@@ -23,13 +23,18 @@ Coordinación servicio <-> lanzador (todo en state/, viaja con el pen):
     daemon.lock.json  <- quién es el servicio (pid, host, arranque, último ciclo)
     daemon.stop       <- su presencia le pide al servicio que pare
     daemon.log        <- diario del servicio (recortado automáticamente)
+    ui_prefs.json     <- lo último que se eligió en la UI (parejas + intervalo)
+
+Esa memoria precarga la UI siguiente y sirve de valor por defecto a --auto, por
+delante de [daemon] del TOML. Solo la escribe la UI: --auto y --daemon únicamente
+la leen, para que un arranque automático no reescriba lo que decidiste a mano.
 
 Con argumentos, se pasan tal cual a sync.py (así `runsync.bat --doctor` sigue
 funcionando), salvo dos flags propios:
 
-  --auto [--interval N] [parejas]  arranca el servicio con los valores de
-      [daemon] del TOML, sin UI y sin preguntar nada. Es lo que lanza
-      penwatch.py cuando detecta el pen recién conectado.
+  --auto [--interval N] [parejas]  arranca el servicio sin UI y sin preguntar
+      nada, con la última elección de la UI (o, si no la hay, con los valores de
+      [daemon] del TOML). Es lo que lanza penwatch.py al detectar el pen.
   --daemon                          punto de entrada interno del servicio.
 """
 
@@ -56,6 +61,7 @@ SENTINEL = SCRIPT_DIR / "sync_config.toml"   # si esto no se ve, el pen no está
 LOCK = sync.STATE_DIR / "daemon.lock.json"
 STOP = sync.STATE_DIR / "daemon.stop"
 DLOG = sync.STATE_DIR / "daemon.log"
+PREFS = sync.STATE_DIR / "ui_prefs.json"
 
 POLL_SECONDS = 2.0        # cadencia de comprobación de parada / pen ausente
 STOP_WAIT_SECONDS = 15.0  # cuánto espera el lanzador a que pare el servicio
@@ -339,6 +345,75 @@ def daemon_defaults(config: dict) -> tuple[list[str], float]:
     return pairs, float(dcfg.get("interval_minutes", DEFAULT_INTERVAL_MIN))
 
 
+def read_prefs() -> dict:
+    """La última elección de la UI. Que el fichero no exista o esté corrupto no
+    es un error: significa que no hay recuerdo y mandan los valores del TOML."""
+    try:
+        data = json.loads(PREFS.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_prefs(action: str, pairs: list[str], interval_min: float,
+               all_names: list[str]) -> None:
+    """Recuerda lo elegido en la UI. 'known' anota qué parejas existían en ese
+    momento: así una pareja añadida al TOML más tarde no se confunde con una que
+    el usuario había desmarcado (ver startup_defaults)."""
+    data = {
+        "action": action,
+        "pairs": list(pairs),
+        "interval_min": interval_min,
+        "known": list(all_names),
+        "host": HOST,
+        "saved": f"{datetime.now():%Y-%m-%d %H:%M:%S}",
+    }
+    old = read_prefs()
+    if all(old.get(k) == v for k, v in data.items() if k not in ("host", "saved")):
+        return  # misma elección que la vez anterior: no se gasta escritura en el pen
+    try:
+        tmp = PREFS.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+        os.replace(tmp, PREFS)  # atómico: la UI puede estar leyéndolo en otra máquina
+    except OSError:
+        pass  # pen de solo lectura o ya extraído: recordar no es vital
+
+
+def startup_defaults(config: dict) -> tuple[list[str], float, str | None]:
+    """Con qué sale precargada la UI, y con qué arranca --auto sin argumentos.
+    Precedencia: última elección > [daemon] del TOML > todas las parejas cada 30
+    min. Devuelve (parejas, minutos, nota); la nota es None si no hay recuerdo, y
+    si no, el texto con el que la UI avisa de dónde salen las casillas marcadas."""
+    all_names = [p["name"] for p in config.get("pair", [])]
+    d_pairs, d_interval = daemon_defaults(config)
+
+    prefs = read_prefs()
+    if not prefs:
+        return d_pairs, d_interval, None
+
+    saved = prefs.get("pairs")
+    remembered = {n for n in saved if isinstance(n, str)} if isinstance(saved, list) else set()
+    known = prefs.get("known")
+    if isinstance(known, list):
+        # Parejas añadidas al TOML después de aquella elección: nadie las ha
+        # desmarcado nunca, así que entran marcadas.
+        remembered |= {n for n in all_names if n not in known}
+    # Recortado a lo que sigue existiendo y en el orden del TOML.
+    pairs = [n for n in all_names if n in remembered]
+    if not pairs:
+        # Nada de aquello existe ya (parejas renombradas, TOML regenerado): el
+        # recuerdo entero es basura, se vuelve al TOML sin anunciar nada.
+        return d_pairs, d_interval, None
+
+    try:
+        interval = max(1.0, float(prefs.get("interval_min", d_interval)))
+    except (TypeError, ValueError):
+        interval = d_interval
+
+    when = prefs.get("saved")
+    return pairs, interval, "Precargado con la última elección" + (f" ({when})" if when else "")
+
+
 def run_interactive(extra_args: list[str]) -> int:
     """sync.py en la consola actual, heredando stdin/stdout (preguntas incluidas)."""
     return subprocess.run([sys.executable, str(SYNC_PY), *extra_args]).returncode
@@ -449,14 +524,14 @@ def gui_info(msg: str) -> None:
 
 
 def tk_ui(config: dict, startup_msg: str | None) -> tuple | None:
-    """Devuelve ('manual', parejas) | ('daemon', parejas, minutos) |
+    """Devuelve ('manual', parejas, minutos) | ('daemon', parejas, minutos) |
     ('doctor',) | None. Lanza ImportError/TclError si no hay entorno gráfico."""
     import tkinter as tk
     from tkinter import ttk
 
     names = [p["name"] for p in config.get("pair", [])]
     notes = pair_status_notes(config)
-    d_pairs, d_interval = daemon_defaults(config)
+    d_pairs, d_interval, memo = startup_defaults(config)
 
     root = tk.Tk()  # TclError aquí si no hay display -> fallback consola
     root.title("PerePen Sync")
@@ -475,6 +550,10 @@ def tk_ui(config: dict, startup_msg: str | None) -> tuple | None:
 
     ttk.Label(frame, text="Parejas:").grid(row=row, column=0, sticky="w")
     row += 1
+    if memo:
+        ttk.Label(frame, text=memo, foreground="#666666").grid(
+            row=row, column=0, columnspan=2, sticky="w", padx=(12, 0))
+        row += 1
     vars_by_name: dict[str, tk.BooleanVar] = {}
     for name in names:
         var = tk.BooleanVar(value=(name in d_pairs))
@@ -498,16 +577,17 @@ def tk_ui(config: dict, startup_msg: str | None) -> tuple | None:
         sel = selected()
         if kind in ("manual", "daemon") and not sel:
             return  # nada marcado, nada que hacer
-        if kind == "daemon":
-            try:
-                minutes = max(1.0, float(interval_var.get().replace(",", ".")))
-            except ValueError:
-                minutes = d_interval
-            result["choice"] = ("daemon", sel, minutes)
-        elif kind == "manual":
-            result["choice"] = ("manual", sel)
-        else:
+        if kind not in ("manual", "daemon"):
             result["choice"] = (kind,)
+            root.destroy()
+            return
+        # El intervalo se recoge también en "manual": ahí no se usa, pero forma
+        # parte de lo que se recuerda para la próxima vez.
+        try:
+            minutes = max(1.0, float(interval_var.get().replace(",", ".")))
+        except ValueError:
+            minutes = d_interval
+        result["choice"] = (kind, sel, minutes)
         root.destroy()
 
     buttons = ttk.Frame(frame)
@@ -532,7 +612,7 @@ def tk_ui(config: dict, startup_msg: str | None) -> tuple | None:
 def console_ui(config: dict, startup_msg: str | None) -> tuple | None:
     names = [p["name"] for p in config.get("pair", [])]
     notes = pair_status_notes(config)
-    d_pairs, d_interval = daemon_defaults(config)
+    d_pairs, d_interval, memo = startup_defaults(config)
 
     print("\n=== PerePen Sync ===")
     if startup_msg:
@@ -540,6 +620,8 @@ def console_ui(config: dict, startup_msg: str | None) -> tuple | None:
     for n in names:
         extra = f"   [{notes[n]}]" if n in notes else ""
         print(f"   - {n}{extra}")
+    if memo:
+        print(f"\n{memo}: {' '.join(d_pairs)}, cada {d_interval:g} min.")
     print("\n 1) Sincronizar todo ahora"
           "\n 2) Sincronizar parejas concretas"
           "\n 3) Iniciar servicio periódico"
@@ -551,11 +633,11 @@ def console_ui(config: dict, startup_msg: str | None) -> tuple | None:
         return None
 
     if option == "1":
-        return ("manual", names)
+        return ("manual", names, d_interval)
     if option == "2":
-        raw = input(f"Parejas (separadas por espacio) [{' '.join(names)}]: ").strip()
-        sel = [n for n in raw.split() if n in names] or names
-        return ("manual", sel)
+        raw = input(f"Parejas (separadas por espacio) [{' '.join(d_pairs)}]: ").strip()
+        sel = [n for n in raw.split() if n in names] or d_pairs
+        return ("manual", sel, d_interval)
     if option == "3":
         raw = input(f"Parejas del servicio [{' '.join(d_pairs)}]: ").strip()
         sel = [n for n in raw.split() if n in names] or d_pairs
@@ -596,6 +678,12 @@ def ui_flow() -> int:
     if choice is None:
         return 0
 
+    # Se recuerda para la próxima UI y para --auto. "doctor" no toca la selección
+    # de parejas, así que tampoco la sobrescribe.
+    if choice[0] in ("manual", "daemon"):
+        save_prefs(choice[0], choice[1], choice[2],
+                   [p["name"] for p in config.get("pair", [])])
+
     if choice[0] == "daemon":
         _, sel, minutes = choice
         msg = spawn_daemon(sel, minutes)
@@ -620,10 +708,12 @@ def ui_flow() -> int:
 
 
 def auto_start(rest: list[str]) -> int:
-    """--auto: arranca el servicio con los valores del TOML y sin UI, para quien
-    lo lanza sin nadie delante (penwatch.py al conectar el pen, un acceso
-    directo, cron). Las parejas y el intervalo salen de [daemon], salvo que se
-    indiquen aquí. Se para antes el servicio anterior, si lo hubiera."""
+    """--auto: arranca el servicio sin UI, para quien lo lanza sin nadie delante
+    (penwatch.py al conectar el pen, un acceso directo, cron). Las parejas y el
+    intervalo salen de la última elección de la UI, y si no hay ninguna, de
+    [daemon] del TOML; lo que se indique aquí manda sobre ambos. Solo lee esa
+    memoria: un arranque automático nunca reescribe lo decidido a mano.
+    Se para antes el servicio anterior, si lo hubiera."""
     interval: float | None = None
     if rest and rest[0] == "--interval":
         try:
@@ -638,11 +728,13 @@ def auto_start(rest: list[str]) -> int:
         return fatal(str(e))
 
     names = [p["name"] for p in config.get("pair", [])]
-    d_pairs, d_interval = daemon_defaults(config)
+    d_pairs, d_interval, memo = startup_defaults(config)
     unknown = [n for n in rest if n not in names]
     if unknown:
         dlog(f"--auto: parejas desconocidas, ignoradas: {', '.join(unknown)}")
     pairs = [n for n in rest if n in names] or d_pairs
+    if memo and not rest:
+        dlog(f"--auto: parejas de la última elección de la UI: {', '.join(pairs)}")
 
     msg = stop_previous_daemon()
     if msg:

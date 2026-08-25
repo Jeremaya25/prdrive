@@ -107,7 +107,19 @@ messages to an explanation — add new cases there rather than in the caller.
 
 **Daemon (`runsync.py`).** Coordination lives in `state/` so it travels with the
 pen: `daemon.lock.json` (pid/host/pairs/last cycle, written atomically),
-`daemon.stop` (presence = stop request), `daemon.log` (self-trimming). The service
+`daemon.stop` (presence = stop request), `daemon.log` (self-trimming),
+`ui_prefs.json` (last UI choice). `startup_defaults()` layers that memory over
+`daemon_defaults()`: last choice > `[daemon]` in the TOML > all pairs / 30 min,
+and it feeds both the UI prefill and `--auto`'s no-argument case. Only the UI
+writes it (`save_prefs()` from `ui_flow`, for `manual`/`daemon` — not `doctor`);
+`--auto` and `--daemon` only read, so an automatic start never overwrites what
+was chosen by hand. `save_prefs` stores `known` (the pair names that existed at
+the time) so a pair added to the TOML later reads as new — and comes back
+checked — instead of as one the user had unchecked; it skips the write entirely
+when nothing changed, to spare the pen. A record whose pairs are all gone falls
+back to the TOML silently.
+
+The service
 stops when the pen disappears (`SENTINEL` check) or when runsync is launched again.
 Windows specifics that must be preserved: `pid_alive()` uses `OpenProcess`, never
 `os.kill` (which *terminates* on Windows); the daemon is spawned with `pythonw.exe`
