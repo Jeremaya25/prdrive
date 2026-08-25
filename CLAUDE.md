@@ -10,20 +10,26 @@ build, no dependencies, no test suite, no package manifest.
 
 Three entry points stay at the repo root because the pen-root launchers
 (`runsync.pyw`/`.bat`/`.sh`) and `penwatch.py` locate them by fixed path;
-everything they share lives in the `common/` package:
+everything else is split by what it knows about:
 
 ```
 rclone-sync/
 ├── sync.py            entry point: build the rclone command, run it, report
-├── runsync.py         entry point: UI + periodic service
+├── runsync.py         entry point: the periodic service + who calls what
 ├── penwatch.py        entry point: mount watcher (deliberately self-contained)
-└── common/
-    ├── model.py       sync_config.toml parsed into resolved objects
-    └── bisync.py      everything that replicates rclone bisync's internals
+├── common/            knows the config and rclone
+│   ├── model.py       sync_config.toml parsed into resolved objects
+│   ├── bisync.py      everything that replicates rclone bisync's internals
+│   └── store.py       the pen's JSON state files: tolerant reads, atomic writes
+└── ui/                knows how to ask the user and show results
+    ├── __init__.py    Choice, the Frontend protocol, start(), fatal()
+    ├── prefs.py       what the UI starts preloaded with (state/ui_prefs.json)
+    ├── tk.py          TkFrontend: main window, dialogs, output window
+    └── console.py     ConsoleFrontend: the text menu
 ```
 
-`penwatch.py` must NOT import `common`: it is copied to the host and has to keep
-working with the pen unplugged.
+`penwatch.py` must NOT import either package: it is copied to the host and has to
+keep working with the pen unplugged.
 
 The repo is the `rclone-sync/` folder of the pen; `PEN_ROOT` is its **parent**
 directory (`F:\` here). Everything is resolved relative to the script location so
@@ -63,9 +69,9 @@ tracked is the code (`sync.py`, `runsync.py`, `penwatch.py`, `common/`) plus
 
 ## Architecture
 
-`sync.py` is the engine, `runsync.py` is a launcher that imports it (`import sync`)
-and reuses `load_config`, `STATE_DIR` plus `bisync.resync_reasons`. It never
-re-implements sync logic: it shells out to `sync.py <pair>` per pair.
+`sync.py` is the engine. `runsync.py` no longer imports it at all — it talks to
+`common.model` for config and shells out to `model.SYNC_PY <pair>` per pair, so
+the two never share in-process state. It never re-implements sync logic.
 
 **Parse once, at the boundary.** `model.parse_config()` turns the TOML into frozen
 value objects and nothing downstream re-reads TOML keys or repeats
@@ -164,10 +170,26 @@ pen: `daemon.lock.json` (pid/host/pairs/last cycle, written atomically),
 and it feeds both the UI prefill and `--auto`'s no-argument case. Only the UI
 writes it (`save_prefs()` from `ui_flow`, for `manual`/`daemon` — not `doctor`);
 `--auto` and `--daemon` only read, so an automatic start never overwrites what
-was chosen by hand. `Choice(action, pairs, minutes)` is what both UIs return, so
-the caller reads `choice.action` rather than indexing a variable-length tuple;
-`read_json`/`write_json` are the shared atomic-file primitives under both the lock
-and the prefs. `save_prefs` stores `known` (the pair names that existed at
+was chosen by hand. `store.read_json`/`write_json` are the shared primitives under
+both the lock and the prefs.
+
+**UI (`ui/`).** Two frontends implement the same four operations (`ask`,
+`approve_resync`, `info`, `run_sync`), and `ui.start(config, msg)` returns the
+choice **together with the frontend that took it** — whoever asked is who knows
+how to show the answer, since a window cannot dump output to a console that does
+not exist and vice versa. Both return `Choice(action, pairs, minutes)`, so callers
+read `choice.action` instead of indexing a variable-length tuple.
+
+`ConsoleFrontend.approve_resync` always returns False on purpose: with a real
+terminal, `sync.py` inherits stdin and asks the question itself, with more context
+than a dialog fits. Returning True there would append `--yes` and take that
+conversation away from the user.
+
+**`import tkinter` always goes inside the functions, never at module top level.**
+`ui/` is imported by the headless paths too (`--auto`, the service), where tkinter
+may not be installed and there may be no display; the failure has to surface when
+the window is opened, which is when `ui.start()` can catch it and fall back to the
+console menu. Verified in both directions. `save_prefs` stores `known` (the pair names that existed at
 the time) so a pair added to the TOML later reads as new — and comes back
 checked — instead of as one the user had unchecked; it skips the write entirely
 when nothing changed, to spare the pen. A record whose pairs are all gone falls

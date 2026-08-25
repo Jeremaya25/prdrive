@@ -48,8 +48,11 @@ STATE_DIR = APP_DIR / "state"
 FILTERS_DIR = APP_DIR / "filters"
 LOG_DIR = APP_DIR / "logs"
 
+SYNC_PY = APP_DIR / "sync.py"       # a quien lanzan la UI y el servicio
+
 DEFAULT_REMOTE = "synology"
 DEFAULT_MODE = "bisync"
+DEFAULT_INTERVAL_MIN = 30.0         # minutos entre ciclos del servicio
 
 # rclone es una app de consola: lanzada desde un proceso sin consola (pythonw, el
 # servicio) Windows le abriría UNA VENTANA NUEVA por invocación.

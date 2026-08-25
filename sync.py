@@ -5,16 +5,18 @@ sync.py — Sincronización portable Synology <-> pen mediante rclone.
 Todo vive en el pen y no depende de nada instalado en la máquina salvo
 Python 3.11+ (para tomllib). El binario de rclone es portable (carpeta bin/).
 
-    common/model.py    el TOML convertido en objetos ya resueltos
-    common/bisync.py   lo que replica el comportamiento interno de rclone bisync
-    sync.py             este fichero: construir el comando, ejecutarlo y contarlo
+    common/model.py   el TOML convertido en objetos ya resueltos
+    common/bisync.py  lo que replica el comportamiento interno de rclone bisync
+    ui/               la ventana y el menu de consola (los usa runsync.py)
+    sync.py           este fichero: construir el comando, ejecutarlo y contarlo
 
 Estructura esperada en el pen:
 
     PEN/
     ├── rclone-sync/
     │   ├── sync.py            <- este script
-    │   ├── common/            <- los módulos que comparten sync.py y runsync.py
+    │   ├── common/            <- config, bisync y ficheros de estado
+    │   ├── ui/                <- la interfaz (la usa runsync.py)
     │   ├── sync_config.toml   <- qué carpetas sincronizar y en qué dirección
     │   ├── rclone.conf        <- config de rclone (remote SFTP + ruta a la clave)
     │   ├── bin/<arch>/        <- binario portable de rclone (Windows y Linux)
@@ -48,10 +50,6 @@ from typing import Mapping
 
 from common import bisync, model
 from common.model import Config, Pair
-
-# Se reexporta lo que runsync.py necesita, para que no tenga que saber en cuál
-# de los módulos del paquete vive cada cosa.
-from common.model import STATE_DIR, load_config  # noqa: F401
 
 LOG_TAIL_LINES = 15  # líneas de log que se vuelcan a consola cuando algo falla
 SKIPPED = -1         # código interno: pareja no ejecutada (ni OK ni fallo)

@@ -2,17 +2,15 @@
 """
 runsync.py — Lanzador del sync del pen.
 
-Sin argumentos abre una UI mínima (Tkinter si está disponible, menú de consola si
+Sin argumentos abre la UI (paquete `ui/`: Tkinter si se puede, menú de consola si
 no) con dos caminos:
 
   * Sincronizar ahora (todas las parejas o una selección).
   * Iniciar un SERVICIO periódico: un proceso en segundo plano, sin ventana, que
     sincroniza las parejas elegidas cada N minutos.
 
-No necesita terminal: lanzado con pythonw (doble clic en runsync.pyw de la raíz
-del pen) la salida de las sincronizaciones se muestra en una ventana propia, y la
-pregunta de "¿hacer --resync?" es un cuadro de diálogo. Lanzado desde una consola
-(runsync.bat, terminal Linux) todo pasa por la consola, como siempre.
+Este fichero no dibuja nada: le pregunta a `ui` qué se quiere hacer y lo hace. Lo
+suyo es el servicio y la coordinación con él.
 
 El servicio solo se detiene en dos casos:
   1. El pen deja de estar conectado (se comprueba cada pocos segundos).
@@ -23,7 +21,7 @@ Coordinación servicio <-> lanzador (todo en state/, viaja con el pen):
     daemon.lock.json  <- quién es el servicio (pid, host, arranque, último ciclo)
     daemon.stop       <- su presencia le pide al servicio que pare
     daemon.log        <- diario del servicio (recortado automáticamente)
-    ui_prefs.json     <- lo último que se eligió en la UI (parejas + intervalo)
+    ui_prefs.json     <- lo último que se eligió en la UI (lo gestiona ui.prefs)
 
 Esa memoria precarga la UI siguiente y sirve de valor por defecto a --auto, por
 delante de [daemon] del TOML. Solo la escribe la UI: --auto y --daemon únicamente
@@ -40,73 +38,37 @@ funcionando), salvo dos flags propios:
 
 from __future__ import annotations
 
-import json
 import os
-import queue
-import socket
 import subprocess
 import sys
 import tempfile
-import threading
 import time
-from datetime import datetime
 from pathlib import Path
-from typing import NamedTuple
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
-import sync  # noqa: E402
-from common import bisync, model  # noqa: E402
-from common.model import Config  # noqa: E402
+import ui  # noqa: E402
+from common import model, store  # noqa: E402
+from ui import prefs  # noqa: E402
 
-SYNC_PY = SCRIPT_DIR / "sync.py"
-SENTINEL = SCRIPT_DIR / "sync_config.toml"   # si esto no se ve, el pen no está
-LOCK = sync.STATE_DIR / "daemon.lock.json"
-STOP = sync.STATE_DIR / "daemon.stop"
-DLOG = sync.STATE_DIR / "daemon.log"
-PREFS = sync.STATE_DIR / "ui_prefs.json"
+SELF = Path(__file__).resolve()
+SENTINEL = model.CONFIG_FILE          # si esto no se ve, el pen no está
+LOCK = model.STATE_DIR / "daemon.lock.json"
+STOP = model.STATE_DIR / "daemon.stop"
+DLOG = model.STATE_DIR / "daemon.log"
 
 POLL_SECONDS = 2.0        # cadencia de comprobación de parada / pen ausente
 STOP_WAIT_SECONDS = 15.0  # cuánto espera el lanzador a que pare el servicio
 DLOG_MAX_BYTES = 256 * 1024
-DEFAULT_INTERVAL_MIN = 30.0
-HOST = socket.gethostname()
+HOST = prefs.HOST
 
 CREATE_NO_WINDOW = model.CREATE_NO_WINDOW
 CREATE_NEW_PROCESS_GROUP = 0x00000200
-
-# ¿Hay una consola de verdad detrás? Bajo pythonw, sys.stdout es None (y print()
-# se convierte en un no-op silencioso, así que los print sueltos no rompen nada).
-HAS_TTY = bool(sys.stdout) and sys.stdout.isatty()
 
 
 # ---------------------------------------------------------------------------
 # Utilidades comunes
 # ---------------------------------------------------------------------------
-
-def stamp() -> str:
-    return f"{datetime.now():%Y-%m-%d %H:%M:%S}"
-
-
-def read_json(path: Path) -> dict:
-    """Un fichero ausente o corrupto no es un error: es 'no hay nada escrito'."""
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
-def write_json(path: Path, data: dict) -> bool:
-    """Escritura atómica: al otro lado puede haber alguien leyendo."""
-    try:
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
-        os.replace(tmp, path)
-        return True
-    except OSError:
-        return False
-
 
 def pen_present() -> bool:
     try:
@@ -141,17 +103,17 @@ def pid_alive(pid: int) -> bool:
 
 
 def read_lock() -> dict | None:
-    return read_json(LOCK) or None
+    return store.read_json(LOCK) or None
 
 
 def write_lock(data: dict) -> None:
-    write_json(LOCK, data)
+    store.write_json(LOCK, data)
 
 
 def dlog(msg: str) -> None:
     """Diario del servicio. Se abre y cierra en cada línea para no mantener
     ningún descriptor abierto sobre el pen (bloquearía la extracción segura)."""
-    line = f"{stamp()} {msg}\n"
+    line = f"{store.stamp()} {msg}\n"
     try:
         if DLOG.exists() and DLOG.stat().st_size > DLOG_MAX_BYTES:
             tail = DLOG.read_text(encoding="utf-8", errors="replace").splitlines()[-300:]
@@ -160,26 +122,6 @@ def dlog(msg: str) -> None:
             f.write(line)
     except OSError:
         pass  # pen ausente o de solo lectura: el diario no es vital
-
-
-def fatal(msg: str) -> int:
-    """Error irrecuperable, visible aunque no haya consola."""
-    if sys.stderr:
-        try:
-            print(msg, file=sys.stderr)
-        except OSError:
-            pass
-    if not HAS_TTY:
-        try:
-            import tkinter as tk
-            from tkinter import messagebox
-            root = tk.Tk()
-            root.withdraw()
-            messagebox.showerror("PerePen Sync", msg)
-            root.destroy()
-        except Exception:
-            pass
-    return 1
 
 
 # ---------------------------------------------------------------------------
@@ -231,7 +173,7 @@ def run_pair_quiet(name: str) -> tuple[int, str]:
     preguntas interactivas de sync.py toman el valor por defecto: una pareja que
     requiera --resync se SALTA (a propósito: un resync no se lanza solo)."""
     proc = subprocess.run(
-        [sys.executable, str(SYNC_PY), name],
+        [sys.executable, str(model.SYNC_PY), name],
         stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
@@ -259,12 +201,9 @@ def daemon_cycle(pairs: list[str], lock_data: dict) -> None:
         else:
             results[name] = f"OK ({secs:.0f}s)"
             dlog(f"[{name}] OK ({secs:.0f}s)")
-    lock_data["last_cycle"] = stamp()
+    lock_data["last_cycle"] = store.stamp()
     lock_data["last_results"] = results
-    try:
-        write_lock(lock_data)
-    except OSError:
-        pass
+    write_lock(lock_data)
 
 
 def daemon_main(pairs: list[str], interval_min: float) -> int:
@@ -275,7 +214,7 @@ def daemon_main(pairs: list[str], interval_min: float) -> int:
     lock_data = {
         "pid": os.getpid(),
         "host": HOST,
-        "started": stamp(),
+        "started": store.stamp(),
         "pairs": pairs,
         "interval_min": interval_min,
     }
@@ -317,7 +256,7 @@ def daemon_main(pairs: list[str], interval_min: float) -> int:
 
 
 def spawn_daemon(pairs: list[str], interval_min: float) -> str:
-    cmd = [str(SCRIPT_DIR / "runsync.py"), "--daemon", "--interval", str(interval_min), *pairs]
+    cmd = [str(SELF), "--daemon", "--interval", str(interval_min), *pairs]
     kwargs: dict = {
         "stdin": subprocess.DEVNULL,
         "stdout": subprocess.DEVNULL,
@@ -340,382 +279,46 @@ def spawn_daemon(pairs: list[str], interval_min: float) -> str:
             f"Diario: {DLOG}")
 
 
-# ---------------------------------------------------------------------------
-# Datos para la UI
-# ---------------------------------------------------------------------------
-
-class Choice(NamedTuple):
-    """Lo que se ha pedido en la UI. 'doctor' no usa parejas ni intervalo."""
-    action: str                        # 'manual' | 'daemon' | 'doctor'
-    pairs: tuple[str, ...] = ()
-    minutes: float = 0.0
-
-
-def pair_status_notes(config: Config) -> dict[str, str]:
-    """'requiere resync' junto a las parejas bisync sin baseline válido."""
-    notes = {}
-    for pair in config.pairs:
-        try:
-            if bisync.resync_reasons(pair):
-                notes[pair.name] = "requiere resync"
-        except Exception:
-            pass  # un estado ilegible no puede impedir que se abra la UI
-    return notes
-
-
-def daemon_defaults(config: Config) -> tuple[list[str], float]:
-    """Los valores de [daemon] del TOML, saneados contra las parejas que existen."""
-    names = config.names
-    pairs = [n for n in config.daemon.get("pairs", names) if n in names] or names
-    return pairs, float(config.daemon.get("interval_minutes", DEFAULT_INTERVAL_MIN))
-
-
-def read_prefs() -> dict:
-    """La última elección de la UI; vacío si aún no hay ninguna."""
-    return read_json(PREFS)
-
-
-def save_prefs(action: str, pairs: list[str], interval_min: float,
-               all_names: list[str]) -> None:
-    """Recuerda lo elegido en la UI. 'known' anota qué parejas existían en ese
-    momento: así una pareja añadida al TOML más tarde no se confunde con una que
-    el usuario había desmarcado (ver startup_defaults)."""
-    data = {
-        "action": action,
-        "pairs": list(pairs),
-        "interval_min": interval_min,
-        "known": list(all_names),
-        "host": HOST,
-        "saved": stamp(),
-    }
-    old = read_prefs()
-    if all(old.get(k) == v for k, v in data.items() if k not in ("host", "saved")):
-        return  # misma elección que la vez anterior: no se gasta escritura en el pen
-    write_json(PREFS, data)  # si el pen ya no está, recordar no es vital
-
-
-def startup_defaults(config: Config) -> tuple[list[str], float, str | None]:
-    """Con qué sale precargada la UI, y con qué arranca --auto sin argumentos.
-    Precedencia: última elección > [daemon] del TOML > todas las parejas cada 30
-    min. Devuelve (parejas, minutos, nota); la nota es None si no hay recuerdo, y
-    si no, el texto con el que la UI avisa de dónde salen las casillas marcadas."""
-    all_names = config.names
-    d_pairs, d_interval = daemon_defaults(config)
-
-    prefs = read_prefs()
-    if not prefs:
-        return d_pairs, d_interval, None
-
-    saved = prefs.get("pairs")
-    remembered = {n for n in saved if isinstance(n, str)} if isinstance(saved, list) else set()
-    known = prefs.get("known")
-    if isinstance(known, list):
-        # Parejas añadidas al TOML después de aquella elección: nadie las ha
-        # desmarcado nunca, así que entran marcadas.
-        remembered |= {n for n in all_names if n not in known}
-    # Recortado a lo que sigue existiendo y en el orden del TOML.
-    pairs = [n for n in all_names if n in remembered]
-    if not pairs:
-        # Nada de aquello existe ya (parejas renombradas, TOML regenerado): el
-        # recuerdo entero es basura, se vuelve al TOML sin anunciar nada.
-        return d_pairs, d_interval, None
-
-    try:
-        interval = max(1.0, float(prefs.get("interval_min", d_interval)))
-    except (TypeError, ValueError):
-        interval = d_interval
-
-    when = prefs.get("saved")
-    return pairs, interval, "Precargado con la última elección" + (f" ({when})" if when else "")
-
-
 def run_interactive(extra_args: list[str]) -> int:
     """sync.py en la consola actual, heredando stdin/stdout (preguntas incluidas)."""
-    return subprocess.run([sys.executable, str(SYNC_PY), *extra_args]).returncode
+    return subprocess.run([sys.executable, str(model.SYNC_PY), *extra_args]).returncode
 
 
 # ---------------------------------------------------------------------------
-# UI Tkinter
-# ---------------------------------------------------------------------------
-
-def gui_run_sync(title: str, args: list[str]) -> int:
-    """Ejecuta sync.py y muestra su salida en una ventana con desplazamiento.
-    Sustituye a la consola cuando no la hay. Cerrar la ventana a mitad de faena
-    corta el proceso (bisync se recupera con --recover en la siguiente pasada)."""
-    import tkinter as tk
-    from tkinter import ttk
-
-    proc = subprocess.Popen(
-        [sys.executable, str(SYNC_PY), *args],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        errors="replace",
-        bufsize=1,
-    )
-    q: queue.Queue = queue.Queue()
-    DONE = object()
-
-    def reader() -> None:
-        assert proc.stdout is not None
-        for line in proc.stdout:
-            q.put(line)
-        q.put(DONE)
-
-    threading.Thread(target=reader, daemon=True).start()
-
-    root = tk.Tk()
-    root.title(f"PerePen Sync — {title}")
-    text = tk.Text(root, width=104, height=30, state="disabled",
-                   font=("Consolas" if os.name == "nt" else "monospace", 9))
-    scroll = ttk.Scrollbar(root, command=text.yview)
-    text.configure(yscrollcommand=scroll.set)
-    close_btn = ttk.Button(root, text="Cerrar", command=root.destroy)
-    text.grid(row=0, column=0, sticky="nsew", padx=(8, 0), pady=8)
-    scroll.grid(row=0, column=1, sticky="ns", padx=(0, 8), pady=8)
-    close_btn.grid(row=1, column=0, columnspan=2, pady=(0, 8))
-    root.columnconfigure(0, weight=1)
-    root.rowconfigure(0, weight=1)
-
-    state = {"rc": None}
-
-    def append(line: str) -> None:
-        text.configure(state="normal")
-        text.insert("end", line)
-        text.see("end")
-        text.configure(state="disabled")
-
-    def poll() -> None:
-        try:
-            while True:
-                item = q.get_nowait()
-                if item is DONE:
-                    state["rc"] = proc.wait()
-                    verdict = "OK" if state["rc"] == 0 else f"ERROR (código {state['rc']})"
-                    append(f"\n=== Terminado: {verdict} ===\n")
-                    root.title(f"PerePen Sync — {title} — {verdict}")
-                    return
-                append(item)
-        except queue.Empty:
-            pass
-        root.after(120, poll)
-
-    def on_close() -> None:
-        if state["rc"] is None and proc.poll() is None:
-            proc.terminate()
-        root.destroy()
-
-    root.protocol("WM_DELETE_WINDOW", on_close)
-    root.after(120, poll)
-    root.mainloop()
-    if proc.poll() is None:
-        proc.terminate()
-    return state["rc"] if state["rc"] is not None else 1
-
-
-def gui_ask_resync(pending: list[str]) -> bool:
-    import tkinter as tk
-    from tkinter import messagebox
-    root = tk.Tk()
-    root.withdraw()
-    answer = messagebox.askyesno(
-        "PerePen Sync",
-        "Estas parejas requieren --resync (primera vez, baseline perdido o "
-        "filtros cambiados):\n\n  " + "\n  ".join(pending) +
-        "\n\nEl resync compara ambos lados y fija la referencia; no borra por "
-        "diferencias.\n¿Ejecutarlo ahora? (si no, esas parejas se saltarán)")
-    root.destroy()
-    return bool(answer)
-
-
-def gui_info(msg: str) -> None:
-    import tkinter as tk
-    from tkinter import messagebox
-    root = tk.Tk()
-    root.withdraw()
-    messagebox.showinfo("PerePen Sync", msg)
-    root.destroy()
-
-
-def tk_ui(config: Config, startup_msg: str | None) -> Choice | None:
-    """La elección del usuario, o None si cierra la ventana.
-    Lanza ImportError/TclError si no hay entorno gráfico."""
-    import tkinter as tk
-    from tkinter import ttk
-
-    names = config.names
-    notes = pair_status_notes(config)
-    d_pairs, d_interval, memo = startup_defaults(config)
-
-    root = tk.Tk()  # TclError aquí si no hay display -> fallback consola
-    root.title("PerePen Sync")
-    root.resizable(False, False)
-    result: dict = {"choice": None}
-
-    frame = ttk.Frame(root, padding=12)
-    frame.grid(sticky="nsew")
-    row = 0
-
-    if startup_msg:
-        ttk.Label(frame, text=startup_msg, foreground="#775500",
-                  wraplength=340, justify="left").grid(
-            row=row, column=0, columnspan=2, sticky="w", pady=(0, 8))
-        row += 1
-
-    ttk.Label(frame, text="Parejas:").grid(row=row, column=0, sticky="w")
-    row += 1
-    if memo:
-        ttk.Label(frame, text=memo, foreground="#666666").grid(
-            row=row, column=0, columnspan=2, sticky="w", padx=(12, 0))
-        row += 1
-    vars_by_name: dict[str, tk.BooleanVar] = {}
-    for name in names:
-        var = tk.BooleanVar(value=(name in d_pairs))
-        vars_by_name[name] = var
-        label = name + (f"   ⚠ {notes[name]}" if name in notes else "")
-        ttk.Checkbutton(frame, text=label, variable=var).grid(
-            row=row, column=0, columnspan=2, sticky="w", padx=(12, 0))
-        row += 1
-
-    ttk.Label(frame, text="Intervalo del servicio (min):").grid(
-        row=row, column=0, sticky="w", pady=(10, 0))
-    interval_var = tk.StringVar(value=f"{d_interval:g}")
-    ttk.Spinbox(frame, from_=1, to=1440, textvariable=interval_var, width=6).grid(
-        row=row, column=1, sticky="w", pady=(10, 0))
-    row += 1
-
-    def selected() -> list[str]:
-        return [n for n in names if vars_by_name[n].get()]
-
-    def choose(kind: str) -> None:
-        sel = selected()
-        if kind in ("manual", "daemon") and not sel:
-            return  # nada marcado, nada que hacer
-        if kind not in ("manual", "daemon"):
-            result["choice"] = Choice(kind)
-            root.destroy()
-            return
-        # El intervalo se recoge también en "manual": ahí no se usa, pero forma
-        # parte de lo que se recuerda para la próxima vez.
-        try:
-            minutes = max(1.0, float(interval_var.get().replace(",", ".")))
-        except ValueError:
-            minutes = d_interval
-        result["choice"] = Choice(kind, tuple(sel), minutes)
-        root.destroy()
-
-    buttons = ttk.Frame(frame)
-    buttons.grid(row=row, column=0, columnspan=2, pady=(12, 0))
-    ttk.Button(buttons, text="Sincronizar ahora",
-               command=lambda: choose("manual")).grid(row=0, column=0, padx=3)
-    ttk.Button(buttons, text="Iniciar servicio",
-               command=lambda: choose("daemon")).grid(row=0, column=1, padx=3)
-    ttk.Button(buttons, text="Doctor",
-               command=lambda: choose("doctor")).grid(row=0, column=2, padx=3)
-    ttk.Button(buttons, text="Salir",
-               command=root.destroy).grid(row=0, column=3, padx=3)
-
-    root.mainloop()
-    return result["choice"]
-
-
-# ---------------------------------------------------------------------------
-# UI de consola (fallback)
-# ---------------------------------------------------------------------------
-
-def console_ui(config: Config, startup_msg: str | None) -> Choice | None:
-    names = config.names
-    notes = pair_status_notes(config)
-    d_pairs, d_interval, memo = startup_defaults(config)
-
-    print("\n=== PerePen Sync ===")
-    if startup_msg:
-        print(startup_msg)
-    for n in names:
-        extra = f"   [{notes[n]}]" if n in notes else ""
-        print(f"   - {n}{extra}")
-    if memo:
-        print(f"\n{memo}: {' '.join(d_pairs)}, cada {d_interval:g} min.")
-    print("\n 1) Sincronizar todo ahora"
-          "\n 2) Sincronizar parejas concretas"
-          "\n 3) Iniciar servicio periódico"
-          "\n 4) Doctor"
-          "\n 0) Salir")
-    try:
-        option = input("Opción: ").strip()
-    except (EOFError, KeyboardInterrupt):
-        return None
-
-    if option == "1":
-        return Choice("manual", tuple(names), d_interval)
-    if option == "2":
-        raw = input(f"Parejas (separadas por espacio) [{' '.join(d_pairs)}]: ").strip()
-        sel = [n for n in raw.split() if n in names] or d_pairs
-        return Choice("manual", tuple(sel), d_interval)
-    if option == "3":
-        raw = input(f"Parejas del servicio [{' '.join(d_pairs)}]: ").strip()
-        sel = [n for n in raw.split() if n in names] or d_pairs
-        raw = input(f"Intervalo en minutos [{d_interval:g}]: ").strip()
-        try:
-            minutes = max(1.0, float(raw.replace(",", "."))) if raw else d_interval
-        except ValueError:
-            minutes = d_interval
-        return Choice("daemon", tuple(sel), minutes)
-    if option == "4":
-        return Choice("doctor")
-    return None
-
-
-# ---------------------------------------------------------------------------
-# main
+# Caminos de entrada
 # ---------------------------------------------------------------------------
 
 def ui_flow() -> int:
+    """Sin argumentos: parar el servicio anterior, preguntar, y hacer lo pedido."""
     startup_msg = stop_previous_daemon()
 
     try:
-        config = sync.load_config()
+        config = model.load_config()
     except SystemExit as e:  # load_config hace sys.exit con el mensaje
-        return fatal(str(e))
+        return ui.fatal(str(e))
 
-    # UI gráfica si se puede; si no, menú de consola. El tipo de UI decide
-    # también dónde vive la salida de las acciones.
-    try:
-        choice = tk_ui(config, startup_msg)
-        graphical = True
-    except Exception:
-        if startup_msg:
-            print(startup_msg)
-        choice = console_ui(config, startup_msg=None)
-        graphical = False
-
+    choice, frontend = ui.start(config, startup_msg)
     if choice is None:
         return 0
 
     # Se recuerda para la próxima UI y para --auto. "doctor" no toca la selección
     # de parejas, así que tampoco la sobrescribe.
     if choice.action in ("manual", "daemon"):
-        save_prefs(choice.action, list(choice.pairs), choice.minutes, config.names)
+        prefs.save_prefs(choice.action, list(choice.pairs), choice.minutes,
+                         config.names)
 
     if choice.action == "daemon":
-        msg = spawn_daemon(list(choice.pairs), choice.minutes)
-        if graphical:
-            gui_info(msg)
-        else:
-            print(msg)
+        frontend.info(spawn_daemon(list(choice.pairs), choice.minutes))
         return 0
 
     if choice.action == "doctor":
-        title, args = "doctor", ["--doctor"]
-    else:
-        title, args = "sincronización", list(choice.pairs)
-        if graphical:
-            pending = [n for n in pair_status_notes(config) if n in args]
-            if pending and gui_ask_resync(pending):
-                args.append("--yes")
+        return frontend.run_sync("doctor", ["--doctor"])
 
-    return gui_run_sync(title, args) if graphical else run_interactive(args)
+    args = list(choice.pairs)
+    pending = [n for n in ui.pair_status_notes(config) if n in args]
+    if pending and frontend.approve_resync(pending):
+        args.append("--yes")
+    return frontend.run_sync("sincronización", args)
 
 
 def auto_start(rest: list[str]) -> int:
@@ -730,16 +333,16 @@ def auto_start(rest: list[str]) -> int:
         try:
             interval = float(rest[1])
         except (IndexError, ValueError):
-            return fatal("--interval necesita un número de minutos.")
+            return ui.fatal("--interval necesita un número de minutos.")
         rest = rest[2:]
 
     try:
-        config = sync.load_config()
+        config = model.load_config()
     except SystemExit as e:
-        return fatal(str(e))
+        return ui.fatal(str(e))
 
     names = config.names
-    d_pairs, d_interval, memo = startup_defaults(config)
+    d_pairs, d_interval, memo = prefs.startup_defaults(config)
     unknown = [n for n in rest if n not in names]
     if unknown:
         dlog(f"--auto: parejas desconocidas, ignoradas: {', '.join(unknown)}")
@@ -765,12 +368,12 @@ def main() -> int:
 
     if args and args[0] == "--daemon":
         rest = args[1:]
-        interval = DEFAULT_INTERVAL_MIN
+        interval = model.DEFAULT_INTERVAL_MIN
         if rest and rest[0] == "--interval":
             interval = float(rest[1])
             rest = rest[2:]
         if not rest:
-            return fatal("--daemon necesita al menos una pareja.")
+            return ui.fatal("--daemon necesita al menos una pareja.")
         return daemon_main(rest, interval)
 
     if args:
