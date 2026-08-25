@@ -1,0 +1,8 @@
+__pycache__/
+bin/*/*
+filters/*
+keys/*
+logs/*
+state/*
+sync_config.toml
+rclone.conf
