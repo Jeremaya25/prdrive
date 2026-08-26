@@ -30,7 +30,7 @@ rclone-sync/
 │   ├── pair_editor.py what THIS pen does with pairs — the decisions, no Tk
 │   ├── catalog_editor.py  add/edit/remove in the NAS catalogue — no Tk
 │   ├── watch.py       adapter over penwatch.py — no Tk
-│   ├── tk.py          TkFrontend: main window, output window, modal()
+│   ├── tk.py          TkFrontend: main window, output window, modal()/mostrar()
 │   ├── tk_pairs.py    the pairs screen (drawing only)
 │   ├── tk_watch.py    the auto-start screen (drawing only)
 │   └── console.py     ConsoleFrontend: the text menu
@@ -217,6 +217,17 @@ read `choice.action` instead of indexing a variable-length tuple.
 terminal, `sync.py` inherits stdin and asks the question itself, with more context
 than a dialog fits. Returning True there would append `--yes` and take that
 conversation away from the user.
+
+**Windows are shown already centred, never moved after the fact.** `modal()`
+returns the dialog **withdrawn** and without a grab; `mostrar(dlg, parent)` centres
+it, deiconifies, grabs and waits. The split exists because a window's size is not
+known until its widgets are in, and positioning it afterwards means watching it
+appear in a corner and jump. `grab_set()` and `centrar()`'s `update_idletasks()`
+must stay on their current side of the `deiconify()`: Tk refuses to grab a window
+that is not viewable. `main_window` and `output_window` do the same by hand.
+`centrar()` only clamps to the screen when the parent is on the primary monitor —
+with two screens the coordinates go negative and "correcting" would drag the dialog
+across. Tests replace `mostrar()` (not `modal()`) to keep windows off the screen.
 
 **`import tkinter` always goes inside the functions, never at module top level.**
 `ui/` is imported by the headless paths too (`--auto`, the service), where tkinter

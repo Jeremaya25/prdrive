@@ -37,14 +37,11 @@ from ui import tk_pairs, tk_watch
 
 
 def ocultar(modulo):
-    """Los diálogos se crean pero no se enseñan: esto no es una demo."""
-    original = modulo.modal
+    """Los diálogos se crean pero no se enseñan: esto no es una demo.
 
-    def _modal(parent, title):
-        dlg = original(parent, title)
-        dlg.withdraw()
-        return dlg
-    modulo.modal = _modal
+    `modal()` ya los devuelve ocultos; quien los centra y los enseña es
+    `mostrar()`, así que basta con quedarse solo con su espera."""
+    modulo.mostrar = lambda dlg, parent=None: dlg.wait_window()
 
 
 def pulsar(texto):

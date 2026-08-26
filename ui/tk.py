@@ -36,10 +36,8 @@ class TkFrontend:
         return main_window(config, startup_msg)
 
     def approve_resync(self, pending: list[str]) -> bool:
-        import tkinter as tk
         from tkinter import messagebox
-        root = tk.Tk()
-        root.withdraw()
+        root = root_oculto()
         answer = messagebox.askyesno(
             TITLE,
             "Estas parejas requieren --resync (primera vez, baseline perdido o "
@@ -50,10 +48,8 @@ class TkFrontend:
         return bool(answer)
 
     def info(self, msg: str) -> None:
-        import tkinter as tk
         from tkinter import messagebox
-        root = tk.Tk()
-        root.withdraw()
+        root = root_oculto()
         messagebox.showinfo(TITLE, msg)
         root.destroy()
 
@@ -61,15 +57,80 @@ class TkFrontend:
         return output_window(title, [sys.executable, str(model.SYNC_PY), *args])
 
 
+def root_oculto():
+    """Un Tk invisible en mitad de la pantalla, del que colgar un messagebox suelto.
+
+    Los messagebox se colocan respecto a su ventana padre, y un Tk recién creado
+    está en la esquina superior izquierda: sin mover el padre, el aviso sale
+    arrinconado aunque no se vea la ventana de la que cuelga."""
+    import tkinter as tk
+    root = tk.Tk()
+    root.withdraw()
+    root.geometry(f"+{root.winfo_screenwidth() // 2}+{root.winfo_screenheight() // 2}")
+    return root
+
+
+def centrar(win, parent=None) -> None:
+    """Coloca una ventana en el centro: de su padre si lo hay, si no de la pantalla.
+
+    El `update_idletasks()` no es opcional: hasta que Tk no ha resuelto la
+    disposición, `winfo_width()` vale 1 y el centro saldría a ojo."""
+    win.update_idletasks()
+    ancho = max(win.winfo_width(), win.winfo_reqwidth())
+    alto = max(win.winfo_height(), win.winfo_reqheight())
+    pantalla_x, pantalla_y = win.winfo_screenwidth(), win.winfo_screenheight()
+
+    if parent is not None and parent.winfo_ismapped():
+        x = parent.winfo_rootx() + (parent.winfo_width() - ancho) // 2
+        y = parent.winfo_rooty() + (parent.winfo_height() - alto) // 2
+        # Un diálogo puede ser bastante mayor que su padre —la pantalla de
+        # parejas lo es—, así que centrado sobre un padre pegado a un borde se
+        # saldría. Solo se recoloca si el padre está en la pantalla principal:
+        # con dos monitores las coordenadas pueden ser negativas, y ahí
+        # "corregir" sería arrastrar el diálogo a la otra pantalla.
+        if 0 <= parent.winfo_rootx() < pantalla_x:
+            x = max(0, min(x, pantalla_x - ancho))
+            y = max(0, min(y, pantalla_y - alto))
+    else:
+        x = max(0, (pantalla_x - ancho) // 2)
+        # Un pelín por encima del centro geométrico, que es donde el ojo lo
+        # espera y deja sitio por abajo para los diálogos hijos.
+        y = max(0, (pantalla_y - alto) // 2 - alto // 8)
+    win.geometry(f"+{x}+{y}")
+
+
 def modal(parent, title: str):
-    """Un diálogo hijo que bloquea a su padre hasta que se cierra."""
+    """Un diálogo hijo, todavía OCULTO. Se enseña con `mostrar()`.
+
+    Nace oculto porque hasta que no están puestos todos los widgets no se sabe
+    cuánto ocupa, y sin saberlo no se puede centrar. Enseñarlo antes sería verlo
+    aparecer en una esquina y pegar el salto al centro."""
     import tkinter as tk
     dlg = tk.Toplevel(parent)
     dlg.title(f"{TITLE} — {title}")
     dlg.transient(parent)
     dlg.resizable(False, False)
-    dlg.grab_set()
+    dlg.withdraw()
     return dlg
+
+
+def mostrar(dlg, parent=None) -> None:
+    """Centra el diálogo sobre su padre, lo enseña y espera a que se cierre.
+
+    El `grab_set()` va aquí y no en `modal()` porque Tk no deja capturar una
+    ventana que no está visible, y por eso `deiconify()` lleva detrás un
+    `update_idletasks()`: sin él el mapeo puede seguir pendiente. Si aun así
+    fallara, se sigue: un diálogo sin captura es un incordio, pero uno que no se
+    abre es un cuelgue."""
+    import tkinter as tk
+    centrar(dlg, parent)
+    dlg.deiconify()
+    dlg.update_idletasks()
+    try:
+        dlg.grab_set()
+    except tk.TclError:
+        pass
+    dlg.wait_window()
 
 
 def main_window(config: Config, startup_msg: str | None) -> Choice | None:
@@ -84,6 +145,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
     root = tk.Tk()  # TclError aquí si no hay display -> fallback consola
     root.title(TITLE)
     root.resizable(False, False)
+    root.withdraw()          # se enseña ya centrada, ver el final de la función
     result: dict = {"choice": None}
     vista: dict = {"config": config, "aviso": startup_msg}
 
@@ -102,6 +164,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
             return
         vista["aviso"] = None
         render()
+        centrar(root)   # quitar o añadir parejas le cambia el alto
 
     def render() -> None:
         for hijo in frame.winfo_children():
@@ -189,6 +252,8 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
                    command=root.destroy).grid(row=0, column=3, padx=3)
 
     render()
+    centrar(root)
+    root.deiconify()
     root.mainloop()
     return result["choice"]
 
@@ -233,8 +298,8 @@ def output_window(title: str, cmd: list[str], parent=None) -> int:
     else:
         root = tk.Toplevel(parent)
         root.transient(parent)
-        root.grab_set()
         esperar = root.wait_window
+    root.withdraw()          # igual que los diálogos: se enseña ya colocada
     root.title(f"{TITLE} — {title}")
     text = tk.Text(root, width=104, height=30, state="disabled",
                    font=("Consolas" if os.name == "nt" else "monospace", 9))
@@ -276,6 +341,14 @@ def output_window(title: str, cmd: list[str], parent=None) -> int:
         root.destroy()
 
     root.protocol("WM_DELETE_WINDOW", on_close)
+    centrar(root, parent)
+    root.deiconify()
+    root.update_idletasks()
+    if parent is not None:
+        try:
+            root.grab_set()  # después de enseñarla: Tk no captura lo que no se ve
+        except tk.TclError:
+            pass
     root.after(120, poll)
     esperar()
     if proc.poll() is None:

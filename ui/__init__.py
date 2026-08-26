@@ -90,10 +90,10 @@ def fatal(msg: str) -> int:
             pass
     if not HAS_TTY:
         try:
-            import tkinter as tkinter_
             from tkinter import messagebox
-            root = tkinter_.Tk()
-            root.withdraw()
+
+            from . import tk as tk_
+            root = tk_.root_oculto()
             messagebox.showerror("PerePen Sync", msg)
             root.destroy()
         except Exception:

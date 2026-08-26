@@ -12,7 +12,7 @@ ha hecho, igual que cuando se lanza una sincronización.
 from __future__ import annotations
 
 from . import watch
-from .tk import TITLE, modal, output_window
+from .tk import TITLE, modal, mostrar, output_window
 
 
 def open_dialog(parent, config=None) -> None:
@@ -89,7 +89,7 @@ def open_dialog(parent, config=None) -> None:
         ttk.Button(botones, text=texto, command=accion).grid(row=0, column=i, padx=3)
 
     ver_estado()
-    dlg.wait_window()
+    mostrar(dlg, parent)
 
 
 def formulario_instalacion(parent, config) -> dict | None:
@@ -186,5 +186,5 @@ def formulario_instalacion(parent, config) -> dict | None:
     ttk.Button(pie, text="Instalar", command=aceptar).grid(row=0, column=0, padx=3)
     ttk.Button(pie, text="Cancelar", command=dlg.destroy).grid(row=0, column=1, padx=3)
 
-    dlg.wait_window()
+    mostrar(dlg, parent)
     return resultado["opciones"]

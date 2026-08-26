@@ -20,7 +20,7 @@ from common import catalog, config_file, model
 from common.model import ConfigError
 
 from . import catalog_editor, pair_editor
-from .tk import TITLE, modal
+from .tk import TITLE, modal, mostrar
 
 COLUMNAS = [
     ("usa", "En el pen", 70),
@@ -325,7 +325,7 @@ def open_dialog(parent, config) -> bool:
     ttk.Button(cierre, text="Cerrar", command=dlg.destroy).grid(row=0, column=1, padx=3)
 
     refrescar()
-    dlg.wait_window()
+    mostrar(dlg, parent)
     return estado["cambiado"]
 
 
@@ -363,7 +363,7 @@ def preguntar_limpieza(parent, name: str) -> bool | None:
     ttk.Button(pie, text="Quitar", command=aceptar).grid(row=0, column=0, padx=3)
     ttk.Button(pie, text="Cancelar", command=dlg.destroy).grid(row=0, column=1, padx=3)
 
-    dlg.wait_window()
+    mostrar(dlg, parent)
     return respuesta["valor"]
 
 
@@ -461,7 +461,7 @@ def formulario(parent, raw: dict, original_name: str | None, actual: dict,
     ttk.Button(pie, text="Guardar…", command=aceptar).grid(row=0, column=0, padx=3)
     ttk.Button(pie, text="Cancelar", command=dlg.destroy).grid(row=0, column=1, padx=3)
 
-    dlg.wait_window()
+    mostrar(dlg, parent)
     return resultado["datos"]
 
 
@@ -550,5 +550,5 @@ def defaults_form(parent, actual: dict, catalogo: dict | None,
     ttk.Button(pie, text="Guardar…", command=aceptar).grid(row=0, column=0, padx=3)
     ttk.Button(pie, text="Cancelar", command=dlg.destroy).grid(row=0, column=1, padx=3)
 
-    dlg.wait_window()
+    mostrar(dlg, parent)
     return resultado["datos"]
