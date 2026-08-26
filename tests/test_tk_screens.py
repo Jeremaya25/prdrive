@@ -35,6 +35,10 @@ except Exception as e:                                   # sin entorno gráfico
 
 from ui import tk_pairs, tk_watch
 
+# El de verdad: más abajo hay tramos que lo sustituyen por un formulario de
+# mentira, y el último los necesita a los dos.
+FORMULARIO = tk_pairs.formulario
+
 
 def ocultar(modulo):
     """Los diálogos se crean pero no se enseñan: esto no es una demo.
@@ -80,7 +84,8 @@ ocultar(tk_pairs)
 ocultar(tk_watch)
 messagebox.askokcancel = lambda *a, **k: True            # se confirma todo
 messagebox.showinfo = lambda *a, **k: None
-messagebox.showerror = lambda *a, **k: None
+errores: list[str] = []
+messagebox.showerror = lambda titulo, texto=None, **k: errores.append(str(texto))
 
 BASE = {"defaults": {"remote": "synology"},
         "pair": [{"name": "notas", "local": "sync-data/notas",
@@ -268,5 +273,91 @@ with sandbox():
         c("'Detectar el pen' no revienta", True, True)
     except Exception as e:
         c("'Detectar el pen' no revienta", f"{type(e).__name__}: {e}", True)
+
+
+
+# --- el editor de flags: se escribe TOML y sale lo que recibirá rclone -------
+#
+# Lo que se comprueba es la parte peligrosa: que lo que no se puede escribir en
+# el TOML no salga del diálogo. Si saliera, el fallo aparecería al guardar, con
+# el formulario ya cerrado y lo escrito perdido.
+
+def flags_escritos(texto, extra="", boton="Aceptar"):
+    """Escribe en los dos cuadros del diálogo de flags y pulsa un botón."""
+    filas = []
+
+    def _wait(self, *_a, **_k):
+        cajas, botones, tabla = {}, {}, None
+        pila = [self]
+        while pila:
+            w = pila.pop()
+            pila += list(w.winfo_children())
+            if isinstance(w, tk.Text):
+                cajas[int(w.grid_info()["row"])] = w
+            elif isinstance(w, ttk.Button):
+                botones[w.cget("text")] = w
+            elif isinstance(w, ttk.Treeview):
+                tabla = w
+        caja, caja_extra = [cajas[k] for k in sorted(cajas)]
+        caja.delete("1.0", "end")
+        caja.insert("1.0", texto)
+        caja_extra.delete("1.0", "end")
+        caja_extra.insert("1.0", extra)
+        botones["Ver el efecto"].invoke()
+        if tabla is not None:
+            filas[:] = [tabla.item(i)["values"] for i in tabla.get_children()]
+        botones[boton].invoke()
+
+    tk.Toplevel.wait_window = _wait
+    datos = tk_pairs.flags_form(raiz, "Flags", "de prueba", {"transfers": 4}, [],
+                                mode_name="bisync", defaults_flags=None)
+    return datos, filas
+
+
+datos, filas = flags_escritos('transfers = 8\nchecksum = true', "--bwlimit\n8M")
+c("lo escrito vuelve ya parseado", datos["flags"], {"transfers": 8, "checksum": True})
+c("y los extra tal cual", datos["extra_flags"], ["--bwlimit", "8M"])
+c("la tabla enseña de dónde sale cada flag",
+  ["--max-delete 25", "modo bisync"] in [list(f) for f in filas], True)
+c("y los argumentos extra también salen",
+  ["--bwlimit", "extra"] in [list(f) for f in filas], True)
+
+errores.clear()
+datos, _ = flags_escritos("--transfers 8")
+c("la sintaxis de la línea de comandos no sale del diálogo", datos, None)
+c("y se explica por qué", bool(errores), True)
+
+errores.clear()
+datos, _ = flags_escritos('workdir = "otro"')
+c("un flag que pone sync.py tampoco sale", datos, None)
+c("con su motivo", "no se configura aquí" in " ".join(errores), True)
+
+datos, _ = flags_escritos("transfers = 8", boton="Cancelar")
+c("cancelar no devuelve nada", datos, None)
+
+
+# --- y el formulario de la pareja recoge lo que diga ese diálogo -------------
+
+tk_pairs.flags_form = lambda *a, **k: {"flags": {"transfers": 8},
+                                       "extra_flags": ["--stats", "10s"]}
+
+
+def _abrir_y_guardar(self, *_a, **_k):
+    botones = {}
+    pila = [self]
+    while pila:
+        w = pila.pop()
+        pila += list(w.winfo_children())
+        if isinstance(w, ttk.Button):
+            botones[w.cget("text")] = w
+    botones["Flags de rclone…"].invoke()
+    botones["Guardar…"].invoke()
+
+
+tk.Toplevel.wait_window = _abrir_y_guardar
+datos = FORMULARIO(raiz, BASE, "notas", dict(BASE["pair"][0]))
+c("el formulario devuelve los flags del diálogo", datos["flags"], {"transfers": 8})
+c("y sus argumentos extra", datos["extra_flags"], ["--stats", "10s"])
+
 
 sys.exit(c.report())

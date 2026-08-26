@@ -19,7 +19,7 @@ from __future__ import annotations
 from common import catalog, config_file, model
 from common.model import ConfigError
 
-from . import catalog_editor, pair_editor
+from . import catalog_editor, flags_editor, pair_editor
 from .tk import TITLE, modal, mostrar
 
 COLUMNAS = [
@@ -33,8 +33,9 @@ COLUMNAS = [
     ("aviso", "", 170),
 ]
 
-# Lo que edita el formulario de [defaults]. El resto (flags, extra_flags,
-# use_filters_file…) se conserva tal cual, igual que en las parejas.
+# Los campos de texto del formulario de [defaults]. Los flags tienen su propio
+# diálogo, y lo que no sale por ningún sitio (use_filters_file…) se conserva tal
+# cual, igual que en las parejas.
 DEFAULTS_KEYS = ("remote", "pen_remote", "catalog_path")
 
 
@@ -441,11 +442,34 @@ def formulario(parent, raw: dict, original_name: str | None, actual: dict,
                                                   padx=(8, 0))
         fila += 1
 
-    ttk.Label(marco, foreground="#666666", wraplength=760, justify="left",
-              text=("Los flags de rclone no se editan aquí: van en el TOML, que es "
-                    "donde el proyecto quiere que vivan. Los que ya tenga la pareja "
-                    "se conservan.")).grid(
-        row=fila, column=0, columnspan=3, sticky="w", pady=(10, 0))
+    # Los flags viven en su propio diálogo: son muchos, casi siempre no se tocan,
+    # y lo que de verdad hay que ver de ellos —cuáles acaban valiendo— no cabe al
+    # lado de un campo de texto.
+    avanzado = {"flags": dict(actual.get("flags") or {}),
+                "extra_flags": list(model._as_tuple(actual.get("extra_flags")))}
+    resumen = ttk.Label(marco, foreground="#666666")
+
+    def editar_flags():
+        nombre = campos["name"].get().strip() or original_name or "la pareja nueva"
+        datos = flags_form(dlg, f"Flags de rclone de {nombre}",
+                           "Se guardan en [pair.flags]; los que no pongas salen del "
+                           "modo y de [defaults].",
+                           avanzado["flags"], avanzado["extra_flags"],
+                           mode_name=modo.get(),
+                           defaults_flags=(raw.get("defaults") or {}).get("flags"),
+                           catalogo_flags=(catalogo or {}).get("flags") if catalogo else None)
+        if datos is None:
+            return
+        avanzado.update(datos)
+        resumen.configure(text=flags_editor.summary(avanzado["flags"],
+                                                    avanzado["extra_flags"]))
+
+    ttk.Button(marco, text="Flags de rclone…", command=editar_flags).grid(
+        row=fila, column=1, sticky="w", pady=(10, 0))
+    ttk.Label(marco, text="Flags:").grid(row=fila, column=0, sticky="w", pady=(10, 0))
+    resumen.configure(text=flags_editor.summary(avanzado["flags"],
+                                                avanzado["extra_flags"]))
+    resumen.grid(row=fila, column=2, sticky="w", padx=(8, 0), pady=(10, 0))
     fila += 1
 
     def aceptar():
@@ -453,6 +477,8 @@ def formulario(parent, raw: dict, original_name: str | None, actual: dict,
             **{k: v.get() for k, v in campos.items()},
             "mode": modo.get(),
             **{k: caja.get("1.0", "end").splitlines() for k, caja in textos.items()},
+            "flags": dict(avanzado["flags"]),
+            "extra_flags": list(avanzado["extra_flags"]),
         }
         dlg.destroy()
 
@@ -469,8 +495,8 @@ def defaults_form(parent, actual: dict, catalogo: dict | None,
                   titulo: str, subtitulo: str) -> dict | None:
     """El formulario de [defaults]. Devuelve el bloque entero, o None.
 
-    Lo que no se edita aquí (flags, extra_flags, use_filters_file…) viaja tal
-    cual: este formulario devuelve los [defaults] completos, no un parche."""
+    Lo que no se edita aquí (use_filters_file…) viaja tal cual: este formulario
+    devuelve los [defaults] completos, no un parche."""
     import tkinter as tk
     from tkinter import ttk
 
@@ -522,16 +548,46 @@ def defaults_form(parent, actual: dict, catalogo: dict | None,
         textos[clave] = caja
         fila += 1
 
+    avanzado = {"flags": dict(actual.get("flags") or {}),
+                "extra_flags": list(model._as_tuple(actual.get("extra_flags")))}
+    resumen = ttk.Label(marco, foreground="#666666")
+
+    def editar_flags():
+        datos = flags_form(dlg, "Flags de rclone comunes",
+                           "Se guardan en [defaults.flags] y valen para todas las "
+                           "parejas que no lleven el suyo.",
+                           avanzado["flags"], avanzado["extra_flags"],
+                           mode_name=None,
+                           defaults_flags=None,
+                           catalogo_flags=(catalogo or {}).get("flags") if catalogo else None)
+        if datos is None:
+            return
+        avanzado.update(datos)
+        resumen.configure(text=flags_editor.summary(avanzado["flags"],
+                                                    avanzado["extra_flags"]))
+
+    ttk.Label(marco, text="Flags:").grid(row=fila, column=0, sticky="w", pady=(10, 0))
+    ttk.Button(marco, text="Flags de rclone…", command=editar_flags).grid(
+        row=fila, column=1, sticky="w", pady=(10, 0))
+    resumen.configure(text=flags_editor.summary(avanzado["flags"],
+                                                avanzado["extra_flags"]))
+    resumen.grid(row=fila, column=2, sticky="w", padx=(8, 0), pady=(10, 0))
+    fila += 1
+
     ttk.Label(marco, foreground="#666666", wraplength=760, justify="left",
-              text=("[defaults.flags] y lo demás se conserva tal cual. Ojo con "
-                    "'Remote del pen' y 'Remoto': alimentan los extremos de todas "
-                    "las parejas, así que cambiarlos aparta sus baselines.")).grid(
+              text=("Ojo con 'Remote del pen' y 'Remoto': alimentan los extremos de "
+                    "todas las parejas, así que cambiarlos aparta sus baselines.")).grid(
         row=fila, column=0, columnspan=3, sticky="w", pady=(10, 0))
     fila += 1
 
     def aceptar():
         datos = {k: v for k, v in actual.items() if k not in DEFAULTS_KEYS
-                 and k not in ("keep_logs", "include", "exclude")}
+                 and k not in ("keep_logs", "include", "exclude",
+                               "flags", "extra_flags")}
+        if avanzado["flags"]:
+            datos["flags"] = dict(avanzado["flags"])
+        if avanzado["extra_flags"]:
+            datos["extra_flags"] = list(avanzado["extra_flags"])
         for clave, var in campos.items():
             valor = var.get().strip()
             if valor:
@@ -550,5 +606,105 @@ def defaults_form(parent, actual: dict, catalogo: dict | None,
     ttk.Button(pie, text="Guardar…", command=aceptar).grid(row=0, column=0, padx=3)
     ttk.Button(pie, text="Cancelar", command=dlg.destroy).grid(row=0, column=1, padx=3)
 
+    mostrar(dlg, parent)
+    return resultado["datos"]
+
+
+def flags_form(parent, titulo: str, subtitulo: str, flags: dict, extra: list,
+               mode_name: str | None, defaults_flags: dict | None,
+               catalogo_flags: dict | None = None) -> dict | None:
+    """El editor de flags. Devuelve {"flags", "extra_flags"}, o None si se cancela.
+
+    Se edita como texto TOML y no con una fila por flag a propósito: los flags de
+    rclone son cientos, cambian con cada versión y ninguna lista que pusiéramos
+    aquí estaría al día. Lo que sí se puede dar es lo que no se ve escribiéndolos
+    en el TOML —qué queda valiendo al fundir base, modo, [defaults] y pareja—, y
+    eso es la tabla de abajo.
+
+    El diálogo NO se cierra si lo escrito no vale: se avisa y se deja el texto
+    donde está. Cerrar y perderlo, o peor, guardar solo lo que se entendió, es
+    exactamente lo que no puede pasar con un fichero que gobierna borrados."""
+    import tkinter as tk
+    from tkinter import messagebox, ttk
+
+    dlg = modal(parent, titulo)
+    marco = ttk.Frame(dlg, padding=12)
+    marco.grid(sticky="nsew")
+    resultado: dict = {"datos": None}
+
+    ttk.Label(marco, text=subtitulo, foreground="#775500", wraplength=620,
+              justify="left").grid(row=0, column=0, columnspan=2, sticky="w",
+                                   pady=(0, 8))
+
+    ttk.Label(marco, justify="left", text="Flags (uno por línea, 'clave = valor'):").grid(
+        row=1, column=0, sticky="w")
+    caja = tk.Text(marco, width=52, height=8, font=("Consolas", 9))
+    caja.insert("1.0", flags_editor.dump(flags))
+    caja.grid(row=2, column=0, sticky="w")
+    ttk.Label(marco, foreground="#666666", wraplength=300, justify="left",
+              text=("Tal cual se escriben en el TOML: transfers = 4, "
+                    'conflict-resolve = "newer", checksum = true. Sin los guiones '
+                    "de delante.")).grid(row=2, column=1, sticky="nw", padx=(10, 0))
+
+    ttk.Label(marco, text="Argumentos extra (uno por línea):").grid(
+        row=3, column=0, sticky="w", pady=(10, 0))
+    caja_extra = tk.Text(marco, width=52, height=3, font=("Consolas", 9))
+    caja_extra.insert("1.0", flags_editor.dump_extra(extra))
+    caja_extra.grid(row=4, column=0, sticky="w")
+    ttk.Label(marco, foreground="#666666", wraplength=300, justify="left",
+              text=("La salida de emergencia: van a la línea de comandos sin tocar, "
+                    "así que --bwlimit y 8M son DOS líneas.")).grid(
+        row=4, column=1, sticky="nw", padx=(10, 0))
+
+    if catalogo_flags is not None:
+        ttk.Label(marco, foreground="#666666", wraplength=520, justify="left",
+                  text="Catálogo: " + (flags_editor.dump(catalogo_flags).replace(
+                      "\n", "  ·  ") or "ninguno")).grid(
+            row=5, column=0, columnspan=2, sticky="w", pady=(8, 0))
+
+    ttk.Label(marco, text="Lo que acabaría recibiendo rclone:").grid(
+        row=6, column=0, sticky="w", pady=(12, 2))
+    tabla = ttk.Treeview(marco, columns=("flag", "origen"), show="headings",
+                         height=8, selectmode="none")
+    tabla.heading("flag", text="Flag")
+    tabla.heading("origen", text="Sale de")
+    tabla.column("flag", width=330)
+    tabla.column("origen", width=120)
+    tabla.grid(row=7, column=0, columnspan=2, sticky="nsew")
+
+    def leer() -> dict | None:
+        """Lo escrito, ya validado. None si no vale (y ya se ha avisado)."""
+        try:
+            return {"flags": flags_editor.parse(caja.get("1.0", "end")),
+                    "extra_flags": flags_editor.parse_extra(caja_extra.get("1.0", "end"))}
+        except ConfigError as e:
+            messagebox.showerror(TITLE, str(e), parent=dlg)
+            return None
+
+    def repasar():
+        datos = leer()
+        if datos is None:
+            return
+        tabla.delete(*tabla.get_children())
+        for i, fila in enumerate(flags_editor.effective(mode_name, defaults_flags,
+                                                        datos["flags"])):
+            tabla.insert("", "end", iid=str(i), values=(fila.flag, fila.origen))
+        for arg in datos["extra_flags"]:
+            tabla.insert("", "end", values=(arg, "extra"))
+
+    def aceptar():
+        datos = leer()
+        if datos is None:
+            return                       # el diálogo se queda abierto, con el texto
+        resultado["datos"] = datos
+        dlg.destroy()
+
+    pie = ttk.Frame(marco)
+    pie.grid(row=8, column=0, columnspan=2, pady=(14, 0), sticky="w")
+    ttk.Button(pie, text="Ver el efecto", command=repasar).grid(row=0, column=0, padx=3)
+    ttk.Button(pie, text="Aceptar", command=aceptar).grid(row=0, column=1, padx=3)
+    ttk.Button(pie, text="Cancelar", command=dlg.destroy).grid(row=0, column=2, padx=3)
+
+    repasar()
     mostrar(dlg, parent)
     return resultado["datos"]

@@ -29,17 +29,18 @@ rclone-sync/
 │   ├── prefs.py       what the UI starts preloaded with (state/ui_prefs.json)
 │   ├── pair_editor.py what THIS pen does with pairs — the decisions, no Tk
 │   ├── catalog_editor.py  add/edit/remove in the NAS catalogue — no Tk
+│   ├── flags_editor.py    rclone flags: text <-> table, layers, warnings — no Tk
 │   ├── watch.py       adapter over penwatch.py — no Tk
 │   ├── tk.py          TkFrontend: main window, output window, modal()/mostrar()
-│   ├── tk_pairs.py    the pairs screen (drawing only)
+│   ├── tk_pairs.py    the pairs screen + the flags dialog (drawing only)
 │   ├── tk_watch.py    the auto-start screen (drawing only)
 │   └── console.py     ConsoleFrontend: the text menu
 └── tests/             plain scripts; run_all.py runs them in separate processes
 ```
 
 The `tk_*` modules only draw. Everything that decides or touches disk lives in
-`pair_editor.py` / `catalog_editor.py` / `watch.py`, which import no Tk and are
-tested headlessly.
+`pair_editor.py` / `catalog_editor.py` / `flags_editor.py` / `watch.py`, which
+import no Tk and are tested headlessly.
 
 `perepen-install.py` also sits at the root and **is** tracked in git. It is
 deliberately autonomous — one file, stdlib only, no imports from `common/`/`ui/`
@@ -127,11 +128,12 @@ and the missing rclone binary (environment, not config).
 **Config → command.** Flags merge in layers, last wins: `BASE_FLAGS` <
 `Mode.flags` < `[defaults.flags]` < `[pair.flags]` — all of it inside
 `model._build_pair`, so `Pair.flags` arrives ready. `build_command()` only adds
-what depends on *this* run, and `flags_to_args()` turns `key = value` into
+what depends on *this* run, and `model.flags_to_args()` turns `key = value` into
 `--key value` (`true` → bare flag, `false`/`None` → dropped, list → repeated flag,
-`_` → `-`). **Adding an rclone flag means editing the TOML, never the code.** The
-script owns `--config`, `--log-file`, `--dry-run`, `--workdir`, `--resync`;
-`extra_flags` is the raw-string escape hatch.
+`_` → `-`). It lives in `model.py`, not in `sync.py`, because the UI has to show
+what a flag turns into without importing the engine. **Adding an rclone flag means
+editing the TOML, never the code.** The script owns `--config`, `--log-file`,
+`--dry-run`, `--workdir`, `--resync`; `extra_flags` is the raw-string escape hatch.
 
 **`RunContext`** carries what does not change between pairs in one invocation
 (binary, env, `dry_run`, `force_resync`, `resync_approved`, `keep_logs`), so
@@ -337,6 +339,31 @@ shelved for nothing", which a `--resync` fixes. Within the disk step, **rename r
 before shelve**, so an edit that changes the name *and* an endpoint moves state and
 filters to the new name first and shelves that; the other order orphaned
 `filters/<old name>.txt`.
+
+**The flags editor (`ui/flags_editor.py`).** Flags are still written in TOML
+syntax — the dialog is a text box, not a form of one row per flag — and the text
+is parsed with **`tomllib`, not by hand**: its destination is a `[pair.flags]`
+table, so the only way for the form and the file to mean the same thing is to use
+the same parser. `dump()` renders through `config_file.dumps_table()` for the same
+reason. Only what the serializer can write back is accepted (scalars and arrays of
+scalars), because `save()` refuses to write a config that does not re-read equal
+and that refusal would arrive with the dialog already closed. `RESERVED` rejects
+the flags `sync.py` supplies per run and the filter ones derived from
+include/exclude: repeating them does not replace them, and a second `--workdir` or
+`--filters-file` points bisync at a baseline that is not its own.
+
+`effective()` is the point of the whole thing — the four layers resolved into what
+rclone would actually receive, each row labelled with the layer it came from — and
+`warnings()` compares **merged** flag sets, never one layer, so it catches
+`--max-delete` rising because the pair's own value was deleted or because the mode
+changed, with no flag having been touched. Editing flags never shelves a baseline:
+the listing name does not depend on them.
+
+`ui/tk_pairs.flags_form()` is the drawing half; it does **not** close on invalid
+input (losing what was typed, or saving only the part that parsed, is exactly what
+must not happen here). Both the pair form and the `[defaults]` form open it, and
+`pair_editor.merge_form()` — shared with `catalog_editor` — is what makes an
+emptied box actually delete the key instead of leaving it half written.
 
 **Writing the TOML (`common/config_file.py`).** `tomllib` only reads and the
 project takes no dependencies, so the serializer is hand-rolled. It covers what
