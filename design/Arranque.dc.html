@@ -1,0 +1,110 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body { margin: 0; background: #FAF9F7; color: #1C1A17;
+           font-family: "Segoe UI", "Noto Sans", system-ui, sans-serif; font-size: 13.5px; }
+    a { color: #3D5A80; } a:hover { color: #2E4763; }
+    .win { display: flex; flex-direction: column; background: #FAF9F7; overflow: hidden; }
+    .titlebar { display: flex; align-items: center; height: 30px; padding: 0 12px;
+                background: #F1EFEB; border-bottom: 1px solid #E4E0D8;
+                color: #6B655C; font-size: 12px; }
+    .sysbtns { margin-left: auto; display: flex; gap: 16px; color: #9C968B; font-size: 12px; }
+    .pane { flex: 1; display: flex; flex-direction: column; padding: 18px 20px; min-height: 0; }
+    .eyebrow { font-size: 10.5px; letter-spacing: .09em; text-transform: uppercase;
+               color: #8A8477; font-weight: 600; }
+    .hint { font-size: 12px; color: #6B655C; }
+    .mono { font-family: Consolas, "DejaVu Sans Mono", ui-monospace, monospace; }
+    .card { background: #FFFFFF; border: 1px solid #E4E0D8; }
+    .btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+           height: 30px; padding: 0 14px; border: 1px solid #CFC9BE; background: #FFFFFF;
+           color: #1C1A17; font-size: 13px; }
+    .btn.primary { background: #3D5A80; border-color: #33506F; color: #FFFFFF; font-weight: 600; }
+    .btn.quiet { border-color: transparent; background: transparent; color: #3D5A80; }
+    .btn.danger { color: #A0392E; border-color: #DCC4BF; }
+    .btn.off { color: #A9A398; border-color: #E4E0D8; background: #F6F4F0; }
+    .chip { display: inline-flex; align-items: center; gap: 6px; height: 21px; padding: 0 8px;
+            font-size: 11.5px; border: 1px solid #E4E0D8; background: #FFFFFF; color: #5C564C; }
+    .chip.ok { background: #EAF0EA; border-color: #CBDCCE; color: #3F6B4A; }
+    .chip.warn { background: #FBF2E2; border-color: #E8D6AE; color: #8A5A00; }
+    .chip.danger { background: #F9EBE8; border-color: #E4C6C0; color: #A0392E; }
+    .chip.accent { background: #EDF1F6; border-color: #C6D3E2; color: #33506F; }
+    .row { display: flex; align-items: center; gap: 10px; }
+    .sep { height: 1px; background: #E4E0D8; }
+    .field { display: flex; align-items: center; height: 28px; padding: 0 9px;
+             background: #FFFFFF; border: 1px solid #CFC9BE; font-size: 13px; }
+    .label { font-size: 13px; color: #3B362F; }
+    th { text-align: left; font-weight: 600; font-size: 11px; letter-spacing: .06em;
+         text-transform: uppercase; color: #8A8477; padding: 0 10px 7px; }
+    td { padding: 7px 10px; border-top: 1px solid #EFEBE4; font-size: 13px; vertical-align: middle; }
+  </style>
+</helmet>
+<div class="win" style="width: 880px; height: 640px"><div class="titlebar"><span>PerePen Sync &#8212; Arranque autom&#225;tico</span><span class="sysbtns"><span>&#8211;</span><span>&#9723;</span><span>&#10005;</span></span></div>
+  <div class="pane" style="padding: 18px 20px 16px">
+
+    <div class="row" style="align-items: flex-start">
+      <div style="flex: 1">
+        <div style="font-size: 19px; font-weight: 600">Arranque autom&#225;tico</div>
+        <div class="hint" style="margin-top: 5px; max-width: 560px; line-height: 1.45">
+          El vigilante se instala en <b style="color:#3B362F">este equipo</b>, no en el pen, y lanza
+          PerePen en cuanto detecta el pen y puede leerlo. Sin permisos de administrador y sin
+          dejar rastro en el pen.</div>
+      </div>
+      <span class="chip ok" style="margin-top: 4px"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="#3F6B4A" stroke-width="2.2" stroke-linecap="square" stroke-linejoin="miter" style="flex: none"><path d="M3 8.5 6.5 12 13 4.5"/></svg> instalado</span>
+    </div>
+
+    <div class="card" style="margin-top: 16px; padding: 4px 14px">
+        <div class="row" style="padding: 8px 2px; border-top: 1px solid #EFEBE4; gap: 12px">
+          <span class="hint" style="width: 180px">Al detectar el pen</span>
+          <span class="" style="font-size: 12.5px">abrir la ventana</span><span style="flex: 1"></span><span class="chip accent">modo ui</span>
+        </div>
+        <div class="row" style="padding: 8px 2px; border-top: 1px solid #EFEBE4; gap: 12px">
+          <span class="hint" style="width: 180px">Directorio en el equipo</span>
+          <span class="mono" style="font-size: 12.5px">%LOCALAPPDATA%\PerePenWatch</span><span style="flex: 1"></span>
+        </div>
+        <div class="row" style="padding: 8px 2px; border-top: 1px solid #EFEBE4; gap: 12px">
+          <span class="hint" style="width: 180px">Registro en el sistema</span>
+          <span class="" style="font-size: 12.5px">Tarea programada &#183; al iniciar sesi&#243;n</span><span style="flex: 1"></span><span class="chip ok">activa</span>
+        </div>
+        <div class="row" style="padding: 8px 2px; border-top: 1px solid #EFEBE4; gap: 12px">
+          <span class="hint" style="width: 180px">Sondeo del pen</span>
+          <span class="" style="font-size: 12.5px">cada 5 s</span><span style="flex: 1"></span>
+        </div>
+        <div class="row" style="padding: 8px 2px; border-top: 1px solid #EFEBE4; gap: 12px">
+          <span class="hint" style="width: 180px">Pen ahora mismo</span>
+          <span class="mono" style="font-size: 12.5px">F:\</span><span style="flex: 1"></span><span class="chip ok">visible</span>
+        </div>
+    </div>
+
+    <div class="row" style="margin: 16px 0 7px">
+      <span class="eyebrow">Diario del vigilante</span>
+      <span style="flex: 1"></span>
+      <span class="hint mono" style="font-size: 11px; color: #9C968B">
+        %LOCALAPPDATA%\PerePenWatch\watch.log</span>
+    </div>
+    <div class="mono" style="flex: 1; min-height: 0; padding: 10px 12px; background: #FFFFFF;
+         border: 1px solid #E4E0D8; font-size: 12px; line-height: 1.65; color: #5C564C">
+      26/08 08:19:02  pen visible en F:\ (PEREPEN, id=8f2c&#8230;)<br>
+      26/08 08:19:02  lanzando: pythonw runsync.py<br>
+      26/08 08:19:11  el pen ha desaparecido: disparador rearmado<br>
+      25/08 21:04:47  pen visible en E:\ (PEREPEN, id=8f2c&#8230;)<br>
+      25/08 21:04:47  lanzando: pythonw runsync.py
+    </div>
+
+    <div class="row" style="margin-top: 14px; gap: 8px">
+      <button class="btn"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="#5C564C" stroke-width="1.6" stroke-linecap="square" stroke-linejoin="miter" style="flex: none"><path d="M13 8A5 5 0 1 1 11.5 4.5"/><path d="M13 1.5V5h-3.5"/></svg> Actualizar</button>
+      <button class="btn"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="#5C564C" stroke-width="1.6" stroke-linecap="square" stroke-linejoin="miter" style="flex: none"><path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="1.7"/></svg> Detectar el pen</button>
+      <span style="flex: 1"></span>
+      <button class="btn danger">Desinstalar&#8230;</button>
+      <button class="btn primary"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="#FFFFFF" stroke-width="1.6" stroke-linecap="square" stroke-linejoin="miter" style="flex: none"><rect x="4" y="6" width="8" height="7"/><path d="M6.5 6V2.5M9.5 6V2.5"/></svg> Reinstalar&#8230;</button>
+      <button class="btn">Cerrar</button>
+    </div>
+  </div></div></x-dc>
+</body>
+</html>

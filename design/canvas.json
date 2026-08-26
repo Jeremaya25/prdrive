@@ -1,0 +1,37 @@
+{
+  "artboards": [
+    { "file": "Main.dc.html",      "x": 0,    "y": 0,    "w": 480,  "h": 560, "title": "Ventana principal" },
+    { "file": "Parejas.dc.html",   "x": 580,  "y": 0,    "w": 1000, "h": 640, "title": "Parejas" },
+    { "file": "Confirmar.dc.html", "x": 1680, "y": 0,    "w": 560,  "h": 420, "title": "Confirmación del plan" },
+    { "file": "Pareja.dc.html",    "x": 0,    "y": 820,  "w": 720,  "h": 620, "title": "Formulario de pareja" },
+    { "file": "Flags.dc.html",     "x": 820,  "y": 820,  "w": 760,  "h": 700, "title": "Editor de flags" },
+    { "file": "Arranque.dc.html",  "x": 1680, "y": 820,  "w": 880,  "h": 640, "title": "Arranque automático" },
+    { "file": "Salida.dc.html",    "x": 0,    "y": 1660, "w": 900,  "h": 560, "title": "Ventana de salida" },
+    { "file": "Sistema.dc.html",   "x": 1020, "y": 1660, "w": 1100, "h": 940, "title": "El sistema" },
+    { "file": "Icono.dc.html",     "x": 2220, "y": 1660, "w": 900,  "h": 560, "title": "El icono" }
+  ],
+  "annotations": [
+    {
+      "id": "brief",
+      "x": 0,
+      "y": -190,
+      "w": 480,
+      "text": "Dirección «papel técnico»: blanco cálido, tinta casi negra, un solo acento azul.\nTodo ceñido a lo que ttk sabe pintar — sin esquinas redondeadas, sin sombras.\nSe conserva el vocabulario que la app ya tenía: gris para las pistas, ámbar para los avisos, monoespaciada para rutas y flags."
+    },
+    {
+      "id": "cambios",
+      "x": 580,
+      "y": -190,
+      "w": 1000,
+      "text": "Lo que cambia de fondo, no solo de aspecto: cada pareja lleva su estado a la vista (al día / requiere resync) en vez de un ⚠ pegado al nombre; hay UNA acción principal por pantalla; y la separación «este pen» / «catálogo» pasa a ser visual — el bloque que afecta a todos los dispositivos va sobre fondo ámbar."
+    },
+    {
+      "id": "ttk-nota",
+      "x": 1020,
+      "y": 1470,
+      "w": 1100,
+      "text": "La hoja de estilo trae la traducción a ttk de cada pieza, para que el rediseño se pueda implementar sin cambiar de toolkit ni añadir dependencias."
+    }
+  ],
+  "launch": { "view": "canvas" }
+}

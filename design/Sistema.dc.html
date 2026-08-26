@@ -1,0 +1,137 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body { margin: 0; background: #FAF9F7; color: #1C1A17;
+           font-family: "Segoe UI", "Noto Sans", system-ui, sans-serif; font-size: 13.5px; }
+    a { color: #3D5A80; } a:hover { color: #2E4763; }
+    .win { display: flex; flex-direction: column; background: #FAF9F7; overflow: hidden; }
+    .titlebar { display: flex; align-items: center; height: 30px; padding: 0 12px;
+                background: #F1EFEB; border-bottom: 1px solid #E4E0D8;
+                color: #6B655C; font-size: 12px; }
+    .sysbtns { margin-left: auto; display: flex; gap: 16px; color: #9C968B; font-size: 12px; }
+    .pane { flex: 1; display: flex; flex-direction: column; padding: 18px 20px; min-height: 0; }
+    .eyebrow { font-size: 10.5px; letter-spacing: .09em; text-transform: uppercase;
+               color: #8A8477; font-weight: 600; }
+    .hint { font-size: 12px; color: #6B655C; }
+    .mono { font-family: Consolas, "DejaVu Sans Mono", ui-monospace, monospace; }
+    .card { background: #FFFFFF; border: 1px solid #E4E0D8; }
+    .btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+           height: 30px; padding: 0 14px; border: 1px solid #CFC9BE; background: #FFFFFF;
+           color: #1C1A17; font-size: 13px; }
+    .btn.primary { background: #3D5A80; border-color: #33506F; color: #FFFFFF; font-weight: 600; }
+    .btn.quiet { border-color: transparent; background: transparent; color: #3D5A80; }
+    .btn.danger { color: #A0392E; border-color: #DCC4BF; }
+    .btn.off { color: #A9A398; border-color: #E4E0D8; background: #F6F4F0; }
+    .chip { display: inline-flex; align-items: center; gap: 6px; height: 21px; padding: 0 8px;
+            font-size: 11.5px; border: 1px solid #E4E0D8; background: #FFFFFF; color: #5C564C; }
+    .chip.ok { background: #EAF0EA; border-color: #CBDCCE; color: #3F6B4A; }
+    .chip.warn { background: #FBF2E2; border-color: #E8D6AE; color: #8A5A00; }
+    .chip.danger { background: #F9EBE8; border-color: #E4C6C0; color: #A0392E; }
+    .chip.accent { background: #EDF1F6; border-color: #C6D3E2; color: #33506F; }
+    .row { display: flex; align-items: center; gap: 10px; }
+    .sep { height: 1px; background: #E4E0D8; }
+    .field { display: flex; align-items: center; height: 28px; padding: 0 9px;
+             background: #FFFFFF; border: 1px solid #CFC9BE; font-size: 13px; }
+    .label { font-size: 13px; color: #3B362F; }
+    th { text-align: left; font-weight: 600; font-size: 11px; letter-spacing: .06em;
+         text-transform: uppercase; color: #8A8477; padding: 0 10px 7px; }
+    td { padding: 7px 10px; border-top: 1px solid #EFEBE4; font-size: 13px; vertical-align: middle; }
+  </style>
+</helmet>
+
+  <div style="width: 1100px; height: 940px; background: #FAF9F7; padding: 26px 30px;
+       display: flex; flex-direction: column; box-sizing: border-box">
+
+    <div class="row" style="align-items: flex-start">
+      <div style="flex: 1">
+        <div style="font-size: 19px; font-weight: 600">El sistema</div>
+        <div class="hint" style="margin-top: 5px; max-width: 640px; line-height: 1.45">
+          Papel c&#225;lido, tinta casi negra, un solo acento. Se conserva el vocabulario que la app
+          ya ten&#237;a &#8212;gris para las pistas, &#225;mbar para los avisos, monoespaciada para
+          rutas y flags&#8212; y se le da forma. Todo lo de esta hoja se pinta con ttk.</div>
+      </div>
+      <span class="chip">tema <span class="mono">clam</span> &#183; sin esquinas redondeadas</span>
+    </div>
+
+    <div class="eyebrow" style="margin: 22px 0 10px">Color</div>
+    <div class="row" style="gap: 12px; align-items: flex-start">
+      <div style="width: 152px"><div style="height: 46px; background: #FAF9F7; border: 1px solid #E4E0D8"></div><div class="mono" style="font-size: 11.5px; margin-top: 6px; color: #1C1A17">#FAF9F7 &#183; papel</div><div class="hint" style="font-size: 11px; line-height: 1.35">fondo de toda ventana</div></div><div style="width: 152px"><div style="height: 46px; background: #FFFFFF; border: 1px solid #E4E0D8"></div><div class="mono" style="font-size: 11.5px; margin-top: 6px; color: #1C1A17">#FFFFFF &#183; superficie</div><div class="hint" style="font-size: 11px; line-height: 1.35">listas, cajas, tablas</div></div><div style="width: 152px"><div style="height: 46px; background: #1C1A17; border: 1px solid transparent"></div><div class="mono" style="font-size: 11.5px; margin-top: 6px; color: #1C1A17">#1C1A17 &#183; tinta</div><div class="hint" style="font-size: 11px; line-height: 1.35">texto principal</div></div><div style="width: 152px"><div style="height: 46px; background: #5C564C; border: 1px solid transparent"></div><div class="mono" style="font-size: 11.5px; margin-top: 6px; color: #1C1A17">#5C564C &#183; tinta 2</div><div class="hint" style="font-size: 11px; line-height: 1.35">etiquetas de campo</div></div><div style="width: 152px"><div style="height: 46px; background: #8A8477; border: 1px solid transparent"></div><div class="mono" style="font-size: 11.5px; margin-top: 6px; color: #1C1A17">#8A8477 &#183; tinta 3</div><div class="hint" style="font-size: 11px; line-height: 1.35">pistas y r&#243;tulos</div></div><div style="width: 152px"><div style="height: 46px; background: #E4E0D8; border: 1px solid #D8D3C9"></div><div class="mono" style="font-size: 11.5px; margin-top: 6px; color: #1C1A17">#E4E0D8 &#183; l&#237;nea</div><div class="hint" style="font-size: 11px; line-height: 1.35">separadores y bordes</div></div>
+    </div>
+    <div class="row" style="gap: 12px; align-items: flex-start; margin-top: 14px">
+      <div style="width: 152px"><div style="height: 46px; background: #3D5A80; border: 1px solid transparent"></div><div class="mono" style="font-size: 11.5px; margin-top: 6px; color: #1C1A17">#3D5A80 &#183; acento</div><div class="hint" style="font-size: 11px; line-height: 1.35">acci&#243;n principal, enlaces</div></div><div style="width: 152px"><div style="height: 46px; background: #EDF1F6; border: 1px solid #C6D3E2"></div><div class="mono" style="font-size: 11.5px; margin-top: 6px; color: #1C1A17">#EDF1F6 &#183; acento suave</div><div class="hint" style="font-size: 11px; line-height: 1.35">fila elegida, chip</div></div><div style="width: 152px"><div style="height: 46px; background: #3F6B4A; border: 1px solid transparent"></div><div class="mono" style="font-size: 11.5px; margin-top: 6px; color: #1C1A17">#3F6B4A &#183; correcto</div><div class="hint" style="font-size: 11px; line-height: 1.35">al d&#237;a, terminado OK</div></div><div style="width: 152px"><div style="height: 46px; background: #8A5A00; border: 1px solid transparent"></div><div class="mono" style="font-size: 11.5px; margin-top: 6px; color: #1C1A17">#8A5A00 &#183; aviso</div><div class="hint" style="font-size: 11px; line-height: 1.35">resync, espejo, max-delete</div></div><div style="width: 152px"><div style="height: 46px; background: #A0392E; border: 1px solid transparent"></div><div class="mono" style="font-size: 11.5px; margin-top: 6px; color: #1C1A17">#A0392E &#183; peligro</div><div class="hint" style="font-size: 11px; line-height: 1.35">fallo, borrar</div></div><div style="width: 152px"><div style="height: 46px; background: #E0A34A; border: 1px solid transparent"></div><div class="mono" style="font-size: 11.5px; margin-top: 6px; color: #1C1A17">#E0A34A &#183; &#225;mbar</div><div class="hint" style="font-size: 11px; line-height: 1.35">solo en el icono</div></div>
+    </div>
+
+    <div class="row" style="gap: 30px; align-items: flex-start; margin-top: 24px">
+
+      <div style="flex: 1">
+        <div class="eyebrow" style="margin-bottom: 4px">Tipograf&#237;a</div>
+        <div class="row" style="padding: 9px 0; border-top: 1px solid #EFEBE4; gap: 16px"><span style="font-size: 21px; font-weight: 600; letter-spacing: -.01em; width: 300px">Sincronizar</span><span class="hint mono" style="font-size: 11.5px; width: 210px">Segoe UI Semibold 16</span><span class="hint" style="flex: 1">t&#237;tulo de ventana</span></div><div class="row" style="padding: 9px 0; border-top: 1px solid #EFEBE4; gap: 16px"><span style="font-size: 19px; font-weight: 600; width: 300px">Parejas</span><span class="hint mono" style="font-size: 11.5px; width: 210px">Segoe UI Semibold 14</span><span class="hint" style="flex: 1">t&#237;tulo de di&#225;logo</span></div><div class="row" style="padding: 9px 0; border-top: 1px solid #EFEBE4; gap: 16px"><span style="font-size: 10.5px; letter-spacing: .09em; text-transform: uppercase;color: #8A8477; font-weight: 600; width: 300px">PAREJAS</span><span class="hint mono" style="font-size: 11.5px; width: 210px">Segoe UI Bold 8 + espaciado</span><span class="hint" style="flex: 1">r&#243;tulo de secci&#243;n</span></div><div class="row" style="padding: 9px 0; border-top: 1px solid #EFEBE4; gap: 16px"><span style="font-size: 13.5px; width: 300px">Repetir cada 30 minutos</span><span class="hint mono" style="font-size: 11.5px; width: 210px">Segoe UI 10</span><span class="hint" style="flex: 1">texto de la interfaz</span></div><div class="row" style="padding: 9px 0; border-top: 1px solid #EFEBE4; gap: 16px"><span style="font-size: 12.5px; font-family: Consolas, monospace; width: 300px">F:\sync-data\obsidian</span><span class="hint mono" style="font-size: 11.5px; width: 210px">Consolas 9</span><span class="hint" style="flex: 1">rutas, flags, logs</span></div>
+      </div>
+
+      <div style="width: 320px">
+        <div class="eyebrow" style="margin-bottom: 10px">Iconos</div>
+        <div class="card" style="padding: 14px; display: grid;
+             grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 14px">
+          <div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="#3B362F" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" style="flex: none"><path d="M3 8a5 5 0 0 1 8.5-3.5L13 6"/><path d="M13 2.5V6H9.5"/><path d="M13 8a5 5 0 0 1-8.5 3.5L3 10"/><path d="M3 13.5V10h3.5"/></svg><span class="hint" style="font-size: 9.5px">sync</span></div><div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="#3B362F" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" style="flex: none"><rect x="5.5" y="2.5" width="5" height="8"/><path d="M6.5 10.5v3h3v-3"/><path d="M7 2.5V1M9 2.5V1"/></svg><span class="hint" style="font-size: 9.5px">pen</span></div><div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="#3B362F" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" style="flex: none"><rect x="2" y="3" width="12" height="4"/><rect x="2" y="9" width="12" height="4"/><path d="M4.4 5h.2M4.4 11h.2"/></svg><span class="hint" style="font-size: 9.5px">nas</span></div><div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="#3B362F" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" style="flex: none"><path d="M5 13.5V3M2.5 5.5 5 3l2.5 2.5"/><path d="M11 2.5V13M8.5 10.5 11 13l2.5-2.5"/></svg><span class="hint" style="font-size: 9.5px">both</span></div><div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="#3B362F" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" style="flex: none"><path d="M8 13V3"/><path d="M4 7l4-4 4 4"/></svg><span class="hint" style="font-size: 9.5px">up</span></div><div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="#3B362F" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" style="flex: none"><path d="M8 3v10"/><path d="M4 9l4 4 4-4"/></svg><span class="hint" style="font-size: 9.5px">down</span></div><div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="#3B362F" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" style="flex: none"><path d="M3 8.5 6.5 12 13 4.5"/></svg><span class="hint" style="font-size: 9.5px">ok</span></div><div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="#3B362F" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" style="flex: none"><path d="M8 2.5 14.5 13.5h-13z"/><path d="M8 6.4v3.3M8 11.6v.2"/></svg><span class="hint" style="font-size: 9.5px">warn</span></div><div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="#3B362F" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" style="flex: none"><circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.5 1.5"/></svg><span class="hint" style="font-size: 9.5px">clock</span></div><div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="#3B362F" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" style="flex: none"><circle cx="8" cy="8" r="2.4"/><path d="M8 1.5v2M8 12.5v2M14.5 8h-2M3.5 8h-2M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4M12.6 12.6l-1.4-1.4M4.8 4.8 3.4 3.4"/></svg><span class="hint" style="font-size: 9.5px">gear</span></div><div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="#3B362F" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" style="flex: none"><rect x="2.5" y="2.5" width="4.5" height="4.5"/><rect x="9" y="2.5" width="4.5" height="4.5"/><rect x="2.5" y="9" width="4.5" height="4.5"/><rect x="9" y="9" width="4.5" height="4.5"/></svg><span class="hint" style="font-size: 9.5px">grid</span></div><div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="#3B362F" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" style="flex: none"><rect x="4" y="6" width="8" height="7"/><path d="M6.5 6V2.5M9.5 6V2.5"/></svg><span class="hint" style="font-size: 9.5px">plug</span></div><div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="#3B362F" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" style="flex: none"><circle cx="8" cy="8" r="6"/><path d="M8 5v6M5 8h6"/></svg><span class="hint" style="font-size: 9.5px">doctor</span></div><div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="#3B362F" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" style="flex: none"><path d="M4 14V2.5h8l-2 3 2 3H4"/></svg><span class="hint" style="font-size: 9.5px">flag</span></div><div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="#3B362F" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" style="flex: none"><path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="1.7"/></svg><span class="hint" style="font-size: 9.5px">eye</span></div><div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="#3B362F" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" style="flex: none"><path d="M13 8A5 5 0 1 1 11.5 4.5"/><path d="M13 1.5V5h-3.5"/></svg><span class="hint" style="font-size: 9.5px">reload</span></div><div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="#3B362F" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" style="flex: none"><path d="M11.5 2.5 13.5 4.5 5.5 12.5 2.5 13.5 3.5 10.5z"/></svg><span class="hint" style="font-size: 9.5px">edit</span></div><div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="#3B362F" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" style="flex: none"><path d="M3.5 4.5h9M6.5 4.5V2.5h3v2M5 4.5l.7 9h4.6l.7-9"/></svg><span class="hint" style="font-size: 9.5px">trash</span></div>
+        </div>
+        <div class="hint" style="margin-top: 8px; line-height: 1.4">
+          Trazo de 1,6 sobre rejilla de 16, sin relleno y sin emoji: se pintan como PNG de
+          16 y 20 px, o a mano en un <span class="mono">tk.Canvas</span>.</div>
+      </div>
+    </div>
+
+    <div class="row" style="gap: 30px; align-items: flex-start; margin-top: 22px">
+
+      <div style="flex: 1">
+        <div class="eyebrow" style="margin-bottom: 10px">Controles</div>
+        <div class="card" style="padding: 16px">
+          <div class="row" style="gap: 10px; flex-wrap: wrap">
+            <button class="btn primary">Sincronizar ahora</button>
+            <button class="btn">Iniciar servicio</button>
+            <button class="btn quiet">Parejas&#8230;</button>
+            <button class="btn danger">Quitar&#8230;</button>
+            <button class="btn off">Instalar&#8230;</button>
+          </div>
+          <div class="row" style="gap: 16px; margin-top: 16px">
+            <span style="display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;background:#3D5A80;border:1px solid #3D5A80;flex:none"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="#FFFFFF" stroke-width="2.4" stroke-linecap="square"><path d="M3.5 8.5 6.5 11.5 12.5 4.5"/></svg></span><span class="label">marcada</span>
+            <span style="display:inline-block;width:15px;height:15px;background:#FFFFFF;border:1px solid #B9B2A6;flex:none"></span><span class="label">sin marcar</span>
+            <span class="field mono" style="width: 120px">sync-data/notas</span>
+            <span class="field" style="width: 130px; justify-content: space-between; gap: 10px"><span>bisync</span><span style="color:#8A8477;font-size:9px">&#9660;</span></span>
+          </div>
+          <div class="row" style="gap: 8px; margin-top: 16px; flex-wrap: wrap">
+            <span class="chip ok">al d&#237;a</span>
+            <span class="chip warn">requiere resync</span>
+            <span class="chip danger">error</span>
+            <span class="chip accent">cat&#225;logo le&#237;do</span>
+            <span class="chip">sin usar</span>
+          </div>
+          <div class="row" style="gap: 0; margin-top: 16px; padding: 9px 11px; background: #FBF2E2;
+               border: 1px solid #E8D6AE">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#8A5A00" stroke-width="1.7" stroke-linecap="square" stroke-linejoin="miter" style="flex: none"><path d="M8 2.5 14.5 13.5h-13z"/><path d="M8 6.4v3.3M8 11.6v.2"/></svg><span style="color: #7A4F00; margin-left: 9px">
+              Modo espejo: BORRA en el NAS lo que no est&#233; en el pen.</span>
+          </div>
+        </div>
+      </div>
+
+      <div style="width: 470px">
+        <div class="eyebrow" style="margin-bottom: 4px">De aqu&#237; a ttk</div>
+        <div class="row" style="padding: 7px 0; border-top: 1px solid #EFEBE4; align-items: flex-start"><span style="width: 200px">Bot&#243;n principal</span><span class="mono" style="flex: 1; font-size: 11.5px; color: #5C564C; line-height: 1.5">style.configure('Primary.TButton', background='#3D5A80',<br>&nbsp; foreground='#FFFFFF', borderwidth=1, padding=(14, 6))</span></div><div class="row" style="padding: 7px 0; border-top: 1px solid #EFEBE4; align-items: flex-start"><span style="width: 200px">Bot&#243;n de texto</span><span class="mono" style="flex: 1; font-size: 11.5px; color: #5C564C; line-height: 1.5">style.configure('Quiet.TButton', relief='flat',<br>&nbsp; background='#FAF9F7', foreground='#3D5A80')</span></div><div class="row" style="padding: 7px 0; border-top: 1px solid #EFEBE4; align-items: flex-start"><span style="width: 200px">Chip de estado</span><span class="mono" style="flex: 1; font-size: 11.5px; color: #5C564C; line-height: 1.5">ttk.Label(style='Ok.Chip.TLabel', padding=(8, 2))<br>&nbsp; con background y foreground por estado</span></div><div class="row" style="padding: 7px 0; border-top: 1px solid #EFEBE4; align-items: flex-start"><span style="width: 200px">Tabla de parejas</span><span class="mono" style="flex: 1; font-size: 11.5px; color: #5C564C; line-height: 1.5">style.configure('Treeview', rowheight=30,<br>&nbsp; background='#FFFFFF', fieldbackground='#FFFFFF',<br>&nbsp; borderwidth=0); tags por estado</span></div><div class="row" style="padding: 7px 0; border-top: 1px solid #EFEBE4; align-items: flex-start"><span style="width: 200px">Tarjeta / caja</span><span class="mono" style="flex: 1; font-size: 11.5px; color: #5C564C; line-height: 1.5">ttk.Frame(style='Card.TFrame') con<br>&nbsp; bordercolor='#E4E0D8', relief='solid', borderwidth=1</span></div><div class="row" style="padding: 7px 0; border-top: 1px solid #EFEBE4; align-items: flex-start"><span style="width: 200px">Log de salida</span><span class="mono" style="flex: 1; font-size: 11.5px; color: #5C564C; line-height: 1.5">tk.Text(bg='#FFFFFF', font=('Consolas', 9))<br>&nbsp; + tags 'ok' / 'fallo' / 'orden'</span></div><div class="row" style="padding: 7px 0; border-top: 1px solid #EFEBE4; align-items: flex-start"><span style="width: 200px">Icono junto al texto</span><span class="mono" style="flex: 1; font-size: 11.5px; color: #5C564C; line-height: 1.5">tk.PhotoImage(file='ui/iconos/sync-16.png')<br>&nbsp; en compound='left' del propio widget</span></div>
+      </div>
+    </div>
+
+    <div style="flex: 1"></div>
+    <div class="hint" style="border-top: 1px solid #E4E0D8; padding-top: 12px; line-height: 1.5">
+      Nada de esto necesita dependencias nuevas: <span class="mono">ttk.Style</span> con el tema
+      <span class="mono">clam</span>, <span class="mono">tkinter.font</span> y PNG cargados con
+      <span class="mono">tk.PhotoImage</span> (Tk 8.6 los lee sin Pillow). Lo &#250;nico que no se
+      puede tocar es la barra de t&#237;tulo, que la pinta Windows.</div>
+  </div></x-dc>
+</body>
+</html>
