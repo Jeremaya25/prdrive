@@ -4,5 +4,5 @@ filters/*
 keys/*
 logs/*
 state/*
-sync_config.toml
+sync_config.toml*
 rclone.conf
