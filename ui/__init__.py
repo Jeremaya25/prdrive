@@ -21,6 +21,7 @@ no haber tkinter instalado ni display al que conectarse.
 from __future__ import annotations
 
 import sys
+from datetime import datetime
 from typing import NamedTuple, Protocol
 
 from common import bisync
@@ -60,6 +61,37 @@ def pair_status_notes(config: Config) -> dict[str, str]:
         except Exception:
             pass  # un estado ilegible no puede impedir que se abra la UI
     return notes
+
+
+def cuando(marca: float | None) -> str:
+    """Una fecha como la enseña la ventana: la hora si es de hoy, 'ayer' si es de
+    ayer, y el día si es más vieja. Nadie necesita el año de la última pasada."""
+    if not marca:
+        return ""
+    momento = datetime.fromtimestamp(marca)
+    dias = (datetime.now().date() - momento.date()).days
+    if dias <= 0:
+        return momento.strftime("%H:%M")
+    if dias == 1:
+        return "ayer"
+    return momento.strftime("%d/%m")
+
+
+def pair_times(config: Config) -> dict[str, float | None]:
+    """Cuándo se sincronizó bien cada pareja por última vez.
+
+    Se devuelve la marca de tiempo y no el texto porque quien llama también
+    necesita compararlas —«última pasada» de la cabecera es la más reciente de
+    todas—, y ordenar por el texto pondría 'ayer' por delante de '08:20'. None
+    para las que no dejan rastro (todo lo que no es bisync) y para las que aún no
+    han corrido: ahí la ventana enseña un guion, que es la verdad."""
+    marcas: dict[str, float | None] = {}
+    for pair in config.pairs:
+        try:
+            marcas[pair.name] = bisync.last_run(pair)
+        except Exception:
+            marcas[pair.name] = None  # un estado ilegible no impide abrir la UI
+    return marcas
 
 
 def start(config: Config, startup_msg: str | None) -> tuple[Choice | None, Frontend]:

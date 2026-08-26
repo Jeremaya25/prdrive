@@ -288,13 +288,13 @@ def ui_flow() -> int:
         return 0
 
     if choice.action == "doctor":
-        return frontend.run_sync("doctor", ["--doctor"])
+        return frontend.run_sync("Doctor", ["--doctor"])
 
     args = list(choice.pairs)
     pending = [n for n in ui.pair_status_notes(config) if n in args]
     if pending and frontend.approve_resync(pending):
         args.append("--yes")
-    return frontend.run_sync("sincronización", args)
+    return frontend.run_sync("Sincronización manual", args)
 
 
 def auto_start(rest: list[str]) -> int:

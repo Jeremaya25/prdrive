@@ -202,6 +202,25 @@ def pair_state(pair: Pair) -> PairState:
     return PairState("fresh", "sin listados previos", None)
 
 
+def last_run(pair: Pair) -> float | None:
+    """Cuándo fue la última pasada buena, o None si no hay forma de saberlo.
+
+    No existe un registro de pasadas y no hace falta inventarlo: bisync reescribe
+    sus dos listados justo al terminar bien (ver cmd/bisync/operations.go), así
+    que la fecha del más nuevo ES la de la última sincronización correcta. Fuera
+    de bisync no queda rastro —un `copy` no deja estado—, y esas parejas se
+    quedan sin hora antes que enseñar una inventada."""
+    if not pair.is_bisync:
+        return None
+    try:
+        marcas = [p.stat().st_mtime
+                  for sufijo in (PATH1_SUFFIX, PATH2_SUFFIX)
+                  for p in pair.workdir.glob("*" + sufijo)]
+    except OSError:
+        return None                      # el pen ya no está: no es asunto de aquí
+    return max(marcas) if marcas else None
+
+
 def resync_reasons(pair: Pair, state: PairState | None = None) -> list[str]:
     """Por qué esta pareja necesita --resync. Lista vacía = no lo necesita.
 

@@ -7,6 +7,11 @@ consola detrás: por eso aquí no basta con elegir, hace falta además poder
 enseñar la salida de la sincronización y preguntar sí/no, cosas que en el modo
 consola hace la propia terminal.
 
+El aspecto entero sale de `ui/theme.py` y los iconos de `ui/icons.py`: aquí no
+se escribe ningún color a mano. Cada ventana llama a `theme.apply()` nada más
+nacer, porque los estilos de ttk son globales dentro de un intérprete de Tk y a
+lo largo de una sesión se abre más de uno.
+
 `import tkinter` va dentro de cada función a propósito, no arriba: importar este
 módulo no puede fallar en un equipo sin tkinter, porque el fallo tiene que
 saltar cuando se intenta abrir la ventana, que es cuando `ui.start()` puede
@@ -15,18 +20,27 @@ recogerlo y caer al menú de consola.
 
 from __future__ import annotations
 
-import os
 import queue
 import subprocess
 import sys
 import threading
+import time
 
 from common import model
 from common.model import Config
 
-from . import Choice, pair_status_notes, prefs
+from . import Choice, cuando, icons, pair_status_notes, pair_times, prefs, theme
 
 TITLE = "PerePen Sync"
+
+
+def corto(texto: str, maximo: int = 30) -> str:
+    """Una ruta recortada por delante, que es por donde sobra.
+
+    En el pen esto no hace nada —`PEN_ROOT` es `F:\\`—, pero montado en un punto
+    con nombre largo (`/media/quien/PEREPEN`) o corriendo desde el repositorio,
+    una ruta entera estira la ventana hasta salirse de la pantalla."""
+    return texto if len(texto) <= maximo else "…" + texto[-(maximo - 1):]
 
 
 class TkFrontend:
@@ -54,7 +68,11 @@ class TkFrontend:
         root.destroy()
 
     def run_sync(self, title: str, args: list[str]) -> int:
-        return output_window(title, [sys.executable, str(model.SYNC_PY), *args])
+        # El subtítulo de la ventana son las parejas que se van a tocar: lo que
+        # se pasa son sus nombres y, detrás, las opciones que empiezan por '-'.
+        parejas = [a for a in args if not a.startswith("-")]
+        return output_window(title, [sys.executable, str(model.SYNC_PY), *args],
+                             subtitulo=", ".join(parejas))
 
 
 def root_oculto():
@@ -66,6 +84,8 @@ def root_oculto():
     import tkinter as tk
     root = tk.Tk()
     root.withdraw()
+    theme.apply(root)
+    icons.poner_icono(root)
     root.geometry(f"+{root.winfo_screenwidth() // 2}+{root.winfo_screenheight() // 2}")
     return root
 
@@ -107,7 +127,9 @@ def modal(parent, title: str):
     aparecer en una esquina y pegar el salto al centro."""
     import tkinter as tk
     dlg = tk.Toplevel(parent)
+    theme.apply(dlg)
     dlg.title(f"{TITLE} — {title}")
+    dlg.configure(background=theme.PAPEL)
     dlg.transient(parent)
     dlg.resizable(False, False)
     dlg.withdraw()
@@ -133,6 +155,50 @@ def mostrar(dlg, parent=None) -> None:
     dlg.wait_window()
 
 
+# ---------------------------------------------------------------------------
+# Piezas del diseño que aparecen en más de una pantalla
+# ---------------------------------------------------------------------------
+
+def cabecera(parent, titulo: str, pista: str = "", ancho: int = 620,
+             estilo: str = "Titulo.TLabel"):
+    """El título de una pantalla con su frase debajo. Devuelve el marco, para
+    poder colgarle a la derecha un chip de estado."""
+    from tkinter import ttk
+    marco = ttk.Frame(parent)
+    marco.columnconfigure(0, weight=1)
+    ttk.Label(marco, text=titulo, style=estilo).grid(row=0, column=0, sticky="w")
+    if pista:
+        ttk.Label(marco, text=pista, style="Pista.TLabel", wraplength=ancho,
+                  justify="left").grid(row=1, column=0, sticky="w", pady=(5, 0))
+    return marco
+
+
+def bloque_aviso(parent, texto: str, ancho: int = 560, tipo: str = "Ambar"):
+    """El recuadro ámbar (o rojo) con su triángulo: lo que hay que leer dos veces."""
+    from tkinter import ttk
+    fondo = theme.AVISO_FONDO if tipo == "Ambar" else theme.PELIGRO_FONDO
+    color = theme.AVISO if tipo == "Ambar" else theme.PELIGRO
+    caja = ttk.Frame(parent, style=f"{tipo}.TFrame", padding=(11, 9))
+    img = icons.get(caja, "warn", 16, color, fondo)
+    icono = ttk.Label(caja, style=f"{tipo}.TLabel")
+    if img is not None:
+        icono.configure(image=img)
+        icono.image = img
+    icono.grid(row=0, column=0, sticky="nw")
+    ttk.Label(caja, text=texto, style=f"{tipo}.TLabel", wraplength=ancho,
+              justify="left").grid(row=0, column=1, sticky="w", padx=(9, 0))
+    caja.columnconfigure(1, weight=1)
+    return caja
+
+
+def separador_fila(parent, fila: int, columnas: int, superficie: str = "Card."):
+    """La línea fina entre dos filas de una lista dibujada a mano."""
+    from tkinter import ttk
+    est = "Card.TSeparator" if superficie == "Card." else "TSeparator"
+    ttk.Separator(parent, orient="horizontal", style=est).grid(
+        row=fila, column=0, columnspan=columnas, sticky="ew")
+
+
 def working(parent, title: str, funcion, mensaje: str = "") -> tuple[bool, object]:
     """Ejecuta `funcion()` en un hilo aparte y enseña una ventanita mientras.
 
@@ -151,12 +217,12 @@ def working(parent, title: str, funcion, mensaje: str = "") -> tuple[bool, objec
     dlg = modal(parent, title)
     dlg.protocol("WM_DELETE_WINDOW", lambda: None)   # no se cierra a medias
 
-    marco = ttk.Frame(dlg, padding=16)
-    marco.grid()
+    marco = ttk.Frame(dlg, padding=(20, 18))
+    marco.grid(sticky="nsew")
     ttk.Label(marco, text=mensaje or f"{title}…", wraplength=380,
               justify="left").grid(row=0, column=0, sticky="w")
     barra = ttk.Progressbar(marco, mode="indeterminate", length=380)
-    barra.grid(row=1, column=0, pady=(12, 0))
+    barra.grid(row=1, column=0, pady=(14, 0), sticky="ew")
     barra.start(12)
 
     resultado: dict = {"ok": False, "valor": None, "hecho": False}
@@ -184,6 +250,10 @@ def working(parent, title: str, funcion, mensaje: str = "") -> tuple[bool, objec
     return bool(resultado["ok"]), resultado["valor"]
 
 
+# ---------------------------------------------------------------------------
+# La ventana principal
+# ---------------------------------------------------------------------------
+
 def main_window(config: Config, startup_msg: str | None) -> Choice | None:
     """La ventana principal: qué parejas, cada cuánto, y qué hacer con ellas.
     Devuelve la elección, o None si se cierra sin elegir.
@@ -194,14 +264,18 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
     from . import tk_pairs, tk_watch
 
     root = tk.Tk()  # TclError aquí si no hay display -> fallback consola
+    theme.apply(root)
+    icons.poner_icono(root)
     root.title(TITLE)
+    root.configure(background=theme.PAPEL)
     root.resizable(False, False)
     root.withdraw()          # se enseña ya centrada, ver el final de la función
     result: dict = {"choice": None}
     vista: dict = {"config": config, "aviso": startup_msg}
 
-    frame = ttk.Frame(root, padding=12)
+    frame = ttk.Frame(root, padding=(22, 20, 22, 18))
     frame.grid(sticky="nsew")
+    frame.columnconfigure(0, weight=1)
 
     def recargar() -> None:
         """El config ha cambiado bajo nuestros pies: releerlo y repintar.
@@ -224,37 +298,122 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         config = vista["config"]
         names = config.names
         notes = pair_status_notes(config)
+        marcas = pair_times(config)
         d_pairs, d_interval, memo = prefs.startup_defaults(config)
-        row = 0
+        fila = 0
+
+        # --- quién es este pen y cómo está -----------------------------------
+        arriba = ttk.Frame(frame)
+        arriba.grid(row=fila, column=0, sticky="ew")
+        arriba.columnconfigure(0, weight=1)
+        fila += 1
+
+        titulo = ttk.Frame(arriba)
+        titulo.grid(row=0, column=0, sticky="w")
+        ttk.Label(titulo, text="Sincronizar", style="Titulo.TLabel").grid(
+            row=0, column=0, sticky="w")
+        extremos = ttk.Frame(titulo)
+        extremos.grid(row=1, column=0, sticky="w", pady=(6, 0))
+        remotos = sorted({p.remote_name for p in config.pairs}) or [model.DEFAULT_REMOTE]
+        for col, (icono, texto) in enumerate((("pen", corto(str(model.PEN_ROOT))),
+                                              ("nas", corto(", ".join(remotos))))):
+            if col:
+                ttk.Label(extremos, text="·", style="Apagado.TLabel").grid(
+                    row=0, column=2, padx=6)
+            img = icons.get(extremos, icono, 14, theme.TINTA3, theme.PAPEL)
+            marca = ttk.Label(extremos, style="Pista.TLabel")
+            if img is not None:
+                marca.configure(image=img)
+                marca.image = img
+            marca.grid(row=0, column=col * 3, sticky="w")
+            ttk.Label(extremos, text=texto, style="MonoPista.TLabel").grid(
+                row=0, column=col * 3 + 1, sticky="w", padx=(5, 0))
+
+        # El chip dice lo que se sabe sin hablar con nadie: si alguna pareja
+        # necesita un --resync. La conexión con el NAS NO se comprueba aquí — se
+        # tardaría segundos en abrir la ventana y la respuesta caducaría enseguida.
+        if notes:
+            theme.chip(arriba, f"{len(notes)} requieren resync" if len(notes) > 1
+                       else "1 requiere resync", "Aviso.", "warn").grid(
+                row=0, column=1, sticky="ne", pady=(4, 0))
+        else:
+            theme.chip(arriba, "al día", "Ok.", "ok").grid(
+                row=0, column=1, sticky="ne", pady=(4, 0))
 
         if vista["aviso"]:
-            ttk.Label(frame, text=vista["aviso"], foreground="#775500",
-                      wraplength=340, justify="left").grid(
-                row=row, column=0, columnspan=2, sticky="w", pady=(0, 8))
-            row += 1
+            bloque_aviso(frame, vista["aviso"], ancho=400).grid(
+                row=fila, column=0, sticky="ew", pady=(14, 0))
+            fila += 1
 
-        ttk.Label(frame, text="Parejas:").grid(row=row, column=0, sticky="w")
-        row += 1
-        if memo:
-            ttk.Label(frame, text=memo, foreground="#666666").grid(
-                row=row, column=0, columnspan=2, sticky="w", padx=(12, 0))
-            row += 1
+        # --- la lista de parejas ---------------------------------------------
+        rotulo = ttk.Frame(frame)
+        rotulo.grid(row=fila, column=0, sticky="ew", pady=(20, 8))
+        rotulo.columnconfigure(1, weight=1)
+        fila += 1
+        ttk.Label(rotulo, text=theme.rotulo("Parejas"),
+                  style="Rotulo.TLabel").grid(row=0, column=0, sticky="w")
+        ultima = cuando(max((m for m in marcas.values() if m), default=None))
+        resumen = f"{len(d_pairs)} de {len(names)}"
+        if ultima:
+            resumen += f" · última pasada {ultima}"
+        ttk.Label(rotulo, text=resumen, style="Pista.TLabel").grid(
+            row=0, column=2, sticky="e")
+
+        tarjeta = ttk.Frame(frame, style="Card.TFrame", padding=(12, 2))
+        tarjeta.grid(row=fila, column=0, sticky="ew")
+        tarjeta.columnconfigure(2, weight=1)
+        fila += 1
 
         vars_by_name: dict[str, tk.BooleanVar] = {}
+        linea = 0
         for name in names:
+            if linea:
+                separador_fila(tarjeta, linea, 5)
+                linea += 1
             var = tk.BooleanVar(value=(name in d_pairs))
             vars_by_name[name] = var
-            label = name + (f"   ⚠ {notes[name]}" if name in notes else "")
-            ttk.Checkbutton(frame, text=label, variable=var).grid(
-                row=row, column=0, columnspan=2, sticky="w", padx=(12, 0))
-            row += 1
+            ttk.Checkbutton(tarjeta, text=name, variable=var,
+                            style="Card.Fuerte.TCheckbutton").grid(
+                row=linea, column=0, sticky="w", pady=6)
+            pareja = next(p for p in config.pairs if p.name == name)
+            ttk.Label(tarjeta, text=pareja.mode.name, style="Card.Pista.TLabel").grid(
+                row=linea, column=1, sticky="w", padx=(10, 0))
+            ttk.Label(tarjeta, text=cuando(marcas.get(name)) or "—",
+                      style="Card.MonoPista.TLabel").grid(row=linea, column=3,
+                                                          sticky="e", padx=(10, 8))
+            if name in notes:
+                theme.chip(tarjeta, notes[name], "Aviso.").grid(
+                    row=linea, column=4, sticky="e")
+            else:
+                theme.chip(tarjeta, "al día", "Ok.").grid(row=linea, column=4,
+                                                          sticky="e")
+            linea += 1
+        if not names:
+            ttk.Label(tarjeta, text="No hay ninguna pareja configurada.",
+                      style="Card.Pista.TLabel").grid(row=0, column=0, pady=10)
 
-        ttk.Label(frame, text="Intervalo del servicio (min):").grid(
-            row=row, column=0, sticky="w", pady=(10, 0))
+        if memo:
+            ttk.Label(frame, text=memo, style="Pista.TLabel").grid(
+                row=fila, column=0, sticky="w", pady=(7, 0))
+            fila += 1
+
+        # --- cada cuánto ------------------------------------------------------
+        repetir = ttk.Frame(frame)
+        repetir.grid(row=fila, column=0, sticky="w", pady=(16, 0))
+        fila += 1
+        img = icons.get(repetir, "clock", 15, theme.TINTA3, theme.PAPEL)
+        reloj = ttk.Label(repetir)
+        if img is not None:
+            reloj.configure(image=img)
+            reloj.image = img
+        reloj.grid(row=0, column=0, sticky="w")
+        ttk.Label(repetir, text="Repetir cada", style="Campo.TLabel").grid(
+            row=0, column=1, sticky="w", padx=(8, 10))
         interval_var = tk.StringVar(value=f"{d_interval:g}")
-        ttk.Spinbox(frame, from_=1, to=1440, textvariable=interval_var, width=6).grid(
-            row=row, column=1, sticky="w", pady=(10, 0))
-        row += 1
+        ttk.Spinbox(repetir, from_=1, to=1440, textvariable=interval_var,
+                    width=5, font=theme.fuente("mono")).grid(row=0, column=2)
+        ttk.Label(repetir, text="minutos, mientras el pen siga puesto",
+                  style="Pista.TLabel").grid(row=0, column=3, sticky="w", padx=(10, 0))
 
         def selected() -> list[str]:
             return [n for n in names if vars_by_name[n].get()]
@@ -276,31 +435,39 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
             result["choice"] = Choice(kind, tuple(sel), minutes)
             root.destroy()
 
-        # Configuración arriba, separada: no son cosas que se ejecuten, son
-        # pantallas de las que se vuelve aquí.
+        # --- las pantallas de las que se vuelve aquí --------------------------
         ajustes = ttk.Frame(frame)
-        ajustes.grid(row=row, column=0, columnspan=2, pady=(12, 0), sticky="w")
-        ttk.Button(ajustes, text="Parejas…",
-                   command=lambda: tk_pairs.open_dialog(root, vista["config"])
-                   and recargar()).grid(row=0, column=0, padx=3)
-        ttk.Button(ajustes, text="Arranque automático…",
-                   command=lambda: tk_watch.open_dialog(root, vista["config"])).grid(row=0, column=1, padx=3)
-        row += 1
+        ajustes.grid(row=fila, column=0, sticky="ew", pady=(18, 0))
+        ajustes.columnconfigure(2, weight=1)
+        fila += 1
+        for col, (texto, icono, accion) in enumerate((
+                ("Parejas…", "grid",
+                 lambda: tk_pairs.open_dialog(root, vista["config"]) and recargar()),
+                ("Arranque automático…", "plug",
+                 lambda: tk_watch.open_dialog(root, vista["config"])))):
+            boton = ttk.Button(ajustes, text=texto, style="Quiet.TButton",
+                               command=accion)
+            theme.boton_icono(boton, icono, theme.ACENTO, theme.PAPEL)
+            boton.grid(row=0, column=col, sticky="w", padx=(0, 4))
+        doctor = ttk.Button(ajustes, text="Doctor", style="Quiet.TButton",
+                            command=lambda: choose("doctor"))
+        theme.boton_icono(doctor, "doctor", theme.ACENTO, theme.PAPEL)
+        doctor.grid(row=0, column=3, sticky="e")
 
         ttk.Separator(frame, orient="horizontal").grid(
-            row=row, column=0, columnspan=2, sticky="ew", pady=8)
-        row += 1
+            row=fila, column=0, sticky="ew", pady=(14, 0))
+        fila += 1
 
-        buttons = ttk.Frame(frame)
-        buttons.grid(row=row, column=0, columnspan=2)
-        ttk.Button(buttons, text="Sincronizar ahora",
-                   command=lambda: choose("manual")).grid(row=0, column=0, padx=3)
-        ttk.Button(buttons, text="Iniciar servicio",
-                   command=lambda: choose("daemon")).grid(row=0, column=1, padx=3)
-        ttk.Button(buttons, text="Doctor",
-                   command=lambda: choose("doctor")).grid(row=0, column=2, padx=3)
-        ttk.Button(buttons, text="Salir",
-                   command=root.destroy).grid(row=0, column=3, padx=3)
+        # --- la acción principal ---------------------------------------------
+        pie = ttk.Frame(frame)
+        pie.grid(row=fila, column=0, sticky="ew", pady=(14, 0))
+        pie.columnconfigure(0, weight=1)
+        ahora = ttk.Button(pie, text="Sincronizar ahora", style="Primary.TButton",
+                           padding=(14, 8), command=lambda: choose("manual"))
+        theme.boton_icono(ahora, "sync", theme.SUPERFICIE, theme.ACENTO, 16)
+        ahora.grid(row=0, column=0, sticky="ew", padx=(0, 8))
+        ttk.Button(pie, text="Iniciar servicio", padding=(12, 8),
+                   command=lambda: choose("daemon")).grid(row=0, column=1)
 
     render()
     centrar(root)
@@ -309,7 +476,41 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
     return result["choice"]
 
 
-def output_window(title: str, cmd: list[str], parent=None) -> int:
+# ---------------------------------------------------------------------------
+# La ventana de salida
+# ---------------------------------------------------------------------------
+
+# Cómo se colorea cada línea. Es el vocabulario que ya usa sync.py por su salida
+# —'=== pareja ===', '  ejecutando:', '[pareja] OK.', '[pareja] FALLÓ'—, así que
+# esta tabla se lee junto a los print() de sync.py: si allí cambia una fórmula,
+# aquí deja de pintarse, no se rompe nada.
+def _tono(linea: str) -> str:
+    limpia = linea.strip()
+    if not limpia:
+        return "normal"
+    # El resumen final lleva las tres cosas en la misma línea ("2/4 parejas OK,
+    # 1 saltada(s), 1 con errores"), así que se mira entero y de peor a mejor;
+    # buscar 'OK' suelto lo pintaría de verde con un fallo dentro.
+    if limpia.startswith("Hecho."):
+        return ("fallo" if "con errores" in limpia
+                else "aviso" if "saltada" in limpia else "ok")
+    if limpia.startswith("===") or limpia.startswith("---"):
+        return "fallo" if "ERROR" in limpia else (
+            "ok" if "OK" in limpia else "cabecera")
+    if limpia.startswith("ejecutando"):
+        return "orden"
+    if "FALLÓ" in limpia or "ERROR" in limpia or "NO EXISTE" in limpia:
+        return "fallo"
+    if limpia.startswith(">>") or "AVISO" in limpia or "Saltada" in limpia \
+            or "requiere --resync" in limpia:
+        return "aviso"
+    if limpia.endswith("OK.") or limpia.endswith("(OK)") or limpia.startswith("OK"):
+        return "ok"
+    return "normal"
+
+
+def output_window(title: str, cmd: list[str], parent=None,
+                  subtitulo: str = "") -> int:
     """Ejecuta una orden y muestra su salida en una ventana con desplazamiento.
 
     Sustituye a la consola cuando no la hay, así que la usan tanto sync.py como
@@ -321,7 +522,7 @@ def output_window(title: str, cmd: list[str], parent=None) -> int:
     tkinter no lleva bien dos intérpretes a la vez, y desde un diálogo ya hay uno
     en marcha."""
     import tkinter as tk
-    from tkinter import ttk
+    from tkinter import filedialog, messagebox, ttk
 
     proc = subprocess.Popen(
         cmd,
@@ -350,36 +551,109 @@ def output_window(title: str, cmd: list[str], parent=None) -> int:
         root = tk.Toplevel(parent)
         root.transient(parent)
         esperar = root.wait_window
+    theme.apply(root)
+    icons.poner_icono(root)
     root.withdraw()          # igual que los diálogos: se enseña ya colocada
     root.title(f"{TITLE} — {title}")
-    text = tk.Text(root, width=104, height=30, state="disabled",
-                   font=("Consolas" if os.name == "nt" else "monospace", 9))
+    root.configure(background=theme.PAPEL)
+    root.columnconfigure(0, weight=1)
+    root.rowconfigure(1, weight=1)
+    arranque = time.monotonic()
+
+    # --- la barra de arriba: qué se está haciendo y cómo va ------------------
+    barra = ttk.Frame(root, style="Card.TFrame", padding=(18, 13))
+    barra.grid(row=0, column=0, columnspan=2, sticky="ew")
+    barra.columnconfigure(1, weight=1)
+    img = icons.get(barra, "sync", 20, theme.ACENTO, theme.SUPERFICIE)
+    marca = ttk.Label(barra, style="Card.TLabel")
+    if img is not None:
+        marca.configure(image=img)
+        marca.image = img
+    marca.grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, 12))
+    ttk.Label(barra, text=title.capitalize(), style="Card.Fuerte.TLabel").grid(
+        row=0, column=1, sticky="w")
+    ttk.Label(barra, text=subtitulo or " ", style="Card.MonoPista.TLabel").grid(
+        row=1, column=1, sticky="w")
+    estado = theme.chip(barra, "en marcha…", "Acento.")
+    estado.grid(row=0, column=2, rowspan=2, sticky="e")
+
+    # --- el cuerpo ------------------------------------------------------------
+    # `wrap="char"` y no el "none" que trae `caja_texto`: aquí no hay barra
+    # horizontal, así que no ajustar sería perder el final de las líneas largas
+    # —y las órdenes de rclone lo son—.
+    text = theme.caja_texto(root, width=104, height=28, state="disabled",
+                            highlightthickness=0, padx=18, pady=12, wrap="char")
+    text.grid(row=1, column=0, sticky="nsew")
     scroll = ttk.Scrollbar(root, command=text.yview)
     text.configure(yscrollcommand=scroll.set)
-    close_btn = ttk.Button(root, text="Cerrar", command=root.destroy)
-    text.grid(row=0, column=0, sticky="nsew", padx=(8, 0), pady=8)
-    scroll.grid(row=0, column=1, sticky="ns", padx=(0, 8), pady=8)
-    close_btn.grid(row=1, column=0, columnspan=2, pady=(0, 8))
-    root.columnconfigure(0, weight=1)
-    root.rowconfigure(0, weight=1)
+    scroll.grid(row=1, column=1, sticky="ns")
+    for nombre, opciones in (
+            ("normal", dict(foreground=theme.TINTA2)),
+            ("cabecera", dict(foreground=theme.TINTA, font=(
+                theme.familia("mono"), 9, "bold"))),
+            ("orden", dict(foreground=theme.TINTA3)),
+            ("ok", dict(foreground=theme.OK)),
+            ("aviso", dict(foreground=theme.AVISO)),
+            ("fallo", dict(foreground=theme.PELIGRO))):
+        text.tag_configure(nombre, **opciones)
 
     state = {"rc": None}
 
     def append(line: str) -> None:
         text.configure(state="normal")
-        text.insert("end", line)
+        text.insert("end", line, _tono(line))
         text.see("end")
         text.configure(state="disabled")
+
+    def guardar() -> None:
+        """Llevarse la salida tal cual. Los logs de rclone solo se guardan
+        cuando algo falla, así que esta es la única copia de una pasada buena."""
+        destino = filedialog.asksaveasfilename(
+            parent=root, title="Guardar el log", defaultextension=".txt",
+            initialfile=f"perepen-{time.strftime('%Y%m%d-%H%M%S')}.txt",
+            filetypes=[("Texto", "*.txt"), ("Todos", "*.*")])
+        if not destino:
+            return
+        try:
+            with open(destino, "w", encoding="utf-8") as f:
+                f.write(text.get("1.0", "end"))
+        except OSError as e:
+            messagebox.showerror(TITLE, f"No se ha podido guardar:\n\n{e}",
+                                 parent=root)
+
+    # --- el pie ---------------------------------------------------------------
+    ttk.Separator(root, orient="horizontal").grid(row=2, column=0, columnspan=2,
+                                                  sticky="ew")
+    pie = ttk.Frame(root, padding=(18, 11))
+    pie.grid(row=3, column=0, columnspan=2, sticky="ew")
+    pie.columnconfigure(0, weight=1)
+    ttk.Label(pie, text="El log solo se guarda si algo falla, para no gastar el pen.",
+              style="Pista.TLabel").grid(row=0, column=0, sticky="w")
+    guardar_btn = ttk.Button(pie, text="Guardar el log", style="Quiet.TButton",
+                             command=guardar)
+    theme.boton_icono(guardar_btn, "file", theme.ACENTO, theme.PAPEL)
+    guardar_btn.grid(row=0, column=1, padx=(10, 6))
+    ttk.Button(pie, text="Cerrar", style="Primary.TButton",
+               command=lambda: root.destroy()).grid(row=0, column=2)
+
+    def terminado() -> None:
+        state["rc"] = proc.wait()
+        segundos = int(time.monotonic() - arranque)
+        bien = state["rc"] == 0
+        verdict = "OK" if bien else f"ERROR (código {state['rc']})"
+        append(f"\n=== Terminado: {verdict} ===\n")
+        root.title(f"{TITLE} — {title} — {verdict}")
+        nuevo = theme.chip(barra, f"{'terminado' if bien else verdict} · {segundos} s",
+                           "Ok." if bien else "Peligro.", "ok" if bien else "warn")
+        estado.destroy()
+        nuevo.grid(row=0, column=2, rowspan=2, sticky="e")
 
     def poll() -> None:
         try:
             while True:
                 item = q.get_nowait()
                 if item is DONE:
-                    state["rc"] = proc.wait()
-                    verdict = "OK" if state["rc"] == 0 else f"ERROR (código {state['rc']})"
-                    append(f"\n=== Terminado: {verdict} ===\n")
-                    root.title(f"{TITLE} — {title} — {verdict}")
+                    terminado()
                     return
                 append(item)
         except queue.Empty:

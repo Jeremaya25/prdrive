@@ -82,7 +82,11 @@ def elegir_y_pulsar(texto, pareja=None):
 
 ocultar(tk_pairs)
 ocultar(tk_watch)
-messagebox.askokcancel = lambda *a, **k: True            # se confirma todo
+# Las consecuencias de un plan se enseñan en su propia ventana (`confirmar_plan`),
+# no en un messagebox: aquí se responde que sí y ya está. Lo que se comprueba de
+# esta pantalla es el cableado, no el diálogo.
+tk_pairs.confirmar_plan = lambda *a, **k: True
+messagebox.askokcancel = lambda *a, **k: True            # el resto de sí/no
 messagebox.showinfo = lambda *a, **k: None
 errores: list[str] = []
 messagebox.showerror = lambda titulo, texto=None, **k: errores.append(str(texto))
@@ -140,12 +144,14 @@ with sandbox():
     filas = {}
 
     def mirar(self, *_a, **_k):
-        for w in [self] + list(self.winfo_children()):
-            for x in [w] + list(w.winfo_children()):
-                if isinstance(x, ttk.Treeview):
-                    for iid in x.get_children():
-                        filas[iid] = x.item(iid)["values"]
-                    return
+        pila = [self]
+        while pila:
+            w = pila.pop()
+            pila += list(w.winfo_children())
+            if isinstance(w, ttk.Treeview):
+                for iid in w.get_children():
+                    filas[iid] = w.item(iid)["values"]
+                return
 
     tk.Toplevel.wait_window = mirar
     tk_pairs.open_dialog(raiz, cfg)
@@ -283,8 +289,11 @@ with sandbox():
 # el formulario ya cerrado y lo escrito perdido.
 
 def flags_escritos(texto, extra="", boton="Aceptar"):
-    """Escribe en los dos cuadros del diálogo de flags y pulsa un botón."""
-    filas = []
+    """Escribe en los dos cuadros del diálogo de flags y pulsa un botón.
+
+    Devuelve además lo que quede escrito en el diálogo, porque ahí es donde se
+    queja ahora de lo que no vale."""
+    filas, quejas = [], []
 
     def _wait(self, *_a, **_k):
         cajas, botones, tabla = {}, {}, None
@@ -306,15 +315,21 @@ def flags_escritos(texto, extra="", boton="Aceptar"):
         botones["Ver el efecto"].invoke()
         if tabla is not None:
             filas[:] = [tabla.item(i)["values"] for i in tabla.get_children()]
+        pila = [self]
+        while pila:
+            w = pila.pop()
+            pila += list(w.winfo_children())
+            if isinstance(w, ttk.Label):
+                quejas.append(str(w.cget("text")))
         botones[boton].invoke()
 
     tk.Toplevel.wait_window = _wait
     datos = tk_pairs.flags_form(raiz, "Flags", "de prueba", {"transfers": 4}, [],
                                 mode_name="bisync", defaults_flags=None)
-    return datos, filas
+    return datos, filas, quejas
 
 
-datos, filas = flags_escritos('transfers = 8\nchecksum = true', "--bwlimit\n8M")
+datos, filas, _ = flags_escritos('transfers = 8\nchecksum = true', "--bwlimit\n8M")
 c("lo escrito vuelve ya parseado", datos["flags"], {"transfers": 8, "checksum": True})
 c("y los extra tal cual", datos["extra_flags"], ["--bwlimit", "8M"])
 c("la tabla enseña de dónde sale cada flag",
@@ -322,17 +337,16 @@ c("la tabla enseña de dónde sale cada flag",
 c("y los argumentos extra también salen",
   ["--bwlimit", "extra"] in [list(f) for f in filas], True)
 
-errores.clear()
-datos, _ = flags_escritos("--transfers 8")
+datos, _, quejas = flags_escritos("--transfers 8")
 c("la sintaxis de la línea de comandos no sale del diálogo", datos, None)
-c("y se explica por qué", bool(errores), True)
+c("y se explica por qué, dentro del propio diálogo",
+  any("guiones" in q or "clave = valor" in q for q in quejas), True)
 
-errores.clear()
-datos, _ = flags_escritos('workdir = "otro"')
+datos, _, quejas = flags_escritos('workdir = "otro"')
 c("un flag que pone sync.py tampoco sale", datos, None)
-c("con su motivo", "no se configura aquí" in " ".join(errores), True)
+c("con su motivo", any("no se configura aquí" in q for q in quejas), True)
 
-datos, _ = flags_escritos("transfers = 8", boton="Cancelar")
+datos, _, _ = flags_escritos("transfers = 8", boton="Cancelar")
 c("cancelar no devuelve nada", datos, None)
 
 
@@ -350,7 +364,7 @@ def _abrir_y_guardar(self, *_a, **_k):
         pila += list(w.winfo_children())
         if isinstance(w, ttk.Button):
             botones[w.cget("text")] = w
-    botones["Flags de rclone…"].invoke()
+    botones["Editar flags…"].invoke()
     botones["Guardar…"].invoke()
 
 

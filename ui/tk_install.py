@@ -25,6 +25,7 @@ from pathlib import Path
 from install import CATALOG_PATH, MASTER_PATH, InstallError, InstallState
 from install import crypto, device, rclone_bin, remote, seed
 
+from . import icons, theme
 from .tk import TITLE, centrar, output_window, working
 
 VENTANA = f"{TITLE} — Instalador"
@@ -105,13 +106,16 @@ def build(root) -> Wizard:
     una reconstrucción a mano que se quedaría desfasada."""
     from tkinter import ttk
 
+    theme.apply(root)
+    icons.poner_icono(root)
     root.title(VENTANA)
+    root.configure(background=theme.PAPEL)
     root.resizable(False, False)
 
-    marco = ttk.Frame(root, padding=14)
+    marco = ttk.Frame(root, padding=(20, 18, 20, 16))
     marco.grid(sticky="nsew")
 
-    cabecera = ttk.Label(marco, font=("", 11, "bold"))
+    cabecera = ttk.Label(marco, style="Dialogo.TLabel")
     cabecera.grid(row=0, column=0, sticky="w")
     ttk.Separator(marco, orient="horizontal").grid(
         row=1, column=0, sticky="ew", pady=(6, 12))
@@ -126,7 +130,7 @@ def build(root) -> Wizard:
     pie.grid(row=4, column=0, sticky="ew")
 
     atras = ttk.Button(pie, text="< Atrás")
-    siguiente = ttk.Button(pie, text="Siguiente >")
+    siguiente = ttk.Button(pie, text="Siguiente >", style="Primary.TButton")
     atras.grid(row=0, column=0)
     siguiente.grid(row=0, column=1, padx=6)
     ttk.Button(pie, text="Salir", command=root.destroy).grid(row=0, column=3, padx=(20, 0))
@@ -303,17 +307,17 @@ def _paso_destino(cuerpo, wiz) -> None:
         vol = elegido()
         if vol is None:
             aviso.configure(text="Elige una unidad de la lista, o escribe una ruta "
-                                 "abajo.", foreground="#666666")
+                                 "abajo.", foreground=theme.TINTA3)
             wiz.state.device = None
         elif vol.is_system:
             aviso.configure(text="✘ Esa es la unidad del SISTEMA. No.",
-                            foreground="#993333")
+                            foreground=theme.PELIGRO)
             wiz.state.device = None
         else:
             wiz.state.device = vol.root
             aviso.configure(
                 text=f"✔ Destino: {vol.root}" + (f"  ({vol.nota})" if vol.nota else ""),
-                foreground="#116611")
+                foreground=theme.OK)
         wiz.revisar()
 
     tree.bind("<<TreeviewSelect>>", mostrar)
@@ -337,7 +341,7 @@ def _paso_destino(cuerpo, wiz) -> None:
             wiz.error("Esa es la unidad del sistema.")
             return
         wiz.state.device = destino
-        aviso.configure(text=f"✔ Destino: {destino}", foreground="#116611")
+        aviso.configure(text=f"✔ Destino: {destino}", foreground=theme.OK)
         tree.selection_remove(*tree.selection())
         wiz.revisar()
 
@@ -376,7 +380,7 @@ def _paso_siembra(cuerpo, wiz) -> None:
     try:
         situacion, explicacion = device.seed_target(raiz)
     except InstallError as e:
-        ttk.Label(cuerpo, foreground="#993333", wraplength=780, justify="left",
+        ttk.Label(cuerpo, foreground=theme.PELIGRO, wraplength=780, justify="left",
                   text=str(e)).grid(row=1, column=0, sticky="w", pady=(10, 0))
         return
 
@@ -385,7 +389,7 @@ def _paso_siembra(cuerpo, wiz) -> None:
     ttk.Label(cuerpo, foreground=colores[situacion], wraplength=780, justify="left",
               text=explicacion).grid(row=1, column=0, sticky="w", pady=(10, 0))
 
-    ttk.Label(cuerpo, foreground="#775500", wraplength=780, justify="left", text=(
+    ttk.Label(cuerpo, foreground=theme.AVISO, wraplength=780, justify="left", text=(
         "La siembra es un ESPEJO (rclone sync): borra en el destino lo que no "
         f"esté en el NAS, con --max-delete como único freno. Por eso primero se "
         "simula.")).grid(row=2, column=0, sticky="w", pady=(10, 0))
@@ -405,7 +409,7 @@ def _paso_siembra(cuerpo, wiz) -> None:
             botones_estado()
         escrito.trace_add("write", revisar_texto)
 
-    estado_lbl = ttk.Label(cuerpo, wraplength=780, justify="left", foreground="#666666")
+    estado_lbl = ttk.Label(cuerpo, wraplength=780, justify="left", foreground=theme.TINTA3)
     estado_lbl.grid(row=4, column=0, sticky="w", pady=(12, 0))
 
     def sembrar(dry: bool) -> None:
@@ -420,12 +424,12 @@ def _paso_siembra(cuerpo, wiz) -> None:
                            cmd, parent=wiz.root)
         if rc != 0:
             estado_lbl.configure(text=f"La siembra terminó con código {rc}. "
-                                      "Revisa la salida.", foreground="#993333")
+                                      "Revisa la salida.", foreground=theme.PELIGRO)
             return
         if dry:
             wiz.state.seed_simulated = True
             estado_lbl.configure(text="Simulación correcta. Ya se puede sembrar "
-                                      "de verdad.", foreground="#116611")
+                                      "de verdad.", foreground=theme.OK)
         else:
             wiz.state.seeded = True
             # El PEREPEN que llega con la siembra trae el id del pen de origen:
@@ -435,7 +439,7 @@ def _paso_siembra(cuerpo, wiz) -> None:
                 extra = f" Identificador del pen renovado ({nuevo[:8]}…)."
             except InstallError as e:
                 extra = f" Aviso: no he podido renovar el fichero PEREPEN ({e})."
-            estado_lbl.configure(text="Pen sembrado." + extra, foreground="#116611")
+            estado_lbl.configure(text="Pen sembrado." + extra, foreground=theme.OK)
         botones_estado()
         wiz.revisar()
 
@@ -455,7 +459,7 @@ def _paso_siembra(cuerpo, wiz) -> None:
     if seed.sync_py(raiz).is_file():
         estado_lbl.configure(
             text="Este pen ya tiene rclone-sync/: puedes sembrar para "
-                 "actualizarlo, o seguir al paso siguiente.", foreground="#116611")
+                 "actualizarlo, o seguir al paso siguiente.", foreground=theme.OK)
     botones_estado()
 
 
@@ -482,16 +486,16 @@ def _paso_parejas(cuerpo, wiz) -> None:
         elegidas[nombre] = var
         ttk.Checkbutton(marco, variable=var, text=f"{nombre}   [{modo}]").grid(
             row=i, column=0, sticky="w")
-        ttk.Label(marco, foreground="#666666",
+        ttk.Label(marco, foreground=theme.TINTA3,
                   text=f"{pareja.get('local', '?')}  ↔  {pareja.get('remote_path', '?')}"
                   ).grid(row=i, column=1, sticky="w", padx=(16, 0))
         if modo in ("up-mirror", "down-mirror"):
             destino = "el NAS" if modo == "up-mirror" else "el pen"
-            ttk.Label(marco, foreground="#993333", wraplength=260, justify="left",
+            ttk.Label(marco, foreground=theme.PELIGRO, wraplength=260, justify="left",
                       text=f"espejo: borra en {destino} lo que no esté en el origen"
                       ).grid(row=i, column=2, sticky="w", padx=(12, 0))
 
-    resultado = ttk.Label(cuerpo, wraplength=780, justify="left", foreground="#666666")
+    resultado = ttk.Label(cuerpo, wraplength=780, justify="left", foreground=theme.TINTA3)
     resultado.grid(row=2, column=0, sticky="w", pady=(14, 0))
 
     def guardar() -> None:
@@ -510,7 +514,7 @@ def _paso_parejas(cuerpo, wiz) -> None:
         detalle = f"Escrito {destino} con {len(seleccion)} pareja(s)."
         if creadas:
             detalle += "\nCarpetas creadas: " + ", ".join(p.name for p in creadas)
-        resultado.configure(text=detalle, foreground="#116611")
+        resultado.configure(text=detalle, foreground=theme.OK)
         wiz.revisar()
 
     ttk.Button(cuerpo, text="Guardar el config y crear las carpetas",
@@ -536,18 +540,18 @@ def _paso_inicializar(cuerpo, wiz) -> None:
     tabla.grid(row=1, column=0, sticky="w")
     for i, (izq, der) in enumerate(seed.summary(wiz.catalog, wiz.state.selected)):
         ttk.Label(tabla, text=izq).grid(row=i, column=0, sticky="w")
-        ttk.Label(tabla, text=der, foreground="#666666").grid(
+        ttk.Label(tabla, text=der, foreground=theme.TINTA3).grid(
             row=i, column=1, sticky="w", padx=(14, 0))
 
     if espejos:
-        ttk.Label(cuerpo, foreground="#993333", wraplength=780, justify="left", text=(
+        ttk.Label(cuerpo, foreground=theme.PELIGRO, wraplength=780, justify="left", text=(
             "No se inicializan aquí: " + ", ".join(espejos) + ".\n"
             "Son espejos, y 'perepen' lo es del pen ENTERO hacia el NAS: lanzarla "
             "con el pen a medio hacer propagaría eso al maestro. Cuando el pen "
             "esté como quieres, pruébala a mano con --dry-run.")).grid(
             row=2, column=0, sticky="w", pady=(12, 0))
 
-    resultado = ttk.Label(cuerpo, wraplength=780, justify="left", foreground="#666666")
+    resultado = ttk.Label(cuerpo, wraplength=780, justify="left", foreground=theme.TINTA3)
     resultado.grid(row=3, column=0, sticky="w", pady=(12, 0))
 
     def inicializar() -> None:
@@ -562,7 +566,7 @@ def _paso_inicializar(cuerpo, wiz) -> None:
             text="Parejas inicializadas." if rc == 0 else
                  f"Terminó con código {rc}: mira la salida. Se puede reintentar, "
                  "o hacerlo luego desde el pen.",
-            foreground="#116611" if rc == 0 else "#993333")
+            foreground=theme.OK if rc == 0 else "#993333")
 
     boton = ttk.Button(cuerpo, text="Inicializar ahora", command=inicializar)
     boton.grid(row=4, column=0, sticky="w", pady=(12, 0))

@@ -28,6 +28,8 @@ rclone-sync/
 │                       tolerate anything, atomic writes
 ├── ui/                knows how to ask the user and show results
 │   ├── __init__.py    Choice, the Frontend protocol, start(), fatal()
+│   ├── theme.py       the visual system in ttk: palette, fonts, styles — no window
+│   ├── icons.py       the icons, rasterised here: no deps, no emoji
 │   ├── prefs.py       what the UI starts preloaded with (state/ui_prefs.json)
 │   ├── pair_editor.py what THIS pen does with pairs — the decisions, no Tk
 │   ├── catalog_editor.py  add/edit/remove in the NAS catalogue — no Tk
@@ -51,7 +53,9 @@ rclone-sync/
 
 The `tk_*` modules only draw. Everything that decides or touches disk lives in
 `pair_editor.py` / `catalog_editor.py` / `flags_editor.py` / `watch.py` /
-`install/`, which import no Tk and are tested headlessly.
+`install/`, which import no Tk and are tested headlessly. `theme.py` and
+`icons.py` sit under the `tk_*` modules: they own every colour, font and glyph,
+so a `tk_*` module never writes a hex value of its own.
 
 `perepen-install.py` also sits at the root and **is** tracked in git: it is the
 fourth entry point, and it is a launcher — arguments in, `ui/tk_install.py` out.
@@ -70,8 +74,11 @@ frozen: `sys.executable` is the installer and not Python (hence
 `install.python_command()`), and `sys.stdout` can be None with `--windowed`
 (hence `report()`, which opens a window when there is no console).
 
-`design/` holds the UI redesign mock-ups (`.dc.html` artboards). They are design,
-not code: nothing imports them and nothing is generated from them.
+`design/` holds the UI redesign mock-ups (`.dc.html` artboards) that `ui/` now
+implements. They are design, not code: nothing imports them and nothing is
+generated from them, so a change in `ui/` does not update them — they are the
+record of what was decided, and `Sistema.dc.html` is the sheet `ui/theme.py`
+translates.
 
 `penwatch.py` must NOT import either package: it is copied to the host and has to
 keep working with the pen unplugged.
@@ -105,6 +112,7 @@ python perepen-install.py          # the install wizard for a NEW pen (Tk only, 
 python perepen-install.py --check  # rclone + NAS connection + catalogue, then exit
 python perepen-install.py --probe  # what drives it sees, then exit
 python build_installer.py          # build the .exe (PyInstaller, embeds the NAS key)
+python -m ui.icons                 # repaint PEN_ROOT/runsync.ico (no Tk, no display)
 
 python tests/run_all.py        # todos los tests (scripts sueltos, sin framework)
 python tests/test_pair_editor.py   # o uno solo
@@ -204,7 +212,13 @@ imitates rclone's own behaviour, and each section cites the rclone file it mirro
   `.lst` files (`.lst-err` residue is ignored when a valid pair of listings
   exists). `resync_reasons(pair, state=None)` returns the reasons this pair needs
   a `--resync`, empty when it does not, and answers `[]` for non-bisync pairs —
-  the mode guard lives inside it now, so no caller can forget it.
+  the mode guard lives inside it now, so no caller can forget it. `last_run(pair)`
+  is the mtime of the newest listing, which **is** the last good pass: bisync
+  rewrites both listings on success, so there is no run log to invent. Non-bisync
+  pairs get None (a `copy` leaves no state) and the window shows a dash rather
+  than a made-up time; `ui.pair_times()` returns the raw timestamps, not text, so
+  the header can take the most recent one — sorting the strings would put 'ayer'
+  ahead of '08:20'.
 - *Resync approval.* `resolve_resync_approval()` asks **once** for all pairs before
   anything runs. `ask_yes_no()` returns the default when stdin is not a tty, so
   non-interactive runs skip those pairs (`SKIPPED = -1`, distinct from rc 0/failure)
@@ -251,10 +265,83 @@ how to show the answer, since a window cannot dump output to a console that does
 not exist and vice versa. Both return `Choice(action, pairs, minutes)`, so callers
 read `choice.action` instead of indexing a variable-length tuple.
 
+`output_window` colours each line by what it says (`tk._tono`), and that table is
+the vocabulary `sync.py` already prints — `=== pair ===`, `  ejecutando:`,
+`[pair] OK.`, `[pair] FALLÓ`, the final `Hecho. n/m parejas OK…`. Read it beside
+sync.py's `print()`s: if a wording changes there, a line stops being coloured
+here, nothing breaks. It also offers **Guardar el log**, because `dispose_log()`
+only keeps rclone's log when the run failed, so that window is the single copy of
+a successful pass.
+
+A plan's consequences are shown by `tk_pairs.confirmar_plan()`, a real window with
+one line per consequence and each warning in its amber box — not an
+`askokcancel`. Six lines of running text in a message box is exactly what nobody
+reads, and this is the dialog that governs deletions. Tests replace
+`tk_pairs.confirmar_plan`, the way they replace `mostrar()`.
+
 `ConsoleFrontend.approve_resync` always returns False on purpose: with a real
 terminal, `sync.py` inherits stdin and asks the question itself, with more context
 than a dialog fits. Returning True there would append `--yes` and take that
 conversation away from the user.
+
+**The look lives in `ui/theme.py` and `ui/icons.py`, and nowhere else.** The
+screens implement `design/`, and `Sistema.dc.html` is the sheet: warm paper, near
+black ink, one blue accent, amber for warnings, monospace for paths and flags; no
+rounded corners and no shadows, because those are the two things ttk cannot draw
+and faking them with images would mean changing toolkit to decorate.
+
+- `theme.apply(widget)` switches to the **clam** theme and repaints everything.
+  clam and not the native theme because it is the only bundled one that lets you
+  set each border colour (`bordercolor`/`lightcolor`/`darkcolor`), and without
+  that a button cannot be a 1 px box of the colour the design says. It runs
+  **once per Tk interpreter** (styles are global inside one, and a session opens
+  more than one: the main window, then the wizard).
+- Styles are generated by crossing **role** (normal, hint, eyebrow, mono…) with
+  **surface** (paper, card, grey strip, amber block), because a `ttk.Label` does
+  not inherit its parent's background: the same hint on a white card and on the
+  paper are two different styles. The alternative — passing the colour by hand at
+  every call — is what guarantees one gets missed the day the palette moves.
+- `icons.py` rasterises the glyphs itself: no dependencies (no Pillow), Tk cannot
+  read SVG, and the design says «no emoji» — an emoji ✓ comes out in the system's
+  emoji font, in colour, at a size nobody controls. Each icon is a list of
+  primitives on the 16 grid and the rasteriser measures, per pixel, the distance
+  to the nearest ink, which gives antialiasing for free at any size.
+  `PhotoImage.put()` has no alpha, so `_rasterizar()` **takes the background and
+  composes against it** — cheap, because the whole palette is flat — while
+  `_capas_rgba()` keeps the alpha for the one caller that needs it, the `.ico`.
+  `icons.get()` returns None on any failure and the caller keeps its text: an
+  ornament cannot stop a window opening.
+- Square caps and miter joins are done by `_expandir()`, **once per layer, not per
+  pixel**: it moves the free ends outward by half the stroke and drops a wedge
+  (two triangles, `b`-`A`-`T`-`C`) into every corner. Both matter at thick
+  strokes and neither is optional — the app icon's arrowheads are two segments at
+  a right angle, and without this they came out as a lozenge instead of a point.
+  The wedge is the **quadrilateral** and not just the triangle `A`-`T`-`C`: the
+  two stroke rectangles cross at the vertex, so the triangle alone leaves the
+  point floating a hair away from the rest.
+- `write_ico()` paints `runsync.ico`, which is what `iconphoto()` cannot reach:
+  the icon of a shortcut, of a pinned taskbar button and of the installer's
+  `.exe` (`build_installer.py` generates it into `build/` and passes `--icon`).
+  It is Tk-free — `_capas_rgba` is plain Python — so it runs headless. Sizes ≤ 64
+  go in as DIBs and 128/256 as PNG (`zlib` is stdlib): a raw 256×256 is 270 KB
+  against 3 KB compressed, and PNG is what Windows expects at that size. The file
+  lives at `PEN_ROOT`, so the `perepen` pair carries it to the NAS and every pen
+  seeded afterwards inherits it. **The icon is code**: it comes out of the same
+  glyph table as the window's, so there is no second copy to drift.
+- The layer order of `_capas_marca()` is the design's and is not decorative:
+  both arrowheads go **after** both arcs. Grouped by colour, the amber arc paints
+  over half the white arrowhead.
+- The Checkbutton indicator is replaced by an image element (`_casilla_propia`):
+  clam draws something closer to a cross and only lets you pick its colours. Its
+  right-hand margin is *unpainted* pixels of the same PhotoImage — a new one is
+  transparent — so the same image works on paper and on a card.
+- `icons.px()` scales the design's pixel sizes by `tk scaling`: Tk scales fonts on
+  a dense screen but not bitmaps, and a fixed 15 px icon next to grown text looks
+  like a toy.
+- A `ttk.Treeview` cannot colour a single cell, so the design's status chips
+  become **row tags** (`theme.marcar_lista`), which is what the sheet prescribes
+  for that table. Background and not foreground, so the selected row's blue still
+  shows on top and monospace paths stay readable.
 
 **Windows are shown already centred, never moved after the fact.** `modal()`
 returns the dialog **withdrawn** and without a grab; `mostrar(dlg, parent)` centres

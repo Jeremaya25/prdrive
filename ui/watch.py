@@ -56,6 +56,15 @@ def log_tail(lines: int = 10) -> list[str]:
     return _penwatch().log_tail(lines)
 
 
+def log_path() -> str:
+    """Dónde vive el diario, para poder enseñarlo junto a lo que se lee de él.
+    Está en el equipo, nunca en el pen, y decirlo es media explicación."""
+    try:
+        return str(_penwatch().LOG_FILE)
+    except Exception:
+        return ""
+
+
 def is_installed() -> bool:
     pw = _penwatch()
     return bool(pw.read_json(pw.CONFIG_FILE))

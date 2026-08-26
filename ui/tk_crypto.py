@@ -25,6 +25,7 @@ from pathlib import Path
 
 from install import CONTAINER_NAME, InstallError, crypto
 
+from . import theme
 from .tk import TITLE, working
 
 AVISO_AUTOARRANQUE = (
@@ -59,17 +60,17 @@ def dibujar(cuerpo, wiz) -> None:
     panel = ttk.Frame(cuerpo)
     panel.grid(row=2, column=0, sticky="w", pady=(12, 0))
 
-    resumen = ttk.Label(cuerpo, foreground="#775500", wraplength=760, justify="left")
+    resumen = ttk.Label(cuerpo, foreground=theme.AVISO, wraplength=760, justify="left")
     resumen.grid(row=3, column=0, sticky="w", pady=(12, 0))
 
     def refrescar_resumen() -> None:
         if estado.pen_root:
             resumen.configure(
                 text=f"✔ La estructura del pen irá a: {estado.pen_root}",
-                foreground="#116611")
+                foreground=theme.OK)
         else:
             resumen.configure(text="Todavía no hay un destino listo para sembrar.",
-                              foreground="#775500")
+                              foreground=theme.AVISO)
         wiz.revisar()
 
     def repintar(*_) -> None:
@@ -93,7 +94,7 @@ def _panel_ninguno(panel, wiz, hecho) -> None:
     from tkinter import ttk
 
     estado = wiz.state
-    ttk.Label(panel, justify="left", wraplength=760, foreground="#993333", text=(
+    ttk.Label(panel, justify="left", wraplength=760, foreground=theme.PELIGRO, text=(
         "El pen quedará SIN CIFRAR. Ten en cuenta que dentro va a vivir la clave "
         "privada del NAS (rclone-sync/keys/): quien encuentre el pen tiene acceso "
         "al Synology hasta que revoques esa clave.")).grid(row=0, column=0, sticky="w")
@@ -122,7 +123,7 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
     estado.veracrypt = estado.veracrypt or crypto.find_veracrypt()
 
     if not estado.veracrypt:
-        ttk.Label(panel, foreground="#993333", wraplength=760, justify="left", text=(
+        ttk.Label(panel, foreground=theme.PELIGRO, wraplength=760, justify="left", text=(
             "No encuentro VeraCrypt en este equipo. Instálalo desde "
             "veracrypt.jp/en/Downloads.html, o dime dónde está:")).grid(
             row=0, column=0, sticky="w")
@@ -158,7 +159,7 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
     if not existe:
         ttk.Label(formulario, text="Tamaño:").grid(row=fila, column=0, sticky="w")
         ttk.Entry(formulario, textvariable=tam, width=10).grid(row=fila, column=1, sticky="w")
-        ttk.Label(formulario, foreground="#666666",
+        ttk.Label(formulario, foreground=theme.TINTA3,
                   text=f"libre en el pen: {_libre(estado.device) / 1024**3:.1f} GiB "
                        f"— admite 20G, 500M o 'max'").grid(
             row=fila, column=2, sticky="w", padx=(10, 0))
@@ -166,7 +167,7 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
         ttk.Label(formulario, text="Sistema de ficheros:").grid(row=fila, column=0, sticky="w")
         ttk.Combobox(formulario, textvariable=sistema, state="readonly", width=8,
                      values=list(crypto.FILESYSTEMS)).grid(row=fila, column=1, sticky="w")
-        ttk.Label(formulario, foreground="#666666",
+        ttk.Label(formulario, foreground=theme.TINTA3,
                   text="exFAT es lo más portable entre Windows, Linux y macOS").grid(
             row=fila, column=2, sticky="w", padx=(10, 0))
         fila += 1
@@ -184,13 +185,13 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
             row=fila, column=1, columnspan=2, sticky="w")
         fila += 1
 
-    ttk.Label(formulario, foreground="#993333", wraplength=560, justify="left", text=(
+    ttk.Label(formulario, foreground=theme.PELIGRO, wraplength=560, justify="left", text=(
         "Esta contraseña no se guarda en ningún sitio. Si la pierdes, el "
         "contenedor no se recupera: apúntala en tu gestor de contraseñas ANTES "
         "de seguir.")).grid(row=fila, column=0, columnspan=3, sticky="w", pady=(8, 0))
     fila += 1
 
-    ttk.Label(panel, foreground="#775500", wraplength=760, justify="left",
+    ttk.Label(panel, foreground=theme.AVISO, wraplength=760, justify="left",
               text=AVISO_AUTOARRANQUE).grid(row=2, column=0, sticky="w", pady=(10, 0))
 
     def crear_y_montar() -> None:
@@ -238,7 +239,7 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
     ttk.Button(botones, text="Montar" if existe else "Crear y montar",
                command=crear_y_montar).grid(row=0, column=0)
     if estado.pen_root and estado.mounted_by_us:
-        ttk.Label(botones, foreground="#116611",
+        ttk.Label(botones, foreground=theme.OK,
                   text=f"montado en {estado.pen_root}").grid(row=0, column=1, padx=(12, 0))
 
 

@@ -89,6 +89,18 @@ def comprobar_pyinstaller() -> None:
             "Es dependencia solo de compilación; el pen no la necesita.")
 
 
+def escribir_icono() -> Path | None:
+    """Pinta `runsync.ico` en build/, para que el .exe salga con la marca.
+
+    Se genera en vez de guardarse compilado porque el icono ES código: sale de
+    `ui/icons.py`, que es el mismo sitio del que salen los de la ventana, así que
+    no hay dos versiones que puedan separarse. No necesita Tkinter ni pantalla."""
+    from ui import icons
+    destino = RAIZ / "build" / "runsync.ico"
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    return icons.write_ico(destino)
+
+
 def compilar(consola: bool) -> Path:
     """Llama a PyInstaller y devuelve la ruta del ejecutable."""
     cmd = [
@@ -103,8 +115,12 @@ def compilar(consola: bool) -> Path:
         "--hidden-import", "ui.tk_install",
         "--hidden-import", "ui.tk_crypto",
         "--console" if consola else "--windowed",
-        str(ENTRADA),
     ]
+    # El icono solo lo entiende el PyInstaller de Windows; en Linux se compila
+    # igual, sin él, en vez de abortar por un adorno.
+    if sys.platform == "win32":
+        cmd += ["--icon", str(escribir_icono())]
+    cmd.append(str(ENTRADA))
     print("$ " + " ".join(cmd))
     if subprocess.run(cmd, cwd=str(RAIZ)).returncode != 0:
         raise SystemExit("PyInstaller ha fallado.")
