@@ -10,6 +10,8 @@ de la letra de unidad.
 
 from __future__ import annotations
 
+import atexit
+import shutil
 import sys
 import tempfile
 from contextlib import contextmanager
@@ -65,6 +67,26 @@ def mkcfg(names, daemon=None, defaults=None, pairs=None) -> model.Config:
     return model.parse_config(data)
 
 
+_TEMPORALES: list[Path] = []
+
+
+def tmpdir(prefix: str = "perepen-test-") -> Path:
+    """Un directorio temporal que se borra al terminar el test.
+
+    `tempfile.mkdtemp()` a secas deja rastro: cada pasada de la batería dejaría
+    una carpeta más en el temp del usuario, y en Windows nadie las recoge. Aquí
+    se apuntan y se barren al salir, igual que hace `sandbox()` con las suyas."""
+    destino = Path(tempfile.mkdtemp(prefix=prefix))
+    _TEMPORALES.append(destino)
+    return destino
+
+
+@atexit.register
+def _limpiar_temporales() -> None:
+    for destino in _TEMPORALES:
+        shutil.rmtree(destino, ignore_errors=True)
+
+
 @contextmanager
 def sandbox():
     """Reapunta las rutas del modelo a un directorio temporal.
@@ -86,5 +108,4 @@ def sandbox():
     finally:
         for name, value in original.items():
             setattr(model, name, value)
-        import shutil
         shutil.rmtree(root, ignore_errors=True)

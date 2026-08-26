@@ -3,10 +3,9 @@
 
 import builtins
 import sys
-import tempfile
 from pathlib import Path
 
-from _harness import Checks, mkcfg
+from _harness import Checks, mkcfg, tmpdir
 
 import ui
 import ui.console
@@ -14,7 +13,7 @@ import ui.tk
 from ui import prefs
 
 c = Checks("fachada ui.start()")
-prefs.PREFS = Path(tempfile.mkdtemp(prefix="perepen-start-")) / "ui_prefs.json"
+prefs.PREFS = tmpdir("perepen-start-") / "ui_prefs.json"
 for _m in (ui, ui.console, ui.tk):
     _m.pair_status_notes = lambda cfg: {}
 

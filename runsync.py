@@ -49,6 +49,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 import ui  # noqa: E402
 from common import model, store  # noqa: E402
+from common.store import pid_alive  # noqa: E402
 from ui import prefs  # noqa: E402
 
 SELF = Path(__file__).resolve()
@@ -75,31 +76,6 @@ def pen_present() -> bool:
         return SENTINEL.exists()
     except OSError:
         return False
-
-
-def pid_alive(pid: int) -> bool:
-    """¿Sigue vivo ese proceso? OJO: en Windows NO vale os.kill(pid, 0): con
-    cualquier señal que no sea CTRL_C/CTRL_BREAK, os.kill llama a
-    TerminateProcess, es decir, MATA el proceso en vez de comprobarlo."""
-    if os.name == "nt":
-        import ctypes
-        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-        STILL_ACTIVE = 259
-        k32 = ctypes.windll.kernel32
-        handle = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-        if not handle:
-            return False
-        code = ctypes.c_ulong()
-        ok = k32.GetExitCodeProcess(handle, ctypes.byref(code))
-        k32.CloseHandle(handle)
-        return bool(ok) and code.value == STILL_ACTIVE
-    try:
-        os.kill(pid, 0)
-        return True
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
 
 
 def read_lock() -> dict | None:

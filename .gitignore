@@ -6,3 +6,7 @@ logs/*
 state/*
 sync_config.toml*
 rclone.conf
+build/
+dist/
+*.spec
+install/secret.py

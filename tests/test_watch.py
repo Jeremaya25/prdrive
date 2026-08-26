@@ -22,8 +22,19 @@ for esperada in ("Directorio en el equipo", "Registro en el sistema",
 
 filas_probe = watch.probe_rows()
 c("probe devuelve filas", all(len(f) == 2 for f in filas_probe), True)
-c("probe encuentra el pen desde el que corre",
-  any("PEREPEN OK" in nota for _, nota in filas_probe), True)
+c("probe mira en algún sitio", len(filas_probe) > 0, True)
+c("y de cada raíz dice qué ha encontrado",
+  all(nota.strip() for _, nota in filas_probe), True)
+
+# Que ENCUENTRE el pen solo se puede exigir si de verdad hay uno montado, y no lo
+# hay en los dos casos que más se dan: desarrollando sobre una copia en disco, y
+# con un pen VeraCrypt cuyo contenedor no está montado (ahí el fichero PEREPEN
+# vive dentro del contenedor, así que la raíz del pen físico no lo tiene).
+if any("PEREPEN OK" in nota for _, nota in filas_probe):
+    c("probe encuentra el pen montado", True, True)
+else:
+    print("  (saltado) no hay ningún pen montado ahora mismo: "
+          + "; ".join(f"{raiz} {nota}" for raiz, nota in filas_probe))
 
 c("log_tail devuelve una lista", isinstance(watch.log_tail(), list), True)
 c("is_installed responde un booleano", isinstance(watch.is_installed(), bool), True)

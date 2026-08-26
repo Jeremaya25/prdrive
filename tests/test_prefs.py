@@ -3,16 +3,15 @@
 
 import json
 import sys
-import tempfile
 import time
 from pathlib import Path
 
-from _harness import Checks, mkcfg
+from _harness import Checks, mkcfg, tmpdir
 
 from ui import prefs
 
 c = Checks("memoria de la UI (ui/prefs.py)")
-prefs.PREFS = Path(tempfile.mkdtemp(prefix="perepen-prefs-")) / "ui_prefs.json"
+prefs.PREFS = tmpdir("perepen-prefs-") / "ui_prefs.json"
 
 CFG = mkcfg(["upload", "keepass", "obsidian", "perepen"],
             {"pairs": ["obsidian", "keepass"], "interval_minutes": 15})

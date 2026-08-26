@@ -9,9 +9,10 @@ a bundled `rclone` binary. Pure Python **stdlib**, Python 3.11+ (`tomllib`). No
 build, no dependencies, no package manifest. Tests are plain scripts under
 `tests/` — `python tests/run_all.py`, no framework, nothing touches the pen.
 
-Three entry points stay at the repo root because the pen-root launchers
-(`runsync.pyw`/`.bat`/`.sh`) and `penwatch.py` locate them by fixed path;
-everything else is split by what it knows about:
+Four entry points stay at the repo root: three because the pen-root launchers
+(`runsync.pyw`/`.bat`/`.sh`) and `penwatch.py` locate them by fixed path, and
+`perepen-install.py` because it is what gets compiled and handed out. Everything
+else is split by what it knows about:
 
 ```
 rclone-sync/
@@ -23,7 +24,8 @@ rclone-sync/
 │   ├── bisync.py      everything that replicates rclone bisync's internals
 │   ├── config_file.py reads AND writes sync_config.toml (hand-rolled serializer)
 │   ├── catalog.py     the global pair catalogue on the NAS: read, cache, write
-│   └── store.py       the pen's JSON state files: tolerant reads, atomic writes
+│   └── store.py       the pen's JSON state files + pid_alive(): reads that
+│                       tolerate anything, atomic writes
 ├── ui/                knows how to ask the user and show results
 │   ├── __init__.py    Choice, the Frontend protocol, start(), fatal()
 │   ├── prefs.py       what the UI starts preloaded with (state/ui_prefs.json)
@@ -31,22 +33,45 @@ rclone-sync/
 │   ├── catalog_editor.py  add/edit/remove in the NAS catalogue — no Tk
 │   ├── flags_editor.py    rclone flags: text <-> table, layers, warnings — no Tk
 │   ├── watch.py       adapter over penwatch.py — no Tk
-│   ├── tk.py          TkFrontend: main window, output window, modal()/mostrar()
+│   ├── tk.py          TkFrontend: main window, output window, modal()/mostrar()/working()
 │   ├── tk_pairs.py    the pairs screen + the flags dialog (drawing only)
 │   ├── tk_watch.py    the auto-start screen (drawing only)
+│   ├── tk_install.py  the install wizard, step by step (drawing only)
+│   ├── tk_crypto.py   the wizard's encryption step: VeraCrypt/BitLocker (drawing only)
 │   └── console.py     ConsoleFrontend: the text menu
+├── install/           what the installer knows; no Tk, no pen needed
+│   ├── __init__.py    the NAS constants, InstallError, InstallState, python_command()
+│   ├── rclone_bin.py  get hold of an rclone to start with
+│   ├── remote.py      the embedded key, the ephemeral rclone.conf, the NAS catalogue
+│   ├── device.py      what volumes exist, which one is the pen, was it mounted right
+│   ├── crypto.py      VeraCrypt and BitLocker
+│   └── seed.py        the seeding, the device's sync_config.toml and the --resync
 └── tests/             plain scripts; run_all.py runs them in separate processes
 ```
 
 The `tk_*` modules only draw. Everything that decides or touches disk lives in
-`pair_editor.py` / `catalog_editor.py` / `flags_editor.py` / `watch.py`, which
-import no Tk and are tested headlessly.
+`pair_editor.py` / `catalog_editor.py` / `flags_editor.py` / `watch.py` /
+`install/`, which import no Tk and are tested headlessly.
 
-`perepen-install.py` also sits at the root and **is** tracked in git. It is
-deliberately autonomous — one file, stdlib only, no imports from `common/`/`ui/`
-— because it runs before any pen exists, from the NAS, with an embedded SFTP key.
-It duplicates `BASE_FLAGS`, `flags_to_args` and a TOML emitter on purpose; don't
-"fix" that by making it import the package.
+`perepen-install.py` also sits at the root and **is** tracked in git: it is the
+fourth entry point, and it is a launcher — arguments in, `ui/tk_install.py` out.
+Everything it knows lives in `install/`, which **does** import `common/`
+(`model.BASE_FLAGS`, `model.flags_to_args`, `config_file.save`,
+`store.pid_alive`): what the installer writes has to be byte-for-byte what
+`sync.py` will later read, and a second copy of those rules is a second place to
+get them wrong. What it must NOT import is `ui/` outside `tk_install`, and it
+must keep working with **no pen anywhere** — it runs before one exists.
+
+It ships as a PyInstaller executable (`build_installer.py` + the generated
+`.spec`), and that build is what embeds the NAS private key; the `.py` in this
+repo carries none and falls back to `keys/` when run from a provisioned pen, so
+the repo can be versioned without leaking anything. Two traps that only show up
+frozen: `sys.executable` is the installer and not Python (hence
+`install.python_command()`), and `sys.stdout` can be None with `--windowed`
+(hence `report()`, which opens a window when there is no console).
+
+`design/` holds the UI redesign mock-ups (`.dc.html` artboards). They are design,
+not code: nothing imports them and nothing is generated from them.
 
 `penwatch.py` must NOT import either package: it is copied to the host and has to
 keep working with the pen unplugged.
@@ -76,6 +101,11 @@ python penwatch.py status      # what is registered + whether the pen is visible
 python penwatch.py probe       # detection only: candidate roots and what matched
 python penwatch.py uninstall
 
+python perepen-install.py          # the install wizard for a NEW pen (Tk only, no console menu)
+python perepen-install.py --check  # rclone + NAS connection + catalogue, then exit
+python perepen-install.py --probe  # what drives it sees, then exit
+python build_installer.py          # build the .exe (PyInstaller, embeds the NAS key)
+
 python tests/run_all.py        # todos los tests (scripts sueltos, sin framework)
 python tests/test_pair_editor.py   # o uno solo
 ```
@@ -89,7 +119,10 @@ ownership" — prefix commands with `-c safe.directory=F:/rclone-sync`. There is
 remote, and `.gitignore` excludes everything device-specific (`bin/`, `keys/`,
 `filters/`, `logs/`, `state/`, `sync_config.toml`, `rclone.conf`), so what is
 tracked is the code (`sync.py`, `runsync.py`, `penwatch.py`, `perepen-install.py`,
-`common/`, `ui/`, `tests/`) plus `README.md`, `CLAUDE.md` and `.gitignore`. The
+`build_installer.py`, `common/`, `ui/`, `install/`, `tests/`) plus `design/`,
+`README.md`, `CLAUDE.md` and `.gitignore`. The installer's build artefacts
+(`build/`, `dist/`, `*.spec`) and its embedded key (`install/secret.py`) are
+ignored too — the key is what makes that last one non-negotiable. The
 catalogue cache (`state/catalog.toml`, `state/catalog.json`) is ignored with the
 rest of `state/`, and the `perepen` pair already excludes `rclone-sync/state/**`,
 so it never travels to the NAS either.
@@ -206,7 +239,10 @@ and it feeds both the UI prefill and `--auto`'s no-argument case. Only the UI
 writes it (`save_prefs()` from `ui_flow`, for `manual`/`daemon` — not `doctor`);
 `--auto` and `--daemon` only read, so an automatic start never overwrites what
 was chosen by hand. `store.read_json`/`write_json` are the shared primitives under
-both the lock and the prefs.
+both the lock and the prefs, and `store.pid_alive()` lives beside them because a
+lock file with a pid inside is only worth anything if you can ask whether whoever
+wrote it is still running: the daemon asks it about its own lock, and the
+installer about the ephemeral key directories a killed run left behind.
 
 **UI (`ui/`).** Two frontends implement the same four operations (`ask`,
 `approve_resync`, `info`, `run_sync`), and `ui.start(config, msg)` returns the
@@ -230,6 +266,17 @@ that is not viewable. `main_window` and `output_window` do the same by hand.
 `centrar()` only clamps to the screen when the parent is on the primary monitor —
 with two screens the coordinates go negative and "correcting" would drag the dialog
 across. Tests replace `mostrar()` (not `modal()`) to keep windows off the screen.
+The install wizard's root does it by hand too, in `tk_install.run_wizard()`; it
+centres **once**, at open, and not on every step — a wizard that re-centred as its
+body changed size would walk across the screen while you use it.
+
+`tk.working(parent, title, funcion)` is the third way of showing something
+running, next to `output_window` (a command whose output is the point) and a plain
+modal. It runs `funcion()` on a thread and shows a bare progress bar, and it
+exists for the two cases where the output cannot be shown: commands that take
+minutes and say nothing (creating a VeraCrypt container) and commands whose very
+command line is a secret (it carries the passphrase). It has no cancel button on
+purpose — what goes through it cannot be cut in half without leaving things worse.
 
 **`import tkinter` always goes inside the functions, never at module top level.**
 `ui/` is imported by the headless paths too (`--auto`, the service), where tkinter
@@ -249,6 +296,25 @@ Windows specifics that must be preserved: `pid_alive()` uses `OpenProcess`, neve
 every invocation flashes a console window; the daemon `chdir`s to the temp dir so
 the pen can be safely ejected. Child `sync.py` runs get `stdin=DEVNULL` on purpose,
 so a pair needing `--resync` is skipped instead of resynced unattended.
+
+**Provisioning a new pen (`perepen-install.py` + `install/` + `ui/tk_install.py`).**
+The wizard's order is not decorative: you cannot pick pairs before knowing where
+the pen goes, nor initialise them before the `sync.py` that initialises them
+exists. Each step carries its own condition and «Siguiente» stays disabled until
+it is met, so the window can never reach a place where the next button would
+fail. There is **no console fallback** here, unlike `runsync.py`, and that is
+deliberate: everything decided in it — which drive gets seeded, a passphrase typed
+twice, confirming a mirror that deletes — happens once in a pen's life, with the
+screen in front of you, and a text menu replicating it would double the code in
+the one destructive part of the project.
+
+`install.InstallError` is raised instead of `sys.exit` for the same reason as
+`model.ConfigError`: with a wizard open, killing the process closes the window in
+the user's face instead of letting them read what happened and retry. The SFTP key
+is written to a temp directory that records the owning pid; `remote.sweep_stale()`
+cleans up the ones left by installers that were killed hard (no `atexit`, no
+signal handler), and asks `store.pid_alive()` before touching any of them so two
+concurrent installs do not rob each other.
 
 **Mount watcher (`penwatch.py`).** Third entry point, and the only one that
 installs anything on the host. `install` copies the script to
@@ -374,8 +440,11 @@ re-parses what it just generated and refuses to write if it does not reproduce t
 same dict — this file governs deletions, so failing loudly beats writing something
 that does not read back. `save()` and `catalog.push()` both go through it. Work on
 the **raw dict**, never on `model.Config`: its `Pair`s arrive with the `[defaults]`
-already merged in. `header_of(text)` exists because the catalogue arrives as text,
-not as a file.
+already merged in. `header_of(text)` exists because some headers never touch this
+disk: the catalogue arrives from the NAS as text, and the installer hands
+`save(head=...)` the header of a config whose file does not exist yet — the
+default, `head=None`, keeps whatever header the target already had, which is what
+editing pairs needs.
 
 **penwatch from the UI.** `penwatch.py` keeps its `cmd_*` functions but they now
 print rows produced by `status_rows()`/`probe_rows()`/`log_tail()`, so the CLI and

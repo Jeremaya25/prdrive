@@ -61,9 +61,10 @@ def load_raw(path: Path | None = None) -> dict:
 def header_of(text: str) -> str:
     """El bloque de comentarios del principio de un TOML, tal cual.
 
-    Se separa de `header()` porque el catálogo del NAS llega como texto en
-    memoria y no como fichero, y su cabecera —que es el manual del esquema—
-    tiene que sobrevivir igualmente a que la reescribamos."""
+    Se separa de `header()` porque hay cabeceras que nunca llegan a tocar el
+    disco: la del catálogo del NAS —que es el manual del esquema— llega como
+    texto en memoria, y el instalador se la aplica al config que está creando.
+    En los dos casos tiene que sobrevivir a que reescribamos el fichero."""
     cabecera = []
     for line in text.splitlines():
         if line.strip() and not line.lstrip().startswith("#"):
@@ -207,9 +208,15 @@ def dumps_checked(raw: Mapping[str, Any], head: str = "") -> str:
     return text
 
 
-def save(raw: Mapping[str, Any], path: Path | None = None) -> Path:
-    """Valida, deja copia .bak y escribe. Devuelve la ruta del .bak (o None)."""
-    text = dumps_checked(raw, header(path))
+def save(raw: Mapping[str, Any], path: Path | None = None,
+         head: str | None = None) -> Path | None:
+    """Valida, deja copia .bak y escribe. Devuelve la ruta del .bak (o None).
+
+    `head` es el bloque de comentarios del principio. Por defecto se conserva el
+    que ya tuviera el fichero destino, que es lo que hace falta al editar
+    parejas; el instalador pasa el del catálogo, porque en un pen nuevo ese
+    fichero todavía no existe y su cabecera se perdería."""
+    text = dumps_checked(raw, header(path) if head is None else head)
 
     target = _config_path(path)
     backup = None

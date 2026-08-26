@@ -133,6 +133,57 @@ def mostrar(dlg, parent=None) -> None:
     dlg.wait_window()
 
 
+def working(parent, title: str, funcion, mensaje: str = "") -> tuple[bool, object]:
+    """Ejecuta `funcion()` en un hilo aparte y enseña una ventanita mientras.
+
+    Devuelve `(True, resultado)` o `(False, excepción)`.
+
+    Existe porque `output_window` no sirve para todo: hay órdenes que tardan
+    minutos y no dicen nada por su salida —crear un contenedor VeraCrypt—, y
+    otras cuya línea de órdenes NO se puede enseñar porque lleva la contraseña
+    dentro. Lanzarlas en el hilo de Tk congelaría la ventana, así que van a un
+    hilo y aquí solo se espera.
+
+    No hay botón de cancelar a propósito: lo que se lanza así no se puede cortar
+    a medias sin dejar las cosas peor (un contenedor a medio formatear)."""
+    from tkinter import ttk
+
+    dlg = modal(parent, title)
+    dlg.protocol("WM_DELETE_WINDOW", lambda: None)   # no se cierra a medias
+
+    marco = ttk.Frame(dlg, padding=16)
+    marco.grid()
+    ttk.Label(marco, text=mensaje or f"{title}…", wraplength=380,
+              justify="left").grid(row=0, column=0, sticky="w")
+    barra = ttk.Progressbar(marco, mode="indeterminate", length=380)
+    barra.grid(row=1, column=0, pady=(12, 0))
+    barra.start(12)
+
+    resultado: dict = {"ok": False, "valor": None, "hecho": False}
+
+    def trabajar() -> None:
+        try:
+            resultado["valor"] = funcion()
+            resultado["ok"] = True
+        except Exception as e:                       # se le enseña a quien llama
+            resultado["valor"] = e
+        finally:
+            resultado["hecho"] = True
+
+    threading.Thread(target=trabajar, daemon=True).start()
+
+    def mirar() -> None:
+        if resultado["hecho"]:
+            barra.stop()
+            dlg.destroy()
+            return
+        dlg.after(120, mirar)
+
+    dlg.after(120, mirar)
+    mostrar(dlg, parent)
+    return bool(resultado["ok"]), resultado["valor"]
+
+
 def main_window(config: Config, startup_msg: str | None) -> Choice | None:
     """La ventana principal: qué parejas, cada cuánto, y qué hacer con ellas.
     Devuelve la elección, o None si se cierra sin elegir.

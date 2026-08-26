@@ -110,8 +110,10 @@ def flags_to_args(flags: Mapping[str, Any]) -> list[str]:
         clave = ["a", "b"]    -> --clave a --clave b
 
     Vive aquí, y no en sync.py, porque es el último paso de la traducción
-    config -> comando: quien funde las capas de flags es este módulo, y la UI
-    tiene que poder enseñar en qué se convierten sin importar el motor.
+    config -> comando: quien funde las capas de flags es este módulo, y hay dos
+    sitios más que tienen que traducirlos exactamente igual sin arrastrar el
+    motor —la UI, que enseña en qué se convierten, y el instalador, que monta
+    órdenes de rclone antes de que exista ningún pen—.
     """
     args: list[str] = []
     for key, value in flags.items():

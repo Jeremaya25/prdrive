@@ -3,10 +3,9 @@
 
 import builtins
 import sys
-import tempfile
 from pathlib import Path
 
-from _harness import Checks, mkcfg
+from _harness import Checks, mkcfg, tmpdir
 
 import ui
 import ui.console
@@ -14,7 +13,7 @@ import ui.tk
 from ui import prefs
 
 c = Checks("precarga de los frontends")
-prefs.PREFS = Path(tempfile.mkdtemp(prefix="perepen-ui-")) / "ui_prefs.json"
+prefs.PREFS = tmpdir("perepen-ui-") / "ui_prefs.json"
 
 # Los frontends hacen 'from . import pair_status_notes', así que el sustituto va
 # en cada módulo, no solo en el paquete.

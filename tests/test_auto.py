@@ -2,16 +2,15 @@
 """--auto: precedencia de argumentos > recuerdo de la UI > [daemon] del TOML."""
 
 import sys
-import tempfile
 from pathlib import Path
 
-from _harness import Checks, mkcfg
+from _harness import Checks, mkcfg, tmpdir
 
 import runsync
 from ui import prefs
 
 c = Checks("arranque sin UI (--auto)")
-prefs.PREFS = Path(tempfile.mkdtemp(prefix="perepen-auto-")) / "ui_prefs.json"
+prefs.PREFS = tmpdir("perepen-auto-") / "ui_prefs.json"
 
 CFG = mkcfg(["upload", "keepass", "obsidian", "perepen"],
             {"pairs": ["obsidian", "keepass"], "interval_minutes": 15})
