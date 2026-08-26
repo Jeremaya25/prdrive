@@ -138,6 +138,15 @@ def _table_body(table: Mapping[str, Any], key_order: list[str] | None = None) ->
     return lines
 
 
+def dumps_table(table: Mapping[str, Any]) -> str:
+    """Una tabla suelta como texto TOML, una clave por línea.
+
+    Existe para el editor de flags de la UI: lo que se le enseña al usuario tiene
+    que ser exactamente lo que este fichero escribiría, o el formulario diría una
+    cosa y el TOML acabaría con otra."""
+    return "\n".join(_table_body(table))
+
+
 def dumps(raw: Mapping[str, Any], head: str = "") -> str:
     """El dict crudo como texto TOML."""
     out: list[str] = []

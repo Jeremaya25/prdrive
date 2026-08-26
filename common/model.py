@@ -101,6 +101,32 @@ def rclone_binary() -> str:
     return str(tmp)
 
 
+def flags_to_args(flags: Mapping[str, Any]) -> list[str]:
+    """{nombre: valor} -> argumentos de rclone.
+
+        clave = true          -> --clave
+        clave = false / None  -> (se omite)
+        clave = 4 / "texto"   -> --clave 4 / --clave texto
+        clave = ["a", "b"]    -> --clave a --clave b
+
+    Vive aquí, y no en sync.py, porque es el último paso de la traducción
+    config -> comando: quien funde las capas de flags es este módulo, y la UI
+    tiene que poder enseñar en qué se convierten sin importar el motor.
+    """
+    args: list[str] = []
+    for key, value in flags.items():
+        flag = "--" + str(key).replace("_", "-")
+        if value is True:
+            args.append(flag)
+        elif value is False or value is None:
+            continue
+        elif isinstance(value, (list, tuple)):
+            args += [item for v in value for item in (flag, str(v))]
+        else:
+            args += [flag, str(value)]
+    return args
+
+
 # ---------------------------------------------------------------------------
 # Modos
 # ---------------------------------------------------------------------------

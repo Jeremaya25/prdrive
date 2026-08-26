@@ -97,13 +97,10 @@ def plan_catalog_save(cat: catalog.Catalog | None, edited: Mapping[str, Any],
     else:
         i = pair_editor.pair_index(nuevo_raw, original_name)
         anterior = dict(nuevo_raw["pair"][i])
-        # Igual que en el editor local: se parte de lo anterior para no perder lo
-        # que el formulario no edita (flags, extra_flags…), y las listas vaciadas
-        # a mano sí desaparecen.
-        resultante = {**anterior, **campos}
-        for key in ("include", "exclude"):
-            if key in anterior and key not in campos:
-                resultante.pop(key, None)
+        # La misma regla que en el editor local, y por eso la función es la misma:
+        # se parte de lo anterior para no perder lo que el formulario no edita, y
+        # lo que se haya vaciado a mano sí desaparece.
+        resultante = pair_editor.merge_form(anterior, campos)
         nuevo_raw["pair"][i] = resultante
 
         difiere = catalog.diff_keys(anterior, resultante)

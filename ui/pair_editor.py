@@ -39,15 +39,22 @@ from typing import Any, Mapping, NamedTuple
 from common import bisync, catalog, config_file, model
 from common.model import Config, ConfigError
 
+from . import flags_editor
+
 # Los campos de los que depende el nombre de los listados de bisync. Ya no
 # deciden nada (eso lo hace `_prefixes`), pero son lo que se le enseña al
 # usuario: "cambia local, mode" se entiende y "cambia el prefijo" no.
 ENDPOINT_KEYS = ("local", "remote", "remote_path", "mode")
 
-# Lo que edita el formulario. El resto de claves de la pareja (flags,
-# extra_flags, use_filters_file...) se conservan tal cual: la UI no las toca,
-# porque la regla del proyecto es que los flags de rclone se escriben en el TOML.
-FORM_KEYS = ("name", "local", "remote_path", "remote", "mode", "include", "exclude")
+# Lo que edita el formulario. Lo que no aparece aquí (use_filters_file...) se
+# conserva tal cual: la UI no lo toca.
+FORM_KEYS = ("name", "local", "remote_path", "remote", "mode", "include", "exclude",
+             "flags", "extra_flags")
+
+# Claves opcionales: si el formulario las devuelve vacías, desaparecen de la
+# pareja en vez de quedarse a medias. Es lo que hace que vaciar el cuadro de
+# flags devuelva la pareja a lo que digan [defaults] y el modo.
+OPTIONAL_KEYS = ("include", "exclude", "flags", "extra_flags")
 
 MIRROR_MODES = ("up-mirror", "down-mirror")
 NOMBRE_PROHIBIDO = set('/\\:*?"<>|')
@@ -246,13 +253,30 @@ def clean_form(edited: Mapping[str, Any]) -> dict:
         if key not in edited:
             continue
         value = edited[key]
-        if isinstance(value, (list, tuple)):
+        if isinstance(value, dict):        # flags: los valores van con su tipo
+            if value:
+                salida[key] = dict(value)
+        elif isinstance(value, (list, tuple)):
             items = [str(v).strip() for v in value if str(v).strip()]
             if items:
                 salida[key] = items
         elif str(value).strip():
             salida[key] = str(value).strip()
     return salida
+
+
+def merge_form(anterior: Mapping[str, Any], campos: Mapping[str, Any]) -> dict:
+    """La pareja de antes con lo que trae el formulario encima.
+
+    Se parte de la anterior para no perder lo que el formulario no edita, pero
+    las claves opcionales que se hayan vaciado a mano sí desaparecen: si no,
+    borrar un flag del cuadro no lo borraría del TOML. Lo usan los dos editores,
+    el de este pen y el del catálogo, porque la regla tiene que ser la misma."""
+    resultante = {**dict(anterior), **dict(campos)}
+    for key in OPTIONAL_KEYS:
+        if key in anterior and key not in campos:
+            resultante.pop(key, None)
+    return resultante
 
 
 def plan_save(raw: Mapping[str, Any], edited: Mapping[str, Any],
@@ -271,6 +295,8 @@ def plan_save(raw: Mapping[str, Any], edited: Mapping[str, Any],
         resultante = campos
         nuevo_raw["pair"].append(resultante)
         plan.consequences.append(f"Se añade la pareja '{campos['name']}'.")
+        _analizar_flags(plan, raw.get("defaults") or {}, {"mode": _mode_of(campos)},
+                        resultante)
         if _mode_of(campos) == "bisync":
             plan.consequences.append(
                 "Al ser bisync, la primera pasada pedirá un --resync para fijar la "
@@ -278,12 +304,7 @@ def plan_save(raw: Mapping[str, Any], edited: Mapping[str, Any],
     else:
         i = pair_index(raw, original_name)
         anterior = dict(raw["pair"][i])
-        # Se parte de la pareja anterior para no perder lo que el formulario no
-        # edita; las listas vaciadas a mano sí desaparecen.
-        resultante = {**anterior, **campos}
-        for key in ("include", "exclude"):
-            if key in anterior and key not in campos:
-                resultante.pop(key, None)
+        resultante = merge_form(anterior, campos)
         nuevo_raw["pair"][i] = resultante
 
         _analizar_pareja(plan, raw, original_name, anterior, resultante)
@@ -331,8 +352,33 @@ def _analizar_pareja(plan: EditPlan, antes_raw: Mapping[str, Any], original_name
                 "Cambian los filtros: bisync exigirá un --resync, porque no puede "
                 "saber qué ficheros excluidos existían antes.")
 
+    _analizar_flags(plan, antes_raw.get("defaults") or {}, anterior, resultante)
+
     if not plan.consequences:
         plan.consequences.append("El cambio no afecta al estado de bisync.")
+
+
+def _analizar_flags(plan: EditPlan, defaults: Mapping[str, Any],
+                    anterior: Mapping[str, Any], resultante: Mapping[str, Any]) -> None:
+    """Lo que cambia en los flags de rclone de una pareja.
+
+    Los flags no tocan el baseline —el nombre de los listados no depende de
+    ellos—, así que aquí no se aparta nada. Lo que sí se hace es enseñarlos: son
+    lo que acaba en la línea de comandos, y el freno de los borrados es uno de
+    ellos."""
+    cambios = flags_editor.changes(anterior.get("flags"), resultante.get("flags"))
+    if cambios:
+        plan.consequences.append("Flags de la pareja: " + "; ".join(cambios) + ".")
+    if model._as_tuple(anterior.get("extra_flags")) != model._as_tuple(
+            resultante.get("extra_flags")):
+        nuevos = model._as_tuple(resultante.get("extra_flags"))
+        plan.consequences.append(
+            "Argumentos extra: " + (" ".join(nuevos) if nuevos else "ninguno") + ".")
+
+    comunes = defaults.get("flags") or {}
+    plan.warnings += flags_editor.warnings(
+        flags_editor.merge(_mode_of(anterior), comunes, anterior.get("flags")),
+        flags_editor.merge(_mode_of(resultante), comunes, resultante.get("flags")))
 
 
 def plan_remove(raw: Mapping[str, Any], name: str, clean_state: bool = False) -> EditPlan:
@@ -485,8 +531,36 @@ def plan_defaults(raw: Mapping[str, Any], edited: Mapping[str, Any]) -> EditPlan
             "Cambian los filtros comunes: las parejas bisync exigirán un --resync, "
             "porque no pueden saber qué ficheros excluidos existían antes.")
 
+    cambios = flags_editor.changes((raw.get("defaults") or {}).get("flags"),
+                                   nuevo_raw["defaults"].get("flags"))
+    if cambios:
+        plan.consequences.append("Flags comunes: " + "; ".join(cambios) + ". Valen "
+                                 "para todas las parejas que no lleven el suyo.")
+    plan.warnings += _avisos_de_flags(raw, nuevo_raw)
+
     model.parse_config(nuevo_raw)
     return plan
+
+
+def _avisos_de_flags(antes_raw: Mapping[str, Any],
+                     despues_raw: Mapping[str, Any]) -> list[str]:
+    """Los avisos de un cambio en [defaults.flags], pareja a pareja.
+
+    Se mira pareja por pareja porque el aviso depende del valor efectivo, y ese
+    sale de fundir modo, [defaults] y los flags propios: la misma línea en
+    [defaults] puede ser inocua en una pareja y quitarle el freno a otra."""
+    comunes_antes = (antes_raw.get("defaults") or {}).get("flags") or {}
+    comunes = (despues_raw.get("defaults") or {}).get("flags") or {}
+    avisos: list[str] = []
+    for pair in despues_raw.get("pair") or []:
+        propios = pair.get("flags")
+        for aviso in flags_editor.warnings(
+                flags_editor.merge(_mode_of(pair), comunes_antes, propios),
+                flags_editor.merge(_mode_of(pair), comunes, propios)):
+            texto = f"[{pair.get('name')}] {aviso}"
+            if texto not in avisos:
+                avisos.append(texto)
+    return avisos
 
 
 def plan_revert_defaults(raw: Mapping[str, Any], cat: catalog.Catalog | None) -> EditPlan:

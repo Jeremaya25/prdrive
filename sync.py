@@ -161,28 +161,6 @@ def ask_yes_no(question: str, default: bool = False) -> bool:
 # Construcción del comando
 # ---------------------------------------------------------------------------
 
-def flags_to_args(flags: Mapping) -> list[str]:
-    """{nombre: valor} -> argumentos de rclone.
-
-        clave = true          -> --clave
-        clave = false / None  -> (se omite)
-        clave = 4 / "texto"   -> --clave 4 / --clave texto
-        clave = ["a", "b"]    -> --clave a --clave b
-    """
-    args: list[str] = []
-    for key, value in flags.items():
-        flag = "--" + str(key).replace("_", "-")
-        if value is True:
-            args.append(flag)
-        elif value is False or value is None:
-            continue
-        elif isinstance(value, (list, tuple)):
-            args += [item for v in value for item in (flag, str(v))]
-        else:
-            args += [flag, str(value)]
-    return args
-
-
 def filter_args(pair: Pair, ffile: Path | None) -> list[str]:
     """Con fichero de filtros no se emiten --include/--exclude: se duplicarían
     las reglas y bisync dejaría de poder detectar cambios de filtrado."""
@@ -230,7 +208,7 @@ def build_command(ctx: RunContext, pair: Pair, ffile: Path | None,
 
     cmd = [ctx.binary, pair.mode.verb, pair.source, pair.dest]
     cmd += filter_args(pair, ffile)
-    cmd += flags_to_args(flags)
+    cmd += model.flags_to_args(flags)
     cmd += list(pair.extra_flags)
     return cmd, logfile
 
