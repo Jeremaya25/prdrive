@@ -104,4 +104,24 @@ with sandbox() as root:
     except model.ConfigError:
         c("save rechaza un config sin parejas", True, True)
 
+# --- lo que comparten save() y el catálogo del NAS ----------------------------
+BUENO = {"defaults": {"remote": "synology"},
+         "pair": [{"name": "notas", "local": "sync-data/notas",
+                   "remote_path": "/R/notas", "mode": "bisync"}]}
+
+texto = config_file.dumps_checked(BUENO, "# cabecera\n")
+c("dumps_checked devuelve el TOML ya verificado", tomllib.loads(texto), BUENO)
+c.contains("y respeta la cabecera que se le dé", texto, "# cabecera")
+
+try:
+    config_file.dumps_checked({"defaults": {}, "pair": []})
+    c("dumps_checked valida antes de generar nada", "no lanzó", "ConfigError")
+except model.ConfigError:
+    c("dumps_checked valida antes de generar nada", True, True)
+
+c("header_of recorta en la primera línea que no es comentario",
+  config_file.header_of("# uno\n# dos\n\n[defaults]\n# no\n"), "# uno\n# dos\n")
+c("y devuelve vacío si no hay cabecera",
+  config_file.header_of("[defaults]\nremote = \"x\"\n"), "")
+
 sys.exit(c.report())

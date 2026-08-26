@@ -17,7 +17,8 @@ Qué hace (menú interactivo, o «instalación completa» de un tirón):
     8. Inicializa esas parejas (--resync) usando el sync.py ya sembrado en el pen.
 
 La creación de parejas nuevas en el catálogo NO está aquí: se hace desde un pen ya
-provisionado con rclone-sync/catalog.py (que usa la clave completa del pen).
+provisionado, en runsync.py -> «Parejas…» -> bloque «Catálogo» (que usa la clave
+completa del pen). Aquí el catálogo solo se lee.
 
 Uso:
     python perepen-install.py            # menú interactivo

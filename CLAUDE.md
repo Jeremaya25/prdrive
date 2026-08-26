@@ -22,11 +22,13 @@ rclone-sync/
 │   ├── model.py       sync_config.toml parsed into resolved objects
 │   ├── bisync.py      everything that replicates rclone bisync's internals
 │   ├── config_file.py reads AND writes sync_config.toml (hand-rolled serializer)
+│   ├── catalog.py     the global pair catalogue on the NAS: read, cache, write
 │   └── store.py       the pen's JSON state files: tolerant reads, atomic writes
 ├── ui/                knows how to ask the user and show results
 │   ├── __init__.py    Choice, the Frontend protocol, start(), fatal()
 │   ├── prefs.py       what the UI starts preloaded with (state/ui_prefs.json)
-│   ├── pair_editor.py add/edit/remove pairs — the decisions, no Tk
+│   ├── pair_editor.py what THIS pen does with pairs — the decisions, no Tk
+│   ├── catalog_editor.py  add/edit/remove in the NAS catalogue — no Tk
 │   ├── watch.py       adapter over penwatch.py — no Tk
 │   ├── tk.py          TkFrontend: main window, output window, modal()
 │   ├── tk_pairs.py    the pairs screen (drawing only)
@@ -36,7 +38,14 @@ rclone-sync/
 ```
 
 The `tk_*` modules only draw. Everything that decides or touches disk lives in
-`pair_editor.py` / `watch.py`, which import no Tk and are tested headlessly.
+`pair_editor.py` / `catalog_editor.py` / `watch.py`, which import no Tk and are
+tested headlessly.
+
+`perepen-install.py` also sits at the root and **is** tracked in git. It is
+deliberately autonomous — one file, stdlib only, no imports from `common/`/`ui/`
+— because it runs before any pen exists, from the NAS, with an embedded SFTP key.
+It duplicates `BASE_FLAGS`, `flags_to_args` and a TOML emitter on purpose; don't
+"fix" that by making it import the package.
 
 `penwatch.py` must NOT import either package: it is copied to the host and has to
 keep working with the pen unplugged.
@@ -78,8 +87,11 @@ Git note: the repo sits on an exFAT/NTFS pen, so git refuses it as "dubious
 ownership" — prefix commands with `-c safe.directory=F:/rclone-sync`. There is no
 remote, and `.gitignore` excludes everything device-specific (`bin/`, `keys/`,
 `filters/`, `logs/`, `state/`, `sync_config.toml`, `rclone.conf`), so what is
-tracked is the code (`sync.py`, `runsync.py`, `penwatch.py`, `common/`) plus
-`README.md`, `CLAUDE.md` and `.gitignore`.
+tracked is the code (`sync.py`, `runsync.py`, `penwatch.py`, `perepen-install.py`,
+`common/`, `ui/`, `tests/`) plus `README.md`, `CLAUDE.md` and `.gitignore`. The
+catalogue cache (`state/catalog.toml`, `state/catalog.json`) is ignored with the
+rest of `state/`, and the `perepen` pair already excludes `rclone-sync/state/**`,
+so it never travels to the NAS either.
 
 ## Architecture
 
@@ -244,6 +256,40 @@ BitLocker volume errors rather than reporting "not found". It fires once per
 mount — the trigger re-arms only when the pen disappears. `--mode` decides what
 runs: `ui` (default), `sync`, or `daemon` (→ `runsync.py --auto`).
 
+**The catalogue is the source of truth for what pairs exist
+(`common/catalog.py` + `ui/catalog_editor.py`).** `synology:/PJ/Perepen-catalog/pairs.toml`
+is a file with the *same schema* as `sync_config.toml`, shared by every device, and
+`perepen-install.py` reads it to provision a new pen. **A pair is created or
+deleted there first**; each pen then only *chooses* which of them it uses. That
+split is the whole point and must not be collapsed back:
+
+- **Catalogue side** (`plan_catalog_save`/`plan_catalog_remove`/`plan_catalog_defaults`)
+  writes the NAS and changes nothing on this pen. `perepen` cannot be deleted from
+  the catalogue — `perepen-install.py` aborts without it.
+- **Pen side** (`plan_enable`/`plan_remove`/`plan_override`/`plan_revert`) writes
+  `sync_config.toml` and never touches the NAS. `[defaults]` is catalogue-governed
+  too, via `plan_defaults`/`plan_revert_defaults`.
+
+`sync_config.toml` still holds **complete** pair entries, not references: `sync.py`
+must keep working with no network, and its schema did not change. Provenance is
+therefore *derived*, not stored — `catalog.diff_keys()` compares the local entry
+against `state/catalog.toml` (the last successful pull) to produce
+`catálogo` / `modificada aquí` / `huérfana` / `sin usar`. **Do not add a
+`from_catalog`-style key to the TOML**: `config_file.save()` demands strict
+round-trip equality and the file is hand-editable.
+
+Writing the catalogue is the riskiest thing in the project, so `catalog.push()`:
+generates and verifies the text first (`config_file.dumps_checked`), **re-reads the
+remote and refuses if it changed** since it was read (another pen may have edited
+it), copies `pairs.toml` → `pairs.toml.bak` on the NAS, and only then uploads.
+Rewriting keeps the header block and **loses the interleaved comments** — a
+deliberate trade for reusing the serializer that refuses to write what it cannot
+read back. `catalog.load()` never raises: no network falls back to
+`state/catalog.toml`, and a cached catalogue is **not editable** (`Catalog.editable`),
+because you cannot safely overwrite what you have not just read. `catalog.run()` is a
+module-level function precisely so every test replaces it — **no test may touch the
+network**. `catalog.NET_FLAGS` keeps a dead NAS from freezing the window for minutes.
+
 **Editing pairs from the UI (`ui/pair_editor.py`) — the dangerous part.**
 `bisync.expected_prefix()` is derived from `local`, `remote`, `remote_path` and
 `mode`. Change any of them and the expected listing name changes, so on the next
@@ -263,21 +309,35 @@ on the pair name, only the paths do, so `bisync.rename_pair_state()` moves
 `state/<name>/` and `filters/<name>.*` together (the `.md5` must travel with its
 file) and the baseline stays valid.
 
-`plan_save()`/`plan_remove()` return an `EditPlan` **without touching anything**;
-its `consequences` are shown before confirming. `EditPlan.execute()` does the disk
-surgery **before** writing the config, and undoes it if the write fails: the
-combination to avoid is "new config, old baseline", and this ordering can only
-ever fail towards "baseline shelved for nothing", which a `--resync` fixes.
+**The decision is taken by comparing prefixes, not keys.** `_prefixes(raw)` parses
+both the before and after configs and compares `bisync.expected_prefix()` per pair;
+`ENDPOINT_KEYS` now only produces the human-readable message. That is what makes
+`[defaults]` editable at all: `remote` and `pen_remote` feed *every* pair's
+endpoints, so one change there can invalidate several baselines with no pair having
+been touched — which is why `EditPlan.shelve` is a **list**. A prefix that
+*disappears* (bisync → another mode) also shelves: leaving an unchecked baseline
+behind is exactly how you set up the dangerous case for the day it goes back.
+
+`plan_*()` return an `EditPlan` **without touching anything**; its `consequences`
+are shown before confirming. `EditPlan.execute()` does the disk surgery **before**
+writing the config, and undoes it if the write fails: the combination to avoid is
+"new config, old baseline", and this ordering can only ever fail towards "baseline
+shelved for nothing", which a `--resync` fixes. Within the disk step, **rename runs
+before shelve**, so an edit that changes the name *and* an endpoint moves state and
+filters to the new name first and shelves that; the other order orphaned
+`filters/<old name>.txt`.
 
 **Writing the TOML (`common/config_file.py`).** `tomllib` only reads and the
 project takes no dependencies, so the serializer is hand-rolled. It covers what
 the schema uses: scalars, string arrays and one nested `flags` table. Two things
 to preserve: `[pair.flags]` binds to the **last** `[[pair]]` written, so it is
-emitted right after its own pair and never at the end; and `save()` re-parses what
-it just generated and refuses to write if it does not reproduce the same dict —
-this file governs deletions, so failing loudly beats writing something that does
-not read back. Work on the **raw dict**, never on `model.Config`: its `Pair`s
-arrive with the `[defaults]` already merged in.
+emitted right after its own pair and never at the end; and `dumps_checked()`
+re-parses what it just generated and refuses to write if it does not reproduce the
+same dict — this file governs deletions, so failing loudly beats writing something
+that does not read back. `save()` and `catalog.push()` both go through it. Work on
+the **raw dict**, never on `model.Config`: its `Pair`s arrive with the `[defaults]`
+already merged in. `header_of(text)` exists because the catalogue arrives as text,
+not as a file.
 
 **penwatch from the UI.** `penwatch.py` keeps its `cmd_*` functions but they now
 print rows produced by `status_rows()`/`probe_rows()`/`log_tail()`, so the CLI and
@@ -291,12 +351,14 @@ way: penwatch is copied to the host and has to work with the pen unplugged.
 - All comments, docstrings and user-facing output are **Spanish**. Keep it that way.
 - Comments explain *why* against rclone's actual behaviour, often citing the rclone
   source file. Preserve that when touching bisync-related code.
-- `sync_config.toml` is per-device and generated by `perepen-install.py` (not in
-  this repo) from a catalogue on the NAS; it can be edited by hand.
+- `sync_config.toml` is per-device: `perepen-install.py` generates it from the NAS
+  catalogue when provisioning, and from then on the pairs screen maintains it. It
+  can still be edited by hand — a pair that ends up differing from the catalogue is
+  reported as "modificada aquí", not corrected.
 
 ## Documentation
 
-The authoritative manual is the **pen root** `../README.md` (13 sections: daily use,
+The authoritative manual is the **pen root** `../README.md` (14 sections: daily use,
 service, modes, config, filters, bisync internals, troubleshooting, security). The
 `README.md` inside this folder is an older version and has drifted — it predates
 `--doctor`, `runsync.py`, `pen_remote`, per-pair filter files, the `state/<pair>/`

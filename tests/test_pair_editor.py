@@ -14,7 +14,9 @@ from pathlib import Path
 
 from _harness import Checks, sandbox
 
-from common import bisync, config_file, model
+import tomllib
+
+from common import bisync, catalog, config_file, model
 from common.model import ConfigError
 from ui import pair_editor
 
@@ -63,7 +65,7 @@ with sandbox():
     c("de partida el baseline es válido", estado_de("notas")[0].status, "ok")
 
     plan = pair_editor.plan_save(raw, {**BASE[0], "remote_path": "/R/otro"}, "notas")
-    c("cambiar remote_path se planea apartando el baseline", plan.shelve, "notas")
+    c("cambiar remote_path se planea apartando el baseline", plan.shelve, ["notas"])
     c("plan_save no ha tocado nada todavía", estado_de("notas")[0].status, "ok")
     c("y lo explica antes de confirmar",
       any("--resync" in x for x in plan.consequences), True)
@@ -82,7 +84,7 @@ with sandbox():
     prefijo_antes = estado_de("notas")[0].prefix
 
     plan = pair_editor.plan_save(raw, {**BASE[0], "name": "apuntes"}, "notas")
-    c("renombrar no aparta nada", plan.shelve, None)
+    c("renombrar no aparta nada", plan.shelve, [])
     c("renombrar mueve el estado", plan.rename, ("notas", "apuntes"))
     plan.execute()
 
@@ -100,7 +102,7 @@ with sandbox():
     raw = preparar()
     dar_baseline(raw, "notas")
     plan = pair_editor.plan_save(raw, {**BASE[0], "exclude": ["borrador/**"]}, "notas")
-    c("cambiar filtros no aparta el baseline", (plan.shelve, plan.rename), (None, None))
+    c("cambiar filtros no aparta el baseline", (plan.shelve, plan.rename), ([], None))
     c("pero avisa del resync", any("--resync" in x for x in plan.consequences), True)
     plan.execute()
     c("y bisync efectivamente lo pide", estado_de("notas")[1].needs_resync, True)
@@ -122,10 +124,10 @@ with sandbox():
     plan = pair_editor.plan_remove(raw, "notas")
     c("sin limpiar: avisa de lo que queda suelto",
       any("sin usar" in x for x in plan.consequences), True)
-    c("sin limpiar no aparta nada", plan.shelve, None)
+    c("sin limpiar no aparta nada", plan.shelve, [])
 
     plan = pair_editor.plan_remove(raw, "notas", clean_state=True)
-    c("limpiando sí aparta el baseline", plan.shelve, "notas")
+    c("limpiando sí aparta el baseline", plan.shelve, ["notas"])
     plan.execute()
     c("la pareja ya no está", model.load_config().names, ["subida"])
     c("y se ha caído también de [daemon].pairs",
@@ -189,5 +191,150 @@ with sandbox():
     c("y el baseline vuelve a su sitio", estado_de("notas")[0].status, "ok")
     c("sin dejar restos apartados",
       [p.name for p in model.STATE_DIR.iterdir() if ".old-" in p.name], [])
+
+# --- renombrar Y cambiar un extremo a la vez ----------------------------------
+# El caso que se colaba: antes eran ramas excluyentes, así que se apartaba
+# state/notas/ y filters/notas.txt se quedaba huérfano con el nombre viejo.
+with sandbox():
+    raw = preparar()
+    dar_baseline(raw, "notas")
+    plan = pair_editor.plan_save(
+        raw, {**BASE[0], "name": "apuntes", "remote_path": "/R/otro"}, "notas")
+    c("renombrar y mover el extremo hace las dos cosas",
+      (plan.rename, plan.shelve), (("notas", "apuntes"), ["apuntes"]))
+    plan.execute()
+    c("el baseline se aparta ya con el nombre nuevo",
+      any(p.name.startswith("apuntes.old-") for p in model.STATE_DIR.iterdir()), True)
+    c("no queda nada con el nombre viejo",
+      [p.name for p in model.STATE_DIR.iterdir() if p.name.startswith("notas")], [])
+    c("ni filtros huérfanos", (model.FILTERS_DIR / "notas.txt").exists(), False)
+
+# --- [defaults]: un cambio ahí invalida VARIOS baselines a la vez -------------
+with sandbox():
+    raw = preparar(pairs=[BASE[0], {"name": "otra", "local": "sync-data/otra",
+                                    "remote_path": "/R/otra", "mode": "bisync"}])
+    dar_baseline(raw, "notas")
+    dar_baseline(raw, "otra")
+
+    plan = pair_editor.plan_defaults(raw, {"remote": "synology", "pen_remote": "pen"})
+    c("pen_remote cambia el extremo local de todas", sorted(plan.shelve),
+      ["notas", "otra"])
+    c("y se explica por qué",
+      any("todas las parejas" in x for x in plan.consequences), True)
+    plan.execute()
+    c("las dos se quedan sin baseline",
+      (estado_de("notas")[0].status, estado_de("otra")[0].status), ("fresh", "fresh"))
+
+with sandbox():
+    raw = preparar()
+    dar_baseline(raw, "notas")
+    plan = pair_editor.plan_defaults(raw, {"remote": "synology", "keep_logs": True})
+    c("un cambio de [defaults] inocuo no aparta nada", plan.shelve, [])
+    plan.execute()
+    c("el baseline sigue valiendo", estado_de("notas")[0].status, "ok")
+    c("y keep_logs ha quedado escrito",
+      config_file.load_raw()["defaults"].get("keep_logs"), True)
+
+# --- este pen frente al catálogo ----------------------------------------------
+CAT = {"defaults": {"remote": "synology"},
+       "pair": [dict(BASE[0]), dict(BASE[1]),
+                {"name": "fotos", "local": "sync-data/fotos",
+                 "remote_path": "/R/fotos", "mode": "up"}]}
+
+
+def falso_catalogo(raw=None):
+    texto = config_file.dumps(raw if raw is not None else CAT)
+    return catalog.Catalog(raw=tomllib.loads(texto), text=texto, source="remote",
+                           stamp="2026-01-01 00:00:00", endpoint="synology:/x/pairs.toml")
+
+
+with sandbox():
+    raw = preparar()
+    cat = falso_catalogo()
+
+    plan = pair_editor.plan_enable(raw, cat, "fotos")
+    c("usar una del catálogo la copia tal cual",
+      plan.raw["pair"][-1], catalog.find_pair(cat, "fotos"))
+    plan.execute()
+    c("y aparece en el config", model.load_config().names, ["notas", "subida", "fotos"])
+
+    raw = config_file.load_raw()
+    try:
+        pair_editor.plan_enable(raw, cat, "fotos")
+        c("no se puede usar dos veces la misma", "no lanzó", "ConfigError")
+    except ConfigError as e:
+        c("no se puede usar dos veces la misma", "ya está en este pen" in str(e), True)
+    try:
+        pair_editor.plan_enable(raw, cat, "inventada")
+        c("ni una que no está en el catálogo", "no lanzó", "ConfigError")
+    except ConfigError as e:
+        c("ni una que no está en el catálogo", "Créala primero" in str(e), True)
+
+with sandbox():
+    raw = preparar()
+    cat = falso_catalogo()
+    filas = {f.name: f for f in pair_editor.catalog_rows(
+        model.parse_config(raw), raw, cat)}
+    c("la lista trae las del catálogo y las de aquí", sorted(filas),
+      ["fotos", "notas", "subida"])
+    c("las que coinciden salen como del catálogo", filas["notas"].origen,
+      pair_editor.ORIGEN_CATALOGO)
+    c("las que no se usan aquí salen sin marcar",
+      (filas["fotos"].en_pen, filas["fotos"].origen),
+      (False, pair_editor.ORIGEN_SIN_USAR))
+
+    modificado = {**raw, "pair": [{**BASE[0], "remote_path": "/R/mio"}, dict(BASE[1])]}
+    filas = {f.name: f for f in pair_editor.catalog_rows(
+        model.parse_config(modificado), modificado, cat)}
+    c("una pareja divergente se marca", filas["notas"].origen, pair_editor.ORIGEN_LOCAL)
+    c("y se dice en qué difiere", filas["notas"].difiere, ("remote_path",))
+
+    huerfana = {**raw, "pair": [dict(BASE[0]), dict(BASE[1]),
+                                {"name": "vieja", "local": "sync-data/vieja",
+                                 "remote_path": "/R/vieja", "mode": "up"}]}
+    filas = {f.name: f for f in pair_editor.catalog_rows(
+        model.parse_config(huerfana), huerfana, cat)}
+    c("la que ya no está en el catálogo se marca huérfana",
+      filas["vieja"].origen, pair_editor.ORIGEN_HUERFANA)
+
+    c("sin catálogo no se inventa un origen",
+      pair_editor.catalog_rows(model.parse_config(raw), raw, None)[0].origen,
+      pair_editor.ORIGEN_DESCONOCIDO)
+
+with sandbox():
+    modificado = {"defaults": {"remote": "synology"},
+                  "pair": [{**BASE[0], "remote_path": "/R/mio"}, dict(BASE[1])]}
+    raw = preparar(pairs=modificado["pair"])
+    cat = falso_catalogo()
+    dar_baseline(raw, "notas")
+
+    plan = pair_editor.plan_revert(raw, cat, "notas")
+    c("volver al catálogo aparta el baseline (cambia el extremo)", plan.shelve, ["notas"])
+    plan.execute()
+    c("y la pareja vuelve a la del catálogo",
+      next(p.remote_path for p in model.load_config().pairs if p.name == "notas"),
+      "/R/notas")
+
+    try:
+        pair_editor.plan_revert(config_file.load_raw(), cat, "notas")
+        c("volver cuando ya coincide se rechaza", "no lanzó", "ConfigError")
+    except ConfigError as e:
+        c("volver cuando ya coincide se rechaza", "ya es exactamente" in str(e), True)
+
+with sandbox():
+    raw = preparar()
+    cat = falso_catalogo()
+    c("los defaults iguales salen como del catálogo",
+      pair_editor.defaults_origin(raw, cat), (pair_editor.ORIGEN_CATALOGO, ()))
+
+    distintos = {**raw, "defaults": {"remote": "synology", "keep_logs": True}}
+    c("y si difieren se dice en qué",
+      pair_editor.defaults_origin(distintos, cat),
+      (pair_editor.ORIGEN_LOCAL, ("keep_logs",)))
+
+    model.CONFIG_FILE.write_text(config_file.dumps(distintos), encoding="utf-8")
+    pair_editor.plan_revert_defaults(distintos, cat).execute()
+    c("volver a los defaults del catálogo los deja igual",
+      config_file.load_raw()["defaults"], cat.defaults)
 
 sys.exit(c.report())

@@ -58,22 +58,30 @@ def load_raw(path: Path | None = None) -> dict:
         raise ConfigError(f"{target.name} no es TOML válido: {e}") from e
 
 
+def header_of(text: str) -> str:
+    """El bloque de comentarios del principio de un TOML, tal cual.
+
+    Se separa de `header()` porque el catálogo del NAS llega como texto en
+    memoria y no como fichero, y su cabecera —que es el manual del esquema—
+    tiene que sobrevivir igualmente a que la reescribamos."""
+    cabecera = []
+    for line in text.splitlines():
+        if line.strip() and not line.lstrip().startswith("#"):
+            break
+        cabecera.append(line)
+    return "\n".join(cabecera).rstrip() + "\n" if any(l.strip() for l in cabecera) else ""
+
+
 def header(path: Path | None = None) -> str:
-    """El bloque de comentarios del principio del fichero, tal cual.
+    """La cabecera del fichero de configuración de este pen.
 
     Dice de dónde sale el fichero (lo genera perepen-install.py desde el
     catálogo del NAS), así que sobrevive a que lo reescribamos."""
     target = _config_path(path)
     try:
-        lines = target.read_text(encoding="utf-8").splitlines()
+        return header_of(target.read_text(encoding="utf-8"))
     except OSError:
         return ""
-    cabecera = []
-    for line in lines:
-        if line.strip() and not line.lstrip().startswith("#"):
-            break
-        cabecera.append(line)
-    return "\n".join(cabecera).rstrip() + "\n" if any(l.strip() for l in cabecera) else ""
 
 
 # ---------------------------------------------------------------------------
@@ -166,11 +174,15 @@ def dumps(raw: Mapping[str, Any], head: str = "") -> str:
     return "\n".join(out).rstrip() + "\n"
 
 
-def save(raw: Mapping[str, Any], path: Path | None = None) -> Path:
-    """Valida, deja copia .bak y escribe. Devuelve la ruta del .bak (o None)."""
+def dumps_checked(raw: Mapping[str, Any], head: str = "") -> str:
+    """El TOML generado, ya validado y releído. ConfigError si algo no cuadra.
+
+    Es la parte de `save()` que no depende de escribir en disco, y por eso vive
+    aparte: el catálogo del NAS pasa por aquí antes de subirse, y allí un fichero
+    que no se relee igual es todavía peor, porque gobierna borrados en TODOS los
+    dispositivos y no solo en este pen."""
     model.parse_config(raw)                      # ¿tiene sentido lo que se pide?
 
-    head = header(path)
     text = dumps(raw, head)
 
     # ¿Y se relee igual que se ha escrito? Si el serializador se deja algo, es
@@ -183,6 +195,12 @@ def save(raw: Mapping[str, Any], path: Path | None = None) -> Path:
         raise ConfigError(
             "El config generado no reproduce lo que se pidió. No se ha escrito.\n"
             "Es un fallo del serializador, no de tu configuración.")
+    return text
+
+
+def save(raw: Mapping[str, Any], path: Path | None = None) -> Path:
+    """Valida, deja copia .bak y escribe. Devuelve la ruta del .bak (o None)."""
+    text = dumps_checked(raw, header(path))
 
     target = _config_path(path)
     backup = None
