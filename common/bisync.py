@@ -18,6 +18,7 @@ import hashlib
 import os
 import re
 import shutil
+from datetime import datetime
 from pathlib import Path
 from typing import NamedTuple
 
@@ -265,6 +266,67 @@ def normalize_prefix(pair: Pair) -> None:
     want = expected_prefix(pair)
     if state.prefix != want:
         rename_prefix(pair, state.prefix, want)
+
+
+def pair_state_paths(name: str) -> list[Path]:
+    """Lo que hay en disco atado a esa pareja: su workdir y su fichero de filtros.
+
+    Sirve para avisar de qué queda huérfano al quitar una pareja, y para
+    limpiarlo si se pide."""
+    encontrados = [model.STATE_DIR / name]
+    encontrados += [model.FILTERS_DIR / f"{name}.txt",
+                    model.FILTERS_DIR / f"{name}.txt.md5"]
+    return [p for p in encontrados if p.exists()]
+
+
+def shelve_baseline(name: str) -> Path | None:
+    """Aparta el baseline de una pareja: state/<n>/ -> state/<n>.old-<fecha>/.
+
+    Es lo que hay que hacer cuando cambia un EXTREMO de la pareja (local, remote,
+    remote_path o mode). No basta con dejar que normalize_prefix() renombre los
+    listados al prefijo nuevo: eso le estaría diciendo a bisync que el listado del
+    destino VIEJO describe el destino NUEVO, y todo lo que no esté en el nuevo se
+    leería como borrado y se propagaría al otro lado. Apartándolo, la pareja queda
+    'fresh' y exige un --resync explícito, que es una conversación.
+
+    Se renombra en vez de borrar por si hay que volver atrás; el directorio
+    apartado queda inerte, porque lo que recorre state/ solo mira su primer nivel.
+
+    Devuelve dónde ha quedado, o None si no había baseline que apartar."""
+    workdir = model.STATE_DIR / name
+    if not workdir.is_dir():
+        return None
+    sello = f"{datetime.now():%Y%m%d_%H%M%S}"
+    destino = model.STATE_DIR / f"{name}.old-{sello}"
+    n = 1
+    while destino.exists():
+        destino = model.STATE_DIR / f"{name}.old-{sello}_{n}"
+        n += 1
+    workdir.rename(destino)
+    return destino
+
+
+def rename_pair_state(old: str, new: str) -> list[tuple[Path, Path]]:
+    """Mueve el estado de una pareja cuando solo le cambia el nombre.
+
+    El prefijo de los listados NO depende del nombre (ver expected_prefix: sale de
+    los extremos), así que renombrar no invalida el baseline. Lo que sí cuelga del
+    nombre son las rutas: state/<nombre>/ y filters/<nombre>.txt, con su .md5 al
+    lado. Se mueven juntos para que el hash que guarda bisync siga cuadrando.
+
+    Devuelve los movimientos como (origen, destino) para poder deshacerlos."""
+    movimientos: list[tuple[Path, Path]] = []
+    origen, destino = model.STATE_DIR / old, model.STATE_DIR / new
+    if origen.is_dir() and not destino.exists():
+        origen.rename(destino)
+        movimientos.append((origen, destino))
+    for sufijo in (".txt", ".txt.md5"):
+        f_old = model.FILTERS_DIR / f"{old}{sufijo}"
+        f_new = model.FILTERS_DIR / f"{new}{sufijo}"
+        if f_old.exists() and not f_new.exists():
+            f_old.rename(f_new)
+            movimientos.append((f_old, f_new))
+    return movimientos
 
 
 _TIP_RE = re.compile(r"^\s*(Path1|Path2):\s*(.+?)\s*$", re.MULTILINE)

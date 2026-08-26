@@ -467,13 +467,15 @@ def main() -> int:
     for d in (model.STATE_DIR, model.FILTERS_DIR):
         d.mkdir(parents=True, exist_ok=True)
 
-    config = model.load_config()
-    if args.list:
-        return list_pairs(config)
-    if args.doctor:
-        return doctor(config)
-
-    selected = config.select(args.pairs) if args.pairs else list(config.pairs)
+    try:
+        config = model.load_config()
+        if args.list:
+            return list_pairs(config)
+        if args.doctor:
+            return doctor(config)
+        selected = config.select(args.pairs) if args.pairs else list(config.pairs)
+    except model.ConfigError as e:
+        sys.exit(str(e))
     if not model.RCLONE_CONF.exists():
         sys.exit(f"No existe {model.RCLONE_CONF}. Crea la config de rclone con el "
                  f"remote SFTP.")

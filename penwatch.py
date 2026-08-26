@@ -785,43 +785,64 @@ def registered_state() -> str:
     return "; ".join(bits) or "sin servicio ni autostart registrados"
 
 
-def cmd_status(_args: argparse.Namespace) -> int:
+# Ancho de la columna de etiquetas de 'status'. Se saca aquí para que la CLI y
+# la UI de runsync pinten lo mismo sin repetir el formato.
+LABEL_WIDTH = 23
+
+
+def status_rows() -> list[tuple[str, str]]:
+    """Qué hay instalado y cómo está, como (etiqueta, valor).
+
+    Una etiqueta vacía es una línea suelta, sin columna. Devolver filas en vez de
+    imprimirlas permite que la UI de runsync enseñe exactamente lo mismo que la
+    línea de comandos sin tener que analizar texto."""
     cfg = read_json(CONFIG_FILE)
     state = read_json(STATE_FILE)
-    print(f"Directorio en el equipo : {HOST_DIR} {'(OK)' if HOST_DIR.exists() else '(NO EXISTE)'}")
-    print(f"Registro en el sistema  : {registered_state()}")
+    filas = [
+        ("Directorio en el equipo",
+         f"{HOST_DIR} {'(OK)' if HOST_DIR.exists() else '(NO EXISTE)'}"),
+        ("Registro en el sistema", registered_state()),
+    ]
     if not cfg:
-        print("Sin configuración: este equipo no tiene el vigilante instalado.")
+        filas.append(("", "Sin configuración: este equipo no tiene el vigilante instalado."))
     else:
-        print(f"Usuario registrado      : {cfg.get('user')}")
-        print(f"Modo                    : {cfg.get('mode')}"
-              + (f"  parejas={','.join(cfg['pairs'])}" if cfg.get("pairs") else "")
-              + (f"  intervalo={cfg['interval']:g}m" if cfg.get("interval") else ""))
-        print(f"Sondeo                  : cada {cfg.get('poll_seconds', POLL_SECONDS):g}s")
-        print(f"Instalado               : {cfg.get('installed')} desde {cfg.get('installed_from')}")
-        print(f"Pen esperado (id)       : {cfg.get('pen_id') or '(solo por presencia de ' + CONTROL_FILE + ')'}")
+        filas += [
+            ("Usuario registrado", f"{cfg.get('user')}"),
+            ("Modo", f"{cfg.get('mode')}"
+                     + (f"  parejas={','.join(cfg['pairs'])}" if cfg.get("pairs") else "")
+                     + (f"  intervalo={cfg['interval']:g}m" if cfg.get("interval") else "")),
+            ("Sondeo", f"cada {cfg.get('poll_seconds', POLL_SECONDS):g}s"),
+            ("Instalado", f"{cfg.get('installed')} desde {cfg.get('installed_from')}"),
+            ("Pen esperado (id)",
+             cfg.get("pen_id") or f"(solo por presencia de {CONTROL_FILE})"),
+        ]
 
     pid = int(state.get("watcher_pid") or -1)
-    print(f"Vigilante               : {'vivo (pid %d)' % pid if pid_alive(pid) else 'parado'}")
-    print(f"Último disparo          : {state.get('last_launch') or '(ninguno)'}"
-          f"{'' if state.get('last_launch_ok', True) else ' (FALLÓ)'}")
-    print(f"Disparo armado          : {'no (pen ya atendido)' if state.get('launched') else 'sí'}")
-
     root = find_pen(cfg)
-    print(f"Pen ahora mismo         : {root if root else 'no detectado'}")
+    filas += [
+        ("Vigilante", f"vivo (pid {pid})" if pid_alive(pid) else "parado"),
+        ("Último disparo", f"{state.get('last_launch') or '(ninguno)'}"
+                            f"{'' if state.get('last_launch_ok', True) else ' (FALLÓ)'}"),
+        ("Disparo armado", "no (pen ya atendido)" if state.get("launched") else "sí"),
+        ("Pen ahora mismo", str(root) if root else "no detectado"),
+    ]
+    return filas
 
-    if LOG_FILE.exists():
-        tail = LOG_FILE.read_text(encoding="utf-8", errors="replace").splitlines()[-10:]
-        if tail:
-            print(f"\n--- últimas {len(tail)} líneas de {LOG_FILE.name} ---")
-            for line in tail:
-                print("  " + line)
-    return 0
+
+def log_tail(lines: int = 10) -> list[str]:
+    """Las últimas líneas del diario del vigilante, si lo hay."""
+    try:
+        if not LOG_FILE.exists():
+            return []
+        return LOG_FILE.read_text(encoding="utf-8", errors="replace").splitlines()[-lines:]
+    except OSError:
+        return []
 
 
-def cmd_probe(_args: argparse.Namespace) -> int:
+def probe_rows() -> list[tuple[str, str]]:
+    """(raíz candidata, qué se ha encontrado en ella)."""
     cfg = read_json(CONFIG_FILE)
-    print(f"Buscando el fichero de control '{CONTROL_FILE}' en la raíz de:")
+    filas = []
     for root in candidate_roots(cfg):
         try:
             if not (root / CONTROL_FILE).is_file():
@@ -833,8 +854,30 @@ def cmd_probe(_args: argparse.Namespace) -> int:
                 note = f"{CONTROL_FILE} OK" + (f" (id {pen_id[:8]}…)" if pen_id else " (sin id)")
         except OSError as e:
             note = f"no legible ({e.__class__.__name__})"
-        print(f"  {str(root):<28} {note}")
-    root = find_pen(cfg)
+        filas.append((str(root), note))
+    return filas
+
+
+def detected_pen() -> Path | None:
+    return find_pen(read_json(CONFIG_FILE))
+
+
+def cmd_status(_args: argparse.Namespace) -> int:
+    for label, value in status_rows():
+        print(f"{label:<{LABEL_WIDTH}} : {value}" if label else value)
+    tail = log_tail()
+    if tail:
+        print(f"\n--- últimas {len(tail)} líneas de {LOG_FILE.name} ---")
+        for line in tail:
+            print("  " + line)
+    return 0
+
+
+def cmd_probe(_args: argparse.Namespace) -> int:
+    print(f"Buscando el fichero de control '{CONTROL_FILE}' en la raíz de:")
+    for root, note in probe_rows():
+        print(f"  {root:<28} {note}")
+    root = detected_pen()
     print(f"\nPen detectado: {root if root else 'ninguno'}")
     return 0
 

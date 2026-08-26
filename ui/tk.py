@@ -58,7 +58,18 @@ class TkFrontend:
         root.destroy()
 
     def run_sync(self, title: str, args: list[str]) -> int:
-        return output_window(title, args)
+        return output_window(title, [sys.executable, str(model.SYNC_PY), *args])
+
+
+def modal(parent, title: str):
+    """Un diálogo hijo que bloquea a su padre hasta que se cierra."""
+    import tkinter as tk
+    dlg = tk.Toplevel(parent)
+    dlg.title(f"{TITLE} — {title}")
+    dlg.transient(parent)
+    dlg.resizable(False, False)
+    dlg.grab_set()
+    return dlg
 
 
 def main_window(config: Config, startup_msg: str | None) -> Choice | None:
@@ -66,93 +77,138 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
     Devuelve la elección, o None si se cierra sin elegir.
     Lanza ImportError/TclError si no hay entorno gráfico."""
     import tkinter as tk
-    from tkinter import ttk
+    from tkinter import messagebox, ttk
 
-    names = config.names
-    notes = pair_status_notes(config)
-    d_pairs, d_interval, memo = prefs.startup_defaults(config)
+    from . import tk_pairs, tk_watch
 
     root = tk.Tk()  # TclError aquí si no hay display -> fallback consola
     root.title(TITLE)
     root.resizable(False, False)
     result: dict = {"choice": None}
+    vista: dict = {"config": config, "aviso": startup_msg}
 
     frame = ttk.Frame(root, padding=12)
     frame.grid(sticky="nsew")
-    row = 0
 
-    if startup_msg:
-        ttk.Label(frame, text=startup_msg, foreground="#775500",
-                  wraplength=340, justify="left").grid(
-            row=row, column=0, columnspan=2, sticky="w", pady=(0, 8))
-        row += 1
+    def recargar() -> None:
+        """El config ha cambiado bajo nuestros pies: releerlo y repintar.
 
-    ttk.Label(frame, text="Parejas:").grid(row=row, column=0, sticky="w")
-    row += 1
-    if memo:
-        ttk.Label(frame, text=memo, foreground="#666666").grid(
-            row=row, column=0, columnspan=2, sticky="w", padx=(12, 0))
-        row += 1
-    vars_by_name: dict[str, tk.BooleanVar] = {}
-    for name in names:
-        var = tk.BooleanVar(value=(name in d_pairs))
-        vars_by_name[name] = var
-        label = name + (f"   ⚠ {notes[name]}" if name in notes else "")
-        ttk.Checkbutton(frame, text=label, variable=var).grid(
-            row=row, column=0, columnspan=2, sticky="w", padx=(12, 0))
-        row += 1
-
-    ttk.Label(frame, text="Intervalo del servicio (min):").grid(
-        row=row, column=0, sticky="w", pady=(10, 0))
-    interval_var = tk.StringVar(value=f"{d_interval:g}")
-    ttk.Spinbox(frame, from_=1, to=1440, textvariable=interval_var, width=6).grid(
-        row=row, column=1, sticky="w", pady=(10, 0))
-    row += 1
-
-    def selected() -> list[str]:
-        return [n for n in names if vars_by_name[n].get()]
-
-    def choose(kind: str) -> None:
-        sel = selected()
-        if kind in ("manual", "daemon") and not sel:
-            return  # nada marcado, nada que hacer
-        if kind not in ("manual", "daemon"):
-            result["choice"] = Choice(kind)
-            root.destroy()
-            return
-        # El intervalo se recoge también en "manual": ahí no se usa, pero forma
-        # parte de lo que se recuerda para la próxima vez.
+        Si ha quedado ilegible se dice y se conserva el anterior en pantalla, que
+        es mejor que quedarse con una ventana en blanco."""
         try:
-            minutes = max(1.0, float(interval_var.get().replace(",", ".")))
-        except ValueError:
-            minutes = d_interval
-        result["choice"] = Choice(kind, tuple(sel), minutes)
-        root.destroy()
+            vista["config"] = model.load_config()
+        except model.ConfigError as e:
+            messagebox.showerror(TITLE, f"El config no se puede leer:\n\n{e}")
+            return
+        vista["aviso"] = None
+        render()
 
-    buttons = ttk.Frame(frame)
-    buttons.grid(row=row, column=0, columnspan=2, pady=(12, 0))
-    ttk.Button(buttons, text="Sincronizar ahora",
-               command=lambda: choose("manual")).grid(row=0, column=0, padx=3)
-    ttk.Button(buttons, text="Iniciar servicio",
-               command=lambda: choose("daemon")).grid(row=0, column=1, padx=3)
-    ttk.Button(buttons, text="Doctor",
-               command=lambda: choose("doctor")).grid(row=0, column=2, padx=3)
-    ttk.Button(buttons, text="Salir",
-               command=root.destroy).grid(row=0, column=3, padx=3)
+    def render() -> None:
+        for hijo in frame.winfo_children():
+            hijo.destroy()
 
+        config = vista["config"]
+        names = config.names
+        notes = pair_status_notes(config)
+        d_pairs, d_interval, memo = prefs.startup_defaults(config)
+        row = 0
+
+        if vista["aviso"]:
+            ttk.Label(frame, text=vista["aviso"], foreground="#775500",
+                      wraplength=340, justify="left").grid(
+                row=row, column=0, columnspan=2, sticky="w", pady=(0, 8))
+            row += 1
+
+        ttk.Label(frame, text="Parejas:").grid(row=row, column=0, sticky="w")
+        row += 1
+        if memo:
+            ttk.Label(frame, text=memo, foreground="#666666").grid(
+                row=row, column=0, columnspan=2, sticky="w", padx=(12, 0))
+            row += 1
+
+        vars_by_name: dict[str, tk.BooleanVar] = {}
+        for name in names:
+            var = tk.BooleanVar(value=(name in d_pairs))
+            vars_by_name[name] = var
+            label = name + (f"   ⚠ {notes[name]}" if name in notes else "")
+            ttk.Checkbutton(frame, text=label, variable=var).grid(
+                row=row, column=0, columnspan=2, sticky="w", padx=(12, 0))
+            row += 1
+
+        ttk.Label(frame, text="Intervalo del servicio (min):").grid(
+            row=row, column=0, sticky="w", pady=(10, 0))
+        interval_var = tk.StringVar(value=f"{d_interval:g}")
+        ttk.Spinbox(frame, from_=1, to=1440, textvariable=interval_var, width=6).grid(
+            row=row, column=1, sticky="w", pady=(10, 0))
+        row += 1
+
+        def selected() -> list[str]:
+            return [n for n in names if vars_by_name[n].get()]
+
+        def choose(kind: str) -> None:
+            sel = selected()
+            if kind in ("manual", "daemon") and not sel:
+                return  # nada marcado, nada que hacer
+            if kind not in ("manual", "daemon"):
+                result["choice"] = Choice(kind)
+                root.destroy()
+                return
+            # El intervalo se recoge también en "manual": ahí no se usa, pero
+            # forma parte de lo que se recuerda para la próxima vez.
+            try:
+                minutes = max(1.0, float(interval_var.get().replace(",", ".")))
+            except ValueError:
+                minutes = d_interval
+            result["choice"] = Choice(kind, tuple(sel), minutes)
+            root.destroy()
+
+        # Configuración arriba, separada: no son cosas que se ejecuten, son
+        # pantallas de las que se vuelve aquí.
+        ajustes = ttk.Frame(frame)
+        ajustes.grid(row=row, column=0, columnspan=2, pady=(12, 0), sticky="w")
+        ttk.Button(ajustes, text="Parejas…",
+                   command=lambda: tk_pairs.open_dialog(root, vista["config"])
+                   and recargar()).grid(row=0, column=0, padx=3)
+        ttk.Button(ajustes, text="Arranque automático…",
+                   command=lambda: tk_watch.open_dialog(root, vista["config"])).grid(row=0, column=1, padx=3)
+        row += 1
+
+        ttk.Separator(frame, orient="horizontal").grid(
+            row=row, column=0, columnspan=2, sticky="ew", pady=8)
+        row += 1
+
+        buttons = ttk.Frame(frame)
+        buttons.grid(row=row, column=0, columnspan=2)
+        ttk.Button(buttons, text="Sincronizar ahora",
+                   command=lambda: choose("manual")).grid(row=0, column=0, padx=3)
+        ttk.Button(buttons, text="Iniciar servicio",
+                   command=lambda: choose("daemon")).grid(row=0, column=1, padx=3)
+        ttk.Button(buttons, text="Doctor",
+                   command=lambda: choose("doctor")).grid(row=0, column=2, padx=3)
+        ttk.Button(buttons, text="Salir",
+                   command=root.destroy).grid(row=0, column=3, padx=3)
+
+    render()
     root.mainloop()
     return result["choice"]
 
 
-def output_window(title: str, args: list[str]) -> int:
-    """Ejecuta sync.py y muestra su salida en una ventana con desplazamiento.
-    Sustituye a la consola cuando no la hay. Cerrar la ventana a mitad de faena
-    corta el proceso (bisync se recupera con --recover en la siguiente pasada)."""
+def output_window(title: str, cmd: list[str], parent=None) -> int:
+    """Ejecuta una orden y muestra su salida en una ventana con desplazamiento.
+
+    Sustituye a la consola cuando no la hay, así que la usan tanto sync.py como
+    penwatch.py: recibe la orden entera y no supone a quién llama. Cerrar la
+    ventana a mitad de faena corta el proceso (bisync se recupera con --recover
+    en la siguiente pasada).
+
+    Con `parent` se cuelga de una ventana existente en vez de crear un Tk nuevo:
+    tkinter no lleva bien dos intérpretes a la vez, y desde un diálogo ya hay uno
+    en marcha."""
     import tkinter as tk
     from tkinter import ttk
 
     proc = subprocess.Popen(
-        [sys.executable, str(model.SYNC_PY), *args],
+        cmd,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -171,7 +227,14 @@ def output_window(title: str, args: list[str]) -> int:
 
     threading.Thread(target=reader, daemon=True).start()
 
-    root = tk.Tk()
+    if parent is None:
+        root = tk.Tk()
+        esperar = root.mainloop
+    else:
+        root = tk.Toplevel(parent)
+        root.transient(parent)
+        root.grab_set()
+        esperar = root.wait_window
     root.title(f"{TITLE} — {title}")
     text = tk.Text(root, width=104, height=30, state="disabled",
                    font=("Consolas" if os.name == "nt" else "monospace", 9))
@@ -214,7 +277,7 @@ def output_window(title: str, args: list[str]) -> int:
 
     root.protocol("WM_DELETE_WINDOW", on_close)
     root.after(120, poll)
-    root.mainloop()
+    esperar()
     if proc.poll() is None:
         proc.terminate()
     return state["rc"] if state["rc"] is not None else 1

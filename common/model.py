@@ -49,6 +49,17 @@ FILTERS_DIR = APP_DIR / "filters"
 LOG_DIR = APP_DIR / "logs"
 
 SYNC_PY = APP_DIR / "sync.py"       # a quien lanzan la UI y el servicio
+PENWATCH_PY = APP_DIR / "penwatch.py"
+
+class ConfigError(Exception):
+    """El config es inválido.
+
+    Se lanza en vez de hacer sys.exit porque este módulo lo usa también la UI,
+    donde matar el proceso significa cerrarle la ventana al usuario en las
+    narices en vez de enseñarle qué línea del TOML está mal. Los puntos de
+    entrada por línea de comandos la capturan y salen con su mensaje, así que
+    por consola no se nota la diferencia."""
+
 
 DEFAULT_REMOTE = "synology"
 DEFAULT_MODE = "bisync"
@@ -225,15 +236,15 @@ def _build_pair(raw: Mapping[str, Any], defaults: Mapping[str, Any]) -> Pair:
     de menos a más prioridad: base < modo < [defaults.flags] < [pair.flags]."""
     name = raw.get("name")
     if not name:
-        sys.exit("Hay una [[pair]] sin 'name' en el config.")
+        raise ConfigError("Hay una [[pair]] sin 'name' en el config.")
     for required in ("local", "remote_path"):
         if required not in raw:
-            sys.exit(f"[{name}] falta '{required}' en el config.")
+            raise ConfigError(f"[{name}] falta '{required}' en el config.")
 
     mode_name = raw.get("mode", DEFAULT_MODE)
     mode = MODES.get(mode_name)
     if mode is None:
-        sys.exit(f"[{name}] modo inválido: '{mode_name}'. Válidos: {sorted(MODES)}")
+        raise ConfigError(f"[{name}] modo inválido: '{mode_name}'. Válidos: {sorted(MODES)}")
 
     return Pair(
         name=name,
@@ -259,8 +270,9 @@ def _pen_remote_name(defaults: Mapping[str, Any]) -> str | None:
     if not name:
         return None
     if not re.fullmatch(r"[A-Za-z0-9_]+", name):
-        sys.exit(f"'pen_remote' debe ser alfanumérico sin guiones (va en una variable "
-                 f"de entorno RCLONE_CONFIG_<NOMBRE>_*): '{name}'")
+        raise ConfigError(
+            f"'pen_remote' debe ser alfanumérico sin guiones (va en una variable "
+            f"de entorno RCLONE_CONFIG_<NOMBRE>_*): '{name}'")
     return name
 
 
@@ -286,7 +298,8 @@ class Config:
         chosen = [p for p in self.pairs if p.name in wanted]
         missing = wanted - {p.name for p in chosen}
         if missing:
-            sys.exit(f"No existen estas parejas en el config: {', '.join(sorted(missing))}")
+            raise ConfigError(
+                f"No existen estas parejas en el config: {', '.join(sorted(missing))}")
         return chosen
 
     def pen_environment(self) -> dict[str, str]:
@@ -314,7 +327,7 @@ def parse_config(data: Mapping[str, Any]) -> Config:
     defaults = data.get("defaults", {})
     raw_pairs = data.get("pair", [])
     if not raw_pairs:
-        sys.exit("El config no tiene ninguna [[pair]] definida.")
+        raise ConfigError("El config no tiene ninguna [[pair]] definida.")
     return Config(
         pairs=tuple(_build_pair(p, defaults) for p in raw_pairs),
         daemon=data.get("daemon", {}),
@@ -325,6 +338,6 @@ def parse_config(data: Mapping[str, Any]) -> Config:
 
 def load_config() -> Config:
     if not CONFIG_FILE.exists():
-        sys.exit(f"No existe el fichero de configuración: {CONFIG_FILE}")
+        raise ConfigError(f"No existe el fichero de configuración: {CONFIG_FILE}")
     with CONFIG_FILE.open("rb") as f:
         return parse_config(tomllib.load(f))

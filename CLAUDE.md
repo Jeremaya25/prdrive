@@ -6,7 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Portable two-way sync between a Synology NAS (SFTP) and a USB pen drive, driven by
 a bundled `rclone` binary. Pure Python **stdlib**, Python 3.11+ (`tomllib`). No
-build, no dependencies, no test suite, no package manifest.
+build, no dependencies, no package manifest. Tests are plain scripts under
+`tests/` — `python tests/run_all.py`, no framework, nothing touches the pen.
 
 Three entry points stay at the repo root because the pen-root launchers
 (`runsync.pyw`/`.bat`/`.sh`) and `penwatch.py` locate them by fixed path;
@@ -20,13 +21,22 @@ rclone-sync/
 ├── common/            knows the config and rclone
 │   ├── model.py       sync_config.toml parsed into resolved objects
 │   ├── bisync.py      everything that replicates rclone bisync's internals
+│   ├── config_file.py reads AND writes sync_config.toml (hand-rolled serializer)
 │   └── store.py       the pen's JSON state files: tolerant reads, atomic writes
-└── ui/                knows how to ask the user and show results
-    ├── __init__.py    Choice, the Frontend protocol, start(), fatal()
-    ├── prefs.py       what the UI starts preloaded with (state/ui_prefs.json)
-    ├── tk.py          TkFrontend: main window, dialogs, output window
-    └── console.py     ConsoleFrontend: the text menu
+├── ui/                knows how to ask the user and show results
+│   ├── __init__.py    Choice, the Frontend protocol, start(), fatal()
+│   ├── prefs.py       what the UI starts preloaded with (state/ui_prefs.json)
+│   ├── pair_editor.py add/edit/remove pairs — the decisions, no Tk
+│   ├── watch.py       adapter over penwatch.py — no Tk
+│   ├── tk.py          TkFrontend: main window, output window, modal()
+│   ├── tk_pairs.py    the pairs screen (drawing only)
+│   ├── tk_watch.py    the auto-start screen (drawing only)
+│   └── console.py     ConsoleFrontend: the text menu
+└── tests/             plain scripts; run_all.py runs them in separate processes
 ```
+
+The `tk_*` modules only draw. Everything that decides or touches disk lives in
+`pair_editor.py` / `watch.py`, which import no Tk and are tested headlessly.
 
 `penwatch.py` must NOT import either package: it is copied to the host and has to
 keep working with the pen unplugged.
@@ -55,10 +65,14 @@ python penwatch.py install     # register the mount watcher on THIS machine/user
 python penwatch.py status      # what is registered + whether the pen is visible now
 python penwatch.py probe       # detection only: candidate roots and what matched
 python penwatch.py uninstall
+
+python tests/run_all.py        # todos los tests (scripts sueltos, sin framework)
+python tests/test_pair_editor.py   # o uno solo
 ```
 
 `runsync.py` with no args always **stops a previously started service** first.
-Verification is by `--doctor` and `--dry-run`; there is nothing to lint or test.
+Verification is by `tests/run_all.py`, `--doctor` and `--dry-run`; there is
+nothing to lint.
 
 Git note: the repo sits on an exFAT/NTFS pen, so git refuses it as "dubious
 ownership" — prefix commands with `-c safe.directory=F:/rclone-sync`. There is no
@@ -87,9 +101,16 @@ signature, because every layer it contributes is already merged:
 - `Config` — the pairs plus `[daemon]`, `keep_logs`, `pen_remote`, with
   `select()` (aborts on unknown names) and `pen_environment()`.
 
-An invalid `mode` is now rejected at parse time rather than when that pair runs,
-so a typo in the TOML stops `--list`/`--doctor`/a run alike instead of only the
+An invalid `mode` is rejected at parse time rather than when that pair runs, so a
+typo in the TOML stops `--list`/`--doctor`/a run alike instead of only the
 affected pair. Same message, earlier.
+
+Validation raises **`model.ConfigError`**, it does not `sys.exit`: the UI uses the
+same model, and there killing the process means closing the window in the user's
+face instead of showing which line is wrong. The CLI entry points catch it and
+exit with its message, so nothing changes on the console. The two surviving
+`sys.exit`s in `model.py` are the tomllib import (unrecoverable, at import time)
+and the missing rclone binary (environment, not config).
 
 **Config → command.** Flags merge in layers, last wins: `BASE_FLAGS` <
 `Mode.flags` < `[defaults.flags]` < `[pair.flags]` — all of it inside
@@ -222,6 +243,48 @@ host, and every pen access is wrapped in `try/except OSError` because a locked
 BitLocker volume errors rather than reporting "not found". It fires once per
 mount — the trigger re-arms only when the pen disappears. `--mode` decides what
 runs: `ui` (default), `sync`, or `daemon` (→ `runsync.py --auto`).
+
+**Editing pairs from the UI (`ui/pair_editor.py`) — the dangerous part.**
+`bisync.expected_prefix()` is derived from `local`, `remote`, `remote_path` and
+`mode`. Change any of them and the expected listing name changes, so on the next
+run `normalize_prefix()` would **rename the old baseline to the new name** —
+telling bisync that a listing of the *previous* destination describes the *new*
+one. Everything missing from the new side then reads as deleted and propagates,
+with `--max-delete 25` as the only brake. `normalize_prefix()` was written for the
+benign case (pen moves from `G:` to `F:`) and cannot tell the two apart.
+
+So the editor shelves the baseline itself: `bisync.shelve_baseline()` renames
+`state/<pair>/` to `state/<pair>.old-<date>/`, which leaves the pair `fresh` and
+forces an explicit `--resync`. Shelved directories are inert because everything
+that scans `state/` only looks at its top level.
+
+Renaming a pair is the opposite case and is free: the prefix does **not** depend
+on the pair name, only the paths do, so `bisync.rename_pair_state()` moves
+`state/<name>/` and `filters/<name>.*` together (the `.md5` must travel with its
+file) and the baseline stays valid.
+
+`plan_save()`/`plan_remove()` return an `EditPlan` **without touching anything**;
+its `consequences` are shown before confirming. `EditPlan.execute()` does the disk
+surgery **before** writing the config, and undoes it if the write fails: the
+combination to avoid is "new config, old baseline", and this ordering can only
+ever fail towards "baseline shelved for nothing", which a `--resync` fixes.
+
+**Writing the TOML (`common/config_file.py`).** `tomllib` only reads and the
+project takes no dependencies, so the serializer is hand-rolled. It covers what
+the schema uses: scalars, string arrays and one nested `flags` table. Two things
+to preserve: `[pair.flags]` binds to the **last** `[[pair]]` written, so it is
+emitted right after its own pair and never at the end; and `save()` re-parses what
+it just generated and refuses to write if it does not reproduce the same dict —
+this file governs deletions, so failing loudly beats writing something that does
+not read back. Work on the **raw dict**, never on `model.Config`: its `Pair`s
+arrive with the `[defaults]` already merged in.
+
+**penwatch from the UI.** `penwatch.py` keeps its `cmd_*` functions but they now
+print rows produced by `status_rows()`/`probe_rows()`/`log_tail()`, so the CLI and
+the UI show the same thing without parsing text. `ui/watch.py` imports penwatch
+for reads and shells out for `install`/`uninstall`, whose output goes to the same
+`output_window` used for `sync.py`. The dependency is one-way and must stay that
+way: penwatch is copied to the host and has to work with the pen unplugged.
 
 ## Conventions
 

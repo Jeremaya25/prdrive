@@ -294,7 +294,7 @@ def ui_flow() -> int:
 
     try:
         config = model.load_config()
-    except SystemExit as e:  # load_config hace sys.exit con el mensaje
+    except model.ConfigError as e:
         return ui.fatal(str(e))
 
     choice, frontend = ui.start(config, startup_msg)
@@ -338,7 +338,7 @@ def auto_start(rest: list[str]) -> int:
 
     try:
         config = model.load_config()
-    except SystemExit as e:
+    except model.ConfigError as e:
         return ui.fatal(str(e))
 
     names = config.names
