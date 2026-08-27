@@ -119,6 +119,20 @@ def fuente(rol: str = "texto"):
     return (familia("texto"), 10)
 
 
+def fuente_tcl(rol: str = "texto") -> str:
+    """La misma fuente, pero como **lista de Tcl** en una sola cadena.
+
+    Hace falta allí donde el valor no lo pone tkinter sino la base de opciones
+    (`option_add`), que guarda texto: Tcl lo parte por espacios, y «Segoe UI 10»
+    se lee como familia «Segoe», tamaño «UI». Ese error no aparece al crear el
+    widget, sino cuando ttk crea la listbox del desplegable, y entonces
+    `ttk::combobox::Post` se corta y la lista no llega a abrirse."""
+    familia_, *resto = fuente(rol)
+    if " " in familia_:
+        familia_ = "{%s}" % familia_
+    return " ".join([familia_] + [str(x) for x in resto])
+
+
 def rotulo(texto: str) -> str:
     """Un rótulo de sección: mayúsculas y letras separadas.
 
@@ -357,8 +371,7 @@ def apply(widget) -> None:
                           ("*TCombobox*Listbox.foreground", TINTA),
                           ("*TCombobox*Listbox.selectBackground", ACENTO_SUAVE),
                           ("*TCombobox*Listbox.selectForeground", TINTA),
-                          ("*TCombobox*Listbox.font", " ".join(
-                              str(x) for x in fuente()))):
+                          ("*TCombobox*Listbox.font", fuente_tcl())):
         try:
             raiz.option_add(opcion, valor)
         except Exception:
