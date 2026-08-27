@@ -649,12 +649,12 @@ files that use it — a device's `sync_config.toml` and the remote's `pairs.toml
 `config_file.dumps_checked()`: if it stops round-tripping, the serializer and the
 documented schema have drifted apart.
 
-Two things still to settle before the repo goes public:
+`LICENSE` is the Apache License 2.0, verbatim from apache.org, with the
+appendix's copyright line filled in. `README.md`'s «Licencia» section points at
+it; keep the two in step.
 
-- **`LICENSE` does not exist.** A public repo without one is "all rights
-  reserved", which is almost certainly not the intent.
-- **Commit authorship.** The history carries two personal e-mail addresses, one
-  of them on a corporate domain. Decide whether to rewrite authorship or squash
-  to a fresh initial commit before the first `push`. The history is otherwise
-  clean: no key, config or state file has ever been committed (verified with
-  `git log --diff-filter=A`).
+Nothing is left to settle before the repo goes public. The history is clean on
+both counts checked: every commit on every ref is authored **and** committed by
+`jeremaya <peredev@pm.me>` (verified with `git log --all --format='%an <%ae> |
+%cn <%ce>'`), and no key, config or state file has ever been committed (verified
+with `git log --diff-filter=A`).

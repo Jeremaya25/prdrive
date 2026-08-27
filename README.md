@@ -457,4 +457,4 @@ aquí, incluidas las trampas que no se ven leyendo el código.
 
 ## Licencia
 
-Pendiente de elegir.
+Apache License 2.0 — el texto completo está en [`LICENSE`](LICENSE).
