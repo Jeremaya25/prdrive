@@ -4,8 +4,8 @@ watch.py — Lo que la UI necesita de penwatch.py. Sin Tkinter.
 
 La dependencia va en un solo sentido: la UI conoce a penwatch, penwatch no conoce
 a nadie. Eso es deliberado y no se puede invertir — `penwatch.py` se copia al
-equipo y tiene que seguir funcionando con el pen desconectado, así que no puede
-importar nada que viva en el pen.
+equipo y tiene que seguir funcionando con el dispositivo desconectado, así que no puede
+importar nada que viva en el dispositivo.
 
 Para leer (estado, detección) se importa penwatch y se usan sus funciones, que ya
 devuelven filas. Para instalar y desinstalar se lanza como proceso: son órdenes
@@ -58,7 +58,7 @@ def log_tail(lines: int = 10) -> list[str]:
 
 def log_path() -> str:
     """Dónde vive el diario, para poder enseñarlo junto a lo que se lee de él.
-    Está en el equipo, nunca en el pen, y decirlo es media explicación."""
+    Está en el equipo, nunca en el dispositivo, y decirlo es media explicación."""
     try:
         return str(_penwatch().LOG_FILE)
     except Exception:

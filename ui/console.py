@@ -13,7 +13,7 @@ from __future__ import annotations
 import subprocess
 import sys
 
-from common import model
+from common import APP_NAME, model
 from common.model import Config
 
 from . import Choice, pair_status_notes, prefs
@@ -46,7 +46,7 @@ def main_menu(config: Config, startup_msg: str | None) -> Choice | None:
     notes = pair_status_notes(config)
     d_pairs, d_interval, memo = prefs.startup_defaults(config)
 
-    print("\n=== PerePen Sync ===")
+    print(f"\n=== {APP_NAME} ===")
     if startup_msg:
         print(startup_msg)
     for n in names:

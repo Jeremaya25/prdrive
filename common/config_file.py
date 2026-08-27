@@ -62,7 +62,7 @@ def header_of(text: str) -> str:
     """El bloque de comentarios del principio de un TOML, tal cual.
 
     Se separa de `header()` porque hay cabeceras que nunca llegan a tocar el
-    disco: la del catálogo del NAS —que es el manual del esquema— llega como
+    disco: la del catálogo del remoto —que es el manual del esquema— llega como
     texto en memoria, y el instalador se la aplica al config que está creando.
     En los dos casos tiene que sobrevivir a que reescribamos el fichero."""
     cabecera = []
@@ -74,10 +74,10 @@ def header_of(text: str) -> str:
 
 
 def header(path: Path | None = None) -> str:
-    """La cabecera del fichero de configuración de este pen.
+    """La cabecera del fichero de configuración de este dispositivo.
 
-    Dice de dónde sale el fichero (lo genera perepen-install.py desde el
-    catálogo del NAS), así que sobrevive a que lo reescribamos."""
+    Dice de dónde sale el fichero (lo genera el instalador desde el catálogo
+    del remoto), así que sobrevive a que lo reescribamos."""
     target = _config_path(path)
     try:
         return header_of(target.read_text(encoding="utf-8"))
@@ -154,10 +154,22 @@ def dumps(raw: Mapping[str, Any], head: str = "") -> str:
     if head:
         out.append(head.rstrip() + "\n")
 
+    # [remote] solo aparece en el catálogo: es cómo se define el remote en el
+    # rclone.conf de cada dispositivo, y es lo que hace que la conexión se teclee
+    # una sola vez. Va arriba porque es lo primero que se lee a ojo, y arriba es
+    # seguro: la que no puede moverse es [pair.flags], que se engancha a la
+    # ÚLTIMA [[pair]] escrita.
+    remoto = raw.get("remote") or {}
+    if remoto:
+        out.append("[remote]")
+        out += _table_body(remoto, ["name", "type", "host", "port", "user"])
+        out.append("")
+
     defaults = raw.get("defaults") or {}
     if defaults:
         out.append("[defaults]")
-        out += _table_body(defaults, ["remote", "pen_remote", "keep_logs"])
+        out += _table_body(defaults, ["remote", "device_remote", "catalog_path",
+                                      "recovery_path", "keep_logs"])
         out.append("")
         if defaults.get("flags"):
             out.append("[defaults.flags]")
@@ -188,9 +200,9 @@ def dumps_checked(raw: Mapping[str, Any], head: str = "") -> str:
     """El TOML generado, ya validado y releído. ConfigError si algo no cuadra.
 
     Es la parte de `save()` que no depende de escribir en disco, y por eso vive
-    aparte: el catálogo del NAS pasa por aquí antes de subirse, y allí un fichero
+    aparte: el catálogo del remoto pasa por aquí antes de subirse, y allí un fichero
     que no se relee igual es todavía peor, porque gobierna borrados en TODOS los
-    dispositivos y no solo en este pen."""
+    dispositivos y no solo en este dispositivo."""
     model.parse_config(raw)                      # ¿tiene sentido lo que se pide?
 
     text = dumps(raw, head)
@@ -214,7 +226,7 @@ def save(raw: Mapping[str, Any], path: Path | None = None,
 
     `head` es el bloque de comentarios del principio. Por defecto se conserva el
     que ya tuviera el fichero destino, que es lo que hace falta al editar
-    parejas; el instalador pasa el del catálogo, porque en un pen nuevo ese
+    parejas; el instalador pasa el del catálogo, porque en un dispositivo nuevo ese
     fichero todavía no existe y su cabecera se perdería."""
     text = dumps_checked(raw, header(path) if head is None else head)
 

@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-pair_editor.py — Lo que este pen hace con las parejas. Sin Tkinter.
+pair_editor.py — Lo que este dispositivo hace con las parejas. Sin Tkinter.
 
 Aquí no se dibuja nada: la pantalla (`ui/tk_pairs.py`) pide un plan, enseña sus
 consecuencias y, si el usuario confirma, lo ejecuta. Esa separación existe porque
 lo delicado no es el formulario, es lo que pasa en disco.
 
 El alta y la baja de una pareja NO viven aquí: pasan primero por el catálogo del
-NAS (`ui/catalog_editor.py`), porque una pareja es la misma para todos los
-dispositivos. Lo que decide este módulo es de este pen: cuáles de las del
+remoto (`ui/catalog_editor.py`), porque una pareja es la misma para todos los
+dispositivos. Lo que decide este módulo es de este dispositivo: cuáles de las del
 catálogo se usan aquí (`plan_enable` / `plan_remove`), si alguna se modifica solo
 aquí (`plan_override`) y cómo se vuelve a lo que dice el catálogo
 (`plan_revert`).
@@ -19,13 +19,13 @@ los extremos (`bisync.expected_prefix`), así que al cambiar uno,
 `normalize_prefix()` renombraría el baseline viejo al nombre nuevo y bisync
 compararía el listado del destino ANTERIOR contra el destino NUEVO: todo lo que
 no estuviera en el nuevo se leería como borrado y se propagaría. Esa función se
-escribió para un caso benigno (el pen pasa de G: a F:) y no puede distinguirlo
+escribió para un caso benigno (el dispositivo pasa de G: a F:) y no puede distinguirlo
 del maligno. Por eso el plan aparta el baseline él mismo.
 
 Y por eso la decisión de apartarlo no se toma mirando qué claves ha tocado el
 usuario, sino comparando el `expected_prefix` de antes con el de después
 (`_prefixes`). Es lo único que importa de verdad, y así no se escapa nada: un
-cambio en `[defaults]` (`remote`, `pen_remote`) mueve el prefijo de VARIAS
+cambio en `[defaults]` (`remote`, `device_remote`) mueve el prefijo de VARIAS
 parejas a la vez sin que ninguna de ellas se haya tocado.
 """
 
@@ -84,7 +84,7 @@ def _mode_of(pair: Mapping[str, Any]) -> str:
 def mirror_warning(mode: str) -> str | None:
     if mode not in MIRROR_MODES:
         return None
-    destino = "el NAS" if model.MODES[mode].dest == "remote" else "el pen"
+    destino = "el remoto" if model.MODES[mode].dest == "remote" else "el dispositivo"
     return (f"Modo '{mode}': es un espejo, BORRA en {destino} lo que no esté en el "
             f"origen. Pruébalo antes con --dry-run.")
 
@@ -129,7 +129,7 @@ def validate(raw: Mapping[str, Any], edited: Mapping[str, Any],
         problemas.append(f"Ya hay otra pareja que se llama '{name}'.")
 
     if not str(edited.get("local") or "").strip():
-        problemas.append("Falta la ruta local (relativa a la raíz del pen).")
+        problemas.append("Falta la ruta local (relativa a la raíz del dispositivo).")
     if not str(edited.get("remote_path") or "").strip():
         problemas.append("Falta la ruta en el remoto.")
     if edited.get("mode") not in model.MODES:
@@ -271,7 +271,7 @@ def merge_form(anterior: Mapping[str, Any], campos: Mapping[str, Any]) -> dict:
     Se parte de la anterior para no perder lo que el formulario no edita, pero
     las claves opcionales que se hayan vaciado a mano sí desaparecen: si no,
     borrar un flag del cuadro no lo borraría del TOML. Lo usan los dos editores,
-    el de este pen y el del catálogo, porque la regla tiene que ser la misma."""
+    el de este dispositivo y el del catálogo, porque la regla tiene que ser la misma."""
     resultante = {**dict(anterior), **dict(campos)}
     for key in OPTIONAL_KEYS:
         if key in anterior and key not in campos:
@@ -319,7 +319,7 @@ def plan_save(raw: Mapping[str, Any], edited: Mapping[str, Any],
 
 def _analizar_pareja(plan: EditPlan, antes_raw: Mapping[str, Any], original_name: str,
                      anterior: Mapping[str, Any], resultante: Mapping[str, Any]) -> None:
-    """Las consecuencias de cambiar una pareja que este pen ya tenía."""
+    """Las consecuencias de cambiar una pareja que este dispositivo ya tenía."""
     nuevo_nombre = resultante["name"]
     if nuevo_nombre != original_name:
         plan.rename = (original_name, nuevo_nombre)
@@ -397,8 +397,8 @@ def plan_remove(raw: Mapping[str, Any], name: str, clean_state: bool = False) ->
         daemon["pairs"] = [n for n in daemon["pairs"] if n != name]
 
     plan = EditPlan(raw=nuevo_raw)
-    plan.consequences.append(f"Se quita '{name}' de este pen. Sus datos NO se tocan, "
-                             f"ni aquí ni en el NAS: solo deja de sincronizarse. Si "
+    plan.consequences.append(f"Se quita '{name}' de este dispositivo. Sus datos NO se tocan, "
+                             f"ni aquí ni en el remoto: solo deja de sincronizarse. Si "
                              f"está en el catálogo, sigue estándolo.")
 
     huerfanos = bisync.pair_state_paths(name)
@@ -420,7 +420,7 @@ def plan_remove(raw: Mapping[str, Any], name: str, clean_state: bool = False) ->
 
 
 # ---------------------------------------------------------------------------
-# Este pen frente al catálogo
+# Este dispositivo frente al catálogo
 # ---------------------------------------------------------------------------
 
 def plan_enable(raw: Mapping[str, Any], cat: catalog.Catalog | None, name: str) -> EditPlan:
@@ -430,13 +430,13 @@ def plan_enable(raw: Mapping[str, Any], cat: catalog.Catalog | None, name: str) 
         raise ConfigError(f"El catálogo no tiene ninguna pareja llamada '{name}'. "
                           f"Créala primero ahí y luego elígela aquí.")
     if any(p.get("name") == name for p in raw.get("pair") or []):
-        raise ConfigError(f"'{name}' ya está en este pen.")
+        raise ConfigError(f"'{name}' ya está en este dispositivo.")
 
     nuevo_raw = copy.deepcopy(dict(raw))
     nuevo_raw.setdefault("pair", []).append(copy.deepcopy(entrada))
     plan = EditPlan(raw=nuevo_raw)
     plan.consequences.append(
-        f"Se empieza a usar '{name}' en este pen, tal y como está en el catálogo.")
+        f"Se empieza a usar '{name}' en este dispositivo, tal y como está en el catálogo.")
     plan.consequences.append(
         f"La ruta local '{entrada.get('local')}' se creará en la primera pasada si "
         f"todavía no existe.")
@@ -455,16 +455,16 @@ def plan_enable(raw: Mapping[str, Any], cat: catalog.Catalog | None, name: str) 
 
 def plan_override(raw: Mapping[str, Any], cat: catalog.Catalog | None,
                   name: str, edited: Mapping[str, Any]) -> EditPlan:
-    """Modificar una pareja SOLO en este pen. El catálogo no se entera."""
+    """Modificar una pareja SOLO en este dispositivo. El catálogo no se entera."""
     plan = plan_save(raw, edited, name)
     entrada = catalog.find_pair(cat, name)
     resultante = plan.raw["pair"][pair_index(plan.raw, clean_form(edited).get("name", name))]
 
     if entrada is None:
         cabecera = (f"'{name}' no está en el catálogo, así que este cambio solo "
-                    f"existe en este pen.")
+                    f"existe en este dispositivo.")
     elif catalog.diff_keys(resultante, entrada):
-        cabecera = (f"'{name}' deja de seguir el catálogo en este pen: difiere en "
+        cabecera = (f"'{name}' deja de seguir el catálogo en este dispositivo: difiere en "
                     f"{', '.join(catalog.diff_keys(resultante, entrada))}. Los demás "
                     f"dispositivos no cambian.")
     else:
@@ -478,7 +478,7 @@ def plan_revert(raw: Mapping[str, Any], cat: catalog.Catalog | None, name: str) 
     entrada = catalog.find_pair(cat, name)
     if entrada is None:
         raise ConfigError(f"El catálogo no tiene '{name}', así que no hay a qué "
-                          f"volver. O la quitas de este pen, o la creas en el "
+                          f"volver. O la quitas de este dispositivo, o la creas en el "
                           f"catálogo.")
     i = pair_index(raw, name)
     anterior = dict(raw["pair"][i])
@@ -502,10 +502,10 @@ def plan_revert(raw: Mapping[str, Any], cat: catalog.Catalog | None, name: str) 
 
 
 def plan_defaults(raw: Mapping[str, Any], edited: Mapping[str, Any]) -> EditPlan:
-    """Cambiar los [defaults] de este pen.
+    """Cambiar los [defaults] de este dispositivo.
 
     Es el plan con más alcance de todos: `[defaults]` aporta el `remote` y el
-    `pen_remote` a TODAS las parejas, así que un solo cambio aquí puede invalidar
+    `device_remote` a TODAS las parejas, así que un solo cambio aquí puede invalidar
     varios baselines de golpe sin que ninguna pareja se haya tocado. Por eso
     `EditPlan.shelve` es una lista."""
     nuevo_raw = copy.deepcopy(dict(raw))
@@ -575,7 +575,7 @@ def plan_revert_defaults(raw: Mapping[str, Any], cat: catalog.Catalog | None) ->
 
 
 # ---------------------------------------------------------------------------
-# La lista que se pinta: parejas del catálogo + las que solo tiene este pen
+# La lista que se pinta: parejas del catálogo + las que solo tiene este dispositivo
 # ---------------------------------------------------------------------------
 
 class CatalogRow(NamedTuple):
@@ -592,9 +592,9 @@ class CatalogRow(NamedTuple):
 
 
 def _display(entrada: Mapping[str, Any], defaults: Mapping[str, Any]) -> tuple[str, str, str]:
-    """Modo y extremos de una pareja que este pen NO tiene.
+    """Modo y extremos de una pareja que este dispositivo NO tiene.
 
-    No pasa por `model.Pair` a propósito: sus rutas se resuelven contra el pen y
+    No pasa por `model.Pair` a propósito: sus rutas se resuelven contra el dispositivo y
     aquí lo que se enseña es lo que dice el catálogo, no dónde caería."""
     mode = entrada.get("mode", model.DEFAULT_MODE)
     local = str(entrada.get("local", "?")).replace("\\", "/").strip("/") or "."
@@ -631,7 +631,7 @@ def catalog_rows(config: Config, raw: Mapping[str, Any],
 
 def defaults_origin(raw: Mapping[str, Any],
                     cat: catalog.Catalog | None) -> tuple[str, tuple[str, ...]]:
-    """Si los [defaults] de este pen son los del catálogo, y en qué difieren."""
+    """Si los [defaults] de este dispositivo son los del catálogo, y en qué difieren."""
     if cat is None:
         return ORIGEN_DESCONOCIDO, ()
     difiere = catalog.diff_keys(raw.get("defaults"), cat.defaults)

@@ -1,29 +1,28 @@
 #!/usr/bin/env python3
 """
-device.py — Qué unidades hay, cuál va a ser el pen, y si al final quedó bien.
+device.py — Qué unidades hay, cuál va a ser el dispositivo, y si al final quedó bien.
 
 Tres cosas, y las tres son de seguridad más que de comodidad:
 
   * `list_volumes()` NO filtra por «extraíble». Muchos pendrives —y casi todos
     los SSD por USB— se declaran `Fixed`, así que filtrar por ahí es justo lo que
-    hace que el pen del usuario no aparezca en la lista. Se listan todos y se
+    hace que el dispositivo del usuario no aparezca en la lista. Se listan todos y se
     marca cuáles lo parecen; quien decide es el usuario, con los datos delante.
 
-  * `seed_target()` mira qué hay en el destino ANTES de sembrar. La siembra es un
-    espejo que borra en destino: apuntar a la carpeta equivocada la vacía, con
-    `--max-delete` como único freno. Una carpeta con cosas que no son de un pen
-    PEREPEN no se siembra sin que el usuario lo confirme a conciencia.
+  * `install_target()` mira qué hay en el destino ANTES de escribir. Instalar ya
+    no borra nada —era un espejo del remoto y ahora es una copia local—, pero
+    seguir adelante sobre la carpeta equivocada deja el programa desperdigado
+    entre los datos de otro, así que se pide confirmación antes de tocarla.
 
-  * `ensure_control_file()` renueva el `id=` del fichero PEREPEN. El pen se
-    siembra copiando el espejo maestro, y ese espejo trae el PEREPEN del pen de
-    origen: sin renovar el id, dos pens distintos dirían ser el mismo y un
-    vigilante configurado para uno concreto se confundiría.
+  * `ensure_control_file()` pone el `id=` del fichero PRDRIVE. Es lo que
+    distingue este dispositivo de cualquier otro: sin id propio, un vigilante
+    configurado para uno concreto se confundiría con el de al lado.
 
 `CONTROL_FILE` y `CONTROL_TEMPLATE` están copiados de `penwatch.py` a propósito y
 no importados: penwatch se copia al equipo del usuario y tiene que funcionar con
-el pen desconectado, así que no puede depender de este paquete, y este paquete
-acaba dentro de un .exe donde importar un script hermano es un lío. Hay un test
-que comprueba que las dos copias no se separan.
+el dispositivo desconectado, así que no puede depender de este paquete, y este
+paquete acaba dentro de un .exe donde importar un script hermano es un lío. Hay
+un test que comprueba que las dos copias no se separan.
 """
 
 from __future__ import annotations
@@ -38,25 +37,30 @@ from pathlib import Path
 
 from common import model
 
-from . import CREATE_NO_WINDOW, IS_WIN, InstallError
+from . import CREATE_NO_WINDOW, DEVICE_LABEL, IS_WIN, InstallError
 from .rclone_bin import bin_subdir, exe_name
 
-CONTROL_FILE = "PEREPEN"
+CONTROL_FILE = "PRDRIVE"
 CONTROL_TEMPLATE = """\
-# PEREPEN — fichero de control del pen. NO LO BORRES.
+# PRDRIVE — fichero de control del dispositivo. NO LO BORRES.
 # Es lo que permite reconocer esta unidad se monte donde se monte (F:, /media/...).
-# Lo usa rclone-sync/penwatch.py para lanzar la sincronización al conectar el pen.
-id={pen_id}
+# Lo usa .prdrive/penwatch.py para lanzar la sincronización al conectarla.
+id={device_id}
 """
 
 CONTAINER_SUFFIX = ".hc"
-STRUCT_MARKER = Path("rclone-sync") / "runsync.py"
+APP_SUBDIR = ".prdrive"
+STRUCT_MARKER = Path(APP_SUBDIR) / "runsync.py"
 
-# Lo que el sistema deja en cualquier volumen y no cuenta como «aquí hay cosas».
+# Lo que el sistema deja en cualquier volumen —o lo que ponemos nosotros— y no
+# cuenta como «aquí hay cosas de otro». Se compara con `p.name.lower()`, así que
+# va todo en minúsculas. Olvidar aquí algo que escribe el instalador hace que un
+# dispositivo recién hecho se clasifique como AJENO la siguiente vez.
 RUIDO = {
     "system volume information", "$recycle.bin", "recycler", "lost+found",
-    "desktop.ini", ".ds_store", ".spotlight-v100", ".fseventsd", ".trashes",
-    "autorun.inf", "perepen", "perepen.hc",
+    ".ds_store", ".spotlight-v100", ".fseventsd", ".trashes", "desktop.ini",
+    "autorun.inf", "prdrive", "prdrive.hc", ".prdrive",
+    "runsync.pyw", "runsync.sh", "runsync.ico",
 }
 
 # Puntos de montaje donde los escritorios de Linux/macOS cuelgan los extraíbles.
@@ -96,7 +100,7 @@ class Volume:
 
     @property
     def has_container(self) -> bool:
-        return self._exists("PEREPEN" + CONTAINER_SUFFIX)
+        return self._exists(DEVICE_LABEL + CONTAINER_SUFFIX)
 
     @property
     def has_structure(self) -> bool:
@@ -111,8 +115,8 @@ class Volume:
         if self.has_container:
             partes.append("contenedor VeraCrypt")
         if self.has_control:
-            partes.append("ya es un PEREPEN" if self.has_structure
-                          else "tiene PEREPEN pero le falta rclone-sync/")
+            partes.append("ya es un prdrive" if self.has_structure
+                          else f"tiene {CONTROL_FILE} pero le falta {APP_SUBDIR}/")
         if not partes and not self.removable:
             partes.append("no se declara extraíble")
         return "; ".join(partes)
@@ -219,8 +223,8 @@ def list_volumes() -> list[Volume]:
     """Todas las unidades candidatas, sin filtrar por «extraíble».
 
     Los pendrives que se declaran `Fixed` son la norma, no la excepción, así que
-    filtrar por el tipo es la forma más rápida de que el pen del usuario no salga
-    en la lista. Se ordenan poniendo delante lo que más se parece a un pen."""
+    filtrar por el tipo es la forma más rápida de que el dispositivo del usuario no salga
+    en la lista. Se ordenan poniendo delante lo que más se parece a un dispositivo."""
     volumenes = parse_volumes_json(_powershell(PS_VOLUMES)) if IS_WIN else _posix_volumes()
     return sorted(volumenes, key=lambda v: (v.is_system, not v.has_control,
                                             not v.has_container, not v.removable,
@@ -248,21 +252,22 @@ def volume_for(root: Path) -> Volume:
 
 
 # ---------------------------------------------------------------------------
-# ¿Se puede sembrar aquí?
+# ¿Se puede instalar aquí?
 # ---------------------------------------------------------------------------
 
 VACIO = "vacio"
-PEREPEN_YA = "perepen"
+YA_INSTALADO = "instalado"
 AJENO = "ajeno"
 
 
-def seed_target(root: Path) -> tuple[str, str]:
-    """Qué hay en el destino, para decidir si se puede sembrar sin preguntar.
+def install_target(root: Path) -> tuple[str, str]:
+    """Qué hay en el destino, para decidir si se puede instalar sin preguntar.
 
-    Devuelve ('vacio'|'perepen'|'ajeno', explicación). La siembra es un `rclone
-    sync`, o sea un espejo que BORRA en destino lo que no esté en el origen:
-    'ajeno' significa que ahí hay cosas que no son de un pen PEREPEN y que se
-    perderían, así que quien llama tiene que pedir una confirmación seria."""
+    Devuelve ('vacio'|'instalado'|'ajeno', explicación). Instalar es copiar, así
+    que 'ajeno' ya no significa «esto se borraría»: significa que el volumen es
+    de otra cosa y que dejar ahí el programa y sus lanzadores probablemente no es
+    lo que se quería. Quien llama pide confirmación, pero no es la confirmación
+    destructiva que hacía falta con la siembra."""
     root = Path(root)
     try:
         if not root.exists():
@@ -279,13 +284,14 @@ def seed_target(root: Path) -> tuple[str, str]:
     tiene_control = (root / CONTROL_FILE).exists()
     tiene_estructura = (root / STRUCT_MARKER).exists()
     if tiene_control and tiene_estructura:
-        return PEREPEN_YA, "Ya es un pen PEREPEN: la siembra lo actualiza."
+        return YA_INSTALADO, ("Ya es un dispositivo prdrive: se reinstala el "
+                              "código encima y se conserva lo demás.")
 
     nombres = ", ".join(sorted(p.name for p in contenido)[:6])
     return AJENO, (
-        f"Aquí hay {len(contenido)} elemento(s) que no son de un pen PEREPEN "
-        f"({nombres}{'…' if len(contenido) > 6 else ''}). La siembra es un ESPEJO: "
-        f"todo eso se BORRARÍA.")
+        f"Aquí hay {len(contenido)} elemento(s) que no son de un prdrive "
+        f"({nombres}{'…' if len(contenido) > 6 else ''}). No se borrará nada, "
+        f"pero el programa quedaría instalado dentro de este volumen.")
 
 
 # ---------------------------------------------------------------------------
@@ -293,7 +299,7 @@ def seed_target(root: Path) -> tuple[str, str]:
 # ---------------------------------------------------------------------------
 
 def control_id(root: Path) -> str | None:
-    """El 'id=' de dentro del PEREPEN, o None si no lleva ninguno."""
+    """El 'id=' de dentro del PRDRIVE, o None si no lleva ninguno."""
     try:
         texto = (Path(root) / CONTROL_FILE).read_text(encoding="utf-8", errors="replace")
     except OSError:
@@ -306,18 +312,19 @@ def control_id(root: Path) -> str | None:
 
 
 def ensure_control_file(root: Path, renew: bool = False) -> str:
-    """Deja un PEREPEN con id en la raíz y devuelve ese id.
+    """Deja un PRDRIVE con id en la raíz y devuelve ese id.
 
-    `renew=True` es lo que hay que usar DESPUÉS de sembrar: el fichero que llega
-    con la siembra trae el id del pen de origen, y dos pens con el mismo id no se
-    pueden distinguir."""
+    `renew=True` fuerza un id nuevo aunque ya hubiera uno. Hace falta al reutilizar
+    un volumen que ya fue de otro dispositivo: dos dispositivos con el mismo id no
+    se pueden distinguir, y un vigilante atado a ese id lanzaría con el
+    equivocado."""
     path = Path(root) / CONTROL_FILE
     actual = control_id(root)
     if actual and not renew:
         return actual
     nuevo = uuid.uuid4().hex
     try:
-        path.write_text(CONTROL_TEMPLATE.format(pen_id=nuevo), encoding="utf-8")
+        path.write_text(CONTROL_TEMPLATE.format(device_id=nuevo), encoding="utf-8")
     except OSError as e:
         raise InstallError(f"No he podido escribir {path}: {e}") from e
     return nuevo
@@ -334,15 +341,20 @@ class Check:
     detalle: str
 
 
-def verify_pen(root: Path, esperadas: list[str] | None = None) -> list[Check]:
-    """La lista de comprobación del último paso: ¿este pen va a funcionar?
+def verify_device(root: Path, esperadas: list[str] | None = None,
+                  key_name: str | None = None) -> list[Check]:
+    """La lista de comprobación del último paso: ¿este dispositivo va a funcionar?
 
     Mira lo que de verdad hace falta para que `runsync.py` arranque en cualquier
-    equipo: el binario de rclone de esta arquitectura, la clave, el config, y que
-    el config se pueda leer. Lo que falte aquí es lo que fallaría luego sin que
-    se entienda por qué."""
+    equipo: el lanzador, el binario de rclone de esta arquitectura, la conexión,
+    el config, y que el config se pueda leer. Lo que falte aquí es lo que
+    fallaría luego sin que se entienda por qué.
+
+    `key_name` llega del perfil porque el nombre del fichero de clave lo elige el
+    usuario. Sin clave —un backend con contraseña o con agente— no se comprueba
+    ninguna: no falta nada."""
     root = Path(root)
-    app = root / "rclone-sync"
+    app = root / APP_SUBDIR
     checks: list[Check] = []
 
     def mirar(etiqueta: str, ruta: Path, pista: str = "") -> bool:
@@ -355,16 +367,18 @@ def verify_pen(root: Path, esperadas: list[str] | None = None) -> list[Check]:
                             str(ruta) if existe else (pista or f"falta {ruta}")))
         return existe
 
-    pen_id = control_id(root)
-    checks.append(Check("Fichero de control", bool(pen_id),
-                        f"id {pen_id[:8]}…" if pen_id else
+    device_id = control_id(root)
+    checks.append(Check("Fichero de control", bool(device_id),
+                        f"id {device_id[:8]}…" if device_id else
                         f"falta {root / CONTROL_FILE} o no tiene id propio"))
 
-    mirar("Lanzador (runsync.py)", app / "runsync.py")
+    mirar("Lanzador (runsync.pyw)", root / "runsync.pyw")
+    mirar("Interfaz (runsync.py)", app / "runsync.py")
     mirar("Motor (sync.py)", app / "sync.py")
     mirar(f"rclone ({bin_subdir()})", app / "bin" / bin_subdir() / exe_name(),
-          "sin el binario de esta arquitectura el pen no sincroniza aquí")
-    mirar("Clave del NAS", app / "keys" / "synology_ed25519")
+          "sin el binario de esta arquitectura no sincroniza en este equipo")
+    if key_name:
+        mirar("Clave del remoto", app / "keys" / key_name)
     mirar("rclone.conf", app / "rclone.conf")
 
     config = app / "sync_config.toml"
@@ -390,7 +404,7 @@ def _check_config(config: Path, esperadas: list[str]) -> Check:
 
 
 def check_python() -> Check:
-    """Python y Tkinter EN ESTE EQUIPO. No es del pen, pero sin ellos el pen no
+    """Python y Tkinter EN ESTE EQUIPO. No es del dispositivo, pero sin ellos el dispositivo no
     se puede usar aquí, y es mejor enterarse ahora que al conectarlo."""
     from . import python_command
     cmd = python_command()

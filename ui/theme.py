@@ -186,14 +186,14 @@ def _casilla_propia(widget, style) -> None:
         estados = {e: icons.casilla(widget, e)
                    for e in ("marcada", "vacia", "apagada", "apagada-marcada")}
         style.element_create(
-            "Perepen.Checkbutton.indicator", "image", estados["vacia"],
+            "Prdrive.Checkbutton.indicator", "image", estados["vacia"],
             ("disabled", "selected", estados["apagada-marcada"]),
             ("disabled", estados["apagada"]),
             ("selected", estados["marcada"]),
             border=0, sticky="")
         style.layout("TCheckbutton", [
             ("Checkbutton.padding", {"sticky": "nswe", "children": [
-                ("Perepen.Checkbutton.indicator", {"side": "left", "sticky": ""}),
+                ("Prdrive.Checkbutton.indicator", {"side": "left", "sticky": ""}),
                 ("Checkbutton.focus", {"side": "left", "sticky": "w", "children": [
                     ("Checkbutton.label", {"sticky": "nswe"})]})]})])
     except Exception:
@@ -452,7 +452,7 @@ def marcar_lista(tree) -> None:
     El diseño pide un chip de color en la columna de estado y una `ttk.Treeview`
     no sabe pintar una celda suelta, así que el color va a la fila entera: fondo
     para lo que hay que mirar —ámbar si pide un resync, rojo si es un espejo que
-    borra— y letra gris para lo que está ahí pero este pen no usa. Fondo y no
+    borra— y letra gris para lo que está ahí pero este dispositivo no usa. Fondo y no
     letra porque una ruta monoespaciada en ámbar se lee peor, y porque así el
     azul de la fila elegida sigue viéndose encima."""
     tree.tag_configure("ok", background=SUPERFICIE, foreground=TINTA)

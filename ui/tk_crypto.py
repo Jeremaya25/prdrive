@@ -30,7 +30,8 @@ from .tk import TITLE, working
 
 AVISO_AUTOARRANQUE = (
     "Con contenedor, el arranque automático necesita que VeraCrypt lo monte al "
-    "conectar el pen: el vigilante solo ve la unidad una vez montada. En el "
+    "conectar el dispositivo: el vigilante solo ve la unidad una vez montada. "
+    "En el "
     "último paso se puede dejar configurado."
 )
 
@@ -44,7 +45,8 @@ def dibujar(cuerpo, wiz) -> None:
     ttk.Label(cuerpo, justify="left", wraplength=760, text=(
         f"Destino elegido: {estado.device}\n"
         "El cifrado se elige ahora porque decide DÓNDE va a vivir la estructura "
-        "del pen: sin cifrar o con BitLocker, en el propio pen; con VeraCrypt, "
+        "del dispositivo: sin cifrar o con BitLocker, en el propio volumen; con "
+        "VeraCrypt, "
         "dentro del contenedor.")).grid(row=0, column=0, sticky="w", pady=(0, 10))
 
     modo = tk.StringVar(value=estado.encryption)
@@ -64,9 +66,9 @@ def dibujar(cuerpo, wiz) -> None:
     resumen.grid(row=3, column=0, sticky="w", pady=(12, 0))
 
     def refrescar_resumen() -> None:
-        if estado.pen_root:
+        if estado.device_root:
             resumen.configure(
-                text=f"✔ La estructura del pen irá a: {estado.pen_root}",
+                text=f"✔ El programa y los datos irán a: {estado.device_root}",
                 foreground=theme.OK)
         else:
             resumen.configure(text="Todavía no hay un destino listo para sembrar.",
@@ -95,17 +97,18 @@ def _panel_ninguno(panel, wiz, hecho) -> None:
 
     estado = wiz.state
     ttk.Label(panel, justify="left", wraplength=760, foreground=theme.PELIGRO, text=(
-        "El pen quedará SIN CIFRAR. Ten en cuenta que dentro va a vivir la clave "
-        "privada del NAS (rclone-sync/keys/): quien encuentre el pen tiene acceso "
-        "al Synology hasta que revoques esa clave.")).grid(row=0, column=0, sticky="w")
+        "El dispositivo quedará SIN CIFRAR. Ten en cuenta que dentro va a vivir la clave "
+        "privada de tu remoto (.prdrive/keys/): quien encuentre el dispositivo "
+        "tiene acceso a tus datos hasta que revoques esa clave.")).grid(
+        row=0, column=0, sticky="w")
 
     def usar() -> None:
-        estado.pen_root = estado.device
+        estado.device_root = estado.device
         estado.container = None
         estado.mounted_by_us = False
         hecho()
 
-    ttk.Button(panel, text="Entendido, usar el pen tal cual",
+    ttk.Button(panel, text="Entendido, usar el dispositivo tal cual",
                command=usar).grid(row=1, column=0, sticky="w", pady=(10, 0))
 
 
@@ -160,7 +163,7 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
         ttk.Label(formulario, text="Tamaño:").grid(row=fila, column=0, sticky="w")
         ttk.Entry(formulario, textvariable=tam, width=10).grid(row=fila, column=1, sticky="w")
         ttk.Label(formulario, foreground=theme.TINTA3,
-                  text=f"libre en el pen: {_libre(estado.device) / 1024**3:.1f} GiB "
+                  text=f"libre en la unidad: {_libre(estado.device) / 1024**3:.1f} GiB "
                        f"— admite 20G, 500M o 'max'").grid(
             row=fila, column=2, sticky="w", padx=(10, 0))
         fila += 1
@@ -211,7 +214,7 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
                     lambda: crypto.create_container(
                         estado.veracrypt, contenedor, bytes_, password, sistema.get()),
                     f"Creando {contenedor} ({bytes_ / 1024**3:.1f} GiB).\n"
-                    "Según el tamaño y el pen, esto puede tardar bastante.")
+                    "Según el tamaño y la unidad, esto puede tardar bastante.")
                 if not ok:
                     raise res if isinstance(res, Exception) else InstallError("Falló.")
 
@@ -229,7 +232,7 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
             messagebox.showerror(TITLE, f"{type(e).__name__}: {e}", parent=wiz.root)
             return
 
-        estado.pen_root = Path(res)
+        estado.device_root = Path(res)
         estado.mounted_by_us = True
         hecho()
         wiz.repintar()
@@ -238,9 +241,9 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
     botones.grid(row=3, column=0, sticky="w", pady=(12, 0))
     ttk.Button(botones, text="Montar" if existe else "Crear y montar",
                command=crear_y_montar).grid(row=0, column=0)
-    if estado.pen_root and estado.mounted_by_us:
+    if estado.device_root and estado.mounted_by_us:
         ttk.Label(botones, foreground=theme.OK,
-                  text=f"montado en {estado.pen_root}").grid(row=0, column=1, padx=(12, 0))
+                  text=f"montado en {estado.device_root}").grid(row=0, column=1, padx=(12, 0))
 
 
 def _libre(root) -> int:
@@ -267,7 +270,7 @@ def _panel_bitlocker(panel, wiz, hecho) -> None:
         "Cifrar lo hace Windows, no el instalador: automatizarlo exige permisos "
         "de administrador, tarda mucho y falla distinto en cada edición. Aquí se "
         "abre el asistente de Windows, se comprueba después cómo quedó, y se "
-        "ofrece guardar la clave de recuperación en el NAS.")).grid(
+        "ofrece guardar la clave de recuperación en el remoto.")).grid(
         row=0, column=0, sticky="w")
 
     marca = ttk.Label(panel, wraplength=760, justify="left")
@@ -296,7 +299,7 @@ def _panel_bitlocker(panel, wiz, hecho) -> None:
             return
         pintar_estado(res)
         if res.known and res.encrypted and res.unlocked:
-            estado.pen_root = estado.device
+            estado.device_root = estado.device
             hecho()
 
     def subir_clave() -> None:
@@ -307,27 +310,30 @@ def _panel_bitlocker(panel, wiz, hecho) -> None:
         if not ok or not str(texto).strip():
             messagebox.showwarning(TITLE, (
                 "No he podido leer ninguna clave de recuperación. Guárdala tú "
-                "desde el asistente de BitLocker y súbela a mano al NAS."),
+                "desde el asistente de BitLocker y súbela a mano al remoto."),
                 parent=wiz.root)
             return
-        from install import seed
+        from install import deploy
         ok, res = working(
-            wiz.root, "subiendo la clave al NAS",
-            lambda: seed.upload_recovery_key(wiz.rclone, str(texto), letra),
-            "Subiendo la clave de recuperación al NAS.")
+            wiz.root, "subiendo la clave al remoto",
+            lambda: deploy.upload_recovery_key(wiz.rclone, str(texto), letra,
+                                               wiz.perfil.recovery_path),
+            "Subiendo la clave de recuperación al remoto.")
         if ok:
-            messagebox.showinfo(TITLE, f"Guardada en {res}.\n\nEstá en el NAS y no "
-                                "en el pen a propósito: dentro del volumen que "
-                                "descifra no serviría de nada.", parent=wiz.root)
+            messagebox.showinfo(TITLE, f"Guardada en {res}.\n\nEstá en el remoto y "
+                                "no en el dispositivo a propósito: dentro del "
+                                "volumen que descifra no serviría de nada.",
+                                parent=wiz.root)
         else:
             messagebox.showerror(TITLE, str(res), parent=wiz.root)
 
     def seguir_igual() -> None:
         if not messagebox.askokcancel(TITLE, (
-                "Vas a seguir sin haber comprobado que el pen quedó cifrado.\n\n"
-                "Dentro del pen va la clave privada del NAS."), parent=wiz.root):
+                "Vas a seguir sin haber comprobado que el volumen quedó "
+                "cifrado.\n\nDentro va la clave privada de tu remoto."),
+                parent=wiz.root):
             return
-        estado.pen_root = estado.device
+        estado.device_root = estado.device
         hecho()
 
     botones = ttk.Frame(panel)

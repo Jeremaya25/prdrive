@@ -8,7 +8,7 @@ Cada test es un script independiente que devuelve 0 o 1; se lanzan en procesos
 separados a propósito, porque varios sustituyen funciones del proyecto (el bucle
 de Tk, print, las rutas del modelo) y no deben contaminarse entre sí.
 
-Ninguno toca el pen: todos trabajan sobre directorios temporales.
+Ninguno toca el dispositivo: todos trabajan sobre directorios temporales.
 """
 
 from __future__ import annotations

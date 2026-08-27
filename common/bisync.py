@@ -80,7 +80,7 @@ def expected_prefix(pair: Pair) -> str:
     """Nombre base (.path1.lst / .path2.lst) que rclone buscará para esta pareja."""
     def render(kind: str) -> str:
         endpoint = pair.endpoint(kind)
-        if kind == "local" and not pair.pen_remote:
+        if kind == "local" and not pair.device_remote:
             return fs_path_local(endpoint)
         return fs_path_remote(endpoint)
 
@@ -126,7 +126,7 @@ def filters_file_for(pair: Pair) -> Path | None:
     """Genera (si hace falta) filters/<pareja>.txt y devuelve su ruta.
 
     El contenido es determinista: si no cambia, no se reescribe el fichero, para
-    no gastar ciclos del pen ni invalidar el md5 sin motivo."""
+    no gastar ciclos del dispositivo ni invalidar el md5 sin motivo."""
     if not pair.wants_filters_file:
         return None
 
@@ -217,7 +217,7 @@ def last_run(pair: Pair) -> float | None:
                   for sufijo in (PATH1_SUFFIX, PATH2_SUFFIX)
                   for p in pair.workdir.glob("*" + sufijo)]
     except OSError:
-        return None                      # el pen ya no está: no es asunto de aquí
+        return None                      # el dispositivo ya no está: no es asunto de aquí
     return max(marcas) if marcas else None
 
 
@@ -276,7 +276,7 @@ def rename_prefix(pair: Pair, old_prefix: str, new_prefix: str) -> None:
 
 
 def normalize_prefix(pair: Pair) -> None:
-    """Si el baseline está guardado con otro prefijo (el pen se montaba en G: y
+    """Si el baseline está guardado con otro prefijo (el dispositivo se montaba en G: y
     ahora en F:), lo renombra ANTES de ejecutar. El contenido de los .lst es
     relativo a la raíz sincronizada, así que renombrarlos es seguro."""
     state = pair_state(pair)

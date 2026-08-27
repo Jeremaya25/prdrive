@@ -3,7 +3,7 @@
 _harness.py — Lo que comparten los tests.
 
 No hay framework: son scripts que devuelven 0 o 1. El proyecto no admite
-dependencias y esto tiene que poder ejecutarse desde el pen en cualquier equipo,
+dependencias y esto tiene que poder ejecutarse desde el dispositivo en cualquier equipo,
 así que la raíz del proyecto se deduce de la ubicación de este fichero y nunca
 de la letra de unidad.
 """
@@ -58,7 +58,7 @@ class Checks:
 def mkcfg(names, daemon=None, defaults=None, pairs=None) -> model.Config:
     """Una model.Config de mentira a partir de nombres, para no tocar el TOML real."""
     data = {
-        "defaults": defaults or {"remote": "synology"},
+        "defaults": defaults or {"remote": "nas"},
         "pair": pairs or [{"name": n, "local": f"sync-data/{n}", "remote_path": f"/R/{n}"}
                           for n in names],
     }
@@ -70,7 +70,7 @@ def mkcfg(names, daemon=None, defaults=None, pairs=None) -> model.Config:
 _TEMPORALES: list[Path] = []
 
 
-def tmpdir(prefix: str = "perepen-test-") -> Path:
+def tmpdir(prefix: str = "prdrive-test-") -> Path:
     """Un directorio temporal que se borra al terminar el test.
 
     `tempfile.mkdtemp()` a secas deja rastro: cada pasada de la batería dejaría
@@ -92,12 +92,12 @@ def sandbox():
     """Reapunta las rutas del modelo a un directorio temporal.
 
     Todo lo que escriben bisync, los filtros y los logs cuelga de estas cuatro
-    rutas, así que moverlas basta para que ningún test toque el pen de verdad."""
+    rutas, así que moverlas basta para que ningún test toque el dispositivo de verdad."""
     original = {name: getattr(model, name)
-                for name in ("PEN_ROOT", "STATE_DIR", "FILTERS_DIR", "LOG_DIR", "CONFIG_FILE")}
-    root = Path(tempfile.mkdtemp(prefix="perepen-test-"))
+                for name in ("DEVICE_ROOT", "STATE_DIR", "FILTERS_DIR", "LOG_DIR", "CONFIG_FILE")}
+    root = Path(tempfile.mkdtemp(prefix="prdrive-test-"))
     try:
-        model.PEN_ROOT = root
+        model.DEVICE_ROOT = root
         model.STATE_DIR = root / "state"
         model.FILTERS_DIR = root / "filters"
         model.LOG_DIR = root / "logs"

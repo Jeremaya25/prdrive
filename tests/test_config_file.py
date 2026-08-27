@@ -4,7 +4,7 @@ El serializador de TOML: lo que escribe tiene que releerse exactamente igual.
 
 Este fichero gobierna qué se sincroniza y qué se borra, así que la prueba que
 importa es la ida y vuelta, y se hace también contra el sync_config.toml real
-del pen (en memoria: no se escribe nada sobre él).
+del dispositivo (en memoria: no se escribe nada sobre él).
 """
 
 import sys
@@ -28,7 +28,7 @@ def ida_y_vuelta(raw, etiqueta):
     return vuelta
 
 
-# --- el config real del pen -------------------------------------------------
+# --- el config real del dispositivo -------------------------------------------------
 real = config_file.load_raw()
 vuelta = ida_y_vuelta(real, "config real")
 if vuelta is not None:
@@ -39,7 +39,7 @@ c("config real: se conserva la cabecera",
 
 # --- casos que el esquema permite -------------------------------------------
 ida_y_vuelta({
-    "defaults": {"remote": "nas", "pen_remote": "pen", "keep_logs": True,
+    "defaults": {"remote": "nas", "device_remote": "dispositivo", "keep_logs": True,
                  "exclude": ["a/**"], "include": [],
                  "flags": {"transfers": 4, "checkers": 8, "resilient": True}},
     "daemon": {"pairs": ["uno"], "interval_minutes": 12.5},
@@ -104,8 +104,8 @@ with sandbox() as root:
     except model.ConfigError:
         c("save rechaza un config sin parejas", True, True)
 
-# --- lo que comparten save() y el catálogo del NAS ----------------------------
-BUENO = {"defaults": {"remote": "synology"},
+# --- lo que comparten save() y el catálogo del remoto ----------------------------
+BUENO = {"defaults": {"remote": "nas"},
          "pair": [{"name": "notas", "local": "sync-data/notas",
                    "remote_path": "/R/notas", "mode": "bisync"}]}
 

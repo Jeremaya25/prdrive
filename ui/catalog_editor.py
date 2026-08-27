@@ -1,21 +1,26 @@
 #!/usr/bin/env python3
 """
-catalog_editor.py — Alta, edición y baja en el catálogo del NAS. Sin Tkinter.
+catalog_editor.py — Alta, edición y baja en el catálogo del remoto. Sin Tkinter.
 
 Simétrico a `pair_editor.py` y con el mismo guion —plan, consecuencias,
 confirmación, ejecución—, pero lo que hay al otro lado no es el disco de este
-pen: es un fichero del NAS que gobierna a TODOS los dispositivos. Eso cambia dos
-cosas.
+dispositivo: es un fichero del remoto que gobierna a TODOS. Eso cambia dos cosas.
 
-La primera es qué se puede romper. Aquí no hay baselines que apartar (este pen no
-cambia por editar el catálogo), pero un error se propaga a todos los pens la
-próxima vez que alguien mire. Por eso `catalog.push()` verifica el TOML antes de
-subirlo, se niega si el remoto ha cambiado desde que se leyó y deja un `.bak`.
+La primera es qué se puede romper. Aquí no hay baselines que apartar (este
+dispositivo no cambia por editar el catálogo), pero un error se propaga a todos
+los demás la próxima vez que alguien mire. Por eso `catalog.push()` verifica el
+TOML antes de subirlo, se niega si el remoto ha cambiado desde que se leyó y deja
+un `.bak`.
 
-La segunda es que **editar el catálogo no toca este pen**. Dar de alta una pareja
-la deja disponible, no puesta; darla de baja la deja huérfana aquí, no quitada.
-Elegir qué usa este pen es el otro módulo, y es a propósito: son dos decisiones
-distintas y mezclarlas es justo lo que se quería evitar.
+La segunda es que **editar el catálogo no toca este dispositivo**. Dar de alta
+una pareja la deja disponible, no puesta; darla de baja la deja huérfana aquí, no
+quitada. Elegir qué usa este dispositivo es el otro módulo, y es a propósito: son
+dos decisiones distintas y mezclarlas es justo lo que se quería evitar.
+
+**Ya no hay ninguna pareja intocable.** Cuando el código del dispositivo bajaba
+del remoto, la pareja que describía ese espejo era imprescindible para instalar y
+el editor se negaba a borrarla. Ahora el instalador lleva el código dentro, así
+que el catálogo son parejas de datos y todas valen lo mismo.
 """
 
 from __future__ import annotations
@@ -29,13 +34,9 @@ from common.model import ConfigError
 
 from . import pair_editor
 
-# perepen-install.py aborta si el catálogo no la tiene: es la pareja con la que
-# se siembra un pen nuevo desde el NAS. Sin ella no se puede instalar nada.
-PAREJA_IMPRESCINDIBLE = "perepen"
-
-ALCANCE = "Afecta a TODOS los dispositivos, no solo a este pen."
-NO_APLICA_AQUI = ("Los pens que ya usan esta pareja no cambian solos: cada uno "
-                  "tiene que volver al catálogo cuando quiera el cambio.")
+ALCANCE = "Afecta a TODOS los dispositivos, no solo a este."
+NO_APLICA_AQUI = ("Los dispositivos que ya usan esta pareja no cambian solos: "
+                  "cada uno tiene que volver al catálogo cuando quiera el cambio.")
 PIERDE_COMENTARIOS = ("El fichero se reescribe entero: se conserva la cabecera y se "
                       "pierden los comentarios intercalados. Antes se guarda una "
                       "copia en pairs.toml.bak.")
@@ -61,7 +62,7 @@ def _editable(cat: catalog.Catalog | None) -> catalog.Catalog:
     if not cat.editable:
         raise ConfigError(
             "Esto es la copia local del catálogo, no el catálogo. Para editarlo hace "
-            "falta conexión con el NAS: no se puede escribir encima de lo que otros "
+            "falta conexión con el remoto: no se puede escribir encima de lo que otros "
             "dispositivos hayan hecho mientras tanto.")
     return cat
 
@@ -93,7 +94,7 @@ def plan_catalog_save(cat: catalog.Catalog | None, edited: Mapping[str, Any],
         nuevo_raw["pair"].append(resultante)
         plan.consequences.insert(
             0, f"Se crea la pareja '{campos['name']}' en el catálogo. Todavía no la "
-               f"usa ningún pen: cada uno tiene que elegirla.")
+               f"usa ningún dispositivo: cada uno tiene que elegirla.")
     else:
         i = pair_editor.pair_index(nuevo_raw, original_name)
         anterior = dict(nuevo_raw["pair"][i])
@@ -110,31 +111,20 @@ def plan_catalog_save(cat: catalog.Catalog | None, edited: Mapping[str, Any],
         plan.consequences.insert(
             0, f"Cambia '{original_name}' en el catálogo: {', '.join(difiere)}.")
         plan.consequences.append(NO_APLICA_AQUI)
-        if original_name == PAREJA_IMPRESCINDIBLE:
-            plan.warnings.append(
-                f"'{PAREJA_IMPRESCINDIBLE}' es con la que perepen-install.py siembra "
-                f"un pen nuevo desde el NAS. Un error aquí rompe las instalaciones "
-                f"futuras, no las que ya existen.")
 
     plan.consequences.append(PIERDE_COMENTARIOS)
     aviso = pair_editor.mirror_warning(resultante.get("mode", model.DEFAULT_MODE))
     if aviso:
         plan.warnings.append(aviso)
 
-    model.parse_config(nuevo_raw)          # red final, la misma que en el pen
+    model.parse_config(nuevo_raw)          # red final, la misma que en el dispositivo
     return plan
 
 
 def plan_catalog_remove(cat: catalog.Catalog | None, name: str,
                         raw_local: Mapping[str, Any] | None = None) -> CatalogPlan:
-    """Borrar una pareja del catálogo. No toca ningún pen."""
+    """Borrar una pareja del catálogo. No toca ningún dispositivo."""
     cat = _editable(cat)
-    if name == PAREJA_IMPRESCINDIBLE:
-        raise ConfigError(
-            f"'{PAREJA_IMPRESCINDIBLE}' no se puede borrar del catálogo: es con la "
-            f"que perepen-install.py siembra un pen nuevo, y sin ella la instalación "
-            f"aborta.")
-
     i = pair_editor.pair_index(cat.raw, name)
     nuevo_raw = copy.deepcopy(dict(cat.raw))
     del nuevo_raw["pair"][i]
@@ -144,10 +134,10 @@ def plan_catalog_remove(cat: catalog.Catalog | None, name: str,
     plan = _plan(cat, nuevo_raw, raw_local)
     plan.consequences.insert(0, f"Se borra '{name}' del catálogo.")
     plan.consequences.append(
-        f"Los pens que la estén usando NO la pierden: la seguirán sincronizando y "
+        f"Los dispositivos que la estén usando NO la pierden: la seguirán sincronizando y "
         f"aquí aparecerá como huérfana hasta que se quite de cada uno.")
     plan.consequences.append(PIERDE_COMENTARIOS)
-    plan.warnings.append("Los datos del NAS y de los pens no se tocan.")
+    plan.warnings.append("Los datos del remoto y de los dispositivos no se tocan.")
 
     model.parse_config(nuevo_raw)
     return plan

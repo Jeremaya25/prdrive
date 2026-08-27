@@ -45,30 +45,30 @@
     td { padding: 7px 10px; border-top: 1px solid #EFEBE4; font-size: 13px; vertical-align: middle; }
   </style>
 </helmet>
-<div class="win" style="width: 900px; height: 560px"><div class="titlebar"><span>PerePen Sync &#8212; Sincronizaci&#243;n manual</span><span class="sysbtns"><span>&#8211;</span><span>&#9723;</span><span>&#10005;</span></span></div>
+<div class="win" style="width: 900px; height: 560px"><div class="titlebar"><span>prdrive &#8212; Sincronizaci&#243;n manual</span><span class="sysbtns"><span>&#8211;</span><span>&#9723;</span><span>&#10005;</span></span></div>
   <div class="pane" style="padding: 0">
 
     <div class="row" style="padding: 13px 18px; background: #FFFFFF; border-bottom: 1px solid #E4E0D8">
       <svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="#3D5A80" stroke-width="1.6" stroke-linecap="square" stroke-linejoin="miter" style="flex: none"><path d="M3 8a5 5 0 0 1 8.5-3.5L13 6"/><path d="M13 2.5V6H9.5"/><path d="M13 8a5 5 0 0 1-8.5 3.5L3 10"/><path d="M3 13.5V10h3.5"/></svg>
       <div style="flex: 1">
         <div style="font-weight: 600">Sincronizaci&#243;n manual</div>
-        <div class="hint mono" style="font-size: 11.5px">obsidian, keepass, upload</div>
+        <div class="hint mono" style="font-size: 11.5px">docs, claves, upload</div>
       </div>
       <span class="chip ok"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="#3F6B4A" stroke-width="2.2" stroke-linecap="square" stroke-linejoin="miter" style="flex: none"><path d="M3 8.5 6.5 12 13 4.5"/></svg> terminado &#183; 12 s</span>
     </div>
 
     <div class="mono" style="flex: 1; min-height: 0; padding: 12px 18px; background: #FFFFFF;
          font-size: 12px; line-height: 1.7">
-      <span style="color: #1C1A17; font-weight: 600">== obsidian == bisync  F:\sync-data\obsidian &#8594; synology:/PJ/Obsidian</span><br>
-      <span style="color: #5C564C; font-weight: 400">  ejecutando: rclone bisync &#8230; --filters-file filters/obsidian.txt</span><br>
+      <span style="color: #1C1A17; font-weight: 600">== docs == bisync  F:\sync-data\docs &#8594; nas:/datos/docs</span><br>
+      <span style="color: #5C564C; font-weight: 400">  ejecutando: rclone bisync &#8230; --filters-file filters/docs.txt</span><br>
       <span style="color: #3F6B4A; font-weight: 400">  Copied (new) 3, Deleted 0, Renamed 0</span><br>
       <span style="color: #3F6B4A; font-weight: 600">  OK (4 s)</span><br>
       <br>
-      <span style="color: #1C1A17; font-weight: 600">== keepass == bisync  F:\sync-data\keepass &#8594; synology:/PJ/KeePass/DB</span><br>
+      <span style="color: #1C1A17; font-weight: 600">== claves == bisync  F:\sync-data\claves &#8594; nas:/datos/claves</span><br>
       <span style="color: #5C564C; font-weight: 400">  ejecutando: rclone bisync &#8230; --max-delete 25</span><br>
       <span style="color: #3F6B4A; font-weight: 600">  OK (2 s) &#183; sin cambios</span><br>
       <br>
-      <span style="color: #1C1A17; font-weight: 600">== upload == up  F:\sync-data\upload &#8594; synology:/PJ/Share/Pupurri</span><br>
+      <span style="color: #1C1A17; font-weight: 600">== upload == up  F:\sync-data\upload &#8594; nas:/datos/varios</span><br>
       <span style="color: #5C564C; font-weight: 400">  ejecutando: rclone copy &#8230;</span><br>
       <span style="color: #3F6B4A; font-weight: 600">  OK (6 s) &#183; 12 ficheros nuevos</span><br>
       <br>

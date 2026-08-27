@@ -3,7 +3,7 @@
 prefs.py — Con qué valores sale precargada la UI.
 
 La UI recuerda lo último que se eligió en `state/ui_prefs.json`, que viaja en el
-pen y por tanto acompaña al usuario de una máquina a otra. Ese recuerdo manda
+dispositivo y por tanto acompaña al usuario de una máquina a otra. Ese recuerdo manda
 sobre `[daemon]` del TOML, que a su vez manda sobre los valores de fábrica.
 
 Solo escribe aquí la UI (`save_prefs`, desde runsync al confirmar una acción).
@@ -42,8 +42,8 @@ def save_prefs(action: str, pairs: list[str], interval_min: float,
     }
     old = read_prefs()
     if all(old.get(k) == v for k, v in data.items() if k not in ("host", "saved")):
-        return  # misma elección que la vez anterior: no se gasta escritura en el pen
-    store.write_json(PREFS, data)  # si el pen ya no está, recordar no es vital
+        return  # misma elección que la vez anterior: no se gasta escritura en el dispositivo
+    store.write_json(PREFS, data)  # si el dispositivo ya no está, recordar no es vital
 
 
 def daemon_defaults(config: Config) -> tuple[list[str], float]:

@@ -13,7 +13,7 @@ import ui.tk
 from ui import prefs
 
 c = Checks("fachada ui.start()")
-prefs.PREFS = tmpdir("perepen-start-") / "ui_prefs.json"
+prefs.PREFS = tmpdir("prdrive-start-") / "ui_prefs.json"
 for _m in (ui, ui.console, ui.tk):
     _m.pair_status_notes = lambda cfg: {}
 

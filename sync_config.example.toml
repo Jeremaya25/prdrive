@@ -1,0 +1,109 @@
+# Ejemplo de configuración de prdrive.
+#
+# Este MISMO esquema sirve para dos ficheros distintos:
+#
+#   * `.prdrive/sync_config.toml` — el config de UN dispositivo: qué sincroniza
+#     él. Lo genera el instalador y lo mantiene la ventana de parejas.
+#   * `pairs.toml` en tu remoto — el catálogo: qué parejas EXISTEN, para todos
+#     los dispositivos. Admite además la tabla [remote] de abajo.
+#
+# Todo lo que hay aquí es un ejemplo: cambia el remote, las rutas y las parejas
+# por las tuyas.
+
+
+# ---------------------------------------------------------------------------
+# [remote] — SOLO en el catálogo.
+# ---------------------------------------------------------------------------
+# Cómo se define el remote en el rclone.conf de cada dispositivo. Es lo que hace
+# que la conexión se teclee una sola vez: el primer dispositivo la escribe aquí y
+# los demás la heredan al instalarse. Son las mismas claves que usarías en un
+# rclone.conf, así que vale cualquier backend de rclone.
+#
+# La clave privada NO va aquí y nunca sube al remoto: viaja dentro de cada
+# dispositivo, en `.prdrive/keys/`.
+
+[remote]
+name = "nas"                  # el nombre del remote; el que usan los remote_path
+type = "sftp"
+host = "servidor.ejemplo.com"
+port = 22
+user = "usuario-dedicado"
+disable_hashcheck = true      # muchos SFTP no ofrecen md5sum por SSH
+shell_type = "none"
+
+
+# ---------------------------------------------------------------------------
+# [defaults] — lo que vale para todas las parejas
+# ---------------------------------------------------------------------------
+
+[defaults]
+remote = "nas"                # tiene que coincidir con [remote].name
+catalog_path = "/prdrive-catalog/pairs.toml"
+recovery_path = "/prdrive/_recovery"    # dónde se guardan las claves de BitLocker
+
+# Filtros que se suman a los de cada pareja.
+exclude = [
+    "**/.stfolder/**",
+    "**/.stversions/**",
+    "**/.stignore",
+]
+
+# keep_logs = true            # guarda también los logs de las pasadas buenas
+
+# device_remote = "disp"      # avanzado: hace que el nombre de los listados de
+                              # bisync no dependa de la letra de unidad. Exige
+                              # --resync al activarlo.
+
+# Flags de rclone para todas las parejas. La clave es el flag sin '--', y '_' se
+# convierte en '-'. Añadir un flag es editar esto, nunca el código.
+[defaults.flags]
+checkers = 8
+transfers = 4
+
+
+# ---------------------------------------------------------------------------
+# [daemon] — el servicio periódico
+# ---------------------------------------------------------------------------
+
+[daemon]
+pairs = ["docs", "claves"]    # qué sincroniza; si falta, todas
+interval_minutes = 30
+
+
+# ---------------------------------------------------------------------------
+# [[pair]] — una carpeta sincronizada
+# ---------------------------------------------------------------------------
+# modo        qué hace                              borra en
+# ----------  ------------------------------------  ---------------------
+# bisync      dos direcciones, detecta cambios      — (freno --max-delete 25)
+# up          copia dispositivo -> remoto           nada
+# down        copia remoto -> dispositivo           nada
+# up-mirror   espejo dispositivo -> remoto          EL REMOTO
+# down-mirror espejo remoto -> dispositivo          EL DISPOSITIVO
+
+[[pair]]
+name = "docs"
+local = "sync-data/docs"      # relativa a la raíz del dispositivo
+remote_path = "/datos/docs"   # ruta dentro del remote
+mode = "bisync"
+
+[pair.flags]
+conflict-resolve = "newer"    # con qué copia se queda si los dos lados cambiaron
+resilient = true              # un error menor no obliga a --resync la próxima vez
+
+
+[[pair]]
+name = "claves"
+local = "sync-data/claves"
+remote_path = "/datos/claves"
+mode = "bisync"
+
+[pair.flags]
+conflict-resolve = "larger"
+
+
+[[pair]]
+name = "subir"
+local = "sync-data/subir"
+remote_path = "/datos/entrada"
+mode = "up"                   # solo sube; nunca borra en el remoto

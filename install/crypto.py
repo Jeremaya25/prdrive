@@ -2,10 +2,10 @@
 """
 crypto.py — VeraCrypt y BitLocker. Sin Tkinter.
 
-Dos formas de cifrar el pen, con repartos de trabajo muy distintos:
+Dos formas de cifrar el dispositivo, con repartos de trabajo muy distintos:
 
-  * **VeraCrypt** hace un contenedor `PEREPEN.hc` en la raíz del pen físico. Lo
-    crea y lo monta este módulo, y la estructura del pen vive DENTRO. Es lo que
+  * **VeraCrypt** hace un contenedor `PRDRIVE.hc` en la raíz del volumen físico. Lo
+    crea y lo monta este módulo, y la estructura del dispositivo vive DENTRO. Es lo que
     hace portable el cifrado: no depende de la edición de Windows ni de nada
     instalado en el equipo salvo el propio VeraCrypt.
 
@@ -177,7 +177,7 @@ def create_command(vc: dict, container: Path, size_bytes: int, password: str,
 
     /quick (Windows) evita rellenar el fichero entero de datos aleatorios, que en
     un contenedor de varios gigas sobre USB son horas. A cambio, el espacio libre
-    de dentro no queda indistinguible del contenido: no es un problema para un pen
+    de dentro no queda indistinguible del contenido: no es un problema para un dispositivo
     de trabajo, pero conviene saberlo."""
     if IS_WIN:
         return [vc["format"], "/create", str(container),
@@ -288,7 +288,7 @@ def mount_container(vc: dict, container: Path, password: str,
         destino = (letra or free_drive_letter()).rstrip(":").upper()
         punto = Path(f"{destino}:\\")
     else:
-        punto = Path(tempfile.mkdtemp(prefix="perepen-mnt-"))
+        punto = Path(tempfile.mkdtemp(prefix="prdrive-mnt-"))
         destino = punto
 
     cmd = mount_command(vc, container, password, destino)
@@ -328,7 +328,7 @@ def _salida(res) -> str:
 
 
 # ---------------------------------------------------------------------------
-# El favorito: que VeraCrypt monte solo al conectar el pen
+# El favorito: que VeraCrypt monte solo al conectar el dispositivo
 # ---------------------------------------------------------------------------
 
 def veracrypt_config_dir() -> Path:
@@ -342,12 +342,12 @@ FAVORITES_FILE = "Favorite Volumes.xml"
 CONFIG_FILE = "Configuration.xml"
 
 
-def write_favorite(container: Path, letra: str, label: str = "PEREPEN") -> list[str]:
-    """Registra el contenedor como favorito con montaje al conectar el pen.
+def write_favorite(container: Path, letra: str, label: str = "PRDRIVE") -> list[str]:
+    """Registra el contenedor como favorito con montaje al conectar el dispositivo.
 
     Es lo que tapa el hueco que deja VeraCrypt: puede montar solo al aparecer el
     dispositivo, pero no sabe lanzar nada después, así que sigue haciendo falta
-    penwatch. Con las dos cosas, conectar el pen basta.
+    penwatch. Con las dos cosas, conectar el dispositivo basta.
 
     OJO, y hay que decírselo al usuario: esto escribe en la configuración de OTRA
     aplicación. Se deja copia de lo que hubiera, y como el formato es de
@@ -364,7 +364,7 @@ def write_favorite(container: Path, letra: str, label: str = "PEREPEN") -> list[
     hechos = []
     destino = carpeta / FAVORITES_FILE
     if destino.exists():
-        copia = destino.with_suffix(destino.suffix + ".perepen.bak")
+        copia = destino.with_suffix(destino.suffix + ".prdrive.bak")
         shutil.copy2(destino, copia)
         hechos.append(f"Copia de los favoritos anteriores en {copia.name}")
 
@@ -388,7 +388,7 @@ def write_favorite(container: Path, letra: str, label: str = "PEREPEN") -> list[
 
     if set_config_flag("StartOnLogon", "1"):
         hechos.append("VeraCrypt arrancará al iniciar sesión (hace falta para "
-                      "que vigile la llegada del pen)")
+                      "que vigile la llegada del dispositivo)")
     return hechos
 
 
@@ -408,7 +408,7 @@ def set_config_flag(clave: str, valor: str) -> bool:
             if (nodo.text or "").strip() == valor:
                 return False
             nodo.text = valor
-            copia = destino.with_suffix(destino.suffix + ".perepen.bak")
+            copia = destino.with_suffix(destino.suffix + ".prdrive.bak")
             try:
                 shutil.copy2(destino, copia)
                 arbol.write(destino, encoding="utf-8", xml_declaration=True)
@@ -437,7 +437,7 @@ class BitLockerStatus:
 
     `known=False` no es «no está cifrado»: es «no he podido comprobarlo», que es
     lo que pasa siempre sin permisos de administrador. Distinguirlo importa,
-    porque decirle a alguien que su pen está cifrado sin haberlo mirado es peor
+    porque decirle a alguien que su dispositivo está cifrado sin haberlo mirado es peor
     que no decir nada."""
     known: bool
     encrypted: bool = False
@@ -515,7 +515,7 @@ def _ps_json_elevated(script: str, timeout: float = 180.0) -> str:
     Start-Process -Verb RunAs abre otro proceso con su propia consola, así que no
     se puede leer su salida directamente: se le dice que la escriba y la leemos
     nosotros."""
-    tmp = Path(tempfile.mkdtemp(prefix="perepen-bde-")) / "estado.json"
+    tmp = Path(tempfile.mkdtemp(prefix="prdrive-bde-")) / "estado.json"
     interior = script + f" | Out-File -FilePath '{tmp}' -Encoding utf8"
     lanzador = (
         "Start-Process powershell -Verb RunAs -Wait -WindowStyle Hidden "

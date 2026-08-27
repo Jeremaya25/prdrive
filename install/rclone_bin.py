@@ -5,15 +5,15 @@ rclone_bin.py — Conseguir un rclone con el que arrancar.
 El instalador corre en un equipo cualquiera, que puede no tener rclone. Se busca
 en este orden y solo se descarga si no queda otra:
 
-    1. bin/<arch>/ junto al instalador   <- ejecutándolo desde un pen ya hecho
+    1. bin/<arch>/ junto al instalador   <- ejecutándolo desde un checkout
     2. junto al propio ejecutable        <- el .exe y el rclone.exe en la misma carpeta
     3. el PATH del equipo
     4. la caché de descargas de instalaciones anteriores
     5. descarga del zip portable de rclone.org
 
-La descarga va a la caché del usuario, nunca al pen: en este punto puede que
-todavía no haya pen, y aunque lo hubiera, el binario que va a usar el pen es el
-que trae la siembra.
+La descarga va a la caché del usuario, nunca al dispositivo: en este punto puede
+que todavía no exista. El binario que acabe usando el dispositivo es UNA COPIA de
+éste, que deja `deploy.copy_rclone()` en su `bin/<arch>/`.
 """
 
 from __future__ import annotations
@@ -58,17 +58,17 @@ def os_arch() -> tuple[str, str]:
 
 
 def bin_subdir() -> str:
-    """El subdirectorio de bin/ del pen, que no usa los nombres de rclone.
+    """El subdirectorio de bin/ del dispositivo, que no usa los nombres de rclone.
 
     Se pregunta al modelo del proyecto en vez de repetir la tabla: es el mismo
     bin/ que va a usar sync.py luego, y si dejaran de coincidir el instalador
-    verificaría un binario y el pen usaría otro."""
+    verificaría un binario y el dispositivo usaría otro."""
     return arch_dir()
 
 
 def cache_dir() -> Path:
     base = os.environ.get("LOCALAPPDATA") or tempfile.gettempdir()
-    d = Path(base) / "perepen-install"
+    d = Path(base) / "prdrive-install"
     d.mkdir(parents=True, exist_ok=True)
     return d
 

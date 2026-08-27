@@ -3,7 +3,7 @@
 tk_pairs.py — La pantalla de parejas.
 
 Solo dibuja. Todo lo que decide y todo lo que toca el disco está en
-`ui/pair_editor.py` (este pen) y `ui/catalog_editor.py` (el catálogo del NAS), y
+`ui/pair_editor.py` (este dispositivo) y `ui/catalog_editor.py` (el catálogo del remoto), y
 el guion es siempre el mismo: se pide un plan, se enseñan sus consecuencias, y
 solo si el usuario confirma se ejecuta. Ninguna acción de esta pantalla escribe
 nada sin haber enseñado antes lo que va a pasar.
@@ -11,9 +11,9 @@ nada sin haber enseñado antes lo que va a pasar.
 La lista es una sola pero los botones van en dos bloques separados, y esa
 separación es el asunto de la pantalla: el bloque que cambia el catálogo —y por
 tanto TODOS los dispositivos— va sobre fondo ámbar, el mismo con el que la
-aplicación avisa de lo demás; el que cambia solo este pen va sobre el papel, con
+aplicación avisa de lo demás; el que cambia solo este dispositivo va sobre el papel, con
 su única acción principal en azul. Una pareja se crea o se borra en el catálogo,
-y después cada pen elige si la usa.
+y después cada dispositivo elige si la usa.
 
 Las consecuencias ya no se enseñan en un `messagebox`: `confirmar_plan()` es una
 ventana de verdad, con las consecuencias como lista y los avisos en su recuadro
@@ -30,7 +30,7 @@ from . import catalog_editor, flags_editor, icons, pair_editor, theme
 from .tk import TITLE, bloque_aviso, cabecera, modal, mostrar
 
 COLUMNAS = [
-    ("usa", "En el pen", 62),
+    ("usa", "En el dispositivo", 62),
     ("pareja", "Pareja", 110),
     ("modo", "Modo", 95),
     ("local", "Local", 180),
@@ -42,10 +42,10 @@ COLUMNAS = [
 # Los campos de texto del formulario de [defaults]. Los flags tienen su propio
 # diálogo, y lo que no sale por ningún sitio (use_filters_file…) se conserva tal
 # cual, igual que en las parejas.
-DEFAULTS_KEYS = ("remote", "pen_remote", "catalog_path")
+DEFAULTS_KEYS = ("remote", "device_remote", "catalog_path")
 
 NOTA_PEN = "Se guardará copia en sync_config.toml.bak"
-NOTA_CATALOGO = "Se guardará copia en pairs.toml.bak, en el NAS"
+NOTA_CATALOGO = "Se guardará copia en pairs.toml.bak, en el remoto"
 
 
 def _tono(fila) -> str:
@@ -74,7 +74,7 @@ def _estado(fila) -> str:
 
 
 def open_dialog(parent, config) -> bool:
-    """Abre la pantalla. Devuelve True si se ha cambiado el config de este pen."""
+    """Abre la pantalla. Devuelve True si se ha cambiado el config de este dispositivo."""
     from tkinter import messagebox, ttk
 
     dlg = modal(parent, "Parejas")
@@ -92,7 +92,7 @@ def open_dialog(parent, config) -> bool:
     arriba.columnconfigure(0, weight=1)
     cabecera(arriba, "Parejas",
              "Una pareja se crea o se borra en el catálogo, que es igual para "
-             "todos los dispositivos. Cada pen elige después cuáles usa.",
+             "todos los dispositivos. Cada dispositivo elige después cuáles usa.",
              ancho=620, estilo="Dialogo.TLabel").grid(row=0, column=0, sticky="w")
 
     donde = ttk.Frame(arriba)
@@ -192,7 +192,7 @@ def open_dialog(parent, config) -> bool:
         return None
 
     def aplicar(plan, del_catalogo: bool = False, titulo: str = "") -> None:
-        """Confirmar y ejecutar. Un plan del catálogo no cambia este pen."""
+        """Confirmar y ejecutar. Un plan del catálogo no cambia este dispositivo."""
         if not confirmar_plan(dlg, plan, titulo or "Confirmar el cambio",
                               NOTA_CATALOGO if del_catalogo else NOTA_PEN):
             return
@@ -210,7 +210,7 @@ def open_dialog(parent, config) -> bool:
     def fallo(e) -> None:
         messagebox.showerror(TITLE, str(e), parent=dlg)
 
-    # --- este pen ----------------------------------------------------------
+    # --- este dispositivo ----------------------------------------------------------
 
     def usar_aqui() -> None:
         fila = fila_elegida()
@@ -218,7 +218,7 @@ def open_dialog(parent, config) -> bool:
             return
         try:
             aplicar(pair_editor.plan_enable(estado["raw"], estado["cat"], fila.name),
-                    titulo=f"Usar '{fila.name}' en este pen")
+                    titulo=f"Usar '{fila.name}' en este dispositivo")
         except ConfigError as e:
             fallo(e)
 
@@ -227,7 +227,7 @@ def open_dialog(parent, config) -> bool:
         if fila is None:
             return
         if not fila.en_pen:
-            messagebox.showinfo(TITLE, f"'{fila.name}' no se está usando en este pen.",
+            messagebox.showinfo(TITLE, f"'{fila.name}' no se está usando en este dispositivo.",
                                 parent=dlg)
             return
         limpiar = preguntar_limpieza(dlg, fila.name)
@@ -235,7 +235,7 @@ def open_dialog(parent, config) -> bool:
             return
         try:
             aplicar(pair_editor.plan_remove(estado["raw"], fila.name, clean_state=limpiar),
-                    titulo=f"Quitar '{fila.name}' de este pen")
+                    titulo=f"Quitar '{fila.name}' de este dispositivo")
         except ConfigError as e:
             fallo(e)
 
@@ -244,13 +244,13 @@ def open_dialog(parent, config) -> bool:
         if fila is None:
             return
         if not fila.en_pen:
-            messagebox.showinfo(TITLE, f"'{fila.name}' todavía no se usa en este pen: "
+            messagebox.showinfo(TITLE, f"'{fila.name}' todavía no se usa en este dispositivo: "
                                        f"úsala primero y luego modifícala.", parent=dlg)
             return
         actual = next(p for p in estado["raw"]["pair"] if p.get("name") == fila.name)
         datos = formulario(dlg, estado["raw"], fila.name, actual,
                            catalogo=catalog.find_pair(estado["cat"], fila.name),
-                           titulo=f"Modificar '{fila.name}' solo en este pen",
+                           titulo=f"Modificar '{fila.name}' solo en este dispositivo",
                            marca="el catálogo no cambia",
                            subtitulo="Este cambio se queda aquí, los demás "
                                      "dispositivos siguen igual.")
@@ -259,7 +259,7 @@ def open_dialog(parent, config) -> bool:
         try:
             aplicar(pair_editor.plan_override(estado["raw"], estado["cat"],
                                               fila.name, datos),
-                    titulo=f"Modificar '{fila.name}' en este pen")
+                    titulo=f"Modificar '{fila.name}' en este dispositivo")
         except ConfigError as e:
             fallo(e)
 
@@ -277,14 +277,14 @@ def open_dialog(parent, config) -> bool:
         cat = estado["cat"]
         actuales = dict(estado["raw"].get("defaults") or {})
         datos = defaults_form(dlg, actuales, cat.defaults if cat else None,
-                              "Ajustes generales de este pen",
-                              "Valen para todas las parejas de este pen.",
+                              "Ajustes generales de este dispositivo",
+                              "Valen para todas las parejas de este dispositivo.",
                               marca="el catálogo no cambia")
         if datos is None:
             return
         try:
             aplicar(pair_editor.plan_defaults(estado["raw"], datos),
-                    titulo="Cambiar los ajustes de este pen")
+                    titulo="Cambiar los ajustes de este dispositivo")
         except ConfigError as e:
             fallo(e)
 
@@ -301,7 +301,7 @@ def open_dialog(parent, config) -> bool:
         datos = formulario(dlg, (estado["cat"].raw if estado["cat"] else {}), None, {},
                            titulo="Nueva pareja en el catálogo",
                            marca="afecta a TODOS los dispositivos",
-                           subtitulo="Queda disponible para todos los pens; usarla "
+                           subtitulo="Queda disponible para todos los dispositivos; usarla "
                                      "aquí es el paso siguiente.")
         if datos is None:
             return
@@ -323,7 +323,7 @@ def open_dialog(parent, config) -> bool:
         datos = formulario(dlg, estado["cat"].raw, fila.name, entrada,
                            titulo=f"Editar '{fila.name}' en el catálogo",
                            marca="afecta a TODOS los dispositivos",
-                           subtitulo="Lo que se cambie aquí lo verán todos los pens "
+                           subtitulo="Lo que se cambie aquí lo verán todos los dispositivos "
                                      "la próxima vez que lean el catálogo.")
         if datos is None:
             return
@@ -352,7 +352,7 @@ def open_dialog(parent, config) -> bool:
             return
         datos = defaults_form(dlg, cat.defaults, None,
                               "Ajustes generales del catálogo",
-                              "Los heredan todos los pens que no tengan los suyos.",
+                              "Los heredan todos los dispositivos que no tengan los suyos.",
                               marca="afecta a TODOS los dispositivos")
         if datos is None:
             return
@@ -370,7 +370,7 @@ def open_dialog(parent, config) -> bool:
     # --- los dos bloques de botones ----------------------------------------
 
     for i, (texto, accion) in enumerate((
-            ("Ajustes de este pen…", defaults_del_pen),
+            ("Ajustes de este dispositivo…", defaults_del_pen),
             ("Volver a los del catálogo", volver_defaults)), start=4):
         ttk.Button(fila_defaults, text=texto, style="GrisQuiet.TButton",
                    command=accion).grid(row=0, column=i, padx=(4, 0))
@@ -379,16 +379,16 @@ def open_dialog(parent, config) -> bool:
     boton.grid(row=0, column=6, padx=(4, 0))
     botones_catalogo.append(boton)
 
-    pen = ttk.Frame(marco)
-    pen.grid(row=3, column=0, sticky="ew", pady=(14, 0))
-    ttk.Label(pen, text=theme.rotulo("Este pen"), style="Rotulo.TLabel",
+    dispositivo = ttk.Frame(marco)
+    dispositivo.grid(row=3, column=0, sticky="ew", pady=(14, 0))
+    ttk.Label(dispositivo, text=theme.rotulo("Este dispositivo"), style="Rotulo.TLabel",
               width=18).grid(row=0, column=0, sticky="w")
     for i, (texto, icono, estilo, accion) in enumerate((
             ("Usar aquí", "plus", "Primary.TButton", usar_aqui),
             ("Modificar aquí…", "edit", "TButton", modificar_aqui),
             ("Volver al catálogo", "back", "TButton", volver_al_catalogo),
             ("Quitar…", "trash", "Danger.TButton", quitar)), start=1):
-        boton = ttk.Button(pen, text=texto, style=estilo, command=accion)
+        boton = ttk.Button(dispositivo, text=texto, style=estilo, command=accion)
         color = {"Primary.TButton": theme.SUPERFICIE,
                  "Danger.TButton": theme.PELIGRO}.get(estilo, theme.TINTA2)
         fondo = theme.ACENTO if estilo == "Primary.TButton" else theme.SUPERFICIE
@@ -432,11 +432,11 @@ def open_dialog(parent, config) -> bool:
 
 
 def _resumen_defaults(raw, difiere) -> str:
-    """La línea de una sola frase que resume los [defaults] de este pen."""
+    """La línea de una sola frase que resume los [defaults] de este dispositivo."""
     d = raw.get("defaults") or {}
     trozos = [f"remote {d.get('remote', model.DEFAULT_REMOTE)}"]
-    trozos.append(f"pen_remote {d['pen_remote']}" if d.get("pen_remote")
-                  else "sin pen_remote")
+    trozos.append(f"device_remote {d['device_remote']}" if d.get("device_remote")
+                  else "sin device_remote")
     flags = len(d.get("flags") or {})
     trozos.append(f"{flags} flags comunes" if flags else "sin flags comunes")
     if difiere:
@@ -453,7 +453,7 @@ def confirmar_plan(parent, plan, titulo: str, nota: str) -> bool:
 
     Cada consecuencia es una línea con su punto, y cada aviso su recuadro ámbar:
     lo que se está confirmando aquí puede apartar un baseline o subir un cambio
-    al NAS, y en un `askokcancel` todo eso queda en un párrafo que se despacha
+    al remoto, y en un `askokcancel` todo eso queda en un párrafo que se despacha
     con un clic sin leerlo."""
     from tkinter import ttk
 
@@ -518,10 +518,10 @@ def preguntar_limpieza(parent, name: str) -> bool | None:
     marco.columnconfigure(0, weight=1)
     respuesta = {"valor": None}
 
-    ttk.Label(marco, text=f"Quitar '{name}' de este pen",
+    ttk.Label(marco, text=f"Quitar '{name}' de este dispositivo",
               style="Dialogo.TLabel").grid(row=0, column=0, sticky="w")
     ttk.Label(marco, justify="left", wraplength=440, style="Pista.TLabel",
-              text=("Los datos NO se tocan, ni en el pen ni en el NAS, y la pareja "
+              text=("Los datos NO se tocan, ni en el dispositivo ni en el remoto, y la pareja "
                     "sigue en el catálogo: se puede volver a usar cuando "
                     "quieras.")).grid(row=1, column=0, sticky="w", pady=(5, 0))
 
@@ -563,7 +563,7 @@ def _cabecera_form(marco, titulo: str, marca: str | None, subtitulo: str | None,
     """Título, chip de alcance y frase. Devuelve la fila siguiente.
 
     El chip es lo que contesta de un vistazo a la única pregunta que importa
-    antes de tocar nada: si esto se queda aquí o lo van a ver todos los pens."""
+    antes de tocar nada: si esto se queda aquí o lo van a ver todos los dispositivos."""
     from tkinter import ttk
     ttk.Label(marco, text=titulo, style="Dialogo.TLabel").grid(
         row=fila, column=0, columnspan=3, sticky="w")
@@ -620,8 +620,8 @@ def formulario(parent, raw: dict, original_name: str | None, actual: dict,
     campos: dict[str, tk.StringVar] = {}
     for clave, titulo_campo, ayuda, mono in (
             ("name", "Nombre", "nombra también su carpeta en state/", False),
-            ("local", "Ruta local", "relativa a la raíz del pen", True),
-            ("remote_path", "Ruta remota", "en el NAS, p. ej. /PJ/Notas", True),
+            ("local", "Ruta local", "relativa a la raíz del dispositivo", True),
+            ("remote_path", "Ruta remota", "en el remoto, p. ej. /datos/notas", True),
             ("remote", "Remoto", f"vacío = el de [defaults] ({por_defecto})", True)):
         etiqueta(titulo_campo, fila)
         var = tk.StringVar(value=str(actual.get(clave, "")))
@@ -763,7 +763,7 @@ def defaults_form(parent, actual: dict, catalogo: dict | None,
     campos: dict[str, tk.StringVar] = {}
     for clave, titulo_campo, ayuda in (
             ("remote", "Remoto", "el nombre del remote en rclone.conf"),
-            ("pen_remote", "Remote del pen",
+            ("device_remote", "Remote del dispositivo",
              "vacío = desactivado; cambiarlo invalida los baselines"),
             ("catalog_path", "Ruta del catálogo",
              f"vacío = {catalog.DEFAULT_CATALOG_PATH}")):
@@ -834,7 +834,7 @@ def defaults_form(parent, actual: dict, catalogo: dict | None,
         row=0, column=2, rowspan=2, sticky="e")
     fila += 1
 
-    bloque_aviso(marco, "Ojo con 'Remote del pen' y 'Remoto': alimentan los "
+    bloque_aviso(marco, "Ojo con 'Remote del dispositivo' y 'Remoto': alimentan los "
                         "extremos de todas las parejas, así que cambiarlos aparta "
                         "sus baselines.", ancho=620).grid(
         row=fila, column=0, columnspan=3, sticky="ew", pady=(12, 0))

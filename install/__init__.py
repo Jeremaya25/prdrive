@@ -1,21 +1,27 @@
 #!/usr/bin/env python3
 """
-install — Lo que sabe el instalador de un pen PEREPEN nuevo.
+install — Lo que sabe el instalador de un dispositivo prdrive nuevo.
 
 Aquí no se dibuja nada. El asistente vive en `ui/tk_install.py` y esta es la
 misma división que ya rige en el proyecto entre `ui/pair_editor.py` (decide y
 toca el disco) y `ui/tk_pairs.py` (solo pinta): así todo lo delicado —formatear
-órdenes de rclone, elegir dónde se siembra, hablar con VeraCrypt— se puede
-probar sin pantalla y sin pen.
+órdenes de rclone, elegir dónde se instala, hablar con VeraCrypt— se puede
+probar sin pantalla y sin dispositivo.
 
+    profile     la conexión con el remoto: de dónde sale y cómo se escribe
     rclone_bin  conseguir un binario de rclone con el que arrancar
-    remote      la clave embebida, el rclone.conf efímero y el catálogo del NAS
-    device      qué volúmenes hay, cuál es el pen, y si quedó bien montado
+    remote      el rclone.conf efímero y el catálogo de parejas
+    device      qué volúmenes hay, cuál es el dispositivo, y si quedó bien montado
     crypto      VeraCrypt y BitLocker
-    seed        la siembra, el sync_config.toml del dispositivo y el --resync
+    deploy      instalar el código, el config del dispositivo y el --resync
 
-A diferencia del resto del proyecto, esto NO corre desde el pen: corre antes de
-que el pen exista, y su forma final es un ejecutable de PyInstaller. De ahí las
+El código del dispositivo lo copia el instalador desde lo que lleva dentro
+(`deploy.deploy_code`). Antes bajaba del remoto con un `rclone sync` del espejo
+maestro, y eso obligaba a tener el programa guardado en el servidor del usuario:
+ahora el remoto guarda configuración, no programas.
+
+A diferencia del resto del proyecto, esto NO corre desde el dispositivo: corre
+antes de que exista, y su forma final es un ejecutable de PyInstaller. De ahí las
 dos rarezas de este módulo: `python_command()`, porque congelados
 `sys.executable` es el instalador y no Python; y `bundle_dir()`, porque los
 ficheros que acompañan al script están en otro sitio cuando van dentro del .exe.
@@ -29,21 +35,20 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-__version__ = "2.0"
+from common import APP_NAME
 
-# --- El NAS. No es secreto: son rutas y un usuario SFTP dedicado. -------------
-NAS_HOST = "tictactoe.synology.me"
-NAS_PORT = 22
-NAS_USER = "Pereftp"
-REMOTE_NAME = "synology"
+__version__ = "3.0"
 
-MASTER_PATH = "/PJ/Perepen"                       # espejo maestro del pen
-CATALOG_PATH = "/PJ/Perepen-catalog/pairs.toml"   # catálogo global de parejas
-BITLOCKER_PATH = "/PJ/Perepen/_bitlockers"        # claves de recuperación
-
-PEN_LABEL = "PEREPEN"
-CONTAINER_NAME = "PEREPEN.hc"      # contenedor VeraCrypt en la raíz del pen físico
+# --- La marca. Es un identificador, no un adorno: da nombre al fichero de
+# --- control del volumen, al contenedor VeraCrypt y a la carpeta de código.
+# --- Sale de `common` para que no haya dos copias que puedan separarse.
+DEVICE_LABEL = APP_NAME.upper()
+CONTAINER_NAME = f"{DEVICE_LABEL}.hc"   # contenedor VeraCrypt en la raíz del volumen
 RCLONE_BASE_URL = "https://downloads.rclone.org"
+
+# Ya NO hay constantes del servidor. Dónde está el remoto, cómo se llama y con
+# qué clave se entra vive en `profile.Profile`, que se teclea en el asistente, se
+# importa de un rclone.conf o llega incrustado en el .exe. Ver install/profile.py.
 
 IS_WIN = os.name == "nt"
 CREATE_NO_WINDOW = 0x08000000
@@ -78,13 +83,13 @@ def bundle_dir() -> Path:
 
 
 def python_command(windowless: bool = False) -> list[str] | None:
-    """Un Python DE VERDAD con el que lanzar el sync.py ya sembrado en el pen.
+    """Un Python DE VERDAD con el que lanzar el sync.py ya sembrado en el dispositivo.
 
     Congelados, `sys.executable` es el propio instalador: usarlo relanzaría el
     asistente en vez de sincronizar. Por eso solo vale cuando NO estamos
     congelados, y si lo estamos hay que salir a buscar un intérprete instalado.
     Devuelve None si en este equipo no hay ninguno, que es información útil: el
-    pen resultante tampoco funcionaría."""
+    dispositivo resultante tampoco funcionaría."""
     if not is_frozen():
         return [_windowless(sys.executable) if windowless else sys.executable]
 
@@ -118,12 +123,13 @@ def _windowless(exe: str) -> str:
 class InstallState:
     """Lo que se sabe hasta ahora. Un paso lee lo que dejaron los anteriores.
 
-    `device` es la raíz del pen FÍSICO y `pen_root` dónde va a vivir la
+    `device` es la raíz del volumen FÍSICO y `device_root` dónde va a vivir la
     estructura: sin cifrar o con BitLocker son la misma carpeta, pero con un
-    contenedor VeraCrypt `pen_root` es la unidad montada y `device` sigue siendo
-    el pen, que es donde está el .hc."""
+    contenedor VeraCrypt `device_root` es la unidad montada y `device` sigue
+    siendo el dispositivo, que es donde está el .hc. El código y los lanzadores van
+    SIEMPRE en `device_root`, o sea dentro de lo cifrado."""
     device: Path | None = None
-    pen_root: Path | None = None
+    device_root: Path | None = None
 
     encryption: str = "none"                    # none | veracrypt | bitlocker
     container: Path | None = None
@@ -131,7 +137,6 @@ class InstallState:
     mounted_by_us: bool = False
 
     selected: list[str] = field(default_factory=list)
-    seed_simulated: bool = False
-    seeded: bool = False
+    deployed: bool = False
     config_written: bool = False
     initialized: bool = False

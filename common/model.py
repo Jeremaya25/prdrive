@@ -36,12 +36,14 @@ except ModuleNotFoundError:  # pragma: no cover
 
 # --- Rutas, todas deducidas de la ubicación de este fichero -------------------
 #
-# Este módulo vive en rclone-sync/common/, así que la carpeta de la aplicación
-# —la que contiene sync_config.toml, rclone.conf, bin/, keys/, y contra la que
-# rclone resuelve las rutas relativas de su config— es el directorio padre, y el
-# pen el siguiente. Nada de esto depende de la letra de unidad.
+# Este módulo vive en <carpeta de la app>/common/, así que la carpeta de la
+# aplicación —la que contiene sync_config.toml, rclone.conf, bin/, keys/, y contra
+# la que rclone resuelve las rutas relativas de su config— es el directorio padre,
+# y el dispositivo el siguiente. En un dispositivo provisionado la carpeta se
+# llama `.prdrive`; en un checkout, como se llame. Nada de esto depende de la
+# letra de unidad ni del nombre, porque todo sale de `__file__`.
 APP_DIR = Path(__file__).resolve().parent.parent
-PEN_ROOT = APP_DIR.parent  # las rutas 'local' del config son relativas a aquí
+DEVICE_ROOT = APP_DIR.parent  # las rutas 'local' del config son relativas a aquí
 CONFIG_FILE = APP_DIR / "sync_config.toml"
 RCLONE_CONF = APP_DIR / "rclone.conf"
 STATE_DIR = APP_DIR / "state"
@@ -61,7 +63,7 @@ class ConfigError(Exception):
     por consola no se nota la diferencia."""
 
 
-DEFAULT_REMOTE = "synology"
+DEFAULT_REMOTE = "remote"
 DEFAULT_MODE = "bisync"
 DEFAULT_INTERVAL_MIN = 30.0         # minutos entre ciclos del servicio
 
@@ -85,7 +87,7 @@ BIN_DIR = APP_DIR / "bin" / arch_dir()
 
 
 def rclone_binary() -> str:
-    """Ruta ejecutable al binario portable de rclone (con apaño para pen sin +x)."""
+    """Ruta ejecutable al binario portable de rclone (apaño para exFAT sin +x)."""
     name = "rclone.exe" if os.name == "nt" else "rclone"
     binary = BIN_DIR / name
     if not binary.exists():
@@ -113,7 +115,7 @@ def flags_to_args(flags: Mapping[str, Any]) -> list[str]:
     config -> comando: quien funde las capas de flags es este módulo, y hay dos
     sitios más que tienen que traducirlos exactamente igual sin arrastrar el
     motor —la UI, que enseña en qué se convierten, y el instalador, que monta
-    órdenes de rclone antes de que exista ningún pen—.
+    órdenes de rclone antes de que exista ningún dispositivo—.
     """
     args: list[str] = []
     for key, value in flags.items():
@@ -197,7 +199,7 @@ class Pair:
     necesita saber que existían unos `[defaults]`."""
     name: str
     mode: Mode
-    local: str                      # relativa al pen, con / y sin barras sueltas
+    local: str                 # relativa al dispositivo, con / y sin barras sueltas
     remote_path: str
     remote_name: str
     includes: tuple[str, ...]
@@ -205,20 +207,20 @@ class Pair:
     flags: Mapping[str, Any]
     extra_flags: tuple[str, ...]
     use_filters_file: bool
-    pen_remote: str | None
+    device_remote: str | None
 
     # --- extremos tal y como se le pasan a rclone --------------------------
 
     @property
     def local_abs(self) -> Path:
-        return (PEN_ROOT / self.local).resolve()
+        return (DEVICE_ROOT / self.local).resolve()
 
     @property
     def local_endpoint(self) -> str:
-        """Con `pen_remote` el lado local es un remote propio, y entonces su
-        nombre ya no depende de dónde esté montado el pen."""
-        if self.pen_remote:
-            return f"{self.pen_remote}:{self.local}"
+        """Con `device_remote` el lado local es un remote propio, y entonces su
+        nombre ya no depende de dónde esté montado el dispositivo."""
+        if self.device_remote:
+            return f"{self.device_remote}:{self.local}"
         return str(self.local_abs)
 
     @property
@@ -250,7 +252,7 @@ class Pair:
     @property
     def top_level_dir(self) -> str:
         """Primer tramo de la ruta local: lo que se declara como upstream del
-        remote 'combine' cuando se usa `pen_remote`."""
+        remote 'combine' cuando se usa `device_remote`."""
         return self.local.split("/")[0]
 
     @property
@@ -287,20 +289,20 @@ def _build_pair(raw: Mapping[str, Any], defaults: Mapping[str, Any]) -> Pair:
         extra_flags=_as_tuple(defaults.get("extra_flags")) + _as_tuple(raw.get("extra_flags")),
         use_filters_file=raw.get("use_filters_file",
                                  defaults.get("use_filters_file", True)),
-        pen_remote=_pen_remote_name(defaults),
+        device_remote=_device_remote_name(defaults),
     )
 
 
-def _pen_remote_name(defaults: Mapping[str, Any]) -> str | None:
+def _device_remote_name(defaults: Mapping[str, Any]) -> str | None:
     """El nombre viaja en variables de entorno RCLONE_CONFIG_<NOMBRE>_*, que no
     admiten cualquier cosa."""
-    name = defaults.get("pen_remote")
+    name = defaults.get("device_remote")
     if not name:
         return None
     if not re.fullmatch(r"[A-Za-z0-9_]+", name):
         raise ConfigError(
-            f"'pen_remote' debe ser alfanumérico sin guiones (va en una variable "
-            f"de entorno RCLONE_CONFIG_<NOMBRE>_*): '{name}'")
+            f"'device_remote' debe ser alfanumérico sin guiones (va en una "
+            f"variable de entorno RCLONE_CONFIG_<NOMBRE>_*): '{name}'")
     return name
 
 
@@ -313,7 +315,7 @@ class Config:
     pairs: tuple[Pair, ...]
     daemon: Mapping[str, Any]
     keep_logs: bool
-    pen_remote: str | None
+    device_remote: str | None
 
     @property
     def names(self) -> list[str]:
@@ -331,23 +333,23 @@ class Config:
         return chosen
 
     def pen_environment(self) -> dict[str, str]:
-        """Variables que definen el remote 'combine' del pen en tiempo de ejecución.
+        """Variables que definen el remote 'combine' del dispositivo en ejecución.
 
         Un remote 'alias' NO sirve: backend/alias/alias.go devuelve el Fs de
         destino tal cual, así que con destino local f.Name() vuelve a ser "local"
         y la ruta absoluta reaparece en el nombre de los listados. Un 'combine' sí
-        es un Fs propio y el lado del pen pasa a llamarse "pen:sync-data/x" en
-        cualquier máquina.
+        es un Fs propio y el lado local pasa a llamarse "dispositivo:sync-data/x"
+        en cualquier máquina.
 
         Se calcula con TODAS las parejas, no solo las seleccionadas, para que el
         remote sea idéntico ejecutes lo que ejecutes."""
-        if not self.pen_remote:
+        if not self.device_remote:
             return {}
         tops = sorted({p.top_level_dir for p in self.pairs})
-        upstreams = " ".join(f'{t}="{(PEN_ROOT / t).resolve()}"' for t in tops)
+        upstreams = " ".join(f'{t}="{(DEVICE_ROOT / t).resolve()}"' for t in tops)
         return {
-            f"RCLONE_CONFIG_{self.pen_remote.upper()}_TYPE": "combine",
-            f"RCLONE_CONFIG_{self.pen_remote.upper()}_UPSTREAMS": upstreams,
+            f"RCLONE_CONFIG_{self.device_remote.upper()}_TYPE": "combine",
+            f"RCLONE_CONFIG_{self.device_remote.upper()}_UPSTREAMS": upstreams,
         }
 
 
@@ -360,7 +362,7 @@ def parse_config(data: Mapping[str, Any]) -> Config:
         pairs=tuple(_build_pair(p, defaults) for p in raw_pairs),
         daemon=data.get("daemon", {}),
         keep_logs=bool(defaults.get("keep_logs", False)),
-        pen_remote=_pen_remote_name(defaults),
+        device_remote=_device_remote_name(defaults),
     )
 
 

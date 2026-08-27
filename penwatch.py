@@ -1,37 +1,37 @@
 #!/usr/bin/env python3
 """
-penwatch.py — Arranque automático al conectar el pen.
+penwatch.py — Arranque automático al conectar el dispositivo.
 
-Instala EN EL EQUIPO (no en el pen) un vigilante que detecta en qué unidad se ha
-montado el pen y lanza `runsync.py` en cuanto es legible. Sin permisos de
+Instala EN EL EQUIPO (no en el dispositivo) un vigilante que detecta en qué unidad se ha
+montado el dispositivo y lanza `runsync.py` en cuanto es legible. Sin permisos de
 administrador: tarea programada de usuario en Windows, servicio de usuario de
 systemd en Linux (autostart XDG si no hay systemd).
 
     python penwatch.py install [--mode ui|sync|daemon] [--pairs a b]
                                [--interval N] [--poll N] [--extra-root RUTA]
     python penwatch.py uninstall     # quita la tarea/servicio y el vigilante
-    python penwatch.py status        # qué hay instalado y si ve el pen ahora
+    python penwatch.py status        # qué hay instalado y si ve el dispositivo ahora
     python penwatch.py probe         # solo detección: dónde busca y qué encuentra
     python penwatch.py run [--once]  # el bucle del vigilante (lo llama la tarea)
 
-Cómo se reconoce el pen
+Cómo se reconoce el dispositivo
 -----------------------
-Por el fichero de control `PEREPEN` en la RAÍZ de la unidad. Ni la letra ni el
+Por el fichero de control `PRDRIVE` en la RAÍZ de la unidad. Ni la letra ni el
 punto de montaje sirven: cambian de equipo a equipo y de un día para otro. El
 fichero puede llevar dentro una línea `id=<hex>` (`install` la escribe si el
-PEREPEN no existía o estaba vacío; si ya tenía contenido, no lo toca), y entonces
-se exige además que el id coincida, para no confundir este pen con otro USB que
-también llevara un PEREPEN. Antes de lanzar nada se comprueba que esté
-`rclone-sync/runsync.py`: sin eso, la unidad no es este proyecto.
+PRDRIVE no existía o estaba vacío; si ya tenía contenido, no lo toca), y entonces
+se exige además que el id coincida, para no confundir este dispositivo con otro USB que
+también llevara un PRDRIVE. Antes de lanzar nada se comprueba que esté
+`.prdrive/runsync.py`: sin eso, la unidad no es este proyecto.
 
 Por qué un vigilante que sondea y no un evento del sistema
 ----------------------------------------------------------
-El pen va cifrado. Windows y Linux avisan de la llegada del DISPOSITIVO, pero el
+El dispositivo va cifrado. Windows y Linux avisan de la llegada del DISPOSITIVO, pero el
 volumen no se puede leer hasta que se desbloquea (BitLocker/LUKS), lo que puede
 tardar lo que tarde el usuario en teclear la contraseña. El evento útil no es
 "ha llegado" sino "ya se lee", y eso solo se sabe intentándolo. Sondear un
 marcador cuesta un stat cada pocos segundos, funciona igual en los dos sistemas,
-y da lo mismo si el pen estaba puesto desde el arranque o se enchufa a media
+y da lo mismo si el dispositivo estaba puesto desde el arranque o se enchufa a media
 sesión.
 
 Permanencia
@@ -45,15 +45,15 @@ sin sesión abierta).
 
 Convivencia con un medio que puede desaparecer a media frase
 ------------------------------------------------------------
-  * El vigilante NUNCA escribe en el pen ni se mete dentro de él (ni cwd ni
+  * El vigilante NUNCA escribe en el dispositivo ni se mete dentro de él (ni cwd ni
     ficheros abiertos): eso bloquearía la extracción segura. Su configuración,
     su estado y su diario viven en el equipo.
-  * Toda lectura del pen va envuelta en try/except OSError: un volumen cifrado y
+  * Toda lectura del dispositivo va envuelta en try/except OSError: un volumen cifrado y
     bloqueado, o retirado en mitad de la llamada, responde con error, no con un
     educado "no existe".
   * Solo se lanza runsync cuando el marcador se ha leído bien en dos sondeos
     seguidos, para no arrancar sobre un montaje a medias.
-  * Nada se relanza mientras el pen siga puesto: hace falta que desaparezca para
+  * Nada se relanza mientras el dispositivo siga puesto: hace falta que desaparezca para
     volver a armar el disparo.
 
 Modos (--mode, se decide al instalar y se guarda en el equipo)
@@ -81,16 +81,22 @@ from datetime import datetime
 from pathlib import Path
 from xml.sax.saxutils import escape as xml_escape
 
-APP = "PerePenWatch"
-TASK_NAME = "PerePenWatch"           # Windows: nombre de la tarea programada
-UNIT_NAME = "perepen-watch.service"  # Linux: unidad de usuario de systemd
+# La marca. `common/__init__.py` la tiene también, y esta es la única copia
+# consentida: penwatch se copia al equipo del usuario y tiene que arrancar con
+# el dispositivo desconectado, así que no puede importar nada del proyecto.
+# Hay un test que comprueba que las dos copias no se separan.
+APP_NAME = "prdrive"
+APP = "PrDriveWatch"
+TASK_NAME = APP                       # Windows: nombre de la tarea programada
+UNIT_NAME = f"{APP_NAME}-watch.service"   # Linux: unidad de usuario de systemd
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-CONTROL_FILE = "PEREPEN"                         # en la RAÍZ de la unidad
-STRUCT_MARKER = Path("rclone-sync") / "runsync.py"  # lo que se va a lanzar
+CONTROL_FILE = APP_NAME.upper()                       # en la RAÍZ de la unidad
+APP_SUBDIR = f".{APP_NAME}"                           # la carpeta oculta del código
+STRUCT_MARKER = Path(APP_SUBDIR) / "runsync.py"       # lo que se va a lanzar
 
 POLL_SECONDS = 5.0
-STABLE_CHECKS = 2            # sondeos seguidos legibles antes de dar el pen por montado
+STABLE_CHECKS = 2            # sondeos seguidos legibles antes de dar el dispositivo por montado
 STOP_WAIT_SECONDS = 8.0
 LOG_MAX_BYTES = 256 * 1024
 LOG_KEEP_LINES = 400
@@ -100,10 +106,10 @@ CREATE_NO_WINDOW = 0x08000000
 CREATE_NEW_PROCESS_GROUP = 0x00000200
 
 CONTROL_TEMPLATE = """\
-# PEREPEN — fichero de control del pen. NO LO BORRES.
+# PRDRIVE — fichero de control del dispositivo. NO LO BORRES.
 # Es lo que permite reconocer esta unidad se monte donde se monte (F:, /media/...).
-# Lo usa rclone-sync/penwatch.py para lanzar la sincronización al conectar el pen.
-id={pen_id}
+# Lo usa .prdrive/penwatch.py para lanzar la sincronización al conectarla.
+id={device_id}
 """
 
 
@@ -113,7 +119,7 @@ def host_dir() -> Path:
         base = os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local")
         return Path(base) / APP
     base = os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share")
-    return Path(base) / "perepen-watch"
+    return Path(base) / f"{APP_NAME}-watch"
 
 
 HOST_DIR = host_dir()
@@ -124,7 +130,7 @@ STOP_FILE = HOST_DIR / "stop"
 SELF_COPY = HOST_DIR / "penwatch.py"
 TASK_XML_FILE = HOST_DIR / "task.xml"
 UNIT_FILE = Path.home() / ".config" / "systemd" / "user" / UNIT_NAME
-DESKTOP_FILE = Path.home() / ".config" / "autostart" / "perepen-watch.desktop"
+DESKTOP_FILE = Path.home() / ".config" / "autostart" / f"{APP_NAME}-watch.desktop"
 
 
 # ---------------------------------------------------------------------------
@@ -168,7 +174,7 @@ def write_json(path: Path, data: dict) -> None:
 
 def pid_alive(pid: int) -> bool:
     """Duplicado a propósito de runsync.py: el vigilante vive en el equipo y no
-    puede importar nada del pen (que puede no estar). OJO: en Windows NO vale
+    puede importar nada del dispositivo (que puede no estar). OJO: en Windows NO vale
     os.kill(pid, 0), que MATA el proceso en vez de comprobarlo."""
     if pid <= 0:
         return False
@@ -216,10 +222,10 @@ def run_quiet(cmd: list[str]) -> subprocess.CompletedProcess:
 
 
 # ---------------------------------------------------------------------------
-# Detección del pen
+# Detección del dispositivo
 #
 # No se busca "una letra de unidad" ni "un punto de montaje": se busca el fichero
-# de control PEREPEN en la raíz, que es lo único que sobrevive a cambiar de
+# de control PRDRIVE en la raíz, que es lo único que sobrevive a cambiar de
 # equipo, de sistema y de letra.
 # ---------------------------------------------------------------------------
 
@@ -243,7 +249,7 @@ def windows_roots() -> list[Path]:
         if not (mask >> i) & 1:
             continue
         root = f"{chr(ord('A') + i)}:\\"
-        # Un pen puede presentarse como extraíble o como fijo según el firmware.
+        # Un dispositivo puede presentarse como extraíble o como fijo según el firmware.
         if k32.GetDriveTypeW(root) in (DRIVE_REMOVABLE, DRIVE_FIXED):
             roots.append(Path(root))
     return roots
@@ -268,12 +274,12 @@ def posix_roots() -> list[Path]:
         pass  # macOS y demás: se cubre con los directorios de abajo
     for base in ("/media", "/run/media", "/mnt", "/Volumes"):
         try:
-            for child in Path(base).iterdir():      # /media/pen
+            for child in Path(base).iterdir():      # /media/dispositivo
                 if not child.is_dir():
                     continue
                 roots.append(child)
                 try:
-                    roots += [g for g in child.iterdir() if g.is_dir()]  # /media/usuario/pen
+                    roots += [g for g in child.iterdir() if g.is_dir()]  # /media/usuario/dispositivo
                 except OSError:
                     pass
         except OSError:
@@ -295,7 +301,7 @@ def candidate_roots(cfg: dict) -> list[Path]:
 
 
 def control_id(root: Path) -> str | None:
-    """El 'id=' de dentro del PEREPEN, o None si no lleva ninguno.
+    """El 'id=' de dentro del PRDRIVE, o None si no lleva ninguno.
     Propaga OSError: quien llama decide qué significa no poder leerlo."""
     for line in (root / CONTROL_FILE).read_text(
             encoding="utf-8", errors="replace").splitlines():
@@ -306,9 +312,9 @@ def control_id(root: Path) -> str | None:
 
 
 def find_pen(cfg: dict) -> Path | None:
-    """La raíz del pen, o None. Cualquier OSError significa 'ahora mismo no': un
+    """La raíz del dispositivo, o None. Cualquier OSError significa 'ahora mismo no': un
     volumen bloqueado responde con error de permisos, no con 'no existe'."""
-    want = cfg.get("pen_id")
+    want = cfg.get("device_id")
     for root in candidate_roots(cfg):
         try:
             if not (root / CONTROL_FILE).is_file():
@@ -355,7 +361,7 @@ def launch(root: Path, cfg: dict) -> bool:
         log("aviso: modo 'ui' sin DISPLAY; runsync no podrá abrir ventana "
             "(usa --mode daemon o --mode sync en equipos sin escritorio)")
 
-    # cwd en el equipo, NUNCA en el pen: un cwd dentro del pen impide extraerlo.
+    # cwd en el equipo, NUNCA en el dispositivo: un cwd dentro del dispositivo impide extraerlo.
     kwargs: dict = {"stdin": subprocess.DEVNULL, "cwd": str(HOST_DIR), "close_fds": True}
     handle = None
     if mode == "sync":
@@ -404,20 +410,20 @@ def watch_loop(once: bool = False) -> int:
 
             if root is None:
                 if state.get("launched") or state.get("root"):
-                    log("pen no disponible; disparo rearmado")
+                    log("dispositivo no disponible; disparo rearmado")
                     state.update({"launched": False, "root": None})
                     write_json(STATE_FILE, state)
                 stable = 0
             elif not state.get("launched"):
                 stable += 1
                 if stable >= (1 if once else STABLE_CHECKS):
-                    log(f"pen detectado en {root}")
+                    log(f"dispositivo detectado en {root}")
                     ok = launch(root, cfg)
                     state.update({"launched": ok, "root": str(root),
                                   "last_launch": stamp(), "last_launch_ok": ok})
                     write_json(STATE_FILE, state)
                     # Si el lanzamiento falla no se da por hecho: se reintenta en
-                    # ~1 min, por si el pen se estaba desbloqueando todavía.
+                    # ~1 min, por si el dispositivo se estaba desbloqueando todavía.
                     stable = 0 if ok else -int(60 / poll)
             else:
                 stable = 0
@@ -479,7 +485,7 @@ TASK_XML = """<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
     <Author>{user}</Author>
-    <Description>Vigila la conexion del pen (fichero PEREPEN) y lanza runsync.py.</Description>
+    <Description>Vigila la conexion del dispositivo (fichero PRDRIVE) y lanza runsync.py.</Description>
   </RegistrationInfo>
   <Triggers>
     <LogonTrigger>
@@ -569,7 +575,7 @@ def register_windows(cfg: dict) -> str:
 
 
 UNIT_TEMPLATE = """[Unit]
-Description=PerePen — vigila la conexion del pen y lanza runsync.py
+Description=prdrive — vigila la conexion del dispositivo y lanza runsync.py
 
 [Service]
 Type=simple
@@ -610,7 +616,7 @@ def register_linux(cfg: dict) -> str:
 
     DESKTOP_FILE.parent.mkdir(parents=True, exist_ok=True)
     DESKTOP_FILE.write_text(
-        "[Desktop Entry]\nType=Application\nName=PerePen Watch\n"
+        "[Desktop Entry]\nType=Application\nName=prdrive Watch\n"
         f"Exec={python} {SELF_COPY} run\n"
         "X-GNOME-Autostart-enabled=true\nNoDisplay=true\n", encoding="utf-8")
     return (f"Autostart XDG instalado en {DESKTOP_FILE} (no hay systemd de "
@@ -664,49 +670,50 @@ def start_now(cfg: dict) -> str:
 # Órdenes
 # ---------------------------------------------------------------------------
 
-def pen_root_from_here() -> Path:
-    """'install' se ejecuta desde el pen: la raíz es el padre de rclone-sync/."""
+def device_root_from_here() -> Path:
+    """'install' se ejecuta desde el dispositivo: la raíz es el padre de
+    la carpeta de la aplicación."""
     root = SCRIPT_DIR.parent
     if not (root / STRUCT_MARKER).is_file():
-        sys.exit(f"'install' hay que ejecutarlo desde el pen: no encuentro "
-                 f"{root / STRUCT_MARKER}")
+        sys.exit(f"'install' hay que ejecutarlo desde el dispositivo: no "
+                 f"encuentro {root / STRUCT_MARKER}")
     return root
 
 
 def ensure_control_file(root: Path) -> str | None:
-    """Se asegura de que hay PEREPEN en la raíz y devuelve su 'id'.
+    """Se asegura de que hay PRDRIVE en la raíz y devuelve su 'id'.
 
-    Un PEREPEN que ya traiga contenido NO se toca (es tuyo): el pen se reconocerá
-    por su sola presencia. Uno vacío sí se rellena con la plantilla, que no
-    pierde nada y añade el id. Si el pen es de solo lectura, se sigue adelante
-    sin id.
+    Un PRDRIVE que ya traiga contenido NO se toca (es tuyo): la unidad se
+    reconocerá por su sola presencia. Uno vacío sí se rellena con la plantilla,
+    que no pierde nada y añade el id. Si el volumen es de solo lectura, se sigue
+    adelante sin id.
     """
     path = root / CONTROL_FILE
     try:
         text = path.read_text(encoding="utf-8", errors="replace") if path.is_file() else None
         if text is not None and text.strip():
-            pen_id = control_id(root)
+            device_id = control_id(root)
             print(f"  fichero de control: {path}"
-                  + (f" (id {pen_id[:8]}…)" if pen_id else
+                  + (f" (id {device_id[:8]}…)" if device_id else
                      " (sin id: se reconocerá solo por su presencia)"))
-            return pen_id
-        pen_id = uuid.uuid4().hex
-        path.write_text(CONTROL_TEMPLATE.format(pen_id=pen_id), encoding="utf-8")
+            return device_id
+        device_id = uuid.uuid4().hex
+        path.write_text(CONTROL_TEMPLATE.format(device_id=device_id), encoding="utf-8")
         verbo = "rellenado" if text is not None else "creado"
-        print(f"  fichero de control {verbo}: {path} (id {pen_id[:8]}…)")
-        return pen_id
+        print(f"  fichero de control {verbo}: {path} (id {device_id[:8]}…)")
+        return device_id
     except OSError as e:
-        print(f"  aviso: no he podido leer/escribir {path} ({e}); el pen se "
+        print(f"  aviso: no he podido leer/escribir {path} ({e}); la unidad se "
               f"reconocerá solo por su presencia.")
         return None
 
 
 def cmd_install(args: argparse.Namespace) -> int:
-    pen = pen_root_from_here()
+    dispositivo = device_root_from_here()
     user = current_user()
-    print(f"Pen: {pen}")
+    print(f"Dispositivo: {dispositivo}")
     print(f"Usuario: {user}")
-    pen_id = ensure_control_file(pen)
+    device_id = ensure_control_file(dispositivo)
 
     msg = stop_running_watcher()
     if msg:
@@ -721,18 +728,18 @@ def cmd_install(args: argparse.Namespace) -> int:
         "pairs": list(args.pairs or []),
         "interval": args.interval,
         "poll_seconds": args.poll,
-        "pen_id": pen_id,
+        "device_id": device_id,
         "extra_roots": list(args.extra_root or []),
         "python_exe": sys.executable,
         "user": user,
         "installed": stamp(),
-        "installed_from": str(pen),
+        "installed_from": str(dispositivo),
     }
     write_json(CONFIG_FILE, cfg)
 
-    # El pen está puesto AHORA (se está instalando desde él): se marca como ya
+    # El dispositivo está puesto AHORA (se está instalando desde él): se marca como ya
     # atendido para no abrir una UI en la cara nada más instalar.
-    write_json(STATE_FILE, {"launched": True, "root": str(pen),
+    write_json(STATE_FILE, {"launched": True, "root": str(dispositivo),
                             "note": "montaje presente durante la instalación"})
 
     try:
@@ -748,7 +755,7 @@ def cmd_install(args: argparse.Namespace) -> int:
           + (f" (parejas: {', '.join(args.pairs)})" if args.pairs else "")
           + (f" (intervalo: {args.interval:g} min)" if args.interval else ""))
     print(f"Config y diario del vigilante: {HOST_DIR}")
-    print("El disparo se arma al desconectar el pen: la próxima vez que lo "
+    print("El disparo se arma al desconectar el dispositivo: la próxima vez que lo "
           "conectes (y desbloquees) se lanzará runsync.")
     print(f'Comprobar: python "{SELF_COPY}" status')
     return 0
@@ -766,7 +773,7 @@ def cmd_uninstall(_args: argparse.Namespace) -> int:
             print(f"  Eliminado {HOST_DIR}")
         except OSError as e:
             print(f"  Aviso: no he podido borrar {HOST_DIR}: {e}")
-    print(f"Desinstalado. El pen no se ha tocado (el fichero {CONTROL_FILE} sigue "
+    print(f"Desinstalado. El dispositivo no se ha tocado (el fichero {CONTROL_FILE} sigue "
           f"ahí; puedes borrarlo si no vas a usar esto en ningún equipo).")
     return 0
 
@@ -813,8 +820,8 @@ def status_rows() -> list[tuple[str, str]]:
                      + (f"  intervalo={cfg['interval']:g}m" if cfg.get("interval") else "")),
             ("Sondeo", f"cada {cfg.get('poll_seconds', POLL_SECONDS):g}s"),
             ("Instalado", f"{cfg.get('installed')} desde {cfg.get('installed_from')}"),
-            ("Pen esperado (id)",
-             cfg.get("pen_id") or f"(solo por presencia de {CONTROL_FILE})"),
+            ("Dispositivo esperado (id)",
+             cfg.get("device_id") or f"(solo por presencia de {CONTROL_FILE})"),
         ]
 
     pid = int(state.get("watcher_pid") or -1)
@@ -823,8 +830,8 @@ def status_rows() -> list[tuple[str, str]]:
         ("Vigilante", f"vivo (pid {pid})" if pid_alive(pid) else "parado"),
         ("Último disparo", f"{state.get('last_launch') or '(ninguno)'}"
                             f"{'' if state.get('last_launch_ok', True) else ' (FALLÓ)'}"),
-        ("Disparo armado", "no (pen ya atendido)" if state.get("launched") else "sí"),
-        ("Pen ahora mismo", str(root) if root else "no detectado"),
+        ("Disparo armado", "no (dispositivo ya atendido)" if state.get("launched") else "sí"),
+        ("Dispositivo ahora mismo", str(root) if root else "no detectado"),
     ]
     return filas
 
@@ -850,8 +857,8 @@ def probe_rows() -> list[tuple[str, str]]:
             elif not (root / STRUCT_MARKER).is_file():
                 note = f"{CONTROL_FILE} OK, pero falta {STRUCT_MARKER}"
             else:
-                pen_id = control_id(root)
-                note = f"{CONTROL_FILE} OK" + (f" (id {pen_id[:8]}…)" if pen_id else " (sin id)")
+                device_id = control_id(root)
+                note = f"{CONTROL_FILE} OK" + (f" (id {device_id[:8]}…)" if device_id else " (sin id)")
         except OSError as e:
             note = f"no legible ({e.__class__.__name__})"
         filas.append((str(root), note))
@@ -888,27 +895,27 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser(
-        description="Arranque automático de runsync al conectar el pen.")
+        description="Arranque automático de runsync al conectar el dispositivo.")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("install", help="Instala el vigilante en ESTE equipo.")
     p.add_argument("--mode", choices=["ui", "sync", "daemon"], default="ui",
-                   help="Qué hacer al detectar el pen (por defecto: ui).")
+                   help="Qué hacer al detectar el dispositivo (por defecto: ui).")
     p.add_argument("--pairs", nargs="*", default=[],
                    help="Parejas para los modos sync/daemon (por defecto: todas).")
     p.add_argument("--interval", type=float,
                    help="Minutos entre pasadas en modo daemon (por defecto: el del TOML).")
     p.add_argument("--poll", type=float, default=POLL_SECONDS,
-                   help="Segundos entre sondeos del pen (por defecto: 5).")
+                   help="Segundos entre sondeos del dispositivo (por defecto: 5).")
     p.add_argument("--extra-root", action="append", default=[],
-                   help="Ruta extra donde buscar el pen (repetible).")
+                   help="Ruta extra donde buscar el dispositivo (repetible).")
     p.add_argument("--no-start", action="store_true",
                    help="Registra el vigilante pero no lo arranca todavía.")
     p.set_defaults(func=cmd_install)
 
     sub.add_parser("uninstall", help="Quita el vigilante de ESTE equipo."
                    ).set_defaults(func=cmd_uninstall)
-    sub.add_parser("status", help="Qué hay instalado y si se ve el pen ahora."
+    sub.add_parser("status", help="Qué hay instalado y si se ve el dispositivo ahora."
                    ).set_defaults(func=cmd_status)
     sub.add_parser("probe", help="Solo detección: dónde busca y qué encuentra."
                    ).set_defaults(func=cmd_probe)

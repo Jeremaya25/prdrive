@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-perepen-install.py — Aprovisiona un pen PEREPEN nuevo desde el NAS.
+prdrive-install.py — Aprovisiona un dispositivo prdrive nuevo.
 
 Punto de entrada y poco más: aquí se miran los argumentos y se abre el asistente.
 Lo que sabe hacer está repartido:
@@ -8,23 +8,29 @@ Lo que sabe hacer está repartido:
     install/     lo que decide y lo que toca disco o red (sin Tkinter)
     ui/tk_install.py, ui/tk_crypto.py   el asistente (solo dibujan)
 
-Lo que hace el asistente, en orden: consigue un rclone, monta un remote SFTP
-efímero con la clave que lleva dentro, lee el catálogo global de parejas del NAS,
-te deja elegir el pen y cómo cifrarlo (VeraCrypt o BitLocker), lo siembra con el
-espejo maestro `/PJ/Perepen`, escribe el `sync_config.toml` de ESE dispositivo,
-crea sus carpetas, inicializa las parejas bisync y comprueba que todo está.
+Lo que hace el asistente, en orden: pregunta la conexión con tu remoto (un
+formulario, o importar un remote de tu rclone.conf), consigue un rclone, lee el
+catálogo global de parejas, te deja elegir la unidad y cómo cifrarla (VeraCrypt o
+BitLocker), **copia el programa** en su carpeta oculta `.prdrive/`, escribe el
+`rclone.conf` y el `sync_config.toml` de ESE dispositivo, crea sus carpetas,
+inicializa las parejas bisync y comprueba que todo está.
 
-    python perepen-install.py            el asistente
-    python perepen-install.py --check    rclone + conexión + catálogo, y sale
-    python perepen-install.py --probe    qué unidades ve, y sale
+    python prdrive-install.py            el asistente
+    python prdrive-install.py --check    rclone + conexión + catálogo, y sale
+    python prdrive-install.py --probe    qué unidades ve, y sale
+
+El código que aterriza en el dispositivo viaja DENTRO del instalador; antes lo
+bajaba del remoto con un espejo del árbol entero. El remoto guarda configuración,
+no programas.
 
 La forma en que se reparte es un ejecutable de PyInstaller (`build_installer.py`),
-que además incrusta la clave privada del NAS. El .py de este repositorio NO la
-lleva: la coge de `keys/` cuando se ejecuta desde un pen ya provisionado. Por eso
-esto se puede versionar sin filtrar nada.
+que además puede incrustar un perfil de conexión con su clave privada, para
+repartir dispositivos llave en mano. El .py de este repositorio NO lleva ninguno:
+sin perfil, el asistente abre su formulario de conexión y lo pregunta. Por eso
+esto se puede publicar sin filtrar nada.
 
 Ojo con una trampa que solo aparece compilado: `sys.executable` es este mismo
-ejecutable, no Python. Todo lo que lance el `sync.py` del pen pasa por
+ejecutable, no Python. Todo lo que lance el `sync.py` del dispositivo pasa por
 `install.python_command()`, que busca un intérprete de verdad.
 """
 
@@ -34,15 +40,16 @@ import argparse
 import sys
 from pathlib import Path
 
-# Ejecutado como .py hay que poner rclone-sync/ en el path para poder importar
+# Ejecutado como .py hay que poner la raíz del proyecto en el path para importar
 # `install`, `ui` y `common`. Compilado no hace falta: PyInstaller ya los trae.
 if not getattr(sys, "frozen", False):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from install import InstallError, __version__  # noqa: E402
-from install import device, rclone_bin, remote  # noqa: E402
+from install import APP_NAME, InstallError, __version__  # noqa: E402
+from install import device, profile, rclone_bin, remote  # noqa: E402
 
-DESCRIPCION = "Aprovisiona un pen PEREPEN nuevo a partir del catálogo del NAS."
+DESCRIPCION = ("Aprovisiona un dispositivo prdrive nuevo a partir del catálogo "
+               "de tu remoto.")
 
 
 def report(lineas: list[str]) -> None:
@@ -59,7 +66,7 @@ def report(lineas: list[str]) -> None:
         import tkinter as tk
         from tkinter import scrolledtext
         raiz = tk.Tk()
-        raiz.title("PerePen Sync — Instalador")
+        raiz.title(f"{APP_NAME} — Instalador")
         caja = scrolledtext.ScrolledText(raiz, width=96, height=20,
                                          font=("Consolas", 9))
         caja.grid(padx=8, pady=8)
@@ -71,20 +78,35 @@ def report(lineas: list[str]) -> None:
 
 
 def cmd_check() -> int:
-    """Que haya rclone, que el NAS conteste y que su catálogo se entienda."""
+    """Que haya rclone, que el remoto conteste y que su catálogo se entienda.
+
+    Sin perfil incrustado no hay nada que comprobar y se dice: es el caso de
+    quien acaba de clonar el repo, y la respuesta útil ahí es «abre el
+    asistente», no un error de conexión."""
+    perfil = profile.load()
+    if not perfil.configured:
+        report(["Este instalador no lleva ninguna conexión configurada.",
+                "",
+                "Es lo normal si lo has clonado del repositorio: la conexión con",
+                "tu remoto se configura en el primer paso del asistente, y desde",
+                "ahí se puede guardar en el catálogo para los demás dispositivos.",
+                "",
+                "Ábrelo sin argumentos:  python prdrive-install.py"])
+        return 1
+
     lineas: list[str] = []
     binario = rclone_bin.ensure_rclone(progreso=lineas.append)
     lineas.append(f"rclone:      {binario}")
-
-    creds = remote.load_credentials()
-    lineas.append(f"clave:       {creds.origen}")
+    lineas.append(f"conexión:    {perfil.describe()}")
+    lineas.append(f"origen:      {perfil.origen}")
 
     remote.sweep_stale()
-    with remote.EphemeralConf(creds) as conf:
-        rclone = remote.Rclone(str(binario), conf.path)
+    with remote.EphemeralConf(perfil) as conf:
+        rclone = remote.Rclone(str(binario), conf.path,
+                               remote_name=perfil.remote_name)
         rclone.check_connection()
-        lineas.append("conexión:    el NAS contesta")
-        catalogo = remote.pull_catalog(rclone)
+        lineas.append("estado:      el remoto contesta")
+        catalogo = remote.pull_catalog(rclone, perfil.catalog_path)
         lineas.append(f"catálogo:    {len(catalogo.names)} parejas: "
                       + ", ".join(catalogo.names))
 
@@ -114,10 +136,10 @@ def cmd_wizard() -> int:
     """El asistente. Sin Tkinter no hay instalador: no hay menú de consola.
 
     No lo hay a propósito. Todo lo que se decide aquí —elegir la unidad que se va
-    a sembrar, escribir una passphrase dos veces, confirmar un espejo que borra—
-    se hace UNA vez en la vida de un pen y con la pantalla delante. Un menú de
-    texto que replicara eso sería el doble de código y el doble de sitios donde
-    equivocarse en la única parte destructiva del proyecto."""
+    a usar, escribir una passphrase dos veces, teclear la conexión al remoto— se
+    hace UNA vez en la vida de un dispositivo y con la pantalla delante. Un menú
+    de texto que replicara eso sería el doble de código y el doble de sitios
+    donde equivocarse en la parte más delicada del proyecto."""
     try:
         from ui import tk_install
         return tk_install.run_wizard()
@@ -133,9 +155,11 @@ def cmd_wizard() -> int:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(prog="perepen-install", description=DESCRIPCION)
+    parser = argparse.ArgumentParser(prog=f"{APP_NAME}-install",
+                                     description=DESCRIPCION)
     parser.add_argument("--check", action="store_true",
-                        help="Comprueba rclone, la conexión al NAS y el catálogo, y sale.")
+                        help="Comprueba rclone, la conexión al remoto y el "
+                             "catálogo, y sale.")
     parser.add_argument("--probe", action="store_true",
                         help="Lista las unidades detectadas y sale.")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")

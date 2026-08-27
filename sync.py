@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-sync.py — Sincronización portable Synology <-> pen mediante rclone.
+sync.py — Sincronización portable entre un remoto de rclone y un dispositivo local.
 
-Todo vive en el pen y no depende de nada instalado en la máquina salvo
+Todo vive en el dispositivo y no depende de nada instalado en la máquina salvo
 Python 3.11+ (para tomllib). El binario de rclone es portable (carpeta bin/).
 
     common/model.py   el TOML convertido en objetos ya resueltos
@@ -10,7 +10,7 @@ Python 3.11+ (para tomllib). El binario de rclone es portable (carpeta bin/).
     ui/               la ventana y el menu de consola (los usa runsync.py)
     sync.py           este fichero: construir el comando, ejecutarlo y contarlo
 
-Estructura esperada en el pen:
+Estructura esperada en el dispositivo:
 
     PEN/
     ├── rclone-sync/
@@ -20,7 +20,7 @@ Estructura esperada en el pen:
     │   ├── sync_config.toml   <- qué carpetas sincronizar y en qué dirección
     │   ├── rclone.conf        <- config de rclone (remote SFTP + ruta a la clave)
     │   ├── bin/<arch>/        <- binario portable de rclone (Windows y Linux)
-    │   ├── keys/              <- clave privada SSH (el pen ya va cifrado)
+    │   ├── keys/              <- clave privada SSH (el dispositivo ya va cifrado)
     │   ├── filters/<pareja>.txt     <- filtros generados desde el TOML (+ su .md5)
     │   ├── state/<pareja>/    <- workdir de bisync, UNO POR PAREJA
     │   └── logs/              <- solo logs de ejecuciones fallidas
@@ -80,7 +80,7 @@ KNOWN_ERRORS = [
     ("Failed to create file system",
      "rclone no ha podido montar uno de los dos extremos. Suele ser una ruta o "
      "credencial mal resuelta en rclone.conf (revisa key_file y "
-     "known_hosts_file), o el NAS inalcanzable."),
+     "known_hosts_file), o el remoto inalcanzable."),
 ]
 
 
@@ -92,7 +92,7 @@ def temp_log(name: str) -> Path:
     """rclone escribe siempre a un log, pero en un temporal del sistema.
 
     Solo se conserva (moviéndolo a logs/) si la ejecución ha fallado. Si todo va
-    bien no queda rastro y no se escribe en el pen: menos ciclos de escritura y
+    bien no queda rastro y no se escribe en el dispositivo: menos ciclos de escritura y
     una carpeta logs/ que solo contiene lo que hay que mirar."""
     fd, path = tempfile.mkstemp(prefix=f"rclone-sync-{name}-", suffix=".log")
     os.close(fd)
@@ -216,7 +216,7 @@ def build_command(ctx: RunContext, pair: Pair, ffile: Path | None,
 def execute(ctx: RunContext, cmd: list[str]) -> int:
     print(f"  ejecutando{ctx.tag}: " + " ".join(cmd))
     # cwd FIJO en rclone-sync/: rclone.conf usa rutas relativas (key_file,
-    # known_hosts_file) para que el pen siga siendo portable, y esas rutas se
+    # known_hosts_file) para que el dispositivo siga siendo portable, y esas rutas se
     # resuelven contra el directorio de trabajo. No se puede depender de quién
     # nos haya lanzado ni desde dónde.
     kwargs: dict = {"cwd": str(model.APP_DIR)}
@@ -250,7 +250,7 @@ def _bisync_preflight(ctx: RunContext, pair: Pair) -> tuple[bool, int | None]:
         print(f"[{pair.name}] Saltada: requiere --resync y no está aprobado.")
         return need_resync, SKIPPED
 
-    # Si YA había baseline y la carpeta local no está, algo va mal (pen a medio
+    # Si YA había baseline y la carpeta local no está, algo va mal (dispositivo a medio
     # montar). Crearla vacía haría que bisync viese "han borrado todo".
     if state.has_baseline and not pair.local_abs.exists():
         print(f"[{pair.name}] ERROR: existe baseline pero la ruta local "
@@ -391,13 +391,13 @@ def _doctor_pair(pair: Pair) -> bool:
 
 
 def doctor(config: Config) -> int:
-    print(f"Pen detectado en: {model.PEN_ROOT}")
+    print(f"Dispositivo detectado en: {model.DEVICE_ROOT}")
     print(f"Workdir de estado: {model.STATE_DIR}")
-    if config.pen_remote:
+    if config.device_remote:
         for key, value in config.pen_environment().items():
             print(f"  {key}={value}")
     else:
-        print("  (sin pen_remote: el lado local va como ruta absoluta, el nombre "
+        print("  (sin device_remote: el lado local va como ruta absoluta, el nombre "
               "de los listados depende de la letra de unidad)")
     print()
 
@@ -417,7 +417,7 @@ def doctor(config: Config) -> int:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Sincronización portable Synology <-> pen (rclone)."
+        description="Sincronización portable entre un remoto de rclone y un dispositivo local."
     )
     parser.add_argument("pairs", nargs="*",
                         help="Nombres de parejas a sincronizar (por defecto: todas).")

@@ -52,7 +52,7 @@ GLIFOS: dict[str, list[tuple]] = {
              ("p", [(13, 2.5), (13, 6), (9.5, 6)]),
              ("a", 8, 8, 5, 0, 135), ("l", 4.5, 11.5, 3, 10),
              ("p", [(3, 13.5), (3, 10), (6.5, 10)])],
-    "pen": [("r", 5.5, 2.5, 5, 8), ("p", [(6.5, 10.5), (6.5, 13.5), (9.5, 13.5),
+    "dispositivo": [("r", 5.5, 2.5, 5, 8), ("p", [(6.5, 10.5), (6.5, 13.5), (9.5, 13.5),
                                           (9.5, 10.5)]),
             ("l", 7, 2.5, 7, 1), ("l", 9, 2.5, 9, 1)],
     "nas": [("r", 2, 3, 12, 4), ("r", 2, 9, 12, 4), ("d", 4.5, 5), ("d", 4.5, 11)],
@@ -90,7 +90,7 @@ GLIFOS: dict[str, list[tuple]] = {
              ("p", [(9, 1.5), (9, 5), (12, 5)])],
 }
 
-# El icono de la aplicación: campo, los dos brazos del ciclo y el cuerpo del pen.
+# El icono de la aplicación: campo, los dos brazos del ciclo y el cuerpo del dispositivo.
 # Rejilla de 64 y capas de colores distintos, por eso no cabe en GLIFOS.
 CAMPO = "#2E4763"
 MARCA = "#FAF9F7"
@@ -581,8 +581,11 @@ def write_ico(destino, tamanos=ICO_TAMANOS):
 if __name__ == "__main__":                        # python -m ui.icons [destino]
     import sys
 
-    from common import model                      # solo aquí: PEN_ROOT vive ahí
+    # El .ico va DENTRO de la carpeta de la aplicación, junto al resto del
+    # código, y no en la raíz del volumen: esa carpeta está oculta, así que un
+    # icono suelto entre los datos del usuario sería el único resto visible.
+    from common import model                      # solo aquí: APP_DIR vive ahí
     ruta = write_ico(sys.argv[1] if len(sys.argv) > 1
-                     else model.PEN_ROOT / "runsync.ico")
+                     else model.APP_DIR / "runsync.ico")
     print(f"Escrito {ruta} ({ruta.stat().st_size / 1024:.0f} KB, "
           f"{len(ICO_TAMANOS)} tamaños)")

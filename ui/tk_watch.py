@@ -10,7 +10,7 @@ ha hecho, igual que cuando se lanza una sincronización.
 
 Lo que el diseño cambia aquí es de dónde se lee cada cosa: el estado deja de ser
 una lista de pares «etiqueta: valor» a secas y pasa a una tarjeta donde lo que se
-mira de un vistazo —si está instalado, si la tarea está activa, si el pen se ve
+mira de un vistazo —si está instalado, si la tarea está activa, si el dispositivo se ve
 ahora mismo— son chips, y el resto texto normal.
 """
 
@@ -28,7 +28,7 @@ from .tk import TITLE, cabecera, modal, mostrar, output_window
 CHIPS = {
     "Registro en el sistema": ("activo", "sin registrar", "NO registrada"),
     "Vigilante": ("en marcha", "parado", "parado"),
-    "Pen ahora mismo": ("visible", "no se ve", "no detectado"),
+    "Dispositivo ahora mismo": ("visible", "no se ve", "no detectado"),
 }
 
 
@@ -36,7 +36,7 @@ def _chip_de(etiqueta: str, valor: str):
     """El chip que le toca a una fila de estado, o None si es texto normal.
 
     Se decide por la palabra que penwatch usa para el caso malo y no por la
-    buena: los valores buenos traen detalles pegados (el pid, la ruta del pen) y
+    buena: los valores buenos traen detalles pegados (el pid, la ruta del dispositivo) y
     buscar en ellos sería adivinar."""
     regla = CHIPS.get(etiqueta)
     if regla is None:
@@ -59,9 +59,9 @@ def open_dialog(parent, config=None) -> None:
     arriba.grid(row=0, column=0, sticky="ew")
     arriba.columnconfigure(0, weight=1)
     cabecera(arriba, "Arranque automático",
-             "El vigilante se instala en ESTE equipo, no en el pen, y lanza "
-             "PerePen en cuanto detecta el pen y puede leerlo. Sin permisos de "
-             "administrador y sin dejar rastro en el pen.",
+             "El vigilante se instala en ESTE equipo, no en el dispositivo, y lanza "
+             "prdrive en cuanto detecta el dispositivo y puede leerlo. Sin permisos "
+             "administrador y sin dejar rastro en el dispositivo.",
              ancho=560, estilo="Dialogo.TLabel").grid(row=0, column=0, sticky="w")
     chip_estado = {"widget": None}
 
@@ -127,7 +127,7 @@ def open_dialog(parent, config=None) -> None:
 
     def ver_deteccion() -> None:
         filas = [(raiz, nota) for raiz, nota in watch.probe_rows()]
-        pintar(filas, "Dónde se ha buscado el pen", [])
+        pintar(filas, "Dónde se ha buscado el dispositivo", [])
 
     def lanzar(cmd: list[str], titulo: str) -> None:
         output_window(titulo, cmd, parent=dlg)
@@ -145,7 +145,7 @@ def open_dialog(parent, config=None) -> None:
             return
         if not messagebox.askokcancel(TITLE, (
                 "Se quitará el vigilante de este equipo: la tarea programada, su "
-                "configuración y su diario.\n\nEl pen no se toca."), parent=dlg):
+                "configuración y su diario.\n\nEl dispositivo no se toca."), parent=dlg):
             return
         lanzar(watch.uninstall_command(), "desinstalar el vigilante")
 
@@ -154,7 +154,7 @@ def open_dialog(parent, config=None) -> None:
     botones.columnconfigure(2, weight=1)
     for i, (texto, icono, accion) in enumerate((
             ("Actualizar", "reload", ver_estado),
-            ("Detectar el pen", "eye", ver_deteccion))):
+            ("Detectar el dispositivo", "eye", ver_deteccion))):
         boton = ttk.Button(botones, text=texto, command=accion)
         theme.boton_icono(boton, icono, theme.TINTA2, theme.SUPERFICIE)
         boton.grid(row=0, column=i, sticky="w", padx=(0, 6))
@@ -188,7 +188,7 @@ def formulario_instalacion(parent, config) -> dict | None:
               style="Dialogo.TLabel").grid(row=0, column=0, columnspan=3, sticky="w")
     ttk.Label(marco, style="Pista.TLabel", wraplength=620, justify="left",
               text="Se registra una tarea del usuario que arranca al iniciar "
-                   "sesión. Nada de esto se escribe en el pen.").grid(
+                   "sesión. Nada de esto se escribe en el dispositivo.").grid(
         row=1, column=0, columnspan=3, sticky="w", pady=(5, 14))
 
     def etiqueta(texto: str, en: int, arriba: bool = False) -> None:
@@ -196,7 +196,7 @@ def formulario_instalacion(parent, config) -> dict | None:
                   width=22).grid(row=en, column=0, sticky="ne" if arriba else "e",
                                  padx=(0, 12), pady=(5, 0) if arriba else 3)
 
-    etiqueta("Al detectar el pen", 2)
+    etiqueta("Al detectar el dispositivo", 2)
     modo = tk.StringVar(value=previas.get("mode", "ui"))
     ttk.Combobox(marco, textvariable=modo, state="readonly", width=12,
                  values=list(watch.MODES)).grid(row=2, column=1, sticky="w", pady=3)
@@ -232,12 +232,12 @@ def formulario_instalacion(parent, config) -> dict | None:
               style="Pista.TLabel").grid(row=fila, column=2, sticky="w", padx=(12, 0))
     fila += 1
 
-    etiqueta("Sondeo del pen", fila)
+    etiqueta("Sondeo del dispositivo", fila)
     sondeo = tk.StringVar(value=str(previas.get("poll") or 5))
     ttk.Entry(marco, textvariable=sondeo, width=8).grid(row=fila, column=1,
                                                         sticky="w", pady=3)
     ttk.Label(marco, style="Pista.TLabel", wraplength=340, justify="left",
-              text=("Segundos. Se sondea en vez de escuchar al sistema: en un pen "
+              text=("Segundos. Se sondea en vez de escuchar al sistema: en un dispositivo "
                     "cifrado el aviso de llegada ocurre mucho antes de que el "
                     "volumen se pueda leer.")).grid(row=fila, column=2, sticky="w",
                                                     padx=(12, 0))

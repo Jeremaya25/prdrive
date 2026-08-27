@@ -126,7 +126,7 @@ def fatal(msg: str) -> int:
 
             from . import tk as tk_
             root = tk_.root_oculto()
-            messagebox.showerror("PerePen Sync", msg)
+            messagebox.showerror(tk_.TITLE, msg)
             root.destroy()
         except Exception:
             pass

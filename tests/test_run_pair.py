@@ -21,7 +21,7 @@ from common import bisync, model
 
 c = Checks("run_pair(): control de flujo e invariantes")
 
-DEF = {"remote": "synology", "exclude": ["**/.git/**"]}
+DEF = {"remote": "nas", "exclude": ["**/.git/**"]}
 BI = {"name": "bi", "local": "sync-data/bi", "remote_path": "/R/bi", "mode": "bisync"}
 UP = {"name": "up", "local": "sync-data/up", "remote_path": "/R/up", "mode": "up"}
 MIR = {"name": "mir", "local": "sync-data/mir", "remote_path": "/R/mir", "mode": "up-mirror"}

@@ -85,7 +85,7 @@ c("un flag apagado se enseña, no desaparece",
 
 # La misma fusión que hace model._build_pair: si esto se separara, el editor
 # enseñaría unos flags y rclone recibiría otros.
-pair = model.parse_config({"defaults": {"remote": "synology", "flags": {"transfers": 4}},
+pair = model.parse_config({"defaults": {"remote": "nas", "flags": {"transfers": 4}},
                            "pair": [{**BASE[0]}]}).pairs[0]
 c("se funde igual que en el modelo",
   fe.merge("bisync", {"transfers": 4}, BASE[0]["flags"]), dict(pair.flags))
@@ -118,7 +118,7 @@ c("los cambios se cuentan flag a flag",
 # --- y de ahí al TOML --------------------------------------------------------
 
 with sandbox():
-    raw = {"defaults": {"remote": "synology"}, "pair": [dict(p) for p in BASE]}
+    raw = {"defaults": {"remote": "nas"}, "pair": [dict(p) for p in BASE]}
     model.CONFIG_FILE.write_text(config_file.dumps(raw), encoding="utf-8")
 
     plan = pair_editor.plan_save(raw, {**BASE[0], "flags": {"transfers": 8},

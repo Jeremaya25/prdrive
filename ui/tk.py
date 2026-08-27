@@ -26,19 +26,19 @@ import sys
 import threading
 import time
 
-from common import model
+from common import APP_NAME, model
 from common.model import Config
 
 from . import Choice, cuando, icons, pair_status_notes, pair_times, prefs, theme
 
-TITLE = "PerePen Sync"
+TITLE = APP_NAME          # el nombre de la ventana sale de common/
 
 
 def corto(texto: str, maximo: int = 30) -> str:
     """Una ruta recortada por delante, que es por donde sobra.
 
-    En el pen esto no hace nada —`PEN_ROOT` es `F:\\`—, pero montado en un punto
-    con nombre largo (`/media/quien/PEREPEN`) o corriendo desde el repositorio,
+    En el dispositivo esto no hace nada —`DEVICE_ROOT` es `F:\\`—, pero montado en un punto
+    con nombre largo (`/media/quien/PRDRIVE`) o corriendo desde el repositorio,
     una ruta entera estira la ventana hasta salirse de la pantalla."""
     return texto if len(texto) <= maximo else "…" + texto[-(maximo - 1):]
 
@@ -302,7 +302,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         d_pairs, d_interval, memo = prefs.startup_defaults(config)
         fila = 0
 
-        # --- quién es este pen y cómo está -----------------------------------
+        # --- quién es este dispositivo y cómo está -----------------------------------
         arriba = ttk.Frame(frame)
         arriba.grid(row=fila, column=0, sticky="ew")
         arriba.columnconfigure(0, weight=1)
@@ -315,7 +315,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         extremos = ttk.Frame(titulo)
         extremos.grid(row=1, column=0, sticky="w", pady=(6, 0))
         remotos = sorted({p.remote_name for p in config.pairs}) or [model.DEFAULT_REMOTE]
-        for col, (icono, texto) in enumerate((("pen", corto(str(model.PEN_ROOT))),
+        for col, (icono, texto) in enumerate((("dispositivo", corto(str(model.DEVICE_ROOT))),
                                               ("nas", corto(", ".join(remotos))))):
             if col:
                 ttk.Label(extremos, text="·", style="Apagado.TLabel").grid(
@@ -330,7 +330,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
                 row=0, column=col * 3 + 1, sticky="w", padx=(5, 0))
 
         # El chip dice lo que se sabe sin hablar con nadie: si alguna pareja
-        # necesita un --resync. La conexión con el NAS NO se comprueba aquí — se
+        # necesita un --resync. La conexión con el remoto NO se comprueba aquí — se
         # tardaría segundos en abrir la ventana y la respuesta caducaría enseguida.
         if notes:
             theme.chip(arriba, f"{len(notes)} requieren resync" if len(notes) > 1
@@ -412,7 +412,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         interval_var = tk.StringVar(value=f"{d_interval:g}")
         ttk.Spinbox(repetir, from_=1, to=1440, textvariable=interval_var,
                     width=5, font=theme.fuente("mono")).grid(row=0, column=2)
-        ttk.Label(repetir, text="minutos, mientras el pen siga puesto",
+        ttk.Label(repetir, text="minutos, mientras el dispositivo siga puesto",
                   style="Pista.TLabel").grid(row=0, column=3, sticky="w", padx=(10, 0))
 
         def selected() -> list[str]:
@@ -610,7 +610,7 @@ def output_window(title: str, cmd: list[str], parent=None,
         cuando algo falla, así que esta es la única copia de una pasada buena."""
         destino = filedialog.asksaveasfilename(
             parent=root, title="Guardar el log", defaultextension=".txt",
-            initialfile=f"perepen-{time.strftime('%Y%m%d-%H%M%S')}.txt",
+            initialfile=f"{TITLE}-{time.strftime('%Y%m%d-%H%M%S')}.txt",
             filetypes=[("Texto", "*.txt"), ("Todos", "*.*")])
         if not destino:
             return
@@ -627,7 +627,7 @@ def output_window(title: str, cmd: list[str], parent=None,
     pie = ttk.Frame(root, padding=(18, 11))
     pie.grid(row=3, column=0, columnspan=2, sticky="ew")
     pie.columnconfigure(0, weight=1)
-    ttk.Label(pie, text="El log solo se guarda si algo falla, para no gastar el pen.",
+    ttk.Label(pie, text="El log solo se guarda si algo falla, para no gastar el dispositivo.",
               style="Pista.TLabel").grid(row=0, column=0, sticky="w")
     guardar_btn = ttk.Button(pie, text="Guardar el log", style="Quiet.TButton",
                              command=guardar)

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-runsync.py — Lanzador del sync del pen.
+runsync.py — Lanzador del sync del dispositivo.
 
 Sin argumentos abre la UI (paquete `ui/`: Tkinter si se puede, menú de consola si
 no) con dos caminos:
@@ -13,11 +13,11 @@ Este fichero no dibuja nada: le pregunta a `ui` qué se quiere hacer y lo hace. 
 suyo es el servicio y la coordinación con él.
 
 El servicio solo se detiene en dos casos:
-  1. El pen deja de estar conectado (se comprueba cada pocos segundos).
+  1. El dispositivo deja de estar conectado (se comprueba cada pocos segundos).
   2. Se vuelve a ejecutar runsync: el lanzador detecta el servicio anterior, le
      pide parar, espera, y muestra la UI inicial de nuevo.
 
-Coordinación servicio <-> lanzador (todo en state/, viaja con el pen):
+Coordinación servicio <-> lanzador (todo en state/, viaja con el dispositivo):
     daemon.lock.json  <- quién es el servicio (pid, host, arranque, último ciclo)
     daemon.stop       <- su presencia le pide al servicio que pare
     daemon.log        <- diario del servicio (recortado automáticamente)
@@ -32,7 +32,7 @@ funcionando), salvo dos flags propios:
 
   --auto [--interval N] [parejas]  arranca el servicio sin UI y sin preguntar
       nada, con la última elección de la UI (o, si no la hay, con los valores de
-      [daemon] del TOML). Es lo que lanza penwatch.py al detectar el pen.
+      [daemon] del TOML). Es lo que lanza penwatch.py al detectar el dispositivo.
   --daemon                          punto de entrada interno del servicio.
 """
 
@@ -53,12 +53,12 @@ from common.store import pid_alive  # noqa: E402
 from ui import prefs  # noqa: E402
 
 SELF = Path(__file__).resolve()
-SENTINEL = model.CONFIG_FILE          # si esto no se ve, el pen no está
+SENTINEL = model.CONFIG_FILE          # si esto no se ve, el dispositivo no está
 LOCK = model.STATE_DIR / "daemon.lock.json"
 STOP = model.STATE_DIR / "daemon.stop"
 DLOG = model.STATE_DIR / "daemon.log"
 
-POLL_SECONDS = 2.0        # cadencia de comprobación de parada / pen ausente
+POLL_SECONDS = 2.0        # cadencia de comprobación de parada / dispositivo ausente
 STOP_WAIT_SECONDS = 15.0  # cuánto espera el lanzador a que pare el servicio
 DLOG_MAX_BYTES = 256 * 1024
 HOST = prefs.HOST
@@ -88,7 +88,7 @@ def write_lock(data: dict) -> None:
 
 def dlog(msg: str) -> None:
     """Diario del servicio. Se abre y cierra en cada línea para no mantener
-    ningún descriptor abierto sobre el pen (bloquearía la extracción segura)."""
+    ningún descriptor abierto sobre el dispositivo (bloquearía la extracción segura)."""
     line = f"{store.stamp()} {msg}\n"
     try:
         if DLOG.exists() and DLOG.stat().st_size > DLOG_MAX_BYTES:
@@ -97,7 +97,7 @@ def dlog(msg: str) -> None:
         with DLOG.open("a", encoding="utf-8") as f:
             f.write(line)
     except OSError:
-        pass  # pen ausente o de solo lectura: el diario no es vital
+        pass  # dispositivo ausente o de solo lectura: el diario no es vital
 
 
 # ---------------------------------------------------------------------------
@@ -113,7 +113,7 @@ def stop_previous_daemon() -> str | None:
 
     pid = int(info.get("pid", -1))
     if info.get("host") != HOST or not pid_alive(pid):
-        # Rastro de otro equipo (pen extraído sin más) o proceso ya muerto.
+        # Rastro de otro equipo (dispositivo extraído sin más) o proceso ya muerto.
         LOCK.unlink(missing_ok=True)
         STOP.unlink(missing_ok=True)
         return (f"Había un registro de un servicio ya inexistente "
@@ -183,7 +183,7 @@ def daemon_cycle(pairs: list[str], lock_data: dict) -> None:
 
 
 def daemon_main(pairs: list[str], interval_min: float) -> int:
-    # Fuera del pen: mantener el cwd en el USB impediría su extracción segura.
+    # Fuera del dispositivo: mantener el cwd en el USB impediría su extracción segura.
     os.chdir(tempfile.gettempdir())
 
     STOP.unlink(missing_ok=True)
@@ -202,7 +202,7 @@ def daemon_main(pairs: list[str], interval_min: float) -> int:
     try:
         while True:
             if not pen_present():
-                reason = "pen no conectado"
+                reason = "dispositivo no conectado"
                 break
             if stop_requested():
                 reason = "parada solicitada por el lanzador"
@@ -212,7 +212,7 @@ def daemon_main(pairs: list[str], interval_min: float) -> int:
             stop = False
             while time.monotonic() < wake:
                 if not pen_present():
-                    reason, stop = "pen no conectado", True
+                    reason, stop = "dispositivo no conectado", True
                     break
                 if stop_requested():
                     reason, stop = "parada solicitada por el lanzador", True
@@ -251,7 +251,7 @@ def spawn_daemon(pairs: list[str], interval_min: float) -> str:
     proc = subprocess.Popen([exe, *cmd], **kwargs)
     return (f"Servicio iniciado (pid {proc.pid}): {', '.join(pairs)} "
             f"cada {interval_min:g} min.\n"
-            f"Se detendrá solo si se extrae el pen o si vuelves a ejecutar runsync.\n"
+            f"Se detendrá solo si se extrae el dispositivo o si vuelves a ejecutar runsync.\n"
             f"Diario: {DLOG}")
 
 
@@ -299,7 +299,7 @@ def ui_flow() -> int:
 
 def auto_start(rest: list[str]) -> int:
     """--auto: arranca el servicio sin UI, para quien lo lanza sin nadie delante
-    (penwatch.py al conectar el pen, un acceso directo, cron). Las parejas y el
+    (penwatch.py al conectar el dispositivo, un acceso directo, cron). Las parejas y el
     intervalo salen de la última elección de la UI, y si no hay ninguna, de
     [daemon] del TOML; lo que se indique aquí manda sobre ambos. Solo lee esa
     memoria: un arranque automático nunca reescribe lo decidido a mano.

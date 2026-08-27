@@ -4,18 +4,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Portable two-way sync between a Synology NAS (SFTP) and a USB pen drive, driven by
-a bundled `rclone` binary. Pure Python **stdlib**, Python 3.11+ (`tomllib`). No
-build, no dependencies, no package manifest. Tests are plain scripts under
-`tests/` — `python tests/run_all.py`, no framework, nothing touches the pen.
+**prdrive**: portable two-way sync between *any* rclone remote and a removable
+drive, driven by a bundled `rclone` binary. Pure Python **stdlib**, Python 3.11+
+(`tomllib`). No build, no dependencies, no package manifest. Tests are plain
+scripts under `tests/` — `python tests/run_all.py`, no framework, nothing touches
+a real device or the network.
 
-Four entry points stay at the repo root: three because the pen-root launchers
-(`runsync.pyw`/`.bat`/`.sh`) and `penwatch.py` locate them by fixed path, and
-`perepen-install.py` because it is what gets compiled and handed out. Everything
+The code knows **no server**: everything about the connection lives in a
+`profile.Profile` that the wizard asks for, imports from the user's `rclone.conf`,
+or carries embedded in the compiled `.exe`. What the remote stores is
+**configuration only** — the catalogue of pairs — never the program.
+
+Four entry points stay at the repo root: three because the volume-root launchers
+(`runsync.pyw` / `runsync.sh`) and `penwatch.py` locate them by fixed path, and
+`prdrive-install.py` because it is what gets compiled and handed out. Everything
 else is split by what it knows about:
 
 ```
-rclone-sync/
+prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 ├── sync.py            entry point: build the rclone command, run it, report
 ├── runsync.py         entry point: the periodic service + who calls what
 ├── penwatch.py        entry point: mount watcher (deliberately self-contained)
@@ -23,16 +29,16 @@ rclone-sync/
 │   ├── model.py       sync_config.toml parsed into resolved objects
 │   ├── bisync.py      everything that replicates rclone bisync's internals
 │   ├── config_file.py reads AND writes sync_config.toml (hand-rolled serializer)
-│   ├── catalog.py     the global pair catalogue on the NAS: read, cache, write
-│   └── store.py       the pen's JSON state files + pid_alive(): reads that
+│   ├── catalog.py     the global pair catalogue on the remote: read, cache, write
+│   └── store.py       the device's JSON state files + pid_alive(): reads that
 │                       tolerate anything, atomic writes
 ├── ui/                knows how to ask the user and show results
 │   ├── __init__.py    Choice, the Frontend protocol, start(), fatal()
 │   ├── theme.py       the visual system in ttk: palette, fonts, styles — no window
 │   ├── icons.py       the icons, rasterised here: no deps, no emoji
 │   ├── prefs.py       what the UI starts preloaded with (state/ui_prefs.json)
-│   ├── pair_editor.py what THIS pen does with pairs — the decisions, no Tk
-│   ├── catalog_editor.py  add/edit/remove in the NAS catalogue — no Tk
+│   ├── pair_editor.py what THIS device does with pairs — the decisions, no Tk
+│   ├── catalog_editor.py  add/edit/remove in the remote catalogue — no Tk
 │   ├── flags_editor.py    rclone flags: text <-> table, layers, warnings — no Tk
 │   ├── watch.py       adapter over penwatch.py — no Tk
 │   ├── tk.py          TkFrontend: main window, output window, modal()/mostrar()/working()
@@ -41,13 +47,14 @@ rclone-sync/
 │   ├── tk_install.py  the install wizard, step by step (drawing only)
 │   ├── tk_crypto.py   the wizard's encryption step: VeraCrypt/BitLocker (drawing only)
 │   └── console.py     ConsoleFrontend: the text menu
-├── install/           what the installer knows; no Tk, no pen needed
-│   ├── __init__.py    the NAS constants, InstallError, InstallState, python_command()
+├── install/           what the installer knows; no Tk, no device needed
+│   ├── __init__.py    the brand constants, InstallError, InstallState, python_command()
+│   ├── profile.py     the connection: where it comes from and how it is written
 │   ├── rclone_bin.py  get hold of an rclone to start with
-│   ├── remote.py      the embedded key, the ephemeral rclone.conf, the NAS catalogue
-│   ├── device.py      what volumes exist, which one is the pen, was it mounted right
+│   ├── remote.py      the ephemeral rclone.conf and the pair catalogue
+│   ├── device.py      what volumes exist, which one is the device, was it mounted right
 │   ├── crypto.py      VeraCrypt and BitLocker
-│   └── seed.py        the seeding, the device's sync_config.toml and the --resync
+│   └── deploy.py      copy the code in, write the device's config, --resync
 └── tests/             plain scripts; run_all.py runs them in separate processes
 ```
 
@@ -57,22 +64,34 @@ The `tk_*` modules only draw. Everything that decides or touches disk lives in
 `icons.py` sit under the `tk_*` modules: they own every colour, font and glyph,
 so a `tk_*` module never writes a hex value of its own.
 
-`perepen-install.py` also sits at the root and **is** tracked in git: it is the
+`prdrive-install.py` also sits at the root and **is** tracked in git: it is the
 fourth entry point, and it is a launcher — arguments in, `ui/tk_install.py` out.
 Everything it knows lives in `install/`, which **does** import `common/`
 (`model.BASE_FLAGS`, `model.flags_to_args`, `config_file.save`,
 `store.pid_alive`): what the installer writes has to be byte-for-byte what
 `sync.py` will later read, and a second copy of those rules is a second place to
 get them wrong. What it must NOT import is `ui/` outside `tk_install`, and it
-must keep working with **no pen anywhere** — it runs before one exists.
+must keep working with **no device anywhere** — it runs before one exists.
 
-It ships as a PyInstaller executable (`build_installer.py` + the generated
-`.spec`), and that build is what embeds the NAS private key; the `.py` in this
-repo carries none and falls back to `keys/` when run from a provisioned pen, so
-the repo can be versioned without leaking anything. Two traps that only show up
-frozen: `sys.executable` is the installer and not Python (hence
-`install.python_command()`), and `sys.stdout` can be None with `--windowed`
-(hence `report()`, which opens a window when there is no console).
+It ships as a PyInstaller executable (`build_installer.py`), and that build does
+**two** things: it packs the tree the installer will deploy (`sync.py`,
+`runsync.py`, `penwatch.py`, `common/`, `ui/` as `--add-data`), and it optionally
+embeds a connection profile with its private key. Both halves matter:
+
+- `common/` and `ui/` end up in the bundle **twice** — as importable bytecode
+  (the installer uses them) and as copyable data (what gets deployed).
+  PyInstaller cannot hand back the `.py` source of a module it imported, and
+  source is what has to land on the device.
+- **Without a profile** — the normal case for a clone of this repo — the binary is
+  generic, carries no secret at all, and asks for the connection in step 1.
+  **With one** (`prdrive-profile.toml` + `keys/` in the checkout) it is
+  turnkey and must only ever be shared privately. This split is what lets the
+  repo be public: `install/secret.py` is generated at build time, gitignored, and
+  deleted in a `finally`.
+
+Two traps that only show up frozen: `sys.executable` is the installer and not
+Python (hence `install.python_command()`), and `sys.stdout` can be None with
+`--windowed` (hence `report()`, which opens a window when there is no console).
 
 `design/` holds the UI redesign mock-ups (`.dc.html` artboards) that `ui/` now
 implements. They are design, not code: nothing imports them and nothing is
@@ -81,11 +100,15 @@ record of what was decided, and `Sistema.dc.html` is the sheet `ui/theme.py`
 translates.
 
 `penwatch.py` must NOT import either package: it is copied to the host and has to
-keep working with the pen unplugged.
+keep working with the device unplugged.
 
-The repo is the `rclone-sync/` folder of the pen; `PEN_ROOT` is its **parent**
-directory (`F:\` here). Everything is resolved relative to the script location so
-the drive letter never matters.
+On a provisioned device the code lives in `.prdrive/` at the volume root — the
+leading dot hides it on POSIX and `deploy.hide()` sets the hidden attribute on
+Windows. `model.APP_DIR` is `Path(__file__).parent.parent` and `DEVICE_ROOT` is
+its parent, so **nothing depends on the folder name or the drive letter**: a
+development checkout called anything at all works the same. `deploy.APP_SUBDIR`
+is the name the installer writes, and `penwatch.STRUCT_MARKER` /
+`device.STRUCT_MARKER` are the two copies that have to agree with it.
 
 ## Commands
 
@@ -104,15 +127,15 @@ python runsync.py --auto       # start the periodic service with [daemon] defaul
 python runsync.py --doctor     # any other args are passed straight through to sync.py
 
 python penwatch.py install     # register the mount watcher on THIS machine/user
-python penwatch.py status      # what is registered + whether the pen is visible now
+python penwatch.py status      # what is registered + whether the device is visible now
 python penwatch.py probe       # detection only: candidate roots and what matched
 python penwatch.py uninstall
 
-python perepen-install.py          # the install wizard for a NEW pen (Tk only, no console menu)
-python perepen-install.py --check  # rclone + NAS connection + catalogue, then exit
-python perepen-install.py --probe  # what drives it sees, then exit
-python build_installer.py          # build the .exe (PyInstaller, embeds the NAS key)
-python -m ui.icons                 # repaint PEN_ROOT/runsync.ico (no Tk, no display)
+python prdrive-install.py          # the install wizard for a NEW device (Tk only, no console menu)
+python prdrive-install.py --check  # rclone + connection + catalogue, then exit
+python prdrive-install.py --probe  # what drives it sees, then exit
+python build_installer.py          # build the .exe (PyInstaller; embeds the profile if there is one)
+python -m ui.icons                 # repaint APP_DIR/runsync.ico (no Tk, no display)
 
 python tests/run_all.py        # todos los tests (scripts sueltos, sin framework)
 python tests/test_pair_editor.py   # o uno solo
@@ -122,18 +145,18 @@ python tests/test_pair_editor.py   # o uno solo
 Verification is by `tests/run_all.py`, `--doctor` and `--dry-run`; there is
 nothing to lint.
 
-Git note: the repo sits on an exFAT/NTFS pen, so git refuses it as "dubious
-ownership" — prefix commands with `-c safe.directory=F:/rclone-sync`. There is no
-remote, and `.gitignore` excludes everything device-specific (`bin/`, `keys/`,
-`filters/`, `logs/`, `state/`, `sync_config.toml`, `rclone.conf`), so what is
-tracked is the code (`sync.py`, `runsync.py`, `penwatch.py`, `perepen-install.py`,
-`build_installer.py`, `common/`, `ui/`, `install/`, `tests/`) plus `design/`,
-`README.md`, `CLAUDE.md` and `.gitignore`. The installer's build artefacts
-(`build/`, `dist/`, `*.spec`) and its embedded key (`install/secret.py`) are
-ignored too — the key is what makes that last one non-negotiable. The
-catalogue cache (`state/catalog.toml`, `state/catalog.json`) is ignored with the
-rest of `state/`, and the `perepen` pair already excludes `rclone-sync/state/**`,
-so it never travels to the NAS either.
+Git note: this checkout sits on an exFAT/NTFS volume, so git refuses it as
+"dubious ownership" — prefix commands with `-c safe.directory=F:/rclone-sync`.
+`.gitignore` excludes everything device- or user-specific (`bin/`, `keys/`,
+`filters/`, `logs/`, `state/`, `sync_config.toml`, `rclone.conf`,
+`prdrive-profile.toml`), so what is tracked is the code (`sync.py`, `runsync.py`,
+`penwatch.py`, `prdrive-install.py`, `build_installer.py`, `common/`, `ui/`,
+`install/`, `tests/`) plus `design/`, `sync_config.example.toml`, `README.md`,
+`CLAUDE.md` and `.gitignore`. The installer's build artefacts (`build/`, `dist/`,
+`*.spec`) and its embedded profile (`install/secret.py`) are ignored too — the
+private key is what makes those last two non-negotiable. **Nothing on the device
+travels to the remote any more**: no pair mirrors `.prdrive/`, so neither the key
+nor the state nor the code can leak that way.
 
 ## Architecture
 
@@ -152,7 +175,7 @@ signature, because every layer it contributes is already merged:
 - `Pair` — a `[[pair]]` with every layer resolved: `includes`/`excludes`, merged
   `flags`, `extra_flags`, and the endpoint properties (`local_endpoint`,
   `remote_endpoint`, `source`, `dest`, `local_abs`, `workdir`).
-- `Config` — the pairs plus `[daemon]`, `keep_logs`, `pen_remote`, with
+- `Config` — the pairs plus `[daemon]`, `keep_logs`, `device_remote`, with
   `select()` (aborts on unknown names) and `pen_environment()`.
 
 An invalid `mode` is rejected at parse time rather than when that pair runs, so a
@@ -191,10 +214,10 @@ imitates rclone's own behaviour, and each section cites the rclone file it mirro
   `canonical_path`/`session_name`/`expected_prefix` replicate
   `cmd/bisync/bilib/canonical.go` so the script knows the filename rclone will look
   for **before** running. `normalize_prefix()` renames an existing listing set when
-  it no longer matches (pen mounted as `E:` instead of `F:`); `heal_listings()` is
+  it no longer matches (device mounted as `E:` instead of `F:`); `heal_listings()` is
   the fallback that parses the `Tip: Path1/Path2` lines out of a failed log and
   retries **once**. Current state files are `F__sync-data_...` — drive-letter bound.
-- *`pen_remote`.* Setting `pen_remote = "pen"` in `[defaults]` makes the pen side a
+- *`device_remote`.* Setting `device_remote = "device"` in `[defaults]` makes the device side a
   `combine` remote defined via `RCLONE_CONFIG_<NAME>_TYPE/_UPSTREAMS` env vars
   (`Config.pen_environment()`, computed from **all** pairs so it is identical
   whatever you run), making the prefix machine-independent. An `alias` remote does *not* work —
@@ -231,21 +254,22 @@ imitates rclone's own behaviour, and each section cites the rclone file it mirro
   "everything was deleted". Only pairs without a baseline get their local dir
   created.
 - `max-delete` defaults (25 bisync / 50 mirror) exist for the same reason.
-- rclone always runs with `cwd = model.APP_DIR` (i.e. `rclone-sync/`, **not** the
+- rclone always runs with `cwd = model.APP_DIR` (i.e. `.prdrive/`, **not** the
   package dir) because `rclone.conf` uses paths relative to it (`key_file`,
   `known_hosts_file`) to stay portable. `model.APP_DIR` is
   `Path(__file__).parent.parent` precisely because `model.py` sits one level down;
-  `PEN_ROOT` hangs off it. Moving these files changes those anchors.
-- The `perepen` pair is `up-mirror` of the **whole pen** to the NAS; it deletes on
-  the remote. Never exercise it without `--dry-run`.
+  `DEVICE_ROOT` hangs off it. Moving these files changes those anchors.
+- Any `*-mirror` pair deletes on the far side. Never exercise one without
+  `--dry-run` first. There is **no longer** a pair that mirrors the whole device:
+  the code no longer travels through the remote, so nothing needs one.
 
 **Logs.** rclone always writes to a temp file; `dispose_log()` keeps it in `logs/`
 only when the run failed (or `--keep-logs` / `keep_logs = true`), to spare write
-cycles on the pen. On failure the tail is printed and `KNOWN_ERRORS` maps rclone
+cycles on the device. On failure the tail is printed and `KNOWN_ERRORS` maps rclone
 messages to an explanation — add new cases there rather than in the caller.
 
 **Daemon (`runsync.py`).** Coordination lives in `state/` so it travels with the
-pen: `daemon.lock.json` (pid/host/pairs/last cycle, written atomically),
+device: `daemon.lock.json` (pid/host/pairs/last cycle, written atomically),
 `daemon.stop` (presence = stop request), `daemon.log` (self-trimming),
 `ui_prefs.json` (last UI choice). `startup_defaults()` layers that memory over
 `daemon_defaults()`: last choice > `[daemon]` in the TOML > all pairs / 30 min,
@@ -325,9 +349,11 @@ and faking them with images would mean changing toolkit to decorate.
   It is Tk-free — `_capas_rgba` is plain Python — so it runs headless. Sizes ≤ 64
   go in as DIBs and 128/256 as PNG (`zlib` is stdlib): a raw 256×256 is 270 KB
   against 3 KB compressed, and PNG is what Windows expects at that size. The file
-  lives at `PEN_ROOT`, so the `perepen` pair carries it to the NAS and every pen
-  seeded afterwards inherits it. **The icon is code**: it comes out of the same
-  glyph table as the window's, so there is no second copy to drift.
+  is written into `.prdrive/` by the wizard's install step, and **repainted**
+  rather than copied: it comes out of the same glyph table as the window's, so
+  there is no second copy to drift. Inside the hidden folder and not at the
+  volume root, because a stray icon among the user's files would be the only
+  visible leftover.
 - The layer order of `_capas_marca()` is the design's and is not decorative:
   both arrowheads go **after** both arcs. Grouped by colour, the amber arc paints
   over half the white arrowhead.
@@ -372,68 +398,103 @@ the window is opened, which is when `ui.start()` can catch it and fall back to t
 console menu. Verified in both directions. `save_prefs` stores `known` (the pair names that existed at
 the time) so a pair added to the TOML later reads as new — and comes back
 checked — instead of as one the user had unchecked; it skips the write entirely
-when nothing changed, to spare the pen. A record whose pairs are all gone falls
+when nothing changed, to spare the device. A record whose pairs are all gone falls
 back to the TOML silently.
 
 The service
-stops when the pen disappears (`SENTINEL` check) or when runsync is launched again.
+stops when the device disappears (`SENTINEL` check) or when runsync is launched again.
 Windows specifics that must be preserved: `pid_alive()` uses `OpenProcess`, never
 `os.kill` (which *terminates* on Windows); the daemon is spawned with `pythonw.exe`
 + `CREATE_NO_WINDOW`, and rclone is spawned with `CREATE_NO_WINDOW` too, otherwise
 every invocation flashes a console window; the daemon `chdir`s to the temp dir so
-the pen can be safely ejected. Child `sync.py` runs get `stdin=DEVNULL` on purpose,
+the device can be safely ejected. Child `sync.py` runs get `stdin=DEVNULL` on purpose,
 so a pair needing `--resync` is skipped instead of resynced unattended.
 
-**Provisioning a new pen (`perepen-install.py` + `install/` + `ui/tk_install.py`).**
-The wizard's order is not decorative: you cannot pick pairs before knowing where
-the pen goes, nor initialise them before the `sync.py` that initialises them
-exists. Each step carries its own condition and «Siguiente» stays disabled until
-it is met, so the window can never reach a place where the next button would
-fail. There is **no console fallback** here, unlike `runsync.py`, and that is
-deliberate: everything decided in it — which drive gets seeded, a passphrase typed
-twice, confirming a mirror that deletes — happens once in a pen's life, with the
-screen in front of you, and a text menu replicating it would double the code in
-the one destructive part of the project.
+**Provisioning a new device (`prdrive-install.py` + `install/` + `ui/tk_install.py`).**
+Eight steps, and the order is not decorative: you cannot read the catalogue before
+knowing which remote to talk to, nor pick pairs before knowing where the device
+goes, nor initialise them before the `sync.py` that initialises them exists.
+
+```
+1 Conexión        form, or import a remote from the user's rclone.conf
+2 Comprobaciones  rclone + connect + read the catalogue
+3 Destino         which volume
+4 Cifrado         VeraCrypt / BitLocker / none -> fixes state.device_root
+5 Instalación     copy .prdrive/, hide it, launchers, rclone.conf + keys
+6 Parejas         pick from the catalogue, write sync_config.toml, make dirs
+7 Inicialización  --resync of the bisync pairs
+8 Verificación
+```
+
+Each step carries its own condition and «Siguiente» stays disabled until it is
+met, so the window can never reach a place where the next button would fail.
+There is **no console fallback** here, unlike `runsync.py`, and that is
+deliberate: everything decided in it — which drive gets written, a passphrase
+typed twice, the connection to the remote — happens once in a device's life, with
+the screen in front of you, and a text menu replicating it would double the code
+in the most delicate part of the project.
+
+**Step 5 no longer simulates first.** It used to be an `rclone sync` of a master
+mirror, i.e. something that deleted in the destination whatever was not in the
+source, and that is why it demanded a `--dry-run` and typing the path by hand.
+Now it copies a folder of its own and touches nothing else, so it runs straight
+through `ui.tk.working()` — a job that takes a while (the rclone binary is tens of
+MB) and whose output tells nobody anything.
+
+**Step 1 is what makes the repo publishable.** `profile.load()` returns an
+**empty** profile when there is nothing embedded and nothing in the checkout, and
+that is not an error — it is the normal start for someone who just cloned. Before,
+that path raised `InstallError` and the wizard died explaining that a key was
+missing that the user had never had.
 
 `install.InstallError` is raised instead of `sys.exit` for the same reason as
 `model.ConfigError`: with a wizard open, killing the process closes the window in
-the user's face instead of letting them read what happened and retry. The SFTP key
-is written to a temp directory that records the owning pid; `remote.sweep_stale()`
-cleans up the ones left by installers that were killed hard (no `atexit`, no
-signal handler), and asks `store.pid_alive()` before touching any of them so two
-concurrent installs do not rob each other.
+the user's face instead of letting them read what happened and retry. The private
+key is written to a temp directory that records the owning pid;
+`remote.sweep_stale()` cleans up the ones left by installers that were killed hard
+(no `atexit`, no signal handler), and asks `store.pid_alive()` before touching any
+of them so two concurrent installs do not rob each other.
+
+**The key never leaves the device.** `deploy.write_device_remote()` writes
+`.prdrive/rclone.conf` and `.prdrive/keys/<name>` with **relative** paths
+(`key_file = keys/…`), which is what makes the device work under any drive letter
+— rclone resolves them against its cwd, which the project always fixes at
+`model.APP_DIR`. Nothing mirrors `.prdrive/`, so the key stays put, protected by
+whatever protects the volume.
 
 **Mount watcher (`penwatch.py`).** Third entry point, and the only one that
 installs anything on the host. `install` copies the script to
-`%LOCALAPPDATA%\PerePenWatch` / `~/.local/share/perepen-watch`, writes `watch.json`
+`%LOCALAPPDATA%\prdriveWatch` / `~/.local/share/prdrive-watch`, writes `watch.json`
 there and registers a **per-user** logon-triggered Task Scheduler task (XML via
 `schtasks /Create /XML`, UTF-16 — UTF-8 is rejected; `DisallowStartIfOnBatteries`
 must stay `false` or laptops never start it) or a systemd **user** unit
 (`WantedBy=default.target`, plus `loginctl enable-linger`). No admin rights
 anywhere. The watcher **polls** rather than subscribing to device events, because
-on an encrypted pen the arrival event fires long before the volume is readable —
+on an encrypted device the arrival event fires long before the volume is readable —
 what matters is "already readable", which is only knowable by trying. It
-identifies the pen by the control file **`PEREPEN` at the volume root** (optional
+identifies the device by the control file **`PRDRIVE` at the volume root** (optional
 `id=<hex>` line inside), never by drive letter or mount point, and confirms
-`rclone-sync/runsync.py` before launching. It must never write to, or `chdir`
-into, the pen (that blocks safe ejection): its config, state and log live on the
-host, and every pen access is wrapped in `try/except OSError` because a locked
+`.prdrive/runsync.py` before launching. It must never write to, or `chdir`
+into, the device (that blocks safe ejection): its config, state and log live on the
+host, and every device access is wrapped in `try/except OSError` because a locked
 BitLocker volume errors rather than reporting "not found". It fires once per
-mount — the trigger re-arms only when the pen disappears. `--mode` decides what
+mount — the trigger re-arms only when the device disappears. `--mode` decides what
 runs: `ui` (default), `sync`, or `daemon` (→ `runsync.py --auto`).
 
 **The catalogue is the source of truth for what pairs exist
-(`common/catalog.py` + `ui/catalog_editor.py`).** `synology:/PJ/Perepen-catalog/pairs.toml`
+(`common/catalog.py` + `ui/catalog_editor.py`).** `nas:/prdrive-catalog/pairs.toml`
 is a file with the *same schema* as `sync_config.toml`, shared by every device, and
-`perepen-install.py` reads it to provision a new pen. **A pair is created or
-deleted there first**; each pen then only *chooses* which of them it uses. That
+`prdrive-install.py` reads it to provision a new device. **A pair is created or
+deleted there first**; each device then only *chooses* which of them it uses. That
 split is the whole point and must not be collapsed back:
 
 - **Catalogue side** (`plan_catalog_save`/`plan_catalog_remove`/`plan_catalog_defaults`)
-  writes the NAS and changes nothing on this pen. `perepen` cannot be deleted from
-  the catalogue — `perepen-install.py` aborts without it.
-- **Pen side** (`plan_enable`/`plan_remove`/`plan_override`/`plan_revert`) writes
-  `sync_config.toml` and never touches the NAS. `[defaults]` is catalogue-governed
+  writes the remote and changes nothing on this device. **No pair is sacred any
+  more**: when the code came down from the remote, the pair describing that mirror
+  was required to install and the editor refused to delete it. The installer now
+  carries the code, so the catalogue is data pairs and they are all equal.
+- **Device side** (`plan_enable`/`plan_remove`/`plan_override`/`plan_revert`) writes
+  `sync_config.toml` and never touches the remote. `[defaults]` is catalogue-governed
   too, via `plan_defaults`/`plan_revert_defaults`.
 
 `sync_config.toml` still holds **complete** pair entries, not references: `sync.py`
@@ -446,15 +507,25 @@ round-trip equality and the file is hand-editable.
 
 Writing the catalogue is the riskiest thing in the project, so `catalog.push()`:
 generates and verifies the text first (`config_file.dumps_checked`), **re-reads the
-remote and refuses if it changed** since it was read (another pen may have edited
-it), copies `pairs.toml` → `pairs.toml.bak` on the NAS, and only then uploads.
+remote and refuses if it changed** since it was read (another device may have edited
+it), copies `pairs.toml` → `pairs.toml.bak` on the remote, and only then uploads.
 Rewriting keeps the header block and **loses the interleaved comments** — a
 deliberate trade for reusing the serializer that refuses to write what it cannot
 read back. `catalog.load()` never raises: no network falls back to
 `state/catalog.toml`, and a cached catalogue is **not editable** (`Catalog.editable`),
 because you cannot safely overwrite what you have not just read. `catalog.run()` is a
 module-level function precisely so every test replaces it — **no test may touch the
-network**. `catalog.NET_FLAGS` keeps a dead NAS from freezing the window for minutes.
+network**. `catalog.NET_FLAGS` keeps a dead remote from freezing the window for
+minutes.
+
+The catalogue also carries an optional **`[remote]`** table: the non-secret
+definition of the rclone remote itself (type, host, user…). It is what makes the
+connection typed **once** — the first device writes it there and the rest inherit
+it. `profile.align_with_catalog()` applies it, and it enforces one rule that is
+not negotiable: **the catalogue decides the remote's name**, because every pair's
+`remote_path` resolves against `[defaults].remote`. If the device's rclone.conf
+called the remote something else, every sync would fail with an "unknown remote"
+that looks nothing like the cause. The private key never goes in there.
 
 **Editing pairs from the UI (`ui/pair_editor.py`) — the dangerous part.**
 `bisync.expected_prefix()` is derived from `local`, `remote`, `remote_path` and
@@ -463,7 +534,7 @@ run `normalize_prefix()` would **rename the old baseline to the new name** —
 telling bisync that a listing of the *previous* destination describes the *new*
 one. Everything missing from the new side then reads as deleted and propagates,
 with `--max-delete 25` as the only brake. `normalize_prefix()` was written for the
-benign case (pen moves from `G:` to `F:`) and cannot tell the two apart.
+benign case (device moves from `G:` to `F:`) and cannot tell the two apart.
 
 So the editor shelves the baseline itself: `bisync.shelve_baseline()` renames
 `state/<pair>/` to `state/<pair>.old-<date>/`, which leaves the pair `fresh` and
@@ -478,7 +549,7 @@ file) and the baseline stays valid.
 **The decision is taken by comparing prefixes, not keys.** `_prefixes(raw)` parses
 both the before and after configs and compares `bisync.expected_prefix()` per pair;
 `ENDPOINT_KEYS` now only produces the human-readable message. That is what makes
-`[defaults]` editable at all: `remote` and `pen_remote` feed *every* pair's
+`[defaults]` editable at all: `remote` and `device_remote` feed *every* pair's
 endpoints, so one change there can invalidate several baselines with no pair having
 been touched — which is why `EditPlan.shelve` is a **list**. A prefix that
 *disappears* (bisync → another mode) also shelves: leaving an unchecked baseline
@@ -528,7 +599,7 @@ same dict — this file governs deletions, so failing loudly beats writing somet
 that does not read back. `save()` and `catalog.push()` both go through it. Work on
 the **raw dict**, never on `model.Config`: its `Pair`s arrive with the `[defaults]`
 already merged in. `header_of(text)` exists because some headers never touch this
-disk: the catalogue arrives from the NAS as text, and the installer hands
+disk: the catalogue arrives from the remote as text, and the installer hands
 `save(head=...)` the header of a config whose file does not exist yet — the
 default, `head=None`, keeps whatever header the target already had, which is what
 editing pairs needs.
@@ -538,23 +609,52 @@ print rows produced by `status_rows()`/`probe_rows()`/`log_tail()`, so the CLI a
 the UI show the same thing without parsing text. `ui/watch.py` imports penwatch
 for reads and shells out for `install`/`uninstall`, whose output goes to the same
 `output_window` used for `sync.py`. The dependency is one-way and must stay that
-way: penwatch is copied to the host and has to work with the pen unplugged.
+way: penwatch is copied to the host and has to work with the device unplugged.
 
 ## Conventions
 
 - All comments, docstrings and user-facing output are **Spanish**. Keep it that way.
 - Comments explain *why* against rclone's actual behaviour, often citing the rclone
   source file. Preserve that when touching bisync-related code.
-- `sync_config.toml` is per-device: `perepen-install.py` generates it from the NAS
+- `sync_config.toml` is per-device: `prdrive-install.py` generates it from the remote
   catalogue when provisioning, and from then on the pairs screen maintains it. It
   can still be edited by hand — a pair that ends up differing from the catalogue is
   reported as "modificada aquí", not corrected.
 
 ## Documentation
 
-The authoritative manual is the **pen root** `../README.md` (14 sections: daily use,
-service, modes, config, filters, bisync internals, troubleshooting, security). The
-`README.md` inside this folder is an older version and has drifted — it predates
-`--doctor`, `runsync.py`, `pen_remote`, per-pair filter files, the `state/<pair>/`
-layout and the "logs only on failure" policy. When changing behaviour, update
-`../README.md`, and either update or stop extending the local one.
+Two documents, two audiences, and they must not drift into each other:
+
+- **`README.md`** (this folder) is the front door of a public repository and the
+  thorough one: the three-piece model, install, the flag layering, how bisync's
+  baseline actually works and why the ugly parts exist, the service, the watcher,
+  the security model, the architecture. Someone deciding whether to use or hack
+  on this reads it.
+- **`device-readme.md`** is the *light* quick guide, and it is **not** for
+  readers of the repo: the installer copies it to the volume root as `README.md`
+  (`deploy.write_guide()`), so it is what the user finds when they open the
+  drive. Keep it short, task-shaped and free of internals. It used to live at the
+  volume root and travel through the master mirror; with no mirror, either the
+  installer writes it or it never arrives.
+
+`write_guide()` is deliberately best-effort — it returns None if the template is
+not in the bundle instead of raising. It is documentation, and a missing document
+cannot abort an install that otherwise went fine; same criterion as `hide()` and
+`icons.get()`. `build_installer.py` does list it in `DATOS_FICHEROS`, so a build
+that forgets it fails loudly at compile time, which is the right place.
+
+`sync_config.example.toml` is tracked and is the schema reference for **both**
+files that use it — a device's `sync_config.toml` and the remote's `pairs.toml`
+(which additionally takes `[remote]`). It is verified by hand with
+`config_file.dumps_checked()`: if it stops round-tripping, the serializer and the
+documented schema have drifted apart.
+
+Two things still to settle before the repo goes public:
+
+- **`LICENSE` does not exist.** A public repo without one is "all rights
+  reserved", which is almost certainly not the intent.
+- **Commit authorship.** The history carries two personal e-mail addresses, one
+  of them on a corporate domain. Decide whether to rewrite authorship or squash
+  to a fresh initial commit before the first `push`. The history is otherwise
+  clean: no key, config or state file has ever been committed (verified with
+  `git log --diff-filter=A`).

@@ -10,3 +10,5 @@ build/
 dist/
 *.spec
 install/secret.py
+prdrive-profile.toml
+runsync.ico

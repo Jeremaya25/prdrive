@@ -31,7 +31,7 @@ BASE = [
 
 
 def preparar(pairs=None, daemon=None) -> dict:
-    raw = {"defaults": {"remote": "synology"},
+    raw = {"defaults": {"remote": "nas"},
            "pair": [dict(p) for p in (pairs or BASE)]}
     if daemon:
         raw["daemon"] = daemon
@@ -170,7 +170,7 @@ with sandbox():
     raw = preparar()
     plan = pair_editor.plan_save(raw, {**BASE[1], "mode": "up-mirror"}, "subida")
     c("up-mirror avisa de que borra en el destino",
-      any("BORRA en el NAS" in w for w in plan.warnings), True)
+      any("BORRA en el remoto" in w for w in plan.warnings), True)
 
 # --- si falla el guardado, el estado vuelve a su sitio -------------------------
 with sandbox():
@@ -216,8 +216,8 @@ with sandbox():
     dar_baseline(raw, "notas")
     dar_baseline(raw, "otra")
 
-    plan = pair_editor.plan_defaults(raw, {"remote": "synology", "pen_remote": "pen"})
-    c("pen_remote cambia el extremo local de todas", sorted(plan.shelve),
+    plan = pair_editor.plan_defaults(raw, {"remote": "nas", "device_remote": "dispositivo"})
+    c("device_remote cambia el extremo local de todas", sorted(plan.shelve),
       ["notas", "otra"])
     c("y se explica por qué",
       any("todas las parejas" in x for x in plan.consequences), True)
@@ -228,15 +228,15 @@ with sandbox():
 with sandbox():
     raw = preparar()
     dar_baseline(raw, "notas")
-    plan = pair_editor.plan_defaults(raw, {"remote": "synology", "keep_logs": True})
+    plan = pair_editor.plan_defaults(raw, {"remote": "nas", "keep_logs": True})
     c("un cambio de [defaults] inocuo no aparta nada", plan.shelve, [])
     plan.execute()
     c("el baseline sigue valiendo", estado_de("notas")[0].status, "ok")
     c("y keep_logs ha quedado escrito",
       config_file.load_raw()["defaults"].get("keep_logs"), True)
 
-# --- este pen frente al catálogo ----------------------------------------------
-CAT = {"defaults": {"remote": "synology"},
+# --- este dispositivo frente al catálogo ----------------------------------------------
+CAT = {"defaults": {"remote": "nas"},
        "pair": [dict(BASE[0]), dict(BASE[1]),
                 {"name": "fotos", "local": "sync-data/fotos",
                  "remote_path": "/R/fotos", "mode": "up"}]}
@@ -245,7 +245,7 @@ CAT = {"defaults": {"remote": "synology"},
 def falso_catalogo(raw=None):
     texto = config_file.dumps(raw if raw is not None else CAT)
     return catalog.Catalog(raw=tomllib.loads(texto), text=texto, source="remote",
-                           stamp="2026-01-01 00:00:00", endpoint="synology:/x/pairs.toml")
+                           stamp="2026-01-01 00:00:00", endpoint="nas:/x/pairs.toml")
 
 
 with sandbox():
@@ -263,7 +263,7 @@ with sandbox():
         pair_editor.plan_enable(raw, cat, "fotos")
         c("no se puede usar dos veces la misma", "no lanzó", "ConfigError")
     except ConfigError as e:
-        c("no se puede usar dos veces la misma", "ya está en este pen" in str(e), True)
+        c("no se puede usar dos veces la misma", "ya está en este dispositivo" in str(e), True)
     try:
         pair_editor.plan_enable(raw, cat, "inventada")
         c("ni una que no está en el catálogo", "no lanzó", "ConfigError")
@@ -302,7 +302,7 @@ with sandbox():
       pair_editor.ORIGEN_DESCONOCIDO)
 
 with sandbox():
-    modificado = {"defaults": {"remote": "synology"},
+    modificado = {"defaults": {"remote": "nas"},
                   "pair": [{**BASE[0], "remote_path": "/R/mio"}, dict(BASE[1])]}
     raw = preparar(pairs=modificado["pair"])
     cat = falso_catalogo()
@@ -327,7 +327,7 @@ with sandbox():
     c("los defaults iguales salen como del catálogo",
       pair_editor.defaults_origin(raw, cat), (pair_editor.ORIGEN_CATALOGO, ()))
 
-    distintos = {**raw, "defaults": {"remote": "synology", "keep_logs": True}}
+    distintos = {**raw, "defaults": {"remote": "nas", "keep_logs": True}}
     c("y si difieren se dice en qué",
       pair_editor.defaults_origin(distintos, cat),
       (pair_editor.ORIGEN_LOCAL, ("keep_logs",)))

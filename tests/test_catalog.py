@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-El catálogo del NAS (common/catalog.py).
+El catálogo del remoto (common/catalog.py).
 
-`catalog.run` se sustituye entera: aquí no se habla con ningún NAS. Lo que se
+`catalog.run` se sustituye entera: aquí no se habla con ningún remoto. Lo que se
 comprueba es lo que puede hacer daño de verdad —que escribir se niegue cuando el
 remoto ha cambiado bajo nuestros pies, y que la copia de seguridad se suba ANTES
 que el fichero nuevo— y lo que sostiene la pantalla cuando no hay red.
@@ -15,12 +15,13 @@ import tomllib
 from _harness import Checks, sandbox
 
 from common import catalog, config_file, model
+from install import profile
 from common.model import ConfigError
 
-c = Checks("catálogo del NAS (common/catalog.py)")
+c = Checks("catálogo del remoto (common/catalog.py)")
 
-CAT = {"defaults": {"remote": "synology", "exclude": ["**/.stfolder/**"]},
-       "pair": [{"name": "perepen", "local": ".", "remote_path": "/PJ/Perepen",
+CAT = {"defaults": {"remote": "nas", "exclude": ["**/.stfolder/**"]},
+       "pair": [{"name": "prdrive", "local": ".", "remote_path": "/prdrive",
                  "mode": "up-mirror"},
                 {"name": "notas", "local": "sync-data/notas",
                  "remote_path": "/R/notas", "mode": "bisync"}]}
@@ -51,8 +52,13 @@ def falla(error="no route to host"):
 
 
 # --- de dónde se lee ---------------------------------------------------------
-c("el endpoint por defecto es el del instalador", catalog.endpoint(),
-  "synology:/PJ/Perepen-catalog/pairs.toml")
+c("el endpoint por defecto sale de las constantes compartidas", catalog.endpoint(),
+  f"{model.DEFAULT_REMOTE}:{catalog.DEFAULT_CATALOG_PATH}")
+# El instalador lee el catálogo cuando todavía no hay dispositivo, así que tiene
+# que buscarlo en el mismo sitio. Antes eran dos cadenas iguales en dos módulos
+# que no se importaban; ahora hay una sola y esto lo vigila.
+c("y el instalador usa exactamente esa", profile.empty().catalog_path,
+  catalog.DEFAULT_CATALOG_PATH)
 c("[defaults] puede moverlo",
   catalog.endpoint({"defaults": {"remote": "otro", "catalog_path": "/x/y.toml"}}),
   "otro:/x/y.toml")
@@ -65,10 +71,10 @@ c("y dice que no hay diferencia cuando no la hay",
 # --- leer deja copia, y la copia salva la pantalla sin red -------------------
 with sandbox():
     responder(ok())
-    cat = catalog.pull()
+    cat = catalog.pull(CAT)
     c("leer usa 'cat' contra el endpoint", llamadas[0],
-      ["cat", "synology:/PJ/Perepen-catalog/pairs.toml"])
-    c("y trae las parejas", [p["name"] for p in cat.raw["pair"]], ["perepen", "notas"])
+      ["cat", "nas:/prdrive-catalog/pairs.toml"])
+    c("y trae las parejas", [p["name"] for p in cat.raw["pair"]], ["prdrive", "notas"])
     c("viene del remoto y por tanto es editable", (cat.source, cat.editable),
       ("remote", True))
     c("ha quedado copia local", catalog.cache_toml().read_text(encoding="utf-8"), TEXTO)
@@ -78,7 +84,7 @@ with sandbox():
     c("sin red se cae a la copia", cat.source, "cache")
     c("y la copia NO se puede editar", cat.editable, False)
     c("con las mismas parejas", [p["name"] for p in cat.raw["pair"]],
-      ["perepen", "notas"])
+      ["prdrive", "notas"])
     c("y se dice por qué", "Sin conexión" in aviso, True)
 
 with sandbox():
@@ -98,19 +104,19 @@ with sandbox():
     nuevo = {**CAT, "pair": CAT["pair"] + [{"name": "fotos", "local": "sync-data/fotos",
                                             "remote_path": "/R/fotos", "mode": "up"}]}
     responder(ok(), ok(""), ok(""))
-    hechos = catalog.push(nuevo, TEXTO)
+    hechos = catalog.push(nuevo, TEXTO, CAT)
 
     c("primero se relee el remoto", llamadas[0][0], "cat")
     c("después se copia el .bak, ANTES de escribir", llamadas[1],
-      ["copyto", "synology:/PJ/Perepen-catalog/pairs.toml",
-       "synology:/PJ/Perepen-catalog/pairs.toml.bak"])
+      ["copyto", "nas:/prdrive-catalog/pairs.toml",
+       "nas:/prdrive-catalog/pairs.toml.bak"])
     c("y por último se sube el fichero nuevo",
       llamadas[2][0] == "copyto" and llamadas[2][-1].endswith("pairs.toml"), True)
     c("se cuenta lo que se ha hecho", len(hechos), 2)
 
     subido = tomllib.loads(catalog.cache_toml().read_text(encoding="utf-8"))
     c("la copia local queda al día", [p["name"] for p in subido["pair"]],
-      ["perepen", "notas", "fotos"])
+      ["prdrive", "notas", "fotos"])
     c("y la cabecera del catálogo sobrevive",
       catalog.cache_toml().read_text(encoding="utf-8").startswith(CABECERA.rstrip()), True)
 

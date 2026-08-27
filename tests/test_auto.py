@@ -10,13 +10,13 @@ import runsync
 from ui import prefs
 
 c = Checks("arranque sin UI (--auto)")
-prefs.PREFS = tmpdir("perepen-auto-") / "ui_prefs.json"
+prefs.PREFS = tmpdir("prdrive-auto-") / "ui_prefs.json"
 
-CFG = mkcfg(["upload", "keepass", "obsidian", "perepen"],
-            {"pairs": ["obsidian", "keepass"], "interval_minutes": 15})
+CFG = mkcfg(["upload", "claves", "docs", "prdrive"],
+            {"pairs": ["docs", "claves"], "interval_minutes": 15})
 ALL = CFG.names
 
-# Nada de esto debe tocar el servicio real ni el diario del pen.
+# Nada de esto debe tocar el servicio real ni el diario del dispositivo.
 runsync.stop_previous_daemon = lambda: None
 runsync.dlog = lambda msg: None
 runsync.model.load_config = lambda: CFG
@@ -28,19 +28,19 @@ builtins.print = lambda *a, **k: None
 try:
     runsync.auto_start([])
     c("sin recuerdo manda [daemon]", (lanzado["pairs"], lanzado["mins"]),
-      (["obsidian", "keepass"], 15.0))
+      (["docs", "claves"], 15.0))
 
-    prefs.save_prefs("daemon", ["keepass"], 8.0, ALL)
+    prefs.save_prefs("daemon", ["claves"], 8.0, ALL)
     lanzado.clear(); runsync.auto_start([])
-    c("con recuerdo manda el recuerdo", (lanzado["pairs"], lanzado["mins"]), (["keepass"], 8.0))
+    c("con recuerdo manda el recuerdo", (lanzado["pairs"], lanzado["mins"]), (["claves"], 8.0))
 
-    lanzado.clear(); runsync.auto_start(["--interval", "3", "obsidian"])
+    lanzado.clear(); runsync.auto_start(["--interval", "3", "docs"])
     c("los argumentos mandan sobre todo", (lanzado["pairs"], lanzado["mins"]),
-      (["obsidian"], 3.0))
+      (["docs"], 3.0))
 
     lanzado.clear(); runsync.auto_start(["--interval", "3"])
     c("solo --interval: parejas del recuerdo", (lanzado["pairs"], lanzado["mins"]),
-      (["keepass"], 3.0))
+      (["claves"], 3.0))
 
     # Un arranque automático nunca reescribe lo que se decidió a mano.
     antes = prefs.PREFS.read_text(encoding="utf-8")

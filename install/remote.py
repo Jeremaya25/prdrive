@@ -1,22 +1,17 @@
 #!/usr/bin/env python3
 """
-remote.py — La clave del NAS, el rclone.conf efímero y el catálogo de parejas.
+remote.py — El rclone.conf efímero y el catálogo de parejas.
 
-El instalador tiene que hablar con el NAS antes de que exista ningún pen, así que
-no puede usar el `rclone.conf` del pen ni su `keys/`: se los fabrica en un
-directorio temporal a partir de una clave que viaja con él, y los borra al salir.
+El instalador tiene que hablar con el remoto antes de que exista ningún
+dispositivo, así que no puede usar el `rclone.conf` del dispositivo ni su
+`keys/`: se los fabrica en un directorio temporal a partir del `Profile` que
+lleva (ver `install/profile.py`), y los borra al salir.
 
-De dónde sale esa clave, en orden:
-
-    1. `install/secret.py`, que genera `build_installer.py` al compilar el .exe.
-       Es el caso normal del binario que se comparte.
-    2. `keys/synology_ed25519` junto al instalador, cuando se ejecuta el .py
-       desde un pen ya provisionado. Es el caso de desarrollo.
-    3. Ninguno: se explica qué falta y no se sigue.
-
-Así el fuente se puede versionar sin llevar el secreto dentro. El marcador
-`__INJECT` existe para que una compilación mal hecha falle diciendo por qué en
-vez de intentar conectarse con una clave de mentira.
+Un perfil sin clave privada es perfectamente válido —un webdav con contraseña, un
+sftp con agente— y entonces `EphemeralConf` solo escribe el conf. Lo que hay que
+proteger es la clave cuando la hay, y de eso van las tres precauciones de aquí:
+un directorio por proceso con su `owner.pid`, sobrescribir antes de borrar, y
+`sweep_stale()` para lo que dejó un instalador al que mataron duro.
 
 Lo que se lanza contra rclone pasa siempre por `Rclone`, que admite un runner
 inyectado: es lo que permite probar cómo se construye cada orden sin que ningún
@@ -26,8 +21,6 @@ test toque la red.
 from __future__ import annotations
 
 import atexit
-import base64
-import binascii
 import os
 import shutil
 import signal
@@ -43,75 +36,11 @@ from common import config_file, model
 from common.model import ConfigError
 from common.store import pid_alive
 
-from . import (CATALOG_PATH, CREATE_NO_WINDOW, IS_WIN, NAS_HOST, NAS_PORT,
-               NAS_USER, REMOTE_NAME, InstallError, bundle_dir)
+from . import CREATE_NO_WINDOW, IS_WIN, InstallError
+from .profile import Profile, render_conf
 
-INJECT_MARKER = "__INJECT"
-KEY_NAME = "synology_ed25519"
-TMP_PREFIX = "perepen-key-"
+TMP_PREFIX = "prdrive-key-"
 OWNER_FILE = "owner.pid"
-
-
-# ---------------------------------------------------------------------------
-# Credenciales
-# ---------------------------------------------------------------------------
-
-@dataclass(frozen=True)
-class Credentials:
-    """La clave privada y los known_hosts, más de dónde han salido.
-
-    El origen no es adorno: es lo que el paso de comprobaciones enseña para que
-    se vea si el .exe lleva la clave dentro o la está cogiendo de un pen."""
-    private_key: bytes
-    known_hosts: str
-    origen: str
-
-
-def _from_secret_module() -> Credentials | None:
-    """Lo que inyectó `build_installer.py`, si es que se compiló con clave."""
-    try:
-        from . import secret            # type: ignore[attr-defined]
-    except ImportError:
-        return None
-
-    b64 = getattr(secret, "PRIVATE_KEY_B64", "")
-    if not b64 or b64.startswith(INJECT_MARKER):
-        raise InstallError(
-            "Este instalador se compiló sin clave privada (quedó el marcador "
-            f"{INJECT_MARKER}). Vuelve a compilarlo con build_installer.py "
-            "desde un pen que tenga keys/.")
-    try:
-        clave = base64.b64decode(b64, validate=True)
-    except (binascii.Error, ValueError) as e:
-        raise InstallError(f"La clave inyectada no es base64 válido: {e}") from e
-    return Credentials(clave, getattr(secret, "KNOWN_HOSTS", ""), "incrustada en el instalador")
-
-
-def _from_pen_keys() -> Credentials | None:
-    """Las llaves del pen desde el que se está ejecutando el .py."""
-    keys = bundle_dir() / "keys"
-    key_file, known_file = keys / KEY_NAME, keys / "known_hosts"
-    try:
-        if not key_file.is_file():
-            return None
-        conocidos = known_file.read_text(encoding="utf-8") if known_file.is_file() else ""
-        return Credentials(key_file.read_bytes(), conocidos, f"leída de {keys}")
-    except OSError:
-        return None
-
-
-def load_credentials() -> Credentials:
-    """La clave con la que hablar con el NAS, o un error que explica qué falta."""
-    for fuente in (_from_secret_module, _from_pen_keys):
-        creds = fuente()
-        if creds is not None:
-            return creds
-    raise InstallError(
-        "No encuentro la clave privada del NAS.\n\n"
-        "Si estás ejecutando el .py, hazlo desde un pen ya provisionado, que la "
-        f"tiene en keys/{KEY_NAME}.\n"
-        "Si es el ejecutable, hay que compilarlo con build_installer.py, que la "
-        "incrusta al generarlo.")
 
 
 # ---------------------------------------------------------------------------
@@ -149,40 +78,38 @@ class EphemeralConf:
     se invoca muchas veces y regenerar la clave en cada una no la protegería más,
     solo la escribiría más veces."""
 
-    def __init__(self, creds: Credentials, base: Path | None = None) -> None:
+    def __init__(self, profile: Profile, base: Path | None = None) -> None:
         base = base or Path(tempfile.gettempdir())
         base.mkdir(parents=True, exist_ok=True)
         self.dir = Path(tempfile.mkdtemp(prefix=TMP_PREFIX, dir=base))
-        self.key_file = self.dir / KEY_NAME
+        self.profile = profile
+        self.key_file = self.dir / profile.key_name
         self.known_file = self.dir / "known_hosts"
         self.conf_file = self.dir / "rclone.conf"
 
         (self.dir / OWNER_FILE).write_text(str(os.getpid()), encoding="utf-8")
-        self.key_file.write_bytes(creds.private_key)
-        try:
-            self.key_file.chmod(0o600)
-        except OSError:
-            pass    # Windows: los permisos POSIX no aplican; el temp ya es del usuario
-        self.known_file.write_text(creds.known_hosts, encoding="utf-8")
+        if profile.private_key is not None:
+            self.key_file.write_bytes(profile.private_key)
+            try:
+                self.key_file.chmod(0o600)
+            except OSError:
+                pass    # Windows: los permisos POSIX no aplican; el temp ya es del usuario
+        if profile.known_hosts:
+            self.known_file.write_text(profile.known_hosts, encoding="utf-8")
         self.conf_file.write_text(self._conf_text(), encoding="utf-8")
         _ABIERTAS.append(self)
 
     def _conf_text(self) -> str:
-        # disable_hashcheck / shell_type=none: el Synology no ofrece md5sum por
-        # SSH y sin esto rclone pierde un rato largo intentando averiguarlo.
-        lineas = [
-            f"[{REMOTE_NAME}]",
-            "type = sftp",
-            f"host = {NAS_HOST}",
-            f"port = {NAS_PORT}",
-            f"user = {NAS_USER}",
-            f"key_file = {self.key_file}",
-            "disable_hashcheck = true",
-            "shell_type = none",
-        ]
-        if self.known_file.stat().st_size:
-            lineas.insert(6, f"known_hosts_file = {self.known_file}")
-        return "\n".join(lineas) + "\n"
+        """El conf del perfil, con las rutas de ESTE temporal.
+
+        Cada ruta se pasa solo si hay algo que apuntar: un `key_file` que no
+        existe hace fallar a rclone, mientras que no ponerlo deja que el backend
+        se autentique como sepa —contraseña, agente, token—."""
+        return render_conf(
+            self.profile,
+            key_file=self.key_file if self.profile.private_key is not None else None,
+            known_file=self.known_file if self.profile.known_hosts else None)
+
 
     @property
     def path(self) -> str:
@@ -258,10 +185,13 @@ class Rclone:
     """Las órdenes de rclone del instalador, con su config efímero ya puesto.
 
     `runner` está para los tests: con uno de mentira se comprueba cómo se
-    construye cada orden sin tocar la red ni el disco."""
+    construye cada orden sin tocar la red ni el disco. `remote_name` viaja aquí
+    porque es lo que convierte una ruta en un endpoint, y quien tiene el conf
+    puesto es quien sabe cómo se llama el remote que hay dentro."""
     binary: str
     conf: str
     runner: Runner = field(default=_default_runner)
+    remote_name: str = ""
 
     def command(self, *args: str) -> list[str]:
         """La orden completa. La usa la ventana de salida, que la ejecuta ella."""
@@ -276,17 +206,23 @@ class Rclone:
             kwargs["timeout"] = timeout
         return self.runner(self.command(*args), **kwargs)
 
+    def endpoint(self, path: str = "") -> str:
+        """'remote:ruta'. Es lo único que el proyecto sabe de un backend."""
+        return f"{self.remote_name}:{path}"
+
     def check_connection(self, timeout: float = 45.0) -> None:
-        """¿Se llega al NAS? Lanza InstallError con lo que dijo rclone."""
+        """¿Se llega al remoto? Lanza InstallError con lo que dijo rclone."""
         try:
-            res = self.run("lsd", f"{REMOTE_NAME}:", "--max-depth", "1",
+            res = self.run("lsd", self.endpoint(), "--max-depth", "1",
                            capture=True, timeout=timeout)
         except subprocess.TimeoutExpired as e:
             raise InstallError(
-                f"El NAS ({NAS_HOST}) no ha contestado en {timeout:g}s.") from e
+                f"El remoto '{self.remote_name}' no ha contestado en "
+                f"{timeout:g}s.") from e
         if res.returncode != 0:
             raise InstallError(
-                f"No se puede conectar con {NAS_HOST}:\n\n{(res.stderr or '').strip()}")
+                f"No se puede conectar con '{self.remote_name}':\n\n"
+                f"{(res.stderr or '').strip()}")
 
 
 # ---------------------------------------------------------------------------
@@ -295,7 +231,7 @@ class Rclone:
 
 @dataclass(frozen=True)
 class Catalog:
-    """El pairs.toml del NAS: el dict crudo y su cabecera de comentarios.
+    """El pairs.toml del remoto: el dict crudo y su cabecera de comentarios.
 
     Crudo y no `model.Config` porque de aquí sale un TOML que hay que volver a
     escribir, y las `Pair` del modelo llegan con los `[defaults]` ya fundidos:
@@ -323,27 +259,28 @@ def parse_catalog(text: str) -> Catalog:
 
     Se valida aquí, nada más leerlo, y no cuando se use: un `mode` mal escrito en
     el catálogo tiene que reventar en el primer paso del asistente y no en el
-    sexto, con el pen ya sembrado."""
+    sexto, con el dispositivo ya sembrado."""
     try:
         raw = tomllib.loads(text)
     except tomllib.TOMLDecodeError as e:
-        raise InstallError(f"El catálogo del NAS no es TOML válido: {e}") from e
+        raise InstallError(f"El catálogo del remoto no es TOML válido: {e}") from e
     try:
         model.parse_config(raw)
     except ConfigError as e:
-        raise InstallError(f"El catálogo del NAS no es un config válido:\n\n{e}") from e
+        raise InstallError(f"El catálogo del remoto no es un config válido:\n\n{e}") from e
     return Catalog(raw, config_file.header_of(text))
 
 
-def pull_catalog(rclone: Rclone, timeout: float = 45.0) -> Catalog:
-    """Se trae el catálogo global de parejas del NAS."""
+def pull_catalog(rclone: Rclone, catalog_path: str,
+                 timeout: float = 45.0) -> Catalog:
+    """Se trae el catálogo global de parejas del remoto."""
+    donde = rclone.endpoint(catalog_path)
     try:
-        res = rclone.run("cat", f"{REMOTE_NAME}:{CATALOG_PATH}",
-                         capture=True, timeout=timeout)
+        res = rclone.run("cat", donde, capture=True, timeout=timeout)
     except subprocess.TimeoutExpired as e:
         raise InstallError(
-            f"El NAS no ha servido el catálogo en {timeout:g}s.") from e
+            f"El remoto no ha servido el catálogo en {timeout:g}s.") from e
     if res.returncode != 0:
         raise InstallError(
-            f"No puedo leer el catálogo {CATALOG_PATH}:\n\n{(res.stderr or '').strip()}")
+            f"No puedo leer el catálogo {donde}:\n\n{(res.stderr or '').strip()}")
     return parse_catalog(res.stdout or "")

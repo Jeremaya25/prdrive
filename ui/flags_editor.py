@@ -36,7 +36,7 @@ from common.model import ConfigError
 
 # Los que pone sync.py por su cuenta: build_command() y filter_args().
 RESERVED = {
-    "config": "lo pone sync.py: es el rclone.conf del pen",
+    "config": "lo pone sync.py: es el rclone.conf del dispositivo",
     "log-file": "lo pone sync.py: cada pasada escribe en su propio log",
     "dry-run": "es --dry-run de sync.py, para que valga en todas las parejas",
     "workdir": "lo pone sync.py: state/<pareja>/, y cambiarlo mueve el baseline",

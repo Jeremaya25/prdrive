@@ -13,16 +13,16 @@ import ui.tk
 from ui import prefs
 
 c = Checks("precarga de los frontends")
-prefs.PREFS = tmpdir("perepen-ui-") / "ui_prefs.json"
+prefs.PREFS = tmpdir("prdrive-ui-") / "ui_prefs.json"
 
 # Los frontends hacen 'from . import pair_status_notes', así que el sustituto va
 # en cada módulo, no solo en el paquete.
 for _m in (ui, ui.console, ui.tk):
     _m.pair_status_notes = lambda cfg: {}
 
-CFG = mkcfg(["upload", "keepass", "obsidian", "perepen"],
-            {"pairs": ["obsidian", "keepass"], "interval_minutes": 15})
-prefs.save_prefs("manual", ["upload", "keepass"], 12.0, CFG.names)
+CFG = mkcfg(["upload", "claves", "docs", "prdrive"],
+            {"pairs": ["docs", "claves"], "interval_minutes": 15})
+prefs.save_prefs("manual", ["upload", "claves"], 12.0, CFG.names)
 
 
 # --- consola ---------------------------------------------------------------
@@ -37,11 +37,11 @@ finally:
     builtins.input, builtins.print = real_input, real_print
 
 texto = "\n".join(salida)
-c("consola: propone lo recordado", choice, ui.Choice("daemon", ("upload", "keepass"), 12.0))
+c("consola: propone lo recordado", choice, ui.Choice("daemon", ("upload", "claves"), 12.0))
 c("consola: se lee por nombre de campo",
-  (choice.action, list(choice.pairs), choice.minutes), ("daemon", ["upload", "keepass"], 12.0))
+  (choice.action, list(choice.pairs), choice.minutes), ("daemon", ["upload", "claves"], 12.0))
 c.contains("consola: anuncia el recuerdo", texto, "Precargado con la última elección")
-c.contains("consola: parejas por defecto", texto, "[upload keepass]")
+c.contains("consola: parejas por defecto", texto, "[upload claves]")
 c.contains("consola: intervalo por defecto", texto, "[12]")
 
 
@@ -73,11 +73,11 @@ try:
 
     tk.Tk.mainloop = fake_mainloop
     choice = ui.tk.main_window(CFG, None)
-    c("tk: casillas precargadas", marcadas, ["upload", "keepass"])
+    c("tk: casillas precargadas", marcadas, ["upload", "claves"])
     c("tk: la nota es visible",
       any("Precargado con la última elección" in e for e in etiquetas), True)
     c("tk: 'Sincronizar ahora' arrastra el intervalo",
-      choice, ui.Choice("manual", ("upload", "keepass"), 12.0))
+      choice, ui.Choice("manual", ("upload", "claves"), 12.0))
 except tk.TclError as e:
     print(f"  (saltado) sin entorno gráfico: {e}")
 
