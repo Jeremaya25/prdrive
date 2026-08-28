@@ -54,6 +54,10 @@ from common.model import Config, Pair
 LOG_TAIL_LINES = 15  # líneas de log que se vuelcan a consola cuando algo falla
 SKIPPED = -1         # código interno: pareja no ejecutada (ni OK ni fallo)
 
+# La cabecera con la que se marca, dentro del log, lo que rclone sacó por
+# consola en vez de por --log-file. Ver append_output().
+DIRECT_OUTPUT_HEADER = "--- salida directa de rclone (no pasó por --log-file) ---"
+
 KNOWN_ERRORS = [
     (bisync.MISSING_LISTINGS,
      "No hay baseline: primera vez, listados en otro sitio (¿cambió la ruta?) o "
@@ -81,6 +85,19 @@ KNOWN_ERRORS = [
      "rclone no ha podido montar uno de los dos extremos. Suele ser una ruta o "
      "credencial mal resuelta en rclone.conf (revisa key_file y "
      "known_hosts_file), o el remoto inalcanzable."),
+    # Los dos últimos son errores de ARRANQUE: rclone rechaza la orden antes de
+    # instalar el --log-file, así que solo se ven desde que execute() captura su
+    # consola. Van al final a propósito: si un log trae además uno de los de
+    # arriba, ese es el que hay que explicar, porque el de arriba es el que
+    # ocurrió de verdad durante la sincronización.
+    ("unknown flag",
+     "rclone no conoce uno de los flags. Está escrito en sync_config.toml (o en "
+     "el editor de flags de la ventana de parejas): rclone lo rechaza antes de "
+     "empezar, por eso no hay más log que este."),
+    ("invalid argument",
+     "rclone rechaza el VALOR de un flag: no es de los que admite (por ejemplo "
+     "conflict-resolve = \"new\" cuando lo válido es \"newer\"). El mensaje de "
+     "arriba enumera los buenos. Se corrige en sync_config.toml."),
 ]
 
 
@@ -110,6 +127,54 @@ def keep_log(name: str, tmp: Path) -> Path:
         n += 1
     shutil.move(str(tmp), str(final))
     return final
+
+
+def strip_usage(text: str) -> str:
+    """Quita el volcado de ayuda con el que rclone acompaña un error de flags.
+
+    Ante un flag malo, rclone escribe el error y detrás la ayuda entera del
+    subcomando: 12 KB documentando todos los flags que existen. Meter eso en el
+    log tiene dos efectos y los dos son malos. El primero es que las 15 líneas de
+    `print_log_tail` se van en documentación y el mensaje queda enterrado. El
+    segundo es peor: `explain_failure` busca agujas de `KNOWN_ERRORS` dentro del
+    texto, y esa ayuda menciona `--max-delete`, `lock file` y compañía, así que
+    un error de flags salía explicado como «se han superado los borrados
+    permitidos» — un diagnóstico falso, que es peor que ninguno.
+
+    El bloque va desde la línea `Usage:` hasta la última que empieza por
+    `Use "rclone`, que es como lo cierra siempre. Lo de fuera —el `Error:` de
+    arriba y el `Fatal error:` de abajo— es justo lo que hay que leer."""
+    lineas = text.splitlines()
+    inicio = next((i for i, l in enumerate(lineas) if l.strip() == "Usage:"), None)
+    if inicio is None:
+        return text
+    fin = max((i for i, l in enumerate(lineas) if l.strip().startswith('Use "rclone')),
+              default=len(lineas) - 1)
+    quedan = lineas[:inicio] + lineas[fin + 1:]
+    return "\n".join(l for l in quedan if l.strip())
+
+
+def append_output(logfile: Path, text: str) -> None:
+    """Añade al log lo que rclone haya escrito por consola.
+
+    Con `--log-file`, rclone manda al fichero todo lo que registra... pero solo
+    desde que lo instala. Lo que falla ANTES —un flag que no existe, o un valor
+    que no admite, como `--conflict-resolve new` cuando lo válido es `newer`—
+    sale por stderr y no llega nunca al fichero: el log quedaba de 0 bytes,
+    `print_log_tail` no tenía nada que enseñar y `explain_failure` nada que
+    reconocer, justo en el caso en el que ese es el único mensaje que hay.
+
+    Va marcado y no mezclado a secas porque no son líneas de log de rclone: no
+    llevan su fecha ni su nivel, y sin el aviso no se sabría quién las escribió."""
+    limpio = strip_usage(text)
+    if not limpio.strip():
+        return
+    tenia = logfile.exists() and logfile.stat().st_size > 0
+    with logfile.open("a", encoding="utf-8", errors="replace") as f:
+        if tenia:
+            f.write("\n")
+        f.write(DIRECT_OUTPUT_HEADER + "\n")
+        f.write(limpio if limpio.endswith("\n") else limpio + "\n")
 
 
 def dispose_log(name: str, tmp: Path, rc: int, keep_always: bool) -> Path | None:
@@ -213,7 +278,7 @@ def build_command(ctx: RunContext, pair: Pair, ffile: Path | None,
     return cmd, logfile
 
 
-def execute(ctx: RunContext, cmd: list[str]) -> int:
+def execute(ctx: RunContext, cmd: list[str], logfile: Path | None = None) -> int:
     print(f"  ejecutando{ctx.tag}: " + " ".join(cmd))
     # cwd FIJO en rclone-sync/: rclone.conf usa rutas relativas (key_file,
     # known_hosts_file) para que el dispositivo siga siendo portable, y esas rutas se
@@ -222,9 +287,20 @@ def execute(ctx: RunContext, cmd: list[str]) -> int:
     kwargs: dict = {"cwd": str(model.APP_DIR)}
     if os.name == "nt":
         # Sin esto, cada invocación abre una ventana de consola cuando quien
-        # llama no tiene una (pythonw, el servicio). La salida va al --log-file.
+        # llama no tiene una (pythonw, el servicio).
         kwargs["creationflags"] = model.CREATE_NO_WINDOW
-    return subprocess.run(cmd, env={**os.environ, **ctx.env}, **kwargs).returncode
+    # La consola de rclone se CAPTURA, no se hereda. Con --log-file puesto, por
+    # aquí solo sale lo que rclone no ha llegado a registrar —lo que falla antes
+    # de instalar el log—, y heredarlo significaba perderlo: sin consola detrás
+    # (pythonw, el servicio) no va a ninguna parte, y aun con ella se quedaba
+    # fuera del fichero que luego se guarda, se enseña y se explica. Es poco
+    # texto por definición: todo lo demás está en el log.
+    proc = subprocess.run(cmd, env={**os.environ, **ctx.env},
+                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                          text=True, errors="replace", **kwargs)
+    if proc.stdout and logfile is not None:
+        append_output(logfile, proc.stdout)
+    return proc.returncode
 
 
 # ---------------------------------------------------------------------------
@@ -275,7 +351,7 @@ def run_pair(ctx: RunContext, pair: Pair) -> int:
 
     ffile = bisync.filters_file_for(pair)
     cmd, logfile = build_command(ctx, pair, ffile, need_resync)
-    rc = execute(ctx, cmd)
+    rc = execute(ctx, cmd, logfile)
 
     # Un solo reintento, y solo si podemos reparar el estado con certeza. El log
     # del intento fallido se conserva aunque el reintento salga bien: documenta
@@ -284,7 +360,7 @@ def run_pair(ctx: RunContext, pair: Pair) -> int:
         dispose_log(pair.name, logfile, rc, keep_always=False)
         print(f"[{pair.name}] Reintentando tras reparar los listados...")
         cmd, logfile = build_command(ctx, pair, ffile, need_resync=False)
-        rc = execute(ctx, cmd)
+        rc = execute(ctx, cmd, logfile)
 
     saved = dispose_log(pair.name, logfile, rc, ctx.keep_logs)
     if rc == 0:

@@ -268,6 +268,24 @@ only when the run failed (or `--keep-logs` / `keep_logs = true`), to spare write
 cycles on the device. On failure the tail is printed and `KNOWN_ERRORS` maps rclone
 messages to an explanation — add new cases there rather than in the caller.
 
+`--log-file` only catches what rclone logs **after** it installs the log, so
+`execute()` captures rclone's console (`stdout`+`stderr`) and `append_output()`
+appends it to that same file under `DIRECT_OUTPUT_HEADER`. Without it, everything
+that fails at startup — a flag that does not exist, a value it does not accept
+(`conflict-resolve = "new"` when the valid one is `newer`) — left a **0-byte log**
+and a failure with nothing to print and nothing to explain, which is the one case
+where that message is all there is. Captured and not inherited because with no
+console behind it (pythonw, the service) inherited output goes nowhere, and even
+with one it stayed outside the file that later gets kept, shown and explained.
+
+`strip_usage()` drops the help dump rclone prints after a bad flag, and it is not
+cosmetic: those 12 KB bury the message in the 15 lines of `print_log_tail`, and
+they mention `--max-delete` and `lock file`, so `explain_failure()` matched a
+`KNOWN_ERRORS` needle inside rclone's own documentation and explained a failure
+that never happened. **A false diagnosis is worse than none.** For the same
+reason the two flag entries in `KNOWN_ERRORS` go **last**: a log carrying one of
+the others is a real sync failure, and that is the one to explain.
+
 **Daemon (`runsync.py`).** Coordination lives in `state/` so it travels with the
 device: `daemon.lock.json` (pid/host/pairs/last cycle, written atomically),
 `daemon.stop` (presence = stop request), `daemon.log` (self-trimming),
