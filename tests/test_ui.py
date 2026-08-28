@@ -40,7 +40,6 @@ texto = "\n".join(salida)
 c("consola: propone lo recordado", choice, ui.Choice("daemon", ("upload", "claves"), 12.0))
 c("consola: se lee por nombre de campo",
   (choice.action, list(choice.pairs), choice.minutes), ("daemon", ["upload", "claves"], 12.0))
-c.contains("consola: anuncia el recuerdo", texto, "Precargado con la última elección")
 c.contains("consola: parejas por defecto", texto, "[upload claves]")
 c.contains("consola: intervalo por defecto", texto, "[12]")
 

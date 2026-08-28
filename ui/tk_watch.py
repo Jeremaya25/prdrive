@@ -58,9 +58,6 @@ def open_dialog(parent, config=None) -> None:
     arriba.grid(row=0, column=0, sticky="ew")
     arriba.columnconfigure(0, weight=1)
     cabecera(arriba, "Arranque automático",
-             "El vigilante se instala en ESTE equipo, no en el dispositivo, y lanza "
-             "prdrive en cuanto detecta el dispositivo y puede leerlo. Sin permisos "
-             "administrador y sin dejar rastro en el dispositivo.",
              ancho=560, estilo="Dialogo.TLabel").grid(row=0, column=0, sticky="w")
     chip_estado = {"widget": None}
 
@@ -186,7 +183,7 @@ def formulario_instalacion(parent, config) -> dict | None:
               style="Dialogo.TLabel").grid(row=0, column=0, columnspan=3, sticky="w")
     ttk.Label(marco, style="Pista.TLabel", wraplength=620, justify="left",
               text="Se registra una tarea del usuario que arranca al iniciar "
-                   "sesión. Nada de esto se escribe en el dispositivo.").grid(
+                   "sesión.").grid(
         row=1, column=0, columnspan=3, sticky="w", pady=(5, 14))
 
     def etiqueta(texto: str, en: int, arriba: bool = False) -> None:
@@ -235,9 +232,7 @@ def formulario_instalacion(parent, config) -> dict | None:
     ttk.Entry(marco, textvariable=sondeo, width=8).grid(row=fila, column=1,
                                                         sticky="w", pady=3)
     ttk.Label(marco, style="Pista.TLabel", wraplength=340, justify="left",
-              text=("Segundos. Se sondea en vez de escuchar al sistema: en un dispositivo "
-                    "cifrado el aviso de llegada ocurre mucho antes de que el "
-                    "volumen se pueda leer.")).grid(row=fila, column=2, sticky="w",
+              text=("segundos")).grid(row=fila, column=2, sticky="w",
                                                     padx=(12, 0))
     fila += 1
 

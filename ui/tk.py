@@ -506,7 +506,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         names = config.names
         notes = pair_status_notes(config)
         marcas = pair_times(config)
-        d_pairs, d_interval, memo = prefs.startup_defaults(config)
+        d_pairs, d_interval, _ = prefs.startup_defaults(config)
         fila = 0
 
         # --- quién es este dispositivo y cómo está -----------------------------------
@@ -598,11 +598,6 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         if not names:
             ttk.Label(tarjeta, text="No hay ninguna pareja configurada.",
                       style="Card.Pista.TLabel").grid(row=0, column=0, pady=10)
-
-        if memo:
-            ttk.Label(frame, text=memo, style="Pista.TLabel").grid(
-                row=fila, column=0, sticky="w", pady=(7, 0))
-            fila += 1
 
         # --- cada cuánto ------------------------------------------------------
         repetir = ttk.Frame(frame)
@@ -850,8 +845,6 @@ def output_window(title: str, cmd: list[str], parent=None,
     pie = ttk.Frame(root, padding=(18, 11))
     pie.grid(row=3, column=0, columnspan=2, sticky="ew")
     pie.columnconfigure(0, weight=1)
-    ttk.Label(pie, text="El log solo se guarda si algo falla, para no gastar el dispositivo.",
-              style="Pista.TLabel").grid(row=0, column=0, sticky="w")
     guardar_btn = ttk.Button(pie, text="Guardar el log", style="Quiet.TButton",
                              command=guardar)
     theme.boton_icono(guardar_btn, "file", theme.ACENTO, theme.PAPEL)
