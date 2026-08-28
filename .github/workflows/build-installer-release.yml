@@ -1,29 +1,41 @@
 name: Build Installer Release
 
+# VERSION es la única fuente de la versión (ver CLAUDE.md): lo que se copia al
+# dispositivo y contra lo que common/update.py compara la última release. Por eso
+# el disparador es ese fichero: al subir a main un commit que lo toque, se publica
+# la release con el tag v<VERSION>. El workflow_dispatch se queda como salida
+# manual (repetir una publicación fallida sin tener que tocar VERSION otra vez).
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - VERSION
   workflow_dispatch:
     inputs:
-      tag:
-        description: "Release tag (e.g. v1.2.3)"
-        required: true
-        type: string
       release_name:
-        description: "Release title"
+        description: "Título de la release (por defecto, el tag)"
         required: false
         type: string
       draft:
-        description: "Create as draft release"
+        description: "Crearla como borrador"
         required: false
         type: boolean
         default: false
       prerelease:
-        description: "Mark as prerelease"
+        description: "Marcarla como prerelease"
         required: false
         type: boolean
         default: false
 
 permissions:
   contents: write
+
+# Dos commits seguidos a VERSION no pueden publicar a la vez: el segundo espera,
+# y así ve el tag del primero ya creado.
+concurrency:
+  group: release-installer
+  cancel-in-progress: false
 
 jobs:
   build-and-release:
@@ -32,41 +44,62 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # El tag sale de VERSION, no se pide: si se pidiera, habría dos sitios
+      # donde equivocarse y el aviso de actualización mentiría en las dos
+      # direcciones. Si ese tag ya existe no hay nada que publicar; en un push
+      # eso es normal (un commit que toca VERSION sin subirla) y se sale en
+      # verde, pero lanzado a mano es un error: hay que subir VERSION primero.
+      - name: Resolver versión y tag
+        id: version
+        shell: pwsh
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          if ($version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+[-.0-9A-Za-z]*$') {
+            Write-Error "VERSION ('$version') no parece una versión. Se esperaba algo como 1.2.3."
+            exit 1
+          }
+          $tag = "v$version"
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+
+          $existe = [bool](git tag --list $tag)
+          if ($existe) {
+            if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+              Write-Error "El tag $tag ya existe. Sube VERSION en un commit para publicar una nueva release."
+              exit 1
+            }
+            "publicar=false" >> $env:GITHUB_OUTPUT
+            Write-Host "::notice::El tag $tag ya existe; no hay versión nueva que publicar."
+          } else {
+            "publicar=true" >> $env:GITHUB_OUTPUT
+            Write-Host "Se publicará $tag"
+          }
 
       - name: Set up Python
+        if: steps.version.outputs.publicar == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       - name: Install build dependencies
+        if: steps.version.outputs.publicar == 'true'
         shell: pwsh
         run: |
           python -m pip install --upgrade pip
           python -m pip install pyinstaller
 
-      # El tag y el fichero VERSION tienen que decir lo mismo. VERSION es lo que
-      # se copia al dispositivo y contra lo que common/update.py compara la
-      # última release; si el tag no coincide, los dispositivos se creerían en
-      # una versión que no es y el aviso de actualización mentiría en las dos
-      # direcciones. Se comprueba antes de compilar para no publicar nada malo.
-      - name: Check tag matches VERSION
-        shell: pwsh
-        run: |
-          $version = (Get-Content VERSION -Raw).Trim()
-          $tag = "${{ github.event.inputs.tag }}".Trim()
-          if ($tag -ne "v$version") {
-            Write-Error "El tag '$tag' no coincide con VERSION ('$version'). Sube VERSION en un commit y vuelve a lanzar el workflow con el tag 'v$version'."
-            exit 1
-          }
-          Write-Host "Tag $tag == VERSION $version"
-
       - name: Build installer executable
+        if: steps.version.outputs.publicar == 'true'
         shell: pwsh
         run: |
           python build_installer.py
 
       - name: Find built executable
         id: artifact
+        if: steps.version.outputs.publicar == 'true'
         shell: pwsh
         run: |
           $exe = Get-ChildItem -Path dist -Filter *.exe -Recurse | Select-Object -First 1
@@ -77,16 +110,26 @@ jobs:
           "path=$($exe.FullName)" >> $env:GITHUB_OUTPUT
           "name=$($exe.Name)" >> $env:GITHUB_OUTPUT
 
+      # --target fija el tag en el commit que subió VERSION, no en la punta de
+      # main: si mientras se compilaba entró otro commit, la release seguiría
+      # apuntando al código cuya versión dice llevar.
       - name: Create GitHub release
+        if: steps.version.outputs.publicar == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
-          $tag = "${{ github.event.inputs.tag }}"
+          $tag = "${{ steps.version.outputs.tag }}"
           $name = "${{ github.event.inputs.release_name }}"
           if ([string]::IsNullOrWhiteSpace($name)) { $name = $tag }
 
-          $args = @("release", "create", $tag, "${{ steps.artifact.outputs.path }}", "--title", $name, "--notes", "Automated release from workflow_dispatch")
+          $args = @(
+            "release", "create", $tag,
+            "${{ steps.artifact.outputs.path }}",
+            "--target", "${{ github.sha }}",
+            "--title", $name,
+            "--generate-notes"
+          )
 
           if ("${{ github.event.inputs.draft }}" -eq "true") { $args += "--draft" }
           if ("${{ github.event.inputs.prerelease }}" -eq "true") { $args += "--prerelease" }

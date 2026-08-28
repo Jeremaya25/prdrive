@@ -626,7 +626,11 @@ hold it up, and none of them is arbitrary:
 `DEPLOY_FILES` and in `DATOS_FICHEROS`, `install.version()` reads it out of
 `bundle_dir()` (there is no `__version__ = "3.0"` constant any more — it had
 drifted from the tags), `update.installed_version()` reads it out of `APP_DIR`,
-and the release workflow **refuses to build if the tag is not `v<VERSION>`**. A
+and the release workflow is **triggered by a push to `main` that touches
+`VERSION`** and takes `v<VERSION>` as the tag rather than being told one — the
+tag cannot disagree with the file because there is nowhere left to say it twice.
+If that tag already exists there is no new version: a push exits green doing
+nothing, a manual `workflow_dispatch` (the retry hatch) fails saying so. A
 device with no `VERSION` is one installed before this existed: it reads as
 unknown, which compares older than anything, which is correct.
 
