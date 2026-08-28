@@ -85,7 +85,7 @@ def open_dialog(parent, nueva) -> bool:
     for i, (etiqueta, valor) in enumerate(filas):
         ttk.Label(tarjeta, text=etiqueta, style="Card.Campo.TLabel").grid(
             row=i, column=0, sticky="nw", pady=(0, 6), padx=(0, 12))
-        ttk.Label(tarjeta, text=valor, style="Card.TLabel", wraplength=380,
+        ttk.Label(tarjeta, text=valor, style="Card.TLabel", wraplength=theme.medida(380),
                   justify="left").grid(row=i, column=1, sticky="w", pady=(0, 6))
 
     fila = 2
@@ -98,7 +98,8 @@ def open_dialog(parent, nueva) -> bool:
         notas.grid(row=fila, column=0, sticky="ew")
         notas.columnconfigure(0, weight=1)
         ttk.Label(notas, text=nueva.notes.strip()[:1200], style="Gris.Pista.TLabel",
-                  wraplength=520, justify="left").grid(row=0, column=0, sticky="w")
+                  wraplength=theme.medida(520),
+                  justify="left").grid(row=0, column=0, sticky="w")
         fila += 1
 
     if servicio_vivo():

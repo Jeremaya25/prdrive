@@ -111,7 +111,7 @@ def open_dialog(parent, config) -> bool:
               style="Gris.Rotulo.TLabel").grid(row=0, column=0, sticky="w")
     origen_defaults = {"widget": None}
     linea_defaults = ttk.Label(fila_defaults, style="Gris.Pista.TLabel",
-                               wraplength=420, justify="left")
+                               wraplength=theme.medida(420), justify="left")
     linea_defaults.grid(row=0, column=2, sticky="w", padx=(10, 0))
 
     # --- la lista ------------------------------------------------------------
@@ -126,7 +126,7 @@ def open_dialog(parent, config) -> bool:
     for clave, titulo, ancho in COLUMNAS:
         sitio = "center" if clave == "usa" else "w"
         tree.heading(clave, text=titulo, anchor=sitio)
-        tree.column(clave, width=ancho, anchor=sitio)
+        tree.column(clave, width=icons.px(tree, ancho), anchor=sitio)
     tree.grid(row=0, column=0, sticky="nsew")
     theme.marcar_lista(tree)
     scroll = ttk.Scrollbar(tarjeta, orient="vertical", command=tree.yview)
@@ -420,8 +420,8 @@ def open_dialog(parent, config) -> bool:
     cierre = ttk.Frame(marco)
     cierre.grid(row=5, column=0, sticky="ew", pady=(12, 0))
     cierre.columnconfigure(0, weight=1)
-    pie_nota = ttk.Label(cierre, text="", style="MonoPista.TLabel", wraplength=760,
-                         justify="left")
+    pie_nota = ttk.Label(cierre, text="", style="MonoPista.TLabel",
+                         wraplength=theme.medida(760), justify="left")
     pie_nota.grid(row=0, column=0, sticky="w")
     ttk.Button(cierre, text="Cerrar", command=dlg.destroy).grid(row=0, column=1)
 
@@ -475,7 +475,7 @@ def confirmar_plan(parent, plan, titulo: str, nota: str) -> bool:
                 row=i * 2 - 1, column=0, columnspan=2, sticky="ew")
         ttk.Label(tarjeta, text="•", style="Card.Apagado.TLabel").grid(
             row=i * 2, column=0, sticky="nw", pady=7)
-        ttk.Label(tarjeta, text=texto, style="Card.TLabel", wraplength=470,
+        ttk.Label(tarjeta, text=texto, style="Card.TLabel", wraplength=theme.medida(470),
                   justify="left").grid(row=i * 2, column=1, sticky="w",
                                        padx=(9, 0), pady=7)
 
@@ -517,7 +517,7 @@ def preguntar_limpieza(parent, name: str) -> bool | None:
 
     ttk.Label(marco, text=f"Quitar '{name}' de este dispositivo",
               style="Dialogo.TLabel").grid(row=0, column=0, sticky="w")
-    ttk.Label(marco, justify="left", wraplength=440, style="Pista.TLabel",
+    ttk.Label(marco, justify="left", wraplength=theme.medida(440), style="Pista.TLabel",
               text=("Los datos NO se tocan, ni en el dispositivo ni en el remoto, y la pareja "
                     "sigue en el catálogo: se puede volver a usar cuando "
                     "quieras.")).grid(row=1, column=0, sticky="w", pady=(5, 0))
@@ -528,7 +528,7 @@ def preguntar_limpieza(parent, name: str) -> bool | None:
     ttk.Checkbutton(caja, variable=limpiar, style="Card.TCheckbutton", text=(
         "Apartar también su baseline y borrar sus filtros generados")).grid(
         row=0, column=0, sticky="w")
-    ttk.Label(caja, style="Card.Pista.TLabel", wraplength=430, justify="left",
+    ttk.Label(caja, style="Card.Pista.TLabel", wraplength=theme.medida(430), justify="left",
               text=("El baseline se renombra a state/<pareja>.old-<fecha>/, no se "
                     "borra. Si no marcas nada, se queda todo donde está.")).grid(
         row=1, column=0, sticky="w", padx=(24, 0), pady=(4, 0))
@@ -574,7 +574,7 @@ def _cabecera_form(marco, titulo: str, marca: str | None, subtitulo: str | None,
                                                             sticky="w")
             col = 1
         if subtitulo:
-            ttk.Label(linea, text=subtitulo, style="Pista.TLabel", wraplength=520,
+            ttk.Label(linea, text=subtitulo, style="Pista.TLabel", wraplength=theme.medida(520),
                       justify="left").grid(row=0, column=col, sticky="w",
                                            padx=(8, 0) if col else 0)
         fila += 1
@@ -626,7 +626,7 @@ def formulario(parent, raw: dict, original_name: str | None, actual: dict,
                   style="Mono.TEntry" if mono else "TEntry").grid(
             row=fila, column=1, sticky="w", pady=3)
         ttk.Label(marco, text=pista(clave, ayuda), style="Pista.TLabel",
-                  wraplength=250, justify="left").grid(row=fila, column=2,
+                  wraplength=theme.medida(250), justify="left").grid(row=fila, column=2,
                                                        sticky="w", padx=(12, 0))
         fila += 1
 
@@ -635,7 +635,7 @@ def formulario(parent, raw: dict, original_name: str | None, actual: dict,
     ttk.Combobox(marco, textvariable=modo, state="readonly", width=36,
                  values=sorted(model.MODES)).grid(row=fila, column=1, sticky="w",
                                                   pady=3)
-    aviso_modo = ttk.Label(marco, style="Aviso.TLabel", wraplength=250,
+    aviso_modo = ttk.Label(marco, style="Aviso.TLabel", wraplength=theme.medida(250),
                            justify="left")
     aviso_modo.grid(row=fila, column=2, sticky="w", padx=(12, 0))
 
@@ -654,7 +654,7 @@ def formulario(parent, raw: dict, original_name: str | None, actual: dict,
         caja.insert("1.0", "\n".join(actual.get(clave, []) or []))
         caja.grid(row=fila, column=1, sticky="w", pady=(8, 2))
         textos[clave] = caja
-        ttk.Label(marco, style="Pista.TLabel", wraplength=250, justify="left",
+        ttk.Label(marco, style="Pista.TLabel", wraplength=theme.medida(250), justify="left",
                   text=pista(clave, "Un patrón por línea. Vacío = todo.")).grid(
             row=fila, column=2, sticky="nw", padx=(12, 0), pady=(8, 0))
         fila += 1
@@ -676,7 +676,7 @@ def formulario(parent, raw: dict, original_name: str | None, actual: dict,
     marca_flags.grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, 10))
     ttk.Label(caja_flags, text="Flags de rclone",
               style="Card.Fuerte.TLabel").grid(row=0, column=1, sticky="w")
-    resumen = ttk.Label(caja_flags, style="Card.Pista.TLabel", wraplength=420,
+    resumen = ttk.Label(caja_flags, style="Card.Pista.TLabel", wraplength=theme.medida(420),
                         justify="left")
     resumen.grid(row=1, column=1, sticky="w")
 
@@ -768,7 +768,7 @@ def defaults_form(parent, actual: dict, catalogo: dict | None,
         ttk.Entry(marco, textvariable=var, width=38, style="Mono.TEntry").grid(
             row=fila, column=1, sticky="w", pady=3)
         ttk.Label(marco, text=pista(clave, ayuda), style="Pista.TLabel",
-                  wraplength=260, justify="left").grid(row=fila, column=2,
+                  wraplength=theme.medida(260), justify="left").grid(row=fila, column=2,
                                                        sticky="w", padx=(12, 0))
         fila += 1
 
@@ -786,7 +786,7 @@ def defaults_form(parent, actual: dict, catalogo: dict | None,
         caja.insert("1.0", "\n".join(actual.get(clave, []) or []))
         caja.grid(row=fila, column=1, sticky="w", pady=(8, 2))
         textos[clave] = caja
-        ttk.Label(marco, style="Pista.TLabel", wraplength=260, justify="left",
+        ttk.Label(marco, style="Pista.TLabel", wraplength=theme.medida(260), justify="left",
                   text="Un patrón por línea. Vale para todas las parejas.").grid(
             row=fila, column=2, sticky="nw", padx=(12, 0), pady=(8, 0))
         fila += 1
@@ -805,7 +805,7 @@ def defaults_form(parent, actual: dict, catalogo: dict | None,
     marca_flags.grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, 10))
     ttk.Label(caja_flags, text="Flags de rclone comunes",
               style="Card.Fuerte.TLabel").grid(row=0, column=1, sticky="w")
-    resumen = ttk.Label(caja_flags, style="Card.Pista.TLabel", wraplength=420,
+    resumen = ttk.Label(caja_flags, style="Card.Pista.TLabel", wraplength=theme.medida(420),
                         justify="left")
     resumen.grid(row=1, column=1, sticky="w")
 
@@ -901,7 +901,7 @@ def flags_form(parent, titulo: str, subtitulo: str, flags: dict, extra: list,
 
     ttk.Label(marco, text=titulo, style="Dialogo.TLabel").grid(
         row=0, column=0, columnspan=2, sticky="w")
-    ttk.Label(marco, text=subtitulo, style="Pista.TLabel", wraplength=600,
+    ttk.Label(marco, text=subtitulo, style="Pista.TLabel", wraplength=theme.medida(600),
               justify="left").grid(row=1, column=0, columnspan=2, sticky="w",
                                    pady=(5, 0))
 
@@ -914,7 +914,7 @@ def flags_form(parent, titulo: str, subtitulo: str, flags: dict, extra: list,
     caja = theme.caja_texto(izquierda, width=40, height=8)
     caja.insert("1.0", flags_editor.dump(flags))
     caja.grid(row=1, column=0, sticky="ew")
-    ttk.Label(izquierda, style="Pista.TLabel", wraplength=330, justify="left",
+    ttk.Label(izquierda, style="Pista.TLabel", wraplength=theme.medida(330), justify="left",
               text=("Tal cual se escriben en el TOML: transfers = 4, "
                     'conflict-resolve = "newer", checksum = true. Sin los guiones '
                     "de delante.")).grid(row=2, column=0, sticky="w", pady=(7, 0))
@@ -928,12 +928,12 @@ def flags_form(parent, titulo: str, subtitulo: str, flags: dict, extra: list,
     caja_extra = theme.caja_texto(izquierda, width=40, height=3)
     caja_extra.insert("1.0", flags_editor.dump_extra(extra))
     caja_extra.grid(row=5, column=0, sticky="ew")
-    ttk.Label(izquierda, style="Pista.TLabel", wraplength=330, justify="left",
+    ttk.Label(izquierda, style="Pista.TLabel", wraplength=theme.medida(330), justify="left",
               text=("Van a la línea de comandos sin tocar: --bwlimit y 8M son DOS "
                     "líneas.")).grid(row=6, column=0, sticky="w", pady=(7, 0))
 
     if catalogo_flags is not None:
-        ttk.Label(izquierda, style="MonoPista.TLabel", wraplength=330,
+        ttk.Label(izquierda, style="MonoPista.TLabel", wraplength=theme.medida(330),
                   justify="left",
                   text="Catálogo: " + (flags_editor.dump(catalogo_flags).replace(
                       "\n", "  ·  ") or "ninguno")).grid(row=7, column=0,
@@ -959,14 +959,14 @@ def flags_form(parent, titulo: str, subtitulo: str, flags: dict, extra: list,
                          height=12, selectmode="none")
     tabla.heading("flag", text="Flag")
     tabla.heading("origen", text="Sale de")
-    tabla.column("flag", width=290)
-    tabla.column("origen", width=110)
+    tabla.column("flag", width=icons.px(tabla, 290))
+    tabla.column("origen", width=icons.px(tabla, 110))
     tabla.grid(row=0, column=0, sticky="nsew")
     tabla.tag_configure("propio", foreground=theme.OK)
     tabla.tag_configure("heredado", foreground=theme.TINTA2)
     tabla.tag_configure("base", foreground=theme.TINTA3)
 
-    ttk.Label(derecha, style="Pista.TLabel", wraplength=380, justify="left",
+    ttk.Label(derecha, style="Pista.TLabel", wraplength=theme.medida(380), justify="left",
               text="Se funden en este orden: siempre → modo → [defaults] → esta "
                    "pareja.").grid(row=2, column=0, sticky="w", pady=(8, 0))
 

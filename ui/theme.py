@@ -26,6 +26,94 @@ puede importar quien no tenga entorno gráfico.
 
 from __future__ import annotations
 
+import sys
+
+# ---------------------------------------------------------------------------
+# Densidad de pantalla
+#
+# Todo lo de más abajo —los tamaños en puntos, los iconos de `icons.px`— da por
+# hecho que Tk sabe cuántos píxeles tiene de verdad la pantalla. No lo sabe por
+# defecto, y ahí es donde se pierde la nitidez.
+# ---------------------------------------------------------------------------
+
+_densidad_declarada = False
+
+
+def nitidez() -> None:
+    """Declara ante Windows que la aplicación dibuja a la densidad real.
+
+    Un proceso que no lo declara es «no consciente de ppp», y entonces Windows
+    le miente sobre la pantalla: en un 4K al 200 % le dice que mide 1472x920 a
+    96 ppp en lugar de 2944x1840 a 192. Tk dibuja a esa medida de mentira y el
+    compositor **estira** después el mapa de bits hasta el panel de verdad. Ese
+    estirado es lo que se ve borroso, y no hay nada en la tipografía que lo
+    arregle: el problema no es el tamaño de la letra, es que la letra se está
+    pintando con la mitad de los píxeles que hay para pintarla.
+
+    Declarada la densidad, Tk mide la pantalla entera, `tk scaling` pasa de 1,33
+    a 2,67 y crece solo todo lo que va en puntos —que es toda la tipografía de
+    `fuente()`—, ya sin estirar nada.
+
+    **Consciencia del sistema y no por monitor**, a propósito: Tk 8.6 no atiende
+    `WM_DPICHANGED`, así que no sabe redibujarse cuando la ventana pasa a una
+    pantalla con otro zoom. Con la del sistema, Windows estira la ventana en ese
+    caso —borrosa como hasta ahora, pero del tamaño que toca—; con la de por
+    monitor no la estiraría, y la ventana saldría a la mitad de su tamaño
+    físico, que es peor que borrosa. Cuando el proyecto llegue a Tk 9, esta es
+    la línea que cambia.
+
+    Tiene que correr **antes** del primer `Tk()`: Tk lee la densidad al arrancar
+    su intérprete y no la vuelve a mirar. Es una propiedad del proceso, así que
+    basta una vez; se llama desde todos los sitios que abren una raíz porque
+    cuál de ellos es el primero depende de por dónde se haya entrado."""
+    global _densidad_declarada
+    if _densidad_declarada or sys.platform != "win32":
+        return
+    _densidad_declarada = True
+
+    import ctypes
+
+    # De la más nueva a la más vieja. Todas fallan sin ruido —devolviendo cero,
+    # o un HRESULT que no es cero, o no existiendo— si esta versión de Windows
+    # no las conoce o si la consciencia ya venía puesta desde el manifiesto del
+    # .exe, que es un sitio perfectamente válido para haberla puesto.
+    try:                                        # Windows 10 1703 en adelante
+        if ctypes.windll.user32.SetProcessDpiAwarenessContext(
+                ctypes.c_void_p(-2)):           # ..._SYSTEM_AWARE
+            return
+    except Exception:                           # noqa: BLE001
+        pass
+    try:                                        # Windows 8.1
+        if ctypes.windll.shcore.SetProcessDpiAwareness(1) == 0:  # PROCESS_SYSTEM_DPI_AWARE
+            return
+    except Exception:                           # noqa: BLE001
+        pass
+    try:                                        # Windows Vista
+        ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:                           # noqa: BLE001
+        pass
+
+
+def medida(px_diseno: int) -> str:
+    """Una distancia del diseño en la unidad que Tk sí escala: puntos.
+
+    Tk convierte un número suelto en píxeles tal cual, y un número con «p» en
+    puntos, que multiplica por `tk scaling`. Un ancho de corte de párrafo escrito
+    como 760 mide 760 px tanto al 100 % como al 200 %, así que en una pantalla
+    densa el mismo texto —que sí ha crecido— se queda en una columna de la mitad
+    de ancho y el triple de alta. Escrito como `medida(760)` acompaña a la letra.
+
+    La conversión es la de 96 ppp, que es la densidad para la que están pensadas
+    las medidas del diseño, y sale exacta: 760 px son 570 puntos justos.
+
+    Hermana de `icons.px()` y con el mismo cometido; son dos porque van a sitios
+    distintos. `px()` devuelve un entero, para lo que Tk no sabe escalar de
+    ninguna manera (los mapas de bits de los iconos) y para lo que solo admite
+    un entero (`rowheight`); `medida()` devuelve la distancia de Tk, que no
+    necesita tener el widget a mano para calcularse."""
+    return f"{round(px_diseno * 72 / 96)}p"
+
+
 # ---------------------------------------------------------------------------
 # Color
 # ---------------------------------------------------------------------------
@@ -225,6 +313,8 @@ def apply(widget) -> None:
         return
 
     from tkinter import ttk
+
+    from . import icons
     style = ttk.Style(widget)
     try:
         style.theme_use("clam")
@@ -379,7 +469,8 @@ def apply(widget) -> None:
 
     # --- listas, barras y demás --------------------------------------------
     style.configure("Treeview", background=SUPERFICIE, fieldbackground=SUPERFICIE,
-                    foreground=TINTA, rowheight=28, borderwidth=0, relief="flat",
+                    foreground=TINTA, rowheight=icons.px(widget, 28),
+                    borderwidth=0, relief="flat",
                     font=fuente())
     style.map("Treeview",
               background=[("selected", ACENTO_SUAVE)],

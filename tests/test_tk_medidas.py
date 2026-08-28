@@ -198,20 +198,29 @@ try:
           wiz.visor._medida()[1], alto_conexion)
         top.destroy()
 
-    # En una 1080p al 200 % «Conexión» no cabe por mucho que se estire, y entonces
-    # la barra es obligatoria: es la comprobación de que un recorte nunca es
-    # silencioso. También va por nombre: al abrirse, el asistente ya no enseña
+    # En las pantallas más apretadas «Conexión» no cabe por mucho que se estire, y
+    # entonces la barra es obligatoria: es la comprobación de que un recorte nunca
+    # es silencioso. También va por nombre: al abrirse, el asistente ya no enseña
     # ese paso sino el del dispositivo, que sí cabe.
-    pantalla(1920, 1080, 2.6667)
-    top = tk.Toplevel(raiz)
-    top.withdraw()
-    wiz = tk_install.build(top)
-    wiz.indice = PASO["Conexión"]
-    wiz.repintar()
-    top.update_idletasks()
-    c("1080p al 200 %: lo que no cabe se desplaza, con su barra",
-      bool(wiz.visor.vertical.grid_info()), True)
-    top.destroy()
+    #
+    # Se afirma **también que no cabe**, y no solo que hay barra: el día que el
+    # paso adelgace lo bastante para entrar, esta comprobación se quedaría sin
+    # asunto y pasaría sola sin comprobar nada. Es justo lo que pasó al escalar
+    # el ancho de corte de los párrafos: en una 1080p al 200 % el mismo texto
+    # cabe ahora en menos líneas, y este caso dejó de desbordar.
+    for nombre, ancho, alto in (("1366x768 al 200 %", 1366, 768),
+                                ("1024x600 al 200 %", 1024, 600)):
+        pantalla(ancho, alto, 2.6667)
+        top = tk.Toplevel(raiz)
+        top.withdraw()
+        wiz = tk_install.build(top)
+        wiz.indice = PASO["Conexión"]
+        wiz.repintar()
+        top.update_idletasks()
+        no_cabe = wiz.visor.interior.winfo_reqheight() > wiz.visor._medida()[1]
+        c(f"{nombre}: lo que no cabe se desplaza, con su barra",
+          (no_cabe, bool(wiz.visor.vertical.grid_info())), (True, True))
+        top.destroy()
 
     # --- los diálogos -----------------------------------------------------------------
     REAL_MOSTRAR, REAL_WAIT = tk_pairs.mostrar, tk.Toplevel.wait_window

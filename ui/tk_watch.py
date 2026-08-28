@@ -90,14 +90,15 @@ def open_dialog(parent, config=None) -> None:
             if not etiqueta:
                 # Una fila sin etiqueta es un aviso de penwatch, no un dato.
                 ttk.Label(tarjeta, text=valor, style="Card.Aviso.TLabel",
-                          wraplength=740, justify="left").grid(
+                          wraplength=theme.medida(740), justify="left").grid(
                     row=linea, column=0, columnspan=3, sticky="w", pady=7)
                 continue
             ttk.Label(tarjeta, text=etiqueta, style="Card.Pista.TLabel",
                       width=24).grid(row=linea, column=0, sticky="w", pady=7)
             chip = _chip_de(etiqueta, valor)
             if chip is None:
-                ttk.Label(tarjeta, text=valor, style="Card.TLabel", wraplength=520,
+                ttk.Label(tarjeta, text=valor, style="Card.TLabel",
+                          wraplength=theme.medida(520),
                           justify="left").grid(row=linea, column=1, sticky="w",
                                                padx=(12, 0), pady=7)
             else:
@@ -181,7 +182,7 @@ def formulario_instalacion(parent, config) -> dict | None:
 
     ttk.Label(marco, text="Instalar el vigilante en este equipo",
               style="Dialogo.TLabel").grid(row=0, column=0, columnspan=3, sticky="w")
-    ttk.Label(marco, style="Pista.TLabel", wraplength=620, justify="left",
+    ttk.Label(marco, style="Pista.TLabel", wraplength=theme.medida(620), justify="left",
               text="Se registra una tarea del usuario que arranca al iniciar "
                    "sesión.").grid(
         row=1, column=0, columnspan=3, sticky="w", pady=(5, 14))
@@ -195,7 +196,7 @@ def formulario_instalacion(parent, config) -> dict | None:
     modo = tk.StringVar(value=previas.get("mode", "ui"))
     ttk.Combobox(marco, textvariable=modo, state="readonly", width=12,
                  values=list(watch.MODES)).grid(row=2, column=1, sticky="w", pady=3)
-    ayuda = ttk.Label(marco, style="Pista.TLabel", wraplength=340, justify="left")
+    ayuda = ttk.Label(marco, style="Pista.TLabel", wraplength=theme.medida(340), justify="left")
     ayuda.grid(row=2, column=2, sticky="w", padx=(12, 0))
 
     # Las parejas y el intervalo solo pintan algo en los modos que sincronizan.
@@ -231,7 +232,7 @@ def formulario_instalacion(parent, config) -> dict | None:
     sondeo = tk.StringVar(value=str(previas.get("poll") or 5))
     ttk.Entry(marco, textvariable=sondeo, width=8).grid(row=fila, column=1,
                                                         sticky="w", pady=3)
-    ttk.Label(marco, style="Pista.TLabel", wraplength=340, justify="left",
+    ttk.Label(marco, style="Pista.TLabel", wraplength=theme.medida(340), justify="left",
               text=("segundos")).grid(row=fila, column=2, sticky="w",
                                                     padx=(12, 0))
     fila += 1

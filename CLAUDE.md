@@ -346,6 +346,33 @@ black ink, one blue accent, amber for warnings, monospace for paths and flags; n
 rounded corners and no shadows, because those are the two things ttk cannot draw
 and faking them with images would mean changing toolkit to decorate.
 
+- **`theme.nitidez()` runs before the first `Tk()`, and that is the whole reason
+  the window is sharp.** A process that does not declare DPI awareness is lied
+  to about the screen: on a 4K at 200 % Windows reports 1472x920 at 96 ppp
+  instead of 2944x1840 at 192, Tk draws at that size and the compositor
+  **stretches the bitmap** to the real panel. That stretch is the blur, and no
+  amount of font work fixes it — the glyphs are being painted with half the
+  pixels available. Declared, `tk scaling` goes from 1,33 to 2,67 and everything
+  measured in points grows on its own. It is **system** awareness and not
+  per-monitor on purpose: Tk 8.6 does not handle `WM_DPICHANGED`, so on a
+  second monitor at another zoom Windows stretches the window (blurry but the
+  right size) instead of leaving it at half its physical size, which is worse.
+  Tk reads the density once when its interpreter starts, so the call has to
+  precede `Tk()`; it is a process property, and it is called from all five
+  places that open a root because which one runs first depends on the entry
+  point.
+- **A design distance goes through `theme.medida()`, never as a bare integer.**
+  Tk takes a plain number as pixels and a number with `p` as points, which it
+  multiplies by `tk scaling`. `wraplength=760` measures 760 px at 100 % *and* at
+  200 %, so on a dense screen the same text — which did grow — is squeezed into
+  a column half as wide and three times as tall; the wizard's «Conexión» step
+  went from asking 1042 px of width to 1449, and stopped overflowing.
+  `theme.medida()` and `icons.px()` are the same idea in two shapes: `px()`
+  returns an int, for what Tk cannot scale at all (the icons' bitmaps) and for
+  what only takes an int (`rowheight`, which at a fixed 28 px clipped its own
+  37 px rows); `medida()` returns Tk's own distance and needs no widget at hand.
+  `tests/test_tk_densidad.py` guards both the effect and the habit: it fails if
+  a `wraplength`/`rowheight` in bare pixels reappears anywhere in `ui/`.
 - `theme.apply(widget)` switches to the **clam** theme and repaints everything.
   clam and not the native theme because it is the only bundled one that lets you
   set each border colour (`bordercolor`/`lightcolor`/`darkcolor`), and without

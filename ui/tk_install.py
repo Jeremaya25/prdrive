@@ -206,6 +206,7 @@ def run_wizard() -> int:
     """Abre el asistente. Devuelve 0 siempre que se haya podido abrir."""
     import tkinter as tk
 
+    theme.nitidez()
     root = tk.Tk()
     root.withdraw()          # se enseña ya centrada, igual que la ventana principal
     wiz = build(root)
@@ -235,7 +236,7 @@ def _paso_conexion(cuerpo, wiz) -> None:
     import tkinter as tk
     from tkinter import filedialog, ttk
 
-    ttk.Label(cuerpo, justify="left", wraplength=780, text=(
+    ttk.Label(cuerpo, justify="left", wraplength=theme.medida(780), text=(
         "Dónde guardas tu configuración y tus datos. prdrive no sabe de ningún "
         "servidor concreto: vale cualquier remote de rclone.")).grid(
         row=0, column=0, sticky="w", pady=(0, 10))
@@ -317,7 +318,7 @@ def _paso_conexion(cuerpo, wiz) -> None:
     ttk.Button(nuevo, text="Examinar…",
                command=lambda: _fichero(conocidos, "El known_hosts")).grid(
         row=5, column=3, sticky="w", pady=(4, 0))
-    ttk.Label(nuevo, style="Pista.TLabel", wraplength=520, justify="left", text=(
+    ttk.Label(nuevo, style="Pista.TLabel", wraplength=theme.medida(520), justify="left", text=(
         "Los dos son opcionales: un backend con contraseña o con token no los "
         "usa. Sin known_hosts se acepta la clave del servidor a la primera.")
         ).grid(row=6, column=0, columnspan=4, sticky="w", pady=(4, 0))
@@ -358,7 +359,8 @@ def _paso_conexion(cuerpo, wiz) -> None:
     ttk.Label(importar, text="Remote:", style="Campo.TLabel").grid(
         row=1, column=0, sticky="w", pady=(10, 0))
     combo_remoto.grid(row=1, column=1, sticky="w", padx=(6, 6), pady=(10, 0))
-    ttk.Label(importar, style="Pista.TLabel", wraplength=560, justify="left", text=(
+    ttk.Label(importar, style="Pista.TLabel", wraplength=theme.medida(560),
+              justify="left", text=(
         "Se copia la definición del remote y, si usa fichero de clave, también la "
         "clave: el dispositivo tiene que llevar la suya para funcionar en "
         "cualquier equipo.")).grid(row=2, column=0, columnspan=3, sticky="w",
@@ -401,7 +403,8 @@ def _paso_conexion(cuerpo, wiz) -> None:
 
     catalogo.trace_add("write", cambiar_catalogo)
 
-    estado = ttk.Label(cuerpo, wraplength=780, justify="left", style="Pista.TLabel")
+    estado = ttk.Label(cuerpo, wraplength=theme.medida(780), justify="left",
+                       style="Pista.TLabel")
     estado.grid(row=5, column=0, sticky="w", pady=(12, 0))
 
     def usar() -> None:
@@ -449,7 +452,7 @@ def _paso_conexion(cuerpo, wiz) -> None:
 def _paso_comprobaciones(cuerpo, wiz) -> None:
     from tkinter import ttk
 
-    ttk.Label(cuerpo, justify="left", wraplength=780, text=(
+    ttk.Label(cuerpo, justify="left", wraplength=theme.medida(780), text=(
         "Antes de tocar nada: que haya un rclone con el que trabajar, que el "
         "remoto conteste y que su catálogo de parejas se entienda.")).grid(
         row=0, column=0, sticky="w", pady=(0, 10))
@@ -466,7 +469,7 @@ def _paso_comprobaciones(cuerpo, wiz) -> None:
             ttk.Label(tabla, text=marca, foreground=color, width=3).grid(
                 row=i, column=0, sticky="w")
             ttk.Label(tabla, text=etiqueta + ":").grid(row=i, column=1, sticky="w")
-            ttk.Label(tabla, text=detalle, foreground=color, wraplength=560,
+            ttk.Label(tabla, text=detalle, foreground=color, wraplength=theme.medida(560),
                       justify="left").grid(row=i, column=2, sticky="w", padx=(10, 0))
 
     def comprobar(descargar: bool = False) -> None:
@@ -555,7 +558,7 @@ def _paso_destino(cuerpo, wiz) -> None:
     import tkinter as tk
     from tkinter import ttk
 
-    ttk.Label(cuerpo, justify="left", wraplength=780, text=(
+    ttk.Label(cuerpo, justify="left", wraplength=theme.medida(780), text=(
         "Se listan TODAS las unidades, no solo las que Windows declara "
         "extraíbles: muchos pendrives (y casi todos los SSD por USB) se declaran "
         "fijos, y filtrarlos es la forma más rápida de que el tuyo no aparezca.")
@@ -565,10 +568,10 @@ def _paso_destino(cuerpo, wiz) -> None:
                         show="headings", height=8, selectmode="browse")
     for clave, titulo, ancho in COLUMNAS:
         tree.heading(clave, text=titulo)
-        tree.column(clave, width=ancho, anchor="w")
+        tree.column(clave, width=icons.px(tree, ancho), anchor="w")
     tree.grid(row=1, column=0, sticky="w")
 
-    aviso = ttk.Label(cuerpo, wraplength=780, justify="left")
+    aviso = ttk.Label(cuerpo, wraplength=theme.medida(780), justify="left")
     aviso.grid(row=2, column=0, sticky="w", pady=(8, 0))
 
     volumenes: dict[str, device.Volume] = {}
@@ -710,7 +713,7 @@ def _panel_ya_instalado(cuerpo, wiz, raiz, fila: int) -> None:
     puesta = update.installed_version(deploy.app_dir(raiz)) or "desconocida"
     ttk.Label(caja, text=f"{raiz} ya es un dispositivo prdrive",
               style="Card.Fuerte.TLabel").grid(row=0, column=0, sticky="w")
-    ttk.Label(caja, style="Card.Pista.TLabel", wraplength=700, justify="left",
+    ttk.Label(caja, style="Card.Pista.TLabel", wraplength=theme.medida(700), justify="left",
               text=(f"Lleva la versión {puesta} y este instalador trae la "
                     f"{__version__ or 'desconocida'}. Puedes ponerle el programa "
                     f"nuevo sin tocar nada más, o repetir la instalación entera "
@@ -764,7 +767,7 @@ def _paso_actualizar(cuerpo, wiz) -> None:
     puesta = update.installed_version(app)
     mia = __version__
 
-    ttk.Label(cuerpo, justify="left", wraplength=780, text=(
+    ttk.Label(cuerpo, justify="left", wraplength=theme.medida(780), text=(
         f"Se sustituye el programa de:\n\n"
         f"    {app}\n\n"
         "Se conservan tu configuración, tus claves, el estado de bisync, los "
@@ -789,13 +792,13 @@ def _paso_actualizar(cuerpo, wiz) -> None:
         aviso = ttk.Frame(cuerpo, style="Ambar.TFrame", padding=(11, 9))
         aviso.grid(row=fila, column=0, sticky="ew", pady=(14, 0))
         aviso.columnconfigure(0, weight=1)
-        ttk.Label(aviso, style="Ambar.TLabel", wraplength=740, justify="left",
+        ttk.Label(aviso, style="Ambar.TLabel", wraplength=theme.medida(740), justify="left",
                   text=(f"Este instalador es MÁS VIEJO que el dispositivo: trae "
                         f"la {mia} y ahí está puesta la {puesta}. Seguir lo "
                         f"dejaría en la {mia}.")).grid(row=0, column=0, sticky="w")
         fila += 1
 
-    estado_lbl = ttk.Label(cuerpo, wraplength=780, justify="left",
+    estado_lbl = ttk.Label(cuerpo, wraplength=theme.medida(780), justify="left",
                            foreground=theme.TINTA3)
     estado_lbl.grid(row=fila + 1, column=0, sticky="w", pady=(12, 0))
 
@@ -859,7 +862,7 @@ def _paso_instalar(cuerpo, wiz) -> None:
     from tkinter import ttk
 
     raiz = wiz.device_root
-    ttk.Label(cuerpo, justify="left", wraplength=780, text=(
+    ttk.Label(cuerpo, justify="left", wraplength=theme.medida(780), text=(
         f"Se instalará el programa en:\n\n"
         f"    {deploy.app_dir(raiz)}\n\n"
         "Ahí van el código, el binario de rclone, tu rclone.conf y su clave. La "
@@ -871,13 +874,15 @@ def _paso_instalar(cuerpo, wiz) -> None:
     try:
         situacion, explicacion = device.install_target(raiz)
     except InstallError as e:
-        ttk.Label(cuerpo, foreground=theme.PELIGRO, wraplength=780, justify="left",
-                  text=str(e)).grid(row=1, column=0, sticky="w", pady=(10, 0))
+        ttk.Label(cuerpo, foreground=theme.PELIGRO, justify="left",
+                  wraplength=theme.medida(780), text=str(e)).grid(
+                      row=1, column=0, sticky="w", pady=(10, 0))
         return
 
     colores = {device.VACIO: theme.OK, device.YA_INSTALADO: theme.OK,
                device.AJENO: theme.AVISO}
-    ttk.Label(cuerpo, foreground=colores[situacion], wraplength=780, justify="left",
+    ttk.Label(cuerpo, foreground=colores[situacion], justify="left",
+              wraplength=theme.medida(780),
               text=explicacion).grid(row=1, column=0, sticky="w", pady=(10, 0))
 
     confirmado = {"vale": situacion != device.AJENO}
@@ -895,7 +900,7 @@ def _paso_instalar(cuerpo, wiz) -> None:
             boton_estado()
         escrito.trace_add("write", revisar_texto)
 
-    estado_lbl = ttk.Label(cuerpo, wraplength=780, justify="left",
+    estado_lbl = ttk.Label(cuerpo, wraplength=theme.medida(780), justify="left",
                            foreground=theme.TINTA3)
     estado_lbl.grid(row=3, column=0, sticky="w", pady=(12, 0))
 
@@ -954,7 +959,7 @@ def _paso_parejas(cuerpo, wiz) -> None:
     import tkinter as tk
     from tkinter import ttk
 
-    ttk.Label(cuerpo, justify="left", wraplength=780, text=(
+    ttk.Label(cuerpo, justify="left", wraplength=theme.medida(780), text=(
         "Qué carpetas va a sincronizar ESTE dispositivo. El catálogo es global; "
         "el sync_config.toml que se escribe aquí es solo de este dispositivo.")
         ).grid(row=0, column=0, sticky="w", pady=(0, 10))
@@ -974,11 +979,13 @@ def _paso_parejas(cuerpo, wiz) -> None:
                   ).grid(row=i, column=1, sticky="w", padx=(16, 0))
         if modo in ("up-mirror", "down-mirror"):
             destino = "el remoto" if modo == "up-mirror" else "el dispositivo"
-            ttk.Label(marco, foreground=theme.PELIGRO, wraplength=260, justify="left",
+            ttk.Label(marco, foreground=theme.PELIGRO, justify="left",
+                      wraplength=theme.medida(260),
                       text=f"espejo: borra en {destino} lo que no esté en el origen"
                       ).grid(row=i, column=2, sticky="w", padx=(12, 0))
 
-    resultado = ttk.Label(cuerpo, wraplength=780, justify="left", foreground=theme.TINTA3)
+    resultado = ttk.Label(cuerpo, wraplength=theme.medida(780), justify="left",
+                          foreground=theme.TINTA3)
     resultado.grid(row=2, column=0, sticky="w", pady=(14, 0))
 
     def guardar() -> None:
@@ -1017,7 +1024,7 @@ def _paso_inicializar(cuerpo, wiz) -> None:
     bisync = deploy.resync_targets(wiz.catalog, wiz.state.selected)
     espejos = deploy.mirror_pairs(wiz.catalog, wiz.state.selected)
 
-    ttk.Label(cuerpo, justify="left", wraplength=780, text=(
+    ttk.Label(cuerpo, justify="left", wraplength=theme.medida(780), text=(
         "Una pareja bisync necesita un --resync la primera vez: es lo que compara "
         "los dos lados y fija la referencia. No borra por diferencias.")).grid(
         row=0, column=0, sticky="w", pady=(0, 10))
@@ -1030,14 +1037,16 @@ def _paso_inicializar(cuerpo, wiz) -> None:
             row=i, column=1, sticky="w", padx=(14, 0))
 
     if espejos:
-        ttk.Label(cuerpo, foreground=theme.PELIGRO, wraplength=780, justify="left", text=(
+        ttk.Label(cuerpo, foreground=theme.PELIGRO, justify="left",
+                  wraplength=theme.medida(780), text=(
             "No se inicializan aquí: " + ", ".join(espejos) + ".\n"
             "Son espejos: borran en el otro lado lo que no esté en el origen, y "
             "lanzarlos con las carpetas locales recién creadas propagaría ese "
             "vacío. Cuando el dispositivo esté como quieres, pruébalos a mano con "
             "--dry-run.")).grid(row=2, column=0, sticky="w", pady=(12, 0))
 
-    resultado = ttk.Label(cuerpo, wraplength=780, justify="left", foreground=theme.TINTA3)
+    resultado = ttk.Label(cuerpo, wraplength=theme.medida(780), justify="left",
+                          foreground=theme.TINTA3)
     resultado.grid(row=3, column=0, sticky="w", pady=(12, 0))
 
     def inicializar() -> None:
@@ -1069,7 +1078,7 @@ def _paso_inicializar(cuerpo, wiz) -> None:
 def _paso_final(cuerpo, wiz) -> None:
     from tkinter import ttk
 
-    ttk.Label(cuerpo, justify="left", wraplength=780, text=(
+    ttk.Label(cuerpo, justify="left", wraplength=theme.medida(780), text=(
         "Lo que de verdad hace falta para que este dispositivo arranque en "
         "cualquier equipo. Lo que falte aquí es lo que fallaría luego sin que se "
         "entienda por qué.")).grid(row=0, column=0, sticky="w", pady=(0, 10))
@@ -1088,7 +1097,7 @@ def _paso_final(cuerpo, wiz) -> None:
             ttk.Label(tabla, text="✔" if chk.ok else "✘", foreground=color,
                       width=3).grid(row=i, column=0, sticky="w")
             ttk.Label(tabla, text=chk.etiqueta + ":").grid(row=i, column=1, sticky="w")
-            ttk.Label(tabla, text=chk.detalle, foreground=color, wraplength=520,
+            ttk.Label(tabla, text=chk.detalle, foreground=color, wraplength=theme.medida(520),
                       justify="left").grid(row=i, column=2, sticky="w", padx=(10, 0))
 
     revisar_dispositivo()

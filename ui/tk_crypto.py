@@ -42,7 +42,7 @@ def dibujar(cuerpo, wiz) -> None:
     from tkinter import ttk
 
     estado = wiz.state
-    ttk.Label(cuerpo, justify="left", wraplength=760, text=(
+    ttk.Label(cuerpo, justify="left", wraplength=theme.medida(760), text=(
         f"Destino elegido: {estado.device}\n"
         "El cifrado se elige ahora porque decide DÓNDE va a vivir la estructura "
         "del dispositivo: sin cifrar o con BitLocker, en el propio volumen; con "
@@ -62,7 +62,8 @@ def dibujar(cuerpo, wiz) -> None:
     panel = ttk.Frame(cuerpo)
     panel.grid(row=2, column=0, sticky="w", pady=(12, 0))
 
-    resumen = ttk.Label(cuerpo, foreground=theme.AVISO, wraplength=760, justify="left")
+    resumen = ttk.Label(cuerpo, foreground=theme.AVISO, justify="left",
+                        wraplength=theme.medida(760))
     resumen.grid(row=3, column=0, sticky="w", pady=(12, 0))
 
     def refrescar_resumen() -> None:
@@ -96,7 +97,8 @@ def _panel_ninguno(panel, wiz, hecho) -> None:
     from tkinter import ttk
 
     estado = wiz.state
-    ttk.Label(panel, justify="left", wraplength=760, foreground=theme.PELIGRO, text=(
+    ttk.Label(panel, justify="left", wraplength=theme.medida(760),
+              foreground=theme.PELIGRO, text=(
         "El dispositivo quedará SIN CIFRAR. Ten en cuenta que dentro va a vivir la clave "
         "privada de tu remoto (.prdrive/keys/): quien encuentre el dispositivo "
         "tiene acceso a tus datos hasta que revoques esa clave.")).grid(
@@ -126,7 +128,8 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
     estado.veracrypt = estado.veracrypt or crypto.find_veracrypt()
 
     if not estado.veracrypt:
-        ttk.Label(panel, foreground=theme.PELIGRO, wraplength=760, justify="left", text=(
+        ttk.Label(panel, foreground=theme.PELIGRO, justify="left",
+                  wraplength=theme.medida(760), text=(
             "No encuentro VeraCrypt en este equipo. Instálalo desde "
             "veracrypt.jp/en/Downloads.html, o dime dónde está:")).grid(
             row=0, column=0, sticky="w")
@@ -147,7 +150,7 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
         return
 
     existe = contenedor.is_file()
-    ttk.Label(panel, justify="left", wraplength=760, text=(
+    ttk.Label(panel, justify="left", wraplength=theme.medida(760), text=(
         f"Contenedor: {contenedor}\n"
         + ("Ya existe: se puede montar con su contraseña."
            if existe else "Todavía no existe: se va a crear."))).grid(
@@ -188,13 +191,14 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
             row=fila, column=1, columnspan=2, sticky="w")
         fila += 1
 
-    ttk.Label(formulario, foreground=theme.PELIGRO, wraplength=560, justify="left", text=(
+    ttk.Label(formulario, foreground=theme.PELIGRO, justify="left",
+              wraplength=theme.medida(560), text=(
         "Esta contraseña no se guarda en ningún sitio. Si la pierdes, el "
         "contenedor no se recupera: apúntala en tu gestor de contraseñas ANTES "
         "de seguir.")).grid(row=fila, column=0, columnspan=3, sticky="w", pady=(8, 0))
     fila += 1
 
-    ttk.Label(panel, foreground=theme.AVISO, wraplength=760, justify="left",
+    ttk.Label(panel, foreground=theme.AVISO, wraplength=theme.medida(760), justify="left",
               text=AVISO_AUTOARRANQUE).grid(row=2, column=0, sticky="w", pady=(10, 0))
 
     def crear_y_montar() -> None:
@@ -266,14 +270,14 @@ def _panel_bitlocker(panel, wiz, hecho) -> None:
     estado.mounted_by_us = False
     letra = str(estado.device)[0] if estado.device else ""
 
-    ttk.Label(panel, justify="left", wraplength=760, text=(
+    ttk.Label(panel, justify="left", wraplength=theme.medida(760), text=(
         "Cifrar lo hace Windows, no el instalador: automatizarlo exige permisos "
         "de administrador, tarda mucho y falla distinto en cada edición. Aquí se "
         "abre el asistente de Windows, se comprueba después cómo quedó, y se "
         "ofrece guardar la clave de recuperación en el remoto.")).grid(
         row=0, column=0, sticky="w")
 
-    marca = ttk.Label(panel, wraplength=760, justify="left")
+    marca = ttk.Label(panel, wraplength=theme.medida(760), justify="left")
     marca.grid(row=1, column=0, sticky="w", pady=(10, 0))
 
     def pintar_estado(st) -> None:

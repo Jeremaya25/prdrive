@@ -82,6 +82,7 @@ def root_oculto():
     está en la esquina superior izquierda: sin mover el padre, el aviso sale
     arrinconado aunque no se vea la ventana de la que cuelga."""
     import tkinter as tk
+    theme.nitidez()
     root = tk.Tk()
     root.withdraw()
     theme.apply(root)
@@ -373,7 +374,7 @@ def cabecera(parent, titulo: str, pista: str = "", ancho: int = 620,
     marco.columnconfigure(0, weight=1)
     ttk.Label(marco, text=titulo, style=estilo).grid(row=0, column=0, sticky="w")
     if pista:
-        ttk.Label(marco, text=pista, style="Pista.TLabel", wraplength=ancho,
+        ttk.Label(marco, text=pista, style="Pista.TLabel", wraplength=theme.medida(ancho),
                   justify="left").grid(row=1, column=0, sticky="w", pady=(5, 0))
     return marco
 
@@ -398,7 +399,7 @@ def bloque_aviso(parent, texto: str, ancho: int = 560, tipo: str = "Ambar",
         marca.configure(image=img)
         marca.image = img
     marca.grid(row=0, column=0, sticky="nw")
-    ttk.Label(caja, text=texto, style=f"{tipo}.TLabel", wraplength=ancho,
+    ttk.Label(caja, text=texto, style=f"{tipo}.TLabel", wraplength=theme.medida(ancho),
               justify="left").grid(row=0, column=1, sticky="w", padx=(9, 0))
     caja.columnconfigure(1, weight=1)
     if boton is not None:
@@ -439,9 +440,10 @@ def working(parent, title: str, funcion, mensaje: str = "") -> tuple[bool, objec
 
     marco = ttk.Frame(dlg, padding=(20, 18))
     marco.grid(sticky="nsew")
-    ttk.Label(marco, text=mensaje or f"{title}…", wraplength=380,
+    ttk.Label(marco, text=mensaje or f"{title}…", wraplength=theme.medida(380),
               justify="left").grid(row=0, column=0, sticky="w")
-    barra = ttk.Progressbar(marco, mode="indeterminate", length=380)
+    barra = ttk.Progressbar(marco, mode="indeterminate",
+                            length=theme.medida(380))
     barra.grid(row=1, column=0, pady=(14, 0), sticky="ew")
     barra.start(12)
 
@@ -483,6 +485,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
 
     from . import tk_pairs, tk_update, tk_watch
 
+    theme.nitidez()
     root = tk.Tk()  # TclError aquí si no hay display -> fallback consola
     theme.apply(root)
     icons.poner_icono(root)
@@ -837,6 +840,7 @@ def output_window(title: str, cmd: list[str], parent=None,
     threading.Thread(target=reader, daemon=True).start()
 
     if parent is None:
+        theme.nitidez()
         root = tk.Tk()
         esperar = root.mainloop
     else:

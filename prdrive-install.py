@@ -73,6 +73,9 @@ def report(lineas: list[str]) -> None:
     try:
         import tkinter as tk
         from tkinter import scrolledtext
+
+        from ui import theme
+        theme.nitidez()
         raiz = tk.Tk()
         raiz.title(f"{APP_NAME} — Instalador")
         caja = scrolledtext.ScrolledText(raiz, width=96, height=20,
