@@ -16,13 +16,17 @@ systemd en Linux (autostart XDG si no hay systemd).
 
 Cómo se reconoce el dispositivo
 -----------------------
-Por el fichero de control `PRDRIVE` en la RAÍZ de la unidad. Ni la letra ni el
-punto de montaje sirven: cambian de equipo a equipo y de un día para otro. El
-fichero puede llevar dentro una línea `id=<hex>` (`install` la escribe si el
-PRDRIVE no existía o estaba vacío; si ya tenía contenido, no lo toca), y entonces
-se exige además que el id coincida, para no confundir este dispositivo con otro USB que
-también llevara un PRDRIVE. Antes de lanzar nada se comprueba que esté
+Por el fichero de control `.prdrive/PRDRIVE`. Ni la letra ni el punto de montaje
+sirven: cambian de equipo a equipo y de un día para otro. El fichero puede llevar
+dentro una línea `id=<hex>` (`install` la escribe si el PRDRIVE no existía o
+estaba vacío; si ya tenía contenido, no lo toca), y entonces se exige además que
+el id coincida, para no confundir este dispositivo con otro USB que también
+llevara un PRDRIVE. Antes de lanzar nada se comprueba que esté
 `.prdrive/runsync.py`: sin eso, la unidad no es este proyecto.
+
+Va dentro de `.prdrive/` y no en la raíz del volumen a propósito: para identificar
+la unidad da igual dónde esté mientras la ruta sea relativa a su raíz, y ahí no
+deja un fichero suelto entre los datos del usuario.
 
 Por qué un vigilante que sondea y no un evento del sistema
 ----------------------------------------------------------
@@ -91,9 +95,9 @@ TASK_NAME = APP                       # Windows: nombre de la tarea programada
 UNIT_NAME = f"{APP_NAME}-watch.service"   # Linux: unidad de usuario de systemd
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-CONTROL_FILE = APP_NAME.upper()                       # en la RAÍZ de la unidad
 APP_SUBDIR = f".{APP_NAME}"                           # la carpeta oculta del código
 STRUCT_MARKER = Path(APP_SUBDIR) / "runsync.py"       # lo que se va a lanzar
+CONTROL_FILE = Path(APP_SUBDIR) / APP_NAME.upper()    # quién es esta unidad
 
 POLL_SECONDS = 5.0
 STABLE_CHECKS = 2            # sondeos seguidos legibles antes de dar el dispositivo por montado
@@ -225,8 +229,10 @@ def run_quiet(cmd: list[str]) -> subprocess.CompletedProcess:
 # Detección del dispositivo
 #
 # No se busca "una letra de unidad" ni "un punto de montaje": se busca el fichero
-# de control PRDRIVE en la raíz, que es lo único que sobrevive a cambiar de
-# equipo, de sistema y de letra.
+# de control `.prdrive/PRDRIVE`, que es lo único que sobrevive a cambiar de
+# equipo, de sistema y de letra. Va dentro de la carpeta del programa y no en la
+# raíz porque para identificar la unidad da igual dónde esté, mientras la ruta
+# sea relativa a ella, y ahí no estorba entre los ficheros del usuario.
 # ---------------------------------------------------------------------------
 
 _ERRORMODE_SET = False
@@ -681,7 +687,7 @@ def device_root_from_here() -> Path:
 
 
 def ensure_control_file(root: Path) -> str | None:
-    """Se asegura de que hay PRDRIVE en la raíz y devuelve su 'id'.
+    """Se asegura de que hay un `.prdrive/PRDRIVE` y devuelve su 'id'.
 
     Un PRDRIVE que ya traiga contenido NO se toca (es tuyo): la unidad se
     reconocerá por su sola presencia. Uno vacío sí se rellena con la plantilla,

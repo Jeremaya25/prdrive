@@ -81,7 +81,7 @@ cd prdrive
 python prdrive-install.py
 ```
 
-El asistente son ocho pasos, y el orden no es negociable: no se puede leer el
+El asistente son ocho pasos, y el orden tiene sus motivos: no se puede leer el
 catálogo antes de saber con qué remoto se habla, ni elegir parejas antes de saber
 dónde va el dispositivo, ni inicializarlas antes de que exista el `sync.py` que
 las inicializa. Cada paso tiene su condición y **Siguiente** no se enciende hasta
@@ -89,22 +89,39 @@ cumplirla.
 
 | # | paso | qué hace |
 |---|---|---|
-| 1 | **Conexión** | formulario de remoto nuevo, o importar uno de tu `rclone.conf`. Más la ruta del catálogo |
-| 2 | **Comprobaciones** | consigue un rclone (lo busca, y si no lo descarga), conecta y lee el catálogo |
-| 3 | **Destino** | qué unidad |
-| 4 | **Cifrado** | VeraCrypt, BitLocker o ninguno |
+| 1 | **Dispositivo** | qué unidad. Si ya es un prdrive, atajo para actualizarla |
+| 2 | **Cifrado** | VeraCrypt, BitLocker o ninguno |
+| 3 | **Conexión** | formulario de remoto nuevo, o importar uno de tu `rclone.conf`. Más la ruta del catálogo |
+| 4 | **Comprobaciones** | consigue un rclone (lo busca, y si no lo descarga), conecta y lee el catálogo |
 | 5 | **Instalación** | copia el programa a `.prdrive/`, los lanzadores, el `rclone.conf` y la clave |
 | 6 | **Parejas** | cuáles de las del catálogo usa este dispositivo |
 | 7 | **Inicialización** | el `--resync` que fija la referencia de las parejas bisync |
 | 8 | **Verificación** | que no falte nada de lo que hace falta para arrancar |
 
-En el paso 3 se listan **todas** las unidades, no solo las que el sistema declara
+En el paso 1 se listan **todas** las unidades, no solo las que el sistema declara
 extraíbles: muchos pendrives y casi todos los SSD por USB se declaran fijos, y
 filtrar por ahí es la forma más rápida de que el tuyo no aparezca.
 
 El paso 5 no borra nada fuera de `.prdrive/`. Si esa carpeta ya existe, se
-sobrescribe el código y se conserva el resto — es la forma de actualizar un
-dispositivo.
+sobrescribe el código y se conserva el resto.
+
+### Pasar el instalador por un dispositivo que ya existe
+
+El dispositivo va primero justamente para esto: si la unidad elegida **ya es un
+prdrive**, el paso 1 lo dice —con la versión que lleva y la que trae el
+instalador— y ofrece dos caminos.
+
+- **Actualizar el programa** son dos pantallas y se acabó. Se sustituye el
+  código, se conserva todo lo demás y no se pregunta nada más: ni conexión, ni
+  catálogo, ni parejas, porque al actualizar no cambia ninguna de esas cosas. Va
+  **sin red**, porque el código sale del propio instalador. Si el instalador
+  resulta ser más viejo que el dispositivo, se avisa y hay que confirmarlo.
+- **Reinstalar desde cero** sigue el asistente completo, que es lo que hace falta
+  para cambiar de remoto, recifrar el volumen o rehacer las parejas.
+
+Con VeraCrypt el `.prdrive/` está dentro del contenedor, así que hasta montarlo
+la unidad no se distingue de una vacía: ahí el atajo aparece en el paso 2, en
+cuanto el contenedor está abierto.
 
 ### La primera vez
 
@@ -361,9 +378,11 @@ estado y su registro viven en el equipo.
 - **Sondea, no se suscribe a eventos del sistema.** En una unidad cifrada el
   evento de conexión llega mucho antes de que el volumen se pueda leer, y lo que
   importa es «ya se puede leer», que solo se sabe intentándolo.
-- **Identifica la unidad por el fichero `PRDRIVE` de su raíz** (con un `id=` dentro
+- **Identifica la unidad por el fichero `.prdrive/PRDRIVE`** (con un `id=` dentro
   si lo lleva), nunca por la letra ni por el punto de montaje. Antes de lanzar
-  nada confirma que existe `.prdrive/runsync.py`.
+  nada confirma que existe `.prdrive/runsync.py`. Va dentro de la carpeta del
+  programa y no en la raíz porque para identificar la unidad da igual dónde
+  esté, mientras la ruta sea relativa a ella.
 - Se dispara **una vez por conexión**: el disparo se rearma cuando la unidad
   desaparece.
 - `--mode` decide qué lanza: `ui` (por defecto), `sync` o `daemon`.

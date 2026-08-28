@@ -27,7 +27,7 @@ Las ventanas se crean ocultas y no se entra nunca en el bucle de eventos.
 
 import sys
 
-from _harness import Checks, sandbox
+from _harness import Checks, sandbox, tmpdir
 
 import tomllib
 
@@ -133,53 +133,81 @@ def medir_dialogo(fabricar, ancho, alto, escala, modulo=None) -> tuple[bool, boo
 
 try:
     # --- el asistente, paso a paso ---------------------------------------------------
-    # Los pasos 5, 6 y 8 necesitan un dispositivo elegido; los que se pueden pintar
-    # sin nada montado son los que llevan formulario, que son los que se salían.
-    DIBUJABLES = (0, 1, 2, 3, 6)
+    # Instalación, Parejas y Verificación necesitan un dispositivo elegido; los que
+    # se pueden pintar sin nada montado son los que llevan formulario, que son los
+    # que se salían.
+    #
+    # Por NOMBRE y no por índice: el orden de los pasos ya ha cambiado una vez
+    # (el dispositivo pasó a ser el primero), y una lista de números habría
+    # seguido pasando mientras medía los pasos equivocados.
+    PASO = {t: i for i, (t, _, _) in enumerate(tk_install.PASOS_INSTALACION)}
+    DIBUJABLES = ("Dispositivo", "Cifrado", "Conexión", "Comprobaciones",
+                  "Inicialización")
+    # Un dispositivo de mentira con su VERSION, para que la pantalla de
+    # actualizar tenga que pintar la tabla de versiones de verdad.
+    DISPOSITIVO_FALSO = tmpdir("prdrive-medidas-")
+    (DISPOSITIVO_FALSO / ".prdrive").mkdir()
+    (DISPOSITIVO_FALSO / ".prdrive" / "VERSION").write_text("0.0.1", encoding="utf-8")
 
     for nombre, ancho, alto, escala in PANTALLAS:
         pantalla(ancho, alto, escala)
         top = tk.Toplevel(raiz)
         top.withdraw()
         wiz = tk_install.build(top)
-        for i in DIBUJABLES:
-            wiz.indice = i
+        for paso in DIBUJABLES:
+            wiz.indice = PASO[paso]
             wiz.repintar()
-            paso = tk_install.PASOS[i][0]
             c(f"{nombre}: el paso «{paso}» cabe en la ventana", cabe(top), True)
             c(f"{nombre}: el paso «{paso}» no queda recortado",
               recortado(wiz.visor), False)
+        # La pantalla del recorrido corto. Solo esa: la otra es «Dispositivo», que
+        # ya se ha medido arriba, y volver a pintarla cuesta otra consulta de
+        # unidades al sistema por cada resolución de la tabla.
+        wiz.pasos = tk_install.PASOS_ACTUALIZACION
+        wiz.state.device = DISPOSITIVO_FALSO
+        wiz.indice = len(tk_install.PASOS_ACTUALIZACION) - 1
+        wiz.repintar()
+        c(f"{nombre}: «Actualización» cabe", cabe(top), True)
+        c(f"{nombre}: «Actualización» no queda recortado",
+          recortado(wiz.visor), False)
         top.destroy()
 
-    # El caso que se reportó: en una pantalla normal el paso 1 tiene que verse
-    # entero, no desplazarse. Una barra ahí sería tapar el fallo, no arreglarlo.
-    # En una 4K, donde sobra sitio, igual.
+    # El caso que se reportó era el formulario de «Conexión»: en una pantalla
+    # normal tiene que verse entero, no desplazarse. Una barra ahí sería tapar el
+    # fallo, no arreglarlo. En una 4K, donde sobra sitio, igual. Se busca por
+    # nombre porque ese paso ya no es el primero.
     for nombre, ancho, alto, escala in (("1080p", 1920, 1080, 1.3333),
                                         ("4K al 150 %", 3840, 2160, 2.0)):
         pantalla(ancho, alto, escala)
         top = tk.Toplevel(raiz)
         top.withdraw()
         wiz = tk_install.build(top)
+        wiz.indice = PASO["Conexión"]
+        wiz.repintar()
         top.update_idletasks()          # sin esto la barra aún no está puesta
-        c(f"{nombre}: el paso 1 se ve entero, sin barra",
+        c(f"{nombre}: «Conexión» se ve entero, sin barra",
           bool(wiz.visor.vertical.grid_info()), False)
-        c(f"{nombre}: el hueco de los pasos llega a lo que pide el paso 1",
+        c(f"{nombre}: el hueco de los pasos llega a lo que pide «Conexión»",
           wiz.visor._medida()[1] >= wiz.visor.interior.winfo_reqheight(), True)
         # ...y el hueco crece con el paso más grande, pero no encoge con el más
         # pequeño: el asistente no puede cambiar de tamaño a cada paso.
-        alto_paso1 = wiz.visor._medida()[1]
-        wiz.indice = 1
+        alto_conexion = wiz.visor._medida()[1]
+        wiz.indice = PASO["Inicialización"]
         wiz.repintar()
         c(f"{nombre}: un paso corto no encoge el hueco",
-          wiz.visor._medida()[1], alto_paso1)
+          wiz.visor._medida()[1], alto_conexion)
         top.destroy()
 
-    # En una 1080p al 200 % no cabe por mucho que se estire, y entonces la barra es
-    # obligatoria: es la comprobación de que un recorte nunca es silencioso.
+    # En una 1080p al 200 % «Conexión» no cabe por mucho que se estire, y entonces
+    # la barra es obligatoria: es la comprobación de que un recorte nunca es
+    # silencioso. También va por nombre: al abrirse, el asistente ya no enseña
+    # ese paso sino el del dispositivo, que sí cabe.
     pantalla(1920, 1080, 2.6667)
     top = tk.Toplevel(raiz)
     top.withdraw()
     wiz = tk_install.build(top)
+    wiz.indice = PASO["Conexión"]
+    wiz.repintar()
     top.update_idletasks()
     c("1080p al 200 %: lo que no cabe se desplaza, con su barra",
       bool(wiz.visor.vertical.grid_info()), True)

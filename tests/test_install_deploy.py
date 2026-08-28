@@ -323,10 +323,17 @@ c.contains("nombrando lo que hay", motivo, "TFM-sin-copia")
 # nada.
 c.contains("y tranquiliza en vez de amenazar", motivo, "No se borrará nada")
 
-(base / "PRDRIVE").write_text("id=abc\n", encoding="utf-8")
+# El fichero de control vive DENTRO de `.prdrive/`, no en la raíz del volumen:
+# para identificar la unidad da igual dónde esté mientras la ruta sea relativa a
+# ella, y ahí no deja un fichero suelto entre los datos del usuario.
 deploy.app_dir(base).mkdir(exist_ok=True)
+(base / device.CONTROL_FILE).write_text("id=abc\n", encoding="utf-8")
 (deploy.app_dir(base) / "runsync.py").write_text("#\n", encoding="utf-8")
+c("el control va dentro de la carpeta del programa, no en la raíz",
+  device.CONTROL_FILE.parent.name, deploy.APP_SUBDIR)
 c("un dispositivo prdrive de verdad se reconoce",
   device.install_target(base)[0], device.YA_INSTALADO)
+c("y la raíz no gana ningún fichero suelto",
+  (base / "PRDRIVE").exists(), False)
 
 sys.exit(c.report())

@@ -22,8 +22,7 @@ y marca la casilla *«Add Python to PATH»*.
 |---|---|
 | `runsync.pyw` / `runsync.sh` | los lanzadores. Empieza siempre por aquí |
 | `sync-data/` | **tus carpetas sincronizadas** |
-| `PRDRIVE` | fichero de control. **No lo borres**: es lo que identifica esta unidad |
-| `.prdrive/` | el programa. Está oculta a propósito; no hace falta tocarla |
+| `.prdrive/` | el programa y el fichero de control. Está oculta a propósito; no hace falta tocarla |
 
 ## La ventana
 
@@ -84,7 +83,7 @@ la encuentre entra en tus datos hasta que revoques esa clave.
 
 - Ten la unidad **cifrada** (VeraCrypt o BitLocker). Si no lo está, vuelve a
   pasar el instalador y hazlo.
-- No borres `PRDRIVE` ni `.prdrive/`. Si desaparecen, el arranque automático deja
+- No borres `.prdrive/`. Si desaparece, el arranque automático deja
   de reconocer la unidad y hay que reinstalar.
 - **Extráela con seguridad.** El programa no escribe nada mientras no sincroniza,
   así que basta con cerrar la ventana antes.

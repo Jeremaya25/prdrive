@@ -113,19 +113,19 @@ def en_paso(wiz, indice):
     wiz.repintar()
 
 
-PASO = {titulo: i for i, (titulo, _, _) in enumerate(tk_install.PASOS)}
+PASO = {titulo: i for i, (titulo, _, _) in enumerate(tk_install.PASOS_INSTALACION)}
 
 # --- todos los pasos se pintan -----------------------------------------------
 dispositivo = tmpdir()
 wiz = nuevo_asistente(dispositivo)
-for i, (titulo, _, _) in enumerate(tk_install.PASOS):
+for i, (titulo, _, _) in enumerate(tk_install.PASOS_INSTALACION):
     try:
         en_paso(wiz, i)
         c(f"el paso «{titulo}» se pinta", True, True)
     except Exception as e:
         c(f"el paso «{titulo}» se pinta", f"{type(e).__name__}: {e}", True)
 
-total = len(tk_install.PASOS)
+total = len(tk_install.PASOS_INSTALACION)
 c("la cabecera dice por dónde va",
   wiz.cabecera.cget("text").startswith(f"Paso {total} de {total}"), True)
 c("en el último paso el botón cambia de nombre",
@@ -160,7 +160,7 @@ vacio.rclone = remote.Rclone("RCLONE", "CONF", remote_name="nas")
 vacio.revisar()
 c("con catálogo sí", str(vacio.boton_siguiente.cget("state")), "normal")
 
-en_paso(vacio, PASO["Destino"])
+en_paso(vacio, PASO["Dispositivo"])
 c("sin destino no se sale del paso de destino",
   str(vacio.boton_siguiente.cget("state")), "disabled")
 
@@ -251,5 +251,57 @@ en_paso(wiz, PASO["Verificación"])
 etiquetas = [w.cget("text") for w in widgets(wiz.cuerpo, ttk.Label)]
 c("el último paso enseña la lista de comprobación",
   any("sync_config.toml" in str(t) for t in etiquetas), True)
+
+
+# --- el recorrido corto: una unidad que YA es un prdrive ----------------------
+# `limpio` acaba de pasar por la instalación entera, así que sirve de dispositivo
+# de verdad. Lo que se comprueba aquí es el desvío: que se reconoce, que no deja
+# avanzar hasta elegir camino, y que actualizar no le cambia el identificador.
+c("una unidad recién instalada se reconoce como prdrive",
+  tk_install._ya_es_prdrive(limpio), True)
+c("y una vacía no", tk_install._ya_es_prdrive(tmpdir()), False)
+
+# El paso pinta la lista de unidades del sistema y selecciona la que ya esté
+# elegida; sin esto, un directorio temporal no sale en esa lista y la selección
+# se pierde. Se sustituye la consulta al sistema, no el paso.
+device.list_volumes = lambda: [device.Volume(root=limpio, label="PRDRIVE",
+                                             filesystem="exFAT",
+                                             drive_type="Removable")]
+
+corto = nuevo_asistente(limpio)
+corto.state.device_root = None          # como si no se hubiera pasado por Cifrado
+en_paso(corto, PASO["Dispositivo"])
+c("con un prdrive detectado, «Siguiente» espera a que se elija camino",
+  str(corto.boton_siguiente.cget("state")), "disabled")
+c("y se ofrecen los dos caminos",
+  sorted(str(b.cget("text")) for b in widgets(corto.cuerpo, ttk.Button)
+         if "Actualizar el programa" in str(b.cget("text"))
+         or "Reinstalar" in str(b.cget("text"))),
+  ["Actualizar el programa", "Reinstalar desde cero"])
+
+antes = device.control_id(limpio)
+boton(corto.cuerpo, "Actualizar el programa").invoke()
+c("elegir actualizar cambia al recorrido corto",
+  [t for t, _, _ in corto.pasos], ["Dispositivo", "Actualización"])
+c("y planta al usuario en la pantalla de actualizar", corto.indice, 1)
+
+(app / "sync.py").write_text("# version vieja\n", encoding="utf-8")
+boton(corto.cuerpo, "Actualizar ahora").invoke()
+c("se sustituye el código",
+  "version vieja" in (app / "sync.py").read_text(encoding="utf-8"), False)
+c("y se deja el VERSION del instalador", (app / "VERSION").is_file(), True)
+# Renovarle el id sería tratarlo como un dispositivo nuevo, y dejaría colgado a
+# cualquier vigilante que ya estuviera atado a este.
+c("el identificador del dispositivo NO cambia", device.control_id(limpio), antes)
+c("la configuración sigue en su sitio", config.is_file(), True)
+
+# Reinstalar sigue estando disponible: reconocer el dispositivo no puede quitar
+# la forma de cambiarle el remoto o el cifrado.
+otro_corto = nuevo_asistente(limpio)
+en_paso(otro_corto, PASO["Dispositivo"])
+boton(otro_corto.cuerpo, "Reinstalar desde cero").invoke()
+c("reinstalar mantiene el recorrido largo",
+  len(otro_corto.pasos), len(tk_install.PASOS_INSTALACION))
+c("y avanza al paso siguiente", otro_corto.indice, PASO["Cifrado"])
 
 sys.exit(c.report())

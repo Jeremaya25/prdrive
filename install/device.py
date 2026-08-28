@@ -40,17 +40,22 @@ from common import model
 from . import CREATE_NO_WINDOW, DEVICE_LABEL, IS_WIN, InstallError
 from .rclone_bin import bin_subdir, exe_name
 
-CONTROL_FILE = "PRDRIVE"
+CONTAINER_SUFFIX = ".hc"
+APP_SUBDIR = ".prdrive"
+STRUCT_MARKER = Path(APP_SUBDIR) / "runsync.py"
+
+# El fichero de control, DENTRO de la carpeta del programa y no en la raíz del
+# volumen. Lo que hace es identificar la unidad se monte donde se monte, y para
+# eso da igual dónde esté mientras la ruta sea relativa a la raíz: en `.prdrive/`
+# cumple lo mismo sin dejar un fichero suelto entre los datos del usuario, y de
+# paso no se puede borrar sin borrar también el programa.
+CONTROL_FILE = Path(APP_SUBDIR) / DEVICE_LABEL
 CONTROL_TEMPLATE = """\
 # PRDRIVE — fichero de control del dispositivo. NO LO BORRES.
 # Es lo que permite reconocer esta unidad se monte donde se monte (F:, /media/...).
 # Lo usa .prdrive/penwatch.py para lanzar la sincronización al conectarla.
 id={device_id}
 """
-
-CONTAINER_SUFFIX = ".hc"
-APP_SUBDIR = ".prdrive"
-STRUCT_MARKER = Path(APP_SUBDIR) / "runsync.py"
 
 # Lo que el sistema deja en cualquier volumen —o lo que ponemos nosotros— y no
 # cuenta como «aquí hay cosas de otro». Se compara con `p.name.lower()`, así que
@@ -59,7 +64,7 @@ STRUCT_MARKER = Path(APP_SUBDIR) / "runsync.py"
 RUIDO = {
     "system volume information", "$recycle.bin", "recycler", "lost+found",
     ".ds_store", ".spotlight-v100", ".fseventsd", ".trashes", "desktop.ini",
-    "autorun.inf", "prdrive", "prdrive.hc", ".prdrive",
+    "autorun.inf", "prdrive.hc", ".prdrive",
     "runsync.pyw", "runsync.sh", "runsync.ico",
 }
 
@@ -115,8 +120,11 @@ class Volume:
         if self.has_container:
             partes.append("contenedor VeraCrypt")
         if self.has_control:
+            # Con el control dentro de `.prdrive/`, que falte la estructura ya no
+            # es «no hay carpeta»: la carpeta está y lo que falta es el programa,
+            # o sea una instalación a medias.
             partes.append("ya es un prdrive" if self.has_structure
-                          else f"tiene {CONTROL_FILE} pero le falta {APP_SUBDIR}/")
+                          else f"tiene {CONTROL_FILE} pero le falta el programa")
         if not partes and not self.removable:
             partes.append("no se declara extraíble")
         return "; ".join(partes)
@@ -312,18 +320,23 @@ def control_id(root: Path) -> str | None:
 
 
 def ensure_control_file(root: Path, renew: bool = False) -> str:
-    """Deja un PRDRIVE con id en la raíz y devuelve ese id.
+    """Deja un PRDRIVE con id dentro de `.prdrive/` y devuelve ese id.
 
     `renew=True` fuerza un id nuevo aunque ya hubiera uno. Hace falta al reutilizar
     un volumen que ya fue de otro dispositivo: dos dispositivos con el mismo id no
     se pueden distinguir, y un vigilante atado a ese id lanzaría con el
-    equivocado."""
+    equivocado. Actualizar es justo el caso contrario y va con `renew=False`:
+    es el MISMO dispositivo, y cambiarle el id dejaría colgado al vigilante que
+    ya estuviera apuntándole."""
     path = Path(root) / CONTROL_FILE
     actual = control_id(root)
     if actual and not renew:
         return actual
     nuevo = uuid.uuid4().hex
     try:
+        # En la instalación el directorio ya está (lo crea `deploy_code`), pero
+        # penwatch también adopta unidades, y ahí puede no estarlo.
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(CONTROL_TEMPLATE.format(device_id=nuevo), encoding="utf-8")
     except OSError as e:
         raise InstallError(f"No he podido escribir {path}: {e}") from e

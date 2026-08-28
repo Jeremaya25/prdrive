@@ -115,7 +115,13 @@ Windows. `model.APP_DIR` is `Path(__file__).parent.parent` and `DEVICE_ROOT` is
 its parent, so **nothing depends on the folder name or the drive letter**: a
 development checkout called anything at all works the same. `deploy.APP_SUBDIR`
 is the name the installer writes, and `penwatch.STRUCT_MARKER` /
-`device.STRUCT_MARKER` are the two copies that have to agree with it.
+`device.STRUCT_MARKER` are the two copies that have to agree with it — as are
+`penwatch.CONTROL_FILE` / `device.CONTROL_FILE`, which is `.prdrive/PRDRIVE`.
+The control file sits **inside** that folder rather than at the volume root:
+identifying the drive only needs a path relative to its root, so anywhere does,
+and inside it leaves nothing loose among the user's files and cannot be deleted
+without deleting the program too. `tests/test_install_device.py` asserts the two
+copies of both constants have not drifted.
 
 ## Commands
 
@@ -478,15 +484,21 @@ knowing which remote to talk to, nor pick pairs before knowing where the device
 goes, nor initialise them before the `sync.py` that initialises them exists.
 
 ```
-1 Conexión        form, or import a remote from the user's rclone.conf
-2 Comprobaciones  rclone + connect + read the catalogue
-3 Destino         which volume
-4 Cifrado         VeraCrypt / BitLocker / none -> fixes state.device_root
+1 Dispositivo     which volume  — and the shortcut out, see below
+2 Cifrado         VeraCrypt / BitLocker / none -> fixes state.device_root
+3 Conexión        form, or import a remote from the user's rclone.conf
+4 Comprobaciones  rclone + connect + read the catalogue
 5 Instalación     copy .prdrive/, hide it, launchers, rclone.conf + keys
 6 Parejas         pick from the catalogue, write sync_config.toml, make dirs
 7 Inicialización  --resync of the bisync pairs
 8 Verificación
 ```
+
+**The device goes first so the wizard can recognise one it has already made.**
+`_paso_destino` depends on nothing (`device.list_volumes()` and no more), so it
+costs nothing to put it there, and `Cifrado` has to follow it because it is what
+settles `state.device_root`, which `Instalación` writes to. Connection and
+catalogue can wait: nothing needs them until `Parejas`.
 
 Each step carries its own condition and «Siguiente» stays disabled until it is
 met, so the window can never reach a place where the next button would fail.
@@ -496,6 +508,39 @@ typed twice, the connection to the remote — happens once in a device's life, w
 the screen in front of you, and a text menu replicating it would double the code
 in the most delicate part of the project.
 
+**The shortcut: a volume that is already a prdrive.** When `_paso_destino` sees
+`device.install_target() == YA_INSTALADO`, it shows which version is on the device
+and which one the installer carries, and offers two ways out. Three things about
+it are load-bearing:
+
+- **Both ways out, always.** Recognising the device must not take away the
+  ability to re-provision it — changing remote, re-encrypting, redoing pairs all
+  need the full wizard, and forcing someone to delete `.prdrive/` by hand to get
+  there would be a trap. So «Reinstalar desde cero» sits next to «Actualizar».
+- **`Wizard.pasos` is an instance attribute, not the old module global.** That is
+  the whole mechanism: there are two step lists (`PASOS_INSTALACION`,
+  `PASOS_ACTUALIZACION`) and the button picks one. `_ir_a_actualizar()` *sets*
+  the index rather than advancing by one, because the shortcut can be entered
+  from either the device step or the encryption step and «one more» does not land
+  in the same place from both.
+- **`_ok_destino` returns False until a way out is chosen**, so «Siguiente» stays
+  dark next to the two buttons. Three ways forward with two destinations is the
+  confusion the wizard's disabled-until-resolved idiom exists to prevent.
+
+The short path installs the tree the **installer itself carries** (`bundle_dir()`,
+the same source step 5 uses) — no network, no catalogue, no connection. The
+GitHub-fetching updater is `common/update.py`, reached from the main window; here
+the answer to "which code" is "the one in your hand". It calls
+`ensure_control_file(renew=False)`, and that `False` matters: step 5 renews
+because it is provisioning a device, and renewing here would strand a watcher
+already bound to this device's id. Going backwards in version is allowed but
+never silent — `_confirmar_retroceso()`.
+
+With VeraCrypt `.prdrive/` lives *inside* the container, so the volume is
+indistinguishable from an empty one until it is mounted. The detection therefore
+runs again at the end of `_paso_cifrado`, which is the first moment it can
+succeed.
+
 **Step 5 no longer simulates first.** It used to be an `rclone sync` of a master
 mirror, i.e. something that deleted in the destination whatever was not in the
 source, and that is why it demanded a `--dry-run` and typing the path by hand.
@@ -503,7 +548,7 @@ Now it copies a folder of its own and touches nothing else, so it runs straight
 through `ui.tk.working()` — a job that takes a while (the rclone binary is tens of
 MB) and whose output tells nobody anything.
 
-**Step 1 is what makes the repo publishable.** `profile.load()` returns an
+**The `Conexión` step is what makes the repo publishable.** `profile.load()` returns an
 **empty** profile when there is nothing embedded and nothing in the checkout, and
 that is not an error — it is the normal start for someone who just cloned. Before,
 that path raised `InstallError` and the wizard died explaining that a key was
@@ -589,7 +634,7 @@ must stay `false` or laptops never start it) or a systemd **user** unit
 anywhere. The watcher **polls** rather than subscribing to device events, because
 on an encrypted device the arrival event fires long before the volume is readable —
 what matters is "already readable", which is only knowable by trying. It
-identifies the device by the control file **`PRDRIVE` at the volume root** (optional
+identifies the device by the control file **`.prdrive/PRDRIVE`** (optional
 `id=<hex>` line inside), never by drive letter or mount point, and confirms
 `.prdrive/runsync.py` before launching. It must never write to, or `chdir`
 into, the device (that blocks safe ejection): its config, state and log live on the

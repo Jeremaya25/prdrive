@@ -25,7 +25,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from install import InstallError, InstallState
+from common import update
+from install import InstallError, InstallState, __version__
 from install import crypto, deploy, device, profile, rclone_bin, remote
 
 from . import icons, theme
@@ -68,15 +69,25 @@ class Wizard:
         self.rclone: remote.Rclone | None = None
         self.catalog: remote.Catalog | None = None
         self.indice = 0
+        # Qué recorrido se está haciendo. Se decide en el primer paso: si la
+        # unidad elegida ya es un prdrive se puede cambiar a `PASOS_ACTUALIZACION`,
+        # que son dos pantallas en vez de ocho. Es un atributo y no el global de
+        # antes precisamente para que quepan los dos recorridos.
+        self.pasos = PASOS_INSTALACION
+        # `modo` es None mientras no se haya elegido entre actualizar y reinstalar.
+        # Solo hay que elegir cuando la unidad YA es un prdrive; en una unidad
+        # nueva no hay nada que preguntar y se sigue de largo.
+        self.modo: str | None = None
+        self.ya_instalado = False
 
     # --- navegación ---------------------------------------------------------
 
     def repintar(self) -> None:
         for hijo in self.cuerpo.winfo_children():
             hijo.destroy()
-        titulo, dibujar, _ = PASOS[self.indice]
+        titulo, dibujar, _ = self.pasos[self.indice]
         self.cabecera.configure(
-            text=f"Paso {self.indice + 1} de {len(PASOS)}   ·   {titulo}")
+            text=f"Paso {self.indice + 1} de {len(self.pasos)}   ·   {titulo}")
         dibujar(self.cuerpo, self)
         self.revisar()
         # El hueco se ajusta DESPUÉS de pintar, que es cuando se sabe lo que pide
@@ -89,8 +100,8 @@ class Wizard:
 
     def revisar(self) -> None:
         """Enciende o apaga «Siguiente» según la condición del paso actual."""
-        _, _, condicion = PASOS[self.indice]
-        ultimo = self.indice == len(PASOS) - 1
+        _, _, condicion = self.pasos[self.indice]
+        ultimo = self.indice == len(self.pasos) - 1
         try:
             puede = bool(condicion(self))
         except Exception:
@@ -101,10 +112,10 @@ class Wizard:
         self.boton_atras.configure(state="disabled" if self.indice == 0 else "normal")
 
     def ir(self, delta: int) -> None:
-        if self.indice == len(PASOS) - 1 and delta > 0:
+        if self.indice == len(self.pasos) - 1 and delta > 0:
             self.root.destroy()
             return
-        self.indice = max(0, min(len(PASOS) - 1, self.indice + delta))
+        self.indice = max(0, min(len(self.pasos) - 1, self.indice + delta))
         self.repintar()
 
     # --- atajos que usan varios pasos ---------------------------------------
@@ -531,7 +542,7 @@ def _fila_python() -> tuple[str, bool, str]:
 
 
 # ---------------------------------------------------------------------------
-# Paso 3 — Destino
+# Paso 1 — Dispositivo (y el desvío a actualizar)
 # ---------------------------------------------------------------------------
 
 COLUMNAS = [("unidad", "Unidad", 80), ("etiqueta", "Etiqueta", 110),
@@ -594,6 +605,21 @@ def _paso_destino(cuerpo, wiz) -> None:
             aviso.configure(
                 text=f"✔ Destino: {vol.root}" + (f"  ({vol.nota})" if vol.nota else ""),
                 foreground=theme.OK)
+        revisar_desvio()
+
+    def revisar_desvio() -> None:
+        """Poner o quitar el panel de «ya es un prdrive» según lo elegido.
+
+        Cambiar de unidad tira la elección anterior: si se había dicho
+        «actualizar» para un pen y ahora hay otro seleccionado, esa respuesta ya
+        no vale para nada."""
+        for hijo in desvio.winfo_children():
+            hijo.destroy()
+        wiz.modo = None
+        wiz.pasos = PASOS_INSTALACION
+        wiz.ya_instalado = _ya_es_prdrive(wiz.state.device)
+        if wiz.ya_instalado:
+            _panel_ya_instalado(desvio, wiz, wiz.state.device, 0)
         wiz.revisar()
 
     tree.bind("<<TreeviewSelect>>", mostrar)
@@ -619,22 +645,203 @@ def _paso_destino(cuerpo, wiz) -> None:
         wiz.state.device = destino
         aviso.configure(text=f"✔ Destino: {destino}", foreground=theme.OK)
         tree.selection_remove(*tree.selection())
-        wiz.revisar()
+        revisar_desvio()
 
     ttk.Button(manual, text="Usar esta ruta", command=usar_ruta).grid(row=0, column=2)
     ttk.Button(manual, text="Actualizar lista", command=refrescar).grid(
         row=0, column=3, padx=(16, 0))
 
+    # El hueco del desvío a actualizar. Va debajo de la ruta a mano porque solo
+    # aparece a veces, y lo que no puede es empujar la lista hacia abajo cada vez
+    # que se cambia de selección.
+    desvio = ttk.Frame(cuerpo)
+    desvio.grid(row=4, column=0, sticky="ew", pady=(0, 0))
+    desvio.columnconfigure(0, weight=1)
+
     refrescar()
 
 
 # ---------------------------------------------------------------------------
-# Paso 4 — Cifrado (vive en ui/tk_crypto.py)
+# «Esta unidad ya es un prdrive»: el desvío al recorrido corto
+# ---------------------------------------------------------------------------
+
+def _ya_es_prdrive(raiz) -> bool:
+    """¿Hay un prdrive completo en esa raíz? Un volumen ilegible es que no."""
+    if raiz is None:
+        return False
+    try:
+        return device.install_target(raiz)[0] == device.YA_INSTALADO
+    except InstallError:
+        return False        # bloqueado o ilegible: ya se dirá en su momento
+
+
+def _ir_a_actualizar(wiz) -> None:
+    """Cambiar al recorrido corto y plantarse en su pantalla de actualizar.
+
+    Se fija el índice en vez de avanzar uno, porque a este desvío se puede
+    llegar desde el paso del dispositivo o desde el del cifrado —VeraCrypt no
+    deja ver el `.prdrive/` hasta montar el contenedor— y desde sitios distintos
+    «uno más» no cae en el mismo sitio."""
+    wiz.modo = "actualizar"
+    wiz.pasos = PASOS_ACTUALIZACION
+    wiz.indice = len(PASOS_ACTUALIZACION) - 1
+    wiz.repintar()
+
+
+def _seguir_instalando(wiz) -> None:
+    wiz.modo = "instalar"
+    wiz.pasos = PASOS_INSTALACION
+    wiz.ir(1)
+
+
+def _panel_ya_instalado(cuerpo, wiz, raiz, fila: int) -> None:
+    """El desvío: qué versión hay, cuál trae el instalador, y los dos caminos.
+
+    Se ofrecen los dos a propósito. Reconocer el dispositivo no puede quitarle a
+    nadie la posibilidad de volver a aprovisionarlo: cambiar de remoto, recifrar
+    el volumen o rehacer las parejas se hace con el asistente completo, y
+    obligar a borrar `.prdrive/` a mano para llegar ahí sería una trampa."""
+    from tkinter import ttk
+
+    caja = ttk.Frame(cuerpo, style="Card.TFrame", padding=(14, 12))
+    caja.grid(row=fila, column=0, sticky="ew", pady=(14, 0))
+    caja.columnconfigure(0, weight=1)
+
+    puesta = update.installed_version(deploy.app_dir(raiz)) or "desconocida"
+    ttk.Label(caja, text=f"{raiz} ya es un dispositivo prdrive",
+              style="Card.Fuerte.TLabel").grid(row=0, column=0, sticky="w")
+    ttk.Label(caja, style="Card.Pista.TLabel", wraplength=700, justify="left",
+              text=(f"Lleva la versión {puesta} y este instalador trae la "
+                    f"{__version__ or 'desconocida'}. Puedes ponerle el programa "
+                    f"nuevo sin tocar nada más, o repetir la instalación entera "
+                    f"si lo que quieres es cambiar de remoto, de cifrado o de "
+                    f"parejas.")).grid(row=1, column=0, sticky="w", pady=(5, 11))
+
+    botones = ttk.Frame(caja, style="Card.TFrame")
+    botones.grid(row=2, column=0, sticky="w")
+    actualizar = ttk.Button(botones, text="Actualizar el programa",
+                            style="Primary.TButton", padding=(12, 7),
+                            command=lambda: _ir_a_actualizar(wiz))
+    theme.boton_icono(actualizar, "down", theme.SUPERFICIE, theme.ACENTO)
+    actualizar.grid(row=0, column=0)
+    ttk.Button(botones, text="Reinstalar desde cero", style="CardQuiet.TButton",
+               command=lambda: _seguir_instalando(wiz)).grid(row=0, column=1,
+                                                             padx=(8, 0))
+
+
+# ---------------------------------------------------------------------------
+# Paso 2 — Cifrado (vive en ui/tk_crypto.py)
 # ---------------------------------------------------------------------------
 
 def _paso_cifrado(cuerpo, wiz) -> None:
     from . import tk_crypto
     tk_crypto.dibujar(cuerpo, wiz)
+    # Con VeraCrypt el `.prdrive/` vive DENTRO del contenedor, así que hasta
+    # montarlo la unidad no se distingue de una vacía: el desvío a actualizar no
+    # se podía ofrecer en el paso anterior y se ofrece aquí.
+    if wiz.modo is None and _ya_es_prdrive(wiz.device_root):
+        _panel_ya_instalado(cuerpo, wiz, wiz.device_root, 90)
+
+
+# ---------------------------------------------------------------------------
+# Recorrido corto, paso 2 — Actualizar el programa
+# ---------------------------------------------------------------------------
+
+def _paso_actualizar(cuerpo, wiz) -> None:
+    """Ponerle a un dispositivo que ya existe el código que trae el instalador.
+
+    El origen es el propio ejecutable, no GitHub: el .exe ya lleva el árbol
+    dentro (es lo mismo que copia el paso «Instalación»), así que esto va sin
+    red, sin conexión al remoto y sin catálogo. Quien quiera la última versión
+    publicada la tiene en el aviso de la ventana principal, que sí baja de
+    GitHub; aquí se instala lo que hay en la mano."""
+    from tkinter import ttk
+
+    # En el recorrido corto puede no haberse pasado por «Cifrado», que es quien
+    # fija `device_root`; sin cifrado, la raíz del volumen es la del dispositivo.
+    raiz = wiz.device_root or wiz.state.device
+    app = deploy.app_dir(raiz)
+    puesta = update.installed_version(app)
+    mia = __version__
+
+    ttk.Label(cuerpo, justify="left", wraplength=780, text=(
+        f"Se sustituye el programa de:\n\n"
+        f"    {app}\n\n"
+        "Se conservan tu configuración, tus claves, el estado de bisync, los "
+        "filtros, los diarios y el rclone que ya tiene. Tampoco se toca nada de "
+        "lo que haya fuera de esa carpeta.")).grid(row=0, column=0, sticky="w")
+
+    tabla = ttk.Frame(cuerpo, style="Card.TFrame", padding=(14, 12))
+    tabla.grid(row=1, column=0, sticky="w", pady=(14, 0))
+    for i, (etiqueta, valor) in enumerate((
+            ("Tiene puesta", puesta or "una versión anterior a los avisos"),
+            ("Se le pondrá", mia or "la que trae este instalador"))):
+        ttk.Label(tabla, text=etiqueta, style="Card.Campo.TLabel").grid(
+            row=i, column=0, sticky="w", padx=(0, 14), pady=(0, 3))
+        ttk.Label(tabla, text=valor, style="Card.Mono.TLabel").grid(
+            row=i, column=1, sticky="w", pady=(0, 3))
+
+    fila = 2
+    # Instalar hacia atrás no se prohíbe —puede ser justo lo que se quiere para
+    # salir de una versión que va mal— pero no puede pasar por descuido.
+    retroceso = bool(puesta and mia and update.is_newer(puesta, mia))
+    if retroceso:
+        aviso = ttk.Frame(cuerpo, style="Ambar.TFrame", padding=(11, 9))
+        aviso.grid(row=fila, column=0, sticky="ew", pady=(14, 0))
+        aviso.columnconfigure(0, weight=1)
+        ttk.Label(aviso, style="Ambar.TLabel", wraplength=740, justify="left",
+                  text=(f"Este instalador es MÁS VIEJO que el dispositivo: trae "
+                        f"la {mia} y ahí está puesta la {puesta}. Seguir lo "
+                        f"dejaría en la {mia}.")).grid(row=0, column=0, sticky="w")
+        fila += 1
+
+    estado_lbl = ttk.Label(cuerpo, wraplength=780, justify="left",
+                           foreground=theme.TINTA3)
+    estado_lbl.grid(row=fila + 1, column=0, sticky="w", pady=(12, 0))
+
+    def actualizar() -> None:
+        if retroceso and not _confirmar_retroceso(wiz, mia, puesta):
+            return
+
+        def trabajo():
+            escrito = deploy.deploy_code(raiz)      # sin rclone: ya está puesto
+            escrito += deploy.write_launchers(raiz)
+            guia = deploy.write_guide(raiz)
+            if guia is not None:
+                escrito.append(guia)
+            icons.write_ico(app / "runsync.ico")
+            # renew=False: es el MISMO dispositivo. Renovarle el id —que es lo
+            # que hace la instalación— dejaría colgado a cualquier vigilante que
+            # ya estuviera atado a él.
+            ident = device.ensure_control_file(raiz, renew=False)
+            return escrito, ident
+
+        ok, res = working(wiz.root, "actualizando", trabajo,
+                          "Sustituyendo el programa del dispositivo.")
+        if not ok:
+            estado_lbl.configure(text=f"No se ha podido actualizar: {res}",
+                                 foreground=theme.PELIGRO)
+            return
+        escrito, ident = res
+        wiz.state.deployed = True
+        boton.configure(state="disabled")
+        estado_lbl.configure(
+            text=(f"Actualizado a la {mia}: {len(escrito)} elementos en {app}.\n"
+                  f"El dispositivo sigue siendo el {ident[:8]}… y conserva todo "
+                  f"lo suyo. Ya puedes cerrar."),
+            foreground=theme.OK)
+
+    boton = ttk.Button(cuerpo, text="Actualizar ahora", style="Primary.TButton",
+                       padding=(14, 8), command=actualizar)
+    theme.boton_icono(boton, "down", theme.SUPERFICIE, theme.ACENTO)
+    boton.grid(row=fila, column=0, sticky="w", pady=(16, 0))
+
+
+def _confirmar_retroceso(wiz, mia: str, puesta: str) -> bool:
+    from tkinter import messagebox
+    return bool(messagebox.askokcancel(TITLE, (
+        f"Vas a dejar el dispositivo en la versión {mia}, que es anterior a la "
+        f"{puesta} que tiene ahora.\n\n¿Seguro?"), parent=wiz.root, icon="warning"))
 
 
 # ---------------------------------------------------------------------------
@@ -964,7 +1171,14 @@ def _ok_comprobaciones(w) -> bool:
 
 
 def _ok_destino(w) -> bool:
-    return w.state.device is not None
+    """Con una unidad que ya es un prdrive hay que decir antes qué se va a hacer.
+
+    Dejar «Siguiente» encendido junto a los dos botones del desvío daría tres
+    formas de avanzar y dos destinos distintos; apagarlo hasta que se elija es el
+    mismo criterio que sigue el resto del asistente."""
+    if w.state.device is None:
+        return False
+    return not w.ya_instalado or w.modo is not None
 
 
 def _ok_cifrado(w) -> bool:
@@ -979,15 +1193,30 @@ def _ok_parejas(w) -> bool:
     return w.state.config_written
 
 
-PASOS = [
+# El dispositivo va PRIMERO, y no es cosmético: es lo que permite reconocer una
+# unidad que ya es un prdrive y ofrecer actualizarla en dos pantallas en vez de
+# repetir el aprovisionamiento entero. El orden de los demás lo manda lo que
+# necesita cada uno: «Cifrado» va pegado a «Dispositivo» porque es quien fija
+# `state.device_root`, que es donde escribe «Instalación»; y «Conexión» y
+# «Comprobaciones» pueden ir después porque el catálogo no hace falta hasta
+# «Parejas».
+PASOS_INSTALACION = [
+    ("Dispositivo", _paso_destino, _ok_destino),
+    ("Cifrado", _paso_cifrado, _ok_cifrado),
     ("Conexión", _paso_conexion, _ok_conexion),
     ("Comprobaciones", _paso_comprobaciones, _ok_comprobaciones),
-    ("Destino", _paso_destino, _ok_destino),
-    ("Cifrado", _paso_cifrado, _ok_cifrado),
     ("Instalación", _paso_instalar, _ok_instalacion),
     ("Parejas y configuración", _paso_parejas, _ok_parejas),
     ("Inicialización", _paso_inicializar, lambda w: True),
     ("Verificación", _paso_final, lambda w: True),
+]
+
+# El recorrido corto: la unidad ya es un prdrive y solo hay que ponerle el código
+# que este instalador lleva dentro. Ni conexión, ni catálogo, ni parejas: nada de
+# eso cambia al actualizar, y pedirlo otra vez sería pedirlo para nada.
+PASOS_ACTUALIZACION = [
+    ("Dispositivo", _paso_destino, _ok_destino),
+    ("Actualización", _paso_actualizar, lambda w: True),
 ]
 
 
