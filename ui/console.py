@@ -13,7 +13,7 @@ from __future__ import annotations
 import subprocess
 import sys
 
-from common import APP_NAME, model
+from common import APP_NAME, model, update
 from common.model import Config
 
 from . import Choice, pair_status_notes, prefs
@@ -54,6 +54,18 @@ def main_menu(config: Config, startup_msg: str | None) -> Choice | None:
         print(f"   - {n}{extra}")
     if memo:
         print(f"\n{memo}: {' '.join(d_pairs)}, cada {d_interval:g} min.")
+
+    # El aviso de versión nueva se pinta aquí y no llega por `startup_msg`,
+    # porque ese canal lo comparten los dos frontends y la ventana ya se lo
+    # dibuja ella sola en ámbar: pasarlo por ahí lo enseñaría dos veces.
+    # `pending()` y no `check()`: solo caché, cero red. Nadie va a esperar a
+    # GitHub para ver un menú de texto, y la caché ya la refrescan la ventana y
+    # el servicio periódico.
+    nueva = update.pending()
+    if nueva is not None:
+        print(f"\nHay una actualización disponible: {nueva.tag} "
+              f"(tienes la {update.installed_version() or 'desconocida'}).")
+        print(f"Actualiza desde la ventana, o pasa el instalador: {nueva.url}")
     print("\n 1) Sincronizar todo ahora"
           "\n 2) Sincronizar parejas concretas"
           "\n 3) Iniciar servicio periódico"

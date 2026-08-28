@@ -107,6 +107,40 @@ c("se dice todo lo que se ha escrito", len(escrito) >= 6, True)
 c("lo que había en el volumen no se toca",
   (destino / "mis-cosas.txt").read_text(encoding="utf-8"), "no me toques\n")
 
+# --- actualizar: lo mismo, pero sin tocar el rclone ni nada del usuario -------
+# Es el camino de `prdrive-install.py --update`, que corre desde el zip recién
+# descargado sobre un dispositivo que ya existe. Lo que se vigila es lo único
+# que puede hacer daño: que se lleve por delante la configuración o la clave.
+al_dia = tmpdir() / "unidad-usada"
+app_usada = al_dia / deploy.APP_SUBDIR
+(app_usada / "keys").mkdir(parents=True)
+(app_usada / "state" / "docs").mkdir(parents=True)
+(app_usada / "keys" / "id_ed25519").write_bytes(b"CLAVE-QUE-NO-SE-TOCA")
+(app_usada / "rclone.conf").write_text("[nas]\nkey_file = keys/id_ed25519\n",
+                                       encoding="utf-8")
+(app_usada / "sync_config.toml").write_text("# lo mío\n", encoding="utf-8")
+(app_usada / "state" / "docs" / "listado.lst").write_text("x\n", encoding="utf-8")
+(app_usada / "sync.py").write_text("# version vieja\n", encoding="utf-8")
+
+nuevo = deploy.deploy_code(al_dia, origen=origen)
+
+c("actualizar sustituye el código",
+  (app_usada / "sync.py").read_text(encoding="utf-8"), "# sync.py\n")
+c("y deja el VERSION nuevo", (app_usada / "VERSION").is_file(), True)
+# Sin binario que copiar no se crea bin/: el del dispositivo ya está puesto, y
+# pasarle el suyo propio como origen daría SameFileError.
+c("sin rclone no se toca bin/", (app_usada / "bin").exists(), False)
+c("ni se cuenta entre lo escrito", any("bin" in p.parts for p in nuevo), False)
+c("la clave privada sigue intacta",
+  (app_usada / "keys" / "id_ed25519").read_bytes(), b"CLAVE-QUE-NO-SE-TOCA")
+c("el rclone.conf del dispositivo sigue intacto",
+  (app_usada / "rclone.conf").read_text(encoding="utf-8"),
+  "[nas]\nkey_file = keys/id_ed25519\n")
+c("su sync_config.toml sigue intacto",
+  (app_usada / "sync_config.toml").read_text(encoding="utf-8"), "# lo mío\n")
+c("y la línea base de bisync no se ha movido",
+  (app_usada / "state" / "docs" / "listado.lst").is_file(), True)
+
 # --- los lanzadores -----------------------------------------------------------
 lanzadores = deploy.write_launchers(destino)
 c("se escriben los dos lanzadores", sorted(p.name for p in lanzadores),

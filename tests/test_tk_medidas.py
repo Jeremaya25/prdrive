@@ -31,7 +31,7 @@ from _harness import Checks, sandbox
 
 import tomllib
 
-from common import catalog, config_file, model
+from common import catalog, config_file, model, update
 
 c = Checks("medidas de las pantallas")
 
@@ -45,7 +45,10 @@ except Exception as e:                                   # sin entorno gráfico
     sys.exit(0)
 
 from ui import tk as uitk
-from ui import tk_install, tk_pairs
+from ui import tk_install, tk_pairs, tk_update
+
+# Ni una petición a GitHub desde un test.
+update.fetch = lambda url, timeout: c("ningún test toca la red", "fetch", "nada")
 
 messagebox.showinfo = lambda *a, **k: None
 messagebox.showerror = lambda *a, **k: None
@@ -103,19 +106,28 @@ def recortado(visor) -> bool:
                 and not visor.horizontal.grid_info()))
 
 
-def medir_dialogo(fabricar, ancho, alto, escala) -> tuple[bool, bool]:
-    """Abre un diálogo sin enseñarlo y devuelve (cabe, recortado)."""
+def medir_dialogo(fabricar, ancho, alto, escala, modulo=None) -> tuple[bool, bool]:
+    """Abre un diálogo sin enseñarlo y devuelve (cabe, recortado).
+
+    `modulo` es aquel cuyo `mostrar` hay que interceptar: cada pantalla importa
+    el suyo con `from .tk import mostrar`, así que sustituirlo en una no lo
+    sustituye en las demás."""
     pantalla(ancho, alto, escala)
     medida: dict = {}
+    modulo = modulo or tk_pairs
 
     def falso_mostrar(dlg, parent=None):
         dlg.visor.encajar(dlg)
         medida["cabe"] = cabe(dlg)
         medida["recortado"] = recortado(dlg.visor)
 
-    tk_pairs.mostrar = falso_mostrar
+    previo = modulo.mostrar
+    modulo.mostrar = falso_mostrar
     tk.Toplevel.wait_window = lambda self, *a, **k: None
-    fabricar()
+    try:
+        fabricar()
+    finally:
+        modulo.mostrar = previo
     return medida.get("cabe", False), medida.get("recortado", True)
 
 
@@ -190,6 +202,20 @@ try:
                          lambda: tk_pairs.flags_form(raiz, "Flags", "pareja0", {},
                                                      [], "bisync", {}))):
                     entra, corta = medir_dialogo(fabricar, ancho, alto, escala)
+                    c(f"{nombre}: {que} cabe", entra, True)
+                    c(f"{nombre}: {que} no queda recortado", corta, False)
+
+                # La de actualizar crece con las notas de la release, que las
+                # escribe quien publica y aquí no las controla nadie: se mide con
+                # las más largas que se enseñan (`tk_update` recorta a 1200).
+                for que, notas in (("la pantalla de actualizar", "Arreglado esto."),
+                                   ("la pantalla de actualizar con notas largas",
+                                    "Una línea de novedades. " * 60)):
+                    rel = update.Release("v9.9.9", "9.9.9", "La novena",
+                                         "https://x/9", "2026-08-28T08:12:13Z", notas)
+                    entra, corta = medir_dialogo(
+                        lambda r=rel: tk_update.open_dialog(raiz, r),
+                        ancho, alto, escala, modulo=tk_update)
                     c(f"{nombre}: {que} cabe", entra, True)
                     c(f"{nombre}: {que} no queda recortado", corta, False)
     finally:

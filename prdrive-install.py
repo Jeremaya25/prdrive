@@ -15,9 +15,17 @@ BitLocker), **copia el programa** en su carpeta oculta `.prdrive/`, escribe el
 `rclone.conf` y el `sync_config.toml` de ESE dispositivo, crea sus carpetas,
 inicializa las parejas bisync y comprueba que todo está.
 
-    python prdrive-install.py            el asistente
-    python prdrive-install.py --check    rclone + conexión + catálogo, y sale
-    python prdrive-install.py --probe    qué unidades ve, y sale
+    python prdrive-install.py                 el asistente
+    python prdrive-install.py --check         rclone + conexión + catálogo, y sale
+    python prdrive-install.py --probe         qué unidades ve, y sale
+    python prdrive-install.py --update RUTA   sustituye el código de un dispositivo
+
+`--update` es el otro extremo del aviso de versión nueva de la ventana: no
+aprovisiona nada, solo repite el paso 5 sobre un dispositivo que ya existe. Y no
+se ejecuta desde el dispositivo, sino desde el zip que `common/update.py` acaba
+de descargar y verificar: `install/` no viaja al dispositivo, así que **la
+versión nueva es la que se instala a sí misma**, y no hay una segunda copia del
+manifiesto de qué se despliega que se pueda quedar atrás.
 
 El código que aterriza en el dispositivo viaja DENTRO del instalador; antes lo
 bajaba del remoto con un espejo del árbol entero. El remoto guarda configuración,
@@ -46,7 +54,7 @@ if not getattr(sys, "frozen", False):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from install import APP_NAME, InstallError, __version__  # noqa: E402
-from install import device, profile, rclone_bin, remote  # noqa: E402
+from install import deploy, device, profile, rclone_bin, remote  # noqa: E402
 
 DESCRIPCION = ("Aprovisiona un dispositivo prdrive nuevo a partir del catálogo "
                "de tu remoto.")
@@ -132,6 +140,46 @@ def cmd_probe() -> int:
     return 0
 
 
+def cmd_update(raiz: str) -> int:
+    """Sustituye el código de un dispositivo que ya existe. Nada más.
+
+    Es el paso 5 del asistente menos el rclone —que ya está en `bin/`— y menos
+    todo lo demás: no se pregunta la conexión, no se elige unidad, no se cifra
+    nada, no se tocan las parejas. Se sobrescriben los ficheros del programa y
+    se conservan `rclone.conf`, `keys/`, `sync_config.toml`, `state/`, `logs/`,
+    `filters/`, `bin/` y el fichero de control del volumen.
+
+    Se imprime línea a línea con `print()` y no con `report()` al final porque
+    esto solo se ejecuta desde un checkout —el zip que ha descargado
+    `common/update.py`—, nunca congelado: hay stdout de verdad, y quien mira es
+    la ventana de salida, que enseña lo que va llegando."""
+    root = Path(raiz).expanduser()
+    destino = deploy.app_dir(root)
+    if not destino.is_dir():
+        raise InstallError(
+            f"En {root} no hay ningún {deploy.APP_SUBDIR}/, así que ahí no hay "
+            f"nada que actualizar.\n"
+            f"Para preparar un dispositivo nuevo, abre el asistente sin "
+            f"argumentos.")
+
+    print(f"Actualizando {destino} a la versión {__version__}")
+    escrito = deploy.deploy_code(root)          # sin rclone: ya está puesto
+    escrito += deploy.write_launchers(root)
+    guia = deploy.write_guide(root)
+    if guia is not None:
+        escrito.append(guia)
+    try:
+        from ui import icons                    # sin Tk: rasteriza él solo
+        escrito.append(icons.write_ico(destino / "runsync.ico"))
+    except Exception:                           # noqa: BLE001
+        pass        # un icono no puede tumbar una actualización que va bien
+
+    for ruta in escrito:
+        print(f"  {ruta}")
+    print("Hecho. Se conservan la configuración, las claves y el estado.")
+    return 0
+
+
 def cmd_wizard() -> int:
     """El asistente. Sin Tkinter no hay instalador: no hay menú de consola.
 
@@ -162,6 +210,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                              "catálogo, y sale.")
     parser.add_argument("--probe", action="store_true",
                         help="Lista las unidades detectadas y sale.")
+    parser.add_argument("--update", metavar="RUTA",
+                        help="Sustituye el código de un dispositivo ya "
+                             "instalado (la raíz del volumen) y sale. No toca "
+                             "ni la configuración ni las claves.")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     return parser.parse_args(argv)
 
@@ -176,6 +228,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     remote.install_signal_handlers()
     try:
+        if args.update:
+            return cmd_update(args.update)
         if args.check:
             return cmd_check()
         if args.probe:

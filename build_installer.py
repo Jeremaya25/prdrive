@@ -57,7 +57,7 @@ NOMBRE = "prdrive-install"
 # Lo que el instalador va a dejar en el dispositivo. Tiene que coincidir con
 # `install/deploy.py`: si aquí falta algo, el fallo aparece a mitad de una
 # instalación de verdad y no al compilar.
-DATOS_FICHEROS = ("sync.py", "runsync.py", "penwatch.py",
+DATOS_FICHEROS = ("sync.py", "runsync.py", "penwatch.py", "VERSION",
                   "device-readme.md")
 DATOS_ARBOLES = ("common", "ui")
 

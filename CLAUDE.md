@@ -25,11 +25,13 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 ├── sync.py            entry point: build the rclone command, run it, report
 ├── runsync.py         entry point: the periodic service + who calls what
 ├── penwatch.py        entry point: mount watcher (deliberately self-contained)
+├── VERSION            the version, in ONE place; it ships to the device
 ├── common/            knows the config and rclone
 │   ├── model.py       sync_config.toml parsed into resolved objects
 │   ├── bisync.py      everything that replicates rclone bisync's internals
 │   ├── config_file.py reads AND writes sync_config.toml (hand-rolled serializer)
 │   ├── catalog.py     the global pair catalogue on the remote: read, cache, write
+│   ├── update.py      is there a newer release, and how to fetch its code — no Tk
 │   └── store.py       the device's JSON state files + pid_alive(): reads that
 │                       tolerate anything, atomic writes
 ├── ui/                knows how to ask the user and show results
@@ -46,6 +48,7 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 │   ├── tk_watch.py    the auto-start screen (drawing only)
 │   ├── tk_install.py  the install wizard, step by step (drawing only)
 │   ├── tk_crypto.py   the wizard's encryption step: VeraCrypt/BitLocker (drawing only)
+│   ├── tk_update.py   the «there's a new version» screen (drawing only)
 │   └── console.py     ConsoleFrontend: the text menu
 ├── install/           what the installer knows; no Tk, no device needed
 │   ├── __init__.py    the brand constants, InstallError, InstallState, python_command()
@@ -66,7 +69,11 @@ so a `tk_*` module never writes a hex value of its own.
 
 `prdrive-install.py` also sits at the root and **is** tracked in git: it is the
 fourth entry point, and it is a launcher — arguments in, `ui/tk_install.py` out.
-Everything it knows lives in `install/`, which **does** import `common/`
+The one exception is `--update`, which does its work right there and never opens
+a window: it is the applier of the self-update, it runs from the *downloaded*
+copy of the project rather than from a device, and a wizard step for it would be
+a wizard nobody is sitting in front of. Everything else it knows lives in
+`install/`, which **does** import `common/`
 (`model.BASE_FLAGS`, `model.flags_to_args`, `config_file.save`,
 `store.pid_alive`): what the installer writes has to be byte-for-byte what
 `sync.py` will later read, and a second copy of those rules is a second place to
@@ -134,6 +141,7 @@ python penwatch.py uninstall
 python prdrive-install.py          # the install wizard for a NEW device (Tk only, no console menu)
 python prdrive-install.py --check  # rclone + connection + catalogue, then exit
 python prdrive-install.py --probe  # what drives it sees, then exit
+python prdrive-install.py --update E:\   # replace the code of an installed device
 python build_installer.py          # build the .exe (PyInstaller; embeds the profile if there is one)
 python -m ui.icons                 # repaint APP_DIR/runsync.ico (no Tk, no display)
 
@@ -151,8 +159,8 @@ Git note: this checkout sits on an exFAT/NTFS volume, so git refuses it as
 `filters/`, `logs/`, `state/`, `sync_config.toml`, `rclone.conf`,
 `prdrive-profile.toml`), so what is tracked is the code (`sync.py`, `runsync.py`,
 `penwatch.py`, `prdrive-install.py`, `build_installer.py`, `common/`, `ui/`,
-`install/`, `tests/`) plus `design/`, `sync_config.example.toml`, `README.md`,
-`CLAUDE.md` and `.gitignore`. The installer's build artefacts (`build/`, `dist/`,
+`install/`, `tests/`) plus `VERSION`, `design/`, `sync_config.example.toml`,
+`README.md`, `CLAUDE.md` and `.gitignore`. The installer's build artefacts (`build/`, `dist/`,
 `*.spec`) and its embedded profile (`install/secret.py`) are ignored too — the
 private key is what makes those last two non-negotiable. **Nothing on the device
 travels to the remote any more**: no pair mirrors `.prdrive/`, so neither the key
@@ -515,6 +523,61 @@ of them so two concurrent installs do not rob each other.
 — rclone resolves them against its cwd, which the project always fixes at
 `model.APP_DIR`. Nothing mirrors `.prdrive/`, so the key stays put, protected by
 whatever protects the volume.
+
+**Updating a device in place (`common/update.py` + `ui/tk_update.py` +
+`prdrive-install.py --update`).** The main window shows an amber block when
+GitHub has a newer release, and its button does the whole thing. Three decisions
+hold it up, and none of them is arbitrary:
+
+- **The applier runs from the download, not from the device.** `install/` is
+  deliberately absent from a provisioned device, so on-device code cannot call
+  `deploy_code()`. The source zip of the tag does carry it, so the update runs
+  `python <extracted>/prdrive-install.py --update <volume>` — **the new version
+  installs itself**. The alternative, an applier living in `common/`, would be a
+  second copy of the "what is the deployed tree" manifest, and it would be the
+  one to fall behind the day a file is added.
+- **The payload is the source zip of the tag (~270 KB), not the release `.exe`
+  (12.6 MB).** The CI-built exe is generic — no embedded profile — so re-running
+  it would ask for the connection again to do what is really a `copy2` of the
+  code.
+- **`.prdrive/` is never renamed.** `deploy_code()` copies file by file, and the
+  stage-and-swap that looks tidier is worse here in three concrete ways:
+  `rclone.exe` may be running from `.prdrive/bin/` (Windows will not rename its
+  directory, and `catalog.run` holds `cwd=APP_DIR` for the length of a call); if
+  `.prdrive/runsync.py` vanishes for even an instant, penwatch loses its
+  `STRUCT_MARKER`, **re-arms its trigger and relaunches the UI on its own**
+  within 5-15 s; and if `sync_config.toml` vanishes, a running service shuts
+  itself down. Copying costs one thing — a module deleted upstream lingers on
+  old devices — and that is exactly what re-running the installer already did.
+
+`VERSION` at the repo root is the whole versioning story: it is in
+`DEPLOY_FILES` and in `DATOS_FICHEROS`, `install.version()` reads it out of
+`bundle_dir()` (there is no `__version__ = "3.0"` constant any more — it had
+drifted from the tags), `update.installed_version()` reads it out of `APP_DIR`,
+and the release workflow **refuses to build if the tag is not `v<VERSION>`**. A
+device with no `VERSION` is one installed before this existed: it reads as
+unknown, which compares older than anything, which is correct.
+
+`update.fetch()` is a module-level function for the same reason `catalog.run()`
+is: every test replaces it, and **no test touches the network**. Same for
+`state_file()` being a function — `sandbox()` rebinds `model.STATE_DIR` hot, and
+a constant computed at import would point at the real device. Note `sandbox()`
+does **not** rebind `APP_DIR`, which is why everything that writes takes its
+destination explicitly (`download(tag, destino)`, `deploy_code(device_root, …)`).
+
+`check()` never raises and honours a 24 h cache in `state/update.json`;
+`pending()` reads that cache and **never** goes to the network, because it is
+what the first paint asks. The window refreshes it on a thread after
+`deiconify()`; `daemon_cycle()` refreshes it too, which is the only thing keeping
+it current for the console menu. The console prints its own notice in
+`console.main_menu` rather than riding `startup_msg` — that channel is shared by
+both frontends and the window already draws its own, so it would show twice.
+
+What a download has to survive before it is allowed near the device: TLS,
+the zip CRC, every name in `update.OBLIGATORIOS` present, no member whose path
+escapes the destination (`extractall` is the footgun; `_ruta_segura` checks the
+names), and **the `VERSION` inside matching the tag asked for**. There is no
+signature, and the README says so plainly rather than implying otherwise.
 
 **Mount watcher (`penwatch.py`).** Third entry point, and the only one that
 installs anything on the host. `install` copies the script to

@@ -48,7 +48,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 import ui  # noqa: E402
-from common import model, store  # noqa: E402
+from common import model, store, update  # noqa: E402
 from common.store import pid_alive  # noqa: E402
 from ui import prefs  # noqa: E402
 
@@ -180,6 +180,18 @@ def daemon_cycle(pairs: list[str], lock_data: dict) -> None:
     lock_data["last_cycle"] = store.stamp()
     lock_data["last_results"] = results
     write_lock(lock_data)
+
+    # De paso, refrescar la caché de versiones. Con las 24 h de `CACHE_HORAS`
+    # esto es como mucho una consulta al día, y es lo único que la mantiene al
+    # día para el menú de consola, que nunca va a la red por su cuenta. El
+    # servicio no tiene interfaz, así que aquí no se enseña nada: solo se apunta.
+    try:
+        update.check()                  # respeta la caché: no sale cada ciclo
+        nueva = update.pending()
+        if nueva is not None:
+            dlog(f"hay una versión nueva disponible: {nueva.tag}")
+    except Exception as e:                              # noqa: BLE001
+        dlog(f"no he podido mirar si hay versión nueva: {e}")
 
 
 def daemon_main(pairs: list[str], interval_min: float) -> int:

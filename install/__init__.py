@@ -37,8 +37,6 @@ from pathlib import Path
 
 from common import APP_NAME
 
-__version__ = "3.0"
-
 # --- La marca. Es un identificador, no un adorno: da nombre al fichero de
 # --- control del volumen, al contenedor VeraCrypt y a la carpeta de código.
 # --- Sale de `common` para que no haya dos copias que puedan separarse.
@@ -80,6 +78,21 @@ def bundle_dir() -> Path:
     if meipass:
         return Path(meipass)
     return Path(__file__).resolve().parent.parent
+
+
+def version() -> str:
+    """La versión que lleva este instalador dentro.
+
+    Sale del fichero `VERSION`, que es el mismo que se copia al dispositivo
+    (`deploy.DEPLOY_FILES`), el mismo contra el que `common/update.py` compara
+    la última release y el mismo contra el que el workflow comprueba el tag al
+    publicar. Una constante aquí sería una cuarta copia del número, y sería la
+    que se quedaría atrás."""
+    from common.update import installed_version
+    return installed_version(bundle_dir())
+
+
+__version__ = version()
 
 
 def python_command(windowless: bool = False) -> list[str] | None:

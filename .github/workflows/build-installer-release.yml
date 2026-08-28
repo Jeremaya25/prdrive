@@ -44,6 +44,22 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install pyinstaller
 
+      # El tag y el fichero VERSION tienen que decir lo mismo. VERSION es lo que
+      # se copia al dispositivo y contra lo que common/update.py compara la
+      # última release; si el tag no coincide, los dispositivos se creerían en
+      # una versión que no es y el aviso de actualización mentiría en las dos
+      # direcciones. Se comprueba antes de compilar para no publicar nada malo.
+      - name: Check tag matches VERSION
+        shell: pwsh
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          $tag = "${{ github.event.inputs.tag }}".Trim()
+          if ($tag -ne "v$version") {
+            Write-Error "El tag '$tag' no coincide con VERSION ('$version'). Sube VERSION en un commit y vuelve a lanzar el workflow con el tag 'v$version'."
+            exit 1
+          }
+          Write-Host "Tag $tag == VERSION $version"
+
       - name: Build installer executable
         shell: pwsh
         run: |

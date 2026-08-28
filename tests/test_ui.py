@@ -10,10 +10,21 @@ from _harness import Checks, mkcfg, tmpdir
 import ui
 import ui.console
 import ui.tk
+from common import update
 from ui import prefs
 
 c = Checks("precarga de los frontends")
 prefs.PREFS = tmpdir("prdrive-ui-") / "ui_prefs.json"
+
+# El aviso de versión nueva, fijado: si no, este test enseñaría una cosa u otra
+# según lo que hubiera en el `state/` de quien lo ejecuta. Y `fetch` cortada,
+# porque ningún test habla con GitHub.
+RELEASE = update.Release("v9.9.9", "9.9.9", "La novena", "https://x/9",
+                         "2026-08-28T08:12:13Z", "")
+update.pending = lambda root=None: RELEASE
+update.check = lambda force=False: (RELEASE, None)
+update.installed_version = lambda root=None: "0.0.1"
+update.fetch = lambda url, timeout: c("ningún test toca la red", "fetch", "nada")
 
 # Los frontends hacen 'from . import pair_status_notes', así que el sustituto va
 # en cada módulo, no solo en el paquete.
@@ -42,6 +53,11 @@ c("consola: se lee por nombre de campo",
   (choice.action, list(choice.pairs), choice.minutes), ("daemon", ["upload", "claves"], 12.0))
 c.contains("consola: parejas por defecto", texto, "[upload claves]")
 c.contains("consola: intervalo por defecto", texto, "[12]")
+# El menú de texto no tiene ámbar, así que el aviso de versión nueva lo escribe
+# él. No llega por `startup_msg` a propósito: ese canal lo comparten los dos
+# frontends y la ventana ya pinta el suyo, así que se vería dos veces.
+c.contains("consola: avisa de la versión nueva", texto, "v9.9.9")
+c.contains("consola: y dice cuál lleva puesta", texto, "0.0.1")
 
 
 # --- ventana Tk -------------------------------------------------------------
@@ -56,6 +72,7 @@ try:
 
     marcadas: list[str] = []
     etiquetas: list[str] = []
+    botones: list[str] = []
 
     def fake_mainloop(self):
         """Sustituye al bucle de eventos: inspecciona y pulsa un botón."""
@@ -65,6 +82,8 @@ try:
                     marcadas.append(w.cget("text"))
             elif isinstance(w, ttk.Label):
                 etiquetas.append(w.cget("text"))
+            elif isinstance(w, ttk.Button):
+                botones.append(w.cget("text"))
         for w in walk(self):
             if isinstance(w, ttk.Button) and w.cget("text") == "Sincronizar ahora":
                 w.invoke()
@@ -77,6 +96,11 @@ try:
       any("Precargado con la última elección" in e for e in etiquetas), True)
     c("tk: 'Sincronizar ahora' arrastra el intervalo",
       choice, ui.Choice("manual", ("upload", "claves"), 12.0))
+    c("tk: el aviso de versión nueva se ve",
+      any("Hay una actualización: v9.9.9" in (e or "") for e in etiquetas), True)
+    c("tk: diciendo cuál lleva puesta",
+      any("Tienes la 0.0.1" in (e or "") for e in etiquetas), True)
+    c("tk: con su botón", any(b.startswith("Actualizar") for b in botones), True)
 except tk.TclError as e:
     print(f"  (saltado) sin entorno gráfico: {e}")
 

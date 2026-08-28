@@ -91,6 +91,10 @@ la encuentre entra en tus datos hasta que revoques esa clave.
 
 ## Actualizar
 
-Vuelve a pasar el instalador (`prdrive-install`) sobre esta misma unidad y elige
-**Instalar el programa**. Se sustituye el código y se conserva todo lo demás: tu
-configuración, tus claves y tus datos.
+Cuando haya una versión nueva, la ventana te lo dirá en un recuadro naranja al
+abrirla. Pulsa **Actualizar…** y ya está: se descarga, se sustituye el programa
+y la ventana se vuelve a abrir sola. Tu configuración, tus claves y tus datos no
+se tocan.
+
+Si prefieres hacerlo a mano, vuelve a pasar el instalador (`prdrive-install`)
+sobre esta misma unidad y elige **Instalar el programa**: es lo mismo.

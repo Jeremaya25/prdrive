@@ -161,6 +161,37 @@ python penwatch.py uninstall
 
 `runsync.py` sin argumentos **para siempre un servicio anterior** antes de nada.
 
+### Actualizarse
+
+Cuando hay una release nueva en GitHub, la ventana lo dice en un recuadro ámbar
+y el botón lo resuelve: se descargan los ~270 KB del código de ese tag, se
+verifican, se sustituye el programa del dispositivo y la ventana se reabre ya
+con la versión nueva. **No se toca nada tuyo**: la configuración, las claves, el
+estado de bisync, los filtros, los diarios y el rclone se quedan donde estaban.
+
+La versión instalada es el fichero `VERSION` de `.prdrive/`, y se compara con el
+tag de la última release. Un dispositivo instalado antes de que esto existiera
+no lo tiene, así que se lee como «desconocida» y se le ofrece la actualización,
+que es justo lo que le hace falta.
+
+Por dentro, el que instala es el código **recién descargado**, no el del
+dispositivo:
+
+```bash
+python <descarga>/prdrive-install.py --update E:\    # lo que hace el botón
+```
+
+Y así porque `install/` no viaja al dispositivo a propósito: el zip sí lo trae,
+de modo que la versión nueva se instala a sí misma y no hay una segunda copia
+del manifiesto de qué se despliega que pueda quedarse atrás. Es el paso 5 del
+asistente, sin el asistente.
+
+Se pregunta **una vez al día**: la respuesta se guarda en `state/update.json` y
+el aviso se pinta desde ahí, así que abrir la ventana no espera nunca a la red.
+Sin conexión no pasa nada — se enseña lo último que se supo, o nada.
+
+Sigue valiendo pasar el instalador por encima, que es lo mismo por otro camino.
+
 ## Configuración
 
 `sync_config.toml` (dentro de `.prdrive/`) es el config de **ese** dispositivo. Se
@@ -380,6 +411,13 @@ Léelo entero antes de usar esto con datos que te importen.
   borrados en todos tus dispositivos. Por eso `catalog.push()` genera y verifica
   el TOML antes de tocar la red, **relee el remoto y se niega si ha cambiado**
   desde que se leyó, copia `pairs.toml` → `pairs.toml.bak` y solo entonces sube.
+- **Actualizarse descarga y ejecuta código.** Conviene saber exactamente qué lo
+  respalda, que es esto y nada más: HTTPS con validación de certificado contra
+  `api.github.com` y `codeload.github.com`, el CRC del zip, que estén todos los
+  ficheros que tiene que traer, y que el `VERSION` de dentro cuadre con el tag
+  que se pidió. **No hay firma**: el repositorio es público y este es el nivel
+  que hay. Tu clave privada no interviene en ningún momento — el remoto ni se
+  toca—, y lo que se sustituye son solo los ficheros del programa.
 - **El instalador con perfil incrustado lleva tu clave privada.** No lo publiques.
 - Las claves de recuperación de BitLocker se suben **al remoto** y nunca al
   dispositivo: dentro del volumen que descifran no servirían de nada.
@@ -391,13 +429,15 @@ prdrive/
 ├── sync.py            el motor: monta la orden de rclone, la lanza, informa
 ├── runsync.py         la ventana y el servicio periódico
 ├── penwatch.py        el vigilante del equipo anfitrión
-├── prdrive-install.py el asistente de instalación
+├── prdrive-install.py el asistente de instalación, y el --update
 ├── build_installer.py compila el ejecutable
+├── VERSION            la versión, en un sitio: viaja al dispositivo
 ├── common/            lo que comparten los puntos de entrada
 │   ├── model.py       el TOML convertido en objetos ya resueltos
 │   ├── bisync.py      lo que replica el comportamiento interno de rclone bisync
 │   ├── config_file.py lee Y escribe el TOML, con round-trip verificado
 │   ├── catalog.py     el catálogo del remoto: leer, cachear, escribir
+│   ├── update.py      si hay release nueva, y cómo traerse su código
 │   └── store.py       los ficheros de estado en JSON del dispositivo
 ├── ui/                pantallas y su lógica
 │   ├── theme.py       la paleta, las fuentes y los estilos ttk. Sin ventana

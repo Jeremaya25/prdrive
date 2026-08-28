@@ -26,7 +26,7 @@ import sys
 import threading
 import time
 
-from common import APP_NAME, model
+from common import APP_NAME, model, update
 from common.model import Config
 
 from . import Choice, cuando, icons, pair_status_notes, pair_times, prefs, theme
@@ -378,21 +378,36 @@ def cabecera(parent, titulo: str, pista: str = "", ancho: int = 620,
     return marco
 
 
-def bloque_aviso(parent, texto: str, ancho: int = 560, tipo: str = "Ambar"):
-    """El recuadro ámbar (o rojo) con su triángulo: lo que hay que leer dos veces."""
+def bloque_aviso(parent, texto: str, ancho: int = 560, tipo: str = "Ambar",
+                 icono: str = "warn", boton: tuple[str, object] | None = None):
+    """El recuadro ámbar (o rojo) con su triángulo: lo que hay que leer dos veces.
+
+    `icono` y `boton` son opcionales porque el mismo recuadro sirve para dos
+    cosas distintas: un aviso que solo se lee (el servicio que se ha parado) y
+    uno sobre el que se actúa (hay versión nueva, y el botón la instala). Dos
+    funciones casi iguales serían dos sitios donde arreglar el mismo color.
+    El botón va en `AmbarQuiet.TButton`, que es el único cuyo fondo es el del
+    bloque: cualquier otro se recortaría contra el ámbar."""
     from tkinter import ttk
     fondo = theme.AVISO_FONDO if tipo == "Ambar" else theme.PELIGRO_FONDO
     color = theme.AVISO if tipo == "Ambar" else theme.PELIGRO
     caja = ttk.Frame(parent, style=f"{tipo}.TFrame", padding=(11, 9))
-    img = icons.get(caja, "warn", 16, color, fondo)
-    icono = ttk.Label(caja, style=f"{tipo}.TLabel")
+    img = icons.get(caja, icono, 16, color, fondo)
+    marca = ttk.Label(caja, style=f"{tipo}.TLabel")
     if img is not None:
-        icono.configure(image=img)
-        icono.image = img
-    icono.grid(row=0, column=0, sticky="nw")
+        marca.configure(image=img)
+        marca.image = img
+    marca.grid(row=0, column=0, sticky="nw")
     ttk.Label(caja, text=texto, style=f"{tipo}.TLabel", wraplength=ancho,
               justify="left").grid(row=0, column=1, sticky="w", padx=(9, 0))
     caja.columnconfigure(1, weight=1)
+    if boton is not None:
+        rotulo, accion = boton
+        # Solo hay botón hecho para el ámbar; el día que haga falta uno rojo se
+        # añade `RojoQuiet.TButton` al tema, no se inventa aquí un color.
+        estilo = "AmbarQuiet.TButton" if tipo == "Ambar" else "Quiet.TButton"
+        ttk.Button(caja, text=rotulo, style=estilo,
+                   command=accion).grid(row=0, column=2, sticky="e", padx=(12, 0))
     return caja
 
 
@@ -466,7 +481,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
     import tkinter as tk
     from tkinter import messagebox, ttk
 
-    from . import tk_pairs, tk_watch
+    from . import tk_pairs, tk_update, tk_watch
 
     root = tk.Tk()  # TclError aquí si no hay display -> fallback consola
     theme.apply(root)
@@ -476,7 +491,16 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
     root.resizable(False, False)
     root.withdraw()          # se enseña ya centrada, ver el final de la función
     result: dict = {"choice": None}
-    vista: dict = {"config": config, "aviso": startup_msg}
+    # `nueva` es la release pendiente, si la hay. Se pregunta a la caché y no a
+    # la red: esto es el primer pintado y tiene que ser instantáneo. Quien va a
+    # GitHub es el hilo de `mirar_version()`, más abajo. Bajo `except` porque
+    # `ui.start()` envuelve toda la llamada a `ask()`: un estado ilegible aquí no
+    # daría un error, daría un menú de consola sin explicar por qué.
+    try:
+        pendiente = update.pending()
+    except Exception:                                # noqa: BLE001
+        pendiente = None
+    vista: dict = {"config": config, "aviso": startup_msg, "nueva": pendiente}
 
     # Dentro de un visor: la lista de parejas crece con cada pareja y la ventana
     # no puede pasar del alto de la pantalla. Con pocas parejas no se nota nada.
@@ -497,6 +521,54 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         render()
         root.visor.encajar(root)
         centrar(root)   # quitar o añadir parejas le cambia el alto
+
+    def repintar() -> None:
+        """Repintar y recolocar. La ventana no es redimensionable y va dentro de
+        un visor, así que quitar o poner un bloque obliga a rehacer las dos
+        medidas; sin esto el aviso nuevo aparece recortado."""
+        render()
+        root.visor.encajar(root)
+        centrar(root)
+
+    def abrir_actualizacion() -> None:
+        """La pantalla de actualización. Si se ha actualizado, aquí no se vuelve:
+        `tk_update` relanza el programa y cierra esta ventana, porque este
+        proceso tiene cargados en memoria los módulos que se acaban de
+        sustituir."""
+        if tk_update.open_dialog(root, vista["nueva"]):
+            result["choice"] = None
+            root.destroy()
+            return
+        vista["nueva"] = update.pending()
+        repintar()
+
+    def mirar_version() -> None:
+        """Preguntarle a GitHub si hay algo nuevo, sin que se note.
+
+        En un hilo porque la ventana ya está abierta y no puede quedarse quieta
+        esperando a la red, y devolviendo por `after` porque a Tk solo se le
+        habla desde su propio hilo. Todo bajo `except`: `ui.start()` envuelve la
+        llamada entera a `ask()`, así que una excepción suelta aquí no daría un
+        error, daría un menú de consola sin explicación."""
+        def responder(nueva) -> None:
+            # También cuando pasa a None: si la caché estaba adelantada, el
+            # aviso tiene que irse, no quedarse puesto hasta la próxima vez.
+            if nueva != vista["nueva"]:
+                vista["nueva"] = nueva
+                repintar()
+
+        def trabajo() -> None:
+            try:
+                update.check()
+                nueva = update.pending()
+            except Exception:                        # noqa: BLE001
+                return       # sin red no hay aviso, y no pasa nada
+            try:
+                root.after(0, responder, nueva)
+            except Exception:                        # noqa: BLE001
+                pass         # la ventana ya se ha cerrado
+
+        threading.Thread(target=trabajo, daemon=True).start()
 
     def render() -> None:
         for hijo in frame.winfo_children():
@@ -550,6 +622,20 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         if vista["aviso"]:
             bloque_aviso(frame, vista["aviso"], ancho=400).grid(
                 row=fila, column=0, sticky="ew", pady=(14, 0))
+            fila += 1
+
+        # --- hay versión nueva -----------------------------------------------
+        # Debajo del aviso de arranque y no encima: ese cuenta lo que acaba de
+        # pasar (el servicio que se ha parado), y esto puede esperar.
+        nueva = vista["nueva"]
+        if nueva is not None:
+            actual = update.installed_version() or "desconocida"
+            bloque_aviso(
+                frame,
+                f"Hay una actualización: {nueva.tag}\nTienes la {actual}",
+                ancho=330, icono="down",
+                boton=("Actualizar…", abrir_actualizacion),
+            ).grid(row=fila, column=0, sticky="ew", pady=(14, 0))
             fila += 1
 
         # --- la lista de parejas ---------------------------------------------
@@ -675,6 +761,9 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
     root.visor.encajar(root)
     centrar(root)
     root.deiconify()
+    # Después de enseñarla, no antes: la comprobación de versión no puede
+    # retrasar la apertura ni un parpadeo.
+    root.after(300, mirar_version)
     root.mainloop()
     return result["choice"]
 

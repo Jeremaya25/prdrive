@@ -59,7 +59,12 @@ APP_SUBDIR = f".{APP_NAME}"
 # Qué se copia al dispositivo. `install/` NO está y es a propósito: el
 # dispositivo no instala nada, y meter el instalador dentro sería arrastrar el
 # camino de la clave incrustada a un sitio donde no pinta nada.
-DEPLOY_FILES = ("sync.py", "runsync.py", "penwatch.py")
+#
+# `VERSION` sí va, y no es documentación: es lo único que le dice al dispositivo
+# qué versión lleva puesta, y sin ello `common/update.py` no tiene contra qué
+# comparar la última release. Un dispositivo sin ese fichero es uno instalado
+# antes de que existiera el aviso, y se lee como versión desconocida.
+DEPLOY_FILES = ("sync.py", "runsync.py", "penwatch.py", "VERSION")
 DEPLOY_TREES = ("common", "ui")
 
 # La guía rápida que se le deja al usuario en la raíz, con el nombre con el que
@@ -129,14 +134,26 @@ def deploy_source() -> Path:
     return bundle_dir()
 
 
-def deploy_code(device_root: Path | str, rclone_binary: Path | str,
+def deploy_code(device_root: Path | str, rclone_binary: Path | str | None = None,
                 origen: Path | str | None = None) -> list[Path]:
     """Copia el programa al dispositivo. Devuelve lo que ha escrito.
 
     Es una copia, no un espejo: lo que ya hubiera en `.prdrive/` de una versión
     anterior se sobrescribe fichero a fichero, pero nada de fuera se toca. Por
     eso este paso no necesita el «simular y luego hacer» que sí exigía la
-    siembra."""
+    siembra.
+
+    Sin `rclone_binary` no se toca `bin/`, que es el caso de actualizar: el
+    binario ya está puesto, no hace falta volver a bajarlo, y pasarle el que hay
+    en el propio dispositivo daría `SameFileError`.
+
+    Que sea copia y no espejo tiene una pega asumida: un módulo que se elimine
+    del proyecto se queda para siempre en los dispositivos ya instalados. Se
+    prefiere a la alternativa —renombrar `.prdrive/` y montar el árbol nuevo al
+    lado—, que en Windows choca con el rclone que puede estar corriendo desde
+    `bin/`, le hace perder a penwatch su marcador de estructura (y relanzar la
+    interfaz solo) y apaga un servicio en marcha al desaparecerle el
+    `sync_config.toml`."""
     base = Path(origen) if origen else deploy_source()
     destino = app_dir(device_root)
     escrito: list[Path] = []
@@ -173,7 +190,8 @@ def deploy_code(device_root: Path | str, rclone_binary: Path | str,
             raise InstallError(f"No he podido copiar {nombre}/: {e}") from e
         escrito.append(destino / nombre)
 
-    escrito.append(copy_rclone(device_root, rclone_binary))
+    if rclone_binary is not None:
+        escrito.append(copy_rclone(device_root, rclone_binary))
     return escrito
 
 
