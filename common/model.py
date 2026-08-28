@@ -72,27 +72,109 @@ DEFAULT_INTERVAL_MIN = 30.0         # minutos entre ciclos del servicio
 CREATE_NO_WINDOW = 0x08000000
 
 
+# Tipos de máquina de la cabecera PE: es en lo que contesta IsWow64Process2.
+_MAQUINAS_PE = {
+    0x8664: "amd64",
+    0xAA64: "arm64",
+    0x01C4: "arm",      # ARM de 32 bits (ARMNT)
+    0x014C: "x86",
+}
+
+
+def maquina_nativa_windows() -> int | None:
+    """El tipo de máquina nativa según IsWow64Process2, o None si no se sabe.
+
+    Función de módulo, y no un bloque dentro de `machine_arch()`, por lo mismo
+    que `catalog.run()` y `update.fetch()`: es lo único de aquí que depende del
+    equipo donde corre, así que es lo que un test sustituye para preguntar qué
+    pasaría en un ARM sin necesitar uno."""
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.GetCurrentProcess.argtypes = []
+        k32.GetCurrentProcess.restype = ctypes.c_void_p
+        k32.IsWow64Process2.argtypes = [ctypes.c_void_p,
+                                        ctypes.POINTER(ctypes.c_ushort),
+                                        ctypes.POINTER(ctypes.c_ushort)]
+        k32.IsWow64Process2.restype = ctypes.c_int
+        proceso = ctypes.c_ushort()
+        nativa = ctypes.c_ushort()
+        if not k32.IsWow64Process2(k32.GetCurrentProcess(),
+                                   ctypes.byref(proceso), ctypes.byref(nativa)):
+            return None
+        return nativa.value or None
+    except (OSError, AttributeError, ValueError):
+        return None     # Windows anterior a 1709, o sin ctypes: queda platform
+
+
+def machine_arch() -> str:
+    """La arquitectura del EQUIPO en minúsculas: platform.machine() corregido.
+
+    Windows on ARM ejecuta los binarios x64 emulados y les miente sobre dónde
+    están. En un Python x64 sobre un Snapdragon, `platform.machine()` y
+    `PROCESSOR_ARCHITECTURE` contestan 'AMD64'; también `GetNativeSystemInfo()`,
+    que promete justo lo contrario, porque para el emulador la máquina nativa ES
+    x64; y `PROCESSOR_ARCHITEW6432`, el apaño clásico, solo lo pone Windows en
+    los procesos de 32 bits, no en los x64 emulados. La única que contesta la
+    verdad es `IsWow64Process2()` (Windows 10 1709+), que devuelve por separado
+    el tipo de máquina nativa.
+
+    Importa porque los dos lados no corren con el mismo Python: el instalador es
+    un .exe x64 —se compila en un runner x64— y el `runsync.py` del dispositivo
+    corre con el Python del equipo, que en un portátil ARM es ARM64 nativo. Sin
+    esto el instalador dejaba rclone en `bin/x64` y el dispositivo lo buscaba en
+    `bin/arm`."""
+    nativa = maquina_nativa_windows()
+    if nativa in _MAQUINAS_PE:
+        return _MAQUINAS_PE[nativa]
+    return platform.machine().lower()
+
+
 def arch_dir() -> str:
     """Subdirectorio de bin/ según la arquitectura de la CPU."""
-    machine = platform.machine().lower()
+    machine = machine_arch()
     if machine.startswith("arm") or machine in {"aarch64", "aarch64_be", "arm64"}:
         return "arm"
     if machine in {"x86_64", "amd64", "x64", "i386", "i686", "x86"}:
         return "x64"
-    print(f"Aviso: arquitectura '{platform.machine()}' no reconocida; usando bin/x64.")
+    print(f"Aviso: arquitectura '{machine}' no reconocida; usando bin/x64.")
     return "x64"
 
 
 BIN_DIR = APP_DIR / "bin" / arch_dir()
 
+# Un Windows ARM64 ejecuta los x64 emulados, así que un dispositivo provisionado
+# por un instalador que se creyó x64 —lo que pasaba antes de `machine_arch()`—
+# sigue arrancando en vez de quedarse sin rclone. Al revés no vale: un x64 no
+# ejecuta ARM, y por eso la lista no es simétrica.
+BIN_FALLBACK_DIRS: tuple[Path, ...] = (
+    (APP_DIR / "bin" / "x64",) if os.name == "nt" and arch_dir() == "arm" else ())
+
+
+def rclone_name() -> str:
+    return "rclone.exe" if os.name == "nt" else "rclone"
+
+
+def rclone_path() -> Path | None:
+    """El rclone del dispositivo, o None si no hay ninguno utilizable."""
+    for carpeta in (BIN_DIR, *BIN_FALLBACK_DIRS):
+        binary = carpeta / rclone_name()
+        try:
+            if binary.is_file():
+                return binary
+        except OSError:
+            continue
+    return None
+
 
 def rclone_binary() -> str:
     """Ruta ejecutable al binario portable de rclone (apaño para exFAT sin +x)."""
-    name = "rclone.exe" if os.name == "nt" else "rclone"
-    binary = BIN_DIR / name
-    if not binary.exists():
+    binary = rclone_path()
+    if binary is None:
         sys.exit(
-            f"No encuentro el binario de rclone en: {binary}\n"
+            f"No encuentro el binario de rclone en: {BIN_DIR / rclone_name()}\n"
             f"Descarga el rclone portable de tu plataforma y colócalo ahí."
         )
     if os.name == "nt" or os.access(binary, os.X_OK):

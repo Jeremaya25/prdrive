@@ -115,10 +115,9 @@ def _binary() -> str:
 
     Este módulo lo usa la UI, y ahí matar el proceso es cerrarle la ventana al
     usuario en las narices en vez de decirle qué falta."""
-    name = "rclone.exe" if os.name == "nt" else "rclone"
-    if not (model.BIN_DIR / name).exists():
+    if model.rclone_path() is None:
         raise ConfigError(
-            f"No encuentro el binario de rclone en: {model.BIN_DIR / name}\n"
+            f"No encuentro el binario de rclone en: {model.BIN_DIR / model.rclone_name()}\n"
             f"Sin él no se puede hablar con el catálogo.")
     return model.rclone_binary()
 

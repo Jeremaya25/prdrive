@@ -29,7 +29,7 @@ import zipfile
 from pathlib import Path
 from typing import Callable
 
-from common.model import arch_dir
+from common.model import arch_dir, machine_arch
 
 from . import RCLONE_BASE_URL, InstallError, bundle_dir
 
@@ -42,13 +42,21 @@ def exe_name() -> str:
 
 
 def os_arch() -> tuple[str, str]:
-    """(so, arquitectura) con los nombres que usa rclone en sus zips."""
+    """(so, arquitectura) con los nombres que usa rclone en sus zips.
+
+    La arquitectura sale de `machine_arch()`, no de `platform.machine()`, por lo
+    mismo que `bin_subdir()` se la pregunta al modelo: el instalador es un .exe
+    x64 y en un Windows ARM se creería en un equipo x64, así que descargaba el
+    rclone de amd64 para dejarlo en el `bin/arm` que mira el dispositivo."""
     sysname = {"windows": "windows", "darwin": "osx", "linux": "linux"}.get(
         platform.system().lower(), "linux")
-    machine = platform.machine().lower()
-    if machine in {"x86_64", "amd64", "x64"}:
-        arch = "amd64"
-    elif machine.startswith("arm") or machine in {"aarch64", "arm64"}:
+    # ARM o x86 lo decide `arch_dir()`, no una segunda tabla de aquí: tenía una
+    # y se le había quedado corta —'aarch64_be' era ARM para el dispositivo y
+    # amd64 para el instalador—, que es exactamente el desajuste que este módulo
+    # no puede permitirse, porque el zip que baja acaba dentro de la carpeta que
+    # elige el otro. Dentro de x86 sí queda algo que decidir: 32 o 64 bits.
+    machine = machine_arch()
+    if arch_dir() == "arm":
         arch = "arm64"
     elif machine in {"i386", "i686", "x86"}:
         arch = "386"
@@ -67,8 +75,16 @@ def bin_subdir() -> str:
 
 
 def cache_dir() -> Path:
+    """La caché de descargas, con una carpeta por arquitectura.
+
+    Separada por arquitectura porque si no la caché es lo que deshace el
+    arreglo: un instalador que se creyó x64 en un equipo ARM dejó ahí un rclone
+    de amd64, y al volver a instalar `find_rclone()` lo encuentra antes de
+    plantearse descargar, así que el `download_url()` correcto no llega a
+    usarse nunca. El binario del zip depende de la arquitectura; el sitio donde
+    se guarda, también."""
     base = os.environ.get("LOCALAPPDATA") or tempfile.gettempdir()
-    d = Path(base) / "prdrive-install"
+    d = Path(base) / "prdrive-install" / bin_subdir()
     d.mkdir(parents=True, exist_ok=True)
     return d
 

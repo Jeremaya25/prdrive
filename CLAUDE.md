@@ -100,6 +100,28 @@ Two traps that only show up frozen: `sys.executable` is the installer and not
 Python (hence `install.python_command()`), and `sys.stdout` can be None with
 `--windowed` (hence `report()`, which opens a window when there is no console).
 
+A third one only shows up **on Windows on ARM**, and it is what
+`model.machine_arch()` exists for. rclone lives in `bin/<arch>/`, chosen by
+`model.arch_dir()` — but the installer is an x64 `.exe` (it is built on an x64
+runner) and Windows lies to an emulated x64 process about the hardware under it:
+`platform.machine()`, `PROCESSOR_ARCHITECTURE` and even `GetNativeSystemInfo()`
+all answer `AMD64` on a Snapdragon, and `PROCESSOR_ARCHITEW6432` is only set for
+32-bit processes, not for emulated x64 ones. The one API that tells the truth is
+`IsWow64Process2()`, so `model.maquina_nativa_windows()` asks it and everything
+else — `arch_dir()`, `rclone_bin.os_arch()`, `rclone_bin.cache_dir()` — hangs off
+that single answer. It matters because the two sides do **not** run the same
+Python: the installer deposited rclone in `bin/x64` while the device's
+`runsync.py`, running under the machine's native ARM64 Python, looked in
+`bin/arm` and found nothing. `os_arch()` asks `arch_dir()` for the ARM/x86 split
+rather than keeping a second table (its own had already drifted: `aarch64_be`
+was ARM for the device and amd64 for the installer), the download cache is per
+architecture (a single one would hand back the wrong-arch binary forever), and
+`BIN_FALLBACK_DIRS` lets an ARM64 host fall back to `bin/x64` — emulated x64
+runs, ARM on x64 does not, which is why that list is not symmetric. Note this is
+resolved on the **host**, not stored on the device: the same drive plugged into
+an x64 desktop and into an ARM laptop legitimately needs both `bin/` folders.
+`tests/test_arch.py` fakes the probe, so none of it needs an ARM machine.
+
 `design/` holds the UI redesign mock-ups (`.dc.html` artboards) that `ui/` now
 implements. They are design, not code: nothing imports them and nothing is
 generated from them, so a change in `ui/` does not update them — they are the
