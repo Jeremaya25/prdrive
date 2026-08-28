@@ -5,6 +5,7 @@ build_installer.py — Genera el ejecutable del instalador.
     python build_installer.py                 dist/prdrive-install(.exe)
     python build_installer.py --console       con consola detrás (para depurar)
     python build_installer.py --only-secret   solo genera install/secret.py
+    python build_installer.py --onedir        carpeta en vez de fichero único
 
 Hace dos cosas distintas, y conviene no confundirlas:
 
@@ -60,6 +61,12 @@ NOMBRE = "prdrive-install"
 DATOS_FICHEROS = ("sync.py", "runsync.py", "penwatch.py", "VERSION",
                   "device-readme.md")
 DATOS_ARBOLES = ("common", "ui")
+
+# Los datos del recurso de versión del .exe. La línea de copyright es la misma
+# que el apéndice de LICENSE: si cambia una, cambia la otra.
+AUTOR = "Jeremaya"
+COPYRIGHT = "Copyright 2026 Jeremaya - Apache License 2.0"
+DESCRIPCION = "Instalador de prdrive: sincronizacion portable con rclone"
 
 PLANTILLA = '''"""
 secret.py — GENERADO por build_installer.py. NO SE VERSIONA.
@@ -141,6 +148,50 @@ def escribir_icono() -> Path | None:
     return icons.write_ico(destino)
 
 
+# Se genera en ASCII a proposito, sin acentos: lo lee PyInstaller, no una
+# persona, y no merece la pena depender de con que codificacion lo abra.
+VERSION_INFO = """# GENERADO por build_installer.py. El recurso de version del .exe.
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers={tupla}, prodvers={tupla},
+    mask=0x3f, flags=0x0, OS=0x40004, fileType=0x1, subtype=0x0, date=(0, 0)),
+  kids=[
+    StringFileInfo([StringTable('040a04b0', [
+      StringStruct('CompanyName', {autor!r}),
+      StringStruct('FileDescription', {descripcion!r}),
+      StringStruct('FileVersion', {version!r}),
+      StringStruct('InternalName', {nombre!r}),
+      StringStruct('LegalCopyright', {copyright!r}),
+      StringStruct('OriginalFilename', {fichero!r}),
+      StringStruct('ProductName', {producto!r}),
+      StringStruct('ProductVersion', {version!r}),
+    ])]),
+    VarFileInfo([VarStruct('Translation', [0x040a, 1200])]),
+  ]
+)
+"""
+
+
+def escribir_version_info() -> Path:
+    """Pinta build/version_info.txt: quién firma el .exe, qué es y qué versión."""
+    from common import APP_NAME
+    from common.update import installed_version
+
+    version = installed_version(RAIZ) or "0.0.0"
+    # filevers exige cuatro enteros. 'v1.2' o un sufijo raro no pueden tumbar la
+    # compilación por un campo informativo: lo que no sea número cuenta como 0.
+    partes = [int(x) if x.isdigit() else 0 for x in version.split(".")[:4]]
+    tupla = tuple(partes + [0] * (4 - len(partes)))
+
+    destino = RAIZ / "build" / "version_info.txt"
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    destino.write_text(VERSION_INFO.format(
+        tupla=tupla, autor=AUTOR, descripcion=DESCRIPCION, version=version,
+        nombre=NOMBRE, copyright=COPYRIGHT, fichero=NOMBRE + ".exe",
+        producto=APP_NAME), encoding="utf-8")
+    return destino
+
+
 def datos() -> list[str]:
     """Los `--add-data` del árbol que se despliega en el dispositivo."""
     args: list[str] = []
@@ -158,10 +209,17 @@ def datos() -> list[str]:
     return args
 
 
-def compilar(consola: bool) -> Path:
-    """Llama a PyInstaller y devuelve la ruta del ejecutable."""
+def compilar(consola: bool, carpeta: bool) -> Path:
+    """Llama a PyInstaller y devuelve la ruta del entregable."""
     cmd = [
-        sys.executable, "-m", "PyInstaller", "--onefile", "--noconfirm", "--clean",
+        sys.executable, "-m", "PyInstaller",
+        "--onedir" if carpeta else "--onefile",
+        "--noconfirm", "--clean",
+        # UPX comprime el ejecutable y es, a ojos de un antivirus, exactamente
+        # lo que hace un empaquetador de malware. PyInstaller lo usa solo si lo
+        # encuentra en el PATH, así que sin esto el binario saldría distinto
+        # según la máquina que compile.
+        "--noupx",
         "--name", NOMBRE,
         "--distpath", str(RAIZ / "dist"),
         "--workpath", str(RAIZ / "build"),
@@ -178,10 +236,16 @@ def compilar(consola: bool) -> Path:
     # igual, sin él, en vez de abortar por un adorno.
     if sys.platform == "win32":
         cmd += ["--icon", str(escribir_icono())]
+        cmd += ["--version-file", str(escribir_version_info())]
     cmd.append(str(ENTRADA))
     print("$ " + " ".join(cmd))
     if subprocess.run(cmd, cwd=str(RAIZ)).returncode != 0:
         raise SystemExit("PyInstaller ha fallado.")
+
+    if carpeta:
+        # En modo carpeta el entregable ES dist/<nombre>/: el .exe de dentro no
+        # arranca sin el _internal/ que tiene al lado.
+        return RAIZ / "dist" / NOMBRE
 
     # PyInstaller deja además el árbol sin empaquetar en dist/<nombre>/, que es
     # una SEGUNDA copia de la aplicación —con el perfil dentro si lo hay—. El
@@ -200,6 +264,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--only-secret", action="store_true",
                         help="Genera install/secret.py y no compila. Para probar "
                              "el camino del perfil incrustado sin PyInstaller.")
+    parser.add_argument("--onedir", action="store_true",
+                        help="Entrega dist/prdrive-install/ en vez de un fichero "
+                             "único. Menos cómodo de repartir (hay que llevarse "
+                             "la carpeta entera, o un zip), pero no se autoextrae "
+                             "en el temporal al arrancar, que es la forma que más "
+                             "puntúa en los antivirus.")
     args = parser.parse_args(argv)
 
     if args.only_secret:
@@ -211,7 +281,7 @@ def main(argv: list[str] | None = None) -> int:
     con_secreto = False
     try:
         con_secreto = escribir_secreto() is not None
-        binario = compilar(args.console)
+        binario = compilar(args.console, args.onedir)
     finally:
         # Pase lo que pase. Un secret.py olvidado en el árbol es la fuga que este
         # script existe para evitar.
@@ -223,7 +293,8 @@ def main(argv: list[str] | None = None) -> int:
         shutil.rmtree(RAIZ / "build", ignore_errors=True)
 
     print(f"\nListo: {binario}")
-    print(f"Compruébalo con:  {binario} --check")
+    comprobar = binario / (NOMBRE + ".exe") if args.onedir else binario
+    print(f"Compruébalo con:  {comprobar} --check")
     if con_secreto:
         print("\nEse fichero LLEVA DENTRO tu clave privada. Compártelo solo en "
               "privado; si se filtra, revoca la clave en el servidor.")
