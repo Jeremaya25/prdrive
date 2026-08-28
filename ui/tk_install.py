@@ -29,9 +29,13 @@ from install import InstallError, InstallState
 from install import crypto, deploy, device, profile, rclone_bin, remote
 
 from . import icons, theme
-from .tk import TITLE, centrar, output_window, working
+from .tk import TITLE, Visor, centrar, output_window, working
 
 VENTANA = f"{TITLE} — Instalador"
+
+# El lienzo de los pasos, en las medidas del diseño; `icons.px` las lleva a los
+# píxeles de esta pantalla, porque el texto de dentro también crece con ella.
+ANCHO_CUERPO, ALTO_CUERPO = 820, 430
 
 
 # ---------------------------------------------------------------------------
@@ -41,9 +45,10 @@ VENTANA = f"{TITLE} — Instalador"
 class Wizard:
     """La ventana y por qué paso va. Los pasos solo pintan dentro de `cuerpo`."""
 
-    def __init__(self, root, cuerpo, cabecera, boton_siguiente, boton_atras) -> None:
+    def __init__(self, root, visor, cabecera, boton_siguiente, boton_atras) -> None:
         self.root = root
-        self.cuerpo = cuerpo
+        self.visor = visor
+        self.cuerpo = visor.interior
         self.cabecera = cabecera
         self.boton_siguiente = boton_siguiente
         self.boton_atras = boton_atras
@@ -74,6 +79,13 @@ class Wizard:
             text=f"Paso {self.indice + 1} de {len(PASOS)}   ·   {titulo}")
         dibujar(self.cuerpo, self)
         self.revisar()
+        # El hueco se ajusta DESPUÉS de pintar, que es cuando se sabe lo que pide
+        # este paso. Se recoloca la ventana solo si ha cambiado de tamaño: el
+        # asistente se centra una vez al abrirse y no debe pasearse por la
+        # pantalla a cada paso, pero uno que crece sin recolocarse acaba con el
+        # pie por debajo del borde de abajo.
+        if self.visor.crecer(self.root):
+            centrar(self.root)
 
     def revisar(self) -> None:
         """Enciende o apaga «Siguiente» según la condición del paso actual."""
@@ -148,9 +160,17 @@ def build(root) -> Wizard:
     ttk.Separator(marco, orient="horizontal").grid(
         row=1, column=0, sticky="ew", pady=(6, 12))
 
-    cuerpo = ttk.Frame(marco, width=820, height=430)
-    cuerpo.grid(row=2, column=0, sticky="nw")
-    cuerpo.grid_propagate(False)
+    # El hueco de los pasos. Antes era un `ttk.Frame` de 820x430 con
+    # `grid_propagate(False)`, que es un recorte silencioso: el paso 1 pide 486
+    # px de alto en una pantalla normal y el último campo simplemente no se
+    # dibujaba. Ahora es un `Visor`: parte del tamaño del diseño, CRECE hasta lo
+    # que pida el paso más grande (nunca encoge, para que la ventana no baile de
+    # un paso a otro) y solo se desplaza cuando ya no cabe en la pantalla.
+    visor = Visor(marco, ancho=icons.px(root, ANCHO_CUERPO),
+                  alto=icons.px(root, ALTO_CUERPO))
+    visor.marco.grid(row=2, column=0, sticky="nsew")
+    marco.columnconfigure(0, weight=1)
+    marco.rowconfigure(2, weight=1)
 
     ttk.Separator(marco, orient="horizontal").grid(
         row=3, column=0, sticky="ew", pady=(12, 8))
@@ -164,7 +184,7 @@ def build(root) -> Wizard:
     ttk.Button(pie, text="Salir", command=root.destroy).grid(row=0, column=3, padx=(20, 0))
     pie.columnconfigure(2, weight=1)
 
-    wiz = Wizard(root, cuerpo, cabecera, siguiente, atras)
+    wiz = Wizard(root, visor, cabecera, siguiente, atras)
     atras.configure(command=lambda: wiz.ir(-1))
     siguiente.configure(command=lambda: wiz.ir(+1))
     wiz.repintar()

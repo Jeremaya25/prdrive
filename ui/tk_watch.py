@@ -17,7 +17,7 @@ ahora mismo— son chips, y el resto texto normal.
 from __future__ import annotations
 
 from . import theme, watch
-from .tk import TITLE, cabecera, modal, mostrar, output_window
+from .tk import TITLE, cabecera, cuerpo_visible, modal, mostrar, output_window
 
 # Las filas de estado que además de un valor llevan un veredicto, y por eso se
 # pintan como chip en vez de como texto. La clave es la etiqueta tal cual la
@@ -51,8 +51,7 @@ def open_dialog(parent, config=None) -> None:
     from tkinter import messagebox, ttk
 
     dlg = modal(parent, "Arranque automático")
-    marco = ttk.Frame(dlg, padding=(20, 18, 20, 16))
-    marco.grid(sticky="nsew")
+    marco = cuerpo_visible(dlg, padding=(20, 18, 20, 16))
     marco.columnconfigure(0, weight=1)
 
     arriba = ttk.Frame(marco)
@@ -178,8 +177,7 @@ def formulario_instalacion(parent, config) -> dict | None:
     from tkinter import ttk
 
     dlg = modal(parent, "Instalar el vigilante")
-    marco = ttk.Frame(dlg, padding=(20, 18, 20, 16))
-    marco.grid(sticky="nsew")
+    marco = cuerpo_visible(dlg, padding=(20, 18, 20, 16))
     marco.columnconfigure(2, weight=1)
     resultado: dict = {"opciones": None}
     previas = watch.installed_options()

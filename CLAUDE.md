@@ -381,7 +381,43 @@ with two screens the coordinates go negative and "correcting" would drag the dia
 across. Tests replace `mostrar()` (not `modal()`) to keep windows off the screen.
 The install wizard's root does it by hand too, in `tk_install.run_wizard()`; it
 centres **once**, at open, and not on every step — a wizard that re-centred as its
-body changed size would walk across the screen while you use it.
+body changed size would walk across the screen while you use it. The one
+exception is `Wizard.repintar()` re-centring when `Visor.crecer()` reports the
+body actually changed size: growing without recolocating puts the footer past
+the bottom edge, and that only happens on the step that grows it, not on every
+step.
+
+**Every screen sits inside a `tk.Visor`, so it fits on any screen.** Font sizes
+are in points, so Tk grows them on a dense display or with the system zoom at
+150 %, while a container measured in pixels does not grow with them — and a
+window cannot be taller than the screen no matter what. `Visor` is a canvas of a
+known size with the content inside: `interior` is where you draw, `encajar()`
+sizes it to the content or to what fits, whichever is smaller, and `crecer()`
+(the wizard's) only ever grows it. Scrollbars appear **only** when content is
+left over, and their gutter is reserved with `minsize` whether they show or not
+— a bar that took and gave back its own width would resize the window from step
+to step, and would oscillate on and off around the threshold. `pantalla_util()`
+is what "fits" means and it is a module-level function so a test can replace it
+and pretend the screen is 1024x600.
+
+- `cuerpo_visible(ventana, padding=…)` replaces the `ttk.Frame(dlg, padding=…)` +
+  `.grid(sticky="nsew")` every dialog used to open with, and hangs the visor off
+  the window so `mostrar()` calls `encajar()` without each dialog remembering to.
+- The wizard's body was a `ttk.Frame(width=820, height=430)` with
+  `grid_propagate(False)`, which is a **silent crop**: step 1 asks for 486 px of
+  height on an ordinary 1080p screen and its last field simply was not drawn.
+  Its size is now a starting minimum (`ANCHO_CUERPO`/`ALTO_CUERPO` through
+  `icons.px`), not a cap.
+- `output_window` needs no visor — the `Text` already scrolls — but its `104x28`
+  are rows and columns of text, not pixels, so it asks for the ones that fit.
+- `tests/test_tk_medidas.py` is the guard: every screen against a matrix of
+  resolution **and** `tk scaling` — 1080p/2K/4K at 100 %, 150 % and 200 %, plus
+  the small laptop sizes — checking that the window asks for no more than there
+  is and that nothing is cropped without a scrollbar to reach it. The scaling
+  column is the half that matters: a 4K on its own only proves there is room to
+  spare, while a 1080p at 200 % is where the content stops fitting. It fakes both
+  by replacing `pantalla_util` and calling `tk scaling` on the interpreter, which
+  is reversible and is picked up by widgets created afterwards.
 
 `tk.working(parent, title, funcion)` is the third way of showing something
 running, next to `output_window` (a command whose output is the point) and a plain

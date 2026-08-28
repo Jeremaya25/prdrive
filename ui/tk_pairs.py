@@ -27,7 +27,7 @@ from common import catalog, config_file, model
 from common.model import ConfigError
 
 from . import catalog_editor, flags_editor, icons, pair_editor, theme
-from .tk import TITLE, bloque_aviso, cabecera, modal, mostrar
+from .tk import TITLE, bloque_aviso, cabecera, cuerpo_visible, modal, mostrar
 
 COLUMNAS = [
     ("usa", "En el dispositivo", 62),
@@ -82,8 +82,7 @@ def open_dialog(parent, config) -> bool:
     cat, aviso = catalog.load(raw)
     estado = {"raw": raw, "config": config, "cat": cat, "cambiado": False}
 
-    marco = ttk.Frame(dlg, padding=(20, 18, 20, 16))
-    marco.grid(sticky="nsew")
+    marco = cuerpo_visible(dlg, padding=(20, 18, 20, 16))
     marco.columnconfigure(0, weight=1)
 
     # --- de qué va esta pantalla, y de dónde sale el catálogo ---------------
@@ -459,8 +458,7 @@ def confirmar_plan(parent, plan, titulo: str, nota: str) -> bool:
 
     dlg = modal(parent, titulo)
     respuesta = {"sigue": False}
-    marco = ttk.Frame(dlg, padding=(22, 20, 22, 18))
-    marco.grid(sticky="nsew")
+    marco = cuerpo_visible(dlg, padding=(22, 20, 22, 18))
     marco.columnconfigure(0, weight=1)
 
     ttk.Label(marco, text=titulo, style="Dialogo.TLabel").grid(
@@ -513,8 +511,7 @@ def preguntar_limpieza(parent, name: str) -> bool | None:
     from tkinter import ttk
 
     dlg = modal(parent, f"Quitar '{name}'")
-    marco = ttk.Frame(dlg, padding=(22, 20, 22, 18))
-    marco.grid(sticky="nsew")
+    marco = cuerpo_visible(dlg, padding=(22, 20, 22, 18))
     marco.columnconfigure(0, weight=1)
     respuesta = {"valor": None}
 
@@ -597,8 +594,7 @@ def formulario(parent, raw: dict, original_name: str | None, actual: dict,
 
     dlg = modal(parent, titulo or (f"Editar '{original_name}'" if original_name
                                    else "Nueva pareja"))
-    marco = ttk.Frame(dlg, padding=(20, 18, 20, 16))
-    marco.grid(sticky="nsew")
+    marco = cuerpo_visible(dlg, padding=(20, 18, 20, 16))
     marco.columnconfigure(2, weight=1)
     resultado: dict = {"datos": None}
     por_defecto = raw.get("defaults", {}).get("remote", model.DEFAULT_REMOTE)
@@ -741,8 +737,7 @@ def defaults_form(parent, actual: dict, catalogo: dict | None,
     from tkinter import ttk
 
     dlg = modal(parent, titulo)
-    marco = ttk.Frame(dlg, padding=(20, 18, 20, 16))
-    marco.grid(sticky="nsew")
+    marco = cuerpo_visible(dlg, padding=(20, 18, 20, 16))
     marco.columnconfigure(2, weight=1)
     resultado: dict = {"datos": None}
 
@@ -900,8 +895,7 @@ def flags_form(parent, titulo: str, subtitulo: str, flags: dict, extra: list,
     from tkinter import ttk
 
     dlg = modal(parent, titulo)
-    marco = ttk.Frame(dlg, padding=(20, 18, 20, 16))
-    marco.grid(sticky="nsew")
+    marco = cuerpo_visible(dlg, padding=(20, 18, 20, 16))
     marco.columnconfigure(1, weight=1)
     resultado: dict = {"datos": None}
 

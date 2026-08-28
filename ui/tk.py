@@ -119,6 +119,206 @@ def centrar(win, parent=None) -> None:
     win.geometry(f"+{x}+{y}")
 
 
+# ---------------------------------------------------------------------------
+# Que quepa en la pantalla
+# ---------------------------------------------------------------------------
+
+def pantalla_util(win) -> tuple[int, int]:
+    """Lo que de verdad le queda a una ventana: la pantalla menos su marco y la
+    barra de tareas.
+
+    Los márgenes van en medidas del diseño escaladas (`icons.px`) porque el
+    adorno del sistema crece con la densidad igual que el texto: una barra de
+    tareas ocupa más píxeles en una pantalla al 150 % que en una al 100 %."""
+    return (max(480, win.winfo_screenwidth() - icons.px(win, 60)),
+            max(360, win.winfo_screenheight() - icons.px(win, 110)))
+
+
+class Visor:
+    """Un recuadro con el contenido dentro, que se desplaza cuando no cabe.
+
+    Existe porque una ventana no puede ser más alta que la pantalla y el
+    contenido de estas sí: los tamaños de letra van en puntos, así que en una
+    pantalla densa —o con el zoom del sistema al 150 %— todo crece, mientras que
+    los recuadros de tamaño fijo no. Eso se veía como un asistente al que le
+    faltaba el último campo, sin nada que lo avisara: el paso 1 pide 486 px de
+    alto en una pantalla normal y el hueco medía 430.
+
+    `interior` es donde se dibuja. El recuadro se ajusta cuando la ventana ya
+    está montada (`encajar`/`crecer`) y no antes, porque hasta entonces no se
+    sabe cuánto ocupa el resto —cabecera, pie, márgenes—, y descontar una cifra
+    fija sería volver a suponer el tamaño de las letras.
+
+    Las barras tienen su hueco reservado siempre, aparezcan o no: si lo ganaran
+    y lo perdieran, la ventana cambiaría de ancho al pasar de un paso a otro."""
+
+    def __init__(self, padre, ancho: int | None = None, alto: int | None = None):
+        """`ancho`/`alto` son el tamaño de partida y el mínimo, no un tope: el
+        recuadro nunca es más pequeño que eso, y crece con el contenido hasta
+        donde llegue la pantalla."""
+        import tkinter as tk
+        from tkinter import ttk
+
+        self.base = (ancho, alto)
+        self.marco = ttk.Frame(padre)
+        self.lienzo = tk.Canvas(self.marco, background=theme.PAPEL,
+                                highlightthickness=0, borderwidth=0,
+                                width=ancho or 200, height=alto or 150)
+        self.vertical = ttk.Scrollbar(self.marco, orient="vertical",
+                                      command=self.lienzo.yview)
+        self.horizontal = ttk.Scrollbar(self.marco, orient="horizontal",
+                                        command=self.lienzo.xview)
+        self.lienzo.configure(yscrollcommand=self.vertical.set,
+                              xscrollcommand=self.horizontal.set)
+        self.lienzo.grid(row=0, column=0, sticky="nsew")
+        self.marco.columnconfigure(0, weight=1)
+        self.marco.rowconfigure(0, weight=1)
+        self.marco.columnconfigure(1, minsize=self.vertical.winfo_reqwidth())
+        self.marco.rowconfigure(1, minsize=self.horizontal.winfo_reqheight())
+
+        self.interior = ttk.Frame(self.lienzo)
+        self._dentro = self.lienzo.create_window((0, 0), window=self.interior,
+                                                 anchor="nw")
+        self._puesto = (0, 0)          # lo último que se le dijo al item
+        self.interior.bind("<Configure>", lambda _e: self._revisar())
+        self.lienzo.bind("<Configure>", lambda _e: self._revisar())
+        self.lienzo.bind("<Enter>", lambda _e: self._rueda(True))
+        self.lienzo.bind("<Leave>", lambda _e: self._rueda(False))
+        self.lienzo.bind("<Destroy>", lambda _e: self._rueda(False))
+
+    # --- tamaño -------------------------------------------------------------
+
+    def _medida(self) -> tuple[int, int]:
+        """Lo que mide el recuadro ahora mismo."""
+        return (int(self.lienzo.cget("width")), int(self.lienzo.cget("height")))
+
+    def _natural(self) -> tuple[int, int]:
+        """Lo que pediría el contenido si nadie lo recortara, nunca por debajo
+        del tamaño de partida: `base` es un mínimo, no un tope."""
+        self.interior.update_idletasks()
+        base_x, base_y = self.base
+        return (max(base_x or 0, self.interior.winfo_reqwidth()),
+                max(base_y or 0, self.interior.winfo_reqheight()))
+
+    def _tope(self, ventana) -> tuple[int, int]:
+        """Lo más grande que puede ser el recuadro sin que la ventana se salga.
+
+        Se mide el resto de la ventana en vez de descontar una cifra fija: la
+        cabecera y el pie ocupan lo que ocupen sus fuentes."""
+        ventana.update_idletasks()
+        resto_x = max(0, ventana.winfo_reqwidth() - self.lienzo.winfo_reqwidth())
+        resto_y = max(0, ventana.winfo_reqheight() - self.lienzo.winfo_reqheight())
+        util_x, util_y = pantalla_util(ventana)
+        return (max(320, util_x - resto_x), max(240, util_y - resto_y))
+
+    def _fijar(self, ancho: int, alto: int) -> bool:
+        """Devuelve si ha cambiado de tamaño.
+
+        `_revisar()` se llama aunque no cambie: cambiar de paso cambia el
+        contenido sin cambiar el hueco, y entonces la barra que hace falta (o la
+        que sobra) es distinta. Dejarlo colgando del `<Configure>` significaba
+        que hasta el siguiente reposo del bucle de eventos la barra no estaba, y
+        el hueco parecía completo cuando no lo era."""
+        cambia = (ancho, alto) != self._medida()
+        if cambia:
+            self.lienzo.configure(width=ancho, height=alto)
+        self._revisar()
+        return cambia
+
+    def encajar(self, ventana=None) -> bool:
+        """Deja el recuadro del tamaño del contenido, o del que quepa si no cabe."""
+        ventana = ventana or self.marco.winfo_toplevel()
+        ancho, alto = self._natural()
+        self._fijar(ancho, alto)
+        tope_x, tope_y = self._tope(ventana)
+        return self._fijar(min(ancho, tope_x), min(alto, tope_y))
+
+    def crecer(self, ventana=None) -> bool:
+        """Agranda el recuadro si lo de ahora pide más, y no lo encoge nunca.
+
+        Es lo que necesita un asistente: el hueco tiene que valer para el paso
+        más grande, y una ventana que menguara y creciera a cada paso sería un
+        baile. Devuelve si ha cambiado de tamaño, que es cuando quien llama
+        tiene que volver a colocarla."""
+        ventana = ventana or self.marco.winfo_toplevel()
+        pide_x, pide_y = self._natural()
+        hay_x, hay_y = self._medida()
+        tope_x, tope_y = self._tope(ventana)
+        return self._fijar(min(max(hay_x, pide_x), tope_x),
+                           min(max(hay_y, pide_y), tope_y))
+
+    # --- barras --------------------------------------------------------------
+
+    def _revisar(self) -> None:
+        """Enseña cada barra solo si por ese lado sobra contenido.
+
+        El interior se estira hasta llenar el hueco cuando no sobra, para que un
+        formulario colocado con `sticky='ew'` siga ocupando todo el ancho; y solo
+        se le habla cuando la medida cambia, porque redimensionarlo dispara otro
+        `<Configure>` y con él se volvería aquí sin parar."""
+        ancho, alto = self._medida()
+        ancho = max(ancho, self.lienzo.winfo_width())
+        alto = max(alto, self.lienzo.winfo_height())
+        pide_x = self.interior.winfo_reqwidth()
+        pide_y = self.interior.winfo_reqheight()
+        medida = (max(ancho, pide_x), max(alto, pide_y))
+        if medida != self._puesto:
+            self._puesto = medida
+            self.lienzo.itemconfigure(self._dentro, width=medida[0], height=medida[1])
+            self.lienzo.configure(scrollregion=(0, 0, medida[0], medida[1]))
+        # Puesta o no en la rejilla, no `winfo_ismapped()`: una ventana todavía
+        # oculta —y todas nacen ocultas, ver `modal()`— no tiene nada mapeado, y
+        # con eso la barra se pondría cada vez y no se quitaría nunca.
+        for barra, falta, sitio in (
+                (self.vertical, pide_y > alto, dict(row=0, column=1, sticky="ns")),
+                (self.horizontal, pide_x > ancho, dict(row=1, column=0, sticky="ew"))):
+            puesta = bool(barra.grid_info())
+            if falta and not puesta:
+                barra.grid(**sitio)
+            elif not falta and puesta:
+                barra.grid_remove()
+
+    def _rueda(self, activar: bool) -> None:
+        eventos = ("<MouseWheel>", "<Button-4>", "<Button-5>")   # Windows / X11
+        for evento in eventos:
+            if activar:
+                self.lienzo.bind_all(evento, self._girar)
+            else:
+                self.lienzo.unbind_all(evento)
+
+    def _girar(self, evento):
+        """La rueda desplaza el recuadro, salvo sobre algo que ya se desplaza
+        solo: dentro de la caja de opciones o de una lista, la rueda es suya."""
+        if not self.vertical.winfo_ismapped():
+            return None
+        if evento.widget is not self.lienzo and hasattr(evento.widget, "yview_scroll"):
+            return None
+        arriba = getattr(evento, "num", 0) == 4 or getattr(evento, "delta", 0) > 0
+        self.lienzo.yview_scroll(-1 if arriba else 1, "units")
+        return "break"
+
+
+def cuerpo_visible(ventana, **opciones):
+    """El marco donde se dibuja una pantalla, ya dentro de un `Visor`.
+
+    Sustituye al `ttk.Frame(ventana, padding=…)` + `.grid(sticky='nsew')` que
+    hacían todos los diálogos. La única diferencia visible es que, cuando la
+    pantalla es pequeña, el contenido se desplaza en vez de quedarse fuera. El
+    visor queda colgado de la ventana para que `mostrar()` lo encaje al
+    enseñarla, sin que cada diálogo tenga que acordarse."""
+    from tkinter import ttk
+    visor = Visor(ventana)
+    visor.marco.grid(row=0, column=0, sticky="nsew")
+    ventana.columnconfigure(0, weight=1)
+    ventana.rowconfigure(0, weight=1)
+    visor.interior.columnconfigure(0, weight=1)
+    visor.interior.rowconfigure(0, weight=1)
+    marco = ttk.Frame(visor.interior, **opciones)
+    marco.grid(row=0, column=0, sticky="nsew")
+    ventana.visor = visor
+    return marco
+
+
 def modal(parent, title: str):
     """Un diálogo hijo, todavía OCULTO. Se enseña con `mostrar()`.
 
@@ -145,6 +345,11 @@ def mostrar(dlg, parent=None) -> None:
     fallara, se sigue: un diálogo sin captura es un incordio, pero uno que no se
     abre es un cuelgue."""
     import tkinter as tk
+    # Primero encoger el contenido a lo que quepa y solo después centrar: al
+    # revés se centraría un tamaño que aún va a cambiar.
+    visor = getattr(dlg, "visor", None)
+    if visor is not None:
+        visor.encajar(dlg)
     centrar(dlg, parent)
     dlg.deiconify()
     dlg.update_idletasks()
@@ -273,8 +478,9 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
     result: dict = {"choice": None}
     vista: dict = {"config": config, "aviso": startup_msg}
 
-    frame = ttk.Frame(root, padding=(22, 20, 22, 18))
-    frame.grid(sticky="nsew")
+    # Dentro de un visor: la lista de parejas crece con cada pareja y la ventana
+    # no puede pasar del alto de la pantalla. Con pocas parejas no se nota nada.
+    frame = cuerpo_visible(root, padding=(22, 20, 22, 18))
     frame.columnconfigure(0, weight=1)
 
     def recargar() -> None:
@@ -289,6 +495,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
             return
         vista["aviso"] = None
         render()
+        root.visor.encajar(root)
         centrar(root)   # quitar o añadir parejas le cambia el alto
 
     def render() -> None:
@@ -470,6 +677,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
                    command=lambda: choose("daemon")).grid(row=0, column=1)
 
     render()
+    root.visor.encajar(root)
     centrar(root)
     root.deiconify()
     root.mainloop()
@@ -522,7 +730,7 @@ def output_window(title: str, cmd: list[str], parent=None,
     tkinter no lleva bien dos intérpretes a la vez, y desde un diálogo ya hay uno
     en marcha."""
     import tkinter as tk
-    from tkinter import filedialog, messagebox, ttk
+    from tkinter import filedialog, font as tkfont, messagebox, ttk
 
     proc = subprocess.Popen(
         cmd,
@@ -587,6 +795,21 @@ def output_window(title: str, cmd: list[str], parent=None,
     scroll = ttk.Scrollbar(root, command=text.yview)
     text.configure(yscrollcommand=scroll.set)
     scroll.grid(row=1, column=1, sticky="ns")
+
+    # 104x28 son filas y columnas de texto, no píxeles: con el zoom del sistema
+    # al 150 % esas 28 líneas miden más que la pantalla y la ventana nace con el
+    # final fuera. Aquí no hace falta un `Visor` —el texto ya se desplaza solo—,
+    # basta con pedir las que caben. Se mide el resto de la ventana en vez de
+    # descontar una cifra fija, igual que hace `Visor._tope`.
+    root.update_idletasks()
+    resto_x = max(0, root.winfo_reqwidth() - text.winfo_reqwidth())
+    resto_y = max(0, root.winfo_reqheight() - text.winfo_reqheight())
+    util_x, util_y = pantalla_util(root)
+    letra = tkfont.Font(root=root, font=text.cget("font"))
+    columna, linea = max(1, letra.measure("0")), max(1, letra.metrics("linespace"))
+    text.configure(width=max(40, min(104, (util_x - resto_x) // columna)),
+                   height=max(8, min(28, (util_y - resto_y) // linea)))
+
     for nombre, opciones in (
             ("normal", dict(foreground=theme.TINTA2)),
             ("cabecera", dict(foreground=theme.TINTA, font=(
