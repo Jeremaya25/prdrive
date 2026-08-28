@@ -303,7 +303,8 @@ def write_device_remote(device_root: Path | str, profile: Profile) -> list[Path]
 # El sync_config.toml del dispositivo
 # ---------------------------------------------------------------------------
 
-def device_config(catalog: Catalog, selected: list[str]) -> dict:
+def device_config(catalog: Catalog, selected: list[str],
+                  catalog_path: str = "") -> dict:
     """El dict crudo del config de ESTE dispositivo: los defaults del catálogo,
     su [daemon] si lo trae, y solo las parejas elegidas.
 
@@ -325,6 +326,12 @@ def device_config(catalog: Catalog, selected: list[str]) -> dict:
     daemon = _daemon_section(catalog, selected)
     if daemon:
         raw["daemon"] = daemon
+    if catalog_path:
+        # La ruta del catálogo se teclea en el paso 1 y hasta aquí solo servía
+        # para descargarlo: no quedaba escrita en ningún sitio, así que el
+        # dispositivo instalado volvía a la de por defecto y la ventana de
+        # parejas buscaba el catálogo donde no estaba.
+        raw.setdefault("defaults", {})["catalog_path"] = catalog_path
     raw["pair"] = [dict(catalog.pair(n)) for n in selected]      # type: ignore[arg-type]
     model.parse_config(raw)                                      # red final
     return raw
@@ -369,11 +376,12 @@ def config_path(device_root: Path | str) -> Path:
 
 
 def write_device_config(device_root: Path | str, catalog: Catalog,
-                        selected: list[str], endpoint: str = "") -> Path:
+                        selected: list[str], endpoint: str = "",
+                        catalog_path: str = "") -> Path:
     """Escribe el sync_config.toml del dispositivo. Devuelve su ruta."""
     destino = config_path(device_root)
     destino.parent.mkdir(parents=True, exist_ok=True)
-    config_file.save(device_config(catalog, selected), path=destino,
+    config_file.save(device_config(catalog, selected, catalog_path), path=destino,
                      head=device_header(catalog, endpoint))
     return destino
 

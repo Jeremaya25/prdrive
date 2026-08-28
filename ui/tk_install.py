@@ -348,6 +348,28 @@ def _paso_conexion(cuerpo, wiz) -> None:
     ttk.Entry(comun, textvariable=catalogo, width=46).grid(row=0, column=1,
                                                            sticky="w", padx=(6, 0))
 
+    def cambiar_catalogo(*_) -> None:
+        """La ruta del catálogo, aplicada sola.
+
+        Es el único campo de este paso que vale igual para una conexión recién
+        tecleada que para una que ya venía dada —incrustada en el .exe o en el
+        checkout—, y en ese segundo caso «Usar esta conexión» no se pulsa nunca:
+        sin esto, cambiarla aquí no llegaba a ningún sitio. Al cambiarla se suelta
+        lo descargado, porque el catálogo que hubiera en memoria es el de la ruta
+        anterior."""
+        if not wiz.perfil.configured:
+            return                      # aún no hay perfil: lo pone `usar()`
+        nueva = catalogo.get().strip() or profile.DEFAULT_CATALOG_PATH
+        if nueva == wiz.perfil.catalog_path:
+            return
+        wiz.soltar_conexion()
+        wiz.perfil = profile.with_catalog_path(wiz.perfil, nueva)
+        estado.configure(text=f"✔ {wiz.perfil.describe()}   ·   catálogo en "
+                              f"{wiz.perfil.endpoint_catalog}", style="Ok.TLabel")
+        wiz.revisar()
+
+    catalogo.trace_add("write", cambiar_catalogo)
+
     estado = ttk.Label(cuerpo, wraplength=780, justify="left", style="Pista.TLabel")
     estado.grid(row=5, column=0, sticky="w", pady=(12, 0))
 
@@ -737,7 +759,8 @@ def _paso_parejas(cuerpo, wiz) -> None:
         try:
             destino = deploy.write_device_config(
                 wiz.device_root, wiz.catalog, seleccion,
-                endpoint=wiz.perfil.endpoint_catalog)
+                endpoint=wiz.perfil.endpoint_catalog,
+                catalog_path=wiz.perfil.catalog_path)
             creadas = deploy.make_local_dirs(wiz.device_root, wiz.catalog, seleccion)
         except InstallError as e:
             wiz.error(str(e))

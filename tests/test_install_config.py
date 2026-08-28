@@ -104,6 +104,15 @@ sin_daemon = deploy.device_config(remote.parse_catalog(
 c("un [daemon] que se queda sin parejas válidas pierde la clave",
   "pairs" in sin_daemon.get("daemon", {}), False)
 
+# La ruta del catálogo se teclea en el instalador y tiene que quedar escrita: si
+# no, el dispositivo instalado vuelve a la de por defecto y busca el catálogo
+# donde no está.
+con_ruta = deploy.device_config(cat, ["docs"], "/otro-sitio/pairs.toml")
+c("la ruta del catálogo se guarda en los defaults",
+  con_ruta["defaults"]["catalog_path"], "/otro-sitio/pairs.toml")
+c("y sin ella los defaults no se inventan la clave",
+  "catalog_path" in raw.get("defaults", {}), False)
+
 # --- lo que no se permite -----------------------------------------------------
 for etiqueta, seleccion in (("ninguna pareja", []), ("una que no existe", ["fantasma"])):
     try:

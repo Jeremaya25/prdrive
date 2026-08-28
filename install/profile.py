@@ -397,6 +397,17 @@ def align_with_catalog(perfil: Profile,
     return ajustado, notas
 
 
+def with_catalog_path(perfil: Profile, ruta: str) -> Profile:
+    """El mismo perfil con otra ruta de catálogo.
+
+    La ruta se teclea en su propia caja, aparte de la conexión, y por eso puede
+    cambiar sin que se vuelva a construir el perfil entero: sin esto, editarla
+    con una conexión ya dada no llegaba a ningún sitio. Vacía vuelve a la de por
+    defecto, igual que en `from_form`."""
+    return replace(perfil,
+                   catalog_path=(ruta or "").strip() or DEFAULT_CATALOG_PATH)
+
+
 def to_catalog_remote(profile: Profile) -> dict[str, str]:
     """El `[remote]` que se guarda en el catálogo. Sin nada secreto dentro."""
     tabla = {"name": profile.remote_name}
