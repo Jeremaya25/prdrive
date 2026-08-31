@@ -1,24 +1,26 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code working in this repository.
 
 ## What this is
 
 **prdrive**: portable two-way sync between *any* rclone remote and a removable
-drive, driven by a bundled `rclone` binary. Pure Python **stdlib**, Python 3.11+
+drive, driven by a bundled `rclone` binary. Pure Python **stdlib**, 3.11+
 (`tomllib`). No build, no dependencies, no package manifest. Tests are plain
-scripts under `tests/` — `python tests/run_all.py`, no framework, nothing touches
-a real device or the network.
+scripts under `tests/` — no framework, nothing touches a real device or the
+network.
 
 The code knows **no server**: everything about the connection lives in a
-`profile.Profile` that the wizard asks for, imports from the user's `rclone.conf`,
-or carries embedded in the compiled `.exe`. What the remote stores is
-**configuration only** — the catalogue of pairs — never the program.
+`profile.Profile` the wizard asks for, imports from the user's `rclone.conf`, or
+carries embedded in the compiled `.exe`. The remote stores **configuration
+only** — the catalogue of pairs — never the program.
 
-Four entry points stay at the repo root: three because the volume-root launchers
-(`runsync.pyw` / `runsync.sh`) and `penwatch.py` locate them by fixed path, and
-`prdrive-install.py` because it is what gets compiled and handed out. Everything
-else is split by what it knows about:
+## Layout
+
+Four entry points at the repo root: `sync.py`, `runsync.py`, `penwatch.py`,
+`prdrive-install.py`. The first three because volume-root launchers
+(`runsync.pyw` / `runsync.sh`) and `penwatch.py` locate them by fixed path;
+`prdrive-install.py` because it is what gets compiled and handed out.
 
 ```
 prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
@@ -32,8 +34,7 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 │   ├── config_file.py reads AND writes sync_config.toml (hand-rolled serializer)
 │   ├── catalog.py     the global pair catalogue on the remote: read, cache, write
 │   ├── update.py      is there a newer release, and how to fetch its code — no Tk
-│   └── store.py       the device's JSON state files + pid_alive(): reads that
-│                       tolerate anything, atomic writes
+│   └── store.py       device JSON state files + pid_alive(); tolerant reads, atomic writes
 ├── ui/                knows how to ask the user and show results
 │   ├── __init__.py    Choice, the Frontend protocol, start(), fatal()
 │   ├── theme.py       the visual system in ttk: palette, fonts, styles — no window
@@ -51,7 +52,7 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 │   ├── tk_update.py   the «there's a new version» screen (drawing only)
 │   └── console.py     ConsoleFrontend: the text menu
 ├── install/           what the installer knows; no Tk, no device needed
-│   ├── __init__.py    the brand constants, InstallError, InstallState, python_command()
+│   ├── __init__.py    brand constants, InstallError, InstallState, python_command()
 │   ├── profile.py     the connection: where it comes from and how it is written
 │   ├── rclone_bin.py  get hold of an rclone to start with
 │   ├── remote.py      the ephemeral rclone.conf and the pair catalogue
@@ -61,89 +62,71 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 └── tests/             plain scripts; run_all.py runs them in separate processes
 ```
 
-The `tk_*` modules only draw. Everything that decides or touches disk lives in
-`pair_editor.py` / `catalog_editor.py` / `flags_editor.py` / `watch.py` /
-`install/`, which import no Tk and are tested headlessly. `theme.py` and
-`icons.py` sit under the `tk_*` modules: they own every colour, font and glyph,
-so a `tk_*` module never writes a hex value of its own.
+**Dependency rules — do not cross them:**
 
-`prdrive-install.py` also sits at the root and **is** tracked in git: it is the
-fourth entry point, and it is a launcher — arguments in, `ui/tk_install.py` out.
-The one exception is `--update`, which does its work right there and never opens
-a window: it is the applier of the self-update, it runs from the *downloaded*
-copy of the project rather than from a device, and a wizard step for it would be
-a wizard nobody is sitting in front of. Everything else it knows lives in
-`install/`, which **does** import `common/`
-(`model.BASE_FLAGS`, `model.flags_to_args`, `config_file.save`,
-`store.pid_alive`): what the installer writes has to be byte-for-byte what
-`sync.py` will later read, and a second copy of those rules is a second place to
-get them wrong. What it must NOT import is `ui/` outside `tk_install`, and it
-must keep working with **no device anywhere** — it runs before one exists.
+- `tk_*` modules only draw. Every decision and disk touch lives in
+  `pair_editor` / `catalog_editor` / `flags_editor` / `watch` / `install/`,
+  which import no Tk and are tested headlessly.
+- `theme.py` / `icons.py` own every colour, font and glyph; a `tk_*` module
+  never writes a hex value of its own.
+- `penwatch.py` imports **neither** package: it is copied to the host and must
+  keep working with the device unplugged.
+- `install/` **does** import `common/` (`model.BASE_FLAGS`,
+  `model.flags_to_args`, `config_file.save`, `store.pid_alive`) — what the
+  installer writes must be byte-for-byte what `sync.py` later reads. It must
+  **not** import `ui/` outside `tk_install`, and must work with **no device
+  anywhere**.
+- `prdrive-install.py` is a launcher (arguments in, `ui/tk_install.py` out). The
+  one exception is `--update`, which does its work inline with no window: it is
+  the self-update applier, run from the *downloaded* copy of the project.
 
-It ships as a PyInstaller executable (`build_installer.py`), and that build does
-**two** things: it packs the tree the installer will deploy (`sync.py`,
-`runsync.py`, `penwatch.py`, `common/`, `ui/` as `--add-data`), and it optionally
-embeds a connection profile with its private key. Both halves matter:
+**On a provisioned device** the code lives in `.prdrive/` at the volume root
+(the leading dot hides it on POSIX; `deploy.hide()` sets the hidden attribute on
+Windows). `model.APP_DIR` is `Path(__file__).parent.parent` and `DEVICE_ROOT`
+its parent, so **nothing depends on the folder name or drive letter** — a
+development checkout named anything works the same. Constants that must not
+drift, guarded by `tests/test_install_device.py`: `deploy.APP_SUBDIR` and the
+two copies each of `STRUCT_MARKER` and `CONTROL_FILE` (`.prdrive/PRDRIVE`) in
+`penwatch.py` / `install/device.py`. The control file sits **inside** that
+folder: identifying the drive only needs a path relative to its root, and inside
+it cannot be deleted without deleting the program.
+
+`design/` holds the UI redesign mock-ups (`.dc.html` artboards) that `ui/`
+implements. They are the record of what was decided, not code — nothing imports
+or generates them. `Sistema.dc.html` is the sheet `ui/theme.py` translates.
+
+## The PyInstaller build (`build_installer.py`)
+
+It does **two** things: packs the tree the installer will deploy (`sync.py`,
+`runsync.py`, `penwatch.py`, `common/`, `ui/` as `--add-data`), and optionally
+embeds a connection profile with its private key.
 
 - `common/` and `ui/` end up in the bundle **twice** — as importable bytecode
-  (the installer uses them) and as copyable data (what gets deployed).
-  PyInstaller cannot hand back the `.py` source of a module it imported, and
-  source is what has to land on the device.
-- **Without a profile** — the normal case for a clone of this repo — the binary is
-  generic, carries no secret at all, and asks for the connection in step 1.
-  **With one** (`prdrive-profile.toml` + `keys/` in the checkout) it is
-  turnkey and must only ever be shared privately. This split is what lets the
-  repo be public: `install/secret.py` is generated at build time, gitignored, and
-  deleted in a `finally`.
+  (the installer uses them) and as copyable source (what lands on the device).
+  PyInstaller cannot hand back the `.py` source of a module it imported.
+- **Without a profile** (the normal case for a clone) the binary is generic,
+  carries no secret, and asks for the connection in step 1. **With one**
+  (`prdrive-profile.toml` + `keys/` in the checkout) it is turnkey and must only
+  be shared privately. This split is what lets the repo be public:
+  `install/secret.py` is generated at build time, gitignored, deleted in a
+  `finally`.
 
-Two traps that only show up frozen: `sys.executable` is the installer and not
-Python (hence `install.python_command()`), and `sys.stdout` can be None with
-`--windowed` (hence `report()`, which opens a window when there is no console).
+**Traps that only show up frozen:** `sys.executable` is the installer, not
+Python (`install.python_command()`); `sys.stdout` can be None with `--windowed`
+(`report()` opens a window when there is no console).
 
-A third one only shows up **on Windows on ARM**, and it is what
-`model.machine_arch()` exists for. rclone lives in `bin/<arch>/`, chosen by
-`model.arch_dir()` — but the installer is an x64 `.exe` (it is built on an x64
-runner) and Windows lies to an emulated x64 process about the hardware under it:
-`platform.machine()`, `PROCESSOR_ARCHITECTURE` and even `GetNativeSystemInfo()`
-all answer `AMD64` on a Snapdragon, and `PROCESSOR_ARCHITEW6432` is only set for
-32-bit processes, not for emulated x64 ones. The one API that tells the truth is
-`IsWow64Process2()`, so `model.maquina_nativa_windows()` asks it and everything
-else — `arch_dir()`, `rclone_bin.os_arch()`, `rclone_bin.cache_dir()` — hangs off
-that single answer. It matters because the two sides do **not** run the same
-Python: the installer deposited rclone in `bin/x64` while the device's
-`runsync.py`, running under the machine's native ARM64 Python, looked in
-`bin/arm` and found nothing. `os_arch()` asks `arch_dir()` for the ARM/x86 split
-rather than keeping a second table (its own had already drifted: `aarch64_be`
-was ARM for the device and amd64 for the installer), the download cache is per
-architecture (a single one would hand back the wrong-arch binary forever), and
-`BIN_FALLBACK_DIRS` lets an ARM64 host fall back to `bin/x64` — emulated x64
-runs, ARM on x64 does not, which is why that list is not symmetric. Note this is
-resolved on the **host**, not stored on the device: the same drive plugged into
-an x64 desktop and into an ARM laptop legitimately needs both `bin/` folders.
-`tests/test_arch.py` fakes the probe, so none of it needs an ARM machine.
-
-`design/` holds the UI redesign mock-ups (`.dc.html` artboards) that `ui/` now
-implements. They are design, not code: nothing imports them and nothing is
-generated from them, so a change in `ui/` does not update them — they are the
-record of what was decided, and `Sistema.dc.html` is the sheet `ui/theme.py`
-translates.
-
-`penwatch.py` must NOT import either package: it is copied to the host and has to
-keep working with the device unplugged.
-
-On a provisioned device the code lives in `.prdrive/` at the volume root — the
-leading dot hides it on POSIX and `deploy.hide()` sets the hidden attribute on
-Windows. `model.APP_DIR` is `Path(__file__).parent.parent` and `DEVICE_ROOT` is
-its parent, so **nothing depends on the folder name or the drive letter**: a
-development checkout called anything at all works the same. `deploy.APP_SUBDIR`
-is the name the installer writes, and `penwatch.STRUCT_MARKER` /
-`device.STRUCT_MARKER` are the two copies that have to agree with it — as are
-`penwatch.CONTROL_FILE` / `device.CONTROL_FILE`, which is `.prdrive/PRDRIVE`.
-The control file sits **inside** that folder rather than at the volume root:
-identifying the drive only needs a path relative to its root, so anywhere does,
-and inside it leaves nothing loose among the user's files and cannot be deleted
-without deleting the program too. `tests/test_install_device.py` asserts the two
-copies of both constants have not drifted.
+**Windows on ARM** — what `model.maquina_nativa_windows()` exists for. rclone
+lives in `bin/<arch>/`, chosen by `model.arch_dir()`. The installer is an x64
+`.exe`, and Windows lies to an emulated x64 process about the hardware:
+`platform.machine()`, `PROCESSOR_ARCHITECTURE`, `GetNativeSystemInfo()` all
+answer `AMD64` on a Snapdragon; `PROCESSOR_ARCHITEW6432` is only set for 32-bit
+processes. Only `IsWow64Process2()` tells the truth, and `arch_dir()`,
+`rclone_bin.os_arch()` / `cache_dir()` all hang off that one answer. It matters
+because the two sides do not run the same Python — the installer wrote rclone to
+`bin/x64`, the device's native ARM64 `runsync.py` looked in `bin/arm`. The
+download cache is per-arch; `BIN_FALLBACK_DIRS` lets an ARM64 host fall back to
+`bin/x64` (not symmetric — emulated x64 runs, ARM on x64 does not). Resolved on
+the **host**, never stored on the device. `tests/test_arch.py` fakes the probe.
 
 ## Commands
 
@@ -159,396 +142,283 @@ python sync.py --keep-logs     # keep logs of successful runs too
 
 python runsync.py              # UI (Tk, console fallback) + periodic service
 python runsync.py --auto       # start the periodic service with [daemon] defaults, no UI
-python runsync.py --doctor     # any other args are passed straight through to sync.py
+python runsync.py --doctor     # any other args pass straight through to sync.py
 
 python penwatch.py install     # register the mount watcher on THIS machine/user
 python penwatch.py status      # what is registered + whether the device is visible now
 python penwatch.py probe       # detection only: candidate roots and what matched
 python penwatch.py uninstall
 
-python prdrive-install.py          # the install wizard for a NEW device (Tk only, no console menu)
+python prdrive-install.py          # install wizard for a NEW device (Tk only, no console menu)
 python prdrive-install.py --check  # rclone + connection + catalogue, then exit
 python prdrive-install.py --probe  # what drives it sees, then exit
 python prdrive-install.py --update E:\   # replace the code of an installed device
-python build_installer.py          # build the .exe (PyInstaller; embeds the profile if there is one)
+python build_installer.py          # build the .exe (embeds the profile if there is one)
 python -m ui.icons                 # repaint APP_DIR/runsync.ico (no Tk, no display)
 
-python tests/run_all.py        # todos los tests (scripts sueltos, sin framework)
-python tests/test_pair_editor.py   # o uno solo
+python tests/run_all.py            # all tests (loose scripts, no framework)
+python tests/test_pair_editor.py   # or just one
 ```
 
-`runsync.py` with no args always **stops a previously started service** first.
-Verification is by `tests/run_all.py`, `--doctor` and `--dry-run`; there is
-nothing to lint.
-
-Git note: this checkout sits on an exFAT/NTFS volume, so git refuses it as
-"dubious ownership" — prefix commands with `-c safe.directory=F:/rclone-sync`.
-`.gitignore` excludes everything device- or user-specific (`bin/`, `keys/`,
-`filters/`, `logs/`, `state/`, `sync_config.toml`, `rclone.conf`,
-`prdrive-profile.toml`), so what is tracked is the code (`sync.py`, `runsync.py`,
-`penwatch.py`, `prdrive-install.py`, `build_installer.py`, `common/`, `ui/`,
-`install/`, `tests/`) plus `VERSION`, `design/`, `sync_config.example.toml`,
-`README.md`, `CLAUDE.md` and `.gitignore`. The installer's build artefacts (`build/`, `dist/`,
-`*.spec`) and its embedded profile (`install/secret.py`) are ignored too — the
-private key is what makes those last two non-negotiable. **Nothing on the device
-travels to the remote any more**: no pair mirrors `.prdrive/`, so neither the key
-nor the state nor the code can leak that way.
+- `runsync.py` with no args always **stops a previously started service** first.
+- Verification is `tests/run_all.py`, `--doctor`, `--dry-run`. Nothing to lint.
+- Git: this checkout sits on an exFAT/NTFS volume, so git refuses it as "dubious
+  ownership" — prefix commands with `-c safe.directory=F:/rclone-sync`.
+- `.gitignore` excludes device/user-specific paths (`bin/`, `keys/`, `filters/`,
+  `logs/`, `state/`, `sync_config.toml`, `rclone.conf`, `prdrive-profile.toml`),
+  build artefacts (`build/`, `dist/`, `*.spec`), and `install/secret.py`.
+  **Nothing on the device travels to the remote** — no pair mirrors `.prdrive/`.
 
 ## Architecture
 
-`sync.py` is the engine. `runsync.py` no longer imports it at all — it talks to
-`common.model` for config and shells out to `model.SYNC_PY <pair>` per pair, so
-the two never share in-process state. It never re-implements sync logic.
+`sync.py` is the engine. `runsync.py` never imports it — it reads config via
+`common.model` and shells out to `model.SYNC_PY <pair>` per pair, so the two
+never share in-process state.
 
-**Parse once, at the boundary.** `model.parse_config()` turns the TOML into frozen
-value objects and nothing downstream re-reads TOML keys or repeats
-`.get(key, default)`; in particular `defaults` stops being threaded through every
-signature, because every layer it contributes is already merged:
+**Parse once, at the boundary.** `model.parse_config()` turns the TOML into
+frozen value objects; nothing downstream re-reads TOML keys or repeats
+`.get(key, default)`, and `defaults` stops being threaded through signatures
+because every layer it contributes is already merged.
 
-- `Mode` — one entry per mode in `MODES`, carrying the rclone subcommand, which
-  end is source and which is dest, and that mode's default flags. Adding a mode
-  means adding one `Mode(...)` to that table.
-- `Pair` — a `[[pair]]` with every layer resolved: `includes`/`excludes`, merged
-  `flags`, `extra_flags`, and the endpoint properties (`local_endpoint`,
-  `remote_endpoint`, `source`, `dest`, `local_abs`, `workdir`).
-- `Config` — the pairs plus `[daemon]`, `keep_logs`, `device_remote`, with
-  `select()` (aborts on unknown names) and `pen_environment()`.
+- `Mode` — one entry per mode in `MODES`: the rclone subcommand, which end is
+  source/dest, that mode's default flags. Adding a mode = one `Mode(...)`.
+- `Pair` — a `[[pair]]` fully resolved: `includes`/`excludes`, merged `flags`,
+  `extra_flags`, endpoint properties (`source`, `dest`, `local_abs`, `workdir`…).
+- `Config` — pairs plus `[daemon]`, `keep_logs`, `device_remote`; `select()`
+  (aborts on unknown names), `pen_environment()`.
 
-An invalid `mode` is rejected at parse time rather than when that pair runs, so a
-typo in the TOML stops `--list`/`--doctor`/a run alike instead of only the
-affected pair. Same message, earlier.
+An invalid `mode` is rejected at parse time, so a typo stops
+`--list`/`--doctor`/a run alike. Validation raises **`model.ConfigError`**, not
+`sys.exit` — the UI shares this model and killing the process would close the
+window in the user's face. CLI entry points catch it and exit with its message.
+The only surviving `sys.exit`s in `model.py` are the `tomllib` import and the
+missing rclone binary.
 
-Validation raises **`model.ConfigError`**, it does not `sys.exit`: the UI uses the
-same model, and there killing the process means closing the window in the user's
-face instead of showing which line is wrong. The CLI entry points catch it and
-exit with its message, so nothing changes on the console. The two surviving
-`sys.exit`s in `model.py` are the tomllib import (unrecoverable, at import time)
-and the missing rclone binary (environment, not config).
-
-**Config → command.** Flags merge in layers, last wins: `BASE_FLAGS` <
-`Mode.flags` < `[defaults.flags]` < `[pair.flags]` — all of it inside
-`model._build_pair`, so `Pair.flags` arrives ready. `build_command()` only adds
-what depends on *this* run, and `model.flags_to_args()` turns `key = value` into
-`--key value` (`true` → bare flag, `false`/`None` → dropped, list → repeated flag,
-`_` → `-`). It lives in `model.py`, not in `sync.py`, because the UI has to show
-what a flag turns into without importing the engine. **Adding an rclone flag means
-editing the TOML, never the code.** The script owns `--config`, `--log-file`,
-`--dry-run`, `--workdir`, `--resync`; `extra_flags` is the raw-string escape hatch.
+**Config → command.** Flags merge last-wins: `BASE_FLAGS` < `Mode.flags` <
+`[defaults.flags]` < `[pair.flags]`, all inside `model._build_pair` so
+`Pair.flags` arrives ready. `build_command()` adds only what depends on *this*
+run. `model.flags_to_args()` turns `key = value` into `--key value` (`true` →
+bare flag, `false`/`None` → dropped, list → repeated flag, `_` → `-`); it lives
+in `model.py` so the UI can show what a flag becomes without importing the
+engine. **Adding an rclone flag means editing the TOML, never the code.** The
+script owns `--config`, `--log-file`, `--dry-run`, `--workdir`, `--resync`;
+`extra_flags` is the raw-string escape hatch.
 
 **`RunContext`** carries what does not change between pairs in one invocation
-(binary, env, `dry_run`, `force_resync`, `resync_approved`, `keep_logs`), so
-`run_pair(ctx, pair)` replaces an eight-positional-argument call that ended in
-four consecutive booleans.
+(binary, env, `dry_run`, `force_resync`, `resync_approved`, `keep_logs`).
 
-**Why the ugly parts exist** (all of it is about bisync's baseline; the comments in
-`sync.py` cite the rclone sources they replicate):
+### bisync (`common/bisync.py`)
 
-All of it lives in `common/bisync.py`, on purpose: it is the one place that
-imitates rclone's own behaviour, and each section cites the rclone file it mirrors.
+The one place that imitates rclone's own behaviour; each section cites the
+rclone source file it mirrors. Preserve those citations.
 
-- *Session prefix.* bisync names its listings after the two endpoint strings.
-  `canonical_path`/`session_name`/`expected_prefix` replicate
-  `cmd/bisync/bilib/canonical.go` so the script knows the filename rclone will look
-  for **before** running. `normalize_prefix()` renames an existing listing set when
-  it no longer matches (device mounted as `E:` instead of `F:`); `heal_listings()` is
-  the fallback that parses the `Tip: Path1/Path2` lines out of a failed log and
-  retries **once**. Current state files are `F__sync-data_...` — drive-letter bound.
-- *`device_remote`.* Setting `device_remote = "device"` in `[defaults]` makes the device side a
-  `combine` remote defined via `RCLONE_CONFIG_<NAME>_TYPE/_UPSTREAMS` env vars
-  (`Config.pen_environment()`, computed from **all** pairs so it is identical
-  whatever you run), making the prefix machine-independent. An `alias` remote does *not* work —
-  it returns the target Fs itself and the absolute path reappears. Not enabled in
-  the current `sync_config.toml`.
-- *Filters.* For `bisync` only (`Pair.wants_filters_file`), `filters_file_for()`
-  generates `filters/<pair>.txt` from the TOML include/exclude patterns and passes
-  `--filters-file`; in that case `--include/--exclude` are **not** also emitted
-  (duplicate rules break change detection). bisync stores the md5 beside the file
-  and only rewrites it during `--resync`, so `filters_state()` compares the hash
-  itself and reports "needs resync" instead of letting rclone abort.
-- *State.* One workdir per pair, `Pair.workdir` → `state/<pair>/`;
+- **Session prefix.** bisync names its listings after the two endpoint strings.
+  `canonical_path` / `session_name` / `expected_prefix` replicate
+  `cmd/bisync/bilib/canonical.go` so the script knows the filename rclone will
+  look for **before** running. `normalize_prefix()` renames an existing listing
+  set when it no longer matches (device mounted `E:` instead of `F:`);
+  `heal_listings()` parses `Tip: Path1/Path2` out of a failed log and retries
+  **once**. Current state files are `F__sync-data_...` — drive-letter bound.
+- **`device_remote`.** `device_remote = "device"` in `[defaults]` makes the
+  device side a `combine` remote via `RCLONE_CONFIG_<NAME>_TYPE/_UPSTREAMS` env
+  vars (`Config.pen_environment()`, computed from **all** pairs), making the
+  prefix machine-independent. An `alias` remote does *not* work. Not currently
+  enabled.
+- **Filters.** For `bisync` only (`Pair.wants_filters_file`), `filters_file_for()`
+  generates `filters/<pair>.txt` and passes `--filters-file`; `--include`/
+  `--exclude` are then **not** also emitted (duplicate rules break change
+  detection). bisync stores the md5 beside the file and rewrites it only during
+  `--resync`, so `filters_state()` compares the hash itself and reports "needs
+  resync".
+- **State.** One workdir per pair, `Pair.workdir` → `state/<pair>/`;
   `migrate_legacy_state()` moves the old flat layout. `pair_state()` returns a
-  `PairState(status, detail, prefix)` with `fresh|ok|broken` read from the actual
-  `.lst` files (`.lst-err` residue is ignored when a valid pair of listings
-  exists). `resync_reasons(pair, state=None)` returns the reasons this pair needs
-  a `--resync`, empty when it does not, and answers `[]` for non-bisync pairs —
-  the mode guard lives inside it now, so no caller can forget it. `last_run(pair)`
-  is the mtime of the newest listing, which **is** the last good pass: bisync
-  rewrites both listings on success, so there is no run log to invent. Non-bisync
-  pairs get None (a `copy` leaves no state) and the window shows a dash rather
-  than a made-up time; `ui.pair_times()` returns the raw timestamps, not text, so
-  the header can take the most recent one — sorting the strings would put 'ayer'
-  ahead of '08:20'.
-- *Resync approval.* `resolve_resync_approval()` asks **once** for all pairs before
-  anything runs. `ask_yes_no()` returns the default when stdin is not a tty, so
-  non-interactive runs skip those pairs (`SKIPPED = -1`, distinct from rc 0/failure)
-  rather than resyncing unattended.
+  `PairState(status, detail, prefix)` — `fresh|ok|broken` read from the actual
+  `.lst` files. `resync_reasons(pair, state=None)` returns the reasons this pair
+  needs a `--resync` (`[]` for non-bisync pairs — the mode guard is inside it).
+  `last_run(pair)` is the mtime of the newest listing, which **is** the last
+  good pass (bisync rewrites both listings on success); non-bisync pairs get
+  None and the window shows a dash. `ui.pair_times()` returns raw timestamps.
+- **Resync approval.** `resolve_resync_approval()` asks **once** for all pairs
+  before anything runs. `ask_yes_no()` returns the default when stdin is not a
+  tty, so non-interactive runs skip those pairs (`SKIPPED = -1`) rather than
+  resyncing unattended.
 
-**Safety invariants — do not weaken:**
+### Safety invariants — do not weaken
 
-- If a bisync baseline exists but the local path does **not**, `_bisync_preflight()`
-  aborts with rc 2 instead of creating the folder: an empty local side reads as
-  "everything was deleted". Only pairs without a baseline get their local dir
-  created.
-- `max-delete` defaults (25 bisync / 50 mirror) exist for the same reason.
-- rclone always runs with `cwd = model.APP_DIR` (i.e. `.prdrive/`, **not** the
-  package dir) because `rclone.conf` uses paths relative to it (`key_file`,
-  `known_hosts_file`) to stay portable. `model.APP_DIR` is
-  `Path(__file__).parent.parent` precisely because `model.py` sits one level down;
-  `DEVICE_ROOT` hangs off it. Moving these files changes those anchors.
-- Any `*-mirror` pair deletes on the far side. Never exercise one without
-  `--dry-run` first. There is **no longer** a pair that mirrors the whole device:
-  the code no longer travels through the remote, so nothing needs one.
+- If a bisync baseline exists but the local path does **not**,
+  `_bisync_preflight()` aborts with rc 2 instead of creating the folder (an
+  empty local side reads as "everything was deleted"). Only pairs **without** a
+  baseline get their local dir created.
+- `max-delete` defaults: 25 bisync / 50 mirror.
+- rclone always runs with `cwd = model.APP_DIR` (`.prdrive/`, not the package
+  dir) because `rclone.conf` uses paths relative to it (`key_file`,
+  `known_hosts_file`).
+- Any `*-mirror` pair deletes on the far side — never exercise one without
+  `--dry-run` first. No pair mirrors the whole device any more.
 
-**Logs.** rclone always writes to a temp file; `dispose_log()` keeps it in `logs/`
-only when the run failed (or `--keep-logs` / `keep_logs = true`), to spare write
-cycles on the device. On failure the tail is printed and `KNOWN_ERRORS` maps rclone
-messages to an explanation — add new cases there rather than in the caller.
+### Logs
 
-`--log-file` only catches what rclone logs **after** it installs the log, so
-`execute()` captures rclone's console (`stdout`+`stderr`) and `append_output()`
-appends it to that same file under `DIRECT_OUTPUT_HEADER`. Without it, everything
-that fails at startup — a flag that does not exist, a value it does not accept
-(`conflict-resolve = "new"` when the valid one is `newer`) — left a **0-byte log**
-and a failure with nothing to print and nothing to explain, which is the one case
-where that message is all there is. Captured and not inherited because with no
-console behind it (pythonw, the service) inherited output goes nowhere, and even
-with one it stayed outside the file that later gets kept, shown and explained.
+rclone writes to a temp file; `dispose_log()` keeps it in `logs/` only when the
+run failed (or `--keep-logs` / `keep_logs = true`), to spare device write
+cycles. On failure the tail is printed and `KNOWN_ERRORS` maps rclone messages
+to an explanation — add new cases there.
 
-`strip_usage()` drops the help dump rclone prints after a bad flag, and it is not
-cosmetic: those 12 KB bury the message in the 15 lines of `print_log_tail`, and
-they mention `--max-delete` and `lock file`, so `explain_failure()` matched a
-`KNOWN_ERRORS` needle inside rclone's own documentation and explained a failure
-that never happened. **A false diagnosis is worse than none.** For the same
-reason the two flag entries in `KNOWN_ERRORS` go **last**: a log carrying one of
-the others is a real sync failure, and that is the one to explain.
+- `--log-file` only catches what rclone logs **after** it installs the log, so
+  `execute()` captures rclone's `stdout`+`stderr` and `append_output()` appends
+  it under `DIRECT_OUTPUT_HEADER`. Without it, startup failures (a bad flag, a
+  value rclone rejects) left a 0-byte log with nothing to explain. Captured, not
+  inherited, because with no console behind it (pythonw, the service) inherited
+  output goes nowhere.
+- `strip_usage()` drops the 12 KB help dump rclone prints after a bad flag: it
+  buries the real message and mentions `--max-delete` / `lock file`, so
+  `explain_failure()` matched a `KNOWN_ERRORS` needle inside rclone's own
+  documentation and explained a failure that never happened. **A false diagnosis
+  is worse than none.** The two flag entries in `KNOWN_ERRORS` go **last**.
 
-**Daemon (`runsync.py`).** Coordination lives in `state/` so it travels with the
-device: `daemon.lock.json` (pid/host/pairs/last cycle, written atomically),
-`daemon.stop` (presence = stop request), `daemon.log` (self-trimming),
-`ui_prefs.json` (last UI choice). `startup_defaults()` layers that memory over
-`daemon_defaults()`: last choice > `[daemon]` in the TOML > all pairs / 30 min,
-and it feeds both the UI prefill and `--auto`'s no-argument case. Only the UI
-writes it (`save_prefs()` from `ui_flow`, for `manual`/`daemon` — not `doctor`);
-`--auto` and `--daemon` only read, so an automatic start never overwrites what
-was chosen by hand. `store.read_json`/`write_json` are the shared primitives under
-both the lock and the prefs, and `store.pid_alive()` lives beside them because a
-lock file with a pid inside is only worth anything if you can ask whether whoever
-wrote it is still running: the daemon asks it about its own lock, and the
-installer about the ephemeral key directories a killed run left behind.
+### Daemon (`runsync.py`)
 
-**UI (`ui/`).** Two frontends implement the same four operations (`ask`,
-`approve_resync`, `info`, `run_sync`), and `ui.start(config, msg)` returns the
-choice **together with the frontend that took it** — whoever asked is who knows
-how to show the answer, since a window cannot dump output to a console that does
-not exist and vice versa. Both return `Choice(action, pairs, minutes)`, so callers
-read `choice.action` instead of indexing a variable-length tuple.
+Coordination lives in `state/` so it travels with the device:
+`daemon.lock.json` (pid/host/pairs/cycle, atomic), `daemon.stop` (presence =
+stop request), `daemon.log` (self-trimming), `ui_prefs.json`.
+`startup_defaults()` layers memory over `daemon_defaults()`: last choice >
+`[daemon]` in the TOML > all pairs / 30 min. Only the UI writes prefs
+(`save_prefs()` for `manual`/`daemon`, not `doctor`); `--auto`/`--daemon` only
+read. `store.read_json`/`write_json` are the shared primitives; `store.pid_alive()`
+sits beside them.
 
-`output_window` colours each line by what it says (`tk._tono`), and that table is
-the vocabulary `sync.py` already prints — `=== pair ===`, `  ejecutando:`,
-`[pair] OK.`, `[pair] FALLÓ`, the final `Hecho. n/m parejas OK…`. Read it beside
-sync.py's `print()`s: if a wording changes there, a line stops being coloured
-here, nothing breaks. It also offers **Guardar el log**, because `dispose_log()`
-only keeps rclone's log when the run failed, so that window is the single copy of
-a successful pass.
+The service stops when the device disappears (`SENTINEL` check) or when runsync
+is launched again. **Windows specifics to preserve:** `pid_alive()` uses
+`OpenProcess`, never `os.kill` (which *terminates* on Windows); the daemon is
+spawned with `pythonw.exe` + `CREATE_NO_WINDOW`, rclone with `CREATE_NO_WINDOW`
+too (else every invocation flashes a console); the daemon `chdir`s to the temp
+dir so the device can be ejected. Child `sync.py` runs get `stdin=DEVNULL`, so a
+pair needing `--resync` is skipped rather than resynced unattended.
 
-A plan's consequences are shown by `tk_pairs.confirmar_plan()`, a real window with
-one line per consequence and each warning in its amber box — not an
-`askokcancel`. Six lines of running text in a message box is exactly what nobody
-reads, and this is the dialog that governs deletions. Tests replace
-`tk_pairs.confirmar_plan`, the way they replace `mostrar()`.
+## UI (`ui/`)
 
-`ConsoleFrontend.approve_resync` always returns False on purpose: with a real
-terminal, `sync.py` inherits stdin and asks the question itself, with more context
-than a dialog fits. Returning True there would append `--yes` and take that
-conversation away from the user.
+Two frontends implement the same four operations (`ask`, `approve_resync`,
+`info`, `run_sync`). `ui.start(config, msg)` returns the choice **together with
+the frontend that took it** — a window cannot dump output to a console that does
+not exist, and vice versa. Both return `Choice(action, pairs, minutes)`.
 
-**The look lives in `ui/theme.py` and `ui/icons.py`, and nowhere else.** The
-screens implement `design/`, and `Sistema.dc.html` is the sheet: warm paper, near
-black ink, one blue accent, amber for warnings, monospace for paths and flags; no
-rounded corners and no shadows, because those are the two things ttk cannot draw
-and faking them with images would mean changing toolkit to decorate.
+- `output_window` colours each line by content (`tk._tono`) using the vocabulary
+  `sync.py` already prints (`=== pair ===`, `  ejecutando:`, `[pair] OK.`,
+  `[pair] FALLÓ`, `Hecho. n/m parejas OK…`). Change the wording there and a line
+  stops being coloured; nothing breaks. It offers **Guardar el log** — the only
+  copy of a successful pass.
+- `tk_pairs.confirmar_plan()` is a real window, one line per consequence, each
+  warning in an amber box — not an `askokcancel`. This is the dialog that
+  governs deletions. Tests replace it, like `mostrar()`.
+- `ConsoleFrontend.approve_resync` always returns False on purpose: with a real
+  terminal `sync.py` inherits stdin and asks the question itself, with more
+  context than a dialog fits.
+- **`import tkinter` always goes inside functions, never at module top.** `ui/`
+  is imported by headless paths (`--auto`, the service) where tkinter may be
+  absent; the failure must surface when the window opens so `ui.start()` can
+  fall back to the console menu.
+- `save_prefs` stores `known` (the pair names that existed then) so a pair added
+  later reads as new and comes back checked; it skips the write when nothing
+  changed; a record whose pairs are all gone falls back to the TOML silently.
 
-- **`theme.nitidez()` runs before the first `Tk()`, and that is the whole reason
-  the window is sharp.** A process that does not declare DPI awareness is lied
-  to about the screen: on a 4K at 200 % Windows reports 1472x920 at 96 ppp
-  instead of 2944x1840 at 192, Tk draws at that size and the compositor
-  **stretches the bitmap** to the real panel. That stretch is the blur, and no
-  amount of font work fixes it — the glyphs are being painted with half the
-  pixels available. Declared, `tk scaling` goes from 1,33 to 2,67 and everything
-  measured in points grows on its own. It is **system** awareness and not
-  per-monitor on purpose: Tk 8.6 does not handle `WM_DPICHANGED`, so on a
-  second monitor at another zoom Windows stretches the window (blurry but the
-  right size) instead of leaving it at half its physical size, which is worse.
-  Tk reads the density once when its interpreter starts, so the call has to
-  precede `Tk()`; it is a process property, and it is called from all five
-  places that open a root because which one runs first depends on the entry
-  point.
-- **A design distance goes through `theme.medida()`, never as a bare integer.**
-  Tk takes a plain number as pixels and a number with `p` as points, which it
-  multiplies by `tk scaling`. `wraplength=760` measures 760 px at 100 % *and* at
-  200 %, so on a dense screen the same text — which did grow — is squeezed into
-  a column half as wide and three times as tall; the wizard's «Conexión» step
-  went from asking 1042 px of width to 1449, and stopped overflowing.
-  `theme.medida()` and `icons.px()` are the same idea in two shapes: `px()`
-  returns an int, for what Tk cannot scale at all (the icons' bitmaps) and for
-  what only takes an int (`rowheight`, which at a fixed 28 px clipped its own
-  37 px rows); `medida()` returns Tk's own distance and needs no widget at hand.
-  `tests/test_tk_densidad.py` guards both the effect and the habit: it fails if
-  a `wraplength`/`rowheight` in bare pixels reappears anywhere in `ui/`.
-- `theme.apply(widget)` switches to the **clam** theme and repaints everything.
-  clam and not the native theme because it is the only bundled one that lets you
-  set each border colour (`bordercolor`/`lightcolor`/`darkcolor`), and without
-  that a button cannot be a 1 px box of the colour the design says. It runs
-  **once per Tk interpreter** (styles are global inside one, and a session opens
-  more than one: the main window, then the wizard).
-- Styles are generated by crossing **role** (normal, hint, eyebrow, mono…) with
-  **surface** (paper, card, grey strip, amber block), because a `ttk.Label` does
-  not inherit its parent's background: the same hint on a white card and on the
-  paper are two different styles. The alternative — passing the colour by hand at
-  every call — is what guarantees one gets missed the day the palette moves.
-- `icons.py` rasterises the glyphs itself: no dependencies (no Pillow), Tk cannot
-  read SVG, and the design says «no emoji» — an emoji ✓ comes out in the system's
-  emoji font, in colour, at a size nobody controls. Each icon is a list of
-  primitives on the 16 grid and the rasteriser measures, per pixel, the distance
-  to the nearest ink, which gives antialiasing for free at any size.
-  `PhotoImage.put()` has no alpha, so `_rasterizar()` **takes the background and
-  composes against it** — cheap, because the whole palette is flat — while
-  `_capas_rgba()` keeps the alpha for the one caller that needs it, the `.ico`.
-  `icons.get()` returns None on any failure and the caller keeps its text: an
-  ornament cannot stop a window opening.
-- Square caps and miter joins are done by `_expandir()`, **once per layer, not per
-  pixel**: it moves the free ends outward by half the stroke and drops a wedge
-  (two triangles, `b`-`A`-`T`-`C`) into every corner. Both matter at thick
-  strokes and neither is optional — the app icon's arrowheads are two segments at
-  a right angle, and without this they came out as a lozenge instead of a point.
-  The wedge is the **quadrilateral** and not just the triangle `A`-`T`-`C`: the
-  two stroke rectangles cross at the vertex, so the triangle alone leaves the
-  point floating a hair away from the rest.
-- `write_ico()` paints `runsync.ico`, which is what `iconphoto()` cannot reach:
-  the icon of a shortcut, of a pinned taskbar button and of the installer's
-  `.exe` (`build_installer.py` generates it into `build/` and passes `--icon`).
-  It is Tk-free — `_capas_rgba` is plain Python — so it runs headless. Sizes ≤ 64
-  go in as DIBs and 128/256 as PNG (`zlib` is stdlib): a raw 256×256 is 270 KB
-  against 3 KB compressed, and PNG is what Windows expects at that size. The file
-  is written into `.prdrive/` by the wizard's install step, and **repainted**
-  rather than copied: it comes out of the same glyph table as the window's, so
-  there is no second copy to drift. Inside the hidden folder and not at the
-  volume root, because a stray icon among the user's files would be the only
-  visible leftover.
-- The layer order of `_capas_marca()` is the design's and is not decorative:
-  both arrowheads go **after** both arcs. Grouped by colour, the amber arc paints
-  over half the white arrowhead.
-- The Checkbutton indicator is replaced by an image element (`_casilla_propia`):
-  clam draws something closer to a cross and only lets you pick its colours. Its
-  right-hand margin is *unpainted* pixels of the same PhotoImage — a new one is
-  transparent — so the same image works on paper and on a card.
-- `icons.px()` scales the design's pixel sizes by `tk scaling`: Tk scales fonts on
-  a dense screen but not bitmaps, and a fixed 15 px icon next to grown text looks
-  like a toy.
-- A `ttk.Treeview` cannot colour a single cell, so the design's status chips
-  become **row tags** (`theme.marcar_lista`), which is what the sheet prescribes
-  for that table. Background and not foreground, so the selected row's blue still
-  shows on top and monospace paths stay readable.
+### Theme & icons (`ui/theme.py` + `ui/icons.py`, nowhere else)
+
+Implements `design/`; `Sistema.dc.html` is the sheet: warm paper, near-black
+ink, one blue accent, amber for warnings, monospace for paths and flags; no
+rounded corners and no shadows (ttk cannot draw them).
+
+- **`theme.nitidez()` runs before the first `Tk()`** and declares DPI awareness.
+  Without it a dense screen is misreported (4K at 200 % → 1472×920 at 96 ppp),
+  Tk draws at that size and the compositor stretches the bitmap — that stretch
+  is the blur, and no font work fixes it. **System** awareness, not per-monitor
+  (Tk 8.6 doesn't handle `WM_DPICHANGED`). Called from all five places that open
+  a root.
+- **Design distances go through `theme.medida()`, never a bare integer** — Tk
+  takes a plain number as pixels, unscaled, so `wraplength=760` is half as wide
+  on a dense screen. `icons.px()` returns an int for what Tk cannot scale at all
+  (bitmaps) and what only takes an int (`rowheight`).
+  `tests/test_tk_densidad.py` fails if a bare-pixel `wraplength`/`rowheight`
+  reappears in `ui/`.
+- `theme.apply(widget)` switches to **clam** (the only bundled theme that lets
+  you set each border colour) and repaints. Runs **once per Tk interpreter**.
+- Styles cross **role** (normal, hint, eyebrow, mono…) with **surface** (paper,
+  card, grey strip, amber block), because a `ttk.Label` does not inherit its
+  parent's background.
+- `icons.py` rasterises the glyphs itself: no dependencies, Tk cannot read SVG,
+  the design says «no emoji». Each icon is primitives on a 16-grid; the
+  rasteriser measures per-pixel distance to the nearest ink (free antialiasing).
+  `_rasterizar()` composes against the background (`PhotoImage.put()` has no
+  alpha); `_capas_rgba()` keeps the alpha for the `.ico`. `icons.get()` returns
+  None on any failure and the caller keeps its text.
+- `_expandir()` does square caps / miter joins **once per layer**: moves free
+  ends out by half the stroke and drops a quadrilateral wedge into each corner
+  (without it the app icon's right-angle arrowheads render as lozenges).
+- `write_ico()` paints `runsync.ico` (shortcut, taskbar and installer-`.exe`
+  icon, which `iconphoto()` cannot reach). Tk-free, runs headless. Sizes ≤ 64 go
+  in as DIBs, 128/256 as PNG (`zlib` is stdlib). Written into `.prdrive/` and
+  **repainted**, not copied — same glyph table as the window's, no second copy
+  to drift.
+- `_capas_marca()` layer order is the design's: both arrowheads **after** both
+  arcs, or the amber arc paints over the white arrowhead.
+- The Checkbutton indicator is replaced by an image (`_casilla_propia`); its
+  right-hand margin is unpainted transparent pixels so the same image works on
+  paper and on a card.
+- A `ttk.Treeview` cannot colour a single cell, so status chips become **row
+  tags** (`theme.marcar_lista`) — background, not foreground, so the selected
+  row's blue still shows.
+
+### Window sizing
 
 **Windows are shown already centred, never moved after the fact.** `modal()`
-returns the dialog **withdrawn** and without a grab; `mostrar(dlg, parent)` centres
-it, deiconifies, grabs and waits. The split exists because a window's size is not
-known until its widgets are in, and positioning it afterwards means watching it
-appear in a corner and jump. `grab_set()` and `centrar()`'s `update_idletasks()`
-must stay on their current side of the `deiconify()`: Tk refuses to grab a window
-that is not viewable. `main_window` and `output_window` do the same by hand.
-`centrar()` only clamps to the screen when the parent is on the primary monitor —
-with two screens the coordinates go negative and "correcting" would drag the dialog
-across. Tests replace `mostrar()` (not `modal()`) to keep windows off the screen.
-The install wizard's root does it by hand too, in `tk_install.run_wizard()`; it
-centres **once**, at open, and not on every step — a wizard that re-centred as its
-body changed size would walk across the screen while you use it. The one
-exception is `Wizard.reencajar()` re-centring when `Visor.crecer()` reports
-the body actually changed size: growing without recolocating puts the footer past
-the bottom edge.
+returns the dialog **withdrawn** and without a grab; `mostrar(dlg, parent)`
+centres, deiconifies, grabs and waits — a window's size is not known until its
+widgets are in. `grab_set()` and `update_idletasks()` must stay on their current
+side of the `deiconify()` (Tk refuses to grab a non-viewable window).
+`centrar()` clamps to the screen only when the parent is on the primary monitor.
+Tests replace `mostrar()`, not `modal()`. The wizard root centres **once**, at
+open (`tk_install.run_wizard()`); the exception is `Wizard.reencajar()`
+re-centring when `Visor.crecer()` reports the body actually changed size.
 
-`reencajar()` hangs off **`Wizard.revisar()`**, not off `repintar()`, because not
-everything that changes a step's height is a change of step: the «ya es un
-prdrive» panel appears on a `<<TreeviewSelect>>`, the checks table fills in as the
-remote answers, and the verification table redraws — and all three already end by
-calling `revisar()`. While the fit lived in `repintar()` alone, those three kept
-the *previous* box and the content was cropped **with no scrollbar to say so**,
-which is the worse of the two failures. The missing bar is not a second bug: the
-visor's `interior` is a canvas item with its height pinned by `itemconfigure`, so
-adding widgets changes what it *asks for* and not what it *measures*, and the
-`<Configure>` the scrollbar hangs off never fires. Anything that grows a body has
-to say so; `revisar()` is where every caller already was.
+`reencajar()` hangs off **`Wizard.revisar()`**, not `repintar()`: the «ya es un
+prdrive» panel, the checks table filling in, and the verification table redraw
+all change a step's height without a step change, and all three already end by
+calling `revisar()`. While the fit lived in `repintar()` those three kept the
+previous box and cropped the content **with no scrollbar** (the visor's
+`interior` is a canvas item with height pinned by `itemconfigure`, so the
+`<Configure>` the scrollbar hangs off never fires).
 
-**Every screen sits inside a `tk.Visor`, so it fits on any screen.** Font sizes
-are in points, so Tk grows them on a dense display or with the system zoom at
-150 %, while a container measured in pixels does not grow with them — and a
-window cannot be taller than the screen no matter what. `Visor` is a canvas of a
-known size with the content inside: `interior` is where you draw, `encajar()`
-sizes it to the content or to what fits, whichever is smaller, and `crecer()`
-(the wizard's) only ever grows it. Scrollbars appear **only** when content is
-left over, and their gutter is reserved with `minsize` whether they show or not
-— a bar that took and gave back its own width would resize the window from step
-to step, and would oscillate on and off around the threshold. `pantalla_util()`
-is what "fits" means and it is a module-level function so a test can replace it
-and pretend the screen is 1024x600.
+**Every screen sits inside a `tk.Visor`.** `interior` is where you draw;
+`encajar()` sizes it to the content or to what fits, whichever is smaller;
+`crecer()` (the wizard's) only ever grows it. Scrollbars appear **only** when
+content is left over, and their gutter is reserved with `minsize` whether they
+show or not. `pantalla_util()` is module-level so a test can pretend the screen
+is 1024×600.
 
-- `cuerpo_visible(ventana, padding=…)` replaces the `ttk.Frame(dlg, padding=…)` +
-  `.grid(sticky="nsew")` every dialog used to open with, and hangs the visor off
-  the window so `mostrar()` calls `encajar()` without each dialog remembering to.
-- The wizard's body was a `ttk.Frame(width=820, height=430)` with
-  `grid_propagate(False)`, which is a **silent crop**: step 1 asks for 486 px of
-  height on an ordinary 1080p screen and its last field simply was not drawn.
-  Its size is now a starting minimum (`ANCHO_CUERPO`/`ALTO_CUERPO` through
-  `icons.px`), not a cap.
-- `output_window` needs no visor — the `Text` already scrolls — but its `104x28`
-  are rows and columns of text, not pixels, so it asks for the ones that fit.
-- `tests/test_tk_medidas.py` is the guard: every screen against a matrix of
-  resolution **and** `tk scaling` — 1080p/2K/4K at 100 %, 150 % and 200 %, plus
-  the small laptop sizes — checking that the window asks for no more than there
-  is and that nothing is cropped without a scrollbar to reach it. The scaling
-  column is the half that matters: a 4K on its own only proves there is room to
-  spare, while a 1080p at 200 % is where the content stops fitting. It fakes both
-  by replacing `pantalla_util` and calling `tk scaling` on the interpreter, which
-  is reversible and is picked up by widgets created afterwards. It also drives the
-  one case that is *not* a step change — selecting a volume that already is a
-  prdrive — on a roomy screen and on a 1024x600, because the right answer differs
-  and both count: grow where there is room, show the bar where there is not.
+- `cuerpo_visible(ventana, padding=…)` replaces the `ttk.Frame(dlg, padding=…)`
+  + `.grid(sticky="nsew")` every dialog used to open with.
+- The wizard body's `ANCHO_CUERPO`/`ALTO_CUERPO` (via `icons.px`) are a starting
+  minimum, not a cap — the old `ttk.Frame(width, height)` + `grid_propagate(False)`
+  was a silent crop.
+- `output_window` needs no visor (the `Text` scrolls); its `104x28` are text
+  rows/cols, not pixels.
+- `tests/test_tk_medidas.py` checks every screen against a matrix of resolution
+  **and** `tk scaling` (1080p/2K/4K at 100/150/200 %, plus small laptops) — the
+  scaling column is the half that matters. It also drives the "already a
+  prdrive" case on a roomy screen and a 1024×600.
 
-`tk.working(parent, title, funcion)` is the third way of showing something
-running, next to `output_window` (a command whose output is the point) and a plain
-modal. It runs `funcion()` on a thread and shows a bare progress bar, and it
-exists for the two cases where the output cannot be shown: commands that take
-minutes and say nothing (creating a VeraCrypt container) and commands whose very
-command line is a secret (it carries the passphrase). It has no cancel button on
-purpose — what goes through it cannot be cut in half without leaving things worse.
+`tk.working(parent, title, funcion)` runs `funcion()` on a thread behind a bare
+progress bar — for commands that take minutes and say nothing (creating a
+VeraCrypt container) or whose command line is a secret (it carries the
+passphrase). No cancel button on purpose.
 
-**`import tkinter` always goes inside the functions, never at module top level.**
-`ui/` is imported by the headless paths too (`--auto`, the service), where tkinter
-may not be installed and there may be no display; the failure has to surface when
-the window is opened, which is when `ui.start()` can catch it and fall back to the
-console menu. Verified in both directions. `save_prefs` stores `known` (the pair names that existed at
-the time) so a pair added to the TOML later reads as new — and comes back
-checked — instead of as one the user had unchecked; it skips the write entirely
-when nothing changed, to spare the device. A record whose pairs are all gone falls
-back to the TOML silently.
+## Provisioning a new device (`prdrive-install.py` + `install/` + `ui/tk_install.py`)
 
-The service
-stops when the device disappears (`SENTINEL` check) or when runsync is launched again.
-Windows specifics that must be preserved: `pid_alive()` uses `OpenProcess`, never
-`os.kill` (which *terminates* on Windows); the daemon is spawned with `pythonw.exe`
-+ `CREATE_NO_WINDOW`, and rclone is spawned with `CREATE_NO_WINDOW` too, otherwise
-every invocation flashes a console window; the daemon `chdir`s to the temp dir so
-the device can be safely ejected. Child `sync.py` runs get `stdin=DEVNULL` on purpose,
-so a pair needing `--resync` is skipped instead of resynced unattended.
-
-**Provisioning a new device (`prdrive-install.py` + `install/` + `ui/tk_install.py`).**
-Eight steps, and the order is not decorative: you cannot read the catalogue before
-knowing which remote to talk to, nor pick pairs before knowing where the device
-goes, nor initialise them before the `sync.py` that initialises them exists.
+Eight steps; the order is load-bearing (you cannot read the catalogue before
+knowing the remote, pick pairs before knowing where the device goes, or
+initialise them before the `sync.py` that does so exists):
 
 ```
-1 Dispositivo     which volume  — and the shortcut out, see below
-2 Cifrado         VeraCrypt / BitLocker / none -> fixes state.device_root
+1 Dispositivo     which volume + the "already a prdrive" shortcut
+2 Cifrado         VeraCrypt / BitLocker / none  → fixes state.device_root
 3 Conexión        form, or import a remote from the user's rclone.conf
 4 Comprobaciones  rclone + connect + read the catalogue
 5 Instalación     copy .prdrive/, hide it, launchers, rclone.conf + keys
@@ -557,394 +427,278 @@ goes, nor initialise them before the `sync.py` that initialises them exists.
 8 Verificación
 ```
 
-**The device goes first so the wizard can recognise one it has already made.**
-`_paso_destino` depends on nothing (`device.list_volumes()` and no more), so it
-costs nothing to put it there, and `Cifrado` has to follow it because it is what
-settles `state.device_root`, which `Instalación` writes to. Connection and
-catalogue can wait: nothing needs them until `Parejas`.
+`_paso_destino` depends only on `device.list_volumes()`, so it costs nothing to
+put first; `Cifrado` follows because it settles `state.device_root`, which
+`Instalación` writes to. Each step disables «Siguiente» until its condition is
+met. **No console fallback** here (unlike `runsync.py`) — everything decided
+happens once in a device's life with the screen in front of you.
 
-Each step carries its own condition and «Siguiente» stays disabled until it is
-met, so the window can never reach a place where the next button would fail.
-There is **no console fallback** here, unlike `runsync.py`, and that is
-deliberate: everything decided in it — which drive gets written, a passphrase
-typed twice, the connection to the remote — happens once in a device's life, with
-the screen in front of you, and a text menu replicating it would double the code
-in the most delicate part of the project.
+**Nothing in the wizard spawns a shell.** An unsigned `.exe` running out of
+`%TEMP%` that spawns `powershell.exe` is, to a behavioural AV engine, the shape
+of a dropper — Sophos Intercept X blocked the installer outright. Two things now
+ask Windows directly:
 
-**Nothing in the wizard spawns a shell, and that is not a style preference.**
-An unsigned `.exe` running out of `%TEMP%` that spawns `powershell.exe` is, to a
-behavioural AV engine, the shape of a dropper: Sophos Intercept X blocked the
-installer outright with its `Lockdown` mitigation. Two things it used to ask
-PowerShell for it now asks Windows directly.
+- **BitLocker status.** Reads `System.Volume.BitLockerProtection` via
+  `IShellItem2::GetInt32` (the property Explorer uses to draw the padlock), no
+  elevation. **Ask `PSGetPropertyKeyFromName` for the PROPERTYKEY**, never a
+  remembered one (the `System.Volume.*` set is a different key that returns
+  `ERROR_NOT_FOUND`). `BitLockerStatus.protected` accepts only state `On` — a
+  volume in *Waiting for activation* (encrypted, key still in the clear) must
+  fail, or the remote's private key gets written onto it.
+- **Volume list.** `_win_volumes()` does it in four kernel32 calls (~35 ms vs
+  `Get-Volume`'s measured 3.5 s, on the Tk thread while drawing the first
+  screen). Needs `SetThreadErrorMode(SEM_FAILCRITICALERRORS)` (else an empty
+  card reader pops a "no disk" modal) and `TIPOS_OCULTOS` (`GetLogicalDrives`
+  returns mapped network drives).
 
-- **BitLocker status.** `Get-BitLockerVolume` and `manage-bde -status` both answer
-  "access denied" to a normal user, so checking the encryption meant re-launching
-  *elevated*: `Start-Process powershell -Verb RunAs -WindowStyle Hidden` with an
-  inline `-Command`, which is not distinguishable from a UAC bypass. It now reads
-  `System.Volume.BitLockerProtection` through `IShellItem2::GetInt32` — the same
-  property Explorer uses to draw the padlock — with no elevation, no process and
-  no window. **Ask `PSGetPropertyKeyFromName` for the PROPERTYKEY**, never trust a
-  remembered one: the `System.Volume.*` set (`{9B174B35-…}` pid 8) is a *different*
-  key and returns `ERROR_NOT_FOUND`. What is lost is the percentage. What is
-  gained is `BitLockerStatus.protected`, which accepts only the state `On`: the
-  old test was "FullyEncrypted, or percent > 0" and discarded the
-  `ProtectionStatus` it had just asked PowerShell for, so a volume in *Waiting for
-  activation* — encrypted, readable, key still in the clear on disk awaiting a
-  reboot — passed the check and got the remote's private key written onto it.
-- **The volume list.** `Get-Volume` through `powershell -Command` took **3.5
-  seconds**, measured and consistent, and `_paso_destino` calls it on the Tk thread
-  while drawing the wizard's *first* screen and again on every «Actualizar lista»,
-  which is exactly what you press after plugging the pendrive in. `_win_volumes()`
-  does it in four kernel32 calls, ~35 ms. Two things `Get-Volume` did for free have
-  to be done by hand: `SetThreadErrorMode(SEM_FAILCRITICALERRORS)`, or an empty CD
-  or card reader pops Windows' «no disk in the drive» modal on top of the wizard
-  and leaves it there; and `TIPOS_OCULTOS`, because `GetLogicalDrives` returns
-  mapped network drives and `Get-Volume` did not — without it the destination
-  picker fills with drives that can never be the device.
+`make_volume()` / `BitLockerStatus` are pure and tested; `_win_volumes()` /
+`_leer_estado_bitlocker()` are module-level so tests replace them. There is **no
+recovery-key feature** — reading a BitLocker recovery password genuinely needs
+elevation, and it was not worth the last `runas`.
 
-Both split the way the rest of the project does: `make_volume()` and
-`BitLockerStatus` are pure and tested, while `_win_volumes()` and
-`_leer_estado_bitlocker()` are module-level functions the tests replace, for the
-same reason `catalog.run()` and `update.fetch()` are. There is **no longer a
-recovery-key feature**: reading a BitLocker recovery password is the one thing
-here that genuinely cannot be done without elevation, and it was not worth the
-only remaining `runas` in the project.
+**The "already a prdrive" shortcut.** When `_paso_destino` sees
+`device.install_target() == YA_INSTALADO` it shows the device's version vs the
+installer's and offers **«Actualizar»** and **«Reinstalar desde cero»** —
+**both, always**, because re-provisioning (new remote, re-encrypt, redo pairs)
+must stay possible without deleting `.prdrive/` by hand.
 
-**The shortcut: a volume that is already a prdrive.** When `_paso_destino` sees
-`device.install_target() == YA_INSTALADO`, it shows which version is on the device
-and which one the installer carries, and offers two ways out. Four things about
-it are load-bearing:
+- `Wizard.pasos` is an **instance** attribute: two step lists
+  (`PASOS_INSTALACION`, `PASOS_ACTUALIZACION`), the button picks one.
+  `_ir_a_actualizar()` *sets* the index (the shortcut is reachable from the
+  device step and the encryption step, which don't land in the same place from
+  "one more").
+- `_ok_destino` returns False until a way out is chosen, so «Siguiente» stays
+  dark next to the two buttons.
+- `install_target()` looks for the **device before the content**: `.prdrive` is
+  in `RUIDO` (or a device the installer just made reads as `AJENO` next time),
+  so a freshly provisioned volume with no user data used to come back `VACIO`
+  and the shortcut was the one thing not offered on the newest device that can
+  exist.
+- The short path installs the tree the **installer carries** (`bundle_dir()`,
+  the same source step 5 uses) — no network. It calls
+  `ensure_control_file(renew=False)` (step 5 renews because it provisions;
+  renewing here would strand a watcher bound to this device's id). Going
+  backwards in version is allowed but never silent (`_confirmar_retroceso()`).
 
-- **Both ways out, always.** Recognising the device must not take away the
-  ability to re-provision it — changing remote, re-encrypting, redoing pairs all
-  need the full wizard, and forcing someone to delete `.prdrive/` by hand to get
-  there would be a trap. So «Reinstalar desde cero» sits next to «Actualizar».
-- **`Wizard.pasos` is an instance attribute, not the old module global.** That is
-  the whole mechanism: there are two step lists (`PASOS_INSTALACION`,
-  `PASOS_ACTUALIZACION`) and the button picks one. `_ir_a_actualizar()` *sets*
-  the index rather than advancing by one, because the shortcut can be entered
-  from either the device step or the encryption step and «one more» does not land
-  in the same place from both.
-- **`_ok_destino` returns False until a way out is chosen**, so «Siguiente» stays
-  dark next to the two buttons. Three ways forward with two destinations is the
-  confusion the wizard's disabled-until-resolved idiom exists to prevent.
-- **`install_target()` looks for the device before it looks for content**, and
-  that order is load-bearing. `.prdrive` is in `RUIDO` — it has to be, or a device
-  the installer had just made would read as `AJENO` the next time round — so a
-  freshly provisioned volume, program installed and no user data on it yet, leaves
-  nothing visible at all and used to come back `VACIO`. The shortcut was therefore
-  the one thing not offered on the newest device that can exist.
+**Other step notes:**
 
-The short path installs the tree the **installer itself carries** (`bundle_dir()`,
-the same source step 5 uses) — no network, no catalogue, no connection. The
-GitHub-fetching updater is `common/update.py`, reached from the main window; here
-the answer to "which code" is "the one in your hand". It calls
-`ensure_control_file(renew=False)`, and that `False` matters: step 5 renews
-because it is provisioning a device, and renewing here would strand a watcher
-already bound to this device's id. Going backwards in version is allowed but
-never silent — `_confirmar_retroceso()`.
+- With VeraCrypt, `.prdrive/` lives *inside* the container, so the volume looks
+  empty until mounted — detection re-runs at the end of `_paso_cifrado`.
+- **Step 5 no longer simulates first.** It used to be an `rclone sync` of a
+  master mirror (deletes in the destination), hence the mandatory `--dry-run`
+  and typed path. Now it copies a folder of its own and touches nothing else, so
+  it runs straight through `ui.tk.working()`.
+- **`Conexión` is what makes the repo publishable.** `profile.load()` returns an
+  **empty** profile when nothing is embedded and nothing is in the checkout —
+  not an error, the normal start for someone who just cloned.
+- `install.InstallError` is raised instead of `sys.exit` (same reason as
+  `model.ConfigError`). The private key is written to a temp dir that records
+  the owning pid; `remote.sweep_stale()` cleans dirs left by hard-killed
+  installers, asking `store.pid_alive()` first.
+- **The key never leaves the device.** `deploy.write_device_remote()` writes
+  `.prdrive/rclone.conf` and `.prdrive/keys/<name>` with **relative** paths
+  (`key_file = keys/…`), which is what makes the device work under any drive
+  letter (rclone resolves them against `cwd = model.APP_DIR`). Nothing mirrors
+  `.prdrive/`.
 
-With VeraCrypt `.prdrive/` lives *inside* the container, so the volume is
-indistinguishable from an empty one until it is mounted. The detection therefore
-runs again at the end of `_paso_cifrado`, which is the first moment it can
-succeed.
+## Updating a device in place (`common/update.py` + `ui/tk_update.py` + `--update`)
 
-**Step 5 no longer simulates first.** It used to be an `rclone sync` of a master
-mirror, i.e. something that deleted in the destination whatever was not in the
-source, and that is why it demanded a `--dry-run` and typing the path by hand.
-Now it copies a folder of its own and touches nothing else, so it runs straight
-through `ui.tk.working()` — a job that takes a while (the rclone binary is tens of
-MB) and whose output tells nobody anything.
+The main window shows an amber block when GitHub has a newer release; its button
+does the whole thing.
 
-**The `Conexión` step is what makes the repo publishable.** `profile.load()` returns an
-**empty** profile when there is nothing embedded and nothing in the checkout, and
-that is not an error — it is the normal start for someone who just cloned. Before,
-that path raised `InstallError` and the wizard died explaining that a key was
-missing that the user had never had.
-
-`install.InstallError` is raised instead of `sys.exit` for the same reason as
-`model.ConfigError`: with a wizard open, killing the process closes the window in
-the user's face instead of letting them read what happened and retry. The private
-key is written to a temp directory that records the owning pid;
-`remote.sweep_stale()` cleans up the ones left by installers that were killed hard
-(no `atexit`, no signal handler), and asks `store.pid_alive()` before touching any
-of them so two concurrent installs do not rob each other.
-
-**The key never leaves the device.** `deploy.write_device_remote()` writes
-`.prdrive/rclone.conf` and `.prdrive/keys/<name>` with **relative** paths
-(`key_file = keys/…`), which is what makes the device work under any drive letter
-— rclone resolves them against its cwd, which the project always fixes at
-`model.APP_DIR`. Nothing mirrors `.prdrive/`, so the key stays put, protected by
-whatever protects the volume.
-
-**Updating a device in place (`common/update.py` + `ui/tk_update.py` +
-`prdrive-install.py --update`).** The main window shows an amber block when
-GitHub has a newer release, and its button does the whole thing. Three decisions
-hold it up, and none of them is arbitrary:
-
-- **The applier runs from the download, not from the device.** `install/` is
-  deliberately absent from a provisioned device, so on-device code cannot call
-  `deploy_code()`. The source zip of the tag does carry it, so the update runs
-  `python <extracted>/prdrive-install.py --update <volume>` — **the new version
-  installs itself**. The alternative, an applier living in `common/`, would be a
-  second copy of the "what is the deployed tree" manifest, and it would be the
-  one to fall behind the day a file is added.
+- **The applier runs from the download, not the device.** `install/` is
+  deliberately absent from a provisioned device, so the update runs `python
+  <extracted>/prdrive-install.py --update <volume>` — **the new version installs
+  itself**. An applier in `common/` would be a second copy of the "what is the
+  deployed tree" manifest.
 - **The payload is the source zip of the tag (~270 KB), not the release `.exe`
-  (12.6 MB).** The CI-built exe is generic — no embedded profile — so re-running
-  it would ask for the connection again to do what is really a `copy2` of the
-  code.
-- **`.prdrive/` is never renamed.** `deploy_code()` copies file by file, and the
-  stage-and-swap that looks tidier is worse here in three concrete ways:
-  `rclone.exe` may be running from `.prdrive/bin/` (Windows will not rename its
-  directory, and `catalog.run` holds `cwd=APP_DIR` for the length of a call); if
-  `.prdrive/runsync.py` vanishes for even an instant, penwatch loses its
-  `STRUCT_MARKER`, **re-arms its trigger and relaunches the UI on its own**
-  within 5-15 s; and if `sync_config.toml` vanishes, a running service shuts
-  itself down. Copying costs one thing — a module deleted upstream lingers on
-  old devices — and that is exactly what re-running the installer already did.
+  (12.6 MB)** — the CI exe is generic and would re-ask for the connection.
+- **`.prdrive/` is never renamed.** `deploy_code()` copies file by file.
+  Stage-and-swap breaks three ways: `rclone.exe` may be running from
+  `.prdrive/bin/`; if `.prdrive/runsync.py` vanishes for an instant penwatch
+  loses its `STRUCT_MARKER` and relaunches the UI within 5–15 s; if
+  `sync_config.toml` vanishes a running service shuts itself down. The cost —
+  a module deleted upstream lingers on old devices — is what re-running the
+  installer already did.
 
-`VERSION` at the repo root is the whole versioning story: it is in
-`DEPLOY_FILES` and in `DATOS_FICHEROS`, `install.version()` reads it out of
-`bundle_dir()` (there is no `__version__ = "3.0"` constant any more — it had
-drifted from the tags), `update.installed_version()` reads it out of `APP_DIR`,
-and the release workflow is **triggered by a push to `main` that touches
-`VERSION`** and takes `v<VERSION>` as the tag rather than being told one — the
-tag cannot disagree with the file because there is nowhere left to say it twice.
-If that tag already exists there is no new version: a push exits green doing
-nothing, a manual `workflow_dispatch` (the retry hatch) fails saying so. A
-device with no `VERSION` is one installed before this existed: it reads as
-unknown, which compares older than anything, which is correct.
+**`VERSION` at the repo root is the whole versioning story.** It is in
+`DEPLOY_FILES` and `DATOS_FICHEROS`; `install.version()` reads it from
+`bundle_dir()`, `update.installed_version()` from `APP_DIR`. The release
+workflow is **triggered by a push to `main` that touches `VERSION`** and takes
+`v<VERSION>` as the tag — the tag cannot disagree with the file. If the tag
+already exists there is no new version (a push exits green; a manual
+`workflow_dispatch` fails saying so). A device with no `VERSION` reads as
+unknown, which compares older than anything.
 
-`update.fetch()` is a module-level function for the same reason `catalog.run()`
-is: every test replaces it, and **no test touches the network**. Same for
-`state_file()` being a function — `sandbox()` rebinds `model.STATE_DIR` hot, and
-a constant computed at import would point at the real device. Note `sandbox()`
-does **not** rebind `APP_DIR`, which is why everything that writes takes its
-destination explicitly (`download(tag, destino)`, `deploy_code(device_root, …)`).
+`check()` never raises and honours a 24 h cache in `state/update.json`.
+`pending()` reads that cache and **never** goes to the network (it is what the
+first paint asks). The window refreshes on a thread after `deiconify()`;
+`daemon_cycle()` refreshes it too (the only thing keeping it current for the
+console menu, which prints its own notice in `console.main_menu`).
 
-`check()` never raises and honours a 24 h cache in `state/update.json`;
-`pending()` reads that cache and **never** goes to the network, because it is
-what the first paint asks. The window refreshes it on a thread after
-`deiconify()`; `daemon_cycle()` refreshes it too, which is the only thing keeping
-it current for the console menu. The console prints its own notice in
-`console.main_menu` rather than riding `startup_msg` — that channel is shared by
-both frontends and the window already draws its own, so it would show twice.
+**What a download must survive** before it goes near the device: TLS, the zip
+CRC, every name in `update.OBLIGATORIOS` present, no member whose path escapes
+the destination (`_ruta_segura` — `extractall` is the footgun), and the
+`VERSION` inside matching the tag asked for. There is no signature and the
+README says so.
 
-What a download has to survive before it is allowed near the device: TLS,
-the zip CRC, every name in `update.OBLIGATORIOS` present, no member whose path
-escapes the destination (`extractall` is the footgun; `_ruta_segura` checks the
-names), and **the `VERSION` inside matching the tag asked for**. There is no
-signature, and the README says so plainly rather than implying otherwise.
+**`rclone_bin.download_rclone()` verifies before it writes:** reads
+`downloads.rclone.org/version.txt`, pulls `<version>/SHA256SUMS`, hashes the zip
+in memory — a mismatch leaves the cache untouched. The URL is the **versioned**
+one, not the `rclone-current-…` alias (which moves, so a release landing
+mid-fetch would make the sum describe a different file). It does **not** defend
+against a compromised rclone.org (same TLS, same host) — only against a
+truncated transfer, a proxy, a stale cache, the alias moving.
 
-**`rclone_bin.download_rclone()` verifies before it writes**, and it is the same
-class of problem: what it fetches gets executed and then copied into the device.
-It reads `downloads.rclone.org/version.txt`, pulls `<version>/SHA256SUMS`, and
-hashes the zip in memory — nothing unverified reaches the disk, so a mismatch
-leaves the cache exactly as it was. The URL is the **versioned** one and not the
-`rclone-current-…` alias on purpose: the alias moves to whatever rclone has
-published at the moment you ask, so a release landing between reading
-`version.txt` and fetching the zip would make the sum describe one file and the
-download another — a failure with nothing wrong behind it, which is the worst
-kind. `fetch()` is module-level for the usual reason: every test replaces it and
-none touches the network. Be honest about the reach in comments and in the
-README, as `download_rclone()`'s docstring is: the sum travels over the same TLS
-from the same host as the zip, so it does **not** defend against a compromised
-rclone.org. It defends against a truncated transfer, a proxy returning something
-else, a stale cache, and the alias moving.
+## Mount watcher (`penwatch.py`)
 
-**Mount watcher (`penwatch.py`).** Third entry point, and the only one that
-installs anything on the host. `install` copies the script to
-`%LOCALAPPDATA%\prdriveWatch` / `~/.local/share/prdrive-watch`, writes `watch.json`
-there and registers a **per-user** logon-triggered Task Scheduler task (XML via
-`schtasks /Create /XML`, UTF-16 — UTF-8 is rejected; `DisallowStartIfOnBatteries`
-must stay `false` or laptops never start it) or a systemd **user** unit
-(`WantedBy=default.target`, plus `loginctl enable-linger`). No admin rights
-anywhere. The watcher **polls** rather than subscribing to device events, because
-on an encrypted device the arrival event fires long before the volume is readable —
-what matters is "already readable", which is only knowable by trying. It
-identifies the device by the control file **`.prdrive/PRDRIVE`** (optional
-`id=<hex>` line inside), never by drive letter or mount point, and confirms
-`.prdrive/runsync.py` before launching. It must never write to, or `chdir`
-into, the device (that blocks safe ejection): its config, state and log live on the
-host, and every device access is wrapped in `try/except OSError` because a locked
-BitLocker volume errors rather than reporting "not found". It fires once per
-mount — the trigger re-arms only when the device disappears. `--mode` decides what
-runs: `ui` (default), `sync`, or `daemon` (→ `runsync.py --auto`).
+The only entry point that installs anything on the host. `install` copies the
+script to `%LOCALAPPDATA%\prdriveWatch` / `~/.local/share/prdrive-watch`, writes
+`watch.json`, and registers a **per-user** logon-triggered Task Scheduler task
+(XML via `schtasks /Create /XML`, UTF-16 — UTF-8 is rejected;
+`DisallowStartIfOnBatteries` must stay `false`) or a systemd **user** unit
+(`WantedBy=default.target` + `loginctl enable-linger`). No admin rights.
 
-**The catalogue is the source of truth for what pairs exist
-(`common/catalog.py` + `ui/catalog_editor.py`).** `nas:/prdrive-catalog/pairs.toml`
-is a file with the *same schema* as `sync_config.toml`, shared by every device, and
-`prdrive-install.py` reads it to provision a new device. **A pair is created or
-deleted there first**; each device then only *chooses* which of them it uses. That
-split is the whole point and must not be collapsed back:
+- It **polls** rather than subscribing to device events: on an encrypted device
+  the arrival event fires long before the volume is readable.
+- It identifies the device by the control file **`.prdrive/PRDRIVE`** (optional
+  `id=<hex>` line), never by drive letter, and confirms `.prdrive/runsync.py`
+  before launching.
+- It must never write to, or `chdir` into, the device (that blocks safe
+  ejection); config, state and log live on the host, and every device access is
+  wrapped in `try/except OSError` (a locked BitLocker volume errors rather than
+  reporting "not found").
+- Fires once per mount — the trigger re-arms only when the device disappears.
+  `--mode`: `ui` (default), `sync`, or `daemon` (→ `runsync.py --auto`).
+- `ui/watch.py` imports penwatch for reads and shells out for
+  `install`/`uninstall` (output to `output_window`). One-way dependency.
 
-- **Catalogue side** (`plan_catalog_save`/`plan_catalog_remove`/`plan_catalog_defaults`)
-  writes the remote and changes nothing on this device. **No pair is sacred any
-  more**: when the code came down from the remote, the pair describing that mirror
-  was required to install and the editor refused to delete it. The installer now
-  carries the code, so the catalogue is data pairs and they are all equal.
-- **Device side** (`plan_enable`/`plan_remove`/`plan_override`/`plan_revert`) writes
-  `sync_config.toml` and never touches the remote. `[defaults]` is catalogue-governed
-  too, via `plan_defaults`/`plan_revert_defaults`.
+## The catalogue (`common/catalog.py` + `ui/catalog_editor.py`)
 
-`sync_config.toml` still holds **complete** pair entries, not references: `sync.py`
-must keep working with no network, and its schema did not change. Provenance is
-therefore *derived*, not stored — `catalog.diff_keys()` compares the local entry
-against `state/catalog.toml` (the last successful pull) to produce
-`catálogo` / `modificada aquí` / `huérfana` / `sin usar`. **Do not add a
-`from_catalog`-style key to the TOML**: `config_file.save()` demands strict
+`nas:/prdrive-catalog/pairs.toml` — same schema as `sync_config.toml`, shared by
+every device, read by `prdrive-install.py` when provisioning. **A pair is
+created or deleted there first**; each device only *chooses* which it uses. Do
+not collapse that split:
+
+- **Catalogue side** (`plan_catalog_save`/`_remove`/`_defaults`) writes the
+  remote, changes nothing local. **No pair is sacred** — the installer carries
+  the code now, so the catalogue is all data pairs, all equal.
+- **Device side** (`plan_enable`/`_remove`/`_override`/`_revert`) writes
+  `sync_config.toml`, never the remote. `[defaults]` is catalogue-governed too
+  (`plan_defaults`/`plan_revert_defaults`).
+
+`sync_config.toml` holds **complete** pair entries, not references (`sync.py`
+must work with no network). Provenance is **derived**, not stored:
+`catalog.diff_keys()` compares the local entry against `state/catalog.toml` (the
+last successful pull) → `catálogo` / `modificada aquí` / `huérfana` / `sin usar`.
+**Do not add a `from_catalog` key** — `config_file.save()` demands strict
 round-trip equality and the file is hand-editable.
 
-Writing the catalogue is the riskiest thing in the project, so `catalog.push()`:
-generates and verifies the text first (`config_file.dumps_checked`), **re-reads the
-remote and refuses if it changed** since it was read (another device may have edited
-it), copies `pairs.toml` → `pairs.toml.bak` on the remote, and only then uploads.
-Rewriting keeps the header block and **loses the interleaved comments** — a
-deliberate trade for reusing the serializer that refuses to write what it cannot
-read back. `catalog.load()` never raises: no network falls back to
-`state/catalog.toml`, and a cached catalogue is **not editable** (`Catalog.editable`),
-because you cannot safely overwrite what you have not just read. `catalog.run()` is a
-module-level function precisely so every test replaces it — **no test may touch the
-network**. `catalog.NET_FLAGS` keeps a dead remote from freezing the window for
-minutes.
+`catalog.push()` is the riskiest thing in the project: it generates and verifies
+the text (`config_file.dumps_checked`), **re-reads the remote and refuses if it
+changed**, copies `pairs.toml` → `pairs.toml.bak`, and only then uploads.
+Rewriting keeps the header block and **loses interleaved comments**.
+`catalog.load()` never raises — no network falls back to `state/catalog.toml`,
+and a cached catalogue is **not editable** (`Catalog.editable`).
+`catalog.NET_FLAGS` keeps a dead remote from freezing the window.
 
 The catalogue also carries an optional **`[remote]`** table: the non-secret
-definition of the rclone remote itself (type, host, user…). It is what makes the
-connection typed **once** — the first device writes it there and the rest inherit
-it. `profile.align_with_catalog()` applies it, and it enforces one rule that is
-not negotiable: **the catalogue decides the remote's name**, because every pair's
-`remote_path` resolves against `[defaults].remote`. If the device's rclone.conf
-called the remote something else, every sync would fail with an "unknown remote"
-that looks nothing like the cause. The private key never goes in there.
+definition of the rclone remote (type, host, user…). The first device writes it,
+the rest inherit it via `profile.align_with_catalog()`. **The catalogue decides
+the remote's name** — every pair's `remote_path` resolves against
+`[defaults].remote`, so a differently-named remote would fail every sync with an
+"unknown remote". The private key never goes there.
 
-**Editing pairs from the UI (`ui/pair_editor.py`) — the dangerous part.**
-`bisync.expected_prefix()` is derived from `local`, `remote`, `remote_path` and
-`mode`. Change any of them and the expected listing name changes, so on the next
-run `normalize_prefix()` would **rename the old baseline to the new name** —
-telling bisync that a listing of the *previous* destination describes the *new*
-one. Everything missing from the new side then reads as deleted and propagates,
-with `--max-delete 25` as the only brake. `normalize_prefix()` was written for the
-benign case (device moves from `G:` to `F:`) and cannot tell the two apart.
+## Editing pairs from the UI (`ui/pair_editor.py`) — the dangerous part
 
-So the editor shelves the baseline itself: `bisync.shelve_baseline()` renames
-`state/<pair>/` to `state/<pair>.old-<date>/`, which leaves the pair `fresh` and
-forces an explicit `--resync`. Shelved directories are inert because everything
-that scans `state/` only looks at its top level.
+`bisync.expected_prefix()` derives from `local`, `remote`, `remote_path`,
+`mode`. Change any and the expected listing name changes, so on the next run
+`normalize_prefix()` would **rename the old baseline to the new name** — telling
+bisync that a listing of the *previous* destination describes the *new* one.
+Everything missing from the new side then reads as deleted and propagates, with
+`--max-delete 25` as the only brake. `normalize_prefix()` was written for the
+benign case (`G:` → `F:`) and cannot tell the two apart.
 
-Renaming a pair is the opposite case and is free: the prefix does **not** depend
-on the pair name, only the paths do, so `bisync.rename_pair_state()` moves
-`state/<name>/` and `filters/<name>.*` together (the `.md5` must travel with its
-file) and the baseline stays valid.
+- The editor shelves the baseline: `bisync.shelve_baseline()` renames
+  `state/<pair>/` → `state/<pair>.old-<date>/`, leaving the pair `fresh` and
+  forcing an explicit `--resync`. Shelved dirs are inert (scans only look at the
+  top level).
+- **Renaming a pair is free** — the prefix doesn't depend on the name.
+  `bisync.rename_pair_state()` moves `state/<name>/` and `filters/<name>.*`
+  together (the `.md5` must travel with its file).
+- **The decision compares prefixes, not keys.** `_prefixes(raw)` parses the
+  before and after configs and compares `bisync.expected_prefix()` per pair;
+  `ENDPOINT_KEYS` only produces the human-readable message. This is what makes
+  `[defaults]` editable — `remote`/`device_remote` feed *every* pair, so
+  `EditPlan.shelve` is a **list**. A prefix that *disappears* (bisync → another
+  mode) also shelves.
+- `plan_*()` return an `EditPlan` **without touching anything**; its
+  `consequences` are shown before confirming. `EditPlan.execute()` does the disk
+  surgery **before** writing the config and undoes it if the write fails (it can
+  only ever fail towards "baseline shelved for nothing", which a `--resync`
+  fixes). **Rename runs before shelve** (else `filters/<old name>.txt` is
+  orphaned).
 
-**The decision is taken by comparing prefixes, not keys.** `_prefixes(raw)` parses
-both the before and after configs and compares `bisync.expected_prefix()` per pair;
-`ENDPOINT_KEYS` now only produces the human-readable message. That is what makes
-`[defaults]` editable at all: `remote` and `device_remote` feed *every* pair's
-endpoints, so one change there can invalidate several baselines with no pair having
-been touched — which is why `EditPlan.shelve` is a **list**. A prefix that
-*disappears* (bisync → another mode) also shelves: leaving an unchecked baseline
-behind is exactly how you set up the dangerous case for the day it goes back.
+## The flags editor (`ui/flags_editor.py`)
 
-`plan_*()` return an `EditPlan` **without touching anything**; its `consequences`
-are shown before confirming. `EditPlan.execute()` does the disk surgery **before**
-writing the config, and undoes it if the write fails: the combination to avoid is
-"new config, old baseline", and this ordering can only ever fail towards "baseline
-shelved for nothing", which a `--resync` fixes. Within the disk step, **rename runs
-before shelve**, so an edit that changes the name *and* an endpoint moves state and
-filters to the new name first and shelves that; the other order orphaned
-`filters/<old name>.txt`.
+Flags are written in TOML syntax (a text box, not a row-per-flag form) and
+parsed with **`tomllib`, not by hand** — the destination is a `[pair.flags]`
+table. `dump()` renders through `config_file.dumps_table()`. Only what the
+serializer can write back is accepted (scalars, arrays of scalars). `RESERVED`
+rejects the flags `sync.py` supplies per run and the filter ones — a second
+`--workdir` or `--filters-file` points bisync at the wrong baseline.
 
-**The flags editor (`ui/flags_editor.py`).** Flags are still written in TOML
-syntax — the dialog is a text box, not a form of one row per flag — and the text
-is parsed with **`tomllib`, not by hand**: its destination is a `[pair.flags]`
-table, so the only way for the form and the file to mean the same thing is to use
-the same parser. `dump()` renders through `config_file.dumps_table()` for the same
-reason. Only what the serializer can write back is accepted (scalars and arrays of
-scalars), because `save()` refuses to write a config that does not re-read equal
-and that refusal would arrive with the dialog already closed. `RESERVED` rejects
-the flags `sync.py` supplies per run and the filter ones derived from
-include/exclude: repeating them does not replace them, and a second `--workdir` or
-`--filters-file` points bisync at a baseline that is not its own.
+`effective()` resolves the four layers into what rclone would actually receive,
+each row labelled with its layer. `warnings()` compares **merged** flag sets,
+never one layer, so it catches `--max-delete` rising because the pair's own
+value was deleted or the mode changed. Editing flags never shelves a baseline.
 
-`effective()` is the point of the whole thing — the four layers resolved into what
-rclone would actually receive, each row labelled with the layer it came from — and
-`warnings()` compares **merged** flag sets, never one layer, so it catches
-`--max-delete` rising because the pair's own value was deleted or because the mode
-changed, with no flag having been touched. Editing flags never shelves a baseline:
-the listing name does not depend on them.
+`ui/tk_pairs.flags_form()` is the drawing half and does **not** close on invalid
+input. Both the pair form and the `[defaults]` form open it;
+`pair_editor.merge_form()` (shared with `catalog_editor`) makes an emptied box
+delete the key.
 
-`ui/tk_pairs.flags_form()` is the drawing half; it does **not** close on invalid
-input (losing what was typed, or saving only the part that parsed, is exactly what
-must not happen here). Both the pair form and the `[defaults]` form open it, and
-`pair_editor.merge_form()` — shared with `catalog_editor` — is what makes an
-emptied box actually delete the key instead of leaving it half written.
+## Writing the TOML (`common/config_file.py`)
 
-**Writing the TOML (`common/config_file.py`).** `tomllib` only reads and the
-project takes no dependencies, so the serializer is hand-rolled. It covers what
-the schema uses: scalars, string arrays and one nested `flags` table. Two things
-to preserve: `[pair.flags]` binds to the **last** `[[pair]]` written, so it is
-emitted right after its own pair and never at the end; and `dumps_checked()`
-re-parses what it just generated and refuses to write if it does not reproduce the
-same dict — this file governs deletions, so failing loudly beats writing something
-that does not read back. `save()` and `catalog.push()` both go through it. Work on
-the **raw dict**, never on `model.Config`: its `Pair`s arrive with the `[defaults]`
-already merged in. `header_of(text)` exists because some headers never touch this
-disk: the catalogue arrives from the remote as text, and the installer hands
-`save(head=...)` the header of a config whose file does not exist yet — the
-default, `head=None`, keeps whatever header the target already had, which is what
-editing pairs needs.
-
-**penwatch from the UI.** `penwatch.py` keeps its `cmd_*` functions but they now
-print rows produced by `status_rows()`/`probe_rows()`/`log_tail()`, so the CLI and
-the UI show the same thing without parsing text. `ui/watch.py` imports penwatch
-for reads and shells out for `install`/`uninstall`, whose output goes to the same
-`output_window` used for `sync.py`. The dependency is one-way and must stay that
-way: penwatch is copied to the host and has to work with the device unplugged.
+`tomllib` only reads and the project takes no dependencies, so the serializer is
+hand-rolled. It covers scalars, string arrays and one nested `flags` table. Two
+things to preserve: `[pair.flags]` binds to the **last** `[[pair]]` written, so
+it is emitted right after its own pair; and `dumps_checked()` re-parses what it
+generated and refuses to write if the dict does not reproduce. `save()` and
+`catalog.push()` both go through it. Work on the **raw dict**, never
+`model.Config` (its `Pair`s arrive with `[defaults]` merged). `header_of(text)`
+is for headers that never hit disk; `save(head=None)` keeps the target's
+existing header.
 
 ## Conventions
 
-- All comments, docstrings and user-facing output are **Spanish**. Keep it that way.
-- Comments explain *why* against rclone's actual behaviour, often citing the rclone
-  source file. Preserve that when touching bisync-related code.
-- `sync_config.toml` is per-device: `prdrive-install.py` generates it from the remote
-  catalogue when provisioning, and from then on the pairs screen maintains it. It
-  can still be edited by hand — a pair that ends up differing from the catalogue is
-  reported as "modificada aquí", not corrected.
+- All comments, docstrings and user-facing output are **Spanish**. Keep it that
+  way.
+- Comments explain *why* against rclone's actual behaviour, often citing the
+  rclone source file. Preserve that when touching bisync-related code.
+- `sync_config.toml` is per-device: generated from the catalogue at
+  provisioning, then maintained by the pairs screen. Still hand-editable — a
+  pair that ends up differing from the catalogue is *reported* as "modificada
+  aquí", not corrected.
+- Recurring idiom: `catalog.run()`, `update.fetch()`, `rclone_bin.fetch()`,
+  `model.state_file()`, the `penwatch` reads, `_win_volumes()`,
+  `_leer_estado_bitlocker()` are module-level indirection points **so every test
+  replaces them** — no test touches the network or a real device.
 
 ## Documentation
 
-Two documents, two audiences, and they must not drift into each other:
-
-- **`README.md`** (this folder) is the front door of a public repository and the
-  thorough one: the three-piece model, install, the flag layering, how bisync's
-  baseline actually works and why the ugly parts exist, the service, the watcher,
-  the security model, the architecture. Someone deciding whether to use or hack
-  on this reads it.
-- **`device-readme.md`** is the *light* quick guide, and it is **not** for
-  readers of the repo: the installer copies it to the volume root as `README.md`
-  (`deploy.write_guide()`), so it is what the user finds when they open the
-  drive. Keep it short, task-shaped and free of internals. It used to live at the
-  volume root and travel through the master mirror; with no mirror, either the
-  installer writes it or it never arrives.
-
-`write_guide()` is deliberately best-effort — it returns None if the template is
-not in the bundle instead of raising. It is documentation, and a missing document
-cannot abort an install that otherwise went fine; same criterion as `hide()` and
-`icons.get()`. `build_installer.py` does list it in `DATOS_FICHEROS`, so a build
-that forgets it fails loudly at compile time, which is the right place.
-
-`sync_config.example.toml` is tracked and is the schema reference for **both**
-files that use it — a device's `sync_config.toml` and the remote's `pairs.toml`
-(which additionally takes `[remote]`). It is verified by hand with
-`config_file.dumps_checked()`: if it stops round-tripping, the serializer and the
-documented schema have drifted apart.
-
-`LICENSE` is the Apache License 2.0, verbatim from apache.org, with the
-appendix's copyright line filled in. `README.md`'s «Licencia» section points at
-it; keep the two in step.
-
-Nothing is left to settle before the repo goes public. The history is clean on
-both counts checked: every commit on every ref is authored **and** committed by
-`jeremaya <peredev@pm.me>` (verified with `git log --all --format='%an <%ae> |
-%cn <%ce>'`), and no key, config or state file has ever been committed (verified
-with `git log --diff-filter=A`).
+- **`README.md`** is the front door of a public repo and the thorough one (the
+  three-piece model, install, flag layering, how bisync's baseline works, the
+  service, the watcher, the security model, the architecture).
+- **`device-readme.md`** is the *light* quick guide — **not** for repo readers.
+  The installer copies it to the volume root as `README.md`
+  (`deploy.write_guide()`). Keep it short, task-shaped, free of internals.
+  `write_guide()` is best-effort (returns None if the template is missing rather
+  than aborting an otherwise-fine install; same criterion as `hide()` /
+  `icons.get()`). `build_installer.py` lists it in `DATOS_FICHEROS`, so a build
+  that forgets it fails at compile time.
+- **`sync_config.example.toml`** is tracked and is the schema reference for both
+  `sync_config.toml` and the remote's `pairs.toml` (which additionally takes
+  `[remote]`). Verified by hand with `config_file.dumps_checked()`.
+- **`LICENSE`** is the Apache License 2.0, verbatim, appendix copyright filled
+  in. README's «Licencia» section points at it; keep the two in step.
