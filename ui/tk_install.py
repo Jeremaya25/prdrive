@@ -90,16 +90,15 @@ class Wizard:
             text=f"Paso {self.indice + 1} de {len(self.pasos)}   ·   {titulo}")
         dibujar(self.cuerpo, self)
         self.revisar()
-        # El hueco se ajusta DESPUÉS de pintar, que es cuando se sabe lo que pide
-        # este paso. Se recoloca la ventana solo si ha cambiado de tamaño: el
-        # asistente se centra una vez al abrirse y no debe pasearse por la
-        # pantalla a cada paso, pero uno que crece sin recolocarse acaba con el
-        # pie por debajo del borde de abajo.
-        if self.visor.crecer(self.root):
-            centrar(self.root)
 
     def revisar(self) -> None:
-        """Enciende o apaga «Siguiente» según la condición del paso actual."""
+        """Enciende o apaga «Siguiente» según la condición del paso, y reajusta.
+
+        Las dos cosas van juntas porque las pide la misma gente: todo lo que
+        cambia el cuerpo termina llamando aquí —el panel de «ya es un prdrive» al
+        elegir unidad, la tabla de comprobaciones según va contestando el remoto,
+        la de verificación—. Cuando el ajuste vivía solo en `repintar()`, lo que
+        cambiaba sin cambiar de paso se quedaba con el hueco de antes."""
         _, _, condicion = self.pasos[self.indice]
         ultimo = self.indice == len(self.pasos) - 1
         try:
@@ -110,6 +109,23 @@ class Wizard:
             text="Terminar" if ultimo else "Siguiente >",
             state="normal" if (puede or ultimo) else "disabled")
         self.boton_atras.configure(state="disabled" if self.indice == 0 else "normal")
+        self.reencajar()
+
+    def reencajar(self) -> None:
+        """Ajusta el hueco a lo que pide el cuerpo ahora, y recoloca si ha crecido.
+
+        El visor no se entera por su cuenta: su interior es un item del lienzo con
+        la altura fijada por `itemconfigure`, así que añadirle widgets cambia lo
+        que PIDE pero no lo que MIDE, y el `<Configure>` del que cuelga la barra
+        de desplazamiento no llega a dispararse. Sin esto, un panel que aparece
+        con la pantalla ya dibujada queda recortado Y sin barra, que es el peor de
+        los dos casos: nada indica que falte nada.
+
+        Se recoloca solo si ha cambiado de tamaño. El asistente se centra una vez
+        al abrirse y no debe pasearse por la pantalla, pero uno que crece sin
+        recolocarse acaba con el pie por debajo del borde de abajo."""
+        if self.visor.crecer(self.root):
+            centrar(self.root)
 
     def ir(self, delta: int) -> None:
         if self.indice == len(self.pasos) - 1 and delta > 0:

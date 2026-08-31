@@ -362,14 +362,21 @@ def install_target(root: Path) -> tuple[str, str]:
             f"No puedo leer {root}: {e}\n"
             "¿Está el volumen desbloqueado (BitLocker/VeraCrypt)?") from e
 
-    if not contenido:
-        return VACIO, "Está vacío."
-
+    # Reconocer el dispositivo va ANTES de mirar si hay algo dentro, y el orden
+    # no es cosmético: `.prdrive` está en RUIDO —tiene que estarlo, o el
+    # dispositivo que el instalador acaba de hacer se leería como ajeno la vez
+    # siguiente—, así que un volumen recién provisionado, con el programa dentro
+    # y todavía sin datos del usuario, no deja NINGÚN contenido a la vista y se
+    # leía como vacío. El asistente entonces no ofrecía el recorrido corto justo
+    # en el dispositivo más nuevo que existe.
     tiene_control = (root / CONTROL_FILE).exists()
     tiene_estructura = (root / STRUCT_MARKER).exists()
     if tiene_control and tiene_estructura:
         return YA_INSTALADO, ("Ya es un dispositivo prdrive: se reinstala el "
                               "código encima y se conserva lo demás.")
+
+    if not contenido:
+        return VACIO, "Está vacío."
 
     nombres = ", ".join(sorted(p.name for p in contenido)[:6])
     return AJENO, (

@@ -336,4 +336,26 @@ c("un dispositivo prdrive de verdad se reconoce",
 c("y la raíz no gana ningún fichero suelto",
   (base / "PRDRIVE").exists(), False)
 
+# El caso que se escapaba. Un dispositivo RECIÉN provisionado no tiene todavía ni
+# un fichero del usuario, y `.prdrive` está en RUIDO —tiene que estarlo, ver
+# arriba—, así que no deja nada a la vista. Mientras el «¿está vacío?» iba antes
+# que el «¿es un prdrive?», el dispositivo más nuevo que existe se leía como una
+# carpeta vacía y el asistente no ofrecía el recorrido corto para actualizarlo.
+recien = tmpdir()
+deploy.app_dir(recien).mkdir(exist_ok=True)
+(recien / device.CONTROL_FILE).write_text("id=abc\n", encoding="utf-8")
+(deploy.app_dir(recien) / "runsync.py").write_text("#\n", encoding="utf-8")
+c("un dispositivo recién hecho, aún sin datos, se reconoce igual",
+  device.install_target(recien)[0], device.YA_INSTALADO)
+
+# La frontera del otro lado: hacen falta LAS DOS cosas. Con el control pero sin
+# el programa no hay instalación que actualizar, y leerlo como vacío es lo
+# correcto —no hay nada del usuario que conservar y se puede instalar encima sin
+# preguntar—, que es justo lo que dice `Volume.nota` de ese caso.
+a_medias = tmpdir()
+deploy.app_dir(a_medias).mkdir(exist_ok=True)
+(a_medias / device.CONTROL_FILE).write_text("id=abc\n", encoding="utf-8")
+c("con el control pero sin el programa no es un dispositivo",
+  device.install_target(a_medias)[0], device.VACIO)
+
 sys.exit(c.report())

@@ -32,6 +32,7 @@ from _harness import Checks, sandbox, tmpdir
 import tomllib
 
 from common import catalog, config_file, model, update
+from install import device
 
 c = Checks("medidas de las pantallas")
 
@@ -171,6 +172,65 @@ try:
         c(f"{nombre}: «Actualización» no queda recortado",
           recortado(wiz.visor), False)
         top.destroy()
+
+    # --- lo que aparece DESPUÉS de pintar el paso -----------------------------
+    #
+    # Reportado: al elegir una unidad que ya es un prdrive, el panel del desvío
+    # sale por debajo del borde y sin barra que lo avise. Lo que fallaba era el
+    # momento: `repintar()` ajustaba el hueco al terminar de dibujar, pero este
+    # panel lo monta el `<<TreeviewSelect>>`, o sea después. Y no basta con que
+    # el visor se entere solo, porque su interior es un item del lienzo con la
+    # altura fijada: al añadirle widgets cambia lo que PIDE y no lo que MIDE, así
+    # que el <Configure> del que cuelga la barra tampoco llega a dispararse.
+    #
+    # Se mide en una pantalla amplia y en una pequeña porque la respuesta
+    # correcta es distinta y las dos valen: crecer donde hay sitio, y poner la
+    # barra donde no lo hay. Lo que no vale es ninguna de las dos.
+    PRDRIVE_FALSO = tmpdir("prdrive-desvio-")
+    (PRDRIVE_FALSO / ".prdrive").mkdir()
+    (PRDRIVE_FALSO / ".prdrive" / "VERSION").write_text("0.0.1", encoding="utf-8")
+    (PRDRIVE_FALSO / ".prdrive" / "PRDRIVE").write_text("id=abc\n", encoding="utf-8")
+    (PRDRIVE_FALSO / ".prdrive" / "runsync.py").write_text("#\n", encoding="utf-8")
+    # `.prdrive` está en `device.RUIDO`, así que un volumen que solo lo lleve se
+    # lee como vacío: hace falta algo más para que dé YA_INSTALADO.
+    (PRDRIVE_FALSO / "docs").mkdir()
+
+    volumenes_real = device.list_volumes
+    device.list_volumes = lambda: [device.Volume(
+        root=PRDRIVE_FALSO, label="PRDRIVE", filesystem="exFAT",
+        drive_type="Removable", size=8049885184, free=7000000000)]
+    try:
+        for nombre, ancho, alto, escala in (("1080p", 1920, 1080, 1.3333),
+                                            ("1024x600", 1024, 600, 1.3333)):
+            pantalla(ancho, alto, escala)
+            top = tk.Toplevel(raiz)
+            top.withdraw()
+            wiz = tk_install.build(top)
+            wiz.indice = PASO["Dispositivo"]
+            wiz.repintar()
+            top.update()
+
+            arbol = None
+            pendientes = list(wiz.cuerpo.winfo_children())
+            while pendientes:
+                w = pendientes.pop(0)
+                if isinstance(w, ttk.Treeview):
+                    arbol = w
+                    break
+                pendientes += list(w.winfo_children())
+            c(f"{nombre}: la lista de unidades está ahí", arbol is not None, True)
+
+            arbol.selection_set(str(PRDRIVE_FALSO))
+            top.update()
+            c(f"{nombre}: al elegir un prdrive sale el desvío",
+              wiz.ya_instalado, True)
+            c(f"{nombre}: y el panel del desvío no queda recortado",
+              recortado(wiz.visor), False)
+            c(f"{nombre}: la ventana sigue cabiendo con el desvío puesto",
+              cabe(top), True)
+            top.destroy()
+    finally:
+        device.list_volumes = volumenes_real
 
     # El caso que se reportó era el formulario de «Conexión»: en una pantalla
     # normal tiene que verse entero, no desplazarse. Una barra ahí sería tapar el

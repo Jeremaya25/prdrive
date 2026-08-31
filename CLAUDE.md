@@ -463,10 +463,21 @@ across. Tests replace `mostrar()` (not `modal()`) to keep windows off the screen
 The install wizard's root does it by hand too, in `tk_install.run_wizard()`; it
 centres **once**, at open, and not on every step — a wizard that re-centred as its
 body changed size would walk across the screen while you use it. The one
-exception is `Wizard.repintar()` re-centring when `Visor.crecer()` reports the
-body actually changed size: growing without recolocating puts the footer past
-the bottom edge, and that only happens on the step that grows it, not on every
-step.
+exception is `Wizard.reencajar()` re-centring when `Visor.crecer()` reports
+the body actually changed size: growing without recolocating puts the footer past
+the bottom edge.
+
+`reencajar()` hangs off **`Wizard.revisar()`**, not off `repintar()`, because not
+everything that changes a step's height is a change of step: the «ya es un
+prdrive» panel appears on a `<<TreeviewSelect>>`, the checks table fills in as the
+remote answers, and the verification table redraws — and all three already end by
+calling `revisar()`. While the fit lived in `repintar()` alone, those three kept
+the *previous* box and the content was cropped **with no scrollbar to say so**,
+which is the worse of the two failures. The missing bar is not a second bug: the
+visor's `interior` is a canvas item with its height pinned by `itemconfigure`, so
+adding widgets changes what it *asks for* and not what it *measures*, and the
+`<Configure>` the scrollbar hangs off never fires. Anything that grows a body has
+to say so; `revisar()` is where every caller already was.
 
 **Every screen sits inside a `tk.Visor`, so it fits on any screen.** Font sizes
 are in points, so Tk grows them on a dense display or with the system zoom at
@@ -498,7 +509,10 @@ and pretend the screen is 1024x600.
   column is the half that matters: a 4K on its own only proves there is room to
   spare, while a 1080p at 200 % is where the content stops fitting. It fakes both
   by replacing `pantalla_util` and calling `tk scaling` on the interpreter, which
-  is reversible and is picked up by widgets created afterwards.
+  is reversible and is picked up by widgets created afterwards. It also drives the
+  one case that is *not* a step change — selecting a volume that already is a
+  prdrive — on a roomy screen and on a 1024x600, because the right answer differs
+  and both count: grow where there is room, show the bar where there is not.
 
 `tk.working(parent, title, funcion)` is the third way of showing something
 running, next to `output_window` (a command whose output is the point) and a plain
@@ -557,9 +571,48 @@ typed twice, the connection to the remote — happens once in a device's life, w
 the screen in front of you, and a text menu replicating it would double the code
 in the most delicate part of the project.
 
+**Nothing in the wizard spawns a shell, and that is not a style preference.**
+An unsigned `.exe` running out of `%TEMP%` that spawns `powershell.exe` is, to a
+behavioural AV engine, the shape of a dropper: Sophos Intercept X blocked the
+installer outright with its `Lockdown` mitigation. Two things it used to ask
+PowerShell for it now asks Windows directly.
+
+- **BitLocker status.** `Get-BitLockerVolume` and `manage-bde -status` both answer
+  "access denied" to a normal user, so checking the encryption meant re-launching
+  *elevated*: `Start-Process powershell -Verb RunAs -WindowStyle Hidden` with an
+  inline `-Command`, which is not distinguishable from a UAC bypass. It now reads
+  `System.Volume.BitLockerProtection` through `IShellItem2::GetInt32` — the same
+  property Explorer uses to draw the padlock — with no elevation, no process and
+  no window. **Ask `PSGetPropertyKeyFromName` for the PROPERTYKEY**, never trust a
+  remembered one: the `System.Volume.*` set (`{9B174B35-…}` pid 8) is a *different*
+  key and returns `ERROR_NOT_FOUND`. What is lost is the percentage. What is
+  gained is `BitLockerStatus.protected`, which accepts only the state `On`: the
+  old test was "FullyEncrypted, or percent > 0" and discarded the
+  `ProtectionStatus` it had just asked PowerShell for, so a volume in *Waiting for
+  activation* — encrypted, readable, key still in the clear on disk awaiting a
+  reboot — passed the check and got the remote's private key written onto it.
+- **The volume list.** `Get-Volume` through `powershell -Command` took **3.5
+  seconds**, measured and consistent, and `_paso_destino` calls it on the Tk thread
+  while drawing the wizard's *first* screen and again on every «Actualizar lista»,
+  which is exactly what you press after plugging the pendrive in. `_win_volumes()`
+  does it in four kernel32 calls, ~35 ms. Two things `Get-Volume` did for free have
+  to be done by hand: `SetThreadErrorMode(SEM_FAILCRITICALERRORS)`, or an empty CD
+  or card reader pops Windows' «no disk in the drive» modal on top of the wizard
+  and leaves it there; and `TIPOS_OCULTOS`, because `GetLogicalDrives` returns
+  mapped network drives and `Get-Volume` did not — without it the destination
+  picker fills with drives that can never be the device.
+
+Both split the way the rest of the project does: `make_volume()` and
+`BitLockerStatus` are pure and tested, while `_win_volumes()` and
+`_leer_estado_bitlocker()` are module-level functions the tests replace, for the
+same reason `catalog.run()` and `update.fetch()` are. There is **no longer a
+recovery-key feature**: reading a BitLocker recovery password is the one thing
+here that genuinely cannot be done without elevation, and it was not worth the
+only remaining `runas` in the project.
+
 **The shortcut: a volume that is already a prdrive.** When `_paso_destino` sees
 `device.install_target() == YA_INSTALADO`, it shows which version is on the device
-and which one the installer carries, and offers two ways out. Three things about
+and which one the installer carries, and offers two ways out. Four things about
 it are load-bearing:
 
 - **Both ways out, always.** Recognising the device must not take away the
@@ -575,6 +628,12 @@ it are load-bearing:
 - **`_ok_destino` returns False until a way out is chosen**, so «Siguiente» stays
   dark next to the two buttons. Three ways forward with two destinations is the
   confusion the wizard's disabled-until-resolved idiom exists to prevent.
+- **`install_target()` looks for the device before it looks for content**, and
+  that order is load-bearing. `.prdrive` is in `RUIDO` — it has to be, or a device
+  the installer had just made would read as `AJENO` the next time round — so a
+  freshly provisioned volume, program installed and no user data on it yet, leaves
+  nothing visible at all and used to come back `VACIO`. The shortcut was therefore
+  the one thing not offered on the newest device that can exist.
 
 The short path installs the tree the **installer itself carries** (`bundle_dir()`,
 the same source step 5 uses) — no network, no catalogue, no connection. The
