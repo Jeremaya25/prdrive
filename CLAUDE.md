@@ -736,6 +736,22 @@ escapes the destination (`extractall` is the footgun; `_ruta_segura` checks the
 names), and **the `VERSION` inside matching the tag asked for**. There is no
 signature, and the README says so plainly rather than implying otherwise.
 
+**`rclone_bin.download_rclone()` verifies before it writes**, and it is the same
+class of problem: what it fetches gets executed and then copied into the device.
+It reads `downloads.rclone.org/version.txt`, pulls `<version>/SHA256SUMS`, and
+hashes the zip in memory — nothing unverified reaches the disk, so a mismatch
+leaves the cache exactly as it was. The URL is the **versioned** one and not the
+`rclone-current-…` alias on purpose: the alias moves to whatever rclone has
+published at the moment you ask, so a release landing between reading
+`version.txt` and fetching the zip would make the sum describe one file and the
+download another — a failure with nothing wrong behind it, which is the worst
+kind. `fetch()` is module-level for the usual reason: every test replaces it and
+none touches the network. Be honest about the reach in comments and in the
+README, as `download_rclone()`'s docstring is: the sum travels over the same TLS
+from the same host as the zip, so it does **not** defend against a compromised
+rclone.org. It defends against a truncated transfer, a proxy returning something
+else, a stale cache, and the alias moving.
+
 **Mount watcher (`penwatch.py`).** Third entry point, and the only one that
 installs anything on the host. `install` copies the script to
 `%LOCALAPPDATA%\prdriveWatch` / `~/.local/share/prdrive-watch`, writes `watch.json`

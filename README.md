@@ -438,8 +438,19 @@ Léelo entero antes de usar esto con datos que te importen.
   que hay. Tu clave privada no interviene en ningún momento — el remoto ni se
   toca—, y lo que se sustituye son solo los ficheros del programa.
 - **El instalador con perfil incrustado lleva tu clave privada.** No lo publiques.
-- Las claves de recuperación de BitLocker se suben **al remoto** y nunca al
-  dispositivo: dentro del volumen que descifran no servirían de nada.
+- **El instalador descarga rclone si no lo encuentra en el equipo**, y lo que
+  baja se ejecuta y acaba copiado dentro del dispositivo. Se comprueba contra el
+  `SHA256SUMS` que publica rclone —leyendo antes su `version.txt` para pedir el
+  zip de una versión concreta, y no el alias `current`, que puede moverse entre
+  una cosa y la otra— y si no cuadra **no se guarda nada**. Con la misma
+  honestidad que arriba: esa suma viaja desde el mismo servidor y por el mismo
+  TLS que el zip, así que no protege de que rclone.org esté comprometido. Sí de
+  una descarga a medias, de un proxy que devuelve otra cosa y de una caché que
+  sirve un artefacto viejo.
+- **La clave de recuperación de BitLocker no la toca el programa.** Leerla exige
+  permisos de administrador y no compensaba: guárdala donde te diga Windows,
+  pero **no dentro del dispositivo** —es el volumen que descifra, así que ahí no
+  serviría de nada—.
 
 ## Arquitectura
 
