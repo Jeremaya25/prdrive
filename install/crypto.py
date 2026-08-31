@@ -10,10 +10,12 @@ Dos formas de cifrar el dispositivo, con repartos de trabajo muy distintos:
     instalado en el equipo salvo el propio VeraCrypt.
 
   * **BitLocker** cifra el volumen entero, y aquí solo se guía y se comprueba:
-    cifrar de verdad lo hace el diálogo de Windows. Comprobarlo NO se puede sin
-    permisos de administrador —ni `manage-bde` ni `Get-BitLockerVolume` sueltan
-    nada sin elevar—, así que «no he podido comprobarlo» es una respuesta de
-    primera clase y no se disfraza de «está todo bien».
+    cifrar de verdad lo hace el diálogo de Windows. Comprobarlo no pasa por
+    `manage-bde` ni por `Get-BitLockerVolume` —los dos exigen elevar— sino por
+    la propiedad del shell que usa el Explorador, que se lee sin permisos y sin
+    lanzar nada; la nota larga está en la sección de BitLocker. Aun así «no he
+    podido comprobarlo» sigue siendo una respuesta de primera clase y no se
+    disfraza de «está todo bien».
 
 Dos reglas que no se pueden relajar:
 
@@ -431,123 +433,165 @@ def open_veracrypt(vc: dict) -> None:
 # BitLocker
 # ---------------------------------------------------------------------------
 
+# El estado de BitLocker se lee por la MISMA vía que usa el Explorador para
+# pintar el candado: la propiedad `System.Volume.BitLockerProtection` del almacén
+# de propiedades del shell. Que sea esa y no otra importa por dos razones:
+#
+#   * `Get-BitLockerVolume` y `manage-bde -status` le contestan «acceso denegado»
+#     a un usuario normal, así que la comprobación tenía que relanzarse elevada.
+#     Un .exe sin firmar, corriendo desde %TEMP%, que lanza un PowerShell ELEVADO
+#     y con la ventana oculta es —visto desde un antivirus— la forma exacta de un
+#     bypass de UAC: Sophos lo paraba con su mitigación 'Lockdown'. Esto no eleva,
+#     no lanza ningún proceso y no enseña ninguna ventana.
+#   * La clave canónica hay que PEDÍRSELA a Windows con `PSGetPropertyKeyFromName`.
+#     La que circula por ahí —la del conjunto System.Volume.*, {9B174B35-…} pid 8—
+#     es otra distinta, y con ella la consulta devuelve ERROR_NOT_FOUND.
+#
+# Lo que se pierde frente a `Get-BitLockerVolume` es el porcentaje: se sabe que
+# se está cifrando, no por cuánto va. A cambio se gana la distinción que el
+# código anterior no hacía; ver `BitLockerStatus.protected`.
+IID_ISHELLITEM2 = "{7E9FB0D3-919F-4307-AB2E-9B1860310C93}"
+PKEY_BITLOCKER_FMTID = "{2D15A9A1-A556-4189-91AD-027458F11A07}"
+PKEY_BITLOCKER_PID = 1717
+
+# La enumeración es de Windows, no nuestra: se relee cuando haga falta pasándole
+# cada valor a `PSFormatForDisplay` con esa misma clave.
+BDE_ON = 1                   # cifrado Y protegido: el único estado que vale
+BDE_OFF = 2
+BDE_ENCRYPTING = 3
+BDE_DECRYPTING = 4
+BDE_SUSPENDED = 5
+BDE_LOCKED = 6
+BDE_NOT_ENCRYPTABLE = 7
+BDE_WAITING = 8              # activado, pero con la clave TODAVÍA en claro
+
+BDE_TEXTOS = {
+    BDE_ON: "cifrado con BitLocker y protegido",
+    BDE_OFF: "el volumen NO está cifrado con BitLocker",
+    BDE_ENCRYPTING: "cifrándose ahora mismo; espera a que Windows termine",
+    BDE_DECRYPTING: "descifrándose: BitLocker se está quitando de este volumen",
+    BDE_SUSPENDED: "cifrado, pero con la protección SUSPENDIDA: la clave está "
+                   "accesible en el propio disco",
+    BDE_LOCKED: "cifrado y BLOQUEADO: desbloquéalo para poder instalar",
+    BDE_NOT_ENCRYPTABLE: "este volumen no se puede cifrar con BitLocker",
+    BDE_WAITING: "BitLocker activado pero SIN proteger todavía: la clave sigue "
+                 "guardada en claro a la espera de reiniciar",
+}
+
+
 @dataclass(frozen=True)
 class BitLockerStatus:
     """Lo que se sabe del cifrado de un volumen.
 
-    `known=False` no es «no está cifrado»: es «no he podido comprobarlo», que es
-    lo que pasa siempre sin permisos de administrador. Distinguirlo importa,
-    porque decirle a alguien que su dispositivo está cifrado sin haberlo mirado es peor
-    que no decir nada."""
+    `known=False` no es «no está cifrado»: es «no he podido comprobarlo».
+    Distinguirlo importa, porque decirle a alguien que su dispositivo está
+    cifrado sin haberlo mirado es peor que no decir nada."""
     known: bool
-    encrypted: bool = False
-    unlocked: bool = False
-    percent: float = 0.0
+    state: int = 0
     detail: str = ""
+
+    @property
+    def protected(self) -> bool:
+        """Cifrado Y con la protección puesta. Lo único que autoriza a seguir.
+
+        Antes esto se calculaba como «VolumeStatus empieza por FullyEncrypted, o
+        el porcentaje pasa de cero», y el `ProtectionStatus` que la consulta sí
+        pedía se tiraba sin llegar a leerlo. Un volumen recién activado —el
+        estado 'Waiting for activation'— está cifrado, se lee sin problemas y
+        tiene su clave guardada EN CLARO en el propio disco esperando un
+        reinicio: pasaba la comprobación, y encima de él se dejaba la clave
+        privada del remoto. Aquí solo vale 'On'."""
+        return self.state == BDE_ON
 
     @property
     def resumen(self) -> str:
         if not self.known:
             return f"sin comprobar — {self.detail}"
-        if not self.encrypted:
-            return "el volumen NO está cifrado con BitLocker"
-        estado = "desbloqueado" if self.unlocked else "BLOQUEADO"
-        return f"cifrado al {self.percent:g}% y {estado}"
+        return BDE_TEXTOS.get(self.state, f"estado desconocido ({self.state})")
 
 
-PS_BITLOCKER = (
-    "$v = Get-BitLockerVolume -MountPoint '{letra}:' -ErrorAction Stop; "
-    "[pscustomobject]@{{ VolumeStatus=[string]$v.VolumeStatus; "
-    "ProtectionStatus=[string]$v.ProtectionStatus; LockStatus=[string]$v.LockStatus; "
-    "Percent=[double]$v.EncryptionPercentage }} | ConvertTo-Json -Compress"
-)
+def _leer_estado_bitlocker(ruta: str) -> int:
+    """El valor de `System.Volume.BitLockerProtection` de un volumen.
+
+    Con ctypes y a mano porque el proyecto no admite dependencias y la biblioteca
+    estándar no trae COM. Son tres llamadas: crear el item del shell para esa
+    ruta, pedirle la propiedad como entero, y soltarlo."""
+    import ctypes
+    from ctypes import POINTER, byref, c_int, c_void_p, c_wchar_p
+    from ctypes.wintypes import DWORD, ULONG
+
+    class GUID(ctypes.Structure):
+        _fields_ = [("Data1", ctypes.c_ulong), ("Data2", ctypes.c_ushort),
+                    ("Data3", ctypes.c_ushort), ("Data4", ctypes.c_ubyte * 8)]
+
+    class PROPERTYKEY(ctypes.Structure):
+        _fields_ = [("fmtid", GUID), ("pid", DWORD)]
+
+    ole32 = ctypes.windll.ole32
+    shell32 = ctypes.windll.shell32
+
+    def guid(texto: str) -> GUID:
+        g = GUID()
+        if ole32.CLSIDFromString(c_wchar_p(texto), byref(g)) < 0:
+            raise OSError(f"GUID ilegible: {texto}")
+        return g
+
+    clave = PROPERTYKEY()
+    clave.fmtid = guid(PKEY_BITLOCKER_FMTID)
+    clave.pid = PKEY_BITLOCKER_PID
+    iid = guid(IID_ISHELLITEM2)
+
+    # COINIT_APARTMENTTHREADED. Hay que inicializar COM en ESTE hilo, sea cual
+    # sea. Un HRESULT negativo aquí es RPC_E_CHANGED_MODE: COM ya estaba puesto
+    # en el otro modelo, que para esto sirve igual. Solo se cierra lo que se haya
+    # abierto aquí, porque cerrar de más se lleva por delante el COM de los demás.
+    hr_init = ole32.CoInitializeEx(None, 2)
+    try:
+        item = c_void_p()
+        hr = shell32.SHCreateItemFromParsingName(
+            c_wchar_p(ruta), None, byref(iid), byref(item))
+        if hr < 0 or not item:
+            raise OSError(f"SHCreateItemFromParsingName: 0x{hr & 0xFFFFFFFF:08X}")
+        vtbl = ctypes.cast(item, POINTER(POINTER(c_void_p))).contents
+        try:
+            # Huecos de la vtabla de IShellItem2: el 2 es Release, de IUnknown, y
+            # el 16 es GetInt32 —detrás de los 3 de IUnknown, los 5 de IShellItem
+            # y los 8 primeros de IShellItem2—.
+            get_int32 = ctypes.WINFUNCTYPE(
+                ctypes.c_long, c_void_p, POINTER(PROPERTYKEY),
+                POINTER(c_int))(vtbl[16])
+            valor = c_int(0)
+            hr = get_int32(item, byref(clave), byref(valor))
+            if hr < 0:
+                raise OSError(f"IShellItem2::GetInt32: 0x{hr & 0xFFFFFFFF:08X}")
+            return valor.value
+        finally:
+            ctypes.WINFUNCTYPE(ULONG, c_void_p)(vtbl[2])(item)
+    finally:
+        if hr_init >= 0:
+            ole32.CoUninitialize()
 
 
-def bitlocker_status(letra: str, elevate: bool = False) -> BitLockerStatus:
-    """Estado de BitLocker de una unidad.
+def bitlocker_status(letra: str) -> BitLockerStatus:
+    """Estado de BitLocker de una unidad. Ni eleva, ni lanza nada, ni tarda.
 
-    Sin elevar no hay nada que hacer: tanto `manage-bde` como
-    `Get-BitLockerVolume` contestan «acceso denegado» a un usuario normal. Con
-    `elevate=True` se relanza la consulta pidiendo permisos —solo lectura, es un
-    -status— y el usuario verá el aviso de UAC."""
+    Cualquier fallo sale como `known=False`, y esa es la dirección segura: quien
+    llama solo deja seguir con `protected`, así que no poder comprobarlo frena el
+    asistente en vez de dejarlo pasar. Por eso se captura `Exception` y no una
+    lista de tipos: aquí debajo hay COM, y equivocarse de excepción significaría
+    dar por buena una unidad sin haberla mirado."""
     if not IS_WIN:
         return BitLockerStatus(False, detail="BitLocker es solo de Windows.")
     letra = letra.rstrip(":").upper()
-    script = PS_BITLOCKER.format(letra=letra)
-
-    salida = _ps_json(script) if not elevate else _ps_json_elevated(script)
-    if not salida:
+    try:
+        estado = _leer_estado_bitlocker(f"{letra}:\\")
+    except Exception as e:                        # noqa: BLE001 — ver docstring
+        return BitLockerStatus(False, detail=f"Windows no ha contestado ({e})")
+    if estado not in BDE_TEXTOS:
         return BitLockerStatus(
-            False, detail=("hacen falta permisos de administrador"
-                           if not elevate else "la consulta con permisos no ha devuelto nada"))
-    import json
-    try:
-        data = json.loads(salida)
-    except ValueError:
-        return BitLockerStatus(False, detail="respuesta ilegible de Windows")
-
-    volumen = str(data.get("VolumeStatus", ""))
-    return BitLockerStatus(
-        known=True,
-        encrypted=volumen.lower().startswith("fullyencrypted")
-        or float(data.get("Percent") or 0) > 0,
-        unlocked=str(data.get("LockStatus", "")).lower() != "locked",
-        percent=float(data.get("Percent") or 0),
-        detail=f"VolumeStatus={volumen}",
-    )
-
-
-def _ps_json(script: str, timeout: float = 30.0) -> str:
-    kwargs = {"creationflags": CREATE_NO_WINDOW} if IS_WIN else {}
-    try:
-        res = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
-            text=True, encoding="utf-8", errors="replace",
-            capture_output=True, timeout=timeout, **kwargs)
-    except (OSError, subprocess.TimeoutExpired):
-        return ""
-    return (res.stdout or "").strip() if res.returncode == 0 else ""
-
-
-def _ps_json_elevated(script: str, timeout: float = 180.0) -> str:
-    """La misma consulta, pero elevando. El resultado viaja por un fichero.
-
-    Start-Process -Verb RunAs abre otro proceso con su propia consola, así que no
-    se puede leer su salida directamente: se le dice que la escriba y la leemos
-    nosotros."""
-    tmp = Path(tempfile.mkdtemp(prefix="prdrive-bde-")) / "estado.json"
-    interior = script + f" | Out-File -FilePath '{tmp}' -Encoding utf8"
-    lanzador = (
-        "Start-Process powershell -Verb RunAs -Wait -WindowStyle Hidden "
-        f"-ArgumentList '-NoProfile','-NonInteractive','-Command',\"{interior}\""
-    )
-    try:
-        subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command", lanzador],
-            capture_output=True, text=True, timeout=timeout,
-            **({"creationflags": CREATE_NO_WINDOW} if IS_WIN else {}))
-        return tmp.read_text(encoding="utf-8-sig").strip()
-    except (OSError, subprocess.TimeoutExpired, ValueError):
-        return ""
-    finally:
-        shutil.rmtree(tmp.parent, ignore_errors=True)
-
-
-PS_RECOVERY = (
-    "$v = Get-BitLockerVolume -MountPoint '{letra}:' -ErrorAction Stop; "
-    "($v.KeyProtector | Where-Object {{ $_.KeyProtectorType -eq 'RecoveryPassword' }} "
-    "| ForEach-Object {{ \"$($_.KeyProtectorId) $($_.RecoveryPassword)\" }}) -join \"`n\""
-)
-
-
-def bitlocker_recovery_key(letra: str) -> str:
-    """La clave de recuperación de esa unidad, elevando para poder leerla.
-
-    Devuelve cadena vacía si no se ha podido: no hay clave de recuperación, o el
-    usuario ha dicho que no al aviso de permisos."""
-    if not IS_WIN:
-        return ""
-    return _ps_json_elevated(PS_RECOVERY.format(letra=letra.rstrip(":").upper()))
+            False, detail=f"Windows ha devuelto un estado que no conozco ({estado})")
+    return BitLockerStatus(known=True, state=estado,
+                           detail=f"BitLockerProtection={estado}")
 
 
 def open_bitlocker_setup(letra: str) -> None:
@@ -555,15 +599,27 @@ def open_bitlocker_setup(letra: str) -> None:
 
     Cifrar lo hace Windows, no nosotros: automatizarlo con manage-bde exige
     permisos, tarda mucho y falla de formas distintas en cada edición. Lo que sí
-    aporta el instalador es abrirlo en el sitio y comprobar después."""
+    aporta el instalador es abrirlo en el sitio y comprobar después.
+
+    Dos `os.startfile` y no un PowerShell con dos `Start-Process`: hacen lo mismo
+    sin lanzar un intérprete de órdenes, que es justo lo que mira un antivirus.
+    `ms-settings:` abre la página de cifrado, y la unidad abre el Explorador, que
+    es donde está «Activar BitLocker» en las ediciones que no traen esa página.
+
+    Los dos se intentan por separado, como los dos `Start-Process` de antes: si
+    esta edición de Windows no resuelve el `ms-settings:`, lo que no puede pasar
+    es que se lleve por delante la ventana del Explorador, que es la que sirve en
+    todas. Solo se da por fallado si no se abre ninguna de las dos."""
     if not IS_WIN:
         raise InstallError("BitLocker es solo de Windows.")
     letra = letra.rstrip(":").upper()
-    try:
-        subprocess.Popen(
-            ["powershell", "-NoProfile", "-Command",
-             f"Start-Process 'ms-settings:deviceencryption'; "
-             f"Start-Process -FilePath 'explorer.exe' -ArgumentList '{letra}:'"],
-            creationflags=CREATE_NO_WINDOW)
-    except OSError as e:
-        raise InstallError(f"No he podido abrir el asistente de BitLocker: {e}") from e
+    abiertas, fallos = 0, []
+    for destino in ("ms-settings:deviceencryption", f"{letra}:\\"):
+        try:
+            os.startfile(destino)          # type: ignore[attr-defined]
+            abiertas += 1
+        except OSError as e:
+            fallos.append(f"{destino}: {e}")
+    if not abiertas:
+        raise InstallError("No he podido abrir el asistente de BitLocker.\n\n"
+                           + "\n".join(fallos))

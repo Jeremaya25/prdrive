@@ -54,7 +54,6 @@ INJECT_MARKER = "__INJECT"
 PROFILE_FILE = "prdrive-profile.toml"
 DEFAULT_KEY_NAME = "id_ed25519"
 DEFAULT_REMOTE_NAME = "remote"
-DEFAULT_RECOVERY_PATH = "/prdrive/_recovery"
 
 # Las dos opciones que NO se guardan en el perfil: son rutas del disco de quien
 # ejecuta, y valen una cosa en el temporal del instalador y otra en el
@@ -81,7 +80,6 @@ class Profile:
     known_hosts: str = ""
     key_name: str = DEFAULT_KEY_NAME
     catalog_path: str = DEFAULT_CATALOG_PATH
-    recovery_path: str = DEFAULT_RECOVERY_PATH
     origen: str = "sin configurar"
 
     @property
@@ -290,8 +288,7 @@ def from_rclone_conf(path: Path | str, remote_name: str,
 def from_form(remote_name: str, options: Mapping[str, str],
               key_path: Path | str | None = None,
               known_path: Path | str | None = None,
-              catalog_path: str = DEFAULT_CATALOG_PATH,
-              recovery_path: str = DEFAULT_RECOVERY_PATH) -> Profile:
+              catalog_path: str = DEFAULT_CATALOG_PATH) -> Profile:
     """Lo que se ha tecleado en el asistente, validado antes de intentar nada."""
     remote_name = (remote_name or "").strip()
     if not remote_name:
@@ -325,7 +322,6 @@ def from_form(remote_name: str, options: Mapping[str, str],
         remote_name=remote_name, options=limpio, private_key=clave,
         known_hosts=conocidos or "", key_name=key_name,
         catalog_path=(catalog_path or DEFAULT_CATALOG_PATH).strip(),
-        recovery_path=(recovery_path or DEFAULT_RECOVERY_PATH).strip(),
         origen="configurada en el asistente")
 
 
@@ -390,10 +386,6 @@ def align_with_catalog(perfil: Profile,
                          "catálogo, que es el que comparten todos los dispositivos.")
         ajustado = replace(ajustado, options=opciones)
 
-    ruta = str(defaults.get("recovery_path") or "").strip()
-    if ruta and ruta != ajustado.recovery_path:
-        ajustado = replace(ajustado, recovery_path=ruta)
-
     return ajustado, notas
 
 
@@ -429,7 +421,6 @@ def dumps(profile: Profile) -> str:
         f'remote_name = "{profile.remote_name}"',
         f'key_name = "{profile.key_name}"',
         f'catalog_path = "{profile.catalog_path}"',
-        f'recovery_path = "{profile.recovery_path}"',
         "",
         "[options]",
     ]
@@ -453,8 +444,6 @@ def loads(texto: str, *, private_key: bytes | None = None,
         key_name=str(raw.get("key_name", DEFAULT_KEY_NAME) or DEFAULT_KEY_NAME),
         catalog_path=str(raw.get("catalog_path", DEFAULT_CATALOG_PATH)
                          or DEFAULT_CATALOG_PATH),
-        recovery_path=str(raw.get("recovery_path", DEFAULT_RECOVERY_PATH)
-                          or DEFAULT_RECOVERY_PATH),
         origen=origen or "leída de un perfil")
 
 

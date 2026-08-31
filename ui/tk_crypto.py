@@ -273,15 +273,16 @@ def _panel_bitlocker(panel, wiz, hecho) -> None:
     ttk.Label(panel, justify="left", wraplength=theme.medida(760), text=(
         "Cifrar lo hace Windows, no el instalador: automatizarlo exige permisos "
         "de administrador, tarda mucho y falla distinto en cada edición. Aquí se "
-        "abre el asistente de Windows, se comprueba después cómo quedó, y se "
-        "ofrece guardar la clave de recuperación en el remoto.")).grid(
+        "abre el asistente de Windows y se comprueba después cómo quedó.\n\n"
+        "Guarda la clave de recuperación donde te diga Windows, pero NO dentro "
+        "de este volumen: ahí no serviría de nada.")).grid(
         row=0, column=0, sticky="w")
 
     marca = ttk.Label(panel, wraplength=theme.medida(760), justify="left")
     marca.grid(row=1, column=0, sticky="w", pady=(10, 0))
 
     def pintar_estado(st) -> None:
-        color = "#116611" if (st.known and st.encrypted and st.unlocked) else "#775500"
+        color = "#116611" if (st.known and st.protected) else "#775500"
         marca.configure(text=f"Estado de {letra}: {st.resumen}", foreground=color)
 
     pintar_estado(crypto.BitLockerStatus(False, detail="sin comprobar todavía"))
@@ -293,43 +294,11 @@ def _panel_bitlocker(panel, wiz, hecho) -> None:
             messagebox.showerror(TITLE, str(e), parent=wiz.root)
 
     def comprobar() -> None:
-        ok, res = working(
-            wiz.root, "comprobando BitLocker",
-            lambda: crypto.bitlocker_status(letra, elevate=True),
-            "Consultando el estado de BitLocker.\nWindows va a pedir permisos: "
-            "es una consulta de solo lectura.")
-        if not ok:
-            messagebox.showerror(TITLE, f"{res}", parent=wiz.root)
-            return
+        res = crypto.bitlocker_status(letra)
         pintar_estado(res)
-        if res.known and res.encrypted and res.unlocked:
+        if res.known and res.protected:
             estado.device_root = estado.device
             hecho()
-
-    def subir_clave() -> None:
-        ok, texto = working(
-            wiz.root, "leyendo la clave de recuperación",
-            lambda: crypto.bitlocker_recovery_key(letra),
-            "Leyendo la clave de recuperación (Windows pedirá permisos).")
-        if not ok or not str(texto).strip():
-            messagebox.showwarning(TITLE, (
-                "No he podido leer ninguna clave de recuperación. Guárdala tú "
-                "desde el asistente de BitLocker y súbela a mano al remoto."),
-                parent=wiz.root)
-            return
-        from install import deploy
-        ok, res = working(
-            wiz.root, "subiendo la clave al remoto",
-            lambda: deploy.upload_recovery_key(wiz.rclone, str(texto), letra,
-                                               wiz.perfil.recovery_path),
-            "Subiendo la clave de recuperación al remoto.")
-        if ok:
-            messagebox.showinfo(TITLE, f"Guardada en {res}.\n\nEstá en el remoto y "
-                                "no en el dispositivo a propósito: dentro del "
-                                "volumen que descifra no serviría de nada.",
-                                parent=wiz.root)
-        else:
-            messagebox.showerror(TITLE, str(res), parent=wiz.root)
 
     def seguir_igual() -> None:
         if not messagebox.askokcancel(TITLE, (
@@ -345,6 +314,5 @@ def _panel_bitlocker(panel, wiz, hecho) -> None:
     for i, (texto, accion) in enumerate((
             ("Abrir el asistente de Windows", abrir),
             ("Comprobar cómo quedó", comprobar),
-            ("Subir la clave de recuperación", subir_clave),
             ("Seguir de todas formas", seguir_igual))):
         ttk.Button(botones, text=texto, command=accion).grid(row=0, column=i, padx=(0, 6))

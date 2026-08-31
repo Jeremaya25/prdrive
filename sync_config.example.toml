@@ -39,7 +39,6 @@ shell_type = "none"
 [defaults]
 remote = "nas"                # tiene que coincidir con [remote].name
 catalog_path = "/prdrive-catalog/pairs.toml"
-recovery_path = "/prdrive/_recovery"    # dónde se guardan las claves de BitLocker
 
 # Filtros que se suman a los de cada pareja.
 exclude = [

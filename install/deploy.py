@@ -39,7 +39,6 @@ from __future__ import annotations
 
 import shutil
 import stat
-import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Mapping
@@ -49,7 +48,7 @@ from common import config_file, model
 from . import APP_NAME, IS_WIN, InstallError, bundle_dir, python_command
 from .profile import Profile, render_conf
 from .rclone_bin import bin_subdir, exe_name
-from .remote import Catalog, Rclone
+from .remote import Catalog
 
 # El punto la oculta en Linux y macOS por convención; en Windows hace falta
 # además el atributo, que pone `hide()`. Con las dos cosas la carpeta está
@@ -485,37 +484,6 @@ def resync_command(device_root: Path | str, names: list[str]) -> list[str]:
             "para inicializar las parejas.\n\nInstala Python 3.11+ y vuelve a este "
             "paso; el código ya instalado no se pierde.")
     return [*python, str(destino), *names, "--resync", "--yes"]
-
-
-# ---------------------------------------------------------------------------
-# La clave de recuperación de BitLocker
-# ---------------------------------------------------------------------------
-
-def upload_recovery_key(rclone: Rclone, texto: str, etiqueta: str,
-                        recovery_path: str) -> str:
-    """Sube la clave de recuperación de BitLocker al remoto y devuelve su ruta.
-
-    Va al remoto y NO al dispositivo a propósito: una clave de recuperación
-    guardada dentro del volumen que descifra no sirve de nada."""
-    if not texto.strip():
-        raise InstallError("No hay ninguna clave de recuperación que subir.")
-    if not recovery_path:
-        raise InstallError(
-            "No sé dónde guardar la clave de recuperación: falta 'recovery_path' "
-            "en el perfil de conexión.")
-    nombre = f"BitLocker-{etiqueta}-{datetime.now():%Y%m%d-%H%M}.txt"
-    tmpdir = Path(tempfile.mkdtemp(prefix=f"{APP_NAME}-bde-"))
-    local = tmpdir / nombre
-    try:
-        local.write_text(texto, encoding="utf-8")
-        destino = rclone.endpoint(f"{recovery_path.rstrip('/')}/{nombre}")
-        res = rclone.run("copyto", str(local), destino, capture=True, timeout=120)
-        if res.returncode != 0:
-            raise InstallError(
-                f"No he podido subir la clave al remoto:\n\n{(res.stderr or '').strip()}")
-        return destino
-    finally:
-        shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------

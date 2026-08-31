@@ -169,7 +169,7 @@ def dumps(raw: Mapping[str, Any], head: str = "") -> str:
     if defaults:
         out.append("[defaults]")
         out += _table_body(defaults, ["remote", "device_remote", "catalog_path",
-                                      "recovery_path", "keep_logs"])
+                                      "keep_logs"])
         out.append("")
         if defaults.get("flags"):
             out.append("[defaults.flags]")

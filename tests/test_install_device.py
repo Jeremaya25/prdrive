@@ -2,10 +2,12 @@
 """
 Detección de unidades, fichero de control y verificación final.
 
-Lo interesante aquí es el JSON de Get-Volume: `ConvertTo-Json` devuelve un OBJETO
-cuando solo hay un volumen y una LISTA cuando hay varios, así que el caso de «un
-único pendrive conectado» es exactamente el que rompe si se trata como lista. Se
-prueba con salida enlatada, sin llamar a PowerShell.
+Las unidades ya no salen de un `Get-Volume` por PowerShell —tardaba 3,5 segundos
+medidos, y `_paso_destino` lo llamaba en el hilo de Tk al dibujar la primera
+pantalla del asistente— sino de cuatro llamadas a kernel32. Lo que se prueba aquí
+es `make_volume()`, la mitad pura de esa enumeración, más la tabla de tipos:
+`GetLogicalDrives` devuelve TAMBIÉN las unidades de red, que `Get-Volume` no
+devolvía y que no pueden ser el dispositivo, así que hay que descartarlas.
 
 También se comprueba que la copia de `CONTROL_FILE`/`CONTROL_TEMPLATE` que vive
 en `install/device.py` no se ha separado de la de `penwatch.py`. Están duplicadas
@@ -23,40 +25,57 @@ from install import device
 
 c = Checks("instalador: unidades y verificación del dispositivo")
 
-VARIOS = ('[{"DriveLetter":"C","FileSystemLabel":"Windows","FileSystem":"NTFS",'
-          '"DriveType":"Fixed","Size":509604786176,"SizeRemaining":184530755584},'
-          '{"DriveLetter":"E","FileSystemLabel":"PRDRIVE","FileSystem":"exFAT",'
-          '"DriveType":"Removable","Size":8049885184,"SizeRemaining":1607237632}]')
-UNO = ('{"DriveLetter":"E","FileSystemLabel":"PRDRIVE","FileSystem":"exFAT",'
-       '"DriveType":"Removable","Size":8049885184,"SizeRemaining":1607237632}')
+# --- de lo que conteste el sistema a un Volume --------------------------------
+sistema = device.make_volume("C", "Fixed", "Windows", "NTFS",
+                             509604786176, 184530755584, system_drive="C:")
+pen = device.make_volume("E", "Removable", "PRDRIVE", "exFAT",
+                         8049885184, 1607237632, system_drive="C:")
 
-# --- el JSON de Get-Volume ----------------------------------------------------
-volumenes = device.parse_volumes_json(VARIOS, system_drive="C:")
-c("varias unidades", [str(v.root) for v in volumenes],
-  [str(Path("C:/")), str(Path("E:/"))])
-c("se marca la del sistema", [v.is_system for v in volumenes], [True, False])
-c("y solo esa", volumenes[1].is_system, False)
+c("la letra se convierte en una raíz", str(pen.root), str(Path("E:/")))
+c("se marca la del sistema", sistema.is_system, True)
+c("y solo esa", pen.is_system, False)
+c("la etiqueta se lee", pen.label, "PRDRIVE")
+c("los tamaños se pasan a GB", pen.size_gb, 7.5)
+c("y el hueco libre también", pen.free_gb, 1.5)
+c("'Removable' se reconoce", pen.removable, True)
+c("'Fixed' no", sistema.removable, False)
+c("de la unidad del sistema se avisa fuerte", "SISTEMA" in sistema.nota, True)
 
-# Este es el caso que fallaba: con un solo pendrive, ConvertTo-Json no da lista.
-uno = device.parse_volumes_json(UNO, system_drive="C:")
-c("una sola unidad no revienta", len(uno), 1)
-c("y se lee igual", uno[0].label, "PRDRIVE")
+# La letra no siempre llega escrita igual según de dónde venga.
+c("una letra en minúscula se normaliza",
+  str(device.make_volume("e").root), str(Path("E:/")))
+c("y con los dos puntos detrás también",
+  str(device.make_volume("E:").root), str(Path("E:/")))
 
-c("los tamaños se pasan a GB", uno[0].size_gb, 7.5)
-c("y el hueco libre también", uno[0].free_gb, 1.5)
-c("'Removable' se reconoce", uno[0].removable, True)
-c("'Fixed' no", volumenes[0].removable, False)
-
-# Un pendrive que se declara 'Fixed' —lo normal en SSD por USB— tiene que salir
-# igualmente en la lista, con una nota: filtrarlo es lo que hacía que no
+# Un pendrive que se declara 'Fixed' —lo normal en los SSD por USB— tiene que
+# salir igualmente en la lista, con una nota: filtrarlo es lo que hacía que no
 # apareciera el dispositivo del usuario.
-fijo = device.parse_volumes_json(
-    UNO.replace('"Removable"', '"Fixed"'), system_drive="C:")[0]
-c("un extraíble que se declara fijo no se descarta", len(uno), 1)
-c.contains("pero se avisa", fijo.nota, "no se declara extraíble")
-c("de la unidad del sistema se avisa fuerte", "SISTEMA" in volumenes[0].nota, True)
-c("nada raro que decir de un JSON vacío", device.parse_volumes_json(""), [])
-c("ni de uno ilegible", device.parse_volumes_json("{no es json"), [])
+fijo = device.make_volume("E", "Fixed", "PRDRIVE", "exFAT",
+                          8049885184, 1607237632, system_drive="C:")
+c.contains("un extraíble que se declara fijo se avisa, no se descarta",
+           fijo.nota, "no se declara extraíble")
+
+# Una unidad sin medio dentro —un CD o un lector de tarjetas vacíos— hace fallar
+# a GetVolumeInformationW, y aun así tiene que salir: que la letra exista ya es
+# un dato, y esconderla es justo lo que dejaba al usuario sin ver su unidad.
+vacia = device.make_volume("Z", "CD-ROM", system_drive="C:")
+c("una unidad sin medio dentro no revienta", str(vacia.root), str(Path("Z:/")))
+c("sale sin etiqueta", vacia.label, "")
+c("y sin tamaño", vacia.size, 0)
+
+# --- la tabla de tipos de GetDriveTypeW ---------------------------------------
+c("DRIVE_REMOVABLE", device.DRIVE_TYPES[2], "Removable")
+c("DRIVE_FIXED", device.DRIVE_TYPES[3], "Fixed")
+c("DRIVE_REMOTE", device.DRIVE_TYPES[4], "Network")
+c("DRIVE_CDROM", device.DRIVE_TYPES[5], "CD-ROM")
+
+# Ésta es la comprobación del cambio de comportamiento: `Get-Volume` no devolvía
+# las unidades de red y `GetLogicalDrives` sí, así que sin el filtro el selector
+# de destino se llenaría de unidades mapeadas que nadie puede elegir.
+c("las de red no se ofrecen", "Network" in device.TIPOS_OCULTOS, True)
+c("las extraíbles sí", "Removable" in device.TIPOS_OCULTOS, False)
+c("y las fijas también, que muchos pendrives lo son",
+  "Fixed" in device.TIPOS_OCULTOS, False)
 
 # --- el fichero de control ----------------------------------------------------
 base = tmpdir()

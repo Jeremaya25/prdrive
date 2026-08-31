@@ -8,6 +8,8 @@ Tres cosas, y las tres son de seguridad más que de comodidad:
     los SSD por USB— se declaran `Fixed`, así que filtrar por ahí es justo lo que
     hace que el dispositivo del usuario no aparezca en la lista. Se listan todos y se
     marca cuáles lo parecen; quien decide es el usuario, con los datos delante.
+    Lo único que se descarta son las unidades de red (`TIPOS_OCULTOS`): ninguna
+    puede ser un dispositivo, y `GetLogicalDrives` sí las devuelve.
 
   * `install_target()` mira qué hay en el destino ANTES de escribir. Instalar ya
     no borra nada —era un espejo del remoto y ahora es una copia local—, pero
@@ -27,17 +29,16 @@ un test que comprueba que las dos copias no se separan.
 
 from __future__ import annotations
 
-import json
 import os
-import subprocess
+import shutil
 import tomllib
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from common import model
 
-from . import CREATE_NO_WINDOW, DEVICE_LABEL, IS_WIN, InstallError
+from . import DEVICE_LABEL, IS_WIN, InstallError
 from .rclone_bin import bin_subdir, exe_name
 
 CONTAINER_SUFFIX = ".hc"
@@ -138,58 +139,111 @@ class Volume:
         return round(self.free / 1024 ** 3, 1)
 
 
-PS_VOLUMES = (
-    "Get-Volume -ErrorAction SilentlyContinue | "
-    "Where-Object { $_.DriveLetter } | "
-    "Select-Object DriveLetter, FileSystemLabel, FileSystem, "
-    "@{n='DriveType';e={[string]$_.DriveType}}, Size, SizeRemaining | "
-    "ConvertTo-Json -Compress"
-)
+# Los tipos que devuelve `GetDriveTypeW`, con los mismos nombres que daba
+# `Get-Volume`: son los que enseña la tabla del asistente y los que mira
+# `Volume.removable`, así que traducirlos a otra cosa sería cambiar la pantalla y
+# la lógica a la vez sin ninguna necesidad.
+DRIVE_TYPES = {
+    2: "Removable",
+    3: "Fixed",
+    4: "Network",
+    5: "CD-ROM",
+    6: "RAM disk",
+}
+
+# Se enumeran pero NO se ofrecen. Una unidad de red no puede ser el dispositivo,
+# y `Get-Volume` tampoco las devolvía: sin este filtro el selector de destino se
+# llena de unidades mapeadas que nadie puede elegir.
+TIPOS_OCULTOS = ("Network",)
 
 
-def _powershell(script: str, timeout: float = 30.0) -> str:
-    kwargs: dict = {}
-    if IS_WIN:
-        kwargs["creationflags"] = CREATE_NO_WINDOW
-    try:
-        res = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
-            text=True, encoding="utf-8", errors="replace",
-            capture_output=True, timeout=timeout, **kwargs)
-    except (OSError, subprocess.TimeoutExpired):
-        return ""
-    return (res.stdout or "").strip()
+def make_volume(letra: str, drive_type: str = "", label: str = "",
+                filesystem: str = "", size: int = 0, free: int = 0,
+                system_drive: str = "") -> Volume:
+    """Un `Volume` a partir de lo que haya contestado el sistema.
 
-
-def parse_volumes_json(salida: str, system_drive: str = "") -> list[Volume]:
-    """El JSON de Get-Volume -> Volumes.
-
-    ConvertTo-Json devuelve un OBJETO cuando solo hay un volumen y una LISTA
-    cuando hay varios; con un solo pendrive conectado, tratarlo como lista es
-    justo el caso que falla."""
-    if not salida:
-        return []
-    try:
-        data = json.loads(salida)
-    except ValueError:
-        return []
-    filas = [data] if isinstance(data, dict) else list(data)
-
+    Es la mitad pura de la enumeración, y por eso es la que se prueba:
+    `_win_volumes()` no hace más que traducir llamadas de kernel32 a estos
+    argumentos, igual que `_leer_estado_bitlocker` en `crypto.py` es la parte que
+    los tests sustituyen en vez de simular."""
     system = (system_drive or os.environ.get("SystemDrive", "C:")).rstrip(":").upper()
-    volumenes = []
-    for fila in filas:
-        letra = str(fila.get("DriveLetter") or "").strip().rstrip(":")
-        if not letra:
-            continue
-        volumenes.append(Volume(
-            root=Path(f"{letra.upper()}:\\"),
-            label=str(fila.get("FileSystemLabel") or ""),
-            filesystem=str(fila.get("FileSystem") or ""),
-            drive_type=str(fila.get("DriveType") or ""),
-            size=int(fila.get("Size") or 0),
-            free=int(fila.get("SizeRemaining") or 0),
-            is_system=letra.upper() == system,
-        ))
+    letra = letra.strip().rstrip(":").upper()
+    return Volume(
+        root=Path(f"{letra}:\\"),
+        label=label or "",
+        filesystem=filesystem or "",
+        drive_type=drive_type or "",
+        size=int(size or 0),
+        free=int(free or 0),
+        is_system=letra == system,
+    )
+
+
+def _win_volumes() -> list[Volume]:
+    """Las unidades con letra, preguntándole a kernel32 en vez de a PowerShell.
+
+    Cuatro llamadas, ninguna eleva. Antes esto era un `Get-Volume` lanzado con
+    `powershell -Command`, y se cambió por dos razones:
+
+      * **Tardaba 3,5 segundos**, medidos y constantes —no era arranque en frío—,
+        contra unos 35 ms de esto. Y `ui.tk_install._paso_destino` lo llama en el
+        hilo de Tk al dibujar la PRIMERA pantalla del asistente, y otra vez en
+        cada «Actualizar lista», que es justo lo que se pulsa tras enchufar el
+        pendrive: la ventana se quedaba muerta esos 3,5 s cada vez.
+      * Era el último proceso hijo que lanzaba el instalador en el camino normal.
+        Un .exe sin firmar que corre desde %TEMP% y lanza PowerShell es la forma
+        que puntúa en un antivirus; ver la nota larga de BitLocker en `crypto.py`.
+
+    Dos cosas hay que hacer aquí que `Get-Volume` hacía por su cuenta:
+
+      * **Callar el diálogo de «No hay ningún disco en la unidad».** Un lector de
+        tarjetas o un CD vacíos lo sacan en cuanto se les pregunta, y sale ENCIMA
+        del asistente a esperar a que alguien lo cierre. `SetThreadErrorMode` es
+        la versión por hilo de `SetErrorMode`, que es global al proceso: se
+        restaura al salir para no cambiarle el modo a nadie más.
+      * **Quitar las unidades de red**, que `GetLogicalDrives` sí devuelve."""
+    import ctypes
+    from ctypes import byref, c_ulonglong, c_wchar_p, create_unicode_buffer
+    from ctypes.wintypes import DWORD
+
+    k32 = ctypes.windll.kernel32
+    SEM_FAILCRITICALERRORS = 0x0001
+    LARGO = 261                    # MAX_PATH + 1, lo que pide GetVolumeInformationW
+
+    volumenes: list[Volume] = []
+    anterior = DWORD()
+    k32.SetThreadErrorMode(SEM_FAILCRITICALERRORS, byref(anterior))
+    try:
+        mascara = k32.GetLogicalDrives()
+        for i in range(26):
+            if not (mascara >> i) & 1:
+                continue
+            letra = chr(ord("A") + i)
+            raiz = c_wchar_p(f"{letra}:\\")
+
+            tipo = DRIVE_TYPES.get(k32.GetDriveTypeW(raiz), "Unknown")
+            if tipo in TIPOS_OCULTOS:
+                continue
+
+            etiqueta = create_unicode_buffer(LARGO)
+            sistema = create_unicode_buffer(LARGO)
+            if not k32.GetVolumeInformationW(raiz, etiqueta, LARGO,
+                                             None, None, None, sistema, LARGO):
+                # Sin medio dentro, o bloqueada. La unidad sigue saliendo en la
+                # lista y sin etiqueta: que la letra exista ya es un dato, y
+                # esconderla es lo que dejaba al usuario sin ver su dispositivo.
+                etiqueta.value = sistema.value = ""
+
+            total, libre = c_ulonglong(0), c_ulonglong(0)
+            # El segundo hueco es el libre PARA QUIEN PREGUNTA (cuotas); el que
+            # se quiere aquí es el total libre, que es lo que decía SizeRemaining.
+            if not k32.GetDiskFreeSpaceExW(raiz, None, byref(total), byref(libre)):
+                total.value = libre.value = 0
+
+            volumenes.append(make_volume(letra, tipo, etiqueta.value,
+                                         sistema.value, total.value, libre.value))
+    finally:
+        k32.SetThreadErrorMode(anterior, byref(DWORD()))
     return volumenes
 
 
@@ -227,13 +281,36 @@ def _posix_volumes() -> list[Volume]:
     return volumenes
 
 
+def _con_tamano(vol: Volume) -> Volume:
+    """Rellena tamaño y hueco cuando la enumeración los ha dejado a cero.
+
+    Visto una vez: `Get-Volume` devolvió el pendrive con `Size` y `SizeRemaining`
+    a cero mientras el volumen estaba montado y se leía sin problemas —un
+    `disk_usage` sobre esa misma ruta contestaba bien—, y el asistente lo
+    enseñaba como «0 GB». No ha vuelto a reproducirse, así que la causa no se
+    sabe y no se finge saberla. Lo que sí se sabe es que un cero aquí merece una
+    segunda opinión antes de enseñárselo a nadie: quien ve «0 GB» descarta esa
+    unidad.
+
+    Se hace aquí y no en `make_volume` para que ese siga siendo una traducción
+    pura de lo que conteste el sistema, que es como está probado."""
+    if vol.size:
+        return vol
+    try:
+        uso = shutil.disk_usage(str(vol.root))
+    except OSError:
+        return vol                     # bloqueado, sin medio dentro, o desaparecido
+    return replace(vol, size=uso.total, free=uso.free)
+
+
 def list_volumes() -> list[Volume]:
     """Todas las unidades candidatas, sin filtrar por «extraíble».
 
     Los pendrives que se declaran `Fixed` son la norma, no la excepción, así que
     filtrar por el tipo es la forma más rápida de que el dispositivo del usuario no salga
     en la lista. Se ordenan poniendo delante lo que más se parece a un dispositivo."""
-    volumenes = parse_volumes_json(_powershell(PS_VOLUMES)) if IS_WIN else _posix_volumes()
+    volumenes = [_con_tamano(v) for v in
+                 (_win_volumes() if IS_WIN else _posix_volumes())]
     return sorted(volumenes, key=lambda v: (v.is_system, not v.has_control,
                                             not v.has_container, not v.removable,
                                             str(v.root)))
@@ -249,8 +326,7 @@ def volume_for(root: Path) -> Volume:
         except OSError:
             continue
     try:
-        import shutil as _shutil
-        uso = _shutil.disk_usage(str(root))
+        uso = shutil.disk_usage(str(root))
         size, free = uso.total, uso.free
     except OSError:
         size = free = 0
