@@ -702,3 +702,17 @@ existing header.
   `[remote]`). Verified by hand with `config_file.dumps_checked()`.
 - **`LICENSE`** is the Apache License 2.0, verbatim, appendix copyright filled
   in. README's «Licencia» section points at it; keep the two in step.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues (`Jeremaya25/prdrive`), driven by the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical triage labels, each label string equal to its role name. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: one `CONTEXT.md` + `docs/adr/` at the repo root, created lazily. See `docs/agents/domain.md`.
