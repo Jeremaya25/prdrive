@@ -963,6 +963,97 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
 
 
 # ---------------------------------------------------------------------------
+# El aviso del servicio
+# ---------------------------------------------------------------------------
+
+def aviso_fallo(fallos, al_abrir=None) -> None:
+    """La ventanita que abre el servicio cuando falla un ciclo. Bloquea hasta
+    que se cierra: quien la llama (`ui.avisar_fallo`) la tiene en su propio
+    hilo. `al_abrir()` se llama cuando ya se ve.
+
+    Es lo mínimo: qué parejas, cuándo, y el log. Explicar el fallo es cosa de la
+    ventana principal, que ya tiene su bloque ámbar para esto; aquí solo hay
+    que conseguir que alguien se entere.
+
+    Al cerrarse se suelta AQUÍ todo lo de Tk: lo que recuerdan `theme` e
+    `icons` de este intérprete, y los `PhotoImage` colgados de los widgets en
+    ciclos de referencias. Si los soltara más tarde el hilo del servicio,
+    borrarlos sería hablarle a Tk desde un hilo que no es el suyo."""
+    import gc
+    try:
+        _aviso_fallo(fallos, al_abrir)
+    finally:
+        gc.collect()
+
+
+def _aviso_fallo(fallos, al_abrir) -> None:
+    import tkinter as tk
+    from tkinter import ttk
+
+    theme.nitidez()
+    root = tk.Tk()               # TclError aquí si no hay display: lo recoge quien llama
+    theme.apply(root)
+    icons.poner_icono(root)
+    root.title(f"{TITLE} — el servicio ha fallado")
+    root.configure(background=theme.PAPEL)
+    root.resizable(False, False)
+    root.withdraw()
+
+    marco = cuerpo_visible(root, padding=(22, 20, 22, 18))
+    marco.columnconfigure(0, weight=1)
+    cabecera(marco, "El servicio no ha podido sincronizar",
+             "Sigue en marcha y lo volverá a intentar en el próximo ciclo. Abre "
+             f"{TITLE} para ver qué ha pasado.",
+             ancho=420, estilo="Dialogo.TLabel").grid(row=0, column=0, sticky="w")
+
+    tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(14, 4))
+    tarjeta.grid(row=1, column=0, sticky="ew", pady=(14, 0))
+    tarjeta.columnconfigure(0, weight=1)
+    for i, fallo in enumerate(fallos):
+        if i:
+            separador_fila(tarjeta, i * 2 - 1, 2)
+        ttk.Label(tarjeta, text=fallo.pareja, style="Card.Fuerte.TLabel").grid(
+            row=i * 2, column=0, sticky="w", pady=6)
+        ttk.Label(tarjeta, text=cuando_sello(fallo.cuando) or "—",
+                  style="Card.MonoPista.TLabel").grid(row=i * 2, column=1, sticky="e")
+
+    def ver(ruta) -> None:
+        try:
+            abrir(ruta)
+        except OSError:
+            pass         # sin visor no hay log que enseñar; la principal lo tiene
+
+    pie = ttk.Frame(marco)
+    pie.grid(row=2, column=0, sticky="ew", pady=(16, 0))
+    pie.columnconfigure(0, weight=1)
+    logs = [f.log for f in fallos if f.log is not None]
+    if logs:
+        ttk.Button(pie, text="Ver el log" if len(logs) == 1 else "Abrir los logs",
+                   style="Quiet.TButton",
+                   command=lambda: ver(logs[0] if len(logs) == 1 else model.LOG_DIR)).grid(
+            row=0, column=1, padx=(0, 8))
+    ttk.Button(pie, text="Cerrar", style="Primary.TButton",
+               command=root.destroy).grid(row=0, column=2)
+
+    root.visor.encajar(root)
+    centrar(root)
+    root.deiconify()
+    # Un proceso sin ventana no puede quitarle el foco a nadie, así que Windows
+    # la dejaría debajo de todo: encima un momento, lo justo para verla.
+    try:
+        root.attributes("-topmost", True)
+        root.after(1500, lambda: root.attributes("-topmost", False))
+    except tk.TclError:
+        pass
+    if al_abrir is not None:
+        al_abrir()
+    root.mainloop()
+    interp = root.tk
+    theme.olvidar(interp)
+    icons.olvidar(interp)
+
+
+# ---------------------------------------------------------------------------
 # La ventana de salida
 # ---------------------------------------------------------------------------
 

@@ -96,6 +96,55 @@ def abrir(ruta: Path) -> None:
                      start_new_session=True)
 
 
+_aviso_abierto: dict = {"hilo": None}
+
+
+def avisar_fallo(nombres: list[str], espera: float = 10.0) -> bool:
+    """La ventanita con la que el servicio dice que un ciclo ha fallado.
+
+    Devuelve True si se ha podido enseñar, y False si no hay entorno gráfico,
+    para que quien llama lo apunte en su diario —la misma caída que hace
+    `start()` a la consola—.
+
+    Va en un hilo propio con su propio intérprete de Tk, y no en el del
+    servicio, porque el servicio tiene que seguir: una ventana que nadie cierra
+    no puede parar la sincronización de las demás parejas, y bombearla desde el
+    bucle del servicio la dejaría congelada mientras rclone trabaja. Todo lo de
+    Tk ocurre dentro de ese hilo, que es lo que Tk exige. No se lanza ningún
+    proceso: un servicio sin ventana que de repente arranca otro programa es
+    justo lo que un antivirus mira mal (ver `install/`).
+
+    Si ya hay una abierta no se abre otra: esa ya dice que falla."""
+    import threading
+
+    hilo = _aviso_abierto["hilo"]
+    if hilo is not None and hilo.is_alive():
+        return True
+
+    from common import results
+    fallos = results.fallos_de(nombres)
+    abierta = threading.Event()
+    hecho = threading.Event()
+
+    def trabajar() -> None:
+        try:
+            from . import tk
+            tk.aviso_fallo(fallos, al_abrir=abierta.set)
+        except Exception:                            # noqa: BLE001
+            pass                 # sin tkinter o sin display: lo dirá el diario
+        finally:
+            hecho.set()
+
+    hilo = threading.Thread(target=trabajar, daemon=True, name="aviso-fallo")
+    _aviso_abierto["hilo"] = hilo
+    hilo.start()
+    limite = espera
+    while limite > 0 and not abierta.is_set() and not hecho.is_set():
+        abierta.wait(0.05)
+        limite -= 0.05
+    return abierta.is_set()
+
+
 def cuando_sello(sello: str) -> str:
     """`cuando()` para una fecha escrita con `store.stamp()`."""
     try:

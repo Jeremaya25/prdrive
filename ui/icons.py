@@ -368,6 +368,17 @@ def _rasterizar(capas, caja: float, size: int, fondo: str) -> str:
 _CACHE: dict[tuple, tuple] = {}
 
 
+def olvidar(interp) -> None:
+    """Suelta las imágenes de un intérprete de Tk que ya se ha cerrado.
+
+    La caché las guarda por intérprete y no se vacía nunca, lo que no importa
+    en el hilo principal. Sí importa en la ventanita del servicio, que vive en
+    un hilo propio (`ui.avisar_fallo`): si sus imágenes siguieran aquí, las
+    borraría el hilo principal al salir, y a Tk solo se le habla desde el suyo."""
+    for ficha in [f for f, (dueno, _img) in _CACHE.items() if dueno is interp]:
+        del _CACHE[ficha]
+
+
 def px(widget, medida: int) -> int:
     """Una medida del diseño llevada a los píxeles de esta pantalla.
 

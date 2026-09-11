@@ -158,7 +158,19 @@ def run_pair_quiet(name: str) -> tuple[int, str]:
     return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
 
 
+def notificar_fallo(nombres: list[str]) -> None:
+    """Enseña que ha fallado un ciclo: una ventanita del propio servicio, en su
+    mismo intérprete y sin lanzar nada (ver `ui.avisar_fallo`). Sin pantalla
+    —un servicio de systemd sin DISPLAY, por ejemplo— el aviso se queda en el
+    diario, que es donde estaba antes. De módulo para que un test la sustituya."""
+    if ui.avisar_fallo(nombres):
+        dlog(f"aviso de fallo en pantalla: {', '.join(nombres)}")
+    else:
+        dlog("no hay entorno gráfico: el aviso de fallo queda solo en este diario")
+
+
 def daemon_cycle(pairs: list[str], lock_data: dict) -> None:
+    previos = lock_data.get("last_results") or {}
     results = {}
     for name in pairs:
         if stop_requested() or not pen_present():
@@ -180,6 +192,13 @@ def daemon_cycle(pairs: list[str], lock_data: dict) -> None:
     lock_data["last_cycle"] = store.stamp()
     lock_data["last_results"] = results
     write_lock(lock_data)
+
+    # Solo cuando algo EMPIEZA a fallar. Un servicio sano no dice nada, y uno
+    # que lleva horas sin red no abre una ventana cada media hora: ya lo ha
+    # dicho, y la ventana principal lo sigue enseñando hasta que se arregle.
+    fallidas = [n for n, r in results.items() if r.startswith("ERROR")]
+    if any(not str(previos.get(n, "")).startswith("ERROR") for n in fallidas):
+        notificar_fallo(fallidas)
 
     # De paso, refrescar la caché de versiones. Con las 24 h de `CACHE_HORAS`
     # esto es como mucho una consulta al día, y es lo único que la mantiene al

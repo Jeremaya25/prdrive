@@ -18,7 +18,7 @@ de que pide un resync ya avisa su propio chip.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import NamedTuple
+from typing import Iterable, NamedTuple
 
 from . import model, store
 from .model import Config
@@ -51,11 +51,16 @@ def apuntar(nombre: str, codigo: int, log: Path | None) -> None:
 
 def fallos(config: Config) -> list[Fallo]:
     """Las parejas del config cuya última pasada falló, en el orden del config."""
+    return fallos_de(config.names)
+
+
+def fallos_de(nombres: Iterable[str]) -> list[Fallo]:
+    """Lo mismo para una lista de nombres: el servicio solo sabe los suyos."""
     parejas = store.read_json(ruta_estado()).get("parejas")
     if not isinstance(parejas, dict):
         return []
     salida = []
-    for nombre in config.names:
+    for nombre in nombres:
         dato = parejas.get(nombre)
         if not isinstance(dato, dict):
             continue
