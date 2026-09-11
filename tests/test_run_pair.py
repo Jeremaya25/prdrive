@@ -123,6 +123,63 @@ with sandbox():
     c("bisync usa fichero de filtros", "--filters-file" in ordenes[0], True)
     c("bisync no duplica reglas con --include", "--include" in ordenes[0], False)
 
+# --- lo que queda apuntado tras cada pasada -------------------------------------
+# La ventana y el servicio no leen la salida de sync.py: leen state/. Así que lo
+# que importa es qué queda escrito ahí después de cada caso.
+from common import conflicts, results  # noqa: E402
+
+CFG_BI = model.parse_config({"defaults": DEF, "pair": [BI]})
+
+
+def conflicto_en_disco():
+    carpeta = model.DEVICE_ROOT / "sync-data" / "bi"
+    carpeta.mkdir(parents=True, exist_ok=True)
+    (carpeta / "plan.md").write_text("ganó", encoding="utf-8")
+    (carpeta / "plan.md.conflicto-remoto1").write_text("perdió", encoding="utf-8")
+
+
+with sandbox():
+    conflicto_en_disco()
+    rc, salida, _ = correr(BI, listings=True)
+    c("tras la pasada se buscan conflictos", [x.relativa for x in
+                                              conflicts.cargar(CFG_BI)["bi"]], ["plan.md"])
+    c.contains("y se avisa en la salida", salida, "AVISO: 1 fichero(s) en conflicto")
+    c.contains("diciendo cuál", salida, "plan.md")
+
+with sandbox():
+    conflicto_en_disco()
+    rc, salida, _ = correr(BI, listings=True, dry_run=True)
+    c("un dry-run no apunta conflictos", conflicts.ruta_estado().exists(), False)
+    c("ni resultados", results.ruta_estado().exists(), False)
+
+with sandbox():
+    rc, salida, _ = correr(BI, listings=True, rc_seq=(1,))
+    fallos = results.fallos(CFG_BI)
+    c("un fallo queda apuntado", [f.pareja for f in fallos], ["bi"])
+    c("con el log que se ha conservado", fallos[0].log is not None
+      and fallos[0].log.exists(), True)
+
+    # Sin `listings`: los de la primera pasada ya están (renombrados por
+    # normalize_prefix), y escribirlos otra vez dejaría dos juegos.
+    correr(BI)
+    c("y la siguiente pasada buena lo quita", results.fallos(CFG_BI), [])
+
+with sandbox():
+    correr(BI, listings=True, rc_seq=(1,))
+    # Sin baseline aprobado se salta: una pareja que no se ha ejecutado no
+    # tiene resultado nuevo, así que el fallo anterior sigue siendo la verdad.
+    for f in model.STATE_DIR.glob("bi/*.lst"):
+        f.unlink()
+    rc, _, _ = correr(BI)
+    c("saltarse una pareja no borra su fallo anterior",
+      (rc, [f.pareja for f in results.fallos(CFG_BI)]), (sync.SKIPPED, ["bi"]))
+
+with sandbox():
+    rc, _, _ = correr(BI, listings=True, make_local=False)
+    c("abortar por la carpeta local ausente cuenta como fallo",
+      [(f.pareja, f.codigo) for f in results.fallos(CFG_BI)], [("bi", 2)])
+
+
 # --- la consola de rclone acaba dentro del log ------------------------------------
 # Aquí NO se simula execute(): se ejecuta un proceso de verdad, porque lo que se
 # comprueba es justamente el trozo que el simulador se salta. El caso real es un
