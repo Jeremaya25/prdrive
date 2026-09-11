@@ -34,6 +34,7 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 │   ├── bisync.py      everything that replicates rclone bisync's internals
 │   ├── conflicts.py   bisync conflict files: scan, which side each is, state/conflicts.json
 │   ├── results.py     how each pair's last run ended (state/last_run.json)
+│   ├── progress.py    rclone's stats lines → the live progress line; reads, never runs
 │   ├── config_file.py reads AND writes sync_config.toml (hand-rolled serializer)
 │   ├── catalog.py     the global pair catalogue on the remote: read, cache, write
 │   ├── update.py      is there a newer release, and how to fetch its code — no Tk
@@ -297,6 +298,28 @@ to an explanation — add new cases there.
   documentation and explained a failure that never happened. **A false diagnosis
   is worse than none.** The two flag entries in `KNOWN_ERRORS` go **last**.
 
+**Live progress** (`common/progress.py`). `BASE_FLAGS` carries `--stats 2s
+--stats-one-line`, so rclone logs one stats line every two seconds — in the base
+layer, not the code, so a pair can override it like any flag.
+`execute()` runs rclone inside `seguir_progreso(logfile)`: a thread tails the
+temp log, `progress.Seguidor` turns new bytes into a `  progreso: …` line (only
+complete lines, only when the text changes) and `sync.py` prints it. The
+temp log is the **only** channel — no rc API, no ports, no processes.
+
+- **Strictly best-effort.** `progress.leer()` treats each line as untrusted: no
+  full match, no progress. The thread swallows *any* exception: a progress
+  failure must never cut a pass or put a traceback in the window.
+- The file is closed before `execute()` returns: Windows cannot delete or move an
+  open file, and `dispose_log()` does one of the two right after.
+- `main()` switches stdout to line buffering. Launched by the window, stdout is
+  a pipe, and Python fills pipes in blocks — everything arrived at the end.
+- `print_log_tail()` drops stats lines. With one every two seconds, a pass that
+  thinks for a while before failing would fill the 15-line tail with numbers.
+- The stats regex mirrors `StatsInfo.String()` in `fs/accounting/stats.go`; it
+  matches with or without `--stats-one-line`, and requires the ETA so a line cut
+  mid-write never yields a half number. The fixtures in `tests/test_progress.py`
+  are recorded rclone logs.
+
 ### Daemon (`runsync.py`)
 
 Coordination lives in `state/` so it travels with the device:
@@ -340,6 +363,11 @@ not exist, and vice versa. Both return `Choice(action, pairs, minutes)`.
   `[pair] FALLÓ`, `Hecho. n/m parejas OK…`). Change the wording there and a line
   stops being coloured; nothing breaks. It offers **Guardar el log** — the only
   copy of a successful pass.
+- The progress line is the exception: `_tono` recognises it by
+  `progress.ETIQUETA`, **imported**, not retyped — `append()` rewrites
+  consecutive progress lines in place (a left-gravity mark), so one live line
+  per rclone run survives with its last reading, and an unrecognised one would
+  not lose its colour but stack hundreds of lines.
 - `tk_pairs.confirmar_plan()` is a real window, one line per consequence, each
   warning in an amber box — not an `askokcancel`. This is the dialog that
   governs deletions. Tests replace it, like `mostrar()`.
