@@ -43,17 +43,20 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Mapping
 
-from common import bisync, conflicts, model, results
+from common import bisync, conflicts, model, progress, results
 from common.model import Config, Pair
 
 LOG_TAIL_LINES = 15  # líneas de log que se vuelcan a consola cuando algo falla
 SKIPPED = -1         # código interno: pareja no ejecutada (ni OK ni fallo)
 CONFLICTS_SHOWN = 5  # ficheros en conflicto que se nombran en la salida
+PROGRESS_POLL_S = 0.5  # cada cuánto se mira si rclone ha escrito más en su log
 
 # La cabecera con la que se marca, dentro del log, lo que rclone sacó por
 # consola en vez de por --log-file. Ver append_output().
@@ -193,7 +196,11 @@ def dispose_log(name: str, tmp: Path, rc: int, keep_always: bool) -> Path | None
 def print_log_tail(lpath: Path | None, lines: int = LOG_TAIL_LINES) -> None:
     if lpath is None or not lpath.exists():
         return
-    tail = lpath.read_text(encoding="utf-8", errors="replace").splitlines()[-lines:]
+    # Sin las estadísticas. Con una cada pocos segundos, una pasada que se queda
+    # pensando antes de fallar llenaba estas líneas de números y el error se
+    # quedaba fuera; lo que llegó a transferir ya lo ha contado el progreso.
+    todas = lpath.read_text(encoding="utf-8", errors="replace").splitlines()
+    tail = [linea for linea in todas if progress.leer(linea) is None][-lines:]
     print(f"--- últimas {len(tail)} líneas de {lpath.name} ---")
     for line in tail:
         print("  " + line)
@@ -283,6 +290,48 @@ def build_command(ctx: RunContext, pair: Pair, ffile: Path | None,
     return cmd, logfile
 
 
+def _seguir(logfile: Path, parar: threading.Event) -> None:
+    """El hilo de `seguir_progreso`: lee lo nuevo del log hasta que le avisan,
+    y una vez más después, que es cuando rclone ya ha escrito su última
+    estadística."""
+    try:
+        seguidor = progress.Seguidor()
+        with logfile.open("rb") as f:
+            while True:
+                acabado = parar.wait(PROGRESS_POLL_S)
+                linea = seguidor.alimentar(f.read())
+                if linea is not None:
+                    print(linea)
+                if acabado:
+                    return
+    except Exception:                                    # noqa: BLE001
+        # Cualquier fallo aquí es del progreso, no de la pasada: un log que no
+        # se deja abrir o un error del lector no pueden cortar la sincronización
+        # ni llenar la ventana con un traceback. Sin progreso, y ya está.
+        return
+
+
+@contextmanager
+def seguir_progreso(logfile: Path | None):
+    """Mientras dura el bloque, cuenta por la salida cómo va rclone.
+
+    Lee el log temporal de la pareja desde otro hilo, porque quien lanza rclone
+    se queda esperando a que termine. El fichero se cierra antes de salir del
+    bloque: en Windows no se puede borrar ni mover un fichero abierto, y justo
+    después `dispose_log` hace una de las dos cosas."""
+    if logfile is None:
+        yield
+        return
+    parar = threading.Event()
+    hilo = threading.Thread(target=_seguir, args=(logfile, parar), daemon=True)
+    hilo.start()
+    try:
+        yield
+    finally:
+        parar.set()
+        hilo.join()
+
+
 def execute(ctx: RunContext, cmd: list[str], logfile: Path | None = None) -> int:
     print(f"  ejecutando{ctx.tag}: " + " ".join(cmd))
     # cwd FIJO en rclone-sync/: rclone.conf usa rutas relativas (key_file,
@@ -299,10 +348,12 @@ def execute(ctx: RunContext, cmd: list[str], logfile: Path | None = None) -> int
     # de instalar el log—, y heredarlo significaba perderlo: sin consola detrás
     # (pythonw, el servicio) no va a ninguna parte, y aun con ella se quedaba
     # fuera del fichero que luego se guarda, se enseña y se explica. Es poco
-    # texto por definición: todo lo demás está en el log.
-    proc = subprocess.run(cmd, env={**os.environ, **ctx.env},
-                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                          text=True, errors="replace", **kwargs)
+    # texto por definición: todo lo demás está en el log. Y el log se lee
+    # mientras tanto: de ahí sale el progreso (common/progress.py).
+    with seguir_progreso(logfile):
+        proc = subprocess.run(cmd, env={**os.environ, **ctx.env},
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                              text=True, errors="replace", **kwargs)
     if proc.stdout and logfile is not None:
         append_output(logfile, proc.stdout)
     return proc.returncode
@@ -555,6 +606,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main() -> int:
+    # Línea a línea aunque la salida sea una tubería, que es lo que es cuando
+    # lanza sync.py la ventana: Python llena las tuberías por bloques, y lo
+    # escrito llegaba todo junto al final, progreso incluido.
+    reconfigurar = getattr(sys.stdout, "reconfigure", None)
+    if reconfigurar is not None:
+        reconfigurar(line_buffering=True)
     args = parse_args()
 
     # logs/ se crea solo cuando hay algo que guardar (ver dispose_log).

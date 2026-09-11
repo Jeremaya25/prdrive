@@ -306,6 +306,14 @@ El script se reserva `--config`, `--log-file`, `--dry-run`, `--workdir` y
 `--resync`, porque dependen de *esta* ejecución. Para lo que no quepa en el
 esquema está `extra_flags`, una lista de cadenas que se pasan crudas.
 
+La capa base lleva `--verbose`, `--create-empty-src-dirs` y las estadísticas del
+**progreso en vivo**: `--stats 2s --stats-one-line`. Con ellas rclone escribe en
+su log, cada dos segundos, cuánto lleva; `sync.py` lo va leyendo mientras corre
+la pareja y lo cuenta en una línea (`progreso: 2,1 MB de 3,4 MB · 61 % ·
+1,1 MB/s`), que la ventana de salida reescribe en su sitio. Es solo
+informativo: si no sale nada del log —porque una pareja cambia esos flags, por
+ejemplo con `stats = "0"`—, no hay progreso y la pasada va igual.
+
 El editor de flags de la ventana enseña **las cuatro capas resueltas**, con la
 etiqueta de dónde viene cada valor, y avisa cuando un cambio sube el
 `--max-delete` efectivo aunque no hayas tocado ese flag.
@@ -502,8 +510,9 @@ proceso muerto.
 
 Los logs de rclone **solo se guardan si la pasada falla** (o con `--keep-logs`),
 para no gastar ciclos de escritura de la unidad. Quedan en `.prdrive/logs/`. Al
-fallar se imprime la cola del log y se traduce el error de rclone a una
-explicación, si es uno de los conocidos.
+fallar se imprime la cola del log —sin las líneas de estadísticas, que ya contó
+el progreso— y se traduce el error de rclone a una explicación, si es uno de
+los conocidos.
 
 Casos habituales:
 

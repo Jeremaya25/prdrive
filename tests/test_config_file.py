@@ -29,13 +29,18 @@ def ida_y_vuelta(raw, etiqueta):
 
 
 # --- el config real del dispositivo -------------------------------------------------
-real = config_file.load_raw()
-vuelta = ida_y_vuelta(real, "config real")
-if vuelta is not None:
-    c("config real: misma Config resuelta",
-      model.parse_config(vuelta), model.parse_config(real))
-c("config real: se conserva la cabecera",
-  config_file.header().startswith("#"), True)
+# Solo si lo hay: sync_config.toml es de cada dispositivo y no va en el repo, así
+# que un checkout recién clonado no lo tiene. El resto del fichero no lo necesita.
+if model.CONFIG_FILE.exists():
+    real = config_file.load_raw()
+    vuelta = ida_y_vuelta(real, "config real")
+    if vuelta is not None:
+        c("config real: misma Config resuelta",
+          model.parse_config(vuelta), model.parse_config(real))
+    c("config real: se conserva la cabecera",
+      config_file.header().startswith("#"), True)
+else:
+    print(f"  (saltado) config real: no hay {model.CONFIG_FILE}")
 
 # --- casos que el esquema permite -------------------------------------------
 ida_y_vuelta({

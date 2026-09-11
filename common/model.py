@@ -223,9 +223,18 @@ def flags_to_args(flags: Mapping[str, Any]) -> list[str]:
 # ---------------------------------------------------------------------------
 
 # Flags que lleva toda ejecución, sea del modo que sea.
+#
+# --stats / --stats-one-line: cómo va la pasada, una línea cada pocos segundos
+#               en el log (la de fábrica es un bloque cada minuto). De ahí saca
+#               sync.py el progreso en vivo (common/progress.py). Van en esta
+#               capa y no en el código para que una pareja los pueda cambiar
+#               como cualquier otro flag; sin ellos no hay progreso, y la
+#               pasada va igual.
 BASE_FLAGS: Mapping[str, Any] = {
     "verbose": True,
     "create-empty-src-dirs": True,
+    "stats": "2s",
+    "stats-one-line": True,
 }
 
 

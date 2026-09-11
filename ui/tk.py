@@ -27,7 +27,7 @@ import sys
 import threading
 import time
 
-from common import APP_NAME, conflicts, model, results, update
+from common import APP_NAME, conflicts, model, progress, results, update
 from common.model import Config
 
 from . import (Choice, abrir, cuando, cuando_sello, icons, manual_args,
@@ -1061,11 +1061,14 @@ def _aviso_fallo(fallos, al_abrir) -> None:
 # Cómo se colorea cada línea. Es el vocabulario que ya usa sync.py por su salida
 # —'=== pareja ===', '  ejecutando:', '[pareja] OK.', '[pareja] FALLÓ'—, así que
 # esta tabla se lee junto a los print() de sync.py: si allí cambia una fórmula,
-# aquí deja de pintarse, no se rompe nada.
+# aquí deja de pintarse, no se rompe nada. La excepción es la de progreso, que
+# no está escrita aquí sino importada (ver `progress.ETIQUETA`).
 def _tono(linea: str) -> str:
     limpia = linea.strip()
     if not limpia:
         return "normal"
+    if limpia.startswith(progress.ETIQUETA):
+        return "progreso"
     # El resumen final lleva las tres cosas en la misma línea ("2/4 parejas OK,
     # 1 saltada(s), 1 con errores"), así que se mira entero y de peor a mejor;
     # buscar 'OK' suelto lo pintaría de verde con un fallo dentro.
@@ -1194,14 +1197,26 @@ def output_window(title: str, cmd: list[str], parent=None,
             ("orden", dict(foreground=theme.TINTA3)),
             ("ok", dict(foreground=theme.OK)),
             ("aviso", dict(foreground=theme.AVISO)),
-            ("fallo", dict(foreground=theme.PELIGRO))):
+            ("fallo", dict(foreground=theme.PELIGRO)),
+            ("progreso", dict(foreground=theme.ACENTO))):
         text.tag_configure(nombre, **opciones)
 
-    state = {"rc": None}
+    state = {"rc": None, "progreso": False}
 
     def append(line: str) -> None:
+        tono = _tono(line)
         text.configure(state="normal")
-        text.insert("end", line, _tono(line))
+        # El progreso llega cada pocos segundos mientras dura la pareja: se
+        # reescribe en su sitio, no se apila. Una línea viva por pareja, que al
+        # terminar se queda con la última lectura. La marca, con gravedad a la
+        # izquierda, se queda al principio de esa línea aunque se escriba en ella.
+        if tono == "progreso" and state["progreso"]:
+            text.delete("progreso-vivo", "end-1c")
+        elif tono == "progreso":
+            text.mark_set("progreso-vivo", "end-1c")
+            text.mark_gravity("progreso-vivo", "left")
+        state["progreso"] = tono == "progreso"
+        text.insert("end", line, tono)
         text.see("end")
         text.configure(state="disabled")
 

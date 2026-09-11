@@ -83,6 +83,17 @@ c("un flag apagado se enseña, no desaparece",
   dict(fe.effective("up", None, {"verbose": False})).get("(--verbose: desactivado)"),
   "esta pareja")
 
+# Las estadísticas de las que sale el progreso son flags como los demás: se ven
+# con su capa, y la pareja las cambia sin tocar código.
+filas = dict(fe.effective("up", None, None))
+c("las estadísticas del progreso van en la capa de siempre",
+  (filas.get("--stats 2s"), filas.get("--stats-one-line")), ("siempre", "siempre"))
+propias = fe.parse('stats = "10s"\nstats-one-line = false')
+filas = dict(fe.effective("up", None, propias))
+c("y la pareja las cambia", (filas.get("--stats 10s"),
+                             filas.get("(--stats-one-line: desactivado)")),
+  ("esta pareja", "esta pareja"))
+
 # La misma fusión que hace model._build_pair: si esto se separara, el editor
 # enseñaría unos flags y rclone recibiría otros.
 pair = model.parse_config({"defaults": {"remote": "nas", "flags": {"transfers": 4}},
