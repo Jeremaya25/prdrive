@@ -87,7 +87,9 @@ remote_path = "/datos/docs"   # ruta dentro del remote
 mode = "bisync"
 
 [pair.flags]
-conflict-resolve = "newer"    # con qué copia se queda si los dos lados cambiaron
+conflict-resolve = "newer"    # con qué copia se queda si los dos lados cambiaron;
+                              # la otra se guarda al lado con el sufijo de su lado
+                              # (conflict-suffix, que ya trae el modo bisync)
 resilient = true              # un error menor no obliga a --resync la próxima vez
 
 
