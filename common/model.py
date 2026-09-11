@@ -246,9 +246,20 @@ class Mode:
 # --recover   : una interrupción brusca se recupera sola en la siguiente pasada.
 # --max-lock  : caduca el .lck que deja un proceso muerto (mínimo 2m).
 # --max-delete: una ruta local vacía o desmontada no debe arrasar el otro lado.
+# --conflict-suffix: un sufijo POR LADO. Con el de fábrica ("conflict") y
+#               --conflict-loser num, rclone llama al perdedor `.conflictN` con
+#               el primer número libre (cmd/bisync/resolve.go: resolve y
+#               numerate), y ese número es un orden, no un lado: no hay forma
+#               de saber después si la copia era la de este dispositivo o la
+#               del remoto. Con dos sufijos distintos el nombre lo dice, y sigue
+#               numerado, así que un segundo conflicto en el mismo fichero no
+#               pisa la copia del primero (con --conflict-loser pathname sí la
+#               pisaría: el nombre sería otra vez `.conflict1`). Quien lo lee es
+#               common/conflicts.py.
 MODES: Mapping[str, Mode] = {m.name: m for m in (
     Mode("bisync", "bisync", "local", "remote", {
         "conflict-resolve": "newer",
+        "conflict-suffix": "conflicto-dispositivo,conflicto-remoto",
         "max-delete": 25,
         "resilient": True,
         "recover": True,
