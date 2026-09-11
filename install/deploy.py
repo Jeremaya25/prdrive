@@ -6,7 +6,9 @@ las parejas.
 Cuatro cosas, en este orden, y el orden importa:
 
   1. **Código.** `deploy_code()` copia a `<dispositivo>/.prdrive/` el árbol que el
-     instalador lleva dentro, más el binario de rclone de esta arquitectura.
+     instalador lleva dentro; `apply_platforms()` le pone rclone y —en la
+     instalación completa— un Python propio para cada plataforma elegida, y
+     `write_launchers()` los lanzadores de la raíz.
   2. **Conexión.** `write_device_remote()` escribe el `rclone.conf` del
      dispositivo y su clave. Va DESPUÉS del código porque vive dentro de
      `.prdrive/`, y con rutas RELATIVAS porque es lo que hace que el dispositivo
@@ -37,15 +39,18 @@ mirar es la forma más rápida de vaciar el destino. Esas se ejecutan a mano y c
 
 from __future__ import annotations
 
+import os
 import shutil
 import stat
 from datetime import datetime
 from pathlib import Path
-from typing import Mapping
+from typing import Callable, Mapping
 
 from common import config_file, model
+from common.pins import Plataforma
 
-from . import APP_NAME, IS_WIN, InstallError, bundle_dir, python_command
+from . import APP_NAME, IS_WIN, InstallError, bundle_dir, platforms, python_command
+from . import rclone_bin, runtime_bin
 from .profile import Profile, render_conf
 from .rclone_bin import bin_subdir, exe_name
 from .remote import Catalog
@@ -76,9 +81,107 @@ NO_COPIAR = shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo")
 
 FILE_ATTRIBUTE_HIDDEN = 0x02
 
+# --- Los lanzadores de la raíz --------------------------------------------------
+#
+# Se escriben al APROVISIONAR y no se vuelven a tocar: actualizar el programa
+# (`--update`, el aviso de la ventana, el recorrido corto del asistente) cambia lo
+# que hay dentro de `.prdrive/`, nunca la forma de arrancarlo. Lo que sí los
+# reescribe es aprovisionar otra vez: la instalación entera o «Añadir
+# plataformas…».
+#
+# El .bat y el .sh van SIEMPRE, también en la ligera: un dispositivo hecho en
+# Windows tiene que arrancar igual al enchufarlo en Linux, que es la premisa del
+# proyecto. Los dos prefieren el Python del dispositivo y caen al del equipo.
+#
+# No hay lanzador .vbs —Microsoft retira VBScript— ni ejecutable propio: nada que
+# no sea texto o un binario de su publicador.
+
+LAUNCHER_BAT = f'''\
+@echo off
+rem runsync.bat - Lanzador de prdrive para Windows. Doble clic y sale la ventana.
+rem
+rem Arranca con el primer Python que encuentre, en este orden:
+rem   1. el del dispositivo para ARM64, si este equipo es ARM64
+rem   2. el del dispositivo para x64 (un ARM64 lo ejecuta emulado; cmd corre
+rem      nativo, asi que PROCESSOR_ARCHITECTURE aqui dice la verdad)
+rem   3. el pythonw.exe (o pyw.exe) de este equipo, si hay uno instalado
+rem "start" lo suelta y esta consola se cierra al momento.
+rem
+rem Lo escribe el instalador al preparar el dispositivo; actualizar el programa
+rem no lo toca. Sin bloques entre parentesis a proposito: una ruta con ")" los
+rem romperia.
+setlocal
+set "APP=%~dp0{APP_SUBDIR}"
+set "PY="
+if /i "%PROCESSOR_ARCHITECTURE%"=="ARM64" if exist "%APP%\\runtime\\windows-arm64\\pythonw.exe" set "PY=%APP%\\runtime\\windows-arm64\\pythonw.exe"
+if not defined PY if exist "%APP%\\runtime\\windows-x64\\pythonw.exe" set "PY=%APP%\\runtime\\windows-x64\\pythonw.exe"
+if not defined PY for %%P in (pythonw.exe) do if not "%%~$PATH:P"=="" set "PY=%%~$PATH:P"
+if not defined PY for %%P in (pyw.exe) do if not "%%~$PATH:P"=="" set "PY=%%~$PATH:P"
+if not defined PY goto sin_python
+start "" "%PY%" "%APP%\\runsync.py" %*
+exit /b 0
+
+:sin_python
+chcp 65001 >nul
+echo.
+echo   prdrive no puede arrancar en este equipo.
+echo.
+echo   El dispositivo no lleva Python para Windows %PROCESSOR_ARCHITECTURE% y aquí
+echo   no hay ninguno instalado.
+echo.
+echo   Para arreglarlo, vuelve a ejecutar el instalador de prdrive, elige este
+echo   dispositivo y pulsa «Añadir plataformas…». O instala Python 3.11+.
+echo.
+pause
+exit /b 1
+'''
+
+LAUNCHER_SH = f'''\
+#!/bin/sh
+# runsync.sh — Lanzador de prdrive para Linux.
+#
+# Arranca con el primer Python que sirva, en este orden:
+#   1. el del dispositivo para la CPU de este equipo (x64 o ARM64)
+#   2. el python3 de este equipo
+#
+# Lo escribe el instalador al preparar el dispositivo; actualizar el programa
+# no lo toca.
+base="$(cd "$(dirname "$0")" && pwd)/{APP_SUBDIR}"
+plataforma=""
+if [ "$(uname -s)" = "Linux" ]; then
+    case "$(uname -m)" in
+        x86_64|amd64) plataforma="linux-x64" ;;
+        aarch64|arm64) plataforma="linux-arm64" ;;
+    esac
+fi
+py=""
+if [ -n "$plataforma" ]; then
+    propio="$base/runtime/$plataforma/bin/python3"
+    if [ -x "$propio" ]; then
+        py="$propio"
+    elif [ -f "$propio" ]; then
+        # exFAT sin bit de ejecución, o un volumen montado con noexec.
+        echo "prdrive: el Python del dispositivo no se puede ejecutar desde este" >&2
+        echo "  montaje (¿noexec?); pruebo con el del equipo." >&2
+    fi
+fi
+if [ -z "$py" ] && command -v python3 >/dev/null 2>&1; then
+    py="python3"
+fi
+if [ -z "$py" ]; then
+    echo "prdrive no puede arrancar en este equipo: el dispositivo no lleva" >&2
+    echo "Python para $(uname -s) $(uname -m) y aquí no hay python3 instalado." >&2
+    echo "Vuelve a ejecutar el instalador de prdrive y pulsa «Añadir plataformas…»," >&2
+    echo "o instala Python 3.11+ con Tkinter." >&2
+    exit 1
+fi
+exec "$py" "$base/runsync.py" "$@"
+'''
+
 LAUNCHER_PYW = f'''\
-# runsync.pyw — Lanzador Windows SIN terminal. Doble clic y sale la UI.
-# (La asociación .pyw -> pythonw.exe la crea el instalador estándar de Python.)
+# runsync.pyw — Lanzador Windows de la instalación LIGERA: usa el Python de este
+# equipo (la asociación .pyw -> pythonw.exe la crea el instalador de Python).
+# El dispositivo completo no lo lleva: su runsync.bat no necesita nada instalado.
 import runpy
 import sys
 from pathlib import Path
@@ -86,15 +189,6 @@ from pathlib import Path
 base = Path(__file__).resolve().parent / "{APP_SUBDIR}"
 sys.path.insert(0, str(base))
 runpy.run_path(str(base / "runsync.py"), run_name="__main__")
-'''
-
-LAUNCHER_SH = f'''\
-#!/bin/sh
-# runsync.sh — Lanzador para Linux y macOS. El equivalente del .pyw.
-# Se escriben los dos siempre: un dispositivo hecho en Windows tiene que
-# arrancar igual al enchufarlo en otro sitio, que es la premisa del proyecto.
-base="$(cd "$(dirname "$0")" && pwd)/{APP_SUBDIR}"
-exec python3 "$base/runsync.py" "$@"
 '''
 
 
@@ -194,16 +288,19 @@ def deploy_code(device_root: Path | str, rclone_binary: Path | str | None = None
     return escrito
 
 
-def copy_rclone(device_root: Path | str, rclone_binary: Path | str) -> Path:
+def copy_rclone(device_root: Path | str, rclone_binary: Path | str,
+                plat: Plataforma | None = None) -> Path:
     """Deja el binario en `bin/<arch>/`, que es donde lo va a buscar el modelo.
 
-    Se pregunta a `bin_subdir()` en vez de repetir la tabla de arquitecturas: es
-    el mismo `bin/` que usará `sync.py` luego, y si dejaran de coincidir el
-    instalador verificaría un binario y el dispositivo usaría otro.
+    Sin `plat` es el de este equipo, y se pregunta a `bin_subdir()` en vez de
+    repetir la tabla de arquitecturas: es el mismo `bin/` que usará `sync.py`
+    luego, y si dejaran de coincidir el instalador verificaría un binario y el
+    dispositivo usaría otro. Con `plat`, el de esa plataforma.
 
     Va SIN el bit de ejecución en exFAT —que no lo tiene—, y por eso
     `model.rclone_binary()` se copia a un temporal cuando hace falta."""
-    destino = app_dir(device_root) / "bin" / bin_subdir() / exe_name()
+    destino = (platforms.rclone_path(device_root, plat) if plat is not None
+               else app_dir(device_root) / "bin" / bin_subdir() / exe_name())
     try:
         destino.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(rclone_binary, destino)
@@ -217,22 +314,150 @@ def copy_rclone(device_root: Path | str, rclone_binary: Path | str) -> Path:
     return destino
 
 
-def write_launchers(device_root: Path | str) -> list[Path]:
-    """Los dos lanzadores, en la raíz del volumen.
+# ---------------------------------------------------------------------------
+# rclone y Python por plataforma
+# ---------------------------------------------------------------------------
+
+def install_runtime(device_root: Path | str, plat: Plataforma,
+                    archivo: Path) -> Path | None:
+    """Deja en `runtime/<clave>/` el Python de ese archivo. None si ya estaba.
+
+    Se extrae al lado, en una carpeta de trabajo, y se INTERCAMBIA con la que
+    hubiera: nunca se escribe encima de un runtime que funciona. Si el de antes
+    no se puede apartar —en Windows no se puede renombrar la carpeta de un
+    `pythonw.exe` que está corriendo, o sea un prdrive abierto desde el
+    dispositivo—, falla entero y el de antes sigue como estaba. Lo que no puede
+    pasar es quedarse con medio runtime."""
+    sha = runtime_bin.recorded_sha256(archivo) or runtime_bin.file_sha256(archivo)
+    if platforms.runtime_stamp(device_root, plat) == runtime_bin.stamp_text(plat, sha):
+        return None
+    final = platforms.runtime_dir(device_root, plat)
+    base = final.parent
+    nuevo = base / f".{plat.clave}.nuevo-{os.getpid()}"
+    viejo = base / f".{plat.clave}.viejo-{os.getpid()}"
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        raise InstallError(f"No he podido crear {base}: {e}") from e
+    shutil.rmtree(nuevo, ignore_errors=True)
+    try:
+        runtime_bin.extract(archivo, nuevo, plat, sha)
+    except InstallError:
+        shutil.rmtree(nuevo, ignore_errors=True)
+        raise
+
+    apartado = False
+    if final.exists():
+        try:
+            os.replace(final, viejo)
+            apartado = True
+        except OSError as e:
+            shutil.rmtree(nuevo, ignore_errors=True)
+            raise InstallError(
+                f"No he podido sustituir el Python de {plat.nombre} en {final}: "
+                f"{e}\n\nCierra prdrive si está abierto desde este dispositivo "
+                f"y vuelve a intentarlo. El que había sigue en su sitio.") from e
+    try:
+        os.replace(nuevo, final)
+    except OSError as e:
+        if apartado:
+            os.replace(viejo, final)
+        shutil.rmtree(nuevo, ignore_errors=True)
+        raise InstallError(f"No he podido colocar el Python de {plat.nombre} "
+                           f"en {final}: {e}") from e
+    if apartado:
+        shutil.rmtree(viejo, ignore_errors=True)
+    return final
+
+
+def remove_platform(device_root: Path | str, plat: Plataforma) -> list[Path]:
+    """Borra el rclone y el Python de esa plataforma. Devuelve lo borrado.
+
+    Solo lo suyo: el `bin/x64/` de Windows x64 es también el de Linux x64, así
+    que se borra el fichero, no la carpeta. El runtime se aparta primero con un
+    renombrado —que en Windows falla entero si está en uso— y luego se borra;
+    así nunca queda uno a medio borrar que parezca instalado."""
+    borrado: list[Path] = []
+    binario = platforms.rclone_path(device_root, plat)
+    try:
+        if binario.is_file():
+            binario.unlink()
+            borrado.append(binario)
+    except OSError as e:
+        raise InstallError(f"No he podido borrar {binario}: {e}\n"
+                           f"¿Está prdrive sincronizando ahora mismo?") from e
+
+    carpeta = platforms.runtime_dir(device_root, plat)
+    if carpeta.exists():
+        papelera = carpeta.with_name(f".{plat.clave}.borrar-{os.getpid()}")
+        try:
+            os.replace(carpeta, papelera)
+        except OSError as e:
+            raise InstallError(
+                f"No he podido borrar el Python de {plat.nombre}: {e}\n\n"
+                f"Cierra prdrive si está abierto desde este dispositivo y vuelve "
+                f"a intentarlo.") from e
+        shutil.rmtree(papelera, ignore_errors=True)
+        borrado.append(carpeta)
+    return borrado
+
+
+def apply_platforms(device_root: Path | str, plan: platforms.Plan,
+                    progreso: Callable[[str], None] | None = None
+                    ) -> tuple[list[Path], list[Path]]:
+    """Ejecuta el plan de la lista de plataformas. Devuelve (escrito, borrado).
+
+    Primero se borra —libera el sitio que lo demás va a ocupar—, luego rclone y
+    luego Python. Lo que haya que descargar se descarga aquí (con su
+    comprobación de SHA-256), y va a la caché del usuario antes de tocar el
+    dispositivo."""
+    escrito: list[Path] = []
+    borrado: list[Path] = []
+    for plat in plan.borrar:
+        borrado += remove_platform(device_root, plat)
+    for plat in plan.rclone:
+        binario = rclone_bin.rclone_for(plat, progreso)
+        escrito.append(copy_rclone(device_root, binario, plat))
+    for plat in plan.runtime:
+        archivo = runtime_bin.ensure_runtime(plat, progreso)
+        puesto = install_runtime(device_root, plat, archivo)
+        if puesto is not None:
+            escrito.append(puesto)
+    return escrito, borrado
+
+
+def write_launchers(device_root: Path | str, completa: bool = True) -> list[Path]:
+    """Los lanzadores, en la raíz del volumen. Solo al aprovisionar.
+
+    La completa deja exactamente `runsync.bat` y `runsync.sh`; la ligera añade
+    `runsync.pyw`, que solo sirve donde hay un Python instalado (depende de la
+    asociación .pyw -> pythonw.exe). Una completa sobre una que fue ligera quita
+    ese .pyw: es nuestro, y ya no hace falta.
 
     Van en `device_root` y no en el dispositivo físico: con VeraCrypt eso significa
     dentro del contenedor, junto a los datos. Es la decisión coherente —todo lo
     del producto vive dentro de lo cifrado— y el precio es que primero hay que
-    montar el contenedor."""
+    montar el contenedor.
+
+    El .bat va con CRLF: cmd lee los .bat con LF casi siempre bien, y el «casi»
+    son los `goto` a una etiqueta, que es justo lo que usa este."""
     raiz = Path(device_root)
     escrito = []
-    for nombre, texto in (("runsync.pyw", LAUNCHER_PYW), ("runsync.sh", LAUNCHER_SH)):
+    lanzadores = [("runsync.bat", LAUNCHER_BAT, "\r\n"), ("runsync.sh", LAUNCHER_SH, "\n")]
+    if not completa:
+        lanzadores.append(("runsync.pyw", LAUNCHER_PYW, "\n"))
+    for nombre, texto, fin in lanzadores:
         ruta = raiz / nombre
         try:
-            ruta.write_text(texto, encoding="utf-8", newline="\n")
+            ruta.write_text(texto, encoding="utf-8", newline=fin)
         except OSError as e:
             raise InstallError(f"No he podido escribir {ruta}: {e}") from e
         escrito.append(ruta)
+    if completa:
+        try:
+            (raiz / "runsync.pyw").unlink(missing_ok=True)
+        except OSError:
+            pass            # un .pyw que sobra no puede tumbar la instalación
     if not IS_WIN:
         try:
             sh = raiz / "runsync.sh"
@@ -461,12 +686,35 @@ def sync_py(device_root: Path | str) -> Path:
     return app_dir(device_root) / "sync.py"
 
 
+def device_python(device_root: Path | str) -> list[str] | None:
+    """El Python con el que el instalador lanza cosas DEL dispositivo.
+
+    El del propio dispositivo si lleva uno que sirva en este equipo —en el mismo
+    orden que el `runsync.bat`—, y si no, uno instalado (`python_command()`). Es
+    el de consola: lo que se lanza así lo lee alguien en la ventana de salida.
+
+    Es lo que hace que «nada que instalar» valga también para el instalador: con
+    la instalación completa, inicializar las parejas o registrar el vigilante ya
+    no piden un Python en el equipo desde el que se instala."""
+    propio = platforms.device_interpreter(device_root, platforms.host(), consola=True)
+    if propio is not None:
+        return [str(propio)]
+    return python_command()
+
+
+SIN_PYTHON = ("El dispositivo no lleva un Python que sirva en este equipo, y aquí "
+              "tampoco hay ninguno instalado.\n\nVuelve al paso «Instalación» y "
+              "elige la instalación completa con la plataforma de este equipo, o "
+              "instala Python 3.11+; el código ya instalado no se pierde.")
+
+
 def resync_command(device_root: Path | str, names: list[str]) -> list[str]:
     """La orden que inicializa las parejas bisync del dispositivo.
 
     Aquí está la trampa que hace fracasar al instalador compilado:
     `sys.executable` es el propio .exe, no Python, así que usarlo relanzaría el
-    instalador en vez de sincronizar. Hay que buscar un intérprete de verdad.
+    instalador en vez de sincronizar. Hay que buscar un intérprete de verdad, y
+    el primero que se mira es el que lleva el propio dispositivo.
 
     Va con --yes porque se lanza sin terminal: sin él, la pregunta del resync
     tomaría el valor por defecto (no) y las parejas se saltarían en silencio, que
@@ -477,12 +725,10 @@ def resync_command(device_root: Path | str, names: list[str]) -> list[str]:
             f"No encuentro {destino}. ¿Se ha instalado el código?")
     if not names:
         raise InstallError("No hay ninguna pareja bisync que inicializar.")
-    python = python_command()
+    python = device_python(device_root)
     if not python:
-        raise InstallError(
-            "No encuentro ningún Python instalado en este equipo, y hace falta "
-            "para inicializar las parejas.\n\nInstala Python 3.11+ y vuelve a este "
-            "paso; el código ya instalado no se pierde.")
+        raise InstallError("No hay Python con el que inicializar las parejas.\n\n"
+                           + SIN_PYTHON)
     return [*python, str(destino), *names, "--resync", "--yes"]
 
 
@@ -495,13 +741,15 @@ def penwatch_install_command(device_root: Path | str, mode: str = "ui") -> list[
 
     Se usa el del dispositivo y no el que lleve el instalador dentro porque es el
     que va a quedarse: así lo que se registra apunta al dispositivo recién
-    hecho."""
+    hecho. Y se lanza con el Python del dispositivo, que penwatch copia al equipo
+    para no depender de ningún Python instalado."""
     destino = app_dir(device_root) / "penwatch.py"
     if not destino.is_file():
         raise InstallError(f"No encuentro {destino}. ¿Se ha instalado el código?")
-    python = python_command()
+    python = device_python(device_root)
     if not python:
-        raise InstallError("No encuentro ningún Python instalado en este equipo.")
+        raise InstallError("No hay Python con el que instalar el vigilante.\n\n"
+                           + SIN_PYTHON)
     return [*python, str(destino), "install", "--mode", mode]
 
 

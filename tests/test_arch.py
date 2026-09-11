@@ -109,6 +109,14 @@ try:
 
     model.BIN_DIR = raiz / "bin" / "vacio"
     c("sin ningún binario: None, no una ruta inventada", model.rclone_path(), None)
+
+    # Un dispositivo que no se preparó para este equipo: el mensaje dice la cura,
+    # que es volver a pasar por el instalador, no «descárgalo tú».
+    try:
+        model.rclone_binary()
+        c("sin rclone para esta plataforma se sale", "siguió", "SystemExit")
+    except SystemExit as e:
+        c.contains("diciendo cómo se arregla", str(e.code), "Añadir plataformas")
 finally:
     model.BIN_DIR, model.BIN_FALLBACK_DIRS = originales
 

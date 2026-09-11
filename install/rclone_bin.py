@@ -9,7 +9,12 @@ en este orden y solo se descarga si no queda otra:
     2. junto al propio ejecutable        <- el .exe y el rclone.exe en la misma carpeta
     3. el PATH del equipo
     4. la caché de descargas de instalaciones anteriores
-    5. descarga del zip portable de rclone.org
+    5. descarga del zip portable de rclone.org, de la versión FIJADA en
+       `common/pins.py` —no la última que haya publicado rclone—
+
+Eso es para ESTE equipo. El dispositivo puede llevar además rclone para otras
+plataformas (`rclone_for()`): de esas no hay nada que buscar en el equipo, así que
+salen de la caché o de la descarga.
 
 Lo que se descarga se COMPRUEBA contra el SHA256SUMS que publica rclone antes de
 tocar el disco, y si no cuadra no se guarda nada: esto se va a ejecutar y va a
@@ -29,6 +34,7 @@ import os
 import platform
 import shutil
 import stat
+import sys
 import tempfile
 import urllib.error
 import urllib.request
@@ -36,9 +42,11 @@ import zipfile
 from pathlib import Path
 from typing import Callable
 
+from common import pins
 from common.model import arch_dir, machine_arch
+from common.pins import Plataforma
 
-from . import APP_NAME, RCLONE_BASE_URL, InstallError, bundle_dir
+from . import APP_NAME, IS_WIN, RCLONE_BASE_URL, InstallError, bundle_dir
 
 DOWNLOAD_TIMEOUT = 60          # segundos por lectura, no en total
 Progreso = Callable[[str], None]
@@ -48,13 +56,16 @@ def exe_name() -> str:
     return "rclone.exe" if os.name == "nt" else "rclone"
 
 
-def os_arch() -> tuple[str, str]:
+def os_arch(plat: Plataforma | None = None) -> tuple[str, str]:
     """(so, arquitectura) con los nombres que usa rclone en sus zips.
 
-    La arquitectura sale de `machine_arch()`, no de `platform.machine()`, por lo
+    Con `plat` son los de esa plataforma. Sin él, los de ESTE equipo, y ahí la
+    arquitectura sale de `machine_arch()`, no de `platform.machine()`, por lo
     mismo que `bin_subdir()` se la pregunta al modelo: el instalador es un .exe
     x64 y en un Windows ARM se creería en un equipo x64, así que descargaba el
     rclone de amd64 para dejarlo en el `bin/arm` que mira el dispositivo."""
+    if plat is not None:
+        return plat.so, plat.rclone_arch
     sysname = {"windows": "windows", "darwin": "osx", "linux": "linux"}.get(
         platform.system().lower(), "linux")
     # ARM o x86 lo decide `arch_dir()`, no una segunda tabla de aquí: tenía una
@@ -81,7 +92,7 @@ def bin_subdir() -> str:
     return arch_dir()
 
 
-def cache_dir() -> Path:
+def cache_dir(plat: Plataforma | None = None) -> Path:
     """La caché de descargas, con una carpeta por arquitectura.
 
     Separada por arquitectura porque si no la caché es lo que deshace el
@@ -89,9 +100,10 @@ def cache_dir() -> Path:
     de amd64, y al volver a instalar `find_rclone()` lo encuentra antes de
     plantearse descargar, así que el `download_url()` correcto no llega a
     usarse nunca. El binario del zip depende de la arquitectura; el sitio donde
-    se guarda, también."""
+    se guarda, también. Windows y Linux de la misma CPU comparten carpeta sin
+    pisarse: uno es `rclone.exe` y el otro `rclone`, igual que en `bin/`."""
     base = os.environ.get("LOCALAPPDATA") or tempfile.gettempdir()
-    d = Path(base) / "prdrive-install" / bin_subdir()
+    d = Path(base) / "prdrive-install" / (plat.bin_dir if plat else bin_subdir())
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -119,7 +131,6 @@ def find_rclone() -> Path | None:
     return None
 
 
-VERSION_URL = f"{RCLONE_BASE_URL}/version.txt"
 USER_AGENT = f"{APP_NAME}-install"
 
 
@@ -135,37 +146,20 @@ def fetch(url: str, timeout: float = DOWNLOAD_TIMEOUT) -> bytes:
         return resp.read()
 
 
-def latest_version() -> str:
-    """La versión que rclone publica como actual, en la forma 'v1.75.0'.
-
-    Hace falta saberla para poder comprobar nada: las sumas viven en
-    `<versión>/SHA256SUMS` y ahí dentro los ficheros se nombran con su versión,
-    no como `rclone-current-…`."""
-    texto = fetch(VERSION_URL, 30).decode("utf-8", "replace").strip()
-    # version.txt dice «rclone v1.75.0».
-    for parte in texto.split():
-        if parte.startswith("v") and parte[1:2].isdigit():
-            return parte
-    raise InstallError(
-        f"No entiendo lo que contesta {VERSION_URL}: {texto[:120]!r}\n"
-        f"Con conexión limitada, copia un rclone a mano en {cache_dir()}.")
-
-
-def zip_name(version: str) -> str:
-    sysname, arch = os_arch()
+def zip_name(version: str, plat: Plataforma | None = None) -> str:
+    sysname, arch = os_arch(plat)
     return f"rclone-{version}-{sysname}-{arch}.zip"
 
 
-def download_url(version: str) -> str:
+def download_url(version: str, plat: Plataforma | None = None) -> str:
     """La URL del zip de ESA versión, nunca el alias `rclone-current-…`.
 
     El alias apunta a lo último que haya publicado rclone en el momento de
-    pedirlo, y eso no se puede comprobar: entre leer `version.txt` y bajar el
-    zip puede salir una versión nueva, y entonces la suma que tenemos en la mano
-    es de un fichero y el fichero es otro. Fallaría la comprobación sin que nada
-    vaya mal, que es la peor manera de fallar. Con la URL versionada las dos
-    mitades hablan de lo mismo por construcción."""
-    return f"{RCLONE_BASE_URL}/{version}/{zip_name(version)}"
+    pedirlo, y eso no se puede comprobar: la suma que tenemos en la mano es la
+    de la versión fijada, y el alias puede ser ya otra. Fallaría la comprobación
+    sin que nada vaya mal, que es la peor manera de fallar. Con la URL
+    versionada las dos mitades hablan de lo mismo por construcción."""
+    return f"{RCLONE_BASE_URL}/{version}/{zip_name(version, plat)}"
 
 
 def published_sha256(version: str, nombre_zip: str) -> str:
@@ -186,8 +180,12 @@ def published_sha256(version: str, nombre_zip: str) -> str:
         f"déjalo en {cache_dir()}.")
 
 
-def download_rclone(progreso: Progreso | None = None) -> Path:
+def download_rclone(progreso: Progreso | None = None,
+                    plat: Plataforma | None = None) -> Path:
     """Baja el zip portable, COMPRUEBA su SHA-256, y deja el binario en la caché.
+
+    Es el de la versión fijada en `common/pins.py`, para `plat` o, sin ella, para
+    este equipo.
 
     Lo que se descarga aquí se va a ejecutar y va a acabar copiado dentro del
     dispositivo, así que se compara con la suma que rclone publica antes de
@@ -203,11 +201,12 @@ def download_rclone(progreso: Progreso | None = None) -> Path:
         if progreso:
             progreso(msg)
 
-    version = latest_version()
-    nombre = zip_name(version)
-    url = download_url(version)
+    version = pins.RCLONE_VERSION
+    nombre = zip_name(version, plat)
+    url = download_url(version, plat)
+    exe = plat.rclone_exe if plat else exe_name()
 
-    decir(f"rclone publica {version}; leyendo su SHA256SUMS")
+    decir(f"rclone {version} ({nombre}): leyendo su SHA256SUMS")
     esperado = published_sha256(version, nombre)
 
     decir(f"Descargando {url}")
@@ -216,7 +215,8 @@ def download_rclone(progreso: Progreso | None = None) -> Path:
     except (urllib.error.URLError, OSError) as e:
         raise InstallError(
             f"No he podido descargar rclone de {url}: {e}\n"
-            f"Con conexión limitada, copia un rclone a mano en {cache_dir()}.") from e
+            f"Con conexión limitada, copia un rclone a mano en "
+            f"{cache_dir(plat)}.") from e
 
     obtenido = hashlib.sha256(datos).hexdigest()
     if obtenido != esperado:
@@ -227,30 +227,66 @@ def download_rclone(progreso: Progreso | None = None) -> Path:
             f"  esperado: {esperado}\n"
             f"  obtenido: {obtenido}\n\n"
             f"No se ha guardado nada. Vuelve a intentarlo; si sigue pasando, "
-            f"baja rclone a mano de {RCLONE_BASE_URL} y déjalo en {cache_dir()}.")
+            f"baja rclone a mano de {RCLONE_BASE_URL} y déjalo en "
+            f"{cache_dir(plat)}.")
     decir(f"SHA-256 correcto: {obtenido}")
 
     # A partir de aquí ya se puede tocar el disco.
-    destino = cache_dir() / exe_name()
+    destino = cache_dir(plat) / exe
     try:
         with zipfile.ZipFile(io.BytesIO(datos)) as zf:
             # El zip trae una carpeta con versión dentro; el binario es el único
             # miembro que se llama así, pero si rclone cambia el empaquetado hay
             # que decirlo, no reventar con un StopIteration sin contexto.
-            miembros = [m for m in zf.namelist() if m.rsplit("/", 1)[-1] == exe_name()]
+            miembros = [m for m in zf.namelist() if m.rsplit("/", 1)[-1] == exe]
             if not miembros:
                 raise InstallError(
-                    f"El zip de rclone no contiene ningún {exe_name()}. "
+                    f"El zip de rclone no contiene ningún {exe}. "
                     f"¿Ha cambiado el empaquetado en {url}?")
             with zf.open(miembros[0]) as src, open(destino, "wb") as dst:
                 shutil.copyfileobj(src, dst)
     except zipfile.BadZipFile as e:
         raise InstallError(f"El fichero descargado de {url} no es un zip válido: {e}") from e
 
-    if os.name != "nt":
+    if not IS_WIN:
         destino.chmod(destino.stat().st_mode | stat.S_IXUSR | stat.S_IRUSR)
     decir(f"rclone listo: {destino}")
     return destino
+
+
+def _es_este_equipo(plat: Plataforma) -> bool:
+    """¿Es `plat` la plataforma de este equipo? Con la misma respuesta que usa
+    el dispositivo para su `bin/`, no con `platform.machine()`.
+
+    «No es Windows» no significa «es Linux»: el rclone de un Mac copiado como
+    el de Linux sería un binario que no arranca en ningún sitio."""
+    so = "windows" if IS_WIN else ("linux" if sys.platform.startswith("linux")
+                                   else sys.platform)
+    return plat.so == so and plat.bin_dir == bin_subdir()
+
+
+def rclone_for(plat: Plataforma, progreso: Progreso | None = None,
+               allow_download: bool = True) -> Path:
+    """El rclone que se copiará al dispositivo para esa plataforma.
+
+    La de este equipo sigue la cadena de siempre (`find_rclone()`): así se puede
+    aprovisionar sin red con un rclone puesto a mano, como antes. Las demás no
+    tienen nada que buscar en este equipo: caché o descarga."""
+    if _es_este_equipo(plat):
+        encontrado = find_rclone()
+        if encontrado:
+            return encontrado
+    en_cache = cache_dir(plat) / plat.rclone_exe
+    try:
+        if en_cache.is_file():
+            return en_cache
+    except OSError:
+        pass
+    if not allow_download:
+        raise InstallError(
+            f"No hay rclone para {plat.nombre} en la caché y no se ha permitido "
+            f"descargarlo.")
+    return download_rclone(progreso, plat)
 
 
 def ensure_rclone(progreso: Progreso | None = None,

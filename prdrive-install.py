@@ -39,7 +39,8 @@ esto se puede publicar sin filtrar nada.
 
 Ojo con una trampa que solo aparece compilado: `sys.executable` es este mismo
 ejecutable, no Python. Todo lo que lance el `sync.py` del dispositivo pasa por
-`install.python_command()`, que busca un intérprete de verdad.
+`deploy.device_python()`, que usa el Python que lleva el propio dispositivo y,
+si no lleva uno para este equipo, busca uno instalado.
 """
 
 from __future__ import annotations
@@ -146,11 +147,16 @@ def cmd_probe() -> int:
 def cmd_update(raiz: str) -> int:
     """Sustituye el código de un dispositivo que ya existe. Nada más.
 
-    Es el paso 5 del asistente menos el rclone —que ya está en `bin/`— y menos
-    todo lo demás: no se pregunta la conexión, no se elige unidad, no se cifra
-    nada, no se tocan las parejas. Se sobrescriben los ficheros del programa y
-    se conservan `rclone.conf`, `keys/`, `sync_config.toml`, `state/`, `logs/`,
-    `filters/`, `bin/` y el fichero de control del volumen.
+    Es el paso 5 del asistente menos las plataformas —rclone y Python ya están
+    en `bin/` y `runtime/`— y menos todo lo demás: no se pregunta la conexión, no
+    se elige unidad, no se cifra nada, no se tocan las parejas. Se sobrescriben
+    los ficheros del programa y se conservan `rclone.conf`, `keys/`,
+    `sync_config.toml`, `state/`, `logs/`, `filters/`, `bin/`, `runtime/` y el
+    fichero de control del volumen.
+
+    Tampoco se tocan los lanzadores de la raíz: se escriben al aprovisionar y
+    ya está. Actualizar cambia el programa, no la forma de arrancarlo —y el
+    runtime es un componente, no código: el zip de la release no lo lleva—.
 
     Se imprime línea a línea con `print()` y no con `report()` al final porque
     esto solo se ejecuta desde un checkout —el zip que ha descargado
@@ -167,7 +173,6 @@ def cmd_update(raiz: str) -> int:
 
     print(f"Actualizando {destino} a la versión {__version__}")
     escrito = deploy.deploy_code(root)          # sin rclone: ya está puesto
-    escrito += deploy.write_launchers(root)
     guia = deploy.write_guide(root)
     if guia is not None:
         escrito.append(guia)

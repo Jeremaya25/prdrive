@@ -10,6 +10,7 @@ buscan ahí por ruta fija. Lo que vive aquí es lo que ellos comparten:
     config_file  leer Y escribir el TOML, con round-trip verificado
     catalog      el catálogo de parejas que vive en el remoto del usuario
     store        los ficheros de estado en JSON del dispositivo
+    pins         las versiones fijadas de rclone y de Python, y las plataformas
 
 `penwatch.py` NO usa este paquete a propósito: se copia al equipo del usuario y
 tiene que seguir funcionando con el dispositivo desconectado. Por eso repite las

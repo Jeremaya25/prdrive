@@ -142,24 +142,240 @@ c("y la línea base de bisync no se ha movido",
   (app_usada / "state" / "docs" / "listado.lst").is_file(), True)
 
 # --- los lanzadores -----------------------------------------------------------
-lanzadores = deploy.write_launchers(destino)
-c("se escriben los dos lanzadores", sorted(p.name for p in lanzadores),
-  ["runsync.pyw", "runsync.sh"])
+# La completa lleva Python propio, así que no depende de la asociación .pyw ->
+# pythonw.exe que solo existe con un Python instalado: .bat y .sh, y nada más.
+lanzadores = deploy.write_launchers(destino, completa=True)
+c("la completa escribe exactamente .bat y .sh", sorted(p.name for p in lanzadores),
+  ["runsync.bat", "runsync.sh"])
 c("y en la raíz del volumen, no dentro de la carpeta oculta",
   {p.parent for p in lanzadores}, {destino})
+
+ligera = deploy.write_launchers(destino, completa=False)
+c("la ligera añade el .pyw, que solo sirve con un Python en el equipo",
+  sorted(p.name for p in ligera), ["runsync.bat", "runsync.pyw", "runsync.sh"])
 pyw = (destino / "runsync.pyw").read_text(encoding="utf-8")
-c.contains("el lanzador apunta a la carpeta del código", pyw, deploy.APP_SUBDIR)
+c.contains("el .pyw apunta a la carpeta del código", pyw, deploy.APP_SUBDIR)
 c.contains("y arranca runsync.py", pyw, "runsync.py")
+
+deploy.write_launchers(destino, completa=True)
+c("pasar de ligera a completa quita el .pyw que ya no hace falta",
+  (destino / "runsync.pyw").exists(), False)
+
+bat = (destino / "runsync.bat").read_bytes().decode("utf-8")
+c("el .bat va con CRLF, que es lo que cmd lee sin sorpresas con los goto",
+  "\r\n" in bat and "\n" not in bat.replace("\r\n", ""), True)
+c.contains("elige por la arquitectura que cmd ve de verdad", bat,
+           "%PROCESSOR_ARCHITECTURE%")
+# El orden es la cadena del issue: ARM64 propio, x64 propio (emulado en un ARM64,
+# y el .bat corre en el cmd nativo, así que la variable dice la verdad), y el
+# Python del equipo si no hay ninguno.
+orden_bat = [bat.index(r"runtime\windows-arm64\pythonw.exe"),
+             bat.index(r"runtime\windows-x64\pythonw.exe"),
+             bat.index("(pythonw.exe)")]
+c("prueba el ARM64 propio, luego el x64 propio y luego el del equipo",
+  orden_bat, sorted(orden_bat))
+c.contains("se suelta con start y la consola no se queda", bat, 'start ""')
+c.contains("arranca el runsync.py del dispositivo", bat,
+           rf"%APP%\runsync.py")
+c.contains("sin ningún Python dice cómo se arregla", bat, "Añadir plataformas")
+c.contains("y espera a que se lea", bat, "pause")
+sh = (destino / "runsync.sh").read_text(encoding="utf-8")
+c.contains("el .sh usa el Python propio de Linux x64", sh, "linux-x64")
+c.contains("y el de ARM64", sh, "linux-arm64")
+c.contains("comprueba que se puede ejecutar (exFAT, noexec)", sh, "[ -x")
+c.contains("y si no, el python3 del equipo", sh, "command -v python3")
+c.contains("y sin ninguno también dice cómo se arregla", sh, "Añadir plataformas")
+# Microsoft retira VBScript: nada de lanzadores .vbs, ni hoy ni escondidos.
+todos = bat + sh + pyw
+c("ningún lanzador depende de VBScript",
+  any(x in todos.lower() for x in (".vbs", "wscript", "cscript")), False)
+
+# La raíz de un dispositivo completo queda con lo justo: dos lanzadores y la guía.
+limpia = tmpdir() / "raiz-limpia"
+limpia.mkdir()
+deploy.write_launchers(limpia, completa=True)
+(origen / deploy.GUIDE_SOURCE).write_text("# guía\n", encoding="utf-8")
+deploy.write_guide(limpia, origen=origen)
+c("una completa deja en la raíz dos lanzadores y la guía",
+  sorted(p.name for p in limpia.iterdir()), ["README.md", "runsync.bat", "runsync.sh"])
 
 # La guía rápida ya no puede llegar por el espejo: o la escribe el instalador, o
 # el usuario se queda sin nada que leer al abrir la unidad.
-(origen / deploy.GUIDE_SOURCE).write_text("# guía\n", encoding="utf-8")
 guia = deploy.write_guide(destino, origen=origen)
 c("la guía se deja en la raíz con el nombre que se busca",
   guia, destino / deploy.GUIDE_TARGET)
 # Es documentación, no maquinaria: que falte no puede tumbar una instalación.
 c("y si el instalador no la lleva dentro, no pasa nada",
   deploy.write_guide(destino, origen=tmpdir()), None)
+
+# --- los lanzadores no se tocan al actualizar ---------------------------------
+# Se escriben al aprovisionar y ya está: el camino de actualizar —el aviso de la
+# ventana, que ejecuta `prdrive-install.py --update` desde el zip descargado—
+# cambia el programa, no la forma de arrancarlo.
+import importlib.util  # noqa: E402
+
+spec = importlib.util.spec_from_file_location(
+    "prdrive_install", Path(__file__).resolve().parent.parent / "prdrive-install.py")
+instalador = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(instalador)
+
+inmutable = tmpdir() / "inmutable"
+deploy.deploy_code(inmutable, origen=origen)
+(inmutable / "runsync.bat").write_bytes(b"rem el mio\r\n")
+(inmutable / "runsync.sh").write_text("# el mío\n", encoding="utf-8")
+fuente_real = deploy.deploy_source
+deploy.deploy_source = lambda: origen
+try:
+    instalador.cmd_update(str(inmutable))
+finally:
+    deploy.deploy_source = fuente_real
+c("--update no reescribe el .bat",
+  (inmutable / "runsync.bat").read_bytes(), b"rem el mio\r\n")
+c("ni el .sh", (inmutable / "runsync.sh").read_text(encoding="utf-8"), "# el mío\n")
+c("ni se inventa un .pyw", (inmutable / "runsync.pyw").exists(), False)
+
+# --- rclone y Python por plataforma --------------------------------------------
+from common import pins  # noqa: E402
+from install import platforms, rclone_bin, runtime_bin  # noqa: E402
+
+WIN, LIN = pins.plataforma("windows-x64"), pins.plataforma("linux-x64")
+LARM = pins.plataforma("linux-arm64")
+
+
+def archivo_runtime(plat, contenido=b"py") -> Path:
+    """Un archivo de python-build-standalone de mentira para esa plataforma."""
+    import io
+    import tarfile
+    ruta = tmpdir() / f"{plat.clave}.tar.gz"
+    with tarfile.open(ruta, "w:gz") as tf:
+        for rel in {plat.interprete, plat.interprete_consola, "lib-de-mentira.py"}:
+            info = tarfile.TarInfo(f"python/{rel}")
+            info.size = len(contenido)
+            info.mode = 0o755
+            tf.addfile(info, io.BytesIO(contenido))
+    return ruta
+
+
+archivos = {p.clave: archivo_runtime(p) for p in (WIN, LIN, LARM)}
+descargados: list[str] = []
+reales = (rclone_bin.rclone_for, runtime_bin.ensure_runtime)
+rclone_bin.rclone_for = lambda plat, progreso=None, allow_download=True: (
+    descargados.append("rclone " + plat.clave) or rclone_falso)
+runtime_bin.ensure_runtime = lambda plat, progreso=None, allow_download=True: (
+    descargados.append("python " + plat.clave) or archivos[plat.clave])
+try:
+    multi = tmpdir() / "multi"
+    matriz = platforms.Matriz.para(multi, anfitrion=WIN)
+    matriz.elegir("linux-x64")
+    escritos, borrados = deploy.apply_platforms(multi, matriz.plan())
+    c("se consigue rclone y Python de cada plataforma marcada",
+      sorted(descargados), ["python linux-x64", "python windows-x64",
+                            "rclone linux-x64", "rclone windows-x64"])
+    c("rclone de Windows en bin/x64/rclone.exe",
+      platforms.rclone_path(multi, WIN).is_file(), True)
+    c("el de Linux al lado, sin pisarlo", platforms.rclone_path(multi, LIN).is_file(), True)
+    c("el Python de cada una en runtime/<clave>/",
+      sorted(platforms.provisioned(multi)), ["linux-x64", "windows-x64"])
+    c("con su sello", platforms.runtime_stamp(multi, WIN),
+      runtime_bin.stamp_text(WIN, runtime_bin.recorded_sha256(archivos["windows-x64"])
+                             or runtime_bin.file_sha256(archivos["windows-x64"])))
+    c("sin carpetas de trabajo olvidadas",
+      sorted(p.name for p in (deploy.app_dir(multi) / "runtime").iterdir()),
+      ["linux-x64", "windows-x64"])
+    c("nada borrado en un dispositivo nuevo", borrados, [])
+
+    # Otra vez lo mismo: el runtime con el mismo sello no se vuelve a extraer.
+    marca = platforms.runtime_dir(multi, WIN) / "marca-de-antes"
+    marca.write_text("x", encoding="utf-8")
+    deploy.apply_platforms(multi, matriz.plan())
+    c("un runtime que ya es ese mismo no se toca", marca.exists(), True)
+
+    # Otro archivo (otra release): se sustituye entero, por intercambio.
+    archivos["windows-x64"] = archivo_runtime(WIN, b"py nuevo")
+    deploy.apply_platforms(multi, matriz.plan())
+    c("uno distinto se sustituye entero", marca.exists(), False)
+    c("con lo nuevo dentro",
+      (platforms.runtime_dir(multi, WIN) / WIN.interprete).read_bytes(), b"py nuevo")
+    c("y sin restos del intercambio",
+      sorted(p.name for p in (deploy.app_dir(multi) / "runtime").iterdir()),
+      ["linux-x64", "windows-x64"])
+
+    # Ligera: rclone sí, Python no; y lo que ya había de Python no se borra solo.
+    descargados.clear()
+    ligera_m = platforms.Matriz.para(multi, anfitrion=WIN)
+    ligera_m.completa = False
+    deploy.apply_platforms(multi, ligera_m.plan())
+    c("la ligera solo consigue rclone", sorted(descargados),
+      ["rclone linux-x64", "rclone windows-x64"])
+    c("y no borra el Python que ya estaba",
+      sorted(platforms.provisioned(multi)), ["linux-x64", "windows-x64"])
+
+    # Quitar Linux x64 y confirmar el borrado: se va su rclone y su Python, y
+    # solo los suyos —el rclone.exe de Windows vive en la misma carpeta—.
+    quitar = platforms.Matriz.para(multi, anfitrion=WIN)
+    quitar.quitar("linux-x64")
+    quitar.confirmar_borrado("linux-x64", True)
+    _, borrados = deploy.apply_platforms(multi, quitar.plan())
+    c("se borra lo de la plataforma quitada",
+      platforms.provisioned(multi).get("linux-x64"), None)
+    c("y solo lo suyo", platforms.rclone_path(multi, WIN).is_file(), True)
+    c("se dice qué se ha borrado", len(borrados), 2)
+
+    # Sin confirmar, quitar no borra.
+    no_borra = platforms.Matriz.para(multi, anfitrion=WIN)
+    no_borra.quitar("windows-x64")
+    no_borra.confirmar_borrado("windows-x64", False)
+    deploy.apply_platforms(multi, no_borra.plan())
+    c("desmarcar sin confirmar no borra nada",
+      sorted(platforms.provisioned(multi)), ["windows-x64"])
+finally:
+    rclone_bin.rclone_for, runtime_bin.ensure_runtime = reales
+
+# --- un runtime en uso no se deja a medias ---------------------------------------
+# En Windows, el runtime del que está corriendo prdrive no se puede renombrar. El
+# intercambio falla ENTERO —el runtime viejo sigue ahí y funciona— en vez de
+# dejar la carpeta medio borrada.
+enuso = tmpdir() / "en-uso"
+deploy.install_runtime(enuso, WIN, archivo_runtime(WIN, b"viejo"))
+reemplazar = deploy.os.replace
+llamadas = {"n": 0}
+
+
+def replace_que_falla(a, b):
+    llamadas["n"] += 1
+    if llamadas["n"] == 1:
+        raise PermissionError("en uso")
+    return reemplazar(a, b)
+
+
+deploy.os.replace = replace_que_falla
+try:
+    deploy.install_runtime(enuso, WIN, archivo_runtime(WIN, b"nuevo"))
+    c("un runtime en uso no se sustituye en silencio", "siguió", "InstallError")
+except InstallError as e:
+    c("un runtime en uso no se sustituye en silencio", "InstallError", "InstallError")
+    c.contains("y se dice qué hacer", str(e), "Cierra prdrive")
+finally:
+    deploy.os.replace = reemplazar
+c("el runtime de antes sigue entero",
+  (platforms.runtime_dir(enuso, WIN) / WIN.interprete).read_bytes(), b"viejo")
+c("y no quedan restos", sorted(p.name for p in (deploy.app_dir(enuso) / "runtime").iterdir()),
+  ["windows-x64"])
+
+# --- el instalador usa el Python del dispositivo -----------------------------------
+# Es lo que hace real «nada que instalar»: inicializar las parejas (paso 7) y
+# registrar el vigilante ya no piden un Python en el equipo que instala.
+propio = tmpdir() / "con-python"
+anfitrion = platforms.host()
+if anfitrion is not None:
+    deploy.install_runtime(propio, anfitrion, archivo_runtime(anfitrion))
+    (deploy.app_dir(propio) / "sync.py").write_text("#\n", encoding="utf-8")
+    (deploy.app_dir(propio) / "penwatch.py").write_text("#\n", encoding="utf-8")
+    consola = platforms.runtime_dir(propio, anfitrion) / anfitrion.interprete_consola
+    c("inicializar usa el Python del dispositivo, el de consola",
+      deploy.resync_command(propio, ["docs"])[0], str(consola))
+    c("y registrar el vigilante, también",
+      deploy.penwatch_install_command(propio)[0], str(consola))
 
 # --- la conexión del dispositivo ----------------------------------------------
 perfil = profile.from_form(
@@ -309,6 +525,7 @@ c("un contenedor VeraCrypt en la raíz tampoco",
 # dispositivo que acaba de hacer se clasificaría como ajeno la siguiente vez y
 # pediría la confirmación a ciegas.
 (base / "runsync.pyw").write_text("#\n", encoding="utf-8")
+(base / "runsync.bat").write_text("#\n", encoding="utf-8")
 (base / "runsync.sh").write_text("#\n", encoding="utf-8")
 (base / "runsync.ico").write_bytes(b"\0")
 c("ni los lanzadores que ponemos nosotros",

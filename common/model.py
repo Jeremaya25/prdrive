@@ -173,9 +173,14 @@ def rclone_binary() -> str:
     """Ruta ejecutable al binario portable de rclone (apaño para exFAT sin +x)."""
     binary = rclone_path()
     if binary is None:
+        # Lo normal es un dispositivo que no se preparó para este equipo: la cura
+        # es el instalador, que baja el rclone fijado y lo comprueba, no que
+        # alguien busque uno a mano.
         sys.exit(
             f"No encuentro el binario de rclone en: {BIN_DIR / rclone_name()}\n"
-            f"Descarga el rclone portable de tu plataforma y colócalo ahí."
+            f"Este dispositivo no se preparó para esta plataforma. Vuelve a "
+            f"ejecutar el instalador de prdrive, elige este dispositivo y pulsa "
+            f"«Añadir plataformas…»."
         )
     if os.name == "nt" or os.access(binary, os.X_OK):
         return str(binary)

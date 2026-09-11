@@ -9,7 +9,9 @@ toca el disco) y `ui/tk_pairs.py` (solo pinta): así todo lo delicado —formate
 probar sin pantalla y sin dispositivo.
 
     profile     la conexión con el remoto: de dónde sale y cómo se escribe
-    rclone_bin  conseguir un binario de rclone con el que arrancar
+    rclone_bin  conseguir rclone, el de este equipo o el de otra plataforma
+    runtime_bin conseguir el Python que viaja en el dispositivo, y extraerlo
+    platforms   para qué equipos va a funcionar: la lista del paso 5
     remote      el rclone.conf efímero y el catálogo de parejas
     device      qué volúmenes hay, cuál es el dispositivo, y si quedó bien montado
     crypto      VeraCrypt y BitLocker
@@ -96,13 +98,13 @@ __version__ = version()
 
 
 def python_command(windowless: bool = False) -> list[str] | None:
-    """Un Python DE VERDAD con el que lanzar el sync.py ya sembrado en el dispositivo.
+    """Un Python DE VERDAD instalado en este equipo.
 
     Congelados, `sys.executable` es el propio instalador: usarlo relanzaría el
     asistente en vez de sincronizar. Por eso solo vale cuando NO estamos
     congelados, y si lo estamos hay que salir a buscar un intérprete instalado.
-    Devuelve None si en este equipo no hay ninguno, que es información útil: el
-    dispositivo resultante tampoco funcionaría."""
+    Devuelve None si en este equipo no hay ninguno. Para lanzar algo DEL
+    dispositivo se pregunta antes por el suyo: `deploy.device_python()`."""
     if not is_frozen():
         return [_windowless(sys.executable) if windowless else sys.executable]
 
