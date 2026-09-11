@@ -20,9 +20,12 @@ no haber tkinter instalado ni display al que conectarse.
 
 from __future__ import annotations
 
+import os
+import subprocess
 import sys
 from datetime import datetime
-from typing import NamedTuple, Protocol
+from pathlib import Path
+from typing import Callable, NamedTuple, Protocol
 
 from common import bisync
 from common.model import Config
@@ -61,6 +64,44 @@ def pair_status_notes(config: Config) -> dict[str, str]:
         except Exception:
             pass  # un estado ilegible no puede impedir que se abra la UI
     return notes
+
+
+def manual_args(config: Config, pairs, approve: Callable[[list[str]], bool]) -> list[str]:
+    """Los argumentos de sync.py para una pasada manual de esas parejas.
+
+    Las que piden un --resync se le preguntan a quien ha elegido (`approve`),
+    UNA vez para todas; si dice que sí va `--yes`, y si no, sync.py las salta.
+    Lo comparten la ventana, que lanza la pasada sin cerrarse, y runsync para el
+    menú de consola."""
+    args = list(pairs)
+    pending = [n for n in pair_status_notes(config) if n in args]
+    if pending and approve(pending):
+        args.append("--yes")
+    return args
+
+
+def abrir(ruta: Path) -> None:
+    """Abre un fichero o una carpeta con lo que el sistema tenga para ello.
+
+    `os.startfile` en Windows y no un `explorer.exe` lanzado a mano: lo abre el
+    propio sistema, sin intérprete de órdenes de por medio (ver
+    `install/crypto.py`, que hace lo mismo por el mismo motivo). En Linux es
+    `xdg-open`, sin shell. Lanza OSError si no se puede, y es de módulo para que
+    los tests lo sustituyan: ninguno abre nada de verdad."""
+    if os.name == "nt":
+        os.startfile(str(ruta))                    # type: ignore[attr-defined]
+        return
+    subprocess.Popen(["xdg-open", str(ruta)], stdin=subprocess.DEVNULL,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     start_new_session=True)
+
+
+def cuando_sello(sello: str) -> str:
+    """`cuando()` para una fecha escrita con `store.stamp()`."""
+    try:
+        return cuando(datetime.strptime(sello, "%Y-%m-%d %H:%M:%S").timestamp())
+    except (TypeError, ValueError):
+        return ""
 
 
 def cuando(marca: float | None) -> str:

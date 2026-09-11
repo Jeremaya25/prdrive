@@ -31,7 +31,7 @@ from _harness import Checks, sandbox, tmpdir
 
 import tomllib
 
-from common import catalog, config_file, model, update
+from common import catalog, config_file, conflicts, model, update
 from install import device
 
 c = Checks("medidas de las pantallas")
@@ -46,7 +46,7 @@ except Exception as e:                                   # sin entorno gráfico
     sys.exit(0)
 
 from ui import tk as uitk
-from ui import tk_install, tk_pairs, tk_update
+from ui import tk_conflicts, tk_install, tk_pairs, tk_update
 
 # Ni una petición a GitHub desde un test.
 update.fetch = lambda url, timeout: c("ningún test toca la red", "fetch", "nada")
@@ -301,6 +301,21 @@ try:
                     entra, corta = medir_dialogo(fabricar, ancho, alto, escala)
                     c(f"{nombre}: {que} cabe", entra, True)
                     c(f"{nombre}: {que} no queda recortado", corta, False)
+
+                # La de conflictos crece con cada fichero y cada versión: se
+                # mide con varios, de ruta larga, que es lo que la estira.
+                pareja0 = cfg.pairs[0]
+                for i in range(6):
+                    carpeta = pareja0.local_abs / "documentos" / f"proyecto-{i}" / "borradores"
+                    carpeta.mkdir(parents=True, exist_ok=True)
+                    (carpeta / f"informe-trimestral-{i}.docx").write_text("a", encoding="utf-8")
+                    (carpeta / f"informe-trimestral-{i}.docx.conflicto-remoto1").write_text(
+                        "b", encoding="utf-8")
+                conflicts.actualizar_pareja(pareja0)
+                entra, corta = medir_dialogo(lambda: tk_conflicts.open_dialog(raiz, cfg),
+                                             ancho, alto, escala, modulo=tk_conflicts)
+                c(f"{nombre}: la ventana de conflictos cabe", entra, True)
+                c(f"{nombre}: la ventana de conflictos no queda recortada", corta, False)
 
                 # La de actualizar crece con las notas de la release, que las
                 # escribe quien publica y aquí no las controla nadie: se mide con

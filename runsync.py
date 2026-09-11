@@ -302,10 +302,9 @@ def ui_flow() -> int:
     if choice.action == "doctor":
         return frontend.run_sync("Doctor", ["--doctor"])
 
-    args = list(choice.pairs)
-    pending = [n for n in ui.pair_status_notes(config) if n in args]
-    if pending and frontend.approve_resync(pending):
-        args.append("--yes")
+    # 'manual' solo llega aquí desde el menú de consola: la ventana sincroniza
+    # sin cerrarse y no devuelve esta elección.
+    args = ui.manual_args(config, choice.pairs, frontend.approve_resync)
     return frontend.run_sync("Sincronización manual", args)
 
 
