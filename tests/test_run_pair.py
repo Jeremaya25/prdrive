@@ -263,4 +263,49 @@ with sandbox():
 c("sin ayuda que quitar, el texto se respeta entero",
   sync.strip_usage("Error: unknown flag: --x\n"), "Error: unknown flag: --x\n")
 
+# --- el lock de otra ejecución, no el de rutina ------------------------------------
+# bisync con --max-lock apunta "lock file renewed" en CADA pasada que coge el
+# lock, también en las que luego fallan por otra cosa. Con la aguja "lock file" a
+# secas, cualquier fallo de bisync salía explicado como un lock de otra
+# ejecución. Los dos logs son de verdad (rclone v1.75, rutas cambiadas).
+TODO_CAMBIADO = """\
+2026/09/11 13:05:29 INFO  : Bisyncing with Comparison Settings:
+2026/09/11 13:05:29 INFO  : lock file renewed for 2m0s. New expiration: 2026-09-11 13:07:29.7723403 +0200 CEST m=+120.280093401
+2026/09/11 13:05:29 INFO  : Synching Path1 "E:\\sync-data\\notas\\" with Path2 "nas:/datos/notas/"
+2026/09/11 13:05:29 INFO  : Path1 checking for diffs
+2026/09/11 13:05:29 INFO  : - Path1             File changed: size (larger), time (newer)   - plan.md
+2026/09/11 13:05:29 INFO  : Path1:    1 changes:    0 new,    1 modified,    0 deleted
+2026/09/11 13:05:29 INFO  : Path2 checking for diffs
+2026/09/11 13:05:29 ERROR : Safety abort: all files were changed on Path1 "E:\\sync-data\\notas\\". Run with --force if desired.
+2026/09/11 13:05:29 NOTICE: Bisync aborted. Please try again.
+2026/09/11 13:05:29 NOTICE: Failed to bisync: all files were changed
+"""
+
+LCK = r"E:\.prdrive\state\notas\E__sync-data_notas..nas_datos_notas.lck"
+CANDADO = f"""\
+2026/09/11 13:05:49 INFO  : Bisyncing with Comparison Settings:
+2026/09/11 13:05:49 INFO  : {LCK}: Valid lock file found. Expires at 2026-09-11 13:07:47.1379312 +0200 CEST. (1m58s from now)
+2026/09/11 13:05:49 INFO  : Lockfile info:
+2026/09/11 13:05:49 NOTICE: Failed to bisync: prior lock file found: {LCK}
+Tip: this indicates that another bisync run (of these same paths) either is still running or was interrupted before completion.
+If you're SURE you want to override this safety feature, you can delete the lock file with the following command, then run bisync again:
+rclone deletefile "{LCK}"
+"""
+
+
+def explicar(texto):
+    with sandbox():
+        log = sync.temp_log("explicar")
+        log.write_text(texto, encoding="utf-8")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            sync.explain_failure(log)
+        log.unlink(missing_ok=True)
+        return buf.getvalue()
+
+
+c("el lock renovado de rutina no se explica como un lock de otra ejecución",
+  ".lck" in explicar(TODO_CAMBIADO), False)
+c.contains("un lock de otra ejecución, sí", explicar(CANDADO), ".lck")
+
 sys.exit(c.report())

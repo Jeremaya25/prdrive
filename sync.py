@@ -75,7 +75,11 @@ KNOWN_ERRORS = [
      "esté vacía o desmontada antes de forzar nada."),
     ("Access is denied",
      "Fichero bloqueado por otro proceso (Obsidian, KeePass, antivirus)."),
-    ("lock file",
+    # Lo que dice bisync al encontrar el lock de otra (cmd/bisync/lockfile.go,
+    # setLockFile). "lock file" a secas no vale: con --max-lock, cada pasada que
+    # coge el lock apunta "lock file renewed", y todo fallo de bisync salía
+    # explicado como un lock que no existía.
+    ("prior lock file found",
      "Hay un lock de otra ejecución. Si no hay ninguna corriendo, borra el .lck "
      "del workdir de la pareja."),
     ("known_hosts_file",
