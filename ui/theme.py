@@ -275,6 +275,14 @@ _CHIPS = {
 _puestos: dict[int, object] = {}
 
 
+def olvidar(interp) -> None:
+    """Deja de recordar un intérprete ya cerrado. Hermana de `icons.olvidar()`,
+    y por lo mismo: el de la ventanita del servicio vive en otro hilo, y si este
+    diccionario lo retuviera lo acabaría soltando el hilo principal."""
+    if _puestos.get(id(interp)) is interp:
+        del _puestos[id(interp)]
+
+
 def _casilla_propia(widget, style) -> None:
     """Cambia el indicador del Checkbutton por el cuadrado del diseño.
 

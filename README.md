@@ -23,7 +23,7 @@ Python, ningún servicio de terceros por medio.
 
 - [El modelo](#el-modelo) · [Instalación](#instalación) · [Uso diario](#uso-diario)
 - [Configuración](#configuración) · [Modos](#modos) · [Filtros](#filtros)
-- [Cómo funciona bisync por dentro](#cómo-funciona-bisync-por-dentro)
+- [Cómo funciona bisync por dentro](#cómo-funciona-bisync-por-dentro) · [Conflictos](#conflictos)
 - [El servicio periódico](#el-servicio-periódico) · [El vigilante](#el-vigilante)
 - [Diagnóstico](#diagnóstico) · [Seguridad](#seguridad)
 - [Arquitectura](#arquitectura) · [Desarrollo](#desarrollo)
@@ -283,7 +283,10 @@ la ruta absoluta reaparece.
 `bisync` viene además con `--conflict-resolve newer`, `--resilient`, `--recover` y
 `--max-lock 2m`: un error menor no obliga a rehacer la referencia, una
 interrupción brusca se recupera sola en la pasada siguiente, y el `.lck` que deja
-un proceso muerto caduca en vez de bloquear para siempre.
+un proceso muerto caduca en vez de bloquear para siempre. Y con
+`--conflict-suffix conflicto-dispositivo,conflicto-remoto`, para que el nombre de
+la copia que pierde un conflicto diga de qué lado venía (ver
+[Conflictos](#conflictos)).
 
 Un `mode` mal escrito se rechaza **al leer el config**, no cuando esa pareja
 corre: un error tipográfico para `--list`, `--doctor` y la ejecución por igual, en
@@ -345,6 +348,37 @@ el servicio, el vigilante) la respuesta por defecto es *no*: esas parejas se
 saltan, con un código distinto de «ha fallado», en vez de rehacerse solas sin que
 nadie mire.
 
+## Conflictos
+
+Cuando un fichero cambia en los dos lados entre dos pasadas, bisync no elige en
+silencio: con `--conflict-resolve newer` se queda con el más reciente, le cambia
+el nombre al otro añadiéndole un sufijo, y copia los dos a los dos lados. Hasta
+aquí, eso solo quedaba en el log de rclone —que se borra si la pasada fue bien— y
+en un fichero con un nombre raro que nadie miraba, mientras las dos versiones
+seguían separándose.
+
+Ahora, después de cada pasada, `sync.py` recorre la carpeta local de la pareja,
+encuentra esas copias y lo dice en su salida. La ventana pone un chip ámbar en la
+pareja y un bloque con **Revisar…**, que abre la lista de ficheros en conflicto
+con sus versiones —«versión de este dispositivo» y «versión del remoto», con
+tamaño y fecha— y deja quedarse con una. Eso pasa por la misma confirmación que
+los demás borrados, toca **solo ficheros de este dispositivo** y la siguiente
+pasada lleva el resultado al remoto. El aviso no es un suceso que se lee y se
+olvida: se deriva del disco, y se va solo cuando ya no quedan copias, las haya
+borrado quien las haya borrado.
+
+**Por qué el sufijo lleva el lado.** Con el sufijo de fábrica de rclone
+(`.conflict`) y `--conflict-loser num`, la copia se llama `.conflictN` con el
+primer número libre (`cmd/bisync/resolve.go`), y ese número es un orden, no un
+lado: después no hay forma de saber de quién era. Por eso `bisync` lleva
+`--conflict-suffix conflicto-dispositivo,conflicto-remoto`: la copia se llama
+`informe.docx.conflicto-remoto1` y el nombre lo dice, y sigue numerada, así que un
+segundo conflicto en el mismo fichero no pisa la copia del primero (con
+`--conflict-loser pathname` sí lo haría). Quien interpreta el nombre,
+`common/conflicts.py`, lo lee de los flags de la pareja igual que rclone, así que
+cambiar esos flags en el TOML sigue funcionando. Los `.conflictN` que ya hubiera
+se siguen reconociendo, pero sin lado: ahí se elige una versión concreta.
+
 ## El servicio periódico
 
 `runsync.py` puede quedarse sincronizando cada N minutos. Su coordinación vive en
@@ -356,6 +390,18 @@ nadie mire.
 | `daemon.stop` | su presencia es una petición de parada |
 | `daemon.log` | registro, se recorta solo |
 | `ui_prefs.json` | lo último que se eligió en la ventana |
+| `last_run.json` | cómo acabó la última pasada de cada pareja, y qué log la explica |
+| `conflicts.json` | los ficheros en conflicto del último recorrido |
+
+**Un fallo no se queda escondido.** `sync.py` apunta en `last_run.json` el
+resultado de cada pareja, la lance quien la lance. Al abrir la ventana, las
+parejas cuya última pasada falló salen en un bloque ámbar con un botón al log
+conservado, hasta que una pasada buena lo quite. Y el servicio, cuando una pareja
+**empieza** a fallar, abre él mismo una ventanita —en su propio intérprete, sin
+lanzar ningún proceso—: un ciclo bueno no enseña nada, y el mismo fallo repetido
+cada media hora no vuelve a saltar. Sin pantalla, el aviso se queda en
+`daemon.log`. El servicio sigue sin preguntar nada nunca: una pareja que pide
+`--resync` se salta.
 
 La ventana arranca precargada con la última elección, por encima de `[daemon]` del
 TOML, por encima de «todas las parejas / 30 minutos». Solo la ventana escribe esa
@@ -465,6 +511,8 @@ prdrive/
 ├── common/            lo que comparten los puntos de entrada
 │   ├── model.py       el TOML convertido en objetos ya resueltos
 │   ├── bisync.py      lo que replica el comportamiento interno de rclone bisync
+│   ├── conflicts.py   los ficheros en conflicto de bisync y de qué lado es cada uno
+│   ├── results.py     cómo acabó la última pasada de cada pareja
 │   ├── config_file.py lee Y escribe el TOML, con round-trip verificado
 │   ├── catalog.py     el catálogo del remoto: leer, cachear, escribir
 │   ├── update.py      si hay release nueva, y cómo traerse su código

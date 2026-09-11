@@ -26,10 +26,11 @@ import sys
 import threading
 import time
 
-from common import APP_NAME, model, update
+from common import APP_NAME, conflicts, model, results, update
 from common.model import Config
 
-from . import Choice, cuando, icons, pair_status_notes, pair_times, prefs, theme
+from . import (Choice, abrir, cuando, cuando_sello, icons, manual_args,
+               pair_status_notes, pair_times, prefs, theme)
 
 TITLE = APP_NAME          # el nombre de la ventana sale de common/
 
@@ -50,16 +51,11 @@ class TkFrontend:
         return main_window(config, startup_msg)
 
     def approve_resync(self, pending: list[str]) -> bool:
-        from tkinter import messagebox
         root = root_oculto()
-        answer = messagebox.askyesno(
-            TITLE,
-            "Estas parejas requieren --resync (primera vez, baseline perdido o "
-            "filtros cambiados):\n\n  " + "\n  ".join(pending) +
-            "\n\nEl resync compara ambos lados y fija la referencia; no borra por "
-            "diferencias.\n¿Ejecutarlo ahora? (si no, esas parejas se saltarán)")
-        root.destroy()
-        return bool(answer)
+        try:
+            return preguntar_resync(root, pending)
+        finally:
+            root.destroy()
 
     def info(self, msg: str) -> None:
         from tkinter import messagebox
@@ -68,11 +64,30 @@ class TkFrontend:
         root.destroy()
 
     def run_sync(self, title: str, args: list[str]) -> int:
-        # El subtítulo de la ventana son las parejas que se van a tocar: lo que
-        # se pasa son sus nombres y, detrás, las opciones que empiezan por '-'.
-        parejas = [a for a in args if not a.startswith("-")]
-        return output_window(title, [sys.executable, str(model.SYNC_PY), *args],
-                             subtitulo=", ".join(parejas))
+        rc = output_window(title, orden_sync(args), subtitulo=subtitulo_sync(args))
+        return rc if rc is not None else 1
+
+
+def orden_sync(args: list[str]) -> list[str]:
+    return [sys.executable, str(model.SYNC_PY), *args]
+
+
+def subtitulo_sync(args: list[str]) -> str:
+    """El subtítulo de la ventana son las parejas que se van a tocar: lo que se
+    pasa son sus nombres y, detrás, las opciones que empiezan por '-'."""
+    return ", ".join(a for a in args if not a.startswith("-"))
+
+
+def preguntar_resync(parent, pending: list[str]) -> bool:
+    """El sí/no del --resync, colgado de la ventana que pregunta."""
+    from tkinter import messagebox
+    return bool(messagebox.askyesno(
+        TITLE,
+        "Estas parejas requieren --resync (primera vez, baseline perdido o "
+        "filtros cambiados):\n\n  " + "\n  ".join(pending) +
+        "\n\nEl resync compara ambos lados y fija la referencia; no borra por "
+        "diferencias.\n¿Ejecutarlo ahora? (si no, esas parejas se saltarán)",
+        parent=parent))
 
 
 def root_oculto():
@@ -478,7 +493,11 @@ def working(parent, title: str, funcion, mensaje: str = "") -> tuple[bool, objec
 
 def main_window(config: Config, startup_msg: str | None) -> Choice | None:
     """La ventana principal: qué parejas, cada cuánto, y qué hacer con ellas.
-    Devuelve la elección, o None si se cierra sin elegir.
+
+    Sincronizar y el doctor se hacen DESDE aquí, en una ventana de salida hija
+    que no la cierra: al terminar se vuelve a esta con todo al día. Lo único que
+    sale de la ventana es arrancar el servicio, que vive en otro proceso: la
+    elección 'daemon' se devuelve a runsync. None si se cierra sin más.
     Lanza ImportError/TclError si no hay entorno gráfico."""
     import tkinter as tk
     from tkinter import messagebox, ttk
@@ -503,12 +522,41 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         pendiente = update.pending()
     except Exception:                                # noqa: BLE001
         pendiente = None
-    vista: dict = {"config": config, "aviso": startup_msg, "nueva": pendiente}
+    vista: dict = {"config": config, "aviso": startup_msg, "nueva": pendiente,
+                   "en_curso": False}
 
     # Dentro de un visor: la lista de parejas crece con cada pareja y la ventana
     # no puede pasar del alto de la pantalla. Con pocas parejas no se nota nada.
     frame = cuerpo_visible(root, padding=(22, 20, 22, 18))
     frame.columnconfigure(0, weight=1)
+
+    def leer_estado() -> None:
+        """Lo que dejó apuntado la última pasada: qué falló y qué conflictos hay.
+
+        Se lee de state/ y no se recorre nada: es lo que pinta la ventana nada
+        más abrirse y al volver de una sincronización (sync.py lo acaba de
+        escribir). El recorrido de verdad lo hace `mirar_conflictos()` en un
+        hilo. Bajo `except` por lo mismo que `update.pending()` arriba."""
+        try:
+            vista["fallos"] = results.fallos(vista["config"])
+        except Exception:                            # noqa: BLE001
+            vista["fallos"] = []
+        try:
+            vista["conflictos"] = conflicts.contar(conflicts.cargar(vista["config"]))
+        except Exception:                            # noqa: BLE001
+            vista["conflictos"] = {}
+
+    leer_estado()
+
+    def reajustar() -> None:
+        """Repintar sin mover la ventana si no ha cambiado de tamaño.
+
+        Lo que cambia aquí —un botón que se apaga mientras sincroniza, un chip
+        que pasa a ámbar— casi nunca cambia el tamaño, y recolocar una ventana
+        que el usuario ha movido sería arrastrársela."""
+        render()
+        if root.visor.encajar(root):
+            centrar(root)
 
     def recargar() -> None:
         """El config ha cambiado bajo nuestros pies: releerlo y repintar.
@@ -521,6 +569,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
             messagebox.showerror(TITLE, f"El config no se puede leer:\n\n{e}")
             return
         vista["aviso"] = None
+        leer_estado()
         render()
         root.visor.encajar(root)
         centrar(root)   # quitar o añadir parejas le cambia el alto
@@ -573,7 +622,77 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
 
         threading.Thread(target=trabajo, daemon=True).start()
 
+    def mirar_conflictos() -> None:
+        """Recorrer las carpetas de verdad, sin que se note.
+
+        Lo que se pintó al abrir sale del último escaneo; esto lo pone al día
+        —conflictos que han llegado de otro dispositivo, o que se han resuelto a
+        mano—. En un hilo porque recorrer un árbol grande en un dispositivo USB
+        tarda, y devolviendo por `after` porque a Tk solo se le habla desde su
+        hilo. Mientras sincroniza no se mira: sync.py ya lo hace al acabar."""
+        if vista["en_curso"]:
+            return
+        config_ahora = vista["config"]
+
+        def responder(cuentas) -> None:
+            if cuentas != vista["conflictos"] and not vista["en_curso"]:
+                vista["conflictos"] = cuentas
+                reajustar()
+
+        def trabajo() -> None:
+            try:
+                cuentas = conflicts.contar(conflicts.refrescar(config_ahora))
+            except Exception:                        # noqa: BLE001
+                return
+            try:
+                root.after(0, responder, cuentas)
+            except Exception:                        # noqa: BLE001
+                pass         # la ventana ya se ha cerrado
+
+        threading.Thread(target=trabajo, daemon=True).start()
+
+    def abrir_conflictos() -> None:
+        from . import tk_conflicts
+        tk_conflicts.open_dialog(root, vista["config"])
+        leer_estado()
+        reajustar()
+
+    def abrir_log(ruta) -> None:
+        try:
+            abrir(ruta)
+        except OSError as e:
+            messagebox.showerror(TITLE, f"No se ha podido abrir:\n\n{ruta}\n\n{e}",
+                                 parent=root)
+
+    def lanzar(titulo: str, args: list[str]) -> None:
+        """Ejecuta sync.py en la ventana de salida SIN cerrar esta.
+
+        La ventana de salida es hija de esta y no la bloquea; mientras corre, lo
+        que tocaría el mismo estado (otra pasada, el servicio, las parejas) queda
+        apagado. Al cerrarla se vuelve aquí con las horas, los chips y los avisos
+        ya al día: sync.py acaba de escribirlos en state/."""
+        vista["en_curso"] = True
+        reajustar()
+
+        def al_cerrar(_rc) -> None:
+            vista["en_curso"] = False
+            try:
+                leer_estado()
+                reajustar()
+            except tk.TclError:
+                pass         # se está cerrando la ventana principal entera
+
+        output_window(titulo, orden_sync(args), parent=root,
+                      subtitulo=subtitulo_sync(args), modal=False, al_cerrar=al_cerrar)
+
     def render() -> None:
+        # Lo marcado a mano se conserva al repintar: esta ventana se repinta sola
+        # (vuelve una sincronización, llega el escaneo de conflictos) y perder
+        # las casillas que se acaban de tocar sería un castigo por esperar.
+        if vista.get("casillas"):
+            vista["marcadas"] = [n for n, v in vista["casillas"].items() if v.get()]
+            vista["conocidas"] = list(vista["casillas"])
+            vista["intervalo"] = vista["intervalo_var"].get()
         for hijo in frame.winfo_children():
             hijo.destroy()
 
@@ -581,7 +700,13 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         names = config.names
         notes = pair_status_notes(config)
         marcas = pair_times(config)
+        cuentas = {n: k for n, k in vista["conflictos"].items() if n in names}
         d_pairs, d_interval, _ = prefs.startup_defaults(config)
+        if "marcadas" in vista:
+            d_pairs = [n for n in names
+                       if n in vista["marcadas"] or n not in vista["conocidas"]]
+        en_curso = vista["en_curso"]
+        apagado = "disabled" if en_curso else "normal"
         fila = 0
 
         # --- quién es este dispositivo y cómo está -----------------------------------
@@ -614,17 +739,60 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         # El chip dice lo que se sabe sin hablar con nadie: si alguna pareja
         # necesita un --resync. La conexión con el remoto NO se comprueba aquí — se
         # tardaría segundos en abrir la ventana y la respuesta caducaría enseguida.
-        if notes:
-            theme.chip(arriba, f"{len(notes)} requieren resync" if len(notes) > 1
-                       else "1 requiere resync", "Aviso.", "warn").grid(
-                row=0, column=1, sticky="ne", pady=(4, 0))
+        if en_curso:
+            chip = theme.chip(arriba, "sincronizando…", "Acento.", "sync")
+        elif notes:
+            chip = theme.chip(arriba, f"{len(notes)} requieren resync" if len(notes) > 1
+                              else "1 requiere resync", "Aviso.", "warn")
+        elif cuentas:
+            total = sum(cuentas.values())
+            chip = theme.chip(arriba, f"{total} en conflicto", "Aviso.", "warn")
         else:
-            theme.chip(arriba, "al día", "Ok.", "ok").grid(
-                row=0, column=1, sticky="ne", pady=(4, 0))
+            chip = theme.chip(arriba, "al día", "Ok.", "ok")
+        chip.grid(row=0, column=1, sticky="ne", pady=(4, 0))
 
         if vista["aviso"]:
             bloque_aviso(frame, vista["aviso"], ancho=400).grid(
                 row=fila, column=0, sticky="ew", pady=(14, 0))
+            fila += 1
+
+        # --- lo que falló la última vez ---------------------------------------
+        # Justo debajo del aviso de arranque: es lo más urgente de la ventana, y
+        # sin esto un fallo del servicio solo existía en logs/, donde nadie mira.
+        # Se queda mientras la última pasada de esa pareja siga siendo un fallo.
+        fallos = [f for f in vista["fallos"] if f.pareja in names]
+        if fallos and not en_curso:
+            lineas = [f"{f.pareja}" + (f" · {cuando_sello(f.cuando)}"
+                                       if cuando_sello(f.cuando) else "")
+                      for f in fallos]
+            logs = [f.log for f in fallos if f.log is not None]
+            boton = None
+            if len(logs) == 1:
+                boton = ("Ver el log", lambda ruta=logs[0]: abrir_log(ruta))
+            elif logs:
+                boton = ("Abrir los logs", lambda: abrir_log(model.LOG_DIR))
+            bloque_aviso(
+                frame,
+                "La última pasada falló en:\n" + "\n".join(lineas) +
+                "\nMientras no se arregle, eso no está sincronizado.",
+                ancho=330, boton=boton,
+            ).grid(row=fila, column=0, sticky="ew", pady=(14, 0))
+            fila += 1
+
+        # --- ficheros con dos versiones ----------------------------------------
+        if cuentas:
+            total = sum(cuentas.values())
+            caja = bloque_aviso(
+                frame,
+                f"{total} fichero(s) en conflicto en {', '.join(cuentas)}: cambiaron "
+                f"en los dos lados y ahora hay dos versiones.",
+                ancho=330, boton=("Revisar…", abrir_conflictos))
+            caja.grid(row=fila, column=0, sticky="ew", pady=(14, 0))
+            # Resolver mientras sincroniza sería mover ficheros bajo los pies de
+            # rclone.
+            for hijo in caja.winfo_children():
+                if isinstance(hijo, ttk.Button):
+                    hijo.configure(state=apagado)
             fila += 1
 
         # --- hay versión nueva -----------------------------------------------
@@ -680,6 +848,11 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
             if name in notes:
                 theme.chip(tarjeta, notes[name], "Aviso.").grid(
                     row=linea, column=4, sticky="e")
+            elif name in cuentas:
+                # Se queda hasta que no quede ninguna copia en disco: no es un
+                # suceso que se lee y se olvida, es un estado de la carpeta.
+                texto = "1 conflicto" if cuentas[name] == 1 else f"{cuentas[name]} conflictos"
+                theme.chip(tarjeta, texto, "Aviso.").grid(row=linea, column=4, sticky="e")
             else:
                 theme.chip(tarjeta, "al día", "Ok.").grid(row=linea, column=4,
                                                           sticky="e")
@@ -700,30 +873,41 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         reloj.grid(row=0, column=0, sticky="w")
         ttk.Label(repetir, text="Repetir cada", style="Campo.TLabel").grid(
             row=0, column=1, sticky="w", padx=(8, 10))
-        interval_var = tk.StringVar(value=f"{d_interval:g}")
+        interval_var = tk.StringVar(value=vista.get("intervalo") or f"{d_interval:g}")
         ttk.Spinbox(repetir, from_=1, to=1440, textvariable=interval_var,
                     width=5, font=theme.fuente("mono")).grid(row=0, column=2)
         ttk.Label(repetir, text="minutos, mientras el dispositivo siga puesto",
                   style="Pista.TLabel").grid(row=0, column=3, sticky="w", padx=(10, 0))
+        vista["casillas"], vista["intervalo_var"] = vars_by_name, interval_var
 
         def selected() -> list[str]:
             return [n for n in names if vars_by_name[n].get()]
 
-        def choose(kind: str) -> None:
-            sel = selected()
-            if kind in ("manual", "daemon") and not sel:
-                return  # nada marcado, nada que hacer
-            if kind not in ("manual", "daemon"):
-                result["choice"] = Choice(kind)
-                root.destroy()
-                return
-            # El intervalo se recoge también en "manual": ahí no se usa, pero
-            # forma parte de lo que se recuerda para la próxima vez.
+        def minutos() -> float:
             try:
-                minutes = max(1.0, float(interval_var.get().replace(",", ".")))
+                return max(1.0, float(interval_var.get().replace(",", ".")))
             except ValueError:
-                minutes = d_interval
-            result["choice"] = Choice(kind, tuple(sel), minutes)
+                return d_interval
+
+        def sincronizar() -> None:
+            """La pasada manual, aquí mismo. Se recuerda lo elegido —el
+            intervalo también: aquí no se usa, pero forma parte de lo que se
+            recuerda para la próxima vez— antes de preguntar por los resync."""
+            sel = selected()
+            if not sel:
+                return  # nada marcado, nada que hacer
+            prefs.save_prefs("manual", sel, minutos(), names)
+            args = manual_args(vista["config"], sel,
+                               lambda pendientes: preguntar_resync(root, pendientes))
+            lanzar("Sincronización manual", args)
+
+        def servicio() -> None:
+            """El servicio sí cierra la ventana: corre en otro proceso, sin
+            ella, y quien lo arranca es runsync al volver de aquí."""
+            sel = selected()
+            if not sel:
+                return
+            result["choice"] = Choice("daemon", tuple(sel), minutos())
             root.destroy()
 
         # --- las pantallas de las que se vuelve aquí --------------------------
@@ -731,17 +915,23 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         ajustes.grid(row=fila, column=0, sticky="ew", pady=(18, 0))
         ajustes.columnconfigure(2, weight=1)
         fila += 1
-        for col, (texto, icono, accion) in enumerate((
+        # Mientras sincroniza se apaga todo lo que toca el mismo estado: otra
+        # pasada chocaría con el lock de bisync, y la pantalla de parejas puede
+        # apartar un baseline que rclone está usando. «Arranque automático» no
+        # toca nada del dispositivo, así que sigue a mano.
+        for col, (texto, icono, accion, estado_boton) in enumerate((
                 ("Parejas…", "grid",
-                 lambda: tk_pairs.open_dialog(root, vista["config"]) and recargar()),
+                 lambda: tk_pairs.open_dialog(root, vista["config"]) and recargar(),
+                 apagado),
                 ("Arranque automático…", "plug",
-                 lambda: tk_watch.open_dialog(root, vista["config"])))):
+                 lambda: tk_watch.open_dialog(root, vista["config"]), "normal"))):
             boton = ttk.Button(ajustes, text=texto, style="Quiet.TButton",
-                               command=accion)
+                               command=accion, state=estado_boton)
             theme.boton_icono(boton, icono, theme.ACENTO, theme.PAPEL)
             boton.grid(row=0, column=col, sticky="w", padx=(0, 4))
         doctor = ttk.Button(ajustes, text="Doctor", style="Quiet.TButton",
-                            command=lambda: choose("doctor"))
+                            command=lambda: lanzar("Doctor", ["--doctor"]),
+                            state=apagado)
         theme.boton_icono(doctor, "doctor", theme.ACENTO, theme.PAPEL)
         doctor.grid(row=0, column=3, sticky="e")
 
@@ -754,21 +944,113 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         pie.grid(row=fila, column=0, sticky="ew", pady=(14, 0))
         pie.columnconfigure(0, weight=1)
         ahora = ttk.Button(pie, text="Sincronizar ahora", style="Primary.TButton",
-                           padding=(14, 8), command=lambda: choose("manual"))
+                           padding=(14, 8), command=sincronizar, state=apagado)
         theme.boton_icono(ahora, "sync", theme.SUPERFICIE, theme.ACENTO, 16)
         ahora.grid(row=0, column=0, sticky="ew", padx=(0, 8))
         ttk.Button(pie, text="Iniciar servicio", padding=(12, 8),
-                   command=lambda: choose("daemon")).grid(row=0, column=1)
+                   command=servicio, state=apagado).grid(row=0, column=1)
 
     render()
     root.visor.encajar(root)
     centrar(root)
     root.deiconify()
-    # Después de enseñarla, no antes: la comprobación de versión no puede
-    # retrasar la apertura ni un parpadeo.
+    # Después de enseñarla, no antes: la comprobación de versión y el recorrido
+    # de las carpetas no pueden retrasar la apertura ni un parpadeo.
     root.after(300, mirar_version)
+    root.after(300, mirar_conflictos)
     root.mainloop()
     return result["choice"]
+
+
+# ---------------------------------------------------------------------------
+# El aviso del servicio
+# ---------------------------------------------------------------------------
+
+def aviso_fallo(fallos, al_abrir=None) -> None:
+    """La ventanita que abre el servicio cuando falla un ciclo. Bloquea hasta
+    que se cierra: quien la llama (`ui.avisar_fallo`) la tiene en su propio
+    hilo. `al_abrir()` se llama cuando ya se ve.
+
+    Es lo mínimo: qué parejas, cuándo, y el log. Explicar el fallo es cosa de la
+    ventana principal, que ya tiene su bloque ámbar para esto; aquí solo hay
+    que conseguir que alguien se entere.
+
+    Al cerrarse se suelta AQUÍ todo lo de Tk: lo que recuerdan `theme` e
+    `icons` de este intérprete, y los `PhotoImage` colgados de los widgets en
+    ciclos de referencias. Si los soltara más tarde el hilo del servicio,
+    borrarlos sería hablarle a Tk desde un hilo que no es el suyo."""
+    import gc
+    try:
+        _aviso_fallo(fallos, al_abrir)
+    finally:
+        gc.collect()
+
+
+def _aviso_fallo(fallos, al_abrir) -> None:
+    import tkinter as tk
+    from tkinter import ttk
+
+    theme.nitidez()
+    root = tk.Tk()               # TclError aquí si no hay display: lo recoge quien llama
+    theme.apply(root)
+    icons.poner_icono(root)
+    root.title(f"{TITLE} — el servicio ha fallado")
+    root.configure(background=theme.PAPEL)
+    root.resizable(False, False)
+    root.withdraw()
+
+    marco = cuerpo_visible(root, padding=(22, 20, 22, 18))
+    marco.columnconfigure(0, weight=1)
+    cabecera(marco, "El servicio no ha podido sincronizar",
+             "Sigue en marcha y lo volverá a intentar en el próximo ciclo. Abre "
+             f"{TITLE} para ver qué ha pasado.",
+             ancho=420, estilo="Dialogo.TLabel").grid(row=0, column=0, sticky="w")
+
+    tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(14, 4))
+    tarjeta.grid(row=1, column=0, sticky="ew", pady=(14, 0))
+    tarjeta.columnconfigure(0, weight=1)
+    for i, fallo in enumerate(fallos):
+        if i:
+            separador_fila(tarjeta, i * 2 - 1, 2)
+        ttk.Label(tarjeta, text=fallo.pareja, style="Card.Fuerte.TLabel").grid(
+            row=i * 2, column=0, sticky="w", pady=6)
+        ttk.Label(tarjeta, text=cuando_sello(fallo.cuando) or "—",
+                  style="Card.MonoPista.TLabel").grid(row=i * 2, column=1, sticky="e")
+
+    def ver(ruta) -> None:
+        try:
+            abrir(ruta)
+        except OSError:
+            pass         # sin visor no hay log que enseñar; la principal lo tiene
+
+    pie = ttk.Frame(marco)
+    pie.grid(row=2, column=0, sticky="ew", pady=(16, 0))
+    pie.columnconfigure(0, weight=1)
+    logs = [f.log for f in fallos if f.log is not None]
+    if logs:
+        ttk.Button(pie, text="Ver el log" if len(logs) == 1 else "Abrir los logs",
+                   style="Quiet.TButton",
+                   command=lambda: ver(logs[0] if len(logs) == 1 else model.LOG_DIR)).grid(
+            row=0, column=1, padx=(0, 8))
+    ttk.Button(pie, text="Cerrar", style="Primary.TButton",
+               command=root.destroy).grid(row=0, column=2)
+
+    root.visor.encajar(root)
+    centrar(root)
+    root.deiconify()
+    # Un proceso sin ventana no puede quitarle el foco a nadie, así que Windows
+    # la dejaría debajo de todo: encima un momento, lo justo para verla.
+    try:
+        root.attributes("-topmost", True)
+        root.after(1500, lambda: root.attributes("-topmost", False))
+    except tk.TclError:
+        pass
+    if al_abrir is not None:
+        al_abrir()
+    root.mainloop()
+    interp = root.tk
+    theme.olvidar(interp)
+    icons.olvidar(interp)
 
 
 # ---------------------------------------------------------------------------
@@ -805,7 +1087,8 @@ def _tono(linea: str) -> str:
 
 
 def output_window(title: str, cmd: list[str], parent=None,
-                  subtitulo: str = "") -> int:
+                  subtitulo: str = "", modal: bool = True,
+                  al_cerrar=None) -> int | None:
     """Ejecuta una orden y muestra su salida en una ventana con desplazamiento.
 
     Sustituye a la consola cuando no la hay, así que la usan tanto sync.py como
@@ -815,7 +1098,12 @@ def output_window(title: str, cmd: list[str], parent=None,
 
     Con `parent` se cuelga de una ventana existente en vez de crear un Tk nuevo:
     tkinter no lleva bien dos intérpretes a la vez, y desde un diálogo ya hay uno
-    en marcha."""
+    en marcha.
+
+    Con `modal=False` (y `parent`) no espera ni captura: vuelve enseguida con
+    None y la ventana principal sigue viva debajo —es lo que la ventana
+    principal necesita para no desaparecer al sincronizar—. `al_cerrar(rc)` se
+    llama una vez, cuando la ventana se cierra, sea como sea."""
     import tkinter as tk
     from tkinter import filedialog, font as tkfont, messagebox, ttk
 
@@ -958,6 +1246,10 @@ def output_window(title: str, cmd: list[str], parent=None,
         nuevo.grid(row=0, column=2, rowspan=2, sticky="e")
 
     def poll() -> None:
+        # Sin ventana no hay a quién contárselo. Con la principal viva debajo el
+        # bucle de eventos sigue, y sin esto el sondeo seguiría para siempre.
+        if not root.winfo_exists():
+            return
         try:
             while True:
                 item = q.get_nowait()
@@ -974,10 +1266,33 @@ def output_window(title: str, cmd: list[str], parent=None,
             proc.terminate()
         root.destroy()
 
+    avisado = {"ya": False}
+
+    def al_destruir(evento) -> None:
+        """Cerrar por el botón, por la X o porque se cierra la ventana madre:
+        cualquiera de las tres acaba aquí, y en las tres hay que cortar el
+        proceso si sigue y avisar a quien espera, una sola vez."""
+        if evento.widget is not root or avisado["ya"]:
+            return
+        avisado["ya"] = True
+        if proc.poll() is None:
+            proc.terminate()
+        if al_cerrar is not None:
+            rc = state["rc"] if state["rc"] is not None else 1
+            try:
+                parent.after_idle(al_cerrar, rc)
+            except Exception:                        # noqa: BLE001
+                pass         # la madre también se está cerrando
+
     root.protocol("WM_DELETE_WINDOW", on_close)
     centrar(root, parent)
     root.deiconify()
     root.update_idletasks()
+    sin_espera = parent is not None and not modal
+    if sin_espera:
+        root.bind("<Destroy>", al_destruir, add="+")
+        root.after(120, poll)
+        return None
     if parent is not None:
         try:
             root.grab_set()  # después de enseñarla: Tk no captura lo que no se ve

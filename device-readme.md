@@ -26,7 +26,8 @@ y marca la casilla *«Add Python to PATH»*.
 
 ## La ventana
 
-- **Sincronizar ahora** — una pasada y a otra cosa.
+- **Sincronizar ahora** — una pasada, en una ventana aparte; al cerrarla vuelves
+  aquí con todo al día.
 - **Cada N minutos** — deja un servicio en marcha mientras la unidad siga
   conectada. Se para solo al extraerla, o al volver a abrir la ventana.
 - **Diagnóstico** — cuando algo no cuadra. Enseña dónde apunta cada carpeta y si
@@ -71,7 +72,12 @@ Los dos últimos borran de verdad. Antes de estrenar uno, pruébalo con
   hayan hecho tus otros dispositivos.
 - **Un fichero cambiado en los dos sitios.** Se queda con el que diga la
   configuración de esa carpeta (el más nuevo, el más grande, o un lado fijo) y
-  guarda el otro al lado con otro nombre. No se pierde nada.
+  guarda el otro al lado con otro nombre. No se pierde nada. La carpeta sale con
+  un aviso ámbar de **conflicto** hasta que decidas: pulsa **Revisar…**, mira las
+  dos versiones y quédate con una.
+- **Un aviso ámbar de que falló la última pasada.** Esa carpeta no está al día.
+  **Ver el log** enseña qué dijo rclone. Si el servicio periódico está en marcha,
+  él mismo abre una ventanita en cuanto algo empieza a fallar.
 
 Cuando una pasada falla se guarda su registro en `.prdrive/logs/`. Cuando va
 bien no se guarda nada, para no gastar la memoria de la unidad.

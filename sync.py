@@ -48,11 +48,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Mapping
 
-from common import bisync, model
+from common import bisync, conflicts, model, results
 from common.model import Config, Pair
 
 LOG_TAIL_LINES = 15  # líneas de log que se vuelcan a consola cuando algo falla
 SKIPPED = -1         # código interno: pareja no ejecutada (ni OK ni fallo)
+CONFLICTS_SHOWN = 5  # ficheros en conflicto que se nombran en la salida
 
 # La cabecera con la que se marca, dentro del log, lo que rclone sacó por
 # consola en vez de por --log-file. Ver append_output().
@@ -336,6 +337,38 @@ def _bisync_preflight(ctx: RunContext, pair: Pair) -> tuple[bool, int | None]:
     return need_resync, None
 
 
+def record_result(ctx: RunContext, pair: Pair, rc: int, log: Path | None) -> None:
+    """Deja apuntado cómo acabó la pareja, para que la ventana y el servicio lo
+    enseñen (ver common/results.py). Un dry-run no apunta nada: no dice cómo
+    está la pareja de verdad, y un simulacro bueno no puede tapar un fallo real."""
+    if ctx.dry_run or rc == SKIPPED:
+        return
+    results.apuntar(pair.name, rc, log)
+
+
+def report_conflicts(ctx: RunContext, pair: Pair) -> None:
+    """Busca los ficheros en conflicto que haya dejado bisync y los apunta.
+
+    Va después de CADA pasada, buena o mala: rclone renombra al perdedor en
+    cuanto lo detecta, así que un fallo más adelante no quita el conflicto. Si
+    el recorrido falla (el dispositivo ha desaparecido a medias), se calla: es
+    un aviso, no puede tumbar la sincronización."""
+    if not pair.is_bisync or ctx.dry_run:
+        return
+    try:
+        encontrados = conflicts.actualizar_pareja(pair)
+    except OSError:
+        return
+    if not encontrados:
+        return
+    print(f"[{pair.name}] AVISO: {len(encontrados)} fichero(s) en conflicto: cambiaron "
+          f"en los dos lados y hay dos versiones. Resuélvelos desde la ventana.")
+    for conflicto in encontrados[:CONFLICTS_SHOWN]:
+        print(f"  conflicto: {conflicto.relativa}")
+    if len(encontrados) > CONFLICTS_SHOWN:
+        print(f"  … y {len(encontrados) - CONFLICTS_SHOWN} más")
+
+
 def run_pair(ctx: RunContext, pair: Pair) -> int:
     print(f"\n=== {pair.name} ({pair.mode.name}){ctx.tag} ===")
 
@@ -343,6 +376,7 @@ def run_pair(ctx: RunContext, pair: Pair) -> int:
     if pair.is_bisync:
         need_resync, abort_code = _bisync_preflight(ctx, pair)
         if abort_code is not None:
+            record_result(ctx, pair, abort_code, None)
             return abort_code
 
     if not pair.local_abs.exists():
@@ -369,6 +403,8 @@ def run_pair(ctx: RunContext, pair: Pair) -> int:
         print(f"[{pair.name}] FALLÓ (código {rc}). Log: {saved}")
         print_log_tail(saved)
         explain_failure(saved)
+    record_result(ctx, pair, rc, saved)
+    report_conflicts(ctx, pair)
     return rc
 
 

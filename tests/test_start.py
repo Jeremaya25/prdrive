@@ -28,15 +28,17 @@ try:
             yield hijo
             yield from walk(hijo)
 
+    # «Iniciar servicio» es lo único que sale ya de la ventana: sincronizar y el
+    # doctor corren dentro, en una salida hija, sin devolver ninguna elección.
     def fake_mainloop(self):
         for w in walk(self):
-            if isinstance(w, ttk.Button) and w.cget("text") == "Doctor":
+            if isinstance(w, ttk.Button) and w.cget("text") == "Iniciar servicio":
                 w.invoke()
                 return
     tk.Tk.mainloop = fake_mainloop
 
     choice, frontend = ui.start(CFG, None)
-    c("con entorno gráfico: elección", choice, ui.Choice("doctor"))
+    c("con entorno gráfico: elección", choice, ui.Choice("daemon", ("a",), 5.0))
     c("con entorno gráfico: frontend", type(frontend).__name__, "TkFrontend")
 
     # Sin entorno gráfico se cae a la consola y se reimprime el aviso de arranque,

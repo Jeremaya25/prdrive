@@ -89,13 +89,19 @@ try:
                 w.invoke()
                 return
 
+    # «Sincronizar ahora» ya no sale de la ventana: lanza la salida colgada de
+    # ella. Se sustituye para ver con qué la lanza sin ejecutar nada.
+    lanzadas: list[list[str]] = []
+    ui.tk.output_window = lambda titulo, cmd, **k: lanzadas.append(cmd)
+
     tk.Tk.mainloop = fake_mainloop
     choice = ui.tk.main_window(CFG, None)
     c("tk: casillas precargadas", marcadas, ["upload", "claves"])
-    c("tk: la nota es visible",
-      any("Precargado con la última elección" in e for e in etiquetas), True)
-    c("tk: 'Sincronizar ahora' arrastra el intervalo",
-      choice, ui.Choice("manual", ("upload", "claves"), 12.0))
+    c("tk: 'Sincronizar ahora' lanza las parejas marcadas", [cmd[2:] for cmd in lanzadas],
+      [["upload", "claves"]])
+    c("tk: y sin cerrar la ventana, así que no hay elección que devolver", choice, None)
+    c("tk: 'Sincronizar ahora' recuerda también el intervalo",
+      (prefs.read_prefs()["action"], prefs.read_prefs()["interval_min"]), ("manual", 12.0))
     c("tk: el aviso de versión nueva se ve",
       any("Hay una actualización: v9.9.9" in (e or "") for e in etiquetas), True)
     c("tk: diciendo cuál lleva puesta",

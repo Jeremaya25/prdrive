@@ -31,21 +31,26 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 ├── common/            knows the config and rclone
 │   ├── model.py       sync_config.toml parsed into resolved objects
 │   ├── bisync.py      everything that replicates rclone bisync's internals
+│   ├── conflicts.py   bisync conflict files: scan, which side each is, state/conflicts.json
+│   ├── results.py     how each pair's last run ended (state/last_run.json)
 │   ├── config_file.py reads AND writes sync_config.toml (hand-rolled serializer)
 │   ├── catalog.py     the global pair catalogue on the remote: read, cache, write
 │   ├── update.py      is there a newer release, and how to fetch its code — no Tk
 │   └── store.py       device JSON state files + pid_alive(); tolerant reads, atomic writes
 ├── ui/                knows how to ask the user and show results
-│   ├── __init__.py    Choice, the Frontend protocol, start(), fatal()
+│   ├── __init__.py    Choice, the Frontend protocol, start(), fatal(), manual_args(),
+│   │                  abrir() (open a path, no shell), avisar_fallo() (service pop-up)
 │   ├── theme.py       the visual system in ttk: palette, fonts, styles — no window
 │   ├── icons.py       the icons, rasterised here: no deps, no emoji
 │   ├── prefs.py       what the UI starts preloaded with (state/ui_prefs.json)
 │   ├── pair_editor.py what THIS device does with pairs — the decisions, no Tk
 │   ├── catalog_editor.py  add/edit/remove in the remote catalogue — no Tk
+│   ├── conflict_editor.py resolve a conflict: which version keeps the name — no Tk
 │   ├── flags_editor.py    rclone flags: text <-> table, layers, warnings — no Tk
 │   ├── watch.py       adapter over penwatch.py — no Tk
 │   ├── tk.py          TkFrontend: main window, output window, modal()/mostrar()/working()
 │   ├── tk_pairs.py    the pairs screen + the flags dialog (drawing only)
+│   ├── tk_conflicts.py the conflict window (drawing only)
 │   ├── tk_watch.py    the auto-start screen (drawing only)
 │   ├── tk_install.py  the install wizard, step by step (drawing only)
 │   ├── tk_crypto.py   the wizard's encryption step: VeraCrypt/BitLocker (drawing only)
@@ -279,7 +284,8 @@ to an explanation — add new cases there.
 
 Coordination lives in `state/` so it travels with the device:
 `daemon.lock.json` (pid/host/pairs/cycle, atomic), `daemon.stop` (presence =
-stop request), `daemon.log` (self-trimming), `ui_prefs.json`.
+stop request), `daemon.log` (self-trimming), `ui_prefs.json`, and — written by
+`sync.py`, not the daemon — `last_run.json` and `conflicts.json`.
 `startup_defaults()` layers memory over `daemon_defaults()`: last choice >
 `[daemon]` in the TOML > all pairs / 30 min. Only the UI writes prefs
 (`save_prefs()` for `manual`/`daemon`, not `doctor`); `--auto`/`--daemon` only
@@ -293,6 +299,17 @@ spawned with `pythonw.exe` + `CREATE_NO_WINDOW`, rclone with `CREATE_NO_WINDOW`
 too (else every invocation flashes a console); the daemon `chdir`s to the temp
 dir so the device can be ejected. Child `sync.py` runs get `stdin=DEVNULL`, so a
 pair needing `--resync` is skipped rather than resynced unattended.
+
+**Failure pop-up.** `daemon_cycle()` calls `notificar_fallo()` (module-level, tests
+replace it) when a pair *starts* failing — compared against the previous cycle's
+`last_results`, so a healthy service is silent and a persistent outage does not
+reopen a window every cycle. `ui.avisar_fallo()` runs `tk.aviso_fallo()` in its
+**own thread with its own Tk interpreter** (the service must keep syncing while
+nobody closes it; no process is spawned). Everything Tk must die in that thread:
+`theme.olvidar()` / `icons.olvidar()` drop the per-interpreter caches and
+`gc.collect()` runs there, or the main thread frees the images at exit
+(`main thread is not in main loop`, `Tcl_AsyncDelete`). No display → returns
+False and the notice stays in `daemon.log`. One window at a time.
 
 ## UI (`ui/`)
 
@@ -309,6 +326,14 @@ not exist, and vice versa. Both return `Choice(action, pairs, minutes)`.
 - `tk_pairs.confirmar_plan()` is a real window, one line per consequence, each
   warning in an amber box — not an `askokcancel`. This is the dialog that
   governs deletions. Tests replace it, like `mostrar()`.
+- **The main window runs syncs itself.** «Sincronizar ahora» and «Doctor» open
+  `output_window(parent=root, modal=False, al_cerrar=…)`: a modeless child that
+  returns at once; the main window disables whatever touches the same state
+  (another run, the service, «Parejas…», «Revisar…») and on close re-reads
+  `state/` and repaints. Only «Iniciar servicio» returns a `Choice` to runsync.
+  `ui.manual_args()` (resync question + `--yes`) is shared with the console path.
+  `render()` keeps the ticked boxes across repaints; `reajustar()` repaints
+  without re-centring unless the size changed.
 - `ConsoleFrontend.approve_resync` always returns False on purpose: with a real
   terminal `sync.py` inherits stdin and asks the question itself, with more
   context than a dialog fits.
@@ -573,6 +598,41 @@ script to `%LOCALAPPDATA%\prdriveWatch` / `~/.local/share/prdrive-watch`, writes
 - `ui/watch.py` imports penwatch for reads and shells out for
   `install`/`uninstall` (output to `output_window`). One-way dependency.
 
+## Conflicts & failures (`common/conflicts.py`, `common/results.py`, `ui/conflict_editor.py`)
+
+**Why the suffix carries the side.** With rclone's defaults (`--conflict-suffix
+conflict`, `--conflict-loser num`) the loser is `.conflictN` with the lowest free
+N (`cmd/bisync/resolve.go`: `resolve`, `numerate`) — an order, not a side. So
+`MODES["bisync"]` sets `conflict-suffix = "conflicto-dispositivo,conflicto-remoto"`:
+two suffixes → the name says Path1/Path2 and stays numbered (`pathname` would
+overwrite an unresolved earlier copy). `conflicts.esquema()` / `leer_nombre()`
+replicate `setResolveDefaults` + `SuffixName` + `SuffixKeepExtension` from the
+pair's **merged** flags (last wins, `-`/`_` equal), so a user override keeps
+working; legacy `.conflictN` are still found, **without** a side. Path1 is
+`pair.source` (local in bisync) — `conflicts.lado()`. Keep the rclone citations.
+
+- **Derived state.** `sync.run_pair()` scans after every non-dry-run bisync pass
+  (good or bad) and prints an `AVISO`; `state/conflicts.json` stores only copy
+  paths relative to `DEVICE_ROOT`; `cargar()` re-checks each exists, so the chip
+  clears itself. The main window paints from the cache and rescans in a thread.
+- **The original's side is inferred** only when there is exactly one copy with a
+  known side (rclone left the winner under the real name); otherwise it has none.
+  `Conflicto.version(lado)` is None when a side has 0 or ≥2 versions — never guess.
+- **Resolving is local-only.** `plan_conservar()` keeps one version under the
+  real name and deletes the rest; which file moves depends on who lost (keep the
+  device version = move the copy over the original *or* delete the copy).
+  `execute()` refuses if any file changed since the plan (size, mtime_ns), then
+  `mover()` (`os.replace`, atomic — failure changes nothing), then `borrar()`s; a
+  failed delete leaves a still-flagged copy. Both are module-level seams. Labels
+  never show the raw suffix.
+- **Known caveat (fleet):** a copy made on device A syncs to device B, where it
+  still reads «versión de este dispositivo». Path1 is "the device side of the run
+  that hit the conflict".
+- **Last run.** `results.apuntar()` from `sync.run_pair()` — not for dry-runs,
+  not for SKIPPED (a skip is not a result; the resync chip covers it). Logs are
+  stored by name inside `logs/`. `results.fallos()` feeds the amber banner, which
+  stays until a good pass.
+
 ## The catalogue (`common/catalog.py` + `ui/catalog_editor.py`)
 
 `nas:/prdrive-catalog/pairs.toml` — same schema as `sync_config.toml`, shared by
@@ -682,8 +742,9 @@ existing header.
   aquí", not corrected.
 - Recurring idiom: `catalog.run()`, `update.fetch()`, `rclone_bin.fetch()`,
   `model.state_file()`, the `penwatch` reads, `_win_volumes()`,
-  `_leer_estado_bitlocker()` are module-level indirection points **so every test
-  replaces them** — no test touches the network or a real device.
+  `_leer_estado_bitlocker()`, `conflicts.recorrer()`, `conflict_editor.mover()` /
+  `borrar()`, `ui.abrir()`, `runsync.notificar_fallo()` are module-level
+  indirection points **so every test replaces them** — no test touches the network or a real device.
 
 ## Documentation
 
