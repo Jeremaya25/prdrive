@@ -7,22 +7,26 @@ La documentación completa está en el repositorio del proyecto.
 
 ## Para empezar
 
-**Doble clic en `runsync.pyw`.** Se abre una ventana con tus carpetas: marca las
-que quieras y pulsa **Sincronizar ahora**.
+**Doble clic en `runsync.bat`.** Se abre una ventana con tus carpetas: marca las
+que quieras y pulsa **Sincronizar ahora**. (Una consola negra parpadea un instante
+y se va: es el lanzador soltando la ventana.)
 
-En Linux o macOS el lanzador es `runsync.sh`.
+En Linux el lanzador es `runsync.sh`.
 
-Hace falta **Python 3.11 o superior** en el equipo donde lo conectes. Si no lo
-hay, la ventana no se abre: instálalo desde [python.org](https://www.python.org)
-y marca la casilla *«Add Python to PATH»*.
+No hace falta instalar nada en el equipo: la unidad lleva su propio Python para
+los sistemas que se eligieron al prepararla. Si la conectas en uno que no estaba
+previsto, el lanzador te lo dice: vuelve a pasar el instalador (`prdrive-install`)
+sobre esta unidad y pulsa **Añadir plataformas…**. Si la unidad se preparó en
+modo *ligero* (con un `runsync.pyw` en la raíz), entonces sí hace falta **Python
+3.11 o superior** en cada equipo.
 
 ## Qué hay en esta unidad
 
 | | |
 |---|---|
-| `runsync.pyw` / `runsync.sh` | los lanzadores. Empieza siempre por aquí |
+| `runsync.bat` / `runsync.sh` | los lanzadores. Empieza siempre por aquí |
 | `sync-data/` | **tus carpetas sincronizadas** |
-| `.prdrive/` | el programa y el fichero de control. Está oculta a propósito; no hace falta tocarla |
+| `.prdrive/` | el programa, rclone, su Python y el fichero de control. Está oculta a propósito; no hace falta tocarla |
 
 ## La ventana
 
@@ -102,4 +106,4 @@ y la ventana se vuelve a abrir sola. Tu configuración, tus claves y tus datos n
 se tocan.
 
 Si prefieres hacerlo a mano, vuelve a pasar el instalador (`prdrive-install`)
-sobre esta misma unidad y elige **Instalar el programa**: es lo mismo.
+sobre esta misma unidad y elige **Actualizar el programa**: es lo mismo.

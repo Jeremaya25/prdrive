@@ -16,8 +16,12 @@ Las órdenes largas de rclone van a `ui.tk.output_window`, la misma que enseña 
 sincronizaciones, para que se vea exactamente lo que hace. Las de VeraCrypt NO:
 su línea de órdenes lleva la contraseña, así que van por `ui.tk.working`, que
 solo enseña una barra (ver `ui/tk_crypto.py`). La instalación del código también
-va por `working()`: es una copia de ficheros que tarda —el binario de rclone son
-decenas de megas— y cuya salida no le dice nada a nadie.
+va por `working()`: es una copia de ficheros —y descargas: rclone y Python de
+cada plataforma elegida— que tarda y cuya salida no le dice nada a nadie.
+
+La lista de plataformas (`_lista_plataformas`) la pintan dos pasos: «Instalación»
+y el «Plataformas» del recorrido corto que abre «Añadir plataformas…». Lo que
+decide —qué se marca, qué se borra, cuánto ocupa— es `install/platforms.Matriz`.
 """
 
 from __future__ import annotations
@@ -27,7 +31,7 @@ from pathlib import Path
 
 from common import update
 from install import InstallError, InstallState, __version__
-from install import crypto, deploy, device, profile, rclone_bin, remote
+from install import crypto, deploy, device, platforms, profile, rclone_bin, remote
 
 from . import icons, theme
 from .tk import TITLE, Visor, centrar, output_window, working
@@ -79,6 +83,10 @@ class Wizard:
         # nueva no hay nada que preguntar y se sigue de largo.
         self.modo: str | None = None
         self.ya_instalado = False
+        # La lista de plataformas marcadas, y de qué dispositivo es: cambiar de
+        # unidad la invalida, porque lo que «ya lleva» es de la otra.
+        self.matriz: platforms.Matriz | None = None
+        self.matriz_de: Path | None = None
 
     # --- navegación ---------------------------------------------------------
 
@@ -155,6 +163,21 @@ class Wizard:
             self.conf.close()
         self.conf = self.rclone = self.catalog = None
         self.perfil_device, self.notas_perfil = None, []
+
+    def matriz_para(self, raiz: Path) -> platforms.Matriz:
+        """La lista de plataformas de ese dispositivo, la misma entre repintados."""
+        if self.matriz is None or self.matriz_de != Path(raiz):
+            self.matriz = platforms.Matriz.para(raiz)
+            self.matriz_de = Path(raiz)
+        return self.matriz
+
+    def rehacer_matriz(self, raiz: Path) -> None:
+        """Tras escribir en el dispositivo: lo que «ya lleva» ha cambiado. Se
+        conserva la elección de completa o ligera."""
+        completa = self.matriz.completa if self.matriz else True
+        self.matriz = platforms.Matriz.para(raiz)
+        self.matriz.completa = completa
+        self.matriz_de = Path(raiz)
 
     def error(self, msg: str) -> None:
         from tkinter import messagebox
@@ -713,13 +736,24 @@ def _seguir_instalando(wiz) -> None:
     wiz.ir(1)
 
 
-def _panel_ya_instalado(cuerpo, wiz, raiz, fila: int) -> None:
-    """El desvío: qué versión hay, cuál trae el instalador, y los dos caminos.
+def _ir_a_plataformas(wiz) -> None:
+    """El otro recorrido corto: la lista de plataformas sobre un dispositivo que
+    ya existe. Mismo criterio que `_ir_a_actualizar` para fijar el índice."""
+    wiz.modo = "plataformas"
+    wiz.pasos = PASOS_PLATAFORMAS
+    wiz.indice = len(PASOS_PLATAFORMAS) - 1
+    wiz.repintar()
 
-    Se ofrecen los dos a propósito. Reconocer el dispositivo no puede quitarle a
-    nadie la posibilidad de volver a aprovisionarlo: cambiar de remoto, recifrar
-    el volumen o rehacer las parejas se hace con el asistente completo, y
-    obligar a borrar `.prdrive/` a mano para llegar ahí sería una trampa."""
+
+def _panel_ya_instalado(cuerpo, wiz, raiz, fila: int) -> None:
+    """El desvío: qué versión hay, cuál trae el instalador, y los caminos.
+
+    Actualizar y reinstalar se ofrecen los dos a propósito. Reconocer el
+    dispositivo no puede quitarle a nadie la posibilidad de volver a
+    aprovisionarlo: cambiar de remoto, recifrar el volumen o rehacer las parejas
+    se hace con el asistente completo, y obligar a borrar `.prdrive/` a mano para
+    llegar ahí sería una trampa. «Añadir plataformas…» es el tercero: llevar el
+    dispositivo a otro sistema o a otra CPU sin rehacer nada de lo demás."""
     from tkinter import ttk
 
     caja = ttk.Frame(cuerpo, style="Card.TFrame", padding=(14, 12))
@@ -732,7 +766,8 @@ def _panel_ya_instalado(cuerpo, wiz, raiz, fila: int) -> None:
     ttk.Label(caja, style="Card.Pista.TLabel", wraplength=theme.medida(700), justify="left",
               text=(f"Lleva la versión {puesta} y este instalador trae la "
                     f"{__version__ or 'desconocida'}. Puedes ponerle el programa "
-                    f"nuevo sin tocar nada más, o repetir la instalación entera "
+                    f"nuevo sin tocar nada más, añadirle o quitarle plataformas "
+                    f"(otro sistema, otra CPU), o repetir la instalación entera "
                     f"si lo que quieres es cambiar de remoto, de cifrado o de "
                     f"parejas.")).grid(row=1, column=0, sticky="w", pady=(5, 11))
 
@@ -743,8 +778,11 @@ def _panel_ya_instalado(cuerpo, wiz, raiz, fila: int) -> None:
                             command=lambda: _ir_a_actualizar(wiz))
     theme.boton_icono(actualizar, "down", theme.SUPERFICIE, theme.ACENTO)
     actualizar.grid(row=0, column=0)
+    ttk.Button(botones, text="Añadir plataformas…", style="CardQuiet.TButton",
+               command=lambda: _ir_a_plataformas(wiz)).grid(row=0, column=1,
+                                                            padx=(8, 0))
     ttk.Button(botones, text="Reinstalar desde cero", style="CardQuiet.TButton",
-               command=lambda: _seguir_instalando(wiz)).grid(row=0, column=1,
+               command=lambda: _seguir_instalando(wiz)).grid(row=0, column=2,
                                                              padx=(8, 0))
 
 
@@ -823,8 +861,9 @@ def _paso_actualizar(cuerpo, wiz) -> None:
             return
 
         def trabajo():
-            escrito = deploy.deploy_code(raiz)      # sin rclone: ya está puesto
-            escrito += deploy.write_launchers(raiz)
+            # Sin rclone ni Python: ya están puestos. Y sin lanzadores: se
+            # escriben al aprovisionar, y actualizar el programa no los toca.
+            escrito = deploy.deploy_code(raiz)
             guia = deploy.write_guide(raiz)
             if guia is not None:
                 escrito.append(guia)
@@ -881,10 +920,10 @@ def _paso_instalar(cuerpo, wiz) -> None:
     ttk.Label(cuerpo, justify="left", wraplength=theme.medida(780), text=(
         f"Se instalará el programa en:\n\n"
         f"    {deploy.app_dir(raiz)}\n\n"
-        "Ahí van el código, el binario de rclone, tu rclone.conf y su clave. La "
-        "carpeta empieza por punto y se marca como oculta, para que no estorbe "
-        "entre tus datos. En la raíz quedan los lanzadores runsync.pyw y "
-        "runsync.sh, y una guía rápida de uso.")).grid(
+        "Ahí van el código, rclone y Python para cada plataforma que marques, tu "
+        "rclone.conf y su clave. La carpeta empieza por punto y se marca como "
+        "oculta, para que no estorbe entre tus datos. En la raíz quedan los "
+        "lanzadores runsync.bat y runsync.sh, y una guía rápida de uso.")).grid(
         row=0, column=0, sticky="w")
 
     try:
@@ -916,17 +955,24 @@ def _paso_instalar(cuerpo, wiz) -> None:
             boton_estado()
         escrito.trace_add("write", revisar_texto)
 
+    lista, refrescar_lista = _lista_plataformas(cuerpo, wiz, raiz,
+                                                al_cambiar=lambda: boton_estado())
+    lista.grid(row=3, column=0, sticky="ew", pady=(14, 0))
+
     estado_lbl = ttk.Label(cuerpo, wraplength=theme.medida(780), justify="left",
                            foreground=theme.TINTA3)
-    estado_lbl.grid(row=3, column=0, sticky="w", pady=(12, 0))
+    estado_lbl.grid(row=4, column=0, sticky="w", pady=(12, 0))
 
     def instalar() -> None:
-        if not confirmado["vale"]:
+        if not (confirmado["vale"] and wiz.matriz.listo):
             return
+        plan = wiz.matriz.plan()
 
         def trabajo():
-            escrito_ = deploy.deploy_code(raiz, wiz.binario)
-            escrito_ += deploy.write_launchers(raiz)
+            escrito_ = deploy.deploy_code(raiz)
+            nuevos, borrados = deploy.apply_platforms(raiz, plan)
+            escrito_ += nuevos
+            escrito_ += deploy.write_launchers(raiz, plan.completa)
             guia = deploy.write_guide(raiz)
             if guia is not None:
                 escrito_.append(guia)
@@ -936,18 +982,21 @@ def _paso_instalar(cuerpo, wiz) -> None:
             # puedan separarse. Es lo que verán los accesos directos.
             icons.write_ico(deploy.app_dir(raiz) / "runsync.ico")
             ident = device.ensure_control_file(raiz, renew=True)
-            return escrito_, ident
+            return escrito_, borrados, ident
 
         ok, res = working(wiz.root, "instalando", trabajo,
-                          "Copiando el programa y el binario de rclone.")
+                          "Descargando y copiando el programa, rclone y Python.")
         if not ok:
             estado_lbl.configure(text=f"No se ha podido instalar: {res}",
                                  foreground=theme.PELIGRO)
             return
-        escrito_, ident = res
+        escrito_, borrados, ident = res
         wiz.state.deployed = True
+        wiz.rehacer_matriz(raiz)
+        refrescar_lista()
         estado_lbl.configure(
-            text=(f"Instalado: {len(escrito_)} elementos en {deploy.app_dir(raiz)}.\n"
+            text=(f"Instalado: {len(escrito_)} elementos en {deploy.app_dir(raiz)}"
+                  + (f", {len(borrados)} borrados" if borrados else "") + ".\n"
                   f"Identificador del dispositivo: {ident[:8]}…"),
             foreground=theme.OK)
         boton_estado()
@@ -955,15 +1004,210 @@ def _paso_instalar(cuerpo, wiz) -> None:
 
     boton = ttk.Button(cuerpo, text="Instalar el programa", command=instalar,
                        style="Primary.TButton")
-    boton.grid(row=4, column=0, sticky="w", pady=(14, 0))
+    boton.grid(row=5, column=0, sticky="w", pady=(14, 0))
 
     def boton_estado() -> None:
-        boton.configure(state="normal" if confirmado["vale"] else "disabled")
+        listo = confirmado["vale"] and wiz.matriz is not None and wiz.matriz.listo
+        boton.configure(state="normal" if listo else "disabled")
 
     if deploy.sync_py(raiz).is_file():
         estado_lbl.configure(
             text="Este dispositivo ya lleva el programa: puedes reinstalarlo para "
                  "actualizarlo, o seguir al paso siguiente.", foreground=theme.OK)
+    boton_estado()
+
+
+def _preguntar_borrado(wiz, plat) -> bool:
+    """¿Borrar del dispositivo lo que lleva para esa plataforma?
+
+    De módulo para que los tests contesten sin ventana, como `mostrar()`. Es la
+    única pregunta destructiva de la lista, y el «no» es la respuesta segura:
+    los binarios se quedan donde están y simplemente no se reinstalan."""
+    from tkinter import messagebox
+    return bool(messagebox.askyesno(TITLE, (
+        f"El dispositivo ya lleva rclone y Python para {plat.nombre} "
+        f"(≈{plat.mb_rclone + plat.mb_python} MB).\n\n"
+        f"¿Borrarlos al instalar? Si dices que no, se quedan donde están: "
+        f"simplemente no se vuelven a instalar."), parent=wiz.root, icon="warning",
+        default="no"))
+
+
+def _lista_plataformas(padre, wiz, raiz, al_cambiar):
+    """La lista de plataformas: completa o ligera, una casilla por plataforma,
+    lo que ocupa cada una y el total. Devuelve (marco, refrescar).
+
+    Solo pinta. Qué significa marcar o quitar —y quitar algo que el dispositivo
+    ya lleva, que es borrar— lo decide `wiz.matriz` (`install/platforms.Matriz`).
+    Los widgets se crean una vez y `refrescar()` los actualiza en su sitio: una
+    casilla que se destruyera dentro de su propio `command` es la forma de pedir
+    un error de Tcl."""
+    import tkinter as tk
+    from tkinter import ttk
+
+    matriz = wiz.matriz_para(raiz)
+    marco = ttk.Frame(padre)
+    marco.columnconfigure(0, weight=1)
+
+    modo = tk.StringVar(value="completa" if matriz.completa else "ligera")
+    radios = ttk.Frame(marco)
+    radios.grid(row=0, column=0, sticky="w")
+
+    def cambiar_modo() -> None:
+        wiz.matriz.completa = modo.get() == "completa"
+        refrescar()
+
+    for i, (valor, texto) in enumerate((
+            ("completa", "Completa: lleva su propio Python y funciona en equipos "
+                         "sin nada instalado"),
+            ("ligera", "Ligera: usa el Python de cada equipo (3.11+ con Tkinter)"))):
+        ttk.Radiobutton(radios, text=texto, value=valor, variable=modo,
+                        command=cambiar_modo).grid(row=i, column=0, sticky="w")
+
+    tabla = ttk.Frame(marco)
+    tabla.grid(row=1, column=0, sticky="w", pady=(10, 0))
+    for col, rotulo in enumerate(("Plataforma", "rclone", "Python", "")):
+        ttk.Label(tabla, text=rotulo, style="Rotulo.TLabel").grid(
+            row=0, column=col, sticky="w", padx=(0, 18))
+
+    filas: dict[str, tuple] = {}
+
+    def cambiar(plat, var) -> None:
+        if var.get():
+            wiz.matriz.elegir(plat.clave)
+        elif wiz.matriz.quitar(plat.clave):
+            wiz.matriz.confirmar_borrado(plat.clave, _preguntar_borrado(wiz, plat))
+        refrescar()
+
+    for i, fila in enumerate(matriz.filas(), start=1):
+        plat = fila.plataforma
+        var = tk.BooleanVar(value=fila.elegida)
+        texto = plat.nombre + ("  ·  este equipo" if fila.anfitrion else "")
+        ttk.Checkbutton(tabla, text=texto, variable=var,
+                        command=lambda p=plat, v=var: cambiar(p, v)).grid(
+            row=i, column=0, sticky="w", padx=(0, 18))
+        rclone_lbl = ttk.Label(tabla, style="Mono.TLabel")
+        rclone_lbl.grid(row=i, column=1, sticky="w", padx=(0, 18))
+        python_lbl = ttk.Label(tabla, style="Mono.TLabel")
+        python_lbl.grid(row=i, column=2, sticky="w", padx=(0, 18))
+        nota = ttk.Label(tabla, style="Pista.TLabel")
+        nota.grid(row=i, column=3, sticky="w")
+        filas[plat.clave] = (var, rclone_lbl, python_lbl, nota)
+
+    total = ttk.Label(marco, style="Fuerte.TLabel")
+    total.grid(row=2, column=0, sticky="w", pady=(10, 0))
+    plan_lbl = ttk.Label(marco, style="Pista.TLabel", justify="left",
+                         wraplength=theme.medida(760))
+    plan_lbl.grid(row=3, column=0, sticky="w", pady=(4, 0))
+    avisos = ttk.Frame(marco, style="Ambar.TFrame", padding=(11, 9))
+    avisos.columnconfigure(0, weight=1)
+    avisos_lbl = ttk.Label(avisos, style="Ambar.TLabel", justify="left",
+                           wraplength=theme.medida(740))
+    avisos_lbl.grid(row=0, column=0, sticky="w")
+
+    def pintar() -> None:
+        m = wiz.matriz
+        modo.set("completa" if m.completa else "ligera")
+        for fila in m.filas():
+            var, rclone_lbl, python_lbl, nota = filas[fila.plataforma.clave]
+            var.set(fila.elegida)
+            rclone_lbl.configure(text=f"≈{fila.mb_rclone} MB")
+            python_lbl.configure(
+                text=f"≈{fila.mb_python} MB" if m.completa else "—",
+                style="Mono.TLabel" if m.completa else "Apagado.TLabel")
+            if fila.se_borra:
+                nota.configure(text="se borrará", style="Peligro.TLabel")
+            elif fila.instalada and (fila.instalada.runtime or not m.completa):
+                nota.configure(text="ya en el dispositivo", style="Ok.TLabel")
+            elif fila.instalada:
+                nota.configure(text="ya lleva rclone", style="Pista.TLabel")
+            else:
+                nota.configure(text="", style="Pista.TLabel")
+        libre = platforms.free_bytes(raiz)
+        total.configure(text=f"Total: ≈{m.total_mb()} MB"
+                        + (f"   ·   libres en el dispositivo: {libre / 2 ** 30:.1f} GB"
+                           if libre is not None else ""))
+        plan_lbl.configure(text="\n".join(m.plan().consecuencias()))
+        dichos = m.avisos(libre)
+        if dichos:
+            avisos_lbl.configure(text="\n".join(dichos))
+            avisos.grid(row=4, column=0, sticky="ew", pady=(10, 0))
+        else:
+            avisos.grid_remove()
+
+    def refrescar() -> None:
+        # La primera vez se pinta sin avisar a nadie: quien llama todavía está
+        # montando su paso, y su botón aún no existe.
+        pintar()
+        al_cambiar()
+        wiz.revisar()
+
+    pintar()
+    return marco, refrescar
+
+
+# ---------------------------------------------------------------------------
+# Recorrido corto, paso 2 — Añadir (o quitar) plataformas
+# ---------------------------------------------------------------------------
+
+def _paso_plataformas(cuerpo, wiz) -> None:
+    """La lista de plataformas sobre un dispositivo que ya existe.
+
+    No se vuelve a aprovisionar nada: la conexión, las parejas, el estado de
+    bisync y el programa se quedan como están. Lo que se marque se descarga
+    (comprobado) y se copia; lo que se quite y se confirme, se borra. Los
+    lanzadores sí se escriben —esto ES aprovisionar, a su escala—: un
+    dispositivo de antes solo tenía el .pyw, y con Python propio y sin .bat ese
+    Python no lo usaría nadie."""
+    from tkinter import ttk
+
+    raiz = wiz.device_root or wiz.state.device
+    ttk.Label(cuerpo, justify="left", wraplength=theme.medida(780), text=(
+        f"Qué rclone y qué Python lleva:\n\n"
+        f"    {deploy.app_dir(raiz)}\n\n"
+        "Se conserva todo lo demás: tu configuración, tus claves, el estado de "
+        "bisync y el programa. Lo que marques se descarga —comprobando su "
+        "SHA-256— y se copia; lo que quites y confirmes, se borra.")).grid(
+        row=0, column=0, sticky="w")
+
+    lista, refrescar_lista = _lista_plataformas(cuerpo, wiz, raiz,
+                                                al_cambiar=lambda: boton_estado())
+    lista.grid(row=1, column=0, sticky="ew", pady=(14, 0))
+
+    estado_lbl = ttk.Label(cuerpo, wraplength=theme.medida(780), justify="left",
+                           foreground=theme.TINTA3)
+    estado_lbl.grid(row=2, column=0, sticky="w", pady=(12, 0))
+
+    def aplicar() -> None:
+        if not wiz.matriz.listo:
+            return
+        plan = wiz.matriz.plan()
+
+        def trabajo():
+            nuevos, borrados = deploy.apply_platforms(raiz, plan)
+            return nuevos, borrados, deploy.write_launchers(raiz, plan.completa)
+
+        ok, res = working(wiz.root, "plataformas", trabajo,
+                          "Descargando y copiando rclone y Python.")
+        if not ok:
+            estado_lbl.configure(text=f"No se ha podido aplicar: {res}",
+                                 foreground=theme.PELIGRO)
+            return
+        nuevos, borrados, _ = res
+        wiz.rehacer_matriz(raiz)
+        refrescar_lista()
+        estado_lbl.configure(
+            text=(f"Hecho: {len(nuevos)} elementos puestos"
+                  + (f", {len(borrados)} borrados" if borrados else "")
+                  + ". Ya puedes cerrar."), foreground=theme.OK)
+
+    boton = ttk.Button(cuerpo, text="Aplicar", style="Primary.TButton",
+                       padding=(14, 8), command=aplicar)
+    boton.grid(row=3, column=0, sticky="w", pady=(14, 0))
+
+    def boton_estado() -> None:
+        listo = wiz.matriz is not None and wiz.matriz.listo
+        boton.configure(state="normal" if listo else "disabled")
+
     boton_estado()
 
 
@@ -1242,6 +1486,13 @@ PASOS_INSTALACION = [
 PASOS_ACTUALIZACION = [
     ("Dispositivo", _paso_destino, _ok_destino),
     ("Actualización", _paso_actualizar, lambda w: True),
+]
+
+# El otro recorrido corto: «Añadir plataformas…». La misma lista que el paso
+# «Instalación», sobre un dispositivo que ya existe y sin tocar nada más.
+PASOS_PLATAFORMAS = [
+    ("Dispositivo", _paso_destino, _ok_destino),
+    ("Plataformas", _paso_plataformas, lambda w: True),
 ]
 
 

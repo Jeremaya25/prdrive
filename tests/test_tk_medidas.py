@@ -171,6 +171,14 @@ try:
         c(f"{nombre}: «Actualización» cabe", cabe(top), True)
         c(f"{nombre}: «Actualización» no queda recortado",
           recortado(wiz.visor), False)
+        # La lista de plataformas, en su recorrido corto: cuatro filas, el total y
+        # los avisos, que es lo más ancho que pinta el asistente.
+        wiz.pasos = tk_install.PASOS_PLATAFORMAS
+        wiz.indice = len(tk_install.PASOS_PLATAFORMAS) - 1
+        wiz.repintar()
+        c(f"{nombre}: «Plataformas» cabe", cabe(top), True)
+        c(f"{nombre}: «Plataformas» no queda recortado",
+          recortado(wiz.visor), False)
         top.destroy()
 
     # --- lo que aparece DESPUÉS de pintar el paso -----------------------------

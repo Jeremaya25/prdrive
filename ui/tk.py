@@ -2,8 +2,9 @@
 """
 tk.py — La interfaz gráfica (Tkinter).
 
-Es la que se usa cuando se llega por doble clic en `runsync.pyw`, es decir sin
-consola detrás: por eso aquí no basta con elegir, hace falta además poder
+Es la que se usa cuando se llega por doble clic en `runsync.bat` (o en el
+`runsync.pyw` de una instalación ligera), es decir con `pythonw` y sin consola
+detrás: por eso aquí no basta con elegir, hace falta además poder
 enseñar la salida de la sincronización y preguntar sí/no, cosas que en el modo
 consola hace la propia terminal.
 

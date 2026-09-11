@@ -19,7 +19,8 @@ only** — the catalogue of pairs — never the program.
 
 Four entry points at the repo root: `sync.py`, `runsync.py`, `penwatch.py`,
 `prdrive-install.py`. The first three because volume-root launchers
-(`runsync.pyw` / `runsync.sh`) and `penwatch.py` locate them by fixed path;
+(`runsync.bat` / `runsync.sh`, plus `runsync.pyw` in a light install) and
+`penwatch.py` locate them by fixed path;
 `prdrive-install.py` because it is what gets compiled and handed out.
 
 ```
@@ -36,6 +37,7 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 │   ├── config_file.py reads AND writes sync_config.toml (hand-rolled serializer)
 │   ├── catalog.py     the global pair catalogue on the remote: read, cache, write
 │   ├── update.py      is there a newer release, and how to fetch its code — no Tk
+│   ├── pins.py        pinned rclone + python-build-standalone versions; the platform table
 │   └── store.py       device JSON state files + pid_alive(); tolerant reads, atomic writes
 ├── ui/                knows how to ask the user and show results
 │   ├── __init__.py    Choice, the Frontend protocol, start(), fatal(), manual_args(),
@@ -59,11 +61,13 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 ├── install/           what the installer knows; no Tk, no device needed
 │   ├── __init__.py    brand constants, InstallError, InstallState, python_command()
 │   ├── profile.py     the connection: where it comes from and how it is written
-│   ├── rclone_bin.py  get hold of an rclone to start with
+│   ├── rclone_bin.py  get hold of an rclone (this host's, or any platform's), verified
+│   ├── runtime_bin.py get hold of a Python runtime (python-build-standalone), verified; extract
+│   ├── platforms.py   which platforms: host, what the device carries, the step-5 Matriz/Plan
 │   ├── remote.py      the ephemeral rclone.conf and the pair catalogue
 │   ├── device.py      what volumes exist, which one is the device, was it mounted right
 │   ├── crypto.py      VeraCrypt and BitLocker
-│   └── deploy.py      copy the code in, write the device's config, --resync
+│   └── deploy.py      copy the code in, rclone + runtimes, launchers, the device's config, --resync
 └── tests/             plain scripts; run_all.py runs them in separate processes
 ```
 
@@ -92,7 +96,10 @@ its parent, so **nothing depends on the folder name or drive letter** — a
 development checkout named anything works the same. Constants that must not
 drift, guarded by `tests/test_install_device.py`: `deploy.APP_SUBDIR` and the
 two copies each of `STRUCT_MARKER` and `CONTROL_FILE` (`.prdrive/PRDRIVE`) in
-`penwatch.py` / `install/device.py`. The control file sits **inside** that
+`penwatch.py` / `install/device.py`; and by `tests/test_penwatch_runtime.py`:
+`RUNTIME_STAMP` / `RUNTIME_SUBDIR` in `penwatch.py` vs `install/runtime_bin.py`,
+and `penwatch.runtime_keys_for()` vs `install/platforms.candidates()` (the same
+fallback chain the `.bat` hard-codes). The control file sits **inside** that
 folder: identifying the drive only needs a path relative to its root, and inside
 it cannot be deleted without deleting the program.
 
@@ -117,8 +124,14 @@ embeds a connection profile with its private key.
   `finally`.
 
 **Traps that only show up frozen:** `sys.executable` is the installer, not
-Python (`install.python_command()`); `sys.stdout` can be None with `--windowed`
+Python — anything the wizard launches from the device goes through
+`deploy.device_python()` (the device's own runtime for this host, then
+`install.python_command()`); `sys.stdout` can be None with `--windowed`
 (`report()` opens a window when there is no console).
+
+The `.exe` carries **no** runtimes or rclone: step 5 downloads them per platform
+(verified, cached in `%LOCALAPPDATA%/prdrive-install/`). `common/pins.py` is in
+`common/`, so it rides along with no build change.
 
 **Windows on ARM** — what `model.maquina_nativa_windows()` exists for. rclone
 lives in `bin/<arch>/`, chosen by `model.arch_dir()`. The installer is an x64
@@ -132,6 +145,10 @@ because the two sides do not run the same Python — the installer wrote rclone 
 download cache is per-arch; `BIN_FALLBACK_DIRS` lets an ARM64 host fall back to
 `bin/x64` (not symmetric — emulated x64 runs, ARM on x64 does not). Resolved on
 the **host**, never stored on the device. `tests/test_arch.py` fakes the probe.
+The same asymmetry is the runtime chain: windows-arm64 → windows-x64 → host
+Python, in `runsync.bat` (where `%PROCESSOR_ARCHITECTURE%` is truthful because
+the `.bat` runs in the native cmd), `platforms.candidates()` and
+`penwatch.runtime_keys_for()`.
 
 ## Commands
 
@@ -157,7 +174,7 @@ python penwatch.py uninstall
 python prdrive-install.py          # install wizard for a NEW device (Tk only, no console menu)
 python prdrive-install.py --check  # rclone + connection + catalogue, then exit
 python prdrive-install.py --probe  # what drives it sees, then exit
-python prdrive-install.py --update E:\   # replace the code of an installed device
+python prdrive-install.py --update E:\   # replace the code of an installed device (not bin/, runtime/, launchers)
 python build_installer.py          # build the .exe (embeds the profile if there is one)
 python -m ui.icons                 # repaint APP_DIR/runsync.ico (no Tk, no display)
 
@@ -169,7 +186,7 @@ python tests/test_pair_editor.py   # or just one
 - Verification is `tests/run_all.py`, `--doctor`, `--dry-run`. Nothing to lint.
 - Git: this checkout sits on an exFAT/NTFS volume, so git refuses it as "dubious
   ownership" — prefix commands with `-c safe.directory=F:/rclone-sync`.
-- `.gitignore` excludes device/user-specific paths (`bin/`, `keys/`, `filters/`,
+- `.gitignore` excludes device/user-specific paths (`bin/`, `runtime/`, `keys/`, `filters/`,
   `logs/`, `state/`, `sync_config.toml`, `rclone.conf`, `prdrive-profile.toml`),
   build artefacts (`build/`, `dist/`, `*.spec`), and `install/secret.py`.
   **Nothing on the device travels to the remote** — no pair mirrors `.prdrive/`.
@@ -446,7 +463,8 @@ initialise them before the `sync.py` that does so exists):
 2 Cifrado         VeraCrypt / BitLocker / none  → fixes state.device_root
 3 Conexión        form, or import a remote from the user's rclone.conf
 4 Comprobaciones  rclone + connect + read the catalogue
-5 Instalación     copy .prdrive/, hide it, launchers, rclone.conf + keys
+5 Instalación     full/light + platform list; copy .prdrive/, hide it, rclone +
+                  runtime per platform, launchers, rclone.conf + keys
 6 Parejas         pick from the catalogue, write sync_config.toml, make dirs
 7 Inicialización  --resync of the bisync pairs
 8 Verificación
@@ -483,15 +501,16 @@ elevation, and it was not worth the last `runas`.
 
 **The "already a prdrive" shortcut.** When `_paso_destino` sees
 `device.install_target() == YA_INSTALADO` it shows the device's version vs the
-installer's and offers **«Actualizar»** and **«Reinstalar desde cero»** —
-**both, always**, because re-provisioning (new remote, re-encrypt, redo pairs)
-must stay possible without deleting `.prdrive/` by hand.
+installer's and offers **«Actualizar»**, **«Añadir plataformas…»** and
+**«Reinstalar desde cero»** — **reinstall always**, because re-provisioning (new
+remote, re-encrypt, redo pairs) must stay possible without deleting `.prdrive/`
+by hand.
 
-- `Wizard.pasos` is an **instance** attribute: two step lists
-  (`PASOS_INSTALACION`, `PASOS_ACTUALIZACION`), the button picks one.
-  `_ir_a_actualizar()` *sets* the index (the shortcut is reachable from the
-  device step and the encryption step, which don't land in the same place from
-  "one more").
+- `Wizard.pasos` is an **instance** attribute: three step lists
+  (`PASOS_INSTALACION`, `PASOS_ACTUALIZACION`, `PASOS_PLATAFORMAS`), the button
+  picks one. `_ir_a_actualizar()` / `_ir_a_plataformas()` *set* the index (the
+  shortcut is reachable from the device step and the encryption step, which
+  don't land in the same place from "one more").
 - `_ok_destino` returns False until a way out is chosen, so «Siguiente» stays
   dark next to the two buttons.
 - `install_target()` looks for the **device before the content**: `.prdrive` is
@@ -513,6 +532,43 @@ must stay possible without deleting `.prdrive/` by hand.
   master mirror (deletes in the destination), hence the mandatory `--dry-run`
   and typed path. Now it copies a folder of its own and touches nothing else, so
   it runs straight through `ui.tk.working()`.
+
+**Platforms: the zero-install part.** Step 5 (and the «Plataformas» short path)
+draws `tk_install._lista_plataformas()` over a `platforms.Matriz`: full/light,
+one checkbox per `pins.PLATAFORMAS` entry (Windows/Linux × x64/ARM64 — macOS is
+deliberately absent), per-row sizes and a live total vs free space. Host
+pre-checked, plus whatever the device already carries.
+
+- **Full** = rclone + a python-build-standalone runtime per platform in
+  `.prdrive/runtime/<clave>/`; root gets exactly `runsync.bat`, `runsync.sh`,
+  `README.md` (a stale `runsync.pyw` is removed). **Light** = rclone only, and
+  adds `runsync.pyw` (only useful with a host Python). rclone stays in
+  `bin/<arch>/` (`windows-x64` and `linux-x64` share `bin/x64`: `rclone.exe` vs
+  `rclone`).
+- **Deselecting a provisioned platform deletes only if confirmed**
+  (`Matriz.quitar()` returns True → `_preguntar_borrado()`, module-level so
+  tests answer). Unconfirmed = left in place, not reinstalled.
+- **Downloads are pinned and verified**: `common/pins.py` holds the rclone
+  version and the python-build-standalone release (3.13, not 3.14 — the 3.14
+  builds ship Tk 9 and the UI is measured on Tk 8.6). `runtime_bin.extract()`
+  validates every member before writing the first, prunes pip/idle/tests/C
+  headers (and on Linux `share/` and `libpython*.so` — the interpreter is
+  static), never creates symlinks (exFAT) but materialises `bin/python3` by
+  writing its target under that name, and writes the `PRDRIVE-RUNTIME` stamp
+  **last** (no stamp = not installed). The whole pruned runtime was run against
+  `tests/run_all.py` when pinned.
+- `deploy.install_runtime()` extracts beside and **swaps**; if the old dir can't
+  be moved aside (Windows: a `pythonw.exe` running from it) it fails whole and
+  the old runtime stays. `remove_platform()` renames before deleting for the same
+  reason. **No self-built executables, no `.vbs`.**
+- The `.bat` avoids parenthesised blocks on purpose (a `)` in the device path
+  would break them), is written with CRLF (goto/labels), and switches to
+  `chcp 65001` only in the error branch (the rest is ASCII).
+
+**Launchers are immutable after provisioning.** Written by step 5 and by
+«Añadir plataformas…» (a pre-R2 device has no `.bat`, so runtimes would be
+useless without it); **never** by `--update`, the wizard's «Actualización», or
+`deploy_code()`. `tests/test_install_deploy.py` guards the `--update` path.
 - **`Conexión` is what makes the repo publishable.** `profile.load()` returns an
   **empty** profile when nothing is embedded and nothing is in the checkout —
   not an error, the normal start for someone who just cloned.
@@ -567,13 +623,20 @@ the destination (`_ruta_segura` — `extractall` is the footgun), and the
 `VERSION` inside matching the tag asked for. There is no signature and the
 README says so.
 
-**`rclone_bin.download_rclone()` verifies before it writes:** reads
-`downloads.rclone.org/version.txt`, pulls `<version>/SHA256SUMS`, hashes the zip
-in memory — a mismatch leaves the cache untouched. The URL is the **versioned**
-one, not the `rclone-current-…` alias (which moves, so a release landing
-mid-fetch would make the sum describe a different file). It does **not** defend
-against a compromised rclone.org (same TLS, same host) — only against a
-truncated transfer, a proxy, a stale cache, the alias moving.
+**`rclone_bin.download_rclone()` verifies before it writes:** takes the version
+from `pins.RCLONE_VERSION` (no more `version.txt`), pulls `<version>/SHA256SUMS`,
+hashes the zip in memory — a mismatch leaves the cache untouched. The URL is the
+**versioned** one, not the `rclone-current-…` alias (which moves). It does
+**not** defend against a compromised rclone.org (same TLS, same host) — only
+against a truncated transfer, a proxy, a stale cache, the alias moving.
+`runtime_bin` is the same contract against the release's `SHA256SUMS`, and its
+cache re-hashes the archive against the recorded sum on every reuse.
+`rclone_for(plat)` keeps the old lookup chain (checkout, next to the exe, PATH,
+cache) for **this** host's platform so offline provisioning still works; other
+platforms come from the cache or a download.
+
+The update path does not touch `bin/`, `runtime/` or the launchers: runtimes are
+a component, not app code (in-place component updates are R4).
 
 ## Mount watcher (`penwatch.py`)
 
@@ -597,6 +660,20 @@ script to `%LOCALAPPDATA%\prdriveWatch` / `~/.local/share/prdrive-watch`, writes
   `--mode`: `ui` (default), `sync`, or `daemon` (→ `runsync.py --auto`).
 - `ui/watch.py` imports penwatch for reads and shells out for
   `install`/`uninstall` (output to `output_window`). One-way dependency.
+- **Its own Python.** `install` copies the device's runtime for this host
+  (`runtime_keys_for()` chain) into `HOST_DIR/runtime/<stamp_id>/` and points
+  `watch.json` `python_exe` and the task/unit at it — the old
+  `sys.executable` silently died when the user upgraded Python. **One dir per
+  version, never swapped in place**: on Windows you cannot rename the dir of a
+  running `pythonw.exe`, and the watcher runs from it. On each detection
+  `refresh_runtime()` compares stamps; on change it copies beside (tmp +
+  rename), rewrites the pointer (atomic `write_json`), re-`register()`s, and
+  `prune_runtimes()` keeps `python_exe`'s, `task_python`'s (what the task
+  still points at if re-registering failed) and the running process's dirs.
+  No device runtime for this host → host Python (never one living on the
+  device) and `status` shows the note. Re-registering a *running* task via
+  `schtasks /Create /F` is assumed to succeed; if it fails, the old copy is
+  kept and the log says so.
 
 ## Conflicts & failures (`common/conflicts.py`, `common/results.py`, `ui/conflict_editor.py`)
 

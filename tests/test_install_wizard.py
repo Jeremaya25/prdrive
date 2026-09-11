@@ -75,6 +75,41 @@ tk_install.working = lambda parent, titulo, funcion, mensaje="": (True, funcion(
 RCLONE_FALSO = tmpdir() / "rclone-de-mentira"
 RCLONE_FALSO.write_bytes(b"MZ")
 
+# Ni rclone ni Python se descargan: las dos puertas se sustituyen por archivos
+# de mentira con la forma de los de verdad. Se apunta qué se ha pedido.
+import io  # noqa: E402
+import tarfile  # noqa: E402
+
+from common import pins  # noqa: E402
+from install import platforms, rclone_bin, runtime_bin  # noqa: E402
+
+pedido: list[str] = []
+
+
+def archivo_python(plat) -> Path:
+    ruta = tmpdir() / f"{plat.clave}.tar.gz"
+    with tarfile.open(ruta, "w:gz") as tf:
+        for rel in {plat.interprete, plat.interprete_consola}:
+            info = tarfile.TarInfo(f"python/{rel}")
+            info.size = 2
+            tf.addfile(info, io.BytesIO(b"py"))
+    return ruta
+
+
+rclone_bin.rclone_for = lambda plat, progreso=None, allow_download=True: (
+    pedido.append("rclone " + plat.clave) or RCLONE_FALSO)
+runtime_bin.ensure_runtime = lambda plat, progreso=None, allow_download=True: (
+    pedido.append("python " + plat.clave) or archivo_python(plat))
+
+# Quitar de la lista una plataforma que el dispositivo ya lleva pregunta si se
+# borra. La pregunta se sustituye, como `mostrar()`; la respuesta la da el test.
+respuesta = {"borrar": False}
+preguntas: list[str] = []
+tk_install._preguntar_borrado = lambda wiz, plat: (
+    preguntas.append(plat.clave) or respuesta["borrar"])
+
+ANFITRION = platforms.host() or pins.plataforma("windows-x64")
+
 
 def widgets(w, tipo):
     pila, salida = [w], []
@@ -89,6 +124,21 @@ def widgets(w, tipo):
 def boton(w, texto):
     for b in widgets(w, ttk.Button):
         if b.cget("text") == texto:
+            return b
+    return None
+
+
+def casilla(w, plat):
+    """La casilla de la lista de plataformas de esa plataforma."""
+    for b in widgets(w, ttk.Checkbutton):
+        if str(b.cget("text")).startswith(plat.nombre):
+            return b
+    return None
+
+
+def radio(w, prefijo):
+    for b in widgets(w, ttk.Radiobutton):
+        if str(b.cget("text")).startswith(prefijo):
             return b
     return None
 
@@ -180,6 +230,17 @@ en_paso(wiz, PASO["Instalación"])
 c("sin instalar no se sale del paso de instalación",
   str(wiz.boton_siguiente.cget("state")), "disabled")
 
+# La lista de plataformas: este equipo viene marcado, y la completa por defecto.
+c("la lista trae una casilla por plataforma",
+  sum(1 for p in pins.PLATAFORMAS if casilla(wiz.cuerpo, p) is not None),
+  len(pins.PLATAFORMAS))
+c("este equipo viene marcado", wiz.matriz.elegidas, {ANFITRION.clave})
+c("y la instalación completa", wiz.matriz.completa, True)
+c.contains("con el total de lo que ocupará",
+           " ".join(str(w.cget("text")) for w in widgets(wiz.cuerpo, ttk.Label)),
+           f"≈{ANFITRION.mb_rclone + ANFITRION.mb_python} MB")
+
+pedido.clear()
 boton(wiz.cuerpo, "Instalar el programa").invoke()
 from install import deploy                                # noqa: E402
 
@@ -187,9 +248,15 @@ app = deploy.app_dir(limpio)
 c("el programa aterriza en la carpeta oculta", (app / "runsync.py").is_file(), True)
 c("con su motor", (app / "sync.py").is_file(), True)
 c("y su vigilante", (app / "penwatch.py").is_file(), True)
-c("el binario de rclone también",
-  (app / "bin" / deploy.bin_subdir() / deploy.exe_name()).is_file(), True)
-c("los lanzadores quedan en la raíz", (limpio / "runsync.pyw").is_file(), True)
+c("se consigue rclone y Python de este equipo, y de nada más", sorted(pedido),
+  sorted([f"rclone {ANFITRION.clave}", f"python {ANFITRION.clave}"]))
+c("el binario de rclone va a su bin/",
+  platforms.rclone_path(limpio, ANFITRION).is_file(), True)
+c("y el Python propio a runtime/",
+  platforms.provisioned(limpio).get(ANFITRION.clave), platforms.Instalada(True, True))
+c("los lanzadores quedan en la raíz", (limpio / "runsync.bat").is_file(), True)
+c("sin el .pyw: la completa no depende del Python del equipo",
+  (limpio / "runsync.pyw").exists(), False)
 c("se escribe el rclone.conf del dispositivo", (app / "rclone.conf").is_file(), True)
 c("queda marcado como instalado", wiz.state.deployed, True)
 c("ya se puede seguir", str(wiz.boton_siguiente.cget("state")), "normal")
@@ -205,7 +272,46 @@ c("y el dispositivo recibe un identificador propio",
 # Con la siembra esto no se podía prometer.
 c("y el resto del volumen sigue ahí",
   sorted(p.name for p in limpio.iterdir() if p.name.startswith("runsync")),
-  ["runsync.pyw", "runsync.sh"])
+  ["runsync.bat", "runsync.sh"])
+
+# --- la ligera: sin Python propio, con el .pyw ---------------------------------
+ligero = tmpdir()
+wiz_l = nuevo_asistente(ligero)
+en_paso(wiz_l, PASO["Instalación"])
+radio(wiz_l.cuerpo, "Ligera").invoke()
+c("elegir la ligera se apunta", wiz_l.matriz.completa, False)
+c.contains("y el total deja de contar el Python",
+           " ".join(str(w.cget("text")) for w in widgets(wiz_l.cuerpo, ttk.Label)),
+           f"≈{ANFITRION.mb_rclone} MB")
+pedido.clear()
+boton(wiz_l.cuerpo, "Instalar el programa").invoke()
+c("la ligera solo consigue rclone", pedido, [f"rclone {ANFITRION.clave}"])
+c("no deja Python propio", platforms.runtime_stamp(ligero, ANFITRION), None)
+c("y sí el .pyw, que usa el Python del equipo", (ligero / "runsync.pyw").is_file(), True)
+
+# --- quitar una plataforma que el dispositivo ya lleva -------------------------
+# `limpio` ya lleva la de este equipo. Desmarcarla pregunta; lo que se conteste
+# decide si entra en el plan como borrado.
+quita = nuevo_asistente(limpio)
+en_paso(quita, PASO["Instalación"])
+c("un dispositivo que ya lleva esta plataforma la trae marcada",
+  ANFITRION.clave in quita.matriz.elegidas, True)
+respuesta["borrar"] = False
+preguntas.clear()
+casilla(quita.cuerpo, ANFITRION).invoke()
+c("desmarcar lo que ya lleva pregunta si se borra", preguntas, [ANFITRION.clave])
+c("decir que no: desmarcada, pero sin borrar", (quita.matriz.elegidas,
+                                                 quita.matriz.plan().borrar), (set(), []))
+casilla(quita.cuerpo, ANFITRION).invoke()             # otra vez marcada
+respuesta["borrar"] = True
+casilla(quita.cuerpo, ANFITRION).invoke()
+c("decir que sí la manda borrar", [p.clave for p in quita.matriz.plan().borrar],
+  [ANFITRION.clave])
+c("sin nada marcado no se puede instalar",
+  str(boton(quita.cuerpo, "Instalar el programa").cget("state")), "disabled")
+casilla(quita.cuerpo, ANFITRION).invoke()
+c("volver a marcarla anula el borrado", quita.matriz.plan().borrar, [])
+respuesta["borrar"] = False
 
 # Un destino con cosas ajenas: el botón está apagado hasta escribir la ruta.
 ajeno = tmpdir()
@@ -286,10 +392,13 @@ c("elegir actualizar cambia al recorrido corto",
 c("y planta al usuario en la pantalla de actualizar", corto.indice, 1)
 
 (app / "sync.py").write_text("# version vieja\n", encoding="utf-8")
+(limpio / "runsync.bat").write_bytes(b"rem el que puso el aprovisionamiento\r\n")
 boton(corto.cuerpo, "Actualizar ahora").invoke()
 c("se sustituye el código",
   "version vieja" in (app / "sync.py").read_text(encoding="utf-8"), False)
 c("y se deja el VERSION del instalador", (app / "VERSION").is_file(), True)
+c("los lanzadores no se tocan al actualizar",
+  (limpio / "runsync.bat").read_bytes(), b"rem el que puso el aprovisionamiento\r\n")
 # Renovarle el id sería tratarlo como un dispositivo nuevo, y dejaría colgado a
 # cualquier vigilante que ya estuviera atado a este.
 c("el identificador del dispositivo NO cambia", device.control_id(limpio), antes)
@@ -303,5 +412,32 @@ boton(otro_corto.cuerpo, "Reinstalar desde cero").invoke()
 c("reinstalar mantiene el recorrido largo",
   len(otro_corto.pasos), len(tk_install.PASOS_INSTALACION))
 c("y avanza al paso siguiente", otro_corto.indice, PASO["Cifrado"])
+
+# --- «Añadir plataformas…»: sin volver a aprovisionar ---------------------------
+# Lleva la misma lista a un dispositivo que ya existe. La configuración, las
+# claves y el estado no se tocan: solo rclone y Python de lo que se marque.
+config_antes = config.read_bytes()
+mas = nuevo_asistente(limpio)
+en_paso(mas, PASO["Dispositivo"])
+boton(mas.cuerpo, "Añadir plataformas…").invoke()
+c("«Añadir plataformas…» cambia a su recorrido corto",
+  [t for t, _, _ in mas.pasos], ["Dispositivo", "Plataformas"])
+c("y planta al usuario en la lista", mas.indice, 1)
+c("con lo que el dispositivo ya lleva marcado",
+  ANFITRION.clave in mas.matriz.elegidas, True)
+
+otra = next(p for p in pins.PLATAFORMAS if p.clave != ANFITRION.clave)
+casilla(mas.cuerpo, otra).invoke()
+c("marcar otra plataforma la añade", otra.clave in mas.matriz.elegidas, True)
+pedido.clear()
+boton(mas.cuerpo, "Aplicar").invoke()
+c("se consigue rclone y Python de la nueva",
+  {f"rclone {otra.clave}", f"python {otra.clave}"} <= set(pedido), True)
+c("y queda en el dispositivo", platforms.provisioned(limpio).get(otra.clave),
+  platforms.Instalada(True, True))
+c("sin tocar la configuración", config.read_bytes(), config_antes)
+c("ni perder lo que ya llevaba", ANFITRION.clave in platforms.provisioned(limpio), True)
+c("y con los lanzadores de una completa", (limpio / "runsync.bat").is_file()
+  and (limpio / "runsync.sh").is_file(), True)
 
 sys.exit(c.report())

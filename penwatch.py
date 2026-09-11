@@ -60,6 +60,26 @@ Convivencia con un medio que puede desaparecer a media frase
   * Nada se relanza mientras el dispositivo siga puesto: hace falta que desaparezca para
     volver a armar el disparo.
 
+Su propio Python
+----------------
+El vigilante NO depende de un Python instalado en el equipo. `install` copia el
+Python que lleva el dispositivo para esta plataforma a su carpeta del equipo
+(`runtime/<id>/`) y registra la tarea con esa copia; así sigue funcionando cuando
+alguien actualiza o desinstala su Python, que es justo lo que antes lo rompía en
+silencio (se guardaba el `sys.executable` de la instalación).
+
+Cada versión va en su propia carpeta, con el `id` sacado del sello del runtime.
+En cada detección se compara el sello del dispositivo con el de la copia y, si
+difieren, se copia la versión nueva AL LADO y se cambia el puntero de
+`watch.json` de una vez: sustituir la carpeta en su sitio no se puede, porque en
+Windows no se renombra la carpeta de un `pythonw.exe` que está corriendo —y el
+vigilante corre justo desde ahí—. Luego se vuelve a registrar la tarea con la
+copia nueva y se recogen las viejas que ya no usa nadie.
+
+Si el dispositivo no lleva Python para este equipo (una instalación ligera, o
+una que no se preparó para esta plataforma), se usa el del sistema y `status` lo
+dice.
+
 Modos (--mode, se decide al instalar y se guarda en el equipo)
 --------------------------------------------------------------
   ui      (por defecto) abre la UI de runsync.py: tú decides qué hacer.
@@ -74,8 +94,10 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import hashlib
 import json
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -98,6 +120,11 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 APP_SUBDIR = f".{APP_NAME}"                           # la carpeta oculta del código
 STRUCT_MARKER = Path(APP_SUBDIR) / "runsync.py"       # lo que se va a lanzar
 CONTROL_FILE = Path(APP_SUBDIR) / APP_NAME.upper()    # quién es esta unidad
+# El Python del dispositivo, uno por plataforma, y su sello de versión. Copiados
+# de `install/runtime_bin.py` por lo mismo que los de arriba; el test comprueba
+# que no se separan.
+RUNTIME_SUBDIR = Path(APP_SUBDIR) / "runtime"
+RUNTIME_STAMP = "PRDRIVE-RUNTIME"
 
 POLL_SECONDS = 5.0
 STABLE_CHECKS = 2            # sondeos seguidos legibles antes de dar el dispositivo por montado
@@ -132,6 +159,7 @@ STATE_FILE = HOST_DIR / "state.json"
 LOG_FILE = HOST_DIR / "penwatch.log"
 STOP_FILE = HOST_DIR / "stop"
 SELF_COPY = HOST_DIR / "penwatch.py"
+RUNTIMES_DIR = HOST_DIR / "runtime"      # las copias del Python del dispositivo
 TASK_XML_FILE = HOST_DIR / "task.xml"
 UNIT_FILE = Path.home() / ".config" / "systemd" / "user" / UNIT_NAME
 DESKTOP_FILE = Path.home() / ".config" / "autostart" / f"{APP_NAME}-watch.desktop"
@@ -337,6 +365,237 @@ def find_pen(cfg: dict) -> Path | None:
 
 
 # ---------------------------------------------------------------------------
+# El Python del vigilante: una copia del del dispositivo, en el equipo
+# ---------------------------------------------------------------------------
+
+def native_arch() -> str:
+    """La CPU del equipo: 'x64', 'arm64' u otra cosa en minúsculas.
+
+    En Windows se pregunta a IsWow64Process2, por lo mismo que en
+    `common/model.py` (que no se puede importar desde aquí): un Python x64
+    emulado en un ARM64 oye 'AMD64' de todos los demás sitios."""
+    if IS_WIN:
+        try:
+            import ctypes
+            k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            k32.GetCurrentProcess.restype = ctypes.c_void_p
+            k32.IsWow64Process2.argtypes = [ctypes.c_void_p,
+                                            ctypes.POINTER(ctypes.c_ushort),
+                                            ctypes.POINTER(ctypes.c_ushort)]
+            proceso, nativa = ctypes.c_ushort(), ctypes.c_ushort()
+            if k32.IsWow64Process2(k32.GetCurrentProcess(), ctypes.byref(proceso),
+                                   ctypes.byref(nativa)):
+                valor = {0xAA64: "arm64", 0x8664: "x64"}.get(nativa.value)
+                if valor:
+                    return valor
+        except (OSError, AttributeError, ValueError):
+            pass
+    maquina = platform.machine().lower()
+    if maquina in ("aarch64", "aarch64_be", "arm64"):
+        return "arm64"
+    if maquina in ("x86_64", "amd64", "x64"):
+        return "x64"
+    return maquina
+
+
+def runtime_keys_for(so: str, arch: str) -> list[str]:
+    """Los runtimes del dispositivo que sirven en ese equipo, por preferencia.
+
+    La misma cadena que el `runsync.bat` y que `install/platforms.candidates()`:
+    un Windows ARM64 prefiere el suyo y ejecuta el x64 emulado; Linux no emula."""
+    if so == "windows":
+        return {"arm64": ["windows-arm64", "windows-x64"],
+                "x64": ["windows-x64"]}.get(arch, [])
+    if so == "linux":
+        return {"arm64": ["linux-arm64"], "x64": ["linux-x64"]}.get(arch, [])
+    return []
+
+
+def host_runtime_keys() -> list[str]:
+    """Los de ESTE equipo. De módulo para que los tests elijan la plataforma."""
+    so = "windows" if IS_WIN else ("linux" if sys.platform.startswith("linux")
+                                   else sys.platform)
+    return runtime_keys_for(so, native_arch())
+
+
+def interpreter_rel(key: str, windowless: bool = False) -> str:
+    """El intérprete de un runtime, relativo a su carpeta."""
+    if key.startswith("windows-"):
+        return "pythonw.exe" if windowless else "python.exe"
+    return "bin/python3"
+
+
+def device_runtime(root: Path) -> tuple[str, Path, str] | None:
+    """(clave, carpeta, sello) del Python del dispositivo para este equipo.
+
+    None si no lleva ninguno que sirva. Solo lee: un runtime sin intérprete o
+    sin sello es uno a medias, y no cuenta."""
+    for key in host_runtime_keys():
+        carpeta = root / RUNTIME_SUBDIR / key
+        try:
+            if not (carpeta / interpreter_rel(key)).is_file():
+                continue
+            return key, carpeta, (carpeta / RUNTIME_STAMP).read_text(
+                encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+    return None
+
+
+def stamp_id(stamp: str) -> str:
+    """El nombre de la carpeta de una versión: sale del sello, así que dos
+    sellos distintos nunca comparten carpeta."""
+    return hashlib.sha256(stamp.encode("utf-8")).hexdigest()[:12]
+
+
+def copy_runtime(key: str, src: Path, stamp: str) -> Path:
+    """Copia el runtime del dispositivo a `RUNTIMES_DIR/<id>/`. Devuelve la carpeta.
+
+    Si esa versión ya está copiada no hace nada. Si no, copia a una carpeta de
+    trabajo y la renombra al final: una copia interrumpida (el dispositivo se
+    desenchufa a mitad) no deja nada que parezca bueno. Del dispositivo solo se
+    lee, y cada fichero se cierra al copiarlo."""
+    destino = RUNTIMES_DIR / stamp_id(stamp)
+    try:
+        if ((destino / RUNTIME_STAMP).read_text(encoding="utf-8") == stamp
+                and (destino / interpreter_rel(key)).is_file()):
+            return destino
+    except OSError:
+        pass
+    RUNTIMES_DIR.mkdir(parents=True, exist_ok=True)
+    trabajo = RUNTIMES_DIR / f".{destino.name}.tmp-{os.getpid()}"
+    shutil.rmtree(trabajo, ignore_errors=True)
+    try:
+        shutil.copytree(src, trabajo)
+        if not IS_WIN:
+            # Desde exFAT llega sin bit de ejecución; aquí sí se puede poner.
+            interprete = trabajo / interpreter_rel(key)
+            interprete.chmod(interprete.stat().st_mode | 0o755)
+        if destino.exists():
+            shutil.rmtree(destino)          # una copia vieja sin el sello bueno
+        os.replace(trabajo, destino)
+    except OSError:
+        shutil.rmtree(trabajo, ignore_errors=True)
+        raise
+    return destino
+
+
+def _dentro(ruta: Path, raiz: Path) -> bool:
+    try:
+        ruta.resolve().relative_to(raiz.resolve())
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def host_python(root: Path | None = None) -> str | None:
+    """Un Python del EQUIPO, o None. Uno que viva en el dispositivo no vale: al
+    desenchufarlo, la tarea se quedaría sin intérprete."""
+    nombres = ("python", "python3") if IS_WIN else ("python3", "python")
+    for exe in (sys.executable, *(shutil.which(n) for n in nombres)):
+        if not exe:
+            continue
+        if root is not None and _dentro(Path(exe), root):
+            continue
+        return exe
+    return None
+
+
+def choose_python(root: Path) -> tuple[str, dict | None, str]:
+    """(python, runtime, nota): con qué Python va a arrancar el vigilante.
+
+    La copia del del dispositivo si lleva uno para este equipo; si no, el del
+    sistema, con una nota que `status` enseña. RuntimeError si no hay ninguno."""
+    encontrado = device_runtime(root)
+    if encontrado:
+        key, src, stamp = encontrado
+        destino = copy_runtime(key, src, stamp)
+        return (str(destino / interpreter_rel(key)),
+                {"key": key, "id": destino.name, "stamp": stamp}, "")
+    claves = host_runtime_keys()
+    plataforma = claves[0] if claves else f"{sys.platform} {native_arch()}"
+    exe = host_python(root)
+    if not exe:
+        raise RuntimeError(
+            f"El dispositivo no lleva Python para {plataforma} y en este equipo no "
+            f"hay ninguno instalado. Vuelve a ejecutar el instalador de prdrive y "
+            f"pulsa «Añadir plataformas…», o instala Python 3.11+.")
+    return exe, None, (f"el dispositivo no lleva Python para {plataforma}: "
+                       f"se usa el del equipo")
+
+
+def _runtime_root(exe: str | None) -> Path | None:
+    """La carpeta de `RUNTIMES_DIR` a la que pertenece ese intérprete, si alguna."""
+    if not exe:
+        return None
+    try:
+        rel = Path(exe).resolve().relative_to(RUNTIMES_DIR.resolve())
+    except (OSError, ValueError):
+        return None
+    return RUNTIMES_DIR / rel.parts[0] if rel.parts else None
+
+
+def prune_runtimes(cfg: dict) -> None:
+    """Recoge las copias que ya no usa nadie.
+
+    Se conservan tres: la de `python_exe` (con la que se lanza), la de
+    `task_python` (con la que arranca la tarea al iniciar sesión, que puede ser
+    otra si no se pudo volver a registrar) y la del proceso actual. Lo que no se
+    pueda borrar —en uso— se queda para la próxima vez."""
+    guardar = {r.name for r in (_runtime_root(cfg.get("python_exe")),
+                                _runtime_root(cfg.get("task_python")),
+                                _runtime_root(sys.executable)) if r}
+    try:
+        hijos = list(RUNTIMES_DIR.iterdir())
+    except OSError:
+        return
+    for hijo in hijos:
+        if hijo.name not in guardar:
+            shutil.rmtree(hijo, ignore_errors=True)
+
+
+def register(cfg: dict) -> str:
+    """Registra la tarea (Windows) o el servicio de usuario (Linux) con `cfg`.
+
+    De módulo para que los tests no registren nada de verdad."""
+    return register_windows(cfg) if IS_WIN else register_linux(cfg)
+
+
+def refresh_runtime(root: Path, cfg: dict) -> dict:
+    """Si el dispositivo trae otro Python que el de la copia, la refresca.
+
+    Devuelve el `cfg` con el que seguir (el mismo si no había nada que hacer).
+    Nunca lanza: un refresco que falla deja el vigilante con la copia que ya
+    tenía, que sigue funcionando, y lo apunta en el diario."""
+    encontrado = device_runtime(root)
+    if encontrado is None:
+        return cfg
+    key, src, stamp = encontrado
+    actual = cfg.get("runtime") or {}
+    if actual.get("stamp") == stamp and Path(cfg.get("python_exe") or "").is_file():
+        return cfg
+    try:
+        destino = copy_runtime(key, src, stamp)
+    except OSError as e:
+        log(f"no he podido copiar el Python del dispositivo: {e}")
+        return cfg
+
+    nuevo = dict(cfg)
+    nuevo["python_exe"] = str(destino / interpreter_rel(key))
+    nuevo["runtime"] = {"key": key, "id": destino.name, "stamp": stamp}
+    nuevo.pop("runtime_note", None)
+    log(f"el dispositivo trae otro Python ({key}); copia nueva en {destino}")
+    try:
+        log(register(nuevo))
+        nuevo["task_python"] = nuevo["python_exe"]
+    except (OSError, RuntimeError) as e:
+        log(f"no he podido volver a registrar el vigilante con el Python nuevo: {e}")
+    write_json(CONFIG_FILE, nuevo)
+    prune_runtimes(nuevo)
+    return nuevo
+
+
+# ---------------------------------------------------------------------------
 # Lanzamiento de runsync
 # ---------------------------------------------------------------------------
 
@@ -424,6 +683,9 @@ def watch_loop(once: bool = False) -> int:
                 stable += 1
                 if stable >= (1 if once else STABLE_CHECKS):
                     log(f"dispositivo detectado en {root}")
+                    # Antes de lanzar: si el dispositivo trae otro Python, se
+                    # lanza ya con la copia nueva.
+                    cfg = refresh_runtime(root, cfg)
                     ok = launch(root, cfg)
                     state.update({"launched": ok, "root": str(root),
                                   "last_launch": stamp(), "last_launch_ok": ok})
@@ -729,6 +991,15 @@ def cmd_install(args: argparse.Namespace) -> int:
     if Path(__file__).resolve() != SELF_COPY.resolve():
         shutil.copy2(__file__, SELF_COPY)
 
+    try:
+        python_exe, runtime, nota = choose_python(dispositivo)
+    except (OSError, RuntimeError) as e:
+        print(f"ERROR: {e}")
+        return 1
+    print(f"  Python del vigilante: {python_exe}"
+          + (f" (copia del del dispositivo, {runtime['key']})" if runtime else
+             f"\n  aviso: {nota}"))
+
     cfg = {
         "mode": args.mode,
         "pairs": list(args.pairs or []),
@@ -736,7 +1007,9 @@ def cmd_install(args: argparse.Namespace) -> int:
         "poll_seconds": args.poll,
         "device_id": device_id,
         "extra_roots": list(args.extra_root or []),
-        "python_exe": sys.executable,
+        "python_exe": python_exe,
+        "runtime": runtime,
+        "runtime_note": nota,
         "user": user,
         "installed": stamp(),
         "installed_from": str(dispositivo),
@@ -749,10 +1022,13 @@ def cmd_install(args: argparse.Namespace) -> int:
                             "note": "montaje presente durante la instalación"})
 
     try:
-        print("  " + (register_windows(cfg) if IS_WIN else register_linux(cfg)))
+        print("  " + register(cfg))
     except (OSError, RuntimeError) as e:
         print(f"ERROR: {e}")
         return 1
+    cfg["task_python"] = python_exe
+    write_json(CONFIG_FILE, cfg)
+    prune_runtimes(cfg)
 
     if not args.no_start:
         print("  " + start_now(cfg))
@@ -803,6 +1079,16 @@ def registered_state() -> str:
 LABEL_WIDTH = 23
 
 
+def _python_row(cfg: dict) -> str:
+    """Con qué Python arranca el vigilante, y si es el suyo o el del sistema."""
+    exe = cfg.get("python_exe") or "(sin apuntar)"
+    runtime = cfg.get("runtime")
+    if runtime:
+        return f"copia propia del de {runtime.get('key')}: {exe}"
+    nota = cfg.get("runtime_note")
+    return f"el del equipo: {exe}" + (f" — {nota}" if nota else "")
+
+
 def status_rows() -> list[tuple[str, str]]:
     """Qué hay instalado y cómo está, como (etiqueta, valor).
 
@@ -826,6 +1112,7 @@ def status_rows() -> list[tuple[str, str]]:
                      + (f"  intervalo={cfg['interval']:g}m" if cfg.get("interval") else "")),
             ("Sondeo", f"cada {cfg.get('poll_seconds', POLL_SECONDS):g}s"),
             ("Instalado", f"{cfg.get('installed')} desde {cfg.get('installed_from')}"),
+            ("Python del vigilante", _python_row(cfg)),
             ("Dispositivo esperado (id)",
              cfg.get("device_id") or f"(solo por presencia de {CONTROL_FILE})"),
         ]

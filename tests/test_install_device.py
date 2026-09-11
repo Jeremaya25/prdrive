@@ -122,7 +122,8 @@ app = dispositivo / device.APP_SUBDIR
 (app / "bin" / device.bin_subdir()).mkdir(parents=True)
 for rel in ("runsync.py", "sync.py", "rclone.conf"):
     (app / rel).write_text("#\n", encoding="utf-8")
-(dispositivo / "runsync.pyw").write_text("#\n", encoding="utf-8")
+(dispositivo / "runsync.bat").write_text("#\n", encoding="utf-8")
+(dispositivo / "runsync.sh").write_text("#\n", encoding="utf-8")
 (app / "keys" / "mi_clave").write_text("clave\n", encoding="utf-8")
 (app / "bin" / device.bin_subdir() / device.exe_name()).write_text("bin\n",
                                                                    encoding="utf-8")
@@ -154,6 +155,42 @@ parcial = {chk.etiqueta: chk
            for chk in device.verify_device(dispositivo, ["docs", "claves"], "mi_clave")}
 c("se detecta una pareja elegida que no acabó en el config",
   parcial["El config se lee"].ok, False)
+
+# El lanzador que se comprueba es el de ESTE sistema, y ya no el .pyw: la
+# instalación completa no lo lleva.
+lanzador = "runsync.bat" if device.IS_WIN else "runsync.sh"
+c(f"se comprueba el lanzador de este sistema ({lanzador})",
+  f"Lanzador ({lanzador})" in resultado, True)
+
+# El Python que usará este equipo: el del dispositivo si lo lleva. Es lo que
+# hace que la verificación no exija un Python instalado en una completa.
+from install import platforms, runtime_bin  # noqa: E402
+
+anfitrion = platforms.host()
+if anfitrion is not None:
+    rt = platforms.runtime_dir(dispositivo, anfitrion)
+    (rt / anfitrion.interprete).parent.mkdir(parents=True, exist_ok=True)
+    for exe in {anfitrion.interprete, anfitrion.interprete_consola}:
+        (rt / exe).write_bytes(b"py")
+    (rt / runtime_bin.STAMP).write_text("sello\n", encoding="utf-8")
+    con_python = {chk.etiqueta: chk for chk in device.verify_device(dispositivo)}
+    py = con_python["Python para este equipo"]
+    c("con Python propio, el del dispositivo cuenta", py.ok, True)
+    c.contains("y se dice que es el suyo", py.detalle, "del dispositivo")
+
+    # Sin Python propio y sin ninguno instalado, este equipo no podría usarlo.
+    import install  # noqa: E402
+    comando_real = install.python_command
+    install.python_command = lambda windowless=False: None
+    import shutil as _sh  # noqa: E402
+    _sh.rmtree(rt)
+    try:
+        nada = {chk.etiqueta: chk for chk in device.verify_device(dispositivo)}
+    finally:
+        install.python_command = comando_real
+    c("sin Python propio ni instalado, no pasa", nada["Python para este equipo"].ok, False)
+    c.contains("y se dice cómo se arregla", nada["Python para este equipo"].detalle,
+               "Añadir plataformas")
 
 (app / "sync_config.toml").write_text("esto no es { toml", encoding="utf-8")
 roto = {chk.etiqueta: chk for chk in device.verify_device(dispositivo)}

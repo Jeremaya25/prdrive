@@ -66,7 +66,7 @@ RUIDO = {
     "system volume information", "$recycle.bin", "recycler", "lost+found",
     ".ds_store", ".spotlight-v100", ".fseventsd", ".trashes", "desktop.ini",
     "autorun.inf", "prdrive.hc", ".prdrive",
-    "runsync.pyw", "runsync.sh", "runsync.ico",
+    "runsync.pyw", "runsync.bat", "runsync.sh", "runsync.ico",
 }
 
 # Puntos de montaje donde los escritorios de Linux/macOS cuelgan los extraíbles.
@@ -468,7 +468,9 @@ def verify_device(root: Path, esperadas: list[str] | None = None,
                         f"id {device_id[:8]}…" if device_id else
                         f"falta {root / CONTROL_FILE} o no tiene id propio"))
 
-    mirar("Lanzador (runsync.pyw)", root / "runsync.pyw")
+    # El de ESTE sistema. El .pyw ya no: la instalación completa no lo lleva.
+    lanzador = "runsync.bat" if IS_WIN else "runsync.sh"
+    mirar(f"Lanzador ({lanzador})", root / lanzador)
     mirar("Interfaz (runsync.py)", app / "runsync.py")
     mirar("Motor (sync.py)", app / "sync.py")
     mirar(f"rclone ({bin_subdir()})", app / "bin" / bin_subdir() / exe_name(),
@@ -481,7 +483,7 @@ def verify_device(root: Path, esperadas: list[str] | None = None,
     if mirar("sync_config.toml", config):
         checks.append(_check_config(config, esperadas or []))
 
-    checks.append(check_python())
+    checks.append(check_python(root))
     return checks
 
 
@@ -499,14 +501,37 @@ def _check_config(config: Path, esperadas: list[str]) -> Check:
                  + ", ".join(cfg.names))
 
 
-def check_python() -> Check:
-    """Python y Tkinter EN ESTE EQUIPO. No es del dispositivo, pero sin ellos el dispositivo no
-    se puede usar aquí, y es mejor enterarse ahora que al conectarlo."""
-    from . import python_command
+def check_python(root: Path | None = None) -> Check:
+    """Con qué Python arrancará el dispositivo EN ESTE EQUIPO.
+
+    Con `root`, lo primero es el del propio dispositivo —el que usará el
+    `runsync.bat`—, y entonces no hace falta ninguno instalado. Si no lleva uno
+    que sirva aquí, cuenta el del equipo, con Tkinter o sin él. Sin `root` (el
+    paso de comprobaciones, antes de que exista el dispositivo) solo se mira el
+    del equipo, y que falte no es grave: la instalación completa lleva el suyo."""
+    from . import platforms, python_command
+    if root is not None:
+        anfitrion = platforms.host()
+        propio = platforms.device_interpreter(root, anfitrion)
+        if propio is not None:
+            return Check("Python para este equipo", True,
+                         f"el del dispositivo: {propio}")
+        cmd = python_command()
+        if not cmd:
+            nombre = anfitrion.nombre if anfitrion else "este sistema"
+            return Check("Python para este equipo", False,
+                         f"el dispositivo no lleva Python para {nombre} y aquí no "
+                         f"hay ninguno instalado: vuelve a ejecutar el instalador y "
+                         f"pulsa «Añadir plataformas…», o instala Python 3.11+")
+        return Check("Python para este equipo", True,
+                     f"el del equipo: {' '.join(cmd)} (el dispositivo no lleva "
+                     f"uno propio para aquí)")
+
     cmd = python_command()
     if not cmd:
         return Check("Python en este equipo", False,
-                     "no encuentro ningún intérprete: instala Python 3.11+")
+                     "no hay ninguno: hará falta la instalación completa, que "
+                     "lleva el suyo")
     try:
         import tkinter  # noqa: F401
         return Check("Python en este equipo", True, f"{' '.join(cmd)} (con Tkinter)")

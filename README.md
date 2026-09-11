@@ -2,16 +2,19 @@
 
 Sincronización portable entre **cualquier remoto de rclone** y una **unidad
 extraíble**. Conectas el pendrive en cualquier equipo, se abre una ventana y se
-sincroniza. Nada que instalar en el equipo anfitrión, ninguna dependencia de
-Python, ningún servicio de terceros por medio.
+sincroniza. Nada que instalar en el equipo anfitrión —ni siquiera Python—,
+ningún servicio de terceros por medio.
 
 - **Python puro** (3.11+), solo biblioteca estándar. No hay `requirements.txt`
   porque no hay nada que instalar.
 - **El programa vive en el dispositivo**, en una carpeta oculta `.prdrive/`,
-  junto a un binario portable de rclone.
+  junto a un rclone portable y —en la instalación completa— **su propio Python**
+  para cada plataforma que elijas. Los dos son binarios de su publicador, en una
+  versión fijada y comprobada; aquí no se compila nada.
 - **Tu remoto es tuyo**: SFTP, WebDAV, S3, Drive… lo que soporte rclone. El
   código no conoce ningún servidor concreto.
-- **Windows, Linux y macOS**, con el mismo dispositivo.
+- **Windows y Linux, en x64 y ARM64**, con el mismo dispositivo. macOS no está:
+  no hay equipo con el que probarlo, y prometerlo sin probarlo sería mentir.
 
 > **Aviso**: esto mueve y borra ficheros. Los modos `*-mirror` borran en el
 > destino lo que no esté en el origen. Lee [Seguridad](#seguridad) antes de
@@ -72,8 +75,10 @@ Dos consecuencias que gobiernan el diseño:
 
 ## Instalación
 
-Necesitas Python 3.11+ con Tkinter en el equipo desde el que instalas, y un
-remote de rclone al que puedas escribir.
+Necesitas un remote de rclone al que puedas escribir y, para ejecutar el
+instalador desde el repositorio, Python 3.11+ con Tkinter en el equipo desde el
+que instalas (el [ejecutable](#un-ejecutable-para-no-repetir-todo-esto) no lo
+necesita). El dispositivo que sale de ahí no necesita nada en ningún equipo.
 
 ```bash
 git clone <este-repo> prdrive
@@ -93,7 +98,7 @@ cumplirla.
 | 2 | **Cifrado** | VeraCrypt, BitLocker o ninguno |
 | 3 | **Conexión** | formulario de remoto nuevo, o importar uno de tu `rclone.conf`. Más la ruta del catálogo |
 | 4 | **Comprobaciones** | consigue un rclone (lo busca, y si no lo descarga), conecta y lee el catálogo |
-| 5 | **Instalación** | copia el programa a `.prdrive/`, los lanzadores, el `rclone.conf` y la clave |
+| 5 | **Instalación** | completa o ligera, y para qué plataformas; copia el programa a `.prdrive/`, rclone y Python de cada plataforma, los lanzadores, el `rclone.conf` y la clave |
 | 6 | **Parejas** | cuáles de las del catálogo usa este dispositivo |
 | 7 | **Inicialización** | el `--resync` que fija la referencia de las parejas bisync |
 | 8 | **Verificación** | que no falte nada de lo que hace falta para arrancar |
@@ -105,17 +110,52 @@ filtrar por ahí es la forma más rápida de que el tuyo no aparezca.
 El paso 5 no borra nada fuera de `.prdrive/`. Si esa carpeta ya existe, se
 sobrescribe el código y se conserva el resto.
 
+### Plataformas: completa o ligera
+
+En el paso 5 se elige **para qué equipos** va a funcionar el dispositivo: Windows
+x64, Windows ARM64, Linux x64 y Linux ARM64. La de este equipo viene marcada.
+Cada plataforma lleva su rclone (≈80 MB) y, en la instalación **completa**, su
+propio Python (≈40–50 MB); la lista enseña lo que ocupa cada una, el total y el
+hueco libre del dispositivo.
+
+| instalación | lleva | en la raíz | necesita en cada equipo |
+|---|---|---|---|
+| **completa** (por defecto) | rclone + Python por plataforma | `runsync.bat`, `runsync.sh`, `README.md` | nada |
+| **ligera** | solo rclone | lo mismo, más `runsync.pyw` | Python 3.11+ con Tkinter |
+
+El Python es [python-build-standalone](https://github.com/astral-sh/python-build-standalone)
+(de astral-sh), no el zip «embebible» de python.org, que no trae tkinter. Va en
+`.prdrive/runtime/<plataforma>/`, podado de lo que prdrive no usa (pip, idle, los
+tests, las cabeceras de C), con un sello de versión que se escribe el último: un
+runtime a medias no cuenta como instalado. rclone sigue en `.prdrive/bin/<arch>/`.
+
+Las versiones de los dos están **fijadas** en `common/pins.py` y se mueven con un
+commit, no porque alguien publicara algo anoche: se instala lo que se ha probado.
+Python va en 3.13 y no en 3.14 porque los 3.14 de python-build-standalone ya traen
+Tk 9, y la interfaz está hecha y medida con Tk 8.6.
+
+**Desmarcar una plataforma que el dispositivo ya lleva pregunta si se borra.** Si
+dices que no, sus binarios se quedan donde están y simplemente no se reinstalan.
+
+Si enchufas el dispositivo en una plataforma para la que no se preparó, el
+lanzador (o `sync.py`, si falta rclone) lo dice y dice la cura: volver a pasar el
+instalador y pulsar **Añadir plataformas…**.
+
 ### Pasar el instalador por un dispositivo que ya existe
 
 El dispositivo va primero justamente para esto: si la unidad elegida **ya es un
 prdrive**, el paso 1 lo dice —con la versión que lleva y la que trae el
-instalador— y ofrece dos caminos.
+instalador— y ofrece tres caminos.
 
 - **Actualizar el programa** son dos pantallas y se acabó. Se sustituye el
   código, se conserva todo lo demás y no se pregunta nada más: ni conexión, ni
   catálogo, ni parejas, porque al actualizar no cambia ninguna de esas cosas. Va
   **sin red**, porque el código sale del propio instalador. Si el instalador
   resulta ser más viejo que el dispositivo, se avisa y hay que confirmarlo.
+- **Añadir plataformas…** abre la misma lista del paso 5 sobre el dispositivo tal
+  cual está: añade (o quita) rclone y Python de otras plataformas sin tocar la
+  conexión, las parejas ni el estado. Es lo que hace falta para llevarse el
+  dispositivo a un Linux, o a un portátil ARM, que no estaban previstos.
 - **Reinstalar desde cero** sigue el asistente completo, que es lo que hace falta
   para cambiar de remoto, recifrar el volumen o rehacer las parejas.
 
@@ -153,8 +193,15 @@ variantes, y la diferencia importa:
 
 ## Uso diario
 
-Doble clic en `runsync.pyw` en la raíz del dispositivo (`runsync.sh` en
-Linux/macOS). Desde la línea de órdenes, dentro de `.prdrive/`:
+Doble clic en `runsync.bat` en la raíz del dispositivo (`runsync.sh` en Linux).
+El `.bat` arranca con el Python del dispositivo —el de ARM64 en un equipo ARM64,
+si no el de x64, que un ARM64 ejecuta emulado— y, si no lleva ninguno que sirva,
+con el `pythonw.exe` del equipo; la consola parpadea un instante y se va. El `.sh`
+hace lo mismo con `runtime/linux-*/bin/python3` y `python3`. Los lanzadores se
+escriben al aprovisionar y **no se tocan al actualizar**.
+
+Desde la línea de órdenes, dentro de `.prdrive/` (con `python` el del equipo, o el
+del dispositivo: `runtime\windows-x64\python.exe`, `runtime/linux-x64/bin/python3`):
 
 ```bash
 python sync.py                 # sincroniza todas las parejas
@@ -184,7 +231,9 @@ Cuando hay una release nueva en GitHub, la ventana lo dice en un recuadro ámbar
 y el botón lo resuelve: se descargan los ~270 KB del código de ese tag, se
 verifican, se sustituye el programa del dispositivo y la ventana se reabre ya
 con la versión nueva. **No se toca nada tuyo**: la configuración, las claves, el
-estado de bisync, los filtros, los diarios y el rclone se quedan donde estaban.
+estado de bisync, los filtros, los diarios, el rclone, el Python del dispositivo y
+los lanzadores se quedan donde estaban. rclone y Python son componentes, no
+código: el zip de la release no los lleva.
 
 La versión instalada es el fichero `VERSION` de `.prdrive/`, y se compara con el
 tag de la última release. Un dispositivo instalado antes de que esto existiera
@@ -432,6 +481,13 @@ estado y su registro viven en el equipo.
 - Se dispara **una vez por conexión**: el disparo se rearma cuando la unidad
   desaparece.
 - `--mode` decide qué lanza: `ui` (por defecto), `sync` o `daemon`.
+- **Tiene su propio Python.** `install` copia el del dispositivo a su carpeta del
+  equipo y registra la tarea con esa copia, así que no se rompe cuando alguien
+  actualiza o desinstala el Python del sistema. En cada detección compara el
+  sello del dispositivo con el de la copia y, si difieren, copia la versión nueva
+  al lado, cambia el puntero y vuelve a registrar la tarea (sustituir la carpeta
+  en su sitio no se puede: el vigilante corre desde ella). Si el dispositivo no
+  lleva Python para ese equipo, usa el del sistema y `penwatch status` lo dice.
 
 ## Diagnóstico
 
@@ -484,15 +540,17 @@ Léelo entero antes de usar esto con datos que te importen.
   que hay. Tu clave privada no interviene en ningún momento — el remoto ni se
   toca—, y lo que se sustituye son solo los ficheros del programa.
 - **El instalador con perfil incrustado lleva tu clave privada.** No lo publiques.
-- **El instalador descarga rclone si no lo encuentra en el equipo**, y lo que
-  baja se ejecuta y acaba copiado dentro del dispositivo. Se comprueba contra el
-  `SHA256SUMS` que publica rclone —leyendo antes su `version.txt` para pedir el
-  zip de una versión concreta, y no el alias `current`, que puede moverse entre
-  una cosa y la otra— y si no cuadra **no se guarda nada**. Con la misma
-  honestidad que arriba: esa suma viaja desde el mismo servidor y por el mismo
-  TLS que el zip, así que no protege de que rclone.org esté comprometido. Sí de
-  una descarga a medias, de un proxy que devuelve otra cosa y de una caché que
-  sirve un artefacto viejo.
+- **El instalador descarga rclone y Python**, y lo que baja se ejecuta y acaba
+  copiado dentro del dispositivo. Los dos son de su publicador —nada se compila
+  aquí—, de la versión **fijada** en `common/pins.py` (el zip versionado de
+  rclone, nunca el alias `current`; la release concreta de python-build-standalone),
+  y se comprueban contra el `SHA256SUMS` que publica cada uno. Si no cuadra **no
+  se guarda nada**. Un archivo de Python que traiga un solo miembro que se salga
+  de su carpeta se rechaza entero antes de escribir el primero. Con la misma
+  honestidad que arriba: esas sumas viajan desde el mismo servidor y por el mismo
+  TLS que lo que describen, así que no protegen de que rclone.org o GitHub estén
+  comprometidos. Sí de una descarga a medias, de un proxy que devuelve otra cosa
+  y de una caché que sirve un artefacto viejo.
 - **La clave de recuperación de BitLocker no la toca el programa.** Leerla exige
   permisos de administrador y no compensaba: guárdala donde te diga Windows,
   pero **no dentro del dispositivo** —es el volumen que descifra, así que ahí no
@@ -516,6 +574,7 @@ prdrive/
 │   ├── config_file.py lee Y escribe el TOML, con round-trip verificado
 │   ├── catalog.py     el catálogo del remoto: leer, cachear, escribir
 │   ├── update.py      si hay release nueva, y cómo traerse su código
+│   ├── pins.py        las versiones fijadas de rclone y Python, y las plataformas
 │   └── store.py       los ficheros de estado en JSON del dispositivo
 ├── ui/                pantallas y su lógica
 │   ├── theme.py       la paleta, las fuentes y los estilos ttk. Sin ventana
@@ -524,7 +583,10 @@ prdrive/
 │   └── *_editor.py    lo que decide y toca disco. Sin Tk, probado sin pantalla
 ├── install/           lo que sabe el instalador. Sin Tk, sin dispositivo
 │   ├── profile.py     la conexión: de dónde sale y cómo se escribe
-│   ├── deploy.py      copiar el código, escribir el config, el --resync
+│   ├── rclone_bin.py  conseguir rclone, comprobado
+│   ├── runtime_bin.py conseguir Python (python-build-standalone), comprobado
+│   ├── platforms.py   para qué equipos: la lista del paso 5
+│   ├── deploy.py      copiar el código, rclone y Python, el config, el --resync
 │   ├── device.py      qué volúmenes hay y cuál es el bueno
 │   └── crypto.py      VeraCrypt y BitLocker
 ├── tests/             scripts sueltos, sin framework
