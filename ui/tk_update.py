@@ -35,7 +35,7 @@ import tempfile
 import webbrowser
 from pathlib import Path
 
-from common import components, model, store, update
+from common import model, store, update
 
 from . import prefs, theme
 from .tk import (TITLE, bloque_aviso, cabecera, cuerpo_visible, modal, mostrar,
