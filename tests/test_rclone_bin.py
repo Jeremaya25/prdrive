@@ -193,6 +193,32 @@ try:
     c("ni el zip", (limpio / "rclone.zip").exists(), False)
     c("la caché se queda como estaba", list(limpio.iterdir()), [])
 
+    # --- y si falla justo al apuntar la suma, tampoco queda nada a medias ----
+    #
+    # Este fallo llega DESPUÉS del `os.replace`: ya no hay `.part` que limpiar,
+    # pero sí un `destino` recién renombrado. Si se dejara ahí sería un binario
+    # ya verificado y cacheado sin su `.sha256` al lado —invisible para
+    # `cached()`, así que no cachea nada, solo desmiente el «no he podido
+    # guardar» del mensaje.
+    suma_rota = tmpdir("prdrive-rclone-suma-rota-")
+    rclone_bin.cache_dir = lambda plat=None: suma_rota
+    red({URL_SUMS: SUMS.encode(), URL_ZIP: ZIP})
+    file_sha256_real = rclone_bin.file_sha256
+    rclone_bin.file_sha256 = lambda ruta: (_ for _ in ()).throw(
+        OSError("disco lleno, para la prueba"))
+    try:
+        rclone_bin.download_rclone()
+        c("si falla al apuntar la suma no se sigue", "siguió", "InstallError")
+    except InstallError as e:
+        c("si falla al apuntar la suma no se sigue", "InstallError", "InstallError")
+        c.contains("y dice que no ha podido guardar, de verdad", str(e),
+                   "No he podido guardar")
+    finally:
+        rclone_bin.file_sha256 = file_sha256_real
+    c("no deja el binario ya renombrado sin su suma", (suma_rota / EXE).exists(), False)
+    c("la caché queda tan limpia como si no se hubiera tocado",
+      list(suma_rota.iterdir()), [])
+
     # --- la caché va por versión fijada --------------------------------------
     #
     # Sin este tramo, mover `pins.RCLONE_VERSION` no servía de nada mientras la

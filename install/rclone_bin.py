@@ -306,7 +306,15 @@ def download_rclone(progreso: Progreso | None = None,
         parcial.unlink(missing_ok=True)
         raise InstallError(f"El fichero descargado de {url} no es un zip válido: {e}") from e
     except OSError as e:
+        # El fallo puede llegar DESPUÉS del `os.replace` —al apuntar la suma—,
+        # así que `parcial` ya no existe pero `destino` sí: hay que borrar los
+        # tres nombres, no solo el de siempre. Un binario ya renombrado pero sin
+        # su `.sha256` (o con uno de un binario anterior en esa misma ruta) es
+        # invisible para `cached()`, así que dejarlo ahí no cachea nada, solo
+        # deja basura y desmentiría el «no se ha guardado nada» de abajo.
         parcial.unlink(missing_ok=True)
+        destino.unlink(missing_ok=True)
+        _suma_apuntada(destino).unlink(missing_ok=True)
         raise InstallError(f"No he podido guardar {destino}: {e}") from e
 
     if not IS_WIN:
