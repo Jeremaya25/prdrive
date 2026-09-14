@@ -123,13 +123,22 @@ def _limpiar_restos(carpeta: Path) -> None:
     Un `.rclone.exe.viejo-1234` solo aparece cuando no se pudo borrar el de
     antes —Windows no borra un `.exe` en marcha—, y entonces lo que procede es
     volver a intentarlo la próxima vez, no dar un error por algo que ya está
-    resuelto."""
-    try:
-        for patron in (".*.viejo-*", ".*.nuevo-*"):
-            for resto in carpeta.glob(patron):
+    resuelto.
+
+    Uno atascado no para el barrido de los demás: el que falla es justo el caso
+    esperado —un `.viejo` que sujeta un rclone en marcha—, y como los `.viejo-*`
+    van primero, abortar ahí dejaría los `.nuevo-*` sin barrer para siempre,
+    acumulándose en un volumen extraíble."""
+    for patron in (".*.viejo-*", ".*.nuevo-*"):
+        try:
+            restos = list(carpeta.glob(patron))
+        except OSError:
+            continue
+        for resto in restos:
+            try:
                 resto.unlink(missing_ok=True)
-    except OSError:
-        pass
+            except OSError:
+                pass
 
 
 def swap_rclone(destino: Path, origen: Path) -> None:
@@ -216,7 +225,7 @@ def _poner_rclone(raiz: Path, p: Pendiente, decir: Progreso) -> str | None:
         return ("está en uso o no se puede escribir ahora. Se queda como "
                 "estaba; vuelve a intentarlo cuando no haya ninguna "
                 "sincronización en marcha.")
-    decir(f"{p.titulo}: consiguiendo la {p.deberia}")
+    decir(f"{p.titulo}: consiguiendo la versión {p.deberia}")
     binario = rclone_bin.pinned_rclone(p.plataforma, decir)
     decir(f"{p.titulo}: sustituyendo {destino}")
     swap_rclone(destino, binario)
@@ -232,7 +241,7 @@ def _poner_python(raiz: Path, p: Pendiente, decir: Progreso) -> str | None:
                 "así que no se puede sustituir sin cerrarlo. Abre el programa "
                 "con un Python instalado en este equipo —o desde otro equipo— y "
                 "vuelve a intentarlo.")
-    decir(f"{p.titulo}: consiguiendo la {p.deberia}")
+    decir(f"{p.titulo}: consiguiendo la versión {p.deberia}")
     archivo = runtime_bin.ensure_runtime(p.plataforma, decir)
     decir(f"{p.titulo}: sustituyendo {carpeta}")
     deploy.install_runtime(raiz, p.plataforma, archivo)
@@ -260,7 +269,15 @@ def aplicar(device_root: Path | str, progreso: Progreso | None = None,
         poner = _poner_rclone if p.que == RCLONE else _poner_python
         try:
             motivo = poner(raiz, p, decir)
-        except InstallError as e:
+        except (InstallError, OSError) as e:
+            # El OSError es tan normal como el InstallError, y el camino más
+            # corto hasta aquí es el más probable de todos: `urllib.error.URLError`
+            # ES un OSError, así que quedarse sin red —o un proxy, o un tiempo de
+            # espera— sale por aquí en cuanto se va a leer el SHA256SUMS. También
+            # un volumen que se retira a media pasada. Ninguna de las dos cosas
+            # es asunto de las demás plataformas: si se escapara, se perdería el
+            # parte entero de una pasada que quizá ya había puesto al día media
+            # docena de componentes, y esta función promete justo lo contrario.
             res.fallidos.append(f"{p.titulo}: {e}")
             continue
         if motivo is not None:

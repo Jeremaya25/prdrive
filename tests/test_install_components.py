@@ -21,6 +21,7 @@ Lo que se comprueba es lo que puede hacer daño:
 
 import sys
 from pathlib import Path
+from urllib.error import URLError
 
 from _harness import Checks, tmpdir
 
@@ -97,6 +98,7 @@ try:
     c("no queda nada pospuesto", res.pospuestos, [])
     c("ni fallido", res.fallidos, [])
     c("se cuentan los cuatro componentes", len(res.hechos), 4)
+    c("y la pasada cuenta como buena", res.ok, True)
     c("y el dispositivo ya está al día", components.pendientes(raiz), [])
     c("el rclone es el nuevo",
       platforms.rclone_path(raiz, WIN).read_bytes(), b"rclone NUEVO")
@@ -134,6 +136,7 @@ try:
       [p.que for p in components.pendientes(raiz) if p.plataforma == WIN],
       [comp.RCLONE])
     c("lo demás sí se ha hecho", len(res.hechos), 3)
+    c("y posponer no hace fallar la pasada", res.ok, True)
     components.rclone_en_uso = lambda ruta: False
 
     # El Python desde el que corre este mismo programa: en Windows no se puede
@@ -166,6 +169,49 @@ try:
       comp.leer_sello(comp._texto(
           comp.rclone_stamp_path(deploy.app_dir(raiz), WIN))).get("rclone"),
       "v0.0.1")
+    c("una pasada con fallos no está ok", res.ok, False)
+    rclone_bin.pinned_rclone = lambda plat, progreso=None: (
+        bajados.append("rclone " + plat.clave) or nuevo_rclone)
+
+    # --- y lo que falla del lado del Python se cuenta igual ------------------
+    raiz = dispositivo()
+
+    def runtime_que_revienta(plat, progreso=None, allow_download=True):
+        raise InstallError("el archivo descargado no cuadra con su suma")
+
+    runtime_bin.ensure_runtime = runtime_que_revienta
+    res = components.aplicar(raiz)
+    c("un Python que no se puede poner también es un fallo", len(res.fallidos), 2)
+    c.contains("diciendo cuál", res.fallidos[0], "Python de Windows x64")
+    c.contains("y qué pasó", res.fallidos[0], "no cuadra con su suma")
+    c("los rclone de esa misma pasada sí se han puesto", len(res.hechos), 2)
+    runtime_bin.ensure_runtime = falso_runtime
+
+    # --- sin red no hay ni InstallError --------------------------------------
+    #
+    # `urllib.error.URLError` ES un OSError, y sale crudo de `published_sha256()`
+    # nada más ir a leer el SHA256SUMS —el primer sitio al que va una descarga—,
+    # así que quedarse sin red, un proxy o un tiempo de espera llegan por ahí. Si
+    # se escapara, se perdería el parte entero de una pasada que a lo mejor ya
+    # había puesto al día media docena de componentes.
+    raiz = dispositivo()
+
+    def sin_red(plat, progreso=None):
+        if plat == WIN:
+            raise URLError("getaddrinfo failed")
+        return bajados.append("rclone " + plat.clave) or nuevo_rclone
+
+    rclone_bin.pinned_rclone = sin_red
+    res = components.aplicar(raiz)
+    c("quedarse sin red es un fallo de ese componente, no de la pasada",
+      len(res.fallidos), 1)
+    c.contains("y se cuenta lo que dijo la red",
+               res.fallidos[0], "getaddrinfo failed")
+    c("los demás componentes se ponen igual", len(res.hechos), 3)
+    c("aunque la pasada no salga ok", res.ok, False)
+    c("y el que no se pudo bajar sigue pendiente",
+      [p.que for p in components.pendientes(raiz) if p.plataforma == WIN],
+      [comp.RCLONE])
     rclone_bin.pinned_rclone = lambda plat, progreso=None: (
         bajados.append("rclone " + plat.clave) or nuevo_rclone)
 
@@ -278,6 +324,37 @@ try:
     resto.write_bytes(b"de la vez pasada")
     components.aplicar(raiz)
     c("un resto de un intercambio anterior se barre", resto.exists(), False)
+
+    # Y uno atascado no puede llevarse por delante el barrido de los que van
+    # detrás: el que falla es justo el esperado —un `.viejo` que sujeta un rclone
+    # en marcha— y los `.viejo-*` van primero, así que los `.nuevo-*` se
+    # quedarían sin barrer para siempre. Aquí se atasca con un directorio, que
+    # `unlink()` rechaza en los dos sistemas.
+    raiz = dispositivo()
+    destino = platforms.rclone_path(raiz, WIN)
+    atascado = destino.with_name(f".{destino.name}.viejo-1")
+    atascado.mkdir()
+    (atascado / "dentro").write_bytes(b"no se deja borrar")
+    detras = destino.with_name(f".{destino.name}.nuevo-2")
+    detras.write_bytes(b"de un intento a medias")
+    components.aplicar(raiz)
+    c("un resto atascado no para el barrido de los siguientes",
+      detras.exists(), False)
+    c("y él se queda para la próxima vez", atascado.is_dir(), True)
+
+    # --- lo que se va contando mientras tanto --------------------------------
+    #
+    # Es lo que imprime la orden de consola, así que se mira como lo leería
+    # alguien: «consiguiendo la v1.75.1» sería un artículo sin nombre detrás.
+    raiz = dispositivo()
+    dicho: list[str] = []
+    components.aplicar(raiz, dicho.append)
+    c("se cuenta lo que se consigue, uno por componente",
+      len([m for m in dicho if "consiguiendo" in m]), 4)
+    c.contains("nombrando la versión, no dejando el artículo suelto",
+               dicho[0], "consiguiendo la versión ")
+    c.contains("y se dice también lo que se sustituye",
+               "\n".join(dicho), "sustituyendo")
 finally:
     (rclone_bin.pinned_rclone, runtime_bin.ensure_runtime, deploy.install_runtime,
      components.rclone_en_uso, components.runtime_en_uso) = reales
