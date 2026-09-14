@@ -256,6 +256,41 @@ Se pregunta **una vez al día**: la respuesta se guarda en `state/update.json` y
 el aviso se pinta desde ahí, así que abrir la ventana no espera nunca a la red.
 Sin conexión no pasa nada — se enseña lo último que se supo, o nada.
 
+#### Los componentes: rclone y el Python del dispositivo
+
+El programa es una cosa y los componentes otra. Cada release **fija** en
+`common/pins.py` una versión exacta de rclone y una release exacta de
+python-build-standalone, y esos pines viajan dentro del programa. Cuando el
+dispositivo lleva otros —porque se instaló hace meses, o porque una release
+nueva movió los pines—, la ventana lo dice en el mismo recuadro ámbar y el botón
+los sustituye.
+
+Cómo se sabe qué lleva: cada componente deja escrito de dónde salió, en
+`runtime/<plataforma>/PRDRIVE-RUNTIME` y en `bin/<arch>/<rclone>.PRDRIVE-RCLONE`.
+Hace falta porque un binario no dice su versión sin ejecutarlo, y el de otra
+plataforma no se puede ejecutar aquí. Un dispositivo anterior a esto no tiene el
+sello de rclone: se lee **«no consta»**, que cuenta como pendiente, y la primera
+actualización lo deja apuntado para siempre.
+
+```bash
+python <descarga>/prdrive-install.py --update-components E:\   # lo que hace el botón
+```
+
+- **Se descarga el zip de la versión INSTALADA**, no el de la última release: la
+  maquinaria que baja y comprueba los componentes tiene que ser la de la versión
+  que los fija.
+- **Cada sustitución es un renombrado**, no una escritura encima. En ningún
+  instante hay medio binario en `bin/`, que es el estado en el que el
+  dispositivo no sincroniza en ningún equipo.
+- **Lo que está en uso se pospone** y se dice cuál y por qué: un rclone
+  sincronizando ahora mismo, o el Python desde el que está abierto el propio
+  programa (en Windows no se puede sustituir la carpeta de un `pythonw.exe`
+  vivo — ábrelo con un Python del equipo, o hazlo desde otro equipo).
+- **No se instala ninguna plataforma nueva.** Para eso está «Añadir
+  plataformas…» del asistente, que enseña los megas antes de bajarlos.
+- No se tocan el programa, la configuración, las claves, el estado ni los
+  lanzadores.
+
 Sigue valiendo pasar el instalador por encima, que es lo mismo por otro camino.
 
 ## Configuración
@@ -560,6 +595,11 @@ Léelo entero antes de usar esto con datos que te importen.
   TLS que lo que describen, así que no protegen de que rclone.org o GitHub estén
   comprometidos. Sí de una descarga a medias, de un proxy que devuelve otra cosa
   y de una caché que sirve un artefacto viejo.
+  Lo mismo vale cuando el **dispositivo** pone al día sus componentes desde la
+  ventana: es la misma maquinaria, ejecutada desde el zip del código recién
+  descargado y verificado. Y una garantía más, porque aquí se sustituye algo que
+  ya funcionaba: el intercambio es un renombrado, así que un corte deja el
+  componente de antes exactamente como estaba, nunca uno a medias.
 - **La clave de recuperación de BitLocker no la toca el programa.** Leerla exige
   permisos de administrador y no compensaba: guárdala donde te diga Windows,
   pero **no dentro del dispositivo** —es el volumen que descifra, así que ahí no
