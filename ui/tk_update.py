@@ -16,6 +16,15 @@ El reparto de las tres formas de enseñar algo en marcha es el de siempre:
 Y al terminar bien no se vuelve aquí: se relanza el programa y se cierra la
 ventana. No es una cortesía, es obligatorio: este proceso tiene cargados en
 memoria los módulos que se acaban de sustituir en disco.
+
+Aquí viven las dos pantallas de actualizar, que son la misma historia contada
+dos veces: `open_dialog()` cambia el PROGRAMA y `open_components_dialog()` los
+COMPONENTES —el rclone y el Python que el dispositivo lleva dentro—. Las dos
+bajan el mismo zip del código y lanzan el mismo `prdrive-install.py` descargado,
+porque `install/` no viaja al dispositivo. La diferencia de fondo: sustituir el
+programa obliga a reabrir la ventana (sus módulos ya no son los de disco);
+sustituir los componentes no, porque nada de lo que se toca está cargado en
+memoria.
 """
 
 from __future__ import annotations
@@ -26,7 +35,7 @@ import tempfile
 import webbrowser
 from pathlib import Path
 
-from common import model, store, update
+from common import components, model, store, update
 
 from . import prefs, theme
 from .tk import (TITLE, bloque_aviso, cabecera, cuerpo_visible, modal, mostrar,
@@ -176,3 +185,119 @@ def open_dialog(parent, nueva) -> bool:
 
     mostrar(dlg, parent)
     return hecho["ok"]
+
+
+def open_components_dialog(parent, pends) -> bool:
+    """La pantalla de «los componentes están anticuados».
+
+    Devuelve True si se ha tocado algo, para que la ventana relea los sellos y
+    repinte. No hace falta reabrir el programa, a diferencia de la otra: lo que
+    se sustituye son binarios que este proceso no tiene cargados en memoria."""
+    from tkinter import messagebox, ttk
+
+    if not pends:
+        return False
+
+    tocado = {"ok": False}
+    tag = update.source_tag()
+
+    dlg = modal(parent, "Actualizar componentes")
+    marco = cuerpo_visible(dlg, padding=(20, 18, 20, 16))
+    marco.columnconfigure(0, weight=1)
+
+    cabecera(marco, "Los componentes del dispositivo están anticuados",
+             "El rclone y el Python que lleva dentro no son los que fija esta "
+             "versión del programa.", ancho=520,
+             estilo="Dialogo.TLabel").grid(row=0, column=0, sticky="w")
+
+    # --- qué lleva y qué toca ------------------------------------------------
+    tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(14, 12))
+    tarjeta.grid(row=1, column=0, sticky="ew", pady=(16, 0))
+    tarjeta.columnconfigure(1, weight=1)
+    for i, p in enumerate(pends):
+        ttk.Label(tarjeta, text=p.titulo, style="Card.Campo.TLabel").grid(
+            row=i, column=0, sticky="nw", pady=(0, 6), padx=(0, 12))
+        ttk.Label(tarjeta, text=f"{p.lleva}  →  {p.deberia}",
+                  style="Card.MonoPista.TLabel",
+                  wraplength=theme.medida(340), justify="left").grid(
+            row=i, column=1, sticky="w", pady=(0, 6))
+
+    # --- qué respalda la descarga, sin adornos -------------------------------
+    notas = ttk.Frame(marco, style="Gris.TFrame", padding=(12, 10))
+    notas.grid(row=2, column=0, sticky="ew", pady=(14, 0))
+    notas.columnconfigure(0, weight=1)
+    ttk.Label(notas, text=(
+        "Se descargan de su publicador —rclone.org y python-build-standalone— "
+        "y se comprueban contra el SHA256 que cada uno publica antes de "
+        "escribir nada. No hay firma. Se sustituyen de un renombrado, así que "
+        "un corte no puede dejar el dispositivo a medias, y lo que esté en uso "
+        "se deja para otro momento. Tu configuración, tus claves y tus datos no "
+        "se tocan."), style="Gris.Pista.TLabel",
+        wraplength=theme.medida(520), justify="left").grid(row=0, column=0,
+                                                           sticky="w")
+    fila = 3
+
+    if servicio_vivo():
+        bloque_aviso(marco, "El servicio periódico sigue en marcha en este "
+                            "equipo. Si está sincronizando, su rclone no se "
+                            "podrá sustituir y se dejará para otra vez.",
+                     ancho=520).grid(row=fila, column=0, sticky="ew", pady=(14, 0))
+        fila += 1
+
+    if not tag:
+        bloque_aviso(marco, "Este dispositivo no dice qué versión lleva, así "
+                            "que no sé qué código descargar para ponerlo al "
+                            "día. Pasa el instalador por encima.",
+                     ancho=520).grid(row=fila, column=0, sticky="ew", pady=(14, 0))
+        fila += 1
+
+    def actualizar() -> None:
+        if not messagebox.askokcancel(TITLE, (
+                "Se van a sustituir el rclone y el Python que lleva este "
+                "dispositivo por los que fija esta versión del programa.\n\n"
+                "El programa, tu configuración, tus claves y tus datos no se "
+                "tocan. Lo que esté en uso ahora mismo se dejará para otra vez."),
+                parent=dlg):
+            return
+
+        # En el temporal del equipo, nunca en el dispositivo: son ~270 KB que se
+        # borran a continuación, y no hay por qué gastarle ciclos de escritura.
+        staged = Path(tempfile.mkdtemp(prefix="prdrive-components-"))
+        try:
+            ok, valor = working(dlg, "Descargando el instalador",
+                                lambda: update.download(tag, staged),
+                                f"Trayendo el código de la {tag}…")
+            if not ok:
+                messagebox.showerror(TITLE, f"No se ha tocado nada.\n\n{valor}",
+                                     parent=dlg)
+                return
+
+            rc = output_window("actualizar los componentes",
+                               update.components_command(staged, model.DEVICE_ROOT),
+                               parent=dlg, subtitulo=str(model.APP_DIR))
+            # Se haya podido con todo o no, los sellos ya dicen la verdad: la
+            # ventana relee y el aviso se apaga solo si ya no hay motivo.
+            tocado["ok"] = True
+            if rc != 0:
+                messagebox.showerror(TITLE, (
+                    f"No se ha podido con todo (código {rc}).\n\n"
+                    f"Lo que no se ha sustituido sigue exactamente como estaba. "
+                    f"Mira la salida para ver qué ha fallado."), parent=dlg)
+                return
+        finally:
+            shutil.rmtree(staged, ignore_errors=True)
+        dlg.destroy()
+
+    botones = ttk.Frame(marco)
+    botones.grid(row=fila, column=0, sticky="ew", pady=(16, 0))
+    botones.columnconfigure(0, weight=1)
+    instalar = ttk.Button(botones, text="Actualizar ahora", style="Primary.TButton",
+                          padding=(12, 7), command=actualizar)
+    theme.boton_icono(instalar, "down", theme.SUPERFICIE, theme.ACENTO)
+    if not tag:
+        instalar.configure(state="disabled")
+    instalar.grid(row=0, column=1, padx=(0, 6))
+    ttk.Button(botones, text="Cerrar", command=dlg.destroy).grid(row=0, column=2)
+
+    mostrar(dlg, parent)
+    return tocado["ok"]

@@ -13,7 +13,7 @@ from __future__ import annotations
 import subprocess
 import sys
 
-from common import APP_NAME, model, update
+from common import APP_NAME, components, model, update
 from common.model import Config
 
 from . import Choice, pair_status_notes, prefs
@@ -66,6 +66,16 @@ def main_menu(config: Config, startup_msg: str | None) -> Choice | None:
         print(f"\nHay una actualización disponible: {nueva.tag} "
               f"(tienes la {update.installed_version() or 'desconocida'}).")
         print(f"Actualiza desde la ventana, o pasa el instalador: {nueva.url}")
+
+    # Los componentes no necesitan caché ni red: sus sellos están en el propio
+    # dispositivo. Aquí solo se avisa —ponerlos al día es de la ventana, que es
+    # donde está la ceremonia de confirmar y ver la salida—.
+    pend = components.pendientes()
+    if pend:
+        print("\nLos componentes de este dispositivo están anticuados:")
+        for p in pend:
+            print(f"   - {p.describe()}")
+        print("Ponlos al día desde la ventana, o pasa el instalador por encima.")
     print("\n 1) Sincronizar todo ahora"
           "\n 2) Sincronizar parejas concretas"
           "\n 3) Iniciar servicio periódico"

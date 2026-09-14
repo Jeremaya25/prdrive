@@ -31,7 +31,7 @@ from _harness import Checks, sandbox, tmpdir
 
 import tomllib
 
-from common import catalog, config_file, conflicts, model, update
+from common import catalog, components, config_file, conflicts, model, pins, update
 from install import device
 
 c = Checks("medidas de las pantallas")
@@ -338,6 +338,20 @@ try:
                         ancho, alto, escala, modulo=tk_update)
                     c(f"{nombre}: {que} cabe", entra, True)
                     c(f"{nombre}: {que} no queda recortado", corta, False)
+
+                # La de componentes crece con una fila por componente: se mide
+                # con el peor caso posible, las cuatro plataformas con sus dos
+                # componentes cada una.
+                pends = [components.Pendiente(p, que, "v0.0.1 (20200101)",
+                                              "v9.9.9 (20260901)")
+                         for p in pins.PLATAFORMAS
+                         for que in (components.RCLONE, components.PYTHON)]
+                entra, corta = medir_dialogo(
+                    lambda: tk_update.open_components_dialog(raiz, pends),
+                    ancho, alto, escala, modulo=tk_update)
+                c(f"{nombre}: la pantalla de componentes cabe", entra, True)
+                c(f"{nombre}: la pantalla de componentes no queda recortada",
+                  corta, False)
     finally:
         tk_pairs.mostrar, tk.Toplevel.wait_window = REAL_MOSTRAR, REAL_WAIT
 finally:
