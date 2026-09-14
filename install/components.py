@@ -44,7 +44,7 @@ from typing import Callable
 # un `components.pendientes(...)` dentro de `install/components.py` sería una
 # adivinanza sobre cuál de los dos se está leyendo.
 from common import pins
-from common.components import PYTHON, RCLONE, Pendiente
+from common.components import RCLONE, Pendiente
 from common.components import pendientes as sellos_pendientes
 
 from . import IS_WIN, InstallError
@@ -139,7 +139,9 @@ def swap_rclone(destino: Path, origen: Path) -> None:
     aparta el de antes con un renombrado y se coloca el nuevo con otro. El
     renombrado es atómico en los dos sistemas, así que en ningún instante hay
     medio rclone en `bin/` — y medio rclone es un dispositivo que no sincroniza
-    en ningún equipo. Si el último paso falla, el de antes vuelve a su sitio.
+    en ningún equipo. Si el último paso falla, el de antes vuelve a su sitio; y
+    si ni eso se puede, el error dice que esa plataforma se ha quedado sin rclone
+    y cómo volver a ponerlo.
 
     Borrar el apartado es lo único que puede fallar sin consecuencias, y se deja
     para la próxima pasada (`_limpiar_restos`)."""
@@ -168,8 +170,24 @@ def swap_rclone(destino: Path, origen: Path) -> None:
     try:
         os.replace(nuevo, destino)
     except OSError as e:
+        # Esta es la única rama que puede dejar `bin/` SIN rclone, y por eso es
+        # la única que no se puede permitir escaparse cruda: `aplicar()` solo
+        # recoge InstallError, así que un OSError de aquí abortaría la pasada
+        # entera y se perdería el parte de lo hecho justo cuando hay algo urgente
+        # que contar. Y un dispositivo sin binario ni siquiera vuelve a salir
+        # como pendiente —`rclone_pendiente()` no compara lo que no está—, o sea
+        # que si no lo dice este mensaje no lo dice nadie.
         if apartado:
-            os.replace(viejo, destino)
+            try:
+                os.replace(viejo, destino)
+            except OSError as otro:
+                nuevo.unlink(missing_ok=True)
+                raise InstallError(
+                    f"No he podido colocar el rclone en {destino} ({e}) y "
+                    f"tampoco devolver a su sitio el que había ({otro}).\n\n"
+                    f"Esta plataforma se ha quedado sin rclone. Vuelve a "
+                    f"ejecutar el instalador de prdrive, elige este dispositivo "
+                    f"y pulsa «Añadir plataformas…».") from otro
         nuevo.unlink(missing_ok=True)
         raise InstallError(f"No he podido colocar el rclone en {destino}: {e}\n"
                            f"El que había sigue en su sitio.") from e

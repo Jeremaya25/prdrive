@@ -238,6 +238,39 @@ try:
     c("y el .nuevo se ha retirado",
       [p.name for p in destino.parent.glob(".*")], [])
 
+    # Y si encima falla devolver el de antes a su sitio, el dispositivo se queda
+    # sin rclone de verdad. Eso tiene que salir como InstallError y diciendo por
+    # dónde se sale: un OSError crudo abortaría la pasada entera de `aplicar()`
+    # —que solo recoge InstallError— y se perdería el parte; y una plataforma sin
+    # binario ya no vuelve a salir como pendiente, así que nadie más lo contaría.
+    raiz = dispositivo()
+    destino = platforms.rclone_path(raiz, WIN)
+    llamadas = {"n": 0}
+
+    def replace_que_falla_siempre_menos_la_primera(a, b):
+        llamadas["n"] += 1
+        if llamadas["n"] >= 2:    # la 1ª aparta; fallan colocar y devolver
+            raise PermissionError("justo ahora no")
+        return reemplazar(a, b)
+
+    components.os.replace = replace_que_falla_siempre_menos_la_primera
+    try:
+        components.swap_rclone(destino, nuevo_rclone)
+        c("quedarse sin rclone se cuenta", "siguió", "InstallError")
+    except InstallError as e:
+        c("quedarse sin rclone se cuenta", "InstallError", "InstallError")
+        c.contains("diciendo en qué estado queda", str(e), "sin rclone")
+        c.contains("y por dónde se sale", str(e), "Añadir plataformas")
+    except OSError:
+        c("quedarse sin rclone se cuenta", "OSError crudo", "InstallError")
+    finally:
+        components.os.replace = reemplazar
+    c("sin dejar el .nuevo por ahí",
+      [p.name for p in destino.parent.glob(".*.nuevo-*")], [])
+    c("y con el binario de antes apartado, no destruido",
+      [p.read_bytes() for p in destino.parent.glob(".*.viejo-*")],
+      [b"rclone viejo"])
+
     # --- los restos de un intento anterior se barren -------------------------
     raiz = dispositivo()
     destino = platforms.rclone_path(raiz, WIN)
