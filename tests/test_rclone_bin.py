@@ -219,6 +219,38 @@ try:
     c("la caché queda tan limpia como si no se hubiera tocado",
       list(suma_rota.iterdir()), [])
 
+    # --- y si falla ANTES de renombrar, lo que ya hubiera no se toca ---------
+    #
+    # El caso simétrico al de arriba: aquí `destino` no es del intento que
+    # falla, es un binario bueno de una descarga anterior, con su suma al lado.
+    # Antes del `os.replace` lo único a medias es el `.part`; un fallo aquí no
+    # tiene por qué llevarse por delante una caché que ya era buena.
+    con_binario_previo = tmpdir("prdrive-rclone-binario-previo-")
+    rclone_bin.cache_dir = lambda plat=None: con_binario_previo
+    (con_binario_previo / EXE).write_bytes(b"rclone de antes, bueno")
+    suma_previa = hashlib.sha256(b"rclone de antes, bueno").hexdigest()
+    (con_binario_previo / (EXE + ".sha256")).write_text(suma_previa + "\n",
+                                                        encoding="ascii")
+    red({URL_SUMS: SUMS.encode(), URL_ZIP: ZIP})
+    copyfileobj_real = rclone_bin.shutil.copyfileobj
+    rclone_bin.shutil.copyfileobj = lambda src, dst: (_ for _ in ()).throw(
+        OSError("disco lleno, para la prueba"))
+    try:
+        rclone_bin.download_rclone()
+        c("si falla antes de renombrar no se sigue", "siguió", "InstallError")
+    except InstallError as e:
+        c("si falla antes de renombrar no se sigue", "InstallError", "InstallError")
+        c.contains("y también lo dice", str(e), "No he podido guardar")
+    finally:
+        rclone_bin.shutil.copyfileobj = copyfileobj_real
+    c("el binario bueno de antes no se toca",
+      (con_binario_previo / EXE).read_bytes(), b"rclone de antes, bueno")
+    c("ni su suma",
+      (con_binario_previo / (EXE + ".sha256")).read_text(encoding="ascii").strip(),
+      suma_previa)
+    c("y el .part a medias sí se limpia",
+      (con_binario_previo / (EXE + ".part")).exists(), False)
+
     # --- la caché va por versión fijada --------------------------------------
     #
     # Sin este tramo, mover `pins.RCLONE_VERSION` no servía de nada mientras la

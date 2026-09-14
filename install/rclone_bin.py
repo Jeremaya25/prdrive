@@ -284,6 +284,8 @@ def download_rclone(progreso: Progreso | None = None,
     # cortada no puede quedarse con el nombre bueno y parecer una caché completa.
     destino = cache_dir(plat) / exe
     parcial = destino.with_name(destino.name + ".part")
+    renombrado = False       # como `apartado` en `deploy.install_runtime()`:
+                             # marca desde dónde el fallo ya no es sobre `.part`
     try:
         with zipfile.ZipFile(io.BytesIO(datos)) as zf:
             # El zip trae una carpeta con versión dentro; el binario es el único
@@ -297,6 +299,7 @@ def download_rclone(progreso: Progreso | None = None,
             with zf.open(miembros[0]) as src, open(parcial, "wb") as dst:
                 shutil.copyfileobj(src, dst)
         os.replace(parcial, destino)
+        renombrado = True
         # La suma del ZIP, que es la que publica rclone y la que se acaba de
         # comprobar. Lo que se apunta al lado es para volver a mirar el binario
         # extraído, así que se resume ÉL, no el zip que ya no existe.
@@ -306,15 +309,17 @@ def download_rclone(progreso: Progreso | None = None,
         parcial.unlink(missing_ok=True)
         raise InstallError(f"El fichero descargado de {url} no es un zip válido: {e}") from e
     except OSError as e:
-        # El fallo puede llegar DESPUÉS del `os.replace` —al apuntar la suma—,
-        # así que `parcial` ya no existe pero `destino` sí: hay que borrar los
-        # tres nombres, no solo el de siempre. Un binario ya renombrado pero sin
-        # su `.sha256` (o con uno de un binario anterior en esa misma ruta) es
-        # invisible para `cached()`, así que dejarlo ahí no cachea nada, solo
-        # deja basura y desmentiría el «no se ha guardado nada» de abajo.
+        # Antes del `os.replace` lo único a medias es `.part`; si ya había un
+        # `destino` de una descarga buena anterior, es ajeno a este intento y no
+        # se toca. Después del `os.replace` es al revés: ya no hay `.part`, pero
+        # `destino` es el binario que se acaba de dejar aquí y puede haberse
+        # quedado sin su `.sha256` (o con el de uno anterior en esa misma ruta)
+        # —invisible para `cached()`, así que dejarlo ahí no cachea nada, solo
+        # desmentiría el «no he podido guardar» de abajo.
         parcial.unlink(missing_ok=True)
-        destino.unlink(missing_ok=True)
-        _suma_apuntada(destino).unlink(missing_ok=True)
+        if renombrado:
+            destino.unlink(missing_ok=True)
+            _suma_apuntada(destino).unlink(missing_ok=True)
         raise InstallError(f"No he podido guardar {destino}: {e}") from e
 
     if not IS_WIN:
