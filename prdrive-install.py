@@ -19,6 +19,7 @@ inicializa las parejas bisync y comprueba que todo está.
     python prdrive-install.py --check         rclone + conexión + catálogo, y sale
     python prdrive-install.py --probe         qué unidades ve, y sale
     python prdrive-install.py --update RUTA   sustituye el código de un dispositivo
+    python prdrive-install.py --update-components RUTA   pone al día su rclone y su Python
 
 `--update` es el otro extremo del aviso de versión nueva de la ventana: no
 aprovisiona nada, solo repite el paso 5 sobre un dispositivo que ya existe. Y no
@@ -55,7 +56,7 @@ if not getattr(sys, "frozen", False):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from install import APP_NAME, InstallError, __version__  # noqa: E402
-from install import deploy, device, profile, rclone_bin, remote  # noqa: E402
+from install import components, deploy, device, profile, rclone_bin, remote  # noqa: E402
 
 DESCRIPCION = ("Aprovisiona un dispositivo prdrive nuevo a partir del catálogo "
                "de tu remoto.")
@@ -188,6 +189,50 @@ def cmd_update(raiz: str) -> int:
     return 0
 
 
+def cmd_update_components(raiz: str) -> int:
+    """Pone al día el rclone y el Python que lleva un dispositivo. Nada más.
+
+    El hermano de `--update`: aquel cambia el CÓDIGO y deja los componentes,
+    éste cambia los componentes y no toca el código, la configuración, las
+    claves ni los lanzadores. Se ejecuta igual, desde el zip descargado, y por
+    el mismo motivo: `install/` no viaja al dispositivo, y la maquinaria de bajar
+    y comprobar rclone y Python vive aquí.
+
+    No se instala ninguna plataforma nueva. Eso es «Añadir plataformas…» del
+    asistente, que es una decisión con megas de por medio y una lista delante."""
+    root = Path(raiz).expanduser()
+    destino = deploy.app_dir(root)
+    if not destino.is_dir():
+        raise InstallError(
+            f"En {root} no hay ningún {deploy.APP_SUBDIR}/, así que ahí no hay "
+            f"componentes que poner al día.\n"
+            f"Para preparar un dispositivo nuevo, abre el asistente sin "
+            f"argumentos.")
+
+    pendientes = components.pendientes(root)
+    if not pendientes:
+        print(f"Los componentes de {destino} ya son los que fija la versión "
+              f"{__version__}. No hay nada que hacer.")
+        return 0
+
+    print(f"Componentes por poner al día en {destino}:")
+    for p in pendientes:
+        print(f"  {p.describe()}")
+    res = components.aplicar(root, progreso=print, pends=pendientes)
+    for linea in res.hechos:
+        print(f"  hecho      {linea}")
+    for linea in res.pospuestos:
+        print(f"  POSPUESTO  {linea}")
+    for linea in res.fallidos:
+        print(f"  FALLO      {linea}")
+    if res.fallidos:
+        print("No se ha podido con todo. Nada ha quedado a medias: lo que no se "
+              "ha sustituido sigue exactamente como estaba.")
+        return 1
+    print("Hecho. Ni el código, ni la configuración, ni las claves se han tocado.")
+    return 0
+
+
 def cmd_wizard() -> int:
     """El asistente. Sin Tkinter no hay instalador: no hay menú de consola.
 
@@ -222,6 +267,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="Sustituye el código de un dispositivo ya "
                              "instalado (la raíz del volumen) y sale. No toca "
                              "ni la configuración ni las claves.")
+    parser.add_argument("--update-components", metavar="RUTA",
+                        help="Pone al día el rclone y el Python que ya lleva un "
+                             "dispositivo instalado (la raíz del volumen) y "
+                             "sale. No toca el código ni la configuración.")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     return parser.parse_args(argv)
 
@@ -236,6 +285,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     remote.install_signal_handlers()
     try:
+        if args.update_components:
+            return cmd_update_components(args.update_components)
         if args.update:
             return cmd_update(args.update)
         if args.check:

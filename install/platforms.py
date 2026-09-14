@@ -28,12 +28,11 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from common import model, pins
+from common import components, model, pins
 from common.pins import PLATAFORMAS, Plataforma
 
 from . import IS_WIN
 from .device import APP_SUBDIR
-from .runtime_bin import RUNTIME_SUBDIR, STAMP
 
 MB = 2 ** 20
 
@@ -78,26 +77,28 @@ class Instalada:
     runtime: bool
 
 
+# Las rutas de los componentes las define `common/components.py` y no este
+# módulo: el instalador ESCRIBE ahí y el dispositivo LEE de ahí, y son dos
+# paquetes distintos. Con una copia en cada lado, el día que una cambie el
+# instalador dejaría rclone en un sitio y la ventana lo buscaría en otro. Lo que
+# se añade aquí es solo la traducción de «raíz del volumen» a «carpeta del
+# código», que es lo que el instalador maneja y el dispositivo no necesita.
+
+def _app(device_root: Path | str) -> Path:
+    return Path(device_root) / APP_SUBDIR
+
+
 def runtime_dir(device_root: Path | str, plat: Plataforma) -> Path:
-    return Path(device_root) / APP_SUBDIR / RUNTIME_SUBDIR / plat.clave
+    return components.runtime_dir(_app(device_root), plat)
 
 
 def rclone_path(device_root: Path | str, plat: Plataforma) -> Path:
-    return Path(device_root) / APP_SUBDIR / "bin" / plat.bin_dir / plat.rclone_exe
+    return components.rclone_path(_app(device_root), plat)
 
 
 def runtime_stamp(device_root: Path | str, plat: Plataforma) -> str | None:
-    """El sello del runtime de esa plataforma, o None si no hay uno completo.
-
-    Sin sello no hay runtime: `runtime_bin.extract()` lo escribe el último, así
-    que una extracción interrumpida no lo tiene. Y sin intérprete tampoco."""
-    d = runtime_dir(device_root, plat)
-    try:
-        if not (d / plat.interprete).is_file():
-            return None
-        return (d / STAMP).read_text(encoding="utf-8")
-    except OSError:
-        return None
+    """El sello del runtime de esa plataforma, o None si no hay uno completo."""
+    return components.runtime_stamp(_app(device_root), plat)
 
 
 def provisioned(device_root: Path | str | None) -> dict[str, Instalada]:

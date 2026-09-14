@@ -46,7 +46,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Mapping
 
-from common import config_file, model
+from common import components, config_file, model
 from common.pins import Plataforma
 
 from . import APP_NAME, IS_WIN, InstallError, bundle_dir, platforms, python_command
@@ -288,14 +288,44 @@ def deploy_code(device_root: Path | str, rclone_binary: Path | str | None = None
     return escrito
 
 
+def write_rclone_stamp(binario: Path | str, plat: Plataforma | None,
+                       version: str) -> None:
+    """Deja —o quita— el sello que dice qué rclone hay en `binario`.
+
+    Es lo único que le permite al dispositivo saber qué versión lleva: un rclone
+    de otra plataforma no se puede ejecutar aquí para preguntárselo, y el de la
+    propia tampoco merece la pena arrancarlo cada vez que se pinta una ventana.
+
+    Sin versión afirmable se BORRA el que hubiera. «No consta» es la respuesta
+    honesta, y un sello viejo al lado de un binario nuevo sería peor que ninguno:
+    el dispositivo dejaría de ofrecer justo la actualización que le hace falta.
+
+    Best-effort, como `hide()` o `write_guide()`: que no se pueda escribir un
+    sello no puede tumbar una instalación que por lo demás ha ido bien."""
+    ruta = Path(binario)
+    sello = ruta.with_name(ruta.name + components.RCLONE_STAMP_SUFIJO)
+    try:
+        if version and plat is not None:
+            sello.write_text(components.rclone_stamp_text(plat, version),
+                             encoding="utf-8", newline="\n")
+        else:
+            sello.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def copy_rclone(device_root: Path | str, rclone_binary: Path | str,
-                plat: Plataforma | None = None) -> Path:
+                plat: Plataforma | None = None, version: str = "") -> Path:
     """Deja el binario en `bin/<arch>/`, que es donde lo va a buscar el modelo.
 
     Sin `plat` es el de este equipo, y se pregunta a `bin_subdir()` en vez de
     repetir la tabla de arquitecturas: es el mismo `bin/` que usará `sync.py`
     luego, y si dejaran de coincidir el instalador verificaría un binario y el
     dispositivo usaría otro. Con `plat`, el de esa plataforma.
+
+    `version` es la versión que se puede AFIRMAR de ese binario (la que devuelve
+    `rclone_bin.pinned_version()`), no la fijada: de un rclone encontrado en el
+    PATH no se sabe nada, y entonces se deja sin sello a propósito.
 
     Va SIN el bit de ejecución en exFAT —que no lo tiene—, y por eso
     `model.rclone_binary()` se copia a un temporal cuando hace falta."""
@@ -311,6 +341,10 @@ def copy_rclone(device_root: Path | str, rclone_binary: Path | str,
             destino.chmod(destino.stat().st_mode | stat.S_IXUSR | stat.S_IRUSR)
         except OSError:
             pass        # exFAT: no hay permisos que poner, y no pasa nada
+    # `plat or platforms.host()` y no una tabla propia: sin plataforma es el de
+    # este equipo, y en un macOS `host()` contesta None —no hay plataforma que
+    # sellar— en vez de colarlo como si fuera Linux.
+    write_rclone_stamp(destino, plat or platforms.host(), version)
     return destino
 
 
@@ -383,6 +417,11 @@ def remove_platform(device_root: Path | str, plat: Plataforma) -> list[Path]:
         if binario.is_file():
             binario.unlink()
             borrado.append(binario)
+            # El sello se va con él, pero no se apunta como borrado: no es un
+            # componente, es la etiqueta de uno. Dejarlo sería que la siguiente
+            # instalación leyera un rclone que ya no está.
+            binario.with_name(binario.name +
+                              components.RCLONE_STAMP_SUFIJO).unlink(missing_ok=True)
     except OSError as e:
         raise InstallError(f"No he podido borrar {binario}: {e}\n"
                            f"¿Está prdrive sincronizando ahora mismo?") from e
@@ -417,7 +456,8 @@ def apply_platforms(device_root: Path | str, plan: platforms.Plan,
         borrado += remove_platform(device_root, plat)
     for plat in plan.rclone:
         binario = rclone_bin.rclone_for(plat, progreso)
-        escrito.append(copy_rclone(device_root, binario, plat))
+        escrito.append(copy_rclone(device_root, binario, plat,
+                                   rclone_bin.pinned_version(binario, plat)))
     for plat in plan.runtime:
         archivo = runtime_bin.ensure_runtime(plat, progreso)
         puesto = install_runtime(device_root, plat, archivo)

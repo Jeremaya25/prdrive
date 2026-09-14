@@ -235,7 +235,7 @@ c("ni el .sh", (inmutable / "runsync.sh").read_text(encoding="utf-8"), "# el mí
 c("ni se inventa un .pyw", (inmutable / "runsync.pyw").exists(), False)
 
 # --- rclone y Python por plataforma --------------------------------------------
-from common import pins  # noqa: E402
+from common import components, pins  # noqa: E402
 from install import platforms, rclone_bin, runtime_bin  # noqa: E402
 
 WIN, LIN = pins.plataforma("windows-x64"), pins.plataforma("linux-x64")
@@ -284,6 +284,33 @@ try:
       ["linux-x64", "windows-x64"])
     c("nada borrado en un dispositivo nuevo", borrados, [])
 
+    # --- el sello de rclone ---------------------------------------------------
+    #
+    # De un rclone que salió de find_rclone() —el del PATH, el del checkout— no
+    # se sabe la versión, y el sello tiene que decir «no consta» en vez de
+    # inventársela: un sello que miente es peor que ninguno, porque el
+    # dispositivo dejaría de ofrecer la actualización que le hace falta.
+    sello = platforms.rclone_path(multi, WIN)
+    sello = sello.with_name(sello.name + components.RCLONE_STAMP_SUFIJO)
+    c("un rclone de procedencia desconocida no deja sello", sello.exists(), False)
+    c("y el dispositivo lo lee como pendiente",
+      [p.que for p in components.pendientes(deploy.app_dir(multi))
+       if p.plataforma == WIN], [components.RCLONE])
+
+    # Con versión afirmable sí, y entonces deja de estar pendiente.
+    deploy.copy_rclone(multi, rclone_falso, WIN, pins.RCLONE_VERSION)
+    c("con versión afirmable se deja sello", sello.is_file(), True)
+    c.contains("diciendo cuál", sello.read_text(encoding="utf-8"),
+               pins.RCLONE_VERSION)
+    c("y ese rclone deja de estar pendiente",
+      [p.que for p in components.pendientes(deploy.app_dir(multi))
+       if p.plataforma == WIN and p.que == components.RCLONE], [])
+
+    # Volver a copiar uno del que no se sabe nada BORRA el sello: quedaría
+    # describiendo a un binario que ya no está ahí.
+    deploy.copy_rclone(multi, rclone_falso, WIN)
+    c("copiar uno desconocido encima quita el sello", sello.exists(), False)
+
     # Otra vez lo mismo: el runtime con el mismo sello no se vuelve a extraer.
     marca = platforms.runtime_dir(multi, WIN) / "marca-de-antes"
     marca.write_text("x", encoding="utf-8")
@@ -312,6 +339,7 @@ try:
 
     # Quitar Linux x64 y confirmar el borrado: se va su rclone y su Python, y
     # solo los suyos —el rclone.exe de Windows vive en la misma carpeta—.
+    deploy.copy_rclone(multi, rclone_falso, LIN, pins.RCLONE_VERSION)
     quitar = platforms.Matriz.para(multi, anfitrion=WIN)
     quitar.quitar("linux-x64")
     quitar.confirmar_borrado("linux-x64", True)
@@ -320,6 +348,14 @@ try:
       platforms.provisioned(multi).get("linux-x64"), None)
     c("y solo lo suyo", platforms.rclone_path(multi, WIN).is_file(), True)
     c("se dice qué se ha borrado", len(borrados), 2)
+
+    # Borrar la plataforma se lleva también su sello: si no, quedaría un
+    # PRDRIVE-RCLONE huérfano describiendo un binario que ya no existe, y la
+    # siguiente instalación lo leería como si el rclone siguiera ahí.
+    huerfano = platforms.rclone_path(multi, LIN)
+    c("el sello se va con su binario",
+      huerfano.with_name(huerfano.name +
+                         components.RCLONE_STAMP_SUFIJO).exists(), False)
 
     # Sin confirmar, quitar no borra.
     no_borra = platforms.Matriz.para(multi, anfitrion=WIN)

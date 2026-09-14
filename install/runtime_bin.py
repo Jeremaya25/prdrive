@@ -49,7 +49,7 @@ import urllib.request
 from pathlib import Path
 from typing import Callable
 
-from common import pins
+from common import components, pins
 from common.pins import Plataforma
 from common.update import _ruta_segura
 
@@ -60,11 +60,12 @@ USER_AGENT = f"{APP_NAME}-install"
 Progreso = Callable[[str], None]
 
 # El sello de versión de cada runtime del dispositivo: `runtime/<clave>/STAMP`.
-# penwatch lo compara con el de su copia en el equipo para saber si tiene que
-# refrescarla, así que el nombre está repetido allí —y un test impide que las dos
-# copias se separen—.
-STAMP = "PRDRIVE-RUNTIME"
-RUNTIME_SUBDIR = "runtime"
+# Los nombres los define `common/components.py`, que es quien los LEE desde el
+# dispositivo; aquí solo se escriben. Un segundo literal aquí sería el que se
+# quedaría atrás el día que cambiara el otro. penwatch los repite —no puede
+# importar nada del proyecto— y un test impide que las copias se separen.
+STAMP = components.RUNTIME_STAMP
+RUNTIME_SUBDIR = components.RUNTIME_SUBDIR
 
 SUMS_URL = f"{pins.PBS_BASE_URL}/{pins.PYTHON_RELEASE}/SHA256SUMS"
 

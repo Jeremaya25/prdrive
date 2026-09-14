@@ -193,4 +193,30 @@ c("con --update y la raíz del volumen", orden[3:], ["--update", str(Path("/medi
 c("sin buffer, para que la ventana de salida enseñe línea a línea",
   "-u" in orden, True)
 
+# --- la orden que pone al día los componentes --------------------------------
+#
+# El zip que hay que bajar es el de la versión INSTALADA, no el de la última
+# release: los pines viajan con el programa, así que la maquinaria que baja
+# rclone y Python tiene que ser la de la versión que los fija. Bajar la de otra
+# instalaría componentes que este dispositivo no espera.
+puesto = tmpdir("prdrive-tag-")
+(puesto / "VERSION").write_text("0.1.3\n", encoding="utf-8")
+c("el tag a descargar es el de la versión instalada",
+  update.source_tag(puesto), "v0.1.3")
+c("y sin VERSION no hay tag que pedir",
+  update.source_tag(tmpdir("prdrive-sintag-")), "")
+
+orden = update.components_command(Path("/tmp/staged"), Path("/media/pen"))
+c("se ejecuta el prdrive-install.py DESCARGADO, no el del dispositivo",
+  Path(orden[2]).name, "prdrive-install.py")
+c.contains("y desde la carpeta descargada", orden[2], "staged")
+c("con --update-components y la raíz del volumen",
+  orden[3:], ["--update-components", str(Path("/media/pen"))])
+c("sin buffer, para que la ventana de salida enseñe línea a línea",
+  "-u" in orden, True)
+# El mismo intérprete a propósito: si el dispositivo lleva Python propio, éste
+# es el suyo, y así `install/components.py` reconoce que ese runtime está en uso
+# sin que nadie tenga que pasárselo.
+c("con el mismo Python que esta ventana", orden[0], sys.executable)
+
 sys.exit(c.report())

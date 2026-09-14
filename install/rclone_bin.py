@@ -47,6 +47,7 @@ from common.model import arch_dir, machine_arch
 from common.pins import Plataforma
 
 from . import APP_NAME, IS_WIN, RCLONE_BASE_URL, InstallError, bundle_dir
+from .runtime_bin import file_sha256     # el mismo resumen a trozos, una copia
 
 DOWNLOAD_TIMEOUT = 60          # segundos por lectura, no en total
 Progreso = Callable[[str], None]
@@ -93,17 +94,25 @@ def bin_subdir() -> str:
 
 
 def cache_dir(plat: Plataforma | None = None) -> Path:
-    """La caché de descargas, con una carpeta por arquitectura.
+    """La caché de descargas: una carpeta por VERSIÓN fijada y arquitectura.
 
-    Separada por arquitectura porque si no la caché es lo que deshace el
-    arreglo: un instalador que se creyó x64 en un equipo ARM dejó ahí un rclone
-    de amd64, y al volver a instalar `find_rclone()` lo encuentra antes de
-    plantearse descargar, así que el `download_url()` correcto no llega a
-    usarse nunca. El binario del zip depende de la arquitectura; el sitio donde
-    se guarda, también. Windows y Linux de la misma CPU comparten carpeta sin
-    pisarse: uno es `rclone.exe` y el otro `rclone`, igual que en `bin/`."""
+    Por arquitectura, porque si no la caché deshace el arreglo del ARM: un
+    instalador que se creyó x64 en un equipo ARM dejaba ahí un rclone de amd64, y
+    al volver a instalar `find_rclone()` lo encuentra antes de plantearse
+    descargar, así que el `download_url()` correcto no llegaba a usarse nunca.
+
+    Y por versión desde que el dispositivo puede actualizar sus componentes, por
+    exactamente el mismo motivo una capa más arriba: mover `pins.RCLONE_VERSION`
+    no serviría de nada mientras el equipo tuviera cacheado el binario de antes,
+    que es el primero que se encuentra. Con la versión en la ruta, una caché de
+    otra versión simplemente no existe para este código.
+
+    El nombre del FICHERO no lleva la versión a propósito: es el mismo que va a
+    tener en `bin/` del dispositivo. Windows y Linux de la misma CPU comparten
+    carpeta sin pisarse, uno es `rclone.exe` y el otro `rclone`."""
     base = os.environ.get("LOCALAPPDATA") or tempfile.gettempdir()
-    d = Path(base) / "prdrive-install" / (plat.bin_dir if plat else bin_subdir())
+    d = (Path(base) / f"{APP_NAME}-install" / "rclone" / pins.RCLONE_VERSION
+         / (plat.bin_dir if plat else bin_subdir()))
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -129,6 +138,54 @@ def find_rclone() -> Path | None:
         except OSError:
             continue
     return None
+
+
+def _suma_apuntada(binario: Path) -> Path:
+    return binario.with_name(binario.name + ".sha256")
+
+
+def cached(plat: Plataforma | None = None) -> Path | None:
+    """El binario de la caché, si está y sigue siendo el que se comprobó.
+
+    Se vuelve a resumir en cada uso, igual que `runtime_bin.cached()`: la
+    carpeta ya garantiza la VERSIÓN, lo que queda por garantizar son los bytes.
+    Cuesta una fracción de segundo y a cambio una caché truncada o estropeada no
+    llega nunca a un dispositivo, donde se va a ejecutar en cada equipo."""
+    binario = cache_dir(plat) / (plat.rclone_exe if plat else exe_name())
+    try:
+        if not binario.is_file():
+            return None
+        apuntada = _suma_apuntada(binario).read_text(encoding="ascii").strip()
+        if apuntada and file_sha256(binario) == apuntada:
+            return binario
+    except OSError:
+        pass
+    return None
+
+
+def pinned_version(ruta: Path | str, plat: Plataforma | None = None) -> str:
+    """La versión de ese binario si se puede AFIRMAR, o '' si no se sabe.
+
+    Solo se puede afirmar de lo que salió de la caché, porque la caché va por
+    versión. De un rclone encontrado en el PATH, dejado a mano junto al
+    instalador o heredado de un checkout no se sabe nada, y el sello del
+    dispositivo tiene que decir «no consta» en vez de mentir: un sello viejo al
+    lado de un binario nuevo es peor que ningún sello. Ejecutarlo para
+    preguntárselo tampoco vale — el de otra plataforma no arranca aquí.
+
+    Y estar DENTRO de la carpeta de la caché no basta: `candidates()` añade ahí
+    un binario sin comprobar a propósito —es lo que mantiene vivo el reaprovechar
+    sin red de `ensure_rclone()`—, y es la misma carpeta que
+    `published_sha256()` nombra en su mensaje de error cuando invita a dejar un
+    rclone a mano. Así que se exige `cached()`: solo lo que se ha vuelto a
+    resumir y cuadra con su `.sha256` es lo que este sello puede afirmar."""
+    en_cache = cached(plat)
+    try:
+        return (pins.RCLONE_VERSION
+                if en_cache is not None
+                and Path(ruta).resolve() == en_cache.resolve() else "")
+    except OSError:
+        return ""
 
 
 USER_AGENT = f"{APP_NAME}-install"
@@ -231,8 +288,13 @@ def download_rclone(progreso: Progreso | None = None,
             f"{cache_dir(plat)}.")
     decir(f"SHA-256 correcto: {obtenido}")
 
-    # A partir de aquí ya se puede tocar el disco.
+    # A partir de aquí ya se puede tocar el disco. Se escribe a un `.part` y se
+    # renombra, por lo mismo que `runtime_bin.download_runtime()`: una extracción
+    # cortada no puede quedarse con el nombre bueno y parecer una caché completa.
     destino = cache_dir(plat) / exe
+    parcial = destino.with_name(destino.name + ".part")
+    renombrado = False       # como `apartado` en `deploy.install_runtime()`:
+                             # marca desde dónde el fallo ya no es sobre `.part`
     try:
         with zipfile.ZipFile(io.BytesIO(datos)) as zf:
             # El zip trae una carpeta con versión dentro; el binario es el único
@@ -243,10 +305,31 @@ def download_rclone(progreso: Progreso | None = None,
                 raise InstallError(
                     f"El zip de rclone no contiene ningún {exe}. "
                     f"¿Ha cambiado el empaquetado en {url}?")
-            with zf.open(miembros[0]) as src, open(destino, "wb") as dst:
+            with zf.open(miembros[0]) as src, open(parcial, "wb") as dst:
                 shutil.copyfileobj(src, dst)
+        os.replace(parcial, destino)
+        renombrado = True
+        # La suma del ZIP, que es la que publica rclone y la que se acaba de
+        # comprobar. Lo que se apunta al lado es para volver a mirar el binario
+        # extraído, así que se resume ÉL, no el zip que ya no existe.
+        _suma_apuntada(destino).write_text(file_sha256(destino) + "\n",
+                                           encoding="ascii")
     except zipfile.BadZipFile as e:
+        parcial.unlink(missing_ok=True)
         raise InstallError(f"El fichero descargado de {url} no es un zip válido: {e}") from e
+    except OSError as e:
+        # Antes del `os.replace` lo único a medias es `.part`; si ya había un
+        # `destino` de una descarga buena anterior, es ajeno a este intento y no
+        # se toca. Después del `os.replace` es al revés: ya no hay `.part`, pero
+        # `destino` es el binario que se acaba de dejar aquí y puede haberse
+        # quedado sin su `.sha256` (o con el de uno anterior en esa misma ruta)
+        # —invisible para `cached()`, así que dejarlo ahí no cachea nada, solo
+        # desmentiría el «no he podido guardar» de abajo.
+        parcial.unlink(missing_ok=True)
+        if renombrado:
+            destino.unlink(missing_ok=True)
+            _suma_apuntada(destino).unlink(missing_ok=True)
+        raise InstallError(f"No he podido guardar {destino}: {e}") from e
 
     if not IS_WIN:
         destino.chmod(destino.stat().st_mode | stat.S_IXUSR | stat.S_IRUSR)
@@ -276,16 +359,27 @@ def rclone_for(plat: Plataforma, progreso: Progreso | None = None,
         encontrado = find_rclone()
         if encontrado:
             return encontrado
-    en_cache = cache_dir(plat) / plat.rclone_exe
-    try:
-        if en_cache.is_file():
-            return en_cache
-    except OSError:
-        pass
+    en_cache = cached(plat)
+    if en_cache is not None:
+        return en_cache
     if not allow_download:
         raise InstallError(
             f"No hay rclone para {plat.nombre} en la caché y no se ha permitido "
             f"descargarlo.")
+    return download_rclone(progreso, plat)
+
+
+def pinned_rclone(plat: Plataforma, progreso: Progreso | None = None) -> Path:
+    """El rclone de la versión FIJADA para esa plataforma: caché o descarga.
+
+    No es `rclone_for()`, y la diferencia es justo la que importa. Aquel acepta
+    «cualquier rclone que haya por este equipo» —el del checkout, el del PATH—,
+    que es lo que permite aprovisionar sin red con uno puesto a mano. Esto
+    SUSTITUYE el binario que el dispositivo ya lleva, y cambiarlo por uno de
+    versión desconocida sería ir hacia atrás sin enterarse."""
+    en_cache = cached(plat)
+    if en_cache is not None:
+        return en_cache
     return download_rclone(progreso, plat)
 
 

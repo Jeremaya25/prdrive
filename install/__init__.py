@@ -12,6 +12,7 @@ probar sin pantalla y sin dispositivo.
     rclone_bin  conseguir rclone, el de este equipo o el de otra plataforma
     runtime_bin conseguir el Python que viaja en el dispositivo, y extraerlo
     platforms   para qué equipos va a funcionar: la lista del paso 5
+    components  poner al día el rclone y el Python que ya lleva un dispositivo
     remote      el rclone.conf efímero y el catálogo de parejas
     device      qué volúmenes hay, cuál es el dispositivo, y si quedó bien montado
     crypto      VeraCrypt y BitLocker

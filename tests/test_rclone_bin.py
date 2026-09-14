@@ -192,6 +192,132 @@ try:
     c("y NO deja el binario escrito", (limpio / EXE).exists(), False)
     c("ni el zip", (limpio / "rclone.zip").exists(), False)
     c("la caché se queda como estaba", list(limpio.iterdir()), [])
+
+    # --- y si falla justo al apuntar la suma, tampoco queda nada a medias ----
+    #
+    # Este fallo llega DESPUÉS del `os.replace`: ya no hay `.part` que limpiar,
+    # pero sí un `destino` recién renombrado. Si se dejara ahí sería un binario
+    # ya verificado y cacheado sin su `.sha256` al lado —invisible para
+    # `cached()`, así que no cachea nada, solo desmiente el «no he podido
+    # guardar» del mensaje.
+    suma_rota = tmpdir("prdrive-rclone-suma-rota-")
+    rclone_bin.cache_dir = lambda plat=None: suma_rota
+    red({URL_SUMS: SUMS.encode(), URL_ZIP: ZIP})
+    file_sha256_real = rclone_bin.file_sha256
+    rclone_bin.file_sha256 = lambda ruta: (_ for _ in ()).throw(
+        OSError("disco lleno, para la prueba"))
+    try:
+        rclone_bin.download_rclone()
+        c("si falla al apuntar la suma no se sigue", "siguió", "InstallError")
+    except InstallError as e:
+        c("si falla al apuntar la suma no se sigue", "InstallError", "InstallError")
+        c.contains("y dice que no ha podido guardar, de verdad", str(e),
+                   "No he podido guardar")
+    finally:
+        rclone_bin.file_sha256 = file_sha256_real
+    c("no deja el binario ya renombrado sin su suma", (suma_rota / EXE).exists(), False)
+    c("la caché queda tan limpia como si no se hubiera tocado",
+      list(suma_rota.iterdir()), [])
+
+    # --- y si falla ANTES de renombrar, lo que ya hubiera no se toca ---------
+    #
+    # El caso simétrico al de arriba: aquí `destino` no es del intento que
+    # falla, es un binario bueno de una descarga anterior, con su suma al lado.
+    # Antes del `os.replace` lo único a medias es el `.part`; un fallo aquí no
+    # tiene por qué llevarse por delante una caché que ya era buena.
+    con_binario_previo = tmpdir("prdrive-rclone-binario-previo-")
+    rclone_bin.cache_dir = lambda plat=None: con_binario_previo
+    (con_binario_previo / EXE).write_bytes(b"rclone de antes, bueno")
+    suma_previa = hashlib.sha256(b"rclone de antes, bueno").hexdigest()
+    (con_binario_previo / (EXE + ".sha256")).write_text(suma_previa + "\n",
+                                                        encoding="ascii")
+    red({URL_SUMS: SUMS.encode(), URL_ZIP: ZIP})
+    copyfileobj_real = rclone_bin.shutil.copyfileobj
+    # Esto rebautiza `shutil.copyfileobj` del intérprete entero, no un alias
+    # local — pero se restaura en el `finally` de abajo y `run_all.py` lanza
+    # cada fichero de test en su propio proceso, así que no se escapa a ningún
+    # otro test. No mover esto a un proceso compartido.
+    rclone_bin.shutil.copyfileobj = lambda src, dst: (_ for _ in ()).throw(
+        OSError("disco lleno, para la prueba"))
+    try:
+        rclone_bin.download_rclone()
+        c("si falla antes de renombrar no se sigue", "siguió", "InstallError")
+    except InstallError as e:
+        c("si falla antes de renombrar no se sigue", "InstallError", "InstallError")
+        c.contains("y también lo dice", str(e), "No he podido guardar")
+    finally:
+        rclone_bin.shutil.copyfileobj = copyfileobj_real
+    c("el binario bueno de antes no se toca",
+      (con_binario_previo / EXE).read_bytes(), b"rclone de antes, bueno")
+    c("ni su suma",
+      (con_binario_previo / (EXE + ".sha256")).read_text(encoding="ascii").strip(),
+      suma_previa)
+    c("y el .part a medias sí se limpia",
+      (con_binario_previo / (EXE + ".part")).exists(), False)
+
+    # --- la caché va por versión fijada --------------------------------------
+    #
+    # Sin este tramo, mover `pins.RCLONE_VERSION` no servía de nada mientras la
+    # caché del equipo tuviera el binario de antes: `rclone_for()` lo encuentra
+    # antes de plantearse descargar, así que la versión nueva no llegaba nunca a
+    # un dispositivo. Y desde R4 eso además le mentiría al sello.
+    rclone_bin.cache_dir = cache_real
+    version_real = rclone_bin.pins.RCLONE_VERSION
+    try:
+        rclone_bin.pins.RCLONE_VERSION = "v9.9.9"
+        cache_nueva = rclone_bin.cache_dir()
+        rclone_bin.pins.RCLONE_VERSION = "v0.0.1"
+        cache_vieja = rclone_bin.cache_dir()
+        c("la caché no mezcla versiones", cache_nueva != cache_vieja, True)
+        c("y la arquitectura sigue siendo el último tramo",
+          cache_nueva.name, rclone_bin.bin_subdir())
+    finally:
+        rclone_bin.pins.RCLONE_VERSION = version_real
+
+    # --- la caché se vuelve a resumir cada vez que se usa ---------------------
+    #
+    # Igual que la de los runtimes: la carpeta ya garantiza la VERSIÓN, lo que
+    # queda por garantizar son los bytes. Esto va a acabar ejecutándose en cada
+    # equipo donde se enchufe el dispositivo.
+    sano = tmpdir("prdrive-rclone-sano-")
+    rclone_bin.cache_dir = lambda plat=None: sano
+    red({URL_SUMS: SUMS.encode(), URL_ZIP: ZIP})
+    guardado = rclone_bin.download_rclone()
+    c("al descargar se apunta la suma al lado",
+      (sano / (EXE + ".sha256")).is_file(), True)
+    red({})
+    c("y volver a pedirlo sale de la caché sin red",
+      rclone_bin.pinned_rclone(platforms.host()) if platforms.host() else guardado,
+      guardado)
+
+    guardado.write_bytes(b"esto ya no es el que se comprobo")
+    c("una caché estropeada deja de valer", rclone_bin.cached(), None)
+    red({URL_SUMS: SUMS.encode(), URL_ZIP: ZIP})
+    c("y se vuelve a descargar entera",
+      rclone_bin.pinned_rclone(platforms.host()).read_bytes()
+      if platforms.host() else b"soy rclone", b"soy rclone")
+
+    # --- de qué binario se puede AFIRMAR la versión --------------------------
+    #
+    # Solo del que salió de la caché, que va por versión. De uno encontrado en
+    # el PATH o dejado a mano junto al instalador no se sabe nada, y el sello
+    # del dispositivo tiene que decir «no consta» en vez de mentir: ejecutarlo
+    # para preguntárselo no vale, el de otra plataforma no arranca aquí.
+    c("del de la caché sí", rclone_bin.pinned_version(sano / EXE), VERSION)
+    ajeno = tmpdir("prdrive-rclone-ajeno-") / EXE
+    ajeno.write_bytes(b"vete tu a saber")
+    c("de uno de fuera, no", rclone_bin.pinned_version(ajeno), "")
+
+    # Estar DENTRO de la carpeta de la caché no basta: es la misma carpeta que
+    # `published_sha256()` nombra en su mensaje de error cuando invita a dejar
+    # un rclone a mano, y ese binario nunca pasó por `cached()`. Sin su
+    # `.sha256` al lado no se puede afirmar nada de él, aunque viva justo donde
+    # `pinned_rclone()` lo encontraría.
+    sin_verificar = tmpdir("prdrive-rclone-sinverificar-")
+    rclone_bin.cache_dir = lambda plat=None: sin_verificar
+    (sin_verificar / EXE).write_bytes(b"puesto a mano, sin sha256 al lado")
+    c("estar en la carpeta de la caché sin su .sha256 no basta",
+      rclone_bin.pinned_version(sin_verificar / EXE), "")
 finally:
     rclone_bin.fetch = fetch_real
     rclone_bin.cache_dir = cache_real

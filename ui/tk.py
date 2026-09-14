@@ -27,7 +27,8 @@ import sys
 import threading
 import time
 
-from common import APP_NAME, conflicts, model, progress, results, update
+from common import (APP_NAME, components, conflicts, model, progress, results,
+                    update)
 from common.model import Config
 
 from . import (Choice, abrir, cuando, cuando_sello, icons, manual_args,
@@ -546,6 +547,13 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
             vista["conflictos"] = conflicts.contar(conflicts.cargar(vista["config"]))
         except Exception:                            # noqa: BLE001
             vista["conflictos"] = {}
+        # Los componentes se leen de sus sellos: es un puñado de ficheros de dos
+        # líneas del propio dispositivo, así que no hace falta hilo ni red —a
+        # diferencia de la release, que vive en GitHub—.
+        try:
+            vista["componentes"] = components.pendientes()
+        except Exception:                            # noqa: BLE001
+            vista["componentes"] = []
 
     leer_estado()
 
@@ -593,6 +601,16 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
             root.destroy()
             return
         vista["nueva"] = update.pending()
+        repintar()
+
+    def abrir_componentes() -> None:
+        """Poner al día el rclone y el Python que lleva el dispositivo.
+
+        Aquí sí se vuelve, a diferencia de la actualización del programa: lo que
+        se sustituye son binarios que este proceso no tiene cargados en memoria,
+        así que no hay que relanzar nada."""
+        if tk_update.open_components_dialog(root, vista["componentes"]):
+            leer_estado()
         repintar()
 
     def mirar_version() -> None:
@@ -808,6 +826,24 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
                 ancho=330, icono="down",
                 boton=("Actualizar…", abrir_actualizacion),
             ).grid(row=fila, column=0, sticky="ew", pady=(14, 0))
+            fila += 1
+        # --- los componentes están anticuados ---------------------------------
+        # `elif` y no un bloque suyo: los pines viajan CON el programa, así que
+        # actualizarlo primero puede mover lo que toca. Ofrecer las dos cosas a
+        # la vez sería pedir el mismo trabajo dos veces, y en el orden malo.
+        elif vista["componentes"]:
+            caja = bloque_aviso(
+                frame,
+                "El rclone o el Python que lleva el dispositivo no son los que "
+                "fija esta versión:\n" + components.resumen(vista["componentes"]),
+                ancho=330, icono="down",
+                boton=("Actualizar…", abrir_componentes))
+            caja.grid(row=fila, column=0, sticky="ew", pady=(14, 0))
+            # Sustituir el rclone mientras sincroniza sería cambiárselo bajo los
+            # pies; el módulo lo pospondría, pero es mejor no ofrecerlo siquiera.
+            for hijo in caja.winfo_children():
+                if isinstance(hijo, ttk.Button):
+                    hijo.configure(state=apagado)
             fila += 1
 
         # --- la lista de parejas ---------------------------------------------

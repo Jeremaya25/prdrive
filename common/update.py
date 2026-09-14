@@ -374,6 +374,36 @@ def apply_command(staged: Path | str, device_root: Path | str) -> list[str]:
             "--update", str(device_root)]
 
 
+def source_tag(root: Path | str | None = None) -> str:
+    """El tag del código que este árbol lleva puesto, o '' si no se sabe.
+
+    Es lo que hay que descargar para poner al día los COMPONENTES, y no es el
+    tag de la última release: los pines (`common/pins.py`) viajan con el
+    programa, así que la maquinaria que sabe bajar y comprobar rclone y Python
+    es la de esta misma versión. La de otra fijaría otras versiones, que no son
+    las que este dispositivo espera."""
+    version = installed_version(root)
+    return f"v{version}" if version else ""
+
+
+def components_command(staged: Path | str, device_root: Path | str) -> list[str]:
+    """La orden que pone al día los componentes, ejecutada DESDE lo descargado.
+
+    El hermano de `apply_command()` y por el mismo motivo: `install/` no está en
+    el dispositivo, y quien sabe bajar rclone y Python —y comprobarlos— es el
+    instalador. Aquella cambia el CÓDIGO y deja los componentes; ésta cambia los
+    componentes y no toca el código.
+
+    Con `sys.executable` a propósito, no con cualquier Python: si el dispositivo
+    lleva el suyo, éste ES el suyo, y así `install/components.py` reconoce que
+    ese runtime está en uso mirando su propio intérprete, sin que nadie tenga
+    que pasárselo por la línea de órdenes. El `-u` es el de siempre:
+    `output_window` lee línea a línea."""
+    return [sys.executable, "-u",
+            str(Path(staged) / "prdrive-install.py"),
+            "--update-components", str(device_root)]
+
+
 def relaunch_command() -> list[str]:
     """Cómo volver a abrir la ventana con el código nuevo ya puesto.
 
