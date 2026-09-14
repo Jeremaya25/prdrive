@@ -38,7 +38,7 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 │   ├── config_file.py reads AND writes sync_config.toml (hand-rolled serializer)
 │   ├── catalog.py     the global pair catalogue on the remote: read, cache, write
 │   ├── update.py      is there a newer release, and how to fetch its code — no Tk
-│   ├── components.py  qué rclone/Python lleva el dispositivo vs los pines — sellos, sin red
+│   ├── components.py  what rclone/Python the device carries vs the pins — stamps, no network
 │   ├── pins.py        pinned rclone + python-build-standalone versions; the platform table
 │   └── store.py       device JSON state files + pid_alive(); tolerant reads, atomic writes
 ├── ui/                knows how to ask the user and show results
@@ -66,7 +66,7 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 │   ├── rclone_bin.py  get hold of an rclone (this host's, or any platform's), verified
 │   ├── runtime_bin.py get hold of a Python runtime (python-build-standalone), verified; extract
 │   ├── platforms.py   which platforms: host, what the device carries, the step-5 Matriz/Plan
-│   ├── components.py  sustituir esos componentes: conseguir el fijado e intercambiar
+│   ├── components.py  replace those components: get the pinned one and swap it in
 │   ├── remote.py      the ephemeral rclone.conf and the pair catalogue
 │   ├── device.py      what volumes exist, which one is the device, was it mounted right
 │   ├── crypto.py      VeraCrypt and BitLocker
@@ -178,7 +178,7 @@ python prdrive-install.py          # install wizard for a NEW device (Tk only, n
 python prdrive-install.py --check  # rclone + connection + catalogue, then exit
 python prdrive-install.py --probe  # what drives it sees, then exit
 python prdrive-install.py --update E:\   # replace the code of an installed device (not bin/, runtime/, launchers)
-python prdrive-install.py --update-components E:\   # rclone + runtime del dispositivo, no el código
+python prdrive-install.py --update-components E:\   # the device's rclone + runtime, not the code
 python build_installer.py          # build the .exe (embeds the profile if there is one)
 python -m ui.icons                 # repaint APP_DIR/runsync.ico (no Tk, no display)
 
@@ -648,28 +648,29 @@ first paint asks). The window refreshes on a thread after `deiconify()`;
 `daemon_cycle()` refreshes it too (the only thing keeping it current for the
 console menu, which prints its own notice in `console.main_menu`).
 
-**Los componentes van por otro camino, con la misma forma.** `common/components.py`
-lee los sellos (`runtime/<clave>/PRDRIVE-RUNTIME`, `bin/<arch>/<rclone>.PRDRIVE-RCLONE`)
-y los resta de `common/pins.py`; es puro y sin red, así que la ventana lo
-pregunta al pintarse igual que `update.pending()`. `install/components.py` lo
-arregla, y se ejecuta desde el zip por lo mismo que el aplicador de código.
-Cuatro cosas que no se pueden ablandar:
+**Components travel a different road, with the same shape.** `common/components.py`
+reads the stamps (`runtime/<clave>/PRDRIVE-RUNTIME`,
+`bin/<arch>/<rclone>.PRDRIVE-RCLONE`) and subtracts them from `common/pins.py`;
+it is pure and network-free, so the window asks it while painting, exactly like
+`update.pending()`. `install/components.py` fixes what it finds, and runs from
+the zip for the same reason the code applier does. Four things that must not be
+weakened:
 
-- **Se descarga el zip del tag INSTALADO** (`update.source_tag()`), no el de la
-  última release: los pines viajan con el programa, y la maquinaria que baja los
-  componentes tiene que ser la de la versión que los fija.
-- **La caché de rclone va por versión fijada** (`rclone_bin.cache_dir()`) y se
-  reverifica contra la suma apuntada al lado en cada uso. Sin el tramo de
-  versión, mover `pins.RCLONE_VERSION` no cambiaba nada: `find_rclone()`
-  encuentra la caché antes de plantearse descargar.
-- **Solo se sella lo que se puede afirmar** (`rclone_bin.pinned_version()`): de
-  un rclone del PATH no se sabe la versión, y entonces se deja SIN sello. Un
-  sello que miente es peor que ninguno — el dispositivo dejaría de pedir la
-  actualización que necesita.
-- **El intercambio es el de `install_runtime()`, también para rclone**: copiar al
-  lado, apartar, renombrar. Nunca `copy2` encima del binario que hay. Lo que
-  está en uso se pospone con su motivo (`rclone_en_uso` / `runtime_en_uso`, las
-  dos de módulo para que los tests las sustituyan).
+- **The zip downloaded is the INSTALLED tag's** (`update.source_tag()`), not the
+  latest release's: the pins travel with the program, so the machinery that
+  fetches the components has to be the one from the version that pins them.
+- **The rclone cache is keyed by pinned version** (`rclone_bin.cache_dir()`) and
+  re-hashed against the sum recorded beside it on every use. Without the version
+  segment, moving `pins.RCLONE_VERSION` changed nothing: `find_rclone()` finds
+  the cache before it ever considers downloading.
+- **Only what can be asserted gets stamped** (`rclone_bin.pinned_version()`):
+  nothing is known about the version of an rclone found on the PATH, so it is
+  left **without** a stamp. A stamp that lies is worse than none — the device
+  would stop asking for the update it needs.
+- **The swap is `install_runtime()`'s, for rclone too**: copy beside, move aside,
+  rename. Never `copy2` over the binary that is there. Whatever is in use is
+  postponed with its reason (`rclone_en_uso` / `runtime_en_uso`, both
+  module-level so tests can replace them).
 
 **What a download must survive** before it goes near the device: TLS, the zip
 CRC, every name in `update.OBLIGATORIOS` present, no member whose path escapes
