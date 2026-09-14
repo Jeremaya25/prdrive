@@ -285,7 +285,8 @@ python <descarga>/prdrive-install.py --update-components E:\   # lo que hace el 
 - **Lo que está en uso se pospone** y se dice cuál y por qué: un rclone
   sincronizando ahora mismo, o el Python desde el que está abierto el propio
   programa (en Windows no se puede sustituir la carpeta de un `pythonw.exe`
-  vivo — ábrelo con un Python del equipo, o hazlo desde otro equipo).
+  vivo — ciérralo y ejecuta `python runsync.py` dentro de `.prdrive/` con un
+  Python instalado en este equipo).
 - **No se instala ninguna plataforma nueva.** Para eso está «Añadir
   plataformas…» del asistente, que enseña los megas antes de bajarlos.
 - No se tocan el programa, la configuración, las claves, el estado ni los
@@ -623,6 +624,7 @@ prdrive/
 │   ├── config_file.py lee Y escribe el TOML, con round-trip verificado
 │   ├── catalog.py     el catálogo del remoto: leer, cachear, escribir
 │   ├── update.py      si hay release nueva, y cómo traerse su código
+│   ├── components.py  qué rclone y qué Python lleva el dispositivo, y si están al día
 │   ├── pins.py        las versiones fijadas de rclone y Python, y las plataformas
 │   └── store.py       los ficheros de estado en JSON del dispositivo
 ├── ui/                pantallas y su lógica
@@ -637,7 +639,8 @@ prdrive/
 │   ├── platforms.py   para qué equipos: la lista del paso 5
 │   ├── deploy.py      copiar el código, rclone y Python, el config, el --resync
 │   ├── device.py      qué volúmenes hay y cuál es el bueno
-│   └── crypto.py      VeraCrypt y BitLocker
+│   ├── crypto.py      VeraCrypt y BitLocker
+│   └── components.py  poner al día el rclone y el Python de un dispositivo
 ├── tests/             scripts sueltos, sin framework
 └── design/            las maquetas que implementa ui/
 ```

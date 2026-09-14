@@ -113,7 +113,12 @@ def leer_sello(texto: str) -> dict[str, str]:
 def _texto(ruta: Path) -> str:
     try:
         return ruta.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, ValueError):
+        # ValueError además de OSError: un `.read_text` sobre un fichero a
+        # medias —el dispositivo se extrajo a mitad de una escritura— no falla
+        # con un error de E/S, falla con un `UnicodeDecodeError` (que ES un
+        # ValueError), y es el mismo suceso que el resto de este módulo trata
+        # como «no consta»: un fichero que no se puede leer como texto.
         return ""
 
 
@@ -140,7 +145,11 @@ def runtime_stamp(app_dir: Path | str | None, plat: Plataforma) -> str | None:
         if not (d / plat.interprete).is_file():
             return None
         return (d / RUNTIME_STAMP).read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, ValueError):
+        # Mismo motivo que en `_texto()`: un sello a medio escribir se lee como
+        # `UnicodeDecodeError`, no como `OSError`, y el contrato de este módulo
+        # —nunca lanza, la ventana lo llama en su primer pintado— es el mismo
+        # para los dos.
         return None
 
 

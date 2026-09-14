@@ -231,6 +231,10 @@ try:
             raise PermissionError("justo ahora no")
         return reemplazar(a, b)
 
+    # Esto rebautiza `os.replace` del intérprete entero, no un alias local de
+    # este módulo — pero cada bloque lo restaura en su `finally` y
+    # `run_all.py` lanza cada fichero de test en su propio proceso, así que no
+    # se escapa a ningún otro test. No mover esto a un proceso compartido.
     components.os.replace = replace_que_falla
     try:
         components.swap_rclone(destino, nuevo_rclone)
@@ -384,6 +388,11 @@ try:
             f"triple = {plat.triple}\nsha256 = x\n", encoding="utf-8")
     c("un dispositivo al día no tiene nada pendiente",
       components.pendientes(aldia), [])
+    # `c()` solo apunta el fallo y sigue: si esta invariante se rompiera, el
+    # subprocess de abajo lanzaría el descargador de verdad contra la red. En
+    # este proyecto ningún test habla con la red, así que aquí hace falta un
+    # assert de verdad que pare el script.
+    assert not components.pendientes(aldia)
     hecho = subprocess.run([sys.executable, str(entrada),
                             "--update-components", str(aldia)],
                            capture_output=True, text=True)

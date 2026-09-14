@@ -233,6 +233,10 @@ try:
                                                         encoding="ascii")
     red({URL_SUMS: SUMS.encode(), URL_ZIP: ZIP})
     copyfileobj_real = rclone_bin.shutil.copyfileobj
+    # Esto rebautiza `shutil.copyfileobj` del intérprete entero, no un alias
+    # local — pero se restaura en el `finally` de abajo y `run_all.py` lanza
+    # cada fichero de test en su propio proceso, así que no se escapa a ningún
+    # otro test. No mover esto a un proceso compartido.
     rclone_bin.shutil.copyfileobj = lambda src, dst: (_ for _ in ()).throw(
         OSError("disco lleno, para la prueba"))
     try:
@@ -303,6 +307,17 @@ try:
     ajeno = tmpdir("prdrive-rclone-ajeno-") / EXE
     ajeno.write_bytes(b"vete tu a saber")
     c("de uno de fuera, no", rclone_bin.pinned_version(ajeno), "")
+
+    # Estar DENTRO de la carpeta de la caché no basta: es la misma carpeta que
+    # `published_sha256()` nombra en su mensaje de error cuando invita a dejar
+    # un rclone a mano, y ese binario nunca pasó por `cached()`. Sin su
+    # `.sha256` al lado no se puede afirmar nada de él, aunque viva justo donde
+    # `pinned_rclone()` lo encontraría.
+    sin_verificar = tmpdir("prdrive-rclone-sinverificar-")
+    rclone_bin.cache_dir = lambda plat=None: sin_verificar
+    (sin_verificar / EXE).write_bytes(b"puesto a mano, sin sha256 al lado")
+    c("estar en la carpeta de la caché sin su .sha256 no basta",
+      rclone_bin.pinned_version(sin_verificar / EXE), "")
 finally:
     rclone_bin.fetch = fetch_real
     rclone_bin.cache_dir = cache_real

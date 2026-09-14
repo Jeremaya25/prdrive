@@ -171,10 +171,19 @@ def pinned_version(ruta: Path | str, plat: Plataforma | None = None) -> str:
     instalador o heredado de un checkout no se sabe nada, y el sello del
     dispositivo tiene que decir «no consta» en vez de mentir: un sello viejo al
     lado de un binario nuevo es peor que ningún sello. Ejecutarlo para
-    preguntárselo tampoco vale — el de otra plataforma no arranca aquí."""
+    preguntárselo tampoco vale — el de otra plataforma no arranca aquí.
+
+    Y estar DENTRO de la carpeta de la caché no basta: `candidates()` añade ahí
+    un binario sin comprobar a propósito —es lo que mantiene vivo el reaprovechar
+    sin red de `ensure_rclone()`—, y es la misma carpeta que
+    `published_sha256()` nombra en su mensaje de error cuando invita a dejar un
+    rclone a mano. Así que se exige `cached()`: solo lo que se ha vuelto a
+    resumir y cuadra con su `.sha256` es lo que este sello puede afirmar."""
+    en_cache = cached(plat)
     try:
         return (pins.RCLONE_VERSION
-                if Path(ruta).resolve().parent == cache_dir(plat).resolve() else "")
+                if en_cache is not None
+                and Path(ruta).resolve() == en_cache.resolve() else "")
     except OSError:
         return ""
 

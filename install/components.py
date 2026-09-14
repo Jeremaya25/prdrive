@@ -238,9 +238,11 @@ def _poner_python(raiz: Path, p: Pendiente, decir: Progreso) -> str | None:
     carpeta = platforms.runtime_dir(raiz, p.plataforma)
     if runtime_en_uso(carpeta):
         return ("es el Python con el que está corriendo prdrive ahora mismo, "
-                "así que no se puede sustituir sin cerrarlo. Abre el programa "
-                "con un Python instalado en este equipo —o desde otro equipo— y "
-                "vuelve a intentarlo.")
+                "así que no se puede sustituir sin cerrarlo. Cierra el "
+                "programa y ejecuta «python runsync.py» dentro de .prdrive/ "
+                "con un Python instalado en este equipo —una instalación "
+                "completa no lleva runsync.pyw, así que hay que invocarlo así "
+                "a mano— y vuelve a intentarlo.")
     decir(f"{p.titulo}: consiguiendo la versión {p.deberia}")
     archivo = runtime_bin.ensure_runtime(p.plataforma, decir)
     decir(f"{p.titulo}: sustituyendo {carpeta}")

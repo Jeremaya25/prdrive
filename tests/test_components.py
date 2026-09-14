@@ -122,6 +122,42 @@ c("rclone primero, que es el que sincroniza",
 c("el resumen lleva una línea por componente",
   len(components.resumen(pend).splitlines()), 2)
 
+# --- un sello ilegible no lanza -----------------------------------------------
+#
+# `read_text(encoding="utf-8")` sobre un fichero a medias no falla con un
+# OSError, falla con un UnicodeDecodeError (que ES un ValueError) — el caso
+# real que describe el docstring de `leer_sello()`: el dispositivo se extrajo a
+# mitad de una escritura. El contrato de este módulo es que nunca lanza, así
+# que tiene que leerse igual que si no hubiera sello: «no consta», pendiente.
+app5 = tmpdir("prdrive-comp5-") / ".prdrive"
+poner_rclone(app5, WIN)
+components.rclone_stamp_path(app5, WIN).write_bytes(b"rclone = v1.7\xff5.1\n")
+pend = components.pendientes(app5)
+c("un sello de rclone con bytes inválidos no lanza, sale pendiente",
+  [p.lleva for p in pend], [components.DESCONOCIDA])
+
+app6 = tmpdir("prdrive-comp6-") / ".prdrive"
+poner_runtime(app6, WIN)
+(components.runtime_dir(app6, WIN) / components.RUNTIME_STAMP).write_bytes(
+    b"python = 3.1\xff3.1\n")
+c("un sello de runtime con bytes inválidos no lanza, sale como no instalado",
+  components.pendientes(app6), [])
+
+# --- las claves del sello del runtime son las que escribe el productor --------
+#
+# Con fixtures escritas a mano, renombrar una clave en un lado y no en el otro
+# no lo detecta ningún test: cada dispositivo saldría con su Python
+# permanentemente pendiente. Esto usa el texto REAL de `runtime_bin.stamp_text`
+# (ya importado arriba), no una fixture reescrita a mano como las de más arriba.
+app7 = tmpdir("prdrive-comp7-") / ".prdrive"
+d7 = components.runtime_dir(app7, WIN)
+(d7 / WIN.interprete).parent.mkdir(parents=True, exist_ok=True)
+(d7 / WIN.interprete).write_bytes(b"py")
+(d7 / components.RUNTIME_STAMP).write_text(
+    runtime_bin.stamp_text(WIN, "x"), encoding="utf-8")
+c("el sello real del productor se lee como al día",
+  components.pendientes(app7), [])
+
 # --- deriva: el instalador escribe donde el dispositivo lee -------------------
 raiz = tmpdir("prdrive-deriva-")
 app_r = raiz / ".prdrive"
