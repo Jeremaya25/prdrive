@@ -355,6 +355,40 @@ try:
                dicho[0], "consiguiendo la versión ")
     c.contains("y se dice también lo que se sustituye",
                "\n".join(dicho), "sustituyendo")
+
+    # --- la orden de consola --------------------------------------------------
+    #
+    # Se lanza un proceso de VERDAD, así que solo se prueban los dos caminos que
+    # no llegan a descargar nada: el que no es un dispositivo y el que ya está al
+    # día. En cuanto hubiera algo pendiente, el descargador real saldría a
+    # Internet, y en este proyecto ningún test habla con la red.
+    import subprocess
+
+    entrada = Path(__file__).resolve().parent.parent / "prdrive-install.py"
+
+    vacio = tmpdir("prdrive-sin-nada-")
+    hecho = subprocess.run([sys.executable, str(entrada),
+                            "--update-components", str(vacio)],
+                           capture_output=True, text=True)
+    c("sobre algo que no es un dispositivo se sale con 1", hecho.returncode, 1)
+    c.contains("nombrando la carpeta que falta", hecho.stdout + hecho.stderr,
+               ".prdrive")
+
+    # Uno con los componentes ya fijados: se dice y se sale con 0, sin red.
+    aldia = dispositivo(rclone_version=pins.RCLONE_VERSION,
+                        python_release=pins.PYTHON_RELEASE)
+    for plat in (WIN, LIN):
+        d = platforms.runtime_dir(aldia, plat)
+        (d / comp.RUNTIME_STAMP).write_text(
+            f"python = {pins.PYTHON_VERSION}\nrelease = {pins.PYTHON_RELEASE}\n"
+            f"triple = {plat.triple}\nsha256 = x\n", encoding="utf-8")
+    c("un dispositivo al día no tiene nada pendiente",
+      components.pendientes(aldia), [])
+    hecho = subprocess.run([sys.executable, str(entrada),
+                            "--update-components", str(aldia)],
+                           capture_output=True, text=True)
+    c("y la orden lo dice y sale con 0", hecho.returncode, 0)
+    c.contains("sin haber tocado nada", hecho.stdout, "nada que hacer")
 finally:
     (rclone_bin.pinned_rclone, runtime_bin.ensure_runtime, deploy.install_runtime,
      components.rclone_en_uso, components.runtime_en_uso) = reales
