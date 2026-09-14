@@ -192,6 +192,59 @@ try:
     c("y NO deja el binario escrito", (limpio / EXE).exists(), False)
     c("ni el zip", (limpio / "rclone.zip").exists(), False)
     c("la caché se queda como estaba", list(limpio.iterdir()), [])
+
+    # --- la caché va por versión fijada --------------------------------------
+    #
+    # Sin este tramo, mover `pins.RCLONE_VERSION` no servía de nada mientras la
+    # caché del equipo tuviera el binario de antes: `rclone_for()` lo encuentra
+    # antes de plantearse descargar, así que la versión nueva no llegaba nunca a
+    # un dispositivo. Y desde R4 eso además le mentiría al sello.
+    rclone_bin.cache_dir = cache_real
+    version_real = rclone_bin.pins.RCLONE_VERSION
+    try:
+        rclone_bin.pins.RCLONE_VERSION = "v9.9.9"
+        cache_nueva = rclone_bin.cache_dir()
+        rclone_bin.pins.RCLONE_VERSION = "v0.0.1"
+        cache_vieja = rclone_bin.cache_dir()
+        c("la caché no mezcla versiones", cache_nueva != cache_vieja, True)
+        c("y la arquitectura sigue siendo el último tramo",
+          cache_nueva.name, rclone_bin.bin_subdir())
+    finally:
+        rclone_bin.pins.RCLONE_VERSION = version_real
+
+    # --- la caché se vuelve a resumir cada vez que se usa ---------------------
+    #
+    # Igual que la de los runtimes: la carpeta ya garantiza la VERSIÓN, lo que
+    # queda por garantizar son los bytes. Esto va a acabar ejecutándose en cada
+    # equipo donde se enchufe el dispositivo.
+    sano = tmpdir("prdrive-rclone-sano-")
+    rclone_bin.cache_dir = lambda plat=None: sano
+    red({URL_SUMS: SUMS.encode(), URL_ZIP: ZIP})
+    guardado = rclone_bin.download_rclone()
+    c("al descargar se apunta la suma al lado",
+      (sano / (EXE + ".sha256")).is_file(), True)
+    red({})
+    c("y volver a pedirlo sale de la caché sin red",
+      rclone_bin.pinned_rclone(platforms.host()) if platforms.host() else guardado,
+      guardado)
+
+    guardado.write_bytes(b"esto ya no es el que se comprobo")
+    c("una caché estropeada deja de valer", rclone_bin.cached(), None)
+    red({URL_SUMS: SUMS.encode(), URL_ZIP: ZIP})
+    c("y se vuelve a descargar entera",
+      rclone_bin.pinned_rclone(platforms.host()).read_bytes()
+      if platforms.host() else b"soy rclone", b"soy rclone")
+
+    # --- de qué binario se puede AFIRMAR la versión --------------------------
+    #
+    # Solo del que salió de la caché, que va por versión. De uno encontrado en
+    # el PATH o dejado a mano junto al instalador no se sabe nada, y el sello
+    # del dispositivo tiene que decir «no consta» en vez de mentir: ejecutarlo
+    # para preguntárselo no vale, el de otra plataforma no arranca aquí.
+    c("del de la caché sí", rclone_bin.pinned_version(sano / EXE), VERSION)
+    ajeno = tmpdir("prdrive-rclone-ajeno-") / EXE
+    ajeno.write_bytes(b"vete tu a saber")
+    c("de uno de fuera, no", rclone_bin.pinned_version(ajeno), "")
 finally:
     rclone_bin.fetch = fetch_real
     rclone_bin.cache_dir = cache_real
