@@ -591,6 +591,18 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         root.visor.encajar(root)
         centrar(root)
 
+    def descartar_aviso() -> None:
+        """Quitar el aviso de arranque, que es lo único de la ventana que se lee
+        una vez.
+
+        Los otros recuadros ámbar no se descartan y no deben poder hacerlo: una
+        pareja que falló, un fichero en conflicto o un componente viejo son
+        ESTADO del dispositivo, y se van cuando se arreglan. Este cuenta un
+        suceso —«se ha parado el servicio que había»—, así que una vez leído no
+        tiene por qué seguir ocupando sitio."""
+        vista["aviso"] = None
+        reajustar()
+
     def abrir_actualizacion() -> None:
         """La pantalla de actualización. Si se ha actualizado, aquí no se vuelve:
         `tk_update` relanza el programa y cierra esta ventana, porque este
@@ -771,7 +783,11 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         chip.grid(row=0, column=1, sticky="ne", pady=(4, 0))
 
         if vista["aviso"]:
-            bloque_aviso(frame, vista["aviso"], ancho=400).grid(
+            # Con botón para descartarlo: es el único aviso que no describe un
+            # estado del dispositivo sino algo que acaba de pasar. El hueco del
+            # botón ya lo tiene `bloque_aviso`, que lo estrenó la actualización.
+            bloque_aviso(frame, vista["aviso"], ancho=400,
+                         boton=("Descartar", descartar_aviso)).grid(
                 row=fila, column=0, sticky="ew", pady=(14, 0))
             fila += 1
 
