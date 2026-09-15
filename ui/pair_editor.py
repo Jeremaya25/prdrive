@@ -380,6 +380,23 @@ def _analizar_flags(plan: EditPlan, defaults: Mapping[str, Any],
         flags_editor.merge(_mode_of(resultante), comunes, resultante.get("flags")))
 
 
+def simular_args(raw: Mapping[str, Any], name: str) -> list[str]:
+    """Los argumentos de `sync.py` para ver qué haría una pareja sin hacerlo.
+
+    Es la otra mitad de la ceremonia que gobierna los borrados. `confirmar_plan`
+    enseña lo que va a pasar con la CONFIGURACIÓN; esto enseña lo que va a pasar
+    con los FICHEROS, que es lo que de verdad preocupa de un espejo o de una
+    pareja que lleva tiempo sin sincronizar: un `--dry-run` de rclone enumera
+    cada copia y cada borrado y no toca nada.
+
+    No lleva `--yes`: una pareja sin baseline se salta, y ese «requiere --resync»
+    es exactamente lo que hay que leer antes de aprobar nada."""
+    if not any(p.get("name") == name for p in raw.get("pair") or []):
+        raise ConfigError(f"'{name}' no se usa en este dispositivo, así que aquí no "
+                          f"hay nada que simular. Úsala primero.")
+    return [name, "--dry-run"]
+
+
 def plan_remove(raw: Mapping[str, Any], name: str, clean_state: bool = False) -> EditPlan:
     """El plan de quitar una pareja. No toca nada."""
     i = pair_index(raw, name)

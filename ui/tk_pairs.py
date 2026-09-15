@@ -27,7 +27,8 @@ from common import catalog, config_file, model
 from common.model import ConfigError
 
 from . import catalog_editor, flags_editor, icons, pair_editor, theme
-from .tk import TITLE, bloque_aviso, cabecera, cuerpo_visible, modal, mostrar
+from .tk import (TITLE, bloque_aviso, cabecera, cuerpo_visible, modal,
+                 mostrar, orden_sync, output_window)
 
 COLUMNAS = [
     ("usa", "En el dispositivo", 62),
@@ -238,6 +239,29 @@ def open_dialog(parent, config) -> bool:
         except ConfigError as e:
             fallo(e)
 
+    def simular() -> None:
+        """Enseñar lo que haría la pareja elegida, sin hacerlo.
+
+        La ventana de salida va MODAL: mientras rclone mira los dos lados, esta
+        pantalla no puede apartar un baseline ni reescribir el config. Al volver
+        se le devuelve la captura a este diálogo, porque destruir la ventana hija
+        se lleva la suya y sin esto la pantalla de parejas dejaría de ser modal."""
+        fila = fila_elegida()
+        if fila is None:
+            return
+        try:
+            args = pair_editor.simular_args(estado["raw"], fila.name)
+        except ConfigError as e:
+            fallo(e)
+            return
+        output_window(f"Simulación de '{fila.name}'", orden_sync(args), parent=dlg,
+                      subtitulo=fila.name)
+        try:
+            dlg.grab_set()
+        except Exception:                                # noqa: BLE001
+            pass
+        refrescar(f"Simulación de '{fila.name}' terminada: no se ha tocado nada.")
+
     def modificar_aqui() -> None:
         fila = fila_elegida()
         if fila is None:
@@ -388,6 +412,7 @@ def open_dialog(parent, config) -> bool:
               width=18).grid(row=0, column=0, sticky="w")
     for i, (texto, icono, estilo, accion) in enumerate((
             ("Usar aquí", "plus", "Primary.TButton", usar_aqui),
+            ("Simular", "eye", "TButton", simular),
             ("Modificar aquí…", "edit", "TButton", modificar_aqui),
             ("Volver al catálogo", "back", "TButton", volver_al_catalogo),
             ("Quitar…", "trash", "Danger.TButton", quitar)), start=1):

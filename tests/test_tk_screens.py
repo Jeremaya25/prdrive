@@ -264,6 +264,34 @@ with sandbox():
 
     catalog.load = falso_catalogo
 
+# --- «Simular» lanza un dry-run, no una pasada --------------------------------
+# La ventana de salida se sustituye: lo que importa es QUÉ orden se lanza, y
+# ningún test ejecuta sync.py de verdad.
+with sandbox():
+    cfg = preparar()
+    lanzadas: list[list[str]] = []
+    real_salida = tk_pairs.output_window
+    tk_pairs.output_window = lambda titulo, cmd, **k: lanzadas.append(list(cmd))
+    try:
+        tk.Toplevel.wait_window = elegir_y_pulsar("Simular", "notas")
+        c("simular no cuenta como un cambio del config",
+          tk_pairs.open_dialog(raiz, cfg), False)
+        c("se lanza sync.py con la pareja elegida", lanzadas[-1][-2:],
+          ["notas", "--dry-run"])
+        c("y nada más: un simulacro no escribe en el config",
+          model.load_config().names, ["notas", "subida"])
+
+        # Una pareja que este dispositivo no usa no se puede simular aquí.
+        lanzadas.clear()
+        errores.clear()
+        tk.Toplevel.wait_window = elegir_y_pulsar("Simular", "fotos")
+        tk_pairs.open_dialog(raiz, cfg)
+        c("simular una que no se usa aquí no lanza nada", lanzadas, [])
+        c("y lo dice", any("no se usa en este dispositivo" in e for e in errores), True)
+    finally:
+        tk_pairs.output_window = real_salida
+
+
 # --- la flota: se abre desde parejas, y solo toca la nota de ESTE dispositivo ---
 #
 # La lista la sirve `common/fleet.py`, que aquí se sustituye entera: lo que se
