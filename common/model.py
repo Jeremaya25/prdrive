@@ -72,6 +72,10 @@ DEFAULT_MODE = "bisync"
 # sabe qué nombres valen (`_device_remote_name`) y qué se hace con ellos
 # (`Config.pen_environment`).
 DEFAULT_DEVICE_REMOTE = "disp"
+# El upstream de la RAÍZ del dispositivo, para la pareja cuyo `local` es "."
+# (ver `Pair.top_level_dir`). Tiene que ser un nombre y no ".", y sale en el
+# prefijo de los listados de bisync: cambiarlo invalida esos baselines.
+RAIZ_UPSTREAM = "raiz"
 DEFAULT_INTERVAL_MIN = 30.0         # minutos entre ciclos del servicio
 
 # rclone es una app de consola: lanzada desde un proceso sin consola (pythonw, el
@@ -334,7 +338,7 @@ class Pair:
         """Con `device_remote` el lado local es un remote propio, y entonces su
         nombre ya no depende de dónde esté montado el dispositivo."""
         if self.device_remote:
-            return f"{self.device_remote}:{self.local}"
+            return f"{self.device_remote}:{self.ruta_en_combine}"
         return str(self.local_abs)
 
     @property
@@ -364,10 +368,35 @@ class Pair:
         return STATE_DIR / self.name
 
     @property
+    def tramos_locales(self) -> tuple[str, ...]:
+        """La ruta local partida, sin los tramos que no dicen nada ("." y "")."""
+        partida = self.local.replace("\\", "/").split("/")
+        return tuple(t for t in partida if t not in ("", "."))
+
+    @property
     def top_level_dir(self) -> str:
         """Primer tramo de la ruta local: lo que se declara como upstream del
-        remote 'combine' cuando se usa `device_remote`."""
-        return self.local.split("/")[0]
+        remote 'combine' cuando se usa `device_remote`.
+
+        Una pareja que sincroniza la RAÍZ del dispositivo (`local = "."`) no
+        tiene primer tramo, y no vale dejarlo en ".": rclone limpia la ruta antes
+        de buscar el upstream, así que `disp:.` se convierte en el upstream ""
+        y falla con «combine for remote "": directory not found». Por eso la raíz
+        se declara con un nombre de verdad."""
+        tramos = self.tramos_locales
+        return tramos[0] if tramos else RAIZ_UPSTREAM
+
+    @property
+    def top_level_abs(self) -> Path:
+        """La carpeta a la que apunta ese upstream."""
+        tramos = self.tramos_locales
+        return (DEVICE_ROOT / tramos[0]).resolve() if tramos else DEVICE_ROOT.resolve()
+
+    @property
+    def ruta_en_combine(self) -> str:
+        """La ruta de la pareja vista desde dentro del remote 'combine'. Para
+        todas menos la raíz es la ruta local tal cual."""
+        return "/".join((self.top_level_dir,) + self.tramos_locales[1:])
 
     @property
     def wants_filters_file(self) -> bool:
@@ -424,6 +453,23 @@ def _device_remote_name(defaults: Mapping[str, Any]) -> str | None:
 # Configuración completa
 # ---------------------------------------------------------------------------
 
+def _upstream(nombre: str, ruta: Path) -> str:
+    r"""Un tramo del `upstreams` del remote 'combine', tal y como rclone lo lee.
+
+    rclone parsea `upstreams` como `fs.SpaceSepList` (fs/types.go), que es un
+    CSV con el espacio de separador: un campo solo va entrecomillado si empieza
+    por comilla, y una comilla dentro de un campo que no empezaba por comilla es
+    un error de sintaxis. Por eso las comillas envuelven el PAR ENTERO
+    `nombre=ruta` y no la ruta: entrecomillar solo la ruta daba `.="F:\"`, que
+    rclone rechaza con «bare " in non-quoted-field» y tumbaba TODAS las parejas
+    del dispositivo. Entre comillas caben tanto la barra final de la raíz de una
+    unidad (`F:\`) como los espacios de la ruta, que es para lo que hacían
+    falta. Una comilla dentro de la ruta se dobla, como manda el CSV.
+    """
+    texto = str(ruta).replace('"', '""')
+    return f'"{nombre}={texto}"'
+
+
 @dataclass(frozen=True)
 class Config:
     pairs: tuple[Pair, ...]
@@ -459,8 +505,19 @@ class Config:
         remote sea idéntico ejecutes lo que ejecutes."""
         if not self.device_remote:
             return {}
-        tops = sorted({p.top_level_dir for p in self.pairs})
-        upstreams = " ".join(f'{t}="{(DEVICE_ROOT / t).resolve()}"' for t in tops)
+        tops: dict[str, Path] = {}
+        for pareja in self.pairs:
+            nombre, ruta = pareja.top_level_dir, pareja.top_level_abs
+            # Dos parejas que pidan el mismo nombre para carpetas distintas solo
+            # puede pasar con la raíz: `local = "."` la declara como RAIZ_UPSTREAM
+            # y otra pareja tiene una carpeta que se llama justo así. Sería un
+            # upstream apuntando a donde no es, callando.
+            if tops.setdefault(nombre, ruta) != ruta:
+                raise ConfigError(
+                    f"Dos parejas declaran el upstream '{nombre}' apuntando a "
+                    f"carpetas distintas ({tops[nombre]} y {ruta}). Renombra la "
+                    f"carpeta '{nombre}' de la raíz del dispositivo.")
+        upstreams = " ".join(_upstream(n, tops[n]) for n in sorted(tops))
         return {
             f"RCLONE_CONFIG_{self.device_remote.upper()}_TYPE": "combine",
             f"RCLONE_CONFIG_{self.device_remote.upper()}_UPSTREAMS": upstreams,

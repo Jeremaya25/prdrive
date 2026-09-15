@@ -16,6 +16,7 @@ prefijo y las variables de entorno que definen ese remote— y que la venda ya n
 está.
 """
 
+import csv
 import sys
 from pathlib import Path
 
@@ -29,6 +30,11 @@ PAREJAS = [{"name": "notas", "local": "sync-data/notas", "remote_path": "/datos/
             "mode": "bisync"},
            {"name": "fotos", "local": "media/fotos", "remote_path": "/datos/fotos",
             "mode": "bisync"}]
+
+
+def releer(texto):
+    """Lo que rclone entiende al leer `upstreams`: un CSV separado por espacios."""
+    return next(csv.reader([texto], delimiter=" ", quotechar='"'))
 
 
 def config(device_remote=None, raiz=None):
@@ -79,11 +85,85 @@ with sandbox() as root:
     # Un upstream por primer tramo de ruta local, de TODAS las parejas: el
     # remote tiene que ser idéntico se ejecute lo que se ejecute.
     c("un upstream por cada carpeta de primer nivel",
-      upstreams, f'media="{(root / "media").resolve()}" '
-                 f'sync-data="{(root / "sync-data").resolve()}"')
+      upstreams, f'"media={(root / "media").resolve()}" '
+                 f'"sync-data={(root / "sync-data").resolve()}"')
     c("sin device_remote no hay entorno que poner", config(raiz=root).pen_environment(), {})
 
+    # --- y ese texto lo tiene que saber leer rclone ---------------------------
+    # rclone lee `upstreams` como fs.SpaceSepList (fs/types.go), que es un CSV
+    # con el espacio de separador. `releer` hace lo mismo: si lo que generamos
+    # no vuelve a salir entero, rclone tampoco lo va a entender.
+    c("los upstreams se releen como los pares que son",
+      releer(upstreams), [f'media={(root / "media").resolve()}',
+                          f'sync-data={(root / "sync-data").resolve()}'])
+
+    # La razón de ser de las comillas: una carpeta con un espacio en el nombre.
+    con_espacio = model.parse_config(
+        {"defaults": {"remote": "nas", "device_remote": "disp"},
+         "pair": [{"name": "notas", "local": "mis documentos/notas",
+                   "remote_path": "/datos/notas", "mode": "bisync"}]})
+    c("una carpeta con espacios sigue siendo UN upstream",
+      releer(con_espacio.pen_environment()["RCLONE_CONFIG_DISP_UPSTREAMS"]),
+      [f'mis documentos={(root / "mis documentos").resolve()}'])
+
     model.DEVICE_ROOT = original
+
+# --- la pareja que sincroniza la RAÍZ del dispositivo ---------------------------
+# `local = "."` no tiene primer tramo. Dejarlo en "." daba el upstream "." y el
+# extremo `disp:.`, y rclone limpia la ruta ANTES de buscar el upstream: se
+# quedaba buscando el upstream "" y fallaba con «combine for remote "":
+# directory not found». Ni siquiera es un fallo de la pareja de la raíz sola: es
+# la pareja que se lleva el dispositivo entero.
+with sandbox() as root:
+    original = model.DEVICE_ROOT
+    model.DEVICE_ROOT = Path(root)
+
+    raiz = model.parse_config(
+        {"defaults": {"remote": "nas", "device_remote": "disp"},
+         "pair": [{"name": "todo", "local": ".", "remote_path": "/copia", "mode": "down"},
+                  {"name": "notas", "local": "sync-data/notas",
+                   "remote_path": "/datos/notas", "mode": "bisync"}]})
+    todo, notas = raiz.pairs
+
+    c("la raíz se declara con un nombre, no con un punto",
+      todo.top_level_dir, model.RAIZ_UPSTREAM)
+    c("y el extremo local deja de ser 'disp:.'", todo.local_endpoint, "disp:raiz")
+    c("el upstream de la raíz apunta a la raíz del dispositivo",
+      todo.top_level_abs, Path(root).resolve())
+    c("una pareja normal no cambia", notas.local_endpoint, "disp:sync-data/notas")
+    c("y su upstream sigue siendo su carpeta",
+      notas.top_level_abs, (Path(root) / "sync-data").resolve())
+    c("los dos upstreams, cada uno con su carpeta",
+      releer(raiz.pen_environment()["RCLONE_CONFIG_DISP_UPSTREAMS"]),
+      [f'raiz={Path(root).resolve()}',
+       f'sync-data={(Path(root) / "sync-data").resolve()}'])
+
+    # Si alguien tiene una carpeta llamada como el upstream de la raíz, el mismo
+    # nombre apuntaría a dos sitios. Mejor plantarse que sincronizar a ciegas.
+    choque = model.parse_config(
+        {"defaults": {"remote": "nas", "device_remote": "disp"},
+         "pair": [{"name": "todo", "local": ".", "remote_path": "/copia", "mode": "down"},
+                  {"name": "otra", "local": f"{model.RAIZ_UPSTREAM}/cosas",
+                   "remote_path": "/cosas", "mode": "down"}]})
+    try:
+        choque.pen_environment()
+        c("dos upstreams con el mismo nombre se avisan", "no avisó", "ConfigError")
+    except model.ConfigError as e:
+        c("dos upstreams con el mismo nombre se avisan",
+          model.RAIZ_UPSTREAM in str(e), True)
+
+    model.DEVICE_ROOT = original
+
+
+# --- la forma exacta que tumbó el dispositivo de pruebas ------------------------
+# Un dispositivo montado en F: tiene la propia raíz como upstream (la pareja cuyo
+# `local` es "."), y `F:\` acaba en barra. Entrecomillando solo la ruta salía
+# `.="F:\"`: un campo que no empieza por comilla con una comilla dentro. rclone
+# rechazaba la línea entera con «bare " in non-quoted-field», así que NINGUNA
+# pareja del dispositivo podía correr. Con el par entero entre comillas la barra
+# final queda dentro y se relee bien.
+c("la raíz de una unidad acaba en barra y aun así se relee",
+  releer(r'".=F:\" "sync-data=F:\sync-data"'), ['.=F:\\', 'sync-data=F:\\sync-data'])
 
 # --- la venda, retirada ----------------------------------------------------------
 # No es una comprobación de aspecto: renombrar los listados al prefijo nuevo es

@@ -256,6 +256,23 @@ rclone source file it mirrors. Preserve those citations.
   remote does *not* work. It goes in the **device's** defaults, not the
   catalogue's: in the catalogue it would move every installed device's prefix at
   once. `tests/test_bisync_prefijo.py` guards both halves.
+- **How the `upstreams` string must be written.** rclone reads it as an
+  `fs.SpaceSepList` (`fs/types.go`): a CSV with space as the separator, where a
+  field is only quoted if it **starts** with a quote. So the quotes wrap the
+  whole `name=path` pair, never just the path — `.="F:\"` is a field starting
+  with a dot that contains a quote, and rclone rejects the whole line with
+  `bare " in non-quoted-field`, taking **every** pair on the device down with
+  it. Inside the quotes fit both things they are there for: a drive root's
+  trailing backslash and spaces in the path. `model._upstream()` is the one
+  place that builds it.
+- **The device root needs a named upstream.** A pair whose `local` is `"."` has
+  no first segment, and `"."` will not do: rclone cleans the path *before*
+  looking up the upstream, so `disp:.` becomes the upstream `""` and fails with
+  `combine for remote "": directory not found`. `model.RAIZ_UPSTREAM` (`"raiz"`)
+  names it instead. This is why the upstream's **name** and the **folder** it
+  points at are two properties (`top_level_dir` / `top_level_abs`) and not one
+  string: for every other pair they coincide, for the root they do not. The name
+  is in the bisync prefix, so changing it invalidates those baselines.
 - **There is no listing rename any more.** `normalize_prefix()`,
   `rename_prefix()` and `heal_listings()` were deleted with `device_remote`:
   renaming a listing set tells bisync that a listing of the *previous*
