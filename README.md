@@ -46,6 +46,9 @@ Hay tres piezas, y entenderlas es entender el programa entero:
    qué parejas EXISTEN              cuáles usa ESTE               lo detecta
    [remote] cómo se conecta         + su rclone.conf y su clave   y lo lanza
 
+   devices/<id>.toml ◄── nota ───   quién es, qué versión lleva
+   el registro de la flota          y cuándo sincronizó
+
    /datos/docs    ◄── bisync ──►    sync-data/docs
    /datos/claves  ◄── bisync ──►    sync-data/claves
 ```
@@ -58,6 +61,12 @@ una carpeta ocurren ahí primero.
 Un pendrive pequeño puede llevar dos; el de casa, todas. Esa separación es
 deliberada y no conviene colapsarla: crear una pareja y elegir usarla son dos
 decisiones distintas.
+
+**El registro de la flota** (`devices/`, al lado del catálogo) es un fichero
+diminuto por dispositivo, que cada uno reescribe **solo el suyo** al sincronizar:
+cómo se llama, qué versión lleva, para qué plataformas sirve y cómo acabó su
+última pasada. Es lo que permite ver desde cualquiera de ellos cuántos hay y cuál
+lleva un mes en un cajón.
 
 **El vigilante** (`penwatch`) es lo único que se instala en el equipo anfitrión, y
 es opcional.
@@ -99,7 +108,7 @@ cumplirla.
 | 3 | **Conexión** | formulario de remoto nuevo, o importar uno de tu `rclone.conf`. Más la ruta del catálogo |
 | 4 | **Comprobaciones** | consigue un rclone (lo busca, y si no lo descarga), conecta y lee el catálogo |
 | 5 | **Instalación** | completa o ligera, y para qué plataformas; copia el programa a `.prdrive/`, rclone y Python de cada plataforma, los lanzadores, el `rclone.conf` y la clave |
-| 6 | **Parejas** | cuáles de las del catálogo usa este dispositivo |
+| 6 | **Parejas** | cuáles de las del catálogo usa este dispositivo, y apunta el dispositivo en el registro de la flota |
 | 7 | **Inicialización** | el `--resync` que fija la referencia de las parejas bisync |
 | 8 | **Verificación** | que no falte nada de lo que hace falta para arrancar |
 
@@ -225,6 +234,31 @@ python penwatch.py uninstall
 
 `runsync.py` sin argumentos **para siempre un servicio anterior** antes de nada.
 
+### La ventana de parejas
+
+Se abre desde «Parejas…» y es donde se decide qué sincroniza este dispositivo.
+Los botones van en dos bloques separados y esa separación es el asunto de la
+pantalla: el bloque ámbar cambia **el catálogo**, o sea todos los dispositivos;
+el otro cambia **solo este**. Cuatro cosas que se hacen desde ahí:
+
+- **Simular.** Lanza un `--dry-run` de la pareja elegida en la ventana de salida:
+  rclone enumera lo que copiaría y lo que borraría, y no toca nada. Es la forma
+  de ver los borrados de un espejo *antes* de aprobarlos.
+- **Examinar…** junto a la ruta remota abre un explorador del remoto (`rclone
+  lsd`): entrar, subir y, si hace falta, **crear la carpeta** que falta. Se apaga
+  cuando no hay conexión, igual que el bloque del catálogo. La ruta local usa el
+  diálogo de carpetas del sistema y se guarda relativa a la raíz del dispositivo.
+- **Dispositivos…** enseña [la flota](#el-modelo): todos los que comparten este
+  catálogo, con su nombre, su versión, para qué plataformas sirven y cuándo se
+  les vio por última vez. Los que llevan más de una semana sin aparecer salen
+  apagados. Desde ahí se le puede poner nombre a **este** dispositivo («el
+  pendrive azul»); ningún dispositivo escribe la nota de otro.
+- **Editar flags…** enseña las cuatro capas resueltas y avisa si un cambio sube
+  el `--max-delete` efectivo.
+
+Todo lo que escribe algo pasa antes por la misma ceremonia: un plan que todavía
+no ha tocado nada, con una línea por consecuencia, y una confirmación.
+
 ### Actualizarse
 
 Cuando hay una release nueva en GitHub, la ventana lo dice en un recuadro ámbar
@@ -303,6 +337,7 @@ edita desde la ventana de parejas o a mano; el mismo esquema sirve para el
 ```toml
 [defaults]
 remote = "nas"                       # el remote de rclone que usan las parejas
+device_remote = "disp"               # el lado local, como remote propio
 catalog_path = "/prdrive-catalog/pairs.toml"
 exclude = ["**/.stfolder/**", "**/.stignore"]
 
@@ -354,14 +389,22 @@ El editor de flags de la ventana enseña **las cuatro capas resueltas**, con la
 etiqueta de dónde viene cada valor, y avisa cuando un cambio sube el
 `--max-delete` efectivo aunque no hayas tocado ese flag.
 
-### `device_remote` (avanzado)
+### `device_remote`
 
 `device_remote = "disp"` en `[defaults]` hace que el lado local sea un remote
 `combine` propio, definido en variables de entorno. Con eso el nombre de los
 listados de bisync deja de depender de la letra de unidad, y el dispositivo es
-igual de portable en `F:` que en `/media/quien/PRDRIVE`. Activarlo exige un
-`--resync`. Un remote `alias` **no** sirve: devuelve el Fs de destino tal cual y
-la ruta absoluta reaparece.
+igual de portable en `F:` que en `/media/quien/PRDRIVE`.
+
+**El instalador lo escribe en todos los dispositivos nuevos**, así que no hay
+nada que activar. Va en los `[defaults]` del dispositivo y no en los del
+catálogo a propósito: cambiarlo en el catálogo movería el nombre de los listados
+de todos los dispositivos ya instalados, y cada uno tendría que rehacer su
+referencia con un `--resync`. Eso es justo lo que hay que hacer si vienes de una
+versión anterior: ponerlo a mano y resincronizar.
+
+Un remote `alias` **no** sirve: devuelve el Fs de destino tal cual y la ruta
+absoluta reaparece.
 
 ## Modos
 
@@ -412,17 +455,19 @@ lado».
 llama `F__sync-data_docs..nas__datos_docs.path1.lst` y similares. De ahí se
 siguen tres cosas:
 
-- Si el dispositivo se monta con otra letra, el nombre cambia y rclone no
-  encuentra su referencia. `normalize_prefix()` renombra el juego de listados
-  solo, antes de ejecutar. `heal_listings()` es la red de abajo: lee las líneas
-  `Tip: Path1/Path2` de un log fallido y reintenta **una** vez.
-- Si cambias `local`, `remote`, `remote_path` o `mode`, el nombre esperado también
-  cambia — pero ahí renombrar sería mentir: le estarías diciendo a bisync que un
-  listado del destino *anterior* describe el *nuevo*. Por eso el editor de
-  parejas **aparta** la referencia (`state/<pareja>.old-<fecha>/`) y te obliga a
-  un `--resync` explícito.
-- Con `device_remote` el lado local pasa a llamarse `disp:sync-data/docs` y el
-  nombre deja de depender de la máquina.
+- Con `device_remote` —que el instalador pone en todo dispositivo nuevo— el lado
+  local pasa a llamarse `disp:sync-data/docs`, y el nombre deja de depender de
+  dónde esté montado el dispositivo. Es lo que hace que enchufarlo en otro
+  ordenador, o con otra letra, no rompa nada.
+- Si cambias `local`, `remote`, `remote_path` o `mode`, el nombre esperado sí
+  cambia, y ahí reaprovechar los listados sería mentir: le estarías diciendo a
+  bisync que un listado del destino *anterior* describe el *nuevo*. Por eso el
+  editor de parejas **aparta** la referencia (`state/<pareja>.old-<fecha>/`) y te
+  obliga a un `--resync` explícito.
+- **No hay ningún renombrado automático de listados.** Lo hubo, mientras el
+  nombre dependía de la letra de unidad, y era un apaño peligroso: no se puede
+  distinguir el caso benigno (el mismo destino con otro nombre) del maligno (otro
+  destino). Con `device_remote` el caso benigno ya no ocurre.
 
 **Un `[defaults]` puede invalidar varias referencias a la vez.** `remote` y
 `device_remote` alimentan los extremos de *todas* las parejas, así que un solo
@@ -553,8 +598,9 @@ los conocidos.
 Casos habituales:
 
 - **«Must run --resync».** Los filtros han cambiado. `python sync.py <pareja> --resync`.
-- **No encuentra la referencia.** Suele ser la letra de unidad y se arregla solo;
-  si cambiaste rutas a mano, `--resync`.
+- **No encuentra la referencia.** `--resync`. Un dispositivo instalado con esta
+  versión no debería llegar ahí por cambiar de equipo o de letra de unidad (ver
+  [`device_remote`](#device_remote)); si cambiaste rutas a mano, sí.
 - **La ventana de parejas dice que no hay catálogo.** Sin red se abre con la
   última copia (`state/catalog.toml`) y **no deja editarlo**: no se puede
   sobrescribir con seguridad lo que no se acaba de leer. Puede que otro
@@ -623,6 +669,7 @@ prdrive/
 │   ├── results.py     cómo acabó la última pasada de cada pareja
 │   ├── config_file.py lee Y escribe el TOML, con round-trip verificado
 │   ├── catalog.py     el catálogo del remoto: leer, cachear, escribir
+│   ├── fleet.py       el registro de la flota: la nota de cada dispositivo
 │   ├── update.py      si hay release nueva, y cómo traerse su código
 │   ├── components.py  qué rclone y qué Python lleva el dispositivo, y si están al día
 │   ├── pins.py        las versiones fijadas de rclone y Python, y las plataformas
