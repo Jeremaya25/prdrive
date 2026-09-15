@@ -369,7 +369,6 @@ def _bisync_preflight(ctx: RunContext, pair: Pair) -> tuple[bool, int | None]:
     Devuelve (hace_falta_resync, código_con_el_que_abortar). Con código None se
     puede seguir adelante."""
     bisync.migrate_legacy_state(pair)
-    bisync.normalize_prefix(pair)
 
     state = bisync.pair_state(pair)
     print(f"  estado: {state.status} — {state.detail}")
@@ -442,15 +441,6 @@ def run_pair(ctx: RunContext, pair: Pair) -> int:
     cmd, logfile = build_command(ctx, pair, ffile, need_resync)
     rc = execute(ctx, cmd, logfile)
 
-    # Un solo reintento, y solo si podemos reparar el estado con certeza. El log
-    # del intento fallido se conserva aunque el reintento salga bien: documenta
-    # por qué hubo que reparar nada.
-    if rc != 0 and pair.is_bisync and not ctx.dry_run and bisync.heal_listings(pair, logfile):
-        dispose_log(pair.name, logfile, rc, keep_always=False)
-        print(f"[{pair.name}] Reintentando tras reparar los listados...")
-        cmd, logfile = build_command(ctx, pair, ffile, need_resync=False)
-        rc = execute(ctx, cmd, logfile)
-
     saved = dispose_log(pair.name, logfile, rc, ctx.keep_logs)
     if rc == 0:
         print(f"[{pair.name}] OK." + (f" Log: {saved}" if saved else ""))
@@ -471,7 +461,6 @@ def resolve_resync_approval(selected: list[Pair], assume_yes: bool) -> bool:
         if not pair.is_bisync:
             continue
         bisync.migrate_legacy_state(pair)
-        bisync.normalize_prefix(pair)
         reasons = bisync.resync_reasons(pair)
         if reasons:
             pending.append((pair.name, reasons))
@@ -540,8 +529,9 @@ def _doctor_pair(pair: Pair) -> bool:
     print(f"  estado: {state.status} — {state.detail}")
     print(f"  prefijo esperado: {want}")
     if state.prefix and state.prefix != want:
-        print("  AVISO: el baseline está guardado con otro prefijo; se renombrará "
-              "en la próxima ejecución.")
+        print("  AVISO: el baseline está guardado con otro prefijo, así que no es "
+              "el de esta pareja: rclone no lo encontrará. Apártalo (state/<pareja>/) "
+              "y haz --resync.")
     filters = bisync.filters_state(bisync.filters_file_for(pair))
     print(f"  filtros: {filters.status} — {filters.detail}")
 
@@ -560,12 +550,8 @@ def _doctor_pair(pair: Pair) -> bool:
 def doctor(config: Config) -> int:
     print(f"Dispositivo detectado en: {model.DEVICE_ROOT}")
     print(f"Workdir de estado: {model.STATE_DIR}")
-    if config.device_remote:
-        for key, value in config.pen_environment().items():
-            print(f"  {key}={value}")
-    else:
-        print("  (sin device_remote: el lado local va como ruta absoluta, el nombre "
-              "de los listados depende de la letra de unidad)")
+    for key, value in config.pen_environment().items():
+        print(f"  {key}={value}")
     print()
 
     stray = sorted(model.STATE_DIR.glob("*.lst")) if model.STATE_DIR.exists() else []

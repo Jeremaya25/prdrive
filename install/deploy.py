@@ -605,6 +605,15 @@ def device_config(catalog: Catalog, selected: list[str],
     raw: dict = {}
     if catalog.raw.get("defaults"):
         raw["defaults"] = dict(catalog.raw["defaults"])
+    # El lado local va como remote 'combine' desde el primer día. Sin esto, el
+    # nombre de los listados de bisync lleva dentro la letra de unidad, y el
+    # dispositivo deja de sincronizar en cuanto se monta en otra: era la herida
+    # que tapaba el renombrado automático de los listados, que ya no existe.
+    # Se escribe en los [defaults] de ESTE dispositivo y no en el catálogo
+    # porque cambiarlo en el catálogo invalidaría los baselines de todos los
+    # dispositivos ya instalados, igual que `catalog_path` de aquí abajo.
+    raw.setdefault("defaults", {}).setdefault(
+        "device_remote", model.DEFAULT_DEVICE_REMOTE)
     daemon = _daemon_section(catalog, selected)
     if daemon:
         raw["daemon"] = daemon

@@ -65,6 +65,13 @@ class ConfigError(Exception):
 
 DEFAULT_REMOTE = "remote"
 DEFAULT_MODE = "bisync"
+
+# El nombre del remote 'combine' con el que el lado local deja de ser una ruta
+# absoluta. Lo escribe el instalador en los [defaults] de cada dispositivo nuevo
+# (ver install/deploy.device_config), y está aquí porque es este módulo el que
+# sabe qué nombres valen (`_device_remote_name`) y qué se hace con ellos
+# (`Config.pen_environment`).
+DEFAULT_DEVICE_REMOTE = "disp"
 DEFAULT_INTERVAL_MIN = 30.0         # minutos entre ciclos del servicio
 
 # rclone es una app de consola: lanzada desde un proceso sin consola (pythonw, el

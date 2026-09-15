@@ -3,8 +3,8 @@
 El editor de parejas, que es lo que puede hacer daño.
 
 La comprobación central es la primera: cambiar un extremo de una pareja bisync
-tiene que APARTAR su baseline. Si no se apartara, normalize_prefix() renombraría
-los listados del destino viejo al nombre del nuevo y bisync leería como borrados
+tiene que APARTAR su baseline. Reaprovecharlo con el nombre nuevo le diría a
+bisync que el listado del destino viejo describe el nuevo, y leería como borrados
 todos los ficheros que solo estaban en el anterior.
 """
 

@@ -159,8 +159,8 @@ with sandbox():
     c("con el log que se ha conservado", fallos[0].log is not None
       and fallos[0].log.exists(), True)
 
-    # Sin `listings`: los de la primera pasada ya están (renombrados por
-    # normalize_prefix), y escribirlos otra vez dejaría dos juegos.
+    # Sin `listings`: los de la primera pasada ya están, y escribirlos otra vez
+    # dejaría dos juegos.
     correr(BI)
     c("y la siguiente pasada buena lo quita", results.fallos(CFG_BI), [])
 

@@ -5,8 +5,16 @@ bisync.py — Todo lo que replica el comportamiento interno de rclone bisync.
 Aquí vive la parte incómoda del proyecto, y vive junta a propósito: bisync guarda
 su baseline en ficheros cuyo nombre deduce de los dos extremos, y no perdona que
 ese nombre cambie. Saber calcular ANTES de ejecutar el nombre que rclone va a
-buscar es lo que permite renombrar el juego de listados en vez de comerse un
-error crítico.
+buscar es lo que permite decidir si el baseline que hay en disco sirve para esta
+pareja o hay que apartarlo y rehacerlo (`ui/pair_editor.py`).
+
+Lo que YA NO hay es un renombrado automático de los listados. Existió mientras el
+nombre dependía de dónde estuviera montado el dispositivo (`F:` un día, `G:` al
+siguiente), y era un apaño peligroso: renombrar es decirle a bisync que el
+listado del destino ANTERIOR describe el NUEVO, y no hay forma de distinguir el
+caso benigno del maligno. Desde que el lado local va como `device_remote` —un
+remote 'combine' propio— el nombre no depende de la máquina, así que la herida
+está cerrada y la venda sobra.
 
 Cada apartado cita el fichero de rclone cuyo comportamiento imita. Si se toca
 algo de aquí, es contra esas fuentes contra lo que hay que contrastarlo.
@@ -268,25 +276,6 @@ def migrate_legacy_state(pair: Pair) -> None:
         print(f"  migrados {moved} fichero(s) de estado a {workdir}")
 
 
-def rename_prefix(pair: Pair, old_prefix: str, new_prefix: str) -> None:
-    for f in sorted(pair.workdir.iterdir()):
-        if f.is_file() and f.name.startswith(old_prefix):
-            f.rename(pair.workdir / (new_prefix + f.name[len(old_prefix):]))
-    print(f"  listados renombrados: '{old_prefix}' -> '{new_prefix}'")
-
-
-def normalize_prefix(pair: Pair) -> None:
-    """Si el baseline está guardado con otro prefijo (el dispositivo se montaba en G: y
-    ahora en F:), lo renombra ANTES de ejecutar. El contenido de los .lst es
-    relativo a la raíz sincronizada, así que renombrarlos es seguro."""
-    state = pair_state(pair)
-    if not state.has_baseline or state.prefix is None:
-        return
-    want = expected_prefix(pair)
-    if state.prefix != want:
-        rename_prefix(pair, state.prefix, want)
-
-
 def pair_state_paths(name: str) -> list[Path]:
     """Lo que hay en disco atado a esa pareja: su workdir y su fichero de filtros.
 
@@ -302,11 +291,12 @@ def shelve_baseline(name: str) -> Path | None:
     """Aparta el baseline de una pareja: state/<n>/ -> state/<n>.old-<fecha>/.
 
     Es lo que hay que hacer cuando cambia un EXTREMO de la pareja (local, remote,
-    remote_path o mode). No basta con dejar que normalize_prefix() renombre los
-    listados al prefijo nuevo: eso le estaría diciendo a bisync que el listado del
-    destino VIEJO describe el destino NUEVO, y todo lo que no esté en el nuevo se
-    leería como borrado y se propagaría al otro lado. Apartándolo, la pareja queda
-    'fresh' y exige un --resync explícito, que es una conversación.
+    remote_path o mode). Reaprovechar los listados con el prefijo nuevo —lo que
+    hacía el renombrado automático que ya no existe— le estaría diciendo a bisync
+    que el listado del destino VIEJO describe el destino NUEVO, y todo lo que no
+    esté en el nuevo se leería como borrado y se propagaría al otro lado.
+    Apartándolo, la pareja queda 'fresh' y exige un --resync explícito, que es
+    una conversación.
 
     Se renombra en vez de borrar por si hay que volver atrás; el directorio
     apartado queda inerte, porque lo que recorre state/ solo mira su primer nivel.
@@ -346,33 +336,3 @@ def rename_pair_state(old: str, new: str) -> list[tuple[Path, Path]]:
             f_old.rename(f_new)
             movimientos.append((f_old, f_new))
     return movimientos
-
-
-_TIP_RE = re.compile(r"^\s*(Path1|Path2):\s*(.+?)\s*$", re.MULTILINE)
-
-
-def heal_listings(pair: Pair, logfile: Path) -> bool:
-    """Red de seguridad por si el prefijo calculado no coincidiera con el de
-    rclone: se lee el nombre que rclone dice esperar en su propio log ('Tip: here
-    are the filenames...') y se renombra el juego de listados."""
-    if not logfile.exists():
-        return False
-    text = logfile.read_text(encoding="utf-8", errors="replace")
-    if MISSING_LISTINGS not in text:
-        return False
-
-    tips = dict(_TIP_RE.findall(text))
-    if "Path1" not in tips:
-        return False
-    expected = Path(tips["Path1"])
-    if not expected.name.endswith(PATH1_SUFFIX):
-        return False
-    if expected.parent.name != pair.workdir.name:  # paranoia
-        return False
-
-    new_prefix = expected.name[: -len(PATH1_SUFFIX)]
-    state = pair_state(pair)
-    if not state.has_baseline or state.prefix in (None, new_prefix):
-        return False
-    rename_prefix(pair, state.prefix, new_prefix)
-    return True

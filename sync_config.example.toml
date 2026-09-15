@@ -49,9 +49,11 @@ exclude = [
 
 # keep_logs = true            # guarda también los logs de las pasadas buenas
 
-# device_remote = "disp"      # avanzado: hace que el nombre de los listados de
-                              # bisync no dependa de la letra de unidad. Exige
-                              # --resync al activarlo.
+# El lado local va como un remote 'combine' propio en vez de como ruta absoluta,
+# y así el nombre de los listados de bisync no depende de dónde esté montado el
+# dispositivo. Lo escribe el instalador en cada dispositivo nuevo. Ponerlo o
+# quitarlo a mano cambia ese nombre: exige un --resync.
+device_remote = "disp"
 
 # Flags de rclone para todas las parejas. La clave es el flag sin '--', y '_' se
 # convierte en '-'. Añadir un flag es editar esto, nunca el código.

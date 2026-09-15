@@ -15,12 +15,11 @@ aquí (`plan_override`) y cómo se vuelve a lo que dice el catálogo
 
 Lo delicado, en una frase: **cambiar un extremo de una pareja bisync sin apartar
 su baseline puede provocar borrados masivos.** El nombre de los listados sale de
-los extremos (`bisync.expected_prefix`), así que al cambiar uno,
-`normalize_prefix()` renombraría el baseline viejo al nombre nuevo y bisync
-compararía el listado del destino ANTERIOR contra el destino NUEVO: todo lo que
-no estuviera en el nuevo se leería como borrado y se propagaría. Esa función se
-escribió para un caso benigno (el dispositivo pasa de G: a F:) y no puede distinguirlo
-del maligno. Por eso el plan aparta el baseline él mismo.
+los extremos (`bisync.expected_prefix`), y un baseline que se reaprovechara con
+el nombre nuevo le estaría diciendo a bisync que el listado del destino ANTERIOR
+describe el NUEVO: todo lo que no estuviera en el nuevo se leería como borrado y
+se propagaría, con `--max-delete 25` de único freno. Por eso el plan aparta el
+baseline él mismo.
 
 Y por eso la decisión de apartarlo no se toma mirando qué claves ha tocado el
 usuario, sino comparando el `expected_prefix` de antes con el de después
