@@ -62,7 +62,12 @@ SALIDA = [
 ]
 # Con pausas, para que las líneas lleguen en lecturas distintas de la ventana,
 # que es lo que pasa de verdad: una estadística cada pocos segundos.
+# El hijo hace lo mismo que `sync.py` antes de escribir nada (`preparar_salida`):
+# UTF-8 por la tubería. Las líneas de progreso llevan un · en medio, y sin esto
+# salían en cp1252 mientras la ventana ya lee UTF-8 — que es el fallo que se
+# acaba de arreglar, pero del revés.
 ESCRIBIR = ("import sys, time\n"
+            "sys.stdout.reconfigure(encoding='utf-8')\n"
             "for l in sys.argv[1:]:\n"
             "    sys.stdout.write(l); sys.stdout.flush(); time.sleep(0.15)\n")
 

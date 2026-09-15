@@ -17,6 +17,16 @@ import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 
+# Los tests escriben en castellano, y sus mensajes de fallo enseñan lo que se
+# obtuvo — que puede llevar cualquier cosa, incluido el carácter de reemplazo.
+# Lanzados por run_all.py o con la salida redirigida, Python codifica con la del
+# sistema (cp1252 en Windows) y el propio arnés petaba al imprimir el fallo, que
+# es justo cuando hace falta leerlo. Mismo criterio que `sync.preparar_salida`.
+for _flujo in (sys.stdout, sys.stderr):
+    _reconfigurar = getattr(_flujo, "reconfigure", None)
+    if _reconfigurar is not None:
+        _reconfigurar(encoding="utf-8", errors="replace")
+
 REPO = Path(__file__).resolve().parent.parent
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))

@@ -153,6 +153,9 @@ def run_pair_quiet(name: str) -> tuple[int, str]:
         stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
+        # sync.py escribe UTF-8 (ver su main()); sin decirlo aquí se decodifica
+        # con la del sistema y las tildes acaban descompuestas en daemon.log.
+        encoding="utf-8",
         errors="replace",
     )
     return proc.returncode, (proc.stdout or "") + (proc.stderr or "")

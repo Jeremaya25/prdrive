@@ -1153,6 +1153,9 @@ def output_window(title: str, cmd: list[str], parent=None,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
+        # Lo que se lee aquí es castellano (sync.py) o UTF-8 de rclone; con la
+        # codificación del sistema las tildes se rompían en la propia ventana.
+        encoding="utf-8",
         errors="replace",
         bufsize=1,
     )

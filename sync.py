@@ -351,9 +351,13 @@ def execute(ctx: RunContext, cmd: list[str], logfile: Path | None = None) -> int
     # texto por definición: todo lo demás está en el log. Y el log se lee
     # mientras tanto: de ahí sale el progreso (common/progress.py).
     with seguir_progreso(logfile):
+        # encoding explícito: rclone escribe UTF-8 en todas las plataformas, y
+        # sin decirlo Python decodifica con la del sistema (cp1252 en Windows).
+        # Un nombre de fichero con tilde llegaba roto al log que luego se guarda.
         proc = subprocess.run(cmd, env={**os.environ, **ctx.env},
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                              text=True, errors="replace", **kwargs)
+                              text=True, encoding="utf-8", errors="replace",
+                              **kwargs)
     if proc.stdout and logfile is not None:
         append_output(logfile, proc.stdout)
     return proc.returncode
@@ -591,13 +595,29 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def preparar_salida() -> None:
+    """Deja stdout y stderr línea a línea y en UTF-8.
+
+    Línea a línea aunque la salida sea una tubería, que es lo que es cuando
+    lanza sync.py la ventana: Python llena las tuberías por bloques, y lo
+    escrito llegaba todo junto al final, progreso incluido.
+
+    Y en UTF-8, que no se coge solo: hacia una tubería Python codifica con la
+    del sistema, que en Windows es cp1252. Todo lo que escribe este script está
+    en castellano, así que las tildes llegaban descompuestas a la ventana y al
+    diario del servicio, que leen UTF-8. En una consola de verdad ya era UTF-8,
+    así que ahí no cambia nada.
+
+    stderr también: por ahí salen los ConfigError («No existe el fichero de
+    configuración…»), que es justo el texto que lee quien tiene un problema."""
+    for flujo in (sys.stdout, sys.stderr):
+        reconfigurar = getattr(flujo, "reconfigure", None)
+        if reconfigurar is not None:
+            reconfigurar(line_buffering=True, encoding="utf-8", errors="replace")
+
+
 def main() -> int:
-    # Línea a línea aunque la salida sea una tubería, que es lo que es cuando
-    # lanza sync.py la ventana: Python llena las tuberías por bloques, y lo
-    # escrito llegaba todo junto al final, progreso incluido.
-    reconfigurar = getattr(sys.stdout, "reconfigure", None)
-    if reconfigurar is not None:
-        reconfigurar(line_buffering=True)
+    preparar_salida()
     args = parse_args()
 
     # logs/ se crea solo cuando hay algo que guardar (ver dispose_log).
