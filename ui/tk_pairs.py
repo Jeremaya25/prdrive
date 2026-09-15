@@ -873,13 +873,13 @@ def explorador_remoto(parent, remote: str, inicial: str = "") -> str | None:
                      justify="left")
     nota.grid(row=3, column=0, sticky="w", pady=(8, 0))
 
-    def ir(ruta: str) -> None:
+    def ir(ruta: str) -> bool:
         """Enseña esa carpeta. Si no se puede leer, se queda donde estaba."""
         try:
             nombres = remote_picker.listar(remote, ruta)
         except ConfigError as e:
             nota.configure(text=str(e), style="Peligro.TLabel")
-            return
+            return False
         estado["ruta"] = remote_picker.normalizar(ruta)
         ruta_lbl.configure(text=f"{remote}:{estado['ruta']}")
         lista.delete(*lista.get_children())
@@ -889,6 +889,7 @@ def explorador_remoto(parent, remote: str, inicial: str = "") -> str | None:
                             else "normal")
         nota.configure(text=("Aquí no hay ninguna carpeta." if not nombres else
                              f"{len(nombres)} carpeta(s)."), style="Pista.TLabel")
+        return True
 
     def entrar(_evento=None) -> None:
         elegido = lista.selection()
@@ -936,7 +937,11 @@ def explorador_remoto(parent, remote: str, inicial: str = "") -> str | None:
     ttk.Button(pie, text="Elegir esta carpeta", style="Primary.TButton",
                command=elegir).grid(row=0, column=2)
 
-    ir(estado["ruta"])
+    # Si la carpeta de la que se venía ya no existe —la pareja apuntaba a una
+    # ruta borrada, o con una errata— se empieza por la raíz en vez de abrir un
+    # diálogo vacío del que no se puede salir a ningún sitio.
+    if not ir(estado["ruta"]) and estado["ruta"] != remote_picker.RAIZ:
+        ir(remote_picker.RAIZ)
     mostrar(dlg, parent)
     return estado["elegida"]
 

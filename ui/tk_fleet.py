@@ -37,6 +37,21 @@ SIN_NOTA = ("Todavía no hay ningún dispositivo apuntado. Cada uno deja su nota
             "sincronizar, así que aparecerán aquí en cuanto se usen.")
 
 
+def _visto(disp: fleet.Dispositivo) -> str:
+    """Cuándo se le vio. Los de siempre con el formato de la ventana («ayer»,
+    «08:20»); los que llevan una semana o más, con la fecha entera.
+
+    Aquí sí hace falta el año, a diferencia del resto de la aplicación: entre un
+    dispositivo visto hace tres semanas y otro visto hace dos años, un «12/09» a
+    secas no distingue nada, y distinguirlos es justo para lo que se abre esta
+    lista."""
+    if not disp.last_seen:
+        return "—"
+    if disp.obsoleto():
+        return disp.last_seen[:10]
+    return cuando_sello(disp.last_seen) or disp.last_seen[:10]
+
+
 def _tono(disp: fleet.Dispositivo) -> str:
     """El color de una fila: apagado el que lleva una semana sin aparecer, ámbar
     el que acabó mal. El olvido va antes que el fallo a propósito —de uno que no
@@ -116,7 +131,7 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> bool:
                         values=("✓" if disp.id == yo else "",
                                 disp.nombre, disp.version,
                                 ", ".join(disp.plataformas) or "—",
-                                cuando_sello(disp.last_seen) or "—",
+                                _visto(disp),
                                 disp.last_result))
         tree.configure(height=min(12, max(4, len(flota))))
         if flota:

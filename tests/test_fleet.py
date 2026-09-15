@@ -176,6 +176,14 @@ try:
         flota, aviso = fleet.leer(CFG)
         c("sin remoto la lista sale vacía", flota, [])
         c.contains("con el motivo", aviso or "", "no such host")
+
+        # Una flota en la que todavía no ha dejado nota nadie: la carpeta no
+        # existe, y eso NO es un fallo de conexión (rclone lo distingue con su
+        # propio código de salida).
+        catalog.run = falso_run([], rc=fleet.RC_SIN_CARPETA,
+                                stderr="directory not found")
+        c("una carpeta que aún no existe es una flota vacía, sin aviso",
+          fleet.leer(CFG), ([], None))
 finally:
     catalog.run, model.APP_DIR = real_run, real_app
 

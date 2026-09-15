@@ -315,6 +315,19 @@ try:
     tk.Toplevel.wait_window = pulsar("Cancelar")
     c("cancelar no devuelve ninguna ruta",
       tk_pairs.explorador_remoto(raiz, "nas", "/datos"), None)
+
+    # La pareja apuntaba a una carpeta que ya no está: se empieza por la raíz en
+    # vez de abrir un diálogo vacío del que no se puede ir a ningún sitio.
+    def solo_la_raiz(args):
+        if args[-1] == "nas:/":
+            return subprocess.CompletedProcess(args, 0, stdout=LSD, stderr="")
+        return subprocess.CompletedProcess(args, 3, stdout="",
+                                           stderr="directory not found")
+
+    catalog.run = solo_la_raiz
+    tk.Toplevel.wait_window = navegar_y_elegir(0)
+    c("una carpeta que ya no existe abre en la raíz",
+      tk_pairs.explorador_remoto(raiz, "nas", "/se/ha/borrado"), "/")
 finally:
     catalog.run = real_run
 

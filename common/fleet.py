@@ -59,6 +59,12 @@ HORAS_ENTRE_NOTAS = 6
 
 RESULTADO_OK = "ok"
 
+# El código con el que rclone dice «ese directorio no existe» (ver la tabla de
+# códigos de salida de su documentación: 0 bien, 1 uso, 2 error sin clasificar,
+# 3 directorio no encontrado). Aquí no es un error: es una flota en la que
+# todavía no ha dejado nota nadie, y enseñarla como «sin conexión» sería mentir.
+RC_SIN_CARPETA = 3
+
 CABECERA = (
     f"# {APP_NAME} — nota de presencia de un dispositivo.\n"
     "# La escribe el propio dispositivo al sincronizar. No la edites a mano: se\n"
@@ -419,6 +425,8 @@ def leer(raw_local: Mapping[str, Any] | None = None
     tmpdir = Path(tempfile.mkdtemp(prefix="prdrive-flota-"))
     try:
         res = catalog.run(["copy", donde, str(tmpdir), "--include", "*" + SUFIJO])
+        if res.returncode == RC_SIN_CARPETA:
+            return [], None
         if res.returncode != 0:
             return [], (f"No se ha podido leer la flota en {donde}: "
                         f"{(res.stderr or '').strip()}")
