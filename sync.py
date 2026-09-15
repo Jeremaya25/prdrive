@@ -50,7 +50,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Mapping
 
-from common import bisync, conflicts, model, progress, results
+from common import bisync, conflicts, fleet, model, progress, results
 from common.model import Config, Pair
 
 LOG_TAIL_LINES = 15  # líneas de log que se vuelcan a consola cuando algo falla
@@ -627,7 +627,15 @@ def main() -> int:
         resync_approved=approved,
         keep_logs=args.keep_logs or config.keep_logs,
     )
-    return run_all(ctx, selected)
+    rc = run_all(ctx, selected)
+
+    # Deja constancia en la flota de que este dispositivo se ha usado, y de cómo
+    # le ha ido. Va detrás de la pasada y nunca lanza (ver common/fleet.py): es
+    # una nota para la ventana de parejas, no parte de la sincronización. Un
+    # simulacro no cuenta, por lo mismo que no apunta resultados.
+    if not ctx.dry_run:
+        fleet.publicar(config)
+    return rc
 
 
 if __name__ == "__main__":

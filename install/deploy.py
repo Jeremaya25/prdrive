@@ -42,18 +42,20 @@ from __future__ import annotations
 import os
 import shutil
 import stat
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, Mapping
 
-from common import components, config_file, model
+from common import components, config_file, fleet, model
 from common.pins import Plataforma
 
-from . import APP_NAME, IS_WIN, InstallError, bundle_dir, platforms, python_command
+from . import (APP_NAME, IS_WIN, InstallError, bundle_dir, platforms,
+               python_command, version)
 from . import rclone_bin, runtime_bin
 from .profile import Profile, render_conf
 from .rclone_bin import bin_subdir, exe_name
-from .remote import Catalog
+from .remote import Catalog, Rclone
 
 # El punto la oculta en Linux y macOS por convención; en Windows hace falta
 # además el atributo, que pone `hide()`. Con las dos cosas la carpeta está
@@ -709,6 +711,52 @@ def make_local_dirs(device_root: Path | str, catalog: Catalog,
             raise InstallError(f"No he podido crear {destino}: {e}") from e
         creadas.append(destino)
     return creadas
+
+
+# ---------------------------------------------------------------------------
+# La nota de presencia en la flota
+# ---------------------------------------------------------------------------
+
+NOTA_INICIAL = "recién instalado"
+
+
+def publish_fleet_note(rclone: Rclone, device_root: Path | str,
+                       endpoint_catalogo: str, timeout: float = 45.0) -> str | None:
+    """Apunta el dispositivo recién sembrado en el registro de la flota.
+
+    Devuelve dónde ha quedado la nota, o None si no se ha podido dejar. Es
+    **mejor esfuerzo**, como `write_guide()`: el registro sirve para mirar la
+    flota desde la ventana, y que el remoto no acepte un fichero de 200 bytes no
+    puede tumbar una instalación que ya está hecha.
+
+    Va por el rclone del instalador y no por el del dispositivo porque el
+    dispositivo todavía no ha ejecutado nada: sus claves están puestas, pero
+    quien tiene la conexión abierta en este momento es el asistente.
+
+    De paso deja escrito en el dispositivo cómo se llama y qué se ha publicado
+    (`state/fleet.json`), que es lo que hace que el nombre no cambie al cambiar
+    de ordenador y que la primera pasada no repita la misma nota."""
+    app = app_dir(device_root)
+    estado = app / "state"
+    como_se_llama = fleet.nombre(estado)
+    disp = fleet.nota_de(app, como_se_llama, version(), NOTA_INICIAL)
+    if disp is None:
+        return None            # sin fichero de control: no hay a quién apuntar
+    destino = fleet.fichero(endpoint_catalogo, disp.id)
+    tmpdir = Path(tempfile.mkdtemp(prefix="prdrive-fleet-"))
+    try:
+        tmp = tmpdir / "nota.toml"
+        tmp.write_text(fleet.dumps(disp), encoding="utf-8", newline="\n")
+        res = rclone.run("copyto", str(tmp), destino, capture=True, timeout=timeout)
+        if res.returncode != 0:
+            return None
+    except Exception:                                    # noqa: BLE001
+        return None
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+    fleet.guardar_nombre(como_se_llama, estado)
+    fleet.recordar(disp, estado)
+    return destino
 
 
 # ---------------------------------------------------------------------------

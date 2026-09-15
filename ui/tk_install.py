@@ -1264,9 +1264,17 @@ def _paso_parejas(cuerpo, wiz) -> None:
             return
         wiz.state.selected = seleccion
         wiz.state.config_written = True
+        # Y queda apuntado en el registro de la flota, que es lo que permite ver
+        # desde cualquier dispositivo cuántos hay y cómo están. Mejor esfuerzo:
+        # si el remoto no acepta la nota, la instalación ya está hecha igual y la
+        # primera sincronización volverá a intentarlo.
+        nota = deploy.publish_fleet_note(wiz.rclone, wiz.device_root,
+                                         wiz.perfil.endpoint_catalog)
         detalle = f"Escrito {destino} con {len(seleccion)} pareja(s)."
         if creadas:
             detalle += "\nCarpetas creadas: " + ", ".join(p.name for p in creadas)
+        detalle += ("\nApuntado en la flota: " + nota if nota else
+                    "\n(no se ha podido apuntar en la flota; se hará al sincronizar)")
         resultado.configure(text=detalle, foreground=theme.OK)
         wiz.revisar()
 

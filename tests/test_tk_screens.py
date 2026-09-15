@@ -20,7 +20,7 @@ from _harness import Checks, sandbox
 
 import tomllib
 
-from common import catalog, config_file, model
+from common import catalog, config_file, fleet, model
 
 c = Checks("pantallas Tk (cableado)")
 
@@ -33,7 +33,7 @@ except Exception as e:                                   # sin entorno gráfico
     print(f"  (saltado) no hay entorno gráfico: {e}")
     sys.exit(0)
 
-from ui import tk_pairs, tk_watch
+from ui import tk_fleet, tk_pairs, tk_watch
 
 # El de verdad: más abajo hay tramos que lo sustituyen por un formulario de
 # mentira, y el último los necesita a los dos.
@@ -82,6 +82,7 @@ def elegir_y_pulsar(texto, pareja=None):
 
 ocultar(tk_pairs)
 ocultar(tk_watch)
+ocultar(tk_fleet)
 # Las consecuencias de un plan se enseñan en su propia ventana (`confirmar_plan`),
 # no en un messagebox: aquí se responde que sí y ya está. Lo que se comprueba de
 # esta pantalla es el cableado, no el diálogo.
@@ -262,6 +263,65 @@ with sandbox():
     c("pero lo de este dispositivo sigue disponible", estados["Usar aquí"], "normal")
 
     catalog.load = falso_catalogo
+
+# --- la flota: se abre desde parejas, y solo toca la nota de ESTE dispositivo ---
+#
+# La lista la sirve `common/fleet.py`, que aquí se sustituye entera: lo que se
+# comprueba es el cableado de la ventana, no el remoto.
+FLOTA = [fleet.Dispositivo(id="yo", nombre="este", version="0.1.4",
+                           plataformas=("windows-x64",),
+                           last_seen="2026-01-01 00:00:00", last_result="ok"),
+         fleet.Dispositivo(id="otro", nombre="el del trabajo", version="0.1.2",
+                           plataformas=("linux-x64",),
+                           last_seen="2026-01-02 00:00:00", last_result="ok")]
+publicadas: list[tuple] = []
+guardados: list[str] = []
+
+fleet.leer = lambda raw=None: (list(FLOTA), None)
+fleet.device_id = lambda app_dir=None: "yo"
+fleet.nombre = lambda state_dir=None: "este"
+fleet.guardar_nombre = lambda texto, state_dir=None: bool(guardados.append(texto)) or True
+fleet.publicar = lambda cfg=None, raw=None, forzar=False: bool(
+    publicadas.append((cfg, forzar))) or True
+
+with sandbox():
+    cfg = preparar()
+    filas = {}
+
+    def mirar_flota(self, *_a, **_k):
+        pila = [self]
+        while pila:
+            w = pila.pop()
+            pila += list(w.winfo_children())
+            if isinstance(w, ttk.Treeview):
+                for iid in w.get_children():
+                    filas[iid] = w.item(iid)["values"]
+
+    tk.Toplevel.wait_window = mirar_flota
+    tk_fleet.open_dialog(raiz, cfg, dict(BASE))
+    c("la flota enseña un dispositivo por nota", sorted(filas), ["otro", "yo"])
+    c("y marca cuál es este", (filas["yo"][0], filas["otro"][0]), ("✓", ""))
+    c("con su versión y sus plataformas", filas["otro"][2:4], ["0.1.2", "linux-x64"])
+
+with sandbox():
+    cfg = preparar()
+    tk_fleet.pedir_nombre = lambda parent, actual: "el pendrive azul"
+    tk.Toplevel.wait_window = pulsar("Cambiar el nombre de este…")
+    c("cambiar el nombre lo informa", tk_fleet.open_dialog(raiz, cfg, dict(BASE)), True)
+    c("se guarda en el dispositivo", guardados, ["el pendrive azul"])
+    c("y se publica en el acto, sin esperar a la siguiente pasada",
+      [forzar for _cfg, forzar in publicadas], [True])
+
+with sandbox():
+    cfg = preparar()
+    abiertas = []
+    tk_fleet.open_dialog = lambda parent, config, raw=None: abiertas.append(config) or False
+    tk.Toplevel.wait_window = pulsar("Dispositivos…")
+    tk_pairs.open_dialog(raiz, cfg)
+    c("la flota se abre desde la pantalla de parejas", len(abiertas), 1)
+    c("y no cuenta como un cambio del config", model.load_config().names,
+      ["notas", "subida"])
+
 
 # --- la pantalla de penwatch pinta su estado ---------------------------------
 with sandbox():

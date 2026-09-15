@@ -31,7 +31,8 @@ from _harness import Checks, sandbox, tmpdir
 
 import tomllib
 
-from common import catalog, components, config_file, conflicts, model, pins, update
+from common import (catalog, components, config_file, conflicts, fleet, model,
+                    pins, update)
 from install import device
 
 c = Checks("medidas de las pantallas")
@@ -46,7 +47,7 @@ except Exception as e:                                   # sin entorno gráfico
     sys.exit(0)
 
 from ui import tk as uitk
-from ui import tk_conflicts, tk_install, tk_pairs, tk_update
+from ui import tk_conflicts, tk_fleet, tk_install, tk_pairs, tk_update
 
 # Ni una petición a GitHub desde un test.
 update.fetch = lambda url, timeout: c("ningún test toca la red", "fetch", "nada")
@@ -65,6 +66,16 @@ catalog.load = lambda raw=None: (catalog.Catalog(
 catalog.push = lambda *a, **k: []
 catalog.run = lambda args: (_ for _ in ()).throw(
     AssertionError("ningún test puede hablar con el remoto"))
+
+# La flota, con lo más ancho que puede salir: nombres largos, las cuatro
+# plataformas y un resultado que enumera parejas.
+FLOTA = [fleet.Dispositivo(
+    id=f"dispositivo{i}", nombre=f"el pendrive de la oficina de arriba {i}",
+    version="0.1.4", plataformas=tuple(p.clave for p in pins.PLATAFORMAS),
+    last_seen="2026-01-01 00:00:00",
+    last_result="fallo en pareja0, pareja1, pareja2") for i in range(4)]
+fleet.leer = lambda raw=None: (FLOTA, None)
+fleet.device_id = lambda app_dir=None: "dispositivo0"
 
 # nombre, ancho, alto, tk scaling
 PANTALLAS = (
@@ -307,6 +318,19 @@ try:
                          lambda: tk_pairs.flags_form(raiz, "Flags", "pareja0", {},
                                                      [], "bisync", {}))):
                     entra, corta = medir_dialogo(fabricar, ancho, alto, escala)
+                    c(f"{nombre}: {que} cabe", entra, True)
+                    c(f"{nombre}: {que} no queda recortado", corta, False)
+
+                # La flota crece con cada dispositivo y con lo largo que sea su
+                # nombre, que lo pone el usuario.
+                for que, fabricar in (
+                        ("la flota",
+                         lambda: tk_fleet.open_dialog(raiz, cfg, dict(BASE))),
+                        ("el nombre del dispositivo",
+                         lambda: tk_fleet.pedir_nombre(
+                             raiz, "el pendrive de la oficina de arriba"))):
+                    entra, corta = medir_dialogo(fabricar, ancho, alto, escala,
+                                                 modulo=tk_fleet)
                     c(f"{nombre}: {que} cabe", entra, True)
                     c(f"{nombre}: {que} no queda recortado", corta, False)
 

@@ -361,6 +361,10 @@ def open_dialog(parent, config) -> bool:
         except ConfigError as e:
             fallo(e)
 
+    def ver_flota() -> None:
+        from . import tk_fleet
+        tk_fleet.open_dialog(dlg, estado["config"], estado["raw"])
+
     def recargar_catalogo() -> None:
         nonlocal aviso
         estado["cat"], aviso = catalog.load(estado["raw"])
@@ -421,9 +425,17 @@ def open_dialog(parent, config) -> bool:
     cierre.grid(row=5, column=0, sticky="ew", pady=(12, 0))
     cierre.columnconfigure(0, weight=1)
     pie_nota = ttk.Label(cierre, text="", style="MonoPista.TLabel",
-                         wraplength=theme.medida(760), justify="left")
+                         wraplength=theme.medida(700), justify="left")
     pie_nota.grid(row=0, column=0, sticky="w")
-    ttk.Button(cierre, text="Cerrar", command=dlg.destroy).grid(row=0, column=1)
+    # La flota cuelga de aquí y no de la ventana principal: es de la misma
+    # familia que el catálogo —lo que comparten todos los dispositivos— y no algo
+    # que haya que mirar cada vez que se sincroniza. No se apaga sin conexión:
+    # sin ella la ventana sabe decir que no la hay.
+    flota_btn = ttk.Button(cierre, text="Dispositivos…", style="Quiet.TButton",
+                           command=lambda: ver_flota())
+    theme.boton_icono(flota_btn, "dispositivo", theme.ACENTO, theme.PAPEL)
+    flota_btn.grid(row=0, column=1, padx=(10, 6))
+    ttk.Button(cierre, text="Cerrar", command=dlg.destroy).grid(row=0, column=2)
 
     refrescar()
     mostrar(dlg, parent)
