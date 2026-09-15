@@ -1463,7 +1463,20 @@ def _ok_cifrado(w) -> bool:
 
 
 def _ok_instalacion(w) -> bool:
-    return w.state.deployed or deploy.sync_py(w.device_root).is_file()
+    """Para pasar de aquí hay que haber instalado EN ESTA pasada.
+
+    Antes bastaba con que `sync.py` ya existiese en la unidad, así que sobre un
+    dispositivo ya instalado el botón «Siguiente» llegaba activado y se podía
+    pasar de largo sin copiar nada. El paso siguiente sí escribe un
+    `sync_config.toml` recién generado, y el resultado es un dispositivo con
+    config nuevo sobre código viejo: pide cosas que su código no sabe hacer y no
+    se nota hasta que falla la primera pasada. Pasó de verdad, con
+    `device_remote` en los `[defaults]` de un dispositivo sin el código que lo
+    entiende.
+
+    Reinstalar es esta lista de pasos; para poner el código al día sin repetir
+    conexión ni parejas está el recorrido corto («Actualizar»), que sí copia."""
+    return w.state.deployed
 
 
 def _ok_parejas(w) -> bool:

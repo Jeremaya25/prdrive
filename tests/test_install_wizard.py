@@ -440,4 +440,23 @@ c("ni perder lo que ya llevaba", ANFITRION.clave in platforms.provisioned(limpio
 c("y con los lanzadores de una completa", (limpio / "runsync.bat").is_file()
   and (limpio / "runsync.sh").is_file(), True)
 
+
+# --- no se puede pasar del paso «Instalación» sin instalar -----------------------
+# Bastaba con que `sync.py` estuviese ya en la unidad, así que al reinstalar sobre
+# un dispositivo existente el botón «Siguiente» llegaba activado y se podía saltar
+# la copia del código. El paso siguiente sí escribe un `sync_config.toml` nuevo, y
+# quedaba un dispositivo con config nuevo sobre código viejo —lo que pide ese
+# config su código no lo entiende— sin aviso ninguno hasta la primera pasada.
+ya_instalado = tmpdir()
+app = ya_instalado / deploy.APP_SUBDIR
+app.mkdir(parents=True)
+(app / "sync.py").write_text("# de una instalacion anterior", encoding="utf-8")
+
+viejo = nuevo_asistente(ya_instalado)
+c("con código viejo en la unidad, «Siguiente» sigue apagado",
+  tk_install._ok_instalacion(viejo), False)
+viejo.state.deployed = True
+c("y se enciende al haber instalado de verdad",
+  tk_install._ok_instalacion(viejo), True)
+
 sys.exit(c.report())
