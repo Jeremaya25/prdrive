@@ -54,7 +54,7 @@ GLIFOS: dict[str, list[tuple]] = {
              ("p", [(3, 13.5), (3, 10), (6.5, 10)])],
     "dispositivo": [("r", 5.5, 2.5, 5, 8), ("p", [(6.5, 10.5), (6.5, 13.5), (9.5, 13.5),
                                           (9.5, 10.5)]),
-            ("l", 7, 2.5, 7, 1), ("l", 9, 2.5, 9, 1)],
+            ("l", 7, 2.5, 7, 1.9), ("l", 9, 2.5, 9, 1.9)],
     "nas": [("r", 2, 3, 12, 4), ("r", 2, 9, 12, 4), ("d", 4.5, 5), ("d", 4.5, 11)],
     # Los tres modos: los dos sentidos, y cada uno por su cuenta.
     "both": [("l", 5, 13.5, 5, 3), ("p", [(2.5, 5.5), (5, 3), (7.5, 5.5)]),
@@ -62,12 +62,12 @@ GLIFOS: dict[str, list[tuple]] = {
     "up": [("l", 8, 13, 8, 3), ("p", [(4, 7), (8, 3), (12, 7)])],
     "down": [("l", 8, 3, 8, 13), ("p", [(4, 9), (8, 13), (12, 9)])],
     "ok": [("p", [(3, 8.5), (6.5, 12), (13, 4.5)])],
-    "warn": [("p", [(8, 2.5), (14.5, 13.5), (1.5, 13.5), (8, 2.5)]),
-             ("l", 8, 6.4, 8, 9.7), ("d", 8, 11.7)],
+    "warn": [("p", [(8, 3.9), (13.2, 12.8), (2.8, 12.8), (8, 3.9)]),
+             ("l", 8, 7, 8, 9.8), ("d", 8, 11.6)],
     "clock": [("c", 8, 8, 6), ("p", [(8, 4.5), (8, 8), (10.5, 9.5)])],
     "gear": [("c", 8, 8, 2.4),
-             ("l", 8, 1.5, 8, 3.5), ("l", 8, 12.5, 8, 14.5),
-             ("l", 14.5, 8, 12.5, 8), ("l", 3.5, 8, 1.5, 8),
+             ("l", 8, 2, 8, 3.5), ("l", 8, 12.5, 8, 14),
+             ("l", 14, 8, 12.5, 8), ("l", 3.5, 8, 2, 8),
              ("l", 12.6, 3.4, 11.2, 4.8), ("l", 4.8, 11.2, 3.4, 12.6),
              ("l", 12.6, 12.6, 11.2, 11.2), ("l", 4.8, 4.8, 3.4, 3.4)],
     # Una pareja es un ida y vuelta entre dos sitios: dos flechas opuestas. La
@@ -84,9 +84,9 @@ GLIFOS: dict[str, list[tuple]] = {
     "doctor": [("p", [(2.2, 8), (5.0, 8), (6.4, 4.0), (9.0, 12.0), (10.4, 8), (13.8, 8)])],
     "flag": [("p", [(4, 14), (4, 2.5), (12, 2.5), (10, 5.5), (12, 8.5), (4, 8.5)])],
     # El ojo: dos arcos de una circunferencia grande que se cortan en las puntas.
-    "eye": [("a", 8, 10.44, 6.94, 200.6, 339.4), ("a", 8, 5.56, 6.94, 20.6, 159.4),
-            ("c", 8, 8, 1.7)],
-    "reload": [("a", 8, 8, 5, 0, 315), ("p", [(13, 1.5), (13, 5), (9.5, 5)])],
+    "eye": [("a", 8, 10.27, 6.46, 200.6, 339.4), ("a", 8, 5.73, 6.46, 20.6, 159.4),
+            ("c", 8, 8, 1.6)],
+    "reload": [("a", 8, 8, 5, 0, 315), ("p", [(13, 2), (13, 5.2), (9.8, 5.2)])],
     "edit": [("p", [(11.5, 2.5), (13.5, 4.5), (5.5, 12.5), (2.5, 13.5),
                     (3.5, 10.5), (11.5, 2.5)])],
     "trash": [("l", 3.5, 4.5, 12.5, 4.5),
@@ -94,8 +94,8 @@ GLIFOS: dict[str, list[tuple]] = {
               ("p", [(5, 4.5), (5.7, 13.5), (10.3, 13.5), (11, 4.5)])],
     "plus": [("l", 8, 3, 8, 13), ("l", 3, 8, 13, 8)],
     "back": [("l", 13, 8, 3, 8), ("p", [(7, 4), (3, 8), (7, 12)])],
-    "file": [("p", [(4, 1.5), (9, 1.5), (12, 4.5), (12, 14.5), (4, 14.5), (4, 1.5)]),
-             ("p", [(9, 1.5), (9, 5), (12, 5)])],
+    "file": [("p", [(4, 2), (9, 2), (12, 5), (12, 14), (4, 14), (4, 2)]),
+             ("p", [(9, 2), (9, 5.4), (12, 5.4)])],
 }
 
 # El icono de la aplicación: campo, los dos brazos del ciclo y el cuerpo del dispositivo.
@@ -349,11 +349,24 @@ def _capas_rgba(capas, caja: float, size: int) -> list[list[tuple]]:
     return filas
 
 
-def _rasterizar(capas, caja: float, size: int, fondo: str) -> str:
+def _rasterizar(capas, caja: float, size: int, fondo: str,
+                bajar: int = 0, alto: int | None = None) -> str:
     """Lo mismo, ya aplanado contra `fondo` y en el texto que entiende
-    `PhotoImage.put()`."""
+    `PhotoImage.put()`.
+
+    La imagen mide `alto` de alta y el dibujo empieza en la fila `bajar`; el
+    resto son filas de fondo, invisibles porque el icono ya viene aplanado
+    contra el fondo del botón. Es la única forma de mover un icono dentro de un
+    botón: ttk lo centra en la caja de la línea y no hay ningún hueco que tocar.
+
+    Se da la altura ENTERA y no solo cuántas filas poner encima porque ttk
+    centra la imagen: añadir filas arriba y dejar que crezca la mueve solo media
+    fila por cada una, y encima crece el botón, que vuelve a mover el texto. Con
+    la altura fija el sitio del dibujo se decide aquí y no se mueve nada más."""
     fr, fg, fb = _rgb(fondo)
-    salida = []
+    alto = size + bajar if alto is None else alto
+    vacia = "{" + " ".join(["#%02x%02x%02x" % (fr, fg, fb)] * size) + "}"
+    salida = [vacia] * bajar
     for fila in _capas_rgba(capas, caja, size):
         celdas = []
         for r, g, b, a in fila:
@@ -361,7 +374,8 @@ def _rasterizar(capas, caja: float, size: int, fondo: str) -> str:
                           f"{round(g * a + fg * (1 - a)):02x}"
                           f"{round(b * a + fb * (1 - a)):02x}")
         salida.append("{" + " ".join(celdas) + "}")
-    return " ".join(salida)
+    salida += [vacia] * max(0, alto - len(salida))
+    return " ".join(salida[:alto])
 
 
 # ---------------------------------------------------------------------------
@@ -401,29 +415,35 @@ def px(widget, medida: int) -> int:
     return max(1, round(medida * escala / 1.3333))
 
 
-def _dibujar(widget, clave: tuple, capas, caja: float, size: int, fondo: str):
+def _dibujar(widget, clave: tuple, capas, caja: float, size: int, fondo: str,
+             bajar: int = 0, alto: int | None = None):
     interp = widget.tk
     ficha = (id(interp), *clave)
     guardado = _CACHE.get(ficha)
     if guardado is not None and guardado[0] is interp:
         return guardado[1]
     import tkinter as tk
-    img = tk.PhotoImage(master=widget, width=size, height=size)
-    img.put(_rasterizar(capas, caja, size, fondo))
+    img = tk.PhotoImage(master=widget, width=size,
+                        height=size + bajar if alto is None else alto)
+    img.put(_rasterizar(capas, caja, size, fondo, bajar, alto))
     _CACHE[ficha] = (interp, img)
     return img
 
 
 def get(widget, nombre: str, size: int = 16, color: str = "#3B362F",
-        fondo: str = "#FAF9F7"):
+        fondo: str = "#FAF9F7", bajar: int = 0, alto: int | None = None):
     """El icono `nombre` al tamaño del diseño, ya compuesto contra `fondo`.
+
+    `bajar` lo mueve hacia abajo esos píxeles dentro de su propia imagen; lo usa
+    `theme.boton_icono` para alinearlo con el texto de al lado.
 
     Devuelve None si no se puede pintar —un nombre que no existe, un Tk que se
     está cerrando—, y quien llama se queda sin icono pero con su texto."""
     try:
         real = px(widget, size)
         capas = [(color, TRAZO, GLIFOS[nombre])]
-        return _dibujar(widget, (nombre, real, color, fondo), capas, 16.0, real, fondo)
+        return _dibujar(widget, (nombre, real, color, fondo, bajar, alto), capas,
+                        16.0, real, fondo, bajar, alto)
     except Exception:
         return None
 

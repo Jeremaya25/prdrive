@@ -535,10 +535,30 @@ def boton_icono(boton, nombre: str, color: str = TINTA, fondo: str = PAPEL,
                 size: int = 15):
     """Le pone un icono a la izquierda del texto a un botón ya creado.
 
+    El icono va bajado un poco dentro de su propia imagen. ttk la centra en la
+    caja de la línea (ascenso + descenso), pero el texto no ocupa esa caja: sus
+    mayúsculas empiezan bastante por debajo del ascenso, que reserva sitio para
+    las tildes —y en castellano se usan—. Ese hueco de arriba deja la masa del
+    texto más baja que el centro de la caja, y el icono se veía flotando por
+    encima: medido sobre la ventana de verdad, 1 px a 96 ppp.
+
+    La imagen se hace tan alta como la línea y el dibujo se baja el descenso,
+    sin pasarse de lo que quepa. Dando la altura entera el botón no crece —si
+    creciera volvería a mover el texto y no se llegaría nunca—, y el descenso es
+    la medida que Tk sí da y que acompaña al tamaño de la fuente.
+
     Si el icono no se puede pintar el botón se queda con su texto y ya está: un
     adorno no puede dejar sin usar una acción."""
+    from tkinter import font as tkfont
     from . import icons
-    img = icons.get(boton, nombre, size, color, fondo)
+    real, alto, bajar = icons.px(boton, size), None, 0
+    try:
+        m = tkfont.Font(root=boton, font=fuente("normal")).metrics()
+        alto = max(m["linespace"], real)
+        bajar = max(0, min(m["descent"], alto - real))
+    except Exception:                           # noqa: BLE001
+        alto = None                             # sin métricas, como estaba
+    img = icons.get(boton, nombre, size, color, fondo, bajar=bajar, alto=alto)
     if img is not None:
         boton.configure(image=img, compound="left")
         boton.image = img
