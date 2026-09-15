@@ -957,10 +957,10 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         # apartar un baseline que rclone está usando. «Arranque automático» no
         # toca nada del dispositivo, así que sigue a mano.
         for col, (texto, icono, accion, estado_boton) in enumerate((
-                ("Parejas…", "grid",
+                ("Parejas…", "parejas",
                  lambda: tk_pairs.open_dialog(root, vista["config"]) and recargar(),
                  apagado),
-                ("Arranque automático…", "plug",
+                ("Arranque automático…", "arranque",
                  lambda: tk_watch.open_dialog(root, vista["config"]), "normal"))):
             boton = ttk.Button(ajustes, text=texto, style="Quiet.TButton",
                                command=accion, state=estado_boton)

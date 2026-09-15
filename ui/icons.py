@@ -70,10 +70,18 @@ GLIFOS: dict[str, list[tuple]] = {
              ("l", 14.5, 8, 12.5, 8), ("l", 3.5, 8, 1.5, 8),
              ("l", 12.6, 3.4, 11.2, 4.8), ("l", 4.8, 11.2, 3.4, 12.6),
              ("l", 12.6, 12.6, 11.2, 11.2), ("l", 4.8, 4.8, 3.4, 3.4)],
-    "grid": [("r", 2.5, 2.5, 4.5, 4.5), ("r", 9, 2.5, 4.5, 4.5),
-             ("r", 2.5, 9, 4.5, 4.5), ("r", 9, 9, 4.5, 4.5)],
-    "plug": [("r", 4, 6, 8, 7), ("l", 6.5, 6, 6.5, 2.5), ("l", 9.5, 6, 9.5, 2.5)],
-    "doctor": [("c", 8, 8, 6), ("l", 8, 5, 8, 11), ("l", 5, 8, 11, 8)],
+    # Una pareja es un ida y vuelta entre dos sitios: dos flechas opuestas. La
+    # rejilla de cuatro cuadrados que había antes no decía nada, y a 15 px cada
+    # cuadrado se quedaba en un borde grueso con un agujero de dos píxeles.
+    "parejas": [("l", 2.6, 5.4, 12.9, 5.4), ("p", [(10.4, 2.9), (12.9, 5.4), (10.4, 7.9)]),
+                ("l", 13.4, 10.6, 3.1, 10.6), ("p", [(5.6, 8.1), (3.1, 10.6), (5.6, 13.1)])],
+    # El símbolo de encendido, que es lo que se está activando. El enchufe que
+    # había era literal —arranca al enchufar el dispositivo— pero a 15 px sus
+    # dos patillas quedaban en muñones planos y el cuerpo en una mancha.
+    "arranque": [("a", 8, 8.4, 5.2, -55, 235), ("l", 8, 2.2, 8, 7.6)],
+    # Un electrocardiograma: mirar cómo está algo. La cruz dentro de un círculo
+    # se leía como «añadir», que es justo lo que el doctor no hace.
+    "doctor": [("p", [(2.2, 8), (5.0, 8), (6.4, 4.0), (9.0, 12.0), (10.4, 8), (13.8, 8)])],
     "flag": [("p", [(4, 14), (4, 2.5), (12, 2.5), (10, 5.5), (12, 8.5), (4, 8.5)])],
     # El ojo: dos arcos de una circunferencia grande que se cortan en las puntas.
     "eye": [("a", 8, 10.44, 6.94, 200.6, 339.4), ("a", 8, 5.56, 6.94, 20.6, 159.4),
