@@ -14,6 +14,7 @@ del bloque «Este dispositivo» NO cambie el catálogo.
 Las ventanas se crean ocultas y no se entra nunca en el bucle de eventos.
 """
 
+import subprocess
 import sys
 
 from _harness import Checks, sandbox
@@ -263,6 +264,86 @@ with sandbox():
     c("pero lo de este dispositivo sigue disponible", estados["Usar aquí"], "normal")
 
     catalog.load = falso_catalogo
+
+# --- el explorador del remoto -------------------------------------------------
+# El remoto se sustituye entero: lo que se comprueba es que navegar y elegir
+# devuelvan la ruta que se está mirando, y que sin conexión el botón esté
+# apagado en vez de abrir un explorador que no puede listar nada.
+LSD = "          -1 2026-01-01 12:00:00        -1 documentos\n"
+
+
+def falso_lsd(args):
+    return subprocess.CompletedProcess(args, 0, stdout=LSD, stderr="")
+
+
+def navegar_y_elegir(entrar_veces=1):
+    """Entra en la primera carpeta N veces y pulsa «Elegir esta carpeta»."""
+    def _wait(self, *_a, **_k):
+        for _ in range(entrar_veces):
+            arbol, boton = None, None
+            pila = [self]
+            while pila:
+                w = pila.pop()
+                pila += list(w.winfo_children())
+                if isinstance(w, ttk.Treeview):
+                    arbol = w
+                elif isinstance(w, ttk.Button) and w.cget("text") == "Entrar":
+                    boton = w
+            if arbol is None or not arbol.get_children():
+                break
+            arbol.selection_set(arbol.get_children()[0])
+            boton.invoke()
+        pila = [self]
+        while pila:
+            w = pila.pop()
+            pila += list(w.winfo_children())
+            if isinstance(w, ttk.Button) and w.cget("text") == "Elegir esta carpeta":
+                w.invoke()
+                return
+    return _wait
+
+
+real_run = catalog.run
+try:
+    catalog.run = falso_lsd
+    tk.Toplevel.wait_window = navegar_y_elegir(0)
+    c("elegir sin moverse devuelve la carpeta que contiene a la pareja",
+      tk_pairs.explorador_remoto(raiz, "nas", "/datos/notas"), "/datos")
+    tk.Toplevel.wait_window = navegar_y_elegir(1)
+    c("y entrar en una baja un nivel",
+      tk_pairs.explorador_remoto(raiz, "nas", "/datos/notas"), "/datos/documentos")
+    tk.Toplevel.wait_window = pulsar("Cancelar")
+    c("cancelar no devuelve ninguna ruta",
+      tk_pairs.explorador_remoto(raiz, "nas", "/datos"), None)
+finally:
+    catalog.run = real_run
+
+
+def examinar_remoto_activo(explorable):
+    """El estado del botón «Examinar…» de la ruta remota del formulario.
+
+    Hay dos con ese texto —la ruta local también tiene el suyo—, y el del disco
+    está siempre disponible: el que puede quedarse apagado es el segundo."""
+    estados = []
+
+    def _wait(self, *_a, **_k):
+        pila = [self]
+        while pila:
+            w = pila.pop(0)
+            pila += list(w.winfo_children())
+            if isinstance(w, ttk.Button) and w.cget("text") == "Examinar…":
+                estados.append(str(w.cget("state")))
+
+    tk.Toplevel.wait_window = _wait
+    FORMULARIO(raiz, BASE, "notas", dict(BASE["pair"][0]), explorable=explorable)
+    return estados
+
+
+c("con el catálogo recién leído se puede recorrer el remoto",
+  examinar_remoto_activo(True), ["normal", "normal"])
+c("desde la copia local, no; el disco de aquí sí",
+  sorted(examinar_remoto_activo(False)), ["disabled", "normal"])
+
 
 # --- «Simular» lanza un dry-run, no una pasada --------------------------------
 # La ventana de salida se sustituye: lo que importa es QUÉ orden se lanza, y

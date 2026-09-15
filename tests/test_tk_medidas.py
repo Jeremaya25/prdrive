@@ -47,7 +47,9 @@ except Exception as e:                                   # sin entorno gráfico
     sys.exit(0)
 
 from ui import tk as uitk
-from ui import tk_conflicts, tk_fleet, tk_install, tk_pairs, tk_update
+from ui import remote_picker
+from ui import (tk_conflicts, tk_fleet, tk_install, tk_pairs,
+                tk_update)
 
 # Ni una petición a GitHub desde un test.
 update.fetch = lambda url, timeout: c("ningún test toca la red", "fetch", "nada")
@@ -74,6 +76,11 @@ FLOTA = [fleet.Dispositivo(
     version="0.1.4", plataformas=tuple(p.clave for p in pins.PLATAFORMAS),
     last_seen="2026-01-01 00:00:00",
     last_result="fallo en pareja0, pareja1, pareja2") for i in range(4)]
+# El explorador del remoto lista carpetas con `rclone lsd`; aquí se le da la
+# lista hecha, que es lo que hay que medir.
+remote_picker.listar = lambda remote, ruta: [f"carpeta-de-nombre-largo-{i}"
+                                             for i in range(9)]
+
 fleet.leer = lambda raw=None: (FLOTA, None)
 fleet.device_id = lambda app_dir=None: "dispositivo0"
 
@@ -317,6 +324,20 @@ try:
                         ("el editor de flags",
                          lambda: tk_pairs.flags_form(raiz, "Flags", "pareja0", {},
                                                      [], "bisync", {}))):
+                    entra, corta = medir_dialogo(fabricar, ancho, alto, escala)
+                    c(f"{nombre}: {que} cabe", entra, True)
+                    c(f"{nombre}: {que} no queda recortado", corta, False)
+
+                # El explorador del remoto: una lista de carpetas con nombres
+                # que los pone el usuario, y su diálogo de carpeta nueva.
+                for que, fabricar in (
+                        ("el explorador del remoto",
+                         lambda: tk_pairs.explorador_remoto(raiz, "nas",
+                                                            "/datos/documentos")),
+                        ("la carpeta nueva",
+                         lambda: tk_pairs.pedir_texto(
+                             raiz, "Nueva carpeta",
+                             "Se creará dentro de nas:/datos/documentos."))):
                     entra, corta = medir_dialogo(fabricar, ancho, alto, escala)
                     c(f"{nombre}: {que} cabe", entra, True)
                     c(f"{nombre}: {que} no queda recortado", corta, False)

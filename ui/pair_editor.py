@@ -380,6 +380,26 @@ def _analizar_flags(plan: EditPlan, defaults: Mapping[str, Any],
         flags_editor.merge(_mode_of(resultante), comunes, resultante.get("flags")))
 
 
+def ruta_local_relativa(elegida: Path | str) -> str:
+    """La ruta `local` de una pareja a partir de una carpeta elegida del disco.
+
+    `local` es SIEMPRE relativa a la raíz del dispositivo, y eso no es un detalle
+    de formato: es lo que hace que la misma pareja valga con cualquier letra de
+    unidad y en cualquier equipo. Una carpeta de fuera del dispositivo no cabe
+    ahí, y escribirla como '../../otra/cosa' sería una pareja que sincroniza algo
+    del ordenador de turno, así que se rechaza."""
+    destino = Path(elegida).resolve()
+    raiz = model.DEVICE_ROOT.resolve()
+    try:
+        relativa = destino.relative_to(raiz)
+    except ValueError:
+        raise ConfigError(
+            f"Esa carpeta no está dentro del dispositivo ({raiz}), y la ruta local "
+            f"de una pareja tiene que serlo: es lo que hace que funcione en "
+            f"cualquier equipo y con cualquier letra de unidad.") from None
+    return relativa.as_posix().strip("/") or "."
+
+
 def simular_args(raw: Mapping[str, Any], name: str) -> list[str]:
     """Los argumentos de `sync.py` para ver qué haría una pareja sin hacerlo.
 
