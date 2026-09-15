@@ -231,6 +231,27 @@ def rotulo(texto: str) -> str:
     return "   ".join(" ".join(p) for p in texto.upper().split())
 
 
+def ancho_rotulo(widget, *textos: str) -> int:
+    """Lo que ocupa el más ancho de esos rótulos, en píxeles de esta pantalla.
+
+    Para reservarles canalón hay que medirlos con su fuente, no contar sus
+    letras. Un `width=` en un `ttk.Label` son caracteres del ancho MEDIO de la
+    fuente, y `rotulo()` separa las letras a mano: «Este dispositivo» sale de
+    ahí con 31 caracteres, no 16. Un `width=18` calibrado con «Catálogo» —que
+    espaciado son 15— parecía de sobra y cortaba el otro por la mitad.
+
+    Se le pasan los textos SIN espaciar, los mismos que reciben `rotulo()`, y
+    mide el espaciado, que es el que se pinta. Devuelve 0 si no se puede medir,
+    y entonces el canalón se queda en lo que pida la rejilla: un rótulo pegado a
+    su fila de botones se lee, uno cortado no."""
+    from tkinter import font as tkfont
+    try:
+        letra = tkfont.Font(root=widget, font=fuente("rotulo"))
+        return max(letra.measure(rotulo(t)) for t in textos)
+    except Exception:                                # noqa: BLE001
+        return 0
+
+
 # ---------------------------------------------------------------------------
 # Los estilos
 # ---------------------------------------------------------------------------

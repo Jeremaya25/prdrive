@@ -445,6 +445,15 @@ rounded corners and no shadows (ttk cannot draw them).
   (bitmaps) and what only takes an int (`rowheight`).
   `tests/test_tk_densidad.py` fails if a bare-pixel `wraplength`/`rowheight`
   reappears in `ui/`.
+- **A section eyebrow's gutter is measured, never counted in characters.**
+  `width=` on a `ttk.Label` is characters of the font's *average* width, and
+  `theme.rotulo()` spaces the letters by hand, so «Este dispositivo» comes out
+  of it 31 characters long, not 16 — a `width=18` calibrated against «Catálogo»
+  (15 spaced) looked generous and clipped the other one in half. Reserve the
+  gutter with `theme.ancho_rotulo()` + `columnconfigure(minsize=…)`, which is
+  also what actually aligns two button rows across sibling frames (subtract the
+  amber block's own padding, `tk_pairs.PAD_AMBAR`). The same test forbids a
+  `width=` on any call that takes a `theme.rotulo()`.
 - `theme.apply(widget)` switches to **clam** (the only bundled theme that lets
   you set each border colour) and repaints. Runs **once per Tk interpreter**.
 - Styles cross **role** (normal, hint, eyebrow, mono…) with **surface** (paper,

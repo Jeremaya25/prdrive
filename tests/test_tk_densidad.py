@@ -81,10 +81,39 @@ for escala in (1.3333, 2.6667):
     c(f"la fila ({alto_fila} px) cabe la letra ({alto_letra} px) con la escala en {escala}",
       alto_fila >= alto_letra, True)
 
+
+# --- 4. un rótulo de sección cabe entero -----------------------------------
+#
+# El tercer daño de la misma familia: `width=` en un ttk.Label son CARACTERES,
+# del ancho medio de la fuente, y `theme.rotulo()` separa las letras a mano.
+# «Este dispositivo» sale de ahí con 31 caracteres, no 16, así que un `width=18`
+# calibrado con «Catálogo» —15 espaciado— cortaba el otro por la mitad.
+raiz = tk.Tk()
+raiz.withdraw()
+theme._puestos.clear()
+theme.apply(raiz)
+
+letra = tkfont.Font(root=raiz, font=theme.fuente("rotulo"))
+c("el rótulo espaciado no cabía en los 18 caracteres que se le daban",
+  len(theme.rotulo("Este dispositivo")) > 18, True)
+c("y «Catálogo» sí cabía, que es por lo que pasó inadvertido",
+  len(theme.rotulo("Catálogo")) <= 18, True)
+c("ancho_rotulo mide el texto YA espaciado",
+  theme.ancho_rotulo(raiz, "Este dispositivo"),
+  letra.measure(theme.rotulo("Este dispositivo")))
+c("y con varios se queda con el más ancho",
+  theme.ancho_rotulo(raiz, "Catálogo", "Este dispositivo"),
+  theme.ancho_rotulo(raiz, "Este dispositivo"))
+
+etiqueta = ttk.Label(raiz, text=theme.rotulo("Este dispositivo"),
+                     style="Rotulo.TLabel")
+c("un rótulo sin width pide el ancho de lo que va a pintar",
+  etiqueta.winfo_reqwidth() >= letra.measure(theme.rotulo("Este dispositivo")), True)
+
 raiz.destroy()
 
 
-# --- 4. y que no vuelva a colarse una de esas dos medidas en píxeles --------
+# --- 5. y que no vuelva a colarse una de esas medidas en píxeles -----------
 #
 # El efecto se arregla una vez; el hábito vuelve. Estas dos opciones son las
 # únicas de `ui/` que miden en píxeles algo que compite con el texto, así que
@@ -95,5 +124,24 @@ for fuente_py in sorted((REPO / "ui").glob("*.py")):
         if re.search(r"\b(wraplength|rowheight)\s*=\s*\d", linea):
             sueltos.append(f"{fuente_py.name}:{n}")
 c("ningún wraplength/rowheight en píxeles sueltos en ui/", sueltos, [])
+
+# Y lo mismo con el `width` de un rótulo: el hueco de un rótulo se reserva
+# midiéndolo (`theme.ancho_rotulo` + `columnconfigure(minsize=…)`), nunca
+# contando caracteres de un texto cuyas letras van separadas.
+import ast                                              # noqa: E402
+
+contados = []
+for fuente_py in sorted((REPO / "ui").glob("*.py")):
+    arbol = ast.parse(fuente_py.read_text(encoding="utf-8"))
+    for nodo in ast.walk(arbol):
+        if not isinstance(nodo, ast.Call):
+            continue
+        partes = list(nodo.args) + [k.value for k in nodo.keywords]
+        rotulado = any(isinstance(p, ast.Call)
+                       and getattr(p.func, "attr", None) == "rotulo"
+                       for p in partes)
+        if rotulado and any(k.arg == "width" for k in nodo.keywords):
+            contados.append(f"{fuente_py.name}:{nodo.lineno}")
+c("ningún rótulo con el ancho contado en caracteres", contados, [])
 
 raise SystemExit(c.report())

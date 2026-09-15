@@ -49,6 +49,15 @@ DEFAULTS_KEYS = ("remote", "device_remote", "catalog_path")
 NOTA_PEN = "Se guardará copia en sync_config.toml.bak"
 NOTA_CATALOGO = "Se guardará copia en pairs.toml.bak, en el remoto"
 
+# Los dos rótulos de sección que comparten canalón en la pantalla: sus filas de
+# botones tienen que arrancar a la misma altura, así que el hueco se calcula
+# midiendo el más ancho de los dos (`theme.ancho_rotulo`). Si se añade un tercer
+# bloque con rótulo en esa columna, va aquí.
+ROTULOS_SECCION = ("Este dispositivo", "Catálogo")
+# El padding horizontal del bloque ámbar. Tiene nombre porque el canalón se lo
+# descuenta: si cambia ahí y no aquí, las dos filas dejan de estar alineadas.
+PAD_AMBAR = 10
+
 
 def _tono(fila) -> str:
     """El color de una fila, por lo que hay que mirar de ella.
@@ -419,10 +428,18 @@ def open_dialog(parent, config) -> bool:
     boton.grid(row=0, column=6, padx=(4, 0))
     botones_catalogo.append(boton)
 
+    # El canalón de los dos rótulos de sección, medido con su fuente. Antes era
+    # un `width=18` en caracteres, y como `theme.rotulo()` separa las letras a
+    # mano, «Este dispositivo» son 31 caracteres: salía cortado. `CANALON` se
+    # reserva por rejilla, que es lo que de verdad alinea las dos filas de
+    # botones —que era para lo que estaba puesto el `width`—.
+    canalon = theme.ancho_rotulo(marco, *ROTULOS_SECCION) + icons.px(marco, 14)
+
     dispositivo = ttk.Frame(marco)
     dispositivo.grid(row=3, column=0, sticky="ew", pady=(14, 0))
-    ttk.Label(dispositivo, text=theme.rotulo("Este dispositivo"), style="Rotulo.TLabel",
-              width=18).grid(row=0, column=0, sticky="w")
+    dispositivo.columnconfigure(0, minsize=canalon)
+    ttk.Label(dispositivo, text=theme.rotulo("Este dispositivo"),
+              style="Rotulo.TLabel").grid(row=0, column=0, sticky="w")
     for i, (texto, icono, estilo, accion) in enumerate((
             ("Usar aquí", "plus", "Primary.TButton", usar_aqui),
             ("Simular", "eye", "TButton", simular),
@@ -437,11 +454,16 @@ def open_dialog(parent, config) -> bool:
         boton.grid(row=0, column=i, padx=(0, 6))
 
     # El bloque del catálogo va sobre ámbar: es lo que toca a todos los equipos.
-    cat_frame = ttk.Frame(marco, style="Ambar.TFrame", padding=(10, 7))
+    cat_frame = ttk.Frame(marco, style="Ambar.TFrame", padding=(PAD_AMBAR, 7))
     cat_frame.grid(row=4, column=0, sticky="ew", pady=(8, 0))
     cat_frame.columnconfigure(5, weight=1)
+    # El mismo canalón menos lo que este bloque ya mete por su padding: así las
+    # dos filas de botones arrancan a la misma altura pese a estar en marcos
+    # distintos, que es lo que el `width=18` de los dos rótulos buscaba y no
+    # conseguía (los dos pedían 18 y este empieza ya 10 px más a la derecha).
+    cat_frame.columnconfigure(0, minsize=max(0, canalon - icons.px(marco, PAD_AMBAR)))
     ttk.Label(cat_frame, text=theme.rotulo("Catálogo"),
-              style="Ambar.Rotulo.TLabel", width=18).grid(row=0, column=0, sticky="w")
+              style="Ambar.Rotulo.TLabel").grid(row=0, column=0, sticky="w")
     for i, (texto, icono, estilo, accion) in enumerate((
             ("Nueva…", "plus", "Ambar.TButton", catalogo_nueva),
             ("Editar…", "edit", "Ambar.TButton", catalogo_editar),
