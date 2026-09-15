@@ -108,6 +108,53 @@ with sandbox() as root:
 
     model.DEVICE_ROOT = original
 
+# --- la pareja que sincroniza la RAÍZ del dispositivo ---------------------------
+# `local = "."` no tiene primer tramo. Dejarlo en "." daba el upstream "." y el
+# extremo `disp:.`, y rclone limpia la ruta ANTES de buscar el upstream: se
+# quedaba buscando el upstream "" y fallaba con «combine for remote "":
+# directory not found». Ni siquiera es un fallo de la pareja de la raíz sola: es
+# la pareja que se lleva el dispositivo entero.
+with sandbox() as root:
+    original = model.DEVICE_ROOT
+    model.DEVICE_ROOT = Path(root)
+
+    raiz = model.parse_config(
+        {"defaults": {"remote": "nas", "device_remote": "disp"},
+         "pair": [{"name": "todo", "local": ".", "remote_path": "/copia", "mode": "down"},
+                  {"name": "notas", "local": "sync-data/notas",
+                   "remote_path": "/datos/notas", "mode": "bisync"}]})
+    todo, notas = raiz.pairs
+
+    c("la raíz se declara con un nombre, no con un punto",
+      todo.top_level_dir, model.RAIZ_UPSTREAM)
+    c("y el extremo local deja de ser 'disp:.'", todo.local_endpoint, "disp:raiz")
+    c("el upstream de la raíz apunta a la raíz del dispositivo",
+      todo.top_level_abs, Path(root).resolve())
+    c("una pareja normal no cambia", notas.local_endpoint, "disp:sync-data/notas")
+    c("y su upstream sigue siendo su carpeta",
+      notas.top_level_abs, (Path(root) / "sync-data").resolve())
+    c("los dos upstreams, cada uno con su carpeta",
+      releer(raiz.pen_environment()["RCLONE_CONFIG_DISP_UPSTREAMS"]),
+      [f'raiz={Path(root).resolve()}',
+       f'sync-data={(Path(root) / "sync-data").resolve()}'])
+
+    # Si alguien tiene una carpeta llamada como el upstream de la raíz, el mismo
+    # nombre apuntaría a dos sitios. Mejor plantarse que sincronizar a ciegas.
+    choque = model.parse_config(
+        {"defaults": {"remote": "nas", "device_remote": "disp"},
+         "pair": [{"name": "todo", "local": ".", "remote_path": "/copia", "mode": "down"},
+                  {"name": "otra", "local": f"{model.RAIZ_UPSTREAM}/cosas",
+                   "remote_path": "/cosas", "mode": "down"}]})
+    try:
+        choque.pen_environment()
+        c("dos upstreams con el mismo nombre se avisan", "no avisó", "ConfigError")
+    except model.ConfigError as e:
+        c("dos upstreams con el mismo nombre se avisan",
+          model.RAIZ_UPSTREAM in str(e), True)
+
+    model.DEVICE_ROOT = original
+
+
 # --- la forma exacta que tumbó el dispositivo de pruebas ------------------------
 # Un dispositivo montado en F: tiene la propia raíz como upstream (la pareja cuyo
 # `local` es "."), y `F:\` acaba en barra. Entrecomillando solo la ruta salía
