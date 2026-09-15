@@ -424,6 +424,23 @@ def _device_remote_name(defaults: Mapping[str, Any]) -> str | None:
 # Configuración completa
 # ---------------------------------------------------------------------------
 
+def _upstream(top: str) -> str:
+    r"""Un tramo del `upstreams` del remote 'combine', tal y como rclone lo lee.
+
+    rclone parsea `upstreams` como `fs.SpaceSepList` (fs/types.go), que es un
+    CSV con el espacio de separador: un campo solo va entrecomillado si empieza
+    por comilla, y una comilla dentro de un campo que no empezaba por comilla es
+    un error de sintaxis. Por eso las comillas envuelven el PAR ENTERO
+    `nombre=ruta` y no la ruta: entrecomillar solo la ruta daba `.="F:\"`, que
+    rclone rechaza con «bare " in non-quoted-field» y tumbaba TODAS las parejas
+    del dispositivo. Entre comillas caben tanto la barra final de la raíz de una
+    unidad (`F:\`) como los espacios de la ruta, que es para lo que hacían
+    falta. Una comilla dentro de la ruta se dobla, como manda el CSV.
+    """
+    ruta = str((DEVICE_ROOT / top).resolve()).replace('"', '""')
+    return f'"{top}={ruta}"'
+
+
 @dataclass(frozen=True)
 class Config:
     pairs: tuple[Pair, ...]
@@ -460,7 +477,7 @@ class Config:
         if not self.device_remote:
             return {}
         tops = sorted({p.top_level_dir for p in self.pairs})
-        upstreams = " ".join(f'{t}="{(DEVICE_ROOT / t).resolve()}"' for t in tops)
+        upstreams = " ".join(_upstream(t) for t in tops)
         return {
             f"RCLONE_CONFIG_{self.device_remote.upper()}_TYPE": "combine",
             f"RCLONE_CONFIG_{self.device_remote.upper()}_UPSTREAMS": upstreams,
