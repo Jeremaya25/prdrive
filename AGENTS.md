@@ -37,6 +37,7 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 │   ├── progress.py    rclone's stats lines → the live progress line; reads, never runs
 │   ├── config_file.py reads AND writes sync_config.toml (hand-rolled serializer)
 │   ├── catalog.py     the global pair catalogue on the remote: read, cache, write
+│   ├── fleet.py       the fleet registry: one note per device beside the catalogue
 │   ├── update.py      is there a newer release, and how to fetch its code — no Tk
 │   ├── components.py  what rclone/Python the device carries vs the pins — stamps, no network
 │   ├── pins.py        pinned rclone + python-build-standalone versions; the platform table
@@ -49,12 +50,14 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 │   ├── prefs.py       what the UI starts preloaded with (state/ui_prefs.json)
 │   ├── pair_editor.py what THIS device does with pairs — the decisions, no Tk
 │   ├── catalog_editor.py  add/edit/remove in the remote catalogue — no Tk
+│   ├── remote_picker.py   browse the remote to pick a folder (rclone lsd) — no Tk
 │   ├── conflict_editor.py resolve a conflict: which version keeps the name — no Tk
 │   ├── flags_editor.py    rclone flags: text <-> table, layers, warnings — no Tk
 │   ├── watch.py       adapter over penwatch.py — no Tk
 │   ├── tk.py          TkFrontend: main window, output window, modal()/mostrar()/working()
 │   ├── tk_pairs.py    the pairs screen + the flags dialog (drawing only)
 │   ├── tk_conflicts.py the conflict window (drawing only)
+│   ├── tk_fleet.py    the fleet window, off the pairs screen (drawing only)
 │   ├── tk_watch.py    the auto-start screen (drawing only)
 │   ├── tk_install.py  the install wizard, step by step (drawing only)
 │   ├── tk_crypto.py   the wizard's encryption step: VeraCrypt/BitLocker (drawing only)
@@ -241,15 +244,25 @@ rclone source file it mirrors. Preserve those citations.
 - **Session prefix.** bisync names its listings after the two endpoint strings.
   `canonical_path` / `session_name` / `expected_prefix` replicate
   `cmd/bisync/bilib/canonical.go` so the script knows the filename rclone will
-  look for **before** running. `normalize_prefix()` renames an existing listing
-  set when it no longer matches (device mounted `E:` instead of `F:`);
-  `heal_listings()` parses `Tip: Path1/Path2` out of a failed log and retries
-  **once**. Current state files are `F__sync-data_...` — drive-letter bound.
-- **`device_remote`.** `device_remote = "device"` in `[defaults]` makes the
+  look for **before** running. That is now its only job: deciding whether the
+  baseline on disk still belongs to this pair (`ui/pair_editor.py`) and showing
+  it in `--doctor`.
+- **`device_remote`, on by default.** `model.DEFAULT_DEVICE_REMOTE` is `"disp"`
+  and `deploy.device_config()` writes it into every new device's `[defaults]`
+  (`setdefault`, so a catalogue that already carries one wins). It makes the
   device side a `combine` remote via `RCLONE_CONFIG_<NAME>_TYPE/_UPSTREAMS` env
-  vars (`Config.pen_environment()`, computed from **all** pairs), making the
-  prefix machine-independent. An `alias` remote does *not* work. Not currently
-  enabled.
+  vars (`Config.pen_environment()`, computed from **all** pairs), so the prefix
+  is `disp_sync-data_notas..nas__datos_notas` — machine-independent. An `alias`
+  remote does *not* work. It goes in the **device's** defaults, not the
+  catalogue's: in the catalogue it would move every installed device's prefix at
+  once. `tests/test_bisync_prefijo.py` guards both halves.
+- **There is no listing rename any more.** `normalize_prefix()`,
+  `rename_prefix()` and `heal_listings()` were deleted with `device_remote`:
+  renaming a listing set tells bisync that a listing of the *previous*
+  destination describes the *new* one, and the benign case (drive letter moved)
+  is indistinguishable from the malignant one. With `device_remote` the benign
+  case no longer happens. Legacy devices are the maintainer's problem, by hand —
+  no migration code. The absence is asserted in `tests/test_bisync_prefijo.py`.
 - **Filters.** For `bisync` only (`Pair.wants_filters_file`), `filters_file_for()`
   generates `filters/<pair>.txt` and passes `--filters-file`; `--include`/
   `--exclude` are then **not** also emitted (duplicate rules break change
@@ -374,6 +387,10 @@ not exist, and vice versa. Both return `Choice(action, pairs, minutes)`.
 - `tk_pairs.confirmar_plan()` is a real window, one line per consequence, each
   warning in an amber box — not an `askokcancel`. This is the dialog that
   governs deletions. Tests replace it, like `mostrar()`.
+- The pairs screen opens three dialogs of its own besides the pair form:
+  «Simular» (an `output_window` with `--dry-run`), «Examinar…»
+  (`explorador_remoto`) and «Dispositivos…» (`tk_fleet`). None of the three
+  writes to the config, so none of them makes `open_dialog` return True.
 - **The main window runs syncs itself.** «Sincronizar ahora» and «Doctor» open
   `output_window(parent=root, modal=False, al_cerrar=…)`: a modeless child that
   returns at once; the main window disables whatever touches the same state
@@ -496,7 +513,8 @@ initialise them before the `sync.py` that does so exists):
 4 Comprobaciones  rclone + connect + read the catalogue
 5 Instalación     full/light + platform list; copy .prdrive/, hide it, rclone +
                   runtime per platform, launchers, rclone.conf + keys
-6 Parejas         pick from the catalogue, write sync_config.toml, make dirs
+6 Parejas         pick from the catalogue, write sync_config.toml, make dirs,
+                  publish the device's note in the fleet registry
 7 Inicialización  --resync of the bisync pairs
 8 Verificación
 ```
@@ -804,12 +822,11 @@ the remote's name** — every pair's `remote_path` resolves against
 ## Editing pairs from the UI (`ui/pair_editor.py`) — the dangerous part
 
 `bisync.expected_prefix()` derives from `local`, `remote`, `remote_path`,
-`mode`. Change any and the expected listing name changes, so on the next run
-`normalize_prefix()` would **rename the old baseline to the new name** — telling
-bisync that a listing of the *previous* destination describes the *new* one.
-Everything missing from the new side then reads as deleted and propagates, with
-`--max-delete 25` as the only brake. `normalize_prefix()` was written for the
-benign case (`G:` → `F:`) and cannot tell the two apart.
+`mode`. Change any and the expected listing name changes. Reusing the old
+baseline under the new name would tell bisync that a listing of the *previous*
+destination describes the *new* one: everything missing from the new side reads
+as deleted and propagates, with `--max-delete 25` as the only brake. That is
+exactly why the automatic rename was deleted, and why the plan shelves instead.
 
 - The editor shelves the baseline: `bisync.shelve_baseline()` renames
   `state/<pair>/` → `state/<pair>.old-<date>/`, leaving the pair `fresh` and
@@ -830,6 +847,61 @@ benign case (`G:` → `F:`) and cannot tell the two apart.
   only ever fail towards "baseline shelved for nothing", which a `--resync`
   fixes). **Rename runs before shelve** (else `filters/<old name>.txt` is
   orphaned).
+- `simular_args(raw, name)` is the whole of «Simular»: `[name, "--dry-run"]`,
+  run through `output_window` from the pairs screen. **No `--yes`** — a pair with
+  no baseline must come back "Saltada: requiere --resync", which is precisely
+  what you want to read before approving anything. The output window is modal and
+  the screen re-`grab_set()`s afterwards (destroying the child window takes its
+  grab with it, and the pairs screen would stop being modal).
+- `ruta_local_relativa(path)` turns a directory picked with the system dialog
+  into the pair's `local`, relative to `DEVICE_ROOT`, and **refuses** anything
+  outside the device (a `../..` local path is a pair that syncs whatever machine
+  it is plugged into).
+
+## The remote folder picker (`ui/remote_picker.py` + `tk_pairs.explorador_remoto`)
+
+«Examinar…» beside `remote_path`. `listar()` is `rclone lsd` through
+`catalog.run()` — same conf, same cwd, same short `NET_FLAGS` — and `_LINEA`
+parses its fixed five-field line as a whole regex, not by splitting on spaces: a
+folder name with spaces must survive intact, and a line that is not a listing
+must not become a folder. `crear()` is the only thing here that writes, and it is
+a `mkdir`: it cannot damage what is already there. **Deleting remote folders is
+deliberately not offered** — the remote belongs to the whole fleet and there is no
+consequences ceremony behind this dialog.
+
+The button is disabled exactly when the catalogue block is (`cat.editable`): a
+catalogue just read from the remote is the proxy for "there is a connection".
+Local paths use the system directory dialog — browsing a disk is something the
+desktop already does better.
+
+## The fleet registry (`common/fleet.py` + `ui/tk_fleet.py`)
+
+`<catalog dir>/devices/<device id>.toml` — one small TOML per device, **each
+device rewrites only its own**, so there is nothing two devices can clobber and
+therefore no `catalog.push()` ceremony (that protects a file governing deletions;
+this is a presence note). Fields: `id`, `nombre`, `version`, `plataformas`,
+`last_seen`, `last_result`.
+
+- The id is the `id=` of `.prdrive/PRDRIVE`. `fleet.control_file()` is the
+  **third** copy of that path (with `penwatch.py` and `install/device.py`),
+  because `install/` does not travel to the device; `tests/test_fleet.py` and
+  `tests/test_install_device.py` keep them together.
+- `nombre` lives in `state/fleet.json` on the device, not only in the note: it
+  must survive with no network, and reading a hostname instead would rename the
+  device every time it is plugged into another machine. The installer writes it
+  at provisioning (`deploy.publish_fleet_note`), which also calls
+  `fleet.recordar()` so the first pass doesn't repeat the same note.
+- **Published after every real pass, good or bad** (`sync.py main()`, never for
+  `--dry-run`): a fleet where everyone says 'ok' cannot show which device has
+  been failing for weeks. `hace_falta_publicar()` throttles it — anything but
+  `last_seen` changed, or `HORAS_ENTRE_NOTAS` since the last one — because the
+  daemon runs one `sync.py` per pair per cycle.
+- `publicar()` **never raises** and neither does `leer()`; a note is not the
+  sync. `leer()` pulls the whole folder with one `rclone copy` into a temp dir
+  (with SFTP each invocation is a fresh connection, and the window is waiting),
+  and `parse()` tolerates a half-written or future-version note.
+- Staleness is `DIAS_OBSOLETO = 7` and an unreadable date counts as stale. The
+  dialog hangs off the **pairs** screen, not the main window.
 
 ## The flags editor (`ui/flags_editor.py`)
 
@@ -872,12 +944,13 @@ existing header.
   provisioning, then maintained by the pairs screen. Still hand-editable — a
   pair that ends up differing from the catalogue is *reported* as "modificada
   aquí", not corrected.
-- Recurring idiom: `catalog.run()`, `update.fetch()`, `rclone_bin.fetch()`,
-  `model.state_file()`, the `penwatch` reads, `_win_volumes()`,
-  `_leer_estado_bitlocker()`, `conflicts.recorrer()`, `conflict_editor.mover()` /
-  `borrar()`, `ui.abrir()`, `runsync.notificar_fallo()`,
-  `components.rclone_en_uso()` / `runtime_en_uso()` are module-level
-  indirection points **so every test replaces them** — no test touches the network or a real device.
+- Recurring idiom: `catalog.run()` (which `fleet` and `remote_picker` also go
+  through), `update.fetch()`, `rclone_bin.fetch()`, `model.state_file()`, the
+  `penwatch` reads, `_win_volumes()`, `_leer_estado_bitlocker()`,
+  `conflicts.recorrer()`, `conflict_editor.mover()` / `borrar()`, `ui.abrir()`,
+  `runsync.notificar_fallo()`, `components.rclone_en_uso()` / `runtime_en_uso()`
+  are module-level indirection points **so every test replaces them** — no test
+  touches the network or a real device.
 
 ## Documentation
 

@@ -15,12 +15,11 @@ aquí (`plan_override`) y cómo se vuelve a lo que dice el catálogo
 
 Lo delicado, en una frase: **cambiar un extremo de una pareja bisync sin apartar
 su baseline puede provocar borrados masivos.** El nombre de los listados sale de
-los extremos (`bisync.expected_prefix`), así que al cambiar uno,
-`normalize_prefix()` renombraría el baseline viejo al nombre nuevo y bisync
-compararía el listado del destino ANTERIOR contra el destino NUEVO: todo lo que
-no estuviera en el nuevo se leería como borrado y se propagaría. Esa función se
-escribió para un caso benigno (el dispositivo pasa de G: a F:) y no puede distinguirlo
-del maligno. Por eso el plan aparta el baseline él mismo.
+los extremos (`bisync.expected_prefix`), y un baseline que se reaprovechara con
+el nombre nuevo le estaría diciendo a bisync que el listado del destino ANTERIOR
+describe el NUEVO: todo lo que no estuviera en el nuevo se leería como borrado y
+se propagaría, con `--max-delete 25` de único freno. Por eso el plan aparta el
+baseline él mismo.
 
 Y por eso la decisión de apartarlo no se toma mirando qué claves ha tocado el
 usuario, sino comparando el `expected_prefix` de antes con el de después
@@ -379,6 +378,43 @@ def _analizar_flags(plan: EditPlan, defaults: Mapping[str, Any],
     plan.warnings += flags_editor.warnings(
         flags_editor.merge(_mode_of(anterior), comunes, anterior.get("flags")),
         flags_editor.merge(_mode_of(resultante), comunes, resultante.get("flags")))
+
+
+def ruta_local_relativa(elegida: Path | str) -> str:
+    """La ruta `local` de una pareja a partir de una carpeta elegida del disco.
+
+    `local` es SIEMPRE relativa a la raíz del dispositivo, y eso no es un detalle
+    de formato: es lo que hace que la misma pareja valga con cualquier letra de
+    unidad y en cualquier equipo. Una carpeta de fuera del dispositivo no cabe
+    ahí, y escribirla como '../../otra/cosa' sería una pareja que sincroniza algo
+    del ordenador de turno, así que se rechaza."""
+    destino = Path(elegida).resolve()
+    raiz = model.DEVICE_ROOT.resolve()
+    try:
+        relativa = destino.relative_to(raiz)
+    except ValueError:
+        raise ConfigError(
+            f"Esa carpeta no está dentro del dispositivo ({raiz}), y la ruta local "
+            f"de una pareja tiene que serlo: es lo que hace que funcione en "
+            f"cualquier equipo y con cualquier letra de unidad.") from None
+    return relativa.as_posix().strip("/") or "."
+
+
+def simular_args(raw: Mapping[str, Any], name: str) -> list[str]:
+    """Los argumentos de `sync.py` para ver qué haría una pareja sin hacerlo.
+
+    Es la otra mitad de la ceremonia que gobierna los borrados. `confirmar_plan`
+    enseña lo que va a pasar con la CONFIGURACIÓN; esto enseña lo que va a pasar
+    con los FICHEROS, que es lo que de verdad preocupa de un espejo o de una
+    pareja que lleva tiempo sin sincronizar: un `--dry-run` de rclone enumera
+    cada copia y cada borrado y no toca nada.
+
+    No lleva `--yes`: una pareja sin baseline se salta, y ese «requiere --resync»
+    es exactamente lo que hay que leer antes de aprobar nada."""
+    if not any(p.get("name") == name for p in raw.get("pair") or []):
+        raise ConfigError(f"'{name}' no se usa en este dispositivo, así que aquí no "
+                          f"hay nada que simular. Úsala primero.")
+    return [name, "--dry-run"]
 
 
 def plan_remove(raw: Mapping[str, Any], name: str, clean_state: bool = False) -> EditPlan:

@@ -26,8 +26,10 @@ from __future__ import annotations
 from common import catalog, config_file, model
 from common.model import ConfigError
 
-from . import catalog_editor, flags_editor, icons, pair_editor, theme
-from .tk import TITLE, bloque_aviso, cabecera, cuerpo_visible, modal, mostrar
+from . import (catalog_editor, flags_editor, icons, pair_editor,
+               remote_picker, theme)
+from .tk import (TITLE, bloque_aviso, cabecera, cuerpo_visible, modal,
+                 mostrar, orden_sync, output_window)
 
 COLUMNAS = [
     ("usa", "En el dispositivo", 62),
@@ -209,6 +211,15 @@ def open_dialog(parent, config) -> bool:
     def fallo(e) -> None:
         messagebox.showerror(TITLE, str(e), parent=dlg)
 
+    def hay_conexion() -> bool:
+        """Si se puede recorrer el remoto desde el formulario.
+
+        Es la misma pregunta que gobierna el bloque del catálogo, y por eso la
+        misma respuesta: el catálogo se acaba de leer del remoto, o sea que hay
+        con quién hablar. Desde la copia local no se navega nada."""
+        cat = estado["cat"]
+        return cat is not None and cat.editable
+
     # --- este dispositivo ----------------------------------------------------------
 
     def usar_aqui() -> None:
@@ -238,6 +249,29 @@ def open_dialog(parent, config) -> bool:
         except ConfigError as e:
             fallo(e)
 
+    def simular() -> None:
+        """Enseñar lo que haría la pareja elegida, sin hacerlo.
+
+        La ventana de salida va MODAL: mientras rclone mira los dos lados, esta
+        pantalla no puede apartar un baseline ni reescribir el config. Al volver
+        se le devuelve la captura a este diálogo, porque destruir la ventana hija
+        se lleva la suya y sin esto la pantalla de parejas dejaría de ser modal."""
+        fila = fila_elegida()
+        if fila is None:
+            return
+        try:
+            args = pair_editor.simular_args(estado["raw"], fila.name)
+        except ConfigError as e:
+            fallo(e)
+            return
+        output_window(f"Simulación de '{fila.name}'", orden_sync(args), parent=dlg,
+                      subtitulo=fila.name)
+        try:
+            dlg.grab_set()
+        except Exception:                                # noqa: BLE001
+            pass
+        refrescar(f"Simulación de '{fila.name}' terminada: no se ha tocado nada.")
+
     def modificar_aqui() -> None:
         fila = fila_elegida()
         if fila is None:
@@ -252,7 +286,8 @@ def open_dialog(parent, config) -> bool:
                            titulo=f"Modificar '{fila.name}' solo en este dispositivo",
                            marca="el catálogo no cambia",
                            subtitulo="Este cambio se queda aquí, los demás "
-                                     "dispositivos siguen igual.")
+                                     "dispositivos siguen igual.",
+                           explorable=hay_conexion())
         if datos is None:
             return
         try:
@@ -301,7 +336,8 @@ def open_dialog(parent, config) -> bool:
                            titulo="Nueva pareja en el catálogo",
                            marca="afecta a TODOS los dispositivos",
                            subtitulo="Queda disponible para todos los dispositivos; usarla "
-                                     "aquí es el paso siguiente.")
+                                     "aquí es el paso siguiente.",
+                           explorable=hay_conexion())
         if datos is None:
             return
         try:
@@ -323,7 +359,8 @@ def open_dialog(parent, config) -> bool:
                            titulo=f"Editar '{fila.name}' en el catálogo",
                            marca="afecta a TODOS los dispositivos",
                            subtitulo="Lo que se cambie aquí lo verán todos los dispositivos "
-                                     "la próxima vez que lean el catálogo.")
+                                     "la próxima vez que lean el catálogo.",
+                           explorable=hay_conexion())
         if datos is None:
             return
         try:
@@ -361,6 +398,10 @@ def open_dialog(parent, config) -> bool:
         except ConfigError as e:
             fallo(e)
 
+    def ver_flota() -> None:
+        from . import tk_fleet
+        tk_fleet.open_dialog(dlg, estado["config"], estado["raw"])
+
     def recargar_catalogo() -> None:
         nonlocal aviso
         estado["cat"], aviso = catalog.load(estado["raw"])
@@ -384,6 +425,7 @@ def open_dialog(parent, config) -> bool:
               width=18).grid(row=0, column=0, sticky="w")
     for i, (texto, icono, estilo, accion) in enumerate((
             ("Usar aquí", "plus", "Primary.TButton", usar_aqui),
+            ("Simular", "eye", "TButton", simular),
             ("Modificar aquí…", "edit", "TButton", modificar_aqui),
             ("Volver al catálogo", "back", "TButton", volver_al_catalogo),
             ("Quitar…", "trash", "Danger.TButton", quitar)), start=1):
@@ -421,9 +463,17 @@ def open_dialog(parent, config) -> bool:
     cierre.grid(row=5, column=0, sticky="ew", pady=(12, 0))
     cierre.columnconfigure(0, weight=1)
     pie_nota = ttk.Label(cierre, text="", style="MonoPista.TLabel",
-                         wraplength=theme.medida(760), justify="left")
+                         wraplength=theme.medida(700), justify="left")
     pie_nota.grid(row=0, column=0, sticky="w")
-    ttk.Button(cierre, text="Cerrar", command=dlg.destroy).grid(row=0, column=1)
+    # La flota cuelga de aquí y no de la ventana principal: es de la misma
+    # familia que el catálogo —lo que comparten todos los dispositivos— y no algo
+    # que haya que mirar cada vez que se sincroniza. No se apaga sin conexión:
+    # sin ella la ventana sabe decir que no la hay.
+    flota_btn = ttk.Button(cierre, text="Dispositivos…", style="Quiet.TButton",
+                           command=lambda: ver_flota())
+    theme.boton_icono(flota_btn, "dispositivo", theme.ACENTO, theme.PAPEL)
+    flota_btn.grid(row=0, column=1, padx=(10, 6))
+    ttk.Button(cierre, text="Cerrar", command=dlg.destroy).grid(row=0, column=2)
 
     refrescar()
     mostrar(dlg, parent)
@@ -583,14 +633,20 @@ def _cabecera_form(marco, titulo: str, marca: str | None, subtitulo: str | None,
 
 def formulario(parent, raw: dict, original_name: str | None, actual: dict,
                catalogo: dict | None = None, titulo: str | None = None,
-               subtitulo: str | None = None, marca: str | None = None) -> dict | None:
+               subtitulo: str | None = None, marca: str | None = None,
+               explorable: bool = False) -> dict | None:
     """El formulario de una pareja. Devuelve los campos, o None si se cancela.
 
     `catalogo` es la entrada del catálogo con la que comparar: junto a cada campo
     se enseña lo que dice el catálogo y se marca con ✎ el que difiere, que es lo
-    que convierte «modificar aquí» en una decisión informada."""
+    que convierte «modificar aquí» en una decisión informada.
+
+    `explorable` dice si se puede recorrer el remoto desde aquí. Lo decide quien
+    abre el formulario con el mismo criterio que gobierna el catálogo: se acaba
+    de leer del remoto, o sea que hay conexión. Sin ella el botón se apaga en vez
+    de abrir un explorador que no va a poder listar nada."""
     import tkinter as tk
-    from tkinter import ttk
+    from tkinter import messagebox, ttk
 
     dlg = modal(parent, titulo or (f"Editar '{original_name}'" if original_name
                                    else "Nueva pareja"))
@@ -614,17 +670,53 @@ def formulario(parent, raw: dict, original_name: str | None, actual: dict,
                                  padx=(0, 12), pady=(5, 0) if arriba else 0)
 
     campos: dict[str, tk.StringVar] = {}
-    for clave, titulo_campo, ayuda, mono in (
-            ("name", "Nombre", "nombra también su carpeta en state/", False),
-            ("local", "Ruta local", "relativa a la raíz del dispositivo", True),
-            ("remote_path", "Ruta remota", "en el remoto, p. ej. /datos/notas", True),
-            ("remote", "Remoto", f"vacío = el de [defaults] ({por_defecto})", True)):
+
+    def examinar_local() -> None:
+        """La carpeta local, con el diálogo de carpetas del sistema.
+
+        El del sistema y no uno propio: recorrer un disco ya lo sabe hacer el
+        escritorio, y mejor. Lo que sí es asunto nuestro es lo que se escribe
+        después, que tiene que ser relativo a la raíz del dispositivo."""
+        from tkinter import filedialog
+        elegida = filedialog.askdirectory(
+            parent=dlg, title="Carpeta del dispositivo",
+            initialdir=str(model.DEVICE_ROOT), mustexist=True)
+        if not elegida:
+            return
+        try:
+            campos["local"].set(pair_editor.ruta_local_relativa(elegida))
+        except ConfigError as e:
+            messagebox.showerror(TITLE, str(e), parent=dlg)
+
+    def examinar_remoto() -> None:
+        remote = remote_picker.remote_de(raw, campos["remote"].get())
+        elegida = explorador_remoto(dlg, remote, campos["remote_path"].get())
+        if elegida is not None:
+            campos["remote_path"].set(elegida)
+
+    for clave, titulo_campo, ayuda, mono, explorar in (
+            ("name", "Nombre", "nombra también su carpeta en state/", False, None),
+            ("local", "Ruta local", "relativa a la raíz del dispositivo", True,
+             examinar_local),
+            ("remote_path", "Ruta remota", "en el remoto, p. ej. /datos/notas", True,
+             examinar_remoto),
+            ("remote", "Remoto", f"vacío = el de [defaults] ({por_defecto})", True,
+             None)):
         etiqueta(titulo_campo, fila)
         var = tk.StringVar(value=str(actual.get(clave, "")))
         campos[clave] = var
-        ttk.Entry(marco, textvariable=var, width=38,
-                  style="Mono.TEntry" if mono else "TEntry").grid(
-            row=fila, column=1, sticky="w", pady=3)
+        celda = ttk.Frame(marco)
+        celda.grid(row=fila, column=1, sticky="w", pady=3)
+        ttk.Entry(celda, textvariable=var, width=30 if explorar else 38,
+                  style="Mono.TEntry" if mono else "TEntry").grid(row=0, column=0)
+        if explorar is not None:
+            boton = ttk.Button(celda, text="Examinar…", style="Quiet.TButton",
+                               command=explorar, width=11)
+            # El remoto solo se puede recorrer si hay conexión; el disco de aquí,
+            # siempre.
+            if explorar is examinar_remoto and not explorable:
+                boton.configure(state="disabled")
+            boton.grid(row=0, column=1, padx=(6, 0))
         ttk.Label(marco, text=pista(clave, ayuda), style="Pista.TLabel",
                   wraplength=theme.medida(250), justify="left").grid(row=fila, column=2,
                                                        sticky="w", padx=(12, 0))
@@ -725,6 +817,172 @@ def formulario(parent, raw: dict, original_name: str | None, actual: dict,
 
     mostrar(dlg, parent)
     return resultado["datos"]
+
+
+def explorador_remoto(parent, remote: str, inicial: str = "") -> str | None:
+    """Recorre el remoto y devuelve la ruta elegida, o None si se cancela.
+
+    Solo dibuja: leer una carpeta, subir, entrar y crear son de
+    `ui/remote_picker.py`. Lo que hace este diálogo es que elegir una ruta deje
+    de ser teclearla de memoria, que es de donde salían las parejas apuntando a
+    una carpeta con una errata dentro.
+
+    Listar va sin hilo a propósito: `catalog.run` lleva tiempos de espera cortos
+    (unos segundos contra un remoto caído, no los cinco minutos de fábrica), y a
+    cambio la ruta que se está mirando y lo que hay dentro nunca pueden
+    contradecirse a media navegación."""
+    import tkinter as tk
+    from tkinter import messagebox, ttk
+
+    dlg = modal(parent, "Carpetas del remoto")
+    marco = cuerpo_visible(dlg, padding=(20, 18, 20, 16))
+    marco.columnconfigure(0, weight=1)
+    estado = {"ruta": remote_picker.carpeta_de(inicial), "elegida": None}
+
+    cabecera(marco, "Elegir una carpeta del remoto",
+             "Doble clic para entrar. Se elige la carpeta que estés mirando, así "
+             "que para usar una de la lista, entra primero en ella.",
+             ancho=520, estilo="Dialogo.TLabel").grid(row=0, column=0, sticky="w")
+
+    barra = ttk.Frame(marco, style="Gris.TFrame", padding=(12, 8))
+    barra.grid(row=1, column=0, sticky="ew", pady=(14, 0))
+    barra.columnconfigure(1, weight=1)
+    subir_btn = ttk.Button(barra, text="Subir", style="GrisQuiet.TButton",
+                           command=lambda: ir(remote_picker.subir(estado["ruta"])))
+    theme.boton_icono(subir_btn, "up", theme.TINTA2, theme.GRIS_FONDO)
+    subir_btn.grid(row=0, column=0, padx=(0, 10))
+    ruta_lbl = ttk.Label(barra, style="Gris.Mono.TLabel", anchor="w")
+    ruta_lbl.grid(row=0, column=1, sticky="ew")
+
+    tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(8, 8, 2, 4))
+    tarjeta.grid(row=2, column=0, sticky="nsew", pady=(12, 0))
+    tarjeta.columnconfigure(0, weight=1)
+    tarjeta.rowconfigure(0, weight=1)
+    marco.rowconfigure(2, weight=1)
+    lista = ttk.Treeview(tarjeta, columns=("nombre",), show="headings", height=9,
+                         selectmode="browse")
+    lista.heading("nombre", text="Carpetas", anchor="w")
+    lista.column("nombre", width=icons.px(lista, 420), anchor="w")
+    lista.grid(row=0, column=0, sticky="nsew")
+    theme.marcar_lista(lista)
+    scroll = ttk.Scrollbar(tarjeta, orient="vertical", command=lista.yview)
+    lista.configure(yscrollcommand=scroll.set)
+    scroll.grid(row=0, column=1, sticky="ns")
+
+    nota = ttk.Label(marco, style="Pista.TLabel", wraplength=theme.medida(520),
+                     justify="left")
+    nota.grid(row=3, column=0, sticky="w", pady=(8, 0))
+
+    def ir(ruta: str) -> bool:
+        """Enseña esa carpeta. Si no se puede leer, se queda donde estaba."""
+        try:
+            nombres = remote_picker.listar(remote, ruta)
+        except ConfigError as e:
+            nota.configure(text=str(e), style="Peligro.TLabel")
+            return False
+        estado["ruta"] = remote_picker.normalizar(ruta)
+        ruta_lbl.configure(text=f"{remote}:{estado['ruta']}")
+        lista.delete(*lista.get_children())
+        for nombre in nombres:
+            lista.insert("", "end", iid=nombre, values=(nombre,), tags=("ok",))
+        subir_btn.configure(state="disabled" if estado["ruta"] == remote_picker.RAIZ
+                            else "normal")
+        nota.configure(text=("Aquí no hay ninguna carpeta." if not nombres else
+                             f"{len(nombres)} carpeta(s)."), style="Pista.TLabel")
+        return True
+
+    def entrar(_evento=None) -> None:
+        elegido = lista.selection()
+        if elegido:
+            ir(remote_picker.entrar(estado["ruta"], elegido[0]))
+
+    def nueva() -> None:
+        nombre = pedir_texto(dlg, "Nueva carpeta",
+                             f"Se creará dentro de {remote}:{estado['ruta']}.")
+        if nombre is None:
+            return
+        try:
+            destino = remote_picker.crear(remote, estado["ruta"], nombre)
+        except ConfigError as e:
+            messagebox.showerror(TITLE, str(e), parent=dlg)
+            return
+        ir(destino)
+
+    def elegir() -> None:
+        estado["elegida"] = estado["ruta"]
+        dlg.destroy()
+
+    lista.bind("<Double-Button-1>", entrar)
+    lista.bind("<Return>", entrar)
+
+    acciones = ttk.Frame(marco)
+    acciones.grid(row=4, column=0, sticky="ew", pady=(12, 0))
+    acciones.columnconfigure(1, weight=1)
+    entrar_btn = ttk.Button(acciones, text="Entrar", command=entrar)
+    entrar_btn.grid(row=0, column=0, sticky="w")
+    nueva_btn = ttk.Button(acciones, text="Nueva carpeta…", style="Quiet.TButton",
+                           command=nueva)
+    theme.boton_icono(nueva_btn, "plus", theme.ACENTO, theme.PAPEL)
+    nueva_btn.grid(row=0, column=2, sticky="e")
+
+    ttk.Separator(marco, orient="horizontal").grid(row=5, column=0, sticky="ew",
+                                                   pady=(14, 0))
+    pie = ttk.Frame(marco)
+    pie.grid(row=6, column=0, sticky="ew", pady=(12, 0))
+    pie.columnconfigure(0, weight=1)
+    ttk.Label(pie, text="Se escribe en «Ruta remota»; nada se sincroniza todavía.",
+              style="Pista.TLabel").grid(row=0, column=0, sticky="w")
+    ttk.Button(pie, text="Cancelar", command=dlg.destroy).grid(row=0, column=1,
+                                                               padx=(10, 6))
+    ttk.Button(pie, text="Elegir esta carpeta", style="Primary.TButton",
+               command=elegir).grid(row=0, column=2)
+
+    # Si la carpeta de la que se venía ya no existe —la pareja apuntaba a una
+    # ruta borrada, o con una errata— se empieza por la raíz en vez de abrir un
+    # diálogo vacío del que no se puede salir a ningún sitio.
+    if not ir(estado["ruta"]) and estado["ruta"] != remote_picker.RAIZ:
+        ir(remote_picker.RAIZ)
+    mostrar(dlg, parent)
+    return estado["elegida"]
+
+
+def pedir_texto(parent, titulo: str, explicacion: str) -> str | None:
+    """Una línea de texto. None si se cancela o se deja en blanco."""
+    import tkinter as tk
+    from tkinter import ttk
+
+    dlg = modal(parent, titulo)
+    marco = cuerpo_visible(dlg, padding=(22, 20, 22, 18))
+    marco.columnconfigure(0, weight=1)
+    resultado: dict = {"texto": None}
+
+    ttk.Label(marco, text=titulo, style="Dialogo.TLabel").grid(row=0, column=0,
+                                                               sticky="w")
+    ttk.Label(marco, text=explicacion, style="Pista.TLabel", justify="left",
+              wraplength=theme.medida(400)).grid(row=1, column=0, sticky="w",
+                                                 pady=(5, 0))
+    var = tk.StringVar()
+    entrada = ttk.Entry(marco, textvariable=var, width=34, style="Mono.TEntry")
+    entrada.grid(row=2, column=0, sticky="w", pady=(14, 0))
+
+    def aceptar() -> None:
+        if not var.get().strip():
+            return
+        resultado["texto"] = var.get().strip()
+        dlg.destroy()
+
+    entrada.bind("<Return>", lambda _e: aceptar())
+    ttk.Separator(marco, orient="horizontal").grid(row=3, column=0, sticky="ew",
+                                                   pady=(16, 0))
+    pie = ttk.Frame(marco)
+    pie.grid(row=4, column=0, sticky="e", pady=(14, 0))
+    ttk.Button(pie, text="Cancelar", command=dlg.destroy).grid(row=0, column=0,
+                                                               padx=(0, 6))
+    ttk.Button(pie, text="Crear", style="Primary.TButton",
+               command=aceptar).grid(row=0, column=1)
+
+    mostrar(dlg, parent)
+    return resultado["texto"]
 
 
 def defaults_form(parent, actual: dict, catalogo: dict | None,

@@ -14,13 +14,14 @@ del bloque «Este dispositivo» NO cambie el catálogo.
 Las ventanas se crean ocultas y no se entra nunca en el bucle de eventos.
 """
 
+import subprocess
 import sys
 
 from _harness import Checks, sandbox
 
 import tomllib
 
-from common import catalog, config_file, model
+from common import catalog, config_file, fleet, model
 
 c = Checks("pantallas Tk (cableado)")
 
@@ -33,7 +34,7 @@ except Exception as e:                                   # sin entorno gráfico
     print(f"  (saltado) no hay entorno gráfico: {e}")
     sys.exit(0)
 
-from ui import tk_pairs, tk_watch
+from ui import tk_fleet, tk_pairs, tk_watch
 
 # El de verdad: más abajo hay tramos que lo sustituyen por un formulario de
 # mentira, y el último los necesita a los dos.
@@ -82,6 +83,7 @@ def elegir_y_pulsar(texto, pareja=None):
 
 ocultar(tk_pairs)
 ocultar(tk_watch)
+ocultar(tk_fleet)
 # Las consecuencias de un plan se enseñan en su propia ventana (`confirmar_plan`),
 # no en un messagebox: aquí se responde que sí y ya está. Lo que se comprueba de
 # esta pantalla es el cableado, no el diálogo.
@@ -262,6 +264,186 @@ with sandbox():
     c("pero lo de este dispositivo sigue disponible", estados["Usar aquí"], "normal")
 
     catalog.load = falso_catalogo
+
+# --- el explorador del remoto -------------------------------------------------
+# El remoto se sustituye entero: lo que se comprueba es que navegar y elegir
+# devuelvan la ruta que se está mirando, y que sin conexión el botón esté
+# apagado en vez de abrir un explorador que no puede listar nada.
+LSD = "          -1 2026-01-01 12:00:00        -1 documentos\n"
+
+
+def falso_lsd(args):
+    return subprocess.CompletedProcess(args, 0, stdout=LSD, stderr="")
+
+
+def navegar_y_elegir(entrar_veces=1):
+    """Entra en la primera carpeta N veces y pulsa «Elegir esta carpeta»."""
+    def _wait(self, *_a, **_k):
+        for _ in range(entrar_veces):
+            arbol, boton = None, None
+            pila = [self]
+            while pila:
+                w = pila.pop()
+                pila += list(w.winfo_children())
+                if isinstance(w, ttk.Treeview):
+                    arbol = w
+                elif isinstance(w, ttk.Button) and w.cget("text") == "Entrar":
+                    boton = w
+            if arbol is None or not arbol.get_children():
+                break
+            arbol.selection_set(arbol.get_children()[0])
+            boton.invoke()
+        pila = [self]
+        while pila:
+            w = pila.pop()
+            pila += list(w.winfo_children())
+            if isinstance(w, ttk.Button) and w.cget("text") == "Elegir esta carpeta":
+                w.invoke()
+                return
+    return _wait
+
+
+real_run = catalog.run
+try:
+    catalog.run = falso_lsd
+    tk.Toplevel.wait_window = navegar_y_elegir(0)
+    c("elegir sin moverse devuelve la carpeta que contiene a la pareja",
+      tk_pairs.explorador_remoto(raiz, "nas", "/datos/notas"), "/datos")
+    tk.Toplevel.wait_window = navegar_y_elegir(1)
+    c("y entrar en una baja un nivel",
+      tk_pairs.explorador_remoto(raiz, "nas", "/datos/notas"), "/datos/documentos")
+    tk.Toplevel.wait_window = pulsar("Cancelar")
+    c("cancelar no devuelve ninguna ruta",
+      tk_pairs.explorador_remoto(raiz, "nas", "/datos"), None)
+
+    # La pareja apuntaba a una carpeta que ya no está: se empieza por la raíz en
+    # vez de abrir un diálogo vacío del que no se puede ir a ningún sitio.
+    def solo_la_raiz(args):
+        if args[-1] == "nas:/":
+            return subprocess.CompletedProcess(args, 0, stdout=LSD, stderr="")
+        return subprocess.CompletedProcess(args, 3, stdout="",
+                                           stderr="directory not found")
+
+    catalog.run = solo_la_raiz
+    tk.Toplevel.wait_window = navegar_y_elegir(0)
+    c("una carpeta que ya no existe abre en la raíz",
+      tk_pairs.explorador_remoto(raiz, "nas", "/se/ha/borrado"), "/")
+finally:
+    catalog.run = real_run
+
+
+def examinar_remoto_activo(explorable):
+    """El estado del botón «Examinar…» de la ruta remota del formulario.
+
+    Hay dos con ese texto —la ruta local también tiene el suyo—, y el del disco
+    está siempre disponible: el que puede quedarse apagado es el segundo."""
+    estados = []
+
+    def _wait(self, *_a, **_k):
+        pila = [self]
+        while pila:
+            w = pila.pop(0)
+            pila += list(w.winfo_children())
+            if isinstance(w, ttk.Button) and w.cget("text") == "Examinar…":
+                estados.append(str(w.cget("state")))
+
+    tk.Toplevel.wait_window = _wait
+    FORMULARIO(raiz, BASE, "notas", dict(BASE["pair"][0]), explorable=explorable)
+    return estados
+
+
+c("con el catálogo recién leído se puede recorrer el remoto",
+  examinar_remoto_activo(True), ["normal", "normal"])
+c("desde la copia local, no; el disco de aquí sí",
+  sorted(examinar_remoto_activo(False)), ["disabled", "normal"])
+
+
+# --- «Simular» lanza un dry-run, no una pasada --------------------------------
+# La ventana de salida se sustituye: lo que importa es QUÉ orden se lanza, y
+# ningún test ejecuta sync.py de verdad.
+with sandbox():
+    cfg = preparar()
+    lanzadas: list[list[str]] = []
+    real_salida = tk_pairs.output_window
+    tk_pairs.output_window = lambda titulo, cmd, **k: lanzadas.append(list(cmd))
+    try:
+        tk.Toplevel.wait_window = elegir_y_pulsar("Simular", "notas")
+        c("simular no cuenta como un cambio del config",
+          tk_pairs.open_dialog(raiz, cfg), False)
+        c("se lanza sync.py con la pareja elegida", lanzadas[-1][-2:],
+          ["notas", "--dry-run"])
+        c("y nada más: un simulacro no escribe en el config",
+          model.load_config().names, ["notas", "subida"])
+
+        # Una pareja que este dispositivo no usa no se puede simular aquí.
+        lanzadas.clear()
+        errores.clear()
+        tk.Toplevel.wait_window = elegir_y_pulsar("Simular", "fotos")
+        tk_pairs.open_dialog(raiz, cfg)
+        c("simular una que no se usa aquí no lanza nada", lanzadas, [])
+        c("y lo dice", any("no se usa en este dispositivo" in e for e in errores), True)
+    finally:
+        tk_pairs.output_window = real_salida
+
+
+# --- la flota: se abre desde parejas, y solo toca la nota de ESTE dispositivo ---
+#
+# La lista la sirve `common/fleet.py`, que aquí se sustituye entera: lo que se
+# comprueba es el cableado de la ventana, no el remoto.
+FLOTA = [fleet.Dispositivo(id="yo", nombre="este", version="0.1.4",
+                           plataformas=("windows-x64",),
+                           last_seen="2026-01-01 00:00:00", last_result="ok"),
+         fleet.Dispositivo(id="otro", nombre="el del trabajo", version="0.1.2",
+                           plataformas=("linux-x64",),
+                           last_seen="2026-01-02 00:00:00", last_result="ok")]
+publicadas: list[tuple] = []
+guardados: list[str] = []
+
+fleet.leer = lambda raw=None: (list(FLOTA), None)
+fleet.device_id = lambda app_dir=None: "yo"
+fleet.nombre = lambda state_dir=None: "este"
+fleet.guardar_nombre = lambda texto, state_dir=None: bool(guardados.append(texto)) or True
+fleet.publicar = lambda cfg=None, raw=None, forzar=False: bool(
+    publicadas.append((cfg, forzar))) or True
+
+with sandbox():
+    cfg = preparar()
+    filas = {}
+
+    def mirar_flota(self, *_a, **_k):
+        pila = [self]
+        while pila:
+            w = pila.pop()
+            pila += list(w.winfo_children())
+            if isinstance(w, ttk.Treeview):
+                for iid in w.get_children():
+                    filas[iid] = w.item(iid)["values"]
+
+    tk.Toplevel.wait_window = mirar_flota
+    tk_fleet.open_dialog(raiz, cfg, dict(BASE))
+    c("la flota enseña un dispositivo por nota", sorted(filas), ["otro", "yo"])
+    c("y marca cuál es este", (filas["yo"][0], filas["otro"][0]), ("✓", ""))
+    c("con su versión y sus plataformas", filas["otro"][2:4], ["0.1.2", "linux-x64"])
+
+with sandbox():
+    cfg = preparar()
+    tk_fleet.pedir_nombre = lambda parent, actual: "el pendrive azul"
+    tk.Toplevel.wait_window = pulsar("Cambiar el nombre de este…")
+    c("cambiar el nombre lo informa", tk_fleet.open_dialog(raiz, cfg, dict(BASE)), True)
+    c("se guarda en el dispositivo", guardados, ["el pendrive azul"])
+    c("y se publica en el acto, sin esperar a la siguiente pasada",
+      [forzar for _cfg, forzar in publicadas], [True])
+
+with sandbox():
+    cfg = preparar()
+    abiertas = []
+    tk_fleet.open_dialog = lambda parent, config, raw=None: abiertas.append(config) or False
+    tk.Toplevel.wait_window = pulsar("Dispositivos…")
+    tk_pairs.open_dialog(raiz, cfg)
+    c("la flota se abre desde la pantalla de parejas", len(abiertas), 1)
+    c("y no cuenta como un cambio del config", model.load_config().names,
+      ["notas", "subida"])
+
 
 # --- la pantalla de penwatch pinta su estado ---------------------------------
 with sandbox():

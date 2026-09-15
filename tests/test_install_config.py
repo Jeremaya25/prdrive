@@ -113,6 +113,22 @@ c("la ruta del catálogo se guarda en los defaults",
 c("y sin ella los defaults no se inventan la clave",
   "catalog_path" in raw.get("defaults", {}), False)
 
+# --- el lado local, como remote propio desde el primer día --------------------
+# Sin `device_remote`, el nombre de los listados de bisync lleva dentro la letra
+# de unidad y el dispositivo deja de sincronizar en cuanto se monta en otra.
+c("un dispositivo nuevo se instala con device_remote",
+  raw["defaults"]["device_remote"], model.DEFAULT_DEVICE_REMOTE)
+pareja_bisync = model.parse_config(raw).pairs[0]
+c("así que su prefijo sale del remote y no del punto de montaje",
+  str(model.DEVICE_ROOT) in pareja_bisync.local_endpoint, False)
+
+# Si el catálogo ya trae uno, manda el catálogo: cambiárselo invalidaría los
+# baselines de los dispositivos que ya lo usan.
+con_suyo = deploy.device_config(remote.parse_catalog(
+    CATALOGO.replace('remote = "nas"', 'remote = "nas"\ndevice_remote = "pen"')),
+    ["docs"])
+c("y el del catálogo no se pisa", con_suyo["defaults"]["device_remote"], "pen")
+
 # --- lo que no se permite -----------------------------------------------------
 for etiqueta, seleccion in (("ninguna pareja", []), ("una que no existe", ["fantasma"])):
     try:

@@ -17,6 +17,7 @@ Ningún test lanza rclone ni toca la red: se comprueban ficheros y listas de
 argumentos, nunca la ejecución.
 """
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -610,5 +611,54 @@ deploy.app_dir(a_medias).mkdir(exist_ok=True)
 (a_medias / device.CONTROL_FILE).write_text("id=abc\n", encoding="utf-8")
 c("con el control pero sin el programa no es un dispositivo",
   device.install_target(a_medias)[0], device.VACIO)
+
+# --- la nota de presencia en la flota -----------------------------------------
+# El dispositivo recién hecho queda apuntado en el registro para que se vea desde
+# los demás. Va por el rclone del instalador —el dispositivo todavía no ha
+# ejecutado nada suyo— y es mejor esfuerzo: un remoto que no la acepta no puede
+# tumbar una instalación ya hecha.
+from common import fleet, store                                        # noqa: E402
+
+flota = tmpdir()
+deploy.app_dir(flota).mkdir(exist_ok=True)
+(flota / device.CONTROL_FILE).write_text("id=c0ffee\n", encoding="utf-8")
+
+ordenes: list[list[str]] = []
+
+
+def runner_flota(cmd, **kwargs):
+    ordenes.append(list(cmd))
+    return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+
+rc_flota = remote.Rclone(binary="RCLONE", conf="C.conf", runner=runner_flota,
+                         remote_name="nas")
+destino = deploy.publish_fleet_note(rc_flota, flota, "nas:/prdrive-catalog/pairs.toml")
+c("la nota va al fichero del id de ESTE dispositivo",
+  destino, "nas:/prdrive-catalog/devices/c0ffee.toml")
+c("se sube con copyto", ordenes[-1][3], "copyto")
+subido = Path(ordenes[-1][4])
+c("y lo subido es la nota, no otra cosa", subido.name, "nota.toml")
+apuntado = store.read_json(deploy.app_dir(flota) / "state" / "fleet.json")
+c("el dispositivo se queda con su nombre escrito",
+  apuntado["nombre"], fleet.nombre_por_defecto())
+c("y con lo último publicado, para no repetirlo en la primera pasada",
+  apuntado["publicado"]["last_result"], deploy.NOTA_INICIAL)
+c("el temporal de la nota no se queda por ahí", subido.exists(), False)
+
+sin_control = tmpdir()
+deploy.app_dir(sin_control).mkdir(exist_ok=True)
+c("sin fichero de control no hay nota que publicar",
+  deploy.publish_fleet_note(rc_flota, sin_control, "nas:/c/pairs.toml"), None)
+
+
+def runner_roto(cmd, **kwargs):
+    return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="no such host")
+
+
+c("y si el remoto la rechaza, se dice que no y ya está",
+  deploy.publish_fleet_note(
+      remote.Rclone(binary="RCLONE", conf="C.conf", runner=runner_roto,
+                    remote_name="nas"), flota, "nas:/c/pairs.toml"), None)
 
 sys.exit(c.report())

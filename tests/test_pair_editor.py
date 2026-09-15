@@ -3,8 +3,8 @@
 El editor de parejas, que es lo que puede hacer daño.
 
 La comprobación central es la primera: cambiar un extremo de una pareja bisync
-tiene que APARTAR su baseline. Si no se apartara, normalize_prefix() renombraría
-los listados del destino viejo al nombre del nuevo y bisync leería como borrados
+tiene que APARTAR su baseline. Reaprovecharlo con el nombre nuevo le diría a
+bisync que el listado del destino viejo describe el nuevo, y leería como borrados
 todos los ficheros que solo estaban en el anterior.
 """
 
@@ -336,5 +336,21 @@ with sandbox():
     pair_editor.plan_revert_defaults(distintos, cat).execute()
     c("volver a los defaults del catálogo los deja igual",
       config_file.load_raw()["defaults"], cat.defaults)
+
+# --- simular: ver lo que haría una pareja, sin hacerlo -------------------------
+# Lo que se comprueba es que la orden sea la de un simulacro y no la de una
+# pasada: este botón está para poder VER los borrados antes de aprobarlos.
+with sandbox():
+    raw = preparar()
+    c("simular es un --dry-run de esa pareja",
+      pair_editor.simular_args(raw, "notas"), ["notas", "--dry-run"])
+    c("y no lleva --yes: una pareja sin baseline tiene que salir saltada",
+      "--yes" in pair_editor.simular_args(raw, "notas"), False)
+    try:
+        pair_editor.simular_args(raw, "fotos")
+        c("simular una que este dispositivo no usa se rechaza", "no lanzó", "ConfigError")
+    except ConfigError as e:
+        c("simular una que este dispositivo no usa se rechaza",
+          "no se usa en este dispositivo" in str(e), True)
 
 sys.exit(c.report())
