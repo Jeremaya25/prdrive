@@ -908,6 +908,17 @@ therefore no `catalog.push()` ceremony (that protects a file governing deletions
 this is a presence note). Fields: `id`, `nombre`, `version`, `plataformas`,
 `last_seen`, `last_result`.
 
+`fleet.olvidar(quien, raw)` is the **one** exception, and it deletes a note
+rather than writing one: a device that no longer exists would otherwise sit in
+the list forever, because nothing ever removed a note. It is allowed past the
+rule because it destroys nothing — the note is the device's trace, not the
+device, and the owner republishes it in full the next time it is plugged in — so
+it takes an `askokcancel` and not `confirmar_plan()`. **A device cannot forget
+itself** (it would republish on the next pass and the button would look broken);
+that guard is in `fleet`, not in the window, because it is a property of the
+operation. Unlike `publicar()` / `leer()` it returns the reason it failed
+instead of a mute False: someone is waiting in front of it.
+
 - The id is the `id=` of `.prdrive/PRDRIVE`. `fleet.control_file()` is the
   **third** copy of that path (with `penwatch.py` and `install/device.py`),
   because `install/` does not travel to the device; `tests/test_fleet.py` and

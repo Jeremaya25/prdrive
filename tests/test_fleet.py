@@ -184,6 +184,39 @@ try:
                                 stderr="directory not found")
         c("una carpeta que aún no existe es una flota vacía, sin aviso",
           fleet.leer(CFG), ([], None))
+
+        # --- quitar de la lista la nota de otro ------------------------------
+        # La única escritura de este módulo sobre el fichero de OTRO. No destruye
+        # nada —el dueño vuelve a publicarla en cuanto se enchufe—, pero sí tiene
+        # a alguien esperando respuesta, así que dice qué ha pasado.
+        llamadas = []
+        catalog.run = falso_run(llamadas)
+        c("quitar la nota de otro sale bien", fleet.olvidar("d2", CFG), None)
+        c("y es un deletefile de SU fichero, no de la carpeta",
+          llamadas[-1], ["deletefile", "nas:/prdrive-catalog/devices/d2.toml"])
+
+        antes = len(llamadas)
+        fallo = fleet.olvidar(fleet.device_id(), CFG)
+        c("este dispositivo no puede quitarse a sí mismo", bool(fallo), True)
+        c("y ni siquiera se le pide nada al remoto", len(llamadas), antes)
+
+        c("sin id no se quita nada", bool(fleet.olvidar("", CFG)), True)
+
+        catalog.run = falso_run([], rc=1, stderr="no such host")
+        c.contains("un fallo del remoto se cuenta, no se traga",
+                   fleet.olvidar("d2", CFG) or "", "no such host")
+
+        # Ya no estaba: es el resultado que se pedía, por otro camino.
+        catalog.run = falso_run([], rc=fleet.RC_SIN_CARPETA,
+                                stderr="directory not found")
+        c("una nota que ya no está no es un fallo", fleet.olvidar("d2", CFG), None)
+
+        def reventar_borrado(args):
+            raise OSError("el remoto se ha caído a media orden")
+
+        catalog.run = reventar_borrado
+        c("y una excepción tampoco sale de aquí",
+          bool(fleet.olvidar("d2", CFG)), True)
 finally:
     catalog.run, model.APP_DIR = real_run, real_app
 

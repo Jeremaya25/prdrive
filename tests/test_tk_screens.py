@@ -425,6 +425,63 @@ with sandbox():
     c("y marca cuál es este", (filas["yo"][0], filas["otro"][0]), ("✓", ""))
     c("con su versión y sus plataformas", filas["otro"][2:4], ["0.1.2", "linux-x64"])
 
+# Quitar de la lista la nota de OTRO: lo que se comprueba aquí es que la ventana
+# pide quitar el que está elegido, y que sobre este mismo dispositivo el botón ni
+# siquiera se enciende. Que `fleet` se plante es cosa de test_fleet.py.
+olvidados: list[str] = []
+fleet.olvidar = lambda quien, raw=None: bool(olvidados.append(quien)) or None
+
+def buscar(raiz_widget, clase, texto=None):
+    """El primer widget de esa clase (y con ese texto, si se dice)."""
+    pila = [raiz_widget]
+    while pila:
+        w = pila.pop()
+        pila += list(w.winfo_children())
+        if isinstance(w, clase) and (texto is None or w.cget("text") == texto):
+            return w
+    return None
+
+
+def elegir(ventana, arbol, iid):
+    """Selecciona una fila y deja que Tk reparta el <<TreeviewSelect>>.
+
+    `update_idletasks()` no vale: el evento virtual va a la cola normal, no a la
+    de tareas ociosas, así que sin esto el botón que cuelga de la selección se
+    mira antes de que nadie lo haya repasado."""
+    arbol.selection_set(iid)
+    ventana.update()
+
+
+with sandbox():
+    cfg = preparar()
+
+    def quitar_otro(self, *_a, **_k):
+        elegir(self, buscar(self, ttk.Treeview), "otro")
+        buscar(self, ttk.Button, "Quitar de la lista…").invoke()
+
+    tk.Toplevel.wait_window = quitar_otro
+    tk_fleet.open_dialog(raiz, cfg, dict(BASE))
+    c("quitar de la lista pide olvidar el elegido", olvidados, ["otro"])
+
+with sandbox():
+    cfg = preparar()
+    apagados = {}
+
+    def mirar_boton(self, *_a, **_k):
+        """Elige cada fila y anota si el botón de quitar se enciende."""
+        arbol = buscar(self, ttk.Treeview)
+        boton = buscar(self, ttk.Button, "Quitar de la lista…")
+        for iid in ("yo", "otro"):
+            elegir(self, arbol, iid)
+            apagados[iid] = str(boton.cget("state"))
+
+    tk.Toplevel.wait_window = mirar_boton
+    tk_fleet.open_dialog(raiz, cfg, dict(BASE))
+    c("sobre este dispositivo el botón de quitar está apagado", apagados["yo"],
+      "disabled")
+    c("y sobre otro, encendido", apagados["otro"], "normal")
+    c("elegir una fila no quita nada por su cuenta", olvidados, ["otro"])
+
 with sandbox():
     cfg = preparar()
     tk_fleet.pedir_nombre = lambda parent, actual: "el pendrive azul"

@@ -407,6 +407,50 @@ def publicar(config: model.Config | None = None,
     return True
 
 
+def olvidar(quien: str, raw_local: Mapping[str, Any] | None = None) -> str | None:
+    """Quita de la lista la nota de OTRO dispositivo. None si se ha podido; si
+    no, el motivo, para enseñarlo.
+
+    Es la única escritura de este módulo sobre el fichero de otro, y rompe la
+    regla que hace que aquí no haga falta la ceremonia de `catalog.push()`: que
+    cada uno toca solo el suyo. Se puede permitir porque **no destruye nada**.
+    La nota no es el dispositivo: es su rastro. Si el que se quita vuelve a
+    enchufarse, publica otra vez y reaparece con todo —id, nombre, versión—,
+    porque lo de verdad vive en el propio dispositivo (`state/fleet.json` y el
+    `id=` de su fichero de control). Por eso esto no es «borrar un dispositivo»
+    sino «quitarlo de la lista», y por eso tampoco pasa por `confirmar_plan()`,
+    que es la ventana de los borrados que sí pierden datos.
+
+    El dispositivo actual no puede quitarse a sí mismo: volvería a publicarse en
+    la siguiente pasada y el botón parecería roto. Es aquí y no en la ventana
+    porque es una propiedad de la operación, no de cómo se dibuje. El parámetro
+    se llama `quien` y no `device_id` para no tapar a `device_id()`, que es lo
+    que hay que llamar para saber cuál es este.
+
+    A diferencia de `publicar()` y `leer()`, esto sí tiene a alguien esperando
+    una respuesta: no lanza —el criterio del módulo no cambia—, pero dice qué ha
+    pasado en vez de devolver un False mudo."""
+    if not quien:
+        return "No se sabe qué dispositivo se quiere quitar de la lista."
+    try:
+        if quien == device_id():
+            return ("Este es el dispositivo que estás usando: se volvería a "
+                    "apuntar en la siguiente pasada.")
+    except Exception:                                    # noqa: BLE001
+        pass          # sin id propio no se puede comparar, y quitar otro es legal
+    destino = fichero(endpoint_catalogo(raw_local), quien)
+    try:
+        res = catalog.run(["deletefile", destino])
+    except Exception as e:                               # noqa: BLE001
+        return f"No se ha podido quitar la nota de {destino}: {e}"
+    if res.returncode == RC_SIN_CARPETA:
+        return None   # ya no estaba: el resultado que se pedía, por otro camino
+    if res.returncode != 0:
+        return (f"No se ha podido quitar la nota de {destino}: "
+                f"{(res.stderr or '').strip()}")
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Leer la flota
 # ---------------------------------------------------------------------------

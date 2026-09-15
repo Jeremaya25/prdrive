@@ -11,9 +11,12 @@ para cuando uno se pregunta «¿dónde estaba el otro pendrive?», no algo que h
 que ver cada vez que se sincroniza. La ventana principal ya tiene sus avisos, y
 son los urgentes.
 
-Lo único que se puede cambiar desde aquí es **el nombre de ESTE dispositivo**.
-Ningún dispositivo escribe la nota de otro —por eso son ficheros separados— y
-esta ventana no es la excepción.
+De la nota de otro dispositivo, desde aquí solo se puede hacer una cosa:
+**quitarla de la lista**. Ningún dispositivo escribe la nota de otro —por eso
+son ficheros separados—, y quitarla no es escribirla: es borrar un rastro que el
+dueño vuelve a dejar en cuanto se enchufa. El contenido de una nota lo sigue
+decidiendo solo quien la firma, y lo único que se puede *cambiar* desde aquí es
+el nombre de ESTE dispositivo.
 """
 
 from __future__ import annotations
@@ -140,7 +143,22 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> bool:
         else:
             vacio.grid(row=2, column=0, sticky="w", pady=(10, 0))
         renombrar.configure(state="normal" if yo else "disabled")
+        repasar_quitar()
         pie_nota.configure(text=nota or (aviso or ""))
+
+    def elegido() -> fleet.Dispositivo | None:
+        seleccion = tree.selection()
+        if not seleccion:
+            return None
+        return next((d for d in estado["flota"] if d.id == seleccion[0]), None)
+
+    def repasar_quitar(_evento=None) -> None:
+        """Quitar de la lista se apaga sobre este mismo dispositivo. `fleet` lo
+        rechaza igualmente —la regla es suya—, pero un botón encendido que
+        siempre contesta que no es peor que uno apagado."""
+        disp = elegido()
+        quitar.configure(state="normal" if disp is not None and disp.id != yo
+                         else "disabled")
 
     def cambiar_nombre() -> None:
         """Ponerle nombre a este dispositivo, y contárselo al remoto.
@@ -163,17 +181,45 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> bool:
             refrescar(f"Este dispositivo se llama ahora «{nuevo}», pero no se ha "
                       f"podido avisar al remoto: se hará en la próxima pasada.")
 
+    def quitar_de_la_lista() -> None:
+        """Quitar la nota de un dispositivo que ya no existe.
+
+        Un `askokcancel` y no `confirmar_plan()`: esa ventana gobierna los
+        borrados que pierden datos, y esto no pierde ninguno —si el dispositivo
+        vuelve a enchufarse, publica otra vez y reaparece—. Lo que sí hace falta
+        es decirlo, porque «quitar» suena a más de lo que es."""
+        disp = elegido()
+        if disp is None or disp.id == yo:
+            return
+        if not messagebox.askokcancel(
+                TITLE,
+                f"¿Quitar «{disp.nombre}» de la lista?\n\n"
+                f"Se borra su nota del remoto, no el dispositivo. Si vuelve a "
+                f"enchufarse en algún sitio, se apuntará solo y reaparecerá aquí.",
+                parent=dlg):
+            return
+        fallo = fleet.olvidar(disp.id, raw)
+        if fallo:
+            refrescar(fallo)
+            return
+        refrescar(f"«{disp.nombre}» ya no está en la lista.")
+
     acciones = ttk.Frame(marco)
     acciones.grid(row=3, column=0, sticky="ew", pady=(14, 0))
-    acciones.columnconfigure(1, weight=1)
+    acciones.columnconfigure(2, weight=1)
     renombrar = ttk.Button(acciones, text="Cambiar el nombre de este…",
                            command=cambiar_nombre)
     theme.boton_icono(renombrar, "edit", theme.TINTA2, theme.SUPERFICIE)
     renombrar.grid(row=0, column=0, sticky="w")
+    quitar = ttk.Button(acciones, text="Quitar de la lista…", style="Danger.TButton",
+                        command=quitar_de_la_lista, state="disabled")
+    theme.boton_icono(quitar, "trash", theme.PELIGRO, theme.SUPERFICIE)
+    quitar.grid(row=0, column=1, sticky="w", padx=(6, 0))
+    tree.bind("<<TreeviewSelect>>", repasar_quitar)
     releer = ttk.Button(acciones, text="Releer", style="Quiet.TButton",
                         command=lambda: refrescar("Flota releída."))
     theme.boton_icono(releer, "reload", theme.ACENTO, theme.PAPEL)
-    releer.grid(row=0, column=2, sticky="e")
+    releer.grid(row=0, column=3, sticky="e")
 
     cierre = ttk.Frame(marco)
     cierre.grid(row=4, column=0, sticky="ew", pady=(12, 0))
