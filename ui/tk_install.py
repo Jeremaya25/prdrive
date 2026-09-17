@@ -31,7 +31,8 @@ from pathlib import Path
 
 from common import update
 from install import InstallError, InstallState, __version__
-from install import crypto, deploy, device, platforms, profile, rclone_bin, remote
+from install import (crypto, deploy, device, platforms, profile, rclone_bin,
+                     remote, traveler)
 
 from . import icons, theme
 from .tk import TITLE, Visor, centrar, output_window, working
@@ -1359,8 +1360,12 @@ def _paso_final(cuerpo, wiz) -> None:
             hijo.destroy()
         perfil = wiz.perfil_final
         clave = perfil.key_name if perfil.needs_key else None
-        for i, chk in enumerate(device.verify_device(wiz.device_root,
-                                                     wiz.state.selected, clave)):
+        checks = device.verify_device(wiz.device_root, wiz.state.selected, clave)
+        # Solo con contenedor: sin él no hay nada que montar en el otro equipo, y
+        # una fila roja diciendo que falta VeraCrypt sería mentira.
+        if wiz.state.encryption == "veracrypt" and wiz.state.device:
+            checks += traveler.comprobar(wiz.state.device)
+        for i, chk in enumerate(checks):
             color = theme.OK if chk.ok else theme.PELIGRO
             ttk.Label(tabla, text="✔" if chk.ok else "✘", foreground=color,
                       width=3).grid(row=i, column=0, sticky="w")
@@ -1413,6 +1418,32 @@ def _paso_final(cuerpo, wiz) -> None:
             f"documentación: si la letra {letra}: está ocupada cuando conectes el "
             "dispositivo, VeraCrypt NO monta y NO dice nada."))
 
+    def llevar_veracrypt() -> None:
+        """Copia (o pone al día) el VeraCrypt que viaja en el dispositivo.
+
+        También sirve de «actualizar»: `traveler.instalar()` sobrescribe, así que
+        un dispositivo hecho con un VeraCrypt viejo se pone al día enchufándolo
+        en un equipo con uno nuevo."""
+        if wiz.state.encryption != "veracrypt" or not wiz.state.device:
+            wiz.error("Esto solo tiene sentido con un contenedor VeraCrypt.")
+            return
+        try:
+            escritos = traveler.instalar(wiz.state.veracrypt, wiz.state.device)
+        except InstallError as e:
+            wiz.error(str(e))
+            return
+        traveler.write_autorun(wiz.state.device)
+        arcs = traveler.arquitecturas(wiz.state.device / traveler.CARPETA)
+        wiz.aviso(
+            f"{len(escritos)} ficheros en {wiz.state.device / traveler.CARPETA}.\n\n"
+            f"Arquitectura: {', '.join(arcs) or 'ninguna (falta el driver)'}. "
+            "Solo viaja la del equipo que lo prepara; el x64 vale también en "
+            "Windows ARM, al revés no.\n\n"
+            "En el equipo donde se enchufe seguirá haciendo falta aceptar el "
+            "aviso de administrador: cargar el driver no se puede hacer de otra "
+            "forma.")
+        revisar_dispositivo()
+
     def desmontar() -> None:
         if not (wiz.state.mounted_by_us and wiz.state.veracrypt and wiz.device_root):
             wiz.error("Este instalador no ha montado ningún contenedor.")
@@ -1429,6 +1460,7 @@ def _paso_final(cuerpo, wiz) -> None:
             ("Instalar el arranque automático (penwatch)", instalar_vigilante),
             ("Compartir esta conexión con otros dispositivos", guardar_en_catalogo),
             ("Que VeraCrypt monte al conectar", registrar_favorito),
+            ("Llevar VeraCrypt en el dispositivo", llevar_veracrypt),
             ("Desmontar el contenedor", desmontar),
             ("Volver a comprobar", revisar_dispositivo))):
         ttk.Button(extras, text=texto, command=accion).grid(

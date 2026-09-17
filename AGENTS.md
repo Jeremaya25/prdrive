@@ -62,6 +62,7 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 │   ├── remote.py      the ephemeral rclone.conf and the pair catalogue
 │   ├── device.py      what volumes exist, which is the device, mounted right?
 │   ├── crypto.py      VeraCrypt and BitLocker
+│   ├── traveler.py    VeraCrypt itself, copied onto the volume
 │   └── deploy.py      copy the code in, rclone + runtimes, launchers, config
 └── tests/             plain scripts; run_all.py runs them in separate processes
 ```
@@ -418,6 +419,43 @@ pairs) stays possible without deleting `.prdrive/` by hand.
   `ensure_control_file(renew=False)`: step 5 renews because it provisions, but
   renewing here would strand a watcher bound to this device's id. Going backwards
   in version is allowed but never silent (`_confirmar_retroceso()`).
+
+**VeraCrypt: four things not to weaken.** Every claim below is checked against
+VeraCrypt's source, not its docs, and the citations are in the code — keep them
+like the rclone ones in `common/bisync.py`.
+
+- **Creation speed is `/dynamic`, and it is asked before it is used.** `/quick`
+  does *not* stop VeraCrypt writing the whole container: `FormatNoFs()` walks it
+  writing a zeroed sector every 128 MiB *on purpose* (`Common/Format.c`), and
+  NTFS zero-fills each gap — which is why a container is instant on an internal
+  SSD and half an hour per 50 GiB on USB. `/dynamic` makes the file sparse and
+  the walk costs one cluster per chunk. VeraCrypt **aborts** with
+  `ERR_DYNAMIC_NOT_SUPPORTED` when the host has no sparse support
+  (`Format/Tcformat.c`), so `crypto.soporta_dispersos()` asks first — by the
+  `FILE_SUPPORTS_SPARSE_FILES` flag, the same evidence VeraCrypt uses, never by
+  the filesystem's name. On Linux there is no equivalent: `--quick` is forced off
+  for file containers in 1.26.24 (`Main/TextUserInterface.cpp`; `master` drops
+  that line), so there the only lever is the size, and
+  `crypto.suggested_size()` stops proposing nearly the whole disk.
+- **`/m rm` is not cosmetic.** Mounted without it, Windows creates
+  `System Volume Information` and `$RECYCLE.BIN` *inside* the container, i.e.
+  inside what rclone syncs. Same thing as `removable="1"` in the favourite.
+- **The favourite stores the container by volume GUID** (`crypto.ruta_favorita()`
+  → `\\?\Volume{…}\PRDRIVE.hc`): a drive letter is exactly what changes on
+  another machine. The `mountpoint` is still a letter because VeraCrypt demands
+  one, so the documented trap stands — a busy letter means no mount and no
+  message.
+- **`traveler.py` copies VeraCrypt onto the volume**, so the device mounts on a
+  machine that has none. There is no CLI for this: VeraCrypt's own dialog
+  extracts the binaries from its `VeraCrypt Setup.exe` self-extractor
+  (`Mount/Mount.c`). Copying works only because `DriverLoad()`
+  (`Common/Dlgcode.c`) loads `<exe dir>\veracrypt-x64.sys`. Three things that
+  must stay said out loud: it still needs **administrator** on the host, the
+  signature is **not** verified the way VeraCrypt verifies it, and only the
+  preparing machine's **architecture** travels (x64 also runs on Windows ARM, not
+  the reverse — the same one-way fallback as `BIN_FALLBACK_DIRS`). The folder
+  lives on the **physical** root beside the `.hc`, never inside the container,
+  and `"veracrypt"` therefore belongs in `device.RUIDO`.
 
 Other step notes:
 
