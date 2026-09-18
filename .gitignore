@@ -9,6 +9,7 @@ sync_config.toml*
 rclone.conf
 build/
 dist/
+graphify-out/
 *.spec
 install/secret.py
 prdrive-profile.toml
