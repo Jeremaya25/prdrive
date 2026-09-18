@@ -161,9 +161,11 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
     formulario.grid(row=1, column=0, sticky="w", pady=(10, 0))
     fila = 0
 
-    # La pregunta que decide si esto tarda segundos o media hora. Se hace una vez
-    # y se recuerda en el estado: repintar el panel no puede volver a preguntarle
-    # al sistema de ficheros ni volver a medir la unidad.
+    # La pregunta que decide si esto tarda segundos o media hora. Se rehace en
+    # cada repintado a propósito —es una consulta al sistema de ficheros, ni
+    # escribe ni tarda, y cachearla daría la respuesta de la unidad anterior si
+    # se cambia de destino—. Lo que sí se recuerda en el estado es la MEDIDA de
+    # velocidad, que sí escribe en la unidad: ver `refrescar_espera`.
     dispersos = crypto.soporta_dispersos(estado.device) if not existe else False
     dinamico = tk.BooleanVar(value=dispersos if estado.dinamico is None
                              else (estado.dinamico and dispersos))

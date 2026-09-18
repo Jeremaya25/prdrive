@@ -640,7 +640,9 @@ def volume_guid_path(root: str | Path) -> str | None:
             c_wchar_p(ruta), buf, LARGO)
     except OSError:
         return None
-    return buf.value or None if ok else None
+    if not ok:
+        return None
+    return buf.value or None
 
 
 def ruta_favorita(container: Path) -> str:
