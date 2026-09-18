@@ -245,7 +245,14 @@ source it mirrors. **Preserve those citations.**
   `_bisync_preflight()` aborts with rc 2 instead of creating the folder (an empty
   local side reads as "everything was deleted"). Only pairs **without** a
   baseline get their local dir created.
-- `max-delete` defaults: 25 bisync / 50 mirror.
+- `max-delete` defaults: 25 bisync / 50 mirror, and they are not the same unit.
+  bisync's is a **global** rclone flag it intercepts and reinterprets: it reads
+  `--max-delete` in `Options.applyContext()` (`cmd/bisync/cmd.go`), clamps it to
+  0..100 and immediately sets `ci.MaxDelete = -1` so `fs/operations` never
+  treats it as a count; `excessDeletes()` (`cmd/bisync/deltas.go`) then aborts
+  when `deleted / oldCount` exceeds that **percentage** of the previous
+  listing. `*-mirror`'s 50 is the ordinary `sync` flag: a plain **count** of
+  files. Don't "fix" either number by comparing it to the other.
 - rclone always runs with `cwd = model.APP_DIR`: `rclone.conf` uses paths
   relative to it (`key_file`, `known_hosts_file`).
 - Any `*-mirror` pair deletes on the far side — never exercise one without

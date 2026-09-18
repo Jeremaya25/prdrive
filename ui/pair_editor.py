@@ -377,7 +377,8 @@ def _analizar_flags(plan: EditPlan, defaults: Mapping[str, Any],
     comunes = defaults.get("flags") or {}
     plan.warnings += flags_editor.warnings(
         flags_editor.merge(_mode_of(anterior), comunes, anterior.get("flags")),
-        flags_editor.merge(_mode_of(resultante), comunes, resultante.get("flags")))
+        flags_editor.merge(_mode_of(resultante), comunes, resultante.get("flags")),
+        _mode_of(resultante))
 
 
 def ruta_local_relativa(elegida: Path | str) -> str:
@@ -592,7 +593,8 @@ def _avisos_de_flags(antes_raw: Mapping[str, Any],
         propios = pair.get("flags")
         for aviso in flags_editor.warnings(
                 flags_editor.merge(_mode_of(pair), comunes_antes, propios),
-                flags_editor.merge(_mode_of(pair), comunes, propios)):
+                flags_editor.merge(_mode_of(pair), comunes, propios),
+                _mode_of(pair)):
             texto = f"[{pair.get('name')}] {aviso}"
             if texto not in avisos:
                 avisos.append(texto)

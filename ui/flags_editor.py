@@ -213,7 +213,8 @@ def changes(antes: Mapping[str, Any] | None,
 
 
 def warnings(antes: Mapping[str, Any] | None,
-             despues: Mapping[str, Any] | None) -> list[str]:
+             despues: Mapping[str, Any] | None,
+             mode_name: str | None = None) -> list[str]:
     """Los avisos que merecen leerse dos veces antes de guardar.
 
     Recibe los flags YA FUNDIDOS (los de `merge()`), no los de una capa suelta, y
@@ -223,10 +224,16 @@ def warnings(antes: Mapping[str, Any] | None,
 
     `--max-delete` es el freno que impide que un lado vacío —una ruta que no está
     montada, un baseline que se ha quedado viejo— arrase el otro. Subirlo o
-    quitarlo no es una preferencia de rendimiento."""
+    quitarlo no es una preferencia de rendimiento. En bisync, además, NO es una
+    cuenta de ficheros: `Options.applyContext()` (cmd/bisync/cmd.go) lo reduce a
+    un porcentaje de 0 a 100 y `excessDeletes()` (cmd/bisync/deltas.go) lo compara
+    contra `borrados / ficheros_del_listado_anterior`, así que `mode_name` decide
+    la unidad del aviso; en copy/mirror sí es la cuenta corriente de `sync`."""
     avisos = []
     efectivos_antes = dict(antes or {})
     efectivos = dict(despues or {})
+    modo = model.MODES.get(mode_name or "")
+    es_bisync = bool(modo and modo.is_bisync)
     for freno in FRENOS:
         viejo, nuevo = efectivos_antes.get(freno), efectivos.get(freno)
         if viejo == nuevo:
@@ -236,7 +243,14 @@ def warnings(antes: Mapping[str, Any] | None,
                 f"Sin '{freno}' desaparece el freno que impide que un lado vacío o "
                 f"desmontado borre el otro entero.")
         elif isinstance(nuevo, int) and isinstance(viejo, int) and nuevo > viejo:
-            avisos.append(
-                f"'{freno}' pasa de {viejo} a {nuevo}: se permiten más borrados de "
-                f"golpe antes de que rclone aborte.")
+            if freno == "max-delete" and es_bisync:
+                avisos.append(
+                    f"'{freno}' pasa de {viejo} a {nuevo}: en bisync es un "
+                    f"porcentaje del listado anterior, no una cuenta de ficheros, "
+                    f"así que se permite borrar de golpe una porción mayor antes "
+                    f"de que rclone aborte.")
+            else:
+                avisos.append(
+                    f"'{freno}' pasa de {viejo} a {nuevo}: se permiten más "
+                    f"borrados de golpe antes de que rclone aborte.")
     return avisos
