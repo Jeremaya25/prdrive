@@ -46,6 +46,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Mapping
 
+from common import pairing
 from common.catalog import DEFAULT_CATALOG_PATH
 
 from . import InstallError, bundle_dir
@@ -59,7 +60,10 @@ DEFAULT_REMOTE_NAME = "remote"
 # ejecuta, y valen una cosa en el temporal del instalador y otra en el
 # dispositivo. Si viajaran dentro de `options`, un rclone.conf importado
 # apuntaría a la clave del equipo del que salió.
-RUTAS_DERIVADAS = ("key_file", "known_hosts_file")
+# La lista es de `pairing`, que es quien lee el rclone.conf, y se toma de allí
+# para que no puedan separarse: si una de las dos creciera sin la otra, la ruta
+# nueva viajaría dentro del perfil en un sitio y no en el otro.
+RUTAS_DERIVADAS = pairing.RUTAS_DERIVADAS
 
 # rclone acepta como nombre de remote bastante más que esto, pero el proyecto lo
 # mete en `RCLONE_CONFIG_<NOMBRE>_*` cuando hay `device_remote`, y ahí no cabe
@@ -142,28 +146,11 @@ def render_conf(profile: Profile, key_file: Path | str | None = None,
 # Leer un rclone.conf de fuera
 # ---------------------------------------------------------------------------
 
-def parse_rclone_conf(text: str) -> dict[str, dict[str, str]]:
-    """{nombre: {opción: valor}} de un rclone.conf ajeno.
-
-    A mano y no con `configparser` porque rclone escribe algún valor con `%`
-    dentro (los `%` de las plantillas de nombre) y `configparser` los interpreta
-    como interpolación y revienta. El formato que hace falta entender es una
-    cabecera entre corchetes y `clave = valor`; nada más."""
-    remotes: dict[str, dict[str, str]] = {}
-    actual: dict[str, str] | None = None
-    for linea in text.splitlines():
-        linea = linea.strip()
-        if not linea or linea.startswith(("#", ";")):
-            continue
-        if linea.startswith("[") and linea.endswith("]"):
-            actual = {}
-            remotes[linea[1:-1].strip()] = actual
-            continue
-        if actual is None or "=" not in linea:
-            continue
-        clave, _, valor = linea.partition("=")
-        actual[clave.strip()] = valor.strip()
-    return remotes
+# El lector de rclone.conf vive en `common/pairing.py` y se reexporta aquí, que
+# es donde lo busca todo el instalador. Está allí porque el dispositivo también
+# tiene que leer su propio rclone.conf —para enseñar el QR de emparejamiento— y
+# `install/` no viaja al dispositivo. Una sola implementación, no dos.
+parse_rclone_conf = pairing.parse_rclone_conf
 
 
 def remotes_in(path: Path | str) -> list[str]:

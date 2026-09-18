@@ -486,6 +486,51 @@ def casilla(widget, estado: str, size: int = 15, margen: int = 7):
     return img
 
 
+# El código QR no se pinta con el rasterizador de arriba y es a propósito: ese
+# mide distancias a un trazo para suavizar los bordes, y un QR es justo lo
+# contrario —una rejilla de cuadrados que tiene que salir con el canto duro—.
+# Un módulo medio gris es lo que hace que un lector dude. Así que se compone la
+# cadena de `put()` directamente, repitiendo cada módulo `escala` veces.
+QR_TINTA = "#000000"        # negro y blanco puros, no la paleta: lo lee una cámara
+QR_PAPEL = "#FFFFFF"
+QR_SILENCIO = 4             # los módulos de margen que exige ISO/IEC 18004
+
+
+def matriz(widget, modulos, escala: int = 4, silencio: int = QR_SILENCIO):
+    """Una matriz de módulos (True = oscuro) como PhotoImage cuadrada.
+
+    `escala` son los píxeles de lado de cada módulo: entero y nunca fraccionario,
+    porque un módulo de 3,5 px reparte el medio píxel entre sus vecinos y el
+    resultado ya no es una rejilla. `silencio` es la zona de silencio, que se
+    pone aquí y no en `qr.py` porque es parte de cómo se dibuja, no del código.
+
+    Devuelve None si algo falla, como el resto del módulo: quien llama enseña
+    entonces el texto y no se queda sin ventana.
+
+    **La imagen se la guarda quien llama.** Aquí no entra en `_CACHE` —cada
+    código es distinto y guardarlos todos sería acumular basura—, y una
+    PhotoImage sin referencias en Python desaparece del widget."""
+    try:
+        import tkinter as tk
+        lado = len(modulos)
+        total = (lado + silencio * 2) * escala
+        blanca = " ".join([QR_PAPEL] * total)
+        filas = ["{" + blanca + "}"] * (silencio * escala)
+        for fila in modulos:
+            celdas = [QR_PAPEL] * (silencio * escala)
+            for modulo in fila:
+                celdas += [QR_TINTA if modulo else QR_PAPEL] * escala
+            celdas += [QR_PAPEL] * (silencio * escala)
+            filas += ["{" + " ".join(celdas) + "}"] * escala
+        filas += ["{" + blanca + "}"] * (silencio * escala)
+
+        img = tk.PhotoImage(master=widget, width=total, height=total)
+        img.put(" ".join(filas))
+        return img
+    except Exception:
+        return None
+
+
 def app_icon(widget, size: int = 64):
     """La marca de la aplicación, para `iconphoto()`. None si no se puede."""
     try:
