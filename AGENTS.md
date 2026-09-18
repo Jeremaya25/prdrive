@@ -38,11 +38,13 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 │   ├── update.py      is there a newer release, and how to fetch its code
 │   ├── components.py  rclone/Python carried vs the pins — stamps, no network
 │   ├── pins.py        pinned rclone + python-build-standalone; platform table
+│   ├── pairing.py     reads rclone.conf; the connection as a QR payload
 │   └── store.py       device JSON state + pid_alive(); atomic writes
 ├── ui/                asking the user, showing results
 │   ├── __init__.py    Choice, Frontend, start(), fatal(), manual_args(), abrir()
 │   ├── theme.py       palette, fonts, ttk styles — no window
 │   ├── icons.py       icons rasterised here: no deps, no emoji
+│   ├── qr.py          a QR encoder: ISO/IEC 18004, byte mode, no deps, no Tk
 │   ├── prefs.py       what the UI preloads (state/ui_prefs.json)
 │   ├── pair_editor.py what THIS device does with pairs — the decisions
 │   ├── catalog_editor.py · remote_picker.py · conflict_editor.py ·
@@ -50,7 +52,7 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 │   ├── tk.py          TkFrontend: main + output window, modal()/mostrar()/working()
 │   ├── tk_install.py  the install wizard          (every tk_* draws only)
 │   ├── tk_pairs.py · tk_conflicts.py · tk_fleet.py · tk_watch.py ·
-│   │   tk_update.py · tk_crypto.py
+│   │   tk_update.py · tk_crypto.py · tk_doctor.py · tk_qr.py
 │   └── console.py     ConsoleFrontend: the text menu
 ├── install/           what the installer knows; no Tk, no device needed
 │   ├── __init__.py    brand constants, InstallError, InstallState, python_command()
@@ -367,6 +369,56 @@ paths and flags; no rounded corners, no shadows. Styles cross **role** with
   resolution **and** `tk scaling` — the scaling column is the half that matters.
 - `tk.working(parent, title, funcion)` runs `funcion()` on a thread behind a bare
   progress bar, for slow or passphrase-carrying commands. No cancel button.
+
+### Doctor (`ui/tk_doctor.py`) — where new affordances go
+
+The main window is deliberately lean, so **anything done once in a device's life
+belongs in Doctor, not beside «Sincronizar ahora»**. Doctor is a screen, not the
+`--doctor` command: running the check is its first entry, the pairing code its
+second, and `ENTRADAS` is the list to add to. It receives `lanzar` from the main
+window rather than importing it, because the output window is the *main*
+window's child and disables itself while a pass runs — Doctor knows none of
+that, and closes itself before handing over so two modals never hold the grab at
+once.
+
+## Pairing a phone (`common/pairing.py` + `ui/qr.py` + `ui/tk_qr.py`)
+
+Doctor → «Emparejar un móvil…» shows the device's connection as a QR so a phone
+can read it. Three pieces, none of which knows about the other two's medium:
+
+- **`ui/qr.py` is a full QR encoder**, written here for the same reason
+  `ui/icons.py` draws its own icons: no dependencies. Byte mode only (the payload
+  is UTF-8 with base64 inside — the other three modes would save nothing), but
+  everything else is complete: 40 versions, four ECC levels, block-interleaved
+  Reed-Solomon, all eight masks and the penalty score that picks one. Constants
+  cite **ISO/IEC 18004** the way `common/bisync.py` cites rclone's source;
+  **preserve those citations.** Only two tables can't be derived
+  (`_CORRECCION_POR_BLOQUE`, `_BLOQUES`) — everything else is computed, and
+  `tests/test_qr.py` pins the derivations against the published byte-mode
+  capacities, which is what would catch a mistyped digit in either table.
+- **`common/pairing.py` builds the payload, and lives in `common/` on purpose:**
+  `install/` does not travel to a provisioned device and this runs *on* one, with
+  no network. Same reason `parse_rclone_conf()` moved here and
+  `install/profile.py` re-exports it — **one reader of rclone.conf, not two**, and
+  `RUTAS_DERIVADAS` is shared for the same reason.
+- **The payload format is `profile.dumps()`'s, plus three keys** (the `prdrive`
+  marker, `private_key_b64`, `known_hosts`). Those three are surplus to
+  `profile.loads()`, so the *same text* goes straight into it — no second
+  parser, no translation layer. `tests/test_qr.py` does that whole round trip
+  (device → payload → QR → decoded → `profile.loads()`) and is what keeps the two
+  formats from drifting. **All bare keys must precede `[options]`**: in TOML a
+  stray line after the table header would put the private key inside the
+  backend's options and from there into the phone's rclone.conf.
+- **This shows a private key on screen and says so**, in an amber block. It is
+  not a token and it does not expire: whoever photographs the screen gets the
+  remote. The window stores nothing and copies nothing to the clipboard.
+- The pairing window asks for correction **L**, not the module's default M: the
+  medium is a screen (no creases, no print, no dirt) and what is scarce is
+  capacity — an RSA-3072 key does not fit in *any* version at M. It fails with a
+  sentence rather than a stack trace when even L is not enough.
+- `icons.matriz()` rasterises the modules — pure black and white, integer module
+  size, quiet zone added there — and does **not** cache: the caller holds the
+  reference or Tk loses the image.
 
 ## Provisioning a device (`prdrive-install.py` + `install/` + `ui/tk_install.py`)
 
@@ -766,8 +818,8 @@ keeps the target's existing header.
   `rclone_bin.fetch()`, `conflicts.recorrer()`, `conflict_editor.mover()` /
   `borrar()`, `ui.abrir()`, `runsync.notificar_fallo()`,
   `components.rclone_en_uso()` / `runtime_en_uso()`, `_win_volumes()`,
-  `_leer_estado_bitlocker()`, `_preguntar_borrado()`, `tk.mostrar()` /
-  `confirmar_plan()`. Keep new ones in that shape.
+  `_leer_estado_bitlocker()`, `_preguntar_borrado()`, `pairing.construir()`,
+  `tk.mostrar()` / `confirmar_plan()`. Keep new ones in that shape.
 
 ## Documentation
 

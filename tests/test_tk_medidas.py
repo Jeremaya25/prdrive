@@ -32,7 +32,7 @@ from _harness import Checks, sandbox, tmpdir
 import tomllib
 
 from common import (catalog, components, config_file, conflicts, fleet, model,
-                    pins, update)
+                    pairing, pins, update)
 from install import device
 
 c = Checks("medidas de las pantallas")
@@ -48,8 +48,8 @@ except Exception as e:                                   # sin entorno gráfico
 
 from ui import tk as uitk
 from ui import remote_picker
-from ui import (tk_conflicts, tk_fleet, tk_install, tk_pairs,
-                tk_update)
+from ui import (tk_conflicts, tk_doctor, tk_fleet, tk_install, tk_pairs,
+                tk_qr, tk_update)
 
 # Ni una petición a GitHub desde un test.
 update.fetch = lambda url, timeout: c("ningún test toca la red", "fetch", "nada")
@@ -83,6 +83,17 @@ remote_picker.listar = lambda remote, ruta: [f"carpeta-de-nombre-largo-{i}"
 
 fleet.leer = lambda raw=None: (FLOTA, None)
 fleet.device_id = lambda app_dir=None: "dispositivo0"
+
+# La ventana de emparejar dibuja un código QR cuyo tamaño sale del tamaño de la
+# carga, y la carga lleva una clave privada. Aquí se le da una del tamaño real
+# —una ed25519 en PEM son unos 400 bytes— para medir el dibujo que se va a ver,
+# no uno de juguete. Nada de esto toca el rclone.conf de nadie.
+pairing.construir = lambda raw=None, app_dir=None: pairing.dumps(
+    "nas", {"type": "sftp", "host": "nas.example.org", "port": "22",
+            "user": "pere", "disable_hashcheck": "true", "shell_type": "none"},
+    key_name="id_ed25519", catalog_path="/prdrive-catalog/pairs.toml",
+    private_key=(b"-----BEGIN OPENSSH PRIVATE KEY-----\n" + b"b3BlbnNza" * 40
+                 + b"\n-----END OPENSSH PRIVATE KEY-----\n"))
 
 # nombre, ancho, alto, tk scaling
 PANTALLAS = (
@@ -396,6 +407,26 @@ try:
                     ancho, alto, escala, modulo=tk_update)
                 c(f"{nombre}: la pantalla de componentes cabe", entra, True)
                 c(f"{nombre}: la pantalla de componentes no queda recortada",
+                  corta, False)
+
+                # Doctor: una tarjeta con una entrada por acción, que crece con
+                # cada una que se le añada.
+                entra, corta = medir_dialogo(
+                    lambda: tk_doctor.open_dialog(raiz, cfg, lambda *a: None),
+                    ancho, alto, escala, modulo=tk_doctor)
+                c(f"{nombre}: la pantalla de Doctor cabe", entra, True)
+                c(f"{nombre}: la pantalla de Doctor no queda recortada",
+                  corta, False)
+
+                # El código de emparejamiento: el único dibujo de la aplicación
+                # que mide en píxeles y no puede encoger —un módulo por debajo
+                # de dos píxeles no lo lee ninguna cámara—, así que en una
+                # pantalla pequeña la respuesta correcta es la barra.
+                entra, corta = medir_dialogo(
+                    lambda: tk_qr.open_dialog(raiz, dict(BASE)),
+                    ancho, alto, escala, modulo=tk_qr)
+                c(f"{nombre}: la ventana de emparejar cabe", entra, True)
+                c(f"{nombre}: la ventana de emparejar no queda recortada",
                   corta, False)
     finally:
         tk_pairs.mostrar, tk.Toplevel.wait_window = REAL_MOSTRAR, REAL_WAIT

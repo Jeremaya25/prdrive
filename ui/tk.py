@@ -504,7 +504,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
     import tkinter as tk
     from tkinter import messagebox, ttk
 
-    from . import tk_pairs, tk_update, tk_watch
+    from . import tk_doctor, tk_pairs, tk_update, tk_watch
 
     theme.nitidez()
     root = tk.Tk()  # TclError aquí si no hay display -> fallback consola
@@ -982,8 +982,12 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
                                command=accion, state=estado_boton)
             theme.boton_icono(boton, icono, theme.ACENTO, theme.PAPEL)
             boton.grid(row=0, column=col, sticky="w", padx=(0, 4))
+        # Doctor es una pantalla y no la orden directa: es donde va lo que se
+        # hace de tarde en tarde, para que esta ventana no crezca con cada cosa
+        # nueva. La comprobación sigue siendo su primera entrada.
         doctor = ttk.Button(ajustes, text="Doctor", style="Quiet.TButton",
-                            command=lambda: lanzar("Doctor", ["--doctor"]),
+                            command=lambda: tk_doctor.open_dialog(
+                                root, vista["config"], lanzar),
                             state=apagado)
         theme.boton_icono(doctor, "doctor", theme.ACENTO, theme.PAPEL)
         doctor.grid(row=0, column=3, sticky="e")

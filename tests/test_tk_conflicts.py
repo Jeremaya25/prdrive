@@ -29,7 +29,7 @@ except Exception as e:                                   # sin entorno gráfico
     sys.exit(0)
 
 import ui
-from ui import prefs, tk_conflicts, tk_pairs
+from ui import prefs, tk_conflicts, tk_doctor, tk_pairs
 from ui import tk as uitk
 
 prefs.PREFS = tmpdir("prdrive-tkconf-") / "ui_prefs.json"
@@ -46,6 +46,7 @@ messagebox.showinfo = lambda *a, **k: None
 messagebox.askyesno = lambda *a, **k: False
 
 tk_conflicts.mostrar = lambda dlg, parent=None: dlg.wait_window()
+tk_doctor.mostrar = lambda dlg, parent=None: dlg.destroy()
 confirmaciones: list[str] = []
 
 
@@ -297,11 +298,26 @@ with sandbox():
     c("lo elegido se recuerda para la próxima vez", prefs.read_prefs().get("pairs"),
       ["notas"])
 
+# Doctor ya no lanza la comprobación: abre su pantalla, y la comprobación es su
+# primera entrada. Se prueban las dos mitades —que el botón abre la pantalla, y
+# que la entrada lanza la orden de siempre— porque el cableado entre ellas es lo
+# único que ha cambiado.
 with sandbox():
     cfg, _p = preparar()
     lanzadas.clear()
+    visto: dict = {}
+
+    def dentro_de_doctor(dlg) -> None:
+        botones_doctor = botones(dlg)
+        visto["entradas"] = sorted(botones_doctor)
+        botones_doctor["Ejecutar comprobación"].invoke()
+
+    tk_doctor.mostrar = lambda dlg, parent=None: dentro_de_doctor(dlg)
     ventana_principal(cfg, lambda root: botones(root)["Doctor"].invoke())
-    c("el doctor también corre sin cerrar la principal",
+    c("Doctor abre su pantalla, con la comprobación y el emparejamiento",
+      visto.get("entradas"),
+      ["Cerrar", "Ejecutar comprobación", "Emparejar un móvil…"])
+    c("y su comprobación corre sin cerrar la principal",
       (lanzadas[0]["cmd"][-1], lanzadas[0]["modal"]), ("--doctor", False))
 
 with sandbox():

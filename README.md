@@ -622,6 +622,11 @@ estado y su registro viven en el equipo.
 
 ## Diagnóstico
 
+En la ventana principal, **«Doctor»** abre la pantalla de lo que se hace de tarde
+en tarde: la comprobación de estado y el emparejamiento de un móvil. Todo lo que
+no se usa cada día vive ahí, para que la ventana principal se quede con lo de
+todos los días.
+
 ```bash
 python sync.py --doctor
 ```
@@ -647,6 +652,21 @@ Casos habituales:
   última copia (`state/catalog.toml`) y **no deja editarlo**: no se puede
   sobrescribir con seguridad lo que no se acaba de leer. Puede que otro
   dispositivo lo haya tocado mientras tanto.
+
+### Emparejar un móvil
+
+**Doctor → «Emparejar un móvil…»** enseña la conexión con el remoto como un
+código QR: el backend, sus opciones, dónde está el catálogo y la clave privada.
+Es la forma de llevar la conexión a un aparato que no se puede enchufar al
+dispositivo.
+
+> **El código lleva la clave privada dentro.** Quien le haga una foto a la
+> pantalla tendrá el mismo acceso al remoto que el dispositivo. Enséñalo solo al
+> aparato que vayas a emparejar y cierra la ventana al terminar. No se guarda en
+> ningún fichero ni pasa por el portapapeles.
+
+Funciona con claves ed25519, que es lo que usa prdrive por defecto. Una clave RSA
+grande no cabe en un código QR y la ventana lo dice.
 
 ## Seguridad
 
@@ -715,10 +735,12 @@ prdrive/
 │   ├── update.py      si hay release nueva, y cómo traerse su código
 │   ├── components.py  qué rclone y qué Python lleva el dispositivo, y si están al día
 │   ├── pins.py        las versiones fijadas de rclone y Python, y las plataformas
+│   ├── pairing.py     la conexión del dispositivo, empaquetada para un móvil
 │   └── store.py       los ficheros de estado en JSON del dispositivo
 ├── ui/                pantallas y su lógica
 │   ├── theme.py       la paleta, las fuentes y los estilos ttk. Sin ventana
 │   ├── icons.py       los iconos, rasterizados aquí. Sin dependencias
+│   ├── qr.py          el codificador de códigos QR. Sin dependencias, sin Tk
 │   ├── tk*.py         solo dibujan
 │   └── *_editor.py    lo que decide y toca disco. Sin Tk, probado sin pantalla
 ├── install/           lo que sabe el instalador. Sin Tk, sin dispositivo
