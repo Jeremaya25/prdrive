@@ -65,7 +65,7 @@ id={device_id}
 RUIDO = {
     "system volume information", "$recycle.bin", "recycler", "lost+found",
     ".ds_store", ".spotlight-v100", ".fseventsd", ".trashes", "desktop.ini",
-    "autorun.inf", "prdrive.hc", ".prdrive",
+    "autorun.inf", "prdrive.hc", ".prdrive", "veracrypt",
     "runsync.pyw", "runsync.bat", "runsync.sh", "runsync.ico",
 }
 

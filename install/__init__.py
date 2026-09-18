@@ -152,6 +152,18 @@ class InstallState:
     veracrypt: dict | None = None               # {'mount': ..., 'format': ...}
     mounted_by_us: bool = False
 
+    # Del paso de cifrado, y viven aquí y no en la pantalla porque `repintar()`
+    # destruye el panel entero: sin esto, la casilla se desmarcaría sola y la
+    # velocidad medida se volvería a medir —escribiendo en el dispositivo— cada
+    # vez que se repinta.
+    # None es «todavía no se ha decidido», y por eso no es un bool: el valor por
+    # defecto de la casilla depende de si la unidad admite dispersos, que no se
+    # sabe hasta pintar el paso. Con un False de partida la casilla salía apagada
+    # justo donde sí se podía marcar.
+    dinamico: bool | None = None                # contenedor disperso (/dynamic)
+    traveler: bool = True                       # dejar VeraCrypt en el volumen
+    velocidad_escritura: float | None = None    # bytes/s medidos, ver crypto
+
     selected: list[str] = field(default_factory=list)
     deployed: bool = False
     config_written: bool = False

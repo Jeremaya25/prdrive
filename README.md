@@ -172,6 +172,48 @@ Con VeraCrypt el `.prdrive/` está dentro del contenedor, así que hasta montarl
 la unidad no se distingue de una vacía: ahí el atajo aparece en el paso 2, en
 cuanto el contenedor está abierto.
 
+### Cifrar con VeraCrypt
+
+Dos cosas que conviene saber antes de darle a **Crear y montar**.
+
+**Por qué tarda, y cómo no tardar.** Crear el contenedor no es cifrar: es
+*escribirlo entero*. VeraCrypt reserva el fichero y luego lo recorre escribiendo
+un sector cada 128 MiB para obligar a Windows a reservar cada tramo de verdad, y
+eso obliga a rellenar de ceros todo el contenedor. En un disco interno no se
+nota; en un USB son unos treinta minutos por cada 50 GiB, y por eso el mismo
+contenedor que se crea en un momento dentro del ordenador parece colgarse en el
+disco externo.
+
+La salida es la casilla **Contenedor dinámico**: el fichero se marca como
+*disperso* y solo ocupa lo que vayas guardando, así que crearlo es instantáneo
+sea cual sea el tamaño. Necesita que la unidad esté en **NTFS** —exFAT no admite
+ficheros dispersos— y por eso la casilla sale apagada, con el motivo, cuando no
+se puede. A cambio pierdes la negación plausible (se ve cuánto ocupa de verdad) y
+si llenas la unidad, el volumen de dentro empieza a dar errores de escritura.
+
+Cuando no hay dispersos, el asistente **mide** la velocidad de tu unidad y te
+dice cuánto va a tardar antes de empezar, en vez de dejarte mirando una barra. Y
+propone un tamaño de trabajo en lugar de casi el disco entero: si luego se te
+queda corto, el **VeraCrypt Expander** que viaja en el propio dispositivo lo
+agranda.
+
+**VeraCrypt viaja dentro.** La casilla **Dejar VeraCrypt en el dispositivo** copia
+el VeraCrypt de este equipo a una carpeta `VeraCrypt\` en la raíz de la unidad
+(un *Traveler's Disk*), para poder montar el contenedor en un ordenador que no lo
+tenga instalado. Tres avisos honestos:
+
+- **Sigue haciendo falta ser administrador** en el equipo donde lo enchufes:
+  montar carga un driver y eso no se puede hacer de otra forma. Esto te ahorra
+  instalar VeraCrypt, no el aviso de permisos.
+- **Solo viaja la arquitectura del equipo que lo prepara.** Uno preparado en un
+  PC normal (x64) vale también en un Windows ARM, porque ahí el x64 se emula; al
+  revés no. El paso 8 te dice cuál lleva.
+- prdrive **no comprueba la firma** de lo que copia, que es algo que el propio
+  diálogo de VeraCrypt sí hace. Copia de la carpeta de VeraCrypt instalada en tu
+  equipo, que ya está protegida contra escritura sin permisos de administrador.
+
+En Linux y macOS no hay traveler disk: allí VeraCrypt necesita instalarse.
+
 ### La primera vez
 
 El catálogo todavía no existe. Instala un primer dispositivo con la conexión a
@@ -687,6 +729,7 @@ prdrive/
 │   ├── deploy.py      copiar el código, rclone y Python, el config, el --resync
 │   ├── device.py      qué volúmenes hay y cuál es el bueno
 │   ├── crypto.py      VeraCrypt y BitLocker
+│   ├── traveler.py    dejar el propio VeraCrypt dentro del volumen
 │   └── components.py  poner al día el rclone y el Python de un dispositivo
 ├── tests/             scripts sueltos, sin framework
 └── design/            las maquetas que implementa ui/
