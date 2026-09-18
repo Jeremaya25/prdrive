@@ -73,9 +73,20 @@ KNOWN_ERRORS = [
      "Primer uso de este fichero de filtros. Solución: --resync."),
     ("must run --resync",
      "bisync ha invalidado el baseline y exige rehacerlo. Solución: --resync."),
+    # bisync no dice "--max-delete": excessDeletes() (cmd/bisync/deltas.go)
+    # aborta con "too many deletes (>N%, X of Y)", porque ahí el freno es un
+    # PORCENTAJE del listado anterior, no una cuenta de ficheros (ver el
+    # comentario de MODES["bisync"] en common/model.py). Esta entrada va antes
+    # que la de más abajo para que una pareja bisync lea el aviso correcto.
+    ("too many deletes",
+     "Se ha superado el porcentaje de borrados permitido en esta pasada de "
+     "bisync (--max-delete es un % del listado anterior, no una cuenta de "
+     "ficheros). Comprueba que la ruta local NO esté vacía o desmontada antes "
+     "de forzar nada."),
     ("--max-delete",
-     "Se han superado los borrados permitidos. Comprueba que la ruta local NO "
-     "esté vacía o desmontada antes de forzar nada."),
+     "Se han superado los borrados permitidos (una cuenta de ficheros, en "
+     "copy/mirror). Comprueba que la ruta local NO esté vacía o desmontada "
+     "antes de forzar nada."),
     ("Access is denied",
      "Fichero bloqueado por otro proceso (Obsidian, KeePass, antivirus)."),
     # Lo que dice bisync al encontrar el lock de otra (cmd/bisync/lockfile.go,

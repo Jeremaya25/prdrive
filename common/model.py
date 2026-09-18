@@ -271,6 +271,16 @@ class Mode:
 # --recover   : una interrupción brusca se recupera sola en la siguiente pasada.
 # --max-lock  : caduca el .lck que deja un proceso muerto (mínimo 2m).
 # --max-delete: una ruta local vacía o desmontada no debe arrasar el otro lado.
+#               El 25 de bisync NO es una cuenta de ficheros: es un porcentaje.
+#               Options.applyContext() (cmd/bisync/cmd.go) lee el --max-delete
+#               global, lo acota a 0..100 y acto seguido pone ci.MaxDelete = -1
+#               ("reset MaxDelete for fs/operations, bisync handles this
+#               parameter specially"), así que fs/operations ya no lo cuenta
+#               como número de borrados. excessDeletes() (cmd/bisync/deltas.go)
+#               compara deleted / oldCount contra ese porcentaje del listado
+#               ANTERIOR. El 50 de up-mirror/down-mirror sí es una cuenta: ahí
+#               es el --max-delete corriente de `sync`. No iguales los dos
+#               números pensando que miden lo mismo.
 # --conflict-suffix: un sufijo POR LADO. Con el de fábrica ("conflict") y
 #               --conflict-loser num, rclone llama al perdedor `.conflictN` con
 #               el primer número libre (cmd/bisync/resolve.go: resolve y
