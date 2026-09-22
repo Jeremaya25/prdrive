@@ -24,9 +24,24 @@ from datetime import datetime
 from pathlib import Path
 
 
+FORMATO = "%Y-%m-%d %H:%M:%S"    # el de todos estos ficheros y el del diario
+
+
 def stamp() -> str:
-    """El formato de fecha de todos estos ficheros y del diario del servicio."""
-    return f"{datetime.now():%Y-%m-%d %H:%M:%S}"
+    """La fecha de ahora, como se escribe en todos estos ficheros."""
+    return f"{datetime.now():{FORMATO}}"
+
+
+def desde_sello(texto: str) -> float | None:
+    """La vuelta de `stamp()`, o None si eso no es una fecha suya.
+
+    La escribe quien apunta y la lee quien compara: una marca de tiempo se puede
+    medir contra la mtime de un fichero, y una cadena no. Va aquí, al lado de
+    `stamp()`, para que las dos mitades del formato no puedan separarse."""
+    try:
+        return datetime.strptime(texto, FORMATO).timestamp()
+    except (TypeError, ValueError):
+        return None
 
 
 def read_json(path: Path) -> dict:
