@@ -48,11 +48,13 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 │   ├── prefs.py       what the UI preloads (state/ui_prefs.json)
 │   ├── pair_editor.py what THIS device does with pairs — the decisions
 │   ├── catalog_editor.py · remote_picker.py · conflict_editor.py ·
-│   │   flags_editor.py · watch.py     the other decision halves, no Tk
+│   │   flags_editor.py · watch.py · versions_editor.py
+│   │                   the other decision halves, no Tk
 │   ├── tk.py          TkFrontend: main + output window, modal()/mostrar()/working()
 │   ├── tk_install.py  the install wizard          (every tk_* draws only)
 │   ├── tk_pairs.py · tk_conflicts.py · tk_fleet.py · tk_watch.py ·
-│   │   tk_update.py · tk_crypto.py · tk_doctor.py · tk_qr.py
+│   │   tk_update.py · tk_crypto.py · tk_doctor.py · tk_qr.py ·
+│   │   tk_versions.py
 │   └── console.py     ConsoleFrontend: the text menu
 ├── install/           what the installer knows; no Tk, no device needed
 │   ├── __init__.py    brand constants, InstallError, InstallState, python_command()
@@ -682,6 +684,51 @@ Path1 is `pair.source` (local in bisync) — `conflicts.lado()`. Keep the citati
 - **Last run.** `results.apuntar()` from `sync.run_pair()`, not for dry-runs and
   not for SKIPPED (a skip is not a result; the resync chip covers it).
   `results.fallos()` feeds the amber banner, which stays until a good pass.
+
+## Per-pair versions (`versions = true` + `ui/versions_editor.py`)
+
+A bisync pair with `versions = true` keeps, in `.prversions/` **inside its own
+root on each side**, what *that side* loses: overwritten files, deleted ones
+(including a delete arriving from the other side) and the loser of a conflict.
+Naming is rclone's `--suffix ~%Y%m%d-%H%M%S --suffix-keep-extension`, i.e.
+Syncthing's Simple File Versioning — `nota~20260922-093000.md`.
+
+Everything below was **measured against rclone v1.75.1**, not read in its docs.
+Preserve the citations like the bisync ones.
+
+- **The exclusion is not filtering, it is the precondition.** rclone refuses a
+  `--backup-dir` that overlaps the destination (`destination and parameter to
+  --backup-dir mustn't overlap`) and that abort is *critical*: it invalidates the
+  baseline. `bisync.filters_content()` therefore emits `- .prversions/**`, and
+  emits it **first**, because rclone applies rules in order and the first match
+  wins — behind a `+ **/*.md` it would exclude nothing. The consequence is that
+  the two folders are **independent histories that never replicate**, which is
+  exactly Syncthing's model for `.stversions`.
+- **`--backup-dir` must be on the same remote as its side** (`parameter to
+  --backup-dir has to be on the same remote as destination`), which is why the
+  folder lives inside the pair and not at the device root: no extra `combine`
+  upstream, no overlap validation against other pairs, nothing to configure.
+- **`--conflict-loser delete` + `--backup-dir` does not delete**: the loser is
+  routed through the backup dir. That is what keeps the vault free of
+  `<name>.conflicto-remoto1` files, and it is a **deliberate divergence from
+  Syncthing**, which leaves its conflict copies in the folder and syncs them.
+- **A `--resync` also honours the backup dir**, so the side a resync overwrites
+  is recoverable — today it vanishes silently.
+- `build_command()` injects the five flags; `conflict-loser` goes in with
+  `setdefault` so a `[pair.flags]` still wins. The other four are in
+  `flags_editor.RESERVED`. `RunContext.sello` is computed **once per
+  invocation**, so everything one pass shelves shares a stamp.
+- **`versions` does not move `expected_prefix()`.** `tests/test_versions.py`
+  pins it, because that is where a slip costs a baseline.
+- **The date comes from the NAME, never the mtime** (`versions_editor.SELLO`):
+  copying the folder rewrites mtimes, and the stamp in the name is the whole
+  reason the format exists. Purging is Doctor → «Versiones…», both sides in one
+  plan through `confirmar_plan()`; the remote side goes out as a single
+  `rclone delete --files-from` with the exact list, never an age or a pattern.
+  **Restoring is deliberately not offered** (v1).
+- Turning it **off** removes the exclusion, so whatever is stored starts syncing
+  as ordinary content. `pair_editor._analizar_versiones()` says so as a warning
+  before confirming; it is not fixed in code.
 
 ## The catalogue (`common/catalog.py` + `ui/catalog_editor.py`)
 

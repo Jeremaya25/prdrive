@@ -46,6 +46,14 @@ RESERVED = {
     "filter-from": "usa los patrones incluir/excluir; mezclarlos rompe el filtrado",
     "include": "usa el cuadro «Incluir»",
     "exclude": "usa el cuadro «Excluir»",
+    # Los cuatro del versionado: salen de la casilla «Guardar versiones», y el
+    # sufijo además depende de la pasada (lleva su fecha y su hora), así que no
+    # hay forma de escribirlo aquí que signifique algo.
+    "backup-dir": "el versionado de bisync usa --backup-dir1/2, no este",
+    "backup-dir1": "sale de la casilla «Guardar versiones»: es <pareja>/.prversions",
+    "backup-dir2": "sale de la casilla «Guardar versiones»: es <pareja>/.prversions",
+    "suffix": "lo pone sync.py: la marca de tiempo de ESTA pasada",
+    "suffix-keep-extension": "lo pone sync.py junto con --suffix",
 }
 
 # El nombre es lo que va detrás de `--`, y flags_to_args() convierte _ en -.

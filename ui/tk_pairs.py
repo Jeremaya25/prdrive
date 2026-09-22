@@ -753,13 +753,36 @@ def formulario(parent, raw: dict, original_name: str | None, actual: dict,
                            justify="left")
     aviso_modo.grid(row=fila, column=2, sticky="w", padx=(12, 0))
 
+    fila += 1
+
+    # Versiones. Solo vale en bisync —el modelo lo rechaza al parsear en el
+    # resto—, así que la casilla se apaga con el modo en vez de dejar guardar
+    # algo que luego no arranca.
+    etiqueta("Versiones", fila)
+    versiones = tk.BooleanVar(value=bool(actual.get("versions", False)))
+    casilla = ttk.Checkbutton(
+        marco, variable=versiones,
+        text=f"Guardar en {model.VERSIONS_DIR}/ lo que se sobrescriba o se borre")
+    casilla.grid(row=fila, column=1, sticky="w", pady=3)
+    pista_versiones = ttk.Label(marco, style="Pista.TLabel",
+                                wraplength=theme.medida(250), justify="left")
+    pista_versiones.grid(row=fila, column=2, sticky="w", padx=(12, 0))
+    fila += 1
+
     def modo_cambiado(*_):
         aviso = pair_editor.mirror_warning(modo.get())
         aviso_modo.configure(text=aviso or pista("mode", ""),
                              style="Aviso.TLabel" if aviso else "Pista.TLabel")
+        es_bisync = modo.get() == "bisync"
+        casilla.configure(state="normal" if es_bisync else "disabled")
+        if not es_bisync:
+            versiones.set(False)
+        pista_versiones.configure(text=(
+            "Dentro de la pareja, en los dos lados. También el perdedor de un "
+            "conflicto, en vez de dejarlo suelto." if es_bisync else
+            "Solo en bisync: en copy/sync no hay dos lados que guardar."))
     modo.trace_add("write", modo_cambiado)
     modo_cambiado()
-    fila += 1
 
     textos: dict[str, tk.Text] = {}
     for clave, titulo_campo in (("include", "Incluir"), ("exclude", "Excluir")):
@@ -819,6 +842,7 @@ def formulario(parent, raw: dict, original_name: str | None, actual: dict,
         resultado["datos"] = {
             **{k: v.get() for k, v in campos.items()},
             "mode": modo.get(),
+            "versions": bool(versiones.get()),
             **{k: caja.get("1.0", "end").splitlines() for k, caja in textos.items()},
             "flags": dict(avanzado["flags"]),
             "extra_flags": list(avanzado["extra_flags"]),

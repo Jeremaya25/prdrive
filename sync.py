@@ -271,6 +271,11 @@ class RunContext:
     force_resync: bool = False
     resync_approved: bool = False
     keep_logs: bool = False
+    # El sufijo que llevan las versiones guardadas (`--suffix`), en hora local
+    # como el resto de fechas que ve el usuario. Se calcula UNA vez por
+    # invocación y no por pareja: así todo lo que aparta una misma pasada
+    # comparte marca, que es lo que luego permite leer «esto se perdió junto».
+    sello: str = ""
 
     @property
     def tag(self) -> str:
@@ -293,6 +298,19 @@ def build_command(ctx: RunContext, pair: Pair, ffile: Path | None,
         flags["workdir"] = str(pair.workdir)
         if need_resync:
             flags["resync"] = True
+
+    if pair.versions:
+        # El parseo ya garantiza que es bisync. El sello depende de la pasada,
+        # que es justo por lo que esto no se puede escribir en el TOML.
+        flags["backup-dir1"] = pair.versions_path1
+        flags["backup-dir2"] = pair.versions_path2
+        flags["suffix"] = ctx.sello
+        flags["suffix-keep-extension"] = True
+        # Con `delete`, el perdedor de un conflicto no se borra: sale por el
+        # backup-dir y acaba en `.prversions/` con su marca de tiempo, en vez de
+        # quedarse dentro del pair como `<nombre>.conflicto-remoto1` y viajar al
+        # otro lado. Va con setdefault para que un `[pair.flags]` siga mandando.
+        flags.setdefault("conflict-loser", "delete")
 
     cmd = [ctx.binary, pair.mode.verb, pair.source, pair.dest]
     cmd += filter_args(pair, ffile)
@@ -657,6 +675,7 @@ def main() -> int:
         force_resync=args.resync,
         resync_approved=approved,
         keep_logs=args.keep_logs or config.keep_logs,
+        sello=datetime.now().strftime("~%Y%m%d-%H%M%S"),
     )
     rc = run_all(ctx, selected)
 
