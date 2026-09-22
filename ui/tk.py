@@ -964,9 +964,9 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
             root.destroy()
 
         # --- las pantallas de las que se vuelve aquí --------------------------
-        ajustes = ttk.Frame(frame)
-        ajustes.grid(row=fila, column=0, sticky="ew", pady=(18, 0))
-        ajustes.columnconfigure(2, weight=1)
+        pantallas = ttk.Frame(frame)
+        pantallas.grid(row=fila, column=0, sticky="ew", pady=(18, 0))
+        pantallas.columnconfigure(2, weight=1)
         fila += 1
         # Mientras sincroniza se apaga todo lo que toca el mismo estado: otra
         # pasada chocaría con el lock de bisync, y la pantalla de parejas puede
@@ -978,19 +978,21 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
                  apagado),
                 ("Arranque automático…", "arranque",
                  lambda: tk_watch.open_dialog(root, vista["config"]), "normal"))):
-            boton = ttk.Button(ajustes, text=texto, style="Quiet.TButton",
+            boton = ttk.Button(pantallas, text=texto, style="Quiet.TButton",
                                command=accion, state=estado_boton)
             theme.boton_icono(boton, icono, theme.ACENTO, theme.PAPEL)
             boton.grid(row=0, column=col, sticky="w", padx=(0, 4))
-        # Doctor es una pantalla y no la orden directa: es donde va lo que se
-        # hace de tarde en tarde, para que esta ventana no crezca con cada cosa
-        # nueva. La comprobación sigue siendo su primera entrada.
-        doctor = ttk.Button(ajustes, text="Doctor", style="Quiet.TButton",
-                            command=lambda: tk_doctor.open_dialog(
-                                root, vista["config"], lanzar),
-                            state=apagado)
-        theme.boton_icono(doctor, "doctor", theme.ACENTO, theme.PAPEL)
-        doctor.grid(row=0, column=3, sticky="e")
+        # El engranaje, apartado a la derecha: detrás está lo que se hace de
+        # tarde en tarde —la comprobación del doctor, emparejar un móvil, las
+        # versiones—, para que esta ventana no crezca con cada cosa nueva. Se
+        # llama «Ajustes» y no «Doctor» porque ahí es donde irá también lo que
+        # se configure: el doctor es una de sus entradas, no la pantalla.
+        ajustes = ttk.Button(pantallas, text="Ajustes…", style="Quiet.TButton",
+                             command=lambda: tk_doctor.open_dialog(
+                                 root, vista["config"], lanzar),
+                             state=apagado)
+        theme.boton_icono(ajustes, "gear", theme.ACENTO, theme.PAPEL)
+        ajustes.grid(row=0, column=3, sticky="e")
 
         ttk.Separator(frame, orient="horizontal").grid(
             row=fila, column=0, sticky="ew", pady=(14, 0))

@@ -6,7 +6,7 @@ Solo dibuja. Qué hay guardado y qué se borraría lo sabe `ui/versions_editor.p
 y confirmar el borrado es `tk_pairs.confirmar_plan()`, la misma ventana que
 gobierna los demás borrados de la aplicación.
 
-Cuelga de Doctor y no de la principal porque mirar el histórico es de las cosas
+Cuelga de «Ajustes» y no de la principal porque mirar el histórico es de las cosas
 que se hacen de tarde en tarde. La ventana enseña lo que ocupa cada lado, deja
 abrir la carpeta de aquí y purgar lo anterior a una fecha; **restaurar no está**,
 a propósito: con la carpeta abierta y el nombre `nota~20260922-093000.md`

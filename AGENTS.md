@@ -332,7 +332,8 @@ it** — a window cannot dump output to a console that does not exist.
 - `tk_pairs.confirmar_plan()` is a real window, one line per consequence, each
   warning in an amber box — not an `askokcancel`. This is the dialog that governs
   deletions. Tests replace it, like `mostrar()`.
-- **The main window runs syncs itself:** «Sincronizar ahora» and «Doctor» open a
+- **The main window runs syncs itself:** «Sincronizar ahora» and the check
+  behind «Ajustes…» open a
   modeless `output_window`, the window disables whatever touches the same state,
   and on close re-reads `state/` and repaints. Only «Iniciar servicio» returns a
   `Choice` to runsync. `ui.manual_args()` (resync question + `--yes`) is shared
@@ -379,21 +380,22 @@ paths and flags; no rounded corners, no shadows. Styles cross **role** with
 - `tk.working(parent, title, funcion)` runs `funcion()` on a thread behind a bare
   progress bar, for slow or passphrase-carrying commands. No cancel button.
 
-### Doctor (`ui/tk_doctor.py`) — where new affordances go
+### «Ajustes» (`ui/tk_doctor.py`) — where new affordances go
 
 The main window is deliberately lean, so **anything done once in a device's life
-belongs in Doctor, not beside «Sincronizar ahora»**. Doctor is a screen, not the
-`--doctor` command: running the check is its first entry, the pairing code its
-second, and `ENTRADAS` is the list to add to. It receives `lanzar` from the main
+belongs behind the gear, not beside «Sincronizar ahora»**. The screen is
+«Ajustes» —the module keeps the old name— and it is not the `--doctor` command:
+running the check is its first entry, the pairing code its second, and
+`ENTRADAS` is the list to add to. It receives `lanzar` from the main
 window rather than importing it, because the output window is the *main*
-window's child and disables itself while a pass runs — Doctor knows none of
+window's child and disables itself while a pass runs — this screen knows none of
 that, and closes itself before handing over so two modals never hold the grab at
 once.
 
 ## Pairing a phone (`common/pairing.py` + `ui/qr.py` + `ui/tk_qr.py`)
 
-Doctor → «Emparejar un móvil…» shows the device's connection as a QR so a phone
-can read it. Three pieces, none of which knows about the other two's medium:
+«Ajustes» → «Emparejar un móvil…» shows the device's connection as a QR so a
+phone can read it. Three pieces, none of which knows about the other two's medium:
 
 - **`ui/qr.py` is a full QR encoder**, written here for the same reason
   `ui/icons.py` draws its own icons: no dependencies. Byte mode only (the payload
@@ -722,7 +724,7 @@ Preserve the citations like the bisync ones.
   pins it, because that is where a slip costs a baseline.
 - **The date comes from the NAME, never the mtime** (`versions_editor.SELLO`):
   copying the folder rewrites mtimes, and the stamp in the name is the whole
-  reason the format exists. Purging is Doctor → «Versiones…», both sides in one
+  reason the format exists. Purging is «Ajustes» → «Versiones…», both sides in one
   plan through `confirmar_plan()`; the remote side goes out as a single
   `rclone delete --files-from` with the exact list, never an age or a pattern.
   **Restoring is deliberately not offered** (v1).

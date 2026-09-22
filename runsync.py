@@ -322,7 +322,7 @@ def ui_flow() -> int:
         return 0
 
     if choice.action == "doctor":
-        return frontend.run_sync("Doctor", ["--doctor"])
+        return frontend.run_sync("Comprobación", ["--doctor"])
 
     # 'manual' solo llega aquí desde el menú de consola: la ventana sincroniza
     # sin cerrarse y no devuelve esta elección.

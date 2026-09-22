@@ -599,7 +599,7 @@ Tres cosas que conviene saber:
   empieza a sincronizarse como contenido normal. La ventana lo avisa antes de
   guardar.
 - **Nadie la limpia sola.** Lo que ocupa cada lado, abrir la carpeta y purgar lo
-  anterior a una fecha están en **Doctor → «Versiones…»**, con la misma
+  anterior a una fecha están en **«Ajustes…» → «Versiones…»**, con la misma
   confirmación que los demás borrados.
 
 ## El servicio periódico
@@ -665,10 +665,10 @@ estado y su registro viven en el equipo.
 
 ## Diagnóstico
 
-En la ventana principal, **«Doctor»** abre la pantalla de lo que se hace de tarde
-en tarde: la comprobación de estado y el emparejamiento de un móvil. Todo lo que
-no se usa cada día vive ahí, para que la ventana principal se quede con lo de
-todos los días.
+En la ventana principal, el engranaje de **«Ajustes…»** abre la pantalla de lo
+que se hace de tarde en tarde: la comprobación de estado, el emparejamiento de un
+móvil y las versiones guardadas. Todo lo que no se usa cada día vive ahí, para
+que la ventana principal se quede con lo de todos los días.
 
 ```bash
 python sync.py --doctor
@@ -698,7 +698,7 @@ Casos habituales:
 
 ### Emparejar un móvil
 
-**Doctor → «Emparejar un móvil…»** enseña la conexión con el remoto como un
+**«Ajustes…» → «Emparejar un móvil…»** enseña la conexión con el remoto como un
 código QR: el backend, sus opciones, dónde está el catálogo y la clave privada.
 Es la forma de llevar la conexión a un aparato que no se puede enchufar al
 dispositivo.

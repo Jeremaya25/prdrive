@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 """
-tk_doctor.py — Doctor: lo que se hace de vez en cuando y no cada vez.
+tk_doctor.py — «Ajustes»: lo que se hace de vez en cuando y no cada vez.
 
 Hasta aquí «Doctor» era un botón que lanzaba `sync.py --doctor` y nada más. Se
-convierte en una pantalla por una razón concreta: la ventana principal ya está
+convirtió en una pantalla por una razón concreta: la ventana principal ya está
 llena —sus avisos, la lista de parejas, el intervalo, tres botones y dos
 acciones— y todo lo que se hace una vez en la vida del dispositivo tiene que
-caber en algún sitio que no sea esa ventana. Doctor es ese sitio.
+caber en algún sitio que no sea esa ventana. Esta es ese sitio.
+
+En la ventana se llama «Ajustes», detrás de un engranaje, y no «Doctor»: el
+doctor es una de sus entradas —la primera—, no la pantalla, y aquí es donde irá
+también lo que se configure. El módulo conserva su nombre porque el subcomando
+`sync.py --doctor` no cambia y porque es a esta pantalla a la que apunta el
+rediseño de la pantalla de reparación.
 
 Solo dibuja, y menos que ninguna otra: no lee estado, no escribe nada y no
 decide nada. Cada entrada es un botón y una frase que dice qué pasa al pulsarlo;
@@ -14,8 +20,8 @@ lo que pasa lo hace el módulo de turno.
 
 `lanzar` llega desde la ventana principal en vez de importarse: la comprobación
 se enseña en su ventana de salida, que es hija de la principal y no de esta, y
-que además se apaga sola mientras hay otra pasada en curso. Doctor no tiene por
-qué saber nada de eso.
+que además se apaga sola mientras hay otra pasada en curso. Esta pantalla no
+tiene por qué saber nada de eso.
 """
 
 from __future__ import annotations
@@ -43,18 +49,18 @@ ENTRADAS = (
 
 
 def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None) -> None:
-    """Abre Doctor. `lanzar(titulo, args)` es el de la ventana principal.
+    """Abre «Ajustes». `lanzar(titulo, args)` es el de la ventana principal.
 
     No devuelve nada: de aquí no sale ninguna decisión que quien llama tenga que
     repintar. Lo que cambia estado —si algún día algo lo hace— abrirá su propia
     ventana y se encargará él."""
     from tkinter import ttk
 
-    dlg = modal(parent, "Doctor")
+    dlg = modal(parent, "Ajustes")
     marco = cuerpo_visible(dlg, padding=(22, 20, 22, 18))
     marco.columnconfigure(0, weight=1)
 
-    cabecera(marco, "Doctor",
+    cabecera(marco, "Ajustes",
              "Lo que se mira o se hace de tarde en tarde, para que la ventana "
              "principal se quede con lo de todos los días.",
              ancho=560, estilo="Dialogo.TLabel").grid(row=0, column=0, sticky="w")
@@ -65,7 +71,7 @@ def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None) -
         la otra, así que dejarlas abiertas a la vez pondría la captura del ratón
         en la ventana equivocada."""
         dlg.destroy()
-        lanzar("Doctor", ["--doctor"])
+        lanzar("Comprobación", ["--doctor"])
 
     def emparejar() -> None:
         from . import tk_qr

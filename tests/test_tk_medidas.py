@@ -426,13 +426,13 @@ try:
                 c(f"{nombre}: la pantalla de componentes no queda recortada",
                   corta, False)
 
-                # Doctor: una tarjeta con una entrada por acción, que crece con
-                # cada una que se le añada.
+                # «Ajustes»: una tarjeta con una entrada por acción, que crece
+                # con cada una que se le añada.
                 entra, corta = medir_dialogo(
                     lambda: tk_doctor.open_dialog(raiz, cfg, lambda *a: None),
                     ancho, alto, escala, modulo=tk_doctor)
-                c(f"{nombre}: la pantalla de Doctor cabe", entra, True)
-                c(f"{nombre}: la pantalla de Doctor no queda recortada",
+                c(f"{nombre}: la pantalla de Ajustes cabe", entra, True)
+                c(f"{nombre}: la pantalla de Ajustes no queda recortada",
                   corta, False)
 
                 # Versiones: dos tarjetas con una ruta larga cada una, más el
