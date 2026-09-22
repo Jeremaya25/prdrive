@@ -48,12 +48,12 @@ ENDPOINT_KEYS = ("local", "remote", "remote_path", "mode")
 # Lo que edita el formulario. Lo que no aparece aquí (use_filters_file...) se
 # conserva tal cual: la UI no lo toca.
 FORM_KEYS = ("name", "local", "remote_path", "remote", "mode", "include", "exclude",
-             "flags", "extra_flags")
+             "flags", "extra_flags", "versions")
 
 # Claves opcionales: si el formulario las devuelve vacías, desaparecen de la
 # pareja en vez de quedarse a medias. Es lo que hace que vaciar el cuadro de
 # flags devuelva la pareja a lo que digan [defaults] y el modo.
-OPTIONAL_KEYS = ("include", "exclude", "flags", "extra_flags")
+OPTIONAL_KEYS = ("include", "exclude", "flags", "extra_flags", "versions")
 
 MIRROR_MODES = ("up-mirror", "down-mirror")
 NOMBRE_PROHIBIDO = set('/\\:*?"<>|')
@@ -252,7 +252,13 @@ def clean_form(edited: Mapping[str, Any]) -> dict:
         if key not in edited:
             continue
         value = edited[key]
-        if isinstance(value, dict):        # flags: los valores van con su tipo
+        if isinstance(value, bool):
+            # Antes de la rama de bool: str(False) es "False", una cadena no
+            # vacía, así que una casilla apagada se guardaba en el TOML como
+            # texto. Apagada la clave desaparece, como el resto de opcionales.
+            if value:
+                salida[key] = True
+        elif isinstance(value, dict):      # flags: los valores van con su tipo
             if value:
                 salida[key] = dict(value)
         elif isinstance(value, (list, tuple)):
@@ -351,10 +357,43 @@ def _analizar_pareja(plan: EditPlan, antes_raw: Mapping[str, Any], original_name
                 "Cambian los filtros: bisync exigirá un --resync, porque no puede "
                 "saber qué ficheros excluidos existían antes.")
 
+    _analizar_versiones(plan, anterior, resultante)
     _analizar_flags(plan, antes_raw.get("defaults") or {}, anterior, resultante)
 
     if not plan.consequences:
         plan.consequences.append("El cambio no afecta al estado de bisync.")
+
+
+def _analizar_versiones(plan: EditPlan, anterior: Mapping[str, Any],
+                        resultante: Mapping[str, Any]) -> None:
+    """Encender o apagar el versionado de una pareja.
+
+    No toca el baseline —el nombre de los listados no depende de `versions`—,
+    pero sí el fichero de filtros, porque la regla que excluye
+    `.prversions/` entra y sale con la clave. Y apagarlo tiene una consecuencia
+    que no se ve venir: esa carpeta deja de estar excluida, así que lo que ya
+    hubiera guardado pasa a ser contenido normal de la pareja y se sincroniza al
+    otro lado en la siguiente pasada."""
+    antes = bool(anterior.get("versions"))
+    ahora = bool(resultante.get("versions"))
+    if antes == ahora:
+        return
+
+    if ahora:
+        plan.consequences.append(
+            f"Se guardarán versiones en {model.VERSIONS_DIR}/ dentro de la pareja, "
+            "en los dos lados: lo que se sobrescriba, lo que se borre y el "
+            "perdedor de un conflicto. Cambia el fichero de filtros, así que "
+            "pedirá un --resync.")
+    else:
+        plan.consequences.append(
+            "Se deja de versionar. Cambia el fichero de filtros, así que pedirá "
+            "un --resync.")
+        plan.warnings.append(
+            f"Lo que ya haya en {model.VERSIONS_DIR}/ no se borra, y al quitar la "
+            "regla deja de estar excluido: en la siguiente pasada se sincronizará "
+            "al otro lado como un fichero más. Vacíalo o exclúyelo a mano si no lo "
+            "quieres allí.")
 
 
 def _analizar_flags(plan: EditPlan, defaults: Mapping[str, Any],

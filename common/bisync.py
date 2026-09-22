@@ -122,6 +122,14 @@ class FiltersState(NamedTuple):
 
 def filters_content(pair: Pair) -> str:
     lines = [FILTERS_HEADER]
+    if pair.versions:
+        # Esta regla NO es filtrado: es la condición que pone rclone para dejar
+        # que `.prversions/` viva dentro del pair. Sin ella, `--backup-dir1`
+        # solapa con Path1 y la pasada muere con «destination and parameter to
+        # --backup-dir mustn't overlap», error crítico que además invalida el
+        # baseline. Va la PRIMERA porque rclone aplica las reglas en orden y gana
+        # la que casa antes: detrás de un `+ **/*.md` no excluiría nada.
+        lines.append(f"- {model.VERSIONS_DIR}/**")
     lines += [f"+ {p}" for p in pair.includes]
     lines += [f"- {p}" for p in pair.excludes]
     if pair.includes:

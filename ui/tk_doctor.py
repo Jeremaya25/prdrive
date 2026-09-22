@@ -35,6 +35,10 @@ ENTRADAS = (
      "Enseña la conexión con el remoto como código QR para que la lea otro "
      "aparato. Lleva la clave privada dentro: el código avisa.",
      "qr"),
+    ("Versiones…", "file",
+     "Lo guardado en .prversions/ por las parejas que versionan: cuánto ocupa "
+     "en cada lado, abrir la carpeta de aquí y purgar lo anterior a una fecha.",
+     "versiones"),
 )
 
 
@@ -67,7 +71,11 @@ def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None) -
         from . import tk_qr
         tk_qr.open_dialog(dlg, raw_local)
 
-    acciones = {"doctor": comprobacion, "qr": emparejar}
+    def versiones() -> None:
+        from . import tk_versions
+        tk_versions.open_dialog(dlg, config)
+
+    acciones = {"doctor": comprobacion, "qr": emparejar, "versiones": versiones}
 
     tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(14, 12, 14, 12))
     tarjeta.grid(row=1, column=0, sticky="ew", pady=(16, 0))

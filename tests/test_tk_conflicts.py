@@ -314,9 +314,12 @@ with sandbox():
 
     tk_doctor.mostrar = lambda dlg, parent=None: dentro_de_doctor(dlg)
     ventana_principal(cfg, lambda root: botones(root)["Doctor"].invoke())
-    c("Doctor abre su pantalla, con la comprobación y el emparejamiento",
+    # La lista va entera y no «contiene»: Doctor es donde aterriza todo lo que no
+    # cabe en la principal, así que lo que hay que ver de un vistazo al añadir una
+    # entrada es la lista completa de lo que esa pantalla ofrece.
+    c("Doctor abre su pantalla con sus entradas",
       visto.get("entradas"),
-      ["Cerrar", "Ejecutar comprobación", "Emparejar un móvil…"])
+      ["Cerrar", "Ejecutar comprobación", "Emparejar un móvil…", "Versiones…"])
     c("y su comprobación corre sin cerrar la principal",
       (lanzadas[0]["cmd"][-1], lanzadas[0]["modal"]), ("--doctor", False))
 

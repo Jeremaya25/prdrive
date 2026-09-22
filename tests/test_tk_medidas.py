@@ -49,7 +49,7 @@ except Exception as e:                                   # sin entorno gráfico
 from ui import tk as uitk
 from ui import remote_picker
 from ui import (tk_conflicts, tk_doctor, tk_fleet, tk_install, tk_pairs,
-                tk_qr, tk_update)
+                tk_qr, tk_update, tk_versions, versions_editor)
 
 # Ni una petición a GitHub desde un test.
 update.fetch = lambda url, timeout: c("ningún test toca la red", "fetch", "nada")
@@ -83,6 +83,23 @@ remote_picker.listar = lambda remote, ruta: [f"carpeta-de-nombre-largo-{i}"
 
 fleet.leer = lambda raw=None: (FLOTA, None)
 fleet.device_id = lambda app_dir=None: "dispositivo0"
+
+# Las versiones del lado remoto salen de un `rclone lsf`, que aquí no se lanza.
+# Se le da el peor caso de ancho: una ruta larga y una cifra de varios dígitos,
+# que es lo que estira esa tarjeta.
+VERSIONES_REMOTAS = versions_editor.Lado(
+    versions_editor.REMOTO,
+    "nas:/datos/documentos/proyectos/2026/bóveda-de-notas/.prversions", True, "",
+    tuple(versions_editor.Version(
+        ruta=f"documentos/proyecto-{i}/borradores/informe-trimestral-{i}"
+            f"~2026010{i % 9 + 1}-120000.docx",
+        original=f"informe-trimestral-{i}.docx",
+        cuando=__import__("datetime").datetime(2026, 1, i % 28 + 1, 12, 0),
+        tamano=1024 * 1024 * 3) for i in range(40)))
+versions_editor.leer_remoto = lambda pair: VERSIONES_REMOTAS
+# `working()` lanza un hilo y abre su propia ventanita: aquí se mide la de
+# versiones, no esa.
+tk_versions.working = lambda parent, title, funcion, mensaje="": (True, funcion())
 
 # La ventana de emparejar dibuja un código QR cuyo tamaño sale del tamaño de la
 # carga, y la carga lleva una clave privada. Aquí se le da una del tamaño real
@@ -417,6 +434,23 @@ try:
                 c(f"{nombre}: la pantalla de Doctor cabe", entra, True)
                 c(f"{nombre}: la pantalla de Doctor no queda recortada",
                   corta, False)
+
+                # Versiones: dos tarjetas con una ruta larga cada una, más el
+                # desplegable de parejas. Se mide con y sin parejas versionadas,
+                # porque el caso vacío es un párrafo y el otro son dos tarjetas.
+                for que, datos in (
+                        ("la pantalla de versiones", [
+                            {"name": f"pareja{i}", "local": f"sync-data/p{i}",
+                             "remote_path": f"/R/p{i}", "mode": "bisync",
+                             "versions": True} for i in range(12)]),
+                        ("la pantalla de versiones sin ninguna", BASE["pair"])):
+                    cfg_v = model.parse_config({"defaults": BASE["defaults"],
+                                                "pair": datos})
+                    entra, corta = medir_dialogo(
+                        lambda c_=cfg_v: tk_versions.open_dialog(raiz, c_),
+                        ancho, alto, escala, modulo=tk_versions)
+                    c(f"{nombre}: {que} cabe", entra, True)
+                    c(f"{nombre}: {que} no queda recortada", corta, False)
 
                 # El código de emparejamiento: el único dibujo de la aplicación
                 # que mide en píxeles y no puede encoger —un módulo por debajo

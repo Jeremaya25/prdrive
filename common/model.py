@@ -76,6 +76,15 @@ DEFAULT_DEVICE_REMOTE = "disp"
 # (ver `Pair.top_level_dir`). Tiene que ser un nombre y no ".", y sale en el
 # prefijo de los listados de bisync: cambiarlo invalida esos baselines.
 RAIZ_UPSTREAM = "raiz"
+# La carpeta de versiones de una pareja, DENTRO de su propia raíz (ver
+# `Pair.versions_path1`). Vive dentro del pair porque es del pair: se lleva con
+# él y no hay nada que configurar. Que quepa ahí depende de que el fichero de
+# filtros la excluya —rclone rechaza un `--backup-dir` que solape con el destino
+# («destination and parameter to --backup-dir mustn't overlap») y aborta la
+# pareja con error crítico—, así que `bisync.filters_content` la emite y lo hace
+# como PRIMERA regla, porque rclone aplica las reglas en orden y gana la que
+# casa antes.
+VERSIONS_DIR = ".prversions"
 DEFAULT_INTERVAL_MIN = 30.0         # minutos entre ciclos del servicio
 
 # rclone es una app de consola: lanzada desde un proceso sin consola (pythonw, el
@@ -336,6 +345,7 @@ class Pair:
     extra_flags: tuple[str, ...]
     use_filters_file: bool
     device_remote: str | None
+    versions: bool
 
     # --- extremos tal y como se le pasan a rclone --------------------------
 
@@ -413,6 +423,24 @@ class Pair:
         """--filters-file es exclusivo de bisync; en el resto van --include/--exclude."""
         return self.is_bisync and self.use_filters_file
 
+    # --- versiones -----------------------------------------------------------
+    #
+    # Los dos extremos son los de la pareja con la carpeta detrás, y no hay una
+    # tercera ruta que configurar. Path1 es `source` y Path2 es `dest` porque es
+    # así como se los pasa `build_command` a rclone, y en bisync `source` es el
+    # lado local. Se construyen con "/" también en Windows: rclone admite la
+    # barra en una ruta local y así la propiedad no tiene dos ramas.
+
+    @property
+    def versions_path1(self) -> str:
+        """--backup-dir1: lo que pierde el lado local."""
+        return f"{self.source.rstrip('/')}/{VERSIONS_DIR}"
+
+    @property
+    def versions_path2(self) -> str:
+        """--backup-dir2: lo que pierde el lado remoto."""
+        return f"{self.dest.rstrip('/')}/{VERSIONS_DIR}"
+
 
 def _build_pair(raw: Mapping[str, Any], defaults: Mapping[str, Any]) -> Pair:
     """Funde las capas de configuración de una pareja. El orden de los flags va
@@ -429,6 +457,16 @@ def _build_pair(raw: Mapping[str, Any], defaults: Mapping[str, Any]) -> Pair:
     if mode is None:
         raise ConfigError(f"[{name}] modo inválido: '{mode_name}'. Válidos: {sorted(MODES)}")
 
+    # El versionado se apoya en --backup-dir1/--backup-dir2 y en que el perdedor
+    # de un conflicto se aparte en vez de quedarse suelto: las tres cosas son de
+    # bisync. En un copy/sync no hay dos lados que guardar, así que la clave no
+    # significa nada ahí y vale más decirlo al parsear que dejarla sin efecto.
+    versions = bool(raw.get("versions", False))
+    if versions and not mode.is_bisync:
+        raise ConfigError(
+            f"[{name}] 'versions' solo vale en modo bisync, y esta pareja es "
+            f"'{mode_name}'. Quita la clave o cambia el modo.")
+
     return Pair(
         name=name,
         mode=mode,
@@ -443,6 +481,7 @@ def _build_pair(raw: Mapping[str, Any], defaults: Mapping[str, Any]) -> Pair:
         use_filters_file=raw.get("use_filters_file",
                                  defaults.get("use_filters_file", True)),
         device_remote=_device_remote_name(defaults),
+        versions=versions,
     )
 
 
