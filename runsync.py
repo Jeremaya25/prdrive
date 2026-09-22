@@ -17,10 +17,16 @@ El servicio solo se detiene en dos casos:
   2. Se vuelve a ejecutar runsync: el lanzador detecta el servicio anterior, le
      pide parar, espera, y muestra la UI inicial de nuevo.
 
+Y de ventana solo hay una a la vez: la segunda se niega a abrirse en vez de
+apilarse, porque abrir runsync detiene el servicio anterior y dos ventanas se
+lo quitarían la una a la otra. Mientras haya ventana o servicio vivos,
+el vigilante de `penwatch.py` tampoco lanza nada al enchufar el dispositivo.
+
 Coordinación servicio <-> lanzador (todo en state/, viaja con el dispositivo):
     daemon.lock.json  <- quién es el servicio (pid, host, arranque, último ciclo)
     daemon.stop       <- su presencia le pide al servicio que pare
     daemon.log        <- diario del servicio (recortado automáticamente)
+    ui.lock.json      <- quién tiene la ventana abierta (pid, host, arranque)
     ui_prefs.json     <- lo último que se eligió en la UI (lo gestiona ui.prefs)
 
 Esa memoria precarga la UI siguiente y sirve de valor por defecto a --auto, por
@@ -48,7 +54,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 import ui  # noqa: E402
-from common import model, store, update  # noqa: E402
+from common import APP_NAME, model, store, update  # noqa: E402
 from common.store import pid_alive  # noqa: E402
 from ui import prefs  # noqa: E402
 
@@ -57,6 +63,7 @@ SENTINEL = model.CONFIG_FILE          # si esto no se ve, el dispositivo no est�
 LOCK = model.STATE_DIR / "daemon.lock.json"
 STOP = model.STATE_DIR / "daemon.stop"
 DLOG = model.STATE_DIR / "daemon.log"
+UI_LOCK = model.STATE_DIR / "ui.lock.json"   # quién tiene la ventana abierta
 
 POLL_SECONDS = 2.0        # cadencia de comprobación de parada / dispositivo ausente
 STOP_WAIT_SECONDS = 15.0  # cuánto espera el lanzador a que pare el servicio
@@ -98,6 +105,62 @@ def dlog(msg: str) -> None:
             f.write(line)
     except OSError:
         pass  # dispositivo ausente o de solo lectura: el diario no es vital
+
+
+# ---------------------------------------------------------------------------
+# Una sola ventana a la vez (lado lanzador)
+# ---------------------------------------------------------------------------
+
+def ui_en_marcha() -> dict | None:
+    """El registro de una ventana de runsync viva EN ESTE EQUIPO, o None.
+
+    Mismo criterio que el registro del servicio: un pid muerto o un registro de
+    otro anfitrión es rastro de un dispositivo que se extrajo sin cerrar nada, y
+    se limpia. Solo cuenta este equipo porque el fichero viaja con el
+    dispositivo: el pid de otra máquina aquí no quiere decir nada."""
+    info = store.read_json(UI_LOCK) or None
+    if info is None:
+        return None
+    try:
+        pid = int(info.get("pid", -1))
+    except (TypeError, ValueError):
+        pid = -1
+    if info.get("host") != HOST or not pid_alive(pid):
+        UI_LOCK.unlink(missing_ok=True)
+        return None
+    return info
+
+
+def tomar_ui() -> None:
+    """Apunta que esta ventana es la de este dispositivo.
+
+    No devuelve nada ni se comprueba que se haya escrito: en un dispositivo de
+    solo lectura la ventana se abre igual. El registro es para que la SIGUIENTE
+    no se abra encima, no un permiso para abrir esta."""
+    store.write_json(UI_LOCK, {"pid": os.getpid(), "host": HOST,
+                               "started": store.stamp()})
+
+
+def soltar_ui() -> None:
+    """Suelta el registro si sigue siendo el nuestro. Lo de «si sigue siendo»
+    es por el mismo motivo que en el servicio: si otro lo ha tomado ya —el
+    dispositivo se extrajo y se volvió a enchufar—, no es nuestro para borrarlo."""
+    info = store.read_json(UI_LOCK)
+    if info.get("pid") == os.getpid() and info.get("host") == HOST:
+        UI_LOCK.unlink(missing_ok=True)
+
+
+def vigilante_instalado() -> bool:
+    """¿Está registrado el arranque automático en este equipo?
+
+    Solo para decirlo en un mensaje. Bajo `except` porque penwatch es un script
+    hermano que puede no poder importarse, y porque no saberlo no es motivo para
+    no abrir la ventana."""
+    try:
+        from ui import watch
+        return watch.is_installed()
+    except Exception:                                   # noqa: BLE001
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -300,13 +363,42 @@ def run_interactive(extra_args: list[str]) -> int:
 
 def ui_flow() -> int:
     """Sin argumentos: parar el servicio anterior, preguntar, y hacer lo pedido."""
+    # Lo PRIMERO, antes de parar nada: si ya hay una ventana abierta, esta sobra
+    # y además haría daño. Abrir runsync detiene el servicio anterior, así que
+    # una segunda ventana mataría el que acaba de arrancar la primera.
+    abierta = ui_en_marcha()
+    if abierta is not None:
+        return ui.fatal(
+            f"Ya hay una ventana de {APP_NAME} abierta para este dispositivo "
+            f"(pid {abierta.get('pid')}, desde las {abierta.get('started', '?')}).\n"
+            "Usa esa; si no la encuentras, ciérrala desde el administrador de "
+            "tareas y vuelve a intentarlo.")
+
     startup_msg = stop_previous_daemon()
+    if vigilante_instalado():
+        # El vigilante no lanza nada mientras esta ventana esté abierta, y eso
+        # no se ve por ningún sitio: sin decirlo, enchufar el dispositivo con la
+        # ventana abierta parecería que el arranque automático se ha roto.
+        aviso = ("El arranque automático está en pausa mientras esta ventana "
+                 "esté abierta.")
+        startup_msg = f"{startup_msg}\n{aviso}" if startup_msg else aviso
 
     try:
         config = model.load_config()
     except model.ConfigError as e:
         return ui.fatal(str(e))
 
+    tomar_ui()
+    try:
+        return _atender(config, startup_msg)
+    finally:
+        soltar_ui()
+
+
+def _atender(config: model.Config, startup_msg: str | None) -> int:
+    """Preguntar y hacer lo pedido. Aparte de `ui_flow()` para que el registro
+    de la ventana se suelte pase lo que pase, incluida una elección que arranca
+    el servicio y se va."""
     choice, frontend = ui.start(config, startup_msg)
     if choice is None:
         return 0
@@ -318,7 +410,11 @@ def ui_flow() -> int:
                          config.names)
 
     if choice.action == "daemon":
-        frontend.info(spawn_daemon(list(choice.pairs), choice.minutes))
+        msg = spawn_daemon(list(choice.pairs), choice.minutes)
+        if vigilante_instalado():
+            msg += ("\nMientras el servicio esté en marcha, el arranque "
+                    "automático tampoco abrirá nada al enchufar el dispositivo.")
+        frontend.info(msg)
         return 0
 
     if choice.action == "doctor":
@@ -349,6 +445,17 @@ def auto_start(rest: list[str]) -> int:
         config = model.load_config()
     except model.ConfigError as e:
         return ui.fatal(str(e))
+
+    # El vigilante ya no llama aquí con la ventana abierta, pero esto también lo
+    # lanzan un acceso directo o un cron: arrancar el servicio por detrás de una
+    # ventana abierta pondría dos cosas a sincronizar las mismas parejas.
+    abierta = ui_en_marcha()
+    if abierta is not None:
+        msg = (f"Hay una ventana de {APP_NAME} abierta (pid {abierta.get('pid')}): "
+               "no arranco el servicio.")
+        print(msg)
+        dlog(f"--auto: {msg}")
+        return 0
 
     names = config.names
     d_pairs, d_interval, memo = prefs.startup_defaults(config)

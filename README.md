@@ -612,6 +612,7 @@ Tres cosas que conviene saber:
 | `daemon.lock.json` | pid, equipo, parejas y último ciclo. Escritura atómica |
 | `daemon.stop` | su presencia es una petición de parada |
 | `daemon.log` | registro, se recorta solo |
+| `ui.lock.json` | pid y equipo de la ventana abierta, si la hay |
 | `ui_prefs.json` | lo último que se eligió en la ventana |
 | `last_run.json` | cómo acabó la última pasada de cada pareja, y qué log la explica |
 | `conflicts.json` | los ficheros en conflicto del último recorrido |
@@ -635,6 +636,12 @@ El servicio se para cuando el dispositivo desaparece o cuando se vuelve a lanzar
 `runsync.py`. En Windows se lanza con `pythonw.exe` y sin consola, y hace `chdir`
 al directorio temporal para que la unidad se pueda extraer con seguridad.
 
+**Una ventana a la vez.** Como abrir `runsync.py` detiene el servicio anterior,
+dos ventanas se lo quitarían la una a la otra: la segunda no se abre y lo dice.
+Mientras haya ventana abierta o servicio en marcha, el vigilante tampoco lanza
+nada al enchufar el dispositivo; la ventana avisa de esa pausa al abrirse, y al
+arrancar el servicio se avisa de lo mismo.
+
 ## El vigilante
 
 `penwatch.py` es lo único que se instala en el equipo anfitrión, y **nunca escribe
@@ -654,6 +661,10 @@ estado y su registro viven en el equipo.
   esté, mientras la ruta sea relativa a ella.
 - Se dispara **una vez por conexión**: el disparo se rearma cuando la unidad
   desaparece.
+- **No lanza nada si ya hay ventana o servicio en marcha** en ese equipo: lee
+  (sin escribir) los dos registros del dispositivo y lo anota en su diario. El
+  disparo se da por gastado igual, para no reintentarlo cada minuto detrás de una
+  ventana abierta.
 - `--mode` decide qué lanza: `ui` (por defecto), `sync` o `daemon`.
 - **Tiene su propio Python.** `install` copia el del dispositivo a su carpeta del
   equipo y registra la tarea con esa copia, así que no se rompe cuando alguien

@@ -101,7 +101,9 @@ Constants duplicated across modules that must not drift: `deploy.APP_SUBDIR`, an
 does not travel to the device (`tests/test_install_device.py`, `test_fleet.py`);
 `RUNTIME_STAMP` / `RUNTIME_SUBDIR`, and `penwatch.runtime_keys_for()` vs
 `install/platforms.candidates()`, the fallback chain `runsync.bat` hard-codes
-(`tests/test_penwatch_runtime.py`).
+(`tests/test_penwatch_runtime.py`); `penwatch.UI_LOCK_REL` / `DAEMON_LOCK_REL` /
+`HOST` vs `runsync.UI_LOCK` / `LOCK` and `prefs.HOST`
+(`tests/test_instancia_unica.py`).
 
 ## The PyInstaller build (`build_installer.py`)
 
@@ -290,11 +292,26 @@ explanation — add new cases there.
 
 Coordination lives in `state/` so it travels with the device: `daemon.lock.json`
 (pid/host/pairs/cycle), `daemon.stop` (presence = stop request), `daemon.log`,
-`ui_prefs.json`, plus `last_run.json` and `conflicts.json` (written by `sync.py`,
+`ui.lock.json` (pid/host of the open window), `ui_prefs.json`, plus
+`last_run.json` and `conflicts.json` (written by `sync.py`,
 not the daemon). `startup_defaults()` layers last choice > `[daemon]` in the TOML
 > all pairs / 30 min; only the UI writes prefs (`manual`/`daemon`, not `doctor`),
 `--auto`/`--daemon` only read. The service stops when the device disappears
 (`SENTINEL`) or when runsync is launched again.
+
+**One window at a time, and the watcher waits for it.** `ui_flow()` checks
+`ui.lock.json` **before** `stop_previous_daemon()` and refuses to open a second
+window — opening runsync stops the previous service, so two windows would take
+the service from each other. A record whose pid is dead, or that belongs to
+another host, is the trace of a device pulled without closing anything, and is
+cleaned exactly like the daemon's. The lock is taken around `_atender()` and
+released in a `finally`. `penwatch` reads both locks (never writes them) and
+launches nothing while either is alive: the pass is logged and the trigger is
+spent, so it does not retry every minute behind an open window. Both facts are
+said out loud — in the startup notice and in the message that confirms the
+service — but only when the watcher is registered on this machine
+(`ui.watch.is_installed()`); otherwise they would describe something that does
+not exist here.
 
 **Windows specifics to preserve:** `pid_alive()` uses `OpenProcess`, never
 `os.kill` (which *terminates* on Windows); the daemon is spawned with
@@ -646,7 +663,10 @@ script to `%LOCALAPPDATA%\prdriveWatch` / `~/.local/share/prdrive-watch`, writes
 - It must never write to, or `chdir` into, the device (that blocks safe
   ejection); config, state and log live on the host, and every device access is
   wrapped in `try/except OSError` (a locked BitLocker volume errors rather than
-  reporting "not found").
+  reporting "not found"). It does **read** the device's `ui.lock.json` and
+  `daemon.lock.json` (`aplicacion_en_marcha()`): with a window open or the
+  service running on this machine it launches nothing, and the skipped trigger
+  is not a failure — `_disparo_row()` says so instead of printing «FALLÓ».
 - `ui/watch.py` imports penwatch for reads and shells out for
   `install`/`uninstall`. One-way dependency.
 - **Its own Python**: `install` copies the device's runtime for this host
