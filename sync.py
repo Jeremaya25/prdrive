@@ -50,7 +50,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Mapping
 
-from common import bisync, conflicts, fleet, model, progress, results
+from common import bisync, conflicts, fleet, model, progress, results, revision
 from common.model import Config, Pair
 
 LOG_TAIL_LINES = 15  # líneas de log que se vuelcan a consola cuando algo falla
@@ -547,53 +547,15 @@ def list_pairs(config: Config) -> int:
     return 0
 
 
-def _doctor_pair(pair: Pair) -> bool:
-    """Diagnostica una pareja e informa. Devuelve True si requiere atención."""
-    print(f"[{pair.name}] {pair.mode.name}")
-    local_ok = pair.local_abs.exists()
-    print(f"  local : {pair.local_endpoint} {'(OK)' if local_ok else '(NO EXISTE)'}")
-    print(f"  remoto: {pair.remote_endpoint}")
-    if not pair.is_bisync:
-        print()
-        return False
-
-    state = bisync.pair_state(pair)
-    want = bisync.expected_prefix(pair)
-    print(f"  estado: {state.status} — {state.detail}")
-    print(f"  prefijo esperado: {want}")
-    if state.prefix and state.prefix != want:
-        print("  AVISO: el baseline está guardado con otro prefijo, así que no es "
-              "el de esta pareja: rclone no lo encontrará. Apártalo (state/<pareja>/) "
-              "y haz --resync.")
-    filters = bisync.filters_state(bisync.filters_file_for(pair))
-    print(f"  filtros: {filters.status} — {filters.detail}")
-
-    if pair.workdir.exists():
-        for f in sorted(pair.workdir.iterdir()):
-            if f.is_file():
-                ts = datetime.fromtimestamp(f.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
-                print(f"    {f.name:<62} {ts}")
-        if list(pair.workdir.glob("*.lck")):
-            print("  AVISO: hay lock(s). Si no hay ninguna ejecución en curso, "
-                  "bórralos o espera a que caduquen (--max-lock).")
-    print()
-    return not state.has_baseline or filters.needs_resync or not local_ok
-
-
 def doctor(config: Config) -> int:
-    print(f"Dispositivo detectado en: {model.DEVICE_ROOT}")
-    print(f"Workdir de estado: {model.STATE_DIR}")
-    for key, value in config.pen_environment().items():
-        print(f"  {key}={value}")
-    print()
+    """El estado del dispositivo, en texto. No toca nada.
 
-    stray = sorted(model.STATE_DIR.glob("*.lst")) if model.STATE_DIR.exists() else []
-    if stray:
-        print(f"Aviso: {len(stray)} listado(s) sueltos en la raíz de state/ "
-              f"(layout antiguo). Se migrarán al ejecutar.\n")
-
-    problems = sum(_doctor_pair(pair) for pair in config.pairs)
-    print("Sin incidencias." if not problems else f"{problems} pareja(s) requieren atención.")
+    El diagnóstico no está aquí: lo hace `common/revision.py`, que es también de
+    donde saca sus averías la pantalla de «Reparación». Aquí solo se imprime, y
+    por eso esta función es tan corta como debe: dos sitios que decidan qué está
+    roto acaban discrepando, y el que se equivoque será el que no se mire."""
+    for linea in revision.informe(config):
+        print(linea)
     return 0
 
 

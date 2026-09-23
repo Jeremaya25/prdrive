@@ -48,8 +48,8 @@ except Exception as e:                                   # sin entorno gráfico
 
 from ui import tk as uitk
 from ui import remote_picker
-from ui import (tk_conflicts, tk_doctor, tk_fleet, tk_install, tk_pairs,
-                tk_qr, tk_update, tk_versions, versions_editor)
+from ui import (tk_doctor, tk_fleet, tk_install, tk_pairs, tk_qr, tk_repair,
+                tk_update, tk_versions, versions_editor)
 
 # Ni una petición a GitHub desde un test.
 update.fetch = lambda url, timeout: c("ningún test toca la red", "fetch", "nada")
@@ -414,8 +414,11 @@ try:
                     c(f"{nombre}: {que} cabe", entra, True)
                     c(f"{nombre}: {que} no queda recortado", corta, False)
 
-                # La de conflictos crece con cada fichero y cada versión: se
-                # mide con varios, de ruta larga, que es lo que la estira.
+                # «Reparación» es la pantalla que más crece de todas: una fila
+                # por avería, con su explicación, y debajo la lista de conflictos
+                # con cada fichero y cada versión. Se mide con las doce parejas
+                # sin baseline —o sea, con una avería por pareja— y con varios
+                # conflictos de ruta larga, que es lo que la estira.
                 pareja0 = cfg.pairs[0]
                 for i in range(6):
                     carpeta = pareja0.local_abs / "documentos" / f"proyecto-{i}" / "borradores"
@@ -424,10 +427,11 @@ try:
                     (carpeta / f"informe-trimestral-{i}.docx.conflicto-remoto1").write_text(
                         "b", encoding="utf-8")
                 conflicts.actualizar_pareja(pareja0)
-                entra, corta = medir_dialogo(lambda: tk_conflicts.open_dialog(raiz, cfg),
-                                             ancho, alto, escala, modulo=tk_conflicts)
-                c(f"{nombre}: la ventana de conflictos cabe", entra, True)
-                c(f"{nombre}: la ventana de conflictos no queda recortada", corta, False)
+                entra, corta = medir_dialogo(
+                    lambda: tk_repair.open_dialog(raiz, cfg, lambda *a: None),
+                    ancho, alto, escala, modulo=tk_repair)
+                c(f"{nombre}: la pantalla de reparación cabe", entra, True)
+                c(f"{nombre}: la pantalla de reparación no queda recortada", corta, False)
 
                 # La de actualizar crece con las notas de la release, que las
                 # escribe quien publica y aquí no las controla nadie: se mide con

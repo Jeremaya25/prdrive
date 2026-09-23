@@ -120,20 +120,21 @@ with sandbox():
 
 # --- un estado NO se descarta ------------------------------------------------
 # Una pareja que falló es estado del dispositivo: se va cuando haya una pasada
-# buena, no cuando alguien cierre el aviso. Si algún día su recuadro estrena un
-# «Descartar», que sea leyendo esto.
+# buena, no cuando alguien cierre el aviso. Ya no tiene recuadro propio —lo
+# cuenta la línea que lleva a «Reparación»—, pero la regla es la misma: si algún
+# día esa línea estrena un «Descartar», que sea leyendo esto.
 with sandbox():
     estado = {}
     results.fallos = lambda cfg: [results.Fallo(
         pareja="notas", cuando="2026-01-01 00:00:00", codigo=1, log=None)]
 
     def sonda_fallo(self, *_a, **_k):
-        estado["falla"] = any("La última pasada falló" in t for t in textos(self))
+        estado["falla"] = any("que revisar" in t for t in textos(self))
         estado["descartables"] = len(botones(self, "Descartar"))
         self.destroy()
 
     conducir(sonda_fallo, aviso=None)
-    c("el fallo de la última pasada se pinta", estado["falla"], True)
+    c("el fallo de la última pasada se cuenta", estado["falla"], True)
     c("y no se puede descartar", estado["descartables"], 0)
 
 sys.exit(c.report())

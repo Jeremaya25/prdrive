@@ -53,6 +53,22 @@ LOG_DIR = APP_DIR / "logs"
 SYNC_PY = APP_DIR / "sync.py"       # a quien lanzan la UI y el servicio
 PENWATCH_PY = APP_DIR / "penwatch.py"
 
+
+# Los dos registros que dicen quién está usando el dispositivo ahora mismo: el
+# servicio periódico y la ventana. Los escribe `runsync.py`, y los lee también
+# quien necesita saber si hay algo en marcha antes de tocar el estado —borrar un
+# bloqueo de bisync, por ejemplo—. Funciones y no constantes porque los tests
+# mueven `STATE_DIR` al vuelo, igual que `results.ruta_estado()`.
+# (`penwatch.py` tiene su propia copia de estas rutas a la fuerza: no puede
+# importar nada del dispositivo. Hay un test que ata las dos.)
+
+def daemon_lock() -> Path:
+    return STATE_DIR / "daemon.lock.json"
+
+
+def ui_lock() -> Path:
+    return STATE_DIR / "ui.lock.json"
+
 class ConfigError(Exception):
     """El config es inválido.
 

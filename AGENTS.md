@@ -31,6 +31,7 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 │   ├── bisync.py      replicates rclone bisync's internals
 │   ├── conflicts.py   conflict files: scan, side, state/conflicts.json
 │   ├── results.py     each pair's last run (state/last_run.json)
+│   ├── revision.py    what is wrong, as data: the ONE diagnosis
 │   ├── progress.py    rclone stats lines → the live progress line
 │   ├── config_file.py reads AND writes the TOML (hand-rolled serializer)
 │   ├── catalog.py     the pair catalogue on the remote: read, cache, write
@@ -47,14 +48,15 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 │   ├── qr.py          a QR encoder: ISO/IEC 18004, byte mode, no deps, no Tk
 │   ├── prefs.py       what the UI preloads (state/ui_prefs.json)
 │   ├── pair_editor.py what THIS device does with pairs — the decisions
+│   ├── repair.py      what to do about a finding: the repair plans
 │   ├── catalog_editor.py · remote_picker.py · conflict_editor.py ·
 │   │   flags_editor.py · watch.py · versions_editor.py
 │   │                   the other decision halves, no Tk
 │   ├── tk.py          TkFrontend: main + output window, modal()/mostrar()/working()
 │   ├── tk_install.py  the install wizard          (every tk_* draws only)
-│   ├── tk_pairs.py · tk_conflicts.py · tk_fleet.py · tk_watch.py ·
-│   │   tk_update.py · tk_crypto.py · tk_doctor.py · tk_qr.py ·
-│   │   tk_versions.py
+│   ├── tk_pairs.py · tk_repair.py · tk_conflicts.py · tk_fleet.py ·
+│   │   tk_watch.py · tk_update.py · tk_crypto.py · tk_doctor.py ·
+│   │   tk_qr.py · tk_versions.py
 │   └── console.py     ConsoleFrontend: the text menu
 ├── install/           what the installer knows; no Tk, no device needed
 │   ├── __init__.py    brand constants, InstallError, InstallState, python_command()
@@ -102,8 +104,10 @@ does not travel to the device (`tests/test_install_device.py`, `test_fleet.py`);
 `RUNTIME_STAMP` / `RUNTIME_SUBDIR`, and `penwatch.runtime_keys_for()` vs
 `install/platforms.candidates()`, the fallback chain `runsync.bat` hard-codes
 (`tests/test_penwatch_runtime.py`); `penwatch.UI_LOCK_REL` / `DAEMON_LOCK_REL` /
-`HOST` vs `runsync.UI_LOCK` / `LOCK` and `prefs.HOST`
-(`tests/test_instancia_unica.py`).
+`HOST` vs `model.ui_lock()` / `model.daemon_lock()` and `prefs.HOST`
+(`tests/test_instancia_unica.py`). Those two paths are functions in `model.py`
+and not constants because the tests move `STATE_DIR` at runtime; `runsync` and
+`ui/repair.py` both go through them, so penwatch's copy is the only one.
 
 ## The PyInstaller build (`build_installer.py`)
 
@@ -349,8 +353,8 @@ it** — a window cannot dump output to a console that does not exist.
 - `tk_pairs.confirmar_plan()` is a real window, one line per consequence, each
   warning in an amber box — not an `askokcancel`. This is the dialog that governs
   deletions. Tests replace it, like `mostrar()`.
-- **The main window runs syncs itself:** «Sincronizar ahora» and the check
-  behind «Ajustes…» open a
+- **The main window runs syncs itself:** «Sincronizar ahora», and whatever
+  «Reparación» hands back, open a
   modeless `output_window`, the window disables whatever touches the same state,
   and on close re-reads `state/` and repaints. Only «Iniciar servicio» returns a
   `Choice` to runsync. `ui.manual_args()` (resync question + `--yes`) is shared
@@ -402,12 +406,46 @@ paths and flags; no rounded corners, no shadows. Styles cross **role** with
 The main window is deliberately lean, so **anything done once in a device's life
 belongs behind the gear, not beside «Sincronizar ahora»**. The screen is
 «Ajustes» —the module keeps the old name— and it is not the `--doctor` command:
-running the check is its first entry, the pairing code its second, and
-`ENTRADAS` is the list to add to. It receives `lanzar` from the main
-window rather than importing it, because the output window is the *main*
-window's child and disables itself while a pass runs — this screen knows none of
-that, and closes itself before handing over so two modals never hold the grab at
-once.
+«Reparación» is its first entry, the pairing code its second, and
+`ENTRADAS` is the list to add to. It receives `lanzar` and `abrir_reparacion`
+from the main window rather than importing them, because the output window and
+«Reparación» are the *main* window's children and it disables itself while a
+pass runs — this screen knows none of that, and closes itself before handing
+over so two modals never hold the grab at once.
+
+### «Reparación» (`common/revision.py` + `ui/repair.py` + `ui/tk_repair.py`)
+
+**One diagnosis, three layers.** `revision.revisar(config)` returns `Hallazgo`s
+(clave, título, detalle, pareja, gravedad, dato) and `revision.informe(config)`
+returns the same thing as the text `sync.py --doctor` prints — which is now all
+`doctor()` does. It lives in `common/` for one reason: **`sync.py` does not
+import `ui/`**, so a diagnosis on the window's side would be a second one, and
+the two would drift. `ui/repair.py` answers "and what do I do about it" with
+plans in the `EditPlan` shape (`consequences`/`warnings`/`execute()`), and
+`ui/tk_repair.py` only draws.
+
+- **What has a button and what doesn't.** `prefijo` shelves the baseline
+  (`bisync.shelve_baseline`), `lock` deletes the stray `.lck`s, `resync` and
+  `fallo` are not disk plans (a pass through `lanzar`, and opening the log).
+  **A missing local dir deliberately has none**: creating it is exactly what
+  `_bisync_preflight()` refuses to do when a baseline exists, because an empty
+  local side reads as "everything was deleted". The screen says so instead.
+- **Deleting a lock asks who is syncing first.** `repair.sincronizacion_en_curso()`
+  reads `model.daemon_lock()` and errs towards "yes, someone is": another host's
+  record cannot be checked with `pid_alive`, and refusing to delete costs
+  nothing while deleting under a live pass does not.
+- **Nothing repairs itself**, not on open and not on click: every plan goes
+  through `tk_pairs.confirmar_plan()`. After executing, the screen re-runs
+  `revisar()` whole rather than crossing out the row it just fixed.
+- **The conflicts are a section, not a window.** `tk_conflicts.seccion()` builds
+  the tree into whatever frame it is given; there is no `open_dialog` any more,
+  so the only way in is through «Reparación». `conflict_editor` is untouched.
+- **The main window says it in one line.** Up to three amber blocks (last run
+  failed, files in conflict, resync pending) became `revision.cuenta()` in the
+  header chip plus one line with a «Reparación…» button, hidden while a pass
+  runs — the same rule that used to disable those blocks' buttons. The update /
+  components block stays as it was: an offer is not a fault, and counting them
+  together is what made everything weigh the same.
 
 ## Pairing a phone (`common/pairing.py` + `ui/qr.py` + `ui/tk_qr.py`)
 
@@ -705,7 +743,10 @@ Path1 is `pair.source` (local in bisync) — `conflicts.lado()`. Keep the citati
   nothing), then `borrar()`s. Labels never show the raw suffix.
 - **Last run.** `results.apuntar()` from `sync.run_pair()`, not for dry-runs and
   not for SKIPPED (a skip is not a result; the resync chip covers it).
-  `results.fallos()` feeds the amber banner, which stays until a good pass.
+  `results.fallos()` feeds `revision`, which is what the «Reparación» line
+  counts; the entry stays until a good pass. `results.ultimas_buenas()` is the
+  other half — the date the main window shows — and it survives a failure
+  because `apuntar()` keeps the last good stamp in its own key.
 
 ## Per-pair versions (`versions = true` + `ui/versions_editor.py`)
 
