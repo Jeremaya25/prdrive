@@ -377,15 +377,16 @@ it** — a window cannot dump output to a console that does not exist.
   variable `trace`: a widget's command dies with it, a trace's Tcl command does
   not, and it would hold the whole window and its images until exit. «Repetir
   cada» sits by the footer because the interval is the service's.
+  `ui.manual_args()` (resync question + `--yes`) is shared with the console
+  path. The pairs screen's «Simular», «Examinar…» and «Dispositivos…» write
+  nothing, so none makes `open_dialog` return True.
 - **The watcher line** replaced the «Arranque automático…» button: what this host
   does when the device is plugged in, from `watch.resumen()` (files only, no
   `schtasks`/`systemctl`: it is asked on first paint) and worded by
   `watch.linea()`, which the console menu shares. States: `sin_instalar`,
   `otro_dispositivo` (a host has one watcher; `watch.json`'s `device_id` is
   another prdrive's), `desfasado` (amber), `instalado` + mode. Its button opens
-  `tk_watch` and the line is re-read on return; it stays enabled during a pass. `ui.manual_args()` (resync question + `--yes`) is shared
-  with the console path. The pairs screen's «Simular», «Examinar…» and
-  «Dispositivos…» write nothing, so none makes `open_dialog` return True.
+  `tk_watch` and the line is re-read on return; it stays enabled during a pass.
 - `ConsoleFrontend.approve_resync` always returns False on purpose: with a real
   terminal `sync.py` inherits stdin and asks the question itself, with more
   context than a dialog fits.
