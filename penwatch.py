@@ -7,8 +7,8 @@ montado el dispositivo y lanza `runsync.py` en cuanto es legible. Sin permisos d
 administrador: tarea programada de usuario en Windows, servicio de usuario de
 systemd en Linux (autostart XDG si no hay systemd).
 
-    python penwatch.py install [--mode ui|sync|daemon] [--pairs a b]
-                               [--interval N] [--poll N] [--extra-root RUTA]
+    python penwatch.py install [--mode ui|sync|daemon] [--poll N]
+                               [--extra-root RUTA]
     python penwatch.py uninstall     # quita la tarea/servicio y el vigilante
     python penwatch.py status        # qué hay instalado y si ve el dispositivo ahora
     python penwatch.py probe         # solo detección: dónde busca y qué encuentra
@@ -83,11 +83,22 @@ dice.
 Modos (--mode, se decide al instalar y se guarda en el equipo)
 --------------------------------------------------------------
   ui      (por defecto) abre la UI de runsync.py: tú decides qué hacer.
-  sync    sincroniza una vez, en silencio, las parejas indicadas (o todas).
-  daemon  arranca el servicio periódico con los valores del TOML (runsync --auto).
+  sync    una pasada del servicio, en silencio, y nada más (runsync --auto --once).
+  daemon  arranca el servicio periódico (runsync --auto).
+
+Qué parejas y cada cuánto NO se decide aquí: son los del servicio, que viven en
+el dispositivo y se eligen en su ventana. El vigilante no los lee —no lee
+configuración del dispositivo—: lanza runsync sin ellos y runsync los lee allí.
+Así el servicio es uno solo, se arranque a mano o al enchufar, y el intervalo que
+se ve en la ventana es el que se usa.
 
 En los tres casos, una pareja bisync que necesite --resync se SALTA: un resync no
 se lanza solo, igual que en el resto del proyecto.
+
+La copia que corre en el equipo es la que hizo `install`, y NADA la pone al día
+sola: `refresh_runtime()` refresca el Python, no este fichero. Por eso
+`copia_al_dia()` la compara con la del dispositivo, y `status` —y la ventana— lo
+dicen cuando no coinciden: reinstalar es lo que la pone al día.
 """
 
 from __future__ import annotations
@@ -653,13 +664,14 @@ def aplicacion_en_marcha(root: Path) -> str | None:
 def launch(root: Path, cfg: dict) -> bool:
     mode = cfg.get("mode", "ui")
     args = [python_for_launch(cfg), str(root / STRUCT_MARKER)]
+    # Ni parejas ni intervalo: son los del servicio y runsync los lee del
+    # dispositivo. Un watch.json de una versión anterior que los traiga no
+    # manda. Y `sync` va por --auto --once y no por `runsync.py <parejas>`:
+    # sin parejas eso era `runsync.py` a secas, que abre la ventana.
     if mode == "daemon":
         args.append("--auto")
-        if cfg.get("interval"):
-            args += ["--interval", str(cfg["interval"])]
-        args += list(cfg.get("pairs", []))
     elif mode == "sync":
-        args += list(cfg.get("pairs", []))   # sin parejas: todas
+        args += ["--auto", "--once"]
     # mode 'ui': runsync.py sin argumentos abre la UI.
 
     if mode == "ui" and not IS_WIN and not (os.environ.get("DISPLAY") or
@@ -1056,8 +1068,6 @@ def cmd_install(args: argparse.Namespace) -> int:
 
     cfg = {
         "mode": args.mode,
-        "pairs": list(args.pairs or []),
-        "interval": args.interval,
         "poll_seconds": args.poll,
         "device_id": device_id,
         "extra_roots": list(args.extra_root or []),
@@ -1088,8 +1098,9 @@ def cmd_install(args: argparse.Namespace) -> int:
         print("  " + start_now(cfg))
 
     print(f"\nModo: {args.mode}"
-          + (f" (parejas: {', '.join(args.pairs)})" if args.pairs else "")
-          + (f" (intervalo: {args.interval:g} min)" if args.interval else ""))
+          + ("" if args.mode == "ui" else
+             " (con las parejas y el intervalo del servicio, que viven en el "
+             "dispositivo)"))
     print(f"Config y diario del vigilante: {HOST_DIR}")
     print("El disparo se arma al desconectar el dispositivo: la próxima vez que lo "
           "conectes (y desbloquees) se lanzará runsync.")
@@ -1126,6 +1137,32 @@ def registered_state() -> str:
     if DESKTOP_FILE.exists():
         bits.append(f"autostart: {DESKTOP_FILE}")
     return "; ".join(bits) or "sin servicio ni autostart registrados"
+
+
+def copia_al_dia() -> bool:
+    """¿La copia del vigilante en este equipo es este mismo penwatch.py?
+
+    Llamado desde el dispositivo —la ventana, o `penwatch status` desde
+    `.prdrive/`—, compara la copia que corre en el equipo con la que trae el
+    dispositivo. Nada pone esa copia al día salvo `install`, así que tras
+    actualizar el dispositivo el equipo puede seguir con la anterior, haciendo
+    lo que hacía entonces.
+
+    Desde la propia copia no hay con qué comparar, y sin poder leerse a sí mismo
+    tampoco: en los dos casos True, no se acusa a nadie sin pruebas. Sin copia
+    en el equipo, False: lo que el sistema tenga registrado apunta a un fichero
+    que no existe."""
+    propio = Path(__file__).resolve()
+    if propio == SELF_COPY.resolve():
+        return True
+    try:
+        mio = propio.read_bytes()
+    except OSError:
+        return True
+    try:
+        return SELF_COPY.read_bytes() == mio
+    except OSError:
+        return False
 
 
 # Ancho de la columna de etiquetas de 'status'. Se saca aquí para que la CLI y
@@ -1173,6 +1210,9 @@ def status_rows() -> list[tuple[str, str]]:
     if not cfg:
         filas.append(("", "Sin configuración: este equipo no tiene el vigilante instalado."))
     else:
+        # Parejas e intervalo ya no se escriben, pero un watch.json de una
+        # versión anterior los trae, y la copia vieja que lo lee los sigue
+        # usando: se enseñan mientras estén, que es justo cuando importan.
         filas += [
             ("Usuario registrado", f"{cfg.get('user')}"),
             ("Modo", f"{cfg.get('mode')}"
@@ -1184,6 +1224,9 @@ def status_rows() -> list[tuple[str, str]]:
             ("Dispositivo esperado (id)",
              cfg.get("device_id") or f"(solo por presencia de {CONTROL_FILE})"),
         ]
+        if not copia_al_dia():
+            filas.append(("", "La copia del vigilante de este equipo no es la de "
+                              "este dispositivo: reinstálalo para ponerla al día."))
 
     pid = int(state.get("watcher_pid") or -1)
     root = find_pen(cfg)
@@ -1260,11 +1303,9 @@ def main() -> int:
 
     p = sub.add_parser("install", help="Instala el vigilante en ESTE equipo.")
     p.add_argument("--mode", choices=["ui", "sync", "daemon"], default="ui",
-                   help="Qué hacer al detectar el dispositivo (por defecto: ui).")
-    p.add_argument("--pairs", nargs="*", default=[],
-                   help="Parejas para los modos sync/daemon (por defecto: todas).")
-    p.add_argument("--interval", type=float,
-                   help="Minutos entre pasadas en modo daemon (por defecto: el del TOML).")
+                   help="Qué hacer al detectar el dispositivo (por defecto: ui). "
+                        "Las parejas y el intervalo son los del servicio, en el "
+                        "dispositivo.")
     p.add_argument("--poll", type=float, default=POLL_SECONDS,
                    help="Segundos entre sondeos del dispositivo (por defecto: 5).")
     p.add_argument("--extra-root", action="append", default=[],

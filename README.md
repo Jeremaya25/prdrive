@@ -270,6 +270,7 @@ python sync.py --keep-logs     # guarda también los logs de las pasadas buenas
 
 python runsync.py              # la ventana (menú de consola si no hay Tkinter)
 python runsync.py --auto       # arranca el servicio periódico sin ventana
+python runsync.py --auto --once  # una pasada de las parejas del servicio y se acaba
 python runsync.py --doctor     # cualquier otro argumento va tal cual a sync.py
 
 python penwatch.py install     # registra el vigilante en ESTE equipo/usuario
@@ -609,8 +610,11 @@ Tres cosas que conviene saber:
 
 ## El servicio periódico
 
-`runsync.py` puede quedarse sincronizando cada N minutos. Su coordinación vive en
-`state/`, dentro del dispositivo, para que viaje con él:
+`runsync.py` puede quedarse sincronizando cada N minutos. Es **un solo servicio con
+dos maneras de arrancarlo**: a mano, con «Iniciar servicio», o al enchufar el
+dispositivo en un equipo que tenga [el vigilante](#el-vigilante). Las dos usan las
+mismas parejas y el mismo intervalo, los que se ven en la ventana. Su coordinación
+vive en `state/`, dentro del dispositivo, para que viaje con él:
 
 | fichero | qué es |
 |---|---|
@@ -618,7 +622,7 @@ Tres cosas que conviene saber:
 | `daemon.stop` | su presencia es una petición de parada |
 | `daemon.log` | registro, se recorta solo |
 | `ui.lock.json` | pid y equipo de la ventana abierta, si la hay |
-| `ui_prefs.json` | lo último que se eligió en la ventana |
+| `ui_prefs.json` | las parejas y el intervalo del servicio |
 | `last_run.json` | cómo acabó la última pasada de cada pareja, y qué log la explica |
 | `conflicts.json` | los ficheros en conflicto del último recorrido |
 
@@ -632,10 +636,15 @@ cada media hora no vuelve a saltar. Sin pantalla, el aviso se queda en
 `daemon.log`. El servicio sigue sin preguntar nada nunca: una pareja que pide
 `--resync` se salta.
 
-La ventana arranca precargada con la última elección, por encima de `[daemon]` del
-TOML, por encima de «todas las parejas / 30 minutos». Solo la ventana escribe esa
-memoria: `--auto` la lee pero no la pisa, para que un arranque automático no
-cambie lo que elegiste a mano.
+**Qué parejas y cada cuánto.** Las casillas de la ventana son las mismas para
+«Sincronizar ahora» y para «Iniciar servicio», y salen marcadas con las del
+servicio; «Marcar todas» y «Desmarcar todas» están en el rótulo de la lista. El
+intervalo, «El servicio repite cada N minutos», va junto al pie porque solo lo usa
+el servicio. **Solo «Iniciar servicio» guarda** lo marcado y el intervalo: una
+pasada manual con dos parejas marcadas no decide qué sincroniza el servicio la
+próxima vez que enchufes el dispositivo. Lo guardado manda sobre `[daemon]` del
+TOML, que manda sobre «todas las parejas / 30 minutos», y vale igual para la
+ventana, para `--auto` y para el vigilante. `--auto` lo lee pero no lo pisa.
 
 El servicio se para cuando el dispositivo desaparece o cuando se vuelve a lanzar
 `runsync.py`. En Windows se lanza con `pythonw.exe` y sin consola, y hace `chdir`
@@ -644,8 +653,8 @@ al directorio temporal para que la unidad se pueda extraer con seguridad.
 **Una ventana a la vez.** Como abrir `runsync.py` detiene el servicio anterior,
 dos ventanas se lo quitarían la una a la otra: la segunda no se abre y lo dice.
 Mientras haya ventana abierta o servicio en marcha, el vigilante tampoco lanza
-nada al enchufar el dispositivo; la ventana avisa de esa pausa al abrirse, y al
-arrancar el servicio se avisa de lo mismo.
+nada al enchufar el dispositivo; la línea del arranque automático de la ventana
+lo dice, y al arrancar el servicio se avisa de lo mismo.
 
 ## El vigilante
 
@@ -670,7 +679,16 @@ estado y su registro viven en el equipo.
   (sin escribir) los dos registros del dispositivo y lo anota en su diario. El
   disparo se da por gastado igual, para no reintentarlo cada minuto detrás de una
   ventana abierta.
-- `--mode` decide qué lanza: `ui` (por defecto), `sync` o `daemon`.
+- `--mode` decide qué lanza: `ui` (por defecto) abre la ventana, `daemon` arranca
+  el servicio (`runsync --auto`) y `sync` hace una pasada y nada más (`runsync
+  --auto --once`). **Qué parejas y cada cuánto no se decide aquí**: son los del
+  servicio, que viven en el dispositivo; el vigilante lanza runsync sin ellos y
+  runsync los lee allí.
+- **La ventana dice qué hace este equipo al enchufar**, en una línea encima del
+  pie —«Al enchufarlo en este equipo: arranca el servicio · Cambiar…»—, y lleva a
+  la pantalla del vigilante. También dice si el vigilante de este equipo es para
+  otro dispositivo, o si es de otra versión: la copia del equipo solo la pone al
+  día `install`, así que tras actualizar el dispositivo hay que reinstalarlo.
 - **Tiene su propio Python.** `install` copia el del dispositivo a su carpeta del
   equipo y registra la tarea con esa copia, así que no se rompe cuando alguien
   actualiza o desinstala el Python del sistema. En cada detección compara el

@@ -1,6 +1,6 @@
 # Un servicio, dos maneras de arrancarlo (issue #14)
 
-Fecha: 2026-09-23 · Estado: propuesta, pendiente de aceptar · Versión: 0.2.5
+Fecha: 2026-09-23 · Estado: aceptada e implementada · Versión: 0.2.5
 
 ## El problema
 
@@ -228,6 +228,7 @@ nota nueva de `startup_defaults()`.
 | Vigilante viejo en `sync` con parejas | `runsync.py <parejas>`: una pasada como hoy. |
 | `ui_prefs.json` con `action = "manual"` | Se ignora: la ventana y `--auto` salen con `[daemon]` o todas. |
 | `ui_prefs.json` con `action = "daemon"` | Es la configuración del servicio, sin cambios. |
+| Vigilante nuevo y un dispositivo que ha vuelto a una versión anterior, en `sync` | El `runsync` viejo no conoce `--once`: lo toma por una pareja desconocida y arranca el servicio. La línea dice `desfasado`. |
 
 No hay código de migración: reinstalar el vigilante lo pone al día, y la ventana
 lo pide.
@@ -285,6 +286,29 @@ lo pide.
   tono de la guía: el intervalo es del servicio, y la línea dice qué hace este
   equipo al enchufar.
 - **`VERSION`** → `0.2.5`.
+
+## Al implementarlo
+
+Lo que cambió respecto a lo de arriba, y por qué:
+
+- **La fila «Modo» de `status_rows()` sigue enseñando parejas e intervalo
+  mientras un `watch.json` de antes los traiga.** La copia vieja del equipo los
+  usa, así que es justo cuando importan; al reinstalar desaparecen del fichero.
+- **El menú de consola también dice la línea del vigilante**, con la pausa. La
+  frase de la pausa salió del aviso de arranque, que era por donde le llegaba a
+  la consola.
+- **El «N de M» y el botón de marcar siguen a las casillas por su `command`, no
+  por un `trace`.** La orden de Tcl de un trace no muere con el widget: sujetaba
+  la ventana entera, con sus imágenes, hasta cerrar el intérprete, y al salir
+  `Image.__del__` protestaba.
+- **Las medidas de la ventana principal van en `tests/test_tk_servicio.py`** y no
+  en `test_tk_medidas.py`: la principal abre su propio intérprete de Tk, así que
+  la escala se le pone al aplicarle el tema. `test_tk_medidas` no la medía.
+- **`MODE_HELP` es más corto** («sincroniza cada N minutos mientras siga puesto»,
+  «sincroniza una vez, en silencio, y se cierra»): de dónde salen parejas e
+  intervalo lo dice una sola vez la pista de debajo de las tres opciones.
+- `tk_watch.open_dialog()` y `formulario_instalacion()` pierden el parámetro
+  `config`, que solo servía para las casillas de parejas.
 
 ## Después
 
