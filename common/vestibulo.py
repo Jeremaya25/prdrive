@@ -28,6 +28,8 @@ proyecto) y un test comprueba que no se separan.
 
 from __future__ import annotations
 
+import os
+import shutil
 from pathlib import Path
 
 from . import APP_NAME
@@ -61,3 +63,81 @@ def leer_id(raiz: Path | str) -> str | None:
         if linea.lower().startswith("id="):
             return linea[3:].strip() or None
     return None
+
+
+# ---------------------------------------------------------------------------
+# Desde dentro: dónde está la raíz física de este dispositivo
+# ---------------------------------------------------------------------------
+
+def raiz_fisica(device_id: str) -> Path | None:
+    """La raíz física del contenedor en el que vive este dispositivo, o None.
+
+    La que tiene una marca con este id y el contenedor al lado. Las unidades se
+    recorren con `penwatch.candidate_roots()`, importado aquí dentro como hace
+    `ui/watch.py`: así hay UN recorrido de unidades en todo el proyecto, el que
+    ya sabe no sacar el diálogo de «no hay disco» con un lector de tarjetas
+    vacío. Cualquier fallo es None: esto adorna una ventana, no la sostiene.
+
+    Función de módulo para que los tests la sustituyan."""
+    if not device_id:
+        return None
+    try:
+        import penwatch
+        raices = penwatch.candidate_roots({})
+    except Exception:                                # noqa: BLE001
+        return None
+    for raiz in raices:
+        try:
+            if leer_id(raiz) == device_id and (raiz / CONTENEDOR).is_file():
+                return raiz
+        except OSError:
+            continue
+    return None
+
+
+FILE_ATTRIBUTE_SPARSE_FILE = 0x200      # winnt.h
+INVALID_FILE_ATTRIBUTES = 0xFFFFFFFF
+
+
+def disperso(contenedor: Path | str) -> bool:
+    """¿Es un fichero disperso? Es lo que hace un contenedor «dinámico».
+
+    Uno disperso ocupa lo que se ha escrito y crece al escribir, así que el sitio
+    que le queda fuera es el que le queda dentro. En Windows se pregunta por el
+    atributo; en POSIX, si ocupa en disco menos de lo que mide. False si no se
+    puede saber: un aviso que no se sabe dar no se da."""
+    ruta = str(contenedor)
+    if os.name == "nt":
+        try:
+            import ctypes
+            # Sin `restype`, ctypes lo devuelve como int CON signo y el
+            # INVALID_FILE_ATTRIBUTES de un fichero que no está llega como -1,
+            # que tiene todos los bits puestos, el de disperso también.
+            attrs = ctypes.windll.kernel32.GetFileAttributesW(ruta) & 0xFFFFFFFF
+        except (OSError, AttributeError):
+            return False
+        return (attrs != INVALID_FILE_ATTRIBUTES
+                and bool(attrs & FILE_ATTRIBUTE_SPARSE_FILE))
+    try:
+        st = os.stat(ruta)
+    except OSError:
+        return False
+    return getattr(st, "st_blocks", st.st_size // 512 + 1) * 512 < st.st_size
+
+
+# Por debajo de esto, un contenedor disperso está a una tanda de fotos de dar
+# errores de escritura por dentro.
+UMBRAL_LIBRE = 1024 ** 3
+
+
+def sin_sitio_fuera(device_id: str) -> tuple[Path, int] | None:
+    """(raíz física, bytes libres) si el contenedor es disperso y fuera queda
+    menos de `UMBRAL_LIBRE`; None si no hay nada que avisar."""
+    fisica = raiz_fisica(device_id)
+    if fisica is None or not disperso(fisica / CONTENEDOR):
+        return None
+    try:
+        libre = shutil.disk_usage(str(fisica)).free
+    except OSError:
+        return None
+    return (fisica, libre) if libre < UMBRAL_LIBRE else None

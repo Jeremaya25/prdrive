@@ -283,7 +283,7 @@ Sustituye al favorito, en **cualquier** equipo que tenga penwatch.
   preguntar hasta que el dispositivo desaparezca y vuelva. El estado guarda
   `vestibulo` (la raíz) y se rearma igual que `launched`.
 - Nunca escribe en el dispositivo; `cwd` en `HOST_DIR`, como `launch()`.
-- `status` y `probe` dicen «cifrado, sin abrir» cuando ven el vestíbulo.
+- `status` y `probe` dicen «cifrado y cerrado» cuando ven el vestíbulo.
 
 ### «Expulsar» en la ventana principal
 
@@ -358,18 +358,24 @@ puede explicar por qué.
 - **`tests/test_vestibulo.py`** (nuevo): los textos (CRLF en los `.bat`, sin
   `(`/`)` fuera de los comentarios, el id y el contenedor dentro, instalado
   antes que traveler, `/dismount`, sin `/silent` al expulsar, sin `/password`);
-  `escribir()` deja los siete ficheros; la marca se lee con `leer_id()`;
-  `comprobar()`; `raiz_fisica()` con raíces falsas; `disperso()`.
-- **`tests/test_penwatch_vestibulo.py`** (nuevo): `find_vestibulo()` con id
-  correcto, otro id, sin contenedor; el bucle lanza la apertura una sola vez
-  por conexión y la rearma al desaparecer; no lanza runsync desde el
-  vestíbulo; las constantes coinciden con `common/vestibulo.py`.
-- **`tests/test_revision.py`**: el hallazgo `espacio` aparece solo con
-  contenedor disperso y poco sitio fuera.
-- **`tests/test_install_device.py`**: los nombres nuevos están en `RUIDO`.
-- **`tests/test_tk_*`**: el panel de VeraCrypt con restos en claro y con FAT32;
-  la ventana principal con y sin «Expulsar» (en `test_tk_medidas`, en toda la
-  matriz).
+  `escribir()` deja los seis ficheros; la marca se lee con `leer_id()`;
+  `comprobar()`; `destino()`; y los `.sh` **ejecutados** contra un `veracrypt`
+  de mentira.
+- **`tests/test_penwatch_vestibulo.py`** (nuevo): `find_vestibule()` con id
+  correcto, otro id, sin contenedor; la orden de VeraCrypt en Windows y en
+  Linux; el bucle lanza la apertura una sola vez por conexión, no la repite
+  tras «Expulsar» y la rearma al desaparecer; no lanza runsync desde el
+  vestíbulo; las constantes coinciden con `common/vestibulo.py`. También
+  `raiz_fisica()`, `disperso()`, el hallazgo `espacio` (solo con contenedor
+  disperso y poco sitio fuera) y `cifrado.expulsion()` /
+  `lanzar_expulsion()`.
+- Los nombres nuevos están en `RUIDO` (en `tests/test_vestibulo.py`).
+- **`tests/test_install_wizard.py`**: el panel de VeraCrypt con restos en claro,
+  FAT32 y contraseña corta; el paso 5 con contenedor deja el vestíbulo con el id
+  del fichero de control; «Añadir plataformas…» se lo pone a uno de antes.
+- **`tests/test_tk_medidas.py`**: el panel de VeraCrypt en su peor caso, en toda
+  la matriz. **`tests/test_tk_principal.py`**: la ventana con y sin
+  «Expulsar», cancelar y confirmar.
 - `python tests/run_all.py` en verde.
 
 ## Documentación

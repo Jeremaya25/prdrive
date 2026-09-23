@@ -37,6 +37,8 @@ modo *ligero* (con un `runsync.pyw` en la raíz), entonces sí hace falta **Pyth
   conectada. Se para solo al extraerla, o al volver a abrir la ventana.
 - **Diagnóstico** — cuando algo no cuadra. Enseña dónde apunta cada carpeta y si
   su sincronización está sana.
+- **Expulsar** — solo si la unidad va cifrada con VeraCrypt. Cierra la ventana y
+  el contenedor; cuando el aviso diga que está cerrado, ya se puede quitar.
 
 Abajo del todo hay dos botones más:
 
@@ -104,10 +106,10 @@ la encuentre entra en tus datos hasta que revoques esa clave.
 - No borres `.prdrive/`. Si desaparece, el arranque automático deja
   de reconocer la unidad y hay que reinstalar.
 - **Extráela con seguridad.** El programa no escribe nada mientras no sincroniza,
-  así que basta con cerrar la ventana antes. Si va con VeraCrypt, cierra también
-  el contenedor antes de quitarla, con **Expulsar PRDRIVE** en la raíz de la
-  unidad: mientras está abierto, Windows no la deja extraer, y tirar del cable
-  puede estropear lo de dentro.
+  así que basta con cerrar la ventana antes. Si va con VeraCrypt, usa
+  **Expulsar** en la ventana (o **Expulsar PRDRIVE** en la raíz de la unidad):
+  cierra la ventana y el contenedor. Mientras el contenedor está abierto, Windows
+  no deja extraer la unidad, y tirar del cable puede estropear lo de dentro.
 
 ## Actualizar
 

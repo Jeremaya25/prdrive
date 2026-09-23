@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from . import bisync, conflicts, model, results
+from . import bisync, conflicts, model, results, vestibulo
 from .model import Config, Pair
 
 # Cuánto pesa una avería. No son tres colores: son tres respuestas distintas a
@@ -43,7 +43,7 @@ class Hallazgo:
     para quien lo lee. `dato` lleva lo que la reparación necesita y el diagnóstico
     ya ha averiguado —las rutas de los locks, por ejemplo—, para no recorrer el
     disco dos veces."""
-    clave: str                  # 'local' | 'prefijo' | 'resync' | 'lock' | …
+    clave: str                  # 'local' | 'prefijo' | 'resync' | 'lock' | 'espacio' | …
     titulo: str
     detalle: str
     pareja: str | None = None   # None: es del dispositivo, no de una pareja
@@ -166,6 +166,34 @@ def _listados_sueltos() -> Hallazgo | None:
         None, NOTA, tuple(sueltos))
 
 
+def _espacio() -> Hallazgo | None:
+    """Un contenedor VeraCrypt dinámico al que se le acaba el sitio de fuera.
+
+    Uno dinámico (disperso) crece a medida que se escribe dentro, así que su
+    sitio libre de verdad es el de la unidad física. Cuando se acaba, el volumen
+    de dentro da errores de E/S en mitad de lo que esté escribiendo —un bisync,
+    por ejemplo—, y rclone no puede explicar por qué: desde dentro, el disco no
+    está lleno. No tiene botón: la salida es liberar sitio fuera del contenedor.
+
+    `fleet` se importa aquí dentro: es el que sabe leer el id del fichero de
+    control, y arrastra el catálogo, que el resto de este módulo no necesita."""
+    try:
+        from . import fleet
+        falta = vestibulo.sin_sitio_fuera(fleet.device_id())
+    except Exception:                                # noqa: BLE001
+        return None
+    if falta is None:
+        return None
+    fisica, libre = falta
+    return Hallazgo(
+        "espacio", "El contenedor se queda sin sitio fuera",
+        f"{vestibulo.CONTENEDOR} es dinámico: crece a medida que se escribe "
+        f"dentro, y en {fisica} quedan {libre / 1024 ** 2:.0f} MB libres. Si se "
+        "llena, lo de dentro empieza a dar errores de escritura en mitad de una "
+        "sincronización. Libera sitio en la unidad, fuera del contenedor.",
+        None, AVISO, (str(fisica), libre))
+
+
 def revisar(config: Config) -> list[Hallazgo]:
     """Todo lo que está mal ahora mismo, lo más grave primero.
 
@@ -186,9 +214,9 @@ def revisar(config: Config) -> list[Hallazgo]:
                 hallazgos.append(hallazgo)
     hallazgos += _conflictos(config)
     hallazgos += _fallos(config)
-    suelto = _listados_sueltos()
-    if suelto is not None:
-        hallazgos.append(suelto)
+    for hallazgo in (_listados_sueltos(), _espacio()):
+        if hallazgo is not None:
+            hallazgos.append(hallazgo)
 
     orden = {GRAVE: 0, AVISO: 1, NOTA: 2}
     return sorted(hallazgos, key=lambda h: orden.get(h.gravedad, 9))

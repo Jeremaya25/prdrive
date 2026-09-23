@@ -54,6 +54,7 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 │   │   flags_editor.py · watch.py · versions_editor.py
 │   │                   the other decision halves, no Tk
 │   ├── tk.py          TkFrontend: main + output window, modal()/mostrar()/working()
+│   ├── cifrado.py     is this device inside a VeraCrypt container? «Expulsar»
 │   ├── tk_install.py  the install wizard          (every tk_* draws only)
 │   ├── tk_pairs.py · tk_repair.py · tk_conflicts.py · tk_fleet.py ·
 │   │   tk_watch.py · tk_update.py · tk_crypto.py · tk_doctor.py ·
@@ -110,6 +111,8 @@ does not travel to the device (`tests/test_install_device.py`, `test_fleet.py`);
 (`tests/test_instancia_unica.py`). Those two paths are functions in `model.py`
 and not constants because the tests move `STATE_DIR` at runtime; `runsync` and
 `ui/repair.py` both go through them, so penwatch's copy is the only one.
+`penwatch.CONTAINER_FILE` / `VESTIBULE_MARKER` vs `common/vestibulo.py`
+(`tests/test_penwatch_vestibulo.py`); `install/` imports the latter directly.
 
 ## The PyInstaller build (`build_installer.py`)
 
@@ -355,6 +358,15 @@ it** — a window cannot dump output to a console that does not exist.
 - `tk_pairs.confirmar_plan()` is a real window, one line per consequence, each
   warning in an amber box — not an `askokcancel`. This is the dialog that governs
   deletions. Tests replace it, like `mostrar()`.
+- **«Expulsar», only inside a VeraCrypt container** (`ui/cifrado.py`). Closing
+  the window does not close the `.hc`, and with it open the drive cannot be
+  removed. This process runs *from inside* the container (the device's Python
+  is in `.prdrive/runtime/`) and VeraCrypt only retries a busy dismount for
+  1.5 s, so the button does not dismount: it launches the vestibule's
+  `Expulsar PRDRIVE` script with its cwd on the physical root
+  (`lanzar_expulsion()`, an indirection point) and closes. The script waits,
+  then asks VeraCrypt without `/silent`. Disabled while a pass runs; with the
+  window open there is no service (opening it stopped it).
 - **The main window runs syncs itself:** «Sincronizar ahora», and whatever
   «Reparación» hands back, open a
   modeless `output_window`, the window disables whatever touches the same state,
@@ -432,6 +444,10 @@ plans in the `EditPlan` shape (`consequences`/`warnings`/`execute()`), and
   **A missing local dir deliberately has none**: creating it is exactly what
   `_bisync_preflight()` refuses to do when a baseline exists, because an empty
   local side reads as "everything was deleted". The screen says so instead.
+  Nor does **`espacio`**: a *dynamic* (sparse) VeraCrypt container with under
+  `vestibulo.UMBRAL_LIBRE` (1 GiB) free on the physical drive. It grows as it is
+  written, so when the drive fills the volume inside throws I/O errors mid-pass
+  and rclone cannot say why — the fix is freeing space outside.
 - **Deleting a lock asks who is syncing first.** `repair.sincronizacion_en_curso()`
   reads `model.daemon_lock()` and errs towards "yes, someone is": another host's
   record cannot be checked with `pid_alive`, and refusing to delete costs
@@ -767,8 +783,22 @@ script to `%LOCALAPPDATA%\prdriveWatch` / `~/.local/share/prdrive-watch`, writes
   `daemon.lock.json` (`aplicacion_en_marcha()`): with a window open or the
   service running on this machine it launches nothing, and the skipped trigger
   is not a failure — `_disparo_row()` says so instead of printing «FALLÓ».
+- **A VeraCrypt device, closed.** `find_pen()` sees nothing until the container
+  is open, so `find_vestibule()` looks for the vestibule marker
+  (`VESTIBULE_MARKER`, same id as `device_id`, `CONTAINER_FILE` beside it) and
+  `open_container()` launches VeraCrypt with the same command as
+  `Abrir PRDRIVE.bat` — no password (VeraCrypt asks in its own window), the
+  installed one before the travelling one, on Linux only with a display. It
+  does **not** launch runsync: the ordinary loop does, once the volume shows up
+  mounted, so the `mode` is respected and nothing races for the window lock.
+  **Once per connection** (`state["vestibule"]`): a cancelled password is not
+  asked again, nor after «Expulsar» with the drive still plugged; it re-arms
+  only when the physical root disappears. No id in `watch.json` → never asks.
 - `ui/watch.py` imports penwatch for reads and shells out for
-  `install`/`uninstall`. One-way dependency.
+  `install`/`uninstall`. One-way dependency. So does
+  `common/vestibulo.raiz_fisica()`, lazily and guarded like `ui/watch.py`: one
+  drive walk in the whole project (`penwatch.candidate_roots()`), the one that
+  already avoids the «no disk» modal.
 - **Its own Python**: `install` copies the device's runtime for this host
   (`runtime_keys_for()` chain) into `HOST_DIR/runtime/<stamp_id>/` and points
   `watch.json` and the task/unit at it, because `sys.executable` silently died
@@ -1037,6 +1067,8 @@ keeps the target's existing header.
   `rclone_bin.fetch()`, `conflicts.recorrer()`, `conflict_editor.mover()` /
   `borrar()`, `ui.abrir()`, `runsync.notificar_fallo()`,
   `components.rclone_en_uso()` / `runtime_en_uso()`, `_win_volumes()`,
+  `vestibulo.raiz_fisica()`, `cifrado.lanzar_expulsion()`,
+  `crypto.sistema_de_ficheros()`,
   `_leer_estado_bitlocker()`, `_preguntar_borrado()`, `pairing.construir()`,
   `tk.mostrar()` / `confirmar_plan()`. Keep new ones in that shape.
 

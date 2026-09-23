@@ -29,9 +29,11 @@ from . import theme
 from .tk import TITLE, bloque_aviso, working
 
 AVISO_AUTOARRANQUE = (
-    "Con contenedor, el programa vive dentro: hasta que el contenedor esté "
-    f"abierto, este equipo solo ve el fichero {CONTAINER_NAME}. Ábrelo con VeraCrypt "
-    "antes de usar el dispositivo, y ciérralo antes de quitarlo."
+    "Con contenedor, el programa vive dentro: hasta abrirlo, un equipo solo ve "
+    f"el fichero {CONTAINER_NAME}. Fuera quedan «Abrir PRDRIVE» y «Expulsar "
+    "PRDRIVE» para hacerlo en cualquier equipo; y donde esté instalado el "
+    "arranque automático, al conectar el dispositivo aparece directamente la "
+    "contraseña de VeraCrypt."
 )
 
 

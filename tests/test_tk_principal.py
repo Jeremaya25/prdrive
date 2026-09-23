@@ -136,5 +136,68 @@ with sandbox():
     conducir(sonda_fallo, aviso=None)
     c("el fallo de la última pasada se cuenta", estado["falla"], True)
     c("y no se puede descartar", estado["descartables"], 0)
+results.fallos = lambda cfg: []
+
+# --- «Expulsar»: solo dentro de un contenedor VeraCrypt ------------------------
+# Cerrar la ventana no cierra el contenedor, y con él abierto no se puede quitar
+# la unidad. El botón no desmonta nada él mismo —este proceso corre desde dentro
+# del contenedor—: lanza el script del vestíbulo y se cierra.
+from pathlib import Path  # noqa: E402
+from tkinter import messagebox  # noqa: E402
+
+from ui import cifrado  # noqa: E402
+
+reales = (cifrado.expulsion, cifrado.lanzar_expulsion, messagebox.askokcancel)
+SCRIPT = Path("E:/Expulsar PRDRIVE.bat")
+lanzados: list = []
+try:
+    with sandbox():
+        sin_boton = {}
+
+        def sonda_sin_contenedor(self, *_a, **_k):
+            sin_boton["n"] = len(botones(self, "Expulsar"))
+            self.destroy()
+
+        cifrado.expulsion = lambda: None
+        conducir(sonda_sin_contenedor, aviso=None)
+        c("sin contenedor no hay «Expulsar»", sin_boton["n"], 0)
+
+    cifrado.expulsion = lambda: SCRIPT
+    cifrado.lanzar_expulsion = lambda script: lanzados.append(script)
+
+    with sandbox():
+        cancelado = {}
+        messagebox.askokcancel = lambda *a, **k: False
+
+        def sonda_cancelar(self, *_a, **_k):
+            cancelado["n"] = len(botones(self, "Expulsar"))
+            botones(self, "Expulsar")[0].invoke()
+            cancelado["viva"] = bool(self.winfo_exists())
+            self.destroy()
+
+        conducir(sonda_cancelar, aviso=None)
+        c("dentro de un contenedor, «Expulsar» está", cancelado["n"], 1)
+        c("si no se confirma, no se lanza nada", lanzados, [])
+        c("y la ventana sigue abierta", cancelado["viva"], True)
+
+    with sandbox():
+        hecho = {}
+        messagebox.askokcancel = lambda *a, **k: True
+
+        def sonda_expulsar(self, *_a, **_k):
+            botones(self, "Expulsar")[0].invoke()
+            try:
+                hecho["viva"] = bool(self.winfo_exists())
+                self.destroy()
+            except tk.TclError:
+                hecho["viva"] = False
+
+        eleccion = conducir(sonda_expulsar, aviso=None)
+        c("al confirmar, se lanza el script del vestíbulo", lanzados, [SCRIPT])
+        c("y la ventana se cierra, para que el contenedor se pueda desmontar",
+          hecho["viva"], False)
+        c("sin devolverle nada a runsync: no hay servicio que arrancar", eleccion, None)
+finally:
+    cifrado.expulsion, cifrado.lanzar_expulsion, messagebox.askokcancel = reales
 
 sys.exit(c.report())

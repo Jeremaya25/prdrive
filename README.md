@@ -314,6 +314,14 @@ python penwatch.py uninstall
 
 `runsync.py` sin argumentos **para siempre un servicio anterior** antes de nada.
 
+**Con VeraCrypt**, los lanzadores están dentro del contenedor: se empieza por
+**Abrir PRDRIVE**, en la raíz de la unidad (ver [Cifrar con
+VeraCrypt](#cifrar-con-veracrypt)). Y para quitarla, **Expulsar**, en el pie de la
+ventana: cierra la ventana y después el contenedor. No desmonta ella misma
+—corre desde dentro del contenedor, y mientras corra VeraCrypt no puede
+desmontar sin forzar—: lanza **Expulsar PRDRIVE** de fuera y se cierra. Si algún
+otro programa tiene algo abierto dentro, VeraCrypt pregunta si forzar.
+
 ### La ventana de parejas
 
 Se abre desde «Parejas…» y es donde se decide qué sincroniza este dispositivo.
@@ -700,6 +708,13 @@ estado y su registro viven en el equipo.
   esté, mientras la ruta sea relativa a ella.
 - Se dispara **una vez por conexión**: el disparo se rearma cuando la unidad
   desaparece.
+- **Con VeraCrypt, abre el contenedor.** Cerrado, el `.prdrive/PRDRIVE` no se ve;
+  lo que sí se ve es la marca de fuera, con el mismo id. Con ella el vigilante le
+  pide a VeraCrypt que abra el contenedor —la contraseña la pide VeraCrypt en su
+  ventana, no pasa por prdrive— y, en cuanto está abierto, sigue como siempre.
+  **Una vez por conexión** también: si cancelas la contraseña no vuelve a
+  preguntar hasta que quites la unidad y la vuelvas a poner, y tampoco después
+  de «Expulsar». En Linux, solo con escritorio.
 - **No lanza nada si ya hay ventana o servicio en marcha** en ese equipo: lee
   (sin escribir) los dos registros del dispositivo y lo anota en su diario. El
   disparo se da por gastado igual, para no reintentarlo cada minuto detrás de una
@@ -726,6 +741,7 @@ todo junto y, lo que se pueda, con su arreglo al lado:
 | Bloqueos `.lck` de una pasada cortada | Borrarlos, solo si no hay ninguna pasada en marcha |
 | Ficheros en conflicto | Elegir con qué versión te quedas |
 | La última pasada falló | Abrir el log que lo explica |
+| Un contenedor VeraCrypt **dinámico** se queda sin sitio fuera (menos de 1 GiB libre en la unidad) | Liberar sitio fuera del contenedor. Si se llena, lo de dentro da errores de escritura en mitad de una pasada |
 | **La carpeta local no está** | **Nada, a propósito**: ver abajo |
 
 Nada se toca sin confirmarlo antes, con la misma pantalla de consecuencias que
