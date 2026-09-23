@@ -17,7 +17,7 @@ haga el instalador.
 """
 
 import sys
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from _harness import Checks, tmpdir
 
@@ -31,7 +31,10 @@ sistema = device.make_volume("C", "Fixed", "Windows", "NTFS",
 pen = device.make_volume("E", "Removable", "PRDRIVE", "exFAT",
                          8049885184, 1607237632, system_drive="C:")
 
-c("la letra se convierte en una raíz", str(pen.root), str(Path("E:/")))
+# `PureWindowsPath` y no `Path`: lo que se comprueba es una raíz de Windows
+# (`E:\\`), y `Path("E:/")` solo la escribe así EN Windows —fuera, «E:» es un
+# nombre de fichero cualquiera y el test fallaba sin que nada estuviera roto.
+c("la letra se convierte en una raíz", str(pen.root), str(PureWindowsPath("E:/")))
 c("se marca la del sistema", sistema.is_system, True)
 c("y solo esa", pen.is_system, False)
 c("la etiqueta se lee", pen.label, "PRDRIVE")
@@ -43,9 +46,9 @@ c("de la unidad del sistema se avisa fuerte", "SISTEMA" in sistema.nota, True)
 
 # La letra no siempre llega escrita igual según de dónde venga.
 c("una letra en minúscula se normaliza",
-  str(device.make_volume("e").root), str(Path("E:/")))
+  str(device.make_volume("e").root), str(PureWindowsPath("E:/")))
 c("y con los dos puntos detrás también",
-  str(device.make_volume("E:").root), str(Path("E:/")))
+  str(device.make_volume("E:").root), str(PureWindowsPath("E:/")))
 
 # Un pendrive que se declara 'Fixed' —lo normal en los SSD por USB— tiene que
 # salir igualmente en la lista, con una nota: filtrarlo es lo que hacía que no
@@ -59,7 +62,7 @@ c.contains("un extraíble que se declara fijo se avisa, no se descarta",
 # a GetVolumeInformationW, y aun así tiene que salir: que la letra exista ya es
 # un dato, y esconderla es justo lo que dejaba al usuario sin ver su unidad.
 vacia = device.make_volume("Z", "CD-ROM", system_drive="C:")
-c("una unidad sin medio dentro no revienta", str(vacia.root), str(Path("Z:/")))
+c("una unidad sin medio dentro no revienta", str(vacia.root), str(PureWindowsPath("Z:/")))
 c("sale sin etiqueta", vacia.label, "")
 c("y sin tamaño", vacia.size, 0)
 

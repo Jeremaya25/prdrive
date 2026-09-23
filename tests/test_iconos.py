@@ -33,6 +33,11 @@ from tkinter import font as tkfont, ttk  # noqa: E402
 raiz = tk.Tk()
 raiz.withdraw()
 theme.apply(raiz)
+# `icons.px()` escala con `tk scaling`, así que un 15 del diseño solo son 15
+# píxeles a 96 ppp. Se fija aquí —1,3333 es esa densidad— porque lo que se
+# comprueba abajo es el dibujo, no la densidad de la pantalla de quien ejecute
+# el test: sin esto fallaría en un portátil al 150 % igual que en un X virtual.
+raiz.tk.call("tk", "scaling", 1.3333)
 
 FONDO = theme.PAPEL
 
