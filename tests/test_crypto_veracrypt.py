@@ -27,6 +27,7 @@ VC = {"mount": "VeraCrypt.exe", "format": "VeraCrypt Format.exe"}
 CONT = crypto.Path("P:/PRDRIVE.hc")
 
 win_original = crypto.IS_WIN
+path_original = crypto.Path
 sondas = {n: getattr(crypto, n) for n in
           ("soporta_dispersos", "medir_escritura", "volume_guid_path", "en_uso",
            "_run", "_volumenes_con_control", "veracrypt_config_dir", "Path")}
@@ -212,6 +213,7 @@ try:
                generico, "Lo más habitual")
 finally:
     crypto.IS_WIN = win_original
+    crypto.Path = path_original
     for nombre, funcion in sondas.items():
         setattr(crypto, nombre, funcion)
 
