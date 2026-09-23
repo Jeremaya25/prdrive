@@ -32,7 +32,7 @@ from pathlib import Path
 from common import update
 from install import InstallError, InstallState, __version__
 from install import (crypto, deploy, device, platforms, profile, rclone_bin,
-                     remote, traveler)
+                     remote, traveler, vestibulo)
 
 from . import icons, theme
 from .tk import TITLE, Visor, centrar, output_window, working
@@ -924,7 +924,12 @@ def _paso_instalar(cuerpo, wiz) -> None:
         "Ahí van el código, rclone y Python para cada plataforma que marques, tu "
         "rclone.conf y su clave. La carpeta empieza por punto y se marca como "
         "oculta, para que no estorbe entre tus datos. En la raíz quedan los "
-        "lanzadores runsync.bat y runsync.sh, y una guía rápida de uso.")).grid(
+        "lanzadores runsync.bat y runsync.sh, y una guía rápida de uso."
+        + (f"\n\nY fuera del contenedor, en {vestibulo.destino(wiz.state)}, la "
+           f"entrada para abrirlo y cerrarlo en cualquier equipo: "
+           f"«{vestibulo.NOMBRE_ABRIR}», «{vestibulo.NOMBRE_EXPULSAR}» y una guía "
+           "corta."
+           if vestibulo.destino(wiz.state) is not None else ""))).grid(
         row=0, column=0, sticky="w")
 
     try:
@@ -983,6 +988,11 @@ def _paso_instalar(cuerpo, wiz) -> None:
             # puedan separarse. Es lo que verán los accesos directos.
             icons.write_ico(deploy.app_dir(raiz) / "runsync.ico")
             ident = device.ensure_control_file(raiz, renew=True)
+            # Con contenedor, la entrada de fuera: después del fichero de
+            # control, que es de donde sale el id que las une.
+            fisica = vestibulo.destino(wiz.state)
+            if fisica is not None:
+                escrito_ += vestibulo.escribir(fisica, ident)
             return escrito_, borrados, ident
 
         ok, res = working(wiz.root, "instalando", trabajo,
@@ -1185,7 +1195,15 @@ def _paso_plataformas(cuerpo, wiz) -> None:
 
         def trabajo():
             nuevos, borrados = deploy.apply_platforms(raiz, plan)
-            return nuevos, borrados, deploy.write_launchers(raiz, plan.completa)
+            lanzadores = deploy.write_launchers(raiz, plan.completa)
+            # La entrada de fuera, por lo mismo que los lanzadores: un
+            # dispositivo VeraCrypt de antes no la tiene, y este es el camino
+            # que existe para ponérsela sin reinstalar.
+            fisica = vestibulo.destino(wiz.state)
+            ident = device.control_id(raiz) if fisica is not None else None
+            if ident:
+                lanzadores += vestibulo.escribir(fisica, ident)
+            return nuevos, borrados, lanzadores
 
         ok, res = working(wiz.root, "plataformas", trabajo,
                           "Descargando y copiando rclone y Python.")
@@ -1366,6 +1384,8 @@ def _paso_final(cuerpo, wiz) -> None:
         # con la instalación en claro que quedó fuera: solo es un resto cuando
         # la de verdad está dentro de un contenedor.
         if wiz.state.encryption == "veracrypt" and wiz.state.device:
+            checks += vestibulo.comprobar(wiz.state.device,
+                                          device.control_id(wiz.device_root))
             checks += traveler.comprobar(wiz.state.device)
             checks += crypto.comprobar_restos(wiz.state.device)
         for i, chk in enumerate(checks):

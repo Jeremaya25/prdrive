@@ -333,6 +333,35 @@ c("y el resto del volumen sigue ahí",
   sorted(p.name for p in limpio.iterdir() if p.name.startswith("runsync")),
   ["runsync.bat", "runsync.sh"])
 
+# Sin contenedor no hay vestíbulo: la entrada de fuera es cosa de VeraCrypt.
+from common import vestibulo as vest                      # noqa: E402
+
+c("sin contenedor, nada de vestíbulo", (limpio / vest.MARCA).exists(), False)
+
+# --- con contenedor: la entrada de fuera, con el mismo id -----------------------
+#
+# El dispositivo vive en lo montado y el vestíbulo en la raíz física, junto al
+# .hc. Lo que las une es el id: el de la marca de fuera tiene que ser el del
+# fichero de control de dentro, o nadie reconocería el dispositivo cerrado.
+fisica = tmpdir()
+(fisica / "PRDRIVE.hc").write_bytes(b"x")
+montado = tmpdir()
+wiz_vc = nuevo_asistente(montado)
+wiz_vc.state.device = fisica
+wiz_vc.state.encryption = "veracrypt"
+en_paso(wiz_vc, PASO["Instalación"])
+c.contains("el paso dice que va a dejar la entrada de fuera",
+           " ".join(str(w.cget("text")) for w in widgets(wiz_vc.cuerpo, ttk.Label)),
+           "Abrir PRDRIVE")
+boton(wiz_vc.cuerpo, "Instalar el programa").invoke()
+c("el programa va DENTRO del contenedor",
+  (deploy.app_dir(montado) / "runsync.py").is_file(), True)
+c("y fuera, nada del programa", (fisica / deploy.APP_SUBDIR).exists(), False)
+c("fuera, el vestíbulo entero",
+  all((fisica / n).is_file() for n in vest.TODOS), True)
+c("con el mismo id que el fichero de control de dentro",
+  vest.leer_id(fisica), device.control_id(montado))
+
 # --- la ligera: sin Python propio, con el .pyw ---------------------------------
 ligero = tmpdir()
 wiz_l = nuevo_asistente(ligero)
@@ -498,6 +527,24 @@ c("sin tocar la configuración", config.read_bytes(), config_antes)
 c("ni perder lo que ya llevaba", ANFITRION.clave in platforms.provisioned(limpio), True)
 c("y con los lanzadores de una completa", (limpio / "runsync.bat").is_file()
   and (limpio / "runsync.sh").is_file(), True)
+c("sin contenedor, tampoco aquí hay vestíbulo", (limpio / vest.MARCA).exists(), False)
+
+# Un dispositivo VeraCrypt de antes no tiene vestíbulo, y este es el camino para
+# ponérselo sin reinstalar: el mismo que ya existe para los lanzadores. Se
+# simula quitándoselo al que se acaba de hacer con contenedor.
+for nombre in vest.TODOS:
+    (fisica / nombre).unlink()
+# Con VeraCrypt el atajo sale en el paso de cifrado, ya montado: antes de
+# montar, el volumen no deja ver el `.prdrive/`.
+viejo_vc = nuevo_asistente(montado)
+viejo_vc.state.device = fisica
+viejo_vc.state.encryption = "veracrypt"
+en_paso(viejo_vc, PASO["Cifrado"])
+boton(viejo_vc.cuerpo, "Añadir plataformas…").invoke()
+boton(viejo_vc.cuerpo, "Aplicar").invoke()
+c("«Añadir plataformas…» le pone el vestíbulo a un dispositivo VeraCrypt de antes",
+  all((fisica / n).is_file() for n in vest.TODOS), True)
+c("con su id de siempre", vest.leer_id(fisica), device.control_id(montado))
 
 
 # --- no se puede pasar del paso «Instalación» sin instalar -----------------------

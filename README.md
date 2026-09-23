@@ -236,6 +236,22 @@ tenga instalado. Tres avisos honestos:
 
 En Linux y macOS no hay traveler disk: allí VeraCrypt necesita instalarse.
 
+**Abrirlo y cerrarlo, en cualquier equipo.** Con VeraCrypt todo prdrive está
+dentro del contenedor, así que el instalador deja fuera, en la raíz de la unidad,
+lo justo para llegar a él:
+
+| | |
+|---|---|
+| `Abrir PRDRIVE` | abre el contenedor y la ventana de prdrive. La contraseña la pide VeraCrypt en su propia ventana: no pasa por prdrive |
+| `Expulsar PRDRIVE` | cierra el contenedor para poder quitar la unidad. Si queda algo abierto, VeraCrypt pregunta si forzar |
+| `abrir-prdrive.sh`, `expulsar-prdrive.sh` | lo mismo en Linux (con VeraCrypt instalado) |
+| `LEEME-PRDRIVE.txt` | cómo se hace, en diez líneas, legible sin abrir nada |
+
+Usan el VeraCrypt instalado en el equipo si lo hay, y si no el que viaja en la
+unidad: con otra versión instalada, el que viaja no puede cargar su driver. Un
+dispositivo VeraCrypt hecho con una versión anterior se los pone con **Añadir
+plataformas…**, sin reinstalar.
+
 ### La primera vez
 
 El catálogo todavía no existe. Instala un primer dispositivo con la conexión a
@@ -837,6 +853,7 @@ prdrive/
 │   ├── components.py  qué rclone y qué Python lleva el dispositivo, y si están al día
 │   ├── pins.py        las versiones fijadas de rclone y Python, y las plataformas
 │   ├── pairing.py     la conexión del dispositivo, empaquetada para un móvil
+│   ├── vestibulo.py   lo que un dispositivo VeraCrypt deja fuera del contenedor
 │   └── store.py       los ficheros de estado en JSON del dispositivo
 ├── ui/                pantallas y su lógica
 │   ├── theme.py       la paleta, las fuentes y los estilos ttk. Sin ventana
@@ -854,6 +871,7 @@ prdrive/
 │   ├── device.py      qué volúmenes hay y cuál es el bueno
 │   ├── crypto.py      VeraCrypt y BitLocker
 │   ├── traveler.py    dejar el propio VeraCrypt dentro del volumen
+│   ├── vestibulo.py   los lanzadores de fuera del contenedor: abrir y expulsar
 │   └── components.py  poner al día el rclone y el Python de un dispositivo
 ├── tests/             scripts sueltos, sin framework
 └── design/            las maquetas que implementa ui/

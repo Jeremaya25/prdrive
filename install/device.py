@@ -36,7 +36,7 @@ import uuid
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from common import model
+from common import model, vestibulo
 
 from . import DEVICE_LABEL, IS_WIN, InstallError
 from .rclone_bin import bin_subdir, exe_name
@@ -67,6 +67,9 @@ RUIDO = {
     ".ds_store", ".spotlight-v100", ".fseventsd", ".trashes", "desktop.ini",
     "autorun.inf", "prdrive.hc", ".prdrive", "veracrypt",
     "runsync.pyw", "runsync.bat", "runsync.sh", "runsync.ico",
+    # El vestíbulo de un dispositivo VeraCrypt (`common/vestibulo.py`), sacado de
+    # sus constantes y no tecleado: son seis nombres y crecerán.
+    *(nombre.lower() for nombre in vestibulo.TODOS),
 }
 
 # Puntos de montaje donde los escritorios de Linux/macOS cuelgan los extraíbles.

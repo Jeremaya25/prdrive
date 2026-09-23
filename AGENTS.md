@@ -40,6 +40,7 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 │   ├── components.py  rclone/Python carried vs the pins — stamps, no network
 │   ├── pins.py        pinned rclone + python-build-standalone; platform table
 │   ├── pairing.py     reads rclone.conf; the connection as a QR payload
+│   ├── vestibulo.py   what a VeraCrypt device leaves OUTSIDE its container
 │   └── store.py       device JSON state + pid_alive(); atomic writes
 ├── ui/                asking the user, showing results
 │   ├── __init__.py    Choice, Frontend, start(), fatal(), manual_args(), abrir()
@@ -69,6 +70,7 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 │   ├── device.py      what volumes exist, which is the device, mounted right?
 │   ├── crypto.py      VeraCrypt and BitLocker
 │   ├── traveler.py    VeraCrypt itself, copied onto the volume
+│   ├── vestibulo.py   the launchers outside the container: open, eject
 │   └── deploy.py      copy the code in, rclone + runtimes, launchers, config
 └── tests/             plain scripts; run_all.py runs them in separate processes
 ```
@@ -601,6 +603,39 @@ its docs, and the citations are in the code — keep them like the rclone ones i
   the data folders, the panel says so in red before creating, and step 8 keeps a
   red row. **Nothing deletes it**: those folders may hold unsynced changes.
 
+**The vestibule (`common/vestibulo.py` + `install/vestibulo.py`).** With
+VeraCrypt everything — code, launchers, guide, control file — is inside
+`PRDRIVE.hc`, so a machine sees an opaque file until it is opened. The physical
+root therefore gets `Abrir PRDRIVE.bat` / `Expulsar PRDRIVE.bat`,
+`abrir-prdrive.sh` / `expulsar-prdrive.sh`, `LEEME-PRDRIVE.txt` and the hidden
+marker `.prdrive-vestibulo`, whose `id=` is **the same** as `.prdrive/PRDRIVE`
+inside: that id is what joins the two halves. `common/` holds the names and
+`leer_id()` (the device needs them; `install/` does not travel); `install/`
+writes the texts. Four things not to weaken:
+
+- **The password never passes through us.** `VeraCrypt.exe /volume X /quit`
+  without `/password` asks with VeraCrypt's own dialog (`Mount/Mount.c`,
+  `WM_INITDIALOG`). No `/auto`: it also opens an Explorer window.
+- **The installed VeraCrypt before the travelling one**: with another version's
+  driver loaded, the traveller fails with `ERR_DRIVER_VERSION`
+  (`Common/Dlgcode.c`, `DriverAttach`).
+- **The exit code is not the mount.** The traveller without admin rights
+  relaunches itself elevated with `/q UAC` and exits 0 after two seconds
+  (`InitApp`, `LaunchElevatedProcess`), so the `.bat` waits to *see* the drive
+  (by the control file's id) — 10 s with the installed one, 180 s with the
+  traveller.
+- **Eject is `/dismount <letter> /quit` without `/silent`**, after a short
+  wait: VeraCrypt only retries 30 × 50 ms (`Common/Dlgcode.h`), and without
+  `/silent` it asks whether to force. `/unmount` does not exist before 1.26.24.
+
+Same rules as the launchers inside: CRLF, no parenthesised blocks, `chcp 65001`
+before any accent, written by step 5 (right after `ensure_control_file()`, which
+is where the id comes from) and by «Añadir plataformas…», **never** by
+`--update`. `vestibulo.destino(state)` decides whether there is one (the `.hc`
+on the physical root and the device mounted elsewhere). Its six names are in
+`device.RUIDO`, built from `vestibulo.TODOS`. `tests/test_vestibulo.py` reads the
+`.bat` and **runs** the `.sh` against a fake `veracrypt`.
+
 Other step notes:
 
 - With VeraCrypt, `.prdrive/` lives *inside* the container, so the volume looks
@@ -645,7 +680,8 @@ absent), per-row sizes and a live total vs free space.
 - **Launchers are immutable after provisioning**: written by step 5 and by
   «Añadir plataformas…» (an old device has no `.bat`, so its runtimes would be
   useless), **never** by `--update`, «Actualización» or `deploy_code()`
-  (`tests/test_install_deploy.py` guards it).
+  (`tests/test_install_deploy.py` guards it). The vestibule outside a VeraCrypt
+  container follows the same rule.
 
 ## Updating a device in place (`common/update.py` + `ui/tk_update.py` + `--update`)
 
