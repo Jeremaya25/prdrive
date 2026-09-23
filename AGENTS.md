@@ -101,7 +101,9 @@ Constants duplicated across modules that must not drift: `deploy.APP_SUBDIR`, an
 does not travel to the device (`tests/test_install_device.py`, `test_fleet.py`);
 `RUNTIME_STAMP` / `RUNTIME_SUBDIR`, and `penwatch.runtime_keys_for()` vs
 `install/platforms.candidates()`, the fallback chain `runsync.bat` hard-codes
-(`tests/test_penwatch_runtime.py`).
+(`tests/test_penwatch_runtime.py`); `penwatch.UI_LOCK_REL` / `DAEMON_LOCK_REL` /
+`HOST` vs `runsync.UI_LOCK` / `LOCK` and `prefs.HOST`
+(`tests/test_instancia_unica.py`).
 
 ## The PyInstaller build (`build_installer.py`)
 
@@ -290,11 +292,26 @@ explanation — add new cases there.
 
 Coordination lives in `state/` so it travels with the device: `daemon.lock.json`
 (pid/host/pairs/cycle), `daemon.stop` (presence = stop request), `daemon.log`,
-`ui_prefs.json`, plus `last_run.json` and `conflicts.json` (written by `sync.py`,
+`ui.lock.json` (pid/host of the open window), `ui_prefs.json`, plus
+`last_run.json` and `conflicts.json` (written by `sync.py`,
 not the daemon). `startup_defaults()` layers last choice > `[daemon]` in the TOML
 > all pairs / 30 min; only the UI writes prefs (`manual`/`daemon`, not `doctor`),
 `--auto`/`--daemon` only read. The service stops when the device disappears
 (`SENTINEL`) or when runsync is launched again.
+
+**One window at a time, and the watcher waits for it.** `ui_flow()` checks
+`ui.lock.json` **before** `stop_previous_daemon()` and refuses to open a second
+window — opening runsync stops the previous service, so two windows would take
+the service from each other. A record whose pid is dead, or that belongs to
+another host, is the trace of a device pulled without closing anything, and is
+cleaned exactly like the daemon's. The lock is taken around `_atender()` and
+released in a `finally`. `penwatch` reads both locks (never writes them) and
+launches nothing while either is alive: the pass is logged and the trigger is
+spent, so it does not retry every minute behind an open window. Both facts are
+said out loud — in the startup notice and in the message that confirms the
+service — but only when the watcher is registered on this machine
+(`ui.watch.is_installed()`); otherwise they would describe something that does
+not exist here.
 
 **Windows specifics to preserve:** `pid_alive()` uses `OpenProcess`, never
 `os.kill` (which *terminates* on Windows); the daemon is spawned with
@@ -332,7 +349,8 @@ it** — a window cannot dump output to a console that does not exist.
 - `tk_pairs.confirmar_plan()` is a real window, one line per consequence, each
   warning in an amber box — not an `askokcancel`. This is the dialog that governs
   deletions. Tests replace it, like `mostrar()`.
-- **The main window runs syncs itself:** «Sincronizar ahora» and «Doctor» open a
+- **The main window runs syncs itself:** «Sincronizar ahora» and the check
+  behind «Ajustes…» open a
   modeless `output_window`, the window disables whatever touches the same state,
   and on close re-reads `state/` and repaints. Only «Iniciar servicio» returns a
   `Choice` to runsync. `ui.manual_args()` (resync question + `--yes`) is shared
@@ -379,21 +397,22 @@ paths and flags; no rounded corners, no shadows. Styles cross **role** with
 - `tk.working(parent, title, funcion)` runs `funcion()` on a thread behind a bare
   progress bar, for slow or passphrase-carrying commands. No cancel button.
 
-### Doctor (`ui/tk_doctor.py`) — where new affordances go
+### «Ajustes» (`ui/tk_doctor.py`) — where new affordances go
 
 The main window is deliberately lean, so **anything done once in a device's life
-belongs in Doctor, not beside «Sincronizar ahora»**. Doctor is a screen, not the
-`--doctor` command: running the check is its first entry, the pairing code its
-second, and `ENTRADAS` is the list to add to. It receives `lanzar` from the main
+belongs behind the gear, not beside «Sincronizar ahora»**. The screen is
+«Ajustes» —the module keeps the old name— and it is not the `--doctor` command:
+running the check is its first entry, the pairing code its second, and
+`ENTRADAS` is the list to add to. It receives `lanzar` from the main
 window rather than importing it, because the output window is the *main*
-window's child and disables itself while a pass runs — Doctor knows none of
+window's child and disables itself while a pass runs — this screen knows none of
 that, and closes itself before handing over so two modals never hold the grab at
 once.
 
 ## Pairing a phone (`common/pairing.py` + `ui/qr.py` + `ui/tk_qr.py`)
 
-Doctor → «Emparejar un móvil…» shows the device's connection as a QR so a phone
-can read it. Three pieces, none of which knows about the other two's medium:
+«Ajustes» → «Emparejar un móvil…» shows the device's connection as a QR so a
+phone can read it. Three pieces, none of which knows about the other two's medium:
 
 - **`ui/qr.py` is a full QR encoder**, written here for the same reason
   `ui/icons.py` draws its own icons: no dependencies. Byte mode only (the payload
@@ -644,7 +663,10 @@ script to `%LOCALAPPDATA%\prdriveWatch` / `~/.local/share/prdrive-watch`, writes
 - It must never write to, or `chdir` into, the device (that blocks safe
   ejection); config, state and log live on the host, and every device access is
   wrapped in `try/except OSError` (a locked BitLocker volume errors rather than
-  reporting "not found").
+  reporting "not found"). It does **read** the device's `ui.lock.json` and
+  `daemon.lock.json` (`aplicacion_en_marcha()`): with a window open or the
+  service running on this machine it launches nothing, and the skipped trigger
+  is not a failure — `_disparo_row()` says so instead of printing «FALLÓ».
 - `ui/watch.py` imports penwatch for reads and shells out for
   `install`/`uninstall`. One-way dependency.
 - **Its own Python**: `install` copies the device's runtime for this host
@@ -722,7 +744,7 @@ Preserve the citations like the bisync ones.
   pins it, because that is where a slip costs a baseline.
 - **The date comes from the NAME, never the mtime** (`versions_editor.SELLO`):
   copying the folder rewrites mtimes, and the stamp in the name is the whole
-  reason the format exists. Purging is Doctor → «Versiones…», both sides in one
+  reason the format exists. Purging is «Ajustes» → «Versiones…», both sides in one
   plan through `confirmar_plan()`; the remote side goes out as a single
   `rclone delete --files-from` with the exact list, never an age or a pattern.
   **Restoring is deliberately not offered** (v1).

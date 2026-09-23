@@ -36,6 +36,25 @@ class Fallo(NamedTuple):
     log: Path | None        # None si no quedó log o ya no está
 
 
+def _buena(dato: dict) -> str | None:
+    """La fecha de la última pasada buena que conste en lo apuntado de una pareja.
+
+    Aquí solo cabe un resultado por pareja, así que sin esto un fallo borraría la
+    fecha de cuando esa pareja sí quedó al día — y para todo lo que no es bisync
+    este es el único sitio donde consta, porque los listados solo existen ahí.
+
+    El segundo camino es por los registros escritos antes de que existiera la
+    clave: si la última pasada apuntada fue buena, su fecha es la que se busca."""
+    if isinstance(dato.get("buena"), str):
+        return dato["buena"]
+    try:
+        if int(dato.get("codigo", 1)) != 0:
+            return None
+    except (TypeError, ValueError):
+        return None
+    return dato["cuando"] if isinstance(dato.get("cuando"), str) else None
+
+
 def apuntar(nombre: str, codigo: int, log: Path | None) -> None:
     """Apunta el resultado de una pasada. Nunca falla: si el dispositivo no deja
     escribir, el aviso se pierde, pero la sincronización no puede caerse por él.
@@ -44,9 +63,40 @@ def apuntar(nombre: str, codigo: int, log: Path | None) -> None:
     letra de unidad cambia de un equipo a otro."""
     data = store.read_json(ruta_estado())
     parejas = data.get("parejas") if isinstance(data.get("parejas"), dict) else {}
-    parejas[nombre] = {"cuando": store.stamp(), "codigo": int(codigo),
-                       "log": log.name if log is not None else None}
+    anterior = parejas.get(nombre)
+    ahora = store.stamp()
+    parejas[nombre] = {"cuando": ahora, "codigo": int(codigo),
+                       "log": log.name if log is not None else None,
+                       "buena": ahora if int(codigo) == 0 else
+                                _buena(anterior if isinstance(anterior, dict) else {})}
     store.write_json(ruta_estado(), {"parejas": parejas})
+
+
+def ultimas_buenas(nombres: Iterable[str]) -> dict[str, float]:
+    """Cuándo terminó BIEN por última vez cada una de esas parejas.
+
+    Lo de aquí es la única huella que deja una pasada cualquiera: la apunta
+    `sync.run_pair()` la lance quien la lance —la ventana, una terminal, el
+    servicio periódico o el vigilante al enchufar el dispositivo—, así que es lo
+    que le falta a `bisync.last_run()`, que solo sabe de la fecha de los listados
+    y por tanto solo de las parejas bisync.
+
+    Solo las buenas: la ventana enseña esta fecha como la última vez que esa
+    pareja quedó al día, y una pasada fallida no deja nada al día —ni borra la
+    anterior, para eso está `_buena()`—. De que falló avisan `fallos()` y su
+    banner, que es donde eso se cuenta."""
+    parejas = store.read_json(ruta_estado()).get("parejas")
+    if not isinstance(parejas, dict):
+        return {}
+    marcas: dict[str, float] = {}
+    for nombre in nombres:
+        dato = parejas.get(nombre)
+        if not isinstance(dato, dict):
+            continue
+        cuando = store.desde_sello(str(_buena(dato) or ""))
+        if cuando is not None:
+            marcas[nombre] = cuando
+    return marcas
 
 
 def fallos(config: Config) -> list[Fallo]:

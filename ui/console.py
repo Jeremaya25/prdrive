@@ -79,7 +79,7 @@ def main_menu(config: Config, startup_msg: str | None) -> Choice | None:
     print("\n 1) Sincronizar todo ahora"
           "\n 2) Sincronizar parejas concretas"
           "\n 3) Iniciar servicio periódico"
-          "\n 4) Doctor"
+          "\n 4) Comprobación del estado (doctor)"
           "\n 0) Salir")
     try:
         option = input("Opción: ").strip()

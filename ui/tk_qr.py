@@ -14,7 +14,7 @@ remoto entero. De ahí el recuadro ámbar, que no es adorno: es la única barrer
 que hay. Por eso también la ventana no guarda nada, no copia nada al
 portapapeles y el código desaparece al cerrarla.
 
-Cuelga de Doctor y no de la ventana principal porque emparejar un móvil se hace
+Cuelga de «Ajustes» y no de la ventana principal porque emparejar un móvil se hace
 una vez, no cada vez que se sincroniza.
 """
 

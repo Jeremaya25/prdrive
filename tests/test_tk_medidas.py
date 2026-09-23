@@ -312,16 +312,48 @@ try:
           wiz.visor._medida()[1], alto_conexion)
         top.destroy()
 
-    # En las pantallas más apretadas «Conexión» no cabe por mucho que se estire, y
-    # entonces la barra es obligatoria: es la comprobación de que un recorte nunca
-    # es silencioso. También va por nombre: al abrirse, el asistente ya no enseña
-    # ese paso sino el del dispositivo, que sí cabe.
+    # Cuando «Conexión» no cabe por mucho que se estire, la barra es obligatoria:
+    # es la comprobación de que un recorte nunca es silencioso. También va por
+    # nombre: al abrirse, el asistente ya no enseña ese paso sino el del
+    # dispositivo, que sí cabe.
     #
     # Se afirma **también que no cabe**, y no solo que hay barra: el día que el
     # paso adelgace lo bastante para entrar, esta comprobación se quedaría sin
     # asunto y pasaría sola sin comprobar nada. Es justo lo que pasó al escalar
     # el ancho de corte de los párrafos: en una 1080p al 200 % el mismo texto
     # cabe ahora en menos líneas, y este caso dejó de desbordar.
+    #
+    # Por eso el alto de la pantalla se SACA de lo que el paso pide, en vez de
+    # escribir aquí una resolución concreta: cuánto pide depende de la letra del
+    # sistema, que no es la misma en Windows que en el equipo de al lado, así que
+    # una 1366x768 al 200 % desborda en una y entra de sobra en la otra —y el
+    # caso fallaba sin que nada estuviera roto—. Con la mitad de lo que pide, la
+    # premisa la fija el test y no la tipografía de quien lo ejecuta.
+    pantalla(3840, 2160, 2.6667)
+    top = tk.Toplevel(raiz)
+    top.withdraw()
+    wiz = tk_install.build(top)
+    wiz.indice = PASO["Conexión"]
+    wiz.repintar()
+    top.update_idletasks()
+    pide = wiz.visor.interior.winfo_reqheight()
+    top.destroy()
+
+    pantalla(1366, max(200, pide // 2), 2.6667)
+    top = tk.Toplevel(raiz)
+    top.withdraw()
+    wiz = tk_install.build(top)
+    wiz.indice = PASO["Conexión"]
+    wiz.repintar()
+    top.update_idletasks()
+    no_cabe = wiz.visor.interior.winfo_reqheight() > wiz.visor._medida()[1]
+    c("en una pantalla que no da para «Conexión», se desplaza con su barra",
+      (no_cabe, bool(wiz.visor.vertical.grid_info())), (True, True))
+    top.destroy()
+
+    # Y en las pantallas apretadas de verdad, lo que sí es invariante haya o no
+    # desbordamiento: que nada quede fuera del recuadro sin una barra que lo
+    # enseñe.
     for nombre, ancho, alto in (("1366x768 al 200 %", 1366, 768),
                                 ("1024x600 al 200 %", 1024, 600)):
         pantalla(ancho, alto, 2.6667)
@@ -331,9 +363,8 @@ try:
         wiz.indice = PASO["Conexión"]
         wiz.repintar()
         top.update_idletasks()
-        no_cabe = wiz.visor.interior.winfo_reqheight() > wiz.visor._medida()[1]
-        c(f"{nombre}: lo que no cabe se desplaza, con su barra",
-          (no_cabe, bool(wiz.visor.vertical.grid_info())), (True, True))
+        c(f"{nombre}: «Conexión» no se recorta en silencio",
+          recortado(wiz.visor), False)
         top.destroy()
 
     # --- los diálogos -----------------------------------------------------------------
@@ -426,13 +457,13 @@ try:
                 c(f"{nombre}: la pantalla de componentes no queda recortada",
                   corta, False)
 
-                # Doctor: una tarjeta con una entrada por acción, que crece con
-                # cada una que se le añada.
+                # «Ajustes»: una tarjeta con una entrada por acción, que crece
+                # con cada una que se le añada.
                 entra, corta = medir_dialogo(
                     lambda: tk_doctor.open_dialog(raiz, cfg, lambda *a: None),
                     ancho, alto, escala, modulo=tk_doctor)
-                c(f"{nombre}: la pantalla de Doctor cabe", entra, True)
-                c(f"{nombre}: la pantalla de Doctor no queda recortada",
+                c(f"{nombre}: la pantalla de Ajustes cabe", entra, True)
+                c(f"{nombre}: la pantalla de Ajustes no queda recortada",
                   corta, False)
 
                 # Versiones: dos tarjetas con una ruta larga cada una, más el

@@ -27,7 +27,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, NamedTuple, Protocol
 
-from common import bisync
+from common import bisync, results, store
 from common.model import Config
 
 # ¿Hay una consola de verdad detrás? Bajo pythonw, sys.stdout es None (y print()
@@ -147,10 +147,7 @@ def avisar_fallo(nombres: list[str], espera: float = 10.0) -> bool:
 
 def cuando_sello(sello: str) -> str:
     """`cuando()` para una fecha escrita con `store.stamp()`."""
-    try:
-        return cuando(datetime.strptime(sello, "%Y-%m-%d %H:%M:%S").timestamp())
-    except (TypeError, ValueError):
-        return ""
+    return cuando(store.desde_sello(sello))
 
 
 def cuando(marca: float | None) -> str:
@@ -173,14 +170,29 @@ def pair_times(config: Config) -> dict[str, float | None]:
     Se devuelve la marca de tiempo y no el texto porque quien llama también
     necesita compararlas —«última pasada» de la cabecera es la más reciente de
     todas—, y ordenar por el texto pondría 'ayer' por delante de '08:20'. None
-    para las que no dejan rastro (todo lo que no es bisync) y para las que aún no
-    han corrido: ahí la ventana enseña un guion, que es la verdad."""
+    para las que aún no han corrido: ahí la ventana enseña un guion, que es la
+    verdad.
+
+    Dos fuentes, y hacen falta las dos. Los listados de bisync
+    (`bisync.last_run`) son la fecha de la última pasada buena para las parejas
+    que los tienen, incluidas las de un dispositivo que ya venía sincronizando
+    antes de que existiera el registro. Lo apuntado en `state/last_run.json`
+    (`results.ultimas_buenas`) cubre a las demás —un `copy` o un `*-mirror` no
+    deja estado ninguno— y lo hace sin importar quién lanzó la pasada: la
+    ventana, una terminal, el servicio periódico o el vigilante al enchufar el
+    dispositivo. La más reciente de las dos es la respuesta."""
+    try:
+        apuntadas = results.ultimas_buenas(config.names)
+    except Exception:
+        apuntadas = {}            # un estado ilegible no impide abrir la UI
     marcas: dict[str, float | None] = {}
     for pair in config.pairs:
         try:
-            marcas[pair.name] = bisync.last_run(pair)
+            listados = bisync.last_run(pair)
         except Exception:
-            marcas[pair.name] = None  # un estado ilegible no impide abrir la UI
+            listados = None
+        candidatas = [m for m in (listados, apuntadas.get(pair.name)) if m]
+        marcas[pair.name] = max(candidatas) if candidatas else None
     return marcas
 
 

@@ -599,7 +599,7 @@ Tres cosas que conviene saber:
   empieza a sincronizarse como contenido normal. La ventana lo avisa antes de
   guardar.
 - **Nadie la limpia sola.** Lo que ocupa cada lado, abrir la carpeta y purgar lo
-  anterior a una fecha están en **Doctor → «Versiones…»**, con la misma
+  anterior a una fecha están en **«Ajustes…» → «Versiones…»**, con la misma
   confirmación que los demás borrados.
 
 ## El servicio periódico
@@ -612,6 +612,7 @@ Tres cosas que conviene saber:
 | `daemon.lock.json` | pid, equipo, parejas y último ciclo. Escritura atómica |
 | `daemon.stop` | su presencia es una petición de parada |
 | `daemon.log` | registro, se recorta solo |
+| `ui.lock.json` | pid y equipo de la ventana abierta, si la hay |
 | `ui_prefs.json` | lo último que se eligió en la ventana |
 | `last_run.json` | cómo acabó la última pasada de cada pareja, y qué log la explica |
 | `conflicts.json` | los ficheros en conflicto del último recorrido |
@@ -635,6 +636,12 @@ El servicio se para cuando el dispositivo desaparece o cuando se vuelve a lanzar
 `runsync.py`. En Windows se lanza con `pythonw.exe` y sin consola, y hace `chdir`
 al directorio temporal para que la unidad se pueda extraer con seguridad.
 
+**Una ventana a la vez.** Como abrir `runsync.py` detiene el servicio anterior,
+dos ventanas se lo quitarían la una a la otra: la segunda no se abre y lo dice.
+Mientras haya ventana abierta o servicio en marcha, el vigilante tampoco lanza
+nada al enchufar el dispositivo; la ventana avisa de esa pausa al abrirse, y al
+arrancar el servicio se avisa de lo mismo.
+
 ## El vigilante
 
 `penwatch.py` es lo único que se instala en el equipo anfitrión, y **nunca escribe
@@ -654,6 +661,10 @@ estado y su registro viven en el equipo.
   esté, mientras la ruta sea relativa a ella.
 - Se dispara **una vez por conexión**: el disparo se rearma cuando la unidad
   desaparece.
+- **No lanza nada si ya hay ventana o servicio en marcha** en ese equipo: lee
+  (sin escribir) los dos registros del dispositivo y lo anota en su diario. El
+  disparo se da por gastado igual, para no reintentarlo cada minuto detrás de una
+  ventana abierta.
 - `--mode` decide qué lanza: `ui` (por defecto), `sync` o `daemon`.
 - **Tiene su propio Python.** `install` copia el del dispositivo a su carpeta del
   equipo y registra la tarea con esa copia, así que no se rompe cuando alguien
@@ -665,10 +676,10 @@ estado y su registro viven en el equipo.
 
 ## Diagnóstico
 
-En la ventana principal, **«Doctor»** abre la pantalla de lo que se hace de tarde
-en tarde: la comprobación de estado y el emparejamiento de un móvil. Todo lo que
-no se usa cada día vive ahí, para que la ventana principal se quede con lo de
-todos los días.
+En la ventana principal, el engranaje de **«Ajustes…»** abre la pantalla de lo
+que se hace de tarde en tarde: la comprobación de estado, el emparejamiento de un
+móvil y las versiones guardadas. Todo lo que no se usa cada día vive ahí, para
+que la ventana principal se quede con lo de todos los días.
 
 ```bash
 python sync.py --doctor
@@ -698,7 +709,7 @@ Casos habituales:
 
 ### Emparejar un móvil
 
-**Doctor → «Emparejar un móvil…»** enseña la conexión con el remoto como un
+**«Ajustes…» → «Emparejar un móvil…»** enseña la conexión con el remoto como un
 código QR: el backend, sus opciones, dónde está el catálogo y la clave privada.
 Es la forma de llevar la conexión a un aparato que no se puede enchufar al
 dispositivo.

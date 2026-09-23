@@ -123,7 +123,7 @@ resilient = true              # un error menor no obliga a --resync la próxima 
 #     empezará a sincronizarse al otro lado como contenido normal. Vacíala
 #     antes si no lo quieres allí.
 #
-# Nadie la limpia sola: se mira y se purga desde Doctor → «Versiones…».
+# Nadie la limpia sola: se mira y se purga desde «Ajustes…» → «Versiones…».
 
 
 [[pair]]

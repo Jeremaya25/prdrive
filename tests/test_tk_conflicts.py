@@ -286,7 +286,7 @@ with sandbox():
     c("la principal sigue abierta mientras sincroniza", vistos["viva"], True)
     c("y no deja lanzar otra pasada a la vez",
       (vistos["durante"]["Sincronizar ahora"], vistos["durante"]["Iniciar servicio"],
-       vistos["durante"]["Doctor"], vistos["durante"]["Parejas…"]),
+       vistos["durante"]["Ajustes…"], vistos["durante"]["Parejas…"]),
       ("disabled", "disabled", "disabled", "disabled"))
     c("la cabecera dice que está sincronizando", vistos["chip durante"], True)
     c("al cerrar la salida, la principal sigue ahí", vistos["viva después"], True)
@@ -298,7 +298,7 @@ with sandbox():
     c("lo elegido se recuerda para la próxima vez", prefs.read_prefs().get("pairs"),
       ["notas"])
 
-# Doctor ya no lanza la comprobación: abre su pantalla, y la comprobación es su
+# El engranaje no lanza la comprobación: abre «Ajustes», y la comprobación es su
 # primera entrada. Se prueban las dos mitades —que el botón abre la pantalla, y
 # que la entrada lanza la orden de siempre— porque el cableado entre ellas es lo
 # único que ha cambiado.
@@ -307,17 +307,17 @@ with sandbox():
     lanzadas.clear()
     visto: dict = {}
 
-    def dentro_de_doctor(dlg) -> None:
-        botones_doctor = botones(dlg)
-        visto["entradas"] = sorted(botones_doctor)
-        botones_doctor["Ejecutar comprobación"].invoke()
+    def dentro_de_ajustes(dlg) -> None:
+        botones_ajustes = botones(dlg)
+        visto["entradas"] = sorted(botones_ajustes)
+        botones_ajustes["Ejecutar comprobación"].invoke()
 
-    tk_doctor.mostrar = lambda dlg, parent=None: dentro_de_doctor(dlg)
-    ventana_principal(cfg, lambda root: botones(root)["Doctor"].invoke())
-    # La lista va entera y no «contiene»: Doctor es donde aterriza todo lo que no
-    # cabe en la principal, así que lo que hay que ver de un vistazo al añadir una
-    # entrada es la lista completa de lo que esa pantalla ofrece.
-    c("Doctor abre su pantalla con sus entradas",
+    tk_doctor.mostrar = lambda dlg, parent=None: dentro_de_ajustes(dlg)
+    ventana_principal(cfg, lambda root: botones(root)["Ajustes…"].invoke())
+    # La lista va entera y no «contiene»: «Ajustes» es donde aterriza todo lo que
+    # no cabe en la principal, así que lo que hay que ver de un vistazo al añadir
+    # una entrada es la lista completa de lo que esa pantalla ofrece.
+    c("el engranaje abre «Ajustes» con sus entradas",
       visto.get("entradas"),
       ["Cerrar", "Ejecutar comprobación", "Emparejar un móvil…", "Versiones…"])
     c("y su comprobación corre sin cerrar la principal",

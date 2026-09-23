@@ -99,6 +99,7 @@ import json
 import os
 import platform
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -125,6 +126,13 @@ CONTROL_FILE = Path(APP_SUBDIR) / APP_NAME.upper()    # quién es esta unidad
 # que no se separan.
 RUNTIME_SUBDIR = Path(APP_SUBDIR) / "runtime"
 RUNTIME_STAMP = "PRDRIVE-RUNTIME"
+# Los dos registros de runsync: quién tiene la ventana abierta y quién es el
+# servicio. Se LEEN para no lanzar una segunda instancia encima, nunca se
+# escriben —en el dispositivo no escribe nadie desde aquí—. Copiados de
+# `runsync.py` por lo mismo que los de arriba, y con su test.
+UI_LOCK_REL = Path(APP_SUBDIR) / "state" / "ui.lock.json"
+DAEMON_LOCK_REL = Path(APP_SUBDIR) / "state" / "daemon.lock.json"
+HOST = socket.gethostname()           # el mismo que apunta `ui/prefs.py`
 
 POLL_SECONDS = 5.0
 STABLE_CHECKS = 2            # sondeos seguidos legibles antes de dar el dispositivo por montado
@@ -609,6 +617,39 @@ def python_for_launch(cfg: dict) -> str:
     return exe
 
 
+def _vivo_aqui(root: Path, rel: Path) -> dict | None:
+    """Ese registro del dispositivo, si es de un proceso vivo de ESTE equipo.
+
+    Solo de este equipo: el fichero viaja dentro del dispositivo, así que el pid
+    que dejó otra máquina no dice nada de la nuestra. No se limpia lo que haya
+    quedado rancio —de eso se encarga runsync—: aquí no se escribe en el
+    dispositivo, que bloquearía su extracción."""
+    info = read_json(root / rel)
+    if not isinstance(info, dict) or info.get("host") != HOST:
+        return None
+    try:
+        pid = int(info.get("pid", -1))
+    except (TypeError, ValueError):
+        return None
+    return info if pid_alive(pid) else None
+
+
+def aplicacion_en_marcha(root: Path) -> str | None:
+    """Qué hay ya en marcha para este dispositivo en este equipo, o None.
+
+    Lanzar encima de una ventana abierta o de un servicio en marcha no aporta
+    nada y puede estorbar: dos sincronizaciones a la vez se pelean por el lock de
+    bisync, y una segunda ventana le quitaría el servicio a la primera. Se
+    devuelve la frase para el diario, que es lo único que se hace con esto."""
+    ventana = _vivo_aqui(root, UI_LOCK_REL)
+    if ventana is not None:
+        return f"la ventana de runsync ya está abierta (pid {ventana.get('pid')})"
+    servicio = _vivo_aqui(root, DAEMON_LOCK_REL)
+    if servicio is not None:
+        return f"el servicio periódico ya está en marcha (pid {servicio.get('pid')})"
+    return None
+
+
 def launch(root: Path, cfg: dict) -> bool:
     mode = cfg.get("mode", "ui")
     args = [python_for_launch(cfg), str(root / STRUCT_MARKER)]
@@ -683,16 +724,29 @@ def watch_loop(once: bool = False) -> int:
                 stable += 1
                 if stable >= (1 if once else STABLE_CHECKS):
                     log(f"dispositivo detectado en {root}")
-                    # Antes de lanzar: si el dispositivo trae otro Python, se
-                    # lanza ya con la copia nueva.
-                    cfg = refresh_runtime(root, cfg)
-                    ok = launch(root, cfg)
-                    state.update({"launched": ok, "root": str(root),
-                                  "last_launch": stamp(), "last_launch_ok": ok})
+                    ocupado = aplicacion_en_marcha(root)
+                    if ocupado:
+                        # El disparo se da por gastado igual que si se hubiera
+                        # lanzado: reintentarlo cada minuto mientras el usuario
+                        # tiene la ventana abierta solo llenaría el diario. Se
+                        # rearma al desaparecer el dispositivo, como siempre.
+                        log(f"no lanzo nada: {ocupado}")
+                        state.update({"launched": True, "root": str(root),
+                                      "last_launch": stamp(), "last_launch_ok": None,
+                                      "last_skip": ocupado})
+                        stable = 0
+                    else:
+                        # Antes de lanzar: si el dispositivo trae otro Python, se
+                        # lanza ya con la copia nueva.
+                        cfg = refresh_runtime(root, cfg)
+                        ok = launch(root, cfg)
+                        state.update({"launched": ok, "root": str(root),
+                                      "last_launch": stamp(), "last_launch_ok": ok,
+                                      "last_skip": None})
+                        # Si el lanzamiento falla no se da por hecho: se reintenta
+                        # en ~1 min, por si el dispositivo se estaba desbloqueando.
+                        stable = 0 if ok else -int(60 / poll)
                     write_json(STATE_FILE, state)
-                    # Si el lanzamiento falla no se da por hecho: se reintenta en
-                    # ~1 min, por si el dispositivo se estaba desbloqueando todavía.
-                    stable = 0 if ok else -int(60 / poll)
             else:
                 stable = 0
                 if state.get("root") != str(root):  # remontado en otra letra
@@ -1089,6 +1143,20 @@ def _python_row(cfg: dict) -> str:
     return f"el del equipo: {exe}" + (f" — {nota}" if nota else "")
 
 
+def _disparo_row(state: dict) -> str:
+    """El último disparo: cuándo fue y cómo acabó.
+
+    Un disparo puede no haber lanzado nada a propósito —ya había ventana abierta
+    o servicio en marcha—, y eso no es un fallo: poner ahí «FALLÓ» mandaría a
+    buscar una avería que no existe."""
+    cuando = state.get("last_launch") or "(ninguno)"
+    if state.get("last_skip"):
+        return f"{cuando} — sin lanzar: {state['last_skip']}"
+    if state.get("last_launch_ok", True) is False:
+        return f"{cuando} (FALLÓ)"
+    return cuando
+
+
 def status_rows() -> list[tuple[str, str]]:
     """Qué hay instalado y cómo está, como (etiqueta, valor).
 
@@ -1121,8 +1189,7 @@ def status_rows() -> list[tuple[str, str]]:
     root = find_pen(cfg)
     filas += [
         ("Vigilante", f"vivo (pid {pid})" if pid_alive(pid) else "parado"),
-        ("Último disparo", f"{state.get('last_launch') or '(ninguno)'}"
-                            f"{'' if state.get('last_launch_ok', True) else ' (FALLÓ)'}"),
+        ("Último disparo", _disparo_row(state)),
         ("Disparo armado", "no (dispositivo ya atendido)" if state.get("launched") else "sí"),
         ("Dispositivo ahora mismo", str(root) if root else "no detectado"),
     ]
