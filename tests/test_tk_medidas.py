@@ -70,12 +70,21 @@ catalog.run = lambda args: (_ for _ in ()).throw(
     AssertionError("ningún test puede hablar con el remoto"))
 
 # La flota, con lo más ancho que puede salir: nombres largos, las cuatro
-# plataformas y un resultado que enumera parejas.
+# plataformas y un resultado que enumera parejas. Y el peor de todos al FINAL,
+# no el primero: la ventana abre con el primero elegido, así que lo que se mide
+# es que el sitio de la ficha se reserva para toda la flota y no solo para ese.
+# Sus equipos llevan nombres de 63 caracteres, el límite de una etiqueta DNS.
+EQUIPOS_LARGOS = tuple(
+    fleet.Equipo((f"sala-de-reuniones-{i}-del-edificio-de-la-oficina-de-arriba-" * 2)[:63],
+                 "2026-01-01 00:00:00") for i in range(fleet.MAX_EQUIPOS))
 FLOTA = [fleet.Dispositivo(
     id=f"dispositivo{i}", nombre=f"el pendrive de la oficina de arriba {i}",
     version="0.1.4", plataformas=tuple(p.clave for p in pins.PLATAFORMAS),
     last_seen="2026-01-01 00:00:00",
-    last_result="fallo en pareja0, pareja1, pareja2") for i in range(4)]
+    last_result="fallo en pareja0, pareja1, pareja2") for i in range(7)]
+FLOTA.append(FLOTA[0]._replace(
+    id="el-peor", equipos=EQUIPOS_LARGOS, ultima_buena="2025-12-01 08:00:00",
+    last_result="fallo en " + ", ".join(p["name"] for p in BASE["pair"])))
 # El explorador del remoto lista carpetas con `rclone lsd`; aquí se le da la
 # lista hecha, que es lo que hay que medir.
 remote_picker.listar = lambda remote, ruta: [f"carpeta-de-nombre-largo-{i}"
@@ -83,6 +92,8 @@ remote_picker.listar = lambda remote, ruta: [f"carpeta-de-nombre-largo-{i}"
 
 fleet.leer = lambda raw=None: (FLOTA, None)
 fleet.device_id = lambda app_dir=None: "dispositivo0"
+# Este equipo es uno de los largos: la marca «· este equipo» alarga su línea.
+fleet.equipo_actual = lambda: EQUIPOS_LARGOS[0].nombre
 
 # Las versiones del lado remoto salen de un `rclone lsf`, que aquí no se lanza.
 # Se le da el peor caso de ancho: una ruta larga y una cifra de varios dígitos,
@@ -497,6 +508,52 @@ try:
                 c(f"{nombre}: la ventana de emparejar cabe", entra, True)
                 c(f"{nombre}: la ventana de emparejar no queda recortada",
                   corta, False)
+
+        # La ficha de la flota cambia con la fila elegida, y el recuadro se
+        # encaja una sola vez, al abrir: lo que se reservó entonces tiene que
+        # valer para todas. Se recorre la lista entera y se mira lo que PIDE el
+        # contenido, no lo que mide el recuadro —ese no cambia después de
+        # encajar, pase lo que pase dentro—. Sin la reserva, elegir el peor
+        # hacía crecer el contenido y aparecer una barra que al abrir no estaba.
+        for nombre, ancho, alto, escala in (("1080p", 1920, 1080, 1.3333),
+                                            ("1080p al 200 %", 1920, 1080, 2.6667)):
+            with sandbox():
+                model.CONFIG_FILE.write_text(config_file.dumps(BASE), encoding="utf-8")
+                cfg = model.parse_config(BASE)
+                pantalla(ancho, alto, escala)
+                recorrido: dict = {"cortes": [], "pide": set(), "barras": set()}
+
+                def recorrer(dlg, parent=None):
+                    dlg.visor.encajar(dlg)
+                    pila, arbol = [dlg], None
+                    while pila and arbol is None:
+                        w = pila.pop()
+                        pila += list(w.winfo_children())
+                        arbol = w if isinstance(w, ttk.Treeview) else None
+                    for iid in arbol.get_children():
+                        arbol.selection_set(iid)
+                        dlg.update()
+                        visor = dlg.visor
+                        recorrido["cortes"].append(recortado(visor))
+                        recorrido["pide"].add((visor.interior.winfo_reqwidth(),
+                                               visor.interior.winfo_reqheight()))
+                        recorrido["barras"].add((bool(visor.vertical.grid_info()),
+                                                 bool(visor.horizontal.grid_info())))
+
+                previo = tk_fleet.mostrar
+                tk_fleet.mostrar = recorrer
+                tk.Toplevel.wait_window = lambda self, *a, **k: None
+                try:
+                    tk_fleet.open_dialog(raiz, cfg, dict(BASE))
+                finally:
+                    tk_fleet.mostrar = previo
+                c(f"{nombre}: se recorre la flota entera",
+                  len(recorrido["cortes"]), len(FLOTA))
+                c(f"{nombre}: ninguna ficha queda cortada", any(recorrido["cortes"]), False)
+                c(f"{nombre}: lo que pide la ventana no cambia al elegir otra",
+                  len(recorrido["pide"]), 1)
+                c(f"{nombre}: ni aparece o desaparece una barra",
+                  len(recorrido["barras"]), 1)
     finally:
         tk_pairs.mostrar, tk.Toplevel.wait_window = REAL_MOSTRAR, REAL_WAIT
 finally:

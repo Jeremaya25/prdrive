@@ -34,6 +34,10 @@ class Fallo(NamedTuple):
     cuando: str             # `store.stamp()` del final de la pasada
     codigo: int
     log: Path | None        # None si no quedó log o ya no está
+    # La última pasada buena de esa pareja (`_buena()`), o None si no consta
+    # ninguna. Es lo que dice desde cuándo falla. Va con valor por defecto
+    # porque quien construye un Fallo a mano no tiene por qué saberla.
+    buena: str | None = None
 
 
 def _buena(dato: dict) -> str | None:
@@ -127,5 +131,6 @@ def fallos_de(nombres: Iterable[str]) -> list[Fallo]:
                 log = candidato if candidato.is_file() else None
             except OSError:
                 log = None
-        salida.append(Fallo(nombre, str(dato.get("cuando", "")), codigo, log))
+        salida.append(Fallo(nombre, str(dato.get("cuando", "")), codigo, log,
+                            _buena(dato)))
     return salida

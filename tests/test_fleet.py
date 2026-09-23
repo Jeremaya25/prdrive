@@ -6,7 +6,9 @@ Lo que se comprueba es lo que hace que esto no pueda estropear nada: que la ruta
 sale del catálogo y lleva el id dentro (así ningún dispositivo escribe sobre la
 nota de otro), que lo que se publica se relee igual, que una nota rota o de una
 versión futura no tumba la lista, y que la obsolescencia es una cuenta de días y
-no una impresión.
+no una impresión. Y lo de la ficha: que la lista de equipos se hereda de la nota
+anterior sin crecer ni repetirse, que el freno solo la deja pasar al cambiar de
+equipo, y desde cuándo falla.
 
 El remoto se sustituye entero (`catalog.run`): aquí no se toca la red.
 """
@@ -58,6 +60,38 @@ futura = fleet.parse('id = "z9"\nnombre = "el nuevo"\ncosa_nueva = 42\n')
 c("una nota de una versión futura se lee igual", (futura.id, futura.nombre), ("z9", "el nuevo"))
 c("y lo que falta se enseña como desconocido", futura.version, "desconocida")
 
+# --- dónde ha estado, y desde cuándo falla ------------------------------------
+# Dos listas paralelas y no una lista de tablas: el serializador solo escribe
+# escalares y listas de cadenas, y una nota de presencia no merece enseñarle más.
+Equipo = fleet.Equipo
+COMPLETA = DISP._replace(
+    equipos=(Equipo("PORTATIL", AYER), Equipo("OFICINA-07", HACE_UN_MES)),
+    last_result="fallo en fotos", ultima_buena=HACE_UN_MES)
+c("una nota con equipos y última buena se relee igual",
+  fleet.parse(fleet.dumps(COMPLETA)), COMPLETA)
+c.contains("los equipos van en una lista", fleet.dumps(COMPLETA), "equipos = [")
+c.contains("y sus fechas en otra, paralela", fleet.dumps(COMPLETA), "equipos_visto = [")
+c("una nota sin equipos ni fallo no escribe esas claves",
+  [k for k in ("equipos", "ultima_buena") if k in texto], [])
+
+vieja = fleet.parse('id = "v"\nnombre = "de la 0.2.3"\n')
+c("una nota de antes de los equipos no trae ninguno", vieja.equipos, ())
+c("ni última buena", vieja.ultima_buena, "")
+c("unos equipos que no son una lista no son ninguno",
+  fleet.parse('id = "x"\nequipos = "PORTATIL"\n').equipos, ())
+c("listas desparejadas: al que le falta la fecha se le deja vacía",
+  fleet.parse('id = "d"\nequipos = ["A", "B"]\n'
+              'equipos_visto = ["2026-09-01 10:00:00"]\n').equipos,
+  (Equipo("A", "2026-09-01 10:00:00"), Equipo("B", "")))
+c("una entrada que no es cadena se descarta, y su fecha con ella",
+  fleet.parse('id = "r"\nequipos = ["A", 7, "C"]\n'
+              'equipos_visto = ["1", "2", 3]\n').equipos,
+  (Equipo("A", "1"), Equipo("C", "")))
+larga = fleet.parse('id = "l"\nequipos = ['
+                    + ", ".join(f'"E{i}"' for i in range(fleet.MAX_EQUIPOS + 3)) + "]\n")
+c("más equipos de la cuenta se cortan al leer", len(larga.equipos), fleet.MAX_EQUIPOS)
+c("y se quedan los primeros, que son los más recientes", larga.equipos[0].nombre, "E0")
+
 
 # --- obsoleto es una cuenta de días -------------------------------------------
 c("visto ayer no es obsoleto", DISP.obsoleto(), False)
@@ -85,9 +119,12 @@ def falso_run(llamadas, rc=0, stderr=""):
 CFG = {"defaults": {"remote": "nas", "catalog_path": "/prdrive-catalog/pairs.toml"},
        "pair": [{"name": "notas", "local": "sync-data/notas", "remote_path": "/R/notas"}]}
 
-real_run, real_app = catalog.run, model.APP_DIR
+real_run, real_app, real_equipo = catalog.run, model.APP_DIR, fleet.equipo_actual
 try:
     with sandbox() as root:
+        # El nombre del equipo que ejecuta los tests no es algo que un test
+        # pueda afirmar: se sustituye, como el remoto.
+        fleet.equipo_actual = lambda: "PORTATIL"
         # El dispositivo se identifica por el fichero de control, que vive dentro
         # de la carpeta del programa. `sandbox()` NO reengancha `model.APP_DIR`
         # —hay tests que necesitan la de verdad—, así que aquí se hace a mano:
@@ -130,6 +167,105 @@ try:
         c("un fallo se publica", fleet.publicar(cfg, CFG), True)
         c.contains("y la nota lo dice", store.read_json(
             fleet.ruta_estado())["publicado"]["last_result"], "fallo en notas")
+
+        def publicado():
+            return store.read_json(fleet.ruta_estado())["publicado"]
+
+        c("con desde cuándo: de esa pareja no consta ninguna pasada buena",
+          publicado()["ultima_buena"], fleet.SIN_BUENA)
+
+        # --- dónde ha estado ---------------------------------------------------
+        # La lista se hereda de la última nota publicada, con el equipo de ahora
+        # delante: ninguna escritura nueva en el dispositivo.
+        def equipos():
+            return list(publicado().get("equipos", []))
+
+        c("la nota lleva el equipo desde el que se publica", equipos(), ["PORTATIL"])
+        c("con la hora de la pasada, la misma que last_seen",
+          publicado()["equipos_visto"], [publicado()["last_seen"]])
+
+        llamadas.clear()
+        c("en el mismo equipo el freno no cambia", fleet.publicar(cfg, CFG), False)
+
+        fleet.equipo_actual = lambda: "OFICINA-07"
+        c("enchufado en otro equipo se publica en la primera pasada",
+          fleet.publicar(cfg, CFG), True)
+        c("con el nuevo delante", equipos(), ["OFICINA-07", "PORTATIL"])
+
+        fleet.equipo_actual = lambda: "PORTATIL"
+        fleet.publicar(cfg, CFG)
+        c("volver a uno que ya estaba lo pasa al frente sin repetirlo",
+          equipos(), ["PORTATIL", "OFICINA-07"])
+
+        for i in range(fleet.MAX_EQUIPOS):
+            fleet.equipo_actual = lambda i=i: f"AULA-{i}"
+            fleet.publicar(cfg, CFG)
+        c("la lista no pasa de MAX_EQUIPOS, y se van los más antiguos",
+          equipos(), [f"AULA-{i}" for i in reversed(range(fleet.MAX_EQUIPOS))])
+
+        antes = equipos()
+        fleet.equipo_actual = lambda: ""
+        c("sin nombre de equipo la lista se queda como estaba",
+          [e.nombre for e in fleet.nota(cfg).equipos], antes)
+        c("y no hace publicar", fleet.publicar(cfg, CFG), False)
+
+        # Lo que dejó apuntado una 0.2.3 no trae equipos: tras actualizar se
+        # publica una vez, que es lo que se quiere, y solo una.
+        fleet.equipo_actual = lambda: "AULA-4"
+        datos = store.read_json(fleet.ruta_estado())
+        for clave in ("equipos", "equipos_visto", "ultima_buena"):
+            datos["publicado"].pop(clave, None)
+        store.write_json(fleet.ruta_estado(), datos)
+        c("lo publicado por una versión sin equipos hace publicar una vez",
+          fleet.publicar(cfg, CFG), True)
+        c("y solo una", fleet.publicar(cfg, CFG), False)
+
+        # Sin red en un equipo nuevo no se apunta nada, y el reintento sale solo:
+        # el equipo sigue sin ser el de la última nota.
+        fleet.equipo_actual = lambda: "SOBREMESA"
+        antes = equipos()
+        catalog.run = falso_run([], rc=1, stderr="no such host")
+        c("sin red en un equipo nuevo no se publica", fleet.publicar(cfg, CFG), False)
+        c("ni se apunta como publicado", equipos(), antes)
+        catalog.run = falso_run(llamadas)
+        c("y la pasada siguiente lo reintenta sola", fleet.publicar(cfg, CFG), True)
+        c("con la lista que no pudo subir", equipos(), ["SOBREMESA"] + antes)
+
+        # «Reinstalar desde cero» renueva el id: para la flota es otro
+        # dispositivo, y no hereda dónde estuvo el anterior.
+        (model.APP_DIR / "PRDRIVE").write_text("id=reinstalado\n", encoding="utf-8")
+        c("con otro id la lista empieza de cero",
+          [e.nombre for e in fleet.nota(cfg).equipos], ["SOBREMESA"])
+        (model.APP_DIR / "PRDRIVE").write_text("id=a1b2c3\n", encoding="utf-8")
+
+        # --- desde cuándo falla ----------------------------------------------
+        # Resultado y fecha salen de UNA lectura de `results`, así que no pueden
+        # contradecirse.
+        cfg2 = model.parse_config({"defaults": CFG["defaults"], "pair": [
+            CFG["pair"][0],
+            {"name": "fotos", "local": "sync-data/fotos", "remote_path": "/R/fotos"}]})
+
+        def registro(**parejas):
+            store.write_json(results.ruta_estado(), {"parejas": parejas})
+
+        def fallo(buena):
+            return {"cuando": "2026-09-20 10:00:00", "codigo": 1, "log": None,
+                    "buena": buena}
+
+        BIEN = {"cuando": "2026-09-20 10:00:00", "codigo": 0, "log": None,
+                "buena": "2026-09-20 10:00:00"}
+        registro(notas=BIEN, fotos=BIEN)
+        c("si todo va bien no hay fecha de última buena", fleet.estado(cfg2), ("ok", ""))
+        registro(notas=fallo("2026-09-10 08:00:00"), fotos=BIEN)
+        c("si falla una, su última pasada buena", fleet.estado(cfg2),
+          ("fallo en notas", "2026-09-10 08:00:00"))
+        registro(notas=fallo("2026-09-10 08:00:00"), fotos=fallo("2026-09-01 08:00:00"))
+        c("si fallan dos, la más antigua: desde entonces hay algo roto",
+          fleet.estado(cfg2), ("fallo en notas, fotos", "2026-09-01 08:00:00"))
+        registro(notas=fallo("2026-09-10 08:00:00"), fotos=fallo(None))
+        c("si de alguna no consta ninguna, se dice eso",
+          fleet.estado(cfg2)[1], fleet.SIN_BUENA)
+        c("sin config no hay nada que haya fallado", fleet.estado(None), ("ok", ""))
 
         # Sin remoto no pasa nada: es una nota, no la sincronización.
         catalog.run = falso_run([], rc=1, stderr="no such host")
@@ -218,6 +354,6 @@ try:
         c("y una excepción tampoco sale de aquí",
           bool(fleet.olvidar("d2", CFG)), True)
 finally:
-    catalog.run, model.APP_DIR = real_run, real_app
+    catalog.run, model.APP_DIR, fleet.equipo_actual = real_run, real_app, real_equipo
 
 sys.exit(c.report())
