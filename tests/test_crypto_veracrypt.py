@@ -15,6 +15,8 @@ módulo (`soporta_dispersos`, `medir_escritura`, `volume_guid_path`, `_run`,
 `_volumenes_con_control`), que para eso son funciones de módulo.
 """
 
+from pathlib import PurePosixPath
+
 from _harness import Checks, tmpdir
 
 from install import crypto
@@ -25,6 +27,7 @@ VC = {"mount": "VeraCrypt.exe", "format": "VeraCrypt Format.exe"}
 CONT = crypto.Path("P:/PRDRIVE.hc")
 
 win_original = crypto.IS_WIN
+path_original = crypto.Path
 sondas = {n: getattr(crypto, n) for n in
           ("soporta_dispersos", "medir_escritura", "volume_guid_path", "en_uso",
            "_run", "_volumenes_con_control", "veracrypt_config_dir")}
@@ -114,18 +117,26 @@ try:
     # y se mira por el otro lado: una unidad con el fichero de control es este
     # dispositivo... pero solo si hay UNA. Con dos prdrive enchufados, adivinar
     # cuál es sería peor que no saberlo.
+    #
+    # Fingir un anfitrión POSIX es cambiar IS_WIN **y** las rutas: con
+    # `WindowsPath`, `str()` de «/media/usb/PRDRIVE.hc» es «\media\usb\...» y no
+    # casa con nada de lo que imprime VeraCrypt, así que en Windows la prueba
+    # fallaba sin que el código tuviera culpa. Esa rama no toca el disco, y
+    # `PurePosixPath` le basta.
     crypto.IS_WIN = False
+    crypto.Path = PurePosixPath
     listado = ("1: /media/usb/PRDRIVE.hc /dev/mapper/veracrypt1 /media/veracrypt1\n"
                "2: /otro/cosa.hc /dev/mapper/veracrypt2 -\n")
     crypto._run = lambda cmd, password="", timeout=None: type(
         "R", (), {"stdout": listado, "stderr": "", "returncode": 0})()
-    aqui = crypto.Path("/media/usb/PRDRIVE.hc")
+    aqui = PurePosixPath("/media/usb/PRDRIVE.hc")
     c("POSIX: lo encuentra por la ruta del anfitrión",
       str(crypto.mounted_container(VC, aqui)), "/media/veracrypt1")
     c("y un volumen sin punto de montaje no cuenta",
-      crypto.mounted_container(VC, crypto.Path("/otro/cosa.hc")), None)
+      crypto.mounted_container(VC, PurePosixPath("/otro/cosa.hc")), None)
     c("ni uno que no está en la lista",
-      crypto.mounted_container(VC, crypto.Path("/nada.hc")), None)
+      crypto.mounted_container(VC, PurePosixPath("/nada.hc")), None)
+    crypto.Path = path_original
 
     crypto.IS_WIN = True
     raiz = crypto.Path("Q:/")
@@ -163,6 +174,7 @@ try:
                generico, "Lo más habitual")
 finally:
     crypto.IS_WIN = win_original
+    crypto.Path = path_original
     for nombre, funcion in sondas.items():
         setattr(crypto, nombre, funcion)
 
