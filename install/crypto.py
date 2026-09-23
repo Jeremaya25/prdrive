@@ -468,12 +468,93 @@ def _volumenes_con_control() -> list[Path]:
     return [v.root for v in device.list_volumes() if v.has_control]
 
 
+def _entre_comillas(texto: str) -> str:
+    """Lo que hace con una ruta `StringConverter::QuoteSpaces()` de VeraCrypt
+    (src/Platform/StringConverter.cpp, igual en los tags VeraCrypt_1.26.24 y
+    VeraCrypt_1.26.29 y en `master`).
+
+    Solo entrecomilla si hay algún espacio —L' ', no un tabulador—, con comillas
+    simples, y dobla las simples de dentro: `/media/u/USB DISK` sale como
+    `'/media/u/USB DISK'`, y `/media/u/O'Neil x` como `'/media/u/O''Neil x'`.
+    Nada más: ni barras invertidas ni saltos de línea."""
+    if " " not in texto:
+        return texto
+    return "'" + texto.replace("'", "''") + "'"
+
+
+def _sin_comillas(campo: str) -> str | None:
+    """La inversa exacta de `_entre_comillas()`, o None si `campo` no es algo
+    que `QuoteSpaces()` haya podido escribir.
+
+    No hay ambigüedad: lo que devuelve QuoteSpaces lleva un espacio si y solo si
+    lo ha entrecomillado. Un campo sin espacios es literal, aunque tenga
+    comillas; uno con espacios tiene que ser `'…'` con todas las de dentro
+    dobladas."""
+    if " " not in campo:
+        return campo
+    if campo[0] != "'" or campo[-1] != "'":
+        return None
+    dentro = campo[1:-1]
+    if "'" in dentro.replace("''", ""):
+        return None             # una comilla suelta: QuoteSpaces no escribe eso
+    return dentro.replace("''", "'")
+
+
+def _punto_en_listado(listado: str, container: Path) -> Path | None:
+    """Dónde dice la salida de `veracrypt --text --list` que está montado
+    `container`, o None.
+
+    El formato es el de `UserInterface::ListMountedVolumes()`
+    (src/Main/UserInterface.cpp, igual en los tags VeraCrypt_1.26.24 y
+    VeraCrypt_1.26.29 y en `master`), un registro por volumen:
+
+        <ranura>": " Q(ruta) (" " dispositivo | " - ") (" " Q(punto) | " - ") "\\n"
+
+    con Q = `QuoteSpaces()`. El dispositivo va sin comillas, pero es un nodo de
+    /dev y no lleva espacios. La ruta del anfitrión es absoluta
+    (CommandLineInterface.cpp la pasa por `wxFileName::Normalize` con
+    `wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS`, sin resolver enlaces). El punto
+    de montaje sale de `getmntent()` (src/Core/Unix/Linux/CoreLinux.cpp), que ya
+    ha convertido el `\\040` de /etc/mtab en un espacio de verdad: udisks monta
+    en `/media/<usuario>/<ETIQUETA>`, y una etiqueta como «USB DISK» llega
+    entre comillas en los dos campos.
+
+    Por eso la ruta no se trocea: se CODIFICA. Se escribe la nuestra como la
+    escribiría VeraCrypt y se mira si el registro empieza por ella y un espacio.
+    Con las comillas de dentro dobladas, una comilla seguida de un espacio solo
+    puede ser el cierre de ese campo, así que no hace falta adivinar dónde
+    acaba. El punto de montaje es el último campo, o sea el resto del registro,
+    y `-` sigue queriendo decir «sin montar».
+
+    Lo único que QuoteSpaces no escapa es el salto de línea: una ruta que lo
+    lleve parte su registro en dos, y entonces ya no se sabe dónde acaba. Por la
+    salida estándar solo salen registros —avisos y errores van a `wcerr`
+    (TextUserInterface.cpp)— y cada uno termina en '\\n', así que una línea que
+    no empieza por `<ranura>: `, o una última que no llega entera, invalida el
+    listado entero. Mejor contestar None, intentar el montaje y que VeraCrypt
+    diga lo suyo, que devolver una carpeta que no es."""
+    *registros, cola = listado.split("\n")
+    if cola:
+        return None                 # el último registro no llegó entero
+    propio = _entre_comillas(str(container)) + " "
+    punto = None
+    for registro in registros:
+        ranura, dos_puntos, campos = registro.partition(": ")
+        if not (dos_puntos and ranura.isascii() and ranura.isdigit()):
+            return None             # un registro partido por un salto de línea
+        if campos.startswith(propio):
+            _dispositivo, _, resto = campos[len(propio):].partition(" ")
+            punto = _sin_comillas(resto.strip(" "))
+    return Path(punto) if punto and punto != "-" else None
+
+
 def mounted_container(vc: dict, container: Path) -> Path | None:
     """Dónde está YA montado ese contenedor, o None.
 
     En POSIX se le pregunta a VeraCrypt: `--text --list` imprime, por volumen
     montado, la ruta del anfitrión y el punto de montaje
-    (CommandLineInterface.cpp registra `--list`). Respuesta exacta.
+    (CommandLineInterface.cpp registra `--list`). Respuesta exacta, siempre que
+    se lea con su formato: `_punto_en_listado()`.
 
     En Windows NO hay listado por línea de órdenes —el suyo vive en el driver— y
     hay que ir por el otro lado, con dos condiciones que tienen que darse las
@@ -495,14 +576,7 @@ def mounted_container(vc: dict, container: Path) -> Path | None:
                        timeout=30)
         except (OSError, subprocess.TimeoutExpired):
             return None
-        for linea in (res.stdout or "").splitlines():
-            # «1: /ruta/PRDRIVE.hc /dev/mapper/veracrypt1 /media/veracrypt1»,
-            # y un volumen sin montar deja un '-' en el último campo.
-            partes = linea.split()
-            if (len(partes) >= 4 and partes[1] == str(container)
-                    and partes[3] != "-"):
-                return Path(partes[3])
-        return None
+        return _punto_en_listado(res.stdout or "", container)
 
     if not en_uso(container):
         return None         # nadie lo tiene abierto: no está montado, y punto
