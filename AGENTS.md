@@ -872,9 +872,10 @@ block is (`cat.editable`), the proxy for "there is a connection".
 ## The fleet registry (`common/fleet.py` + `ui/tk_fleet.py`)
 
 `<catalog dir>/devices/<device id>.toml` — one small TOML per device (`id`,
-`nombre`, `version`, `plataformas`, `last_seen`, `last_result`), the id being the
-`id=` of `.prdrive/PRDRIVE`. **Each device rewrites only its own**, so there is
-nothing two devices can clobber and therefore no `catalog.push()` ceremony (that
+`nombre`, `version`, `plataformas`, `last_seen`, `last_result`, and optionally
+`equipos`, `equipos_visto`, `ultima_buena`), the id being the `id=` of
+`.prdrive/PRDRIVE`. **Each device rewrites only its own**, so there is nothing
+two devices can clobber and therefore no `catalog.push()` ceremony (that
 protects a file governing deletions; this is a presence note).
 
 - `fleet.olvidar(quien, raw)` is the **one** exception and deletes a note instead
@@ -894,6 +895,45 @@ protects a file governing deletions; this is a presence note).
 - `publicar()` and `leer()` **never raise**; a note is not the sync, and
   `parse()` tolerates a half-written or future-version one. Staleness is
   `DIAS_OBSOLETO = 7`; an unreadable date counts as stale.
+
+**Where it has been, and since when it fails (#17).** Everything is computed at
+publish time, with **no new write on the device**:
+
+- **`equipos` / `equipos_visto`** are two *parallel* string lists (latest first,
+  no repeats, at most `MAX_EQUIPOS = 5`), not a list of tables, because
+  `config_file.dumps_table()` writes only scalars and string arrays, and teaching
+  it inline tables would touch the serializer behind `sync_config.toml` and the
+  catalogue. `nota_de()` inherits the list from `publicado` in that device's
+  `state/fleet.json` (`<app_dir>/state/` when given an `app_dir`) **only if its
+  `id` matches** (a «Reinstalar desde cero» is another device), puts
+  `equipo_actual()` in front with the pass's `store.stamp()`, and leaves the list
+  alone when the hostname is empty. `parse()` pairs the lists by position: a
+  non-string name is dropped with its date, a missing date is `""`, and it cuts
+  to `MAX_EQUIPOS` on read. `_tabla()` is the one dict both `dumps()` and
+  `recordar()` write, so the throttle compares against what was published.
+- **The hostname is published as is, always, and the window says so** in its
+  header. Whoever can read `devices/` holds the remote's key and every synced
+  file; a machine's network name is far less. `equipos` means «where it could
+  publish from»: a failed publish records nothing, and the retry happens by
+  itself on the next pass because the host still differs from the last note's.
+- **`ultima_buena`** comes from `results.Fallo.buena` (the pair's `_buena()`),
+  read in the **same** `results.fallos()` call as `last_result` —
+  `fleet.estado(config)` returns both, so they cannot contradict each other. It
+  is the **oldest** `buena` among the failing pairs, or `SIN_BUENA` (`"ninguna"`)
+  when any has none. «None that is recorded», not «never»: a pair that never
+  succeeded and a record older than the `buena` key look the same.
+- **`_sin_fecha()`** adds only the current host (`equipos[0]`) and
+  `ultima_buena`: same machine → the 6 h rhythm is unchanged; another machine →
+  published on the first pass; `ultima_buena` only moves with `last_result`. A
+  `publicado` from before these keys publishes once after updating.
+- **The card** (`tk_fleet.ficha()`, pure, no Tk) sits under the table, in the
+  same window — a fourth-level modal was the alternative. The table dropped
+  «Versión» and «Para» into it. Its space is **reserved for the largest card in
+  the fleet** (`reservar()` paints each one and measures; the «Equipos» block
+  always holds `MAX_EQUIPOS` lines): the `Visor` fits once, on opening, and
+  without that, picking a longer card grew the content and brought up a
+  scrollbar that was not there. `test_tk_medidas` walks the whole list to hold
+  that.
 
 ## The flags editor (`ui/flags_editor.py`)
 

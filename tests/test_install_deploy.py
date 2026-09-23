@@ -633,6 +633,8 @@ def runner_flota(cmd, **kwargs):
 
 rc_flota = remote.Rclone(binary="RCLONE", conf="C.conf", runner=runner_flota,
                          remote_name="nas")
+# El nombre del equipo que ejecuta los tests no se puede afirmar: se fija.
+fleet.equipo_actual = lambda: "PORTATIL-PERE"
 destino = deploy.publish_fleet_note(rc_flota, flota, "nas:/prdrive-catalog/pairs.toml")
 c("la nota va al fichero del id de ESTE dispositivo",
   destino, "nas:/prdrive-catalog/devices/c0ffee.toml")
@@ -644,6 +646,10 @@ c("el dispositivo se queda con su nombre escrito",
   apuntado["nombre"], fleet.nombre_por_defecto())
 c("y con lo último publicado, para no repetirlo en la primera pasada",
   apuntado["publicado"]["last_result"], deploy.NOTA_INICIAL)
+c("el equipo que lo aprovisiona es el primero donde ha estado",
+  apuntado["publicado"]["equipos"], ["PORTATIL-PERE"])
+c("y una nota recién hecha no dice nada de pasadas buenas",
+  "ultima_buena" in apuntado["publicado"], False)
 c("el temporal de la nota no se queda por ahí", subido.exists(), False)
 
 sin_control = tmpdir()

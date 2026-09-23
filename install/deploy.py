@@ -735,7 +735,10 @@ def publish_fleet_note(rclone: Rclone, device_root: Path | str,
 
     De paso deja escrito en el dispositivo cómo se llama y qué se ha publicado
     (`state/fleet.json`), que es lo que hace que el nombre no cambie al cambiar
-    de ordenador y que la primera pasada no repita la misma nota."""
+    de ordenador y que la primera pasada no repita la misma nota.
+
+    El equipo que lo aprovisiona entra como el primero donde ha estado, que es
+    verdad; la lista la sigue después cada pasada (`fleet.nota_de()`)."""
     app = app_dir(device_root)
     estado = app / "state"
     como_se_llama = fleet.nombre(estado)

@@ -16,6 +16,7 @@ Las ventanas se crean ocultas y no se entra nunca en el bucle de eventos.
 
 import subprocess
 import sys
+from datetime import datetime, timedelta
 
 from _harness import Checks, sandbox
 
@@ -395,12 +396,14 @@ FLOTA = [fleet.Dispositivo(id="yo", nombre="este", version="0.1.4",
                            last_seen="2026-01-01 00:00:00", last_result="ok"),
          fleet.Dispositivo(id="otro", nombre="el del trabajo", version="0.1.2",
                            plataformas=("linux-x64",),
-                           last_seen="2026-01-02 00:00:00", last_result="ok")]
+                           last_seen="2026-01-02 00:00:00", last_result="ok",
+                           equipos=(fleet.Equipo("OFICINA-07", "2026-01-02 00:00:00"),))]
 publicadas: list[tuple] = []
 guardados: list[str] = []
 
 fleet.leer = lambda raw=None: (list(FLOTA), None)
 fleet.device_id = lambda app_dir=None: "yo"
+fleet.equipo_actual = lambda: "PORTATIL"
 fleet.nombre = lambda state_dir=None: "este"
 fleet.guardar_nombre = lambda texto, state_dir=None: bool(guardados.append(texto)) or True
 fleet.publicar = lambda cfg=None, raw=None, forzar=False: bool(
@@ -423,7 +426,50 @@ with sandbox():
     tk_fleet.open_dialog(raiz, cfg, dict(BASE))
     c("la flota enseña un dispositivo por nota", sorted(filas), ["otro", "yo"])
     c("y marca cuál es este", (filas["yo"][0], filas["otro"][0]), ("✓", ""))
-    c("con su versión y sus plataformas", filas["otro"][2:4], ["0.1.2", "linux-x64"])
+    c("la tabla se queda en cuándo se le vio y cómo acabó (lo demás, a la ficha)",
+      (len(filas["otro"]), filas["otro"][3]), (4, "ok"))
+
+# --- la ficha: qué dice, sin dibujarla -----------------------------------------
+Linea = tk_fleet.Linea
+AYER = f"{datetime.now() - timedelta(days=1):%Y-%m-%d %H:%M:%S}"
+COMPLETA = fleet.Dispositivo(
+    id="3f9c1a2b77", nombre="el del trabajo", version="0.2.1",
+    plataformas=("windows-x64", "linux-x64"), last_seen=AYER,
+    last_result="fallo en fotos",
+    equipos=(fleet.Equipo("PORTATIL", AYER),
+             fleet.Equipo("OFICINA-07", "2026-09-02 09:12:40")),
+    ultima_buena="2026-09-01 08:00:00")
+apartados = {f.rotulo: f for f in tk_fleet.ficha(COMPLETA, "OFICINA-07")}
+c("la ficha tiene sus cuatro apartados, en orden", list(apartados),
+  list(tk_fleet.ROTULOS_FICHA))
+c("con la versión y las plataformas",
+  (apartados["Versión"].lineas, apartados["Para"].lineas),
+  ((Linea("0.2.1"),), (Linea("windows-x64, linux-x64"),)))
+c("el estado dice desde cuándo falla, en pista", apartados["Estado"].lineas,
+  (Linea("fallo en fotos"), Linea("Última pasada buena: 2026-09-01", pista=True)))
+c("los equipos, el más reciente primero, y marcado el de aquí",
+  [ln.texto for ln in apartados["Equipos"].lineas],
+  ["PORTATIL", "OFICINA-07 · este equipo"])
+c("con la fecha de la columna «Visto»: relativa, o entera si es vieja",
+  [ln.fecha for ln in apartados["Equipos"].lineas], ["ayer", "2026-09-02"])
+c("y el sitio de todos los que caben, aunque haya menos",
+  apartados["Equipos"].reserva, fleet.MAX_EQUIPOS)
+c("sin saber el equipo de aquí no se marca ninguno",
+  [ln.texto for ln in tk_fleet.ficha(COMPLETA, "")[3].lineas],
+  ["PORTATIL", "OFICINA-07"])
+
+ninguna = {f.rotulo: f for f in tk_fleet.ficha(
+    COMPLETA._replace(ultima_buena=fleet.SIN_BUENA), "")}
+c("de una pareja sin pasada buena que conste, se dice eso",
+  ninguna["Estado"].lineas[1], Linea(tk_fleet.SIN_BUENA, pista=True))
+
+vieja = {f.rotulo: f for f in tk_fleet.ficha(fleet.Dispositivo(
+    id="v", nombre="de la 0.2.3", version="0.2.3", plataformas=(),
+    last_seen=AYER, last_result="ok"), "PORTATIL")}
+c("una nota vieja: sin equipos, y se dice por qué", vieja["Equipos"].lineas,
+  (Linea(tk_fleet.SIN_EQUIPOS, pista=True),))
+c("un estado bueno no habla de pasadas buenas", vieja["Estado"].lineas, (Linea("ok"),))
+c("y sin plataformas, una raya", vieja["Para"].lineas, (Linea("—"),))
 
 # Quitar de la lista la nota de OTRO: lo que se comprueba aquí es que la ventana
 # pide quitar el que está elegido, y que sobre este mismo dispositivo el botón ni
@@ -481,6 +527,57 @@ with sandbox():
       "disabled")
     c("y sobre otro, encendido", apagados["otro"], "normal")
     c("elegir una fila no quita nada por su cuenta", olvidados, ["otro"])
+
+
+def textos(ventana):
+    """El texto de todas las etiquetas que hay ahora en la ventana."""
+    salida, pila = [], [ventana]
+    while pila:
+        w = pila.pop()
+        pila += list(w.winfo_children())
+        if isinstance(w, ttk.Label):
+            salida.append(str(w.cget("text")))
+    return salida
+
+
+with sandbox():
+    cfg = preparar()
+    fichas = {}
+
+    def mirar_fichas(self, *_a, **_k):
+        """Elige cada fila y apunta lo que dice la ficha."""
+        arbol = buscar(self, ttk.Treeview)
+        for iid in ("otro", "yo"):
+            elegir(self, arbol, iid)
+            fichas[iid] = textos(self)
+
+    tk.Toplevel.wait_window = mirar_fichas
+    tk_fleet.open_dialog(raiz, cfg, dict(BASE))
+    c("la ficha es la del elegido",
+      ("id otro" in fichas["otro"], "id otro" in fichas["yo"]), (True, False))
+    c("elegir otra fila la repinta",
+      ("OFICINA-07" in fichas["otro"], "OFICINA-07" in fichas["yo"]), (True, False))
+    c("y de una nota vieja dice que no consta",
+      tk_fleet.SIN_EQUIPOS in fichas["yo"], True)
+
+# Sin nadie en la lista no hay nada elegido, y la ficha no se enseña: en su
+# sitio va el aviso de que todavía no ha dejado nota nadie.
+with sandbox():
+    cfg = preparar()
+    vacia: dict = {}
+
+    def mirar_vacia(self, *_a, **_k):
+        aviso = buscar(self, ttk.Label, tk_fleet.SIN_NOTA)
+        vacia["aviso"], vacia["fila"] = aviso, aviso.master.grid_slaves(row=2)
+
+    fleet.leer = lambda raw=None: ([], None)
+    tk.Toplevel.wait_window = mirar_vacia
+    try:
+        tk_fleet.open_dialog(raiz, cfg, dict(BASE))
+    finally:
+        fleet.leer = lambda raw=None: (list(FLOTA), None)
+    c("con la flota vacía la ficha no se enseña, solo el aviso",
+      vacia["fila"], [vacia["aviso"]])
 
 with sandbox():
     cfg = preparar()

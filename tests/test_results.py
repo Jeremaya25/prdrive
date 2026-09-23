@@ -11,7 +11,7 @@ import sys
 
 from _harness import Checks, mkcfg, sandbox
 
-from common import model, results
+from common import model, results, store
 
 c = Checks("última pasada de cada pareja (common/results.py)")
 
@@ -43,6 +43,21 @@ with sandbox():
       [f.pareja for f in results.fallos(cfg)], ["docs"])
     c("una pareja que ya no está en el config no cuenta",
       results.fallos(mkcfg(["notas"])), [])
+
+    # Con el fallo viaja la última pasada buena de esa pareja: es lo que dice
+    # desde cuándo falla (la ficha de la flota). `fotos` fue bien más arriba.
+    buena_fotos = store.read_json(results.ruta_estado())["parejas"]["fotos"]["cuando"]
+    results.apuntar("fotos", 1, None)
+    por_pareja = {f.pareja: f for f in results.fallos(cfg)}
+    c("el fallo recuerda la última pasada buena", por_pareja["fotos"].buena, buena_fotos)
+    c("y de una que nunca fue bien no consta ninguna", por_pareja["docs"].buena, None)
+
+    # Un registro escrito antes de que existiera la clave `buena`: de un fallo
+    # así no se sabe cuándo fue bien, y no se inventa.
+    store.write_json(results.ruta_estado(), {"parejas": {"notas": {
+        "cuando": "2026-01-01 00:00:00", "codigo": 1, "log": None}}})
+    c("un fallo de un registro antiguo no trae pasada buena",
+      [f.buena for f in results.fallos(cfg)], [None])
 
     results.ruta_estado().write_text("no es json", encoding="utf-8")
     c("un registro ilegible no son fallos", results.fallos(cfg), [])

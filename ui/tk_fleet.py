@@ -17,9 +17,16 @@ son ficheros separados—, y quitarla no es escribirla: es borrar un rastro que 
 dueño vuelve a dejar en cuanto se enchufa. El contenido de una nota lo sigue
 decidiendo solo quien la firma, y lo único que se puede *cambiar* desde aquí es
 el nombre de ESTE dispositivo.
+
+Debajo de la lista va la **ficha** del elegido: versión, plataformas, desde
+cuándo falla y en qué equipos ha estado. En la misma ventana y no en otra: sería
+el tercer modal en fila (principal → Parejas → Dispositivos → Ficha). Lo que dice
+la ficha lo decide `ficha()`, que no toca Tk; aquí solo se dibuja.
 """
 
 from __future__ import annotations
+
+from typing import NamedTuple
 
 from common import fleet
 from common.model import Config
@@ -27,32 +34,78 @@ from common.model import Config
 from . import cuando_sello, icons, theme
 from .tk import TITLE, cabecera, cuerpo_visible, modal, mostrar
 
+# La versión y las plataformas se fueron a la ficha: en la tabla queda lo que se
+# compara de un vistazo entre dispositivos.
 COLUMNAS = [
     ("aqui", "Este", 46),
-    ("nombre", "Dispositivo", 180),
-    ("version", "Versión", 90),
-    ("plataformas", "Para", 220),
-    ("visto", "Visto", 90),
-    ("estado", "Última pasada", 190),
+    ("nombre", "Dispositivo", 250),
+    ("visto", "Visto", 100),
+    ("estado", "Última pasada", 300),
 ]
 
 SIN_NOTA = ("Todavía no hay ningún dispositivo apuntado. Cada uno deja su nota al "
             "sincronizar, así que aparecerán aquí en cuanto se usen.")
 
+ROTULOS_FICHA = ("Versión", "Para", "Estado", "Equipos")
+ESTE_EQUIPO = " · este equipo"
+SIN_EQUIPOS = "No consta: las versiones anteriores no lo apuntaban."
+SIN_BUENA = "No consta ninguna pasada buena."
 
-def _visto(disp: fleet.Dispositivo) -> str:
-    """Cuándo se le vio. Los de siempre con el formato de la ventana («ayer»,
-    «08:20»); los que llevan una semana o más, con la fecha entera.
+
+class Linea(NamedTuple):
+    """Una línea de la ficha."""
+    texto: str
+    fecha: str = ""             # a la derecha, en mono: cuándo
+    pista: bool = False         # lo que acompaña al dato, no el dato
+
+
+class Fila(NamedTuple):
+    """Un apartado de la ficha: su rótulo y sus líneas."""
+    rotulo: str
+    lineas: tuple[Linea, ...]
+    # Las líneas que se reservan aunque no haya tantas. Es lo que hace que la
+    # ficha mida lo mismo con un equipo que con cinco.
+    reserva: int = 0
+
+
+def _fecha(sello: str) -> str:
+    """Una fecha de la nota. Las recientes, con el formato de la ventana
+    («ayer», «08:20»); las de hace una semana o más, con la fecha entera.
 
     Aquí sí hace falta el año, a diferencia del resto de la aplicación: entre un
     dispositivo visto hace tres semanas y otro visto hace dos años, un «12/09» a
     secas no distingue nada, y distinguirlos es justo para lo que se abre esta
     lista."""
-    if not disp.last_seen:
+    if not sello:
         return "—"
-    if disp.obsoleto():
-        return disp.last_seen[:10]
-    return cuando_sello(disp.last_seen) or disp.last_seen[:10]
+    if fleet.sello_obsoleto(sello):
+        return sello[:10]
+    return cuando_sello(sello) or sello[:10]
+
+
+def ficha(disp: fleet.Dispositivo, equipo_aqui: str) -> list[Fila]:
+    """Lo que dice la ficha de un dispositivo, apartado por apartado.
+
+    `equipo_aqui` es el nombre de red de este equipo: la entrada que coincide se
+    marca, y eso contesta sin más si el otro pendrive ha estado en este
+    ordenador."""
+    estado = [Linea(disp.last_result)]
+    if disp.ultima_buena == fleet.SIN_BUENA:
+        estado.append(Linea(SIN_BUENA, pista=True))
+    elif disp.ultima_buena:
+        estado.append(Linea(f"Última pasada buena: {_fecha(disp.ultima_buena)}",
+                            pista=True))
+    equipos = []
+    for equipo in disp.equipos:
+        marca = ESTE_EQUIPO if equipo_aqui and equipo.nombre == equipo_aqui else ""
+        equipos.append(Linea(equipo.nombre + marca, _fecha(equipo.visto)))
+    if not equipos:
+        equipos.append(Linea(SIN_EQUIPOS, pista=True))
+    version, para, est, eqs = ROTULOS_FICHA
+    return [Fila(version, (Linea(disp.version),)),
+            Fila(para, (Linea(", ".join(disp.plataformas) or "—"),)),
+            Fila(est, tuple(estado)),
+            Fila(eqs, tuple(equipos), reserva=fleet.MAX_EQUIPOS)]
 
 
 def _tono(disp: fleet.Dispositivo) -> str:
@@ -79,11 +132,14 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> bool:
     arriba = ttk.Frame(marco)
     arriba.grid(row=0, column=0, sticky="ew")
     arriba.columnconfigure(0, weight=1)
+    # Lo de los equipos se dice aquí, a la vista, y no en una ayuda: es el nombre
+    # de red de los ordenadores de cada uno, y se publica siempre.
     cabecera(arriba, "Dispositivos",
              "Todos los que comparten este catálogo. Cada uno deja una nota al "
-             "sincronizar —quién es, qué versión lleva y cómo le fue—, y nadie "
-             "escribe la de otro. Los que llevan más de una semana sin aparecer "
-             "salen apagados.",
+             "sincronizar —quién es, qué versión lleva, cómo le fue y en qué "
+             "equipos se ha enchufado, por su nombre de red—, y nadie escribe la "
+             "de otro. Los que llevan más de una semana sin aparecer salen "
+             "apagados.",
              ancho=620, estilo="Dialogo.TLabel").grid(row=0, column=0, sticky="w")
 
     donde = ttk.Frame(arriba)
@@ -114,6 +170,66 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> bool:
     vacio = ttk.Label(marco, text=SIN_NOTA, style="Pista.TLabel",
                       wraplength=theme.medida(620), justify="left")
 
+    # --- la ficha del elegido ------------------------------------------------
+    # `hueco` es el sitio que se le reserva y `hoja` lo que se pinta dentro. Van
+    # separados porque el sitio se mide para la ficha más grande de la flota
+    # (`reservar()`). El `Visor` encaja una sola vez, al abrir; sin la reserva,
+    # elegir una ficha más larga que la primera hacía crecer el contenido y
+    # sacaba una barra de desplazamiento que al abrir no estaba.
+    hueco = ttk.Frame(marco)
+    hueco.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+    hueco.columnconfigure(0, weight=1)
+    hoja = ttk.Frame(hueco, style="Card.TFrame", padding=(14, 10, 14, 12))
+    hoja.grid(row=0, column=0, sticky="nsew")
+    canalon = theme.ancho_rotulo(marco, *ROTULOS_FICHA) + icons.px(marco, 14)
+    hoja.columnconfigure(0, minsize=canalon)
+    hoja.columnconfigure(1, weight=1)
+    aqui = fleet.equipo_actual()
+
+    def pintar_ficha(disp: fleet.Dispositivo) -> None:
+        for widget in hoja.winfo_children():
+            widget.destroy()
+        ttk.Label(hoja, text=disp.nombre, style="Card.Fuerte.TLabel",
+                  wraplength=theme.medida(460), justify="left").grid(
+            row=0, column=0, columnspan=2, sticky="w")
+        # El id corto: dos dispositivos aprovisionados en el mismo equipo
+        # empiezan con el mismo nombre, y el id es lo único que los distingue
+        # (y el nombre de su fichero en `devices/`).
+        ttk.Label(hoja, text=f"id {disp.id[:8]}", style="Card.MonoPista.TLabel").grid(
+            row=0, column=2, sticky="ne", padx=(12, 0))
+        fila = 1
+        for apartado in ficha(disp, aqui):
+            ttk.Label(hoja, text=theme.rotulo(apartado.rotulo),
+                      style="Card.Rotulo.TLabel").grid(row=fila, column=0,
+                                                       sticky="nw", pady=(9, 0))
+            lineas = list(apartado.lineas)
+            lineas += [Linea(" ")] * (apartado.reserva - len(lineas))
+            for i, linea in enumerate(lineas):
+                aire = (8, 0) if i == 0 else (2, 0)
+                ttk.Label(hoja, text=linea.texto, justify="left",
+                          style="Card.Pista.TLabel" if linea.pista else "Card.TLabel",
+                          wraplength=theme.medida(440)).grid(
+                    row=fila, column=1, sticky="w", pady=aire)
+                if linea.fecha:
+                    ttk.Label(hoja, text=linea.fecha, style="Card.MonoPista.TLabel").grid(
+                        row=fila, column=2, sticky="e", padx=(12, 0), pady=aire)
+                fila += 1
+
+    def reservar() -> None:
+        """El sitio de la ficha: el que pide la más grande de esta flota.
+
+        Los equipos ya reservan siempre sus `MAX_EQUIPOS` líneas, pero hay texto
+        que sí cambia de alto —un «fallo en a, b, c…» que parte en dos líneas,
+        un nombre largo—, y medirlo es la única forma de no suponerlo."""
+        ancho = alto = 0
+        for disp in estado["flota"]:
+            pintar_ficha(disp)
+            hoja.update_idletasks()
+            ancho = max(ancho, hoja.winfo_reqwidth())
+            alto = max(alto, hoja.winfo_reqheight())
+        hueco.columnconfigure(0, minsize=ancho)
+        hueco.rowconfigure(0, minsize=alto)
+
     def pintar_chip(texto: str, tipo: str, icono: str) -> None:
         if chip["widget"] is not None:
             chip["widget"].destroy()
@@ -132,19 +248,23 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> bool:
         for disp in flota:
             tree.insert("", "end", iid=disp.id, tags=(_tono(disp),),
                         values=("✓" if disp.id == yo else "",
-                                disp.nombre, disp.version,
-                                ", ".join(disp.plataformas) or "—",
-                                _visto(disp),
+                                disp.nombre, _fecha(disp.last_seen),
                                 disp.last_result))
-        tree.configure(height=min(12, max(4, len(flota))))
+        # Más baja que antes: la ficha se lleva parte de la ventana.
+        tree.configure(height=min(8, max(3, len(flota))))
+        reservar()
         if flota:
             vacio.grid_remove()
             tree.selection_set(flota[0].id)
         else:
             vacio.grid(row=2, column=0, sticky="w", pady=(10, 0))
         renombrar.configure(state="normal" if yo else "disabled")
-        repasar_quitar()
+        repasar()
         pie_nota.configure(text=nota or (aviso or ""))
+        # Releer puede traer una ficha más grande que las que había al abrir:
+        # entonces el recuadro crece, en vez de meter la ventana tras una barra.
+        if dlg.winfo_ismapped():
+            dlg.visor.crecer(dlg)
 
     def elegido() -> fleet.Dispositivo | None:
         seleccion = tree.selection()
@@ -152,11 +272,19 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> bool:
             return None
         return next((d for d in estado["flota"] if d.id == seleccion[0]), None)
 
-    def repasar_quitar(_evento=None) -> None:
-        """Quitar de la lista se apaga sobre este mismo dispositivo. `fleet` lo
-        rechaza igualmente —la regla es suya—, pero un botón encendido que
-        siempre contesta que no es peor que uno apagado."""
+    def repasar(_evento=None) -> None:
+        """Lo que cuelga de la fila elegida: su ficha, y el botón de quitar.
+
+        Sin nada elegido —flota vacía, o recién quitado uno— la ficha se
+        esconde entera. Quitar de la lista se apaga sobre este mismo
+        dispositivo: `fleet` lo rechaza igualmente —la regla es suya—, pero un
+        botón encendido que siempre contesta que no es peor que uno apagado."""
         disp = elegido()
+        if disp is None:
+            hueco.grid_remove()
+        else:
+            pintar_ficha(disp)
+            hueco.grid()
         quitar.configure(state="normal" if disp is not None and disp.id != yo
                          else "disabled")
 
@@ -215,7 +343,7 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> bool:
                         command=quitar_de_la_lista, state="disabled")
     theme.boton_icono(quitar, "trash", theme.PELIGRO, theme.SUPERFICIE)
     quitar.grid(row=0, column=1, sticky="w", padx=(6, 0))
-    tree.bind("<<TreeviewSelect>>", repasar_quitar)
+    tree.bind("<<TreeviewSelect>>", repasar)
     releer = ttk.Button(acciones, text="Releer", style="Quiet.TButton",
                         command=lambda: refrescar("Flota releída."))
     theme.boton_icono(releer, "reload", theme.ACENTO, theme.PAPEL)

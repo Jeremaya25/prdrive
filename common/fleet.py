@@ -15,8 +15,21 @@ dispositivos puedan pisarse, y por eso tampoco hay aquí la ceremonia de
 gobierna borrados en toda la flota, y esto es una nota de presencia.
 
 Lo que se publica es lo que sirve para mirar la lista y decidir: quién es
-(`id`, `nombre`), qué lleva (`version`, `plataformas`) y cómo está (`last_seen`,
-`last_result`). Nada de rutas, ni de parejas, ni de nada que no se pueda enseñar.
+(`id`, `nombre`), qué lleva (`version`, `plataformas`), cómo está (`last_seen`,
+`last_result` y, si falla, `ultima_buena`) y dónde ha estado (`equipos`). Nada
+de rutas ni de parejas.
+
+Lo único de fuera del dispositivo que viaja es el **nombre de red de los
+equipos** donde se ha enchufado, y es a propósito: sin él no hay respuesta para
+«¿dónde estaba el otro pendrive?». Quien puede leer `devices/` tiene la clave
+del remoto y puede leer todo lo que se sincroniza; el nombre de un equipo es
+mucho menos que eso. La ventana lo dice.
+
+`equipos` es «desde dónde ha podido publicar», no «dónde se ha enchufado»: si la
+publicación falla no se apunta nada, y el reintento sale solo en la pasada
+siguiente, porque el equipo sigue sin ser el de la última nota. Un equipo donde
+nunca hubo red no aparece, y es correcto: allí tampoco se sincronizó nada,
+porque el remoto *es* la red.
 
 Se escribe desde dos sitios y son los dos únicos: `sync.py` al terminar una
 pasada de verdad, e `install/` al aprovisionar (por su propio rclone, que en ese
@@ -59,6 +72,15 @@ HORAS_ENTRE_NOTAS = 6
 
 RESULTADO_OK = "ok"
 
+# Cuántos equipos recuerda la nota. Los últimos, que son los que contestan
+# «¿dónde estaba?»; con un tope, la nota no crece con los años.
+MAX_EQUIPOS = 5
+
+# `ultima_buena` cuando de alguna pareja que falla no consta ninguna pasada
+# buena. «Ninguna que conste», no «nunca»: `results` no distingue una pareja que
+# jamás fue bien de un registro escrito antes de que existiera la clave `buena`.
+SIN_BUENA = "ninguna"
+
 # El código con el que rclone dice «ese directorio no existe» (ver la tabla de
 # códigos de salida de su documentación: 0 bien, 1 uso, 2 error sin clasificar,
 # 3 directorio no encontrado). Aquí no es un error: es una flota en la que
@@ -72,6 +94,12 @@ CABECERA = (
 )
 
 
+class Equipo(NamedTuple):
+    """Un equipo desde el que el dispositivo ha publicado su nota."""
+    nombre: str                 # `socket.gethostname()`, tal cual
+    visto: str                  # `store.stamp()`, o '' si la nota no lo dice
+
+
 class Dispositivo(NamedTuple):
     """Un dispositivo de la flota, tal y como él mismo se ha descrito."""
     id: str
@@ -80,16 +108,18 @@ class Dispositivo(NamedTuple):
     plataformas: tuple[str, ...]
     last_seen: str              # con el formato de `store.stamp()`
     last_result: str
+    # El más reciente primero, sin repetir, como mucho `MAX_EQUIPOS`.
+    equipos: tuple[Equipo, ...] = ()
+    # Solo si `last_result` es un fallo: desde cuándo no consta una pasada
+    # buena (`store.stamp()`), o `SIN_BUENA`.
+    ultima_buena: str = ""
 
     @property
     def bien(self) -> bool:
         return self.last_result == RESULTADO_OK
 
     def visto(self) -> datetime | None:
-        try:
-            return datetime.strptime(self.last_seen, "%Y-%m-%d %H:%M:%S")
-        except (TypeError, ValueError):
-            return None
+        return _momento(self.last_seen)
 
     def obsoleto(self, ahora: datetime | None = None) -> bool:
         """¿Hace tanto que no se sabe de él que hay que mirarlo?
@@ -97,10 +127,24 @@ class Dispositivo(NamedTuple):
         Sin fecha legible cuenta como obsoleto: lo que se pregunta es «¿consta
         que este dispositivo se haya usado esta semana?», y de uno que no dice
         cuándo no consta."""
-        momento = self.visto()
-        if momento is None:
-            return True
-        return (ahora or datetime.now()) - momento > timedelta(days=DIAS_OBSOLETO)
+        return sello_obsoleto(self.last_seen, ahora)
+
+
+def _momento(sello: str) -> datetime | None:
+    try:
+        return datetime.strptime(sello, "%Y-%m-%d %H:%M:%S")
+    except (TypeError, ValueError):
+        return None
+
+
+def sello_obsoleto(sello: str, ahora: datetime | None = None) -> bool:
+    """¿Es esa fecha de hace más de `DIAS_OBSOLETO`? La regla de
+    `Dispositivo.obsoleto()`, para cualquier fecha de una nota: la ventana la
+    usa también con la de cada equipo."""
+    momento = _momento(sello)
+    if momento is None:
+        return True
+    return (ahora or datetime.now()) - momento > timedelta(days=DIAS_OBSOLETO)
 
 
 # ---------------------------------------------------------------------------
@@ -147,6 +191,28 @@ def fichero(endpoint_catalogo: str, device_id: str) -> str:
 # El texto de una nota
 # ---------------------------------------------------------------------------
 
+def _tabla(disp: Dispositivo) -> dict[str, Any]:
+    """La nota como dict: lo que se publica y lo que el dispositivo recuerda
+    haber publicado, que tienen que ser lo mismo o el freno compararía con otra
+    cosa.
+
+    Los equipos van en DOS listas paralelas y no en una lista de tablas porque
+    `config_file.dumps_table()` solo escribe escalares y listas de cadenas, y
+    enseñarle tablas en línea sería tocar el módulo que escribe el config y el
+    catálogo. Lo que está vacío no se escribe: una nota sin fallo no dice nada
+    de pasadas buenas."""
+    tabla: dict[str, Any] = {
+        "id": disp.id, "nombre": disp.nombre, "version": disp.version,
+        "plataformas": list(disp.plataformas),
+        "last_seen": disp.last_seen, "last_result": disp.last_result}
+    if disp.equipos:
+        tabla["equipos"] = [e.nombre for e in disp.equipos]
+        tabla["equipos_visto"] = [e.visto for e in disp.equipos]
+    if disp.ultima_buena:
+        tabla["ultima_buena"] = disp.ultima_buena
+    return tabla
+
+
 def dumps(disp: Dispositivo) -> str:
     """La nota como texto TOML, ya releída.
 
@@ -154,13 +220,31 @@ def dumps(disp: Dispositivo) -> str:
     config— y se vuelve a parsear antes de devolverla, por lo mismo que
     `dumps_checked`: más vale no publicar nada que publicar algo que no se relee
     igual."""
-    tabla = {"id": disp.id, "nombre": disp.nombre, "version": disp.version,
-             "plataformas": list(disp.plataformas),
-             "last_seen": disp.last_seen, "last_result": disp.last_result}
-    texto = CABECERA + config_file.dumps_table(tabla) + "\n"
+    texto = CABECERA + config_file.dumps_table(_tabla(disp)) + "\n"
     if parse(texto) != disp:
         raise model.ConfigError("La nota generada no se relee igual. No se publica.")
     return texto
+
+
+def _equipos(nombres: Any, vistos: Any) -> tuple[Equipo, ...]:
+    """Las dos listas paralelas de una nota, emparejadas por posición.
+
+    Con la tolerancia del resto de `parse()`: la puede haber escrito otra
+    versión, o nadie (una nota vieja no las trae). Una entrada de `equipos` que
+    no sea un nombre se descarta, y su fecha con ella; una fecha que falte o no
+    sea texto se deja vacía; y lo que pase del tope se corta aquí, no se confía
+    en que quien escribió lo respetara."""
+    if not isinstance(nombres, (list, tuple)):
+        return ()
+    if not isinstance(vistos, (list, tuple)):
+        vistos = ()
+    salida = []
+    for i, nombre in enumerate(nombres):
+        if not isinstance(nombre, str) or not nombre:
+            continue
+        visto = vistos[i] if i < len(vistos) and isinstance(vistos[i], str) else ""
+        salida.append(Equipo(nombre, visto))
+    return tuple(salida[:MAX_EQUIPOS])
 
 
 def parse(texto: str, device_id: str = "") -> Dispositivo | None:
@@ -192,7 +276,9 @@ def parse(texto: str, device_id: str = "") -> Dispositivo | None:
         version=cadena("version") or "desconocida",
         plataformas=tuple(str(p) for p in plataformas),
         last_seen=cadena("last_seen"),
-        last_result=cadena("last_result") or "desconocido")
+        last_result=cadena("last_result") or "desconocido",
+        equipos=_equipos(datos.get("equipos"), datos.get("equipos_visto")),
+        ultima_buena=cadena("ultima_buena"))
 
 
 # ---------------------------------------------------------------------------
@@ -231,13 +317,21 @@ def device_id(app_dir: Path | str | None = None) -> str:
     return ""
 
 
+def equipo_actual() -> str:
+    """El nombre de red del equipo donde está enchufado ahora, o '' si no se sabe.
+
+    Función de módulo para que los tests la sustituyan: el nombre del equipo que
+    ejecuta los tests no es algo que un test pueda afirmar."""
+    try:
+        return socket.gethostname() or ""
+    except OSError:
+        return ""
+
+
 def nombre_por_defecto() -> str:
     """El nombre del equipo que lo aprovisiona. Es un punto de partida
     reconocible, y lo primero que invita a cambiar por «el pendrive azul»."""
-    try:
-        return socket.gethostname() or APP_NAME
-    except OSError:
-        return APP_NAME
+    return equipo_actual() or APP_NAME
 
 
 def nombre(state_dir: Path | str | None = None) -> str:
@@ -284,37 +378,94 @@ def plataformas_instaladas(app_dir: Path | str | None = None) -> tuple[str, ...]
     return tuple(salida)
 
 
-def resultado(config: model.Config | None) -> str:
-    """Cómo acabó lo último: 'ok', o qué parejas siguen fallando."""
+def estado(config: model.Config | None) -> tuple[str, str]:
+    """Cómo acabó lo último y, si fue mal, desde cuándo: `(last_result,
+    ultima_buena)`.
+
+    Las dos cosas salen de UNA lectura de `results.fallos()`. Leídas por
+    separado, una pasada que terminara entre las dos lecturas las haría
+    contradecirse: una nota que dice 'ok' con fecha de última buena, o un fallo
+    sin ella.
+
+    La fecha es la pasada buena MÁS ANTIGUA de las parejas que fallan: lo que se
+    pregunta es desde cuándo hay algo roto, y eso lo marca la que más tiempo
+    lleva rota. Si de alguna no consta ninguna, eso es lo que se dice
+    (`SIN_BUENA`), en vez de callarlo tras la fecha de otra."""
     if config is None:
-        return RESULTADO_OK
+        return RESULTADO_OK, ""
     try:
         fallos = results.fallos(config)
     except Exception:                                    # noqa: BLE001
-        return "desconocido"
+        return "desconocido", ""
     if not fallos:
-        return RESULTADO_OK
-    return "fallo en " + ", ".join(f.pareja for f in fallos)
+        return RESULTADO_OK, ""
+    last_result = "fallo en " + ", ".join(f.pareja for f in fallos)
+    buenas = [f.buena for f in fallos]
+    if not all(buenas):
+        return last_result, SIN_BUENA
+    # `store.stamp()` se ordena como texto: año, mes, día, hora.
+    return last_result, min(buenas)
+
+
+def _estado_de(app_dir: Path | str | None) -> Path:
+    """El `fleet.json` de ese dispositivo: el de este, o el de uno que no es
+    este. `<app_dir>/state/` guarda con `app_dir` la misma relación que
+    `model.STATE_DIR` con `model.APP_DIR`."""
+    return _estado(Path(app_dir) / "state" if app_dir is not None else None)
+
+
+def _equipos_previos(app_dir: Path | str | None,
+                     identificador: str) -> tuple[Equipo, ...]:
+    """Los equipos de la última nota que ese dispositivo recuerda haber publicado.
+
+    Solo si era de este mismo id: «Reinstalar desde cero» lo renueva, y para la
+    flota eso es otro dispositivo, que empieza de cero."""
+    anterior = store.read_json(_estado_de(app_dir)).get("publicado")
+    if not isinstance(anterior, dict) or anterior.get("id") != identificador:
+        return ()
+    return _equipos(anterior.get("equipos"), anterior.get("equipos_visto"))
+
+
+def _con_equipo(previos: tuple[Equipo, ...], aqui: str,
+                cuando: str) -> tuple[Equipo, ...]:
+    """El equipo de ahora delante, sin repetirlo, y cortado al tope. Sin nombre
+    de equipo no hay nada que poner delante: la lista se queda como estaba."""
+    if not aqui:
+        return previos
+    resto = tuple(e for e in previos if e.nombre != aqui)
+    return ((Equipo(aqui, cuando),) + resto)[:MAX_EQUIPOS]
 
 
 def nota_de(app_dir: Path | str | None, como_se_llama: str,
-            version: str, last_result: str) -> Dispositivo | None:
+            version: str, last_result: str,
+            ultima_buena: str = "") -> Dispositivo | None:
     """La nota de un dispositivo cualquiera: el id y las plataformas salen de él.
 
     Con `app_dir` se describe uno que no es este, que es lo que necesita el
-    instalador: acaba de sembrarlo y todavía no puede ejecutar nada suyo."""
+    instalador: acaba de sembrarlo y todavía no puede ejecutar nada suyo.
+
+    La lista de equipos se hereda de la última nota publicada, que el propio
+    dispositivo recuerda (`recordar()`), con el equipo de ahora delante. Así no
+    hace falta ninguna escritura más en el dispositivo: la fecha de cada equipo
+    tiene la precisión de `last_seen`, que es la que ya tenía la lista."""
     identificador = device_id(app_dir)
     if not identificador:
         return None            # sin fichero de control no hay a quién apuntar
+    ahora = store.stamp()
     return Dispositivo(id=identificador, nombre=como_se_llama,
                        version=version or "desconocida",
                        plataformas=plataformas_instaladas(app_dir),
-                       last_seen=store.stamp(), last_result=last_result)
+                       last_seen=ahora, last_result=last_result,
+                       equipos=_con_equipo(_equipos_previos(app_dir, identificador),
+                                           equipo_actual(), ahora),
+                       ultima_buena=ultima_buena)
 
 
 def nota(config: model.Config | None = None) -> Dispositivo | None:
     """La nota de ESTE dispositivo, ahora mismo. None si no tiene id."""
-    return nota_de(None, nombre(), update.installed_version(), resultado(config))
+    last_result, ultima_buena = estado(config)
+    return nota_de(None, nombre(), update.installed_version(), last_result,
+                   ultima_buena)
 
 
 # ---------------------------------------------------------------------------
@@ -323,16 +474,24 @@ def nota(config: model.Config | None = None) -> Dispositivo | None:
 
 def _sin_fecha(disp: Dispositivo) -> tuple:
     """La nota sin lo que cambia en cada pasada: con lo que se decide si hay algo
-    nuevo que contar o solo estamos diciendo la hora."""
-    return (disp.id, disp.nombre, disp.version, disp.plataformas, disp.last_result)
+    nuevo que contar o solo estamos diciendo la hora.
+
+    Del equipo cuenta solo cuál es el de ahora (el primero de la lista), no sus
+    fechas: en la misma máquina todo sigue igual —una nota cada tantas horas—, y
+    en otra se publica en la primera pasada, que es cuando más importa.
+    `ultima_buena` solo cambia cuando cambia `last_result`, así que no añade
+    notas."""
+    return (disp.id, disp.nombre, disp.version, disp.plataformas, disp.last_result,
+            disp.equipos[0].nombre if disp.equipos else "", disp.ultima_buena)
 
 
 def hace_falta_publicar(disp: Dispositivo, ahora: datetime | None = None) -> bool:
     """¿Vale la pena subir esta nota?
 
     Sí si ha cambiado algo de fondo (la versión, el nombre, las plataformas, el
-    último resultado) y sí si la última que se subió ya tiene horas. Lo que se
-    evita es el caso tonto: cuatro parejas por ciclo repitiendo la misma nota."""
+    último resultado, el equipo) y sí si la última que se subió ya tiene horas.
+    Lo que se evita es el caso tonto: cuatro parejas por ciclo repitiendo la
+    misma nota."""
     anterior = store.read_json(ruta_estado()).get("publicado")
     if not isinstance(anterior, dict):
         return True
@@ -353,11 +512,8 @@ def recordar(disp: Dispositivo, state_dir: Path | str | None = None) -> None:
     misma nota en su primera pasada."""
     datos = store.read_json(_estado(state_dir))
     datos["nombre"] = disp.nombre
-    datos["publicado"] = {"id": disp.id, "nombre": disp.nombre,
-                          "version": disp.version,
-                          "plataformas": list(disp.plataformas),
-                          "last_seen": disp.last_seen,
-                          "last_result": disp.last_result}
+    # Entera, equipos incluidos: de aquí hereda la lista la nota siguiente.
+    datos["publicado"] = _tabla(disp)
     store.write_json(_estado(state_dir), datos)
 
 

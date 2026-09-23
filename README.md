@@ -65,9 +65,12 @@ decisiones distintas.
 
 **El registro de la flota** (`devices/`, al lado del catálogo) es un fichero
 diminuto por dispositivo, que cada uno reescribe **solo el suyo** al sincronizar:
-cómo se llama, qué versión lleva, para qué plataformas sirve y cómo acabó su
-última pasada. Es lo que permite ver desde cualquiera de ellos cuántos hay y cuál
-lleva un mes en un cajón.
+cómo se llama, qué versión lleva, para qué plataformas sirve, cómo acabó su
+última pasada (y, si falló, desde cuándo no consta una buena) y **en qué equipos
+se ha enchufado**, los cinco últimos, por su nombre de red. Es lo que permite ver
+desde cualquiera de ellos cuántos hay, cuál lleva un mes en un cajón y dónde se
+usó por última vez. El nombre de los equipos se publica siempre: quien puede leer
+`devices/` tiene la clave del remoto, y con ella todo lo que se sincroniza.
 
 **El vigilante** (`penwatch`) es lo único que se instala en el equipo anfitrión, y
 es opcional.
@@ -292,10 +295,12 @@ el otro cambia **solo este**. Cuatro cosas que se hacen desde ahí:
   cuando no hay conexión, igual que el bloque del catálogo. La ruta local usa el
   diálogo de carpetas del sistema y se guarda relativa a la raíz del dispositivo.
 - **Dispositivos…** enseña [la flota](#el-modelo): todos los que comparten este
-  catálogo, con su nombre, su versión, para qué plataformas sirven y cuándo se
-  les vio por última vez. Los que llevan más de una semana sin aparecer salen
-  apagados. Desde ahí se le puede poner nombre a **este** dispositivo («el
-  pendrive azul»); ningún dispositivo escribe la nota de otro.
+  catálogo, cuándo se les vio por última vez y cómo acabó su última pasada. Los
+  que llevan más de una semana sin aparecer salen apagados. Debajo, la **ficha**
+  del elegido: su versión, para qué plataformas sirve, desde cuándo falla si
+  falla, y los últimos equipos donde ha estado, con **«· este equipo»** en el
+  ordenador desde el que miras. Desde ahí se le puede poner nombre a **este**
+  dispositivo («el pendrive azul»); ningún dispositivo escribe la nota de otro.
 - **Editar flags…** enseña las cuatro capas resueltas y avisa si un cambio sube
   el `--max-delete` efectivo.
 
