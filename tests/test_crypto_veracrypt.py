@@ -30,7 +30,7 @@ win_original = crypto.IS_WIN
 path_original = crypto.Path
 sondas = {n: getattr(crypto, n) for n in
           ("soporta_dispersos", "medir_escritura", "volume_guid_path", "en_uso",
-           "_run", "_volumenes_con_control", "veracrypt_config_dir")}
+           "_run", "_volumenes_con_control", "veracrypt_config_dir", "Path")}
 try:
     # --- 1. /dynamic solo cuando se pide, y nunca a ciegas -------------------
     #
@@ -118,25 +118,64 @@ try:
     # dispositivo... pero solo si hay UNA. Con dos prdrive enchufados, adivinar
     # cuál es sería peor que no saberlo.
     #
-    # Fingir un anfitrión POSIX es cambiar IS_WIN **y** las rutas: con
-    # `WindowsPath`, `str()` de «/media/usb/PRDRIVE.hc» es «\media\usb\...» y no
-    # casa con nada de lo que imprime VeraCrypt, así que en Windows la prueba
-    # fallaba sin que el código tuviera culpa. Esa rama no toca el disco, y
-    # `PurePosixPath` le basta.
+    # Los listados se escriben a mano, carácter a carácter como los escribe
+    # `UserInterface::ListMountedVolumes()` —el '-' de «sin montar» lleva un
+    # espacio detrás—: generarlos con `crypto._entre_comillas()` daría por
+    # bueno cualquier formato. `PurePosixPath` y no `Path`: son rutas de Linux
+    # y esto tiene que pasar también en Windows.
     crypto.IS_WIN = False
     crypto.Path = PurePosixPath
+
+    def montado(listado, ruta):
+        crypto._run = lambda cmd, password="", timeout=None: type(
+            "R", (), {"stdout": listado, "stderr": "", "returncode": 0})()
+        punto = crypto.mounted_container(VC, PurePosixPath(ruta))
+        return None if punto is None else str(punto)
+
     listado = ("1: /media/usb/PRDRIVE.hc /dev/mapper/veracrypt1 /media/veracrypt1\n"
-               "2: /otro/cosa.hc /dev/mapper/veracrypt2 -\n")
-    crypto._run = lambda cmd, password="", timeout=None: type(
-        "R", (), {"stdout": listado, "stderr": "", "returncode": 0})()
-    aqui = PurePosixPath("/media/usb/PRDRIVE.hc")
+               "2: /otro/cosa.hc /dev/mapper/veracrypt2 - \n")
     c("POSIX: lo encuentra por la ruta del anfitrión",
-      str(crypto.mounted_container(VC, aqui)), "/media/veracrypt1")
+      montado(listado, "/media/usb/PRDRIVE.hc"), "/media/veracrypt1")
     c("y un volumen sin punto de montaje no cuenta",
-      crypto.mounted_container(VC, PurePosixPath("/otro/cosa.hc")), None)
-    c("ni uno que no está en la lista",
-      crypto.mounted_container(VC, PurePosixPath("/nada.hc")), None)
-    crypto.Path = path_original
+      montado(listado, "/otro/cosa.hc"), None)
+    c("ni uno que no está en la lista", montado(listado, "/nada.hc"), None)
+
+    # udisks monta en /media/<usuario>/<ETIQUETA>, y «USB DISK» es una etiqueta
+    # de lo más corriente. VeraCrypt entrecomilla con simples cada ruta que
+    # lleva un espacio (`QuoteSpaces`); trocear la línea por espacios no la
+    # reconocía nunca, y el instalador intentaba montar por segunda vez lo que
+    # ya estaba montado —al volver atrás en el asistente, por ejemplo—.
+    c("con espacios en la ruta del anfitrión y en el punto de montaje",
+      montado("1: '/media/ana/USB DISK/PRDRIVE.hc' /dev/mapper/veracrypt1 "
+              "'/media/ana/PRDRIVE 1'\n", "/media/ana/USB DISK/PRDRIVE.hc"),
+      "/media/ana/PRDRIVE 1")
+    c("una ruta que solo empieza igual es otra",
+      montado("2: '/media/ana/USB DISK/PRDRIVE.hc.viejo' /dev/mapper/veracrypt2 "
+              "/media/veracrypt2\n", "/media/ana/USB DISK/PRDRIVE.hc"), None)
+    c("una comilla de dentro va doblada, y se deshace",
+      montado("3: '/media/ana/O''Neil USB/PRDRIVE.hc' /dev/mapper/veracrypt3 "
+              "'/mnt/it''s mine'\n", "/media/ana/O'Neil USB/PRDRIVE.hc"),
+      "/mnt/it's mine")
+    c("sin espacios no hay comillas, aunque la ruta lleve una",
+      montado("4: /media/ana/O'Neil/PRDRIVE.hc /dev/mapper/veracrypt4 "
+              "/media/veracrypt4\n", "/media/ana/O'Neil/PRDRIVE.hc"),
+      "/media/veracrypt4")
+    c("sin dispositivo, el '-' deja dos espacios y el punto sigue leyéndose",
+      montado("5: '/media/ana/USB DISK/PRDRIVE.hc' -  '/media/ana/PRDRIVE 1'\n",
+              "/media/ana/USB DISK/PRDRIVE.hc"), "/media/ana/PRDRIVE 1")
+    c("y entre comillas el '-' sigue siendo «sin montar»",
+      montado("6: '/media/ana/USB DISK/PRDRIVE.hc' /dev/mapper/veracrypt6 - \n",
+              "/media/ana/USB DISK/PRDRIVE.hc"), None)
+
+    # Lo único que QuoteSpaces no escapa es el salto de línea: parte el
+    # registro, y leerlo tal cual daría una carpeta que no es. No se adivina.
+    c("un salto de línea en una ruta invalida el listado",
+      montado("1: /media/usb/PRDRIVE.hc /dev/mapper/veracrypt1 /media/vera\ncrypt1\n",
+              "/media/usb/PRDRIVE.hc"), None)
+    c("y un registro que no llega entero, también",
+      montado("1: /media/usb/PRDRIVE.hc /dev/mapper/veracrypt1 /media/vera",
+              "/media/usb/PRDRIVE.hc"), None)
+    crypto.Path = sondas["Path"]
 
     crypto.IS_WIN = True
     raiz = crypto.Path("Q:/")
