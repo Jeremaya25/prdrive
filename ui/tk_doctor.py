@@ -33,10 +33,11 @@ from .tk import cabecera, cuerpo_visible, modal, mostrar, separador_fila
 
 # rótulo del botón, icono, frase, clave de la acción
 ENTRADAS = (
-    ("Ejecutar comprobación", "doctor",
-     "Repasa el estado de bisync de cada pareja: el prefijo de su baseline, los "
-     "filtros, los bloqueos que hayan quedado sueltos. No toca nada.",
-     "doctor"),
+    ("Reparación…", "doctor",
+     "Lo que está mal en este dispositivo y qué hacer con ello: baselines que no "
+     "son de su pareja, bloqueos sueltos, ficheros en conflicto. Nada se toca "
+     "sin confirmarlo.",
+     "reparacion"),
     ("Emparejar un móvil…", "dispositivo",
      "Enseña la conexión con el remoto como código QR para que la lea otro "
      "aparato. Lleva la clave privada dentro: el código avisa.",
@@ -48,12 +49,18 @@ ENTRADAS = (
 )
 
 
-def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None) -> None:
+def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None,
+                abrir_reparacion=None) -> None:
     """Abre «Ajustes». `lanzar(titulo, args)` es el de la ventana principal.
 
     No devuelve nada: de aquí no sale ninguna decisión que quien llama tenga que
     repintar. Lo que cambia estado —si algún día algo lo hace— abrirá su propia
-    ventana y se encargará él."""
+    ventana y se encargará él.
+
+    `abrir_reparacion` llega de la ventana principal por lo mismo que `lanzar`:
+    «Reparación» puede acabar lanzando una pasada, y su ventana de salida es
+    hija de la principal, no de esta. Además esta se cierra antes de abrirla,
+    para no tener dos modales disputándose la captura del ratón."""
     from tkinter import ttk
 
     dlg = modal(parent, "Ajustes")
@@ -65,13 +72,13 @@ def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None) -
              "principal se quede con lo de todos los días.",
              ancho=560, estilo="Dialogo.TLabel").grid(row=0, column=0, sticky="w")
 
-    def comprobacion() -> None:
-        """La comprobación se enseña en la ventana de salida de la principal, y
-        por eso esta se cierra antes: son dos modales y la de salida es hija de
-        la otra, así que dejarlas abiertas a la vez pondría la captura del ratón
-        en la ventana equivocada."""
+    def reparacion() -> None:
+        """«Reparación» se abre desde la principal y por eso esta se cierra
+        antes: son dos modales, y la de allí puede abrir a su vez la ventana de
+        salida, que es hija de la principal."""
         dlg.destroy()
-        lanzar("Comprobación", ["--doctor"])
+        if abrir_reparacion is not None:
+            abrir_reparacion()
 
     def emparejar() -> None:
         from . import tk_qr
@@ -81,7 +88,7 @@ def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None) -
         from . import tk_versions
         tk_versions.open_dialog(dlg, config)
 
-    acciones = {"doctor": comprobacion, "qr": emparejar, "versiones": versiones}
+    acciones = {"reparacion": reparacion, "qr": emparejar, "versiones": versiones}
 
     tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(14, 12, 14, 12))
     tarjeta.grid(row=1, column=0, sticky="ew", pady=(16, 0))

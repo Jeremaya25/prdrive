@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 """
-tk_conflicts.py — La ventana de los ficheros en conflicto.
+tk_conflicts.py — Los ficheros en conflicto, dentro de «Reparación».
 
 Solo dibuja. Qué versión es de quién lo sabe `common/conflicts.py`, y qué pasa
 en disco al elegir una lo decide `ui/conflict_editor.py`. El guion es el de la
 pantalla de parejas: se pide un plan, se enseñan sus consecuencias en
 `tk_pairs.confirmar_plan()` —la misma ventana que gobierna los demás borrados de
 la aplicación— y solo si el usuario dice que sí se ejecuta.
+
+**Esto ya no es una ventana suelta**: era una modal a la que solo se llegaba
+desde un recuadro ámbar de la ventana principal, o sea por un susto y no por una
+tarea. Un fichero en conflicto es una avería como las demás, así que vive donde
+las demás: `seccion()` devuelve el bloque y quien lo coloca es `tk_repair`.
 
 La lista es un árbol: cada fichero en conflicto con sus versiones debajo, cada
 una con su tamaño y su fecha, que es lo que hace falta para elegir. El sufijo
@@ -17,11 +22,13 @@ ficheros tiene «Abrir la carpeta».
 
 from __future__ import annotations
 
+from typing import Callable
+
 from common import conflicts
 from common.model import Config
 
 from . import abrir, conflict_editor, icons, theme
-from .tk import TITLE, cabecera, cuerpo_visible, modal, mostrar
+from .tk import TITLE
 
 COLUMNAS = [
     ("pareja", "Pareja", 110),
@@ -31,35 +38,42 @@ COLUMNAS = [
 
 NOTA = "Solo cambian ficheros de este dispositivo"
 
+EXPLICACION = ("Cambiaron en los dos lados entre dos pasadas. rclone se quedó con "
+               "la más reciente y guardó la otra al lado: elige con cuál te "
+               "quedas, y la próxima sincronización lo lleva al remoto.")
 
-def open_dialog(parent, config: Config) -> bool:
-    """Abre la ventana. Devuelve True si se ha resuelto algo."""
+
+def seccion(padre, ventana, config: Config,
+            al_cambiar: Callable[[], None] | None = None):
+    """El bloque de conflictos, listo para colocar con `grid`.
+
+    `ventana` es de quien cuelgan los diálogos (el aviso de error, la
+    confirmación del plan); `al_cambiar` lo llama cuando se ha resuelto algo,
+    para que quien lo enseñe pueda repintar su cuenta."""
     from tkinter import messagebox, ttk
 
     from . import tk_pairs
 
-    dlg = modal(parent, "Conflictos")
     parejas = {p.name: p for p in config.pairs if p.is_bisync}
-    estado: dict = {"conflictos": [], "filas": {}, "cambiado": False}
+    estado: dict = {"conflictos": [], "filas": {}}
 
-    marco = cuerpo_visible(dlg, padding=(20, 18, 20, 16))
+    marco = ttk.Frame(padre)
     marco.columnconfigure(0, weight=1)
 
-    cabecera(marco, "Ficheros en conflicto",
-             "Cambiaron en los dos lados entre dos pasadas. rclone se quedó con la "
-             "más reciente y guardó la otra al lado, así que ahora hay dos versiones "
-             "y se van separando. Elige con cuál te quedas: la otra se borra, y la "
-             "próxima sincronización lo lleva al remoto.",
-             ancho=640, estilo="Dialogo.TLabel").grid(row=0, column=0, sticky="w")
+    ttk.Label(marco, text=theme.rotulo("Ficheros en conflicto"),
+              style="Rotulo.TLabel").grid(row=0, column=0, sticky="w")
+    ttk.Label(marco, text=EXPLICACION, style="Pista.TLabel", justify="left",
+              wraplength=theme.medida(600)).grid(row=1, column=0, sticky="w",
+                                                 pady=(4, 0))
 
     tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(8, 8, 2, 4))
-    tarjeta.grid(row=1, column=0, sticky="nsew", pady=(14, 0))
+    tarjeta.grid(row=2, column=0, sticky="nsew", pady=(10, 0))
     tarjeta.columnconfigure(0, weight=1)
     tarjeta.rowconfigure(0, weight=1)
-    marco.rowconfigure(1, weight=1)
+    marco.rowconfigure(2, weight=1)
 
     tree = ttk.Treeview(tarjeta, columns=[c[0] for c in COLUMNAS],
-                        show="tree headings", height=8, selectmode="browse")
+                        show="tree headings", height=6, selectmode="browse")
     tree.heading("#0", text="Fichero / versión", anchor="w")
     tree.column("#0", width=icons.px(tree, 320), anchor="w")
     for clave, titulo, ancho in COLUMNAS:
@@ -111,24 +125,24 @@ def open_dialog(parent, config: Config) -> bool:
         tree.delete(*tree.get_children())
         estado["filas"] = {}
         for i, conflicto in enumerate(estado["conflictos"]):
-            padre = f"c{i}"
-            tree.insert("", "end", iid=padre, text=conflicto.relativa, open=True,
+            padre_fila = f"c{i}"
+            tree.insert("", "end", iid=padre_fila, text=conflicto.relativa, open=True,
                         values=(conflicto.pareja, "", ""), tags=("aviso",))
-            estado["filas"][padre] = (conflicto, None)
+            estado["filas"][padre_fila] = (conflicto, None)
             for j, (version, nombre) in enumerate(conflict_editor.etiquetas(conflicto)):
-                hijo = f"{padre}v{j}"
+                hijo = f"{padre_fila}v{j}"
                 dato = conflict_editor.huella(version.ruta)
-                tree.insert(padre, "end", iid=hijo, text=nombre, tags=("ok",), values=(
+                tree.insert(padre_fila, "end", iid=hijo, text=nombre, tags=("ok",), values=(
                     "", conflict_editor.tamano(dato[0]) if dato else "—",
                     conflict_editor.fecha(dato[1]) if dato else "ya no está"))
                 estado["filas"][hijo] = (conflicto, version)
         filas = len(estado["filas"])
-        tree.configure(height=min(14, max(5, filas)))
+        tree.configure(height=min(12, max(4, filas)))
         if estado["conflictos"]:
             vacio.grid_remove()
             tree.selection_set("c0")
         else:
-            vacio.grid(row=2, column=0, sticky="w", pady=(10, 0))
+            vacio.grid(row=4, column=0, sticky="w", pady=(10, 0))
         pie_nota.configure(text=nota)
         repasar_botones()
 
@@ -138,18 +152,19 @@ def open_dialog(parent, config: Config) -> bool:
         try:
             plan = pensar()
         except conflict_editor.ResolucionImposible as e:
-            messagebox.showerror(TITLE, str(e), parent=dlg)
+            messagebox.showerror(TITLE, str(e), parent=ventana)
             return
-        if not tk_pairs.confirmar_plan(dlg, plan, titulo, NOTA):
+        if not tk_pairs.confirmar_plan(ventana, plan, titulo, NOTA):
             return
         try:
             hechos = plan.execute()
         except conflict_editor.ResolucionImposible as e:
-            messagebox.showerror(TITLE, str(e), parent=dlg)
+            messagebox.showerror(TITLE, str(e), parent=ventana)
             refrescar(escanear=True)
             return
-        estado["cambiado"] = True
         refrescar("  ·  ".join(hechos), escanear=True)
+        if al_cambiar is not None:
+            al_cambiar()
 
     def por_lado(lado: str) -> None:
         conflicto, _ = elegido()
@@ -174,13 +189,13 @@ def open_dialog(parent, config: Config) -> bool:
                 abrir(ruta)
             except OSError as e:
                 messagebox.showerror(TITLE, f"No se ha podido abrir:\n\n{ruta}\n\n{e}",
-                                     parent=dlg)
+                                     parent=ventana)
                 return
 
     tree.bind("<<TreeviewSelect>>", repasar_botones)
 
     acciones = ttk.Frame(marco)
-    acciones.grid(row=3, column=0, sticky="ew", pady=(14, 0))
+    acciones.grid(row=3, column=0, sticky="ew", pady=(10, 0))
     acciones.columnconfigure(3, weight=1)
     conservar_aqui = ttk.Button(acciones, text="Quedarme con la de este dispositivo",
                                 command=lambda: por_lado(conflicts.DISPOSITIVO))
@@ -203,14 +218,9 @@ def open_dialog(parent, config: Config) -> bool:
         command=lambda: abrir_todo(lambda x: [v.ruta for v in x.versiones]))
     abrir_versiones.grid(row=0, column=5, sticky="e", padx=(4, 0))
 
-    cierre = ttk.Frame(marco)
-    cierre.grid(row=4, column=0, sticky="ew", pady=(12, 0))
-    cierre.columnconfigure(0, weight=1)
-    pie_nota = ttk.Label(cierre, text="", style="MonoPista.TLabel",
-                         wraplength=theme.medida(640), justify="left")
-    pie_nota.grid(row=0, column=0, sticky="w")
-    ttk.Button(cierre, text="Cerrar", command=dlg.destroy).grid(row=0, column=1)
+    pie_nota = ttk.Label(marco, text="", style="MonoPista.TLabel",
+                         wraplength=theme.medida(600), justify="left")
+    pie_nota.grid(row=5, column=0, sticky="w", pady=(8, 0))
 
     refrescar()
-    mostrar(dlg, parent)
-    return estado["cambiado"]
+    return marco

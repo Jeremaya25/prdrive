@@ -29,7 +29,7 @@ ningún servicio de terceros por medio.
 - [Cómo funciona bisync por dentro](#cómo-funciona-bisync-por-dentro) · [Conflictos](#conflictos)
 - [Versiones](#versiones)
 - [El servicio periódico](#el-servicio-periódico) · [El vigilante](#el-vigilante)
-- [Diagnóstico](#diagnóstico) · [Seguridad](#seguridad)
+- [Diagnóstico y reparación](#diagnóstico-y-reparación) · [Seguridad](#seguridad)
 - [Arquitectura](#arquitectura) · [Desarrollo](#desarrollo)
 
 ---
@@ -540,9 +540,9 @@ seguían separándose.
 
 Ahora, después de cada pasada, `sync.py` recorre la carpeta local de la pareja,
 encuentra esas copias y lo dice en su salida. La ventana pone un chip ámbar en la
-pareja y un bloque con **Revisar…**, que abre la lista de ficheros en conflicto
-con sus versiones —«versión de este dispositivo» y «versión del remoto», con
-tamaño y fecha— y deja quedarse con una. Eso pasa por la misma confirmación que
+pareja y los cuenta en su línea de **«cosas que revisar»**, que lleva a
+**Reparación**: allí están, con sus versiones —«versión de este dispositivo» y
+«versión del remoto», con tamaño y fecha—, y se elige con cuál quedarse. Eso pasa por la misma confirmación que
 los demás borrados, toca **solo ficheros de este dispositivo** y la siguiente
 pasada lleva el resultado al remoto. El aviso no es un suceso que se lee y se
 olvida: se deriva del disco, y se va solo cuando ya no quedan copias, las haya
@@ -674,12 +674,30 @@ estado y su registro viven en el equipo.
   en su sitio no se puede: el vigilante corre desde ella). Si el dispositivo no
   lleva Python para ese equipo, usa el del sistema y `penwatch status` lo dice.
 
-## Diagnóstico
+## Diagnóstico y reparación
 
-En la ventana principal, el engranaje de **«Ajustes…»** abre la pantalla de lo
-que se hace de tarde en tarde: la comprobación de estado, el emparejamiento de un
-móvil y las versiones guardadas. Todo lo que no se usa cada día vive ahí, para
-que la ventana principal se quede con lo de todos los días.
+La ventana principal no grita: cuando hay algo que mirar lo dice en **una línea**
+—«Hay 3 cosas que revisar»— con un botón que lleva a **Reparación**. Ahí está
+todo junto y, lo que se pueda, con su arreglo al lado:
+
+| Lo que se ve | Lo que se puede hacer |
+|---|---|
+| El baseline guardado no es el de esta pareja | Apartarlo (no se borra) y resincronizar |
+| La pareja necesita un `--resync` | Lanzarlo desde ahí |
+| Bloqueos `.lck` de una pasada cortada | Borrarlos, solo si no hay ninguna pasada en marcha |
+| Ficheros en conflicto | Elegir con qué versión te quedas |
+| La última pasada falló | Abrir el log que lo explica |
+| **La carpeta local no está** | **Nada, a propósito**: ver abajo |
+
+Nada se toca sin confirmarlo antes, con la misma pantalla de consecuencias que
+gobierna los demás borrados. Y si falta la carpeta local de una pareja que ya
+tiene baseline, **no se ofrece crearla**: un lado local vacío se lee como «se ha
+borrado todo» y eso se propagaría al remoto. Lo que hay que arreglar está fuera
+del programa —el volumen no está montado donde se cree, o la carpeta se movió—,
+así que la pantalla lo dice y se calla.
+
+Desde ahí también se puede **simular una pasada** (`--dry-run`) antes de
+sincronizar de verdad, y ver el informe completo, que es lo mismo que:
 
 ```bash
 python sync.py --doctor
@@ -688,7 +706,12 @@ python sync.py --doctor
 Dice, por cada pareja: dónde apuntan sus dos extremos, si la referencia de bisync
 está sana (`fresh` / `ok` / `broken`), con qué nombre la busca rclone, si los
 filtros han cambiado desde el último `--resync` y si hay algún `.lck` de un
-proceso muerto.
+proceso muerto; y acaba con la misma lista de averías que enseña la pantalla —es
+el mismo diagnóstico, escrito en vez de dibujado.
+
+El engranaje de **«Ajustes…»** es la otra puerta a esa pantalla, y donde vive lo
+que se hace de tarde en tarde: el emparejamiento de un móvil y las versiones
+guardadas.
 
 Los logs de rclone **solo se guardan si la pasada falla** (o con `--keep-logs`),
 para no gastar ciclos de escritura de la unidad. Quedan en `.prdrive/logs/`. Al
@@ -783,6 +806,7 @@ prdrive/
 │   ├── bisync.py      lo que replica el comportamiento interno de rclone bisync
 │   ├── conflicts.py   los ficheros en conflicto de bisync y de qué lado es cada uno
 │   ├── results.py     cómo acabó la última pasada de cada pareja
+│   ├── revision.py    qué está mal, como datos: el diagnóstico, que es uno solo
 │   ├── config_file.py lee Y escribe el TOML, con round-trip verificado
 │   ├── catalog.py     el catálogo del remoto: leer, cachear, escribir
 │   ├── fleet.py       el registro de la flota: la nota de cada dispositivo
@@ -796,6 +820,7 @@ prdrive/
 │   ├── icons.py       los iconos, rasterizados aquí. Sin dependencias
 │   ├── qr.py          el codificador de códigos QR. Sin dependencias, sin Tk
 │   ├── tk*.py         solo dibujan
+│   ├── repair.py      qué hacer con cada avería: los planes de reparación
 │   └── *_editor.py    lo que decide y toca disco. Sin Tk, probado sin pantalla
 ├── install/           lo que sabe el instalador. Sin Tk, sin dispositivo
 │   ├── profile.py     la conexión: de dónde sale y cómo se escribe

@@ -27,7 +27,7 @@ import sys
 import threading
 import time
 
-from common import (APP_NAME, components, conflicts, model, progress, results,
+from common import (APP_NAME, components, conflicts, model, progress, revision,
                     update)
 from common.model import Config
 
@@ -533,16 +533,16 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
     frame.columnconfigure(0, weight=1)
 
     def leer_estado() -> None:
-        """Lo que dejó apuntado la última pasada: qué falló y qué conflictos hay.
+        """Lo que hay que revisar: averías apuntadas y conflictos.
 
         Se lee de state/ y no se recorre nada: es lo que pinta la ventana nada
         más abrirse y al volver de una sincronización (sync.py lo acaba de
         escribir). El recorrido de verdad lo hace `mirar_conflictos()` en un
         hilo. Bajo `except` por lo mismo que `update.pending()` arriba."""
         try:
-            vista["fallos"] = results.fallos(vista["config"])
+            vista["hallazgos"] = revision.revisar(vista["config"])
         except Exception:                            # noqa: BLE001
-            vista["fallos"] = []
+            vista["hallazgos"] = []
         try:
             vista["conflictos"] = conflicts.contar(conflicts.cargar(vista["config"]))
         except Exception:                            # noqa: BLE001
@@ -667,6 +667,11 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
 
         def responder(cuentas) -> None:
             if cuentas != vista["conflictos"] and not vista["en_curso"]:
+                # `leer_estado()` y no solo la cuenta nueva: los conflictos son
+                # una avería más, así que la línea de «cosas que revisar» y el
+                # chip de la cabecera salen de la misma revisión y hay que
+                # rehacerla, o dirían uno menos de los que se acaban de ver.
+                leer_estado()
                 vista["conflictos"] = cuentas
                 reajustar()
 
@@ -682,10 +687,17 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
 
         threading.Thread(target=trabajo, daemon=True).start()
 
-    def abrir_conflictos() -> None:
-        from . import tk_conflicts
-        tk_conflicts.open_dialog(root, vista["config"])
-        leer_estado()
+    def abrir_reparacion() -> None:
+        """La pantalla donde se ve lo que está mal y se arregla.
+
+        Se le pasan las parejas marcadas porque desde allí se puede simular una
+        pasada, y lo que interesa simular es lo que se iba a sincronizar."""
+        from . import tk_repair
+        marcadas = [n for n in vista["config"].names
+                    if n in vista.get("casillas", {})
+                    and vista["casillas"][n].get()]
+        if tk_repair.open_dialog(root, vista["config"], lanzar, marcadas):
+            leer_estado()
         reajustar()
 
     def abrir_log(ruta) -> None:
@@ -767,17 +779,18 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
             ttk.Label(extremos, text=texto, style="MonoPista.TLabel").grid(
                 row=0, column=col * 3 + 1, sticky="w", padx=(5, 0))
 
-        # El chip dice lo que se sabe sin hablar con nadie: si alguna pareja
-        # necesita un --resync. La conexión con el remoto NO se comprueba aquí — se
+        # El chip dice lo que se sabe sin hablar con nadie: lo que hay apuntado
+        # en state/. La conexión con el remoto NO se comprueba aquí — se
         # tardaría segundos en abrir la ventana y la respuesta caducaría enseguida.
+        # Es una sola cuenta, la misma que la línea de abajo y la que enseña
+        # «Reparación»: tres maneras de contar lo mismo se contradicen solas.
+        pendientes_chip = revision.cuenta(vista["hallazgos"])
         if en_curso:
             chip = theme.chip(arriba, "sincronizando…", "Acento.", "sync")
-        elif notes:
-            chip = theme.chip(arriba, f"{len(notes)} requieren resync" if len(notes) > 1
-                              else "1 requiere resync", "Aviso.", "warn")
-        elif cuentas:
-            total = sum(cuentas.values())
-            chip = theme.chip(arriba, f"{total} en conflicto", "Aviso.", "warn")
+        elif pendientes_chip:
+            chip = theme.chip(arriba, f"{pendientes_chip} que revisar"
+                              if pendientes_chip > 1 else "1 que revisar",
+                              "Aviso.", "warn")
         else:
             chip = theme.chip(arriba, "al día", "Ok.", "ok")
         chip.grid(row=0, column=1, sticky="ne", pady=(4, 0))
@@ -791,44 +804,35 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
                 row=fila, column=0, sticky="ew", pady=(14, 0))
             fila += 1
 
-        # --- lo que falló la última vez ---------------------------------------
-        # Justo debajo del aviso de arranque: es lo más urgente de la ventana, y
-        # sin esto un fallo del servicio solo existía en logs/, donde nadie mira.
-        # Se queda mientras la última pasada de esa pareja siga siendo un fallo.
-        fallos = [f for f in vista["fallos"] if f.pareja in names]
-        if fallos and not en_curso:
-            lineas = [f"{f.pareja}" + (f" · {cuando_sello(f.cuando)}"
-                                       if cuando_sello(f.cuando) else "")
-                      for f in fallos]
-            logs = [f.log for f in fallos if f.log is not None]
-            boton = None
-            if len(logs) == 1:
-                boton = ("Ver el log", lambda ruta=logs[0]: abrir_log(ruta))
-            elif logs:
-                boton = ("Abrir los logs", lambda: abrir_log(model.LOG_DIR))
-            bloque_aviso(
-                frame,
-                "La última pasada falló en:\n" + "\n".join(lineas) +
-                "\nMientras no se arregle, eso no está sincronizado.",
-                ancho=330, boton=boton,
-            ).grid(row=fila, column=0, sticky="ew", pady=(14, 0))
+        # --- lo que hay que revisar -------------------------------------------
+        # Una línea, no tres recuadros. Aquí se apilaban el de la última pasada
+        # fallida, el de los ficheros en conflicto y el aviso de resync, los
+        # tres del mismo ámbar y con el mismo peso: eso ya no es jerarquía, es
+        # ruido. Lo que dicen —y, ahora sí, lo que se hace con ello— está en
+        # «Reparación»; aquí queda cuántas cosas son y por dónde se va.
+        #
+        # Mientras sincroniza no se enseña, por lo mismo que antes se apagaban
+        # sus botones: no se repara bajo los pies de rclone.
+        pendientes = revision.cuenta(vista["hallazgos"])
+        if pendientes and not en_curso:
+            aviso_linea = ttk.Frame(frame)
+            aviso_linea.grid(row=fila, column=0, sticky="ew", pady=(14, 0))
+            aviso_linea.columnconfigure(1, weight=1)
             fila += 1
-
-        # --- ficheros con dos versiones ----------------------------------------
-        if cuentas:
-            total = sum(cuentas.values())
-            caja = bloque_aviso(
-                frame,
-                f"{total} fichero(s) en conflicto en {', '.join(cuentas)}: cambiaron "
-                f"en los dos lados y ahora hay dos versiones.",
-                ancho=330, boton=("Revisar…", abrir_conflictos))
-            caja.grid(row=fila, column=0, sticky="ew", pady=(14, 0))
-            # Resolver mientras sincroniza sería mover ficheros bajo los pies de
-            # rclone.
-            for hijo in caja.winfo_children():
-                if isinstance(hijo, ttk.Button):
-                    hijo.configure(state=apagado)
-            fila += 1
+            img = icons.get(aviso_linea, "warn", 14, theme.AVISO, theme.PAPEL)
+            marca = ttk.Label(aviso_linea)
+            if img is not None:
+                marca.configure(image=img)
+                marca.image = img
+            marca.grid(row=0, column=0, sticky="w", padx=(0, 8))
+            ttk.Label(aviso_linea,
+                      text=("Hay 1 cosa que revisar." if pendientes == 1
+                            else f"Hay {pendientes} cosas que revisar."),
+                      style="Aviso.TLabel").grid(row=0, column=1, sticky="w")
+            revisar = ttk.Button(aviso_linea, text="Reparación…",
+                                 style="Quiet.TButton", command=abrir_reparacion)
+            theme.boton_icono(revisar, "doctor", theme.ACENTO, theme.PAPEL)
+            revisar.grid(row=0, column=2, sticky="e")
 
         # --- hay versión nueva -----------------------------------------------
         # Debajo del aviso de arranque y no encima: ese cuenta lo que acaba de
@@ -989,7 +993,8 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         # se configure: el doctor es una de sus entradas, no la pantalla.
         ajustes = ttk.Button(pantallas, text="Ajustes…", style="Quiet.TButton",
                              command=lambda: tk_doctor.open_dialog(
-                                 root, vista["config"], lanzar),
+                                 root, vista["config"], lanzar,
+                                 abrir_reparacion=abrir_reparacion),
                              state=apagado)
         theme.boton_icono(ajustes, "gear", theme.ACENTO, theme.PAPEL)
         ajustes.grid(row=0, column=3, sticky="e")

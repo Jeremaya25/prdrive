@@ -60,10 +60,10 @@ from ui import prefs  # noqa: E402
 
 SELF = Path(__file__).resolve()
 SENTINEL = model.CONFIG_FILE          # si esto no se ve, el dispositivo no está
-LOCK = model.STATE_DIR / "daemon.lock.json"
+LOCK = model.daemon_lock()            # quién es el servicio
 STOP = model.STATE_DIR / "daemon.stop"
 DLOG = model.STATE_DIR / "daemon.log"
-UI_LOCK = model.STATE_DIR / "ui.lock.json"   # quién tiene la ventana abierta
+UI_LOCK = model.ui_lock()             # quién tiene la ventana abierta
 
 POLL_SECONDS = 2.0        # cadencia de comprobación de parada / dispositivo ausente
 STOP_WAIT_SECONDS = 15.0  # cuánto espera el lanzador a que pare el servicio
