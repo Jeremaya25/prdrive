@@ -223,6 +223,65 @@ boton(vacio.cuerpo, "Entendido, usar el dispositivo tal cual").invoke()
 c("elegir «sin cifrar» deja el destino listo", vacio.state.device_root, dispositivo)
 c("y ya se puede seguir", str(vacio.boton_siguiente.cget("state")), "normal")
 
+# --- el panel de VeraCrypt ----------------------------------------------------
+#
+# Tres cosas que se dicen ANTES de crear nada: la instalación sin cifrar que se
+# quedaría al lado del contenedor, el tope de una unidad FAT32 y una contraseña
+# más corta de lo que VeraCrypt recomienda. Ni VeraCrypt ni una unidad de verdad:
+# las sondas de `crypto` se sustituyen.
+from install import crypto  # noqa: E402
+from ui import tk_crypto  # noqa: E402
+
+# El panel importa su propio `working`: el mismo cambio que arriba.
+tk_crypto.working = tk_install.working
+sondas_crypto = {n: getattr(crypto, n) for n in (
+    "find_veracrypt", "soporta_dispersos", "sistema_de_ficheros",
+    "medir_escritura", "create_container", "mount_container")}
+creados, montado_en = [], tmpdir()
+crypto.find_veracrypt = lambda extra_dir=None: {"mount": "VeraCrypt.exe",
+                                                "format": "VeraCrypt Format.exe"}
+crypto.soporta_dispersos = lambda root: False
+crypto.sistema_de_ficheros = lambda root: "FAT32"
+crypto.medir_escritura = lambda root, muestra=0: 10 * 1024 ** 2
+crypto.create_container = lambda *a, **k: creados.append(a)
+crypto.mount_container = lambda *a, **k: montado_en
+preguntado: list[str] = []
+askyesno_original = messagebox.askyesno
+try:
+    en_claro = tmpdir()
+    (en_claro / ".prdrive").mkdir()
+    (en_claro / ".prdrive" / "PRDRIVE").write_text("id=viejo\n", encoding="utf-8")
+    (en_claro / "sync-data").mkdir()
+    vc = nuevo_asistente(en_claro)
+    vc.state.device_root = None
+    vc.state.encryption = "veracrypt"
+    en_paso(vc, PASO["Cifrado"])
+    textos = " ".join(str(w.cget("text")) for w in widgets(vc.cuerpo, ttk.Label))
+    c.contains("la instalación sin cifrar se avisa antes de crear", textos, "SIN CIFRAR")
+    c.contains("nombrando lo que queda fuera", textos, "sync-data/")
+    c.contains("el tope de FAT32 se dice junto al tamaño", textos, "como mucho 4095M")
+    campos = widgets(vc.cuerpo, ttk.Entry)
+    c("y el tamaño propuesto ya lo respeta",
+      "4095M" in [e.get() for e in campos if not e.cget("show")], True)
+
+    claves = [e for e in campos if e.cget("show")]
+    for e in claves:
+        e.insert(0, "corta")
+    messagebox.askyesno = lambda *a, **k: preguntado.append(a[1]) or False
+    boton(vc.cuerpo, "Crear y montar").invoke()
+    c("una contraseña corta se pregunta, como haría VeraCrypt sin /silent",
+      len(preguntado), 1)
+    c("y si se dice que no, no se crea nada", creados, [])
+    messagebox.askyesno = lambda *a, **k: preguntado.append(a[1]) or True
+    boton(vc.cuerpo, "Crear y montar").invoke()
+    c("si se dice que sí, se crea", len(creados), 1)
+    c("con el tamaño dentro del tope", creados[0][2], 4095 * 1024 ** 2)
+    c("y el destino queda en lo montado", vc.state.device_root, montado_en)
+finally:
+    messagebox.askyesno = askyesno_original
+    for nombre, funcion in sondas_crypto.items():
+        setattr(crypto, nombre, funcion)
+
 # --- el paso de instalación ---------------------------------------------------
 limpio = tmpdir()
 wiz = nuevo_asistente(limpio)

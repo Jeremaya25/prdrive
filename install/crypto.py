@@ -34,12 +34,9 @@ Tres reglas que no se pueden relajar:
      y esa comprobación es nuestra: `soporta_dispersos()`. Ver la sección
      «Cuánto tarda».
 
-Sobre el XML: se usa `xml.etree` de la biblioteca estándar y no `defusedxml`
-porque el proyecto no admite dependencias, y aquí no hacen falta. Lo que se
-parsea es la configuración local de VeraCrypt, que escribe VeraCrypt en el perfil
-del propio usuario; no es entrada de red ni de un tercero. Y `xml.etree` no
-resuelve entidades externas: las declaraciones de entidad las rechaza en vez de
-expandirlas, que es justo lo que hace peligrosos a otros parseadores.
+Lo que NO hay aquí: un favorito de VeraCrypt para montar al conectar. Estaba,
+y no funcionaba —ver la sección «Por qué no hay favorito», al final de la de
+VeraCrypt—; lo sustituye el vestíbulo que abre el contenedor desde fuera.
 """
 
 from __future__ import annotations
@@ -49,7 +46,6 @@ import shutil
 import subprocess
 import tempfile
 import time
-import xml.etree.ElementTree as ET  # ver la nota sobre XML al final del docstring
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -76,6 +72,13 @@ POSIX_CANDIDATES = [
 ]
 
 FILESYSTEMS = ("exFAT", "NTFS", "FAT") if IS_WIN else ("exFAT", "NTFS", "ext4")
+
+# La contraseña, con los números de VeraCrypt (`Common/Password.h`, tag
+# VeraCrypt_1.26.24): `MAX_PASSWORD` y `PASSWORD_LEN_WARNING`. Los dos miden
+# BYTES en UTF-8 —la CLI convierte con `WideCharToMultiByte(CP_UTF8, …)`—, así
+# que una letra con tilde cuenta dos.
+CONTRASENA_MAX = 128
+CONTRASENA_AVISO = 20
 
 
 # ---------------------------------------------------------------------------
@@ -127,11 +130,17 @@ UNIDADES = {"k": 1024, "m": 1024 ** 2, "g": 1024 ** 3, "t": 1024 ** 4}
 MARGEN = 50 * 1024 ** 2         # lo que se deja libre al pedir 'max'
 
 
-def size_to_bytes(raw: str, free: int) -> int:
-    """'20G' / '500M' / 'max' -> bytes."""
+def size_to_bytes(raw: str, free: int, tope: int | None = None) -> int:
+    """'20G' / '500M' / 'max' -> bytes.
+
+    `tope` es lo más que admite el sistema de ficheros de la unidad
+    (`tope_contenedor()`). Solo recorta 'max', que es «todo lo que quepa»: un
+    tamaño escrito a mano por encima no se rebaja en silencio, lo rechaza
+    `create_container()` diciendo por qué."""
     texto = str(raw).strip().lower()
     if texto in {"max", ""}:
-        return max(0, free - MARGEN)
+        maximo = max(0, free - MARGEN)
+        return min(maximo, tope) if tope is not None else maximo
     try:
         if texto[-1] in UNIDADES:
             return int(float(texto[:-1].replace(",", ".")) * UNIDADES[texto[-1]])
@@ -139,6 +148,37 @@ def size_to_bytes(raw: str, free: int) -> int:
     except (ValueError, IndexError) as e:
         raise InstallError(
             f"No entiendo el tamaño '{raw}'. Usa 20G, 500M o 'max'.") from e
+
+
+# Un contenedor es UN fichero, y FAT32 no admite ficheros de 4 GiB o más. La
+# mayoría de pendrives de 32 GB o menos vienen así de fábrica, y sin dispersos
+# (FAT no los tiene) se proponía «el hueco, con tope de 64G»: VeraCrypt fallaba
+# al crear con un error que no decía esto. El tope no es 4 GiB − 1 porque
+# VeraCrypt redondea `/size` HACIA ARRIBA al tamaño de sector
+# (`Format/Tcformat.c`, tag VeraCrypt_1.26.24: «correct volume size to be
+# multiple of sector size»); 4095 MiB es múltiplo de cualquier sector.
+SISTEMAS_FAT = {"fat", "fat12", "fat16", "fat32", "vfat", "msdos"}
+TOPE_FAT = 4095 * 1024 ** 2
+
+
+def sistema_de_ficheros(root: str | Path) -> str:
+    """El sistema de ficheros de la unidad de `root`, o "" si no se sabe.
+
+    Función de módulo para que los tests la sustituyan, como
+    `soporta_dispersos()`."""
+    from . import device
+    try:
+        return device.volume_for(Path(root)).filesystem or ""
+    except (OSError, TypeError, AttributeError):
+        return ""
+
+
+def tope_contenedor(filesystem: str) -> int | None:
+    """Lo más grande que puede ser un contenedor en ese sistema de ficheros.
+
+    None es «sin tope que importe». Se compara el nombre entero y en minúsculas:
+    `exfat` contiene «fat» y no tiene nada que ver."""
+    return TOPE_FAT if (filesystem or "").strip().lower() in SISTEMAS_FAT else None
 
 
 # Sin dispersos, cada giga propuesto es un giga que hay que ESCRIBIR en la
@@ -149,16 +189,19 @@ def size_to_bytes(raw: str, free: int) -> int:
 TOPE_SIN_DISPERSOS = 64 * 1024 ** 3     # a partir de aquí no se propone más
 
 
-def suggested_size(free: int, dinamico: bool = False) -> str:
+def suggested_size(free: int, dinamico: bool = False, tope: int | None = None) -> str:
     """Lo que se propone por defecto.
 
     Con contenedor dinámico, `max`: solo ocupa lo que se guarde dentro. Sin él,
     el hueco menos un giga de respiro pero con tope, porque ese número es
-    minutos de escritura (ver la sección «Cuánto tarda»)."""
+    minutos de escritura (ver la sección «Cuánto tarda»). Y nunca más de lo que
+    admite la unidad (`tope`, ver `tope_contenedor()`)."""
     if dinamico:
         return "max"
-    gib = min(max(0, free - 1024 ** 3), TOPE_SIN_DISPERSOS) / 1024 ** 3
-    return f"{max(1, int(gib))}G"
+    limite = min(max(0, free - 1024 ** 3), TOPE_SIN_DISPERSOS)
+    if tope is not None and limite > tope:
+        return f"{tope // 1024 ** 2}M"
+    return f"{max(1, int(limite / 1024 ** 3))}G"
 
 
 def free_drive_letter(preferida: str = "P") -> str:
@@ -405,11 +448,22 @@ def _run(cmd: list[str], password: str = "", timeout: float | None = None):
 
 def create_container(vc: dict, container: Path, size_bytes: int, password: str,
                      filesystem: str = "exFAT", dinamico: bool = False) -> None:
-    """Crea el contenedor. Lanza InstallError con lo que dijo VeraCrypt."""
+    """Crea el contenedor. Lanza InstallError con lo que dijo VeraCrypt.
+
+    Lo que se puede saber antes se dice antes: un tamaño que el sistema de
+    ficheros de la unidad no admite se rechaza sin lanzar VeraCrypt, que
+    fallaría a medias y sin decir por qué."""
     if container.exists():
         raise InstallError(
             f"Ya existe {container}. Si quieres rehacerlo, bórralo tú a mano: "
             "el instalador no borra contenedores.")
+    fs = sistema_de_ficheros(container.parent)
+    tope = tope_contenedor(fs)
+    if tope is not None and size_bytes > tope:
+        raise InstallError(
+            f"Esta unidad es {fs}, y en {fs} un fichero no puede llegar a 4 GiB: "
+            f"el contenedor es un fichero. Elige {tope // 1024 ** 2}M o menos, o "
+            "reformatea la unidad en exFAT o NTFS (eso borra lo que tenga).")
     cmd = create_command(vc, container, size_bytes, password, filesystem, dinamico)
     try:
         res = _run(cmd, password)
@@ -681,151 +735,112 @@ def explicar_montaje(res, container: Path) -> str:
 
 
 # ---------------------------------------------------------------------------
-# El favorito: que VeraCrypt monte solo al conectar el dispositivo
+# Lo que se revisa antes de crear
 # ---------------------------------------------------------------------------
 
-def veracrypt_config_dir() -> Path:
-    if IS_WIN:
-        base = os.environ.get("APPDATA") or str(Path.home() / "AppData" / "Roaming")
-        return Path(base) / "VeraCrypt"
-    return Path.home() / ".VeraCrypt"
+def revisar_contrasena(password: str) -> tuple[str | None, str | None]:
+    """(error, aviso) sobre la contraseña de un contenedor NUEVO.
+
+    El error impide seguir; el aviso se pregunta. Es lo que diría VeraCrypt si
+    no le pasáramos `/silent`: su CLI de creación llama a
+    `CheckPasswordLength(…, Silent, Silent)` (`Format/Tcformat.c`) y con
+    `/silent` se salta la pregunta de «contraseña corta»
+    (`Common/Password.c`). Nadie la hacía, y se aceptaba cualquier contraseña
+    no vacía para proteger la clave privada del remoto.
+
+    Se mide en bytes UTF-8, como mide VeraCrypt (ver `CONTRASENA_MAX`)."""
+    largo = len(password.encode("utf-8"))
+    if largo == 0:
+        return "Falta la contraseña.", None
+    if largo > CONTRASENA_MAX:
+        return (f"La contraseña ocupa {largo} bytes y VeraCrypt admite como mucho "
+                f"{CONTRASENA_MAX} (cada letra con tilde cuenta dos)."), None
+    if largo < CONTRASENA_AVISO:
+        return None, (
+            f"La contraseña tiene menos de {CONTRASENA_AVISO} caracteres. "
+            "VeraCrypt recomienda 20 o más: una corta se puede romper probando, "
+            "y dentro del contenedor va la clave de tu remoto.\n\n"
+            "¿Seguir con esta contraseña?")
+    return None, None
 
 
-FAVORITES_FILE = "Favorite Volumes.xml"
-CONFIG_FILE = "Configuration.xml"
+def restos_en_claro(raiz_fisica: str | Path) -> list[str]:
+    """Lo que un prdrive SIN cifrar dejó en la raíz física, si lo hay.
 
+    Pasa al «Reinstalar desde cero» con VeraCrypt sobre un dispositivo que iba
+    sin cifrar: el contenedor se crea al lado, y la instalación anterior —con
+    `.prdrive/keys/` y la clave del remoto en claro, y las carpetas de datos—
+    sigue ahí. Crear el contenedor no la mueve ni la borra, y no debe hacerlo
+    solo: esas carpetas pueden llevar cambios que no están en el remoto.
 
-def volume_guid_path(root: str | Path) -> str | None:
-    """`\\\\?\\Volume{GUID}\\` de esa unidad, o None si Windows no lo da.
-
-    Indirección de módulo: los tests la sustituyen, y en POSIX no existe."""
-    if not IS_WIN:
-        return None
-    import ctypes
-    from ctypes import c_wchar_p, create_unicode_buffer
-
-    ruta = str(root)
-    if not ruta.endswith(("\\", "/")):
-        ruta += "\\"
-    LARGO = 60          # «\\?\Volume{...}\» son 49; el resto es margen
-    buf = create_unicode_buffer(LARGO)
+    Devuelve `.prdrive/` y lo que haya en la raíz que no sea `device.RUIDO` (las
+    carpetas de datos), o la lista vacía si ahí no hay un prdrive."""
+    from . import device
+    raiz = Path(raiz_fisica)
     try:
-        ok = ctypes.windll.kernel32.GetVolumeNameForVolumeMountPointW(
-            c_wchar_p(ruta), buf, LARGO)
+        if not ((raiz / device.CONTROL_FILE).exists()
+                or (raiz / device.STRUCT_MARKER).exists()):
+            return []
+        otros = sorted((p for p in raiz.iterdir()
+                        if p.name.lower() not in device.RUIDO),
+                       key=lambda p: p.name.lower())
+        return [f"{device.APP_SUBDIR}/"] + [
+            p.name + ("/" if p.is_dir() else "") for p in otros]
     except OSError:
-        return None
-    if not ok:
-        return None
-    return buf.value or None
+        return []
 
 
-def ruta_favorita(container: Path) -> str:
-    """La ruta del contenedor tal como conviene guardarla en el favorito.
-
-    `P:\\PRDRIVE.hc` deja de valer en cuanto la unidad coge otra letra en otro
-    equipo, que en un dispositivo portátil es la norma. La forma
-    `\\\\?\\Volume{GUID}\\PRDRIVE.hc` no depende de la letra, y es una que
-    VeraCrypt ya maneja en sus favoritos (Favorites.cpp busca `Volume{` en la
-    ruta guardada).
-
-    Si Windows no la da, se queda la de siempre: una ruta que funciona hoy es
-    mejor que ninguna. Y ojo, esto arregla encontrar el CONTENEDOR, no la letra
-    donde se monta —eso sigue siendo el `mountpoint`, con la trampa que avisa
-    `write_favorite()`."""
-    guid = volume_guid_path(Path(container).parent)
-    if not guid:
-        return str(container)
-    return guid.rstrip("\\/") + "\\" + Path(container).name
+def aviso_restos(restos: list[str]) -> str:
+    """El texto que se enseña cuando `restos_en_claro()` encuentra algo."""
+    lista = ", ".join(restos[:6]) + ("…" if len(restos) > 6 else "")
+    return (
+        f"En la raíz de la unidad sigue una instalación SIN CIFRAR: {lista}. "
+        "Crear el contenedor no la mueve ni la borra. Ahí está la clave de tu "
+        "remoto en claro (.prdrive/keys/), y las carpetas pueden tener cambios "
+        "que todavía no están en el remoto.\n\n"
+        "Cuando hayas comprobado que no falta nada, bórrala a mano. Y en memoria "
+        "flash borrar no garantiza que no se pueda recuperar: si alguien pudo "
+        "copiar el dispositivo mientras iba sin cifrar, cambia la clave del "
+        "remoto.")
 
 
-def write_favorite(container: Path, letra: str,
-                   label: str = DEVICE_LABEL) -> list[str]:
-    """Registra el contenedor como favorito con montaje al conectar el dispositivo.
-
-    Es lo que tapa el hueco que deja VeraCrypt: puede montar solo al aparecer el
-    dispositivo, pero no sabe lanzar nada después, así que sigue haciendo falta
-    penwatch. Con las dos cosas, conectar el dispositivo basta.
-
-    OJO, y hay que decírselo al usuario: esto escribe en la configuración de OTRA
-    aplicación. Se deja copia de lo que hubiera, y como el formato es de
-    VeraCrypt y puede cambiar entre versiones, conviene confirmarlo abriendo
-    VeraCrypt > Favoritos > Organizar volúmenes favoritos. Además, la propia
-    documentación de VeraCrypt avisa de que si la letra guardada está ocupada,
-    NO monta y NO dice nada."""
-    carpeta = veracrypt_config_dir()
-    if not carpeta.is_dir():
-        raise InstallError(
-            f"No encuentro la configuración de VeraCrypt en {carpeta}. "
-            "Abre VeraCrypt una vez y vuelve a intentarlo.")
-
-    hechos = []
-    destino = carpeta / FAVORITES_FILE
-    if destino.exists():
-        copia = destino.with_suffix(destino.suffix + ".prdrive.bak")
-        shutil.copy2(destino, copia)
-        hechos.append(f"Copia de los favoritos anteriores en {copia.name}")
-
-    raiz = ET.Element("VeraCrypt")
-    favoritos = ET.SubElement(raiz, "favorites")
-    # `removable` es el `/m rm` del montaje a mano: sin él Windows crea
-    # `System Volume Information` y `$RECYCLE.BIN` dentro del contenedor.
-    # `useLabelInExplorer` solo lo respeta VeraCrypt si NO es de solo lectura
-    # (Favorites.cpp), así que los dos van juntos.
-    volumen = ET.SubElement(favoritos, "volume", {
-        "mountpoint": f"{letra.rstrip(':').upper()}:",
-        "mountOnArrival": "1",
-        "mountOnLogOn": "0",
-        "noHotKeyMount": "0",
-        "readonly": "0",
-        "removable": "1",
-        "system": "0",
-        "openExplorerWindow": "0",
-        "useLabelInExplorer": "1",
-        "label": label,
-    })
-    volumen.text = ruta_favorita(container)
-    ET.ElementTree(raiz).write(destino, encoding="utf-8", xml_declaration=True)
-    hechos.append(f"Favorito escrito en {destino}")
-
-    if set_config_flag("StartOnLogon", "1"):
-        hechos.append("VeraCrypt arrancará al iniciar sesión (hace falta para "
-                      "que vigile la llegada del dispositivo)")
-    return hechos
+def comprobar_restos(raiz_fisica: str | Path) -> list:
+    """La fila del último paso: vacía si no hay restos, roja si los hay."""
+    from .device import Check
+    restos = restos_en_claro(raiz_fisica)
+    if not restos:
+        return []
+    return [Check("Instalación sin cifrar", False,
+                  "fuera del contenedor siguen " + ", ".join(restos[:6])
+                  + ("…" if len(restos) > 6 else "")
+                  + ": bórrala a mano cuando compruebes que no falta nada")]
 
 
-def set_config_flag(clave: str, valor: str) -> bool:
-    """Cambia una opción del Configuration.xml de VeraCrypt. True si se tocó.
-
-    El montaje al conectar lo hace la tarea en segundo plano de VeraCrypt, que
-    solo existe si VeraCrypt está arrancado: sin StartOnLogon, tras reiniciar no
-    hay nadie vigilando."""
-    destino = veracrypt_config_dir() / CONFIG_FILE
-    try:
-        arbol = ET.parse(destino)
-    except (OSError, ET.ParseError):
-        return False
-    for nodo in arbol.getroot().iter("config"):
-        if nodo.get("key") == clave:
-            if (nodo.text or "").strip() == valor:
-                return False
-            nodo.text = valor
-            copia = destino.with_suffix(destino.suffix + ".prdrive.bak")
-            try:
-                shutil.copy2(destino, copia)
-                arbol.write(destino, encoding="utf-8", xml_declaration=True)
-            except OSError:
-                return False
-            return True
-    return False
-
-
-def open_veracrypt(vc: dict) -> None:
-    """Abre la ventana de VeraCrypt, para confirmar el favorito a ojo."""
-    try:
-        kwargs = {"creationflags": CREATE_NO_WINDOW} if IS_WIN else {}
-        subprocess.Popen([vc["mount"]], **kwargs)
-    except OSError as e:
-        raise InstallError(f"No he podido abrir VeraCrypt: {e}") from e
+# Por qué no hay favorito
+# -----------------------
+#
+# Hubo un `write_favorite()` que registraba el contenedor en los favoritos de
+# VeraCrypt con «montar al conectar». No funcionaba, y no tenía arreglo que
+# mereciera la pena. Contra el código de VeraCrypt (tag 1.26.24, igual en
+# `master`):
+#
+#   * Guardaba el contenedor como `\\?\Volume{GUID}\PRDRIVE.hc` para no
+#     depender de la letra. El temporizador del montaje al conectar
+#     (`Mount/Mount.c`) resuelve esa forma con `VolumeGuidPathToDevicePath()`
+#     (`Common/Dlgcode.c`), que solo acepta rutas que TERMINAN en `}\` —un
+#     volumen entero—: con un fichero detrás devuelve vacío y el favorito se
+#     salta con `continue`. No se montaba nunca.
+#   * Ponía `StartOnLogon=1` en `Configuration.xml`. El arranque con Windows lo
+#     escribe `ManageStartupSeq()` en el registro, y solo se llama desde los
+#     diálogos de Preferencias y de Favoritos: tocar el XML no registraba nada.
+#   * Escribía `Favorite Volumes.xml` desde cero: borraba los favoritos que el
+#     usuario ya tuviera.
+#
+# Hacerlo bien exigiría guardar el contenedor por LETRA (la única forma que ese
+# temporizador resuelve para un fichero), escribir en el registro de otra
+# aplicación y seguir dependiendo de que la letra esté libre. Lo sustituye el
+# vestíbulo: `penwatch` abre el contenedor al conectar en cualquier equipo que
+# lo tenga, y fuera de eso está «Abrir PRDRIVE».
 
 
 # ---------------------------------------------------------------------------

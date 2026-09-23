@@ -103,7 +103,10 @@ la encuentre entra en tus datos hasta que revoques esa clave.
 - No borres `.prdrive/`. Si desaparece, el arranque automático deja
   de reconocer la unidad y hay que reinstalar.
 - **Extráela con seguridad.** El programa no escribe nada mientras no sincroniza,
-  así que basta con cerrar la ventana antes.
+  así que basta con cerrar la ventana antes. Si va con VeraCrypt, cierra también
+  el contenedor antes de quitarla (en VeraCrypt, «Desmontar»): mientras está
+  abierto, Windows no la deja extraer, y tirar del cable puede estropear lo de
+  dentro.
 
 ## Actualizar
 

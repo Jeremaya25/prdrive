@@ -538,9 +538,11 @@ pairs) stays possible without deleting `.prdrive/` by hand.
   renewing here would strand a watcher bound to this device's id. Going backwards
   in version is allowed but never silent (`_confirmar_retroceso()`).
 
-**VeraCrypt: four things not to weaken.** Every claim below is checked against
-VeraCrypt's source, not its docs, and the citations are in the code — keep them
-like the rclone ones in `common/bisync.py`.
+**VeraCrypt: what not to weaken.** Every claim below is checked against
+VeraCrypt's source (tag `VeraCrypt_1.26.24`, and `master` where it matters), not
+its docs, and the citations are in the code — keep them like the rclone ones in
+`common/bisync.py`. The design and the evidence table are in
+`docs/superpowers/specs/2026-09-23-veracrypt-ciclo-de-vida-design.md`.
 
 - **Creation speed is `/dynamic`, and it is asked before it is used.** `/quick`
   does *not* stop VeraCrypt writing the whole container: `FormatNoFs()` walks it
@@ -555,25 +557,49 @@ like the rclone ones in `common/bisync.py`.
   for file containers in 1.26.24 (`Main/TextUserInterface.cpp`; `master` drops
   that line), so there the only lever is the size, and
   `crypto.suggested_size()` stops proposing nearly the whole disk.
+- **A FAT32 host caps the container at 4095 MiB** (`crypto.tope_contenedor()`),
+  checked in `create_container()` before VeraCrypt runs. Not 4 GiB − 1: VeraCrypt
+  rounds `/size` **up** to the sector size (`Format/Tcformat.c`). The name is
+  compared whole — `exfat` contains «fat» and has no cap.
 - **`/m rm` is not cosmetic.** Mounted without it, Windows creates
   `System Volume Information` and `$RECYCLE.BIN` *inside* the container, i.e.
-  inside what rclone syncs. Same thing as `removable="1"` in the favourite.
-- **The favourite stores the container by volume GUID** (`crypto.ruta_favorita()`
-  → `\\?\Volume{…}\PRDRIVE.hc`): a drive letter is exactly what changes on
-  another machine. The `mountpoint` is still a letter because VeraCrypt demands
-  one, so the documented trap stands — a busy letter means no mount and no
-  message.
-- **`traveler.py` copies VeraCrypt onto the volume**, so the device mounts on a
-  machine that has none. There is no CLI for this: VeraCrypt's own dialog
-  extracts the binaries from its `VeraCrypt Setup.exe` self-extractor
-  (`Mount/Mount.c`). Copying works only because `DriverLoad()`
-  (`Common/Dlgcode.c`) loads `<exe dir>\veracrypt-x64.sys`. Three things that
-  must stay said out loud: it still needs **administrator** on the host, the
-  signature is **not** verified the way VeraCrypt verifies it, and only the
-  preparing machine's **architecture** travels (x64 also runs on Windows ARM, not
-  the reverse — the same one-way fallback as `BIN_FALLBACK_DIRS`). The folder
-  lives on the **physical** root beside the `.hc`, never inside the container,
-  and `"veracrypt"` therefore belongs in `device.RUIDO`.
+  inside what rclone syncs.
+- **The password is checked the way `/silent` stops VeraCrypt from checking
+  it.** `CheckPasswordLength(…, Silent, Silent)` skips the short-password
+  question (`Format/Tcformat.c`, `Common/Password.c`), so
+  `crypto.revisar_contrasena()` asks it: under `PASSWORD_LEN_WARNING = 20` a
+  question with «No» as default, over `MAX_PASSWORD = 128` an error — both in
+  **UTF-8 bytes**, as VeraCrypt measures.
+- **There is no favourite, on purpose.** `write_favorite()` stored the container
+  as `\\?\Volume{GUID}\PRDRIVE.hc`, and `VolumeGuidPathToDevicePath()`
+  (`Common/Dlgcode.c`) only resolves paths ending in `}\` — the arrival timer in
+  `Mount/Mount.c` skipped it every time, so it **never** mounted. Setting
+  `StartOnLogon` in `Configuration.xml` registers nothing (`ManageStartupSeq()`
+  only runs from the Preferences and Favourites dialogs), and the file was
+  rewritten from scratch, wiping the user's favourites. The note in `crypto.py`
+  says why it is not coming back.
+- **`traveler.py` copies VeraCrypt onto the volume, renaming the driver.** There
+  is no CLI for this: VeraCrypt's own dialog extracts the binaries from its
+  `VeraCrypt Setup.exe` self-extractor (`Mount/Mount.c`, `TravelerDlgProc`).
+  Copying works because `DriverLoad()` (`Common/Dlgcode.c`) loads
+  `<exe dir>\veracrypt-x64.sys` or `-arm64.sys` — but the installer leaves it
+  as **`veracrypt.sys`** (`Setup/Setup.c`: the destination is `szFiles[i]+1`), so
+  `nombre_portatil()` renames it from the architecture in its **PE header**
+  (`maquina_pe()`), exactly what VeraCrypt's own dialog does for an MSI install.
+  Copying it as is left a traveler that never loaded its driver. Three things
+  that must stay said out loud: it still needs **administrator** on the host,
+  the signature is **not** verified the way VeraCrypt verifies it, and each
+  architecture works **only on its own**: `IsARM()` asks for the *native*
+  machine, so an emulated x64 VeraCrypt on Windows ARM looks for the arm64
+  driver, and a driver is never emulated. This is **not** the one-way fallback
+  of `BIN_FALLBACK_DIRS`. The folder lives on the **physical** root beside the
+  `.hc`, never inside the container, and `"veracrypt"` therefore belongs in
+  `device.RUIDO`.
+- **Re-encrypting leaves the old tree where it was.** «Reinstalar desde cero»
+  with VeraCrypt over an unencrypted prdrive creates the container beside it;
+  `crypto.restos_en_claro()` finds the plaintext `.prdrive/` (with the key) and
+  the data folders, the panel says so in red before creating, and step 8 keeps a
+  red row. **Nothing deletes it**: those folders may hold unsynced changes.
 
 Other step notes:
 

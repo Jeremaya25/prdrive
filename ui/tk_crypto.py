@@ -26,13 +26,12 @@ from pathlib import Path
 from install import CONTAINER_NAME, IS_WIN, InstallError, crypto
 
 from . import theme
-from .tk import TITLE, working
+from .tk import TITLE, bloque_aviso, working
 
 AVISO_AUTOARRANQUE = (
-    "Con contenedor, el arranque automático necesita que VeraCrypt lo monte al "
-    "conectar el dispositivo: el vigilante solo ve la unidad una vez montada. "
-    "En el "
-    "último paso se puede dejar configurado."
+    "Con contenedor, el programa vive dentro: hasta que el contenedor esté "
+    f"abierto, este equipo solo ve el fichero {CONTAINER_NAME}. Ábrelo con VeraCrypt "
+    "antes de usar el dispositivo, y ciérralo antes de quitarlo."
 )
 
 
@@ -157,8 +156,16 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
            if existe else "Todavía no existe: se va a crear."))).grid(
         row=0, column=0, sticky="w")
 
+    # Una instalación sin cifrar en la raíz física: la de antes de un
+    # «Reinstalar desde cero». El contenedor va al lado y ella se queda, con la
+    # clave en claro. Se dice antes de crear nada, y no se borra sola.
+    restos = crypto.restos_en_claro(estado.device)
+    if restos:
+        bloque_aviso(panel, crypto.aviso_restos(restos), ancho=720,
+                     tipo="Rojo").grid(row=1, column=0, sticky="ew", pady=(10, 0))
+
     formulario = ttk.Frame(panel)
-    formulario.grid(row=1, column=0, sticky="w", pady=(10, 0))
+    formulario.grid(row=2, column=0, sticky="w", pady=(10, 0))
     fila = 0
 
     # La pregunta que decide si esto tarda segundos o media hora. Se rehace en
@@ -167,9 +174,13 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
     # se cambia de destino—. Lo que sí se recuerda en el estado es la MEDIDA de
     # velocidad, que sí escribe en la unidad: ver `refrescar_espera`.
     dispersos = crypto.soporta_dispersos(estado.device) if not existe else False
+    # El sistema de ficheros de la unidad, por lo mismo: en FAT32 un fichero no
+    # llega a 4 GiB, y el contenedor es un fichero (`crypto.tope_contenedor`).
+    fs = crypto.sistema_de_ficheros(estado.device) if not existe else ""
+    tope = crypto.tope_contenedor(fs)
     dinamico = tk.BooleanVar(value=dispersos if estado.dinamico is None
                              else (estado.dinamico and dispersos))
-    tam = tk.StringVar(value=crypto.suggested_size(libre, dinamico.get()))
+    tam = tk.StringVar(value=crypto.suggested_size(libre, dinamico.get(), tope))
     sistema = tk.StringVar(value=crypto.FILESYSTEMS[0])
     espera = ttk.Label(formulario, foreground=theme.TINTA3, justify="left",
                        wraplength=theme.medida(560))
@@ -177,9 +188,10 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
     if not existe:
         ttk.Label(formulario, text="Tamaño:").grid(row=fila, column=0, sticky="w")
         ttk.Entry(formulario, textvariable=tam, width=10).grid(row=fila, column=1, sticky="w")
-        ttk.Label(formulario, foreground=theme.TINTA3,
-                  text=f"libre en la unidad: {libre / 1024**3:.1f} GiB "
-                       f"— admite 20G, 500M o 'max'").grid(
+        ttk.Label(formulario, foreground=theme.AVISO if tope else theme.TINTA3,
+                  text=(f"libre en la unidad: {libre / 1024**3:.1f} GiB "
+                        + (f"— es {fs}: como mucho {tope // 1024**2}M"
+                           if tope else "— admite 20G, 500M o 'max'"))).grid(
             row=fila, column=2, sticky="w", padx=(10, 0))
         fila += 1
         ttk.Label(formulario, text="Sistema de ficheros:").grid(row=fila, column=0, sticky="w")
@@ -198,7 +210,7 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
                   wraplength=theme.medida(360), text=(
             "sin negación plausible, y si la unidad se llena el volumen da "
             "errores de E/S" if dispersos else
-            f"esta unidad ({_sistema_de(estado.device)}) no admite ficheros "
+            f"esta unidad ({fs or 'sin identificar'}) no admite ficheros "
             "dispersos: el contenedor hay que escribirlo entero")).grid(
             row=fila, column=2, sticky="w", padx=(10, 0), pady=(6, 0))
         fila += 1
@@ -235,7 +247,7 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
             espera.configure(text="Creación prácticamente inmediata.")
             return
         try:
-            bytes_ = crypto.size_to_bytes(tam.get(), libre)
+            bytes_ = crypto.size_to_bytes(tam.get(), libre, tope)
         except InstallError as e:
             espera.configure(text=str(e))
             return
@@ -249,7 +261,7 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
             f"Hay que escribir el contenedor entero: {crypto.describir_espera(segundos)}."))
 
     def al_cambiar_dinamico(*_) -> None:
-        tam.set(crypto.suggested_size(libre, bool(dinamico.get())))
+        tam.set(crypto.suggested_size(libre, bool(dinamico.get()), tope))
         refrescar_espera()
 
     if not existe:
@@ -264,25 +276,33 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
         ttk.Checkbutton(
             panel, variable=traveler,
             text="Dejar VeraCrypt en el dispositivo, para montarlo en equipos que "
-                 "no lo tengan").grid(row=2, column=0, sticky="w", pady=(10, 0))
+                 "no lo tengan").grid(row=3, column=0, sticky="w", pady=(10, 0))
 
     ttk.Label(panel, foreground=theme.AVISO, wraplength=theme.medida(760), justify="left",
-              text=AVISO_AUTOARRANQUE).grid(row=3, column=0, sticky="w", pady=(6, 0))
+              text=AVISO_AUTOARRANQUE).grid(row=4, column=0, sticky="w", pady=(6, 0))
 
     def crear_y_montar() -> None:
         password = pw1.get()
-        if not password:
-            messagebox.showwarning(TITLE, "Falta la contraseña.", parent=wiz.root)
+        # Al crear, lo que diría VeraCrypt sin `/silent`; al montar uno que ya
+        # existe, basta con que haya algo: la contraseña ya es la que es.
+        error, aviso = (crypto.revisar_contrasena(password) if not existe
+                        else (None if password else "Falta la contraseña.", None))
+        if error:
+            messagebox.showwarning(TITLE, error, parent=wiz.root)
             return
         if not existe and password != pw2.get():
             messagebox.showwarning(TITLE, "Las dos contraseñas no coinciden.",
                                    parent=wiz.root)
             return
+        # «No» por defecto, como la pregunta de VeraCrypt (MB_DEFBUTTON2).
+        if aviso and not messagebox.askyesno(TITLE, aviso, default="no",
+                                             icon="warning", parent=wiz.root):
+            return
         estado.dinamico = bool(dinamico.get()) and dispersos
         estado.traveler = bool(traveler.get())
         try:
             if not existe:
-                bytes_ = crypto.size_to_bytes(tam.get(), libre)
+                bytes_ = crypto.size_to_bytes(tam.get(), libre, tope)
                 ok, res = working(
                     wiz.root, "creando el contenedor",
                     lambda: crypto.create_container(
@@ -316,7 +336,7 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
         wiz.repintar()
 
     botones = ttk.Frame(panel)
-    botones.grid(row=4, column=0, sticky="w", pady=(12, 0))
+    botones.grid(row=5, column=0, sticky="w", pady=(12, 0))
     ttk.Button(botones, text="Montar" if existe else "Crear y montar",
                command=crear_y_montar).grid(row=0, column=0)
     if estado.device_root and estado.mounted_by_us:
@@ -341,15 +361,6 @@ def _llevar_veracrypt(wiz) -> None:
         wiz.aviso("El dispositivo ha quedado montado, pero no he podido dejar "
                   f"VeraCrypt dentro:\n\n{e}\n\nSe puede reintentar desde el "
                   "último paso.")
-
-
-def _sistema_de(root) -> str:
-    """El sistema de ficheros de esa unidad, para poder decir por qué no se puede."""
-    from install import device
-    try:
-        return device.volume_for(Path(root)).filesystem or "sin identificar"
-    except (OSError, TypeError):
-        return "sin identificar"
 
 
 def _libre(root) -> int:

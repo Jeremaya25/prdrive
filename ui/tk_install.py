@@ -1362,9 +1362,12 @@ def _paso_final(cuerpo, wiz) -> None:
         clave = perfil.key_name if perfil.needs_key else None
         checks = device.verify_device(wiz.device_root, wiz.state.selected, clave)
         # Solo con contenedor: sin él no hay nada que montar en el otro equipo, y
-        # una fila roja diciendo que falta VeraCrypt sería mentira.
+        # una fila roja diciendo que falta VeraCrypt sería mentira. Lo mismo
+        # con la instalación en claro que quedó fuera: solo es un resto cuando
+        # la de verdad está dentro de un contenedor.
         if wiz.state.encryption == "veracrypt" and wiz.state.device:
             checks += traveler.comprobar(wiz.state.device)
+            checks += crypto.comprobar_restos(wiz.state.device)
         for i, chk in enumerate(checks):
             color = theme.OK if chk.ok else theme.PELIGRO
             ttk.Label(tabla, text="✔" if chk.ok else "✘", foreground=color,
@@ -1401,23 +1404,6 @@ def _paso_final(cuerpo, wiz) -> None:
                 f"{k} = {v}" for k, v in
                 profile.to_catalog_remote(wiz.perfil_final).items()))
 
-    def registrar_favorito() -> None:
-        if wiz.state.encryption != "veracrypt" or not wiz.state.container:
-            wiz.error("Esto solo tiene sentido con un contenedor VeraCrypt.")
-            return
-        letra = str(wiz.device_root)[0] if wiz.device_root else ""
-        try:
-            hechos = crypto.write_favorite(wiz.state.container, letra)
-        except InstallError as e:
-            wiz.error(str(e))
-            return
-        wiz.aviso("\n".join(hechos) + (
-            "\n\nConfírmalo en VeraCrypt > Favoritos > Organizar volúmenes "
-            "favoritos: es la configuración de otra aplicación y su formato "
-            "cambia entre versiones.\n\nY ojo con lo que avisa su propia "
-            f"documentación: si la letra {letra}: está ocupada cuando conectes el "
-            "dispositivo, VeraCrypt NO monta y NO dice nada."))
-
     def llevar_veracrypt() -> None:
         """Copia (o pone al día) el VeraCrypt que viaja en el dispositivo.
 
@@ -1437,8 +1423,9 @@ def _paso_final(cuerpo, wiz) -> None:
         wiz.aviso(
             f"{len(escritos)} ficheros en {wiz.state.device / traveler.CARPETA}.\n\n"
             f"Arquitectura: {', '.join(arcs) or 'ninguna (falta el driver)'}. "
-            "Solo viaja la del equipo que lo prepara; el x64 vale también en "
-            "Windows ARM, al revés no.\n\n"
+            "Solo viaja la del equipo que lo prepara, y solo vale en esa: un "
+            "driver no se emula, así que uno x64 no monta en un Windows ARM ni "
+            "al revés.\n\n"
             "En el equipo donde se enchufe seguirá haciendo falta aceptar el "
             "aviso de administrador: cargar el driver no se puede hacer de otra "
             "forma.")
@@ -1459,7 +1446,6 @@ def _paso_final(cuerpo, wiz) -> None:
     for i, (texto, accion) in enumerate((
             ("Instalar el arranque automático (penwatch)", instalar_vigilante),
             ("Compartir esta conexión con otros dispositivos", guardar_en_catalogo),
-            ("Que VeraCrypt monte al conectar", registrar_favorito),
             ("Llevar VeraCrypt en el dispositivo", llevar_veracrypt),
             ("Desmontar el contenedor", desmontar),
             ("Volver a comprobar", revisar_dispositivo))):

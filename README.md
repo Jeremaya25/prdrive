@@ -178,7 +178,7 @@ cuanto el contenedor está abierto.
 
 ### Cifrar con VeraCrypt
 
-Dos cosas que conviene saber antes de darle a **Crear y montar**.
+Unas cuantas cosas que conviene saber antes de darle a **Crear y montar**.
 
 **Por qué tarda, y cómo no tardar.** Crear el contenedor no es cifrar: es
 *escribirlo entero*. VeraCrypt reserva el fichero y luego lo recorre escribiendo
@@ -201,6 +201,24 @@ propone un tamaño de trabajo en lugar de casi el disco entero: si luego se te
 queda corto, el **VeraCrypt Expander** que viaja en el propio dispositivo lo
 agranda.
 
+**En FAT32, 4095M como mucho.** Muchos pendrives de 32 GB o menos vienen en
+FAT32 de fábrica, y en FAT32 un fichero no puede llegar a 4 GiB: el contenedor es
+un fichero. El asistente lo dice junto al tamaño y no deja pasar de ahí. Si
+necesitas más, reformatea la unidad en exFAT o NTFS antes de empezar (eso borra
+lo que tenga).
+
+**La contraseña.** Si tiene menos de 20 caracteres, el asistente te pregunta si
+quieres seguir con ella, que es lo que haría el propio VeraCrypt y aquí no puede
+hacer (se le lanza en silencio). No se guarda en ningún sitio: si la pierdes, el
+contenedor no se recupera.
+
+**Si el dispositivo ya iba sin cifrar.** Al reinstalar con VeraCrypt, el
+contenedor se crea al lado de la instalación anterior, y esa se queda donde
+estaba, con la clave del remoto en claro y tus carpetas. El asistente te lo dice
+en rojo antes de crear nada, y no la borra: puede tener cambios que todavía no
+están en el remoto. Bórrala tú cuando compruebes que no falta nada, y si alguien
+pudo copiar el dispositivo mientras iba sin cifrar, cambia la clave del remoto.
+
 **VeraCrypt viaja dentro.** La casilla **Dejar VeraCrypt en el dispositivo** copia
 el VeraCrypt de este equipo a una carpeta `VeraCrypt\` en la raíz de la unidad
 (un *Traveler's Disk*), para poder montar el contenedor en un ordenador que no lo
@@ -209,9 +227,9 @@ tenga instalado. Tres avisos honestos:
 - **Sigue haciendo falta ser administrador** en el equipo donde lo enchufes:
   montar carga un driver y eso no se puede hacer de otra forma. Esto te ahorra
   instalar VeraCrypt, no el aviso de permisos.
-- **Solo viaja la arquitectura del equipo que lo prepara.** Uno preparado en un
-  PC normal (x64) vale también en un Windows ARM, porque ahí el x64 se emula; al
-  revés no. El paso 8 te dice cuál lleva.
+- **Solo viaja la arquitectura del equipo que lo prepara, y solo vale en esa.**
+  Montar carga un driver, y un driver no se emula: uno preparado en un PC normal
+  (x64) no monta en un Windows ARM, ni al revés. El paso 8 te dice cuál lleva.
 - prdrive **no comprueba la firma** de lo que copia, que es algo que el propio
   diálogo de VeraCrypt sí hace. Copia de la carpeta de VeraCrypt instalada en tu
   equipo, que ya está protegida contra escritura sin permisos de administrador.
