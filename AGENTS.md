@@ -1026,6 +1026,11 @@ keeps the target's existing header.
 - **`sync_config.example.toml`** — the schema reference for both
   `sync_config.toml` and the remote's `pairs.toml` (which also takes `[remote]`).
 - **`LICENSE`** — Apache 2.0 verbatim; README's «Licencia» section points at it.
+- **`.github/pull_request_template.md`** — what every PR answers, agents' included:
+  where it touches, which data is at stake, what happens to devices already in
+  use, and how it was checked (no CI runs the tests). **A PR title is release
+  text**: the release workflow uses `--generate-notes`, and `tk_update` shows
+  those notes on every device — write it in Spanish, for the device's user.
 
 ## Agent skills
 
