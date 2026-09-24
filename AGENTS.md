@@ -562,6 +562,27 @@ its docs, and the citations are in the code — keep them like the rclone ones i
 `common/bisync.py`. The design and the evidence table are in
 `docs/superpowers/specs/2026-09-23-veracrypt-ciclo-de-vida-design.md`.
 
+What a **real Windows run** found is in
+`docs/superpowers/pruebas/2026-09-24-veracrypt-unidad-g-resultados.md` (the plan
+is the file beside it; the helper scripts lived outside the repo). Read it
+before touching VeraCrypt on Windows. It has:
+- a table per test;
+- findings H-1…H-10 with their evidence;
+- the fixes and a second pass after them (sections 8–10);
+- what the plan got wrong, e.g. the portable package has no `VeraCrypt.exe`,
+  unplugging leaves a ghost volume, and a forced dismount *may* keep the `.hc`
+  held.
+
+Still unverified on real hardware:
+- an installed VeraCrypt (`ERR_DRIVER_VERSION`);
+- the «retenido» branch;
+- the new eject wait;
+- Linux.
+
+Agent trap: this machine's Bash tool is sandboxed. It redirects writes under
+`%LOCALAPPDATA%` (a `penwatch install` from there registers a task that points
+at nothing) and hangs `tasklist | find`. Use PowerShell for both.
+
 - **Creation speed is `/dynamic`, and it is asked before it is used.** `/quick`
   does *not* stop VeraCrypt writing the whole container: `FormatNoFs()` walks it
   writing a zeroed sector every 128 MiB *on purpose* (`Common/Format.c`), and
