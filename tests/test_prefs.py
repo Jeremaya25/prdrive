@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""La memoria de la UI: qué recuerda, qué olvida y qué no llega a escribir."""
+"""La configuración del servicio (ui/prefs.py): qué recuerda, qué olvida y qué
+no llega a escribir."""
 
 import json
 import sys
@@ -24,7 +25,8 @@ c("sin recuerdo", prefs.startup_defaults(CFG), (["docs", "claves"], 15.0, None))
 prefs.save_prefs("daemon", ["docs"], 7.0, ALL)
 pairs, interval, memo = prefs.startup_defaults(CFG)
 c("tras elegir docs/7min", (pairs, interval), (["docs"], 7.0))
-c("y se anuncia", memo is not None and memo.startswith("Precargado"), True)
+c("y se anuncia", memo is not None and memo.startswith("Parejas e intervalo del servicio"),
+  True)
 
 # Repetir la misma elección no gasta un ciclo de escritura del dispositivo.
 mtime = prefs.PREFS.stat().st_mtime_ns
@@ -38,7 +40,7 @@ CFG2 = mkcfg(["upload", "claves", "docs", "prdrive", "fotos"],
 c("pareja nueva se marca sola", prefs.startup_defaults(CFG2)[0], ["docs", "fotos"])
 
 # El orden es el del TOML, no el del guardado.
-prefs.save_prefs("manual", ["prdrive", "upload"], 7.0, ALL)
+prefs.save_prefs("daemon", ["prdrive", "upload"], 7.0, ALL)
 c("orden del TOML", prefs.startup_defaults(CFG)[0], ["upload", "prdrive"])
 
 # TOML regenerado con otros nombres: todas cuentan como nuevas.
@@ -47,11 +49,24 @@ c("TOML regenerado: todas nuevas",
 
 # Lo elegido ya no existe y no hay parejas nuevas: se vuelve al TOML sin
 # presumir de un recuerdo que ya no aplica (nota None).
-prefs.save_prefs("manual", ["upload"], 9.0, ALL)
+prefs.save_prefs("daemon", ["upload"], 9.0, ALL)
 c("elegida borrada del TOML",
   prefs.startup_defaults(mkcfg(["claves", "docs", "prdrive"],
                                {"pairs": ["claves"], "interval_minutes": 20})),
   (["claves"], 20.0, None))
+
+# Un registro 'manual' es de antes de que las pasadas manuales dejaran de
+# escribir aquí: el recuerdo de una pasada suelta no decide el servicio.
+prefs.PREFS.write_text(json.dumps({"action": "manual", "pairs": ["upload"], "known": ALL,
+                                   "interval_min": 5, "saved": "2026-01-01 00:00:00"}),
+                       encoding="utf-8")
+c("un registro 'manual' no cuenta", prefs.startup_defaults(CFG),
+  (["docs", "claves"], 15.0, None))
+
+# Uno sin `action` (escrito a mano) sí.
+prefs.PREFS.write_text(json.dumps({"pairs": ["upload"], "known": ALL, "interval_min": 5}),
+                       encoding="utf-8")
+c("un registro sin 'action' vale", prefs.startup_defaults(CFG)[:2], (["upload"], 5.0))
 
 # Ficheros rotos: nunca son un error, solo "no hay nada escrito".
 prefs.PREFS.write_text("{ esto no es json", encoding="utf-8")

@@ -35,7 +35,7 @@ except Exception as e:                                   # sin entorno gráfico
     print(f"  (saltado) no hay entorno gráfico: {e}")
     sys.exit(0)
 
-from ui import tk_fleet, tk_pairs, tk_watch
+from ui import tk_fleet, tk_pairs, tk_watch, watch
 
 # El de verdad: más abajo hay tramos que lo sustituyen por un formulario de
 # mentira, y el último los necesita a los dos.
@@ -604,17 +604,47 @@ with sandbox():
     cfg = preparar()
     tk.Toplevel.wait_window = pulsar("Cerrar")
     try:
-        tk_watch.open_dialog(raiz, cfg)
+        tk_watch.open_dialog(raiz)
         c("la pantalla de penwatch se abre y se cierra", True, True)
     except Exception as e:
         c("la pantalla de penwatch se abre y se cierra", f"{type(e).__name__}: {e}", True)
 
     tk.Toplevel.wait_window = pulsar("Detectar el dispositivo")
     try:
-        tk_watch.open_dialog(raiz, cfg)
+        tk_watch.open_dialog(raiz)
         c("'Detectar el dispositivo' no revienta", True, True)
     except Exception as e:
         c("'Detectar el dispositivo' no revienta", f"{type(e).__name__}: {e}", True)
+
+# El formulario de instalación ya no pregunta parejas ni intervalo: son los del
+# servicio, que viven en el dispositivo. Lo que queda es del equipo: qué hacer al
+# enchufar —tres opciones a la vista, no un desplegable—, el sondeo y las raíces.
+visto_form: dict = {}
+
+
+def inspeccionar_y_aceptar(self, *_a, **_k):
+    pila, textos, radios = [self], [], []
+    while pila:
+        w = pila.pop()
+        pila += list(w.winfo_children())
+        if isinstance(w, ttk.Radiobutton):
+            radios.append(str(w.cget("text")))
+        elif isinstance(w, ttk.Label):
+            textos.append(str(w.cget("text")))
+    visto_form.update(textos=textos, radios=sorted(radios))
+    pulsar("Instalar")(self)
+
+
+tk.Toplevel.wait_window = inspeccionar_y_aceptar
+opciones = tk_watch.formulario_instalacion(raiz)
+c("el vigilante: ni parejas ni intervalo en el formulario",
+  [t for t in visto_form["textos"] if t in ("Parejas", "Intervalo del servicio")], [])
+c("el vigilante: y dice de dónde salen",
+  any("son los del servicio" in t for t in visto_form["textos"]), True)
+c("el vigilante: los tres modos, en palabras", visto_form["radios"],
+  sorted(watch.MODE_LABELS.values()))
+c("el vigilante: lo que devuelve es lo del equipo",
+  sorted(opciones), ["extra_roots", "mode", "poll", "start"])
 
 
 

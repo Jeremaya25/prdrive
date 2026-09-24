@@ -12,6 +12,10 @@ Lo que el diseño cambia aquí es de dónde se lee cada cosa: el estado deja de 
 una lista de pares «etiqueta: valor» a secas y pasa a una tarjeta donde lo que se
 mira de un vistazo —si está instalado, si la tarea está activa, si el dispositivo se ve
 ahora mismo— son chips, y el resto texto normal.
+
+Aquí solo se decide QUÉ se hace al enchufar. Las parejas y el intervalo son los
+del servicio, que se eligen en la ventana principal y viajan con el dispositivo:
+el servicio es uno, se arranque a mano o al enchufar.
 """
 
 from __future__ import annotations
@@ -47,7 +51,7 @@ def _chip_de(etiqueta: str, valor: str):
             "warn" if malo else "ok")
 
 
-def open_dialog(parent, config=None) -> None:
+def open_dialog(parent) -> None:
     from tkinter import messagebox, ttk
 
     dlg = modal(parent, "Arranque automático")
@@ -131,7 +135,7 @@ def open_dialog(parent, config=None) -> None:
         ver_estado()
 
     def instalar() -> None:
-        opciones = formulario_instalacion(dlg, config)
+        opciones = formulario_instalacion(dlg)
         if opciones is None:
             return
         lanzar(watch.install_command(**opciones), "instalar el vigilante")
@@ -169,7 +173,7 @@ def open_dialog(parent, config=None) -> None:
     mostrar(dlg, parent)
 
 
-def formulario_instalacion(parent, config) -> dict | None:
+def formulario_instalacion(parent) -> dict | None:
     """Las opciones de `penwatch install`. None si se cancela."""
     import tkinter as tk
     from tkinter import ttk
@@ -192,42 +196,25 @@ def formulario_instalacion(parent, config) -> dict | None:
                   width=22).grid(row=en, column=0, sticky="ne" if arriba else "e",
                                  padx=(0, 12), pady=(5, 0) if arriba else 3)
 
-    etiqueta("Al detectar el dispositivo", 2)
+    # El modo, en palabras y a la vista: con un desplegable de `ui` / `sync` /
+    # `daemon` había que abrirlo para saber que existían los otros dos.
+    etiqueta("Al detectar el dispositivo", 2, arriba=True)
     modo = tk.StringVar(value=previas.get("mode", "ui"))
-    ttk.Combobox(marco, textvariable=modo, state="readonly", width=12,
-                 values=list(watch.MODES)).grid(row=2, column=1, sticky="w", pady=3)
-    ayuda = ttk.Label(marco, style="Pista.TLabel", wraplength=theme.medida(340), justify="left")
-    ayuda.grid(row=2, column=2, sticky="w", padx=(12, 0))
-
-    # Las parejas y el intervalo solo pintan algo en los modos que sincronizan.
-    etiqueta("Parejas", 3, arriba=True)
-    marco_parejas = ttk.Frame(marco, style="Card.TFrame", padding=(12, 10))
-    marco_parejas.grid(row=3, column=1, columnspan=2, sticky="w", pady=(8, 2))
-    elegidas: dict[str, tk.BooleanVar] = {}
-    nombres = list(config.names) if config is not None else []
-    for i, nombre in enumerate(nombres):
-        var = tk.BooleanVar(value=nombre in (previas.get("pairs") or []))
-        elegidas[nombre] = var
-        ttk.Checkbutton(marco_parejas, text=nombre, variable=var,
-                        style="Card.TCheckbutton").grid(
-            row=i // 3, column=i % 3, sticky="w", padx=(0, 16))
-    if not nombres:
-        ttk.Label(marco_parejas, text="(no se han podido leer las parejas)",
-                  style="Card.Pista.TLabel").grid()
-    else:
-        ttk.Label(marco_parejas, text="Vacío = todas.", style="Card.Pista.TLabel").grid(
-            row=len(nombres) // 3 + 1, column=0, columnspan=3, sticky="w",
-            pady=(6, 0))
+    if modo.get() not in watch.MODES:
+        modo.set("ui")
+    modos = ttk.Frame(marco)
+    modos.grid(row=2, column=1, columnspan=2, sticky="w", pady=(5, 2))
+    for i, clave in enumerate(watch.MODES):
+        ttk.Radiobutton(modos, text=watch.MODE_LABELS[clave], value=clave,
+                        variable=modo).grid(row=i, column=0, sticky="w", pady=1)
+        ttk.Label(modos, text=watch.MODE_HELP[clave], style="Pista.TLabel").grid(
+            row=i, column=1, sticky="w", padx=(12, 0))
+    ttk.Label(marco, style="Pista.TLabel", wraplength=theme.medida(480), justify="left",
+              text="Las parejas y el intervalo son los del servicio: se eligen en la "
+                   "ventana principal y viajan con el dispositivo.").grid(
+        row=3, column=1, columnspan=2, sticky="w", pady=(6, 4))
 
     fila = 4
-    etiqueta("Intervalo del servicio", fila)
-    intervalo = tk.StringVar(value=str(previas.get("interval") or ""))
-    entrada_intervalo = ttk.Entry(marco, textvariable=intervalo, width=8)
-    entrada_intervalo.grid(row=fila, column=1, sticky="w", pady=3)
-    ttk.Label(marco, text="minutos; vacío = el de [daemon] del TOML",
-              style="Pista.TLabel").grid(row=fila, column=2, sticky="w", padx=(12, 0))
-    fila += 1
-
     etiqueta("Sondeo del dispositivo", fila)
     sondeo = tk.StringVar(value=str(previas.get("poll") or 5))
     ttk.Entry(marco, textvariable=sondeo, width=8).grid(row=fila, column=1,
@@ -249,15 +236,6 @@ def formulario_instalacion(parent, config) -> dict | None:
         row=fila, column=1, columnspan=2, sticky="w", pady=(10, 0))
     fila += 1
 
-    def modo_cambiado(*_):
-        ayuda.configure(text=watch.MODE_HELP.get(modo.get(), ""))
-        sincroniza = modo.get() in ("sync", "daemon")
-        for hijo in marco_parejas.winfo_children():
-            hijo.configure(state="normal" if sincroniza else "disabled")
-        entrada_intervalo.configure(state="normal" if modo.get() == "daemon" else "disabled")
-    modo.trace_add("write", modo_cambiado)
-    modo_cambiado()
-
     def aceptar():
         def numero(var):
             try:
@@ -266,9 +244,6 @@ def formulario_instalacion(parent, config) -> dict | None:
                 return None
         resultado["opciones"] = {
             "mode": modo.get(),
-            "pairs": [n for n, v in elegidas.items()
-                      if v.get() and modo.get() in ("sync", "daemon")],
-            "interval": numero(intervalo) if modo.get() == "daemon" else None,
             "poll": numero(sondeo),
             "extra_roots": raices.get("1.0", "end").splitlines(),
             "start": bool(arrancar.get()),

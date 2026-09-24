@@ -504,7 +504,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
     import tkinter as tk
     from tkinter import messagebox, ttk
 
-    from . import tk_doctor, tk_pairs, tk_update, tk_watch
+    from . import tk_doctor, tk_pairs, tk_update, tk_watch, watch
 
     theme.nitidez()
     root = tk.Tk()  # TclError aquí si no hay display -> fallback consola
@@ -561,6 +561,12 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
             vista["expulsion"] = cifrado.expulsion()
         except Exception:                            # noqa: BLE001
             vista["expulsion"] = None
+        # Qué hace este equipo al enchufar el dispositivo. Solo lee ficheros del
+        # equipo (ver `watch.resumen`), así que también cabe en el primer pintado.
+        try:
+            vista["vigilante"] = watch.resumen()
+        except Exception:                            # noqa: BLE001
+            vista["vigilante"] = watch.Resumen("no_disponible")
 
     leer_estado()
 
@@ -693,6 +699,16 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
                 pass         # la ventana ya se ha cerrado
 
         threading.Thread(target=trabajo, daemon=True).start()
+
+    def abrir_arranque() -> None:
+        """La pantalla del vigilante. Al volver se relee qué hace este equipo al
+        enchufar: se puede haber instalado, cambiado de modo o quitado."""
+        tk_watch.open_dialog(root)
+        try:
+            vista["vigilante"] = watch.resumen()
+        except Exception:                            # noqa: BLE001
+            vista["vigilante"] = watch.Resumen("no_disponible")
+        reajustar()
 
     def abrir_reparacion() -> None:
         """La pantalla donde se ve lo que está mal y se arregla.
@@ -898,18 +914,26 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
             fila += 1
 
         # --- la lista de parejas ---------------------------------------------
+        # Las casillas son las mismas para «Sincronizar ahora» y para «Iniciar
+        # servicio», y salen marcadas con lo del servicio (`prefs`): lo que se
+        # ve marcado al abrir es lo que sincroniza el servicio.
         rotulo = ttk.Frame(frame)
         rotulo.grid(row=fila, column=0, sticky="ew", pady=(20, 8))
-        rotulo.columnconfigure(1, weight=1)
+        rotulo.columnconfigure(2, weight=1)
         fila += 1
         ttk.Label(rotulo, text=theme.rotulo("Parejas"),
                   style="Rotulo.TLabel").grid(row=0, column=0, sticky="w")
         ultima = cuando(max((m for m in marcas.values() if m), default=None))
-        resumen = f"{len(d_pairs)} de {len(names)}"
-        if ultima:
-            resumen += f" · última pasada {ultima}"
-        ttk.Label(rotulo, text=resumen, style="Pista.TLabel").grid(
-            row=0, column=2, sticky="e")
+        resumen = ttk.Label(rotulo, style="Pista.TLabel")
+        resumen.grid(row=0, column=3, sticky="e")
+        todas = None
+        if len(names) > 1:
+            # El texto dice lo que hará, y cambia: se mide el más largo y se le
+            # reserva el sitio, o el resumen de la derecha bailaría con cada clic.
+            todas = ttk.Button(rotulo, text="Desmarcar todas", style="Quiet.TButton")
+            todas.grid(row=0, column=1, sticky="w", padx=(10, 0))
+            todas.update_idletasks()
+            rotulo.columnconfigure(1, minsize=todas.winfo_reqwidth() + 10)
 
         tarjeta = ttk.Frame(frame, style="Card.TFrame", padding=(12, 2))
         tarjeta.grid(row=fila, column=0, sticky="ew")
@@ -917,6 +941,30 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         fila += 1
 
         vars_by_name: dict[str, tk.BooleanVar] = {}
+
+        def contar() -> None:
+            """El «N de M» y el texto del botón siguen a las casillas.
+
+            Lo llama cada casilla con su `command` y no un `trace` de la
+            variable: la orden de un widget se borra con él, y la de un trace
+            no, así que desde Tcl seguiría sujetando esta función —y con ella
+            la ventana entera y sus imágenes— hasta cerrar el intérprete."""
+            marcadas = sum(1 for v in vars_by_name.values() if v.get())
+            texto = f"{marcadas} de {len(names)}"
+            if ultima:
+                texto += f" · última pasada {ultima}"
+            resumen.configure(text=texto)
+            if todas is not None:
+                todas.configure(text="Desmarcar todas" if marcadas == len(names)
+                                else "Marcar todas")
+
+        def marcar_todas() -> None:
+            """Si falta alguna, todas; si están todas, ninguna."""
+            valor = not all(v.get() for v in vars_by_name.values())
+            for v in vars_by_name.values():
+                v.set(valor)
+            contar()
+
         linea = 0
         for name in names:
             if linea:
@@ -924,7 +972,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
                 linea += 1
             var = tk.BooleanVar(value=(name in d_pairs))
             vars_by_name[name] = var
-            ttk.Checkbutton(tarjeta, text=name, variable=var,
+            ttk.Checkbutton(tarjeta, text=name, variable=var, command=contar,
                             style="Card.Fuerte.TCheckbutton").grid(
                 row=linea, column=0, sticky="w", pady=6)
             pareja = next(p for p in config.pairs if p.name == name)
@@ -949,74 +997,23 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
             ttk.Label(tarjeta, text="No hay ninguna pareja configurada.",
                       style="Card.Pista.TLabel").grid(row=0, column=0, pady=10)
 
-        # --- cada cuánto ------------------------------------------------------
-        repetir = ttk.Frame(frame)
-        repetir.grid(row=fila, column=0, sticky="w", pady=(16, 0))
-        fila += 1
-        img = icons.get(repetir, "clock", 15, theme.TINTA3, theme.PAPEL)
-        reloj = ttk.Label(repetir)
-        if img is not None:
-            reloj.configure(image=img)
-            reloj.image = img
-        reloj.grid(row=0, column=0, sticky="w")
-        ttk.Label(repetir, text="Repetir cada", style="Campo.TLabel").grid(
-            row=0, column=1, sticky="w", padx=(8, 10))
-        interval_var = tk.StringVar(value=vista.get("intervalo") or f"{d_interval:g}")
-        ttk.Spinbox(repetir, from_=1, to=1440, textvariable=interval_var,
-                    width=5, font=theme.fuente("mono")).grid(row=0, column=2)
-        ttk.Label(repetir, text="minutos, mientras el dispositivo siga puesto",
-                  style="Pista.TLabel").grid(row=0, column=3, sticky="w", padx=(10, 0))
-        vista["casillas"], vista["intervalo_var"] = vars_by_name, interval_var
-
-        def selected() -> list[str]:
-            return [n for n in names if vars_by_name[n].get()]
-
-        def minutos() -> float:
-            try:
-                return max(1.0, float(interval_var.get().replace(",", ".")))
-            except ValueError:
-                return d_interval
-
-        def sincronizar() -> None:
-            """La pasada manual, aquí mismo. Se recuerda lo elegido —el
-            intervalo también: aquí no se usa, pero forma parte de lo que se
-            recuerda para la próxima vez— antes de preguntar por los resync."""
-            sel = selected()
-            if not sel:
-                return  # nada marcado, nada que hacer
-            prefs.save_prefs("manual", sel, minutos(), names)
-            args = manual_args(vista["config"], sel,
-                               lambda pendientes: preguntar_resync(root, pendientes))
-            lanzar("Sincronización manual", args)
-
-        def servicio() -> None:
-            """El servicio sí cierra la ventana: corre en otro proceso, sin
-            ella, y quien lo arranca es runsync al volver de aquí."""
-            sel = selected()
-            if not sel:
-                return
-            result["choice"] = Choice("daemon", tuple(sel), minutos())
-            root.destroy()
+        if todas is not None:
+            todas.configure(command=marcar_todas)
+        contar()
 
         # --- las pantallas de las que se vuelve aquí --------------------------
         pantallas = ttk.Frame(frame)
         pantallas.grid(row=fila, column=0, sticky="ew", pady=(18, 0))
-        pantallas.columnconfigure(2, weight=1)
+        pantallas.columnconfigure(1, weight=1)
         fila += 1
-        # Mientras sincroniza se apaga todo lo que toca el mismo estado: otra
-        # pasada chocaría con el lock de bisync, y la pantalla de parejas puede
-        # apartar un baseline que rclone está usando. «Arranque automático» no
-        # toca nada del dispositivo, así que sigue a mano.
-        for col, (texto, icono, accion, estado_boton) in enumerate((
-                ("Parejas…", "parejas",
-                 lambda: tk_pairs.open_dialog(root, vista["config"]) and recargar(),
-                 apagado),
-                ("Arranque automático…", "arranque",
-                 lambda: tk_watch.open_dialog(root, vista["config"]), "normal"))):
-            boton = ttk.Button(pantallas, text=texto, style="Quiet.TButton",
-                               command=accion, state=estado_boton)
-            theme.boton_icono(boton, icono, theme.ACENTO, theme.PAPEL)
-            boton.grid(row=0, column=col, sticky="w", padx=(0, 4))
+        # Mientras sincroniza se apaga lo que toca el mismo estado: la pantalla
+        # de parejas puede apartar un baseline que rclone está usando.
+        boton = ttk.Button(pantallas, text="Parejas…", style="Quiet.TButton",
+                           command=lambda: (tk_pairs.open_dialog(root, vista["config"])
+                                            and recargar()),
+                           state=apagado)
+        theme.boton_icono(boton, "parejas", theme.ACENTO, theme.PAPEL)
+        boton.grid(row=0, column=0, sticky="w")
         # El engranaje, apartado a la derecha: detrás está lo que se hace de
         # tarde en tarde —la comprobación del doctor, emparejar un móvil, las
         # versiones—, para que esta ventana no crezca con cada cosa nueva. Se
@@ -1028,7 +1025,90 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
                                  abrir_reparacion=abrir_reparacion),
                              state=apagado)
         theme.boton_icono(ajustes, "gear", theme.ACENTO, theme.PAPEL)
-        ajustes.grid(row=0, column=3, sticky="e")
+        ajustes.grid(row=0, column=2, sticky="e")
+
+        # --- el servicio: cada cuánto, y qué hace este equipo al enchufar -----
+        # Junto al pie y no junto a la lista: el intervalo es del servicio, y
+        # una pasada manual no lo usa. Sale precargado con el del servicio.
+        repetir = ttk.Frame(frame)
+        repetir.grid(row=fila, column=0, sticky="w", pady=(18, 0))
+        fila += 1
+        img = icons.get(repetir, "clock", 15, theme.TINTA3, theme.PAPEL)
+        reloj = ttk.Label(repetir)
+        if img is not None:
+            reloj.configure(image=img)
+            reloj.image = img
+        reloj.grid(row=0, column=0, sticky="w")
+        ttk.Label(repetir, text="El servicio repite cada", style="Campo.TLabel").grid(
+            row=0, column=1, sticky="w", padx=(8, 10))
+        interval_var = tk.StringVar(value=vista.get("intervalo") or f"{d_interval:g}")
+        ttk.Spinbox(repetir, from_=1, to=1440, textvariable=interval_var,
+                    width=5, font=theme.fuente("mono")).grid(row=0, column=2)
+        ttk.Label(repetir, text="minutos, mientras el dispositivo siga puesto",
+                  style="Pista.TLabel").grid(row=0, column=3, sticky="w", padx=(10, 0))
+        vista["casillas"], vista["intervalo_var"] = vars_by_name, interval_var
+
+        # La línea del arranque automático: lo que antes solo se sabía abriendo
+        # su pantalla. Sigue encendida mientras sincroniza, como el botón al que
+        # sustituye: el vigilante no toca nada del dispositivo.
+        vigilante = vista["vigilante"]
+        dicho = watch.linea(vigilante)
+        if dicho is not None:
+            arranque = ttk.Frame(frame)
+            arranque.grid(row=fila, column=0, sticky="ew", pady=(10, 0))
+            arranque.columnconfigure(1, weight=1)
+            fila += 1
+            img = icons.get(arranque, "warn" if dicho.aviso else "arranque", 15,
+                            theme.AVISO if dicho.aviso else theme.TINTA3, theme.PAPEL)
+            marca = ttk.Label(arranque)
+            if img is not None:
+                marca.configure(image=img)
+                marca.image = img
+            marca.grid(row=0, column=0, sticky="nw", padx=(0, 8), pady=(1, 0))
+            ttk.Label(arranque, text=dicho.texto,
+                      style="Aviso.TLabel" if dicho.aviso else "Campo.TLabel",
+                      wraplength=theme.medida(380), justify="left").grid(
+                row=0, column=1, sticky="w")
+            if vigilante.vigila_este:
+                # El vigilante no lanza nada mientras esta ventana esté abierta;
+                # sin decirlo, enchufar con la ventana abierta parecería que el
+                # arranque automático se ha roto.
+                ttk.Label(arranque, text=watch.PAUSA, style="Pista.TLabel").grid(
+                    row=1, column=1, sticky="w")
+            cambiar = ttk.Button(arranque, text=dicho.boton, style="Quiet.TButton",
+                                 command=abrir_arranque)
+            theme.boton_icono(cambiar, "arranque", theme.ACENTO, theme.PAPEL)
+            cambiar.grid(row=0, column=2, rowspan=2, sticky="e", padx=(10, 0))
+
+        def selected() -> list[str]:
+            return [n for n in names if vars_by_name[n].get()]
+
+        def minutos() -> float:
+            try:
+                return max(1.0, float(interval_var.get().replace(",", ".")))
+            except ValueError:
+                return d_interval
+
+        def sincronizar() -> None:
+            """La pasada manual, aquí mismo. No se recuerda nada: lo que se
+            guarda es la configuración del servicio, y una pasada suelta con
+            unas pocas parejas no puede decidir qué sincroniza el servicio."""
+            sel = selected()
+            if not sel:
+                return  # nada marcado, nada que hacer
+            args = manual_args(vista["config"], sel,
+                               lambda pendientes: preguntar_resync(root, pendientes))
+            lanzar("Sincronización manual", args)
+
+        def servicio() -> None:
+            """El servicio sí cierra la ventana: corre en otro proceso, sin
+            ella, y quien lo arranca —y guarda lo elegido— es runsync al volver
+            de aquí."""
+            sel = selected()
+            if not sel:
+                return
+            result["choice"] = Choice("daemon", tuple(sel), minutos())
+            root.destroy()
 
         ttk.Separator(frame, orient="horizontal").grid(
             row=fila, column=0, sticky="ew", pady=(14, 0))

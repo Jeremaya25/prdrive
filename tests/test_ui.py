@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Los dos frontends salen precargados con lo que se eligió la última vez."""
+"""Los dos frontends salen precargados con las parejas y el intervalo del
+servicio, y una pasada manual no los toca."""
 
 import builtins
 import sys
@@ -33,7 +34,7 @@ for _m in (ui, ui.console, ui.tk):
 
 CFG = mkcfg(["upload", "claves", "docs", "prdrive"],
             {"pairs": ["docs", "claves"], "interval_minutes": 15})
-prefs.save_prefs("manual", ["upload", "claves"], 12.0, CFG.names)
+prefs.save_prefs("daemon", ["upload", "claves"], 12.0, CFG.names)
 
 
 # --- consola ---------------------------------------------------------------
@@ -93,6 +94,7 @@ try:
     # ella. Se sustituye para ver con qué la lanza sin ejecutar nada.
     lanzadas: list[list[str]] = []
     ui.tk.output_window = lambda titulo, cmd, **k: lanzadas.append(cmd)
+    servicio_antes = prefs.PREFS.read_bytes()
 
     tk.Tk.mainloop = fake_mainloop
     choice = ui.tk.main_window(CFG, None)
@@ -100,8 +102,8 @@ try:
     c("tk: 'Sincronizar ahora' lanza las parejas marcadas", [cmd[2:] for cmd in lanzadas],
       [["upload", "claves"]])
     c("tk: y sin cerrar la ventana, así que no hay elección que devolver", choice, None)
-    c("tk: 'Sincronizar ahora' recuerda también el intervalo",
-      (prefs.read_prefs()["action"], prefs.read_prefs()["interval_min"]), ("manual", 12.0))
+    c("tk: 'Sincronizar ahora' no toca la configuración del servicio",
+      prefs.PREFS.read_bytes(), servicio_antes)
     c("tk: el aviso de versión nueva se ve",
       any("Hay una actualización: v9.9.9" in (e or "") for e in etiquetas), True)
     c("tk: diciendo cuál lleva puesta",
