@@ -1,6 +1,6 @@
 # Un servicio, dos maneras de arrancarlo (issue #14)
 
-Fecha: 2026-09-23 · Estado: aceptada e implementada · Versión: 0.2.5
+Fecha: 2026-09-23 · Estado: aceptada e implementada · Versión: 0.3.1
 
 ## El problema
 
@@ -285,7 +285,7 @@ lo pide.
 - **`device-readme.md`**: «La ventana» y el «Arranque automático» de abajo, en el
   tono de la guía: el intervalo es del servicio, y la línea dice qué hace este
   equipo al enchufar.
-- **`VERSION`** → `0.2.5`.
+- **`VERSION`** → `0.3.1` (se pensó como `0.2.5`; ver «Al implementarlo»).
 
 ## Al implementarlo
 
@@ -309,6 +309,10 @@ Lo que cambió respecto a lo de arriba, y por qué:
   intervalo lo dice una sola vez la pista de debajo de las tres opciones.
 - `tk_watch.open_dialog()` y `formulario_instalacion()` pierden el parámetro
   `config`, que solo servía para las casillas de parejas.
+- **Sale como 0.3.1, no como 0.2.5.** Mientras esperaba, `main` publicó la 0.3.0
+  (VeraCrypt), que también toca la ventana principal: «Expulsar» en el pie y su
+  estado en `leer_estado()`. Los dos se quedan, y la medida de la ventana
+  principal de `tests/test_tk_servicio.py` incluye ese tercer botón.
 
 ## Después
 

@@ -167,10 +167,11 @@ c("al volver a conectarla, se pide de nuevo", len(aperturas), 2)
 c.contains("y queda en el diario", penwatch.LOG_FILE.read_text(encoding="utf-8"),
            "dispositivo cifrado detectado")
 
-# Instalado con el contenedor abierto —lo que hace «Arranque automático…» desde la
-# ventana—, el vigilante no ha visto nunca el dispositivo cerrado. El estado es el
-# que escribe `cmd_install`, y «Expulsar» con la unidad puesta sigue sin ser una
-# conexión nueva (J2 en docs/superpowers/pruebas/…-resultados.md, H-8).
+# Instalado con el contenedor abierto —lo que hace la pantalla del arranque
+# automático desde la ventana—, el vigilante no ha visto nunca el dispositivo
+# cerrado. El estado es el que escribe `cmd_install`, y «Expulsar» con la unidad
+# puesta sigue sin ser una conexión nueva (J2 en
+# docs/superpowers/pruebas/…-resultados.md, H-8).
 montado[:] = [tmpdir("prdrive-montado-")]
 raices[:] = [fisica]
 penwatch.write_json(penwatch.STATE_FILE, {

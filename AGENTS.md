@@ -439,6 +439,9 @@ paths and flags; no rounded corners, no shadows. Styles cross **role** with
   `repintar()`, because three things change a step's height without a step
   change. `tests/test_tk_medidas.py` checks every screen against a matrix of
   resolution **and** `tk scaling` — the scaling column is the half that matters.
+  The main window opens its own interpreter, so it is measured on the same
+  matrix in `tests/test_tk_servicio.py`, in its worst case: twelve pairs, the
+  amber watcher line and «Expulsar» in the footer.
 - `tk.working(parent, title, funcion)` runs `funcion()` on a thread behind a bare
   progress bar, for slow or passphrase-carrying commands. No cancel button.
 

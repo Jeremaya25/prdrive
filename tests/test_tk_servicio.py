@@ -10,9 +10,9 @@ comprueba lo que se ve y se toca en la ventana:
   * que una pasada manual no escribe la configuración del servicio;
   * la línea que dice qué hace este equipo al enchufar, en cada estado, y que
     su botón lleva a la pantalla del vigilante y al volver se repinta;
-  * que con lo más largo que puede salir —doce parejas, el botón de marcar y la
-    línea en ámbar— la ventana cabe o se desplaza, en la matriz de resolución y
-    `tk scaling` de `test_tk_medidas`.
+  * que con lo más largo que puede salir —doce parejas, el botón de marcar, la
+    línea en ámbar y «Expulsar» en el pie— la ventana cabe o se desplaza, en la
+    matriz de resolución y `tk scaling` de `test_tk_medidas`.
 
 Nada se enseña ni se lanza: el bucle de eventos se sustituye por lo que se quiere
 pulsar, y la salida de sync.py y la pantalla del vigilante por un apunte.
@@ -20,6 +20,7 @@ pulsar, y la salida de sync.py y la pantalla del vigilante por un apunte.
 
 import re
 import sys
+from pathlib import Path
 
 from _harness import Checks, mkcfg, sandbox, tmpdir
 
@@ -35,7 +36,7 @@ except Exception as e:                                   # sin entorno gráfico
 
 import ui.tk as uitk  # noqa: E402
 from common import update  # noqa: E402
-from ui import prefs, theme, tk_watch, watch  # noqa: E402
+from ui import cifrado, prefs, theme, tk_watch, watch  # noqa: E402
 
 # Nada de red ni del estado de quien ejecuta el test.
 update.pending = lambda root=None: None
@@ -44,6 +45,9 @@ uitk.pair_status_notes = lambda cfg: {}
 uitk.preguntar_resync = lambda root, pendientes: False
 lanzadas: list = []
 uitk.output_window = lambda titulo, cmd, **k: lanzadas.append(cmd)
+# Ni contenedor VeraCrypt ni recorrido de unidades: «Expulsar» solo sale donde
+# se pide, en la medida de más abajo.
+cifrado.expulsion = lambda: None
 prefs.PREFS = tmpdir("prdrive-tkservicio-") / "ui_prefs.json"
 
 CUATRO = mkcfg(["upload", "claves", "docs", "prdrive"],
@@ -245,6 +249,7 @@ def medir(root) -> None:
     ancho, alto = visor._medida()
     medida["cabe"] = (root.winfo_reqwidth() <= util_x
                       and root.winfo_reqheight() <= util_y)
+    medida["expulsar"] = "Expulsar" in botones(root)
     medida["recortado"] = ((visor.interior.winfo_reqheight() > alto
                             and not visor.vertical.grid_info())
                            or (visor.interior.winfo_reqwidth() > ancho
@@ -260,66 +265,17 @@ try:
             REAL_APPLY(widget)
 
         theme.apply = con_escala
+        # Con «Expulsar» en el pie, el tercer botón: el de un dispositivo que
+        # vive en un contenedor VeraCrypt. No se pulsa, solo se mide.
+        cifrado.expulsion = lambda: Path("E:/Expulsar PRDRIVE.bat")
         with sandbox():
             medida: dict = {}
             ventana(DOCE, medir, resumen=watch.Resumen("desfasado", "daemon"))
+            c(f"{nombre}: con «Expulsar» en el pie", medida.get("expulsar"), True)
             c(f"{nombre}: la ventana principal cabe", medida.get("cabe"), True)
             c(f"{nombre}: y no queda recortada", medida.get("recortado"), False)
 finally:
     uitk.pantalla_util, theme.apply = REAL_UTIL, REAL_APPLY
-
-
-# --- que quepa ---------------------------------------------------------------------
-# La ventana principal abre su propio intérprete de Tk, así que la escala no se le
-# puede cambiar desde fuera como en `test_tk_medidas`: se pone en el momento en
-# que se le aplica el tema, que es lo primero que hace con su `Tk()` y antes de
-# crear ningún widget. La pantalla, igual que allí: sustituyendo `pantalla_util`.
-PANTALLAS = (
-    ("1080p", 1920, 1080, 1.3333),
-    ("1080p al 150 %", 1920, 1080, 2.0),
-    ("1080p al 200 %", 1920, 1080, 2.6667),
-    ("2K", 2560, 1440, 1.3333),
-    ("2K al 150 %", 2560, 1440, 2.0),
-    ("4K al 150 %", 3840, 2160, 2.0),
-    ("4K al 200 %", 3840, 2160, 2.6667),
-    ("portátil 1366x768", 1366, 768, 1.3333),
-    ("1280x720", 1280, 720, 1.3333),
-    ("1024x600", 1024, 600, 1.3333),
-)
-DOCE = mkcfg([f"pareja-con-nombre-largo-{i}" for i in range(12)])
-REAL_UTIL, REAL_APPLY = uitk.pantalla_util, theme.apply
-
-
-def medir(root) -> None:
-    """(cabe, recortado), como `cabe()` y `recortado()` de test_tk_medidas."""
-    root.update_idletasks()
-    util_x, util_y = uitk.pantalla_util(root)
-    visor = root.visor
-    visor.interior.update_idletasks()
-    ancho, alto = visor._medida()
-    medida["cabe"] = (root.winfo_reqwidth() <= util_x
-                      and root.winfo_reqheight() <= util_y)
-    medida["recortado"] = ((visor.interior.winfo_reqheight() > alto
-                            and not visor.vertical.grid_info())
-                           or (visor.interior.winfo_reqwidth() > ancho
-                               and not visor.horizontal.grid_info()))
-
-
-try:
-    for nombre, ancho, alto, escala in PANTALLAS:
-        uitk.pantalla_util = lambda win, a=ancho, h=alto: (a, h)
-
-        def con_escala(widget, e=escala):
-            widget.tk.call("tk", "scaling", e)
-            REAL_APPLY(widget)
-
-        theme.apply = con_escala
-        with sandbox():
-            medida: dict = {}
-            ventana(DOCE, medir, resumen=watch.Resumen("desfasado", "daemon"))
-            c(f"{nombre}: la ventana principal cabe", medida.get("cabe"), True)
-            c(f"{nombre}: y no queda recortada", medida.get("recortado"), False)
-finally:
-    uitk.pantalla_util, theme.apply = REAL_UTIL, REAL_APPLY
+    cifrado.expulsion = lambda: None
 
 sys.exit(c.report())
