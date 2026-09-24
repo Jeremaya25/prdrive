@@ -579,6 +579,15 @@ its docs, and the citations are in the code — keep them like the rclone ones i
   checked in `create_container()` before VeraCrypt runs. Not 4 GiB − 1: VeraCrypt
   rounds `/size` **up** to the sector size (`Format/Tcformat.c`). The name is
   compared whole — `exfat` contains «fat» and has no cap.
+- **The container exists when the elevated copy is done, not when our process
+  exits.** The travelling `VeraCrypt Format`, without admin rights, relaunches
+  itself elevated (`/q UAC`) and exits 0 while the copy is still writing;
+  mounting in that gap left a volume with no filesystem, and the container was
+  useless. `create_container()` notes the processes with that executable's name
+  before launching and waits for the new ones to exit
+  (`_esperar_copia_elevada()`). The list comes from a Toolhelp snapshot
+  (`crypto._procesos()`, an indirection point): WMI did not show the elevated
+  copy. No time limit, like the command itself.
 - **`/m rm` is not cosmetic.** Mounted without it, Windows creates
   `System Volume Information` and `$RECYCLE.BIN` *inside* the container, i.e.
   inside what rclone syncs.
@@ -627,7 +636,7 @@ root therefore gets `Abrir PRDRIVE.bat` / `Expulsar PRDRIVE.bat`,
 marker `.prdrive-vestibulo`, whose `id=` is **the same** as `.prdrive/PRDRIVE`
 inside: that id is what joins the two halves. `common/` holds the names and
 `leer_id()` (the device needs them; `install/` does not travel); `install/`
-writes the texts. Four things not to weaken:
+writes the texts. Five things not to weaken:
 
 - **The password never passes through us.** `VeraCrypt.exe /volume X /quit`
   without `/password` asks with VeraCrypt's own dialog (`Mount/Mount.c`,
@@ -643,6 +652,20 @@ writes the texts. Four things not to weaken:
 - **Eject is `/dismount <letter> /quit` without `/silent`**, after a short
   wait: VeraCrypt only retries 30 × 50 ms (`Common/Dlgcode.h`), and without
   `/silent` it asks whether to force. `/unmount` does not exist before 1.26.24.
+  **The letter going is not enough**: forcing it with a file still open inside
+  drops the letter while Windows keeps refusing to remove the drive, so the
+  script says «ya puedes quitar la unidad» only once `:libre` sees the `.hc`
+  free.
+- **A letter with the id is not proof the container is open.** Unplugging
+  without ejecting leaves the inner letter behind, serving the control file from
+  cache, and `Abrir` used to launch prdrive from it. With the real volume
+  mounted the driver holds the `.hc` without write sharing (`TCOpenVolume()`,
+  `Driver/Ntvol.c`), so a letter with the id beside a free `.hc` is that ghost:
+  the script says how to get out («Expulsar», then «Abrir») instead of
+  launching. `:libre` opens the `.hc` for append with `type nul`, which changes
+  nothing, and answers «held» when there is no `.hc` to look at. Its blind spot
+  is a shared mount (`MountVolume()` in `Common/Dlgcode.c` falls back to one
+  when someone else had the file open), and there it costs two extra clicks.
 
 Same rules as the launchers inside: CRLF, no parenthesised blocks, `chcp 65001`
 before any accent, written by step 5 (right after `ensure_control_file()`, which
@@ -650,7 +673,10 @@ is where the id comes from) and by «Añadir plataformas…», **never** by
 `--update`. `vestibulo.destino(state)` decides whether there is one (the `.hc`
 on the physical root and the device mounted elsewhere). Its six names are in
 `device.RUIDO`, built from `vestibulo.TODOS`. `tests/test_vestibulo.py` reads the
-`.bat` and **runs** the `.sh` against a fake `veracrypt`.
+`.bat`, **runs** the `.sh` against a fake `veracrypt` and, on Windows, runs
+`:libre` against a container held the way the driver holds it. Rewriting the
+vestibule goes through `deploy.unhide()` first: Windows refuses `open(…, "w")`
+on a hidden file, and the marker is hidden.
 
 Other step notes:
 
@@ -793,7 +819,10 @@ script to `%LOCALAPPDATA%\prdriveWatch` / `~/.local/share/prdrive-watch`, writes
   mounted, so the `mode` is respected and nothing races for the window lock.
   **Once per connection** (`state["vestibule"]`): a cancelled password is not
   asked again, nor after «Expulsar» with the drive still plugged; it re-arms
-  only when the physical root disappears. No id in `watch.json` → never asks.
+  only when the physical root disappears. The mounted volume disappearing with
+  its vestibule still there marks it as asked too: a watcher installed with the
+  container open never saw it closed, and «Expulsar» brought up the password.
+  No id in `watch.json` → never asks.
 - `ui/watch.py` imports penwatch for reads and shells out for
   `install`/`uninstall`. One-way dependency. So does
   `common/vestibulo.raiz_fisica()`, lazily and guarded like `ui/watch.py`: one

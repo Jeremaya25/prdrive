@@ -824,6 +824,14 @@ def watch_loop(once: bool = False) -> int:
                 if state.get("launched") or state.get("root"):
                     log("dispositivo no disponible; disparo rearmado")
                     state.update({"launched": False, "root": None})
+                    # Si lo que queda es su entrada, se ha cerrado el contenedor
+                    # con la unidad puesta: es «Expulsar», no una conexión nueva.
+                    # Sin apuntarlo aquí, un vigilante que no lo vio cerrado
+                    # —instalado con el contenedor abierto— pedía la contraseña.
+                    if not state.get("vestibule"):
+                        cerrado = find_vestibule(cfg)
+                        if cerrado is not None:
+                            state["vestibule"] = str(cerrado)
                     write_json(STATE_FILE, state)
                 stable = 0
                 # ¿Está el dispositivo, pero cerrado? Una vez por conexión: si

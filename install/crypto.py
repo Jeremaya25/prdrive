@@ -442,9 +442,78 @@ def _run(cmd: list[str], password: str = "", timeout: float | None = None):
     return subprocess.run(cmd, **kwargs)
 
 
+def _procesos(nombre: str) -> set[int]:
+    """Los pid de los procesos vivos cuyo ejecutable se llama `nombre`.
+
+    Solo Windows. Indirección de módulo, como `_volumenes_con_control()`: los
+    tests la sustituyen. Va por la instantánea de Toolhelp, que da el nombre sin
+    abrir ningún proceso, y no por WMI: en las pruebas en G:, la consulta a WMI
+    no enseñaba la copia elevada de VeraCrypt y `Get-Process` sí. Si no se puede
+    sacar la instantánea devuelve un conjunto vacío: no poder mirar no puede
+    dejar a nadie esperando."""
+    import ctypes
+    from ctypes import wintypes
+
+    class PROCESSENTRY32W(ctypes.Structure):
+        _fields_ = [("dwSize", wintypes.DWORD),
+                    ("cntUsage", wintypes.DWORD),
+                    ("th32ProcessID", wintypes.DWORD),
+                    ("th32DefaultHeapID", ctypes.c_size_t),
+                    ("th32ModuleID", wintypes.DWORD),
+                    ("cntThreads", wintypes.DWORD),
+                    ("th32ParentProcessID", wintypes.DWORD),
+                    ("pcPriClassBase", ctypes.c_long),
+                    ("dwFlags", wintypes.DWORD),
+                    ("szExeFile", wintypes.WCHAR * 260)]
+
+    TH32CS_SNAPPROCESS = 0x00000002
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    k32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    k32.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
+    k32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
+
+    foto = k32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+    if not foto or foto == wintypes.HANDLE(-1).value:
+        return set()
+    vivos = set()
+    try:
+        entrada = PROCESSENTRY32W()
+        entrada.dwSize = ctypes.sizeof(PROCESSENTRY32W)
+        seguir = k32.Process32FirstW(foto, ctypes.byref(entrada))
+        while seguir:
+            if entrada.szExeFile.lower() == nombre.lower():
+                vivos.add(entrada.th32ProcessID)
+            seguir = k32.Process32NextW(foto, ctypes.byref(entrada))
+    finally:
+        k32.CloseHandle(foto)
+    return vivos
+
+
 # ---------------------------------------------------------------------------
 # Crear, montar, desmontar
 # ---------------------------------------------------------------------------
+
+def _esperar_copia_elevada(ejecutable: str, antes: set[int]) -> None:
+    """Espera a que terminen los `ejecutable` que no estaban en `antes`.
+
+    Es la regla 2 aplicada a crear. VeraCrypt sin su driver instalado —el que
+    viaja— y sin administrador se relanza elevado con `/q UAC` y el proceso que
+    lanzamos sale con 0 a los dos segundos (`Common/Dlgcode.c`, `InitApp` y
+    `LaunchElevatedProcess`), mientras la copia sigue escribiendo el contenedor.
+    Esa copia es hija de la nuestra y cuando la nuestra sale ya existe: sale
+    después del UAC, no antes. En G: Format volvía con el fichero 128 KiB corto
+    y seguía de 5 s a casi 3 min más; montar en ese hueco dejaba el volumen sin
+    sistema de ficheros.
+
+    Se reconoce por el nombre y por no estar antes de lanzar la orden: un Format
+    que la persona ya tuviera abierto no hace esperar. Sin límite de tiempo, como
+    la orden sin relanzar: crear un contenedor grande sin `/dynamic` en un USB
+    lento son minutos de verdad."""
+    while _procesos(ejecutable) - antes:
+        time.sleep(MOUNT_POLL)
+
 
 def create_container(vc: dict, container: Path, size_bytes: int, password: str,
                      filesystem: str = "exFAT", dinamico: bool = False) -> None:
@@ -452,7 +521,10 @@ def create_container(vc: dict, container: Path, size_bytes: int, password: str,
 
     Lo que se puede saber antes se dice antes: un tamaño que el sistema de
     ficheros de la unidad no admite se rechaza sin lanzar VeraCrypt, que
-    fallaría a medias y sin decir por qué."""
+    fallaría a medias y sin decir por qué.
+
+    Y lo que se sabe después, después de verdad: no vuelve hasta que termina la
+    copia elevada, si VeraCrypt se ha relanzado (`_esperar_copia_elevada()`)."""
     if container.exists():
         raise InstallError(
             f"Ya existe {container}. Si quieres rehacerlo, bórralo tú a mano: "
@@ -465,10 +537,14 @@ def create_container(vc: dict, container: Path, size_bytes: int, password: str,
             f"el contenedor es un fichero. Elige {tope // 1024 ** 2}M o menos, o "
             "reformatea la unidad en exFAT o NTFS (eso borra lo que tenga).")
     cmd = create_command(vc, container, size_bytes, password, filesystem, dinamico)
+    ejecutable = Path(cmd[0]).name
+    antes = _procesos(ejecutable) if IS_WIN else set()
     try:
         res = _run(cmd, password)
     except OSError as e:
         raise InstallError(f"No he podido lanzar VeraCrypt: {e}") from e
+    if IS_WIN and res.returncode == 0:
+        _esperar_copia_elevada(ejecutable, antes)
     if res.returncode != 0 or not container.exists():
         raise InstallError(
             "VeraCrypt no ha podido crear el contenedor "

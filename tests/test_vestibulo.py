@@ -113,6 +113,88 @@ c("expulsar: sin /silent, para que VeraCrypt pregunte si forzar",
 c("expulsar: espera antes a que la ventana que lo llama se cierre",
   expulsar.index("timeout /t 3") < expulsar.index("/dismount"), True)
 
+
+def bloque(texto, etiqueta):
+    """Las líneas de `:etiqueta` hasta la siguiente etiqueta."""
+    lineas = texto.splitlines()
+    if f":{etiqueta}" not in lineas:
+        return []
+    desde = lineas.index(f":{etiqueta}") + 1
+    hasta = next((i for i in range(desde, len(lineas)) if lineas[i].startswith(":")),
+                 len(lineas))
+    return lineas[desde:hasta]
+
+
+def precedida(texto, orden, antes):
+    """¿Hay alguna línea con `orden`, y va cada una justo detrás de un `antes`?"""
+    lineas = [ln for ln in texto.splitlines() if ln.strip()]
+    donde = [i for i, ln in enumerate(lineas) if orden in ln]
+    return bool(donde) and all(lineas[i - 1] == antes for i in donde)
+
+
+# Tras forzar el cierre con un fichero abierto dentro, la letra se va y Windows
+# sigue sin dejar quitar la unidad: el contenedor sigue retenido (G4b y H-6 en
+# docs/superpowers/pruebas/…-resultados.md). Que se vaya la letra no basta.
+sin_contenedor = f'if not exist "%~dp0{CONTAINER_NAME}" goto cerrado'
+c("expulsar: «ya puedes quitar la unidad» solo tras ver el contenedor suelto",
+  precedida(expulsar.replace(sin_contenedor + "\n", ""), "goto cerrado", "call :libre"),
+  True)
+c("expulsar: o si no hay contenedor al lado que mirar (un .bat copiado a otro sitio)",
+  sin_contenedor in bloque(expulsar, "sin_letra"), True)
+c("expulsar: y «ya estaba cerrado» tampoco sin mirarlo",
+  bloque(expulsar, "ya_cerrado")[:1], ["call :libre"])
+retenido = "\n".join(bloque(expulsar, "retenido"))
+c.contains("expulsar: retenido, dice que no se quite", retenido, "Windows no")
+c("expulsar: y no dice que se pueda", "puedes quitar la unidad." in retenido, False)
+libre = bloque(expulsar, "libre")
+c("comprobar el contenedor no lo crea si no está",
+  libre[:1], [f'if not exist "%~dp0{CONTAINER_NAME}" exit /b 1'])
+c("ni escribe nada en él", any(f'>>"%~dp0{CONTAINER_NAME}" type nul' in ln
+                               for ln in bloque(expulsar, "tocar")), True)
+
+# Desenchufada sin expulsar, la letra de dentro se queda (un fantasma que sirve
+# el fichero de control de la caché), y «Abrir» lanzaba prdrive desde él (H1 y
+# H-10). Con el volumen de verdad montado, el contenedor está retenido.
+antes_de_montar = abrir[:abrir.index("/volume")]
+c("abrir: antes de lanzar lo encontrado, mira que el contenedor esté abierto",
+  precedida(antes_de_montar, "goto lanzar", "call :libre"), True)
+fantasma = "\n".join(bloque(abrir, "fantasma"))
+c("abrir: un fantasma no se lanza", "runsync" in fantasma, False)
+c.contains("abrir: y se dice cómo salir", fantasma, vestibulo.NOMBRE_EXPULSAR)
+c("abrir: comprueba igual que expulsar", (bool(libre), bloque(abrir, "libre")),
+  (True, libre))
+
+if IS_WIN:
+    # La subrutina tal cual sale del texto, contra un contenedor de verdad: suelto,
+    # retenido en exclusiva como lo retiene el driver, y sin contenedor.
+    import ctypes
+    from ctypes import wintypes
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateFileW.restype = wintypes.HANDLE
+    prueba = tmpdir("prdrive-libre-")
+    hc = prueba / CONTAINER_NAME
+    hc.write_bytes(b"contenido")
+    bat = prueba / "libre.bat"
+    bat.write_text("@echo off\r\ncall :libre\r\necho %ERRORLEVEL%\r\nexit /b 0\r\n"
+                   + "\r\n".join(["", ":libre", *libre, "", ":tocar",
+                                  *bloque(expulsar, "tocar")]) + "\r\n",
+                   encoding="ascii")
+
+    def correr():
+        r = subprocess.run(["cmd", "/c", str(bat)], capture_output=True, text=True)
+        return (r.stdout + r.stderr).strip()
+
+    c("un contenedor suelto da 0", correr(), "0")
+    h = k32.CreateFileW(str(hc), 0xC0000000, 0, None, 3, 0x80, None)
+    try:
+        c("retenido en exclusiva da 1, sin mensajes de cmd", correr(), "1")
+    finally:
+        k32.CloseHandle(h)
+    c("y el contenedor no ha cambiado", hc.read_bytes(), b"contenido")
+    hc.unlink()
+    c("sin contenedor da 1", correr(), "1")
+    c("y no lo crea", hc.exists(), False)
+
 # --- 3. escribirlo -------------------------------------------------------------
 fisica = tmpdir("prdrive-fisica-")
 (fisica / CONTAINER_NAME).write_bytes(b"x")
@@ -127,6 +209,20 @@ c("los .sh con LF", b"\r" in (fisica / v.ABRIR_SH).read_bytes(), False)
 c("la guía con BOM, para el Bloc de notas antiguo",
   (fisica / v.LEEME).read_bytes()[:3], b"\xef\xbb\xbf")
 c("la marca se lee con el mismo id", v.leer_id(fisica), ID)
+# Escribir encima es como se pone al día («Añadir plataformas…»), y en Windows la
+# marca ya está oculta: abrirla para escribir con CREATE_ALWAYS da «acceso
+# denegado» si no se le pasan los mismos atributos, y `open(…, "w")` no los pasa.
+try:
+    vestibulo.escribir(fisica, ID)
+    fallo = None
+except vestibulo.InstallError as e:
+    fallo = str(e)
+c("se puede volver a escribir encima, con la marca ya oculta", fallo, None)
+c("y la marca sigue con el mismo id", v.leer_id(fisica), ID)
+if IS_WIN:
+    import ctypes
+    atributos = ctypes.windll.kernel32.GetFileAttributesW(str(fisica / v.MARCA))
+    c("y sigue oculta", bool(atributos & 0x2), True)
 c.contains("y dice qué contenedor", (fisica / v.MARCA).read_text(encoding="utf-8"),
            f"contenedor={CONTAINER_NAME}")
 c("sin marca no hay id", v.leer_id(tmpdir()), None)

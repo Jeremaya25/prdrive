@@ -26,6 +26,11 @@ VeraCrypt_1.26.24; las citas, en la spec
   * **`/dismount`, no `/unmount`**: el segundo no existe antes de la 1.26.24.
   * **Sin `/auto`**: además de montar, abre una ventana del Explorador
     (`ExtractCommandLine`: `bExplore = TRUE`). Con `/quit` y `/volume` ya monta.
+  * **La letra no dice si el contenedor está abierto**, en ningún sentido. Tras
+    forzar el cierre con algo abierto dentro, la letra se va y Windows sigue
+    sin dejar quitar la unidad; tras quitarla sin expulsar, la letra se queda y
+    sirve el fichero de control de la caché. Lo que sí lo dice es el propio
+    `.hc`: montado, el driver lo retiene. Eso mira `:libre` (`_LIBRE_BAT`).
 
 Los `.bat` siguen las reglas de `runsync.bat` (`deploy.LAUNCHER_BAT`): CRLF, sin
 bloques entre paréntesis —una ruta con «)» los rompe— y `chcp 65001` solo antes
@@ -71,6 +76,28 @@ _BUSCAR_BAT = (
     "exit /b 0\n"
 )
 
+# ¿Ha quedado suelto el contenedor? 0 si nadie lo tiene abierto. Con el volumen
+# montado, el driver lo tiene abierto sin dejar escribir a nadie más
+# (`TCOpenVolume()`, `Driver/Ntvol.c`, con `bExclusiveAccess`), así que abrirlo
+# para añadir falla. La excepción: si al montar otro proceso ya tenía el
+# fichero abierto, `MountVolume()` (`Common/Dlgcode.c`) monta compartido —con
+# `/silent` sin preguntar, sin él preguntando— y entonces esto lo ve suelto
+# aunque esté montado. `type nul` no añade nada: ni el contenido ni la fecha
+# cambian. Sin el contenedor al lado devuelve 1 y no lo crea: sin él no se
+# puede afirmar nada, y quien llama sigue como antes. El `2>nul` va en el `call`
+# porque en la misma línea que `>>` no tapa el mensaje de cmd cuando la
+# apertura falla, y sin paréntesis no hay otra forma de envolverla.
+_LIBRE_BAT = (
+    ":libre\n"
+    f'if not exist "%~dp0{v.CONTENEDOR}" exit /b 1\n'
+    "call :tocar 2>nul\n"
+    "exit /b\n"
+    "\n"
+    ":tocar\n"
+    f'>>"%~dp0{v.CONTENEDOR}" type nul || exit /b 1\n'
+    "exit /b 0\n"
+)
+
 # El VeraCrypt que se usa: el instalado antes que el que viaja.
 _ELEGIR_BAT = (
     'set "VC="\n'
@@ -105,6 +132,10 @@ def bat_abrir(device_id: str) -> str:
         f"rem {v.ABRIR_BAT} - Abre el contenedor cifrado de prdrive y lanza la ventana.\n"
         "rem\n"
         "rem   1. Si el contenedor ya esta abierto en alguna unidad, lanza prdrive.\n"
+        "rem      Pero si una unidad dice ser este dispositivo y el contenedor de\n"
+        "rem      aqui esta suelto, es lo que quedo al quitar la unidad sin\n"
+        "rem      expulsarla (Windows la deja puesta y sirve lo que tenia en\n"
+        "rem      cache): no se lanza desde ella.\n"
         "rem   2. Si no, lo abre con VeraCrypt: el instalado antes que el que viaja\n"
         "rem      en la carpeta VeraCrypt de esta unidad (con otro VeraCrypt\n"
         "rem      instalado, el que viaja no puede cargar su driver). La contrasena\n"
@@ -121,7 +152,12 @@ def bat_abrir(device_id: str) -> str:
         'cd /d "%~dp0"\n'
         f'set "ID={device_id}"\n'
         "call :buscar\n"
-        "if defined RAIZ goto lanzar\n"
+        "if not defined RAIZ goto montar\n"
+        "call :libre\n"
+        "if errorlevel 1 goto lanzar\n"
+        "goto fantasma\n"
+        "\n"
+        ":montar\n"
         'set "VIAJERO="\n'
         + _ELEGIR_BAT +
         f'set "ESPERA={ESPERA_INSTALADO}"\n'
@@ -147,7 +183,21 @@ def bat_abrir(device_id: str) -> str:
         "\n"
         + _BUSCAR_BAT +
         "\n"
+        + _LIBRE_BAT +
+        "\n"
         + _SIN_VERACRYPT_BAT +
+        "\n"
+        ":fantasma\n"
+        "chcp 65001 >nul\n"
+        "echo.\n"
+        f"echo   {v.ETIQUETA} aparece abierto en %RAIZ%, pero el contenedor de esta\n"
+        "echo   unidad no lo está: lo más probable es que sea lo que quedó al\n"
+        "echo   quitarla sin expulsarla. Lo que se guarde ahí se pierde, así que no\n"
+        f"echo   lo abro. Ciérralo con «{NOMBRE_EXPULSAR}» y vuelve a abrir\n"
+        f"echo   «{NOMBRE_ABRIR}».\n"
+        "echo.\n"
+        "pause\n"
+        "exit /b 1\n"
         "\n"
         ":no_abierto\n"
         "chcp 65001 >nul\n"
@@ -180,6 +230,9 @@ def bat_expulsar(device_id: str) -> str:
         "rem pregunta si forzar, con su propia ventana (por eso NO va con /silent).\n"
         "rem Espera unos segundos antes: quien lo llama suele ser la propia ventana,\n"
         "rem que se esta cerrando, y VeraCrypt reintenta el desmontaje solo 1,5 s.\n"
+        "rem No dice que se puede quitar la unidad hasta ver suelto el contenedor:\n"
+        "rem si se fuerza el cierre con algo abierto dentro, la letra se va pero el\n"
+        "rem contenedor sigue retenido y Windows no deja quitarla.\n"
         "rem\n"
         "rem Lo escribe el instalador de prdrive. Sin bloques entre parentesis a\n"
         "rem proposito: una ruta con \")\" los romperia.\n"
@@ -196,11 +249,22 @@ def bat_expulsar(device_id: str) -> str:
         'set "INTENTOS=0"\n'
         ":esperar\n"
         "call :buscar\n"
-        "if not defined RAIZ goto cerrado\n"
+        "if not defined RAIZ goto sin_letra\n"
         "set /a INTENTOS+=1\n"
         "if %INTENTOS% geq 30 goto sigue_abierto\n"
         "timeout /t 1 /nobreak >nul\n"
         "goto esperar\n"
+        "\n"
+        ":sin_letra\n"
+        f'if not exist "%~dp0{v.CONTENEDOR}" goto cerrado\n'
+        'set "INTENTOS=0"\n'
+        ":esperar_suelto\n"
+        "call :libre\n"
+        "if not errorlevel 1 goto cerrado\n"
+        "set /a INTENTOS+=1\n"
+        "if %INTENTOS% geq 10 goto retenido\n"
+        "timeout /t 1 /nobreak >nul\n"
+        "goto esperar_suelto\n"
         "\n"
         ":cerrado\n"
         "chcp 65001 >nul\n"
@@ -211,6 +275,8 @@ def bat_expulsar(device_id: str) -> str:
         "exit /b 0\n"
         "\n"
         ":ya_cerrado\n"
+        "call :libre\n"
+        f'if errorlevel 1 if exist "%~dp0{v.CONTENEDOR}" goto retenido\n'
         "chcp 65001 >nul\n"
         "echo.\n"
         f"echo   {v.ETIQUETA} ya estaba cerrado. Puedes quitar la unidad.\n"
@@ -227,7 +293,21 @@ def bat_expulsar(device_id: str) -> str:
         "pause\n"
         "exit /b 1\n"
         "\n"
+        ":retenido\n"
+        "chcp 65001 >nul\n"
+        "echo.\n"
+        f"echo   El contenedor de {v.ETIQUETA} sigue abierto aunque ya no tiene letra:\n"
+        "echo   pasa cuando se cierra a la fuerza con algo de dentro todavía en uso.\n"
+        "echo   Windows no te dejará quitar la unidad. Cierra los programas que usaban\n"
+        f"echo   {v.ETIQUETA} y vuelve a abrir «{NOMBRE_EXPULSAR}». Si sigue igual,\n"
+        "echo   reinicia el equipo antes de quitarla.\n"
+        "echo.\n"
+        "pause\n"
+        "exit /b 1\n"
+        "\n"
         + _BUSCAR_BAT +
+        "\n"
+        + _LIBRE_BAT +
         "\n"
         + _SIN_VERACRYPT_BAT
     )
@@ -380,6 +460,11 @@ def escribir(raiz_fisica: Path | str, device_id: str) -> list[Path]:
         (v.LEEME, leeme(), "\r\n", "utf-8-sig"),
         (v.MARCA, marca(device_id), "\n", "utf-8"),
     )
+    from .deploy import hide, unhide
+    # Al ponerlo al día la marca ya está oculta, y Windows no deja reescribir un
+    # fichero oculto con `open(…, "w")` (ver `unhide()`): se destapa, se escribe
+    # y se vuelve a ocultar abajo.
+    unhide(raiz / v.MARCA)
     escrito = []
     for nombre, texto, fin, codificacion in ficheros:
         ruta = raiz / nombre
@@ -388,7 +473,6 @@ def escribir(raiz_fisica: Path | str, device_id: str) -> list[Path]:
         except OSError as e:
             raise InstallError(f"No he podido escribir {ruta}: {e}") from e
         escrito.append(ruta)
-    from .deploy import hide
     hide(raiz / v.MARCA)
     if not IS_WIN:
         for nombre in (v.ABRIR_SH, v.EXPULSAR_SH):

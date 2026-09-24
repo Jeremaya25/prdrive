@@ -30,7 +30,7 @@ win_original = crypto.IS_WIN
 path_original = crypto.Path
 sondas = {n: getattr(crypto, n) for n in
           ("soporta_dispersos", "medir_escritura", "sistema_de_ficheros", "en_uso",
-           "_run", "_volumenes_con_control", "Path")}
+           "_run", "_procesos", "_volumenes_con_control", "Path", "MOUNT_POLL")}
 try:
     # --- 1. /dynamic solo cuando se pide, y nunca a ciegas -------------------
     #
@@ -171,6 +171,60 @@ try:
       [(k.etiqueta, k.ok) for k in fila], [("Instalación sin cifrar", False)])
     c("una ruta que no existe no revienta",
       crypto.restos_en_claro(fisica / "no-existe"), [])
+
+    # --- 5d. crear: no hay contenedor hasta que termina la copia elevada -----
+    #
+    # El VeraCrypt Format que viaja, sin administrador, se relanza elevado y el
+    # proceso que lanzamos sale con 0 mientras la copia sigue escribiendo. Darlo
+    # por creado ahí era montar un contenedor a medio hacer, que se quedaba sin
+    # sistema de ficheros e inservible (H-4 en
+    # docs/superpowers/pruebas/2026-09-24-veracrypt-unidad-g-resultados.md).
+    crypto.IS_WIN = True
+    crypto.sistema_de_ficheros = lambda root: "exFAT"
+    crypto.MOUNT_POLL = 0
+    hc = tmpdir("prdrive-crear-") / "PRDRIVE.hc"
+    tabla = {111}                   # un VeraCrypt Format que ya estaba abierto
+    vistas = []
+
+    def lanzar(cmd, password="", timeout=None):
+        hc.write_bytes(b"a medias")
+        tabla.add(26060)            # la copia elevada, que sigue trabajando
+        return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    def procesos(nombre):
+        vistas.append(nombre)
+        if len(vistas) > 50:
+            raise RuntimeError("esperando sin fin")
+        if 26060 in tabla and len(vistas) > 3:      # termina a la cuarta mirada
+            hc.write_bytes(b"entero")
+            tabla.discard(26060)
+        return set(tabla)
+
+    crypto._run = lanzar
+    crypto._procesos = procesos
+    try:
+        crypto.create_container(VC, hc, GIB, "x" * 20, "exFAT")
+        fallo = None
+    except (crypto.InstallError, RuntimeError) as e:
+        fallo = str(e)
+    c("crear no protesta", fallo, None)
+    c("y no vuelve hasta que termina la copia elevada", hc.read_bytes(), b"entero")
+    c("la busca por el nombre del Format que lanza", set(vistas),
+      {"VeraCrypt Format.exe"})
+    c("y el que ya estaba abierto no la hace esperar", len(vistas) < 50, True)
+
+    tabla.clear()
+    vistas.clear()
+    crypto._run = lambda cmd, password="", timeout=None: type(
+        "R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+    try:
+        crypto.create_container(VC, tmpdir("prdrive-crear-") / "PRDRIVE.hc", GIB,
+                                "x" * 20, "exFAT")
+        fallo = "no ha protestado"
+    except crypto.InstallError as e:
+        fallo = str(e)
+    c.contains("si al terminar no hay contenedor, se dice", fallo,
+               "no ha podido crear el contenedor")
 
     # --- 6. no montar dos veces lo que ya está montado ----------------------
     #
