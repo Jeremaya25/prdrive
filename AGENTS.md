@@ -47,7 +47,7 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 │   ├── theme.py       palette, fonts, ttk styles — no window
 │   ├── icons.py       icons rasterised here: no deps, no emoji
 │   ├── qr.py          a QR encoder: ISO/IEC 18004, byte mode, no deps, no Tk
-│   ├── prefs.py       what the UI preloads (state/ui_prefs.json)
+│   ├── prefs.py       the service's pairs + interval (state/ui_prefs.json)
 │   ├── pair_editor.py what THIS device does with pairs — the decisions
 │   ├── repair.py      what to do about a finding: the repair plans
 │   ├── catalog_editor.py · remote_picker.py · conflict_editor.py ·
@@ -154,7 +154,8 @@ python sync.py -y/--yes        # auto-approve the resync question (cron/scripts)
 python sync.py --keep-logs     # keep logs of successful runs too
 
 python runsync.py              # UI (Tk, console fallback) + periodic service
-python runsync.py --auto       # periodic service with [daemon] defaults, no UI
+python runsync.py --auto       # periodic service with the service's config, no UI
+python runsync.py --auto --once  # one pass of the service's pairs, then exit
 python runsync.py --doctor     # any other args pass straight through to sync.py
 
 python penwatch.py install|status|probe|uninstall   # the watcher, per machine/user
@@ -303,10 +304,23 @@ Coordination lives in `state/` so it travels with the device: `daemon.lock.json`
 (pid/host/pairs/cycle), `daemon.stop` (presence = stop request), `daemon.log`,
 `ui.lock.json` (pid/host of the open window), `ui_prefs.json`, plus
 `last_run.json` and `conflicts.json` (written by `sync.py`,
-not the daemon). `startup_defaults()` layers last choice > `[daemon]` in the TOML
-> all pairs / 30 min; only the UI writes prefs (`manual`/`daemon`, not `doctor`),
-`--auto`/`--daemon` only read. The service stops when the device disappears
-(`SENTINEL`) or when runsync is launched again.
+not the daemon). The service stops when the device disappears (`SENTINEL`) or
+when runsync is launched again.
+
+**One service, two ways to start it (#14).** By hand («Iniciar servicio») or on
+plugging in (the watcher → `runsync --auto`), it is the same service with the
+same config: pairs + interval in `ui_prefs.json`, on the device.
+`startup_defaults()` layers that record > `[daemon]` in the TOML > all pairs /
+30 min, for the window, `--auto` and the watcher alike; explicit `--auto`
+arguments still win (shortcuts, cron, and watchers not yet reinstalled). **Only
+starting the service writes it** (`_atender()`, action `daemon`): a manual pass
+with a few pairs ticked must not decide what the service syncs at the next plug-in.
+A record with `action == "manual"` predates that and is ignored (by `== "manual"`,
+so a hand-written record without `action` still counts). The file keeps its old
+name: renaming it would need a migration to change a word. `--auto --once`
+(`una_pasada()`) is one pass of those pairs with no service behind it; with a
+live service on this host it does nothing and does **not** stop it — swapping a
+service for a single pass would leave the device without one.
 
 **One window at a time, and the watcher waits for it.** `ui_flow()` checks
 `ui.lock.json` **before** `stop_previous_daemon()` and refuses to open a second
@@ -317,10 +331,10 @@ cleaned exactly like the daemon's. The lock is taken around `_atender()` and
 released in a `finally`. `penwatch` reads both locks (never writes them) and
 launches nothing while either is alive: the pass is logged and the trigger is
 spent, so it does not retry every minute behind an open window. Both facts are
-said out loud — in the startup notice and in the message that confirms the
-service — but only when the watcher is registered on this machine
-(`ui.watch.is_installed()`); otherwise they would describe something that does
-not exist here.
+said out loud — the pause in the watcher line of the main window (and the
+console menu), the other in the message that confirms the service — but only
+when this host's watcher attends to this device (`watch.resumen().vigila_este`);
+otherwise they would describe something that does not exist here.
 
 **Windows specifics to preserve:** `pid_alive()` uses `OpenProcess`, never
 `os.kill` (which *terminates* on Windows); the daemon is spawned with
@@ -371,9 +385,22 @@ it** — a window cannot dump output to a console that does not exist.
   «Reparación» hands back, open a
   modeless `output_window`, the window disables whatever touches the same state,
   and on close re-reads `state/` and repaints. Only «Iniciar servicio» returns a
-  `Choice` to runsync. `ui.manual_args()` (resync question + `--yes`) is shared
-  with the console path. The pairs screen's «Simular», «Examinar…» and
-  «Dispositivos…» write nothing, so none makes `open_dialog` return True.
+  `Choice` to runsync. The checkboxes are shared by both buttons and open with
+  the service's pairs; «Marcar todas»/«Desmarcar todas» (two pairs or more)
+  and the «N de M» follow them through each checkbox's `command`, **not** a
+  variable `trace`: a widget's command dies with it, a trace's Tcl command does
+  not, and it would hold the whole window and its images until exit. «Repetir
+  cada» sits by the footer because the interval is the service's.
+  `ui.manual_args()` (resync question + `--yes`) is shared with the console
+  path. The pairs screen's «Simular», «Examinar…» and «Dispositivos…» write
+  nothing, so none makes `open_dialog` return True.
+- **The watcher line** replaced the «Arranque automático…» button: what this host
+  does when the device is plugged in, from `watch.resumen()` (files only, no
+  `schtasks`/`systemctl`: it is asked on first paint) and worded by
+  `watch.linea()`, which the console menu shares. States: `sin_instalar`,
+  `otro_dispositivo` (a host has one watcher; `watch.json`'s `device_id` is
+  another prdrive's), `desfasado` (amber), `instalado` + mode. Its button opens
+  `tk_watch` and the line is re-read on return; it stays enabled during a pass.
 - `ConsoleFrontend.approve_resync` always returns False on purpose: with a real
   terminal `sync.py` inherits stdin and asks the question itself, with more
   context than a dialog fits.
@@ -412,6 +439,9 @@ paths and flags; no rounded corners, no shadows. Styles cross **role** with
   `repintar()`, because three things change a step's height without a step
   change. `tests/test_tk_medidas.py` checks every screen against a matrix of
   resolution **and** `tk scaling` — the scaling column is the half that matters.
+  The main window opens its own interpreter, so it is measured on the same
+  matrix in `tests/test_tk_servicio.py`, in its worst case: twelve pairs, the
+  amber watcher line and «Expulsar» in the footer.
 - `tk.working(parent, title, funcion)` runs `funcion()` on a thread behind a bare
   progress bar, for slow or passphrase-carrying commands. No cancel button.
 
@@ -828,7 +858,17 @@ script to `%LOCALAPPDATA%\prdriveWatch` / `~/.local/share/prdrive-watch`, writes
 - It identifies the device by the control file **`.prdrive/PRDRIVE`** (optional
   `id=<hex>` line), never by drive letter, and confirms `.prdrive/runsync.py`
   before launching. Fires once per mount — the trigger re-arms only when the
-  device disappears. `--mode`: `ui` (default), `sync`, `daemon`.
+  device disappears. `--mode`: `ui` (default, `runsync.py`), `daemon`
+  (`--auto`), `sync` (`--auto --once`). **No pairs, no interval**: they are the
+  service's, live on the device and `runsync` reads them there, so penwatch still
+  reads no device config. A legacy `watch.json` carrying them is ignored (the
+  `Modo` status row still shows them while present: the old copy uses them). The
+  old `sync` without pairs launched a bare `runsync.py`, which opened the window.
+- **The host copy is never refreshed by itself**: `install` copies the script,
+  `refresh_runtime()` only the Python. `copia_al_dia()` compares `SELF_COPY` with
+  its own `__file__` (the device's, when called from the window or `.prdrive/`);
+  on a mismatch `status_rows()` adds a warning row and the main window's line
+  reads `desfasado`. Reinstalling is the fix.
 - It must never write to, or `chdir` into, the device (that blocks safe
   ejection); config, state and log live on the host, and every device access is
   wrapped in `try/except OSError` (a locked BitLocker volume errors rather than
@@ -1126,7 +1166,8 @@ keeps the target's existing header.
   `vestibulo.raiz_fisica()`, `cifrado.lanzar_expulsion()`,
   `crypto.sistema_de_ficheros()`,
   `_leer_estado_bitlocker()`, `_preguntar_borrado()`, `pairing.construir()`,
-  `tk.mostrar()` / `confirmar_plan()`. Keep new ones in that shape.
+  `watch.resumen()`, `tk.mostrar()` / `confirmar_plan()`. Keep new ones in that
+  shape.
 
 ## Documentation
 
@@ -1138,6 +1179,11 @@ keeps the target's existing header.
 - **`sync_config.example.toml`** — the schema reference for both
   `sync_config.toml` and the remote's `pairs.toml` (which also takes `[remote]`).
 - **`LICENSE`** — Apache 2.0 verbatim; README's «Licencia» section points at it.
+- **`.github/pull_request_template.md`** — what every PR answers, agents' included:
+  where it touches, which data is at stake, what happens to devices already in
+  use, and how it was checked (no CI runs the tests). **A PR title is release
+  text**: the release workflow uses `--generate-notes`, and `tk_update` shows
+  those notes on every device — write it in Spanish, for the device's user.
 
 ## Agent skills
 

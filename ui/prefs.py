@@ -1,14 +1,21 @@
 #!/usr/bin/env python3
 """
-prefs.py — Con qué valores sale precargada la UI.
+prefs.py — Las parejas y el intervalo del servicio.
 
-La UI recuerda lo último que se eligió en `state/ui_prefs.json`, que viaja en el
-dispositivo y por tanto acompaña al usuario de una máquina a otra. Ese recuerdo manda
-sobre `[daemon]` del TOML, que a su vez manda sobre los valores de fábrica.
+El servicio periódico es uno solo, se arranque a mano («Iniciar servicio») o al
+enchufar el dispositivo (el vigilante, `runsync --auto`), y su configuración vive
+en `state/ui_prefs.json`: viaja en el dispositivo y acompaña al usuario de una
+máquina a otra. Es también con lo que sale precargada la ventana. Ese recuerdo
+manda sobre `[daemon]` del TOML, que a su vez manda sobre los valores de fábrica.
 
-Solo escribe aquí la UI (`save_prefs`, desde runsync al confirmar una acción).
+Solo se escribe al ARRANCAR el servicio (`save_prefs`, desde runsync). Una pasada
+manual no lo toca: marcar una sola pareja para sincronizarla ahora no puede
+decidir qué sincroniza el servicio la próxima vez que se enchufe el dispositivo.
 `--auto` y el servicio únicamente leen, para que un arranque automático nunca
 reescriba lo que se decidió a mano.
+
+El fichero conserva el nombre de cuando era «lo último que se eligió en la UI»:
+renombrarlo pediría una migración para cambiar una palabra.
 """
 
 from __future__ import annotations
@@ -29,9 +36,13 @@ def read_prefs() -> dict:
 
 def save_prefs(action: str, pairs: list[str], interval_min: float,
                all_names: list[str]) -> None:
-    """Recuerda lo elegido en la UI. 'known' anota qué parejas existían en ese
-    momento: así una pareja añadida al TOML más tarde no se confunde con una que
-    el usuario había desmarcado (ver startup_defaults)."""
+    """Recuerda lo elegido para el servicio. 'known' anota qué parejas existían
+    en ese momento: así una pareja añadida al TOML más tarde no se confunde con
+    una que el usuario había desmarcado (ver startup_defaults).
+
+    `action` se sigue guardando aunque ya solo llegue 'daemon': es lo que
+    distingue los registros de antes, cuando una pasada manual también
+    escribía aquí (ver `startup_defaults`)."""
     data = {
         "action": action,
         "pairs": list(pairs),
@@ -54,15 +65,20 @@ def daemon_defaults(config: Config) -> tuple[list[str], float]:
 
 
 def startup_defaults(config: Config) -> tuple[list[str], float, str | None]:
-    """Con qué sale precargada la UI, y con qué arranca --auto sin argumentos.
-    Precedencia: última elección > [daemon] del TOML > todas las parejas cada 30
-    min. Devuelve (parejas, minutos, nota); la nota es None si no hay recuerdo, y
-    si no, el texto con el que la UI avisa de dónde salen las casillas marcadas."""
+    """Las parejas y el intervalo del servicio: con qué sale precargada la UI y
+    con qué arranca --auto sin argumentos. Precedencia: lo guardado al arrancar
+    el servicio > [daemon] del TOML > todas las parejas cada 30 min. Devuelve
+    (parejas, minutos, nota); la nota es None si no hay recuerdo, y si no, el
+    texto con el que la UI dice de dónde salen las casillas marcadas."""
     all_names = config.names
     d_pairs, d_interval = daemon_defaults(config)
 
     prefs = read_prefs()
-    if not prefs:
+    # Un registro 'manual' solo puede ser de antes de que las pasadas manuales
+    # dejaran de escribir aquí, y es justo el recuerdo de una pasada suelta que
+    # no debe decidir el servicio. Se descarta por 'manual' y no por «distinto
+    # de 'daemon'»: uno sin `action`, escrito a mano, sigue valiendo.
+    if not prefs or prefs.get("action") == "manual":
         return d_pairs, d_interval, None
 
     saved = prefs.get("pairs")
@@ -85,4 +101,5 @@ def startup_defaults(config: Config) -> tuple[list[str], float, str | None]:
         interval = d_interval
 
     when = prefs.get("saved")
-    return pairs, interval, "Precargado con la última elección" + (f" ({when})" if when else "")
+    return pairs, interval, ("Parejas e intervalo del servicio"
+                             + (f", elegidos el {when}" if when else ""))

@@ -16,7 +16,7 @@ import sys
 from common import APP_NAME, components, model, update
 from common.model import Config
 
-from . import Choice, pair_status_notes, prefs
+from . import Choice, pair_status_notes, prefs, watch
 
 
 class ConsoleFrontend:
@@ -54,6 +54,16 @@ def main_menu(config: Config, startup_msg: str | None) -> Choice | None:
         print(f"   - {n}{extra}")
     if memo:
         print(f"\n{memo}: {' '.join(d_pairs)}, cada {d_interval:g} min.")
+    # Lo mismo que dice la línea de la ventana: qué hace este equipo al
+    # enchufar, y que mientras esto siga abierto no lo hace.
+    try:
+        vigilante = watch.resumen()
+        dicho = watch.linea(vigilante)
+    except Exception:                                   # noqa: BLE001
+        dicho = None
+    if dicho is not None:
+        print(f"\n{dicho.texto}"
+              + (f" {watch.PAUSA}" if vigilante.vigila_este else ""))
 
     # El aviso de versión nueva se pinta aquí y no llega por `startup_msg`,
     # porque ese canal lo comparten los dos frontends y la ventana ya se lo

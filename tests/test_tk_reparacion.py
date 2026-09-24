@@ -408,6 +408,7 @@ with sandbox():
     cfg, p = preparar()
     lanzadas.clear()
     vistos = {}
+    servicio_antes = prefs.read_prefs()
 
     def sincronizar_y_volver(root):
         b = botones(root)
@@ -441,8 +442,10 @@ with sandbox():
     c("y con los chips al día (el conflicto que dejó la pasada)",
       "1 conflicto" in vistos["textos"], True)
     c("sincronizar ya no es una elección que salga de la ventana", eleccion, None)
-    c("lo elegido se recuerda para la próxima vez", prefs.read_prefs().get("pairs"),
-      ["notas"])
+    # Lo que se guarda es la configuración del servicio, y una pasada suelta no
+    # decide qué sincroniza el servicio al enchufar la próxima vez.
+    c("una pasada manual no toca la configuración del servicio",
+      prefs.read_prefs(), servicio_antes)
 
 # El engranaje abre «Ajustes», y «Reparación» es su primera entrada. Se prueban
 # las dos mitades —que el botón abre la pantalla, y que la entrada lleva a

@@ -27,18 +27,22 @@ Coordinación servicio <-> lanzador (todo en state/, viaja con el dispositivo):
     daemon.stop       <- su presencia le pide al servicio que pare
     daemon.log        <- diario del servicio (recortado automáticamente)
     ui.lock.json      <- quién tiene la ventana abierta (pid, host, arranque)
-    ui_prefs.json     <- lo último que se eligió en la UI (lo gestiona ui.prefs)
+    ui_prefs.json     <- parejas e intervalo del servicio (lo gestiona ui.prefs)
 
-Esa memoria precarga la UI siguiente y sirve de valor por defecto a --auto, por
-delante de [daemon] del TOML. Solo la escribe la UI: --auto y --daemon únicamente
-la leen, para que un arranque automático no reescriba lo que decidiste a mano.
+El servicio es uno, se arranque a mano o al enchufar: esa memoria es su
+configuración, precarga la UI siguiente y sirve de valor por defecto a --auto,
+por delante de [daemon] del TOML. Solo la escribe la UI, y solo al arrancar el
+servicio: una pasada manual no la toca, y --auto y --daemon únicamente la leen,
+para que un arranque automático no reescriba lo que decidiste a mano.
 
 Con argumentos, se pasan tal cual a sync.py (así `runsync.bat --doctor` sigue
 funcionando), salvo dos flags propios:
 
-  --auto [--interval N] [parejas]  arranca el servicio sin UI y sin preguntar
-      nada, con la última elección de la UI (o, si no la hay, con los valores de
-      [daemon] del TOML). Es lo que lanza penwatch.py al detectar el dispositivo.
+  --auto [--once] [--interval N] [parejas]  arranca el servicio sin UI y sin
+      preguntar nada, con las parejas y el intervalo del servicio (o, si no hay,
+      con los valores de [daemon] del TOML); lo que se indique aquí manda sobre
+      ambos. Con --once, una sola pasada de esas parejas y nada más. Es lo que
+      lanza penwatch.py al detectar el dispositivo (modos daemon y sync).
   --daemon                          punto de entrada interno del servicio.
 """
 
@@ -151,14 +155,14 @@ def soltar_ui() -> None:
 
 
 def vigilante_instalado() -> bool:
-    """¿Está registrado el arranque automático en este equipo?
+    """¿Hay en este equipo un arranque automático que atienda a este dispositivo?
 
     Solo para decirlo en un mensaje. Bajo `except` porque penwatch es un script
     hermano que puede no poder importarse, y porque no saberlo no es motivo para
     no abrir la ventana."""
     try:
         from ui import watch
-        return watch.is_installed()
+        return watch.resumen().vigila_este
     except Exception:                                   # noqa: BLE001
         return False
 
@@ -199,6 +203,21 @@ def stop_previous_daemon() -> str | None:
 # ---------------------------------------------------------------------------
 # El servicio (lado daemon)
 # ---------------------------------------------------------------------------
+
+def servicio_en_marcha() -> dict | None:
+    """El registro del servicio si es de un proceso vivo de ESTE equipo, o None.
+
+    Solo lee: limpiar lo rancio es de `stop_previous_daemon()`, que es quien va
+    a sustituirlo. Quien pregunta esto no lo sustituye."""
+    info = read_lock()
+    if info is None or info.get("host") != HOST:
+        return None
+    try:
+        pid = int(info.get("pid", -1))
+    except (TypeError, ValueError):
+        return None
+    return info if pid_alive(pid) else None
+
 
 def stop_requested() -> bool:
     try:
@@ -374,14 +393,10 @@ def ui_flow() -> int:
             "Usa esa; si no la encuentras, ciérrala desde el administrador de "
             "tareas y vuelve a intentarlo.")
 
+    # Que el vigilante no lanza nada mientras esta ventana esté abierta ya no
+    # se dice aquí: lo dice la línea del arranque automático, que está siempre
+    # a la vista y no desaparece con el siguiente repintado.
     startup_msg = stop_previous_daemon()
-    if vigilante_instalado():
-        # El vigilante no lanza nada mientras esta ventana esté abierta, y eso
-        # no se ve por ningún sitio: sin decirlo, enchufar el dispositivo con la
-        # ventana abierta parecería que el arranque automático se ha roto.
-        aviso = ("El arranque automático está en pausa mientras esta ventana "
-                 "esté abierta.")
-        startup_msg = f"{startup_msg}\n{aviso}" if startup_msg else aviso
 
     try:
         config = model.load_config()
@@ -403,13 +418,12 @@ def _atender(config: model.Config, startup_msg: str | None) -> int:
     if choice is None:
         return 0
 
-    # Se recuerda para la próxima UI y para --auto. "doctor" no toca la selección
-    # de parejas, así que tampoco la sobrescribe.
-    if choice.action in ("manual", "daemon"):
+    if choice.action == "daemon":
+        # Es la configuración del servicio: la precarga de la próxima ventana y
+        # lo que usa --auto. Solo se guarda aquí; una pasada manual con unas
+        # pocas parejas no decide qué sincroniza el servicio (ver ui/prefs.py).
         prefs.save_prefs(choice.action, list(choice.pairs), choice.minutes,
                          config.names)
-
-    if choice.action == "daemon":
         msg = spawn_daemon(list(choice.pairs), choice.minutes)
         if vigilante_instalado():
             msg += ("\nMientras el servicio esté en marcha, el arranque "
@@ -429,12 +443,19 @@ def _atender(config: model.Config, startup_msg: str | None) -> int:
 def auto_start(rest: list[str]) -> int:
     """--auto: arranca el servicio sin UI, para quien lo lanza sin nadie delante
     (penwatch.py al conectar el dispositivo, un acceso directo, cron). Las parejas y el
-    intervalo salen de la última elección de la UI, y si no hay ninguna, de
+    intervalo son los del servicio (`prefs.startup_defaults`), y si no hay, los de
     [daemon] del TOML; lo que se indique aquí manda sobre ambos. Solo lee esa
     memoria: un arranque automático nunca reescribe lo decidido a mano.
-    Se para antes el servicio anterior, si lo hubiera."""
+    Se para antes el servicio anterior, si lo hubiera.
+
+    Con --once no hay servicio: una pasada de esas mismas parejas y se acaba
+    (ver `una_pasada`)."""
     interval: float | None = None
-    if rest and rest[0] == "--interval":
+    once = False
+    while rest and rest[0] in ("--interval", "--once"):
+        if rest[0] == "--once":
+            once, rest = True, rest[1:]
+            continue
         try:
             interval = float(rest[1])
         except (IndexError, ValueError):
@@ -452,7 +473,7 @@ def auto_start(rest: list[str]) -> int:
     abierta = ui_en_marcha()
     if abierta is not None:
         msg = (f"Hay una ventana de {APP_NAME} abierta (pid {abierta.get('pid')}): "
-               "no arranco el servicio.")
+               + ("no lanzo la pasada." if once else "no arranco el servicio."))
         print(msg)
         dlog(f"--auto: {msg}")
         return 0
@@ -464,7 +485,10 @@ def auto_start(rest: list[str]) -> int:
         dlog(f"--auto: parejas desconocidas, ignoradas: {', '.join(unknown)}")
     pairs = [n for n in rest if n in names] or d_pairs
     if memo and not rest:
-        dlog(f"--auto: parejas de la última elección de la UI: {', '.join(pairs)}")
+        dlog(f"--auto: parejas del servicio: {', '.join(pairs)}")
+
+    if once:
+        return una_pasada(pairs)
 
     msg = stop_previous_daemon()
     if msg:
@@ -474,6 +498,29 @@ def auto_start(rest: list[str]) -> int:
     print(msg)
     dlog("--auto: " + msg.splitlines()[0])
     return 0
+
+
+def una_pasada(pairs: list[str]) -> int:
+    """--auto --once: las parejas del servicio, una vez, sin servicio detrás.
+
+    Es el modo `sync` del vigilante. Con un servicio vivo en este equipo no hace
+    nada: el vigilante ya no lanzaría en ese caso, pero un cron sí, y una pasada
+    al lado del servicio chocaría con el lock de bisync. Y NO lo para, a
+    diferencia de --auto: cambiar un servicio por una sola pasada dejaría el
+    dispositivo sin servicio, que no es lo que se ha pedido.
+
+    `sync.py` hereda la entrada y la salida. Sin terminal —así lo lanza el
+    vigilante—, una pareja que pide --resync se salta, y la salida va a su
+    diario."""
+    servicio = servicio_en_marcha()
+    if servicio is not None:
+        msg = (f"El servicio periódico ya está en marcha (pid {servicio.get('pid')}): "
+               "no lanzo otra pasada.")
+        print(msg)
+        dlog(f"--auto --once: {msg}")
+        return 0
+    dlog(f"--auto --once: una pasada de {', '.join(pairs)}")
+    return run_interactive(pairs)
 
 
 def main() -> int:

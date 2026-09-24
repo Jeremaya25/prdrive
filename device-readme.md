@@ -31,21 +31,23 @@ modo *ligero* (con un `runsync.pyw` en la raíz), entonces sí hace falta **Pyth
 
 ## La ventana
 
-- **Sincronizar ahora** — una pasada, en una ventana aparte; al cerrarla vuelves
-  aquí con todo al día.
-- **Cada N minutos** — deja un servicio en marcha mientras la unidad siga
-  conectada. Se para solo al extraerla, o al volver a abrir la ventana.
+- **Sincronizar ahora** — una pasada de lo marcado, en una ventana aparte; al
+  cerrarla vuelves aquí con todo al día.
+- **Iniciar servicio** — sincroniza lo marcado cada N minutos (lo pones justo
+  encima) mientras la unidad siga conectada. Se para solo al extraerla, o al
+  volver a abrir la ventana. Lo marcado y el intervalo se recuerdan para la
+  próxima vez.
 - **Diagnóstico** — cuando algo no cuadra. Enseña dónde apunta cada carpeta y si
   su sincronización está sana.
 - **Expulsar** — solo si la unidad va cifrada con VeraCrypt. Cierra la ventana y
   el contenedor; cuando el aviso diga que está cerrado, ya se puede quitar.
 
-Abajo del todo hay dos botones más:
+Encima de los botones hay una línea que dice qué hace **este ordenador** al
+conectar la unidad, con un botón para cambiarlo: abrir esta ventana, arrancar el
+servicio o hacer una pasada. Se instala por usuario, sin permisos de
+administrador, y no escribe nada aquí dentro.
 
-- **Parejas** — añadir, quitar o cambiar carpetas sincronizadas.
-- **Arranque automático** — que el ordenador lance esto solo al conectar la
-  unidad. Se instala por usuario, sin permisos de administrador, y no escribe
-  nada aquí dentro.
+Debajo de la lista, **Parejas** — añadir, quitar o cambiar carpetas sincronizadas.
 
 ## Añadir una carpeta
 
