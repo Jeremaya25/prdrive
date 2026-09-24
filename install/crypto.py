@@ -392,10 +392,13 @@ def mount_command(vc: dict, container: Path, password: str,
     """La orden de montar.
 
     `/m rm` monta como MEDIO EXTRAÍBLE, y no es un adorno: sin él Windows crea
-    `System Volume Information` y `$RECYCLE.BIN` DENTRO del contenedor —o sea,
-    dentro de lo que mira rclone— y además fuerza más desmontajes. `/m` se puede
-    repetir: el propio `autorun.inf` que genera VeraCrypt emite `/m rm` y
-    `/m ro` en la misma orden (Mount.c, TravelerDlgProc).
+    `$RECYCLE.BIN` DENTRO del contenedor —o sea, dentro de lo que mira rclone— y
+    además fuerza más desmontajes. `System Volume Information` no lo evita: en
+    Windows 11 24H2 aparece al montar igual que en cualquier USB (visto en las
+    pruebas en G:, H-5). No molesta: ninguna pareja sincroniza la raíz del
+    dispositivo y `device.RUIDO` la ignora. `/m` se puede repetir: el propio
+    `autorun.inf` que genera VeraCrypt emite `/m rm` y `/m ro` en la misma
+    orden (Mount.c, TravelerDlgProc).
 
     `/m label=` es solo cómo lo llama el Explorador; no toca el sistema de
     ficheros de dentro, así que no depende de haberlo formateado de una manera.

@@ -101,14 +101,19 @@ try:
 
     penwatch.IS_WIN = False
     binarios = tmpdir("prdrive-bin-")
-    (binarios / "veracrypt").write_text("#!/bin/sh\n", encoding="utf-8")
-    (binarios / "veracrypt").chmod(0o755)
+    # La rama de Linux usa `shutil.which` de verdad, y en Windows —donde también
+    # corre esta batería— `which` solo encuentra nombres con una extensión de
+    # PATHEXT: sin ella el test fallaba allí sin que el producto tuviera culpa.
+    falso = binarios / ("veracrypt.exe" if os.name == "nt" else "veracrypt")
+    falso.write_text("#!/bin/sh\n", encoding="utf-8")
+    falso.chmod(0o755)
     os.environ["PATH"] = str(binarios)
     os.environ["DISPLAY"] = ":99"
     os.environ.pop("WAYLAND_DISPLAY", None)
+    orden = penwatch.veracrypt_command(fisica)
     c("Linux: veracrypt con el contenedor, en su ventana",
-      penwatch.veracrypt_command(fisica),
-      [str(binarios / "veracrypt"), str(fisica / vestibulo.CONTENEDOR)])
+      orden and [Path(orden[0]).resolve(), *orden[1:]],
+      [falso.resolve(), str(fisica / vestibulo.CONTENEDOR)])
     os.environ.pop("DISPLAY")
     c("sin escritorio no hay dónde pedir la contraseña: nada",
       penwatch.veracrypt_command(fisica), None)

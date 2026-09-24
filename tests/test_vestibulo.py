@@ -22,6 +22,8 @@ explicaba estaba dentro del contenedor. Lo que se comprueba:
 import os
 import shutil
 import subprocess
+import time
+from pathlib import Path
 from types import SimpleNamespace
 
 from _harness import Checks, tmpdir
@@ -146,6 +148,32 @@ c("expulsar: y «ya estaba cerrado» tampoco sin mirarlo",
 retenido = "\n".join(bloque(expulsar, "retenido"))
 c.contains("expulsar: retenido, dice que no se quite", retenido, "Windows no")
 c("expulsar: y no dice que se pueda", "puedes quitar la unidad." in retenido, False)
+
+# Con el VeraCrypt que viaja, el que lanzamos sale a los dos segundos y es la
+# copia elevada la que pregunta si forzar: los 30 intentos se gastaban esperando
+# esa respuesta, y la consola decía «sigue abierto» con la pregunta todavía en
+# pantalla (G4b en la vuelta a G:, #41). Mientras viva un VeraCrypt que no estaba
+# antes, se espera sin gastar intentos; si ya había uno (en segundo plano), no
+# se sabe cuál es el nuestro y se cuenta como siempre.
+def despues(lineas, orden):
+    """La línea que sigue a `orden`, o None."""
+    return lineas[lineas.index(orden) + 1] if orden in lineas[:-1] else None
+
+
+esperar = bloque(expulsar, "esperar")
+c("expulsar: mira si ya había un VeraCrypt antes de lanzar el suyo",
+  "VC_ANTES" in expulsar and expulsar.index("VC_ANTES") < expulsar.index("/dismount"),
+  True)
+c("expulsar: mientras VeraCrypt siga con lo suyo, espera sin gastar intentos",
+  (despues(esperar, "call :vc_pendiente"),
+   "call :vc_pendiente" in esperar
+   and esperar.index("call :vc_pendiente") < esperar.index("set /a INTENTOS+=1")),
+  ("if not errorlevel 1 goto esperar_vc", True))
+c("expulsar: y esperar sin contar vuelve a mirar la letra",
+  bloque(expulsar, "esperar_vc")[:2], ["timeout /t 1 /nobreak >nul", "goto esperar"])
+c("expulsar: con uno de antes vivo, no se puede saber cuál es el suyo: se cuenta",
+  bloque(expulsar, "vc_pendiente")[:1], ["if defined VC_ANTES exit /b 1"])
+
 libre = bloque(expulsar, "libre")
 c("comprobar el contenedor no lo crea si no está",
   libre[:1], [f'if not exist "%~dp0{CONTAINER_NAME}" exit /b 1'])
@@ -194,6 +222,56 @@ if IS_WIN:
     hc.unlink()
     c("sin contenedor da 1", correr(), "1")
     c("y no lo crea", hc.exists(), False)
+
+    # `:vc_pendiente` y la línea que apunta VC_ANTES, tal cual salen del texto,
+    # contra un proceso que se llama VeraCrypt.exe: una copia de ping.exe, que no
+    # necesita consola ni nada al lado.
+    apuntar = next((ln for ln in expulsar.splitlines() if 'set "VC_ANTES=1"' in ln),
+                   "rem falta la linea que apunta VC_ANTES")
+    pendiente = prueba / "pendiente.bat"
+
+    def pendiente_da(al_empezar=True):
+        """VC_ANTES y el código de `:vc_pendiente`, como «VC_ANTES-código».
+        `al_empezar=False`: sin mirar antes, como si VeraCrypt no estuviera."""
+        pendiente.write_text("@echo off\r\n" + (apuntar if al_empezar else "rem")
+                             + "\r\ncall :vc_pendiente\r\n"
+                             "echo %VC_ANTES%-%ERRORLEVEL%\r\nexit /b 0\r\n"
+                             + "\r\n".join(["", ":vc_pendiente",
+                                            *bloque(expulsar, "vc_pendiente")])
+                             + "\r\n", encoding="utf-8")
+        try:
+            r = subprocess.run(["cmd", "/c", str(pendiente)], capture_output=True,
+                               text=True, timeout=30)
+        except subprocess.TimeoutExpired:
+            return "no ha terminado en 30 s"
+        return (r.stdout + r.stderr).strip()
+
+    def vivos():
+        r = subprocess.run(["tasklist", "/fi", "imagename eq VeraCrypt.exe", "/nh"],
+                           capture_output=True, text=True, timeout=30)
+        return "veracrypt.exe" in r.stdout.lower()
+
+    if not vivos():         # con un VeraCrypt de verdad abierto, esto no se puede mirar
+        c("sin VeraCrypt vivo: nada que esperar", pendiente_da(), "-1")
+        falso = prueba / "VeraCrypt.exe"
+        shutil.copy2(Path(os.environ.get("SystemRoot", r"C:\Windows"))
+                     / "System32" / "PING.EXE", falso)
+        proc = subprocess.Popen([str(falso), "-n", "30", "127.0.0.1"],
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            for _ in range(50):
+                if vivos():
+                    break
+                time.sleep(0.1)
+            c("con uno vivo que no estaba al empezar: esperar",
+              pendiente_da(al_empezar=False), "-0")
+            # Mirando al empezar, ya está vivo: es el caso de un VeraCrypt en
+            # segundo plano de antes.
+            c("con uno vivo desde antes, se apunta y se cuenta como siempre",
+              pendiente_da(), "1-1")
+        finally:
+            proc.kill()
+            proc.wait()
 
 # --- 3. escribirlo -------------------------------------------------------------
 fisica = tmpdir("prdrive-fisica-")

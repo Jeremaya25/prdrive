@@ -589,8 +589,10 @@ its docs, and the citations are in the code — keep them like the rclone ones i
   (`crypto._procesos()`, an indirection point): WMI did not show the elevated
   copy. No time limit, like the command itself.
 - **`/m rm` is not cosmetic.** Mounted without it, Windows creates
-  `System Volume Information` and `$RECYCLE.BIN` *inside* the container, i.e.
-  inside what rclone syncs.
+  `$RECYCLE.BIN` *inside* the container, i.e. inside what rclone syncs. It does
+  **not** stop `System Volume Information`: Windows 11 24H2 creates it on mount
+  as on any USB stick (seen on a real drive). Harmless — no pair syncs the
+  device root, and `device.RUIDO` ignores it.
 - **The password is checked the way `/silent` stops VeraCrypt from checking
   it.** `CheckPasswordLength(…, Silent, Silent)` skips the short-password
   question (`Format/Tcformat.c`, `Common/Password.c`), so
@@ -652,6 +654,10 @@ writes the texts. Five things not to weaken:
 - **Eject is `/dismount <letter> /quit` without `/silent`**, after a short
   wait: VeraCrypt only retries 30 × 50 ms (`Common/Dlgcode.h`), and without
   `/silent` it asks whether to force. `/unmount` does not exist before 1.26.24.
+  With the travelling VeraCrypt that question comes from the elevated copy,
+  which `start /wait` does not wait for, so while a `VeraCrypt.exe` that was not
+  running before is alive the 30 s do not count (`:vc_pendiente`, via
+  `tasklist`, which sees an elevated process's name without elevation).
   **The letter going is not enough**: forcing it with a file still open inside
   drops the letter while Windows keeps refusing to remove the drive, so the
   script says «ya puedes quitar la unidad» only once `:libre` sees the `.hc`

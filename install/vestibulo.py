@@ -98,6 +98,22 @@ _LIBRE_BAT = (
     "exit /b 0\n"
 )
 
+# ¿Sigue VeraCrypt con el desmontaje? 0 si hay que seguir esperando sin contar.
+# El que viaja, sin administrador, se relanza elevado y sale a los dos segundos
+# (`InitApp`, `LaunchElevatedProcess` en `Common/Dlgcode.c`), así que `start
+# /wait` no espera a la copia elevada, que es la que pregunta si forzar: los 30
+# intentos se gastaban mientras la pregunta seguía en pantalla. `tasklist` ve el
+# nombre de un proceso elevado sin serlo. Solo vale si al empezar no había
+# ninguno (`VC_ANTES`): con uno en segundo plano no se sabe cuál es el nuestro,
+# y se cuenta como siempre. Sin tope, igual que `start /wait` con el instalado
+# espera lo que tarde la respuesta.
+_VC_PENDIENTE_BAT = (
+    ":vc_pendiente\n"
+    "if defined VC_ANTES exit /b 1\n"
+    'tasklist /fi "imagename eq VeraCrypt.exe" /nh 2>nul | find /i "VeraCrypt.exe" >nul\n'
+    "exit /b\n"
+)
+
 # El VeraCrypt que se usa: el instalado antes que el que viaja.
 _ELEGIR_BAT = (
     'set "VC="\n'
@@ -230,6 +246,8 @@ def bat_expulsar(device_id: str) -> str:
         "rem pregunta si forzar, con su propia ventana (por eso NO va con /silent).\n"
         "rem Espera unos segundos antes: quien lo llama suele ser la propia ventana,\n"
         "rem que se esta cerrando, y VeraCrypt reintenta el desmontaje solo 1,5 s.\n"
+        "rem Mientras VeraCrypt siga preguntando (el que viaja lo hace desde una\n"
+        "rem copia elevada que no esperamos con /wait), la espera no cuenta.\n"
         "rem No dice que se puede quitar la unidad hasta ver suelto el contenedor:\n"
         "rem si se fuerza el cierre con algo abierto dentro, la letra se va pero el\n"
         "rem contenedor sigue retenido y Windows no deja quitarla.\n"
@@ -245,13 +263,19 @@ def bat_expulsar(device_id: str) -> str:
         + _ELEGIR_BAT +
         f"echo Cerrando {v.ETIQUETA}...\n"
         "timeout /t 3 /nobreak >nul\n"
+        'set "VC_ANTES="\n'
+        'tasklist /fi "imagename eq VeraCrypt.exe" /nh 2>nul '
+        '| find /i "VeraCrypt.exe" >nul && set "VC_ANTES=1"\n'
         'start "" /wait "%VC%" /dismount %RAIZ:~0,1% /quit\n'
         'set "INTENTOS=0"\n'
         ":esperar\n"
         "call :buscar\n"
         "if not defined RAIZ goto sin_letra\n"
+        "call :vc_pendiente\n"
+        "if not errorlevel 1 goto esperar_vc\n"
         "set /a INTENTOS+=1\n"
         "if %INTENTOS% geq 30 goto sigue_abierto\n"
+        ":esperar_vc\n"
         "timeout /t 1 /nobreak >nul\n"
         "goto esperar\n"
         "\n"
@@ -308,6 +332,8 @@ def bat_expulsar(device_id: str) -> str:
         + _BUSCAR_BAT +
         "\n"
         + _LIBRE_BAT +
+        "\n"
+        + _VC_PENDIENTE_BAT +
         "\n"
         + _SIN_VERACRYPT_BAT
     )
