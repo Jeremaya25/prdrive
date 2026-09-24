@@ -178,7 +178,7 @@ cuanto el contenedor está abierto.
 
 ### Cifrar con VeraCrypt
 
-Dos cosas que conviene saber antes de darle a **Crear y montar**.
+Unas cuantas cosas que conviene saber antes de darle a **Crear y montar**.
 
 **Por qué tarda, y cómo no tardar.** Crear el contenedor no es cifrar: es
 *escribirlo entero*. VeraCrypt reserva el fichero y luego lo recorre escribiendo
@@ -201,6 +201,24 @@ propone un tamaño de trabajo en lugar de casi el disco entero: si luego se te
 queda corto, el **VeraCrypt Expander** que viaja en el propio dispositivo lo
 agranda.
 
+**En FAT32, 4095M como mucho.** Muchos pendrives de 32 GB o menos vienen en
+FAT32 de fábrica, y en FAT32 un fichero no puede llegar a 4 GiB: el contenedor es
+un fichero. El asistente lo dice junto al tamaño y no deja pasar de ahí. Si
+necesitas más, reformatea la unidad en exFAT o NTFS antes de empezar (eso borra
+lo que tenga).
+
+**La contraseña.** Si tiene menos de 20 caracteres, el asistente te pregunta si
+quieres seguir con ella, que es lo que haría el propio VeraCrypt y aquí no puede
+hacer (se le lanza en silencio). No se guarda en ningún sitio: si la pierdes, el
+contenedor no se recupera.
+
+**Si el dispositivo ya iba sin cifrar.** Al reinstalar con VeraCrypt, el
+contenedor se crea al lado de la instalación anterior, y esa se queda donde
+estaba, con la clave del remoto en claro y tus carpetas. El asistente te lo dice
+en rojo antes de crear nada, y no la borra: puede tener cambios que todavía no
+están en el remoto. Bórrala tú cuando compruebes que no falta nada, y si alguien
+pudo copiar el dispositivo mientras iba sin cifrar, cambia la clave del remoto.
+
 **VeraCrypt viaja dentro.** La casilla **Dejar VeraCrypt en el dispositivo** copia
 el VeraCrypt de este equipo a una carpeta `VeraCrypt\` en la raíz de la unidad
 (un *Traveler's Disk*), para poder montar el contenedor en un ordenador que no lo
@@ -209,14 +227,30 @@ tenga instalado. Tres avisos honestos:
 - **Sigue haciendo falta ser administrador** en el equipo donde lo enchufes:
   montar carga un driver y eso no se puede hacer de otra forma. Esto te ahorra
   instalar VeraCrypt, no el aviso de permisos.
-- **Solo viaja la arquitectura del equipo que lo prepara.** Uno preparado en un
-  PC normal (x64) vale también en un Windows ARM, porque ahí el x64 se emula; al
-  revés no. El paso 8 te dice cuál lleva.
+- **Solo viaja la arquitectura del equipo que lo prepara, y solo vale en esa.**
+  Montar carga un driver, y un driver no se emula: uno preparado en un PC normal
+  (x64) no monta en un Windows ARM, ni al revés. El paso 8 te dice cuál lleva.
 - prdrive **no comprueba la firma** de lo que copia, que es algo que el propio
   diálogo de VeraCrypt sí hace. Copia de la carpeta de VeraCrypt instalada en tu
   equipo, que ya está protegida contra escritura sin permisos de administrador.
 
 En Linux y macOS no hay traveler disk: allí VeraCrypt necesita instalarse.
+
+**Abrirlo y cerrarlo, en cualquier equipo.** Con VeraCrypt todo prdrive está
+dentro del contenedor, así que el instalador deja fuera, en la raíz de la unidad,
+lo justo para llegar a él:
+
+| | |
+|---|---|
+| `Abrir PRDRIVE` | abre el contenedor y la ventana de prdrive. La contraseña la pide VeraCrypt en su propia ventana: no pasa por prdrive |
+| `Expulsar PRDRIVE` | cierra el contenedor para poder quitar la unidad. Si queda algo abierto, VeraCrypt pregunta si forzar |
+| `abrir-prdrive.sh`, `expulsar-prdrive.sh` | lo mismo en Linux (con VeraCrypt instalado) |
+| `LEEME-PRDRIVE.txt` | cómo se hace, en diez líneas, legible sin abrir nada |
+
+Usan el VeraCrypt instalado en el equipo si lo hay, y si no el que viaja en la
+unidad: con otra versión instalada, el que viaja no puede cargar su driver. Un
+dispositivo VeraCrypt hecho con una versión anterior se los pone con **Añadir
+plataformas…**, sin reinstalar.
 
 ### La primera vez
 
@@ -279,6 +313,14 @@ python penwatch.py uninstall
 ```
 
 `runsync.py` sin argumentos **para siempre un servicio anterior** antes de nada.
+
+**Con VeraCrypt**, los lanzadores están dentro del contenedor: se empieza por
+**Abrir PRDRIVE**, en la raíz de la unidad (ver [Cifrar con
+VeraCrypt](#cifrar-con-veracrypt)). Y para quitarla, **Expulsar**, en el pie de la
+ventana: cierra la ventana y después el contenedor. No desmonta ella misma
+—corre desde dentro del contenedor, y mientras corra VeraCrypt no puede
+desmontar sin forzar—: lanza **Expulsar PRDRIVE** de fuera y se cierra. Si algún
+otro programa tiene algo abierto dentro, VeraCrypt pregunta si forzar.
 
 ### La ventana de parejas
 
@@ -666,6 +708,13 @@ estado y su registro viven en el equipo.
   esté, mientras la ruta sea relativa a ella.
 - Se dispara **una vez por conexión**: el disparo se rearma cuando la unidad
   desaparece.
+- **Con VeraCrypt, abre el contenedor.** Cerrado, el `.prdrive/PRDRIVE` no se ve;
+  lo que sí se ve es la marca de fuera, con el mismo id. Con ella el vigilante le
+  pide a VeraCrypt que abra el contenedor —la contraseña la pide VeraCrypt en su
+  ventana, no pasa por prdrive— y, en cuanto está abierto, sigue como siempre.
+  **Una vez por conexión** también: si cancelas la contraseña no vuelve a
+  preguntar hasta que quites la unidad y la vuelvas a poner, y tampoco después
+  de «Expulsar». En Linux, solo con escritorio.
 - **No lanza nada si ya hay ventana o servicio en marcha** en ese equipo: lee
   (sin escribir) los dos registros del dispositivo y lo anota en su diario. El
   disparo se da por gastado igual, para no reintentarlo cada minuto detrás de una
@@ -692,6 +741,7 @@ todo junto y, lo que se pueda, con su arreglo al lado:
 | Bloqueos `.lck` de una pasada cortada | Borrarlos, solo si no hay ninguna pasada en marcha |
 | Ficheros en conflicto | Elegir con qué versión te quedas |
 | La última pasada falló | Abrir el log que lo explica |
+| Un contenedor VeraCrypt **dinámico** se queda sin sitio fuera (menos de 1 GiB libre en la unidad) | Liberar sitio fuera del contenedor. Si se llena, lo de dentro da errores de escritura en mitad de una pasada |
 | **La carpeta local no está** | **Nada, a propósito**: ver abajo |
 
 Nada se toca sin confirmarlo antes, con la misma pantalla de consecuencias que
@@ -819,6 +869,7 @@ prdrive/
 │   ├── components.py  qué rclone y qué Python lleva el dispositivo, y si están al día
 │   ├── pins.py        las versiones fijadas de rclone y Python, y las plataformas
 │   ├── pairing.py     la conexión del dispositivo, empaquetada para un móvil
+│   ├── vestibulo.py   lo que un dispositivo VeraCrypt deja fuera del contenedor
 │   └── store.py       los ficheros de estado en JSON del dispositivo
 ├── ui/                pantallas y su lógica
 │   ├── theme.py       la paleta, las fuentes y los estilos ttk. Sin ventana
@@ -836,6 +887,7 @@ prdrive/
 │   ├── device.py      qué volúmenes hay y cuál es el bueno
 │   ├── crypto.py      VeraCrypt y BitLocker
 │   ├── traveler.py    dejar el propio VeraCrypt dentro del volumen
+│   ├── vestibulo.py   los lanzadores de fuera del contenedor: abrir y expulsar
 │   └── components.py  poner al día el rclone y el Python de un dispositivo
 ├── tests/             scripts sueltos, sin framework
 └── design/            las maquetas que implementa ui/

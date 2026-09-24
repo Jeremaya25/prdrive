@@ -28,6 +28,12 @@ Va dentro de `.prdrive/` y no en la raíz del volumen a propósito: para identif
 la unidad da igual dónde esté mientras la ruta sea relativa a su raíz, y ahí no
 deja un fichero suelto entre los datos del usuario.
 
+Con VeraCrypt, `.prdrive/` está DENTRO del contenedor y hasta abrirlo no hay nada
+que ver. Fuera queda el vestíbulo (`common/vestibulo.py`), con una marca que lleva
+el mismo id: con ella el vigilante reconoce el dispositivo cerrado y le pide a
+VeraCrypt que lo abra —VeraCrypt pide la contraseña en su ventana—, una vez por
+conexión. Cuando el volumen aparece montado, se sigue como siempre.
+
 Por qué un vigilante que sondea y no un evento del sistema
 ----------------------------------------------------------
 El dispositivo va cifrado. Windows y Linux avisan de la llegada del DISPOSITIVO, pero el
@@ -121,6 +127,10 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 APP_SUBDIR = f".{APP_NAME}"                           # la carpeta oculta del código
 STRUCT_MARKER = Path(APP_SUBDIR) / "runsync.py"       # lo que se va a lanzar
 CONTROL_FILE = Path(APP_SUBDIR) / APP_NAME.upper()    # quién es esta unidad
+# El vestíbulo de un dispositivo VeraCrypt, fuera del contenedor. Copias de
+# `common/vestibulo.py`, con su test, como las de arriba.
+CONTAINER_FILE = f"{APP_NAME.upper()}.hc"
+VESTIBULE_MARKER = f".{APP_NAME}-vestibulo"
 # El Python del dispositivo, uno por plataforma, y su sello de versión. Copiados
 # de `install/runtime_bin.py` por lo mismo que los de arriba; el test comprueba
 # que no se separan.
@@ -370,6 +380,101 @@ def find_pen(cfg: dict) -> Path | None:
         except OSError:
             continue
     return None
+
+
+# ---------------------------------------------------------------------------
+# El dispositivo cifrado, antes de abrirlo
+# ---------------------------------------------------------------------------
+#
+# Lo que se hace aquí es lo mismo que `Abrir PRDRIVE.bat` (install/vestibulo.py,
+# con las citas del código de VeraCrypt), menos lanzar runsync: eso lo hace el
+# bucle de siempre cuando el volumen aparece montado, y así se respeta el modo
+# (`daemon` no abre ventana) y no hay dos lanzamientos peleándose por el
+# registro de la ventana.
+
+def vestibule_id(root: Path) -> str | None:
+    """El 'id=' de la marca del vestíbulo. Propaga OSError, como control_id()."""
+    for line in (root / VESTIBULE_MARKER).read_text(
+            encoding="utf-8", errors="replace").splitlines():
+        line = line.strip()
+        if line.lower().startswith("id="):
+            return line[3:].strip() or None
+    return None
+
+
+def find_vestibule(cfg: dict) -> Path | None:
+    """La raíz FÍSICA de este dispositivo, cerrado, o None.
+
+    Solo con id: sin él no se sabe de quién es el contenedor, y pedir la
+    contraseña de otro dispositivo sería peor que no pedir ninguna."""
+    want = cfg.get("device_id")
+    if not want:
+        return None
+    for root in candidate_roots(cfg):
+        try:
+            if ((root / VESTIBULE_MARKER).is_file() and vestibule_id(root) == want
+                    and (root / CONTAINER_FILE).is_file()):
+                return root
+        except OSError:
+            continue
+    return None
+
+
+def veracrypt_command(root: Path) -> list[str] | None:
+    """La orden que abre el contenedor de `root`, o None si no hay con qué.
+
+    Sin contraseña, que la pide VeraCrypt en su ventana. El VeraCrypt instalado
+    antes que el que viaja en la unidad: con otra versión instalada, el que viaja
+    no puede cargar su driver (ERR_DRIVER_VERSION). En Linux, solo con
+    escritorio: sin él no hay dónde pedir la contraseña, ni la de administrador
+    que montar exige."""
+    container = root / CONTAINER_FILE
+    if IS_WIN:
+        candidates = [Path(os.environ[k]) / "VeraCrypt" / "VeraCrypt.exe"
+                      for k in ("ProgramFiles", "ProgramW6432") if os.environ.get(k)]
+        candidates.append(root / "VeraCrypt" / "VeraCrypt.exe")
+        for exe in candidates:
+            try:
+                if exe.is_file():
+                    return [str(exe), "/volume", str(container),
+                            "/mountoption", "rm",
+                            "/mountoption", f"label={APP_NAME.upper()}",
+                            "/history", "n", "/cache", "n", "/quit"]
+            except OSError:
+                continue
+        return None
+    exe = shutil.which("veracrypt")
+    if not exe or not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+        return None
+    return [exe, str(container)]
+
+
+def open_container(root: Path) -> bool:
+    """Le pide a VeraCrypt que abra el contenedor de `root`. No espera.
+
+    Si se ha abierto lo dirá `find_pen()` en los sondeos siguientes: VeraCrypt,
+    sin permisos de administrador y en modo portátil, se relanza elevado y sale
+    con 0 antes de que nadie haya escrito la contraseña, así que su salida no
+    dice nada. cwd en el equipo, como `launch()`."""
+    cmd = veracrypt_command(root)
+    if cmd is None:
+        log(f"{root}: dispositivo cifrado y cerrado, pero no hay VeraCrypt con el "
+            "que abrirlo" + ("" if IS_WIN else " (o no hay escritorio)"))
+        return False
+    kwargs: dict = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL,
+                    "stderr": subprocess.DEVNULL, "cwd": str(HOST_DIR),
+                    "close_fds": True}
+    if IS_WIN:
+        kwargs["creationflags"] = CREATE_NEW_PROCESS_GROUP
+    else:
+        kwargs["start_new_session"] = True
+    try:
+        subprocess.Popen(cmd, **kwargs)
+    except OSError as e:
+        log(f"no he podido lanzar VeraCrypt: {e}")
+        return False
+    log(f"abriendo el contenedor de {root} con {cmd[0]}; la contraseña la pide VeraCrypt")
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -710,6 +815,7 @@ def watch_loop(once: bool = False) -> int:
         f"sondeo {poll:g}s{', una pasada' if once else ''})")
 
     stable = 0
+    stable_vestibule = 0
     try:
         while True:
             root = find_pen(cfg)
@@ -718,8 +824,37 @@ def watch_loop(once: bool = False) -> int:
                 if state.get("launched") or state.get("root"):
                     log("dispositivo no disponible; disparo rearmado")
                     state.update({"launched": False, "root": None})
+                    # Si lo que queda es su entrada, se ha cerrado el contenedor
+                    # con la unidad puesta: es «Expulsar», no una conexión nueva.
+                    # Sin apuntarlo aquí, un vigilante que no lo vio cerrado
+                    # —instalado con el contenedor abierto— pedía la contraseña.
+                    if not state.get("vestibule"):
+                        cerrado = find_vestibule(cfg)
+                        if cerrado is not None:
+                            state["vestibule"] = str(cerrado)
                     write_json(STATE_FILE, state)
                 stable = 0
+                # ¿Está el dispositivo, pero cerrado? Una vez por conexión: si
+                # se cancela la contraseña no se vuelve a preguntar hasta que
+                # desaparezca y vuelva. Tampoco después de «Expulsar»: la unidad
+                # sigue puesta y lo que se quiere es quitarla.
+                vestibule = find_vestibule(cfg)
+                if vestibule is None:
+                    stable_vestibule = 0
+                    if state.get("vestibule"):
+                        log("entrada del dispositivo cifrado retirada; apertura rearmada")
+                        state["vestibule"] = None
+                        write_json(STATE_FILE, state)
+                elif not state.get("vestibule"):
+                    stable_vestibule += 1
+                    if stable_vestibule >= (1 if once else STABLE_CHECKS):
+                        log(f"dispositivo cifrado detectado en {vestibule}")
+                        ok = open_container(vestibule)
+                        state.update({"vestibule": str(vestibule),
+                                      "vestibule_open": stamp(),
+                                      "vestibule_open_ok": ok})
+                        write_json(STATE_FILE, state)
+                        stable_vestibule = 0
             elif not state.get("launched"):
                 stable += 1
                 if stable >= (1 if once else STABLE_CHECKS):
@@ -1191,9 +1326,16 @@ def status_rows() -> list[tuple[str, str]]:
         ("Vigilante", f"vivo (pid {pid})" if pid_alive(pid) else "parado"),
         ("Último disparo", _disparo_row(state)),
         ("Disparo armado", "no (dispositivo ya atendido)" if state.get("launched") else "sí"),
-        ("Dispositivo ahora mismo", str(root) if root else "no detectado"),
+        ("Dispositivo ahora mismo", str(root) if root else _cerrado_row(cfg)),
     ]
     return filas
+
+
+def _cerrado_row(cfg: dict) -> str:
+    """Sin dispositivo a la vista: ¿está puesto pero cifrado y cerrado?"""
+    vestibule = find_vestibule(cfg)
+    return (f"cifrado y cerrado, en {vestibule}" if vestibule is not None
+            else "no detectado")
 
 
 def log_tail(lines: int = 10) -> list[str]:
@@ -1212,7 +1354,12 @@ def probe_rows() -> list[tuple[str, str]]:
     filas = []
     for root in candidate_roots(cfg):
         try:
-            if not (root / CONTROL_FILE).is_file():
+            if (not (root / CONTROL_FILE).is_file()
+                    and (root / VESTIBULE_MARKER).is_file()):
+                device_id = vestibule_id(root)
+                note = ("dispositivo cifrado, cerrado"
+                        + (f" (id {device_id[:8]}…)" if device_id else " (sin id)"))
+            elif not (root / CONTROL_FILE).is_file():
                 note = f"sin {CONTROL_FILE}"
             elif not (root / STRUCT_MARKER).is_file():
                 note = f"{CONTROL_FILE} OK, pero falta {STRUCT_MARKER}"

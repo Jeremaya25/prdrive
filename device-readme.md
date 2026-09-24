@@ -37,6 +37,8 @@ modo *ligero* (con un `runsync.pyw` en la raíz), entonces sí hace falta **Pyth
   conectada. Se para solo al extraerla, o al volver a abrir la ventana.
 - **Diagnóstico** — cuando algo no cuadra. Enseña dónde apunta cada carpeta y si
   su sincronización está sana.
+- **Expulsar** — solo si la unidad va cifrada con VeraCrypt. Cierra la ventana y
+  el contenedor; cuando el aviso diga que está cerrado, ya se puede quitar.
 
 Abajo del todo hay dos botones más:
 
@@ -94,16 +96,20 @@ la encuentre entra en tus datos hasta que revoques esa clave.
 
 - Ten la unidad **cifrada** (VeraCrypt o BitLocker). Si no lo está, vuelve a
   pasar el instalador y hazlo.
-- Si va con VeraCrypt y el equipo no lo tiene instalado, abre
-  `VeraCrypt\VeraCrypt.exe` de esta misma unidad, elige el fichero `PRDRIVE.hc`
-  y móntalo; después ya aparece `runsync.bat` dentro. Hará falta aceptar el aviso
-  de permisos de administrador: montar carga un driver y no hay otra forma.
+- Si va con VeraCrypt, fuera del contenedor, en la raíz de la unidad, está
+  **Abrir PRDRIVE**: pide la contraseña y abre esta ventana. Sirve también en un
+  equipo sin VeraCrypt instalado, con el que viaja en la carpeta `VeraCrypt\`;
+  entonces hará falta aceptar el aviso de permisos de administrador: montar carga
+  un driver y no hay otra forma.
   ¿Se te queda pequeño el contenedor? `VeraCrypt\VeraCryptExpander.exe` lo
   agranda sin rehacerlo.
 - No borres `.prdrive/`. Si desaparece, el arranque automático deja
   de reconocer la unidad y hay que reinstalar.
 - **Extráela con seguridad.** El programa no escribe nada mientras no sincroniza,
-  así que basta con cerrar la ventana antes.
+  así que basta con cerrar la ventana antes. Si va con VeraCrypt, usa
+  **Expulsar** en la ventana (o **Expulsar PRDRIVE** en la raíz de la unidad):
+  cierra la ventana y el contenedor. Mientras el contenedor está abierto, Windows
+  no deja extraer la unidad, y tirar del cable puede estropear lo de dentro.
 
 ## Actualizar
 

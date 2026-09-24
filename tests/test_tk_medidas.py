@@ -123,6 +123,25 @@ pairing.construir = lambda raw=None, app_dir=None: pairing.dumps(
     private_key=(b"-----BEGIN OPENSSH PRIVATE KEY-----\n" + b"b3BlbnNza" * 40
                  + b"\n-----END OPENSSH PRIVATE KEY-----\n"))
 
+# El panel de VeraCrypt sin VeraCrypt: se le da uno de mentira, una unidad
+# FAT32 (la pista del tope) y sin dispersos (la estimación de la espera), que es
+# el panel más alto que pinta. Nada de esto lanza nada ni escribe en ninguna
+# unidad.
+from install import crypto  # noqa: E402
+
+crypto.find_veracrypt = lambda extra_dir=None: {"mount": "VeraCrypt.exe",
+                                                "format": "VeraCrypt Format.exe"}
+crypto.soporta_dispersos = lambda root: False
+crypto.sistema_de_ficheros = lambda root: "FAT32"
+crypto.medir_escritura = lambda root, muestra=0: 10 * 1024 ** 2
+# Y al lado, una instalación sin cifrar con carpetas de nombre largo: el bloque
+# rojo que la avisa es lo que más estira ese paso.
+EN_CLARO = tmpdir("prdrive-en-claro-")
+(EN_CLARO / ".prdrive").mkdir()
+(EN_CLARO / ".prdrive" / "PRDRIVE").write_text("id=viejo\n", encoding="utf-8")
+for i in range(8):
+    (EN_CLARO / f"carpeta-de-datos-con-un-nombre-bastante-largo-{i}").mkdir()
+
 # nombre, ancho, alto, tk scaling
 PANTALLAS = (
     ("1080p", 1920, 1080, 1.3333),
@@ -218,6 +237,15 @@ try:
             c(f"{nombre}: el paso «{paso}» cabe en la ventana", cabe(top), True)
             c(f"{nombre}: el paso «{paso}» no queda recortado",
               recortado(wiz.visor), False)
+        # El paso de cifrado con VeraCrypt, en su peor caso (ver EN_CLARO).
+        wiz.state.device, wiz.state.device_root = EN_CLARO, None
+        wiz.state.encryption = "veracrypt"
+        wiz.indice = PASO["Cifrado"]
+        wiz.repintar()
+        c(f"{nombre}: el panel de VeraCrypt cabe", cabe(top), True)
+        c(f"{nombre}: el panel de VeraCrypt no queda recortado",
+          recortado(wiz.visor), False)
+        wiz.state.encryption = "none"
         # La pantalla del recorrido corto. Solo esa: la otra es «Dispositivo», que
         # ya se ha medido arriba, y volver a pintarla cuesta otra consulta de
         # unidades al sistema por cada resolución de la tabla.

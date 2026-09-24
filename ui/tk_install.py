@@ -32,7 +32,7 @@ from pathlib import Path
 from common import update
 from install import InstallError, InstallState, __version__
 from install import (crypto, deploy, device, platforms, profile, rclone_bin,
-                     remote, traveler)
+                     remote, traveler, vestibulo)
 
 from . import icons, theme
 from .tk import TITLE, Visor, centrar, output_window, working
@@ -924,7 +924,12 @@ def _paso_instalar(cuerpo, wiz) -> None:
         "Ahí van el código, rclone y Python para cada plataforma que marques, tu "
         "rclone.conf y su clave. La carpeta empieza por punto y se marca como "
         "oculta, para que no estorbe entre tus datos. En la raíz quedan los "
-        "lanzadores runsync.bat y runsync.sh, y una guía rápida de uso.")).grid(
+        "lanzadores runsync.bat y runsync.sh, y una guía rápida de uso."
+        + (f"\n\nY fuera del contenedor, en {vestibulo.destino(wiz.state)}, la "
+           f"entrada para abrirlo y cerrarlo en cualquier equipo: "
+           f"«{vestibulo.NOMBRE_ABRIR}», «{vestibulo.NOMBRE_EXPULSAR}» y una guía "
+           "corta."
+           if vestibulo.destino(wiz.state) is not None else ""))).grid(
         row=0, column=0, sticky="w")
 
     try:
@@ -983,6 +988,11 @@ def _paso_instalar(cuerpo, wiz) -> None:
             # puedan separarse. Es lo que verán los accesos directos.
             icons.write_ico(deploy.app_dir(raiz) / "runsync.ico")
             ident = device.ensure_control_file(raiz, renew=True)
+            # Con contenedor, la entrada de fuera: después del fichero de
+            # control, que es de donde sale el id que las une.
+            fisica = vestibulo.destino(wiz.state)
+            if fisica is not None:
+                escrito_ += vestibulo.escribir(fisica, ident)
             return escrito_, borrados, ident
 
         ok, res = working(wiz.root, "instalando", trabajo,
@@ -1185,7 +1195,15 @@ def _paso_plataformas(cuerpo, wiz) -> None:
 
         def trabajo():
             nuevos, borrados = deploy.apply_platforms(raiz, plan)
-            return nuevos, borrados, deploy.write_launchers(raiz, plan.completa)
+            lanzadores = deploy.write_launchers(raiz, plan.completa)
+            # La entrada de fuera, por lo mismo que los lanzadores: un
+            # dispositivo VeraCrypt de antes no la tiene, y este es el camino
+            # que existe para ponérsela sin reinstalar.
+            fisica = vestibulo.destino(wiz.state)
+            ident = device.control_id(raiz) if fisica is not None else None
+            if ident:
+                lanzadores += vestibulo.escribir(fisica, ident)
+            return nuevos, borrados, lanzadores
 
         ok, res = working(wiz.root, "plataformas", trabajo,
                           "Descargando y copiando rclone y Python.")
@@ -1362,9 +1380,14 @@ def _paso_final(cuerpo, wiz) -> None:
         clave = perfil.key_name if perfil.needs_key else None
         checks = device.verify_device(wiz.device_root, wiz.state.selected, clave)
         # Solo con contenedor: sin él no hay nada que montar en el otro equipo, y
-        # una fila roja diciendo que falta VeraCrypt sería mentira.
+        # una fila roja diciendo que falta VeraCrypt sería mentira. Lo mismo
+        # con la instalación en claro que quedó fuera: solo es un resto cuando
+        # la de verdad está dentro de un contenedor.
         if wiz.state.encryption == "veracrypt" and wiz.state.device:
+            checks += vestibulo.comprobar(wiz.state.device,
+                                          device.control_id(wiz.device_root))
             checks += traveler.comprobar(wiz.state.device)
+            checks += crypto.comprobar_restos(wiz.state.device)
         for i, chk in enumerate(checks):
             color = theme.OK if chk.ok else theme.PELIGRO
             ttk.Label(tabla, text="✔" if chk.ok else "✘", foreground=color,
@@ -1401,23 +1424,6 @@ def _paso_final(cuerpo, wiz) -> None:
                 f"{k} = {v}" for k, v in
                 profile.to_catalog_remote(wiz.perfil_final).items()))
 
-    def registrar_favorito() -> None:
-        if wiz.state.encryption != "veracrypt" or not wiz.state.container:
-            wiz.error("Esto solo tiene sentido con un contenedor VeraCrypt.")
-            return
-        letra = str(wiz.device_root)[0] if wiz.device_root else ""
-        try:
-            hechos = crypto.write_favorite(wiz.state.container, letra)
-        except InstallError as e:
-            wiz.error(str(e))
-            return
-        wiz.aviso("\n".join(hechos) + (
-            "\n\nConfírmalo en VeraCrypt > Favoritos > Organizar volúmenes "
-            "favoritos: es la configuración de otra aplicación y su formato "
-            "cambia entre versiones.\n\nY ojo con lo que avisa su propia "
-            f"documentación: si la letra {letra}: está ocupada cuando conectes el "
-            "dispositivo, VeraCrypt NO monta y NO dice nada."))
-
     def llevar_veracrypt() -> None:
         """Copia (o pone al día) el VeraCrypt que viaja en el dispositivo.
 
@@ -1437,8 +1443,9 @@ def _paso_final(cuerpo, wiz) -> None:
         wiz.aviso(
             f"{len(escritos)} ficheros en {wiz.state.device / traveler.CARPETA}.\n\n"
             f"Arquitectura: {', '.join(arcs) or 'ninguna (falta el driver)'}. "
-            "Solo viaja la del equipo que lo prepara; el x64 vale también en "
-            "Windows ARM, al revés no.\n\n"
+            "Solo viaja la del equipo que lo prepara, y solo vale en esa: un "
+            "driver no se emula, así que uno x64 no monta en un Windows ARM ni "
+            "al revés.\n\n"
             "En el equipo donde se enchufe seguirá haciendo falta aceptar el "
             "aviso de administrador: cargar el driver no se puede hacer de otra "
             "forma.")
@@ -1459,7 +1466,6 @@ def _paso_final(cuerpo, wiz) -> None:
     for i, (texto, accion) in enumerate((
             ("Instalar el arranque automático (penwatch)", instalar_vigilante),
             ("Compartir esta conexión con otros dispositivos", guardar_en_catalogo),
-            ("Que VeraCrypt monte al conectar", registrar_favorito),
             ("Llevar VeraCrypt en el dispositivo", llevar_veracrypt),
             ("Desmontar el contenedor", desmontar),
             ("Volver a comprobar", revisar_dispositivo))):

@@ -223,6 +223,65 @@ boton(vacio.cuerpo, "Entendido, usar el dispositivo tal cual").invoke()
 c("elegir «sin cifrar» deja el destino listo", vacio.state.device_root, dispositivo)
 c("y ya se puede seguir", str(vacio.boton_siguiente.cget("state")), "normal")
 
+# --- el panel de VeraCrypt ----------------------------------------------------
+#
+# Tres cosas que se dicen ANTES de crear nada: la instalación sin cifrar que se
+# quedaría al lado del contenedor, el tope de una unidad FAT32 y una contraseña
+# más corta de lo que VeraCrypt recomienda. Ni VeraCrypt ni una unidad de verdad:
+# las sondas de `crypto` se sustituyen.
+from install import crypto  # noqa: E402
+from ui import tk_crypto  # noqa: E402
+
+# El panel importa su propio `working`: el mismo cambio que arriba.
+tk_crypto.working = tk_install.working
+sondas_crypto = {n: getattr(crypto, n) for n in (
+    "find_veracrypt", "soporta_dispersos", "sistema_de_ficheros",
+    "medir_escritura", "create_container", "mount_container")}
+creados, montado_en = [], tmpdir()
+crypto.find_veracrypt = lambda extra_dir=None: {"mount": "VeraCrypt.exe",
+                                                "format": "VeraCrypt Format.exe"}
+crypto.soporta_dispersos = lambda root: False
+crypto.sistema_de_ficheros = lambda root: "FAT32"
+crypto.medir_escritura = lambda root, muestra=0: 10 * 1024 ** 2
+crypto.create_container = lambda *a, **k: creados.append(a)
+crypto.mount_container = lambda *a, **k: montado_en
+preguntado: list[str] = []
+askyesno_original = messagebox.askyesno
+try:
+    en_claro = tmpdir()
+    (en_claro / ".prdrive").mkdir()
+    (en_claro / ".prdrive" / "PRDRIVE").write_text("id=viejo\n", encoding="utf-8")
+    (en_claro / "sync-data").mkdir()
+    vc = nuevo_asistente(en_claro)
+    vc.state.device_root = None
+    vc.state.encryption = "veracrypt"
+    en_paso(vc, PASO["Cifrado"])
+    textos = " ".join(str(w.cget("text")) for w in widgets(vc.cuerpo, ttk.Label))
+    c.contains("la instalación sin cifrar se avisa antes de crear", textos, "SIN CIFRAR")
+    c.contains("nombrando lo que queda fuera", textos, "sync-data/")
+    c.contains("el tope de FAT32 se dice junto al tamaño", textos, "como mucho 4095M")
+    campos = widgets(vc.cuerpo, ttk.Entry)
+    c("y el tamaño propuesto ya lo respeta",
+      "4095M" in [e.get() for e in campos if not e.cget("show")], True)
+
+    claves = [e for e in campos if e.cget("show")]
+    for e in claves:
+        e.insert(0, "corta")
+    messagebox.askyesno = lambda *a, **k: preguntado.append(a[1]) or False
+    boton(vc.cuerpo, "Crear y montar").invoke()
+    c("una contraseña corta se pregunta, como haría VeraCrypt sin /silent",
+      len(preguntado), 1)
+    c("y si se dice que no, no se crea nada", creados, [])
+    messagebox.askyesno = lambda *a, **k: preguntado.append(a[1]) or True
+    boton(vc.cuerpo, "Crear y montar").invoke()
+    c("si se dice que sí, se crea", len(creados), 1)
+    c("con el tamaño dentro del tope", creados[0][2], 4095 * 1024 ** 2)
+    c("y el destino queda en lo montado", vc.state.device_root, montado_en)
+finally:
+    messagebox.askyesno = askyesno_original
+    for nombre, funcion in sondas_crypto.items():
+        setattr(crypto, nombre, funcion)
+
 # --- el paso de instalación ---------------------------------------------------
 limpio = tmpdir()
 wiz = nuevo_asistente(limpio)
@@ -273,6 +332,35 @@ c("y el dispositivo recibe un identificador propio",
 c("y el resto del volumen sigue ahí",
   sorted(p.name for p in limpio.iterdir() if p.name.startswith("runsync")),
   ["runsync.bat", "runsync.sh"])
+
+# Sin contenedor no hay vestíbulo: la entrada de fuera es cosa de VeraCrypt.
+from common import vestibulo as vest                      # noqa: E402
+
+c("sin contenedor, nada de vestíbulo", (limpio / vest.MARCA).exists(), False)
+
+# --- con contenedor: la entrada de fuera, con el mismo id -----------------------
+#
+# El dispositivo vive en lo montado y el vestíbulo en la raíz física, junto al
+# .hc. Lo que las une es el id: el de la marca de fuera tiene que ser el del
+# fichero de control de dentro, o nadie reconocería el dispositivo cerrado.
+fisica = tmpdir()
+(fisica / "PRDRIVE.hc").write_bytes(b"x")
+montado = tmpdir()
+wiz_vc = nuevo_asistente(montado)
+wiz_vc.state.device = fisica
+wiz_vc.state.encryption = "veracrypt"
+en_paso(wiz_vc, PASO["Instalación"])
+c.contains("el paso dice que va a dejar la entrada de fuera",
+           " ".join(str(w.cget("text")) for w in widgets(wiz_vc.cuerpo, ttk.Label)),
+           "Abrir PRDRIVE")
+boton(wiz_vc.cuerpo, "Instalar el programa").invoke()
+c("el programa va DENTRO del contenedor",
+  (deploy.app_dir(montado) / "runsync.py").is_file(), True)
+c("y fuera, nada del programa", (fisica / deploy.APP_SUBDIR).exists(), False)
+c("fuera, el vestíbulo entero",
+  all((fisica / n).is_file() for n in vest.TODOS), True)
+c("con el mismo id que el fichero de control de dentro",
+  vest.leer_id(fisica), device.control_id(montado))
 
 # --- la ligera: sin Python propio, con el .pyw ---------------------------------
 ligero = tmpdir()
@@ -439,6 +527,24 @@ c("sin tocar la configuración", config.read_bytes(), config_antes)
 c("ni perder lo que ya llevaba", ANFITRION.clave in platforms.provisioned(limpio), True)
 c("y con los lanzadores de una completa", (limpio / "runsync.bat").is_file()
   and (limpio / "runsync.sh").is_file(), True)
+c("sin contenedor, tampoco aquí hay vestíbulo", (limpio / vest.MARCA).exists(), False)
+
+# Un dispositivo VeraCrypt de antes no tiene vestíbulo, y este es el camino para
+# ponérselo sin reinstalar: el mismo que ya existe para los lanzadores. Se
+# simula quitándoselo al que se acaba de hacer con contenedor.
+for nombre in vest.TODOS:
+    (fisica / nombre).unlink()
+# Con VeraCrypt el atajo sale en el paso de cifrado, ya montado: antes de
+# montar, el volumen no deja ver el `.prdrive/`.
+viejo_vc = nuevo_asistente(montado)
+viejo_vc.state.device = fisica
+viejo_vc.state.encryption = "veracrypt"
+en_paso(viejo_vc, PASO["Cifrado"])
+boton(viejo_vc.cuerpo, "Añadir plataformas…").invoke()
+boton(viejo_vc.cuerpo, "Aplicar").invoke()
+c("«Añadir plataformas…» le pone el vestíbulo a un dispositivo VeraCrypt de antes",
+  all((fisica / n).is_file() for n in vest.TODOS), True)
+c("con su id de siempre", vest.leer_id(fisica), device.control_id(montado))
 
 
 # --- no se puede pasar del paso «Instalación» sin instalar -----------------------

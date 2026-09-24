@@ -40,6 +40,7 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 │   ├── components.py  rclone/Python carried vs the pins — stamps, no network
 │   ├── pins.py        pinned rclone + python-build-standalone; platform table
 │   ├── pairing.py     reads rclone.conf; the connection as a QR payload
+│   ├── vestibulo.py   what a VeraCrypt device leaves OUTSIDE its container
 │   └── store.py       device JSON state + pid_alive(); atomic writes
 ├── ui/                asking the user, showing results
 │   ├── __init__.py    Choice, Frontend, start(), fatal(), manual_args(), abrir()
@@ -53,6 +54,7 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 │   │   flags_editor.py · watch.py · versions_editor.py
 │   │                   the other decision halves, no Tk
 │   ├── tk.py          TkFrontend: main + output window, modal()/mostrar()/working()
+│   ├── cifrado.py     is this device inside a VeraCrypt container? «Expulsar»
 │   ├── tk_install.py  the install wizard          (every tk_* draws only)
 │   ├── tk_pairs.py · tk_repair.py · tk_conflicts.py · tk_fleet.py ·
 │   │   tk_watch.py · tk_update.py · tk_crypto.py · tk_doctor.py ·
@@ -69,6 +71,7 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 │   ├── device.py      what volumes exist, which is the device, mounted right?
 │   ├── crypto.py      VeraCrypt and BitLocker
 │   ├── traveler.py    VeraCrypt itself, copied onto the volume
+│   ├── vestibulo.py   the launchers outside the container: open, eject
 │   └── deploy.py      copy the code in, rclone + runtimes, launchers, config
 └── tests/             plain scripts; run_all.py runs them in separate processes
 ```
@@ -108,6 +111,8 @@ does not travel to the device (`tests/test_install_device.py`, `test_fleet.py`);
 (`tests/test_instancia_unica.py`). Those two paths are functions in `model.py`
 and not constants because the tests move `STATE_DIR` at runtime; `runsync` and
 `ui/repair.py` both go through them, so penwatch's copy is the only one.
+`penwatch.CONTAINER_FILE` / `VESTIBULE_MARKER` vs `common/vestibulo.py`
+(`tests/test_penwatch_vestibulo.py`); `install/` imports the latter directly.
 
 ## The PyInstaller build (`build_installer.py`)
 
@@ -353,6 +358,15 @@ it** — a window cannot dump output to a console that does not exist.
 - `tk_pairs.confirmar_plan()` is a real window, one line per consequence, each
   warning in an amber box — not an `askokcancel`. This is the dialog that governs
   deletions. Tests replace it, like `mostrar()`.
+- **«Expulsar», only inside a VeraCrypt container** (`ui/cifrado.py`). Closing
+  the window does not close the `.hc`, and with it open the drive cannot be
+  removed. This process runs *from inside* the container (the device's Python
+  is in `.prdrive/runtime/`) and VeraCrypt only retries a busy dismount for
+  1.5 s, so the button does not dismount: it launches the vestibule's
+  `Expulsar PRDRIVE` script with its cwd on the physical root
+  (`lanzar_expulsion()`, an indirection point) and closes. The script waits,
+  then asks VeraCrypt without `/silent`. Disabled while a pass runs; with the
+  window open there is no service (opening it stopped it).
 - **The main window runs syncs itself:** «Sincronizar ahora», and whatever
   «Reparación» hands back, open a
   modeless `output_window`, the window disables whatever touches the same state,
@@ -430,6 +444,10 @@ plans in the `EditPlan` shape (`consequences`/`warnings`/`execute()`), and
   **A missing local dir deliberately has none**: creating it is exactly what
   `_bisync_preflight()` refuses to do when a baseline exists, because an empty
   local side reads as "everything was deleted". The screen says so instead.
+  Nor does **`espacio`**: a *dynamic* (sparse) VeraCrypt container with under
+  `vestibulo.UMBRAL_LIBRE` (1 GiB) free on the physical drive. It grows as it is
+  written, so when the drive fills the volume inside throws I/O errors mid-pass
+  and rclone cannot say why — the fix is freeing space outside.
 - **Deleting a lock asks who is syncing first.** `repair.sincronizacion_en_curso()`
   reads `model.daemon_lock()` and errs towards "yes, someone is": another host's
   record cannot be checked with `pid_alive`, and refusing to delete costs
@@ -538,9 +556,32 @@ pairs) stays possible without deleting `.prdrive/` by hand.
   renewing here would strand a watcher bound to this device's id. Going backwards
   in version is allowed but never silent (`_confirmar_retroceso()`).
 
-**VeraCrypt: four things not to weaken.** Every claim below is checked against
-VeraCrypt's source, not its docs, and the citations are in the code — keep them
-like the rclone ones in `common/bisync.py`.
+**VeraCrypt: what not to weaken.** Every claim below is checked against
+VeraCrypt's source (tag `VeraCrypt_1.26.24`, and `master` where it matters), not
+its docs, and the citations are in the code — keep them like the rclone ones in
+`common/bisync.py`. The design and the evidence table are in
+`docs/superpowers/specs/2026-09-23-veracrypt-ciclo-de-vida-design.md`.
+
+What a **real Windows run** found is in
+`docs/superpowers/pruebas/2026-09-24-veracrypt-unidad-g-resultados.md` (the plan
+is the file beside it; the helper scripts lived outside the repo). Read it
+before touching VeraCrypt on Windows. It has:
+- a table per test;
+- findings H-1…H-10 with their evidence;
+- the fixes and a second pass after them (sections 8–10);
+- what the plan got wrong, e.g. the portable package has no `VeraCrypt.exe`,
+  unplugging leaves a ghost volume, and a forced dismount *may* keep the `.hc`
+  held.
+
+Still unverified on real hardware:
+- an installed VeraCrypt (`ERR_DRIVER_VERSION`);
+- the «retenido» branch;
+- the new eject wait;
+- Linux.
+
+Agent trap: this machine's Bash tool is sandboxed. It redirects writes under
+`%LOCALAPPDATA%` (a `penwatch install` from there registers a task that points
+at nothing) and hangs `tasklist | find`. Use PowerShell for both.
 
 - **Creation speed is `/dynamic`, and it is asked before it is used.** `/quick`
   does *not* stop VeraCrypt writing the whole container: `FormatNoFs()` walks it
@@ -555,25 +596,114 @@ like the rclone ones in `common/bisync.py`.
   for file containers in 1.26.24 (`Main/TextUserInterface.cpp`; `master` drops
   that line), so there the only lever is the size, and
   `crypto.suggested_size()` stops proposing nearly the whole disk.
+- **A FAT32 host caps the container at 4095 MiB** (`crypto.tope_contenedor()`),
+  checked in `create_container()` before VeraCrypt runs. Not 4 GiB − 1: VeraCrypt
+  rounds `/size` **up** to the sector size (`Format/Tcformat.c`). The name is
+  compared whole — `exfat` contains «fat» and has no cap.
+- **The container exists when the elevated copy is done, not when our process
+  exits.** The travelling `VeraCrypt Format`, without admin rights, relaunches
+  itself elevated (`/q UAC`) and exits 0 while the copy is still writing;
+  mounting in that gap left a volume with no filesystem, and the container was
+  useless. `create_container()` notes the processes with that executable's name
+  before launching and waits for the new ones to exit
+  (`_esperar_copia_elevada()`). The list comes from a Toolhelp snapshot
+  (`crypto._procesos()`, an indirection point): WMI did not show the elevated
+  copy. No time limit, like the command itself.
 - **`/m rm` is not cosmetic.** Mounted without it, Windows creates
-  `System Volume Information` and `$RECYCLE.BIN` *inside* the container, i.e.
-  inside what rclone syncs. Same thing as `removable="1"` in the favourite.
-- **The favourite stores the container by volume GUID** (`crypto.ruta_favorita()`
-  → `\\?\Volume{…}\PRDRIVE.hc`): a drive letter is exactly what changes on
-  another machine. The `mountpoint` is still a letter because VeraCrypt demands
-  one, so the documented trap stands — a busy letter means no mount and no
-  message.
-- **`traveler.py` copies VeraCrypt onto the volume**, so the device mounts on a
-  machine that has none. There is no CLI for this: VeraCrypt's own dialog
-  extracts the binaries from its `VeraCrypt Setup.exe` self-extractor
-  (`Mount/Mount.c`). Copying works only because `DriverLoad()`
-  (`Common/Dlgcode.c`) loads `<exe dir>\veracrypt-x64.sys`. Three things that
-  must stay said out loud: it still needs **administrator** on the host, the
-  signature is **not** verified the way VeraCrypt verifies it, and only the
-  preparing machine's **architecture** travels (x64 also runs on Windows ARM, not
-  the reverse — the same one-way fallback as `BIN_FALLBACK_DIRS`). The folder
-  lives on the **physical** root beside the `.hc`, never inside the container,
-  and `"veracrypt"` therefore belongs in `device.RUIDO`.
+  `$RECYCLE.BIN` *inside* the container, i.e. inside what rclone syncs. It does
+  **not** stop `System Volume Information`: Windows 11 24H2 creates it on mount
+  as on any USB stick (seen on a real drive). Harmless — no pair syncs the
+  device root, and `device.RUIDO` ignores it.
+- **The password is checked the way `/silent` stops VeraCrypt from checking
+  it.** `CheckPasswordLength(…, Silent, Silent)` skips the short-password
+  question (`Format/Tcformat.c`, `Common/Password.c`), so
+  `crypto.revisar_contrasena()` asks it: under `PASSWORD_LEN_WARNING = 20` a
+  question with «No» as default, over `MAX_PASSWORD = 128` an error — both in
+  **UTF-8 bytes**, as VeraCrypt measures.
+- **There is no favourite, on purpose.** `write_favorite()` stored the container
+  as `\\?\Volume{GUID}\PRDRIVE.hc`, and `VolumeGuidPathToDevicePath()`
+  (`Common/Dlgcode.c`) only resolves paths ending in `}\` — the arrival timer in
+  `Mount/Mount.c` skipped it every time, so it **never** mounted. Setting
+  `StartOnLogon` in `Configuration.xml` registers nothing (`ManageStartupSeq()`
+  only runs from the Preferences and Favourites dialogs), and the file was
+  rewritten from scratch, wiping the user's favourites. The note in `crypto.py`
+  says why it is not coming back.
+- **`traveler.py` copies VeraCrypt onto the volume, renaming the driver.** There
+  is no CLI for this: VeraCrypt's own dialog extracts the binaries from its
+  `VeraCrypt Setup.exe` self-extractor (`Mount/Mount.c`, `TravelerDlgProc`).
+  Copying works because `DriverLoad()` (`Common/Dlgcode.c`) loads
+  `<exe dir>\veracrypt-x64.sys` or `-arm64.sys` — but the installer leaves it
+  as **`veracrypt.sys`** (`Setup/Setup.c`: the destination is `szFiles[i]+1`), so
+  `nombre_portatil()` renames it from the architecture in its **PE header**
+  (`maquina_pe()`), exactly what VeraCrypt's own dialog does for an MSI install.
+  Copying it as is left a traveler that never loaded its driver. Three things
+  that must stay said out loud: it still needs **administrator** on the host,
+  the signature is **not** verified the way VeraCrypt verifies it, and each
+  architecture works **only on its own**: `IsARM()` asks for the *native*
+  machine, so an emulated x64 VeraCrypt on Windows ARM looks for the arm64
+  driver, and a driver is never emulated. This is **not** the one-way fallback
+  of `BIN_FALLBACK_DIRS`. The folder lives on the **physical** root beside the
+  `.hc`, never inside the container, and `"veracrypt"` therefore belongs in
+  `device.RUIDO`.
+- **Re-encrypting leaves the old tree where it was.** «Reinstalar desde cero»
+  with VeraCrypt over an unencrypted prdrive creates the container beside it;
+  `crypto.restos_en_claro()` finds the plaintext `.prdrive/` (with the key) and
+  the data folders, the panel says so in red before creating, and step 8 keeps a
+  red row. **Nothing deletes it**: those folders may hold unsynced changes.
+
+**The vestibule (`common/vestibulo.py` + `install/vestibulo.py`).** With
+VeraCrypt everything — code, launchers, guide, control file — is inside
+`PRDRIVE.hc`, so a machine sees an opaque file until it is opened. The physical
+root therefore gets `Abrir PRDRIVE.bat` / `Expulsar PRDRIVE.bat`,
+`abrir-prdrive.sh` / `expulsar-prdrive.sh`, `LEEME-PRDRIVE.txt` and the hidden
+marker `.prdrive-vestibulo`, whose `id=` is **the same** as `.prdrive/PRDRIVE`
+inside: that id is what joins the two halves. `common/` holds the names and
+`leer_id()` (the device needs them; `install/` does not travel); `install/`
+writes the texts. Five things not to weaken:
+
+- **The password never passes through us.** `VeraCrypt.exe /volume X /quit`
+  without `/password` asks with VeraCrypt's own dialog (`Mount/Mount.c`,
+  `WM_INITDIALOG`). No `/auto`: it also opens an Explorer window.
+- **The installed VeraCrypt before the travelling one**: with another version's
+  driver loaded, the traveller fails with `ERR_DRIVER_VERSION`
+  (`Common/Dlgcode.c`, `DriverAttach`).
+- **The exit code is not the mount.** The traveller without admin rights
+  relaunches itself elevated with `/q UAC` and exits 0 after two seconds
+  (`InitApp`, `LaunchElevatedProcess`), so the `.bat` waits to *see* the drive
+  (by the control file's id) — 10 s with the installed one, 180 s with the
+  traveller.
+- **Eject is `/dismount <letter> /quit` without `/silent`**, after a short
+  wait: VeraCrypt only retries 30 × 50 ms (`Common/Dlgcode.h`), and without
+  `/silent` it asks whether to force. `/unmount` does not exist before 1.26.24.
+  With the travelling VeraCrypt that question comes from the elevated copy,
+  which `start /wait` does not wait for, so while a `VeraCrypt.exe` that was not
+  running before is alive the 30 s do not count (`:vc_pendiente`, via
+  `tasklist`, which sees an elevated process's name without elevation).
+  **The letter going is not enough**: forcing it with a file still open inside
+  drops the letter while Windows keeps refusing to remove the drive, so the
+  script says «ya puedes quitar la unidad» only once `:libre` sees the `.hc`
+  free.
+- **A letter with the id is not proof the container is open.** Unplugging
+  without ejecting leaves the inner letter behind, serving the control file from
+  cache, and `Abrir` used to launch prdrive from it. With the real volume
+  mounted the driver holds the `.hc` without write sharing (`TCOpenVolume()`,
+  `Driver/Ntvol.c`), so a letter with the id beside a free `.hc` is that ghost:
+  the script says how to get out («Expulsar», then «Abrir») instead of
+  launching. `:libre` opens the `.hc` for append with `type nul`, which changes
+  nothing, and answers «held» when there is no `.hc` to look at. Its blind spot
+  is a shared mount (`MountVolume()` in `Common/Dlgcode.c` falls back to one
+  when someone else had the file open), and there it costs two extra clicks.
+
+Same rules as the launchers inside: CRLF, no parenthesised blocks, `chcp 65001`
+before any accent, written by step 5 (right after `ensure_control_file()`, which
+is where the id comes from) and by «Añadir plataformas…», **never** by
+`--update`. `vestibulo.destino(state)` decides whether there is one (the `.hc`
+on the physical root and the device mounted elsewhere). Its six names are in
+`device.RUIDO`, built from `vestibulo.TODOS`. `tests/test_vestibulo.py` reads the
+`.bat`, **runs** the `.sh` against a fake `veracrypt` and, on Windows, runs
+`:libre` against a container held the way the driver holds it. Rewriting the
+vestibule goes through `deploy.unhide()` first: Windows refuses `open(…, "w")`
+on a hidden file, and the marker is hidden.
 
 Other step notes:
 
@@ -619,7 +749,8 @@ absent), per-row sizes and a live total vs free space.
 - **Launchers are immutable after provisioning**: written by step 5 and by
   «Añadir plataformas…» (an old device has no `.bat`, so its runtimes would be
   useless), **never** by `--update`, «Actualización» or `deploy_code()`
-  (`tests/test_install_deploy.py` guards it).
+  (`tests/test_install_deploy.py` guards it). The vestibule outside a VeraCrypt
+  container follows the same rule.
 
 ## Updating a device in place (`common/update.py` + `ui/tk_update.py` + `--update`)
 
@@ -705,8 +836,25 @@ script to `%LOCALAPPDATA%\prdriveWatch` / `~/.local/share/prdrive-watch`, writes
   `daemon.lock.json` (`aplicacion_en_marcha()`): with a window open or the
   service running on this machine it launches nothing, and the skipped trigger
   is not a failure — `_disparo_row()` says so instead of printing «FALLÓ».
+- **A VeraCrypt device, closed.** `find_pen()` sees nothing until the container
+  is open, so `find_vestibule()` looks for the vestibule marker
+  (`VESTIBULE_MARKER`, same id as `device_id`, `CONTAINER_FILE` beside it) and
+  `open_container()` launches VeraCrypt with the same command as
+  `Abrir PRDRIVE.bat` — no password (VeraCrypt asks in its own window), the
+  installed one before the travelling one, on Linux only with a display. It
+  does **not** launch runsync: the ordinary loop does, once the volume shows up
+  mounted, so the `mode` is respected and nothing races for the window lock.
+  **Once per connection** (`state["vestibule"]`): a cancelled password is not
+  asked again, nor after «Expulsar» with the drive still plugged; it re-arms
+  only when the physical root disappears. The mounted volume disappearing with
+  its vestibule still there marks it as asked too: a watcher installed with the
+  container open never saw it closed, and «Expulsar» brought up the password.
+  No id in `watch.json` → never asks.
 - `ui/watch.py` imports penwatch for reads and shells out for
-  `install`/`uninstall`. One-way dependency.
+  `install`/`uninstall`. One-way dependency. So does
+  `common/vestibulo.raiz_fisica()`, lazily and guarded like `ui/watch.py`: one
+  drive walk in the whole project (`penwatch.candidate_roots()`), the one that
+  already avoids the «no disk» modal.
 - **Its own Python**: `install` copies the device's runtime for this host
   (`runtime_keys_for()` chain) into `HOST_DIR/runtime/<stamp_id>/` and points
   `watch.json` and the task/unit at it, because `sys.executable` silently died
@@ -975,6 +1123,8 @@ keeps the target's existing header.
   `rclone_bin.fetch()`, `conflicts.recorrer()`, `conflict_editor.mover()` /
   `borrar()`, `ui.abrir()`, `runsync.notificar_fallo()`,
   `components.rclone_en_uso()` / `runtime_en_uso()`, `_win_volumes()`,
+  `vestibulo.raiz_fisica()`, `cifrado.lanzar_expulsion()`,
+  `crypto.sistema_de_ficheros()`,
   `_leer_estado_bitlocker()`, `_preguntar_borrado()`, `pairing.construir()`,
   `tk.mostrar()` / `confirmar_plan()`. Keep new ones in that shape.
 

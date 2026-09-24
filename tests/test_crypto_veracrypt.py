@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-VeraCrypt: cuánto tarda crear el contenedor, cómo se monta y qué se recuerda.
+VeraCrypt: cuánto tarda crear el contenedor, cómo se monta y qué se revisa antes.
 
 Crear el contenedor en un disco externo tardaba media hora, y la causa no era el
 cifrado: con `/quick`, VeraCrypt preasigna el fichero y después escribe un sector
@@ -11,7 +11,7 @@ aborta con ERR_DYNAMIC_NOT_SUPPORTED. Esa decisión —la que convierte media ho
 en segundos, o la instalación en un error— es lo que se comprueba aquí.
 
 Nada de esto lanza VeraCrypt ni toca una unidad: se sustituyen las sondas de
-módulo (`soporta_dispersos`, `medir_escritura`, `volume_guid_path`, `_run`,
+módulo (`soporta_dispersos`, `medir_escritura`, `sistema_de_ficheros`, `_run`,
 `_volumenes_con_control`), que para eso son funciones de módulo.
 """
 
@@ -19,9 +19,9 @@ from pathlib import PurePosixPath
 
 from _harness import Checks, tmpdir
 
-from install import crypto
+from install import crypto, device
 
-c = Checks("VeraCrypt: creación, montaje y favorito")
+c = Checks("VeraCrypt: creación, montaje y lo que se revisa antes")
 
 VC = {"mount": "VeraCrypt.exe", "format": "VeraCrypt Format.exe"}
 CONT = crypto.Path("P:/PRDRIVE.hc")
@@ -29,8 +29,8 @@ CONT = crypto.Path("P:/PRDRIVE.hc")
 win_original = crypto.IS_WIN
 path_original = crypto.Path
 sondas = {n: getattr(crypto, n) for n in
-          ("soporta_dispersos", "medir_escritura", "volume_guid_path", "en_uso",
-           "_run", "_volumenes_con_control", "veracrypt_config_dir", "Path")}
+          ("soporta_dispersos", "medir_escritura", "sistema_de_ficheros", "en_uso",
+           "_run", "_procesos", "_volumenes_con_control", "Path", "MOUNT_POLL")}
 try:
     # --- 1. /dynamic solo cuando se pide, y nunca a ciegas -------------------
     #
@@ -89,27 +89,142 @@ try:
     c("y el texto lo reconoce",
       crypto.describir_espera(None), "no he podido medir la velocidad de la unidad")
 
-    # --- 5. el favorito sobrevive a un cambio de letra ----------------------
+    # --- 5. FAT32: un fichero no llega a 4 GiB ------------------------------
     #
-    # `P:\PRDRIVE.hc` deja de valer en cuanto la unidad coge otra letra en otro
-    # equipo, que en un dispositivo portátil es lo normal.
-    crypto.volume_guid_path = lambda root: "\\\\?\\Volume{1234-5678}\\"
-    c("el contenedor se guarda por GUID de volumen",
-      crypto.ruta_favorita(CONT), "\\\\?\\Volume{1234-5678}\\PRDRIVE.hc")
-    crypto.volume_guid_path = lambda root: None
-    c("y si Windows no lo da, se queda la ruta de siempre",
-      crypto.ruta_favorita(CONT), str(CONT))
+    # Casi todos los pendrives de 32 GB o menos vienen en FAT32, y el contenedor
+    # es un fichero. Se proponía «el hueco, hasta 64G» y VeraCrypt fallaba al
+    # crear sin decir esto. El tope es 4095 MiB y no 4 GiB − 1 porque VeraCrypt
+    # redondea /size HACIA ARRIBA al tamaño de sector (Tcformat.c).
+    MIB, GIB = 1024 ** 2, 1024 ** 3
+    for nombre in ("FAT32", "FAT", "fat16", "vfat", "msdos"):
+        c(f"{nombre} tiene tope", crypto.tope_contenedor(nombre), 4095 * MIB)
+    for nombre in ("exFAT", "exfat", "NTFS", "ext4", ""):
+        c(f"{nombre or 'sin nombre'} no (exFAT contiene «fat» y no es FAT)",
+          crypto.tope_contenedor(nombre), None)
+    c("el tope es múltiplo de cualquier sector", (4095 * MIB) % 4096, 0)
+    c("y no llega a 4 GiB", 4095 * MIB < 4 * GIB, True)
 
-    config = tmpdir("prdrive-vc-")
-    (config / "Configuration.xml").write_text("<VeraCrypt/>", encoding="utf-8")
-    crypto.veracrypt_config_dir = lambda: config
-    crypto.volume_guid_path = lambda root: "\\\\?\\Volume{1234-5678}\\"
-    crypto.write_favorite(CONT, "P", label="PRDRIVE")
-    xml = (config / "Favorite Volumes.xml").read_text(encoding="utf-8")
-    c.contains("el favorito monta como extraíble", xml, 'removable="1"')
-    c.contains("y enseña la etiqueta en el Explorador", xml, 'useLabelInExplorer="1"')
-    c.contains("y guarda la ruta independiente de la letra", xml, "Volume{1234-5678}")
-    c.contains("sigue montando al conectar", xml, 'mountOnArrival="1"')
+    TOPE = crypto.TOPE_FAT
+    c("en un pendrive FAT32 de 32 GB se propone el tope, en megas",
+      crypto.suggested_size(30 * GIB, False, TOPE), "4095M")
+    c("y si el hueco es menor, el hueco", crypto.suggested_size(3 * GIB, False, TOPE), "2G")
+    c("'max' tampoco pasa del tope", crypto.size_to_bytes("max", 30 * GIB, TOPE), TOPE)
+    c("sin tope, 'max' es el hueco menos el margen",
+      crypto.size_to_bytes("max", 30 * GIB), 30 * GIB - crypto.MARGEN)
+    c("un tamaño escrito a mano no se rebaja en silencio",
+      crypto.size_to_bytes("8G", 30 * GIB, TOPE), 8 * GIB)
+
+    lanzado = []
+    crypto._run = lambda cmd, password="", timeout=None: lanzado.append(cmd)
+    crypto.sistema_de_ficheros = lambda root: "FAT32"
+    vacio = tmpdir("prdrive-fat-")
+    try:
+        crypto.create_container(VC, vacio / "PRDRIVE.hc", 8 * GIB, "x" * 20, "exFAT")
+        fallo = "no ha protestado"
+    except crypto.InstallError as e:
+        fallo = str(e)
+    c.contains("crear más grande que el tope se rechaza, diciendo el límite",
+               fallo, "4095M")
+    c.contains("y la salida", fallo, "exFAT o NTFS")
+    c("sin llegar a lanzar VeraCrypt", lanzado, [])
+
+    # --- 5b. la contraseña: lo que VeraCrypt diría sin /silent ---------------
+    #
+    # Con /silent, VeraCrypt Format se salta la pregunta de «contraseña corta»
+    # (CheckPasswordLength con bSkipPasswordWarning = Silent). Nadie la hacía.
+    # Se mide en bytes UTF-8, como mide VeraCrypt: una tilde cuenta dos.
+    c("vacía, error", crypto.revisar_contrasena("")[0] is not None, True)
+    c("19 bytes, aviso y no error",
+      [x is not None for x in crypto.revisar_contrasena("a" * 19)], [False, True])
+    c("20 bytes, nada", crypto.revisar_contrasena("a" * 20), (None, None))
+    c("128 bytes, nada", crypto.revisar_contrasena("a" * 128), (None, None))
+    c("129 bytes, error", crypto.revisar_contrasena("a" * 129)[0] is not None, True)
+    c("diez eñes son veinte bytes: sin aviso", crypto.revisar_contrasena("ñ" * 10),
+      (None, None))
+    c("65 eñes son 130 bytes: error aunque sean 65 letras",
+      crypto.revisar_contrasena("ñ" * 65)[0] is not None, True)
+
+    # --- 5c. la instalación en claro que se queda al recifrar ----------------
+    #
+    # «Reinstalar desde cero» con VeraCrypt sobre un prdrive sin cifrar crea el
+    # contenedor al lado: la instalación de antes, con la clave en claro, sigue
+    # ahí. Se dice, y no se borra sola.
+    fisica = tmpdir("prdrive-fisica-")
+    (fisica / "PRDRIVE.hc").write_bytes(b"x")
+    (fisica / "VeraCrypt").mkdir()
+    c("una raíz de VeraCrypt sin restos no tiene nada que decir",
+      crypto.restos_en_claro(fisica), [])
+    c("ni fila en la verificación", crypto.comprobar_restos(fisica), [])
+    (fisica / device.CONTROL_FILE).parent.mkdir()
+    (fisica / device.CONTROL_FILE).write_text("id=viejo\n", encoding="utf-8")
+    (fisica / "sync-data").mkdir()
+    (fisica / "runsync.bat").write_text("x", encoding="utf-8")
+    (fisica / "notas.txt").write_text("x", encoding="utf-8")
+    c("con un prdrive en claro: el programa, y las carpetas de datos",
+      crypto.restos_en_claro(fisica), [".prdrive/", "notas.txt", "sync-data/"])
+    c.contains("el aviso nombra la clave", crypto.aviso_restos(
+        crypto.restos_en_claro(fisica)), ".prdrive/keys/")
+    c.contains("y dice que la borre a mano, no que se va a borrar",
+               crypto.aviso_restos(crypto.restos_en_claro(fisica)), "bórrala a mano")
+    fila = crypto.comprobar_restos(fisica)
+    c("y la verificación lleva una fila roja",
+      [(k.etiqueta, k.ok) for k in fila], [("Instalación sin cifrar", False)])
+    c("una ruta que no existe no revienta",
+      crypto.restos_en_claro(fisica / "no-existe"), [])
+
+    # --- 5d. crear: no hay contenedor hasta que termina la copia elevada -----
+    #
+    # El VeraCrypt Format que viaja, sin administrador, se relanza elevado y el
+    # proceso que lanzamos sale con 0 mientras la copia sigue escribiendo. Darlo
+    # por creado ahí era montar un contenedor a medio hacer, que se quedaba sin
+    # sistema de ficheros e inservible (H-4 en
+    # docs/superpowers/pruebas/2026-09-24-veracrypt-unidad-g-resultados.md).
+    crypto.IS_WIN = True
+    crypto.sistema_de_ficheros = lambda root: "exFAT"
+    crypto.MOUNT_POLL = 0
+    hc = tmpdir("prdrive-crear-") / "PRDRIVE.hc"
+    tabla = {111}                   # un VeraCrypt Format que ya estaba abierto
+    vistas = []
+
+    def lanzar(cmd, password="", timeout=None):
+        hc.write_bytes(b"a medias")
+        tabla.add(26060)            # la copia elevada, que sigue trabajando
+        return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    def procesos(nombre):
+        vistas.append(nombre)
+        if len(vistas) > 50:
+            raise RuntimeError("esperando sin fin")
+        if 26060 in tabla and len(vistas) > 3:      # termina a la cuarta mirada
+            hc.write_bytes(b"entero")
+            tabla.discard(26060)
+        return set(tabla)
+
+    crypto._run = lanzar
+    crypto._procesos = procesos
+    try:
+        crypto.create_container(VC, hc, GIB, "x" * 20, "exFAT")
+        fallo = None
+    except (crypto.InstallError, RuntimeError) as e:
+        fallo = str(e)
+    c("crear no protesta", fallo, None)
+    c("y no vuelve hasta que termina la copia elevada", hc.read_bytes(), b"entero")
+    c("la busca por el nombre del Format que lanza", set(vistas),
+      {"VeraCrypt Format.exe"})
+    c("y el que ya estaba abierto no la hace esperar", len(vistas) < 50, True)
+
+    tabla.clear()
+    vistas.clear()
+    crypto._run = lambda cmd, password="", timeout=None: type(
+        "R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+    try:
+        crypto.create_container(VC, tmpdir("prdrive-crear-") / "PRDRIVE.hc", GIB,
+                                "x" * 20, "exFAT")
+        fallo = "no ha protestado"
+    except crypto.InstallError as e:
+        fallo = str(e)
+    c.contains("si al terminar no hay contenedor, se dice", fallo,
+               "no ha podido crear el contenedor")
 
     # --- 6. no montar dos veces lo que ya está montado ----------------------
     #

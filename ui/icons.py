@@ -96,6 +96,10 @@ GLIFOS: dict[str, list[tuple]] = {
     "back": [("l", 13, 8, 3, 8), ("p", [(7, 4), (3, 8), (7, 12)])],
     "file": [("p", [(4, 2), (9, 2), (12, 5), (12, 14), (4, 14), (4, 2)]),
              ("p", [(9, 2), (9, 5.4), (12, 5.4)])],
+    # El de expulsar de siempre: un triángulo sobre una barra. Cierra el
+    # contenedor cifrado para poder quitar la unidad.
+    "expulsar": [("p", [(3.2, 9.6), (8, 4.2), (12.8, 9.6), (3.2, 9.6)]),
+                 ("l", 3.2, 12.6, 12.8, 12.6)],
 }
 
 # El icono de la aplicación: campo, los dos brazos del ciclo y el cuerpo del dispositivo.

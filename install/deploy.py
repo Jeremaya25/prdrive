@@ -82,6 +82,7 @@ GUIDE_TARGET = "README.md"
 NO_COPIAR = shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo")
 
 FILE_ATTRIBUTE_HIDDEN = 0x02
+FILE_ATTRIBUTE_NORMAL = 0x80
 
 # --- Los lanzadores de la raíz --------------------------------------------------
 #
@@ -215,6 +216,23 @@ def hide(path: Path | str) -> bool:
         import ctypes
         return bool(ctypes.windll.kernel32.SetFileAttributesW(  # type: ignore[attr-defined]
             str(path), FILE_ATTRIBUTE_HIDDEN))
+    except Exception:
+        return False
+
+
+def unhide(path: Path | str) -> bool:
+    """Lo contrario de `hide()`, para poder reescribir un fichero oculto.
+
+    Windows niega abrir con `CREATE_ALWAYS` —lo que hace `open(…, "w")`— un
+    fichero oculto o de sistema si no se le piden esos mismos atributos
+    (`CreateFileW`): el «acceso denegado» sale aunque se tenga permiso. No lanza
+    nunca, y sin el fichero no hay nada que destapar."""
+    if not IS_WIN:
+        return True
+    try:
+        import ctypes
+        return bool(ctypes.windll.kernel32.SetFileAttributesW(  # type: ignore[attr-defined]
+            str(path), FILE_ATTRIBUTE_NORMAL))
     except Exception:
         return False
 

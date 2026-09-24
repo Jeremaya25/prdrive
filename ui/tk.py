@@ -31,7 +31,7 @@ from common import (APP_NAME, components, conflicts, model, progress, revision,
                     update)
 from common.model import Config
 
-from . import (Choice, abrir, cuando, cuando_sello, icons, manual_args,
+from . import (Choice, abrir, cifrado, cuando, cuando_sello, icons, manual_args,
                pair_status_notes, pair_times, prefs, theme)
 
 TITLE = APP_NAME          # el nombre de la ventana sale de common/
@@ -554,6 +554,13 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
             vista["componentes"] = components.pendientes()
         except Exception:                            # noqa: BLE001
             vista["componentes"] = []
+        # ¿Vive en un contenedor VeraCrypt? Entonces cerrar la ventana no basta
+        # para quitar la unidad, y el pie ofrece «Expulsar». Mira las unidades,
+        # no la red: es un stat por letra.
+        try:
+            vista["expulsion"] = cifrado.expulsion()
+        except Exception:                            # noqa: BLE001
+            vista["expulsion"] = None
 
     leer_estado()
 
@@ -699,6 +706,30 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         if tk_repair.open_dialog(root, vista["config"], lanzar, marcadas):
             leer_estado()
         reajustar()
+
+    def expulsar() -> None:
+        """Cerrar la ventana y el contenedor, para poder quitar la unidad.
+
+        No desmonta este proceso: corre desde DENTRO del contenedor y mientras
+        viva no se puede desmontar sin forzar. Lanza el script del vestíbulo,
+        que espera a que esta ventana se haya ido, y se cierra. Con la ventana
+        abierta no hay servicio en marcha (abrirla lo para), así que no queda
+        nada nuestro con ficheros abiertos dentro."""
+        script = vista.get("expulsion")
+        if script is None or not messagebox.askokcancel(TITLE, (
+                "Se cierra esta ventana y, unos segundos después, el contenedor "
+                "cifrado. Cuando VeraCrypt termine, ya puedes quitar la unidad.\n\n"
+                "Si algún otro programa tiene abierto algo de dentro, VeraCrypt "
+                "te preguntará si forzar el cierre."), parent=root):
+            return
+        try:
+            cifrado.lanzar_expulsion(script)
+        except OSError as e:
+            messagebox.showerror(TITLE, f"No he podido lanzar {script.name}: {e}",
+                                 parent=root)
+            return
+        result["choice"] = None
+        root.destroy()
 
     def abrir_log(ruta) -> None:
         try:
@@ -1013,6 +1044,15 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         ahora.grid(row=0, column=0, sticky="ew", padx=(0, 8))
         ttk.Button(pie, text="Iniciar servicio", padding=(12, 8),
                    command=servicio, state=apagado).grid(row=0, column=1)
+        # Solo en un dispositivo que vive en un contenedor VeraCrypt, y apagado
+        # mientras sincroniza: cerrar el contenedor en mitad de una pasada es
+        # arrancarle los ficheros a rclone.
+        if vista.get("expulsion") is not None:
+            boton_expulsar = ttk.Button(pie, text="Expulsar", padding=(12, 8),
+                                        command=expulsar, state=apagado)
+            theme.boton_icono(boton_expulsar, "expulsar", theme.TINTA2,
+                              theme.SUPERFICIE)
+            boton_expulsar.grid(row=0, column=2, padx=(8, 0))
 
     render()
     root.visor.encajar(root)
