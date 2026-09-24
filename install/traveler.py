@@ -61,15 +61,17 @@ import re
 import shutil
 from pathlib import Path
 
+from common import autorun, vestibulo
+
 from . import CONTAINER_NAME, DEVICE_LABEL, IS_WIN, InstallError
 from .device import Check
 
-CARPETA = "VeraCrypt"               # dentro de la raíz física del volumen
-AUTORUN = "autorun.inf"
+CARPETA = vestibulo.TRAVELER        # dentro de la raíz física del volumen
+AUTORUN = autorun.FICHERO
 
 # Lo único sin lo que no se puede montar. El driver va aparte porque su nombre
 # lleva la arquitectura, y cuál sale de su cabecera (ver `nombre_portatil()`).
-IMPRESCINDIBLE = "VeraCrypt.exe"
+IMPRESCINDIBLE = vestibulo.TRAVELER_EXE
 
 # Lo que se lleva si está. El Expander es el que puede AGRANDAR el contenedor
 # más adelante, y es lo que hace segura la estrategia «empieza pequeño»; la
@@ -253,7 +255,7 @@ def autorun_texto(label: str = DEVICE_LABEL,
     return (
         "[autorun]\n"
         f"label={label}\n"
-        f"icon={CARPETA}\\VeraCrypt.exe\n"
+        f"icon={autorun.ICONO_VERACRYPT}\n"
         f"action=Montar el volumen {label}\n"
         f"shell\\montar=Montar el volumen {label}\n"
         f'shell\\montar\\command={CARPETA}\\VeraCrypt.exe /q /m rm /v "{contenedor}"\n'
@@ -265,16 +267,20 @@ def autorun_texto(label: str = DEVICE_LABEL,
 def write_autorun(raiz: Path, label: str = DEVICE_LABEL) -> Path | None:
     """Escribe el `autorun.inf`. **Mejor esfuerzo**, como `deploy.write_guide()`.
 
-    VeraCrypt lo escribe en UTF-16 (`_wfopen(…, L"w,ccs=UNICODE")`) y aquí se
-    hace igual: es lo que sabe leer el Explorador cuando la etiqueta lleva
-    acentos. Que no se pueda escribir no rompe nada —la unidad se seguirá
-    llamando «Disco extraíble»—, así que no se levanta."""
-    destino = Path(raiz) / AUTORUN
+    Si la unidad ya tiene uno, su nombre y su icono se quedan: pueden venir de
+    «Ajustes» → «Nombre e icono de la unidad» (`ui/volumen.py`), y esto está
+    para poner al día las órdenes de VeraCrypt, no para deshacer lo que eligió
+    el usuario. Cómo se escribe —UTF-16, como VeraCrypt— lo dice
+    `common/autorun.py`. Que no se pueda escribir no rompe nada —la unidad se
+    seguirá llamando «Disco extraíble»—, así que no se levanta."""
+    texto = autorun_texto(label)
+    actual = autorun.leer(raiz)
+    if actual.ruta is not None:
+        texto = autorun.con(texto, actual.etiqueta, actual.icono)
     try:
-        destino.write_text(autorun_texto(label), encoding="utf-16")
+        return autorun.escribir(raiz, texto)
     except OSError:
         return None
-    return destino
 
 
 def exe_portatil(raiz: Path, nombre: str = IMPRESCINDIBLE) -> Path:

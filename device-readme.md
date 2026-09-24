@@ -28,6 +28,7 @@ modo *ligero* (con un `runsync.pyw` en la raíz), entonces sí hace falta **Pyth
 | `sync-data/` | **tus carpetas sincronizadas** |
 | `.prdrive/` | el programa, rclone, su Python y el fichero de control. Está oculta a propósito; no hace falta tocarla |
 | `VeraCrypt/` | solo si la unidad va cifrada con VeraCrypt: el propio VeraCrypt, para poder abrirla en equipos que no lo tengan |
+| `autorun.inf` | el nombre y el icono con que la ve Windows. No ejecuta nada |
 
 ## La ventana
 
@@ -67,6 +68,12 @@ Los modos, en corto:
 
 Los dos últimos borran de verdad. Antes de estrenar uno, pruébalo con
 **Simular**.
+
+## Ponerle nombre e icono
+
+**Ajustes (el engranaje) → Nombre e icono de la unidad…** Así la verás en el
+Explorador de Windows con tu nombre y tu icono en vez de «Disco extraíble». Se
+nota la próxima vez que la conectes.
 
 ## Si algo va mal
 

@@ -852,16 +852,16 @@ def restos_en_claro(raiz_fisica: str | Path) -> list[str]:
     sigue ahí. Crear el contenedor no la mueve ni la borra, y no debe hacerlo
     solo: esas carpetas pueden llevar cambios que no están en el remoto.
 
-    Devuelve `.prdrive/` y lo que haya en la raíz que no sea `device.RUIDO` (las
-    carpetas de datos), o la lista vacía si ahí no hay un prdrive."""
+    Devuelve `.prdrive/` y lo que haya en la raíz que no sea ruido
+    (`device.es_ruido()`: las carpetas de datos), o la lista vacía si ahí no hay
+    un prdrive."""
     from . import device
     raiz = Path(raiz_fisica)
     try:
         if not ((raiz / device.CONTROL_FILE).exists()
                 or (raiz / device.STRUCT_MARKER).exists()):
             return []
-        otros = sorted((p for p in raiz.iterdir()
-                        if p.name.lower() not in device.RUIDO),
+        otros = sorted((p for p in raiz.iterdir() if not device.es_ruido(p.name)),
                        key=lambda p: p.name.lower())
         return [f"{device.APP_SUBDIR}/"] + [
             p.name + ("/" if p.is_dir() else "") for p in otros]

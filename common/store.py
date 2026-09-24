@@ -14,6 +14,10 @@ Los comparten el registro del servicio (daemon.lock.json) y la memoria de la UI
 (ui_prefs.json). Y con ellos viaja `pid_alive`, que es lo que le da sentido a un
 registro con un pid dentro: un fichero de bloqueo solo vale si se puede saber si
 quien lo escribió sigue vivo.
+
+Al final, `hide()` y `unhide()`: el atributo de oculto de Windows. Los usaba solo
+el instalador, y vivían en `install/deploy.py`; el dispositivo también esconde
+algo suyo (el icono de la unidad, `ui/volumen.py`) e `install/` no viaja a él.
 """
 
 from __future__ import annotations
@@ -88,3 +92,41 @@ def pid_alive(pid: int) -> bool:
         return False
     except PermissionError:
         return True     # existe, pero es de otro usuario
+
+
+FILE_ATTRIBUTE_HIDDEN = 0x02
+FILE_ATTRIBUTE_NORMAL = 0x80
+
+
+def hide(path: Path | str) -> bool:
+    """Marca el fichero o la carpeta como oculto en Windows. Devuelve si lo ha
+    conseguido.
+
+    No lanza nunca: es un adorno, y un adorno no puede abortar una instalación
+    que por lo demás ha ido bien —el mismo criterio que `icons.get()`—. En POSIX
+    devuelve True sin hacer nada porque el punto del nombre ya lo oculta."""
+    if os.name != "nt":
+        return True
+    try:
+        import ctypes
+        return bool(ctypes.windll.kernel32.SetFileAttributesW(  # type: ignore[attr-defined]
+            str(path), FILE_ATTRIBUTE_HIDDEN))
+    except Exception:
+        return False
+
+
+def unhide(path: Path | str) -> bool:
+    """Lo contrario de `hide()`, para poder reescribir un fichero oculto.
+
+    Windows niega abrir con `CREATE_ALWAYS` —lo que hace `open(…, "w")`— un
+    fichero oculto o de sistema si no se le piden esos mismos atributos
+    (`CreateFileW`): el «acceso denegado» sale aunque se tenga permiso. No lanza
+    nunca, y sin el fichero no hay nada que destapar."""
+    if os.name != "nt":
+        return True
+    try:
+        import ctypes
+        return bool(ctypes.windll.kernel32.SetFileAttributesW(  # type: ignore[attr-defined]
+            str(path), FILE_ATTRIBUTE_NORMAL))
+    except Exception:
+        return False

@@ -46,6 +46,10 @@ ENTRADAS = (
      "Lo guardado en .prversions/ por las parejas que versionan: cuánto ocupa "
      "en cada lado, abrir la carpeta de aquí y purgar lo anterior a una fecha.",
      "versiones"),
+    ("Nombre e icono de la unidad…", "edit",
+     "Cómo la enseña el Explorador de Windows al conectarla. Útil para "
+     "distinguir un dispositivo de otro a simple vista.",
+     "volumen"),
 )
 
 
@@ -88,7 +92,12 @@ def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None,
         from . import tk_versions
         tk_versions.open_dialog(dlg, config)
 
-    acciones = {"reparacion": reparacion, "qr": emparejar, "versiones": versiones}
+    def nombre_e_icono() -> None:
+        from . import tk_volumen
+        tk_volumen.open_dialog(dlg)
+
+    acciones = {"reparacion": reparacion, "qr": emparejar, "versiones": versiones,
+                "volumen": nombre_e_icono}
 
     tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(14, 12, 14, 12))
     tarjeta.grid(row=1, column=0, sticky="ew", pady=(16, 0))
