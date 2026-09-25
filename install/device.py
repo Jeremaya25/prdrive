@@ -76,8 +76,11 @@ RUIDO = {
 def es_ruido(nombre: str) -> bool:
     """¿No cuenta como «aquí hay cosas de otro»? `RUIDO`, y además el icono de la
     unidad (`common/autorun.py`), que no cabe en un conjunto de nombres: el suyo
-    cambia con el dibujo, y así el Explorador no enseña el de antes."""
-    return nombre.lower() in RUIDO or autorun.es_icono(nombre)
+    cambia con el dibujo, y así el Explorador no enseña el de antes. Y lo que
+    deja a medias un intercambio del VeraCrypt de viaje (`.VeraCrypt.viejo-<pid>`,
+    `vestibulo.es_resto_traveler()`), que lleva el pid en el nombre."""
+    return (nombre.lower() in RUIDO or autorun.es_icono(nombre)
+            or vestibulo.es_resto_traveler(nombre))
 
 
 # Puntos de montaje donde los escritorios de Linux/macOS cuelgan los extraíbles.

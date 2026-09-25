@@ -10,9 +10,11 @@ forma de cambiar las dos cosas sin tocar el sistema de ficheros: su etiqueta es
 otro asunto —en Windows puede pedir administrador, en Linux hay que desmontar, y
 FAT32 guarda once caracteres en mayúsculas—, y aquí cabe «Pendrive de Pere».
 
-Lo escriben dos: el traveler de VeraCrypt (`install/traveler.py`), que añade las
-órdenes de montar y desmontar, y «Nombre e icono de la unidad» (`ui/volumen.py`)
-desde el propio dispositivo. Vive en `common/` porque ese segundo corre donde
+Lo escriben dos: el traveler de VeraCrypt (`install/traveler.py`), que pone el
+nombre y el icono de VeraCrypt cuando no hay fichero y retira las órdenes de
+montar y desmontar que escribían sus versiones anteriores —Windows no las enseña
+en un extraíble (M2 en las pruebas de abajo)—, y «Nombre e icono de la unidad»
+(`ui/volumen.py`) desde el propio dispositivo. Vive en `common/` porque ese segundo corre donde
 `install/` no viaja. Y para que ninguno pise lo del otro, aquí el fichero se
 **edita**: se cambian `label` e `icon` y todo lo demás se queda como estaba.
 
@@ -26,6 +28,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from . import APP_NAME, vestibulo
 
@@ -37,7 +40,25 @@ SECCION = "autorun"
 MAX_NOMBRE = 32
 
 # El icono del traveler: el propio ejecutable de VeraCrypt que viaja en la unidad.
-ICONO_VERACRYPT = f"{vestibulo.TRAVELER}\\{vestibulo.TRAVELER_EXE}"
+# El del portable x64 cuando no se sabe cuál hay: un icono se lee sin ejecutar
+# nada, así que el de un `.exe` x64 lo enseña igual el Explorador de un Windows
+# ARM. Quien lo escribe pone el que haya de verdad
+# (`vestibulo.traveler_ejecutables()`).
+ICONO_VERACRYPT = f"{vestibulo.TRAVELER}\\{vestibulo.traveler_portatil('x64')}"
+# Todos los que pueden aparecer: los del portable y el de una instalación, que
+# es lo que dejaban las versiones anteriores de prdrive (`VeraCrypt\\VeraCrypt.exe`).
+ICONOS_VERACRYPT = tuple(
+    f"{vestibulo.TRAVELER}\\{nombre}"
+    for nombre in (*(vestibulo.traveler_portatil(a)
+                     for a in vestibulo.TRAVELER_ARQUITECTURAS),
+                   vestibulo.TRAVELER_EXE))
+
+
+def es_icono_veracrypt(icono: str) -> bool:
+    """¿Es ese `icon=` uno de los ejecutables del traveler? Sin mirar mayúsculas
+    ni la barra, como los lee Windows."""
+    limpio = icono.strip().replace("/", "\\").lower()
+    return limpio in {i.lower() for i in ICONOS_VERACRYPT}
 
 # Los iconos que pinta o copia `ui/volumen.py` se llaman `icono-….ico` y van
 # dentro de `.prdrive/`, sin cifrar o con BitLocker. Con VeraCrypt no puede ser:
@@ -175,6 +196,27 @@ def con(texto: str, etiqueta: str, icono: str) -> str:
     if not any(_clave(linea) for linea in salida):
         return ""
     return "\n".join(salida).rstrip("\n") + "\n"
+
+
+def sin(texto: str, quitar: Callable[[str, str], bool]) -> str:
+    """`texto` sin las claves de `[autorun]` para las que `quitar(clave, valor)`
+    dice que sí —la clave en minúsculas—, y todo lo demás tal cual: otras
+    claves, otras secciones, comentarios.
+
+    Es la otra mitad de `con()`: lo que usa quien escribió unas claves para
+    retirarlas cuando dejan de ser verdad, sin llevarse las de nadie más."""
+    salida: list[str] = []
+    dentro = False
+    for linea in texto.splitlines():
+        seccion = _cabecera(linea)
+        if seccion is not None:
+            dentro = seccion == SECCION
+        elif dentro:
+            clave = _clave(linea)
+            if clave is not None and quitar(clave, linea.split("=", 1)[1].strip()):
+                continue
+        salida.append(linea)
+    return "\n".join(salida) + "\n" if salida else ""
 
 
 def escribir(raiz: Path | str, texto: str) -> Path | None:

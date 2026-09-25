@@ -115,10 +115,9 @@ def raiz_del_volumen() -> tuple[Path, bool]:
 
 
 def lleva_veracrypt(raiz: Path) -> bool:
-    try:
-        return (Path(raiz) / vestibulo.TRAVELER / vestibulo.TRAVELER_EXE).is_file()
-    except OSError:
-        return False
+    """¿Lleva la unidad el VeraCrypt de viaje? El portable de ahora
+    (`VeraCrypt-x64.exe`, `-arm64.exe`) o la copia de antes (`VeraCrypt.exe`)."""
+    return bool(vestibulo.traveler_ejecutables(raiz))
 
 
 def _nuestro(carpetas: tuple[str, ...], nombre: str) -> re.Match | None:
@@ -137,7 +136,7 @@ def clave_de(icono: str) -> str:
     puso alguien, y guardar solo el nombre no tiene por qué llevárselo."""
     if not icono:
         return NINGUNO
-    if icono.lower() == autorun.ICONO_VERACRYPT.lower():
+    if autorun.es_icono_veracrypt(icono):
         return VERACRYPT
     *carpetas, nombre = PureWindowsPath(icono).parts
     hallado = _nuestro(tuple(carpetas), nombre)
@@ -210,7 +209,7 @@ def ubicar(estado: Estado, nombre: str) -> tuple[Path, str]:
     """(fichero en disco, valor de `icon=`) de un icono llamado `nombre`.
 
     `icon=` va relativo a la raíz de la unidad, con la barra de Windows, como el
-    `VeraCrypt\\VeraCrypt.exe` del traveler."""
+    `VeraCrypt\\VeraCrypt-x64.exe` del traveler."""
     if estado.fisica:
         nombre = autorun.PREFIJO_RAIZ + nombre
         return estado.carpeta / nombre, nombre
@@ -235,12 +234,17 @@ def _icono(estado: Estado, clave: str,
             return estado.icono, None, None
         raise VolumenError("Elige primero el .ico que quieres ponerle.")
     if clave == VERACRYPT:
-        # El que ya tenía se respeta aunque falte el traveler: cambiar solo el
-        # nombre no tiene por qué pedir explicaciones sobre el icono.
-        if not estado.veracrypt and estado.clave != VERACRYPT:
-            raise VolumenError("Esta unidad no lleva VeraCrypt, así que no hay "
-                               "icono suyo que ponerle.")
-        return autorun.ICONO_VERACRYPT, None, None
+        # El ejecutable que lleva de verdad: el portable de ahora no trae el
+        # `VeraCrypt.exe` de antes. El que ya tenía se respeta aunque falte el
+        # traveler: cambiar solo el nombre no tiene por qué pedir explicaciones
+        # sobre el icono.
+        hallados = vestibulo.traveler_ejecutables(estado.raiz)
+        if hallados:
+            return hallados[0], None, None
+        if estado.clave == VERACRYPT:
+            return estado.icono, None, None
+        raise VolumenError("Esta unidad no lleva VeraCrypt, así que no hay "
+                           "icono suyo que ponerle.")
     if clave == OTRO:
         return estado.icono, None, None
     if clave == NINGUNO:

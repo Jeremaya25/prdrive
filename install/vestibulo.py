@@ -106,27 +106,47 @@ _LIBRE_BAT = (
 # (`InitApp`, `LaunchElevatedProcess` en `Common/Dlgcode.c`), así que `start
 # /wait` no espera a la copia elevada, que es la que pregunta si forzar: los 30
 # intentos se gastaban mientras la pregunta seguía en pantalla. `tasklist` ve el
-# nombre de un proceso elevado sin serlo. Solo vale si al empezar no había
-# ninguno (`VC_ANTES`): con uno en segundo plano no se sabe cuál es el nuestro,
-# y se cuenta como siempre. Sin tope, igual que `start /wait` con el instalado
-# espera lo que tarde la respuesta.
+# nombre de un proceso elevado sin serlo. La copia elevada es la misma imagen
+# (`InitApp` relanza lo que le da `GetModuleFileNameW`), así que se busca por el
+# nombre del que se ha lanzado, `VC_IMAGEN`: `VeraCrypt.exe` instalado o de
+# antes, `VeraCrypt-x64.exe` o `VeraCrypt-arm64.exe` del portable. Solo vale si
+# al empezar no había ninguno (`VC_ANTES`): con uno en segundo plano no se sabe
+# cuál es el nuestro, y se cuenta como siempre. Sin tope, igual que `start
+# /wait` con el instalado espera lo que tarde la respuesta.
 _VC_PENDIENTE_BAT = (
     ":vc_pendiente\n"
     "if defined VC_ANTES exit /b 1\n"
-    'tasklist /fi "imagename eq VeraCrypt.exe" /nh 2>nul | find /i "VeraCrypt.exe" >nul\n'
+    'tasklist /fi "imagename eq %VC_IMAGEN%" /nh 2>nul | find /i "%VC_IMAGEN%" >nul\n'
     "exit /b\n"
 )
 
-# El VeraCrypt que se usa: el instalado antes que el que viaja.
+# El que viaja, con los nombres del portable oficial (`veracrypt_bin`): uno por
+# arquitectura. `%PROCESSOR_ARCHITECTURE%` dice la verdad aquí porque cmd corre
+# nativo —lo mismo que ya da por hecho `runsync.bat`—, y hay que elegir la de
+# este equipo: `IsARM()` escoge el driver por la máquina NATIVA, y un driver no
+# se emula (ver `install/traveler.py`).
+_VIAJERO_BAT = f"%~dp0{v.TRAVELER}\\{v.TRAVELER_PORTATIL.format(arq='%VC_ARQ%')}"
+_VIAJERO_IMAGEN = v.TRAVELER_PORTATIL.format(arq="%VC_ARQ%")
+_VIAJERO_ANTES_BAT = f"%~dp0{v.TRAVELER}\\{v.TRAVELER_EXE}"
+
+# El VeraCrypt que se usa: el instalado antes que el que viaja; y del que viaja,
+# el portable de la arquitectura de este equipo antes que la copia de una
+# instalación que dejaban las versiones anteriores (`VeraCrypt\VeraCrypt.exe`).
 _ELEGIR_BAT = (
     'set "VC="\n'
+    'set "VC_IMAGEN=VeraCrypt.exe"\n'
+    'set "VC_ARQ=x64"\n'
+    'if /i "%PROCESSOR_ARCHITECTURE%"=="ARM64" set "VC_ARQ=arm64"\n'
     'if exist "%ProgramFiles%\\VeraCrypt\\VeraCrypt.exe" '
     'set "VC=%ProgramFiles%\\VeraCrypt\\VeraCrypt.exe"\n'
     'if not defined VC if exist "%ProgramW6432%\\VeraCrypt\\VeraCrypt.exe" '
     'set "VC=%ProgramW6432%\\VeraCrypt\\VeraCrypt.exe"\n'
-    'if not defined VC if exist "%~dp0VeraCrypt\\VeraCrypt.exe" set "VIAJERO=1"\n'
-    'if not defined VC if exist "%~dp0VeraCrypt\\VeraCrypt.exe" '
-    'set "VC=%~dp0VeraCrypt\\VeraCrypt.exe"\n'
+    f'if not defined VC if exist "{_VIAJERO_BAT}" set "VIAJERO=1"\n'
+    f'if not defined VC if exist "{_VIAJERO_BAT}" set "VC_IMAGEN={_VIAJERO_IMAGEN}"\n'
+    f'if not defined VC if exist "{_VIAJERO_BAT}" set "VC={_VIAJERO_BAT}"\n'
+    f'if not defined VC if exist "{_VIAJERO_ANTES_BAT}" set "VIAJERO=1"\n'
+    f'if not defined VC if exist "{_VIAJERO_ANTES_BAT}" '
+    f'set "VC={_VIAJERO_ANTES_BAT}"\n'
     "if not defined VC goto sin_veracrypt\n"
 )
 
@@ -157,7 +177,8 @@ def bat_abrir(device_id: str) -> str:
         "rem      cache): no se lanza desde ella.\n"
         "rem   2. Si no, lo abre con VeraCrypt: el instalado antes que el que viaja\n"
         "rem      en la carpeta VeraCrypt de esta unidad (con otro VeraCrypt\n"
-        "rem      instalado, el que viaja no puede cargar su driver). La contrasena\n"
+        "rem      instalado, el que viaja no puede cargar su driver). Del que viaja,\n"
+        "rem      el de la arquitectura de este equipo (x64 o ARM64). La contrasena\n"
         "rem      la pide VeraCrypt en su ventana: nunca pasa por aqui.\n"
         "rem   3. Busca la unidad por el id del dispositivo y lanza su runsync.bat.\n"
         "rem\n"
@@ -267,8 +288,8 @@ def bat_expulsar(device_id: str) -> str:
         f"echo Cerrando {v.ETIQUETA}...\n"
         "timeout /t 3 /nobreak >nul\n"
         'set "VC_ANTES="\n'
-        'tasklist /fi "imagename eq VeraCrypt.exe" /nh 2>nul '
-        '| find /i "VeraCrypt.exe" >nul && set "VC_ANTES=1"\n'
+        'tasklist /fi "imagename eq %VC_IMAGEN%" /nh 2>nul '
+        '| find /i "%VC_IMAGEN%" >nul && set "VC_ANTES=1"\n'
         'start "" /wait "%VC%" /dismount %RAIZ:~0,1% /quit\n'
         'set "INTENTOS=0"\n'
         ":esperar\n"

@@ -396,6 +396,37 @@ try:
     creando = [p for t, p in esperas if t == "creando el contenedor"]
     c("un contenedor dinámico se crea sin medir nada",
       (len(creados), seguimientos[-1], creando[-1]), (2, None, None))
+
+    # Sin VeraCrypt en el equipo, en Windows no hace falta instalarlo: la
+    # pantalla ofrece el VeraCrypt Portable oficial, que se baja y se comprueba
+    # (#50). Aquí la descarga se sustituye por una carpeta de mentira.
+    from _harness import falso_portatil
+    from install import veracrypt_bin
+
+    portable_vc = falso_portatil()
+    reales_panel = (tk_crypto.IS_WIN, veracrypt_bin.ensure_veracrypt)
+    tk_crypto.IS_WIN = True
+    crypto.find_veracrypt = lambda extra_dir=None: (
+        {"mount": str(Path(extra_dir) / "VeraCrypt-x64.exe"),
+         "format": str(Path(extra_dir) / "VeraCrypt Format-x64.exe")}
+        if extra_dir else None)
+    veracrypt_bin.ensure_veracrypt = lambda progreso=None, allow_download=True: portable_vc
+    try:
+        sin_vc = nuevo_asistente(tmpdir())
+        sin_vc.state.device_root = None
+        sin_vc.state.encryption = "veracrypt"
+        en_paso(sin_vc, PASO["Cifrado"])
+        textos = " ".join(str(w.cget("text")) for w in widgets(sin_vc.cuerpo, ttk.Label))
+        c.contains("sin VeraCrypt instalado se ofrece el portable oficial", textos,
+                   "VeraCrypt Portable oficial")
+        c.contains("diciendo que se comprueba", textos, "SHA-256")
+        boton(sin_vc.cuerpo, "Descargar VeraCrypt Portable").invoke()
+        c("y bajado, se usa", Path(sin_vc.state.veracrypt["mount"]).parent, portable_vc)
+        textos = " ".join(str(w.cget("text")) for w in widgets(sin_vc.cuerpo, ttk.Label))
+        c.contains("avisando de que cada paso pedirá administrador", textos,
+                   "pedirá permiso de administrador")
+    finally:
+        tk_crypto.IS_WIN, veracrypt_bin.ensure_veracrypt = reales_panel
 finally:
     messagebox.askyesno = askyesno_original
     for nombre, funcion in sondas_crypto.items():
@@ -724,6 +755,54 @@ boton(viejo_vc.cuerpo, "Aplicar").invoke()
 c("«Añadir plataformas…» le pone el vestíbulo a un dispositivo VeraCrypt de antes",
   all((fisica / n).is_file() for n in vest.TODOS), True)
 c("con su id de siempre", vest.leer_id(fisica), device.control_id(montado))
+
+# Un dispositivo VeraCrypt de antes lleva además, en VeraCrypt\, la copia de una
+# instalación: `VeraCrypt.exe`, una sola arquitectura y sin sello, que su
+# vestíbulo de antes sabe abrir. `--update-components` no la toca; «Añadir
+# plataformas…» es quien la cambia por el portable oficial —con sello y las dos
+# arquitecturas— A LA VEZ que el vestíbulo, y así los dos quedan coherentes (#50).
+from _harness import falso_portatil                       # noqa: E402
+from common import components as comp                     # noqa: E402
+from install import traveler as trav, veracrypt_bin       # noqa: E402
+
+(fisica / "VeraCrypt").mkdir(exist_ok=True)
+(fisica / "VeraCrypt" / "VeraCrypt.exe").write_bytes(b"MZ")
+(fisica / "VeraCrypt" / "veracrypt-x64.sys").write_bytes(b"MZ")
+def veracrypt_pendiente():
+    return [p.asistente for p in comp.pendientes(deploy.app_dir(montado), fisica)
+            if p.que == comp.VERACRYPT]
+
+
+c("antes de nada, se sabe que ese VeraCrypt no se pone al día solo",
+  veracrypt_pendiente(), [True])
+portable = falso_portatil()
+reales_vc = (trav.IS_WIN, veracrypt_bin.ensure_veracrypt)
+trav.IS_WIN = True
+veracrypt_bin.ensure_veracrypt = lambda progreso=None, allow_download=True: portable
+try:
+    viejo_vc = nuevo_asistente(montado)
+    viejo_vc.state.device = fisica
+    viejo_vc.state.encryption = "veracrypt"
+    en_paso(viejo_vc, PASO["Cifrado"])
+    boton(viejo_vc.cuerpo, "Añadir plataformas…").invoke()
+    textos = " ".join(str(w.cget("text")) for w in widgets(viejo_vc.cuerpo, ttk.Label))
+    c.contains("el paso dice que cambia el VeraCrypt de antes", textos,
+               "lleva un VeraCrypt de antes")
+    c.contains("por el portable, con las dos arquitecturas", textos, "con x64 y ARM64")
+    c.contains("a la vez que la entrada que lo abre", textos, "a la vez que la entrada")
+    boton(viejo_vc.cuerpo, "Aplicar").invoke()
+    c("queda el VeraCrypt Portable, con su sello", trav.version_puesta(fisica),
+      pins.VERACRYPT_VERSION)
+    c("con las dos arquitecturas", trav.arquitecturas(fisica / "VeraCrypt"),
+      ["arm64", "x64"])
+    c("sin el VeraCrypt.exe de antes mezclado",
+      (fisica / "VeraCrypt" / "VeraCrypt.exe").exists(), False)
+    c("y con la entrada nueva, que sabe abrir el portable",
+      "VeraCrypt-%VC_ARQ%.exe" in (fisica / vest.ABRIR_BAT).read_text(encoding="utf-8"),
+      True)
+    c("y su VeraCrypt ya no está pendiente", veracrypt_pendiente(), [])
+finally:
+    trav.IS_WIN, veracrypt_bin.ensure_veracrypt = reales_vc
 
 
 # --- no se puede pasar del paso «Instalación» sin instalar -----------------------

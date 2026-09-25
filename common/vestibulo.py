@@ -8,7 +8,8 @@ solo ve un fichero opaco. El vestíbulo es lo mínimo que se deja a la vista, en
 raíz FÍSICA del volumen, para abrirlo y cerrarlo en cualquier equipo:
 
     PRDRIVE.hc               el contenedor
-    VeraCrypt/               el traveler (install/traveler.py), si se pidió
+    VeraCrypt/               el traveler (install/traveler.py), si se pidió:
+                             el VeraCrypt Portable oficial, x64 y ARM64
     Abrir PRDRIVE.bat        Windows: abre el contenedor y lanza prdrive
     Expulsar PRDRIVE.bat     Windows: lo cierra
     abrir-prdrive.sh         Linux: lo mismo
@@ -54,6 +55,55 @@ TODOS = (MARCA, ABRIR_BAT, EXPULSAR_BAT, ABRIR_SH, EXPULSAR_SH, LEEME)
 # la ventana del nombre y el icono (`ui/volumen.py`) lo ofrece si está.
 TRAVELER = "VeraCrypt"
 TRAVELER_EXE = "VeraCrypt.exe"
+
+# Lo que viaja ahora es el paquete «VeraCrypt Portable» oficial, con sus nombres:
+# un ejecutable por arquitectura, con ella en el nombre, y los dos drivers al
+# lado (`szCompressedFiles` en `Setup/Setup.h` para PORTABLE, tag
+# VeraCrypt_1.26.24; el propio diálogo del traveler de VeraCrypt los copia así,
+# `Mount/Mount.c`, `TravelerDlgProc`). No lleva ningún `VeraCrypt.exe`: ese
+# `TRAVELER_EXE` es la disposición de una INSTALACIÓN, la que dejaban las
+# versiones anteriores de prdrive, y quien abre el contenedor la sigue aceptando
+# detrás de la del portable. `penwatch.py` repite estos nombres —no importa nada
+# del proyecto— con un test que no los deja separarse.
+TRAVELER_ARQUITECTURAS = ("x64", "arm64")
+TRAVELER_PORTATIL = "VeraCrypt-{arq}.exe"
+
+
+def traveler_portatil(arq: str) -> str:
+    """El ejecutable de montar del portable para esa arquitectura."""
+    return TRAVELER_PORTATIL.format(arq=arq)
+
+
+def traveler_ejecutables(raiz: Path | str) -> list[str]:
+    """Los ejecutables de montar que lleva la carpeta `VeraCrypt\\` de esa raíz,
+    relativos a ella y con la barra de Windows (`VeraCrypt\\VeraCrypt-x64.exe`).
+
+    Primero los del portable, x64 delante, y detrás el de una instalación. Es el
+    orden en que se escogen como icono: el de un ejecutable se lee sin ejecutarlo,
+    así que el x64 le vale al Explorador de un Windows ARM igual que al de uno
+    x64. Lista vacía si no hay ninguno o no se puede mirar."""
+    carpeta = Path(raiz) / TRAVELER
+    nombres = [*(traveler_portatil(a) for a in TRAVELER_ARQUITECTURAS), TRAVELER_EXE]
+    hallados = []
+    for nombre in nombres:
+        try:
+            if (carpeta / nombre).is_file():
+                hallados.append(f"{TRAVELER}\\{nombre}")
+        except OSError:
+            continue
+    return hallados
+
+
+def es_resto_traveler(nombre: str) -> bool:
+    """¿Es lo que deja a medias un intercambio de la carpeta `VeraCrypt\\`?
+
+    `install/traveler.py` la sustituye copiando al lado (`.VeraCrypt.nuevo-<pid>`)
+    y apartando la de antes (`.VeraCrypt.viejo-<pid>`); si algo no se pudo borrar
+    se queda para la próxima vez. No es contenido de nadie: `device.es_ruido()`."""
+    bajo = nombre.lower()
+    prefijo = f".{TRAVELER.lower()}."
+    return bajo.startswith(prefijo) and bajo[len(prefijo):].startswith(
+        ("nuevo-", "viejo-"))
 
 
 def leer_id(raiz: Path | str) -> str | None:

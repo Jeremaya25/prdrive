@@ -74,7 +74,15 @@ ocultados: list[str] = []
 
 # --- 1. el fichero: se edita, no se reescribe ---------------------------------
 
-TRAVELER = traveler.autorun_texto("PRDRIVE")
+# El que dejaban las versiones anteriores del traveler, con sus órdenes: es lo
+# que hay en las unidades de antes, y editarlo no puede llevárselas por delante
+# (las retira el traveler, que es quien las puso: `traveler.write_autorun`).
+TRAVELER = ("[autorun]\nlabel=PRDRIVE\nicon=VeraCrypt\\VeraCrypt.exe\n"
+            "action=Montar el volumen PRDRIVE\n"
+            "shell\\montar=Montar el volumen PRDRIVE\n"
+            'shell\\montar\\command=VeraCrypt\\VeraCrypt.exe /q /m rm /v "PRDRIVE.hc"\n'
+            "shell\\desmontar=Desmontar todos los volúmenes\n"
+            "shell\\desmontar\\command=VeraCrypt\\VeraCrypt.exe /q /dismount\n")
 editado = autorun.con(TRAVELER, "Pendrive de Pere", ".prdrive\\icono-verde.ico")
 c("cambia el nombre", autorun.claves(editado)["label"], "Pendrive de Pere")
 c("y el icono", autorun.claves(editado)["icon"], ".prdrive\\icono-verde.ico")
@@ -130,6 +138,9 @@ c("y se reescribe ESE, no uno al lado con otro nombre",
 for icono, clave in (("", volumen.NINGUNO),
                      ("VeraCrypt\\VeraCrypt.exe", volumen.VERACRYPT),
                      ("veracrypt\\veracrypt.EXE", volumen.VERACRYPT),
+                     # el portable de ahora, una por arquitectura (#50)
+                     ("VeraCrypt\\VeraCrypt-x64.exe", volumen.VERACRYPT),
+                     ("VeraCrypt/VeraCrypt-arm64.exe", volumen.VERACRYPT),
                      # dentro de `.prdrive/`, sin cifrar o con BitLocker
                      (f"{DENTRO}\\icono-verde.ico", "verde"),
                      (f"{DENTRO.upper()}/ICONO-VERDE.ICO", "verde"),
@@ -309,7 +320,9 @@ with sandbox() as dentro:
     (fisica / "PRDRIVE.hc").write_text("x", encoding="utf-8")
     (fisica / vestibulo.TRAVELER).mkdir()
     (fisica / vestibulo.TRAVELER / vestibulo.TRAVELER_EXE).write_text("x", encoding="utf-8")
-    traveler.write_autorun(fisica)
+    # El de un dispositivo de antes: lo que escribía el traveler, con sus
+    # órdenes, y algo de otro programa al lado.
+    autorun.escribir(fisica, TRAVELER + "open=otra-cosa.exe\n")
     # Lo que quedó en claro de antes de cifrar no se toca (`crypto.restos_en_claro`).
     (fisica / DENTRO).mkdir()
     (fisica / DENTRO / "icono-verde.ico").write_bytes(b"x")
@@ -329,18 +342,23 @@ with sandbox() as dentro:
     texto = utf16(fisica / "autorun.inf")
     c.contains("el nombre nuevo", texto, "label=Cifrado de Pere")
     c.contains("sin perder la orden de montar", texto, '/q /m rm /v "PRDRIVE.hc"')
+    c.contains("ni lo que no es de prdrive", texto, "open=otra-cosa.exe")
     c("el icono va fuera del contenedor, junto al autorun.inf",
       (volumen.leer().icono, (fisica / ".prdrive-icono-azul.ico").is_file()),
       (".prdrive-icono-azul.ico", True))
     c("y oculto", ocultados, [".prdrive-icono-azul.ico"])
     c("nada dentro del contenedor", (iconos(dentro), iconos(dentro / DENTRO)), ([], []))
 
-    # Volver a llevar VeraCrypt pone al día sus órdenes y respeta lo elegido.
+    # Volver a llevar VeraCrypt respeta lo elegido, y retira sus órdenes de
+    # antes: Windows no las enseña en un extraíble (M2) y apuntaban a un
+    # VeraCrypt.exe que el portable no trae (#50).
     traveler.write_autorun(fisica)
     texto = utf16(fisica / "autorun.inf")
     c.contains("el traveler respeta el nombre elegido", texto, "label=Cifrado de Pere")
     c.contains("y el icono", texto, "icon=.prdrive-icono-azul.ico")
-    c.contains("y deja sus órdenes", texto, "/q /dismount")
+    c("y retira sus órdenes de antes", ("shell\\" in texto, "action=" in texto),
+      (False, False))
+    c.contains("pero no lo que no es suyo", texto, "open=otra-cosa.exe")
 
     volumen.guardar(volumen.leer(), "Cifrado de Pere", volumen.VERACRYPT)
     c("volver al de VeraCrypt recoge el pintado",
@@ -349,13 +367,28 @@ with sandbox() as dentro:
     c("y no entra en el .prdrive/ en claro que quedó fuera",
       (fisica / DENTRO / "icono-verde.ico").is_file(), True)
 
+    # Con el portable en lugar de la copia de antes, el icono de VeraCrypt pasa
+    # a ser un ejecutable que existe: el `VeraCrypt.exe` ya no está.
+    (fisica / vestibulo.TRAVELER / vestibulo.TRAVELER_EXE).unlink()
+    for arq in vestibulo.TRAVELER_ARQUITECTURAS:
+        (fisica / vestibulo.TRAVELER / vestibulo.traveler_portatil(arq)).write_bytes(b"MZ")
+    traveler.write_autorun(fisica)
+    c("tras cambiar al portable, el icono es su ejecutable x64",
+      (volumen.leer().icono, volumen.leer().clave),
+      ("VeraCrypt\\VeraCrypt-x64.exe", volumen.VERACRYPT))
+    volumen.guardar(volumen.leer(), "Cifrado de Pere", "azul")
+    volumen.guardar(volumen.leer(), "Cifrado de Pere", volumen.VERACRYPT)
+    c("y elegirlo en la ventana pone el que hay",
+      volumen.leer().icono, "VeraCrypt\\VeraCrypt-x64.exe")
+
 store.hide = HIDE_DE_VERDAD
 
 nuevo = tmpdir("prdrive-fisica-")
 traveler.write_autorun(nuevo)
-c("un traveler sin autorun.inf previo pone el nombre y el icono de siempre",
+c("un traveler sin autorun.inf previo pone el nombre y el icono de VeraCrypt",
   (autorun.leer(nuevo).etiqueta, autorun.leer(nuevo).icono),
-  ("PRDRIVE", "VeraCrypt\\VeraCrypt.exe"))
+  ("PRDRIVE", "VeraCrypt\\VeraCrypt-x64.exe"))
+c("y ninguna orden", "shell" in autorun.leer(nuevo).texto, False)
 
 # --- 6. el asistente no los toma por contenido de otro ---------------------------------
 

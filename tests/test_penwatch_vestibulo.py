@@ -42,6 +42,11 @@ ID = "a" * 32
 c("el contenedor de penwatch es el de common", penwatch.CONTAINER_FILE,
   vestibulo.CONTENEDOR)
 c("y la marca también", penwatch.VESTIBULE_MARKER, vestibulo.MARCA)
+c("y los nombres del VeraCrypt que viaja",
+  (penwatch.TRAVELER_DIR, penwatch.TRAVELER_EXE, penwatch.TRAVELER_PORTABLE,
+   penwatch.TRAVELER_ARCHS),
+  (vestibulo.TRAVELER, vestibulo.TRAVELER_EXE, vestibulo.TRAVELER_PORTATIL,
+   vestibulo.TRAVELER_ARQUITECTURAS))
 c("y el script de abrir en Linux", penwatch.OPEN_SCRIPT, vestibulo.ABRIR_SH)
 c("y el fichero que activa VeraCrypt en udisks2, el del script",
   penwatch.UDISKS_TCRYPT_CONF.as_posix(), escritor.TCRYPT_CONF)
@@ -125,6 +130,49 @@ finally:
     penwatch.IS_WIN = reales["IS_WIN"]
     os.environ.clear()
     os.environ.update(reales["environ"])
+
+# --- 3a. el que viaja es el portable: el de la arquitectura de este equipo -------
+#
+# Lo que deja ahora el instalador es el VeraCrypt Portable oficial, un ejecutable
+# por arquitectura (#50). Se elige por la máquina NATIVA —VeraCrypt escoge su
+# driver igual, y un driver no se emula—, y un dispositivo de antes, con su
+# `VeraCrypt.exe`, se sigue abriendo.
+reales_arq = {"IS_WIN": penwatch.IS_WIN, "native_arch": penwatch.native_arch,
+              "environ": dict(os.environ)}
+try:
+    penwatch.IS_WIN = True
+    os.environ["ProgramFiles"] = str(tmpdir())      # sin VeraCrypt instalado
+    os.environ.pop("ProgramW6432", None)
+    portable = vestibulo_en()
+    (portable / "VeraCrypt").mkdir()
+    for arq in ("x64", "arm64"):
+        (portable / "VeraCrypt" / f"VeraCrypt-{arq}.exe").write_bytes(b"MZ")
+    penwatch.native_arch = lambda: "x64"
+    c("Windows x64: el portable x64",
+      penwatch.veracrypt_command(portable)[0],
+      str(portable / "VeraCrypt" / "VeraCrypt-x64.exe"))
+    penwatch.native_arch = lambda: "arm64"
+    c("Windows ARM64: el portable arm64, no el x64 emulado",
+      penwatch.veracrypt_command(portable)[0],
+      str(portable / "VeraCrypt" / "VeraCrypt-arm64.exe"))
+    (portable / "VeraCrypt" / "VeraCrypt-arm64.exe").unlink()
+    (portable / "VeraCrypt" / "VeraCrypt.exe").write_bytes(b"MZ")
+    c("sin el suyo, el VeraCrypt.exe de un dispositivo de antes",
+      penwatch.veracrypt_command(portable)[0],
+      str(portable / "VeraCrypt" / "VeraCrypt.exe"))
+    (portable / "VeraCrypt" / "VeraCrypt.exe").unlink()
+    c("pero nunca el de la otra arquitectura: un driver no se emula",
+      penwatch.veracrypt_command(portable), None)
+    penwatch.native_arch = lambda: "x86"
+    (portable / "VeraCrypt" / "VeraCrypt.exe").write_bytes(b"MZ")
+    c("en una CPU sin portable, solo el de antes",
+      penwatch.veracrypt_command(portable)[0],
+      str(portable / "VeraCrypt" / "VeraCrypt.exe"))
+finally:
+    penwatch.IS_WIN = reales_arq["IS_WIN"]
+    penwatch.native_arch = reales_arq["native_arch"]
+    os.environ.clear()
+    os.environ.update(reales_arq["environ"])
 
 # --- 3b. Linux sin VeraCrypt: qué vía tiene el equipo --------------------------------
 #

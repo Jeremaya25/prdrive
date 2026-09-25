@@ -24,7 +24,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from install import CONTAINER_NAME, IS_WIN, InstallError, crypto
+from common import pins
+from install import CONTAINER_NAME, IS_WIN, InstallError, crypto, veracrypt_bin
 
 from . import theme
 from .tk import TITLE, bloque_aviso, working
@@ -130,15 +131,44 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
     estado.veracrypt = estado.veracrypt or crypto.find_veracrypt()
 
     if not estado.veracrypt:
-        ttk.Label(panel, foreground=theme.PELIGRO, justify="left",
-                  wraplength=theme.medida(760), text=(
+        # En Windows no hace falta instalar nada: el VeraCrypt Portable oficial
+        # se baja y se comprueba (`install/veracrypt_bin.py`). En Linux sí: allí
+        # VeraCrypt necesita su driver y FUSE, y no hay portable.
+        ttk.Label(panel, foreground=theme.AVISO if IS_WIN else theme.PELIGRO,
+                  justify="left", wraplength=theme.medida(760), text=(
+            f"No hay VeraCrypt instalado en este equipo. Puedo usar el VeraCrypt "
+            f"Portable oficial {pins.VERACRYPT_VERSION}, sin instalarlo: se "
+            f"descarga (≈39 MB) y se comprueba contra el SHA-256 que fija este "
+            f"programa antes de usarlo. O dime dónde tienes uno (una instalación "
+            f"o un portable descomprimido):" if IS_WIN else
             "No encuentro VeraCrypt en este equipo. Instálalo desde "
             "veracrypt.jp/en/Downloads.html, o dime dónde está:")).grid(
             row=0, column=0, sticky="w")
         ruta = tk.StringVar()
         fila = ttk.Frame(panel)
         fila.grid(row=1, column=0, sticky="w", pady=(6, 0))
-        ttk.Entry(fila, textvariable=ruta, width=52).grid(row=0, column=0)
+
+        def descargar() -> None:
+            ok, res = working(
+                wiz.root, "descargando VeraCrypt",
+                lambda: veracrypt_bin.ensure_veracrypt(),
+                f"Descargando VeraCrypt Portable {pins.VERACRYPT_VERSION} y "
+                f"comprobándolo.")
+            estado.veracrypt = crypto.find_veracrypt(res) if ok else None
+            if estado.veracrypt:
+                hecho()
+                wiz.repintar()
+            else:
+                messagebox.showerror(TITLE, (
+                    f"No se ha podido usar el VeraCrypt Portable:\n\n{res}" if not ok
+                    else "El VeraCrypt Portable no trae los ejecutables de este "
+                         "equipo."), parent=wiz.root)
+
+        if IS_WIN:
+            ttk.Button(fila, text="Descargar VeraCrypt Portable",
+                       style="Primary.TButton", command=descargar).grid(
+                row=0, column=0, sticky="w", padx=(0, 12))
+        ttk.Entry(fila, textvariable=ruta, width=52).grid(row=0, column=1)
 
         def buscar() -> None:
             estado.veracrypt = crypto.find_veracrypt(ruta.get().strip() or None)
@@ -148,7 +178,7 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
             else:
                 messagebox.showerror(TITLE, "Ahí tampoco está VeraCrypt.",
                                      parent=wiz.root)
-        ttk.Button(fila, text="Buscar aquí", command=buscar).grid(row=0, column=1, padx=6)
+        ttk.Button(fila, text="Buscar aquí", command=buscar).grid(row=0, column=2, padx=6)
         return
 
     existe = contenedor.is_file()
@@ -156,7 +186,9 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
     ttk.Label(panel, justify="left", wraplength=theme.medida(760), text=(
         f"Contenedor: {contenedor}\n"
         + ("Ya existe: se puede montar con su contraseña."
-           if existe else "Todavía no existe: se va a crear."))).grid(
+           if existe else "Todavía no existe: se va a crear.")
+        + ("\nCon el VeraCrypt Portable, sin instalar: cada paso pedirá permiso "
+           "de administrador." if crypto.portatil(estado.veracrypt) else ""))).grid(
         row=0, column=0, sticky="w")
 
     # Una instalación sin cifrar en la raíz física: la de antes de un
@@ -185,6 +217,11 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
                              else (estado.dinamico and dispersos))
     tam = tk.StringVar(value=crypto.suggested_size(libre, dinamico.get(), tope))
     sistema = tk.StringVar(value=crypto.FILESYSTEMS[0])
+    # El traveler disk es cosa de Windows: en Linux y macOS VeraCrypt necesita
+    # instalarse (driver y FUSE) y no hay nada que llevar. Ni se ofrece. Se crea
+    # aquí arriba porque 'max' depende de él: con VeraCrypt de viaje deja más
+    # sitio fuera del contenedor (`crypto.RESERVA_VIAJERO`).
+    traveler = tk.BooleanVar(value=estado.traveler and IS_WIN)
     espera = ttk.Label(formulario, foreground=theme.TINTA3, justify="left",
                        wraplength=theme.medida(560))
 
@@ -250,7 +287,8 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
             espera.configure(text="Creación prácticamente inmediata.")
             return
         try:
-            bytes_ = crypto.size_to_bytes(tam.get(), libre, tope)
+            bytes_ = crypto.size_to_bytes(tam.get(), libre, tope,
+                                          viajero=bool(traveler.get()))
         except InstallError as e:
             espera.configure(text=str(e))
             return
@@ -272,14 +310,12 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
         tam.trace_add("write", refrescar_espera)
         refrescar_espera()
 
-    # El traveler disk es cosa de Windows: en Linux y macOS VeraCrypt necesita
-    # instalarse (driver y FUSE) y no hay nada que llevar. Ni se ofrece.
-    traveler = tk.BooleanVar(value=estado.traveler and IS_WIN)
     if IS_WIN:
         ttk.Checkbutton(
             panel, variable=traveler,
-            text="Dejar VeraCrypt en el dispositivo, para montarlo en equipos que "
-                 "no lo tengan").grid(row=3, column=0, sticky="w", pady=(10, 0))
+            text="Dejar VeraCrypt en el dispositivo (el portable oficial, x64 y "
+                 "ARM64), para montarlo en equipos que no lo tengan").grid(
+            row=3, column=0, sticky="w", pady=(10, 0))
 
     ttk.Label(panel, foreground=theme.AVISO, wraplength=theme.medida(760), justify="left",
               text=AVISO_AUTOARRANQUE).grid(row=4, column=0, sticky="w", pady=(6, 0))
@@ -305,7 +341,8 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
         estado.traveler = bool(traveler.get())
         try:
             if not existe:
-                bytes_ = crypto.size_to_bytes(tam.get(), libre, tope)
+                bytes_ = crypto.size_to_bytes(tam.get(), libre, tope,
+                                              viajero=estado.traveler and IS_WIN)
                 # Sin dispersos se escribe el contenedor entero, y eso son
                 # minutos u horas: el avance se mide en la unidad mientras
                 # tanto. Con `/dynamic` son segundos y no hay nada que medir.
@@ -358,17 +395,20 @@ def _llevar_veracrypt(wiz) -> None:
     Va a la raíz FÍSICA, fuera del contenedor —dentro haría falta VeraCrypt para
     llegar a VeraCrypt—, y es lo único de este paso que puede fallar sin que
     importe: sin traveler disk el dispositivo funciona igual en cualquier equipo
-    que tenga VeraCrypt instalado."""
+    que tenga VeraCrypt instalado. Por `working()`: puede tener que bajar el
+    VeraCrypt Portable (≈39 MB) y comprobarlo."""
     from install import traveler
 
     estado = wiz.state
-    try:
-        traveler.instalar(estado.veracrypt, estado.device)
-        traveler.write_autorun(estado.device)
-    except InstallError as e:
+    ok, res = working(wiz.root, "llevando VeraCrypt",
+                      lambda: traveler.llevar(estado.veracrypt, estado.device),
+                      "Dejando VeraCrypt en la unidad, fuera del contenedor.")
+    if not ok:
         wiz.aviso("El dispositivo ha quedado montado, pero no he podido dejar "
-                  f"VeraCrypt dentro:\n\n{e}\n\nSe puede reintentar desde el "
+                  f"VeraCrypt dentro:\n\n{res}\n\nSe puede reintentar desde el "
                   "último paso.")
+    elif res.aviso:
+        wiz.aviso(res.aviso)
 
 
 def _libre(root) -> int:
