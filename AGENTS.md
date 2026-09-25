@@ -278,7 +278,11 @@ source it mirrors. **Preserve those citations.**
 rclone writes to a temp file; `dispose_log()` keeps it in `logs/` only when the
 run failed (or `--keep-logs` / `keep_logs = true`), to spare device write cycles.
 On failure the tail is printed and `KNOWN_ERRORS` maps rclone messages to an
-explanation — add new cases there.
+explanation — add new cases there. If the device vanished mid-pass (#36),
+`keep_log()` leaves the log in the temp dir, says so in one `AVISO` line (any
+half-copy in `logs/` removed) and returns that path, so the tail and the
+explanation still come out; `run_all()` turns an `OSError` from the pairs after
+it into a `FALLÓ` line, never a traceback.
 
 - `--log-file` only catches what rclone logs **after** installing the log, so
   `execute()` captures rclone's `stdout`+`stderr` (captured, not inherited: with
