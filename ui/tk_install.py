@@ -913,6 +913,7 @@ def _paso_actualizar(cuerpo, wiz) -> None:
             estado_lbl.configure(text=f"No se ha podido actualizar: {res}",
                                  foreground=theme.PELIGRO)
             wiz.revisar()           # lo mismo que en «Instalación» (#49)
+            wiz.visor.ver(estado_lbl)       # aquí el error va debajo del botón
             return
         escrito, ident = res
         wiz.state.deployed = True
@@ -1046,8 +1047,10 @@ def _paso_instalar(cuerpo, wiz) -> None:
             # falló y cómo ponerla a mano— y hace crecer el paso sin cambiar de
             # paso. Sin reencajar, «Instalar el programa» quedaba por debajo
             # del borde, fuera de la vista aunque en la pantalla sobrara sitio,
-            # justo cuando hay que volver a pulsarlo (#49).
+            # justo cuando hay que volver a pulsarlo (#49). Y si ni creciendo
+            # cabe, se desplaza hasta él.
             wiz.revisar()
+            wiz.visor.ver(boton)
             return
         escrito_, borrados, ident = res
         wiz.state.deployed = True
@@ -1259,6 +1262,7 @@ def _paso_plataformas(cuerpo, wiz) -> None:
             estado_lbl.configure(text=f"No se ha podido aplicar: {res}",
                                  foreground=theme.PELIGRO)
             wiz.revisar()           # lo mismo que en «Instalación» (#49)
+            wiz.visor.ver(boton)
             return
         nuevos, borrados, _ = res
         wiz.rehacer_matriz(raiz)

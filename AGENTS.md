@@ -446,7 +446,9 @@ paths and flags; no rounded corners, no shadows. Styles cross **role** with
   content or to what fits; scrollbars only when content is left over). The wizard
   root centres **once**, and `Wizard.reencajar()` hangs off `revisar()`, not
   `repintar()`, because three things change a step's height without a step
-  change. `tests/test_tk_medidas.py` checks every screen against a matrix of
+  change. When even growing does not fit (a long error above the button that
+  retries it), `Visor.ver(widget)` scrolls just enough to show that widget whole.
+  `tests/test_tk_medidas.py` checks every screen against a matrix of
   resolution **and** `tk scaling` — the scaling column is the half that matters.
   The main window opens its own interpreter, so it is measured on the same
   matrix in `tests/test_tk_servicio.py`, in its worst case: twelve pairs, the

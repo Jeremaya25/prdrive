@@ -265,6 +265,33 @@ class Visor:
         return self._fijar(min(max(hay_x, pide_x), tope_x),
                            min(max(hay_y, pide_y), tope_y))
 
+    def ver(self, widget) -> None:
+        """Desplaza lo justo para que `widget` quede entero a la vista.
+
+        Para lo que crece con la pantalla ya pintada, cuando ni creciendo cabe: un
+        error de una docena de líneas encima del botón que hay que volver a
+        pulsar dejaba ese botón a medias por debajo del borde, con la barra
+        puesta pero sin que nada invitara a usarla (#49). Se mide por la cadena
+        de `winfo_y` hasta `interior` y no con coordenadas de pantalla, que en
+        una ventana todavía oculta no existen."""
+        self.interior.update_idletasks()
+        arriba, w = 0, widget
+        while w is not None and w is not self.interior:
+            arriba += w.winfo_y()
+            w = w.master
+        if w is None:
+            return                          # no está dentro de este visor
+        abajo = arriba + widget.winfo_reqheight()
+        alto = self._medida()[1]
+        desde = self.lienzo.canvasy(0)
+        if abajo > desde + alto:
+            desde = abajo - alto
+        elif arriba < desde:
+            desde = arriba
+        else:
+            return
+        self.lienzo.yview_moveto(max(0.0, desde) / max(1, self._puesto[1]))
+
     # --- barras --------------------------------------------------------------
 
     def _revisar(self) -> None:

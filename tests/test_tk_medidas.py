@@ -453,6 +453,17 @@ try:
                     abajo = boton_err.winfo_y() + boton_err.winfo_reqheight()
                     c(f"{nombre}: «{texto}» se ve entero tras el error",
                       abajo <= wiz.visor._medida()[1], True)
+                # Y en todas, también donde no cabe y sale la barra: el botón,
+                # entero en la parte que se ve, sin tener que desplazar a mano
+                # (`Visor.ver`). Con la barra puesta quedaba a medias en el borde.
+                arriba, w = 0, boton_err
+                while w is not wiz.visor.interior:
+                    arriba += w.winfo_y()
+                    w = w.master
+                desde = wiz.visor.lienzo.canvasy(0)
+                c(f"{nombre}: «{texto}» queda a la vista tras el error",
+                  desde <= arriba and arriba + boton_err.winfo_reqheight()
+                  <= desde + wiz.visor._medida()[1], True)
                 top.destroy()
     finally:
         (rclone_bin.fetch, rclone_bin.cache_dir, rclone_bin.find_rclone,
