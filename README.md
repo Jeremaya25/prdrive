@@ -109,7 +109,7 @@ cumplirla.
 |---|---|---|
 | 1 | **Dispositivo** | qué unidad. Si ya es un prdrive, atajo para actualizarla |
 | 2 | **Cifrado** | VeraCrypt, BitLocker o ninguno |
-| 3 | **Conexión** | formulario de remoto nuevo, o importar uno de tu `rclone.conf`. Más la ruta del catálogo |
+| 3 | **Conexión** | formulario de remoto nuevo, o importar uno de tu `rclone.conf`. Más la ruta del catálogo: la del fichero (`…/pairs.toml`), no la de su carpeta |
 | 4 | **Comprobaciones** | consigue un rclone (lo busca, y si no lo descarga), conecta y lee el catálogo |
 | 5 | **Instalación** | completa o ligera, y para qué plataformas; copia el programa a `.prdrive/`, rclone y Python de cada plataforma, los lanzadores, el `rclone.conf` y la clave |
 | 6 | **Parejas** | cuáles de las del catálogo usa este dispositivo, y apunta el dispositivo en el registro de la flota |
@@ -429,7 +429,7 @@ edita desde la ventana de parejas o a mano; el mismo esquema sirve para el
 [defaults]
 remote = "nas"                       # el remote de rclone que usan las parejas
 device_remote = "disp"               # el lado local, como remote propio
-catalog_path = "/prdrive-catalog/pairs.toml"
+catalog_path = "/prdrive-catalog/pairs.toml" # el fichero, no su carpeta
 exclude = ["**/.stfolder/**", "**/.stignore"]
 
 [defaults.flags]                     # flags de rclone para todas las parejas

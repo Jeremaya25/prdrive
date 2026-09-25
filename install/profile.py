@@ -47,7 +47,7 @@ from pathlib import Path
 from typing import Mapping
 
 from common import pairing
-from common.catalog import DEFAULT_CATALOG_PATH
+from common.catalog import DEFAULT_CATALOG_PATH, problema_de_ruta
 
 from . import InstallError, bundle_dir
 
@@ -102,6 +102,13 @@ class Profile:
     @property
     def endpoint_catalog(self) -> str:
         return f"{self.remote_name}:{self.catalog_path}"
+
+    @property
+    def problema_catalogo(self) -> str | None:
+        """Qué le pasa a la ruta del catálogo, o None. Es aparte de `configured`
+        porque una ruta mala no deja de ser una conexión: `load()` no debe
+        saltarse por eso un perfil incrustado, y el paso Conexión la enseña."""
+        return problema_de_ruta(self.catalog_path)
 
     def describe(self) -> str:
         """Una línea para la pantalla: el backend y adónde apunta."""
@@ -264,8 +271,8 @@ def from_rclone_conf(path: Path | str, remote_name: str,
         options.pop(derivada, None)
     return Profile(
         remote_name=remote_name, options=options, private_key=clave,
-        known_hosts=conocidos, key_name=key_name, catalog_path=catalog_path,
-        origen=f"importada de {ruta}")
+        known_hosts=conocidos, key_name=key_name,
+        catalog_path=_ruta_catalogo(catalog_path), origen=f"importada de {ruta}")
 
 
 # ---------------------------------------------------------------------------
@@ -308,8 +315,19 @@ def from_form(remote_name: str, options: Mapping[str, str],
     return Profile(
         remote_name=remote_name, options=limpio, private_key=clave,
         known_hosts=conocidos or "", key_name=key_name,
-        catalog_path=(catalog_path or DEFAULT_CATALOG_PATH).strip(),
+        catalog_path=_ruta_catalogo(catalog_path),
         origen="configurada en el asistente")
+
+
+def _ruta_catalogo(ruta: str | None) -> str:
+    """La ruta del catálogo tecleada: limpia, la de fábrica si está vacía, y
+    rechazada si nombra una carpeta en vez de un fichero `.toml` (#48). Antes
+    eso no se notaba hasta el paso de comprobaciones, con un error de TOML."""
+    limpia = (ruta or "").strip() or DEFAULT_CATALOG_PATH
+    problema = problema_de_ruta(limpia)
+    if problema:
+        raise InstallError(problema)
+    return limpia
 
 
 def with_catalog_remote(profile: Profile, tabla: Mapping[str, object]) -> Profile:
@@ -382,7 +400,11 @@ def with_catalog_path(perfil: Profile, ruta: str) -> Profile:
     La ruta se teclea en su propia caja, aparte de la conexión, y por eso puede
     cambiar sin que se vuelva a construir el perfil entero: sin esto, editarla
     con una conexión ya dada no llegaba a ningún sitio. Vacía vuelve a la de por
-    defecto, igual que en `from_form`."""
+    defecto, igual que en `from_form`.
+
+    A diferencia de `from_form`, no rechaza una ruta mala: se aplica a cada
+    tecla, y a medio escribir ninguna termina en `.toml`. Lo que impide seguir
+    con ella es la condición del paso (`Profile.problema_catalogo`)."""
     return replace(perfil,
                    catalog_path=(ruta or "").strip() or DEFAULT_CATALOG_PATH)
 

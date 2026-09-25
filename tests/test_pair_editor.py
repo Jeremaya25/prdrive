@@ -235,6 +235,25 @@ with sandbox():
     c("y keep_logs ha quedado escrito",
       config_file.load_raw()["defaults"].get("keep_logs"), True)
 
+# --- la ruta del catálogo: el fichero, no su carpeta (#48) ---------------------
+with sandbox():
+    raw = preparar()
+    try:
+        pair_editor.plan_defaults(raw, {"remote": "nas",
+                                        "catalog_path": "/prdrive-catalog"})
+        c("una carpeta por ruta del catálogo se rechaza", "no lanzó", "ConfigError")
+    except ConfigError as e:
+        c.contains("una carpeta por ruta del catálogo se rechaza", str(e),
+                   "«/prdrive-catalog/pairs.toml»")
+    antes = config_file.load_raw()
+    c("y no se ha escrito nada", antes["defaults"].get("catalog_path"), None)
+
+    # Una ruta que ya estaba —a mano, sin extensión— no impide guardar lo demás.
+    raw["defaults"]["catalog_path"] = "/cat/pares"
+    plan = pair_editor.plan_defaults(raw, {"remote": "nas", "keep_logs": True,
+                                           "catalog_path": "/cat/pares"})
+    c("una ruta que no cambia no se revisa", plan.shelve, [])
+
 # --- este dispositivo frente al catálogo ----------------------------------------------
 CAT = {"defaults": {"remote": "nas"},
        "pair": [dict(BASE[0]), dict(BASE[1]),

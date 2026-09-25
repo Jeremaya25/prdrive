@@ -437,8 +437,14 @@ def _paso_conexion(cuerpo, wiz) -> None:
             return
         wiz.soltar_conexion()
         wiz.perfil = profile.with_catalog_path(wiz.perfil, nueva)
-        estado.configure(text=f"✔ {wiz.perfil.describe()}   ·   catálogo en "
-                              f"{wiz.perfil.endpoint_catalog}", style="Ok.TLabel")
+        # Una carpeta en vez del fichero (#48) se dice aquí, según se teclea, y
+        # la condición del paso no deja seguir con ella.
+        if wiz.perfil.problema_catalogo:
+            estado.configure(text=f"✘ {wiz.perfil.problema_catalogo}",
+                             style="Peligro.TLabel")
+        else:
+            estado.configure(text=f"✔ {wiz.perfil.describe()}   ·   catálogo en "
+                                  f"{wiz.perfil.endpoint_catalog}", style="Ok.TLabel")
         wiz.revisar()
 
     catalogo.trace_add("write", cambiar_catalogo)
@@ -478,7 +484,12 @@ def _paso_conexion(cuerpo, wiz) -> None:
     ttk.Button(cuerpo, text="Usar esta conexión", command=usar).grid(
         row=4, column=0, sticky="w", pady=(12, 0))
 
-    if wiz.perfil.configured:
+    if wiz.perfil.configured and wiz.perfil.problema_catalogo:
+        # Un perfil incrustado o del checkout con la carpeta por ruta: aquí no
+        # se pulsa «Usar esta conexión», así que es aquí donde hay que verlo.
+        estado.configure(text=f"✘ {wiz.perfil.problema_catalogo}",
+                         style="Peligro.TLabel")
+    elif wiz.perfil.configured:
         estado.configure(
             text=f"✔ {wiz.perfil.describe()}   ·   catálogo en "
                  f"{wiz.perfil.endpoint_catalog}\n{wiz.perfil.origen}",
@@ -1478,7 +1489,7 @@ def _paso_final(cuerpo, wiz) -> None:
 # ---------------------------------------------------------------------------
 
 def _ok_conexion(w) -> bool:
-    return w.perfil.configured
+    return w.perfil.configured and not w.perfil.problema_catalogo
 
 
 def _ok_comprobaciones(w) -> bool:

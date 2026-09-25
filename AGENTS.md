@@ -1052,6 +1052,24 @@ rewriting keeps the header block and **loses interleaved comments**.
 and a cached catalogue is **not editable** (`Catalog.editable`).
 `catalog.NET_FLAGS` keeps a dead remote from freezing the window.
 
+**The path names the file, never its folder (#48).** `rclone cat` of a folder
+does not fail: it concatenates every file inside, recursively — `pairs.toml`,
+the `.bak`, the `devices/` notes (measured with rclone v1.75.1) — and `tomllib`
+answers "Cannot declare ('defaults',) twice". Both readers (`catalog.pull()`,
+`remote.pull_catalog()`) therefore ask `catalog.explicar_carpeta()`, which runs
+`lsjson --stat` (and, for a folder, `--stat` of its `pairs.toml` to suggest it)
+**only when something smells**: the content did not parse, or the path does not
+end in `.toml` (which also catches an empty folder and one holding only
+`pairs.toml`, both of which `cat` reads with rc 0). Never on the happy path and
+never after a failed `cat`: offline, the question would time out too. An
+unanswerable `--stat` diagnoses nothing. What is **typed** is refused without
+network by `catalog.problema_de_ruta()` — the wizard's Conexión
+(`profile.from_form`/`from_rclone_conf`; `with_catalog_path` does not raise,
+it runs per keystroke, and `Profile.problema_catalogo` holds the step shut) and
+both `[defaults]` forms, only when `catalog_path` **changes**
+(`validar_ruta_editada()`): an extension-less path already on a device keeps
+working.
+
 An optional **`[remote]`** table carries the non-secret definition of the rclone
 remote (type, host, user…): the first device writes it, the rest inherit it via
 `profile.align_with_catalog()`. **The catalogue decides the remote's name** —

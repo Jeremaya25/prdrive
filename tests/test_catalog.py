@@ -74,6 +74,9 @@ with sandbox():
     cat = catalog.pull(CAT)
     c("leer usa 'cat' contra el endpoint", llamadas[0],
       ["cat", "nas:/prdrive-catalog/pairs.toml"])
+    # El diagnóstico de la carpeta (#48) solo pregunta cuando algo huele mal:
+    # abrir la ventana de parejas no puede costar una ida y vuelta más.
+    c("y en el camino bueno no pregunta nada más", len(llamadas), 1)
     c("y trae las parejas", [p["name"] for p in cat.raw["pair"]], ["prdrive", "notas"])
     c("viene del remoto y por tanto es editable", (cat.source, cat.editable),
       ("remote", True))
@@ -148,5 +151,122 @@ with sandbox():
         c("un catálogo sin parejas se rechaza antes de tocar la red",
           "ninguna [[pair]]" in str(e), True)
     c("ni siquiera se ha releído el remoto", llamadas, [])
+
+# --- una carpeta no es un catálogo (#48) ---------------------------------------
+# `rclone cat` de una carpeta no falla: junta todo lo que hay dentro. Con el
+# pairs.toml y el .bak que deja push(), son dos copias seguidas del catálogo, y
+# eso es exactamente el error que se veía. Las respuestas de `lsjson --stat` son
+# las de rclone v1.75.1 contra una carpeta y un fichero de verdad.
+DOS_COPIAS = TEXTO + TEXTO
+try:
+    tomllib.loads(DOS_COPIAS)
+    c("dos copias seguidas no son TOML", "se leyó", "TOMLDecodeError")
+except tomllib.TOMLDecodeError as e:
+    c.contains("dos copias seguidas dan el error del issue", str(e),
+               "Cannot declare ('defaults',) twice")
+
+STAT_CARPETA = ('{\n\t"Path": "",\n\t"Name": "",\n\t"Size": -1,\n'
+                '\t"MimeType": "inode/directory",\n'
+                '\t"ModTime": "2026-09-25T11:38:30.975365128Z",\n\t"IsDir": true\n}\n')
+STAT_FICHERO = ('{\n\t"Path": "pairs.toml",\n\t"Name": "pairs.toml",\n\t"Size": 94,\n'
+                '\t"MimeType": "application/toml",\n'
+                '\t"ModTime": "2026-09-25T11:38:30.643855347Z",\n\t"IsDir": false\n}\n')
+NO_EXISTE = (3, "", "NOTICE: Failed to lsjson: directory not found")
+EN_CARPETA = {"defaults": {"remote": "nas", "catalog_path": "/prdrive-catalog"}}
+
+
+def lee(raw_local=None):
+    """pull() y lo que dijo, o None si no lanzó."""
+    try:
+        catalog.pull(raw_local)
+        return None
+    except ConfigError as e:
+        return str(e)
+
+
+with sandbox():
+    responder(ok(DOS_COPIAS), ok(STAT_CARPETA), ok(STAT_FICHERO))
+    motivo = lee(EN_CARPETA) or ""
+    c.contains("una carpeta se dice como carpeta", motivo, "es una carpeta")
+    c.contains("y se sugiere el pairs.toml que hay dentro", motivo,
+               "«/prdrive-catalog/pairs.toml»")
+    c("y no se habla de TOML, que no es la causa", "TOML" in motivo, False)
+    c("se pregunta qué es la ruta, y si dentro hay un pairs.toml", llamadas,
+      [["cat", "nas:/prdrive-catalog"],
+       ["lsjson", "--stat", "nas:/prdrive-catalog"],
+       ["lsjson", "--stat", "nas:/prdrive-catalog/pairs.toml"]])
+    c("lo que trajo el cat no se cachea", catalog.cache_toml().exists(), False)
+
+    responder(ok(DOS_COPIAS), ok(STAT_CARPETA), ok(STAT_FICHERO))
+    cat, aviso = catalog.load(EN_CARPETA)
+    c("load() sigue sin lanzar", cat, None)
+    c.contains("y el aviso lleva el diagnóstico", aviso or "", "es una carpeta")
+
+with sandbox():
+    responder(ok(DOS_COPIAS), ok(STAT_CARPETA), NO_EXISTE)
+    motivo = lee(EN_CARPETA) or ""
+    c.contains("sin pairs.toml dentro se da un ejemplo", motivo,
+               "Por ejemplo «/prdrive-catalog/pairs.toml»")
+    c("sin afirmar que esté", "Dentro hay" in motivo, False)
+
+with sandbox():
+    # Una carpeta con un solo pairs.toml se lee SIN error: es la ruta que no
+    # termina en .toml lo que hace preguntar.
+    responder(ok(TEXTO), ok(STAT_CARPETA), ok(STAT_FICHERO))
+    c.contains("una carpeta que se lee bien por casualidad también se dice",
+               lee(EN_CARPETA) or "", "es una carpeta")
+
+with sandbox():
+    # Una carpeta vacía: `cat` sale con 0 y no trae nada.
+    responder(ok(""), ok(STAT_CARPETA), NO_EXISTE)
+    c.contains("una carpeta vacía también", lee(EN_CARPETA) or "", "es una carpeta")
+
+    responder(ok(""))
+    c("un pairs.toml vacío de verdad se sigue leyendo", lee(CAT), None)
+    c("sin preguntar nada más", len(llamadas), 1)
+
+with sandbox():
+    # Un diagnóstico falso es peor que ninguno.
+    responder(ok("esto ] no [ es toml"), ok(STAT_FICHERO))
+    c.contains("un fichero que no es TOML sigue diciendo eso", lee(CAT) or "",
+               "no es TOML válido")
+    responder(ok(DOS_COPIAS), (0, "esto no es json", ""))
+    c.contains("una respuesta que no se entiende no diagnostica nada",
+               lee(EN_CARPETA) or "", "no es TOML válido")
+    responder(ok(DOS_COPIAS), NO_EXISTE)
+    c.contains("ni un lsjson que falla", lee(EN_CARPETA) or "", "no es TOML válido")
+
+with sandbox():
+    responder(falla())
+    lee(EN_CARPETA)
+    c("si falla el propio cat no se pregunta nada más: sin red tardaría lo mismo",
+      len(llamadas), 1)
+
+with sandbox():
+    sin_extension = {"defaults": {"remote": "nas", "catalog_path": "/cat/pares"}}
+    responder(ok(TEXTO), ok(STAT_FICHERO))
+    c("un catálogo sin .toml que es un fichero se sigue leyendo",
+      lee(sin_extension), None)
+    c("a costa de una sola pregunta", len(llamadas), 2)
+
+# --- la ruta tecleada ----------------------------------------------------------
+c.contains("una carpeta tecleada se rechaza sin red",
+           catalog.problema_de_ruta("/prdrive-catalog") or "",
+           "«/prdrive-catalog/pairs.toml»")
+c.contains("con la barra del final, sin barra doble",
+           catalog.problema_de_ruta("/prdrive-catalog/") or "",
+           "«/prdrive-catalog/pairs.toml»")
+c("un fichero .toml vale", catalog.problema_de_ruta("/x/pairs.toml"), None)
+c("en mayúsculas también", catalog.problema_de_ruta("/x/PAIRS.TOML"), None)
+c("vacía vale: se cae a la de fábrica", catalog.problema_de_ruta("  "), None)
+
+catalog.validar_ruta_editada({"catalog_path": "/cat/pares"},
+                             {"catalog_path": "/cat/pares", "keep_logs": True})
+c("una ruta que ya estaba no se revisa al guardar otra cosa", True, True)
+try:
+    catalog.validar_ruta_editada({}, {"catalog_path": "/prdrive-catalog"})
+    c("cambiarla a una carpeta se rechaza", "no lanzó", "ConfigError")
+except ConfigError as e:
+    c.contains("cambiarla a una carpeta se rechaza", str(e), "no termina en .toml")
 
 sys.exit(c.report())

@@ -31,13 +31,14 @@ así ninguno toca la red.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
 import tempfile
 import tomllib
-from pathlib import Path
-from typing import Any, Mapping, NamedTuple
+from pathlib import Path, PurePosixPath
+from typing import Any, Callable, Mapping, NamedTuple
 
 from . import config_file, model, store
 from .model import ConfigError
@@ -48,6 +49,9 @@ from .model import ConfigError
 # y dispositivo no puedan discrepar.
 DEFAULT_CATALOG_PATH = "/prdrive-catalog/pairs.toml"
 BAK_SUFFIX = ".bak"
+# El fichero dentro de la carpeta del catálogo: sale de la ruta de fábrica para
+# no escribirlo dos veces. Es lo que se sugiere cuando alguien pone la carpeta.
+FICHERO = PurePosixPath(DEFAULT_CATALOG_PATH).name
 
 # El catálogo son unos kilobytes, así que aquí no se espera por ancho de banda:
 # se espera a un servidor que puede no estar. Y quien espera es la ventana de
@@ -106,6 +110,47 @@ def endpoint(raw_local: Mapping[str, Any] | None = None) -> str:
     return f"{remote}:{path}"
 
 
+def problema_de_ruta(ruta: str) -> str | None:
+    """Qué tiene de malo una ruta de catálogo recién tecleada, o None si nada.
+
+    Sin red solo se puede saber si nombra un fichero `.toml`, y basta para el
+    error que de verdad se comete: poner la carpeta (`/prdrive-catalog`) en vez
+    del fichero (`/prdrive-catalog/pairs.toml`). Vacía no es un problema: quien
+    la pide cae a `DEFAULT_CATALOG_PATH`.
+
+    Se aplica a lo que se TECLEA —el paso Conexión del instalador y los dos
+    formularios de [defaults]—, nunca a lo que ya está escrito en un
+    dispositivo: un catálogo sin extensión que hoy funciona no puede dejar de
+    leerse por una actualización. Para ese caso está `explicar_carpeta()`."""
+    limpia = (ruta or "").strip()
+    if not limpia or limpia.lower().endswith(".toml"):
+        return None
+    return (f"La ruta del catálogo tiene que ser la de su fichero .toml, no la de "
+            f"la carpeta: «{limpia}» no termina en .toml. Si el catálogo está "
+            f"dentro, sería «{_dentro(limpia)}».")
+
+
+def validar_ruta_editada(antes: Mapping[str, Any] | None,
+                         despues: Mapping[str, Any] | None) -> None:
+    """ConfigError si unos [defaults] editados ponen una carpeta por
+    `catalog_path`. Solo si la CAMBIAN: guardar otro ajuste no puede
+    tropezar con una ruta que ya estaba y que, si está ahí, funciona."""
+    nueva = str((despues or {}).get("catalog_path") or "")
+    if nueva == str((antes or {}).get("catalog_path") or ""):
+        return
+    problema = problema_de_ruta(nueva)
+    if problema:
+        raise ConfigError(problema)
+
+
+def _dentro(ruta: str) -> str:
+    """El `pairs.toml` de esa carpeta. Vale para una ruta y para un endpoint:
+    `nas:` a secas es la raíz del remoto, y ahí no se antepone ninguna barra."""
+    if not ruta or ruta.endswith((":", "/")):
+        return ruta + FICHERO
+    return f"{ruta}/{FICHERO}"
+
+
 # ---------------------------------------------------------------------------
 # rclone
 # ---------------------------------------------------------------------------
@@ -146,6 +191,64 @@ def _parse(text: str, where: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Una carpeta no es un catálogo
+# ---------------------------------------------------------------------------
+
+# Quien pregunta a rclone: `run` aquí, `remote.Rclone.run` en el instalador.
+Ejecutar = Callable[[list[str]], subprocess.CompletedProcess]
+
+
+def _es_carpeta(ejecutar: Ejecutar, donde: str) -> bool | None:
+    """Lo que dice `rclone lsjson --stat` de esa ruta: True si es una carpeta,
+    False si es un fichero y None si no se sabe —no existe (rc 3), no contesta,
+    o la respuesta no es la esperada—. Un «no se sabe» nunca se convierte en
+    diagnóstico: un diagnóstico falso es peor que ninguno."""
+    try:
+        res = ejecutar(["lsjson", "--stat", donde])
+    except (OSError, subprocess.SubprocessError, ConfigError):
+        return None
+    if res.returncode != 0:
+        return None
+    try:
+        info = json.loads(res.stdout or "")
+    except ValueError:
+        return None
+    if not isinstance(info, dict) or not isinstance(info.get("IsDir"), bool):
+        return None
+    return info["IsDir"]
+
+
+def explicar_carpeta(ejecutar: Ejecutar, donde: str,
+                     fallo: bool = False) -> str | None:
+    """Si la ruta del catálogo es una carpeta, qué decirle al usuario; si no, None.
+
+    `rclone cat` de una carpeta NO falla: concatena, recursivamente, todos los
+    ficheros que hay dentro —medido con rclone v1.75.1: el `pairs.toml`, el
+    `.bak` que deja `push()` y las notas de `devices/` de `fleet`— y sale con 0.
+    Lo que llega es un TOML con dos `[defaults]`, y `tomllib` contesta «Cannot
+    declare ('defaults',) twice», que no se parece en nada a la causa (#48).
+
+    Por eso, cuando algo huele mal, se le pregunta al remoto qué es esa ruta
+    (`lsjson --stat`, que para una carpeta da `"IsDir": true`). Huele mal si lo
+    leído no sirve (`fallo`) o si la ruta no termina en `.toml`: así se pillan
+    también la carpeta vacía y la que solo tiene un `pairs.toml`, que `cat` lee
+    sin error. En el camino bueno no cuesta ninguna ida y vuelta más. Tampoco
+    se pregunta cuando falla el propio `cat`: sin red la pregunta tardaría lo
+    mismo en no llegar, y quien espera es una ventana."""
+    ruta = donde.partition(":")[2]
+    if not (fallo or problema_de_ruta(ruta)):
+        return None
+    if _es_carpeta(ejecutar, donde) is not True:
+        return None
+    motivo = (f"La ruta del catálogo, {donde}, es una carpeta y no un fichero: "
+              f"tiene que apuntar al fichero del catálogo.")
+    if _es_carpeta(ejecutar, _dentro(donde)) is False:
+        return (f"{motivo} Dentro hay un {FICHERO}, así que seguramente es "
+                f"«{_dentro(ruta)}».")
+    return f"{motivo} Por ejemplo «{_dentro(ruta)}», si es ahí donde está."
+
+
+# ---------------------------------------------------------------------------
 # Lectura
 # ---------------------------------------------------------------------------
 
@@ -161,13 +264,24 @@ def _write_cache(cat: Catalog) -> None:
 
 
 def pull(raw_local: Mapping[str, Any] | None = None) -> Catalog:
-    """Leer el catálogo del remoto y cachearlo. ConfigError si no se puede."""
+    """Leer el catálogo del remoto y cachearlo. ConfigError si no se puede, o
+    si la ruta resulta ser una carpeta (ver `explicar_carpeta`): lo que `cat`
+    trae de ahí no se cachea, porque no es el catálogo."""
     where = endpoint(raw_local)
     res = run(["cat", where])
     if res.returncode != 0:
         raise ConfigError(f"No pude leer el catálogo {where}: "
                           f"{(res.stderr or '').strip()}")
-    cat = Catalog(raw=_parse(res.stdout, where), text=res.stdout, source="remote",
+    texto = res.stdout or ""
+    try:
+        raw = _parse(texto, where)
+    except ConfigError as e:
+        raise ConfigError(explicar_carpeta(run, where, fallo=True)
+                          or str(e)) from e
+    carpeta = explicar_carpeta(run, where)
+    if carpeta:
+        raise ConfigError(carpeta)
+    cat = Catalog(raw=raw, text=texto, source="remote",
                   stamp=store.stamp(), endpoint=where)
     _write_cache(cat)
     return cat
