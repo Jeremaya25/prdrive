@@ -19,6 +19,7 @@ from pathlib import PurePosixPath
 
 from _harness import Checks, tmpdir
 
+from common import pins
 from install import crypto, device
 
 c = Checks("VeraCrypt: creación, montaje y lo que se revisa antes")
@@ -326,6 +327,97 @@ try:
     generico = crypto.explicar_montaje(salida("algo que no dice nada"), CONT)
     c.contains("y si no casa ninguna, se dice «lo más habitual», no una causa",
                generico, "Lo más habitual")
+
+    # --- 8. sin VeraCrypt instalado: el portable (#50, #38) ------------------
+    #
+    # El paquete portable no trae ningún `VeraCrypt.exe`: trae `VeraCrypt-x64.exe`,
+    # `VeraCrypt Format-x64.exe` y los `-arm64`. Con una carpeta así, «dime dónde
+    # está» no encontraba nada (#38). Y cuál de los dos usar lo dice la máquina
+    # NATIVA, como a VeraCrypt (`IsARM()`), no lo que oye un instalador x64
+    # emulado: la sonda del sistema se sustituye, como en tests/test_arch.py.
+    from _harness import falso_portatil
+    from common import model
+    from install import veracrypt_bin
+
+    crypto.IS_WIN = True
+    sonda_original = model.maquina_nativa_windows
+    cached_original = veracrypt_bin.cached
+    candidatos_originales = crypto.WIN_CANDIDATES
+    # El equipo que pasa la batería puede tener VeraCrypt instalado: aquí se
+    # pregunta qué pasa sin él.
+    crypto.WIN_CANDIDATES = {"mount": [], "format": []}
+    try:
+        portable = falso_portatil()
+        veracrypt_bin.cached = lambda: None
+        model.maquina_nativa_windows = lambda: 0x8664
+        vc = crypto.find_veracrypt(portable)
+        c("una carpeta del portable se reconoce (#38)",
+          vc and (crypto.Path(vc["mount"]).name, crypto.Path(vc["format"]).name),
+          ("VeraCrypt-x64.exe", "VeraCrypt Format-x64.exe"))
+        c("y se sabe que es el portable (cada paso pedirá UAC)",
+          crypto.portatil(vc), True)
+        model.maquina_nativa_windows = lambda: 0xAA64
+        vc = crypto.find_veracrypt(portable)
+        c("en un Windows ARM, los de arm64, aunque el instalador sea x64 emulado",
+          vc and crypto.Path(vc["mount"]).name, "VeraCrypt-arm64.exe")
+        c("el Format que se lanza es el suyo",
+          vc and crypto.Path(vc["format"]).name, "VeraCrypt Format-arm64.exe")
+
+        instalacion = tmpdir("prdrive-vc-instalado-")
+        for nombre in ("VeraCrypt.exe", "VeraCrypt Format.exe"):
+            (instalacion / nombre).write_bytes(b"MZ")
+        vc = crypto.find_veracrypt(instalacion)
+        c("una carpeta con la disposición de una instalación sigue valiendo",
+          vc and crypto.Path(vc["mount"]).name, "VeraCrypt.exe")
+        c("y esa no es el portable", crypto.portatil(vc), False)
+        media = tmpdir("prdrive-vc-medio-")
+        (media / "VeraCrypt-arm64.exe").write_bytes(b"MZ")
+        (media / "VeraCrypt Format.exe").write_bytes(b"MZ")
+        c("montar de una y formatear de otra no se mezclan",
+          crypto.find_veracrypt(media), None)
+
+        # Sin carpeta que mirar y sin instalado: el portable de la caché, si
+        # está y sigue siendo el comprobado. Bajarlo lo pide la pantalla.
+        c("sin nada, None", crypto.find_veracrypt(), None)
+        veracrypt_bin.cached = lambda: portable
+        model.maquina_nativa_windows = lambda: 0x8664
+        vc = crypto.find_veracrypt()
+        c("con el portable en la caché, ese",
+          vc and crypto.Path(vc["mount"]), portable / "VeraCrypt-x64.exe")
+
+        # Crear con el portable: la copia elevada es `VeraCrypt Format-x64.exe`,
+        # y es a esa a la que hay que esperar (H-4).
+        vistas.clear()
+        crypto._procesos = lambda nombre: vistas.append(nombre) or set()
+        crypto._run = lambda cmd, password="", timeout=None: (
+            hc2.write_bytes(b"x"), type("R", (), {"returncode": 0, "stdout": "",
+                                                  "stderr": ""})())[1]
+        hc2 = tmpdir("prdrive-crear-") / "PRDRIVE.hc"
+        crypto.create_container(vc, hc2, GIB, "x" * 20, "exFAT")
+        c("con el portable se espera a SU Format, por su nombre",
+          set(vistas), {"VeraCrypt Format-x64.exe"})
+    finally:
+        model.maquina_nativa_windows = sonda_original
+        veracrypt_bin.cached = cached_original
+        crypto.WIN_CANDIDATES = candidatos_originales
+
+    # --- 9. 'max' deja sitio para el VeraCrypt de viaje ------------------------
+    #
+    # Con 50 MiB libres fuera, un contenedor 'max' dejaba la unidad sin sitio
+    # para poner al día el VeraCrypt que viaja: la carpeta nueva se copia al
+    # lado de la vieja antes de cambiarlas.
+    c("con VeraCrypt de viaje, 'max' deja la reserva",
+      crypto.size_to_bytes("max", 30 * GIB, viajero=True),
+      30 * GIB - crypto.RESERVA_VIAJERO)
+    c("que es de 256 MiB", crypto.RESERVA_VIAJERO, 256 * MIB)
+    c("y cabe dos veces lo que ocupa", crypto.RESERVA_VIAJERO > 2 * pins.MB_VERACRYPT * MIB,
+      True)
+    c("sin él, el margen de siempre", crypto.size_to_bytes("max", 30 * GIB),
+      30 * GIB - crypto.MARGEN)
+    c("el tope de FAT32 sigue mandando",
+      crypto.size_to_bytes("max", 30 * GIB, TOPE, viajero=True), TOPE)
+    c("y un tamaño escrito a mano no se toca",
+      crypto.size_to_bytes("8G", 30 * GIB, viajero=True), 8 * GIB)
 finally:
     crypto.IS_WIN = win_original
     crypto.Path = path_original

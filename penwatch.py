@@ -142,6 +142,13 @@ CONTROL_FILE = Path(APP_SUBDIR) / APP_NAME.upper()    # quién es esta unidad
 # `common/vestibulo.py`, con su test, como las de arriba.
 CONTAINER_FILE = f"{APP_NAME.upper()}.hc"
 VESTIBULE_MARKER = f".{APP_NAME}-vestibulo"
+# El VeraCrypt que viaja junto al contenedor: el portable oficial, un ejecutable
+# por arquitectura, y detrás el `VeraCrypt.exe` de los dispositivos de antes.
+# Copias de `common/vestibulo.py` (TRAVELER*), con su test, como las de arriba.
+TRAVELER_DIR = "VeraCrypt"
+TRAVELER_EXE = "VeraCrypt.exe"
+TRAVELER_PORTABLE = "VeraCrypt-{arq}.exe"
+TRAVELER_ARCHS = ("x64", "arm64")
 # El Python del dispositivo, uno por plataforma, y su sello de versión. Copiados
 # de `install/runtime_bin.py` por lo mismo que los de arriba; el test comprueba
 # que no se separan.
@@ -436,14 +443,19 @@ def veracrypt_command(root: Path) -> list[str] | None:
 
     Sin contraseña, que la pide VeraCrypt en su ventana. El VeraCrypt instalado
     antes que el que viaja en la unidad: con otra versión instalada, el que viaja
-    no puede cargar su driver (ERR_DRIVER_VERSION). En Linux, solo con
-    escritorio: sin él no hay dónde pedir la contraseña, ni la de administrador
-    que montar exige."""
+    no puede cargar su driver (ERR_DRIVER_VERSION). Del que viaja, el portable de
+    la arquitectura NATIVA de este equipo —VeraCrypt escoge el driver por ella, y
+    un driver no se emula—, y detrás el `VeraCrypt.exe` de un dispositivo de
+    antes. En Linux, solo con escritorio: sin él no hay dónde pedir la
+    contraseña, ni la de administrador que montar exige."""
     container = root / CONTAINER_FILE
     if IS_WIN:
         candidates = [Path(os.environ[k]) / "VeraCrypt" / "VeraCrypt.exe"
                       for k in ("ProgramFiles", "ProgramW6432") if os.environ.get(k)]
-        candidates.append(root / "VeraCrypt" / "VeraCrypt.exe")
+        arch = native_arch()
+        if arch in TRAVELER_ARCHS:
+            candidates.append(root / TRAVELER_DIR / TRAVELER_PORTABLE.format(arq=arch))
+        candidates.append(root / TRAVELER_DIR / TRAVELER_EXE)
         for exe in candidates:
             try:
                 if exe.is_file():

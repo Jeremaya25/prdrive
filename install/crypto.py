@@ -7,7 +7,9 @@ Dos formas de cifrar el dispositivo, con repartos de trabajo muy distintos:
   * **VeraCrypt** hace un contenedor `PRDRIVE.hc` en la raíz del volumen físico. Lo
     crea y lo monta este módulo, y la estructura del dispositivo vive DENTRO. Es lo que
     hace portable el cifrado: no depende de la edición de Windows ni de nada
-    instalado en el equipo salvo el propio VeraCrypt.
+    instalado en el equipo. Tampoco de VeraCrypt: en Windows, si no está
+    instalado, se usa el VeraCrypt Portable oficial, bajado y comprobado por
+    `install/veracrypt_bin.py` (en Linux sí tiene que estar instalado).
 
   * **BitLocker** cifra el volumen entero, y aquí solo se guía y se comprueba:
     cifrar de verdad lo hace el diálogo de Windows. Comprobarlo no pasa por
@@ -49,9 +51,12 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import CREATE_NO_WINDOW, DEVICE_LABEL, IS_WIN, InstallError
+from common import model
 
-MOUNT_TIMEOUT = 90.0        # VeraCrypt puede pedir UAC y tardar lo suyo
+from . import CREATE_NO_WINDOW, DEVICE_LABEL, IS_WIN, InstallError
+from . import veracrypt_bin
+
+MOUNT_TIMEOUT = 90.0       # VeraCrypt puede pedir UAC y tardar lo suyo
 MOUNT_POLL = 0.5
 PASSWORD_MARK = "***"
 
@@ -97,22 +102,76 @@ def _first_exe(candidatos: list[str]) -> str | None:
     return None
 
 
+def arquitectura_vc() -> str:
+    """'arm64' en un Windows ARM64 y 'x64' en los demás: qué ejecutables del
+    VeraCrypt Portable usa ESTE equipo.
+
+    VeraCrypt elige su driver por la máquina NATIVA (`IsARM()` en
+    `Common/Dlgcode.c` pregunta a `IsWow64Process2`), y aquí se pregunta lo
+    mismo por el mismo camino que todo lo demás del proyecto
+    (`model.machine_arch()`, que cuelga de `model.maquina_nativa_windows()`): el
+    instalador es un .exe x64 y en un Windows ARM oiría «AMD64» de cualquier
+    otro sitio. El x64 emulado también cargaría el driver arm64 que viaja a su
+    lado, pero no hay por qué emular lo que existe nativo."""
+    return "arm64" if model.machine_arch() in ("arm64", "aarch64") else "x64"
+
+
+def _en_carpeta(carpeta: Path) -> dict | None:
+    """Los ejecutables de montar y de formatear de esa carpeta, o None.
+
+    Con los nombres del portable oficial —`VeraCrypt-<arq>.exe` y
+    `VeraCrypt Format-<arq>.exe`, los de este equipo (#38: el portable no trae
+    ningún `VeraCrypt.exe`)— o con los de una instalación. Los dos de la misma
+    disposición: mezclar el de montar de una con el de formatear de otra es
+    mezclar versiones."""
+    arq = arquitectura_vc()
+    for montar, formatear in ((veracrypt_bin.montar(arq), veracrypt_bin.formatear(arq)),
+                              ("VeraCrypt.exe", "VeraCrypt Format.exe")):
+        try:
+            if (carpeta / montar).is_file() and (carpeta / formatear).is_file():
+                return {"mount": str(carpeta / montar),
+                        "format": str(carpeta / formatear)}
+        except OSError:
+            continue
+    return None
+
+
+def portatil(vc: dict | None) -> bool:
+    """¿Es ese el VeraCrypt Portable (los nombres llevan la arquitectura)?
+
+    Lo que cambia para quien lo usa es el UAC: sin su driver instalado, cada
+    operación se relanza elevada (`InitApp`, `LaunchElevatedProcess` en
+    `Common/Dlgcode.c`), y la pantalla lo avisa."""
+    nombre = Path((vc or {}).get("mount") or "").name.lower()
+    return nombre in {veracrypt_bin.montar(a).lower()
+                      for a in veracrypt_bin.ARQUITECTURAS}
+
+
 def find_veracrypt(extra_dir: str | Path | None = None) -> dict | None:
     """Los ejecutables de VeraCrypt, o None.
 
     En Windows son dos binarios distintos (montar y formatear); en Linux y macOS
     los dos papeles los hace el mismo `veracrypt --text`. `extra_dir` es la
-    carpeta que indique el usuario cuando no está donde se espera."""
+    carpeta que indique el usuario cuando no está donde se espera: una
+    instalación o un VeraCrypt Portable descomprimido, las dos valen.
+
+    En Windows, por este orden: esa carpeta, el VeraCrypt INSTALADO —con otro
+    VeraCrypt instalado y su driver cargado, el portable falla con
+    ERR_DRIVER_VERSION (`Common/Dlgcode.c`, `DriverAttach`)— y, si no hay
+    ninguno, el VeraCrypt Portable oficial que ya esté en la caché del
+    instalador y siga siendo el comprobado (`veracrypt_bin.cached()`). Bajarlo
+    no se hace aquí: es una descarga, y la pide la pantalla con su botón."""
     if IS_WIN:
-        candidatos = dict(WIN_CANDIDATES)
         if extra_dir:
-            d = Path(extra_dir)
-            candidatos = {
-                "mount": [str(d / "VeraCrypt.exe")] + candidatos["mount"],
-                "format": [str(d / "VeraCrypt Format.exe")] + candidatos["format"],
-            }
-        mount, fmt = _first_exe(candidatos["mount"]), _first_exe(candidatos["format"])
-        return {"mount": mount, "format": fmt} if mount and fmt else None
+            hallado = _en_carpeta(Path(extra_dir))
+            if hallado is not None:
+                return hallado
+        mount = _first_exe(WIN_CANDIDATES["mount"])
+        fmt = _first_exe(WIN_CANDIDATES["format"])
+        if mount and fmt:
+            return {"mount": mount, "format": fmt}
+        cache = veracrypt_bin.cached()
+        return _en_carpeta(cache) if cache is not None else None
 
     candidatos = list(POSIX_CANDIDATES)
     if extra_dir:
@@ -129,17 +188,29 @@ def find_veracrypt(extra_dir: str | Path | None = None) -> dict | None:
 UNIDADES = {"k": 1024, "m": 1024 ** 2, "g": 1024 ** 3, "t": 1024 ** 4}
 MARGEN = 50 * 1024 ** 2         # lo que se deja libre al pedir 'max'
 
+# Lo que se deja libre al pedir 'max' si la unidad va a llevar VeraCrypt en su
+# raíz física (`install/traveler.py`). Son ~29 MB, pero ponerlo al día copia el
+# nuevo AL LADO del viejo antes de cambiarlos (nunca encima), así que en ese
+# momento hace falta el doble, más el vestíbulo y el `autorun.inf`, y algo para
+# versiones que pesen más. Con 50 MiB, un contenedor 'max' dejaba la unidad sin
+# sitio para su primera actualización —y uno dinámico, al crecer, se lo comía—.
+RESERVA_VIAJERO = 256 * 1024 ** 2
 
-def size_to_bytes(raw: str, free: int, tope: int | None = None) -> int:
+
+def size_to_bytes(raw: str, free: int, tope: int | None = None,
+                  viajero: bool = False) -> int:
     """'20G' / '500M' / 'max' -> bytes.
 
     `tope` es lo más que admite el sistema de ficheros de la unidad
     (`tope_contenedor()`). Solo recorta 'max', que es «todo lo que quepa»: un
     tamaño escrito a mano por encima no se rebaja en silencio, lo rechaza
-    `create_container()` diciendo por qué."""
+    `create_container()` diciendo por qué.
+
+    `viajero`: la unidad va a llevar VeraCrypt fuera del contenedor, y 'max'
+    deja `RESERVA_VIAJERO` en vez de `MARGEN`."""
     texto = str(raw).strip().lower()
     if texto in {"max", ""}:
-        maximo = max(0, free - MARGEN)
+        maximo = max(0, free - (RESERVA_VIAJERO if viajero else MARGEN))
         return min(maximo, tope) if tope is not None else maximo
     try:
         if texto[-1] in UNIDADES:
@@ -511,8 +582,12 @@ def _esperar_copia_elevada(ejecutable: str, antes: set[int]) -> None:
     sistema de ficheros.
 
     Se reconoce por el nombre y por no estar antes de lanzar la orden: un Format
-    que la persona ya tuviera abierto no hace esperar. Sin límite de tiempo, como
-    la orden sin relanzar: crear un contenedor grande sin `/dynamic` en un USB
+    que la persona ya tuviera abierto no hace esperar. El nombre es el del
+    ejecutable que se ha lanzado —`VeraCrypt Format.exe` de una instalación,
+    `VeraCrypt Format-x64.exe` o `-arm64.exe` del portable—, porque la copia
+    elevada es la misma imagen: `InitApp` relanza lo que le da
+    `GetModuleFileNameW` (`Common/Dlgcode.c`). Sin límite de tiempo, como la
+    orden sin relanzar: crear un contenedor grande sin `/dynamic` en un USB
     lento son minutos de verdad."""
     while _procesos(ejecutable) - antes:
         time.sleep(MOUNT_POLL)

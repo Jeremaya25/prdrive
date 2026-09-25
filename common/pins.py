@@ -3,9 +3,10 @@
 pins.py — Las versiones exactas de lo que el dispositivo lleva de fuera, y las
 plataformas para las que puede llevarlo.
 
-Dos cosas del dispositivo no son código de este proyecto: el binario de rclone y
-el intérprete de Python. Las dos se descargan de su publicador —nunca se compilan
-aquí— y las dos se fijan a una versión CONCRETA en este fichero. Moverlas es un
+Tres cosas del dispositivo no son código de este proyecto: el binario de rclone,
+el intérprete de Python y —en uno cifrado con VeraCrypt— el VeraCrypt que viaja
+fuera del contenedor. Las tres se descargan de su publicador —nunca se compilan
+aquí— y las tres se fijan a una versión CONCRETA en este fichero. Moverlas es un
 commit, no algo que pase solo porque alguien publicó otra cosa por la noche:
 
   * lo que se comprueba es lo que se ha probado, y no «lo último» que haya
@@ -14,7 +15,7 @@ commit, no algo que pase solo porque alguien publicó otra cosa por la noche:
   * y el día que algo se rompa se sabe con qué versión, porque está escrita.
 
 Es la fuente única que consultan el instalador (`install/rclone_bin.py`,
-`install/runtime_bin.py`) y el despliegue. `penwatch.py` no la importa —no puede
+`install/runtime_bin.py`, `install/veracrypt_bin.py`) y el despliegue. `penwatch.py` no la importa —no puede
 importar nada del proyecto— y repite solo el nombre del sello y de la carpeta del
 runtime, que un test mantiene a raya.
 
@@ -43,6 +44,34 @@ PYTHON_RELEASE = "20260901"          # el tag de la release en GitHub
 PYTHON_VERSION = "3.13.15"
 PBS_BASE_URL = ("https://github.com/astral-sh/python-build-standalone/"
                 "releases/download")
+
+# --- VeraCrypt (el paquete «VeraCrypt Portable» oficial, de IDRIX) --------------
+# El que se usa para crear y montar el contenedor en un equipo que no tiene
+# VeraCrypt instalado, y el que viaja en la carpeta `VeraCrypt\` de la raíz
+# física de un dispositivo cifrado, con sus dos arquitecturas (x64 y ARM64).
+# Lo baja y lo abre `install/veracrypt_bin.py` sin ejecutarlo.
+#
+# La URL lleva la versión, como la de rclone: nunca un «última» que se mueva por
+# debajo. Y aquí sí se fija el SHA-256 del `.exe` a mano, porque IDRIX no publica
+# un fichero de sumas junto al paquete: publica la firma PGP (`.sig`) y el propio
+# `.exe` va firmado con Authenticode. Ninguna de las dos se puede comprobar en
+# Python puro, así que QUIEN MUEVA ESTA VERSIÓN comprueba las dos una vez, a mano
+# —la Authenticode de «IDRIX SARL» (propiedades del fichero → Firmas digitales,
+# o `Get-AuthenticodeSignature`) y la PGP con la clave de VeraCrypt
+# (`gpg --verify "VeraCrypt Portable X.exe.sig"`)— y apunta aquí el SHA-256 del
+# fichero que ha comprobado. A partir de ahí el asistente compara con este número
+# todo lo que baje: lo que no cuadre no se escribe.
+VERACRYPT_VERSION = "1.26.24"
+VERACRYPT_PAQUETE = f"VeraCrypt Portable {VERACRYPT_VERSION}.exe"
+VERACRYPT_URL = ("https://launchpad.net/veracrypt/trunk/"
+                 f"{VERACRYPT_VERSION}/+download/"
+                 f"VeraCrypt%20Portable%20{VERACRYPT_VERSION}.exe")
+VERACRYPT_SHA256 = "99c166a3dbab07ee8e42af4e42d1fd6123ca5c0825c0300f93085e81c154049a"
+# Lo que ocupa en la unidad lo que se extrae (ejecutables y drivers de las dos
+# arquitecturas, catálogos, .inf y licencias: 28,1 MiB en la 1.26.24),
+# redondeado hacia arriba. La descarga son ~39 MB porque trae además la
+# documentación y los idiomas, que no viajan.
+MB_VERACRYPT = 29
 
 
 @dataclass(frozen=True)

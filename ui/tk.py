@@ -899,12 +899,17 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         # actualizarlo primero puede mover lo que toca. Ofrecer las dos cosas a
         # la vez sería pedir el mismo trabajo dos veces, y en el orden malo.
         elif vista["componentes"]:
+            # Sin botón si lo único pendiente es el VeraCrypt sin sello de un
+            # dispositivo de antes: eso no lo arregla «Actualizar…» sino
+            # «Añadir plataformas…» del instalador, y el texto ya lo dice.
             caja = bloque_aviso(
                 frame,
-                "El rclone o el Python que lleva el dispositivo no son los que "
-                "fija esta versión:\n" + components.resumen(vista["componentes"]),
+                "Lo que lleva el dispositivo de fuera (rclone, Python, VeraCrypt) "
+                "no es lo que fija esta versión:\n"
+                + components.resumen(vista["componentes"]),
                 ancho=330, icono="down",
-                boton=("Actualizar…", abrir_componentes))
+                boton=(("Actualizar…", abrir_componentes)
+                       if components.actualizables(vista["componentes"]) else None))
             caja.grid(row=fila, column=0, sticky="ew", pady=(14, 0))
             # Sustituir el rclone mientras sincroniza sería cambiárselo bajo los
             # pies; el módulo lo pospondría, pero es mejor no ofrecerlo siquiera.

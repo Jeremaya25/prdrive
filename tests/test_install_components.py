@@ -360,6 +360,98 @@ try:
     c.contains("y se dice también lo que se sustituye",
                "\n".join(dicho), "sustituyendo")
 
+    # --- el VeraCrypt de viaje (#50) ------------------------------------------
+    #
+    # Su carpeta vive en la raíz FÍSICA, junto al .hc, y se sustituye entera con
+    # el mismo intercambio. Lo que se comprueba: que con sello se pone al día,
+    # que en uso se pospone sin bajar nada, que uno SIN sello no se toca nunca
+    # desde aquí —su vestíbulo solo sabe abrir esa disposición— y que si no cabe
+    # no se toca nada.
+    import shutil
+
+    from _harness import falso_portatil
+    from install import traveler, veracrypt_bin
+
+    cache_vc = falso_portatil()
+    reales_vc = (veracrypt_bin.ensure_veracrypt, components.veracrypt_en_uso,
+                 traveler.espacio_libre)
+    veracrypt_bin.ensure_veracrypt = lambda progreso=None, allow_download=True: (
+        bajados.append("veracrypt") or cache_vc)
+    components.veracrypt_en_uso = lambda carpeta: False
+
+    def con_veracrypt(version=None, sello=True):
+        """Un dispositivo (el contenedor montado) y su raíz física con VeraCrypt."""
+        disp = dispositivo(rclone_version=pins.RCLONE_VERSION,
+                           python_release=pins.PYTHON_RELEASE)
+        for plat in (WIN, LIN):
+            (platforms.runtime_dir(disp, plat) / comp.RUNTIME_STAMP).write_text(
+                f"python = {pins.PYTHON_VERSION}\nrelease = {pins.PYTHON_RELEASE}\n",
+                encoding="utf-8")
+        fis = tmpdir("prdrive-comp-fisica-")
+        shutil.copytree(falso_portatil(version), comp.veracrypt_dir(fis))
+        if not sello:
+            comp.veracrypt_stamp_path(fis).unlink()
+        return disp, fis
+
+    def lo_de(fis):
+        carpeta = comp.veracrypt_dir(fis)
+        return {p.name: p.read_bytes() for p in carpeta.iterdir()}
+
+    try:
+        disp, fis = con_veracrypt("1.26.7")
+        pends = comp.pendientes(deploy.app_dir(disp), fis)
+        c("un VeraCrypt de otra versión es lo único pendiente",
+          [p.que for p in pends], [comp.VERACRYPT])
+        bajados.clear()
+        res = components.aplicar(disp, pends=pends)
+        c("se pone al día", (res.hechos, res.pospuestos, res.fallidos),
+          ([f"VeraCrypt de la unidad: 1.26.7 → {pins.VERACRYPT_VERSION}"], [], []))
+        c("con el portable comprobado", bajados, ["veracrypt"])
+        c("y ya no queda nada pendiente",
+          comp.pendientes(deploy.app_dir(disp), fis), [])
+        c("sin restos del intercambio en la raíz física",
+          sorted(p.name for p in fis.iterdir()), [comp.veracrypt_dir(fis).name])
+
+        # En uso: se pospone, sin bajar nada y sin tocar la carpeta.
+        disp, fis = con_veracrypt("1.26.7")
+        antes = lo_de(fis)
+        components.veracrypt_en_uso = lambda carpeta: carpeta == comp.veracrypt_dir(fis)
+        bajados.clear()
+        res = components.aplicar(disp, pends=comp.pendientes(deploy.app_dir(disp), fis))
+        c("en uso se pospone", len(res.pospuestos), 1)
+        c.contains("diciendo por qué", res.pospuestos[0], "en uso")
+        c("sin bajar nada", bajados, [])
+        c("y sin tocar la carpeta", lo_de(fis), antes)
+        components.veracrypt_en_uso = lambda carpeta: False
+
+        # Sin sello (un dispositivo de antes): no se toca NUNCA desde aquí.
+        disp, fis = con_veracrypt(sello=False)
+        antes = lo_de(fis)
+        bajados.clear()
+        res = components.aplicar(disp, pends=comp.pendientes(deploy.app_dir(disp), fis))
+        c("un VeraCrypt sin sello no se pone al día solo",
+          (res.hechos, len(res.pospuestos), res.fallidos), ([], 1, []))
+        c.contains("se remite a «Añadir plataformas…»", res.pospuestos[0],
+                   "«Añadir plataformas…»")
+        c.contains("que cambia también el vestíbulo", res.pospuestos[0], "vestíbulo")
+        c("sin bajar nada", bajados, [])
+        c("y sin tocar la carpeta", lo_de(fis), antes)
+
+        # No cabe: un fallo que se dice, y la carpeta como estaba.
+        disp, fis = con_veracrypt("1.26.7")
+        antes = lo_de(fis)
+        traveler.espacio_libre = lambda raiz: 1024
+        res = components.aplicar(disp, pends=comp.pendientes(deploy.app_dir(disp), fis))
+        traveler.espacio_libre = reales_vc[2]
+        c("si no cabe, es un fallo", len(res.fallidos), 1)
+        c.contains("que lo dice", res.fallidos[0], "No cabe VeraCrypt")
+        c("y la carpeta sigue como estaba", lo_de(fis), antes)
+        c("sin restos", sorted(p.name for p in fis.iterdir()),
+          [comp.veracrypt_dir(fis).name])
+    finally:
+        (veracrypt_bin.ensure_veracrypt, components.veracrypt_en_uso,
+         traveler.espacio_libre) = reales_vc
+
     # --- la orden de consola --------------------------------------------------
     #
     # Se lanza un proceso de VERDAD, así que solo se prueban los dos caminos que

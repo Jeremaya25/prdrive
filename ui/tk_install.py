@@ -1160,6 +1160,16 @@ def _lista_plataformas(padre, wiz, raiz, al_cambiar):
 # Recorrido corto, paso 2 — Añadir (o quitar) plataformas
 # ---------------------------------------------------------------------------
 
+def _texto_fuera(fisica) -> str:
+    """Lo que «Añadir plataformas…» rehace fuera del contenedor, si lo hay: la
+    entrada y, si la unidad lleva VeraCrypt, el VeraCrypt (`traveler.lo_que_hara`)."""
+    if fisica is None:
+        return ""
+    return (f"\n\nFuera del contenedor, en {fisica}, se rehace la entrada "
+            f"(«{vestibulo.NOMBRE_ABRIR}», «{vestibulo.NOMBRE_EXPULSAR}»)."
+            + (f" {traveler.lo_que_hara(fisica)}" if traveler.lleva(fisica) else ""))
+
+
 def _paso_plataformas(cuerpo, wiz) -> None:
     """La lista de plataformas sobre un dispositivo que ya existe.
 
@@ -1177,7 +1187,8 @@ def _paso_plataformas(cuerpo, wiz) -> None:
         f"    {deploy.app_dir(raiz)}\n\n"
         "Se conserva todo lo demás: tu configuración, tus claves, el estado de "
         "bisync y el programa. Lo que marques se descarga —comprobando su "
-        "SHA-256— y se copia; lo que quites y confirmes, se borra.")).grid(
+        "SHA-256— y se copia; lo que quites y confirmes, se borra."
+        + _texto_fuera(vestibulo.destino(wiz.state)))).grid(
         row=0, column=0, sticky="w")
 
     lista, refrescar_lista = _lista_plataformas(cuerpo, wiz, raiz,
@@ -1203,7 +1214,20 @@ def _paso_plataformas(cuerpo, wiz) -> None:
             ident = device.control_id(raiz) if fisica is not None else None
             if ident:
                 lanzadores += vestibulo.escribir(fisica, ident)
-            return nuevos, borrados, lanzadores
+            # Y el VeraCrypt que viaja, si lleva uno: el vestíbulo que se acaba
+            # de escribir sabe abrir el portable y la copia de antes, así que
+            # primero él y después la carpeta, y los dos quedan coherentes pase
+            # lo que pase con la segunda. Es el único camino de un VeraCrypt SIN
+            # sello: `--update-components` no lo toca (`install/components.py`).
+            nota = ""
+            if fisica is not None and traveler.lleva(fisica):
+                try:
+                    puesto = traveler.llevar(wiz.state.veracrypt, fisica)
+                    nuevos += puesto.ficheros
+                    nota = puesto.aviso
+                except InstallError as e:
+                    nota = f"El VeraCrypt de la unidad se queda como estaba: {e}"
+            return nuevos, borrados, lanzadores, nota
 
         ok, res = working(wiz.root, "plataformas", trabajo,
                           "Descargando y copiando rclone y Python.")
@@ -1211,13 +1235,14 @@ def _paso_plataformas(cuerpo, wiz) -> None:
             estado_lbl.configure(text=f"No se ha podido aplicar: {res}",
                                  foreground=theme.PELIGRO)
             return
-        nuevos, borrados, _ = res
+        nuevos, borrados, _, nota = res
         wiz.rehacer_matriz(raiz)
         refrescar_lista()
         estado_lbl.configure(
             text=(f"Hecho: {len(nuevos)} elementos puestos"
                   + (f", {len(borrados)} borrados" if borrados else "")
-                  + ". Ya puedes cerrar."), foreground=theme.OK)
+                  + ". Ya puedes cerrar." + (f"\n\n{nota}" if nota else "")),
+            foreground=theme.AVISO if nota else theme.OK)
 
     boton = ttk.Button(cuerpo, text="Aplicar", style="Primary.TButton",
                        padding=(14, 8), command=aplicar)
@@ -1425,28 +1450,30 @@ def _paso_final(cuerpo, wiz) -> None:
                 profile.to_catalog_remote(wiz.perfil_final).items()))
 
     def llevar_veracrypt() -> None:
-        """Copia (o pone al día) el VeraCrypt que viaja en el dispositivo.
+        """Deja (o pone al día) el VeraCrypt que viaja en el dispositivo.
 
-        También sirve de «actualizar»: `traveler.instalar()` sobrescribe, así que
-        un dispositivo hecho con un VeraCrypt viejo se pone al día enchufándolo
-        en un equipo con uno nuevo."""
+        El VeraCrypt Portable oficial, comprobado, con x64 y ARM64; sin red, la
+        copia del de este equipo (`traveler.instalar()`). Nunca copiando encima:
+        la carpeta se sustituye entera, y si no cabe no se toca."""
         if wiz.state.encryption != "veracrypt" or not wiz.state.device:
             wiz.error("Esto solo tiene sentido con un contenedor VeraCrypt.")
             return
-        try:
-            escritos = traveler.instalar(wiz.state.veracrypt, wiz.state.device)
-        except InstallError as e:
-            wiz.error(str(e))
+        ok, puesto = working(
+            wiz.root, "llevando VeraCrypt",
+            lambda: traveler.llevar(wiz.state.veracrypt, wiz.state.device),
+            "Dejando VeraCrypt en la unidad, fuera del contenedor.")
+        if not ok:
+            wiz.error(str(puesto))
             return
-        traveler.write_autorun(wiz.state.device)
-        arcs = traveler.arquitecturas(wiz.state.device / traveler.CARPETA)
+        arcs = traveler.arquitecturas(puesto.carpeta)
         wiz.aviso(
-            f"{len(escritos)} ficheros en {wiz.state.device / traveler.CARPETA}.\n\n"
-            f"Arquitectura: {', '.join(arcs) or 'ninguna (falta el driver)'}. "
-            "Solo viaja la del equipo que lo prepara, y solo vale en esa: un "
-            "driver no se emula, así que uno x64 no monta en un Windows ARM ni "
-            "al revés.\n\n"
-            "En el equipo donde se enchufe seguirá haciendo falta aceptar el "
+            (f"{puesto.carpeta} ya llevaba este VeraCrypt: no se ha tocado."
+             if puesto.al_dia else
+             f"{len(puesto.ficheros)} ficheros en {puesto.carpeta}.")
+            + f"\n\nArquitecturas: {', '.join(arcs) or 'ninguna (falta el driver)'}. "
+            "Cada una solo vale en la suya: un driver no se emula.\n\n"
+            + (f"{puesto.aviso}\n\n" if puesto.aviso else "")
+            + "En el equipo donde se enchufe seguirá haciendo falta aceptar el "
             "aviso de administrador: cargar el driver no se puede hacer de otra "
             "forma.")
         revisar_dispositivo()

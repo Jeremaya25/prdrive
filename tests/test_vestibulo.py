@@ -91,6 +91,39 @@ for nombre, texto in (("abrir", abrir), ("expulsar", expulsar)):
     c(f"{nombre}: el VeraCrypt instalado antes que el que viaja "
       "(ERR_DRIVER_VERSION)", instalado < viajero, True)
 
+# El que viaja es el VeraCrypt Portable, con un ejecutable por arquitectura
+# (#50), y se elige el de ESTE equipo: VeraCrypt escoge el driver por la máquina
+# nativa y un driver no se emula. `%PROCESSOR_ARCHITECTURE%` dice la verdad en un
+# .bat (cmd corre nativo), como ya da por hecho runsync.bat. Los dispositivos de
+# antes llevan `VeraCrypt\VeraCrypt.exe`, y se siguen abriendo.
+for nombre, texto in (("abrir", abrir), ("expulsar", expulsar)):
+    lineas = texto.splitlines()
+    c(f"{nombre}: el portable es x64 salvo en un Windows ARM64",
+      ('set "VC_ARQ=x64"' in lineas,
+       'if /i "%PROCESSOR_ARCHITECTURE%"=="ARM64" set "VC_ARQ=arm64"' in lineas,
+       lineas.index('set "VC_ARQ=x64"') < lineas.index(
+           'if /i "%PROCESSOR_ARCHITECTURE%"=="ARM64" set "VC_ARQ=arm64"')),
+      (True, True, True))
+    instalado = texto.index('"%ProgramFiles%\\VeraCrypt\\VeraCrypt.exe"')
+    portable = texto.index('"%~dp0VeraCrypt\\VeraCrypt-%VC_ARQ%.exe"')
+    de_antes = texto.index('"%~dp0VeraCrypt\\VeraCrypt.exe"')
+    c(f"{nombre}: el instalado, luego el portable de este equipo, luego el de antes",
+      instalado < portable < de_antes, True)
+    c(f"{nombre}: el portable se apunta como el que viaja (espera larga)",
+      'if not defined VC if exist "%~dp0VeraCrypt\\VeraCrypt-%VC_ARQ%.exe" '
+      'set "VIAJERO=1"' in lineas, True)
+    c(f"{nombre}: y con su nombre de imagen, para buscar la copia elevada",
+      'if not defined VC if exist "%~dp0VeraCrypt\\VeraCrypt-%VC_ARQ%.exe" '
+      'set "VC_IMAGEN=VeraCrypt-%VC_ARQ%.exe"' in lineas, True)
+    c(f"{nombre}: la arquitectura se fija antes de mirar nada",
+      lineas.index('set "VC_ARQ=x64"') < min(
+          i for i, ln in enumerate(lineas) if "VeraCrypt-%VC_ARQ%" in ln), True)
+c("expulsar: la copia elevada se busca por el nombre del que se lanza, no por uno fijo",
+  ('imagename eq %VC_IMAGEN%' in expulsar, 'imagename eq VeraCrypt.exe' in expulsar),
+  (True, False))
+c("expulsar: VC_IMAGEN empieza en el de una instalación",
+  'set "VC_IMAGEN=VeraCrypt.exe"' in expulsar.splitlines(), True)
+
 orden = next(ln for ln in abrir.splitlines() if "/volume" in ln)
 c("abrir: monta este contenedor, junto al .bat",
   f'/volume "%~dp0{CONTAINER_NAME}"' in orden, True)
@@ -233,7 +266,10 @@ if IS_WIN:
     def pendiente_da(al_empezar=True):
         """VC_ANTES y el código de `:vc_pendiente`, como «VC_ANTES-código».
         `al_empezar=False`: sin mirar antes, como si VeraCrypt no estuviera."""
-        pendiente.write_text("@echo off\r\n" + (apuntar if al_empezar else "rem")
+        # VC_IMAGEN lo fija `_ELEGIR_BAT` según el VeraCrypt que se lanza; aquí,
+        # el de una instalación, que es como se llama el ping falso.
+        pendiente.write_text("@echo off\r\nset \"VC_IMAGEN=VeraCrypt.exe\"\r\n"
+                             + (apuntar if al_empezar else "rem")
                              + "\r\ncall :vc_pendiente\r\n"
                              "echo %VC_ANTES%-%ERRORLEVEL%\r\nexit /b 0\r\n"
                              + "\r\n".join(["", ":vc_pendiente",

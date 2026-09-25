@@ -91,6 +91,55 @@ def tmpdir(prefix: str = "prdrive-test-") -> Path:
     return destino
 
 
+MAQUINAS_PE = {"x64": 0x8664, "arm64": 0xAA64, "x86": 0x014C}
+
+
+def pe(maquina: int | None, relleno: bytes = b"") -> bytes:
+    """Lo justo de un binario de Windows para que se lea su CPU.
+
+    Cabecera DOS con `e_lfanew` = 0x40, la firma `PE\\0\\0` ahí, y detrás el
+    `Machine` de `IMAGE_FILE_HEADER`. None da algo que no es un PE. `relleno` va
+    al final, para que dos ficheros de la misma CPU no sean idénticos."""
+    if maquina is None:
+        return b"esto no es un ejecutable" + relleno
+    cabecera = bytearray(0x40)
+    cabecera[0:2] = b"MZ"
+    cabecera[0x3C:0x40] = (0x40).to_bytes(4, "little")
+    return bytes(cabecera) + b"PE\0\0" + maquina.to_bytes(2, "little") + bytes(16) + relleno
+
+
+def falso_portatil(version: str | None = None, sin: tuple[str, ...] = ()) -> Path:
+    """Una carpeta con la pinta de la caché del VeraCrypt Portable ya comprobado.
+
+    Los ficheros del portable —los de montar, formatear y agrandar de las dos
+    arquitecturas, los dos drivers, con la CPU en su cabecera, y las licencias—
+    y su sello con el SHA-256 de cada uno, como lo deja `veracrypt_bin`. Es lo
+    que devolvería `veracrypt_bin.ensure_veracrypt()`: los tests lo sustituyen
+    por esto y ninguno baja nada. `sin` son ficheros que no se ponen."""
+    import hashlib
+
+    from common import components, pins
+    from install import veracrypt_bin
+
+    carpeta = tmpdir("prdrive-vc-portatil-")
+    resumenes = {}
+    nombres = [(n, MAQUINAS_PE[arq]) for arq in veracrypt_bin.ARQUITECTURAS
+               for n in (veracrypt_bin.montar(arq), veracrypt_bin.formatear(arq),
+                         veracrypt_bin.expander(arq), veracrypt_bin.driver(arq))]
+    nombres += [(n, None) for n in veracrypt_bin.LICENCIAS]
+    for nombre, maquina in nombres:
+        if nombre in sin:
+            continue
+        contenido = pe(maquina, nombre.encode()) if maquina else nombre.encode()
+        (carpeta / nombre).write_bytes(contenido)
+        resumenes[nombre] = hashlib.sha256(contenido).hexdigest()
+    (carpeta / components.VERACRYPT_STAMP).write_text(
+        components.veracrypt_stamp_text(version or pins.VERACRYPT_VERSION,
+                                        "0" * 64, resumenes),
+        encoding="utf-8", newline="\n")
+    return carpeta
+
+
 @atexit.register
 def _limpiar_temporales() -> None:
     for destino in _TEMPORALES:
