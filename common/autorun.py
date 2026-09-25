@@ -39,17 +39,21 @@ MAX_NOMBRE = 32
 # El icono del traveler: el propio ejecutable de VeraCrypt que viaja en la unidad.
 ICONO_VERACRYPT = f"{vestibulo.TRAVELER}\\{vestibulo.TRAVELER_EXE}"
 
-# Los iconos que pinta o copia `ui/volumen.py` van en la raíz, junto a este
-# fichero, ocultos y con este prefijo. Van en la raíz y no en `.prdrive/` porque
-# con VeraCrypt la raíz física no tiene `.prdrive/`: está dentro del contenedor, y
-# el Explorador lee el icono antes de que nadie lo abra.
-PREFIJO_ICONO = f".{APP_NAME}-icono"
+# Los iconos que pinta o copia `ui/volumen.py` se llaman `icono-….ico` y van
+# dentro de `.prdrive/`, sin cifrar o con BitLocker. Con VeraCrypt no puede ser:
+# la raíz que se enchufa no tiene `.prdrive/` —está dentro del contenedor, y el
+# Explorador busca el icono antes de que nadie lo abra—, así que ahí van junto a
+# este fichero, ocultos y con `PREFIJO_RAIZ` delante para saber de quién son.
+BASE_ICONO = "icono"
 EXTENSION_ICONO = ".ico"
+PREFIJO_RAIZ = f".{APP_NAME}-"
+PREFIJO_ICONO = PREFIJO_RAIZ + BASE_ICONO
 
 
 def es_icono(nombre: str) -> bool:
-    """¿Es uno de los iconos que deja aquí prdrive? Para `install/device.RUIDO`
-    —no son contenido de nadie— y para saber cuáles se pueden recoger."""
+    """¿Es uno de los iconos que deja prdrive en una raíz (la de fuera de un
+    contenedor de VeraCrypt)? Para `install/device.RUIDO` —no son contenido de
+    nadie—. Los de dentro de `.prdrive/` no hace falta: esa carpeta ya lo es."""
     bajo = nombre.lower()
     return bajo.startswith(PREFIJO_ICONO) and bajo.endswith(EXTENSION_ICONO)
 

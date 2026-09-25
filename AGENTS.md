@@ -510,23 +510,36 @@ it shows **after replugging**, and the window says so.
   commands survive, and `traveler.write_autorun()` keeps an existing label/icon
   when it refreshes those commands. UTF-16 + CRLF, like VeraCrypt's own;
   `buscar()` matches the name case-insensitively. Nothing left → file deleted.
-- **Which root:** the one that is plugged in. `vestibulo.raiz_fisica()` when the
-  device lives in a container (the mounted volume is not what the user plugs
-  in), else `DEVICE_ROOT`. The window prints the path it writes to.
+- **Which root:** the one that is plugged in. Unencrypted and BitLocker are the
+  same case, `DEVICE_ROOT` (BitLocker's unlocked volume *is* the one plugged
+  in); `vestibulo.raiz_fisica()` when the device lives in a VeraCrypt container
+  (the mounted volume is not what the user plugs in). The window prints the path
+  it writes to.
+- **Where the icon lives:** `Estado.carpeta`. In `.prdrive/`
+  (`icon=.prdrive\icono-verde.ico`, derived from `APP_DIR.name`, not
+  hard-coded), so the root holds nothing but `autorun.inf`. On a container's
+  physical root there is no `.prdrive/` — the one inside cannot be read before
+  the container is opened, and Explorer reads the icon on arrival — so there it
+  sits beside `autorun.inf`, hidden with `store.hide()` (moved there from
+  `install/deploy.py`, which re-exports it) and prefixed
+  (`.prdrive-icono-verde.ico`), and counts as noise through `device.es_ruido()`,
+  since hashed names cannot sit in the `RUIDO` set. A stray plaintext
+  `.prdrive/` on that root is never touched (`crypto.restos_en_claro()`).
 - **The choice is read back from `icon=` itself** — no separate state: the icon
-  file name carries the key (`.prdrive-icono-verde.ico`), a user's `.ico` a hash
-  slice (`.prdrive-icono-propio-<8 hex>.ico`). A new drawing is a new name
-  because Explorer caches icons by path; `recoger()` then deletes our other
-  icons. An `icon=` prdrive did not write reads as `OTRO` and survives a
-  name-only save. Icons live at the root (not in `.prdrive/`, absent outside a
-  container), hidden with `store.hide()` — moved there from `install/deploy.py`,
-  which re-exports it — and count as noise through `device.es_ruido()`, since
-  hashed names cannot sit in the `RUIDO` set.
+  file name carries the key (`icono-verde.ico`), a user's `.ico` a hash slice
+  (`icono-propio-<8 hex>.ico`), and it counts only in the place prdrive would
+  put it (prefixed at the root, bare inside `.prdrive/`). A new drawing is a new
+  name because Explorer caches icons by path; `recoger()` then deletes our other
+  icons, at the root too, which moves an old root icon into `.prdrive/` on the
+  next save. An `icon=` prdrive did not write reads as `OTRO` and survives a
+  name-only save.
 - The five colours are `icons.CAMPOS` (brand field only; white and amber stay).
   Painting one is ~2 s (the 256 px size), so the save runs in `tk.working()` and
-  an existing file is never repainted. Unverified on real Windows: an icon file
-  with the hidden attribute, and a *change* of name or icon (M1 saw a first
-  write) — the per-drawing file name is there so the icon cache cannot win.
+  an existing file is never repainted. Unverified on real Windows: an icon
+  inside the hidden `.prdrive/` or with the hidden attribute itself; whether
+  Explorer reads the file when a BitLocker drive is *unlocked* (locked, it
+  cannot); and a *change* of name or icon (M1 saw a first write) — the
+  per-drawing file name is there so the icon cache cannot win.
 
 ## Pairing a phone (`common/pairing.py` + `ui/qr.py` + `ui/tk_qr.py`)
 

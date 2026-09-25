@@ -8,10 +8,11 @@ Solo dibuja. Qué hay puesto, qué se puede poner y cómo se escribe lo decide
 Cuelga de «Ajustes» porque se hace una vez —o cuando se tiene un segundo
 dispositivo y hace falta distinguirlos—, no cada vez que se sincroniza.
 
-Dos cosas se dicen en la propia ventana porque sin ellas parece que no funciona:
+Tres cosas se dicen en la propia ventana porque sin ellas parece que no funciona:
 el Explorador lee el fichero **al llegar la unidad**, así que el cambio se ve la
-próxima vez que se conecte, no al pulsar «Guardar»; y con VeraCrypt lo que cambia
-es la unidad que se enchufa, no el volumen que aparece al abrir el contenedor.
+próxima vez que se conecte, no al pulsar «Guardar»; con BitLocker no lo lee
+mientras esté bloqueada; y con VeraCrypt lo que cambia es la unidad que se
+enchufa, no el volumen que aparece al abrir el contenedor.
 """
 
 from __future__ import annotations
@@ -125,14 +126,21 @@ def open_dialog(parent) -> None:
                                             sticky="w")
 
     # --- dónde se escribe y cuándo se ve ------------------------------------
-    cuando = ("El Explorador lo lee al llegar la unidad: el cambio se verá la "
-              "próxima vez que la conectes.")
+    inf = estado.raiz / autorun.FICHERO
     if estado.fisica:
-        cuando += (" Es la unidad que se enchufa, la del contenedor; la que "
-                   "aparece al abrirlo conserva su nombre.")
-    notas = [f"Se guarda en {estado.raiz / autorun.FICHERO}, que no ejecuta nada: "
-             "Windows no arranca programas al conectar una unidad extraíble, "
-             "pero sí lee de ahí el nombre y el icono.", cuando]
+        donde = (f"Se guarda en {inf}, fuera del contenedor, con el icono al "
+                 "lado y oculto: es la unidad que se enchufa, y lo de dentro el "
+                 "Explorador no lo ve hasta abrirlo. La que aparece al abrirlo "
+                 "conserva su nombre.")
+    else:
+        donde = (f"Se guarda en {inf}, y el icono dentro de {estado.carpeta}. "
+                 "Con BitLocker, Windows no puede leerlo mientras la unidad "
+                 "esté bloqueada.")
+    notas = [donde,
+             "Ese fichero no ejecuta nada: Windows no arranca programas al "
+             "conectar una unidad extraíble, pero sí lee de ahí el nombre y el "
+             "icono, al llegar la unidad. El cambio se verá la próxima vez que "
+             "la conectes."]
     ttk.Label(marco, text="\n".join(notas), style="Pista.TLabel", justify="left",
               wraplength=theme.medida(560)).grid(row=4, column=0, columnspan=2,
                                                  sticky="w", pady=(18, 0))

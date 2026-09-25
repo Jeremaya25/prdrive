@@ -123,13 +123,15 @@ pairing.construir = lambda raw=None, app_dir=None: pairing.dumps(
     private_key=(b"-----BEGIN OPENSSH PRIVATE KEY-----\n" + b"b3BlbnNza" * 40
                  + b"\n-----END OPENSSH PRIVATE KEY-----\n"))
 
-# El nombre y el icono de la unidad, en su caso más alto: con VeraCrypt (una fila
-# más de icono y una frase más de nota), un icono que no puso prdrive con una
-# ruta larga, y la raíz física en una ruta larga, que es lo que alarga la nota.
-volumen.leer = lambda: volumen.Estado(
+# El nombre y el icono de la unidad, en sus casos más altos: con el icono de
+# VeraCrypt ofrecido (una fila más), un icono que no puso prdrive con una ruta
+# larga, y la raíz en una ruta larga, que es lo que alarga la nota. Las dos notas:
+# la de la raíz física de un contenedor, y la de la unidad sin cifrar o con
+# BitLocker, que lleva la ruta dos veces (el autorun.inf y `.prdrive/`).
+VOLUMENES = [volumen.Estado(
     __import__("pathlib").Path("/media/usuario-de-nombre-largo/PENDRIVE-DE-LA-OFICINA"),
-    True, "Pendrive de la oficina de arriba", volumen.OTRO,
-    "%SystemRoot%\\System32\\imageres.dll,-30", True)
+    fisica, "Pendrive de la oficina de arriba", volumen.OTRO,
+    "%SystemRoot%\\System32\\imageres.dll,-30", True) for fisica in (True, False)]
 
 # El panel de VeraCrypt sin VeraCrypt: se le da uno de mentira, una unidad
 # FAT32 (la pista del tope) y sin dispersos (la estimación de la espera), que es
@@ -537,12 +539,16 @@ try:
                 # El nombre y el icono de la unidad: una fila de muestras de
                 # color que miden en píxeles de la pantalla (`icons.px`), y
                 # debajo el resto de opciones y dos párrafos de notas.
-                entra, corta = medir_dialogo(
-                    lambda: tk_volumen.open_dialog(raiz),
-                    ancho, alto, escala, modulo=tk_volumen)
-                c(f"{nombre}: la ventana del nombre e icono cabe", entra, True)
-                c(f"{nombre}: la ventana del nombre e icono no queda recortada",
-                  corta, False)
+                for estado_v in VOLUMENES:
+                    volumen.leer = lambda e_=estado_v: e_
+                    que = "con VeraCrypt" if estado_v.fisica else "sin contenedor"
+                    entra, corta = medir_dialogo(
+                        lambda: tk_volumen.open_dialog(raiz),
+                        ancho, alto, escala, modulo=tk_volumen)
+                    c(f"{nombre}: la ventana del nombre e icono ({que}) cabe",
+                      entra, True)
+                    c(f"{nombre}: la ventana del nombre e icono ({que}) no queda "
+                      "recortada", corta, False)
 
                 # El código de emparejamiento: el único dibujo de la aplicación
                 # que mide en píxeles y no puede encoger —un módulo por debajo

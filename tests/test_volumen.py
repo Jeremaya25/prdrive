@@ -10,7 +10,10 @@ Lo que se comprueba:
     comentarios. Y se escribe como el de VeraCrypt: UTF-16 y CRLF.
   * Qué icono hay puesto se lee del propio `icon=`, sin estado aparte, y uno que
     no puso prdrive no se pierde por cambiar solo el nombre.
-  * Guardar deja un solo icono de prdrive en la raíz: el que se usa. Y el nombre
+  * El icono va dentro de `.prdrive/` en una unidad sin cifrar o con BitLocker,
+    y junto al autorun.inf, oculto, en la raíz física de un contenedor de
+    VeraCrypt, que no tiene `.prdrive/`. Guardar deja un solo icono de prdrive:
+    el que se usa, y se lleva también los que quedaron en la raíz. Y el nombre
     del fichero cambia con el dibujo, que es lo que evita la caché del
     Explorador.
   * El traveler, al volver a llevar VeraCrypt, respeta lo elegido.
@@ -22,7 +25,7 @@ Ningún test toca una unidad de verdad: todo va sobre directorios temporales.
 """
 
 import sys
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from _harness import Checks, sandbox, tmpdir
 
@@ -50,19 +53,38 @@ def utf16(ruta: Path) -> str:
     return ruta.read_bytes().decode("utf-16")
 
 
+def en_disco(raiz: Path, icono: str) -> Path:
+    """Dónde está el fichero de un `icon=`, que va con la barra de Windows."""
+    return raiz.joinpath(*PureWindowsPath(icono).parts)
+
+
+def iconos(carpeta: Path) -> list[str]:
+    """Los .ico de una carpeta, por nombre."""
+    return sorted(p.name for p in carpeta.iterdir() if p.suffix == ".ico")
+
+
+# Dónde van los iconos en una unidad sin contenedor: `.prdrive` en un
+# dispositivo; aquí, el nombre de la carpeta del checkout.
+DENTRO = model.APP_DIR.name
+
+# `store.hide()` no hace nada fuera de Windows: se apunta a quién se le pide.
+HIDE_DE_VERDAD = store.hide
+ocultados: list[str] = []
+
+
 # --- 1. el fichero: se edita, no se reescribe ---------------------------------
 
 TRAVELER = traveler.autorun_texto("PRDRIVE")
-editado = autorun.con(TRAVELER, "Pendrive de Pere", ".prdrive-icono-verde.ico")
+editado = autorun.con(TRAVELER, "Pendrive de Pere", ".prdrive\\icono-verde.ico")
 c("cambia el nombre", autorun.claves(editado)["label"], "Pendrive de Pere")
-c("y el icono", autorun.claves(editado)["icon"], ".prdrive-icono-verde.ico")
+c("y el icono", autorun.claves(editado)["icon"], ".prdrive\\icono-verde.ico")
 c("sin dejar el nombre de antes", editado.count("label="), 1)
 c.contains("y sin tocar la orden de montar del traveler", editado,
            '/q /m rm /v "PRDRIVE.hc"')
 c.contains("ni la de desmontar", editado, "/q /dismount")
 c("las dos claves van justo debajo de [autorun], como las pone VeraCrypt",
   editado.splitlines()[:3],
-  ["[autorun]", "label=Pendrive de Pere", "icon=.prdrive-icono-verde.ico"])
+  ["[autorun]", "label=Pendrive de Pere", "icon=.prdrive\\icono-verde.ico"])
 
 AJENO = ("; lo escribió otro\n[Autorun]\nLabel=VIEJO\nopen=setup.exe\n"
          "ICON=viejo.ico\n\n[Content]\nMusicFiles=false\n")
@@ -108,9 +130,18 @@ c("y se reescribe ESE, no uno al lado con otro nombre",
 for icono, clave in (("", volumen.NINGUNO),
                      ("VeraCrypt\\VeraCrypt.exe", volumen.VERACRYPT),
                      ("veracrypt\\veracrypt.EXE", volumen.VERACRYPT),
+                     # dentro de `.prdrive/`, sin cifrar o con BitLocker
+                     (f"{DENTRO}\\icono-verde.ico", "verde"),
+                     (f"{DENTRO.upper()}/ICONO-VERDE.ICO", "verde"),
+                     (f"{DENTRO}\\icono-propio-0123abcd.ico", volumen.PROPIO),
+                     (f"{DENTRO}\\icono-fucsia.ico", volumen.OTRO),
+                     # en la raíz física de un contenedor, con el prefijo
                      (".prdrive-icono-verde.ico", "verde"),
                      (".prdrive-icono-propio-0123abcd.ico", volumen.PROPIO),
-                     (".prdrive-icono-fucsia.ico", volumen.OTRO),
+                     # nuestro nombre en un sitio donde prdrive no lo deja
+                     ("icono-verde.ico", volumen.OTRO),
+                     (f"{DENTRO}\\.prdrive-icono-verde.ico", volumen.OTRO),
+                     ("iconos\\icono-verde.ico", volumen.OTRO),
                      ("miicono.ico", volumen.OTRO),
                      ("%SystemRoot%\\system32\\shell32.dll,8", volumen.OTRO)):
     c(f"«{icono}» es {clave}", volumen.clave_de(icono), clave)
@@ -154,11 +185,19 @@ volumen.MAX_ICO = maximo
 
 # --- 4. guardar ----------------------------------------------------------------------
 
+store.hide = lambda ruta: ocultados.append(Path(ruta).name)
+
 with sandbox() as dispositivo:
+    # Sin cifrar o con BitLocker es lo mismo: `.prdrive/` está en la raíz que
+    # se enchufa, y no hay vestíbulo que encontrar.
     vestibulo.raiz_fisica = lambda device_id: None
+    programa = dispositivo / DENTRO
+    programa.mkdir()
+    (programa / "runsync.ico").write_bytes(b"x")
     estado = volumen.leer()
     c("sin contenedor, la raíz es la del dispositivo",
       (estado.raiz, estado.fisica), (dispositivo, False))
+    c("y los iconos van en su carpeta del programa", estado.carpeta, programa)
     c("y sin autorun.inf no hay nombre ni icono",
       (estado.nombre, estado.clave), ("", volumen.NINGUNO))
 
@@ -168,9 +207,14 @@ with sandbox() as dispositivo:
     volumen.guardar(estado, "Pendrive de Pere", "verde")
     ahora = volumen.leer()
     c("guarda el nombre", ahora.nombre, "Pendrive de Pere")
-    c("y el color", (ahora.clave, ahora.icono), ("verde", ".prdrive-icono-verde.ico"))
+    c("y el color, con el icono dentro de la carpeta del programa",
+      (ahora.clave, ahora.icono), ("verde", f"{DENTRO}\\icono-verde.ico"))
     c("pintado con su color", pintados[-1], icons.CAMPOS["verde"])
-    c("y el icono está al lado", (dispositivo / ahora.icono).is_file(), True)
+    c("el icono está donde dice icon=",
+      en_disco(dispositivo, ahora.icono), programa / "icono-verde.ico")
+    c("y existe", (programa / "icono-verde.ico").is_file(), True)
+    c("en la raíz no queda ningún icono", iconos(dispositivo), [])
+    c("ni se oculta: ya lo esconde su carpeta", ocultados, [])
 
     pintados.clear()
     volumen.guardar(ahora, "Otro nombre", "verde")
@@ -178,28 +222,47 @@ with sandbox() as dispositivo:
 
     volumen.guardar(volumen.leer(), "Otro nombre", "granate")
     ahora = volumen.leer()
-    c("otro color, otro fichero", ahora.icono, ".prdrive-icono-granate.ico")
-    c("y el anterior se recoge",
-      sorted(p.name for p in dispositivo.iterdir() if autorun.es_icono(p.name)),
-      [".prdrive-icono-granate.ico"])
-    c("sin tocar nada que no sea un icono de prdrive",
+    c("otro color, otro fichero", ahora.icono, f"{DENTRO}\\icono-granate.ico")
+    c("y el anterior se recoge, sin tocar el icono de la aplicación",
+      iconos(programa), ["icono-granate.ico", "runsync.ico"])
+    c("ni nada que no sea un icono de prdrive",
       ((dispositivo / "datos-del-usuario").is_dir(),
        (dispositivo / ".prdrive-otra-cosa").is_file()), (True, True))
+
+    # Uno que se dejó en la raíz, como hacía la primera versión de esto, se lee
+    # igual y se va a su sitio con el siguiente «Guardar».
+    (dispositivo / ".prdrive-icono-verde.ico").write_bytes(b"x")
+    autorun.escribir(dispositivo, "[autorun]\nlabel=A\nicon=.prdrive-icono-verde.ico\n")
+    c("un icono en la raíz se reconoce", volumen.leer().clave, "verde")
+    volumen.guardar(volumen.leer(), "A", "verde")
+    c("y al guardar pasa a la carpeta del programa",
+      (volumen.leer().icono, iconos(dispositivo), iconos(programa)),
+      (f"{DENTRO}\\icono-verde.ico", [], ["icono-verde.ico", "runsync.ico"]))
+    ahora = volumen.leer()
 
     mio = ICO_DE_VERDAD((16,), "#123456")
     volumen.guardar(ahora, "Otro nombre", volumen.PROPIO, mio)
     ahora = volumen.leer()
     c("uno propio lleva su hash en el nombre",
-      ahora.icono, volumen.nombre_icono(volumen.PROPIO, mio))
-    c("y es una copia exacta", (dispositivo / ahora.icono).read_bytes(), mio)
+      ahora.icono, f"{DENTRO}\\" + volumen.nombre_icono(volumen.PROPIO, mio))
+    c("y es una copia exacta", en_disco(dispositivo, ahora.icono).read_bytes(), mio)
     otro_mio = ICO_DE_VERDAD((16,), "#654321")
     c("otro dibujo, otro nombre: la caché del Explorador no enseña el de antes",
       volumen.nombre_icono(volumen.PROPIO, otro_mio) != ahora.icono, True)
     volumen.guardar(ahora, "Cambio solo el nombre", volumen.PROPIO)
     ahora = volumen.leer()
     c("sin elegir otro .ico, el propio que había se queda",
-      (ahora.nombre, ahora.clave, (dispositivo / ahora.icono).is_file()),
+      (ahora.nombre, ahora.clave, en_disco(dispositivo, ahora.icono).is_file()),
       ("Cambio solo el nombre", volumen.PROPIO, True))
+
+    # Escrito a mano con la barra de Unix y en mayúsculas sigue siendo el mismo
+    # fichero: guardar solo el nombre no puede llevárselo por delante.
+    a_mano = ahora.icono.replace("\\", "/").upper()
+    autorun.escribir(dispositivo, f"[autorun]\nlabel=A\nicon={a_mano}\n")
+    volumen.guardar(volumen.leer(), "B", volumen.PROPIO)
+    c("un icon= a mano con / y mayúsculas no se recoge",
+      (volumen.leer().icono, en_disco(dispositivo, ahora.icono).is_file()),
+      (a_mano, True))
 
     c("VeraCrypt sin traveler no se puede elegir",
       bool(rechaza(volumen.guardar, ahora, "x", volumen.VERACRYPT)), True)
@@ -218,7 +281,7 @@ with sandbox() as dispositivo:
     c("un icon= ajeno se queda al cambiar solo el nombre",
       (volumen.leer().nombre, volumen.leer().icono), ("B", "miicono.ico"))
     c("y los iconos de prdrive, que ya no se usan, se van",
-      [p.name for p in dispositivo.iterdir() if autorun.es_icono(p.name)], [])
+      (iconos(dispositivo), iconos(programa)), ([], ["runsync.ico"]))
 
     # Si el autorun.inf no se puede escribir, no queda un icono huérfano.
     escribir = autorun.escribir
@@ -231,11 +294,12 @@ with sandbox() as dispositivo:
     autorun.escribir = escribir
     c.contains("un fallo al escribir se dice con la ruta", error, "autorun.inf")
     c("y no deja el icono nuevo suelto",
-      (dispositivo / ".prdrive-icono-morado.ico").exists(), False)
+      (programa / "icono-morado.ico").exists(), False)
     c("ni cambia lo que había", volumen.leer().nombre, "B")
 
     volumen.guardar(volumen.leer(), "", volumen.NINGUNO)
     c("sin nombre y sin icono no queda autorun.inf", autorun.buscar(dispositivo), None)
+    c("y en .prdrive/ solo lo que era suyo", iconos(programa), ["runsync.ico"])
 
 # --- 5. con VeraCrypt: la raíz física, y el traveler ---------------------------------
 
@@ -246,10 +310,17 @@ with sandbox() as dentro:
     (fisica / vestibulo.TRAVELER).mkdir()
     (fisica / vestibulo.TRAVELER / vestibulo.TRAVELER_EXE).write_text("x", encoding="utf-8")
     traveler.write_autorun(fisica)
+    # Lo que quedó en claro de antes de cifrar no se toca (`crypto.restos_en_claro`).
+    (fisica / DENTRO).mkdir()
+    (fisica / DENTRO / "icono-verde.ico").write_bytes(b"x")
+    (dentro / DENTRO).mkdir()
+    ocultados.clear()
 
     estado = volumen.leer()
     c("con contenedor, se escribe en la raíz que se enchufa, no en el montado",
       (estado.raiz, estado.fisica), (fisica, True))
+    c("y los iconos van en esa raíz: su .prdrive/ está dentro del contenedor",
+      estado.carpeta, fisica)
     c("lo que puso el traveler se lee", (estado.nombre, estado.clave),
       ("PRDRIVE", volumen.VERACRYPT))
     c("y su icono se ofrece", estado.veracrypt, True)
@@ -259,8 +330,10 @@ with sandbox() as dentro:
     c.contains("el nombre nuevo", texto, "label=Cifrado de Pere")
     c.contains("sin perder la orden de montar", texto, '/q /m rm /v "PRDRIVE.hc"')
     c("el icono va fuera del contenedor, junto al autorun.inf",
-      ((fisica / ".prdrive-icono-azul.ico").is_file(),
-       (dentro / ".prdrive-icono-azul.ico").exists()), (True, False))
+      (volumen.leer().icono, (fisica / ".prdrive-icono-azul.ico").is_file()),
+      (".prdrive-icono-azul.ico", True))
+    c("y oculto", ocultados, [".prdrive-icono-azul.ico"])
+    c("nada dentro del contenedor", (iconos(dentro), iconos(dentro / DENTRO)), ([], []))
 
     # Volver a llevar VeraCrypt pone al día sus órdenes y respeta lo elegido.
     traveler.write_autorun(fisica)
@@ -273,6 +346,10 @@ with sandbox() as dentro:
     c("volver al de VeraCrypt recoge el pintado",
       ((fisica / ".prdrive-icono-azul.ico").exists(), volumen.leer().icono),
       (False, "VeraCrypt\\VeraCrypt.exe"))
+    c("y no entra en el .prdrive/ en claro que quedó fuera",
+      (fisica / DENTRO / "icono-verde.ico").is_file(), True)
+
+store.hide = HIDE_DE_VERDAD
 
 nuevo = tmpdir("prdrive-fisica-")
 traveler.write_autorun(nuevo)
@@ -328,7 +405,7 @@ tk_volumen.working = lambda parent, title, funcion, mensaje="": (True, funcion()
 volumen.guardar = lambda estado, nombre, clave, propio=None: llamadas.append(
     (estado.nombre, nombre, clave, propio))
 volumen.leer = lambda: volumen.Estado(Path("E:/"), False, "PRDRIVE", "azul",
-                                      ".prdrive-icono-azul.ico", False)
+                                      ".prdrive\\icono-azul.ico", False)
 
 
 def rellenar_y_pulsar(nombre: str, clave: str, boton: str = "Guardar"):
