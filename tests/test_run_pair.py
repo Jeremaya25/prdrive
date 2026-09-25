@@ -28,7 +28,8 @@ MIR = {"name": "mir", "local": "sync-data/mir", "remote_path": "/R/mir", "mode":
 PREFIJO = "prefijo-de-prueba"
 
 
-def correr(raw, *, listings=False, make_local=True, rc_seq=(0,), **opciones):
+def correr(raw, *, listings=False, make_local=True, rc_seq=(0,), texto_log="simulado\n",
+           **opciones):
     """Ejecuta run_pair sobre una pareja en un sandbox. Devuelve (rc, salida, ordenes)."""
     pair = model.parse_config({"defaults": DEF, "pair": [raw]}).pairs[0]
     if make_local:
@@ -52,7 +53,7 @@ def correr(raw, *, listings=False, make_local=True, rc_seq=(0,), **opciones):
         rc = next(codigos, rc_seq[-1])
         for i, arg in enumerate(cmd):          # rclone escribe su log; se emula
             if arg == "--log-file":
-                Path(cmd[i + 1]).write_text("simulado\n", encoding="utf-8")
+                Path(cmd[i + 1]).write_text(texto_log, encoding="utf-8")
         return rc
 
     original, sync.execute = sync.execute, execute_simulado
@@ -178,6 +179,75 @@ with sandbox():
     rc, _, _ = correr(BI, listings=True, make_local=False)
     c("abortar por la carpeta local ausente cuenta como fallo",
       [(f.pareja, f.codigo) for f in results.fallos(CFG_BI)], [("bi", 2)])
+
+
+# --- el diario de pasadas ------------------------------------------------------------
+# Va al lado de `results` y con su criterio (common/historial.py): cada pasada
+# real, buena o mala, deja una línea; un simulacro o una pareja saltada, no.
+from common import historial, store  # noqa: E402
+
+MOVIDO = round(2.384 * 2 ** 20)
+ESTADISTICA = ("2026/09/11 12:45:31 INFO  :     2.384 MiB / 2.384 MiB, 100%, "
+               "1.029 MiB/s, ETA 0s\n")
+
+with sandbox():
+    correr(BI, listings=True,
+           texto_log="2026/09/11 12:45:31 INFO  : Bisync successful\n" + ESTADISTICA)
+    pasadas = historial.leer()
+    c("una pasada buena queda en el diario", [(p.pareja, p.codigo) for p in pasadas],
+      [("bi", 0)])
+    c("con cuándo empezó", store.desde_sello(pasadas[0].inicio) is not None, True)
+    c("y lo que duró", pasadas[0].segundos is not None and pasadas[0].segundos >= 0, True)
+    c("lo que movió sale del log antes de que se tire", pasadas[0].transferido, MOVIDO)
+    c("(que se tira igual: la pasada fue bien)", list(model.LOG_DIR.glob("*.log")), [])
+
+with sandbox():
+    correr(BI, listings=True)
+    c("sin estadísticas en el log, lo movido no consta",
+      historial.leer()[0].transferido, None)
+
+with sandbox():
+    correr(BI, listings=True, rc_seq=(1,), texto_log=ESTADISTICA)
+    p = historial.leer()[0]
+    c("una pasada fallida también, con su código", (p.codigo, p.transferido), (1, MOVIDO))
+    c("y su log se sigue guardando", len(list(model.LOG_DIR.glob("*.log"))), 1)
+
+with sandbox():
+    correr(BI, listings=True, dry_run=True)
+    c("un dry-run no se apunta en el diario", historial.ruta().exists(), False)
+
+with sandbox():
+    correr(BI, listings=True, rc_seq=(1,))
+    for f in model.STATE_DIR.glob("bi/*.lst"):
+        f.unlink()
+    rc, _, _ = correr(BI)
+    c("una pareja saltada no se apunta: no es un resultado",
+      (rc, [p.codigo for p in historial.leer()]), (sync.SKIPPED, [1]))
+
+with sandbox():
+    correr(BI, listings=True, make_local=False)
+    c("abortar por la carpeta local ausente queda en el diario",
+      [(p.codigo, p.transferido) for p in historial.leer()], [(2, None)])
+
+with sandbox():
+    # El diario no puede tumbar una pasada: si no se deja escribir, se pierde
+    # su línea y nada más.
+    real = historial.ruta
+    historial.ruta = lambda: model.DEVICE_ROOT / "no-existe" / "historial.jsonl"
+    try:
+        rc, salida, _ = correr(BI, listings=True)
+    finally:
+        historial.ruta = real
+    c("si el diario no se puede escribir, la pasada acaba igual", rc, 0)
+    c("sin traceback", "Traceback" in salida, False)
+    c("y el resultado sí queda apuntado", [f.pareja for f in results.fallos(CFG_BI)], [])
+
+with sandbox():
+    # Quien apunta sin reloj —una pareja cortada antes de llegar a rclone— consta
+    # igual, con la hora de ahora y sin duración.
+    sync.record_result(sync.RunContext(binary="RCLONE", env={}), CFG_BI.pairs[0], 1, None)
+    c("record_result sin reloj también deja su línea",
+      [(p.pareja, p.codigo, p.segundos) for p in historial.leer()], [("bi", 1, None)])
 
 
 # --- la consola de rclone acaba dentro del log ------------------------------------

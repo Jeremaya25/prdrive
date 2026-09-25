@@ -31,7 +31,10 @@ import zlib
 from _harness import Checks, pe, tmpdir
 
 from common import components, pins
-from install import InstallError, veracrypt_bin
+from install import InstallError, descarga, veracrypt_bin
+
+# Los reintentos de red esperan entre intento e intento: aquí, nada.
+descarga.esperar = lambda segundos: None
 
 c = Checks("VeraCrypt Portable: abrirlo sin ejecutarlo (install/veracrypt_bin.py)")
 
@@ -236,7 +239,42 @@ try:
         de_red = "InstallError sin más: " + str(e)
     c.contains("sin red es SinRed, distinto de un paquete que no cuadra", de_red,
                "No he podido descargar")
+    c.contains("tras reintentarlo", de_red, f"probado {descarga.INTENTOS} veces")
     c.contains("y dice la URL exacta", de_red, pins.VERACRYPT_URL)
+    c.contains("el SHA-256 fijado", de_red, pins.VERACRYPT_SHA256)
+    c.contains("y dónde dejarlo a mano", de_red, str(veracrypt_bin.paquete_a_mano().parent))
+
+    # Un corte de un momento se reintenta; un paquete que no cuadra, no.
+    intentos = []
+
+    def corte_y_luego_bien(url, timeout=0):
+        intentos.append(url)
+        if len(intentos) == 1:
+            raise TimeoutError("la red se queda muda")
+        return bueno
+
+    veracrypt_bin.fetch = corte_y_luego_bien
+    pins.VERACRYPT_SHA256 = hashlib.sha256(bueno).hexdigest()
+    c("un corte de red se reintenta y sale bien",
+      (veracrypt_bin.ensure_veracrypt(), len(intentos)), (cache, 2))
+    (cache / components.VERACRYPT_STAMP).unlink()
+    intentos.clear()
+    veracrypt_bin.fetch = lambda url, timeout=0: intentos.append(url) or malo
+    c("un paquete que no cuadra no se reintenta",
+      (fallo_de(veracrypt_bin.download_veracrypt) is not None, len(intentos)), (True, 1))
+
+    # Dejarlo a mano: el paquete bajado con el navegador, con su nombre, en la
+    # caché. Se comprueba igual que una descarga, sin red.
+    veracrypt_bin.fetch = sin_red
+    veracrypt_bin.paquete_a_mano().write_bytes(bueno)
+    pins.VERACRYPT_SHA256 = hashlib.sha256(bueno).hexdigest()
+    c("el paquete dejado a mano se adopta, sin red",
+      (veracrypt_bin.ensure_veracrypt(), veracrypt_bin.cached()), (cache, cache))
+    (cache / components.VERACRYPT_STAMP).unlink()
+    veracrypt_bin.paquete_a_mano().write_bytes(malo)
+    c("y uno a mano que no es el fijado se dice, no se usa",
+      (fallo_de(veracrypt_bin.ensure_veracrypt) or "").count("no es el paquete"), 1)
+    veracrypt_bin.paquete_a_mano().unlink()
     try:
         veracrypt_bin.ensure_veracrypt(allow_download=False)
         de_red = "no ha protestado"

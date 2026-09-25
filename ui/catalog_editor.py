@@ -154,6 +154,7 @@ def plan_catalog_defaults(cat: catalog.Catalog | None, edited: Mapping[str, Any]
     if not difiere:
         raise ConfigError("Los [defaults] se quedan exactamente igual: no hay nada "
                           "que subir.")
+    catalog.validar_ruta_editada(cat.defaults, nuevo_raw["defaults"])
 
     plan = _plan(cat, nuevo_raw, raw_local)
     plan.consequences.insert(0, "Cambia en los [defaults] del catálogo: "

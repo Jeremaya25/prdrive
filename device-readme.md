@@ -110,6 +110,11 @@ la encuentre entra en tus datos hasta que revoques esa clave.
   equipo sin VeraCrypt instalado, con el que viaja en la carpeta `VeraCrypt\`;
   entonces hará falta aceptar el aviso de permisos de administrador: montar carga
   un driver y no hay otra forma.
+  En Linux es `sh abrir-prdrive.sh`, en una terminal, y no hace falta
+  VeraCrypt: vale también udisks2 o cryptsetup, que vienen en casi todas las
+  distribuciones. Para que udisks2 lo abra sin pedir permisos de administrador,
+  una vez en cada equipo:
+  `sudo touch /etc/udisks2/tcrypt.conf && sudo systemctl restart udisks2`.
   ¿Se te queda pequeño el contenedor? `VeraCrypt\VeraCryptExpander-x64.exe`
   (`-arm64` en un Windows ARM) lo agranda sin rehacerlo.
 - No borres `.prdrive/`. Si desaparece, el arranque automático deja

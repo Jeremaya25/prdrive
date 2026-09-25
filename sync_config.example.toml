@@ -38,7 +38,7 @@ shell_type = "none"
 
 [defaults]
 remote = "nas"                # tiene que coincidir con [remote].name
-catalog_path = "/prdrive-catalog/pairs.toml"
+catalog_path = "/prdrive-catalog/pairs.toml"   # el fichero, no su carpeta
 
 # Filtros que se suman a los de cada pareja.
 exclude = [

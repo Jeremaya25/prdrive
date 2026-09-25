@@ -11,9 +11,13 @@ explicaba estaba dentro del contenedor. Lo que se comprueba:
     `/dismount` y no `/unmount`, sin `/silent` al cerrar), y siguen las reglas de
     `runsync.bat`: CRLF, sin bloques entre paréntesis, `chcp 65001` antes de
     cualquier acento. No se pueden ejecutar aquí: se lee su texto.
-  * Los `.sh` sí se ejecutan, con un `veracrypt` de mentira que «monta» creando
-    una carpeta: abrir, reconocer lo ya abierto, no confundirse de dispositivo y
-    cerrar. Nada toca una unidad de verdad.
+  * Los `.sh` sí se ejecutan (con sh, y con dash y bash si están), contra un
+    `veracrypt`, un `udisksctl` y un `cryptsetup` de mentira que «montan» en un
+    sistema de juguete: el orden de las vías (VeraCrypt > udisks2 con
+    tcrypt.conf > cryptsetup > el mensaje), reconocer lo ya abierto, no
+    confundirse de dispositivo, cerrar con lo mismo que abrió deduciéndolo del
+    estado, y que la contraseña no aparezca nunca en una línea de órdenes. Nada
+    toca una unidad de verdad, ni un sudo de verdad.
   * La marca une las dos mitades: el mismo id que el fichero de control.
   * Los nombres nuevos están en `device.RUIDO`, o un dispositivo recién hecho se
     leería como ajeno la vez siguiente.
@@ -378,9 +382,17 @@ c("sin destino todavía, tampoco",
 
 # --- 6. los .sh, ejecutados ------------------------------------------------------
 #
-# Un `veracrypt` de mentira que apunta con qué se le llama y, al «montar», crea
-# `<prefijo>1/` con el fichero de control y un runsync.sh que también apunta. El
-# prefijo es el de `VERACRYPT_MOUNT_PREFIX`, que el propio VeraCrypt respeta.
+# Contra un equipo de mentira: `veracrypt`, `udisksctl`, `cryptsetup`, `losetup`,
+# `mount`, `umount`, `sudo` y `pkexec` falsos que apuntan con qué se les llama y
+# cambian un /sys, un /proc/mounts y un /run/media de juguete bajo
+# PRDRIVE_SISTEMA, como cambiaría el de verdad. El PATH lleva solo esos falsos y
+# unas pocas herramientas de verdad, para que nada del equipo real se cuele (ni un
+# sudo ni un cryptsetup de verdad). La raíz del sistema lleva un espacio: el
+# montaje de udisks2 también, y /proc/mounts lo escapa como \040.
+#
+# «La contraseña» es una línea que se escribe en la terminal (un pty) antes de
+# lanzar el script: los falsos la leen de ahí, como udisksctl y cryptsetup, y el
+# test comprueba que no aparece en ningún argumento de ninguna orden.
 sh = shutil.which("sh")
 if IS_WIN or not sh:
     print("  (saltado) sin sh: los .sh solo se leen")
@@ -388,69 +400,400 @@ if IS_WIN or not sh:
         c(f"{nombre} empieza por su intérprete",
           (fisica / nombre).read_text(encoding="utf-8").startswith("#!/bin/sh"), True)
 else:
-    for nombre in (v.ABRIR_SH, v.EXPULSAR_SH):
-        res = subprocess.run([sh, "-n", str(fisica / nombre)], capture_output=True)
-        c(f"{nombre}: sh lo da por bueno", (res.returncode, res.stderr), (0, b""))
+    import pty
+    import re
 
+    # sh, y además dash y bash en modo POSIX si están y no son el mismo sh.
+    real = Path(os.path.realpath(sh)).name
+    conchas = [("sh" if real == "sh" else f"sh={real}", [sh])]
+    vistos = {os.path.realpath(sh)}
+    for nombre, args in (("dash", []), ("bash", ["--posix"])):
+        ruta = shutil.which(nombre)
+        if ruta and os.path.realpath(ruta) not in vistos:
+            vistos.add(os.path.realpath(ruta))
+            conchas.append((nombre, [ruta, *args]))
+
+    for concha, orden in conchas:
+        for nombre in (v.ABRIR_SH, v.EXPULSAR_SH):
+            res = subprocess.run([*orden, "-n", str(fisica / nombre)], capture_output=True)
+            c(f"{nombre}: {concha} lo da por bueno", (res.returncode, res.stderr), (0, b""))
+
+    for nombre, texto in (("abrir", vestibulo.sh_abrir(ID)), ("expulsar", vestibulo.sh_expulsar())):
+        c(f"{nombre}.sh: nada se le pasa por tubería a cryptsetup ni a udisksctl",
+          re.search(r"\|\s*(sudo\s+|pkexec\s+)?(cryptsetup|udisksctl)", texto), None)
+        c(f"{nombre}.sh: ni un fichero de clave",
+          any(x in texto for x in ("--key-file", "--keyfile", "key-file")), False)
+
+    CLAVE = "clave-de-mentira-7Q"
+    HC = str(fisica / CONTAINER_NAME)
+    MAPEO = vestibulo.mapeo(ID)
     trabajo = tmpdir("prdrive-sh-")
     registro = trabajo / "registro.txt"
     prefijo = trabajo / "vc"
-    binarios = trabajo / "bin"
-    binarios.mkdir()
-    falso = binarios / "veracrypt"
-    falso.write_text(
-        "#!/bin/sh\n"
-        f'echo "veracrypt $*" >> "{registro}"\n'
-        'if [ "$1" = "-d" ] || [ "$2" = "-d" ]; then exit 0; fi\n'
-        f'm="{prefijo}1"\n'
-        'mkdir -p "$m/.prdrive"\n'
-        # CRLF a propósito: un dispositivo aprovisionado en Windows lo escribe así.
-        'printf "# control\\r\\nid=%s\\r\\n" "$FALSO_ID" > "$m/.prdrive/PRDRIVE"\n'
-        f'printf \'#!/bin/sh\\necho "runsync $*" >> "{registro}"\\n\' > "$m/runsync.sh"\n',
-        encoding="utf-8")
-    falso.chmod(0o755)
+    sistema = tmpdir("prdrive sistema-")
+    PUNTO_CS = f"{sistema}{vestibulo.PUNTO_CRYPTSETUP}/{MAPEO}"
+    MONTAJE_UDISKS = sistema / "run" / "media" / "prueba" / "MI PRDRIVE"
 
-    def lanzar(script, falso_id=ID, display=True, *args):
-        entorno = {"PATH": f"{binarios}:/usr/bin:/bin", "FALSO_ID": falso_id,
-                   "VERACRYPT_MOUNT_PREFIX": str(prefijo), "HOME": str(trabajo)}
-        if display:
-            entorno["DISPLAY"] = ":99"
-        return subprocess.run([sh, str(fisica / script), *args], env=entorno,
-                              capture_output=True, text=True, timeout=30)
+    # Las herramientas de verdad que hacen falta, y nada más.
+    herramientas = trabajo / "herramientas"
+    herramientas.mkdir()
+    for nombre in ("sh", "dash", "bash", "sed", "cat", "grep", "mkdir", "rm", "rmdir",
+                   "mv", "dirname", "id"):
+        ruta = shutil.which(nombre)
+        if ruta:
+            (herramientas / nombre).symlink_to(ruta)
+
+    # Los falsos, cada uno en su carpeta: así cada caso elige qué hay en el equipo.
+    falsos = trabajo / "falsos"
+    lib = falsos / "lib.sh"
+    falsos.mkdir()
+    lib.write_text(r'''S="$PRDRIVE_SISTEMA"
+anotar() { [ -n "$FALSO_COMO" ] || echo "$*" >> "$REGISTRO"; }
+leer_clave() {
+    clave=""
+    if [ -t 0 ]; then
+        read -r clave
+        echo "$1 leyó la contraseña de la terminal" >> "$REGISTRO"
+    fi
+    [ "$clave" = "$FALSO_CLAVE" ]
+}
+montar() {
+    mkdir -p "$2/.prdrive"
+    printf '# control\r\nid=%s\r\n' "$FALSO_ID" > "$2/.prdrive/PRDRIVE"
+    printf '#!/bin/sh\necho "runsync $*" >> "%s"\n' "$REGISTRO" > "$2/runsync.sh"
+    printf '%s %s exfat rw 0 0\n' "$1" "$(printf '%s' "$2" | sed 's/ /\\040/g')" >> "$S/proc/mounts"
+}
+desmontar() {
+    quitado=""
+    : > "$S/proc/mounts.nuevo"
+    while read -r d p r; do
+        p2="$(printf '%b' "$p")"
+        if [ "$d" = "$1" ] || [ "$p2" = "$1" ]; then
+            quitado="$p2"
+        else
+            printf '%s %s %s\n' "$d" "$p" "$r" >> "$S/proc/mounts.nuevo"
+        fi
+    done < "$S/proc/mounts"
+    mv "$S/proc/mounts.nuevo" "$S/proc/mounts"
+    [ -n "$quitado" ] || return 1
+    rm -rf "$quitado/.prdrive" "$quitado/runsync.sh"
+    echo "$quitado"
+}
+poner_loop() { echo "/dev/$1" > "$S/estado/loop"; mkdir -p "$S/sys/block/$1/holders"; }
+poner_dm() {
+    mkdir -p "$S/sys/block/$2/dm"
+    : > "$S/sys/block/$1/holders/$2"
+    echo "$3" > "$S/sys/block/$2/dm/name"
+}
+quitar_dm() { rm -rf "$S/sys/block/$2" "$S/sys/block/$1/holders/$2"; }
+quitar_loop() { rm -rf "$S/sys/block/$1" "$S/estado/loop"; }
+''', encoding="utf-8")
+
+    def falso(nombre, cuerpo, carpeta=None):
+        d = falsos / (carpeta or nombre)
+        d.mkdir(exist_ok=True)
+        f = d / nombre
+        f.write_text(f'#!/bin/sh\n. "{lib}"\n' + cuerpo, encoding="utf-8")
+        f.chmod(0o755)
+
+    # VeraCrypt «monta» creando `<prefijo>1/` con el fichero de control, con CRLF
+    # como lo escribe un dispositivo aprovisionado en Windows.
+    falso("veracrypt", f'''echo "veracrypt $*" >> "$REGISTRO"
+if [ "$1" = "-d" ] || [ "$2" = "-d" ]; then exit 0; fi
+m="{prefijo}1"
+mkdir -p "$m/.prdrive"
+printf "# control\\r\\nid=%s\\r\\n" "$FALSO_ID" > "$m/.prdrive/PRDRIVE"
+printf '#!/bin/sh\\necho "runsync $*" >> "%s"\\n' "$REGISTRO" > "$m/runsync.sh"
+''')
+    falso("udisksctl", '''if [ "$1" = info ]; then
+    [ -z "$FALSO_UDISKS_RECONOCE" ] || echo "  org.freedesktop.UDisks2.Encrypted:"
+    exit 0
+fi
+anotar "udisksctl $*"
+case "$1" in
+    loop-setup) poner_loop loop7; echo "Mapped file $3 as /dev/loop7." ;;
+    unlock)
+        if ! leer_clave udisksctl; then
+            echo "Error unlocking /dev/loop7: wrong passphrase" >&2
+            exit 1
+        fi
+        poner_dm loop7 dm-3 tcrypt-1792
+        echo "Unlocked /dev/loop7 as /dev/dm-3." ;;
+    mount) montar /dev/dm-3 "$S/run/media/$USER/MI PRDRIVE" ;;
+    unmount)
+        if [ -n "$FALSO_OCUPADO" ]; then echo "target is busy" >&2; exit 1; fi
+        rmdir "$(desmontar /dev/dm-3)" ;;
+    lock) quitar_dm loop7 dm-3 ;;
+    loop-delete) quitar_loop loop7 ;;
+esac
+''')
+    falso("cryptsetup", '''anotar "cryptsetup $*"
+case "$1" in
+    open)
+        for a; do nombre="$a"; done
+        if ! leer_clave cryptsetup; then
+            echo "No device header detected with this passphrase." >&2
+            exit 2
+        fi
+        poner_loop loop8
+        poner_dm loop8 dm-4 "$nombre" ;;
+    close) quitar_dm loop8 dm-4; quitar_loop loop8 ;;
+esac
+''')
+    falso("pkexec", '''echo "pkexec $*" >> "$REGISTRO"
+FALSO_COMO=pkexec; export FALSO_COMO
+exec "$@"
+''')
+    # Lo que todo equipo tiene. `sleep` no espera: el tiempo no se prueba aquí.
+    falso("losetup", '''[ "$1" = "-j" ] || exit 1
+[ -f "$S/estado/loop" ] || exit 0
+printf '%s: [0042]:17 (%s)\\n' "$(cat "$S/estado/loop")" "$2"
+''', "comunes")
+    falso("sudo", '''echo "sudo $*" >> "$REGISTRO"
+FALSO_COMO=sudo; export FALSO_COMO
+exec "$@"
+''', "comunes")
+    falso("mount", '''anotar "mount $*"
+if [ "$1" = "-o" ]; then
+    case "$2" in *uid=*) if [ -n "$FALSO_SIN_UID" ]; then exit 32; fi ;; esac
+    shift 2
+fi
+montar "$1" "$2"
+''', "comunes")
+    falso("umount", '''anotar "umount $*"
+if [ -n "$FALSO_OCUPADO" ]; then echo "target is busy" >&2; exit 32; fi
+desmontar "$1" >/dev/null
+''', "comunes")
+    falso("sleep", "exit 0\n", "comunes")
+
+    def limpiar(tcrypt=False):
+        """Un equipo recién arrancado: nada abierto, nada montado."""
+        shutil.rmtree(sistema)
+        for sub in ("etc/udisks2", "sys/block", "proc", "estado", "run/media/prueba",
+                    "media/prueba", "mnt"):
+            (sistema / sub).mkdir(parents=True)
+        (sistema / "proc" / "mounts").write_text("", encoding="utf-8")
+        if tcrypt:
+            (sistema / "etc" / "udisks2" / "tcrypt.conf").write_text("", encoding="utf-8")
+        shutil.rmtree(f"{prefijo}1", ignore_errors=True)
+        registro.unlink(missing_ok=True)
+
+    def estado():
+        """(loop, montajes) del equipo de mentira."""
+        loop = sistema / "estado" / "loop"
+        return (loop.read_text(encoding="utf-8").strip() if loop.exists() else None,
+                (sistema / "proc" / "mounts").read_text(encoding="utf-8").splitlines())
+
+    todo: list[str] = []            # todo lo que se ha llamado, para la contraseña
 
     def leer():
         texto = registro.read_text(encoding="utf-8") if registro.exists() else ""
         registro.unlink(missing_ok=True)
+        todo.extend(texto.splitlines())
         return texto.splitlines()
 
-    res = lanzar(v.ABRIR_SH)
-    c("abrir: sale bien", (res.returncode, res.stderr), (0, ""))
-    c("abrir: le pide a VeraCrypt ESTE contenedor, en su ventana, y lanza prdrive",
-      leer(), [f"veracrypt {fisica / CONTAINER_NAME}", "runsync "])
+    def lanzar(script, con=("veracrypt",), terminal=True, display=True,
+               falso_id=ID, clave=CLAVE, concha=(sh,), **extra):
+        entorno = {"PATH": ":".join([*(str(falsos / n) for n in con),
+                                     str(falsos / "comunes"), str(herramientas)]),
+                   "HOME": str(trabajo), "USER": "prueba", "REGISTRO": str(registro),
+                   vestibulo.VAR_SISTEMA: str(sistema), "FALSO_ID": falso_id,
+                   "FALSO_CLAVE": CLAVE, "VERACRYPT_MOUNT_PREFIX": str(prefijo),
+                   **{k: v_ for k, v_ in extra.items() if v_}}
+        if display:
+            entorno["DISPLAY"] = ":99"
+        maestro = esclavo = None
+        if terminal:
+            maestro, esclavo = pty.openpty()
+            os.write(maestro, (clave + "\n").encode())
+        try:
+            return subprocess.run([*concha, str(fisica / script)], env=entorno,
+                                  stdin=esclavo if terminal else subprocess.DEVNULL,
+                                  capture_output=True, text=True, timeout=30)
+        finally:
+            for fd in (maestro, esclavo):
+                if fd is not None:
+                    os.close(fd)
 
-    res = lanzar(v.ABRIR_SH)
-    c("ya abierto: no se vuelve a montar, solo se lanza prdrive",
-      leer(), ["runsync "])
+    uid_gid = f"uid={os.getuid()},gid={os.getgid()}"
+    TODAS = ("udisksctl", "cryptsetup", "pkexec")
 
-    shutil.rmtree(f"{prefijo}1")
-    res = lanzar(v.ABRIR_SH, ID, False)
-    c("sin escritorio, VeraCrypt por la terminal",
-      leer(), [f"veracrypt --text {fisica / CONTAINER_NAME}", "runsync "])
+    for concha, orden in conchas:
+        def correr(script, **kw):
+            return lanzar(script, concha=orden, **kw)
 
-    shutil.rmtree(f"{prefijo}1")
-    res = lanzar(v.ABRIR_SH, "otro-dispositivo")
-    c("montado otro dispositivo: no lo confunde con este", res.returncode, 1)
-    c.contains("y lo dice", res.stderr, "no se ha abierto")
-    leer()
+        def caso(titulo):
+            return f"[{concha}] {titulo}"
 
-    sin_vc = subprocess.run([sh, str(fisica / v.ABRIR_SH)],
-                            env={"PATH": "/nonexistent", "HOME": str(trabajo)},
-                            capture_output=True, text=True, timeout=30)
-    c("sin VeraCrypt instalado lo dice, en vez de fallar sin más",
-      (sin_vc.returncode, "no encuentro VeraCrypt" in sin_vc.stderr), (1, True))
+        # -- VeraCrypt instalado: como hasta ahora ------------------------------
+        limpiar()
+        res = correr(v.ABRIR_SH)
+        c(caso("abrir: sale bien"), (res.returncode, res.stderr), (0, ""))
+        c(caso("abrir: le pide a VeraCrypt ESTE contenedor, en su ventana, y lanza prdrive"),
+          leer(), [f"veracrypt {HC}", "runsync "])
+        correr(v.ABRIR_SH)
+        c(caso("ya abierto: no se vuelve a montar, solo se lanza prdrive"), leer(), ["runsync "])
 
-    res = lanzar(v.EXPULSAR_SH)
-    c("expulsar: -d de ESTE contenedor", leer(),
-      [f"veracrypt -d {fisica / CONTAINER_NAME}"])
+        limpiar()
+        correr(v.ABRIR_SH, display=False)
+        c(caso("sin escritorio, VeraCrypt por la terminal"),
+          leer(), [f"veracrypt --text {HC}", "runsync "])
+
+        limpiar()
+        res = correr(v.ABRIR_SH, falso_id="otro-dispositivo")
+        c(caso("montado otro dispositivo: no lo confunde con este"), res.returncode, 1)
+        c.contains(caso("y lo dice"), res.stderr, "no se ha abierto")
+        leer()
+
+        limpiar(tcrypt=True)
+        correr(v.ABRIR_SH, con=("veracrypt", *TODAS), FALSO_UDISKS_RECONOCE="1")
+        c(caso("con VeraCrypt y además udisks2 y cryptsetup, VeraCrypt (U10)"),
+          (leer(), estado()), ([f"veracrypt {HC}", "runsync "], (None, [])))
+
+        # -- udisks2 -------------------------------------------------------------
+        limpiar(tcrypt=True)
+        res = correr(v.ABRIR_SH, con=TODAS, FALSO_UDISKS_RECONOCE="1")
+        c(caso("udisks2: sale bien"), (res.returncode, res.stderr), (0, ""))
+        c(caso("udisks2: loop, la contraseña la lee udisksctl de la terminal, monta y lanza"),
+          leer(), [f"udisksctl loop-setup -f {HC}", "udisksctl unlock -b /dev/loop7",
+                   "udisksctl leyó la contraseña de la terminal",
+                   "udisksctl mount -b /dev/dm-3", "runsync "])
+        correr(v.ABRIR_SH, con=TODAS, FALSO_UDISKS_RECONOCE="1")
+        c(caso("udisks2 ya abierto: lo encuentra en /run/media/$USER, solo se lanza prdrive"),
+          leer(), ["runsync "])
+
+        res = correr(v.EXPULSAR_SH, con=TODAS, FALSO_OCUPADO="1")
+        c(caso("expulsar udisks2 con algo abierto dentro: no sigue, y lo dice"),
+          (res.returncode, leer(), estado()[0]),
+          (1, ["udisksctl unmount -b /dev/dm-3"], "/dev/loop7"))
+        c.contains(caso("«no quites la unidad»"), res.stderr, "No quites la unidad")
+
+        res = correr(v.EXPULSAR_SH, con=TODAS, terminal=False)
+        c(caso("expulsar udisks2: desmonta, cierra y suelta el loop, sin terminal ni sudo"),
+          (res.returncode, leer()),
+          (0, ["udisksctl unmount -b /dev/dm-3", "udisksctl lock -b /dev/loop7",
+               "udisksctl loop-delete -b /dev/loop7"]))
+        c(caso("y no queda nada"), (estado(), MONTAJE_UDISKS.exists()), ((None, []), False))
+        c.contains(caso("y dice que ya se puede quitar"), res.stdout, "Ya puedes quitar")
+
+        limpiar(tcrypt=True)
+        res = correr(v.ABRIR_SH, con=TODAS, FALSO_UDISKS_RECONOCE="1", clave="otra")
+        c(caso("udisks2 con otra contraseña: suelta el loop y NO prueba cryptsetup"),
+          (res.returncode, leer(), estado()),
+          (1, [f"udisksctl loop-setup -f {HC}", "udisksctl unlock -b /dev/loop7",
+               "udisksctl leyó la contraseña de la terminal",
+               "udisksctl loop-delete -b /dev/loop7"], (None, [])))
+
+        # Con tcrypt.conf pero udisks2 sin reiniciar: el loop no sale cifrado.
+        limpiar(tcrypt=True)
+        res = correr(v.ABRIR_SH, con=TODAS)
+        c(caso("udisks2 no lo reconoce: suelta el loop y pasa a cryptsetup"),
+          leer()[:3], [f"udisksctl loop-setup -f {HC}",
+                       "udisksctl loop-delete -b /dev/loop7", f"sudo mkdir -p {PUNTO_CS}"])
+        c.contains(caso("diciendo que reinicie udisks2"), res.stderr,
+                   "sudo systemctl restart udisks2")
+        correr(v.EXPULSAR_SH, con=TODAS)
+        leer()
+
+        # -- cryptsetup ------------------------------------------------------------
+        limpiar()                                  # sin tcrypt.conf: udisks2 no vale
+        res = correr(v.ABRIR_SH, con=TODAS)
+        c(caso("cryptsetup: sale bien"), (res.returncode, res.stderr), (0, ""))
+        c(caso("cryptsetup: sudo, la contraseña la lee cryptsetup de la terminal, "
+               "monta con el uid de quien lo abre en /mnt/prdrive-<id> y lanza"),
+          leer(), [f"sudo mkdir -p {PUNTO_CS}",
+                   f"sudo cryptsetup open --type tcrypt --veracrypt {HC} {MAPEO}",
+                   "cryptsetup leyó la contraseña de la terminal",
+                   f"sudo mount -o {uid_gid} /dev/mapper/{MAPEO} {PUNTO_CS}", "runsync "])
+        c.contains(caso("y cómo no necesitar sudo la próxima vez"), res.stdout,
+                   vestibulo.ACTIVAR_UDISKS)
+
+        res = correr(v.EXPULSAR_SH, con=("udisksctl", "cryptsetup"), terminal=False)
+        c(caso("expulsar cryptsetup sin terminal ni pkexec: lo dice y no toca nada"),
+          (res.returncode, leer(), estado()[0]), (1, [], "/dev/loop8"))
+        c.contains(caso("y cómo hacerlo"), res.stderr, v.EXPULSAR_SH)
+
+        res = correr(v.EXPULSAR_SH, con=TODAS)
+        registrado = leer()
+        c(caso("expulsar cryptsetup en una terminal: una sola orden con sudo"),
+          (res.returncode, len(registrado), registrado[0].startswith("sudo sh -c "),
+           registrado[0].endswith(f" sh {PUNTO_CS} {MAPEO}")), (0, 1, True, True))
+        c(caso("que desmonta y cierra: no queda nada"), estado(), (None, []))
+
+        limpiar()
+        correr(v.ABRIR_SH, con=TODAS)
+        leer()
+        res = correr(v.EXPULSAR_SH, con=TODAS, terminal=False)
+        registrado = leer()
+        c(caso("sin terminal (el botón «Expulsar»), pkexec: una sola ventana"),
+          (res.returncode, [r.split(" ", 1)[0] for r in registrado], estado()),
+          (0, ["pkexec"], (None, [])))
+
+        limpiar()
+        res = correr(v.ABRIR_SH, con=TODAS, FALSO_SIN_UID="1")
+        c(caso("un contenedor ext4 no admite uid/gid: se monta sin ellos"),
+          (res.returncode, leer()[-2:]),
+          (0, [f"sudo mount /dev/mapper/{MAPEO} {PUNTO_CS}", "runsync "]))
+
+        limpiar()
+        res = correr(v.ABRIR_SH, con=TODAS, clave="otra")
+        c(caso("cryptsetup con otra contraseña: no monta nada"),
+          (res.returncode, leer(), estado()),
+          (1, [f"sudo mkdir -p {PUNTO_CS}",
+               f"sudo cryptsetup open --type tcrypt --veracrypt {HC} {MAPEO}",
+               "cryptsetup leyó la contraseña de la terminal"], (None, [])))
+
+        # -- sin terminal, sin nada ------------------------------------------------
+        limpiar(tcrypt=True)
+        res = correr(v.ABRIR_SH, con=TODAS, terminal=False, FALSO_UDISKS_RECONOCE="1")
+        c(caso("sin VeraCrypt ni terminal: no se abre nada"), (res.returncode, leer()), (1, []))
+        c.contains(caso("y dice con qué vía y dónde"), res.stderr, "udisks2")
+        c.contains(caso("abriendo una terminal"), res.stderr, f"/{v.ABRIR_SH}\"")
+
+        limpiar()
+        res = correr(v.ABRIR_SH, con=())
+        c(caso("sin ninguna vía: no se abre nada"), (res.returncode, leer()), (1, []))
+        for trozo in (vestibulo.URL_VERACRYPT, vestibulo.ACTIVAR_UDISKS, "cryptsetup"):
+            c.contains(caso(f"y explica las tres salidas: {trozo}"), res.stderr, trozo)
+
+        # -- expulsar, deducido del estado ------------------------------------------
+        limpiar()
+        res = correr(v.EXPULSAR_SH, con=("veracrypt",))
+        c(caso("expulsar con VeraCrypt y sin loop: -d de ESTE contenedor, como siempre"),
+          leer(), [f"veracrypt -d {HC}"])
+
+        limpiar()
+        (sistema / "estado" / "loop").write_text("/dev/loop9\n", encoding="utf-8")
+        (sistema / "sys" / "block" / "loop9" / "holders").mkdir(parents=True)
+        (sistema / "sys" / "block" / "loop9" / "holders" / "dm-5").write_text("")
+        (sistema / "sys" / "block" / "dm-5" / "dm").mkdir(parents=True)
+        (sistema / "sys" / "block" / "dm-5" / "dm" / "name").write_text("veracrypt1\n")
+        correr(v.EXPULSAR_SH, con=("veracrypt", *TODAS))
+        c(caso("un dm veracryptN lo abrió VeraCrypt: se cierra con él"),
+          leer(), [f"veracrypt -d {HC}"])
+
+        limpiar()
+        (sistema / "estado" / "loop").write_text("/dev/loop7\n", encoding="utf-8")
+        (sistema / "sys" / "block" / "loop7" / "holders").mkdir(parents=True)
+        res = correr(v.EXPULSAR_SH, con=TODAS)
+        c(caso("un loop sin abrir (se cortó entre loop-setup y unlock): se suelta"),
+          (res.returncode, leer(), estado()),
+          (0, ["udisksctl loop-delete -b /dev/loop7"], (None, [])))
+
+        limpiar()
+        res = correr(v.EXPULSAR_SH, con=TODAS)
+        c(caso("nada abierto y sin VeraCrypt: ya estaba cerrado"),
+          (res.returncode, leer()), (0, []))
+        c.contains(caso("y lo dice"), res.stdout, "ya estaba cerrado")
+
+    c("la contraseña no aparece nunca en los argumentos de nada",
+      [ln for ln in todo if CLAVE in ln], [])
+    c("ni hay ficheros de clave ni contraseñas en la línea de órdenes",
+      [ln for ln in todo if any(x in ln for x in ("--key-file", "--keyfile",
+                                                  "--password", "--passphrase"))], [])
+    c("y udisksctl y cryptsetup la han leído de la terminal, que es donde la piden",
+      {ln for ln in todo if "leyó la contraseña" in ln},
+      {"udisksctl leyó la contraseña de la terminal",
+       "cryptsetup leyó la contraseña de la terminal"})
 
 raise SystemExit(c.report())

@@ -18,14 +18,20 @@ puede llevar rclone para varias plataformas, cada una con su zip.
 
 import hashlib
 import io
+import urllib.error
 import zipfile
 
 from _harness import Checks, tmpdir
 
 from common import pins
-from install import InstallError, rclone_bin
+from install import InstallError, descarga, rclone_bin
 
 c = Checks("instalador: descarga y comprobación de rclone")
+
+# Entre dos intentos no se duerme de verdad: se apunta cuánto se habría esperado.
+esperas: list[float] = []
+esperar_real = descarga.esperar
+descarga.esperar = esperas.append
 
 VERSION = pins.RCLONE_VERSION
 SYS, ARCH = rclone_bin.os_arch()
@@ -53,7 +59,10 @@ SUMS = (f"# generado por rclone\n"
 
 
 def red(respuestas: dict):
-    """Sustituye `fetch` por un diccionario de URL -> bytes. Cuenta lo pedido."""
+    """Sustituye `fetch` por un diccionario de URL -> bytes. Cuenta lo pedido.
+
+    Una lista es una respuesta por petición, en orden (la última se repite): así
+    se prueba una red que falla dos veces y a la tercera contesta."""
     pedidas: list[str] = []
 
     def falso(url, timeout=None):
@@ -61,6 +70,8 @@ def red(respuestas: dict):
         if url not in respuestas:
             raise AssertionError(f"el código ha pedido una URL que no esperaba: {url}")
         valor = respuestas[url]
+        if isinstance(valor, list):
+            valor = valor.pop(0) if len(valor) > 1 else valor[0]
         if isinstance(valor, Exception):
             raise valor
         return valor
@@ -85,6 +96,10 @@ try:
       "current" in rclone_bin.download_url(VERSION), False)
 
     # --- sacar la suma del SHA256SUMS ----------------------------------------
+    # Antes de ir a la red se mira si hay uno puesto a mano en la caché: que sea
+    # una vacía, y no la de quien corre los tests.
+    vacia = tmpdir("prdrive-rclone-vacia-")
+    rclone_bin.cache_dir = lambda plat=None: vacia
     red({URL_SUMS: SUMS.encode()})
     c("se encuentra la línea del zip que toca",
       rclone_bin.published_sha256(VERSION, NOMBRE_ZIP), SUMA)
@@ -318,8 +333,156 @@ try:
     (sin_verificar / EXE).write_bytes(b"puesto a mano, sin sha256 al lado")
     c("estar en la carpeta de la caché sin su .sha256 no basta",
       rclone_bin.pinned_version(sin_verificar / EXE), "")
+
+    # --- #49: un tiempo de espera ya no tumba la instalación ------------------
+    #
+    # Lo que se reportó: con las cuatro plataformas marcadas, UN «The read
+    # operation timed out» leyendo el zip de Linux ARM64 abortaba el paso, sin
+    # segundo intento. Ahora la red tiene tres oportunidades, con esperas
+    # crecientes, antes de darse por perdida.
+    TIMEOUT = TimeoutError("The read operation timed out")
+    reintento = tmpdir("prdrive-rclone-reintento-")
+    rclone_bin.cache_dir = lambda plat=None: reintento
+    esperas.clear()
+    dicho = []
+    pedidas = red({URL_SUMS: sums_arm.encode(),
+                   url_arm: [TIMEOUT, TIMEOUT, zip_arm]})
+    arm = rclone_bin.download_rclone(dicho.append, LINUX_ARM)
+    c("dos tiempos de espera y a la tercera: sale bien",
+      arm.read_bytes(), b"rclone de linux arm")
+    c("pidiendo el zip tres veces", pedidas.count(url_arm), descarga.INTENTOS)
+    c("con las esperas crecientes entre medias", esperas, list(descarga.ESPERAS))
+    c.contains("y se cuenta que se reintenta", " ".join(dicho), "intento 2 de 3")
+
+    # El SHA256SUMS también: es la primera petición, y la más fácil de perder.
+    esperas.clear()
+    (reintento / "rclone").unlink()
+    (reintento / "rclone.sha256").unlink()
+    pedidas = red({URL_SUMS: [urllib.error.URLError(ConnectionResetError(104, "reset")),
+                              sums_arm.encode()],
+                   url_arm: zip_arm})
+    rclone_bin.download_rclone(plat=LINUX_ARM)
+    c("un corte leyendo el SHA256SUMS también se reintenta",
+      pedidas, [URL_SUMS, URL_SUMS, url_arm])
+
+    # Y cuando no hay manera, se rinde, y el mensaje dice lo que hace falta
+    # saber: qué plataforma, qué fichero exacto y en qué carpeta exacta.
+    rendido = tmpdir("prdrive-rclone-rendido-")
+    rclone_bin.cache_dir = lambda plat=None: rendido
+    esperas.clear()
+    pedidas = red({URL_SUMS: sums_arm.encode(), url_arm: [TIMEOUT]})
+    try:
+        rclone_bin.download_rclone(plat=LINUX_ARM)
+        c("si la red no vuelve, se rinde", "siguió", "InstallError")
+        mensaje = ""
+    except InstallError as e:
+        c("si la red no vuelve, se rinde", "InstallError", "InstallError")
+        mensaje = str(e)
+    c("tras INTENTOS peticiones, ni una más", pedidas.count(url_arm), descarga.INTENTOS)
+    c.contains("el mensaje nombra la plataforma", mensaje, "Linux ARM64")
+    c.contains("con el error de verdad", mensaje, "The read operation timed out")
+    c.contains("y cuántas veces se ha probado", mensaje, "probado 3 veces")
+    c.contains("pide el ZIP con su nombre exacto, no «un rclone»", mensaje,
+               f"rclone-{VERSION}-linux-arm64.zip")
+    c.contains("y su SHA256SUMS, con la URL de la versión", mensaje, URL_SUMS)
+    c.contains("en la carpeta exacta", mensaje, str(rendido))
+    c("sin haber dejado nada en la caché", list(rendido.iterdir()), [])
+
+    # Un 404 no va a aparecer por insistir: sale a la primera.
+    esperas.clear()
+    pedidas = red({URL_SUMS: sums_arm.encode(),
+                   url_arm: urllib.error.HTTPError(url_arm, 404, "Not Found", {}, None)})
+    try:
+        rclone_bin.download_rclone(plat=LINUX_ARM)
+    except InstallError:
+        pass
+    c("un 404 no se reintenta", (pedidas.count(url_arm), esperas), (1, []))
+
+    # Y una suma que no cuadra TAMPOCO: el zip llegó entero, así que no es un
+    # corte de red, es otra cosa contestando en su lugar. Repetir hasta que un
+    # intento cuadrara sería la forma de no enterarse.
+    esperas.clear()
+    pedidas = red({URL_SUMS: SUMS.encode(), URL_ZIP: zip_de_mentira(b"otra cosa")})
+    try:
+        rclone_bin.download_rclone()
+    except InstallError as e:
+        c.contains("una suma que no cuadra se dice", str(e), "no es lo que rclone publica")
+    c("y no se reintenta", (pedidas.count(URL_ZIP), esperas), (1, []))
+
+    # --- #49: ponerlo a mano es dejar el zip, y se comprueba ------------------
+    #
+    # El consejo de antes, «copia un rclone a mano en <caché>», no servía para
+    # otra plataforma: un binario suelto no tiene suma con la que comprobarlo y
+    # `cached()` lo ignoraba. Lo que sí se puede comprobar es el zip oficial.
+    a_mano = tmpdir("prdrive-rclone-a-mano-")
+    rclone_bin.cache_dir = lambda plat=None: a_mano
+    zip_puesto = a_mano / f"rclone-{VERSION}-linux-arm64.zip"
+    c("el zip se espera con su nombre exacto, en la caché de su plataforma",
+      rclone_bin.zip_a_mano(LINUX_ARM), zip_puesto)
+    zip_puesto.write_bytes(zip_arm)
+    (a_mano / "SHA256SUMS").write_text(sums_arm, encoding="utf-8")
+    pedidas = red({})                  # sin red: cualquier petición revienta
+    puesto = rclone_bin.rclone_for(LINUX_ARM)
+    c("con el zip y su SHA256SUMS al lado, sale sin red", pedidas, [])
+    c("el binario es el del zip", puesto.read_bytes(), b"rclone de linux arm")
+    c("queda como una caché comprobada, con su suma",
+      rclone_bin.cached(LINUX_ARM), puesto)
+    c("así que el sello puede afirmar la versión",
+      rclone_bin.pinned_version(puesto, LINUX_ARM), VERSION)
+    c("y el zip, que es de quien lo puso, no se toca", zip_puesto.read_bytes(), zip_arm)
+
+    # Sin el SHA256SUMS al lado, el de la red: son unos KB, y el zip no se baja.
+    for nombre in ("rclone", "rclone.sha256", "SHA256SUMS"):
+        (a_mano / nombre).unlink()
+    pedidas = red({URL_SUMS: sums_arm.encode()})
+    c("sin SHA256SUMS al lado, se pide solo ese",
+      (rclone_bin.pinned_rclone(LINUX_ARM).read_bytes(), pedidas),
+      (b"rclone de linux arm", [URL_SUMS]))
+
+    # Aunque no se permita descargar: el zip es un fichero de este equipo.
+    for nombre in ("rclone", "rclone.sha256"):
+        (a_mano / nombre).unlink()
+    (a_mano / "SHA256SUMS").write_text(sums_arm, encoding="utf-8")
+    red({})
+    c("el zip a mano vale aunque no se permita descargar",
+      rclone_bin.rclone_for(LINUX_ARM, allow_download=False).read_bytes(),
+      b"rclone de linux arm")
+
+    # Un zip a mano que no es el publicado se dice, y NO se descarga otro por
+    # detrás: alguien lo ha puesto ahí a propósito.
+    for nombre in ("rclone", "rclone.sha256"):
+        (a_mano / nombre).unlink()
+    zip_puesto.write_bytes(zip_de_mentira(b"cortado a medias", "linux", "arm64", "rclone"))
+    pedidas = red({})
+    try:
+        rclone_bin.rclone_for(LINUX_ARM)
+        c("un zip a mano que no cuadra se rechaza", "siguió", "InstallError")
+    except InstallError as e:
+        c("un zip a mano que no cuadra se rechaza", "InstallError", "InstallError")
+        c.contains("diciendo cuál", str(e), str(zip_puesto))
+        c.contains("y que no se ha usado", str(e), "No lo he usado")
+    c("sin descargar nada en su lugar", pedidas, [])
+    c("ni dejar binario", (a_mano / "rclone").exists(), False)
+
+    # Un SHA256SUMS a mano de OTRA versión no hace pasar nada: no trae la línea.
+    zip_puesto.write_bytes(zip_arm)
+    (a_mano / "SHA256SUMS").write_text(f"{'1' * 64}  rclone-v0.0.1-linux-arm64.zip\n",
+                                       encoding="utf-8")
+    try:
+        rclone_bin.rclone_for(LINUX_ARM)
+        c("un SHA256SUMS de otra versión no vale", "siguió", "InstallError")
+    except InstallError as e:
+        c("un SHA256SUMS de otra versión no vale", "InstallError", "InstallError")
+        c.contains("y se dice cuál se ha leído", str(e), str(a_mano / "SHA256SUMS"))
+
+    # Windows ARM64 comparte la carpeta `arm/` con Linux ARM64: su zip se llama
+    # distinto, y el de Linux no le sirve.
+    c("Windows ARM64 espera SU zip en la misma carpeta",
+      rclone_bin.zip_a_mano(pins.plataforma("windows-arm64")).name,
+      f"rclone-{VERSION}-windows-arm64.zip")
 finally:
     rclone_bin.fetch = fetch_real
     rclone_bin.cache_dir = cache_real
+    descarga.esperar = esperar_real
 
 raise SystemExit(c.report())

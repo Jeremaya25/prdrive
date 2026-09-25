@@ -111,6 +111,11 @@ c("y se avisa del alcance que tienen",
 rechaza("defaults iguales no suben nada",
         lambda: catalog_editor.plan_catalog_defaults(cat, dict(CAT["defaults"])),
         "exactamente igual")
+# El mismo formulario que el del dispositivo, y la misma regla (#48).
+rechaza("una carpeta por ruta del catálogo no sube",
+        lambda: catalog_editor.plan_catalog_defaults(
+            cat, {**CAT["defaults"], "catalog_path": "/prdrive-catalog"}),
+        "no termina en .toml")
 
 # --- vetos de escritura -------------------------------------------------------
 rechaza("sin catálogo no se puede crear nada",

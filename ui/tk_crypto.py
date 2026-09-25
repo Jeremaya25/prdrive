@@ -13,7 +13,8 @@ Reglas de esta pantalla:
   * La passphrase **nunca** sale de aquí más que hacia `install.crypto`. No se
     pinta, no se registra y no se pasa a la ventana de salida (que es lo que
     enseña las órdenes de rclone): las órdenes de VeraCrypt van por
-    `ui.tk.working()`, que solo enseña una barra.
+    `ui.tk.working()`, que solo enseña una barra y, al crear un contenedor
+    fijo, cuánto lleva escrito la unidad.
   * Nada se da por bueno sin comprobarlo. Un contenedor se da por montado cuando
     se puede leer, y de BitLocker se dice «no lo he podido comprobar» tal cual
     cuando no hay permisos, en vez de suponer que todo fue bien.
@@ -342,14 +343,19 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
             if not existe:
                 bytes_ = crypto.size_to_bytes(tam.get(), libre, tope,
                                               viajero=estado.traveler and IS_WIN)
+                # Sin dispersos se escribe el contenedor entero, y eso son
+                # minutos u horas: el avance se mide en la unidad mientras
+                # tanto. Con `/dynamic` son segundos y no hay nada que medir.
+                seguimiento = None if estado.dinamico else crypto.Seguimiento()
                 ok, res = working(
                     wiz.root, "creando el contenedor",
                     lambda: crypto.create_container(
                         estado.veracrypt, contenedor, bytes_, password,
-                        sistema.get(), estado.dinamico),
+                        sistema.get(), estado.dinamico, seguimiento=seguimiento),
                     f"Creando {contenedor} ({bytes_ / 1024**3:.1f} GiB).\n"
                     + ("Es un contenedor dinámico: esto va a ser rápido."
-                       if estado.dinamico else espera.cget("text")))
+                       if estado.dinamico else espera.cget("text")),
+                    progreso=None if seguimiento is None else seguimiento.progreso)
                 if not ok:
                     raise res if isinstance(res, Exception) else InstallError("Falló.")
 

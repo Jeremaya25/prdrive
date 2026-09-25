@@ -28,7 +28,7 @@ import tarfile
 from _harness import Checks, tmpdir
 
 from common import pins
-from install import InstallError, runtime_bin
+from install import InstallError, descarga, runtime_bin
 
 c = Checks("instalador: el runtime de Python del dispositivo")
 
@@ -217,6 +217,8 @@ except InstallError as e:
 
 # --- descargar, comprobar y guardar en la caché -------------------------------------
 def red(respuestas: dict):
+    """URL -> bytes o excepción; una lista es una respuesta por petición, en
+    orden, y la última se repite."""
     pedidas: list[str] = []
 
     def falso(url, timeout=None):
@@ -224,6 +226,8 @@ def red(respuestas: dict):
         if url not in respuestas:
             raise AssertionError(f"el código ha pedido una URL que no esperaba: {url}")
         valor = respuestas[url]
+        if isinstance(valor, list):
+            valor = valor.pop(0) if len(valor) > 1 else valor[0]
         if isinstance(valor, Exception):
             raise valor
         return valor
@@ -239,7 +243,15 @@ SUMS = (f"{'0' * 64}  cpython-{pins.PYTHON_VERSION}+{pins.PYTHON_RELEASE}-"
 URL_WIN = runtime_bin.download_url(WIN)
 
 fetch_real, cache_real = runtime_bin.fetch, runtime_bin.cache_dir
+# Entre dos intentos no se duerme de verdad: se apunta cuánto se habría esperado.
+esperas: list[float] = []
+esperar_real = descarga.esperar
+descarga.esperar = esperas.append
 try:
+    # Antes de ir a la red se mira si hay un SHA256SUMS puesto a mano en la
+    # caché: que sea una vacía, y no la de quien corre los tests.
+    vacia = tmpdir("prdrive-runtime-vacia-")
+    runtime_bin.cache_dir = lambda: vacia
     red({runtime_bin.SUMS_URL: SUMS})
     c("se encuentra la suma del destino que toca",
       runtime_bin.published_sha256(WIN), SUMA_WIN)
@@ -296,8 +308,72 @@ try:
         c.contains("enseñando la suma esperada", str(e), SUMA_WIN)
         c.contains("y diciendo que no ha guardado nada", str(e), "No se ha guardado nada")
     c("la caché se queda como estaba", list(limpio.iterdir()), [])
+    c("y una suma que no cuadra no se reintenta: no es un corte de red",
+      esperas, [])
+
+    # --- #49: un tiempo de espera ya no tumba la instalación ------------------
+    TIMEOUT = TimeoutError("The read operation timed out")
+    reintento = tmpdir("prdrive-runtime-reintento-")
+    runtime_bin.cache_dir = lambda: reintento
+    esperas.clear()
+    pedidas = red({runtime_bin.SUMS_URL: SUMS, URL_WIN: [TIMEOUT, ARCHIVO_WIN]})
+    c("un tiempo de espera y a la segunda: sale bien",
+      runtime_bin.ensure_runtime(WIN).read_bytes(), ARCHIVO_WIN)
+    c("pidiendo el archivo dos veces", pedidas.count(URL_WIN), 2)
+    c("con una espera entre medias", esperas, [descarga.ESPERAS[0]])
+
+    rendido = tmpdir("prdrive-runtime-rendido-")
+    runtime_bin.cache_dir = lambda: rendido
+    pedidas = red({runtime_bin.SUMS_URL: SUMS, URL_WIN: [TIMEOUT]})
+    try:
+        runtime_bin.ensure_runtime(WIN)
+        c("si la red no vuelve, se rinde", "siguió", "InstallError")
+        mensaje = ""
+    except InstallError as e:
+        c("si la red no vuelve, se rinde", "InstallError", "InstallError")
+        mensaje = str(e)
+    c("tras INTENTOS peticiones", pedidas.count(URL_WIN), descarga.INTENTOS)
+    c.contains("el mensaje nombra la plataforma", mensaje, WIN.nombre)
+    c.contains("el archivo con su nombre exacto, con el '+' sin escapar", mensaje,
+               NOMBRE_WIN)
+    c.contains("su SHA256SUMS", mensaje, runtime_bin.SUMS_URL)
+    c.contains("y la carpeta exacta", mensaje, str(rendido))
+    c("sin haber dejado nada en la caché", list(rendido.iterdir()), [])
+
+    # --- #49: ponerlo a mano ------------------------------------------------------
+    #
+    # El archivo va justo donde lo dejaría la descarga, con su nombre, y junto al
+    # SHA256SUMS de la release se comprueba sin red. Antes un archivo sin su
+    # `.sha256` al lado se ignoraba y se descargaba encima.
+    a_mano = tmpdir("prdrive-runtime-a-mano-")
+    runtime_bin.cache_dir = lambda: a_mano
+    (a_mano / NOMBRE_WIN).write_bytes(ARCHIVO_WIN)
+    (a_mano / "SHA256SUMS").write_bytes(SUMS)
+    pedidas = red({})                  # sin red: cualquier petición revienta
+    archivo = runtime_bin.ensure_runtime(WIN)
+    c("con el archivo y su SHA256SUMS al lado, sale sin red", pedidas, [])
+    c("es el que se dejó", archivo, a_mano / NOMBRE_WIN)
+    c("y desde ahí es caché comprobada, con su suma apuntada",
+      (runtime_bin.cached(WIN), runtime_bin.recorded_sha256(archivo)),
+      (archivo, SUMA_WIN))
+
+    # Uno que no es el publicado se dice, y NO se descarga encima.
+    otro = tmpdir("prdrive-runtime-a-mano-malo-")
+    runtime_bin.cache_dir = lambda: otro
+    (otro / NOMBRE_WIN).write_bytes(b"cortado a medias")
+    (otro / "SHA256SUMS").write_bytes(SUMS)
+    pedidas = red({})
+    try:
+        runtime_bin.ensure_runtime(WIN)
+        c("un archivo a mano que no cuadra se rechaza", "siguió", "InstallError")
+    except InstallError as e:
+        c("un archivo a mano que no cuadra se rechaza", "InstallError", "InstallError")
+        c.contains("y se dice que no se ha usado", str(e), "No lo he usado")
+    c("sin descargar nada encima", pedidas, [])
+    c("ni tocarlo", (otro / NOMBRE_WIN).read_bytes(), b"cortado a medias")
 finally:
     runtime_bin.fetch = fetch_real
     runtime_bin.cache_dir = cache_real
+    descarga.esperar = esperar_real
 
 raise SystemExit(c.report())

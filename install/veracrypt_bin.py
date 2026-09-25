@@ -16,7 +16,10 @@ escrito en `pins.py` por quien movió la versión después de comprobar a mano l
 firma Authenticode y la PGP del paquete (en Python puro no se puede). La
 comprobación de aquí, por tanto, es contra ESE número: ataja una descarga
 truncada, un proxy que devuelve otra cosa o una caché vieja, y además cualquier
-paquete que no sea exactamente el que alguien comprobó.
+paquete que no sea exactamente el que alguien comprobó. Como en los otros dos,
+un corte de red se reintenta (`descarga.con_reintentos()`) y un paquete que no
+cuadra no; y el paquete bajado a mano y dejado en la caché con su nombre se
+comprueba igual que una descarga, sin red (`adoptar()`).
 
 **Por qué no se ejecuta.** El paquete es un autoextraíble: el `.exe` del
 extractor con un bloque añadido detrás. Su formato está en `src/Setup/SelfExtract.c`
@@ -70,7 +73,6 @@ import lzma
 import os
 import struct
 import tempfile
-import urllib.error
 import urllib.request
 import zlib
 from pathlib import Path
@@ -78,7 +80,7 @@ from typing import Callable
 
 from common import components, pins, vestibulo
 
-from . import APP_NAME, InstallError
+from . import APP_NAME, InstallError, descarga
 from .runtime_bin import file_sha256     # el mismo resumen a trozos, una copia
 
 DOWNLOAD_TIMEOUT = 60          # segundos por lectura, no en total
@@ -332,12 +334,29 @@ def fetch(url: str, timeout: float = DOWNLOAD_TIMEOUT) -> bytes:
         return resp.read()
 
 
+def paquete_a_mano() -> Path:
+    """Dónde dejar el paquete bajado con el navegador: en la caché, con su nombre
+    exacto. Se comprueba igual que una descarga (`adoptar()`), sin red."""
+    return cache_dir() / pins.VERACRYPT_PAQUETE
+
+
+def a_mano() -> str:
+    """Cómo ponerlo a mano cuando la descarga no sale, con los datos exactos."""
+    return (f"Sin conexión, instala VeraCrypt en este equipo, o baja a mano el "
+            f"paquete oficial:\n  {pins.VERACRYPT_URL}\ncon el SHA-256\n  "
+            f"{pins.VERACRYPT_SHA256}\ny déjalo, con ese nombre "
+            f"({pins.VERACRYPT_PAQUETE}), en:\n  {cache_dir()}\nAl volver a "
+            f"intentarlo se comprueba igual que una descarga.")
+
+
 def download_veracrypt(progreso: Progreso | None = None) -> Path:
     """Baja el paquete, lo COMPRUEBA entero y deja lo que viaja en la caché.
 
     Todo en memoria hasta el final: el SHA-256 contra `pins.py`, los CRC del
     paquete y de cada fichero, los nombres. Si algo no cuadra, InstallError y la
-    caché queda como estaba. Sin red, `SinRed`."""
+    caché queda como estaba. Un corte de red se reintenta
+    (`descarga.con_reintentos()`); un paquete que no cuadra, no —ver
+    `descarga.py`—. Sin red al final, `SinRed`."""
     def decir(msg: str) -> None:
         if progreso:
             progreso(msg)
@@ -345,17 +364,36 @@ def download_veracrypt(progreso: Progreso | None = None) -> Path:
     url = pins.VERACRYPT_URL
     decir(f"Descargando VeraCrypt Portable {pins.VERACRYPT_VERSION}: {url}")
     try:
-        datos = fetch(url)
-    except (urllib.error.URLError, OSError) as e:
-        raise SinRed(
-            f"No he podido descargar VeraCrypt de {url}: {e}\n\nSin conexión, "
-            f"instala VeraCrypt en este equipo o deja el paquete oficial ya "
-            f"comprobado en {cache_dir()}.") from e
+        datos = descarga.con_reintentos(lambda: fetch(url),
+                                        f"Descargar {pins.VERACRYPT_PAQUETE}",
+                                        progreso)
+    except descarga.FALLOS_DE_RED as e:
+        raise SinRed(f"No he podido descargar VeraCrypt de {url}: "
+                     f"{descarga.describir(e)}\n\n{a_mano()}") from e
+    return _guardar(datos, url, decir)
 
+
+def adoptar(progreso: Progreso | None = None) -> Path | None:
+    """El paquete dejado a mano en la caché, comprobado y abierto como una
+    descarga; None si no hay ninguno. Uno que no cuadra se dice (InstallError)."""
+    ruta = paquete_a_mano()
+    try:
+        if not ruta.is_file():
+            return None
+        datos = ruta.read_bytes()
+    except OSError:
+        return None
+    return _guardar(datos, str(ruta),
+                    (lambda msg: progreso(msg)) if progreso else (lambda msg: None))
+
+
+def _guardar(datos: bytes, origen: str, decir: Progreso) -> Path:
+    """Comprueba el paquete entero y deja en la caché lo que viaja, con su sello
+    el último. Si algo no cuadra, InstallError y no se escribe nada."""
     obtenido = hashlib.sha256(datos).hexdigest()
     if obtenido != pins.VERACRYPT_SHA256:
         raise InstallError(
-            f"Lo descargado de {url} no es el paquete de VeraCrypt fijado.\n\n"
+            f"{origen} no es el paquete de VeraCrypt fijado.\n\n"
             f"  esperado: {pins.VERACRYPT_SHA256}\n  obtenido: {obtenido}\n\n"
             f"No se ha guardado nada. Vuelve a intentarlo.")
     decir(f"SHA-256 correcto: {obtenido}")
@@ -385,13 +423,17 @@ def download_veracrypt(progreso: Progreso | None = None) -> Path:
 
 def ensure_veracrypt(progreso: Progreso | None = None,
                      allow_download: bool = True) -> Path:
-    """La carpeta con el VeraCrypt Portable fijado, comprobado: caché o descarga.
+    """La carpeta con el VeraCrypt Portable fijado, comprobado: la caché, el
+    paquete dejado a mano en ella (`adoptar()`) o la descarga.
 
-    Sin caché y sin permiso para descargar, `SinRed`: para quien llama es lo
-    mismo que no tener conexión."""
+    Sin nada de eso y sin permiso para descargar, `SinRed`: para quien llama es
+    lo mismo que no tener conexión."""
     encontrado = cached()
     if encontrado is not None:
         return encontrado
+    adoptado = adoptar(progreso)
+    if adoptado is not None:
+        return adoptado
     if not allow_download:
         raise SinRed("No hay VeraCrypt Portable en la caché y no se ha permitido "
                      "descargarlo.")

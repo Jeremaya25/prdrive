@@ -109,7 +109,7 @@ cumplirla.
 |---|---|---|
 | 1 | **Dispositivo** | qué unidad. Si ya es un prdrive, atajo para actualizarla |
 | 2 | **Cifrado** | VeraCrypt, BitLocker o ninguno |
-| 3 | **Conexión** | formulario de remoto nuevo, o importar uno de tu `rclone.conf`. Más la ruta del catálogo |
+| 3 | **Conexión** | formulario de remoto nuevo, o importar uno de tu `rclone.conf`. Más la ruta del catálogo: la del fichero (`…/pairs.toml`), no la de su carpeta |
 | 4 | **Comprobaciones** | consigue un rclone (lo busca, y si no lo descarga), conecta y lee el catálogo |
 | 5 | **Instalación** | completa o ligera, y para qué plataformas; copia el programa a `.prdrive/`, rclone y Python de cada plataforma, los lanzadores, el `rclone.conf` y la clave |
 | 6 | **Parejas** | cuáles de las del catálogo usa este dispositivo, y apunta el dispositivo en el registro de la flota |
@@ -150,6 +150,19 @@ Tk 9, y la interfaz está hecha y medida con Tk 8.6.
 **Desmarcar una plataforma que el dispositivo ya lleva pregunta si se borra.** Si
 dices que no, sus binarios se quedan donde están y simplemente no se reinstalan.
 
+**Si una descarga falla.** Cada fichero se intenta tres veces, con esperas
+crecientes, ante un corte o un tiempo de espera. Si ni así llega, **no se ha
+tocado el dispositivo**: todo lo de fuera se consigue antes de copiar nada, y lo
+ya descargado se queda en la caché del equipo (`%LOCALAPPDATA%\prdrive-install\`,
+o el temporal en Linux) y no se vuelve a bajar. El mensaje dice qué plataforma
+falta: puedes reintentar, o desmarcarla y seguir sin ella (se añade luego con
+**Añadir plataformas…**). Y dice cómo ponerla **a mano**: bajar con el navegador
+el zip de rclone (o el archivo de Python) y el `SHA256SUMS` de su versión, y
+dejarlos, sin descomprimir y con sus nombres exactos, en la carpeta que indica.
+Al reintentar se comprueban igual que una descarga, sin red. Un binario de
+rclone suelto no vale para otra plataforma: rclone publica las sumas de sus
+zips, no de lo que llevan dentro, así que no habría con qué comprobarlo.
+
 Si enchufas el dispositivo en una plataforma para la que no se preparó, el
 lanzador (o `sync.py`, si falta rclone) lo dice y dice la cura: volver a pasar el
 instalador y pulsar **Añadir plataformas…**.
@@ -188,7 +201,8 @@ paquete y de cada fichero, como hace el propio VeraCrypt—. Si lo tienes
 descomprimido en una carpeta, también vale indicarla. Con el portable, cada paso
 (crear, montar, desmontar) pide permiso de administrador: sin su driver
 instalado, VeraCrypt se relanza elevado. Si hay uno instalado, se usa ese. En
-Linux sí tiene que estar instalado.
+Linux, para crear el contenedor, sí tiene que estar instalado (abrirlo luego no
+lo necesita: ver [En Linux, sin VeraCrypt](#en-linux-sin-veracrypt)).
 
 **Por qué tarda, y cómo no tardar.** Crear el contenedor no es cifrar: es
 *escribirlo entero*. VeraCrypt reserva el fichero y luego lo recorre escribiendo
@@ -206,10 +220,16 @@ se puede. A cambio pierdes la negación plausible (se ve cuánto ocupa de verdad
 si llenas la unidad, el volumen de dentro empieza a dar errores de escritura.
 
 Cuando no hay dispersos, el asistente **mide** la velocidad de tu unidad y te
-dice cuánto va a tardar antes de empezar, en vez de dejarte mirando una barra. Y
-propone un tamaño de trabajo en lugar de casi el disco entero: si luego se te
-queda corto, el **VeraCrypt Expander** que viaja en el propio dispositivo lo
-agranda.
+dice cuánto va a tardar **como poco** antes de empezar. Es un mínimo porque lo
+que se mide en unos segundos es la velocidad de arranque: muchas memorias USB
+escriben rápido solo hasta que se llena su caché, y después bajan a la mitad o
+menos. Mientras se crea, la barra enseña el **avance real** —lo que la propia
+unidad dice que lleva escrito— y cuánto queda según la velocidad del último
+minuto: si la memoria se frena, el tiempo sube con ella. Si el sistema no deja
+leer esa cuenta, o deja de moverse, la barra vuelve a ir y venir sin cifra: mejor
+sin número que con uno inventado. Y propone un tamaño de trabajo en lugar de casi
+el disco entero: si luego se te queda corto, el **VeraCrypt Expander** que viaja
+en el propio dispositivo lo agranda.
 
 **En FAT32, 4095M como mucho.** Muchos pendrives de 32 GB o menos vienen en
 FAT32 de fábrica, y en FAT32 un fichero no puede llegar a 4 GiB: el contenedor es
@@ -258,7 +278,8 @@ una versión anterior, que lleva esa copia: su VeraCrypt no se pone al día solo
 —su entrada de fuera solo sabe abrir esa disposición—, y la ventana lo dice;
 **Añadir plataformas…** cambia a la vez el VeraCrypt y la entrada.
 
-En Linux y macOS no hay traveler disk: allí VeraCrypt necesita instalarse.
+En Linux y macOS no hay traveler disk. En Linux tampoco hace falta VeraCrypt: ver
+[En Linux, sin VeraCrypt](#en-linux-sin-veracrypt).
 
 **Abrirlo y cerrarlo, en cualquier equipo.** Con VeraCrypt todo prdrive está
 dentro del contenedor, así que el instalador deja fuera, en la raíz de la unidad,
@@ -268,13 +289,56 @@ lo justo para llegar a él:
 |---|---|
 | `Abrir PRDRIVE` | abre el contenedor y la ventana de prdrive. La contraseña la pide VeraCrypt en su propia ventana: no pasa por prdrive |
 | `Expulsar PRDRIVE` | cierra el contenedor para poder quitar la unidad. Si queda algo abierto, VeraCrypt pregunta si forzar |
-| `abrir-prdrive.sh`, `expulsar-prdrive.sh` | lo mismo en Linux (con VeraCrypt instalado) |
+| `abrir-prdrive.sh`, `expulsar-prdrive.sh` | lo mismo en Linux, con VeraCrypt, udisks2 o cryptsetup |
 | `LEEME-PRDRIVE.txt` | cómo se hace, en diez líneas, legible sin abrir nada |
 
 Usan el VeraCrypt instalado en el equipo si lo hay, y si no el que viaja en la
 unidad, el de la arquitectura del equipo: con otra versión instalada, el que
 viaja no puede cargar su driver. Un dispositivo VeraCrypt hecho con una versión
 anterior se los pone con **Añadir plataformas…**, sin reinstalar.
+
+#### En Linux, sin VeraCrypt
+
+Un contenedor como los que crea prdrive (AES, SHA-512, PIM 0, sin volumen
+oculto) también lo abren **udisks2** y **cryptsetup**, que vienen en casi todas
+las distribuciones. `sh abrir-prdrive.sh`, en una terminal, usa lo primero que
+haya:
+
+| | | |
+|---|---|---|
+| 1 | **VeraCrypt** instalado | como siempre: su ventana pide la contraseña |
+| 2 | **udisks2**, si reconoce contenedores VeraCrypt | sin ser administrador. Se monta en `/media/$USER/…` o `/run/media/$USER/…` |
+| 3 | **cryptsetup** | con `sudo` cada vez. Se monta en `/mnt/prdrive-<id>` |
+
+udisks2 no reconoce un contenedor VeraCrypt hasta que se lo pides, porque su
+cabecera no se distingue del ruido. Es **una vez por equipo**, como
+administrador:
+
+```bash
+sudo touch /etc/udisks2/tcrypt.conf && sudo systemctl restart udisks2
+```
+
+prdrive no lo hace por su cuenta: es cambiar la configuración del sistema, y eso
+lo decide quien lo administra. Sin eso, el script usa cryptsetup; y sin ninguno
+de los tres, dice estas tres salidas.
+
+- **La contraseña la piden `udisksctl` o `cryptsetup` en la terminal**, y no pasa
+  por prdrive. Por eso sin VeraCrypt hace falta una terminal: un doble clic que
+  no la abre no sirve, y el script lo dice.
+- **`expulsar-prdrive.sh` cierra con lo mismo que abrió**, y no lo apunta en
+  ningún sitio: lo deduce de lo que dice el sistema (el dispositivo *loop* que
+  tiene el contenedor, y quién ha montado encima). Con cryptsetup hace falta ser
+  administrador también para cerrar: en una terminal, `sudo`; desde el botón
+  **Expulsar** de la ventana, el diálogo del escritorio (`pkexec`).
+- **El vigilante no lo abre solo** sin VeraCrypt: no tiene terminal donde pedir
+  la contraseña. Lo apunta en su diario, con la orden que lo abre; y en cuanto lo
+  abres tú, lo ve montado y abre la ventana como siempre.
+- **Sin probar en hardware real todavía**: está hecho contra el código fuente de
+  udisks2 y cryptsetup, y lo que hagan las versiones de cada distribución, lo
+  que hace el escritorio al ver el contenedor, y que lo escrito desde Linux se lea
+  bien en Windows (y al revés) están por comprobar ([#51](https://github.com/Jeremaya25/prdrive/issues/51)).
+- Un dispositivo hecho antes de esto sigue con sus `.sh` viejos (solo VeraCrypt)
+  hasta que le pases **Añadir plataformas…**.
 
 ### La primera vez
 
@@ -457,7 +521,7 @@ edita desde la ventana de parejas o a mano; el mismo esquema sirve para el
 [defaults]
 remote = "nas"                       # el remote de rclone que usan las parejas
 device_remote = "disp"               # el lado local, como remote propio
-catalog_path = "/prdrive-catalog/pairs.toml"
+catalog_path = "/prdrive-catalog/pairs.toml" # el fichero, no su carpeta
 exclude = ["**/.stfolder/**", "**/.stignore"]
 
 [defaults.flags]                     # flags de rclone para todas las parejas
@@ -694,6 +758,7 @@ vive en `state/`, dentro del dispositivo, para que viaje con él:
 | `ui.lock.json` | pid y equipo de la ventana abierta, si la hay |
 | `ui_prefs.json` | las parejas y el intervalo del servicio |
 | `last_run.json` | cómo acabó la última pasada de cada pareja, y qué log la explica |
+| `historial.jsonl` | las últimas 50 pasadas de cada pareja: cuándo, cuánto duró, si fue bien. Se recorta solo |
 | `conflicts.json` | los ficheros en conflicto del último recorrido |
 
 **Un fallo no se queda escondido.** `sync.py` apunta en `last_run.json` el
@@ -705,6 +770,13 @@ lanzar ningún proceso—: un ciclo bueno no enseña nada, y el mismo fallo repe
 cada media hora no vuelve a saltar. Sin pantalla, el aviso se queda en
 `daemon.log`. El servicio sigue sin preguntar nada nunca: una pareja que pide
 `--resync` se salta.
+
+**Desde cuándo falla.** Cada pasada real deja además una línea en
+`historial.jsonl`, y la fila del fallo en «Reparación» —y `sync.py --doctor`—
+lo resume: «Falla desde el 12/09 · 0 de las últimas 14 bien». Es lo que separa
+un tropiezo de una avería. Para gastar lo mínimo del pendrive, cada pasada
+**añade** una línea y el fichero solo se reescribe entero cuando una pareja pasa
+de 100, para dejarla en 50.
 
 **Qué parejas y cada cuánto.** Las casillas de la ventana son las mismas para
 «Sincronizar ahora» y para «Iniciar servicio», y salen marcadas con las del
@@ -751,7 +823,10 @@ estado y su registro viven en el equipo.
   ventana, no pasa por prdrive— y, en cuanto está abierto, sigue como siempre.
   **Una vez por conexión** también: si cancelas la contraseña no vuelve a
   preguntar hasta que quites la unidad y la vuelvas a poner, y tampoco después
-  de «Expulsar». En Linux, solo con escritorio.
+  de «Expulsar». En Linux, solo con escritorio y con VeraCrypt instalado: sin
+  él, udisks2 y cryptsetup piden la contraseña en una terminal, y el vigilante
+  no tiene. Apunta en su diario con qué se abre en ese equipo, y en cuanto lo
+  abres con `abrir-prdrive.sh`, sigue como siempre.
 - **No lanza nada si ya hay ventana o servicio en marcha** en ese equipo: lee
   (sin escribir) los dos registros del dispositivo y lo anota en su diario. El
   disparo se da por gastado igual, para no reintentarlo cada minuto detrás de una
@@ -909,7 +984,12 @@ Léelo entero antes de usar esto con datos que te importen.
   honestidad que arriba: esas sumas viajan desde el mismo servidor y por el mismo
   TLS que lo que describen, así que no protegen de que rclone.org o GitHub estén
   comprometidos. Sí de una descarga a medias, de un proxy que devuelve otra cosa
-  y de una caché que sirve un artefacto viejo.
+  y de una caché que sirve un artefacto viejo. Un fallo de red se reintenta; una
+  suma que no cuadra **no**: el archivo llegó entero, así que no es un corte sino
+  otra cosa contestando en su lugar, y se te dice con las dos sumas. Lo que dejes
+  **a mano** en la caché (el zip o el archivo oficial, con su `SHA256SUMS`) pasa
+  por la misma comprobación, y protege de lo mismo: los dos salen del mismo
+  servidor.
   Lo mismo vale cuando el **dispositivo** pone al día sus componentes desde la
   ventana: es la misma maquinaria, ejecutada desde el zip del código recién
   descargado y verificado. Y una garantía más, porque aquí se sustituye algo que
@@ -957,6 +1037,7 @@ prdrive/
 │   ├── rclone_bin.py  conseguir rclone, comprobado
 │   ├── runtime_bin.py conseguir Python (python-build-standalone), comprobado
 │   ├── veracrypt_bin.py conseguir el VeraCrypt Portable, comprobado, sin ejecutarlo
+│   ├── descarga.py    lo que comparten: reintentar la red, leer un SHA256SUMS
 │   ├── platforms.py   para qué equipos: la lista del paso 5
 │   ├── deploy.py      copiar el código, rclone y Python, el config, el --resync
 │   ├── device.py      qué volúmenes hay y cuál es el bueno
