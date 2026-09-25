@@ -265,6 +265,33 @@ class Visor:
         return self._fijar(min(max(hay_x, pide_x), tope_x),
                            min(max(hay_y, pide_y), tope_y))
 
+    def ver(self, widget) -> None:
+        """Desplaza lo justo para que `widget` quede entero a la vista.
+
+        Para lo que crece con la pantalla ya pintada, cuando ni creciendo cabe: un
+        error de una docena de líneas encima del botón que hay que volver a
+        pulsar dejaba ese botón a medias por debajo del borde, con la barra
+        puesta pero sin que nada invitara a usarla (#49). Se mide por la cadena
+        de `winfo_y` hasta `interior` y no con coordenadas de pantalla, que en
+        una ventana todavía oculta no existen."""
+        self.interior.update_idletasks()
+        arriba, w = 0, widget
+        while w is not None and w is not self.interior:
+            arriba += w.winfo_y()
+            w = w.master
+        if w is None:
+            return                          # no está dentro de este visor
+        abajo = arriba + widget.winfo_reqheight()
+        alto = self._medida()[1]
+        desde = self.lienzo.canvasy(0)
+        if abajo > desde + alto:
+            desde = abajo - alto
+        elif arriba < desde:
+            desde = arriba
+        else:
+            return
+        self.lienzo.yview_moveto(max(0.0, desde) / max(1, self._puesto[1]))
+
     # --- barras --------------------------------------------------------------
 
     def _revisar(self) -> None:
@@ -437,7 +464,48 @@ def separador_fila(parent, fila: int, columnas: int, superficie: str = "Card."):
         row=fila, column=0, columnspan=columnas, sticky="ew")
 
 
-def working(parent, title: str, funcion, mensaje: str = "") -> tuple[bool, object]:
+PASO_BARRA_MS = 12          # lo que tarda en avanzar la barra sin cifra
+
+
+def _medir_avance(progreso) -> tuple[float, str] | None:
+    """Lo que dice `progreso()`, o None si no dice nada que se pueda pintar.
+
+    Se captura `Exception` a propósito: el avance es un adorno, y esto corre en
+    el sondeo de `working()`, que es lo único que cierra la ventanita. Un error
+    aquí que cortara ese sondeo dejaría la ventana abierta para siempre, y no se
+    puede cerrar a mano."""
+    try:
+        medida = progreso()
+        if medida is None:
+            return None
+        fraccion, texto = medida
+        return max(0.0, min(1.0, float(fraccion))), str(texto)
+    except Exception:                                # noqa: BLE001 — ver docstring
+        return None
+
+
+def _pintar_avance(barra, etiqueta, medida: tuple[float, str] | None) -> None:
+    """Con cifra, la barra determinada y el texto debajo; sin ella, la barra
+    que va y viene y el texto vacío: «mejor sin número que con uno falso»."""
+    determinada = str(barra.cget("mode")) == "determinate"
+    if medida is None:
+        if determinada:
+            barra.configure(mode="indeterminate", value=0)
+            barra.start(PASO_BARRA_MS)
+        if str(etiqueta.cget("text")):
+            etiqueta.configure(text="")
+        return
+    fraccion, texto = medida
+    if not determinada:
+        barra.stop()
+        barra.configure(mode="determinate")
+    barra.configure(value=100 * fraccion)
+    if str(etiqueta.cget("text")) != texto:
+        etiqueta.configure(text=texto)
+
+
+def working(parent, title: str, funcion, mensaje: str = "",
+            progreso=None) -> tuple[bool, object]:
     """Ejecuta `funcion()` en un hilo aparte y enseña una ventanita mientras.
 
     Devuelve `(True, resultado)` o `(False, excepción)`.
@@ -447,6 +515,15 @@ def working(parent, title: str, funcion, mensaje: str = "") -> tuple[bool, objec
     otras cuya línea de órdenes NO se puede enseñar porque lleva la contraseña
     dentro. Lanzarlas en el hilo de Tk congelaría la ventana, así que van a un
     hilo y aquí solo se espera.
+
+    `progreso`, si se da, es una función sin argumentos que devuelve
+    `(fracción, texto)` o None, y se pregunta en cada vuelta del sondeo. Mientras
+    diga algo, la barra se llena y el texto va debajo («43 % · quedan unos 25
+    min»); cuando vuelva a None, la barra vuelve a ir y venir. La llama el hilo
+    de Tk, así que no puede tocar el disco ni esperar a nada: tiene que devolver
+    lo último que otro hilo haya medido (`crypto.Seguimiento.progreso`). El
+    hueco de ese texto se reserva desde el principio, para que la ventanita no
+    cambie de alto cuando llega la primera cifra.
 
     No hay botón de cancelar a propósito: lo que se lanza así no se puede cortar
     a medias sin dejar las cosas peor (un contenedor a medio formatear)."""
@@ -462,7 +539,13 @@ def working(parent, title: str, funcion, mensaje: str = "") -> tuple[bool, objec
     barra = ttk.Progressbar(marco, mode="indeterminate",
                             length=theme.medida(380))
     barra.grid(row=1, column=0, pady=(14, 0), sticky="ew")
-    barra.start(12)
+    barra.start(PASO_BARRA_MS)
+    cifra = None
+    if progreso is not None:
+        cifra = ttk.Label(marco, text="", wraplength=theme.medida(380),
+                          justify="left")
+        cifra.grid(row=2, column=0, sticky="w", pady=(theme.medida(8), 0))
+    dlg.barra, dlg.cifra = barra, cifra     # colgadas como `visor`: los tests las miran
 
     resultado: dict = {"ok": False, "valor": None, "hecho": False}
 
@@ -482,7 +565,11 @@ def working(parent, title: str, funcion, mensaje: str = "") -> tuple[bool, objec
             barra.stop()
             dlg.destroy()
             return
+        # La siguiente vuelta se pide ANTES de pintar: si pintar fallara, el
+        # sondeo seguiría y la ventanita se cerraría igual al terminar.
         dlg.after(120, mirar)
+        if cifra is not None:
+            _pintar_avance(barra, cifra, _medir_avance(progreso))
 
     dlg.after(120, mirar)
     mostrar(dlg, parent)
@@ -899,12 +986,17 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         # actualizarlo primero puede mover lo que toca. Ofrecer las dos cosas a
         # la vez sería pedir el mismo trabajo dos veces, y en el orden malo.
         elif vista["componentes"]:
+            # Sin botón si lo único pendiente es el VeraCrypt sin sello de un
+            # dispositivo de antes: eso no lo arregla «Actualizar…» sino
+            # «Añadir plataformas…» del instalador, y el texto ya lo dice.
             caja = bloque_aviso(
                 frame,
-                "El rclone o el Python que lleva el dispositivo no son los que "
-                "fija esta versión:\n" + components.resumen(vista["componentes"]),
+                "Lo que lleva el dispositivo de fuera (rclone, Python, VeraCrypt) "
+                "no es lo que fija esta versión:\n"
+                + components.resumen(vista["componentes"]),
                 ancho=330, icono="down",
-                boton=("Actualizar…", abrir_componentes))
+                boton=(("Actualizar…", abrir_componentes)
+                       if components.actualizables(vista["componentes"]) else None))
             caja.grid(row=fila, column=0, sticky="ew", pady=(14, 0))
             # Sustituir el rclone mientras sincroniza sería cambiárselo bajo los
             # pies; el módulo lo pospondría, pero es mejor no ofrecerlo siquiera.

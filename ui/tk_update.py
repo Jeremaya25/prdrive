@@ -206,8 +206,8 @@ def open_components_dialog(parent, pends) -> bool:
     marco.columnconfigure(0, weight=1)
 
     cabecera(marco, "Los componentes del dispositivo están anticuados",
-             "El rclone y el Python que lleva dentro no son los que fija esta "
-             "versión del programa.", ancho=520,
+             "El rclone, el Python o el VeraCrypt que lleva no son los que fija "
+             "esta versión del programa.", ancho=520,
              estilo="Dialogo.TLabel").grid(row=0, column=0, sticky="w")
 
     # --- qué lleva y qué toca ------------------------------------------------
@@ -217,7 +217,8 @@ def open_components_dialog(parent, pends) -> bool:
     for i, p in enumerate(pends):
         ttk.Label(tarjeta, text=p.titulo, style="Card.Campo.TLabel").grid(
             row=i, column=0, sticky="nw", pady=(0, 6), padx=(0, 12))
-        ttk.Label(tarjeta, text=f"{p.lleva}  →  {p.deberia}",
+        ttk.Label(tarjeta, text=(f"{p.lleva}  →  {p.deberia}" if not p.asistente
+                                 else "con «Añadir plataformas…» del instalador"),
                   style="Card.MonoPista.TLabel",
                   wraplength=theme.medida(340), justify="left").grid(
             row=i, column=1, sticky="w", pady=(0, 6))
@@ -227,9 +228,10 @@ def open_components_dialog(parent, pends) -> bool:
     notas.grid(row=2, column=0, sticky="ew", pady=(14, 0))
     notas.columnconfigure(0, weight=1)
     ttk.Label(notas, text=(
-        "Se descargan de su publicador —rclone.org y python-build-standalone— "
-        "y se comprueban contra el SHA256 que cada uno publica antes de "
-        "escribir nada. No hay firma. Se sustituyen de un renombrado, así que "
+        "Se descargan de su publicador —rclone.org, python-build-standalone e "
+        "IDRIX para VeraCrypt— y se comprueban contra su SHA256 antes de "
+        "escribir nada: el que publica cada uno, y el de VeraCrypt el que fija "
+        "el programa. No hay firma. Se sustituyen de un renombrado, así que "
         "un corte no puede dejar el dispositivo a medias, y lo que esté en uso "
         "se deja para otro momento. Tu configuración, tus claves y tus datos no "
         "se tocan."), style="Gris.Pista.TLabel",
@@ -253,8 +255,8 @@ def open_components_dialog(parent, pends) -> bool:
 
     def actualizar() -> None:
         if not messagebox.askokcancel(TITLE, (
-                "Se van a sustituir el rclone y el Python que lleva este "
-                "dispositivo por los que fija esta versión del programa.\n\n"
+                "Se van a sustituir los componentes que lleva este dispositivo "
+                "por los que fija esta versión del programa.\n\n"
                 "El programa, tu configuración, tus claves y tus datos no se "
                 "tocan. Lo que esté en uso ahora mismo se dejará para otra vez."),
                 parent=dlg):

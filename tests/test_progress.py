@@ -208,6 +208,53 @@ c("y lo siguiente se lee",
   s.alimentar(b"\nINFO  :     2.086 MiB / 3.433 MiB, 61%, 1.086 MiB/s, ETA 1s\n"),
   ESPERADAS[1])
 
+# --- el log ya terminado: lo que movió la pasada, para el diario -------------------
+# `sync.run_pair()` lo lee justo antes de tirar el log de una pasada buena. Lo
+# mismo que el progreso: de más, y nunca un número a medias.
+with sandbox() as root:
+    def log_con(nombre, texto):
+        ruta = root / nombre
+        ruta.write_bytes(texto if isinstance(texto, bytes) else texto.encode("utf-8"))
+        return ruta
+
+    fin = progress.final_del_log(log_con("copia.log", COPIA))
+    c("de un log de verdad sale lo que se movió en la pasada entera",
+      fin.hecho, round(3.433 * MiB))
+    c("también de bisync", progress.final_del_log(log_con("bisync.log", BISYNC)).hecho,
+      round(2.384 * MiB))
+    c("una pasada que no movió nada movió cero, que es un dato",
+      progress.final_del_log(log_con("nada.log", NADA)).hecho, 0)
+    c("un log sin estadísticas no da número",
+      progress.final_del_log(log_con("sin.log", "2026/09/11 12:44:39 INFO  : There was "
+                                                "nothing to transfer\n")), None)
+    c("uno vacío tampoco", progress.final_del_log(log_con("vacio.log", "")), None)
+    c("ni uno que no existe", progress.final_del_log(root / "no-existe.log"), None)
+    (root / "carpeta.log").mkdir()
+    c("ni uno que no se deja leer", progress.final_del_log(root / "carpeta.log"), None)
+
+    # Un log de megas: solo se lee la cola, y la última estadística está ahí.
+    relleno = "2026/09/11 12:45:29 INFO  : sub/fichero.bin: Copied (new)\n"
+    grande = relleno * (3 * progress.COLA // len(relleno)) + BISYNC
+    c("de un log grande se lee la cola y basta",
+      progress.final_del_log(log_con("grande.log", grande)).hecho, round(2.384 * MiB))
+
+    # Lo que no puede pasar: que la cola empiece a mitad de una estadística y
+    # esa sea la única que queda. «2.086 MiB» cortado en «086 MiB» se lee
+    # perfectamente, y es falso.
+    linea = "2026/09/11 12:44:38 INFO  :     2.086 MiB / 3.433 MiB, 61%, 1.086 MiB/s, ETA 1s\n"
+    corte = linea[linea.index("2.086") + 2:]
+    detras = "2026/09/11 12:44:39 NOTICE: Failed to copy: algo\n"
+    detras = detras * ((progress.COLA - len(corte)) // len(detras))
+    detras += "x" * (progress.COLA - len(corte) - len(detras) - 1) + "\n"
+    texto = "0" * 5000 + "\n" + linea + detras
+    cola = texto.encode("utf-8")[-progress.COLA:]
+    c("(la cola de la prueba empieza donde se quería)",
+      cola.decode("utf-8").startswith("086 MiB"), True)
+    c("(y leída a secas daría un número falso)",
+      progress.ultimo(cola.decode("utf-8")).hecho, round(86 * MiB))
+    c("una estadística cortada por el principio de la cola no da número",
+      progress.final_del_log(log_con("cortado.log", texto)), None)
+
 s = progress.Seguidor()
 ruido = os.urandom(50_000)
 try:

@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from . import bisync, conflicts, model, results, vestibulo
+from . import bisync, conflicts, historial, model, results, store, vestibulo
 from .model import Config, Pair
 
 # Cuánto pesa una avería. No son tres colores: son tres respuestas distintas a
@@ -136,19 +136,52 @@ def _conflictos(config: Config) -> list[Hallazgo]:
         nombre, AVISO, (n,)) for nombre, n in cuentas.items() if n]
 
 
+def _dia(sello: str) -> str:
+    """«12/09», o «12/09/2025» si no es de este año."""
+    cuando = datetime.strptime(sello, store.FORMATO)
+    return f"{cuando:%d/%m}" if cuando.year == datetime.now().year else f"{cuando:%d/%m/%Y}"
+
+
+def _frase_racha(racha: historial.Racha) -> str:
+    """Desde cuándo falla y cuántas de sus últimas pasadas fueron bien, en una
+    frase: «Falla desde el 12/09 · 0 de las últimas 14 bien.»
+
+    «Al menos» cuando el diario no ve dónde empezó la racha —todas las que
+    constan fallaron—: puede que lleve fallando desde antes de que el diario
+    existiera, y una fecha que parece exacta y no lo es haría buscar la causa
+    en el día equivocado."""
+    desde = ("Falla desde el " if racha.exacta else "Falla al menos desde el ")
+    cuenta = ("es la única pasada que consta" if racha.pasadas == 1
+              else f"{racha.buenas} de las últimas {racha.pasadas} bien")
+    return f"{desde}{_dia(racha.desde)} · {cuenta}."
+
+
 def _fallos(config: Config) -> list[Hallazgo]:
     """La última pasada de esa pareja falló. No tiene reparación: es un informe,
-    y lo que se ofrece es el log que lo explica."""
+    y lo que se ofrece es el log que lo explica.
+
+    Del diario de pasadas sale desde cuándo falla, que es lo que distingue un
+    tropiezo de una avería. Sin diario (un dispositivo recién actualizado, o
+    uno que no se deja leer) la avería se cuenta igual, sin esa frase."""
     try:
         fallos = results.fallos(config)
     except Exception:                                   # noqa: BLE001
         return []
-    return [Hallazgo(
-        "fallo", f"«{f.pareja}»: la última pasada falló",
-        f"Acabó con código {f.codigo}" + (f" el {f.cuando}" if f.cuando else "") +
-        (". El log lo explica." if f.log else ". No queda log de aquella pasada.") +
-        " Mientras no se arregle, eso no está sincronizado.",
-        f.pareja, AVISO, (f.log,)) for f in fallos]
+    try:
+        rachas = historial.rachas(f.pareja for f in fallos)
+    except Exception:                                   # noqa: BLE001
+        rachas = {}
+    hallazgos = []
+    for f in fallos:
+        racha = rachas.get(f.pareja)
+        hallazgos.append(Hallazgo(
+            "fallo", f"«{f.pareja}»: la última pasada falló",
+            f"Acabó con código {f.codigo}" + (f" el {f.cuando}" if f.cuando else "") +
+            (". El log lo explica." if f.log else ". No queda log de aquella pasada.") +
+            (f" {_frase_racha(racha)}" if racha is not None else "") +
+            " Mientras no se arregle, eso no está sincronizado.",
+            f.pareja, AVISO, (f.log,)))
+    return hallazgos
 
 
 def _listados_sueltos() -> Hallazgo | None:

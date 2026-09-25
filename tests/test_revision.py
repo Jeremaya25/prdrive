@@ -11,11 +11,12 @@ gravedad, no cómo queda escrito.
 import hashlib
 import shutil
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from _harness import Checks, mkcfg, sandbox
 
-from common import bisync, conflicts, model, results, revision
+from common import bisync, conflicts, historial, model, results, revision
 
 c = Checks("el diagnóstico compartido")
 
@@ -136,5 +137,75 @@ with sandbox():
     listados(cfg.pairs[0])
     c.contains("sin averías, el informe lo dice",
                "\n".join(revision.informe(cfg)), "Sin incidencias.")
+
+
+# --- desde cuándo falla: el diario de pasadas ----------------------------------------
+# El fallo dice desde cuándo y cuántas de las últimas fueron bien. La frase sale
+# de common/historial.py y llega a la pantalla y a --doctor desde aquí.
+ANO = datetime.now().year
+
+
+def diario(pareja, codigos, dia=1, ano=ANO):
+    """Una pasada por código, un día después de la anterior, empezando el `dia`
+    de septiembre."""
+    for i, codigo in enumerate(codigos):
+        historial.apuntar(historial.Pasada(
+            pareja, f"{ano}-09-{dia + i:02d} 10:00:00", codigo, 5.0, None))
+
+
+def detalle_fallo(cfg):
+    return uno(revision.revisar(cfg), "fallo").detalle
+
+
+with sandbox():
+    cfg = mkcfg(["notas"])
+    cfg.pairs[0].local_abs.mkdir(parents=True, exist_ok=True)
+    listados(cfg.pairs[0])
+    results.apuntar("notas", 1, None)
+    sin_diario = detalle_fallo(cfg)
+    c("sin diario, el fallo sale como antes, sin la frase", "Falla" in sin_diario, False)
+    c("entero", sin_diario.endswith("Mientras no se arregle, eso no está sincronizado."),
+      True)
+
+    diario("notas", [0, 0, 1, 0, 1, 1, 1], dia=6)
+    c.contains("falla desde hace 3: desde la primera de la racha, y cuántas bien",
+               detalle_fallo(cfg), "Falla desde el 10/09 · 3 de las últimas 7 bien.")
+    c.contains("lo de antes sigue ahí", detalle_fallo(cfg), "Acabó con código 1")
+    c.contains("y llega igual a --doctor", "\n".join(revision.informe(cfg)),
+               "Falla desde el 10/09 · 3 de las últimas 7 bien.")
+    c("sigue siendo un solo hallazgo", revision.cuenta(revision.revisar(cfg)), 1)
+
+with sandbox():
+    cfg = mkcfg(["notas", "fotos", "docs"])
+    for pair in cfg.pairs:
+        pair.local_abs.mkdir(parents=True, exist_ok=True)
+        listados(pair)
+    for nombre in ("notas", "fotos", "docs"):
+        results.apuntar(nombre, 1, None)
+    diario("notas", [1, 1, 1, 1], dia=12)
+    diario("fotos", [1], dia=20)
+    diario("docs", [0, 1], dia=3, ano=ANO - 1)
+    por_pareja = {h.pareja: h.detalle for h in revision.revisar(cfg) if h.clave == "fallo"}
+    c.contains("nunca ha ido bien: «al menos», que pudo empezar antes del diario",
+               por_pareja["notas"], "Falla al menos desde el 12/09 · 0 de las últimas 4 bien.")
+    c.contains("una sola pasada no es «0 de las últimas 1»",
+               por_pareja["fotos"], "Falla al menos desde el 20/09 · es la única pasada "
+                                    "que consta.")
+    c.contains("de otro año, con el año", por_pareja["docs"],
+               f"Falla desde el 04/09/{ANO - 1} · 1 de las últimas 2 bien.")
+
+with sandbox():
+    # El diario dice que la última fue bien y last_run.json que falló: se ha
+    # perdido una línea. Mejor ninguna frase que una que contradice al título.
+    cfg = mkcfg(["notas"])
+    cfg.pairs[0].local_abs.mkdir(parents=True, exist_ok=True)
+    listados(cfg.pairs[0])
+    diario("notas", [1, 0])
+    results.apuntar("notas", 1, None)
+    c("si el diario no acaba en un fallo, no se dice nada de él",
+      "Falla" in detalle_fallo(cfg), False)
+
+    historial.ruta().write_text("basura\n", encoding="utf-8")
+    c("un diario ilegible tampoco estorba al fallo", "Falla" in detalle_fallo(cfg), False)
 
 sys.exit(c.report())

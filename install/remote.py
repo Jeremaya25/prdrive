@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from common import config_file, model
+from common import catalog, config_file, model
 from common.model import ConfigError
 from common.store import pid_alive
 
@@ -273,7 +273,12 @@ def parse_catalog(text: str) -> Catalog:
 
 def pull_catalog(rclone: Rclone, catalog_path: str,
                  timeout: float = 45.0) -> Catalog:
-    """Se trae el catálogo global de parejas del remoto."""
+    """Se trae el catálogo global de parejas del remoto.
+
+    Si la ruta es una carpeta, `rclone cat` no falla sino que lo junta todo, y
+    el error que saldría —TOML inválido, dos `[defaults]`— no dice la causa. El
+    diagnóstico es el del dispositivo, `catalog.explicar_carpeta()`: uno solo
+    para los dos lectores, y sin ninguna pregunta más en el camino bueno."""
     donde = rclone.endpoint(catalog_path)
     try:
         res = rclone.run("cat", donde, capture=True, timeout=timeout)
@@ -283,4 +288,19 @@ def pull_catalog(rclone: Rclone, catalog_path: str,
     if res.returncode != 0:
         raise InstallError(
             f"No puedo leer el catálogo {donde}:\n\n{(res.stderr or '').strip()}")
-    return parse_catalog(res.stdout or "")
+    texto = res.stdout or ""
+
+    def ejecutar(args: list[str]) -> subprocess.CompletedProcess:
+        return rclone.run(*args, capture=True, timeout=timeout)
+
+    try:
+        leido = parse_catalog(texto)
+    except InstallError as e:
+        carpeta = catalog.explicar_carpeta(ejecutar, donde, fallo=True)
+        if carpeta is None:
+            raise
+        raise InstallError(carpeta) from e
+    carpeta = catalog.explicar_carpeta(ejecutar, donde)
+    if carpeta:
+        raise InstallError(carpeta)
+    return leido

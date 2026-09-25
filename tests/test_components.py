@@ -158,6 +158,86 @@ d7 = components.runtime_dir(app7, WIN)
 c("el sello real del productor se lee como al día",
   components.pendientes(app7), [])
 
+# --- el VeraCrypt de viaje (#50) ------------------------------------------------
+#
+# Vive en la raíz FÍSICA, junto al .hc, y su sello va dentro de su carpeta. Se
+# le pasa la raíz física a `pendientes()`; sin pasarla se busca por el vestíbulo,
+# y un dispositivo sin fichero de control (estos de mentira) no vive en ninguno.
+from _harness import falso_portatil  # noqa: E402
+from common import vestibulo  # noqa: E402
+
+vacia = tmpdir("prdrive-comp-vc-") / ".prdrive"
+fisica = tmpdir("prdrive-comp-fisica-")
+c("sin carpeta VeraCrypt no lleva: nada pendiente",
+  components.pendientes(vacia, fisica), [])
+c("un dispositivo que no vive en un contenedor no mira ninguna raíz física",
+  (components.raiz_fisica(vacia), components.pendientes(vacia)), (None, []))
+
+
+def poner_veracrypt(raiz, version=None, sello=True):
+    """La carpeta de la caché de mentira, copiada como la dejaría el traveler."""
+    import shutil
+    destino = components.veracrypt_dir(raiz)
+    shutil.rmtree(destino, ignore_errors=True)
+    shutil.copytree(falso_portatil(version), destino)
+    if not sello:
+        components.veracrypt_stamp_path(raiz).unlink()
+
+
+poner_veracrypt(fisica)
+c("el de la versión fijada está al día", components.pendientes(vacia, fisica), [])
+
+poner_veracrypt(fisica, "1.26.7")
+pend = components.pendientes(vacia, fisica)
+c("uno con sello de otra versión sale pendiente",
+  [(p.que, p.lleva, p.deberia, p.asistente) for p in pend],
+  [(components.VERACRYPT, "1.26.7", pins.VERACRYPT_VERSION, False)])
+c("sin plataforma: lleva las dos arquitecturas", pend[0].plataforma, None)
+c("y dice dónde está su carpeta", pend[0].ruta, fisica / vestibulo.TRAVELER)
+c.contains("y se sabe contar", pend[0].describe(), "VeraCrypt de la unidad: lleva 1.26.7")
+c("se puede poner al día desde la ventana", components.actualizables(pend), pend)
+
+# El de un dispositivo de antes: la copia de una instalación, sin sello. Su
+# vestíbulo solo sabe abrir esa disposición, así que no se pone al día solo: se
+# dice, y se remite a «Añadir plataformas…».
+de_antes = tmpdir("prdrive-comp-fisica-")
+(de_antes / vestibulo.TRAVELER).mkdir()
+(de_antes / vestibulo.TRAVELER / vestibulo.TRAVELER_EXE).write_bytes(b"MZ")
+(de_antes / vestibulo.TRAVELER / "veracrypt-x64.sys").write_bytes(b"MZ")
+pend = components.pendientes(vacia, de_antes)
+c("un VeraCrypt sin sello sale pendiente, como algo que no consta",
+  [(p.que, p.lleva) for p in pend], [(components.VERACRYPT, components.DESCONOCIDA)])
+c("marcado: no lo pone al día una actualización de componentes",
+  (pend[0].asistente, components.actualizables(pend)), (True, []))
+c.contains("y dice por dónde se sale", pend[0].describe(), "«Añadir plataformas…»")
+
+poner_veracrypt(fisica, sello=False)
+c("también el portable si le falta el sello: sin sello no se afirma nada",
+  [p.asistente for p in components.pendientes(vacia, fisica)], [True])
+
+# Sin pasar la raíz física se busca por el id: el fichero de control dentro, la
+# marca del vestíbulo fuera (`vestibulo.raiz_fisica`, sustituida aquí).
+real_raiz = vestibulo.raiz_fisica
+try:
+    poner_veracrypt(fisica, "1.26.7")
+    vestibulo.raiz_fisica = lambda device_id: fisica if device_id == "abc" else None
+    con_id = tmpdir("prdrive-comp-id-") / ".prdrive"
+    con_id.mkdir()
+    (con_id / "PRDRIVE").write_text("id=abc\n", encoding="utf-8")
+    c("dentro de un contenedor, se encuentra su VeraCrypt por el id",
+      [p.que for p in components.pendientes(con_id)], [components.VERACRYPT])
+    vestibulo.raiz_fisica = lambda device_id: 1 / 0
+    c("y si buscarlo falla, no lanza: no hay nada que decir",
+      components.pendientes(con_id), [])
+finally:
+    vestibulo.raiz_fisica = real_raiz
+
+sello_vc = components.veracrypt_stamp_text(
+    "1.26.24", "f" * 64, {"VeraCrypt-x64.exe": "A" * 64, "../fuera.exe": "b" * 64,
+                          "C:\\x.exe": "c" * 64})
+c("un sello escrito a mano no saca a nadie de la carpeta",
+  components.veracrypt_ficheros(sello_vc), {"VeraCrypt-x64.exe": "a" * 64})
+
 # --- deriva: el instalador escribe donde el dispositivo lee -------------------
 raiz = tmpdir("prdrive-deriva-")
 app_r = raiz / ".prdrive"

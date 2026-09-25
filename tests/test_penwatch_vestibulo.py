@@ -42,6 +42,14 @@ ID = "a" * 32
 c("el contenedor de penwatch es el de common", penwatch.CONTAINER_FILE,
   vestibulo.CONTENEDOR)
 c("y la marca también", penwatch.VESTIBULE_MARKER, vestibulo.MARCA)
+c("y los nombres del VeraCrypt que viaja",
+  (penwatch.TRAVELER_DIR, penwatch.TRAVELER_EXE, penwatch.TRAVELER_PORTABLE,
+   penwatch.TRAVELER_ARCHS),
+  (vestibulo.TRAVELER, vestibulo.TRAVELER_EXE, vestibulo.TRAVELER_PORTATIL,
+   vestibulo.TRAVELER_ARQUITECTURAS))
+c("y el script de abrir en Linux", penwatch.OPEN_SCRIPT, vestibulo.ABRIR_SH)
+c("y el fichero que activa VeraCrypt en udisks2, el del script",
+  penwatch.UDISKS_TCRYPT_CONF.as_posix(), escritor.TCRYPT_CONF)
 
 # --- 2. un equipo de mentira ------------------------------------------------------
 equipo = tmpdir("prdrive-equipo-")
@@ -62,6 +70,7 @@ def vestibulo_en(device_id=ID, con_contenedor=True) -> Path:
 
 fisica = vestibulo_en()
 raices: list[Path] = []
+candidate_roots_real = penwatch.candidate_roots
 penwatch.candidate_roots = lambda cfg: list(raices)
 cfg = {"device_id": ID, "mode": "ui"}
 
@@ -121,6 +130,187 @@ finally:
     penwatch.IS_WIN = reales["IS_WIN"]
     os.environ.clear()
     os.environ.update(reales["environ"])
+
+# --- 3a. el que viaja es el portable: el de la arquitectura de este equipo -------
+#
+# Lo que deja ahora el instalador es el VeraCrypt Portable oficial, un ejecutable
+# por arquitectura (#50). Se elige por la máquina NATIVA —VeraCrypt escoge su
+# driver igual, y un driver no se emula—, y un dispositivo de antes, con su
+# `VeraCrypt.exe`, se sigue abriendo.
+reales_arq = {"IS_WIN": penwatch.IS_WIN, "native_arch": penwatch.native_arch,
+              "environ": dict(os.environ)}
+try:
+    penwatch.IS_WIN = True
+    os.environ["ProgramFiles"] = str(tmpdir())      # sin VeraCrypt instalado
+    os.environ.pop("ProgramW6432", None)
+    portable = vestibulo_en()
+    (portable / "VeraCrypt").mkdir()
+    for arq in ("x64", "arm64"):
+        (portable / "VeraCrypt" / f"VeraCrypt-{arq}.exe").write_bytes(b"MZ")
+    penwatch.native_arch = lambda: "x64"
+    c("Windows x64: el portable x64",
+      penwatch.veracrypt_command(portable)[0],
+      str(portable / "VeraCrypt" / "VeraCrypt-x64.exe"))
+    penwatch.native_arch = lambda: "arm64"
+    c("Windows ARM64: el portable arm64, no el x64 emulado",
+      penwatch.veracrypt_command(portable)[0],
+      str(portable / "VeraCrypt" / "VeraCrypt-arm64.exe"))
+    (portable / "VeraCrypt" / "VeraCrypt-arm64.exe").unlink()
+    (portable / "VeraCrypt" / "VeraCrypt.exe").write_bytes(b"MZ")
+    c("sin el suyo, el VeraCrypt.exe de un dispositivo de antes",
+      penwatch.veracrypt_command(portable)[0],
+      str(portable / "VeraCrypt" / "VeraCrypt.exe"))
+    (portable / "VeraCrypt" / "VeraCrypt.exe").unlink()
+    c("pero nunca el de la otra arquitectura: un driver no se emula",
+      penwatch.veracrypt_command(portable), None)
+    penwatch.native_arch = lambda: "x86"
+    (portable / "VeraCrypt" / "VeraCrypt.exe").write_bytes(b"MZ")
+    c("en una CPU sin portable, solo el de antes",
+      penwatch.veracrypt_command(portable)[0],
+      str(portable / "VeraCrypt" / "VeraCrypt.exe"))
+finally:
+    penwatch.IS_WIN = reales_arq["IS_WIN"]
+    penwatch.native_arch = reales_arq["native_arch"]
+    os.environ.clear()
+    os.environ.update(reales_arq["environ"])
+
+# --- 3b. Linux sin VeraCrypt: qué vía tiene el equipo --------------------------------
+#
+# udisks2 y cryptsetup piden la contraseña por una terminal, y el vigilante no
+# tiene: no abre nada (el `loop-setup` automático espera a U4 en #51), pero dice
+# en el diario con qué se abre en este equipo. Qué programas hay y si existe
+# tcrypt.conf se sustituyen: `shutil.which` y `Path.is_file`.
+hay: set[str] = set()
+tcrypt = [False]
+lanzado: list = []
+reales = {"IS_WIN": penwatch.IS_WIN, "which": shutil.which, "is_file": Path.is_file,
+          "Popen": penwatch.subprocess.Popen, "environ": dict(os.environ)}
+
+
+def which_falso(nombre, mode=None, path=None):
+    return f"/usr/bin/{nombre}" if nombre in hay else None
+
+
+def is_file_falso(self):
+    if self == penwatch.UDISKS_TCRYPT_CONF:
+        return tcrypt[0]
+    return reales["is_file"](self)
+
+
+def diario() -> str:
+    try:
+        return penwatch.LOG_FILE.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+try:
+    penwatch.IS_WIN = False
+    shutil.which = which_falso
+    Path.is_file = is_file_falso
+    penwatch.subprocess.Popen = lambda cmd, **kw: lanzado.append(cmd)
+    os.environ["DISPLAY"] = ":99"
+    for programas, con_tcrypt, via in (
+            ({"veracrypt", "udisksctl", "cryptsetup"}, True, "veracrypt"),
+            ({"udisksctl", "cryptsetup"}, True, "udisks2"),
+            ({"udisksctl", "cryptsetup"}, False, "cryptsetup"),
+            ({"cryptsetup"}, True, "cryptsetup"),
+            ({"udisksctl"}, False, None),
+            (set(), True, None)):
+        hay.clear()
+        hay.update(programas)
+        tcrypt[0] = con_tcrypt
+        c(f"con {', '.join(sorted(programas)) or 'nada'} y "
+          f"{'con' if con_tcrypt else 'sin'} tcrypt.conf: {via}",
+          penwatch.linux_open_route(), via)
+
+    hay.clear()
+    hay.update({"udisksctl", "cryptsetup"})
+    tcrypt[0] = True
+    penwatch.LOG_FILE.unlink(missing_ok=True)
+    c("Linux con udisks2 y sin VeraCrypt: el vigilante no abre nada",
+      (penwatch.open_container(fisica), lanzado), (False, []))
+    c.contains("y apunta qué vía tiene este equipo", diario(), "con udisks2, sin administrador")
+    c.contains("y con qué se abre", diario(), f"«sh {fisica / vestibulo.ABRIR_SH}»")
+
+    tcrypt[0] = False
+    penwatch.open_container(fisica)
+    c.contains("sin tcrypt.conf, cryptsetup", diario(), "con cryptsetup, con sudo")
+    hay.clear()
+    penwatch.open_container(fisica)
+    c.contains("sin nada, lo dice", diario(), "no tiene con qué abrirlo")
+    hay.add("veracrypt")
+    os.environ.pop("DISPLAY")
+    penwatch.open_container(fisica)
+    c.contains("con VeraCrypt sin escritorio, también", diario(), "no escritorio")
+    os.environ["DISPLAY"] = ":99"
+    c("con VeraCrypt y escritorio, como siempre: lo lanza",
+      (penwatch.open_container(fisica), len(lanzado)), (True, 1))
+
+    # Y una vez por conexión, con el `open_container()` de verdad.
+    hay.clear()
+    hay.add("udisksctl")
+    tcrypt[0] = True
+    penwatch.LOG_FILE.unlink(missing_ok=True)
+    penwatch.write_json(penwatch.CONFIG_FILE, cfg)
+    penwatch.write_json(penwatch.STATE_FILE, {})
+    raices[:] = [fisica]
+    penwatch.watch_loop(once=True)
+    penwatch.watch_loop(once=True)
+    c("una vez por conexión: la vía se apunta una vez, no en cada sondeo",
+      diario().count("con udisks2, sin administrador"), 1)
+finally:
+    penwatch.IS_WIN = reales["IS_WIN"]
+    shutil.which = reales["which"]
+    Path.is_file = reales["is_file"]
+    penwatch.subprocess.Popen = reales["Popen"]
+    os.environ.clear()
+    os.environ.update(reales["environ"])
+    raices.clear()
+
+# Abierto a mano por udisks2 o por cryptsetup, el vigilante lo encuentra y el
+# lanzamiento sigue como siempre: /run/media/$USER/… y /mnt/prdrive-<id> están
+# entre las raíces que mira, y cualquier montaje de /proc/self/mounts también.
+# Raíces de búsqueda sustituidas: nada del sistema de verdad.
+sis = tmpdir("prdrive sistema-")
+
+
+def montado_en(ruta: Path, device_id: str) -> Path:
+    (ruta / ".prdrive").mkdir(parents=True)
+    (ruta / ".prdrive" / "PRDRIVE").write_text(f"# control\r\nid={device_id}\r\n",
+                                               encoding="utf-8")
+    (ruta / ".prdrive" / "runsync.py").write_text("", encoding="utf-8")
+    return ruta
+
+
+por_udisks = montado_en(sis / "run" / "media" / "prueba" / "PRDRIVE", ID)
+por_cryptsetup = montado_en(sis / "mnt" / f"prdrive-{'b' * 8}", "b" * 32)
+suelto = montado_en(sis / "otro sitio" / "vol", "c" * 32)
+montajes = sis / "mounts"
+montajes.write_text("proc /proc proc rw 0 0\n"
+                    f"/dev/mapper/tcrypt-1792 {str(suelto).replace(' ', chr(92) + '040')} "
+                    "exfat rw 0 0\n", encoding="utf-8")
+reales = {"IS_WIN": penwatch.IS_WIN, "MOUNTS_FILE": penwatch.MOUNTS_FILE,
+          "POSIX_MOUNT_BASES": penwatch.POSIX_MOUNT_BASES,
+          "candidate_roots": penwatch.candidate_roots}
+try:
+    penwatch.IS_WIN = False
+    penwatch.MOUNTS_FILE = montajes
+    penwatch.POSIX_MOUNT_BASES = tuple(str(sis / b) for b in ("media", "run/media", "mnt"))
+    penwatch.candidate_roots = candidate_roots_real
+    halladas = penwatch.candidate_roots({})
+    c("candidate_roots: el montaje de udisks2 en /run/media/$USER/…",
+      por_udisks in halladas, True)
+    c("candidate_roots: el de cryptsetup en /mnt/prdrive-<id>", por_cryptsetup in halladas, True)
+    c("candidate_roots: y uno de /proc/self/mounts, con su \\040",
+      suelto in halladas, True)
+    c("find_pen: el de este vigilante, por su id",
+      penwatch.find_pen({"device_id": ID}), por_udisks)
+    c("find_pen: y el de otro, por el suyo",
+      penwatch.find_pen({"device_id": "b" * 32}), por_cryptsetup)
+finally:
+    for nombre, valor in reales.items():
+        setattr(penwatch, nombre, valor)
 
 # --- 4. el bucle: una vez por conexión ------------------------------------------
 #

@@ -18,6 +18,11 @@ lado. La caché es por release y los ficheros se llaman por su destino, así que
 distintas plataformas y distintas versiones no se pisan. Al dispositivo llega una
 EXTRACCIÓN de ese archivo, que hace `extract()` y coloca `deploy.install_runtime()`.
 
+**Ponerlo a mano** (`a_mano()`, `adoptar()`) es dejar ahí mismo el archivo con su
+nombre exacto, junto al SHA256SUMS de la release: se comprueba igual que una
+descarga, sin red, y solo entonces cuenta como caché. Un fallo de red al bajarlo
+se reintenta (`descarga.con_reintentos()`); una suma que no cuadra, no.
+
 **Qué se escribe al extraer, y qué no.**
 
   * Todo miembro se valida ANTES de escribir el primero: uno solo que pretenda
@@ -43,7 +48,6 @@ import posixpath
 import shutil
 import tarfile
 import tempfile
-import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -54,6 +58,7 @@ from common.pins import Plataforma
 from common.update import _ruta_segura
 
 from . import APP_NAME, IS_WIN, InstallError
+from . import descarga
 
 DOWNLOAD_TIMEOUT = 60          # segundos por lectura, no en total
 USER_AGENT = f"{APP_NAME}-install"
@@ -131,14 +136,45 @@ def fetch(url: str, timeout: float = DOWNLOAD_TIMEOUT) -> bytes:
         return resp.read()
 
 
-def published_sha256(plat: Plataforma) -> str:
-    """El SHA-256 que python-build-standalone publica para ese archivo."""
+def a_mano(plat: Plataforma) -> str:
+    """Cómo ponerlo a mano cuando la descarga no sale. Con los nombres exactos.
+
+    El archivo va donde lo dejaría la descarga —la caché ya guarda archivos, no
+    extracciones—, junto al SHA256SUMS de la misma release: con los dos,
+    `adoptar()` lo comprueba igual que una descarga y sin red. El nombre se dice
+    entero porque la URL lleva el '+' escapado y el navegador puede guardarlo de
+    cualquiera de las dos maneras; el que cuenta es el de aquí."""
+    return (f"Para ponerlo a mano, baja con el navegador estos dos ficheros:\n"
+            f"    {download_url(plat)}\n"
+            f"    {SUMS_URL}\n"
+            f"y déjalos, sin descomprimir y con esos nombres exactos "
+            f"({archive_name(plat)} y {descarga.SUMAS}), en:\n"
+            f"    {cache_dir()}\n"
+            f"Al volver a intentarlo se comprueban igual que una descarga, y no "
+            f"hace falta red.")
+
+
+def published_sha256(plat: Plataforma, progreso: Progreso | None = None) -> str:
+    """El SHA-256 que python-build-standalone publica para ese archivo.
+
+    Del SHA256SUMS que haya dejado alguien a mano en la caché o, si no hay, de
+    la red con reintentos (`descarga.sumas()`)."""
     nombre = archive_name(plat)
-    texto = fetch(SUMS_URL, 30).decode("utf-8", "replace")
-    for linea in texto.splitlines():
-        partes = linea.split()
-        if len(partes) == 2 and partes[1].lstrip("*") == nombre:
-            return partes[0].lower()
+    try:
+        texto, origen = descarga.sumas(SUMS_URL, cache_dir() / descarga.SUMAS,
+                                       lambda: fetch(SUMS_URL, 30), progreso)
+    except descarga.FALLOS_DE_RED as e:
+        raise InstallError(
+            f"No he podido leer {SUMS_URL} para comprobar Python de "
+            f"{plat.nombre}: {descarga.describir(e)}\n\n{a_mano(plat)}") from e
+    suma = descarga.suma_en(texto, nombre)
+    if suma is not None:
+        return suma
+    if origen != SUMS_URL:
+        raise InstallError(
+            f"{origen} no trae ninguna suma para {nombre}, así que no puedo "
+            f"comprobarlo. ¿Es el SHA256SUMS de la release {pins.PYTHON_RELEASE}? "
+            f"El que vale es el de {SUMS_URL}.")
     raise InstallError(
         f"{SUMS_URL} no trae ninguna suma para {nombre}, así que no puedo "
         f"comprobar lo que descargue.\n\n¿Ha cambiado python-build-standalone "
@@ -207,7 +243,10 @@ def download_runtime(plat: Plataforma, progreso: Progreso | None = None) -> Path
     release que el archivo, así que no protege de un GitHub —o una cuenta de
     astral-sh— comprometidos. Ataja todo lo demás: una descarga truncada, un
     proxy que devuelve otra cosa, una caché que sirve algo viejo. Y la release
-    está FIJADA en `common/pins.py`: no se baja «lo último», se baja lo probado."""
+    está FIJADA en `common/pins.py`: no se baja «lo último», se baja lo probado.
+
+    Lo mismo que rclone también en los fallos: un corte o un tiempo de espera se
+    reintentan (`descarga.con_reintentos()`), una suma que no cuadra no."""
     def decir(msg: str) -> None:
         if progreso:
             progreso(msg)
@@ -215,21 +254,25 @@ def download_runtime(plat: Plataforma, progreso: Progreso | None = None) -> Path
     nombre = archive_name(plat)
     url = download_url(plat)
     decir(f"Python {pins.PYTHON_VERSION} para {plat.nombre}: leyendo SHA256SUMS")
-    esperado = published_sha256(plat)
+    esperado = published_sha256(plat, progreso)
 
     decir(f"Descargando {url}")
     try:
-        datos = fetch(url)
-    except (urllib.error.URLError, OSError) as e:
+        datos = descarga.con_reintentos(lambda: fetch(url), f"Descargar {nombre}",
+                                        progreso)
+    except descarga.FALLOS_DE_RED as e:
         raise InstallError(
-            f"No he podido descargar Python para {plat.nombre} de {url}: {e}") from e
+            f"No he podido descargar Python para {plat.nombre} de {url}: "
+            f"{descarga.describir(e)}\n\n{a_mano(plat)}") from e
 
     obtenido = hashlib.sha256(datos).hexdigest()
     if obtenido != esperado:
         raise InstallError(
             f"Lo descargado de {url} no es lo que python-build-standalone "
             f"publica.\n\n  esperado: {esperado}\n  obtenido: {obtenido}\n\n"
-            f"No se ha guardado nada. Vuelve a intentarlo.")
+            f"No se ha guardado nada. Vuelve a intentarlo; si sigue pasando, algo "
+            f"entre este equipo y GitHub cambia lo que llega (un proxy, un portal "
+            f"de acceso).\n\n{a_mano(plat)}")
     decir(f"SHA-256 correcto: {obtenido}")
 
     destino = cache_dir() / nombre
@@ -244,10 +287,54 @@ def download_runtime(plat: Plataforma, progreso: Progreso | None = None) -> Path
     return destino
 
 
+def adoptar(plat: Plataforma, progreso: Progreso | None = None) -> Path | None:
+    """El archivo que alguien ha dejado a mano en la caché, ya comprobado.
+
+    None si no hay ninguno SIN suma apuntada: uno con su `.sha256` al lado salió
+    de una descarga, y si ya no cuadra es una caché estropeada, que se vuelve a
+    descargar como siempre (`cached()`). Uno sin `.sha256` es otra cosa: o lo ha
+    puesto alguien con el nombre de `a_mano()`, o una descarga se cortó justo
+    entre el renombrado y apuntar la suma. Los dos se comprueban contra el
+    SHA256SUMS —el de al lado si se dejó, si no el de la red— y solo entonces se
+    apunta su suma y cuenta como caché.
+
+    Si no cuadra se dice y NO se descarga encima: alguien lo ha puesto ahí a
+    propósito, y pisarlo en silencio sería no enterarse de que lo que tiene en
+    la mano no es lo publicado."""
+    archivo = cache_dir() / archive_name(plat)
+    try:
+        if not archivo.is_file() or _suma_apuntada(archivo).exists():
+            return None
+    except OSError:
+        return None
+    if progreso:
+        progreso(f"Python para {plat.nombre}: comprobando {archivo}")
+    esperado = published_sha256(plat, progreso)
+    try:
+        obtenido = file_sha256(archivo)
+    except OSError as e:
+        raise InstallError(f"No he podido leer {archivo}: {e}") from e
+    if obtenido != esperado:
+        raise InstallError(
+            f"{archivo} no es el archivo que python-build-standalone publica para "
+            f"{plat.nombre}.\n\n  esperado: {esperado}\n  obtenido: {obtenido}\n\n"
+            f"No lo he usado. ¿Se cortó la descarga del navegador? Bórralo y "
+            f"vuelve a bajarlo de {download_url(plat)}; o bórralo sin más y el "
+            f"instalador lo descargará.")
+    try:
+        _suma_apuntada(archivo).write_text(obtenido + "\n", encoding="ascii")
+    except OSError as e:
+        raise InstallError(f"No he podido apuntar la suma de {archivo}: {e}") from e
+    return archivo
+
+
 def ensure_runtime(plat: Plataforma, progreso: Progreso | None = None,
                    allow_download: bool = True) -> Path:
-    """El archivo comprobado de esa plataforma. Descarga solo si hace falta."""
-    encontrado = cached(plat)
+    """El archivo comprobado de esa plataforma. Descarga solo si hace falta.
+
+    Un archivo dejado a mano (`adoptar()`) cuenta aunque no se permita
+    descargar, como en `rclone_bin.rclone_for()`: es un fichero de este equipo."""
+    encontrado = cached(plat) or adoptar(plat, progreso)
     if encontrado:
         return encontrado
     if not allow_download:

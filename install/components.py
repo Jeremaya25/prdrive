@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-components.py — Poner al día el rclone y el Python que lleva un dispositivo.
+components.py — Poner al día el rclone, el Python y el VeraCrypt que lleva un dispositivo.
 
 El otro extremo de `common/components.py`: aquel LEE los sellos y dice qué está
 anticuado —desde el propio dispositivo, al instante y sin red—; esto lo ARREGLA,
@@ -26,9 +26,19 @@ el renombrado colaría —un `.exe` en marcha se puede apartar, lo que no se pue
 es borrar—, pero cambiarle el binario a una sincronización a media pasada no es
 algo que deba ocurrir sin que nadie lo haya pedido.
 
+**El VeraCrypt de viaje va por el mismo camino**, con la carpeta entera en vez
+de un binario: `traveler.poner_portatil()` la sustituye con el mismo intercambio,
+después de mirar el sitio libre de la raíz física. Si está en uso
+(`veracrypt_en_uso()`) se pospone. Y uno SIN sello —la copia de una instalación
+que dejaban las versiones anteriores— no se toca nunca desde aquí: su vestíbulo
+solo sabe abrir esa disposición, y el vestíbulo no es cosa de una actualización
+de componentes. Se pospone diciendo que eso es de «Añadir plataformas…», que
+cambia las dos cosas a la vez.
+
 Lo que aquí no pasa nunca: instalar una plataforma que el dispositivo no lleva
 (eso es «Añadir plataformas…», y es una decisión con sitio en disco de por
-medio), tocar el código, los lanzadores, la configuración o las claves.
+medio), tocar el código, los lanzadores, el vestíbulo, la configuración o las
+claves.
 """
 
 from __future__ import annotations
@@ -44,11 +54,11 @@ from typing import Callable
 # un `components.pendientes(...)` dentro de `install/components.py` sería una
 # adivinanza sobre cuál de los dos se está leyendo.
 from common import pins
-from common.components import RCLONE, Pendiente
+from common.components import PYTHON, RCLONE, VERACRYPT, Pendiente
 from common.components import pendientes as sellos_pendientes
 
 from . import IS_WIN, InstallError
-from . import deploy, platforms, rclone_bin, runtime_bin
+from . import deploy, platforms, rclone_bin, runtime_bin, traveler, veracrypt_bin
 
 Progreso = Callable[[str], None]
 
@@ -111,6 +121,21 @@ def runtime_en_uso(carpeta: Path) -> bool:
         return True
     except (ValueError, OSError):
         return False
+
+
+def veracrypt_en_uso(carpeta: Path) -> bool:
+    """¿Está en uso el VeraCrypt de esa carpeta?
+
+    El mismo truco que `rclone_en_uso()`, fichero a fichero: un `VeraCrypt-x64.exe`
+    en marcha no se deja abrir para escribir. Es el caso normal más que una
+    rareza: si el contenedor se abrió con el VeraCrypt que viaja, la copia
+    elevada puede seguir viva, y apartar la carpeta con ella dentro fallaría.
+    Que no exista no es «en uso»: no hay nada que apartar."""
+    try:
+        ficheros = [p for p in Path(carpeta).iterdir() if p.is_file()]
+    except OSError:
+        return False
+    return any(rclone_en_uso(p) for p in ficheros)
 
 
 # ---------------------------------------------------------------------------
@@ -250,6 +275,36 @@ def _poner_python(raiz: Path, p: Pendiente, decir: Progreso) -> str | None:
     return None
 
 
+SIN_SELLO = ("es una copia de antes, sin sello, y el vestíbulo de esta unidad solo "
+             "sabe abrir esa. Se queda como está: ponlo al día con «Añadir "
+             "plataformas…» del instalador, que cambia a la vez el VeraCrypt de la "
+             "unidad (por el portable oficial, con x64 y ARM64) y el vestíbulo que "
+             "lo abre.")
+
+
+def _poner_veracrypt(raiz: Path, p: Pendiente, decir: Progreso) -> str | None:
+    """Sustituye el VeraCrypt de viaje. Devuelve el motivo si se pospone.
+
+    `raiz` es la del dispositivo (el contenedor montado); la carpeta que se
+    sustituye es la de la raíz FÍSICA, que viene en `p.ruta`."""
+    if p.asistente:
+        return SIN_SELLO
+    carpeta = p.ruta
+    if carpeta is None:
+        return "no sé dónde está su carpeta: pasa el instalador por encima."
+    if veracrypt_en_uso(carpeta):
+        return ("está en uso: VeraCrypt se está ejecutando desde esa carpeta. Se "
+                "queda como estaba; vuelve a intentarlo cuando no lo esté.")
+    decir(f"{p.titulo}: consiguiendo la versión {p.deberia}")
+    origen = veracrypt_bin.ensure_veracrypt(decir)
+    decir(f"{p.titulo}: sustituyendo {carpeta}")
+    traveler.poner_portatil(carpeta.parent, origen)
+    return None
+
+
+PONER = {RCLONE: _poner_rclone, PYTHON: _poner_python, VERACRYPT: _poner_veracrypt}
+
+
 def aplicar(device_root: Path | str, progreso: Progreso | None = None,
             pends: list[Pendiente] | None = None) -> Resultado:
     """Pone al día los componentes anticuados de ese dispositivo.
@@ -268,7 +323,7 @@ def aplicar(device_root: Path | str, progreso: Progreso | None = None,
         pends = pendientes(raiz)
 
     for p in pends:
-        poner = _poner_rclone if p.que == RCLONE else _poner_python
+        poner = PONER[p.que]
         try:
             motivo = poner(raiz, p, decir)
         except (InstallError, OSError) as e:

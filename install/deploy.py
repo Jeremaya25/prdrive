@@ -43,6 +43,7 @@ import os
 import shutil
 import stat
 import tempfile
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, Mapping
@@ -428,26 +429,88 @@ def remove_platform(device_root: Path | str, plat: Plataforma) -> list[Path]:
     return borrado
 
 
+@dataclass
+class Conseguido:
+    """Lo que `apply_platforms()` va a poner, ya comprobado y en la caché de este
+    equipo: el binario de rclone y el archivo de Python de cada plataforma, por
+    clave. Nada de esto está todavía en el dispositivo."""
+    rclone: dict[str, Path] = field(default_factory=dict)
+    runtime: dict[str, Path] = field(default_factory=dict)
+
+
+def _falta(plat: Plataforma, que: str, motivo: Exception) -> InstallError:
+    """El error de una plataforma que no se ha podido conseguir.
+
+    Nombra la plataforma, dice que el dispositivo no se ha tocado y da las dos
+    salidas: reintentar —lo ya bajado no se vuelve a bajar— o desmarcarla. Antes
+    solo se leía la URL del zip, y quien había marcado las cuatro plataformas no
+    sabía que bastaba con quitar una para seguir (#49)."""
+    return InstallError(
+        f"No he podido conseguir {que} para {plat.nombre}. No se ha tocado el "
+        f"dispositivo.\n\n{motivo}\n\n"
+        f"Lo ya conseguido se queda en la caché de este equipo y no se vuelve a "
+        f"bajar. Vuelve a intentarlo, o desmarca {plat.nombre} y sigue sin ella: "
+        f"se le puede añadir más adelante con «Añadir plataformas…».")
+
+
+def conseguir_plataformas(plan: platforms.Plan,
+                          progreso: Callable[[str], None] | None = None
+                          ) -> Conseguido:
+    """Consigue todo lo que el plan va a poner, SIN tocar el dispositivo.
+
+    Caché, archivo dejado a mano o descarga, y siempre comprobado: lo mismo que
+    `rclone_bin.rclone_for()` y `runtime_bin.ensure_runtime()`, que son quienes
+    lo hacen. Solo se escribe en la caché de este equipo.
+
+    Es la primera mitad de `apply_platforms()`, y existe aparte para que el paso
+    «Instalación» la llame ANTES de copiar el programa: así un rclone de otra
+    plataforma que no llega no deja el dispositivo con el código nuevo y sin
+    lanzadores ni `rclone.conf` —o con una plataforma ya borrada—. Si algo falta,
+    no se ha tocado nada (#49).
+
+    Se para en la primera que falla, y no intenta las demás: cada descarga ya se
+    ha reintentado (`descarga.con_reintentos()`), así que lo que llega aquí es una
+    red que acaba de fallar tres veces seguidas, y probar el resto sería tener a
+    alguien varios minutos más delante de una barra que no dice nada para acabar
+    igual. Lo conseguido hasta ahí se queda en la caché, y el reintento solo baja
+    lo que faltaba."""
+    conseguido = Conseguido()
+    for plat in plan.rclone:
+        try:
+            conseguido.rclone[plat.clave] = rclone_bin.rclone_for(plat, progreso)
+        except (InstallError, OSError) as e:
+            raise _falta(plat, "rclone", e) from e
+    for plat in plan.runtime:
+        try:
+            conseguido.runtime[plat.clave] = runtime_bin.ensure_runtime(plat, progreso)
+        except (InstallError, OSError) as e:
+            raise _falta(plat, "Python", e) from e
+    return conseguido
+
+
 def apply_platforms(device_root: Path | str, plan: platforms.Plan,
-                    progreso: Callable[[str], None] | None = None
+                    progreso: Callable[[str], None] | None = None,
+                    conseguido: Conseguido | None = None
                     ) -> tuple[list[Path], list[Path]]:
     """Ejecuta el plan de la lista de plataformas. Devuelve (escrito, borrado).
 
-    Primero se borra —libera el sitio que lo demás va a ocupar—, luego rclone y
-    luego Python. Lo que haya que descargar se descarga aquí (con su
-    comprobación de SHA-256), y va a la caché del usuario antes de tocar el
-    dispositivo."""
+    Primero se CONSIGUE todo, en la caché del usuario y comprobado
+    (`conseguir_plataformas()`, o lo que ya traiga `conseguido`): si falta algo,
+    el dispositivo no se ha tocado, ni siquiera para borrar lo que se desmarcó.
+    Luego se borra —libera el sitio que lo demás va a ocupar—, luego rclone y
+    luego Python."""
+    if conseguido is None:
+        conseguido = conseguir_plataformas(plan, progreso)
     escrito: list[Path] = []
     borrado: list[Path] = []
     for plat in plan.borrar:
         borrado += remove_platform(device_root, plat)
     for plat in plan.rclone:
-        binario = rclone_bin.rclone_for(plat, progreso)
+        binario = conseguido.rclone[plat.clave]
         escrito.append(copy_rclone(device_root, binario, plat,
                                    rclone_bin.pinned_version(binario, plat)))
     for plat in plan.runtime:
-        archivo = runtime_bin.ensure_runtime(plat, progreso)
-        puesto = install_runtime(device_root, plat, archivo)
+        puesto = install_runtime(device_root, plat, conseguido.runtime[plat.clave])
         if puesto is not None:
             escrito.append(puesto)
     return escrito, borrado
