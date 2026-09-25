@@ -245,10 +245,21 @@ fija, `~/PRDRIVE`.
   la pide la ventana de VeraCrypt, igual que en `Abrir PRDRIVE.bat`. Una orden
   así no la tiene hoy nadie: se generaliza `penwatch.veracrypt_command()` para
   que reciba contenedor y destino en vez de deducirlos de la raíz.
-- **Al iniciar sesión, una vez:** si el contenedor está cerrado, el agente pide
-  abrirlo (se puede desactivar en `agente.json`). Si se cancela, no se vuelve a
-  pedir hasta que se pulse «Desbloquear» en la bandeja. Es la misma regla de
-  «una vez por conexión» que tiene penwatch para las unidades cifradas.
+- **Al iniciar sesión: configurable.** Es el ajuste `pedir_al_iniciar` de
+  `agente.json`, que viene activado por defecto.
+  - **Activado:** si el contenedor está cerrado, el agente pide abrirlo una vez.
+    Si se cancela, no se vuelve a pedir hasta que se pulse «Desbloquear». Es la
+    misma regla de «una vez por conexión» que tiene penwatch para las unidades
+    cifradas.
+  - **Desactivado:** el agente arranca con la raíz bloqueada y no pide nada
+    hasta que se pulse «Desbloquear». Mientras tanto sigue atendiendo las
+    unidades.
+  - **Dónde se cambia:** lo elige el paso «Cifrado» del asistente (una casilla
+    marcada), y después se cambia con una casilla del menú de la bandeja o desde
+    «Ajustes» en la ventana de la raíz. Esto último cubre Linux sin bandeja.
+  - **`agente.json` solo lo escribe el agente.** La ventana es el código de la
+    raíz, que puede ir en otra versión, así que no toca la configuración del
+    equipo: pide el cambio con `servicio.pide` (`ajuste`) y el agente lo aplica.
 - **Que VeraCrypt salga con 0 no quiere decir que esté montado.** El agente sabe
   que está abierto cuando **ve** el volumen con el id de la marca, igual que los
   `.bat` del vestíbulo, y lo busca por la letra o el punto de montaje guardados.
@@ -278,6 +289,15 @@ fija, `~/PRDRIVE`.
   el agente lo trata igual.
 - **Tampoco hay favoritos** que lo monten solo al iniciar sesión, por la misma
   nota: no registran nada y reescriben el fichero entero.
+- **El agente no bloquea al suspender en la v1.** Queda como ajuste futuro
+  (`bloquear_al_suspender`, desactivado por defecto), atado a
+  `PBT_APMSUSPEND` en Windows y a la señal `PrepareForSleep` de logind en
+  Linux. No se hace ahora porque tiene su propio problema: la suspensión avisa
+  con poco margen y cortaría la pasada en curso, así que hay que decidir antes
+  si se espera, se corta o se renuncia a bloquear. Mientras tanto, quien lo
+  quiera tiene la preferencia de VeraCrypt, que el agente ya soporta como si se
+  desenchufara la unidad. La v1 no reserva la clave en `agente.json`: se añade
+  cuando exista.
 
 ### Lo que el cifrado hace más seguro, y lo que no
 
@@ -468,13 +488,13 @@ Nada, mientras no se instale el agente. Cuando se instala:
    «no»?
 4. **Bandeja en Linux:** ¿se acepta el cliente D-Bus propio, o basta en la v1 con
    el lanzador y los avisos?
-5. **Pedir la contraseña al iniciar sesión:** ¿activado por defecto?
-   **Propuesta: sí**, porque es lo que hace que un equipo cifrado se comporte
-   como uno sin cifrar.
-6. **¿«Bloquear al suspender» en el propio agente**, con `PBT_APMSUSPEND`? Sería
-   distinto del cierre automático de VeraCrypt, que no tocamos. El riesgo es
-   cortar una pasada. **Propuesta: no en la v1**; para eso ya está la
-   preferencia de VeraCrypt.
+
+Resueltas:
+
+- **Pedir la contraseña al iniciar sesión:** es configurable
+  (`pedir_al_iniciar`) y viene activado por defecto (sección 4, «Abrir»).
+- **Bloquear al suspender:** no entra en la v1. Será un ajuste futuro,
+  desactivado por defecto (sección 4, «Cerrar»).
 
 ## Fases
 
@@ -487,17 +507,19 @@ Cada fase se puede publicar por separado y deja el proyecto funcionando:
 2. **La raíz del equipo sin cifrar**: `tipo=equipo`, `PASOS_EQUIPO` sin
    «Cifrado», y la raíz como una raíz atendida más.
 3. **Cifrado local con VeraCrypt**: el paso «Cifrado» del equipo,
-   Desbloquear/Bloquear en el agente, la letra fija, `raiz_fisica()` con raíces
-   extra y «Expulsar» → «Bloquear». Se prueba en Windows real antes de
-   publicarlo, como se hizo con la unidad G:.
+   Desbloquear/Bloquear en el agente, `pedir_al_iniciar` elegido en el
+   asistente, la letra fija, `raiz_fisica()` con raíces extra y «Expulsar» →
+   «Bloquear». Se prueba en Windows real antes de publicarlo, como se hizo con
+   la unidad G:.
 4. **Bandeja en Windows**, con la detección por `WM_DEVICECHANGE` montada sobre
-   su ventana.
-5. **Ventana ↔ agente**: la línea del agente, `servicio.pide` y «Actualizar».
+   su ventana y la casilla de `pedir_al_iniciar`.
+5. **Ventana ↔ agente**: la línea del agente, `servicio.pide` (con `ajuste`) y
+   «Actualizar».
 6. **Bandeja en Linux** (StatusNotifierItem) con la caída al lanzador.
 
 Para después: parejas ejecutadas en el propio proceso, reaccionar a los cambios
-de ficheros, `rclone rcd` y sincronizar la unidad con el equipo sin pasar por el
-remoto.
+de ficheros, `rclone rcd`, sincronizar la unidad con el equipo sin pasar por el
+remoto y «Bloquear al suspender» como ajuste.
 
 ## Pruebas
 
@@ -512,6 +534,9 @@ remoto.
   - la orden de abrir no lleva nunca `/password` y sí `/letter` y `rm`;
   - «abierto» se decide al ver el id, no por la salida del proceso;
   - la vuelta al estado bloqueado solo con el `.hc` libre;
+  - con `pedir_al_iniciar` desactivado no se lanza VeraCrypt al arrancar; con
+    él activado se lanza una vez y no se repite tras cancelar;
+  - un `ajuste` pedido por `servicio.pide` lo escribe el agente, no la ventana;
   - el aviso por el punto de montaje con contenido;
   - que `raiz_fisica()` encuentra la carpeta del contenedor por las raíces
     extra.
