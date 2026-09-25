@@ -88,6 +88,15 @@ class Wizard:
         # unidad la invalida, porque lo que «ya lleva» es de la otra.
         self.matriz: platforms.Matriz | None = None
         self.matriz_de: Path | None = None
+        # El recorrido «En este equipo» (`ui/tk_equipo.py`): dónde se instala, y
+        # lo que sus pasos van sabiendo. `donde` sale elegido «unidad», que es lo
+        # de siempre, para que quien viene a preparar un pendrive no note nada.
+        self.donde = "unidad"
+        self.agente_prep = None
+        self.agente_unidades: dict | None = None
+        self.agente_origen: dict = {}
+        self.agente_espera = 120.0
+        self.agente_hecho: list[str] | None = None
 
     # --- navegación ---------------------------------------------------------
 
@@ -614,6 +623,62 @@ def _paso_comprobaciones(cuerpo, wiz) -> None:
 def _fila_python() -> tuple[str, bool, str]:
     chk = device.check_python()
     return (chk.etiqueta, chk.ok, chk.detalle)
+
+
+# ---------------------------------------------------------------------------
+# Paso 0 — ¿Dónde? En una unidad, o en este equipo
+# ---------------------------------------------------------------------------
+
+def _paso_donde(cuerpo, wiz) -> None:
+    """La primera pregunta: qué recorrido se hace.
+
+    «En una unidad» es lo de siempre. «En este equipo» instala el agente
+    residente (`install/agente.py`): prdrive se queda en el ordenador y atiende
+    las unidades prdrive que se enchufan. Cambiar de respuesta cambia la lista
+    de pasos, y las dos empiezan por esta pantalla, así que «Atrás» siempre
+    vuelve aquí."""
+    import tkinter as tk
+    from tkinter import ttk
+
+    from common import equipo
+
+    ttk.Label(cuerpo, justify="left", wraplength=theme.medida(780),
+              text="¿Dónde quieres instalar prdrive?").grid(
+        row=0, column=0, sticky="w", pady=(0, 12))
+    eleccion = tk.StringVar(value=wiz.donde)
+
+    def elegir() -> None:
+        wiz.donde = eleccion.get()
+        wiz.pasos = PASOS_EQUIPO if wiz.donde == "equipo" else PASOS_INSTALACION
+        wiz.repintar()
+
+    instalado = equipo.leer_instalacion().get("version") if equipo.instalado() else None
+    opciones = (
+        ("unidad", "En una unidad",
+         "Un pendrive o un disco que lleva prdrive y tus carpetas, y funciona en "
+         "cualquier equipo donde lo enchufes. Lo de siempre."),
+        ("equipo", "En este equipo",
+         "prdrive se queda en el ordenador, en segundo plano, y atiende las "
+         "unidades prdrive que enchufes aquí: las sincroniza sin que tengas que "
+         "abrir nada, y avisa si algo falla. Sustituye al arranque automático "
+         "(penwatch). En esta versión atiende unidades; las carpetas propias del "
+         "equipo llegarán más adelante."
+         + (f"\nYa está instalado (versión {instalado}): puedes ponerlo al día o "
+            f"cambiar sus unidades." if instalado else "")))
+    for i, (valor, titulo, texto) in enumerate(opciones):
+        tarjeta = ttk.Frame(cuerpo, style="Card.TFrame", padding=(14, 10))
+        tarjeta.grid(row=1 + i, column=0, sticky="ew", pady=(0, 10))
+        tarjeta.columnconfigure(0, weight=1)
+        ttk.Radiobutton(tarjeta, text=titulo, value=valor, variable=eleccion,
+                        style="Card.Fuerte.TRadiobutton", command=elegir).grid(
+            row=0, column=0, sticky="w")
+        ttk.Label(tarjeta, text=texto, style="Card.Pista.TLabel", justify="left",
+                  wraplength=theme.medida(720)).grid(row=1, column=0, sticky="w",
+                                                     pady=(4, 0))
+
+
+def _ok_donde(w) -> bool:
+    return w.donde in ("unidad", "equipo")
 
 
 # ---------------------------------------------------------------------------
@@ -1480,7 +1545,21 @@ def _paso_final(cuerpo, wiz) -> None:
     extras = ttk.LabelFrame(cuerpo, text="Y ya que estamos", padding=10)
     extras.grid(row=2, column=0, sticky="w", pady=(14, 0))
 
+    from common import equipo
+    agente = equipo.instalado()
+
     def instalar_vigilante() -> None:
+        if agente:
+            # Con el agente residente en este equipo, penwatch sobra: se le pide
+            # a él que atienda este dispositivo (lo escribe él, en su lista).
+            uid = device.control_id(wiz.device_root)
+            if not uid or not equipo.pedir({"pide": equipo.PIDE_MODO, "id": uid,
+                                            "modo": equipo.MODO_AL_ATENDER}):
+                wiz.error("No he podido pedírselo al agente de este equipo.")
+                return
+            wiz.aviso("El agente de este equipo sincronizará este dispositivo en "
+                      "segundo plano cada vez que lo enchufes.")
+            return
         try:
             cmd = deploy.penwatch_install_command(wiz.device_root)
         except InstallError as e:
@@ -1545,7 +1624,8 @@ def _paso_final(cuerpo, wiz) -> None:
         wiz.aviso("Contenedor desmontado. Ya puedes extraer el dispositivo.")
 
     for i, (texto, accion) in enumerate((
-            ("Instalar el arranque automático (penwatch)", instalar_vigilante),
+            ("Que lo atienda el agente de este equipo" if agente else
+             "Instalar el arranque automático (penwatch)", instalar_vigilante),
             ("Compartir esta conexión con otros dispositivos", guardar_en_catalogo),
             ("Llevar VeraCrypt en el dispositivo", llevar_veracrypt),
             ("Desmontar el contenedor", desmontar),
@@ -1610,6 +1690,7 @@ def _ok_parejas(w) -> bool:
 # «Comprobaciones» pueden ir después porque el catálogo no hace falta hasta
 # «Parejas».
 PASOS_INSTALACION = [
+    ("¿Dónde?", _paso_donde, _ok_donde),
     ("Dispositivo", _paso_destino, _ok_destino),
     ("Cifrado", _paso_cifrado, _ok_cifrado),
     ("Conexión", _paso_conexion, _ok_conexion),
@@ -1624,6 +1705,7 @@ PASOS_INSTALACION = [
 # que este instalador lleva dentro. Ni conexión, ni catálogo, ni parejas: nada de
 # eso cambia al actualizar, y pedirlo otra vez sería pedirlo para nada.
 PASOS_ACTUALIZACION = [
+    ("¿Dónde?", _paso_donde, _ok_donde),
     ("Dispositivo", _paso_destino, _ok_destino),
     ("Actualización", _paso_actualizar, lambda w: True),
 ]
@@ -1631,8 +1713,38 @@ PASOS_ACTUALIZACION = [
 # El otro recorrido corto: «Añadir plataformas…». La misma lista que el paso
 # «Instalación», sobre un dispositivo que ya existe y sin tocar nada más.
 PASOS_PLATAFORMAS = [
+    ("¿Dónde?", _paso_donde, _ok_donde),
     ("Dispositivo", _paso_destino, _ok_destino),
     ("Plataformas", _paso_plataformas, lambda w: True),
+]
+
+
+def _paso_equipo(nombre: str):
+    """Un paso de `ui/tk_equipo.py`, importado al pintarlo: así este módulo no
+    arrastra `install/agente` (y con él penwatch) a quien solo prepara unidades."""
+    def dibujar(cuerpo, wiz) -> None:
+        from . import tk_equipo
+        getattr(tk_equipo, nombre)(cuerpo, wiz)
+    return dibujar
+
+
+def _ok_equipo(nombre: str):
+    def condicion(wiz) -> bool:
+        from . import tk_equipo
+        return getattr(tk_equipo, nombre)(wiz)
+    return condicion
+
+
+# «En este equipo»: el agente residente, solo atendiendo unidades (la instalación
+# «solo agente» del diseño). Sin conexión, ni catálogo, ni clave: cada unidad
+# trae las suyas. «Instalación» va antes que «Unidades» porque el paso de las
+# unidades escribe la configuración que leerá ESTE código.
+PASOS_EQUIPO = [
+    ("¿Dónde?", _paso_donde, _ok_donde),
+    ("Instalación", _paso_equipo("paso_instalar"), _ok_equipo("ok_instalar")),
+    ("Unidades", _paso_equipo("paso_unidades"), lambda w: True),
+    ("Arranque", _paso_equipo("paso_arranque"), _ok_equipo("ok_arranque")),
+    ("Verificación", _paso_equipo("paso_final"), lambda w: True),
 ]
 
 

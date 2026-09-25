@@ -21,6 +21,7 @@ renombrarlo pediría una migración para cambiar una palabra.
 from __future__ import annotations
 
 import socket
+from typing import Any, Mapping
 
 from common import model, store
 from common.model import Config
@@ -59,9 +60,18 @@ def save_prefs(action: str, pairs: list[str], interval_min: float,
 
 def daemon_defaults(config: Config) -> tuple[list[str], float]:
     """Los valores de [daemon] del TOML, saneados contra las parejas que existen."""
-    names = config.names
-    pairs = [n for n in config.daemon.get("pairs", names) if n in names] or names
-    return pairs, float(config.daemon.get("interval_minutes", model.DEFAULT_INTERVAL_MIN))
+    return _de_daemon(config.names, config.daemon)
+
+
+def _de_daemon(names: list[str], daemon: Mapping[str, Any]) -> tuple[list[str], float]:
+    pedidas = daemon.get("pairs", names)
+    pairs = [n for n in (pedidas if isinstance(pedidas, list) else names)
+             if n in names] or list(names)
+    try:
+        interval = float(daemon.get("interval_minutes", model.DEFAULT_INTERVAL_MIN))
+    except (TypeError, ValueError):
+        interval = model.DEFAULT_INTERVAL_MIN
+    return pairs, interval
 
 
 def startup_defaults(config: Config) -> tuple[list[str], float, str | None]:
@@ -70,10 +80,20 @@ def startup_defaults(config: Config) -> tuple[list[str], float, str | None]:
     el servicio > [daemon] del TOML > todas las parejas cada 30 min. Devuelve
     (parejas, minutos, nota); la nota es None si no hay recuerdo, y si no, el
     texto con el que la UI dice de dónde salen las casillas marcadas."""
-    all_names = config.names
-    d_pairs, d_interval = daemon_defaults(config)
+    return elegir(config.names, config.daemon, read_prefs())
 
-    prefs = read_prefs()
+
+def elegir(all_names: list[str], daemon: Mapping[str, Any],
+           prefs: Mapping[str, Any]) -> tuple[list[str], float, str | None]:
+    """`startup_defaults()` con los datos ya leídos: las parejas de la raíz, su
+    tabla `[daemon]` y su `ui_prefs.json`.
+
+    Aparte y sin tocar el disco porque el agente del equipo (`agente.py`) hace de
+    servicio de raíces que no son la suya: lee esos tres datos de cada una y
+    decide con esta misma regla, en vez de con una segunda copia que se
+    separaría de esta."""
+    d_pairs, d_interval = _de_daemon(all_names, daemon)
+
     # Un registro 'manual' solo puede ser de antes de que las pasadas manuales
     # dejaran de escribir aquí, y es justo el recuerdo de una pasada suelta que
     # no debe decidir el servicio. Se descarta por 'manual' y no por «distinto

@@ -205,7 +205,6 @@ LOG_FILE = HOST_DIR / "penwatch.log"
 STOP_FILE = HOST_DIR / "stop"
 SELF_COPY = HOST_DIR / "penwatch.py"
 RUNTIMES_DIR = HOST_DIR / "runtime"      # las copias del Python del dispositivo
-TASK_XML_FILE = HOST_DIR / "task.xml"
 UNIT_FILE = Path.home() / ".config" / "systemd" / "user" / UNIT_NAME
 DESKTOP_FILE = Path.home() / ".config" / "autostart" / f"{APP_NAME}-watch.desktop"
 
@@ -492,13 +491,14 @@ def veracrypt_command(root: Path) -> list[str] | None:
     return [exe, str(container)]
 
 
-def open_container(root: Path) -> bool:
+def open_container(root: Path, cwd: Path | None = None) -> bool:
     """Le pide a VeraCrypt que abra el contenedor de `root`. No espera.
 
     Si se ha abierto lo dirá `find_pen()` en los sondeos siguientes: VeraCrypt,
     sin permisos de administrador y en modo portátil, se relanza elevado y sale
     con 0 antes de que nadie haya escrito la contraseña, así que su salida no
-    dice nada. cwd en el equipo, como `launch()`."""
+    dice nada. cwd en el equipo, como `launch()`: la carpeta del vigilante, o la
+    que diga quien llama (el agente residente, que tiene la suya)."""
     cmd = veracrypt_command(root)
     if cmd is None and not IS_WIN:
         log(linux_closed_note(root))
@@ -508,7 +508,7 @@ def open_container(root: Path) -> bool:
             "que abrirlo")
         return False
     kwargs: dict = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL,
-                    "stderr": subprocess.DEVNULL, "cwd": str(HOST_DIR),
+                    "stderr": subprocess.DEVNULL, "cwd": str(cwd or HOST_DIR),
                     "close_fds": True}
     if IS_WIN:
         kwargs["creationflags"] = CREATE_NEW_PROCESS_GROUP
@@ -1036,7 +1036,7 @@ TASK_XML = """<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
     <Author>{user}</Author>
-    <Description>Vigila la conexion del dispositivo (fichero PRDRIVE) y lanza runsync.py.</Description>
+    <Description>{description}</Description>
   </RegistrationInfo>
   <Triggers>
     <LogonTrigger>
@@ -1097,32 +1097,73 @@ def current_user() -> str:
         return os.environ.get("USER", "")
 
 
-def register_windows(cfg: dict) -> str:
-    exe = python_for_launch(cfg)
-    user = cfg.get("user") or current_user()
-    xml = TASK_XML.format(
-        user=xml_escape(user),
-        command=xml_escape(exe),
-        arguments=xml_escape(f'"{SELF_COPY}" run'),
-        workdir=xml_escape(str(HOST_DIR)),
-    )
+TASK_DESCRIPTION = ("Vigila la conexion del dispositivo (fichero PRDRIVE) y lanza "
+                    "runsync.py.")
+
+
+def task_xml(user: str, command: str, arguments: str, workdir: str,
+             description: str) -> str:
+    """El XML de una tarea por usuario que arranca al iniciar sesión.
+
+    Aparte de `register_windows()` para que el agente residente registre la suya
+    con las mismas trampas ya resueltas: UTF-16, `DisallowStartIfOnBatteries`
+    en false (un portátil a batería no arrancaba nada) y `ExecutionTimeLimit`
+    PT0S (sin él, Windows la mata a las 72 h)."""
+    return TASK_XML.format(user=xml_escape(user), command=xml_escape(command),
+                           arguments=xml_escape(arguments), workdir=xml_escape(workdir),
+                           description=xml_escape(description))
+
+
+def register_task(name: str, command: str, arguments: str, workdir: Path,
+                  description: str, user: str | None = None) -> str:
+    """Registra (o sustituye) la tarea `name`. Lanza RuntimeError si no puede."""
+    user = user or current_user()
+    xml = task_xml(user, command, arguments, str(workdir), description)
+    workdir.mkdir(parents=True, exist_ok=True)
+    fichero = workdir / "task.xml"
     # schtasks /XML quiere el fichero en UTF-16; en UTF-8 falla con acentos.
-    TASK_XML_FILE.write_text(xml, encoding="utf-16")
-    res = run_quiet(["schtasks", "/Create", "/TN", TASK_NAME,
-                     "/XML", str(TASK_XML_FILE), "/F"])
+    fichero.write_text(xml, encoding="utf-16")
+    res = run_quiet(["schtasks", "/Create", "/TN", name, "/XML", str(fichero), "/F"])
     if res.returncode != 0:
         # Plan B: la forma simple, que no admite ajustes (con ella Windows puede
         # negarse a arrancar la tarea con el portátil a batería).
         log(f"schtasks /XML ha fallado ({res.stderr.strip() or res.stdout.strip()}); "
             f"probando la forma simple")
-        res = run_quiet(["schtasks", "/Create", "/TN", TASK_NAME,
-                         "/TR", f'"{exe}" "{SELF_COPY}" run',
-                         "/SC", "ONLOGON", "/F"])
+        res = run_quiet(["schtasks", "/Create", "/TN", name,
+                         "/TR", f'"{command}" {arguments}', "/SC", "ONLOGON", "/F"])
         if res.returncode != 0:
             raise RuntimeError(f"no he podido crear la tarea: "
                                f"{res.stderr.strip() or res.stdout.strip()}")
-    return (f"Tarea '{TASK_NAME}' creada para {user}: arranca en cada inicio de "
+    return (f"Tarea '{name}' creada para {user}: arranca en cada inicio de "
             f"sesión (sobrevive a reinicios).")
+
+
+def register_windows(cfg: dict) -> str:
+    return register_task(TASK_NAME, python_for_launch(cfg), f'"{SELF_COPY}" run',
+                         HOST_DIR, TASK_DESCRIPTION, cfg.get("user"))
+
+
+def desktop_exec(args: list[str]) -> str:
+    """La línea `Exec=` de un .desktop, según la *Desktop Entry Specification*
+    («The Exec key»): cada argumento entre comillas dobles, con `"`, `` ` ``,
+    `$` y la barra invertida escapados con una barra; ENCIMA, la regla de
+    escape de todo valor de tipo cadena dobla cada barra; y el `%` (códigos de
+    campo) se dobla. Sin comillas, una ruta con espacios —un usuario «Ana
+    María»— partía la orden en dos."""
+    partes = []
+    for arg in args:
+        citado = "".join("\\" + ch if ch in '"`$\\' else ch for ch in arg)
+        partes.append('"' + citado.replace("\\", "\\\\") + '"')
+    return " ".join(partes).replace("%", "%%")
+
+
+def autostart_desktop(name: str, args: list[str], comment: str = "") -> str:
+    """Un autostart XDG (~/.config/autostart/*.desktop) que lanza `args`."""
+    return ("[Desktop Entry]\nType=Application\n"
+            f"Name={name}\n"
+            + (f"Comment={comment}\n" if comment else "")
+            + f"Exec={desktop_exec(args)}\n"
+            "X-GNOME-Autostart-enabled=true\nNoDisplay=true\n")
 
 
 UNIT_TEMPLATE = """[Unit]
@@ -1167,9 +1208,8 @@ def register_linux(cfg: dict) -> str:
 
     DESKTOP_FILE.parent.mkdir(parents=True, exist_ok=True)
     DESKTOP_FILE.write_text(
-        "[Desktop Entry]\nType=Application\nName=prdrive Watch\n"
-        f"Exec={python} {SELF_COPY} run\n"
-        "X-GNOME-Autostart-enabled=true\nNoDisplay=true\n", encoding="utf-8")
+        autostart_desktop(f"{APP_NAME} Watch", [python, str(SELF_COPY), "run"]),
+        encoding="utf-8")
     return (f"Autostart XDG instalado en {DESKTOP_FILE} (no hay systemd de "
             f"usuario): arranca al iniciar el escritorio.")
 

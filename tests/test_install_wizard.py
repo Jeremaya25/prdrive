@@ -686,8 +686,8 @@ c("y se ofrecen los dos caminos",
 antes = device.control_id(limpio)
 boton(corto.cuerpo, "Actualizar el programa").invoke()
 c("elegir actualizar cambia al recorrido corto",
-  [t for t, _, _ in corto.pasos], ["Dispositivo", "Actualización"])
-c("y planta al usuario en la pantalla de actualizar", corto.indice, 1)
+  [t for t, _, _ in corto.pasos], ["¿Dónde?", "Dispositivo", "Actualización"])
+c("y planta al usuario en la pantalla de actualizar", corto.indice, 2)
 
 (app / "sync.py").write_text("# version vieja\n", encoding="utf-8")
 (limpio / "runsync.bat").write_bytes(b"rem el que puso el aprovisionamiento\r\n")
@@ -719,8 +719,8 @@ mas = nuevo_asistente(limpio)
 en_paso(mas, PASO["Dispositivo"])
 boton(mas.cuerpo, "Añadir plataformas…").invoke()
 c("«Añadir plataformas…» cambia a su recorrido corto",
-  [t for t, _, _ in mas.pasos], ["Dispositivo", "Plataformas"])
-c("y planta al usuario en la lista", mas.indice, 1)
+  [t for t, _, _ in mas.pasos], ["¿Dónde?", "Dispositivo", "Plataformas"])
+c("y planta al usuario en la lista", mas.indice, 2)
 c("con lo que el dispositivo ya lleva marcado",
   ANFITRION.clave in mas.matriz.elegidas, True)
 
@@ -822,5 +822,73 @@ c("con código viejo en la unidad, «Siguiente» sigue apagado",
 viejo.state.deployed = True
 c("y se enciende al haber instalado de verdad",
   tk_install._ok_instalacion(viejo), True)
+
+# --- «En este equipo»: el agente residente ------------------------------------
+# El mismo asistente, otra lista de pasos. Nada de esto toca el equipo de
+# verdad: la carpeta del agente va a un temporal, y preparar y activar se
+# sustituyen por lo que apuntan (lo de dentro lo prueba test_install_agente).
+import penwatch  # noqa: E402
+from common import equipo  # noqa: E402
+from install import agente as ia  # noqa: E402
+from ui import tk_equipo  # noqa: E402
+
+equipo.DIR = tmpdir("prdrive-asis-equipo-")
+penwatch.CONFIG_FILE = tmpdir("prdrive-asis-pw-") / "watch.json"
+tk_equipo.working = working_directo
+preparados, activados = [], []
+PREP = ia.Preparado(equipo.DIR / "agente" / "0.4.0", equipo.DIR / "runtime" / "x" / "py",
+                    "sello")
+ia.preparar = lambda progreso=None: preparados.append(1) or PREP
+ia.activar = lambda prep, elegidas, espera: (activados.append((prep, elegidas, espera))
+                                             or ["Agente arrancado."])
+ia.candidatas = lambda: [ia.Candidata("u" * 32, "PRDRIVE-2", equipo.DAEMON,
+                                      "enchufada ahora")]
+
+casa = nuevo_asistente(None)
+en_paso(casa, 0)
+c("el primer paso es «¿Dónde?»", tk_install.PASOS_INSTALACION[0][0], "¿Dónde?")
+c("  sale elegido «En una unidad»: quien prepara un pendrive no nota nada",
+  (casa.donde, casa.pasos is tk_install.PASOS_INSTALACION), ("unidad", True))
+c("  y se puede seguir sin tocar nada", str(casa.boton_siguiente.cget("state")), "normal")
+radio = next(w for w in widgets(casa.cuerpo, ttk.Radiobutton)
+             if w.cget("text") == "En este equipo")
+radio.invoke()
+c("«En este equipo» cambia la lista de pasos",
+  [t for t, _, _ in casa.pasos], ["¿Dónde?", "Instalación", "Unidades", "Arranque",
+                                  "Verificación"])
+c("  sin moverse de la primera pantalla", casa.indice, 0)
+casa.ir(+1)
+c("«Instalación»: Siguiente apagado hasta instalar",
+  str(casa.boton_siguiente.cget("state")), "disabled")
+boton(casa.cuerpo, "Instalar el agente").invoke()
+c("  instalar prepara el código y el Python", (preparados, casa.agente_prep), ([1], PREP))
+c("  y enciende Siguiente", str(casa.boton_siguiente.cget("state")), "normal")
+casa.ir(+1)
+c("«Unidades» ofrece las que se saben sin red, con su modo",
+  casa.agente_unidades, {"u" * 32: (equipo.DAEMON, "PRDRIVE-2")})
+caja = next(iter(widgets(casa.cuerpo, ttk.Combobox)))
+caja.set(equipo.TEXTO_MODO[equipo.SYNC])
+caja.event_generate("<<ComboboxSelected>>")
+c("  cambiar el modo lo apunta", casa.agente_unidades["u" * 32][0], equipo.SYNC)
+casa.ir(+1)
+c("«Arranque»: Siguiente apagado hasta registrar",
+  str(casa.boton_siguiente.cget("state")), "disabled")
+boton(casa.cuerpo, "Registrar y arrancar").invoke()
+c("  registrar activa con lo elegido",
+  activados, [(PREP, {"u" * 32: (equipo.SYNC, "PRDRIVE-2")}, 120.0)])
+c("  y enciende Siguiente", str(casa.boton_siguiente.cget("state")), "normal")
+casa.ir(+1)
+c("«Verificación» se pinta y es la última",
+  casa.boton_siguiente.cget("text"), "Terminar")
+filas = {e: ok for e, ok, _ in tk_equipo.comprobaciones()}
+c("  y dice lo que falta (aquí nada se instaló de verdad)",
+  (filas["Agente instalado"], filas["penwatch"]), (False, True))
+casa.ir(-4)
+radio = next(w for w in widgets(casa.cuerpo, ttk.Radiobutton)
+             if w.cget("text") == "En una unidad")
+radio.invoke()
+c("volver a «En una unidad» devuelve el recorrido de siempre",
+  casa.pasos is tk_install.PASOS_INSTALACION, True)
+
 
 sys.exit(c.report())

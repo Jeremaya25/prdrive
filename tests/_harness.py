@@ -140,6 +140,15 @@ def falso_portatil(version: str | None = None, sin: tuple[str, ...] = ()) -> Pat
     return carpeta
 
 
+# La carpeta del agente residente en el equipo (`common/equipo.py`), en un
+# temporal para TODOS los tests: en el equipo de quien los ejecuta puede haber
+# un agente instalado de verdad, y ni su configuración puede cambiar lo que ve
+# un test ni un test puede escribirle en el buzón.
+from common import equipo  # noqa: E402
+
+equipo.DIR = tmpdir("prdrive-equipo-harness-")
+
+
 @atexit.register
 def _limpiar_temporales() -> None:
     for destino in _TEMPORALES:

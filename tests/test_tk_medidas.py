@@ -259,10 +259,28 @@ try:
     # (el dispositivo pasó a ser el primero), y una lista de números habría
     # seguido pasando mientras medía los pasos equivocados.
     PASO = {t: i for i, (t, _, _) in enumerate(tk_install.PASOS_INSTALACION)}
-    DIBUJABLES = ("Dispositivo", "Cifrado", "Conexión", "Comprobaciones",
+    DIBUJABLES = ("¿Dónde?", "Dispositivo", "Cifrado", "Conexión", "Comprobaciones",
                   "Inicialización")
     # Un dispositivo de mentira con su VERSION, para que la pantalla de
     # actualizar tenga que pintar la tabla de versiones de verdad.
+    # El recorrido «En este equipo» con la carpeta del agente en un temporal y
+    # penwatch instalado (el aviso ámbar de «Arranque» es su peor caso).
+    import penwatch
+    from common import equipo
+    from install import agente as ia
+    equipo.DIR = tmpdir("prdrive-medidas-equipo-") / ("carpeta del agente " * 3).strip()
+    penwatch.CONFIG_FILE = tmpdir("prdrive-medidas-pw-") / "watch.json"
+    penwatch.CONFIG_FILE.write_text("{}", encoding="utf-8")
+    EQUIPO_PREP = ia.Preparado(equipo.DIR / "agente" / "0.4.0",
+                               equipo.DIR / "runtime" / ("0" * 12) / "pythonw.exe", "x")
+    EQUIPO_HECHO = ["Configuración del agente escrita en "
+                    + str(equipo.DIR / "agente.json") + ".",
+                    "penwatch: Tarea 'PrDriveWatch' eliminada.",
+                    "penwatch: eliminado C:\\Users\\alguien\\AppData\\Local\\PrDriveWatch",
+                    "El agente sustituye a penwatch en este equipo: lo que vigilaba "
+                    "está en su lista.",
+                    "Autostart instalado en /home/alguien/.config/autostart/prdrive.desktop: "
+                    "arranca al iniciar el escritorio.", "Agente arrancado."]
     DISPOSITIVO_FALSO = tmpdir("prdrive-medidas-")
     (DISPOSITIVO_FALSO / ".prdrive").mkdir()
     (DISPOSITIVO_FALSO / ".prdrive" / "VERSION").write_text("0.0.1", encoding="utf-8")
@@ -312,6 +330,22 @@ try:
         c(f"{nombre}: «Plataformas» cabe", cabe(top), True)
         c(f"{nombre}: «Plataformas» no queda recortado",
           recortado(wiz.visor), False)
+        # «En este equipo», cada paso en su estado más lleno: el resultado de
+        # instalar con rutas largas, seis unidades, el aviso de penwatch y el
+        # resultado de registrar, y la tabla de verificación.
+        wiz.pasos = tk_install.PASOS_EQUIPO
+        wiz.donde = "equipo"
+        wiz.agente_prep = EQUIPO_PREP
+        wiz.agente_unidades = {f"{i}" * 32: (modo, f"Unidad número {i} de la casa")
+                               for i, modo in zip(range(6), equipo.MODOS * 2)}
+        wiz.agente_origen = {k: "la vigilaba penwatch" for k in wiz.agente_unidades}
+        wiz.agente_hecho = EQUIPO_HECHO
+        for paso in ("¿Dónde?", "Instalación", "Unidades", "Arranque", "Verificación"):
+            wiz.indice = [t for t, _, _ in wiz.pasos].index(paso)
+            wiz.repintar()
+            c(f"{nombre}: «{paso}» (en este equipo) cabe", cabe(top), True)
+            c(f"{nombre}: «{paso}» (en este equipo) no queda recortado",
+              recortado(wiz.visor), False)
         top.destroy()
 
     # --- lo que aparece DESPUÉS de pintar el paso -----------------------------

@@ -20,6 +20,8 @@ inicializa las parejas bisync y comprueba que todo está.
     python prdrive-install.py --probe         qué unidades ve, y sale
     python prdrive-install.py --update RUTA   sustituye el código de un dispositivo
     python prdrive-install.py --update-components RUTA   pone al día su rclone y su Python
+    python prdrive-install.py --instalar-agente      el agente residente en ESTE equipo
+    python prdrive-install.py --desinstalar-agente   y quitarlo (no toca ninguna unidad)
 
 `--update` es el otro extremo del aviso de versión nueva de la ventana: no
 aprovisiona nada, solo repite el paso 5 sobre un dispositivo que ya existe. Y no
@@ -233,6 +235,25 @@ def cmd_update_components(raiz: str) -> int:
     return 0
 
 
+def cmd_instalar_agente() -> int:
+    """El agente residente sin asistente: el mismo recorrido «En este equipo»,
+    con las unidades que se sepan sin red (la de penwatch, las enchufadas) en
+    el modo que se les propone. Las demás llegarán con el aviso de «unidad
+    nueva»."""
+    from install import agente
+    for linea in agente.instalar(progreso=print):
+        print(f"  {linea}")
+    print("Hecho. Estado:  python agente.py status   (en la carpeta del agente)")
+    return 0
+
+
+def cmd_desinstalar_agente() -> int:
+    from install import agente
+    for linea in agente.desinstalar():
+        print(f"  {linea}")
+    return 0
+
+
 def cmd_wizard() -> int:
     """El asistente. Sin Tkinter no hay instalador: no hay menú de consola.
 
@@ -271,6 +292,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="Pone al día el rclone y el Python que ya lleva un "
                              "dispositivo instalado (la raíz del volumen) y "
                              "sale. No toca el código ni la configuración.")
+    parser.add_argument("--instalar-agente", action="store_true",
+                        help="Instala el agente residente en este equipo (atiende "
+                             "las unidades que se enchufan) y sale.")
+    parser.add_argument("--desinstalar-agente", action="store_true",
+                        help="Quita el agente residente de este equipo y sale. No "
+                             "toca ninguna unidad.")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     return parser.parse_args(argv)
 
@@ -289,6 +316,10 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_update_components(args.update_components)
         if args.update:
             return cmd_update(args.update)
+        if args.instalar_agente:
+            return cmd_instalar_agente()
+        if args.desinstalar_agente:
+            return cmd_desinstalar_agente()
         if args.check:
             return cmd_check()
         if args.probe:

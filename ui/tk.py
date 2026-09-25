@@ -1167,10 +1167,11 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
                 # arranque automático se ha roto.
                 ttk.Label(arranque, text=watch.PAUSA, style="Pista.TLabel").grid(
                     row=1, column=1, sticky="w")
-            cambiar = ttk.Button(arranque, text=dicho.boton, style="Quiet.TButton",
-                                 command=abrir_arranque)
-            theme.boton_icono(cambiar, "arranque", theme.ACENTO, theme.PAPEL)
-            cambiar.grid(row=0, column=2, rowspan=2, sticky="e", padx=(10, 0))
+            if dicho.boton:
+                cambiar = ttk.Button(arranque, text=dicho.boton, style="Quiet.TButton",
+                                     command=abrir_arranque)
+                theme.boton_icono(cambiar, "arranque", theme.ACENTO, theme.PAPEL)
+                cambiar.grid(row=0, column=2, rowspan=2, sticky="e", padx=(10, 0))
 
         def selected() -> list[str]:
             return [n for n in names if vars_by_name[n].get()]

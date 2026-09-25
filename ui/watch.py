@@ -55,14 +55,19 @@ class Resumen(NamedTuple):
       sin_instalar      en este equipo no hay vigilante
       otro_dispositivo  lo hay, pero vigila otro prdrive (un equipo tiene uno)
       desfasado         vigila este, con una copia de otra versión
-      instalado         vigila este, y `modo` es lo que hará"""
+      instalado         vigila este, y `modo` es lo que hará
+      agente_nueva      el agente residente (`agente.py`) está instalado y este
+                        dispositivo no está en su lista: preguntará al enchufarlo
+      agente            el agente lo tiene en su lista, y `modo` es lo que hace
+                        (`common.equipo.MODOS`, que añade «nada»)"""
     estado: str
     modo: str = ""
 
     @property
     def vigila_este(self) -> bool:
         """Hay un vigilante en este equipo que atiende a este dispositivo."""
-        return self.estado in ("desfasado", "instalado")
+        return (self.estado in ("desfasado", "instalado")
+                or (self.estado == "agente" and self.modo != "nada"))
 
 
 class Linea(NamedTuple):
@@ -141,7 +146,13 @@ def resumen() -> Resumen:
     `update.pending()`). Si la tarea está registrada o no lo cuenta la pantalla
     del vigilante, que sí puede tardar. Nunca lanza.
 
+    Con el agente residente instalado en este equipo, manda él: lo sustituye a
+    penwatch, que el instalador desinstala al ponerlo.
+
     De módulo para que los tests la sustituyan."""
+    agente = _agente()
+    if agente is not None:
+        return agente
     try:
         pw = _penwatch()
         cfg = pw.read_json(pw.CONFIG_FILE)
@@ -162,12 +173,46 @@ def resumen() -> Resumen:
     return Resumen("instalado" if al_dia else "desfasado", modo)
 
 
+def _agente() -> Resumen | None:
+    """Lo que el agente residente hace con este dispositivo, si hay agente.
+
+    Solo lee su configuración (`common/equipo.py`): ni el agente ni la ventana
+    se escriben el uno al otro aquí. Nunca lanza."""
+    try:
+        from common import equipo
+        if not equipo.instalado():
+            return None
+        unidad = equipo.leer_ajustes().unidades.get(fleet.device_id())
+    except Exception:                                   # noqa: BLE001
+        return None
+    if unidad is None:
+        return Resumen("agente_nueva")
+    return Resumen("agente", unidad.modo)
+
+
+# Lo que hace el agente al enchufarlo, dicho en la misma línea.
+_AGENTE_HACE = {
+    "ui": "el agente de este equipo abre esta ventana al enchufarlo.",
+    "daemon": "el agente de este equipo lo sincroniza en segundo plano.",
+    "sync": "el agente de este equipo hace una pasada al enchufarlo.",
+    "nada": "el agente de este equipo no hace nada con él.",
+}
+
+
 def linea(res: Resumen) -> Linea | None:
     """Lo que dice la ventana principal del arranque automático, o None.
 
-    Aquí y no en la ventana para que el menú de consola diga lo mismo."""
+    Aquí y no en la ventana para que el menú de consola diga lo mismo. Un botón
+    vacío es que no hay nada que abrir desde aquí: con el agente, cambiar lo que
+    hace con este dispositivo es cosa suya (`agente.py modo`), no de penwatch."""
     if res.estado == "no_disponible":
         return None
+    if res.estado == "agente_nueva":
+        return Linea("El agente de este equipo preguntará si atenderlo la próxima "
+                     "vez que lo enchufes.", False, "")
+    if res.estado == "agente":
+        hace = _AGENTE_HACE.get(res.modo, res.modo)
+        return Linea(hace[0].upper() + hace[1:], False, "")
     if res.estado == "sin_instalar":
         return Linea("En este equipo no se arranca nada al enchufarlo.",
                      False, "Configurar…")

@@ -137,6 +137,37 @@ try:
                      "interval": 10, "poll_seconds": 3})
     c("installed_options ya no devuelve parejas ni intervalo",
       sorted(watch.installed_options()), ["device_id", "extra_roots", "mode", "poll"])
+
+    # --- con el agente residente instalado en este equipo -----------------------
+    from common import equipo  # noqa: E402
+    codigo = equipo.DIR / "agente" / "0.4.0"
+    codigo.mkdir(parents=True)
+    (codigo / "agente.py").write_text("", encoding="utf-8")
+    from common import store  # noqa: E402
+    store.write_json(equipo.instalacion_json(), {"codigo": str(codigo)})
+    r = resumen_con({"mode": "ui", "device_id": "aaaa"})
+    c("con el agente instalado, manda él aunque quede un watch.json",
+      r.estado, "agente_nueva")
+    c("  sin este dispositivo en su lista: preguntará al enchufarlo",
+      watch.linea(r), watch.Linea("El agente de este equipo preguntará si atenderlo "
+                                  "la próxima vez que lo enchufes.", False, ""))
+    c("  y no vigila este (todavía)", r.vigila_este, False)
+    for modo, dice in (("daemon", "lo sincroniza en segundo plano"),
+                       ("ui", "abre esta ventana al enchufarlo"),
+                       ("sync", "hace una pasada al enchufarlo")):
+        equipo.guardar_ajustes(equipo.Ajustes().con_unidad(equipo.Unidad("aaaa", modo)))
+        r = watch.resumen()
+        c(f"agente, modo {modo}: lo dice", dice in watch.linea(r).texto, True)
+        c(f"  y cuenta como vigilado (la ventana dice que está en pausa)",
+          r.vigila_este, True)
+    c("  sin botón: no se abre la pantalla de penwatch", watch.linea(r).boton, "")
+    equipo.guardar_ajustes(equipo.Ajustes().con_unidad(equipo.Unidad("aaaa", "nada")))
+    r = watch.resumen()
+    c("agente, modo nada: no hace nada, y no vigila", (watch.linea(r).texto, r.vigila_este),
+      ("El agente de este equipo no hace nada con él.", False))
+    store.write_json(equipo.instalacion_json(), {"codigo": str(equipo.DIR / "no-existe")})
+    c("un instalacion.json sin código no es un agente",
+      resumen_con({"mode": "ui", "device_id": "aaaa"}).estado, "instalado")
 finally:
     watch._penwatch, fleet.device_id = real_penwatch, real_device_id
 

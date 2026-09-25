@@ -190,6 +190,11 @@ def stop_previous_daemon() -> str | None:
     deadline = time.monotonic() + STOP_WAIT_SECONDS
     while time.monotonic() < deadline:
         if read_lock() is None:
+            # El agente residente (`agente.py`) no se va: suelta el dispositivo
+            # mientras haya una ventana abierta y vuelve cuando se cierra.
+            if info.get("agente"):
+                return ("El agente de este equipo deja de sincronizar este "
+                        "dispositivo mientras la ventana esté abierta.")
             return f"Servicio anterior (pid {pid}) detenido."
         time.sleep(0.3)
 

@@ -179,14 +179,25 @@ def arch_dir() -> str:
     return "x64"
 
 
-BIN_DIR = APP_DIR / "bin" / arch_dir()
+def carpetas_bin(app_dir: Path) -> tuple[Path, ...]:
+    """Dónde buscar rclone en la carpeta de programa `app_dir`, por orden.
 
-# Un Windows ARM64 ejecuta los x64 emulados, así que un dispositivo provisionado
-# por un instalador que se creyó x64 —lo que pasaba antes de `machine_arch()`—
-# sigue arrancando en vez de quedarse sin rclone. Al revés no vale: un x64 no
-# ejecuta ARM, y por eso la lista no es simétrica.
-BIN_FALLBACK_DIRS: tuple[Path, ...] = (
-    (APP_DIR / "bin" / "x64",) if os.name == "nt" and arch_dir() == "arm" else ())
+    Un Windows ARM64 ejecuta los x64 emulados, así que un dispositivo provisionado
+    por un instalador que se creyó x64 —lo que pasaba antes de `machine_arch()`—
+    sigue arrancando en vez de quedarse sin rclone. Al revés no vale: un x64 no
+    ejecuta ARM, y por eso la lista no es simétrica.
+
+    Recibe la carpeta porque el agente residente (`agente.py`) busca el rclone de
+    raíces que no son la suya; para este dispositivo son `BIN_DIR` y
+    `BIN_FALLBACK_DIRS`."""
+    propia = app_dir / "bin" / arch_dir()
+    if os.name == "nt" and arch_dir() == "arm":
+        return (propia, app_dir / "bin" / "x64")
+    return (propia,)
+
+
+BIN_DIR, *_recambios = carpetas_bin(APP_DIR)
+BIN_FALLBACK_DIRS: tuple[Path, ...] = tuple(_recambios)
 
 
 def rclone_name() -> str:
@@ -218,6 +229,15 @@ def rclone_binary() -> str:
             f"ejecutar el instalador de prdrive, elige este dispositivo y pulsa "
             f"«Añadir plataformas…»."
         )
+    return ejecutable(binary)
+
+
+def ejecutable(binary: Path) -> str:
+    """Una ruta que se pueda ejecutar para ese rclone.
+
+    En exFAT no hay bit de ejecución: en POSIX se copia al temporal y se le pone.
+    Aparte de `rclone_binary()` para que el agente lo use con el rclone de otra
+    raíz."""
     if os.name == "nt" or os.access(binary, os.X_OK):
         return str(binary)
     tmp = Path(tempfile.gettempdir()) / "rclone_portable"
