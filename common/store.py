@@ -58,9 +58,16 @@ def read_json(path: Path) -> dict:
 
 def write_json(path: Path, data: dict) -> bool:
     """True si se ha escrito. False = dispositivo de solo lectura o ya extraído."""
+    return write_text(path, json.dumps(data, ensure_ascii=False, indent=1))
+
+
+def write_text(path: Path, text: str) -> bool:
+    """Lo mismo para un texto cualquiera: el diario de pasadas no es un JSON
+    sino una línea por pasada (`common/historial.py`), y cuando se recorta se
+    reescribe entero con la misma regla que el resto."""
     try:
         tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+        tmp.write_text(text, encoding="utf-8")
         os.replace(tmp, path)
         return True
     except OSError:

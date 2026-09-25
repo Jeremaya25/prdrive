@@ -666,6 +666,7 @@ vive en `state/`, dentro del dispositivo, para que viaje con él:
 | `ui.lock.json` | pid y equipo de la ventana abierta, si la hay |
 | `ui_prefs.json` | las parejas y el intervalo del servicio |
 | `last_run.json` | cómo acabó la última pasada de cada pareja, y qué log la explica |
+| `historial.jsonl` | las últimas 50 pasadas de cada pareja: cuándo, cuánto duró, si fue bien. Se recorta solo |
 | `conflicts.json` | los ficheros en conflicto del último recorrido |
 
 **Un fallo no se queda escondido.** `sync.py` apunta en `last_run.json` el
@@ -677,6 +678,13 @@ lanzar ningún proceso—: un ciclo bueno no enseña nada, y el mismo fallo repe
 cada media hora no vuelve a saltar. Sin pantalla, el aviso se queda en
 `daemon.log`. El servicio sigue sin preguntar nada nunca: una pareja que pide
 `--resync` se salta.
+
+**Desde cuándo falla.** Cada pasada real deja además una línea en
+`historial.jsonl`, y la fila del fallo en «Reparación» —y `sync.py --doctor`—
+lo resume: «Falla desde el 12/09 · 0 de las últimas 14 bien». Es lo que separa
+un tropiezo de una avería. Para gastar lo mínimo del pendrive, cada pasada
+**añade** una línea y el fichero solo se reescribe entero cuando una pareja pasa
+de 100, para dejarla en 50.
 
 **Qué parejas y cada cuánto.** Las casillas de la ventana son las mismas para
 «Sincronizar ahora» y para «Iniciar servicio», y salen marcadas con las del

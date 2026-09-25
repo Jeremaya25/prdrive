@@ -23,7 +23,9 @@ lector con logs grabados sin lanzar nada.
 
 from __future__ import annotations
 
+import os
 import re
+from pathlib import Path
 from typing import NamedTuple
 
 # Lo que abre la línea de progreso en la salida de sync.py. La ventana de salida
@@ -36,6 +38,10 @@ ETIQUETA = "progreso:"
 # Ninguna línea de estadísticas mide esto. Un trozo sin saltos de línea más largo
 # se tira en vez de guardarlo esperando un salto que puede no llegar nunca.
 RESTO_MAX = 64 * 1024
+
+# Cuánto se lee del final de un log terminado para encontrar su última
+# estadística (ver `final_del_log()`).
+COLA = 64 * 1024
 
 _MULTIPLOS = {"": 1, "K": 2 ** 10, "M": 2 ** 20, "G": 2 ** 30, "T": 2 ** 40,
               "P": 2 ** 50, "E": 2 ** 60}
@@ -107,6 +113,38 @@ def ultimo(texto: str) -> Progreso | None:
         if progreso is not None:
             return progreso
     return None
+
+
+def final_del_log(ruta: Path) -> Progreso | None:
+    """La última estadística de un log ya terminado: lo que movió la pasada.
+
+    La pide `sync.run_pair()` justo antes de que `dispose_log()` tire el log, y
+    va al diario de pasadas (`common/historial.py`). Solo los bytes: con
+    `--stats-one-line`, la cuenta de ficheros (`xfr#N/M`) solo sale mientras
+    queda algo en la cola (`StatsInfo.String()`, fs/accounting/stats.go), así
+    que la línea final nunca la lleva, y los borrados solo están en el bloque de
+    varias líneas («Deleted:»). Un número que unas veces está y otras no, no se
+    guarda.
+
+    Se lee la cola y no el log entero, que en una pareja grande con `-v` es de
+    megas: rclone escribe su estadística de cierre al terminar (`Run()`, en
+    cmd/cmd.go) y detrás solo quedan el error que lo tumbó y la consola que
+    añade `sync.append_output()`. Si la lectura empieza a mitad del fichero, su
+    primera línea se tira entera: «2.086 MiB» cortado en «086 MiB» sería una
+    estadística perfectamente legible, y falsa.
+
+    Como todo lo de este módulo, de más: sin log, sin estadísticas o con
+    cualquier error al leerlo, None."""
+    try:
+        with ruta.open("rb") as f:
+            tamano = f.seek(0, os.SEEK_END)
+            f.seek(max(0, tamano - COLA))
+            datos = f.read()
+        if tamano > COLA:
+            datos = datos.partition(b"\n")[2]
+        return ultimo(datos.decode("utf-8", errors="replace"))
+    except Exception:                                    # noqa: BLE001
+        return None
 
 
 class Seguidor:

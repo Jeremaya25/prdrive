@@ -50,7 +50,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Mapping
 
-from common import bisync, conflicts, fleet, model, progress, results, revision
+from common import bisync, conflicts, fleet, historial, model, progress, results, revision
 from common.model import Config, Pair
 
 LOG_TAIL_LINES = 15  # líneas de log que se vuelcan a consola cuando algo falla
@@ -424,13 +424,22 @@ def _bisync_preflight(ctx: RunContext, pair: Pair) -> tuple[bool, int | None]:
     return need_resync, None
 
 
-def record_result(ctx: RunContext, pair: Pair, rc: int, log: Path | None) -> None:
+def record_result(ctx: RunContext, pair: Pair, rc: int, log: Path | None,
+                  reloj: historial.Reloj | None = None,
+                  final: progress.Progreso | None = None) -> None:
     """Deja apuntado cómo acabó la pareja, para que la ventana y el servicio lo
     enseñen (ver common/results.py). Un dry-run no apunta nada: no dice cómo
-    está la pareja de verdad, y un simulacro bueno no puede tapar un fallo real."""
+    está la pareja de verdad, y un simulacro bueno no puede tapar un fallo real.
+
+    Con el mismo criterio va al diario de pasadas (common/historial.py), que es
+    lo que dice desde cuándo falla: `reloj` sabe cuándo empezó la pareja y
+    `final` es la última estadística de rclone, si la hubo. Sin reloj, la
+    pasada consta igual, con la hora de ahora y sin duración."""
     if ctx.dry_run or rc == SKIPPED:
         return
     results.apuntar(pair.name, rc, log)
+    historial.apuntar(historial.pasada(pair.name, rc, reloj,
+                                       final.hecho if final is not None else None))
 
 
 def report_conflicts(ctx: RunContext, pair: Pair) -> None:
@@ -458,12 +467,13 @@ def report_conflicts(ctx: RunContext, pair: Pair) -> None:
 
 def run_pair(ctx: RunContext, pair: Pair) -> int:
     print(f"\n=== {pair.name} ({pair.mode.name}){ctx.tag} ===")
+    reloj = historial.Reloj()
 
     need_resync = ctx.force_resync
     if pair.is_bisync:
         need_resync, abort_code = _bisync_preflight(ctx, pair)
         if abort_code is not None:
-            record_result(ctx, pair, abort_code, None)
+            record_result(ctx, pair, abort_code, None, reloj)
             return abort_code
 
     if not pair.local_abs.exists():
@@ -473,6 +483,9 @@ def run_pair(ctx: RunContext, pair: Pair) -> int:
     ffile = bisync.filters_file_for(pair)
     cmd, logfile = build_command(ctx, pair, ffile, need_resync)
     rc = execute(ctx, cmd, logfile)
+    # Antes de dispose_log(): si la pasada fue bien, el log se tira ahí, y con
+    # él lo único que dice cuánto movió.
+    final = progress.final_del_log(logfile)
 
     saved = dispose_log(pair.name, logfile, rc, ctx.keep_logs)
     if rc == 0:
@@ -481,7 +494,7 @@ def run_pair(ctx: RunContext, pair: Pair) -> int:
         print(f"[{pair.name}] FALLÓ (código {rc}). Log: {saved}")
         print_log_tail(saved)
         explain_failure(saved)
-    record_result(ctx, pair, rc, saved)
+    record_result(ctx, pair, rc, saved, reloj, final)
     report_conflicts(ctx, pair)
     return rc
 

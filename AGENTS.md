@@ -31,6 +31,7 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 │   ├── bisync.py      replicates rclone bisync's internals
 │   ├── conflicts.py   conflict files: scan, side, state/conflicts.json
 │   ├── results.py     each pair's last run (state/last_run.json)
+│   ├── historial.py   the pass journal: last N passes per pair (state/historial.jsonl)
 │   ├── revision.py    what is wrong, as data: the ONE diagnosis
 │   ├── progress.py    rclone stats lines → the live progress line
 │   ├── config_file.py reads AND writes the TOML (hand-rolled serializer)
@@ -304,7 +305,7 @@ explanation — add new cases there.
 Coordination lives in `state/` so it travels with the device: `daemon.lock.json`
 (pid/host/pairs/cycle), `daemon.stop` (presence = stop request), `daemon.log`,
 `ui.lock.json` (pid/host of the open window), `ui_prefs.json`, plus
-`last_run.json` and `conflicts.json` (written by `sync.py`,
+`last_run.json`, `historial.jsonl` and `conflicts.json` (written by `sync.py`,
 not the daemon). The service stops when the device disappears (`SENTINEL`) or
 when runsync is launched again.
 
@@ -483,6 +484,11 @@ plans in the `EditPlan` shape (`consequences`/`warnings`/`execute()`), and
   reads `model.daemon_lock()` and errs towards "yes, someone is": another host's
   record cannot be checked with `pid_alive`, and refusing to delete costs
   nothing while deleting under a live pass does not.
+- **A `fallo` says since when** (#20): `revision._fallos()` adds one sentence
+  from the pass journal, «Falla desde el 12/09 · 0 de las últimas 14 bien.»
+  («al menos desde» when every recorded pass failed: the streak may predate the
+  journal). It goes in the `detalle`, so `--doctor` prints it too; no journal,
+  or one whose last line is not a failure, and the finding reads as before.
 - **Nothing repairs itself**, not on open and not on click: every plan goes
   through `tk_pairs.confirmar_plan()`. After executing, the screen re-runs
   `revisar()` whole rather than crossing out the row it just fixed.
@@ -981,6 +987,22 @@ Path1 is `pair.source` (local in bisync) — `conflicts.lado()`. Keep the citati
   counts; the entry stays until a good pass. `results.ultimas_buenas()` is the
   other half — the date the main window shows — and it survives a failure
   because `apuntar()` keeps the last good stamp in its own key.
+- **Pass journal (#20).** `last_run.json` holds one pass per pair, so
+  `historial.py` keeps the last `POR_PAREJA = 50` of each in
+  `state/historial.jsonl`, one JSON line per pass: `pareja`, `inicio`
+  (`store.stamp()`), `codigo`, `segundos`, `transferido` (bytes, or null).
+  Written inside `sync.record_result()`, so it follows `results`' rule (no
+  dry-run, no SKIPPED) and a call without a `Reloj` still lands, timed now and
+  without a duration. **Appending is the normal write**; the atomic rewrite
+  (`store.write_text`) happens only when a pair passes `RECORTE = 2 × N` or the
+  file `TOPE_BYTES`, so the file is rewritten at most once per N appends —
+  write cycles are why good logs are not kept. `transferido` is
+  `progress.final_del_log()`, read from the log's tail **before**
+  `dispose_log()` deletes it; file counts are not stored, because with
+  `--stats-one-line` `xfr#` appears only while the transfer queue is non-empty
+  (`StatsInfo.String()`) and deletes only in the multi-line block. Reading
+  skips half-written or foreign lines, and an append after a cut line starts
+  on its own. `historial.racha()` is the logic behind the «Reparación» sentence.
 
 ## Per-pair versions (`versions = true` + `ui/versions_editor.py`)
 

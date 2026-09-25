@@ -31,8 +31,8 @@ from _harness import Checks, sandbox, tmpdir
 
 import tomllib
 
-from common import (catalog, components, config_file, conflicts, fleet, model,
-                    pairing, pins, update)
+from common import (catalog, components, config_file, conflicts, fleet, historial,
+                    model, pairing, pins, results, revision, update)
 from install import device
 
 c = Checks("medidas de las pantallas")
@@ -466,8 +466,8 @@ try:
                 # «Reparación» es la pantalla que más crece de todas: una fila
                 # por avería, con su explicación, y debajo la lista de conflictos
                 # con cada fichero y cada versión. Se mide con las doce parejas
-                # sin baseline —o sea, con una avería por pareja— y con varios
-                # conflictos de ruta larga, que es lo que la estira.
+                # sin baseline y fallando —o sea, con dos averías por pareja— y
+                # con varios conflictos de ruta larga, que es lo que la estira.
                 pareja0 = cfg.pairs[0]
                 for i in range(6):
                     carpeta = pareja0.local_abs / "documentos" / f"proyecto-{i}" / "borradores"
@@ -476,6 +476,18 @@ try:
                     (carpeta / f"informe-trimestral-{i}.docx.conflicto-remoto1").write_text(
                         "b", encoding="utf-8")
                 conflicts.actualizar_pareja(pareja0)
+                # Y las doce fallando, con la frase del diario más larga que
+                # sale: «al menos», con el año (la racha empezó el año pasado)
+                # y dos cifras en la cuenta.
+                ano = __import__("datetime").datetime.now().year - 1
+                for p in cfg.pairs:
+                    results.apuntar(p.name, 1, None)
+                    for dia in range(1, 15):
+                        historial.apuntar(historial.Pasada(
+                            p.name, f"{ano}-12-{dia:02d} 10:00:00", 1, 30.0))
+                c(f"{nombre}: (las doce fallan, con la frase del diario)",
+                  sum(f"Falla al menos desde el 01/12/{ano}" in h.detalle
+                      for h in revision.revisar(cfg) if h.clave == "fallo"), 12)
                 entra, corta = medir_dialogo(
                     lambda: tk_repair.open_dialog(raiz, cfg, lambda *a: None),
                     ancho, alto, escala, modulo=tk_repair)
