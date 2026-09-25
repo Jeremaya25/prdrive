@@ -41,7 +41,8 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 │   ├── pins.py        pinned rclone + python-build-standalone; platform table
 │   ├── pairing.py     reads rclone.conf; the connection as a QR payload
 │   ├── vestibulo.py   what a VeraCrypt device leaves OUTSIDE its container
-│   └── store.py       device JSON state + pid_alive(); atomic writes
+│   ├── autorun.py     the root's autorun.inf: the drive's name and icon, edited
+│   └── store.py       device JSON state + pid_alive(); atomic writes; hide()
 ├── ui/                asking the user, showing results
 │   ├── __init__.py    Choice, Frontend, start(), fatal(), manual_args(), abrir()
 │   ├── theme.py       palette, fonts, ttk styles — no window
@@ -51,14 +52,14 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 │   ├── pair_editor.py what THIS device does with pairs — the decisions
 │   ├── repair.py      what to do about a finding: the repair plans
 │   ├── catalog_editor.py · remote_picker.py · conflict_editor.py ·
-│   │   flags_editor.py · watch.py · versions_editor.py
+│   │   flags_editor.py · watch.py · versions_editor.py · volumen.py
 │   │                   the other decision halves, no Tk
 │   ├── tk.py          TkFrontend: main + output window, modal()/mostrar()/working()
 │   ├── cifrado.py     is this device inside a VeraCrypt container? «Expulsar»
 │   ├── tk_install.py  the install wizard          (every tk_* draws only)
 │   ├── tk_pairs.py · tk_repair.py · tk_conflicts.py · tk_fleet.py ·
 │   │   tk_watch.py · tk_update.py · tk_crypto.py · tk_doctor.py ·
-│   │   tk_qr.py · tk_versions.py
+│   │   tk_qr.py · tk_versions.py · tk_volumen.py
 │   └── console.py     ConsoleFrontend: the text menu
 ├── install/           what the installer knows; no Tk, no device needed
 │   ├── __init__.py    brand constants, InstallError, InstallState, python_command()
@@ -494,6 +495,38 @@ plans in the `EditPlan` shape (`consequences`/`warnings`/`execute()`), and
   runs — the same rule that used to disable those blocks' buttons. The update /
   components block stays as it was: an offer is not a fault, and counting them
   together is what made everything weigh the same.
+
+## The drive's name and icon (`common/autorun.py` + `ui/volumen.py` + `ui/tk_volumen.py`)
+
+«Ajustes» → «Nombre e icono de la unidad…» sets what Windows Explorer shows for
+the drive through the root's `autorun.inf`: `label=` and `icon=` are still read
+on arrival although AutoRun has run nothing from removable media since Windows 7.
+No admin, any filesystem, accents allowed — the filesystem label is untouched.
+Seen on real hardware only for the traveler's file (M1 in the VeraCrypt results):
+it shows **after replugging**, and the window says so.
+
+- **The file is edited, never rewritten.** `autorun.con()` replaces `label` and
+  `icon` under `[autorun]` and keeps every other line, so the traveler's mount
+  commands survive, and `traveler.write_autorun()` keeps an existing label/icon
+  when it refreshes those commands. UTF-16 + CRLF, like VeraCrypt's own;
+  `buscar()` matches the name case-insensitively. Nothing left → file deleted.
+- **Which root:** the one that is plugged in. `vestibulo.raiz_fisica()` when the
+  device lives in a container (the mounted volume is not what the user plugs
+  in), else `DEVICE_ROOT`. The window prints the path it writes to.
+- **The choice is read back from `icon=` itself** — no separate state: the icon
+  file name carries the key (`.prdrive-icono-verde.ico`), a user's `.ico` a hash
+  slice (`.prdrive-icono-propio-<8 hex>.ico`). A new drawing is a new name
+  because Explorer caches icons by path; `recoger()` then deletes our other
+  icons. An `icon=` prdrive did not write reads as `OTRO` and survives a
+  name-only save. Icons live at the root (not in `.prdrive/`, absent outside a
+  container), hidden with `store.hide()` — moved there from `install/deploy.py`,
+  which re-exports it — and count as noise through `device.es_ruido()`, since
+  hashed names cannot sit in the `RUIDO` set.
+- The five colours are `icons.CAMPOS` (brand field only; white and amber stay).
+  Painting one is ~2 s (the 256 px size), so the save runs in `tk.working()` and
+  an existing file is never repainted. Unverified on real Windows: an icon file
+  with the hidden attribute, and a *change* of name or icon (M1 saw a first
+  write) — the per-drawing file name is there so the icon cache cannot win.
 
 ## Pairing a phone (`common/pairing.py` + `ui/qr.py` + `ui/tk_qr.py`)
 

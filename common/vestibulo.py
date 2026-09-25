@@ -48,6 +48,13 @@ LEEME = f"LEEME-{ETIQUETA}.txt"
 # siguiente.
 TODOS = (MARCA, ABRIR_BAT, EXPULSAR_BAT, ABRIR_SH, EXPULSAR_SH, LEEME)
 
+# El VeraCrypt que viaja en la raíz física, si se pidió. Lo copia
+# `install/traveler.py`; los nombres están aquí porque el dispositivo también
+# los necesita: su ejecutable es el icono que el traveler le pone a la unidad, y
+# la ventana del nombre y el icono (`ui/volumen.py`) lo ofrece si está.
+TRAVELER = "VeraCrypt"
+TRAVELER_EXE = "VeraCrypt.exe"
+
 
 def leer_id(raiz: Path | str) -> str | None:
     """El `id=` de la marca de esa raíz, o None si no hay marca o no se lee.

@@ -36,7 +36,7 @@ import uuid
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from common import model, vestibulo
+from common import autorun, model, vestibulo
 
 from . import DEVICE_LABEL, IS_WIN, InstallError
 from .rclone_bin import bin_subdir, exe_name
@@ -71,6 +71,14 @@ RUIDO = {
     # sus constantes y no tecleado: son seis nombres y crecerán.
     *(nombre.lower() for nombre in vestibulo.TODOS),
 }
+
+
+def es_ruido(nombre: str) -> bool:
+    """¿No cuenta como «aquí hay cosas de otro»? `RUIDO`, y además el icono de la
+    unidad (`common/autorun.py`), que no cabe en un conjunto de nombres: el suyo
+    cambia con el dibujo, y así el Explorador no enseña el de antes."""
+    return nombre.lower() in RUIDO or autorun.es_icono(nombre)
+
 
 # Puntos de montaje donde los escritorios de Linux/macOS cuelgan los extraíbles.
 POSIX_BASES = ("/media", "/run/media", "/mnt", "/Volumes")
@@ -359,7 +367,7 @@ def install_target(root: Path) -> tuple[str, str]:
     try:
         if not root.exists():
             return VACIO, "La carpeta no existe todavía; se creará."
-        contenido = [p for p in root.iterdir() if p.name.lower() not in RUIDO]
+        contenido = [p for p in root.iterdir() if not es_ruido(p.name)]
     except OSError as e:
         raise InstallError(
             f"No puedo leer {root}: {e}\n"

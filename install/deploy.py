@@ -49,6 +49,9 @@ from typing import Callable, Mapping
 
 from common import components, config_file, fleet, model
 from common.pins import Plataforma
+# Viven en `common/` porque el dispositivo también esconde cosas; se importan
+# aquí con su nombre para que `deploy.hide()` siga siendo lo que era.
+from common.store import hide, unhide  # noqa: F401
 
 from . import (APP_NAME, IS_WIN, InstallError, bundle_dir, platforms,
                python_command, version)
@@ -80,9 +83,6 @@ DEPLOY_TREES = ("common", "ui")
 GUIDE_SOURCE = "device-readme.md"
 GUIDE_TARGET = "README.md"
 NO_COPIAR = shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo")
-
-FILE_ATTRIBUTE_HIDDEN = 0x02
-FILE_ATTRIBUTE_NORMAL = 0x80
 
 # --- Los lanzadores de la raíz --------------------------------------------------
 #
@@ -203,39 +203,6 @@ def app_dir(device_root: Path | str) -> Path:
 # ---------------------------------------------------------------------------
 # El código
 # ---------------------------------------------------------------------------
-
-def hide(path: Path | str) -> bool:
-    """Marca la carpeta como oculta en Windows. Devuelve si lo ha conseguido.
-
-    No lanza nunca: es un adorno, y un adorno no puede abortar una instalación
-    que por lo demás ha ido bien —el mismo criterio que `icons.get()`—. En POSIX
-    devuelve True sin hacer nada porque el punto del nombre ya la oculta."""
-    if not IS_WIN:
-        return True
-    try:
-        import ctypes
-        return bool(ctypes.windll.kernel32.SetFileAttributesW(  # type: ignore[attr-defined]
-            str(path), FILE_ATTRIBUTE_HIDDEN))
-    except Exception:
-        return False
-
-
-def unhide(path: Path | str) -> bool:
-    """Lo contrario de `hide()`, para poder reescribir un fichero oculto.
-
-    Windows niega abrir con `CREATE_ALWAYS` —lo que hace `open(…, "w")`— un
-    fichero oculto o de sistema si no se le piden esos mismos atributos
-    (`CreateFileW`): el «acceso denegado» sale aunque se tenga permiso. No lanza
-    nunca, y sin el fichero no hay nada que destapar."""
-    if not IS_WIN:
-        return True
-    try:
-        import ctypes
-        return bool(ctypes.windll.kernel32.SetFileAttributesW(  # type: ignore[attr-defined]
-            str(path), FILE_ATTRIBUTE_NORMAL))
-    except Exception:
-        return False
-
 
 def deploy_source() -> Path:
     """De dónde se copia el código.

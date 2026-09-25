@@ -108,8 +108,20 @@ CAMPO = "#2E4763"
 MARCA = "#FAF9F7"
 AMBAR = "#E0A34A"
 
+# Los campos con los que se puede pintar la marca como icono de la UNIDAD
+# (`ui/volumen.py`), para distinguir un dispositivo de otro a simple vista. El
+# primero es el de la aplicación. Todos oscuros y apagados, como él: encima van
+# el blanco y el ámbar de siempre, y tienen que seguir leyéndose.
+CAMPOS = {
+    "azul": CAMPO,
+    "verde": "#2F5A48",
+    "granate": "#6B2C34",
+    "morado": "#4B3D6E",
+    "grafito": "#3B362F",
+}
 
-def _capas_marca(size: int) -> list[tuple[str, float, list[tuple]]]:
+
+def _capas_marca(size: int, campo: str = CAMPO) -> list[tuple[str, float, list[tuple]]]:
     """Las capas del icono. A 16 px se simplifica, como manda el diseño: trazo
     más grueso, sin puntas de flecha y con el cuerpo entero. Lo que queda es un
     anillo partido, que sigue leyéndose como «sincroniza».
@@ -117,7 +129,7 @@ def _capas_marca(size: int) -> list[tuple[str, float, list[tuple]]]:
     El ORDEN es el del diseño y no es decorativo: las dos puntas van después de
     los dos arcos. Agrupadas por color —arco blanco y punta blanca juntos— el
     arco ámbar, que se pinta después, se come media punta blanca."""
-    campo = [(CAMPO, 0.0, [("rr", 0, 0, 64, 64, 13)])]
+    campo = [(campo, 0.0, [("rr", 0, 0, 64, 64, 13)])]
     if size <= 20:
         return campo + [
             (MARCA, 7.0, [("a", 32, 32, 21, -90, 90)]),
@@ -535,11 +547,16 @@ def matriz(widget, modulos, escala: int = 4, silencio: int = QR_SILENCIO):
         return None
 
 
-def app_icon(widget, size: int = 64):
-    """La marca de la aplicación, para `iconphoto()`. None si no se puede."""
+def app_icon(widget, size: int = 64, campo: str = CAMPO, fondo: str | None = None):
+    """La marca de la aplicación, para `iconphoto()`. None si no se puede.
+
+    `campo` la pinta en otro color (`CAMPOS`), y `fondo` es contra qué se
+    componen las esquinas redondeadas: para una ventana da igual —se aplana
+    contra el propio campo, como siempre—, pero una muestra sobre el papel de un
+    formulario tiene que llevar las esquinas del color del papel."""
     try:
-        return _dibujar(widget, ("@marca", size), _capas_marca(size), 64.0, size,
-                        CAMPO)
+        return _dibujar(widget, ("@marca", size, campo, fondo),
+                        _capas_marca(size, campo), 64.0, size, fondo or campo)
     except Exception:
         return None
 
@@ -641,15 +658,16 @@ def _png(rgba, size: int) -> bytes:
             + trozo(b"IEND", b""))
 
 
-def write_ico(destino, tamanos=ICO_TAMANOS):
-    """Escribe la marca como `.ico` con todos sus tamaños. Devuelve la ruta."""
-    import struct
-    from pathlib import Path
+def ico(tamanos=ICO_TAMANOS, campo: str = CAMPO) -> bytes:
+    """La marca como `.ico` con todos sus tamaños, en bytes.
 
-    destino = Path(destino)
+    Tarda: son unos dos segundos, casi todos del de 256 px. Quien lo pida desde
+    una ventana, que lo haga en `tk.working()`."""
+    import struct
+
     imagenes = []
     for size in tamanos:
-        rgba = _capas_rgba(_capas_marca(size), 64.0, size)
+        rgba = _capas_rgba(_capas_marca(size, campo), 64.0, size)
         imagenes.append((size, _png(rgba, size) if size >= ICO_PNG_DESDE
                          else _dib(rgba, size)))
 
@@ -662,7 +680,15 @@ def write_ico(destino, tamanos=ICO_TAMANOS):
         desplazamiento += len(datos)
         cuerpo += datos
 
-    destino.write_bytes(struct.pack("<HHH", 0, 1, len(imagenes)) + entradas + cuerpo)
+    return struct.pack("<HHH", 0, 1, len(imagenes)) + entradas + cuerpo
+
+
+def write_ico(destino, tamanos=ICO_TAMANOS, campo: str = CAMPO):
+    """Escribe la marca como `.ico` con todos sus tamaños. Devuelve la ruta."""
+    from pathlib import Path
+
+    destino = Path(destino)
+    destino.write_bytes(ico(tamanos, campo))
     return destino
 
 

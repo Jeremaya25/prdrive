@@ -783,8 +783,8 @@ proceso muerto; y acaba con la misma lista de averías que enseña la pantalla �
 el mismo diagnóstico, escrito en vez de dibujado.
 
 El engranaje de **«Ajustes…»** es la otra puerta a esa pantalla, y donde vive lo
-que se hace de tarde en tarde: el emparejamiento de un móvil y las versiones
-guardadas.
+que se hace de tarde en tarde: el emparejamiento de un móvil, las versiones
+guardadas y el nombre e icono de la unidad.
 
 Los logs de rclone **solo se guardan si la pasada falla** (o con `--keep-logs`),
 para no gastar ciclos de escritura de la unidad. Quedan en `.prdrive/logs/`. Al
@@ -817,6 +817,26 @@ dispositivo.
 
 Funciona con claves ed25519, que es lo que usa prdrive por defecto. Una clave RSA
 grande no cabe en un código QR y la ventana lo dice.
+
+### Nombre e icono de la unidad
+
+**«Ajustes…» → «Nombre e icono de la unidad…»** cambia cómo enseña el Explorador
+de Windows la unidad al conectarla: un nombre como «Pendrive de Pere» en vez de
+«Disco extraíble», y de icono la marca de prdrive en uno de cinco colores, un
+`.ico` tuyo, el de VeraCrypt si la unidad lo lleva, o ninguno. Los colores están
+para distinguir un dispositivo de otro a simple vista.
+
+Se guarda en un `autorun.inf` en la raíz de la unidad que se enchufa —con
+VeraCrypt, la de fuera del contenedor—, con el icono al lado y oculto
+(`.prdrive-icono-….ico`). Ese fichero **no ejecuta nada**: Windows dejó de
+arrancar programas desde una unidad extraíble en Windows 7, pero el Explorador
+sigue leyendo de ahí el nombre y el icono. Si ya había uno, solo se cambian esas
+dos líneas; lo demás se queda como estaba.
+
+- **Se ve al volver a conectar la unidad**, no al guardar: el Explorador lee el
+  fichero cuando llega el volumen.
+- **La etiqueta del sistema de ficheros no cambia.** En Linux, y en la ruta donde
+  se monta, la unidad se sigue llamando como antes.
 
 ## Seguridad
 
