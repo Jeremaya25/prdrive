@@ -13,8 +13,15 @@ en segundos, o la instalación en un error— es lo que se comprueba aquí.
 Nada de esto lanza VeraCrypt ni toca una unidad: se sustituyen las sondas de
 módulo (`soporta_dispersos`, `medir_escritura`, `sistema_de_ficheros`, `_run`,
 `_volumenes_con_control`), que para eso son funciones de módulo.
+
+El avance de una creación larga (#46) se prueba igual: `avance()` es pura y se le
+dan secuencias de lecturas escritas a mano, y `bytes_escritos` se sustituye para
+que `create_container()` lo lea sin que haya ninguna unidad detrás.
 """
 
+import os
+import sys
+import time
 from pathlib import PurePosixPath
 
 from _harness import Checks, tmpdir
@@ -30,7 +37,8 @@ win_original = crypto.IS_WIN
 path_original = crypto.Path
 sondas = {n: getattr(crypto, n) for n in
           ("soporta_dispersos", "medir_escritura", "sistema_de_ficheros", "en_uso",
-           "_run", "_procesos", "_volumenes_con_control", "Path", "MOUNT_POLL")}
+           "_run", "_procesos", "_volumenes_con_control", "Path", "MOUNT_POLL",
+           "bytes_escritos", "SYS_DEV_BLOCK")}
 try:
     # --- 1. /dynamic solo cuando se pide, y nunca a ciegas -------------------
     #
@@ -77,12 +85,31 @@ try:
     c("nunca se propone cero", crypto.suggested_size(0, False), "1G")
 
     # --- 4. la espera se mide, no se adivina --------------------------------
+    #
+    # Y lo que se mide es la RÁFAGA: una sonda de 8 MiB no ve la caché de la
+    # memoria USB llenarse. El caso de #46: más de 100 GB en exFAT, «unos 23
+    # min» dichos y 40 cumplidos sin terminar. El número se da como mínimo, y
+    # siempre al lado de por qué.
     crypto.medir_escritura = lambda root, muestra=0: 10 * 1024 ** 2   # 10 MB/s
     c("un giga a 10 MB/s son ~102 s",
       round(crypto.estimar_creacion("P:/", 1024 ** 3)), 102)
-    c("y se dice en minutos", crypto.describir_espera(600), "unos 10 min")
-    c("las esperas cortas se dicen así", crypto.describir_espera(30),
-      "menos de dos minutos")
+    c("el caso de #46 ya no promete 23 min: son un mínimo, y se dice por qué",
+      crypto.describir_espera(23 * 60),
+      "al menos unos 23 min; en memorias USB suele tardar bastante más, porque "
+      "la velocidad baja cuando se llena su caché. Mientras se crea verás el "
+      "avance real, si la unidad deja medirlo")
+    c("en minutos, como mínimo", crypto.describir_espera(600).split(";")[0],
+      "al menos unos 10 min")
+    c("las esperas cortas tampoco prometen",
+      crypto.describir_espera(30).split(";")[0], "en principio menos de dos minutos")
+    c.contains("y llevan el mismo aviso", crypto.describir_espera(30),
+               "cuando se llena su caché")
+    c("hasta hora y media, en minutos", crypto.describir_espera(89 * 60).split(";")[0],
+      "al menos unos 89 min")
+    c("después, en horas y con coma", crypto.describir_espera(5400).split(";")[0],
+      "al menos unas 1,5 h")
+    c("sin un «,0» que nadie diría", crypto.describir_espera(7200).split(";")[0],
+      "al menos unas 2 h")
     crypto.medir_escritura = lambda root, muestra=0: None
     c("si no se ha podido medir, se dice; no se inventa un número",
       crypto.estimar_creacion("P:/", 1024 ** 3), None)
@@ -225,6 +252,241 @@ try:
         fallo = str(e)
     c.contains("si al terminar no hay contenedor, se dice", fallo,
                "no ha podido crear el contenedor")
+
+    # --- 5e. el avance de una creación larga: la aritmética -----------------
+    #
+    # Con un contenedor fijo se escribe el volumen entero, y la ventana solo
+    # tenía una barra que iba y venía. `avance()` convierte las lecturas del
+    # contador de la unidad en «cuánto va» y «cuánto queda», y cuando el
+    # contador no merece confianza no dice nada: mejor sin número que con uno
+    # falso.
+    MB = 1024 ** 2
+
+    def serie(tramos, base=7 * GIB, t0=1000.0):
+        """[(segundos, bytes por segundo), …] → una lectura por segundo, con la
+        inicial delante (la de antes de lanzar VeraCrypt)."""
+        muestras = [(t0, base)]
+        t, b = t0, base
+        for segundos, velocidad in tramos:
+            for _ in range(int(segundos)):
+                t, b = t + 1, b + velocidad
+                muestras.append((t, b))
+        return muestras
+
+    def redondo(medida):
+        return None if medida is None else (
+            round(medida[0], 4), None if medida[1] is None else round(medida[1]))
+
+    TAM = 6000 * MB
+    c("a velocidad constante: lo escrito entre el tamaño, y lo que falta a esa "
+      "velocidad", redondo(crypto.avance(serie([(120, 10 * MB)]), TAM)), (0.2, 480))
+    c("los primeros segundos hay fracción, pero todavía no velocidad",
+      redondo(crypto.avance(serie([(10, 10 * MB)]), TAM)), (round(100 / 6000, 4), None))
+    c("sin haberse movido nunca no se sabe nada: el UAC, o un contador que no "
+      "ve estas escrituras", crypto.avance(serie([(20, 0)]), TAM), None)
+
+    # El UAC de la copia elevada fueron ~36 s en las pruebas en G: (sección 5
+    # de los resultados). Esa espera no es lentitud de la unidad.
+    tras_uac = serie([(40, 0), (40, 10 * MB)])
+    c("tras la espera del UAC, la velocidad es la de la escritura, no la media "
+      "con la espera", redondo(crypto.avance(tras_uac, TAM)), (round(400 / 6000, 4), 560))
+    c("y hasta llevar un rato escribiendo no hay tiempo restante",
+      crypto.avance(serie([(40, 0), (20, 10 * MB)]), TAM)[1], None)
+
+    # El escalón de la caché SLC: rápido los primeros gigas, y de golpe a la
+    # cuarta parte. El tiempo que queda tiene que SUBIR, que es justo lo que la
+    # sonda de 8 MiB nunca podía saber.
+    GRANDE = 60000 * MB
+    antes_del_escalon = crypto.avance(serie([(120, 80 * MB)]), GRANDE)
+    tras_el_escalon = crypto.avance(serie([(120, 80 * MB), (120, 20 * MB)]), GRANDE)
+    c("escalón SLC: antes, lo que queda a 80 MB/s", round(antes_del_escalon[1]), 630)
+    c("después, el tiempo restante crece aunque se haya escrito más",
+      tras_el_escalon[1] > antes_del_escalon[1], True)
+    c("y en cuanto la ventana entera es de después, es el de 20 MB/s",
+      round(tras_el_escalon[1]), (60000 - 9600 - 2400) // 20)
+    c("a medio escalón, entre lo de antes y lo de 20 MB/s",
+      630 < crypto.avance(serie([(120, 80 * MB), (30, 20 * MB)]), GRANDE)[1]
+      < (60000 - 9600 - 600) / 20, True)
+
+    # Un contador que baja se ha reiniciado, o no cuenta lo que se creía: no
+    # vale ni esa lectura ni ninguna de las siguientes.
+    baja = serie([(90, 10 * MB)])
+    baja.append((baja[-1][0] + 1, baja[-1][1] - 1))
+    c("el contador baja: no se sabe", crypto.avance(baja, TAM), None)
+    t, b = baja[-1]
+    baja += [(t + i, b + i * 10 * MB) for i in range(1, 90)]
+    c("y aunque vuelva a subir, ya no se le cree", crypto.avance(baja, TAM), None)
+
+    c("parado más de PARADO_S: no se sabe",
+      crypto.avance(serie([(90, 10 * MB), (crypto.PARADO_S + 1, 0)]), TAM), None)
+    c("parado menos, todavía sí",
+      crypto.avance(serie([(90, 10 * MB), (crypto.PARADO_S - 1, 0)]), TAM) is not None,
+      True)
+    c("y al volver a moverse, vuelve el número",
+      crypto.avance(serie([(90, 10 * MB), (crypto.PARADO_S + 5, 0), (5, 10 * MB)]),
+                    TAM) is not None, True)
+
+    # El contador cuenta todo lo que se escriba en la unidad, no solo esto, y
+    # después del relleno aún quedan la cabecera de respaldo y el formato.
+    c("la fracción nunca pasa del 99 %",
+      crypto.avance(serie([(120, 10 * MB)]), 100 * MB), (0.99, 0.0))
+    c("ni con el contenedor justo escrito",
+      crypto.avance(serie([(10, 10 * MB)]), 100 * MB)[0], 0.99)
+
+    lecturas = serie([(60, 10 * MB)])
+    c("sin la inicial no hay de dónde restar",
+      crypto.avance([(lecturas[0][0], None)] + lecturas[1:], TAM), None)
+    c("si falla la última lectura, no se sabe cómo va",
+      crypto.avance(lecturas + [(lecturas[-1][0] + 1, None)], TAM), None)
+    c("una que falla por en medio no estropea las demás",
+      redondo(crypto.avance(lecturas[:30] + [(lecturas[30][0], None)] + lecturas[31:],
+                            TAM)), redondo(crypto.avance(lecturas, TAM)))
+    c("sin lecturas, nada", crypto.avance([], TAM), None)
+    c("y con un tamaño que no es, tampoco", crypto.avance(lecturas, 0), None)
+
+    # --- 5f. el avance, dicho --------------------------------------------------
+    c("«43 % · quedan unos 25 min»", crypto.describir_avance(0.43, 25 * 60),
+      "43 % · quedan unos 25 min")
+    c("la cifra se trunca: el tope es 99 %, no 100 %",
+      crypto.describir_avance(0.99, 30), "99 % · queda menos de un minuto")
+    c("un minuto y algo", crypto.describir_avance(0.5, 75), "50 % · queda un minuto y pico")
+    c("en horas, con coma", crypto.describir_avance(0.1, 9000),
+      "10 % · quedan unas 2,5 h")
+    c("sin velocidad todavía, se dice", crypto.describir_avance(0.02, None),
+      "2 % · calculando cuánto queda")
+
+    # --- 5g. el contador de la unidad ------------------------------------------
+    #
+    # Lo de verdad solo se puede leer con una unidad de verdad (pruebas P1–P7
+    # de #46). Lo que sí se puede fijar aquí es cómo se lee: el campo, la
+    # unidad, y la estructura de Windows byte a byte contra winioctl.h.
+    c("IOCTL_DISK_PERFORMANCE es CTL_CODE(IOCTL_DISK_BASE, 8, BUFFERED, ANY)",
+      crypto.IOCTL_DISK_PERFORMANCE, 0x00070020)
+    import ctypes  # noqa: E402
+
+    DP = crypto._disk_performance()
+    c("DISK_PERFORMANCE mide 88 bytes, como en Windows", ctypes.sizeof(DP), 88)
+    c("BytesWritten es el segundo LARGE_INTEGER", DP.BytesWritten.offset, 8)
+    c("y detrás de los cuatro DWORD va QueryTime",
+      (DP.QueryTime.offset, DP.StorageDeviceNumber.offset,
+       DP.StorageManagerName.offset), (56, 64, 68))
+    c("una ruta sin letra no tiene volumen que abrir",
+      crypto._escritos_windows("\\\\servidor\\recurso"), None)
+
+    if hasattr(os, "major"):
+        # /sys/dev/block/<mayor>:<menor>/stat, falso: el séptimo campo son
+        # sectores escritos, y un sector ahí es siempre de 512 bytes.
+        sysfs = tmpdir("prdrive-sysfs-")
+        raiz = tmpdir("prdrive-raiz-")
+        st = os.stat(raiz)
+        nodo = sysfs / f"{os.major(st.st_dev)}:{os.minor(st.st_dev)}"
+        nodo.mkdir()
+        (nodo / "stat").write_text(
+            "    4262     1049   311426     1542    73113    41507  1234567    79440"
+            "        0    67264    81958        0        0        0        0\n",
+            encoding="ascii")
+        crypto.SYS_DEV_BLOCK = sysfs
+        crypto.IS_WIN = False
+        c("Linux: los sectores escritos del dispositivo de la raíz, en bytes",
+          crypto.bytes_escritos(raiz), 1234567 * 512)
+        crypto.SYS_DEV_BLOCK = tmpdir("prdrive-sysfs-vacio-")
+        c("sin dispositivo de bloques detrás (tmpfs…), None",
+          crypto.bytes_escritos(raiz), None)
+        (nodo / "stat").write_text("4262 1049\n", encoding="ascii")
+        crypto.SYS_DEV_BLOCK = sysfs
+        c("y un stat que no es el que se espera, también None",
+          crypto.bytes_escritos(raiz), None)
+        crypto.SYS_DEV_BLOCK = sondas["SYS_DEV_BLOCK"]
+    if sys.platform != "win32":
+        crypto.IS_WIN = True
+        c("un fallo de ctypes es None, no una excepción",
+          crypto.bytes_escritos("G:\\"), None)
+        crypto.IS_WIN = False
+
+    # --- 5h. crear, midiendo: el contador se apunta antes de lanzar ----------
+    #
+    # `create_container()` apunta la lectura inicial ANTES de lanzar VeraCrypt
+    # —lo de antes no es de esta creación— y la va leyendo en otro hilo hasta
+    # volver. Aquí VeraCrypt es un `_run` que escribe el fichero, y el contador
+    # uno que crece un mega por lectura.
+    crypto.IS_WIN = False
+    contador = {"bytes": 5000, "lecturas": []}
+
+    def escritos(root):
+        contador["lecturas"].append(str(root))
+        contador["bytes"] += MB
+        return contador["bytes"]
+
+    hc = tmpdir("prdrive-avance-") / "PRDRIVE.hc"
+    al_lanzar = []
+
+    def lanzar_escribiendo(cmd, password="", timeout=None):
+        al_lanzar.append(len(contador["lecturas"]))
+        time.sleep(0.3)                     # VeraCrypt escribiendo el volumen
+        al_lanzar.append(len(contador["lecturas"]))
+        hc.write_bytes(b"entero")
+        return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    crypto.bytes_escritos = escritos
+    crypto._run = lanzar_escribiendo
+    seguimiento = crypto.Seguimiento(cada=0.01)
+    try:
+        crypto.create_container(VC, hc, GIB, "x" * 20, "exFAT", seguimiento=seguimiento)
+        fallo = None
+    except crypto.InstallError as e:
+        fallo = str(e)
+    c("crear midiendo no cambia nada de crear", (fallo, hc.read_bytes()),
+      (None, b"entero"))
+    c("la lectura inicial va antes de lanzar VeraCrypt", al_lanzar[0] >= 1, True)
+    c("y es la primera muestra", seguimiento.muestras[0][1], 5000 + MB)
+    c("de la raíz física, la que lleva el contenedor", contador["lecturas"][0],
+      str(hc.parent))
+    c("mientras VeraCrypt escribe se sigue leyendo", al_lanzar[1] > al_lanzar[0], True)
+    leidas = len(contador["lecturas"])
+    time.sleep(0.1)
+    c("y al volver se deja de leer", len(contador["lecturas"]), leidas)
+    c("lo que ve la ventana: cuánto va, y que aún no hay velocidad",
+      seguimiento.progreso()[1].endswith("calculando cuánto queda"), True)
+
+    # Un contador que no se puede leer no puede impedir crear.
+    crypto.bytes_escritos = lambda root: None
+    hc = tmpdir("prdrive-avance-") / "PRDRIVE.hc"
+    seguimiento = crypto.Seguimiento(cada=0.01)
+    try:
+        crypto.create_container(VC, hc, GIB, "x" * 20, "exFAT", seguimiento=seguimiento)
+        fallo = None
+    except crypto.InstallError as e:
+        fallo = str(e)
+    c("sin contador se crea igual", (fallo, hc.read_bytes()), (None, b"entero"))
+    c("y la ventana no recibe ningún número", seguimiento.progreso(), None)
+
+    # Si VeraCrypt no llega a lanzarse, el hilo no se queda leyendo.
+    def no_lanza(cmd, password="", timeout=None):
+        raise OSError("no existe")
+
+    crypto._run = no_lanza
+    seguimiento = crypto.Seguimiento(cada=0.01)
+    try:
+        crypto.create_container(VC, tmpdir("prdrive-avance-") / "PRDRIVE.hc", GIB,
+                                "x" * 20, "exFAT", seguimiento=seguimiento)
+    except crypto.InstallError:
+        pass
+    c("si VeraCrypt no se lanza, el hilo del avance para",
+      seguimiento._hilo is not None and seguimiento._hilo.is_alive(), False)
+
+    # Lo que ve la ventana caduca: si el hilo se queda colgado en una lectura,
+    # el último número calculado no se sigue enseñando como si fuera de ahora.
+    reloj = {"t": 0.0}
+    crypto.bytes_escritos = escritos
+    seguimiento = crypto.Seguimiento(cada=1000, reloj=lambda: reloj["t"])
+    seguimiento.empezar(hc.parent, GIB)
+    for _ in range(40):
+        reloj["t"] += 1
+        seguimiento._apuntar()
+    c("con lecturas recientes hay número", seguimiento.leer() is not None, True)
+    reloj["t"] += crypto.PARADO_S + 1
+    c("sin lecturas en PARADO_S, deja de haberlo", seguimiento.leer(), None)
+    seguimiento.parar()
 
     # --- 6. no montar dos veces lo que ya está montado ----------------------
     #

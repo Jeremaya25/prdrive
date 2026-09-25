@@ -109,7 +109,7 @@ cumplirla.
 |---|---|---|
 | 1 | **Dispositivo** | qué unidad. Si ya es un prdrive, atajo para actualizarla |
 | 2 | **Cifrado** | VeraCrypt, BitLocker o ninguno |
-| 3 | **Conexión** | formulario de remoto nuevo, o importar uno de tu `rclone.conf`. Más la ruta del catálogo |
+| 3 | **Conexión** | formulario de remoto nuevo, o importar uno de tu `rclone.conf`. Más la ruta del catálogo: la del fichero (`…/pairs.toml`), no la de su carpeta |
 | 4 | **Comprobaciones** | consigue un rclone (lo busca, y si no lo descarga), conecta y lee el catálogo |
 | 5 | **Instalación** | completa o ligera, y para qué plataformas; copia el programa a `.prdrive/`, rclone y Python de cada plataforma, los lanzadores, el `rclone.conf` y la clave |
 | 6 | **Parejas** | cuáles de las del catálogo usa este dispositivo, y apunta el dispositivo en el registro de la flota |
@@ -149,6 +149,19 @@ Tk 9, y la interfaz está hecha y medida con Tk 8.6.
 
 **Desmarcar una plataforma que el dispositivo ya lleva pregunta si se borra.** Si
 dices que no, sus binarios se quedan donde están y simplemente no se reinstalan.
+
+**Si una descarga falla.** Cada fichero se intenta tres veces, con esperas
+crecientes, ante un corte o un tiempo de espera. Si ni así llega, **no se ha
+tocado el dispositivo**: todo lo de fuera se consigue antes de copiar nada, y lo
+ya descargado se queda en la caché del equipo (`%LOCALAPPDATA%\prdrive-install\`,
+o el temporal en Linux) y no se vuelve a bajar. El mensaje dice qué plataforma
+falta: puedes reintentar, o desmarcarla y seguir sin ella (se añade luego con
+**Añadir plataformas…**). Y dice cómo ponerla **a mano**: bajar con el navegador
+el zip de rclone (o el archivo de Python) y el `SHA256SUMS` de su versión, y
+dejarlos, sin descomprimir y con sus nombres exactos, en la carpeta que indica.
+Al reintentar se comprueban igual que una descarga, sin red. Un binario de
+rclone suelto no vale para otra plataforma: rclone publica las sumas de sus
+zips, no de lo que llevan dentro, así que no habría con qué comprobarlo.
 
 Si enchufas el dispositivo en una plataforma para la que no se preparó, el
 lanzador (o `sync.py`, si falta rclone) lo dice y dice la cura: volver a pasar el
@@ -196,10 +209,16 @@ se puede. A cambio pierdes la negación plausible (se ve cuánto ocupa de verdad
 si llenas la unidad, el volumen de dentro empieza a dar errores de escritura.
 
 Cuando no hay dispersos, el asistente **mide** la velocidad de tu unidad y te
-dice cuánto va a tardar antes de empezar, en vez de dejarte mirando una barra. Y
-propone un tamaño de trabajo en lugar de casi el disco entero: si luego se te
-queda corto, el **VeraCrypt Expander** que viaja en el propio dispositivo lo
-agranda.
+dice cuánto va a tardar **como poco** antes de empezar. Es un mínimo porque lo
+que se mide en unos segundos es la velocidad de arranque: muchas memorias USB
+escriben rápido solo hasta que se llena su caché, y después bajan a la mitad o
+menos. Mientras se crea, la barra enseña el **avance real** —lo que la propia
+unidad dice que lleva escrito— y cuánto queda según la velocidad del último
+minuto: si la memoria se frena, el tiempo sube con ella. Si el sistema no deja
+leer esa cuenta, o deja de moverse, la barra vuelve a ir y venir sin cifra: mejor
+sin número que con uno inventado. Y propone un tamaño de trabajo en lugar de casi
+el disco entero: si luego se te queda corto, el **VeraCrypt Expander** que viaja
+en el propio dispositivo lo agranda.
 
 **En FAT32, 4095M como mucho.** Muchos pendrives de 32 GB o menos vienen en
 FAT32 de fábrica, y en FAT32 un fichero no puede llegar a 4 GiB: el contenedor es
@@ -429,7 +448,7 @@ edita desde la ventana de parejas o a mano; el mismo esquema sirve para el
 [defaults]
 remote = "nas"                       # el remote de rclone que usan las parejas
 device_remote = "disp"               # el lado local, como remote propio
-catalog_path = "/prdrive-catalog/pairs.toml"
+catalog_path = "/prdrive-catalog/pairs.toml" # el fichero, no su carpeta
 exclude = ["**/.stfolder/**", "**/.stignore"]
 
 [defaults.flags]                     # flags de rclone para todas las parejas
@@ -889,7 +908,12 @@ Léelo entero antes de usar esto con datos que te importen.
   honestidad que arriba: esas sumas viajan desde el mismo servidor y por el mismo
   TLS que lo que describen, así que no protegen de que rclone.org o GitHub estén
   comprometidos. Sí de una descarga a medias, de un proxy que devuelve otra cosa
-  y de una caché que sirve un artefacto viejo.
+  y de una caché que sirve un artefacto viejo. Un fallo de red se reintenta; una
+  suma que no cuadra **no**: el archivo llegó entero, así que no es un corte sino
+  otra cosa contestando en su lugar, y se te dice con las dos sumas. Lo que dejes
+  **a mano** en la caché (el zip o el archivo oficial, con su `SHA256SUMS`) pasa
+  por la misma comprobación, y protege de lo mismo: los dos salen del mismo
+  servidor.
   Lo mismo vale cuando el **dispositivo** pone al día sus componentes desde la
   ventana: es la misma maquinaria, ejecutada desde el zip del código recién
   descargado y verificado. Y una garantía más, porque aquí se sustituye algo que
@@ -936,6 +960,7 @@ prdrive/
 │   ├── profile.py     la conexión: de dónde sale y cómo se escribe
 │   ├── rclone_bin.py  conseguir rclone, comprobado
 │   ├── runtime_bin.py conseguir Python (python-build-standalone), comprobado
+│   ├── descarga.py    lo que comparten: reintentar la red, leer un SHA256SUMS
 │   ├── platforms.py   para qué equipos: la lista del paso 5
 │   ├── deploy.py      copiar el código, rclone y Python, el config, el --resync
 │   ├── device.py      qué volúmenes hay y cuál es el bueno

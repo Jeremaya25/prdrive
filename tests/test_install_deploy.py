@@ -368,6 +368,87 @@ try:
 finally:
     rclone_bin.rclone_for, runtime_bin.ensure_runtime = reales
 
+# --- #49: si falta lo de una plataforma, el dispositivo no se toca ---------------
+#
+# Antes se borraba, se copiaba rclone plataforma a plataforma y luego Python, y
+# el primer fallo de descarga —el de una plataforma que ni siquiera era la de
+# este equipo— abortaba a medias. Ahora todo se consigue ANTES de tocar nada, y
+# el mensaje dice qué plataforma falta y que se puede desmarcar.
+fallidas = {"linux-arm64"}
+
+
+def rclone_o_nada(plat, progreso=None, allow_download=True):
+    if plat.clave in fallidas:
+        raise InstallError("No he podido descargar rclone de https://x/rclone-"
+                           "linux-arm64.zip: The read operation timed out")
+    descargados.append("rclone " + plat.clave)
+    return rclone_falso
+
+
+rclone_bin.rclone_for = rclone_o_nada
+runtime_bin.ensure_runtime = lambda plat, progreso=None, allow_download=True: (
+    descargados.append("python " + plat.clave) or archivos[plat.clave])
+try:
+    intacto = tmpdir() / "intacto"
+    deploy.install_runtime(intacto, LIN, archivos["linux-x64"])     # ya lleva Linux x64
+    antes = sorted(str(p.relative_to(intacto)) for p in intacto.rglob("*"))
+    todas = platforms.Matriz.para(intacto, anfitrion=WIN)
+    todas.elegir("linux-arm64")
+    todas.quitar("linux-x64")
+    todas.confirmar_borrado("linux-x64", True)        # y se pide borrarla
+    descargados.clear()
+    try:
+        deploy.apply_platforms(intacto, todas.plan())
+        c("una plataforma que no se consigue para el plan", "siguió", "InstallError")
+        mensaje = ""
+    except InstallError as e:
+        c("una plataforma que no se consigue para el plan", "InstallError", "InstallError")
+        mensaje = str(e)
+    c.contains("el mensaje nombra la plataforma", mensaje, "Linux ARM64")
+    c.contains("dice que se puede desmarcar", mensaje, "desmarca Linux ARM64")
+    c.contains("y que el dispositivo no se ha tocado", mensaje, "No se ha tocado")
+    c.contains("con el motivo de dentro", mensaje, "timed out")
+    c("el dispositivo sigue exactamente igual",
+      sorted(str(p.relative_to(intacto)) for p in intacto.rglob("*")), antes)
+    c("ni siquiera se ha borrado lo que se pidió borrar",
+      platforms.runtime_stamp(intacto, LIN) is not None, True)
+
+    # En el paso «Instalación» la descarga va ANTES de copiar el programa: esta
+    # es la función que llama, y no escribe en ningún dispositivo.
+    descargados.clear()
+    try:
+        deploy.conseguir_plataformas(todas.plan())
+    except InstallError:
+        pass
+    c("conseguir_plataformas() se para en la que falta, sin seguir probando",
+      descargados, ["rclone windows-x64"])
+
+    # Un OSError crudo —un URLError que se hubiera escapado— también se cuenta
+    # con su plataforma, y en el Python dice «Python».
+    fallidas.clear()
+    runtime_bin.ensure_runtime = lambda plat, progreso=None, allow_download=True: (
+        _ for _ in ()).throw(OSError("se fue la red"))
+    try:
+        deploy.conseguir_plataformas(todas.plan())
+    except InstallError as e:
+        c.contains("un OSError de Python también nombra la plataforma", str(e),
+                   "Python para Windows x64")
+
+    # Sin fallos: lo conseguido es lo que se pone, sin volver a pedirlo.
+    runtime_bin.ensure_runtime = lambda plat, progreso=None, allow_download=True: (
+        descargados.append("python " + plat.clave) or archivos[plat.clave])
+    solo_win = platforms.Matriz.para(tmpdir() / "vacio", anfitrion=WIN)
+    descargados.clear()
+    conseguido = deploy.conseguir_plataformas(solo_win.plan())
+    pedidos_antes = list(descargados)
+    otro = tmpdir() / "con-lo-conseguido"
+    deploy.apply_platforms(otro, solo_win.plan(), conseguido=conseguido)
+    c("apply_platforms() usa lo ya conseguido sin volver a pedirlo",
+      descargados, pedidos_antes)
+    c("y lo pone", sorted(platforms.provisioned(otro)), ["windows-x64"])
+finally:
+    rclone_bin.rclone_for, runtime_bin.ensure_runtime = reales
+
 # --- un runtime en uso no se deja a medias ---------------------------------------
 # En Windows, el runtime del que está corriendo prdrive no se puede renombrar. El
 # intercambio falla ENTERO —el runtime viejo sigue ahí y funciona— en vez de
