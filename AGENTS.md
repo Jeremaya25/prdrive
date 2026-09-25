@@ -1059,11 +1059,12 @@ Path1 is `pair.source` (local in bisync) — `conflicts.lado()`. Keep the citati
   `state/historial.jsonl`, one JSON line per pass: `pareja`, `inicio`
   (`store.stamp()`), `codigo`, `segundos`, `transferido` (bytes, or null).
   Written inside `sync.record_result()`, so it follows `results`' rule (no
-  dry-run, no SKIPPED) and a call without a `Reloj` still lands, timed now and
-  without a duration. **Appending is the normal write**; the atomic rewrite
-  (`store.write_text`) happens only when a pair passes `RECORTE = 2 × N` or the
-  file `TOPE_BYTES`, so the file is rewritten at most once per N appends —
-  write cycles are why good logs are not kept. `transferido` is
+  dry-run, no SKIPPED) and a call without a `Reloj` — `run_all()`'s `OSError`
+  net (#36) — still lands, timed now and without a duration. **Appending is
+  the normal write**; the atomic rewrite (`store.write_text`) happens only when
+  a pair passes `RECORTE = 2 × N` or the file `TOPE_BYTES`, so the file is
+  rewritten at most once per N appends — write cycles are why good logs are
+  not kept. `transferido` is
   `progress.final_del_log()`, read from the log's tail **before**
   `dispose_log()` deletes it; file counts are not stored, because with
   `--stats-one-line` `xfr#` appears only while the transfer queue is non-empty

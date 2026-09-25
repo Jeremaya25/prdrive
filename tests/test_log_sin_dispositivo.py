@@ -25,7 +25,7 @@ from pathlib import Path
 from _harness import Checks, sandbox
 
 import sync
-from common import bisync, model, results, store
+from common import bisync, historial, model, results, store
 
 c = Checks("sync.py: el log de un fallo sin dispositivo (#36)")
 
@@ -225,6 +225,11 @@ with sandbox() as root:
     fallos = {f.pareja: f for f in results.fallos(config)}
     c("las dos quedan apuntadas como fallo",
       sorted((n, f.codigo) for n, f in fallos.items()), [("bi", 7), ("up", 1)])
+    # Y en el diario de pasadas (#20), que es lo que dice desde cuándo falla: la
+    # de detrás no llegó a tener reloj, así que consta sin duración.
+    c("las dos entran en el diario, la de detrás sin duración",
+      [(p.pareja, p.codigo, p.segundos is None) for p in historial.leer()],
+      [("bi", 7, False), ("up", 1, True)])
     apuntado = store.read_json(results.ruta_estado()).get("parejas", {}).get("bi", {})
     c("sin apuntar como log uno que no está en logs/",
       apuntado.get("log", "(sin apuntar)"), None)
