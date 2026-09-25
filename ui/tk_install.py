@@ -912,6 +912,7 @@ def _paso_actualizar(cuerpo, wiz) -> None:
         if not ok:
             estado_lbl.configure(text=f"No se ha podido actualizar: {res}",
                                  foreground=theme.PELIGRO)
+            wiz.revisar()           # lo mismo que en «Instalación» (#49)
             return
         escrito, ident = res
         wiz.state.deployed = True
@@ -921,6 +922,7 @@ def _paso_actualizar(cuerpo, wiz) -> None:
                   f"El dispositivo sigue siendo el {ident[:8]}… y conserva todo "
                   f"lo suyo. Ya puedes cerrar."),
             foreground=theme.OK)
+        wiz.revisar()
 
     boton = ttk.Button(cuerpo, text="Actualizar ahora", style="Primary.TButton",
                        padding=(14, 8), command=actualizar)
