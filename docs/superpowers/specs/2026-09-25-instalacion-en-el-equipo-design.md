@@ -1,6 +1,6 @@
 # Instalación en el equipo: prdrive residente
 
-Fecha: 2026-09-25 · Estado: **borrador**, sin implementar · Versión objetivo: 0.4.0
+Fecha: 2026-09-25 · Estado: **aceptada**, sin implementar · Versión objetivo: 0.4.0
 
 ## Qué se pide
 
@@ -241,7 +241,7 @@ Cuando aparece una unidad prdrive cuyo id no está en la lista:
   conectado PRDRIVE-2. ¿Atenderla en este equipo?») y una ventanita con la
   pregunta y una cuenta atrás. Las respuestas son «Atender» y «Ahora no».
 - **Si no se contesta en `espera_unidad_nueva`**, un ajuste de `agente.json`
-  (**propuesta: 2 minutos**), cuenta como «Ahora no», y **«Ahora no» vale solo
+  (**2 minutos por defecto**), cuenta como «Ahora no», y **«Ahora no» vale solo
   para esta conexión**:
   - La unidad no se atiende mientras siga enchufada.
   - La próxima vez que se enchufe se vuelve a preguntar. «Esta conexión» acaba
@@ -249,9 +249,9 @@ Cuando aparece una unidad prdrive cuyo id no está en la lista:
     disparo.
   - **Mientras siga conectada, se puede decir que sí desde la bandeja:** el menú
     tiene una entrada «PRDRIVE-2, conectada · Atender…».
-- **«Atender»** la añade a la lista con el modo `daemon` (propuesta: es lo
-  natural para un programa en segundo plano, y se cambia en los ajustes) y la
-  atiende enseguida.
+- **«Atender»** la añade a la lista con el modo `daemon`, lo natural para un
+  programa en segundo plano, y la atiende enseguida. El modo se cambia después
+  en los ajustes.
 - **Quién lleva el reloj: el agente, no la ventana.** El plazo es un dato del
   planificador. La ventana solo enseña la cuenta atrás y se cierra sola al
   llegar a cero. Si contesta tarde, la respuesta se ignora; para eso está la
@@ -593,19 +593,15 @@ Nada, mientras no se instale el agente. Cuando se instala:
   parejas sigue siendo el `ConfigError` de siempre, y la bandeja lo enseña como
   aviso en vez de tumbar el agente.
 - **Aviso de «unidad nueva»:** tiene un plazo configurable
-  (`espera_unidad_nueva`, propuesta 2 min). Sin respuesta cuenta como «Ahora
+  (`espera_unidad_nueva`, 2 min por defecto). Sin respuesta cuenta como «Ahora
   no», solo para esta conexión, y se puede decir que sí desde la bandeja
-  mientras siga enchufada (sección 3).
+  mientras siga enchufada. «Atender» la añade en modo `daemon` (sección 3).
 - **Bandeja en Linux:** entra en la v1, con cliente D-Bus propio, y cae al
   lanzador solo donde el escritorio no tiene bandeja (sección 5).
 - **Pedir la contraseña al iniciar sesión:** es configurable
   (`pedir_al_iniciar`) y viene activado por defecto (sección 4, «Abrir»).
 - **Bloquear al suspender:** no entra en la v1. Será un ajuste futuro,
   desactivado por defecto (sección 4, «Cerrar»).
-
-Quedan dos propuestas pendientes de confirmar, que no bloquean el diseño: el
-modo con el que entra una unidad al decir «Atender» (`daemon`) y los 2 minutos
-de `espera_unidad_nueva`.
 
 ## Fases
 
