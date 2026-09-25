@@ -37,8 +37,9 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 │   ├── catalog.py     the pair catalogue on the remote: read, cache, write
 │   ├── fleet.py       one note per device beside the catalogue
 │   ├── update.py      is there a newer release, and how to fetch its code
-│   ├── components.py  rclone/Python carried vs the pins — stamps, no network
-│   ├── pins.py        pinned rclone + python-build-standalone; platform table
+│   ├── components.py  rclone/Python/VeraCrypt carried vs the pins — stamps, no network
+│   ├── pins.py        pinned rclone + python-build-standalone + VeraCrypt
+│   │                   Portable (URL + SHA-256); platform table
 │   ├── pairing.py     reads rclone.conf; the connection as a QR payload
 │   ├── vestibulo.py   what a VeraCrypt device leaves OUTSIDE its container
 │   ├── autorun.py     the root's autorun.inf: the drive's name and icon, edited
@@ -66,12 +67,13 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 │   ├── profile.py     the connection: where it comes from, how it is written
 │   ├── rclone_bin.py  get an rclone (any platform's), verified
 │   ├── runtime_bin.py get a python-build-standalone runtime, verified; extract
+│   ├── veracrypt_bin.py get the VeraCrypt Portable, verified, opened without running it
 │   ├── platforms.py   host, what the device carries, the step-5 Matriz/Plan
 │   ├── components.py  fetch the pinned component, swap it in
 │   ├── remote.py      the ephemeral rclone.conf and the pair catalogue
 │   ├── device.py      what volumes exist, which is the device, mounted right?
 │   ├── crypto.py      VeraCrypt and BitLocker
-│   ├── traveler.py    VeraCrypt itself, copied onto the volume
+│   ├── traveler.py    the VeraCrypt Portable (x64 + ARM64) on the volume, swapped
 │   ├── vestibulo.py   the launchers outside the container: open, eject
 │   └── deploy.py      copy the code in, rclone + runtimes, launchers, config
 └── tests/             plain scripts; run_all.py runs them in separate processes
@@ -112,8 +114,10 @@ does not travel to the device (`tests/test_install_device.py`, `test_fleet.py`);
 (`tests/test_instancia_unica.py`). Those two paths are functions in `model.py`
 and not constants because the tests move `STATE_DIR` at runtime; `runsync` and
 `ui/repair.py` both go through them, so penwatch's copy is the only one.
-`penwatch.CONTAINER_FILE` / `VESTIBULE_MARKER` vs `common/vestibulo.py`
-(`tests/test_penwatch_vestibulo.py`); `install/` imports the latter directly.
+`penwatch.CONTAINER_FILE` / `VESTIBULE_MARKER` and `TRAVELER_DIR` /
+`TRAVELER_EXE` / `TRAVELER_PORTABLE` / `TRAVELER_ARCHS` vs `common/vestibulo.py`
+(`TRAVELER*`, `tests/test_penwatch_vestibulo.py`); `install/` imports the
+latter directly, and `Abrir/Expulsar PRDRIVE.bat` are generated from them.
 
 ## The PyInstaller build (`build_installer.py`)
 
@@ -506,10 +510,16 @@ Seen on real hardware only for the traveler's file (M1 in the VeraCrypt results)
 it shows **after replugging**, and the window says so.
 
 - **The file is edited, never rewritten.** `autorun.con()` replaces `label` and
-  `icon` under `[autorun]` and keeps every other line, so the traveler's mount
-  commands survive, and `traveler.write_autorun()` keeps an existing label/icon
-  when it refreshes those commands. UTF-16 + CRLF, like VeraCrypt's own;
-  `buscar()` matches the name case-insensitively. Nothing left → file deleted.
+  `icon` under `[autorun]` and keeps every other line; `autorun.sin()` drops
+  only the keys its caller names. `traveler.write_autorun()` edits too: it keeps
+  an existing label, an icon that is not VeraCrypt's and every foreign line,
+  re-points a VeraCrypt icon at the executable the drive carries now
+  (`vestibulo.traveler_ejecutables()`; `autorun.ICONOS_VERACRYPT` recognises the
+  old `VeraCrypt\VeraCrypt.exe` too), and **removes** the `action=` /
+  `shell\montar…` / `shell\desmontar…` it used to write — Windows ignores them on
+  a removable drive (M2) and they pointed at an exe the portable does not have.
+  UTF-16 + CRLF, like VeraCrypt's own; `buscar()` matches the name
+  case-insensitively. Nothing left → file deleted.
 - **Which root:** the one that is plugged in. Unencrypted and BitLocker are the
   same case, `DEVICE_ROOT` (BitLocker's unlocked volume *is* the one plugged
   in); `vestibulo.raiz_fisica()` when the device lives in a VeraCrypt container
@@ -653,7 +663,17 @@ Still unverified on real hardware:
 - an installed VeraCrypt (`ERR_DRIVER_VERSION`);
 - the «retenido» branch;
 - the new eject wait;
-- Linux.
+- Linux;
+- the VeraCrypt Portable of #50 (tests V1–V7 in the issue; results go in
+  `docs/superpowers/pruebas/`): V1 create + mount on Windows x64 with nothing
+  installed, from the cache; V2/V3 the same drive opened on Windows ARM64 and
+  back, the `.bat` choosing by `%PROCESSOR_ARCHITECTURE%`; V4 another VeraCrypt
+  version installed (installed first, no `ERR_DRIVER_VERSION`); V5
+  `--update-components` with a nearly full drive, and the swap with room; V6 a
+  corrupt / cut download; V7 `_esperar_copia_elevada()` seeing
+  `VeraCrypt Format-x64.exe`. Also unverified: whether the traveler's `.sys` is
+  held open while its driver is loaded (`veracrypt_en_uso()` only probes the
+  files), and Explorer showing the icon of `VeraCrypt-x64.exe` on Windows ARM.
 
 Agent trap: this machine's Bash tool is sandboxed. It redirects writes under
 `%LOCALAPPDATA%` (a `penwatch install` from there registers a task that points
@@ -704,23 +724,55 @@ at nothing) and hangs `tasklist | find`. Use PowerShell for both.
   only runs from the Preferences and Favourites dialogs), and the file was
   rewritten from scratch, wiping the user's favourites. The note in `crypto.py`
   says why it is not coming back.
-- **`traveler.py` copies VeraCrypt onto the volume, renaming the driver.** There
-  is no CLI for this: VeraCrypt's own dialog extracts the binaries from its
-  `VeraCrypt Setup.exe` self-extractor (`Mount/Mount.c`, `TravelerDlgProc`).
-  Copying works because `DriverLoad()` (`Common/Dlgcode.c`) loads
-  `<exe dir>\veracrypt-x64.sys` or `-arm64.sys` — but the installer leaves it
-  as **`veracrypt.sys`** (`Setup/Setup.c`: the destination is `szFiles[i]+1`), so
-  `nombre_portatil()` renames it from the architecture in its **PE header**
-  (`maquina_pe()`), exactly what VeraCrypt's own dialog does for an MSI install.
-  Copying it as is left a traveler that never loaded its driver. Three things
-  that must stay said out loud: it still needs **administrator** on the host,
-  the signature is **not** verified the way VeraCrypt verifies it, and each
-  architecture works **only on its own**: `IsARM()` asks for the *native*
-  machine, so an emulated x64 VeraCrypt on Windows ARM looks for the arm64
-  driver, and a driver is never emulated. This is **not** the one-way fallback
-  of `BIN_FALLBACK_DIRS`. The folder lives on the **physical** root beside the
-  `.hc`, never inside the container, and `"veracrypt"` therefore belongs in
-  `device.RUIDO`.
+- **No VeraCrypt installed is fine on Windows: the official Portable, never
+  run to unpack it (#50, #38).** `install/veracrypt_bin.py` downloads
+  `pins.VERACRYPT_URL` (versioned, never an alias), checks it **in memory**
+  against `pins.VERACRYPT_SHA256` — IDRIX publishes no sums file, so whoever
+  moves the pin checks the Authenticode and PGP signatures by hand once and
+  writes the hash down — and reads the self-extractor with the stdlib
+  (`Setup/SelfExtract.c`): both markers from the **end**, like
+  `FindStringInFile()` (`VCINSTRT` also sits in the extractor's code), the
+  package CRC of `VerifyPackageIntegrity()` (up to the end marker, bytes
+  0x130–0x1ff zeroed by `WipeSignatureAreas()`), the compressed length reaching
+  the end marker, each file's CRC, and every name validated before the first
+  write. Only exes, drivers, `.cat`, `.inf` and licences are kept, in a cache
+  per version whose stamp (`PRDRIVE-VERACRYPT`, written last) carries each
+  file's SHA-256 and is re-hashed on every use. `SinRed` (could not *download*)
+  is distinct from a package that does not check out. `crypto.find_veracrypt()`
+  tries the user's folder (installation or portable layout, never mixed), then
+  the **installed** one, then the verified cache; the portable's names come
+  from `crypto.arquitectura_vc()`, i.e. `model.machine_arch()` — the native
+  machine, like VeraCrypt's `IsARM()`. The panel's «Descargar VeraCrypt
+  Portable» button fetches it; with it, every step asks for UAC.
+- **`traveler.py` puts the Portable on the volume, both architectures, as a
+  component.** There is no CLI for this: VeraCrypt's own dialog extracts the
+  binaries from its self-extractor (`Mount/Mount.c`, `TravelerDlgProc`), and in
+  portable mode it copies `VeraCrypt-x64.exe`, `-arm64.exe` and both drivers
+  with those names — which is what travels now, unrenamed. It works because
+  `DriverLoad()` (`Common/Dlgcode.c`) loads `<exe dir>\veracrypt-x64.sys` or
+  `-arm64.sys`. The folder is **swapped**, never copied over: new beside
+  (`.VeraCrypt.nuevo-<pid>`), old moved aside, rename; free space on the
+  physical root is checked first (`traveler.espacio_libre()`, an indirection
+  point) and if it does not fit nothing is touched; copies are re-hashed against
+  the stamp, which is written last. Leftovers are noise
+  (`vestibulo.es_resto_traveler()` in `device.es_ruido()`). `crypto.size_to_bytes`
+  with `viajero=True` leaves `RESERVA_VIAJERO` (256 MiB) instead of 50 MiB so a
+  'max' container still leaves room for that swap. **Without network** (only
+  `SinRed`) and with a VeraCrypt on this host, the old path: copy the
+  installation, renaming `VeraCrypt.exe` / `veracrypt.sys`… to the portable
+  names from the architecture in their **PE header** (`maquina_pe()`), exactly
+  what VeraCrypt's own dialog does for an MSI install (the installer leaves
+  **`veracrypt.sys`**, `Setup/Setup.c`: `szFiles[i]+1`). That copy has one
+  architecture and **no stamp**, and it never replaces a stamped portable.
+  Three things that must stay said out loud: it still needs **administrator** on
+  the host, the signature is **not** verified the way VeraCrypt verifies it
+  (the portable is checked against the hand-verified pin; an installation copy
+  against nothing), and each architecture works **only on its own**: `IsARM()`
+  asks for the *native* machine, so an emulated x64 VeraCrypt on Windows ARM
+  looks for the arm64 driver, and a driver is never emulated. This is **not** the
+  one-way fallback of `BIN_FALLBACK_DIRS`. The folder lives on the **physical**
+  root beside the `.hc`, never inside the container, and `"veracrypt"`
+  therefore belongs in `device.RUIDO`.
 - **Re-encrypting leaves the old tree where it was.** «Reinstalar desde cero»
   with VeraCrypt over an unencrypted prdrive creates the container beside it;
   `crypto.restos_en_claro()` finds the plaintext `.prdrive/` (with the key) and
@@ -742,7 +794,11 @@ writes the texts. Five things not to weaken:
   `WM_INITDIALOG`). No `/auto`: it also opens an Explorer window.
 - **The installed VeraCrypt before the travelling one**: with another version's
   driver loaded, the traveller fails with `ERR_DRIVER_VERSION`
-  (`Common/Dlgcode.c`, `DriverAttach`).
+  (`Common/Dlgcode.c`, `DriverAttach`). Of the travelling one, the Portable of
+  this machine's architecture (`VeraCrypt-%VC_ARQ%.exe`, from
+  `%PROCESSOR_ARCHITECTURE%`, truthful in a `.bat`), then the
+  `VeraCrypt\VeraCrypt.exe` of an old device; penwatch does the same with
+  `native_arch()`. `VC_IMAGEN` is the image name `tasklist` looks for.
 - **The exit code is not the mount.** The traveller without admin rights
   relaunches itself elevated with `/q UAC` and exits 0 after two seconds
   (`InitApp`, `LaunchElevatedProcess`), so the `.bat` waits to *see* the drive
@@ -876,7 +932,23 @@ things that must not be weakened:
   the update it needs.
 - **The swap is `install_runtime()`'s, for rclone too**: copy beside, move aside,
   rename; never `copy2` over the binary that is there. Whatever is in use is
-  postponed with its reason (`rclone_en_uso` / `runtime_en_uso`).
+  postponed with its reason (`rclone_en_uso` / `runtime_en_uso` /
+  `veracrypt_en_uso`).
+
+**The travelling VeraCrypt is the third component** (#50). Its stamp,
+`VeraCrypt/PRDRIVE-VERACRYPT`, lives on the **physical** root, so
+`components.pendientes(app_dir, fisica)` takes that root, or finds it through
+`components.raiz_fisica()` (control-file id → vestibule marker, an indirection
+point); a device not in a container has none. `Pendiente.plataforma` is None
+and `ruta` is the folder. **An unstamped `VeraCrypt\` (an old device's
+installation copy) is never touched by `--update-components` or `--update`**:
+its vestibule only opens `VeraCrypt\VeraCrypt.exe`, and the vestibule is not a
+component's to rewrite. It reads as pending with `asistente=True`, the window
+says «Añadir plataformas…» and offers no button when that is all there is
+(`components.actualizables()`), and `aplicar()` postpones it with that reason.
+«Añadir plataformas…» writes the new vestibule **first** (it opens both
+layouts) and then swaps in the stamped Portable (`traveler.llevar()`), so the
+two stay coherent whatever happens to the second.
 
 **What a download must survive** before going near the device: TLS, the zip CRC,
 every name in `update.OBLIGATORIOS` present, no member whose path escapes the
@@ -1206,9 +1278,11 @@ keeps the target's existing header.
 - Everything that touches the network, a real device or the desktop is a
   **module-level indirection point so every test can replace it**: `catalog.run()`
   (which `fleet` and `remote_picker` go through), `update.fetch()`,
-  `rclone_bin.fetch()`, `conflicts.recorrer()`, `conflict_editor.mover()` /
+  `rclone_bin.fetch()`, `veracrypt_bin.fetch()` / `ensure_veracrypt()`,
+  `conflicts.recorrer()`, `conflict_editor.mover()` /
   `borrar()`, `ui.abrir()`, `runsync.notificar_fallo()`,
-  `components.rclone_en_uso()` / `runtime_en_uso()`, `_win_volumes()`,
+  `components.rclone_en_uso()` / `runtime_en_uso()` / `veracrypt_en_uso()`,
+  `common.components.raiz_fisica()`, `traveler.espacio_libre()`, `_win_volumes()`,
   `vestibulo.raiz_fisica()`, `cifrado.lanzar_expulsion()`,
   `crypto.sistema_de_ficheros()`,
   `_leer_estado_bitlocker()`, `_preguntar_borrado()`, `pairing.construir()`,

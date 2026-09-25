@@ -27,7 +27,7 @@ modo *ligero* (con un `runsync.pyw` en la raíz), entonces sí hace falta **Pyth
 | `runsync.bat` / `runsync.sh` | los lanzadores. Empieza siempre por aquí |
 | `sync-data/` | **tus carpetas sincronizadas** |
 | `.prdrive/` | el programa, rclone, su Python y el fichero de control. Está oculta a propósito; no hace falta tocarla |
-| `VeraCrypt/` | solo si la unidad va cifrada con VeraCrypt: el propio VeraCrypt, para poder abrirla en equipos que no lo tengan |
+| `VeraCrypt/` | solo si la unidad va cifrada con VeraCrypt: el propio VeraCrypt (para Windows x64 y ARM64), para poder abrirla en equipos que no lo tengan |
 | `autorun.inf` | el nombre y el icono con que la ve Windows. No ejecuta nada |
 
 ## La ventana
@@ -110,8 +110,8 @@ la encuentre entra en tus datos hasta que revoques esa clave.
   equipo sin VeraCrypt instalado, con el que viaja en la carpeta `VeraCrypt\`;
   entonces hará falta aceptar el aviso de permisos de administrador: montar carga
   un driver y no hay otra forma.
-  ¿Se te queda pequeño el contenedor? `VeraCrypt\VeraCryptExpander.exe` lo
-  agranda sin rehacerlo.
+  ¿Se te queda pequeño el contenedor? `VeraCrypt\VeraCryptExpander-x64.exe`
+  (`-arm64` en un Windows ARM) lo agranda sin rehacerlo.
 - No borres `.prdrive/`. Si desaparece, el arranque automático deja
   de reconocer la unidad y hay que reinstalar.
 - **Extráela con seguridad.** El programa no escribe nada mientras no sincroniza,

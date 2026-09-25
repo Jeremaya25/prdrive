@@ -180,6 +180,16 @@ cuanto el contenedor está abierto.
 
 Unas cuantas cosas que conviene saber antes de darle a **Crear y montar**.
 
+**En Windows no hace falta tenerlo instalado.** Si el equipo no tiene VeraCrypt,
+el paso 2 ofrece **Descargar VeraCrypt Portable**: el paquete oficial de IDRIX,
+de la versión fijada en `common/pins.py`, que se abre sin ejecutarlo y se
+comprueba antes de usarlo —su SHA-256 contra el fijado, y los CRC-32 del
+paquete y de cada fichero, como hace el propio VeraCrypt—. Si lo tienes
+descomprimido en una carpeta, también vale indicarla. Con el portable, cada paso
+(crear, montar, desmontar) pide permiso de administrador: sin su driver
+instalado, VeraCrypt se relanza elevado. Si hay uno instalado, se usa ese. En
+Linux sí tiene que estar instalado.
+
 **Por qué tarda, y cómo no tardar.** Crear el contenedor no es cifrar: es
 *escribirlo entero*. VeraCrypt reserva el fichero y luego lo recorre escribiendo
 un sector cada 128 MiB para obligar a Windows a reservar cada tramo de verdad, y
@@ -219,20 +229,34 @@ en rojo antes de crear nada, y no la borra: puede tener cambios que todavía no
 están en el remoto. Bórrala tú cuando compruebes que no falta nada, y si alguien
 pudo copiar el dispositivo mientras iba sin cifrar, cambia la clave del remoto.
 
-**VeraCrypt viaja dentro.** La casilla **Dejar VeraCrypt en el dispositivo** copia
-el VeraCrypt de este equipo a una carpeta `VeraCrypt\` en la raíz de la unidad
-(un *Traveler's Disk*), para poder montar el contenedor en un ordenador que no lo
-tenga instalado. Tres avisos honestos:
+**VeraCrypt viaja dentro.** La casilla **Dejar VeraCrypt en el dispositivo** deja
+el VeraCrypt Portable oficial en una carpeta `VeraCrypt\` en la raíz de la unidad
+(un *Traveler's Disk*, ≈29 MB), para poder montar el contenedor en un ordenador
+que no lo tenga instalado. Lleva las **dos arquitecturas**, x64 y ARM64, con los
+nombres del paquete (`VeraCrypt-x64.exe`, `VeraCrypt-arm64.exe`…), y quien abre
+el contenedor escoge la del equipo. Es un **componente**, como rclone: lleva un
+sello con su versión, se pone al día con el botón de la ventana, y se sustituye
+entero —la carpeta nueva al lado, la de antes apartada, un renombrado—, nunca
+copiando encima; si no cabe en la unidad no se toca nada. Por eso, con **max**
+como tamaño, el contenedor deja 256 MiB libres fuera en vez de 50. Tres avisos
+honestos:
 
 - **Sigue haciendo falta ser administrador** en el equipo donde lo enchufes:
   montar carga un driver y eso no se puede hacer de otra forma. Esto te ahorra
   instalar VeraCrypt, no el aviso de permisos.
-- **Solo viaja la arquitectura del equipo que lo prepara, y solo vale en esa.**
-  Montar carga un driver, y un driver no se emula: uno preparado en un PC normal
-  (x64) no monta en un Windows ARM, ni al revés. El paso 8 te dice cuál lleva.
-- prdrive **no comprueba la firma** de lo que copia, que es algo que el propio
-  diálogo de VeraCrypt sí hace. Copia de la carpeta de VeraCrypt instalada en tu
-  equipo, que ya está protegida contra escritura sin permisos de administrador.
+- **Cada arquitectura vale solo en la suya.** Montar carga un driver, y un driver
+  no se emula: por eso viajan las dos. El paso 8 te dice cuáles lleva.
+- prdrive **no comprueba la firma** de lo que copia como la comprueba el propio
+  VeraCrypt: comprueba que el paquete es el que fija el programa (su SHA-256), y
+  ese número lo apunta a mano quien mueve la versión después de comprobar la
+  firma Authenticode de IDRIX y la PGP.
+
+Sin conexión, y con VeraCrypt instalado en el equipo, se copia ese en su lugar:
+una sola arquitectura, la del equipo, y sin sello. **Añadir plataformas…** lo
+cambia por el portable cuando haya red. Lo mismo con un dispositivo hecho con
+una versión anterior, que lleva esa copia: su VeraCrypt no se pone al día solo
+—su entrada de fuera solo sabe abrir esa disposición—, y la ventana lo dice;
+**Añadir plataformas…** cambia a la vez el VeraCrypt y la entrada.
 
 En Linux y macOS no hay traveler disk: allí VeraCrypt necesita instalarse.
 
@@ -248,9 +272,9 @@ lo justo para llegar a él:
 | `LEEME-PRDRIVE.txt` | cómo se hace, en diez líneas, legible sin abrir nada |
 
 Usan el VeraCrypt instalado en el equipo si lo hay, y si no el que viaja en la
-unidad: con otra versión instalada, el que viaja no puede cargar su driver. Un
-dispositivo VeraCrypt hecho con una versión anterior se los pone con **Añadir
-plataformas…**, sin reinstalar.
+unidad, el de la arquitectura del equipo: con otra versión instalada, el que
+viaja no puede cargar su driver. Un dispositivo VeraCrypt hecho con una versión
+anterior se los pone con **Añadir plataformas…**, sin reinstalar.
 
 ### La primera vez
 
@@ -381,21 +405,24 @@ Se pregunta **una vez al día**: la respuesta se guarda en `state/update.json` y
 el aviso se pinta desde ahí, así que abrir la ventana no espera nunca a la red.
 Sin conexión no pasa nada — se enseña lo último que se supo, o nada.
 
-#### Los componentes: rclone y el Python del dispositivo
+#### Los componentes: rclone, el Python y el VeraCrypt del dispositivo
 
 El programa es una cosa y los componentes otra. Cada release **fija** en
-`common/pins.py` una versión exacta de rclone y una release exacta de
-python-build-standalone, y esos pines viajan dentro del programa. Cuando el
-dispositivo lleva otros —porque se instaló hace meses, o porque una release
-nueva movió los pines—, la ventana lo dice en el mismo recuadro ámbar y el botón
-los sustituye.
+`common/pins.py` una versión exacta de rclone, una release exacta de
+python-build-standalone y una versión del VeraCrypt Portable, y esos pines
+viajan dentro del programa. Cuando el dispositivo lleva otros —porque se instaló
+hace meses, o porque una release nueva movió los pines—, la ventana lo dice en
+el mismo recuadro ámbar y el botón los sustituye.
 
 Cómo se sabe qué lleva: cada componente deja escrito de dónde salió, en
-`runtime/<plataforma>/PRDRIVE-RUNTIME` y en `bin/<arch>/<rclone>.PRDRIVE-RCLONE`.
-Hace falta porque un binario no dice su versión sin ejecutarlo, y el de otra
-plataforma no se puede ejecutar aquí. Un dispositivo anterior a esto no tiene el
-sello de rclone: se lee **«no consta»**, que cuenta como pendiente, y la primera
-actualización lo deja apuntado para siempre.
+`runtime/<plataforma>/PRDRIVE-RUNTIME`, en `bin/<arch>/<rclone>.PRDRIVE-RCLONE` y,
+fuera del contenedor, en `VeraCrypt\PRDRIVE-VERACRYPT`. Hace falta porque un
+binario no dice su versión sin ejecutarlo, y el de otra plataforma no se puede
+ejecutar aquí. Un dispositivo anterior a esto no tiene el sello de rclone: se lee
+**«no consta»**, que cuenta como pendiente, y la primera actualización lo deja
+apuntado para siempre. El VeraCrypt sin sello de un dispositivo de antes es la
+excepción: la ventana lo dice, pero no lo toca, porque su entrada de fuera solo
+sabe abrir esa copia; se cambian los dos con **Añadir plataformas…**.
 
 ```bash
 python <descarga>/prdrive-install.py --update-components E:\   # lo que hace el botón
@@ -408,10 +435,11 @@ python <descarga>/prdrive-install.py --update-components E:\   # lo que hace el 
   instante hay medio binario en `bin/`, que es el estado en el que el
   dispositivo no sincroniza en ningún equipo.
 - **Lo que está en uso se pospone** y se dice cuál y por qué: un rclone
-  sincronizando ahora mismo, o el Python desde el que está abierto el propio
+  sincronizando ahora mismo, el Python desde el que está abierto el propio
   programa (en Windows no se puede sustituir la carpeta de un `pythonw.exe`
   vivo — ciérralo y ejecuta `python runsync.py` dentro de `.prdrive/` con un
-  Python instalado en este equipo).
+  Python instalado en este equipo), o un VeraCrypt que se está ejecutando desde
+  la unidad.
 - **No se instala ninguna plataforma nueva.** Para eso está «Añadir
   plataformas…» del asistente, que enseña los megas antes de bajarlos.
 - No se tocan el programa, la configuración, las claves, el estado ni los
@@ -928,11 +956,12 @@ prdrive/
 │   ├── profile.py     la conexión: de dónde sale y cómo se escribe
 │   ├── rclone_bin.py  conseguir rclone, comprobado
 │   ├── runtime_bin.py conseguir Python (python-build-standalone), comprobado
+│   ├── veracrypt_bin.py conseguir el VeraCrypt Portable, comprobado, sin ejecutarlo
 │   ├── platforms.py   para qué equipos: la lista del paso 5
 │   ├── deploy.py      copiar el código, rclone y Python, el config, el --resync
 │   ├── device.py      qué volúmenes hay y cuál es el bueno
 │   ├── crypto.py      VeraCrypt y BitLocker
-│   ├── traveler.py    dejar el propio VeraCrypt dentro del volumen
+│   ├── traveler.py    dejar el VeraCrypt Portable (x64 y ARM64) en el volumen
 │   ├── vestibulo.py   los lanzadores de fuera del contenedor: abrir y expulsar
 │   └── components.py  poner al día el rclone y el Python de un dispositivo
 ├── tests/             scripts sueltos, sin framework
