@@ -112,8 +112,10 @@ does not travel to the device (`tests/test_install_device.py`, `test_fleet.py`);
 (`tests/test_instancia_unica.py`). Those two paths are functions in `model.py`
 and not constants because the tests move `STATE_DIR` at runtime; `runsync` and
 `ui/repair.py` both go through them, so penwatch's copy is the only one.
-`penwatch.CONTAINER_FILE` / `VESTIBULE_MARKER` vs `common/vestibulo.py`
-(`tests/test_penwatch_vestibulo.py`); `install/` imports the latter directly.
+`penwatch.CONTAINER_FILE` / `VESTIBULE_MARKER` / `OPEN_SCRIPT` vs
+`common/vestibulo.py`, and `penwatch.UDISKS_TCRYPT_CONF` vs
+`install/vestibulo.TCRYPT_CONF` (`tests/test_penwatch_vestibulo.py`); `install/`
+imports the former directly.
 
 ## The PyInstaller build (`build_installer.py`)
 
@@ -653,7 +655,13 @@ Still unverified on real hardware:
 - an installed VeraCrypt (`ERR_DRIVER_VERSION`);
 - the «retenido» branch;
 - the new eject wait;
-- Linux.
+- Linux;
+- opening and closing on Linux **without** VeraCrypt (udisks2 / cryptsetup,
+  #51): written against udisks `master` and cryptsetup `main`, not run on any
+  distribution. The plan is U1–U10 in the issue; **U9** (write on Linux through
+  each route, check the sums on Windows with VeraCrypt, and back) is the one
+  that says whether the data survives, U4 decides penwatch's `loop-setup`, and
+  U8 is H-10's ghost on Linux (unplugged with the container open), unhandled.
 
 Agent trap: this machine's Bash tool is sandboxed. It redirects writes under
 `%LOCALAPPDATA%` (a `penwatch install` from there registers a task that points
@@ -776,10 +784,48 @@ is where the id comes from) and by «Añadir plataformas…», **never** by
 `--update`. `vestibulo.destino(state)` decides whether there is one (the `.hc`
 on the physical root and the device mounted elsewhere). Its six names are in
 `device.RUIDO`, built from `vestibulo.TODOS`. `tests/test_vestibulo.py` reads the
-`.bat`, **runs** the `.sh` against a fake `veracrypt` and, on Windows, runs
-`:libre` against a container held the way the driver holds it. Rewriting the
-vestibule goes through `deploy.unhide()` first: Windows refuses `open(…, "w")`
-on a hidden file, and the marker is hidden.
+`.bat`, **runs** the `.sh` (with `sh`, and `dash`/`bash --posix` when present)
+against fake `veracrypt`/`udisksctl`/`cryptsetup`/`losetup`/`mount`/`sudo`/
+`pkexec` on a toy system, and, on Windows, runs `:libre` against a container
+held the way the driver holds it. Rewriting the vestibule goes through
+`deploy.unhide()` first: Windows refuses `open(…, "w")` on a hidden file, and
+the marker is hidden.
+
+**Linux without VeraCrypt (#51).** A container as prdrive makes it (AES, SHA-512,
+PIM 0, no hidden volume) is also opened by udisks2 and cryptsetup, so
+`abrir-prdrive.sh` takes the first of: VeraCrypt (as before) → udisks2, only if
+`TCRYPT_CONF` (`/etc/udisks2/tcrypt.conf`) exists → cryptsetup with `sudo` →
+a message with the three ways out. Citations in `install/vestibulo.py` and rows
+15–22 of the spec's table. Not to weaken:
+
+- **The password still never passes through us**, and that is why there is no
+  opening without a terminal: `udisksctl unlock` reads the controlling tty
+  (`read_passphrase()`, `tools/udisksctl.c`) and cryptsetup reads the tty only
+  if stdin is one, otherwise **stdin itself** (`tools_get_key()`,
+  `src/utils_password.c`). So no `pkexec` to *open* — it could not carry the
+  password without piping it; `pkexec` only *closes* (no container password
+  there), when the window's «Expulsar» launches the script without a tty.
+- **prdrive never creates `tcrypt.conf`** (root, `/etc`, restarting a system
+  service): the script and `LEEME` say how (`ACTIVAR_UDISKS`), and the
+  cryptsetup route hints at it. Without it udisks never marks the loop
+  `crypto_unknown`, so there is no `Encrypted` interface to unlock
+  (`src/udiskslinuxblock.c`, `src/main.c`).
+- **Closing is deduced, never recorded**: `losetup -j` → the loop,
+  `/sys/block/loopN/holders/` → the dm, its name → who opened it (`veracryptN`
+  VeraCrypt, `prdrive-<id8>` our cryptsetup, anything else udisks2's
+  `tcrypt-…`), `/proc/mounts` → where. No loop → `veracrypt -d` if installed. It
+  reports closed only after re-reading that state.
+- A loop that udisks set up and did not unlock is deleted (it holds the `.hc`,
+  and the drive could not be removed); a wrong udisks password does **not** fall
+  through to cryptsetup — only «udisks does not recognise it» does.
+- cryptsetup mounts at `/mnt/prdrive-<id8>` with `uid`/`gid` (exFAT/NTFS keep no
+  owner), retrying without them for ext4; the empty dir is left behind.
+- The scripts append `/usr/sbin:/sbin` to `PATH` (Debian keeps `losetup` and
+  `cryptsetup` there, out of a user's `PATH`), and every system path goes
+  through `$PRDRIVE_SISTEMA` (`VAR_SISTEMA`), empty in real life: it is how the
+  test points them at a toy `/etc`, `/sys`, `/proc`, `/media`, `/mnt`.
+- Devices provisioned before this keep their old VeraCrypt-only `.sh` until
+  step 5 or «Añadir plataformas…» rewrites the vestibule — never `--update`.
 
 Other step notes:
 
@@ -935,7 +981,16 @@ script to `%LOCALAPPDATA%\prdriveWatch` / `~/.local/share/prdrive-watch`, writes
   only when the physical root disappears. The mounted volume disappearing with
   its vestibule still there marks it as asked too: a watcher installed with the
   container open never saw it closed, and «Expulsar» brought up the password.
-  No id in `watch.json` → never asks.
+  No id in `watch.json` → never asks. **Linux without VeraCrypt** (or without a
+  display) it opens nothing: udisks2 and cryptsetup ask on a terminal it does
+  not have. It logs the route this host has (`linux_open_route()`, same order
+  as the script) and the `sh …/abrir-prdrive.sh` to run, once per connection
+  as always. Doing the `udisksctl loop-setup` itself waits on **U4** (#51: does
+  the desktop then ask for the password on its own?). Opened by hand,
+  `posix_roots()` already finds it — `/proc/self/mounts` (`MOUNTS_FILE`) plus
+  `/media`, `/run/media`, `/mnt` one and two levels down
+  (`POSIX_MOUNT_BASES`, both replaceable by tests) — and the launch goes on as
+  usual.
 - `ui/watch.py` imports penwatch for reads and shells out for
   `install`/`uninstall`. One-way dependency. So does
   `common/vestibulo.raiz_fisica()`, lazily and guarded like `ui/watch.py`: one

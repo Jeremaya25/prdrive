@@ -45,6 +45,22 @@ Todo contra el tag **VeraCrypt_1.26.24**, y lo que importa también contra
 | 13 | El propio `autorun.inf` de VeraCrypt nombra el volumen **relativo a la raíz** y entre comillas: `/v "PRDRIVE.hc"`. | `Mount/Mount.c:4584`, `:5040` | La entrada «Montar» del nuestro no llevaba `/v`: solo abría la ventana. |
 | 14 | En Linux, `veracrypt <volumen>` en modo gráfico monta de forma interactiva (contraseña y la de administrador con sus diálogos) en `<prefijo>N`, con prefijo `/media/veracrypt`, `/run/media/veracrypt` o `/mnt/veracrypt` (o `VERACRYPT_MOUNT_PREFIX`), y sale con 0, o con 1 si se cancela. | `Main/CommandLineInterface.cpp:694`, `Main/UserInterface.cpp:1065`, `Core/Unix/CoreUnix.cpp:288` | Es la orden del lanzador exterior en Linux. |
 
+Y para Linux sin VeraCrypt (#51), contra udisks (`storaged-project/udisks`,
+`master`) y cryptsetup (`main`), más una fila de VeraCrypt. Lo de cada
+distribución puede diferir: nada de esto se ha probado en hardware (U1–U10 en
+#51). Las citas van en `install/vestibulo.py` y `penwatch.py`.
+
+| # | Hecho | Dónde | Consecuencia para prdrive |
+|---|---|---|---|
+| 15 | udisks abre TCRYPT siempre en modo VeraCrypt (`veracrypt = TRUE`: «it can unlock both VeraCrypt and legacy TrueCrypt volumes»), y `Unlock` acepta `pim`, `hidden`, `system` y `keyfiles`. `udisksctl unlock` no tiene opciones para ellos. | `src/udiskslinuxencryptedhelpers.c` (`tcrypt_open_job_func()`), `src/udiskslinuxencrypted.c` (`handle_unlock()`), `tools/udisksctl.c` | Un contenedor de prdrive (PIM 0, sin oculto) se abre con `udisksctl unlock` sin más. |
+| 16 | Una cabecera VeraCrypt no tiene firma: udisks solo marca un dispositivo desconocido `IdType = crypto_unknown` con `enable_tcrypt` y `bd_crypto_device_seems_encrypted()`. Sin esa marca no hay interfaz `Encrypted`, y `unlock` falla («is not an encrypted device»; el método D-Bus, «does not appear to be a LUKS, BITLK or TCRYPT device»). | `src/udiskslinuxblock.c`, `src/udiskslinuxblockobject.c` (`encrypted_check()`), `tools/udisksctl.c`, `src/udiskslinuxencrypted.c` | El `.sh` espera a ver la interfaz `Encrypted` en el loop antes de pedir la contraseña; si no sale, suelta el loop y pasa a cryptsetup. |
+| 17 | `enable_tcrypt` es que exista `/etc/udisks2/tcrypt.conf` cuando arranca el servicio: `g_file_test ("/etc/udisks2/tcrypt.conf", G_FILE_TEST_IS_REGULAR)`. | `src/main.c:169` | Root **una vez por equipo** y reiniciar udisks2. prdrive no lo crea: lo dice (`ACTIVAR_UDISKS`). |
+| 18 | polkit da `allow_active=yes` a `loop-setup`, `encrypted-unlock` y `filesystem-mount`. Un loop puesto por quien llama usa la acción normal, no la de dispositivos del sistema, y lo que se abre encima también. `loop-setup` no pone `autoclear`. | `data/org.freedesktop.UDisks2.policy.in`, `src/udisksdaemonutil.c` (`udisks_daemon_util_setup_by_user()`), `src/udiskslinuxmanager.c` (`handle_loop_setup()`) | Con sesión activa, sin contraseña de administrador. Al cerrar hay que `loop-delete`, y un loop sin abrir se suelta: retiene el `.hc`. |
+| 19 | `udisksctl unlock` lee la contraseña de la terminal que controla el proceso (`ctermid()`, `fopen(…, "r+")`). El mapeo se llama `tcrypt-<uuid o número de dispositivo>`. | `tools/udisksctl.c` (`read_passphrase()`), `src/udiskslinuxblock.c` (`udisks_linux_block_make_dm_name()`) | Sin VeraCrypt hace falta una terminal. Un dm que no es `veracryptN` ni `prdrive-<id>` es de udisks. |
+| 20 | cryptsetup abre VeraCrypt por defecto (`--veracrypt`: «ignored as VeraCrypt compatible mode is supported by default»), con un fichero pone el loop él solo, necesita la API de cifrado del kernel en espacio de usuario y nunca cambia la cabecera TCRYPT. | `man/common_options.adoc`, `man/cryptsetup.8.adoc` («TCRYPT … EXTENSION», «Notes on loopback device use») | `--veracrypt` se pasa siempre (las versiones viejas lo necesitaban); `losetup -j` ve su loop, que se suelta solo al cerrar. |
+| 21 | cryptsetup pide la contraseña por la terminal solo si stdin lo es (`isatty(STDIN_FILENO)`); si no, la **lee de stdin** hasta el fin de línea. | `src/utils_password.c` (`tools_get_key()`) | Para abrir no hay `pkexec`: sin terminal la contraseña tendría que llegarle por tubería. `pkexec` solo para cerrar. |
+| 22 | VeraCrypt en Linux, con el cifrado del kernel, pone el propio `.hc` en un loop y llama al dm `veracrypt<ranura>`. | `Core/Unix/Linux/CoreLinux.cpp` (`MountVolumeNative()`) | Expulsar reconoce lo abierto por VeraCrypt por el nombre del dm; sin loop (sin cifrado del kernel), `veracrypt -d` si está. |
+
 ## Alcance
 
 **Entra** (este cambio):
@@ -232,6 +248,9 @@ abierto.
   montaje y lanza `runsync.sh`.
 - Expulsar: `sleep 3` y `veracrypt -d "<raíz>/PRDRIVE.hc"`.
 - Sin VeraCrypt instalado lo dicen: en Linux no hay traveler.
+- *Después (#51):* sin VeraCrypt, abrir usa udisks2 (si existe
+  `/etc/udisks2/tcrypt.conf`) o cryptsetup con `sudo`, en una terminal; y
+  expulsar cierra con lo mismo, deducido del estado del sistema (hechos 15–22).
 
 ### `LEEME-PRDRIVE.txt`
 

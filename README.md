@@ -234,7 +234,8 @@ tenga instalado. Tres avisos honestos:
   diálogo de VeraCrypt sí hace. Copia de la carpeta de VeraCrypt instalada en tu
   equipo, que ya está protegida contra escritura sin permisos de administrador.
 
-En Linux y macOS no hay traveler disk: allí VeraCrypt necesita instalarse.
+En Linux y macOS no hay traveler disk. En Linux tampoco hace falta VeraCrypt: ver
+[En Linux, sin VeraCrypt](#en-linux-sin-veracrypt).
 
 **Abrirlo y cerrarlo, en cualquier equipo.** Con VeraCrypt todo prdrive está
 dentro del contenedor, así que el instalador deja fuera, en la raíz de la unidad,
@@ -244,13 +245,56 @@ lo justo para llegar a él:
 |---|---|
 | `Abrir PRDRIVE` | abre el contenedor y la ventana de prdrive. La contraseña la pide VeraCrypt en su propia ventana: no pasa por prdrive |
 | `Expulsar PRDRIVE` | cierra el contenedor para poder quitar la unidad. Si queda algo abierto, VeraCrypt pregunta si forzar |
-| `abrir-prdrive.sh`, `expulsar-prdrive.sh` | lo mismo en Linux (con VeraCrypt instalado) |
+| `abrir-prdrive.sh`, `expulsar-prdrive.sh` | lo mismo en Linux, con VeraCrypt, udisks2 o cryptsetup |
 | `LEEME-PRDRIVE.txt` | cómo se hace, en diez líneas, legible sin abrir nada |
 
 Usan el VeraCrypt instalado en el equipo si lo hay, y si no el que viaja en la
 unidad: con otra versión instalada, el que viaja no puede cargar su driver. Un
 dispositivo VeraCrypt hecho con una versión anterior se los pone con **Añadir
 plataformas…**, sin reinstalar.
+
+#### En Linux, sin VeraCrypt
+
+Un contenedor como los que crea prdrive (AES, SHA-512, PIM 0, sin volumen
+oculto) también lo abren **udisks2** y **cryptsetup**, que vienen en casi todas
+las distribuciones. `sh abrir-prdrive.sh`, en una terminal, usa lo primero que
+haya:
+
+| | | |
+|---|---|---|
+| 1 | **VeraCrypt** instalado | como siempre: su ventana pide la contraseña |
+| 2 | **udisks2**, si reconoce contenedores VeraCrypt | sin ser administrador. Se monta en `/media/$USER/…` o `/run/media/$USER/…` |
+| 3 | **cryptsetup** | con `sudo` cada vez. Se monta en `/mnt/prdrive-<id>` |
+
+udisks2 no reconoce un contenedor VeraCrypt hasta que se lo pides, porque su
+cabecera no se distingue del ruido. Es **una vez por equipo**, como
+administrador:
+
+```bash
+sudo touch /etc/udisks2/tcrypt.conf && sudo systemctl restart udisks2
+```
+
+prdrive no lo hace por su cuenta: es cambiar la configuración del sistema, y eso
+lo decide quien lo administra. Sin eso, el script usa cryptsetup; y sin ninguno
+de los tres, dice estas tres salidas.
+
+- **La contraseña la piden `udisksctl` o `cryptsetup` en la terminal**, y no pasa
+  por prdrive. Por eso sin VeraCrypt hace falta una terminal: un doble clic que
+  no la abre no sirve, y el script lo dice.
+- **`expulsar-prdrive.sh` cierra con lo mismo que abrió**, y no lo apunta en
+  ningún sitio: lo deduce de lo que dice el sistema (el dispositivo *loop* que
+  tiene el contenedor, y quién ha montado encima). Con cryptsetup hace falta ser
+  administrador también para cerrar: en una terminal, `sudo`; desde el botón
+  **Expulsar** de la ventana, el diálogo del escritorio (`pkexec`).
+- **El vigilante no lo abre solo** sin VeraCrypt: no tiene terminal donde pedir
+  la contraseña. Lo apunta en su diario, con la orden que lo abre; y en cuanto lo
+  abres tú, lo ve montado y abre la ventana como siempre.
+- **Sin probar en hardware real todavía**: está hecho contra el código fuente de
+  udisks2 y cryptsetup, y lo que hagan las versiones de cada distribución, lo
+  que hace el escritorio al ver el contenedor, y que lo escrito desde Linux se lea
+  bien en Windows (y al revés) están por comprobar ([#51](https://github.com/Jeremaya25/prdrive/issues/51)).
+- Un dispositivo hecho antes de esto sigue con sus `.sh` viejos (solo VeraCrypt)
+  hasta que le pases **Añadir plataformas…**.
 
 ### La primera vez
 
@@ -723,7 +767,10 @@ estado y su registro viven en el equipo.
   ventana, no pasa por prdrive— y, en cuanto está abierto, sigue como siempre.
   **Una vez por conexión** también: si cancelas la contraseña no vuelve a
   preguntar hasta que quites la unidad y la vuelvas a poner, y tampoco después
-  de «Expulsar». En Linux, solo con escritorio.
+  de «Expulsar». En Linux, solo con escritorio y con VeraCrypt instalado: sin
+  él, udisks2 y cryptsetup piden la contraseña en una terminal, y el vigilante
+  no tiene. Apunta en su diario con qué se abre en ese equipo, y en cuanto lo
+  abres con `abrir-prdrive.sh`, sigue como siempre.
 - **No lanza nada si ya hay ventana o servicio en marcha** en ese equipo: lee
   (sin escribir) los dos registros del dispositivo y lo anota en su diario. El
   disparo se da por gastado igual, para no reintentarlo cada minuto detrás de una

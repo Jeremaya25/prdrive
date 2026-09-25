@@ -32,7 +32,10 @@ Con VeraCrypt, `.prdrive/` está DENTRO del contenedor y hasta abrirlo no hay na
 que ver. Fuera queda el vestíbulo (`common/vestibulo.py`), con una marca que lleva
 el mismo id: con ella el vigilante reconoce el dispositivo cerrado y le pide a
 VeraCrypt que lo abra —VeraCrypt pide la contraseña en su ventana—, una vez por
-conexión. Cuando el volumen aparece montado, se sigue como siempre.
+conexión. Cuando el volumen aparece montado, se sigue como siempre. En Linux sin
+VeraCrypt no lo abre él (udisks2 y cryptsetup piden la contraseña por una
+terminal): lo apunta en el diario, y si alguien lo abre con `abrir-prdrive.sh`,
+lo encuentra montado y sigue igual.
 
 Por qué un vigilante que sondea y no un evento del sistema
 ----------------------------------------------------------
@@ -142,6 +145,12 @@ CONTROL_FILE = Path(APP_SUBDIR) / APP_NAME.upper()    # quién es esta unidad
 # `common/vestibulo.py`, con su test, como las de arriba.
 CONTAINER_FILE = f"{APP_NAME.upper()}.hc"
 VESTIBULE_MARKER = f".{APP_NAME}-vestibulo"
+# Linux sin VeraCrypt: el script del vestíbulo que lo abre con udisks2 o
+# cryptsetup, y el fichero sin el que udisks2 no reconoce un contenedor VeraCrypt
+# (lo mira al arrancar el servicio: `src/main.c` de udisks). Copias de
+# `common/vestibulo.py` y `install/vestibulo.py`, con su test.
+OPEN_SCRIPT = f"abrir-{APP_NAME}.sh"
+UDISKS_TCRYPT_CONF = Path("/etc/udisks2/tcrypt.conf")
 # El Python del dispositivo, uno por plataforma, y su sello de versión. Copiados
 # de `install/runtime_bin.py` por lo mismo que los de arriba; el test comprueba
 # que no se separan.
@@ -324,18 +333,29 @@ def _unescape_mount(mp: str) -> str:
     return mp
 
 
+# Dónde montan lo extraíble en POSIX, un nivel o dos por debajo: VeraCrypt
+# (/media/veracrypt1…), udisks2 (/media/$USER/… en Debian y Ubuntu,
+# /run/media/$USER/… en Fedora y Arch), cryptsetup desde `abrir-prdrive.sh`
+# (/mnt/prdrive-<id>) y macOS (/Volumes). Con /proc/self/mounts, que ya lista
+# todo lo montado desde un /dev (también /dev/mapper/…), cualquiera de las vías
+# que abren un contenedor sale dos veces. Sustituibles, para que los tests no
+# miren el sistema de verdad.
+MOUNTS_FILE = Path("/proc/self/mounts")
+POSIX_MOUNT_BASES = ("/media", "/run/media", "/mnt", "/Volumes")
+
+
 def posix_roots() -> list[Path]:
     """Puntos de montaje respaldados por un dispositivo de bloque, más los sitios
     donde los escritorios montan lo extraíble."""
     roots: list[Path] = []
     try:
-        for line in Path("/proc/self/mounts").read_text(encoding="utf-8").splitlines():
+        for line in MOUNTS_FILE.read_text(encoding="utf-8").splitlines():
             parts = line.split()
             if len(parts) >= 3 and parts[0].startswith("/dev/"):
                 roots.append(Path(_unescape_mount(parts[1])))
     except OSError:
         pass  # macOS y demás: se cubre con los directorios de abajo
-    for base in ("/media", "/run/media", "/mnt", "/Volumes"):
+    for base in POSIX_MOUNT_BASES:
         try:
             for child in Path(base).iterdir():      # /media/dispositivo
                 if not child.is_dir():
@@ -468,6 +488,9 @@ def open_container(root: Path) -> bool:
     con 0 antes de que nadie haya escrito la contraseña, así que su salida no
     dice nada. cwd en el equipo, como `launch()`."""
     cmd = veracrypt_command(root)
+    if cmd is None and not IS_WIN:
+        log(linux_closed_note(root))
+        return False
     if cmd is None:
         log(f"{root}: dispositivo cifrado y cerrado, pero no hay VeraCrypt con el "
             "que abrirlo" + ("" if IS_WIN else " (o no hay escritorio)"))
@@ -486,6 +509,53 @@ def open_container(root: Path) -> bool:
         return False
     log(f"abriendo el contenedor de {root} con {cmd[0]}; la contraseña la pide VeraCrypt")
     return True
+
+
+# Linux sin VeraCrypt. `abrir-prdrive.sh` lo abre con udisks2 o cryptsetup
+# (install/vestibulo.py, con las citas), pero los dos piden la contraseña por una
+# terminal —`udisksctl unlock` la lee de la que controla el proceso, cryptsetup
+# de stdin— y el vigilante no tiene ninguna. Que el escritorio la pida solo tras
+# un `udisksctl loop-setup` (GNOME Shell, Files, Dolphin) está POR PROBAR (U4 en
+# #51): hasta entonces el vigilante no pone el loop por su cuenta, y deja en el
+# diario qué vía tiene este equipo y cómo abrirlo. Abierto a mano por cualquiera
+# de las dos, `posix_roots()` lo encuentra y el lanzamiento sigue como siempre;
+# la regla de una vez por conexión no cambia.
+
+def linux_open_route() -> str | None:
+    """Con qué abriría `abrir-prdrive.sh` el contenedor en este equipo Linux.
+
+    El mismo orden que el script: 'veracrypt', 'udisks2' (si existe
+    `UDISKS_TCRYPT_CONF`) o 'cryptsetup'; None si con nada. Con /usr/sbin y
+    /sbin, como el script: Debian no los pone en el PATH de un usuario, y ahí
+    vive cryptsetup."""
+    path = os.pathsep.join(p for p in (os.environ.get("PATH", ""), "/usr/sbin", "/sbin")
+                           if p)
+    if shutil.which("veracrypt", path=path):
+        return "veracrypt"
+    try:
+        tcrypt = UDISKS_TCRYPT_CONF.is_file()
+    except OSError:
+        tcrypt = False
+    if tcrypt and shutil.which("udisksctl", path=path):
+        return "udisks2"
+    if shutil.which("cryptsetup", path=path):
+        return "cryptsetup"
+    return None
+
+
+def linux_closed_note(root: Path) -> str:
+    """La línea del diario cuando el vigilante no puede abrirlo: por qué, y cómo sí."""
+    route = linux_open_route()
+    if route is None:
+        return (f"{root}: dispositivo cifrado y cerrado, y este equipo no tiene con "
+                f"qué abrirlo: ni VeraCrypt, ni udisks2 con {UDISKS_TCRYPT_CONF}, ni "
+                "cryptsetup")
+    why = {"veracrypt": "hay VeraCrypt, pero no escritorio donde pida la contraseña",
+           "udisks2": "sin VeraCrypt; este equipo lo abre con udisks2, sin administrador",
+           "cryptsetup": "sin VeraCrypt; este equipo lo abre con cryptsetup, con sudo",
+           }[route]
+    return (f"{root}: dispositivo cifrado y cerrado; {why}. La contraseña se pide en "
+            f"una terminal: «sh {root / OPEN_SCRIPT}»")
 
 
 # ---------------------------------------------------------------------------
