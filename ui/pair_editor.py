@@ -586,6 +586,7 @@ def plan_defaults(raw: Mapping[str, Any], edited: Mapping[str, Any]) -> EditPlan
     `EditPlan.shelve` es una lista."""
     nuevo_raw = copy.deepcopy(dict(raw))
     nuevo_raw["defaults"] = copy.deepcopy(dict(edited))
+    catalog.validar_ruta_editada(raw.get("defaults"), nuevo_raw["defaults"])
     plan = EditPlan(raw=nuevo_raw)
 
     cambiados = catalog.diff_keys(raw.get("defaults"), nuevo_raw["defaults"])

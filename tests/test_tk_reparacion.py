@@ -18,7 +18,7 @@ from pathlib import Path
 
 from _harness import Checks, sandbox, tmpdir
 
-from common import bisync, conflicts, model, results, update
+from common import bisync, conflicts, historial, model, results, update
 
 c = Checks("«Reparación» y la ventana principal (cableado)")
 
@@ -374,6 +374,20 @@ with sandbox():
     abiertos.clear()
     reparacion(cfg, lambda dlg: botones(dlg)["Ver el log"].invoke())
     c("«Ver el log» abre el log que se conservó", abiertos, [log])
+
+with sandbox():
+    # La fila del fallo dice desde cuándo falla, del diario de pasadas: la frase
+    # es de common/revision.py, y aquí solo se comprueba que llega a la pantalla.
+    cfg, _p = preparar()
+    ano = __import__("datetime").datetime.now().year
+    for dia, codigo in ((10, 0), (11, 1), (12, 1)):
+        historial.apuntar(historial.Pasada("notas", f"{ano}-09-{dia} 10:00:00", codigo, 3.0))
+    results.apuntar("notas", 1, None)
+    vistos = []
+    reparacion(cfg, lambda dlg: vistos.extend(textos(dlg)))
+    c("la fila del fallo dice desde cuándo falla y cuántas fueron bien",
+      [x for x in vistos if "Falla desde el 11/09 · 1 de las últimas 3 bien." in x] != [],
+      True)
 
 with sandbox():
     cfg, p = preparar()

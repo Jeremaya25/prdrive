@@ -218,6 +218,39 @@ try:
 except InstallError as e:
     c.contains("un remote que no está se dice", str(e), "personal")
 
+# Importar exige lo mismo que el formulario (#47). Antes un remote sin `type`
+# salía de aquí como perfil sin estar `configured`: la pantalla pintaba ✔ y
+# «Siguiente» se quedaba gris, sin decir por qué.
+(ajeno / "incompleto.conf").write_text(
+    "[sintipo]\n"
+    "host = otro.example\n"
+    "\n"
+    "[tipovacio]\n"
+    "type = \n"
+    "host = otro.example\n"
+    "\n"
+    "[sinhost]\n"
+    "type = sftp\n"
+    "user = yo\n"
+    "key_file = keys/mi_clave\n"
+    "\n"
+    "[conssh]\n"
+    "type = sftp\n"
+    "ssh = ssh -o ServerAliveInterval=20 yo@otro.example\n", encoding="utf-8")
+for cual, porque in (("sintipo", "type = …"), ("tipovacio", "type = …"),
+                     ("sinhost", "host = …")):
+    try:
+        profile.from_rclone_conf(ajeno / "incompleto.conf", cual)
+        c(f"importar «{cual}» se rechaza", "no lanzó", "InstallError")
+    except InstallError as e:
+        c.contains(f"importar «{cual}» se rechaza diciendo qué falta", str(e), porque)
+        c.contains(f"y de qué remote habla («{cual}»)", str(e), f"'{cual}'")
+# Con el ssh externo, rclone ignora host, user y port del conf: los lleva la
+# orden. Exigir `host` ahí sería rechazar una configuración que funciona.
+ssh = profile.from_rclone_conf(ajeno / "incompleto.conf", "conssh")
+c("un sftp con ssh externo se importa sin host", ssh.configured, True)
+c("y sin avisar del usuario, que va en la orden", profile.avisos(ssh), [])
+
 # --- 7. el conf del dispositivo: relativo ------------------------------------
 c("el conf efímero usa rutas absolutas",
   "key_file = /tmp/x" in profile.render_conf(perfil, key_file="/tmp/x"), True)
@@ -255,6 +288,53 @@ try:
     c("sin tipo de backend se rechaza", "no lanzó", "InstallError")
 except InstallError as e:
     c.contains("sin tipo de backend se rechaza", str(e), "tipo de remote")
+
+# La plantilla tal cual (#47): `from_form` descarta los valores vacíos, así que
+# quedaba `{"type": "sftp"}`, y eso daba un perfil «configurado» que rclone
+# llevaría a `:22`, este mismo equipo.
+for tipo, falta in (("sftp", "host = …"), ("webdav", "url = …")):
+    opciones = profile.parse_options(profile.PLANTILLAS[tipo])
+    opciones["type"] = tipo
+    try:
+        profile.from_form("nas", opciones)
+        c(f"la plantilla de {tipo} sin rellenar se rechaza", "no lanzó", "InstallError")
+    except InstallError as e:
+        c.contains(f"la plantilla de {tipo} sin rellenar se rechaza, diciendo qué falta",
+                   str(e), falta)
+try:
+    profile.from_form("nas", {"type": "sftp", "host": "   "})
+    c("un host en blanco cuenta como ausente", "no lanzó", "InstallError")
+except InstallError as e:
+    c.contains("un host en blanco cuenta como ausente", str(e), "host = …")
+
+# Criterio conservador: solo bloquea lo que rclone marca obligatorio y no tiene
+# otra salida. Un s3 sin claves entra como anónimo, y un tipo sin plantilla no se
+# interpreta: los dos los juzga el paso de comprobaciones, hablando con rclone.
+opciones = profile.parse_options(profile.PLANTILLAS["s3"])
+opciones["type"] = "s3"
+c("la plantilla de s3 no tiene obligatorias", profile.from_form("nas", opciones).configured,
+  True)
+c("un tipo sin plantilla no se valida aquí",
+  profile.from_form("nas", {"type": "stfp"}).configured, True)
+# Lo que bloquea tiene que estar en su plantilla: si no, el formulario exigiría
+# un campo que no enseña.
+for tipo, obligatorias in profile.OBLIGATORIAS.items():
+    c(f"las obligatorias de {tipo} están en su plantilla",
+      {clave for clave, _ in obligatorias} <= set(
+          linea.partition("=")[0].strip()
+          for linea in profile.PLANTILLAS[tipo].splitlines()), True)
+
+# El usuario de un sftp: no bloquea —puede funcionar donde se instala— pero se
+# avisa, porque rclone usa el de cada equipo y el dispositivo viaja.
+sin_user = profile.from_form("nas", {"type": "sftp", "host": "nas.example"})
+c("un sftp sin user se acepta", sin_user.configured, True)
+avisado = profile.avisos(sin_user)
+c("pero se avisa, una vez", len(avisado), 1)
+c.contains("de qué campo", avisado[0] if avisado else "", "user = …")
+c("con user no hay nada que avisar", profile.avisos(profile.from_form(
+    "nas", {"type": "sftp", "host": "nas.example", "user": "quien"})), [])
+c("y un webdav sin user tampoco: es anónimo a propósito", profile.avisos(
+    profile.from_form("nas", {"type": "webdav", "url": "https://dav.example/"})), [])
 
 # --- 9. el perfil va y vuelve, sin la clave -----------------------------------
 vuelta = profile.loads(profile.dumps(perfil))

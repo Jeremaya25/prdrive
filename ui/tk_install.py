@@ -437,15 +437,51 @@ def _paso_conexion(cuerpo, wiz) -> None:
             return
         wiz.soltar_conexion()
         wiz.perfil = profile.with_catalog_path(wiz.perfil, nueva)
-        estado.configure(text=f"✔ {wiz.perfil.describe()}   ·   catálogo en "
-                              f"{wiz.perfil.endpoint_catalog}", style="Ok.TLabel")
+        preparada(wiz.perfil)
         wiz.revisar()
 
     catalogo.trace_add("write", cambiar_catalogo)
 
-    estado = ttk.Label(cuerpo, wraplength=theme.medida(780), justify="left",
-                       style="Pista.TLabel")
+    # Lo que se sabe de la conexión, y nada más (#47). «Usar esta conexión» solo
+    # convierte el formulario en un perfil —con las comprobaciones de
+    # `install/profile.py`, que no hablan con nadie—: el remoto no se toca hasta
+    # «Comprobaciones». Por eso aquí no hay ✔ ni verde, que se leían como
+    # «conexión comprobada». Lo que falla sí se dice aquí, en rojo, y deja el paso
+    # sin conexión: un error al lado de un «Siguiente» encendido invita a seguir
+    # con la de antes creyendo que es la que se acaba de escribir.
+    estado = ttk.Label(cuerpo, wraplength=theme.medida(780), justify="left")
     estado.grid(row=5, column=0, sticky="w", pady=(12, 0))
+    # Lo que no impide seguir pero conviene saber (`profile.avisos`). Solo ocupa
+    # sitio cuando dice algo.
+    notas = ttk.Label(cuerpo, wraplength=theme.medida(780), justify="left",
+                      style="Aviso.TLabel")
+
+    def preparada(perfil: profile.Profile) -> None:
+        if perfil.problema_catalogo:
+            # Una carpeta en vez del fichero (#48) se dice aquí, según se teclea
+            # o al abrir el paso con un perfil incrustado que la trae, y la
+            # condición del paso (`_ok_conexion`) no deja seguir con ella.
+            estado.configure(text=f"✘ {perfil.problema_catalogo}",
+                             style="Peligro.TLabel")
+            notas.grid_remove()
+            return
+        estado.configure(style="TLabel", text=(
+            "Conexión preparada, sin probar todavía: se comprobará en el paso "
+            f"siguiente.\n{perfil.describe()}   ·   catálogo en "
+            f"{perfil.endpoint_catalog}   ·   {perfil.origen}"))
+        avisos = profile.avisos(perfil)
+        notas.configure(text="\n".join(avisos))
+        if avisos:
+            notas.grid(row=6, column=0, sticky="w", pady=(8, 0))
+        else:
+            notas.grid_remove()
+
+    def fallida(mensaje: str) -> None:
+        wiz.soltar_conexion()
+        wiz.perfil = profile.empty()
+        estado.configure(text=mensaje, style="Peligro.TLabel")
+        notas.grid_remove()
+        wiz.revisar()
 
     def usar() -> None:
         try:
@@ -460,29 +496,25 @@ def _paso_conexion(cuerpo, wiz) -> None:
                     catalog_path=catalogo.get().strip())
             else:
                 if not remoto_ajeno.get():
-                    wiz.error("Elige cuál de los remotes de ese fichero quieres.")
-                    return
+                    raise InstallError(
+                        "Elige cuál de los remotes de ese fichero quieres.")
                 perfil = profile.from_rclone_conf(
                     conf_ajeno.get(), remoto_ajeno.get(),
                     catalog_path=catalogo.get().strip())
         except InstallError as e:
-            wiz.error(str(e))
+            fallida(str(e))
             return
 
         wiz.soltar_conexion()          # el conf efímero anterior ya no vale
         wiz.perfil = perfil
-        estado.configure(text=f"✔ {perfil.describe()}   ·   catálogo en "
-                              f"{perfil.endpoint_catalog}", style="Ok.TLabel")
+        preparada(perfil)
         wiz.revisar()
 
     ttk.Button(cuerpo, text="Usar esta conexión", command=usar).grid(
         row=4, column=0, sticky="w", pady=(12, 0))
 
     if wiz.perfil.configured:
-        estado.configure(
-            text=f"✔ {wiz.perfil.describe()}   ·   catálogo en "
-                 f"{wiz.perfil.endpoint_catalog}\n{wiz.perfil.origen}",
-            style="Ok.TLabel")
+        preparada(wiz.perfil)
 
 
 # ---------------------------------------------------------------------------
@@ -880,6 +912,7 @@ def _paso_actualizar(cuerpo, wiz) -> None:
         if not ok:
             estado_lbl.configure(text=f"No se ha podido actualizar: {res}",
                                  foreground=theme.PELIGRO)
+            wiz.revisar()           # lo mismo que en «Instalación» (#49)
             return
         escrito, ident = res
         wiz.state.deployed = True
@@ -889,6 +922,7 @@ def _paso_actualizar(cuerpo, wiz) -> None:
                   f"El dispositivo sigue siendo el {ident[:8]}… y conserva todo "
                   f"lo suyo. Ya puedes cerrar."),
             foreground=theme.OK)
+        wiz.revisar()
 
     boton = ttk.Button(cuerpo, text="Actualizar ahora", style="Primary.TButton",
                        padding=(14, 8), command=actualizar)
@@ -975,8 +1009,16 @@ def _paso_instalar(cuerpo, wiz) -> None:
         plan = wiz.matriz.plan()
 
         def trabajo():
+            # Primero lo que viene de fuera, comprobado y a la caché de este
+            # equipo: si falta algo —el rclone de otra plataforma que no
+            # llega—, el dispositivo sigue sin tocar y el reintento solo baja
+            # lo que faltaba. Antes se copiaba el programa y luego se
+            # descargaba, y un fallo dejaba el código nuevo sin lanzadores ni
+            # rclone.conf (#49).
+            conseguido = deploy.conseguir_plataformas(plan)
             escrito_ = deploy.deploy_code(raiz)
-            nuevos, borrados = deploy.apply_platforms(raiz, plan)
+            nuevos, borrados = deploy.apply_platforms(raiz, plan,
+                                                      conseguido=conseguido)
             escrito_ += nuevos
             escrito_ += deploy.write_launchers(raiz, plan.completa)
             guia = deploy.write_guide(raiz)
@@ -1000,6 +1042,12 @@ def _paso_instalar(cuerpo, wiz) -> None:
         if not ok:
             estado_lbl.configure(text=f"No se ha podido instalar: {res}",
                                  foreground=theme.PELIGRO)
+            # El mensaje puede ocupar una docena de líneas —qué plataforma
+            # falló y cómo ponerla a mano— y hace crecer el paso sin cambiar de
+            # paso. Sin reencajar, «Instalar el programa» quedaba por debajo
+            # del borde, fuera de la vista aunque en la pantalla sobrara sitio,
+            # justo cuando hay que volver a pulsarlo (#49).
+            wiz.revisar()
             return
         escrito_, borrados, ident = res
         wiz.state.deployed = True
@@ -1210,6 +1258,7 @@ def _paso_plataformas(cuerpo, wiz) -> None:
         if not ok:
             estado_lbl.configure(text=f"No se ha podido aplicar: {res}",
                                  foreground=theme.PELIGRO)
+            wiz.revisar()           # lo mismo que en «Instalación» (#49)
             return
         nuevos, borrados, _ = res
         wiz.rehacer_matriz(raiz)
@@ -1218,6 +1267,7 @@ def _paso_plataformas(cuerpo, wiz) -> None:
             text=(f"Hecho: {len(nuevos)} elementos puestos"
                   + (f", {len(borrados)} borrados" if borrados else "")
                   + ". Ya puedes cerrar."), foreground=theme.OK)
+        wiz.revisar()
 
     boton = ttk.Button(cuerpo, text="Aplicar", style="Primary.TButton",
                        padding=(14, 8), command=aplicar)
@@ -1478,7 +1528,7 @@ def _paso_final(cuerpo, wiz) -> None:
 # ---------------------------------------------------------------------------
 
 def _ok_conexion(w) -> bool:
-    return w.perfil.configured
+    return w.perfil.configured and not w.perfil.problema_catalogo
 
 
 def _ok_comprobaciones(w) -> bool:
