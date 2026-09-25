@@ -410,8 +410,8 @@ try:
             ERROR_LARGO = e
         c.contains("el error de la prueba es el de una descarga que no llega",
                    str(ERROR_LARGO), "desmarca Linux ARM64")
-        tk_install.working = lambda parent, titulo, funcion, mensaje="": (
-            False, ERROR_LARGO)
+        tk_install.working = (lambda parent, titulo, funcion, mensaje="",
+                              progreso=None: (False, ERROR_LARGO))
 
         def boton_de(wiz, texto):
             pila = [wiz.cuerpo]

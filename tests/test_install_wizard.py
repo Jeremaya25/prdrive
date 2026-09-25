@@ -515,7 +515,7 @@ def rclone_sin_otra(plat, progreso=None, allow_download=True):
     return rclone_para(plat, progreso, allow_download)
 
 
-def working_de_verdad(parent, titulo, funcion, mensaje=""):
+def working_de_verdad(parent, titulo, funcion, mensaje="", progreso=None):
     """Lo que hace `working()` con una excepción: devolverla, no dejarla escapar."""
     try:
         return True, funcion()
