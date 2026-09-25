@@ -196,10 +196,16 @@ se puede. A cambio pierdes la negación plausible (se ve cuánto ocupa de verdad
 si llenas la unidad, el volumen de dentro empieza a dar errores de escritura.
 
 Cuando no hay dispersos, el asistente **mide** la velocidad de tu unidad y te
-dice cuánto va a tardar antes de empezar, en vez de dejarte mirando una barra. Y
-propone un tamaño de trabajo en lugar de casi el disco entero: si luego se te
-queda corto, el **VeraCrypt Expander** que viaja en el propio dispositivo lo
-agranda.
+dice cuánto va a tardar **como poco** antes de empezar. Es un mínimo porque lo
+que se mide en unos segundos es la velocidad de arranque: muchas memorias USB
+escriben rápido solo hasta que se llena su caché, y después bajan a la mitad o
+menos. Mientras se crea, la barra enseña el **avance real** —lo que la propia
+unidad dice que lleva escrito— y cuánto queda según la velocidad del último
+minuto: si la memoria se frena, el tiempo sube con ella. Si el sistema no deja
+leer esa cuenta, o deja de moverse, la barra vuelve a ir y venir sin cifra: mejor
+sin número que con uno inventado. Y propone un tamaño de trabajo en lugar de casi
+el disco entero: si luego se te queda corto, el **VeraCrypt Expander** que viaja
+en el propio dispositivo lo agranda.
 
 **En FAT32, 4095M como mucho.** Muchos pendrives de 32 GB o menos vienen en
 FAT32 de fábrica, y en FAT32 un fichero no puede llegar a 4 GiB: el contenedor es

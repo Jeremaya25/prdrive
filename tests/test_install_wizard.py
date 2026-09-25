@@ -68,8 +68,17 @@ tk_install.output_window = lambda titulo, cmd, parent=None: (
 
 # `working()` corre su función en un hilo y abre una barra de progreso, que sin
 # bucle de eventos se quedaría colgada. Se sustituye por la ejecución directa,
-# que es lo que interesa comprobar: el trabajo se hace de verdad.
-tk_install.working = lambda parent, titulo, funcion, mensaje="": (True, funcion())
+# que es lo que interesa comprobar: el trabajo se hace de verdad. Se apunta el
+# `progreso` que recibe: crear un contenedor fijo tiene que llevarlo.
+esperas: list = []
+
+
+def working_directo(parent, titulo, funcion, mensaje="", progreso=None):
+    esperas.append((titulo, progreso))
+    return True, funcion()
+
+
+tk_install.working = working_directo
 
 # Un rclone de mentira: el paso de instalación lo copia, no lo ejecuta.
 RCLONE_FALSO = tmpdir() / "rclone-de-mentira"
@@ -331,7 +340,9 @@ crypto.find_veracrypt = lambda extra_dir=None: {"mount": "VeraCrypt.exe",
 crypto.soporta_dispersos = lambda root: False
 crypto.sistema_de_ficheros = lambda root: "FAT32"
 crypto.medir_escritura = lambda root, muestra=0: 10 * 1024 ** 2
-crypto.create_container = lambda *a, **k: creados.append(a)
+seguimientos: list = []
+crypto.create_container = lambda *a, **k: (
+    creados.append(a) or seguimientos.append(k.get("seguimiento")))
 crypto.mount_container = lambda *a, **k: montado_en
 preguntado: list[str] = []
 askyesno_original = messagebox.askyesno
@@ -365,6 +376,26 @@ try:
     c("si se dice que sí, se crea", len(creados), 1)
     c("con el tamaño dentro del tope", creados[0][2], 4095 * 1024 ** 2)
     c("y el destino queda en lo montado", vc.state.device_root, montado_en)
+    # Sin dispersos se escribe el contenedor entero: la ventanita de espera
+    # lleva el avance medido en la unidad (#46), y es el de ESA creación.
+    creando = [p for t, p in esperas if t == "creando el contenedor"]
+    c("un contenedor fijo se crea con su avance medido",
+      isinstance(seguimientos[-1], crypto.Seguimiento), True)
+    c("y la ventanita lo enseña", creando[-1] == seguimientos[-1].progreso, True)
+
+    # Con dispersos, `/dynamic`: son segundos y no hay nada que medir.
+    crypto.soporta_dispersos = lambda root: True
+    crypto.sistema_de_ficheros = lambda root: "NTFS"
+    dinamico = nuevo_asistente(tmpdir())
+    dinamico.state.device_root = None
+    dinamico.state.encryption = "veracrypt"
+    en_paso(dinamico, PASO["Cifrado"])
+    for e in [e for e in widgets(dinamico.cuerpo, ttk.Entry) if e.cget("show")]:
+        e.insert(0, "una contraseña bastante larga")
+    boton(dinamico.cuerpo, "Crear y montar").invoke()
+    creando = [p for t, p in esperas if t == "creando el contenedor"]
+    c("un contenedor dinámico se crea sin medir nada",
+      (len(creados), seguimientos[-1], creando[-1]), (2, None, None))
 finally:
     messagebox.askyesno = askyesno_original
     for nombre, funcion in sondas_crypto.items():
