@@ -13,10 +13,14 @@ hace todo lo que hoy hace `runsync` y deja sitio a funciones futuras. Puede ir
 
 - **Las dos cosas.** El programa residente sincroniza **sus propias parejas**
   (carpetas del equipo ↔ remoto) **y atiende a cualquier unidad prdrive** que se
-  enchufe en ese equipo.
+  enchufe en ese equipo. **Las parejas propias son opcionales:** una
+  instalación puede ser solo el agente, atendiendo unidades.
+- **La raíz en claro es configurable:** una carpeta propia (`~/PRDRIVE` por
+  defecto) o la carpeta personal (`~`).
 - **Icono en la bandeja**: estado, «Sincronizar ahora», «Abrir», «Pausar» y,
   si hay contenedor, «Desbloquear» y «Bloquear».
-- **Windows y Linux** desde la primera versión.
+- **Windows y Linux** desde la primera versión, **bandeja de Linux incluida**
+  (StatusNotifierItem sobre un cliente D-Bus propio).
 - **Cifrado local con VeraCrypt** como opción de la instalación en el equipo:
   el mismo contenedor `.hc` que ya se crea en las unidades, pero en el disco del
   ordenador.
@@ -70,16 +74,23 @@ su sucesor.
 └── agente.log
 ```
 
-**La raíz del equipo sin cifrar** (`DEVICE_ROOT`):
+Esto es todo lo que tiene una instalación **solo agente**: ni raíz, ni conexión,
+ni clave. Cada unidad trae su `rclone.conf` y su código, y el agente no necesita
+nada más para atenderla.
+
+**La raíz del equipo sin cifrar** (`DEVICE_ROOT`), en una de dos formas que se
+eligen al instalar:
 
 ```
-~/PRDRIVE/                   (C:\Users\<u>\PRDRIVE)
-├── .prdrive/                oculto, la misma estructura que en una unidad
-│   ├── PRDRIVE              id=… y además tipo=equipo
-│   ├── bin/<arch>/          rclone. No lleva runtime: la lanza el agente.
-│   ├── rclone.conf, keys/   la clave, en el disco del equipo SIN cifrar
+Carpeta propia (por defecto)          Carpeta personal
+~/PRDRIVE/                            ~/
+├── .prdrive/                         ├── .prdrive/          (el mismo árbol)
+│   ├── PRDRIVE   id=…, tipo=equipo   ├── Documentos/Obsidian   ← local =
+│   ├── bin/<arch>/  rclone, sin      │                           "Documentos/Obsidian"
+│   │                runtime: la lanza el agente
+│   ├── rclone.conf, keys/  la clave, en claro
 │   └── state/
-└── obsidian/ …              las parejas, relativas a la raíz
+└── obsidian/ …   las parejas         └── …
 ```
 
 **La raíz del equipo cifrada:**
@@ -100,10 +111,36 @@ su sucesor.
   Tiene el mismo `CONTENEDOR` y la misma marca con el mismo id, así que
   `vestibulo.leer_id()`, `disperso()` y el hallazgo `espacio` sirven tal cual.
   Solo cambia cómo se encuentra (sección 4).
-- **La carpeta de las parejas es la raíz, y solo la raíz** (v1). La regla de
-  `pair_editor.ruta_local_relativa()` no cambia (pregunta abierta 1).
+- **Carpeta propia o carpeta personal, configurable.** El motor es el mismo en
+  los dos casos: la raíz es `DEVICE_ROOT`, las parejas siguen siendo relativas a
+  ella y `pair_editor.ruta_local_relativa()` sigue rechazando lo que queda
+  fuera. Lo que cambia es dónde está el límite:
+  - **Carpeta propia:** el modelo de Dropbox. Nada de fuera de `~/PRDRIVE` se
+    toca, y es la opción por defecto.
+  - **Carpeta personal:** se sincroniza `~/Documentos/Obsidian` sin moverlo. A
+    cambio:
+    - **Las rutas del catálogo pensadas para una unidad** (`sync-data/…`)
+      caerían sueltas en `~`. El paso «Parejas» enseña la ruta resuelta de cada
+      pareja antes de escribir nada y ofrece cambiar su `local` en este equipo.
+      Es el mismo `plan_override` que ya existe: la pareja queda como
+      «modificada aquí».
+    - **Otro cliente de sincronización:** si una ruta cae dentro de una carpeta
+      de OneDrive, Dropbox o similar (en Windows, `Documentos` suele estar
+      redirigida a OneDrive), se avisa en ámbar. Dos programas sincronizando la
+      misma carpeta se pisan los borrados. Es un aviso, no un bloqueo. Las
+      carpetas se saben sin adivinar: las variables `OneDrive`,
+      `OneDriveConsumer` y `OneDriveCommercial`, y el `info.json` de Dropbox.
+      Es un punto de indirección, para que los tests pongan las suyas.
+  - **Se elige al instalar y no se cambia después** en la v1. Cambiarlo es
+    «Reinstalar»: mover `DEVICE_ROOT` deja cada línea base apuntando a una
+    carpeta que ya no está, y `_bisync_preflight()` las pararía todas.
+  - `agente.json` guarda la ruta de cada raíz, así que el agente no deduce
+    nada del nombre de la carpeta.
 - **La pareja de la raíz entera (`local = "."`) queda prohibida en un equipo.**
-  Sería el mismo `.prdrive/` con la clave dentro.
+  Sería el mismo `.prdrive/` con la clave dentro y, con la carpeta personal,
+  todo `~`. Se rechaza con un `ConfigError` en `model.load_config()`, que lee el
+  `tipo` del fichero de control, y no en la ventana, así que un TOML editado a
+  mano tampoco se la salta.
 - **Sin cifrar, la clave vive en claro en el disco del equipo.** El asistente lo
   dice en ámbar y enseña si el disco del sistema tiene BitLocker en estado `On`
   (la misma lectura de `install/crypto.py`). Es información, no una exigencia.
@@ -185,9 +222,8 @@ funciona con unidades que llevan código viejo.
   vuelve a atenderla.
 - **Qué unidades atiende:** una lista explícita de ids en `agente.json`, cada uno
   con su modo al enchufar. Son los tres de penwatch (`ui`, `daemon`, `sync`) más
-  `nada`. Una unidad prdrive que no está en la lista provoca un aviso («Se ha
-  conectado PRDRIVE-2. ¿Atenderla en este equipo?») y nunca se sincroniza sin
-  preguntar.
+  `nada`. Una unidad que no está en la lista nunca se sincroniza sin preguntar
+  (ver «Una unidad nueva», abajo).
 - **Las parejas y el intervalo siguen siendo de la raíz** (`ui_prefs.json` >
   `[daemon]`, `prefs.startup_defaults()`). En el equipo solo se guarda lo que es
   del equipo, igual que decidió el issue #14.
@@ -196,6 +232,39 @@ funciona con unidades que llevan código viejo.
 - **Sustituye a penwatch en ese equipo.** Instalar el agente importa el
   `device_id` y el modo de `watch.json` a la lista y desinstala penwatch, y lo
   dice. `penwatch` sigue existiendo para los equipos sin agente.
+
+### Una unidad nueva
+
+Cuando aparece una unidad prdrive cuyo id no está en la lista:
+
+- **Se pregunta una vez, con tiempo límite.** Se enseña un aviso («Se ha
+  conectado PRDRIVE-2. ¿Atenderla en este equipo?») y una ventanita con la
+  pregunta y una cuenta atrás. Las respuestas son «Atender» y «Ahora no».
+- **Si no se contesta en `espera_unidad_nueva`**, un ajuste de `agente.json`
+  (**propuesta: 2 minutos**), cuenta como «Ahora no», y **«Ahora no» vale solo
+  para esta conexión**:
+  - La unidad no se atiende mientras siga enchufada.
+  - La próxima vez que se enchufe se vuelve a preguntar. «Esta conexión» acaba
+    cuando su raíz desaparece, la misma regla con la que penwatch rearma su
+    disparo.
+  - **Mientras siga conectada, se puede decir que sí desde la bandeja:** el menú
+    tiene una entrada «PRDRIVE-2, conectada · Atender…».
+- **«Atender»** la añade a la lista con el modo `daemon` (propuesta: es lo
+  natural para un programa en segundo plano, y se cambia en los ajustes) y la
+  atiende enseguida.
+- **Quién lleva el reloj: el agente, no la ventana.** El plazo es un dato del
+  planificador. La ventana solo enseña la cuenta atrás y se cierra sola al
+  llegar a cero. Si contesta tarde, la respuesta se ignora; para eso está la
+  entrada de la bandeja. Sin entorno gráfico donde abrir la ventana, cuenta como
+  «Ahora no» al momento, y la entrada de la bandeja o el diario lo dicen.
+- **Antes del sí no se ejecuta nada de la unidad.** Para preguntar, el agente
+  solo *lee* el id del fichero de control y el nombre de `state/fleet.json`. No
+  lanza su `runsync.py`, ni su `sync.py`, ni su rclone. Ejecutar código de una
+  unidad cualquiera al enchufarla es exactamente lo que AutoRun dejó de hacer, y
+  por la misma razón.
+- **La ventanita es un proceso hijo**, como la ventana principal: el agente
+  sigue sin cargar Tk. Se dibuja en `ui/tk_agente.py`; qué hacer con la
+  respuesta lo decide el agente.
 
 ## 4. Cifrado local con VeraCrypt
 
@@ -257,9 +326,10 @@ fija, `~/PRDRIVE`.
   - **Dónde se cambia:** lo elige el paso «Cifrado» del asistente (una casilla
     marcada), y después se cambia con una casilla del menú de la bandeja o desde
     «Ajustes» en la ventana de la raíz. Esto último cubre Linux sin bandeja.
-  - **`agente.json` solo lo escribe el agente.** La ventana es el código de la
-    raíz, que puede ir en otra versión, así que no toca la configuración del
-    equipo: pide el cambio con `servicio.pide` (`ajuste`) y el agente lo aplica.
+  - **`agente.json` lo crea el asistente, y a partir de ahí solo lo escribe el
+    agente.** La ventana es el código de la raíz, que puede ir en otra versión,
+    así que no toca la configuración del equipo: pide el cambio con
+    `agente.pide` (sección 5) y el agente lo aplica.
 - **Que VeraCrypt salga con 0 no quiere decir que esté montado.** El agente sabe
   que está abierto cuando **ve** el volumen con el id de la marca, igual que los
   `.bat` del vestíbulo, y lo busca por la letra o el punto de montaje guardados.
@@ -336,21 +406,43 @@ Todo con la biblioteca estándar: ctypes en Windows y el protocolo D-Bus en Linu
   registrar un AppUserModelID. El icono lo pinta `icons.py` en cinco estados
   (bien, sincronizando, aviso, en pausa, **bloqueado**) y se carga con
   `LoadImageW` desde un `.ico` repintado, nunca copiado.
-- **Linux, avisos:** `org.freedesktop.Notifications.Notify`. Sin D-Bus, el aviso
-  se queda en el diario, que es la misma caída que tiene hoy `avisar_fallo()`.
-- **Linux, bandeja:** es **la parte con más riesgo del plan**. La norma actual es
-  StatusNotifierItem, y exige *exportar* un objeto en el bus: autenticación
-  EXTERNAL, serialización, propiedades y señales. Serían unas 600-900 líneas de
-  cliente D-Bus propio, con el mismo espíritu que `ui/qr.py`. Además, **GNOME no
-  tiene bandeja** sin la extensión AppIndicator: Ubuntu la trae y Fedora no.
-  «Paridad» significa, por tanto, **las mismas funciones**, pero no siempre la
-  misma superficie. Sin bandeja queda un lanzador `.desktop` «prdrive» que
+- **Linux: un cliente D-Bus propio, en la v1.** Es **la parte con más riesgo del
+  plan**, y se hace con el mismo espíritu que `ui/qr.py`: sin dependencias,
+  completo en lo que usa, y con las constantes citando la especificación (la
+  *D-Bus Specification* de freedesktop.org para el protocolo, y la de
+  StatusNotifierItem para la bandeja), como `common/bisync.py` cita a rclone.
+  Son dos piezas:
+  - **`common/dbus.py`**, sin Tk y sin bandeja: el socket de la sesión
+    (`DBUS_SESSION_BUS_ADDRESS`), la autenticación `EXTERNAL`, la serialización
+    de mensajes (firmas, alineación, cuerpo), las llamadas a métodos, las
+    propiedades y la escucha de señales. Está en `common/` porque también lo
+    usan cosas que no son de la ventana: los avisos
+    (`org.freedesktop.Notifications.Notify`), la red de uso medido
+    (`Metered` de NetworkManager, sección 6) y, más adelante, la señal
+    `PrepareForSleep` de logind.
+  - **`ui/bandeja_linux.py`**, que *exporta* objetos en el bus: un
+    `org.kde.StatusNotifierItem` registrado en `org.kde.StatusNotifierWatcher`,
+    y su menú por `com.canonical.dbusmenu`, que es un protocolo aparte y la
+    mitad del trabajo. El icono viaja como `IconPixmap` (ARGB32 en orden de red),
+    así que `icons.py` lo rasteriza directamente, sin `.ico` de por medio.
+  - **Tamaño estimado:** 600-900 líneas entre las dos.
+- **GNOME no tiene bandeja** sin la extensión AppIndicator: Ubuntu la trae y
+  Fedora no. El agente lo sabe al arrancar, porque no hay nadie registrado como
+  `org.kde.StatusNotifierWatcher`, y cae a un lanzador `.desktop` «prdrive» que
   arranca el agente o, si ya está vivo, le pide abrir la ventana (o
-  desbloquear), más los avisos con el estado.
-- **La ventana ↔ el agente, sin puertos.**
-  - La ventana escribe `state/servicio.pide` en su raíz: `reanudar`, `bloquear`
-    o `pasada` con sus parejas.
-  - El agente lo sondea igual que `daemon.stop`.
+  desbloquear), más los avisos con el estado. La verificación del asistente lo
+  dice, con el nombre de la extensión que falta. Así que «paridad» es, siempre,
+  **las mismas funciones**, y la bandeja allí donde el escritorio tiene una.
+- **Sin sesión D-Bus**, el aviso se queda en el diario, que es la misma caída
+  que tiene hoy `avisar_fallo()`.
+- **La ventana ↔ el agente, sin puertos.** Se usan dos buzones, que son ficheros
+  que el agente sondea igual que `daemon.stop`:
+  - **`state/servicio.pide`**, en la raíz, para lo que es de esa raíz:
+    `reanudar`, `bloquear` o `pasada` con sus parejas.
+  - **`agente.pide`**, en el directorio del agente en el equipo, para lo que es
+    del equipo: un `ajuste` (`pedir_al_iniciar`, `espera_unidad_nueva`, el modo
+    de una unidad) o `añadir_raiz`. Es una ruta fija por sistema, como el
+    `HOST_DIR` de penwatch, así que la ventana la sabe sin preguntar.
   - «Iniciar servicio» deja de lanzar un servicio: escribe `ui_prefs.json`,
     como hoy, y un `reanudar`.
   - La línea del vigilante pasa a ser la línea del agente, que dice qué atiende
@@ -366,7 +458,8 @@ de módulo:
   debajo del 20 %**.
 - **Red de uso medido:** en Windows `INetworkCostManager` (COM por vtable, igual
   que ya se hace con `IShellItem2`) y en Linux la propiedad `Metered` de
-  NetworkManager. Por defecto **se pausa**. «Sincronizar ahora» siempre se salta
+  NetworkManager, leída con `common/dbus.py`. Sin NetworkManager no se sabe, y
+  se trata como una red normal. Por defecto **se pausa**. «Sincronizar ahora» siempre se salta
   esta moderación.
 - **Sin conexión:** si un fallo es de red (una categoría nueva en
   `KNOWN_ERRORS`), todo lo que va a **ese remoto** pasa a «sin conexión». Se
@@ -389,18 +482,34 @@ hoy) / «En este equipo»**. El recorrido nuevo es otra lista de pasos
 (`PASOS_EQUIPO`), como ya lo son `PASOS_ACTUALIZACION` y `PASOS_PLATAFORMAS`:
 
 ```
-1 Carpeta         dónde va (por defecto ~/PRDRIVE); ¿ya hay un prdrive ahí?
+1 Carpeta         carpeta propia (~/PRDRIVE, editable) / carpeta personal (~) /
+                  ninguna: solo atender unidades; ¿ya hay un prdrive ahí?
 2 Cifrado         ninguno / VeraCrypt: contenedor, tamaño, letra o punto de
-                  montaje; lo crea, lo monta y fija state.device_root
+                  montaje, pedir_al_iniciar; lo crea, lo monta y fija
+                  state.device_root
 3 Conexión        igual
 4 Comprobaciones  igual
 5 Instalación     .prdrive/ + rclone en la raíz; agente + runtime en el equipo
-6 Parejas         igual, y las rutas por debajo de la raíz
+6 Parejas         igual, con la ruta resuelta de cada una a la vista
 7 Inicialización  --resync de las bisync
-8 Unidades        qué unidades de la flota atiende y cómo (lista de devices/)
+8 Unidades        qué unidades atiende y cómo, y espera_unidad_nueva
 9 Arranque        registrar el agente al iniciar sesión y arrancarlo
 10 Verificación
 ```
+
+- **«Ninguna: solo atender unidades»** se salta los pasos 2, 3, 4, 6 y 7. Sin
+  raíz no hay conexión que pedir, ni catálogo, ni clave en el equipo: cada
+  unidad trae los suyos. «Instalación» copia solo el agente y su runtime.
+  «Unidades» ofrece entonces lo que se sabe sin red: el `device_id` de un
+  `watch.json` de penwatch y las unidades enchufadas en ese momento. El resto
+  llega con el aviso de «unidad nueva». Con raíz, la lista sale además del
+  registro de la flota (`devices/`).
+- **Añadir una raíz más tarde** es volver a pasar el asistente «En este
+  equipo»: ve el agente instalado, no lo reinstala, y le pide con `agente.pide`
+  que añada la raíz (sección 5).
+- **Carpeta personal.** El paso 1 lo explica en dos líneas (qué se gana, qué
+  límite se pierde), y el paso 6 enseña la ruta resuelta de cada pareja y los
+  avisos de otro cliente de sincronización antes de escribir nada.
 
 - **«Cifrado» va antes de «Conexión» por lo mismo que en las unidades:** fija
   dónde escribe «Instalación». Con VeraCrypt, la detección de un prdrive ya
@@ -473,39 +582,45 @@ Nada, mientras no se instale el agente. Cuando se instala:
   abierta. Para pararlo, se usa «Pausar» en la bandeja. Hay que decirlo en el
   README y en `device-readme.md`.
 
-## Preguntas abiertas
+## Preguntas resueltas
 
-1. **¿La raíz es una carpeta dedicada (`~/PRDRIVE`) o la carpeta personal
-   (`~`)?** Con la dedicada, el límite queda claro y nada de fuera se toca: es el
-   modelo de Dropbox. Con la carpeta personal se puede sincronizar
-   `~/Documentos/Obsidian` sin moverlo, pero se pierde ese límite y muchas parejas
-   del catálogo (`sync-data/…`) caerían sueltas en `~`. Con VeraCrypt la pregunta
-   no existe: la raíz es el volumen. **Propuesta: dedicada en la v1.**
-2. **¿Una instalación en el equipo sin parejas propias**, es decir, solo el
-   agente atendiendo unidades? Hoy `parse_config()` rechaza un config sin
-   `[[pair]]`. **Propuesta: permitirlo solo con `tipo=equipo`.**
-3. **¿Cuánto espera el aviso de «unidad nueva»** antes de dar la respuesta por
-   «no»?
-4. **Bandeja en Linux:** ¿se acepta el cliente D-Bus propio, o basta en la v1 con
-   el lanzador y los avisos?
-
-Resueltas:
-
+- **Carpeta propia o carpeta personal:** configurable, con la carpeta propia
+  por defecto (sección 1). Con VeraCrypt la pregunta no existe: la raíz es el
+  volumen.
+- **Instalación sin parejas propias:** sí. Es la instalación «solo agente», sin
+  raíz. No toca `parse_config()`: no es un config vacío, es que no hay config
+  (sección 1 y sección 7). Una raíz a la que se le han quitado todas las
+  parejas sigue siendo el `ConfigError` de siempre, y la bandeja lo enseña como
+  aviso en vez de tumbar el agente.
+- **Aviso de «unidad nueva»:** tiene un plazo configurable
+  (`espera_unidad_nueva`, propuesta 2 min). Sin respuesta cuenta como «Ahora
+  no», solo para esta conexión, y se puede decir que sí desde la bandeja
+  mientras siga enchufada (sección 3).
+- **Bandeja en Linux:** entra en la v1, con cliente D-Bus propio, y cae al
+  lanzador solo donde el escritorio no tiene bandeja (sección 5).
 - **Pedir la contraseña al iniciar sesión:** es configurable
   (`pedir_al_iniciar`) y viene activado por defecto (sección 4, «Abrir»).
 - **Bloquear al suspender:** no entra en la v1. Será un ajuste futuro,
   desactivado por defecto (sección 4, «Cerrar»).
 
+Quedan dos propuestas pendientes de confirmar, que no bloquean el diseño: el
+modo con el que entra una unidad al decir «Atender» (`daemon`) y los 2 minutos
+de `espera_unidad_nueva`.
+
 ## Fases
 
-Cada fase se puede publicar por separado y deja el proyecto funcionando:
+**La v1 son las seis.** Cada fase se puede publicar por separado y deja el
+proyecto funcionando:
 
-1. **El agente sin bandeja**, con unidades: su sitio en el equipo, el
-   planificador, la cola, el contrato de la sección 3, la sustitución de
-   penwatch, la moderación y los avisos nativos. Ya mejora a quien solo usa
-   unidades.
-2. **La raíz del equipo sin cifrar**: `tipo=equipo`, `PASOS_EQUIPO` sin
-   «Cifrado», y la raíz como una raíz atendida más.
+1. **El agente sin bandeja**, con unidades: la instalación «solo agente», su
+   sitio en el equipo, el planificador, la cola, el contrato de la sección 3, el
+   aviso de «unidad nueva», la sustitución de penwatch, la moderación y los
+   avisos nativos. Aquí entra la mitad cliente de `common/dbus.py` (llamadas,
+   propiedades, señales), porque los avisos y la red de uso medido de Linux la
+   necesitan. Ya mejora a quien solo usa unidades.
+2. **La raíz del equipo sin cifrar**: `tipo=equipo`, carpeta propia o
+   personal, `PASOS_EQUIPO` sin «Cifrado», la ruta resuelta y el aviso de otro
+   cliente de sincronización en «Parejas», y la raíz como una raíz atendida más.
 3. **Cifrado local con VeraCrypt**: el paso «Cifrado» del equipo,
    Desbloquear/Bloquear en el agente, `pedir_al_iniciar` elegido en el
    asistente, la letra fija, `raiz_fisica()` con raíces extra y «Expulsar» →
@@ -513,19 +628,43 @@ Cada fase se puede publicar por separado y deja el proyecto funcionando:
    la unidad G:.
 4. **Bandeja en Windows**, con la detección por `WM_DEVICECHANGE` montada sobre
    su ventana y la casilla de `pedir_al_iniciar`.
-5. **Ventana ↔ agente**: la línea del agente, `servicio.pide` (con `ajuste`) y
+5. **Ventana ↔ agente**: la línea del agente, los dos buzones
+   (`servicio.pide` y `agente.pide`), añadir una raíz a un agente ya instalado y
    «Actualizar».
-6. **Bandeja en Linux** (StatusNotifierItem) con la caída al lanzador.
+6. **Bandeja en Linux**: la mitad que exporta objetos de `common/dbus.py`,
+   `org.kde.StatusNotifierItem` + `com.canonical.dbusmenu`, y la caída al
+   lanzador cuando no hay `StatusNotifierWatcher`. Se prueba en real en KDE, en
+   GNOME con AppIndicator (Ubuntu) y en GNOME sin ella (Fedora).
 
 Para después: parejas ejecutadas en el propio proceso, reaccionar a los cambios
 de ficheros, `rclone rcd`, sincronizar la unidad con el equipo sin pasar por el
-remoto y «Bloquear al suspender» como ajuste.
+remoto, «Bloquear al suspender» como ajuste y un «No volver a preguntar» para
+unidades ajenas.
 
 ## Pruebas
 
 - `test_planificador.py`: tabla de casos con un reloj de prueba (espera
   creciente, batería, red de uso medido, sin conexión, raíz bloqueada, cola
   única, «Sincronizar ahora»).
+- `test_unidad_nueva.py`: comprueba que
+  - sin respuesta en `espera_unidad_nueva` cuenta como «Ahora no»;
+  - «Ahora no» dura hasta que la raíz desaparece y se vuelve a preguntar al
+    reaparecer;
+  - una respuesta tardía de la ventana se ignora;
+  - el «Atender» de la bandeja funciona mientras sigue conectada;
+  - sin entorno gráfico es «Ahora no» al momento;
+  - **antes del sí no se lanza ningún proceso con rutas de la unidad**.
+- Raíz del equipo: `local = "."` es un `ConfigError` con `tipo=equipo`;
+  `ruta_local_relativa()` con la carpeta personal; el aviso de OneDrive o
+  Dropbox con sus ubicaciones falsas.
+- `test_dbus.py`, con un bus falso sobre un `socketpair`, comprueba:
+  - la serialización contra los ejemplos de la especificación (firmas,
+    alineación, `a{sv}`, `(iiay)`);
+  - el saludo `EXTERNAL`;
+  - una llamada con su respuesta, y un error;
+  - que el `StatusNotifierItem` y el `dbusmenu` exportados contestan a lo que
+    pregunta un `StatusNotifierWatcher`;
+  - la caída al lanzador cuando no hay ninguno.
 - `test_agente_contrato.py`: raíces falsas con `daemon.lock.json`,
   `daemon.stop` y `ui.lock.json` escritos como lo haría un `runsync` viejo.
   Comprueba la pausa, el apartarse ante otro servicio y la vuelta.
@@ -536,7 +675,7 @@ remoto y «Bloquear al suspender» como ajuste.
   - la vuelta al estado bloqueado solo con el `.hc` libre;
   - con `pedir_al_iniciar` desactivado no se lanza VeraCrypt al arrancar; con
     él activado se lanza una vez y no se repite tras cancelar;
-  - un `ajuste` pedido por `servicio.pide` lo escribe el agente, no la ventana;
+  - un `ajuste` pedido por `agente.pide` lo escribe el agente, no la ventana;
   - el aviso por el punto de montaje con contenido;
   - que `raiz_fisica()` encuentra la carpeta del contenedor por las raíces
     extra.
