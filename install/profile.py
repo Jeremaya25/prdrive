@@ -216,6 +216,75 @@ PLANTILLAS: dict[str, str] = {
            "secret_access_key = \nregion = "),
 }
 
+# Lo que un backend de las plantillas NO puede no tener, con para qué sirve.
+# Criterio conservador: solo lo que rclone marca `Required: true` en la
+# definición del backend y no admite otra salida, porque esto BLOQUEA —«Usar esta
+# conexión» no hace un perfil sin ello—. Lo que rclone rellena por su cuenta
+# (el puerto, el usuario) no está aquí: eso, si acaso, es un aviso (`avisos()`).
+#
+#   * sftp → `host` (`backend/sftp/sftp.go`). Sin él rclone ni siquiera falla:
+#     marca `f.opt.Host+":"+f.opt.Port`, o sea `:22`, y Go entiende un host vacío
+#     como este mismo equipo. La excepción es `ssh`, el ssh externo: con él rclone
+#     ignora host, user y port del conf (`NewFsWithConnection`) y los espera
+#     dentro de esa orden.
+#   * webdav → `url` (`backend/webdav/webdav.go`).
+#   * s3 → nada. Sus `Required` son el `endpoint` de proveedores concretos, que
+#     la plantilla no pone, y sin claves rclone entra como anónimo
+#     (`AnonymousCredentials` en `backend/s3/s3.go`): mal para escribir el
+#     catálogo, pero eso lo dice el paso de comprobaciones, no una suposición.
+#
+# Un tipo que no esté aquí no se valida: rclone tiene decenas de backends y el
+# proyecto no interpreta ninguno. Tampoco se comprueba que el tipo exista —haría
+# falta rclone, que se consigue en el paso siguiente—: allí rclone lo dice solo.
+OBLIGATORIAS: dict[str, tuple[tuple[str, str], ...]] = {
+    "sftp": (("host", "saber a qué servidor conectarse"),),
+    "webdav": (("url", "saber la dirección del servidor"),),
+}
+
+
+def faltan(options: Mapping[str, str]) -> list[tuple[str, str]]:
+    """Las opciones obligatorias de ese backend que no están o están vacías.
+
+    Vacías cuentan como ausentes porque es lo que deja la plantilla (`host = `)
+    y lo que trae un rclone.conf a medio escribir."""
+    tipo = str(options.get("type", "")).strip()
+    if tipo == "sftp" and str(options.get("ssh", "")).strip():
+        return []
+    return [(clave, para) for clave, para in OBLIGATORIAS.get(tipo, ())
+            if not str(options.get(clave, "")).strip()]
+
+
+def _falta(options: Mapping[str, str], donde: str) -> str:
+    """La frase del error de `faltan()`: qué falta, dónde, y para qué hace falta."""
+    falta = faltan(options)
+    claves = " y ".join(f"«{clave} = …»" for clave, _ in falta)
+    para = " y ".join(para for _, para in falta)
+    verbo = "Falta" if len(falta) == 1 else "Faltan"
+    return (f"{verbo} {claves} {donde}: un remote {options.get('type')} necesita "
+            f"{para}.")
+
+
+def avisos(perfil: Profile) -> list[str]:
+    """Lo que no impide seguir pero conviene saber antes de probar la conexión.
+
+    No bloquea porque no es seguro que falle: puede funcionar en el equipo donde
+    se instala y dejar de hacerlo en otro, que es justo lo que el paso de
+    comprobaciones no puede ver."""
+    notas: list[str] = []
+    opciones = perfil.options
+    # Sin `user`, rclone usa `currentUser` (`env.CurrentUser()` en
+    # `backend/sftp/sftp.go`): el de la sesión del equipo donde se ejecuta, que en
+    # Windows además viene como EQUIPO\usuario. El dispositivo viaja, así que
+    # entra o no según dónde se enchufe. Con `ssh` el usuario va en esa orden.
+    if (opciones.get("type") == "sftp"
+            and not str(opciones.get("ssh", "")).strip()
+            and not str(opciones.get("user", "")).strip()):
+        notas.append(
+            "Sin «user = …», rclone entrará con el nombre de usuario del equipo "
+            "en que se ejecute. El dispositivo va de un equipo a otro: donde ese "
+            "nombre no sea el del servidor, no le dejará entrar.")
+    return notas
+
 
 def _leer_clave(options: Mapping[str, str], base: Path) -> tuple[bytes | None, str, str]:
     """La clave y los known_hosts a los que apunte un rclone.conf importado.
@@ -266,6 +335,16 @@ def from_rclone_conf(path: Path | str, remote_name: str,
             f"Tiene: {', '.join(sorted(remotes))}.")
 
     options = dict(remotes[remote_name])
+    # Lo mismo que se le exige al formulario. Sin esto un remote sin `type` salía
+    # de aquí como perfil, sin estar `configured`: la pantalla lo daba por bueno
+    # y «Siguiente» se quedaba gris sin que nada dijera por qué.
+    donde = f"en el remote '{remote_name}' de {ruta}"
+    if not options.get("type", "").strip():
+        raise InstallError(
+            f"Falta «type = …» {donde}: sin el tipo (sftp, webdav, s3…) rclone "
+            f"no sabe con qué backend hablar.")
+    if faltan(options):
+        raise InstallError(_falta(options, donde))
     clave, conocidos, key_name = _leer_clave(options, ruta.parent)
     for derivada in RUTAS_DERIVADAS:
         options.pop(derivada, None)
@@ -295,6 +374,8 @@ def from_form(remote_name: str, options: Mapping[str, str],
               if str(v).strip() and k not in RUTAS_DERIVADAS}
     if not limpio.get("type"):
         raise InstallError("Falta el tipo de remote (sftp, webdav, s3…).")
+    if faltan(limpio):
+        raise InstallError(_falta(limpio, "en las opciones"))
 
     clave = conocidos = None
     key_name = DEFAULT_KEY_NAME

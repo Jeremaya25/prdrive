@@ -193,6 +193,25 @@ def recortado(visor) -> bool:
                 and not visor.horizontal.grid_info()))
 
 
+def usar_conexion(wiz) -> None:
+    """Pulsa «Usar esta conexión» con lo que deja más alto el paso: la línea de
+    «preparada», larga, y debajo el aviso de un sftp sin usuario (#47). Las dos
+    aparecen con el paso ya pintado, que es cuando un hueco se queda corto."""
+    pendientes, caja, usar = list(wiz.cuerpo.winfo_children()), None, None
+    while pendientes:
+        w = pendientes.pop()
+        pendientes += list(w.winfo_children())
+        if isinstance(w, tk.Text):
+            caja = w
+        elif isinstance(w, ttk.Button) and w.cget("text") == "Usar esta conexión":
+            usar = w
+    caja.delete("1.0", "end")
+    caja.insert("1.0", "host = servidor-de-la-oficina-de-arriba.example.org\n"
+                       "port = 22\n")
+    usar.invoke()
+    wiz.root.update_idletasks()
+
+
 def medir_dialogo(fabricar, ancho, alto, escala, modulo=None) -> tuple[bool, bool]:
     """Abre un diálogo sin enseñarlo y devuelve (cabe, recortado).
 
@@ -247,6 +266,13 @@ try:
             c(f"{nombre}: el paso «{paso}» cabe en la ventana", cabe(top), True)
             c(f"{nombre}: el paso «{paso}» no queda recortado",
               recortado(wiz.visor), False)
+        # «Conexión» después de pulsar su botón, con el estado y el aviso puestos.
+        wiz.indice = PASO["Conexión"]
+        wiz.repintar()
+        usar_conexion(wiz)
+        c(f"{nombre}: «Conexión» con su estado y su aviso cabe", cabe(top), True)
+        c(f"{nombre}: «Conexión» con su estado y su aviso no queda recortado",
+          recortado(wiz.visor), False)
         # El paso de cifrado con VeraCrypt, en su peor caso (ver EN_CLARO).
         wiz.state.device, wiz.state.device_root = EN_CLARO, None
         wiz.state.encryption = "veracrypt"
@@ -359,6 +385,13 @@ try:
         wiz.repintar()
         c(f"{nombre}: un paso corto no encoge el hueco",
           wiz.visor._medida()[1], alto_conexion)
+        # Lo que sale al pulsar «Usar esta conexión» tampoco puede traer la barra:
+        # el hueco crece con ello.
+        wiz.indice = PASO["Conexión"]
+        wiz.repintar()
+        usar_conexion(wiz)
+        c(f"{nombre}: «Conexión» con su estado y su aviso se ve entero, sin barra",
+          bool(wiz.visor.vertical.grid_info()), False)
         top.destroy()
 
     # Cuando «Conexión» no cabe por mucho que se estire, la barra es obligatoria:

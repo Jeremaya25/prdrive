@@ -77,7 +77,7 @@ def trae(rc: remote.Rclone, ruta: str):
 # --- el formulario, sin red ----------------------------------------------------
 for como, hacer in (
         ("from_form", lambda ruta: profile.from_form(
-            "nas", {"type": "sftp"}, catalog_path=ruta)),
+            "nas", {"type": "sftp", "host": "nas.example"}, catalog_path=ruta)),
         ("from_rclone_conf", None)):
     if hacer is None:
         conf = tmpdir() / "rclone.conf"
@@ -181,7 +181,7 @@ def widgets(w, tipo):
 
 def estado(wiz) -> ttk.Label | None:
     for lbl in widgets(wiz.root, ttk.Label):
-        if str(lbl.cget("text")).startswith(("✔", "✘")):
+        if str(lbl.cget("text")).startswith(("✘", "Conexión preparada")):
             return lbl
     return None
 
@@ -210,7 +210,11 @@ if caja is not None:
       "/prdrive-catalog/pairs.toml")
     c("y ya se puede seguir", str(wiz.boton_siguiente.cget("state")), "normal")
     lbl = estado(wiz)
-    c("con la marca buena", str(lbl.cget("text"))[:1] if lbl else "", "✔")
+    # Sin ✔: la ruta está bien escrita, pero nadie ha hablado aún con el remoto
+    # (#47). Lo que se ve es el estado neutro de una conexión preparada.
+    c.contains("con el estado neutro, no el error", str(lbl.cget("text")) if lbl else "",
+               "sin probar todavía")
+    c("y sin el estilo de error", str(lbl.cget("style")) if lbl else "", "TLabel")
 
     caja.delete(len("/prdrive-catalog"), "end")
     c("borrarlo vuelve a cerrar el paso", str(wiz.boton_siguiente.cget("state")),

@@ -792,6 +792,17 @@ Other step notes:
   an error, the normal start for a fresh clone. The private key goes to a temp
   dir recording the owning pid; `remote.sweep_stale()` cleans what hard-killed
   installers left, asking `store.pid_alive()` first.
+- **«Usar esta conexión» talks to nobody** (#47): it turns the form into a
+  `Profile`, so the step says «preparada, sin probar» in plain ink — no ✔, no
+  green, which read as "connection tested"; the remote is first touched in
+  «Comprobaciones». What can be checked locally is, in `profile.py`, on both
+  paths (form and import): a `type`, and `OBLIGATORIAS` — only what rclone marks
+  `Required` with no way round (sftp `host` unless `ssh` is set: an empty host
+  dials `:22`, this machine; webdav `url`; nothing for s3). Those block: the
+  error goes in red in the step itself and the previous connection is dropped,
+  so «Siguiente» is off. `profile.avisos()` only warns (amber, still enabled):
+  an sftp without `user` logs in as whoever runs rclone on each host. Whether
+  the `type` exists is not checked — that needs rclone, which step 4 has.
 - **The key never leaves the device**, and `deploy.write_device_remote()` writes
   `.prdrive/rclone.conf` + `.prdrive/keys/<name>` with **relative** paths
   (`key_file = keys/…`) — that is what makes the device work under any drive

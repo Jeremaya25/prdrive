@@ -197,6 +197,94 @@ sin_conexion.revisar()
 c("con conexión configurada sí", str(sin_conexion.boton_siguiente.cget("state")),
   "normal")
 
+# --- «Usar esta conexión» no promete lo que no ha probado (#47) ---------------
+# El botón solo convierte el formulario en un perfil; con el remoto se habla en
+# «Comprobaciones». Antes pintaba «✔ nas (sftp)» en verde, que se leía como
+# «conexión comprobada», también con la plantilla sin rellenar.
+
+
+def etiquetas(wiz, estilo=None):
+    """Los textos de las etiquetas VISIBLES del paso, o solo las de ese estilo."""
+    return [str(l.cget("text")) for l in widgets(wiz.cuerpo, ttk.Label)
+            if l.winfo_manager() and (estilo is None or str(l.cget("style")) == estilo)]
+
+
+def promete(wiz) -> bool:
+    """¿Dice el paso, de alguna forma, que la conexión está comprobada?"""
+    return (any("✔" in t for t in etiquetas(wiz))
+            or any(t.strip() for t in etiquetas(wiz, "Ok.TLabel")))
+
+
+def opciones_del_formulario(wiz, texto):
+    caja = widgets(wiz.cuerpo, tk.Text)[0]
+    caja.delete("1.0", "end")
+    caja.insert("1.0", texto)
+
+
+def siguiente(wiz):
+    return str(wiz.boton_siguiente.cget("state"))
+
+
+usa = nuevo_asistente(dispositivo)
+usa.perfil = profile.empty()
+en_paso(usa, PASO["Conexión"])
+# La plantilla tal cual: `host = ` vacío. Antes daba ✔ con «Siguiente» encendido.
+boton(usa.cuerpo, "Usar esta conexión").invoke()
+c("la plantilla sin rellenar no deja seguir", siguiente(usa), "disabled")
+c("y dice qué falta, en rojo, en el propio paso",
+  any("host = …" in t for t in etiquetas(usa, "Peligro.TLabel")), True)
+c("sin ningún ✔", promete(usa), False)
+
+opciones_del_formulario(usa, "host = nas.example\nuser = quien\n")
+boton(usa.cuerpo, "Usar esta conexión").invoke()
+c("con el formulario bien, se puede seguir", siguiente(usa), "normal")
+c("el estado dice que está preparada y sin probar",
+  any("sin probar" in t and "paso siguiente" in t for t in etiquetas(usa)), True)
+c("con el dato de a dónde apunta", any("nas.example" in t for t in etiquetas(usa)), True)
+c("pero sin ✔ ni verde: no se ha hablado con el remoto", promete(usa), False)
+c("y sin rojo de antes", etiquetas(usa, "Peligro.TLabel"), [])
+c("sin nada que avisar, el aviso no ocupa sitio", etiquetas(usa, "Aviso.TLabel"), [])
+
+# Un sftp sin usuario funciona donde el usuario coincida: se deja seguir, avisando.
+opciones_del_formulario(usa, "host = nas.example\n")
+boton(usa.cuerpo, "Usar esta conexión").invoke()
+c("un aviso no bloquea", siguiente(usa), "normal")
+c("pero se enseña", any("user = …" in t for t in etiquetas(usa, "Aviso.TLabel")), True)
+
+# Con una conexión que ya valía, un «Usar» que falla la suelta: un error al lado
+# de un «Siguiente» encendido invitaría a seguir con la de antes.
+opciones_del_formulario(usa, "port = 22\n")
+boton(usa.cuerpo, "Usar esta conexión").invoke()
+c("un «Usar» que falla deja el paso sin conexión", siguiente(usa), "disabled")
+c("con el error a la vista", any("host = …" in t
+                                 for t in etiquetas(usa, "Peligro.TLabel")), True)
+c("y sin el aviso de la conexión de antes", etiquetas(usa, "Aviso.TLabel"), [])
+
+# Importar un remote sin `type`: antes, ✔ verde y «Siguiente» gris a la vez.
+conf_ajeno = tmpdir() / "rclone.conf"
+conf_ajeno.write_text("[sintipo]\nhost = nas.example\n", encoding="utf-8")
+importa = nuevo_asistente(dispositivo)
+en_paso(importa, PASO["Conexión"])
+radio(importa.cuerpo, "Importar").invoke()
+elector = next(w for w in widgets(importa.cuerpo, ttk.Combobox)
+               if str(w.cget("state")) == "readonly")
+next(w for w in elector.master.winfo_children()
+     if isinstance(w, ttk.Entry)).insert(0, str(conf_ajeno))
+elector.set("sintipo")
+boton(importa.cuerpo, "Usar esta conexión").invoke()
+c("importar un remote sin tipo no deja seguir", siguiente(importa), "disabled")
+c("y dice por qué", any("type = …" in t
+                        for t in etiquetas(importa, "Peligro.TLabel")), True)
+c("sin ✔ al lado del botón gris", promete(importa), False)
+
+# La conexión que ya venía dada —incrustada en el .exe o en el checkout— tampoco
+# se ha probado cuando se pinta el paso.
+dada = nuevo_asistente(dispositivo)
+en_paso(dada, PASO["Conexión"])
+c("una conexión dada se puede usar", siguiente(dada), "normal")
+c("y tampoco se da por comprobada", promete(dada), False)
+c("dice de dónde sale", any(PERFIL.origen in t for t in etiquetas(dada)), True)
+
 # --- las condiciones de los demás pasos --------------------------------------
 vacio = nuevo_asistente()
 vacio.catalog = None
