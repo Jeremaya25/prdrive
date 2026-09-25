@@ -17,14 +17,16 @@ pairs — never the program.
 ## Layout
 
 Root entry points: `sync.py`, `runsync.py`, `penwatch.py` (the volume-root
-launchers and the watcher locate them by fixed path), `prdrive-install.py` (what
-gets compiled and handed out) and `build_installer.py`.
+launchers and the watcher locate them by fixed path), `agente.py` (the resident
+agent, copied to the HOST, never to a device), `prdrive-install.py` (what gets
+compiled and handed out) and `build_installer.py`.
 
 ```
 prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 ├── sync.py            engine: build the rclone command, run it, report
 ├── runsync.py         the periodic service + who calls what
 ├── penwatch.py        mount watcher (deliberately self-contained)
+├── agente.py          the resident agent: penwatch's successor on a host
 ├── VERSION            the version, in ONE place; ships to the device
 ├── common/            the config and rclone
 │   ├── model.py       sync_config.toml parsed into resolved objects
@@ -44,6 +46,11 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 │   ├── pairing.py     reads rclone.conf; the connection as a QR payload
 │   ├── vestibulo.py   what a VeraCrypt device leaves OUTSIDE its container
 │   ├── autorun.py     the root's autorun.inf: the drive's name and icon, edited
+│   ├── planificador.py the agent's scheduler: PURE (data in, decision out)
+│   ├── equipo.py      the agent's host dir: agente.json, instalacion.json, buzón
+│   ├── moderacion.py  battery, metered network, "is this failure the network?"
+│   ├── dbus.py        a stdlib D-Bus client (the calling half)
+│   ├── avisos.py      native notifications, no Tk
 │   └── store.py       device JSON state + pid_alive(); atomic writes; hide()
 ├── ui/                asking the user, showing results
 │   ├── __init__.py    Choice, Frontend, start(), fatal(), manual_args(), abrir()
@@ -59,6 +66,8 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 │   ├── tk.py          TkFrontend: main + output window, modal()/mostrar()/working()
 │   ├── cifrado.py     is this device inside a VeraCrypt container? «Expulsar»
 │   ├── tk_install.py  the install wizard          (every tk_* draws only)
+│   ├── tk_equipo.py   the wizard's «En este equipo» steps
+│   ├── tk_agente.py   «¿Atender esta unidad?», a child process of the agent
 │   ├── tk_pairs.py · tk_repair.py · tk_conflicts.py · tk_fleet.py ·
 │   │   tk_watch.py · tk_update.py · tk_crypto.py · tk_doctor.py ·
 │   │   tk_qr.py · tk_versions.py · tk_volumen.py
@@ -77,6 +86,7 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 │   ├── crypto.py      VeraCrypt and BitLocker
 │   ├── traveler.py    the VeraCrypt Portable (x64 + ARM64) on the volume, swapped
 │   ├── vestibulo.py   the launchers outside the container: open, eject
+│   ├── agente.py      put the resident agent on this host, and take it off
 │   └── deploy.py      copy the code in, rclone + runtimes, launchers, config
 └── tests/             plain scripts; run_all.py runs them in separate processes
 ```
@@ -168,12 +178,16 @@ python runsync.py --auto --once  # one pass of the service's pairs, then exit
 python runsync.py --doctor     # any other args pass straight through to sync.py
 
 python penwatch.py install|status|probe|uninstall   # the watcher, per machine/user
+python agente.py run|status                         # the resident agent (host copy)
+python agente.py atender ID | modo ID MODO | pasada ID [pareja…] | pausa | sigue | parar
 
 python prdrive-install.py          # install wizard for a NEW device (Tk only)
 python prdrive-install.py --check  # rclone + connection + catalogue, then exit
 python prdrive-install.py --probe  # what drives it sees, then exit
 python prdrive-install.py --update E:\             # the device's code only
 python prdrive-install.py --update-components E:\  # its rclone + runtime only
+python prdrive-install.py --instalar-agente        # the resident agent on THIS host
+python prdrive-install.py --desinstalar-agente     # and off again (no drive touched)
 python build_installer.py          # build the .exe (embeds the profile if any)
 python -m ui.icons                 # repaint APP_DIR/runsync.ico (headless)
 
@@ -1156,6 +1170,98 @@ script to `%LOCALAPPDATA%\prdriveWatch` / `~/.local/share/prdrive-watch`, writes
   and the running process's dirs. No device runtime for this host → host Python,
   never one living on the device.
 
+## The resident agent (`agente.py` + `common/planificador.py` + `install/agente.py`)
+
+Phase 1 of `docs/superpowers/specs/2026-09-25-instalacion-en-el-equipo-design.md`
+(read it before touching this): the **«solo agente»** install — no root of its
+own on the host, it attends the prdrive drives plugged into it. The later phases
+(the host root, VeraCrypt on the host, the trays, window ↔ agent mailboxes,
+«Actualizar») are specified there and not built yet.
+
+- **Lives outside every root**, in `equipo.DIR` (`%LOCALAPPDATA%\prdrive\`,
+  `~/.local/share/prdrive/`): `agente/<version>/` (agente.py, penwatch.py,
+  common/, ui/ — never install/), `runtime/<stamp_id>/` (its own
+  python-build-standalone, extracted by `runtime_bin.extract()`), `agente.json`
+  (WHAT: drives, modes, `espera_unidad_nueva`, moderation), `instalacion.json`
+  (WHERE: code, python), `agente.lock.json`, `agente.pide`, `estado.json`,
+  `agente.log`. **No secret there.** `tests/_harness.py` points `equipo.DIR` at
+  a temp dir for every test.
+- **One writer per file.** `agente.json` is written by `install/agente.py` the
+  first time only; afterwards **only the agent** writes it, and everybody else
+  (the wizard re-run, the CLI, later the window) appends a JSON line to the
+  mailbox `agente.pide` (`equipo.pedir()`); the agent consumes it by renaming it
+  first (`equipo.recoger()`). `instalacion.json` is the installer's.
+- **The agent never runs a drive's code before «Atender».** A drive whose id is
+  not in `agente.json` gets a notification + a countdown window (`agente.py
+  pregunta` → `ui/tk_agente.py`, exit code 0/1/2); the deadline is
+  `planificador.Pregunta`, not the window's. No answer / late answer / no
+  display = «Ahora no» for THIS connection only (re-armed when the root
+  disappears). Only its control file and `state/fleet.json` are read.
+  `tests/test_unidad_nueva.py` asserts no launched process carries its paths.
+- **It is the drive's service through the drive's own files** (spec section 3),
+  so old drives work: it writes `daemon.lock.json` (`"agente": true`), obeys
+  `daemon.stop` after the pair in flight (releases, deletes the stop, and
+  **pauses** instead of exiting), stays paused while a live `ui.lock.json` of
+  this host exists and for `GRACIA` seconds after (so a service started from the
+  window has time to write its lock), and **steps aside** while another live
+  pid of this host holds the lock. A stale lock (dead pid / other host) is
+  overwritten. `runsync.stop_previous_daemon()` says "pauses" when the lock is
+  the agent's. `tests/test_agente_contrato.py` drives the real
+  `stop_previous_daemon()` against it.
+- **Every pass is the root's own `sync.py`**, a child with the agent's Python
+  (`pythonw` on Windows), `stdin=DEVNULL` (a pair needing `--resync` is skipped),
+  cwd `equipo.DIR`. One pass at a time on the whole host. Nothing stays open in
+  a drive between passes. A drive unplugged mid-pass records nothing.
+- **`common/planificador.py` is pure** and holds every rule: single queue,
+  urgent («Sincronizar ahora») skips all moderation, pause / battery / metered
+  hold everything, `intervalo · 2^k` backoff capped at 4 h (never below the
+  interval), mode `sync` = infinite interval, offline remotes are PROBED
+  (`SONDA`, an `rclone lsd remote:` with `catalog.NET_FLAGS`) instead of
+  retried. A `RED` result doesn't count a failure; the agent probes at once and,
+  if the remote answers, re-records it as `FALLO` (the classification was
+  wrong). Network needles live in `moderacion.ERRORES_DE_RED`, and
+  `sync.KNOWN_ERRORS` uses `moderacion.es_de_red` as a **callable needle** —
+  one list, because the agent doesn't carry `sync.py`.
+- **Notifications only when a pair STARTS failing** (`planificador.empieza_a_fallar`)
+  or a remote goes offline — `common/avisos.py` (D-Bus `Notify`; Windows
+  `Shell_NotifyIconW` NIF_INFO on a temporary message-only window, **unverified
+  on real Windows**). No Tk in the agent process: `tests/test_install_agente.py`
+  checks `tkinter` isn't in `sys.modules` after importing it.
+- **`common/dbus.py`** cites the *D-Bus Specification* like `ui/qr.py` cites
+  ISO/IEC 18004 — keep the citations. Client half only (address, EXTERNAL,
+  marshalling, calls, properties, `AddMatch`); exporting objects is the Linux
+  tray's phase. `tests/test_dbus.py` pins the canonical `Hello` bytes.
+- **Detection** reuses `penwatch.candidate_roots()` (still the one drive walk):
+  Linux wakes on `POLLPRI` of `/proc/self/mountinfo` and bursts; Windows polls
+  every `penwatch.POLL_SECONDS` until the tray's `WM_DEVICECHANGE`. Two sightings
+  before a drive counts. VeraCrypt vestibules of LISTED drives are opened once
+  per connection (`penwatch.open_container(root, cwd=…)`), never for others;
+  a disconnection is recorded as «already asked» until a walk shows no vestibule
+  («Expulsar» must not bring the password up again).
+- **Pairs and interval stay the drive's**: `leer_servicio()` reads the raw TOML
+  (not `model.parse_config()`: the drive may be another version) and applies
+  `prefs.elegir()` — the pure core of `startup_defaults()`, one rule, not two.
+- **Installing** (`install/agente.py`): code and runtime each in a per-version
+  dir, swapped with `os.replace`, old ones pruned; imports penwatch's
+  `device_id`/`mode` and **uninstalls penwatch** (and says so); registers with
+  `penwatch.register_task()` (the task XML is now `penwatch.task_xml()` with the
+  command as a parameter) or an XDG autostart (`penwatch.autostart_desktop()`,
+  `Exec=` quoted per the Desktop Entry spec) — **not** systemd: notifications,
+  the question and VeraCrypt's password need the graphical session.
+  Uninstalling removes `equipo.DIR` and never touches a drive.
+- **Dependency rules:** the agent imports penwatch, never the reverse; penwatch
+  still imports nothing of the project (`test_install_agente.py` walks its AST).
+  `agente.py` is in `build_installer.DATOS_FICHEROS` but NOT in
+  `deploy.DEPLOY_FILES`: it goes to hosts, not devices.
+- **The window's watcher line** (`watch.resumen()`) asks `equipo` first: with an
+  agent installed it reports `agente` / `agente_nueva` and offers no button
+  (changing the mode from the window is the phase-5 mailbox). The wizard's
+  final step offers «Que lo atienda el agente de este equipo» instead of
+  installing penwatch.
+- **The wizard's first step is «¿Dónde?»** in every route (`PASOS_INSTALACION`,
+  both short routes, `PASOS_EQUIPO`), so «Dispositivo» keeps index 1 everywhere
+  and «Atrás» always lands where it says.
+
 ## Conflicts & failures (`conflicts.py`, `results.py`, `ui/conflict_editor.py`)
 
 **Why the suffix carries the side.** With rclone's defaults the loser is
@@ -1455,8 +1561,11 @@ keeps the target's existing header.
   `vestibulo.raiz_fisica()`, `cifrado.lanzar_expulsion()`,
   `crypto.sistema_de_ficheros()`, `crypto.bytes_escritos()`,
   `_leer_estado_bitlocker()`, `_preguntar_borrado()`, `pairing.construir()`,
-  `watch.resumen()`, `tk.mostrar()` / `confirmar_plan()`. Keep new ones in that
-  shape.
+  `watch.resumen()`, `tk.mostrar()` / `confirmar_plan()`, and for the agent
+  `agente.lanzar()` / `hay_pantalla()` / `avisar()` / `abrir_contenedor()` /
+  `diario()`, `avisos.enviar()`, `moderacion.energia()` / `red_medida()`,
+  `install.agente.conseguir_runtime()` / `lanzar()` / `autostart_file()`, and
+  `equipo.DIR`. Keep new ones in that shape.
 
 ## Documentation
 

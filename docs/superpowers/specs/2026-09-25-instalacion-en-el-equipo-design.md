@@ -1,6 +1,8 @@
 # Instalación en el equipo: prdrive residente
 
-Fecha: 2026-09-25 · Estado: **aceptada**, sin implementar · Versión objetivo: 0.4.0
+Fecha: 2026-09-25 · Estado: **aceptada**; fase 1 implementada (el agente sin
+bandeja, con unidades: `agente.py`, `common/planificador.py`, `install/agente.py`) ·
+Versión objetivo: 0.4.0
 
 ## Qué se pide
 

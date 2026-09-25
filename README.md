@@ -28,7 +28,7 @@ ningún servicio de terceros por medio.
 - [Configuración](#configuración) · [Modos](#modos) · [Filtros](#filtros)
 - [Cómo funciona bisync por dentro](#cómo-funciona-bisync-por-dentro) · [Conflictos](#conflictos)
 - [Versiones](#versiones)
-- [El servicio periódico](#el-servicio-periódico) · [El vigilante](#el-vigilante)
+- [El servicio periódico](#el-servicio-periódico) · [El vigilante](#el-vigilante) · [El agente residente](#el-agente-residente)
 - [Diagnóstico y reparación](#diagnóstico-y-reparación) · [Seguridad](#seguridad)
 - [Arquitectura](#arquitectura) · [Desarrollo](#desarrollo)
 
@@ -99,7 +99,12 @@ cd prdrive
 python prdrive-install.py
 ```
 
-El asistente son ocho pasos, y el orden tiene sus motivos: no se puede leer el
+Lo primero que pregunta es **dónde**: «En una unidad», que es lo de siempre y
+lo que se describe aquí, o «En este equipo», que instala [el agente
+residente](#el-agente-residente) en el ordenador para que atienda las unidades
+que se enchufan.
+
+Para una unidad, el asistente son ocho pasos, y el orden tiene sus motivos: no se puede leer el
 catálogo antes de saber con qué remoto se habla, ni elegir parejas antes de saber
 dónde va el dispositivo, ni inicializarlas antes de que exista el `sync.py` que
 las inicializa. Cada paso tiene su condición y **Siguiente** no se enciende hasta
@@ -849,6 +854,86 @@ estado y su registro viven en el equipo.
   en su sitio no se puede: el vigilante corre desde ella). Si el dispositivo no
   lleva Python para ese equipo, usa el del sistema y `penwatch status` lo dice.
 
+## El agente residente
+
+La otra forma de instalar: **prdrive en el ordenador**, como un proceso de tu
+usuario que arranca al iniciar sesión, corre en segundo plano y atiende las
+unidades prdrive que enchufas en ese equipo. Es el sucesor de
+[el vigilante](#el-vigilante): donde se instala, lo sustituye (el instalador
+pasa a su lista la unidad que vigilaba penwatch y lo desinstala, y lo dice).
+
+```bash
+python prdrive-install.py                      # el asistente → «En este equipo»
+python prdrive-install.py --instalar-agente    # lo mismo, sin ventanas
+python prdrive-install.py --desinstalar-agente # quitarlo (no toca ninguna unidad)
+```
+
+En esta versión es la instalación **«solo agente»**: atiende unidades, sin
+carpetas propias del equipo (eso, y el icono en la bandeja, llegan más adelante:
+el diseño completo está en
+`docs/superpowers/specs/2026-09-25-instalacion-en-el-equipo-design.md`).
+
+- **Vive fuera de toda unidad**, en `%LOCALAPPDATA%\prdrive\` o en
+  `~/.local/share/prdrive/`, con **su propio Python** (python-build-standalone,
+  descargado y comprobado como el de las unidades). Ahí no hay ningún secreto: ni
+  clave, ni `rclone.conf`, ni listados. Cada unidad trae los suyos.
+- **Cada unidad ejecuta su propio código.** Cada pasada es el `sync.py` de esa
+  unidad, lanzado como proceso aparte con el Python del agente y el directorio de
+  trabajo fuera de ella: una unidad de otra versión funciona, un rclone colgado no
+  tumba al agente, y entre pasadas no queda nada abierto en la unidad, así que se
+  puede expulsar.
+- **Una pasada a la vez en todo el equipo**, sea de la unidad que sea: ahorra
+  ancho de banda y evita que dos unidades con la misma pareja vayan contra la
+  misma carpeta del remoto a la vez.
+- **Nunca sincroniza una unidad sin preguntar.** La primera vez que se enchufa
+  una que no está en su lista, avisa («Se ha conectado PRDRIVE-2. ¿Atenderla en
+  este equipo?») y abre una ventanita con cuenta atrás (2 minutos por defecto).
+  **«Atender»** la añade en modo `daemon`; **«Ahora no»** —o no contestar— vale
+  solo para esa conexión: la próxima vez que la enchufes, vuelve a preguntar.
+  Antes del sí no se ejecuta nada de la unidad: solo se leen su id y su nombre.
+  Sin escritorio, cuenta como «Ahora no» al momento, y el diario dice cómo
+  atenderla: `python agente.py atender <id>`.
+- **Qué hace con cada unidad** es su modo: `ui` abre su ventana, `daemon` la
+  sincroniza en segundo plano, `sync` hace una pasada al enchufarla y `nada`, nada.
+  Las parejas y el intervalo siguen siendo **los del servicio de la unidad**, los
+  que se eligen en su ventana.
+- **Hace de servicio de la unidad con sus mismos ficheros** (`daemon.lock.json`,
+  `daemon.stop`, `ui.lock.json`), así que funciona con unidades de código viejo.
+  **El único cambio que se nota: abrir la ventana de la unidad ya no apaga el
+  servicio para siempre, lo pausa mientras está abierta.** Si desde la ventana
+  pulsas «Iniciar servicio», el agente se aparta: un servicio por unidad, el que
+  tenga el lock. Para pararlo todo, `python agente.py pausa` (y `sigue`).
+- **Se modera solo.** Con batería por debajo del 20 % o en una red de uso medido
+  no lanza nada; si un remoto no contesta, deja de lanzar pareja tras pareja
+  contra él y lo sondea cada 5 minutos; tras un fallo, cada pareja espera el
+  doble de su intervalo (hasta 4 horas), y a cero con la primera pasada buena.
+  «Sincronizar ahora» (`python agente.py pasada <id>`) se salta todo eso. Nunca
+  hace un `--resync` por su cuenta.
+- **Avisa con los avisos del sistema**, sin ventanas propias, y solo cuando una
+  pareja **empieza** a fallar o un remoto se queda sin conexión. En Linux por
+  D-Bus (un cliente propio, sin dependencias: `common/dbus.py`); en Windows con
+  el globo del área de notificación. Sin avisos, queda en su diario,
+  `agente.log`.
+- **Detecta las unidades** con el mismo recorrido que penwatch, pero en Linux se
+  despierta cuando cambian los montajes en vez de sondear cada 5 segundos. Las
+  unidades VeraCrypt de su lista se abren como con penwatch: VeraCrypt pide la
+  contraseña en su ventana, una vez por conexión.
+- **Se registra por usuario, sin administrador**: en Windows con una tarea
+  programada; en Linux con un autostart del escritorio (y no con systemd: los
+  avisos y la pregunta por una unidad nueva necesitan la sesión gráfica).
+
+```bash
+python agente.py status               # qué atiende y cómo (en su carpeta del equipo)
+python agente.py modo <id> daemon     # ui | daemon | sync | nada
+python agente.py pasada <id> [pareja] # sincronizar ahora
+python agente.py pausa | sigue
+```
+
+Esas órdenes no tocan nada por sí mismas: dejan la petición en el buzón del
+agente (`agente.pide`), y él escribe su configuración. **Sin probar todavía en un
+Windows real**: la tarea programada, los avisos (`Shell_NotifyIconW`), la batería
+y la red de uso medido (`INetworkCostManager`).
+
 ## Diagnóstico y reparación
 
 La ventana principal no grita: cuando hay algo que mirar lo dice en **una línea**
@@ -1007,6 +1092,7 @@ prdrive/
 ├── sync.py            el motor: monta la orden de rclone, la lanza, informa
 ├── runsync.py         la ventana y el servicio periódico
 ├── penwatch.py        el vigilante del equipo anfitrión
+├── agente.py          el agente residente: atiende las unidades desde el equipo
 ├── prdrive-install.py el asistente de instalación, y el --update
 ├── build_installer.py compila el ejecutable
 ├── VERSION            la versión, en un sitio: viaja al dispositivo
@@ -1024,6 +1110,11 @@ prdrive/
 │   ├── pins.py        las versiones fijadas de rclone y Python, y las plataformas
 │   ├── pairing.py     la conexión del dispositivo, empaquetada para un móvil
 │   ├── vestibulo.py   lo que un dispositivo VeraCrypt deja fuera del contenedor
+│   ├── planificador.py qué le toca al agente y cuándo: puro, sin reloj ni disco
+│   ├── equipo.py      dónde vive el agente en el equipo, su configuración y su buzón
+│   ├── moderacion.py  batería, red de uso medido, fallos de red
+│   ├── dbus.py        un cliente de D-Bus sin dependencias
+│   ├── avisos.py      los avisos del sistema, sin Tk
 │   └── store.py       los ficheros de estado en JSON del dispositivo
 ├── ui/                pantallas y su lógica
 │   ├── theme.py       la paleta, las fuentes y los estilos ttk. Sin ventana
@@ -1044,6 +1135,7 @@ prdrive/
 │   ├── crypto.py      VeraCrypt y BitLocker
 │   ├── traveler.py    dejar el VeraCrypt Portable (x64 y ARM64) en el volumen
 │   ├── vestibulo.py   los lanzadores de fuera del contenedor: abrir y expulsar
+│   ├── agente.py      poner el agente residente en el equipo, y quitarlo
 │   └── components.py  poner al día el rclone y el Python de un dispositivo
 ├── tests/             scripts sueltos, sin framework
 └── design/            las maquetas que implementa ui/
