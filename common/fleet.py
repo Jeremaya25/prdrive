@@ -113,6 +113,13 @@ class Dispositivo(NamedTuple):
     # Solo si `last_result` es un fallo: desde cuándo no consta una pasada
     # buena (`store.stamp()`), o `SIN_BUENA`.
     ultima_buena: str = ""
+    # Qué es, del `tipo=` de su fichero de control: vacío en una unidad (la nota
+    # de siempre, sin la clave) y `model.TIPO_EQUIPO` en la raíz de un equipo.
+    tipo: str = ""
+
+    @property
+    def es_equipo(self) -> bool:
+        return self.tipo == model.TIPO_EQUIPO
 
     @property
     def bien(self) -> bool:
@@ -210,6 +217,8 @@ def _tabla(disp: Dispositivo) -> dict[str, Any]:
         tabla["equipos_visto"] = [e.visto for e in disp.equipos]
     if disp.ultima_buena:
         tabla["ultima_buena"] = disp.ultima_buena
+    if disp.tipo:
+        tabla["tipo"] = disp.tipo
     return tabla
 
 
@@ -278,7 +287,8 @@ def parse(texto: str, device_id: str = "") -> Dispositivo | None:
         last_seen=cadena("last_seen"),
         last_result=cadena("last_result") or "desconocido",
         equipos=_equipos(datos.get("equipos"), datos.get("equipos_visto")),
-        ultima_buena=cadena("ultima_buena"))
+        ultima_buena=cadena("ultima_buena"),
+        tipo=cadena("tipo").strip().lower())
 
 
 # ---------------------------------------------------------------------------
@@ -458,7 +468,8 @@ def nota_de(app_dir: Path | str | None, como_se_llama: str,
                        last_seen=ahora, last_result=last_result,
                        equipos=_con_equipo(_equipos_previos(app_dir, identificador),
                                            equipo_actual(), ahora),
-                       ultima_buena=ultima_buena)
+                       ultima_buena=ultima_buena,
+                       tipo="" if not model.es_equipo(app_dir) else model.TIPO_EQUIPO)
 
 
 def nota(config: model.Config | None = None) -> Dispositivo | None:
@@ -482,7 +493,8 @@ def _sin_fecha(disp: Dispositivo) -> tuple:
     `ultima_buena` solo cambia cuando cambia `last_result`, así que no añade
     notas."""
     return (disp.id, disp.nombre, disp.version, disp.plataformas, disp.last_result,
-            disp.equipos[0].nombre if disp.equipos else "", disp.ultima_buena)
+            disp.equipos[0].nombre if disp.equipos else "", disp.ultima_buena,
+            disp.tipo)
 
 
 def hace_falta_publicar(disp: Dispositivo, ahora: datetime | None = None) -> bool:

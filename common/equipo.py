@@ -10,7 +10,8 @@ algo. Aquí no hay ningún secreto: ni clave, ni `rclone.conf`, ni listados.
 
     agente/<versión>/     la copia del código con la que corre el agente
     runtime/<stamp_id>/   su Python, uno por versión (como el de penwatch)
-    agente.json           QUÉ hace: unidades que atiende, su modo, plazos, moderación
+    agente.json           QUÉ hace: raíces que atiende (unidades y la del equipo),
+                          su modo, plazos, moderación
     instalacion.json      DÓNDE está: código, Python, cuándo se registró
     agente.lock.json      una sola instancia por usuario
     agente.pide           el buzón: lo que otros le piden al agente
@@ -109,9 +110,21 @@ def dir_runtimes() -> Path:
 
 @dataclass(frozen=True)
 class Unidad:
+    """Una raíz de la lista: una unidad que se enchufa, o —con `ruta`— la raíz de
+    este equipo, una carpeta del ordenador que está siempre en el mismo sitio.
+
+    Las dos van en la misma lista porque para el agente son lo mismo: una raíz
+    con su id, su modo y su propio código. Lo único que cambia es cómo se
+    encuentra: una unidad recorriendo los volúmenes, la raíz del equipo mirando
+    en su `ruta`, que se guarda y no se deduce del nombre de la carpeta."""
     id: str
     modo: str = MODO_AL_ATENDER
     nombre: str = ""
+    ruta: str = ""
+
+    @property
+    def es_raiz(self) -> bool:
+        return bool(self.ruta)
 
 
 @dataclass(frozen=True)
@@ -127,6 +140,11 @@ class Ajustes:
         unidades = dict(self.unidades)
         unidades[unidad.id] = unidad
         return replace(self, unidades=unidades)
+
+    @property
+    def raices(self) -> dict[str, Unidad]:
+        """Las raíces de este equipo: las de la lista con `ruta`."""
+        return {uid: u for uid, u in self.unidades.items() if u.es_raiz}
 
 
 def _numero(valor: Any, defecto: float, minimo: float, maximo: float) -> float:
@@ -150,7 +168,8 @@ def desde_dict(datos: Mapping[str, Any]) -> Ajustes:
                 continue
             modo = u.get("modo") if u.get("modo") in MODOS else MODO_AL_ATENDER
             nombre = u.get("nombre") if isinstance(u.get("nombre"), str) else ""
-            unidades[uid.strip()] = Unidad(uid.strip(), modo, nombre)
+            ruta = u.get("ruta") if isinstance(u.get("ruta"), str) else ""
+            unidades[uid.strip()] = Unidad(uid.strip(), modo, nombre, ruta.strip())
     m = datos.get("moderacion") if isinstance(datos.get("moderacion"), dict) else {}
     fabrica = Politica()
     politica = replace(
@@ -172,7 +191,8 @@ def desde_dict(datos: Mapping[str, Any]) -> Ajustes:
 
 def a_dict(aj: Ajustes) -> dict:
     return {
-        "unidades": {u.id: {"modo": u.modo, "nombre": u.nombre}
+        "unidades": {u.id: {"modo": u.modo, "nombre": u.nombre,
+                            **({"ruta": u.ruta} if u.ruta else {})}
                      for u in aj.unidades.values()},
         "espera_unidad_nueva": aj.espera_unidad_nueva,
         "moderacion": {"con_bateria": aj.politica.con_bateria,
@@ -247,6 +267,7 @@ PIDE_PASADA = "pasada"          # id, parejas (vacío: todas): «Sincronizar aho
 PIDE_PAUSA = "pausa"
 PIDE_SIGUE = "sigue"
 PIDE_PARAR = "parar"            # que termine (el instalador, antes de sustituirlo)
+PIDE_RAIZ = "añadir_raiz"       # id, ruta, nombre: la raíz de este equipo
 AJUSTES_PEDIBLES = ("espera_unidad_nueva",)
 
 

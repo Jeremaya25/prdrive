@@ -193,8 +193,9 @@ def stop_previous_daemon() -> str | None:
             # El agente residente (`agente.py`) no se va: suelta el dispositivo
             # mientras haya una ventana abierta y vuelve cuando se cierra.
             if info.get("agente"):
-                return ("El agente de este equipo deja de sincronizar este "
-                        "dispositivo mientras la ventana esté abierta.")
+                que = "esta carpeta" if model.es_equipo() else "este dispositivo"
+                return (f"El agente de este equipo deja de sincronizar {que} "
+                        f"mientras la ventana esté abierta.")
             return f"Servicio anterior (pid {pid}) detenido."
         time.sleep(0.3)
 

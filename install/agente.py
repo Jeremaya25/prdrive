@@ -11,8 +11,14 @@ sitio a penwatch, que es a quien sustituye.
     preparar()     el código en `agente/<versión>/` y el Python en `runtime/<id>/`
     candidatas()   qué unidades se le pueden dar ya: las de penwatch, las
                    enchufadas y las que ya tenga en su lista
-    activar()      su lista de unidades, penwatch fuera, registro, arranque
-    desinstalar()  todo lo anterior al revés; nunca toca una unidad
+    activar()      su lista de unidades (y la raíz del equipo, si la hay),
+                   penwatch fuera, registro, el acceso del menú, arranque
+    desinstalar()  todo lo anterior al revés; nunca toca una unidad ni la raíz
+
+La raíz del equipo (fase 2, `install/raiz_equipo.py`) la pone el asistente
+antes; aquí solo entra en la lista del agente, con su ruta, y trae consigo el
+acceso «prdrive» del menú del sistema, que abre su ventana (`agente.py abrir`):
+no lleva lanzadores ni Python propio.
 
 Tres reglas, las mismas que en el resto de `install/`:
 
@@ -29,6 +35,7 @@ Tres reglas, las mismas que en el resto de `install/`:
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -222,6 +229,8 @@ def candidatas() -> list[Candidata]:
     el aviso de «unidad nueva»."""
     salida: dict[str, Candidata] = {}
     for u in equipo.leer_ajustes().unidades.values():
+        if u.es_raiz:
+            continue            # la raíz del equipo no se enchufa: no es una unidad
         salida[u.id] = Candidata(u.id, u.nombre, u.modo, "ya en la lista del agente")
     pw = de_penwatch()
     if pw and pw[0] not in salida:
@@ -236,22 +245,32 @@ def candidatas() -> list[Candidata]:
     return list(salida.values())
 
 
-def aplicar_unidades(elegidas: dict[str, tuple[str, str]], espera: float) -> str:
-    """Lo que se ha elegido en «Unidades»: {id: (modo, nombre)} y el plazo.
+def aplicar_unidades(elegidas: dict[str, tuple[str, str]], espera: float,
+                     raiz: equipo.Unidad | None = None) -> str:
+    """Lo que se ha elegido en «Unidades»: {id: (modo, nombre)} y el plazo, y
+    la raíz del equipo que haya puesto el asistente (una `Unidad` con `ruta`).
 
     Sin `agente.json` se escribe de una vez. Con él, el agente ya tiene dueño de
     su configuración y se le pide por el buzón: una unidad nueva entra con su
-    modo (`PIDE_MODO`), y el plazo es un `PIDE_AJUSTE`."""
+    modo (`PIDE_MODO`), la raíz con `PIDE_RAIZ`, y el plazo es un `PIDE_AJUSTE`."""
     if not equipo.ajustes_json().exists():
         aj = equipo.Ajustes(espera_unidad_nueva=espera)
         for uid, (modo, nombre) in elegidas.items():
             aj = aj.con_unidad(equipo.Unidad(uid, modo, nombre))
+        if raiz is not None:
+            aj = aj.con_unidad(raiz)
         aj = equipo.desde_dict(equipo.a_dict(aj))          # saneado, como al leerlo
         if not equipo.guardar_ajustes(aj):
             raise InstallError(f"No he podido escribir {equipo.ajustes_json()}.")
         return f"Configuración del agente escrita en {equipo.ajustes_json()}."
     actuales = equipo.leer_ajustes()
     pedidas = 0
+    if raiz is not None:
+        ya = actuales.unidades.get(raiz.id)
+        if ya is None or ya.ruta != raiz.ruta or ya.modo != raiz.modo:
+            equipo.pedir({"pide": equipo.PIDE_RAIZ, "id": raiz.id, "ruta": raiz.ruta,
+                          "nombre": raiz.nombre, "modo": raiz.modo})
+            pedidas += 1
     for uid, (modo, nombre) in elegidas.items():
         ya = actuales.unidades.get(uid)
         if ya is None or ya.modo != modo:
@@ -264,6 +283,26 @@ def aplicar_unidades(elegidas: dict[str, tuple[str, str]], espera: float) -> str
         pedidas += 1
     return (f"El agente ya tenía su configuración: se le han pedido {pedidas} cambios."
             if pedidas else "El agente ya tenía esta configuración.")
+
+
+def raiz_pedida(uid: str | None) -> bool:
+    """¿Hay en el buzón del agente una petición sin leer de añadir esa raíz? Es
+    lo que la verificación del asistente acepta como «ya está en camino»."""
+    if not uid:
+        return False
+    try:
+        lineas = equipo.buzon().read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return False
+    for linea in lineas:
+        try:
+            p = json.loads(linea)
+        except ValueError:
+            continue
+        if isinstance(p, dict) and p.get("pide") == equipo.PIDE_RAIZ \
+                and p.get("id") == uid:
+            return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -324,6 +363,139 @@ def desregistrar() -> str:
     return "No había autostart."
 
 
+# ---------------------------------------------------------------------------
+# El acceso del menú: abrir la ventana de la raíz del equipo
+# ---------------------------------------------------------------------------
+
+def acceso_menu() -> Path:
+    """Dónde va el acceso «prdrive» del menú del sistema. Función para que los
+    tests lo lleven a un temporal, como `autostart_file()`."""
+    if IS_WIN:
+        base = os.environ.get("APPDATA") or (Path.home() / "AppData" / "Roaming")
+        return (Path(base) / "Microsoft" / "Windows" / "Start Menu" / "Programs"
+                / f"{APP_NAME}.lnk")
+    base = os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share")
+    return Path(base) / "applications" / f"{APP_NAME}.desktop"
+
+
+COMENTARIO_MENU = f"La ventana de {APP_NAME} de este equipo: sus parejas y su estado."
+
+
+def menu_desktop(args: list[str], icono: Path | None = None) -> str:
+    """La entrada del menú de aplicaciones (Desktop Entry Specification): visible,
+    a diferencia del autostart, con el `Exec=` escapado como aquel."""
+    return ("[Desktop Entry]\nType=Application\n"
+            f"Name={APP_NAME}\n"
+            f"Comment={COMENTARIO_MENU}\n"
+            f"Exec={penwatch.desktop_exec(args)}\n"
+            + (f"Icon={icono}\n" if icono else "")
+            + "Terminal=false\nCategories=Utility;\n")
+
+
+def crear_lnk(destino: Path, objetivo: str, argumentos: str, carpeta: str,
+              icono: str, descripcion: str) -> None:
+    """Un acceso directo `.lnk` de Windows, con `IShellLinkW` + `IPersistFile`.
+
+    COM por vtable, como `IShellItem2` en `install/crypto.py`: la biblioteca
+    estándar no trae COM y el proyecto no admite dependencias. Punto de
+    indirección: los tests lo sustituyen, y no está probado en un Windows real.
+
+    Huecos de la vtabla (detrás de los 3 de IUnknown), en el orden de
+    `ShObjIdl_core.h`: IShellLinkW 7 SetDescription, 9 SetWorkingDirectory,
+    11 SetArguments, 17 SetIconLocation, 20 SetPath; IPersistFile (detrás de
+    IPersist::GetClassID, el 3) 6 Save."""
+    import ctypes
+    from ctypes import POINTER, byref, c_int, c_long, c_void_p, c_wchar_p
+    from ctypes.wintypes import ULONG
+
+    class GUID(ctypes.Structure):
+        _fields_ = [("Data1", ctypes.c_ulong), ("Data2", ctypes.c_ushort),
+                    ("Data3", ctypes.c_ushort), ("Data4", ctypes.c_ubyte * 8)]
+
+    ole32 = ctypes.windll.ole32
+
+    def guid(texto: str) -> GUID:
+        g = GUID()
+        if ole32.CLSIDFromString(c_wchar_p(texto), byref(g)) < 0:
+            raise OSError(f"GUID ilegible: {texto}")
+        return g
+
+    def vtabla(objeto: c_void_p):
+        return ctypes.cast(objeto, POINTER(POINTER(c_void_p))).contents
+
+    def soltar(objeto: c_void_p) -> None:
+        ctypes.WINFUNCTYPE(ULONG, c_void_p)(vtabla(objeto)[2])(objeto)
+
+    def comprobar(hr: int, que: str) -> None:
+        if hr < 0:
+            raise OSError(f"{que}: 0x{hr & 0xFFFFFFFF:08X}")
+
+    clsid = guid("{00021401-0000-0000-C000-000000000046}")      # CLSID_ShellLink
+    iid_enlace = guid("{000214F9-0000-0000-C000-000000000046}")  # IID_IShellLinkW
+    iid_fichero = guid("{0000010B-0000-0000-C000-000000000046}") # IID_IPersistFile
+    hr_init = ole32.CoInitializeEx(None, 2)             # COINIT_APARTMENTTHREADED
+    try:
+        enlace = c_void_p()
+        comprobar(ole32.CoCreateInstance(byref(clsid), None, 1, byref(iid_enlace),
+                                         byref(enlace)), "CoCreateInstance(ShellLink)")
+        tabla = vtabla(enlace)
+        try:
+            texto = ctypes.WINFUNCTYPE(c_long, c_void_p, c_wchar_p)
+            for hueco, valor, que in ((20, objetivo, "SetPath"),
+                                      (11, argumentos, "SetArguments"),
+                                      (9, carpeta, "SetWorkingDirectory"),
+                                      (7, descripcion, "SetDescription")):
+                comprobar(texto(tabla[hueco])(enlace, valor), que)
+            comprobar(ctypes.WINFUNCTYPE(c_long, c_void_p, c_wchar_p, c_int)(
+                tabla[17])(enlace, icono, 0), "SetIconLocation")
+            fichero = c_void_p()
+            comprobar(ctypes.WINFUNCTYPE(c_long, c_void_p, POINTER(GUID),
+                                         POINTER(c_void_p))(tabla[0])(
+                enlace, byref(iid_fichero), byref(fichero)), "QueryInterface")
+            try:
+                comprobar(ctypes.WINFUNCTYPE(c_long, c_void_p, c_wchar_p, c_int)(
+                    vtabla(fichero)[6])(fichero, str(destino), 1), "IPersistFile::Save")
+            finally:
+                soltar(fichero)
+        finally:
+            soltar(enlace)
+    finally:
+        if hr_init >= 0:
+            ole32.CoUninitialize()
+
+
+def poner_menu(prep: Preparado) -> str:
+    """El acceso «prdrive» del menú, que abre la ventana de la raíz del equipo
+    con el Python del agente (`agente.py abrir`). Se reescribe en cada
+    instalación: apunta a la versión del código, que cambia."""
+    destino = acceso_menu()
+    icono = prep.codigo / "runsync.ico"
+    try:
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        if IS_WIN:
+            crear_lnk(destino, str(prep.python), f'"{prep.codigo / "agente.py"}" abrir',
+                      str(equipo.DIR), str(icono), COMENTARIO_MENU)
+        else:
+            destino.write_text(menu_desktop(
+                [str(prep.python), str(prep.codigo / "agente.py"), "abrir"],
+                icono if icono.is_file() else None), encoding="utf-8")
+    except (OSError, AttributeError) as e:
+        return (f"No he podido crear el acceso del menú ({e}): la ventana se abre con "
+                f"«{prep.python} {prep.codigo / 'agente.py'} abrir».")
+    return f"Acceso «{APP_NAME}» en el menú del sistema: abre la ventana de este equipo."
+
+
+def quitar_menu() -> str | None:
+    destino = acceso_menu()
+    if not destino.exists():
+        return None
+    try:
+        destino.unlink()
+    except OSError as e:
+        return f"No he podido borrar {destino}: {e}"
+    return f"Acceso del menú {destino} eliminado."
+
+
 def lanzar(args: list[str], **kwargs):
     """Punto de indirección: arrancar el agente sin esperar a la sesión siguiente."""
     return subprocess.Popen(args, **kwargs)
@@ -378,16 +550,21 @@ def podar(prep: Preparado) -> None:
 
 
 def activar(prep: Preparado, elegidas: dict[str, tuple[str, str]], espera: float,
-            arrancar_ya: bool = True) -> list[str]:
-    """Los pasos «Unidades» y «Arranque» de una vez: configuración, penwatch
-    fuera, registro, `instalacion.json`, versiones viejas fuera y arranque."""
+            arrancar_ya: bool = True, raiz: equipo.Unidad | None = None) -> list[str]:
+    """Los pasos «Unidades» y «Arranque» de una vez: configuración (con la raíz
+    del equipo, si la hay), penwatch fuera, registro, el acceso del menú,
+    `instalacion.json`, versiones viejas fuera y arranque."""
     msgs = []
     parado = parar_agente()
     if parado:
         msgs.append(parado)
-    msgs.append(aplicar_unidades(elegidas, espera))
+    msgs.append(aplicar_unidades(elegidas, espera, raiz))
     msgs += quitar_penwatch()
     msgs.append(registrar(prep))
+    # El acceso del menú solo tiene sentido con una raíz del equipo: es su
+    # ventana. Sin ella, cada unidad se abre desde sí misma.
+    if raiz is not None or equipo.leer_ajustes().raices:
+        msgs.append(poner_menu(prep))
     store.write_json(equipo.instalacion_json(), {
         "version": version(), "codigo": str(prep.codigo), "python": str(prep.python),
         "runtime": penwatch.stamp_id(prep.sello), "instalado": store.stamp()})
@@ -409,18 +586,28 @@ def instalar(elegidas: dict[str, tuple[str, str]] | None = None,
 
 
 def desinstalar() -> list[str]:
-    """Quita el registro, el agente y su Python. Nunca toca una unidad: lo que
-    tuviera a medias el agente sigue en ellas, como las dejó."""
+    """Quita el registro, el acceso del menú, el agente y su Python. Nunca toca
+    una unidad ni la raíz del equipo: lo que tuviera a medias el agente sigue en
+    ellas, como las dejó."""
     msgs = []
     parado = parar_agente()
     if parado:
         msgs.append(parado)
     msgs.append(desregistrar())
+    menu = quitar_menu()
+    if menu:
+        msgs.append(menu)
+    raices = [u.ruta for u in equipo.leer_ajustes().raices.values()]
     if equipo.DIR.exists():
         shutil.rmtree(equipo.DIR, ignore_errors=True)
         msgs.append(f"Eliminado {equipo.DIR}" if not equipo.DIR.exists()
                     else f"Queda algo en {equipo.DIR} (en uso); se puede borrar a mano.")
     msgs.append("Las unidades no se han tocado.")
+    for ruta in raices:
+        # Nunca se borra: tiene las carpetas del usuario, y la clave. Se dice
+        # dónde está para que no parezca que se ha ido con el agente.
+        msgs.append(f"La raíz de este equipo sigue en {ruta}, con sus carpetas y su "
+                    f".prdrive/ (la clave incluida): bórrala a mano si ya no la quieres.")
     return msgs
 
 

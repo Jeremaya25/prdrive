@@ -101,8 +101,8 @@ python prdrive-install.py
 
 Lo primero que pregunta es **dónde**: «En una unidad», que es lo de siempre y
 lo que se describe aquí, o «En este equipo», que instala [el agente
-residente](#el-agente-residente) en el ordenador para que atienda las unidades
-que se enchufan.
+residente](#el-agente-residente) en el ordenador para que sincronice una carpeta
+del propio equipo y atienda las unidades que se enchufan.
 
 Para una unidad, el asistente son ocho pasos, y el orden tiene sus motivos: no se puede leer el
 catálogo antes de saber con qué remoto se habla, ni elegir parejas antes de saber
@@ -868,10 +868,11 @@ python prdrive-install.py --instalar-agente    # lo mismo, sin ventanas
 python prdrive-install.py --desinstalar-agente # quitarlo (no toca ninguna unidad)
 ```
 
-En esta versión es la instalación **«solo agente»**: atiende unidades, sin
-carpetas propias del equipo (eso, y el icono en la bandeja, llegan más adelante:
-el diseño completo está en
-`docs/superpowers/specs/2026-09-25-instalacion-en-el-equipo-design.md`).
+Puede sincronizar además **una carpeta del propio equipo**, la raíz del equipo
+(abajo), o no tener ninguna y solo atender unidades: la instalación **«solo
+agente»**. El icono en la bandeja, la raíz cifrada con VeraCrypt y la ventana
+hablando con el agente llegan más adelante; el diseño completo está en
+`docs/superpowers/specs/2026-09-25-instalacion-en-el-equipo-design.md`.
 
 - **Vive fuera de toda unidad**, en `%LOCALAPPDATA%\prdrive\` o en
   `~/.local/share/prdrive/`, con **su propio Python** (python-build-standalone,
@@ -927,12 +928,63 @@ python agente.py status               # qué atiende y cómo (en su carpeta del 
 python agente.py modo <id> daemon     # ui | daemon | sync | nada
 python agente.py pasada <id> [pareja] # sincronizar ahora
 python agente.py pausa | sigue
+python agente.py abrir [id]           # la ventana de la raíz de este equipo
 ```
 
 Esas órdenes no tocan nada por sí mismas: dejan la petición en el buzón del
 agente (`agente.pide`), y él escribe su configuración. **Sin probar todavía en un
-Windows real**: la tarea programada, los avisos (`Shell_NotifyIconW`), la batería
-y la red de uso medido (`INetworkCostManager`).
+Windows real**: la tarea programada, los avisos (`Shell_NotifyIconW`), la batería,
+la red de uso medido (`INetworkCostManager`) y el acceso del menú Inicio
+(`IShellLinkW`).
+
+### La raíz del equipo
+
+Una carpeta del ordenador con `.prdrive/` dentro es, para el motor, un
+dispositivo más: `sync.py`, la ventana, «Reparación» y la flota no saben que no
+está en un USB. El asistente «En este equipo» pregunta en su paso **Carpeta**
+cuál:
+
+- **Una carpeta propia** (`~/PRDRIVE` por defecto, o la que escribas): prdrive y
+  tus parejas dentro, como la carpeta de Dropbox. Nada de fuera se toca.
+- **Tu carpeta personal** (`~`): sincroniza carpetas que ya tienes, como
+  `Documentos/Obsidian`, sin moverlas. A cambio, el límite es todo tu usuario.
+- **Ninguna**: solo atender unidades.
+
+Se elige al instalar y **no se cambia después**: mover la raíz deja cada pareja
+sin su carpeta (y `sync.py` se niega a sincronizar una línea base sin su carpeta
+local, que es lo que se quiere). Cambiarla es volver a instalar.
+
+Con raíz, el recorrido es el de una unidad con otra cabeza y otra cola:
+**Carpeta → Conexión → Comprobaciones → Instalación → Parejas → Inicialización →
+Unidades → Arranque → Verificación**. Lo que cambia:
+
+- **Qué lleva la raíz:** `.prdrive/` con el programa, rclone *solo para este
+  equipo*, la conexión y su clave, y un fichero de control con `tipo=equipo`. Sin
+  Python propio ni lanzadores: la sincroniza el agente con el suyo, y su ventana
+  se abre desde el acceso **«prdrive» del menú del sistema** (`python agente.py
+  abrir`).
+- **La clave queda en claro en el disco del equipo**, como en una unidad sin
+  cifrar. El asistente lo dice en ámbar y, en Windows, si el disco tiene BitLocker
+  activado. Es información, no una exigencia.
+- **En «Parejas» se ve dónde cae cada una en este equipo**, y se puede cambiar su
+  ruta solo aquí (la pareja queda como «modificada aquí»): con la carpeta
+  personal, una ruta pensada para una unidad (`sync-data/…`) caería suelta en tu
+  carpeta de usuario. Si la carpeta ya la sincroniza **OneDrive o Dropbox**, lo
+  dice en ámbar: dos programas sincronizando lo mismo se pisan los borrados. Se
+  sabe sin adivinar, por las variables de OneDrive y el `info.json` de Dropbox.
+- **La pareja de la raíz entera (`local = "."`) no vale en un equipo**, ni una que
+  salga de ella (`..`, una ruta absoluta): sería sincronizar el propio `.prdrive/`,
+  con la clave, y con la carpeta personal, todo tu usuario. Lo rechaza el propio
+  `sync.py` al leer el config, así que un TOML editado a mano tampoco se lo salta.
+- **El agente la atiende como a una unidad**, con el mismo contrato: si abres su
+  ventana, se pausa; si la carpeta desaparece (la has movido), avisa una vez y no
+  lanza nada hasta que vuelve.
+- **En la flota** su nota lleva `tipo = "equipo"`, y la ventana de la flota la
+  marca como «(equipo)». El paso «Unidades» puede ofrecer las unidades apuntadas
+  en la flota, pero entran como «preguntar al enchufarla»: nunca en la lista sin
+  que se diga que sí.
+- **Desinstalar el agente nunca borra la raíz**: tiene tus carpetas, y la clave.
+  Lo dice, con la ruta, para que la borres a mano si ya no la quieres.
 
 ## Diagnóstico y reparación
 
@@ -1092,7 +1144,7 @@ prdrive/
 ├── sync.py            el motor: monta la orden de rclone, la lanza, informa
 ├── runsync.py         la ventana y el servicio periódico
 ├── penwatch.py        el vigilante del equipo anfitrión
-├── agente.py          el agente residente: atiende las unidades desde el equipo
+├── agente.py          el agente residente: la raíz del equipo y las unidades
 ├── prdrive-install.py el asistente de instalación, y el --update
 ├── build_installer.py compila el ejecutable
 ├── VERSION            la versión, en un sitio: viaja al dispositivo
@@ -1136,6 +1188,7 @@ prdrive/
 │   ├── traveler.py    dejar el VeraCrypt Portable (x64 y ARM64) en el volumen
 │   ├── vestibulo.py   los lanzadores de fuera del contenedor: abrir y expulsar
 │   ├── agente.py      poner el agente residente en el equipo, y quitarlo
+│   ├── raiz_equipo.py la raíz del equipo: qué carpeta, instalarla, otros clientes
 │   └── components.py  poner al día el rclone y el Python de un dispositivo
 ├── tests/             scripts sueltos, sin framework
 └── design/            las maquetas que implementa ui/

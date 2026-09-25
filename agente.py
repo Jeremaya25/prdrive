@@ -15,6 +15,7 @@ por una unidad nueva son procesos hijos.
     python agente.py pasada ID [PAREJA…]  «Sincronizar ahora», sin moderación
     python agente.py pausa | sigue        dejar de lanzar pasadas, y volver
     python agente.py parar                que termine (lo usa el instalador)
+    python agente.py abrir [ID]           la ventana de la raíz de este equipo (o de esa)
 
 Las órdenes que no son `run` no hacen nada por sí mismas: dejan la petición en
 el buzón del agente (`equipo.pedir()`), que es quien escribe su configuración.
@@ -43,6 +44,12 @@ Cómo trabaja, vuelta a vuelta (`Agente.vuelta()`):
      el directorio de trabajo fuera de la raíz: cada raíz ejecuta su propio
      código, un rclone colgado no tumba al agente, y entre pasadas no queda nada
      abierto dentro de ninguna unidad, así que se puede expulsar.
+
+La raíz de ESTE equipo (una carpeta del ordenador con `.prdrive/` dentro, que
+pone el asistente «En este equipo») es una raíz más de la lista, con su `ruta`:
+se busca ahí en vez de recorriendo volúmenes, y todo lo demás es igual. Si falta
+—se ha movido o renombrado la carpeta—, se avisa una vez y no se lanza nada: una
+línea base sin su carpeta local es justo lo que `_bisync_preflight()` frena.
 
 Avisa con los avisos del sistema (`common/avisos.py`), no con Tk, y solo cuando
 una pareja EMPIEZA a fallar. Sin avisos, queda en su diario.
@@ -303,6 +310,8 @@ class Agente:
     retenido: str | None = None
     rafaga_hasta: float = -math.inf
     ultimo_estado: dict | None = None
+    # Las raíces del equipo que no están donde dice su `ruta`, ya avisadas.
+    ausentes: set[str] = field(default_factory=set)
     # Cuándo arrancó, en hora de verdad (`equipo.pedir()` sella con ella): un
     # «parar» de antes iba para el agente anterior.
     inicio: float = field(default_factory=time.time)
@@ -333,7 +342,12 @@ class Agente:
     def _recorrer(self, ahora: float) -> None:
         abiertas: dict[str, Path] = {}
         cerradas: dict[str, Path] = {}
-        for raiz in penwatch.candidate_roots({"extra_roots": list(self.ajustes.extra_roots)}):
+        # Las raíces del equipo, primero y por su ruta: son carpetas, no
+        # volúmenes, y el recorrido no las vería. Van como las raíces extra de
+        # penwatch, así que el recorrido sigue siendo uno.
+        propias = [u.ruta for u in self.ajustes.raices.values()]
+        for raiz in penwatch.candidate_roots(
+                {"extra_roots": propias + list(self.ajustes.extra_roots)}):
             try:
                 if (raiz / penwatch.CONTROL_FILE).is_file():
                     if not (raiz / penwatch.STRUCT_MARKER).is_file():
@@ -367,6 +381,24 @@ class Agente:
             if uid not in abiertas:
                 self._desconectar(uid, ahora, cerradas)
         self._vestibulos(cerradas, ahora)
+        self._raices_ausentes(abiertas)
+
+    def _raices_ausentes(self, abiertas: dict[str, Path]) -> None:
+        """Una raíz del equipo que no está en su ruta se dice UNA vez. No se
+        busca en otro sitio ni se recrea: mover la carpeta deja las líneas base
+        apuntando a lo que ya no está, y eso se arregla reinstalando."""
+        for uid, unidad in self.ajustes.raices.items():
+            if uid in abiertas:
+                if uid in self.ausentes:
+                    self.ausentes.discard(uid)
+                    diario(f"{unidad.nombre or uid[:8]}: la raíz vuelve a estar en "
+                           f"{unidad.ruta}")
+                continue
+            if uid not in self.ausentes:
+                self.ausentes.add(uid)
+                avisar(f"{unidad.nombre or APP_NAME}: no encuentro su carpeta",
+                       f"La raíz de este equipo tenía que estar en {unidad.ruta}. "
+                       f"Si la has movido, vuelve a ponerla ahí o reinstala.", True)
 
     def _conectar(self, uid: str, raiz: Path, ahora: float) -> None:
         unidad = self.ajustes.unidades.get(uid)
@@ -382,7 +414,8 @@ class Agente:
             return
         if unidad.nombre != nombre:
             self._guardar(self.ajustes.con_unidad(replace(unidad, nombre=nombre)))
-        diario(f"{nombre} conectada en {raiz} (modo {unidad.modo})")
+        diario(f"{nombre}: " + ("raíz de este equipo" if unidad.es_raiz else "conectada")
+               + f" en {raiz} (modo {unidad.modo})")
         if unidad.modo == equipo.UI:
             self._abrir_ventana(con)
 
@@ -406,7 +439,10 @@ class Agente:
             k: v for k, v in self.entorno.sin_conexion.items() if k[0] != uid})
         self.sospechas = {k: v for k, v in self.sospechas.items() if k[0] != uid}
         self.sin_red_avisado = {k for k in self.sin_red_avisado if k[0] != uid}
-        diario(f"{con.nombre} desconectada")
+        unidad = self.ajustes.unidades.get(uid)
+        diario(f"{con.nombre} " + ("ya no está en su carpeta"
+                                   if unidad is not None and unidad.es_raiz
+                                   else "desconectada"))
 
     def _vestibulos(self, cerradas: dict[str, Path], ahora: float) -> None:
         """Una unidad VeraCrypt de la lista, cerrada: se le pide a VeraCrypt que
@@ -740,8 +776,7 @@ class Agente:
             self.sospechas[(tarea.raiz, tarea.remoto)] = (tarea.pareja, antes)
             self.entorno = pl.sin_conexion(self.entorno, tarea.raiz, tarea.remoto, ahora)
         elif pl.empieza_a_fallar(antes, despues):
-            avisar(f"{con.nombre}: falla {tarea.pareja}",
-                   f"Abre {APP_NAME} desde la unidad para ver qué ha pasado.", True)
+            avisar(f"{con.nombre}: falla {tarea.pareja}", self._donde_mirar(con), True)
 
     def _fin_de_sonda(self, con: Conexion, remoto: str, rc: int, texto: str,
                       ahora: float) -> None:
@@ -758,8 +793,7 @@ class Agente:
                 diario(f"[{con.nombre}] {remoto} contesta: el fallo de {pareja} no era "
                        f"de la red")
                 if pl.empieza_a_fallar(antes, despues):
-                    avisar(f"{con.nombre}: falla {pareja}",
-                           f"Abre {APP_NAME} desde la unidad para ver qué ha pasado.", True)
+                    avisar(f"{con.nombre}: falla {pareja}", self._donde_mirar(con), True)
             elif clave in self.sin_red_avisado:
                 self.sin_red_avisado.discard(clave)
                 diario(f"[{con.nombre}] vuelve la conexión con {remoto}")
@@ -770,6 +804,12 @@ class Agente:
             self.sin_red_avisado.add(clave)
             avisar(f"{con.nombre}: sin conexión con {remoto}",
                    "Sus parejas esperan a que vuelva la red; no hace falta hacer nada.")
+
+    def _donde_mirar(self, con: Conexion) -> str:
+        unidad = self.ajustes.unidades.get(con.id)
+        if unidad is not None and unidad.es_raiz:
+            return f"Abre la ventana de {APP_NAME} en este equipo para ver qué ha pasado."
+        return f"Abre {APP_NAME} desde la unidad para ver qué ha pasado."
 
     def _apuntar_en_lock(self, con: Conexion, pareja: str, como: str, rc: int,
                          segundos: float) -> None:
@@ -829,6 +869,19 @@ class Agente:
             self._guardar(self.ajustes.con_unidad(
                 replace(unidad, modo=modo, nombre=unidad.nombre or nombre)))
             diario(f"{unidad.nombre or nombre or uid[:8]}: modo {modo}")
+        elif que == equipo.PIDE_RAIZ:
+            # Lo que pide el asistente vuelto a pasar con el agente instalado:
+            # la raíz que acaba de poner en este equipo.
+            ruta = p.get("ruta") if isinstance(p.get("ruta"), str) else ""
+            if not uid.strip() or not ruta.strip():
+                diario(f"añadir raíz {uid[:8]!r} en {ruta!r}: falta el id o la ruta")
+                return
+            nombre = p.get("nombre") if isinstance(p.get("nombre"), str) else ""
+            modo = p.get("modo") if p.get("modo") in equipo.MODOS else equipo.DAEMON
+            self._guardar(self.ajustes.con_unidad(
+                equipo.Unidad(uid, modo, nombre, ruta.strip())))
+            self.ausentes.discard(uid)
+            diario(f"raíz de este equipo añadida: {nombre or uid[:8]} en {ruta}")
         elif que == equipo.PIDE_AJUSTE:
             clave, valor = p.get("clave"), p.get("valor")
             if clave not in equipo.AJUSTES_PEDIBLES:
@@ -868,6 +921,7 @@ class Agente:
         for con in self.conexiones.values():
             unidad = self.ajustes.unidades.get(con.id)
             unidades.append({"id": con.id, "nombre": con.nombre, "raiz": str(con.raiz),
+                             "del_equipo": bool(unidad and unidad.es_raiz),
                              "modo": unidad.modo if unidad else None,
                              "atendida": con.lock is not None,
                              "motivo": con.motivo})
@@ -878,7 +932,9 @@ class Agente:
                 "sin_conexion": sorted(f"{self.conexiones[r].nombre}: {m}"
                                        for r, m in self.entorno.sin_conexion
                                        if r in self.conexiones),
-                "unidades": unidades}
+                "unidades": unidades,
+                "ausentes": sorted(self.ajustes.unidades[u].ruta for u in self.ausentes
+                                   if u in self.ajustes.unidades)}
 
     def _escribir_estado(self) -> None:
         resumen = self.resumen()
@@ -1015,8 +1071,12 @@ def cmd_status(_args: argparse.Namespace) -> int:
     print(f"Agente:         {'vivo (pid ' + str(vivo.get('pid')) + ')' if vivo else 'parado'}")
     print(f"En el equipo:   {equipo.DIR}")
     print(f"Unidad nueva:   se pregunta y se espera {aj.espera_unidad_nueva:g} s")
-    print("Unidades en la lista:" if aj.unidades else "Unidades en la lista: ninguna")
-    for u in aj.unidades.values():
+    for u in aj.raices.values():
+        print(f"Raíz del equipo: {u.nombre or '(sin nombre)'} en {u.ruta} ({u.modo}: "
+              f"{equipo.TEXTO_MODO[u.modo]})")
+    unidades = [u for u in aj.unidades.values() if not u.es_raiz]
+    print("Unidades en la lista:" if unidades else "Unidades en la lista: ninguna")
+    for u in unidades:
         print(f"  {u.nombre or '(sin nombre)':<20} {u.id[:12]}…  {u.modo}: "
               f"{equipo.TEXTO_MODO[u.modo]}")
     estado = equipo.leer_estado() if vivo else {}
@@ -1028,8 +1088,11 @@ def cmd_status(_args: argparse.Namespace) -> int:
         p = estado["pasada"]
         print(f"Ahora: {p.get('unidad')} · {p.get('pareja') or 'comprobando la conexión'}")
     for u in estado.get("unidades") or []:
-        print(f"Conectada: {u.get('nombre')} en {u.get('raiz')}"
+        print(f"{'Raíz' if u.get('del_equipo') else 'Conectada'}: {u.get('nombre')} "
+              f"en {u.get('raiz')}"
               + (f" — {u['motivo']}" if u.get("motivo") else " — atendida"))
+    for ruta in estado.get("ausentes") or []:
+        print(f"Falta la raíz del equipo: no está en {ruta}")
     for linea in estado.get("sin_conexion") or []:
         print(f"Sin conexión: {linea}")
     return 0
@@ -1058,6 +1121,56 @@ def cmd_parar(_args: argparse.Namespace) -> int:
         time.sleep(0.3)
     print("Agente detenido." if equipo.agente_vivo() is None else
           "El agente sigue terminando una pasada; parará al acabarla.")
+    return 0
+
+
+def raiz_para_abrir(uid: str | None) -> tuple[Path | None, str]:
+    """Qué raíz abre `agente.py abrir`: la de ese id (del equipo, o una unidad
+    conectada según el estado del agente), o la única raíz del equipo. (raíz,
+    por qué no) — la frase va vacía cuando hay raíz."""
+    aj = equipo.leer_ajustes()
+    if uid:
+        unidad = aj.unidades.get(uid)
+        if unidad is not None and unidad.es_raiz:
+            return Path(unidad.ruta), ""
+        for u in equipo.leer_estado().get("unidades") or []:
+            if u.get("id") == uid and u.get("raiz"):
+                return Path(u["raiz"]), ""
+        return None, f"No conozco ninguna raíz conectada con el id {uid}."
+    raices = list(aj.raices.values())
+    if not raices:
+        return None, ("Este equipo no tiene raíz propia: las unidades se abren desde "
+                      "ellas.")
+    if len(raices) > 1:
+        return None, ("Hay más de una raíz en este equipo; di cuál: "
+                      + ", ".join(f"{u.id} ({u.ruta})" for u in raices))
+    return Path(raices[0].ruta), ""
+
+
+def cmd_abrir(args: argparse.Namespace) -> int:
+    """La ventana de runsync de la raíz, con el Python del agente y el directorio
+    de trabajo fuera de ella: la raíz del equipo no lleva Python propio. Es lo
+    que lanza el acceso «prdrive» del menú del sistema."""
+    raiz, porque = raiz_para_abrir(args.id)
+    if raiz is None:
+        print(porque, file=sys.stderr)
+        return 1
+    if not presente(raiz):
+        print(f"No encuentro {APP_NAME} en {raiz}.", file=sys.stderr)
+        return 1
+    # El servicio no estorba (lo pausa la propia ventana al abrirse); otra
+    # ventana sí, y runsync ya se negaría: se dice aquí, sin lanzar nada.
+    ventana = penwatch._vivo_aqui(raiz, penwatch.UI_LOCK_REL)
+    if ventana is not None:
+        print(f"La ventana de {raiz} ya está abierta (pid {ventana.get('pid')}).")
+        return 0
+    try:
+        lanzar([python(ventana=True), str(app(raiz) / "runsync.py")],
+               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+               **_opciones_hijo(equipo.DIR, separado=True))
+    except OSError as e:
+        print(f"No he podido abrir la ventana: {e}", file=sys.stderr)
+        return 1
     return 0
 
 
@@ -1096,6 +1209,9 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("sigue", help="Volver a lanzarlas.").set_defaults(
         func=lambda a: _pedir({"pide": equipo.PIDE_SIGUE}))
     sub.add_parser("parar", help="Que el agente termine.").set_defaults(func=cmd_parar)
+    p = sub.add_parser("abrir", help="La ventana de la raíz de este equipo.")
+    p.add_argument("id", nargs="?")
+    p.set_defaults(func=cmd_abrir)
     p = sub.add_parser("pregunta", help=argparse.SUPPRESS)
     p.add_argument("--nombre", required=True)
     p.add_argument("--segundos", type=int, default=int(equipo.ESPERA_UNIDAD_NUEVA))

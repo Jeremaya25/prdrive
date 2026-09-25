@@ -59,7 +59,9 @@ class Resumen(NamedTuple):
       agente_nueva      el agente residente (`agente.py`) está instalado y este
                         dispositivo no está en su lista: preguntará al enchufarlo
       agente            el agente lo tiene en su lista, y `modo` es lo que hace
-                        (`common.equipo.MODOS`, que añade «nada»)"""
+                        (`common.equipo.MODOS`, que añade «nada»)
+      agente_raiz       no es una unidad: es la raíz de este equipo, y el agente
+                        la atiende con ese `modo`"""
     estado: str
     modo: str = ""
 
@@ -67,7 +69,7 @@ class Resumen(NamedTuple):
     def vigila_este(self) -> bool:
         """Hay un vigilante en este equipo que atiende a este dispositivo."""
         return (self.estado in ("desfasado", "instalado")
-                or (self.estado == "agente" and self.modo != "nada"))
+                or (self.estado in ("agente", "agente_raiz") and self.modo != "nada"))
 
 
 class Linea(NamedTuple):
@@ -187,7 +189,7 @@ def _agente() -> Resumen | None:
         return None
     if unidad is None:
         return Resumen("agente_nueva")
-    return Resumen("agente", unidad.modo)
+    return Resumen("agente_raiz" if unidad.es_raiz else "agente", unidad.modo)
 
 
 # Lo que hace el agente al enchufarlo, dicho en la misma línea.
@@ -213,6 +215,10 @@ def linea(res: Resumen) -> Linea | None:
     if res.estado == "agente":
         hace = _AGENTE_HACE.get(res.modo, res.modo)
         return Linea(hace[0].upper() + hace[1:], False, "")
+    if res.estado == "agente_raiz":
+        return Linea("Es la carpeta de este equipo: "
+                     + ("el agente no hace nada con ella." if res.modo == "nada" else
+                        "la sincroniza el agente, en segundo plano."), False, "")
     if res.estado == "sin_instalar":
         return Linea("En este equipo no se arranca nada al enchufarlo.",
                      False, "Configurar…")

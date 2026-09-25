@@ -1136,7 +1136,9 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         interval_var = tk.StringVar(value=vista.get("intervalo") or f"{d_interval:g}")
         ttk.Spinbox(repetir, from_=1, to=1440, textvariable=interval_var,
                     width=5, font=theme.fuente("mono")).grid(row=0, column=2)
-        ttk.Label(repetir, text="minutos, mientras el dispositivo siga puesto",
+        # La raíz de un equipo no se desenchufa: el servicio repite sin más.
+        ttk.Label(repetir, text="minutos" if model.es_equipo() else
+                  "minutos, mientras el dispositivo siga puesto",
                   style="Pista.TLabel").grid(row=0, column=3, sticky="w", padx=(10, 0))
         vista["casillas"], vista["intervalo_var"] = vars_by_name, interval_var
 

@@ -1,8 +1,9 @@
 # Instalación en el equipo: prdrive residente
 
-Fecha: 2026-09-25 · Estado: **aceptada**; fase 1 implementada (el agente sin
-bandeja, con unidades: `agente.py`, `common/planificador.py`, `install/agente.py`) ·
-Versión objetivo: 0.4.0
+Fecha: 2026-09-25 · Estado: **aceptada**; fases 1 y 2 implementadas (el agente
+sin bandeja, con unidades: `agente.py`, `common/planificador.py`,
+`install/agente.py`; la raíz del equipo sin cifrar: `install/raiz_equipo.py`,
+`ui/tk_equipo.py`) · Versión objetivo: 0.4.0
 
 ## Qué se pide
 
@@ -619,6 +620,9 @@ proyecto funcionando:
 2. **La raíz del equipo sin cifrar**: `tipo=equipo`, carpeta propia o
    personal, `PASOS_EQUIPO` sin «Cifrado», la ruta resuelta y el aviso de otro
    cliente de sincronización en «Parejas», y la raíz como una raíz atendida más.
+   Como hasta la fase 4 no hay «Abrir» en la bandeja, la ventana de la raíz se
+   abre con `agente.py abrir`, desde un acceso «prdrive» en el menú del sistema
+   que pone el instalador (el lanzador de la sección 5, adelantado).
 3. **Cifrado local con VeraCrypt**: el paso «Cifrado» del equipo,
    Desbloquear/Bloquear en el agente, `pedir_al_iniciar` elegido en el
    asistente, la letra fija, `raiz_fisica()` con raíces extra y «Expulsar» →

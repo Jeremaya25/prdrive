@@ -318,7 +318,7 @@ def plan_save(raw: Mapping[str, Any], edited: Mapping[str, Any],
     if aviso:
         plan.warnings.append(aviso)
 
-    model.parse_config(nuevo_raw)          # red final
+    model.parse_config(nuevo_raw, equipo=model.es_equipo())          # red final
     return plan
 
 
@@ -437,7 +437,15 @@ def ruta_local_relativa(elegida: Path | str) -> str:
             f"Esa carpeta no está dentro del dispositivo ({raiz}), y la ruta local "
             f"de una pareja tiene que serlo: es lo que hace que funcione en "
             f"cualquier equipo y con cualquier letra de unidad.") from None
-    return relativa.as_posix().strip("/") or "."
+    local = relativa.as_posix().strip("/") or "."
+    if local == "." and model.es_equipo():
+        # En una raíz del equipo la raíz entera no es una pareja (ver
+        # `model._local_de_equipo`): se dice al elegirla y no al guardar.
+        raise ConfigError(
+            f"Esa es la raíz entera ({raiz}), y en un equipo no se sincroniza: "
+            f"llevaría la carpeta del programa, con su clave. Elige una carpeta de "
+            f"dentro.")
+    return local
 
 
 def simular_args(raw: Mapping[str, Any], name: str) -> list[str]:
@@ -491,7 +499,7 @@ def plan_remove(raw: Mapping[str, Any], name: str, clean_state: bool = False) ->
         plan.consequences.append(
             "Quedará sin usar: " + ", ".join(p.name for p in huerfanos))
 
-    model.parse_config(nuevo_raw)
+    model.parse_config(nuevo_raw, equipo=model.es_equipo())
     return plan
 
 
@@ -525,7 +533,7 @@ def plan_enable(raw: Mapping[str, Any], cat: catalog.Catalog | None, name: str) 
     if aviso:
         plan.warnings.append(aviso)
 
-    model.parse_config(nuevo_raw)
+    model.parse_config(nuevo_raw, equipo=model.es_equipo())
     return plan
 
 
@@ -573,7 +581,7 @@ def plan_revert(raw: Mapping[str, Any], cat: catalog.Catalog | None, name: str) 
     if aviso:
         plan.warnings.append(aviso)
 
-    model.parse_config(nuevo_raw)
+    model.parse_config(nuevo_raw, equipo=model.es_equipo())
     return plan
 
 
@@ -592,7 +600,7 @@ def plan_defaults(raw: Mapping[str, Any], edited: Mapping[str, Any]) -> EditPlan
     cambiados = catalog.diff_keys(raw.get("defaults"), nuevo_raw["defaults"])
     if not cambiados:
         plan.consequences.append("No cambia nada en [defaults].")
-        model.parse_config(nuevo_raw)
+        model.parse_config(nuevo_raw, equipo=model.es_equipo())
         return plan
 
     plan.consequences.append("Cambia en [defaults]: " + ", ".join(cambiados) + ".")
@@ -615,7 +623,7 @@ def plan_defaults(raw: Mapping[str, Any], edited: Mapping[str, Any]) -> EditPlan
                                  "para todas las parejas que no lleven el suyo.")
     plan.warnings += _avisos_de_flags(raw, nuevo_raw)
 
-    model.parse_config(nuevo_raw)
+    model.parse_config(nuevo_raw, equipo=model.es_equipo())
     return plan
 
 

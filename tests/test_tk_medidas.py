@@ -281,6 +281,27 @@ try:
                     "está en su lista.",
                     "Autostart instalado en /home/alguien/.config/autostart/prdrive.desktop: "
                     "arranca al iniciar el escritorio.", "Agente arrancado."]
+    from install import raiz_equipo
+    from install import remote as iremote
+    from install import profile as iprofile
+    RAIZ_MEDIDAS = tmpdir("prdrive-medidas-raiz-") / ("mi carpeta de prdrive " * 3).strip()
+    (RAIZ_MEDIDAS / ".prdrive").mkdir(parents=True)
+    (RAIZ_MEDIDAS / ".prdrive" / "PRDRIVE").write_text("id=" + "e" * 32 + "\ntipo=equipo\n",
+                                                       encoding="utf-8")
+    raiz_equipo.carpetas_sincronizadas = lambda: [
+        ("OneDrive", RAIZ_MEDIDAS / "OneDrive - Empresa con un nombre largo")]
+    PERFIL_MEDIDAS = iprofile.from_form("nas", {"type": "sftp", "host": "nas.example"})
+    CATALOGO_MEDIDAS = iremote.parse_catalog(
+        '[defaults]\nremote = "nas"\n\n'
+        + "".join(f'[[pair]]\nname = "{n}"\nlocal = "{l}"\n'
+                  f'remote_path = "/datos/compartidos/de/toda/la/casa/{n}"\nmode = "{m}"\n\n'
+                  for n, l, m in (("todo", ".", "up-mirror"),
+                                  ("obsidian", "sync-data/obsidian", "bisync"),
+                                  ("empresa", "OneDrive - Empresa con un nombre largo/x",
+                                   "bisync"),
+                                  ("fotos", "sync-data/fotos del móvil", "bisync"),
+                                  ("musica", "sync-data/música", "down-mirror"),
+                                  ("docs", "Documentos/trabajo", "bisync"))))
     DISPOSITIVO_FALSO = tmpdir("prdrive-medidas-")
     (DISPOSITIVO_FALSO / ".prdrive").mkdir()
     (DISPOSITIVO_FALSO / ".prdrive" / "VERSION").write_text("0.0.1", encoding="utf-8")
@@ -340,7 +361,17 @@ try:
                                for i, modo in zip(range(6), equipo.MODOS * 2)}
         wiz.agente_origen = {k: "la vigilaba penwatch" for k in wiz.agente_unidades}
         wiz.agente_hecho = EQUIPO_HECHO
-        for paso in ("¿Dónde?", "Instalación", "Unidades", "Arranque", "Verificación"):
+        # Con raíz: una carpeta de ruta larga, ya instalada, y un catálogo de
+        # seis parejas en el que una es la raíz entera (error), otra un espejo y
+        # otra cae dentro de «OneDrive» (aviso de dos líneas).
+        wiz.equipo_ruta = str(RAIZ_MEDIDAS)
+        wiz.state.device_root = RAIZ_MEDIDAS
+        wiz.state.deployed, wiz.equipo_id = True, "e" * 32
+        wiz.perfil = PERFIL_MEDIDAS
+        wiz.rclone = object()
+        wiz.catalog = CATALOGO_MEDIDAS
+        for paso in ("¿Dónde?", "Carpeta", "Instalación", "Parejas y configuración",
+                     "Unidades", "Arranque", "Verificación"):
             wiz.indice = [t for t, _, _ in wiz.pasos].index(paso)
             wiz.repintar()
             c(f"{nombre}: «{paso}» (en este equipo) cabe", cabe(top), True)

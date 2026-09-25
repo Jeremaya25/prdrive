@@ -839,10 +839,25 @@ preparados, activados = [], []
 PREP = ia.Preparado(equipo.DIR / "agente" / "0.4.0", equipo.DIR / "runtime" / "x" / "py",
                     "sello")
 ia.preparar = lambda progreso=None: preparados.append(1) or PREP
-ia.activar = lambda prep, elegidas, espera: (activados.append((prep, elegidas, espera))
-                                             or ["Agente arrancado."])
+ia.activar = lambda prep, elegidas, espera, raiz=None: (
+    activados.append((prep, elegidas, espera, raiz)) or ["Agente arrancado."])
 ia.candidatas = lambda: [ia.Candidata("u" * 32, "PRDRIVE-2", equipo.DAEMON,
                                       "enchufada ahora")]
+from install import raiz_equipo  # noqa: E402
+
+raiz_equipo.carpetas_sincronizadas = lambda: []
+
+
+def elegir(wiz, texto: str) -> None:
+    next(w for w in widgets(wiz.cuerpo, ttk.Radiobutton)
+         if w.cget("text") == texto).invoke()
+
+
+def escribir(entrada, texto: str) -> None:
+    """Como teclearlo: borrar e insertar pasan por la validación de la caja."""
+    entrada.delete(0, "end")
+    entrada.insert(0, texto)
+
 
 casa = nuevo_asistente(None)
 en_paso(casa, 0)
@@ -850,22 +865,36 @@ c("el primer paso es «¿Dónde?»", tk_install.PASOS_INSTALACION[0][0], "¿Dón
 c("  sale elegido «En una unidad»: quien prepara un pendrive no nota nada",
   (casa.donde, casa.pasos is tk_install.PASOS_INSTALACION), ("unidad", True))
 c("  y se puede seguir sin tocar nada", str(casa.boton_siguiente.cget("state")), "normal")
-radio = next(w for w in widgets(casa.cuerpo, ttk.Radiobutton)
-             if w.cget("text") == "En este equipo")
-radio.invoke()
-c("«En este equipo» cambia la lista de pasos",
-  [t for t, _, _ in casa.pasos], ["¿Dónde?", "Instalación", "Unidades", "Arranque",
-                                  "Verificación"])
+elegir(casa, "En este equipo")
+c("«En este equipo» cambia la lista de pasos: con carpeta propia, de salida",
+  [t for t, _, _ in casa.pasos],
+  ["¿Dónde?", "Carpeta", "Conexión", "Comprobaciones", "Instalación",
+   "Parejas y configuración", "Inicialización", "Unidades", "Arranque", "Verificación"])
 c("  sin moverse de la primera pantalla", casa.indice, 0)
+casa.ir(+1)
+c("«Carpeta» propone la carpeta propia", casa.equipo_ruta,
+  str(raiz_equipo.carpeta_propia()))
+
+# --- «Ninguna»: la instalación «solo agente» ----------------------------------
+elegir(casa, "Ninguna: solo atender unidades")
+c("«Ninguna» es el recorrido corto, sin conexión ni parejas",
+  [t for t, _, _ in casa.pasos],
+  ["¿Dónde?", "Carpeta", "Instalación", "Unidades", "Arranque", "Verificación"])
+c("  sin moverse de «Carpeta», y se puede seguir",
+  (casa.indice, str(casa.boton_siguiente.cget("state"))), (1, "normal"))
+c("  y sin raíz", casa.state.device_root, None)
 casa.ir(+1)
 c("«Instalación»: Siguiente apagado hasta instalar",
   str(casa.boton_siguiente.cget("state")), "disabled")
-boton(casa.cuerpo, "Instalar el agente").invoke()
+boton(casa.cuerpo, "Instalar").invoke()
 c("  instalar prepara el código y el Python", (preparados, casa.agente_prep), ([1], PREP))
 c("  y enciende Siguiente", str(casa.boton_siguiente.cget("state")), "normal")
 casa.ir(+1)
 c("«Unidades» ofrece las que se saben sin red, con su modo",
   casa.agente_unidades, {"u" * 32: (equipo.DAEMON, "PRDRIVE-2")})
+c("  sin raíz no hay flota que leer",
+  [b for b in widgets(casa.cuerpo, ttk.Button)
+   if b.cget("text") == "Añadir las de la flota"], [])
 caja = next(iter(widgets(casa.cuerpo, ttk.Combobox)))
 caja.set(equipo.TEXTO_MODO[equipo.SYNC])
 caja.event_generate("<<ComboboxSelected>>")
@@ -874,8 +903,8 @@ casa.ir(+1)
 c("«Arranque»: Siguiente apagado hasta registrar",
   str(casa.boton_siguiente.cget("state")), "disabled")
 boton(casa.cuerpo, "Registrar y arrancar").invoke()
-c("  registrar activa con lo elegido",
-  activados, [(PREP, {"u" * 32: (equipo.SYNC, "PRDRIVE-2")}, 120.0)])
+c("  registrar activa con lo elegido, y sin raíz",
+  activados, [(PREP, {"u" * 32: (equipo.SYNC, "PRDRIVE-2")}, 120.0, None)])
 c("  y enciende Siguiente", str(casa.boton_siguiente.cget("state")), "normal")
 casa.ir(+1)
 c("«Verificación» se pinta y es la última",
@@ -883,12 +912,120 @@ c("«Verificación» se pinta y es la última",
 filas = {e: ok for e, ok, _ in tk_equipo.comprobaciones()}
 c("  y dice lo que falta (aquí nada se instaló de verdad)",
   (filas["Agente instalado"], filas["penwatch"]), (False, True))
+c("  sin raíz, no hay filas de raíz", "Fichero de control" in filas, False)
 casa.ir(-4)
-radio = next(w for w in widgets(casa.cuerpo, ttk.Radiobutton)
-             if w.cget("text") == "En una unidad")
-radio.invoke()
+c("de vuelta en «Carpeta»", casa.pasos[casa.indice][0], "Carpeta")
+casa.ir(-1)
+elegir(casa, "En una unidad")
 c("volver a «En una unidad» devuelve el recorrido de siempre",
   casa.pasos is tk_install.PASOS_INSTALACION, True)
 
+# --- con raíz: una carpeta propia del equipo -----------------------------------
+# Se instala de verdad en un temporal (rclone y Python de mentira, como arriba):
+# lo que se comprueba es que la raíz queda hecha y que el agente la recibe.
+preparados.clear()
+activados.clear()
+propia = nuevo_asistente(None)
+en_paso(propia, 0)
+elegir(propia, "En este equipo")
+propia.ir(+1)
+elegir(propia, "Una carpeta propia (recomendado)")
+entrada = next(iter(widgets(propia.cuerpo, ttk.Entry)))
+RAIZ_EQUIPO = tmpdir("prdrive-raiz-equipo-") / "PRDRIVE"
+escribir(entrada, "relativa/no")
+c("«Carpeta»: una ruta relativa no vale", (propia.state.device_root,
+                                           str(propia.boton_siguiente.cget("state"))),
+  (None, "disabled"))
+escribir(entrada, str(RAIZ_EQUIPO))
+c("  una que no existe sí, y fija la raíz",
+  (propia.state.device_root, propia.equipo_examen.estado,
+   str(propia.boton_siguiente.cget("state"))),
+  (RAIZ_EQUIPO, raiz_equipo.NUEVA, "normal"))
+
+# Conexión y catálogo como los dejaría «Comprobaciones».
+propia.perfil = PERFIL
+propia.rclone = object()
+propia.catalog = remote.parse_catalog(CATALOGO)
+en_paso(propia, [t for t, _, _ in propia.pasos].index("Instalación"))
+c("«Instalación» avisa de la clave en claro",
+  any("clave del remoto queda en claro" in w.cget("text")
+      for w in widgets(propia.cuerpo, ttk.Label)), True)
+boton(propia.cuerpo, "Instalar").invoke()
+from install import device  # noqa: E402
+c("  instala la raíz con tipo=equipo y el agente",
+  (device.control_tipo(RAIZ_EQUIPO), bool(propia.equipo_id), propia.agente_prep),
+  ("equipo", True, PREP))
+c("  con rclone para este equipo y sin lanzadores ni Python",
+  ((RAIZ_EQUIPO / "runsync.sh").exists(), (RAIZ_EQUIPO / ".prdrive" / "runtime").exists(),
+   (RAIZ_EQUIPO / ".prdrive" / "rclone.conf").is_file()), (False, False, True))
+c("  y enciende Siguiente", str(propia.boton_siguiente.cget("state")), "normal")
+
+from install import deploy  # noqa: E402
+publicadas = []
+deploy.publish_fleet_note = lambda rc, raiz, endpoint, timeout=45.0: (
+    publicadas.append(raiz) or None)
+propia.ir(+1)
+c("«Parejas»: Siguiente apagado hasta guardar",
+  str(propia.boton_siguiente.cget("state")), "disabled")
+cajas = list(widgets(propia.cuerpo, ttk.Entry))
+textos = [w.cget("text") for w in widgets(propia.cuerpo, ttk.Label)]
+c("  la pareja de la raíz entera se dice que no vale",
+  any("es la raíz entera" in t for t in textos), True)
+c("  y la otra, dónde cae en este equipo",
+  str(RAIZ_EQUIPO / "sync-data" / "docs") in textos, True)
+boton(propia.cuerpo, "Guardar el config y crear las carpetas").invoke()
+c("  con la de la raíz elegida no se guarda",
+  (propia.state.config_written, any("Arregla antes" in w.cget("text")
+                                    for w in widgets(propia.cuerpo, ttk.Label))),
+  (False, True))
+por_valor = {w.get(): w for w in cajas}
+escribir(por_valor["."], "copia")
+escribir(por_valor["sync-data/docs"], "Documentos/docs")
+boton(propia.cuerpo, "Guardar el config y crear las carpetas").invoke()
+import tomllib  # noqa: E402
+escrito = tomllib.loads((RAIZ_EQUIPO / ".prdrive" / "sync_config.toml").read_text(
+    encoding="utf-8"))
+c("  cambiar la ruta se escribe solo aquí",
+  {p["name"]: p["local"] for p in escrito["pair"]},
+  {"respaldo": "copia", "docs": "Documentos/docs"})
+c("  y crea las carpetas donde se ha dicho, y publica la nota",
+  ((RAIZ_EQUIPO / "Documentos" / "docs").is_dir(), publicadas), (True, [RAIZ_EQUIPO]))
+c("  y enciende Siguiente", str(propia.boton_siguiente.cget("state")), "normal")
+
+propia.ir(+1)
+lanzadas.clear()
+boton(propia.cuerpo, "Inicializar ahora").invoke()
+c("«Inicialización» usa el Python del agente: la raíz no lleva",
+  [cmd[:2] for _, cmd in lanzadas],
+  [[str(PREP.python), str(RAIZ_EQUIPO / ".prdrive" / "sync.py")]])
+propia.ir(+1)
+c("«Unidades» ofrece leer la flota, porque hay conexión",
+  len([b for b in widgets(propia.cuerpo, ttk.Button)
+       if b.cget("text") == "Añadir las de la flota"]), 1)
+flota = [fleet_disp for fleet_disp in []]
+from common import fleet  # noqa: E402
+raiz_equipo.de_la_flota = lambda rc, endpoint, timeout=45.0: [
+    fleet.Dispositivo("f" * 32, "PRDRIVE-azul", "0.3.0", (), "", "ok")]
+boton(propia.cuerpo, "Añadir las de la flota").invoke()
+c("  las de la flota entran como «preguntar», no en la lista",
+  propia.agente_unidades["f" * 32], (tk_equipo.PREGUNTAR, "PRDRIVE-azul"))
+propia.ir(+1)
+boton(propia.cuerpo, "Registrar y arrancar").invoke()
+prep_, elegidas_, _, raiz_dada = activados[-1]
+c("«Arranque» le da al agente la raíz, en modo daemon y con su ruta",
+  (raiz_dada.id, raiz_dada.modo, raiz_dada.ruta),
+  (propia.equipo_id, equipo.DAEMON, str(RAIZ_EQUIPO)))
+c("  y las de «preguntar» no entran en su lista", "f" * 32 in elegidas_, False)
+propia.ir(+1)
+filas = {e: ok for e, ok, _ in tk_equipo.comprobaciones(
+    RAIZ_EQUIPO, propia.state.selected, None)}
+c("«Verificación» mira la raíz: control, rclone y config bien",
+  (filas["Fichero de control"], filas["rclone.conf"], filas["El config se lee"]),
+  (True, True, True))
+c("  sin lanzador ni Python que pedirle", any(e.startswith("Lanzador") or
+                                              e.startswith("Python para")
+                                              for e in filas), False)
+c("  y dice que no está en la lista del agente (activar era de mentira)",
+  filas["En la lista del agente"], False)
 
 sys.exit(c.report())

@@ -87,6 +87,7 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 │   ├── traveler.py    the VeraCrypt Portable (x64 + ARM64) on the volume, swapped
 │   ├── vestibulo.py   the launchers outside the container: open, eject
 │   ├── agente.py      put the resident agent on this host, and take it off
+│   ├── raiz_equipo.py the host root: which folder, install it, other sync clients
 │   └── deploy.py      copy the code in, rclone + runtimes, launchers, config
 └── tests/             plain scripts; run_all.py runs them in separate processes
 ```
@@ -180,6 +181,7 @@ python runsync.py --doctor     # any other args pass straight through to sync.py
 python penwatch.py install|status|probe|uninstall   # the watcher, per machine/user
 python agente.py run|status                         # the resident agent (host copy)
 python agente.py atender ID | modo ID MODO | pasada ID [pareja…] | pausa | sigue | parar
+python agente.py abrir [ID]                         # the window of the host root
 
 python prdrive-install.py          # install wizard for a NEW device (Tk only)
 python prdrive-install.py --check  # rclone + connection + catalogue, then exit
@@ -1172,11 +1174,11 @@ script to `%LOCALAPPDATA%\prdriveWatch` / `~/.local/share/prdrive-watch`, writes
 
 ## The resident agent (`agente.py` + `common/planificador.py` + `install/agente.py`)
 
-Phase 1 of `docs/superpowers/specs/2026-09-25-instalacion-en-el-equipo-design.md`
-(read it before touching this): the **«solo agente»** install — no root of its
-own on the host, it attends the prdrive drives plugged into it. The later phases
-(the host root, VeraCrypt on the host, the trays, window ↔ agent mailboxes,
-«Actualizar») are specified there and not built yet.
+Phases 1 and 2 of `docs/superpowers/specs/2026-09-25-instalacion-en-el-equipo-design.md`
+(read it before touching this): the agent attends the prdrive drives plugged
+into the host and, optionally, **the host root** (below); with no root it is the
+**«solo agente»** install. The later phases (VeraCrypt on the host, the trays,
+window ↔ agent mailboxes, «Actualizar») are specified there and not built yet.
 
 - **Lives outside every root**, in `equipo.DIR` (`%LOCALAPPDATA%\prdrive\`,
   `~/.local/share/prdrive/`): `agente/<version>/` (agente.py, penwatch.py,
@@ -1259,8 +1261,64 @@ own on the host, it attends the prdrive drives plugged into it. The later phases
   final step offers «Que lo atienda el agente de este equipo» instead of
   installing penwatch.
 - **The wizard's first step is «¿Dónde?»** in every route (`PASOS_INSTALACION`,
-  both short routes, `PASOS_EQUIPO`), so «Dispositivo» keeps index 1 everywhere
-  and «Atrás» always lands where it says.
+  both short routes, `PASOS_EQUIPO`, `PASOS_EQUIPO_SOLO`), so «Dispositivo» and
+  «Carpeta» keep index 1 and «Atrás» always lands where it says.
+
+### The host root (`install/raiz_equipo.py` + `ui/tk_equipo.py`)
+
+A folder of the host with `.prdrive/` inside is, for the engine, one more device
+(`DEVICE_ROOT` is `.prdrive/`'s parent and nothing else). What differs, and must
+not be weakened:
+
+- **`tipo=equipo`** is a line of the control file (`device.ensure_control_file(
+  tipo=)`, which keeps the id when only the type changes); `model.tipo_raiz()` /
+  `es_equipo()` read it, an old penwatch only reads `id=`. The fleet note carries
+  `tipo = "equipo"` (drives write no key, so their notes are unchanged) and
+  `tk_fleet` labels it.
+- **No pair of the whole root, nor one leaving it** (`local = "."`, `..`, an
+  absolute path): it would sync `.prdrive/` with the key, and with the home
+  folder as root, all of `~`. `model.problema_local_equipo()` is the ONE rule;
+  `parse_config(equipo=True)` applies it and `load_config()` passes
+  `es_equipo()`. It is a keyword and not read inside `parse_config` because the
+  **catalogue** goes through the same function, and there a root pair is legit
+  for drives — so `catalog_editor`, `install/remote.py` and `config_file` stay
+  as they were, while `pair_editor` (every red-net call), `tk_pairs`,
+  `deploy.device_config(equipo=)`, `write_device_config()` (reads the root's
+  type) and `device._check_config` pass it. `pair_editor.ruta_local_relativa()`
+  also refuses the root when picking it.
+- **What the root carries:** code, rclone for THIS host only
+  (`raiz_equipo.plan_rclone()`, fetched before writing, #49), connection + key,
+  control file. **No runtime, no launchers, no guide**: the agent syncs it with
+  its Python, and its window opens from the menu entry «prdrive»
+  (`install/agente.poner_menu()`: an XDG `.desktop` on Linux, a Start Menu `.lnk`
+  via `IShellLinkW` on Windows — `crear_lnk()` is an indirection point,
+  **unverified on real Windows**) that runs `agente.py abrir`.
+  `device.verify_device()` skips the launcher and Python rows for such a root;
+  the wizard's initialisation passes the agent's console Python to
+  `deploy.resync_command(python=)`.
+- **Own folder (`~/PRDRIVE`) or home (`~`), chosen once.** `examinar()` refuses
+  a relative path, a file, a drive prdrive, anything crossing `equipo.DIR`
+  (except home, which always contains it); a root that already is `tipo=equipo`
+  is reinstalled keeping its id — the agent lists it by id.
+- **Other sync clients** (`carpetas_sincronizadas()`, an indirection point: the
+  `OneDrive*` env vars and Dropbox's `info.json`) are an amber warning in both
+  directions, never a block. The «Parejas» step shows each pair's resolved path
+  and lets its `local` be changed HERE only (`device_config(locales=)`: the pair
+  reads as «modificada aquí»).
+- **The agent** keeps the root in the same list as drives: `equipo.Unidad.ruta`
+  (non-empty = host root; `Ajustes.raices`). `_recorrer()` passes those paths as
+  penwatch extra roots, so the walk is still one. A root missing from its path is
+  notified ONCE (`Agente.ausentes`) and nothing runs until it is back — never
+  searched for or recreated. `PIDE_RAIZ` (`añadir_raiz`) is how a wizard re-run
+  with the agent installed adds it; `install.agente.aplicar_unidades(raiz=)`
+  writes it directly only when there is no `agente.json`. `candidatas()` never
+  offers a root as a drive. Uninstalling never deletes the root, and says where
+  it stays.
+- **The «Unidades» step** can add the fleet's drives (`raiz_equipo.de_la_flota()`:
+  one `rclone copy` of `devices/` to a temp dir, never `cat` of the folder, #48),
+  but as `tk_equipo.PREGUNTAR` — not in the list: a drive is never synced without
+  a yes.
+- `ui/watch.py` reports `agente_raiz` for a window opened on the host root.
 
 ## Conflicts & failures (`conflicts.py`, `results.py`, `ui/conflict_editor.py`)
 
@@ -1564,7 +1622,8 @@ keeps the target's existing header.
   `watch.resumen()`, `tk.mostrar()` / `confirmar_plan()`, and for the agent
   `agente.lanzar()` / `hay_pantalla()` / `avisar()` / `abrir_contenedor()` /
   `diario()`, `avisos.enviar()`, `moderacion.energia()` / `red_medida()`,
-  `install.agente.conseguir_runtime()` / `lanzar()` / `autostart_file()`, and
+  `install.agente.conseguir_runtime()` / `lanzar()` / `autostart_file()` /
+  `acceso_menu()` / `crear_lnk()`, `raiz_equipo.carpetas_sincronizadas()`, and
   `equipo.DIR`. Keep new ones in that shape.
 
 ## Documentation

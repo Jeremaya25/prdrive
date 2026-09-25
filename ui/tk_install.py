@@ -31,8 +31,8 @@ from pathlib import Path
 
 from common import update
 from install import InstallError, InstallState, __version__
-from install import (crypto, deploy, device, platforms, profile, rclone_bin,
-                     remote, traveler, vestibulo)
+from install import (crypto, deploy, device, platforms, profile, raiz_equipo,
+                     rclone_bin, remote, traveler, vestibulo)
 
 from . import icons, theme
 from .tk import TITLE, Visor, centrar, output_window, working
@@ -97,6 +97,14 @@ class Wizard:
         self.agente_origen: dict = {}
         self.agente_espera = 120.0
         self.agente_hecho: list[str] | None = None
+        # La raíz de este equipo (fase 2): qué forma, qué carpeta, qué id le ha
+        # tocado al instalarla, y el `local` de cada pareja que se cambie aquí.
+        # Sale la carpeta propia, que es lo recomendado.
+        self.equipo_forma = raiz_equipo.PROPIA
+        self.equipo_ruta = str(raiz_equipo.carpeta_propia())
+        self.equipo_examen: raiz_equipo.Examen | None = None
+        self.equipo_id = ""
+        self.equipo_locales: dict[str, str] = {}
 
     # --- navegación ---------------------------------------------------------
 
@@ -591,7 +599,7 @@ def _paso_comprobaciones(cuerpo, wiz) -> None:
             ("Catálogo", True, f"{perfil.endpoint_catalog} — "
                                f"{len(catalogo.names)} parejas: "
                                + ", ".join(catalogo.names)),
-            _fila_python(),
+            *_filas_python(wiz),
         ]
         # Si el catálogo manda otra cosa, se dice aquí y no al final: es el
         # momento en que todavía se puede volver atrás y cambiarlo.
@@ -612,7 +620,7 @@ def _paso_comprobaciones(cuerpo, wiz) -> None:
             ("rclone", True, str(wiz.binario)),
             ("Conexión", True, wiz.perfil.describe()),
             ("Catálogo", True, ", ".join(wiz.catalog.names)),
-            _fila_python(),
+            *_filas_python(wiz),
         ])
     else:
         pintar([("rclone", None, "sin comprobar"),
@@ -620,9 +628,13 @@ def _paso_comprobaciones(cuerpo, wiz) -> None:
                 ("Catálogo", None, "sin comprobar")])
 
 
-def _fila_python() -> tuple[str, bool, str]:
+def _filas_python(wiz) -> list[tuple[str, bool, str]]:
+    """Con qué Python arrancará lo instalado. En este equipo no se pregunta: la
+    raíz la sincroniza el agente con el suyo, que se instala en «Instalación»."""
+    if wiz.donde == "equipo":
+        return []
     chk = device.check_python()
-    return (chk.etiqueta, chk.ok, chk.detalle)
+    return [(chk.etiqueta, chk.ok, chk.detalle)]
 
 
 # ---------------------------------------------------------------------------
@@ -649,7 +661,7 @@ def _paso_donde(cuerpo, wiz) -> None:
 
     def elegir() -> None:
         wiz.donde = eleccion.get()
-        wiz.pasos = PASOS_EQUIPO if wiz.donde == "equipo" else PASOS_INSTALACION
+        wiz.pasos = pasos_equipo(wiz) if wiz.donde == "equipo" else PASOS_INSTALACION
         wiz.repintar()
 
     instalado = equipo.leer_instalacion().get("version") if equipo.instalado() else None
@@ -658,13 +670,12 @@ def _paso_donde(cuerpo, wiz) -> None:
          "Un pendrive o un disco que lleva prdrive y tus carpetas, y funciona en "
          "cualquier equipo donde lo enchufes. Lo de siempre."),
         ("equipo", "En este equipo",
-         "prdrive se queda en el ordenador, en segundo plano, y atiende las "
-         "unidades prdrive que enchufes aquí: las sincroniza sin que tengas que "
-         "abrir nada, y avisa si algo falla. Sustituye al arranque automático "
-         "(penwatch). En esta versión atiende unidades; las carpetas propias del "
-         "equipo llegarán más adelante."
-         + (f"\nYa está instalado (versión {instalado}): puedes ponerlo al día o "
-            f"cambiar sus unidades." if instalado else "")))
+         "prdrive se queda en el ordenador, en segundo plano: sincroniza una "
+         "carpeta de este equipo con tu remoto, si quieres, y atiende las "
+         "unidades prdrive que enchufes aquí, sin que tengas que abrir nada. "
+         "Avisa si algo falla, y sustituye al arranque automático (penwatch)."
+         + (f"\nYa está instalado (versión {instalado}): puedes ponerlo al día, "
+            f"añadirle una carpeta o cambiar sus unidades." if instalado else "")))
     for i, (valor, titulo, texto) in enumerate(opciones):
         tarjeta = ttk.Frame(cuerpo, style="Card.TFrame", padding=(14, 10))
         tarjeta.grid(row=1 + i, column=0, sticky="ew", pady=(0, 10))
@@ -1481,8 +1492,12 @@ def _paso_inicializar(cuerpo, wiz) -> None:
     resultado.grid(row=3, column=0, sticky="w", pady=(12, 0))
 
     def inicializar() -> None:
+        # La raíz de un equipo no lleva Python: la inicializa el del agente, el
+        # mismo que la sincronizará.
+        python = (raiz_equipo.python_consola(wiz.agente_prep.python)
+                  if wiz.donde == "equipo" and wiz.agente_prep is not None else None)
         try:
-            cmd = deploy.resync_command(wiz.device_root, bisync)
+            cmd = deploy.resync_command(wiz.device_root, bisync, python)
         except InstallError as e:
             wiz.error(str(e))
             return
@@ -1735,17 +1750,41 @@ def _ok_equipo(nombre: str):
     return condicion
 
 
-# «En este equipo»: el agente residente, solo atendiendo unidades (la instalación
-# «solo agente» del diseño). Sin conexión, ni catálogo, ni clave: cada unidad
-# trae las suyas. «Instalación» va antes que «Unidades» porque el paso de las
-# unidades escribe la configuración que leerá ESTE código.
+# «En este equipo», con una raíz en una carpeta del ordenador. Es el recorrido de
+# una unidad con otra cabeza y otra cola: «Carpeta» hace lo que «Dispositivo» y
+# «Cifrado» (fija `state.device_root`), y detrás de «Inicialización» van los del
+# agente. «Instalación» va antes de «Parejas» por lo mismo que en una unidad, y
+# además porque deja el Python del agente con el que se inicializa.
 PASOS_EQUIPO = [
     ("¿Dónde?", _paso_donde, _ok_donde),
+    ("Carpeta", _paso_equipo("paso_carpeta"), _ok_equipo("ok_carpeta")),
+    ("Conexión", _paso_conexion, _ok_conexion),
+    ("Comprobaciones", _paso_comprobaciones, _ok_comprobaciones),
+    ("Instalación", _paso_equipo("paso_instalar"), _ok_equipo("ok_instalar")),
+    ("Parejas y configuración", _paso_equipo("paso_parejas"), _ok_equipo("ok_parejas")),
+    ("Inicialización", _paso_inicializar, lambda w: True),
+    ("Unidades", _paso_equipo("paso_unidades"), lambda w: True),
+    ("Arranque", _paso_equipo("paso_arranque"), _ok_equipo("ok_arranque")),
+    ("Verificación", _paso_equipo("paso_final"), lambda w: True),
+]
+
+# «Ninguna: solo atender unidades» (la instalación «solo agente» de la fase 1).
+# Sin conexión, ni catálogo, ni clave: cada unidad trae las suyas. «Carpeta»
+# sigue en el índice 1 para que cambiar de respuesta no mueva al usuario de paso.
+PASOS_EQUIPO_SOLO = [
+    ("¿Dónde?", _paso_donde, _ok_donde),
+    ("Carpeta", _paso_equipo("paso_carpeta"), _ok_equipo("ok_carpeta")),
     ("Instalación", _paso_equipo("paso_instalar"), _ok_equipo("ok_instalar")),
     ("Unidades", _paso_equipo("paso_unidades"), lambda w: True),
     ("Arranque", _paso_equipo("paso_arranque"), _ok_equipo("ok_arranque")),
     ("Verificación", _paso_equipo("paso_final"), lambda w: True),
 ]
+
+
+def pasos_equipo(wiz) -> list:
+    """La lista de «En este equipo» que toca según lo elegido en «Carpeta»."""
+    return (PASOS_EQUIPO_SOLO if wiz.equipo_forma == raiz_equipo.NINGUNA
+            else PASOS_EQUIPO)
 
 
 if __name__ == "__main__":          # pragma: no cover - atajo para probar a mano
