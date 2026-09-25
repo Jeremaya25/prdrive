@@ -377,6 +377,66 @@ c("la ligera solo consigue rclone", pedido, [f"rclone {ANFITRION.clave}"])
 c("no deja Python propio", platforms.runtime_stamp(ligero, ANFITRION), None)
 c("y sí el .pyw, que usa el Python del equipo", (ligero / "runsync.pyw").is_file(), True)
 
+# --- #49: una plataforma que no llega no deja nada a medias --------------------
+# Lo reportado: con varias plataformas marcadas, el rclone de una que ni
+# siquiera era la de este equipo no llegaba, la instalación se abortaba después
+# de haber copiado el programa, y el mensaje no decía que bastaba con desmarcarla.
+# Ahora lo de fuera se consigue ANTES de copiar nada: el dispositivo no se toca,
+# el mensaje nombra la plataforma y el botón sigue ahí para reintentar.
+from install import InstallError  # noqa: E402
+
+otra_plat = next(p for p in pins.PLATAFORMAS if p.clave != ANFITRION.clave)
+rclone_para, working_para = rclone_bin.rclone_for, tk_install.working
+
+
+def rclone_sin_otra(plat, progreso=None, allow_download=True):
+    if plat.clave == otra_plat.clave:
+        raise InstallError(f"No he podido descargar rclone de https://x/{plat.clave}"
+                           f".zip: The read operation timed out")
+    return rclone_para(plat, progreso, allow_download)
+
+
+def working_de_verdad(parent, titulo, funcion, mensaje=""):
+    """Lo que hace `working()` con una excepción: devolverla, no dejarla escapar."""
+    try:
+        return True, funcion()
+    except Exception as e:                   # noqa: BLE001 — como el de verdad
+        return False, e
+
+
+rclone_bin.rclone_for, tk_install.working = rclone_sin_otra, working_de_verdad
+try:
+    a_medias = tmpdir()
+    wiz_f = nuevo_asistente(a_medias)
+    en_paso(wiz_f, PASO["Instalación"])
+    casilla(wiz_f.cuerpo, otra_plat).invoke()
+    c("la otra plataforma queda marcada", otra_plat.clave in wiz_f.matriz.elegidas, True)
+    boton(wiz_f.cuerpo, "Instalar el programa").invoke()
+    c("si falta una plataforma, no se copia el programa",
+      (a_medias / deploy.APP_SUBDIR).exists(), False)
+    c("ni los lanzadores", (a_medias / "runsync.bat").exists(), False)
+    textos = " ".join(str(w.cget("text")) for w in widgets(wiz_f.cuerpo, ttk.Label))
+    c.contains("el error nombra la plataforma que falta", textos, otra_plat.nombre)
+    c.contains("y dice que se puede desmarcar", textos, f"desmarca {otra_plat.nombre}")
+    c("no cuenta como instalado", wiz_f.state.deployed, False)
+    c("«Siguiente» sigue apagado", str(wiz_f.boton_siguiente.cget("state")), "disabled")
+    c("y el botón sigue ahí para reintentar",
+      str(boton(wiz_f.cuerpo, "Instalar el programa").cget("state")), "normal")
+
+    # Desmarcarla —no la lleva todavía, así que no pregunta nada— y reintentar.
+    preguntas.clear()
+    casilla(wiz_f.cuerpo, otra_plat).invoke()
+    c("desmarcar una que no lleva no pregunta", preguntas, [])
+    boton(wiz_f.cuerpo, "Instalar el programa").invoke()
+    c("desmarcándola, se instala",
+      (deploy.app_dir(a_medias) / "runsync.py").is_file(), True)
+    c("con lo demás", platforms.provisioned(a_medias).get(ANFITRION.clave),
+      platforms.Instalada(True, True))
+    c("y sin ella", platforms.provisioned(a_medias).get(otra_plat.clave), None)
+    c("ya se puede seguir", str(wiz_f.boton_siguiente.cget("state")), "normal")
+finally:
+    rclone_bin.rclone_for, tk_install.working = rclone_para, working_para
+
 # --- quitar una plataforma que el dispositivo ya lleva -------------------------
 # `limpio` ya lleva la de este equipo. Desmarcarla pregunta; lo que se conteste
 # decide si entra en el plan como borrado.

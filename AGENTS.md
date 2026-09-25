@@ -66,6 +66,7 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 │   ├── profile.py     the connection: where it comes from, how it is written
 │   ├── rclone_bin.py  get an rclone (any platform's), verified
 │   ├── runtime_bin.py get a python-build-standalone runtime, verified; extract
+│   ├── descarga.py    what both share: retry the network, read a SHA256SUMS
 │   ├── platforms.py   host, what the device carries, the step-5 Matriz/Plan
 │   ├── components.py  fetch the pinned component, swap it in
 │   ├── remote.py      the ephemeral rclone.conf and the pair catalogue
@@ -816,6 +817,15 @@ absent), per-row sizes and a live total vs free space.
   interpreter is static), never creates symlinks (exFAT) but materialises
   `bin/python3` by writing its target under that name, and writes the
   `PRDRIVE-RUNTIME` stamp **last** (no stamp = not installed).
+- **Everything is fetched before the device is touched (#49).**
+  `deploy.conseguir_plataformas(plan)` gets every rclone and runtime into the
+  host cache, verified, and `apply_platforms(…, conseguido=)` only then deletes
+  and copies; step 5 calls it **before** `deploy_code()`. It stops at the first
+  platform that fails (each file was already retried three times, so trying the
+  rest is minutes more behind a bare bar) and raises one `InstallError` that
+  names it, says the device is untouched and that it can be unticked. The
+  `wiz.revisar()` in step 5's (and «Plataformas»') error branch is what keeps
+  the button in view under that dozen-line message (`test_tk_medidas`).
 - `deploy.install_runtime()` extracts beside and **swaps**; if the old dir can't
   be moved aside (Windows: a `pythonw.exe` running from it) it fails whole and
   the old runtime stays. `remove_platform()` renames before deleting for the same
@@ -889,6 +899,23 @@ alias, which moves. That defends against a truncated transfer, a proxy or a stal
 cache, not against a compromised rclone.org. `rclone_for(plat)` keeps the old
 lookup chain (checkout, next to the exe, PATH, cache) for **this** host so
 offline provisioning still works.
+
+`install/descarga.py` is what both downloaders share, and what a third (a
+VeraCrypt one) should use: `con_reintentos()` retries **only** what another
+attempt might not have (timeouts, resets, `IncompleteRead`, 5xx/408/429) three
+times with growing waits (`ESPERAS`, via the indirection point `esperar()`);
+never a 404, a certificate that fails verification, or a **hash mismatch** —
+`fetch()` returns the whole body or raises, so a complete file that is not the
+published one is something else answering, and retrying until one matches is
+how not to notice. **Placing it by hand means the official ZIP, not the binary**
+(rclone publishes sums of zips): `rclone_bin.a_mano()` / `runtime_bin.a_mano()`
+name the exact files and folder (`rclone_bin.zip_a_mano()`), `adoptar_zip()` /
+`adoptar()` verify it like a download and only then extract/record its sum, and
+`descarga.sumas()` reads a `SHA256SUMS` left beside it **before** the network —
+that is what makes it work offline, and it defends against exactly what the
+network copy does, since both come from the same server. A hand-placed file that
+does not match is reported and **not** downloaded over. A loose binary is still
+accepted only for this host, and still unstamped.
 
 ## Mount watcher (`penwatch.py`)
 
@@ -1206,7 +1233,8 @@ keeps the target's existing header.
 - Everything that touches the network, a real device or the desktop is a
   **module-level indirection point so every test can replace it**: `catalog.run()`
   (which `fleet` and `remote_picker` go through), `update.fetch()`,
-  `rclone_bin.fetch()`, `conflicts.recorrer()`, `conflict_editor.mover()` /
+  `rclone_bin.fetch()` / `runtime_bin.fetch()`, `descarga.esperar()`,
+  `conflicts.recorrer()`, `conflict_editor.mover()` /
   `borrar()`, `ui.abrir()`, `runsync.notificar_fallo()`,
   `components.rclone_en_uso()` / `runtime_en_uso()`, `_win_volumes()`,
   `vestibulo.raiz_fisica()`, `cifrado.lanzar_expulsion()`,

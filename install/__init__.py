@@ -11,6 +11,7 @@ probar sin pantalla y sin dispositivo.
     profile     la conexión con el remoto: de dónde sale y cómo se escribe
     rclone_bin  conseguir rclone, el de este equipo o el de otra plataforma
     runtime_bin conseguir el Python que viaja en el dispositivo, y extraerlo
+    descarga    lo que comparten los dos: reintentar la red, leer un SHA256SUMS
     platforms   para qué equipos va a funcionar: la lista del paso 5
     components  poner al día el rclone y el Python que ya lleva un dispositivo
     remote      el rclone.conf efímero y el catálogo de parejas

@@ -975,8 +975,16 @@ def _paso_instalar(cuerpo, wiz) -> None:
         plan = wiz.matriz.plan()
 
         def trabajo():
+            # Primero lo que viene de fuera, comprobado y a la caché de este
+            # equipo: si falta algo —el rclone de otra plataforma que no
+            # llega—, el dispositivo sigue sin tocar y el reintento solo baja
+            # lo que faltaba. Antes se copiaba el programa y luego se
+            # descargaba, y un fallo dejaba el código nuevo sin lanzadores ni
+            # rclone.conf (#49).
+            conseguido = deploy.conseguir_plataformas(plan)
             escrito_ = deploy.deploy_code(raiz)
-            nuevos, borrados = deploy.apply_platforms(raiz, plan)
+            nuevos, borrados = deploy.apply_platforms(raiz, plan,
+                                                      conseguido=conseguido)
             escrito_ += nuevos
             escrito_ += deploy.write_launchers(raiz, plan.completa)
             guia = deploy.write_guide(raiz)
@@ -1000,6 +1008,12 @@ def _paso_instalar(cuerpo, wiz) -> None:
         if not ok:
             estado_lbl.configure(text=f"No se ha podido instalar: {res}",
                                  foreground=theme.PELIGRO)
+            # El mensaje puede ocupar una docena de líneas —qué plataforma
+            # falló y cómo ponerla a mano— y hace crecer el paso sin cambiar de
+            # paso. Sin reencajar, «Instalar el programa» quedaba por debajo
+            # del borde, fuera de la vista aunque en la pantalla sobrara sitio,
+            # justo cuando hay que volver a pulsarlo (#49).
+            wiz.revisar()
             return
         escrito_, borrados, ident = res
         wiz.state.deployed = True
@@ -1210,6 +1224,7 @@ def _paso_plataformas(cuerpo, wiz) -> None:
         if not ok:
             estado_lbl.configure(text=f"No se ha podido aplicar: {res}",
                                  foreground=theme.PELIGRO)
+            wiz.revisar()           # lo mismo que en «Instalación» (#49)
             return
         nuevos, borrados, _ = res
         wiz.rehacer_matriz(raiz)
@@ -1218,6 +1233,7 @@ def _paso_plataformas(cuerpo, wiz) -> None:
             text=(f"Hecho: {len(nuevos)} elementos puestos"
                   + (f", {len(borrados)} borrados" if borrados else "")
                   + ". Ya puedes cerrar."), foreground=theme.OK)
+        wiz.revisar()
 
     boton = ttk.Button(cuerpo, text="Aplicar", style="Primary.TButton",
                        padding=(14, 8), command=aplicar)

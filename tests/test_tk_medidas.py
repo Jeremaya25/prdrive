@@ -335,6 +335,91 @@ try:
     finally:
         device.list_volumes = volumenes_real
 
+    # --- #49: el error de una descarga no se come el botón ----------------------
+    #
+    # Reportado: tras un fallo al descargar el rclone de otra plataforma, el
+    # mensaje —varias líneas— hacía crecer el paso, y como la rama de error no
+    # volvía a encajar el visor, «Instalar el programa» quedaba por debajo del
+    # borde, fuera de la vista: justo el botón que hay que pulsar para
+    # reintentar. Donde hay sitio, la respuesta es crecer, y eso es lo que se
+    # mira en la 1080p; en las pantallas pequeñas, que nada quede recortado sin
+    # barra que lo enseñe.
+    #
+    # El mensaje es el de verdad, el que sale de `deploy.conseguir_plataformas()`
+    # cuando la red no contesta ni al tercer intento: la plataforma, la URL, cómo
+    # ponerlo a mano con sus rutas y cómo seguir sin ella. Sin red y sin dormir.
+    from install import (InstallError, deploy, descarga, platforms,  # noqa: E402
+                         rclone_bin)
+
+    LARM = pins.plataforma("linux-arm64")
+    reales_err = (rclone_bin.fetch, rclone_bin.cache_dir, rclone_bin.find_rclone,
+                  descarga.esperar, tk_install.working)
+    try:
+        # Como en el reporte: el SHA256SUMS llega, y el zip de Linux ARM64 no.
+        sumas_err = (f"{'0' * 64}  "
+                     f"{rclone_bin.zip_name(pins.RCLONE_VERSION, LARM)}\n").encode()
+        rclone_bin.fetch = lambda url, timeout=None: (
+            sumas_err if url.endswith("SHA256SUMS") else (_ for _ in ()).throw(
+                TimeoutError("The read operation timed out")))
+        cache_err = tmpdir("prdrive-medidas-cache-")
+        rclone_bin.cache_dir = lambda plat=None: cache_err
+        rclone_bin.find_rclone = lambda: None
+        descarga.esperar = lambda segundos: None
+        try:
+            deploy.conseguir_plataformas(platforms.Plan([LARM], [LARM], [], True))
+            ERROR_LARGO = InstallError("no ha fallado")
+        except InstallError as e:
+            ERROR_LARGO = e
+        c.contains("el error de la prueba es el de una descarga que no llega",
+                   str(ERROR_LARGO), "desmarca Linux ARM64")
+        tk_install.working = lambda parent, titulo, funcion, mensaje="": (
+            False, ERROR_LARGO)
+
+        def boton_de(wiz, texto):
+            pila = [wiz.cuerpo]
+            while pila:
+                w = pila.pop()
+                pila += list(w.winfo_children())
+                if isinstance(w, ttk.Button) and w.cget("text") == texto:
+                    return w
+            return None
+
+        for nombre, ancho, alto, escala in (("1080p", 1920, 1080, 1.3333),
+                                            ("1080p al 200 %", 1920, 1080, 2.6667),
+                                            ("portátil 1366x768", 1366, 768, 1.3333),
+                                            ("1024x600", 1024, 600, 1.3333)):
+            for paso, pasos, texto in (
+                    ("Instalación", tk_install.PASOS_INSTALACION, "Instalar el programa"),
+                    ("Plataformas", tk_install.PASOS_PLATAFORMAS, "Aplicar")):
+                pantalla(ancho, alto, escala)
+                top = tk.Toplevel(raiz)
+                top.withdraw()
+                wiz = tk_install.build(top)
+                destino_err = tmpdir("prdrive-medidas-err-")
+                wiz.state.device = wiz.state.device_root = destino_err
+                # Las cuatro marcadas, como en el reporte: la lista más alta.
+                wiz.matriz_para(destino_err).elegidas = {p.clave for p in pins.PLATAFORMAS}
+                wiz.pasos = pasos
+                wiz.indice = [t for t, _, _ in pasos].index(paso)
+                wiz.repintar()
+                top.update_idletasks()
+                boton_err = boton_de(wiz, texto)
+                boton_err.invoke()
+                top.update_idletasks()
+                c(f"{nombre}: tras el error, «{paso}» no queda recortado",
+                  recortado(wiz.visor), False)
+                c(f"{nombre}: y la ventana sigue cabiendo", cabe(top), True)
+                if (ancho, alto, escala) == (1920, 1080, 1.3333):
+                    # Donde sobra sitio, crecer: el botón, a la vista sin
+                    # desplazar nada, que es lo que se echaba en falta.
+                    abajo = boton_err.winfo_y() + boton_err.winfo_reqheight()
+                    c(f"{nombre}: «{texto}» se ve entero tras el error",
+                      abajo <= wiz.visor._medida()[1], True)
+                top.destroy()
+    finally:
+        (rclone_bin.fetch, rclone_bin.cache_dir, rclone_bin.find_rclone,
+         descarga.esperar, tk_install.working) = reales_err
+
     # El caso que se reportó era el formulario de «Conexión»: en una pantalla
     # normal tiene que verse entero, no desplazarse. Una barra ahí sería tapar el
     # fallo, no arreglarlo. En una 4K, donde sobra sitio, igual. Se busca por

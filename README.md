@@ -150,6 +150,19 @@ Tk 9, y la interfaz está hecha y medida con Tk 8.6.
 **Desmarcar una plataforma que el dispositivo ya lleva pregunta si se borra.** Si
 dices que no, sus binarios se quedan donde están y simplemente no se reinstalan.
 
+**Si una descarga falla.** Cada fichero se intenta tres veces, con esperas
+crecientes, ante un corte o un tiempo de espera. Si ni así llega, **no se ha
+tocado el dispositivo**: todo lo de fuera se consigue antes de copiar nada, y lo
+ya descargado se queda en la caché del equipo (`%LOCALAPPDATA%\prdrive-install\`,
+o el temporal en Linux) y no se vuelve a bajar. El mensaje dice qué plataforma
+falta: puedes reintentar, o desmarcarla y seguir sin ella (se añade luego con
+**Añadir plataformas…**). Y dice cómo ponerla **a mano**: bajar con el navegador
+el zip de rclone (o el archivo de Python) y el `SHA256SUMS` de su versión, y
+dejarlos, sin descomprimir y con sus nombres exactos, en la carpeta que indica.
+Al reintentar se comprueban igual que una descarga, sin red. Un binario de
+rclone suelto no vale para otra plataforma: rclone publica las sumas de sus
+zips, no de lo que llevan dentro, así que no habría con qué comprobarlo.
+
 Si enchufas el dispositivo en una plataforma para la que no se preparó, el
 lanzador (o `sync.py`, si falta rclone) lo dice y dice la cura: volver a pasar el
 instalador y pulsar **Añadir plataformas…**.
@@ -881,7 +894,12 @@ Léelo entero antes de usar esto con datos que te importen.
   honestidad que arriba: esas sumas viajan desde el mismo servidor y por el mismo
   TLS que lo que describen, así que no protegen de que rclone.org o GitHub estén
   comprometidos. Sí de una descarga a medias, de un proxy que devuelve otra cosa
-  y de una caché que sirve un artefacto viejo.
+  y de una caché que sirve un artefacto viejo. Un fallo de red se reintenta; una
+  suma que no cuadra **no**: el archivo llegó entero, así que no es un corte sino
+  otra cosa contestando en su lugar, y se te dice con las dos sumas. Lo que dejes
+  **a mano** en la caché (el zip o el archivo oficial, con su `SHA256SUMS`) pasa
+  por la misma comprobación, y protege de lo mismo: los dos salen del mismo
+  servidor.
   Lo mismo vale cuando el **dispositivo** pone al día sus componentes desde la
   ventana: es la misma maquinaria, ejecutada desde el zip del código recién
   descargado y verificado. Y una garantía más, porque aquí se sustituye algo que
@@ -928,6 +946,7 @@ prdrive/
 │   ├── profile.py     la conexión: de dónde sale y cómo se escribe
 │   ├── rclone_bin.py  conseguir rclone, comprobado
 │   ├── runtime_bin.py conseguir Python (python-build-standalone), comprobado
+│   ├── descarga.py    lo que comparten: reintentar la red, leer un SHA256SUMS
 │   ├── platforms.py   para qué equipos: la lista del paso 5
 │   ├── deploy.py      copiar el código, rclone y Python, el config, el --resync
 │   ├── device.py      qué volúmenes hay y cuál es el bueno
