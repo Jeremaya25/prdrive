@@ -62,10 +62,18 @@ c.contains("consola: y dice cuál lleva puesta", texto, "0.0.1")
 
 
 # --- ventana Tk -------------------------------------------------------------
+# Se prueba antes de usarla: sin tkinter (un Python sin `python3-tk`) el import
+# falla con ModuleNotFoundError, no con TclError, y `tk` ni siquiera existe.
 try:
     import tkinter as tk
     from tkinter import ttk
+    tk.Tk().destroy()
+    hay_pantalla = True
+except Exception as e:                                   # sin entorno gráfico
+    print(f"  (saltado) no hay entorno gráfico: {e}")
+    hay_pantalla = False
 
+if hay_pantalla:
     def walk(w):
         for hijo in w.winfo_children():
             yield hijo
@@ -109,7 +117,5 @@ try:
     c("tk: diciendo cuál lleva puesta",
       any("Tienes la 0.0.1" in (e or "") for e in etiquetas), True)
     c("tk: con su botón", any(b.startswith("Actualizar") for b in botones), True)
-except tk.TclError as e:
-    print(f"  (saltado) sin entorno gráfico: {e}")
 
 sys.exit(c.report())
