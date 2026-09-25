@@ -279,7 +279,11 @@ source it mirrors. **Preserve those citations.**
 rclone writes to a temp file; `dispose_log()` keeps it in `logs/` only when the
 run failed (or `--keep-logs` / `keep_logs = true`), to spare device write cycles.
 On failure the tail is printed and `KNOWN_ERRORS` maps rclone messages to an
-explanation — add new cases there.
+explanation — add new cases there. If the device vanished mid-pass (#36),
+`keep_log()` leaves the log in the temp dir, says so in one `AVISO` line (any
+half-copy in `logs/` removed) and returns that path, so the tail and the
+explanation still come out; `run_all()` turns an `OSError` from the pairs after
+it into a `FALLÓ` line, never a traceback.
 
 - `--log-file` only catches what rclone logs **after** installing the log, so
   `execute()` captures rclone's `stdout`+`stderr` (captured, not inherited: with
@@ -446,6 +450,12 @@ paths and flags; no rounded corners, no shadows. Styles cross **role** with
   amber watcher line and «Expulsar» in the footer.
 - `tk.working(parent, title, funcion)` runs `funcion()` on a thread behind a bare
   progress bar, for slow or passphrase-carrying commands. No cancel button.
+  An optional `progreso()` → `(fracción, texto)` or None turns the bar
+  determinate with the text below while it answers, and back when it stops; it
+  is asked from the Tk thread every 120 ms, so it must only read what another
+  thread measured, and any exception counts as None — the poll is the only
+  thing that closes the window. The text's row is reserved from the start
+  (`tests/test_tk_espera.py`, and the matrix in `test_tk_medidas.py`).
 
 ### «Ajustes» (`ui/tk_doctor.py`) — where new affordances go
 
@@ -654,7 +664,12 @@ Still unverified on real hardware:
 - an installed VeraCrypt (`ERR_DRIVER_VERSION`);
 - the «retenido» branch;
 - the new eject wait;
-- Linux.
+- Linux;
+- the creation progress counters (#46, tests P1–P7 in the issue): whether
+  `IOCTL_DISK_PERFORMANCE` on `\\.\X:` answers **without admin**, whether it
+  counts the filesystem's zero-fill and the elevated Format copy's writes, the
+  SLC curve of a long fixed creation, and `/sys/dev/block/…/stat` on a USB
+  stick. The Linux path was only seen counting on a local virtio disk.
 
 Agent trap: this machine's Bash tool is sandboxed. It redirects writes under
 `%LOCALAPPDATA%` (a `penwatch install` from there registers a task that points
@@ -673,6 +688,20 @@ at nothing) and hangs `tasklist | find`. Use PowerShell for both.
   for file containers in 1.26.24 (`Main/TextUserInterface.cpp`; `master` drops
   that line), so there the only lever is the size, and
   `crypto.suggested_size()` stops proposing nearly the whole disk.
+- **A fixed container shows its real progress, and the estimate is a floor.**
+  `medir_escritura()`'s 8 MiB probe measures the *burst*: USB sticks drop to a
+  half or a quarter once their SLC cache fills (#46: «unos 23 min» said, 40 min
+  and still writing), so `describir_espera()` says «al menos» and why. While
+  creating, `crypto.Seguimiento` reads the **drive's own write counter** —
+  `crypto.bytes_escritos()`, an indirection point: `DISK_PERFORMANCE.BytesWritten`
+  via `IOCTL_DISK_PERFORMANCE` on the volume opened with access 0 (ctypes, no
+  shell), or field 7 of `/sys/dev/block/<maj>:<min>/stat` × 512 — noting the
+  first reading **before** VeraCrypt launches, then once a second on its own
+  thread until `create_container()` returns. `avance()` is pure: fraction capped
+  at 99 %, time left from the last 60 s (so it rises when the cache runs out),
+  and **None — back to the bare bar — when the counter fails, goes down, never
+  moved or stops for 30 s**. Better no number than a false one. Only when not
+  `/dynamic`; the creation waits exactly as before.
 - **A FAT32 host caps the container at 4095 MiB** (`crypto.tope_contenedor()`),
   checked in `create_container()` before VeraCrypt runs. Not 4 GiB − 1: VeraCrypt
   rounds `/size` **up** to the sector size (`Format/Tcformat.c`). The name is
@@ -793,6 +822,17 @@ Other step notes:
   an error, the normal start for a fresh clone. The private key goes to a temp
   dir recording the owning pid; `remote.sweep_stale()` cleans what hard-killed
   installers left, asking `store.pid_alive()` first.
+- **«Usar esta conexión» talks to nobody** (#47): it turns the form into a
+  `Profile`, so the step says «preparada, sin probar» in plain ink — no ✔, no
+  green, which read as "connection tested"; the remote is first touched in
+  «Comprobaciones». What can be checked locally is, in `profile.py`, on both
+  paths (form and import): a `type`, and `OBLIGATORIAS` — only what rclone marks
+  `Required` with no way round (sftp `host` unless `ssh` is set: an empty host
+  dials `:22`, this machine; webdav `url`; nothing for s3). Those block: the
+  error goes in red in the step itself and the previous connection is dropped,
+  so «Siguiente» is off. `profile.avisos()` only warns (amber, still enabled):
+  an sftp without `user` logs in as whoever runs rclone on each host. Whether
+  the `type` exists is not checked — that needs rclone, which step 4 has.
 - **The key never leaves the device**, and `deploy.write_device_remote()` writes
   `.prdrive/rclone.conf` + `.prdrive/keys/<name>` with **relative** paths
   (`key_file = keys/…`) — that is what makes the device work under any drive
@@ -1079,6 +1119,24 @@ rewriting keeps the header block and **loses interleaved comments**.
 and a cached catalogue is **not editable** (`Catalog.editable`).
 `catalog.NET_FLAGS` keeps a dead remote from freezing the window.
 
+**The path names the file, never its folder (#48).** `rclone cat` of a folder
+does not fail: it concatenates every file inside, recursively — `pairs.toml`,
+the `.bak`, the `devices/` notes (measured with rclone v1.75.1) — and `tomllib`
+answers "Cannot declare ('defaults',) twice". Both readers (`catalog.pull()`,
+`remote.pull_catalog()`) therefore ask `catalog.explicar_carpeta()`, which runs
+`lsjson --stat` (and, for a folder, `--stat` of its `pairs.toml` to suggest it)
+**only when something smells**: the content did not parse, or the path does not
+end in `.toml` (which also catches an empty folder and one holding only
+`pairs.toml`, both of which `cat` reads with rc 0). Never on the happy path and
+never after a failed `cat`: offline, the question would time out too. An
+unanswerable `--stat` diagnoses nothing. What is **typed** is refused without
+network by `catalog.problema_de_ruta()` — the wizard's Conexión
+(`profile.from_form`/`from_rclone_conf`; `with_catalog_path` does not raise,
+it runs per keystroke, and `Profile.problema_catalogo` holds the step shut) and
+both `[defaults]` forms, only when `catalog_path` **changes**
+(`validar_ruta_editada()`): an extension-less path already on a device keeps
+working.
+
 An optional **`[remote]`** table carries the non-secret definition of the rclone
 remote (type, host, user…): the first device writes it, the rest inherit it via
 `profile.align_with_catalog()`. **The catalogue decides the remote's name** —
@@ -1238,7 +1296,7 @@ keeps the target's existing header.
   `borrar()`, `ui.abrir()`, `runsync.notificar_fallo()`,
   `components.rclone_en_uso()` / `runtime_en_uso()`, `_win_volumes()`,
   `vestibulo.raiz_fisica()`, `cifrado.lanzar_expulsion()`,
-  `crypto.sistema_de_ficheros()`,
+  `crypto.sistema_de_ficheros()`, `crypto.bytes_escritos()`,
   `_leer_estado_bitlocker()`, `_preguntar_borrado()`, `pairing.construir()`,
   `watch.resumen()`, `tk.mostrar()` / `confirmar_plan()`. Keep new ones in that
   shape.

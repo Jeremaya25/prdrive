@@ -45,6 +45,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -320,15 +321,348 @@ def estimar_creacion(root: str | Path, size_bytes: int) -> float | None:
     return size_bytes / velocidad
 
 
+# Lo que la sonda NO puede saber, dicho siempre al lado de su número. Mide la
+# ráfaga: muchas memorias USB escriben rápido los primeros gigas en una caché
+# (SLC) y, llena esa caché, bajan a su velocidad real, a menudo la mitad o la
+# cuarta parte. Una sonda más grande no lo arregla, porque esa caché puede ser
+# de varios gigas. Caso real (#46): más de 100 GB en exFAT, la sonda midió unos
+# 75 MB/s, se dijo «unos 23 min» y a los 40 seguía escribiendo. Por eso el
+# número es un mínimo, y el de verdad lo da el avance medido mientras se crea
+# (sección «Progreso de la creación»).
+AVISO_RAFAGA = ("en memorias USB suele tardar bastante más, porque la velocidad "
+                "baja cuando se llena su caché. Mientras se crea verás el avance "
+                "real, si la unidad deja medirlo")
+
+
+def _duracion(segundos: float) -> str:
+    """«unos 23 min» o «unas 1,5 h»: una espera de más de minuto y medio.
+
+    Las horas empiezan en hora y media, que es la primera cifra que no se lee
+    mejor en minutos («unas 1,0 h» no la diría nadie), y con coma decimal."""
+    if segundos < 90 * 60:
+        return f"unos {max(2, round(segundos / 60))} min"
+    horas = f"{segundos / 3600:.1f}".replace(".", ",").removesuffix(",0")
+    return f"unas {horas} h"
+
+
 def describir_espera(segundos: float | None) -> str:
-    """La estimación, en algo que se pueda leer de un vistazo."""
+    """La estimación, en algo que se pueda leer de un vistazo.
+
+    Es un MÍNIMO, y lo dice: sale de la velocidad de ráfaga (ver
+    `AVISO_RAFAGA`). Quien llama pone delante lo que se va a escribir y detrás
+    el punto."""
     if segundos is None:
         return "no he podido medir la velocidad de la unidad"
     if segundos < 90:
-        return "menos de dos minutos"
-    if segundos < 3600:
-        return f"unos {round(segundos / 60)} min"
-    return f"unas {segundos / 3600:.1f} h"
+        return f"en principio menos de dos minutos; {AVISO_RAFAGA}"
+    return f"al menos {_duracion(segundos)}; {AVISO_RAFAGA}"
+
+
+# ---------------------------------------------------------------------------
+# Progreso de la creación
+# ---------------------------------------------------------------------------
+#
+# VeraCrypt crea con `/silent` y no cuenta nada, pero lo que escribe acaba en el
+# disco, y el disco lleva la cuenta de lo que se le escribe. Se apunta ese
+# contador justo antes de lanzar la orden y se vuelve a leer cada segundo desde
+# un hilo propio: lo que ha crecido, entre lo que mide el contenedor, es cuánto
+# va. Es el único canal, igual que el log de rclone lo es para `progress.py`, y
+# con las mismas reglas: puramente informativo, y **mejor sin número que con uno
+# falso**. Si el contador no se puede leer, baja o se queda quieto, no hay
+# avance y la ventana vuelve a la barra sin cifra, que es lo que había antes.
+#
+# SIN VERIFICAR EN HARDWARE (#46, pruebas P1–P7): que Windows conteste sin
+# administrador, que su cuenta incluya el relleno de ceros del sistema de
+# ficheros y lo que escribe la copia elevada de Format, y el camino de Linux
+# sobre una memoria USB. Mientras no se pruebe, lo que protege es la vuelta a la
+# barra indeterminada: con un contador que no sirve, nada cambia respecto a no
+# tenerlo.
+
+MUESTREO_S = 1.0        # cada cuánto se lee el contador
+VENTANA_S = 60.0        # la velocidad que vale es la de este último rato
+VENTANA_MIN_S = 30.0    # con menos rato escribiendo, no se da tiempo restante
+PARADO_S = 30.0         # sin moverse este rato, el contador ya no dice nada
+TOPE_AVANCE = 0.99      # hasta que create_container() vuelva, nunca el 100 %
+
+SECTOR_SYSFS = 512
+SYS_DEV_BLOCK = Path("/sys/dev/block")
+
+# winioctl.h: `IOCTL_DISK_PERFORMANCE` es CTL_CODE(IOCTL_DISK_BASE, 0x0008,
+# METHOD_BUFFERED, FILE_ANY_ACCESS), con IOCTL_DISK_BASE = FILE_DEVICE_DISK = 7 y
+# CTL_CODE(t, f, m, a) = (t << 16) | (a << 14) | (f << 2) | m.
+FILE_DEVICE_DISK = 0x00000007
+METHOD_BUFFERED = 0
+FILE_ANY_ACCESS = 0
+
+
+def _ctl_code(tipo: int, funcion: int, metodo: int, acceso: int) -> int:
+    return (tipo << 16) | (acceso << 14) | (funcion << 2) | metodo
+
+
+IOCTL_DISK_PERFORMANCE = _ctl_code(FILE_DEVICE_DISK, 0x0008, METHOD_BUFFERED,
+                                   FILE_ANY_ACCESS)            # 0x00070020
+FILE_SHARE_READ = 0x00000001
+FILE_SHARE_WRITE = 0x00000002
+OPEN_EXISTING = 3
+
+
+def _disk_performance():
+    """La estructura `DISK_PERFORMANCE` de winioctl.h, campo a campo:
+
+        LARGE_INTEGER BytesRead, BytesWritten, ReadTime, WriteTime, IdleTime;
+        DWORD         ReadCount, WriteCount, QueueDepth, SplitCount;
+        LARGE_INTEGER QueryTime;
+        DWORD         StorageDeviceNumber;
+        WCHAR         StorageManagerName[8];
+
+    88 bytes en total. Con tipos de tamaño fijo y no los de `wintypes`, para que
+    la disposición se pueda comprobar en cualquier sistema (un `c_wchar` son
+    cuatro bytes en Linux; un WCHAR, dos). Se construye al llamarla, como el
+    resto de ctypes de este módulo."""
+    import ctypes
+
+    class DISK_PERFORMANCE(ctypes.Structure):
+        _fields_ = [("BytesRead", ctypes.c_int64),
+                    ("BytesWritten", ctypes.c_int64),
+                    ("ReadTime", ctypes.c_int64),
+                    ("WriteTime", ctypes.c_int64),
+                    ("IdleTime", ctypes.c_int64),
+                    ("ReadCount", ctypes.c_uint32),
+                    ("WriteCount", ctypes.c_uint32),
+                    ("QueueDepth", ctypes.c_uint32),
+                    ("SplitCount", ctypes.c_uint32),
+                    ("QueryTime", ctypes.c_int64),
+                    ("StorageDeviceNumber", ctypes.c_uint32),
+                    ("StorageManagerName", ctypes.c_uint16 * 8)]
+
+    return DISK_PERFORMANCE
+
+
+def _escritos_windows(root: str | Path) -> int | None:
+    """`DISK_PERFORMANCE.BytesWritten` del volumen de `root` (`\\\\.\\G:`).
+
+    Se abre con acceso 0 y compartido para leer y escribir: la documentación de
+    `CreateFileW` dice que con acceso 0 se pueden consultar los atributos de un
+    dispositivo sin acceder a él —ni al medio—, y `IOCTL_DISK_PERFORMANCE` es
+    FILE_ANY_ACCESS, así que el administrador de E/S no le pide nada más al
+    handle. Que el driver tampoco pida administrador es la prueba P1.
+
+    Un handle por lectura, cerrado enseguida: uno abierto toda la creación
+    sería una cosa más agarrada al volumen del que cuelga el contenedor. Y la
+    primera llamada puede ser la que ENCIENDE los contadores (la documentación
+    de esa IOCTL dice «enables performance counters»): por eso solo vale la
+    diferencia con la inicial, que se lee antes de lanzar VeraCrypt.
+
+    La alternativa que queda para P1 si el volumen no contesta es el disco
+    (`\\\\.\\PhysicalDriveN`, vía IOCTL_STORAGE_GET_DEVICE_NUMBER). No está
+    aquí a propósito: mezclar las dos cuentas en una misma creación daría un
+    salto que se leería como avance."""
+    unidad = str(root)[:2]
+    if len(unidad) != 2 or unidad[1] != ":" or not unidad[0].isalpha():
+        return None                 # una ruta UNC o sin letra: no hay volumen que abrir
+
+    import ctypes
+    from ctypes import wintypes
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateFileW.restype = wintypes.HANDLE
+    k32.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                                wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD,
+                                wintypes.HANDLE]
+    k32.DeviceIoControl.restype = wintypes.BOOL
+    k32.DeviceIoControl.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.LPVOID,
+                                    wintypes.DWORD, wintypes.LPVOID, wintypes.DWORD,
+                                    ctypes.POINTER(wintypes.DWORD), wintypes.LPVOID]
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
+
+    handle = k32.CreateFileW(f"\\\\.\\{unidad.upper()}", 0,
+                             FILE_SHARE_READ | FILE_SHARE_WRITE, None,
+                             OPEN_EXISTING, 0, None)
+    if not handle or handle == wintypes.HANDLE(-1).value:
+        return None
+    try:
+        estructura = _disk_performance()
+        datos = estructura()
+        devueltos = wintypes.DWORD(0)
+        ok = k32.DeviceIoControl(handle, IOCTL_DISK_PERFORMANCE, None, 0,
+                                 ctypes.byref(datos), ctypes.sizeof(datos),
+                                 ctypes.byref(devueltos), None)
+        hasta = estructura.BytesWritten.offset + estructura.BytesWritten.size
+        if not ok or devueltos.value < hasta:
+            return None
+        return int(datos.BytesWritten)
+    finally:
+        k32.CloseHandle(handle)
+
+
+def _escritos_linux(root: str | Path) -> int | None:
+    """Sectores escritos en el dispositivo de bloques de `root`, en bytes.
+
+    `/sys/dev/block/<mayor>:<menor>` es el enlace al dispositivo del `st_dev`
+    (Documentation/ABI/testing/sysfs-dev del kernel), y si es una partición su
+    `stat` ya es solo de ella. El séptimo campo son los sectores escritos, y son
+    siempre de 512 bytes, sea cual sea el tamaño de sector del disco
+    (Documentation/block/stat.rst: «standard UNIX 512-byte sectors»). Cuenta lo
+    que llega al dispositivo, después de la caché de páginas: lo que de verdad
+    se ha escrito. Un sistema de ficheros sin dispositivo de bloques (tmpfs, o
+    el número anónimo de btrfs) no tiene ese fichero, y eso es un None."""
+    st = os.stat(root)
+    ruta = SYS_DEV_BLOCK / f"{os.major(st.st_dev)}:{os.minor(st.st_dev)}" / "stat"
+    campos = ruta.read_text(encoding="ascii").split()
+    return int(campos[6]) * SECTOR_SYSFS
+
+
+def bytes_escritos(root: str | Path) -> int | None:
+    """Bytes escritos hasta ahora en el dispositivo donde está `root`, o None.
+
+    Un contador del sistema, no de esta creación: lo que vale es la diferencia
+    entre dos lecturas. Cualquier fallo es None —se captura `Exception`, como en
+    `bitlocker_status()`, porque en Windows hay ctypes debajo y esto es un
+    adorno: no puede tumbar la creación—.
+
+    Función de módulo para que los tests la sustituyan, como
+    `soporta_dispersos()`."""
+    try:
+        valor = _escritos_windows(root) if IS_WIN else _escritos_linux(root)
+    except Exception:                             # noqa: BLE001 — ver docstring
+        return None
+    return valor if valor is None or valor >= 0 else None
+
+
+def avance(muestras: list[tuple[float, int | None]],
+           size_bytes: int) -> tuple[float, float | None] | None:
+    """(fracción, segundos que quedan) a partir de las lecturas, o None.
+
+    `muestras` son `(t, bytes)` en orden, con `t` en segundos de un reloj
+    monótono y la primera leída ANTES de lanzar VeraCrypt; `bytes` es None
+    cuando esa lectura falló. Pura: toda la aritmética, nada de disco.
+
+    None —«no se sabe»— cuando:
+      * falta la inicial o falla la última lectura;
+      * el contador baja en algún momento: se reinició o cuenta otra cosa, y ya
+        no hay manera de fiarse de él en toda la creación;
+      * no se ha movido nunca: todavía no se escribe (el aviso de UAC de la
+        copia elevada) o este contador no ve estas escrituras;
+      * lleva más de `PARADO_S` sin moverse.
+
+    La fracción es lo escrito entre el tamaño, con tope en `TOPE_AVANCE`: el
+    contador ve también lo que escriba cualquier otro en esa unidad, y después
+    del relleno aún quedan la cabecera de respaldo y el formato de dentro.
+
+    El tiempo que queda sale de la velocidad de los últimos `VENTANA_S`, no de la
+    de la sonda: cuando se llena la caché de la memoria USB y la velocidad cae,
+    en un minuto el tiempo que queda sube con ella. La ventana empieza como
+    pronto en la última lectura antes del primer movimiento, para que la espera
+    del UAC no pase por lentitud; y con menos de `VENTANA_MIN_S` de escritura el
+    tiempo que queda es None: hay fracción, pero todavía no hay velocidad."""
+    if not muestras or size_bytes <= 0:
+        return None
+    if muestras[0][1] is None or muestras[-1][1] is None:
+        return None
+    leidas = [(t, b) for t, b in muestras if b is not None]
+    arranque = ultimo_movimiento = None
+    for (ta, a), (tb, b) in zip(leidas, leidas[1:]):
+        if b < a:
+            return None
+        if b > a:
+            if arranque is None:
+                arranque = ta
+            ultimo_movimiento = tb
+    t_fin, b_fin = leidas[-1]
+    if ultimo_movimiento is None or t_fin - ultimo_movimiento > PARADO_S:
+        return None
+
+    escritos = b_fin - leidas[0][1]
+    fraccion = min(TOPE_AVANCE, escritos / size_bytes)
+
+    desde = max(t_fin - VENTANA_S, arranque)
+    t_base, b_base = next((t, b) for t, b in leidas if t >= desde)
+    tramo = t_fin - t_base
+    if tramo < VENTANA_MIN_S:
+        return fraccion, None
+    velocidad = (b_fin - b_base) / tramo
+    if velocidad <= 0:
+        return fraccion, None
+    return fraccion, max(0, size_bytes - escritos) / velocidad
+
+
+def describir_restante(segundos: float) -> str:
+    if segundos < 60:
+        return "queda menos de un minuto"
+    if segundos < 90:
+        return "queda un minuto y pico"
+    return f"quedan {_duracion(segundos)}"
+
+
+def describir_avance(fraccion: float, restante: float | None) -> str:
+    """«43 % · quedan unos 25 min». La cifra se trunca: 99,9 % no es 100 %."""
+    cifra = f"{int(fraccion * 100 + 1e-9)} %"
+    if restante is None:
+        return f"{cifra} · calculando cuánto queda"
+    return f"{cifra} · {describir_restante(restante)}"
+
+
+class Seguimiento:
+    """El avance de una creación, leído del volumen en un hilo propio.
+
+    Lo arranca `create_container()` —que es quien sabe cuándo se lanza
+    VeraCrypt— y lo lee la ventana con `progreso()`, que no toca el disco: solo
+    devuelve lo último que calculó el hilo. Leer el contador puede tardar (una
+    IOCTL a una memoria USB ocupada escribiendo), y el hilo de Tk no puede
+    esperar a nadie."""
+
+    def __init__(self, cada: float = MUESTREO_S, reloj=time.monotonic):
+        self.cada = cada
+        self.reloj = reloj
+        self.muestras: list[tuple[float, int | None]] = []
+        self._raiz: str | Path = ""
+        self._tamano = 0
+        self._ultimo: tuple[float, float | None] | None = None
+        self._parar = threading.Event()
+        self._hilo: threading.Thread | None = None
+
+    def empezar(self, raiz: str | Path, size_bytes: int) -> None:
+        """Apunta la lectura inicial y arranca el hilo. Se llama justo antes de
+        lanzar VeraCrypt. Nada de aquí puede impedir la creación: si falla, no
+        hay avance."""
+        self._raiz, self._tamano = raiz, size_bytes
+        try:
+            self._apuntar()
+            self._hilo = threading.Thread(target=self._bucle, daemon=True,
+                                          name="prdrive-avance")
+            self._hilo.start()
+        except Exception:                         # noqa: BLE001 — ver docstring
+            self._ultimo = None
+
+    def _apuntar(self) -> None:
+        self.muestras.append((self.reloj(), bytes_escritos(self._raiz)))
+        self._ultimo = avance(self.muestras, self._tamano)
+
+    def _bucle(self) -> None:
+        while not self._parar.wait(self.cada):
+            try:
+                self._apuntar()
+            except Exception:                     # noqa: BLE001 — un adorno
+                self._ultimo = None
+                return
+
+    def parar(self) -> None:
+        self._parar.set()
+        if self._hilo is not None:
+            self._hilo.join(timeout=2)      # solo espera si una lectura se colgó
+
+    def leer(self) -> tuple[float, float | None] | None:
+        """(fracción, segundos que quedan), o None. Si el hilo lleva más de
+        `PARADO_S` sin apuntar nada —colgado en una lectura—, lo último que
+        calculó ya no vale."""
+        if not self.muestras or self.reloj() - self.muestras[-1][0] > PARADO_S:
+            return None
+        return self._ultimo
+
+    def progreso(self) -> tuple[float, str] | None:
+        """Lo que pide `ui.tk.working()`: (fracción, texto), o None."""
+        medida = self.leer()
+        return None if medida is None else (medida[0], describir_avance(*medida))
 
 
 # ---------------------------------------------------------------------------
@@ -519,7 +853,8 @@ def _esperar_copia_elevada(ejecutable: str, antes: set[int]) -> None:
 
 
 def create_container(vc: dict, container: Path, size_bytes: int, password: str,
-                     filesystem: str = "exFAT", dinamico: bool = False) -> None:
+                     filesystem: str = "exFAT", dinamico: bool = False,
+                     seguimiento: Seguimiento | None = None) -> None:
     """Crea el contenedor. Lanza InstallError con lo que dijo VeraCrypt.
 
     Lo que se puede saber antes se dice antes: un tamaño que el sistema de
@@ -527,7 +862,11 @@ def create_container(vc: dict, container: Path, size_bytes: int, password: str,
     fallaría a medias y sin decir por qué.
 
     Y lo que se sabe después, después de verdad: no vuelve hasta que termina la
-    copia elevada, si VeraCrypt se ha relanzado (`_esperar_copia_elevada()`)."""
+    copia elevada, si VeraCrypt se ha relanzado (`_esperar_copia_elevada()`).
+
+    `seguimiento`, si lo hay, apunta el contador de la unidad justo antes de
+    lanzar la orden y lo va leyendo hasta aquí: la espera es la misma, solo que
+    medida (sección «Progreso de la creación»)."""
     if container.exists():
         raise InstallError(
             f"Ya existe {container}. Si quieres rehacerlo, bórralo tú a mano: "
@@ -542,12 +881,18 @@ def create_container(vc: dict, container: Path, size_bytes: int, password: str,
     cmd = create_command(vc, container, size_bytes, password, filesystem, dinamico)
     ejecutable = Path(cmd[0]).name
     antes = _procesos(ejecutable) if IS_WIN else set()
+    if seguimiento is not None:
+        seguimiento.empezar(container.parent, size_bytes)
     try:
-        res = _run(cmd, password)
-    except OSError as e:
-        raise InstallError(f"No he podido lanzar VeraCrypt: {e}") from e
-    if IS_WIN and res.returncode == 0:
-        _esperar_copia_elevada(ejecutable, antes)
+        try:
+            res = _run(cmd, password)
+        except OSError as e:
+            raise InstallError(f"No he podido lanzar VeraCrypt: {e}") from e
+        if IS_WIN and res.returncode == 0:
+            _esperar_copia_elevada(ejecutable, antes)
+    finally:
+        if seguimiento is not None:
+            seguimiento.parar()
     if res.returncode != 0 or not container.exists():
         raise InstallError(
             "VeraCrypt no ha podido crear el contenedor "

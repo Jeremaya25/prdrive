@@ -136,16 +136,45 @@ def temp_log(name: str) -> Path:
 
 
 def keep_log(name: str, tmp: Path) -> Path:
-    """Mueve un log temporal a logs/ y devuelve su ruta definitiva."""
-    model.LOG_DIR.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    final = model.LOG_DIR / f"{name}_{stamp}.log"
-    n = 1
-    while final.exists():  # ejecución + reintento dentro del mismo segundo
-        final = model.LOG_DIR / f"{name}_{stamp}_{n}.log"
-        n += 1
-    shutil.move(str(tmp), str(final))
-    return final
+    """Mueve un log temporal a logs/ y devuelve dónde ha quedado.
+
+    Normalmente en logs/, pero esto va justo detrás de un fallo, y el fallo
+    puede ser que el dispositivo haya desaparecido a mitad de pasada (#36): ni
+    logs/ se deja crear ni el log mover, y el traceback que salía tapaba en la
+    ventana la cola del log y su explicación, que es lo que hay que leer en ese
+    momento. Ahora se dice en una línea y el log se queda en el temporal del
+    sistema, que está en el equipo: esa es la ruta que se devuelve, y de ahí
+    leen `print_log_tail` y `explain_failure`.
+
+    `OSError` y no `PermissionError`, que es como llega en Windows
+    ([WinError 21]): en otro sistema, o con el dispositivo lleno o de solo
+    lectura, llega otro. Y el movimiento dentro: entre dos unidades
+    `shutil.move` copia y borra el origen al final, así que puede fallar con la
+    copia a medias y el temporal entero. Esa copia se quita, para que en logs/
+    no quede un log cortado con nombre de completo."""
+    destino = None
+    try:
+        model.LOG_DIR.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        final = model.LOG_DIR / f"{name}_{stamp}.log"
+        n = 1
+        while final.exists():  # ejecución + reintento dentro del mismo segundo
+            final = model.LOG_DIR / f"{name}_{stamp}_{n}.log"
+            n += 1
+        destino = final
+        shutil.move(str(tmp), str(final))
+        return final
+    except OSError as e:
+        motivo = e.strerror or str(e)
+    # Solo con el temporal todavía ahí: si no, lo de logs/ sería la única copia.
+    if destino is not None and tmp.exists():
+        try:
+            destino.unlink(missing_ok=True)
+        except OSError:
+            pass            # con el dispositivo fuera tampoco se puede borrar
+    print(f"[{name}] AVISO: no he podido guardar el log en el dispositivo "
+          f"({motivo}); está en {tmp}")
+    return tmp
 
 
 def strip_usage(text: str) -> str:
@@ -205,12 +234,21 @@ def dispose_log(name: str, tmp: Path, rc: int, keep_always: bool) -> Path | None
 
 
 def print_log_tail(lpath: Path | None, lines: int = LOG_TAIL_LINES) -> None:
-    if lpath is None or not lpath.exists():
+    if lpath is None:
+        return
+    try:
+        if not lpath.exists():
+            return
+        todas = lpath.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError as e:
+        # Guardado en el dispositivo, que se ha ido justo después (#36): un
+        # volumen de VeraCrypt desenchufado sin expulsar sigue aceptando
+        # escrituras en caché y luego no deja leer. Una línea, no un traceback.
+        print(f"  (no he podido leer {lpath}: {e.strerror or e})")
         return
     # Sin las estadísticas. Con una cada pocos segundos, una pasada que se queda
     # pensando antes de fallar llenaba estas líneas de números y el error se
     # quedaba fuera; lo que llegó a transferir ya lo ha contado el progreso.
-    todas = lpath.read_text(encoding="utf-8", errors="replace").splitlines()
     tail = [linea for linea in todas if progress.leer(linea) is None][-lines:]
     print(f"--- últimas {len(tail)} líneas de {lpath.name} ---")
     for line in tail:
@@ -221,9 +259,14 @@ def print_log_tail(lpath: Path | None, lines: int = LOG_TAIL_LINES) -> None:
 def explain_failure(lpath: Path | None) -> None:
     """Traduce el error de rclone a algo accionable. Los casos nuevos se añaden a
     KNOWN_ERRORS, nunca en quien llama."""
-    if lpath is None or not lpath.exists():
+    if lpath is None:
         return
-    text = lpath.read_text(encoding="utf-8", errors="replace")
+    try:
+        if not lpath.exists():
+            return
+        text = lpath.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return          # ya lo ha dicho print_log_tail, que va antes
     for needle, explanation in KNOWN_ERRORS:
         if needle in text:
             print(f"  >> {explanation}")
@@ -430,6 +473,12 @@ def record_result(ctx: RunContext, pair: Pair, rc: int, log: Path | None) -> Non
     está la pareja de verdad, y un simulacro bueno no puede tapar un fallo real."""
     if ctx.dry_run or rc == SKIPPED:
         return
+    # `results` apunta el log por su nombre y lo busca en logs/. Uno que se ha
+    # quedado en el temporal del sistema porque el dispositivo ya no estaba
+    # (`keep_log`, #36) no se encontraría ahí: apuntarlo sería dar un nombre
+    # que no lleva a ninguna parte.
+    if log is not None and log.parent != model.LOG_DIR:
+        log = None
     results.apuntar(pair.name, rc, log)
 
 
@@ -518,7 +567,19 @@ def resolve_resync_approval(selected: list[Pair], assume_yes: bool) -> bool:
 def run_all(ctx: RunContext, selected: list[Pair]) -> int:
     ok = failures = skipped = 0
     for pair in selected:
-        rc = run_pair(ctx, pair)
+        try:
+            rc = run_pair(ctx, pair)
+        except OSError as e:
+            # Si el dispositivo desaparece a mitad de pasada (#36), la pareja que
+            # estaba en marcha falla con su log y su explicación, pero las de
+            # detrás ni llegan a rclone: crear su carpeta local, escribir sus
+            # filtros o arrancar el rclone, que vive en el dispositivo, fallan
+            # antes. Cada una con su línea y contada como fallo, no con un
+            # traceback que se lleva por delante el resumen y la nota de la flota.
+            # Nada de esto se salta una comprobación: la pareja se corta ahí.
+            print(f"[{pair.name}] FALLÓ: {e}")
+            rc = 1                  # el «error sin clasificar» de rclone
+            record_result(ctx, pair, rc, None)
         if rc == SKIPPED:
             skipped += 1
         elif rc == 0:

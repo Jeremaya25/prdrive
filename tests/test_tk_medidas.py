@@ -26,6 +26,8 @@ Las ventanas se crean ocultas y no se entra nunca en el bucle de eventos.
 """
 
 import sys
+import threading
+import time
 
 from _harness import Checks, sandbox, tmpdir
 
@@ -152,6 +154,16 @@ EN_CLARO = tmpdir("prdrive-en-claro-")
 for i in range(8):
     (EN_CLARO / f"carpeta-de-datos-con-un-nombre-bastante-largo-{i}").mkdir()
 
+# La ventanita de espera de crear un contenedor fijo (#46), con lo más largo que
+# enseña: la ruta de una unidad montada con nombre largo, la estimación entera
+# con su aviso, y la cifra de avance más ancha que sale de `describir_avance`.
+ESPERA_MENSAJE = (
+    "Creando /media/usuario-de-nombre-largo/PENDRIVE-DE-LA-OFICINA/PRDRIVE.hc "
+    "(4.0 GiB).\nHay que escribir el contenedor entero: "
+    + crypto.describir_espera(23 * 60) + ".")
+ESPERA_CIFRA = max((crypto.describir_avance(0.99, s) for s in (None, 30, 75, 5340, 45000)),
+                   key=len)
+
 # nombre, ancho, alto, tk scaling
 PANTALLAS = (
     ("1080p", 1920, 1080, 1.3333),
@@ -191,6 +203,25 @@ def recortado(visor) -> bool:
              and not visor.vertical.grid_info())
             or (visor.interior.winfo_reqwidth() > ancho
                 and not visor.horizontal.grid_info()))
+
+
+def usar_conexion(wiz) -> None:
+    """Pulsa «Usar esta conexión» con lo que deja más alto el paso: la línea de
+    «preparada», larga, y debajo el aviso de un sftp sin usuario (#47). Las dos
+    aparecen con el paso ya pintado, que es cuando un hueco se queda corto."""
+    pendientes, caja, usar = list(wiz.cuerpo.winfo_children()), None, None
+    while pendientes:
+        w = pendientes.pop()
+        pendientes += list(w.winfo_children())
+        if isinstance(w, tk.Text):
+            caja = w
+        elif isinstance(w, ttk.Button) and w.cget("text") == "Usar esta conexión":
+            usar = w
+    caja.delete("1.0", "end")
+    caja.insert("1.0", "host = servidor-de-la-oficina-de-arriba.example.org\n"
+                       "port = 22\n")
+    usar.invoke()
+    wiz.root.update_idletasks()
 
 
 def medir_dialogo(fabricar, ancho, alto, escala, modulo=None) -> tuple[bool, bool]:
@@ -247,6 +278,13 @@ try:
             c(f"{nombre}: el paso «{paso}» cabe en la ventana", cabe(top), True)
             c(f"{nombre}: el paso «{paso}» no queda recortado",
               recortado(wiz.visor), False)
+        # «Conexión» después de pulsar su botón, con el estado y el aviso puestos.
+        wiz.indice = PASO["Conexión"]
+        wiz.repintar()
+        usar_conexion(wiz)
+        c(f"{nombre}: «Conexión» con su estado y su aviso cabe", cabe(top), True)
+        c(f"{nombre}: «Conexión» con su estado y su aviso no queda recortado",
+          recortado(wiz.visor), False)
         # El paso de cifrado con VeraCrypt, en su peor caso (ver EN_CLARO).
         wiz.state.device, wiz.state.device_root = EN_CLARO, None
         wiz.state.encryption = "veracrypt"
@@ -444,6 +482,13 @@ try:
         wiz.repintar()
         c(f"{nombre}: un paso corto no encoge el hueco",
           wiz.visor._medida()[1], alto_conexion)
+        # Lo que sale al pulsar «Usar esta conexión» tampoco puede traer la barra:
+        # el hueco crece con ello.
+        wiz.indice = PASO["Conexión"]
+        wiz.repintar()
+        usar_conexion(wiz)
+        c(f"{nombre}: «Conexión» con su estado y su aviso se ve entero, sin barra",
+          bool(wiz.visor.vertical.grid_info()), False)
         top.destroy()
 
     # Cuando «Conexión» no cabe por mucho que se estire, la barra es obligatoria:
@@ -691,6 +736,50 @@ try:
                   len(recorrido["pide"]), 1)
                 c(f"{nombre}: ni aparece o desaparece una barra",
                   len(recorrido["barras"]), 1)
+        # La ventanita de `working()` con avance: no va en un `Visor` —es un
+        # párrafo y una barra—, así que lo que se mide es que quepa, y que al
+        # llegar la primera cifra no cambie de tamaño: su hueco está reservado
+        # desde que se abre, y una ventana ya centrada no puede crecer por abajo.
+        REAL_MOSTRAR_TK = uitk.mostrar
+        try:
+            for nombre, ancho, alto, escala in PANTALLAS:
+                pantalla(ancho, alto, escala)
+                soltar = threading.Event()
+                dice: dict = {"medida": None}
+                vista: dict = {}
+
+                def esperar_a(condicion, limite=5.0) -> bool:
+                    fin = time.monotonic() + limite
+                    while time.monotonic() < fin:
+                        raiz.update()
+                        if condicion():
+                            return True
+                        time.sleep(0.02)
+                    return False
+
+                def medir_espera(dlg, parent=None):
+                    dlg.update_idletasks()
+                    vista["sin_cifra"] = (dlg.winfo_reqwidth(), dlg.winfo_reqheight())
+                    dice["medida"] = (0.99, ESPERA_CIFRA)
+                    esperar_a(lambda: str(dlg.barra.cget("mode")) == "determinate")
+                    dlg.update_idletasks()
+                    vista["con_cifra"] = (dlg.winfo_reqwidth(), dlg.winfo_reqheight())
+                    vista["cabe"] = cabe(dlg)
+                    vista["texto"] = str(dlg.cifra.cget("text"))
+                    soltar.set()
+                    vista["cerrada"] = esperar_a(lambda: not dlg.winfo_exists())
+
+                uitk.mostrar = medir_espera
+                uitk.working(raiz, "creando el contenedor", lambda: soltar.wait(5),
+                             ESPERA_MENSAJE, progreso=lambda: dice["medida"])
+                c(f"{nombre}: la espera con avance cabe", vista.get("cabe"), True)
+                c(f"{nombre}: la cifra del avance se pinta", vista.get("texto"),
+                  ESPERA_CIFRA)
+                c(f"{nombre}: y la ventanita no cambia de tamaño al llegar",
+                  vista.get("con_cifra"), vista.get("sin_cifra"))
+                c(f"{nombre}: y se cierra al terminar", vista.get("cerrada"), True)
+        finally:
+            uitk.mostrar = REAL_MOSTRAR_TK
     finally:
         tk_pairs.mostrar, tk.Toplevel.wait_window = REAL_MOSTRAR, REAL_WAIT
 finally:

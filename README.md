@@ -109,7 +109,7 @@ cumplirla.
 |---|---|---|
 | 1 | **Dispositivo** | qué unidad. Si ya es un prdrive, atajo para actualizarla |
 | 2 | **Cifrado** | VeraCrypt, BitLocker o ninguno |
-| 3 | **Conexión** | formulario de remoto nuevo, o importar uno de tu `rclone.conf`. Más la ruta del catálogo |
+| 3 | **Conexión** | formulario de remoto nuevo, o importar uno de tu `rclone.conf`. Más la ruta del catálogo: la del fichero (`…/pairs.toml`), no la de su carpeta |
 | 4 | **Comprobaciones** | consigue un rclone (lo busca, y si no lo descarga), conecta y lee el catálogo |
 | 5 | **Instalación** | completa o ligera, y para qué plataformas; copia el programa a `.prdrive/`, rclone y Python de cada plataforma, los lanzadores, el `rclone.conf` y la clave |
 | 6 | **Parejas** | cuáles de las del catálogo usa este dispositivo, y apunta el dispositivo en el registro de la flota |
@@ -209,10 +209,16 @@ se puede. A cambio pierdes la negación plausible (se ve cuánto ocupa de verdad
 si llenas la unidad, el volumen de dentro empieza a dar errores de escritura.
 
 Cuando no hay dispersos, el asistente **mide** la velocidad de tu unidad y te
-dice cuánto va a tardar antes de empezar, en vez de dejarte mirando una barra. Y
-propone un tamaño de trabajo en lugar de casi el disco entero: si luego se te
-queda corto, el **VeraCrypt Expander** que viaja en el propio dispositivo lo
-agranda.
+dice cuánto va a tardar **como poco** antes de empezar. Es un mínimo porque lo
+que se mide en unos segundos es la velocidad de arranque: muchas memorias USB
+escriben rápido solo hasta que se llena su caché, y después bajan a la mitad o
+menos. Mientras se crea, la barra enseña el **avance real** —lo que la propia
+unidad dice que lleva escrito— y cuánto queda según la velocidad del último
+minuto: si la memoria se frena, el tiempo sube con ella. Si el sistema no deja
+leer esa cuenta, o deja de moverse, la barra vuelve a ir y venir sin cifra: mejor
+sin número que con uno inventado. Y propone un tamaño de trabajo en lugar de casi
+el disco entero: si luego se te queda corto, el **VeraCrypt Expander** que viaja
+en el propio dispositivo lo agranda.
 
 **En FAT32, 4095M como mucho.** Muchos pendrives de 32 GB o menos vienen en
 FAT32 de fábrica, y en FAT32 un fichero no puede llegar a 4 GiB: el contenedor es
@@ -442,7 +448,7 @@ edita desde la ventana de parejas o a mano; el mismo esquema sirve para el
 [defaults]
 remote = "nas"                       # el remote de rclone que usan las parejas
 device_remote = "disp"               # el lado local, como remote propio
-catalog_path = "/prdrive-catalog/pairs.toml"
+catalog_path = "/prdrive-catalog/pairs.toml" # el fichero, no su carpeta
 exclude = ["**/.stfolder/**", "**/.stignore"]
 
 [defaults.flags]                     # flags de rclone para todas las parejas
