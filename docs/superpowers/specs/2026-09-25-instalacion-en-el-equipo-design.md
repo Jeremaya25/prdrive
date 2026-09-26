@@ -7,7 +7,7 @@ agente sin bandeja, con unidades: `agente.py`, `common/planificador.py`,
 `ui/bandeja.py`, `ui/bandeja_windows.py`; la ventana ↔ el agente con
 «Actualizar»; y la bandeja de Linux: `ui/bandeja_linux.py`; **sin probar en
 real**) · Versión
-objetivo: 0.4.0 · Lo que falta probar en equipos reales:
+objetivo: 0.5.0 · Lo que falta probar en equipos reales:
 `docs/superpowers/pruebas/2026-09-25-equipo-pendiente-en-real.md`
 
 ## Qué se pide
