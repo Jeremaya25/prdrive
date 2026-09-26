@@ -40,8 +40,14 @@ from dataclasses import dataclass
 RCLONE_VERSION = "v1.75.1"
 
 # --- Python (python-build-standalone, de astral-sh) ---------------------------
-PYTHON_RELEASE = "20260901"          # el tag de la release en GitHub
+PYTHON_RELEASE = "20260924"          # el tag de la release en GitHub
 PYTHON_VERSION = "3.13.15"
+# No bajar de 20260924. En todas las anteriores con 3.13 para Windows ARM64
+# (de 20250630 a 20260901) su `tcl86t.dll` importa `zlib1.dll` y el archivo no
+# la trae: `import _tkinter` falla con «DLL load failed», y como el lanzador usa
+# `pythonw.exe`, doble clic en `runsync.bat` no abría nada ni decía por qué. La
+# de x64 no depende de zlib1.dll. 20260924 la lleva en `DLLs/`, que `podar()`
+# no toca.
 PBS_BASE_URL = ("https://github.com/astral-sh/python-build-standalone/"
                 "releases/download")
 
@@ -125,7 +131,7 @@ PLATAFORMAS: tuple[Plataforma, ...] = (
     Plataforma("windows-x64", "Windows x64", "windows", "x64", "amd64",
                "x86_64-pc-windows-msvc", 82, 45),
     Plataforma("windows-arm64", "Windows ARM64", "windows", "arm", "arm64",
-               "aarch64-pc-windows-msvc", 77, 45),
+               "aarch64-pc-windows-msvc", 77, 47),
     Plataforma("linux-x64", "Linux x64", "linux", "x64", "amd64",
                "x86_64-unknown-linux-gnu", 82, 51),
     Plataforma("linux-arm64", "Linux ARM64", "linux", "arm", "arm64",
