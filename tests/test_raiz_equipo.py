@@ -346,7 +346,7 @@ c("  y no la toca", (nueva / ".prdrive" / "PRDRIVE").is_file(), True)
 
 # --- la línea de la ventana -----------------------------------------------------
 c("watch: la raíz del equipo, atendida por el agente",
-  watch.linea(watch.Resumen("agente_raiz", equipo.DAEMON)).texto,
+  watch.linea(watch.Resumen("agente_raiz", equipo.DAEMON, True)).texto,
   "Es la carpeta de este equipo: la sincroniza el agente, en segundo plano.")
 c("  y eso cuenta como que la vigila",
   watch.Resumen("agente_raiz", equipo.DAEMON).vigila_este, True)

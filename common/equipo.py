@@ -18,6 +18,10 @@ algo. Aquí no hay ningún secreto: ni clave, ni `rclone.conf`, ni listados.
     agente.pide           el buzón: lo que otros le piden al agente
     estado.json           lo que el agente está haciendo, para quien lo pregunte
     agente.log            su diario
+    update.json           lo último que dijo GitHub de la versión nueva
+
+Y en cada raíz, `state/servicio.pide`: el buzón de lo que su ventana le pide al
+servicio de ESA raíz (`BUZON_SERVICIO`), con la misma forma que `agente.pide`.
 
 Los dos JSON de configuración están separados a propósito y cada uno tiene UN
 escritor. `agente.json` lo crea el asistente y a partir de ahí solo lo escribe el
@@ -305,17 +309,29 @@ PIDE_DESBLOQUEAR = "desbloquear"    # [id]: abrir el contenedor de la raíz cifr
 PIDE_BLOQUEAR = "bloquear"          # [id]: cerrarlo
 PIDE_ABRIR = "abrir"            # id: la ventana de esa raíz (la cifrada, desbloqueándola antes)
 PIDE_DESPERTAR = "despertar"    # el equipo vuelve de la suspensión: mirarlo todo ya
+PIDE_ACTUALIZAR = "actualizar"  # bajar la versión nueva y ponerla (agente y raíces del equipo)
+PIDE_REANUDAR = "reanudar"      # (buzón de la raíz) «Iniciar servicio» con el agente: volver ya
 AJUSTES_PEDIBLES = ("espera_unidad_nueva", "pedir_al_iniciar")
 
+# El buzón de UNA raíz, en su `state/`: lo que la ventana de esa raíz le pide al
+# servicio que la atiende (sección 5 del diseño). Solo lo que es de esa raíz:
+# `reanudar`, `pasada` con sus parejas y `bloquear`. El id no hace falta: es el
+# de la raíz donde está el fichero. Lo del equipo (un ajuste, el modo de una
+# unidad, añadir una raíz) va al buzón del agente, `agente.pide`.
+BUZON_SERVICIO = "servicio.pide"
+PIDE_SERVICIO = (PIDE_REANUDAR, PIDE_PASADA, PIDE_BLOQUEAR)
 
-def pedir(peticion: Mapping[str, Any]) -> bool:
-    """Deja una petición en el buzón del agente. True si se ha podido escribir.
+
+def pedir(peticion: Mapping[str, Any], buzon_de: Path | None = None) -> bool:
+    """Deja una petición en el buzón del agente (o en el de una raíz, con
+    `buzon_de`). True si se ha podido escribir.
 
     Va sellada con la hora (`cuando`): un «parar» que el agente de entonces no
     llegó a leer no puede tumbar al siguiente."""
+    destino = buzon_de if buzon_de is not None else buzon()
     try:
-        DIR.mkdir(parents=True, exist_ok=True)
-        with buzon().open("a", encoding="utf-8") as f:
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        with destino.open("a", encoding="utf-8") as f:
             f.write(json.dumps({**dict(peticion), "cuando": time.time()},
                                ensure_ascii=False) + "\n")
         return True
@@ -323,9 +339,9 @@ def pedir(peticion: Mapping[str, Any]) -> bool:
         return False
 
 
-def recoger() -> list[dict]:
+def recoger(buzon_de: Path | None = None) -> list[dict]:
     """Lo que hay en el buzón, vaciándolo. Solo lo llama el agente."""
-    origen = buzon()
+    origen = buzon_de if buzon_de is not None else buzon()
     tomado = origen.with_name(f"{origen.name}.{os.getpid()}")
     try:
         os.replace(origen, tomado)

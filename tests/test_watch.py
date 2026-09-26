@@ -87,6 +87,7 @@ class _Pw:
         return self.al_dia
 
 
+real_nombre = fleet.nombre
 real_penwatch, real_device_id = watch._penwatch, fleet.device_id
 fleet.device_id = lambda app_dir=None: "aaaa"
 
@@ -148,10 +149,13 @@ try:
     r = resumen_con({"mode": "ui", "device_id": "aaaa"})
     c("con el agente instalado, manda él aunque quede un watch.json",
       r.estado, "agente_nueva")
-    c("  sin este dispositivo en su lista: preguntará al enchufarlo",
-      watch.linea(r), watch.Linea("El agente de este equipo preguntará si atenderlo "
-                                  "la próxima vez que lo enchufes.", False, ""))
+    PARADO = " Ahora no está en marcha: arranca al iniciar sesión."
+    c("  sin este dispositivo en su lista: lo dice, y se le puede decir que sí",
+      watch.linea(r), watch.Linea("El agente de este equipo no lo tiene en su lista: "
+                                  "pregunta al enchufarlo, o dile aquí qué hacer con "
+                                  "él." + PARADO, True, "Atender…"))
     c("  y no vigila este (todavía)", r.vigila_este, False)
+    c("  sin agente vivo: ni vivo ni en pausa", (r.vivo, r.pausado), (False, False))
     for modo, dice in (("daemon", "lo sincroniza en segundo plano"),
                        ("ui", "abre esta ventana al enchufarlo"),
                        ("sync", "hace una pasada al enchufarlo")):
@@ -160,15 +164,66 @@ try:
         c(f"agente, modo {modo}: lo dice", dice in watch.linea(r).texto, True)
         c(f"  y cuenta como vigilado (la ventana dice que está en pausa)",
           r.vigila_este, True)
-    c("  sin botón: no se abre la pantalla de penwatch", watch.linea(r).boton, "")
+    c("  el botón abre «Qué hace el agente»", watch.linea(r).boton, "Cambiar…")
+    c("  parado: en ámbar, y lo dice", (watch.linea(r).aviso,
+                                         watch.linea(r).texto.endswith(PARADO)),
+      (True, True))
+    c("  su servicio no es el agente si no está vivo", r.servicio_del_agente, False)
+
+    # Vivo, y luego en pausa: su lock con este pid, su estado.json.
+    import os  # noqa: E402
+    equipo.guardar_ajustes(equipo.Ajustes().con_unidad(equipo.Unidad("aaaa", "daemon")))
+    store.write_json(equipo.lock_json(), {"pid": os.getpid(), "host": equipo.HOST})
+    r = watch.resumen()
+    c("agente vivo en daemon: su servicio es el agente",
+      (r.vivo, r.pausado, r.servicio_del_agente), (True, False, True))
+    c("  línea normal, sin ámbar", (watch.linea(r).aviso, watch.linea(r).texto),
+      (False, "El agente de este equipo lo sincroniza en segundo plano."))
+    store.write_json(equipo.estado_json(), {"pausado": True})
+    r = watch.resumen()
+    c("  en pausa (su «Pausar»): lo dice", (r.pausado, "en pausa para todo"
+                                            in watch.linea(r).texto), (True, True))
+    equipo.estado_json().unlink()
+    equipo.lock_json().unlink()
+
+    # Lo que se le pide desde la ventana, por su buzón.
+    equipo.recoger()
+    fleet.nombre = lambda state_dir=None: "PRDRIVE-7"
+    c("pedir_modo deja PIDE_MODO para ESTE dispositivo, con su nombre",
+      (watch.pedir_modo("sync"), [(p["pide"], p["id"], p["modo"], p["nombre"])
+                                  for p in equipo.recoger()]),
+      (True, [(equipo.PIDE_MODO, "aaaa", "sync", "PRDRIVE-7")]))
+    c("  un modo que no existe, no", (watch.pedir_modo("todo"), equipo.recoger()),
+      (False, []))
+    c("pedido(): la línea enseña lo pedido, que el agente aplica enseguida",
+      watch.pedido(watch.Resumen("agente_nueva", "", True), "daemon"),
+      watch.Resumen("agente", "daemon", True))
+    c("  en la raíz del equipo, sigue siendo la raíz",
+      watch.pedido(watch.Resumen("agente_raiz", "daemon", True), "nada").estado,
+      "agente_raiz")
+    c("modos: la raíz del equipo no se enchufa",
+      (watch.modos_agente(watch.Resumen("agente_raiz", "daemon")),
+       watch.modos_agente(watch.Resumen("agente", "ui"))),
+      (("daemon", "nada"), ("daemon", "sync", "ui", "nada")))
+    c("pedir_al_iniciar: None si no es la raíz cifrada de este equipo",
+      watch.pedir_al_iniciar(), None)
+    equipo.guardar_ajustes(equipo.Ajustes(pedir_al_iniciar=False).con_unidad(
+        equipo.Unidad("aaaa", "daemon", ruta="P:\\", contenedor="C:\\x.hc")))
+    c("  y el de agente.json si lo es", watch.pedir_al_iniciar(), False)
+    c("pedir_ajuste lo pide al agente, no lo escribe",
+      (watch.pedir_ajuste("pedir_al_iniciar", True), equipo.leer_ajustes().pedir_al_iniciar,
+       [(p["clave"], p["valor"]) for p in equipo.recoger()]),
+      (True, False, [("pedir_al_iniciar", True)]))
+
     equipo.guardar_ajustes(equipo.Ajustes().con_unidad(equipo.Unidad("aaaa", "nada")))
     r = watch.resumen()
     c("agente, modo nada: no hace nada, y no vigila", (watch.linea(r).texto, r.vigila_este),
-      ("El agente de este equipo no hace nada con él.", False))
+      ("El agente de este equipo no hace nada con él." + PARADO, False))
     store.write_json(equipo.instalacion_json(), {"codigo": str(equipo.DIR / "no-existe")})
     c("un instalacion.json sin código no es un agente",
       resumen_con({"mode": "ui", "device_id": "aaaa"}).estado, "instalado")
 finally:
     watch._penwatch, fleet.device_id = real_penwatch, real_device_id
+    fleet.nombre = real_nombre
 
 sys.exit(c.report())

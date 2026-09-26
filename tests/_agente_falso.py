@@ -60,6 +60,10 @@ def preparar() -> Path:
     penwatch.candidate_roots = lambda cfg: list(RAICES)
     moderacion.energia = lambda: moderacion.Energia()
     moderacion.red_medida = lambda: False
+    # Ni una pregunta a GitHub: la versión nueva la pone el test que la quiera,
+    # y lo que iría en un hilo corre en el sitio.
+    agente.buscar_version = lambda: None
+    agente.hilo = lambda funcion: funcion()
     return equipo.DIR
 
 

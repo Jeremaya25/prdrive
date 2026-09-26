@@ -19,6 +19,7 @@ por una unidad nueva son procesos hijos.
     python agente.py desbloquear [ID]     abrir el contenedor de la raíz cifrada
     python agente.py bloquear [ID]        y cerrarlo
     python agente.py ajuste CLAVE VALOR   pedir_al_iniciar sí|no · espera_unidad_nueva SEG
+    python agente.py actualizar           bajar la versión nueva y ponerla (lo que hace la bandeja)
 
 Las órdenes que no son `run` no hacen nada por sí mismas: dejan la petición en
 el buzón del agente (`equipo.pedir()`), que es quien escribe su configuración.
@@ -83,6 +84,13 @@ enseña a partir de `resumen()`, `ui/bandeja_windows.py` lo dibuja en su propio
 hilo, y lo que se elige en su menú llega como las peticiones del buzón
 (`Agente.pedir()`), por el mismo camino.
 
+La ventana de una raíz le habla por dos buzones (fase 5): lo del equipo por
+`agente.pide`, y lo de esa raíz —«Iniciar servicio» (`reanudar`), «Bloquear»—
+por el `state/servicio.pide` de la propia raíz, que solo se lee en las raíces
+de la lista. Y cuando hay una versión nueva, lo dice una vez; «Actualizar»
+(`agente.py actualizar`) baja el código de la release y ejecuta SU instalador,
+que pone el agente nuevo al lado de este, lo para y arranca el nuevo.
+
 Depende de `penwatch.py` para detectar, leer los registros de runsync y abrir
 VeraCrypt: el agente importa de penwatch, nunca al revés, y penwatch sigue sin
 importar nada del proyecto.
@@ -94,8 +102,10 @@ import argparse
 import math
 import os
 import queue
+import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from dataclasses import dataclass, field, replace
@@ -108,7 +118,7 @@ if str(SCRIPT_DIR) not in sys.path:
 
 import penwatch  # noqa: E402
 from common import (APP_NAME, avisos, catalog, equipo, model, moderacion,  # noqa: E402
-                    store, vestibulo)
+                    store, update, vestibulo)
 from common import planificador as pl  # noqa: E402
 from common.store import pid_alive  # noqa: E402
 from ui import bandeja, prefs  # noqa: E402
@@ -136,6 +146,7 @@ GRACIA_DESMONTAJE = 5.0         # tras salir VeraCrypt, a que el `.hc` quede lib
 ESPERA_ABRIR = 180.0            # `abrir` con la raíz cerrada: a que se desbloquee
 GRACIA_ABRIR = 20.0             # tras salir VeraCrypt, a ver la raíz abierta; si no, cancelada
 COLA_SALIDA = 64 * 1024         # lo que se lee de la salida de una pasada
+MIRAR_VERSION = 6 * 3600.0      # si hay versión nueva (`update.check` guarda 24 h)
 
 OK, FALLO, RED, SALTADA = pl.OK, pl.FALLO, pl.RED, pl.SALTADA
 TEXTO_RESULTADO = {OK: "bien", FALLO: "FALLÓ", RED: "FALLÓ por la red",
@@ -169,6 +180,30 @@ def abrir_contenedor(raiz: Path) -> bool:
 
 def diario(msg: str) -> None:
     penwatch.log(msg)
+
+
+def hilo(funcion) -> None:
+    """Corre `funcion` en un hilo aparte, para lo que puede tardar (la red).
+    De módulo para que los tests la corran en el sitio."""
+    threading.Thread(target=funcion, daemon=True).start()
+
+
+def cache_version() -> Path:
+    """Lo último que dijo GitHub, en la carpeta del agente: no vive en ninguna
+    raíz, y el `state/` de su código se va con cada versión."""
+    return equipo.DIR / "update.json"
+
+
+def buscar_version() -> "update.Release | None":
+    """La release más nueva que la versión de este agente, o None. Respeta la
+    caché de `update.check()` (24 h), así que casi nunca sale a la red."""
+    update.check(cache=cache_version())
+    return update.pending(SCRIPT_DIR, cache=cache_version())
+
+
+def ejecutar(args: list[str], **kwargs) -> Any:
+    """Corre un proceso hasta que acaba. De módulo para los tests."""
+    return subprocess.run(args, **kwargs)
 
 
 def python(ventana: bool = False) -> str:
@@ -385,6 +420,10 @@ class Conexion:
     avisado_error: bool = False
     firma: tuple = ()                   # mtimes de lo que decide el servicio
     motivo: str = ""                    # qué le pasa, para `status`
+    # «Iniciar servicio» en su ventana (`reanudar` en su buzón): al irse la
+    # ventana se vuelve enseguida, sin la `GRACIA` que se da a un servicio que
+    # la ventana arrancara por su cuenta.
+    reanudar: bool = False
 
 
 @dataclass
@@ -451,6 +490,13 @@ class Agente:
     # Cuándo arrancó, en hora de verdad (`equipo.pedir()` sella con ella): un
     # «parar» de antes iba para el agente anterior.
     inicio: float = field(default_factory=time.time)
+    # Su versión, la más nueva que se sabe (su tag, o None), cuándo se miró,
+    # la que ya se avisó, y el `agente.py actualizar` en marcha.
+    version: str = field(default_factory=lambda: update.installed_version(SCRIPT_DIR))
+    nueva: str | None = None
+    version_mirada: float = -math.inf
+    nueva_avisada: str | None = None
+    actualizando: Any = None
 
     # --- la vuelta ---------------------------------------------------------------
 
@@ -466,10 +512,12 @@ class Agente:
                 self._desconectar(con.id, ahora, {})
         self._preguntas(ahora)
         self._fin_de_pasada(ahora)
+        self._buzones_de_raices(ahora)
         self._bloqueos(ahora)
         for con in self.conexiones.values():
             self._contrato(con, ahora)
         self._leer_entorno(ahora)
+        self._mirar_version(ahora)
         decision = None
         if self.pasada is None and not self.terminar:
             decision = self._decidir(ahora)
@@ -807,14 +855,16 @@ class Agente:
             con.pausa = ahora
             diario(f"{con.nombre}: runsync ha pedido parar el servicio; en pausa")
             dlog(con.raiz, "servicio (agente del equipo) en pausa: lo ha pedido runsync")
-        if penwatch._vivo_aqui(con.raiz, penwatch.UI_LOCK_REL) is not None:
+        ventana = penwatch._vivo_aqui(con.raiz, penwatch.UI_LOCK_REL) is not None
+        if ventana:
             con.pausa = ahora
         otro = self._otro_servicio(con)
         if otro is not None and con.lock is not None:
             con.lock = None                 # el lock ya es de otro
         self._cargar_servicio(con)
 
-        if con.pausa is not None and ahora - con.pausa < GRACIA:
+        if con.pausa is not None and (ventana or (ahora - con.pausa < GRACIA
+                                                  and not con.reanudar)):
             con.motivo = "en pausa: hay una ventana de runsync abierta"
         elif otro is not None:
             con.motivo = f"la atiende otro servicio (pid {otro.get('pid')})"
@@ -822,6 +872,7 @@ class Agente:
             con.motivo = f"sin servicio: {con.error}"
         else:
             con.pausa = None
+            con.reanudar = False
             con.motivo = ""
             if con.lock is None:
                 self._tomar(con)
@@ -1194,6 +1245,55 @@ class Agente:
                                bateria=energia.porcentaje,
                                red_medida=moderacion.red_medida())
 
+    # --- la versión nueva ---------------------------------------------------------------
+
+    def _mirar_version(self, ahora: float) -> None:
+        """¿Hay una versión más nueva que la de este agente? En un hilo, porque
+        es la red, y de tarde en tarde. Cuando la hay se dice una vez, y la
+        bandeja ofrece «Actualizar» (sección 8 del diseño)."""
+        if self.actualizando is not None and self.actualizando.poll() is not None:
+            # Si el agente sigue siendo este, la actualización no ha llegado a
+            # sustituirlo: lo cuenta su diario, y se puede volver a pedir.
+            self.actualizando = None
+        if self.nueva and self.nueva != self.nueva_avisada:
+            self.nueva_avisada = self.nueva
+            avisar(f"Hay una versión nueva de {APP_NAME}: {self.nueva}",
+                   f"Tienes la {self.version or 'desconocida'}. "
+                   + ("Actualízala desde su icono de la bandeja." if self.bandeja
+                      else "Para ponerla: python agente.py actualizar"))
+        if ahora - self.version_mirada < MIRAR_VERSION:
+            return
+        self.version_mirada = ahora
+
+        def trabajo() -> None:
+            try:
+                rel = buscar_version()
+            except Exception as e:                  # noqa: BLE001
+                diario(f"no he podido mirar si hay versión nueva: {e}")
+                return
+            self.nueva = rel.tag if rel is not None else None
+
+        hilo(trabajo)
+
+    def _actualizar(self) -> None:
+        """«Actualizar»: un hijo suelto (`agente.py actualizar`) que baja la
+        versión nueva y la pone con su propio instalador, que para a este
+        agente y arranca el nuevo. Aquí no se espera nada: la red y la copia
+        no pueden tener parada la cola."""
+        if self.actualizando is not None and self.actualizando.poll() is None:
+            diario("ya se está actualizando")
+            return
+        try:
+            self.actualizando = lanzar([python(), str(SCRIPT_DIR / "agente.py"),
+                                        "actualizar"],
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                       **_opciones_hijo(equipo.DIR, separado=True))
+        except OSError as e:
+            avisar(f"{APP_NAME}: no he podido actualizar", str(e), True)
+            return
+        diario(f"actualizando a la {self.nueva or 'última versión'}; lo que pase, "
+               f"aquí mismo")
+
     # --- el buzón ---------------------------------------------------------------------
 
     def pedir(self, peticion: dict) -> None:
@@ -1214,10 +1314,42 @@ class Agente:
             except Exception as e:                      # noqa: BLE001
                 diario(f"petición ilegible {p!r}: {e}")
 
+    def _buzones_de_raices(self, ahora: float) -> None:
+        """El buzón de cada raíz conectada y en la lista (`state/servicio.pide`):
+        lo que su ventana le pide a su servicio. Lo que llega por ahí es de ESA
+        raíz, sea cual sea el id que traiga, y solo lo que es de una raíz
+        (`equipo.PIDE_SERVICIO`). El de una unidad que no está en la lista ni se
+        mira: de ella solo se lee su id y su nombre."""
+        for con in list(self.conexiones.values()):
+            if con.id not in self.ajustes.unidades:
+                continue
+            for p in equipo.recoger(estado_de(con.raiz) / equipo.BUZON_SERVICIO):
+                if p.get("pide") not in equipo.PIDE_SERVICIO:
+                    diario(f"{con.nombre}: su buzón pide {p.get('pide')!r}, que no es "
+                           f"cosa de una raíz; ignorado")
+                    continue
+                try:
+                    self._atender_peticion({**p, "id": con.id}, ahora)
+                except Exception as e:                  # noqa: BLE001
+                    diario(f"petición ilegible {p!r}: {e}")
+
     def _atender_peticion(self, p: dict, ahora: float) -> None:
         que = p.get("pide")
         uid = p.get("id") if isinstance(p.get("id"), str) else ""
-        if que == equipo.PIDE_ATENDER:
+        if que == equipo.PIDE_REANUDAR:
+            # «Iniciar servicio» en la ventana de esa raíz: ya no arranca un
+            # servicio suyo, le dice al agente que vuelva en cuanto se cierre.
+            # Como el servicio que se arrancaba, empieza con una pasada: las
+            # parejas o el intervalo acaban de elegirse.
+            con = self.conexiones.get(uid)
+            if con is None:
+                diario(f"reanudar {uid[:8]}: no está conectada")
+                return
+            con.reanudar = True
+            for clave in [k for k in self.marcas if k[0] == uid]:
+                del self.marcas[clave]
+            diario(f"{con.nombre}: su ventana pide volver a sincronizarla")
+        elif que == equipo.PIDE_ATENDER:
             con = self.conexiones.get(uid)
             if con is None:
                 diario(f"atender {uid[:8]}: no está conectada; se atiende enchufada")
@@ -1294,6 +1426,8 @@ class Agente:
             nombres = [x.nombre for x in con.servicio.parejas
                        if not pedidas or x.nombre in pedidas]
             self.urgentes += [(uid, n) for n in nombres if (uid, n) not in self.urgentes]
+        elif que == equipo.PIDE_ACTUALIZAR:
+            self._actualizar()
         elif que == equipo.PIDE_PAUSA:
             self.pausado = True
         elif que == equipo.PIDE_SIGUE:
@@ -1381,7 +1515,10 @@ class Agente:
                 "equipo": [{"id": uid, "nombre": u.nombre or APP_NAME, "ruta": u.ruta,
                             "cifrada": u.cifrada, "estado": self._estado_raiz(uid, u)}
                            for uid, u in self.ajustes.raices.items()],
-                "pedir_al_iniciar": self.ajustes.pedir_al_iniciar}
+                "pedir_al_iniciar": self.ajustes.pedir_al_iniciar,
+                "version": self.version, "nueva": self.nueva,
+                "actualizando": self.actualizando is not None
+                and self.actualizando.poll() is None}
 
     def _escribir_estado(self) -> None:
         resumen = self.resumen()
@@ -1585,6 +1722,9 @@ def cmd_status(_args: argparse.Namespace) -> int:
     vivo = equipo.agente_vivo()
     print(f"Agente:         {'vivo (pid ' + str(vivo.get('pid')) + ')' if vivo else 'parado'}")
     print(f"En el equipo:   {equipo.DIR}")
+    nueva = update.pending(SCRIPT_DIR, cache=cache_version())
+    print(f"Versión:        {update.installed_version(SCRIPT_DIR) or 'desconocida'}"
+          + (f" (hay una nueva, {nueva.tag}: agente.py actualizar)" if nueva else ""))
     print(f"Unidad nueva:   se pregunta y se espera {aj.espera_unidad_nueva:g} s")
     for u in aj.raices.values():
         print(f"Raíz del equipo: {u.nombre or '(sin nombre)'} en {u.ruta} ({u.modo}: "
@@ -1746,6 +1886,52 @@ def cmd_ajuste(args: argparse.Namespace) -> int:
     return _pedir({"pide": equipo.PIDE_AJUSTE, "clave": args.clave, "valor": valor})
 
 
+def cmd_actualizar(_args: argparse.Namespace) -> int:
+    """«Actualizar» de la bandeja (o a mano): baja el código de la última
+    release, lo comprueba (`update.download()`) y ejecuta SU instalador con
+    `--update-agente`, que pone el agente nuevo al lado, para a este, vuelve a
+    registrarlo, pone al día las raíces abiertas y arranca el nuevo. Lo que
+    dice va al diario del agente. Nunca se descarga dentro de ninguna raíz."""
+    _enganchar_penwatch()
+
+    def decir(msg: str) -> None:
+        print(msg)
+        diario(f"actualizar: {msg}")
+
+    rel, motivo = update.check(force=True, cache=cache_version())
+    actual = update.installed_version(SCRIPT_DIR)
+    if rel is None:
+        decir(motivo or "no sé qué versión es la última")
+        return 1
+    if not update.is_newer(rel.version, actual):
+        decir(f"ya está en la última versión ({actual or rel.version})")
+        return 0
+    trabajo = Path(tempfile.mkdtemp(prefix=f"{APP_NAME}-agente-"))
+    try:
+        try:
+            update.download(rel.tag, trabajo / "codigo", progreso=decir)
+        except update.UpdateError as e:
+            decir(str(e))
+            avisar(f"{APP_NAME}: no he podido actualizar", str(e).splitlines()[0], True)
+            return 1
+        kwargs = _opciones_hijo(equipo.DIR)
+        proc = ejecutar(update.agent_command(trabajo / "codigo", sys.executable),
+                        capture_output=True, text=True, encoding="utf-8",
+                        errors="replace", **kwargs)
+        for linea in ((proc.stdout or "") + (proc.stderr or "")).splitlines():
+            if linea.strip():
+                decir(linea.rstrip())
+        if proc.returncode != 0:
+            avisar(f"{APP_NAME}: no he podido actualizar",
+                   f"Lo que ha pasado está en {equipo.diario_log()}.", True)
+            return proc.returncode
+        avisar(f"{APP_NAME} actualizado a la {rel.tag}",
+               "El agente se ha reiniciado con la versión nueva.")
+        return 0
+    finally:
+        shutil.rmtree(trabajo, ignore_errors=True)
+
+
 def cmd_pregunta(args: argparse.Namespace) -> int:
     from ui import tk_agente
     return tk_agente.main(args.nombre, args.segundos)
@@ -1790,6 +1976,8 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("bloquear", help="Cerrarlo.")
     p.add_argument("id", nargs="?", default="")
     p.set_defaults(func=lambda a: _pedir({"pide": equipo.PIDE_BLOQUEAR, "id": a.id}))
+    sub.add_parser("actualizar", help="Bajar la versión nueva y ponerla.").set_defaults(
+        func=cmd_actualizar)
     p = sub.add_parser("ajuste", help="Cambiar un ajuste del agente.")
     p.add_argument("clave", choices=equipo.AJUSTES_PEDIBLES)
     p.add_argument("valor")

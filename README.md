@@ -870,8 +870,8 @@ python prdrive-install.py --desinstalar-agente # quitarlo (no toca ninguna unida
 
 Puede sincronizar además **una carpeta del propio equipo**, la raíz del equipo
 (abajo), o no tener ninguna y solo atender unidades: la instalación **«solo
-agente»**. El icono en la bandeja de Linux y la ventana hablando con el agente
-llegan más adelante; el diseño completo está en
+agente»**. El icono en la bandeja de Linux llega más adelante; el diseño
+completo está en
 `docs/superpowers/specs/2026-09-25-instalacion-en-el-equipo-design.md`.
 
 - **Vive fuera de toda unidad**, en `%LOCALAPPDATA%\prdrive\` o en
@@ -902,8 +902,26 @@ llegan más adelante; el diseño completo está en
   `daemon.stop`, `ui.lock.json`), así que funciona con unidades de código viejo.
   **El único cambio que se nota: abrir la ventana de la unidad ya no apaga el
   servicio para siempre, lo pausa mientras está abierta.** Si desde la ventana
-  pulsas «Iniciar servicio», el agente se aparta: un servicio por unidad, el que
-  tenga el lock. Para pararlo todo, `python agente.py pausa` (y `sigue`).
+  pulsas «Iniciar servicio» y el agente la sincroniza en segundo plano, no se
+  arranca otro servicio: se guardan las parejas y el intervalo, y el agente
+  vuelve en cuanto cierras la ventana, con una pasada. En cualquier otro caso
+  (otro modo, o el agente parado) arranca el servicio de siempre y el agente se
+  aparta: un servicio por unidad, el que tenga el lock. Para pararlo todo,
+  `python agente.py pausa` (y `sigue`).
+- **La ventana de la unidad dice qué hace el agente con ella**, si está en pausa
+  y si no está en marcha, y su botón **«Cambiar…»** (o **«Atender…»**, si no la
+  tiene en su lista) le pide otro modo. La ventana no escribe la configuración
+  del equipo: se lo pide al agente por su buzón (`agente.pide`), y lo que es de
+  una unidad («reanudar», «bloquear») por el de la unidad,
+  `.prdrive/state/servicio.pide`.
+- **Se actualiza solo, cuando se lo pides.** Mira de vez en cuando si hay una
+  versión nueva y avisa una vez; **«Actualizar a la vX»** en la bandeja (o
+  `python agente.py actualizar`) baja el código de la release, lo comprueba y
+  ejecuta su instalador (`prdrive-install.py --update-agente`): el agente nuevo
+  se pone al lado del viejo, se vuelve a registrar y arranca, y la raíz de este
+  equipo, si está abierta, pasa también a la versión nueva. Su lista y sus
+  ajustes no se tocan. Volver a pasar el asistente con el agente de la misma
+  versión no lo reinstala: solo le pide lo nuevo.
 - **Se modera solo.** Con batería por debajo del 20 % o en una red de uso medido
   no lanza nada; si un remoto no contesta, deja de lanzar pareja tras pareja
   contra él y lo sondea cada 5 minutos; tras un fallo, cada pareja espera el
@@ -941,13 +959,14 @@ python agente.py pausa | sigue
 python agente.py abrir [id]           # la ventana de la raíz de este equipo
 python agente.py desbloquear | bloquear          # la raíz cifrada de este equipo
 python agente.py ajuste pedir_al_iniciar no      # no pedir su contraseña al entrar
+python agente.py actualizar           # la versión nueva, como «Actualizar» de la bandeja
 ```
 
 Esas órdenes no tocan nada por sí mismas: dejan la petición en el buzón del
 agente (`agente.pide`), y él escribe su configuración. **Sin probar todavía en un
 Windows real**: la tarea programada, la bandeja y los avisos (`Shell_NotifyIconW`), la batería,
-la red de uso medido (`INetworkCostManager`) y el acceso del menú Inicio
-(`IShellLinkW`).
+la red de uso medido (`INetworkCostManager`), el acceso del menú Inicio
+(`IShellLinkW`) y «Actualizar».
 
 ### La raíz del equipo
 
@@ -1014,7 +1033,8 @@ el contenedor y una marca con su id.
   crear y montar, y deja el contenedor abierto. Desde ahí lo abre el agente con
   la ventana de VeraCrypt: al iniciar sesión (una vez; si cancelas, hasta que
   pidas `agente.py desbloquear`), o nunca, si desmarcas «Pedir la contraseña al
-  iniciar sesión». Con la raíz cerrada, el acceso «prdrive» del menú la
+  iniciar sesión» (en el asistente, y después en la bandeja o en «Ajustes» de su
+  ventana). Con la raíz cerrada, el acceso «prdrive» del menú la
   desbloquea y abre la ventana.
 - **Bloquear** es el botón del pie de su ventana (donde una unidad cifrada tiene
   «Expulsar»), o `agente.py bloquear`. El agente acaba la pareja en curso y le

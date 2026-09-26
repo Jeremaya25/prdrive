@@ -93,6 +93,9 @@ class Wizard:
         # de siempre, para que quien viene a preparar un pendrive no note nada.
         self.donde = "unidad"
         self.agente_prep = None
+        # El agente ya estaba, de esta misma versión: no se reinstala, se le
+        # pide lo nuevo por su buzón (`install.agente.anadir`).
+        self.agente_reusado = False
         self.agente_unidades: dict | None = None
         self.agente_origen: dict = {}
         self.agente_espera = 120.0

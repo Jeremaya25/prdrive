@@ -22,6 +22,7 @@ inicializa las parejas bisync y comprueba que todo está.
     python prdrive-install.py --update-components RUTA   pone al día su rclone y su Python
     python prdrive-install.py --instalar-agente      el agente residente en ESTE equipo
     python prdrive-install.py --desinstalar-agente   y quitarlo (no toca ninguna unidad)
+    python prdrive-install.py --update-agente        poner el agente instalado a esta versión
 
 `--update` es el otro extremo del aviso de versión nueva de la ventana: no
 aprovisiona nada, solo repite el paso 5 sobre un dispositivo que ya existe. Y no
@@ -247,6 +248,21 @@ def cmd_instalar_agente() -> int:
     return 0
 
 
+def cmd_update_agente() -> int:
+    """El agente residente de este equipo, a la versión de ESTE instalador: su
+    código y su Python al lado de los que hay, registrarlo de nuevo, las raíces
+    del equipo que estén abiertas y arrancarlo. Lo lanza «Actualizar» de la
+    bandeja desde el zip que acaba de descargar (`agente.py actualizar`), por
+    lo mismo que `--update`: la versión nueva se instala a sí misma. Se
+    imprime línea a línea: quien lo lanza lo copia en el diario del agente."""
+    from install import agente
+    print(f"Actualizando el agente de este equipo a la versión {__version__}")
+    for linea in agente.actualizar(progreso=print):
+        print(f"  {linea}")
+    print("Hecho. Su lista de unidades y sus ajustes se conservan.")
+    return 0
+
+
 def cmd_desinstalar_agente() -> int:
     from install import agente
     for linea in agente.desinstalar():
@@ -298,6 +314,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--desinstalar-agente", action="store_true",
                         help="Quita el agente residente de este equipo y sale. No "
                              "toca ninguna unidad.")
+    parser.add_argument("--update-agente", action="store_true",
+                        help="Pone el agente residente de este equipo (y el código de "
+                             "sus raíces abiertas) a la versión de este instalador, y "
+                             "sale. No toca su configuración.")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     return parser.parse_args(argv)
 
@@ -316,6 +336,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_update_components(args.update_components)
         if args.update:
             return cmd_update(args.update)
+        if args.update_agente:
+            return cmd_update_agente()
         if args.instalar_agente:
             return cmd_instalar_agente()
         if args.desinstalar_agente:

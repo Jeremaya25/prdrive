@@ -1,10 +1,11 @@
 # Instalación en el equipo: prdrive residente
 
-Fecha: 2026-09-25 · Estado: **aceptada**; fases 1 a 4 implementadas (el agente
+Fecha: 2026-09-25 · Estado: **aceptada**; fases 1 a 5 implementadas (el agente
 sin bandeja, con unidades: `agente.py`, `common/planificador.py`,
 `install/agente.py`; la raíz del equipo sin cifrar: `install/raiz_equipo.py`,
-`ui/tk_equipo.py`; cifrada con VeraCrypt; y la bandeja de Windows:
-`ui/bandeja.py`, `ui/bandeja_windows.py`; **sin probar en real**) · Versión
+`ui/tk_equipo.py`; cifrada con VeraCrypt; la bandeja de Windows:
+`ui/bandeja.py`, `ui/bandeja_windows.py`; y la ventana ↔ el agente con
+«Actualizar»; **sin probar en real**) · Versión
 objetivo: 0.4.0 · Lo que falta probar en equipos reales:
 `docs/superpowers/pruebas/2026-09-25-equipo-pendiente-en-real.md`
 
@@ -612,7 +613,10 @@ Nada, mientras no se instale el agente. Cuando se instala:
 ## Fases
 
 **La v1 son las seis.** Cada fase se puede publicar por separado y deja el
-proyecto funcionando:
+proyecto funcionando. Lo que cada fase deja por probar en un equipo real se
+apunta, fase a fase, en
+[`docs/superpowers/pruebas/2026-09-25-equipo-pendiente-en-real.md`](../pruebas/2026-09-25-equipo-pendiente-en-real.md):
+una fase no está acabada hasta que su sección está escrita allí.
 
 1. **El agente sin bandeja**, con unidades: la instalación «solo agente», su
    sitio en el equipo, el planificador, la cola, el contrato de la sección 3, el
@@ -640,11 +644,12 @@ proyecto funcionando:
      del usuario.
    - **Fuera solo va la marca** (`.prdrive-vestibulo`), sin «Abrir/Expulsar
      PRDRIVE» ni guía: la raíz del equipo la abre y la cierra el agente.
-   - **«Bloquear» va por `agente.pide`**, no por `state/servicio.pide`, que es
-     de la fase 5. Por eso la ventana de runsync no se cierra con
-     `daemon.stop`: no lo escucha. El botón «Bloquear» se lo pide al agente y
-     cierra su propia ventana; el agente espera a que esa ventana se vaya
-     (hasta un minuto) y, si sigue abierta, lo dice y no bloquea.
+   - **«Bloquear» iba por `agente.pide`**, porque `state/servicio.pide` era
+     de la fase 5 (que ya lo ha movido allí; el agente sigue aceptándolo por
+     los dos). La ventana de runsync no se cierra con `daemon.stop`: no lo
+     escucha. El botón «Bloquear» se lo pide al agente y cierra su propia
+     ventana; el agente espera a que esa ventana se vaya (hasta un minuto) y,
+     si sigue abierta, lo dice y no bloquea.
    - **`agente.py abrir` con la raíz cerrada** le pide al agente
      «desbloquear» y abre la ventana en cuanto la raíz aparece. Es lo que hace
      el acceso del menú.
@@ -673,7 +678,42 @@ proyecto funcionando:
      batería usan el icono de pausa.
 5. **Ventana ↔ agente**: la línea del agente, los dos buzones
    (`servicio.pide` y `agente.pide`), añadir una raíz a un agente ya instalado y
-   «Actualizar».
+   «Actualizar». Hecho así, y en seis cosas precisado o distinto de lo escrito
+   arriba:
+   - **`state/servicio.pide` es de la raíz donde está**: el agente lo mira solo
+     en las raíces conectadas y de su lista (el de una unidad ajena ni se lee),
+     toma el id del sitio y no de la petición, y ahí solo acepta `reanudar`,
+     `pasada` y `bloquear`; un ajuste del equipo por ese buzón se ignora y se
+     dice. «Bloquear» de la ventana va ya por él. La ventana sigue haciendo
+     sus propias pasadas en su ventana de salida: `pasada` por ese buzón
+     existe, pero hoy no la usa nadie más que quien la escriba a mano.
+   - **«Iniciar servicio» → `reanudar` solo si el agente es el servicio de esa
+     raíz**: está vivo y la tiene en modo `daemon`. En modo `sync` (una pasada
+     por conexión), `ui` o `nada`, sin agente vivo, o con la unidad fuera de
+     su lista, se arranca el servicio de siempre y el agente se aparta, como
+     en la fase 1: quien pulsa «Iniciar servicio» pide un servicio cada N
+     minutos. `reanudar` se salta la `GRACIA` al irse la ventana y empieza
+     con una pasada, como el servicio que se arrancaba.
+   - **La línea del agente** dice qué hace con esa raíz, si está en pausa y,
+     en ámbar, si no está en marcha. Su botón («Cambiar…», o «Atender…» con la
+     unidad fuera de la lista) abre «Qué hace el agente», que pide el modo por
+     `agente.pide` (`PIDE_MODO`); a la raíz del equipo solo se le ofrecen
+     «en segundo plano» y «nada». `pedir_al_iniciar` es una casilla de
+     «Ajustes», solo en la raíz cifrada del equipo.
+   - **Volver a pasar el asistente con el agente de la misma versión** no lo
+     reinstala ni lo para: «Instalación» usa el que hay y «Arranque» se lo pide
+     por el buzón (`install/agente.anadir()`). Con otra versión, se pone al
+     lado, como antes.
+   - **«Actualizar»**: el agente mira cada 6 h, en un hilo, con la caché de
+     24 h de `update.check()` guardada en su carpeta, y lo dice una vez. La
+     bandeja lo ofrece; en Linux, hasta la fase 6, el aviso dice
+     `agente.py actualizar`. Quien actualiza es un hijo suelto que baja el zip
+     de la release y ejecuta SU instalador con `--update-agente`: la versión
+     nueva se instala a sí misma, como `--update` en una unidad.
+   - **Las raíces del equipo abiertas se actualizan con el agente**
+     (`deploy.deploy_code()`, como `--update`); una cifrada bloqueada se queda
+     y su ventana lo ofrece al desbloquearla. La poda nunca borra el Python con
+     el que corre el propio «Actualizar»: se recoge la vez siguiente.
 6. **Bandeja en Linux**: la mitad que exporta objetos de `common/dbus.py`,
    `org.kde.StatusNotifierItem` + `com.canonical.dbusmenu`, y la caída al
    lanzador cuando no hay `StatusNotifierWatcher`. Se prueba en real en KDE, en
@@ -726,7 +766,8 @@ unidades ajenas.
   comprueba también que penwatch sigue sin importar el proyecto.
 - `test_tk_medidas.py` cubre los pasos nuevos del asistente.
 - La bandeja, los avisos y VeraCrypt se sustituyen en todos los tests. La prueba
-  de verdad se hace en Windows y Linux reales y se apunta en
-  `docs/superpowers/pruebas/`, con los mismos casos que la de la unidad G:
-  (crear, abrir, bloquear con un fichero abierto, volumen fantasma tras
-  suspender).
+  de verdad se hace en Windows y Linux reales, con los mismos casos que la de la
+  unidad G: (crear, abrir, bloquear con un fichero abierto, volumen fantasma tras
+  suspender). La lista viva de lo que falta está en
+  [`docs/superpowers/pruebas/2026-09-25-equipo-pendiente-en-real.md`](../pruebas/2026-09-25-equipo-pendiente-en-real.md);
+  los resultados van a su lado, en `docs/superpowers/pruebas/`.

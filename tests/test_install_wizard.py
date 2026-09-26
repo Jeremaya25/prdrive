@@ -929,6 +929,36 @@ elegir(casa, "En una unidad")
 c("volver a «En una unidad» devuelve el recorrido de siempre",
   casa.pasos is tk_install.PASOS_INSTALACION, True)
 
+# --- con el agente de esta versión ya instalado: no se reinstala ----------------
+anadidos: list = []
+real_misma, real_prep_inst, real_anadir = ia.misma_version, ia.instalado_prep, ia.anadir
+real_instalado = ia.instalado
+ia.misma_version = lambda: True
+ia.instalado_prep = lambda: PREP
+ia.instalado = lambda: {"version": "0.4.0", "codigo": str(PREP.codigo)}
+ia.anadir = lambda elegidas, espera, raiz=None, pedir_al_iniciar=None: (
+    anadidos.append((elegidas, espera, raiz)) or ["Pedido al agente."])
+preparados.clear()
+activados.clear()
+otra = nuevo_asistente(None)
+en_paso(otra, 0)
+elegir(otra, "En este equipo")
+otra.ir(+1)
+elegir(otra, "Ninguna: solo atender unidades")
+otra.ir(+1)
+c("agente de esta versión ya instalado: «Instalación» lo dice",
+  any("no se reinstala" in w.cget("text") for w in widgets(otra.cuerpo, ttk.Label)), True)
+boton(otra.cuerpo, "Instalar").invoke()
+c("  y no copia código ni Python: usa el que hay",
+  (preparados, otra.agente_prep, otra.agente_reusado), ([], PREP, True))
+otra.ir(+2)
+boton(otra.cuerpo, "Pedírselo al agente").invoke()
+c("  «Arranque» se lo pide por su buzón: ni parar, ni registrar",
+  (activados, len(anadidos)), ([], 1))
+c("  y se puede seguir", str(otra.boton_siguiente.cget("state")), "normal")
+ia.misma_version, ia.instalado_prep, ia.anadir = real_misma, real_prep_inst, real_anadir
+ia.instalado = real_instalado
+
 # --- con raíz: una carpeta propia del equipo -----------------------------------
 # Se instala de verdad en un temporal (rclone y Python de mentira, como arriba):
 # lo que se comprueba es que la raíz queda hecha y que el agente la recibe.

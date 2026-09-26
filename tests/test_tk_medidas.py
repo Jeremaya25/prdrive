@@ -51,7 +51,8 @@ except Exception as e:                                   # sin entorno gráfico
 from ui import tk as uitk
 from ui import remote_picker
 from ui import (tk_doctor, tk_fleet, tk_install, tk_pairs, tk_qr, tk_repair,
-                tk_update, tk_versions, tk_volumen, versions_editor, volumen)
+                tk_update, tk_versions, tk_volumen, tk_watch, versions_editor, volumen,
+                watch)
 
 # Ni una petición a GitHub desde un test.
 update.fetch = lambda url, timeout: c("ningún test toca la red", "fetch", "nada")
@@ -745,13 +746,27 @@ try:
                   corta, False)
 
                 # «Ajustes»: una tarjeta con una entrada por acción, que crece
-                # con cada una que se le añada.
-                entra, corta = medir_dialogo(
-                    lambda: tk_doctor.open_dialog(raiz, cfg, lambda *a: None),
-                    ancho, alto, escala, modulo=tk_doctor)
+                # con cada una que se le añada. Su peor caso es la raíz cifrada
+                # de un equipo, que añade la casilla de `pedir_al_iniciar`.
+                previo_pedir = watch.pedir_al_iniciar
+                watch.pedir_al_iniciar = lambda: True
+                try:
+                    entra, corta = medir_dialogo(
+                        lambda: tk_doctor.open_dialog(raiz, cfg, lambda *a: None),
+                        ancho, alto, escala, modulo=tk_doctor)
+                finally:
+                    watch.pedir_al_iniciar = previo_pedir
                 c(f"{nombre}: la pantalla de Ajustes cabe", entra, True)
                 c(f"{nombre}: la pantalla de Ajustes no queda recortada",
                   corta, False)
+
+                # «Qué hace el agente»: los cuatro modos de una unidad, y el
+                # aviso de que el agente no está en marcha.
+                entra, corta = medir_dialogo(
+                    lambda: tk_watch.open_agente(raiz, watch.Resumen("agente", "ui")),
+                    ancho, alto, escala, modulo=tk_watch)
+                c(f"{nombre}: «Qué hace el agente» cabe", entra, True)
+                c(f"{nombre}: «Qué hace el agente» no queda recortada", corta, False)
 
                 # Versiones: dos tarjetas con una ruta larga cada una, más el
                 # desplegable de parejas. Se mide con y sin parejas versionadas,

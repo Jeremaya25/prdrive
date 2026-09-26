@@ -217,6 +217,17 @@ def _sincronizar(resumen: Mapping[str, Any]) -> Entrada:
           for u in atendidas)))
 
 
+def _actualizar(resumen: Mapping[str, Any]) -> list[Entrada]:
+    """«Actualizar» cuando el agente sabe de una versión más nueva que la suya
+    (sección 8 del diseño). Mientras se actualiza, dicho y apagado."""
+    nueva = resumen.get("nueva")
+    if not nueva:
+        return []
+    if resumen.get("actualizando"):
+        return [Entrada(f"Actualizando a la {nueva}…", activa=False)]
+    return [Entrada(f"Actualizar a la {nueva}", _pide(equipo.PIDE_ACTUALIZAR))]
+
+
 def _bloques(*bloques: list[Entrada]) -> tuple[Entrada, ...]:
     """Los bloques no vacíos, con un separador entre cada dos."""
     salida: list[Entrada] = []
@@ -242,5 +253,6 @@ def vista(resumen: Mapping[str, Any]) -> Vista:
                     [_sincronizar(resumen),
                      Entrada("Reanudar", _pide(equipo.PIDE_SIGUE)) if pausado
                      else Entrada("Pausar", _pide(equipo.PIDE_PAUSA))],
-                    [Entrada("Cerrar el agente", _pide(equipo.PIDE_PARAR))])
+                    [*_actualizar(resumen),
+                     Entrada("Cerrar el agente", _pide(equipo.PIDE_PARAR))])
     return Vista(icono, tip(frase), menu)

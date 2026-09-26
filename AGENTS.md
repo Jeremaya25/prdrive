@@ -186,6 +186,7 @@ python agente.py atender ID | modo ID MODO | pasada ID [pareja…] | pausa | sig
 python agente.py abrir [ID]                         # the window of the host root
 python agente.py desbloquear [ID] | bloquear [ID]   # open / close the encrypted host root
 python agente.py ajuste pedir_al_iniciar sí|no      # or espera_unidad_nueva SEG
+python agente.py actualizar                         # fetch the new release and put it in place
 
 python prdrive-install.py          # install wizard for a NEW device (Tk only)
 python prdrive-install.py --check  # rclone + connection + catalogue, then exit
@@ -194,6 +195,7 @@ python prdrive-install.py --update E:\             # the device's code only
 python prdrive-install.py --update-components E:\  # its rclone + runtime only
 python prdrive-install.py --instalar-agente        # the resident agent on THIS host
 python prdrive-install.py --desinstalar-agente     # and off again (no drive touched)
+python prdrive-install.py --update-agente          # the installed agent (and open host roots) to this version
 python build_installer.py          # build the .exe (embeds the profile if any)
 python -m ui.icons                 # repaint APP_DIR/runsync.ico (headless)
 
@@ -342,7 +344,8 @@ when runsync is launched again.
 
 **One service, two ways to start it (#14).** By hand («Iniciar servicio») or on
 plugging in (the watcher → `runsync --auto`), it is the same service with the
-same config: pairs + interval in `ui_prefs.json`, on the device.
+same config (with the resident agent as this root's service, «Iniciar
+servicio» asks it to resume instead: «The window ↔ the agent», below): pairs + interval in `ui_prefs.json`, on the device.
 `startup_defaults()` layers that record > `[daemon]` in the TOML > all pairs /
 30 min, for the window, `--auto` and the watcher alike; explicit `--auto`
 arguments still win (shortcuts, cron, and watchers not yet reinstalled). **Only
@@ -1178,12 +1181,13 @@ script to `%LOCALAPPDATA%\prdriveWatch` / `~/.local/share/prdrive-watch`, writes
 
 ## The resident agent (`agente.py` + `common/planificador.py` + `install/agente.py`)
 
-Phases 1 to 4 of `docs/superpowers/specs/2026-09-25-instalacion-en-el-equipo-design.md`
+Phases 1 to 5 of `docs/superpowers/specs/2026-09-25-instalacion-en-el-equipo-design.md`
 (read it before touching this): the agent attends the prdrive drives plugged
 into the host and, optionally, **the host root** (below), plain or in a
 VeraCrypt container; with no root it is the **«solo agente»** install. On
-Windows it has a tray (below). The later phases (window ↔ agent mailboxes,
-«Actualizar», the Linux tray) are specified there and not built yet. **Nothing of this has run on a real machine**: what has to be
+Windows it has a tray (below), and the window of a root talks to it (below).
+The last phase, the Linux tray, is specified there and not built yet.
+**Nothing of this has run on a real machine**: what has to be
 checked there, phase by phase, is the living list in
 `docs/superpowers/pruebas/2026-09-25-equipo-pendiente-en-real.md` — add to it
 whatever you build that only a real host can prove.
@@ -1198,9 +1202,10 @@ whatever you build that only a real host can prove.
   a temp dir for every test.
 - **One writer per file.** `agente.json` is written by `install/agente.py` the
   first time only; afterwards **only the agent** writes it, and everybody else
-  (the wizard re-run, the CLI, later the window) appends a JSON line to the
+  (the wizard re-run, the CLI, the window) appends a JSON line to the
   mailbox `agente.pide` (`equipo.pedir()`); the agent consumes it by renaming it
-  first (`equipo.recoger()`). `instalacion.json` is the installer's.
+  first (`equipo.recoger()`). `instalacion.json` is the installer's. A root has
+  its own mailbox, `state/servicio.pide` (phase 5, below), same shape.
 - **The agent never runs a drive's code before «Atender».** A drive whose id is
   not in `agente.json` gets a notification + a countdown window (`agente.py
   pregunta` → `ui/tk_agente.py`, exit code 0/1/2); the deadline is
@@ -1265,10 +1270,9 @@ whatever you build that only a real host can prove.
   `agente.py` is in `build_installer.DATOS_FICHEROS` but NOT in
   `deploy.DEPLOY_FILES`: it goes to hosts, not devices.
 - **The window's watcher line** (`watch.resumen()`) asks `equipo` first: with an
-  agent installed it reports `agente` / `agente_nueva` and offers no button
-  (changing the mode from the window is the phase-5 mailbox). The wizard's
-  final step offers «Que lo atienda el agente de este equipo» instead of
-  installing penwatch.
+  agent installed it reports `agente` / `agente_nueva` / `agente_raiz` and is the
+  agent's line (phase 5, below). The wizard's final step offers «Que lo atienda
+  el agente de este equipo» instead of installing penwatch.
 - **The wizard's first step is «¿Dónde?»** in every route (`PASOS_INSTALACION`,
   both short routes, `PASOS_EQUIPO`, `PASOS_EQUIPO_SOLO`), so «Dispositivo» and
   «Carpeta» keep index 1 and «Atrás» always lands where it says.
@@ -1430,6 +1434,58 @@ draws**, and neither imports tkinter (`test_install_agente.py` checks it).
   indirection point) it keeps penwatch's 5 s. Linux has no tray until phase 6.
 - «Cerrar el agente» is `PIDE_PARAR`: the next logon starts it again. Not in the
   spec's list; there is no other way to close a tray icon.
+
+### The window ↔ the agent (phase 5)
+
+No ports: two mailboxes of JSON lines, appended by whoever asks and consumed by
+the agent renaming them first (`equipo.pedir(…, buzon_de=)` /
+`equipo.recoger(buzon_de=)`).
+
+- **`state/servicio.pide`** (`equipo.BUZON_SERVICIO`) is the ROOT's: the agent
+  drains it only for connected roots **in its list** (`_buzones_de_raices()`;
+  an unlisted drive's is not even read), takes the id from WHERE the file is,
+  never from the request, and accepts only `equipo.PIDE_SERVICIO`
+  (`reanudar`, `pasada`, `bloquear`); anything else is logged and ignored. The
+  window's «Bloquear» goes through it (`cifrado.pedir_bloqueo()`); the agent
+  still takes `bloquear` from `agente.pide` too (the CLI, the tray).
+- **«Iniciar servicio»** (`runsync._atender()`) still saves `ui_prefs.json`,
+  then, only when the agent IS this root's service (`watch.Resumen.
+  servicio_del_agente`: alive, listed, mode `daemon`), writes `reanudar`
+  (`runsync.pedir_reanudar()`) instead of spawning a daemon. Any other case
+  (mode `sync`/`ui`/`nada`, agent dead, drive unlisted) spawns the classic
+  service, and the agent steps aside as in phase 1. `reanudar` sets
+  `Conexion.reanudar`: when the window's UI lock goes, the agent resumes at
+  once (no `GRACIA`) and drops that root's `marcas`, so it starts with a pass
+  like the service it replaces.
+- **The agent's line** (`watch._agente_linea()`): what it does with this root,
+  «en pausa para todo» from `estado.json`, and amber when no agent process is
+  alive. Its button («Cambiar…», «Atender…» for an unlisted drive) opens
+  `tk_watch.open_agente()`, which asks the mode with `PIDE_MODO`
+  (`watch.pedir_modo()` → `watch.pedir_al_agente()`, an indirection point); the
+  line then shows what was asked (`watch.pedido()`), since `agente.json` only
+  changes when the agent reads it. A host root is offered `daemon`/`nada` only.
+- **`pedir_al_iniciar` in «Ajustes»**: a checkbox, only for the encrypted host
+  root (`watch.pedir_al_iniciar()` → None otherwise), sent as `PIDE_AJUSTE`.
+- **Wizard re-run with the agent of the same version** (`install/agente.
+  misma_version()`): «Instalación» reuses it (`instalado_prep()`), «Arranque»
+  is «Pedírselo al agente» → `anadir()`: mailbox only, menu entry if a root is
+  new, start it only if it is not running. No stop, no re-register.
+- **«Actualizar»** (section 8 of the spec). The agent checks every
+  `MIRAR_VERSION` (6 h) in a thread (`agente.hilo()`, `buscar_version()`, both
+  indirection points; `_agente_falso` runs it inline and never finds one) with
+  `update.check(cache=)`'s 24 h cache in `equipo.DIR/update.json`, says it
+  ONCE, and `resumen()` carries `version`/`nueva`/`actualizando` so the tray
+  offers «Actualizar a la vX». `PIDE_ACTUALIZAR` launches ONE detached
+  `agente.py actualizar`, which downloads the tag with `update.download()` to a
+  temp dir (never a root), runs THAT tree's `prdrive-install.py
+  --update-agente` with the agent's Python (`update.agent_command()`,
+  `agente.ejecutar()`), copies its output to `agente.log` and removes the temp
+  dir. `install/agente.actualizar()` = `preparar()` beside, `parar_agente()`,
+  `registrar()`, menu, `instalacion.json`, `actualizar_raices()`
+  (`deploy.deploy_code()` on each OPEN host root; a locked one is left for its
+  window), `podar()`, `arrancar()`. **`podar()` never deletes the runtime of
+  `sys.executable`**: «Actualizar» runs on the old Python, and deleting half a
+  live interpreter's stdlib kills it on its next import.
 
 ## Conflicts & failures (`conflicts.py`, `results.py`, `ui/conflict_editor.py`)
 
@@ -1737,7 +1793,9 @@ keeps the target's existing header.
   `acceso_menu()` / `crear_lnk()`, `raiz_equipo.carpetas_sincronizadas()` /
   `veracrypt_instalado()` / `abrir_o_crear()`, `penwatch.installed_veracrypt()`,
   `vestibulo.retenido()`, `cifrado.pedir_bloqueo()`, `agente.poner_bandeja()`, the tray's
-  `bandeja_windows.Api`, and `equipo.DIR`. Keep new ones in that shape.
+  `bandeja_windows.Api`, `agente.hilo()` / `buscar_version()` / `ejecutar()` /
+  `cache_version()`, `runsync.pedir_reanudar()` / `agente_sirve()`,
+  `watch.pedir_al_agente()`, and `equipo.DIR`. Keep new ones in that shape.
 
 ## Documentation
 

@@ -45,7 +45,7 @@ Equipos que hacen falta:
 | A9 | L | Lo mismo que A8, con NetworkManager marcando la red como medida (`nmcli connection modify … connection.metered yes`). | Igual que A8. | `moderacion._energia_linux()`, `_medida_linux()` |
 | A10 | W, L | Desconectar la red con una pareja en marcha. | Un aviso «sin conexión con …»; ya no se lanzan las parejas una a una, sino una sonda cada 5 min. Al volver la red, sigue sola. | `Agente._fin_de_sonda()` |
 | A11 | L | Enchufar una unidad y medir cuánto tarda en verla. | Unos segundos, no los 30 del respaldo: `POLLPRI` de `/proc/self/mountinfo`. | `agente.Vigia` |
-| A12 | W, L | Con la unidad atendida, abrir su ventana (`runsync.py`) desde la unidad. | El agente se pausa (`status`: «en pausa: hay una ventana…»). Al cerrarla, vuelve a atenderla. Con «Iniciar servicio» en la ventana, el agente se aparta. | contrato de la sección 3, `Agente._contrato()` |
+| A12 | W, L | Con la unidad atendida, abrir su ventana (`runsync.py`) desde la unidad. | El agente se pausa (`status`: «en pausa: hay una ventana…»). Al cerrarla, vuelve a atenderla. «Iniciar servicio» en la ventana: ver V1 y V2 (fase 5). | contrato de la sección 3, `Agente._contrato()` |
 | A13 | W | Unidad VeraCrypt de la lista, enchufada cerrada. | VeraCrypt pide la contraseña **una** vez por conexión. Tras «Expulsar» con la unidad puesta no la vuelve a pedir. | `Agente._vestibulos()`, `penwatch.open_container()` |
 | A14 | W, L | Desinstalar el agente (`prdrive-install.py --desinstalar-agente`). | Sin tarea ni autostart, sin `%LOCALAPPDATA%\prdrive`; ninguna unidad tocada. | `install/agente.desinstalar()` |
 | A15 | WA | A1 en Windows ARM64. | El runtime del agente es el arm64. | `install/agente.poner_runtime()` |
@@ -62,7 +62,7 @@ Equipos que hacen falta:
 | R6 | W, L | Lo mismo que R5 con Dropbox instalado. | El mismo aviso, por el `info.json` de Dropbox. | `raiz_equipo._info_dropbox()` |
 | R7 | W, L | Renombrar la carpeta de la raíz con el agente en marcha, y devolverle el nombre. | Un solo aviso «no encuentro su carpeta» y nada lanzado mientras falta. Al volver, sigue sola. | `Agente._raices_ausentes()` |
 | R8 | W, L | Editar a mano `sync_config.toml` de la raíz con `local = "."` y lanzar una pasada. | `sync.py` se niega con el `ConfigError` de la raíz del equipo; el agente avisa una vez. | `model.problema_local_equipo()` |
-| R9 | W, L | Volver a pasar el asistente «En este equipo» con el agente ya instalado y añadir la raíz. | El agente no se reinstala. La raíz entra por el buzón (`añadir_raiz`) y se atiende sin reiniciar. | `install/agente.aplicar_unidades(raiz=)`, `PIDE_RAIZ` |
+| R9 | W, L | Volver a pasar el asistente «En este equipo» con el agente ya instalado y añadir la raíz. | El agente no se reinstala (V7). La raíz entra por el buzón (`añadir_raiz`) y se atiende sin reiniciar. | `install/agente.aplicar_unidades(raiz=)`, `anadir()`, `PIDE_RAIZ` |
 | R10 | W | Desinstalar el agente con la raíz puesta. | La raíz sigue en su sitio, el asistente dice dónde, y la entrada del menú Inicio desaparece. | `install/agente.desinstalar()`, `quitar_menu()` |
 | R11 | W, L | Mirar la ventana de la flota desde una unidad tras una pasada de la raíz. | La raíz aparece como «Nombre (equipo)» y «En un equipo» en su ficha. | `fleet` `tipo`, `ui/tk_fleet.py` |
 
@@ -84,7 +84,7 @@ pruebas, nunca una real.
 | C8 | W | Cerrar sesión con el contenedor cerrado y `pedir_al_iniciar` activado, y volver a entrar. | VeraCrypt pide la contraseña **una** vez. Si se cancela, no vuelve a pedirla hasta `desbloquear`. | `Agente._al_iniciar()` |
 | C9 | W | C8 con `pedir_al_iniciar` desactivado (`agente.py ajuste pedir_al_iniciar no`). | No pide nada al entrar; la raíz sale «bloqueada» y las unidades se siguen atendiendo. | idem |
 | C10 | W | Suspender el equipo con el contenedor abierto, con la preferencia de VeraCrypt «desmontar al suspender» activada, y volver. | Es una unidad desenchufada: la pasada en curso no cuenta y la raíz sale bloqueada. Si queda la letra con el `.hc` libre (el fantasma de H-10), el agente no la atiende y dice «Bloquear y volver a desbloquear». | `Agente._fantasmas()` |
-| C11 | W | Con la raíz abierta, la ventana (acceso «prdrive»): el botón del pie. | Dice «Bloquear», no «Expulsar». Al pulsarlo, se lo pide al agente, se cierra la ventana y la raíz queda bloqueada como en C4. | `ui/cifrado.bloqueo()` / `pedir_bloqueo()`, `ui/tk.py` |
+| C11 | W | Con la raíz abierta, la ventana (acceso «prdrive»): el botón del pie. | Dice «Bloquear», no «Expulsar». Al pulsarlo, se lo pide al agente por `state\servicio.pide` (fase 5; el fichero desaparece en unos segundos), se cierra la ventana y la raíz queda bloqueada como en C4. | `ui/cifrado.bloqueo()` / `pedir_bloqueo()`, `Agente._buzones_de_raices()`, `ui/tk.py` |
 | C12 | W | Con la raíz cifrada, «Reparación» con menos de 1 GiB libre en `C:`. | Sale el hallazgo `espacio` (el contenedor es disperso). | `vestibulo.raiz_fisica()` con las raíces extra de `agente.json` |
 | C13 | W | Reinstalar cifrado sobre una raíz que iba sin cifrar en la misma carpeta. | Rojo antes de crear, y fila roja en «Verificación»: la instalación en claro sigue ahí y nada la borra. | `crypto.restos_en_claro()` |
 | C14 | W | Desinstalar el agente con el contenedor abierto. | Queda abierto, el asistente lo dice, y ni el `.hc` ni la carpeta se tocan. | `install/agente.desinstalar()` |
@@ -121,7 +121,32 @@ prueba.
 
 ## Fase 5 — Ventana ↔ agente
 
-*(se rellena al hacerla)*
+La ventana de una raíz le habla al agente por dos buzones: `state\servicio.pide`
+en la raíz (lo de esa raíz: `reanudar`, `pasada`, `bloquear`) y `agente.pide`
+en `%LOCALAPPDATA%\prdrive` (lo del equipo: el modo, un ajuste). Ninguno
+tiene más prueba que los tests; lo que hay que ver aquí es que el fichero
+aparece, que el agente lo consume en unos segundos y que hace lo que dice.
+
+«Actualizar» (V8–V12) necesita una **release publicada después de esta fase**:
+el zip que baja es el que trae `--update-agente`. Para tener algo que
+actualizar, instalar el agente de esa release y bajarle el número a mano en
+`%LOCALAPPDATA%\prdrive\agente\<versión>\VERSION` (p. ej. `0.3.9`), y
+reiniciar el agente (`agente.py parar` y volver a entrar en la sesión).
+
+| Código | Dónde | Qué hacer | Qué se espera | Código a prueba |
+|---|---|---|---|---|
+| V1 | W, L | Unidad atendida por el agente en modo `daemon`. Abrir su ventana, marcar otras parejas, poner otro intervalo y pulsar «Iniciar servicio». | Ningún `pythonw` nuevo desde la unidad. El mensaje dice que el agente vuelve al cerrar la ventana. Al cerrarla, el agente vuelve **enseguida** (sin los 15 s de gracia), con una pasada, y su `daemon.lock.json` lleva las parejas y el intervalo elegidos. | `runsync._atender()` / `agente_sirve()` / `pedir_reanudar()`, `Agente._buzones_de_raices()`, `PIDE_REANUDAR` |
+| V2 | W, L | V1 con la unidad en modo `sync`, y otra vez con el agente parado (`agente.py parar`). | El servicio de siempre (un `pythonw` de la unidad con su `daemon.lock.json`), y el agente se aparta mientras vive. | `watch.Resumen.servicio_del_agente` |
+| V3 | W, L | La línea del agente en la ventana: con el agente en marcha, en pausa (su «Pausar») y parado. | Dice qué hace con esa unidad; en pausa lo dice; parado va en ámbar y dice que arranca al iniciar sesión. | `watch.linea()`, `watch._agente()` (lee `agente.lock.json` y `estado.json`) |
+| V4 | W, L | «Cambiar…» en esa línea: pasar la unidad a «Nada», y luego a «Sincronizarlo en segundo plano». | La línea cambia al momento; en unos segundos el agente suelta la unidad (su `daemon.lock.json` desaparece) y la vuelve a tomar. `agente.json` lo escribe el agente (su hora de modificación es la del agente, no la de la ventana). | `ui/tk_watch.open_agente()`, `watch.pedir_modo()`, `PIDE_MODO` |
+| V5 | W, L | Enchufar una unidad que no está en la lista, contestar «Ahora no», abrir su ventana desde la unidad y pulsar «Atender…» en la línea. | Entra en la lista con el modo elegido y el nombre de su flota. | `PIDE_MODO` de una unidad nueva |
+| V6 | W, L | Raíz cifrada: «Ajustes» de su ventana, desmarcar «Pedir la contraseña al iniciar sesión». Cerrar sesión y volver a entrar. | No pide la contraseña al entrar; la casilla de la bandeja sale desmarcada. Volver a marcarla la deja como estaba. En una unidad o una raíz sin cifrar la casilla no sale. | `ui/tk_doctor.py`, `watch.pedir_al_iniciar()` / `pedir_ajuste()` |
+| V7 | W, L | Volver a pasar el asistente «En este equipo» con el agente de la misma versión en marcha, añadiendo una raíz. | «Instalación» dice que no se reinstala; «Arranque» dice «Pedírselo al agente». El pid de `agente.lock.json` es el mismo antes y después, y la raíz se atiende sin reiniciar. | `install/agente.misma_version()` / `anadir()`, `ui/tk_equipo.py` |
+| V8 | W | Con el `VERSION` rebajado (ver arriba): esperar el aviso y pulsar «Actualizar a la vX» en la bandeja. | Un aviso «Hay una versión nueva…» **una** vez. Tras pulsar, «Actualizando…» apagado; en menos de un minuto el icono se va y vuelve (el agente nuevo), `instalacion.json` apunta a `agente\<vX>`, la tarea programada también, la carpeta vieja ha desaparecido y el diario cuenta cada paso con «actualizar:». Otro aviso: «prdrive actualizado a la vX». | `Agente._mirar_version()` / `_actualizar()`, `agente.cmd_actualizar()`, `prdrive-install.py --update-agente`, `install/agente.actualizar()` |
+| V9 | W | V8 con la raíz del equipo abierta y su ventana abierta; y otra vez con la raíz cifrada bloqueada. | Abierta: el código de su `.prdrive\` pasa a la vX sin tocar `sync_config.toml`, `state\` ni la clave. Bloqueada: el diario dice que su ventana lo ofrecerá, y al desbloquearla la ventana ofrece «Actualizar…». | `install/agente.actualizar_raices()`, `deploy.deploy_code()` |
+| V10 | W | V8 con una versión que cambie el Python fijado (`pins.py`). | El runtime nuevo va a su carpeta al lado; el viejo, con el que corría «Actualizar», **no** se borra esa vez y se recoge en la siguiente instalación. El agente nuevo arranca con el nuevo. | `install/agente.podar()` (conserva el de `sys.executable`) |
+| V11 | W | V8 sin red, y con un proxy que corte la descarga. | Aviso «no he podido actualizar»; el agente viejo sigue en marcha como estaba, y «Actualizar» se puede volver a pedir. | `update.download()`, `Agente._mirar_version()` |
+| V12 | L | V8 en Linux, que no tiene bandeja hasta la fase 6. | El aviso dice «python agente.py actualizar»; ejecutarlo hace lo mismo que la bandeja en Windows (autostart reescrito a la versión nueva). | `agente.cmd_actualizar()`, `install/agente.registrar()` en Linux |
 
 ## Fase 6 — Bandeja en Linux
 

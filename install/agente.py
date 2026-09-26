@@ -13,6 +13,10 @@ sitio a penwatch, que es a quien sustituye.
                    enchufadas y las que ya tenga en su lista
     activar()      su lista de unidades (y la raíz del equipo, si la hay),
                    penwatch fuera, registro, el acceso del menú, arranque
+    anadir()       lo mismo con el agente ya instalado y de esta versión: solo
+                   por su buzón, sin pararlo ni reinstalarlo
+    actualizar()   la versión que trae este instalador en lugar de la puesta
+                   (`--update-agente`, lo que lanza «Actualizar» de la bandeja)
     desinstalar()  todo lo anterior al revés; nunca toca una unidad ni la raíz
 
 La raíz del equipo (fase 2, `install/raiz_equipo.py`) la pone el asistente
@@ -39,6 +43,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -547,18 +552,34 @@ def parar_agente() -> str | None:
     return f"Agente anterior (pid {pid}) terminado a la fuerza."
 
 
+def _runtime_de(interprete: Path | str) -> str | None:
+    """La carpeta de `runtime/` de la que es ese intérprete, o None."""
+    try:
+        rel = Path(os.path.relpath(Path(interprete).resolve(),
+                                   equipo.dir_runtimes().resolve()))
+    except (OSError, ValueError):
+        return None
+    return None if not rel.parts or rel.parts[0] == ".." else rel.parts[0]
+
+
 def podar(prep: Preparado) -> None:
     """Las versiones viejas de código y de Python que ya no usa nadie. Lo que no
-    se pueda borrar (un Python en uso) se queda para la próxima vez."""
-    python = Path(os.path.relpath(prep.python, equipo.dir_runtimes())).parts[0]
-    for base, guardar in ((equipo.dir_codigo(), prep.codigo.name),
-                          (equipo.dir_runtimes(), python)):
+    se pueda borrar (un Python en uso) se queda para la próxima vez.
+
+    El Python con el que corre ESTE proceso no se toca nunca, aunque sea el
+    viejo: «Actualizar» se lanza con el Python del agente, y borrarle a medias
+    su biblioteca estándar a un proceso vivo es tumbarlo en su próximo import.
+    Ya se recogerá en la siguiente instalación, como hace penwatch
+    (`prune_runtimes()`)."""
+    guardar_py = {_runtime_de(prep.python), _runtime_de(sys.executable)} - {None}
+    for base, guardar in ((equipo.dir_codigo(), {prep.codigo.name}),
+                          (equipo.dir_runtimes(), guardar_py)):
         try:
             hijos = list(base.iterdir())
         except OSError:
             continue
         for hijo in hijos:
-            if hijo.name != guardar:
+            if hijo.name not in guardar:
                 shutil.rmtree(hijo, ignore_errors=True)
 
 
@@ -585,6 +606,115 @@ def activar(prep: Preparado, elegidas: dict[str, tuple[str, str]], espera: float
     podar(prep)
     if arrancar_ya:
         msgs.append(arrancar(prep))
+    return msgs
+
+
+def instalado_prep() -> Preparado | None:
+    """El agente que ya está instalado, como si se acabara de preparar: su
+    código y su Python, de `instalacion.json`. None si no hay, o si falta algo."""
+    datos = instalado()
+    if not datos:
+        return None
+    codigo, python = datos.get("codigo"), datos.get("python")
+    if not isinstance(codigo, str) or not isinstance(python, str):
+        return None
+    try:
+        if not Path(python).is_file():
+            return None
+    except OSError:
+        return None
+    return Preparado(Path(codigo), Path(python), str(datos.get("runtime") or ""))
+
+
+def misma_version() -> bool:
+    """¿El agente instalado es de la versión que trae este instalador? Entonces
+    volver a pasar el asistente no lo reinstala (sección 7 del diseño): se le
+    pide lo nuevo por su buzón y ya."""
+    datos = instalado()
+    return bool(datos) and datos.get("version") == version() and \
+        instalado_prep() is not None
+
+
+def anadir(elegidas: dict[str, tuple[str, str]], espera: float,
+           raiz: equipo.Unidad | None = None,
+           pedir_al_iniciar: bool | None = None) -> list[str]:
+    """«Unidades» y «Arranque» con el agente ya instalado y de esta versión: no
+    se para, ni se registra, ni se copia nada. Lo elegido se le PIDE por su
+    buzón (`aplicar_unidades`), que es como se añade una raíz a un agente ya
+    instalado. Si con esto el equipo estrena raíz, se pone el acceso del menú;
+    y si el agente no está en marcha, se arranca, para que lo lea ya."""
+    prep = instalado_prep()
+    if prep is None:
+        raise InstallError("No hay un agente instalado del que fiarse: instálalo.")
+    msgs = [aplicar_unidades(elegidas, espera, raiz, pedir_al_iniciar)]
+    msgs += quitar_penwatch()
+    if (raiz is not None or equipo.leer_ajustes().raices) and not acceso_menu().exists():
+        msgs.append(poner_menu(prep))
+    if equipo.agente_vivo() is None:
+        msgs.append(arrancar(prep))
+    else:
+        msgs.append("El agente sigue en marcha: lo lee de su buzón en unos segundos.")
+    return msgs
+
+
+def actualizar_raices(origen: Path | None = None) -> list[str]:
+    """El código de las raíces de este equipo, a la versión que trae este
+    instalador: lo mismo que `--update` en una unidad (`deploy.deploy_code()`,
+    fichero a fichero, sin tocar configuración, claves, estado ni rclone). Una
+    raíz cifrada bloqueada no se puede tocar: se queda como está, y su ventana
+    ofrecerá la versión nueva al desbloquearla (sección 8 del diseño)."""
+    from . import deploy
+    msgs = []
+    for u in equipo.leer_ajustes().raices.values():
+        raiz = Path(u.ruta)
+        nombre = u.nombre or str(raiz)
+        if not _presente(raiz):
+            msgs.append(f"{nombre}: " + ("bloqueada; su ventana ofrecerá la versión "
+                                         "nueva al desbloquearla." if u.cifrada else
+                                         f"no está en {raiz}; no se actualiza."))
+            continue
+        try:
+            deploy.deploy_code(raiz, origen=origen)
+            try:
+                from ui import icons            # sin Tk: rasteriza él solo
+                icons.write_ico(deploy.app_dir(raiz) / "runsync.ico")
+            except Exception:                   # noqa: BLE001
+                pass
+        except (OSError, InstallError) as e:
+            msgs.append(f"{nombre}: no he podido actualizar su código: {e}")
+            continue
+        msgs.append(f"{nombre}: su código, a la versión {version()}.")
+    return msgs
+
+
+def actualizar(progreso=None, origen: Path | None = None) -> list[str]:
+    """`--update-agente`: la versión que trae este instalador en lugar de la
+    instalada. Lo lanza «Actualizar» de la bandeja (`agente.py actualizar`)
+    DESDE el zip descargado, como `--update` en una unidad: la versión nueva
+    se instala a sí misma.
+
+    Nunca se cambia en sitio lo que corre: el código nuevo y, si cambia, el
+    Python nuevo van a su carpeta al lado; se para el agente, se vuelve a
+    registrar (la tarea apunta a la versión), se cambia `instalacion.json`, se
+    ponen al día las raíces del equipo que estén abiertas, se recoge lo viejo y
+    se arranca. `agente.json` no se toca: su lista y sus ajustes siguen."""
+    if instalado() is None:
+        raise InstallError("En este equipo no hay ningún agente instalado: no hay "
+                           "nada que actualizar. Instálalo con el asistente.")
+    prep = preparar(progreso, origen)
+    msgs = [f"Código del agente en {prep.codigo}", f"Su Python: {prep.python}"]
+    parado = parar_agente()
+    if parado:
+        msgs.append(parado)
+    msgs.append(registrar(prep))
+    if equipo.leer_ajustes().raices:
+        msgs.append(poner_menu(prep))
+    store.write_json(equipo.instalacion_json(), {
+        "version": version(), "codigo": str(prep.codigo), "python": str(prep.python),
+        "runtime": penwatch.stamp_id(prep.sello), "instalado": store.stamp()})
+    msgs += actualizar_raices(origen)
+    podar(prep)
+    msgs.append(arrancar(prep))
     return msgs
 
 

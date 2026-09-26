@@ -17,8 +17,8 @@ desmonte, sin `/silent`, para que VeraCrypt pregunte si queda algo abierto.
 
 La raíz cifrada de un EQUIPO (fase 3) no tiene script: la abre y la cierra el
 agente residente. Ahí el botón es «Bloquear», y lo que hace es pedírselo al
-agente por su buzón (`agente.pide`) y cerrar la ventana: el agente espera a que
-se haya ido y desmonta, también sin `/silent`.
+agente por el buzón de la raíz (`state/servicio.pide`) y cerrar la ventana: el
+agente espera a que se haya ido y desmonta, también sin `/silent`.
 """
 
 from __future__ import annotations
@@ -80,11 +80,14 @@ def bloqueo() -> str | None:
 
 
 def pedir_bloqueo(uid: str) -> bool:
-    """Le pide al agente que bloquee esta raíz. False si no hay agente vivo que
-    lo lea, o no se ha podido escribir.
+    """Le pide al agente que bloquee esta raíz, por el buzón de la raíz
+    (`state/servicio.pide`, fase 5): es cosa de esta raíz y no del equipo. El
+    id va igual, aunque el agente se fía del sitio del buzón y no de él. False
+    si no hay agente vivo que lo lea, o no se ha podido escribir.
 
     Indirección de módulo, como `lanzar_expulsion()`: los tests la sustituyen."""
-    from common import equipo
+    from common import equipo, model
     if equipo.agente_vivo() is None:
         return False
-    return equipo.pedir({"pide": equipo.PIDE_BLOQUEAR, "id": uid})
+    return equipo.pedir({"pide": equipo.PIDE_BLOQUEAR, "id": uid},
+                        model.STATE_DIR / equipo.BUZON_SERVICIO)

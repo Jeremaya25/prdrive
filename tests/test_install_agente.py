@@ -177,6 +177,80 @@ c("y se arranca con su orden, fuera de toda unidad",
   (lanzados[-1][0], lanzados[-1][1].get("cwd")),
   (ia.orden(prep.python, prep.codigo), str(equipo.DIR)))
 
+# --- añadir con el agente de esta versión ya puesto: solo el buzón -----------------------
+c("el agente recién activado es de esta versión", ia.misma_version(), True)
+c("  y se puede leer como un Preparado", (ia.instalado_prep().codigo,
+                                          ia.instalado_prep().python),
+  (prep.codigo, prep.python))
+lanzados.clear()
+equipo.recoger()
+tarea_antes = AUTOSTART.read_bytes()
+RAIZ_NUEVA = equipo.Unidad("r" * 32, equipo.DAEMON, "Casa", str(tmpdir("prdrive-casa-")))
+ia.acceso_menu = lambda: MENU
+MENU = tmpdir("prdrive-menu-") / "applications" / "prdrive.desktop"
+msgs = ia.anadir({}, 120, raiz=RAIZ_NUEVA)
+c("anadir(): la raíz nueva (y el plazo que cambia) se le piden por su buzón",
+  [(p["pide"], p.get("id")) for p in equipo.recoger()],
+  [(equipo.PIDE_RAIZ, "r" * 32), (equipo.PIDE_AJUSTE, None)])
+c("  ni se registra otra vez", AUTOSTART.read_bytes(), tarea_antes)
+c("  con raíz nueva, el acceso del menú", MENU.is_file(), True)
+c("  y como el agente no está en marcha, se arranca",
+  [a for a, _ in lanzados], [ia.orden(prep.python, prep.codigo)])
+
+# --- actualizar: la versión de este instalador en lugar de la puesta ---------------------
+# Una raíz del equipo abierta y una cifrada bloqueada; un Python viejo que es
+# el que corre este proceso (el de «Actualizar»), y uno viejo que no.
+ABIERTA = tmpdir("prdrive-abierta-")
+(ABIERTA / ".prdrive").mkdir()
+(ABIERTA / ".prdrive" / "PRDRIVE").write_text("id=" + "o" * 32 + "\ntipo=equipo\n",
+                                              encoding="utf-8")
+(ABIERTA / ".prdrive" / "sync_config.toml").write_text("# mía\n", encoding="utf-8")
+equipo.guardar_ajustes(equipo.leer_ajustes()
+                       .con_unidad(equipo.Unidad("o" * 32, equipo.DAEMON, "Abierta",
+                                                 str(ABIERTA)))
+                       .con_unidad(equipo.Unidad("k" * 32, equipo.DAEMON, "Cifrada",
+                                                 "P:\\", "C:\\c\\PRDRIVE.hc")))
+(equipo.dir_codigo() / "0.0.1").mkdir()
+corriendo = equipo.dir_runtimes() / "corriendo"
+(corriendo / "bin").mkdir(parents=True)
+(corriendo / "bin" / "python3").write_text("", encoding="utf-8")
+(equipo.dir_runtimes() / "viejo").mkdir()
+real_sys = ia.sys
+ia.sys = type("S", (), {"executable": str(corriendo / "bin" / "python3")})
+lanzados.clear()
+try:
+    msgs = ia.actualizar()
+finally:
+    ia.sys = real_sys
+c("actualizar(): el código y el Python de esta versión",
+  (equipo.leer_instalacion().get("version"), equipo.leer_instalacion().get("codigo")),
+  (version(), str(prep.codigo)))
+c("  registrado de nuevo (la tarea apunta a la versión)",
+  f'"{prep.codigo / "agente.py"}"' in AUTOSTART.read_text(encoding="utf-8"), True)
+c("  la raíz abierta, con el código nuevo y su config intacta",
+  ((ABIERTA / ".prdrive" / "sync.py").is_file(),
+   (ABIERTA / ".prdrive" / "sync_config.toml").read_text(encoding="utf-8")),
+  (True, "# mía\n"))
+c("  la cifrada bloqueada, para cuando se desbloquee",
+  any("Cifrada: bloqueada" in m for m in msgs), True)
+c("  el código viejo se recoge", sorted(p.name for p in equipo.dir_codigo().iterdir()),
+  [version()])
+c("  el Python viejo también, pero NO el que corre este proceso",
+  sorted(p.name for p in equipo.dir_runtimes().iterdir()),
+  sorted([penwatch.stamp_id(prep.sello), "corriendo"]))
+c("  y se arranca", [a for a, _ in lanzados], [ia.orden(prep.python, prep.codigo)])
+c("  agente.json no se toca",
+  sorted(u.nombre for u in equipo.leer_ajustes().raices.values()), ["Abierta", "Cifrada"])
+
+guardado = equipo.instalacion_json().read_bytes()
+equipo.instalacion_json().unlink()
+try:
+    ia.actualizar()
+    c("sin agente instalado no hay nada que actualizar", "actualizado", "InstallError")
+except ia.InstallError as e:
+    c("sin agente instalado no hay nada que actualizar", "ningún agente" in str(e), True)
+equipo.instalacion_json().write_bytes(guardado)
+
 # --- la línea de órdenes del instalador -------------------------------------------------
 import importlib.util  # noqa: E402
 
@@ -185,6 +259,8 @@ instalador = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(instalador)
 c("--instalar-agente se entiende", instalador.parse_args(["--instalar-agente"]).instalar_agente,
   True)
+c("--update-agente también", instalador.parse_args(["--update-agente"]).update_agente,
+  True)
 c("--desinstalar-agente también",
   instalador.parse_args(["--desinstalar-agente"]).desinstalar_agente, True)
 
@@ -192,7 +268,11 @@ c("--desinstalar-agente también",
 msgs = ia.desinstalar()
 c("desinstalar quita el autostart", AUTOSTART.exists(), False)
 c("  y la carpeta del agente entera", equipo.DIR.exists(), False)
-c("  y dice que las unidades no se han tocado", msgs[-1], "Las unidades no se han tocado.")
+c("  y dice que las unidades no se han tocado",
+  "Las unidades no se han tocado." in msgs, True)
+c("  ni las raíces del equipo, y dónde siguen",
+  (any("Cifrada" not in m and str(ABIERTA) in m for m in msgs),
+   any("C:\\c\\PRDRIVE.hc" in m for m in msgs)), (True, True))
 c("la unidad enchufada sigue como estaba",
   (ENCH / ".prdrive" / "PRDRIVE").read_text(encoding="utf-8"), "id=" + "e" * 32 + "\n")
 c("ya no cuenta como instalado", equipo.instalado(), False)

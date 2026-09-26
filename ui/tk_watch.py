@@ -263,3 +263,75 @@ def formulario_instalacion(parent) -> dict | None:
 
     mostrar(dlg, parent)
     return resultado["opciones"]
+
+
+def open_agente(parent, res: watch.Resumen) -> str | None:
+    """«Qué hace el agente» con esta raíz: el sucesor de la pantalla del
+    vigilante cuando hay agente residente. Devuelve el modo pedido, o None.
+
+    No escribe la configuración del equipo: se lo pide al agente por su buzón
+    (`watch.pedir_modo`), que lo aplica en unos segundos. Con la unidad fuera
+    de su lista, elegir un modo es decirle que sí desde aquí."""
+    import tkinter as tk
+    from tkinter import messagebox, ttk
+
+    raiz = res.estado == "agente_raiz"
+    nueva = res.estado == "agente_nueva"
+    dlg = modal(parent, "El agente de este equipo")
+    marco = cuerpo_visible(dlg, padding=(20, 18, 20, 16))
+    marco.columnconfigure(0, weight=1)
+    elegido: dict = {"modo": None}
+
+    cabecera(marco, "Qué hace el agente con " + ("esta carpeta" if raiz
+                                                  else "este dispositivo"),
+             "Todavía no está en su lista: elige qué hacer y lo añade." if nueva else
+             "Se lo pide al agente, que es quien guarda su configuración, y lo aplica "
+             "en unos segundos.",
+             ancho=520, estilo="Dialogo.TLabel").grid(row=0, column=0, sticky="w")
+
+    modos = watch.modos_agente(res)
+    modo = tk.StringVar(value=res.modo if res.modo in modos else modos[0])
+    tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(14, 10))
+    tarjeta.grid(row=1, column=0, sticky="ew", pady=(16, 0))
+    for i, clave in enumerate(modos):
+        ttk.Radiobutton(tarjeta, text=watch.ETIQUETA_AGENTE[clave], value=clave,
+                        variable=modo, style="Card.Fuerte.TRadiobutton").grid(
+            row=i, column=0, sticky="w", pady=2)
+        ttk.Label(tarjeta, text=watch.ayuda_agente(res, clave),
+                  style="Card.Pista.TLabel").grid(row=i, column=1, sticky="w",
+                                                  padx=(12, 0))
+    fila = 2
+    ttk.Label(marco, style="Pista.TLabel", wraplength=theme.medida(520), justify="left",
+              text="Las parejas y el intervalo son los del servicio: se eligen en la "
+                   "ventana principal y viajan con " + ("la carpeta." if raiz
+                                                         else "el dispositivo.")).grid(
+        row=fila, column=0, sticky="w", pady=(10, 0))
+    fila += 1
+    if not res.vivo:
+        ttk.Label(marco, style="Aviso.TLabel", wraplength=theme.medida(520),
+                  justify="left",
+                  text="El agente no está en marcha: lo aplicará al arrancar.").grid(
+            row=fila, column=0, sticky="w", pady=(8, 0))
+        fila += 1
+
+    def aceptar() -> None:
+        if not watch.pedir_modo(modo.get()):
+            messagebox.showerror(TITLE, "No he podido dejarle la petición al agente.",
+                                 parent=dlg)
+            return
+        elegido["modo"] = modo.get()
+        dlg.destroy()
+
+    ttk.Separator(marco, orient="horizontal").grid(row=fila, column=0, sticky="ew",
+                                                   pady=(16, 0))
+    pie = ttk.Frame(marco)
+    pie.grid(row=fila + 1, column=0, sticky="e", pady=(14, 0))
+    ttk.Button(pie, text="Cancelar", command=dlg.destroy).grid(row=0, column=0,
+                                                               padx=(0, 6))
+    boton = ttk.Button(pie, text="Atender" if nueva else "Aplicar",
+                       style="Primary.TButton", command=aceptar)
+    theme.boton_icono(boton, "arranque", theme.SUPERFICIE, theme.ACENTO)
+    boton.grid(row=0, column=1)
+
+    mostrar(dlg, parent)
+    return elegido["modo"]

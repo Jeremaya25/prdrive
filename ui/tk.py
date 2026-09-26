@@ -795,7 +795,17 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
 
     def abrir_arranque() -> None:
         """La pantalla del vigilante. Al volver se relee qué hace este equipo al
-        enchufar: se puede haber instalado, cambiado de modo o quitado."""
+        enchufar: se puede haber instalado, cambiado de modo o quitado.
+
+        Con el agente residente, «Qué hace el agente», que se lo pide por su
+        buzón; la línea enseña lo pedido, que el agente aplica en unos segundos."""
+        actual = vista["vigilante"]
+        if actual.es_agente:
+            modo = tk_watch.open_agente(root, actual)
+            if modo is not None:
+                vista["vigilante"] = watch.pedido(actual, modo)
+                reajustar()
+            return
         tk_watch.open_dialog(root)
         try:
             vista["vigilante"] = watch.resumen()

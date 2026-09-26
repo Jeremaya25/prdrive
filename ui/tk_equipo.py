@@ -449,7 +449,13 @@ def paso_instalar(cuerpo, wiz) -> None:
         "código y su propio Python —no depende de ningún Python instalado— y su "
         "configuración. Ahí no hay claves, ni rclone.conf, ni listados."), fila)
     fila += 1
-    if ya:
+    reusar = agente.misma_version()
+    if reusar:
+        _texto(cuerpo, (f"El agente de esta versión ({ya.get('version', '?')}) ya está "
+                        "instalado y no se reinstala: lo que elijas a continuación se le "
+                        "pide por su buzón, sin pararlo."), fila, foreground=theme.TINTA3)
+        fila += 1
+    elif ya:
         _texto(cuerpo, (f"Ya hay un agente instalado (versión {ya.get('version', '?')}). "
                         "Instalar pone esta versión al lado y la deja en su sitio; su "
                         "lista de unidades se conserva."), fila, foreground=theme.TINTA3)
@@ -466,7 +472,9 @@ def paso_instalar(cuerpo, wiz) -> None:
             lineas.append(f"✔ Programa en {deploy.app_dir(donde)} "
                           f"(id {wiz.equipo_id[:8]}…)")
         prep = wiz.agente_prep
-        if prep is not None:
+        if prep is not None and wiz.agente_reusado:
+            lineas.append(f"✔ El agente ya estaba: {prep.codigo}")
+        elif prep is not None:
             lineas += [f"✔ Agente en {prep.codigo}", f"✔ Su Python: {prep.python}"]
         resultado.configure(text="\n".join(lineas), foreground=theme.OK)
         wiz.revisar()
@@ -479,6 +487,8 @@ def paso_instalar(cuerpo, wiz) -> None:
                           else None)
                 _, ident = raiz_equipo.instalar(donde, wiz.perfil_final,
                                                 fisica=fisica)
+            if reusar:
+                return ident, agente.instalado_prep()
             return ident, agente.preparar()
 
         ok, res = working(wiz.root, "instalando", trabajo,
@@ -490,6 +500,7 @@ def paso_instalar(cuerpo, wiz) -> None:
             wiz.visor.ver(resultado)
             return
         ident, wiz.agente_prep = res
+        wiz.agente_reusado = reusar
         if ident:
             wiz.equipo_id = ident
             wiz.state.deployed = True
@@ -749,8 +760,13 @@ def paso_arranque(cuerpo, wiz) -> None:
             if agente.IS_WIN else
             "un autostart del escritorio (~/.config/autostart), porque los avisos y "
             "la pregunta por una unidad nueva necesitan la sesión gráfica")
-    _texto(cuerpo, f"El agente se registra con {como}, y se arranca ya. Sin "
-                   "administrador.", 0)
+    if wiz.agente_reusado:
+        _texto(cuerpo, "El agente ya está registrado y en su sitio: no se toca. Lo "
+                       "elegido se le pide por su buzón y lo aplica él, sin pararse "
+                       "(si no está en marcha, se arranca).", 0)
+    else:
+        _texto(cuerpo, f"El agente se registra con {como}, y se arranca ya. Sin "
+                       "administrador.", 0)
     if raiz(wiz) is not None:
         _texto(cuerpo, (
             f"Sincroniza {raiz(wiz)} en segundo plano, con las parejas y el intervalo "
@@ -776,13 +792,19 @@ def paso_arranque(cuerpo, wiz) -> None:
     resultado.grid(row=5, column=0, sticky="w", pady=(12, 0))
 
     def activar() -> None:
-        ok, msgs = working(wiz.root, "registrando el agente",
-                           lambda: agente.activar(
-                               wiz.agente_prep, elegidas(wiz), wiz.agente_espera,
-                               raiz=la_raiz(wiz),
-                               pedir_al_iniciar=wiz.equipo_pedir if cifrada(wiz)
-                               else None),
-                           "Registrando el agente y arrancándolo.")
+        pedir = wiz.equipo_pedir if cifrada(wiz) else None
+        if wiz.agente_reusado:
+            ok, msgs = working(wiz.root, "pidiéndoselo al agente",
+                               lambda: agente.anadir(elegidas(wiz), wiz.agente_espera,
+                                                     raiz=la_raiz(wiz),
+                                                     pedir_al_iniciar=pedir),
+                               "Dejándole lo elegido en su buzón.")
+        else:
+            ok, msgs = working(wiz.root, "registrando el agente",
+                               lambda: agente.activar(
+                                   wiz.agente_prep, elegidas(wiz), wiz.agente_espera,
+                                   raiz=la_raiz(wiz), pedir_al_iniciar=pedir),
+                               "Registrando el agente y arrancándolo.")
         if not ok:
             resultado.configure(text=str(msgs), foreground=theme.PELIGRO)
             wiz.revisar()
@@ -792,7 +814,8 @@ def paso_arranque(cuerpo, wiz) -> None:
         resultado.configure(text="\n".join(f"✔ {m}" for m in msgs), foreground=theme.OK)
         wiz.revisar()
 
-    ttk.Button(cuerpo, text="Registrar y arrancar", style="Primary.TButton",
+    ttk.Button(cuerpo, text="Pedírselo al agente" if wiz.agente_reusado
+               else "Registrar y arrancar", style="Primary.TButton",
                command=activar).grid(row=4, column=0, sticky="w")
     if wiz.agente_hecho:
         resultado.configure(text="\n".join(f"✔ {m}" for m in wiz.agente_hecho),
