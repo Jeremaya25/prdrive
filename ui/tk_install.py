@@ -105,6 +105,16 @@ class Wizard:
         self.equipo_examen: raiz_equipo.Examen | None = None
         self.equipo_id = ""
         self.equipo_locales: dict[str, str] = {}
+        # Cifrada (fase 3): sin cifrar o VeraCrypt; dónde va el contenedor, la
+        # letra fija, el tamaño; dónde quedó montado (la raíz de verdad), el
+        # `.hc`, y si el agente pide la contraseña al iniciar sesión.
+        self.equipo_cifrado = raiz_equipo.SIN_CIFRAR
+        self.equipo_fisica = ""
+        self.equipo_letra = ""
+        self.equipo_tamano = ""
+        self.equipo_montada: Path | None = None
+        self.equipo_contenedor = ""
+        self.equipo_pedir = True
 
     # --- navegación ---------------------------------------------------------
 
@@ -1751,13 +1761,16 @@ def _ok_equipo(nombre: str):
 
 
 # «En este equipo», con una raíz en una carpeta del ordenador. Es el recorrido de
-# una unidad con otra cabeza y otra cola: «Carpeta» hace lo que «Dispositivo» y
-# «Cifrado» (fija `state.device_root`), y detrás de «Inicialización» van los del
+# una unidad con otra cabeza y otra cola: «Carpeta» hace lo que «Dispositivo», y
+# «Cifrado» lo mismo que en una unidad (fija `state.device_root`: la carpeta, o
+# el volumen montado del contenedor), y va antes de «Conexión» por lo mismo:
+# fija dónde escribe «Instalación». Detrás de «Inicialización» van los del
 # agente. «Instalación» va antes de «Parejas» por lo mismo que en una unidad, y
 # además porque deja el Python del agente con el que se inicializa.
 PASOS_EQUIPO = [
     ("¿Dónde?", _paso_donde, _ok_donde),
     ("Carpeta", _paso_equipo("paso_carpeta"), _ok_equipo("ok_carpeta")),
+    ("Cifrado", _paso_equipo("paso_cifrado"), _ok_equipo("ok_cifrado")),
     ("Conexión", _paso_conexion, _ok_conexion),
     ("Comprobaciones", _paso_comprobaciones, _ok_comprobaciones),
     ("Instalación", _paso_equipo("paso_instalar"), _ok_equipo("ok_instalar")),

@@ -929,6 +929,8 @@ python agente.py modo <id> daemon     # ui | daemon | sync | nada
 python agente.py pasada <id> [pareja] # sincronizar ahora
 python agente.py pausa | sigue
 python agente.py abrir [id]           # la ventana de la raíz de este equipo
+python agente.py desbloquear | bloquear          # la raíz cifrada de este equipo
+python agente.py ajuste pedir_al_iniciar no      # no pedir su contraseña al entrar
 ```
 
 Esas órdenes no tocan nada por sí mismas: dejan la petición en el buzón del
@@ -955,7 +957,7 @@ sin su carpeta (y `sync.py` se niega a sincronizar una línea base sin su carpet
 local, que es lo que se quiere). Cambiarla es volver a instalar.
 
 Con raíz, el recorrido es el de una unidad con otra cabeza y otra cola:
-**Carpeta → Conexión → Comprobaciones → Instalación → Parejas → Inicialización →
+**Carpeta → Cifrado → Conexión → Comprobaciones → Instalación → Parejas → Inicialización →
 Unidades → Arranque → Verificación**. Lo que cambia:
 
 - **Qué lleva la raíz:** `.prdrive/` con el programa, rclone *solo para este
@@ -985,6 +987,45 @@ Unidades → Arranque → Verificación**. Lo que cambia:
   que se diga que sí.
 - **Desinstalar el agente nunca borra la raíz**: tiene tus carpetas, y la clave.
   Lo dice, con la ruta, para que la borres a mano si ya no la quieres.
+
+#### Cifrada con VeraCrypt
+
+Con una carpeta propia, el paso **Cifrado** puede meter la raíz en un
+contenedor VeraCrypt: `~/PRDRIVE-cifrado/PRDRIVE.hc`, que se monta siempre en la
+misma letra en Windows (`P:` si está libre: los programas apuntan a la raíz, y un
+almacén de Obsidian en `P:\obsidian` no puede amanecer en `Q:`) y en `~/PRDRIVE`
+en Linux. Dentro van el programa, la clave, el estado y las parejas; fuera, solo
+el contenedor y una marca con su id.
+
+- **Hace falta VeraCrypt instalado** en el equipo. El instalador no lo descarga
+  ni lo instala; sin él, el paso lo dice y solo ofrece «Sin cifrar». En Linux,
+  VeraCrypt pide además la contraseña de administrador para montar.
+- **La contraseña nunca pasa por prdrive.** El asistente la usa una vez, para
+  crear y montar, y deja el contenedor abierto. Desde ahí lo abre el agente con
+  la ventana de VeraCrypt: al iniciar sesión (una vez; si cancelas, hasta que
+  pidas `agente.py desbloquear`), o nunca, si desmarcas «Pedir la contraseña al
+  iniciar sesión». Con la raíz cerrada, el acceso «prdrive» del menú la
+  desbloquea y abre la ventana.
+- **Bloquear** es el botón del pie de su ventana (donde una unidad cifrada tiene
+  «Expulsar»), o `agente.py bloquear`. El agente acaba la pareja en curso y le
+  pide a VeraCrypt que desmonte **sin forzar**: si algún programa tiene algo
+  abierto dentro, VeraCrypt pregunta, y tú decides. Cerrada, no hay nada que
+  sincronizar ni que avisar; las unidades se siguen atendiendo.
+- **No cambia de letra ni de sitio por su cuenta.** Si la letra la tiene otra
+  unidad, o en `~/PRDRIVE` hay cosas con el contenedor cerrado (quedarían
+  tapadas), lo dice y no monta. Si la letra se queda «colgada» tras suspender (el
+  volumen fantasma que ya conocen las unidades cifradas), no la atiende y te dice
+  que la bloquees y la vuelvas a desbloquear.
+- **Ni favoritos de VeraCrypt ni tocar su configuración**, como en las unidades.
+  Si en sus Preferencias tienes que desmonte al suspender, para el agente es como
+  desenchufar una unidad.
+- Pasar a cifrado una raíz que iba en claro **deja la vieja donde estaba**, con
+  la clave: el asistente lo dice en rojo, y la borras tú cuando compruebes que
+  no falta nada. Desinstalar el agente no cierra ni borra el contenedor.
+
+**Sin probar todavía en un equipo real**, ni en Windows ni en Linux. Lo que hay
+que comprobar está apuntado en
+`docs/superpowers/pruebas/2026-09-25-equipo-pendiente-en-real.md`.
 
 ## Diagnóstico y reparación
 
@@ -1188,7 +1229,7 @@ prdrive/
 │   ├── traveler.py    dejar el VeraCrypt Portable (x64 y ARM64) en el volumen
 │   ├── vestibulo.py   los lanzadores de fuera del contenedor: abrir y expulsar
 │   ├── agente.py      poner el agente residente en el equipo, y quitarlo
-│   ├── raiz_equipo.py la raíz del equipo: qué carpeta, instalarla, otros clientes
+│   ├── raiz_equipo.py la raíz del equipo: qué carpeta, su contenedor, instalarla, otros clientes
 │   └── components.py  poner al día el rclone y el Python de un dispositivo
 ├── tests/             scripts sueltos, sin framework
 └── design/            las maquetas que implementa ui/

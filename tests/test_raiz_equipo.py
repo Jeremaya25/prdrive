@@ -351,4 +351,147 @@ c("watch: la raíz del equipo, atendida por el agente",
 c("  y eso cuenta como que la vigila",
   watch.Resumen("agente_raiz", equipo.DAEMON).vigila_este, True)
 
+# --- fase 3: la raíz cifrada ----------------------------------------------------
+from common import vestibulo as vest  # noqa: E402
+from install import crypto  # noqa: E402
+from ui import cifrado  # noqa: E402
+
+equipo.DIR = tmpdir("prdrive-agente-3-")
+c("equipo: un contenedor sin ruta no es una raíz cifrada",
+  equipo.desde_dict({"unidades": {"a" * 32: {"contenedor": "/x/PRDRIVE.hc"}}})
+  .unidades["a" * 32].contenedor, "")
+c("  pedir_al_iniciar: activado de fábrica; algo que no es sí/no, también",
+  (equipo.Ajustes().pedir_al_iniciar,
+   equipo.desde_dict({"pedir_al_iniciar": "no"}).pedir_al_iniciar,
+   equipo.desde_dict({"pedir_al_iniciar": False}).pedir_al_iniciar), (True, True, False))
+cif = equipo.Unidad("k" * 32, equipo.DAEMON, "C", "/home/u/PRDRIVE", "/home/u/P-c/PRDRIVE.hc")
+c("  y se relee igual, con su contenedor",
+  equipo.desde_dict(equipo.a_dict(equipo.Ajustes().con_unidad(cif))).cifradas,
+  {cif.id: cif})
+
+c("fisica_por_defecto: al lado de la carpeta, con -cifrado",
+  raiz_equipo.fisica_por_defecto("/home/u/PRDRIVE"), Path("/home/u/PRDRIVE-cifrado"))
+c("punto de montaje en Linux: la carpeta misma",
+  raiz_equipo.punto_de_montaje("~/PRDRIVE"), str(Path.home() / "PRDRIVE"))
+base = tmpdir("prdrive-cif-")
+carpeta = base / "PRDRIVE"
+fisica = base / "PRDRIVE-cifrado"
+c("examinar_contenedor: nuevo", raiz_equipo.examinar_contenedor(fisica, carpeta).estado,
+  raiz_equipo.NUEVA)
+c("  con la carpeta personal no hay contenedor",
+  raiz_equipo.examinar_contenedor(fisica, carpeta, raiz_equipo.PERSONAL).vale, False)
+c("  relativa, no", raiz_equipo.examinar_contenedor("rel/x", carpeta).vale, False)
+c("  dentro de donde se monta, no",
+  raiz_equipo.examinar_contenedor(carpeta / "dentro", carpeta).vale, False)
+c("  cruzando la carpeta del agente, no",
+  raiz_equipo.examinar_contenedor(equipo.DIR / "x", carpeta).vale, False)
+carpeta.mkdir()
+(carpeta / "algo.txt").write_text("x", encoding="utf-8")
+c("  un punto de montaje con cosas, no (quedarían tapadas)",
+  raiz_equipo.examinar_contenedor(fisica, carpeta).texto.count("tapadas"), 1)
+(carpeta / "algo.txt").unlink()
+fisica.mkdir()
+(fisica / vest.CONTENEDOR).write_bytes(b"\0")
+c("  con un contenedor ya hecho: se abre con su contraseña",
+  raiz_equipo.examinar_contenedor(fisica, carpeta).estado, raiz_equipo.YA_EQUIPO)
+
+# abrir_o_crear con un VeraCrypt de mentira: qué orden, dónde se monta.
+ordenes = []
+reales_crypto = (crypto._run, crypto.soporta_dispersos, crypto.sistema_de_ficheros)
+crypto.soporta_dispersos = lambda raiz: False
+crypto.sistema_de_ficheros = lambda raiz: "ext4"
+
+
+def run_falso(cmd, password="", timeout=None):
+    ordenes.append(crypto.redact(cmd, password))
+    if "--create" in cmd:
+        Path(cmd[cmd.index("--create") + 1]).write_bytes(b"\0")
+    elif "--list" not in cmd:
+        # montar: la raíz aparece en el punto fijo
+        Path(cmd[3]).mkdir(parents=True, exist_ok=True)
+
+    class R:
+        returncode, stdout, stderr = 0, "", ""
+    return R()
+
+
+crypto._run = run_falso
+try:
+    (fisica / vest.CONTENEDOR).unlink()
+    montada = raiz_equipo.abrir_o_crear({"mount": "vc", "format": "vc"}, fisica, carpeta,
+                                        "", "una-contraseña-larga", "1G")
+finally:
+    crypto._run, crypto.soporta_dispersos, crypto.sistema_de_ficheros = reales_crypto
+c("abrir_o_crear: crea y monta en la carpeta fija, no en una temporal", montada, carpeta)
+c("  la contraseña va por la entrada, nunca en la orden",
+  any("una-contraseña-larga" in a for o in ordenes for a in o), False)
+c("  exFAT dentro (Linux)", any("--filesystem=exFAT" in o for o in ordenes), True)
+
+# instalar dentro del volumen, con la marca fuera; verificar con el contenedor.
+volumen = tmpdir("prdrive-vol-")
+_, ident_c = raiz_equipo.instalar(volumen, PERFIL, fisica=fisica)
+c("instalar con física: la marca fuera lleva el id de dentro",
+  (vest.leer_id(fisica), device.control_tipo(volumen)), (ident_c, "equipo"))
+filas_c = {k.etiqueta: k for k in raiz_equipo.verificar(volumen, [], None,
+                                                         fisica / vest.CONTENEDOR)}
+c("verificar cifrada: contenedor y marca", (filas_c["Contenedor"].ok,
+                                           filas_c["Marca de fuera"].ok), (True, True))
+(fisica / vest.MARCA).write_text("id=" + "z" * 32 + "\n", encoding="utf-8")
+c("  una marca de otra raíz es roja",
+  {k.etiqueta: k.ok for k in raiz_equipo.verificar(
+      volumen, [], None, fisica / vest.CONTENEDOR)}["Marca de fuera"], False)
+raiz_equipo.marcar(fisica, ident_c)
+c("restos: una raíz en claro en la carpeta se encuentra",
+  raiz_equipo.restos(nueva)[0], ".prdrive/")
+
+# lo que recibe el agente: la raíz con su contenedor, y pedir_al_iniciar.
+RAIZ_C = equipo.Unidad(ident_c, equipo.DAEMON, "Cifrada", str(volumen),
+                       str(fisica / vest.CONTENEDOR))
+ia.aplicar_unidades({}, 90.0, RAIZ_C, pedir_al_iniciar=False)
+aj = equipo.leer_ajustes()
+c("aplicar_unidades: la raíz cifrada entra con su contenedor, y el ajuste",
+  (aj.cifradas.get(ident_c), aj.pedir_al_iniciar), (RAIZ_C, False))
+ia.aplicar_unidades({}, 90.0, RAIZ_C, pedir_al_iniciar=True)
+pedido = [json.loads(l) for l in equipo.buzon().read_text(encoding="utf-8").splitlines()]
+c("  con agente.json, pedir_al_iniciar va por el buzón",
+  [(p["pide"], p["clave"], p["valor"]) for p in pedido],
+  [(equipo.PIDE_AJUSTE, "pedir_al_iniciar", True)])
+equipo.buzon().unlink()
+movida = equipo.Unidad(ident_c, equipo.DAEMON, "Cifrada", str(volumen), "/otro/PRDRIVE.hc")
+ia.aplicar_unidades({}, 90.0, movida)
+pedido = [json.loads(l) for l in equipo.buzon().read_text(encoding="utf-8").splitlines()]
+c("  otro contenedor se pide con PIDE_RAIZ, llevándolo",
+  [(p["pide"], p.get("contenedor")) for p in pedido],
+  [(equipo.PIDE_RAIZ, "/otro/PRDRIVE.hc")])
+equipo.buzon().unlink()
+msgs = ia.desinstalar()
+c("desinstalar: la raíz cifrada sigue, y si está abierta lo dice",
+  any("ABIERTA" in m and str(fisica / vest.CONTENEDOR) in m for m in msgs), True)
+c("  y no se toca", (fisica / vest.CONTENEDOR).is_file(), True)
+
+# la flota: cifrado = veracrypt, solo en la raíz cifrada
+equipo.DIR = tmpdir("prdrive-agente-4-")
+equipo.guardar_ajustes(equipo.Ajustes().con_unidad(RAIZ_C))
+nota_c = fleet.nota_de(volumen / ".prdrive", "Cifrada", "0.4.0", "ok")
+c("fleet: la nota de la raíz cifrada lleva cifrado = veracrypt",
+  (nota_c.cifrado, "cifrado = \"veracrypt\"" in fleet.dumps(nota_c)), ("veracrypt", True))
+c("  y vuelve igual del texto", fleet.parse(fleet.dumps(nota_c)), nota_c)
+c("  la de una raíz sin cifrar no la lleva",
+  fleet.nota_de(nueva / ".prdrive", "Mi portátil", "0.4.0", "ok").cifrado, "")
+c("tk_fleet: «(equipo, cifrado)» y su ficha",
+  (tk_fleet.marca(nota_c), tk_fleet.ficha(nota_c, "")[1].lineas[0].texto),
+  (tk_fleet.MARCA_EQUIPO_CIFRADO, tk_fleet.EN_UN_EQUIPO_CIFRADO))
+c("  una unidad no lleva marca", tk_fleet.marca(nota_u), "")
+
+# la ventana: «Bloquear» solo en la raíz cifrada de este equipo
+model_app = model.APP_DIR
+try:
+    model.APP_DIR = volumen / ".prdrive"
+    c("cifrado.bloqueo(): el id de esta raíz cifrada", cifrado.bloqueo(), ident_c)
+    equipo.guardar_ajustes(equipo.Ajustes())
+    c("  sin estar en la lista del agente como cifrada, nada", cifrado.bloqueo(), None)
+    c("  y pedir el bloqueo sin agente vivo, False", cifrado.pedir_bloqueo(ident_c), False)
+finally:
+    model.APP_DIR = model_app
+
 sys.exit(c.report())

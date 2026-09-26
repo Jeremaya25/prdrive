@@ -1140,7 +1140,8 @@ def mounted_container(vc: dict, container: Path) -> Path | None:
 
 def mount_container(vc: dict, container: Path, password: str,
                     letra: str | None = None,
-                    etiqueta: str = DEVICE_LABEL) -> Path:
+                    etiqueta: str = DEVICE_LABEL,
+                    punto_fijo: Path | None = None) -> Path:
     """Monta el contenedor y devuelve dónde ha quedado.
 
     NO se mira el código de retorno para decidir si ha ido bien: VeraCrypt eleva
@@ -1149,7 +1150,11 @@ def mount_container(vc: dict, container: Path, password: str,
 
     Si ya estaba montado no se vuelve a montar: montar dos veces el mismo
     contenedor da una segunda letra o un error, y ninguna de las dos cosas es lo
-    que quiere quien vuelve atrás en el asistente."""
+    que quiere quien vuelve atrás en el asistente.
+
+    `punto_fijo` es para la raíz cifrada de un equipo en POSIX: se monta en esa
+    carpeta (`~/PRDRIVE`) y no en una temporal, porque es donde el agente la
+    buscará y donde apuntan los programas. En Windows, lo fijo es la `letra`."""
     if not container.is_file():
         raise InstallError(f"No existe el contenedor {container}.")
 
@@ -1160,6 +1165,13 @@ def mount_container(vc: dict, container: Path, password: str,
     if IS_WIN:
         destino = (letra or free_drive_letter()).rstrip(":").upper()
         punto = Path(f"{destino}:\\")
+    elif punto_fijo is not None:
+        punto = Path(punto_fijo)
+        try:
+            punto.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            raise InstallError(f"No he podido crear {punto}: {e}") from e
+        destino = punto
     else:
         punto = Path(tempfile.mkdtemp(prefix="prdrive-mnt-"))
         destino = punto

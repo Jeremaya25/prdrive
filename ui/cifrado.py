@@ -14,6 +14,11 @@ en `.prdrive/runtime/`—, y mientras corra, VeraCrypt no puede desmontar sin
 forzar (reintenta solo 1,5 s, `Common/Dlgcode.h`). Así que la ventana lanza el
 script y se cierra; el script espera a que se haya ido y le pide a VeraCrypt que
 desmonte, sin `/silent`, para que VeraCrypt pregunte si queda algo abierto.
+
+La raíz cifrada de un EQUIPO (fase 3) no tiene script: la abre y la cierra el
+agente residente. Ahí el botón es «Bloquear», y lo que hace es pedírselo al
+agente por su buzón (`agente.pide`) y cerrar la ventana: el agente espera a que
+se haya ido y desmonta, también sin `/silent`.
 """
 
 from __future__ import annotations
@@ -59,3 +64,27 @@ def lanzar_expulsion(script: Path) -> None:
     subprocess.Popen(["sh", str(script)], cwd=str(script.parent),
                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                      stderr=subprocess.DEVNULL, start_new_session=True)
+
+
+def bloqueo() -> str | None:
+    """El id de ESTA raíz si es la raíz cifrada de este equipo, o None.
+
+    Con eso el pie ofrece «Bloquear» en vez de «Expulsar». Solo lee ficheros: el
+    `tipo=` del fichero de control y la lista del agente (`agente.json`)."""
+    from common import equipo, fleet, model
+    if not model.es_equipo():
+        return None
+    uid = fleet.device_id()
+    unidad = equipo.leer_ajustes().unidades.get(uid or "")
+    return uid if unidad is not None and unidad.cifrada else None
+
+
+def pedir_bloqueo(uid: str) -> bool:
+    """Le pide al agente que bloquee esta raíz. False si no hay agente vivo que
+    lo lea, o no se ha podido escribir.
+
+    Indirección de módulo, como `lanzar_expulsion()`: los tests la sustituyen."""
+    from common import equipo
+    if equipo.agente_vivo() is None:
+        return False
+    return equipo.pedir({"pide": equipo.PIDE_BLOQUEAR, "id": uid})

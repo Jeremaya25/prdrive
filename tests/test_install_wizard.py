@@ -839,18 +839,27 @@ preparados, activados = [], []
 PREP = ia.Preparado(equipo.DIR / "agente" / "0.4.0", equipo.DIR / "runtime" / "x" / "py",
                     "sello")
 ia.preparar = lambda progreso=None: preparados.append(1) or PREP
-ia.activar = lambda prep, elegidas, espera, raiz=None: (
-    activados.append((prep, elegidas, espera, raiz)) or ["Agente arrancado."])
+pedir_dado = []
+ia.activar = lambda prep, elegidas, espera, raiz=None, pedir_al_iniciar=None: (
+    pedir_dado.append(pedir_al_iniciar)
+    or activados.append((prep, elegidas, espera, raiz)) or ["Agente arrancado."])
 ia.candidatas = lambda: [ia.Candidata("u" * 32, "PRDRIVE-2", equipo.DAEMON,
                                       "enchufada ahora")]
 from install import raiz_equipo  # noqa: E402
 
 raiz_equipo.carpetas_sincronizadas = lambda: []
+raiz_equipo.veracrypt_instalado = lambda: None
 
 
 def elegir(wiz, texto: str) -> None:
     next(w for w in widgets(wiz.cuerpo, ttk.Radiobutton)
          if w.cget("text") == texto).invoke()
+
+
+def radios(wiz) -> dict[str, str]:
+    """El estado de cada opción, por su texto."""
+    return {str(w.cget("text")): str(w.cget("state"))
+            for w in widgets(wiz.cuerpo, ttk.Radiobutton)}
 
 
 def escribir(entrada, texto: str) -> None:
@@ -868,7 +877,7 @@ c("  y se puede seguir sin tocar nada", str(casa.boton_siguiente.cget("state")),
 elegir(casa, "En este equipo")
 c("«En este equipo» cambia la lista de pasos: con carpeta propia, de salida",
   [t for t, _, _ in casa.pasos],
-  ["¿Dónde?", "Carpeta", "Conexión", "Comprobaciones", "Instalación",
+  ["¿Dónde?", "Carpeta", "Cifrado", "Conexión", "Comprobaciones", "Instalación",
    "Parejas y configuración", "Inicialización", "Unidades", "Arranque", "Verificación"])
 c("  sin moverse de la primera pantalla", casa.indice, 0)
 casa.ir(+1)
@@ -941,6 +950,17 @@ c("  una que no existe sí, y fija la raíz",
   (propia.state.device_root, propia.equipo_examen.estado,
    str(propia.boton_siguiente.cget("state"))),
   (RAIZ_EQUIPO, raiz_equipo.NUEVA, "normal"))
+propia.ir(+1)
+c("«Cifrado»: sin VeraCrypt instalado, solo sin cifrar",
+  (radios(propia), propia.equipo_cifrado),
+  ({"Sin cifrar": "normal", "En un contenedor VeraCrypt": "disabled"},
+   raiz_equipo.SIN_CIFRAR))
+c("  y dice cómo instalarlo, sin ofrecer descargarlo",
+  any("veracrypt.jp" in w.cget("text") for w in widgets(propia.cuerpo, ttk.Label)),
+  True)
+c("  sin cifrar, la raíz es la carpeta, y se puede seguir",
+  (propia.state.device_root, str(propia.boton_siguiente.cget("state"))),
+  (RAIZ_EQUIPO, "normal"))
 
 # Conexión y catálogo como los dejaría «Comprobaciones».
 propia.perfil = PERFIL
@@ -1027,5 +1047,94 @@ c("  sin lanzador ni Python que pedirle", any(e.startswith("Lanzador") or
                                               for e in filas), False)
 c("  y dice que no está en la lista del agente (activar era de mentira)",
   filas["En la lista del agente"], False)
+c("  sin cifrar, no se toca pedir_al_iniciar", pedir_dado[-1], None)
+
+# --- con raíz cifrada: VeraCrypt de mentira ---------------------------------------
+# «Montar» es crear la carpeta que haría de volumen: lo que se comprueba es el
+# recorrido —dónde va el contenedor, qué se instala dentro, qué marca queda
+# fuera y qué recibe el agente—, no VeraCrypt (lo sustituye test_agente_veracrypt
+# y lo prueba la lista de pruebas en real).
+raiz_equipo.veracrypt_instalado = lambda: {"mount": "vc", "format": "vc"}
+MONTADAS = []
+
+
+def abrir_o_crear_falso(vc, fisica, carpeta, letra, password, tamano):
+    fisica = Path(fisica)
+    fisica.mkdir(parents=True, exist_ok=True)
+    (fisica / "PRDRIVE.hc").write_bytes(b"\0")
+    volumen = tmpdir("prdrive-volumen-")
+    MONTADAS.append((password, tamano, volumen))
+    return volumen
+
+
+raiz_equipo.abrir_o_crear = abrir_o_crear_falso
+activados.clear()
+cifra = nuevo_asistente(None)
+en_paso(cifra, 0)
+elegir(cifra, "En este equipo")
+cifra.ir(+1)
+CARPETA = tmpdir("prdrive-raiz-cifra-") / "PRDRIVE"
+escribir(next(iter(widgets(cifra.cuerpo, ttk.Entry))), str(CARPETA))
+cifra.ir(+1)
+elegir(cifra, "En un contenedor VeraCrypt")
+c("«Cifrado» con VeraCrypt: sin montar no hay raíz",
+  (cifra.state.device_root, str(cifra.boton_siguiente.cget("state"))),
+  (None, "disabled"))
+cajas = list(widgets(cifra.cuerpo, ttk.Entry))
+c("  el contenedor va al lado de la carpeta",
+  [w.get() for w in cajas if w.get().endswith("-cifrado")],
+  [str(CARPETA.with_name("PRDRIVE-cifrado"))])
+claves = [w for w in cajas if str(w.cget("show")) == "•"]
+escribir(claves[0], "una-contraseña-larga-de-prueba")
+escribir(claves[1], "otra-distinta")
+from tkinter import messagebox  # noqa: E402
+dichos = []
+messagebox.showwarning = lambda t, m, **k: dichos.append(m)
+boton(cifra.cuerpo, "Crear y montar").invoke()
+c("  dos contraseñas distintas no crean nada", (dichos, MONTADAS),
+  (["Las dos contraseñas no coinciden."], []))
+escribir(claves[1], "una-contraseña-larga-de-prueba")
+boton(cifra.cuerpo, "Crear y montar").invoke()
+volumen = MONTADAS[-1][2]
+c("  creado y montado, el volumen es la raíz, y se puede seguir",
+  (cifra.state.device_root, cifra.equipo_montada, str(cifra.boton_siguiente.cget("state"))),
+  (volumen, volumen, "normal"))
+c("  y se recuerda el contenedor",
+  cifra.equipo_contenedor, str(CARPETA.with_name("PRDRIVE-cifrado") / "PRDRIVE.hc"))
+cifra.perfil = PERFIL
+cifra.rclone = object()
+cifra.catalog = remote.parse_catalog(CATALOGO)
+en_paso(cifra, [t for t, _, _ in cifra.pasos].index("Instalación"))
+c("«Instalación» cifrada no avisa de la clave en claro",
+  any("clave del remoto queda en claro" in w.cget("text")
+      for w in widgets(cifra.cuerpo, ttk.Label)), False)
+boton(cifra.cuerpo, "Instalar").invoke()
+from common import vestibulo as vest  # noqa: E402
+c("  instala DENTRO del volumen, y deja fuera la marca con el mismo id",
+  (device.control_tipo(volumen), vest.leer_id(CARPETA.with_name("PRDRIVE-cifrado"))),
+  ("equipo", cifra.equipo_id))
+c("  la carpeta de «Carpeta» no se toca (en Linux es donde se monta)",
+  CARPETA.exists(), False)
+en_paso(cifra, [t for t, _, _ in cifra.pasos].index("Arranque"))
+boton(cifra.cuerpo, "Registrar y arrancar").invoke()
+raiz_dada = activados[-1][3]
+c("«Arranque» le da al agente la raíz cifrada: volumen y contenedor",
+  (raiz_dada.ruta, raiz_dada.contenedor, raiz_dada.cifrada),
+  (str(volumen), cifra.equipo_contenedor, True))
+c("  y pedir_al_iniciar, marcado de salida", pedir_dado[-1], True)
+filas = {e: ok for e, ok, _ in tk_equipo.comprobaciones(
+    volumen, cifra.state.selected, None, cifra.equipo_contenedor)}
+c("«Verificación» mira el contenedor y la marca de fuera",
+  (filas["Contenedor"], filas["Marca de fuera"]), (True, True))
+
+# «Cifrado» con la carpeta personal: no hay contenedor que valga.
+personal = nuevo_asistente(None)
+en_paso(personal, 0)
+elegir(personal, "En este equipo")
+personal.ir(+1)
+elegir(personal, "Tu carpeta personal")
+personal.ir(+1)
+c("con la carpeta personal, VeraCrypt no se ofrece",
+  radios(personal)["En un contenedor VeraCrypt"], "disabled")
 
 sys.exit(c.report())

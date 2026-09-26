@@ -246,15 +246,20 @@ def candidatas() -> list[Candidata]:
 
 
 def aplicar_unidades(elegidas: dict[str, tuple[str, str]], espera: float,
-                     raiz: equipo.Unidad | None = None) -> str:
+                     raiz: equipo.Unidad | None = None,
+                     pedir_al_iniciar: bool | None = None) -> str:
     """Lo que se ha elegido en «Unidades»: {id: (modo, nombre)} y el plazo, y
     la raíz del equipo que haya puesto el asistente (una `Unidad` con `ruta`).
 
     Sin `agente.json` se escribe de una vez. Con él, el agente ya tiene dueño de
     su configuración y se le pide por el buzón: una unidad nueva entra con su
-    modo (`PIDE_MODO`), la raíz con `PIDE_RAIZ`, y el plazo es un `PIDE_AJUSTE`."""
+    modo (`PIDE_MODO`), la raíz con `PIDE_RAIZ` (con su contenedor si va
+    cifrada), y el plazo y `pedir_al_iniciar` son `PIDE_AJUSTE`. None en
+    `pedir_al_iniciar` es «no lo ha preguntado nadie»: se deja como esté."""
     if not equipo.ajustes_json().exists():
-        aj = equipo.Ajustes(espera_unidad_nueva=espera)
+        aj = equipo.Ajustes(espera_unidad_nueva=espera,
+                            pedir_al_iniciar=True if pedir_al_iniciar is None
+                            else pedir_al_iniciar)
         for uid, (modo, nombre) in elegidas.items():
             aj = aj.con_unidad(equipo.Unidad(uid, modo, nombre))
         if raiz is not None:
@@ -267,9 +272,12 @@ def aplicar_unidades(elegidas: dict[str, tuple[str, str]], espera: float,
     pedidas = 0
     if raiz is not None:
         ya = actuales.unidades.get(raiz.id)
-        if ya is None or ya.ruta != raiz.ruta or ya.modo != raiz.modo:
+        if (ya is None or ya.ruta != raiz.ruta or ya.modo != raiz.modo
+                or ya.contenedor != raiz.contenedor):
             equipo.pedir({"pide": equipo.PIDE_RAIZ, "id": raiz.id, "ruta": raiz.ruta,
-                          "nombre": raiz.nombre, "modo": raiz.modo})
+                          "nombre": raiz.nombre, "modo": raiz.modo,
+                          **({"contenedor": raiz.contenedor} if raiz.contenedor
+                             else {})})
             pedidas += 1
     for uid, (modo, nombre) in elegidas.items():
         ya = actuales.unidades.get(uid)
@@ -280,6 +288,10 @@ def aplicar_unidades(elegidas: dict[str, tuple[str, str]], espera: float,
     if actuales.espera_unidad_nueva != espera:
         equipo.pedir({"pide": equipo.PIDE_AJUSTE, "clave": "espera_unidad_nueva",
                       "valor": espera})
+        pedidas += 1
+    if pedir_al_iniciar is not None and actuales.pedir_al_iniciar != pedir_al_iniciar:
+        equipo.pedir({"pide": equipo.PIDE_AJUSTE, "clave": "pedir_al_iniciar",
+                      "valor": pedir_al_iniciar})
         pedidas += 1
     return (f"El agente ya tenía su configuración: se le han pedido {pedidas} cambios."
             if pedidas else "El agente ya tenía esta configuración.")
@@ -550,7 +562,8 @@ def podar(prep: Preparado) -> None:
 
 
 def activar(prep: Preparado, elegidas: dict[str, tuple[str, str]], espera: float,
-            arrancar_ya: bool = True, raiz: equipo.Unidad | None = None) -> list[str]:
+            arrancar_ya: bool = True, raiz: equipo.Unidad | None = None,
+            pedir_al_iniciar: bool | None = None) -> list[str]:
     """Los pasos «Unidades» y «Arranque» de una vez: configuración (con la raíz
     del equipo, si la hay), penwatch fuera, registro, el acceso del menú,
     `instalacion.json`, versiones viejas fuera y arranque."""
@@ -558,7 +571,7 @@ def activar(prep: Preparado, elegidas: dict[str, tuple[str, str]], espera: float
     parado = parar_agente()
     if parado:
         msgs.append(parado)
-    msgs.append(aplicar_unidades(elegidas, espera, raiz))
+    msgs.append(aplicar_unidades(elegidas, espera, raiz, pedir_al_iniciar))
     msgs += quitar_penwatch()
     msgs.append(registrar(prep))
     # El acceso del menú solo tiene sentido con una raíz del equipo: es su
@@ -597,18 +610,34 @@ def desinstalar() -> list[str]:
     menu = quitar_menu()
     if menu:
         msgs.append(menu)
-    raices = [u.ruta for u in equipo.leer_ajustes().raices.values()]
+    raices = list(equipo.leer_ajustes().raices.values())
     if equipo.DIR.exists():
         shutil.rmtree(equipo.DIR, ignore_errors=True)
         msgs.append(f"Eliminado {equipo.DIR}" if not equipo.DIR.exists()
                     else f"Queda algo en {equipo.DIR} (en uso); se puede borrar a mano.")
     msgs.append("Las unidades no se han tocado.")
-    for ruta in raices:
+    for u in raices:
         # Nunca se borra: tiene las carpetas del usuario, y la clave. Se dice
         # dónde está para que no parezca que se ha ido con el agente.
-        msgs.append(f"La raíz de este equipo sigue en {ruta}, con sus carpetas y su "
+        if u.cifrada:
+            # Tampoco se cierra: si está abierta es porque alguien la usa, y
+            # desmontar con algo abierto dentro es decisión de la persona.
+            abierta = _presente(Path(u.ruta))
+            msgs.append(f"La raíz cifrada de este equipo sigue en {u.contenedor}"
+                        + (f", y ABIERTA en {u.ruta}: ciérrala desde VeraCrypt cuando "
+                           f"quieras." if abierta else ".")
+                        + " Bórrala a mano si ya no la quieres.")
+            continue
+        msgs.append(f"La raíz de este equipo sigue en {u.ruta}, con sus carpetas y su "
                     f".prdrive/ (la clave incluida): bórrala a mano si ya no la quieres.")
     return msgs
+
+
+def _presente(raiz: Path) -> bool:
+    try:
+        return (raiz / penwatch.CONTROL_FILE).is_file()
+    except OSError:
+        return False
 
 
 def instalado() -> dict | None:

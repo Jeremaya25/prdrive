@@ -148,6 +148,7 @@ from tkinter import messagebox  # noqa: E402
 from ui import cifrado  # noqa: E402
 
 reales = (cifrado.expulsion, cifrado.lanzar_expulsion, messagebox.askokcancel)
+reales_expulsion = cifrado.expulsion
 SCRIPT = Path("E:/Expulsar PRDRIVE.bat")
 lanzados: list = []
 try:
@@ -199,5 +200,57 @@ try:
         c("sin devolverle nada a runsync: no hay servicio que arrancar", eleccion, None)
 finally:
     cifrado.expulsion, cifrado.lanzar_expulsion, messagebox.askokcancel = reales
+
+# --- «Bloquear»: la raíz cifrada de un equipo --------------------------------------
+# No hay script del vestíbulo: el contenedor lo cierra el agente residente. El
+# botón se lo pide por su buzón y cierra la ventana.
+reales = (cifrado.bloqueo, cifrado.pedir_bloqueo, messagebox.askokcancel,
+          messagebox.showerror)
+pedidos: list = []
+errores: list = []
+UID = "c" * 32
+try:
+    cifrado.bloqueo = lambda: UID
+    cifrado.expulsion = lambda: None
+    messagebox.askokcancel = lambda *a, **k: True
+    messagebox.showerror = lambda *a, **k: errores.append(a)
+
+    with sandbox():
+        sin_agente = {}
+        cifrado.pedir_bloqueo = lambda uid: False
+
+        def sonda_sin_agente(self, *_a, **_k):
+            sin_agente["botones"] = (len(botones(self, "Bloquear")),
+                                     len(botones(self, "Expulsar")))
+            botones(self, "Bloquear")[0].invoke()
+            sin_agente["viva"] = bool(self.winfo_exists())
+            self.destroy()
+
+        conducir(sonda_sin_agente, aviso=None)
+        c("en la raíz cifrada de un equipo, «Bloquear» y no «Expulsar»",
+          sin_agente["botones"], (1, 0))
+        c("sin agente que lo haga, lo dice y la ventana sigue",
+          (len(errores), sin_agente["viva"]), (1, True))
+
+    with sandbox():
+        hecho = {}
+        cifrado.pedir_bloqueo = lambda uid: pedidos.append(uid) or True
+
+        def sonda_bloquear(self, *_a, **_k):
+            botones(self, "Bloquear")[0].invoke()
+            try:
+                hecho["viva"] = bool(self.winfo_exists())
+                self.destroy()
+            except tk.TclError:
+                hecho["viva"] = False
+
+        eleccion = conducir(sonda_bloquear, aviso=None)
+        c("al confirmar, se lo pide al agente con el id de la raíz", pedidos, [UID])
+        c("y la ventana se cierra, para que el agente pueda desmontar",
+          (hecho["viva"], eleccion), (False, None))
+finally:
+    (cifrado.bloqueo, cifrado.pedir_bloqueo, messagebox.askokcancel,
+     messagebox.showerror) = reales
+    cifrado.expulsion = reales_expulsion
 
 sys.exit(c.report())

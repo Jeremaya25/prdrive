@@ -648,6 +648,12 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
             vista["expulsion"] = cifrado.expulsion()
         except Exception:                            # noqa: BLE001
             vista["expulsion"] = None
+        # La raíz cifrada de un equipo no se expulsa: se bloquea, y lo hace el
+        # agente residente (`cifrado.bloqueo`).
+        try:
+            vista["bloqueo"] = cifrado.bloqueo()
+        except Exception:                            # noqa: BLE001
+            vista["bloqueo"] = None
         # Qué hace este equipo al enchufar el dispositivo. Solo lee ficheros del
         # equipo (ver `watch.resumen`), así que también cabe en el primer pintado.
         try:
@@ -830,6 +836,26 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         except OSError as e:
             messagebox.showerror(TITLE, f"No he podido lanzar {script.name}: {e}",
                                  parent=root)
+            return
+        result["choice"] = None
+        root.destroy()
+
+    def bloquear() -> None:
+        """«Bloquear» la raíz cifrada de este equipo: se lo pide al agente y se
+        cierra. El agente espera a que esta ventana se haya ido (y a la pareja
+        en curso) y desmonta sin `/silent`."""
+        uid = vista.get("bloqueo")
+        if uid is None or not messagebox.askokcancel(TITLE, (
+                "Se cierra esta ventana y el agente cierra el contenedor cifrado. "
+                "Hasta que lo desbloquees, nada de dentro se puede leer ni se "
+                "sincroniza.\n\n"
+                "Si algún otro programa tiene abierto algo de dentro, VeraCrypt "
+                "te preguntará si forzar el cierre."), parent=root):
+            return
+        if not cifrado.pedir_bloqueo(uid):
+            messagebox.showerror(TITLE, (
+                "El agente de este equipo no está en marcha, y es quien cierra el "
+                "contenedor. Ciérralo desde VeraCrypt."), parent=root)
             return
         result["choice"] = None
         root.destroy()
@@ -1222,7 +1248,13 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         # Solo en un dispositivo que vive en un contenedor VeraCrypt, y apagado
         # mientras sincroniza: cerrar el contenedor en mitad de una pasada es
         # arrancarle los ficheros a rclone.
-        if vista.get("expulsion") is not None:
+        if vista.get("bloqueo") is not None:
+            boton_bloquear = ttk.Button(pie, text="Bloquear", padding=(12, 8),
+                                        command=bloquear, state=apagado)
+            theme.boton_icono(boton_bloquear, "expulsar", theme.TINTA2,
+                              theme.SUPERFICIE)
+            boton_bloquear.grid(row=0, column=2, padx=(8, 0))
+        elif vista.get("expulsion") is not None:
             boton_expulsar = ttk.Button(pie, text="Expulsar", padding=(12, 8),
                                         command=expulsar, state=apagado)
             theme.boton_icono(boton_expulsar, "expulsar", theme.TINTA2,

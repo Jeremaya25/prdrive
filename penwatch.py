@@ -457,7 +457,30 @@ def find_vestibule(cfg: dict) -> Path | None:
     return None
 
 
-def veracrypt_command(root: Path) -> list[str] | None:
+def installed_veracrypt() -> str | None:
+    """El VeraCrypt INSTALADO en este equipo, o None. Nunca el que viaja.
+
+    En Windows, el de Archivos de programa; en Linux, `veracrypt` en el PATH."""
+    if IS_WIN:
+        for k in ("ProgramFiles", "ProgramW6432"):
+            if not os.environ.get(k):
+                continue
+            exe = Path(os.environ[k]) / "VeraCrypt" / "VeraCrypt.exe"
+            try:
+                if exe.is_file():
+                    return str(exe)
+            except OSError:
+                continue
+        return None
+    return shutil.which("veracrypt")
+
+
+def _con_escritorio() -> bool:
+    return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+
+
+def veracrypt_command(root: Path | None, container: Path | None = None,
+                      dest: str = "") -> list[str] | None:
     """La orden que abre el contenedor de `root`, o None si no hay con qué.
 
     Sin contraseña, que la pide VeraCrypt en su ventana. El VeraCrypt instalado
@@ -466,7 +489,28 @@ def veracrypt_command(root: Path) -> list[str] | None:
     la arquitectura NATIVA de este equipo —VeraCrypt escoge el driver por ella, y
     un driver no se emula—, y detrás el `VeraCrypt.exe` de un dispositivo de
     antes. En Linux, solo con escritorio: sin él no hay dónde pedir la
-    contraseña, ni la de administrador que montar exige."""
+    contraseña, ni la de administrador que montar exige.
+
+    Con `container` es la raíz cifrada de un EQUIPO (la abre el agente): el
+    contenedor no está en la raíz de ninguna unidad, así que se da entero, y
+    solo vale el VeraCrypt instalado —en el ordenador propio se instala una
+    vez; el portátil pide administrador cada vez que carga su driver—. `dest` es
+    dónde montarlo: la letra fija (`/letter`) en Windows, porque los programas
+    apuntan a la raíz y no puede cambiar de un día a otro; la carpeta fija en
+    Linux."""
+    if container is not None:
+        exe = installed_veracrypt()
+        if exe is None:
+            return None
+        if IS_WIN:
+            letra = ["/letter", dest.rstrip(":\\/")[:1].upper()] if dest else []
+            return [exe, "/volume", str(container), *letra,
+                    "/mountoption", "rm",
+                    "/mountoption", f"label={APP_NAME.upper()}",
+                    "/history", "n", "/cache", "n", "/quit"]
+        if not _con_escritorio():
+            return None
+        return [exe, str(container), *([dest] if dest else [])]
     container = root / CONTAINER_FILE
     if IS_WIN:
         candidates = [Path(os.environ[k]) / "VeraCrypt" / "VeraCrypt.exe"
@@ -486,7 +530,7 @@ def veracrypt_command(root: Path) -> list[str] | None:
                 continue
         return None
     exe = shutil.which("veracrypt")
-    if not exe or not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+    if not exe or not _con_escritorio():
         return None
     return [exe, str(container)]
 

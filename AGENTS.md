@@ -87,7 +87,7 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 │   ├── traveler.py    the VeraCrypt Portable (x64 + ARM64) on the volume, swapped
 │   ├── vestibulo.py   the launchers outside the container: open, eject
 │   ├── agente.py      put the resident agent on this host, and take it off
-│   ├── raiz_equipo.py the host root: which folder, install it, other sync clients
+│   ├── raiz_equipo.py the host root: which folder, its container, install it, other sync clients
 │   └── deploy.py      copy the code in, rclone + runtimes, launchers, config
 └── tests/             plain scripts; run_all.py runs them in separate processes
 ```
@@ -182,6 +182,8 @@ python penwatch.py install|status|probe|uninstall   # the watcher, per machine/u
 python agente.py run|status                         # the resident agent (host copy)
 python agente.py atender ID | modo ID MODO | pasada ID [pareja…] | pausa | sigue | parar
 python agente.py abrir [ID]                         # the window of the host root
+python agente.py desbloquear [ID] | bloquear [ID]   # open / close the encrypted host root
+python agente.py ajuste pedir_al_iniciar sí|no      # or espera_unidad_nueva SEG
 
 python prdrive-install.py          # install wizard for a NEW device (Tk only)
 python prdrive-install.py --check  # rclone + connection + catalogue, then exit
@@ -1174,11 +1176,15 @@ script to `%LOCALAPPDATA%\prdriveWatch` / `~/.local/share/prdrive-watch`, writes
 
 ## The resident agent (`agente.py` + `common/planificador.py` + `install/agente.py`)
 
-Phases 1 and 2 of `docs/superpowers/specs/2026-09-25-instalacion-en-el-equipo-design.md`
+Phases 1 to 3 of `docs/superpowers/specs/2026-09-25-instalacion-en-el-equipo-design.md`
 (read it before touching this): the agent attends the prdrive drives plugged
-into the host and, optionally, **the host root** (below); with no root it is the
-**«solo agente»** install. The later phases (VeraCrypt on the host, the trays,
-window ↔ agent mailboxes, «Actualizar») are specified there and not built yet.
+into the host and, optionally, **the host root** (below), plain or in a
+VeraCrypt container; with no root it is the **«solo agente»** install. The later
+phases (the trays, window ↔ agent mailboxes, «Actualizar») are specified there
+and not built yet. **Nothing of this has run on a real machine**: what has to be
+checked there, phase by phase, is the living list in
+`docs/superpowers/pruebas/2026-09-25-equipo-pendiente-en-real.md` — add to it
+whatever you build that only a real host can prove.
 
 - **Lives outside every root**, in `equipo.DIR` (`%LOCALAPPDATA%\prdrive\`,
   `~/.local/share/prdrive/`): `agente/<version>/` (agente.py, penwatch.py,
@@ -1319,6 +1325,54 @@ not be weakened:
   but as `tk_equipo.PREGUNTAR` — not in the list: a drive is never synced without
   a yes.
 - `ui/watch.py` reports `agente_raiz` for a window opened on the host root.
+
+### The encrypted host root (phase 3)
+
+With «Una carpeta propia», the wizard's «Cifrado» step (`tk_equipo.paso_cifrado`,
+between «Carpeta» and «Conexión», because it fixes `state.device_root` as in a
+drive) can put the root in `<carpeta>-cifrado/PRDRIVE.hc`, with only the
+vestibule **marker** beside it (`raiz_equipo.marcar()`: same id as the control
+file inside; no `.bat`/`.sh`/guide — the agent is the opener). Mounted at a
+**fixed letter** on Windows (`equipo.Unidad.ruta` = `P:\`, `Unidad.letra`) or at
+the carpeta itself on Linux (`crypto.mount_container(punto_fijo=)`), and
+`Unidad.contenedor` holds the `.hc`. Not to weaken:
+
+- **Installed VeraCrypt only** (`raiz_equipo.veracrypt_instalado()` =
+  `penwatch.installed_veracrypt()`, one definition for the wizard and the
+  agent). No portable, no download, no installer: without it the step says how
+  to install it and offers only «Sin cifrar». Inside: NTFS on Windows, exFAT on
+  Linux (a fresh ext4 is root's).
+- **The password never passes through the agent.** The wizard uses it once to
+  create and mount (`raiz_equipo.abrir_o_crear()`) and leaves the container
+  open for the agent. From then on `penwatch.veracrypt_command(None, container,
+  dest)` has no `/password`, and does carry `/letter` + `/m rm`.
+- **Open is SEEN, not assumed**: the id at the letter with the `.hc` held
+  (`common/vestibulo.retenido()`, the `:libre` probe; None on POSIX, where the
+  mount point decides). Id at the letter beside a free `.hc` is H-10's ghost:
+  `Agente._fantasmas()` drops it and says «Bloquear y volver a desbloquear»
+  once. `agente.punto_ocupado()` refuses another drive on the letter and a
+  mount point with content (it would be hidden) — the agent never picks another
+  letter or folder.
+- **Locked is not absent**: no notice, no backoff. Only a missing `.hc` is
+  notified (once). `pedir_al_iniciar` (default on, `agente.json`, a
+  `PIDE_AJUSTE` like `espera_unidad_nueva`) asks ONCE per agent start after
+  `ESTABLE` walks; cancelled, not again until `desbloquear`.
+- **Bloquear** (`PIDE_BLOQUEAR`, `Agente._bloqueos()`): stop queuing, wait for
+  the pair in flight and for the root's window to go (`ESPERA_VENTANA`; the
+  window's «Bloquear» asks and closes itself — runsync's window does not listen
+  to `daemon.stop`), release the lock, then dismount **without `/silent`**
+  (`agente.orden_bloquear()`), so VeraCrypt asks before forcing. Locked =
+  `agente.bloqueada()`: `.hc` free and letter gone (Windows), mount point
+  unmounted (Linux). VeraCrypt exiting with it still open → «sigue abierta» and
+  the root is attended again.
+- `ui/cifrado.bloqueo()` turns the window's «Expulsar» into «Bloquear» for such
+  a root; `vestibulo.raiz_fisica()` walks `carpetas_de_contenedor()` as extra
+  roots, so `espacio` and the leftovers check work unchanged. The fleet note
+  adds `cifrado = "veracrypt"` (`fleet._cifrado()`, from `agente.json`).
+- Switching a plain root to encrypted leaves the plain tree where it was
+  (`raiz_equipo.restos()`: red in the step on Windows, a red row in
+  «Verificación»); on Linux the mount point must be empty, so it is refused.
+  Uninstalling never closes or deletes the container, and says if it is open.
 
 ## Conflicts & failures (`conflicts.py`, `results.py`, `ui/conflict_editor.py`)
 
@@ -1623,8 +1677,9 @@ keeps the target's existing header.
   `agente.lanzar()` / `hay_pantalla()` / `avisar()` / `abrir_contenedor()` /
   `diario()`, `avisos.enviar()`, `moderacion.energia()` / `red_medida()`,
   `install.agente.conseguir_runtime()` / `lanzar()` / `autostart_file()` /
-  `acceso_menu()` / `crear_lnk()`, `raiz_equipo.carpetas_sincronizadas()`, and
-  `equipo.DIR`. Keep new ones in that shape.
+  `acceso_menu()` / `crear_lnk()`, `raiz_equipo.carpetas_sincronizadas()` /
+  `veracrypt_instalado()` / `abrir_o_crear()`, `penwatch.installed_veracrypt()`,
+  `vestibulo.retenido()`, `cifrado.pedir_bloqueo()`, and `equipo.DIR`. Keep new ones in that shape.
 
 ## Documentation
 

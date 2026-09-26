@@ -16,6 +16,9 @@ por una unidad nueva son procesos hijos.
     python agente.py pausa | sigue        dejar de lanzar pasadas, y volver
     python agente.py parar                que termine (lo usa el instalador)
     python agente.py abrir [ID]           la ventana de la raíz de este equipo (o de esa)
+    python agente.py desbloquear [ID]     abrir el contenedor de la raíz cifrada
+    python agente.py bloquear [ID]        y cerrarlo
+    python agente.py ajuste CLAVE VALOR   pedir_al_iniciar sí|no · espera_unidad_nueva SEG
 
 Las órdenes que no son `run` no hacen nada por sí mismas: dejan la petición en
 el buzón del agente (`equipo.pedir()`), que es quien escribe su configuración.
@@ -51,6 +54,26 @@ se busca ahí en vez de recorriendo volúmenes, y todo lo demás es igual. Si fa
 —se ha movido o renombrado la carpeta—, se avisa una vez y no se lanza nada: una
 línea base sin su carpeta local es justo lo que `_bisync_preflight()` frena.
 
+La raíz del equipo puede vivir en un contenedor VeraCrypt (fase 3). Entonces el
+agente es quien lo abre y quien lo cierra, con el VeraCrypt INSTALADO y sin que
+la contraseña pase nunca por él:
+
+  * **Desbloquear** lanza VeraCrypt con `/letter` fija (Windows) o el punto de
+    montaje fijo (Linux) y sin `/password`: la pide su ventana. Abierta no es
+    que VeraCrypt salga con 0, sino VER el id en la letra con el `.hc`
+    retenido. Una letra con el id al lado de un `.hc` libre es el fantasma de
+    las unidades (H-10): no se atiende, y se dice «Bloquear y volver a
+    desbloquear». Con la letra de otro, o un punto de montaje con cosas, no se
+    lanza nada: se dice.
+  * **Al iniciar sesión**, con `pedir_al_iniciar`, se pide UNA vez; si se
+    cancela, hasta que se pida «Desbloquear».
+  * **Bloquear** deja de encolar la raíz, espera a la pareja en curso y a que
+    se cierre su ventana, suelta el lock y lanza el desmontaje SIN `/silent`:
+    si un programa tiene algo abierto dentro, VeraCrypt pregunta si forzar, y
+    eso lo decide la persona. Bloqueada es el `.hc` libre, no la letra ida.
+  * **Cerrada, simplemente no está**: no es un fallo, ni un aviso, ni una
+    espera más larga. Una raíz cerrada no tiene carpeta ni línea base.
+
 Avisa con los avisos del sistema (`common/avisos.py`), no con Tk, y solo cuando
 una pareja EMPIEZA a fallar. Sin avisos, queda en su diario.
 
@@ -77,7 +100,7 @@ if str(SCRIPT_DIR) not in sys.path:
 
 import penwatch  # noqa: E402
 from common import (APP_NAME, avisos, catalog, equipo, model, moderacion,  # noqa: E402
-                    store)
+                    store, vestibulo)
 from common import planificador as pl  # noqa: E402
 from common.store import pid_alive  # noqa: E402
 from ui import prefs  # noqa: E402
@@ -99,6 +122,10 @@ ESTABLE = penwatch.STABLE_CHECKS
 GRACIA = 15.0                   # tras ver la ventana o un stop, antes de volver
 MIRAR_ENTORNO = 60.0            # batería y red, cada minuto
 PARAR_ESPERA = 10.0             # lo que espera `parar` a que el agente se vaya
+ESPERA_VENTANA = 60.0           # «Bloquear» con su ventana abierta: lo que se espera
+ESPERA_DESMONTAJE = 300.0       # a que VeraCrypt cierre (puede estar preguntando)
+GRACIA_DESMONTAJE = 5.0         # tras salir VeraCrypt, a que el `.hc` quede libre
+ESPERA_ABRIR = 180.0            # `abrir` con la raíz cerrada: a que se desbloquee
 COLA_SALIDA = 64 * 1024         # lo que se lee de la salida de una pasada
 
 OK, FALLO, RED, SALTADA = pl.OK, pl.FALLO, pl.RED, pl.SALTADA
@@ -247,6 +274,76 @@ def presente(raiz: Path) -> bool:
         return False
 
 
+def punto_ocupado(unidad: equipo.Unidad) -> str | None:
+    """Por qué no se puede montar ahí la raíz cifrada, o None si se puede.
+
+    El agente no se inventa otra letra ni otro sitio: los programas apuntan a la
+    raíz, y un almacén de Obsidian en `P:\\obsidian` se rompería si mañana
+    fuera `Q:`. En Linux, el punto de montaje vacío es una carpeta normal, y lo
+    que se guarde ahí con el contenedor cerrado quedaría tapado al montarlo."""
+    if unidad.letra:
+        raiz = Path(f"{unidad.letra}:\\")
+        try:
+            existe = raiz.exists()
+        except OSError:
+            existe = True
+        if not existe:
+            return None
+        try:
+            suya = penwatch.control_id(raiz) == unidad.id
+        except OSError:
+            suya = False
+        if suya:
+            return (f"La letra {unidad.letra}: tiene su raíz, pero el contenedor está "
+                    f"cerrado: es un volumen fantasma (se desconectó sin bloquear). "
+                    f"Bloquéala y vuelve a desbloquearla.")
+        return (f"La letra {unidad.letra}: está ocupada por otra unidad, y no se "
+                f"cambia: los programas apuntan a {unidad.letra}:\\. Libérala y "
+                f"vuelve a desbloquear.")
+    punto = Path(unidad.ruta)
+    try:
+        if os.path.ismount(punto):
+            return f"Ya hay algo montado en {punto}."
+        if punto.is_dir() and any(punto.iterdir()):
+            return (f"{punto} tiene cosas con el contenedor cerrado: no se monta "
+                    f"encima, porque quedarían tapadas. Muévelas a otro sitio y "
+                    f"vuelve a desbloquear.")
+    except OSError as e:
+        return f"No puedo mirar {punto}: {e}"
+    return None
+
+
+def bloqueada(unidad: equipo.Unidad) -> bool:
+    """¿Está cerrado ya el contenedor de esa raíz?
+
+    En Windows, que la letra se vaya no basta: forzando el desmontaje con un
+    fichero abierto dentro, la letra desaparece y el driver sigue reteniendo el
+    `.hc`. Bloqueada es el `.hc` libre y la letra ida (la de un fantasma también
+    tiene que irse). En Linux no hay esa prueba (`vestibulo.retenido()` no
+    contesta): es el punto de montaje sin montar."""
+    raiz = Path(unidad.ruta)
+    if unidad.letra:
+        return vestibulo.retenido(unidad.contenedor) is not True and not presente(raiz)
+    try:
+        return not os.path.ismount(raiz) and not presente(raiz)
+    except OSError:
+        return False
+
+
+def orden_bloquear(unidad: equipo.Unidad) -> list[str] | None:
+    """El desmontaje de la raíz cifrada, SIN `/silent`, como `Expulsar
+    PRDRIVE.bat`: con un fichero abierto dentro VeraCrypt pregunta si forzar, y
+    esa decisión es de la persona. None sin VeraCrypt instalado."""
+    exe = penwatch.installed_veracrypt()
+    if exe is None:
+        return None
+    if IS_WIN:
+        return [exe, "/dismount", unidad.letra or unidad.ruta[:1], "/quit"]
+    if hay_pantalla():
+        return [exe, "-d", unidad.contenedor]
+    return [exe, "--text", "--non-interactive", "-d", unidad.contenedor]
+
+
 def resultado(rc: int, texto: str) -> str:
     """Cómo acabó una pasada, con el mismo criterio que `runsync.daemon_cycle()`."""
     if rc != 0:
@@ -282,6 +379,14 @@ class Conexion:
 
 
 @dataclass
+class Bloqueo:
+    """«Bloquear», pedido y todavía no hecho."""
+    desde: float
+    proc: Any = None                    # el VeraCrypt que desmonta, ya lanzado
+    lanzado: float = 0.0
+
+
+@dataclass
 class Pasada:
     proc: Any
     tarea: pl.Tarea
@@ -312,6 +417,14 @@ class Agente:
     ultimo_estado: dict | None = None
     # Las raíces del equipo que no están donde dice su `ruta`, ya avisadas.
     ausentes: set[str] = field(default_factory=set)
+    # La raíz cifrada: cuándo se lanzó VeraCrypt para abrirla, las que ya se
+    # pidieron al iniciar sesión (una vez), los «Bloquear» en marcha, y los
+    # volúmenes fantasma ya dichos.
+    desbloqueos: dict[str, float] = field(default_factory=dict)
+    pedidas: set[str] = field(default_factory=set)
+    bloqueos: dict[str, Bloqueo] = field(default_factory=dict)
+    fantasmas: set[str] = field(default_factory=set)
+    recorridos: int = 0
     # Cuándo arrancó, en hora de verdad (`equipo.pedir()` sella con ella): un
     # «parar» de antes iba para el agente anterior.
     inicio: float = field(default_factory=time.time)
@@ -323,11 +436,13 @@ class Agente:
         self._buzon(ahora)
         if recorrer:
             self._recorrer(ahora)
+            self._al_iniciar(ahora)
         for con in list(self.conexiones.values()):
             if not presente(con.raiz):
                 self._desconectar(con.id, ahora, {})
         self._preguntas(ahora)
         self._fin_de_pasada(ahora)
+        self._bloqueos(ahora)
         for con in self.conexiones.values():
             self._contrato(con, ahora)
         self._leer_entorno(ahora)
@@ -362,6 +477,7 @@ class Agente:
                         cerradas.setdefault(uid, raiz)
             except OSError:
                 continue            # un volumen bloqueado contesta con error: ahora no
+        self._fantasmas(abiertas)
 
         for uid in list(self.vistas):
             if uid not in abiertas:
@@ -382,6 +498,26 @@ class Agente:
                 self._desconectar(uid, ahora, cerradas)
         self._vestibulos(cerradas, ahora)
         self._raices_ausentes(abiertas)
+        self.recorridos += 1
+
+    def _fantasmas(self, abiertas: dict[str, Path]) -> None:
+        """Una raíz cifrada vista en su letra con el `.hc` LIBRE no está abierta:
+        es lo que deja un volumen que se fue sin desmontar (suspender con el
+        cierre automático de VeraCrypt, H-10), que sirve el fichero de control
+        de la caché. No se atiende, y se dice una vez cómo salir."""
+        for uid, unidad in self.ajustes.cifradas.items():
+            if uid not in abiertas:
+                self.fantasmas.discard(uid)
+                continue
+            if vestibulo.retenido(unidad.contenedor) is not False:
+                self.fantasmas.discard(uid)
+                continue
+            del abiertas[uid]
+            if uid not in self.fantasmas:
+                self.fantasmas.add(uid)
+                avisar(f"{unidad.nombre or APP_NAME}: el volumen no responde",
+                       f"{unidad.ruta} sigue ahí, pero su contenedor está cerrado. "
+                       f"Bloquéala y vuelve a desbloquearla.", True)
 
     def _raices_ausentes(self, abiertas: dict[str, Path]) -> None:
         """Una raíz del equipo que no está en su ruta se dice UNA vez. No se
@@ -394,6 +530,25 @@ class Agente:
                     diario(f"{unidad.nombre or uid[:8]}: la raíz vuelve a estar en "
                            f"{unidad.ruta}")
                 continue
+            if unidad.cifrada:
+                # Cerrada no es ausente: es lo normal con el contenedor bloqueado.
+                # Lo que falta es el contenedor mismo.
+                try:
+                    hay = Path(unidad.contenedor).is_file()
+                except OSError:
+                    hay = True
+                if hay:
+                    if uid in self.ausentes:
+                        self.ausentes.discard(uid)
+                        diario(f"{unidad.nombre or uid[:8]}: su contenedor vuelve a "
+                               f"estar en {unidad.contenedor}")
+                elif uid not in self.ausentes:
+                    self.ausentes.add(uid)
+                    avisar(f"{unidad.nombre or APP_NAME}: no encuentro su contenedor",
+                           f"La raíz cifrada de este equipo tenía que estar en "
+                           f"{unidad.contenedor}. Si lo has movido, vuelve a ponerlo "
+                           f"ahí o reinstala.", True)
+                continue
             if uid not in self.ausentes:
                 self.ausentes.add(uid)
                 avisar(f"{unidad.nombre or APP_NAME}: no encuentro su carpeta",
@@ -405,6 +560,7 @@ class Agente:
         nombre = nombre_de(raiz, uid, unidad.nombre if unidad else "")
         con = Conexion(uid, raiz, nombre, ahora)
         self.conexiones[uid] = con
+        self.desbloqueos.pop(uid, None)
         # Cada conexión empieza de cero, como el servicio que se arrancaba al
         # enchufar: se sincroniza enseguida, y el modo `sync` vuelve a tocar.
         for clave in [k for k in self.marcas if k[0] == uid]:
@@ -440,7 +596,9 @@ class Agente:
         self.sospechas = {k: v for k, v in self.sospechas.items() if k[0] != uid}
         self.sin_red_avisado = {k for k in self.sin_red_avisado if k[0] != uid}
         unidad = self.ajustes.unidades.get(uid)
-        diario(f"{con.nombre} " + ("ya no está en su carpeta"
+        diario(f"{con.nombre} " + ("bloqueada: su contenedor se ha cerrado"
+                                   if unidad is not None and unidad.cifrada else
+                                   "ya no está en su carpeta"
                                    if unidad is not None and unidad.es_raiz
                                    else "desconectada"))
 
@@ -587,6 +745,12 @@ class Agente:
 
     def _contrato(self, con: Conexion, ahora: float) -> None:
         ocupada = self.pasada is not None and self.pasada.tarea.raiz == con.id
+        if con.id in self.bloqueos:
+            # Se está bloqueando: ni se encola ni se vuelve a tomar el lock.
+            if not ocupada:
+                self._soltar(con)
+            con.motivo = "bloqueándose"
+            return
         if not self._sirve(con):
             if not ocupada:                 # el lock se suelta al acabar la pareja
                 self._soltar(con)
@@ -669,7 +833,7 @@ class Agente:
     def _raices(self) -> list[pl.Raiz]:
         raices = []
         for con in self.conexiones.values():
-            if con.lock is None or con.servicio is None:
+            if con.lock is None or con.servicio is None or con.id in self.bloqueos:
                 continue
             modo = self.ajustes.unidades[con.id].modo
             intervalo = math.inf if modo == equipo.SYNC else con.servicio.minutos * 60
@@ -822,6 +986,140 @@ class Agente:
         con.lock["last_cycle"] = store.stamp()
         store.write_json(con.raiz / penwatch.DAEMON_LOCK_REL, con.lock)
 
+    # --- la raíz cifrada ----------------------------------------------------------------
+
+    def _cifrada(self, uid: str) -> equipo.Unidad | None:
+        """La raíz cifrada de ese id, o la única que haya si no se dice."""
+        cifradas = self.ajustes.cifradas
+        if uid:
+            return cifradas.get(uid)
+        return next(iter(cifradas.values())) if len(cifradas) == 1 else None
+
+    def _al_iniciar(self, ahora: float) -> None:
+        """`pedir_al_iniciar`: la contraseña, UNA vez por arranque del agente.
+
+        Se espera a haber recorrido lo bastante para saber que no está ya
+        abierta (una raíz cuenta al verla `ESTABLE` veces). Si se cancela, no se
+        vuelve a pedir hasta «Desbloquear»: es la misma regla de «una vez por
+        conexión» que tienen las unidades cifradas."""
+        if self.recorridos < ESTABLE:
+            return
+        for uid, unidad in self.ajustes.cifradas.items():
+            if uid in self.pedidas:
+                continue
+            self.pedidas.add(uid)
+            if (self.ajustes.pedir_al_iniciar and unidad.modo != equipo.NADA
+                    and uid not in self.conexiones and uid not in self.vistas):
+                self._desbloquear(unidad, ahora, "al iniciar sesión")
+
+    def _desbloquear(self, unidad: equipo.Unidad, ahora: float, por: str = "") -> bool:
+        """Le pide a VeraCrypt que abra la raíz cifrada. No espera: abierta es
+        cuando el recorrido VE su id con el `.hc` retenido."""
+        nombre = unidad.nombre or APP_NAME
+        if unidad.id in self.conexiones or unidad.id in self.vistas:
+            diario(f"{nombre}: ya está abierta")
+            return False
+        if unidad.id in self.bloqueos:
+            diario(f"{nombre}: se está bloqueando; desbloquear después")
+            return False
+        try:
+            hay = Path(unidad.contenedor).is_file()
+        except OSError:
+            hay = False
+        if not hay:
+            avisar(f"{nombre}: no encuentro su contenedor",
+                   f"Tenía que estar en {unidad.contenedor}.", True)
+            return False
+        ocupado = punto_ocupado(unidad)
+        if ocupado:
+            avisar(f"{nombre}: no la desbloqueo", ocupado, True)
+            return False
+        cmd = penwatch.veracrypt_command(None, Path(unidad.contenedor),
+                                         unidad.letra or unidad.ruta)
+        if cmd is None:
+            avisar(f"{nombre}: no la puedo desbloquear",
+                   "No hay VeraCrypt instalado en este equipo" if IS_WIN or
+                   penwatch.installed_veracrypt() is None else
+                   "No hay escritorio donde VeraCrypt pida la contraseña", True)
+            return False
+        if not unidad.letra:
+            try:
+                Path(unidad.ruta).mkdir(parents=True, exist_ok=True)
+            except OSError:
+                pass                # que lo diga VeraCrypt
+        try:
+            lanzar(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                   **_opciones_hijo(equipo.DIR, separado=True))
+        except OSError as e:
+            avisar(f"{nombre}: no he podido lanzar VeraCrypt", str(e), True)
+            return False
+        self.desbloqueos[unidad.id] = ahora
+        diario(f"{nombre}: desbloqueando" + (f" ({por})" if por else "")
+               + f" en {unidad.ruta}; la contraseña la pide VeraCrypt")
+        return True
+
+    def _bloqueos(self, ahora: float) -> None:
+        """Los «Bloquear» pedidos: primero se espera a que nada lo impida, luego
+        VeraCrypt desmonta y se espera a verlo cerrado de verdad."""
+        for uid, b in list(self.bloqueos.items()):
+            unidad = self.ajustes.unidades.get(uid)
+            if unidad is None or not unidad.cifrada:
+                del self.bloqueos[uid]
+                continue
+            nombre = unidad.nombre or APP_NAME
+            con = self.conexiones.get(uid)
+            if b.proc is None:
+                if con is None and uid not in self.fantasmas:
+                    del self.bloqueos[uid]
+                    diario(f"{nombre}: ya estaba bloqueada")
+                    continue
+                if self.pasada is not None and self.pasada.tarea.raiz == uid:
+                    continue                # acaba la pareja en curso
+                if con is not None and penwatch._vivo_aqui(
+                        con.raiz, penwatch.UI_LOCK_REL) is not None:
+                    # Su ventana pide bloquear y se cierra; se le da un rato.
+                    if ahora - b.desde >= ESPERA_VENTANA:
+                        del self.bloqueos[uid]
+                        avisar(f"{nombre}: no la bloqueo",
+                               "Su ventana sigue abierta. Ciérrala y vuelve a pedirlo.",
+                               True)
+                    continue
+                cmd = orden_bloquear(unidad)
+                if cmd is None:
+                    del self.bloqueos[uid]
+                    avisar(f"{nombre}: no la puedo bloquear",
+                           "No hay VeraCrypt instalado en este equipo.", True)
+                    continue
+                if con is not None:
+                    self._soltar(con)
+                try:
+                    b.proc = lanzar(cmd, stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.DEVNULL,
+                                    **_opciones_hijo(equipo.DIR, separado=True))
+                except OSError as e:
+                    del self.bloqueos[uid]
+                    avisar(f"{nombre}: no he podido lanzar VeraCrypt", str(e), True)
+                    continue
+                b.lanzado = ahora
+                diario(f"{nombre}: bloqueando; si algo tiene un fichero abierto "
+                       f"dentro, VeraCrypt pregunta si forzar")
+                continue
+            if bloqueada(unidad):
+                del self.bloqueos[uid]
+                self.desbloqueos.pop(uid, None)
+                self.fantasmas.discard(uid)
+                if con is not None:
+                    self._desconectar(uid, ahora, {})
+                diario(f"{nombre}: bloqueada")
+                continue
+            salio = b.proc.poll() is not None
+            if (salio and ahora - b.lanzado >= GRACIA_DESMONTAJE) \
+                    or ahora - b.lanzado >= ESPERA_DESMONTAJE:
+                del self.bloqueos[uid]
+                avisar(f"{nombre}: sigue abierta",
+                       "VeraCrypt no la ha cerrado: si un programa tiene un fichero "
+                       "abierto dentro, ciérralo y vuelve a bloquear.", True)
+
     # --- el entorno ------------------------------------------------------------------
 
     def _leer_entorno(self, ahora: float) -> None:
@@ -878,10 +1176,22 @@ class Agente:
                 return
             nombre = p.get("nombre") if isinstance(p.get("nombre"), str) else ""
             modo = p.get("modo") if p.get("modo") in equipo.MODOS else equipo.DAEMON
+            hc = p.get("contenedor") if isinstance(p.get("contenedor"), str) else ""
             self._guardar(self.ajustes.con_unidad(
-                equipo.Unidad(uid, modo, nombre, ruta.strip())))
+                equipo.Unidad(uid, modo, nombre, ruta.strip(), hc.strip())))
             self.ausentes.discard(uid)
-            diario(f"raíz de este equipo añadida: {nombre or uid[:8]} en {ruta}")
+            self.pedidas.add(uid)           # la acaba de dejar abierta el asistente
+            diario(f"raíz de este equipo añadida: {nombre or uid[:8]} en {ruta}"
+                   + (f" (cifrada, contenedor {hc})" if hc else ""))
+        elif que in (equipo.PIDE_DESBLOQUEAR, equipo.PIDE_BLOQUEAR):
+            unidad = self._cifrada(uid)
+            if unidad is None:
+                diario(f"{que} {uid[:8]!r}: no hay esa raíz cifrada en este equipo")
+            elif que == equipo.PIDE_DESBLOQUEAR:
+                self._desbloquear(unidad, ahora, "pedido")
+            elif unidad.id not in self.bloqueos:
+                self.bloqueos[unidad.id] = Bloqueo(ahora)
+                self.urgentes = [u for u in self.urgentes if u[0] != unidad.id]
         elif que == equipo.PIDE_AJUSTE:
             clave, valor = p.get("clave"), p.get("valor")
             if clave not in equipo.AJUSTES_PEDIBLES:
@@ -922,9 +1232,12 @@ class Agente:
             unidad = self.ajustes.unidades.get(con.id)
             unidades.append({"id": con.id, "nombre": con.nombre, "raiz": str(con.raiz),
                              "del_equipo": bool(unidad and unidad.es_raiz),
+                             "cifrada": bool(unidad and unidad.cifrada),
                              "modo": unidad.modo if unidad else None,
                              "atendida": con.lock is not None,
                              "motivo": con.motivo})
+        cerradas = [u.nombre or u.id[:8] for u in self.ajustes.cifradas.values()
+                    if u.id not in self.conexiones and u.id not in self.ausentes]
         return {"pid": os.getpid(), "pausado": self.pausado, "retenido": self.retenido,
                 "pasada": None if self.pasada is None else {
                     "unidad": self.pasada.nombre, "pareja": self.pasada.tarea.pareja,
@@ -933,8 +1246,17 @@ class Agente:
                                        for r, m in self.entorno.sin_conexion
                                        if r in self.conexiones),
                 "unidades": unidades,
-                "ausentes": sorted(self.ajustes.unidades[u].ruta for u in self.ausentes
-                                   if u in self.ajustes.unidades)}
+                "ausentes": sorted((self.ajustes.unidades[u].contenedor
+                                    or self.ajustes.unidades[u].ruta)
+                                   for u in self.ausentes if u in self.ajustes.unidades),
+                "bloqueadas": sorted(cerradas),
+                "desbloqueando": sorted(self.ajustes.unidades[u].nombre or u[:8]
+                                        for u in self.desbloqueos
+                                        if u in self.ajustes.unidades),
+                "bloqueando": sorted(self.ajustes.unidades[u].nombre or u[:8]
+                                     for u in self.bloqueos if u in self.ajustes.unidades),
+                "fantasmas": sorted(self.ajustes.unidades[u].ruta for u in self.fantasmas
+                                    if u in self.ajustes.unidades)}
 
     def _escribir_estado(self) -> None:
         resumen = self.resumen()
@@ -1074,6 +1396,10 @@ def cmd_status(_args: argparse.Namespace) -> int:
     for u in aj.raices.values():
         print(f"Raíz del equipo: {u.nombre or '(sin nombre)'} en {u.ruta} ({u.modo}: "
               f"{equipo.TEXTO_MODO[u.modo]})")
+        if u.cifrada:
+            print(f"  cifrada: {u.contenedor}; al iniciar sesión "
+                  + ("se pide la contraseña" if aj.pedir_al_iniciar
+                     else "no se pide nada (agente.py desbloquear)"))
     unidades = [u for u in aj.unidades.values() if not u.es_raiz]
     print("Unidades en la lista:" if unidades else "Unidades en la lista: ninguna")
     for u in unidades:
@@ -1093,6 +1419,14 @@ def cmd_status(_args: argparse.Namespace) -> int:
               + (f" — {u['motivo']}" if u.get("motivo") else " — atendida"))
     for ruta in estado.get("ausentes") or []:
         print(f"Falta la raíz del equipo: no está en {ruta}")
+    for nombre in estado.get("bloqueadas") or []:
+        print(f"Bloqueada: {nombre} (agente.py desbloquear)")
+    for nombre in estado.get("desbloqueando") or []:
+        print(f"Desbloqueando: {nombre}; la contraseña la pide VeraCrypt")
+    for nombre in estado.get("bloqueando") or []:
+        print(f"Bloqueando: {nombre}")
+    for ruta in estado.get("fantasmas") or []:
+        print(f"Volumen fantasma en {ruta}: bloquéala y vuelve a desbloquearla")
     for linea in estado.get("sin_conexion") or []:
         print(f"Sin conexión: {linea}")
     return 0
@@ -1156,8 +1490,28 @@ def cmd_abrir(args: argparse.Namespace) -> int:
         print(porque, file=sys.stderr)
         return 1
     if not presente(raiz):
-        print(f"No encuentro {APP_NAME} en {raiz}.", file=sys.stderr)
-        return 1
+        unidad = equipo.leer_ajustes().unidades.get(args.id or "") \
+            or next((u for u in equipo.leer_ajustes().raices.values()
+                     if Path(u.ruta) == raiz), None)
+        if unidad is None or not unidad.cifrada:
+            print(f"No encuentro {APP_NAME} en {raiz}.", file=sys.stderr)
+            return 1
+        # Cerrada: se le pide al agente que la desbloquee (la contraseña la
+        # pide VeraCrypt) y se abre la ventana en cuanto aparezca. Es lo que
+        # hace el acceso «prdrive» del menú con la raíz bloqueada.
+        if equipo.agente_vivo() is None:
+            print(f"{raiz} está bloqueada y el agente no está en marcha: no hay quien "
+                  f"la desbloquee.", file=sys.stderr)
+            return 1
+        equipo.pedir({"pide": equipo.PIDE_DESBLOQUEAR, "id": unidad.id})
+        print(f"{raiz} está bloqueada: VeraCrypt pedirá la contraseña.")
+        limite = time.monotonic() + ESPERA_ABRIR
+        while not presente(raiz):
+            if time.monotonic() >= limite:
+                print("No se ha desbloqueado a tiempo; vuelve a intentarlo.",
+                      file=sys.stderr)
+                return 1
+            time.sleep(1.0)
     # El servicio no estorba (lo pausa la propia ventana al abrirse); otra
     # ventana sí, y runsync ya se negaría: se dice aquí, sin lanzar nada.
     ventana = penwatch._vivo_aqui(raiz, penwatch.UI_LOCK_REL)
@@ -1172,6 +1526,31 @@ def cmd_abrir(args: argparse.Namespace) -> int:
         print(f"No he podido abrir la ventana: {e}", file=sys.stderr)
         return 1
     return 0
+
+
+VERDAD = {"si": True, "sí": True, "s": True, "true": True, "1": True, "yes": True,
+          "no": False, "n": False, "false": False, "0": False}
+
+
+def valor_ajuste(clave: str, texto: str) -> Any:
+    """El valor de un ajuste escrito en la línea de órdenes, con su tipo. Un
+    texto donde va un sí o un no volvería al valor de fábrica al leerlo, sin
+    decir nada: por eso se rechaza aquí (ValueError)."""
+    if clave == "pedir_al_iniciar":
+        valor = VERDAD.get(texto.strip().lower())
+        if valor is None:
+            raise ValueError(f"{clave} es sí o no, no {texto!r}")
+        return valor
+    return float(texto)
+
+
+def cmd_ajuste(args: argparse.Namespace) -> int:
+    try:
+        valor = valor_ajuste(args.clave, args.valor)
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        return 2
+    return _pedir({"pide": equipo.PIDE_AJUSTE, "clave": args.clave, "valor": valor})
 
 
 def cmd_pregunta(args: argparse.Namespace) -> int:
@@ -1212,6 +1591,16 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("abrir", help="La ventana de la raíz de este equipo.")
     p.add_argument("id", nargs="?")
     p.set_defaults(func=cmd_abrir)
+    p = sub.add_parser("desbloquear", help="Abrir el contenedor de la raíz cifrada.")
+    p.add_argument("id", nargs="?", default="")
+    p.set_defaults(func=lambda a: _pedir({"pide": equipo.PIDE_DESBLOQUEAR, "id": a.id}))
+    p = sub.add_parser("bloquear", help="Cerrarlo.")
+    p.add_argument("id", nargs="?", default="")
+    p.set_defaults(func=lambda a: _pedir({"pide": equipo.PIDE_BLOQUEAR, "id": a.id}))
+    p = sub.add_parser("ajuste", help="Cambiar un ajuste del agente.")
+    p.add_argument("clave", choices=equipo.AJUSTES_PEDIBLES)
+    p.add_argument("valor")
+    p.set_defaults(func=cmd_ajuste)
     p = sub.add_parser("pregunta", help=argparse.SUPPRESS)
     p.add_argument("--nombre", required=True)
     p.add_argument("--segundos", type=int, default=int(equipo.ESPERA_UNIDAD_NUEVA))

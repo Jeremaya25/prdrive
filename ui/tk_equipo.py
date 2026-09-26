@@ -7,6 +7,8 @@ Solo dibuja. Lo que decide y lo que toca el disco está en `install/agente.py` y
 recorridos, que elige el paso «Carpeta» (ver `tk_install.PASOS_EQUIPO`):
 
     Carpeta        la raíz de este equipo: carpeta propia, la personal, o ninguna
+    Cifrado        sin cifrar, o en un contenedor VeraCrypt (solo la carpeta propia,
+                   solo con VeraCrypt instalado): lo crea, lo monta y lo deja abierto
     Conexión, Comprobaciones        los del recorrido de una unidad, tal cual
     Instalación    .prdrive/ + rclone en la raíz; el agente y su Python en el equipo
     Parejas        las del catálogo, con la ruta de cada una EN ESTE equipo
@@ -176,6 +178,241 @@ def ok_carpeta(wiz) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Cifrado
+# ---------------------------------------------------------------------------
+
+def cifrada(wiz) -> bool:
+    from install import raiz_equipo
+    return con_raiz(wiz) and wiz.equipo_cifrado == raiz_equipo.VERACRYPT
+
+
+def _existente(ruta: Path) -> Path:
+    """La carpeta que ya existe más cerca de `ruta`: el disco del que se
+    pregunta el sitio libre y si admite dispersos antes de crear nada."""
+    for candidata in (ruta, *ruta.parents):
+        try:
+            if candidata.is_dir():
+                return candidata
+        except OSError:
+            continue
+    return ruta
+
+
+def paso_cifrado(cuerpo, wiz) -> None:
+    """Sin cifrar (la carpeta de «Carpeta» es la raíz) o en un contenedor
+    VeraCrypt: se crea al lado de esa carpeta, se monta en una letra fija
+    (Windows) o en la propia carpeta (Linux), y ESE volumen es la raíz. La
+    contraseña se pide aquí para crear y montar, una vez; a partir de ahí abrir y
+    cerrar es del agente, con la ventana de VeraCrypt, y nada la guarda."""
+    import shutil
+    import tkinter as tk
+    from tkinter import messagebox, ttk
+
+    from common import vestibulo
+    from install import IS_WIN, crypto, raiz_equipo as re_
+
+    from .tk import TITLE
+
+    vc = re_.veracrypt_instalado()
+    personal = wiz.equipo_forma == re_.PERSONAL
+    puede = vc is not None and not personal
+    if not puede:
+        wiz.equipo_cifrado = re_.SIN_CIFRAR
+    eleccion = tk.StringVar(value=wiz.equipo_cifrado)
+
+    def elegir() -> None:
+        wiz.equipo_cifrado = eleccion.get()
+        wiz.repintar()
+
+    _texto(cuerpo, "¿Cifrar la raíz de este equipo?", 0)
+    opciones = (
+        (re_.SIN_CIFRAR, "Sin cifrar",
+         f"{wiz.equipo_ruta} es la raíz, tal cual. La clave del remoto queda en claro "
+         f"en el disco (el paso «Instalación» dice si el disco tiene BitLocker)."),
+        (re_.VERACRYPT, "En un contenedor VeraCrypt",
+         "La raíz vive dentro de un fichero cifrado: la clave, la configuración y "
+         "las parejas. Cerrado, no hay nada que leer ni que sincronizar por error. "
+         "Lo abre el agente al iniciar sesión (VeraCrypt pide la contraseña en su "
+         "ventana) y lo cierras con «Bloquear»."))
+    for i, (valor, titulo, texto) in enumerate(opciones):
+        tarjeta = ttk.Frame(cuerpo, style="Card.TFrame", padding=(14, 8))
+        tarjeta.grid(row=1 + i, column=0, sticky="ew", pady=(0, 8))
+        tarjeta.columnconfigure(0, weight=1)
+        radio = ttk.Radiobutton(tarjeta, text=titulo, value=valor, variable=eleccion,
+                                style="Card.Fuerte.TRadiobutton", command=elegir)
+        radio.grid(row=0, column=0, sticky="w")
+        if valor == re_.VERACRYPT and not puede:
+            radio.configure(state="disabled")
+        ttk.Label(tarjeta, text=texto, style="Card.Pista.TLabel", justify="left",
+                  wraplength=theme.medida(720)).grid(row=1, column=0, sticky="w",
+                                                     pady=(3, 0))
+    if not puede:
+        _ambar(cuerpo, re_.examinar_contenedor("x", wiz.equipo_ruta, wiz.equipo_forma
+                                               ).texto if personal else re_.COMO_INSTALAR,
+               3)
+
+    if wiz.equipo_cifrado != re_.VERACRYPT:
+        wiz.state.encryption = None
+        wiz.state.device_root = (Path(wiz.equipo_ruta.strip()).expanduser()
+                                 if wiz.equipo_examen and wiz.equipo_examen.vale else None)
+        return
+
+    wiz.state.encryption = "veracrypt"
+    wiz.state.veracrypt = vc
+    wiz.state.device_root = wiz.equipo_montada
+    if not wiz.equipo_fisica:
+        wiz.equipo_fisica = str(re_.fisica_por_defecto(wiz.equipo_ruta))
+    formulario = ttk.Frame(cuerpo)
+    formulario.grid(row=4, column=0, sticky="ew")
+    formulario.columnconfigure(1, weight=1)
+    ttk.Label(formulario, text="Contenedor en:").grid(row=0, column=0, sticky="w")
+    fisica = tk.StringVar(value=wiz.equipo_fisica)
+    caja = ttk.Entry(formulario, textvariable=fisica, style="Mono.TEntry")
+    caja.grid(row=0, column=1, columnspan=2, sticky="ew", padx=6)
+    examen = ttk.Label(formulario, justify="left", wraplength=theme.medida(ANCHO - 60))
+    examen.grid(row=1, column=0, columnspan=3, sticky="w", pady=(4, 6))
+
+    fila = 2
+    letra = tk.StringVar(value=wiz.equipo_letra or re_.LETRA_PREFERIDA)
+    if IS_WIN:
+        libres = re_.letras_libres()
+        if wiz.equipo_letra not in libres and libres:
+            letra.set(libres[0])
+        ttk.Label(formulario, text="Letra:").grid(row=fila, column=0, sticky="w")
+        ttk.Combobox(formulario, textvariable=letra, state="readonly", width=4,
+                     values=libres).grid(row=fila, column=1, sticky="w", padx=6)
+        ttk.Label(formulario, style="Pista.TLabel", text=(
+            "siempre la misma: los programas apuntarán a ella")).grid(
+            row=fila, column=2, sticky="w")
+    else:
+        ttk.Label(formulario, text="Se monta en:").grid(row=fila, column=0, sticky="w")
+        ttk.Label(formulario, style="MonoPista.TLabel",
+                  text=re_.punto_de_montaje(wiz.equipo_ruta)).grid(
+            row=fila, column=1, columnspan=2, sticky="w", padx=6)
+    fila += 1
+
+    base = _existente(Path(wiz.equipo_fisica).expanduser())
+    try:
+        libre = shutil.disk_usage(str(base)).free
+    except OSError:
+        libre = 0
+    dinamico = crypto.soporta_dispersos(base) if IS_WIN else False
+    tam = tk.StringVar(value=wiz.equipo_tamano or crypto.suggested_size(libre, dinamico))
+    tam_fila = ttk.Frame(formulario)
+    ttk.Label(formulario, text="Tamaño:").grid(row=fila, column=0, sticky="w")
+    tam_fila.grid(row=fila, column=1, columnspan=2, sticky="w", padx=6)
+    ttk.Entry(tam_fila, textvariable=tam, width=8).grid(row=0, column=0)
+    ttk.Label(tam_fila, style="Pista.TLabel", text=(
+        f"libre: {libre / 1024 ** 3:.1f} GiB — "
+        + ("dinámico: solo ocupa lo que guardes" if dinamico else
+           "se escribe entero al crearlo: elige con cabeza"))).grid(
+        row=0, column=1, padx=(8, 0))
+    fila += 1
+    pw1, pw2 = tk.StringVar(), tk.StringVar()
+    ttk.Label(formulario, text="Contraseña:").grid(row=fila, column=0, sticky="w")
+    ttk.Entry(formulario, textvariable=pw1, show="•", width=32).grid(
+        row=fila, column=1, columnspan=2, sticky="w", padx=6)
+    fila += 1
+    repite = ttk.Label(formulario, text="Repítela:")
+    repite_caja = ttk.Entry(formulario, textvariable=pw2, show="•", width=32)
+    repite.grid(row=fila, column=0, sticky="w")
+    repite_caja.grid(row=fila, column=1, columnspan=2, sticky="w", padx=6)
+    fila += 1
+    pedir = tk.BooleanVar(value=wiz.equipo_pedir)
+    ttk.Checkbutton(formulario, variable=pedir,
+                    command=lambda: setattr(wiz, "equipo_pedir", bool(pedir.get())),
+                    text="Pedir la contraseña al iniciar sesión").grid(
+        row=fila, column=0, columnspan=3, sticky="w", pady=(6, 0))
+    fila += 1
+    ttk.Label(formulario, foreground=theme.PELIGRO, justify="left",
+              wraplength=theme.medida(ANCHO - 60), text=(
+        "La contraseña no se guarda en ningún sitio. Si la pierdes, el contenedor "
+        "no se recupera: apúntala en tu gestor de contraseñas antes de seguir."
+        + ("" if IS_WIN else " En Linux, VeraCrypt pide además la de "
+           "administrador para montar."))).grid(
+        row=fila, column=0, columnspan=3, sticky="w", pady=(6, 0))
+
+    restos = re_.restos(wiz.equipo_ruta) if IS_WIN else []
+    if restos:
+        from .tk import bloque_aviso
+        bloque_aviso(cuerpo, crypto.aviso_restos(restos), ancho=ANCHO - 40,
+                     tipo="Rojo").grid(row=5, column=0, sticky="ew", pady=(8, 0))
+
+    botones = ttk.Frame(cuerpo)
+    botones.grid(row=6, column=0, sticky="w", pady=(10, 0))
+    boton = ttk.Button(botones, style="Primary.TButton")
+    boton.grid(row=0, column=0)
+    hecho = ttk.Label(botones, foreground=theme.OK)
+    hecho.grid(row=0, column=1, padx=(12, 0))
+    estado = {"examen": None}
+
+    def revisar(texto: str | None = None) -> None:
+        wiz.equipo_fisica = fisica.get() if texto is None else texto
+        ex = re_.examinar_contenedor(wiz.equipo_fisica, wiz.equipo_ruta,
+                                     wiz.equipo_forma)
+        estado["examen"] = ex
+        examen.configure(text=ex.texto, foreground=theme.PELIGRO if not ex.vale
+                         else theme.TINTA3)
+        existe = ex.estado == re_.YA_EQUIPO
+        for w in (repite, repite_caja):
+            w.grid() if not existe else w.grid_remove()
+        boton.configure(text="Abrir el contenedor" if existe else "Crear y montar",
+                        state="normal" if ex.vale else "disabled")
+        wiz.revisar()
+
+    def crear() -> None:
+        ex = estado["examen"]
+        if ex is None or not ex.vale:
+            return
+        existe = ex.estado == re_.YA_EQUIPO
+        password = pw1.get()
+        error, aviso = (crypto.revisar_contrasena(password) if not existe
+                        else (None if password else "Falta la contraseña.", None))
+        if error:
+            messagebox.showwarning(TITLE, error, parent=wiz.root)
+            return
+        if not existe and password != pw2.get():
+            messagebox.showwarning(TITLE, "Las dos contraseñas no coinciden.",
+                                   parent=wiz.root)
+            return
+        if aviso and not messagebox.askyesno(TITLE, aviso, default="no",
+                                             icon="warning", parent=wiz.root):
+            return
+        wiz.equipo_letra = letra.get()
+        wiz.equipo_tamano = tam.get()
+        ok, res = working(wiz.root, "el contenedor",
+                          lambda: re_.abrir_o_crear(vc, wiz.equipo_fisica, wiz.equipo_ruta,
+                                                    wiz.equipo_letra, password,
+                                                    wiz.equipo_tamano),
+                          ("Abriendo" if existe else "Creando y montando")
+                          + " el contenedor. VeraCrypt puede pedir permisos de "
+                            "administrador: acepta el aviso.")
+        if not ok:
+            messagebox.showerror(TITLE, str(res) or "Falló.", parent=wiz.root)
+            return
+        montada = Path(res)
+        wiz.equipo_montada = montada
+        wiz.equipo_contenedor = str(Path(wiz.equipo_fisica).expanduser()
+                                    / vestibulo.CONTENEDOR)
+        wiz.equipo_examen = re_.examinar(montada)
+        wiz.state.device_root = montada
+        wiz.state.mounted_by_us = True
+        wiz.repintar()
+
+    boton.configure(command=crear)
+    if wiz.equipo_montada is not None:
+        hecho.configure(text=f"✔ abierto en {wiz.equipo_montada}")
+    al_cambiar(caja, revisar)
+    revisar()
+
+
+def ok_cifrado(wiz) -> bool:
+    if cifrada(wiz):
+        return wiz.equipo_montada is not None
+    return wiz.state.device_root is not None
+
+
+# ---------------------------------------------------------------------------
 # Instalación
 # ---------------------------------------------------------------------------
 
@@ -195,11 +432,17 @@ def paso_instalar(cuerpo, wiz) -> None:
             f"sincroniza el agente, con el suyo, y su ventana se abre desde el menú "
             f"del sistema («{agente.APP_NAME}»)."), fila)
         fila += 1
-        avisos = [raiz_equipo.AVISO_CLAVE]
-        disco = raiz_equipo.cifrado_del_disco(donde)
-        if disco:
-            avisos.append(disco)
-        _ambar(cuerpo, "\n\n".join(avisos), fila)
+        if cifrada(wiz):
+            _texto(cuerpo, (
+                f"Todo eso va DENTRO del contenedor ({wiz.equipo_contenedor}); fuera "
+                f"solo queda su marca, con el mismo id, para reconocerlo cerrado."),
+                fila, foreground=theme.TINTA3)
+        else:
+            avisos = [raiz_equipo.AVISO_CLAVE]
+            disco = raiz_equipo.cifrado_del_disco(donde)
+            if disco:
+                avisos.append(disco)
+            _ambar(cuerpo, "\n\n".join(avisos), fila)
         fila += 1
     _texto(cuerpo, (
         f"El agente se queda en este equipo, fuera de toda raíz, en {equipo.DIR}: su "
@@ -232,7 +475,10 @@ def paso_instalar(cuerpo, wiz) -> None:
         def trabajo():
             ident = None
             if donde is not None:
-                _, ident = raiz_equipo.instalar(donde, wiz.perfil_final)
+                fisica = (Path(wiz.equipo_contenedor).parent if cifrada(wiz)
+                          else None)
+                _, ident = raiz_equipo.instalar(donde, wiz.perfil_final,
+                                                fisica=fisica)
             return ident, agente.preparar()
 
         ok, res = working(wiz.root, "instalando", trabajo,
@@ -490,7 +736,7 @@ def la_raiz(wiz):
     if donde is None or not wiz.equipo_id:
         return None
     return equipo.Unidad(wiz.equipo_id, equipo.DAEMON, raiz_equipo.nombre(donde),
-                         str(donde))
+                         str(donde), wiz.equipo_contenedor if cifrada(wiz) else "")
 
 
 def paso_arranque(cuerpo, wiz) -> None:
@@ -509,7 +755,12 @@ def paso_arranque(cuerpo, wiz) -> None:
         _texto(cuerpo, (
             f"Sincroniza {raiz(wiz)} en segundo plano, con las parejas y el intervalo "
             f"de su servicio, y deja en el menú del sistema un acceso «{agente.APP_NAME}» "
-            "que abre su ventana."), 1)
+            "que abre su ventana."
+            + (" El contenedor se queda abierto: el agente lo recibe así, y "
+               + ("pedirá la contraseña al iniciar sesión." if wiz.equipo_pedir else
+                  "no pedirá nada al iniciar sesión («python agente.py desbloquear» "
+                  "lo abre).") + " Para cerrarlo, «Bloquear» en su ventana."
+               if cifrada(wiz) else "")), 1)
     if penwatch.CONFIG_FILE.exists():
         _texto(cuerpo, (
             "penwatch está instalado en este equipo. El agente lo sustituye: lo que "
@@ -526,9 +777,11 @@ def paso_arranque(cuerpo, wiz) -> None:
 
     def activar() -> None:
         ok, msgs = working(wiz.root, "registrando el agente",
-                           lambda: agente.activar(wiz.agente_prep, elegidas(wiz),
-                                                  wiz.agente_espera,
-                                                  raiz=la_raiz(wiz)),
+                           lambda: agente.activar(
+                               wiz.agente_prep, elegidas(wiz), wiz.agente_espera,
+                               raiz=la_raiz(wiz),
+                               pedir_al_iniciar=wiz.equipo_pedir if cifrada(wiz)
+                               else None),
                            "Registrando el agente y arrancándolo.")
         if not ok:
             resultado.configure(text=str(msgs), foreground=theme.PELIGRO)
@@ -555,7 +808,8 @@ def ok_arranque(wiz) -> bool:
 # ---------------------------------------------------------------------------
 
 def comprobaciones(donde: Path | None = None, esperadas: list[str] | None = None,
-                   clave: str | None = None) -> list[tuple[str, bool, str]]:
+                   clave: str | None = None, contenedor: str | None = None,
+                   carpeta_clara: str | None = None) -> list[tuple[str, bool, str]]:
     """(qué, bien, detalle) de lo que quedó puesto. Sin Tk: lo mira el test.
 
     Con `donde`, primero la raíz de este equipo: lo que `device.verify_device()`
@@ -566,14 +820,22 @@ def comprobaciones(donde: Path | None = None, esperadas: list[str] | None = None
 
     filas = []
     if donde is not None:
-        for chk in raiz_equipo.verificar(donde, esperadas, clave):
+        for chk in raiz_equipo.verificar(donde, esperadas, clave, contenedor):
             filas.append((chk.etiqueta, chk.ok, chk.detalle))
+        if contenedor and carpeta_clara:
+            # Pasar a cifrado deja la raíz en claro donde estaba, con la clave:
+            # fila roja, y nada la borra.
+            from install import crypto
+            for chk in crypto.comprobar_restos(carpeta_clara):
+                filas.append((chk.etiqueta, chk.ok, chk.detalle))
         uid = device.control_id(donde)
         en_lista = equipo.leer_ajustes().unidades.get(uid or "")
         pedida = en_lista is None and agente.raiz_pedida(uid)
         filas.append(("En la lista del agente",
-                      bool(en_lista and en_lista.ruta == str(donde)) or pedida,
-                      f"raíz de este equipo, modo {en_lista.modo}" if en_lista else
+                      bool(en_lista and en_lista.ruta == str(donde)
+                           and en_lista.contenedor == (contenedor or "")) or pedida,
+                      f"raíz de este equipo, modo {en_lista.modo}"
+                      + (", cifrada" if en_lista.cifrada else "") if en_lista else
                       "pedido: el agente la añade al leer su buzón" if pedida else
                       "no está: registra y arranca el agente"))
         menu = agente.acceso_menu()
@@ -641,7 +903,9 @@ def paso_final(cuerpo, wiz) -> None:
         perfil = wiz.perfil_final
         clave = perfil.key_name if con_raiz(wiz) and perfil.needs_key else None
         for i, (etiqueta, ok, detalle) in enumerate(
-                comprobaciones(raiz(wiz), wiz.state.selected, clave)):
+                comprobaciones(raiz(wiz), wiz.state.selected, clave,
+                               wiz.equipo_contenedor if cifrada(wiz) else None,
+                               wiz.equipo_ruta if cifrada(wiz) else None)):
             color = theme.OK if ok else theme.PELIGRO
             ttk.Label(tabla, text="✔" if ok else "✘", foreground=color,
                       width=3).grid(row=i, column=0, sticky="w")

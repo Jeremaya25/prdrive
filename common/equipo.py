@@ -10,8 +10,9 @@ algo. Aquí no hay ningún secreto: ni clave, ni `rclone.conf`, ni listados.
 
     agente/<versión>/     la copia del código con la que corre el agente
     runtime/<stamp_id>/   su Python, uno por versión (como el de penwatch)
-    agente.json           QUÉ hace: raíces que atiende (unidades y la del equipo),
-                          su modo, plazos, moderación
+    agente.json           QUÉ hace: raíces que atiende (unidades y la del equipo,
+                          con su contenedor si va cifrada), su modo, plazos,
+                          moderación, `pedir_al_iniciar`
     instalacion.json      DÓNDE está: código, Python, cuándo se registró
     agente.lock.json      una sola instancia por usuario
     agente.pide           el buzón: lo que otros le piden al agente
@@ -121,10 +122,28 @@ class Unidad:
     modo: str = MODO_AL_ATENDER
     nombre: str = ""
     ruta: str = ""
+    # La raíz del equipo cifrada (fase 3): el `PRDRIVE.hc` que la guarda. Con
+    # él, `ruta` es donde se monta —la letra `P:\` en Windows, una carpeta fija
+    # como `~/PRDRIVE` en Linux— y la raíz solo está mientras está abierto.
+    contenedor: str = ""
 
     @property
     def es_raiz(self) -> bool:
         return bool(self.ruta)
+
+    @property
+    def cifrada(self) -> bool:
+        return self.es_raiz and bool(self.contenedor)
+
+    @property
+    def letra(self) -> str:
+        """La letra fija de una raíz cifrada en Windows (`P`), o ''. Se pasa a
+        VeraCrypt con `/letter`: los programas apuntan a la raíz, y un almacén
+        de Obsidian en `P:\\obsidian` se rompería si mañana fuese `Q:`."""
+        r = self.ruta
+        if self.cifrada and len(r) >= 2 and r[1] == ":" and r[0].isalpha():
+            return r[0].upper()
+        return ""
 
 
 @dataclass(frozen=True)
@@ -135,6 +154,9 @@ class Ajustes:
     # Carpetas donde buscar unidades además de las del sistema (penwatch
     # `--extra-root`): un punto de montaje fuera de lo habitual.
     extra_roots: tuple[str, ...] = ()
+    # ¿Pedir la contraseña de la raíz cifrada al iniciar sesión? Una vez: si se
+    # cancela, no se vuelve a pedir hasta «Desbloquear» (sección 4 del diseño).
+    pedir_al_iniciar: bool = True
 
     def con_unidad(self, unidad: Unidad) -> "Ajustes":
         unidades = dict(self.unidades)
@@ -145,6 +167,11 @@ class Ajustes:
     def raices(self) -> dict[str, Unidad]:
         """Las raíces de este equipo: las de la lista con `ruta`."""
         return {uid: u for uid, u in self.unidades.items() if u.es_raiz}
+
+    @property
+    def cifradas(self) -> dict[str, Unidad]:
+        """Las raíces de este equipo que viven en un contenedor VeraCrypt."""
+        return {uid: u for uid, u in self.unidades.items() if u.cifrada}
 
 
 def _numero(valor: Any, defecto: float, minimo: float, maximo: float) -> float:
@@ -169,7 +196,9 @@ def desde_dict(datos: Mapping[str, Any]) -> Ajustes:
             modo = u.get("modo") if u.get("modo") in MODOS else MODO_AL_ATENDER
             nombre = u.get("nombre") if isinstance(u.get("nombre"), str) else ""
             ruta = u.get("ruta") if isinstance(u.get("ruta"), str) else ""
-            unidades[uid.strip()] = Unidad(uid.strip(), modo, nombre, ruta.strip())
+            hc = u.get("contenedor") if isinstance(u.get("contenedor"), str) else ""
+            unidades[uid.strip()] = Unidad(uid.strip(), modo, nombre, ruta.strip(),
+                                           hc.strip() if ruta.strip() else "")
     m = datos.get("moderacion") if isinstance(datos.get("moderacion"), dict) else {}
     fabrica = Politica()
     politica = replace(
@@ -186,19 +215,23 @@ def desde_dict(datos: Mapping[str, Any]) -> Ajustes:
                                     ESPERA_UNIDAD_NUEVA, ESPERA_MINIMA, ESPERA_MAXIMA),
         politica=politica,
         extra_roots=tuple(r for r in extra if isinstance(r, str) and r)
-        if isinstance(extra, list) else ())
+        if isinstance(extra, list) else (),
+        pedir_al_iniciar=datos["pedir_al_iniciar"]
+        if isinstance(datos.get("pedir_al_iniciar"), bool) else True)
 
 
 def a_dict(aj: Ajustes) -> dict:
     return {
         "unidades": {u.id: {"modo": u.modo, "nombre": u.nombre,
-                            **({"ruta": u.ruta} if u.ruta else {})}
+                            **({"ruta": u.ruta} if u.ruta else {}),
+                            **({"contenedor": u.contenedor} if u.contenedor else {})}
                      for u in aj.unidades.values()},
         "espera_unidad_nueva": aj.espera_unidad_nueva,
         "moderacion": {"con_bateria": aj.politica.con_bateria,
                        "bateria_minima": aj.politica.bateria_minima,
                        "pausar_red_medida": aj.politica.pausar_red_medida},
         "extra_roots": list(aj.extra_roots),
+        "pedir_al_iniciar": aj.pedir_al_iniciar,
     }
 
 
@@ -267,8 +300,10 @@ PIDE_PASADA = "pasada"          # id, parejas (vacío: todas): «Sincronizar aho
 PIDE_PAUSA = "pausa"
 PIDE_SIGUE = "sigue"
 PIDE_PARAR = "parar"            # que termine (el instalador, antes de sustituirlo)
-PIDE_RAIZ = "añadir_raiz"       # id, ruta, nombre: la raíz de este equipo
-AJUSTES_PEDIBLES = ("espera_unidad_nueva",)
+PIDE_RAIZ = "añadir_raiz"       # id, ruta, nombre[, contenedor]: la raíz de este equipo
+PIDE_DESBLOQUEAR = "desbloquear"    # [id]: abrir el contenedor de la raíz cifrada
+PIDE_BLOQUEAR = "bloquear"          # [id]: cerrarlo
+AJUSTES_PEDIBLES = ("espera_unidad_nueva", "pedir_al_iniciar")
 
 
 def pedir(peticion: Mapping[str, Any]) -> bool:

@@ -22,6 +22,12 @@ ventana y la flota. Lo que cambia es poco y está aquí:
   * **Qué se avisa.** La clave queda en claro en el disco del equipo (con el
     estado de BitLocker del disco, como información), y una carpeta que ya
     sincroniza otro programa —OneDrive, Dropbox— se pisaría los borrados con él.
+  * **Cifrada (fase 3).** Con la carpeta propia, la raíz puede vivir en un
+    contenedor VeraCrypt: `~/PRDRIVE-cifrado/PRDRIVE.hc`, con la marca del
+    vestíbulo al lado, montado en una letra fija (Windows) o en `~/PRDRIVE`
+    (Linux). Solo con el VeraCrypt INSTALADO: aquí no se descarga ni se instala
+    nada. Lo abre y lo cierra el agente; el asistente lo crea y lo monta una vez,
+    con la contraseña que acaba de pedir, y lo deja abierto.
 
 Sin Tk, como todo `install/`: lo dibuja `ui/tk_equipo.py`.
 """
@@ -36,6 +42,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from common import APP_NAME, equipo, fleet, model
+from common import vestibulo as vest
 
 from . import InstallError, IS_WIN, crypto, deploy, device, platforms
 
@@ -277,14 +284,19 @@ def plan_rclone() -> platforms.Plan:
     return platforms.Plan(rclone=[plat], runtime=[], borrar=[], completa=False)
 
 
-def instalar(raiz: Path | str, perfil, progreso=None) -> tuple[list[Path], str]:
+def instalar(raiz: Path | str, perfil, progreso=None,
+             fisica: Path | str | None = None) -> tuple[list[Path], str]:
     """Deja el programa en la raíz del equipo. Devuelve (lo escrito, el id).
 
     Lo mismo que el paso «Instalación» de una unidad, menos lo que es de viajar:
     rclone solo de este equipo, sin Python ni lanzadores ni guía. Lo de fuera
     (rclone) se consigue ANTES de escribir nada, como en las unidades (#49). Una
     raíz que ya era del equipo conserva su id: el agente la tiene en su lista por
-    él."""
+    él.
+
+    Con `fisica` (la raíz va cifrada y `raiz` es el volumen montado), al final
+    la marca fuera del contenedor con el mismo id: es lo que une las dos
+    mitades, como en una unidad cifrada."""
     raiz = Path(raiz).expanduser()
     examen = examinar(raiz)
     if not examen.vale:
@@ -306,6 +318,8 @@ def instalar(raiz: Path | str, perfil, progreso=None) -> tuple[list[Path], str]:
         pass                                    # la ventana tiene el suyo
     ident = device.ensure_control_file(raiz, renew=examen.estado != YA_EQUIPO,
                                        tipo=model.TIPO_EQUIPO)
+    if fisica is not None:
+        escrito.append(marcar(fisica, ident))
     return escrito, ident
 
 
@@ -326,11 +340,182 @@ def python_consola(python: Path | str) -> list[str]:
 
 
 def verificar(raiz: Path | str, esperadas: list[str] | None = None,
-              key_name: str | None = None) -> list[device.Check]:
+              key_name: str | None = None,
+              contenedor: Path | str | None = None) -> list[device.Check]:
     """Lo que tiene que estar en la raíz para que el agente la sincronice. Es
     `device.verify_device()`, que ya sabe que una raíz del equipo no lleva
-    lanzadores ni Python propio."""
-    return device.verify_device(Path(raiz), esperadas, key_name)
+    lanzadores ni Python propio. Cifrada, además, su contenedor y la marca de
+    fuera con el mismo id."""
+    checks = device.verify_device(Path(raiz), esperadas, key_name)
+    if contenedor is None:
+        return checks
+    hc = Path(contenedor)
+    uid = device.control_id(Path(raiz))
+    checks.append(device.Check("Contenedor", hc.is_file(),
+                               f"{hc}" + (", dinámico" if vest.disperso(hc) else "")
+                               if hc.is_file() else f"no está en {hc}"))
+    marcado = vest.leer_id(hc.parent)
+    checks.append(device.Check(
+        "Marca de fuera", bool(marcado) and marcado == uid,
+        f"{vest.MARCA} con el id de la raíz" if marcado and marcado == uid else
+        f"falta {hc.parent / vest.MARCA}" if not marcado else
+        "la marca es de otra raíz: vuelve a instalar"))
+    return checks
+
+
+# ---------------------------------------------------------------------------
+# Cifrada: la raíz dentro de un contenedor VeraCrypt (fase 3)
+# ---------------------------------------------------------------------------
+
+SIN_CIFRAR, VERACRYPT = "ninguno", "veracrypt"
+LETRA_PREFERIDA = "P"
+# El sistema de ficheros de DENTRO. En Windows, NTFS: el contenedor no sale del
+# equipo, y NTFS no tiene el tope de 4 GiB por fichero ni pierde permisos. En
+# Linux, exFAT, como en las unidades: VeraCrypt lo monta con el uid del usuario
+# y se puede escribir sin más, mientras que un ext4 recién hecho es de root.
+SISTEMA_DENTRO = "NTFS" if IS_WIN else "exFAT"
+
+COMO_INSTALAR = (
+    "Para cifrar la raíz hace falta VeraCrypt INSTALADO en este equipo (el "
+    "portátil pide administrador cada vez que carga su driver). Instálalo desde "
+    "veracrypt.jp/en/Downloads.html y vuelve a este paso. Desde aquí no se "
+    "descarga ni se instala nada.")
+
+
+def veracrypt_instalado() -> dict | None:
+    """El VeraCrypt INSTALADO en este equipo, montar y formatear, o None.
+
+    Nunca el portable ni la caché del instalador: en el ordenador propio se
+    instala una vez, y ramas del portable como ERR_DRIVER_VERSION están sin
+    probar en real. Es el mismo que usará el agente para abrir y cerrar
+    (`penwatch.installed_veracrypt()`), para que el asistente no ofrezca algo
+    que luego no se pueda desbloquear. Punto de indirección para los tests."""
+    import penwatch
+    exe = penwatch.installed_veracrypt()
+    if exe is None:
+        return None
+    if not IS_WIN:
+        return {"mount": exe, "format": exe}
+    formatear = Path(exe).with_name("VeraCrypt Format.exe")
+    return {"mount": exe, "format": str(formatear)} if formatear.is_file() else None
+
+
+def fisica_por_defecto(carpeta: Path | str) -> Path:
+    """Dónde va el contenedor: al lado de la carpeta, con «-cifrado» detrás."""
+    carpeta = Path(str(carpeta).strip() or carpeta_propia()).expanduser()
+    return carpeta.with_name(carpeta.name + "-cifrado")
+
+
+def letras_libres(preferida: str = LETRA_PREFERIDA) -> list[str]:
+    """Las letras que se pueden elegir, la preferida delante. Solo Windows."""
+    if not IS_WIN:
+        return []
+    import ctypes
+    mask = ctypes.windll.kernel32.GetLogicalDrives()
+    usadas = {chr(65 + i) for i in range(26) if mask & (1 << i)}
+    orden = [preferida, *"PQRSTUVWXYZNMLKJIHGFED"]
+    return list(dict.fromkeys(l for l in orden if l not in usadas))
+
+
+def punto_de_montaje(carpeta: Path | str, letra: str = "") -> str:
+    """Dónde queda la raíz abierta: la letra en Windows, la carpeta en Linux."""
+    if IS_WIN:
+        return f"{letra.rstrip(':').upper()}:\\"
+    return str(Path(str(carpeta).strip()).expanduser())
+
+
+def examinar_contenedor(fisica: Path | str, carpeta: Path | str,
+                        forma: str = PROPIA) -> Examen:
+    """¿Puede ir ahí el contenedor, y montarse donde toca?
+
+    NUEVA: se crea. YA_EQUIPO: ya hay un `PRDRIVE.hc`, y se abre con su
+    contraseña (reinstalar conserva su id). En Linux el punto de montaje es la
+    carpeta, y tiene que estar vacía: lo que hubiera quedaría tapado al montar."""
+    if forma == PERSONAL:
+        return Examen(NO_VALE, (
+            "Con la carpeta personal no hay contenedor: la raíz es todo tu usuario, "
+            "y eso no cabe en un fichero cifrado. Para cifrar, elige una carpeta "
+            "propia en el paso anterior."))
+    texto = str(fisica).strip()
+    if not texto:
+        return Examen(NO_VALE, "Escribe dónde va el contenedor.")
+    fisica = Path(texto).expanduser()
+    if not fisica.is_absolute():
+        return Examen(NO_VALE, "Tiene que ser una ruta completa, no relativa.")
+    if _dentro(fisica, equipo.DIR) or _dentro(equipo.DIR, fisica):
+        return Examen(NO_VALE, f"Esa carpeta se cruza con la del agente ({equipo.DIR}).")
+    punto = Path(str(carpeta).strip()).expanduser()
+    if not IS_WIN and (_dentro(fisica, punto) or _dentro(punto, fisica)):
+        return Examen(NO_VALE, (
+            f"El contenedor no puede ir dentro de {punto}, que es donde se monta, "
+            f"ni al revés."))
+    try:
+        if fisica.exists() and not fisica.is_dir():
+            return Examen(NO_VALE, f"{fisica} existe y no es una carpeta.")
+        existe = (fisica / vest.CONTENEDOR).is_file()
+        if not IS_WIN and punto.is_dir() and not os.path.ismount(punto) \
+                and any(punto.iterdir()):
+            return Examen(NO_VALE, (
+                f"{punto} tiene cosas, y es donde se monta el contenedor: quedarían "
+                f"tapadas. Elige otra carpeta en el paso anterior, o vacíala."))
+    except OSError as e:
+        return Examen(NO_VALE, f"No puedo leer {fisica}: {e}")
+    if existe:
+        return Examen(YA_EQUIPO, (
+            f"Ya hay un contenedor en {fisica / vest.CONTENEDOR}: se abre con su "
+            f"contraseña. Si ya era la raíz de este equipo, conserva su id."))
+    return Examen(NUEVA, (
+        f"Se creará {fisica / vest.CONTENEDOR}, con la marca para reconocerlo al "
+        f"lado. Dentro irán el programa, la clave y las parejas."))
+
+
+def restos(carpeta: Path | str) -> list[str]:
+    """La raíz SIN cifrar que haya en la carpeta: pasar a cifrado la deja donde
+    estaba, con la clave en claro, y nada la borra (`crypto.restos_en_claro`)."""
+    return crypto.restos_en_claro(Path(str(carpeta).strip()).expanduser())
+
+
+def abrir_o_crear(vc: dict, fisica: Path | str, carpeta: Path | str, letra: str,
+                  password: str, tamano: str) -> Path:
+    """Crea el contenedor si no está, y lo monta donde se quedará. Devuelve la
+    raíz montada. Lanza InstallError.
+
+    Disperso (`/dynamic`) solo si el disco lo admite, preguntado antes
+    (`crypto.soporta_dispersos()`): en un NTFS lo normal es que sí, y entonces el
+    tamaño casi no cuesta. En Linux no hay `/dynamic`: se escribe entero. El
+    montaje lleva `/m rm` (`crypto.mount_command`) y la letra o la carpeta
+    fija, que es donde lo buscará el agente."""
+    fisica = Path(str(fisica).strip()).expanduser()
+    hc = fisica / vest.CONTENEDOR
+    try:
+        fisica.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        raise InstallError(f"No he podido crear {fisica}: {e}") from e
+    if not hc.is_file():
+        libre = shutil.disk_usage(str(fisica)).free
+        dinamico = crypto.soporta_dispersos(fisica)
+        tope = crypto.tope_contenedor(crypto.sistema_de_ficheros(fisica))
+        bytes_ = crypto.size_to_bytes(tamano, libre, tope)
+        crypto.create_container(vc, hc, bytes_, password, SISTEMA_DENTRO, dinamico)
+    if IS_WIN:
+        return crypto.mount_container(vc, hc, password, letra=letra)
+    return crypto.mount_container(vc, hc, password,
+                                  punto_fijo=Path(punto_de_montaje(carpeta)))
+
+
+def marcar(fisica: Path | str, ident: str) -> Path:
+    """La marca de fuera, `.prdrive-vestibulo`, con el id de la raíz. Solo la
+    marca: sin «Abrir/Expulsar PRDRIVE» ni guía, porque la raíz del equipo la
+    abre y la cierra el agente."""
+    from . import vestibulo as escritor
+    ruta = Path(fisica) / vest.MARCA
+    deploy.unhide(ruta)
+    try:
+        ruta.write_text(escritor.marca(ident), encoding="utf-8", newline="\n")
+    except OSError as e:
+        raise InstallError(f"No he podido escribir {ruta}: {e}") from e
+    deploy.hide(ruta)
+    return ruta
 
 
 # ---------------------------------------------------------------------------

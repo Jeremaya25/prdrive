@@ -1,9 +1,11 @@
 # Instalación en el equipo: prdrive residente
 
-Fecha: 2026-09-25 · Estado: **aceptada**; fases 1 y 2 implementadas (el agente
+Fecha: 2026-09-25 · Estado: **aceptada**; fases 1 a 3 implementadas (el agente
 sin bandeja, con unidades: `agente.py`, `common/planificador.py`,
 `install/agente.py`; la raíz del equipo sin cifrar: `install/raiz_equipo.py`,
-`ui/tk_equipo.py`) · Versión objetivo: 0.4.0
+`ui/tk_equipo.py`; y cifrada con VeraCrypt, **sin probar en real**) · Versión
+objetivo: 0.4.0 · Lo que falta probar en equipos reales:
+`docs/superpowers/pruebas/2026-09-25-equipo-pendiente-en-real.md`
 
 ## Qué se pide
 
@@ -627,7 +629,24 @@ proyecto funcionando:
    Desbloquear/Bloquear en el agente, `pedir_al_iniciar` elegido en el
    asistente, la letra fija, `raiz_fisica()` con raíces extra y «Expulsar» →
    «Bloquear». Se prueba en Windows real antes de publicarlo, como se hizo con
-   la unidad G:.
+   la unidad G:. Hecho así, y en cinco cosas distinto de lo escrito arriba:
+   - **Dónde:** el contenedor va en `<carpeta>-cifrado/` junto a la carpeta de
+     «Carpeta» (`~/PRDRIVE-cifrado/`), y en Linux se monta en esa carpeta
+     (`~/PRDRIVE`). En Windows esa carpeta no se usa: la raíz es la letra. Con
+     la carpeta personal no se ofrece cifrar.
+   - **Sistema de ficheros de dentro:** NTFS en Windows y exFAT en Linux. Un
+     ext4 recién hecho por VeraCrypt es de root, y exFAT se monta con el uid
+     del usuario.
+   - **Fuera solo va la marca** (`.prdrive-vestibulo`), sin «Abrir/Expulsar
+     PRDRIVE» ni guía: la raíz del equipo la abre y la cierra el agente.
+   - **«Bloquear» va por `agente.pide`**, no por `state/servicio.pide`, que es
+     de la fase 5. Por eso la ventana de runsync no se cierra con
+     `daemon.stop`: no lo escucha. El botón «Bloquear» se lo pide al agente y
+     cierra su propia ventana; el agente espera a que esa ventana se vaya
+     (hasta un minuto) y, si sigue abierta, lo dice y no bloquea.
+   - **`agente.py abrir` con la raíz cerrada** le pide al agente
+     «desbloquear» y abre la ventana en cuanto la raíz aparece. Es lo que hace
+     el acceso del menú.
 4. **Bandeja en Windows**, con la detección por `WM_DEVICECHANGE` montada sobre
    su ventana y la casilla de `pedir_al_iniciar`.
 5. **Ventana ↔ agente**: la línea del agente, los dos buzones

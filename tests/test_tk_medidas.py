@@ -370,13 +370,29 @@ try:
         wiz.perfil = PERFIL_MEDIDAS
         wiz.rclone = object()
         wiz.catalog = CATALOGO_MEDIDAS
-        for paso in ("¿Dónde?", "Carpeta", "Instalación", "Parejas y configuración",
-                     "Unidades", "Arranque", "Verificación"):
+        for paso in ("¿Dónde?", "Carpeta", "Cifrado", "Instalación",
+                     "Parejas y configuración", "Unidades", "Arranque", "Verificación"):
             wiz.indice = [t for t, _, _ in wiz.pasos].index(paso)
             wiz.repintar()
             c(f"{nombre}: «{paso}» (en este equipo) cabe", cabe(top), True)
             c(f"{nombre}: «{paso}» (en este equipo) no queda recortado",
               recortado(wiz.visor), False)
+        # «Cifrado» con VeraCrypt, en su estado más lleno: el formulario entero
+        # y el contenedor ya abierto. (El bloque rojo de una raíz en claro que
+        # queda al lado es de Windows, y el de las unidades ya se mide arriba.)
+        reales_vc = raiz_equipo.veracrypt_instalado
+        raiz_equipo.veracrypt_instalado = lambda: {"mount": "vc", "format": "vc"}
+        try:
+            wiz.equipo_cifrado = raiz_equipo.VERACRYPT
+            wiz.equipo_montada = RAIZ_MEDIDAS
+            wiz.equipo_examen = raiz_equipo.examinar(RAIZ_MEDIDAS)
+            wiz.indice = [t for t, _, _ in wiz.pasos].index("Cifrado")
+            wiz.repintar()
+            c(f"{nombre}: «Cifrado» con VeraCrypt (en este equipo) cabe", cabe(top), True)
+            c(f"{nombre}: «Cifrado» con VeraCrypt (en este equipo) no queda recortado",
+              recortado(wiz.visor), False)
+        finally:
+            raiz_equipo.veracrypt_instalado = reales_vc
         top.destroy()
 
     # --- lo que aparece DESPUÉS de pintar el paso -----------------------------
