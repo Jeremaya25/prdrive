@@ -15,6 +15,7 @@ recorriendo volúmenes, y lo demás es el mismo contrato que con una unidad
   * `agente.py abrir` lanza el `runsync.py` de la raíz con el Python del agente.
 """
 
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -25,6 +26,7 @@ import _agente_falso as F
 import agente
 import penwatch
 from common import equipo, store
+from ui import bandeja
 
 c = Checks("agente: la raíz de este equipo")
 
@@ -94,6 +96,7 @@ c("  una sin id no entra", len(aj.unidades), 2)
 # agente.py abrir
 equipo.guardar_ajustes(equipo.Ajustes().con_unidad(
     equipo.Unidad(UID, equipo.DAEMON, "Mi portátil", str(RAIZ))))
+store.write_json(equipo.lock_json(), {"pid": os.getpid(), "host": equipo.HOST})
 F.LANZADOS.clear()
 c("abrir sin id: la única raíz del equipo", agente.main(["abrir"]), 0)
 c("  lanza su runsync.py con el Python del agente, fuera de la raíz",
@@ -105,13 +108,40 @@ F.LANZADOS.clear()
 c("  con su ventana ya abierta no lanza otra",
   (agente.main(["abrir", UID]), F.LANZADOS), (0, []))
 (RAIZ / penwatch.UI_LOCK_REL).unlink()
+equipo.lock_json().unlink()
+F.LANZADOS.clear()
+c("con el agente parado, abrir lo arranca y abre la ventana (el acceso del menú "
+  "donde no hay bandeja)", (agente.main(["abrir"]), [p.args[1:] for p in F.LANZADOS]),
+  (0, [[str(agente.SCRIPT_DIR / "agente.py"), "run"],
+       [str(RAIZ / ".prdrive" / "runsync.py")]]))
+c("  el agente, suelto y fuera de toda raíz",
+  (F.LANZADOS[0].kwargs.get("cwd"), F.LANZADOS[0].kwargs.get("start_new_session")),
+  (str(equipo.DIR), True))
+
 equipo.guardar_ajustes(equipo.Ajustes())
-c("sin raíz en el equipo, abrir lo dice y sale con 1", agente.main(["abrir"]), 1)
-c("  un id que no conoce, igual", agente.main(["abrir", "z" * 32]), 1)
+F.LANZADOS.clear()
+F.AVISOS.clear()
+c("sin raíz en el equipo y el agente parado: abrir lo arranca",
+  (agente.main(["abrir"]), [p.args[-1] for p in F.LANZADOS], [t for t, _ in F.AVISOS]),
+  (0, ["run"], ["prdrive: agente arrancado"]))
+store.write_json(equipo.lock_json(), {"pid": os.getpid(), "host": equipo.HOST})
 store.write_json(equipo.estado_json(), {"unidades": [
-    {"id": "u" * 32, "raiz": str(RAIZ)}]})
+    {"id": "u" * 32, "nombre": "Azul", "raiz": str(RAIZ), "atendida": True,
+     "fallando": ["fotos"]}]})
+F.LANZADOS.clear()
+F.AVISOS.clear()
+c("  y en marcha, dice con un aviso cómo va, como diría su icono",
+  (agente.main(["abrir"]), F.LANZADOS, F.AVISOS),
+  (0, [], [("prdrive: Azul: falla fotos", "Azul: falla fotos")]))
+c("  un id que no conoce: lo dice y sale con 1", agente.main(["abrir", "z" * 32]), 1)
 F.LANZADOS.clear()
 c("  una unidad conectada se abre por su id (del estado del agente)",
   (agente.main(["abrir", "u" * 32]), len(F.LANZADOS)), (0, 1))
+c("aviso_de_estado sin avisos: lo que atiende",
+  bandeja.aviso_de_estado({"unidades": [{"nombre": "Azul", "atendida": True}]}),
+  ("prdrive: al día", "Atiende: Azul."))
+c("  en pausa, cómo seguir",
+  bandeja.aviso_de_estado({"pausado": True})[1].splitlines()[-1],
+  "Para que siga: python agente.py sigue")
 
 sys.exit(c.report())

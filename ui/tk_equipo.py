@@ -766,7 +766,10 @@ def paso_arranque(cuerpo, wiz) -> None:
                        "(si no está en marcha, se arranca).", 0)
     else:
         _texto(cuerpo, f"El agente se registra con {como}, y se arranca ya. Sin "
-                       "administrador.", 0)
+                       "administrador."
+               + ("" if agente.IS_WIN else
+                  f" Su icono va en la bandeja; donde no la hay, hace sus veces el "
+                  f"acceso «{agente.APP_NAME}» del menú."), 0)
     if raiz(wiz) is not None:
         _texto(cuerpo, (
             f"Sincroniza {raiz(wiz)} en segundo plano, con las parejas y el intervalo "
@@ -861,9 +864,10 @@ def comprobaciones(donde: Path | None = None, esperadas: list[str] | None = None
                       + (", cifrada" if en_lista.cifrada else "") if en_lista else
                       "pedido: el agente la añade al leer su buzón" if pedida else
                       "no está: registra y arranca el agente"))
+    if agente.quiere_menu(donde is not None):
         menu = agente.acceso_menu()
         filas.append(("Acceso del menú", menu.exists(), str(menu) if menu.exists()
-                      else "no está: la ventana se abre con «agente.py abrir»"))
+                      else "no está: «agente.py abrir» hace lo mismo"))
     inst = agente.instalado()
     filas.append(("Agente instalado", inst is not None,
                   f"versión {inst.get('version')}, en {inst.get('codigo')}" if inst
@@ -888,13 +892,25 @@ def comprobaciones(donde: Path | None = None, esperadas: list[str] | None = None
                   if not penwatch.CONFIG_FILE.exists()
                   else "sigue instalado: dos vigilantes se pisarían"))
     if not agente.IS_WIN:
-        avisos = _hay_avisos()
+        avisos, hay_bandeja = escritorio()
         filas.append(("Avisos del escritorio", avisos is not False,
                       {True: "el escritorio los enseña",
                        None: "no se ha podido preguntar al bus de sesión",
                        False: "nadie atiende org.freedesktop.Notifications: los avisos "
                               "quedarán solo en el diario"}[avisos]))
+        filas.append(("Bandeja", hay_bandeja is not False,
+                      {True: "el icono del agente va en la bandeja del escritorio",
+                       None: "no se ha podido preguntar al bus de sesión",
+                       False: SIN_BANDEJA}[hay_bandeja]))
     return filas
+
+
+# Lo que dice «Verificación» en un escritorio sin StatusNotifierWatcher, con el
+# nombre de la extensión que lo pone en GNOME (sección 5 del diseño).
+EXTENSION_GNOME = "AppIndicator and KStatusNotifierItem Support"
+SIN_BANDEJA = (f"este escritorio no tiene bandeja. En GNOME la pone la extensión "
+               f"«{EXTENSION_GNOME}» (Ubuntu ya la trae); mientras, el acceso «prdrive» "
+               f"del menú de aplicaciones hace sus veces")
 
 
 def _existe(ruta) -> bool:
@@ -904,13 +920,18 @@ def _existe(ruta) -> bool:
         return False
 
 
-def _hay_avisos() -> bool | None:
+def escritorio() -> tuple[bool | None, bool | None]:
+    """(¿hay avisos?, ¿hay bandeja?) en el bus de sesión: quién atiende
+    `org.freedesktop.Notifications` y `org.kde.StatusNotifierWatcher`. None,
+    lo que no se ha podido preguntar. Punto de indirección para los tests."""
     try:
         from common import avisos, dbus
+        from ui import bandeja_linux
         with dbus.Conexion.sesion() as bus:
-            return bus.tiene_dueno(avisos.NOTIFICACIONES)
+            return (bus.tiene_dueno(avisos.NOTIFICACIONES),
+                    bandeja_linux.hay_bandeja(bus))
     except Exception:                                   # noqa: BLE001
-        return None
+        return None, None
 
 
 def paso_final(cuerpo, wiz) -> None:

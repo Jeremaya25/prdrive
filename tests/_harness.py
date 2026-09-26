@@ -11,6 +11,7 @@ de la letra de unidad.
 from __future__ import annotations
 
 import atexit
+import os
 import shutil
 import sys
 import tempfile
@@ -147,6 +148,11 @@ def falso_portatil(version: str | None = None, sin: tuple[str, ...] = ()) -> Pat
 from common import equipo  # noqa: E402
 
 equipo.DIR = tmpdir("prdrive-equipo-harness-")
+# Y lo que el instalador del agente escribe en el escritorio (el acceso del
+# menú, el autostart), también en temporales: un test que se olvide de
+# sustituirlo no puede dejarle un «prdrive» en el menú a quien los ejecuta.
+os.environ["XDG_DATA_HOME"] = str(tmpdir("prdrive-xdg-data-"))
+os.environ["XDG_CONFIG_HOME"] = str(tmpdir("prdrive-xdg-config-"))
 
 
 @atexit.register

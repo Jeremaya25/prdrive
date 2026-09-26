@@ -43,6 +43,19 @@ c("la primera vuelta mira si hay versión nueva", (buscadas, ag.nueva), ([1], "v
 F.vueltas(ag, 1)
 c("  y lo dice una vez", [t for t, _ in F.AVISOS if "versión nueva" in t],
   ["Hay una versión nueva de prdrive: v9.9.9"])
+c("  sin bandeja, cómo ponerla a mano",
+  [x for t, x in F.AVISOS if "versión nueva" in t][0].endswith("agente.py actualizar"), True)
+
+
+class Icono:
+    puesta = False
+
+
+ag.bandeja = Icono()
+c("  una bandeja sin icono puesto (Linux sin watcher) no cuenta", ag.con_bandeja(), False)
+Icono.puesta = True
+c("  con el icono puesto, sí: «Actualízala desde su icono»", ag.con_bandeja(), True)
+ag.bandeja = None
 F.vueltas(ag, 5)
 c("  sin volver a mirar hasta MIRAR_VERSION, ni repetir el aviso",
   (len(buscadas), len([t for t, _ in F.AVISOS if "versión nueva" in t])), (1, 1))

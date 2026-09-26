@@ -243,11 +243,17 @@ finally:
 
 # --- abrir con la raíz cerrada -------------------------------------------------------
 F.LANZADOS.clear()
-c("abrir con la raíz cerrada y sin agente: no hay quien la desbloquee",
-  agente.main(["abrir"]), 1)
-store.write_json(equipo.lock_json(), {"pid": F.os.getpid(), "host": equipo.HOST})
 agente.ESPERA_ABRIR = 0
 equipo.recoger()
+c("abrir con la raíz cerrada y sin agente: lo arranca y le pide desbloquearla",
+  (agente.main(["abrir"]), [p.args[-1] for p in F.LANZADOS],
+   [p["pide"] for p in equipo.recoger()]), (1, ["run"], [equipo.PIDE_DESBLOQUEAR]))
+agente.lanzar = lambda args, **kw: (_ for _ in ()).throw(OSError("no"))
+c("  si no se puede arrancar, no hay quien la desbloquee",
+  (agente.main(["abrir"]), equipo.recoger()), (1, []))
+agente.lanzar = lambda args, **kw: F.Proc(args, **kw)
+F.LANZADOS.clear()
+store.write_json(equipo.lock_json(), {"pid": F.os.getpid(), "host": equipo.HOST})
 c("con el agente vivo, le pide desbloquearla (y espera a verla)",
   (agente.main(["abrir"]), [p["pide"] for p in equipo.recoger()]),
   (1, [equipo.PIDE_DESBLOQUEAR]))

@@ -870,8 +870,7 @@ python prdrive-install.py --desinstalar-agente # quitarlo (no toca ninguna unida
 
 Puede sincronizar además **una carpeta del propio equipo**, la raíz del equipo
 (abajo), o no tener ninguna y solo atender unidades: la instalación **«solo
-agente»**. El icono en la bandeja de Linux llega más adelante; el diseño
-completo está en
+agente»**. El diseño completo está en
 `docs/superpowers/specs/2026-09-25-instalacion-en-el-equipo-design.md`.
 
 - **Vive fuera de toda unidad**, en `%LOCALAPPDATA%\prdrive\` o en
@@ -933,15 +932,20 @@ completo está en
   D-Bus (un cliente propio, sin dependencias: `common/dbus.py`); en Windows con
   el globo del área de notificación. Sin avisos, queda en su diario,
   `agente.log`.
-- **Tiene un icono en la bandeja de Windows** que dice cómo va (al día,
+- **Tiene un icono en la bandeja**, en Windows y en Linux, que dice cómo va (al día,
   sincronizando, un aviso, en pausa, la raíz cifrada bloqueada) y, con clic
   derecho o izquierdo, un menú: **Abrir** la raíz de este equipo o una unidad
   de su lista, **Sincronizar ahora**, **Pausar**/**Reanudar**, **Desbloquear**
   y **Bloquear** la raíz cifrada con la casilla «Pedir la contraseña al iniciar
   sesión», **Atender…** una unidad a la que dijiste «Ahora no» mientras siga
   enchufada, y **Cerrar el agente** (vuelve a arrancar al iniciar sesión). En
-  Linux la bandeja llega más adelante; mientras tanto, las órdenes de abajo y el
-  acceso «prdrive» del menú.
+  Linux es un StatusNotifierItem (KDE, y GNOME con la extensión «AppIndicator
+  and KStatusNotifierItem Support», que Ubuntu ya trae), hablado por D-Bus sin
+  dependencias. **Donde el escritorio no tiene bandeja** (GNOME sin esa
+  extensión), el acceso «prdrive» del menú de aplicaciones hace sus veces:
+  arranca el agente si no está, abre la ventana de la raíz de este equipo o,
+  sin raíz, dice con un aviso cómo va; si la bandeja aparece después, el icono
+  se pone solo. La «Verificación» del asistente dice si falta.
 - **Detecta las unidades** con el mismo recorrido que penwatch, pero sin sondear
   cada 5 segundos: en Linux se despierta cuando cambian los montajes, y en
   Windows con el aviso de dispositivo que recibe la ventana oculta de la bandeja. Las
@@ -956,7 +960,7 @@ python agente.py status               # qué atiende y cómo (en su carpeta del 
 python agente.py modo <id> daemon     # ui | daemon | sync | nada
 python agente.py pasada <id> [pareja] # sincronizar ahora
 python agente.py pausa | sigue
-python agente.py abrir [id]           # la ventana de la raíz de este equipo
+python agente.py abrir [id]           # la ventana de la raíz (o arranca el agente / dice cómo va)
 python agente.py desbloquear | bloquear          # la raíz cifrada de este equipo
 python agente.py ajuste pedir_al_iniciar no      # no pedir su contraseña al entrar
 python agente.py actualizar           # la versión nueva, como «Actualizar» de la bandeja
@@ -966,7 +970,8 @@ Esas órdenes no tocan nada por sí mismas: dejan la petición en el buzón del
 agente (`agente.pide`), y él escribe su configuración. **Sin probar todavía en un
 Windows real**: la tarea programada, la bandeja y los avisos (`Shell_NotifyIconW`), la batería,
 la red de uso medido (`INetworkCostManager`), el acceso del menú Inicio
-(`IShellLinkW`) y «Actualizar».
+(`IShellLinkW`) y «Actualizar»; ni en un escritorio Linux de verdad la
+bandeja (StatusNotifierItem y dbusmenu).
 
 ### La raíz del equipo
 
@@ -1245,6 +1250,7 @@ prdrive/
 │   ├── qr.py          el codificador de códigos QR. Sin dependencias, sin Tk
 │   ├── bandeja.py     qué enseña la bandeja del agente: puro, sin Tk
 │   ├── bandeja_windows.py  la bandeja de Windows (Shell_NotifyIconW), sin Tk
+│   ├── bandeja_linux.py    la bandeja de Linux (StatusNotifierItem + dbusmenu), sin Tk
 │   ├── tk*.py         solo dibujan
 │   ├── repair.py      qué hacer con cada avería: los planes de reparación
 │   └── *_editor.py    lo que decide y toca disco. Sin Tk, probado sin pantalla

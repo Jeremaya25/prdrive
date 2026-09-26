@@ -176,6 +176,13 @@ c("  y las del Python", sorted(p.name for p in equipo.dir_runtimes().iterdir()),
 c("y se arranca con su orden, fuera de toda unidad",
   (lanzados[-1][0], lanzados[-1][1].get("cwd")),
   (ia.orden(prep.python, prep.codigo), str(equipo.DIR)))
+solo = ia.acceso_menu()
+c("sin raíz, en Linux, también el acceso del menú: donde no hay bandeja hace sus veces",
+  (solo.is_file(), ia.COMENTARIO_SOLO in solo.read_text(encoding="utf-8")), (True, True))
+c("  el de siempre, bajo XDG_DATA_HOME (en los tests, un temporal)",
+  solo.is_relative_to(Path(os.environ["XDG_DATA_HOME"])), True)
+c("  en Windows sin raíz no (la bandeja no falta)",
+  (ia.quiere_menu(False), ia.quiere_menu(True)), (not ia.IS_WIN, True))
 
 # --- añadir con el agente de esta versión ya puesto: solo el buzón -----------------------
 c("el agente recién activado es de esta versión", ia.misma_version(), True)
@@ -194,6 +201,7 @@ c("anadir(): la raíz nueva (y el plazo que cambia) se le piden por su buzón",
   [(equipo.PIDE_RAIZ, "r" * 32), (equipo.PIDE_AJUSTE, None)])
 c("  ni se registra otra vez", AUTOSTART.read_bytes(), tarea_antes)
 c("  con raíz nueva, el acceso del menú", MENU.is_file(), True)
+c("  que ya abre su ventana", ia.COMENTARIO_MENU in MENU.read_text(encoding="utf-8"), True)
 c("  y como el agente no está en marcha, se arranca",
   [a for a, _ in lanzados], [ia.orden(prep.python, prep.codigo)])
 
@@ -291,7 +299,7 @@ res = subprocess.run(
     [sys.executable, "-c",
      "import sys; sys.path.insert(0, sys.argv[1]); import agente; "
      "from common import planificador, avisos, dbus, moderacion, equipo; "
-     "from ui import bandeja, bandeja_windows, icons; "
+     "from ui import bandeja, bandeja_linux, bandeja_windows, icons; "
      "print('tkinter' in sys.modules)", str(REPO)],
     capture_output=True, text=True, cwd=str(REPO))
 c("el agente, el planificador, los avisos, el D-Bus y la bandeja no cargan Tk",

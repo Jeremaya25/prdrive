@@ -756,6 +756,18 @@ def ico_bandeja(estado: str, tamanos=BANDEJA_TAMANOS) -> bytes:
     return _ico_de(tamanos, lambda size: capas_bandeja(size, estado))
 
 
+def pixmap_bandeja(estado: str, size: int) -> bytes:
+    """El icono de la bandeja en ese estado para Linux: el `IconPixmap` de un
+    StatusNotifierItem, que es «ARGB32 … in network byte order», es decir, cada
+    píxel A, R, G, B (sin premultiplicar, como el `QImage::Format_ARGB32` de
+    KDE) y las filas de arriba abajo. Sin `.ico` de por medio: se pinta aquí."""
+    datos = bytearray()
+    for fila in _capas_rgba(capas_bandeja(size, estado), 64.0, size):
+        for r, g, b, a in fila:
+            datos += bytes((round(a * 255), r, g, b))
+    return bytes(datos)
+
+
 def fichero_bandeja(carpeta, estado: str):
     """Dónde va el `.ico` de ese estado dentro de la carpeta del agente."""
     from pathlib import Path

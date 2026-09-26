@@ -14,6 +14,7 @@ cliente manda al conectarse.
 import os
 import socket
 import threading
+import time
 from pathlib import Path
 
 from _harness import Checks, tmpdir
@@ -220,6 +221,65 @@ except dbus.Error as e:
 con.escuchar("type='signal'")
 c("escuchar es un AddMatch con la regla",
   (bus.recibidos[-1].miembro, bus.recibidos[-1].cuerpo), ("AddMatch", ["type='signal'"]))
+con.cerrar()
+
+
+# --- la mitad que contesta ------------------------------------------------------------
+import _bus_falso as B  # noqa: E402
+
+
+def rompe():
+    raise ValueError("adrede")
+
+
+con, bus = B.conectar()
+con.exportar("/e/uno", dbus.Interfaz("org.ejemplo.I", metodos={
+    "Suma": dbus.Metodo("ii", "i", lambda a, b: [a + b]),
+    "Rompe": dbus.Metodo("", "", rompe),
+    "Quien": dbus.Metodo("", "s", lambda: ["yo"])}, propiedades={
+    "N": ("u", lambda: 7)}))
+hilo = threading.Thread(target=lambda: [con.atender(0.05) for _ in range(40)], daemon=True)
+hilo.start()
+c("una llamada a un método exportado se contesta",
+  bus.llamar("/e/uno", "org.ejemplo.I", "Suma", "ii", [2, 3]), ("ok", [5]))
+c("  sin interfaz, por el nombre del método (es opcional)",
+  bus.llamar("/e/uno", None, "Quien"), ("ok", ["yo"]))
+c("  un fallo de quien la atiende es Failed, no una excepción",
+  bus.llamar("/e/uno", "org.ejemplo.I", "Rompe")[:2], ("error", dbus.E_FALLO))
+c("  una interfaz que no está, UnknownInterface",
+  bus.llamar("/e/uno", "org.otra", "Suma", "ii", [1, 1])[:2], ("error", dbus.E_INTERFAZ))
+c("GetAll de una interfaz sin propiedades: vacío, no error",
+  bus.llamar("/e/uno", dbus.PROPIEDADES, "GetAll", "s", ["org.otra"]), ("ok", [{}]))
+c("  Get de una que no existe, UnknownProperty",
+  bus.llamar("/e/uno", dbus.PROPIEDADES, "Get", "ss", ["org.ejemplo.I", "X"])[:2],
+  ("error", dbus.E_PROPIEDAD))
+c("  Introspect de /e: el nodo hijo",
+  '<node name="uno"/>' in bus.llamar("/e", dbus.INTROSPECCION, "Introspect")[1][0], True)
+c("con NO_REPLY_EXPECTED no se contesta",
+  bus.llamar("/e/uno", "org.ejemplo.I", "Suma", "ii", [1, 1], espera=0.3,
+             flags=dbus.NO_REPLY_EXPECTED), None)
+hilo.join()
+
+
+def reentrante(m):
+    # Como un watcher que, antes de contestar, le pregunta algo al que llama.
+    if m.miembro == "Registra":
+        bus.mandar_despues = bus.llamar("/e/uno", dbus.PROPIEDADES, "Get", "ss",
+                                        ["org.ejemplo.I", "N"])
+        return ("ok", "", [])
+    return None
+
+
+bus.responder = lambda m: threading.Thread(
+    target=lambda: bus._contestar(m) if reentrante(m) else None, daemon=True).start()
+c("mientras espera una respuesta, contesta a quien le pregunta",
+  (con.llamar("org.w", "/w", "org.w", "Registra"), bus.mandar_despues), ([], ("ok", [7])))
+c("pedir_nombre(): RequestName sin cola", con.pedir_nombre("org.ejemplo.Yo"), True)
+con.emitir("/e/uno", "org.ejemplo.I", "Cambio", "s", ["x"])
+time.sleep(0.2)
+s = bus.emitidas("Cambio")
+c("emitir(): una señal con su ruta, interfaz y cuerpo",
+  [(x.ruta, x.interfaz, x.cuerpo) for x in s], [("/e/uno", "org.ejemplo.I", ["x"])])
 con.cerrar()
 
 

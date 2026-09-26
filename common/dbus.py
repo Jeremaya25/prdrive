@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-dbus.py — Un cliente de D-Bus sin dependencias: la mitad que LLAMA.
+dbus.py — D-Bus sin dependencias: la mitad que LLAMA y la que CONTESTA.
 
 Linux habla con el escritorio por D-Bus: los avisos
 (`org.freedesktop.Notifications`), si la red es de uso medido (la propiedad
-`Metered` de NetworkManager) y, más adelante, la bandeja y la señal de
+`Metered` de NetworkManager), la bandeja (`ui/bandeja_linux.py`) y la señal de
 suspender. Python no trae D-Bus y el proyecto no admite dependencias, así que
 esto lo implementa con el mismo espíritu que `ui/qr.py`: completo en lo que usa,
 y con las constantes citando la especificación, como `common/bisync.py` cita a
@@ -19,12 +19,16 @@ Lo que hay:
   * la serialización de mensajes, «Message Protocol» → «Marshaling»: firmas,
     alineación, arrays, diccionarios, estructuras y variantes;
   * llamar a un método y esperar su respuesta o su error, leer una propiedad y
-    escuchar señales (`AddMatch`), «Message Bus Specification».
+    escuchar señales (`AddMatch`), «Message Bus Specification»;
+  * exportar objetos (fase 6, la bandeja de Linux): pedir un nombre
+    (`RequestName`), contestar a las llamadas que llegan a una ruta, las tres
+    interfaces estándar que cualquiera puede preguntar («Standard Interfaces»:
+    `Peer`, `Introspectable`, `Properties`) y emitir señales.
 
-Lo que NO hay, a propósito: exportar objetos en el bus (eso es la bandeja de
-Linux, otra fase), pasar descriptores de fichero (`h` se serializa como el
-índice que es, pero no se mandan descriptores) y la autenticación
-`DBUS_COOKIE_SHA1`, que un bus de sesión local no pide.
+Lo que NO hay, a propósito: pasar descriptores de fichero (`h` se serializa como
+el índice que es, pero no se mandan descriptores), la autenticación
+`DBUS_COOKIE_SHA1`, que un bus de sesión local no pide, y propiedades que se
+puedan escribir: nada de lo que se exporta aquí las tiene.
 
 Está en `common/` porque lo usan cosas que no son la ventana —los avisos y la
 moderación del agente— y no importa nada de Tk. Nada aquí es imprescindible:
@@ -40,7 +44,7 @@ import socket
 import struct
 import time
 from dataclasses import dataclass, field
-from typing import Any, Iterable, NamedTuple
+from typing import Any, Callable, Iterable, NamedTuple
 
 
 class Error(Exception):
@@ -428,13 +432,120 @@ def direccion_sistema() -> str:
 
 
 # ---------------------------------------------------------------------------
-# La conexión
+# Lo que se exporta («Standard Interfaces», «Introspection Data Format»)
 # ---------------------------------------------------------------------------
 
 BUS = "org.freedesktop.DBus"
 RUTA_BUS = "/org/freedesktop/DBus"
 PROPIEDADES = "org.freedesktop.DBus.Properties"
+INTROSPECCION = "org.freedesktop.DBus.Introspectable"
+PEER = "org.freedesktop.DBus.Peer"
 ESPERA = 5.0            # segundos que se espera una respuesta, por defecto
+
+# Los nombres de error que usan las interfaces estándar para decir qué falta.
+E_FALLO = "org.freedesktop.DBus.Error.Failed"
+E_ARGUMENTOS = "org.freedesktop.DBus.Error.InvalidArgs"
+E_METODO = "org.freedesktop.DBus.Error.UnknownMethod"
+E_OBJETO = "org.freedesktop.DBus.Error.UnknownObject"
+E_INTERFAZ = "org.freedesktop.DBus.Error.UnknownInterface"
+E_PROPIEDAD = "org.freedesktop.DBus.Error.UnknownProperty"
+E_SOLO_LECTURA = "org.freedesktop.DBus.Error.PropertyReadOnly"
+
+# `RequestName` («Message Bus Messages»): DBUS_NAME_FLAG_DO_NOT_QUEUE, para no
+# quedarse esperando en la cola de un nombre que ya tiene otro, y las dos
+# respuestas que dicen «es tuyo»: PRIMARY_OWNER y ALREADY_OWNER.
+NOMBRE_SIN_COLA = 0x4
+NOMBRE_PRINCIPAL, NOMBRE_YA_ERA = 1, 4
+
+# Dónde está el id de la máquina que pide `Peer.GetMachineId`.
+ID_MAQUINA = ("/etc/machine-id", "/var/lib/dbus/machine-id")
+
+
+@dataclass(frozen=True)
+class Metodo:
+    """Un método exportado: la firma de lo que recibe y de lo que devuelve, y
+    `hacer(*argumentos)`, que devuelve los valores de la respuesta (o None si
+    no devuelve nada). Para contestar con un error, que lance `Error`."""
+    entrada: str
+    salida: str
+    hacer: Callable[..., Iterable[Any] | None]
+
+
+@dataclass
+class Interfaz:
+    """Una interfaz exportada en una ruta. Las propiedades son de solo lectura:
+    nombre → (firma, leer()), y se leen cada vez que alguien pregunta. Las
+    señales solo están para la introspección; se emiten con `Conexion.emitir()`."""
+    nombre: str
+    metodos: dict[str, Metodo] = field(default_factory=dict)
+    propiedades: dict[str, tuple[str, Callable[[], Any]]] = field(default_factory=dict)
+    senales: dict[str, str] = field(default_factory=dict)
+
+
+# «Introspection Data Format»: el DOCTYPE es el de la especificación, y los
+# argumentos van sin nombre (es opcional).
+_DOCTYPE = ('<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"\n'
+            ' "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">\n')
+_ESTANDAR = (
+    f'  <interface name="{PEER}">\n'
+    '    <method name="Ping"/>\n'
+    '    <method name="GetMachineId"><arg type="s" direction="out"/></method>\n'
+    '  </interface>\n'
+    f'  <interface name="{INTROSPECCION}">\n'
+    '    <method name="Introspect"><arg type="s" direction="out"/></method>\n'
+    '  </interface>\n'
+    f'  <interface name="{PROPIEDADES}">\n'
+    '    <method name="Get"><arg type="s" direction="in"/><arg type="s" direction="in"/>'
+    '<arg type="v" direction="out"/></method>\n'
+    '    <method name="GetAll"><arg type="s" direction="in"/>'
+    '<arg type="a{sv}" direction="out"/></method>\n'
+    '    <method name="Set"><arg type="s" direction="in"/><arg type="s" direction="in"/>'
+    '<arg type="v" direction="in"/></method>\n'
+    '    <signal name="PropertiesChanged"><arg type="s"/><arg type="a{sv}"/>'
+    '<arg type="as"/></signal>\n'
+    '  </interface>\n')
+
+
+def introspeccion(interfaces: Iterable[Interfaz], hijos: Iterable[str] = ()) -> str:
+    """El XML que devuelve `Introspect`: las interfaces de la ruta, las
+    estándar y los nodos hijos (el nombre relativo de cada uno)."""
+    from xml.sax.saxutils import quoteattr
+
+    partes = [_DOCTYPE, "<node>\n"]
+    for i in interfaces:
+        partes.append(f"  <interface name={quoteattr(i.nombre)}>\n")
+        for nombre, m in i.metodos.items():
+            args = "".join(f'<arg type={quoteattr(t)} direction="in"/>' for t in partir(m.entrada))
+            args += "".join(f'<arg type={quoteattr(t)} direction="out"/>' for t in partir(m.salida))
+            partes.append(f"    <method name={quoteattr(nombre)}>{args}</method>\n")
+        for nombre, firma in i.senales.items():
+            args = "".join(f"<arg type={quoteattr(t)}/>" for t in partir(firma))
+            partes.append(f"    <signal name={quoteattr(nombre)}>{args}</signal>\n")
+        for nombre, (firma, _leer) in i.propiedades.items():
+            partes.append(f"    <property name={quoteattr(nombre)} type={quoteattr(firma)} "
+                          f'access="read"/>\n')
+        partes.append("  </interface>\n")
+    partes.append(_ESTANDAR)
+    for h in hijos:
+        partes.append(f"  <node name={quoteattr(h)}/>\n")
+    partes.append("</node>\n")
+    return "".join(partes)
+
+
+def id_maquina() -> str:
+    for ruta in ID_MAQUINA:
+        try:
+            texto = open(ruta, encoding="ascii").read().strip()
+        except (OSError, UnicodeDecodeError):
+            continue
+        if texto:
+            return texto
+    raise Error(E_FALLO, "no hay id de máquina")
+
+
+# ---------------------------------------------------------------------------
+# La conexión
+# ---------------------------------------------------------------------------
 
 
 class Conexion:
@@ -446,6 +557,7 @@ class Conexion:
         self._pendiente = b""
         self.senales: list[Mensaje] = []
         self.llamadas: list[Mensaje] = []        # llamadas que nos hacen a nosotros
+        self.objetos: dict[str, dict[str, Interfaz]] = {}   # ruta → sus interfaces
         self._autenticar(os.getuid() if uid is None and hasattr(os, "getuid")
                          else (uid or 0))
         self.nombre = self.llamar(BUS, RUTA_BUS, BUS, "Hello")[0]
@@ -535,9 +647,9 @@ class Conexion:
             if total is not None and len(self._pendiente) >= total:
                 datos, self._pendiente = self._pendiente[:total], self._pendiente[total:]
                 return leer_mensaje(datos)
-            queda = hasta - time.monotonic()
-            if queda <= 0:
-                return None
+            # Con el plazo cumplido se mira igual, sin esperar: lo que ya ha
+            # llegado al socket cuenta (es lo que hace `atender(0)`).
+            queda = max(0.0, hasta - time.monotonic())
             listos, _, _ = select.select([self.sock], [], [], queda)
             if not listos:
                 return None
@@ -552,8 +664,11 @@ class Conexion:
         """Llama a un método y devuelve el cuerpo de la respuesta.
 
         Lanza `Error` con el nombre de error que mande el otro lado, o con
-        `NoReply` si no contesta a tiempo. Lo que llegue entretanto (señales,
-        llamadas a nosotros) se guarda, no se pierde."""
+        `NoReply` si no contesta a tiempo. Lo que llegue entretanto no se
+        pierde: las señales se guardan, y una llamada a nosotros se contesta
+        ya si exportamos algo (quien nos llama puede estar preguntándonos
+        antes de contestarnos, como un `StatusNotifierWatcher` al registrar un
+        icono) y si no, se guarda."""
         campos = {PATH: ruta, MEMBER: metodo}
         if destino:
             campos[DESTINATION] = destino
@@ -573,7 +688,10 @@ class Conexion:
                     texto = m.cuerpo[0] if m.cuerpo and isinstance(m.cuerpo[0], str) else ""
                     raise Error(m.campos.get(ERROR_NAME, "desconocido"), texto)
                 return m.cuerpo
-            self._guardar(m)
+            if m.tipo == METHOD_CALL and self.objetos:
+                self._despachar(m)
+            else:
+                self._guardar(m)
 
     def _guardar(self, m: Mensaje) -> None:
         if m.tipo == SIGNAL:
@@ -605,3 +723,142 @@ class Conexion:
     def tiene_dueno(self, nombre: str) -> bool:
         """¿Hay alguien registrado con ese nombre en el bus? (`NameHasOwner`)."""
         return bool(self.llamar(BUS, RUTA_BUS, BUS, "NameHasOwner", "s", [nombre])[0])
+
+    def fileno(self) -> int:
+        """Para vigilar la conexión con `select` junto a otras cosas. Ojo: lo que
+        ya está leído y sin atender no se ve ahí; `atender(0)` antes de esperar."""
+        return self.sock.fileno()
+
+    # --- la mitad que CONTESTA ---------------------------------------------------
+
+    def pedir_nombre(self, nombre: str) -> bool:
+        """`RequestName` sin quedarse en cola: True si el nombre es nuestro."""
+        r = self.llamar(BUS, RUTA_BUS, BUS, "RequestName", "su", [nombre, NOMBRE_SIN_COLA])[0]
+        return r in (NOMBRE_PRINCIPAL, NOMBRE_YA_ERA)
+
+    def exportar(self, ruta: str, *interfaces: Interfaz) -> None:
+        """Contesta, desde ahora, a las llamadas a esas interfaces en esa ruta."""
+        self.objetos.setdefault(ruta, {}).update({i.nombre: i for i in interfaces})
+
+    def emitir(self, ruta: str, interfaz: str, miembro: str, firma: str = "",
+               args: Iterable[Any] = ()) -> None:
+        """Una señal, a quien la escuche («Message Types» → SIGNAL)."""
+        campos = {PATH: ruta, INTERFACE: interfaz, MEMBER: miembro}
+        if firma:
+            campos[SIGNATURE] = firma
+        self.enviar(Mensaje(SIGNAL, campos=campos, cuerpo=list(args)))
+
+    def atender(self, espera: float = 0.0) -> list[Mensaje]:
+        """Contesta las llamadas que nos hagan y devuelve las señales que lleguen.
+
+        Espera como mucho `espera` segundos a que llegue el primer mensaje, y
+        luego atiende sin esperar todo lo que ya esté aquí. Lanza `Error`
+        (`Disconnected`) si el bus se ha ido."""
+        while self.llamadas:
+            self._despachar(self.llamadas.pop(0))
+        hasta = time.monotonic() + espera
+        while True:
+            m = self._recibir(hasta)
+            if m is None:
+                break
+            if m.tipo == METHOD_CALL:
+                self._despachar(m)
+            else:
+                self._guardar(m)
+            hasta = 0.0                         # ya no se espera más
+        senales, self.senales = self.senales, []
+        return senales
+
+    def _contestar(self, llamada: Mensaje, firma: str = "",
+                   cuerpo: Iterable[Any] = ()) -> None:
+        # «NO_REPLY_EXPECTED»: quien llama ha dicho que no quiere respuesta.
+        if llamada.flags & NO_REPLY_EXPECTED:
+            return
+        campos: dict[int, Any] = {REPLY_SERIAL: llamada.serie}
+        if SENDER in llamada.campos:
+            campos[DESTINATION] = llamada.campos[SENDER]
+        if firma:
+            campos[SIGNATURE] = firma
+        self.enviar(Mensaje(METHOD_RETURN, campos=campos, cuerpo=list(cuerpo)))
+
+    def _contestar_error(self, llamada: Mensaje, nombre: str, texto: str) -> None:
+        if llamada.flags & NO_REPLY_EXPECTED:
+            return
+        campos: dict[int, Any] = {REPLY_SERIAL: llamada.serie, ERROR_NAME: nombre,
+                                  SIGNATURE: "s"}
+        if SENDER in llamada.campos:
+            campos[DESTINATION] = llamada.campos[SENDER]
+        self.enviar(Mensaje(ERROR, campos=campos, cuerpo=[texto]))
+
+    def _hijos(self, ruta: str) -> list[str]:
+        """Los nombres de los nodos que cuelgan directamente de `ruta`."""
+        base = ruta.rstrip("/") + "/"
+        return sorted({r[len(base):].split("/")[0] for r in self.objetos
+                       if r.startswith(base) and r != ruta})
+
+    def _despachar(self, m: Mensaje) -> None:
+        """Contesta una llamada que nos hacen. Un fallo de quien la atiende es
+        un error para quien llama, nunca una excepción aquí."""
+        try:
+            firma, cuerpo = self._resolver(m)
+        except Error as e:
+            self._contestar_error(m, e.nombre, e.mensaje)
+        except Exception as e:                          # noqa: BLE001
+            self._contestar_error(m, E_FALLO, f"{type(e).__name__}: {e}")
+        else:
+            self._contestar(m, firma, cuerpo)
+
+    def _resolver(self, m: Mensaje) -> tuple[str, list[Any]]:
+        ruta, interfaz, miembro = m.ruta, m.interfaz, m.miembro
+        interfaces = self.objetos.get(ruta)
+        if interfaz == PEER or (not interfaz and miembro in ("Ping", "GetMachineId")):
+            if miembro == "Ping":
+                return "", []
+            if miembro == "GetMachineId":
+                return "s", [id_maquina()]
+            raise Error(E_METODO, f"{PEER}.{miembro}")
+        if interfaz == INTROSPECCION or (not interfaz and miembro == "Introspect"):
+            hijos = self._hijos(ruta)
+            if interfaces is None and not hijos:
+                raise Error(E_OBJETO, ruta)
+            return "s", [introspeccion((interfaces or {}).values(), hijos)]
+        if interfaces is None:
+            raise Error(E_OBJETO, ruta)
+        if interfaz == PROPIEDADES:
+            return self._propiedades(m, interfaces)
+        if interfaz:
+            if interfaz not in interfaces:
+                raise Error(E_INTERFAZ, f"{interfaz} en {ruta}")
+            metodo = interfaces[interfaz].metodos.get(miembro)
+        else:
+            # «INTERFACE … is optional»: sin ella, el primero con ese nombre.
+            metodo = next((i.metodos[miembro] for i in interfaces.values()
+                           if miembro in i.metodos), None)
+        if metodo is None:
+            raise Error(E_METODO, f"{interfaz or '?'}.{miembro}")
+        if m.firma != metodo.entrada:
+            raise Error(E_ARGUMENTOS, f"{miembro} lleva {metodo.entrada!r}, no {m.firma!r}")
+        salida = metodo.hacer(*m.cuerpo)
+        return metodo.salida, list(salida or [])
+
+    def _propiedades(self, m: Mensaje, interfaces: dict[str, Interfaz]
+                     ) -> tuple[str, list[Any]]:
+        """`org.freedesktop.DBus.Properties`: Get, GetAll y un Set que siempre
+        dice que no."""
+        esperada = {"Get": "ss", "GetAll": "s", "Set": "ssv"}.get(m.miembro)
+        if esperada is None:
+            raise Error(E_METODO, f"{PROPIEDADES}.{m.miembro}")
+        if m.firma != esperada:
+            raise Error(E_ARGUMENTOS, f"{m.miembro} lleva {esperada!r}, no {m.firma!r}")
+        interfaz = interfaces.get(m.cuerpo[0])
+        if m.miembro == "GetAll":
+            # «If the interface … has no properties, an empty array is returned».
+            todas = interfaz.propiedades if interfaz else {}
+            return "a{sv}", [{nombre: Variante(firma, leer())
+                              for nombre, (firma, leer) in todas.items()}]
+        if interfaz is None or m.cuerpo[1] not in interfaz.propiedades:
+            raise Error(E_PROPIEDAD, f"{m.cuerpo[0]}.{m.cuerpo[1]}")
+        if m.miembro == "Set":
+            raise Error(E_SOLO_LECTURA, f"{m.cuerpo[0]}.{m.cuerpo[1]}")
+        firma, leer = interfaz.propiedades[m.cuerpo[1]]
+        return "v", [Variante(firma, leer())]

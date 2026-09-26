@@ -10,8 +10,9 @@ hace al elegirla, con la misma forma que el buzón (`equipo.pedir()`), así que 
 agente las atiende por un solo camino venga de donde vengan.
 
 La mitad que DIBUJA es de cada sistema: `ui/bandeja_windows.py` (fase 4) con
-`Shell_NotifyIconW`, y la de Linux (fase 6) con StatusNotifierItem. Ninguna de
-las dos decide nada, y ninguna importa tkinter: el agente no carga Tk nunca.
+`Shell_NotifyIconW`, y `ui/bandeja_linux.py` (fase 6) con StatusNotifierItem y
+dbusmenu. Ninguna de las dos decide nada, y ninguna importa tkinter: el agente
+no carga Tk nunca.
 
 Lo que ofrece el menú (sección 5 del diseño, y «Una unidad nueva» de la 3):
 
@@ -74,6 +75,7 @@ class Vista:
     icono: str                          # uno de icons.BANDEJA_ESTADOS
     tip: str
     menu: tuple[Entrada, ...]
+    frase: str = ""                     # el estado sin el nombre delante (Linux)
 
     def defecto(self) -> Entrada | None:
         """La entrada del doble clic, si hay una."""
@@ -134,6 +136,25 @@ def estado(resumen: Mapping[str, Any]) -> tuple[str, str]:
     if not raices and not resumen.get("unidades"):
         return icons.BIEN, "esperando unidades"
     return icons.BIEN, "al día"
+
+
+def aviso_de_estado(resumen: Mapping[str, Any]) -> tuple[str, str]:
+    """(título, texto) del aviso con el que el acceso «prdrive» del menú dice
+    cómo va el agente donde no hay bandeja que lo enseñe (fase 6): lo mismo
+    que su icono y la cabecera de su menú."""
+    _icono, frase = estado(resumen)
+    lineas = avisos(resumen)
+    texto = lineas[:MAX_AVISOS]
+    if len(lineas) > MAX_AVISOS:
+        texto.append(f"y {len(lineas) - MAX_AVISOS} más")
+    if not texto:
+        atendidas = [str(u.get("nombre")) for u in resumen.get("unidades") or []
+                     if u.get("atendida")]
+        texto = [f"Atiende: {', '.join(atendidas)}." if atendidas
+                 else "No hay ninguna unidad conectada que atender."]
+    if resumen.get("pausado"):
+        texto.append("Para que siga: python agente.py sigue")
+    return f"{APP_NAME}: {frase}", "\n".join(texto)
 
 
 def tip(frase: str) -> str:
@@ -255,4 +276,4 @@ def vista(resumen: Mapping[str, Any]) -> Vista:
                      else Entrada("Pausar", _pide(equipo.PIDE_PAUSA))],
                     [*_actualizar(resumen),
                      Entrada("Cerrar el agente", _pide(equipo.PIDE_PARAR))])
-    return Vista(icono, tip(frase), menu)
+    return Vista(icono, tip(frase), menu, frase[:1].upper() + frase[1:])

@@ -146,9 +146,36 @@ reiniciar el agente (`agente.py parar` y volver a entrar en la sesión).
 | V9 | W | V8 con la raíz del equipo abierta y su ventana abierta; y otra vez con la raíz cifrada bloqueada. | Abierta: el código de su `.prdrive\` pasa a la vX sin tocar `sync_config.toml`, `state\` ni la clave. Bloqueada: el diario dice que su ventana lo ofrecerá, y al desbloquearla la ventana ofrece «Actualizar…». | `install/agente.actualizar_raices()`, `deploy.deploy_code()` |
 | V10 | W | V8 con una versión que cambie el Python fijado (`pins.py`). | El runtime nuevo va a su carpeta al lado; el viejo, con el que corría «Actualizar», **no** se borra esa vez y se recoge en la siguiente instalación. El agente nuevo arranca con el nuevo. | `install/agente.podar()` (conserva el de `sys.executable`) |
 | V11 | W | V8 sin red, y con un proxy que corte la descarga. | Aviso «no he podido actualizar»; el agente viejo sigue en marcha como estaba, y «Actualizar» se puede volver a pedir. | `update.download()`, `Agente._mirar_version()` |
-| V12 | L | V8 en Linux, que no tiene bandeja hasta la fase 6. | El aviso dice «python agente.py actualizar»; ejecutarlo hace lo mismo que la bandeja en Windows (autostart reescrito a la versión nueva). | `agente.cmd_actualizar()`, `install/agente.registrar()` en Linux |
+| V12 | L | V8 en Linux: con bandeja (KDE), desde su menú; sin ella (GNOME sin AppIndicator), con `python agente.py actualizar`. | Con bandeja, como V8. Sin ella, el aviso dice «python agente.py actualizar», y ejecutarlo hace lo mismo (autostart y acceso del menú reescritos a la versión nueva). | `Agente.con_bandeja()`, `agente.cmd_actualizar()`, `install/agente.registrar()` en Linux |
 
 ## Fase 6 — Bandeja en Linux
 
-*(se rellena al hacerla; el diseño ya pide KDE, GNOME con AppIndicator (Ubuntu)
-y GNOME sin ella (Fedora))*
+Nada de esto ha hablado con un escritorio: `ui/bandeja_linux.py` y la mitad que
+exporta de `common/dbus.py` solo han conversado con el bus de mentira de
+`tests/_bus_falso.py`, que contesta lo que la especificación dice que contesta
+un watcher. Lo que más puede fallar es lo que un anfitrión de verdad pregunta y
+el falso no (una propiedad que falte, una firma que no acepte), y el orden de
+arranque en el inicio de sesión. En cada prueba mirar `agente.log`, y con
+`busctl --user tree` / `busctl --user introspect org.kde.StatusNotifierItem-<pid>-1
+/StatusNotifierItem` lo que el agente exporta de verdad; `dbus-monitor --session`
+enseña lo que el anfitrión le pide.
+
+Equipos: **K** KDE Plasma (6, Wayland y X11); **U** Ubuntu con GNOME y su
+extensión AppIndicator; **F** Fedora con GNOME, sin ella. Donde se pueda,
+también un escritorio con waybar o XFCE (su bandeja es otra implementación del
+anfitrión).
+
+| Código | Dónde | Qué hacer | Qué se espera | Código a prueba |
+|---|---|---|---|---|
+| T1 | K, U | Iniciar sesión con el agente instalado. | El icono sale en la bandeja con la marca, nítido a escala 1 y 2 (se manda en 16, 22, 24, 32, 48 y 64 px), y al pasar el ratón «prdrive» y el estado. En `busctl --user list` está `org.kde.StatusNotifierItem-<pid>-1`. | `Bandeja.arrancar()` / `_registrar()`, `icons.pixmap_bandeja()` (ARGB32 en orden de red: si sale con los colores cambiados, el orden de los bytes está mal) |
+| T2 | K | Reiniciar `plasmashell` con el agente en marcha (`systemctl --user restart plasma-plasmashell`); y un inicio de sesión donde el agente arranque antes que el panel. | El icono vuelve solo: `NameOwnerChanged` del watcher lo registra otra vez. En el diario no queda «no tiene bandeja» si el panel llegó después. | `Bandeja._senal()` con `NameOwnerChanged`, `REGLA_WATCHER` |
+| T3 | K, U | Clic izquierdo y derecho en el icono; pinchar fuera; Esc. | El menú sale con los dos (`ItemIsMenu`); se cierra sin elegir nada. Las casillas marcadas donde toca, las entradas apagadas en gris, el submenú de «Sincronizar ahora» con dos unidades, y un nombre con `_` sale tal cual (sin letra subrayada). No hay negrita en «Abrir» (dbusmenu no tiene entrada por defecto). | `Menu.disposicion()` / `propiedades()`, `etiqueta()` |
+| T4 | K, U | Cada entrada, como B4: «Abrir», «Sincronizar ahora», «Pausar» / «Reanudar», «Cerrar el agente», y las de la raíz cifrada (B8). | Cada una hace lo suyo en uno o dos segundos. «Cerrar el agente» quita el icono. | `Event` / `EventGroup` → `Menu.pulsada()` → `Agente.pedir()` + `Vigia.despertar()` |
+| T5 | K, U | Con el menú abierto, que cambie el estado (termina una pasada, se enchufa una unidad). | El menú se actualiza al volver a abrirlo (`LayoutUpdated`); pulsar una entrada del menú viejo hace lo que decía, no otra cosa. | `Menu.poner()` (ids nuevos en cada cambio, la numeración anterior guardada) |
+| T6 | K, U | Los cinco estados de B5. | El icono cambia (`NewIcon`) y el texto al pasar el ratón también (`NewToolTip`); con avisos, Plasma lo marca como que pide atención (`NeedsAttention`) sin parpadear sin fin. | `_poner_pendiente()`, `Status` / `AttentionIconPixmap` |
+| T7 | F | Instalar «solo agente» y con raíz en GNOME sin la extensión. | El diario dice «este escritorio no tiene bandeja»; «Verificación» del asistente tiene la fila «Bandeja» en rojo con el nombre de la extensión. En el menú de aplicaciones hay un «prdrive». | `poner_bandeja()`, `tk_equipo.escritorio()` / `SIN_BANDEJA`, `install/agente.quiere_menu()` |
+| T8 | F | Desde ese «prdrive» del menú: con el agente parado (`agente.py parar`); en marcha sin raíz; en marcha con la raíz; con la raíz cifrada bloqueada. | Parado: lo arranca (y sin raíz lo dice con un aviso). Sin raíz: un aviso con el estado, lo mismo que diría el icono. Con raíz: su ventana. Bloqueada: VeraCrypt pide la contraseña y la ventana se abre al montarse. | `agente.cmd_abrir()` / `arrancar_agente()`, `bandeja.aviso_de_estado()` |
+| T9 | F | Activar la extensión AppIndicator con el agente en marcha (sin cerrar sesión). | El icono aparece solo, sin reiniciar el agente. | `NameOwnerChanged`, `StatusNotifierHostRegistered` |
+| T10 | K, U | Suspender y volver con un remoto sin conexión (B10). | Al volver, el diario muestra el sondeo enseguida (`PrepareForSleep(false)` de logind en el bus del sistema). | `REGLA_SUSPENDER`, `PIDE_DESPERTAR` |
+| T11 | K, U | Enchufar y quitar una unidad con la bandeja puesta. | Igual de rápido que sin ella: en Linux los montajes siguen llegando por `mountinfo`, no por la bandeja. | `Vigia` |
+| T12 | K | Cerrar sesión y volver a entrar; `agente.py parar`. | No queda un icono huérfano: al irse el agente, el watcher lo quita al perder su nombre el dueño. | `Bandeja.cerrar()` |

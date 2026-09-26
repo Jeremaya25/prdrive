@@ -397,14 +397,16 @@ def acceso_menu() -> Path:
 
 
 COMENTARIO_MENU = f"La ventana de {APP_NAME} de este equipo: sus parejas y su estado."
+COMENTARIO_SOLO = f"El agente de {APP_NAME}: lo arranca si no está, y dice cómo va."
 
 
-def menu_desktop(args: list[str], icono: Path | None = None) -> str:
+def menu_desktop(args: list[str], icono: Path | None = None,
+                 comentario: str = COMENTARIO_MENU) -> str:
     """La entrada del menú de aplicaciones (Desktop Entry Specification): visible,
     a diferencia del autostart, con el `Exec=` escapado como aquel."""
     return ("[Desktop Entry]\nType=Application\n"
             f"Name={APP_NAME}\n"
-            f"Comment={COMENTARIO_MENU}\n"
+            f"Comment={comentario}\n"
             f"Exec={penwatch.desktop_exec(args)}\n"
             + (f"Icon={icono}\n" if icono else "")
             + "Terminal=false\nCategories=Utility;\n")
@@ -482,10 +484,21 @@ def crear_lnk(destino: Path, objetivo: str, argumentos: str, carpeta: str,
             ole32.CoUninitialize()
 
 
-def poner_menu(prep: Preparado) -> str:
-    """El acceso «prdrive» del menú, que abre la ventana de la raíz del equipo
-    con el Python del agente (`agente.py abrir`). Se reescribe en cada
-    instalación: apunta a la versión del código, que cambia."""
+def quiere_menu(con_raiz: bool) -> bool:
+    """¿Lleva este equipo el acceso «prdrive» del menú? Con una raíz del equipo,
+    siempre: es su ventana. En Linux, además, siempre (fase 6): donde el
+    escritorio no tiene bandeja (GNOME sin la extensión AppIndicator), es lo
+    que arranca el agente o dice cómo va. En Windows la bandeja no falta."""
+    return con_raiz or not IS_WIN
+
+
+def poner_menu(prep: Preparado, con_raiz: bool | None = None) -> str:
+    """El acceso «prdrive» del menú (`agente.py abrir`), con el Python del
+    agente: abre la ventana de la raíz del equipo, y sin raíz arranca el agente
+    o dice cómo va. Se reescribe en cada instalación: apunta a la versión del
+    código, que cambia."""
+    if con_raiz is None:
+        con_raiz = bool(equipo.leer_ajustes().raices)
     destino = acceso_menu()
     icono = prep.codigo / "runsync.ico"
     try:
@@ -496,11 +509,15 @@ def poner_menu(prep: Preparado) -> str:
         else:
             destino.write_text(menu_desktop(
                 [str(prep.python), str(prep.codigo / "agente.py"), "abrir"],
-                icono if icono.is_file() else None), encoding="utf-8")
+                icono if icono.is_file() else None,
+                COMENTARIO_MENU if con_raiz else COMENTARIO_SOLO), encoding="utf-8")
     except (OSError, AttributeError) as e:
         return (f"No he podido crear el acceso del menú ({e}): la ventana se abre con "
                 f"«{prep.python} {prep.codigo / 'agente.py'} abrir».")
-    return f"Acceso «{APP_NAME}» en el menú del sistema: abre la ventana de este equipo."
+    if con_raiz:
+        return f"Acceso «{APP_NAME}» en el menú del sistema: abre la ventana de este equipo."
+    return (f"Acceso «{APP_NAME}» en el menú de aplicaciones: arranca el agente, o dice "
+            f"cómo va (donde el escritorio no tiene bandeja).")
 
 
 def quitar_menu() -> str | None:
@@ -596,10 +613,11 @@ def activar(prep: Preparado, elegidas: dict[str, tuple[str, str]], espera: float
     msgs.append(aplicar_unidades(elegidas, espera, raiz, pedir_al_iniciar))
     msgs += quitar_penwatch()
     msgs.append(registrar(prep))
-    # El acceso del menú solo tiene sentido con una raíz del equipo: es su
-    # ventana. Sin ella, cada unidad se abre desde sí misma.
-    if raiz is not None or equipo.leer_ajustes().raices:
-        msgs.append(poner_menu(prep))
+    # El acceso del menú: con una raíz del equipo, su ventana; sin ella, en
+    # Linux, lo que hace las veces de la bandeja donde no la hay.
+    con_raiz = raiz is not None or bool(equipo.leer_ajustes().raices)
+    if quiere_menu(con_raiz):
+        msgs.append(poner_menu(prep, con_raiz))
     store.write_json(equipo.instalacion_json(), {
         "version": version(), "codigo": str(prep.codigo), "python": str(prep.python),
         "runtime": penwatch.stamp_id(prep.sello), "instalado": store.stamp()})
@@ -648,8 +666,9 @@ def anadir(elegidas: dict[str, tuple[str, str]], espera: float,
         raise InstallError("No hay un agente instalado del que fiarse: instálalo.")
     msgs = [aplicar_unidades(elegidas, espera, raiz, pedir_al_iniciar)]
     msgs += quitar_penwatch()
-    if (raiz is not None or equipo.leer_ajustes().raices) and not acceso_menu().exists():
-        msgs.append(poner_menu(prep))
+    con_raiz = raiz is not None or bool(equipo.leer_ajustes().raices)
+    if quiere_menu(con_raiz) and (raiz is not None or not acceso_menu().exists()):
+        msgs.append(poner_menu(prep, con_raiz))
     if equipo.agente_vivo() is None:
         msgs.append(arrancar(prep))
     else:
@@ -707,8 +726,9 @@ def actualizar(progreso=None, origen: Path | None = None) -> list[str]:
     if parado:
         msgs.append(parado)
     msgs.append(registrar(prep))
-    if equipo.leer_ajustes().raices:
-        msgs.append(poner_menu(prep))
+    con_raiz = bool(equipo.leer_ajustes().raices)
+    if quiere_menu(con_raiz):
+        msgs.append(poner_menu(prep, con_raiz))
     store.write_json(equipo.instalacion_json(), {
         "version": version(), "codigo": str(prep.codigo), "python": str(prep.python),
         "runtime": penwatch.stamp_id(prep.sello), "instalado": store.stamp()})

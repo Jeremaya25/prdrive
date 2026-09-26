@@ -70,6 +70,7 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 │   ├── tk_agente.py   «¿Atender esta unidad?», a child process of the agent
 │   ├── bandeja.py     what the agent's tray shows and asks: PURE, no Tk
 │   ├── bandeja_windows.py  the Windows tray: Shell_NotifyIconW, its own thread
+│   ├── bandeja_linux.py    the Linux tray: StatusNotifierItem + dbusmenu, its own thread
 │   ├── tk_pairs.py · tk_repair.py · tk_conflicts.py · tk_fleet.py ·
 │   │   tk_watch.py · tk_update.py · tk_crypto.py · tk_doctor.py ·
 │   │   tk_qr.py · tk_versions.py · tk_volumen.py
@@ -183,7 +184,8 @@ python runsync.py --doctor     # any other args pass straight through to sync.py
 python penwatch.py install|status|probe|uninstall   # the watcher, per machine/user
 python agente.py run|status                         # the resident agent (host copy)
 python agente.py atender ID | modo ID MODO | pasada ID [pareja…] | pausa | sigue | parar
-python agente.py abrir [ID]                         # the window of the host root
+python agente.py abrir [ID]                         # the window of the host root (the menu entry;
+                                                    # starts a stopped agent, and with no root says how it is)
 python agente.py desbloquear [ID] | bloquear [ID]   # open / close the encrypted host root
 python agente.py ajuste pedir_al_iniciar sí|no      # or espera_unidad_nueva SEG
 python agente.py actualizar                         # fetch the new release and put it in place
@@ -1181,12 +1183,12 @@ script to `%LOCALAPPDATA%\prdriveWatch` / `~/.local/share/prdrive-watch`, writes
 
 ## The resident agent (`agente.py` + `common/planificador.py` + `install/agente.py`)
 
-Phases 1 to 5 of `docs/superpowers/specs/2026-09-25-instalacion-en-el-equipo-design.md`
+The six phases of `docs/superpowers/specs/2026-09-25-instalacion-en-el-equipo-design.md`
 (read it before touching this): the agent attends the prdrive drives plugged
 into the host and, optionally, **the host root** (below), plain or in a
-VeraCrypt container; with no root it is the **«solo agente»** install. On
-Windows it has a tray (below), and the window of a root talks to it (below).
-The last phase, the Linux tray, is specified there and not built yet.
+VeraCrypt container; with no root it is the **«solo agente»** install. It has
+a tray on Windows and on Linux (below), and the window of a root talks to it
+(below).
 **Nothing of this has run on a real machine**: what has to be
 checked there, phase by phase, is the living list in
 `docs/superpowers/pruebas/2026-09-25-equipo-pendiente-en-real.md` — add to it
@@ -1243,9 +1245,16 @@ whatever you build that only a real host can prove.
   on real Windows**). No Tk in the agent process: `tests/test_install_agente.py`
   checks `tkinter` isn't in `sys.modules` after importing it.
 - **`common/dbus.py`** cites the *D-Bus Specification* like `ui/qr.py` cites
-  ISO/IEC 18004 — keep the citations. Client half only (address, EXTERNAL,
-  marshalling, calls, properties, `AddMatch`); exporting objects is the Linux
-  tray's phase. `tests/test_dbus.py` pins the canonical `Hello` bytes.
+  ISO/IEC 18004 — keep the citations. The calling half (address, EXTERNAL,
+  marshalling, calls, properties, `AddMatch`) and, for the Linux tray, the
+  answering half: `pedir_nombre()`, `exportar(ruta, Interfaz…)` (methods with
+  their in/out signatures, read-only properties), `emitir()`, `atender()`, and
+  `Peer` / `Introspectable` / `Properties` answered for every exported path.
+  A call that arrives while `llamar()` waits is answered then and there when
+  something is exported (a watcher may ask before it replies); a handler's
+  exception is a `Failed` error for the caller, never a crash.
+  `tests/test_dbus.py` pins the canonical `Hello` bytes; `tests/_bus_falso.py`
+  is a bus that also calls the client, as a tray host does.
 - **Detection** reuses `penwatch.candidate_roots()` (still the one drive walk):
   Linux wakes on `POLLPRI` of `/proc/self/mountinfo` and bursts; Windows bursts
   on the tray window's `WM_DEVICECHANGE` (both then fall back to a 30 s walk),
@@ -1386,7 +1395,7 @@ the carpeta itself on Linux (`crypto.mount_container(punto_fijo=)`), and
   `ESPERA_ABRIR` passed) is forgotten (`_seguir_desbloqueos()`) so it is
   offered again.
 
-### The tray (phase 4: Windows)
+### The tray (phase 4: Windows; phase 6: Linux)
 
 Same split as the rest of `ui/`: **`ui/bandeja.py` decides, `ui/bandeja_windows.py`
 draws**, and neither imports tkinter (`test_install_agente.py` checks it).
@@ -1431,9 +1440,45 @@ draws**, and neither imports tkinter (`test_install_agente.py` checks it).
     `avisos.GLOBO`; without it, `avisos` falls back to its temporary icon.
 - **Walks with a tray**: `cmd_run()` bursts on `WM_DEVICECHANGE` and falls back
   to `RECORRIDO_RESPALDO` (30 s); without one (`poner_bandeja()` → None, an
-  indirection point) it keeps penwatch's 5 s. Linux has no tray until phase 6.
+  indirection point) it keeps penwatch's 5 s. On Linux the walk is
+  mountinfo's either way; the tray changes nothing there.
 - «Cerrar el agente» is `PIDE_PARAR`: the next logon starts it again. Not in the
   spec's list; there is no other way to close a tray icon.
+
+**Linux (`ui/bandeja_linux.py`, phase 6)** draws the same `bandeja.Vista` on
+the session bus, with its own thread and connection (the agent talks to it via
+`poner()` / `cerrar()`, which write a pipe the thread selects on). Cite the
+*StatusNotifierItem* and *dbusmenu* specifications like the D-Bus one. Not to
+weaken:
+- **Name, path, register**: `org.kde.StatusNotifierItem-<pid>-1` owns
+  `/StatusNotifierItem` (interface `org.kde.StatusNotifierItem`), registered
+  with `RegisterStatusNotifierItem` on `org.kde.StatusNotifierWatcher`; the menu
+  is `com.canonical.dbusmenu` v3 at `/MenuBar`, which the item's `Menu`
+  property names. The icon is `IconPixmap`, `a(iiay)` **ARGB32 in network
+  byte order, not premultiplied** (`icons.pixmap_bandeja()`, 16–64 px, painted
+  lazily and cached); changes are `NewIcon` / `NewToolTip` / `NewStatus`, and
+  `NeedsAttention` with avisos. `ItemIsMenu` so the left click opens the menu
+  too; `Activate` (for hosts that call it anyway) does the `defecto` entry.
+- **dbusmenu ids are renumbered on every change** (`bl.Menu.poner()`, only when
+  the entries actually differ) and `LayoutUpdated` is emitted; the previous
+  numbering is kept, so a click from a menu that was open means what it said.
+  `_` in labels is doubled (dbusmenu mnemonic). There is no default entry, so
+  no bold.
+- **No watcher is not «no tray forever»**: `arrancar()` succeeds with the
+  session bus, `puesta` is False until a watcher with a host exists, and
+  `NameOwnerChanged` / `StatusNotifierHostRegistered` register it when one
+  appears or restarts (Linux's `TaskbarCreated`). `Agente.con_bandeja()` (not
+  `bandeja is not None`) decides whether a notice may say «from the tray icon».
+- **The fallback is the menu entry**: on Linux `install/agente.quiere_menu()`
+  puts the «prdrive» `.desktop` even without a host root, and `agente.py abrir`
+  starts a stopped agent (`arrancar_agente()`), opens the root's window, or with
+  no root sends `bandeja.aviso_de_estado()` as a notification. «Verificación»
+  has a «Bandeja» row (`tk_equipo.escritorio()`, one bus connection for it and
+  the notifications row) naming the GNOME extension when there is no watcher.
+- **Resume from suspend** is `PrepareForSleep(false)` from logind on the
+  **system** bus, heard in the tray thread → `PIDE_DESPERTAR`; no system bus,
+  no resume signal, nothing else lost.
+- `tests/test_bandeja_linux.py` drives it all over `tests/_bus_falso.py`.
 
 ### The window ↔ the agent (phase 5)
 
@@ -1795,7 +1840,9 @@ keeps the target's existing header.
   `vestibulo.retenido()`, `cifrado.pedir_bloqueo()`, `agente.poner_bandeja()`, the tray's
   `bandeja_windows.Api`, `agente.hilo()` / `buscar_version()` / `ejecutar()` /
   `cache_version()`, `runsync.pedir_reanudar()` / `agente_sirve()`,
-  `watch.pedir_al_agente()`, and `equipo.DIR`. Keep new ones in that shape.
+  `watch.pedir_al_agente()`, `agente.arrancar_agente()`, `tk_equipo.escritorio()`,
+  the Linux tray's `conectar` / `conectar_sistema`, and `equipo.DIR`. Keep new
+  ones in that shape.
 
 ## Documentation
 

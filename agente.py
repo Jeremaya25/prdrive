@@ -79,10 +79,14 @@ la contraseña pase nunca por él:
 Avisa con los avisos del sistema (`common/avisos.py`), no con Tk, y solo cuando
 una pareja EMPIEZA a fallar. Sin avisos, queda en su diario.
 
-En Windows tiene un icono en la bandeja (fase 4): `ui/bandeja.py` decide qué
-enseña a partir de `resumen()`, `ui/bandeja_windows.py` lo dibuja en su propio
-hilo, y lo que se elige en su menú llega como las peticiones del buzón
-(`Agente.pedir()`), por el mismo camino.
+Tiene un icono en la bandeja: `ui/bandeja.py` decide qué enseña a partir de
+`resumen()`, y lo dibuja en su propio hilo `ui/bandeja_windows.py` en Windows
+(fase 4) o `ui/bandeja_linux.py` en Linux (fase 6, StatusNotifierItem). Lo que
+se elige en su menú llega como las peticiones del buzón (`Agente.pedir()`), por
+el mismo camino. Donde el escritorio no tiene bandeja (GNOME sin la extensión
+AppIndicator), hace sus veces el acceso «prdrive» del menú de aplicaciones:
+`agente.py abrir` arranca el agente si no está, abre la ventana de la raíz o,
+sin raíz, dice con un aviso cómo va.
 
 La ventana de una raíz le habla por dos buzones (fase 5): lo del equipo por
 `agente.pide`, y lo de esa raíz —«Iniciar servicio» (`reanudar`), «Bloquear»—
@@ -1259,7 +1263,7 @@ class Agente:
             self.nueva_avisada = self.nueva
             avisar(f"Hay una versión nueva de {APP_NAME}: {self.nueva}",
                    f"Tienes la {self.version or 'desconocida'}. "
-                   + ("Actualízala desde su icono de la bandeja." if self.bandeja
+                   + ("Actualízala desde su icono de la bandeja." if self.con_bandeja()
                       else "Para ponerla: python agente.py actualizar"))
         if ahora - self.version_mirada < MIRAR_VERSION:
             return
@@ -1274,6 +1278,10 @@ class Agente:
             self.nueva = rel.tag if rel is not None else None
 
         hilo(trabajo)
+
+    def con_bandeja(self) -> bool:
+        """¿Hay un icono en la bandeja que ofrezca lo que se dice en un aviso?"""
+        return self.bandeja is not None and bool(getattr(self.bandeja, "puesta", True))
 
     def _actualizar(self) -> None:
         """«Actualizar»: un hijo suelto (`agente.py actualizar`) que baja la
@@ -1621,22 +1629,36 @@ class Vigia:
 # ---------------------------------------------------------------------------
 
 def poner_bandeja(agente: Agente, vigia: Vigia) -> Any:
-    """La bandeja del agente, o None si en este sistema no la hay todavía o no
-    se ha podido poner. Punto de indirección: los tests no ponen ninguna.
+    """La bandeja del agente, o None si no se ha podido poner. Punto de
+    indirección: los tests no ponen ninguna.
 
-    Windows (fase 4). En Linux la bandeja es la fase 6: mientras tanto, el menú
-    del sistema, la línea de órdenes y los avisos."""
+    Windows (fase 4): `Shell_NotifyIconW`. Linux (fase 6): StatusNotifierItem
+    en el bus de sesión; sin nadie que haga de `StatusNotifierWatcher` la
+    bandeja existe pero sin icono (`puesta` False), se dice en el diario, y el
+    icono se pone solo si el watcher aparece después. Mientras, el acceso
+    «prdrive» del menú hace sus veces."""
+
+    def pedir(peticion: dict) -> None:
+        agente.pedir(peticion)
+        vigia.despertar()
+
     if not IS_WIN:
-        return None
+        from ui import bandeja_linux
+        b = bandeja_linux.Bandeja(pedir)
+        if not b.arrancar():
+            diario("sin bus de sesión: sigo sin bandeja (el acceso del menú hace sus "
+                   "veces)")
+            return None
+        if not b.puesta:
+            diario(f"este escritorio no tiene bandeja (nadie es {bandeja_linux.WATCHER}): "
+                   f"el acceso «{APP_NAME}» del menú hace sus veces; si aparece una, el "
+                   f"icono se pone solo")
+        return b
     from ui import bandeja_windows, icons
     try:
         icons.write_bandeja(SCRIPT_DIR, solo_si_faltan=True)
     except Exception as e:                              # noqa: BLE001
         diario(f"no he podido pintar los iconos de la bandeja: {e}")
-
-    def pedir(peticion: dict) -> None:
-        agente.pedir(peticion)
-        vigia.despertar()
 
     b = bandeja_windows.Bandeja(SCRIPT_DIR, pedir, lambda: vigia.despertar(montajes=True))
     if not b.arrancar():
@@ -1814,14 +1836,47 @@ def raiz_para_abrir(uid: str | None) -> tuple[Path | None, str]:
     return Path(raices[0].ruta), ""
 
 
+def arrancar_agente() -> bool:
+    """El agente, arrancado desde `abrir` cuando no está en marcha (se cerró con
+    «Cerrar el agente», o la sesión no lo arrancó): suelto, fuera de toda raíz."""
+    try:
+        lanzar([python(), str(SCRIPT_DIR / "agente.py"), "run"],
+               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+               **_opciones_hijo(equipo.DIR, separado=True))
+    except OSError as e:
+        print(f"No he podido arrancar el agente: {e}", file=sys.stderr)
+        return False
+    return True
+
+
 def cmd_abrir(args: argparse.Namespace) -> int:
-    """La ventana de runsync de la raíz, con el Python del agente y el directorio
-    de trabajo fuera de ella: la raíz del equipo no lleva Python propio. Es lo
-    que lanza el acceso «prdrive» del menú del sistema."""
+    """El acceso «prdrive» del menú del sistema, que en un escritorio sin
+    bandeja hace sus veces (fase 6):
+
+      * con el agente parado, lo arranca;
+      * con una raíz en este equipo, abre su ventana de runsync, con el Python
+        del agente y el directorio de trabajo fuera de ella (la raíz del equipo
+        no lleva Python propio); bloqueada, pide antes desbloquearla;
+      * sin raíz («solo agente»), dice con un aviso cómo va el agente."""
+    _enganchar_penwatch()
+    vivo = equipo.agente_vivo() is not None
+    arrancado = False if vivo else arrancar_agente()
     raiz, porque = raiz_para_abrir(args.id)
     if raiz is None:
-        print(porque, file=sys.stderr)
-        return 1
+        if args.id or equipo.leer_ajustes().raices:
+            print(porque, file=sys.stderr)
+            return 1
+        if not vivo:
+            if not arrancado:
+                return 1
+            print("Agente arrancado.")
+            avisar(f"{APP_NAME}: agente arrancado",
+                   "Atiende las unidades de su lista en cuanto se enchufen.")
+            return 0
+        titulo, texto = bandeja.aviso_de_estado(equipo.leer_estado())
+        print(f"{titulo}\n{texto}")
+        avisar(titulo, texto)
+        return 0
     if not presente(raiz):
         unidad = equipo.leer_ajustes().unidades.get(args.id or "") \
             or next((u for u in equipo.leer_ajustes().raices.values()
@@ -1832,7 +1887,7 @@ def cmd_abrir(args: argparse.Namespace) -> int:
         # Cerrada: se le pide al agente que la desbloquee (la contraseña la
         # pide VeraCrypt) y se abre la ventana en cuanto aparezca. Es lo que
         # hace el acceso «prdrive» del menú con la raíz bloqueada.
-        if equipo.agente_vivo() is None:
+        if not (vivo or arrancado):
             print(f"{raiz} está bloqueada y el agente no está en marcha: no hay quien "
                   f"la desbloquee.", file=sys.stderr)
             return 1

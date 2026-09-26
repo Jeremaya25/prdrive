@@ -1,11 +1,12 @@
 # Instalación en el equipo: prdrive residente
 
-Fecha: 2026-09-25 · Estado: **aceptada**; fases 1 a 5 implementadas (el agente
-sin bandeja, con unidades: `agente.py`, `common/planificador.py`,
+Fecha: 2026-09-25 · Estado: **aceptada**; las seis fases implementadas (el
+agente sin bandeja, con unidades: `agente.py`, `common/planificador.py`,
 `install/agente.py`; la raíz del equipo sin cifrar: `install/raiz_equipo.py`,
 `ui/tk_equipo.py`; cifrada con VeraCrypt; la bandeja de Windows:
-`ui/bandeja.py`, `ui/bandeja_windows.py`; y la ventana ↔ el agente con
-«Actualizar»; **sin probar en real**) · Versión
+`ui/bandeja.py`, `ui/bandeja_windows.py`; la ventana ↔ el agente con
+«Actualizar»; y la bandeja de Linux: `ui/bandeja_linux.py`; **sin probar en
+real**) · Versión
 objetivo: 0.4.0 · Lo que falta probar en equipos reales:
 `docs/superpowers/pruebas/2026-09-25-equipo-pendiente-en-real.md`
 
@@ -717,7 +718,30 @@ una fase no está acabada hasta que su sección está escrita allí.
 6. **Bandeja en Linux**: la mitad que exporta objetos de `common/dbus.py`,
    `org.kde.StatusNotifierItem` + `com.canonical.dbusmenu`, y la caída al
    lanzador cuando no hay `StatusNotifierWatcher`. Se prueba en real en KDE, en
-   GNOME con AppIndicator (Ubuntu) y en GNOME sin ella (Fedora).
+   GNOME con AppIndicator (Ubuntu) y en GNOME sin ella (Fedora). Hecho así, y
+   en cinco cosas precisado o distinto de lo escrito arriba:
+   - **«Lo sabe al arrancar» no basta**: al iniciar sesión el agente puede
+     llegar antes que el panel, igual que en Windows antes que la barra de
+     tareas. La bandeja se queda en el bus escuchando `NameOwnerChanged` del
+     watcher (y `StatusNotifierHostRegistered`): si aparece después, o Plasma
+     se reinicia, el icono se pone solo. Sin él, el diario lo dice y hace sus
+     veces el lanzador.
+   - **El lanzador es el acceso «prdrive» del menú de la fase 2**, que en
+     Linux se pone ahora también sin raíz del equipo. `agente.py abrir`
+     arranca el agente si no está; con raíz abre su ventana (bloqueada, pide
+     antes desbloquearla); sin raíz dice con un aviso cómo va
+     (`bandeja.aviso_de_estado()`, lo mismo que diría el icono). En Windows
+     sigue solo con raíz: allí la bandeja no falta.
+   - **La verificación** del asistente tiene una fila «Bandeja» en Linux, en
+     rojo cuando no hay watcher, con el nombre de la extensión de GNOME
+     («AppIndicator and KStatusNotifierItem Support»).
+   - **dbusmenu no tiene entrada por defecto**: «Abrir» no va en negrita. El
+     clic izquierdo saca el menú (`ItemIsMenu`); un anfitrión que llame a
+     `Activate` de todos modos recibe esa entrada. Con avisos, el `Status`
+     es `NeedsAttention`.
+   - **La vuelta de la suspensión** se escucha en la bandeja
+     (`PrepareForSleep` de logind en el bus del sistema) y pide `despertar`,
+     como `WM_POWERBROADCAST` en Windows.
 
 Para después: parejas ejecutadas en el propio proceso, reaccionar a los cambios
 de ficheros, `rclone rcd`, sincronizar la unidad con el equipo sin pasar por el
@@ -748,6 +772,9 @@ unidades ajenas.
   - que el `StatusNotifierItem` y el `dbusmenu` exportados contestan a lo que
     pregunta un `StatusNotifierWatcher`;
   - la caída al lanzador cuando no hay ninguno.
+
+  Estos dos últimos están en `test_bandeja_linux.py`, con el bus de
+  `tests/_bus_falso.py`, que además hace de watcher y de anfitrión.
 - `test_agente_contrato.py`: raíces falsas con `daemon.lock.json`,
   `daemon.stop` y `ui.lock.json` escritos como lo haría un `runsync` viejo.
   Comprueba la pausa, el apartarse ante otro servicio y la vuelta.
