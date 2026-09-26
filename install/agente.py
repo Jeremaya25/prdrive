@@ -113,8 +113,9 @@ def copiar_codigo(origen: Path | None = None) -> Path:
     try:
         from ui import icons                    # sin Tk: rasteriza él solo
         icons.write_ico(trabajo / "runsync.ico")
+        icons.write_bandeja(trabajo)            # los cinco estados de la bandeja
     except Exception:                           # noqa: BLE001
-        pass                    # sin icono los avisos de Windows usan el del sistema
+        pass            # sin iconos: el agente repinta los de la bandeja al arrancar
     viejo = destino.with_name(f".{destino.name}.viejo-{os.getpid()}")
     try:
         if destino.exists():

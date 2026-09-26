@@ -870,8 +870,8 @@ python prdrive-install.py --desinstalar-agente # quitarlo (no toca ninguna unida
 
 Puede sincronizar además **una carpeta del propio equipo**, la raíz del equipo
 (abajo), o no tener ninguna y solo atender unidades: la instalación **«solo
-agente»**. El icono en la bandeja, la raíz cifrada con VeraCrypt y la ventana
-hablando con el agente llegan más adelante; el diseño completo está en
+agente»**. El icono en la bandeja de Linux y la ventana hablando con el agente
+llegan más adelante; el diseño completo está en
 `docs/superpowers/specs/2026-09-25-instalacion-en-el-equipo-design.md`.
 
 - **Vive fuera de toda unidad**, en `%LOCALAPPDATA%\prdrive\` o en
@@ -915,8 +915,18 @@ hablando con el agente llegan más adelante; el diseño completo está en
   D-Bus (un cliente propio, sin dependencias: `common/dbus.py`); en Windows con
   el globo del área de notificación. Sin avisos, queda en su diario,
   `agente.log`.
-- **Detecta las unidades** con el mismo recorrido que penwatch, pero en Linux se
-  despierta cuando cambian los montajes en vez de sondear cada 5 segundos. Las
+- **Tiene un icono en la bandeja de Windows** que dice cómo va (al día,
+  sincronizando, un aviso, en pausa, la raíz cifrada bloqueada) y, con clic
+  derecho o izquierdo, un menú: **Abrir** la raíz de este equipo o una unidad
+  de su lista, **Sincronizar ahora**, **Pausar**/**Reanudar**, **Desbloquear**
+  y **Bloquear** la raíz cifrada con la casilla «Pedir la contraseña al iniciar
+  sesión», **Atender…** una unidad a la que dijiste «Ahora no» mientras siga
+  enchufada, y **Cerrar el agente** (vuelve a arrancar al iniciar sesión). En
+  Linux la bandeja llega más adelante; mientras tanto, las órdenes de abajo y el
+  acceso «prdrive» del menú.
+- **Detecta las unidades** con el mismo recorrido que penwatch, pero sin sondear
+  cada 5 segundos: en Linux se despierta cuando cambian los montajes, y en
+  Windows con el aviso de dispositivo que recibe la ventana oculta de la bandeja. Las
   unidades VeraCrypt de su lista se abren como con penwatch: VeraCrypt pide la
   contraseña en su ventana, una vez por conexión.
 - **Se registra por usuario, sin administrador**: en Windows con una tarea
@@ -935,7 +945,7 @@ python agente.py ajuste pedir_al_iniciar no      # no pedir su contraseña al en
 
 Esas órdenes no tocan nada por sí mismas: dejan la petición en el buzón del
 agente (`agente.pide`), y él escribe su configuración. **Sin probar todavía en un
-Windows real**: la tarea programada, los avisos (`Shell_NotifyIconW`), la batería,
+Windows real**: la tarea programada, la bandeja y los avisos (`Shell_NotifyIconW`), la batería,
 la red de uso medido (`INetworkCostManager`) y el acceso del menú Inicio
 (`IShellLinkW`).
 
@@ -1213,6 +1223,8 @@ prdrive/
 │   ├── theme.py       la paleta, las fuentes y los estilos ttk. Sin ventana
 │   ├── icons.py       los iconos, rasterizados aquí. Sin dependencias
 │   ├── qr.py          el codificador de códigos QR. Sin dependencias, sin Tk
+│   ├── bandeja.py     qué enseña la bandeja del agente: puro, sin Tk
+│   ├── bandeja_windows.py  la bandeja de Windows (Shell_NotifyIconW), sin Tk
 │   ├── tk*.py         solo dibujan
 │   ├── repair.py      qué hacer con cada avería: los planes de reparación
 │   └── *_editor.py    lo que decide y toca disco. Sin Tk, probado sin pantalla

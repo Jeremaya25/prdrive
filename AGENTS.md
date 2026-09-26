@@ -68,6 +68,8 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 │   ├── tk_install.py  the install wizard          (every tk_* draws only)
 │   ├── tk_equipo.py   the wizard's «En este equipo» steps
 │   ├── tk_agente.py   «¿Atender esta unidad?», a child process of the agent
+│   ├── bandeja.py     what the agent's tray shows and asks: PURE, no Tk
+│   ├── bandeja_windows.py  the Windows tray: Shell_NotifyIconW, its own thread
 │   ├── tk_pairs.py · tk_repair.py · tk_conflicts.py · tk_fleet.py ·
 │   │   tk_watch.py · tk_update.py · tk_crypto.py · tk_doctor.py ·
 │   │   tk_qr.py · tk_versions.py · tk_volumen.py
@@ -1176,12 +1178,12 @@ script to `%LOCALAPPDATA%\prdriveWatch` / `~/.local/share/prdrive-watch`, writes
 
 ## The resident agent (`agente.py` + `common/planificador.py` + `install/agente.py`)
 
-Phases 1 to 3 of `docs/superpowers/specs/2026-09-25-instalacion-en-el-equipo-design.md`
+Phases 1 to 4 of `docs/superpowers/specs/2026-09-25-instalacion-en-el-equipo-design.md`
 (read it before touching this): the agent attends the prdrive drives plugged
 into the host and, optionally, **the host root** (below), plain or in a
-VeraCrypt container; with no root it is the **«solo agente»** install. The later
-phases (the trays, window ↔ agent mailboxes, «Actualizar») are specified there
-and not built yet. **Nothing of this has run on a real machine**: what has to be
+VeraCrypt container; with no root it is the **«solo agente»** install. On
+Windows it has a tray (below). The later phases (window ↔ agent mailboxes,
+«Actualizar», the Linux tray) are specified there and not built yet. **Nothing of this has run on a real machine**: what has to be
 checked there, phase by phase, is the living list in
 `docs/superpowers/pruebas/2026-09-25-equipo-pendiente-en-real.md` — add to it
 whatever you build that only a real host can prove.
@@ -1240,8 +1242,9 @@ whatever you build that only a real host can prove.
   marshalling, calls, properties, `AddMatch`); exporting objects is the Linux
   tray's phase. `tests/test_dbus.py` pins the canonical `Hello` bytes.
 - **Detection** reuses `penwatch.candidate_roots()` (still the one drive walk):
-  Linux wakes on `POLLPRI` of `/proc/self/mountinfo` and bursts; Windows polls
-  every `penwatch.POLL_SECONDS` until the tray's `WM_DEVICECHANGE`. Two sightings
+  Linux wakes on `POLLPRI` of `/proc/self/mountinfo` and bursts; Windows bursts
+  on the tray window's `WM_DEVICECHANGE` (both then fall back to a 30 s walk),
+  and without a tray polls every `penwatch.POLL_SECONDS` like penwatch. Two sightings
   before a drive counts. VeraCrypt vestibules of LISTED drives are opened once
   per connection (`penwatch.open_container(root, cwd=…)`), never for others;
   a disconnection is recorded as «already asked» until a walk shows no vestibule
@@ -1373,6 +1376,60 @@ the carpeta itself on Linux (`crypto.mount_container(punto_fijo=)`), and
   (`raiz_equipo.restos()`: red in the step on Windows, a red row in
   «Verificación»); on Linux the mount point must be empty, so it is refused.
   Uninstalling never closes or deletes the container, and says if it is open.
+- A «Desbloquear» in flight is an `agente.Desbloqueo` holding VeraCrypt's
+  process: a second one does not launch another password window, and one that
+  never shows the root open (VeraCrypt exited `GRACIA_ABRIR` ago, or
+  `ESPERA_ABRIR` passed) is forgotten (`_seguir_desbloqueos()`) so it is
+  offered again.
+
+### The tray (phase 4: Windows)
+
+Same split as the rest of `ui/`: **`ui/bandeja.py` decides, `ui/bandeja_windows.py`
+draws**, and neither imports tkinter (`test_install_agente.py` checks it).
+
+- **`bandeja.vista(resumen)` is pure**: from `Agente.resumen()` (what goes to
+  `estado.json`, which gained `equipo` — each host root with its state —
+  `pedir_al_iniciar`, and per drive `en_lista`/`ahora_no`/`preguntando`/
+  `error`/`fallando`) it returns the icon, the tooltip and the menu tree.
+  Every `Entrada` carries **mailbox-shaped requests** (`equipo.PIDE_*`); the
+  agent takes them through `Agente.pedir()` → a `queue.SimpleQueue` drained in
+  `_buzon()` with the file mailbox, so there is one handler for both. New:
+  `PIDE_ABRIR` (the window of a root: `_lanzar_ventana()`, which checks only the
+  UI lock — our own service lock is expected and runsync pauses it; a locked
+  encrypted root is unlocked first with `abrir=True` and its window opens on
+  connect) and `PIDE_DESPERTAR` (back from suspend: re-read battery/network,
+  probe every offline remote now, burst the walk).
+- **Never «Abrir» for a drive that is not in the list**, even asked by hand:
+  that is running its code before the yes. It gets «…, conectada · Atender…».
+- **Icon priority** (`bandeja.estado()`): pause > a pass in flight > avisos
+  (failing pairs, a root's `error`, offline remotes, a missing root, a ghost) >
+  held by battery/metered (pause icon) > an encrypted root locked (not an
+  aviso: it is the normal state) > bien. The five `.ico` are
+  `icons.capas_bandeja()` — the brand plus a corner badge whose **colour** is
+  what reads at 16 px — painted by `copiar_codigo()` and, if missing, by the
+  agent on start (`write_bandeja(solo_si_faltan=True)`), never copied.
+- **`bandeja_windows.Bandeja`** runs its own thread with its window and message
+  loop; the agent talks to it only via `PostMessageW` (`poner()`, `globo()`,
+  `cerrar()`), it talks back via `pedir()` and `montajes()` (→
+  `Vigia.despertar()`, which on Linux writes a pipe polled beside mountinfo).
+  Everything Win32 is in `Api`; `tests/test_bandeja_windows.py` drives the rest
+  with a fake one and a real queue-based loop. Not to weaken:
+  - **A hidden top-level window, not a message-only one** (the spec said
+    message-only): those get no broadcasts, and `WM_DEVICECHANGE` for volumes
+    (VeraCrypt's `BroadcastDeviceChange()`) and `TaskbarCreated` are broadcasts.
+  - **`arrancar()` succeeds with the window, not the icon**: at logon the
+    taskbar may not exist yet, `NIM_ADD` fails, and `TaskbarCreated` adds it
+    later (also after an Explorer restart).
+  - The menu is `TrackPopupMenu(TPM_RETURNCMD)` after `SetForegroundWindow`,
+    with a `WM_NULL` after it, or it does not close when clicking away; `&` in
+    names is doubled (`texto_menu()`).
+  - Notices hang off the tray icon (`NIM_MODIFY` + `NIF_INFO`) through
+    `avisos.GLOBO`; without it, `avisos` falls back to its temporary icon.
+- **Walks with a tray**: `cmd_run()` bursts on `WM_DEVICECHANGE` and falls back
+  to `RECORRIDO_RESPALDO` (30 s); without one (`poner_bandeja()` → None, an
+  indirection point) it keeps penwatch's 5 s. Linux has no tray until phase 6.
+- «Cerrar el agente» is `PIDE_PARAR`: the next logon starts it again. Not in the
+  spec's list; there is no other way to close a tray icon.
 
 ## Conflicts & failures (`conflicts.py`, `results.py`, `ui/conflict_editor.py`)
 
@@ -1679,7 +1736,8 @@ keeps the target's existing header.
   `install.agente.conseguir_runtime()` / `lanzar()` / `autostart_file()` /
   `acceso_menu()` / `crear_lnk()`, `raiz_equipo.carpetas_sincronizadas()` /
   `veracrypt_instalado()` / `abrir_o_crear()`, `penwatch.installed_veracrypt()`,
-  `vestibulo.retenido()`, `cifrado.pedir_bloqueo()`, and `equipo.DIR`. Keep new ones in that shape.
+  `vestibulo.retenido()`, `cifrado.pedir_bloqueo()`, `agente.poner_bandeja()`, the tray's
+  `bandeja_windows.Api`, and `equipo.DIR`. Keep new ones in that shape.
 
 ## Documentation
 

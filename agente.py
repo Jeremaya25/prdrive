@@ -29,8 +29,9 @@ Cómo trabaja, vuelta a vuelta (`Agente.vuelta()`):
      `penwatch.candidate_roots()`, pero no cada 5 s: en Linux se despierta
      cuando cambia `/proc/self/mountinfo` (`POLLPRI`), y de ahí una racha de
      sondeos, porque un volumen cifrado se lee bastante después de montarse. En
-     Windows, hasta que la bandeja traiga su ventana para `WM_DEVICECHANGE`,
-     sondea como penwatch. Una unidad cuenta cuando se ha visto dos veces seguidas.
+     Windows, con el `WM_DEVICECHANGE` que recibe la ventana de la bandeja; sin
+     bandeja, sondea como penwatch. Una unidad cuenta cuando se ha visto dos
+     veces seguidas.
   2. **Pregunta** por las unidades que no conoce (sección «Una unidad nueva» del
      diseño): un aviso y una ventanita con cuenta atrás; sin respuesta es «Ahora
      no», solo para esta conexión. Antes del sí no se ejecuta NADA de la unidad:
@@ -77,6 +78,11 @@ la contraseña pase nunca por él:
 Avisa con los avisos del sistema (`common/avisos.py`), no con Tk, y solo cuando
 una pareja EMPIEZA a fallar. Sin avisos, queda en su diario.
 
+En Windows tiene un icono en la bandeja (fase 4): `ui/bandeja.py` decide qué
+enseña a partir de `resumen()`, `ui/bandeja_windows.py` lo dibuja en su propio
+hilo, y lo que se elige en su menú llega como las peticiones del buzón
+(`Agente.pedir()`), por el mismo camino.
+
 Depende de `penwatch.py` para detectar, leer los registros de runsync y abrir
 VeraCrypt: el agente importa de penwatch, nunca al revés, y penwatch sigue sin
 importar nada del proyecto.
@@ -87,8 +93,10 @@ from __future__ import annotations
 import argparse
 import math
 import os
+import queue
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -103,7 +111,7 @@ from common import (APP_NAME, avisos, catalog, equipo, model, moderacion,  # noq
                     store, vestibulo)
 from common import planificador as pl  # noqa: E402
 from common.store import pid_alive  # noqa: E402
-from ui import prefs  # noqa: E402
+from ui import bandeja, prefs  # noqa: E402
 
 try:
     import tomllib
@@ -115,8 +123,8 @@ HOST = equipo.HOST
 APP_SUBDIR = penwatch.APP_SUBDIR
 
 TICK = 2.0                      # cada cuánto se mira lo barato: stop, ventana, hijos
-RECORRIDO_WINDOWS = penwatch.POLL_SECONDS   # sin WM_DEVICECHANGE todavía: como penwatch
-RECORRIDO_RESPALDO = 30.0       # Linux: aunque mountinfo no diga nada
+RECORRIDO_WINDOWS = penwatch.POLL_SECONDS   # Windows sin bandeja: sin WM_DEVICECHANGE, como penwatch
+RECORRIDO_RESPALDO = 30.0       # aunque mountinfo o WM_DEVICECHANGE no digan nada
 RAFAGA = 60.0                   # tras un cambio de montajes, recorrer en cada vuelta
 ESTABLE = penwatch.STABLE_CHECKS
 GRACIA = 15.0                   # tras ver la ventana o un stop, antes de volver
@@ -126,6 +134,7 @@ ESPERA_VENTANA = 60.0           # «Bloquear» con su ventana abierta: lo que se
 ESPERA_DESMONTAJE = 300.0       # a que VeraCrypt cierre (puede estar preguntando)
 GRACIA_DESMONTAJE = 5.0         # tras salir VeraCrypt, a que el `.hc` quede libre
 ESPERA_ABRIR = 180.0            # `abrir` con la raíz cerrada: a que se desbloquee
+GRACIA_ABRIR = 20.0             # tras salir VeraCrypt, a ver la raíz abierta; si no, cancelada
 COLA_SALIDA = 64 * 1024         # lo que se lee de la salida de una pasada
 
 OK, FALLO, RED, SALTADA = pl.OK, pl.FALLO, pl.RED, pl.SALTADA
@@ -379,6 +388,15 @@ class Conexion:
 
 
 @dataclass
+class Desbloqueo:
+    """«Desbloquear», lanzado: VeraCrypt está pidiendo la contraseña."""
+    desde: float
+    proc: Any = None                    # el VeraCrypt que monta
+    salio: float | None = None          # cuándo se vio que había salido
+    abrir: bool = False                 # abrir su ventana en cuanto se vea abierta
+
+
+@dataclass
 class Bloqueo:
     """«Bloquear», pedido y todavía no hecho."""
     desde: float
@@ -420,11 +438,16 @@ class Agente:
     # La raíz cifrada: cuándo se lanzó VeraCrypt para abrirla, las que ya se
     # pidieron al iniciar sesión (una vez), los «Bloquear» en marcha, y los
     # volúmenes fantasma ya dichos.
-    desbloqueos: dict[str, float] = field(default_factory=dict)
+    desbloqueos: dict[str, Desbloqueo] = field(default_factory=dict)
     pedidas: set[str] = field(default_factory=set)
     bloqueos: dict[str, Bloqueo] = field(default_factory=dict)
     fantasmas: set[str] = field(default_factory=set)
     recorridos: int = 0
+    # Lo que pide la bandeja, que corre en otro hilo: los mismos diccionarios
+    # que el buzón, sin pasar por disco. Y la bandeja misma, si la hay
+    # (`poner(vista)`), para enseñarle el estado.
+    peticiones: Any = field(default_factory=queue.SimpleQueue)
+    bandeja: Any = None
     # Cuándo arrancó, en hora de verdad (`equipo.pedir()` sella con ella): un
     # «parar» de antes iba para el agente anterior.
     inicio: float = field(default_factory=time.time)
@@ -437,6 +460,7 @@ class Agente:
         if recorrer:
             self._recorrer(ahora)
             self._al_iniciar(ahora)
+        self._seguir_desbloqueos(ahora)
         for con in list(self.conexiones.values()):
             if not presente(con.raiz):
                 self._desconectar(con.id, ahora, {})
@@ -560,7 +584,7 @@ class Agente:
         nombre = nombre_de(raiz, uid, unidad.nombre if unidad else "")
         con = Conexion(uid, raiz, nombre, ahora)
         self.conexiones[uid] = con
-        self.desbloqueos.pop(uid, None)
+        desbloqueo = self.desbloqueos.pop(uid, None)
         # Cada conexión empieza de cero, como el servicio que se arrancaba al
         # enchufar: se sincroniza enseguida, y el modo `sync` vuelve a tocar.
         for clave in [k for k in self.marcas if k[0] == uid]:
@@ -574,6 +598,8 @@ class Agente:
                + f" en {raiz} (modo {unidad.modo})")
         if unidad.modo == equipo.UI:
             self._abrir_ventana(con)
+        elif desbloqueo is not None and desbloqueo.abrir:
+            self._lanzar_ventana(con)       # «Abrir» con ella bloqueada
 
     def _desconectar(self, uid: str, ahora: float, cerradas: dict[str, Path]) -> None:
         con = self.conexiones.pop(uid, None)
@@ -687,13 +713,24 @@ class Agente:
     # --- el modo ui ------------------------------------------------------------------
 
     def _abrir_ventana(self, con: Conexion) -> None:
+        """El modo `ui`: la ventana al conectarla, si no hay ya un servicio."""
         con.lanzada = True
         ocupado = penwatch.aplicacion_en_marcha(con.raiz)
         if ocupado:
             diario(f"{con.nombre}: no abro la ventana: {ocupado}")
             return
+        self._lanzar_ventana(con)
+
+    def _lanzar_ventana(self, con: Conexion) -> None:
+        """La ventana de runsync de esa raíz, con el Python del agente y fuera de
+        ella. Nuestro servicio no estorba: la ventana lo pausa al abrirse
+        (`daemon.stop`). Otra ventana sí, y runsync ya se negaría."""
+        ventana = penwatch._vivo_aqui(con.raiz, penwatch.UI_LOCK_REL)
+        if ventana is not None:
+            diario(f"{con.nombre}: su ventana ya está abierta (pid {ventana.get('pid')})")
+            return
         if not hay_pantalla():
-            diario(f"{con.nombre}: modo ui sin entorno gráfico; no hay dónde abrir "
+            diario(f"{con.nombre}: sin entorno gráfico; no hay dónde abrir "
                    f"la ventana")
             return
         try:
@@ -1012,15 +1049,23 @@ class Agente:
                     and uid not in self.conexiones and uid not in self.vistas):
                 self._desbloquear(unidad, ahora, "al iniciar sesión")
 
-    def _desbloquear(self, unidad: equipo.Unidad, ahora: float, por: str = "") -> bool:
+    def _desbloquear(self, unidad: equipo.Unidad, ahora: float, por: str = "",
+                     abrir: bool = False) -> bool:
         """Le pide a VeraCrypt que abra la raíz cifrada. No espera: abierta es
-        cuando el recorrido VE su id con el `.hc` retenido."""
+        cuando el recorrido VE su id con el `.hc` retenido. Con `abrir`, su
+        ventana se abre en cuanto se vea abierta (el «Abrir» de la bandeja)."""
         nombre = unidad.nombre or APP_NAME
         if unidad.id in self.conexiones or unidad.id in self.vistas:
             diario(f"{nombre}: ya está abierta")
             return False
         if unidad.id in self.bloqueos:
             diario(f"{nombre}: se está bloqueando; desbloquear después")
+            return False
+        if unidad.id in self.desbloqueos:
+            # VeraCrypt ya está pidiendo la contraseña: una segunda ventana
+            # suya no ayuda.
+            self.desbloqueos[unidad.id].abrir |= abrir
+            diario(f"{nombre}: ya se está desbloqueando")
             return False
         try:
             hay = Path(unidad.contenedor).is_file()
@@ -1048,15 +1093,33 @@ class Agente:
             except OSError:
                 pass                # que lo diga VeraCrypt
         try:
-            lanzar(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                   **_opciones_hijo(equipo.DIR, separado=True))
+            proc = lanzar(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                          **_opciones_hijo(equipo.DIR, separado=True))
         except OSError as e:
             avisar(f"{nombre}: no he podido lanzar VeraCrypt", str(e), True)
             return False
-        self.desbloqueos[unidad.id] = ahora
+        self.desbloqueos[unidad.id] = Desbloqueo(ahora, proc, abrir=abrir)
         diario(f"{nombre}: desbloqueando" + (f" ({por})" if por else "")
                + f" en {unidad.ruta}; la contraseña la pide VeraCrypt")
         return True
+
+    def _seguir_desbloqueos(self, ahora: float) -> None:
+        """Un «Desbloquear» que no acaba en la raíz abierta se ha cancelado (o
+        la contraseña no era): VeraCrypt ha salido y, pasado un rato, no se ve.
+        Se olvida, para que la bandeja vuelva a ofrecerlo. Con un VeraCrypt que
+        no sale (el de escritorio de Linux se queda abierto), al acabarse
+        `ESPERA_ABRIR`."""
+        for uid, d in list(self.desbloqueos.items()):
+            if uid in self.conexiones or uid in self.vistas:
+                continue
+            if d.salio is None and (d.proc is None or d.proc.poll() is not None):
+                d.salio = ahora
+            if ((d.salio is not None and ahora - d.salio >= GRACIA_ABRIR)
+                    or ahora - d.desde >= ESPERA_ABRIR):
+                del self.desbloqueos[uid]
+                unidad = self.ajustes.unidades.get(uid)
+                diario(f"{(unidad.nombre if unidad else '') or uid[:8]}: no se ha "
+                       f"desbloqueado (¿contraseña cancelada?); sigue bloqueada")
 
     def _bloqueos(self, ahora: float) -> None:
         """Los «Bloquear» pedidos: primero se espera a que nada lo impida, luego
@@ -1133,8 +1196,19 @@ class Agente:
 
     # --- el buzón ---------------------------------------------------------------------
 
+    def pedir(self, peticion: dict) -> None:
+        """Una petición de la bandeja (otro hilo): se atiende en la próxima
+        vuelta, en el hilo del agente, igual que una del buzón."""
+        self.peticiones.put(dict(peticion))
+
     def _buzon(self, ahora: float) -> None:
-        for p in equipo.recoger():
+        pendientes = equipo.recoger()
+        while True:
+            try:
+                pendientes.append(self.peticiones.get_nowait())
+            except queue.Empty:
+                break
+        for p in pendientes:
             try:
                 self._atender_peticion(p, ahora)
             except Exception as e:                      # noqa: BLE001
@@ -1192,6 +1266,16 @@ class Agente:
             elif unidad.id not in self.bloqueos:
                 self.bloqueos[unidad.id] = Bloqueo(ahora)
                 self.urgentes = [u for u in self.urgentes if u[0] != unidad.id]
+        elif que == equipo.PIDE_ABRIR:
+            self._abrir(uid, ahora)
+        elif que == equipo.PIDE_DESPERTAR:
+            # Vuelta de la suspensión: la batería y la red pueden ser otras, y
+            # un remoto «sin conexión» quizá ya contesta. Se mira todo ya.
+            self.entorno_leido = -math.inf
+            self.entorno = replace(self.entorno, sin_conexion={
+                k: min(v, ahora) for k, v in self.entorno.sin_conexion.items()})
+            self.rafaga_hasta = max(self.rafaga_hasta, ahora + RAFAGA)
+            diario("el equipo vuelve de la suspensión")
         elif que == equipo.PIDE_AJUSTE:
             clave, valor = p.get("clave"), p.get("valor")
             if clave not in equipo.AJUSTES_PEDIBLES:
@@ -1224,7 +1308,37 @@ class Agente:
             self.terminar = True
             diario("parada pedida: termina en cuanto acabe lo que esté en marcha")
 
+    def _abrir(self, uid: str, ahora: float) -> None:
+        """«Abrir» de la bandeja: la ventana de una raíz. Una unidad que no está
+        en la lista no: sería ejecutar su código sin el sí. Una raíz cifrada
+        bloqueada se desbloquea antes, y su ventana sale al verla abierta."""
+        unidad = self.ajustes.unidades.get(uid)
+        con = self.conexiones.get(uid)
+        if unidad is None:
+            diario(f"abrir {uid[:8]!r}: no está en la lista; no se ejecuta nada suyo")
+        elif con is not None:
+            self._lanzar_ventana(con)
+        elif unidad.cifrada and uid not in self.ausentes:
+            self._desbloquear(unidad, ahora, "para abrirla", abrir=True)
+        else:
+            diario(f"abrir {unidad.nombre or uid[:8]}: no está aquí ahora")
+
     # --- estado ----------------------------------------------------------------------
+
+    def _estado_raiz(self, uid: str, unidad: equipo.Unidad) -> str:
+        """En qué está una raíz de este equipo, para la bandeja."""
+        if uid in self.ausentes:
+            return bandeja.AUSENTE
+        if uid in self.fantasmas:
+            return bandeja.FANTASMA
+        if uid in self.bloqueos:
+            return bandeja.BLOQUEANDO
+        if uid in self.conexiones:
+            return bandeja.ABIERTA
+        if uid in self.desbloqueos:
+            return bandeja.DESBLOQUEANDO
+        return bandeja.BLOQUEADA if unidad.cifrada else bandeja.BUSCANDO
+
 
     def resumen(self) -> dict:
         unidades = []
@@ -1235,7 +1349,13 @@ class Agente:
                              "cifrada": bool(unidad and unidad.cifrada),
                              "modo": unidad.modo if unidad else None,
                              "atendida": con.lock is not None,
-                             "motivo": con.motivo})
+                             "motivo": con.motivo,
+                             "en_lista": unidad is not None,
+                             "ahora_no": con.respuesta == pl.AHORA_NO,
+                             "preguntando": con.pregunta is not None,
+                             "error": con.error,
+                             "fallando": sorted(p for (r, p), m in self.marcas.items()
+                                                if r == con.id and m.fallos > 0)})
         cerradas = [u.nombre or u.id[:8] for u in self.ajustes.cifradas.values()
                     if u.id not in self.conexiones and u.id not in self.ausentes]
         return {"pid": os.getpid(), "pausado": self.pausado, "retenido": self.retenido,
@@ -1256,13 +1376,23 @@ class Agente:
                 "bloqueando": sorted(self.ajustes.unidades[u].nombre or u[:8]
                                      for u in self.bloqueos if u in self.ajustes.unidades),
                 "fantasmas": sorted(self.ajustes.unidades[u].ruta for u in self.fantasmas
-                                    if u in self.ajustes.unidades)}
+                                    if u in self.ajustes.unidades),
+                # Las raíces de este equipo, con su estado: lo que pinta la bandeja.
+                "equipo": [{"id": uid, "nombre": u.nombre or APP_NAME, "ruta": u.ruta,
+                            "cifrada": u.cifrada, "estado": self._estado_raiz(uid, u)}
+                           for uid, u in self.ajustes.raices.items()],
+                "pedir_al_iniciar": self.ajustes.pedir_al_iniciar}
 
     def _escribir_estado(self) -> None:
         resumen = self.resumen()
         if resumen != self.ultimo_estado:
             self.ultimo_estado = resumen
             store.write_json(equipo.estado_json(), {**resumen, "actualizado": store.stamp()})
+            if self.bandeja is not None:
+                try:
+                    self.bandeja.poner(bandeja.vista(resumen))
+                except Exception as e:                  # noqa: BLE001
+                    diario(f"la bandeja no se ha podido poner al día: {e}")
 
     def cerrar(self) -> None:
         """Al terminar: se sueltan los locks que sean nuestros. Una pasada en
@@ -1281,45 +1411,102 @@ MOUNTINFO = Path("/proc/self/mountinfo")
 
 
 class Vigia:
-    """Espera el tic, o menos si cambian los montajes (Linux).
+    """Espera el tic, o menos si cambian los montajes o alguien lo despierta.
 
-    `/proc/self/mountinfo` avisa con `POLLPRI` (y `POLLERR`) cuando cambia la
-    tabla de montajes; hay que releerlo entero para rearmar el aviso. En Windows
-    todavía no hay nada que esperar: la ventana oculta de la bandeja traerá
-    `WM_DEVICECHANGE`."""
+    En Linux, `/proc/self/mountinfo` avisa con `POLLPRI` (y `POLLERR`) cuando
+    cambia la tabla de montajes; hay que releerlo entero para rearmar el aviso.
+    En Windows los montajes los dice la bandeja (`WM_DEVICECHANGE`), desde su
+    hilo, con `despertar(montajes=True)`; y lo que se elige en su menú,
+    con `despertar()`, para no esperar al tic. En Linux ese despertar va por
+    un pipe que se vigila junto a mountinfo."""
 
     def __init__(self) -> None:
         self._f = None
         self._poll = None
+        self._evento = threading.Event()
+        self._montajes = False
+        self._pipe: tuple[int, int] | None = None
         if IS_WIN:
             return
         try:
             import select
+            self._poll = select.poll()
+            self._pipe = os.pipe()
+            os.set_blocking(self._pipe[1], False)
+            self._poll.register(self._pipe[0], select.POLLIN)
             self._f = MOUNTINFO.open("rb")
             self._f.read()
-            self._poll = select.poll()
             self._poll.register(self._f.fileno(), select.POLLPRI | select.POLLERR)
         except (OSError, AttributeError, ImportError):
-            self._f, self._poll = None, None
+            if self._f is not None:
+                self._f.close()
+            self._f = None
+            if self._pipe is None:
+                self._poll = None
+
+    def despertar(self, montajes: bool = False) -> None:
+        """Que la espera acabe ya. Se puede llamar desde cualquier hilo."""
+        if montajes:
+            self._montajes = True
+        self._evento.set()
+        if self._pipe is not None:
+            try:
+                os.write(self._pipe[1], b"!")
+            except OSError:
+                pass                # lleno: ya hay un despertar pendiente
+
+    def _tomar_montajes(self) -> bool:
+        montajes, self._montajes = self._montajes, False
+        self._evento.clear()
+        return montajes
 
     def esperar(self, segundos: float) -> bool:
+        """True si han cambiado los montajes (hay que recorrer en racha)."""
         if self._poll is None:
-            time.sleep(segundos)
-            return False
+            self._evento.wait(segundos)
+            return self._tomar_montajes()
+        montajes = False
         try:
-            hay = self._poll.poll(int(segundos * 1000))
-            if hay:
-                self._f.seek(0)
-                self._f.read()
-                return True
+            for fd, _ in self._poll.poll(int(segundos * 1000)):
+                if self._pipe is not None and fd == self._pipe[0]:
+                    os.read(fd, 4096)
+                elif self._f is not None:
+                    self._f.seek(0)
+                    self._f.read()
+                    montajes = True
         except OSError:
             time.sleep(segundos)
-        return False
+        return self._tomar_montajes() or montajes
 
 
 # ---------------------------------------------------------------------------
 # Órdenes
 # ---------------------------------------------------------------------------
+
+def poner_bandeja(agente: Agente, vigia: Vigia) -> Any:
+    """La bandeja del agente, o None si en este sistema no la hay todavía o no
+    se ha podido poner. Punto de indirección: los tests no ponen ninguna.
+
+    Windows (fase 4). En Linux la bandeja es la fase 6: mientras tanto, el menú
+    del sistema, la línea de órdenes y los avisos."""
+    if not IS_WIN:
+        return None
+    from ui import bandeja_windows, icons
+    try:
+        icons.write_bandeja(SCRIPT_DIR, solo_si_faltan=True)
+    except Exception as e:                              # noqa: BLE001
+        diario(f"no he podido pintar los iconos de la bandeja: {e}")
+
+    def pedir(peticion: dict) -> None:
+        agente.pedir(peticion)
+        vigia.despertar()
+
+    b = bandeja_windows.Bandeja(SCRIPT_DIR, pedir, lambda: vigia.despertar(montajes=True))
+    if not b.arrancar():
+        diario("no he podido poner la bandeja: sigo sin ella")
+        return None
+    return b
+
 
 def _enganchar_penwatch() -> None:
     """Lo que penwatch escribe en su diario va al del agente: el agente lo
@@ -1361,13 +1548,17 @@ def cmd_run(_args: argparse.Namespace) -> int:
     diario(f"agente iniciado (pid {os.getpid()}, {len(agente.ajustes.unidades)} "
            f"unidades en la lista)")
     vigia = Vigia()
+    agente.bandeja = poner_bandeja(agente, vigia)
+    # Sin quien avise de los montajes (Windows sin bandeja), se recorre como
+    # penwatch; con él, el recorrido de respaldo y las rachas tras cada aviso.
+    cada = RECORRIDO_WINDOWS if IS_WIN and agente.bandeja is None else RECORRIDO_RESPALDO
     proximo = -math.inf
     try:
         while not (agente.terminar and agente.pasada is None):
             ahora = time.time()
             recorrer = ahora >= proximo or ahora < agente.rafaga_hasta
             if recorrer:
-                proximo = ahora + (RECORRIDO_WINDOWS if IS_WIN else RECORRIDO_RESPALDO)
+                proximo = ahora + cada
             try:
                 agente.vuelta(recorrer)
             except Exception as e:                      # noqa: BLE001
@@ -1380,6 +1571,8 @@ def cmd_run(_args: argparse.Namespace) -> int:
         diario("interrumpido por teclado")
     finally:
         agente.cerrar()
+        if agente.bandeja is not None:
+            agente.bandeja.cerrar()
         info = store.read_json(equipo.lock_json())
         if info.get("pid") == os.getpid() and info.get("host") == HOST:
             equipo.lock_json().unlink(missing_ok=True)

@@ -97,7 +97,27 @@ pruebas, nunca una real.
 
 ## Fase 4 — Bandeja en Windows
 
-*(se rellena al hacerla)*
+Todo lo de `ui/bandeja_windows.Api` (ctypes contra user32 y shell32) está sin
+ejecutar: los tests le ponen un Windows de mentira. Lo primero que puede fallar
+es la propia llamada (una firma de ctypes mal puesta tumba el hilo de la
+bandeja), y entonces el agente sigue sin ella: el diario dice «no he podido
+poner la bandeja» y se recorre cada 5 s como antes. Mirar `agente.log` en cada
+prueba.
+
+| Código | Dónde | Qué hacer | Qué se espera | Código a prueba |
+|---|---|---|---|---|
+| B1 | W | Iniciar sesión con el agente instalado. | El icono sale en la bandeja (quizá en el desbordamiento «^»), con la marca y la línea «prdrive — al día» (o lo que toque) al pasar el ratón. Nítido al 100 %, 125 %, 150 % y 200 % (se carga a `SM_CXSMICON` con la densidad declarada). | `Bandeja.arrancar()`, `Api.ventana()` / `icono()` / `notificar()`, `icons.write_bandeja()`, `theme.nitidez()` |
+| B2 | W | Iniciar sesión con el agente arrancando antes que la barra de tareas (equipo lento, o reiniciar el Explorador en el Administrador de tareas con el agente en marcha). | El icono aparece al crearse la barra (`TaskbarCreated`) y vuelve tras reiniciar el Explorador. | `Bandeja._mensaje()` con `TaskbarCreated` |
+| B3 | W | Clic derecho y clic izquierdo en el icono; pinchar fuera del menú; Esc. | El menú sale donde está el ratón, «Abrir …» en negrita, las casillas marcadas donde toca; al pinchar fuera o con Esc se cierra sin elegir nada. | `Api.menu()`: `SetForegroundWindow` + `TrackPopupMenu(TPM_RETURNCMD)` + `WM_NULL` |
+| B4 | W | Cada entrada: «Abrir», «Sincronizar ahora» (y su submenú con dos unidades), «Pausar» / «Reanudar», «Cerrar el agente». | Cada una hace lo suyo en uno o dos segundos (el agente se despierta, no espera al tic). «Cerrar el agente» lo termina y quita el icono. Un nombre con `&` sale tal cual. | `bandeja.vista()`, `Agente.pedir()`, `Vigia.despertar()`, `texto_menu()` |
+| B5 | W | Los cinco estados: al día, una pasada en marcha, una pareja que falla, en pausa (y en red de uso medido), la raíz cifrada bloqueada. | El icono cambia (pastilla azul, ámbar, campo gris con barras, candado oscuro) y la línea lo dice. Distinguibles a 16 px sobre la barra clara y la oscura. | `bandeja.estado()`, `icons.capas_bandeja()` |
+| B6 | W | Enchufar una unidad de la lista; quitarla; abrir y cerrar su VeraCrypt. | Se ve en segundos, no a los 5 s del sondeo: `WM_DEVICECHANGE` despierta la racha. Sin tocar nada, el recorrido de respaldo pasa a cada 30 s (el diario lo delata por los tiempos). Comprobar que la ventana oculta **sí** recibe `DBT_DEVICEARRIVAL` de un volumen y de un montaje de VeraCrypt. | `Bandeja._mensaje()` con `WM_DEVICECHANGE`, `cmd_run()` (`RECORRIDO_RESPALDO`) |
+| B7 | W | Enchufar una unidad que no está en la lista y dejar pasar la pregunta. | La entrada «PRDRIVE-2, conectada · Atender…» la añade a la lista y la atiende. Nunca sale «Abrir» para ella antes del sí. | `bandeja._unidades()`, `PIDE_ATENDER` |
+| B8 | W | Raíz cifrada: «Desbloquear…», «Bloquear», la casilla «Pedir la contraseña al iniciar sesión», y «Abrir …» con la raíz bloqueada. | Como C4–C9, desde el menú. «Abrir» con ella bloqueada pide la contraseña y abre la ventana sola al montarse. Cancelar la contraseña: a los ~20 s vuelve a ofrecer «Desbloquear…». La casilla cambia `agente.json` (lo escribe el agente). | `Agente._abrir()`, `_desbloquear(abrir=)`, `_seguir_desbloqueos()`, `PIDE_AJUSTE` |
+| B9 | W | Un aviso (una pareja que empieza a fallar, una unidad nueva). | Sale como notificación del sistema **colgada del icono de la bandeja** (sin el icono de paso que aparece y desaparece), con el título y el texto; de aviso si es urgente. | `Bandeja.globo()`, `avisos.GLOBO`, `NIF_INFO` |
+| B10 | W | Suspender y volver, con un remoto «sin conexión» (red caída antes de suspender, y de vuelta al despertar). | Al volver se sondea el remoto enseguida y se lee la batería y la red, sin esperar los 5 min del sondeo. | `WM_POWERBROADCAST` / `PBT_APMRESUMEAUTOMATIC`, `PIDE_DESPERTAR` |
+| B11 | W | Cerrar sesión y volver a entrar; y `agente.py parar`. | No queda un icono huérfano en la bandeja (`NIM_DELETE` al cerrar); si queda por un cierre a la fuerza, desaparece al pasar el ratón. | `Bandeja.cerrar()`, `WM_DESTROY` |
+| B12 | WA | B1, B3 y B6 en Windows ARM64 con el runtime ARM64. | Lo mismo. | ctypes en ARM64 |
 
 ## Fase 5 — Ventana ↔ agente
 

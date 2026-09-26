@@ -303,6 +303,8 @@ PIDE_PARAR = "parar"            # que termine (el instalador, antes de sustituir
 PIDE_RAIZ = "añadir_raiz"       # id, ruta, nombre[, contenedor]: la raíz de este equipo
 PIDE_DESBLOQUEAR = "desbloquear"    # [id]: abrir el contenedor de la raíz cifrada
 PIDE_BLOQUEAR = "bloquear"          # [id]: cerrarlo
+PIDE_ABRIR = "abrir"            # id: la ventana de esa raíz (la cifrada, desbloqueándola antes)
+PIDE_DESPERTAR = "despertar"    # el equipo vuelve de la suspensión: mirarlo todo ya
 AJUSTES_PEDIBLES = ("espera_unidad_nueva", "pedir_al_iniciar")
 
 

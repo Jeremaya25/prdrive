@@ -211,9 +211,10 @@ res = subprocess.run(
     [sys.executable, "-c",
      "import sys; sys.path.insert(0, sys.argv[1]); import agente; "
      "from common import planificador, avisos, dbus, moderacion, equipo; "
+     "from ui import bandeja, bandeja_windows, icons; "
      "print('tkinter' in sys.modules)", str(REPO)],
     capture_output=True, text=True, cwd=str(REPO))
-c("el agente, el planificador, los avisos y el D-Bus no cargan Tk",
+c("el agente, el planificador, los avisos, el D-Bus y la bandeja no cargan Tk",
   res.stdout.strip() or res.stderr.strip()[-200:], "False")
 
 raise SystemExit(c.report())

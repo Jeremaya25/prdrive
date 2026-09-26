@@ -12,9 +12,10 @@ el sistema ya tiene para eso.
     nadie que atienda ese nombre, no hay aviso.
   * **Windows:** `Shell_NotifyIconW` con `NIF_INFO`: en Windows 10 y 11 sale como
     notificación del sistema sin registrar un AppUserModelID. Hace falta un
-    icono en el área de notificación para colgarle el globo; hasta que exista la
-    bandeja (otra fase), se pone uno de paso, sobre una ventana de solo mensajes,
-    y se quita a los pocos segundos. **Sin probar en un Windows real.**
+    icono en el área de notificación para colgarle el globo: el de la bandeja
+    del agente (`GLOBO`, que pone `ui/bandeja_windows.py`), y si no la hay, uno
+    de paso sobre una ventana de solo mensajes, que se quita a los pocos
+    segundos. **Sin probar en un Windows real.**
 
 `enviar()` es un punto de indirección de módulo, como `catalog.run()`: los tests
 lo sustituyen, y quien lo llama apunta el aviso en su diario cuando devuelve
@@ -39,6 +40,10 @@ SEGUNDOS_WINDOWS = 12.0
 # El icono de los avisos de Windows: lo pone quien sabe dónde está el .ico
 # repintado (el agente, al arrancar). Sin él, el de información del sistema.
 ICONO: Path | None = None
+
+# La bandeja, si está puesta: `GLOBO(titulo, texto, urgente) -> bool` cuelga el
+# aviso de su propio icono. Si devuelve False, se pone el icono de paso.
+GLOBO = None
 
 
 def enviar(titulo: str, texto: str, urgente: bool = False) -> bool:
@@ -87,6 +92,41 @@ IMAGE_ICON, LR_LOADFROMFILE, LR_DEFAULTSIZE = 1, 0x10, 0x40
 
 
 def _windows(titulo: str, texto: str, urgente: bool) -> bool:
+    if GLOBO is not None and GLOBO(titulo, texto, urgente):
+        return True
+    return _de_paso(titulo, texto, urgente)
+
+
+_TIPOS: dict = {}
+
+
+def notifyicondata():
+    """`NOTIFYICONDATAW` en la forma de Vista en adelante (shellapi.h), con
+    `hBalloonIcon` al final. Una sola definición: la usan el icono de paso y
+    la bandeja."""
+    if "NOTIFYICONDATAW" not in _TIPOS:
+        import ctypes
+        from ctypes import wintypes
+
+        class GUID(ctypes.Structure):
+            _fields_ = [("Data1", ctypes.c_ulong), ("Data2", ctypes.c_ushort),
+                        ("Data3", ctypes.c_ushort), ("Data4", ctypes.c_ubyte * 8)]
+
+        class NOTIFYICONDATAW(ctypes.Structure):
+            _fields_ = [("cbSize", wintypes.DWORD), ("hWnd", wintypes.HWND),
+                        ("uID", wintypes.UINT), ("uFlags", wintypes.UINT),
+                        ("uCallbackMessage", wintypes.UINT), ("hIcon", wintypes.HICON),
+                        ("szTip", ctypes.c_wchar * 128), ("dwState", wintypes.DWORD),
+                        ("dwStateMask", wintypes.DWORD), ("szInfo", ctypes.c_wchar * 256),
+                        ("uVersion", wintypes.UINT), ("szInfoTitle", ctypes.c_wchar * 64),
+                        ("dwInfoFlags", wintypes.DWORD), ("guidItem", GUID),
+                        ("hBalloonIcon", wintypes.HICON)]
+
+        _TIPOS["NOTIFYICONDATAW"] = NOTIFYICONDATAW
+    return _TIPOS["NOTIFYICONDATAW"]
+
+
+def _de_paso(titulo: str, texto: str, urgente: bool) -> bool:
     """Lanza el aviso en un hilo propio y espera a saber si se ha puesto.
 
     La ventana y el icono son de ese hilo de principio a fin (Windows solo deja
@@ -111,20 +151,7 @@ def _globo(titulo: str, texto: str, urgente: bool, listo: threading.Event,
     import ctypes
     from ctypes import wintypes
 
-    class GUID(ctypes.Structure):
-        _fields_ = [("Data1", ctypes.c_ulong), ("Data2", ctypes.c_ushort),
-                    ("Data3", ctypes.c_ushort), ("Data4", ctypes.c_ubyte * 8)]
-
-    class NOTIFYICONDATAW(ctypes.Structure):
-        # La forma de Vista en adelante (shellapi.h), con `hBalloonIcon` al final.
-        _fields_ = [("cbSize", wintypes.DWORD), ("hWnd", wintypes.HWND),
-                    ("uID", wintypes.UINT), ("uFlags", wintypes.UINT),
-                    ("uCallbackMessage", wintypes.UINT), ("hIcon", wintypes.HICON),
-                    ("szTip", ctypes.c_wchar * 128), ("dwState", wintypes.DWORD),
-                    ("dwStateMask", wintypes.DWORD), ("szInfo", ctypes.c_wchar * 256),
-                    ("uVersion", wintypes.UINT), ("szInfoTitle", ctypes.c_wchar * 64),
-                    ("dwInfoFlags", wintypes.DWORD), ("guidItem", GUID),
-                    ("hBalloonIcon", wintypes.HICON)]
+    NOTIFYICONDATAW = notifyicondata()
 
     user32 = ctypes.WinDLL("user32", use_last_error=True)
     shell32 = ctypes.WinDLL("shell32", use_last_error=True)

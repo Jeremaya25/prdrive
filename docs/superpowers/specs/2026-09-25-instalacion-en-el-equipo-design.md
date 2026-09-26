@@ -1,9 +1,10 @@
 # Instalación en el equipo: prdrive residente
 
-Fecha: 2026-09-25 · Estado: **aceptada**; fases 1 a 3 implementadas (el agente
+Fecha: 2026-09-25 · Estado: **aceptada**; fases 1 a 4 implementadas (el agente
 sin bandeja, con unidades: `agente.py`, `common/planificador.py`,
 `install/agente.py`; la raíz del equipo sin cifrar: `install/raiz_equipo.py`,
-`ui/tk_equipo.py`; y cifrada con VeraCrypt, **sin probar en real**) · Versión
+`ui/tk_equipo.py`; cifrada con VeraCrypt; y la bandeja de Windows:
+`ui/bandeja.py`, `ui/bandeja_windows.py`; **sin probar en real**) · Versión
 objetivo: 0.4.0 · Lo que falta probar en equipos reales:
 `docs/superpowers/pruebas/2026-09-25-equipo-pendiente-en-real.md`
 
@@ -648,7 +649,28 @@ proyecto funcionando:
      «desbloquear» y abre la ventana en cuanto la raíz aparece. Es lo que hace
      el acceso del menú.
 4. **Bandeja en Windows**, con la detección por `WM_DEVICECHANGE` montada sobre
-   su ventana y la casilla de `pedir_al_iniciar`.
+   su ventana y la casilla de `pedir_al_iniciar`. Hecho así, y en cinco cosas
+   distinto de lo escrito arriba:
+   - **La ventana oculta es de nivel superior, no de solo mensajes.** Las de
+     solo mensajes no reciben difusiones, y `WM_DEVICECHANGE` de un volumen
+     (también el de VeraCrypt) y `TaskbarCreated` lo son. Nunca se enseña.
+   - **Qué enseña la bandeja lo decide `ui/bandeja.py`, puro**, a partir del
+     resumen del agente (el de `estado.json`), y cada entrada del menú lleva
+     peticiones con la forma del buzón. El agente las recibe por una cola en
+     memoria que atiende junto a `agente.pide`: un solo camino. Dos
+     peticiones nuevas: `abrir` (la ventana de una raíz; con la raíz cifrada
+     bloqueada, desbloquea antes y la abre al verla) y `despertar` (vuelta de
+     la suspensión).
+   - **El menú sale con cualquiera de los dos botones**, y «Abrir» de la raíz
+     del equipo va en negrita. El doble clic no hace nada aparte.
+   - **«Cerrar el agente»** está en el menú, aunque no estaba en la lista:
+     no hay otra forma de quitar un icono de la bandeja. Vuelve a arrancar al
+     iniciar sesión.
+   - **Los iconos llevan el estado en una pastilla de color** en la esquina
+     (azul sincronizando, ámbar aviso, oscura con candado bloqueada; la pausa
+     además pone el campo gris), porque a 16 px lo que se lee es el color.
+     Una raíz cifrada bloqueada no es un aviso, y una red de uso medido o la
+     batería usan el icono de pausa.
 5. **Ventana ↔ agente**: la línea del agente, los dos buzones
    (`servicio.pide` y `agente.pide`), añadir una raíz a un agente ya instalado y
    «Actualizar».
