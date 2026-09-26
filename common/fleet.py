@@ -113,6 +113,16 @@ class Dispositivo(NamedTuple):
     # Solo si `last_result` es un fallo: desde cuándo no consta una pasada
     # buena (`store.stamp()`), o `SIN_BUENA`.
     ultima_buena: str = ""
+    # Qué es, del `tipo=` de su fichero de control: vacío en una unidad (la nota
+    # de siempre, sin la clave) y `model.TIPO_EQUIPO` en la raíz de un equipo.
+    tipo: str = ""
+    # «veracrypt» en la raíz de un equipo que vive en un contenedor; vacío en
+    # todo lo demás (la nota de una unidad no cambia).
+    cifrado: str = ""
+
+    @property
+    def es_equipo(self) -> bool:
+        return self.tipo == model.TIPO_EQUIPO
 
     @property
     def bien(self) -> bool:
@@ -210,6 +220,10 @@ def _tabla(disp: Dispositivo) -> dict[str, Any]:
         tabla["equipos_visto"] = [e.visto for e in disp.equipos]
     if disp.ultima_buena:
         tabla["ultima_buena"] = disp.ultima_buena
+    if disp.tipo:
+        tabla["tipo"] = disp.tipo
+    if disp.cifrado:
+        tabla["cifrado"] = disp.cifrado
     return tabla
 
 
@@ -278,7 +292,9 @@ def parse(texto: str, device_id: str = "") -> Dispositivo | None:
         last_seen=cadena("last_seen"),
         last_result=cadena("last_result") or "desconocido",
         equipos=_equipos(datos.get("equipos"), datos.get("equipos_visto")),
-        ultima_buena=cadena("ultima_buena"))
+        ultima_buena=cadena("ultima_buena"),
+        tipo=cadena("tipo").strip().lower(),
+        cifrado=cadena("cifrado").strip().lower())
 
 
 # ---------------------------------------------------------------------------
@@ -458,7 +474,28 @@ def nota_de(app_dir: Path | str | None, como_se_llama: str,
                        last_seen=ahora, last_result=last_result,
                        equipos=_con_equipo(_equipos_previos(app_dir, identificador),
                                            equipo_actual(), ahora),
-                       ultima_buena=ultima_buena)
+                       ultima_buena=ultima_buena,
+                       tipo="" if not model.es_equipo(app_dir) else model.TIPO_EQUIPO,
+                       cifrado=_cifrado(app_dir, identificador))
+
+
+CIFRADO_VERACRYPT = "veracrypt"
+
+
+def _cifrado(app_dir: Path | str | None, identificador: str) -> str:
+    """«veracrypt» si es la raíz de un equipo y su agente la tiene como cifrada.
+
+    Se pregunta a `agente.json` y no a las unidades: es un fichero del equipo, y
+    la nota se escribe tras cada pasada. Una unidad cifrada no lo dice (no hace
+    falta: se reconoce por su vestíbulo)."""
+    if not model.es_equipo(app_dir):
+        return ""
+    try:
+        from . import equipo
+        unidad = equipo.leer_ajustes().unidades.get(identificador)
+    except Exception:                                   # noqa: BLE001
+        return ""
+    return CIFRADO_VERACRYPT if unidad is not None and unidad.cifrada else ""
 
 
 def nota(config: model.Config | None = None) -> Dispositivo | None:
@@ -482,7 +519,8 @@ def _sin_fecha(disp: Dispositivo) -> tuple:
     `ultima_buena` solo cambia cuando cambia `last_result`, así que no añade
     notas."""
     return (disp.id, disp.nombre, disp.version, disp.plataformas, disp.last_result,
-            disp.equipos[0].nombre if disp.equipos else "", disp.ultima_buena)
+            disp.equipos[0].nombre if disp.equipos else "", disp.ultima_buena,
+            disp.tipo, disp.cifrado)
 
 
 def hace_falta_publicar(disp: Dispositivo, ahora: datetime | None = None) -> bool:

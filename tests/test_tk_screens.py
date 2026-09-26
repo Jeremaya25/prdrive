@@ -616,6 +616,63 @@ with sandbox():
     except Exception as e:
         c("'Detectar el dispositivo' no revienta", f"{type(e).__name__}: {e}", True)
 
+# --- «Qué hace el agente»: se le pide por su buzón, no se escribe -------------------
+pedidos_modo: list = []
+watch.pedir_modo = lambda modo: pedidos_modo.append(modo) or True
+
+
+def elegir_modo(texto_radio, boton):
+    def _wait(self, *_a, **_k):
+        pila = [self]
+        while pila:
+            w = pila.pop()
+            pila += list(w.winfo_children())
+            if isinstance(w, ttk.Radiobutton) and w.cget("text") == texto_radio:
+                w.invoke()
+        pulsar(boton)(self)
+    return _wait
+
+
+tk.Toplevel.wait_window = elegir_modo(watch.ETIQUETA_AGENTE["sync"], "Aplicar")
+c("«Qué hace el agente»: devuelve el modo elegido",
+  tk_watch.open_agente(raiz, watch.Resumen("agente", "daemon", True)), "sync")
+c("  y se lo pide al agente", pedidos_modo, ["sync"])
+tk.Toplevel.wait_window = pulsar("Cancelar")
+c("  cancelar no pide nada", (tk_watch.open_agente(
+    raiz, watch.Resumen("agente", "daemon", True)), pedidos_modo), (None, ["sync"]))
+tk.Toplevel.wait_window = pulsar("Atender")
+c("  sin estar en su lista, «Atender» lo añade en daemon",
+  tk_watch.open_agente(raiz, watch.Resumen("agente_nueva", "", True)), "daemon")
+
+# «Ajustes» de la raíz cifrada de un equipo: la casilla de pedir_al_iniciar.
+from ui import tk_doctor  # noqa: E402
+
+ajustes_pedidos: list = []
+watch.pedir_al_iniciar = lambda: True
+watch.pedir_ajuste = lambda clave, valor: ajustes_pedidos.append((clave, valor)) or True
+
+
+def desmarcar_y_cerrar(self, *_a, **_k):
+    pila = [self]
+    while pila:
+        w = pila.pop()
+        pila += list(w.winfo_children())
+        if isinstance(w, ttk.Checkbutton) and "contraseña" in str(w.cget("text")):
+            w.invoke()
+    pulsar("Cerrar")(self)
+
+
+with sandbox():
+    cfg = preparar()
+    tk.Toplevel.wait_window = desmarcar_y_cerrar
+    tk_doctor.open_dialog(raiz, cfg, lambda *a: None)
+    c("«Ajustes» de la raíz cifrada: la casilla se lo pide al agente",
+      ajustes_pedidos, [("pedir_al_iniciar", False)])
+    watch.pedir_al_iniciar = lambda: None
+    ajustes_pedidos.clear()
+    tk_doctor.open_dialog(raiz, cfg, lambda *a: None)
+    c("  en cualquier otra raíz no está", ajustes_pedidos, [])
+
 # El formulario de instalación ya no pregunta parejas ni intervalo: son los del
 # servicio, que viven en el dispositivo. Lo que queda es del equipo: qué hacer al
 # enchufar —tres opciones a la vista, no un desplegable—, el sondeo y las raíces.

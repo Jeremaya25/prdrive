@@ -636,9 +636,16 @@ def write_device_remote(device_root: Path | str, profile: Profile) -> list[Path]
 # ---------------------------------------------------------------------------
 
 def device_config(catalog: Catalog, selected: list[str],
-                  catalog_path: str = "") -> dict:
+                  catalog_path: str = "", locales: Mapping[str, str] | None = None,
+                  equipo: bool = False) -> dict:
     """El dict crudo del config de ESTE dispositivo: los defaults del catálogo,
     su [daemon] si lo trae, y solo las parejas elegidas.
+
+    `locales` cambia el `local` de alguna pareja solo aquí ({nombre: local}): es
+    lo que ofrece el paso «Parejas» de una raíz del equipo con la carpeta
+    personal, donde la ruta pensada para una unidad caería suelta en `~`. La
+    pareja queda como «modificada aquí», que es lo que es. `equipo` valida con
+    las reglas de esa raíz (`model.problema_local_equipo`).
 
     Crudo y no `model.Config` porque las `Pair` del modelo llegan con los
     `[defaults]` ya fundidos: volcarlas duplicaría los defaults dentro de cada
@@ -674,7 +681,11 @@ def device_config(catalog: Catalog, selected: list[str],
         # parejas buscaba el catálogo donde no estaba.
         raw.setdefault("defaults", {})["catalog_path"] = catalog_path
     raw["pair"] = [dict(catalog.pair(n)) for n in selected]      # type: ignore[arg-type]
-    model.parse_config(raw)                                      # red final
+    for pareja in raw["pair"]:
+        cambiado = (locales or {}).get(pareja.get("name", ""))
+        if cambiado is not None and cambiado != pareja.get("local"):
+            pareja["local"] = cambiado
+    model.parse_config(raw, equipo=equipo)                       # red final
     return raw
 
 
@@ -718,12 +729,17 @@ def config_path(device_root: Path | str) -> Path:
 
 def write_device_config(device_root: Path | str, catalog: Catalog,
                         selected: list[str], endpoint: str = "",
-                        catalog_path: str = "") -> Path:
-    """Escribe el sync_config.toml del dispositivo. Devuelve su ruta."""
+                        catalog_path: str = "",
+                        locales: Mapping[str, str] | None = None) -> Path:
+    """Escribe el sync_config.toml del dispositivo. Devuelve su ruta.
+
+    Si la raíz es la de un equipo (su fichero de control ya lo dice: el paso
+    «Instalación» va antes), se valida con sus reglas."""
     destino = config_path(device_root)
     destino.parent.mkdir(parents=True, exist_ok=True)
-    config_file.save(device_config(catalog, selected, catalog_path), path=destino,
-                     head=device_header(catalog, endpoint))
+    equipo = model.es_equipo(app_dir(device_root))
+    config_file.save(device_config(catalog, selected, catalog_path, locales, equipo),
+                     path=destino, head=device_header(catalog, endpoint))
     return destino
 
 
@@ -731,25 +747,29 @@ def write_device_config(device_root: Path | str, catalog: Catalog,
 # Carpetas locales
 # ---------------------------------------------------------------------------
 
-def local_dirs(catalog: Catalog, selected: list[str]) -> list[Path]:
-    """Las carpetas del dispositivo que necesitan las parejas elegidas.
+def local_dirs(catalog: Catalog, selected: list[str],
+               locales: Mapping[str, str] | None = None) -> list[Path]:
+    """Las carpetas del dispositivo que necesitan las parejas elegidas, con el
+    `local` cambiado aquí si lo hay (ver `device_config`).
 
     Una pareja con `local = "."` no cuenta: es la raíz del volumen, que ya
     existe."""
     salida = []
     for nombre in selected:
         pareja = catalog.pair(nombre) or {}
-        local = str(pareja.get("local", "")).replace("\\", "/").strip("/")
+        local = (locales or {}).get(nombre, pareja.get("local", ""))
+        local = str(local).replace("\\", "/").strip("/")
         if local and local != ".":
             salida.append(Path(local))
     return salida
 
 
 def make_local_dirs(device_root: Path | str, catalog: Catalog,
-                    selected: list[str]) -> list[Path]:
+                    selected: list[str],
+                    locales: Mapping[str, str] | None = None) -> list[Path]:
     """Crea esas carpetas. Devuelve las que se han creado ahora."""
     creadas = []
-    for rel in local_dirs(catalog, selected):
+    for rel in local_dirs(catalog, selected, locales):
         destino = Path(device_root) / rel
         if destino.is_dir():
             continue
@@ -856,7 +876,8 @@ SIN_PYTHON = ("El dispositivo no lleva un Python que sirva en este equipo, y aqu
               "instala Python 3.11+; el código ya instalado no se pierde.")
 
 
-def resync_command(device_root: Path | str, names: list[str]) -> list[str]:
+def resync_command(device_root: Path | str, names: list[str],
+                   python: list[str] | None = None) -> list[str]:
     """La orden que inicializa las parejas bisync del dispositivo.
 
     Aquí está la trampa que hace fracasar al instalador compilado:
@@ -866,14 +887,17 @@ def resync_command(device_root: Path | str, names: list[str]) -> list[str]:
 
     Va con --yes porque se lanza sin terminal: sin él, la pregunta del resync
     tomaría el valor por defecto (no) y las parejas se saltarían en silencio, que
-    es justo lo contrario de lo que se ha pedido."""
+    es justo lo contrario de lo que se ha pedido.
+
+    `python` es para la raíz de un equipo, que no lleva Python propio: la
+    inicializa el Python del agente, el mismo que la sincronizará después."""
     destino = sync_py(device_root)
     if not destino.is_file():
         raise InstallError(
             f"No encuentro {destino}. ¿Se ha instalado el código?")
     if not names:
         raise InstallError("No hay ninguna pareja bisync que inicializar.")
-    python = device_python(device_root)
+    python = python or device_python(device_root)
     if not python:
         raise InstallError("No hay Python con el que inicializar las parejas.\n\n"
                            + SIN_PYTHON)

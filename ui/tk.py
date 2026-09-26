@@ -648,6 +648,12 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
             vista["expulsion"] = cifrado.expulsion()
         except Exception:                            # noqa: BLE001
             vista["expulsion"] = None
+        # La raíz cifrada de un equipo no se expulsa: se bloquea, y lo hace el
+        # agente residente (`cifrado.bloqueo`).
+        try:
+            vista["bloqueo"] = cifrado.bloqueo()
+        except Exception:                            # noqa: BLE001
+            vista["bloqueo"] = None
         # Qué hace este equipo al enchufar el dispositivo. Solo lee ficheros del
         # equipo (ver `watch.resumen`), así que también cabe en el primer pintado.
         try:
@@ -789,7 +795,17 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
 
     def abrir_arranque() -> None:
         """La pantalla del vigilante. Al volver se relee qué hace este equipo al
-        enchufar: se puede haber instalado, cambiado de modo o quitado."""
+        enchufar: se puede haber instalado, cambiado de modo o quitado.
+
+        Con el agente residente, «Qué hace el agente», que se lo pide por su
+        buzón; la línea enseña lo pedido, que el agente aplica en unos segundos."""
+        actual = vista["vigilante"]
+        if actual.es_agente:
+            modo = tk_watch.open_agente(root, actual)
+            if modo is not None:
+                vista["vigilante"] = watch.pedido(actual, modo)
+                reajustar()
+            return
         tk_watch.open_dialog(root)
         try:
             vista["vigilante"] = watch.resumen()
@@ -830,6 +846,26 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         except OSError as e:
             messagebox.showerror(TITLE, f"No he podido lanzar {script.name}: {e}",
                                  parent=root)
+            return
+        result["choice"] = None
+        root.destroy()
+
+    def bloquear() -> None:
+        """«Bloquear» la raíz cifrada de este equipo: se lo pide al agente y se
+        cierra. El agente espera a que esta ventana se haya ido (y a la pareja
+        en curso) y desmonta sin `/silent`."""
+        uid = vista.get("bloqueo")
+        if uid is None or not messagebox.askokcancel(TITLE, (
+                "Se cierra esta ventana y el agente cierra el contenedor cifrado. "
+                "Hasta que lo desbloquees, nada de dentro se puede leer ni se "
+                "sincroniza.\n\n"
+                "Si algún otro programa tiene abierto algo de dentro, VeraCrypt "
+                "te preguntará si forzar el cierre."), parent=root):
+            return
+        if not cifrado.pedir_bloqueo(uid):
+            messagebox.showerror(TITLE, (
+                "El agente de este equipo no está en marcha, y es quien cierra el "
+                "contenedor. Ciérralo desde VeraCrypt."), parent=root)
             return
         result["choice"] = None
         root.destroy()
@@ -1136,7 +1172,9 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         interval_var = tk.StringVar(value=vista.get("intervalo") or f"{d_interval:g}")
         ttk.Spinbox(repetir, from_=1, to=1440, textvariable=interval_var,
                     width=5, font=theme.fuente("mono")).grid(row=0, column=2)
-        ttk.Label(repetir, text="minutos, mientras el dispositivo siga puesto",
+        # La raíz de un equipo no se desenchufa: el servicio repite sin más.
+        ttk.Label(repetir, text="minutos" if model.es_equipo() else
+                  "minutos, mientras el dispositivo siga puesto",
                   style="Pista.TLabel").grid(row=0, column=3, sticky="w", padx=(10, 0))
         vista["casillas"], vista["intervalo_var"] = vars_by_name, interval_var
 
@@ -1167,10 +1205,11 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
                 # arranque automático se ha roto.
                 ttk.Label(arranque, text=watch.PAUSA, style="Pista.TLabel").grid(
                     row=1, column=1, sticky="w")
-            cambiar = ttk.Button(arranque, text=dicho.boton, style="Quiet.TButton",
-                                 command=abrir_arranque)
-            theme.boton_icono(cambiar, "arranque", theme.ACENTO, theme.PAPEL)
-            cambiar.grid(row=0, column=2, rowspan=2, sticky="e", padx=(10, 0))
+            if dicho.boton:
+                cambiar = ttk.Button(arranque, text=dicho.boton, style="Quiet.TButton",
+                                     command=abrir_arranque)
+                theme.boton_icono(cambiar, "arranque", theme.ACENTO, theme.PAPEL)
+                cambiar.grid(row=0, column=2, rowspan=2, sticky="e", padx=(10, 0))
 
         def selected() -> list[str]:
             return [n for n in names if vars_by_name[n].get()]
@@ -1219,7 +1258,13 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         # Solo en un dispositivo que vive en un contenedor VeraCrypt, y apagado
         # mientras sincroniza: cerrar el contenedor en mitad de una pasada es
         # arrancarle los ficheros a rclone.
-        if vista.get("expulsion") is not None:
+        if vista.get("bloqueo") is not None:
+            boton_bloquear = ttk.Button(pie, text="Bloquear", padding=(12, 8),
+                                        command=bloquear, state=apagado)
+            theme.boton_icono(boton_bloquear, "expulsar", theme.TINTA2,
+                              theme.SUPERFICIE)
+            boton_bloquear.grid(row=0, column=2, padx=(8, 0))
+        elif vista.get("expulsion") is not None:
             boton_expulsar = ttk.Button(pie, text="Expulsar", padding=(12, 8),
                                         command=expulsar, state=apagado)
             theme.boton_icono(boton_expulsar, "expulsar", theme.TINTA2,

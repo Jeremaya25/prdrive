@@ -50,6 +50,10 @@ ROTULOS_FICHA = ("Versión", "Para", "Estado", "Equipos")
 ESTE_EQUIPO = " · este equipo"
 SIN_EQUIPOS = "No consta: las versiones anteriores no lo apuntaban."
 SIN_BUENA = "No consta ninguna pasada buena."
+EN_UN_EQUIPO = "Una carpeta de un equipo, no una unidad"
+MARCA_EQUIPO = " (equipo)"
+MARCA_EQUIPO_CIFRADO = " (equipo, cifrado)"
+EN_UN_EQUIPO_CIFRADO = "Una carpeta de un equipo, cifrada con VeraCrypt"
 
 
 class Linea(NamedTuple):
@@ -102,10 +106,21 @@ def ficha(disp: fleet.Dispositivo, equipo_aqui: str) -> list[Fila]:
     if not equipos:
         equipos.append(Linea(SIN_EQUIPOS, pista=True))
     version, para, est, eqs = ROTULOS_FICHA
+    # La raíz de un equipo no se enchufa en ningún sitio: su «para» es el equipo
+    # donde vive, y lo que lleva es rclone para él (el Python es el del agente).
+    para_que = ((EN_UN_EQUIPO_CIFRADO if disp.cifrado else EN_UN_EQUIPO)
+                if disp.es_equipo else ", ".join(disp.plataformas) or "—")
     return [Fila(version, (Linea(disp.version),)),
-            Fila(para, (Linea(", ".join(disp.plataformas) or "—"),)),
+            Fila(para, (Linea(para_que),)),
             Fila(est, tuple(estado)),
             Fila(eqs, tuple(equipos), reserva=fleet.MAX_EQUIPOS)]
+
+
+def marca(disp: fleet.Dispositivo) -> str:
+    """Lo que se le añade al nombre en la tabla: nada en una unidad."""
+    if not disp.es_equipo:
+        return ""
+    return MARCA_EQUIPO_CIFRADO if disp.cifrado else MARCA_EQUIPO
 
 
 def _tono(disp: fleet.Dispositivo) -> str:
@@ -248,7 +263,8 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> bool:
         for disp in flota:
             tree.insert("", "end", iid=disp.id, tags=(_tono(disp),),
                         values=("✓" if disp.id == yo else "",
-                                disp.nombre, _fecha(disp.last_seen),
+                                disp.nombre + marca(disp),
+                                _fecha(disp.last_seen),
                                 disp.last_result))
         # Más baja que antes: la ficha se lleva parte de la ventana.
         tree.configure(height=min(8, max(3, len(flota))))

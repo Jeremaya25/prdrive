@@ -17,14 +17,16 @@ pairs — never the program.
 ## Layout
 
 Root entry points: `sync.py`, `runsync.py`, `penwatch.py` (the volume-root
-launchers and the watcher locate them by fixed path), `prdrive-install.py` (what
-gets compiled and handed out) and `build_installer.py`.
+launchers and the watcher locate them by fixed path), `agente.py` (the resident
+agent, copied to the HOST, never to a device), `prdrive-install.py` (what gets
+compiled and handed out) and `build_installer.py`.
 
 ```
 prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 ├── sync.py            engine: build the rclone command, run it, report
 ├── runsync.py         the periodic service + who calls what
 ├── penwatch.py        mount watcher (deliberately self-contained)
+├── agente.py          the resident agent: penwatch's successor on a host
 ├── VERSION            the version, in ONE place; ships to the device
 ├── common/            the config and rclone
 │   ├── model.py       sync_config.toml parsed into resolved objects
@@ -44,6 +46,11 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 │   ├── pairing.py     reads rclone.conf; the connection as a QR payload
 │   ├── vestibulo.py   what a VeraCrypt device leaves OUTSIDE its container
 │   ├── autorun.py     the root's autorun.inf: the drive's name and icon, edited
+│   ├── planificador.py the agent's scheduler: PURE (data in, decision out)
+│   ├── equipo.py      the agent's host dir: agente.json, instalacion.json, buzón
+│   ├── moderacion.py  battery, metered network, "is this failure the network?"
+│   ├── dbus.py        a stdlib D-Bus client (the calling half)
+│   ├── avisos.py      native notifications, no Tk
 │   └── store.py       device JSON state + pid_alive(); atomic writes; hide()
 ├── ui/                asking the user, showing results
 │   ├── __init__.py    Choice, Frontend, start(), fatal(), manual_args(), abrir()
@@ -59,6 +66,11 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 │   ├── tk.py          TkFrontend: main + output window, modal()/mostrar()/working()
 │   ├── cifrado.py     is this device inside a VeraCrypt container? «Expulsar»
 │   ├── tk_install.py  the install wizard          (every tk_* draws only)
+│   ├── tk_equipo.py   the wizard's «En este equipo» steps
+│   ├── tk_agente.py   «¿Atender esta unidad?», a child process of the agent
+│   ├── bandeja.py     what the agent's tray shows and asks: PURE, no Tk
+│   ├── bandeja_windows.py  the Windows tray: Shell_NotifyIconW, its own thread
+│   ├── bandeja_linux.py    the Linux tray: StatusNotifierItem + dbusmenu, its own thread
 │   ├── tk_pairs.py · tk_repair.py · tk_conflicts.py · tk_fleet.py ·
 │   │   tk_watch.py · tk_update.py · tk_crypto.py · tk_doctor.py ·
 │   │   tk_qr.py · tk_versions.py · tk_volumen.py
@@ -77,6 +89,8 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 │   ├── crypto.py      VeraCrypt and BitLocker
 │   ├── traveler.py    the VeraCrypt Portable (x64 + ARM64) on the volume, swapped
 │   ├── vestibulo.py   the launchers outside the container: open, eject
+│   ├── agente.py      put the resident agent on this host, and take it off
+│   ├── raiz_equipo.py the host root: which folder, its container, install it, other sync clients
 │   └── deploy.py      copy the code in, rclone + runtimes, launchers, config
 └── tests/             plain scripts; run_all.py runs them in separate processes
 ```
@@ -168,12 +182,22 @@ python runsync.py --auto --once  # one pass of the service's pairs, then exit
 python runsync.py --doctor     # any other args pass straight through to sync.py
 
 python penwatch.py install|status|probe|uninstall   # the watcher, per machine/user
+python agente.py run|status                         # the resident agent (host copy)
+python agente.py atender ID | modo ID MODO | pasada ID [pareja…] | pausa | sigue | parar
+python agente.py abrir [ID]                         # the window of the host root (the menu entry;
+                                                    # starts a stopped agent, and with no root says how it is)
+python agente.py desbloquear [ID] | bloquear [ID]   # open / close the encrypted host root
+python agente.py ajuste pedir_al_iniciar sí|no      # or espera_unidad_nueva SEG
+python agente.py actualizar                         # fetch the new release and put it in place
 
 python prdrive-install.py          # install wizard for a NEW device (Tk only)
 python prdrive-install.py --check  # rclone + connection + catalogue, then exit
 python prdrive-install.py --probe  # what drives it sees, then exit
 python prdrive-install.py --update E:\             # the device's code only
 python prdrive-install.py --update-components E:\  # its rclone + runtime only
+python prdrive-install.py --instalar-agente        # the resident agent on THIS host
+python prdrive-install.py --desinstalar-agente     # and off again (no drive touched)
+python prdrive-install.py --update-agente          # the installed agent (and open host roots) to this version
 python build_installer.py          # build the .exe (embeds the profile if any)
 python -m ui.icons                 # repaint APP_DIR/runsync.ico (headless)
 
@@ -322,7 +346,8 @@ when runsync is launched again.
 
 **One service, two ways to start it (#14).** By hand («Iniciar servicio») or on
 plugging in (the watcher → `runsync --auto`), it is the same service with the
-same config: pairs + interval in `ui_prefs.json`, on the device.
+same config (with the resident agent as this root's service, «Iniciar
+servicio» asks it to resume instead: «The window ↔ the agent», below): pairs + interval in `ui_prefs.json`, on the device.
 `startup_defaults()` layers that record > `[daemon]` in the TOML > all pairs /
 30 min, for the window, `--auto` and the watcher alike; explicit `--auto`
 arguments still win (shortcuts, cron, and watchers not yet reinstalled). **Only
@@ -1156,6 +1181,357 @@ script to `%LOCALAPPDATA%\prdriveWatch` / `~/.local/share/prdrive-watch`, writes
   and the running process's dirs. No device runtime for this host → host Python,
   never one living on the device.
 
+## The resident agent (`agente.py` + `common/planificador.py` + `install/agente.py`)
+
+The six phases of `docs/superpowers/specs/2026-09-25-instalacion-en-el-equipo-design.md`
+(read it before touching this): the agent attends the prdrive drives plugged
+into the host and, optionally, **the host root** (below), plain or in a
+VeraCrypt container; with no root it is the **«solo agente»** install. It has
+a tray on Windows and on Linux (below), and the window of a root talks to it
+(below).
+**Nothing of this has run on a real machine**: what has to be
+checked there, phase by phase, is the living list in
+`docs/superpowers/pruebas/2026-09-25-equipo-pendiente-en-real.md` — add to it
+whatever you build that only a real host can prove.
+
+- **Lives outside every root**, in `equipo.DIR` (`%LOCALAPPDATA%\prdrive\`,
+  `~/.local/share/prdrive/`): `agente/<version>/` (agente.py, penwatch.py,
+  common/, ui/ — never install/), `runtime/<stamp_id>/` (its own
+  python-build-standalone, extracted by `runtime_bin.extract()`), `agente.json`
+  (WHAT: drives, modes, `espera_unidad_nueva`, moderation), `instalacion.json`
+  (WHERE: code, python), `agente.lock.json`, `agente.pide`, `estado.json`,
+  `agente.log`. **No secret there.** `tests/_harness.py` points `equipo.DIR` at
+  a temp dir for every test.
+- **One writer per file.** `agente.json` is written by `install/agente.py` the
+  first time only; afterwards **only the agent** writes it, and everybody else
+  (the wizard re-run, the CLI, the window) appends a JSON line to the
+  mailbox `agente.pide` (`equipo.pedir()`); the agent consumes it by renaming it
+  first (`equipo.recoger()`). `instalacion.json` is the installer's. A root has
+  its own mailbox, `state/servicio.pide` (phase 5, below), same shape.
+- **The agent never runs a drive's code before «Atender».** A drive whose id is
+  not in `agente.json` gets a notification + a countdown window (`agente.py
+  pregunta` → `ui/tk_agente.py`, exit code 0/1/2); the deadline is
+  `planificador.Pregunta`, not the window's. No answer / late answer / no
+  display = «Ahora no» for THIS connection only (re-armed when the root
+  disappears). Only its control file and `state/fleet.json` are read.
+  `tests/test_unidad_nueva.py` asserts no launched process carries its paths.
+- **It is the drive's service through the drive's own files** (spec section 3),
+  so old drives work: it writes `daemon.lock.json` (`"agente": true`), obeys
+  `daemon.stop` after the pair in flight (releases, deletes the stop, and
+  **pauses** instead of exiting), stays paused while a live `ui.lock.json` of
+  this host exists and for `GRACIA` seconds after (so a service started from the
+  window has time to write its lock), and **steps aside** while another live
+  pid of this host holds the lock. A stale lock (dead pid / other host) is
+  overwritten. `runsync.stop_previous_daemon()` says "pauses" when the lock is
+  the agent's. `tests/test_agente_contrato.py` drives the real
+  `stop_previous_daemon()` against it.
+- **Every pass is the root's own `sync.py`**, a child with the agent's Python
+  (`pythonw` on Windows), `stdin=DEVNULL` (a pair needing `--resync` is skipped),
+  cwd `equipo.DIR`. One pass at a time on the whole host. Nothing stays open in
+  a drive between passes. A drive unplugged mid-pass records nothing.
+- **`common/planificador.py` is pure** and holds every rule: single queue,
+  urgent («Sincronizar ahora») skips all moderation, pause / battery / metered
+  hold everything, `intervalo · 2^k` backoff capped at 4 h (never below the
+  interval), mode `sync` = infinite interval, offline remotes are PROBED
+  (`SONDA`, an `rclone lsd remote:` with `catalog.NET_FLAGS`) instead of
+  retried. A `RED` result doesn't count a failure; the agent probes at once and,
+  if the remote answers, re-records it as `FALLO` (the classification was
+  wrong). Network needles live in `moderacion.ERRORES_DE_RED`, and
+  `sync.KNOWN_ERRORS` uses `moderacion.es_de_red` as a **callable needle** —
+  one list, because the agent doesn't carry `sync.py`.
+- **Notifications only when a pair STARTS failing** (`planificador.empieza_a_fallar`)
+  or a remote goes offline — `common/avisos.py` (D-Bus `Notify`; Windows
+  `Shell_NotifyIconW` NIF_INFO on a temporary message-only window, **unverified
+  on real Windows**). No Tk in the agent process: `tests/test_install_agente.py`
+  checks `tkinter` isn't in `sys.modules` after importing it.
+- **`common/dbus.py`** cites the *D-Bus Specification* like `ui/qr.py` cites
+  ISO/IEC 18004 — keep the citations. The calling half (address, EXTERNAL,
+  marshalling, calls, properties, `AddMatch`) and, for the Linux tray, the
+  answering half: `pedir_nombre()`, `exportar(ruta, Interfaz…)` (methods with
+  their in/out signatures, read-only properties), `emitir()`, `atender()`, and
+  `Peer` / `Introspectable` / `Properties` answered for every exported path.
+  A call that arrives while `llamar()` waits is answered then and there when
+  something is exported (a watcher may ask before it replies); a handler's
+  exception is a `Failed` error for the caller, never a crash.
+  `tests/test_dbus.py` pins the canonical `Hello` bytes; `tests/_bus_falso.py`
+  is a bus that also calls the client, as a tray host does.
+- **Detection** reuses `penwatch.candidate_roots()` (still the one drive walk):
+  Linux wakes on `POLLPRI` of `/proc/self/mountinfo` and bursts; Windows bursts
+  on the tray window's `WM_DEVICECHANGE` (both then fall back to a 30 s walk),
+  and without a tray polls every `penwatch.POLL_SECONDS` like penwatch. Two sightings
+  before a drive counts. VeraCrypt vestibules of LISTED drives are opened once
+  per connection (`penwatch.open_container(root, cwd=…)`), never for others;
+  a disconnection is recorded as «already asked» until a walk shows no vestibule
+  («Expulsar» must not bring the password up again).
+- **Pairs and interval stay the drive's**: `leer_servicio()` reads the raw TOML
+  (not `model.parse_config()`: the drive may be another version) and applies
+  `prefs.elegir()` — the pure core of `startup_defaults()`, one rule, not two.
+- **Installing** (`install/agente.py`): code and runtime each in a per-version
+  dir, swapped with `os.replace`, old ones pruned; imports penwatch's
+  `device_id`/`mode` and **uninstalls penwatch** (and says so); registers with
+  `penwatch.register_task()` (the task XML is now `penwatch.task_xml()` with the
+  command as a parameter) or an XDG autostart (`penwatch.autostart_desktop()`,
+  `Exec=` quoted per the Desktop Entry spec) — **not** systemd: notifications,
+  the question and VeraCrypt's password need the graphical session.
+  Uninstalling removes `equipo.DIR` and never touches a drive.
+- **Dependency rules:** the agent imports penwatch, never the reverse; penwatch
+  still imports nothing of the project (`test_install_agente.py` walks its AST).
+  `agente.py` is in `build_installer.DATOS_FICHEROS` but NOT in
+  `deploy.DEPLOY_FILES`: it goes to hosts, not devices.
+- **The window's watcher line** (`watch.resumen()`) asks `equipo` first: with an
+  agent installed it reports `agente` / `agente_nueva` / `agente_raiz` and is the
+  agent's line (phase 5, below). The wizard's final step offers «Que lo atienda
+  el agente de este equipo» instead of installing penwatch.
+- **The wizard's first step is «¿Dónde?»** in every route (`PASOS_INSTALACION`,
+  both short routes, `PASOS_EQUIPO`, `PASOS_EQUIPO_SOLO`), so «Dispositivo» and
+  «Carpeta» keep index 1 and «Atrás» always lands where it says.
+
+### The host root (`install/raiz_equipo.py` + `ui/tk_equipo.py`)
+
+A folder of the host with `.prdrive/` inside is, for the engine, one more device
+(`DEVICE_ROOT` is `.prdrive/`'s parent and nothing else). What differs, and must
+not be weakened:
+
+- **`tipo=equipo`** is a line of the control file (`device.ensure_control_file(
+  tipo=)`, which keeps the id when only the type changes); `model.tipo_raiz()` /
+  `es_equipo()` read it, an old penwatch only reads `id=`. The fleet note carries
+  `tipo = "equipo"` (drives write no key, so their notes are unchanged) and
+  `tk_fleet` labels it.
+- **No pair of the whole root, nor one leaving it** (`local = "."`, `..`, an
+  absolute path): it would sync `.prdrive/` with the key, and with the home
+  folder as root, all of `~`. `model.problema_local_equipo()` is the ONE rule;
+  `parse_config(equipo=True)` applies it and `load_config()` passes
+  `es_equipo()`. It is a keyword and not read inside `parse_config` because the
+  **catalogue** goes through the same function, and there a root pair is legit
+  for drives — so `catalog_editor`, `install/remote.py` and `config_file` stay
+  as they were, while `pair_editor` (every red-net call), `tk_pairs`,
+  `deploy.device_config(equipo=)`, `write_device_config()` (reads the root's
+  type) and `device._check_config` pass it. `pair_editor.ruta_local_relativa()`
+  also refuses the root when picking it.
+- **What the root carries:** code, rclone for THIS host only
+  (`raiz_equipo.plan_rclone()`, fetched before writing, #49), connection + key,
+  control file. **No runtime, no launchers, no guide**: the agent syncs it with
+  its Python, and its window opens from the menu entry «prdrive»
+  (`install/agente.poner_menu()`: an XDG `.desktop` on Linux, a Start Menu `.lnk`
+  via `IShellLinkW` on Windows — `crear_lnk()` is an indirection point,
+  **unverified on real Windows**) that runs `agente.py abrir`.
+  `device.verify_device()` skips the launcher and Python rows for such a root;
+  the wizard's initialisation passes the agent's console Python to
+  `deploy.resync_command(python=)`.
+- **Own folder (`~/PRDRIVE`) or home (`~`), chosen once.** `examinar()` refuses
+  a relative path, a file, a drive prdrive, anything crossing `equipo.DIR`
+  (except home, which always contains it); a root that already is `tipo=equipo`
+  is reinstalled keeping its id — the agent lists it by id.
+- **Other sync clients** (`carpetas_sincronizadas()`, an indirection point: the
+  `OneDrive*` env vars and Dropbox's `info.json`) are an amber warning in both
+  directions, never a block. The «Parejas» step shows each pair's resolved path
+  and lets its `local` be changed HERE only (`device_config(locales=)`: the pair
+  reads as «modificada aquí»).
+- **The agent** keeps the root in the same list as drives: `equipo.Unidad.ruta`
+  (non-empty = host root; `Ajustes.raices`). `_recorrer()` passes those paths as
+  penwatch extra roots, so the walk is still one. A root missing from its path is
+  notified ONCE (`Agente.ausentes`) and nothing runs until it is back — never
+  searched for or recreated. `PIDE_RAIZ` (`añadir_raiz`) is how a wizard re-run
+  with the agent installed adds it; `install.agente.aplicar_unidades(raiz=)`
+  writes it directly only when there is no `agente.json`. `candidatas()` never
+  offers a root as a drive. Uninstalling never deletes the root, and says where
+  it stays.
+- **The «Unidades» step** can add the fleet's drives (`raiz_equipo.de_la_flota()`:
+  one `rclone copy` of `devices/` to a temp dir, never `cat` of the folder, #48),
+  but as `tk_equipo.PREGUNTAR` — not in the list: a drive is never synced without
+  a yes.
+- `ui/watch.py` reports `agente_raiz` for a window opened on the host root.
+
+### The encrypted host root (phase 3)
+
+With «Una carpeta propia», the wizard's «Cifrado» step (`tk_equipo.paso_cifrado`,
+between «Carpeta» and «Conexión», because it fixes `state.device_root` as in a
+drive) can put the root in `<carpeta>-cifrado/PRDRIVE.hc`, with only the
+vestibule **marker** beside it (`raiz_equipo.marcar()`: same id as the control
+file inside; no `.bat`/`.sh`/guide — the agent is the opener). Mounted at a
+**fixed letter** on Windows (`equipo.Unidad.ruta` = `P:\`, `Unidad.letra`) or at
+the carpeta itself on Linux (`crypto.mount_container(punto_fijo=)`), and
+`Unidad.contenedor` holds the `.hc`. Not to weaken:
+
+- **Installed VeraCrypt only** (`raiz_equipo.veracrypt_instalado()` =
+  `penwatch.installed_veracrypt()`, one definition for the wizard and the
+  agent). No portable, no download, no installer: without it the step says how
+  to install it and offers only «Sin cifrar». Inside: NTFS on Windows, exFAT on
+  Linux (a fresh ext4 is root's).
+- **The password never passes through the agent.** The wizard uses it once to
+  create and mount (`raiz_equipo.abrir_o_crear()`) and leaves the container
+  open for the agent. From then on `penwatch.veracrypt_command(None, container,
+  dest)` has no `/password`, and does carry `/letter` + `/m rm`.
+- **Open is SEEN, not assumed**: the id at the letter with the `.hc` held
+  (`common/vestibulo.retenido()`, the `:libre` probe; None on POSIX, where the
+  mount point decides). Id at the letter beside a free `.hc` is H-10's ghost:
+  `Agente._fantasmas()` drops it and says «Bloquear y volver a desbloquear»
+  once. `agente.punto_ocupado()` refuses another drive on the letter and a
+  mount point with content (it would be hidden) — the agent never picks another
+  letter or folder.
+- **Locked is not absent**: no notice, no backoff. Only a missing `.hc` is
+  notified (once). `pedir_al_iniciar` (default on, `agente.json`, a
+  `PIDE_AJUSTE` like `espera_unidad_nueva`) asks ONCE per agent start after
+  `ESTABLE` walks; cancelled, not again until `desbloquear`.
+- **Bloquear** (`PIDE_BLOQUEAR`, `Agente._bloqueos()`): stop queuing, wait for
+  the pair in flight and for the root's window to go (`ESPERA_VENTANA`; the
+  window's «Bloquear» asks and closes itself — runsync's window does not listen
+  to `daemon.stop`), release the lock, then dismount **without `/silent`**
+  (`agente.orden_bloquear()`), so VeraCrypt asks before forcing. Locked =
+  `agente.bloqueada()`: `.hc` free and letter gone (Windows), mount point
+  unmounted (Linux). VeraCrypt exiting with it still open → «sigue abierta» and
+  the root is attended again.
+- `ui/cifrado.bloqueo()` turns the window's «Expulsar» into «Bloquear» for such
+  a root; `vestibulo.raiz_fisica()` walks `carpetas_de_contenedor()` as extra
+  roots, so `espacio` and the leftovers check work unchanged. The fleet note
+  adds `cifrado = "veracrypt"` (`fleet._cifrado()`, from `agente.json`).
+- Switching a plain root to encrypted leaves the plain tree where it was
+  (`raiz_equipo.restos()`: red in the step on Windows, a red row in
+  «Verificación»); on Linux the mount point must be empty, so it is refused.
+  Uninstalling never closes or deletes the container, and says if it is open.
+- A «Desbloquear» in flight is an `agente.Desbloqueo` holding VeraCrypt's
+  process: a second one does not launch another password window, and one that
+  never shows the root open (VeraCrypt exited `GRACIA_ABRIR` ago, or
+  `ESPERA_ABRIR` passed) is forgotten (`_seguir_desbloqueos()`) so it is
+  offered again.
+
+### The tray (phase 4: Windows; phase 6: Linux)
+
+Same split as the rest of `ui/`: **`ui/bandeja.py` decides, `ui/bandeja_windows.py`
+draws**, and neither imports tkinter (`test_install_agente.py` checks it).
+
+- **`bandeja.vista(resumen)` is pure**: from `Agente.resumen()` (what goes to
+  `estado.json`, which gained `equipo` — each host root with its state —
+  `pedir_al_iniciar`, and per drive `en_lista`/`ahora_no`/`preguntando`/
+  `error`/`fallando`) it returns the icon, the tooltip and the menu tree.
+  Every `Entrada` carries **mailbox-shaped requests** (`equipo.PIDE_*`); the
+  agent takes them through `Agente.pedir()` → a `queue.SimpleQueue` drained in
+  `_buzon()` with the file mailbox, so there is one handler for both. New:
+  `PIDE_ABRIR` (the window of a root: `_lanzar_ventana()`, which checks only the
+  UI lock — our own service lock is expected and runsync pauses it; a locked
+  encrypted root is unlocked first with `abrir=True` and its window opens on
+  connect) and `PIDE_DESPERTAR` (back from suspend: re-read battery/network,
+  probe every offline remote now, burst the walk).
+- **Never «Abrir» for a drive that is not in the list**, even asked by hand:
+  that is running its code before the yes. It gets «…, conectada · Atender…».
+- **Icon priority** (`bandeja.estado()`): pause > a pass in flight > avisos
+  (failing pairs, a root's `error`, offline remotes, a missing root, a ghost) >
+  held by battery/metered (pause icon) > an encrypted root locked (not an
+  aviso: it is the normal state) > bien. The five `.ico` are
+  `icons.capas_bandeja()` — the brand plus a corner badge whose **colour** is
+  what reads at 16 px — painted by `copiar_codigo()` and, if missing, by the
+  agent on start (`write_bandeja(solo_si_faltan=True)`), never copied.
+- **`bandeja_windows.Bandeja`** runs its own thread with its window and message
+  loop; the agent talks to it only via `PostMessageW` (`poner()`, `globo()`,
+  `cerrar()`), it talks back via `pedir()` and `montajes()` (→
+  `Vigia.despertar()`, which on Linux writes a pipe polled beside mountinfo).
+  Everything Win32 is in `Api`; `tests/test_bandeja_windows.py` drives the rest
+  with a fake one and a real queue-based loop. Not to weaken:
+  - **A hidden top-level window, not a message-only one** (the spec said
+    message-only): those get no broadcasts, and `WM_DEVICECHANGE` for volumes
+    (VeraCrypt's `BroadcastDeviceChange()`) and `TaskbarCreated` are broadcasts.
+  - **`arrancar()` succeeds with the window, not the icon**: at logon the
+    taskbar may not exist yet, `NIM_ADD` fails, and `TaskbarCreated` adds it
+    later (also after an Explorer restart).
+  - The menu is `TrackPopupMenu(TPM_RETURNCMD)` after `SetForegroundWindow`,
+    with a `WM_NULL` after it, or it does not close when clicking away; `&` in
+    names is doubled (`texto_menu()`).
+  - Notices hang off the tray icon (`NIM_MODIFY` + `NIF_INFO`) through
+    `avisos.GLOBO`; without it, `avisos` falls back to its temporary icon.
+- **Walks with a tray**: `cmd_run()` bursts on `WM_DEVICECHANGE` and falls back
+  to `RECORRIDO_RESPALDO` (30 s); without one (`poner_bandeja()` → None, an
+  indirection point) it keeps penwatch's 5 s. On Linux the walk is
+  mountinfo's either way; the tray changes nothing there.
+- «Cerrar el agente» is `PIDE_PARAR`: the next logon starts it again. Not in the
+  spec's list; there is no other way to close a tray icon.
+
+**Linux (`ui/bandeja_linux.py`, phase 6)** draws the same `bandeja.Vista` on
+the session bus, with its own thread and connection (the agent talks to it via
+`poner()` / `cerrar()`, which write a pipe the thread selects on). Cite the
+*StatusNotifierItem* and *dbusmenu* specifications like the D-Bus one. Not to
+weaken:
+- **Name, path, register**: `org.kde.StatusNotifierItem-<pid>-1` owns
+  `/StatusNotifierItem` (interface `org.kde.StatusNotifierItem`), registered
+  with `RegisterStatusNotifierItem` on `org.kde.StatusNotifierWatcher`; the menu
+  is `com.canonical.dbusmenu` v3 at `/MenuBar`, which the item's `Menu`
+  property names. The icon is `IconPixmap`, `a(iiay)` **ARGB32 in network
+  byte order, not premultiplied** (`icons.pixmap_bandeja()`, 16–64 px, painted
+  lazily and cached); changes are `NewIcon` / `NewToolTip` / `NewStatus`, and
+  `NeedsAttention` with avisos. `ItemIsMenu` so the left click opens the menu
+  too; `Activate` (for hosts that call it anyway) does the `defecto` entry.
+- **dbusmenu ids are renumbered on every change** (`bl.Menu.poner()`, only when
+  the entries actually differ) and `LayoutUpdated` is emitted; the previous
+  numbering is kept, so a click from a menu that was open means what it said.
+  `_` in labels is doubled (dbusmenu mnemonic). There is no default entry, so
+  no bold.
+- **No watcher is not «no tray forever»**: `arrancar()` succeeds with the
+  session bus, `puesta` is False until a watcher with a host exists, and
+  `NameOwnerChanged` / `StatusNotifierHostRegistered` register it when one
+  appears or restarts (Linux's `TaskbarCreated`). `Agente.con_bandeja()` (not
+  `bandeja is not None`) decides whether a notice may say «from the tray icon».
+- **The fallback is the menu entry**: on Linux `install/agente.quiere_menu()`
+  puts the «prdrive» `.desktop` even without a host root, and `agente.py abrir`
+  starts a stopped agent (`arrancar_agente()`), opens the root's window, or with
+  no root sends `bandeja.aviso_de_estado()` as a notification. «Verificación»
+  has a «Bandeja» row (`tk_equipo.escritorio()`, one bus connection for it and
+  the notifications row) naming the GNOME extension when there is no watcher.
+- **Resume from suspend** is `PrepareForSleep(false)` from logind on the
+  **system** bus, heard in the tray thread → `PIDE_DESPERTAR`; no system bus,
+  no resume signal, nothing else lost.
+- `tests/test_bandeja_linux.py` drives it all over `tests/_bus_falso.py`.
+
+### The window ↔ the agent (phase 5)
+
+No ports: two mailboxes of JSON lines, appended by whoever asks and consumed by
+the agent renaming them first (`equipo.pedir(…, buzon_de=)` /
+`equipo.recoger(buzon_de=)`).
+
+- **`state/servicio.pide`** (`equipo.BUZON_SERVICIO`) is the ROOT's: the agent
+  drains it only for connected roots **in its list** (`_buzones_de_raices()`;
+  an unlisted drive's is not even read), takes the id from WHERE the file is,
+  never from the request, and accepts only `equipo.PIDE_SERVICIO`
+  (`reanudar`, `pasada`, `bloquear`); anything else is logged and ignored. The
+  window's «Bloquear» goes through it (`cifrado.pedir_bloqueo()`); the agent
+  still takes `bloquear` from `agente.pide` too (the CLI, the tray).
+- **«Iniciar servicio»** (`runsync._atender()`) still saves `ui_prefs.json`,
+  then, only when the agent IS this root's service (`watch.Resumen.
+  servicio_del_agente`: alive, listed, mode `daemon`), writes `reanudar`
+  (`runsync.pedir_reanudar()`) instead of spawning a daemon. Any other case
+  (mode `sync`/`ui`/`nada`, agent dead, drive unlisted) spawns the classic
+  service, and the agent steps aside as in phase 1. `reanudar` sets
+  `Conexion.reanudar`: when the window's UI lock goes, the agent resumes at
+  once (no `GRACIA`) and drops that root's `marcas`, so it starts with a pass
+  like the service it replaces.
+- **The agent's line** (`watch._agente_linea()`): what it does with this root,
+  «en pausa para todo» from `estado.json`, and amber when no agent process is
+  alive. Its button («Cambiar…», «Atender…» for an unlisted drive) opens
+  `tk_watch.open_agente()`, which asks the mode with `PIDE_MODO`
+  (`watch.pedir_modo()` → `watch.pedir_al_agente()`, an indirection point); the
+  line then shows what was asked (`watch.pedido()`), since `agente.json` only
+  changes when the agent reads it. A host root is offered `daemon`/`nada` only.
+- **`pedir_al_iniciar` in «Ajustes»**: a checkbox, only for the encrypted host
+  root (`watch.pedir_al_iniciar()` → None otherwise), sent as `PIDE_AJUSTE`.
+- **Wizard re-run with the agent of the same version** (`install/agente.
+  misma_version()`): «Instalación» reuses it (`instalado_prep()`), «Arranque»
+  is «Pedírselo al agente» → `anadir()`: mailbox only, menu entry if a root is
+  new, start it only if it is not running. No stop, no re-register.
+- **«Actualizar»** (section 8 of the spec). The agent checks every
+  `MIRAR_VERSION` (6 h) in a thread (`agente.hilo()`, `buscar_version()`, both
+  indirection points; `_agente_falso` runs it inline and never finds one) with
+  `update.check(cache=)`'s 24 h cache in `equipo.DIR/update.json`, says it
+  ONCE, and `resumen()` carries `version`/`nueva`/`actualizando` so the tray
+  offers «Actualizar a la vX». `PIDE_ACTUALIZAR` launches ONE detached
+  `agente.py actualizar`, which downloads the tag with `update.download()` to a
+  temp dir (never a root), runs THAT tree's `prdrive-install.py
+  --update-agente` with the agent's Python (`update.agent_command()`,
+  `agente.ejecutar()`), copies its output to `agente.log` and removes the temp
+  dir. `install/agente.actualizar()` = `preparar()` beside, `parar_agente()`,
+  `registrar()`, menu, `instalacion.json`, `actualizar_raices()`
+  (`deploy.deploy_code()` on each OPEN host root; a locked one is left for its
+  window), `podar()`, `arrancar()`. **`podar()` never deletes the runtime of
+  `sys.executable`**: «Actualizar» runs on the old Python, and deleting half a
+  live interpreter's stdlib kills it on its next import.
+
 ## Conflicts & failures (`conflicts.py`, `results.py`, `ui/conflict_editor.py`)
 
 **Why the suffix carries the side.** With rclone's defaults the loser is
@@ -1455,8 +1831,18 @@ keeps the target's existing header.
   `vestibulo.raiz_fisica()`, `cifrado.lanzar_expulsion()`,
   `crypto.sistema_de_ficheros()`, `crypto.bytes_escritos()`,
   `_leer_estado_bitlocker()`, `_preguntar_borrado()`, `pairing.construir()`,
-  `watch.resumen()`, `tk.mostrar()` / `confirmar_plan()`. Keep new ones in that
-  shape.
+  `watch.resumen()`, `tk.mostrar()` / `confirmar_plan()`, and for the agent
+  `agente.lanzar()` / `hay_pantalla()` / `avisar()` / `abrir_contenedor()` /
+  `diario()`, `avisos.enviar()`, `moderacion.energia()` / `red_medida()`,
+  `install.agente.conseguir_runtime()` / `lanzar()` / `autostart_file()` /
+  `acceso_menu()` / `crear_lnk()`, `raiz_equipo.carpetas_sincronizadas()` /
+  `veracrypt_instalado()` / `abrir_o_crear()`, `penwatch.installed_veracrypt()`,
+  `vestibulo.retenido()`, `cifrado.pedir_bloqueo()`, `agente.poner_bandeja()`, the tray's
+  `bandeja_windows.Api`, `agente.hilo()` / `buscar_version()` / `ejecutar()` /
+  `cache_version()`, `runsync.pedir_reanudar()` / `agente_sirve()`,
+  `watch.pedir_al_agente()`, `agente.arrancar_agente()`, `tk_equipo.escritorio()`,
+  the Linux tray's `conectar` / `conectar_sistema`, and `equipo.DIR`. Keep new
+  ones in that shape.
 
 ## Documentation
 

@@ -166,7 +166,12 @@ with sandbox():
 # --- la línea del arranque automático -------------------------------------------
 ESTADOS = (watch.Resumen("sin_instalar"), watch.Resumen("otro_dispositivo"),
            watch.Resumen("desfasado", "daemon"), watch.Resumen("instalado", "ui"),
-           watch.Resumen("instalado", "daemon"), watch.Resumen("instalado", "sync"))
+           watch.Resumen("instalado", "daemon"), watch.Resumen("instalado", "sync"),
+           # La línea del agente (fase 5): en marcha, parado, en pausa, la raíz.
+           watch.Resumen("agente", "daemon", True), watch.Resumen("agente", "ui", False),
+           watch.Resumen("agente", "sync", True, True),
+           watch.Resumen("agente_nueva", "", True),
+           watch.Resumen("agente_raiz", "daemon", True))
 for res in ESTADOS:
     with sandbox():
         visto = {}
@@ -217,6 +222,26 @@ with sandbox():
     c("y al volver la línea dice lo nuevo",
       "Al enchufarlo en este equipo: una pasada de estas parejas." in visto["textos"], True)
 
+
+
+# Con el agente, el botón abre «Qué hace el agente», y la línea enseña lo pedido.
+with sandbox():
+    pedidos: list = []
+    visto = {}
+    real_agente = tk_watch.open_agente
+    tk_watch.open_agente = lambda parent, res: pedidos.append(res) or "nada"
+    try:
+        def cambiar_agente(root) -> None:
+            botones(root)["Cambiar…"].invoke()
+            visto["textos"] = textos(root)
+
+        ventana(CUATRO, cambiar_agente, resumen=watch.Resumen("agente", "daemon", True))
+    finally:
+        tk_watch.open_agente = real_agente
+    c("con agente, «Cambiar…» abre «Qué hace el agente»",
+      [r.estado for r in pedidos], ["agente"])
+    c("  y la línea dice lo pedido",
+      "El agente de este equipo no hace nada con él." in visto["textos"], True)
 
 
 # --- que quepa ---------------------------------------------------------------------

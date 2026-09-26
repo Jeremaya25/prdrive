@@ -35,6 +35,11 @@ por delante de [daemon] del TOML. Solo la escribe la UI, y solo al arrancar el
 servicio: una pasada manual no la toca, y --auto y --daemon únicamente la leen,
 para que un arranque automático no reescriba lo que decidiste a mano.
 
+Con el agente residente (`agente.py`) como servicio de esta raíz —vivo, y con
+ella en modo `daemon`—, «Iniciar servicio» no arranca otro: guarda esa memoria
+y le deja un `reanudar` en `state/servicio.pide`, y el agente vuelve en cuanto
+se cierra la ventana.
+
 Con argumentos, se pasan tal cual a sync.py (así `runsync.bat --doctor` sigue
 funcionando), salvo dos flags propios:
 
@@ -167,6 +172,24 @@ def vigilante_instalado() -> bool:
         return False
 
 
+def agente_sirve() -> bool:
+    """¿El servicio de esta raíz es el agente residente, vivo, en modo daemon?
+    (`watch.Resumen.servicio_del_agente`). Bajo `except`, como el de arriba."""
+    try:
+        from ui import watch
+        return watch.resumen().servicio_del_agente
+    except Exception:                                   # noqa: BLE001
+        return False
+
+
+def pedir_reanudar() -> bool:
+    """«Iniciar servicio» con el agente: `reanudar` en el buzón de esta raíz
+    (`state/servicio.pide`). De módulo para que los tests la sustituyan."""
+    from common import equipo
+    return equipo.pedir({"pide": equipo.PIDE_REANUDAR},
+                        model.STATE_DIR / equipo.BUZON_SERVICIO)
+
+
 # ---------------------------------------------------------------------------
 # Parada del servicio anterior (lado lanzador)
 # ---------------------------------------------------------------------------
@@ -190,6 +213,12 @@ def stop_previous_daemon() -> str | None:
     deadline = time.monotonic() + STOP_WAIT_SECONDS
     while time.monotonic() < deadline:
         if read_lock() is None:
+            # El agente residente (`agente.py`) no se va: suelta el dispositivo
+            # mientras haya una ventana abierta y vuelve cuando se cierra.
+            if info.get("agente"):
+                que = "esta carpeta" if model.es_equipo() else "este dispositivo"
+                return (f"El agente de este equipo deja de sincronizar {que} "
+                        f"mientras la ventana esté abierta.")
             return f"Servicio anterior (pid {pid}) detenido."
         time.sleep(0.3)
 
@@ -424,6 +453,15 @@ def _atender(config: model.Config, startup_msg: str | None) -> int:
         # pocas parejas no decide qué sincroniza el servicio (ver ui/prefs.py).
         prefs.save_prefs(choice.action, list(choice.pairs), choice.minutes,
                          config.names)
+        if agente_sirve() and pedir_reanudar():
+            # El servicio de esta raíz ya es el agente residente: arrancar otro
+            # solo lo apartaría. Lee lo que se acaba de guardar y vuelve en
+            # cuanto se cierre esta ventana.
+            que = "esta carpeta" if model.es_equipo() else "este dispositivo"
+            frontend.info(f"El agente de este equipo vuelve a sincronizar {que} en "
+                          f"cuanto se cierre esta ventana: "
+                          f"{', '.join(choice.pairs)} cada {choice.minutes:g} min.")
+            return 0
         msg = spawn_daemon(list(choice.pairs), choice.minutes)
         if vigilante_instalado():
             msg += ("\nMientras el servicio esté en marcha, el arranque "

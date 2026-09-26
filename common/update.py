@@ -157,11 +157,13 @@ def state_file() -> Path:
     return model.STATE_DIR / "update.json"
 
 
-def _leer_cache() -> tuple[Release | None, float | None]:
+def _leer_cache(cache: Path | None = None) -> tuple[Release | None, float | None]:
     """La release guardada y cuántos segundos hace que se miró.
 
-    Leer nunca es un error: cualquier cosa rara es «aquí no hay nada»."""
-    data = store.read_json(state_file())
+    Leer nunca es un error: cualquier cosa rara es «aquí no hay nada». `cache`
+    es para quien no vive en un dispositivo: el agente residente la guarda en
+    su carpeta del equipo."""
+    data = store.read_json(cache if cache is not None else state_file())
     tag = str(data.get("tag") or "")
     if not tag:
         return None, None
@@ -179,16 +181,17 @@ def _leer_cache() -> tuple[Release | None, float | None]:
     return rel, edad
 
 
-def _escribir_cache(rel: Release) -> None:
+def _escribir_cache(rel: Release, cache: Path | None = None) -> None:
     """Guardar es best-effort: que falle no puede estropear una comprobación.
 
     El dispositivo puede estar de solo lectura o haberse extraído a media frase,
     y esto es una comodidad, no un dato imprescindible."""
+    destino = cache if cache is not None else state_file()
     try:
-        state_file().parent.mkdir(parents=True, exist_ok=True)
+        destino.parent.mkdir(parents=True, exist_ok=True)
     except OSError:
         return                      # write_json no crea el directorio padre
-    store.write_json(state_file(), {"checked": store.stamp(),
+    store.write_json(destino, {"checked": store.stamp(),
                                     "tag": rel.tag,
                                     "version": rel.version,
                                     "name": rel.name,
@@ -226,14 +229,15 @@ def _parse_release(crudo: dict) -> Release:
                    notes=notas[:NOTAS_MAX])
 
 
-def check(force: bool = False) -> tuple[Release | None, str | None]:
+def check(force: bool = False,
+          cache: Path | None = None) -> tuple[Release | None, str | None]:
     """La última release, y si algo no ha ido bien, qué decirle al usuario.
 
     Nunca lanza, igual que `catalog.load()`: esto lo llama un hilo detrás de una
     ventana ya abierta, y ahí un fallo de red no es un error del programa. Con
     una comprobación de hace menos de `CACHE_HORAS` no se toca la red siquiera;
     `force=True` es el botón de «buscar ahora»."""
-    copia, edad = _leer_cache()
+    copia, edad = _leer_cache(cache)
     if not force and copia is not None and edad is not None \
             and 0 <= edad < CACHE_HORAS * 3600:
         return copia, None
@@ -246,16 +250,17 @@ def check(force: bool = False) -> tuple[Release | None, str | None]:
             return copia, f"{motivo}\nSe enseña lo último que se supo."
         return None, motivo
 
-    _escribir_cache(rel)
+    _escribir_cache(rel, cache)
     return rel, None
 
 
-def pending(root: Path | str | None = None) -> Release | None:
+def pending(root: Path | str | None = None,
+            cache: Path | None = None) -> Release | None:
     """¿Hay algo más nuevo que lo instalado? Solo caché, JAMÁS red.
 
     Es lo que pregunta la ventana en su primer pintado, así que tiene que
     contestar sin pensárselo. Quien refresca la caché es el hilo de `check()`."""
-    copia, _ = _leer_cache()
+    copia, _ = _leer_cache(cache)
     if copia is None:
         return None
     return copia if is_newer(copia.version, installed_version(root)) else None
@@ -402,6 +407,14 @@ def components_command(staged: Path | str, device_root: Path | str) -> list[str]
     return [sys.executable, "-u",
             str(Path(staged) / "prdrive-install.py"),
             "--update-components", str(device_root)]
+
+
+def agent_command(staged: Path | str, python: str | None = None) -> list[str]:
+    """La orden que pone el agente residente al día, ejecutada DESDE lo
+    descargado, como `apply_command()`: la versión nueva se instala a sí misma.
+    Con el Python del agente, que es quien la lanza (`agente.py actualizar`)."""
+    return [python or sys.executable, "-u",
+            str(Path(staged) / "prdrive-install.py"), "--update-agente"]
 
 
 def relaunch_command() -> list[str]:

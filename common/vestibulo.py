@@ -135,12 +135,17 @@ def raiz_fisica(device_id: str) -> Path | None:
     ya sabe no sacar el diálogo de «no hay disco» con un lector de tarjetas
     vacío. Cualquier fallo es None: esto adorna una ventana, no la sostiene.
 
+    Las carpetas de los contenedores de las raíces del equipo van como raíces
+    extra (`carpetas_de_contenedor()`): `~/PRDRIVE-cifrado` no es la raíz de
+    ninguna unidad y el recorrido no la vería. Así lo que cuelga de aquí —el
+    hallazgo `espacio`, los restos en claro— sirve también para ellas.
+
     Función de módulo para que los tests la sustituyan."""
     if not device_id:
         return None
     try:
         import penwatch
-        raices = penwatch.candidate_roots({})
+        raices = penwatch.candidate_roots({"extra_roots": carpetas_de_contenedor()})
     except Exception:                                # noqa: BLE001
         return None
     for raiz in raices:
@@ -150,6 +155,42 @@ def raiz_fisica(device_id: str) -> Path | None:
         except OSError:
             continue
     return None
+
+
+def carpetas_de_contenedor() -> list[str]:
+    """Las carpetas del equipo que guardan el contenedor de una raíz cifrada,
+    de `agente.json`. Lista vacía sin agente, o si no se puede leer."""
+    try:
+        from . import equipo
+        return [str(Path(u.contenedor).parent)
+                for u in equipo.leer_ajustes().cifradas.values()]
+    except Exception:                                # noqa: BLE001
+        return []
+
+
+def retenido(contenedor: Path | str) -> bool | None:
+    """¿Tiene alguien abierto el contenedor? None si aquí no se puede saber.
+
+    En Windows, mientras el volumen está montado, el driver de VeraCrypt tiene
+    el `.hc` abierto sin compartir la escritura (`TCOpenVolume()`,
+    `Driver/Ntvol.c`), y abrirlo para escribir contesta con
+    ERROR_SHARING_VIOLATION. Es la misma prueba que `:libre` en «Expulsar
+    PRDRIVE.bat» y que `install/crypto.en_uso()`, sin cambiar nada: se abre para
+    añadir y se cierra. Así se distingue el volumen abierto del fantasma que
+    deja una letra con el id al lado de un `.hc` libre (H-10).
+
+    En POSIX no es una respuesta: el contenedor se abre por un dispositivo de
+    bucle y un segundo `open()` no molesta a nadie. Ahí vale el punto de
+    montaje, y esto devuelve None. Un `.hc` que no está, también None."""
+    if os.name != "nt":
+        return None
+    try:
+        if not Path(contenedor).is_file():
+            return None
+        with open(contenedor, "ab"):
+            return False
+    except OSError:
+        return True
 
 
 FILE_ATTRIBUTE_SPARSE_FILE = 0x200      # winnt.h

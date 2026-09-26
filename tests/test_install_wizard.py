@@ -686,8 +686,8 @@ c("y se ofrecen los dos caminos",
 antes = device.control_id(limpio)
 boton(corto.cuerpo, "Actualizar el programa").invoke()
 c("elegir actualizar cambia al recorrido corto",
-  [t for t, _, _ in corto.pasos], ["Dispositivo", "Actualización"])
-c("y planta al usuario en la pantalla de actualizar", corto.indice, 1)
+  [t for t, _, _ in corto.pasos], ["¿Dónde?", "Dispositivo", "Actualización"])
+c("y planta al usuario en la pantalla de actualizar", corto.indice, 2)
 
 (app / "sync.py").write_text("# version vieja\n", encoding="utf-8")
 (limpio / "runsync.bat").write_bytes(b"rem el que puso el aprovisionamiento\r\n")
@@ -719,8 +719,8 @@ mas = nuevo_asistente(limpio)
 en_paso(mas, PASO["Dispositivo"])
 boton(mas.cuerpo, "Añadir plataformas…").invoke()
 c("«Añadir plataformas…» cambia a su recorrido corto",
-  [t for t, _, _ in mas.pasos], ["Dispositivo", "Plataformas"])
-c("y planta al usuario en la lista", mas.indice, 1)
+  [t for t, _, _ in mas.pasos], ["¿Dónde?", "Dispositivo", "Plataformas"])
+c("y planta al usuario en la lista", mas.indice, 2)
 c("con lo que el dispositivo ya lleva marcado",
   ANFITRION.clave in mas.matriz.elegidas, True)
 
@@ -822,5 +822,360 @@ c("con código viejo en la unidad, «Siguiente» sigue apagado",
 viejo.state.deployed = True
 c("y se enciende al haber instalado de verdad",
   tk_install._ok_instalacion(viejo), True)
+
+# --- «En este equipo»: el agente residente ------------------------------------
+# El mismo asistente, otra lista de pasos. Nada de esto toca el equipo de
+# verdad: la carpeta del agente va a un temporal, y preparar y activar se
+# sustituyen por lo que apuntan (lo de dentro lo prueba test_install_agente).
+import penwatch  # noqa: E402
+from common import equipo  # noqa: E402
+from install import agente as ia  # noqa: E402
+from ui import tk_equipo  # noqa: E402
+
+equipo.DIR = tmpdir("prdrive-asis-equipo-")
+penwatch.CONFIG_FILE = tmpdir("prdrive-asis-pw-") / "watch.json"
+tk_equipo.working = working_directo
+preparados, activados = [], []
+PREP = ia.Preparado(equipo.DIR / "agente" / "0.4.0", equipo.DIR / "runtime" / "x" / "py",
+                    "sello")
+ia.preparar = lambda progreso=None: preparados.append(1) or PREP
+pedir_dado = []
+ia.activar = lambda prep, elegidas, espera, raiz=None, pedir_al_iniciar=None: (
+    pedir_dado.append(pedir_al_iniciar)
+    or activados.append((prep, elegidas, espera, raiz)) or ["Agente arrancado."])
+ia.candidatas = lambda: [ia.Candidata("u" * 32, "PRDRIVE-2", equipo.DAEMON,
+                                      "enchufada ahora")]
+from install import raiz_equipo  # noqa: E402
+
+raiz_equipo.carpetas_sincronizadas = lambda: []
+raiz_equipo.veracrypt_instalado = lambda: None
+
+
+def elegir(wiz, texto: str) -> None:
+    next(w for w in widgets(wiz.cuerpo, ttk.Radiobutton)
+         if w.cget("text") == texto).invoke()
+
+
+def radios(wiz) -> dict[str, str]:
+    """El estado de cada opción, por su texto."""
+    return {str(w.cget("text")): str(w.cget("state"))
+            for w in widgets(wiz.cuerpo, ttk.Radiobutton)}
+
+
+def escribir(entrada, texto: str) -> None:
+    """Como teclearlo: borrar e insertar pasan por la validación de la caja."""
+    entrada.delete(0, "end")
+    entrada.insert(0, texto)
+
+
+casa = nuevo_asistente(None)
+en_paso(casa, 0)
+c("el primer paso es «¿Dónde?»", tk_install.PASOS_INSTALACION[0][0], "¿Dónde?")
+c("  sale elegido «En una unidad»: quien prepara un pendrive no nota nada",
+  (casa.donde, casa.pasos is tk_install.PASOS_INSTALACION), ("unidad", True))
+c("  y se puede seguir sin tocar nada", str(casa.boton_siguiente.cget("state")), "normal")
+elegir(casa, "En este equipo")
+c("«En este equipo» cambia la lista de pasos: con carpeta propia, de salida",
+  [t for t, _, _ in casa.pasos],
+  ["¿Dónde?", "Carpeta", "Cifrado", "Conexión", "Comprobaciones", "Instalación",
+   "Parejas y configuración", "Inicialización", "Unidades", "Arranque", "Verificación"])
+c("  sin moverse de la primera pantalla", casa.indice, 0)
+casa.ir(+1)
+c("«Carpeta» propone la carpeta propia", casa.equipo_ruta,
+  str(raiz_equipo.carpeta_propia()))
+
+# --- «Ninguna»: la instalación «solo agente» ----------------------------------
+elegir(casa, "Ninguna: solo atender unidades")
+c("«Ninguna» es el recorrido corto, sin conexión ni parejas",
+  [t for t, _, _ in casa.pasos],
+  ["¿Dónde?", "Carpeta", "Instalación", "Unidades", "Arranque", "Verificación"])
+c("  sin moverse de «Carpeta», y se puede seguir",
+  (casa.indice, str(casa.boton_siguiente.cget("state"))), (1, "normal"))
+c("  y sin raíz", casa.state.device_root, None)
+casa.ir(+1)
+c("«Instalación»: Siguiente apagado hasta instalar",
+  str(casa.boton_siguiente.cget("state")), "disabled")
+boton(casa.cuerpo, "Instalar").invoke()
+c("  instalar prepara el código y el Python", (preparados, casa.agente_prep), ([1], PREP))
+c("  y enciende Siguiente", str(casa.boton_siguiente.cget("state")), "normal")
+casa.ir(+1)
+c("«Unidades» ofrece las que se saben sin red, con su modo",
+  casa.agente_unidades, {"u" * 32: (equipo.DAEMON, "PRDRIVE-2")})
+c("  sin raíz no hay flota que leer",
+  [b for b in widgets(casa.cuerpo, ttk.Button)
+   if b.cget("text") == "Añadir las de la flota"], [])
+caja = next(iter(widgets(casa.cuerpo, ttk.Combobox)))
+caja.set(equipo.TEXTO_MODO[equipo.SYNC])
+caja.event_generate("<<ComboboxSelected>>")
+c("  cambiar el modo lo apunta", casa.agente_unidades["u" * 32][0], equipo.SYNC)
+casa.ir(+1)
+c("«Arranque»: Siguiente apagado hasta registrar",
+  str(casa.boton_siguiente.cget("state")), "disabled")
+boton(casa.cuerpo, "Registrar y arrancar").invoke()
+c("  registrar activa con lo elegido, y sin raíz",
+  activados, [(PREP, {"u" * 32: (equipo.SYNC, "PRDRIVE-2")}, 120.0, None)])
+c("  y enciende Siguiente", str(casa.boton_siguiente.cget("state")), "normal")
+casa.ir(+1)
+c("«Verificación» se pinta y es la última",
+  casa.boton_siguiente.cget("text"), "Terminar")
+filas = {e: ok for e, ok, _ in tk_equipo.comprobaciones()}
+c("  y dice lo que falta (aquí nada se instaló de verdad)",
+  (filas["Agente instalado"], filas["penwatch"]), (False, True))
+c("  sin raíz, no hay filas de raíz", "Fichero de control" in filas, False)
+escritorio_real = tk_equipo.escritorio
+tk_equipo.escritorio = lambda: (True, False)
+filas = {e: (ok, d) for e, ok, d in tk_equipo.comprobaciones()}
+c("  un escritorio sin StatusNotifierWatcher: la fila de la bandeja lo dice, con la "
+  "extensión que falta", (filas["Bandeja"][0], tk_equipo.EXTENSION_GNOME in filas["Bandeja"][1]),
+  (False, True))
+c("  y en Linux, el acceso del menú aunque no haya raíz", "Acceso del menú" in filas,
+  not ia.IS_WIN)
+tk_equipo.escritorio = lambda: (True, True)
+c("  con bandeja, bien", tk_equipo.comprobaciones()[-1][:2], ("Bandeja", True))
+tk_equipo.escritorio = escritorio_real
+casa.ir(-4)
+c("de vuelta en «Carpeta»", casa.pasos[casa.indice][0], "Carpeta")
+casa.ir(-1)
+elegir(casa, "En una unidad")
+c("volver a «En una unidad» devuelve el recorrido de siempre",
+  casa.pasos is tk_install.PASOS_INSTALACION, True)
+
+# --- con el agente de esta versión ya instalado: no se reinstala ----------------
+anadidos: list = []
+real_misma, real_prep_inst, real_anadir = ia.misma_version, ia.instalado_prep, ia.anadir
+real_instalado = ia.instalado
+ia.misma_version = lambda: True
+ia.instalado_prep = lambda: PREP
+ia.instalado = lambda: {"version": "0.4.0", "codigo": str(PREP.codigo)}
+ia.anadir = lambda elegidas, espera, raiz=None, pedir_al_iniciar=None: (
+    anadidos.append((elegidas, espera, raiz)) or ["Pedido al agente."])
+preparados.clear()
+activados.clear()
+otra = nuevo_asistente(None)
+en_paso(otra, 0)
+elegir(otra, "En este equipo")
+otra.ir(+1)
+elegir(otra, "Ninguna: solo atender unidades")
+otra.ir(+1)
+c("agente de esta versión ya instalado: «Instalación» lo dice",
+  any("no se reinstala" in w.cget("text") for w in widgets(otra.cuerpo, ttk.Label)), True)
+boton(otra.cuerpo, "Instalar").invoke()
+c("  y no copia código ni Python: usa el que hay",
+  (preparados, otra.agente_prep, otra.agente_reusado), ([], PREP, True))
+otra.ir(+2)
+boton(otra.cuerpo, "Pedírselo al agente").invoke()
+c("  «Arranque» se lo pide por su buzón: ni parar, ni registrar",
+  (activados, len(anadidos)), ([], 1))
+c("  y se puede seguir", str(otra.boton_siguiente.cget("state")), "normal")
+ia.misma_version, ia.instalado_prep, ia.anadir = real_misma, real_prep_inst, real_anadir
+ia.instalado = real_instalado
+
+# --- con raíz: una carpeta propia del equipo -----------------------------------
+# Se instala de verdad en un temporal (rclone y Python de mentira, como arriba):
+# lo que se comprueba es que la raíz queda hecha y que el agente la recibe.
+preparados.clear()
+activados.clear()
+propia = nuevo_asistente(None)
+en_paso(propia, 0)
+elegir(propia, "En este equipo")
+propia.ir(+1)
+elegir(propia, "Una carpeta propia (recomendado)")
+entrada = next(iter(widgets(propia.cuerpo, ttk.Entry)))
+RAIZ_EQUIPO = tmpdir("prdrive-raiz-equipo-") / "PRDRIVE"
+escribir(entrada, "relativa/no")
+c("«Carpeta»: una ruta relativa no vale", (propia.state.device_root,
+                                           str(propia.boton_siguiente.cget("state"))),
+  (None, "disabled"))
+escribir(entrada, str(RAIZ_EQUIPO))
+c("  una que no existe sí, y fija la raíz",
+  (propia.state.device_root, propia.equipo_examen.estado,
+   str(propia.boton_siguiente.cget("state"))),
+  (RAIZ_EQUIPO, raiz_equipo.NUEVA, "normal"))
+propia.ir(+1)
+c("«Cifrado»: sin VeraCrypt instalado, solo sin cifrar",
+  (radios(propia), propia.equipo_cifrado),
+  ({"Sin cifrar": "normal", "En un contenedor VeraCrypt": "disabled"},
+   raiz_equipo.SIN_CIFRAR))
+c("  y dice cómo instalarlo, sin ofrecer descargarlo",
+  any("veracrypt.jp" in w.cget("text") for w in widgets(propia.cuerpo, ttk.Label)),
+  True)
+c("  sin cifrar, la raíz es la carpeta, y se puede seguir",
+  (propia.state.device_root, str(propia.boton_siguiente.cget("state"))),
+  (RAIZ_EQUIPO, "normal"))
+
+# Conexión y catálogo como los dejaría «Comprobaciones».
+propia.perfil = PERFIL
+propia.rclone = object()
+propia.catalog = remote.parse_catalog(CATALOGO)
+en_paso(propia, [t for t, _, _ in propia.pasos].index("Instalación"))
+c("«Instalación» avisa de la clave en claro",
+  any("clave del remoto queda en claro" in w.cget("text")
+      for w in widgets(propia.cuerpo, ttk.Label)), True)
+boton(propia.cuerpo, "Instalar").invoke()
+from install import device  # noqa: E402
+c("  instala la raíz con tipo=equipo y el agente",
+  (device.control_tipo(RAIZ_EQUIPO), bool(propia.equipo_id), propia.agente_prep),
+  ("equipo", True, PREP))
+c("  con rclone para este equipo y sin lanzadores ni Python",
+  ((RAIZ_EQUIPO / "runsync.sh").exists(), (RAIZ_EQUIPO / ".prdrive" / "runtime").exists(),
+   (RAIZ_EQUIPO / ".prdrive" / "rclone.conf").is_file()), (False, False, True))
+c("  y enciende Siguiente", str(propia.boton_siguiente.cget("state")), "normal")
+
+from install import deploy  # noqa: E402
+publicadas = []
+deploy.publish_fleet_note = lambda rc, raiz, endpoint, timeout=45.0: (
+    publicadas.append(raiz) or None)
+propia.ir(+1)
+c("«Parejas»: Siguiente apagado hasta guardar",
+  str(propia.boton_siguiente.cget("state")), "disabled")
+cajas = list(widgets(propia.cuerpo, ttk.Entry))
+textos = [w.cget("text") for w in widgets(propia.cuerpo, ttk.Label)]
+c("  la pareja de la raíz entera se dice que no vale",
+  any("es la raíz entera" in t for t in textos), True)
+c("  y la otra, dónde cae en este equipo",
+  str(RAIZ_EQUIPO / "sync-data" / "docs") in textos, True)
+boton(propia.cuerpo, "Guardar el config y crear las carpetas").invoke()
+c("  con la de la raíz elegida no se guarda",
+  (propia.state.config_written, any("Arregla antes" in w.cget("text")
+                                    for w in widgets(propia.cuerpo, ttk.Label))),
+  (False, True))
+por_valor = {w.get(): w for w in cajas}
+escribir(por_valor["."], "copia")
+escribir(por_valor["sync-data/docs"], "Documentos/docs")
+boton(propia.cuerpo, "Guardar el config y crear las carpetas").invoke()
+import tomllib  # noqa: E402
+escrito = tomllib.loads((RAIZ_EQUIPO / ".prdrive" / "sync_config.toml").read_text(
+    encoding="utf-8"))
+c("  cambiar la ruta se escribe solo aquí",
+  {p["name"]: p["local"] for p in escrito["pair"]},
+  {"respaldo": "copia", "docs": "Documentos/docs"})
+c("  y crea las carpetas donde se ha dicho, y publica la nota",
+  ((RAIZ_EQUIPO / "Documentos" / "docs").is_dir(), publicadas), (True, [RAIZ_EQUIPO]))
+c("  y enciende Siguiente", str(propia.boton_siguiente.cget("state")), "normal")
+
+propia.ir(+1)
+lanzadas.clear()
+boton(propia.cuerpo, "Inicializar ahora").invoke()
+c("«Inicialización» usa el Python del agente: la raíz no lleva",
+  [cmd[:2] for _, cmd in lanzadas],
+  [[str(PREP.python), str(RAIZ_EQUIPO / ".prdrive" / "sync.py")]])
+propia.ir(+1)
+c("«Unidades» ofrece leer la flota, porque hay conexión",
+  len([b for b in widgets(propia.cuerpo, ttk.Button)
+       if b.cget("text") == "Añadir las de la flota"]), 1)
+flota = [fleet_disp for fleet_disp in []]
+from common import fleet  # noqa: E402
+raiz_equipo.de_la_flota = lambda rc, endpoint, timeout=45.0: [
+    fleet.Dispositivo("f" * 32, "PRDRIVE-azul", "0.3.0", (), "", "ok")]
+boton(propia.cuerpo, "Añadir las de la flota").invoke()
+c("  las de la flota entran como «preguntar», no en la lista",
+  propia.agente_unidades["f" * 32], (tk_equipo.PREGUNTAR, "PRDRIVE-azul"))
+propia.ir(+1)
+boton(propia.cuerpo, "Registrar y arrancar").invoke()
+prep_, elegidas_, _, raiz_dada = activados[-1]
+c("«Arranque» le da al agente la raíz, en modo daemon y con su ruta",
+  (raiz_dada.id, raiz_dada.modo, raiz_dada.ruta),
+  (propia.equipo_id, equipo.DAEMON, str(RAIZ_EQUIPO)))
+c("  y las de «preguntar» no entran en su lista", "f" * 32 in elegidas_, False)
+propia.ir(+1)
+filas = {e: ok for e, ok, _ in tk_equipo.comprobaciones(
+    RAIZ_EQUIPO, propia.state.selected, None)}
+c("«Verificación» mira la raíz: control, rclone y config bien",
+  (filas["Fichero de control"], filas["rclone.conf"], filas["El config se lee"]),
+  (True, True, True))
+c("  sin lanzador ni Python que pedirle", any(e.startswith("Lanzador") or
+                                              e.startswith("Python para")
+                                              for e in filas), False)
+c("  y dice que no está en la lista del agente (activar era de mentira)",
+  filas["En la lista del agente"], False)
+c("  sin cifrar, no se toca pedir_al_iniciar", pedir_dado[-1], None)
+
+# --- con raíz cifrada: VeraCrypt de mentira ---------------------------------------
+# «Montar» es crear la carpeta que haría de volumen: lo que se comprueba es el
+# recorrido —dónde va el contenedor, qué se instala dentro, qué marca queda
+# fuera y qué recibe el agente—, no VeraCrypt (lo sustituye test_agente_veracrypt
+# y lo prueba la lista de pruebas en real).
+raiz_equipo.veracrypt_instalado = lambda: {"mount": "vc", "format": "vc"}
+MONTADAS = []
+
+
+def abrir_o_crear_falso(vc, fisica, carpeta, letra, password, tamano):
+    fisica = Path(fisica)
+    fisica.mkdir(parents=True, exist_ok=True)
+    (fisica / "PRDRIVE.hc").write_bytes(b"\0")
+    volumen = tmpdir("prdrive-volumen-")
+    MONTADAS.append((password, tamano, volumen))
+    return volumen
+
+
+raiz_equipo.abrir_o_crear = abrir_o_crear_falso
+activados.clear()
+cifra = nuevo_asistente(None)
+en_paso(cifra, 0)
+elegir(cifra, "En este equipo")
+cifra.ir(+1)
+CARPETA = tmpdir("prdrive-raiz-cifra-") / "PRDRIVE"
+escribir(next(iter(widgets(cifra.cuerpo, ttk.Entry))), str(CARPETA))
+cifra.ir(+1)
+elegir(cifra, "En un contenedor VeraCrypt")
+c("«Cifrado» con VeraCrypt: sin montar no hay raíz",
+  (cifra.state.device_root, str(cifra.boton_siguiente.cget("state"))),
+  (None, "disabled"))
+cajas = list(widgets(cifra.cuerpo, ttk.Entry))
+c("  el contenedor va al lado de la carpeta",
+  [w.get() for w in cajas if w.get().endswith("-cifrado")],
+  [str(CARPETA.with_name("PRDRIVE-cifrado"))])
+claves = [w for w in cajas if str(w.cget("show")) == "•"]
+escribir(claves[0], "una-contraseña-larga-de-prueba")
+escribir(claves[1], "otra-distinta")
+from tkinter import messagebox  # noqa: E402
+dichos = []
+messagebox.showwarning = lambda t, m, **k: dichos.append(m)
+boton(cifra.cuerpo, "Crear y montar").invoke()
+c("  dos contraseñas distintas no crean nada", (dichos, MONTADAS),
+  (["Las dos contraseñas no coinciden."], []))
+escribir(claves[1], "una-contraseña-larga-de-prueba")
+boton(cifra.cuerpo, "Crear y montar").invoke()
+volumen = MONTADAS[-1][2]
+c("  creado y montado, el volumen es la raíz, y se puede seguir",
+  (cifra.state.device_root, cifra.equipo_montada, str(cifra.boton_siguiente.cget("state"))),
+  (volumen, volumen, "normal"))
+c("  y se recuerda el contenedor",
+  cifra.equipo_contenedor, str(CARPETA.with_name("PRDRIVE-cifrado") / "PRDRIVE.hc"))
+cifra.perfil = PERFIL
+cifra.rclone = object()
+cifra.catalog = remote.parse_catalog(CATALOGO)
+en_paso(cifra, [t for t, _, _ in cifra.pasos].index("Instalación"))
+c("«Instalación» cifrada no avisa de la clave en claro",
+  any("clave del remoto queda en claro" in w.cget("text")
+      for w in widgets(cifra.cuerpo, ttk.Label)), False)
+boton(cifra.cuerpo, "Instalar").invoke()
+from common import vestibulo as vest  # noqa: E402
+c("  instala DENTRO del volumen, y deja fuera la marca con el mismo id",
+  (device.control_tipo(volumen), vest.leer_id(CARPETA.with_name("PRDRIVE-cifrado"))),
+  ("equipo", cifra.equipo_id))
+c("  la carpeta de «Carpeta» no se toca (en Linux es donde se monta)",
+  CARPETA.exists(), False)
+en_paso(cifra, [t for t, _, _ in cifra.pasos].index("Arranque"))
+boton(cifra.cuerpo, "Registrar y arrancar").invoke()
+raiz_dada = activados[-1][3]
+c("«Arranque» le da al agente la raíz cifrada: volumen y contenedor",
+  (raiz_dada.ruta, raiz_dada.contenedor, raiz_dada.cifrada),
+  (str(volumen), cifra.equipo_contenedor, True))
+c("  y pedir_al_iniciar, marcado de salida", pedir_dado[-1], True)
+filas = {e: ok for e, ok, _ in tk_equipo.comprobaciones(
+    volumen, cifra.state.selected, None, cifra.equipo_contenedor)}
+c("«Verificación» mira el contenedor y la marca de fuera",
+  (filas["Contenedor"], filas["Marca de fuera"]), (True, True))
+
+# «Cifrado» con la carpeta personal: no hay contenedor que valga.
+personal = nuevo_asistente(None)
+en_paso(personal, 0)
+elegir(personal, "En este equipo")
+personal.ir(+1)
+elegir(personal, "Tu carpeta personal")
+personal.ir(+1)
+c("con la carpeta personal, VeraCrypt no se ofrece",
+  radios(personal)["En un contenedor VeraCrypt"], "disabled")
 
 sys.exit(c.report())

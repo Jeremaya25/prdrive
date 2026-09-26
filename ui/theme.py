@@ -368,6 +368,11 @@ def apply(widget) -> None:
                         foreground=manda or TINTA, font=fuente("fuerte"))
         style.configure(f"{sup}Pista.TCheckbutton", background=fondo,
                         foreground=TINTA3, font=fuente("pista"))
+        # La opción de una tarjeta que se elige entera (el «¿Dónde?» del
+        # asistente): el radio con el fondo de su superficie y letra de título.
+        style.configure(f"{sup}Fuerte.TRadiobutton", background=fondo,
+                        foreground=manda or TINTA, font=fuente("fuerte"))
+        style.map(f"{sup}Fuerte.TRadiobutton", background=[("active", fondo)])
 
     # La tarjeta y las franjas de color: un borde de 1 px y nada más.
     for nombre, (fondo, color) in (("Card.TFrame", (SUPERFICIE, LINEA)),
