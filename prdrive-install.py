@@ -47,7 +47,9 @@ si no lleva uno para este equipo, busca uno instalado.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+import traceback
 from pathlib import Path
 
 # Ejecutado como .py hay que poner la raíz del proyecto en el path para importar
@@ -57,6 +59,7 @@ if not getattr(sys, "frozen", False):
 
 from install import APP_NAME, InstallError, __version__  # noqa: E402
 from install import components, deploy, device, profile, rclone_bin, remote  # noqa: E402
+from common.update import CODIGO_RELEVO  # noqa: E402
 
 DESCRIPCION = ("Aprovisiona un dispositivo prdrive nuevo a partir del catálogo "
                "de tu remoto.")
@@ -67,7 +70,8 @@ def report(lineas: list[str]) -> None:
 
     Compilado con --windowed no hay consola: `sys.stdout` es None y `print()` se
     convierte en un no-op silencioso, así que un `--check` desde el .exe no diría
-    nada. En ese caso se abre una ventana con el mismo texto."""
+    nada. En ese caso se abre una ventana con el mismo texto. Lo mismo el relevo,
+    que corre con `pythonw.exe`."""
     texto = "\n".join(lineas)
     if sys.stdout is not None:
         print(texto)
@@ -189,7 +193,7 @@ def cmd_update(raiz: str) -> int:
     return 0
 
 
-def cmd_update_components(raiz: str) -> int:
+def cmd_update_components(raiz: str, relevo: int | None = None) -> int:
     """Pone al día el rclone y el Python que lleva un dispositivo. Nada más.
 
     El hermano de `--update`: aquel cambia el CÓDIGO y deja los componentes,
@@ -199,7 +203,13 @@ def cmd_update_components(raiz: str) -> int:
     y comprobar rclone y Python vive aquí.
 
     No se instala ninguna plataforma nueva. Eso es «Añadir plataformas…» del
-    asistente, que es una decisión con megas de por medio y una lista delante."""
+    asistente, que es una decisión con megas de por medio y una lista delante.
+
+    `relevo` es el pid de la ventana que lo ha lanzado. Si uno de los pendientes
+    es el Python con el que corre este proceso (el de la ventana), ése no se
+    intenta: se deja preparado el relevo que lo cambiará cuando la ventana se
+    cierre (`components.preparar_relevo()`) y se sale con
+    `update.CODIGO_RELEVO`, que es lo que le dice a la ventana que se cierre."""
     root = Path(raiz).expanduser()
     destino = deploy.app_dir(root)
     if not destino.is_dir():
@@ -209,28 +219,96 @@ def cmd_update_components(raiz: str) -> int:
             f"Para preparar un dispositivo nuevo, abre el asistente sin "
             f"argumentos.")
 
+    for resto in deploy.barrer_restos_runtime(root):
+        print(f"Borrado un resto de un intento anterior: {resto}")
+
     pendientes = components.pendientes(root)
     if not pendientes:
         print(f"Los componentes de {destino} ya son los que fija la versión "
               f"{__version__}. No hay nada que hacer.")
         return 0
 
+    propio = components.runtime_propio(root, pendientes) if relevo else None
     print(f"Componentes por poner al día en {destino}:")
     for p in pendientes:
         print(f"  {p.describe()}")
-    res = components.aplicar(root, progreso=print, pends=pendientes)
+    res = components.aplicar(root, progreso=print,
+                             pends=[p for p in pendientes if p != propio])
     for linea in res.hechos:
         print(f"  hecho      {linea}")
     for linea in res.pospuestos:
         print(f"  POSPUESTO  {linea}")
     for linea in res.fallidos:
         print(f"  FALLO      {linea}")
+
+    if propio is not None:
+        try:
+            orden, carpeta = components.preparar_relevo(
+                root, propio, esperar=[relevo, os.getpid()],
+                reabrir=sys.executable, decir=print)
+            components.lanzar_relevo(orden, carpeta)
+        except (InstallError, OSError) as e:
+            print(f"  FALLO      {propio.titulo}: no he podido preparar su cambio "
+                  f"con la ventana cerrada: {e}")
+            print("No se ha podido con todo. Nada ha quedado a medias: lo que no "
+                  "se ha sustituido sigue exactamente como estaba.")
+            return 1
+        print(f"  DESPUÉS    {propio.titulo}: es con el que está abierto prdrive, "
+              f"así que se cambiará con la ventana cerrada.")
+        print("Cierra esta ventana: prdrive se cerrará, cambiará ese Python y "
+              "volverá a abrirse solo en unos segundos.")
+        return CODIGO_RELEVO
+
     if res.fallidos:
         print("No se ha podido con todo. Nada ha quedado a medias: lo que no se "
               "ha sustituido sigue exactamente como estaba.")
         return 1
     print("Hecho. Ni el código, ni la configuración, ni las claves se han tocado.")
     return 0
+
+
+def cmd_relevo(raiz: str, esperar: list[int], reabrir: str | None) -> int:
+    """El relevo: espera a que la ventana se cierre, pone al día y la reabre.
+
+    Corre desde el temporal de este equipo (`components.preparar_relevo()`) con
+    un intérprete sin consola, así que no hay stdout: lo que diría va a
+    `relevo.log`, en su carpeta, y solo se enseña si algo ha salido mal —con la
+    ventana de `report()`—. Si ha ido bien, lo que lo dice es la ventana
+    reabierta sin el recuadro ámbar."""
+    carpeta = Path(__file__).resolve().parent.parent
+    log = carpeta / components.RELEVO_LOG
+    rc, reabrir_ahora = 1, False
+    with open(log, "w", encoding="utf-8", buffering=1) as salida:
+        antes = sys.stdout, sys.stderr
+        sys.stdout = sys.stderr = salida
+        try:
+            if not components.esperar_a(esperar):
+                print("prdrive sigue abierto, así que no se ha cambiado nada. "
+                      "Ciérralo y vuelve a pulsar «Actualizar…».")
+            else:
+                reabrir_ahora = True
+                rc = cmd_update_components(raiz)
+        except InstallError as e:
+            print(e)
+        except Exception:                            # noqa: BLE001
+            traceback.print_exc()
+        finally:
+            sys.stdout, sys.stderr = antes
+
+    if reabrir_ahora and reabrir:
+        try:
+            components.lanzar_suelto(
+                [reabrir, str(deploy.app_dir(Path(raiz).expanduser()) / "runsync.py")])
+        except OSError:
+            pass            # sin ventana reabierta, el informe de abajo lo cuenta
+    if rc != 0:
+        try:
+            texto = log.read_text(encoding="utf-8")
+        except OSError:
+            texto = ""
+        report(["No se han podido poner al día todos los componentes.", ""]
+               + texto.splitlines())
+    return rc
 
 
 def cmd_wizard() -> int:
@@ -271,6 +349,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="Pone al día el rclone y el Python que ya lleva un "
                              "dispositivo instalado (la raíz del volumen) y "
                              "sale. No toca el código ni la configuración.")
+    # Los tres siguientes son de la ventana y del relevo, no de quien teclea.
+    parser.add_argument("--relevo", metavar="PID", type=int,
+                        help=argparse.SUPPRESS)
+    parser.add_argument("--esperar", metavar="PID", type=int, action="append",
+                        help=argparse.SUPPRESS)
+    parser.add_argument("--reabrir", metavar="PYTHON", help=argparse.SUPPRESS)
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     return parser.parse_args(argv)
 
@@ -285,8 +369,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     remote.install_signal_handlers()
     try:
+        if args.update_components and args.esperar:
+            return cmd_relevo(args.update_components, args.esperar, args.reabrir)
         if args.update_components:
-            return cmd_update_components(args.update_components)
+            return cmd_update_components(args.update_components, args.relevo)
         if args.update:
             return cmd_update(args.update)
         if args.check:

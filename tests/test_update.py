@@ -219,4 +219,12 @@ c("sin buffer, para que la ventana de salida enseñe línea a línea",
 # sin que nadie tenga que pasárselo.
 c("con el mismo Python que esta ventana", orden[0], sys.executable)
 
+# Con el pid de la ventana cuando uno de los pendientes es su propio Python: el
+# aplicador deja preparado el relevo y sale con CODIGO_RELEVO.
+orden = update.components_command(Path("/tmp/staged"), Path("/media/pen"), relevo=4242)
+c("con --relevo y el pid de la ventana, al final",
+  orden[3:], ["--update-components", str(Path("/media/pen")), "--relevo", "4242"])
+c("el código del relevo no es ni el de éxito ni el de fallo",
+  update.CODIGO_RELEVO not in (0, 1), True)
+
 sys.exit(c.report())

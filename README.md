@@ -499,11 +499,17 @@ python <descarga>/prdrive-install.py --update-components E:\   # lo que hace el 
   instante hay medio binario en `bin/`, que es el estado en el que el
   dispositivo no sincroniza en ningún equipo.
 - **Lo que está en uso se pospone** y se dice cuál y por qué: un rclone
-  sincronizando ahora mismo, el Python desde el que está abierto el propio
-  programa (en Windows no se puede sustituir la carpeta de un `pythonw.exe`
-  vivo — ciérralo y ejecuta `python runsync.py` dentro de `.prdrive/` con un
-  Python instalado en este equipo), o un VeraCrypt que se está ejecutando desde
-  la unidad.
+  sincronizando ahora mismo o un VeraCrypt que se está ejecutando desde la
+  unidad.
+- **El Python con el que está abierta la ventana se cambia con ella cerrada.**
+  En Windows no se puede sustituir la carpeta de un `pythonw.exe` vivo, así que
+  el botón lo avisa antes de empezar, extrae ese mismo Python en el temporal de
+  este equipo y deja lanzado desde ahí un *relevo*: la ventana se cierra, el
+  relevo sustituye el runtime del dispositivo y la vuelve a abrir. Si algo sale
+  mal, lo dice en una ventana con su registro. No hace falta ningún Python
+  instalado.
+- **Los restos de un intento cortado se barren**: un `runtime/.<plataforma>.nuevo-…`
+  que dejó un proceso que ya no vive se borra la próxima vez.
 - **No se instala ninguna plataforma nueva.** Para eso está «Añadir
   plataformas…» del asistente, que enseña los megas antes de bajarlos.
 - No se tocan el programa, la configuración, las claves, el estado ni los

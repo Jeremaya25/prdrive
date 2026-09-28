@@ -1040,7 +1040,26 @@ things that must not be weakened:
 - **The swap is `install_runtime()`'s, for rclone too**: copy beside, move aside,
   rename; never `copy2` over the binary that is there. Whatever is in use is
   postponed with its reason (`rclone_en_uso` / `runtime_en_uso` /
-  `veracrypt_en_uso`).
+  `veracrypt_en_uso`). Leftover `runtime/.<clave>.nuevo|viejo|borrar-<pid>`
+  of a process that is no longer alive are swept (`deploy.barrer_restos_runtime()`,
+  from `install_runtime()` and `--update-components`); a live pid is left alone.
+- **The window's own Python goes through a relay («relevo»).** On a full
+  install the window runs from `runtime/<clave>/`, and Windows will not move the
+  folder of a live `pythonw.exe`, so that runtime could never be updated from
+  the window. `common.components.propio()` spots it before starting (the confirm
+  says the window will close); the window passes `--relevo <its pid>`; the
+  applier skips that runtime, and `components.preparar_relevo()` extracts the
+  **same** pinned runtime into the host temp dir (`prdrive-relevo-*`, owner pid
+  inside, swept by the next one like `remote.sweep_stale()`) plus a copy of the
+  code (the staged zip is deleted as soon as the window regains control), and
+  launches it detached (`lanzar_suelto()`, cwd = temp, no inherited pipes — the
+  output window reads until EOF) with `--esperar` both pids and `--reabrir`.
+  The applier exits `update.CODIGO_RELEVO` (3); `tk_update` returns `CERRAR`
+  and the main window closes. `cmd_relevo()` waits (`esperar_a()`, 30 min cap,
+  then gives up untouched), runs `--update-components`, reopens the window with
+  the device's Python and, only on failure, shows `relevo.log` via `report()`
+  (it runs under `pythonw`, stdout is None). `lanzar_suelto()` / `esperar_a()`
+  are indirection points.
 
 **The travelling VeraCrypt is the third component** (#50). Its stamp,
 `VeraCrypt/PRDRIVE-VERACRYPT`, lives on the **physical** root, so
@@ -1450,7 +1469,8 @@ keeps the target's existing header.
   `veracrypt_bin.fetch()` / `ensure_veracrypt()`,
   `conflicts.recorrer()`, `conflict_editor.mover()` /
   `borrar()`, `ui.abrir()`, `runsync.notificar_fallo()`,
-  `components.rclone_en_uso()` / `runtime_en_uso()` / `veracrypt_en_uso()`,
+  `components.rclone_en_uso()` / `runtime_en_uso()` / `veracrypt_en_uso()` /
+  `lanzar_suelto()` / `esperar_a()`,
   `common.components.raiz_fisica()`, `traveler.espacio_libre()`, `_win_volumes()`,
   `vestibulo.raiz_fisica()`, `cifrado.lanzar_expulsion()`,
   `crypto.sistema_de_ficheros()`, `crypto.bytes_escritos()`,

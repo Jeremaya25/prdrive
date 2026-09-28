@@ -24,7 +24,9 @@ Python desde el que está abierto este mismo programa se POSPONEN con su motivo;
 lo demás se hace igual. Posponer es una decisión, no una limitación: en Windows
 el renombrado colaría —un `.exe` en marcha se puede apartar, lo que no se puede
 es borrar—, pero cambiarle el binario a una sincronización a media pasada no es
-algo que deba ocurrir sin que nadie lo haya pedido.
+algo que deba ocurrir sin que nadie lo haya pedido. El Python de la ventana es
+la excepción que sí se termina: con `--relevo` lo cambia, con la ventana ya
+cerrada, un proceso que corre desde el temporal del equipo (ver «El relevo»).
 
 **El VeraCrypt de viaje va por el mismo camino**, con la carpeta entera en vez
 de un binario: `traveler.poner_portatil()` la sustituye con el mismo intercambio,
@@ -45,7 +47,9 @@ from __future__ import annotations
 
 import os
 import shutil
-import sys
+import subprocess
+import tempfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -54,13 +58,24 @@ from typing import Callable
 # un `components.pendientes(...)` dentro de `install/components.py` sería una
 # adivinanza sobre cuál de los dos se está leyendo.
 from common import pins
-from common.components import PYTHON, RCLONE, VERACRYPT, Pendiente
+from common.components import PYTHON, RCLONE, VERACRYPT, Pendiente, corre_desde
 from common.components import pendientes as sellos_pendientes
+from common.store import pid_alive
 
 from . import IS_WIN, InstallError
 from . import deploy, platforms, rclone_bin, runtime_bin, traveler, veracrypt_bin
 
 Progreso = Callable[[str], None]
+
+# El relevo: una carpeta en el temporal de ESTE equipo con un Python y una copia
+# de este código, desde la que se termina el trabajo con la ventana cerrada.
+RELEVO_PREFIJO = "prdrive-relevo-"
+RELEVO_DUENNO = "owner.pid"
+RELEVO_LOG = "relevo.log"
+# Cuánto espera el relevo a que se cierre la ventana. La ventana se cierra sola
+# en cuanto se cierra la de salida, pero eso lo decide quien mira: media hora y,
+# si sigue abierta, se rinde sin tocar nada.
+ESPERA_MAXIMA = 30 * 60
 
 
 @dataclass
@@ -115,12 +130,8 @@ def runtime_en_uso(carpeta: Path) -> bool:
     proceso es hijo suyo y usa el mismo intérprete (`update.components_command()`
     pasa `sys.executable` a propósito). En Windows no se puede renombrar la
     carpeta de un `pythonw.exe` vivo, así que sin esto se bajarían 30 MB para
-    fallar al final."""
-    try:
-        Path(sys.executable).resolve().relative_to(Path(carpeta).resolve())
-        return True
-    except (ValueError, OSError):
-        return False
+    fallar al final. Ese caso lo termina el relevo (`preparar_relevo()`)."""
+    return corre_desde(carpeta)
 
 
 def veracrypt_en_uso(carpeta: Path) -> bool:
@@ -263,11 +274,9 @@ def _poner_python(raiz: Path, p: Pendiente, decir: Progreso) -> str | None:
     carpeta = platforms.runtime_dir(raiz, p.plataforma)
     if runtime_en_uso(carpeta):
         return ("es el Python con el que está corriendo prdrive ahora mismo, "
-                "así que no se puede sustituir sin cerrarlo. Cierra el "
-                "programa y ejecuta «python runsync.py» dentro de .prdrive/ "
-                "con un Python instalado en este equipo —una instalación "
-                "completa no lleva runsync.pyw, así que hay que invocarlo así "
-                "a mano— y vuelve a intentarlo.")
+                "así que no se puede sustituir mientras siga abierto. Desde la "
+                "ventana, «Actualizar…» lo cambia cerrándola y volviéndola a "
+                "abrir.")
     decir(f"{p.titulo}: consiguiendo la versión {p.deberia}")
     archivo = runtime_bin.ensure_runtime(p.plataforma, decir)
     decir(f"{p.titulo}: sustituyendo {carpeta}")
@@ -342,3 +351,135 @@ def aplicar(device_root: Path | str, progreso: Progreso | None = None,
         else:
             res.hechos.append(f"{p.titulo}: {p.lleva} → {p.deberia}")
     return res
+
+
+# ---------------------------------------------------------------------------
+# El relevo: cambiar el Python con el que está abierta la ventana
+# ---------------------------------------------------------------------------
+# En un dispositivo con instalación completa, la ventana arranca desde
+# `runtime/<clave>/` de este equipo, y este proceso es hijo suyo con el mismo
+# intérprete. Esa carpeta no se puede apartar mientras la ventana siga abierta,
+# así que desde ella el runtime de esta plataforma no se ponía al día NUNCA: el
+# recuadro ámbar volvía cada vez, y lo que decía que hiciera (lanzar runsync con
+# un Python instalado) es justo lo que un dispositivo que lleva el suyo no tiene.
+#
+# El relevo lo resuelve sin nada instalado. Se extrae en el temporal de ESTE
+# equipo el runtime que se va a poner —el mismo archivo ya comprobado, que se
+# queda en la caché—, se copia al lado este código (el zip descargado se borra
+# en cuanto la ventana recupera el control) y se lanza desde ahí, suelto,
+# `--update-components` con `--esperar` los pids de la ventana y de este
+# proceso. Cuando los dos han salido, ningún proceso usa ya el runtime del
+# dispositivo: se sustituye con el intercambio de siempre y se vuelve a abrir
+# la ventana con él. Si algo sale mal, lo dice en una ventana con su registro.
+
+def runtime_propio(device_root: Path | str,
+                   pends: list[Pendiente]) -> Pendiente | None:
+    """El Python pendiente desde el que corre este proceso, o None.
+
+    Por `runtime_en_uso()`, la misma pregunta que hace `_poner_python()`, para
+    que los tests la contesten en un solo sitio."""
+    for p in pends:
+        if (p.que == PYTHON and p.plataforma is not None
+                and runtime_en_uso(platforms.runtime_dir(device_root, p.plataforma))):
+            return p
+    return None
+
+
+def barrer_relevos(base: Path | None = None) -> int:
+    """Borra las carpetas de relevo de procesos que ya no viven. Cuántas.
+
+    El relevo no puede borrar la suya —está corriendo desde ella—, así que la
+    barre el siguiente, como `remote.sweep_stale()` con las claves. Cada una
+    dice de qué pid es; la de uno vivo no se toca."""
+    base = base or Path(tempfile.gettempdir())
+    borradas = 0
+    for carpeta in base.glob(RELEVO_PREFIJO + "*"):
+        try:
+            duenno = int((carpeta / RELEVO_DUENNO).read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            duenno = None
+        if duenno is not None and pid_alive(duenno):
+            continue
+        shutil.rmtree(carpeta, ignore_errors=True)
+        borradas += 1
+    return borradas
+
+
+def preparar_relevo(device_root: Path | str, p: Pendiente, esperar: list[int],
+                    reabrir: str | None, decir: Progreso,
+                    codigo: Path | None = None,
+                    base: Path | None = None) -> tuple[list[str], Path]:
+    """Deja listo el relevo de ese Python. Devuelve la orden y su carpeta.
+
+    Nada de esto toca el dispositivo: todo va al temporal de este equipo. Si
+    algo falla, la carpeta se borra y sale un InstallError."""
+    barrer_relevos(base)
+    codigo = Path(codigo) if codigo else Path(__file__).resolve().parent.parent
+    carpeta = Path(tempfile.mkdtemp(prefix=RELEVO_PREFIJO, dir=base))
+    try:
+        (carpeta / RELEVO_DUENNO).write_text(str(os.getpid()), encoding="utf-8")
+        decir(f"{p.titulo}: consiguiendo la versión {p.deberia}")
+        archivo = runtime_bin.ensure_runtime(p.plataforma, decir)
+        sha = runtime_bin.recorded_sha256(archivo) or runtime_bin.file_sha256(archivo)
+        decir(f"{p.titulo}: preparando en {carpeta} el Python que lo cambiará")
+        runtime_bin.extract(archivo, carpeta / "python", p.plataforma, sha)
+        shutil.copytree(codigo, carpeta / "codigo",
+                        ignore=shutil.ignore_patterns("__pycache__", ".git"))
+    except (InstallError, OSError) as e:
+        shutil.rmtree(carpeta, ignore_errors=True)
+        if isinstance(e, InstallError):
+            raise
+        raise InstallError(f"No he podido preparar {carpeta}: {e}") from e
+
+    orden = [str(carpeta / "python" / p.plataforma.interprete), "-u",
+             str(carpeta / "codigo" / "prdrive-install.py"),
+             "--update-components", str(Path(device_root))]
+    for pid in esperar:
+        orden += ["--esperar", str(pid)]
+    if reabrir:
+        orden += ["--reabrir", reabrir]
+    return orden, carpeta
+
+
+def lanzar_suelto(orden: list[str]) -> int:
+    """Lanza `orden` desligada de este proceso, sin consola. Devuelve su pid.
+
+    El cwd es el temporal y no el dispositivo: un proceso con el cwd dentro de
+    `runtime/<clave>/` impediría justo el renombrado que se busca, y uno dentro
+    del volumen impediría expulsarlo. Sin heredar nada de la salida: la ventana
+    de salida lee la tubería de este proceso hasta que se cierra, y un hijo que
+    la heredara la tendría esperando al relevo entero. Función de módulo para
+    que los tests la sustituyan: ningún test lanza procesos sueltos de verdad."""
+    extra: dict = {}
+    if IS_WIN:
+        # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+        extra["creationflags"] = 0x00000008 | 0x00000200
+    else:
+        extra["start_new_session"] = True
+    proc = subprocess.Popen(orden, cwd=tempfile.gettempdir(),
+                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL, close_fds=True, **extra)
+    return proc.pid
+
+
+def lanzar_relevo(orden: list[str], carpeta: Path) -> int:
+    """Lanza el relevo y apunta su pid como dueño de la carpeta."""
+    pid = lanzar_suelto(orden)
+    try:
+        (carpeta / RELEVO_DUENNO).write_text(str(pid), encoding="utf-8")
+    except OSError:
+        pass        # a lo sumo, otro relevo la barrería antes de tiempo
+    return pid
+
+
+def esperar_a(pids: list[int], limite: float = ESPERA_MAXIMA) -> bool:
+    """Espera a que salgan todos esos procesos. False si pasa el límite.
+
+    Función de módulo por lo mismo que `descarga.esperar()`: los tests no
+    esperan de verdad."""
+    fin = time.monotonic() + limite
+    while any(pid_alive(pid) for pid in pids):
+        if time.monotonic() > fin:
+            return False
+        time.sleep(0.5)
+    return True

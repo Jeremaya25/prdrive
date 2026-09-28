@@ -24,22 +24,28 @@ bajan el mismo zip del código y lanzan el mismo `prdrive-install.py` descargado
 porque `install/` no viaja al dispositivo. La diferencia de fondo: sustituir el
 programa obliga a reabrir la ventana (sus módulos ya no son los de disco);
 sustituir los componentes no, porque nada de lo que se toca está cargado en
-memoria.
+memoria. Salvo el Python con el que corre esta ventana, que no se puede cambiar
+con ella abierta: ése lo cambia un relevo que corre desde el temporal del
+equipo, después de que la ventana se cierre, y que la vuelve a abrir.
 """
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import tempfile
 import webbrowser
 from pathlib import Path
 
-from common import model, store, update
+from common import components, model, store, update
 
 from . import prefs, theme
 from .tk import (TITLE, bloque_aviso, cabecera, cuerpo_visible, modal, mostrar,
                  output_window, working)
+
+# Lo que devuelve `open_components_dialog()` cuando la ventana tiene que cerrarse.
+CERRAR = "cerrar"
 
 
 def servicio_vivo() -> bool:
@@ -187,12 +193,15 @@ def open_dialog(parent, nueva) -> bool:
     return hecho["ok"]
 
 
-def open_components_dialog(parent, pends) -> bool:
+def open_components_dialog(parent, pends) -> bool | str:
     """La pantalla de «los componentes están anticuados».
 
     Devuelve True si se ha tocado algo, para que la ventana relea los sellos y
     repinte. No hace falta reabrir el programa, a diferencia de la otra: lo que
-    se sustituye son binarios que este proceso no tiene cargados en memoria."""
+    se sustituye son binarios que este proceso no tiene cargados en memoria.
+    La excepción es el Python con el que corre esta misma ventana: entonces
+    devuelve `CERRAR`, y quien llama cierra la ventana para que el relevo lo
+    cambie y la reabra."""
     from tkinter import messagebox, ttk
 
     if not pends:
@@ -253,13 +262,21 @@ def open_components_dialog(parent, pends) -> bool:
                      ancho=520).grid(row=fila, column=0, sticky="ew", pady=(14, 0))
         fila += 1
 
+    # El Python con el que está abierta esta ventana no se puede cambiar con
+    # ella abierta: lo cambia el relevo después de cerrarla (ver
+    # `install/components.py`), y eso se dice ANTES de empezar.
+    propio = components.propio(pends)
+
     def actualizar() -> None:
-        if not messagebox.askokcancel(TITLE, (
-                "Se van a sustituir los componentes que lleva este dispositivo "
-                "por los que fija esta versión del programa.\n\n"
-                "El programa, tu configuración, tus claves y tus datos no se "
-                "tocan. Lo que esté en uso ahora mismo se dejará para otra vez."),
-                parent=dlg):
+        aviso = ("Se van a sustituir los componentes que lleva este dispositivo "
+                 "por los que fija esta versión del programa.\n\n"
+                 "El programa, tu configuración, tus claves y tus datos no se "
+                 "tocan. Lo que esté en uso ahora mismo se dejará para otra vez.")
+        if propio is not None:
+            aviso += (f"\n\nEl {propio.titulo} es con el que está abierto "
+                      f"prdrive: al terminar, la ventana se cerrará, se "
+                      f"cambiará y volverá a abrirse sola.")
+        if not messagebox.askokcancel(TITLE, aviso, parent=dlg):
             return
 
         # En el temporal del equipo, nunca en el dispositivo: son ~270 KB que se
@@ -275,8 +292,16 @@ def open_components_dialog(parent, pends) -> bool:
                 return
 
             rc = output_window("actualizar los componentes",
-                               update.components_command(staged, model.DEVICE_ROOT),
+                               update.components_command(
+                                   staged, model.DEVICE_ROOT,
+                                   relevo=os.getpid() if propio else None),
                                parent=dlg, subtitulo=str(model.APP_DIR))
+            if rc == update.CODIGO_RELEVO:
+                # El relevo está esperando a que este proceso salga: no se
+                # vuelve a la ventana, se cierra, y la reabre él.
+                tocado["ok"] = CERRAR
+                dlg.destroy()
+                return
             # Se haya podido con todo o no, los sellos ya dicen la verdad: la
             # ventana relee y el aviso se apaga solo si ya no hay motivo.
             tocado["ok"] = True

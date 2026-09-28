@@ -51,6 +51,7 @@ lee.
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -354,6 +355,34 @@ def pendientes(app_dir: Path | str | None = None,
         if hallado is not None:
             salida.append(hallado)
     return salida
+
+
+def corre_desde(carpeta: Path | str) -> bool:
+    """¿El intérprete de ESTE proceso vive dentro de esa carpeta?
+
+    Aquí y no en `install/` porque las dos puntas lo preguntan: la ventana, para
+    avisar antes de empezar de que tendrá que cerrarse, y el aplicador, para no
+    intentar apartar la carpeta de un `pythonw.exe` vivo —Windows no lo deja—.
+    Nunca lanza."""
+    try:
+        Path(sys.executable).resolve().relative_to(Path(carpeta).resolve())
+        return True
+    except (ValueError, OSError):
+        return False
+
+
+def propio(pends: list[Pendiente],
+           app_dir: Path | str | None = None) -> Pendiente | None:
+    """El Python pendiente con el que corre este mismo proceso, o None.
+
+    Es el caso normal de un dispositivo con instalación completa: la ventana
+    arranca desde `runtime/<clave>/` de este equipo, así que el runtime de esta
+    plataforma no se puede cambiar mientras siga abierta. Hay como mucho uno."""
+    for p in pends:
+        if (p.que == PYTHON and p.plataforma is not None
+                and corre_desde(runtime_dir(app_dir, p.plataforma))):
+            return p
+    return None
 
 
 def actualizables(pends: list[Pendiente]) -> list[Pendiente]:
