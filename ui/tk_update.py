@@ -295,7 +295,9 @@ def open_components_dialog(parent, pends) -> bool | str:
                                update.components_command(
                                    staged, model.DEVICE_ROOT,
                                    relevo=os.getpid() if propio else None),
-                               parent=dlg, subtitulo=str(model.APP_DIR))
+                               parent=dlg, subtitulo=str(model.APP_DIR),
+                               veredictos={update.CODIGO_RELEVO:
+                                           "OK, falta cerrar la ventana"})
             if rc == update.CODIGO_RELEVO:
                 # El relevo está esperando a que este proceso salga: no se
                 # vuelve a la ventana, se cierra, y la reabre él.

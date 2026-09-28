@@ -362,8 +362,8 @@ def corre_desde(carpeta: Path | str) -> bool:
 
     Aquí y no en `install/` porque las dos puntas lo preguntan: la ventana, para
     avisar antes de empezar de que tendrá que cerrarse, y el aplicador, para no
-    intentar apartar la carpeta de un `pythonw.exe` vivo —Windows no lo deja—.
-    Nunca lanza."""
+    cambiar la carpeta de un intérprete vivo —Windows deja apartarla, pero luego
+    no borrarla, y lo que sí borra es su biblioteca estándar—. Nunca lanza."""
     try:
         Path(sys.executable).resolve().relative_to(Path(carpeta).resolve())
         return True
