@@ -40,6 +40,7 @@ mirar es la forma más rápida de vaciar el destino. Esas se ejecutan a mano y c
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import stat
 import tempfile
@@ -49,10 +50,11 @@ from pathlib import Path
 from typing import Callable, Mapping
 
 from common import components, config_file, fleet, model
-from common.pins import Plataforma
+from common.pins import PLATAFORMAS, Plataforma
 # Viven en `common/` porque el dispositivo también esconde cosas; se importan
 # aquí con su nombre para que `deploy.hide()` siga siendo lo que era.
 from common.store import hide, unhide  # noqa: F401
+from common.store import pid_alive
 
 from . import (APP_NAME, IS_WIN, InstallError, bundle_dir, platforms,
                python_command, version)
@@ -340,6 +342,43 @@ def copy_rclone(device_root: Path | str, rclone_binary: Path | str,
 # rclone y Python por plataforma
 # ---------------------------------------------------------------------------
 
+# Lo que dejan a medias `install_runtime()` y `remove_platform()`:
+# `.windows-x64.nuevo-1234`, `.windows-x64.viejo-1234`, `.windows-x64.borrar-1234`.
+_RESTO_RUNTIME = re.compile(r"^\.(?P<clave>[a-z0-9-]+)\.(?:nuevo|viejo|borrar)-(?P<pid>\d+)$")
+
+
+def barrer_restos_runtime(device_root: Path | str) -> list[Path]:
+    """Borra de `runtime/` lo que dejaron intercambios de otros procesos. Devuelve
+    lo borrado.
+
+    Cada proceso limpia su propio `.nuevo-<pid>` si algo falla, pero no el de
+    otro: uno que murió a mitad de extraer —cerrado a la fuerza, el dispositivo
+    retirado, un error que no era InstallError— deja decenas de megas en una
+    carpeta oculta de un volumen extraíble, y nadie volvía a mirarlos. Solo los
+    de plataformas que existen (el nombre es exactamente el que escriben esas dos
+    funciones) y solo si su pid no está vivo en este equipo: dos instaladores a la
+    vez no se barren el uno al otro. Un pid de otro equipo que coincida con uno
+    vivo aquí se queda para la próxima; nunca se borra de más."""
+    base = platforms.runtime_dir(device_root, PLATAFORMAS[0]).parent
+    claves = {p.clave for p in PLATAFORMAS}
+    borrado: list[Path] = []
+    try:
+        restos = list(base.iterdir())
+    except OSError:
+        return borrado
+    for resto in restos:
+        m = _RESTO_RUNTIME.match(resto.name)
+        if not m or m["clave"] not in claves:
+            continue
+        pid = int(m["pid"])
+        if pid == os.getpid() or pid_alive(pid):
+            continue
+        shutil.rmtree(resto, ignore_errors=True)
+        if not resto.exists():
+            borrado.append(resto)
+    return borrado
+
+
 def install_runtime(device_root: Path | str, plat: Plataforma,
                     archivo: Path) -> Path | None:
     """Deja en `runtime/<clave>/` el Python de ese archivo. None si ya estaba.
@@ -355,6 +394,7 @@ def install_runtime(device_root: Path | str, plat: Plataforma,
         return None
     final = platforms.runtime_dir(device_root, plat)
     base = final.parent
+    barrer_restos_runtime(device_root)
     nuevo = base / f".{plat.clave}.nuevo-{os.getpid()}"
     viejo = base / f".{plat.clave}.viejo-{os.getpid()}"
     try:

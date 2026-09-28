@@ -452,6 +452,263 @@ try:
         (veracrypt_bin.ensure_veracrypt, components.veracrypt_en_uso,
          traveler.espacio_libre) = reales_vc
 
+    # --- los restos de un runtime a medias se barren --------------------------
+    #
+    # Un `.windows-arm64.nuevo-27804` con 28 MB a medio extraer se quedó para
+    # siempre en un dispositivo real: cada proceso solo limpiaba el suyo. Ahora
+    # se barren los de procesos muertos, y solo esos.
+    import contextlib
+    import importlib.util
+    import io
+    import os
+    import subprocess
+
+    from common import update
+
+    def pid_muerto() -> int:
+        proc = subprocess.Popen([sys.executable, "-c", ""])
+        proc.wait()
+        return proc.pid
+
+    muerto = pid_muerto()
+    raiz = dispositivo()
+    base = platforms.runtime_dir(raiz, WIN).parent
+    restos = {n: base / n for n in (
+        f".windows-arm64.nuevo-{muerto}", f".windows-x64.viejo-{muerto}",
+        f".linux-x64.borrar-{muerto}", f".windows-x64.nuevo-{os.getpid()}",
+        f".otra-cosa.nuevo-{muerto}", f"windows-arm64.nuevo-{muerto}")}
+    for d in restos.values():
+        (d / "Lib").mkdir(parents=True)
+        (d / "Lib" / "algo.py").write_text("x", encoding="utf-8")
+    barridos = deploy.barrer_restos_runtime(raiz)
+    c("se barren los restos de procesos muertos",
+      sorted(p.name for p in barridos),
+      sorted([f".windows-arm64.nuevo-{muerto}", f".windows-x64.viejo-{muerto}",
+              f".linux-x64.borrar-{muerto}"]))
+    c("el de este mismo proceso no se toca",
+      restos[f".windows-x64.nuevo-{os.getpid()}"].is_dir(), True)
+    c("ni lo que no es de ninguna plataforma",
+      restos[f".otra-cosa.nuevo-{muerto}"].is_dir(), True)
+    c("ni lo que no lleva el punto delante",
+      restos[f"windows-arm64.nuevo-{muerto}"].is_dir(), True)
+    c("y los runtimes de verdad siguen ahí",
+      (platforms.runtime_dir(raiz, WIN) / WIN.interprete).is_file(), True)
+
+    # --- el relevo: el Python con el que está abierta la ventana -------------
+    #
+    # Desde la ventana, el runtime de esta plataforma no se podía cambiar nunca:
+    # es el suyo, y Windows no deja apartar la carpeta de un pythonw.exe vivo. El
+    # relevo lo cambia con la ventana cerrada, desde el temporal del equipo.
+    raiz = dispositivo()
+    components.runtime_en_uso = lambda carpeta: (
+        carpeta == platforms.runtime_dir(raiz, WIN))
+    c("se reconoce el Python propio entre los pendientes",
+      components.runtime_propio(raiz, components.pendientes(raiz)).plataforma, WIN)
+    components.runtime_en_uso = lambda carpeta: False
+    c("y si no corre desde ninguno, no hay propio",
+      components.runtime_propio(raiz, components.pendientes(raiz)), None)
+
+    # La ventana hace la misma pregunta con `common.components.propio()`.
+    c("corre_desde reconoce la carpeta de este intérprete",
+      comp.corre_desde(Path(sys.executable).parent), True)
+    c("y no una cualquiera", comp.corre_desde(tmpdir("prdrive-ajena-")), False)
+    real_corre = comp.corre_desde
+    app = deploy.app_dir(raiz)
+    comp.corre_desde = lambda carpeta: carpeta == comp.runtime_dir(app, WIN)
+    try:
+        pends = comp.pendientes(app, None)
+        c("propio() da el Python de la ventana", comp.propio(pends, app).plataforma, WIN)
+        c("y nunca un rclone",
+          comp.propio([p for p in pends if p.que == comp.RCLONE], app), None)
+    finally:
+        comp.corre_desde = real_corre
+
+    # Preparar: un Python extraído y una copia del código, en el temporal.
+    reales_rt = (runtime_bin.extract, runtime_bin.recorded_sha256)
+    extraidos: list[tuple] = []
+
+    def falso_extract(archivo, destino, plat, sha):
+        extraidos.append((plat.clave, sha))
+        (destino / plat.interprete).parent.mkdir(parents=True, exist_ok=True)
+        (destino / plat.interprete).write_bytes(b"py NUEVO")
+        return 1
+
+    runtime_bin.extract = falso_extract
+    runtime_bin.recorded_sha256 = lambda archivo: "sha-apuntada"
+    codigo = tmpdir("prdrive-codigo-")
+    (codigo / "prdrive-install.py").write_text("# el aplicador", encoding="utf-8")
+    (codigo / "install").mkdir()
+    (codigo / "install" / "__pycache__").mkdir()
+    (codigo / "install" / "__pycache__" / "x.pyc").write_bytes(b"x")
+    temporal = tmpdir("prdrive-temporal-")
+    try:
+        raiz = dispositivo()
+        propio = components.pendientes(raiz)[1]       # el Python de Windows x64
+        c("(el pendiente de la prueba es el Python de Windows x64)",
+          (propio.que, propio.plataforma), (comp.PYTHON, WIN))
+        orden, carpeta = components.preparar_relevo(
+            raiz, propio, esperar=[111, 222], reabrir="py-del-dispositivo",
+            decir=lambda m: None, codigo=codigo, base=temporal)
+        c("en el temporal del equipo, nunca en el dispositivo",
+          carpeta.parent, temporal)
+        c("con el Python que se va a poner, extraído", extraidos, [("windows-x64", "sha-apuntada")])
+        c("y lanzado con él, sin consola",
+          orden[0], str(carpeta / "python" / WIN.interprete))
+        c("desde la COPIA del código (el zip se borra enseguida)",
+          orden[2], str(carpeta / "codigo" / "prdrive-install.py"))
+        c("la copia no lleva cachés", (carpeta / "codigo" / "install" / "__pycache__").exists(),
+          False)
+        c("pone al día ese dispositivo",
+          orden[3:5], ["--update-components", str(raiz)])
+        c("esperando a la ventana y al aplicador, y reabriendo con el Python de siempre",
+          orden[5:], ["--esperar", "111", "--esperar", "222",
+                      "--reabrir", "py-del-dispositivo"])
+        c("la carpeta dice de quién es",
+          (carpeta / components.RELEVO_DUENNO).read_text(encoding="utf-8"), str(os.getpid()))
+        c("y el dispositivo no se ha tocado",
+          [p.que for p in components.pendientes(raiz) if p.plataforma == WIN],
+          [comp.RCLONE, comp.PYTHON])
+
+        # Si la extracción falla, no queda nada en el temporal.
+        def extract_que_revienta(archivo, destino, plat, sha):
+            destino.mkdir(parents=True)
+            raise InstallError("el archivo no cuadra")
+
+        runtime_bin.extract = extract_que_revienta
+        antes = sorted(p.name for p in temporal.iterdir())
+        try:
+            components.preparar_relevo(raiz, propio, [1], None, lambda m: None,
+                                       codigo=codigo, base=temporal)
+            c("un relevo que no se puede preparar se cuenta", "siguió", "InstallError")
+        except InstallError:
+            c("un relevo que no se puede preparar se cuenta", "InstallError", "InstallError")
+        c("sin dejar su carpeta a medias", sorted(p.name for p in temporal.iterdir()), antes)
+        runtime_bin.extract = falso_extract
+
+        # Las carpetas de relevos muertos las barre el siguiente.
+        viejos = tmpdir("prdrive-relevos-")
+        for nombre, duenno in (("a", str(pid_muerto())), ("b", str(os.getpid())),
+                               ("c", None)):
+            d = viejos / (components.RELEVO_PREFIJO + nombre)
+            d.mkdir()
+            if duenno:
+                (d / components.RELEVO_DUENNO).write_text(duenno, encoding="utf-8")
+        c("se barren las de relevos muertos o sin dueño",
+          components.barrer_relevos(viejos), 2)
+        c("y se queda la de uno vivo",
+          sorted(p.name for p in viejos.iterdir()), [components.RELEVO_PREFIJO + "b"])
+
+        # --- la orden, con --relevo, dentro de este proceso ------------------
+        entrada = Path(__file__).resolve().parent.parent / "prdrive-install.py"
+
+        def cargar(ruta: Path):
+            spec = importlib.util.spec_from_file_location("prdrive_install", ruta)
+            modulo = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(modulo)
+            return modulo
+
+        instalador = cargar(entrada)
+        reales_relevo = (components.lanzar_suelto, components.esperar_a,
+                         components.preparar_relevo)
+        lanzados: list[list[str]] = []
+        components.lanzar_suelto = lambda orden: lanzados.append(orden) or 4242
+        preparar_real = components.preparar_relevo
+        components.preparar_relevo = (
+            lambda *a, **k: preparar_real(*a, codigo=codigo, base=temporal, **k))
+        try:
+            raiz = dispositivo()
+            components.runtime_en_uso = lambda carpeta: (
+                carpeta == platforms.runtime_dir(raiz, WIN))
+            bajados.clear()
+            salida = io.StringIO()
+            with contextlib.redirect_stdout(salida):
+                rc = instalador.cmd_update_components(str(raiz), relevo=999)
+            texto = salida.getvalue()
+            c("con el Python de la ventana pendiente sale con CODIGO_RELEVO",
+              rc, update.CODIGO_RELEVO)
+            c("lo demás se pone al día igual",
+              [p.describe() for p in components.pendientes(raiz)],
+              [p.describe() for p in components.pendientes(raiz)
+               if p.plataforma == WIN and p.que == comp.PYTHON])
+            c("ése se consigue una sola vez: para el relevo, no para el dispositivo",
+              bajados.count("python windows-x64"), 1)
+            c("y el del dispositivo sigue siendo el de antes",
+              (platforms.runtime_dir(raiz, WIN) / WIN.interprete).read_bytes(),
+              b"py viejo")
+            c("se lanza un relevo, uno", len(lanzados), 1)
+            c.contains("esperando a la ventana", " ".join(lanzados[0]), "--esperar 999")
+            c.contains("y a este proceso", " ".join(lanzados[0]), f"--esperar {os.getpid()}")
+            c.contains("reabriendo con el mismo Python", " ".join(lanzados[0]),
+                       f"--reabrir {sys.executable}")
+            c.contains("y se dice que se hará después", texto, "DESPUÉS")
+            c("sin darlo por pospuesto", "POSPUESTO" in texto, False)
+            carpeta = Path(lanzados[0][0]).parent.parent
+            c("la carpeta pasa a ser del relevo",
+              (carpeta / components.RELEVO_DUENNO).read_text(encoding="utf-8"), "4242")
+
+            # Sin --relevo (a mano, desde la consola) se pospone como siempre.
+            raiz = dispositivo()
+            lanzados.clear()
+            salida = io.StringIO()
+            with contextlib.redirect_stdout(salida):
+                rc = instalador.cmd_update_components(str(raiz))
+            c("sin --relevo no se lanza nada", (rc, lanzados), (0, []))
+            c.contains("y se pospone con su motivo", salida.getvalue(), "POSPUESTO")
+            c.contains("que remite al botón de la ventana", salida.getvalue(),
+                       "«Actualizar…»")
+            components.runtime_en_uso = lambda carpeta: False
+
+            # --- el relevo en sí ---------------------------------------------
+            # Se carga desde una copia en su carpeta, como en la vida real: el
+            # registro va al lado del código, no al checkout.
+            relevo = tmpdir("prdrive-relevo-prueba-")
+            (relevo / "codigo").mkdir()
+            (relevo / "codigo" / "prdrive-install.py").write_bytes(entrada.read_bytes())
+            copia = cargar(relevo / "codigo" / "prdrive-install.py")
+
+            raiz = dispositivo()
+            lanzados.clear()
+            components.esperar_a = lambda pids, limite=0: True
+            stdout_antes = sys.stdout
+            rc = copia.cmd_relevo(str(raiz), [999], "py-del-dispositivo")
+            c("el relevo pone al día todo, el Python de la ventana incluido",
+              (rc, components.pendientes(raiz)), (0, []))
+            c("devuelve la salida a su sitio", sys.stdout is stdout_antes, True)
+            c("y reabre la ventana con el Python del dispositivo",
+              lanzados, [["py-del-dispositivo",
+                          str(deploy.app_dir(raiz) / "runsync.py")]])
+            c.contains("dejando su registro", (relevo / components.RELEVO_LOG).read_text(
+                encoding="utf-8"), "Hecho")
+
+            # La ventana no se cierra: no se toca nada ni se reabre otra.
+            raiz = dispositivo()
+            lanzados.clear()
+            components.esperar_a = lambda pids, limite=0: False
+            salida = io.StringIO()
+            with contextlib.redirect_stdout(salida):
+                rc = copia.cmd_relevo(str(raiz), [999], "py-del-dispositivo")
+            c("si la ventana no se cierra, no hace nada", (rc, lanzados), (1, []))
+            c("y el dispositivo sigue como estaba", len(components.pendientes(raiz)), 4)
+            c.contains("y lo cuenta", salida.getvalue(), "sigue abierto")
+
+            # Un fallo al poner al día: reabre igual, y lo cuenta.
+            raiz = dispositivo()
+            lanzados.clear()
+            components.esperar_a = lambda pids, limite=0: True
+            runtime_bin.ensure_runtime = runtime_que_revienta
+            salida = io.StringIO()
+            with contextlib.redirect_stdout(salida):
+                rc = copia.cmd_relevo(str(raiz), [999], "py-del-dispositivo")
+            runtime_bin.ensure_runtime = falso_runtime
+            c("un fallo sale con 1", rc, 1)
+            c("pero la ventana se reabre igual", len(lanzados), 1)
+            c.contains("y se enseña el registro", salida.getvalue(), "no cuadra con su suma")
+        finally:
+            (components.lanzar_suelto, components.esperar_a,
+             components.preparar_relevo) = reales_relevo
+    finally:
+        runtime_bin.extract, runtime_bin.recorded_sha256 = reales_rt
+
     # --- la orden de consola --------------------------------------------------
     #
     # Se lanza un proceso de VERDAD, así que solo se prueban los dos caminos que
@@ -485,11 +742,15 @@ try:
     # este proyecto ningún test habla con la red, así que aquí hace falta un
     # assert de verdad que pare el script.
     assert not components.pendientes(aldia)
+    resto = platforms.runtime_dir(aldia, WIN).parent / f".windows-arm64.nuevo-{pid_muerto()}"
+    (resto / "Lib").mkdir(parents=True)
     hecho = subprocess.run([sys.executable, str(entrada),
                             "--update-components", str(aldia)],
                            capture_output=True, text=True)
     c("y la orden lo dice y sale con 0", hecho.returncode, 0)
     c.contains("sin haber tocado nada", hecho.stdout, "nada que hacer")
+    c("pero barriendo el resto de un intento anterior", resto.exists(), False)
+    c.contains("y diciéndolo", hecho.stdout, "resto de un intento anterior")
 finally:
     (rclone_bin.pinned_rclone, runtime_bin.ensure_runtime, deploy.install_runtime,
      components.rclone_en_uso, components.runtime_en_uso) = reales
