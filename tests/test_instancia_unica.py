@@ -65,6 +65,63 @@ with sandbox():
     registro(runsync.UI_LOCK, os.getpid(), "otro-equipo")
     c("un registro de otro equipo tampoco", runsync.ui_en_marcha(), None)
 
+    # --- tomarlo es atómico --------------------------------------------------
+    # Lo que pasó en G: el 28/09/2026: dos runsync con 6 s de diferencia miraron
+    # los dos, no vieron a nadie y abrieron dos ventanas. Mirar y escribir eran
+    # dos pasos; ahora tomar ES mirar, y la segunda toma sin soltar la primera
+    # tiene que perder.
+    runsync.UI_LOCK.unlink(missing_ok=True)
+    c("la primera toma se la queda", runsync.tomar_ui(), None)
+    segunda = runsync.tomar_ui()
+    c("la segunda, sin soltar la primera, pierde", segunda is not None, True)
+    c("y sabe quién la tiene", (segunda or {}).get("pid"), os.getpid())
+    runsync.soltar_ui()
+    c("soltada, se puede volver a tomar", runsync.tomar_ui(), None)
+    runsync.soltar_ui()
+
+    registro(runsync.UI_LOCK, MUERTO, runsync.HOST)
+    c("un resto de una ventana muerta no impide tomarla", runsync.tomar_ui(), None)
+    c("y el registro pasa a ser el nuestro",
+      store.read_json(runsync.UI_LOCK).get("pid"), os.getpid())
+    runsync.soltar_ui()
+
+    registro(runsync.UI_LOCK, os.getpid(), "otro-equipo")
+    c("ni uno de otro equipo", runsync.tomar_ui(), None)
+    runsync.soltar_ui()
+
+    # Limpiar un resto no puede llevarse por delante un registro recién tomado:
+    # si entre leer el resto y retirarlo otra ventana lo ha sustituido por el
+    # suyo, retirar tiene que dejarlo donde estaba.
+    resto = {"pid": MUERTO, "host": runsync.HOST, "started": "2026-09-22 08:00:00"}
+    registro(runsync.UI_LOCK, os.getpid(), runsync.HOST)
+    vivo = store.read_json(runsync.UI_LOCK)
+    c("retirar un resto que ya no está no retira nada",
+      runsync._retirar_ui(resto), False)
+    c("y el registro vivo sigue en su sitio", store.read_json(runsync.UI_LOCK), vivo)
+    c("sin dejar ficheros de paso", sorted(p.name for p in model.STATE_DIR.iterdir()
+                                           if p.name.startswith("ui.lock")),
+      ["ui.lock.json"])
+    runsync.UI_LOCK.unlink()
+
+    # Un registro a medio escribir (creado y aún vacío) es de alguien que lo
+    # está tomando, no un resto; si sigue vacío pasado el margen, sí lo es.
+    runsync.UI_LOCK.write_bytes(b"")
+    runsync.ESPERA_REGISTRO = 0.05
+    c("un registro vacío que no llega a escribirse es un resto",
+      runsync.tomar_ui(), None)
+    runsync.soltar_ui()
+
+    # Retirar un resto pide antes su propio cerrojo; si quien lo tenía murió
+    # con él puesto, pasado un rato se da por abandonado y no bloquea nada.
+    romper = runsync.UI_LOCK.with_name(runsync.UI_LOCK.name + ".romper")
+    romper.write_text(str(MUERTO), encoding="ascii")
+    viejo = romper.stat().st_mtime - runsync.ROMPER_ABANDONADO - 60
+    os.utime(romper, (viejo, viejo))
+    registro(runsync.UI_LOCK, MUERTO, runsync.HOST)
+    c("un «romper» abandonado no impide retirar el resto", runsync.tomar_ui(), None)
+    c("y no se queda detrás", romper.exists(), False)
+    runsync.soltar_ui()
+
     # Lo que de verdad importa: la segunda no arranca Y no para el servicio de
     # la primera. Si llegara a llamar a stop_previous_daemon(), el registro del
     # servicio desaparecería.

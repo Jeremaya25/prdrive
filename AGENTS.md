@@ -335,13 +335,21 @@ name: renaming it would need a migration to change a word. `--auto --once`
 live service on this host it does nothing and does **not** stop it — swapping a
 service for a single pass would leave the device without one.
 
-**One window at a time, and the watcher waits for it.** `ui_flow()` checks
+**One window at a time, and the watcher waits for it.** `ui_flow()` takes
 `ui.lock.json` **before** `stop_previous_daemon()` and refuses to open a second
 window — opening runsync stops the previous service, so two windows would take
-the service from each other. A record whose pid is dead, or that belongs to
-another host, is the trace of a device pulled without closing anything, and is
-cleaned exactly like the daemon's. The lock is taken around `_atender()` and
-released in a `finally`. `penwatch` reads both locks (never writes them) and
+the service from each other. **Checking and taking are one step**
+(`tomar_ui()`): the file is created with `O_EXCL`, never through
+`store.write_json` (its rename overwrites). Checking first and writing later let
+two runsync launched 6 s apart by two relays both open a window on a real device
+(28/09/2026). A record whose pid is dead, or that belongs to another host, is
+the trace of a device pulled without closing anything; `_retirar_ui()` removes
+it only while holding a second exclusive file, `ui.lock.json.romper`, and only
+if it re-reads the same record — a plain delete could take a window that had
+just replaced it — then the exclusive create is retried once. Windows refuses to
+delete a file another process is reading (WinError 32), so `_borrar()` retries.
+Everything after the take, up to `_atender()`, runs inside the `finally` that
+releases it. `penwatch` reads both locks (never writes them) and
 launches nothing while either is alive: the pass is logged and the trigger is
 spent, so it does not retry every minute behind an open window. Both facts are
 said out loud — the pause in the watcher line of the main window (and the
