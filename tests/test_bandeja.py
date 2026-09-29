@@ -171,6 +171,13 @@ VC = "/opt/veracrypt/veracrypt"
 penwatch.installed_veracrypt = lambda: VC
 penwatch._con_escritorio = lambda: True
 vestibulo.retenido = lambda hc: None
+# La raíz cifrada montada en una carpeta, con el `veracrypt` de la línea de
+# órdenes, es Linux; en Windows va en una letra fija, y una carpeta `C:\…` se
+# leería como la letra C. Se hace Linux en cualquier sistema, como en
+# `test_agente_veracrypt.py`, y se deshace al acabar la sección.
+LINUX_FINGIDO = (penwatch.IS_WIN, agente.IS_WIN, equipo.Unidad.letra)
+penwatch.IS_WIN = agente.IS_WIN = False
+equipo.Unidad.letra = property(lambda self: "")
 UID = "c" * 32
 FISICA = tmpdir("prdrive-cifrado-")
 HC = FISICA / vestibulo.CONTENEDOR
@@ -274,6 +281,7 @@ c("un volumen fantasma es un aviso, y el menú ofrece bloquear",
 desmontar()
 vestibulo.retenido = lambda hc: None
 F.vueltas(ag, 2)
+penwatch.IS_WIN, agente.IS_WIN, equipo.Unidad.letra = LINUX_FINGIDO
 
 # --- despertar ---------------------------------------------------------------------
 ag.entorno = agente.pl.sin_conexion(ag.entorno, UNO, "nas", F.RELOJ[0] + 3600)

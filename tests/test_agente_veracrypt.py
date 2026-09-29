@@ -40,6 +40,15 @@ penwatch._con_escritorio = lambda: True
 RETENIDO: list = [None]             # lo que contesta vestibulo.retenido (Linux: None)
 vestibulo.retenido = lambda hc: RETENIDO[0]
 
+# Lo que sigue es Linux: la raíz se monta en una carpeta, con el `veracrypt` de
+# la línea de órdenes. En Windows va en una letra fija (la sección «las órdenes
+# de Windows», más abajo, y las pruebas en real), y una carpeta de Windows,
+# `C:\…`, se leería como la letra C. Así que se hace Linux en cualquier sistema,
+# como abajo se hace Windows en cualquier sistema.
+LETRA_REAL = equipo.Unidad.letra
+penwatch.IS_WIN = agente.IS_WIN = False
+equipo.Unidad.letra = property(lambda self: "")
+
 UID = "c" * 32
 FISICA = tmpdir("prdrive-cifrado-")
 HC = FISICA / vestibulo.CONTENEDOR
@@ -223,6 +232,7 @@ c("  que es una de las raíces extra", vestibulo.carpetas_de_contenedor(), [str(
 
 # --- las órdenes de Windows ----------------------------------------------------------
 penwatch.IS_WIN, agente.IS_WIN = True, True
+equipo.Unidad.letra = LETRA_REAL
 try:
     win = equipo.Unidad(UID, equipo.DAEMON, "P", "P:\\", r"C:\u\PRDRIVE-cifrado\PRDRIVE.hc")
     c("en Windows la letra sale de la ruta", win.letra, "P")
@@ -239,6 +249,7 @@ try:
        agente.orden_bloquear(win)), (None, None))
 finally:
     penwatch.IS_WIN, agente.IS_WIN = False, False
+    equipo.Unidad.letra = property(lambda self: "")
     penwatch.installed_veracrypt = lambda: VC
 
 # --- abrir con la raíz cerrada -------------------------------------------------------

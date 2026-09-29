@@ -925,13 +925,18 @@ c("  sin raíz, no hay filas de raíz", "Fichero de control" in filas, False)
 escritorio_real = tk_equipo.escritorio
 tk_equipo.escritorio = lambda: (True, False)
 filas = {e: (ok, d) for e, ok, d in tk_equipo.comprobaciones()}
-c("  un escritorio sin StatusNotifierWatcher: la fila de la bandeja lo dice, con la "
-  "extensión que falta", (filas["Bandeja"][0], tk_equipo.EXTENSION_GNOME in filas["Bandeja"][1]),
-  (False, True))
+if ia.IS_WIN:
+    # La fila de la bandeja es de Linux: en Windows la barra de tareas no falta.
+    c("  en Windows no hay fila de la bandeja", "Bandeja" in filas, False)
+else:
+    c("  un escritorio sin StatusNotifierWatcher: la fila de la bandeja lo dice, con la "
+      "extensión que falta",
+      (filas["Bandeja"][0], tk_equipo.EXTENSION_GNOME in filas["Bandeja"][1]), (False, True))
 c("  y en Linux, el acceso del menú aunque no haya raíz", "Acceso del menú" in filas,
   not ia.IS_WIN)
 tk_equipo.escritorio = lambda: (True, True)
-c("  con bandeja, bien", tk_equipo.comprobaciones()[-1][:2], ("Bandeja", True))
+if not ia.IS_WIN:
+    c("  con bandeja, bien", tk_equipo.comprobaciones()[-1][:2], ("Bandeja", True))
 tk_equipo.escritorio = escritorio_real
 casa.ir(-4)
 c("de vuelta en «Carpeta»", casa.pasos[casa.indice][0], "Carpeta")

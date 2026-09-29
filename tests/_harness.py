@@ -92,7 +92,15 @@ def tmpdir(prefix: str = "prdrive-test-") -> Path:
     return destino
 
 
-MAQUINAS_PE = {"x64": 0x8664, "arm64": 0xAA64, "x86": 0x014C}
+def en_exec(ruta) -> str:
+    """Cómo queda una ruta dentro de las comillas del `Exec=` de un .desktop,
+    según la *Desktop Entry Specification*: la barra invertida se escapa para
+    las comillas y, encima, la regla de las cadenas la dobla. Cada `\\` de una
+    ruta de Windows son cuatro; una de Linux no lleva ninguna."""
+    return str(ruta).replace("\\", "\\" * 4)
+
+
+MAQUINAS_PE ={"x64": 0x8664, "arm64": 0xAA64, "x86": 0x014C}
 
 
 def pe(maquina: int | None, relleno: bytes = b"") -> bytes:
@@ -153,6 +161,24 @@ equipo.DIR = tmpdir("prdrive-equipo-harness-")
 # sustituirlo no puede dejarle un «prdrive» en el menú a quien los ejecuta.
 os.environ["XDG_DATA_HOME"] = str(tmpdir("prdrive-xdg-data-"))
 os.environ["XDG_CONFIG_HOME"] = str(tmpdir("prdrive-xdg-config-"))
+
+# Varios tests fuerzan `IS_WIN = False` para pasar por la rama de Linux, y ahí
+# «¿vive este pid?» es `os.kill(pid, 0)`. En Windows eso NO pregunta: 0 es
+# CTRL_C_EVENT, y le manda un Ctrl+C a toda la consola —el test, run_all y el
+# terminal de quien la ha lanzado—. Aquí la señal 0 hace lo mismo que en POSIX:
+# nada si el proceso existe, ProcessLookupError si no.
+if os.name == "nt":
+    _kill_real = os.kill
+
+    def _kill_de_prueba(pid: int, sig: int) -> None:
+        if sig == 0:
+            from common.store import pid_alive
+            if not pid_alive(pid):
+                raise ProcessLookupError(3, "No such process", pid)
+            return None
+        return _kill_real(pid, sig)
+
+    os.kill = _kill_de_prueba
 
 
 @atexit.register

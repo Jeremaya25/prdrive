@@ -102,6 +102,13 @@ c("pixmaps(): un (ancho, alto, datos) por tamaño",
   [(w, h, len(d)) for w, h, d in bl.pixmaps(icons.BIEN)],
   [(s, s, s * s * 4) for s in bl.TAMANOS])
 
+if os.name == "nt":
+    # Lo que sigue corre el hilo de la bandeja, que se despierta con un pipe
+    # vigilado por select(), y en Windows select() solo admite sockets. En
+    # Windows la bandeja es otra (`ui/bandeja_windows.py`, su propio test).
+    print("  (saltado) la bandeja en el bus: solo en Linux")
+    sys.exit(c.report())
+
 
 # --- en el bus: con watcher ------------------------------------------------------------
 

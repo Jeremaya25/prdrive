@@ -317,19 +317,25 @@ def escritorio(m):
     return None
 
 
-servidor, _ = servir(DIR / "sesion", escritorio)
-os.environ["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={DIR / 'sesion'}"
-c("un aviso por Notify en el bus de sesión",
-  avisos.enviar("Ha fallado docs", "Mira la ventana", urgente=True), True)
-n = notificaciones[-1]
-c("  a org.freedesktop.Notifications", (n.campos.get(dbus.DESTINATION), n.interfaz, n.ruta),
-  (avisos.NOTIFICACIONES, avisos.NOTIFICACIONES, avisos.RUTA_NOTIFICACIONES))
-c("  con la firma de la especificación", n.firma, "susssasa{sv}i")
-c("  y lo que se quería decir", n.cuerpo[:5] + [n.cuerpo[6], n.cuerpo[7]],
-  ["prdrive", 0, "", "Ha fallado docs", "Mira la ventana", {"urgency": 1}, -1])
-os.environ["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={DIR / 'no-existe'}"
-c("sin bus de sesión el aviso no sale, y no lanza", avisos.enviar("t", "x"), False)
-servidor.close()
+if avisos.IS_WIN:
+    # En Windows los avisos no van por el bus sino por Shell_NotifyIconW: esta
+    # mitad pondría uno de verdad en la pantalla de quien pasa la batería, y
+    # Windows no tiene sockets de fichero que hagan de bus de sesión.
+    print("  (saltado) avisos por el bus de sesión: solo en Linux")
+else:
+    servidor, _ = servir(DIR / "sesion", escritorio)
+    os.environ["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={DIR / 'sesion'}"
+    c("un aviso por Notify en el bus de sesión",
+      avisos.enviar("Ha fallado docs", "Mira la ventana", urgente=True), True)
+    n = notificaciones[-1]
+    c("  a org.freedesktop.Notifications", (n.campos.get(dbus.DESTINATION), n.interfaz, n.ruta),
+      (avisos.NOTIFICACIONES, avisos.NOTIFICACIONES, avisos.RUTA_NOTIFICACIONES))
+    c("  con la firma de la especificación", n.firma, "susssasa{sv}i")
+    c("  y lo que se quería decir", n.cuerpo[:5] + [n.cuerpo[6], n.cuerpo[7]],
+      ["prdrive", 0, "", "Ha fallado docs", "Mira la ventana", {"urgency": 1}, -1])
+    os.environ["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={DIR / 'no-existe'}"
+    c("sin bus de sesión el aviso no sale, y no lanza", avisos.enviar("t", "x"), False)
+    servidor.close()
 
 
 # --- moderación ------------------------------------------------------------------------
@@ -344,14 +350,18 @@ def nm(valor):
 
 real_win = moderacion.IS_WIN
 moderacion.IS_WIN = False
-for valor, esperado in ((1, True), (3, True), (2, False), (4, False), (0, None)):
-    ruta = DIR / f"sistema-{valor}"
-    srv, _ = servir(ruta, nm(valor))
-    os.environ["DBUS_SYSTEM_BUS_ADDRESS"] = f"unix:path={ruta}"
-    c(f"NetworkManager Metered={valor}", moderacion.red_medida(), esperado)
-    srv.close()
-os.environ["DBUS_SYSTEM_BUS_ADDRESS"] = f"unix:path={DIR / 'no-existe'}"
-c("sin NetworkManager no se sabe", moderacion.red_medida(), None)
+if not hasattr(socket, "AF_UNIX"):
+    # El bus del sistema se abre por su dirección, un socket de fichero.
+    print("  (saltado) NetworkManager por el bus del sistema: sin sockets de fichero")
+else:
+    for valor, esperado in ((1, True), (3, True), (2, False), (4, False), (0, None)):
+        ruta = DIR / f"sistema-{valor}"
+        srv, _ = servir(ruta, nm(valor))
+        os.environ["DBUS_SYSTEM_BUS_ADDRESS"] = f"unix:path={ruta}"
+        c(f"NetworkManager Metered={valor}", moderacion.red_medida(), esperado)
+        srv.close()
+    os.environ["DBUS_SYSTEM_BUS_ADDRESS"] = f"unix:path={DIR / 'no-existe'}"
+    c("sin NetworkManager no se sabe", moderacion.red_medida(), None)
 
 c("coste de Windows sin restricciones: no medida",
   moderacion.coste_medido(moderacion.NLM_COST_UNRESTRICTED), False)

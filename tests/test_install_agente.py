@@ -20,7 +20,7 @@ import sys
 import tarfile
 from pathlib import Path
 
-from _harness import REPO, Checks, tmpdir
+from _harness import REPO, Checks, en_exec, tmpdir
 
 import penwatch
 from common import equipo, store
@@ -138,7 +138,8 @@ c("sin penwatch, no hay nada que decir", ia.quitar_penwatch(), [])
 print("   ", ia.registrar(prep))
 texto = AUTOSTART.read_text(encoding="utf-8")
 c("Linux: autostart XDG que arranca el agente con su Python",
-  f'Exec="{prep.python}" "{prep.codigo / "agente.py"}" "run"' in texto, True)
+  f'Exec="{en_exec(prep.python)}" "{en_exec(prep.codigo / "agente.py")}" "run"' in texto,
+  True)
 c("  oculto del menú", "NoDisplay=true" in texto, True)
 xml = penwatch.task_xml("EQUIPO\\ana", r"C:\Users\ana\AppData\Local\prdrive\runtime\x\pythonw.exe",
                         r'"C:\Users\ana\AppData\Local\prdrive\agente\0.4.0\agente.py" run',
@@ -234,7 +235,7 @@ c("actualizar(): el código y el Python de esta versión",
   (equipo.leer_instalacion().get("version"), equipo.leer_instalacion().get("codigo")),
   (version(), str(prep.codigo)))
 c("  registrado de nuevo (la tarea apunta a la versión)",
-  f'"{prep.codigo / "agente.py"}"' in AUTOSTART.read_text(encoding="utf-8"), True)
+  f'"{en_exec(prep.codigo / "agente.py")}"' in AUTOSTART.read_text(encoding="utf-8"), True)
 c("  la raíz abierta, con el código nuevo y su config intacta",
   ((ABIERTA / ".prdrive" / "sync.py").is_file(),
    (ABIERTA / ".prdrive" / "sync_config.toml").read_text(encoding="utf-8")),

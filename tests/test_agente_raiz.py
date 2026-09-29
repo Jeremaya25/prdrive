@@ -28,6 +28,14 @@ import penwatch
 from common import equipo, store
 from ui import bandeja
 
+
+def suelto(kwargs: dict) -> bool:
+    """¿Se lanzó desligado de quien lo lanza? Una sesión nueva en POSIX; en
+    Windows, su propio grupo de procesos (`agente._opciones_hijo`)."""
+    if agente.IS_WIN:
+        return bool(kwargs.get("creationflags", 0) & penwatch.CREATE_NEW_PROCESS_GROUP)
+    return bool(kwargs.get("start_new_session"))
+
 c = Checks("agente: la raíz de este equipo")
 
 F.preparar()
@@ -115,8 +123,7 @@ c("con el agente parado, abrir lo arranca y abre la ventana (el acceso del menú
   (0, [[str(agente.SCRIPT_DIR / "agente.py"), "run"],
        [str(RAIZ / ".prdrive" / "runsync.py")]]))
 c("  el agente, suelto y fuera de toda raíz",
-  (F.LANZADOS[0].kwargs.get("cwd"), F.LANZADOS[0].kwargs.get("start_new_session")),
-  (str(equipo.DIR), True))
+  (F.LANZADOS[0].kwargs.get("cwd"), suelto(F.LANZADOS[0].kwargs)), (str(equipo.DIR), True))
 
 equipo.guardar_ajustes(equipo.Ajustes())
 F.LANZADOS.clear()

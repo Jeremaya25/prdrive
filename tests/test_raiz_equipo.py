@@ -23,7 +23,7 @@ import os
 import sys
 from pathlib import Path
 
-from _harness import Checks, tmpdir
+from _harness import Checks, en_exec, tmpdir
 
 import tomllib
 
@@ -140,16 +140,20 @@ os.environ["OneDriveCommercial"] = str(onedrive)
 (casa / ".dropbox" / "info.json").write_text(
     json.dumps({"personal": {"path": str(dropbox)}, "business": "basura"}),
     encoding="utf-8")
-viejo_home = os.environ.get("HOME")
-os.environ["HOME"] = str(casa)
+# `Path.home()` sale de HOME en POSIX y de USERPROFILE en Windows: los dos.
+viejos = {v: os.environ.get(v) for v in ("HOME", "USERPROFILE")}
+os.environ["HOME"] = os.environ["USERPROFILE"] = str(casa)
 raiz_equipo.IS_WIN = False
 try:
     c("carpetas_sincronizadas: la variable de OneDrive y el info.json de Dropbox",
       raiz_equipo.carpetas_sincronizadas(), [("OneDrive", onedrive), ("Dropbox", dropbox)])
 finally:
     os.environ.pop("OneDriveCommercial")
-    if viejo_home is not None:
-        os.environ["HOME"] = viejo_home
+    for v, valor in viejos.items():
+        if valor is None:
+            os.environ.pop(v, None)
+        else:
+            os.environ[v] = valor
 raiz_equipo.carpetas_sincronizadas = lambda: [("OneDrive", onedrive)]
 c("otro_cliente: una carpeta dentro de OneDrive",
   raiz_equipo.otro_cliente(onedrive / "notas"), f"OneDrive ({onedrive})")
@@ -344,7 +348,7 @@ msg = ia.poner_menu(prep)
 texto = MENU.read_text(encoding="utf-8")
 c("poner_menu: lo dice", msg.startswith("Acceso «prdrive»"), True)
 c("  abre con agente.py abrir, con el Python del agente",
-  f'Exec="/opt/py dir/bin/python3" "{equipo.DIR}/agente/0.4.0/agente.py" "abrir"'
+  f'Exec="{en_exec(prep.python)}" "{en_exec(prep.codigo / "agente.py")}" "abrir"'
   in texto, True)
 c("  visible en el menú (sin NoDisplay)", "NoDisplay" in texto, False)
 c("quitar_menu lo borra", (ia.quitar_menu() is not None, MENU.exists()), (True, False))
@@ -409,11 +413,15 @@ fisica.mkdir()
 c("  con un contenedor ya hecho: se abre con su contraseña",
   raiz_equipo.examinar_contenedor(fisica, carpeta).estado, raiz_equipo.YA_EQUIPO)
 
-# abrir_o_crear con un VeraCrypt de mentira: qué orden, dónde se monta.
+# abrir_o_crear con un VeraCrypt de mentira: qué orden, dónde se monta. Es el
+# camino de Linux (la orden `veracrypt --create`, exFAT dentro, montar en la
+# carpeta), así que Linux también para `crypto` en cualquier sistema.
 ordenes = []
-reales_crypto = (crypto._run, crypto.soporta_dispersos, crypto.sistema_de_ficheros)
+reales_crypto = (crypto._run, crypto.soporta_dispersos, crypto.sistema_de_ficheros,
+                 crypto.IS_WIN, raiz_equipo.SISTEMA_DENTRO)
 crypto.soporta_dispersos = lambda raiz: False
 crypto.sistema_de_ficheros = lambda raiz: "ext4"
+crypto.IS_WIN, raiz_equipo.SISTEMA_DENTRO = False, "exFAT"
 
 
 def run_falso(cmd, password="", timeout=None):
@@ -435,7 +443,8 @@ try:
     montada = raiz_equipo.abrir_o_crear({"mount": "vc", "format": "vc"}, fisica, carpeta,
                                         "", "una-contraseña-larga", "1G")
 finally:
-    crypto._run, crypto.soporta_dispersos, crypto.sistema_de_ficheros = reales_crypto
+    (crypto._run, crypto.soporta_dispersos, crypto.sistema_de_ficheros,
+     crypto.IS_WIN, raiz_equipo.SISTEMA_DENTRO) = reales_crypto
 c("abrir_o_crear: crea y monta en la carpeta fija, no en una temporal", montada, carpeta)
 c("  la contraseña va por la entrada, nunca en la orden",
   any("una-contraseña-larga" in a for o in ordenes for a in o), False)
@@ -450,6 +459,7 @@ filas_c = {k.etiqueta: k for k in raiz_equipo.verificar(volumen, [], None,
                                                          fisica / vest.CONTENEDOR)}
 c("verificar cifrada: contenedor y marca", (filas_c["Contenedor"].ok,
                                            filas_c["Marca de fuera"].ok), (True, True))
+deploy.unhide(fisica / vest.MARCA)      # Windows no abre con 'w' un fichero oculto
 (fisica / vest.MARCA).write_text("id=" + "z" * 32 + "\n", encoding="utf-8")
 c("  una marca de otra raíz es roja",
   {k.etiqueta: k.ok for k in raiz_equipo.verificar(
