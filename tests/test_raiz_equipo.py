@@ -184,6 +184,20 @@ c("  la personal: se puede, sin ámbar", (ex.vale, ex.aviso), (True, False))
 ex = raiz_equipo.examinar(onedrive / "PRDRIVE")
 c("  dentro de OneDrive: ámbar y lo nombra", (ex.vale, ex.aviso, "OneDrive" in ex.texto),
   (True, True, True))
+# La carpeta personal CONTIENE a OneDrive en casi cualquier Windows 11: no está
+# dentro de él, y lo que se pisaría es solo una pareja que caiga ahí, que ya lo
+# avisa «Parejas». No puede tapar lo que se explica de la carpeta personal
+# (R5 de las pruebas en real).
+ex = raiz_equipo.examinar(casa, raiz_equipo.PERSONAL)
+c("  la personal con OneDrive dentro: se puede, sin ámbar, y dice lo de la personal",
+  (ex.vale, ex.aviso, "Las parejas pueden ser cualquier carpeta" in ex.texto),
+  (True, False, True))
+c("    y nombra a OneDrive sin decir que está dentro de él",
+  ("OneDrive" in ex.texto, "dentro de una carpeta" in ex.texto), (True, False))
+ex = raiz_equipo.examinar(casa)
+c("  una propia que contiene OneDrive: lo dice así, no «dentro de»",
+  (ex.aviso, "contiene" in ex.texto, "dentro de una carpeta" in ex.texto),
+  (True, True, False))
 
 # --- el local de cada pareja, visto desde la raíz --------------------------------
 info = raiz_equipo.revisar_local(casa, "\\Documentos\\Obsidian\\")

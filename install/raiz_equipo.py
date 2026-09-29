@@ -127,18 +127,30 @@ def examinar(ruta: Path | str, forma: str = PROPIA) -> Examen:
                      if raiz.is_dir() else [])
     except OSError as e:
         return Examen(NO_VALE, f"No puedo leer {raiz}: {e}")
-    cliente = otro_cliente(raiz)
-    if cliente:
+    envuelve = _cliente_que_la_contiene(raiz)
+    if envuelve:
         return Examen(CON_COSAS if contenido else NUEVA, (
-            f"{raiz} está dentro de una carpeta que ya sincroniza {cliente}. Dos "
+            f"{raiz} está dentro de una carpeta que ya sincroniza {envuelve}. Dos "
             f"programas sincronizando lo mismo se pisan los borrados: mejor una "
             f"carpeta fuera."), aviso=True)
+    # Lo que queda es que la raíz CONTENGA lo de otro cliente. La carpeta
+    # personal contiene a OneDrive en casi cualquier Windows 11, y ahí lo que se
+    # pisaría es solo una pareja que caiga dentro, que ya avisa «Parejas»
+    # (`revisar_local`): se dice sin alarmar y sin tapar lo de la personal.
+    cliente = otro_cliente(raiz)
     if personal:
         return Examen(CON_COSAS, (
             "Las parejas pueden ser cualquier carpeta de tu usuario, sin moverla "
             "(por ejemplo Documentos/Obsidian). A cambio, el límite es todo el "
             "usuario: el paso «Parejas» enseña dónde cae cada una antes de "
-            "escribir nada."))
+            "escribir nada."
+            + (f" Dentro está lo que sincroniza {cliente}: si una pareja cae ahí, "
+               f"«Parejas» lo avisa." if cliente else "")))
+    if cliente:
+        return Examen(CON_COSAS if contenido else NUEVA, (
+            f"{raiz} contiene una carpeta que ya sincroniza {cliente}. Una pareja "
+            f"que caiga ahí se pisaría los borrados con él; «Parejas» lo avisa."),
+            aviso=True)
     if contenido:
         return Examen(CON_COSAS, (
             f"La carpeta ya tiene {len(contenido)} elemento(s). No se borra nada: "
@@ -202,6 +214,15 @@ def otro_cliente(ruta: Path | str) -> str | None:
     `Documentos/OneDrive` también pisaría lo suyo."""
     for nombre, carpeta in carpetas_sincronizadas():
         if _dentro(ruta, carpeta) or _dentro(carpeta, ruta):
+            return f"{nombre} ({carpeta})"
+    return None
+
+
+def _cliente_que_la_contiene(ruta: Path | str) -> str | None:
+    """Como `otro_cliente()`, pero solo cuando `ruta` está DENTRO de lo que
+    sincroniza otro programa (o es eso mismo), no cuando lo contiene."""
+    for nombre, carpeta in carpetas_sincronizadas():
+        if _dentro(ruta, carpeta):
             return f"{nombre} ({carpeta})"
     return None
 
