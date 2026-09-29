@@ -167,5 +167,36 @@ c("si falla el trabajo, (False, excepción)", (ok, type(valor).__name__),
   (False, "ValueError"))
 c("y la ventanita también se cierra", visto["cerrada"], True)
 
+
+# --- 5. colgada de una raíz que no se enseña ---------------------------------
+#
+# La del relevo cuelga de `root_oculto()`. Un `transient` hereda el estado de su
+# padre, y en Windows la ventanita no llegaba a verse: el relevo trabajaba
+# minutos sin nada en pantalla. Suelta no es transient de nadie.
+def transitoria_de(suelto: bool) -> str:
+    dlg = uitk.modal(raiz, "probando", suelto=suelto)
+    try:
+        return str(dlg.wm_transient() or "")
+    finally:
+        dlg.destroy()
+
+
+c("un diálogo normal es transient de su padre", transitoria_de(False), str(raiz))
+c("uno suelto no lo es de nadie", transitoria_de(True), "")
+
+visto = {}
+
+
+def mirar_suelta(dlg) -> None:
+    visto["transient"] = str(dlg.wm_transient() or "")
+
+
+uitk.mostrar = lambda dlg, parent=None: (mirar_suelta(dlg), dlg.destroy())
+try:
+    uitk.working(raiz, "probando", lambda: "hecho", "Un mensaje.", suelto=True)
+finally:
+    uitk.mostrar = MOSTRAR_REAL
+c("y working(suelto=True) la crea así", visto["transient"], "")
+
 raiz.destroy()
 sys.exit(c.report())

@@ -364,18 +364,24 @@ def cuerpo_visible(ventana, **opciones):
     return marco
 
 
-def modal(parent, title: str):
+def modal(parent, title: str, suelto: bool = False):
     """Un diálogo hijo, todavía OCULTO. Se enseña con `mostrar()`.
 
     Nace oculto porque hasta que no están puestos todos los widgets no se sabe
     cuánto ocupa, y sin saberlo no se puede centrar. Enseñarlo antes sería verlo
-    aparecer en una esquina y pegar el salto al centro."""
+    aparecer en una esquina y pegar el salto al centro.
+
+    `suelto` es para un padre que no se enseña nunca (`root_oculto()`): un
+    `transient` hereda el estado de su padre, y colgado de uno oculto no llega a
+    verse aunque se le haga `deiconify()` —medido en Windows con la ventanita
+    del relevo—."""
     import tkinter as tk
     dlg = tk.Toplevel(parent)
     theme.apply(dlg)
     dlg.title(f"{TITLE} — {title}")
     dlg.configure(background=theme.PAPEL)
-    dlg.transient(parent)
+    if not suelto:
+        dlg.transient(parent)
     dlg.resizable(False, False)
     dlg.withdraw()
     return dlg
@@ -505,7 +511,7 @@ def _pintar_avance(barra, etiqueta, medida: tuple[float, str] | None) -> None:
 
 
 def working(parent, title: str, funcion, mensaje: str = "",
-            progreso=None) -> tuple[bool, object]:
+            progreso=None, suelto: bool = False) -> tuple[bool, object]:
     """Ejecuta `funcion()` en un hilo aparte y enseña una ventanita mientras.
 
     Devuelve `(True, resultado)` o `(False, excepción)`.
@@ -526,10 +532,12 @@ def working(parent, title: str, funcion, mensaje: str = "",
     cambie de alto cuando llega la primera cifra.
 
     No hay botón de cancelar a propósito: lo que se lanza así no se puede cortar
-    a medias sin dejar las cosas peor (un contenedor a medio formatear)."""
+    a medias sin dejar las cosas peor (un contenedor a medio formatear).
+
+    `suelto`, como en `modal()`: para colgarla de una raíz que no se enseña."""
     from tkinter import ttk
 
-    dlg = modal(parent, title)
+    dlg = modal(parent, title, suelto=suelto)
     dlg.protocol("WM_DELETE_WINDOW", lambda: None)   # no se cierra a medias
 
     marco = ttk.Frame(dlg, padding=(20, 18))
@@ -1418,8 +1426,13 @@ def _tono(linea: str) -> str:
 
 def output_window(title: str, cmd: list[str], parent=None,
                   subtitulo: str = "", modal: bool = True,
-                  al_cerrar=None) -> int | None:
+                  al_cerrar=None, veredictos: dict[int, str] | None = None) -> int | None:
     """Ejecuta una orden y muestra su salida en una ventana con desplazamiento.
+
+    `veredictos` son los códigos distintos de 0 que para quien llama NO son un
+    error, con lo que hay que decir en su lugar: el aplicador de componentes sale
+    con `update.CODIGO_RELEVO` cuando todo ha ido bien y falta cerrar la
+    ventana, y leer ahí «ERROR (código 3)» hacía pensar lo contrario.
 
     Sustituye a la consola cuando no la hay, así que la usan tanto sync.py como
     penwatch.py: recibe la orden entera y no supone a quién llama. Cerrar la
@@ -1581,8 +1594,10 @@ def output_window(title: str, cmd: list[str], parent=None,
     def terminado() -> None:
         state["rc"] = proc.wait()
         segundos = int(time.monotonic() - arranque)
-        bien = state["rc"] == 0
-        verdict = "OK" if bien else f"ERROR (código {state['rc']})"
+        especial = (veredictos or {}).get(state["rc"])
+        bien = state["rc"] == 0 or especial is not None
+        verdict = ("OK" if state["rc"] == 0 else especial if bien
+                   else f"ERROR (código {state['rc']})")
         append(f"\n=== Terminado: {verdict} ===\n")
         root.title(f"{TITLE} — {title} — {verdict}")
         nuevo = theme.chip(barra, f"{'terminado' if bien else verdict} · {segundos} s",
