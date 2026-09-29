@@ -235,12 +235,13 @@ TOPE_FAT = 4095 * 1024 ** 2
 
 def sistema_de_ficheros(root: str | Path) -> str:
     """El sistema de ficheros de la unidad de `root`, o "" si no se sabe.
+    `root` puede ser una carpeta: se pregunta a su volumen.
 
     Función de módulo para que los tests la sustituyan, como
     `soporta_dispersos()`."""
     from . import device
     try:
-        return device.volume_for(Path(root)).filesystem or ""
+        return device.volume_for(device.raiz_del_volumen(root)).filesystem or ""
     except (OSError, TypeError, AttributeError):
         return ""
 
@@ -326,6 +327,10 @@ def soporta_dispersos(root: str | Path) -> bool:
     En POSIX devuelve False porque `--dynamic` no existe en su CLI (ver
     `create_command`), no porque ext4 no sepa de dispersos.
 
+    `root` puede ser una carpeta (la del contenedor de la raíz de un equipo):
+    `GetVolumeInformationW` solo acepta la raíz de un volumen, así que se le
+    pregunta a la suya (`device.raiz_del_volumen()`).
+
     Función de módulo para que los tests la sustituyan, como
     `_leer_estado_bitlocker()`."""
     if not IS_WIN:
@@ -334,7 +339,9 @@ def soporta_dispersos(root: str | Path) -> bool:
     from ctypes import byref, c_wchar_p, create_unicode_buffer
     from ctypes.wintypes import DWORD
 
-    ruta = str(root)
+    from . import device
+
+    ruta = str(device.raiz_del_volumen(root))
     if not ruta.endswith(("\\", "/")):
         ruta += "\\"
     flags = DWORD(0)

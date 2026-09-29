@@ -330,6 +330,31 @@ def list_volumes() -> list[Volume]:
                                             str(v.root)))
 
 
+def raiz_del_volumen(ruta: Path | str) -> Path:
+    """La raíz del volumen que guarda `ruta`, exista ya o no: `C:\\` para
+    `C:\\Users\\x\\PRDRIVE-cifrado`, o el punto de montaje en POSIX.
+
+    Lo que se le pregunta al sistema de ficheros —cuál es, si admite dispersos—
+    se pregunta ahí: `GetVolumeInformationW` solo acepta la raíz de un volumen,
+    y con una carpeta falla. La raíz cifrada de un equipo vive en una carpeta
+    (H-1 de las pruebas en real). `GetVolumePathNameW` y no la letra de la
+    ruta, porque un volumen puede estar montado en una carpeta de otro."""
+    ruta = Path(os.path.abspath(str(ruta)))
+    if IS_WIN:
+        import ctypes
+        buf = ctypes.create_unicode_buffer(261)         # MAX_PATH + 1
+        try:
+            if ctypes.windll.kernel32.GetVolumePathNameW(ctypes.c_wchar_p(str(ruta)),
+                                                         buf, 261):
+                return Path(buf.value)
+        except OSError:
+            pass
+        return Path(ruta.anchor or str(ruta))
+    while not os.path.ismount(ruta) and ruta != ruta.parent:
+        ruta = ruta.parent
+    return ruta
+
+
 def volume_for(root: Path) -> Volume:
     """El Volume de una ruta escrita a mano, con lo que se pueda averiguar."""
     root = Path(root)
