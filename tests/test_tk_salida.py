@@ -118,6 +118,32 @@ try:
     c("que la ventana pinta con el acento", str(texto.tag_cget("progreso", "foreground")),
       uitk.theme.ACENTO)
     ventana.destroy()
+
+    # --- un código que quien llama no da por error ---------------------------
+    #
+    # El aplicador de componentes sale con 3 cuando lo ha dejado todo listo para
+    # el relevo, y la ventana decía «ERROR (código 3)» justo en el caso bueno.
+    def terminar(rc, veredictos):
+        antes = set(raiz.winfo_children())
+        uitk.output_window("Prueba", [sys.executable, "-c", f"raise SystemExit({rc})"],
+                           parent=raiz, modal=False, veredictos=veredictos)
+        ventana = next(w for w in raiz.winfo_children() if w not in antes)
+        texto = next(w for w in recorrer(ventana) if isinstance(w, tk.Text))
+        limite = time.monotonic() + 30
+        while time.monotonic() < limite and "Terminado" not in texto.get("1.0", "end"):
+            raiz.update()
+            time.sleep(0.03)
+        final = texto.get("1.0", "end").strip().splitlines()[-1]
+        ventana.destroy()
+        return final
+
+    c("un código con veredicto dice el suyo, no ERROR",
+      terminar(3, {3: "OK, falta cerrar la ventana"}),
+      "=== Terminado: OK, falta cerrar la ventana ===")
+    c("sin veredicto, el mismo código sigue siendo un error",
+      terminar(3, None), "=== Terminado: ERROR (código 3) ===")
+    c("y el veredicto de uno no tapa otro",
+      terminar(1, {3: "OK, falta cerrar la ventana"}), "=== Terminado: ERROR (código 1) ===")
 finally:
     tk.Toplevel.deiconify = real_deiconify
 

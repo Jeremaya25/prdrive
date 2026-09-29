@@ -71,6 +71,7 @@ Progreso = Callable[[str], None]
 # de este código, desde la que se termina el trabajo con la ventana cerrada.
 RELEVO_PREFIJO = "prdrive-relevo-"
 RELEVO_DUENNO = "owner.pid"
+RELEVO_DISPOSITIVO = "dispositivo"
 RELEVO_LOG = "relevo.log"
 # Cuánto espera el relevo a que se cierre la ventana. La ventana se cierra sola
 # en cuanto se cierra la de salida, pero eso lo decide quien mira: media hora y,
@@ -358,10 +359,19 @@ def aplicar(device_root: Path | str, progreso: Progreso | None = None,
 # ---------------------------------------------------------------------------
 # En un dispositivo con instalación completa, la ventana arranca desde
 # `runtime/<clave>/` de este equipo, y este proceso es hijo suyo con el mismo
-# intérprete. Esa carpeta no se puede apartar mientras la ventana siga abierta,
-# así que desde ella el runtime de esta plataforma no se ponía al día NUNCA: el
-# recuadro ámbar volvía cada vez, y lo que decía que hiciera (lanzar runsync con
-# un Python instalado) es justo lo que un dispositivo que lleva el suyo no tiene.
+# intérprete. Esa carpeta no se cambia con un intérprete corriendo desde ella,
+# así que desde la ventana el runtime de esta plataforma no se ponía al día
+# NUNCA: el recuadro ámbar volvía cada vez, y lo que decía que hiciera (lanzar
+# runsync con un Python instalado) es justo lo que un dispositivo que lleva el
+# suyo no tiene.
+#
+# Ojo, que no es porque Windows lo impida. En G: (28/09/2026) el renombrado de
+# `runtime/windows-x64/` salió bien con un `pythonw.exe` vivo dentro; lo que no
+# se pudo fue BORRAR la carpeta apartada: se quedó `.windows-x64.viejo-<pid>`
+# con los 21 ficheros que ese proceso tenía cargados, y el resto —su biblioteca
+# estándar— borrado debajo de él mientras seguía corriendo. Por eso el relevo
+# espera, además, a que NADA corra desde `runtime/` (`procesos_desde()`), y el
+# aplicador lo mira antes de cerrar la ventana.
 #
 # El relevo lo resuelve sin nada instalado. Se extrae en el temporal de ESTE
 # equipo el runtime que se va a poner —el mismo archivo ya comprobado, que se
@@ -405,6 +415,33 @@ def barrer_relevos(base: Path | None = None) -> int:
     return borradas
 
 
+def _clave_dispositivo(device_root: Path | str) -> str:
+    try:
+        return str(deploy.app_dir(device_root).resolve()).lower()
+    except OSError:
+        return str(deploy.app_dir(device_root)).lower()
+
+
+def relevo_en_marcha(device_root: Path | str, base: Path | None = None) -> Path | None:
+    """La carpeta de un relevo vivo para ESE dispositivo, o None.
+
+    En G: se pulsó «Actualizar…» dos veces —la ventana tardaba en volver, y se
+    abrió otra— y dos relevos extraían a la vez 48 MB cada uno en el mismo USB,
+    se cambiaron el runtime uno detrás del otro y reabrieron dos ventanas a la
+    vez. Uno por dispositivo."""
+    base = base or Path(tempfile.gettempdir())
+    clave = _clave_dispositivo(device_root)
+    for carpeta in base.glob(RELEVO_PREFIJO + "*"):
+        try:
+            duenno = int((carpeta / RELEVO_DUENNO).read_text(encoding="utf-8").strip())
+            suyo = (carpeta / RELEVO_DISPOSITIVO).read_text(encoding="utf-8").strip()
+        except (OSError, ValueError):
+            continue
+        if suyo == clave and duenno != os.getpid() and pid_alive(duenno):
+            return carpeta
+    return None
+
+
 def preparar_relevo(device_root: Path | str, p: Pendiente, esperar: list[int],
                     reabrir: str | None, decir: Progreso,
                     codigo: Path | None = None,
@@ -414,10 +451,17 @@ def preparar_relevo(device_root: Path | str, p: Pendiente, esperar: list[int],
     Nada de esto toca el dispositivo: todo va al temporal de este equipo. Si
     algo falla, la carpeta se borra y sale un InstallError."""
     barrer_relevos(base)
+    otro = relevo_en_marcha(device_root, base)
+    if otro is not None:
+        raise InstallError(
+            f"Ya hay un cambio de este Python en marcha ({otro}). Espera a que "
+            f"prdrive se vuelva a abrir solo; no hace falta pulsar otra vez.")
     codigo = Path(codigo) if codigo else Path(__file__).resolve().parent.parent
     carpeta = Path(tempfile.mkdtemp(prefix=RELEVO_PREFIJO, dir=base))
     try:
         (carpeta / RELEVO_DUENNO).write_text(str(os.getpid()), encoding="utf-8")
+        (carpeta / RELEVO_DISPOSITIVO).write_text(_clave_dispositivo(device_root),
+                                                  encoding="utf-8")
         decir(f"{p.titulo}: consiguiendo la versión {p.deberia}")
         archivo = runtime_bin.ensure_runtime(p.plataforma, decir)
         sha = runtime_bin.recorded_sha256(archivo) or runtime_bin.file_sha256(archivo)
@@ -472,14 +516,212 @@ def lanzar_relevo(orden: list[str], carpeta: Path) -> int:
     return pid
 
 
-def esperar_a(pids: list[int], limite: float = ESPERA_MAXIMA) -> bool:
-    """Espera a que salgan todos esos procesos. False si pasa el límite.
+def procesos_desde(carpeta: Path) -> dict[int, str]:
+    """{pid: ejecutable} de los procesos vivos cuyo ejecutable está en `carpeta`.
 
-    Función de módulo por lo mismo que `descarga.esperar()`: los tests no
-    esperan de verdad."""
+    Esperar a la ventana y al aplicador no basta: en G: un `runsync` lanzado
+    con la ventana ya abierta llevaba una hora enseñando «Ya hay una ventana de
+    prdrive abierta…» desde ese mismo `pythonw.exe`: el cambio le borró la
+    biblioteca estándar debajo y dejó la carpeta vieja a medio borrar. Esto es
+    lo que lo ve, para esperarlo y decir cuál es.
+
+    En Windows por la instantánea de Toolhelp (como `crypto._procesos()`) y
+    `QueryFullProcessImageNameW`, que con PROCESS_QUERY_LIMITED_INFORMATION
+    contesta sin elevación; en Linux por `/proc/<pid>/exe`. Lo que no se deja
+    mirar no cuenta. Función de módulo para que los tests la sustituyan."""
+    try:
+        base = Path(carpeta).resolve()
+    except OSError:
+        return {}
+    salida: dict[int, str] = {}
+    for pid, exe in _ejecutables():
+        try:
+            Path(exe).resolve().relative_to(base)
+        except (ValueError, OSError):
+            continue
+        salida[pid] = exe
+    return salida
+
+
+def _ejecutables() -> list[tuple[int, str]]:
+    """(pid, ruta del ejecutable) de los procesos que se dejan mirar."""
+    if not IS_WIN:
+        salida = []
+        for d in Path("/proc").glob("[0-9]*"):
+            try:
+                salida.append((int(d.name), os.readlink(d / "exe")))
+            except (OSError, ValueError):
+                continue
+        return salida
+
+    import ctypes
+    from ctypes import wintypes
+
+    class PROCESSENTRY32W(ctypes.Structure):
+        _fields_ = [("dwSize", wintypes.DWORD),
+                    ("cntUsage", wintypes.DWORD),
+                    ("th32ProcessID", wintypes.DWORD),
+                    ("th32DefaultHeapID", ctypes.c_size_t),
+                    ("th32ModuleID", wintypes.DWORD),
+                    ("cntThreads", wintypes.DWORD),
+                    ("th32ParentProcessID", wintypes.DWORD),
+                    ("pcPriClassBase", ctypes.c_long),
+                    ("dwFlags", wintypes.DWORD),
+                    ("szExeFile", wintypes.WCHAR * 260)]
+
+    TH32CS_SNAPPROCESS = 0x00000002
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    k32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    k32.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
+    k32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
+    k32.OpenProcess.restype = wintypes.HANDLE
+    k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    k32.QueryFullProcessImageNameW.argtypes = [
+        wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)]
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
+
+    foto = k32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+    if not foto or foto == wintypes.HANDLE(-1).value:
+        return []
+    pids = []
+    try:
+        entrada = PROCESSENTRY32W()
+        entrada.dwSize = ctypes.sizeof(PROCESSENTRY32W)
+        seguir = k32.Process32FirstW(foto, ctypes.byref(entrada))
+        while seguir:
+            pids.append(entrada.th32ProcessID)
+            seguir = k32.Process32NextW(foto, ctypes.byref(entrada))
+    finally:
+        k32.CloseHandle(foto)
+
+    salida = []
+    for pid in pids:
+        h = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not h:
+            continue
+        try:
+            buf = ctypes.create_unicode_buffer(32768)
+            n = wintypes.DWORD(len(buf))
+            if k32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(n)):
+                salida.append((pid, buf.value))
+        finally:
+            k32.CloseHandle(h)
+    return salida
+
+
+def quien_retiene(device_root: Path | str, p: Pendiente,
+                  aparte: list[int]) -> dict[int, str]:
+    """Los procesos que corren desde el runtime de `p`, menos los de `aparte`
+    (la ventana y el aplicador, que ya se sabe que van a salir)."""
+    carpeta = platforms.runtime_dir(device_root, p.plataforma)
+    return {pid: exe for pid, exe in procesos_desde(carpeta).items()
+            if pid not in aparte}
+
+
+def _tamanno(carpeta: Path) -> int:
+    total = 0
+    for raiz, _, ficheros in os.walk(carpeta):
+        for nombre in ficheros:
+            try:
+                total += os.path.getsize(os.path.join(raiz, nombre))
+            except OSError:
+                pass
+    return total
+
+
+class AvanceRelevo:
+    """Lo que enseña la ventanita del relevo mientras trabaja.
+
+    Hace falta porque el relevo tarda: extraer 48 MB en un USB son minutos, no
+    segundos, y sin nada en pantalla en G: se volvió a abrir prdrive —que
+    corre justo desde la carpeta que hay que cambiar— y se pulsó «Actualizar…» otra
+    vez. La cifra no es una estimación: es lo que ya hay en la carpeta
+    `.<clave>.nuevo-<pid>` del dispositivo frente a lo que ocupa el mismo
+    runtime ya extraído en el temporal, que es idéntico.
+
+    Lo escriben el hilo que trabaja y uno que mide cada segundo; el de Tk solo
+    llama a `progreso()`, que no toca el disco (`ui.tk.working()`)."""
+
+    ESPERANDO = "Esperando a que se cierre la ventana de prdrive…"
+
+    def __init__(self, device_root: Path | str, referencia: Path | None = None):
+        self._base = platforms.runtime_dir(device_root, pins.PLATAFORMAS[0]).parent
+        self._referencia = referencia
+        self._total = 0
+        self.texto = self.ESPERANDO
+        self.fraccion = 0.0
+        self._midiendo = False
+
+    def esperando(self, retienen: dict[int, str]) -> None:
+        """Para `esperar_a(avisar=…)`: quién sigue corriendo desde el runtime."""
+        if not retienen:
+            self.texto = "Preparando el cambio…"
+            return
+        self.texto = ("Esperando a que se cierre lo que usa ese Python:\n"
+                      + describir_retenedores(retienen)
+                      + "\nPuede ser un aviso de prdrive que se ha quedado abierto.")
+
+    def medir(self) -> None:
+        """Empieza a medir lo copiado, en un hilo suyo, hasta `fin()`."""
+        import threading
+        if self._referencia is not None:
+            self._total = _tamanno(self._referencia)
+        self._midiendo = True
+        self.texto = "Preparando el cambio…"
+        threading.Thread(target=self._bucle, daemon=True).start()
+
+    def _bucle(self) -> None:
+        visto = False
+        while self._midiendo:
+            try:
+                nuevos = list(self._base.glob(f".*.nuevo-{os.getpid()}"))
+                copiado = sum(_tamanno(d) for d in nuevos)
+            except OSError:
+                nuevos, copiado = [], 0
+            if nuevos and self._total:
+                visto = True
+                self.fraccion = min(0.99, copiado / self._total)
+                self.texto = f"Copiando al dispositivo: {int(self.fraccion * 100)} %"
+            elif visto:
+                self.fraccion, self.texto = 0.99, "Colocándolo en su sitio…"
+            time.sleep(1)
+
+    def fin(self) -> None:
+        self._midiendo = False
+        self.fraccion, self.texto = 1.0, "Volviendo a abrir prdrive…"
+
+    def progreso(self) -> tuple[float, str]:
+        return self.fraccion, self.texto
+
+
+def describir_retenedores(retienen: dict[int, str]) -> str:
+    """Una línea por proceso, para el mensaje de quien tiene que cerrarlo."""
+    return "\n".join(f"    pid {pid}: {exe}" for pid, exe in sorted(retienen.items()))
+
+
+def esperar_a(pids: list[int], limite: float = ESPERA_MAXIMA,
+              libre: Path | None = None,
+              avisar: Callable[[dict[int, str]], None] | None = None) -> bool:
+    """Espera a que salgan todos esos procesos y, con `libre`, a que ninguno
+    corra desde esa carpeta. False si pasa el límite.
+
+    `avisar` recibe, cada vez que cambia, quién sigue corriendo desde `libre`
+    ({} cuando ya nadie): es lo que la ventanita del relevo enseña para que se
+    pueda cerrar. Función de módulo por lo mismo que `descarga.esperar()`: los
+    tests no esperan de verdad."""
     fin = time.monotonic() + limite
-    while any(pid_alive(pid) for pid in pids):
+    antes: dict[int, str] | None = None
+    while True:
+        quedan = {pid: "" for pid in pids if pid_alive(pid)}
+        if libre is not None and not quedan:
+            quedan = procesos_desde(libre)
+            if avisar is not None and quedan != antes:
+                avisar(quedan)
+            antes = quedan
+        if not quedan:
+            return True
         if time.monotonic() > fin:
             return False
         time.sleep(0.5)
-    return True

@@ -49,6 +49,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import time
 import traceback
 from pathlib import Path
 
@@ -242,6 +243,18 @@ def cmd_update_components(raiz: str, relevo: int | None = None) -> int:
         print(f"  FALLO      {linea}")
 
     if propio is not None:
+        # Antes de cerrar nada: si algo más corre desde ese Python, cambiarlo le
+        # borraría la biblioteca estándar debajo (ver «El relevo» en
+        # install/components.py). Se dice aquí, con la ventana todavía abierta,
+        # y no después, con el relevo esperando a algo que nadie ve.
+        otros = components.quien_retiene(root, propio, [relevo, os.getpid()])
+        if otros:
+            print(f"  FALLO      {propio.titulo}: además de esta ventana, hay más "
+                  f"procesos corriendo desde él:")
+            print(components.describir_retenedores(otros))
+            print("Ciérralos —suele ser otra ventana de prdrive, o un aviso suyo que "
+                  "se ha quedado abierto detrás— y vuelve a pulsar «Actualizar…».")
+            return 1
         try:
             orden, carpeta = components.preparar_relevo(
                 root, propio, esperar=[relevo, os.getpid()],
@@ -255,8 +268,9 @@ def cmd_update_components(raiz: str, relevo: int | None = None) -> int:
             return 1
         print(f"  DESPUÉS    {propio.titulo}: es con el que está abierto prdrive, "
               f"así que se cambiará con la ventana cerrada.")
-        print("Cierra esta ventana: prdrive se cerrará, cambiará ese Python y "
-              "volverá a abrirse solo en unos segundos.")
+        print("Cierra esta ventana: prdrive se cerrará y una ventanita irá "
+              "diciendo cómo va. En un USB tarda un par de minutos; no abras "
+              "prdrive mientras tanto, se volverá a abrir solo.")
         return CODIGO_RELEVO
 
     if res.fallidos:
@@ -272,30 +286,65 @@ def cmd_relevo(raiz: str, esperar: list[int], reabrir: str | None) -> int:
 
     Corre desde el temporal de este equipo (`components.preparar_relevo()`) con
     un intérprete sin consola, así que no hay stdout: lo que diría va a
-    `relevo.log`, en su carpeta, y solo se enseña si algo ha salido mal —con la
-    ventana de `report()`—. Si ha ido bien, lo que lo dice es la ventana
-    reabierta sin el recuadro ámbar."""
+    `relevo.log`, en su carpeta, y solo se enseña entero si algo ha salido mal
+    —con la ventana de `report()`—. Mientras trabaja, una ventanita dice cómo va
+    (`ui.tk_relevo`); si ha ido bien, lo que lo dice es la ventana reabierta sin
+    el recuadro ámbar.
+
+    Espera a los pids de la ventana y del aplicador y, además, a que nada corra
+    desde `runtime/`: a un prdrive abierto a mano mientras tanto, o a un aviso
+    suyo olvidado detrás, el cambio le borraría la biblioteca estándar debajo.
+    La ventanita dice cuál es, para cerrarlo."""
+    root = Path(raiz).expanduser()
     carpeta = Path(__file__).resolve().parent.parent
     log = carpeta / components.RELEVO_LOG
-    rc, reabrir_ahora = 1, False
-    with open(log, "w", encoding="utf-8", buffering=1) as salida:
-        antes = sys.stdout, sys.stderr
-        sys.stdout = sys.stderr = salida
-        try:
-            if not components.esperar_a(esperar):
-                print("prdrive sigue abierto, así que no se ha cambiado nada. "
-                      "Ciérralo y vuelve a pulsar «Actualizar…».")
-            else:
-                reabrir_ahora = True
-                rc = cmd_update_components(raiz)
-        except InstallError as e:
-            print(e)
-        except Exception:                            # noqa: BLE001
-            traceback.print_exc()
-        finally:
-            sys.stdout, sys.stderr = antes
+    runtimes = deploy.app_dir(root) / "runtime"
+    avance = components.AvanceRelevo(root, carpeta / "python")
+    estado = {"rc": 1, "reabrir": False, "empezado": False, "terminado": False}
 
-    if reabrir_ahora and reabrir:
+    def trabajar() -> None:
+        estado["empezado"] = True
+        with open(log, "w", encoding="utf-8", buffering=1) as salida:
+            antes = sys.stdout, sys.stderr
+            sys.stdout = sys.stderr = salida
+            try:
+                if not components.esperar_a(esperar, libre=runtimes,
+                                            avisar=avance.esperando):
+                    print("prdrive sigue abierto, así que no se ha cambiado nada. "
+                          "Ciérralo y vuelve a pulsar «Actualizar…».")
+                    otros = components.procesos_desde(runtimes)
+                    if otros:
+                        print(components.describir_retenedores(otros))
+                    return
+                estado["reabrir"] = True
+                avance.medir()
+                estado["rc"] = cmd_update_components(str(root))
+            except InstallError as e:
+                print(e)
+            except Exception:                        # noqa: BLE001
+                traceback.print_exc()
+            finally:
+                avance.fin()
+                sys.stdout, sys.stderr = antes
+                estado["terminado"] = True
+
+    try:
+        from ui import tk_relevo
+        tk_relevo.mientras(f"Cambiando el Python de prdrive en {root}.\n\nEn un USB "
+                           f"tarda un par de minutos. No abras prdrive mientras "
+                           f"tanto: se volverá a abrir solo al terminar.",
+                           trabajar, avance.progreso)
+    except Exception:                                # noqa: BLE001
+        # Sin Tk o sin pantalla, el trabajo es el mismo; solo no se ve. Y si la
+        # ventanita cayó con el trabajo ya en marcha, se espera a que acabe:
+        # empezarlo otra vez serían dos intercambios a la vez.
+        if not estado["empezado"]:
+            trabajar()
+        while not estado["terminado"]:
+            time.sleep(0.5)
+
+    rc = estado["rc"]
+    if estado["reabrir"] and reabrir:
         try:
             components.lanzar_suelto(
                 [reabrir, str(deploy.app_dir(Path(raiz).expanduser()) / "runsync.py")])

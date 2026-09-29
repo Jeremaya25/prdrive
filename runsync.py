@@ -48,6 +48,7 @@ funcionando), salvo dos flags propios:
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -115,34 +116,183 @@ def dlog(msg: str) -> None:
 # Una sola ventana a la vez (lado lanzador)
 # ---------------------------------------------------------------------------
 
-def ui_en_marcha() -> dict | None:
-    """El registro de una ventana de runsync viva EN ESTE EQUIPO, o None.
+ESPERA_REGISTRO = 1.0     # lo que se da a quien acaba de crear el registro para llenarlo
+
+
+def _leer_ui() -> dict | None:
+    """El registro tal como está: None si no hay, {} si hay y no se entiende.
+
+    Quien toma el registro lo crea y LUEGO lo llena (ver `tomar_ui`), así que un
+    fichero vacío puede ser el de otra ventana a medio escribir, no un resto. Se
+    le da `ESPERA_REGISTRO` antes de darlo por ilegible."""
+    limite = time.monotonic() + ESPERA_REGISTRO
+    while True:
+        try:
+            texto = UI_LOCK.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return None
+        except OSError:
+            texto = ""
+        try:
+            info = json.loads(texto)
+            if isinstance(info, dict):
+                return info
+        except ValueError:
+            pass
+        if time.monotonic() >= limite:
+            return {}
+        time.sleep(0.05)
+
+
+def _viva_aqui(info: dict | None) -> bool:
+    """¿Es el registro de una ventana viva EN ESTE EQUIPO?
 
     Mismo criterio que el registro del servicio: un pid muerto o un registro de
-    otro anfitrión es rastro de un dispositivo que se extrajo sin cerrar nada, y
-    se limpia. Solo cuenta este equipo porque el fichero viaja con el
-    dispositivo: el pid de otra máquina aquí no quiere decir nada."""
-    info = store.read_json(UI_LOCK) or None
-    if info is None:
-        return None
+    otro anfitrión es rastro de un dispositivo que se extrajo sin cerrar nada.
+    Solo cuenta este equipo porque el fichero viaja con el dispositivo: el pid
+    de otra máquina aquí no quiere decir nada."""
+    if not info:
+        return False
     try:
         pid = int(info.get("pid", -1))
     except (TypeError, ValueError):
         pid = -1
-    if info.get("host") != HOST or not pid_alive(pid):
-        UI_LOCK.unlink(missing_ok=True)
+    return info.get("host") == HOST and pid_alive(pid)
+
+
+def _crear_exclusivo(ruta: Path, datos: bytes) -> bool | None:
+    """Crea `ruta` con `datos` solo si no existe: True creado, False ya estaba,
+    None no se puede escribir (dispositivo de solo lectura o ya extraído).
+
+    O_EXCL es lo que hace de esto un cerrojo: de dos que lo intentan a la vez
+    solo uno lo crea. `store.write_json` no sirve para esto: escribe a un
+    temporal y renombra, y el renombrado pisa lo que haya."""
+    try:
+        fd = os.open(ruta, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                     | getattr(os, "O_BINARY", 0))
+    except FileExistsError:
+        return False
+    except OSError:
+        return None
+    try:
+        os.write(fd, datos)
+    except OSError:
+        pass                            # vacío también cuenta como tomado
+    finally:
+        os.close(fd)
+    return True
+
+
+def _borrar(ruta: Path) -> bool:
+    """Borra `ruta` aunque otro la esté leyendo en ese momento. True si ya no está.
+
+    En Windows no se puede borrar ni renombrar un fichero que otro proceso
+    tiene abierto (WinError 32): con varios runsync mirando el registro a la
+    vez, el primer intento falla casi siempre. Se reintenta un rato."""
+    limite = time.monotonic() + ESPERA_REGISTRO
+    while True:
+        try:
+            ruta.unlink()
+            return True
+        except FileNotFoundError:
+            return True
+        except PermissionError:
+            if time.monotonic() >= limite:
+                return False
+            time.sleep(0.02)
+        except OSError:
+            return False
+
+
+ROMPER_ABANDONADO = 5.0   # s: un «romper» más viejo es de un proceso que murió dentro
+
+
+def _retirar_ui(visto: dict | None) -> bool:
+    """Quita el resto `visto` si sigue siendo ese. True si lo ha quitado.
+
+    Borrar a secas no vale: entre leer el resto y borrarlo, otra ventana puede
+    haberlo retirado ya y haber tomado el suyo, y el borrado se llevaría ese.
+    Así que retirar pide antes otro cerrojo exclusivo, `ui.lock.json.romper`,
+    que se tiene unos milisegundos: con él puesto se vuelve a leer, y solo si
+    sigue ahí el mismo resto se borra. Nadie más borra el registro mientras
+    tanto (su dueño está muerto o en otro equipo) y crearlo exige que no esté,
+    así que lo que se comprueba es lo que se borra.
+
+    Si el «romper» es de un proceso que murió con él puesto, pasado
+    `ROMPER_ABANDONADO` se quita. Eso tiene su propio hueco (dos que lo vean
+    viejo a la vez), pero exige morir en esos milisegundos Y dos ventanas en el
+    mismo instante: no merece más maquinaria."""
+    romper = UI_LOCK.with_name(f"{UI_LOCK.name}.romper")
+    marca = str(os.getpid()).encode("ascii")
+    limite = time.monotonic() + ROMPER_ABANDONADO + 1.0
+    while True:
+        creado = _crear_exclusivo(romper, marca)
+        if creado:
+            break
+        if creado is None or time.monotonic() >= limite:
+            return False
+        try:
+            if time.time() - romper.stat().st_mtime > ROMPER_ABANDONADO:
+                _borrar(romper)
+                continue
+        except OSError:
+            continue                    # se acaba de soltar: otra vez
+        time.sleep(0.02)
+    try:
+        actual = _leer_ui()
+        if actual is None or actual != (visto or {}):
+            return False                # ya lo retiró otro, o es otro registro
+        return _borrar(UI_LOCK)
+    finally:
+        _borrar(romper)
+
+
+def ui_en_marcha() -> dict | None:
+    """El registro de una ventana de runsync viva EN ESTE EQUIPO, o None.
+
+    Solo mira: el resto de una ventana muerta o de otro equipo se limpia, pero
+    esto no toma nada. Para abrir una ventana, `tomar_ui()`."""
+    info = _leer_ui()
+    if info is None:
+        return None
+    if not _viva_aqui(info):
+        _retirar_ui(info)
         return None
     return info
 
 
-def tomar_ui() -> None:
-    """Apunta que esta ventana es la de este dispositivo.
+def tomar_ui() -> dict | None:
+    """Apunta que esta ventana es la de este dispositivo, si nadie la tiene.
 
-    No devuelve nada ni se comprueba que se haya escrito: en un dispositivo de
-    solo lectura la ventana se abre igual. El registro es para que la SIGUIENTE
-    no se abra encima, no un permiso para abrir esta."""
-    store.write_json(UI_LOCK, {"pid": os.getpid(), "host": HOST,
-                               "started": store.stamp()})
+    None si la ha tomado; si no, el registro de la ventana que la tiene.
+
+    Mirar y escribir son UN paso: el fichero se crea con O_EXCL
+    (`_crear_exclusivo`), así que de dos runsync que llegan a la vez solo uno
+    lo crea. Eran dos pasos, y el 28/09/2026 dos ventanas lanzadas con 6 s de
+    diferencia miraron las dos antes de que ninguna escribiera y se abrieron a
+    la vez.
+
+    Si lo que hay es un resto (pid muerto, otro equipo, ilegible) se retira y se
+    vuelve a intentar crearlo, una sola vez: si en ese instante otra ventana se
+    ha adelantado, manda esa.
+
+    Si no se puede escribir (dispositivo de solo lectura), o el resto no se deja
+    quitar, la ventana se abre igual, como antes: el registro es para que la
+    SIGUIENTE no se abra encima, no un permiso para abrir esta."""
+    datos = json.dumps({"pid": os.getpid(), "host": HOST, "started": store.stamp()},
+                       ensure_ascii=False, indent=1).encode("utf-8")
+    for intento in range(2):
+        creado = _crear_exclusivo(UI_LOCK, datos)
+        if creado is not False:
+            return None                 # tomado, o no se puede escribir
+        otra = _leer_ui()
+        if otra is None:
+            continue                    # se soltó entre medias: otra vez
+        if _viva_aqui(otra):
+            return otra
+        if not intento:
+            _retirar_ui(otra)
+    return None
 
 
 def soltar_ui() -> None:
@@ -384,8 +534,10 @@ def ui_flow() -> int:
     """Sin argumentos: parar el servicio anterior, preguntar, y hacer lo pedido."""
     # Lo PRIMERO, antes de parar nada: si ya hay una ventana abierta, esta sobra
     # y además haría daño. Abrir runsync detiene el servicio anterior, así que
-    # una segunda ventana mataría el que acaba de arrancar la primera.
-    abierta = ui_en_marcha()
+    # una segunda ventana mataría el que acaba de arrancar la primera. Mirar y
+    # tomar el registro son un solo paso (`tomar_ui`): mirar primero y tomarlo
+    # después dejaba pasar a dos ventanas que llegaran casi a la vez.
+    abierta = tomar_ui()
     if abierta is not None:
         return ui.fatal(
             f"Ya hay una ventana de {APP_NAME} abierta para este dispositivo "
@@ -393,18 +545,17 @@ def ui_flow() -> int:
             "Usa esa; si no la encuentras, ciérrala desde el administrador de "
             "tareas y vuelve a intentarlo.")
 
-    # Que el vigilante no lanza nada mientras esta ventana esté abierta ya no
-    # se dice aquí: lo dice la línea del arranque automático, que está siempre
-    # a la vista y no desaparece con el siguiente repintado.
-    startup_msg = stop_previous_daemon()
-
     try:
-        config = model.load_config()
-    except model.ConfigError as e:
-        return ui.fatal(str(e))
+        # Que el vigilante no lanza nada mientras esta ventana esté abierta ya
+        # no se dice aquí: lo dice la línea del arranque automático, que está
+        # siempre a la vista y no desaparece con el siguiente repintado.
+        startup_msg = stop_previous_daemon()
 
-    tomar_ui()
-    try:
+        try:
+            config = model.load_config()
+        except model.ConfigError as e:
+            return ui.fatal(str(e))
+
         return _atender(config, startup_msg)
     finally:
         soltar_ui()

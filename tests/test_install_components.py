@@ -20,6 +20,7 @@ Lo que se comprueba es lo que puede hacer daño:
 """
 
 import sys
+import time
 from pathlib import Path
 from urllib.error import URLError
 
@@ -608,13 +609,18 @@ try:
             return modulo
 
         instalador = cargar(entrada)
+        from ui import tk_relevo
         reales_relevo = (components.lanzar_suelto, components.esperar_a,
-                         components.preparar_relevo)
+                         components.preparar_relevo, components.procesos_desde,
+                         tk_relevo.mientras)
         lanzados: list[list[str]] = []
         components.lanzar_suelto = lambda orden: lanzados.append(orden) or 4242
         preparar_real = components.preparar_relevo
         components.preparar_relevo = (
             lambda *a, **k: preparar_real(*a, codigo=codigo, base=temporal, **k))
+        components.procesos_desde = lambda carpeta: {}
+        # Ningún test abre la ventanita: el trabajo se hace igual, sin ella.
+        tk_relevo.mientras = lambda mensaje, funcion, progreso: (True, funcion())
         try:
             raiz = dispositivo()
             components.runtime_en_uso = lambda carpeta: (
@@ -646,6 +652,44 @@ try:
             c("la carpeta pasa a ser del relevo",
               (carpeta / components.RELEVO_DUENNO).read_text(encoding="utf-8"), "4242")
 
+            # Un segundo «Actualizar…» con ese relevo vivo no lanza otro: en G:
+            # dos relevos extraían a la vez en el mismo USB. Aquí «vivo» es este
+            # proceso, que se hace pasar por el relevo.
+            (carpeta / components.RELEVO_DUENNO).write_text(str(pid_muerto()),
+                                                            encoding="utf-8")
+            vivo = temporal / (components.RELEVO_PREFIJO + "vivo")
+            vivo.mkdir()
+            (vivo / components.RELEVO_DUENNO).write_text(str(os.getppid()),
+                                                         encoding="utf-8")
+            (vivo / components.RELEVO_DISPOSITIVO).write_text(
+                components._clave_dispositivo(raiz), encoding="utf-8")
+            c("se reconoce el relevo en marcha de ese dispositivo",
+              components.relevo_en_marcha(raiz, temporal), vivo)
+            c("y no el de otro", components.relevo_en_marcha(dispositivo(), temporal), None)
+            lanzados.clear()
+            salida = io.StringIO()
+            with contextlib.redirect_stdout(salida):
+                rc = instalador.cmd_update_components(str(raiz), relevo=999)
+            c("con uno en marcha no se lanza otro", (rc, lanzados), (1, []))
+            c.contains("y se dice que no hace falta pulsar otra vez", salida.getvalue(),
+                       "no hace falta pulsar otra vez")
+            shutil.rmtree(vivo)
+
+            # Algo más corriendo desde ese Python (en G:, un aviso de prdrive
+            # olvidado detrás): se dice con la ventana todavía abierta, y no se
+            # lanza un relevo que no podría apartar la carpeta.
+            lanzados.clear()
+            components.procesos_desde = lambda carpeta: (
+                {999: "ventana", os.getpid(): "aplicador", 12344: r"G:\pythonw.exe"}
+                if carpeta == platforms.runtime_dir(raiz, WIN) else {})
+            salida = io.StringIO()
+            with contextlib.redirect_stdout(salida):
+                rc = instalador.cmd_update_components(str(raiz), relevo=999)
+            c("con otro proceso en ese Python no se lanza el relevo", (rc, lanzados), (1, []))
+            c.contains("y se dice cuál", salida.getvalue(), r"pid 12344: G:\pythonw.exe")
+            c("sin contar la ventana ni el aplicador", "pid 999" in salida.getvalue(), False)
+            components.procesos_desde = lambda carpeta: {}
+
             # Sin --relevo (a mano, desde la consola) se pospone como siempre.
             raiz = dispositivo()
             lanzados.clear()
@@ -668,7 +712,8 @@ try:
 
             raiz = dispositivo()
             lanzados.clear()
-            components.esperar_a = lambda pids, limite=0: True
+            esperas: list[dict] = []
+            components.esperar_a = lambda pids, **k: esperas.append(k) or True
             stdout_antes = sys.stdout
             rc = copia.cmd_relevo(str(raiz), [999], "py-del-dispositivo")
             c("el relevo pone al día todo, el Python de la ventana incluido",
@@ -679,11 +724,41 @@ try:
                           str(deploy.app_dir(raiz) / "runsync.py")]])
             c.contains("dejando su registro", (relevo / components.RELEVO_LOG).read_text(
                 encoding="utf-8"), "Hecho")
+            c("esperando también a que nada corra desde runtime/",
+              esperas[0]["libre"], deploy.app_dir(raiz) / "runtime")
+
+            # Sin ventanita (sin Tk, sin pantalla) el trabajo se hace igual.
+            def sin_pantalla(mensaje, funcion, progreso):
+                raise RuntimeError("no display name")
+
+            tk_relevo.mientras = sin_pantalla
+            raiz = dispositivo()
+            lanzados.clear()
+            rc = copia.cmd_relevo(str(raiz), [999], "py-del-dispositivo")
+            c("sin pantalla, el relevo hace lo mismo",
+              (rc, components.pendientes(raiz), len(lanzados)), (0, [], 1))
+
+            # Y si la ventanita cae con el trabajo ya en marcha, no lo empieza
+            # otra vez: serían dos intercambios a la vez.
+            veces = {"n": 0}
+
+            def cae_a_medias(mensaje, funcion, progreso):
+                veces["n"] += 1
+                funcion()
+                raise RuntimeError("la ventanita se ha caído")
+
+            tk_relevo.mientras = cae_a_medias
+            raiz = dispositivo()
+            bajados.clear()
+            rc = copia.cmd_relevo(str(raiz), [999], "py-del-dispositivo")
+            c("si la ventanita cae a medias, el trabajo se hace una sola vez",
+              (rc, bajados.count("python windows-x64")), (0, 1))
+            tk_relevo.mientras = lambda mensaje, funcion, progreso: (True, funcion())
 
             # La ventana no se cierra: no se toca nada ni se reabre otra.
             raiz = dispositivo()
             lanzados.clear()
-            components.esperar_a = lambda pids, limite=0: False
+            components.esperar_a = lambda pids, **k: False
             salida = io.StringIO()
             with contextlib.redirect_stdout(salida):
                 rc = copia.cmd_relevo(str(raiz), [999], "py-del-dispositivo")
@@ -694,7 +769,7 @@ try:
             # Un fallo al poner al día: reabre igual, y lo cuenta.
             raiz = dispositivo()
             lanzados.clear()
-            components.esperar_a = lambda pids, limite=0: True
+            components.esperar_a = lambda pids, **k: True
             runtime_bin.ensure_runtime = runtime_que_revienta
             salida = io.StringIO()
             with contextlib.redirect_stdout(salida):
@@ -705,9 +780,62 @@ try:
             c.contains("y se enseña el registro", salida.getvalue(), "no cuadra con su suma")
         finally:
             (components.lanzar_suelto, components.esperar_a,
-             components.preparar_relevo) = reales_relevo
+             components.preparar_relevo, components.procesos_desde,
+             tk_relevo.mientras) = reales_relevo
     finally:
         runtime_bin.extract, runtime_bin.recorded_sha256 = reales_rt
+
+    # --- quién corre desde una carpeta, de verdad ----------------------------
+    #
+    # Sin sustituir nada: es lo único que dice qué retiene un runtime, y en G:
+    # lo que lo retenía era un proceso que nadie veía.
+    desde_aqui = components.procesos_desde(Path(sys.executable).parent)
+    c("este proceso corre desde la carpeta de su intérprete",
+      os.getpid() in desde_aqui, True)
+    c("con la ruta de su ejecutable",
+      Path(desde_aqui.get(os.getpid(), "")).resolve().parent,
+      Path(sys.executable).resolve().parent)
+    c("y desde una carpeta cualquiera no corre nadie",
+      components.procesos_desde(tmpdir("prdrive-nadie-")), {})
+
+    # --- esperar a que la carpeta quede libre --------------------------------
+    turnos = [{12344: "G:/pythonw.exe"}, {12344: "G:/pythonw.exe"}, {}]
+    reales_espera = (components.procesos_desde, components.time.sleep)
+    components.procesos_desde = lambda carpeta: turnos.pop(0) if turnos else {}
+    components.time.sleep = lambda s: None
+    avisos: list[dict] = []
+    try:
+        c("espera a que la carpeta quede libre",
+          components.esperar_a([], limite=60, libre=Path("x"), avisar=avisos.append), True)
+        c("avisando de quién la retiene, y cuando se suelta, sin repetir",
+          avisos, [{12344: "G:/pythonw.exe"}, {}])
+        components.procesos_desde = lambda carpeta: {12344: "G:/pythonw.exe"}
+        c("y se rinde al límite", components.esperar_a([], limite=-1, libre=Path("x")),
+          False)
+    finally:
+        components.procesos_desde, components.time.sleep = reales_espera
+
+    # --- lo que enseña la ventanita del relevo -------------------------------
+    raiz = dispositivo()
+    referencia = tmpdir("prdrive-referencia-")
+    (referencia / "grande.bin").write_bytes(b"x" * 1000)
+    avance = components.AvanceRelevo(raiz, referencia)
+    c("empieza esperando a la ventana", avance.progreso(),
+      (0.0, components.AvanceRelevo.ESPERANDO))
+    avance.esperando({12344: r"G:\pythonw.exe"})
+    c.contains("dice quién retiene el Python", avance.progreso()[1], "pid 12344")
+    avance.medir()
+    nuevo = platforms.runtime_dir(raiz, WIN).parent / f".windows-x64.nuevo-{os.getpid()}"
+    nuevo.mkdir()
+    (nuevo / "medio.bin").write_bytes(b"x" * 500)
+    limite = time.monotonic() + 10
+    while time.monotonic() < limite and "Copiando" not in avance.progreso()[1]:
+        time.sleep(0.1)
+    c("mide lo copiado frente al runtime ya extraído",
+      avance.progreso(), (0.5, "Copiando al dispositivo: 50 %"))
+    avance.fin()
+    c("y al final lo dice", avance.progreso(), (1.0, "Volviendo a abrir prdrive…"))
+    shutil.rmtree(nuevo)
 
     # --- la orden de consola --------------------------------------------------
     #

@@ -502,12 +502,20 @@ python <descarga>/prdrive-install.py --update-components E:\   # lo que hace el 
   sincronizando ahora mismo o un VeraCrypt que se está ejecutando desde la
   unidad.
 - **El Python con el que está abierta la ventana se cambia con ella cerrada.**
-  En Windows no se puede sustituir la carpeta de un `pythonw.exe` vivo, así que
-  el botón lo avisa antes de empezar, extrae ese mismo Python en el temporal de
-  este equipo y deja lanzado desde ahí un *relevo*: la ventana se cierra, el
-  relevo sustituye el runtime del dispositivo y la vuelve a abrir. Si algo sale
-  mal, lo dice en una ventana con su registro. No hace falta ningún Python
+  Cambiar la carpeta de un intérprete que está corriendo le borraría la
+  biblioteca estándar debajo. Por eso el botón:
+  1. lo avisa antes de empezar;
+  2. extrae ese mismo Python en el temporal de este equipo;
+  3. deja lanzado desde ahí un *relevo*.
+
+  La ventana se cierra, y una ventanita va diciendo a qué espera y cuánto lleva
+  copiado. El relevo sustituye el runtime del dispositivo y vuelve a abrir la
+  ventana. En un USB tarda un par de minutos; no hace falta ningún Python
   instalado.
+  - Si algo más corre desde ese Python (otra ventana de prdrive, o un aviso suyo
+    olvidado detrás), lo dice antes de cerrar nada y con qué proceso.
+  - Un segundo «Actualizar…» con un relevo en marcha no lanza otro.
+  - Si algo sale mal, el relevo lo dice en una ventana con su registro.
 - **Los restos de un intento cortado se barren**: un `runtime/.<plataforma>.nuevo-…`
   que dejó un proceso que ya no vive se borra la próxima vez.
 - **No se instala ninguna plataforma nueva.** Para eso está «Añadir
