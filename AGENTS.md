@@ -206,6 +206,12 @@ python tests/run_all.py            # all tests; or run one script directly
 
 - `runsync.py` with no args always **stops a previously started service** first.
 - Verification is `tests/run_all.py`, `--doctor`, `--dry-run`. Nothing to lint.
+  The suite passes on Windows **and** Linux: a check about the other system's
+  branch forces it (`IS_WIN`, and for a Linux mount point `Unidad.letra`) in any
+  system, or prints `(saltado) …` when it cannot run there (Unix sockets, the
+  Linux tray's `select()` on a pipe). `_harness` turns `os.kill(pid, 0)` into a
+  real question on Windows: there 0 is `CTRL_C_EVENT`, a Ctrl+C to the whole
+  console, and forcing `IS_WIN = False` reaches it.
 - `.gitignore` excludes device/user paths (`bin/`, `runtime/`, `keys/`,
   `filters/`, `logs/`, `state/`, `sync_config.toml`, `rclone.conf`,
   `prdrive-profile.toml`), build artefacts and `install/secret.py`.
@@ -745,7 +751,11 @@ at nothing) and hangs `tasklist | find`. Use PowerShell for both.
   `ERR_DYNAMIC_NOT_SUPPORTED` when the host has no sparse support
   (`Format/Tcformat.c`), so `crypto.soporta_dispersos()` asks first — by the
   `FILE_SUPPORTS_SPARSE_FILES` flag, the same evidence VeraCrypt uses, never by
-  the filesystem's name. On Linux there is no equivalent: `--quick` is forced off
+  the filesystem's name. It and `sistema_de_ficheros()` ask the **volume** that
+  holds the path (`device.raiz_del_volumen()`: `GetVolumePathNameW`, the mount
+  point in POSIX): `GetVolumeInformationW` only takes a volume root, and the
+  container of a host root lives in a folder — passing that folder straight made
+  every one of them fixed (H-1 of the real-hardware run). On Linux there is no equivalent: `--quick` is forced off
   for file containers in 1.26.24 (`Main/TextUserInterface.cpp`; `master` drops
   that line), so there the only lever is the size, and
   `crypto.suggested_size()` stops proposing nearly the whole disk.
@@ -1243,7 +1253,12 @@ whatever you build that only a real host can prove.
   pid of this host holds the lock. A stale lock (dead pid / other host) is
   overwritten. `runsync.stop_previous_daemon()` says "pauses" when the lock is
   the agent's. `tests/test_agente_contrato.py` drives the real
-  `stop_previous_daemon()` against it.
+  `stop_previous_daemon()` against it. **Releasing survives Windows**: runsync
+  reads the lock every 0.3 s while it waits, and Windows will not delete a file
+  someone has open (WinError 32); `_soltar()` stops serving at once
+  (`con.lock = None`, what the planner looks at) and retries the delete on the
+  next turns (`Conexion.soltando`) — an undeleted lock with the agent's pid would
+  keep runsync waiting until it gave up.
 - **Every pass is the root's own `sync.py`**, a child with the agent's Python
   (`pythonw` on Windows), `stdin=DEVNULL` (a pair needing `--resync` is skipped),
   cwd `equipo.DIR`. One pass at a time on the whole host. Nothing stays open in
@@ -1343,7 +1358,11 @@ not be weakened:
   is reinstalled keeping its id — the agent lists it by id.
 - **Other sync clients** (`carpetas_sincronizadas()`, an indirection point: the
   `OneDrive*` env vars and Dropbox's `info.json`) are an amber warning in both
-  directions, never a block. The «Parejas» step shows each pair's resolved path
+  directions, never a block — worded by direction: «está dentro de» only when the
+  root is inside the client's folder. Home *contains* OneDrive on almost every
+  Windows 11, so there it is one plain sentence under home's own explanation:
+  the clash is a pair falling inside it, which «Parejas» warns about per pair.
+  The «Parejas» step shows each pair's resolved path
   and lets its `local` be changed HERE only (`device_config(locales=)`: the pair
   reads as «modificada aquí»).
 - **The agent** keeps the root in the same list as drives: `equipo.Unidad.ruta`
