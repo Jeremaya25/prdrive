@@ -363,4 +363,56 @@ ag = F.nuevo()
 F.vueltas(ag, 4)
 c("una cifrada que no está en la lista: nunca se ejecuta nada suyo", F.ABIERTOS, [])
 
+# --- Windows no deja borrar un fichero que otro tiene abierto ------------------------------
+#
+# runsync lee daemon.lock.json cada 0,3 s mientras espera a que el servicio pare,
+# y Python abre sin FILE_SHARE_DELETE: si el agente lo borra justo entonces,
+# WinError 32. La vuelta no puede caerse por eso, ni el lock quedarse en la
+# unidad con el pid del agente: se reintenta en la siguiente. El fallo se
+# provoca aquí a mano para que salga igual en Linux (H-2 de las pruebas en real).
+import pathlib  # noqa: E402
+
+L = "7" * 32
+RL = F.unidad(L, parejas=("docs",))
+equipo.guardar_ajustes(equipo.leer_ajustes().con_unidad(equipo.Unidad(L, equipo.DAEMON)))
+F.RAICES[:] = [RL]
+ag = F.nuevo()
+F.vueltas(ag, 2)
+for p in F.pasadas(RL):
+    F.acabar(p)
+F.vueltas(ag, 1)
+c("(la unidad la atiende el agente, sin pasada en curso)",
+  (F.lock(RL).get("pid"), ag.pasada), (os.getpid(), None))
+
+unlink_real = pathlib.Path.unlink
+en_uso = [3]                        # tres intentos seguidos con runsync leyéndolo
+
+
+def unlink_en_uso(self, missing_ok=False):
+    if self.name == "daemon.lock.json" and en_uso[0]:
+        en_uso[0] -= 1
+        raise PermissionError(32, "El proceso no tiene acceso al archivo porque está "
+                                  "siendo utilizado por otro proceso", str(self))
+    return unlink_real(self, missing_ok=missing_ok)
+
+
+pathlib.Path.unlink = unlink_en_uso
+try:
+    F.stop(RL).touch()
+    F.pasar(3600)                   # la pareja ya tocaría: que se vea si se lanza
+    antes = len(F.pasadas(RL))
+    try:
+        F.vueltas(ag, 1)
+        cayo = None
+    except OSError as e:
+        cayo = e
+    c("un lock que otro está leyendo no tumba la vuelta", cayo, None)
+    c("  el servicio ya está soltado: no lanza la pareja que tocaba",
+      len(F.pasadas(RL)), antes)
+    F.vueltas(ag, 2)
+    c("  y en las vueltas siguientes se borra: no se queda huérfano", F.lock(RL), {})
+    c("  sin lanzar nada mientras", len(F.pasadas(RL)), antes)
+finally:
+    pathlib.Path.unlink = unlink_real
+
 raise SystemExit(c.report())

@@ -419,6 +419,7 @@ class Conexion:
     lanzada: bool = False               # modo ui: su ventana ya se ha abierto
     pausa: float | None = None          # la última vez que se vio ventana o stop
     lock: dict | None = None            # el daemon.lock.json que tenemos escrito
+    soltando: bool = False              # soltado, pero su fichero sigue sin borrar
     servicio: Servicio | None = None
     error: str | None = None            # por qué no hay servicio que atender
     avisado_error: bool = False
@@ -908,17 +909,31 @@ class Agente:
                  "modo": unidad.modo}
         if store.write_json(con.raiz / penwatch.DAEMON_LOCK_REL, datos):
             con.lock = datos
+            con.soltando = False        # el fichero vuelve a ser uno vivo
             dlog(con.raiz, f"servicio (agente del equipo, pid {os.getpid()}) atendiendo: "
                            f"{', '.join(datos['pairs'])}"
                            + ("" if unidad.modo == equipo.SYNC
                               else f" cada {con.servicio.minutos:g} min"))
 
     def _soltar(self, con: Conexion) -> None:
-        if con.lock is None:
+        """Deja de atenderla y borra nuestro `daemon.lock.json`.
+
+        En Windows no se borra un fichero que otro tiene abierto, y runsync lee
+        este cada 0,3 s mientras espera a que el servicio pare (WinError 32, H-2
+        de las pruebas en real). Entonces se deja de atender igual —`con.lock`
+        a None, que es lo que mira el planificador— y el fichero se reintenta
+        en la vuelta siguiente (`soltando`): con el pid del agente dentro,
+        runsync esperaría hasta rendirse."""
+        if con.lock is None and not con.soltando:
             return
         con.lock = None
         if self._lock_es_nuestro(con):
-            (con.raiz / penwatch.DAEMON_LOCK_REL).unlink(missing_ok=True)
+            try:
+                (con.raiz / penwatch.DAEMON_LOCK_REL).unlink(missing_ok=True)
+            except OSError:
+                con.soltando = True
+                return
+        con.soltando = False
 
     # --- planificar y lanzar ------------------------------------------------------------
 
