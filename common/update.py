@@ -391,7 +391,14 @@ def source_tag(root: Path | str | None = None) -> str:
     return f"v{version}" if version else ""
 
 
-def components_command(staged: Path | str, device_root: Path | str) -> list[str]:
+# Lo que devuelve `--update-components --relevo` cuando ha dejado en marcha el
+# proceso que cambiará el Python de la ventana en cuanto ésta se cierre: la
+# ventana lo lee y se cierra sola. Ni 0 ni 1, que ya significan otra cosa.
+CODIGO_RELEVO = 3
+
+
+def components_command(staged: Path | str, device_root: Path | str,
+                       relevo: int | None = None) -> list[str]:
     """La orden que pone al día los componentes, ejecutada DESDE lo descargado.
 
     El hermano de `apply_command()` y por el mismo motivo: `install/` no está en
@@ -403,10 +410,18 @@ def components_command(staged: Path | str, device_root: Path | str) -> list[str]
     lleva el suyo, éste ES el suyo, y así `install/components.py` reconoce que
     ese runtime está en uso mirando su propio intérprete, sin que nadie tenga
     que pasárselo por la línea de órdenes. El `-u` es el de siempre:
-    `output_window` lee línea a línea."""
-    return [sys.executable, "-u",
-            str(Path(staged) / "prdrive-install.py"),
-            "--update-components", str(device_root)]
+    `output_window` lee línea a línea.
+
+    `relevo` es el pid de la ventana, y solo se pasa cuando uno de los pendientes
+    es el Python desde el que está abierta (`components.propio()`): con él, el
+    aplicador deja preparado quién lo cambie después de que se cierre y sale
+    con `CODIGO_RELEVO`."""
+    orden = [sys.executable, "-u",
+             str(Path(staged) / "prdrive-install.py"),
+             "--update-components", str(device_root)]
+    if relevo is not None:
+        orden += ["--relevo", str(relevo)]
+    return orden
 
 
 def agent_command(staged: Path | str, python: str | None = None) -> list[str]:

@@ -726,8 +726,14 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
 
         Aquí sí se vuelve, a diferencia de la actualización del programa: lo que
         se sustituye son binarios que este proceso no tiene cargados en memoria,
-        así que no hay que relanzar nada."""
-        if tk_update.open_components_dialog(root, vista["componentes"]):
+        así que no hay que relanzar nada. Salvo el Python con el que corre esta
+        ventana: ése lo cambia el relevo cuando se cierra, y la reabre él."""
+        tocado = tk_update.open_components_dialog(root, vista["componentes"])
+        if tocado == tk_update.CERRAR:
+            result["choice"] = None
+            root.destroy()
+            return
+        if tocado:
             leer_estado()
         repintar()
 
