@@ -228,22 +228,23 @@ def paso_cifrado(cuerpo, wiz) -> None:
         wiz.equipo_cifrado = eleccion.get()
         wiz.repintar()
 
-    _texto(cuerpo, "¿Cifrar la raíz de este equipo? Es la misma raíz de antes, con lo "
-                   "que se sincroniza: cifrarla no añade nada que hacer con el remoto, "
-                   "solo cambia dónde se guarda.", 0)
-    donde = ("se abre en una letra fija (P:, por ejemplo), y ESA es la raíz: la "
-             "carpeta de antes solo dice dónde va el fichero" if IS_WIN else
-             f"se abre montado sobre {wiz.equipo_ruta}, que es la raíz")
+    _texto(cuerpo, "¿Cifrar la raíz de este equipo? Se sincroniza lo mismo; lo que "
+                   "cambia es que todo queda dentro de un fichero cifrado.", 0)
+    fichero = Path(wiz.equipo_fisica or re_.fisica_por_defecto(wiz.equipo_ruta))
+    fichero = fichero / vestibulo.CONTENEDOR
+    donde = ("como una unidad con letra fija (la que elijas abajo, P: por ejemplo)"
+             if IS_WIN else f"en {wiz.equipo_ruta}")
     opciones = (
         (re_.SIN_CIFRAR, "Sin cifrar",
          f"{wiz.equipo_ruta} es la raíz, tal cual. La clave del remoto queda en claro "
          f"en el disco (el paso «Instalación» dice si el disco tiene BitLocker)."),
         (re_.VERACRYPT, "En un contenedor VeraCrypt",
-         "La raíz vive dentro de un fichero cifrado que se crea ahora (por eso pide "
-         f"tamaño y contraseña): la clave, la configuración y las parejas. Abierto, "
-         f"{donde}. Cerrado, no hay nada que leer ni que sincronizar por error. "
-         "Lo abre el agente al iniciar sesión (VeraCrypt pide la contraseña en su "
-         "ventana) y lo cierras con «Bloquear»."))
+         "Todo va DENTRO de un fichero cifrado que se crea ahora (por eso pide tamaño "
+         "y contraseña): el programa, la clave y las carpetas de las parejas con tus "
+         f"datos. Fuera solo queda ese fichero, {fichero}. Abierto, su contenido "
+         f"aparece {donde}, y ahí trabajas. Cerrado, no hay nada que leer ni que "
+         "sincronizar por error. Lo abre el agente al iniciar sesión (VeraCrypt "
+         "pide la contraseña en su ventana) y lo cierras con «Bloquear»."))
     for i, (valor, titulo, texto) in enumerate(opciones):
         tarjeta = ttk.Frame(cuerpo, style="Card.TFrame", padding=(14, 8))
         tarjeta.grid(row=1 + i, column=0, sticky="ew", pady=(0, 8))
