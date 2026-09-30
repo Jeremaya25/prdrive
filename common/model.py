@@ -440,6 +440,7 @@ class Pair:
     use_filters_file: bool
     device_remote: str | None
     versions: bool
+    watch: bool = False        # sincronizarla en cuanto cambien sus ficheros
 
     # --- extremos tal y como se le pasan a rclone --------------------------
 
@@ -567,6 +568,15 @@ def _build_pair(raw: Mapping[str, Any], defaults: Mapping[str, Any],
             f"[{name}] 'versions' solo vale en modo bisync, y esta pareja es "
             f"'{mode_name}'. Quita la clave o cambia el modo.")
 
+    # Vigilar solo tiene sentido si lo que cambia aquí se sube: en `down` y
+    # `down-mirror` el lado local es el destino, y lo que tocara alguien ahí no
+    # es lo que esa pareja sincroniza. Mejor decirlo al parsear.
+    watch = bool(raw.get("watch", False))
+    if watch and mode.source != "local":
+        raise ConfigError(
+            f"[{name}] 'watch' vigila la carpeta local, y en modo '{mode_name}' "
+            f"la local es el destino. Quita la clave o cambia el modo.")
+
     return Pair(
         name=name,
         mode=mode,
@@ -582,6 +592,7 @@ def _build_pair(raw: Mapping[str, Any], defaults: Mapping[str, Any],
                                  defaults.get("use_filters_file", True)),
         device_remote=_device_remote_name(defaults),
         versions=versions,
+        watch=watch,
     )
 
 

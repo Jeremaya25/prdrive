@@ -32,6 +32,7 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 │   ├── model.py       sync_config.toml parsed into resolved objects
 │   ├── bisync.py      replicates rclone bisync's internals
 │   ├── conflicts.py   conflict files: scan, side, state/conflicts.json
+│   ├── vigilancia.py  `watch = true`: local changes → a pass of that pair (PURE, polling)
 │   ├── results.py     each pair's last run (state/last_run.json)
 │   ├── historial.py   the pass journal: last N passes per pair (state/historial.jsonl)
 │   ├── revision.py    what is wrong, as data: the ONE diagnosis
@@ -1816,6 +1817,28 @@ Path1 is `pair.source` (local in bisync) — `conflicts.lado()`. Keep the citati
   (`StatsInfo.String()`) and deletes only in the multi-line block. Reading
   skips half-written or foreign lines, and an append after a cut line starts
   on its own. `historial.racha()` is the logic behind the «Reparación» sentence.
+
+## Sync on change (`watch = true` + `common/vigilancia.py`)
+
+A pair with `watch = true` is synced when its local files change, not only every
+interval. **Polling, not OS events**: inotify / `ReadDirectoryChangesW` have no
+stdlib and are unreliable on exFAT, VeraCrypt and network folders; a `scandir`
+of (mtime_ns, size) every 5 s works everywhere and is tested with a fake clock.
+`Vigia` is pure; rules: 10 s of **calm** before firing (a burst is one pass), at
+least 60 s between change-triggered passes (what changes meanwhile stays
+pending), `.prversions/` ignored, and more than 50 000 files turns it off for
+that pair (said once in `daemon.log`).
+
+- **The snapshot is taken BEFORE the pass** (`Vigia.iniciar()`, from
+  `runsync.daemon_cycle`), so edits during the pass count. The price: what the
+  pass writes locally reads as one more change and causes ONE more pass that
+  finds nothing and writes nothing.
+- `model._build_pair` rejects `watch` when local is not the source
+  (`down`, `down-mirror`). Remote changes still wait for the interval.
+- **Only `runsync.py`'s service uses it.** The resident agent does not yet: its
+  planner would need a «changed» input that respects moderation (battery,
+  metered network) — do not reuse `urgentes`, which skips all of it.
+- `daemon_cycle(parcial=True)` keeps the other pairs' `last_results`.
 
 ## Per-pair versions (`versions = true` + `ui/versions_editor.py`)
 

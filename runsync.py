@@ -64,7 +64,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 import ui  # noqa: E402
-from common import APP_NAME, model, store, update  # noqa: E402
+from common import APP_NAME, model, store, update, vigilancia  # noqa: E402
 from common.store import pid_alive  # noqa: E402
 from ui import prefs  # noqa: E402
 
@@ -443,12 +443,18 @@ def notificar_fallo(nombres: list[str]) -> None:
         dlog("no hay entorno gráfico: el aviso de fallo queda solo en este diario")
 
 
-def daemon_cycle(pairs: list[str], lock_data: dict) -> None:
+def daemon_cycle(pairs: list[str], lock_data: dict, vigia=None,
+                 parcial: bool = False) -> None:
+    """Una pasada de `pairs`. `vigia` (la de `watch = true`) toma su instantánea
+    de cada pareja justo antes de lanzarla. Con `parcial` —una pasada disparada
+    por cambios, no el ciclo— los resultados de las demás parejas se conservan."""
     previos = lock_data.get("last_results") or {}
-    results = {}
+    results = dict(previos) if parcial else {}
     for name in pairs:
         if stop_requested() or not pen_present():
             return
+        if vigia is not None:
+            vigia.iniciar(name, time.monotonic())
         t0 = time.monotonic()
         rc, output = run_pair_quiet(name)
         secs = time.monotonic() - t0
@@ -473,7 +479,7 @@ def daemon_cycle(pairs: list[str], lock_data: dict) -> None:
     # Solo cuando algo EMPIEZA a fallar. Un servicio sano no dice nada, y uno
     # que lleva horas sin red no abre una ventana cada media hora: ya lo ha
     # dicho, y la ventana principal lo sigue enseñando hasta que se arregle.
-    fallidas = [n for n, r in results.items() if r.startswith("ERROR")]
+    fallidas = [n for n in pairs if results.get(n, "").startswith("ERROR")]
     if any(not str(previos.get(n, "")).startswith("ERROR") for n in fallidas):
         notificar_fallo(fallidas)
 
@@ -524,6 +530,22 @@ def tomar_lock(lock_data: dict) -> dict | None:
         time.sleep(0.3)
 
 
+def crear_vigia(pairs: list[str]):
+    """La `Vigia` de las parejas del servicio con `watch = true`, o None si no
+    hay ninguna (o el config no se puede leer: entonces manda el intervalo)."""
+    try:
+        config = model.load_config()
+    except (model.ConfigError, OSError) as e:
+        dlog(f"no vigilo cambios: no puedo leer el config ({e})")
+        return None
+    vigiladas = {p.name: p.local_abs for p in config.pairs
+                 if p.watch and p.name in pairs}
+    if not vigiladas:
+        return None
+    dlog(f"vigilando cambios en: {', '.join(vigiladas)}")
+    return vigilancia.Vigia(vigiladas, ignorar=(model.VERSIONS_DIR,), avisar=dlog)
+
+
 def daemon_main(pairs: list[str], interval_min: float) -> int:
     # Fuera del dispositivo: mantener el cwd en el USB impediría su extracción segura.
     os.chdir(tempfile.gettempdir())
@@ -545,6 +567,7 @@ def daemon_main(pairs: list[str], interval_min: float) -> int:
          f"parejas={','.join(pairs)} intervalo={interval_min:g}m")
 
     reason = "desconocido"
+    vigia = crear_vigia(pairs)
     try:
         while True:
             if not pen_present():
@@ -553,7 +576,7 @@ def daemon_main(pairs: list[str], interval_min: float) -> int:
             if stop_requested():
                 reason = "parada solicitada por el lanzador"
                 break
-            daemon_cycle(pairs, lock_data)
+            daemon_cycle(pairs, lock_data, vigia)
             wake = time.monotonic() + interval_min * 60
             stop = False
             while time.monotonic() < wake:
@@ -571,6 +594,12 @@ def daemon_main(pairs: list[str], interval_min: float) -> int:
                     # a la vez es lo que no puede ser.
                     reason, stop = f"otro servicio (pid {otro.get('pid')}) tiene el registro", True
                     break
+                if vigia is not None:
+                    tocan = vigia.mirar(time.monotonic())
+                    if tocan:
+                        dlog(f"cambios en: {', '.join(tocan)}")
+                        daemon_cycle(tocan, lock_data, vigia, parcial=True)
+                        continue        # el tiempo de la pasada ya ha corrido
                 time.sleep(POLL_SECONDS)
             if stop:
                 break

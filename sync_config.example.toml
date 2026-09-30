@@ -88,12 +88,24 @@ local = "sync-data/docs"      # relativa a la raíz del dispositivo
 remote_path = "/datos/docs"   # ruta dentro del remote
 mode = "bisync"
 versions = true               # ver más abajo
+watch = true                  # sincronizarla en cuanto cambien sus ficheros
 
 [pair.flags]
 conflict-resolve = "newer"    # con qué copia se queda si los dos lados cambiaron;
                               # la otra se guarda al lado con el sufijo de su lado
                               # (conflict-suffix, que ya trae el modo bisync)
 resilient = true              # un error menor no obliga a --resync la próxima vez
+
+# ---------------------------------------------------------------------------
+# watch — sincronizar al cambiar, sin esperar al intervalo
+# ---------------------------------------------------------------------------
+# Con `watch = true`, el servicio mira la carpeta local de la pareja cada pocos
+# segundos y, cuando alguien cambia ficheros y deja de tocarlos (10 s), lanza
+# una pasada de ESA pareja. Como mucho una cada minuto, aunque no pare de
+# cambiar. Lo que cambie en el remoto sigue esperando al intervalo.
+# Solo donde la carpeta local es el origen (bisync, up, up-mirror); en `down` y
+# `down-mirror` el config se rechaza. Una carpeta de más de 50 000 ficheros no se
+# vigila (se dice en daemon.log) y manda el intervalo.
 
 # ---------------------------------------------------------------------------
 # versions — guardar lo que se pierde
