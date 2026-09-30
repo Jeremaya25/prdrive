@@ -144,6 +144,7 @@ RAFAGA = 60.0                   # tras un cambio de montajes, recorrer en cada v
 ESTABLE = penwatch.STABLE_CHECKS
 GRACIA = 15.0                   # tras ver la ventana o un stop, antes de volver
 MIRAR_ENTORNO = 60.0            # batería y red, cada minuto
+DESPERTAR_DOBLE = 10.0          # Windows avisa dos veces de una vuelta de la suspensión
 PARAR_ESPERA = 10.0             # lo que espera `parar` a que el agente se vaya
 ESPERA_VENTANA = 60.0           # «Bloquear» con su ventana abierta: lo que se espera
 ESPERA_DESMONTAJE = 300.0       # a que VeraCrypt cierre (puede estar preguntando)
@@ -605,6 +606,7 @@ class Agente:
     sin_red_avisado: set[tuple[str, str]] = field(default_factory=set)
     retenido: str | None = None
     rafaga_hasta: float = -math.inf
+    despertado: float = -math.inf   # la última vuelta de la suspensión apuntada
     ultimo_estado: dict | None = None
     # Las raíces del equipo que no están donde dice su `ruta`, ya avisadas.
     ausentes: set[str] = field(default_factory=set)
@@ -1071,6 +1073,11 @@ class Agente:
         elif con.servicio is None:
             con.motivo = f"sin servicio: {con.error}"
         else:
+            if con.pausa is not None:
+                # La otra mitad de «en pausa»: sin ella, el diario no decía cuándo
+                # se volvía a atender tras cerrar la ventana (visto en real).
+                diario(f"{con.nombre}: sin ventana de runsync; vuelvo a atenderla")
+                dlog(con.raiz, "servicio (agente del equipo) reanudado")
             con.pausa = None
             con.reanudar = False
             con.motivo = ""
@@ -1693,7 +1700,11 @@ class Agente:
             self.entorno = replace(self.entorno, sin_conexion={
                 k: min(v, ahora) for k, v in self.entorno.sin_conexion.items()})
             self.rafaga_hasta = max(self.rafaga_hasta, ahora + RAFAGA)
-            diario("el equipo vuelve de la suspensión")
+            # Windows manda dos eventos de reanudación seguidos (visto en real, a
+            # 1 s): lo de arriba no pasa nada por repetirlo, el diario sí.
+            if ahora - self.despertado >= DESPERTAR_DOBLE:
+                diario("el equipo vuelve de la suspensión")
+            self.despertado = ahora
         elif que == equipo.PIDE_AJUSTE:
             clave, valor = p.get("clave"), p.get("valor")
             if clave not in equipo.AJUSTES_PEDIBLES:

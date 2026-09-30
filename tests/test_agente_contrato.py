@@ -88,6 +88,10 @@ c("cerrada la ventana, un rato de gracia antes de volver", F.lock(RAIZ), {})
 F.vueltas(ag, 1, cada=agente.GRACIA)
 F.vueltas(ag, 1)
 c("pasada la gracia, vuelve a tomar el lock", F.lock(RAIZ).get("pid"), os.getpid())
+c("  y lo dice, en su diario y en el de la unidad (la otra mitad de «en pausa»)",
+  (sum("vuelvo a atenderla" in x for x in F.DIARIO),
+   "reanudado" in (RAIZ / ".prdrive" / "state" / "daemon.log").read_text(encoding="utf-8")),
+  (1, True))
 c("  y sigue con la pareja pendiente", F.pasadas(RAIZ)[-1].args[-1], "fotos")
 F.acabar(F.pasadas(RAIZ)[-1])
 F.vueltas(ag, 1)

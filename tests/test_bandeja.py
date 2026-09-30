@@ -292,6 +292,15 @@ ag._buzon(F.RELOJ[0])
 c("vuelta de la suspensión: el remoto sin conexión se sondea ya",
   ag.entorno.sin_conexion[(UNO, "nas")] <= F.RELOJ[0], True)
 c("  y el entorno se vuelve a leer", ag.entorno_leido, float("-inf"))
+# Windows manda dos eventos de reanudación seguidos: el diario, una línea.
+ag.pedir({"pide": equipo.PIDE_DESPERTAR})
+ag._buzon(F.RELOJ[0] + 1)
+c("  el segundo aviso de la misma vuelta no se apunta otra vez",
+  sum(x == "el equipo vuelve de la suspensión" for x in F.DIARIO), 1)
+ag.pedir({"pide": equipo.PIDE_DESPERTAR})
+ag._buzon(F.RELOJ[0] + 1 + agente.DESPERTAR_DOBLE)
+c("  otra suspensión más tarde, sí",
+  sum(x == "el equipo vuelve de la suspensión" for x in F.DIARIO), 2)
 
 # --- lo puro, suelto -----------------------------------------------------------------
 largo = bandeja.tip("x" * 300)

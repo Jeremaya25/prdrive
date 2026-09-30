@@ -445,6 +445,14 @@ Observaciones, ninguna bloquea:
    Windows manda dos eventos de reanudación. Inofensivo.
 5. A12: el diario no dice cuándo el agente reanuda tras cerrarse la ventana
    (solo «ventana abierta» y «en pausa»).
+
+   **Arreglados después, la 4 y la 5**, cada una con su test visto en rojo antes:
+   - la 4: el agente apunta una sola vuelta de la suspensión cuando llegan dos
+     en `agente.DESPERTAR_DOBLE` (10 s);
+   - la 5: al volver a atender dice «…: sin ventana de runsync; vuelvo a
+     atenderla» en su diario, y «reanudado» en el `daemon.log` de la unidad.
+
+   La 3 queda para otra PR.
 6. B1: un cambio de escala **en caliente** estira el icono y el menú, porque el
    proceso declara DPI de sistema y toma el de la sesión al empezar. Es lo
    normal en Windows; con la escala puesta al iniciar la sesión, se ve bien.
