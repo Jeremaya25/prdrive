@@ -49,10 +49,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import penwatch
-from common import APP_NAME, equipo, store, vestibulo
+from common import APP_NAME, equipo, model, pins, store, vestibulo
 from common.pins import Plataforma
 
-from . import InstallError, bundle_dir, pintar, platforms, runtime_bin, version
+from . import (InstallError, bundle_dir, pintar, platforms, rclone_bin, runtime_bin,
+               version)
 
 IS_WIN = os.name == "nt"
 
@@ -89,6 +90,7 @@ class Preparado:
     codigo: Path            # agente/<versión>/
     python: Path            # el intérprete sin consola del runtime
     sello: str              # el sello del runtime (de qué archivo salió)
+    rclone: Path | None = None  # rclone/<versión fijada>/rclone: el que pasa a sus hijos
 
 
 def copiar_codigo(origen: Path | None = None) -> Path:
@@ -176,11 +178,63 @@ def poner_runtime(progreso=None) -> tuple[Path, str]:
     return interprete, sello
 
 
+def conseguir_rclone(plat: Plataforma, progreso=None) -> Path:
+    """El rclone de la versión fijada para esta plataforma, comprobado (la caché
+    del instalador, el zip oficial dejado a mano o la descarga). Nunca uno
+    cualquiera del PATH: es el que el agente pasa en lugar del de cada unidad, y
+    tiene que ser uno del que se sabe qué es. Punto de indirección para los
+    tests."""
+    return rclone_bin.pinned_rclone(plat, progreso)
+
+
+def poner_rclone(progreso=None) -> Path:
+    """El rclone del agente en `rclone/<versión fijada>/`. Devuelve el binario.
+
+    Una carpeta por versión, como el Python: una pasada puede estar usando el
+    de ahora mientras se instala el siguiente. Se copia al lado y se pone con
+    un `os.replace`; uno que ya está, igual de tamaño, no se vuelve a copiar."""
+    plat = platforms.host()
+    if plat is None:
+        raise InstallError("El agente residente es para Windows y Linux, y este "
+                           "equipo no es ninguno de los dos.")
+    origen = conseguir_rclone(plat, progreso)
+    destino = equipo.dir_rclone() / pins.RCLONE_VERSION
+    binario = destino / model.rclone_name()
+    try:
+        if binario.is_file() and binario.stat().st_size == origen.stat().st_size:
+            return binario
+    except OSError:
+        pass
+    trabajo = destino.with_name(f".{destino.name}.nuevo-{os.getpid()}")
+    shutil.rmtree(trabajo, ignore_errors=True)
+    try:
+        trabajo.mkdir(parents=True)
+        shutil.copy2(origen, trabajo / model.rclone_name())
+        if not IS_WIN:
+            (trabajo / model.rclone_name()).chmod(0o755)
+        if destino.exists():
+            shutil.rmtree(destino)
+        os.replace(trabajo, destino)
+    except OSError as e:
+        shutil.rmtree(trabajo, ignore_errors=True)
+        raise InstallError(f"No he podido poner el rclone del agente en {destino}: "
+                           f"{e}") from e
+    return binario
+
+
 def preparar(progreso=None, origen: Path | None = None) -> Preparado:
-    """El paso «Instalación» del recorrido del equipo: código y Python."""
+    """El paso «Instalación» del recorrido del equipo: código, Python y rclone."""
     codigo = copiar_codigo(origen)
     python, sello = poner_runtime(progreso)
-    return Preparado(codigo, python, sello)
+    return Preparado(codigo, python, sello, poner_rclone(progreso))
+
+
+def _instalacion(prep: Preparado) -> dict:
+    """Lo que se apunta en `instalacion.json`: dónde está cada cosa."""
+    return {"version": version(), "codigo": str(prep.codigo), "python": str(prep.python),
+            "runtime": penwatch.stamp_id(prep.sello),
+            **({"rclone": str(prep.rclone)} if prep.rclone else {}),
+            "instalado": store.stamp()}
 
 
 # ---------------------------------------------------------------------------
@@ -656,8 +710,13 @@ def podar(prep: Preparado) -> None:
     Ya se recogerá en la siguiente instalación, como hace penwatch
     (`prune_runtimes()`)."""
     guardar_py = {_runtime_de(prep.python), _runtime_de(sys.executable)} - {None}
-    for base, guardar in ((equipo.dir_codigo(), {prep.codigo.name}),
-                          (equipo.dir_runtimes(), guardar_py)):
+    # El rclone de antes puede estar corriendo en una pasada que aún no acabó
+    # si se cortó; en Windows no se deja borrar, y queda para la próxima.
+    podables = [(equipo.dir_codigo(), {prep.codigo.name}),
+                (equipo.dir_runtimes(), guardar_py)]
+    if prep.rclone is not None:
+        podables.append((equipo.dir_rclone(), {prep.rclone.parent.name}))
+    for base, guardar in podables:
         try:
             hijos = list(base.iterdir())
         except OSError:
@@ -686,9 +745,7 @@ def activar(prep: Preparado, elegidas: dict[str, tuple[str, str]], espera: float
     con_raiz = raiz is not None or bool(equipo.leer_ajustes().raices)
     if quiere_menu(con_raiz):
         msgs.append(poner_menu(prep, con_raiz))
-    store.write_json(equipo.instalacion_json(), {
-        "version": version(), "codigo": str(prep.codigo), "python": str(prep.python),
-        "runtime": penwatch.stamp_id(prep.sello), "instalado": store.stamp()})
+    store.write_json(equipo.instalacion_json(), _instalacion(prep))
     podar(prep)
     if arrancar_ya:
         msgs.append(arrancar(prep))
@@ -709,7 +766,14 @@ def instalado_prep() -> Preparado | None:
             return None
     except OSError:
         return None
-    return Preparado(Path(codigo), Path(python), str(datos.get("runtime") or ""))
+    rclone = datos.get("rclone")
+    try:
+        if not isinstance(rclone, str) or not Path(rclone).is_file():
+            return None             # de antes de que el agente llevara el suyo
+    except OSError:
+        return None
+    return Preparado(Path(codigo), Path(python), str(datos.get("runtime") or ""),
+                     Path(rclone))
 
 
 def misma_version() -> bool:
@@ -799,9 +863,7 @@ def actualizar(progreso=None, origen: Path | None = None) -> list[str]:
     con_raiz = bool(equipo.leer_ajustes().raices)
     if quiere_menu(con_raiz):
         msgs.append(poner_menu(prep, con_raiz))
-    store.write_json(equipo.instalacion_json(), {
-        "version": version(), "codigo": str(prep.codigo), "python": str(prep.python),
-        "runtime": penwatch.stamp_id(prep.sello), "instalado": store.stamp()})
+    store.write_json(equipo.instalacion_json(), _instalacion(prep))
     msgs += actualizar_raices(origen)
     podar(prep)
     msgs.append(arrancar(prep))

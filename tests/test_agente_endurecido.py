@@ -416,6 +416,60 @@ c("al decir que sí, apunta la huella nueva y conserva su modo",
   (agente.huella(RH2), equipo.DAEMON))
 c("  y la vuelve a servir", F.lock(RH2).get("pid"), os.getpid())
 
+# --- el rclone es el del agente, nunca el de la unidad --------------------------------------
+base = agente.huella(RH)
+(app_h / "bin" / "x64").mkdir(parents=True)
+(app_h / "bin" / "x64" / "rclone").write_bytes(b"otro binario cualquiera")
+c("la huella no lee bin/: el rclone de la unidad no se ejecuta", agente.huella(RH), base)
+propio = F.RCLONE[0]
+os.environ[model.RCLONE_DEL_AGENTE] = str(propio)
+try:
+    c("sync.py usa el rclone que pasa el agente", model.rclone_path(), propio)
+    os.environ[model.RCLONE_DEL_AGENTE] = str(propio.with_name("no-esta"))
+    c("  y si no está, ninguno: nunca cae en el de la unidad", model.rclone_path(), None)
+    try:
+        model.rclone_binary()
+        dijo = ""
+    except SystemExit as e:
+        dijo = str(e)
+    c("  y lo dice al fallar", "ha pasado su rclone" in dijo, True)
+finally:
+    del os.environ[model.RCLONE_DEL_AGENTE]
+c("sin el agente, el de la unidad como siempre",
+  model.rclone_path() in (None, *(d / model.rclone_name() for d in
+                                  (model.BIN_DIR, *model.BIN_FALLBACK_DIRS))), True)
+
+# --- unidades de antes de la 0.5.0: no se atienden -----------------------------------------
+V = "6" * 32
+RV = F.unidad(V, parejas=("docs",))
+(RV / ".prdrive" / "VERSION").write_text("0.4.3\n", encoding="utf-8")
+equipo.guardar_ajustes(equipo.leer_ajustes().con_unidad(
+    equipo.Unidad(V, equipo.UI, "Vieja", codigo=agente.huella(RV) or "")))
+F.RAICES[:] = [RV]
+F.AVISOS.clear()
+ag = F.nuevo()
+F.vueltas(ag, 4)
+c("una unidad de la lista con la 0.4.3: ni lock, ni pasadas, ni su ventana",
+  (F.lock(RV), len(F.pasadas(RV)),
+   [x for x in F.LANZADOS if x.args[-1] == str(RV / ".prdrive" / "runsync.py")]),
+  ({}, 0, []))
+c("  lo avisa diciendo qué versión lleva",
+  [t for t, x in F.AVISOS if "0.4.3" in x and "actualices" in x],
+  ["Vieja: su programa es anterior a la 0.5.0"])
+c("  y lo dice como motivo", "0.4.3" in ag.conexiones[V].motivo, True)
+from ui import bandeja  # noqa: E402
+menu = [e for e in bandeja.vista(ag.resumen()).menu if "Vieja" in e.texto]
+c("  la bandeja lo dice, sin ofrecer abrirla",
+  [(e.texto, e.activa) for e in menu], [("Vieja: actualízala para que la atienda", False)])
+W = "2" * 31 + "9"
+RW = F.unidad(W, parejas=("docs",))
+(RW / ".prdrive" / "VERSION").unlink()
+F.RAICES[:] = [RW]
+antes = [x for x in F.LANZADOS if "pregunta" in x.args]
+F.vueltas(ag, 4)
+c("una desconocida sin VERSION no se pregunta: primero hay que actualizarla",
+  [x for x in F.LANZADOS if "pregunta" in x.args], antes)
+
 T = "1" * 32
 RT = F.unidad(T, parejas=("docs",))
 equipo.guardar_ajustes(equipo.leer_ajustes().con_unidad(equipo.Unidad(T, equipo.DAEMON)))

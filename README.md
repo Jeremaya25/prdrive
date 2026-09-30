@@ -911,9 +911,15 @@ agente»**. El diseño completo está en
   sincroniza en segundo plano, `sync` hace una pasada al enchufarla y `nada`, nada.
   Las parejas y el intervalo siguen siendo **los del servicio de la unidad**, los
   que se eligen en su ventana.
+- **Solo atiende unidades con la 0.5.0 o posterior.** Sincroniza con **su propio
+  rclone**, el fijado, que baja al instalarse, y no con el que lleva la unidad;
+  las unidades de antes no saben usarlo, así que el agente no las atiende (ni
+  pregunta por ellas) hasta que las actualices, y lo dice.
+- **Recuerda el código de cada unidad que atiendes.** Si al enchufarla trae otro
+  (la has actualizado, o no es tu unidad aunque lleve su id), no ejecuta nada
+  suyo y vuelve a preguntar, diciendo que su código ha cambiado.
 - **Hace de servicio de la unidad con sus mismos ficheros** (`daemon.lock.json`,
-  `daemon.stop`, `ui.lock.json`), así que funciona con unidades de código viejo.
-  **El único cambio que se nota: abrir la ventana de la unidad ya no apaga el
+  `daemon.stop`, `ui.lock.json`). **El único cambio que se nota: abrir la ventana de la unidad ya no apaga el
   servicio para siempre, lo pausa mientras está abierta.** Si desde la ventana
   pulsas «Iniciar servicio» y el agente la sincroniza en segundo plano, no se
   arranca otro servicio: se guardan las parejas y el intervalo, y el agente

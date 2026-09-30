@@ -154,6 +154,13 @@ COLA_SALIDA = 64 * 1024         # lo que se lee de la salida de una pasada
 MIRAR_VERSION = 6 * 3600.0      # si hay versión nueva (`update.check` guarda 24 h)
 
 OK, FALLO, RED, SALTADA = pl.OK, pl.FALLO, pl.RED, pl.SALTADA
+
+# La primera versión cuyo `sync.py` usa el rclone que le pasa el agente
+# (`model.RCLONE_DEL_AGENTE`). Las de antes ejecutarían el de la unidad, que la
+# huella no cubre: el agente no las atiende hasta que se actualicen.
+VERSION_MINIMA = "0.5.0"
+SIN_RCLONE = ("no encuentro el rclone del agente; sin él no ejecuto nada de las "
+              "unidades. Reinstala el agente o actualízalo.")
 TEXTO_RESULTADO = {OK: "bien", FALLO: "FALLÓ", RED: "FALLÓ por la red",
                    SALTADA: "saltada: pide --resync"}
 
@@ -221,12 +228,31 @@ def python(ventana: bool = False) -> str:
     return exe
 
 
+def rclone_propio() -> Path | None:
+    """El rclone del agente (`instalacion.json`, lo pone el instalador en
+    `rclone/<versión fijada>/`), o None si no está. Es el que se pasa a las
+    pasadas y a las ventanas, y con el que se sondea un remoto: el de una
+    unidad no se ejecuta nunca. De módulo para que los tests lo sustituyan."""
+    ruta = equipo.leer_instalacion().get("rclone")
+    if not isinstance(ruta, str) or not ruta:
+        return None
+    try:
+        return Path(ruta) if Path(ruta).is_file() else None
+    except OSError:
+        return None
+
+
 def _opciones_hijo(cwd: Path, separado: bool = False) -> dict:
     # Los `.pyc` de sus hijos, en la carpeta del agente: los `__pycache__` de
     # una raíz no entran en su huella (`huella()`), así que Python no debe
     # leerlos de ahí. Y de paso no se escribe en la unidad.
+    # Y su rclone, siempre: sin él, una ruta que no existe, para que el
+    # `sync.py` de la raíz falle diciéndolo en vez de usar el de la unidad.
+    rclone = rclone_propio() or equipo.dir_rclone() / "falta" / model.rclone_name()
     kwargs: dict = {"stdin": subprocess.DEVNULL, "cwd": str(cwd), "close_fds": True,
-                    "env": {**os.environ, "PYTHONPYCACHEPREFIX": str(equipo.DIR / "pycache")}}
+                    "env": {**os.environ,
+                            "PYTHONPYCACHEPREFIX": str(equipo.DIR / "pycache"),
+                            model.RCLONE_DEL_AGENTE: str(rclone)}}
     if IS_WIN:
         kwargs["creationflags"] = penwatch.CREATE_NO_WINDOW | (
             penwatch.CREATE_NEW_PROCESS_GROUP if separado else 0)
@@ -265,9 +291,11 @@ def huella(raiz: Path) -> str | None:
     iconos. Todo lo demás cuenta, también lo desconocido: con la carpeta de la
     unidad en `sys.path`, un `json.py` suelto se importaría antes que el de
     verdad. Los `__pycache__` no, porque los hijos del agente los buscan en su
-    carpeta (`PYTHONPYCACHEPREFIX`, `_opciones_hijo()`). Y de `bin/`, los rclone
-    que correrían en este equipo (`model.carpetas_bin()`). `rclone.conf` entra:
-    la opción `ssh` de un remoto sftp es una orden."""
+    carpeta (`PYTHONPYCACHEPREFIX`, `_opciones_hijo()`). `bin/` tampoco: el
+    agente no ejecuta el rclone de la unidad, pasa el suyo
+    (`model.RCLONE_DEL_AGENTE`), y por eso la huella cuesta milisegundos y no
+    lo que tarda en leerse un binario de 60 MB. `rclone.conf` entra: la opción
+    `ssh` de un remoto sftp es una orden."""
     base = app(raiz)
     rutas: list[Path] = []
     try:
@@ -282,10 +310,6 @@ def huella(raiz: Path) -> str | None:
                 if Path(f).suffix.lower() in HUELLA_SIN_EXTENSIONES:
                     continue
                 rutas.append(rel / f)
-        for carpeta in model.carpetas_bin(base):
-            rclone = carpeta / model.rclone_name()
-            if rclone.is_file():
-                rutas.append(rclone.relative_to(base))
         h = hashlib.sha256()
         for rel in sorted(set(rutas), key=lambda r: r.as_posix()):
             ruta = base / rel
@@ -296,6 +320,16 @@ def huella(raiz: Path) -> str | None:
     except (OSError, ValueError):
         return None
     return h.hexdigest()
+
+
+def version_vieja(raiz: Path) -> str | None:
+    """La versión de esa raíz si es anterior a `VERSION_MINIMA` («» si no se
+    sabe, que también es vieja), o None si vale. De una unidad de la lista la
+    `VERSION` es de fiar: entra en la huella que se aceptó."""
+    version = update.installed_version(app(raiz))
+    if version and not update.is_newer(VERSION_MINIMA, version):
+        return None
+    return version
 
 
 def estado_de(raiz: Path) -> Path:
@@ -356,16 +390,11 @@ def orden_sonda(raiz: Path, remoto: str) -> list[str] | None:
     `lsd` del remoto con `catalog.NET_FLAGS`: lo mínimo que exige conectar y
     entrar, y con los plazos cortos para que un remoto caído no tenga la cola
     parada."""
-    carpeta = app(raiz)
-    for bin_dir in model.carpetas_bin(carpeta):
-        binario = bin_dir / model.rclone_name()
-        try:
-            if binario.is_file():
-                return [model.ejecutable(binario), "--config", str(carpeta / "rclone.conf"),
-                        *catalog.NET_FLAGS, "lsd", f"{remoto}:", "--max-depth", "1"]
-        except OSError:
-            continue
-    return None
+    binario = rclone_propio()
+    if binario is None:
+        return None
+    return [str(binario), "--config", str(app(raiz) / "rclone.conf"),
+            *catalog.NET_FLAGS, "lsd", f"{remoto}:", "--max-depth", "1"]
 
 
 def en_la_raiz(raiz: Path, ruta: Path) -> Path | None:
@@ -524,6 +553,9 @@ class Conexion:
     # hasta que se vuelva a decir que sí.
     huella: str | None = None
     cambiada: bool = False
+    # Su programa es anterior a `VERSION_MINIMA` (y esa es su versión, o «»):
+    # ejecutaría el rclone de la unidad, así que no se atiende ni se abre.
+    vieja: str | None = None
 
 
 @dataclass
@@ -584,6 +616,7 @@ class Agente:
     bloqueos: dict[str, Bloqueo] = field(default_factory=dict)
     fantasmas: set[str] = field(default_factory=set)
     recorridos: int = 0
+    sin_rclone_avisado: bool = False
     # Lo que pide la bandeja, que corre en otro hilo: los mismos diccionarios
     # que el buzón, sin pasar por disco. Y la bandeja misma, si la hay
     # (`poner(vista)`), para enseñarle el estado.
@@ -744,6 +777,17 @@ class Agente:
         # enchufar: se sincroniza enseguida, y el modo `sync` vuelve a tocar.
         for clave in [k for k in self.marcas if k[0] == uid]:
             del self.marcas[clave]
+        con.vieja = version_vieja(raiz)
+        if con.vieja is not None:
+            # Antes de preguntar y antes de la huella: no hay nada que decidir
+            # hasta que se actualice.
+            avisar(f"{nombre}: su programa es anterior a la {VERSION_MINIMA}",
+                   f"Lleva la {con.vieja or 'versión desconocida'}. El agente no la "
+                   f"atiende hasta que la actualices con el instalador («Actualizar»).",
+                   True)
+            diario(f"{nombre}: versión {con.vieja or 'desconocida'}, anterior a la "
+                   f"{VERSION_MINIMA}; no se atiende")
+            return
         if unidad is None:
             self._preguntar(con, ahora)
             return
@@ -913,6 +957,11 @@ class Agente:
         """La ventana de runsync de esa raíz, con el Python del agente y fuera de
         ella. Nuestro servicio no estorba: la ventana lo pausa al abrirse
         (`daemon.stop`). Otra ventana sí, y runsync ya se negaría."""
+        if con.vieja is not None or rclone_propio() is None:
+            diario(f"{con.nombre}: no abro su ventana: "
+                   + (self._motivo_sin_servicio(con) if con.vieja is not None
+                      else SIN_RCLONE))
+            return
         ventana = penwatch._vivo_aqui(con.raiz, penwatch.UI_LOCK_REL)
         if ventana is not None:
             diario(f"{con.nombre}: su ventana ya está abierta (pid {ventana.get('pid')})")
@@ -933,7 +982,7 @@ class Agente:
 
     def _sirve(self, con: Conexion) -> bool:
         unidad = self.ajustes.unidades.get(con.id)
-        return unidad is not None and not con.cambiada \
+        return unidad is not None and not con.cambiada and con.vieja is None \
             and unidad.modo in (equipo.DAEMON, equipo.SYNC)
 
     def _cargar_servicio(self, con: Conexion) -> None:
@@ -981,6 +1030,14 @@ class Agente:
             if not ocupada:                 # el lock se suelta al acabar la pareja
                 self._soltar(con)
             con.motivo = self._motivo_sin_servicio(con)
+            return
+        if rclone_propio() is None:
+            if not ocupada:
+                self._soltar(con)
+            con.motivo = SIN_RCLONE
+            if not self.sin_rclone_avisado:
+                self.sin_rclone_avisado = True
+                avisar(f"{APP_NAME}: el agente no tiene su rclone", SIN_RCLONE, True)
             return
         stop = estado_de(con.raiz) / "daemon.stop"
         try:
@@ -1030,6 +1087,9 @@ class Agente:
             return "preguntando si atenderla"
         if con.respuesta == pl.AHORA_NO:
             return "«Ahora no» en esta conexión"
+        if con.vieja is not None:
+            return (f"su programa es de la {con.vieja or 'versión desconocida'}: el agente "
+                    f"atiende desde la {VERSION_MINIMA}")
         if con.cambiada:
             return "su código ha cambiado desde que se atendió"
         unidad = self.ajustes.unidades.get(con.id)
@@ -1538,7 +1598,7 @@ class Agente:
         (`equipo.PIDE_SERVICIO`). El de una unidad que no está en la lista ni se
         mira: de ella solo se lee su id y su nombre."""
         for con in list(self.conexiones.values()):
-            if con.id not in self.ajustes.unidades or con.cambiada:
+            if con.id not in self.ajustes.unidades or con.cambiada or con.vieja is not None:
                 continue
             for p in equipo.recoger(estado_de(con.raiz) / equipo.BUZON_SERVICIO):
                 if p.get("pide") not in equipo.PIDE_SERVICIO:
@@ -1674,7 +1734,7 @@ class Agente:
         bloqueada se desbloquea antes, y su ventana sale al verla abierta."""
         unidad = self.ajustes.unidades.get(uid)
         con = self.conexiones.get(uid)
-        if unidad is None or (con is not None and con.cambiada):
+        if unidad is None or (con is not None and (con.cambiada or con.vieja is not None)):
             diario(f"abrir {uid[:8]!r}: no está en la lista, o su código ha cambiado; "
                    f"no se ejecuta nada suyo")
         elif con is not None:
@@ -1711,8 +1771,10 @@ class Agente:
                              "modo": unidad.modo if unidad else None,
                              "atendida": con.lock is not None,
                              "motivo": con.motivo,
-                             "en_lista": unidad is not None and not con.cambiada,
+                             "en_lista": unidad is not None and not con.cambiada
+                             and con.vieja is None,
                              "cambiada": con.cambiada,
+                             "vieja": con.vieja,
                              "ahora_no": con.respuesta == pl.AHORA_NO,
                              "preguntando": con.pregunta is not None,
                              "error": con.error,

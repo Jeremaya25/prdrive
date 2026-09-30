@@ -23,7 +23,8 @@ from pathlib import Path
 from _harness import REPO, Checks, en_exec, tmpdir
 
 import penwatch
-from common import equipo, store
+from common import equipo, pins, store
+from common import model as agente_model
 from install import agente as ia
 from install import platforms, runtime_bin, version
 
@@ -61,6 +62,11 @@ def archivo_runtime() -> Path:
 ARCHIVO = archivo_runtime()
 pedidos_runtime = []
 ia.conseguir_runtime = lambda plat, progreso=None: pedidos_runtime.append(plat) or ARCHIVO
+# El rclone fijado, sin red: un binario de mentira donde lo dejaría la caché.
+RCLONE_FIJADO = tmpdir("prdrive-rclone-") / agente_model.rclone_name()
+RCLONE_FIJADO.write_bytes(b"rclone de mentira")
+pedidos_rclone = []
+ia.conseguir_rclone = lambda plat, progreso=None: pedidos_rclone.append(plat) or RCLONE_FIJADO
 
 # --- preparar: código y Python ---------------------------------------------------
 prep = ia.preparar()
@@ -82,6 +88,15 @@ antes = prep.python.stat().st_mtime_ns
 otra = ia.preparar()
 c("prepararlo otra vez no vuelve a extraer el mismo Python",
   (otra.python, otra.python.stat().st_mtime_ns), (prep.python, antes))
+c("el rclone del agente es el fijado, en rclone/<versión fijada>/",
+  (prep.rclone, prep.rclone.read_bytes()),
+  (equipo.dir_rclone() / pins.RCLONE_VERSION / agente_model.rclone_name(),
+   b"rclone de mentira"))
+if os.name != "nt":
+    c("  y se puede ejecutar", os.access(prep.rclone, os.X_OK), True)
+c("  pedido para la plataforma de este equipo", pedidos_rclone[:1], [plat])
+c("  y apuntado en instalacion.json al activar (instalado_prep() lo lee)",
+  ia._instalacion(prep).get("rclone"), str(prep.rclone))
 c("  ni deja carpetas de trabajo",
   [p.name for p in equipo.dir_codigo().iterdir()] +
   [p.name for p in equipo.dir_runtimes().iterdir()],

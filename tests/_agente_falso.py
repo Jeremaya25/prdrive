@@ -47,6 +47,9 @@ ABIERTOS: list[Path] = []           # contenedores que se han pedido abrir
 RAICES: list[Path] = []             # lo que «encuentra» el recorrido
 RELOJ = [1_000_000.0]
 PANTALLA = [True]
+RCLONE: list = [None]               # el rclone del agente; [None] = sin él
+VERSION = (Path(__file__).resolve().parent.parent / "VERSION").read_text(
+    encoding="utf-8").strip()       # la de las unidades de mentira: la de este código
 
 
 def preparar() -> Path:
@@ -64,6 +67,12 @@ def preparar() -> Path:
     # y lo que iría en un hilo corre en el sitio.
     agente.buscar_version = lambda: None
     agente.hilo = lambda funcion: funcion()
+    # Su rclone: el que pasa a sus hijos y con el que sondea (no hace nada).
+    rclone = equipo.DIR / "rclone" / "v0" / agente.model.rclone_name()
+    rclone.parent.mkdir(parents=True, exist_ok=True)
+    rclone.write_text("", encoding="utf-8")
+    RCLONE[:] = [rclone]
+    agente.rclone_propio = lambda: RCLONE[0]
     return equipo.DIR
 
 
@@ -82,6 +91,7 @@ def unidad(uid: str, parejas=("docs", "fotos"), nombre: str | None = None,
     app = raiz / penwatch.APP_SUBDIR
     (app / "state").mkdir(parents=True)
     (app / "PRDRIVE").write_text(f"id={uid}\n", encoding="utf-8")
+    (app / "VERSION").write_text(VERSION + "\n", encoding="utf-8")
     for nombre_py in ("runsync.py", "sync.py"):
         (app / nombre_py).write_text("# de mentira\n", encoding="utf-8")
     pares = "".join(f'[[pair]]\nname = "{p}"\nlocal = "sync-data/{p}"\n'

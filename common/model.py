@@ -234,8 +234,31 @@ def rclone_name() -> str:
     return "rclone.exe" if os.name == "nt" else "rclone"
 
 
+# El agente residente (`agente.py`) pasa su propio rclone, comprobado contra la
+# versión fijada al instalarlo, en esta variable: así no ejecuta el binario que
+# traiga la unidad, que es lo único suyo que la huella del código no cubre
+# barato (`agente.huella()`). Llega sola a todo lo que cuelga del agente: la
+# pasada, la ventana que abre y lo que esa ventana lance.
+RCLONE_DEL_AGENTE = "PRDRIVE_RCLONE"
+
+
+def rclone_del_agente() -> Path | None:
+    """El rclone que ha pasado el agente, o None si no ha pasado ninguno."""
+    ruta = os.environ.get(RCLONE_DEL_AGENTE, "").strip()
+    return Path(ruta) if ruta else None
+
+
 def rclone_path() -> Path | None:
-    """El rclone del dispositivo, o None si no hay ninguno utilizable."""
+    """El rclone del dispositivo, o None si no hay ninguno utilizable.
+
+    Si el agente ha pasado el suyo, ese y solo ese: si falta, None. Caer en el
+    de la unidad sería justo lo que el agente quiere evitar."""
+    del_agente = rclone_del_agente()
+    if del_agente is not None:
+        try:
+            return del_agente if del_agente.is_file() else None
+        except OSError:
+            return None
     for carpeta in (BIN_DIR, *BIN_FALLBACK_DIRS):
         binary = carpeta / rclone_name()
         try:
@@ -249,6 +272,11 @@ def rclone_path() -> Path | None:
 def rclone_binary() -> str:
     """Ruta ejecutable al binario portable de rclone (apaño para exFAT sin +x)."""
     binary = rclone_path()
+    if binary is None and rclone_del_agente() is not None:
+        sys.exit(
+            f"El agente de este equipo ha pasado su rclone ({rclone_del_agente()}) "
+            f"y no está ahí. Vuelve a instalar el agente o actualízalo."
+        )
     if binary is None:
         # Lo normal es un dispositivo que no se preparó para este equipo: la cura
         # es el instalador, que baja el rclone fijado y lo comprueba, no que

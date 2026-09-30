@@ -273,10 +273,16 @@ Cuando aparece una unidad prdrive cuyo id no está en la lista:
   en los ajustes.
 - **El id no es una credencial** (tras la revisión del #54): lo lleva escrito la
   unidad y se copia. Así que «Atender» apunta también la huella de su código
-  (`agente.huella()`: todo `.prdrive/` menos lo que cambia con el uso, y su
-  rclone), y una unidad de la lista que se conecta con otra huella se trata
+  (`agente.huella()`: todo `.prdrive/` menos lo que cambia con el uso y
+  `bin/`), y una unidad de la lista que se conecta con otra huella se trata
   como nueva, con la pregunta «su código ha cambiado». Tras actualizar una
   unidad se pregunta una vez más: no hay firmas de las que fiarse.
+- **El rclone es el del agente**, nunca el de la unidad: el instalador pone el
+  rclone fijado en la carpeta del agente y el agente se lo pasa a todo lo que
+  lanza de una raíz (`PRDRIVE_RCLONE`, que `model.rclone_path()` obedece). Así
+  la huella no tiene que leer un binario de 60 MB en cada conexión. Una unidad
+  anterior a la **0.5.0** no sabe de esa variable y usaría el suyo: el agente
+  no la atiende, ni pregunta por ella, hasta que se actualice, y lo dice.
 - **Quién lleva el reloj: el agente, no la ventana.** El plazo es un dato del
   planificador. La ventana solo enseña la cuenta atrás y se cierra sola al
   llegar a cero. Si contesta tarde, la respuesta se ignora; para eso está la

@@ -113,6 +113,12 @@ def dir_runtimes() -> Path:
     return DIR / "runtime"
 
 
+def dir_rclone() -> Path:
+    """`rclone/<versión fijada>/`: el rclone del agente, el que pasa a las
+    pasadas y a las ventanas que lanza en lugar del de cada unidad."""
+    return DIR / "rclone"
+
+
 # ---------------------------------------------------------------------------
 # agente.json
 # ---------------------------------------------------------------------------

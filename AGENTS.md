@@ -1257,7 +1257,8 @@ whatever you build that only a real host can prove.
 - **Lives outside every root**, in `equipo.DIR` (`%LOCALAPPDATA%\prdrive\`,
   `~/.local/share/prdrive/`): `agente/<version>/` (agente.py, penwatch.py,
   common/, ui/ — never install/), `runtime/<stamp_id>/` (its own
-  python-build-standalone, extracted by `runtime_bin.extract()`), `agente.json`
+  python-build-standalone, extracted by `runtime_bin.extract()`),
+  `rclone/<pinned version>/` (its own rclone, below), `agente.json`
   (WHAT: drives, modes, `espera_unidad_nueva`, moderation), `instalacion.json`
   (WHERE: code, python), `agente.lock.json`, `agente.pide`, `estado.json`,
   `agente.log`. **No secret there.** `tests/_harness.py` points `equipo.DIR` at
@@ -1384,8 +1385,8 @@ whatever you build that only a real host can prove.
     alive (`Agente.heredada`).
   - **The id is not a credential**: «Atender» records `agente.huella(raiz)` —
     sha256 of everything in `.prdrive/` except what changes with use (`state/`,
-    `logs/`, `filters/`, `keys/`, `runtime/`, `sync_config.toml`, the control
-    file, `.ico`, `__pycache__`) plus this host's rclone — in
+    `logs/`, `filters/`, `keys/`, `runtime/`, `bin/`, `sync_config.toml`, the
+    control file, `.ico`, `__pycache__`), a few MB, milliseconds — in
     `equipo.Unidad.codigo`. Another hash on connect = `Conexion.cambiada`: not
     served, no window, the tray offers «…, código cambiado · Atender…», and
     `agente.py pregunta --cambiada` asks again; the yes keeps the mode. An empty
@@ -1395,6 +1396,24 @@ whatever you build that only a real host can prove.
     once. **Not covered:** rclone flags in `sync_config.toml` (e.g.
     `--password-command`), which the window edits and the hash cannot pin, and
     the travelling VeraCrypt the vestibule of a listed drive opens.
+  - **The agent never runs a drive's rclone.** `install/agente.poner_rclone()`
+    puts the pinned rclone (`conseguir_rclone()` → `rclone_bin.pinned_rclone()`:
+    cache, hand-placed official zip or download, never the PATH) in
+    `equipo.dir_rclone()/<pins.RCLONE_VERSION>/`, `instalacion.json` records it,
+    `podar()` prunes old ones and `instalado_prep()` needs it. The agent passes
+    it to every child in `model.RCLONE_DEL_AGENTE` (`PRDRIVE_RCLONE`; a missing
+    path when it has none, so the child fails instead of falling back), and
+    `model.rclone_path()` returns that and only that when set — `sync.py`,
+    `catalog.run()` and the window it opens all go through it. The probe runs
+    `agente.rclone_propio()` directly. With no rclone of its own the agent
+    launches nothing from any root (`SIN_RCLONE`, said once). **Drives older
+    than `agente.VERSION_MINIMA` (0.5.0)** would ignore the variable, so they
+    are not served, not asked about, not opened (`Conexion.vieja`,
+    `version_vieja()` — their `VERSION` is inside the accepted fingerprint),
+    notified once per connection, and the tray shows «…: actualízala para que
+    la atienda», greyed out. A drive synced by the agent and by its own window
+    uses two rclones; with both on the same prdrive version they are the same
+    pin.
 - **Dependency rules:** the agent imports penwatch, never the reverse; penwatch
   still imports nothing of the project (`test_install_agente.py` walks its AST).
   `agente.py` is in `build_installer.DATOS_FICHEROS` but NOT in
@@ -1967,7 +1986,8 @@ keeps the target's existing header.
   `bandeja_windows.Api`, `agente.hilo()` / `buscar_version()` / `ejecutar()` /
   `cache_version()`, `runsync.pedir_reanudar()` / `agente_sirve()`,
   `watch.pedir_al_agente()`, `agente.arrancar_agente()`, `tk_equipo.escritorio()`,
-  `install.pintar_iconos`, `install.agente.matar_arbol()`,
+  `install.pintar_iconos`, `install.agente.matar_arbol()` / `conseguir_rclone()`,
+  `agente.rclone_propio()`,
   the Linux tray's `conectar` / `conectar_sistema`, and `equipo.DIR`. Keep new
   ones in that shape.
 

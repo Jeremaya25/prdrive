@@ -189,6 +189,7 @@ def montar() -> None:
     app = PUNTO / penwatch.APP_SUBDIR
     (app / "state").mkdir(parents=True, exist_ok=True)
     (app / "PRDRIVE").write_text(f"id={UID}\ntipo=equipo\n", encoding="utf-8")
+    (app / "VERSION").write_text(F.VERSION + "\n", encoding="utf-8")
     for py in ("runsync.py", "sync.py"):
         (app / py).write_text("# de mentira\n", encoding="utf-8")
     (app / "sync_config.toml").write_text(

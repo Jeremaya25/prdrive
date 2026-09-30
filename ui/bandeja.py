@@ -214,7 +214,12 @@ def _unidades(resumen: Mapping[str, Any]) -> list[Entrada]:
         if u.get("del_equipo"):
             continue
         uid, nombre = u.get("id", ""), u.get("nombre")
-        if u.get("en_lista"):
+        if u.get("vieja") is not None:
+            # Anterior a la versión mínima del agente: no hay nada que pedirle
+            # hasta que se actualice, y se dice en el propio menú.
+            entradas.append(Entrada(f"{nombre}: actualízala para que la atienda",
+                                    activa=False))
+        elif u.get("en_lista"):
             entradas.append(Entrada(f"Abrir {nombre}", _pide(equipo.PIDE_ABRIR, id=uid)))
         elif u.get("ahora_no") or u.get("preguntando"):
             # Con otro código que el aceptado (`agente.huella()`), se dice: el

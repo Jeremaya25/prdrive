@@ -162,7 +162,8 @@ def _binary() -> str:
     usuario en las narices en vez de decirle qué falta."""
     if model.rclone_path() is None:
         raise ConfigError(
-            f"No encuentro el binario de rclone en: {model.BIN_DIR / model.rclone_name()}\n"
+            f"No encuentro el binario de rclone en: "
+            f"{model.rclone_del_agente() or model.BIN_DIR / model.rclone_name()}\n"
             f"Sin él no se puede hablar con el catálogo.")
     return model.rclone_binary()
 

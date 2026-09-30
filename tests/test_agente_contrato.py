@@ -198,23 +198,20 @@ F.vueltas(ag, 1)
 c("el segundo fallo seguido no vuelve a avisar", len(F.AVISOS), 1)
 
 C = "c" * 32
-ag, RC = fresco(C, parejas=("docs",))
 RED = "Failed to create file system: couldn't connect SSH: dial tcp: lookup nas: no such host\n"
+# Sin el rclone del agente no se ejecuta nada de la unidad: ni su sync.py, que
+# usaría el suyo, ni una sonda.
+agente.rclone_propio = lambda: None
 F.AVISOS.clear()
-F.acabar(F.pasadas(RC)[-1], 1, RED)
-F.vueltas(ag, 5)
-sondas = [x for x in F.LANZADOS if "lsd" in x.args]
-c("sin rclone con el que sondear no hay sonda", len(sondas), 0)
-c("  y el fallo cuenta como de la pareja: no se relanza en cada vuelta",
-  len(F.pasadas(RC)), 1)
-c("  y avisa como tal", [a[0] for a in F.AVISOS], ["U: falla docs"])
+ag, RC = fresco(C, parejas=("docs",))
+F.vueltas(ag, 3)
+c("sin el rclone del agente no se lanza nada de la unidad",
+  (len(F.pasadas(RC)), [x for x in F.LANZADOS if "lsd" in x.args]), (0, []))
+c("  y lo dice, una vez", ([a[0] for a in F.AVISOS], ag.conexiones[C].motivo),
+  (["prdrive: el agente no tiene su rclone"], agente.SIN_RCLONE))
+agente.rclone_propio = lambda: F.RCLONE[0]
 
 ag, RC = fresco(C, parejas=("docs",))
-(RC / ".prdrive/bin").mkdir()
-BIN = RC / ".prdrive/bin" / agente.model.carpetas_bin(RC / ".prdrive")[0].name
-BIN.mkdir(exist_ok=True)
-(BIN / agente.model.rclone_name()).write_text("", encoding="utf-8")
-(BIN / agente.model.rclone_name()).chmod(0o755)
 F.AVISOS.clear()
 F.acabar(F.pasadas(RC)[-1], 1, RED)
 F.vueltas(ag, 1)
@@ -223,6 +220,10 @@ c("con rclone, un fallo de red no avisa como fallo de la pareja", F.AVISOS, [])
 c("  y lanza enseguida una sonda del remoto, no la pareja otra vez",
   (len(sondas), len(F.pasadas(RC))), (1, 1))
 c("la sonda es un lsd del remoto de esa pareja", len(sondas), 1)
+c("  con el rclone del agente, nunca el de la unidad", sondas[0].args[0], str(F.RCLONE[0]))
+c("  y la pasada lleva el del agente para su sync.py",
+  F.pasadas(RC)[-1].kwargs.get("env", {}).get(agente.model.RCLONE_DEL_AGENTE),
+  str(F.RCLONE[0]))
 c("  con el rclone.conf de la unidad", sondas[0].args[1:3],
   ["--config", str(RC / ".prdrive" / "rclone.conf")])
 c("  y el remoto", sondas[0].args[-3:], ["nas:", "--max-depth", "1"])
