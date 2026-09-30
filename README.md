@@ -1051,9 +1051,17 @@ almacén de Obsidian en `P:\obsidian` no puede amanecer en `Q:`) y en `~/PRDRIVE
 en Linux. Dentro van el programa, la clave, el estado y las parejas; fuera, solo
 el contenedor y una marca con su id.
 
-- **Hace falta VeraCrypt instalado** en el equipo. El instalador no lo descarga
-  ni lo instala; sin él, el paso lo dice y solo ofrece «Sin cifrar». En Linux,
-  VeraCrypt pide además la contraseña de administrador para montar.
+- **En Windows no hace falta tenerlo instalado.** Sin VeraCrypt, el paso ofrece
+  **Descargar VeraCrypt Portable** —el mismo paquete oficial, comprobado, que
+  usan las unidades— y el agente se lleva una copia a su carpeta
+  (`veracrypt/<versión>/`), que vuelve a comprobar contra su sello antes de cada
+  uso. Sin instalar nada, pero **con el aviso de administrador (UAC) cada vez que
+  abre o cierra la raíz**: al crearla, al desbloquearla —también al iniciar sesión
+  si se pide la contraseña— y al bloquearla. VeraCrypt no puede cargar su driver
+  sin ser administrador; instalado, lo carga una vez y ya no pregunta. Si hay uno
+  instalado se usa ese, y si lo instalas después el agente pasa a usarlo solo.
+  En Linux hace falta VeraCrypt instalado, que pide además la contraseña de
+  administrador para montar.
 - **La contraseña nunca pasa por prdrive.** El asistente la usa una vez, para
   crear y montar, y deja el contenedor abierto. Desde ahí lo abre el agente con
   la ventana de VeraCrypt: al iniciar sesión (una vez; si cancelas, hasta que

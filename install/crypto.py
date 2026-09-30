@@ -52,7 +52,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from common import model
+from common import model, store
 
 from . import CREATE_NO_WINDOW, DEVICE_LABEL, IS_WIN, InstallError
 from . import veracrypt_bin
@@ -861,49 +861,9 @@ def _procesos(nombre: str) -> set[int]:
     """Los pid de los procesos vivos cuyo ejecutable se llama `nombre`.
 
     Solo Windows. Indirección de módulo, como `_volumenes_con_control()`: los
-    tests la sustituyen. Va por la instantánea de Toolhelp, que da el nombre sin
-    abrir ningún proceso, y no por WMI: en las pruebas en G:, la consulta a WMI
-    no enseñaba la copia elevada de VeraCrypt y `Get-Process` sí. Si no se puede
-    sacar la instantánea devuelve un conjunto vacío: no poder mirar no puede
-    dejar a nadie esperando."""
-    import ctypes
-    from ctypes import wintypes
-
-    class PROCESSENTRY32W(ctypes.Structure):
-        _fields_ = [("dwSize", wintypes.DWORD),
-                    ("cntUsage", wintypes.DWORD),
-                    ("th32ProcessID", wintypes.DWORD),
-                    ("th32DefaultHeapID", ctypes.c_size_t),
-                    ("th32ModuleID", wintypes.DWORD),
-                    ("cntThreads", wintypes.DWORD),
-                    ("th32ParentProcessID", wintypes.DWORD),
-                    ("pcPriClassBase", ctypes.c_long),
-                    ("dwFlags", wintypes.DWORD),
-                    ("szExeFile", wintypes.WCHAR * 260)]
-
-    TH32CS_SNAPPROCESS = 0x00000002
-    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
-    k32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
-    k32.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
-    k32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
-    k32.CloseHandle.argtypes = [wintypes.HANDLE]
-
-    foto = k32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
-    if not foto or foto == wintypes.HANDLE(-1).value:
-        return set()
-    vivos = set()
-    try:
-        entrada = PROCESSENTRY32W()
-        entrada.dwSize = ctypes.sizeof(PROCESSENTRY32W)
-        seguir = k32.Process32FirstW(foto, ctypes.byref(entrada))
-        while seguir:
-            if entrada.szExeFile.lower() == nombre.lower():
-                vivos.add(entrada.th32ProcessID)
-            seguir = k32.Process32NextW(foto, ctypes.byref(entrada))
-    finally:
-        k32.CloseHandle(foto)
-    return vivos
+    tests la sustituyen. La instantánea de Toolhelp está en `common/store.py`
+    porque el agente la necesita también y no lleva `install/`."""
+    return store.procesos_llamados(nombre)
 
 
 # ---------------------------------------------------------------------------

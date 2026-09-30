@@ -81,7 +81,6 @@ from typing import Callable
 from common import components, pins, vestibulo
 
 from . import APP_NAME, InstallError, descarga
-from .runtime_bin import file_sha256     # el mismo resumen a trozos, una copia
 
 DOWNLOAD_TIMEOUT = 60          # segundos por lectura, no en total
 USER_AGENT = f"{APP_NAME}-install"
@@ -295,22 +294,11 @@ def ficheros_de(carpeta: Path) -> dict[str, str]:
 def verificada(carpeta: Path, version: str = pins.VERACRYPT_VERSION) -> bool:
     """¿Esa carpeta tiene un sello de esa versión y cada fichero es el que dice?
 
-    Se vuelve a resumir todo en cada uso (son ~28 MB, una fracción de segundo):
+    Se vuelve a resumir todo en cada uso (son ~34 MB, una fracción de segundo):
     la carpeta ya garantiza la versión; lo que queda por garantizar son los
-    bytes, y una caché estropeada no puede llegar a una unidad."""
-    try:
-        texto = (Path(carpeta) / SELLO).read_text(encoding="utf-8")
-    except (OSError, ValueError):
-        return False
-    if components.leer_sello(texto).get(components.VERACRYPT) != version:
-        return False
-    ficheros = components.veracrypt_ficheros(texto)
-    if not all(n in ficheros for n in IMPRESCINDIBLES):
-        return False
-    try:
-        return all(file_sha256(Path(carpeta) / n) == s for n, s in ficheros.items())
-    except OSError:
-        return False
+    bytes, y una caché estropeada no puede llegar a una unidad. La comprobación
+    es `components.veracrypt_integro()`, la misma que hace el agente con el suyo."""
+    return components.veracrypt_integro(carpeta, IMPRESCINDIBLES, version)
 
 
 def cached() -> Path | None:

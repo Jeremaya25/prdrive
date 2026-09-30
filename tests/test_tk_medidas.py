@@ -378,11 +378,14 @@ try:
             c(f"{nombre}: «{paso}» (en este equipo) cabe", cabe(top), True)
             c(f"{nombre}: «{paso}» (en este equipo) no queda recortado",
               recortado(wiz.visor), False)
-        # «Cifrado» con VeraCrypt, en su estado más lleno: el formulario entero
-        # y el contenedor ya abierto. (El bloque rojo de una raíz en claro que
+        # «Cifrado» con VeraCrypt, en su estado más lleno: el formulario entero,
+        # el contenedor ya abierto y, con el VeraCrypt Portable (sin instalar),
+        # el aviso ámbar del UAC. (El bloque rojo de una raíz en claro que
         # queda al lado es de Windows, y el de las unidades ya se mide arriba.)
         reales_vc = raiz_equipo.veracrypt_instalado
-        raiz_equipo.veracrypt_instalado = lambda: {"mount": "vc", "format": "vc"}
+        raiz_equipo.veracrypt_instalado = lambda: {
+            "mount": "C:/cache/VeraCrypt-x64.exe",
+            "format": "C:/cache/VeraCrypt Format-x64.exe"}
         try:
             wiz.equipo_cifrado = raiz_equipo.VERACRYPT
             wiz.equipo_montada = RAIZ_MEDIDAS

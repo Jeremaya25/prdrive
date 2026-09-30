@@ -119,6 +119,13 @@ def dir_rclone() -> Path:
     return DIR / "rclone"
 
 
+def dir_veracrypt() -> Path:
+    """`veracrypt/<versión fijada>/`: el VeraCrypt del agente, para abrir y
+    cerrar una raíz cifrada en un equipo sin VeraCrypt instalado. Solo existe
+    si hace falta (`install/agente.quiere_veracrypt()`)."""
+    return DIR / "veracrypt"
+
+
 # ---------------------------------------------------------------------------
 # agente.json
 # ---------------------------------------------------------------------------

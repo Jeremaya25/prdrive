@@ -45,15 +45,15 @@ import shutil
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import penwatch
-from common import APP_NAME, equipo, model, pins, store, vestibulo
+from common import APP_NAME, components, equipo, model, pins, store, vestibulo
 from common.pins import Plataforma
 
 from . import (InstallError, bundle_dir, pintar, platforms, rclone_bin, runtime_bin,
-               version)
+               veracrypt_bin, version)
 
 IS_WIN = os.name == "nt"
 
@@ -91,6 +91,7 @@ class Preparado:
     python: Path            # el intérprete sin consola del runtime
     sello: str              # el sello del runtime (de qué archivo salió)
     rclone: Path | None = None  # rclone/<versión fijada>/rclone: el que pasa a sus hijos
+    veracrypt: Path | None = None   # veracrypt/<versión fijada>/: el suyo, si hace falta
 
 
 def copiar_codigo(origen: Path | None = None) -> Path:
@@ -222,11 +223,112 @@ def poner_rclone(progreso=None) -> Path:
     return binario
 
 
-def preparar(progreso=None, origen: Path | None = None) -> Preparado:
-    """El paso «Instalación» del recorrido del equipo: código, Python y rclone."""
+# ---------------------------------------------------------------------------
+# Su VeraCrypt, para una raíz cifrada en un equipo sin VeraCrypt instalado
+# ---------------------------------------------------------------------------
+#
+# El agente abre y cierra la raíz cifrada del equipo. Con VeraCrypt instalado,
+# con ese —su driver ya está cargado y no pide nada más que la contraseña—. Sin
+# él, con el VeraCrypt Portable oficial fijado en `pins.py`, el mismo que lleva
+# una unidad cifrada en `VeraCrypt\`: sin instalar nada, pero pidiendo permisos
+# de administrador (UAC) cada vez que carga su driver, que es cada vez que abre
+# o cierra (la documentación de VeraCrypt, «Portable Mode»: «You need
+# administrator privileges in order to be able to run VeraCrypt in portable
+# mode»). Se copia a `veracrypt/<versión>/` de la carpeta del agente, fuera de
+# toda raíz, con su sello: el agente lo vuelve a resumir contra él antes de
+# cada lanzamiento (`agente.veracrypt_propio()`).
+
+def quiere_veracrypt(cifrada: bool = False) -> bool:
+    """¿Tiene que llevar el agente su propio VeraCrypt?
+
+    Solo si atiende una raíz cifrada (`cifrada`: la que el asistente está
+    poniendo ahora; o alguna de `agente.json`) y en el equipo no hay uno
+    instalado. Instalado va siempre primero: con otro driver de otra versión
+    menor cargado, el portable falla con ERR_DRIVER_VERSION (`DriverAttach()`
+    en `Common/Dlgcode.c`), y con el suyo cargado no hay UAC que pedir."""
+    if not (cifrada or equipo.leer_ajustes().cifradas):
+        return False
+    return penwatch.installed_veracrypt() is None
+
+
+def conseguir_veracrypt(progreso=None) -> Path:
+    """La carpeta con el VeraCrypt fijado, comprobado: la caché del instalador,
+    el paquete dejado a mano o la descarga. Punto de indirección para los
+    tests."""
+    if IS_WIN:
+        return veracrypt_bin.ensure_veracrypt(progreso)
+    raise InstallError("En Linux el agente todavía no lleva VeraCrypt: instálalo "
+                       "en el equipo.")
+
+
+def poner_veracrypt(progreso=None) -> Path:
+    """El VeraCrypt del agente en `veracrypt/<versión fijada>/`. Devuelve la
+    carpeta.
+
+    Una carpeta por versión, como el rclone: la de antes puede tener su driver
+    cargado (en modo portátil, con un NTFS escribible montado, se queda así
+    hasta reiniciar), y no se toca. Se copia al lado, se comprueba contra el
+    sello y se pone con un `os.replace`; una que ya está y cuadra no se vuelve a
+    copiar."""
+    destino = equipo.dir_veracrypt() / pins.VERACRYPT_VERSION
+    if components.veracrypt_integro(destino, version=pins.VERACRYPT_VERSION):
+        return destino
+    origen = conseguir_veracrypt(progreso)
+    nombres = [components.VERACRYPT_STAMP,
+               *components.veracrypt_ficheros(
+                   (origen / components.VERACRYPT_STAMP).read_text(encoding="utf-8"))]
+    trabajo = destino.with_name(f".{destino.name}.nuevo-{os.getpid()}")
+    viejo = destino.with_name(f".{destino.name}.viejo-{os.getpid()}")
+    shutil.rmtree(trabajo, ignore_errors=True)
+    if progreso:
+        progreso("Copiando VeraCrypt para el agente…")
+    try:
+        trabajo.mkdir(parents=True)
+        for nombre in nombres:
+            shutil.copy2(origen / nombre, trabajo / nombre)
+            if not IS_WIN and nombre != components.VERACRYPT_STAMP:
+                (trabajo / nombre).chmod(0o755)
+        if not components.veracrypt_integro(trabajo, version=pins.VERACRYPT_VERSION):
+            raise InstallError(f"La copia de VeraCrypt en {trabajo} no cuadra con su "
+                               f"sello. No se ha puesto nada.")
+        if destino.exists():
+            os.replace(destino, viejo)
+        os.replace(trabajo, destino)
+    except OSError as e:
+        shutil.rmtree(trabajo, ignore_errors=True)
+        raise InstallError(f"No he podido poner el VeraCrypt del agente en {destino}: "
+                           f"{e}") from e
+    except InstallError:
+        shutil.rmtree(trabajo, ignore_errors=True)
+        raise
+    shutil.rmtree(viejo, ignore_errors=True)
+    return destino
+
+
+def preparar(progreso=None, origen: Path | None = None,
+             cifrada: bool = False) -> Preparado:
+    """El paso «Instalación» del recorrido del equipo: código, Python, rclone y,
+    si atiende una raíz cifrada sin VeraCrypt instalado (`quiere_veracrypt()`),
+    su VeraCrypt."""
     codigo = copiar_codigo(origen)
     python, sello = poner_runtime(progreso)
-    return Preparado(codigo, python, sello, poner_rclone(progreso))
+    rclone = poner_rclone(progreso)
+    vc = poner_veracrypt(progreso) if quiere_veracrypt(cifrada) else None
+    return Preparado(codigo, python, sello, rclone, vc)
+
+
+def asegurar_veracrypt(prep: Preparado, progreso=None) -> Preparado:
+    """El agente ya instalado y de esta versión, con su VeraCrypt si ahora le
+    hace falta (el asistente le añade una raíz cifrada sin reinstalarlo). Lo
+    apunta en `instalacion.json`, que el agente lee cada vez que lo necesita:
+    no hay que pararlo."""
+    if prep.veracrypt is not None or not quiere_veracrypt(True):
+        return prep
+    nuevo = replace(prep, veracrypt=poner_veracrypt(progreso))
+    datos = instalado() or {}
+    datos["veracrypt"] = str(nuevo.veracrypt)
+    store.write_json(equipo.instalacion_json(), datos)
+    return nuevo
 
 
 def _instalacion(prep: Preparado) -> dict:
@@ -234,6 +336,7 @@ def _instalacion(prep: Preparado) -> dict:
     return {"version": version(), "codigo": str(prep.codigo), "python": str(prep.python),
             "runtime": penwatch.stamp_id(prep.sello),
             **({"rclone": str(prep.rclone)} if prep.rclone else {}),
+            **({"veracrypt": str(prep.veracrypt)} if prep.veracrypt else {}),
             "instalado": store.stamp()}
 
 
@@ -733,6 +836,10 @@ def podar(prep: Preparado) -> None:
                 (equipo.dir_runtimes(), guardar_py)]
     if prep.rclone is not None:
         podables.append((equipo.dir_rclone(), {prep.rclone.parent.name}))
+    # El VeraCrypt de antes puede tener su driver cargado (hasta reiniciar):
+    # lo que no se deje borrar, se queda para la próxima.
+    podables.append((equipo.dir_veracrypt(),
+                     {prep.veracrypt.name} if prep.veracrypt is not None else set()))
     for base, guardar in podables:
         try:
             hijos = list(base.iterdir())
@@ -789,8 +896,9 @@ def instalado_prep() -> Preparado | None:
             return None             # de antes de que el agente llevara el suyo
     except OSError:
         return None
+    vc = datos.get("veracrypt")
     return Preparado(Path(codigo), Path(python), str(datos.get("runtime") or ""),
-                     Path(rclone))
+                     Path(rclone), Path(vc) if isinstance(vc, str) and vc else None)
 
 
 def misma_version() -> bool:
@@ -923,9 +1031,15 @@ def desinstalar(progreso=None) -> list[str]:
             # Tampoco se cierra: si está abierta es porque alguien la usa, y
             # desmontar con algo abierto dentro es decisión de la persona.
             abierta = _presente(Path(u.ruta))
+            instalado_vc = penwatch.installed_veracrypt() is not None
+            cerrar = ("ciérrala desde VeraCrypt cuando quieras" if instalado_vc else
+                      "se cierra sola al reiniciar el equipo (el VeraCrypt que la "
+                      "abría era el del agente, y se ha ido con él)")
             msgs.append(f"La raíz cifrada de este equipo sigue en {u.contenedor}"
-                        + (f", y ABIERTA en {u.ruta}: ciérrala desde VeraCrypt cuando "
-                           f"quieras." if abierta else ".")
+                        + (f", y ABIERTA en {u.ruta}: {cerrar}." if abierta else ".")
+                        + ("" if instalado_vc else
+                           " Para volver a abrirla hace falta VeraCrypt: vuelve a "
+                           "instalar el agente o instala VeraCrypt.")
                         + " Bórrala a mano si ya no la quieres.")
             continue
         msgs.append(f"La raíz de este equipo sigue en {u.ruta}, con sus carpetas y su "

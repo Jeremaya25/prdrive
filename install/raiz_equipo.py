@@ -25,9 +25,11 @@ ventana y la flota. Lo que cambia es poco y está aquí:
   * **Cifrada (fase 3).** Con la carpeta propia, la raíz puede vivir en un
     contenedor VeraCrypt: `~/PRDRIVE-cifrado/PRDRIVE.hc`, con la marca del
     vestíbulo al lado, montado en una letra fija (Windows) o en `~/PRDRIVE`
-    (Linux). Solo con el VeraCrypt INSTALADO: aquí no se descarga ni se instala
-    nada. Lo abre y lo cierra el agente; el asistente lo crea y lo monta una vez,
-    con la contraseña que acaba de pedir, y lo deja abierto.
+    (Linux). Con el VeraCrypt instalado si lo hay; si no, con el VeraCrypt
+    Portable oficial fijado, que el agente se lleva a su carpeta: sin instalar
+    nada, pero con un aviso de administrador (UAC) cada vez que se abre o se
+    cierra. Lo abre y lo cierra el agente; el asistente lo crea y lo monta una
+    vez, con la contraseña que acaba de pedir, y lo deja abierto.
 
 Sin Tk, como todo `install/`: lo dibuja `ui/tk_equipo.py`.
 """
@@ -41,7 +43,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from common import APP_NAME, equipo, fleet, model
+from common import APP_NAME, equipo, fleet, model, pins
 from common import vestibulo as vest
 
 from . import InstallError, IS_WIN, crypto, deploy, device, pintar, platforms
@@ -421,20 +423,29 @@ LETRA_PREFERIDA = "P"
 SISTEMA_DENTRO = "NTFS" if IS_WIN else "exFAT"
 
 COMO_INSTALAR = (
-    "Para cifrar la raíz hace falta VeraCrypt INSTALADO en este equipo (el "
-    "portátil pide administrador cada vez que carga su driver). Instálalo desde "
-    "veracrypt.jp/en/Downloads.html y vuelve a este paso. Desde aquí no se "
-    "descarga ni se instala nada.")
+    f"No hay VeraCrypt en este equipo. Con «Descargar VeraCrypt Portable» se usa "
+    f"el oficial {pins.VERACRYPT_VERSION} sin instalar nada: se descarga (≈39 MB) y "
+    f"se comprueba contra el SHA-256 que fija este programa antes de usarlo. O "
+    f"instala VeraCrypt desde veracrypt.jp/en/Downloads.html y vuelve a este paso."
+    if IS_WIN else
+    "Para cifrar la raíz hace falta VeraCrypt INSTALADO en este equipo. "
+    "Instálalo desde veracrypt.jp/en/Downloads.html y vuelve a este paso.")
+
+AVISO_PORTATIL = (
+    f"Sin VeraCrypt instalado, la raíz se crea y se abre con el VeraCrypt Portable "
+    f"oficial {pins.VERACRYPT_VERSION}, que el agente se lleva a su carpeta. No "
+    f"instala nada, pero pide permisos de administrador (el aviso de Windows) cada "
+    f"vez que abre o cierra la raíz: al crearla, al desbloquearla —también al "
+    f"iniciar sesión, si se pide la contraseña— y al bloquearla. Si más adelante "
+    f"instalas VeraCrypt, el agente usará ese y dejará de pedirlo.")
 
 
 def veracrypt_instalado() -> dict | None:
     """El VeraCrypt INSTALADO en este equipo, montar y formatear, o None.
 
-    Nunca el portable ni la caché del instalador: en el ordenador propio se
-    instala una vez, y ramas del portable como ERR_DRIVER_VERSION están sin
-    probar en real. Es el mismo que usará el agente para abrir y cerrar
-    (`penwatch.installed_veracrypt()`), para que el asistente no ofrezca algo
-    que luego no se pueda desbloquear. Punto de indirección para los tests."""
+    Es el mismo que usará el agente para abrir y cerrar si lo hay
+    (`penwatch.installed_veracrypt()`), y va antes que el portable. Punto de
+    indirección para los tests."""
     import penwatch
     exe = penwatch.installed_veracrypt()
     if exe is None:
@@ -443,6 +454,30 @@ def veracrypt_instalado() -> dict | None:
         return {"mount": exe, "format": exe}
     formatear = Path(exe).with_name("VeraCrypt Format.exe")
     return {"mount": exe, "format": str(formatear)} if formatear.is_file() else None
+
+
+def veracrypt_portatil() -> dict | None:
+    """El VeraCrypt Portable fijado, si ya está en la caché del instalador y
+    sigue siendo el comprobado; None si no (bajarlo lo pide la pantalla con su
+    botón). Solo Windows. Es el mismo paquete que el agente copiará a su
+    carpeta (`install/agente.poner_veracrypt()`), así que lo que crea el
+    asistente lo podrá abrir el agente. Punto de indirección para los tests."""
+    if not IS_WIN:
+        return None
+    from . import veracrypt_bin
+    cache = veracrypt_bin.cached()
+    return crypto.find_veracrypt(cache) if cache is not None else None
+
+
+def veracrypt_para_raiz() -> dict | None:
+    """Con qué VeraCrypt se crea la raíz cifrada: el instalado, y si no, el
+    portable de la caché. None si no hay ninguno."""
+    return veracrypt_instalado() or veracrypt_portatil()
+
+
+def portatil(vc: dict | None) -> bool:
+    """¿Es el portable, que pide administrador en cada apertura y cierre?"""
+    return vc is not None and crypto.portatil(vc)
 
 
 def fisica_por_defecto(carpeta: Path | str) -> Path:

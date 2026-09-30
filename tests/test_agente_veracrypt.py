@@ -15,9 +15,14 @@ Con un VeraCrypt de mentira: lo que se lanza se apunta (`_agente_falso.Proc`) y
   * el fantasma (letra con id y `.hc` libre) no se atiende;
   * un punto de montaje con cosas no se tapa;
   * `vestibulo.raiz_fisica()` encuentra la carpeta del contenedor por las
-    raíces extra.
+    raíces extra;
+  * sin VeraCrypt instalado, el del agente (`veracrypt/<versión>/`), solo si
+    cuadra con su sello, y siguiendo la copia elevada que el portable lanza de
+    sí mismo: ni un «Desbloquear» se da por cancelado ni un «Bloquear» por
+    fallido mientras ella sigue.
 """
 
+import hashlib
 import shutil
 import sys
 from pathlib import Path
@@ -27,7 +32,7 @@ from _harness import Checks, tmpdir
 import _agente_falso as F
 import agente
 import penwatch
-from common import equipo, store, vestibulo
+from common import components, equipo, pins, store, vestibulo
 
 c = Checks("agente: la raíz cifrada de este equipo")
 
@@ -245,13 +250,112 @@ try:
     c("cerrar: /dismount de su letra, sin /silent",
       agente.orden_bloquear(win), [VC, "/dismount", "P", "/quit"])
     penwatch.installed_veracrypt = lambda: None
-    c("sin VeraCrypt instalado, ninguna orden (nunca el que viaja)",
+    c("sin VeraCrypt instalado ni el del agente, ninguna orden (nunca el que viaja)",
       (penwatch.veracrypt_command(None, Path(win.contenedor), "P"),
        agente.orden_bloquear(win)), (None, None))
 finally:
     penwatch.IS_WIN, agente.IS_WIN = False, False
     equipo.Unidad.letra = property(lambda self: "")
     penwatch.installed_veracrypt = lambda: VC
+
+# --- sin VeraCrypt instalado: el del agente ------------------------------------------
+PROPIO = equipo.dir_veracrypt() / pins.VERACRYPT_VERSION
+PROPIO.mkdir(parents=True)
+resumenes = {}
+for nombre in ("veracrypt", "VeraCrypt-x64.exe", "veracrypt-x64.sys"):
+    (PROPIO / nombre).write_bytes(nombre.encode())
+    resumenes[nombre] = hashlib.sha256(nombre.encode()).hexdigest()
+(PROPIO / components.VERACRYPT_STAMP).write_text(
+    components.veracrypt_stamp_text(pins.VERACRYPT_VERSION, "f" * 64, resumenes),
+    encoding="utf-8")
+EXE = str(PROPIO / "veracrypt")
+penwatch.installed_veracrypt = lambda: None
+c("sin el suyo apuntado en instalacion.json, ninguno", agente.veracrypt_propio(), None)
+store.write_json(equipo.instalacion_json(),
+                 {**equipo.leer_instalacion(), "veracrypt": str(PROPIO)})
+c("apuntado y cuadrando con su sello, el suyo", agente.veracrypt_propio(), EXE)
+c("  y es con el que se abre y se cierra", (agente.veracrypt_de_la_raiz(),
+                                           agente.orden_bloquear(UNIDAD)[0]), (EXE, EXE))
+penwatch.installed_veracrypt = lambda: VC
+c("  pero el instalado va primero", agente.veracrypt_de_la_raiz(), VC)
+penwatch.installed_veracrypt = lambda: None
+(PROPIO / "veracrypt").write_bytes(b"cambiado")
+F.DIARIO.clear()
+c("uno que no cuadra con su sello no se lanza", agente.veracrypt_propio(), None)
+c("  y se dice", any("no cuadra" in d for d in F.DIARIO), True)
+(PROPIO / "veracrypt").write_bytes(b"veracrypt")
+agente.IS_WIN = True
+real_arq = penwatch.native_arch
+try:
+    penwatch.native_arch = lambda: "x64"
+    c("en Windows, el portable de la arquitectura nativa",
+      agente.veracrypt_propio(), str(PROPIO / "VeraCrypt-x64.exe"))
+    penwatch.native_arch = lambda: "arm64"
+    c("  sin el ejecutable y el driver de la suya, ninguno (un driver no se emula)",
+      agente.veracrypt_propio(), None)
+finally:
+    agente.IS_WIN = False
+    penwatch.native_arch = real_arq
+
+# La copia elevada: el portable, sin administrador, se relanza elevado y el
+# proceso lanzado sale enseguida. Aquí `procesos()` dice qué copias viven.
+VIVOS: dict[str, set] = {}
+agente.procesos = lambda nombre: set(VIVOS.get(nombre, ()))
+
+
+def propios() -> list:
+    return [p for p in F.LANZADOS if p.args and p.args[0] == EXE]
+
+
+VIVOS["veracrypt"] = {500}          # uno que ya estaba: no cuenta
+F.LANZADOS.clear()
+F.DIARIO.clear()
+ag4 = F.nuevo()
+F.vueltas(ag4, 2)
+c("sin VeraCrypt instalado, al iniciar sesión abre con el del agente",
+  [p.args for p in propios()], [[EXE, str(HC), str(PUNTO)]])
+propios()[0].rc = 0                 # el lanzado sale: sigue la copia elevada
+VIVOS["veracrypt"] = {500, 501}
+F.vueltas(ag4, 1)                   # aquí se vería que salió
+F.pasar(agente.GRACIA_ABRIR + 5)
+F.vueltas(ag4, 1)
+c("  con la copia elevada viva (UAC, contraseña), no se da por cancelado",
+  UID in ag4.desbloqueos, True)
+VIVOS["veracrypt"] = {500}          # la persona cancela: la copia sale
+F.vueltas(ag4, 1)
+F.pasar(agente.GRACIA_ABRIR)
+F.vueltas(ag4, 1)
+c("  al salir la copia, pasada la gracia, sí",
+  (UID in ag4.desbloqueos, any("no se ha desbloqueado" in d for d in F.DIARIO)),
+  (False, True))
+
+equipo.pedir({"pide": equipo.PIDE_DESBLOQUEAR, "id": UID})
+F.vueltas(ag4, 1)
+propios()[-1].rc = 0
+montar()
+F.vueltas(ag4, 3)
+F.acabar(F.pasadas(PUNTO)[-1], rc=0)
+equipo.pedir({"pide": equipo.PIDE_BLOQUEAR, "id": UID})
+F.vueltas(ag4, 1)
+c("bloquear con el del agente", propios()[-1].args, [EXE, "-d", str(HC)])
+propios()[-1].rc = 0                # sale el lanzado; la copia pregunta si forzar
+VIVOS["veracrypt"] = {500, 502}
+F.AVISOS.clear()
+F.vueltas(ag4, 1)
+F.pasar(agente.GRACIA_DESMONTAJE + 5)
+F.vueltas(ag4, 1)
+c("  mientras la copia pregunta, no se dice «sigue abierta»",
+  (UID in ag4.bloqueos, F.AVISOS), (True, []))
+VIVOS["veracrypt"] = {500}          # «No» a forzar
+F.vueltas(ag4, 1)
+F.pasar(agente.GRACIA_DESMONTAJE)
+F.vueltas(ag4, 1)
+c("  al salir la copia con la raíz montada, sí",
+  [t for t, _ in F.AVISOS], ["Mi portátil: sigue abierta"])
+desmontar()
+F.vueltas(ag4, 2)
+agente.procesos = lambda nombre: set()
+penwatch.installed_veracrypt = lambda: VC
 
 # --- abrir con la raíz cerrada -------------------------------------------------------
 F.LANZADOS.clear()

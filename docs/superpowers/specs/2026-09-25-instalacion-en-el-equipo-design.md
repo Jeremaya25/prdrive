@@ -330,6 +330,18 @@ comprueba que haya uno instalado (`find_veracrypt()`). Si no lo hay, dice cómo
 instalarlo y no ofrece la opción. **No se instala VeraCrypt desde aquí**, ni se
 descarga, ni se lanza un instalador.
 
+> **Revisado el 30/09/2026.** En Windows, sin VeraCrypt instalado, el paso ofrece
+> descargar el VeraCrypt Portable fijado (el de las unidades) y el agente se lleva
+> una copia a `veracrypt/<versión>/`, comprobada contra su sello antes de cada
+> lanzamiento. El precio se dice en el paso: un aviso UAC en cada apertura y cada
+> cierre. El instalado sigue yendo primero. Instalar VeraCrypt desde aquí (el
+> MSI) sigue descartado. `ERR_DRIVER_VERSION` resultó menos arriesgado de lo que
+> se temía: `DriverAttach()` compara con `VERSION_NUM` (0x0126 en toda la 1.26),
+> y en las pruebas de la fase 3 un 1.26.24 montó con el driver 1.26.29 cargado.
+> Como el portable sale a los dos segundos y la que pregunta es su copia
+> elevada, el agente sigue esa copia (`agente.Copia`). Linux sigue con el
+> instalado.
+
 **Una letra fija en Windows.** `penwatch.veracrypt_command()` deja que VeraCrypt
 elija letra, y en una unidad da igual. En el equipo no, porque los programas
 apuntan a la raíz: un almacén de Obsidian en `P:\obsidian` se rompe si al día

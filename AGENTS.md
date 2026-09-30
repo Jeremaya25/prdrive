@@ -1258,7 +1258,8 @@ whatever you build that only a real host can prove.
   `~/.local/share/prdrive/`): `agente/<version>/` (agente.py, penwatch.py,
   common/, ui/ — never install/), `runtime/<stamp_id>/` (its own
   python-build-standalone, extracted by `runtime_bin.extract()`),
-  `rclone/<pinned version>/` (its own rclone, below), `agente.json`
+  `rclone/<pinned version>/` (its own rclone, below), `veracrypt/<pinned
+  version>/` (only with an encrypted host root and no VeraCrypt installed), `agente.json`
   (WHAT: drives, modes, `espera_unidad_nueva`, moderation), `instalacion.json`
   (WHERE: code, python), `agente.lock.json`, `agente.pide`, `estado.json`,
   `agente.log`. **No secret there.** `tests/_harness.py` points `equipo.DIR` at
@@ -1507,11 +1508,32 @@ file inside; no `.bat`/`.sh`/guide — the agent is the opener). Mounted at a
 the carpeta itself on Linux (`crypto.mount_container(punto_fijo=)`), and
 `Unidad.contenedor` holds the `.hc`. Not to weaken:
 
-- **Installed VeraCrypt only** (`raiz_equipo.veracrypt_instalado()` =
-  `penwatch.installed_veracrypt()`, one definition for the wizard and the
-  agent). No portable, no download, no installer: without it the step says how
-  to install it and offers only «Sin cifrar». Inside: NTFS on Windows, exFAT on
-  Linux (a fresh ext4 is root's).
+- **Installed VeraCrypt first, else the agent's own Portable (Windows).**
+  `raiz_equipo.veracrypt_para_raiz()` = `veracrypt_instalado()` (=
+  `penwatch.installed_veracrypt()`, the same one the agent uses) or
+  `veracrypt_portatil()` (the verified installer cache; the step offers
+  «Descargar VeraCrypt Portable» and, with it, an amber `AVISO_PORTATIL`).
+  Never an installer: the MSI route was rejected. The agent carries its copy
+  only when it needs it (`install/agente.quiere_veracrypt()`: an encrypted root
+  and nothing installed): `poner_veracrypt()` → `equipo.dir_veracrypt()/
+  <pinned version>/`, recorded in `instalacion.json` (`asegurar_veracrypt()`
+  when the wizard reuses an agent of the same version), pruned by `podar()`.
+  `agente.veracrypt_propio()` re-hashes it against its stamp
+  (`components.veracrypt_integro()`, shared with `veracrypt_bin.verificada()`)
+  before EVERY launch —it asks for elevation— and picks the native
+  architecture's exe + driver; `veracrypt_de_la_raiz()` puts the installed one
+  first, and it goes to `penwatch.veracrypt_command(…, respaldo=)`. The cost is
+  said out loud: **UAC on every unlock and lock**, at logon too with
+  `pedir_al_iniciar` (VeraCrypt docs, «Portable Mode»). Linux: installed only.
+  Inside: NTFS on Windows, exFAT on Linux (a fresh ext4 is root's).
+- **The launched VeraCrypt is not the one that asks.** The portable without
+  admin relaunches itself elevated (`/q UAC`) and the launched process exits in
+  ~2 s; `agente.Copia` notes the same-named processes before launching
+  (`agente.procesos()` → `store.procesos_llamados()`, the Toolhelp snapshot
+  moved out of `crypto._procesos()`) and `_sigue_vivo()` counts a new one as
+  VeraCrypt still at it, so an unlock is not forgotten after `GRACIA_ABRIR`
+  during the UAC/password, nor a lock reported «sigue abierta» while the copy
+  asks whether to force.
 - **The password never passes through the agent.** The wizard uses it once to
   create and mount (`raiz_equipo.abrir_o_crear()`) and leaves the container
   open for the agent. From then on `penwatch.veracrypt_command(None, container,
@@ -2020,8 +2042,9 @@ keeps the target's existing header.
   `bandeja_windows.Api`, `agente.hilo()` / `buscar_version()` / `ejecutar()` /
   `cache_version()`, `runsync.pedir_reanudar()` / `agente_sirve()`,
   `watch.pedir_al_agente()`, `agente.arrancar_agente()`, `tk_equipo.escritorio()`,
-  `install.pintar_iconos`, `install.agente.matar_arbol()` / `conseguir_rclone()`,
-  `agente.rclone_propio()`,
+  `install.pintar_iconos`, `install.agente.matar_arbol()` / `conseguir_rclone()` /
+  `conseguir_veracrypt()`, `agente.rclone_propio()` / `veracrypt_propio()` /
+  `procesos()`, `raiz_equipo.veracrypt_portatil()`,
   the Linux tray's `conectar` / `conectar_sistema`, and `equipo.DIR`. Keep new
   ones in that shape.
 

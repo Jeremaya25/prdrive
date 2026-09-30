@@ -838,7 +838,7 @@ tk_equipo.working = working_directo
 preparados, activados = [], []
 PREP = ia.Preparado(equipo.DIR / "agente" / "0.4.0", equipo.DIR / "runtime" / "x" / "py",
                     "sello")
-ia.preparar = lambda progreso=None: preparados.append(1) or PREP
+ia.preparar = lambda progreso=None, cifrada=False: preparados.append(cifrada) or PREP
 pedir_dado = []
 ia.activar = lambda prep, elegidas, espera, raiz=None, pedir_al_iniciar=None, avance=None: (
     pedir_dado.append(pedir_al_iniciar)
@@ -896,7 +896,7 @@ casa.ir(+1)
 c("«Instalación»: Siguiente apagado hasta instalar",
   str(casa.boton_siguiente.cget("state")), "disabled")
 boton(casa.cuerpo, "Instalar").invoke()
-c("  instalar prepara el código y el Python", (preparados, casa.agente_prep), ([1], PREP))
+c("  instalar prepara el código y el Python", (preparados, casa.agente_prep), ([False], PREP))
 c("  y enciende Siguiente", str(casa.boton_siguiente.cget("state")), "normal")
 casa.ir(+1)
 c("«Unidades» ofrece las que se saben sin red, con su modo",
@@ -1001,9 +1001,46 @@ c("«Cifrado»: sin VeraCrypt instalado, solo sin cifrar",
   (radios(propia), propia.equipo_cifrado),
   ({"Sin cifrar": "normal", "En un contenedor VeraCrypt": "disabled"},
    raiz_equipo.SIN_CIFRAR))
-c("  y dice cómo instalarlo, sin ofrecer descargarlo",
-  any("veracrypt.jp" in w.cget("text") for w in widgets(propia.cuerpo, ttk.Label)),
-  True)
+c("  y dice cómo instalarlo", any("veracrypt.jp" in w.cget("text")
+                                   for w in widgets(propia.cuerpo, ttk.Label)), True)
+import install  # noqa: E402
+
+c("  en Linux sin ofrecer descargarlo (no hay portable)",
+  any(w.cget("text") == "Descargar VeraCrypt Portable"
+      for w in widgets(propia.cuerpo, ttk.Button)), install.IS_WIN)
+
+# En Windows, el VeraCrypt Portable: se ofrece descargarlo y, con él en la
+# caché, la opción se enciende avisando del UAC de cada apertura y cierre.
+from install import veracrypt_bin  # noqa: E402
+
+real_win, real_ensure = install.IS_WIN, veracrypt_bin.ensure_veracrypt
+real_portatil = raiz_equipo.veracrypt_portatil
+PORTATIL = {"mount": "C:/cache/VeraCrypt-x64.exe", "format": "C:/cache/VeraCrypt Format-x64.exe"}
+en_cache: list = []
+descargas = []
+veracrypt_bin.ensure_veracrypt = lambda progreso=None: descargas.append(1) or Path(".")
+raiz_equipo.veracrypt_portatil = lambda: en_cache[0] if en_cache else None
+install.IS_WIN = True
+try:
+    propia.repintar()
+    descargar = [w for w in widgets(propia.cuerpo, ttk.Button)
+                 if w.cget("text") == "Descargar VeraCrypt Portable"]
+    c("  en Windows, sin ninguno, ofrece descargar el Portable", len(descargar), 1)
+    en_cache.append(PORTATIL)
+    descargar[0].invoke()
+    c("  descargado, la opción VeraCrypt se enciende",
+      (descargas, radios(propia)["En un contenedor VeraCrypt"]), ([1], "normal"))
+    c("  avisando del UAC en cada apertura y cierre",
+      any(w.cget("text") == raiz_equipo.AVISO_PORTATIL
+          for w in widgets(propia.cuerpo, ttk.Label)), True)
+    c("  y ya no ofrece descargarlo",
+      any(w.cget("text") == "Descargar VeraCrypt Portable"
+          for w in widgets(propia.cuerpo, ttk.Button)), False)
+finally:
+    install.IS_WIN = real_win
+    veracrypt_bin.ensure_veracrypt = real_ensure
+    raiz_equipo.veracrypt_portatil = real_portatil
+    propia.repintar()
 c("  sin cifrar, la raíz es la carpeta, y se puede seguir",
   (propia.state.device_root, str(propia.boton_siguiente.cget("state"))),
   (RAIZ_EQUIPO, "normal"))
@@ -1154,7 +1191,10 @@ en_paso(cifra, [t for t, _, _ in cifra.pasos].index("Instalación"))
 c("«Instalación» cifrada no avisa de la clave en claro",
   any("clave del remoto queda en claro" in w.cget("text")
       for w in widgets(cifra.cuerpo, ttk.Label)), False)
+preparados.clear()
 boton(cifra.cuerpo, "Instalar").invoke()
+c("  y prepara el agente sabiendo que la raíz va cifrada (su VeraCrypt, si hace falta)",
+  preparados, [True])
 from common import vestibulo as vest  # noqa: E402
 c("  instala DENTRO del volumen, y deja fuera la marca con el mismo id",
   (device.control_tipo(volumen), vest.leer_id(CARPETA.with_name("PRDRIVE-cifrado"))),
