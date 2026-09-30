@@ -7,8 +7,9 @@ Solo dibuja. Lo que decide y lo que toca el disco está en `install/agente.py` y
 recorridos, que elige el paso «Carpeta» (ver `tk_install.PASOS_EQUIPO`):
 
     Carpeta        la raíz de este equipo: carpeta propia, la personal, o ninguna
-    Cifrado        sin cifrar, o en un contenedor VeraCrypt (solo la carpeta propia,
-                   solo con VeraCrypt instalado): lo crea, lo monta y lo deja abierto
+    Cifrado        sin cifrar, o en un contenedor VeraCrypt (solo la carpeta propia;
+                   el instalado, o el oficial sin instalar, que se lleva el agente):
+                   lo crea, lo monta y lo deja abierto
     Conexión, Comprobaciones        los del recorrido de una unidad, tal cual
     Instalación    .prdrive/ + rclone en la raíz; el agente y su Python en el equipo
     Parejas        las del catálogo, con la ruta de cada una EN ESTE equipo
@@ -46,12 +47,13 @@ def _texto(cuerpo, texto: str, fila: int, **kw) -> None:
               **kw).grid(row=fila, column=0, sticky="w", pady=(0, 10))
 
 
-def _ambar(cuerpo, texto: str, fila: int) -> None:
+def _ambar(cuerpo, texto: str, fila: int):
     from tkinter import ttk
     caja = ttk.Frame(cuerpo, style="Ambar.TFrame", padding=(11, 9))
     caja.grid(row=fila, column=0, sticky="ew", pady=(0, 10))
     ttk.Label(caja, style="Ambar.TLabel", justify="left", text=texto,
               wraplength=theme.medida(ANCHO - 40)).grid(row=0, column=0, sticky="w")
+    return caja
 
 
 def al_cambiar(entrada, funcion) -> None:
@@ -213,7 +215,7 @@ def paso_cifrado(cuerpo, wiz) -> None:
 
     from .tk import TITLE
 
-    vc = re_.veracrypt_instalado()
+    vc = re_.veracrypt_para_raiz()
     personal = wiz.equipo_forma == re_.PERSONAL
     puede = vc is not None and not personal
     if not puede:
@@ -247,9 +249,36 @@ def paso_cifrado(cuerpo, wiz) -> None:
                   wraplength=theme.medida(720)).grid(row=1, column=0, sticky="w",
                                                      pady=(3, 0))
     if not puede:
-        _ambar(cuerpo, re_.examinar_contenedor("x", wiz.equipo_ruta, wiz.equipo_forma
-                                               ).texto if personal else re_.COMO_INSTALAR,
-               3)
+        caja = _ambar(cuerpo, re_.examinar_contenedor("x", wiz.equipo_ruta,
+                                                      wiz.equipo_forma).texto
+                      if personal else re_.COMO_INSTALAR, 3)
+        if not personal:
+            # Sin VeraCrypt instalado no hace falta instalarlo: el Portable
+            # oficial en Windows, el AppImage en Linux, bajado y comprobado
+            # (`install/veracrypt_bin.py`), el mismo que se llevará el agente
+            # para abrirla y cerrarla.
+            def descargar() -> None:
+                from common import pins
+                from install import veracrypt_bin
+                ok, res = working(
+                    wiz.root, "descargando VeraCrypt",
+                    lambda: veracrypt_bin.para_este_equipo(),
+                    f"Descargando VeraCrypt {pins.VERACRYPT_VERSION} y "
+                    f"comprobándolo.")
+                if ok and re_.veracrypt_para_raiz() is not None:
+                    wiz.repintar()
+                    return
+                messagebox.showerror(TITLE, (
+                    f"No se ha podido usar VeraCrypt sin instalar:\n\n{res}" if not ok
+                    else "El VeraCrypt descargado no trae los ejecutables de este "
+                         "equipo."), parent=wiz.root)
+
+            ttk.Button(caja, text=("Descargar VeraCrypt Portable" if IS_WIN else
+                                   "Descargar VeraCrypt (AppImage)"),
+                       style="Primary.TButton", command=descargar).grid(
+                row=1, column=0, sticky="w", pady=(8, 0))
+    elif re_.portatil(vc):
+        _ambar(cuerpo, re_.AVISO_PORTATIL, 3)
 
     if wiz.equipo_cifrado != re_.VERACRYPT:
         wiz.state.encryption = None
@@ -296,7 +325,8 @@ def paso_cifrado(cuerpo, wiz) -> None:
         libre = shutil.disk_usage(str(base)).free
     except OSError:
         libre = 0
-    dinamico = crypto.soporta_dispersos(base) if IS_WIN else False
+    disperso = crypto.creacion_dispersa(base, vc)
+    dinamico = disperso is True
     tam = tk.StringVar(value=wiz.equipo_tamano or crypto.suggested_size(libre, dinamico))
     tam_fila = ttk.Frame(formulario)
     ttk.Label(formulario, text="Tamaño:").grid(row=fila, column=0, sticky="w")
@@ -305,6 +335,8 @@ def paso_cifrado(cuerpo, wiz) -> None:
     ttk.Label(tam_fila, style="Pista.TLabel", text=(
         f"libre: {libre / 1024 ** 3:.1f} GiB — "
         + ("dinámico: solo ocupa lo que guardes" if dinamico else
+           "con VeraCrypt 1.26.29 o posterior solo ocupa lo que guardes; con uno "
+           "anterior se escribe entero al crearlo" if disperso is None else
            "se escribe entero al crearlo: elige con cabeza"))).grid(
         row=0, column=1, padx=(8, 0))
     fila += 1
@@ -476,6 +508,8 @@ def paso_instalar(cuerpo, wiz) -> None:
             lineas.append(f"✔ El agente ya estaba: {prep.codigo}")
         elif prep is not None:
             lineas += [f"✔ Agente en {prep.codigo}", f"✔ Su Python: {prep.python}"]
+        if prep is not None and prep.veracrypt is not None:
+            lineas.append(f"✔ Su VeraCrypt (Portable): {prep.veracrypt}")
         resultado.configure(text="\n".join(lineas), foreground=theme.OK)
         wiz.revisar()
 
@@ -488,8 +522,11 @@ def paso_instalar(cuerpo, wiz) -> None:
                 _, ident = raiz_equipo.instalar(donde, wiz.perfil_final,
                                                 fisica=fisica)
             if reusar:
-                return ident, agente.instalado_prep()
-            return ident, agente.preparar()
+                prep = agente.instalado_prep()
+                if prep is not None and cifrada(wiz):
+                    prep = agente.asegurar_veracrypt(prep)
+                return ident, prep
+            return ident, agente.preparar(cifrada=cifrada(wiz))
 
         ok, res = working(wiz.root, "instalando", trabajo,
                           "Copiando el programa, rclone y el Python del agente. La "

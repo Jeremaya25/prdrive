@@ -384,8 +384,12 @@ try:
     c("y la ventanita lo enseña", creando[-1] == seguimientos[-1].progreso, True)
 
     # Con dispersos, `/dynamic`: son segundos y no hay nada que medir.
+    # (En Linux, además, un VeraCrypt de versión conocida: el AppImage fijado.
+    # Con uno instalado no se sabe si su `--quick` deja el contenedor disperso.)
     crypto.soporta_dispersos = lambda root: True
     crypto.sistema_de_ficheros = lambda root: "NTFS"
+    crypto.find_veracrypt = lambda extra_dir=None: {
+        "mount": "VeraCrypt.exe", "format": "VeraCrypt Format.exe", "appimage": True}
     dinamico = nuevo_asistente(tmpdir())
     dinamico.state.device_root = None
     dinamico.state.encryption = "veracrypt"
@@ -397,6 +401,22 @@ try:
     c("un contenedor dinámico se crea sin medir nada",
       (len(creados), seguimientos[-1], creando[-1]), (2, None, None))
 
+    # En Linux con un VeraCrypt instalado, de versión desconocida: ni se promete
+    # que ocupe poco ni que se escriba entero.
+    if not crypto.IS_WIN:
+        crypto.find_veracrypt = lambda extra_dir=None: {"mount": "veracrypt",
+                                                        "format": "veracrypt"}
+        instalado = nuevo_asistente(tmpdir())
+        instalado.state.device_root = None
+        instalado.state.encryption = "veracrypt"
+        en_paso(instalado, PASO["Cifrado"])
+        textos = " ".join(str(w.cget("text"))
+                          for w in widgets(instalado.cuerpo, ttk.Label))
+        c.contains("Linux con VeraCrypt instalado: dice que depende de su versión",
+                   textos, "depende de la versión de VeraCrypt")
+        c("  sin decir que el disco no admite dispersos",
+          "no admite ficheros dispersos" in textos, False)
+
     # Sin VeraCrypt en el equipo, en Windows no hace falta instalarlo: la
     # pantalla ofrece el VeraCrypt Portable oficial, que se baja y se comprueba
     # (#50). Aquí la descarga se sustituye por una carpeta de mentira.
@@ -404,13 +424,13 @@ try:
     from install import veracrypt_bin
 
     portable_vc = falso_portatil()
-    reales_panel = (tk_crypto.IS_WIN, veracrypt_bin.ensure_veracrypt)
+    reales_panel = (tk_crypto.IS_WIN, veracrypt_bin.para_este_equipo)
     tk_crypto.IS_WIN = True
     crypto.find_veracrypt = lambda extra_dir=None: (
         {"mount": str(Path(extra_dir) / "VeraCrypt-x64.exe"),
          "format": str(Path(extra_dir) / "VeraCrypt Format-x64.exe")}
         if extra_dir else None)
-    veracrypt_bin.ensure_veracrypt = lambda progreso=None, allow_download=True: portable_vc
+    veracrypt_bin.para_este_equipo = lambda progreso=None: portable_vc
     try:
         sin_vc = nuevo_asistente(tmpdir())
         sin_vc.state.device_root = None
@@ -425,8 +445,28 @@ try:
         textos = " ".join(str(w.cget("text")) for w in widgets(sin_vc.cuerpo, ttk.Label))
         c.contains("avisando de que cada paso pedirá administrador", textos,
                    "pedirá permiso de administrador")
+
+        # En Linux, lo mismo con el AppImage oficial: sin instalarlo, y
+        # diciendo que montar pide la contraseña de administrador.
+        tk_crypto.IS_WIN = False
+        APPIMAGE = {"mount": "/cache/veracrypt", "format": "/cache/veracrypt",
+                    "appimage": True}
+        bajado: list = []
+        crypto.find_veracrypt = lambda extra_dir=None: APPIMAGE if bajado else None
+        veracrypt_bin.para_este_equipo = lambda progreso=None: bajado.append(1) or Path(".")
+        linux = nuevo_asistente(tmpdir())
+        linux.state.device_root = None
+        linux.state.encryption = "veracrypt"
+        en_paso(linux, PASO["Cifrado"])
+        textos = " ".join(str(w.cget("text")) for w in widgets(linux.cuerpo, ttk.Label))
+        c.contains("en Linux, sin VeraCrypt se ofrece el AppImage oficial", textos,
+                   "AppImage oficial")
+        c.contains("  diciendo que montar pide la de administrador", textos,
+                   "contraseña de administrador")
+        boton(linux.cuerpo, "Descargar VeraCrypt (AppImage)").invoke()
+        c("  y bajado, se usa", (bajado, linux.state.veracrypt), ([1], APPIMAGE))
     finally:
-        tk_crypto.IS_WIN, veracrypt_bin.ensure_veracrypt = reales_panel
+        tk_crypto.IS_WIN, veracrypt_bin.para_este_equipo = reales_panel
 finally:
     messagebox.askyesno = askyesno_original
     for nombre, funcion in sondas_crypto.items():
@@ -838,7 +878,7 @@ tk_equipo.working = working_directo
 preparados, activados = [], []
 PREP = ia.Preparado(equipo.DIR / "agente" / "0.4.0", equipo.DIR / "runtime" / "x" / "py",
                     "sello")
-ia.preparar = lambda progreso=None: preparados.append(1) or PREP
+ia.preparar = lambda progreso=None, cifrada=False: preparados.append(cifrada) or PREP
 pedir_dado = []
 ia.activar = lambda prep, elegidas, espera, raiz=None, pedir_al_iniciar=None, avance=None: (
     pedir_dado.append(pedir_al_iniciar)
@@ -896,7 +936,7 @@ casa.ir(+1)
 c("«Instalación»: Siguiente apagado hasta instalar",
   str(casa.boton_siguiente.cget("state")), "disabled")
 boton(casa.cuerpo, "Instalar").invoke()
-c("  instalar prepara el código y el Python", (preparados, casa.agente_prep), ([1], PREP))
+c("  instalar prepara el código y el Python", (preparados, casa.agente_prep), ([False], PREP))
 c("  y enciende Siguiente", str(casa.boton_siguiente.cget("state")), "normal")
 casa.ir(+1)
 c("«Unidades» ofrece las que se saben sin red, con su modo",
@@ -1001,9 +1041,63 @@ c("«Cifrado»: sin VeraCrypt instalado, solo sin cifrar",
   (radios(propia), propia.equipo_cifrado),
   ({"Sin cifrar": "normal", "En un contenedor VeraCrypt": "disabled"},
    raiz_equipo.SIN_CIFRAR))
-c("  y dice cómo instalarlo, sin ofrecer descargarlo",
-  any("veracrypt.jp" in w.cget("text") for w in widgets(propia.cuerpo, ttk.Label)),
-  True)
+c("  y dice cómo instalarlo", any("veracrypt.jp" in w.cget("text")
+                                   for w in widgets(propia.cuerpo, ttk.Label)), True)
+import install  # noqa: E402
+
+c("  y ofrece descargarlo sin instalarlo (Portable en Windows, AppImage en Linux)",
+  [w.cget("text") for w in widgets(propia.cuerpo, ttk.Button)
+   if w.cget("text").startswith("Descargar VeraCrypt")],
+  ["Descargar VeraCrypt Portable" if install.IS_WIN else "Descargar VeraCrypt (AppImage)"])
+
+# En Windows, el VeraCrypt Portable: se ofrece descargarlo y, con él en la
+# caché, la opción se enciende avisando del UAC de cada apertura y cierre.
+from install import veracrypt_bin  # noqa: E402
+
+real_win, real_ensure = install.IS_WIN, veracrypt_bin.para_este_equipo
+real_portatil = raiz_equipo.veracrypt_portatil
+PORTATIL = {"mount": "C:/cache/VeraCrypt-x64.exe", "format": "C:/cache/VeraCrypt Format-x64.exe"}
+en_cache: list = []
+descargas = []
+veracrypt_bin.para_este_equipo = lambda progreso=None: descargas.append(1) or Path(".")
+raiz_equipo.veracrypt_portatil = lambda: en_cache[0] if en_cache else None
+install.IS_WIN = True
+try:
+    propia.repintar()
+    descargar = [w for w in widgets(propia.cuerpo, ttk.Button)
+                 if w.cget("text") == "Descargar VeraCrypt Portable"]
+    c("  en Windows, sin ninguno, ofrece descargar el Portable", len(descargar), 1)
+    en_cache.append(PORTATIL)
+    descargar[0].invoke()
+    c("  descargado, la opción VeraCrypt se enciende",
+      (descargas, radios(propia)["En un contenedor VeraCrypt"]), ([1], "normal"))
+    c("  avisando del UAC en cada apertura y cierre",
+      any(w.cget("text") == raiz_equipo.AVISO_PORTATIL
+          for w in widgets(propia.cuerpo, ttk.Label)), True)
+    c("  y ya no ofrece descargarlo",
+      any(w.cget("text") == "Descargar VeraCrypt Portable"
+          for w in widgets(propia.cuerpo, ttk.Button)), False)
+finally:
+    install.IS_WIN = real_win
+    veracrypt_bin.para_este_equipo = real_ensure
+    raiz_equipo.veracrypt_portatil = real_portatil
+    propia.repintar()
+
+# En Linux, el AppImage: la opción se enciende con él en la caché, y lo dice.
+if not install.IS_WIN:
+    raiz_equipo.veracrypt_portatil = lambda: {"mount": "/c/veracrypt",
+                                              "format": "/c/veracrypt", "appimage": True}
+    try:
+        propia.repintar()
+        c("con el AppImage en la caché, VeraCrypt se puede elegir",
+          radios(propia)["En un contenedor VeraCrypt"], "normal")
+        c("  y dice que es el AppImage, sin instalar",
+          any(w.cget("text") == raiz_equipo.AVISO_PORTATIL
+              and "AppImage" in raiz_equipo.AVISO_PORTATIL
+              for w in widgets(propia.cuerpo, ttk.Label)), True)
+    finally:
+        raiz_equipo.veracrypt_portatil = real_portatil
+        propia.repintar()
 c("  sin cifrar, la raíz es la carpeta, y se puede seguir",
   (propia.state.device_root, str(propia.boton_siguiente.cget("state"))),
   (RAIZ_EQUIPO, "normal"))
@@ -1154,7 +1248,10 @@ en_paso(cifra, [t for t, _, _ in cifra.pasos].index("Instalación"))
 c("«Instalación» cifrada no avisa de la clave en claro",
   any("clave del remoto queda en claro" in w.cget("text")
       for w in widgets(cifra.cuerpo, ttk.Label)), False)
+preparados.clear()
 boton(cifra.cuerpo, "Instalar").invoke()
+c("  y prepara el agente sabiendo que la raíz va cifrada (su VeraCrypt, si hace falta)",
+  preparados, [True])
 from common import vestibulo as vest  # noqa: E402
 c("  instala DENTRO del volumen, y deja fuera la marca con el mismo id",
   (device.control_tipo(volumen), vest.leer_id(CARPETA.with_name("PRDRIVE-cifrado"))),

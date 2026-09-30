@@ -57,6 +57,50 @@ try:
     posix = crypto.create_command(VC, CONT, 1024, "s3cr3t", "exFAT", dinamico=True)
     c("en POSIX no hay /dynamic que valga", any("dynamic" in a for a in posix), False)
     c("y la contraseña va por stdin, no en la orden", "s3cr3t" in posix, False)
+    c("--quick siempre: la 1.26.29 lo deja disperso, las de antes lo ignoran",
+      "--quick" in posix, True)
+
+    # ¿Saldrá disperso? En Linux lo dice la versión (el AppImage fijado sí; uno
+    # instalado, no se sabe) y el disco, que se prueba de verdad.
+    reales_disp = crypto.soporta_dispersos
+    try:
+        crypto.soporta_dispersos = lambda root: True
+        c("Linux, disco con dispersos y el AppImage: disperso",
+          crypto.creacion_dispersa("/x", {"appimage": True}), True)
+        c("  con uno instalado, no se sabe (None)",
+          crypto.creacion_dispersa("/x", {"mount": "veracrypt"}), None)
+        crypto.soporta_dispersos = lambda root: False
+        c("  disco sin dispersos: entero, con cualquiera",
+          crypto.creacion_dispersa("/x", {"appimage": True}), False)
+    finally:
+        crypto.soporta_dispersos = reales_disp
+    if os.name != "nt":
+        prueba = tmpdir("prdrive-disperso-")
+        c("la prueba de dispersos contesta y no deja nada",
+          (isinstance(crypto._dispersos_posix(prueba), bool), list(prueba.iterdir())),
+          (True, []))
+        c("  y en una carpeta que no existe, no", crypto._dispersos_posix(
+            prueba / "no-existe"), False)
+
+    # Sin VeraCrypt instalado en Linux: el AppImage de la caché, si cuadra.
+    from install import veracrypt_bin as _vb
+    reales_linux = (crypto._first_exe, _vb.en_cache_para_este_equipo)
+    try:
+        crypto._first_exe = lambda candidatos: None
+        _vb.en_cache_para_este_equipo = lambda: None
+        c("en Linux, sin instalado ni AppImage en la caché, ninguno",
+          crypto.find_veracrypt(), None)
+        _vb.en_cache_para_este_equipo = lambda: crypto.Path("/cache")
+        vc_linux = crypto.find_veracrypt()
+        c("  con el AppImage en la caché, ese, y se sabe que lo es",
+          (vc_linux["mount"], vc_linux["format"], crypto.appimage(vc_linux)),
+          (str(crypto.Path("/cache") / "veracrypt"),
+           str(crypto.Path("/cache") / "veracrypt"), True))
+        crypto._first_exe = lambda candidatos: "/usr/bin/veracrypt"
+        c("  pero el instalado va primero", crypto.find_veracrypt(),
+          {"mount": "/usr/bin/veracrypt", "format": "/usr/bin/veracrypt"})
+    finally:
+        crypto._first_exe, _vb.en_cache_para_este_equipo = reales_linux
 
     # --- 2. el montaje, como medio extraíble --------------------------------
     #

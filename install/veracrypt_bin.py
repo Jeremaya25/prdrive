@@ -81,7 +81,6 @@ from typing import Callable
 from common import components, pins, vestibulo
 
 from . import APP_NAME, InstallError, descarga
-from .runtime_bin import file_sha256     # el mismo resumen a trozos, una copia
 
 DOWNLOAD_TIMEOUT = 60          # segundos por lectura, no en total
 USER_AGENT = f"{APP_NAME}-install"
@@ -295,22 +294,11 @@ def ficheros_de(carpeta: Path) -> dict[str, str]:
 def verificada(carpeta: Path, version: str = pins.VERACRYPT_VERSION) -> bool:
     """¿Esa carpeta tiene un sello de esa versión y cada fichero es el que dice?
 
-    Se vuelve a resumir todo en cada uso (son ~28 MB, una fracción de segundo):
+    Se vuelve a resumir todo en cada uso (son ~34 MB, una fracción de segundo):
     la carpeta ya garantiza la versión; lo que queda por garantizar son los
-    bytes, y una caché estropeada no puede llegar a una unidad."""
-    try:
-        texto = (Path(carpeta) / SELLO).read_text(encoding="utf-8")
-    except (OSError, ValueError):
-        return False
-    if components.leer_sello(texto).get(components.VERACRYPT) != version:
-        return False
-    ficheros = components.veracrypt_ficheros(texto)
-    if not all(n in ficheros for n in IMPRESCINDIBLES):
-        return False
-    try:
-        return all(file_sha256(Path(carpeta) / n) == s for n, s in ficheros.items())
-    except OSError:
-        return False
+    bytes, y una caché estropeada no puede llegar a una unidad. La comprobación
+    es `components.veracrypt_integro()`, la misma que hace el agente con el suyo."""
+    return components.veracrypt_integro(carpeta, IMPRESCINDIBLES, version)
 
 
 def cached() -> Path | None:
@@ -438,3 +426,152 @@ def ensure_veracrypt(progreso: Progreso | None = None,
         raise SinRed("No hay VeraCrypt Portable en la caché y no se ha permitido "
                      "descargarlo.")
     return download_veracrypt(progreso)
+
+
+# ---------------------------------------------------------------------------
+# Linux: el AppImage oficial
+# ---------------------------------------------------------------------------
+#
+# En Linux no hay Portable, pero sí un AppImage oficial desde la 1.26.24: un
+# solo ejecutable, sin instalar nada (`pins.VERACRYPT_APPIMAGE`). Se baja, se
+# comprueba contra el SHA-256 fijado EN MEMORIA y se deja en su propia caché
+# (no en la del Portable: un Linux también baja el Portable cuando pone al día
+# el VeraCrypt de viaje de una unidad) como `veracrypt`, ejecutable, con un
+# sello como el del Portable: el mismo `components.veracrypt_integro()` lo
+# comprueba en cada uso, aquí y en el agente. No se abre ni se extrae: el
+# fichero ES el programa.
+#
+# Lo que no cambia con él: montar y crear un exFAT siguen pidiendo la contraseña
+# de administrador (VeraCrypt llama a `sudo` para el loop, dm-crypt y
+# `mkfs.exfat`), igual que con el instalado.
+
+APPIMAGE_EXE = "veracrypt"
+
+
+def appimage(clave: str) -> tuple[str, str]:
+    """(nombre del fichero publicado, SHA-256 fijado) para esa plataforma de
+    Linux. KeyError si no la hay."""
+    return pins.VERACRYPT_APPIMAGE[clave]
+
+
+def appimage_url(clave: str) -> str:
+    return pins.VERACRYPT_APPIMAGE_URL.format(nombre=appimage(clave)[0])
+
+
+def cache_appimage(clave: str) -> Path:
+    """La caché del AppImage: una carpeta por versión y plataforma."""
+    base = os.environ.get("LOCALAPPDATA") or tempfile.gettempdir()
+    d = (Path(base) / f"{APP_NAME}-install" / "veracrypt-appimage"
+         / pins.VERACRYPT_VERSION / clave)
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def appimage_en_cache(clave: str) -> Path | None:
+    """La carpeta de la caché si tiene el AppImage fijado y sigue siendo ese."""
+    d = cache_appimage(clave)
+    return d if components.veracrypt_integro(d, (APPIMAGE_EXE,),
+                                             pins.VERACRYPT_VERSION) else None
+
+
+def appimage_a_mano(clave: str) -> Path:
+    """Dónde dejar el AppImage bajado con el navegador: en su caché, con su
+    nombre exacto. Se comprueba igual que una descarga, sin red."""
+    return cache_appimage(clave) / appimage(clave)[0]
+
+
+def _guardar_appimage(datos: bytes, clave: str, origen: str, decir: Progreso) -> Path:
+    nombre, esperado = appimage(clave)
+    obtenido = hashlib.sha256(datos).hexdigest()
+    if obtenido != esperado:
+        raise InstallError(
+            f"{origen} no es el AppImage de VeraCrypt fijado.\n\n"
+            f"  esperado: {esperado}\n  obtenido: {obtenido}\n\n"
+            f"No se ha guardado nada. Vuelve a intentarlo.")
+    decir(f"SHA-256 correcto: {obtenido}")
+    destino = cache_appimage(clave)
+    try:
+        (destino / SELLO).unlink(missing_ok=True)
+        parcial = destino / f"{APPIMAGE_EXE}.part"
+        parcial.write_bytes(datos)
+        parcial.chmod(0o755)
+        os.replace(parcial, destino / APPIMAGE_EXE)
+        (destino / SELLO).write_text(
+            components.veracrypt_stamp_text(pins.VERACRYPT_VERSION, obtenido,
+                                            {APPIMAGE_EXE: obtenido}, paquete=nombre),
+            encoding="utf-8", newline="\n")
+    except OSError as e:
+        raise InstallError(f"No he podido guardar VeraCrypt en {destino}: {e}") from e
+    decir(f"VeraCrypt listo en {destino}")
+    return destino
+
+
+def download_appimage(clave: str, progreso: Progreso | None = None) -> Path:
+    """Baja el AppImage, lo comprueba en memoria y lo deja en la caché. Mismo
+    contrato que `download_veracrypt()`: un corte se reintenta, uno que no
+    cuadra no; sin red al final, `SinRed`."""
+    def decir(msg: str) -> None:
+        if progreso:
+            progreso(msg)
+
+    nombre, esperado = appimage(clave)
+    url = appimage_url(clave)
+    decir(f"Descargando VeraCrypt {pins.VERACRYPT_VERSION} (AppImage): {url}")
+    try:
+        datos = descarga.con_reintentos(lambda: fetch(url), f"Descargar {nombre}",
+                                        progreso)
+    except descarga.FALLOS_DE_RED as e:
+        raise SinRed(
+            f"No he podido descargar VeraCrypt de {url}: {descarga.describir(e)}\n\n"
+            f"Sin conexión, instala VeraCrypt en este equipo, o baja a mano\n  {url}\n"
+            f"con el SHA-256\n  {esperado}\ny déjalo, con ese nombre ({nombre}), "
+            f"en:\n  {cache_appimage(clave)}\nAl volver a intentarlo se comprueba "
+            f"igual que una descarga.") from e
+    return _guardar_appimage(datos, clave, url, decir)
+
+
+def ensure_appimage(clave: str, progreso: Progreso | None = None,
+                    allow_download: bool = True) -> Path:
+    """La carpeta con el AppImage fijado de esa plataforma, comprobado: la caché,
+    el dejado a mano o la descarga."""
+    encontrado = appimage_en_cache(clave)
+    if encontrado is not None:
+        return encontrado
+    ruta = appimage_a_mano(clave)
+    try:
+        datos = ruta.read_bytes() if ruta.is_file() else None
+    except OSError:
+        datos = None
+    if datos is not None:
+        return _guardar_appimage(datos, clave, str(ruta),
+                                 (lambda m: progreso(m)) if progreso else (lambda m: None))
+    if not allow_download:
+        raise SinRed("No hay VeraCrypt (AppImage) en la caché y no se ha permitido "
+                     "descargarlo.")
+    return download_appimage(clave, progreso)
+
+
+def para_este_equipo(progreso: Progreso | None = None) -> Path:
+    """El VeraCrypt sin instalar que sirve en ESTE equipo: el Portable en
+    Windows, el AppImage de su CPU en Linux. InstallError en otro sistema."""
+    from . import platforms
+    plat = platforms.host()
+    if plat is not None and plat.es_windows:
+        return ensure_veracrypt(progreso)
+    if plat is None or plat.clave not in pins.VERACRYPT_APPIMAGE:
+        raise InstallError("No hay un VeraCrypt sin instalar para este sistema: "
+                           "instálalo desde veracrypt.jp/en/Downloads.html.")
+    return ensure_appimage(plat.clave, progreso)
+
+
+def en_cache_para_este_equipo() -> Path | None:
+    """Lo mismo, sin red y sin descargar: la caché, si está y cuadra."""
+    from . import platforms
+    plat = platforms.host()
+    if plat is None:
+        return None
+    if plat.es_windows:
+        return cached()
+    if plat.clave not in pins.VERACRYPT_APPIMAGE:
+        return None
+    return appimage_en_cache(plat.clave)

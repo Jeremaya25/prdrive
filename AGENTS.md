@@ -722,8 +722,14 @@ before touching VeraCrypt on Windows. It has:
   unplugging leaves a ghost volume, and a forced dismount *may* keep the `.hc`
   held.
 
-Still unverified on real hardware:
-- an installed VeraCrypt (`ERR_DRIVER_VERSION`);
+Still unverified on real hardware — everything about VeraCrypt without
+installing it (V1–V8 of #50, the agent's Portable for the host root, the
+AppImage, `--quick` on Linux, U1–U10 of #51, the 1.26.24 → 1.26.29 move) is
+gathered as one plan in
+`docs/superpowers/pruebas/2026-09-30-veracrypt-sin-instalar.md`:
+- an installed VeraCrypt (`ERR_DRIVER_VERSION`; `DriverAttach()` compares
+  `VERSION_NUM`, 0x0126 for every 1.26.x, so only another minor version
+  clashes);
 - the «retenido» branch;
 - the new eject wait;
 - Linux;
@@ -766,10 +772,17 @@ at nothing) and hangs `tasklist | find`. Use PowerShell for both.
   holds the path (`device.raiz_del_volumen()`: `GetVolumePathNameW`, the mount
   point in POSIX): `GetVolumeInformationW` only takes a volume root, and the
   container of a host root lives in a folder — passing that folder straight made
-  every one of them fixed (H-1 of the real-hardware run). On Linux there is no equivalent: `--quick` is forced off
-  for file containers in 1.26.24 (`Main/TextUserInterface.cpp`; `master` drops
-  that line), so there the only lever is the size, and
-  `crypto.suggested_size()` stops proposing nearly the whole disk.
+  every one of them fixed (H-1 of the real-hardware run). On Linux there is no `/dynamic`, but since 1.26.29
+  `--quick` does the same for a file container: 1.26.24 forced it off
+  (`options->Quick = false` in `Main/TextUserInterface.cpp`) and 1.26.29 drops
+  that line. `create_command()` always passes it: seen with the real AppImages,
+  1.26.24 exits 0 and writes all 20 MiB, 1.26.29 leaves 352 KiB. So on Linux
+  `soporta_dispersos()` is a real probe (`_dispersos_posix()`: 1 MiB with one
+  byte at the end, `st_blocks`), and `crypto.creacion_dispersa(root, vc)` says
+  True / False / **None** — None with an installed VeraCrypt, whose version is
+  not known: both wizard panels then say «depende de la versión» instead of
+  promising either. With an older VeraCrypt the only lever is still the size,
+  and `crypto.suggested_size()` stops proposing nearly the whole disk.
 - **A fixed container shows its real progress, and the estimate is a floor.**
   `medir_escritura()`'s 8 MiB probe measures the *burst*: USB sticks drop to a
   half or a quarter once their SLC cache fills (#46: «unos 23 min» said, 40 min
@@ -839,6 +852,21 @@ at nothing) and hangs `tasklist | find`. Use PowerShell for both.
   from `crypto.arquitectura_vc()`, i.e. `model.machine_arch()` — the native
   machine, like VeraCrypt's `IsARM()`. The panel's «Descargar VeraCrypt
   Portable» button fetches it; with it, every step asks for UAC.
+- **No VeraCrypt installed on Linux: the official AppImage.** Since 1.26.24
+  IDRIX publishes one (x86_64; 1.26.29 adds aarch64 and bundles its own FUSE
+  library — the 1.26.24 one does not start without the host's `libfuse.so.2`).
+  `pins.VERACRYPT_APPIMAGE` (per Linux `Plataforma.clave`, hand-verified PGP;
+  the aarch64 one is NOT in the release's `sha256sum.txt`, only its `.sig`
+  covers it), `veracrypt_bin.ensure_appimage()` (hash in memory, its own cache
+  `veracrypt-appimage/<version>/<clave>/`, saved as an executable `veracrypt`
+  with a `PRDRIVE-VERACRYPT` stamp; hand-placed file adopted), and
+  `para_este_equipo()` / `en_cache_para_este_equipo()` pick the Portable or the
+  AppImage for THIS host. `crypto.find_veracrypt()` falls back to it after the
+  installed one (`{"appimage": True}`, `crypto.appimage()`). Without
+  `fusermount` its runtime extracts and runs. It does not remove root: mounting
+  and creating an exFAT still go through `sudo` (loop, dm-crypt,
+  `mkfs.exfat`). The drives' vestibule scripts do not use it (they open with
+  udisks2/cryptsetup already).
 - **`traveler.py` puts the Portable on the volume, both architectures, as a
   component.** There is no CLI for this: VeraCrypt's own dialog extracts the
   binaries from its self-extractor (`Mount/Mount.c`, `TravelerDlgProc`), and in
@@ -1258,7 +1286,8 @@ whatever you build that only a real host can prove.
   `~/.local/share/prdrive/`): `agente/<version>/` (agente.py, penwatch.py,
   common/, ui/ — never install/), `runtime/<stamp_id>/` (its own
   python-build-standalone, extracted by `runtime_bin.extract()`),
-  `rclone/<pinned version>/` (its own rclone, below), `agente.json`
+  `rclone/<pinned version>/` (its own rclone, below), `veracrypt/<pinned
+  version>/` (only with an encrypted host root and no VeraCrypt installed), `agente.json`
   (WHAT: drives, modes, `espera_unidad_nueva`, moderation), `instalacion.json`
   (WHERE: code, python), `agente.lock.json`, `agente.pide`, `estado.json`,
   `agente.log`. **No secret there.** `tests/_harness.py` points `equipo.DIR` at
@@ -1507,11 +1536,34 @@ file inside; no `.bat`/`.sh`/guide — the agent is the opener). Mounted at a
 the carpeta itself on Linux (`crypto.mount_container(punto_fijo=)`), and
 `Unidad.contenedor` holds the `.hc`. Not to weaken:
 
-- **Installed VeraCrypt only** (`raiz_equipo.veracrypt_instalado()` =
-  `penwatch.installed_veracrypt()`, one definition for the wizard and the
-  agent). No portable, no download, no installer: without it the step says how
-  to install it and offers only «Sin cifrar». Inside: NTFS on Windows, exFAT on
-  Linux (a fresh ext4 is root's).
+- **Installed VeraCrypt first, else the agent's own Portable (Windows).**
+  `raiz_equipo.veracrypt_para_raiz()` = `veracrypt_instalado()` (=
+  `penwatch.installed_veracrypt()`, the same one the agent uses) or
+  `veracrypt_portatil()` (the verified installer cache; the step offers
+  «Descargar VeraCrypt Portable» and, with it, an amber `AVISO_PORTATIL`).
+  Never an installer: the MSI route was rejected. The agent carries its copy
+  only when it needs it (`install/agente.quiere_veracrypt()`: an encrypted root
+  and nothing installed): `poner_veracrypt()` → `equipo.dir_veracrypt()/
+  <pinned version>/`, recorded in `instalacion.json` (`asegurar_veracrypt()`
+  when the wizard reuses an agent of the same version), pruned by `podar()`.
+  `agente.veracrypt_propio()` re-hashes it against its stamp
+  (`components.veracrypt_integro()`, shared with `veracrypt_bin.verificada()`)
+  before EVERY launch —it asks for elevation— and picks the native
+  architecture's exe + driver; `veracrypt_de_la_raiz()` puts the installed one
+  first, and it goes to `penwatch.veracrypt_command(…, respaldo=)`. The cost is
+  said out loud: **UAC on every unlock and lock**, at logon too with
+  `pedir_al_iniciar` (VeraCrypt docs, «Portable Mode»). Linux: the official
+  AppImage instead (below), which asks for the admin password to mount like the
+  installed one.
+  Inside: NTFS on Windows, exFAT on Linux (a fresh ext4 is root's).
+- **The launched VeraCrypt is not the one that asks.** The portable without
+  admin relaunches itself elevated (`/q UAC`) and the launched process exits in
+  ~2 s; `agente.Copia` notes the same-named processes before launching
+  (`agente.procesos()` → `store.procesos_llamados()`, the Toolhelp snapshot
+  moved out of `crypto._procesos()`) and `_sigue_vivo()` counts a new one as
+  VeraCrypt still at it, so an unlock is not forgotten after `GRACIA_ABRIR`
+  during the UAC/password, nor a lock reported «sigue abierta» while the copy
+  asks whether to force.
 - **The password never passes through the agent.** The wizard uses it once to
   create and mount (`raiz_equipo.abrir_o_crear()`) and leaves the container
   open for the agent. From then on `penwatch.veracrypt_command(None, container,
@@ -2020,8 +2072,9 @@ keeps the target's existing header.
   `bandeja_windows.Api`, `agente.hilo()` / `buscar_version()` / `ejecutar()` /
   `cache_version()`, `runsync.pedir_reanudar()` / `agente_sirve()`,
   `watch.pedir_al_agente()`, `agente.arrancar_agente()`, `tk_equipo.escritorio()`,
-  `install.pintar_iconos`, `install.agente.matar_arbol()` / `conseguir_rclone()`,
-  `agente.rclone_propio()`,
+  `install.pintar_iconos`, `install.agente.matar_arbol()` / `conseguir_rclone()` /
+  `conseguir_veracrypt()`, `agente.rclone_propio()` / `veracrypt_propio()` /
+  `procesos()`, `raiz_equipo.veracrypt_portatil()`,
   the Linux tray's `conectar` / `conectar_sistema`, and `equipo.DIR`. Keep new
   ones in that shape.
 

@@ -168,18 +168,20 @@ def rclone_stamp_text(plat: Plataforma, version: str) -> str:
 
 
 def veracrypt_stamp_text(version: str, sha256_paquete: str,
-                         ficheros: dict[str, str]) -> str:
+                         ficheros: dict[str, str], paquete: str | None = None) -> str:
     """El sello del VeraCrypt de viaje: de qué paquete salió y qué hay en él.
 
     A diferencia del de rclone, este SÍ lleva el resumen de cada fichero, y no
     para adornar: es a la vez el manifiesto de la caché del instalador
     (`install/veracrypt_bin.py` vuelve a resumir cada fichero contra él antes de
     usarlo) y el de la carpeta de la unidad, que es una copia exacta de esa
-    caché. Así «qué versión es» y «qué ficheros son» salen del mismo sitio."""
+    caché. Así «qué versión es» y «qué ficheros son» salen del mismo sitio.
+    `paquete` es el nombre de lo descargado cuando no es el Portable de Windows
+    (el AppImage de Linux, `install/veracrypt_bin.py`)."""
     lineas = [f"# {APP_NAME} — el VeraCrypt que viaja en esta unidad. Lo escribe "
               f"el instalador y lo lee la ventana. No lo toques.",
               f"{VERACRYPT} = {version}",
-              f"paquete = VeraCrypt Portable {version}.exe",
+              f"paquete = {paquete or f'VeraCrypt Portable {version}.exe'}",
               f"sha256 = {sha256_paquete}"]
     lineas += [f"{FICHERO_SELLO}{nombre} = {resumen}"
                for nombre, resumen in sorted(ficheros.items())]
@@ -201,6 +203,40 @@ def veracrypt_ficheros(texto: str) -> dict[str, str]:
                 and "\\" not in nombre and ":" not in nombre):
             salida[nombre] = valor.lower()
     return salida
+
+
+def veracrypt_integro(carpeta: Path | str, necesarios: tuple[str, ...] = (),
+                      version: str | None = None) -> bool:
+    """¿Esa carpeta de VeraCrypt es la que dice su sello, byte a byte?
+
+    Sello presente (y de `version`, si se pide), cada fichero que nombra con
+    su SHA-256, y ninguno de `necesarios` sin nombrar. Es la comprobación de
+    `install/veracrypt_bin.verificada()` en `common/`, porque la hace también el
+    agente, que no lleva `install/`, cada vez que va a lanzar SU VeraCrypt: lo
+    que se lanza pide administrador, y lo que pide administrador tiene que ser
+    lo que se comprobó al instalar. No lanza nunca."""
+    import hashlib
+    carpeta = Path(carpeta)
+    try:
+        texto = (carpeta / VERACRYPT_STAMP).read_text(encoding="utf-8")
+    except (OSError, ValueError):
+        return False
+    if version is not None and leer_sello(texto).get(VERACRYPT) != version:
+        return False
+    ficheros = veracrypt_ficheros(texto)
+    if not ficheros or not all(n in ficheros for n in necesarios):
+        return False
+    try:
+        for nombre, esperado in ficheros.items():
+            h = hashlib.sha256()
+            with open(carpeta / nombre, "rb") as f:
+                for trozo in iter(lambda: f.read(1024 * 1024), b""):
+                    h.update(trozo)
+            if h.hexdigest() != esperado:
+                return False
+    except OSError:
+        return False
+    return True
 
 
 def runtime_stamp(app_dir: Path | str | None, plat: Plataforma) -> str | None:

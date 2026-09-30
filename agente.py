@@ -122,8 +122,8 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 import penwatch  # noqa: E402
-from common import (APP_NAME, avisos, catalog, equipo, model, moderacion,  # noqa: E402
-                    store, update, vestibulo)
+from common import (APP_NAME, avisos, catalog, components, equipo, model,  # noqa: E402
+                    moderacion, store, update, vestibulo)
 from common import planificador as pl  # noqa: E402
 from common.store import pid_alive  # noqa: E402
 from ui import bandeja, prefs  # noqa: E402
@@ -160,6 +160,8 @@ OK, FALLO, RED, SALTADA = pl.OK, pl.FALLO, pl.RED, pl.SALTADA
 # (`model.RCLONE_DEL_AGENTE`). Las de antes ejecutarían el de la unidad, que la
 # huella no cubre: el agente no las atiende hasta que se actualicen.
 VERSION_MINIMA = "0.5.0"
+SIN_VERACRYPT = ("No hay VeraCrypt en este equipo: ni instalado ni el del agente. "
+                 "Vuelve a pasar el asistente, que se lo pone, o instala VeraCrypt.")
 SIN_RCLONE = ("no encuentro el rclone del agente; sin él no ejecuto nada de las "
               "unidades. Reinstala el agente o actualízalo.")
 TEXTO_RESULTADO = {OK: "bien", FALLO: "FALLÓ", RED: "FALLÓ por la red",
@@ -241,6 +243,51 @@ def rclone_propio() -> Path | None:
         return Path(ruta) if Path(ruta).is_file() else None
     except OSError:
         return None
+
+
+def veracrypt_propio() -> str | None:
+    """El VeraCrypt del agente para ESTE equipo, comprobado, o None.
+
+    Lo pone el instalador en `veracrypt/<versión fijada>/` solo cuando atiende
+    una raíz cifrada y no hay VeraCrypt instalado (`install/agente.
+    quiere_veracrypt()`), y lo apunta en `instalacion.json`, que se lee aquí
+    cada vez: añadirlo no obliga a parar el agente. Se vuelve a resumir contra
+    su sello antes de devolverlo, porque lo que se lanza pide administrador
+    (UAC), y lo que pide administrador tiene que ser lo que se comprobó al
+    instalar. En Windows, el ejecutable y el driver de la arquitectura NATIVA,
+    como en el vestíbulo: VeraCrypt elige su driver por ella y un driver no se
+    emula. De módulo para que los tests lo sustituyan."""
+    carpeta = equipo.leer_instalacion().get("veracrypt")
+    if not isinstance(carpeta, str) or not carpeta:
+        return None
+    if IS_WIN:
+        arq = penwatch.native_arch()
+        if arq not in penwatch.TRAVELER_ARCHS:
+            return None
+        exe = penwatch.TRAVELER_PORTABLE.format(arq=arq)
+        necesarios = (exe, f"veracrypt-{arq}.sys")
+    else:
+        exe = "veracrypt"
+        necesarios = (exe,)
+    if not components.veracrypt_integro(carpeta, necesarios):
+        diario(f"el VeraCrypt del agente en {carpeta} no cuadra con su sello: no lo "
+               f"lanzo. Reinstala el agente.")
+        return None
+    return str(Path(carpeta) / exe)
+
+
+def veracrypt_de_la_raiz() -> str | None:
+    """Con qué VeraCrypt se abre y se cierra la raíz cifrada: el instalado
+    primero (con su driver cargado no pide administrador, y con otra versión
+    menor cargada el portable fallaría con ERR_DRIVER_VERSION), si no el del
+    agente. None si no hay ninguno."""
+    return penwatch.installed_veracrypt() or veracrypt_propio()
+
+
+def procesos(nombre: str) -> set[int]:
+    """Los pid vivos con ese nombre de ejecutable (Windows; en POSIX, vacío).
+    De módulo para que los tests lo sustituyan."""
+    return store.procesos_llamados(nombre)
 
 
 def _opciones_hijo(cwd: Path, separado: bool = False) -> dict:
@@ -501,8 +548,9 @@ def bloqueada(unidad: equipo.Unidad) -> bool:
 def orden_bloquear(unidad: equipo.Unidad) -> list[str] | None:
     """El desmontaje de la raíz cifrada, SIN `/silent`, como `Expulsar
     PRDRIVE.bat`: con un fichero abierto dentro VeraCrypt pregunta si forzar, y
-    esa decisión es de la persona. None sin VeraCrypt instalado."""
-    exe = penwatch.installed_veracrypt()
+    esa decisión es de la persona. None sin VeraCrypt (ni instalado ni el del
+    agente)."""
+    exe = veracrypt_de_la_raiz()
     if exe is None:
         return None
     if IS_WIN:
@@ -566,6 +614,7 @@ class Desbloqueo:
     proc: Any = None                    # el VeraCrypt que monta
     salio: float | None = None          # cuándo se vio que había salido
     abrir: bool = False                 # abrir su ventana en cuanto se vea abierta
+    copia: Copia | None = None          # la copia elevada que puede seguir tras él
 
 
 @dataclass
@@ -574,6 +623,41 @@ class Bloqueo:
     desde: float
     proc: Any = None                    # el VeraCrypt que desmonta, ya lanzado
     lanzado: float = 0.0
+    copia: Copia | None = None
+
+
+@dataclass(frozen=True)
+class Copia:
+    """Los VeraCrypt que ya había antes de lanzar el nuestro, por nombre.
+
+    VeraCrypt sin su driver instalado y sin administrador —el portable del
+    agente— se relanza elevado (`/q UAC`) y el proceso que lanzamos sale con 0
+    a los dos segundos (`InitApp`, `LaunchElevatedProcess` en
+    `Common/Dlgcode.c`), mientras la copia elevada sigue: pide la contraseña, o
+    pregunta si forzar el desmontaje. Esa copia es la misma imagen, así que se
+    la reconoce por el nombre y por no estar antes, como hacen
+    `crypto._esperar_copia_elevada()` y `:vc_pendiente` del vestíbulo. Sin
+    esto, un «Desbloquear» se daría por cancelado con la persona todavía en el
+    aviso de UAC, y un «Bloquear», por fallido mientras VeraCrypt pregunta."""
+    imagen: str
+    antes: frozenset[int]
+
+    @staticmethod
+    def antes_de(cmd: list[str]) -> Copia:
+        # En Linux no hay copia (el que lanzamos es el que pregunta) y
+        # `procesos()` no ve nada: la copia no sigue nunca.
+        imagen = Path(cmd[0]).name
+        return Copia(imagen, frozenset(procesos(imagen)))
+
+    def sigue(self) -> bool:
+        return bool(procesos(self.imagen) - self.antes)
+
+
+def _sigue_vivo(proc: Any, copia: Copia | None) -> bool:
+    """¿Sigue VeraCrypt en ello: el proceso lanzado, o su copia elevada?"""
+    if proc is not None and proc.poll() is None:
+        return True
+    return copia is not None and copia.sigue()
 
 
 @dataclass
@@ -1441,12 +1525,12 @@ class Agente:
         if ocupado:
             avisar(f"{nombre}: no la desbloqueo", ocupado, True)
             return False
+        exe = veracrypt_de_la_raiz()
         cmd = penwatch.veracrypt_command(None, Path(unidad.contenedor),
-                                         unidad.letra or unidad.ruta)
+                                         unidad.letra or unidad.ruta, respaldo=exe)
         if cmd is None:
             avisar(f"{nombre}: no la puedo desbloquear",
-                   "No hay VeraCrypt instalado en este equipo" if IS_WIN or
-                   penwatch.installed_veracrypt() is None else
+                   SIN_VERACRYPT if exe is None else
                    "No hay escritorio donde VeraCrypt pida la contraseña", True)
             return False
         if not unidad.letra:
@@ -1454,13 +1538,14 @@ class Agente:
                 Path(unidad.ruta).mkdir(parents=True, exist_ok=True)
             except OSError:
                 pass                # que lo diga VeraCrypt
+        copia = Copia.antes_de(cmd)
         try:
             proc = lanzar(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                           **_opciones_hijo(equipo.DIR, separado=True))
         except OSError as e:
             avisar(f"{nombre}: no he podido lanzar VeraCrypt", str(e), True)
             return False
-        self.desbloqueos[unidad.id] = Desbloqueo(ahora, proc, abrir=abrir)
+        self.desbloqueos[unidad.id] = Desbloqueo(ahora, proc, abrir=abrir, copia=copia)
         diario(f"{nombre}: desbloqueando" + (f" ({por})" if por else "")
                + f" en {unidad.ruta}; la contraseña la pide VeraCrypt")
         return True
@@ -1474,7 +1559,7 @@ class Agente:
         for uid, d in list(self.desbloqueos.items()):
             if uid in self.conexiones or uid in self.vistas:
                 continue
-            if d.salio is None and (d.proc is None or d.proc.poll() is not None):
+            if d.salio is None and not _sigue_vivo(d.proc, d.copia):
                 d.salio = ahora
             if ((d.salio is not None and ahora - d.salio >= GRACIA_ABRIR)
                     or ahora - d.desde >= ESPERA_ABRIR):
@@ -1512,11 +1597,11 @@ class Agente:
                 cmd = orden_bloquear(unidad)
                 if cmd is None:
                     del self.bloqueos[uid]
-                    avisar(f"{nombre}: no la puedo bloquear",
-                           "No hay VeraCrypt instalado en este equipo.", True)
+                    avisar(f"{nombre}: no la puedo bloquear", SIN_VERACRYPT, True)
                     continue
                 if con is not None:
                     self._soltar(con)
+                b.copia = Copia.antes_de(cmd)
                 try:
                     b.proc = lanzar(cmd, stdout=subprocess.DEVNULL,
                                     stderr=subprocess.DEVNULL,
@@ -1537,7 +1622,7 @@ class Agente:
                     self._desconectar(uid, ahora, {})
                 diario(f"{nombre}: bloqueada")
                 continue
-            salio = b.proc.poll() is not None
+            salio = not _sigue_vivo(b.proc, b.copia)
             if (salio and ahora - b.lanzado >= GRACIA_DESMONTAJE) \
                     or ahora - b.lanzado >= ESPERA_DESMONTAJE:
                 del self.bloqueos[uid]

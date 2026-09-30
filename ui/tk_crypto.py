@@ -131,18 +131,22 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
     estado.veracrypt = estado.veracrypt or crypto.find_veracrypt()
 
     if not estado.veracrypt:
-        # En Windows no hace falta instalar nada: el VeraCrypt Portable oficial
-        # se baja y se comprueba (`install/veracrypt_bin.py`). En Linux sí: allí
-        # VeraCrypt necesita su driver y FUSE, y no hay portable.
-        ttk.Label(panel, foreground=theme.AVISO if IS_WIN else theme.PELIGRO,
+        # No hace falta instalar nada: el VeraCrypt Portable oficial en Windows,
+        # el AppImage oficial en Linux, bajados y comprobados
+        # (`install/veracrypt_bin.py`). En Linux montar sigue pidiendo la
+        # contraseña de administrador, como con el instalado.
+        ttk.Label(panel, foreground=theme.AVISO,
                   justify="left", wraplength=theme.medida(760), text=(
             f"No hay VeraCrypt instalado en este equipo. Puedo usar el VeraCrypt "
             f"Portable oficial {pins.VERACRYPT_VERSION}, sin instalarlo: se "
             f"descarga (≈39 MB) y se comprueba contra el SHA-256 que fija este "
             f"programa antes de usarlo. O dime dónde tienes uno (una instalación "
             f"o un portable descomprimido):" if IS_WIN else
-            "No encuentro VeraCrypt en este equipo. Instálalo desde "
-            "veracrypt.jp/en/Downloads.html, o dime dónde está:")).grid(
+            f"No hay VeraCrypt instalado en este equipo. Puedo usar el AppImage "
+            f"oficial de VeraCrypt {pins.VERACRYPT_VERSION}, sin instalarlo: se "
+            f"descarga (≈13 MB) y se comprueba contra el SHA-256 que fija este "
+            f"programa antes de usarlo. Para montar pedirá la contraseña de "
+            f"administrador, igual que el instalado. O dime dónde está:")).grid(
             row=0, column=0, sticky="w")
         ruta = tk.StringVar()
         fila = ttk.Frame(panel)
@@ -151,10 +155,10 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
         def descargar() -> None:
             ok, res = working(
                 wiz.root, "descargando VeraCrypt",
-                lambda: veracrypt_bin.ensure_veracrypt(),
-                f"Descargando VeraCrypt Portable {pins.VERACRYPT_VERSION} y "
-                f"comprobándolo.")
-            estado.veracrypt = crypto.find_veracrypt(res) if ok else None
+                lambda: veracrypt_bin.para_este_equipo(),
+                f"Descargando VeraCrypt {pins.VERACRYPT_VERSION} y comprobándolo.")
+            estado.veracrypt = (crypto.find_veracrypt(res if IS_WIN else None)
+                                if ok else None)
             if estado.veracrypt:
                 hecho()
                 wiz.repintar()
@@ -164,10 +168,10 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
                     else "El VeraCrypt Portable no trae los ejecutables de este "
                          "equipo."), parent=wiz.root)
 
-        if IS_WIN:
-            ttk.Button(fila, text="Descargar VeraCrypt Portable",
-                       style="Primary.TButton", command=descargar).grid(
-                row=0, column=0, sticky="w", padx=(0, 12))
+        ttk.Button(fila, text=("Descargar VeraCrypt Portable" if IS_WIN else
+                               "Descargar VeraCrypt (AppImage)"),
+                   style="Primary.TButton", command=descargar).grid(
+            row=0, column=0, sticky="w", padx=(0, 12))
         ttk.Entry(fila, textvariable=ruta, width=52).grid(row=0, column=1)
 
         def buscar() -> None:
@@ -208,7 +212,13 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
     # escribe ni tarda, y cachearla daría la respuesta de la unidad anterior si
     # se cambia de destino—. Lo que sí se recuerda en el estado es la MEDIDA de
     # velocidad, que sí escribe en la unidad: ver `refrescar_espera`.
-    dispersos = crypto.soporta_dispersos(estado.device) if not existe else False
+    # En Linux no hay casilla que valga: `--quick` va siempre, y si el
+    # contenedor sale disperso lo decide la versión de VeraCrypt y el disco
+    # (`crypto.creacion_dispersa()`, None si no se sabe). Se enseña marcada o
+    # no, sin poder cambiarla, y la frase de al lado dice por qué.
+    disperso = (crypto.creacion_dispersa(estado.device, estado.veracrypt)
+                if not existe else False)
+    dispersos = disperso is True
     # El sistema de ficheros de la unidad, por lo mismo: en FAT32 un fichero no
     # llega a 4 GiB, y el contenedor es un fichero (`crypto.tope_contenedor`).
     fs = crypto.sistema_de_ficheros(estado.device) if not existe else ""
@@ -243,13 +253,17 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
         fila += 1
 
         ttk.Checkbutton(
-            formulario, variable=dinamico, state="normal" if dispersos else "disabled",
+            formulario, variable=dinamico,
+            state="normal" if dispersos and IS_WIN else "disabled",
             text="Contenedor dinámico: solo ocupa lo que guardes").grid(
             row=fila, column=0, columnspan=2, sticky="w", pady=(6, 0))
         ttk.Label(formulario, foreground=theme.TINTA3, justify="left",
                   wraplength=theme.medida(360), text=(
             "sin negación plausible, y si la unidad se llena el volumen da "
             "errores de E/S" if dispersos else
+            "depende de la versión de VeraCrypt: con la 1.26.29 o posterior solo "
+            "ocupa lo que guardes; con una anterior se escribe entero"
+            if disperso is None else
             f"esta unidad ({fs or 'sin identificar'}) no admite ficheros "
             "dispersos: el contenedor hay que escribirlo entero")).grid(
             row=fila, column=2, sticky="w", padx=(10, 0), pady=(6, 0))

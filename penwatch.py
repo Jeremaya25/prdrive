@@ -480,7 +480,7 @@ def _con_escritorio() -> bool:
 
 
 def veracrypt_command(root: Path | None, container: Path | None = None,
-                      dest: str = "") -> list[str] | None:
+                      dest: str = "", respaldo: str | None = None) -> list[str] | None:
     """La orden que abre el contenedor de `root`, o None si no hay con qué.
 
     Sin contraseña, que la pide VeraCrypt en su ventana. El VeraCrypt instalado
@@ -492,14 +492,15 @@ def veracrypt_command(root: Path | None, container: Path | None = None,
     contraseña, ni la de administrador que montar exige.
 
     Con `container` es la raíz cifrada de un EQUIPO (la abre el agente): el
-    contenedor no está en la raíz de ninguna unidad, así que se da entero, y
-    solo vale el VeraCrypt instalado —en el ordenador propio se instala una
-    vez; el portátil pide administrador cada vez que carga su driver—. `dest` es
-    dónde montarlo: la letra fija (`/letter`) en Windows, porque los programas
-    apuntan a la raíz y no puede cambiar de un día a otro; la carpeta fija en
-    Linux."""
+    contenedor no está en la raíz de ninguna unidad, así que se da entero. El
+    VeraCrypt instalado primero, por lo mismo que en una unidad; si no hay,
+    `respaldo`, el que lleva el agente en su carpeta (que se lo pasa ya
+    comprobado: penwatch no importa nada del proyecto). Ese es el portable, y
+    pide administrador cada vez que carga su driver. `dest` es dónde montarlo:
+    la letra fija (`/letter`) en Windows, porque los programas apuntan a la raíz
+    y no puede cambiar de un día a otro; la carpeta fija en Linux."""
     if container is not None:
-        exe = installed_veracrypt()
+        exe = installed_veracrypt() or respaldo
         if exe is None:
             return None
         if IS_WIN:

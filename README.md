@@ -205,9 +205,16 @@ comprueba antes de usarlo —su SHA-256 contra el fijado, y los CRC-32 del
 paquete y de cada fichero, como hace el propio VeraCrypt—. Si lo tienes
 descomprimido en una carpeta, también vale indicarla. Con el portable, cada paso
 (crear, montar, desmontar) pide permiso de administrador: sin su driver
-instalado, VeraCrypt se relanza elevado. Si hay uno instalado, se usa ese. En
-Linux, para crear el contenedor, sí tiene que estar instalado (abrirlo luego no
-lo necesita: ver [En Linux, sin VeraCrypt](#en-linux-sin-veracrypt)).
+instalado, VeraCrypt se relanza elevado. Si hay uno instalado, se usa ese.
+
+**En Linux tampoco.** Sin VeraCrypt instalado, el paso ofrece **Descargar
+VeraCrypt (AppImage)**: el AppImage oficial de la misma versión fijada, para x64
+y ARM64, comprobado contra su SHA-256 antes de usarlo. Es un solo ejecutable y no
+instala nada, pero crear y montar siguen pidiendo la contraseña de
+administrador, igual que con el instalado. Para abrirlo después ni eso hace
+falta: ver [En Linux, sin VeraCrypt](#en-linux-sin-veracrypt). Con la 1.26.29
+(la fijada, o una instalada igual o más nueva), en Linux el contenedor también
+se crea disperso si el disco lo admite: solo ocupa lo que se guarda.
 
 **Por qué tarda, y cómo no tardar.** Crear el contenedor no es cifrar: es
 *escribirlo entero*. VeraCrypt reserva el fichero y luego lo recorre escribiendo
@@ -1051,9 +1058,18 @@ almacén de Obsidian en `P:\obsidian` no puede amanecer en `Q:`) y en `~/PRDRIVE
 en Linux. Dentro van el programa, la clave, el estado y las parejas; fuera, solo
 el contenedor y una marca con su id.
 
-- **Hace falta VeraCrypt instalado** en el equipo. El instalador no lo descarga
-  ni lo instala; sin él, el paso lo dice y solo ofrece «Sin cifrar». En Linux,
-  VeraCrypt pide además la contraseña de administrador para montar.
+- **En Windows no hace falta tenerlo instalado.** Sin VeraCrypt, el paso ofrece
+  **Descargar VeraCrypt Portable** —el mismo paquete oficial, comprobado, que
+  usan las unidades— y el agente se lleva una copia a su carpeta
+  (`veracrypt/<versión>/`), que vuelve a comprobar contra su sello antes de cada
+  uso. Sin instalar nada, pero **con el aviso de administrador (UAC) cada vez que
+  abre o cierra la raíz**: al crearla, al desbloquearla —también al iniciar sesión
+  si se pide la contraseña— y al bloquearla. VeraCrypt no puede cargar su driver
+  sin ser administrador; instalado, lo carga una vez y ya no pregunta. Si hay uno
+  instalado se usa ese, y si lo instalas después el agente pasa a usarlo solo.
+  En Linux, sin VeraCrypt instalado, lo mismo con el AppImage oficial
+  (**Descargar VeraCrypt (AppImage)**); con uno o con otro, VeraCrypt pide
+  además la contraseña de administrador para montar.
 - **La contraseña nunca pasa por prdrive.** El asistente la usa una vez, para
   crear y montar, y deja el contenedor abierto. Desde ahí lo abre el agente con
   la ventana de VeraCrypt: al iniciar sesión (una vez; si cancelas, hasta que

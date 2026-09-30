@@ -52,7 +52,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from common import model
+from common import model, store
 
 from . import CREATE_NO_WINDOW, DEVICE_LABEL, IS_WIN, InstallError
 from . import veracrypt_bin
@@ -156,6 +156,9 @@ def find_veracrypt(extra_dir: str | Path | None = None) -> dict | None:
     carpeta que indique el usuario cuando no está donde se espera: una
     instalación o un VeraCrypt Portable descomprimido, las dos valen.
 
+    En Linux, esa carpeta, el instalado y, si no hay, el AppImage oficial
+    fijado que ya esté en la caché (`veracrypt_bin.appimage_en_cache()`).
+
     En Windows, por este orden: esa carpeta, el VeraCrypt INSTALADO —con otro
     VeraCrypt instalado y su driver cargado, el portable falla con
     ERR_DRIVER_VERSION (`Common/Dlgcode.c`, `DriverAttach`)— y, si no hay
@@ -179,7 +182,21 @@ def find_veracrypt(extra_dir: str | Path | None = None) -> dict | None:
         candidatos.insert(0, str(Path(extra_dir) / "veracrypt"))
         candidatos.insert(0, str(extra_dir))
     vc = _first_exe(candidatos)
-    return {"mount": vc, "format": vc} if vc else None
+    if vc:
+        return {"mount": vc, "format": vc}
+    # Sin instalado, el AppImage oficial que ya esté en la caché y siga siendo
+    # el comprobado (`veracrypt_bin.appimage_en_cache()`); bajarlo lo pide la
+    # pantalla, como el Portable en Windows.
+    cache = veracrypt_bin.en_cache_para_este_equipo()
+    if cache is None:
+        return None
+    exe = str(cache / veracrypt_bin.APPIMAGE_EXE)
+    return {"mount": exe, "format": exe, "appimage": True}
+
+
+def appimage(vc: dict | None) -> bool:
+    """¿Es el AppImage oficial fijado (Linux, sin instalar)?"""
+    return bool((vc or {}).get("appimage"))
 
 
 # ---------------------------------------------------------------------------
@@ -324,8 +341,9 @@ def soporta_dispersos(root: str | Path) -> bool:
     nombre del sistema de ficheros: es la misma prueba que hace él, y así no hay
     que mantener aquí una lista de qué sistemas la cumplen.
 
-    En POSIX devuelve False porque `--dynamic` no existe en su CLI (ver
-    `create_command`), no porque ext4 no sepa de dispersos.
+    En POSIX no hay bandera que leer: se prueba (`_dispersos_posix()`). Ahí no
+    decide `/dynamic` —no existe en su CLI—, sino si el `--quick` de la
+    1.26.29 dejará el contenedor disperso (`creacion_dispersa()`).
 
     `root` puede ser una carpeta (la del contenedor de la raíz de un equipo):
     `GetVolumeInformationW` solo acepta la raíz de un volumen, así que se le
@@ -334,7 +352,7 @@ def soporta_dispersos(root: str | Path) -> bool:
     Función de módulo para que los tests la sustituyan, como
     `_leer_estado_bitlocker()`."""
     if not IS_WIN:
-        return False
+        return _dispersos_posix(root)
     import ctypes
     from ctypes import byref, c_wchar_p, create_unicode_buffer
     from ctypes.wintypes import DWORD
@@ -352,6 +370,51 @@ def soporta_dispersos(root: str | Path) -> bool:
     except OSError:
         return False
     return bool(ok) and bool(flags.value & FILE_SUPPORTS_SPARSE_FILES)
+
+
+DISPERSO_NOMBRE = ".prdrive-disperso.tmp"
+
+
+def _dispersos_posix(root: str | Path) -> bool:
+    """¿Deja este sistema de ficheros un fichero con un hueco sin ocupar?
+
+    La prueba es la evidencia misma: 1 MiB de tamaño con un solo byte al final,
+    y se mira cuánto ocupa de verdad (`st_blocks`, en bloques de 512 bytes).
+    ext4, btrfs o xfs lo dejan en un bloque; FAT y exFAT, que no saben de
+    dispersos, lo rellenan entero. Se escribe en la propia carpeta y se borra.
+    Cualquier fallo es «no»: prometer que ocupa poco y que ocupe entero es peor
+    que lo contrario."""
+    prueba = Path(root) / DISPERSO_NOMBRE
+    try:
+        with open(prueba, "wb") as f:
+            f.seek(1024 ** 2 - 1)
+            f.write(b"\0")
+            f.flush()
+            os.fsync(f.fileno())
+        return os.stat(prueba).st_blocks * 512 < 1024 ** 2 // 2
+    except (OSError, AttributeError):
+        return False
+    finally:
+        try:
+            prueba.unlink()
+        except OSError:
+            pass
+
+
+def creacion_dispersa(root: str | Path, vc: dict | None) -> bool | None:
+    """¿El contenedor que se cree en `root` con `vc` saldrá disperso?
+
+    True o False cuando se sabe, None cuando depende de algo que no se puede
+    preguntar sin ejecutarlo. En Windows es `/dynamic`, que se pasa solo si el
+    disco lo admite: `soporta_dispersos()`. En Linux, `--quick` se pasa siempre
+    (`create_command`) y deja el contenedor disperso desde la 1.26.29; antes se
+    ignora. Con el AppImage fijado la versión se sabe; con un VeraCrypt
+    instalado no, y la pantalla lo dice así en vez de prometer nada."""
+    if not soporta_dispersos(root):
+        return False
+    if IS_WIN or appimage(vc):
+        return True
+    return None
 
 
 def medir_escritura(root: str | Path, muestra: int = SONDA_BYTES) -> float | None:
@@ -786,17 +849,20 @@ def create_command(vc: dict, container: Path, size_bytes: int, password: str,
     # --stdin: en Linux la contraseña va por la entrada estándar y no aparece en
     # la lista de procesos.
     #
-    # Aquí NO hay equivalente de /dynamic —no existe en su CLI— y `--quick`
-    # tampoco sirve: en el tag VeraCrypt_1.26.24, TextUserInterface.cpp fuerza
-    # `options->Quick = false` en la rama del contenedor-fichero, así que el
-    # volumen se escribe entero pase lo que pase y lo único que queda es elegir
-    # bien el tamaño. En `master` esa línea ya no está y `--quick` pasa a valer
-    # también para contenedores; cuando eso llegue a una release, se revisa.
+    # Aquí NO hay /dynamic —no existe en su CLI—, pero desde la 1.26.29
+    # `--quick` hace lo mismo con un contenedor-fichero: hasta la 1.26.24,
+    # TextUserInterface.cpp forzaba `options->Quick = false` en esa rama (el
+    # volumen se escribía entero pase lo que pase), y en la 1.26.29 esa línea ya
+    # no está y el aviso de `--quick` dice que el ahorro depende de que el
+    # sistema de ficheros admita dispersos. Visto con el AppImage 1.26.29: un
+    # contenedor FAT de 20 MiB ocupa 352 KiB. Se pasa siempre: una versión
+    # anterior lo ignora sin quejarse (visto con el AppImage 1.26.24: sale con 0
+    # y el fichero ocupa sus 20 MiB), y con el AppImage fijado es la 1.26.29.
     return [vc["format"], "--text", "--create", str(container),
             "--volume-type=normal", f"--size={size_bytes}",
             "--encryption=AES", "--hash=sha512", f"--filesystem={filesystem}",
             "--pim=0", "--keyfiles=", "--random-source=/dev/urandom",
-            "--stdin", "--non-interactive"]
+            "--quick", "--stdin", "--non-interactive"]
 
 
 def mount_command(vc: dict, container: Path, password: str,
@@ -861,49 +927,9 @@ def _procesos(nombre: str) -> set[int]:
     """Los pid de los procesos vivos cuyo ejecutable se llama `nombre`.
 
     Solo Windows. Indirección de módulo, como `_volumenes_con_control()`: los
-    tests la sustituyen. Va por la instantánea de Toolhelp, que da el nombre sin
-    abrir ningún proceso, y no por WMI: en las pruebas en G:, la consulta a WMI
-    no enseñaba la copia elevada de VeraCrypt y `Get-Process` sí. Si no se puede
-    sacar la instantánea devuelve un conjunto vacío: no poder mirar no puede
-    dejar a nadie esperando."""
-    import ctypes
-    from ctypes import wintypes
-
-    class PROCESSENTRY32W(ctypes.Structure):
-        _fields_ = [("dwSize", wintypes.DWORD),
-                    ("cntUsage", wintypes.DWORD),
-                    ("th32ProcessID", wintypes.DWORD),
-                    ("th32DefaultHeapID", ctypes.c_size_t),
-                    ("th32ModuleID", wintypes.DWORD),
-                    ("cntThreads", wintypes.DWORD),
-                    ("th32ParentProcessID", wintypes.DWORD),
-                    ("pcPriClassBase", ctypes.c_long),
-                    ("dwFlags", wintypes.DWORD),
-                    ("szExeFile", wintypes.WCHAR * 260)]
-
-    TH32CS_SNAPPROCESS = 0x00000002
-    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
-    k32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
-    k32.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
-    k32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
-    k32.CloseHandle.argtypes = [wintypes.HANDLE]
-
-    foto = k32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
-    if not foto or foto == wintypes.HANDLE(-1).value:
-        return set()
-    vivos = set()
-    try:
-        entrada = PROCESSENTRY32W()
-        entrada.dwSize = ctypes.sizeof(PROCESSENTRY32W)
-        seguir = k32.Process32FirstW(foto, ctypes.byref(entrada))
-        while seguir:
-            if entrada.szExeFile.lower() == nombre.lower():
-                vivos.add(entrada.th32ProcessID)
-            seguir = k32.Process32NextW(foto, ctypes.byref(entrada))
-    finally:
-        k32.CloseHandle(foto)
-    return vivos
+    tests la sustituyen. La instantánea de Toolhelp está en `common/store.py`
+    porque el agente la necesita también y no lleva `install/`."""
+    return store.procesos_llamados(nombre)
 
 
 # ---------------------------------------------------------------------------

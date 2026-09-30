@@ -23,7 +23,7 @@ from pathlib import Path
 from _harness import REPO, Checks, en_exec, tmpdir
 
 import penwatch
-from common import equipo, pins, store
+from common import components, equipo, pins, store
 from common import model as agente_model
 from install import agente as ia
 from install import platforms, runtime_bin, version
@@ -68,6 +68,29 @@ RCLONE_FIJADO.write_bytes(b"rclone de mentira")
 pedidos_rclone = []
 ia.conseguir_rclone = lambda plat, progreso=None: pedidos_rclone.append(plat) or RCLONE_FIJADO
 
+
+def veracrypt_de_mentira() -> Path:
+    """Una caché de VeraCrypt ya comprobada: los ficheros y su sello."""
+    import hashlib
+    d = tmpdir("prdrive-vc-")
+    resumenes = {}
+    for nombre in ("VeraCrypt-x64.exe", "veracrypt-x64.sys", "VeraCrypt-arm64.exe",
+                   "veracrypt-arm64.sys", "veracrypt", "License.txt"):
+        datos = f"{nombre} de mentira".encode()
+        (d / nombre).write_bytes(datos)
+        resumenes[nombre] = hashlib.sha256(datos).hexdigest()
+    (d / components.VERACRYPT_STAMP).write_text(
+        components.veracrypt_stamp_text(pins.VERACRYPT_VERSION, "f" * 64, resumenes),
+        encoding="utf-8")
+    return d
+
+
+VC_CACHE = veracrypt_de_mentira()
+pedidos_vc = []
+ia.conseguir_veracrypt = lambda progreso=None: pedidos_vc.append(1) or VC_CACHE
+VC_INSTALADO: list = [None]
+penwatch.installed_veracrypt = lambda: VC_INSTALADO[0]
+
 # --- preparar: código y Python ---------------------------------------------------
 prep = ia.preparar()
 c("el código va a agente/<versión>/", prep.codigo, equipo.dir_codigo() / version())
@@ -97,6 +120,45 @@ if os.name != "nt":
 c("  pedido para la plataforma de este equipo", pedidos_rclone[:1], [plat])
 c("  y apuntado en instalacion.json al activar (instalado_prep() lo lee)",
   ia._instalacion(prep).get("rclone"), str(prep.rclone))
+
+# --- su VeraCrypt: solo con una raíz cifrada y sin VeraCrypt instalado ---------------
+c("sin raíz cifrada no lleva VeraCrypt", (prep.veracrypt, pedidos_vc,
+                                          "veracrypt" in ia._instalacion(prep)),
+  (None, [], False))
+c("quiere_veracrypt: con la raíz cifrada que se está poniendo y nada instalado, sí",
+  ia.quiere_veracrypt(True), True)
+VC_INSTALADO[0] = "/opt/veracrypt"
+c("  con VeraCrypt instalado, no: va primero, y con su driver no hay UAC",
+  ia.quiere_veracrypt(True), False)
+VC_INSTALADO[0] = None
+cifrado = ia.preparar(cifrada=True)
+c("preparar(cifrada=True) lo pone en veracrypt/<versión fijada>/",
+  cifrado.veracrypt, equipo.dir_veracrypt() / pins.VERACRYPT_VERSION)
+c("  entero y comprobado contra su sello",
+  components.veracrypt_integro(cifrado.veracrypt, ("veracrypt", "VeraCrypt-x64.exe"),
+                               pins.VERACRYPT_VERSION), True)
+if os.name != "nt":
+    c("  y se puede ejecutar", os.access(cifrado.veracrypt / "veracrypt", os.X_OK), True)
+c("  apuntado en instalacion.json", ia._instalacion(cifrado).get("veracrypt"),
+  str(cifrado.veracrypt))
+c("  sin carpetas de trabajo al lado",
+  sorted(p.name for p in equipo.dir_veracrypt().iterdir()), [pins.VERACRYPT_VERSION])
+pedidos_vc.clear()
+ia.poner_veracrypt()
+c("  uno que ya está y cuadra no se vuelve a pedir ni a copiar", pedidos_vc, [])
+(cifrado.veracrypt / "VeraCrypt-x64.exe").write_bytes(b"cambiado")
+ia.poner_veracrypt()
+c("  uno que no cuadra se vuelve a poner entero",
+  (pedidos_vc, (cifrado.veracrypt / "VeraCrypt-x64.exe").read_bytes()),
+  ([1], b"VeraCrypt-x64.exe de mentira"))
+viejo_vc = equipo.dir_veracrypt() / "1.0.0"
+viejo_vc.mkdir()
+ia.podar(cifrado)
+c("podar deja solo su versión de VeraCrypt",
+  sorted(p.name for p in equipo.dir_veracrypt().iterdir()), [pins.VERACRYPT_VERSION])
+viejo_vc.mkdir()
+ia.podar(prep)
+c("  y sin VeraCrypt que llevar, ninguna", list(equipo.dir_veracrypt().iterdir()), [])
 c("  ni deja carpetas de trabajo",
   [p.name for p in equipo.dir_codigo().iterdir()] +
   [p.name for p in equipo.dir_runtimes().iterdir()],
@@ -265,6 +327,24 @@ c("  el Python viejo también, pero NO el que corre este proceso",
 c("  y se arranca", [a for a, _ in lanzados], [ia.orden(prep.python, prep.codigo)])
 c("  agente.json no se toca",
   sorted(u.nombre for u in equipo.leer_ajustes().raices.values()), ["Abierta", "Cifrada"])
+c("  con una raíz cifrada y sin VeraCrypt instalado, se lleva el suyo",
+  equipo.leer_instalacion().get("veracrypt"),
+  str(equipo.dir_veracrypt() / pins.VERACRYPT_VERSION))
+c("  e instalado_prep() lo lee", ia.instalado_prep().veracrypt,
+  equipo.dir_veracrypt() / pins.VERACRYPT_VERSION)
+
+# asegurar_veracrypt: el agente de esta versión ya puesto, sin el suyo, y una
+# raíz cifrada nueva: se pone y se apunta, sin reinstalar nada.
+datos = equipo.leer_instalacion()
+del datos["veracrypt"]
+store.write_json(equipo.instalacion_json(), datos)
+sin_vc = ia.instalado_prep()
+con_vc = ia.asegurar_veracrypt(sin_vc)
+c("asegurar_veracrypt: lo pone y lo apunta en instalacion.json",
+  (sin_vc.veracrypt, con_vc.veracrypt, equipo.leer_instalacion().get("veracrypt")),
+  (None, equipo.dir_veracrypt() / pins.VERACRYPT_VERSION,
+   str(equipo.dir_veracrypt() / pins.VERACRYPT_VERSION)))
+c("  y con uno ya puesto no hace nada", ia.asegurar_veracrypt(con_vc), con_vc)
 
 guardado = equipo.instalacion_json().read_bytes()
 equipo.instalacion_json().unlink()
@@ -297,6 +377,8 @@ c("  y dice que las unidades no se han tocado",
 c("  ni las raíces del equipo, y dónde siguen",
   (any("Cifrada" not in m and str(ABIERTA) in m for m in msgs),
    any("C:\\c\\PRDRIVE.hc" in m for m in msgs)), (True, True))
+c("  y sin VeraCrypt instalado, que para abrir la cifrada hará falta uno",
+  any("C:\\c\\PRDRIVE.hc" in m and "hace falta VeraCrypt" in m for m in msgs), True)
 c("la unidad enchufada sigue como estaba",
   (ENCH / ".prdrive" / "PRDRIVE").read_text(encoding="utf-8"), "id=" + "e" * 32 + "\n")
 c("ya no cuenta como instalado", equipo.instalado(), False)
