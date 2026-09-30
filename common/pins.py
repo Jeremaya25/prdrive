@@ -58,26 +58,39 @@ PBS_BASE_URL = ("https://github.com/astral-sh/python-build-standalone/"
 # Lo baja y lo abre `install/veracrypt_bin.py` sin ejecutarlo.
 #
 # La URL lleva la versión, como la de rclone: nunca un «última» que se mueva por
-# debajo. Y aquí sí se fija el SHA-256 del `.exe` a mano, porque IDRIX no publica
-# un fichero de sumas junto al paquete: publica la firma PGP (`.sig`) y el propio
-# `.exe` va firmado con Authenticode. Ninguna de las dos se puede comprobar en
-# Python puro, así que QUIEN MUEVA ESTA VERSIÓN comprueba las dos una vez, a mano
-# —la Authenticode de «IDRIX SARL» (propiedades del fichero → Firmas digitales,
-# o `Get-AuthenticodeSignature`) y la PGP con la clave de VeraCrypt
+# debajo. Y aquí se fija el SHA-256 del `.exe` a mano. Desde la 1.26.29 la
+# release publica también `veracrypt-<versión>-sha256sum.txt` con su firma PGP,
+# pero sale del mismo sitio que el paquete: lo que vale es el número de aquí,
+# que alguien comprobó. Ni la firma PGP (`.sig`) ni la Authenticode del `.exe`
+# se pueden comprobar en Python puro, así que QUIEN MUEVA ESTA VERSIÓN comprueba
+# las dos una vez, a mano —la Authenticode de «IDRIX SARL» (propiedades del
+# fichero → Firmas digitales, `Get-AuthenticodeSignature`, u `osslsigncode
+# verify`) y la PGP con la clave de VeraCrypt, huella
+# `5069 A233 D55A 0EEB 174A  5FC3 821A CD02 680D 16DE`
 # (`gpg --verify "VeraCrypt Portable X.exe.sig"`)— y apunta aquí el SHA-256 del
 # fichero que ha comprobado. A partir de ahí el asistente compara con este número
 # todo lo que baje: lo que no cuadre no se escribe.
-VERACRYPT_VERSION = "1.26.24"
+#
+# 1.26.29, comprobado el 30/09/2026: PGP buena con esa huella (el `.exe` de
+# Launchpad y el de GitHub son el mismo, byte a byte); Authenticode buena,
+# firmante «IDRIX SARL» (EV de GlobalSign) con sello de tiempo de DigiCert del
+# 08/06/2026; y el SHA-256 coincide con el de su `sha256sum.txt`, firmado también.
+# Por qué 1.26.29 y no la 1.26.24 de antes: corrige un pantallazo azul del
+# driver de Windows, y es la primera con AppImage de aarch64. Las dos son la
+# misma versión para el driver (`VERSION_NUM` 0x0126 en `Common/Tcdefs.h`, que
+# es lo que compara `DriverAttach()`), así que una unidad con la 1.26.24 y un
+# equipo con la 1.26.29 instalada no chocan con ERR_DRIVER_VERSION.
+VERACRYPT_VERSION = "1.26.29"
 VERACRYPT_PAQUETE = f"VeraCrypt Portable {VERACRYPT_VERSION}.exe"
 VERACRYPT_URL = ("https://launchpad.net/veracrypt/trunk/"
                  f"{VERACRYPT_VERSION}/+download/"
                  f"VeraCrypt%20Portable%20{VERACRYPT_VERSION}.exe")
-VERACRYPT_SHA256 = "99c166a3dbab07ee8e42af4e42d1fd6123ca5c0825c0300f93085e81c154049a"
+VERACRYPT_SHA256 = "8772a127f93561d169d4b4082d9ab5e855fd928a361e020905484c388c474a4e"
 # Lo que ocupa en la unidad lo que se extrae (ejecutables y drivers de las dos
-# arquitecturas, catálogos, .inf y licencias: 28,1 MiB en la 1.26.24),
+# arquitecturas, catálogos, .inf y licencias: 33,7 MiB en la 1.26.29),
 # redondeado hacia arriba. La descarga son ~39 MB porque trae además la
 # documentación y los idiomas, que no viajan.
-MB_VERACRYPT = 29
+MB_VERACRYPT = 34
 
 
 @dataclass(frozen=True)
