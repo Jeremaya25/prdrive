@@ -60,6 +60,28 @@ try:
     c("--quick siempre: la 1.26.29 lo deja disperso, las de antes lo ignoran",
       "--quick" in posix, True)
 
+    # ¿Saldrá disperso? En Linux lo dice la versión (el AppImage fijado sí; uno
+    # instalado, no se sabe) y el disco, que se prueba de verdad.
+    reales_disp = crypto.soporta_dispersos
+    try:
+        crypto.soporta_dispersos = lambda root: True
+        c("Linux, disco con dispersos y el AppImage: disperso",
+          crypto.creacion_dispersa("/x", {"appimage": True}), True)
+        c("  con uno instalado, no se sabe (None)",
+          crypto.creacion_dispersa("/x", {"mount": "veracrypt"}), None)
+        crypto.soporta_dispersos = lambda root: False
+        c("  disco sin dispersos: entero, con cualquiera",
+          crypto.creacion_dispersa("/x", {"appimage": True}), False)
+    finally:
+        crypto.soporta_dispersos = reales_disp
+    if os.name != "nt":
+        prueba = tmpdir("prdrive-disperso-")
+        c("la prueba de dispersos contesta y no deja nada",
+          (isinstance(crypto._dispersos_posix(prueba), bool), list(prueba.iterdir())),
+          (True, []))
+        c("  y en una carpeta que no existe, no", crypto._dispersos_posix(
+            prueba / "no-existe"), False)
+
     # Sin VeraCrypt instalado en Linux: el AppImage de la caché, si cuadra.
     from install import veracrypt_bin as _vb
     reales_linux = (crypto._first_exe, _vb.en_cache_para_este_equipo)

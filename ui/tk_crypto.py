@@ -212,7 +212,13 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
     # escribe ni tarda, y cachearla daría la respuesta de la unidad anterior si
     # se cambia de destino—. Lo que sí se recuerda en el estado es la MEDIDA de
     # velocidad, que sí escribe en la unidad: ver `refrescar_espera`.
-    dispersos = crypto.soporta_dispersos(estado.device) if not existe else False
+    # En Linux no hay casilla que valga: `--quick` va siempre, y si el
+    # contenedor sale disperso lo decide la versión de VeraCrypt y el disco
+    # (`crypto.creacion_dispersa()`, None si no se sabe). Se enseña marcada o
+    # no, sin poder cambiarla, y la frase de al lado dice por qué.
+    disperso = (crypto.creacion_dispersa(estado.device, estado.veracrypt)
+                if not existe else False)
+    dispersos = disperso is True
     # El sistema de ficheros de la unidad, por lo mismo: en FAT32 un fichero no
     # llega a 4 GiB, y el contenedor es un fichero (`crypto.tope_contenedor`).
     fs = crypto.sistema_de_ficheros(estado.device) if not existe else ""
@@ -247,13 +253,17 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
         fila += 1
 
         ttk.Checkbutton(
-            formulario, variable=dinamico, state="normal" if dispersos else "disabled",
+            formulario, variable=dinamico,
+            state="normal" if dispersos and IS_WIN else "disabled",
             text="Contenedor dinámico: solo ocupa lo que guardes").grid(
             row=fila, column=0, columnspan=2, sticky="w", pady=(6, 0))
         ttk.Label(formulario, foreground=theme.TINTA3, justify="left",
                   wraplength=theme.medida(360), text=(
             "sin negación plausible, y si la unidad se llena el volumen da "
             "errores de E/S" if dispersos else
+            "depende de la versión de VeraCrypt: con la 1.26.29 o posterior solo "
+            "ocupa lo que guardes; con una anterior se escribe entero"
+            if disperso is None else
             f"esta unidad ({fs or 'sin identificar'}) no admite ficheros "
             "dispersos: el contenedor hay que escribirlo entero")).grid(
             row=fila, column=2, sticky="w", padx=(10, 0), pady=(6, 0))

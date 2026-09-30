@@ -776,10 +776,13 @@ at nothing) and hangs `tasklist | find`. Use PowerShell for both.
   `--quick` does the same for a file container: 1.26.24 forced it off
   (`options->Quick = false` in `Main/TextUserInterface.cpp`) and 1.26.29 drops
   that line. `create_command()` always passes it: seen with the real AppImages,
-  1.26.24 exits 0 and writes all 20 MiB, 1.26.29 leaves 352 KiB. With an older
-  VeraCrypt the only lever is still the size, and `crypto.suggested_size()`
-  stops proposing nearly the whole disk (the wizard's wording still assumes
-  the full write on Linux).
+  1.26.24 exits 0 and writes all 20 MiB, 1.26.29 leaves 352 KiB. So on Linux
+  `soporta_dispersos()` is a real probe (`_dispersos_posix()`: 1 MiB with one
+  byte at the end, `st_blocks`), and `crypto.creacion_dispersa(root, vc)` says
+  True / False / **None** — None with an installed VeraCrypt, whose version is
+  not known: both wizard panels then say «depende de la versión» instead of
+  promising either. With an older VeraCrypt the only lever is still the size,
+  and `crypto.suggested_size()` stops proposing nearly the whole disk.
 - **A fixed container shows its real progress, and the estimate is a floor.**
   `medir_escritura()`'s 8 MiB probe measures the *burst*: USB sticks drop to a
   half or a quarter once their SLC cache fills (#46: «unos 23 min» said, 40 min

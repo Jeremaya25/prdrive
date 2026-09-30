@@ -384,8 +384,12 @@ try:
     c("y la ventanita lo enseña", creando[-1] == seguimientos[-1].progreso, True)
 
     # Con dispersos, `/dynamic`: son segundos y no hay nada que medir.
+    # (En Linux, además, un VeraCrypt de versión conocida: el AppImage fijado.
+    # Con uno instalado no se sabe si su `--quick` deja el contenedor disperso.)
     crypto.soporta_dispersos = lambda root: True
     crypto.sistema_de_ficheros = lambda root: "NTFS"
+    crypto.find_veracrypt = lambda extra_dir=None: {
+        "mount": "VeraCrypt.exe", "format": "VeraCrypt Format.exe", "appimage": True}
     dinamico = nuevo_asistente(tmpdir())
     dinamico.state.device_root = None
     dinamico.state.encryption = "veracrypt"
@@ -396,6 +400,22 @@ try:
     creando = [p for t, p in esperas if t == "creando el contenedor"]
     c("un contenedor dinámico se crea sin medir nada",
       (len(creados), seguimientos[-1], creando[-1]), (2, None, None))
+
+    # En Linux con un VeraCrypt instalado, de versión desconocida: ni se promete
+    # que ocupe poco ni que se escriba entero.
+    if not crypto.IS_WIN:
+        crypto.find_veracrypt = lambda extra_dir=None: {"mount": "veracrypt",
+                                                        "format": "veracrypt"}
+        instalado = nuevo_asistente(tmpdir())
+        instalado.state.device_root = None
+        instalado.state.encryption = "veracrypt"
+        en_paso(instalado, PASO["Cifrado"])
+        textos = " ".join(str(w.cget("text"))
+                          for w in widgets(instalado.cuerpo, ttk.Label))
+        c.contains("Linux con VeraCrypt instalado: dice que depende de su versión",
+                   textos, "depende de la versión de VeraCrypt")
+        c("  sin decir que el disco no admite dispersos",
+          "no admite ficheros dispersos" in textos, False)
 
     # Sin VeraCrypt en el equipo, en Windows no hace falta instalarlo: la
     # pantalla ofrece el VeraCrypt Portable oficial, que se baja y se comprueba

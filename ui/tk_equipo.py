@@ -325,7 +325,8 @@ def paso_cifrado(cuerpo, wiz) -> None:
         libre = shutil.disk_usage(str(base)).free
     except OSError:
         libre = 0
-    dinamico = crypto.soporta_dispersos(base) if IS_WIN else False
+    disperso = crypto.creacion_dispersa(base, vc)
+    dinamico = disperso is True
     tam = tk.StringVar(value=wiz.equipo_tamano or crypto.suggested_size(libre, dinamico))
     tam_fila = ttk.Frame(formulario)
     ttk.Label(formulario, text="Tamaño:").grid(row=fila, column=0, sticky="w")
@@ -334,6 +335,8 @@ def paso_cifrado(cuerpo, wiz) -> None:
     ttk.Label(tam_fila, style="Pista.TLabel", text=(
         f"libre: {libre / 1024 ** 3:.1f} GiB — "
         + ("dinámico: solo ocupa lo que guardes" if dinamico else
+           "con VeraCrypt 1.26.29 o posterior solo ocupa lo que guardes; con uno "
+           "anterior se escribe entero al crearlo" if disperso is None else
            "se escribe entero al crearlo: elige con cabeza"))).grid(
         row=0, column=1, padx=(8, 0))
     fila += 1

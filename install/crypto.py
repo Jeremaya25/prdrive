@@ -341,8 +341,9 @@ def soporta_dispersos(root: str | Path) -> bool:
     nombre del sistema de ficheros: es la misma prueba que hace él, y así no hay
     que mantener aquí una lista de qué sistemas la cumplen.
 
-    En POSIX devuelve False porque `--dynamic` no existe en su CLI (ver
-    `create_command`), no porque ext4 no sepa de dispersos.
+    En POSIX no hay bandera que leer: se prueba (`_dispersos_posix()`). Ahí no
+    decide `/dynamic` —no existe en su CLI—, sino si el `--quick` de la
+    1.26.29 dejará el contenedor disperso (`creacion_dispersa()`).
 
     `root` puede ser una carpeta (la del contenedor de la raíz de un equipo):
     `GetVolumeInformationW` solo acepta la raíz de un volumen, así que se le
@@ -351,7 +352,7 @@ def soporta_dispersos(root: str | Path) -> bool:
     Función de módulo para que los tests la sustituyan, como
     `_leer_estado_bitlocker()`."""
     if not IS_WIN:
-        return False
+        return _dispersos_posix(root)
     import ctypes
     from ctypes import byref, c_wchar_p, create_unicode_buffer
     from ctypes.wintypes import DWORD
@@ -369,6 +370,51 @@ def soporta_dispersos(root: str | Path) -> bool:
     except OSError:
         return False
     return bool(ok) and bool(flags.value & FILE_SUPPORTS_SPARSE_FILES)
+
+
+DISPERSO_NOMBRE = ".prdrive-disperso.tmp"
+
+
+def _dispersos_posix(root: str | Path) -> bool:
+    """¿Deja este sistema de ficheros un fichero con un hueco sin ocupar?
+
+    La prueba es la evidencia misma: 1 MiB de tamaño con un solo byte al final,
+    y se mira cuánto ocupa de verdad (`st_blocks`, en bloques de 512 bytes).
+    ext4, btrfs o xfs lo dejan en un bloque; FAT y exFAT, que no saben de
+    dispersos, lo rellenan entero. Se escribe en la propia carpeta y se borra.
+    Cualquier fallo es «no»: prometer que ocupa poco y que ocupe entero es peor
+    que lo contrario."""
+    prueba = Path(root) / DISPERSO_NOMBRE
+    try:
+        with open(prueba, "wb") as f:
+            f.seek(1024 ** 2 - 1)
+            f.write(b"\0")
+            f.flush()
+            os.fsync(f.fileno())
+        return os.stat(prueba).st_blocks * 512 < 1024 ** 2 // 2
+    except (OSError, AttributeError):
+        return False
+    finally:
+        try:
+            prueba.unlink()
+        except OSError:
+            pass
+
+
+def creacion_dispersa(root: str | Path, vc: dict | None) -> bool | None:
+    """¿El contenedor que se cree en `root` con `vc` saldrá disperso?
+
+    True o False cuando se sabe, None cuando depende de algo que no se puede
+    preguntar sin ejecutarlo. En Windows es `/dynamic`, que se pasa solo si el
+    disco lo admite: `soporta_dispersos()`. En Linux, `--quick` se pasa siempre
+    (`create_command`) y deja el contenedor disperso desde la 1.26.29; antes se
+    ignora. Con el AppImage fijado la versión se sabe; con un VeraCrypt
+    instalado no, y la pantalla lo dice así en vez de prometer nada."""
+    if not soporta_dispersos(root):
+        return False
+    if IS_WIN or appimage(vc):
+        return True
+    return None
 
 
 def medir_escritura(root: str | Path, muestra: int = SONDA_BYTES) -> float | None:
