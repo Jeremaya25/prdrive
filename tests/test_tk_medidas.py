@@ -371,17 +371,18 @@ try:
         wiz.perfil = PERFIL_MEDIDAS
         wiz.rclone = object()
         wiz.catalog = CATALOGO_MEDIDAS
-        for paso in ("¿Dónde?", "Carpeta", "Cifrado", "Instalación",
+        for paso in ("¿Dónde?", "Raíz", "Cifrado", "Carpeta", "Instalación",
                      "Parejas y configuración", "Unidades", "Arranque", "Verificación"):
             wiz.indice = [t for t, _, _ in wiz.pasos].index(paso)
             wiz.repintar()
             c(f"{nombre}: «{paso}» (en este equipo) cabe", cabe(top), True)
             c(f"{nombre}: «{paso}» (en este equipo) no queda recortado",
               recortado(wiz.visor), False)
-        # «Cifrado» con VeraCrypt, en su estado más lleno: el formulario entero,
-        # el contenedor ya abierto y, con el VeraCrypt Portable (sin instalar),
-        # el aviso ámbar del UAC. (El bloque rojo de una raíz en claro que
-        # queda al lado es de Windows, y el de las unidades ya se mide arriba.)
+        # Con VeraCrypt, cada paso en su estado más lleno: «Cifrado» con el
+        # VeraCrypt Portable (sin instalar) y el aviso ámbar del UAC, y
+        # «Carpeta» con el formulario entero del contenedor, ya abierto. (El
+        # bloque rojo de una raíz en claro que queda al lado es de Windows, y el
+        # de las unidades ya se mide arriba.)
         reales_vc = raiz_equipo.veracrypt_instalado
         raiz_equipo.veracrypt_instalado = lambda: {
             "mount": "C:/cache/VeraCrypt-x64.exe",
@@ -390,11 +391,13 @@ try:
             wiz.equipo_cifrado = raiz_equipo.VERACRYPT
             wiz.equipo_montada = RAIZ_MEDIDAS
             wiz.equipo_examen = raiz_equipo.examinar(RAIZ_MEDIDAS)
-            wiz.indice = [t for t, _, _ in wiz.pasos].index("Cifrado")
-            wiz.repintar()
-            c(f"{nombre}: «Cifrado» con VeraCrypt (en este equipo) cabe", cabe(top), True)
-            c(f"{nombre}: «Cifrado» con VeraCrypt (en este equipo) no queda recortado",
-              recortado(wiz.visor), False)
+            for paso in ("Cifrado", "Carpeta"):
+                wiz.indice = [t for t, _, _ in wiz.pasos].index(paso)
+                wiz.repintar()
+                c(f"{nombre}: «{paso}» con VeraCrypt (en este equipo) cabe",
+                  cabe(top), True)
+                c(f"{nombre}: «{paso}» con VeraCrypt (en este equipo) no queda "
+                  f"recortado", recortado(wiz.visor), False)
         finally:
             raiz_equipo.veracrypt_instalado = reales_vc
         top.destroy()

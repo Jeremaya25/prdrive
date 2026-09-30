@@ -1764,16 +1764,19 @@ def _ok_equipo(nombre: str):
 
 
 # «En este equipo», con una raíz en una carpeta del ordenador. Es el recorrido de
-# una unidad con otra cabeza y otra cola: «Carpeta» hace lo que «Dispositivo», y
-# «Cifrado» lo mismo que en una unidad (fija `state.device_root`: la carpeta, o
-# el volumen montado del contenedor), y va antes de «Conexión» por lo mismo:
-# fija dónde escribe «Instalación». Detrás de «Inicialización» van los del
-# agente. «Instalación» va antes de «Parejas» por lo mismo que en una unidad, y
-# además porque deja el Python del agente con el que se inicializa.
+# una unidad con otra cabeza y otra cola: «Raíz» dice qué forma tiene, «Cifrado»
+# si va en un contenedor, y «Carpeta» la carpeta exacta —la raíz, o dónde va el
+# contenedor y dónde se abre—, por ese orden, porque cifrar cambia qué carpeta se
+# pide. «Carpeta» fija `state.device_root` (la carpeta, o el volumen montado del
+# contenedor) y va antes de «Conexión» por lo mismo que en una unidad: fija dónde
+# escribe «Instalación». Detrás de «Inicialización» van los del agente.
+# «Instalación» va antes de «Parejas» por lo mismo que en una unidad, y además
+# porque deja el Python del agente con el que se inicializa.
 PASOS_EQUIPO = [
     ("¿Dónde?", _paso_donde, _ok_donde),
-    ("Carpeta", _paso_equipo("paso_carpeta"), _ok_equipo("ok_carpeta")),
+    ("Raíz", _paso_equipo("paso_raiz"), lambda w: True),
     ("Cifrado", _paso_equipo("paso_cifrado"), _ok_equipo("ok_cifrado")),
+    ("Carpeta", _paso_equipo("paso_carpeta"), _ok_equipo("ok_carpeta")),
     ("Conexión", _paso_conexion, _ok_conexion),
     ("Comprobaciones", _paso_comprobaciones, _ok_comprobaciones),
     ("Instalación", _paso_equipo("paso_instalar"), _ok_equipo("ok_instalar")),
@@ -1785,11 +1788,11 @@ PASOS_EQUIPO = [
 ]
 
 # «Ninguna: solo atender unidades» (la instalación «solo agente» de la fase 1).
-# Sin conexión, ni catálogo, ni clave: cada unidad trae las suyas. «Carpeta»
+# Sin conexión, ni catálogo, ni clave: cada unidad trae las suyas. «Raíz»
 # sigue en el índice 1 para que cambiar de respuesta no mueva al usuario de paso.
 PASOS_EQUIPO_SOLO = [
     ("¿Dónde?", _paso_donde, _ok_donde),
-    ("Carpeta", _paso_equipo("paso_carpeta"), _ok_equipo("ok_carpeta")),
+    ("Raíz", _paso_equipo("paso_raiz"), lambda w: True),
     ("Instalación", _paso_equipo("paso_instalar"), _ok_equipo("ok_instalar")),
     ("Unidades", _paso_equipo("paso_unidades"), lambda w: True),
     ("Arranque", _paso_equipo("paso_arranque"), _ok_equipo("ok_arranque")),
@@ -1798,7 +1801,7 @@ PASOS_EQUIPO_SOLO = [
 
 
 def pasos_equipo(wiz) -> list:
-    """La lista de «En este equipo» que toca según lo elegido en «Carpeta»."""
+    """La lista de «En este equipo» que toca según lo elegido en «Raíz»."""
     return (PASOS_EQUIPO_SOLO if wiz.equipo_forma == raiz_equipo.NINGUNA
             else PASOS_EQUIPO)
 
