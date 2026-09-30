@@ -99,6 +99,27 @@ def version() -> str:
 __version__ = version()
 
 
+# Los iconos (`runsync.ico` y los cinco de la bandeja del agente) los pinta
+# `ui/icons.py`, e install/ no importa ui/ (AGENTS.md). Quien lanza la
+# instalación y sí conoce ui/ —`prdrive-install.py`, para el asistente y para
+# las órdenes sin ventana— pone aquí con qué: `pintar_iconos(carpeta, bandeja)`
+# deja `runsync.ico` en `carpeta` y, con `bandeja`, los de la bandeja. Sin él no
+# se pinta nada: el agente repinta los de la bandeja al arrancar si faltan, y
+# la ventana dibuja el suyo.
+pintar_iconos = None
+
+
+def pintar(carpeta: Path | str, bandeja: bool = False) -> None:
+    """Los iconos en esa carpeta, si hay quien los pinte. Nunca lanza: un icono
+    no puede tumbar una instalación que va bien."""
+    if pintar_iconos is None:
+        return
+    try:
+        pintar_iconos(Path(carpeta), bandeja)
+    except Exception:                                   # noqa: BLE001
+        pass
+
+
 def python_command(windowless: bool = False) -> list[str] | None:
     """Un Python DE VERDAD instalado en este equipo.
 

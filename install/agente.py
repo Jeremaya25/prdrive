@@ -49,10 +49,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import penwatch
-from common import APP_NAME, equipo, store
+from common import APP_NAME, equipo, store, vestibulo
 from common.pins import Plataforma
 
-from . import InstallError, bundle_dir, platforms, runtime_bin, version
+from . import InstallError, bundle_dir, pintar, platforms, runtime_bin, version
 
 IS_WIN = os.name == "nt"
 
@@ -115,12 +115,7 @@ def copiar_codigo(origen: Path | None = None) -> Path:
     except OSError as e:
         shutil.rmtree(trabajo, ignore_errors=True)
         raise InstallError(f"No he podido copiar el agente a {trabajo}: {e}") from e
-    try:
-        from ui import icons                    # sin Tk: rasteriza él solo
-        icons.write_ico(trabajo / "runsync.ico")
-        icons.write_bandeja(trabajo)            # los cinco estados de la bandeja
-    except Exception:                           # noqa: BLE001
-        pass            # sin iconos: el agente repinta los de la bandeja al arrancar
+    pintar(trabajo, bandeja=True)   # sin ellos, el agente repinta los de la bandeja
     viejo = destino.with_name(f".{destino.name}.viejo-{os.getpid()}")
     try:
         if destino.exists():
@@ -687,18 +682,20 @@ def actualizar_raices(origen: Path | None = None) -> list[str]:
     for u in equipo.leer_ajustes().raices.values():
         raiz = Path(u.ruta)
         nombre = u.nombre or str(raiz)
-        if not _presente(raiz):
+        # Abierta es VERLA abierta, como en el agente: en Windows una letra con
+        # el id al lado de un `.hc` libre es el fantasma de H-10, que sirve lo
+        # que tenía en caché; escribir ahí daría la raíz por actualizada sin
+        # haberla tocado.
+        fantasma = u.cifrada and _presente(raiz) and \
+            vestibulo.retenido(u.contenedor) is False
+        if fantasma or not _presente(raiz):
             msgs.append(f"{nombre}: " + ("bloqueada; su ventana ofrecerá la versión "
                                          "nueva al desbloquearla." if u.cifrada else
                                          f"no está en {raiz}; no se actualiza."))
             continue
         try:
             deploy.deploy_code(raiz, origen=origen)
-            try:
-                from ui import icons            # sin Tk: rasteriza él solo
-                icons.write_ico(deploy.app_dir(raiz) / "runsync.ico")
-            except Exception:                   # noqa: BLE001
-                pass
+            pintar(deploy.app_dir(raiz))
         except (OSError, InstallError) as e:
             msgs.append(f"{nombre}: no he podido actualizar su código: {e}")
             continue

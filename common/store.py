@@ -67,11 +67,105 @@ def write_text(path: Path, text: str) -> bool:
     reescribe entero con la misma regla que el resto."""
     try:
         tmp = path.with_suffix(".tmp")
-        tmp.write_text(text, encoding="utf-8")
+        # El temporal se crea de nuevo y en exclusiva: el `.tmp` que ya hubiera
+        # (el de un corte, o un enlace que alguien dejó ahí) se quita antes, y
+        # O_EXCL no sigue enlaces. Abrirlo sin más seguiría uno, y el contenido
+        # iría a parar al fichero al que apunte, fuera del dispositivo. El
+        # renombrado final tampoco sigue enlaces: sustituye el nombre.
+        try:
+            tmp.unlink()
+        except FileNotFoundError:
+            pass
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
         os.replace(tmp, path)
         return True
     except OSError:
         return False
+
+
+# ---------------------------------------------------------------------------
+# Cerrojos: un fichero que solo uno puede crear
+# ---------------------------------------------------------------------------
+
+def crear_exclusivo(ruta: Path, datos: bytes) -> bool | None:
+    """Crea `ruta` con `datos` solo si no existe: True creado, False ya estaba,
+    None no se puede escribir. O_EXCL es lo que hace de esto un cerrojo: de dos
+    que lo intentan a la vez solo uno lo crea (`write_json` no sirve: su
+    renombrado pisa lo que haya). Es lo mismo que el registro de la ventana
+    (`runsync.tomar_ui()`), para quien no es runsync."""
+    try:
+        fd = os.open(ruta, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                     | getattr(os, "O_BINARY", 0))
+    except FileExistsError:
+        return False
+    except OSError:
+        return None
+    try:
+        os.write(fd, datos)
+    except OSError:
+        pass                            # vacío también cuenta como tomado
+    finally:
+        os.close(fd)
+    return True
+
+
+def borrar(ruta: Path, espera: float = 1.0) -> bool:
+    """Borra `ruta` aunque otro la esté leyendo. True si ya no está. En Windows
+    no se borra un fichero que otro proceso tiene abierto (WinError 32): se
+    reintenta un rato."""
+    import time
+    limite = time.monotonic() + espera
+    while True:
+        try:
+            ruta.unlink()
+            return True
+        except FileNotFoundError:
+            return True
+        except PermissionError:
+            if time.monotonic() >= limite:
+                return False
+            time.sleep(0.02)
+        except OSError:
+            return False
+
+
+ROMPER_ABANDONADO = 5.0     # s: un «romper» más viejo es de un proceso que murió dentro
+
+
+def retirar_si_sigue(ruta: Path, visto: dict, leer) -> bool:
+    """Borra el resto `visto` de `ruta` si sigue siendo ese. True si lo ha quitado.
+
+    Borrar a secas no vale: entre leer el resto y borrarlo, otro puede haberlo
+    retirado y haber tomado el suyo, y el borrado se llevaría ese. Así que antes
+    se toma otro cerrojo, `<ruta>.romper`; con él puesto se vuelve a leer
+    (`leer()`), y solo si sigue el mismo resto se borra. Es la regla de
+    `runsync._retirar_ui()`."""
+    import time
+    romper = ruta.with_name(f"{ruta.name}.romper")
+    marca = str(os.getpid()).encode("ascii")
+    limite = time.monotonic() + ROMPER_ABANDONADO + 1.0
+    while True:
+        creado = crear_exclusivo(romper, marca)
+        if creado:
+            break
+        if creado is None or time.monotonic() >= limite:
+            return False
+        try:
+            if time.time() - romper.stat().st_mtime > ROMPER_ABANDONADO:
+                borrar(romper)
+                continue
+        except OSError:
+            continue                    # se acaba de soltar: otra vez
+        time.sleep(0.02)
+    try:
+        actual = leer()
+        if actual is None or actual != (visto or {}):
+            return False                # ya lo retiró otro, o es otro registro
+        return borrar(ruta)
+    finally:
+        borrar(romper)
 
 
 def pid_alive(pid: int) -> bool:

@@ -49,8 +49,8 @@ c("  con las parejas y el intervalo del servicio de la unidad",
 primera = F.pasadas(RAIZ)
 c("lanza una pasada, y una sola", len(primera), 1)
 p = primera[0]
-c("  es el sync.py DE LA UNIDAD, con una pareja", p.args[1:],
-  [str(RAIZ / ".prdrive" / "sync.py"), "docs"])
+c("  es el sync.py DE LA UNIDAD, con una pareja detrás de un «--»", p.args[1:],
+  [str(RAIZ / ".prdrive" / "sync.py"), "--", "docs"])
 c("  con el directorio de trabajo fuera de la unidad", p.kwargs.get("cwd"), str(equipo.DIR))
 c("  y sin entrada: una pareja que pide --resync se salta",
   p.kwargs.get("stdin"), agente.subprocess.DEVNULL)

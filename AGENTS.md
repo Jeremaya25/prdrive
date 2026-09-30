@@ -107,7 +107,10 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 - `install/` **does** import `common/` (`model.BASE_FLAGS`, `model.flags_to_args`,
   `config_file.save`, `store.pid_alive`) — what the installer writes must be
   byte-for-byte what `sync.py` later reads. It must **not** import `ui/` outside
-  `tk_install`, and must work with **no device anywhere**.
+  `tk_install`, and must work with **no device anywhere**. Icons it installs are
+  painted through `install.pintar()`, which calls `install.pintar_iconos` — set
+  by `prdrive-install.py` to `ui.icons.pintar`; unset, nothing is painted
+  (`tests/test_agente_endurecido.py` walks `install/` for `ui` imports).
 - `prdrive-install.py` is a launcher (arguments in, `ui/tk_install.py` out),
   except `--update`: the self-update applier, inline and windowless, run from the
   *downloaded* copy of the project.
@@ -1336,6 +1339,27 @@ whatever you build that only a real host can prove.
   `Exec=` quoted per the Desktop Entry spec) — **not** systemd: notifications,
   the question and VeraCrypt's password need the graphical session.
   Uninstalling removes `equipo.DIR` and never touches a drive.
+- **Hardened after the #54 review** (`tests/test_agente_endurecido.py`):
+  - **Pair names** go through `model.problema_nombre()` in `_build_pair` (no
+    leading `-`, no `/` `\\` `:` or control characters, not `.`/`..`: the name
+    is an argv entry and a folder in `state/` and `filters/`). The agent reads
+    the raw TOML, so `leer_servicio()` drops such names itself, and every pass
+    is `sync.py -- <pareja>`.
+  - **One agent per host**: `equipo.tomar_lock()` creates `agente.lock.json`
+    with O_EXCL (`store.crear_exclusivo()`) and removes a dead record only by
+    compare-and-delete (`store.retirar_si_sigue()`, the `.romper` rule of
+    `runsync._retirar_ui()`).
+  - **Writes into a root never follow links out of it**: `agente.en_la_raiz()`
+    resolves the path and the root before the agent writes `daemon.log` (also
+    `O_NOFOLLOW`) or `daemon.lock.json`; `store.write_text()` unlinks a stale
+    `.tmp` and creates it with O_EXCL, which does not follow a link.
+  - **The host root and its pairs are checked resolved too**:
+    `raiz_equipo._dentro()` is true if either the written or the resolved paths
+    are contained, and `revisar_local()` refuses a `local` that a link takes out
+    of the root or into `equipo.DIR`.
+  - **«Actualizar» skips a ghost**: `install/agente.actualizar_raices()` treats
+    an encrypted root whose `.hc` is free (`vestibulo.retenido() is False`) as
+    locked, like the agent does.
 - **Dependency rules:** the agent imports penwatch, never the reverse; penwatch
   still imports nothing of the project (`test_install_agente.py` walks its AST).
   `agente.py` is in `build_installer.DATOS_FICHEROS` but NOT in
@@ -1908,6 +1932,7 @@ keeps the target's existing header.
   `bandeja_windows.Api`, `agente.hilo()` / `buscar_version()` / `ejecutar()` /
   `cache_version()`, `runsync.pedir_reanudar()` / `agente_sirve()`,
   `watch.pedir_al_agente()`, `agente.arrancar_agente()`, `tk_equipo.escritorio()`,
+  `install.pintar_iconos`,
   the Linux tray's `conectar` / `conectar_sistema`, and `equipo.DIR`. Keep new
   ones in that shape.
 

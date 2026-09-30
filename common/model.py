@@ -515,6 +515,9 @@ def _build_pair(raw: Mapping[str, Any], defaults: Mapping[str, Any],
     name = raw.get("name")
     if not name:
         raise ConfigError("Hay una [[pair]] sin 'name' en el config.")
+    problema = problema_nombre(name)
+    if problema:
+        raise ConfigError(f"[{name}] {problema}")
     for required in ("local", "remote_path"):
         if required not in raw:
             raise ConfigError(f"[{name}] falta '{required}' en el config.")
@@ -552,6 +555,25 @@ def _build_pair(raw: Mapping[str, Any], defaults: Mapping[str, Any],
         device_remote=_device_remote_name(defaults),
         versions=versions,
     )
+
+
+def problema_nombre(name: Any) -> str | None:
+    """Por qué ese nombre de pareja no vale, o None si vale.
+
+    El nombre acaba en tres sitios donde no es solo un nombre: en la línea de
+    órdenes de `sync.py` (un `--resync` como nombre sería la opción, y con ella
+    todas las parejas), en `state/<pareja>/` y en `filters/<pareja>.txt` (con
+    `/` o `..` saldría de esas carpetas). La ventana no deja escribirlos, pero el
+    TOML se edita a mano y llega de otras versiones: la regla es del parser."""
+    if not isinstance(name, str):
+        return "el nombre tiene que ser un texto"
+    if name.startswith("-"):
+        return "el nombre no puede empezar por '-' (se leería como una opción)"
+    if name in (".", "..") or any(c in name for c in "/\\:") \
+            or any(ord(c) < 32 for c in name):
+        return ("el nombre no puede llevar '/', '\\', ':' ni caracteres de control, "
+                "ni ser '.' o '..' (es el nombre de su carpeta en state/ y filters/)")
+    return None
 
 
 def problema_local_equipo(local: str) -> str | None:

@@ -179,3 +179,16 @@ anfitrión).
 | T10 | K, U | Suspender y volver con un remoto sin conexión (B10). | Al volver, el diario muestra el sondeo enseguida (`PrepareForSleep(false)` de logind en el bus del sistema). | `REGLA_SUSPENDER`, `PIDE_DESPERTAR` |
 | T11 | K, U | Enchufar y quitar una unidad con la bandeja puesta. | Igual de rápido que sin ella: en Linux los montajes siguen llegando por `mountinfo`, no por la bandeja. | `Vigia` |
 | T12 | K | Cerrar sesión y volver a entrar; `agente.py parar`. | No queda un icono huérfano: al irse el agente, el watcher lo quita al perder su nombre el dueño. | `Bandeja.cerrar()` |
+
+## Tras la revisión del PR #54
+
+Lo que se endureció después de la revisión cambia caminos que ya se vieron
+funcionar en Windows (el lock del servicio, el diario de la raíz, el lock del
+agente). Hay que volver a verlos: si la comprobación de enlaces se equivoca con
+una letra de verdad, el agente dejaría de tomar la raíz sin decir nada.
+
+| Código | Dónde | Qué hacer | Qué se espera | Código a prueba |
+|---|---|---|---|---|
+| E1 | W, L | Unidad en la lista enchufada; raíz del equipo sin cifrar; raíz cifrada en `P:\` (W) y montada en su carpeta (L). | El agente toma cada una como antes: su `daemon.lock.json` con `"agente": true` y líneas nuevas en `state\daemon.log`. | `agente.en_la_raiz()` (`os.path.realpath` de una letra de VeraCrypt y de una unidad USB) |
+| E2 | W | Iniciar sesión (la tarea arranca el agente) y, a la vez, abrir «prdrive» del menú con el agente parado. | Un solo agente: un solo icono y un solo pid en `agente.lock.json`; el otro sale diciendo «Ya hay un agente en marcha». | `equipo.tomar_lock()`, `store.crear_exclusivo()` |
+| E3 | W, L | Instalar desde el `.exe` / el asistente y con `--update-agente`. | `runsync.ico` en la carpeta del agente y en `.prdrive\` de la raíz, y los cinco `bandeja-*.ico`: los pinta el lanzador. | `install.pintar_iconos`, `prdrive-install._con_quien_pintar()` |

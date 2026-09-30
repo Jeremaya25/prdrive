@@ -455,6 +455,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _con_quien_pintar() -> None:
+    """Los iconos de lo que instala `install/` los pinta `ui/icons.py`, que
+    `install/` no importa: se lo dice este lanzador, que sí conoce `ui/`
+    (`install.pintar_iconos`). Sin él, sin iconos; nada más."""
+    try:
+        import install
+        from ui import icons                    # sin Tk: rasteriza él solo
+        install.pintar_iconos = icons.pintar
+    except Exception:                           # noqa: BLE001
+        pass
+
+
 def main(argv: list[str] | None = None) -> int:
     for flujo in (sys.stdout, sys.stderr):
         try:
@@ -464,6 +476,7 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parse_args(argv)
     remote.install_signal_handlers()
+    _con_quien_pintar()
     try:
         if args.update_components and args.esperar:
             return cmd_relevo(args.update_components, args.esperar, args.reabrir)

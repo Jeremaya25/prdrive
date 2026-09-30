@@ -44,7 +44,7 @@ from pathlib import Path
 from common import APP_NAME, equipo, fleet, model
 from common import vestibulo as vest
 
-from . import InstallError, IS_WIN, crypto, deploy, device, platforms
+from . import InstallError, IS_WIN, crypto, deploy, device, pintar, platforms
 
 # Qué raíz se pone. «Ninguna» es la instalación «solo agente» de la fase 1.
 PROPIA, PERSONAL, NINGUNA = "propia", "personal", "ninguna"
@@ -84,12 +84,30 @@ class Examen:
         return self.estado != NO_VALE
 
 
-def _dentro(ruta: Path | str, carpeta: Path | str) -> bool:
-    """¿`ruta` es `carpeta` o está dentro? Sin resolver enlaces ni tocar el
-    disco, y sin distinguir mayúsculas donde el sistema no las distingue."""
-    a = os.path.normcase(os.path.abspath(str(ruta)))
-    b = os.path.normcase(os.path.abspath(str(carpeta)))
+def _contiene(a: str, b: str) -> bool:
+    a, b = os.path.normcase(a), os.path.normcase(b)
     return a == b or a.startswith(b.rstrip("\\/") + os.sep)
+
+
+def _real(ruta: Path | str) -> str:
+    """La ruta con los enlaces resueltos: symlinks y, en Windows, junctions y
+    demás puntos de reanálisis (`os.path.realpath` los sigue desde 3.8). Lo que
+    todavía no existe se deja como está."""
+    try:
+        return os.path.realpath(str(ruta))
+    except (OSError, ValueError):
+        return os.path.abspath(str(ruta))
+
+
+def _dentro(ruta: Path | str, carpeta: Path | str) -> bool:
+    """¿`ruta` es `carpeta` o está dentro? Se mira dos veces, con las rutas
+    como se escriben y con los enlaces resueltos, y basta con que una lo diga:
+    una raíz elegida por un enlace que lleva a la carpeta del agente se cruza
+    con ella aunque el texto no lo diga, y el programa, la configuración y la
+    clave acabarían escritos allí. Sin distinguir mayúsculas donde el sistema
+    no las distingue."""
+    return (_contiene(os.path.abspath(str(ruta)), os.path.abspath(str(carpeta)))
+            or _contiene(_real(ruta), _real(carpeta)))
 
 
 def examinar(ruta: Path | str, forma: str = PROPIA) -> Examen:
@@ -251,6 +269,16 @@ def revisar_local(raiz: Path | str, local: str) -> Local:
     if problema:
         return Local(normal, None, problema)
     ruta = Path(raiz) / normal
+    # `problema_local_equipo()` mira el texto; un enlace dentro de la raíz puede
+    # llevar la pareja a otra parte, y el asistente crearía allí su carpeta.
+    # Fuera de la raíz no vale (en la personal, «la raíz» es todo el usuario),
+    # y en la carpeta del agente, nunca.
+    real = _real(ruta)
+    if _contiene(real, _real(equipo.DIR)):
+        return Local(normal, None, f"por un enlace, cae en la carpeta del agente "
+                                   f"({real})")
+    if not _contiene(real, _real(raiz)):
+        return Local(normal, None, f"por un enlace, cae fuera de la raíz ({real})")
     avisos = []
     cliente = otro_cliente(ruta)
     if cliente:
@@ -332,11 +360,7 @@ def instalar(raiz: Path | str, perfil, progreso=None,
     nuevos, _ = deploy.apply_platforms(raiz, plan, conseguido=conseguido)
     escrito += nuevos
     escrito += deploy.write_device_remote(raiz, perfil)
-    try:
-        from ui import icons                    # sin Tk: rasteriza él solo
-        icons.write_ico(deploy.app_dir(raiz) / "runsync.ico")
-    except Exception:                           # noqa: BLE001
-        pass                                    # la ventana tiene el suyo
+    pintar(deploy.app_dir(raiz))                # sin él, la ventana dibuja el suyo
     ident = device.ensure_control_file(raiz, renew=examen.estado != YA_EQUIPO,
                                        tipo=model.TIPO_EQUIPO)
     if fisica is not None:

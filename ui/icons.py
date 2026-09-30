@@ -788,6 +788,15 @@ def write_bandeja(carpeta, solo_si_faltan: bool = False) -> list:
     return rutas
 
 
+def pintar(carpeta, bandeja: bool = False) -> None:
+    """`runsync.ico` en `carpeta` y, con `bandeja`, los cinco de la bandeja:
+    lo que pinta una instalación (`install.pintar_iconos`)."""
+    from pathlib import Path
+    write_ico(Path(carpeta) / "runsync.ico")
+    if bandeja:
+        write_bandeja(carpeta)
+
+
 if __name__ == "__main__":                        # python -m ui.icons [destino]
     import sys
 

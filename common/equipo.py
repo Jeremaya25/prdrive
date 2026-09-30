@@ -283,6 +283,70 @@ def agente_vivo() -> dict | None:
     return info if pid_alive(pid) else None
 
 
+ESPERA_REGISTRO = 1.0      # lo que se le da a quien acaba de crear el lock para llenarlo
+
+
+def _leer_lock() -> dict | None:
+    """El lock tal como está: None si no hay, {} si hay y no se entiende. Quien
+    lo toma lo crea y LUEGO lo llena, así que uno vacío puede ser de otro agente
+    a medio escribir: se le da `ESPERA_REGISTRO`."""
+    import json
+    import time
+    limite = time.monotonic() + ESPERA_REGISTRO
+    while True:
+        try:
+            texto = lock_json().read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return None
+        except OSError:
+            texto = ""
+        try:
+            info = json.loads(texto)
+            if isinstance(info, dict):
+                return info
+        except ValueError:
+            pass
+        if time.monotonic() >= limite:
+            return {}
+        time.sleep(0.05)
+
+
+def _vivo(info: dict | None) -> bool:
+    if not info or info.get("host") != HOST:
+        return False
+    try:
+        return pid_alive(int(info.get("pid", -1)))
+    except (TypeError, ValueError):
+        return False
+
+
+def tomar_lock(datos: dict) -> dict | None:
+    """Apunta que este proceso es el agente de este equipo, si no lo es otro.
+    None si lo ha tomado; si no, el registro del agente que lo es.
+
+    Mirar y escribir son UN paso (`store.crear_exclusivo()`): de dos arranques a
+    la vez —la tarea del inicio de sesión y el acceso del menú, por ejemplo—
+    solo uno lo crea, y el otro se va. Un resto (pid muerto, otro equipo,
+    ilegible) se retira comparando antes de borrar y se vuelve a intentar una
+    vez. Sin poder escribir en la carpeta del agente, sigue: no hay dónde
+    apuntar a otro, y así es como era antes."""
+    import json
+    texto = json.dumps(datos, ensure_ascii=False, indent=1).encode("utf-8")
+    ultimo: dict | None = None
+    for intento in range(2):
+        creado = store.crear_exclusivo(lock_json(), texto)
+        if creado is not False:
+            return None
+        ultimo = _leer_lock()
+        if ultimo is None:
+            continue                    # se soltó entre medias: otra vez
+        if _vivo(ultimo):
+            return ultimo
+        if not intento:
+            store.retirar_si_sigue(lock_json(), ultimo, _leer_lock)
+    return ultimo or {}
+
+
 def leer_estado() -> dict:
     return store.read_json(estado_json())
 

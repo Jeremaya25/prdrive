@@ -275,7 +275,11 @@ def leer_servicio(raiz: Path) -> Servicio:
     defaults = crudo.get("defaults") if isinstance(crudo.get("defaults"), dict) else {}
     remotos: dict[str, str] = {}
     for p in crudo.get("pair") if isinstance(crudo.get("pair"), list) else []:
-        if isinstance(p, dict) and isinstance(p.get("name"), str):
+        # El nombre va a la línea de órdenes de su sync.py y a sus carpetas de
+        # state/ y filters/: uno que su parser no admitiría (`--resync`, `a/b`)
+        # no se lanza, aunque el sync.py de esa raíz sea de antes de la regla.
+        if isinstance(p, dict) and isinstance(p.get("name"), str) \
+                and model.problema_nombre(p["name"]) is None:
             remotos[p["name"]] = str(p.get("remote", defaults.get("remote",
                                                                   model.DEFAULT_REMOTE)))
     if not remotos:
@@ -304,12 +308,38 @@ def orden_sonda(raiz: Path, remoto: str) -> list[str] | None:
     return None
 
 
+def en_la_raiz(raiz: Path, ruta: Path) -> Path | None:
+    """`ruta` si, con los enlaces resueltos, sigue dentro de `raiz`; None si no.
+
+    Lo que el agente escribe en una raíz (el diario y el lock de su servicio)
+    va a donde diga ESA raíz, y una unidad es de quien la trae: un
+    `state/daemon.log` que fuera un enlace a `~/.bashrc`, o un `state/` que
+    llevara a la carpeta personal, haría que el agente escribiera en el equipo.
+    Solo se escribe donde la ruta resuelta sigue dentro de la raíz resuelta."""
+    try:
+        real, base = os.path.realpath(ruta), os.path.realpath(raiz)
+        if os.path.commonpath([os.path.normcase(real), os.path.normcase(base)]) \
+                != os.path.normcase(base):
+            return None
+    except (OSError, ValueError):
+        return None
+    return ruta
+
+
+# Abrir para añadir sin seguir un enlace en el último tramo (POSIX); lo demás lo
+# descarta `en_la_raiz()`.
+_SIN_ENLACE = getattr(os, "O_NOFOLLOW", 0)
+
+
 def dlog(raiz: Path, msg: str) -> None:
     """El diario del servicio de la raíz (`state/daemon.log`), como el de runsync.
     Se abre y se cierra en cada línea: nada se queda abierto en la unidad."""
-    ruta = estado_de(raiz) / "daemon.log"
+    ruta = en_la_raiz(raiz, estado_de(raiz) / "daemon.log")
+    if ruta is None:
+        return
     try:
-        with ruta.open("a", encoding="utf-8") as f:
+        fd = os.open(ruta, os.O_WRONLY | os.O_APPEND | os.O_CREAT | _SIN_ENLACE, 0o666)
+        with os.fdopen(fd, "a", encoding="utf-8") as f:
             f.write(f"{store.stamp()} {msg}\n")
     except OSError:
         pass
@@ -907,7 +937,8 @@ class Agente:
                  "pairs": [p.nombre for p in con.servicio.parejas],
                  "interval_min": con.servicio.minutos, "agente": True,
                  "modo": unidad.modo}
-        if store.write_json(con.raiz / penwatch.DAEMON_LOCK_REL, datos):
+        destino = en_la_raiz(con.raiz, con.raiz / penwatch.DAEMON_LOCK_REL)
+        if destino is not None and store.write_json(destino, datos):
             con.lock = datos
             con.soltando = False        # el fichero vuelve a ser uno vivo
             dlog(con.raiz, f"servicio (agente del equipo, pid {os.getpid()}) atendiendo: "
@@ -975,7 +1006,8 @@ class Agente:
             cwd = app(con.raiz)             # rclone.conf resuelve contra aquí
             que = f"¿contesta {tarea.remoto}?"
         else:
-            args = [python(), str(app(con.raiz) / "sync.py"), tarea.pareja]
+            # `--`: lo que sigue es un nombre, nunca una opción de sync.py.
+            args = [python(), str(app(con.raiz) / "sync.py"), "--", tarea.pareja]
             cwd = equipo.DIR
             que = tarea.pareja
         salida = equipo.DIR / "pasada.out"
@@ -1091,7 +1123,9 @@ class Agente:
                  }.get(como, f"ERROR rc={rc}")
         con.lock.setdefault("last_results", {})[pareja] = texto
         con.lock["last_cycle"] = store.stamp()
-        store.write_json(con.raiz / penwatch.DAEMON_LOCK_REL, con.lock)
+        destino = en_la_raiz(con.raiz, con.raiz / penwatch.DAEMON_LOCK_REL)
+        if destino is not None:
+            store.write_json(destino, con.lock)
 
     # --- la raíz cifrada ----------------------------------------------------------------
 
@@ -1708,13 +1742,13 @@ def cmd_run(_args: argparse.Namespace) -> int:
     except OSError as e:
         print(f"No puedo usar {equipo.DIR}: {e}", file=sys.stderr)
         return 1
-    vivo = equipo.agente_vivo()
-    if vivo is not None and vivo.get("pid") != os.getpid():
-        print(f"Ya hay un agente en marcha (pid {vivo.get('pid')}).")
+    # Tomar el lock es mirar y escribir en un paso (`equipo.tomar_lock()`): dos
+    # arranques a la vez no pueden ver los dos que no hay nadie.
+    otro = equipo.tomar_lock({"pid": os.getpid(), "host": HOST, "started": store.stamp(),
+                              "codigo": str(SCRIPT_DIR)})
+    if otro is not None:
+        print(f"Ya hay un agente en marcha (pid {otro.get('pid', '?')}).")
         return 0
-    store.write_json(equipo.lock_json(), {"pid": os.getpid(), "host": HOST,
-                                          "started": store.stamp(),
-                                          "codigo": str(SCRIPT_DIR)})
     icono = SCRIPT_DIR / "runsync.ico"
     if icono.is_file():
         avisos.ICONO = icono
