@@ -156,6 +156,9 @@ def find_veracrypt(extra_dir: str | Path | None = None) -> dict | None:
     carpeta que indique el usuario cuando no está donde se espera: una
     instalación o un VeraCrypt Portable descomprimido, las dos valen.
 
+    En Linux, esa carpeta, el instalado y, si no hay, el AppImage oficial
+    fijado que ya esté en la caché (`veracrypt_bin.appimage_en_cache()`).
+
     En Windows, por este orden: esa carpeta, el VeraCrypt INSTALADO —con otro
     VeraCrypt instalado y su driver cargado, el portable falla con
     ERR_DRIVER_VERSION (`Common/Dlgcode.c`, `DriverAttach`)— y, si no hay
@@ -179,7 +182,21 @@ def find_veracrypt(extra_dir: str | Path | None = None) -> dict | None:
         candidatos.insert(0, str(Path(extra_dir) / "veracrypt"))
         candidatos.insert(0, str(extra_dir))
     vc = _first_exe(candidatos)
-    return {"mount": vc, "format": vc} if vc else None
+    if vc:
+        return {"mount": vc, "format": vc}
+    # Sin instalado, el AppImage oficial que ya esté en la caché y siga siendo
+    # el comprobado (`veracrypt_bin.appimage_en_cache()`); bajarlo lo pide la
+    # pantalla, como el Portable en Windows.
+    cache = veracrypt_bin.en_cache_para_este_equipo()
+    if cache is None:
+        return None
+    exe = str(cache / veracrypt_bin.APPIMAGE_EXE)
+    return {"mount": exe, "format": exe, "appimage": True}
+
+
+def appimage(vc: dict | None) -> bool:
+    """¿Es el AppImage oficial fijado (Linux, sin instalar)?"""
+    return bool((vc or {}).get("appimage"))
 
 
 # ---------------------------------------------------------------------------
@@ -786,17 +803,20 @@ def create_command(vc: dict, container: Path, size_bytes: int, password: str,
     # --stdin: en Linux la contraseña va por la entrada estándar y no aparece en
     # la lista de procesos.
     #
-    # Aquí NO hay equivalente de /dynamic —no existe en su CLI— y `--quick`
-    # tampoco sirve: en el tag VeraCrypt_1.26.24, TextUserInterface.cpp fuerza
-    # `options->Quick = false` en la rama del contenedor-fichero, así que el
-    # volumen se escribe entero pase lo que pase y lo único que queda es elegir
-    # bien el tamaño. En `master` esa línea ya no está y `--quick` pasa a valer
-    # también para contenedores; cuando eso llegue a una release, se revisa.
+    # Aquí NO hay /dynamic —no existe en su CLI—, pero desde la 1.26.29
+    # `--quick` hace lo mismo con un contenedor-fichero: hasta la 1.26.24,
+    # TextUserInterface.cpp forzaba `options->Quick = false` en esa rama (el
+    # volumen se escribía entero pase lo que pase), y en la 1.26.29 esa línea ya
+    # no está y el aviso de `--quick` dice que el ahorro depende de que el
+    # sistema de ficheros admita dispersos. Visto con el AppImage 1.26.29: un
+    # contenedor FAT de 20 MiB ocupa 352 KiB. Se pasa siempre: una versión
+    # anterior lo ignora sin quejarse (visto con el AppImage 1.26.24: sale con 0
+    # y el fichero ocupa sus 20 MiB), y con el AppImage fijado es la 1.26.29.
     return [vc["format"], "--text", "--create", str(container),
             "--volume-type=normal", f"--size={size_bytes}",
             "--encryption=AES", "--hash=sha512", f"--filesystem={filesystem}",
             "--pim=0", "--keyfiles=", "--random-source=/dev/urandom",
-            "--stdin", "--non-interactive"]
+            "--quick", "--stdin", "--non-interactive"]
 
 
 def mount_command(vc: dict, container: Path, password: str,

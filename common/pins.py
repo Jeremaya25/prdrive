@@ -92,6 +92,32 @@ VERACRYPT_SHA256 = "8772a127f93561d169d4b4082d9ab5e855fd928a361e020905484c388c47
 # documentación y los idiomas, que no viajan.
 MB_VERACRYPT = 34
 
+# --- VeraCrypt para Linux (el AppImage oficial, de la misma versión) -----------
+# Lo que usa un Linux sin VeraCrypt instalado para CREAR el contenedor (abrirlo
+# ya se puede con udisks2 o cryptsetup, #51) y lo que el agente se lleva para
+# abrir y cerrar una raíz cifrada. Un solo fichero ejecutable, sin instalar
+# nada; montar sigue pidiendo la contraseña de administrador (sudo), como el
+# instalado. Existe desde la 1.26.24 (x86_64) y la 1.26.29 añade aarch64 y trae
+# su propia biblioteca FUSE —el de la 1.26.24 no arranca sin `libfuse.so.2` en
+# el equipo, que muchas distribuciones ya no traen—; sin `fusermount` en el
+# equipo, su runtime extrae y ejecuta (visto: `--text --version` y crear un
+# contenedor FAT, como root, en un equipo sin `fusermount`).
+#
+# Mismo contrato que el Portable: el SHA-256 lo apunta a mano quien mueve la
+# versión, tras comprobar la firma PGP de cada uno con la clave de arriba. Los
+# dos de la 1.26.29, el 30/09/2026: PGP buena, y los de Launchpad y los de GitHub
+# son los mismos bytes. El de x86_64 está además en el `sha256sum.txt` firmado;
+# el de aarch64 NO sale en ese fichero, solo lo cubre su `.sig`.
+# Clave: la de `Plataforma.clave` (solo las de Linux).
+VERACRYPT_APPIMAGE: dict[str, tuple[str, str]] = {
+    "linux-x64": (f"VeraCrypt-{VERACRYPT_VERSION}-x86_64.AppImage",
+                  "5a9b96f937b94de42f196c04eb9b9154f944d049ddeaeb9961851332d994c92c"),
+    "linux-arm64": (f"VeraCrypt-{VERACRYPT_VERSION}-aarch64.AppImage",
+                    "aaf4cf7900caa3dfd4d0e26596b7adc5d317d2a2ab5a64607cf56f39e5890d00"),
+}
+VERACRYPT_APPIMAGE_URL = ("https://launchpad.net/veracrypt/trunk/"
+                          f"{VERACRYPT_VERSION}/+download/{{nombre}}")
+
 
 @dataclass(frozen=True)
 class Plataforma:

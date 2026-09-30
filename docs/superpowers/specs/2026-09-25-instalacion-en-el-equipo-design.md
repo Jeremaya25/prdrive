@@ -339,8 +339,9 @@ descarga, ni se lanza un instalador.
 > se temía: `DriverAttach()` compara con `VERSION_NUM` (0x0126 en toda la 1.26),
 > y en las pruebas de la fase 3 un 1.26.24 montó con el driver 1.26.29 cargado.
 > Como el portable sale a los dos segundos y la que pregunta es su copia
-> elevada, el agente sigue esa copia (`agente.Copia`). Linux sigue con el
-> instalado.
+> elevada, el agente sigue esa copia (`agente.Copia`). En Linux, lo mismo con
+> el AppImage oficial (fijado desde la 1.26.29), que pide la contraseña de
+> administrador para montar igual que el instalado.
 
 **Una letra fija en Windows.** `penwatch.veracrypt_command()` deja que VeraCrypt
 elija letra, y en una unidad da igual. En el equipo no, porque los programas

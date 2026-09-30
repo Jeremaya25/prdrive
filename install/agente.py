@@ -229,12 +229,13 @@ def poner_rclone(progreso=None) -> Path:
 #
 # El agente abre y cierra la raíz cifrada del equipo. Con VeraCrypt instalado,
 # con ese —su driver ya está cargado y no pide nada más que la contraseña—. Sin
-# él, con el VeraCrypt Portable oficial fijado en `pins.py`, el mismo que lleva
-# una unidad cifrada en `VeraCrypt\`: sin instalar nada, pero pidiendo permisos
-# de administrador (UAC) cada vez que carga su driver, que es cada vez que abre
-# o cierra (la documentación de VeraCrypt, «Portable Mode»: «You need
-# administrator privileges in order to be able to run VeraCrypt in portable
-# mode»). Se copia a `veracrypt/<versión>/` de la carpeta del agente, fuera de
+# él, en Windows, con el VeraCrypt Portable oficial fijado en `pins.py`, el
+# mismo que lleva una unidad cifrada en `VeraCrypt\`: sin instalar nada, pero
+# pidiendo permisos de administrador (UAC) cada vez que carga su driver, que es
+# cada vez que abre o cierra (la documentación de VeraCrypt, «Portable Mode»:
+# «You need administrator privileges in order to be able to run VeraCrypt in
+# portable mode»). En Linux, con el AppImage oficial, que pide la contraseña de
+# administrador para montar igual que el instalado. Se copia a `veracrypt/<versión>/` de la carpeta del agente, fuera de
 # toda raíz, con su sello: el agente lo vuelve a resumir contra él antes de
 # cada lanzamiento (`agente.veracrypt_propio()`).
 
@@ -252,13 +253,10 @@ def quiere_veracrypt(cifrada: bool = False) -> bool:
 
 
 def conseguir_veracrypt(progreso=None) -> Path:
-    """La carpeta con el VeraCrypt fijado, comprobado: la caché del instalador,
-    el paquete dejado a mano o la descarga. Punto de indirección para los
-    tests."""
-    if IS_WIN:
-        return veracrypt_bin.ensure_veracrypt(progreso)
-    raise InstallError("En Linux el agente todavía no lleva VeraCrypt: instálalo "
-                       "en el equipo.")
+    """La carpeta con el VeraCrypt fijado para este equipo, comprobado —el
+    Portable en Windows, el AppImage en Linux—: la caché del instalador, el
+    dejado a mano o la descarga. Punto de indirección para los tests."""
+    return veracrypt_bin.para_este_equipo(progreso)
 
 
 def poner_veracrypt(progreso=None) -> Path:

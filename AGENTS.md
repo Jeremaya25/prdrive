@@ -766,10 +766,14 @@ at nothing) and hangs `tasklist | find`. Use PowerShell for both.
   holds the path (`device.raiz_del_volumen()`: `GetVolumePathNameW`, the mount
   point in POSIX): `GetVolumeInformationW` only takes a volume root, and the
   container of a host root lives in a folder — passing that folder straight made
-  every one of them fixed (H-1 of the real-hardware run). On Linux there is no equivalent: `--quick` is forced off
-  for file containers in 1.26.24 (`Main/TextUserInterface.cpp`; `master` drops
-  that line), so there the only lever is the size, and
-  `crypto.suggested_size()` stops proposing nearly the whole disk.
+  every one of them fixed (H-1 of the real-hardware run). On Linux there is no `/dynamic`, but since 1.26.29
+  `--quick` does the same for a file container: 1.26.24 forced it off
+  (`options->Quick = false` in `Main/TextUserInterface.cpp`) and 1.26.29 drops
+  that line. `create_command()` always passes it: seen with the real AppImages,
+  1.26.24 exits 0 and writes all 20 MiB, 1.26.29 leaves 352 KiB. With an older
+  VeraCrypt the only lever is still the size, and `crypto.suggested_size()`
+  stops proposing nearly the whole disk (the wizard's wording still assumes
+  the full write on Linux).
 - **A fixed container shows its real progress, and the estimate is a floor.**
   `medir_escritura()`'s 8 MiB probe measures the *burst*: USB sticks drop to a
   half or a quarter once their SLC cache fills (#46: «unos 23 min» said, 40 min
@@ -839,6 +843,21 @@ at nothing) and hangs `tasklist | find`. Use PowerShell for both.
   from `crypto.arquitectura_vc()`, i.e. `model.machine_arch()` — the native
   machine, like VeraCrypt's `IsARM()`. The panel's «Descargar VeraCrypt
   Portable» button fetches it; with it, every step asks for UAC.
+- **No VeraCrypt installed on Linux: the official AppImage.** Since 1.26.24
+  IDRIX publishes one (x86_64; 1.26.29 adds aarch64 and bundles its own FUSE
+  library — the 1.26.24 one does not start without the host's `libfuse.so.2`).
+  `pins.VERACRYPT_APPIMAGE` (per Linux `Plataforma.clave`, hand-verified PGP;
+  the aarch64 one is NOT in the release's `sha256sum.txt`, only its `.sig`
+  covers it), `veracrypt_bin.ensure_appimage()` (hash in memory, its own cache
+  `veracrypt-appimage/<version>/<clave>/`, saved as an executable `veracrypt`
+  with a `PRDRIVE-VERACRYPT` stamp; hand-placed file adopted), and
+  `para_este_equipo()` / `en_cache_para_este_equipo()` pick the Portable or the
+  AppImage for THIS host. `crypto.find_veracrypt()` falls back to it after the
+  installed one (`{"appimage": True}`, `crypto.appimage()`). Without
+  `fusermount` its runtime extracts and runs. It does not remove root: mounting
+  and creating an exFAT still go through `sudo` (loop, dm-crypt,
+  `mkfs.exfat`). The drives' vestibule scripts do not use it (they open with
+  udisks2/cryptsetup already).
 - **`traveler.py` puts the Portable on the volume, both architectures, as a
   component.** There is no CLI for this: VeraCrypt's own dialog extracts the
   binaries from its self-extractor (`Mount/Mount.c`, `TravelerDlgProc`), and in
@@ -1524,7 +1543,9 @@ the carpeta itself on Linux (`crypto.mount_container(punto_fijo=)`), and
   architecture's exe + driver; `veracrypt_de_la_raiz()` puts the installed one
   first, and it goes to `penwatch.veracrypt_command(…, respaldo=)`. The cost is
   said out loud: **UAC on every unlock and lock**, at logon too with
-  `pedir_al_iniciar` (VeraCrypt docs, «Portable Mode»). Linux: installed only.
+  `pedir_al_iniciar` (VeraCrypt docs, «Portable Mode»). Linux: the official
+  AppImage instead (below), which asks for the admin password to mount like the
+  installed one.
   Inside: NTFS on Windows, exFAT on Linux (a fresh ext4 is root's).
 - **The launched VeraCrypt is not the one that asks.** The portable without
   admin relaunches itself elevated (`/q UAC`) and the launched process exits in

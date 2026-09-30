@@ -26,9 +26,9 @@ ventana y la flota. Lo que cambia es poco y está aquí:
     contenedor VeraCrypt: `~/PRDRIVE-cifrado/PRDRIVE.hc`, con la marca del
     vestíbulo al lado, montado en una letra fija (Windows) o en `~/PRDRIVE`
     (Linux). Con el VeraCrypt instalado si lo hay; si no, con el VeraCrypt
-    Portable oficial fijado, que el agente se lleva a su carpeta: sin instalar
-    nada, pero con un aviso de administrador (UAC) cada vez que se abre o se
-    cierra. Lo abre y lo cierra el agente; el asistente lo crea y lo monta una
+    oficial fijado sin instalar —el Portable en Windows, con un aviso de
+    administrador (UAC) cada vez que se abre o se cierra; el AppImage en
+    Linux—, que el agente se lleva a su carpeta. Lo abre y lo cierra el agente; el asistente lo crea y lo monta una
     vez, con la contraseña que acaba de pedir, y lo deja abierto.
 
 Sin Tk, como todo `install/`: lo dibuja `ui/tk_equipo.py`.
@@ -428,8 +428,11 @@ COMO_INSTALAR = (
     f"se comprueba contra el SHA-256 que fija este programa antes de usarlo. O "
     f"instala VeraCrypt desde veracrypt.jp/en/Downloads.html y vuelve a este paso."
     if IS_WIN else
-    "Para cifrar la raíz hace falta VeraCrypt INSTALADO en este equipo. "
-    "Instálalo desde veracrypt.jp/en/Downloads.html y vuelve a este paso.")
+    f"No hay VeraCrypt en este equipo. Con «Descargar VeraCrypt (AppImage)» se usa "
+    f"el AppImage oficial {pins.VERACRYPT_VERSION} sin instalar nada: se descarga "
+    f"(≈13 MB) y se comprueba contra el SHA-256 que fija este programa antes de "
+    f"usarlo. O instala VeraCrypt desde veracrypt.jp/en/Downloads.html y vuelve a "
+    f"este paso.")
 
 AVISO_PORTATIL = (
     f"Sin VeraCrypt instalado, la raíz se crea y se abre con el VeraCrypt Portable "
@@ -437,7 +440,12 @@ AVISO_PORTATIL = (
     f"instala nada, pero pide permisos de administrador (el aviso de Windows) cada "
     f"vez que abre o cierra la raíz: al crearla, al desbloquearla —también al "
     f"iniciar sesión, si se pide la contraseña— y al bloquearla. Si más adelante "
-    f"instalas VeraCrypt, el agente usará ese y dejará de pedirlo.")
+    f"instalas VeraCrypt, el agente usará ese y dejará de pedirlo."
+    if IS_WIN else
+    f"Sin VeraCrypt instalado, la raíz se crea y se abre con el AppImage oficial "
+    f"de VeraCrypt {pins.VERACRYPT_VERSION}, que el agente se lleva a su carpeta. "
+    f"No instala nada. Como el instalado, pide la contraseña de administrador "
+    f"para montar. Si más adelante instalas VeraCrypt, el agente usará ese.")
 
 
 def veracrypt_instalado() -> dict | None:
@@ -457,16 +465,20 @@ def veracrypt_instalado() -> dict | None:
 
 
 def veracrypt_portatil() -> dict | None:
-    """El VeraCrypt Portable fijado, si ya está en la caché del instalador y
-    sigue siendo el comprobado; None si no (bajarlo lo pide la pantalla con su
-    botón). Solo Windows. Es el mismo paquete que el agente copiará a su
-    carpeta (`install/agente.poner_veracrypt()`), así que lo que crea el
-    asistente lo podrá abrir el agente. Punto de indirección para los tests."""
-    if not IS_WIN:
-        return None
+    """El VeraCrypt sin instalar fijado —el Portable en Windows, el AppImage en
+    Linux—, si ya está en la caché del instalador y sigue siendo el comprobado;
+    None si no (bajarlo lo pide la pantalla con su botón). Es el mismo que el
+    agente copiará a su carpeta (`install/agente.poner_veracrypt()`), así que lo
+    que crea el asistente lo podrá abrir el agente. Punto de indirección para
+    los tests."""
     from . import veracrypt_bin
-    cache = veracrypt_bin.cached()
-    return crypto.find_veracrypt(cache) if cache is not None else None
+    cache = veracrypt_bin.en_cache_para_este_equipo()
+    if cache is None:
+        return None
+    if IS_WIN:
+        return crypto.find_veracrypt(cache)
+    exe = str(cache / veracrypt_bin.APPIMAGE_EXE)
+    return {"mount": exe, "format": exe, "appimage": True}
 
 
 def veracrypt_para_raiz() -> dict | None:
@@ -476,8 +488,9 @@ def veracrypt_para_raiz() -> dict | None:
 
 
 def portatil(vc: dict | None) -> bool:
-    """¿Es el portable, que pide administrador en cada apertura y cierre?"""
-    return vc is not None and crypto.portatil(vc)
+    """¿Es el VeraCrypt sin instalar (el Portable, que en Windows pide
+    administrador en cada apertura y cierre; o el AppImage de Linux)?"""
+    return vc is not None and (crypto.portatil(vc) or crypto.appimage(vc))
 
 
 def fisica_por_defecto(carpeta: Path | str) -> Path:

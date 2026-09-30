@@ -284,11 +284,78 @@ try:
 finally:
     veracrypt_bin.fetch, pins.VERACRYPT_SHA256 = real_fetch, real_sha
 
+# --- 4b. Linux: el AppImage oficial -------------------------------------------------
+# Un solo fichero: se comprueba entero en memoria, se deja en su propia caché
+# como `veracrypt`, ejecutable, con un sello que lo resume.
+appimage_bueno = b"\x7fELF un AppImage de mentira"
+real_appimage = dict(pins.VERACRYPT_APPIMAGE)
+pedidos.clear()
+try:
+    nombre_x64 = real_appimage["linux-x64"][0]
+    pins.VERACRYPT_APPIMAGE["linux-x64"] = (nombre_x64, "0" * 64)
+    veracrypt_bin.fetch = lambda url, timeout=0: pedidos.append(url) or appimage_bueno
+    fallo = fallo_de(veracrypt_bin.ensure_appimage, "linux-x64")
+    c.contains("AppImage: un SHA-256 que no es el fijado se dice", fallo or "",
+               "no es el AppImage")
+    c("  pedido por su URL, con la versión", pedidos,
+      [pins.VERACRYPT_APPIMAGE_URL.format(nombre=nombre_x64)])
+    c("  y no deja nada en su caché",
+      list(veracrypt_bin.cache_appimage("linux-x64").iterdir()), [])
+    pins.VERACRYPT_APPIMAGE["linux-x64"] = (nombre_x64,
+                                            hashlib.sha256(appimage_bueno).hexdigest())
+    carpeta = veracrypt_bin.ensure_appimage("linux-x64")
+    c("  con el bueno, su caché, aparte de la del Portable",
+      (carpeta, carpeta != veracrypt_bin.cache_dir()),
+      (veracrypt_bin.cache_appimage("linux-x64"), True))
+    c("  como `veracrypt`, con su sello",
+      sorted(p.name for p in carpeta.iterdir()),
+      sorted([veracrypt_bin.APPIMAGE_EXE, components.VERACRYPT_STAMP]))
+    if os.name != "nt":
+        c("  ejecutable", os.access(carpeta / veracrypt_bin.APPIMAGE_EXE, os.X_OK), True)
+    sello = (carpeta / components.VERACRYPT_STAMP).read_text(encoding="utf-8")
+    c("  el sello dice qué paquete era", components.leer_sello(sello).get("paquete"),
+      nombre_x64)
+    c("  y la caché se reconoce", veracrypt_bin.appimage_en_cache("linux-x64"), carpeta)
+    pedidos.clear()
+    c("  ensure no lo vuelve a bajar",
+      (veracrypt_bin.ensure_appimage("linux-x64"), pedidos), (carpeta, []))
+    (carpeta / veracrypt_bin.APPIMAGE_EXE).write_bytes(b"cambiado")
+    c("  uno que ya no cuadra con su sello no vale",
+      veracrypt_bin.appimage_en_cache("linux-x64"), None)
+    veracrypt_bin.fetch = sin_red
+    veracrypt_bin.appimage_a_mano("linux-x64").write_bytes(appimage_bueno)
+    c("  el dejado a mano con su nombre se adopta, sin red",
+      (veracrypt_bin.ensure_appimage("linux-x64"),
+       (carpeta / veracrypt_bin.APPIMAGE_EXE).read_bytes()), (carpeta, appimage_bueno))
+    veracrypt_bin.appimage_a_mano("linux-x64").unlink()
+    (carpeta / components.VERACRYPT_STAMP).unlink()
+    try:
+        veracrypt_bin.ensure_appimage("linux-x64")
+        de_red = "no ha protestado"
+    except veracrypt_bin.SinRed as e:
+        de_red = str(e)
+    c.contains("  sin red, SinRed con la URL exacta", de_red,
+               pins.VERACRYPT_APPIMAGE_URL.format(nombre=nombre_x64))
+    c.contains("  y dónde dejarlo a mano", de_red, str(carpeta))
+finally:
+    veracrypt_bin.fetch = real_fetch
+    pins.VERACRYPT_APPIMAGE.clear()
+    pins.VERACRYPT_APPIMAGE.update(real_appimage)
+
 # --- 5. lo fijado, sin inventar -----------------------------------------------------
 c("la URL lleva la versión, no un «último»",
   pins.VERACRYPT_VERSION in pins.VERACRYPT_URL, True)
 c("y es del paquete portable", pins.VERACRYPT_URL.endswith(
   f"VeraCrypt%20Portable%20{pins.VERACRYPT_VERSION}.exe"), True)
 c("el SHA-256 fijado tiene la forma de uno", len(pins.VERACRYPT_SHA256), 64)
+c("hay AppImage para las dos plataformas de Linux, y ninguna más",
+  sorted(pins.VERACRYPT_APPIMAGE),
+  sorted(p.clave for p in pins.PLATAFORMAS if p.so == "linux"))
+for clave, (nombre, sha) in pins.VERACRYPT_APPIMAGE.items():
+    c(f"  {clave}: de la versión fijada, y un SHA-256 con su forma",
+      (pins.VERACRYPT_VERSION in nombre, nombre.endswith(".AppImage"), len(sha)),
+      (True, True, 64))
+c("  y la URL del AppImage también lleva la versión",
+  pins.VERACRYPT_VERSION in pins.VERACRYPT_APPIMAGE_URL, True)
 
 sys.exit(c.report())

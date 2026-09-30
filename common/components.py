@@ -168,18 +168,20 @@ def rclone_stamp_text(plat: Plataforma, version: str) -> str:
 
 
 def veracrypt_stamp_text(version: str, sha256_paquete: str,
-                         ficheros: dict[str, str]) -> str:
+                         ficheros: dict[str, str], paquete: str | None = None) -> str:
     """El sello del VeraCrypt de viaje: de qué paquete salió y qué hay en él.
 
     A diferencia del de rclone, este SÍ lleva el resumen de cada fichero, y no
     para adornar: es a la vez el manifiesto de la caché del instalador
     (`install/veracrypt_bin.py` vuelve a resumir cada fichero contra él antes de
     usarlo) y el de la carpeta de la unidad, que es una copia exacta de esa
-    caché. Así «qué versión es» y «qué ficheros son» salen del mismo sitio."""
+    caché. Así «qué versión es» y «qué ficheros son» salen del mismo sitio.
+    `paquete` es el nombre de lo descargado cuando no es el Portable de Windows
+    (el AppImage de Linux, `install/veracrypt_bin.py`)."""
     lineas = [f"# {APP_NAME} — el VeraCrypt que viaja en esta unidad. Lo escribe "
               f"el instalador y lo lee la ventana. No lo toques.",
               f"{VERACRYPT} = {version}",
-              f"paquete = VeraCrypt Portable {version}.exe",
+              f"paquete = {paquete or f'VeraCrypt Portable {version}.exe'}",
               f"sha256 = {sha256_paquete}"]
     lineas += [f"{FICHERO_SELLO}{nombre} = {resumen}"
                for nombre, resumen in sorted(ficheros.items())]

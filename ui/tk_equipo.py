@@ -8,7 +8,7 @@ recorridos, que elige el paso «Carpeta» (ver `tk_install.PASOS_EQUIPO`):
 
     Carpeta        la raíz de este equipo: carpeta propia, la personal, o ninguna
     Cifrado        sin cifrar, o en un contenedor VeraCrypt (solo la carpeta propia;
-                   el instalado, o en Windows el Portable, que se lleva el agente):
+                   el instalado, o el oficial sin instalar, que se lleva el agente):
                    lo crea, lo monta y lo deja abierto
     Conexión, Comprobaciones        los del recorrido de una unidad, tal cual
     Instalación    .prdrive/ + rclone en la raíz; el agente y su Python en el equipo
@@ -252,27 +252,29 @@ def paso_cifrado(cuerpo, wiz) -> None:
         caja = _ambar(cuerpo, re_.examinar_contenedor("x", wiz.equipo_ruta,
                                                       wiz.equipo_forma).texto
                       if personal else re_.COMO_INSTALAR, 3)
-        if not personal and IS_WIN:
+        if not personal:
             # Sin VeraCrypt instalado no hace falta instalarlo: el Portable
-            # oficial, bajado y comprobado (`install/veracrypt_bin.py`), el
-            # mismo que se llevará el agente para abrirla y cerrarla.
+            # oficial en Windows, el AppImage en Linux, bajado y comprobado
+            # (`install/veracrypt_bin.py`), el mismo que se llevará el agente
+            # para abrirla y cerrarla.
             def descargar() -> None:
                 from common import pins
                 from install import veracrypt_bin
                 ok, res = working(
                     wiz.root, "descargando VeraCrypt",
-                    lambda: veracrypt_bin.ensure_veracrypt(),
-                    f"Descargando VeraCrypt Portable {pins.VERACRYPT_VERSION} y "
+                    lambda: veracrypt_bin.para_este_equipo(),
+                    f"Descargando VeraCrypt {pins.VERACRYPT_VERSION} y "
                     f"comprobándolo.")
                 if ok and re_.veracrypt_para_raiz() is not None:
                     wiz.repintar()
                     return
                 messagebox.showerror(TITLE, (
-                    f"No se ha podido usar el VeraCrypt Portable:\n\n{res}" if not ok
-                    else "El VeraCrypt Portable no trae los ejecutables de este "
+                    f"No se ha podido usar VeraCrypt sin instalar:\n\n{res}" if not ok
+                    else "El VeraCrypt descargado no trae los ejecutables de este "
                          "equipo."), parent=wiz.root)
 
-            ttk.Button(caja, text="Descargar VeraCrypt Portable",
+            ttk.Button(caja, text=("Descargar VeraCrypt Portable" if IS_WIN else
+                                   "Descargar VeraCrypt (AppImage)"),
                        style="Primary.TButton", command=descargar).grid(
                 row=1, column=0, sticky="w", pady=(8, 0))
     elif re_.portatil(vc):
