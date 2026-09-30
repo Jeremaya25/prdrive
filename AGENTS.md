@@ -733,16 +733,17 @@ gathered as one plan in
 - the «retenido» branch;
 - the new eject wait;
 - Linux;
-- the VeraCrypt Portable of #50 (tests V1–V7 in the issue; results go in
-  `docs/superpowers/pruebas/`): V1 create + mount on Windows x64 with nothing
-  installed, from the cache; V2/V3 the same drive opened on Windows ARM64 and
-  back, the `.bat` choosing by `%PROCESSOR_ARCHITECTURE%`; V4 another VeraCrypt
-  version installed (installed first, no `ERR_DRIVER_VERSION`); V5
-  `--update-components` with a nearly full drive, and the swap with room; V6 a
-  corrupt / cut download; V7 `_esperar_copia_elevada()` seeing
-  `VeraCrypt Format-x64.exe`. Also unverified: whether the traveler's `.sys` is
-  held open while its driver is loaded (`veracrypt_en_uso()` only probes the
-  files), and Explorer showing the icon of `VeraCrypt-x64.exe` on Windows ARM;
+- the VeraCrypt Portable of #50 (tests V1–V7 in the issue): V1, V5, V6 and V7
+  passed on Windows x64
+  (`docs/superpowers/pruebas/2026-09-30-veracrypt-portable-resultados.md`, with
+  the P-1 finding: a leftover driver of another version with no installation
+  goes unnoticed, and the Portable would hit `ERR_DRIVER_VERSION`). Still
+  pending: V2/V3 the same drive opened on Windows ARM64 and back, the `.bat`
+  choosing by `%PROCESSOR_ARCHITECTURE%`; V4 another VeraCrypt version installed
+  (installed first, no `ERR_DRIVER_VERSION`). Also unverified: whether the
+  traveler's `.sys` is held open while its driver is loaded
+  (`veracrypt_en_uso()` only probes the files), and Explorer showing the icon of
+  `VeraCrypt-x64.exe` on Windows ARM;
 - the creation progress counters (#46, tests P1–P7 in the issue): whether
   `IOCTL_DISK_PERFORMANCE` on `\\.\X:` answers **without admin**, whether it
   counts the filesystem's zero-fill and the elevated Format copy's writes, the
