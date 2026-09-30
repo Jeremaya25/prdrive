@@ -644,9 +644,11 @@ def parar_agente(avance=None) -> str | None:
 
     Se espera `ESPERA_PASADA` con una pasada en marcha, diciéndolo por
     `avance(fracción, texto)` si se da; sin pasada, `PARAR_ESPERA`. Pasado el
-    plazo se corta: la pasada con su rclone (`matar_arbol()`) y el agente. Una
-    bisync cortada puede dejar su bloqueo puesto, así que se dice qué pareja
-    era y dónde se arregla."""
+    plazo se corta: primero el agente —que no vea acabar la pasada, la cuente
+    como fallo y borre su registro—, luego la pasada con su rclone
+    (`matar_arbol()`). Una bisync cortada deja su `.lck`, que caduca solo en dos
+    minutos: se apunta el corte (`equipo.apuntar_corte()`) y el agente que venga
+    deja esa pareja hasta entonces, en vez de fallar contra él."""
     vivo = equipo.agente_vivo()
     pasada = equipo.pasada_viva()
     if vivo is None and pasada is None:
@@ -687,20 +689,21 @@ def parar_agente(avance=None) -> str | None:
     if vivo is None and pasada is None:
         return f"{quien} detenido" + (" tras acabar su pasada." if esperado else ".")
     partes = []
+    if vivo is not None:
+        penwatch.kill_pid(pid)
+        partes.append(f"{quien} terminado a la fuerza.")
     if pasada is not None:
         try:
             matar_arbol(int(pasada.get("pid")))
         except (TypeError, ValueError):
             pass
+        equipo.apuntar_corte(pasada)
         partes.append(f"La pasada de «{pasada.get('pareja')}» en {pasada.get('unidad')} "
-                      f"no acababa en {ESPERA_PASADA / 60:g} min y se ha cortado: si "
-                      f"esa pareja falla la próxima vez, «Reparación» en su ventana "
-                      f"quita el bloqueo. Si copiaba un fichero grande, puede quedar a "
-                      f"medias como «….partial» en uno de los lados, y la próxima pasada "
-                      f"lo sincroniza como uno más: bórralo en cualquiera de los dos.")
-    if vivo is not None:
-        penwatch.kill_pid(pid)
-        partes.insert(0, f"{quien} terminado a la fuerza.")
+                      f"no acababa en {ESPERA_PASADA / 60:g} min y se ha cortado; el "
+                      f"agente la retoma en unos minutos, cuando caduque su bloqueo. "
+                      f"Si copiaba un fichero grande, puede quedar a medias como "
+                      f"«….partial» en uno de los lados, y la próxima pasada lo "
+                      f"sincroniza como uno más: bórralo en cualquiera de los dos.")
     return " ".join(partes)
 
 

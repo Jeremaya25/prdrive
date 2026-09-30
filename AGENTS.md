@@ -1379,10 +1379,20 @@ whatever you build that only a real host can prove.
     from another boot is ignored). `install/agente.parar_agente(avance)` waits
     for the agent AND that pass up to `ESPERA_PASADA` (10 min), saying so
     (`avance(fracción, texto)`; the wizard shows it under the bar, the CLI
-    prints it once per text), then kills the pass with its rclone
-    (`matar_arbol()`: `killpg`, `taskkill /T`) and says which pair may need
-    «Reparación». A new agent launches nothing while the previous one's pass is
-    alive (`Agente.heredada`).
+    prints it once per text), then kills the agent first (so it cannot see the
+    pass end, count a failure and delete the record) and the pass with its
+    rclone (`matar_arbol()`: `killpg`, `taskkill /T`). A new agent launches
+    nothing while the previous one's pass is alive (`Agente.heredada`).
+  - **A cut pass leaves bisync's `.lck`**, which expires by itself two minutes
+    later (`--max-lock 2m`). Before that, the next pass of that pair fails with
+    «prior lock file found» and notifies a failure that is not one (H-15).
+    - `parar_agente()` records the cut in `pasada.json` (`equipo.
+      apuntar_corte()`: `cortada`, plus `raiz` from the record).
+    - The next agent reads it at start (`Agente.cortada`,
+      `equipo.pasada_cortada()`) and `_raices()` leaves out **that pair only**
+      for `equipo.ESPERA_TRAS_CORTE` (150 s). Nothing deletes the lock:
+      rclone's own expiry decides.
+    - A pair whose own flags raise `max-lock` can still fail once, as before.
   - **The id is not a credential**: «Atender» records `agente.huella(raiz)` —
     sha256 of everything in `.prdrive/` except what changes with use (`state/`,
     `logs/`, `filters/`, `keys/`, `runtime/`, `bin/`, `sync_config.toml`, the

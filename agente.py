@@ -599,6 +599,9 @@ class Agente:
     pasada: Pasada | None = None
     # La de un agente anterior que sigue viva al arrancar (`pasada.json`).
     heredada: dict | None = field(default_factory=equipo.pasada_viva)
+    # La pasada que el instalador cortó al parar al agente anterior: su pareja
+    # espera a que caduque el `.lck` que dejó (`equipo.ESPERA_TRAS_CORTE`).
+    cortada: dict | None = field(default_factory=equipo.pasada_cortada)
     urgentes: list[tuple[str, str]] = field(default_factory=list)
     pausado: bool = False
     terminar: bool = False
@@ -1165,13 +1168,36 @@ class Agente:
 
     def _raices(self) -> list[pl.Raiz]:
         raices = []
+        cortada = self._cortada()
         for con in self.conexiones.values():
             if con.lock is None or con.servicio is None or con.id in self.bloqueos:
                 continue
             modo = self.ajustes.unidades[con.id].modo
             intervalo = math.inf if modo == equipo.SYNC else con.servicio.minutos * 60
-            raices.append(pl.Raiz(con.id, con.servicio.parejas, intervalo))
+            parejas = con.servicio.parejas
+            if cortada is not None and cortada.get("raiz") == con.id:
+                parejas = tuple(p for p in parejas if p.nombre != cortada.get("pareja"))
+            raices.append(pl.Raiz(con.id, parejas, intervalo))
         return raices
+
+    def _cortada(self) -> dict | None:
+        """La pasada que cortó el instalador, mientras su pareja tenga que
+        esperar: lanzarla antes de que caduque el `.lck` que dejó falla con
+        «prior lock file found», y se avisaría de un fallo que no es (H-15).
+        Solo esa pareja: las demás siguen como siempre."""
+        c = self.cortada
+        if c is None:
+            return None
+        if self.reloj() >= c["cortada"] + equipo.ESPERA_TRAS_CORTE:
+            diario(f"[{c.get('unidad')}] {c.get('pareja')}: ya ha caducado el bloqueo "
+                   f"de la pasada cortada; vuelve a su turno")
+            self.cortada = None
+            return None
+        if not c.get("avisada"):
+            c["avisada"] = True
+            diario(f"[{c.get('unidad')}] {c.get('pareja')}: su pasada se cortó al parar "
+                   f"el agente anterior; espera a que caduque su bloqueo")
+        return c
 
     def _heredada(self) -> bool:
         """¿Sigue viva la pasada que dejó en marcha el agente anterior? (Se fue
@@ -1248,6 +1274,7 @@ class Agente:
         self.pasada = Pasada(proc, tarea, ahora, salida, con.nombre)
         if tarea.tipo == pl.PASADA:
             equipo.apuntar_pasada({"pid": getattr(proc, "pid", None), "agente": os.getpid(),
+                                   "raiz": tarea.raiz,
                                    "unidad": con.nombre, "pareja": tarea.pareja,
                                    "desde": store.stamp()})
         diario(f"[{con.nombre}] {que}" + (" (a petición)" if tarea.urgente else ""))

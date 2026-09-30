@@ -362,6 +362,44 @@ c("  pasado el plazo, la corta con su árbol y dice qué pareja era",
    "«docs»" in (dicho or "")), (True, True, True))
 c("  y avisa del «….partial» que puede dejar a medias",
   ".partial" in (dicho or ""), True)
+apuntada = store.read_json(equipo.pasada_json())
+c("  apunta el corte en pasada.json, para el agente que venga (H-15)",
+  (isinstance(apuntada.get("cortada"), float), apuntada.get("pareja")), (True, "docs"))
+equipo.pasada_json().unlink(missing_ok=True)
+
+# Primero el agente, luego la pasada: al revés, el agente vería acabar su pasada,
+# la contaría como fallo (con su aviso) y borraría pasada.json antes del corte.
+orden: list = []
+matar_de_verdad, kill_de_verdad = ia.matar_arbol, penwatch.kill_pid
+ia.matar_arbol = lambda pid: orden.append("pasada")
+penwatch.kill_pid = lambda pid: orden.append("agente")
+store.write_json(equipo.lock_json(), {"pid": os.getppid(), "host": equipo.HOST})
+equipo.apuntar_pasada(viva)
+ia.parar_agente()
+ia.matar_arbol, penwatch.kill_pid = matar_de_verdad, kill_de_verdad
+c("  corta primero al agente y luego la pasada", orden, ["agente", "pasada"])
+equipo.lock_json().unlink(missing_ok=True)
+equipo.pasada_json().unlink(missing_ok=True)
+equipo.recoger()                        # el «parar» que se dejó en el buzón
+
+# El agente que viene deja esa pareja hasta que caduque el .lck que quedó (el
+# `--max-lock 2m` de bisync): lanzarla antes fallaba contra él y avisaba de un
+# fallo que no era. Las demás parejas, como siempre.
+Q = "6" * 32
+store.write_json(equipo.pasada_json(), {**viva, "pid": 2 ** 22 + 7, "raiz": Q,
+                                        "host": equipo.HOST, "cortada": F.RELOJ[0]})
+ag, RQ = servida(Q, parejas=("docs", "fotos"))
+c("tras un corte, el agente nuevo lanza las otras parejas, no la cortada",
+  [x.args[-1] for x in F.pasadas(RQ)], ["fotos"])
+F.acabar(F.pasadas(RQ)[-1])
+F.vueltas(ag, 3)
+c("  y la sigue dejando mientras no caduque su bloqueo", len(F.pasadas(RQ)), 1)
+F.pasar(equipo.ESPERA_TRAS_CORTE)
+F.vueltas(ag, 1)
+c("  caducado, vuelve a su turno", ([x.args[-1] for x in F.pasadas(RQ)], ag.cortada),
+  (["fotos", "docs"], None))
+F.acabar(F.pasadas(RQ)[-1])
+F.vueltas(ag, 1)
 equipo.pasada_json().unlink(missing_ok=True)
 
 # `PARAR_ESPERA` cuenta desde que la pasada acabó, no desde que se empezó a esperar:

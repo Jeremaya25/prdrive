@@ -313,6 +313,28 @@ def apuntar_pasada(datos: dict) -> bool:
                                             "arranque": store.arranque_del_sistema()})
 
 
+# Tras cortar una pasada, lo que se deja su pareja sin tocar: el `.lck` de bisync
+# que quedó caduca solo a los dos minutos (`--max-lock 2m`, `common/model.py`),
+# y lanzarla antes falla con «prior lock file found» y avisa de un fallo que no
+# es (H-15). Con un margen.
+ESPERA_TRAS_CORTE = 150.0
+
+
+def apuntar_corte(pasada: dict) -> bool:
+    """El instalador ha cortado esa pasada (`install/agente.parar_agente()`):
+    se apunta cuándo, en el mismo `pasada.json`, para el agente que venga."""
+    return store.write_json(pasada_json(), {**pasada, "cortada": time.time()})
+
+
+def pasada_cortada() -> dict | None:
+    """El registro de una pasada cortada en este equipo, con su `cortada`
+    (segundos de época), o None. Cuánto hace lo decide quien lo lee."""
+    info = store.read_json(pasada_json())
+    if info.get("host") != HOST or not isinstance(info.get("cortada"), (int, float)):
+        return None
+    return info
+
+
 def pasada_viva() -> dict | None:
     """El registro de `pasada.json` si esa pasada sigue viva EN ESTE EQUIPO, o None.
 

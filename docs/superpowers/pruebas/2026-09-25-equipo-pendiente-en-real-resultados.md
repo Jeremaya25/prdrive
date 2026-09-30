@@ -384,12 +384,26 @@ ahora y dice que se borre en cualquiera de los dos lados.
 **No se excluye `*.partial` en los filtros:** cambiaría el md5 de los filtros de
 todas las parejas bisync de todas las unidades, y todas pedirían `--resync`.
 
-### H-15 · Tras cortar una pasada, la siguiente falla una vez y avisa (E5) — abierto
+### H-15 · Tras cortar una pasada, la siguiente falla una vez y avisa (E5) — arreglado
 
 Queda el `.lck` de bisync. La pasada siguiente sale con «Hay un lock de otra
 ejecución», y el agente avisa «falla …» como si fuera un fallo nuevo. El mensaje
-del corte lo anuncia, y «Reparación» o `--doctor` lo arreglan. Quitarlo solo
-exigiría que `pasada.json` llevara la ruta de la raíz.
+del corte lo anuncia, y «Reparación» o `--doctor` lo arreglan.
+
+Ese `.lck` caduca solo: las parejas bisync llevan `--max-lock 2m`. Falló porque
+el agente nuevo lanzó la pareja dentro de esos dos minutos.
+
+**Arreglo:**
+- `parar_agente()` apunta el corte en `pasada.json` (`cortada`), y ya no
+  corta la pasada antes que al agente: el agente viejo podía verla acabar,
+  avisar del fallo y borrar el registro.
+- El agente nuevo deja **solo esa pareja** durante
+  `equipo.ESPERA_TRAS_CORTE` (150 s) y sigue con las demás.
+- No se borra ningún bloqueo: decide la caducidad de rclone.
+- Una pareja que suba `max-lock` en sus propias opciones puede fallar una
+  vez, como antes.
+
+Test en `test_agente_endurecido.py`, visto en rojo sin el arreglo.
 
 ### H-16 · `--doctor` da un GRAVE falso con un remoto `alias` — abierto, menor
 
