@@ -656,13 +656,25 @@ def parar_agente(avance=None) -> str | None:
         equipo.pedir({"pide": equipo.PIDE_PARAR})
     inicio = time.monotonic()
     esperado = False
+    sin_pasada = None       # desde cuándo no hay pasada: `PARAR_ESPERA` cuenta desde ahí
     while True:
         vivo, pasada = equipo.agente_vivo(), equipo.pasada_viva()
         if vivo is None and pasada is None:
             break
-        pasado = time.monotonic() - inicio
-        if pasada is None and pasado >= PARAR_ESPERA or pasado >= ESPERA_PASADA:
-            break
+        ahora = time.monotonic()
+        pasado = ahora - inicio
+        if pasada is None:
+            # Desde que la pasada acabó, no desde que se empezó a esperar: tras
+            # una pasada larga el agente aún necesita unos segundos para apuntarla
+            # y soltar el lock, y contar el total lo cortaba en cuanto ella
+            # terminaba (visto en real: una pasada de 5 min, cortado a los 2 s).
+            sin_pasada = ahora if sin_pasada is None else sin_pasada
+            if ahora - sin_pasada >= PARAR_ESPERA:
+                break
+        else:
+            sin_pasada = None
+            if pasado >= ESPERA_PASADA:
+                break
         if pasada is not None:
             esperado = True
             if avance is not None:
@@ -683,7 +695,9 @@ def parar_agente(avance=None) -> str | None:
         partes.append(f"La pasada de «{pasada.get('pareja')}» en {pasada.get('unidad')} "
                       f"no acababa en {ESPERA_PASADA / 60:g} min y se ha cortado: si "
                       f"esa pareja falla la próxima vez, «Reparación» en su ventana "
-                      f"quita el bloqueo.")
+                      f"quita el bloqueo. Si copiaba un fichero grande, puede quedar a "
+                      f"medias como «….partial» en uno de los lados, y la próxima pasada "
+                      f"lo sincroniza como uno más: bórralo en cualquiera de los dos.")
     if vivo is not None:
         penwatch.kill_pid(pid)
         partes.insert(0, f"{quien} terminado a la fuerza.")

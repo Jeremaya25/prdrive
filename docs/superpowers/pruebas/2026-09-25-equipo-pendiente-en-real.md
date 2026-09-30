@@ -196,3 +196,11 @@ una letra de verdad, el agente dejaría de tomar la raíz sin decir nada.
 | E5 | W, L | Con una pasada larga en marcha, «Actualizar» desde la bandeja; otra vez desinstalando (`--desinstalar-agente`). Y una tercera con `ESPERA_PASADA` corta (a mano) para ver el corte. | Espera a que acabe la pasada, diciéndolo («Esperando a que acabe la pasada de «…»»), y solo entonces sigue. Con el plazo corto: se cortan `sync.py` Y su `rclone` (ninguno en el Administrador de tareas / `ps`), y el mensaje nombra la pareja y «Reparación». Cerrar sesión con una pasada en marcha y volver: el agente nuevo no lanza nada hasta que acabe. | `parar_agente()`, `matar_arbol()` (`taskkill /T`, `killpg`), `equipo.pasada_viva()`, `store.arranque_del_sistema()` (`GetTickCount64`) |
 | E6 | W, L | Una unidad en la lista: enchufarla (sigue igual), actualizarla con `--update` y volver a enchufarla; copiar su `.prdrive\` a otra memoria y cambiar su `sync.py`. | Sin cambios, ni pregunta ni espera apreciable. Actualizada: «su código ha cambiado» una vez; con «Atender» sigue en su modo. La copia modificada: la pregunta, y nada suyo corre (ni lock ni ventana) hasta contestar. | `agente.huella()`, `Conexion.cambiada`, `tk_agente --cambiada`, `PYTHONPYCACHEPREFIX` |
 | E7 | W (x64 y ARM64), L | Instalar el agente y mirar `rclone\<versión>\` en su carpeta; una pasada y la ventana de una unidad abierta desde la bandeja; en el Administrador de tareas / `ps`, qué `rclone` corre. Luego enchufar una unidad con la 0.4.x. | El rclone que corre es el de la carpeta del agente, nunca el de `.prdrive\bin\` (también el de la ventana abierta por el agente, y en ARM64 el arm64). La 0.4.x: un aviso con su versión, nada suyo corre, y en la bandeja «…: actualízala para que la atienda» en gris. | `install/agente.poner_rclone()`, `model.RCLONE_DEL_AGENTE`, `agente.version_vieja()` |
+
+Vistas en Windows x64 el 30/09 (resultados, §10):
+- E2, E3, E4 y E6, enteras;
+- E1, salvo la raíz cifrada en `P:\`;
+- E5, con H-13 arreglado después;
+- E7, salvo la ventana abierta por el agente, la entrada gris de la bandeja y ARM64.
+
+Quedan esas partes, y todas las E en Linux.

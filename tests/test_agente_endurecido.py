@@ -360,6 +360,31 @@ except subprocess.TimeoutExpired:
 c("  pasado el plazo, la corta con su árbol y dice qué pareja era",
   (hijo.returncode is not None and hijo.returncode != 0, "se ha cortado" in (dicho or ""),
    "«docs»" in (dicho or "")), (True, True, True))
+c("  y avisa del «….partial» que puede dejar a medias",
+  ".partial" in (dicho or ""), True)
+equipo.pasada_json().unlink(missing_ok=True)
+
+# `PARAR_ESPERA` cuenta desde que la pasada acabó, no desde que se empezó a esperar:
+# con una pasada más larga que el plazo, el agente que sale solo un instante después
+# se terminaba «a la fuerza» (visto en real: una pasada de 5 min, y el agente cortado
+# 2 s después de acabarla, sin apuntarla ni soltar `daemon.lock.json`).
+ia.ESPERA_PASADA, ia.PARAR_ESPERA = 10.0, 1.0
+pasada_larga = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(1.6)"],
+                                start_new_session=os.name != "nt")
+agente_lento = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(2.2)"],
+                                start_new_session=os.name != "nt")
+for h in (pasada_larga, agente_lento):
+    threading.Thread(target=h.wait, daemon=True).start()
+store.write_json(equipo.lock_json(), {"pid": agente_lento.pid, "host": equipo.HOST})
+equipo.apuntar_pasada({**viva, "pid": pasada_larga.pid})
+dicho = ia.parar_agente()
+if agente_lento.poll() is None:
+    agente_lento.kill()
+c("parar_agente(): el agente que sale solo tras una pasada larga no se corta",
+  ("detenido tras acabar su pasada" in (dicho or ""), "a la fuerza" in (dicho or "")),
+  (True, False))
+ia.ESPERA_PASADA = 0.8
+equipo.lock_json().unlink(missing_ok=True)
 equipo.pasada_json().unlink(missing_ok=True)
 
 # --- el id no es una credencial: la huella del código --------------------------------------

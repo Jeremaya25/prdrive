@@ -342,3 +342,69 @@ verdad (nada si el proceso existe, `ProcessLookupError` si no).
 
 H-3 (la pregunta de forzar al bloquear) y los menores (H-6 a H-12) siguen
 abiertos.
+
+## 10. Segunda pasada: lo endurecido tras la revisión del PR #54 (30/09)
+
+Windows 11 x64, con el código de `85f5ad3` sin tocar. El agente se instaló sin
+elevar, desde `prdrive-install.py`. Se probó con una memoria USB real (Kingston,
+exFAT, en `G:`) aprovisionada como prdrive y con la raíz
+`%USERPROFILE%\PRDRIVE`. El remoto de pruebas es un `alias` local. Informe
+completo en el comentario del PR #54. **La batería en Windows: 76 de 76.**
+
+| Prueba | Resultado |
+|---|---|
+| E1 | OK con la unidad USB y con la raíz sin cifrar. **Sin ver:** la raíz cifrada en `P:\` (hace falta un VeraCrypt instalado de verdad). |
+| E2 | OK. Cuatro agentes lanzados a la vez: uno gana y tres dicen «Ya hay un agente en marcha». |
+| E3 | OK tras `--update-agente` y `--update`. Un script que no pasa por el lanzador no pinta los iconos; es lo esperado. |
+| E4 | OK en `daemon` y en `sync`. El lanzador dice «a mitad de una pareja»; no hay pasadas solapadas; el lock pasa al servicio de runsync. |
+| E5 | OK el corte con el plazo corto (`sync.py` y su `rclone`, el mensaje con la pareja). OK el agente muerto a mitad de pasada: el nuevo no lanza nada hasta que acaba. **Falla H-13**, ya arreglado. |
+| E6 | OK: la huella no cambia sin cambios, pregunta tras `sync.py` modificado y tras `--update`, conserva el modo, y vuelve a atenderse al restaurar los bytes. |
+| E7 | OK: el `rclone` de las pasadas es `%LOCALAPPDATA%\prdrive\rclone\v1.75.1\rclone.exe`. Una unidad 0.4.3: aviso, nada suyo corre, `vieja` en `estado.json`. **Sin ver:** el `rclone` de la ventana abierta por el agente, la entrada gris de la bandeja y ARM64. |
+
+### H-13 · `parar_agente()` corta al agente justo cuando acaba una pasada larga (E5) — arreglado
+
+`PARAR_ESPERA` (12 s) contaba desde que se empezó a esperar, no desde que acabó
+la pasada. Con una pasada de más de 12 s, el agente se cortaba en cuanto ella
+terminaba, sin dejarle salir. Visto en real con `--update-agente` y una pasada de
+~5 min: la pasada acabó bien a las 10:26:07 y a las 10:26:09 el instalador dijo
+«terminado a la fuerza». El agente no apuntó el fin de la pasada ni soltó
+`daemon.lock.json`.
+
+**Arreglo:** el plazo cuenta desde la primera vuelta sin pasada, y
+`ESPERA_PASADA` solo corta mientras hay una. Test en
+`test_agente_endurecido.py`: rojo sin el arreglo y verde con él. Con el mismo
+arreglo, la prueba en real acabó en «detenido tras acabar su pasada».
+
+### H-14 · Una pasada cortada deja un `*.partial`, y la siguiente lo sincroniza (E5) — avisado
+
+Tras el corte quedó `grande2.bin.<hash>.partial` (480 MB) en la carpeta local.
+La pasada siguiente lo subió como un fichero más. El mensaje del corte lo dice
+ahora y dice que se borre en cualquiera de los dos lados.
+
+**No se excluye `*.partial` en los filtros:** cambiaría el md5 de los filtros de
+todas las parejas bisync de todas las unidades, y todas pedirían `--resync`.
+
+### H-15 · Tras cortar una pasada, la siguiente falla una vez y avisa (E5) — abierto
+
+Queda el `.lck` de bisync. La pasada siguiente sale con «Hay un lock de otra
+ejecución», y el agente avisa «falla …» como si fuera un fallo nuevo. El mensaje
+del corte lo anuncia, y «Reparación» o `--doctor` lo arreglan. Quitarlo solo
+exigiría que `pasada.json` llevara la ruta de la raíz.
+
+### H-16 · `--doctor` da un GRAVE falso con un remoto `alias` — abierto, menor
+
+«El baseline no es de esta pareja»: rclone resuelve el `alias` a otra ruta y
+`bisync.expected_prefix()` no. Con sftp/webdav no pasa; importa si el catálogo
+llega a admitir `alias`.
+
+### H-17 · `agente.py status`, justo tras arrancar un servicio de runsync — trivial
+
+Durante unos segundos dice «en pausa: hay una ventana de runsync abierta».
+Después dice «la atiende otro servicio (pid …)». Es transitorio.
+
+### Sigue sin verse
+
+Lo de la §7, más E1 con la raíz cifrada en `P:\`, lo que falta de E7, y todo E
+en Linux. Un intento de B6 desactivando el USB desde el Administrador de
+dispositivos falló con «Error genérico»: el `pythonw` ajeno de la §8 tenía la
+unidad abierta. Solo se quitó y devolvió la letra con `mountvol`.
