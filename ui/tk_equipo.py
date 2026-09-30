@@ -96,8 +96,10 @@ def paso_carpeta(cuerpo, wiz) -> None:
 
     from install import raiz_equipo as re_
 
-    _texto(cuerpo, "¿Qué carpeta de este equipo sincroniza prdrive? Es su raíz: las "
-                   "parejas son carpetas de dentro, y el programa va en .prdrive/.", 0)
+    _texto(cuerpo, "¿Dónde deja este equipo lo que se sincroniza con el remoto? Es "
+                   "su raíz, lo mismo que la de una unidad: las parejas del catálogo "
+                   "caen en carpetas de dentro, y el programa va en .prdrive/. Aquí "
+                   "no se crean parejas, solo se elige dónde viven.", 0)
     eleccion = tk.StringVar(value=wiz.equipo_forma)
 
     def elegir() -> None:
@@ -226,14 +228,20 @@ def paso_cifrado(cuerpo, wiz) -> None:
         wiz.equipo_cifrado = eleccion.get()
         wiz.repintar()
 
-    _texto(cuerpo, "¿Cifrar la raíz de este equipo?", 0)
+    _texto(cuerpo, "¿Cifrar la raíz de este equipo? Es la misma raíz de antes, con lo "
+                   "que se sincroniza: cifrarla no añade nada que hacer con el remoto, "
+                   "solo cambia dónde se guarda.", 0)
+    donde = ("se abre en una letra fija (P:, por ejemplo), y ESA es la raíz: la "
+             "carpeta de antes solo dice dónde va el fichero" if IS_WIN else
+             f"se abre montado sobre {wiz.equipo_ruta}, que es la raíz")
     opciones = (
         (re_.SIN_CIFRAR, "Sin cifrar",
          f"{wiz.equipo_ruta} es la raíz, tal cual. La clave del remoto queda en claro "
          f"en el disco (el paso «Instalación» dice si el disco tiene BitLocker)."),
         (re_.VERACRYPT, "En un contenedor VeraCrypt",
-         "La raíz vive dentro de un fichero cifrado: la clave, la configuración y "
-         "las parejas. Cerrado, no hay nada que leer ni que sincronizar por error. "
+         "La raíz vive dentro de un fichero cifrado que se crea ahora (por eso pide "
+         f"tamaño y contraseña): la clave, la configuración y las parejas. Abierto, "
+         f"{donde}. Cerrado, no hay nada que leer ni que sincronizar por error. "
          "Lo abre el agente al iniciar sesión (VeraCrypt pide la contraseña en su "
          "ventana) y lo cierras con «Bloquear»."))
     for i, (valor, titulo, texto) in enumerate(opciones):
