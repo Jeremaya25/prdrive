@@ -722,8 +722,14 @@ before touching VeraCrypt on Windows. It has:
   unplugging leaves a ghost volume, and a forced dismount *may* keep the `.hc`
   held.
 
-Still unverified on real hardware:
-- an installed VeraCrypt (`ERR_DRIVER_VERSION`);
+Still unverified on real hardware — everything about VeraCrypt without
+installing it (V1–V8 of #50, the agent's Portable for the host root, the
+AppImage, `--quick` on Linux, U1–U10 of #51, the 1.26.24 → 1.26.29 move) is
+gathered as one plan in
+`docs/superpowers/pruebas/2026-09-30-veracrypt-sin-instalar.md`:
+- an installed VeraCrypt (`ERR_DRIVER_VERSION`; `DriverAttach()` compares
+  `VERSION_NUM`, 0x0126 for every 1.26.x, so only another minor version
+  clashes);
 - the «retenido» branch;
 - the new eject wait;
 - Linux;
