@@ -408,3 +408,46 @@ Lo de la §7, más E1 con la raíz cifrada en `P:\`, lo que falta de E7, y todo 
 en Linux. Un intento de B6 desactivando el USB desde el Administrador de
 dispositivos falló con «Error genérico»: el `pythonw` ajeno de la §8 tenía la
 unidad abierta. Solo se quitó y devolvió la letra con `mountvol`.
+
+## 11. Tercera pasada: con la persona delante (30/09)
+
+Windows 11 x64, el mismo equipo, con la persona en el teclado y el código de
+`cf819a3`. El agente 0.5.0 sirve la raíz `%USERPROFILE%\PRDRIVE` y la memoria
+USB de la §10 (`G:`, «PRUEBA-G»). Cierra lo que la §4 dejó en `PARCIAL` por
+tocar la pantalla de la persona.
+
+| Prueba | Resultado | Observación |
+|---|---|---|
+| A1 | OK | Cerrar sesión (11:54:47) y volver a entrar (11:54:53), sin abrir nada: la tarea `\prdrive` arranca el agente a las 11:54:56 (pid nuevo) y el icono aparece en la bandeja. El agente anterior murió sin escribir «agente detenido», como se espera de un cierre de sesión |
+| B1 | OK | Al 100 %: nítido. Al 150 %, con la escala ya puesta al iniciar la sesión: el icono y el texto del menú se ven nítidos. 125 y 200 %: no |
+| B2 | OK | Reiniciado el Explorador de verdad: el icono vuelve solo |
+| B3 | OK | El menú con el ratón, dado por bueno por la persona (sin más detalle apuntado) |
+| B4 | OK (a–c) | Entradas del menú con el ratón, cada una hace lo suyo. «Cerrar el agente» = `parar`, ver B11 |
+| B5 | OK | Azul en marcha, blanco en pausa, ámbar con fallo |
+| B6 | OK | Un USB físico: visto a los 23 s del corte, según el reloj de Windows; la pasada salió 2 s después de verlo. La persona dice «al instante». Ojo: la medida es del reloj, no de un cronómetro |
+| B7 | OK | Dado por bueno por la persona (sin más detalle apuntado) |
+| B10 | OK | Suspendido a las 11:51:06 y reanudado a las 11:51:41: «el equipo vuelve de la suspensión» y pasada enseguida. `G:` conserva su letra. Ver la observación 4 |
+| B11 | OK | `agente.py parar`: el icono desaparece sin fantasma. Cerrar sesión y volver: no queda ningún icono huérfano |
+| A4, A5, A6, A12 | OK | Con la persona delante. A6/B9: un solo aviso, y no se repite en el segundo fallo. A12: la ventana pausa al agente y este vuelve solo |
+
+Tras volver de la sesión, el estado de `estado.json`, los `daemon.lock.json`
+de la raíz y de `G:` (con el pid nuevo, sin huérfanos) y las pasadas de las
+11:55 (`OK`) son coherentes. No queda `pasada.json`.
+
+Observaciones, ninguna bloquea:
+1. B1: el texto de la bandeja «prdrive — al día» se ve «cutre»; se prefiere un
+   indicador más cuidado.
+2. B5: la línea gris de la cabecera del menú («falla PRUEBA-G») «no es muy
+   estética».
+3. Sugerencia: un aviso nativo de «unidad detectada» al enchufar una unidad ya
+   atendida. Hoy solo avisa de fallos y de unidades nuevas.
+4. B10: «el equipo vuelve de la suspensión» sale dos veces (11:51:44 y 11:51:45):
+   Windows manda dos eventos de reanudación. Inofensivo.
+5. A12: el diario no dice cuándo el agente reanuda tras cerrarse la ventana
+   (solo «ventana abierta» y «en pausa»).
+6. B1: un cambio de escala **en caliente** estira el icono y el menú, porque el
+   proceso declara DPI de sistema y toma el de la sesión al empezar. Es lo
+   normal en Windows; con la escala puesta al iniciar la sesión, se ve bien.
+
+Sigue sin verse de esta lista: B1 al 125 y 200 %, la barra oscura, C8 y C9
+cerrando sesión con la raíz cifrada, C10, y lo que ya decía la §10.
