@@ -11,6 +11,7 @@ de la letra de unidad.
 from __future__ import annotations
 
 import atexit
+import os
 import shutil
 import sys
 import tempfile
@@ -91,7 +92,15 @@ def tmpdir(prefix: str = "prdrive-test-") -> Path:
     return destino
 
 
-MAQUINAS_PE = {"x64": 0x8664, "arm64": 0xAA64, "x86": 0x014C}
+def en_exec(ruta) -> str:
+    """Cómo queda una ruta dentro de las comillas del `Exec=` de un .desktop,
+    según la *Desktop Entry Specification*: la barra invertida se escapa para
+    las comillas y, encima, la regla de las cadenas la dobla. Cada `\\` de una
+    ruta de Windows son cuatro; una de Linux no lleva ninguna."""
+    return str(ruta).replace("\\", "\\" * 4)
+
+
+MAQUINAS_PE ={"x64": 0x8664, "arm64": 0xAA64, "x86": 0x014C}
 
 
 def pe(maquina: int | None, relleno: bytes = b"") -> bytes:
@@ -138,6 +147,38 @@ def falso_portatil(version: str | None = None, sin: tuple[str, ...] = ()) -> Pat
                                         "0" * 64, resumenes),
         encoding="utf-8", newline="\n")
     return carpeta
+
+
+# La carpeta del agente residente en el equipo (`common/equipo.py`), en un
+# temporal para TODOS los tests: en el equipo de quien los ejecuta puede haber
+# un agente instalado de verdad, y ni su configuración puede cambiar lo que ve
+# un test ni un test puede escribirle en el buzón.
+from common import equipo  # noqa: E402
+
+equipo.DIR = tmpdir("prdrive-equipo-harness-")
+# Y lo que el instalador del agente escribe en el escritorio (el acceso del
+# menú, el autostart), también en temporales: un test que se olvide de
+# sustituirlo no puede dejarle un «prdrive» en el menú a quien los ejecuta.
+os.environ["XDG_DATA_HOME"] = str(tmpdir("prdrive-xdg-data-"))
+os.environ["XDG_CONFIG_HOME"] = str(tmpdir("prdrive-xdg-config-"))
+
+# Varios tests fuerzan `IS_WIN = False` para pasar por la rama de Linux, y ahí
+# «¿vive este pid?» es `os.kill(pid, 0)`. En Windows eso NO pregunta: 0 es
+# CTRL_C_EVENT, y le manda un Ctrl+C a toda la consola —el test, run_all y el
+# terminal de quien la ha lanzado—. Aquí la señal 0 hace lo mismo que en POSIX:
+# nada si el proceso existe, ProcessLookupError si no.
+if os.name == "nt":
+    _kill_real = os.kill
+
+    def _kill_de_prueba(pid: int, sig: int) -> None:
+        if sig == 0:
+            from common.store import pid_alive
+            if not pid_alive(pid):
+                raise ProcessLookupError(3, "No such process", pid)
+            return None
+        return _kill_real(pid, sig)
+
+    os.kill = _kill_de_prueba
 
 
 @atexit.register

@@ -57,9 +57,10 @@ NOMBRE = "prdrive-install"
 
 # Lo que el instalador va a dejar en el dispositivo. Tiene que coincidir con
 # `install/deploy.py`: si aquí falta algo, el fallo aparece a mitad de una
-# instalación de verdad y no al compilar.
+# instalación de verdad y no al compilar. `agente.py` no va al dispositivo: es
+# lo que `install/agente.py` copia al EQUIPO en la instalación «En este equipo».
 DATOS_FICHEROS = ("sync.py", "runsync.py", "penwatch.py", "VERSION",
-                  "device-readme.md")
+                  "device-readme.md", "agente.py")
 DATOS_ARBOLES = ("common", "ui")
 
 # Los datos del recurso de versión del .exe. La línea de copyright es la misma
@@ -229,6 +230,7 @@ def compilar(consola: bool, carpeta: bool) -> Path:
         "--hidden-import", "install.secret",
         "--hidden-import", "ui.tk_install",
         "--hidden-import", "ui.tk_crypto",
+        "--hidden-import", "install.agente",
         *datos(),
         "--console" if consola else "--windowed",
     ]

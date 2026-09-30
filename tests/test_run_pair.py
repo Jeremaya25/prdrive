@@ -273,7 +273,8 @@ with sandbox():
                'invalid argument "new"')
     c.contains("y marcado como lo que es", texto, sync.DIRECT_OUTPUT_HEADER)
     c("y explain_failure ya tiene algo que reconocer",
-      any(aguja in texto for aguja, _ in sync.KNOWN_ERRORS), True)
+      any(aguja(texto) if callable(aguja) else aguja in texto
+          for aguja, _ in sync.KNOWN_ERRORS), True)
     log.unlink(missing_ok=True)
 
 with sandbox():
@@ -377,5 +378,19 @@ def explicar(texto):
 c("el lock renovado de rutina no se explica como un lock de otra ejecución",
   ".lck" in explicar(TODO_CAMBIADO), False)
 c.contains("un lock de otra ejecución, sí", explicar(CANDADO), ".lck")
+
+# Sin red: la categoría que el agente usa para dejar de insistir con un remoto
+# caído. Va por delante del «no ha podido montar uno de los extremos», que casi
+# siempre la acompaña, y no se come lo que no es de red.
+from common import moderacion  # noqa: E402
+
+SIN_DNS = ('2026/09/25 10:00:00 ERROR : Failed to create file system for "nas:/R": '
+           "couldn't connect SSH: dial tcp: lookup nas.casa: no such host\n")
+NO_LISTO = ('2026/09/25 10:00:00 ERROR : Failed to create file system for '
+            '"disp:sync-data/x": The device is not ready.\n')
+c.contains("un DNS que no resuelve se explica como falta de red", explicar(SIN_DNS),
+           moderacion.EXPLICACION_RED)
+c("la unidad que no está no es un fallo de red",
+  moderacion.EXPLICACION_RED in explicar(NO_LISTO), False)
 
 sys.exit(c.report())

@@ -50,7 +50,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Mapping
 
-from common import bisync, conflicts, fleet, historial, model, progress, results, revision
+from common import (bisync, conflicts, fleet, historial, model, moderacion, progress,
+                    results, revision)
 from common.model import Config, Pair
 
 LOG_TAIL_LINES = 15  # líneas de log que se vuelcan a consola cuando algo falla
@@ -100,6 +101,14 @@ KNOWN_ERRORS = [
      "rclone no encuentra el fichero de known_hosts indicado en rclone.conf. "
      "Las rutas relativas de rclone.conf se resuelven contra rclone-sync/; "
      "comprueba que keys/known_hosts existe ahí."),
+    # Sin conexión: el DNS que no resuelve, el servidor que no contesta. Es una
+    # categoría y no una aguja —una función que mira varias, sin distinguir
+    # mayúsculas— porque el agente residente la usa para dejar de lanzar pareja
+    # tras pareja contra un remoto caído, y no lleva este fichero: la lista
+    # vive en `common/moderacion.py`. Va antes de la de abajo, que casi siempre
+    # la acompaña («Failed to create file system … no such host») y explica
+    # menos.
+    (moderacion.es_de_red, moderacion.EXPLICACION_RED),
     ("Failed to create file system",
      "rclone no ha podido montar uno de los dos extremos. Suele ser una ruta o "
      "credencial mal resuelta en rclone.conf (revisa key_file y "
@@ -268,7 +277,7 @@ def explain_failure(lpath: Path | None) -> None:
     except OSError:
         return          # ya lo ha dicho print_log_tail, que va antes
     for needle, explanation in KNOWN_ERRORS:
-        if needle in text:
+        if needle(text) if callable(needle) else needle in text:
             print(f"  >> {explanation}")
             return
 

@@ -235,12 +235,13 @@ TOPE_FAT = 4095 * 1024 ** 2
 
 def sistema_de_ficheros(root: str | Path) -> str:
     """El sistema de ficheros de la unidad de `root`, o "" si no se sabe.
+    `root` puede ser una carpeta: se pregunta a su volumen.
 
     Función de módulo para que los tests la sustituyan, como
     `soporta_dispersos()`."""
     from . import device
     try:
-        return device.volume_for(Path(root)).filesystem or ""
+        return device.volume_for(device.raiz_del_volumen(root)).filesystem or ""
     except (OSError, TypeError, AttributeError):
         return ""
 
@@ -326,6 +327,10 @@ def soporta_dispersos(root: str | Path) -> bool:
     En POSIX devuelve False porque `--dynamic` no existe en su CLI (ver
     `create_command`), no porque ext4 no sepa de dispersos.
 
+    `root` puede ser una carpeta (la del contenedor de la raíz de un equipo):
+    `GetVolumeInformationW` solo acepta la raíz de un volumen, así que se le
+    pregunta a la suya (`device.raiz_del_volumen()`).
+
     Función de módulo para que los tests la sustituyan, como
     `_leer_estado_bitlocker()`."""
     if not IS_WIN:
@@ -334,7 +339,9 @@ def soporta_dispersos(root: str | Path) -> bool:
     from ctypes import byref, c_wchar_p, create_unicode_buffer
     from ctypes.wintypes import DWORD
 
-    ruta = str(root)
+    from . import device
+
+    ruta = str(device.raiz_del_volumen(root))
     if not ruta.endswith(("\\", "/")):
         ruta += "\\"
     flags = DWORD(0)
@@ -1140,7 +1147,8 @@ def mounted_container(vc: dict, container: Path) -> Path | None:
 
 def mount_container(vc: dict, container: Path, password: str,
                     letra: str | None = None,
-                    etiqueta: str = DEVICE_LABEL) -> Path:
+                    etiqueta: str = DEVICE_LABEL,
+                    punto_fijo: Path | None = None) -> Path:
     """Monta el contenedor y devuelve dónde ha quedado.
 
     NO se mira el código de retorno para decidir si ha ido bien: VeraCrypt eleva
@@ -1149,7 +1157,11 @@ def mount_container(vc: dict, container: Path, password: str,
 
     Si ya estaba montado no se vuelve a montar: montar dos veces el mismo
     contenedor da una segunda letra o un error, y ninguna de las dos cosas es lo
-    que quiere quien vuelve atrás en el asistente."""
+    que quiere quien vuelve atrás en el asistente.
+
+    `punto_fijo` es para la raíz cifrada de un equipo en POSIX: se monta en esa
+    carpeta (`~/PRDRIVE`) y no en una temporal, porque es donde el agente la
+    buscará y donde apuntan los programas. En Windows, lo fijo es la `letra`."""
     if not container.is_file():
         raise InstallError(f"No existe el contenedor {container}.")
 
@@ -1160,6 +1172,13 @@ def mount_container(vc: dict, container: Path, password: str,
     if IS_WIN:
         destino = (letra or free_drive_letter()).rstrip(":").upper()
         punto = Path(f"{destino}:\\")
+    elif punto_fijo is not None:
+        punto = Path(punto_fijo)
+        try:
+            punto.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            raise InstallError(f"No he podido crear {punto}: {e}") from e
+        destino = punto
     else:
         punto = Path(tempfile.mkdtemp(prefix="prdrive-mnt-"))
         destino = punto

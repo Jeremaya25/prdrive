@@ -53,6 +53,36 @@ LOG_DIR = APP_DIR / "logs"
 SYNC_PY = APP_DIR / "sync.py"       # a quien lanzan la UI y el servicio
 PENWATCH_PY = APP_DIR / "penwatch.py"
 
+# Qué es esta raíz, según la línea `tipo=` de su fichero de control
+# (`.prdrive/PRDRIVE`). Sin línea es una unidad, que es lo de siempre; la raíz
+# que el asistente «En este equipo» deja en una carpeta del ordenador lleva
+# `tipo=equipo`. Un penwatch viejo solo lee `id=` y la ignora.
+TIPO_UNIDAD = "unidad"
+TIPO_EQUIPO = "equipo"
+
+
+def tipo_raiz(app_dir: Path | str | None = None) -> str:
+    """El `tipo=` del fichero de control de esa carpeta del programa (la que está
+    corriendo si no se dice). Sin fichero, o sin la línea: una unidad.
+
+    El nombre del fichero se repite aquí (`<app>/PRDRIVE`) como en `fleet.py`: es
+    la misma ruta que `penwatch.CONTROL_FILE` sin la carpeta, y hay un test que
+    las ata."""
+    ruta = Path(app_dir or APP_DIR) / "PRDRIVE"
+    try:
+        texto = ruta.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return TIPO_UNIDAD
+    for linea in texto.splitlines():
+        linea = linea.strip()
+        if linea.lower().startswith("tipo="):
+            return linea[5:].strip().lower() or TIPO_UNIDAD
+    return TIPO_UNIDAD
+
+
+def es_equipo(app_dir: Path | str | None = None) -> bool:
+    return tipo_raiz(app_dir) == TIPO_EQUIPO
+
 
 # Los dos registros que dicen quién está usando el dispositivo ahora mismo: el
 # servicio periódico y la ventana. Los escribe `runsync.py`, y los lee también
@@ -179,22 +209,56 @@ def arch_dir() -> str:
     return "x64"
 
 
-BIN_DIR = APP_DIR / "bin" / arch_dir()
+def carpetas_bin(app_dir: Path) -> tuple[Path, ...]:
+    """Dónde buscar rclone en la carpeta de programa `app_dir`, por orden.
 
-# Un Windows ARM64 ejecuta los x64 emulados, así que un dispositivo provisionado
-# por un instalador que se creyó x64 —lo que pasaba antes de `machine_arch()`—
-# sigue arrancando en vez de quedarse sin rclone. Al revés no vale: un x64 no
-# ejecuta ARM, y por eso la lista no es simétrica.
-BIN_FALLBACK_DIRS: tuple[Path, ...] = (
-    (APP_DIR / "bin" / "x64",) if os.name == "nt" and arch_dir() == "arm" else ())
+    Un Windows ARM64 ejecuta los x64 emulados, así que un dispositivo provisionado
+    por un instalador que se creyó x64 —lo que pasaba antes de `machine_arch()`—
+    sigue arrancando en vez de quedarse sin rclone. Al revés no vale: un x64 no
+    ejecuta ARM, y por eso la lista no es simétrica.
+
+    Recibe la carpeta porque el agente residente (`agente.py`) busca el rclone de
+    raíces que no son la suya; para este dispositivo son `BIN_DIR` y
+    `BIN_FALLBACK_DIRS`."""
+    propia = app_dir / "bin" / arch_dir()
+    if os.name == "nt" and arch_dir() == "arm":
+        return (propia, app_dir / "bin" / "x64")
+    return (propia,)
+
+
+BIN_DIR, *_recambios = carpetas_bin(APP_DIR)
+BIN_FALLBACK_DIRS: tuple[Path, ...] = tuple(_recambios)
 
 
 def rclone_name() -> str:
     return "rclone.exe" if os.name == "nt" else "rclone"
 
 
+# El agente residente (`agente.py`) pasa su propio rclone, comprobado contra la
+# versión fijada al instalarlo, en esta variable: así no ejecuta el binario que
+# traiga la unidad, que es lo único suyo que la huella del código no cubre
+# barato (`agente.huella()`). Llega sola a todo lo que cuelga del agente: la
+# pasada, la ventana que abre y lo que esa ventana lance.
+RCLONE_DEL_AGENTE = "PRDRIVE_RCLONE"
+
+
+def rclone_del_agente() -> Path | None:
+    """El rclone que ha pasado el agente, o None si no ha pasado ninguno."""
+    ruta = os.environ.get(RCLONE_DEL_AGENTE, "").strip()
+    return Path(ruta) if ruta else None
+
+
 def rclone_path() -> Path | None:
-    """El rclone del dispositivo, o None si no hay ninguno utilizable."""
+    """El rclone del dispositivo, o None si no hay ninguno utilizable.
+
+    Si el agente ha pasado el suyo, ese y solo ese: si falta, None. Caer en el
+    de la unidad sería justo lo que el agente quiere evitar."""
+    del_agente = rclone_del_agente()
+    if del_agente is not None:
+        try:
+            return del_agente if del_agente.is_file() else None
+        except OSError:
+            return None
     for carpeta in (BIN_DIR, *BIN_FALLBACK_DIRS):
         binary = carpeta / rclone_name()
         try:
@@ -208,6 +272,11 @@ def rclone_path() -> Path | None:
 def rclone_binary() -> str:
     """Ruta ejecutable al binario portable de rclone (apaño para exFAT sin +x)."""
     binary = rclone_path()
+    if binary is None and rclone_del_agente() is not None:
+        sys.exit(
+            f"El agente de este equipo ha pasado su rclone ({rclone_del_agente()}) "
+            f"y no está ahí. Vuelve a instalar el agente o actualízalo."
+        )
     if binary is None:
         # Lo normal es un dispositivo que no se preparó para este equipo: la cura
         # es el instalador, que baja el rclone fijado y lo comprueba, no que
@@ -218,6 +287,15 @@ def rclone_binary() -> str:
             f"ejecutar el instalador de prdrive, elige este dispositivo y pulsa "
             f"«Añadir plataformas…»."
         )
+    return ejecutable(binary)
+
+
+def ejecutable(binary: Path) -> str:
+    """Una ruta que se pueda ejecutar para ese rclone.
+
+    En exFAT no hay bit de ejecución: en POSIX se copia al temporal y se le pone.
+    Aparte de `rclone_binary()` para que el agente lo use con el rclone de otra
+    raíz."""
     if os.name == "nt" or os.access(binary, os.X_OK):
         return str(binary)
     tmp = Path(tempfile.gettempdir()) / "rclone_portable"
@@ -458,15 +536,21 @@ class Pair:
         return f"{self.dest.rstrip('/')}/{VERSIONS_DIR}"
 
 
-def _build_pair(raw: Mapping[str, Any], defaults: Mapping[str, Any]) -> Pair:
+def _build_pair(raw: Mapping[str, Any], defaults: Mapping[str, Any],
+                equipo: bool = False) -> Pair:
     """Funde las capas de configuración de una pareja. El orden de los flags va
     de menos a más prioridad: base < modo < [defaults.flags] < [pair.flags]."""
     name = raw.get("name")
     if not name:
         raise ConfigError("Hay una [[pair]] sin 'name' en el config.")
+    problema = problema_nombre(name)
+    if problema:
+        raise ConfigError(f"[{name}] {problema}")
     for required in ("local", "remote_path"):
         if required not in raw:
             raise ConfigError(f"[{name}] falta '{required}' en el config.")
+    if equipo:
+        _local_de_equipo(name, str(raw["local"]))
 
     mode_name = raw.get("mode", DEFAULT_MODE)
     mode = MODES.get(mode_name)
@@ -499,6 +583,55 @@ def _build_pair(raw: Mapping[str, Any], defaults: Mapping[str, Any]) -> Pair:
         device_remote=_device_remote_name(defaults),
         versions=versions,
     )
+
+
+def problema_nombre(name: Any) -> str | None:
+    """Por qué ese nombre de pareja no vale, o None si vale.
+
+    El nombre acaba en tres sitios donde no es solo un nombre: en la línea de
+    órdenes de `sync.py` (un `--resync` como nombre sería la opción, y con ella
+    todas las parejas), en `state/<pareja>/` y en `filters/<pareja>.txt` (con
+    `/` o `..` saldría de esas carpetas). La ventana no deja escribirlos, pero el
+    TOML se edita a mano y llega de otras versiones: la regla es del parser."""
+    if not isinstance(name, str):
+        return "el nombre tiene que ser un texto"
+    if name.startswith("-"):
+        return "el nombre no puede empezar por '-' (se leería como una opción)"
+    if name in (".", "..") or any(c in name for c in "/\\:") \
+            or any(ord(c) < 32 for c in name):
+        return ("el nombre no puede llevar '/', '\\', ':' ni caracteres de control, "
+                "ni ser '.' o '..' (es el nombre de su carpeta en state/ y filters/)")
+    return None
+
+
+def problema_local_equipo(local: str) -> str | None:
+    """Por qué ese `local` no vale en una raíz del equipo, o None si vale.
+
+    Tiene que ser una carpeta DENTRO de la raíz. La raíz entera (`local = "."`)
+    sería sincronizar el propio `.prdrive/`, con la clave dentro, y con la
+    carpeta personal como raíz, todo `~`. Y un `..` o una ruta absoluta
+    saldrían de la raíz a cualquier sitio del ordenador. Función aparte para que
+    el asistente lo diga al teclearlo, con las mismas palabras que al parsear."""
+    texto = str(local)
+    tramos = [t for t in texto.replace("\\", "/").split("/") if t not in ("", ".")]
+    if not tramos:
+        return (f"local = \"{texto}\" es la raíz entera, y en una raíz del equipo "
+                f"eso no se puede sincronizar: arrastraría la carpeta del programa "
+                f"(con la clave) y, con la carpeta personal, todo el usuario. Pon "
+                f"una carpeta de dentro.")
+    if ".." in tramos or Path(texto).is_absolute() or re.match(r"^[A-Za-z]:", texto) \
+            or texto.startswith(("/", "\\")):
+        return (f"local = \"{texto}\" sale de la raíz del equipo. Las parejas van en "
+                f"carpetas de dentro, con la ruta relativa a ella.")
+    return None
+
+
+def _local_de_equipo(name: str, local: str) -> None:
+    """Se rechaza al parsear y no en la ventana para que un TOML editado a mano
+    tampoco se lo salte (`problema_local_equipo`)."""
+    problema = problema_local_equipo(local)
+    if problema:
+        raise ConfigError(f"[{name}] {problema}")
 
 
 def _device_remote_name(defaults: Mapping[str, Any]) -> str | None:
@@ -589,13 +722,17 @@ class Config:
         }
 
 
-def parse_config(data: Mapping[str, Any]) -> Config:
+def parse_config(data: Mapping[str, Any], equipo: bool = False) -> Config:
+    """El config crudo, resuelto. `equipo=True` es el de una raíz del equipo
+    (`es_equipo()`), donde cada `local` tiene que ser una carpeta de dentro
+    (`_local_de_equipo`). No se deduce aquí: el catálogo pasa por esta misma
+    función, y en él una pareja de la raíz entera es legítima para las unidades."""
     defaults = data.get("defaults", {})
     raw_pairs = data.get("pair", [])
     if not raw_pairs:
         raise ConfigError("El config no tiene ninguna [[pair]] definida.")
     return Config(
-        pairs=tuple(_build_pair(p, defaults) for p in raw_pairs),
+        pairs=tuple(_build_pair(p, defaults, equipo) for p in raw_pairs),
         daemon=data.get("daemon", {}),
         keep_logs=bool(defaults.get("keep_logs", False)),
         device_remote=_device_remote_name(defaults),
@@ -606,4 +743,4 @@ def load_config() -> Config:
     if not CONFIG_FILE.exists():
         raise ConfigError(f"No existe el fichero de configuración: {CONFIG_FILE}")
     with CONFIG_FILE.open("rb") as f:
-        return parse_config(tomllib.load(f))
+        return parse_config(tomllib.load(f), equipo=es_equipo())

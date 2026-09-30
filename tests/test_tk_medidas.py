@@ -51,7 +51,8 @@ except Exception as e:                                   # sin entorno gráfico
 from ui import tk as uitk
 from ui import remote_picker
 from ui import (tk_doctor, tk_fleet, tk_install, tk_pairs, tk_qr, tk_repair,
-                tk_update, tk_versions, tk_volumen, versions_editor, volumen)
+                tk_update, tk_versions, tk_volumen, tk_watch, versions_editor, volumen,
+                watch)
 
 # Ni una petición a GitHub desde un test.
 update.fetch = lambda url, timeout: c("ningún test toca la red", "fetch", "nada")
@@ -259,10 +260,49 @@ try:
     # (el dispositivo pasó a ser el primero), y una lista de números habría
     # seguido pasando mientras medía los pasos equivocados.
     PASO = {t: i for i, (t, _, _) in enumerate(tk_install.PASOS_INSTALACION)}
-    DIBUJABLES = ("Dispositivo", "Cifrado", "Conexión", "Comprobaciones",
+    DIBUJABLES = ("¿Dónde?", "Dispositivo", "Cifrado", "Conexión", "Comprobaciones",
                   "Inicialización")
     # Un dispositivo de mentira con su VERSION, para que la pantalla de
     # actualizar tenga que pintar la tabla de versiones de verdad.
+    # El recorrido «En este equipo» con la carpeta del agente en un temporal y
+    # penwatch instalado (el aviso ámbar de «Arranque» es su peor caso).
+    import penwatch
+    from common import equipo
+    from install import agente as ia
+    equipo.DIR = tmpdir("prdrive-medidas-equipo-") / ("carpeta del agente " * 3).strip()
+    penwatch.CONFIG_FILE = tmpdir("prdrive-medidas-pw-") / "watch.json"
+    penwatch.CONFIG_FILE.write_text("{}", encoding="utf-8")
+    EQUIPO_PREP = ia.Preparado(equipo.DIR / "agente" / "0.4.0",
+                               equipo.DIR / "runtime" / ("0" * 12) / "pythonw.exe", "x")
+    EQUIPO_HECHO = ["Configuración del agente escrita en "
+                    + str(equipo.DIR / "agente.json") + ".",
+                    "penwatch: Tarea 'PrDriveWatch' eliminada.",
+                    "penwatch: eliminado C:\\Users\\alguien\\AppData\\Local\\PrDriveWatch",
+                    "El agente sustituye a penwatch en este equipo: lo que vigilaba "
+                    "está en su lista.",
+                    "Autostart instalado en /home/alguien/.config/autostart/prdrive.desktop: "
+                    "arranca al iniciar el escritorio.", "Agente arrancado."]
+    from install import raiz_equipo
+    from install import remote as iremote
+    from install import profile as iprofile
+    RAIZ_MEDIDAS = tmpdir("prdrive-medidas-raiz-") / ("mi carpeta de prdrive " * 3).strip()
+    (RAIZ_MEDIDAS / ".prdrive").mkdir(parents=True)
+    (RAIZ_MEDIDAS / ".prdrive" / "PRDRIVE").write_text("id=" + "e" * 32 + "\ntipo=equipo\n",
+                                                       encoding="utf-8")
+    raiz_equipo.carpetas_sincronizadas = lambda: [
+        ("OneDrive", RAIZ_MEDIDAS / "OneDrive - Empresa con un nombre largo")]
+    PERFIL_MEDIDAS = iprofile.from_form("nas", {"type": "sftp", "host": "nas.example"})
+    CATALOGO_MEDIDAS = iremote.parse_catalog(
+        '[defaults]\nremote = "nas"\n\n'
+        + "".join(f'[[pair]]\nname = "{n}"\nlocal = "{l}"\n'
+                  f'remote_path = "/datos/compartidos/de/toda/la/casa/{n}"\nmode = "{m}"\n\n'
+                  for n, l, m in (("todo", ".", "up-mirror"),
+                                  ("obsidian", "sync-data/obsidian", "bisync"),
+                                  ("empresa", "OneDrive - Empresa con un nombre largo/x",
+                                   "bisync"),
+                                  ("fotos", "sync-data/fotos del móvil", "bisync"),
+                                  ("musica", "sync-data/música", "down-mirror"),
+                                  ("docs", "Documentos/trabajo", "bisync"))))
     DISPOSITIVO_FALSO = tmpdir("prdrive-medidas-")
     (DISPOSITIVO_FALSO / ".prdrive").mkdir()
     (DISPOSITIVO_FALSO / ".prdrive" / "VERSION").write_text("0.0.1", encoding="utf-8")
@@ -312,6 +352,48 @@ try:
         c(f"{nombre}: «Plataformas» cabe", cabe(top), True)
         c(f"{nombre}: «Plataformas» no queda recortado",
           recortado(wiz.visor), False)
+        # «En este equipo», cada paso en su estado más lleno: el resultado de
+        # instalar con rutas largas, seis unidades, el aviso de penwatch y el
+        # resultado de registrar, y la tabla de verificación.
+        wiz.pasos = tk_install.PASOS_EQUIPO
+        wiz.donde = "equipo"
+        wiz.agente_prep = EQUIPO_PREP
+        wiz.agente_unidades = {f"{i}" * 32: (modo, f"Unidad número {i} de la casa")
+                               for i, modo in zip(range(6), equipo.MODOS * 2)}
+        wiz.agente_origen = {k: "la vigilaba penwatch" for k in wiz.agente_unidades}
+        wiz.agente_hecho = EQUIPO_HECHO
+        # Con raíz: una carpeta de ruta larga, ya instalada, y un catálogo de
+        # seis parejas en el que una es la raíz entera (error), otra un espejo y
+        # otra cae dentro de «OneDrive» (aviso de dos líneas).
+        wiz.equipo_ruta = str(RAIZ_MEDIDAS)
+        wiz.state.device_root = RAIZ_MEDIDAS
+        wiz.state.deployed, wiz.equipo_id = True, "e" * 32
+        wiz.perfil = PERFIL_MEDIDAS
+        wiz.rclone = object()
+        wiz.catalog = CATALOGO_MEDIDAS
+        for paso in ("¿Dónde?", "Carpeta", "Cifrado", "Instalación",
+                     "Parejas y configuración", "Unidades", "Arranque", "Verificación"):
+            wiz.indice = [t for t, _, _ in wiz.pasos].index(paso)
+            wiz.repintar()
+            c(f"{nombre}: «{paso}» (en este equipo) cabe", cabe(top), True)
+            c(f"{nombre}: «{paso}» (en este equipo) no queda recortado",
+              recortado(wiz.visor), False)
+        # «Cifrado» con VeraCrypt, en su estado más lleno: el formulario entero
+        # y el contenedor ya abierto. (El bloque rojo de una raíz en claro que
+        # queda al lado es de Windows, y el de las unidades ya se mide arriba.)
+        reales_vc = raiz_equipo.veracrypt_instalado
+        raiz_equipo.veracrypt_instalado = lambda: {"mount": "vc", "format": "vc"}
+        try:
+            wiz.equipo_cifrado = raiz_equipo.VERACRYPT
+            wiz.equipo_montada = RAIZ_MEDIDAS
+            wiz.equipo_examen = raiz_equipo.examinar(RAIZ_MEDIDAS)
+            wiz.indice = [t for t, _, _ in wiz.pasos].index("Cifrado")
+            wiz.repintar()
+            c(f"{nombre}: «Cifrado» con VeraCrypt (en este equipo) cabe", cabe(top), True)
+            c(f"{nombre}: «Cifrado» con VeraCrypt (en este equipo) no queda recortado",
+              recortado(wiz.visor), False)
+        finally:
+            raiz_equipo.veracrypt_instalado = reales_vc
         top.destroy()
 
     # --- lo que aparece DESPUÉS de pintar el paso -----------------------------
@@ -664,13 +746,27 @@ try:
                   corta, False)
 
                 # «Ajustes»: una tarjeta con una entrada por acción, que crece
-                # con cada una que se le añada.
-                entra, corta = medir_dialogo(
-                    lambda: tk_doctor.open_dialog(raiz, cfg, lambda *a: None),
-                    ancho, alto, escala, modulo=tk_doctor)
+                # con cada una que se le añada. Su peor caso es la raíz cifrada
+                # de un equipo, que añade la casilla de `pedir_al_iniciar`.
+                previo_pedir = watch.pedir_al_iniciar
+                watch.pedir_al_iniciar = lambda: True
+                try:
+                    entra, corta = medir_dialogo(
+                        lambda: tk_doctor.open_dialog(raiz, cfg, lambda *a: None),
+                        ancho, alto, escala, modulo=tk_doctor)
+                finally:
+                    watch.pedir_al_iniciar = previo_pedir
                 c(f"{nombre}: la pantalla de Ajustes cabe", entra, True)
                 c(f"{nombre}: la pantalla de Ajustes no queda recortada",
                   corta, False)
+
+                # «Qué hace el agente»: los cuatro modos de una unidad, y el
+                # aviso de que el agente no está en marcha.
+                entra, corta = medir_dialogo(
+                    lambda: tk_watch.open_agente(raiz, watch.Resumen("agente", "ui")),
+                    ancho, alto, escala, modulo=tk_watch)
+                c(f"{nombre}: «Qué hace el agente» cabe", entra, True)
+                c(f"{nombre}: «Qué hace el agente» no queda recortada", corta, False)
 
                 # Versiones: dos tarjetas con una ruta larga cada una, más el
                 # desplegable de parejas. Se mide con y sin parejas versionadas,

@@ -330,6 +330,31 @@ def list_volumes() -> list[Volume]:
                                             str(v.root)))
 
 
+def raiz_del_volumen(ruta: Path | str) -> Path:
+    """La raíz del volumen que guarda `ruta`, exista ya o no: `C:\\` para
+    `C:\\Users\\x\\PRDRIVE-cifrado`, o el punto de montaje en POSIX.
+
+    Lo que se le pregunta al sistema de ficheros —cuál es, si admite dispersos—
+    se pregunta ahí: `GetVolumeInformationW` solo acepta la raíz de un volumen,
+    y con una carpeta falla. La raíz cifrada de un equipo vive en una carpeta
+    (H-1 de las pruebas en real). `GetVolumePathNameW` y no la letra de la
+    ruta, porque un volumen puede estar montado en una carpeta de otro."""
+    ruta = Path(os.path.abspath(str(ruta)))
+    if IS_WIN:
+        import ctypes
+        buf = ctypes.create_unicode_buffer(261)         # MAX_PATH + 1
+        try:
+            if ctypes.windll.kernel32.GetVolumePathNameW(ctypes.c_wchar_p(str(ruta)),
+                                                         buf, 261):
+                return Path(buf.value)
+        except OSError:
+            pass
+        return Path(ruta.anchor or str(ruta))
+    while not os.path.ismount(ruta) and ruta != ruta.parent:
+        ruta = ruta.parent
+    return ruta
+
+
 def volume_for(root: Path) -> Volume:
     """El Volume de una ruta escrita a mano, con lo que se pueda averiguar."""
     root = Path(root)
@@ -416,7 +441,8 @@ def control_id(root: Path) -> str | None:
     return None
 
 
-def ensure_control_file(root: Path, renew: bool = False) -> str:
+def ensure_control_file(root: Path, renew: bool = False,
+                        tipo: str = model.TIPO_UNIDAD) -> str:
     """Deja un PRDRIVE con id dentro de `.prdrive/` y devuelve ese id.
 
     `renew=True` fuerza un id nuevo aunque ya hubiera uno. Hace falta al reutilizar
@@ -424,20 +450,32 @@ def ensure_control_file(root: Path, renew: bool = False) -> str:
     se pueden distinguir, y un vigilante atado a ese id lanzaría con el
     equivocado. Actualizar es justo el caso contrario y va con `renew=False`:
     es el MISMO dispositivo, y cambiarle el id dejaría colgado al vigilante que
-    ya estuviera apuntándole."""
+    ya estuviera apuntándole.
+
+    `tipo` es qué raíz es (`model.TIPO_EQUIPO` para la carpeta de un equipo). Va
+    en su propia línea, que un penwatch viejo no lee; cambiarlo conserva el id."""
     path = Path(root) / CONTROL_FILE
     actual = control_id(root)
-    if actual and not renew:
+    if actual and not renew and control_tipo(root) == tipo:
         return actual
-    nuevo = uuid.uuid4().hex
+    nuevo = actual if actual and not renew else uuid.uuid4().hex
+    texto = CONTROL_TEMPLATE.format(device_id=nuevo)
+    if tipo != model.TIPO_UNIDAD:
+        texto += f"tipo={tipo}\n"
     try:
         # En la instalación el directorio ya está (lo crea `deploy_code`), pero
         # penwatch también adopta unidades, y ahí puede no estarlo.
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(CONTROL_TEMPLATE.format(device_id=nuevo), encoding="utf-8")
+        path.write_text(texto, encoding="utf-8")
     except OSError as e:
         raise InstallError(f"No he podido escribir {path}: {e}") from e
     return nuevo
+
+
+def control_tipo(root: Path) -> str:
+    """El `tipo=` del PRDRIVE: `model.TIPO_EQUIPO` en la raíz de un equipo, y una
+    unidad si no lo dice (que es como están todas las de antes)."""
+    return model.tipo_raiz(Path(root) / APP_SUBDIR)
 
 
 # ---------------------------------------------------------------------------
@@ -478,13 +516,18 @@ def verify_device(root: Path, esperadas: list[str] | None = None,
         return existe
 
     device_id = control_id(root)
+    # La raíz de un equipo no lleva lanzadores ni Python propio: la abre y la
+    # sincroniza el agente del equipo, con el suyo (`install/raiz_equipo.py`).
+    equipo = control_tipo(root) == model.TIPO_EQUIPO
     checks.append(Check("Fichero de control", bool(device_id),
-                        f"id {device_id[:8]}…" if device_id else
+                        (f"id {device_id[:8]}…" + (", raíz del equipo" if equipo else ""))
+                        if device_id else
                         f"falta {root / CONTROL_FILE} o no tiene id propio"))
 
     # El de ESTE sistema. El .pyw ya no: la instalación completa no lo lleva.
     lanzador = "runsync.bat" if IS_WIN else "runsync.sh"
-    mirar(f"Lanzador ({lanzador})", root / lanzador)
+    if not equipo:
+        mirar(f"Lanzador ({lanzador})", root / lanzador)
     mirar("Interfaz (runsync.py)", app / "runsync.py")
     mirar("Motor (sync.py)", app / "sync.py")
     mirar(f"rclone ({bin_subdir()})", app / "bin" / bin_subdir() / exe_name(),
@@ -495,16 +538,17 @@ def verify_device(root: Path, esperadas: list[str] | None = None,
 
     config = app / "sync_config.toml"
     if mirar("sync_config.toml", config):
-        checks.append(_check_config(config, esperadas or []))
+        checks.append(_check_config(config, esperadas or [], equipo))
 
-    checks.append(check_python(root))
+    if not equipo:
+        checks.append(check_python(root))
     return checks
 
 
-def _check_config(config: Path, esperadas: list[str]) -> Check:
+def _check_config(config: Path, esperadas: list[str], equipo: bool = False) -> Check:
     try:
         with config.open("rb") as f:
-            cfg = model.parse_config(tomllib.load(f))
+            cfg = model.parse_config(tomllib.load(f), equipo=equipo)
     except (OSError, ValueError, model.ConfigError) as e:
         return Check("El config se lee", False, str(e))
     faltan = [n for n in esperadas if n not in cfg.names]

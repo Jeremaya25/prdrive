@@ -16,7 +16,9 @@ rediseño de la pantalla de reparación.
 
 Solo dibuja, y menos que ninguna otra: no lee estado, no escribe nada y no
 decide nada. Cada entrada es un botón y una frase que dice qué pasa al pulsarlo;
-lo que pasa lo hace el módulo de turno.
+lo que pasa lo hace el módulo de turno. La única casilla, «Pedir la contraseña
+al iniciar sesión» de la raíz cifrada de un equipo, también: lo que vale y cómo
+se le pide al agente es de `ui/watch.py`.
 
 `lanzar` llega desde la ventana principal en vez de importarse: la comprobación
 se enseña en su ventana de salida, que es hija de la principal y no de esta, y
@@ -28,8 +30,8 @@ from __future__ import annotations
 
 from common.model import Config
 
-from . import theme
-from .tk import cabecera, cuerpo_visible, modal, mostrar, separador_fila
+from . import theme, watch
+from .tk import TITLE, cabecera, cuerpo_visible, modal, mostrar, separador_fila
 
 # rótulo del botón, icono, frase, clave de la acción
 ENTRADAS = (
@@ -118,10 +120,44 @@ def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None,
                                                      sticky="w", pady=(3, 10))
         fila += 1
 
-    ttk.Separator(marco, orient="horizontal").grid(row=2, column=0, sticky="ew",
+    # La raíz cifrada de este equipo: si el agente pide su contraseña al
+    # iniciar sesión. Es un ajuste del EQUIPO y no de la raíz, así que no se
+    # escribe aquí: se le pide al agente por su buzón. Así lo tiene también
+    # quien no tiene bandeja (Linux, hasta la fase 6).
+    pedir = watch.pedir_al_iniciar()
+    fila_pie = 2
+    if pedir is not None:
+        import tkinter as tk
+        from tkinter import messagebox
+
+        cifrada = ttk.Frame(marco, style="Card.TFrame", padding=(14, 12, 14, 12))
+        cifrada.grid(row=2, column=0, sticky="ew", pady=(12, 0))
+        cifrada.columnconfigure(0, weight=1)
+        marcada = tk.BooleanVar(value=pedir)
+
+        def cambiar() -> None:
+            if not watch.pedir_ajuste("pedir_al_iniciar", bool(marcada.get())):
+                marcada.set(not marcada.get())
+                messagebox.showerror(TITLE, "No he podido dejarle la petición al "
+                                     "agente.", parent=dlg)
+
+        ttk.Checkbutton(cifrada, text="Pedir la contraseña al iniciar sesión",
+                        variable=marcada, command=cambiar,
+                        style="Card.Fuerte.TCheckbutton").grid(row=0, column=0,
+                                                              sticky="w")
+        ttk.Label(cifrada, style="CardPista.TLabel", justify="left",
+                  wraplength=theme.medida(540),
+                  text="Al iniciar sesión, el agente le pide a VeraCrypt que abra "
+                       "esta carpeta cifrada, una vez. Sin marcar, se queda "
+                       "bloqueada hasta que pidas «Desbloquear». Lo guarda el agente "
+                       "de este equipo, no la carpeta.").grid(
+            row=1, column=0, sticky="w", pady=(3, 0))
+        fila_pie = 3
+
+    ttk.Separator(marco, orient="horizontal").grid(row=fila_pie, column=0, sticky="ew",
                                                    pady=(16, 0))
     pie = ttk.Frame(marco)
-    pie.grid(row=3, column=0, sticky="e", pady=(14, 0))
+    pie.grid(row=fila_pie + 1, column=0, sticky="e", pady=(14, 0))
     ttk.Button(pie, text="Cerrar", command=dlg.destroy).grid(row=0, column=0)
 
     mostrar(dlg, parent)

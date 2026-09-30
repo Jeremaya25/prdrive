@@ -48,6 +48,11 @@ conectar la unidad, con un botón para cambiarlo: abrir esta ventana, arrancar e
 servicio o hacer una pasada. Se instala por usuario, sin permisos de
 administrador, y no escribe nada aquí dentro.
 
+Si el ordenador tiene **prdrive instalado en el equipo** (el agente), es él quien
+la atiende: la primera vez pregunta si atenderla, y después la sincroniza en
+segundo plano cada vez que la enchufas. Con el agente, **abrir esta ventana no
+apaga el servicio: lo pausa mientras está abierta**, y vuelve al cerrarla.
+
 Debajo de la lista, **Parejas** — añadir, quitar o cambiar carpetas sincronizadas.
 
 ## Añadir una carpeta

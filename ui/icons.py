@@ -100,6 +100,16 @@ GLIFOS: dict[str, list[tuple]] = {
     # contenedor cifrado para poder quitar la unidad.
     "expulsar": [("p", [(3.2, 9.6), (8, 4.2), (12.8, 9.6), (3.2, 9.6)]),
                  ("l", 3.2, 12.6, 12.8, 12.6)],
+    # Los del menú de la bandeja (`ui/bandeja.py`, `I_*`): abrir una raíz, la
+    # pausa y su vuelta, y el candado de la raíz cifrada, cerrado y abierto.
+    "carpeta": [("p", [(2.2, 4), (6.2, 4), (7.7, 5.6), (13.8, 5.6), (13.8, 12.8),
+                       (2.2, 12.8), (2.2, 4)])],
+    "pausa": [("l", 5.5, 3.5, 5.5, 12.5), ("l", 10.5, 3.5, 10.5, 12.5)],
+    "play": [("p", [(5, 3.2), (12.8, 8), (5, 12.8), (5, 3.2)])],
+    "candado": [("r", 3.5, 8.2, 9, 5.6), ("a", 8, 6.2, 2.8, 180, 360),
+                ("l", 5.2, 6.2, 5.2, 8.2), ("l", 10.8, 6.2, 10.8, 8.2)],
+    "candado_abierto": [("r", 3.5, 8.2, 9, 5.6), ("a", 8, 5.2, 2.8, 180, 360),
+                        ("l", 5.2, 5.2, 5.2, 8.2)],
 }
 
 # El icono de la aplicación: campo, los dos brazos del ciclo y el cuerpo del dispositivo.
@@ -663,11 +673,16 @@ def ico(tamanos=ICO_TAMANOS, campo: str = CAMPO) -> bytes:
 
     Tarda: son unos dos segundos, casi todos del de 256 px. Quien lo pida desde
     una ventana, que lo haga en `tk.working()`."""
+    return _ico_de(tamanos, lambda size: _capas_marca(size, campo))
+
+
+def _ico_de(tamanos, capas_de) -> bytes:
+    """Un `.ico` con esos tamaños, cada uno pintado con `capas_de(size)`."""
     import struct
 
     imagenes = []
     for size in tamanos:
-        rgba = _capas_rgba(_capas_marca(size, campo), 64.0, size)
+        rgba = _capas_rgba(capas_de(size), 64.0, size)
         imagenes.append((size, _png(rgba, size) if size >= ICO_PNG_DESDE
                          else _dib(rgba, size)))
 
@@ -690,6 +705,119 @@ def write_ico(destino, tamanos=ICO_TAMANOS, campo: str = CAMPO):
     destino = Path(destino)
     destino.write_bytes(ico(tamanos, campo))
     return destino
+
+
+# ---------------------------------------------------------------------------
+# La bandeja del agente
+#
+# Cinco estados (`ui/bandeja.py` decide cuál): la marca de siempre y, en la
+# esquina de abajo a la derecha, una pastilla que lo dice. A 16 px lo que se lee
+# es el COLOR de la pastilla —azul, ámbar, oscura— y el campo gris de la pausa;
+# el dibujo de dentro (la admiración, las dos barras, el candado) solo aparece
+# desde 24 px, que es la bandeja al 150 %. Todo va en `.ico` porque Windows
+# carga el icono de la bandeja con `LoadImageW` desde un fichero, y se REPINTA
+# en la carpeta del agente, como `runsync.ico`: nunca se copia.
+# ---------------------------------------------------------------------------
+
+BIEN, SINCRONIZANDO, AVISO, PAUSA, BLOQUEADO = (
+    "bien", "sincronizando", "aviso", "pausa", "bloqueado")
+BANDEJA_ESTADOS = (BIEN, SINCRONIZANDO, AVISO, PAUSA, BLOQUEADO)
+# Los tamaños del icono pequeño de Windows a 100, 125, 150, 200 y 300 %.
+BANDEJA_TAMANOS = (16, 20, 24, 32, 48)
+
+TINTA_PASTILLA = "#1C1A17"      # la tinta de `theme.TINTA`
+_PASTILLA = {SINCRONIZANDO: "#6F9BD1", AVISO: AMBAR, PAUSA: MARCA,
+             BLOQUEADO: TINTA_PASTILLA}
+_PASTILLA_CENTRO, _PASTILLA_RADIO = 49.0, 14.0
+
+
+def _disco(color: str, radio: float) -> tuple:
+    """Un círculo relleno: un anillo de radio r/2 y trazo r cubre de 0 a r."""
+    return (color, radio, [("c", _PASTILLA_CENTRO, _PASTILLA_CENTRO, radio / 2)])
+
+
+def capas_bandeja(size: int, estado: str) -> list[tuple[str, float, list[tuple]]]:
+    """Las capas del icono de la bandeja en ese estado. ValueError si no es uno."""
+    if estado not in BANDEJA_ESTADOS:
+        raise ValueError(f"estado de la bandeja desconocido: {estado}")
+    capas = _capas_marca(size, CAMPOS["grafito"] if estado == PAUSA else CAMPO)
+    if estado == BIEN:
+        return capas
+    # Un aro claro alrededor la separa de la marca, que también es oscura.
+    capas = capas + [_disco(MARCA, _PASTILLA_RADIO + 3.5),
+                     _disco(_PASTILLA[estado], _PASTILLA_RADIO)]
+    if size < 24:
+        return capas
+    c = _PASTILLA_CENTRO
+    if estado == AVISO:
+        capas.append((TINTA_PASTILLA, 0.0, [("fr", c - 1.75, c - 9, 3.5, 11),
+                                            ("fr", c - 1.75, c + 4.5, 3.5, 3.5)]))
+    elif estado == PAUSA:
+        capas.append((TINTA_PASTILLA, 0.0, [("fr", c - 5.5, c - 6, 3.5, 12),
+                                            ("fr", c + 2, c - 6, 3.5, 12)]))
+    elif estado == BLOQUEADO:
+        capas += [(MARCA, 2.5, [("a", c, c - 1.5, 4, 180, 360)]),
+                  (MARCA, 0.0, [("fr", c - 6, c - 1.5, 12, 8.5)])]
+    return capas
+
+
+def ico_bandeja(estado: str, tamanos=BANDEJA_TAMANOS) -> bytes:
+    """El icono de la bandeja en ese estado, como `.ico`."""
+    return _ico_de(tamanos, lambda size: capas_bandeja(size, estado))
+
+
+def pixeles_menu(nombre: str, size: int, color: str) -> bytes:
+    """Un glifo como imagen de una entrada de menú de Windows: los píxeles de
+    un DIB de 32 bits de arriba abajo (alto negativo en su cabecera), BGRA con
+    el alfa PREMULTIPLICADO, que es como Windows compone la `hbmpItem` de un
+    `MENUITEMINFOW` con transparencia (`AlphaBlend` con `AC_SRC_ALPHA`). Del
+    color que se pida: el del texto del menú, para que siga al tema."""
+    datos = bytearray()
+    for fila in _capas_rgba([(color, TRAZO, GLIFOS[nombre])], 16.0, size):
+        for r, g, b, a in fila:
+            datos += bytes((round(b * a), round(g * a), round(r * a), round(a * 255)))
+    return bytes(datos)
+
+
+def pixmap_bandeja(estado: str, size: int) -> bytes:
+    """El icono de la bandeja en ese estado para Linux: el `IconPixmap` de un
+    StatusNotifierItem, que es «ARGB32 … in network byte order», es decir, cada
+    píxel A, R, G, B (sin premultiplicar, como el `QImage::Format_ARGB32` de
+    KDE) y las filas de arriba abajo. Sin `.ico` de por medio: se pinta aquí."""
+    datos = bytearray()
+    for fila in _capas_rgba(capas_bandeja(size, estado), 64.0, size):
+        for r, g, b, a in fila:
+            datos += bytes((round(a * 255), r, g, b))
+    return bytes(datos)
+
+
+def fichero_bandeja(carpeta, estado: str):
+    """Dónde va el `.ico` de ese estado dentro de la carpeta del agente."""
+    from pathlib import Path
+    return Path(carpeta) / f"bandeja-{estado}.ico"
+
+
+def write_bandeja(carpeta, solo_si_faltan: bool = False) -> list:
+    """Pinta los cinco iconos de la bandeja en `carpeta`. Devuelve las rutas.
+
+    Con `solo_si_faltan`, los que ya están se dejan: es lo que hace el agente
+    al arrancar, por si lo instaló una versión que no los pintaba."""
+    rutas = []
+    for estado in BANDEJA_ESTADOS:
+        ruta = fichero_bandeja(carpeta, estado)
+        if not (solo_si_faltan and ruta.is_file()):
+            ruta.write_bytes(ico_bandeja(estado))
+        rutas.append(ruta)
+    return rutas
+
+
+def pintar(carpeta, bandeja: bool = False) -> None:
+    """`runsync.ico` en `carpeta` y, con `bandeja`, los cinco de la bandeja:
+    lo que pinta una instalación (`install.pintar_iconos`)."""
+    from pathlib import Path
+    write_ico(Path(carpeta) / "runsync.ico")
+    if bandeja:
+        write_bandeja(carpeta)
 
 
 if __name__ == "__main__":                        # python -m ui.icons [destino]

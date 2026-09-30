@@ -148,7 +148,7 @@ def open_dialog(parent, config) -> bool:
 
     def refrescar(nota: str = "") -> None:
         estado["raw"] = config_file.load_raw()
-        estado["config"] = model.parse_config(estado["raw"])
+        estado["config"] = model.parse_config(estado["raw"], equipo=model.es_equipo())
         cat = estado["cat"]
 
         sitio = cat.endpoint if cat else catalog.endpoint(estado["raw"])
