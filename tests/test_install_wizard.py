@@ -917,19 +917,19 @@ c("  y se puede seguir sin tocar nada", str(casa.boton_siguiente.cget("state")),
 elegir(casa, "En este equipo")
 c("«En este equipo» cambia la lista de pasos: con carpeta propia, de salida",
   [t for t, _, _ in casa.pasos],
-  ["¿Dónde?", "Carpeta", "Cifrado", "Conexión", "Comprobaciones", "Instalación",
+  ["¿Dónde?", "Raíz", "Cifrado", "Carpeta", "Conexión", "Comprobaciones", "Instalación",
    "Parejas y configuración", "Inicialización", "Unidades", "Arranque", "Verificación"])
 c("  sin moverse de la primera pantalla", casa.indice, 0)
 casa.ir(+1)
-c("«Carpeta» propone la carpeta propia", casa.equipo_ruta,
+c("«Raíz» propone la carpeta propia", casa.equipo_ruta,
   str(raiz_equipo.carpeta_propia()))
 
 # --- «Ninguna»: la instalación «solo agente» ----------------------------------
 elegir(casa, "Ninguna: solo atender unidades")
 c("«Ninguna» es el recorrido corto, sin conexión ni parejas",
   [t for t, _, _ in casa.pasos],
-  ["¿Dónde?", "Carpeta", "Instalación", "Unidades", "Arranque", "Verificación"])
-c("  sin moverse de «Carpeta», y se puede seguir",
+  ["¿Dónde?", "Raíz", "Instalación", "Unidades", "Arranque", "Verificación"])
+c("  sin moverse de «Raíz», y se puede seguir",
   (casa.indice, str(casa.boton_siguiente.cget("state"))), (1, "normal"))
 c("  y sin raíz", casa.state.device_root, None)
 casa.ir(+1)
@@ -979,7 +979,7 @@ if not ia.IS_WIN:
     c("  con bandeja, bien", tk_equipo.comprobaciones()[-1][:2], ("Bandeja", True))
 tk_equipo.escritorio = escritorio_real
 casa.ir(-4)
-c("de vuelta en «Carpeta»", casa.pasos[casa.indice][0], "Carpeta")
+c("de vuelta en «Raíz»", casa.pasos[casa.indice][0], "Raíz")
 casa.ir(-1)
 elegir(casa, "En una unidad")
 c("volver a «En una unidad» devuelve el recorrido de siempre",
@@ -1025,18 +1025,10 @@ en_paso(propia, 0)
 elegir(propia, "En este equipo")
 propia.ir(+1)
 elegir(propia, "Una carpeta propia (recomendado)")
-entrada = next(iter(widgets(propia.cuerpo, ttk.Entry)))
-RAIZ_EQUIPO = tmpdir("prdrive-raiz-equipo-") / "PRDRIVE"
-escribir(entrada, "relativa/no")
-c("«Carpeta»: una ruta relativa no vale", (propia.state.device_root,
-                                           str(propia.boton_siguiente.cget("state"))),
-  (None, "disabled"))
-escribir(entrada, str(RAIZ_EQUIPO))
-c("  una que no existe sí, y fija la raíz",
-  (propia.state.device_root, propia.equipo_examen.estado,
-   str(propia.boton_siguiente.cget("state"))),
-  (RAIZ_EQUIPO, raiz_equipo.NUEVA, "normal"))
+c("«Raíz» no pide carpeta: eso va después de «Cifrado»",
+  list(widgets(propia.cuerpo, ttk.Entry)), [])
 propia.ir(+1)
+c("«Cifrado» va antes que «Carpeta»", propia.pasos[propia.indice][0], "Cifrado")
 c("«Cifrado»: sin VeraCrypt instalado, solo sin cifrar",
   (radios(propia), propia.equipo_cifrado),
   ({"Sin cifrar": "normal", "En un contenedor VeraCrypt": "disabled"},
@@ -1098,9 +1090,18 @@ if not install.IS_WIN:
     finally:
         raiz_equipo.veracrypt_portatil = real_portatil
         propia.repintar()
-c("  sin cifrar, la raíz es la carpeta, y se puede seguir",
-  (propia.state.device_root, str(propia.boton_siguiente.cget("state"))),
-  (RAIZ_EQUIPO, "normal"))
+propia.ir(+1)
+entrada = next(iter(widgets(propia.cuerpo, ttk.Entry)))
+RAIZ_EQUIPO = tmpdir("prdrive-raiz-equipo-") / "PRDRIVE"
+escribir(entrada, "relativa/no")
+c("«Carpeta»: una ruta relativa no vale", (propia.state.device_root,
+                                           str(propia.boton_siguiente.cget("state"))),
+  (None, "disabled"))
+escribir(entrada, str(RAIZ_EQUIPO))
+c("  una que no existe sí, y sin cifrar es la raíz, y se puede seguir",
+  (propia.state.device_root, propia.equipo_examen.estado,
+   str(propia.boton_siguiente.cget("state"))),
+  (RAIZ_EQUIPO, raiz_equipo.NUEVA, "normal"))
 
 # Conexión y catálogo como los dejaría «Comprobaciones».
 propia.perfil = PERFIL
@@ -1212,15 +1213,25 @@ activados.clear()
 cifra = nuevo_asistente(None)
 en_paso(cifra, 0)
 elegir(cifra, "En este equipo")
-cifra.ir(+1)
-CARPETA = tmpdir("prdrive-raiz-cifra-") / "PRDRIVE"
-escribir(next(iter(widgets(cifra.cuerpo, ttk.Entry))), str(CARPETA))
-cifra.ir(+1)
+cifra.ir(+2)
 elegir(cifra, "En un contenedor VeraCrypt")
-c("«Cifrado» con VeraCrypt: sin montar no hay raíz",
+c("«Cifrado» con VeraCrypt no pide carpeta todavía, y se puede seguir",
+  (list(widgets(cifra.cuerpo, ttk.Entry)), str(cifra.boton_siguiente.cget("state"))),
+  ([], "normal"))
+cifra.ir(+1)
+c("«Carpeta» con VeraCrypt: sin montar no hay raíz",
   (cifra.state.device_root, str(cifra.boton_siguiente.cget("state"))),
   (None, "disabled"))
+CARPETA = tmpdir("prdrive-raiz-cifra-") / "PRDRIVE"
 cajas = list(widgets(cifra.cuerpo, ttk.Entry))
+if install.IS_WIN:
+    # En Windows se abre en una letra: la carpeta solo dice dónde va el fichero.
+    escribir(next(w for w in cajas if w.get().endswith("-cifrado")),
+             str(CARPETA.with_name("PRDRIVE-cifrado")))
+else:
+    # En Linux se abre en una carpeta, y el contenedor la sigue a su lado.
+    escribir(next(w for w in cajas if w.get() == str(raiz_equipo.carpeta_propia())),
+             str(CARPETA))
 c("  el contenedor va al lado de la carpeta",
   [w.get() for w in cajas if w.get().endswith("-cifrado")],
   [str(CARPETA.with_name("PRDRIVE-cifrado"))])
@@ -1277,6 +1288,8 @@ elegir(personal, "En este equipo")
 personal.ir(+1)
 elegir(personal, "Tu carpeta personal")
 personal.ir(+1)
+c("  «Cifrado» va antes que «Carpeta» también con la personal",
+  personal.pasos[personal.indice][0], "Cifrado")
 c("con la carpeta personal, VeraCrypt no se ofrece",
   radios(personal)["En un contenedor VeraCrypt"], "disabled")
 

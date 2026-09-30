@@ -1463,7 +1463,13 @@ whatever you build that only a real host can prove.
   el agente de este equipo» instead of installing penwatch.
 - **The wizard's first step is «¿Dónde?»** in every route (`PASOS_INSTALACION`,
   both short routes, `PASOS_EQUIPO`, `PASOS_EQUIPO_SOLO`), so «Dispositivo» and
-  «Carpeta» keep index 1 and «Atrás» always lands where it says.
+  «Raíz» keep index 1 and «Atrás» always lands where it says.
+- **«Raíz» → «Cifrado» → «Carpeta»**, in that order: «Raíz» picks the shape
+  (own folder, home, none), «Cifrado» only chooses (and fetches VeraCrypt), and
+  «Carpeta» asks for what that choice needs — the root itself, or, encrypted,
+  where the `.hc` goes and where it opens — and fixes `state.device_root`.
+  Encryption goes first because it changes which folder is asked for: asking
+  for the root and then encrypting left, on Windows, a folder nothing used.
 
 ### The host root (`install/raiz_equipo.py` + `ui/tk_equipo.py`)
 
@@ -1528,8 +1534,9 @@ not be weakened:
 ### The encrypted host root (phase 3)
 
 With «Una carpeta propia», the wizard's «Cifrado» step (`tk_equipo.paso_cifrado`,
-between «Carpeta» and «Conexión», because it fixes `state.device_root` as in a
-drive) can put the root in `<carpeta>-cifrado/PRDRIVE.hc`, with only the
+before «Carpeta», whose encrypted form — `tk_equipo._carpeta_cifrada()`, before
+«Conexión» because it fixes `state.device_root` as in a drive — creates and
+mounts it) can put the root in `<carpeta>-cifrado/PRDRIVE.hc`, with only the
 vestibule **marker** beside it (`raiz_equipo.marcar()`: same id as the control
 file inside; no `.bat`/`.sh`/guide — the agent is the opener). Mounted at a
 **fixed letter** on Windows (`equipo.Unidad.ruta` = `P:\`, `Unidad.letra`) or at

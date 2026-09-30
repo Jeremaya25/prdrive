@@ -4,12 +4,14 @@ tk_equipo.py — Los pasos del asistente «En este equipo».
 
 Solo dibuja. Lo que decide y lo que toca el disco está en `install/agente.py` y
 `install/raiz_equipo.py`, igual que el resto del asistente con `install/`. Dos
-recorridos, que elige el paso «Carpeta» (ver `tk_install.PASOS_EQUIPO`):
+recorridos, que elige el paso «Raíz» (ver `tk_install.PASOS_EQUIPO`):
 
-    Carpeta        la raíz de este equipo: carpeta propia, la personal, o ninguna
+    Raíz           la raíz de este equipo: carpeta propia, la personal, o ninguna
     Cifrado        sin cifrar, o en un contenedor VeraCrypt (solo la carpeta propia;
-                   el instalado, o el oficial sin instalar, que se lleva el agente):
-                   lo crea, lo monta y lo deja abierto
+                   el instalado, o el oficial sin instalar, que se lleva el agente).
+                   Va antes que «Carpeta» porque cambia qué carpeta se pide
+    Carpeta        sin cifrar, la raíz; cifrada, dónde va el contenedor y dónde se
+                   abre: lo crea, lo monta y lo deja abierto
     Conexión, Comprobaciones        los del recorrido de una unidad, tal cual
     Instalación    .prdrive/ + rclone en la raíz; el agente y su Python en el equipo
     Parejas        las del catálogo, con la ruta de cada una EN ESTE equipo
@@ -85,21 +87,25 @@ def raiz(wiz) -> Path | None:
 
 
 # ---------------------------------------------------------------------------
-# Carpeta
+# Raíz
 # ---------------------------------------------------------------------------
 
-def paso_carpeta(cuerpo, wiz) -> None:
-    """Dónde vive la raíz de este equipo, o que no haya. Cambiar de respuesta
-    cambia la lista de pasos (`tk_install.pasos_equipo`), como «¿Dónde?»."""
+def paso_raiz(cuerpo, wiz) -> None:
+    """Qué raíz tiene este equipo: una carpeta propia, la personal, o ninguna.
+    Solo la forma: si va cifrada lo pregunta «Cifrado», y la carpeta exacta
+    «Carpeta», por ese orden, porque cifrar cambia qué carpeta se pide. Cambiar
+    de respuesta cambia la lista de pasos (`tk_install.pasos_equipo`), como
+    «¿Dónde?»."""
     import tkinter as tk
-    from tkinter import filedialog, ttk
+    from tkinter import ttk
 
     from install import raiz_equipo as re_
 
     _texto(cuerpo, "¿Dónde deja este equipo lo que se sincroniza con el remoto? Es "
                    "su raíz, lo mismo que la de una unidad: las parejas del catálogo "
                    "caen en carpetas de dentro, y el programa va en .prdrive/. Aquí "
-                   "no se crean parejas, solo se elige dónde viven.", 0)
+                   "no se crean parejas, solo se elige dónde viven. Si se cifra, y "
+                   "la carpeta exacta, en los pasos siguientes.", 0)
     eleccion = tk.StringVar(value=wiz.equipo_forma)
 
     def elegir() -> None:
@@ -114,11 +120,13 @@ def paso_carpeta(cuerpo, wiz) -> None:
 
     opciones = (
         (re_.PROPIA, "Una carpeta propia (recomendado)",
-         f"{re_.carpeta_propia()}, o la que escribas: prdrive y tus parejas dentro, "
-         "como la carpeta de Dropbox. Nada de fuera de ella se toca."),
+         f"{re_.carpeta_propia()}, u otra que elijas: prdrive y tus parejas dentro, "
+         "como la carpeta de Dropbox. Nada de fuera de ella se toca. Se puede "
+         "cifrar."),
         (re_.PERSONAL, "Tu carpeta personal",
          f"{re_.carpeta_personal()}: sincroniza carpetas que ya tienes, como "
-         "Documentos/Obsidian, sin moverlas. A cambio, el límite es todo tu usuario."),
+         "Documentos/Obsidian, sin moverlas. A cambio, el límite es todo tu usuario, "
+         "y no se puede cifrar."),
         (re_.NINGUNA, "Ninguna: solo atender unidades",
          "Sin conexión ni clave en este equipo: el agente sincroniza las unidades "
          "prdrive que enchufes, y cada una trae las suyas."),
@@ -133,52 +141,8 @@ def paso_carpeta(cuerpo, wiz) -> None:
         ttk.Label(tarjeta, text=texto, style="Card.Pista.TLabel", justify="left",
                   wraplength=theme.medida(720)).grid(row=1, column=0, sticky="w",
                                                      pady=(3, 0))
-
     if not con_raiz(wiz):
         wiz.state.device_root = None
-        return
-
-    fila = ttk.Frame(cuerpo)
-    fila.grid(row=4, column=0, sticky="ew", pady=(4, 0))
-    fila.columnconfigure(1, weight=1)
-    ttk.Label(fila, text="Carpeta:").grid(row=0, column=0, sticky="w")
-    ruta = tk.StringVar(value=wiz.equipo_ruta)
-    entrada = ttk.Entry(fila, textvariable=ruta, style="Mono.TEntry")
-    entrada.grid(row=0, column=1, sticky="ew", padx=6)
-    examen = ttk.Label(cuerpo, justify="left", wraplength=theme.medida(ANCHO))
-    examen.grid(row=5, column=0, sticky="w", pady=(8, 0))
-    _texto(cuerpo, "Se elige ahora y no se cambia después: mover la raíz deja cada "
-                   "pareja sin su carpeta, y cambiarla es volver a instalar.", 6,
-           style="Pista.TLabel")
-
-    def revisar(texto: str | None = None) -> None:
-        wiz.equipo_ruta = ruta.get() if texto is None else texto
-        ex = re_.examinar(wiz.equipo_ruta, wiz.equipo_forma)
-        wiz.equipo_examen = ex
-        wiz.state.device_root = (Path(wiz.equipo_ruta.strip()).expanduser()
-                                 if ex.vale else None)
-        color = (theme.PELIGRO if not ex.vale else
-                 theme.AVISO if ex.aviso else theme.TINTA3)
-        examen.configure(text=ex.texto, foreground=color)
-        wiz.revisar()
-
-    def examinar_carpeta() -> None:
-        elegida = filedialog.askdirectory(parent=wiz.root, mustexist=False,
-                                          initialdir=str(Path.home()))
-        if elegida:
-            ruta.set(elegida)               # `set` no valida: se revisa a mano
-            revisar(elegida)
-
-    ttk.Button(fila, text="Examinar…", command=examinar_carpeta).grid(
-        row=0, column=2, sticky="e")
-    if wiz.equipo_forma == re_.PERSONAL:
-        entrada.configure(state="readonly")     # la personal es la personal
-    al_cambiar(entrada, revisar)
-    revisar()
-
-
-def ok_carpeta(wiz) -> bool:
-    return not con_raiz(wiz) or wiz.state.device_root is not None
 
 
 # ---------------------------------------------------------------------------
@@ -190,30 +154,15 @@ def cifrada(wiz) -> bool:
     return con_raiz(wiz) and wiz.equipo_cifrado == raiz_equipo.VERACRYPT
 
 
-def _existente(ruta: Path) -> Path:
-    """La carpeta que ya existe más cerca de `ruta`: el disco del que se
-    pregunta el sitio libre y si admite dispersos antes de crear nada."""
-    for candidata in (ruta, *ruta.parents):
-        try:
-            if candidata.is_dir():
-                return candidata
-        except OSError:
-            continue
-    return ruta
-
-
 def paso_cifrado(cuerpo, wiz) -> None:
-    """Sin cifrar (la carpeta de «Carpeta» es la raíz) o en un contenedor
-    VeraCrypt: se crea al lado de esa carpeta, se monta en una letra fija
-    (Windows) o en la propia carpeta (Linux), y ESE volumen es la raíz. La
-    contraseña se pide aquí para crear y montar, una vez; a partir de ahí abrir y
-    cerrar es del agente, con la ventana de VeraCrypt, y nada la guarda."""
-    import shutil
+    """Sin cifrar o en un contenedor VeraCrypt, antes de pedir la carpeta: sin
+    cifrar, «Carpeta» pide la raíz; cifrada, dónde va el contenedor y dónde se
+    abre (una letra fija en Windows, una carpeta vacía en Linux), y ESE volumen
+    es la raíz. Aquí solo se elige, y se consigue VeraCrypt si falta."""
     import tkinter as tk
     from tkinter import messagebox, ttk
 
-    from common import vestibulo
-    from install import IS_WIN, crypto, raiz_equipo as re_
+    from install import IS_WIN, raiz_equipo as re_
 
     from .tk import TITLE
 
@@ -230,21 +179,21 @@ def paso_cifrado(cuerpo, wiz) -> None:
 
     _texto(cuerpo, "¿Cifrar la raíz de este equipo? Se sincroniza lo mismo; lo que "
                    "cambia es que todo queda dentro de un fichero cifrado.", 0)
-    fichero = Path(wiz.equipo_fisica or re_.fisica_por_defecto(wiz.equipo_ruta))
-    fichero = fichero / vestibulo.CONTENEDOR
-    donde = ("como una unidad con letra fija (la que elijas abajo, P: por ejemplo)"
-             if IS_WIN else f"en {wiz.equipo_ruta}")
+    donde = ("como una unidad con letra fija (P:, por ejemplo)" if IS_WIN else
+             "en una carpeta vacía que eliges")
     opciones = (
         (re_.SIN_CIFRAR, "Sin cifrar",
-         f"{wiz.equipo_ruta} es la raíz, tal cual. La clave del remoto queda en claro "
-         f"en el disco (el paso «Instalación» dice si el disco tiene BitLocker)."),
+         "La carpeta que elijas en el paso siguiente es la raíz, tal cual. La clave "
+         "del remoto queda en claro en el disco (el paso «Instalación» dice si el "
+         "disco tiene BitLocker)."),
         (re_.VERACRYPT, "En un contenedor VeraCrypt",
-         "Todo va DENTRO de un fichero cifrado que se crea ahora (por eso pide tamaño "
-         "y contraseña): el programa, la clave y las carpetas de las parejas con tus "
-         f"datos. Fuera solo queda ese fichero, {fichero}. Abierto, su contenido "
-         f"aparece {donde}, y ahí trabajas. Cerrado, no hay nada que leer ni que "
-         "sincronizar por error. Lo abre el agente al iniciar sesión (VeraCrypt "
-         "pide la contraseña en su ventana) y lo cierras con «Bloquear»."))
+         "Todo va DENTRO de un fichero cifrado: el programa, la clave y las carpetas "
+         "de las parejas con tus datos. Fuera solo queda ese fichero. Abierto, su "
+         f"contenido aparece {donde}, y ahí trabajas. Cerrado, no hay nada que leer "
+         "ni que sincronizar por error. Lo abre el agente al iniciar sesión "
+         "(VeraCrypt pide la contraseña en su ventana) y lo cierras con «Bloquear». "
+         "En el paso siguiente eliges dónde va el fichero, su tamaño y la "
+         "contraseña, y se crea."))
     for i, (valor, titulo, texto) in enumerate(opciones):
         tarjeta = ttk.Frame(cuerpo, style="Card.TFrame", padding=(14, 8))
         tarjeta.grid(row=1 + i, column=0, sticky="ew", pady=(0, 8))
@@ -289,19 +238,125 @@ def paso_cifrado(cuerpo, wiz) -> None:
     elif re_.portatil(vc):
         _ambar(cuerpo, re_.AVISO_PORTATIL, 3)
 
-    if wiz.equipo_cifrado != re_.VERACRYPT:
+    if wiz.equipo_cifrado == re_.VERACRYPT:
+        wiz.state.encryption = "veracrypt"
+        wiz.state.veracrypt = vc
+    else:
         wiz.state.encryption = None
-        wiz.state.device_root = (Path(wiz.equipo_ruta.strip()).expanduser()
-                                 if wiz.equipo_examen and wiz.equipo_examen.vale else None)
-        return
 
+
+def ok_cifrado(wiz) -> bool:
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Carpeta
+# ---------------------------------------------------------------------------
+
+def paso_carpeta(cuerpo, wiz) -> None:
+    """La carpeta exacta, según lo elegido en «Cifrado»: sin cifrar, la raíz;
+    cifrada, el contenedor (`_carpeta_cifrada`)."""
+    if cifrada(wiz):
+        _carpeta_cifrada(cuerpo, wiz)
+        return
+    import tkinter as tk
+    from tkinter import filedialog, ttk
+
+    from install import raiz_equipo as re_
+
+    wiz.state.encryption = None
+    personal = wiz.equipo_forma == re_.PERSONAL
+    _texto(cuerpo, (
+        "Tu carpeta personal es la raíz: las parejas pueden caer en cualquier "
+        "carpeta de tu usuario, y el programa va en .prdrive/." if personal else
+        "¿En qué carpeta? Es la raíz: las parejas son carpetas de dentro, y el "
+        "programa va en .prdrive/."), 0)
+    fila = ttk.Frame(cuerpo)
+    fila.grid(row=1, column=0, sticky="ew", pady=(4, 0))
+    fila.columnconfigure(1, weight=1)
+    ttk.Label(fila, text="Carpeta:").grid(row=0, column=0, sticky="w")
+    ruta = tk.StringVar(value=wiz.equipo_ruta)
+    entrada = ttk.Entry(fila, textvariable=ruta, style="Mono.TEntry")
+    entrada.grid(row=0, column=1, sticky="ew", padx=6)
+    examen = ttk.Label(cuerpo, justify="left", wraplength=theme.medida(ANCHO))
+    examen.grid(row=2, column=0, sticky="w", pady=(8, 0))
+    _texto(cuerpo, "Se elige ahora y no se cambia después: mover la raíz deja cada "
+                   "pareja sin su carpeta, y cambiarla es volver a instalar.", 3,
+           style="Pista.TLabel")
+
+    def revisar(texto: str | None = None) -> None:
+        wiz.equipo_ruta = ruta.get() if texto is None else texto
+        ex = re_.examinar(wiz.equipo_ruta, wiz.equipo_forma)
+        wiz.equipo_examen = ex
+        wiz.state.device_root = (Path(wiz.equipo_ruta.strip()).expanduser()
+                                 if ex.vale else None)
+        color = (theme.PELIGRO if not ex.vale else
+                 theme.AVISO if ex.aviso else theme.TINTA3)
+        examen.configure(text=ex.texto, foreground=color)
+        wiz.revisar()
+
+    def examinar_carpeta() -> None:
+        elegida = filedialog.askdirectory(parent=wiz.root, mustexist=False,
+                                          initialdir=str(Path.home()))
+        if elegida:
+            ruta.set(elegida)               # `set` no valida: se revisa a mano
+            revisar(elegida)
+
+    boton = ttk.Button(fila, text="Examinar…", command=examinar_carpeta)
+    boton.grid(row=0, column=2, sticky="e")
+    if personal:
+        entrada.configure(state="readonly")     # la personal es la personal
+        boton.configure(state="disabled")
+    al_cambiar(entrada, revisar)
+    revisar()
+
+
+def ok_carpeta(wiz) -> bool:
+    if cifrada(wiz):
+        return wiz.equipo_montada is not None
+    return not con_raiz(wiz) or wiz.state.device_root is not None
+
+
+def _existente(ruta: Path) -> Path:
+    """La carpeta que ya existe más cerca de `ruta`: el disco del que se
+    pregunta el sitio libre y si admite dispersos antes de crear nada."""
+    for candidata in (ruta, *ruta.parents):
+        try:
+            if candidata.is_dir():
+                return candidata
+        except OSError:
+            continue
+    return ruta
+
+
+def _carpeta_cifrada(cuerpo, wiz) -> None:
+    """El contenedor: se crea donde se diga (al lado de la carpeta propia, de
+    salida), se monta en una letra fija (Windows) o en una carpeta vacía
+    (Linux, `equipo_ruta`), y ESE volumen es la raíz. La contraseña se pide aquí
+    para crear y montar, una vez; a partir de ahí abrir y cerrar es del agente,
+    con la ventana de VeraCrypt, y nada la guarda."""
+    import shutil
+    import tkinter as tk
+    from tkinter import messagebox, ttk
+
+    from common import vestibulo
+    from install import IS_WIN, crypto, raiz_equipo as re_
+
+    from .tk import TITLE
+
+    vc = re_.veracrypt_para_raiz()
     wiz.state.encryption = "veracrypt"
     wiz.state.veracrypt = vc
     wiz.state.device_root = wiz.equipo_montada
     if not wiz.equipo_fisica:
         wiz.equipo_fisica = str(re_.fisica_por_defecto(wiz.equipo_ruta))
+    _texto(cuerpo, (
+        "El contenedor: dónde se guarda el fichero cifrado, en qué letra se abre, "
+        "su tamaño y la contraseña. Abierto, esa letra es la raíz." if IS_WIN else
+        "El contenedor: dónde se guarda el fichero cifrado, en qué carpeta se abre, "
+        "su tamaño y la contraseña. Abierto, esa carpeta es la raíz."), 0)
     formulario = ttk.Frame(cuerpo)
-    formulario.grid(row=4, column=0, sticky="ew")
+    formulario.grid(row=1, column=0, sticky="ew")
     formulario.columnconfigure(1, weight=1)
     ttk.Label(formulario, text="Contenedor en:").grid(row=0, column=0, sticky="w")
     fisica = tk.StringVar(value=wiz.equipo_fisica)
@@ -312,6 +367,7 @@ def paso_cifrado(cuerpo, wiz) -> None:
 
     fila = 2
     letra = tk.StringVar(value=wiz.equipo_letra or re_.LETRA_PREFERIDA)
+    punto = None
     if IS_WIN:
         libres = re_.letras_libres()
         if wiz.equipo_letra not in libres and libres:
@@ -323,10 +379,14 @@ def paso_cifrado(cuerpo, wiz) -> None:
             "siempre la misma: los programas apuntarán a ella")).grid(
             row=fila, column=2, sticky="w")
     else:
-        ttk.Label(formulario, text="Se monta en:").grid(row=fila, column=0, sticky="w")
-        ttk.Label(formulario, style="MonoPista.TLabel",
-                  text=re_.punto_de_montaje(wiz.equipo_ruta)).grid(
-            row=fila, column=1, columnspan=2, sticky="w", padx=6)
+        # En Linux se monta en una carpeta, que es la raíz: vacía, porque lo que
+        # hubiera quedaría tapado (`examinar_contenedor`).
+        ttk.Label(formulario, text="Se abre en:").grid(row=fila, column=0, sticky="w")
+        # El texto va en la caja y no en una StringVar: sin nadie que la
+        # retenga al salir de aquí, Python la recoge y la caja se queda vacía.
+        punto = ttk.Entry(formulario, style="Mono.TEntry")
+        punto.insert(0, wiz.equipo_ruta)
+        punto.grid(row=fila, column=1, columnspan=2, sticky="ew", padx=6)
     fila += 1
 
     base = _existente(Path(wiz.equipo_fisica).expanduser())
@@ -377,10 +437,10 @@ def paso_cifrado(cuerpo, wiz) -> None:
     if restos:
         from .tk import bloque_aviso
         bloque_aviso(cuerpo, crypto.aviso_restos(restos), ancho=ANCHO - 40,
-                     tipo="Rojo").grid(row=5, column=0, sticky="ew", pady=(8, 0))
+                     tipo="Rojo").grid(row=2, column=0, sticky="ew", pady=(8, 0))
 
     botones = ttk.Frame(cuerpo)
-    botones.grid(row=6, column=0, sticky="w", pady=(10, 0))
+    botones.grid(row=3, column=0, sticky="w", pady=(10, 0))
     boton = ttk.Button(botones, style="Primary.TButton")
     boton.grid(row=0, column=0)
     hecho = ttk.Label(botones, foreground=theme.OK)
@@ -391,6 +451,11 @@ def paso_cifrado(cuerpo, wiz) -> None:
         wiz.equipo_fisica = fisica.get() if texto is None else texto
         ex = re_.examinar_contenedor(wiz.equipo_fisica, wiz.equipo_ruta,
                                      wiz.equipo_forma)
+        if punto is not None:
+            # La carpeta donde se abre también tiene que poder ser una raíz.
+            raiz_ex = re_.examinar(wiz.equipo_ruta, wiz.equipo_forma)
+            if not raiz_ex.vale:
+                ex = raiz_ex
         estado["examen"] = ex
         examen.configure(text=ex.texto, foreground=theme.PELIGRO if not ex.vale
                          else theme.TINTA3)
@@ -400,6 +465,13 @@ def paso_cifrado(cuerpo, wiz) -> None:
         boton.configure(text="Abrir el contenedor" if existe else "Crear y montar",
                         state="normal" if ex.vale else "disabled")
         wiz.revisar()
+
+    def revisar_punto(texto: str) -> None:
+        # El contenedor sigue a la carpeta mientras sea el de salida.
+        if fisica.get() == str(re_.fisica_por_defecto(wiz.equipo_ruta)):
+            fisica.set(str(re_.fisica_por_defecto(texto)))
+        wiz.equipo_ruta = texto
+        revisar(fisica.get())
 
     def crear() -> None:
         ex = estado["examen"]
@@ -444,13 +516,9 @@ def paso_cifrado(cuerpo, wiz) -> None:
     if wiz.equipo_montada is not None:
         hecho.configure(text=f"✔ abierto en {wiz.equipo_montada}")
     al_cambiar(caja, revisar)
+    if punto is not None:
+        al_cambiar(punto, revisar_punto)
     revisar()
-
-
-def ok_cifrado(wiz) -> bool:
-    if cifrada(wiz):
-        return wiz.equipo_montada is not None
-    return wiz.state.device_root is not None
 
 
 # ---------------------------------------------------------------------------
