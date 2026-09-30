@@ -828,11 +828,14 @@ try:
     nuevo = platforms.runtime_dir(raiz, WIN).parent / f".windows-x64.nuevo-{os.getpid()}"
     nuevo.mkdir()
     (nuevo / "medio.bin").write_bytes(b"x" * 500)
+    # Se espera a la cifra, no al primer «Copiando»: el hilo que mide puede
+    # pasar entre el mkdir y la escritura y decir, con razón, 0 %; la medida
+    # siguiente llega un segundo después.
+    esperado = (0.5, "Copiando al dispositivo: 50 %")
     limite = time.monotonic() + 10
-    while time.monotonic() < limite and "Copiando" not in avance.progreso()[1]:
+    while time.monotonic() < limite and avance.progreso() != esperado:
         time.sleep(0.1)
-    c("mide lo copiado frente al runtime ya extraído",
-      avance.progreso(), (0.5, "Copiando al dispositivo: 50 %"))
+    c("mide lo copiado frente al runtime ya extraído", avance.progreso(), esperado)
     avance.fin()
     c("y al final lo dice", avance.progreso(), (1.0, "Volviendo a abrir prdrive…"))
     shutil.rmtree(nuevo)
