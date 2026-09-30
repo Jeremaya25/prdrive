@@ -65,7 +65,8 @@ NO_COPIAR = shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo")
 TAREA = APP_NAME                            # Windows: la tarea programada
 DESCRIPCION = (f"{APP_NAME} residente: sincroniza las unidades {APP_NAME} que se "
                f"enchufan en este equipo.")
-PARAR_ESPERA = 12.0
+PARAR_ESPERA = 12.0         # a que el agente se vaya, si no tiene pasada en marcha
+ESPERA_PASADA = 600.0       # a que acabe la pasada en marcha, antes de cortarla
 
 
 def autostart_file() -> Path:
@@ -547,21 +548,92 @@ def arrancar(prep: Preparado) -> str:
         return f"No he podido arrancarlo ahora ({e}); arrancará al iniciar sesión."
 
 
-def parar_agente() -> str | None:
-    """Pide al agente en marcha que termine, y si no lo hace a tiempo (está en
-    mitad de una pasada), lo termina: la pasada sigue sola hasta acabar."""
-    vivo = equipo.agente_vivo()
-    if vivo is None:
+def matar_arbol(pid: int) -> None:
+    """Termina un proceso Y sus hijos: una pasada es `sync.py` más su rclone, y
+    matar solo el primero deja el segundo escribiendo. En POSIX la pasada es
+    jefa de su propia sesión (el agente la lanza con `start_new_session`), así
+    que su grupo es su pid; en Windows, `taskkill /T` sigue el árbol. De módulo
+    para que los tests lo sustituyan."""
+    try:
+        if IS_WIN:
+            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
+                           capture_output=True, creationflags=penwatch.CREATE_NO_WINDOW)
+            return
+        import signal
+        try:
+            os.killpg(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            os.kill(pid, signal.SIGTERM)    # no era jefe de grupo: al menos él
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+def decirlo(progreso):
+    """El `avance` de `parar_agente()` para quien solo sabe decir líneas
+    (`progreso(texto)`, un `print`): cada texto una vez, no dos veces por segundo."""
+    if progreso is None:
         return None
-    pid = int(vivo.get("pid", -1))
-    equipo.pedir({"pide": equipo.PIDE_PARAR})
-    limite = time.monotonic() + PARAR_ESPERA
-    while time.monotonic() < limite and equipo.agente_vivo() is not None:
-        time.sleep(0.3)
-    if equipo.agente_vivo() is None:
-        return f"Agente anterior (pid {pid}) detenido."
-    penwatch.kill_pid(pid)
-    return f"Agente anterior (pid {pid}) terminado a la fuerza."
+    dicho: list[str] = []
+
+    def avance(_fraccion: float, texto: str) -> None:
+        if not dicho or dicho[-1] != texto:
+            dicho.append(texto)
+            progreso(texto)
+    return avance
+
+
+def parar_agente(avance=None) -> str | None:
+    """Pide al agente en marcha que termine, y espera a que se vaya él Y la
+    pasada que tenga en marcha (`equipo.pasada_viva()`): el agente acaba la
+    pareja en curso antes de irse, y lo que venga después —el código nuevo, un
+    agente nuevo, borrar su Python— no puede pasarle por encima.
+
+    Se espera `ESPERA_PASADA` con una pasada en marcha, diciéndolo por
+    `avance(fracción, texto)` si se da; sin pasada, `PARAR_ESPERA`. Pasado el
+    plazo se corta: la pasada con su rclone (`matar_arbol()`) y el agente. Una
+    bisync cortada puede dejar su bloqueo puesto, así que se dice qué pareja
+    era y dónde se arregla."""
+    vivo = equipo.agente_vivo()
+    pasada = equipo.pasada_viva()
+    if vivo is None and pasada is None:
+        return None
+    pid = int((vivo or {}).get("pid", -1))
+    if vivo is not None:
+        equipo.pedir({"pide": equipo.PIDE_PARAR})
+    inicio = time.monotonic()
+    esperado = False
+    while True:
+        vivo, pasada = equipo.agente_vivo(), equipo.pasada_viva()
+        if vivo is None and pasada is None:
+            break
+        pasado = time.monotonic() - inicio
+        if pasada is None and pasado >= PARAR_ESPERA or pasado >= ESPERA_PASADA:
+            break
+        if pasada is not None:
+            esperado = True
+            if avance is not None:
+                minutos = max(1, round((ESPERA_PASADA - pasado) / 60))
+                avance(pasado / ESPERA_PASADA,
+                       f"Esperando a que acabe la pasada de «{pasada.get('pareja')}» en "
+                       f"{pasada.get('unidad')}; como mucho {minutos} min más.")
+        time.sleep(0.5)
+    quien = f"Agente anterior (pid {pid})" if pid > 0 else "El agente anterior"
+    if vivo is None and pasada is None:
+        return f"{quien} detenido" + (" tras acabar su pasada." if esperado else ".")
+    partes = []
+    if pasada is not None:
+        try:
+            matar_arbol(int(pasada.get("pid")))
+        except (TypeError, ValueError):
+            pass
+        partes.append(f"La pasada de «{pasada.get('pareja')}» en {pasada.get('unidad')} "
+                      f"no acababa en {ESPERA_PASADA / 60:g} min y se ha cortado: si "
+                      f"esa pareja falla la próxima vez, «Reparación» en su ventana "
+                      f"quita el bloqueo.")
+    if vivo is not None:
+        penwatch.kill_pid(pid)
+        partes.insert(0, f"{quien} terminado a la fuerza.")
+    return " ".join(partes)
 
 
 def _runtime_de(interprete: Path | str) -> str | None:
@@ -597,12 +669,13 @@ def podar(prep: Preparado) -> None:
 
 def activar(prep: Preparado, elegidas: dict[str, tuple[str, str]], espera: float,
             arrancar_ya: bool = True, raiz: equipo.Unidad | None = None,
-            pedir_al_iniciar: bool | None = None) -> list[str]:
+            pedir_al_iniciar: bool | None = None, avance=None) -> list[str]:
     """Los pasos «Unidades» y «Arranque» de una vez: configuración (con la raíz
     del equipo, si la hay), penwatch fuera, registro, el acceso del menú,
-    `instalacion.json`, versiones viejas fuera y arranque."""
+    `instalacion.json`, versiones viejas fuera y arranque. `avance`, el de
+    `parar_agente()`."""
     msgs = []
-    parado = parar_agente()
+    parado = parar_agente(avance)
     if parado:
         msgs.append(parado)
     msgs.append(aplicar_unidades(elegidas, espera, raiz, pedir_al_iniciar))
@@ -719,7 +792,7 @@ def actualizar(progreso=None, origen: Path | None = None) -> list[str]:
                            "nada que actualizar. Instálalo con el asistente.")
     prep = preparar(progreso, origen)
     msgs = [f"Código del agente en {prep.codigo}", f"Su Python: {prep.python}"]
-    parado = parar_agente()
+    parado = parar_agente(decirlo(progreso))
     if parado:
         msgs.append(parado)
     msgs.append(registrar(prep))
@@ -746,12 +819,12 @@ def instalar(elegidas: dict[str, tuple[str, str]] | None = None,
             *activar(prep, elegidas, espera)]
 
 
-def desinstalar() -> list[str]:
+def desinstalar(progreso=None) -> list[str]:
     """Quita el registro, el acceso del menú, el agente y su Python. Nunca toca
     una unidad ni la raíz del equipo: lo que tuviera a medias el agente sigue en
-    ellas, como las dejó."""
+    ellas, como las dejó (y la pasada en marcha se espera, `parar_agente()`)."""
     msgs = []
-    parado = parar_agente()
+    parado = parar_agente(decirlo(progreso))
     if parado:
         msgs.append(parado)
     msgs.append(desregistrar())

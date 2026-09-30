@@ -103,6 +103,7 @@ importar nada del proyecto.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import math
 import os
 import queue
@@ -221,7 +222,11 @@ def python(ventana: bool = False) -> str:
 
 
 def _opciones_hijo(cwd: Path, separado: bool = False) -> dict:
-    kwargs: dict = {"stdin": subprocess.DEVNULL, "cwd": str(cwd), "close_fds": True}
+    # Los `.pyc` de sus hijos, en la carpeta del agente: los `__pycache__` de
+    # una raíz no entran en su huella (`huella()`), así que Python no debe
+    # leerlos de ahí. Y de paso no se escribe en la unidad.
+    kwargs: dict = {"stdin": subprocess.DEVNULL, "cwd": str(cwd), "close_fds": True,
+                    "env": {**os.environ, "PYTHONPYCACHEPREFIX": str(equipo.DIR / "pycache")}}
     if IS_WIN:
         kwargs["creationflags"] = penwatch.CREATE_NO_WINDOW | (
             penwatch.CREATE_NEW_PROCESS_GROUP if separado else 0)
@@ -236,6 +241,61 @@ def _opciones_hijo(cwd: Path, separado: bool = False) -> dict:
 
 def app(raiz: Path) -> Path:
     return raiz / APP_SUBDIR
+
+
+# Lo que la huella deja fuera: lo que cambia con el uso y no se ejecuta.
+HUELLA_SIN_CARPETAS = frozenset({"state", "logs", "filters", "keys", "runtime", "bin"})
+HUELLA_SIN_FICHEROS = frozenset({"sync_config.toml", Path(penwatch.CONTROL_FILE).name})
+HUELLA_SIN_EXTENSIONES = frozenset({".ico"})
+
+
+def huella(raiz: Path) -> str | None:
+    """sha256 de lo que el agente ejecutaría de esa raíz, o None si no se lee.
+
+    El id del fichero de control lo lleva escrito la unidad: copiarlo junto a
+    un `.prdrive/` modificado bastaría para que el agente ejecutara ese código
+    como si fuera el de la unidad que se atendió. Así que al decir que sí se
+    apunta esta huella (`equipo.Unidad.codigo`), y con otra se vuelve a
+    preguntar. No hay firmas de las que fiarse: tras actualizar la unidad se
+    pregunta una vez más, y es lo esperado.
+
+    Entra todo `.prdrive/` menos lo que cambia con el uso: `state/`, `logs/`,
+    `filters/`, `keys/`, `runtime/` (el agente usa su propio Python),
+    `sync_config.toml` (lo edita la ventana), el fichero de control y los
+    iconos. Todo lo demás cuenta, también lo desconocido: con la carpeta de la
+    unidad en `sys.path`, un `json.py` suelto se importaría antes que el de
+    verdad. Los `__pycache__` no, porque los hijos del agente los buscan en su
+    carpeta (`PYTHONPYCACHEPREFIX`, `_opciones_hijo()`). Y de `bin/`, los rclone
+    que correrían en este equipo (`model.carpetas_bin()`). `rclone.conf` entra:
+    la opción `ssh` de un remoto sftp es una orden."""
+    base = app(raiz)
+    rutas: list[Path] = []
+    try:
+        for carpeta, carpetas, ficheros in os.walk(base):
+            rel = Path(carpeta).relative_to(base)
+            arriba = rel == Path(".")
+            carpetas[:] = [c for c in carpetas if c != "__pycache__"
+                           and not (arriba and c in HUELLA_SIN_CARPETAS)]
+            for f in ficheros:
+                if arriba and f in HUELLA_SIN_FICHEROS:
+                    continue
+                if Path(f).suffix.lower() in HUELLA_SIN_EXTENSIONES:
+                    continue
+                rutas.append(rel / f)
+        for carpeta in model.carpetas_bin(base):
+            rclone = carpeta / model.rclone_name()
+            if rclone.is_file():
+                rutas.append(rclone.relative_to(base))
+        h = hashlib.sha256()
+        for rel in sorted(set(rutas), key=lambda r: r.as_posix()):
+            ruta = base / rel
+            h.update(f"{rel.as_posix()}\0{ruta.stat().st_size}\0".encode("utf-8"))
+            with ruta.open("rb") as f:
+                for trozo in iter(lambda: f.read(1 << 20), b""):
+                    h.update(trozo)
+    except (OSError, ValueError):
+        return None
+    return h.hexdigest()
 
 
 def estado_de(raiz: Path) -> Path:
@@ -459,6 +519,11 @@ class Conexion:
     # ventana se vuelve enseguida, sin la `GRACIA` que se da a un servicio que
     # la ventana arrancara por su cuenta.
     reanudar: bool = False
+    # Su huella al conectarla (`huella()`), y si no es la que se aceptó: una
+    # unidad de la lista con otro código se trata como una que no lo está
+    # hasta que se vuelva a decir que sí.
+    huella: str | None = None
+    cambiada: bool = False
 
 
 @dataclass
@@ -499,6 +564,8 @@ class Agente:
     entorno: pl.Entorno = field(default_factory=pl.Entorno)
     entorno_leido: float = -math.inf
     pasada: Pasada | None = None
+    # La de un agente anterior que sigue viva al arrancar (`pasada.json`).
+    heredada: dict | None = field(default_factory=equipo.pasada_viva)
     urgentes: list[tuple[str, str]] = field(default_factory=list)
     pausado: bool = False
     terminar: bool = False
@@ -554,7 +621,7 @@ class Agente:
         self._leer_entorno(ahora)
         self._mirar_version(ahora)
         decision = None
-        if self.pasada is None and not self.terminar:
+        if self.pasada is None and not self.terminar and not self._heredada():
             decision = self._decidir(ahora)
         self._escribir_estado()
         return decision
@@ -666,6 +733,11 @@ class Agente:
         unidad = self.ajustes.unidades.get(uid)
         nombre = nombre_de(raiz, uid, unidad.nombre if unidad else "")
         con = Conexion(uid, raiz, nombre, ahora)
+        # Un lock con nuestro pid es de la conexión anterior (se desenchufó y no
+        # se escribe en una unidad que no está): si no se la vuelve a servir,
+        # se borra (`_soltar`); si sí, se reescribe (`_tomar`). De una que no
+        # está en la lista no se lee más que su id y su nombre.
+        con.soltando = unidad is not None and self._lock_es_nuestro(con)
         self.conexiones[uid] = con
         desbloqueo = self.desbloqueos.pop(uid, None)
         # Cada conexión empieza de cero, como el servicio que se arrancaba al
@@ -675,6 +747,20 @@ class Agente:
         if unidad is None:
             self._preguntar(con, ahora)
             return
+        if not unidad.es_raiz:
+            con.huella = huella(raiz)
+            if not unidad.codigo and con.huella:
+                # Atendida sin haberla visto (el asistente, `atender ID` con
+                # ella fuera): la huella se apunta la primera vez que se conecta.
+                unidad = replace(unidad, codigo=con.huella)
+                self._guardar(self.ajustes.con_unidad(unidad))
+                diario(f"{nombre}: apuntada la huella de su código")
+            elif con.huella != unidad.codigo:
+                con.cambiada = True
+                diario(f"{nombre}: su código no es el que tenía cuando se atendió; "
+                       f"no se ejecuta nada suyo hasta que se vuelva a decir que sí")
+                self._preguntar(con, ahora)
+                return
         if unidad.nombre != nombre:
             self._guardar(self.ajustes.con_unidad(replace(unidad, nombre=nombre)))
         diario(f"{nombre}: " + ("raíz de este equipo" if unidad.es_raiz else "conectada")
@@ -741,18 +827,25 @@ class Agente:
 
     def _preguntar(self, con: Conexion, ahora: float) -> None:
         espera = self.ajustes.espera_unidad_nueva
-        avisar(f"Se ha conectado {con.nombre}", "¿Atenderla en este equipo?")
+        if con.cambiada:
+            avisar(f"{con.nombre}: su código ha cambiado",
+                   "¿Seguir atendiéndola en este equipo? Hasta que contestes, no se "
+                   "ejecuta nada suyo.", True)
+        else:
+            avisar(f"Se ha conectado {con.nombre}", "¿Atenderla en este equipo?")
         if not hay_pantalla():
             con.respuesta = pl.AHORA_NO
-            diario(f"{con.nombre} ({con.id[:8]}) no está en la lista y no hay entorno "
-                   f"gráfico donde preguntar: cuenta como «Ahora no». Para atenderla: "
-                   f"agente.py atender {con.id}")
+            diario(f"{con.nombre} ({con.id[:8]}) "
+                   + ("tiene otro código" if con.cambiada else "no está en la lista")
+                   + f" y no hay entorno gráfico donde preguntar: cuenta como «Ahora "
+                     f"no». Para atenderla: agente.py atender {con.id}")
             return
         con.pregunta = pl.Pregunta(con.id, ahora, espera)
         try:
             con.hijo = lanzar([python(ventana=True), str(SCRIPT_DIR / "agente.py"),
                                "pregunta", "--nombre", con.nombre,
-                               "--segundos", str(int(espera))],
+                               "--segundos", str(int(espera)),
+                               *(["--cambiada"] if con.cambiada else [])],
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                               **_opciones_hijo(equipo.DIR))
         except OSError as e:
@@ -782,9 +875,21 @@ class Agente:
                        f"conectada. Para atenderla: agente.py atender {con.id}")
 
     def _atender(self, con: Conexion) -> None:
+        """El sí: la unidad entra en la lista con la huella de su código de
+        ahora. Si ya estaba (su código había cambiado), conserva su modo."""
         con.respuesta = None
+        codigo = huella(con.raiz) or ""
+        con.huella = codigo or None
+        antes = self.ajustes.unidades.get(con.id)
+        if antes is not None:
+            con.cambiada = False
+            self._guardar(self.ajustes.con_unidad(replace(antes, codigo=codigo)))
+            diario(f"{con.nombre}: se sigue atendiendo, con su código de ahora")
+            if antes.modo == equipo.UI:
+                self._abrir_ventana(con)
+            return
         self._guardar(self.ajustes.con_unidad(
-            equipo.Unidad(con.id, equipo.MODO_AL_ATENDER, con.nombre)))
+            equipo.Unidad(con.id, equipo.MODO_AL_ATENDER, con.nombre, codigo=codigo)))
         diario(f"{con.nombre} añadida a la lista (modo {equipo.MODO_AL_ATENDER})")
 
     def _guardar(self, ajustes: equipo.Ajustes) -> None:
@@ -828,7 +933,8 @@ class Agente:
 
     def _sirve(self, con: Conexion) -> bool:
         unidad = self.ajustes.unidades.get(con.id)
-        return unidad is not None and unidad.modo in (equipo.DAEMON, equipo.SYNC)
+        return unidad is not None and not con.cambiada \
+            and unidad.modo in (equipo.DAEMON, equipo.SYNC)
 
     def _cargar_servicio(self, con: Conexion) -> None:
         """Relee las parejas y el intervalo si cambió el TOML o la memoria del
@@ -881,10 +987,13 @@ class Agente:
             parar = stop.exists()
         except OSError:
             parar = False
-        if parar and not ocupada:
+        otro = self._otro_servicio(con)
+        if parar and not ocupada and otro is None:
             # Lo que hace runsync al abrir su ventana (o con --auto, o con
-            # cualquier orden pasada a sync.py): acabada la pareja en curso, se
-            # suelta el lock y se borra el stop. Ya no se sale: se hace pausa.
+            # cualquier orden pasada a sync.py, o su servicio al arrancar):
+            # acabada la pareja en curso, se suelta el lock y se borra el stop.
+            # Ya no se sale: se hace pausa. Con otro servicio vivo en el lock, el
+            # stop es para ESE: borrarlo lo dejaría corriendo.
             self._soltar(con)
             stop.unlink(missing_ok=True)
             con.pausa = ahora
@@ -893,7 +1002,6 @@ class Agente:
         ventana = penwatch._vivo_aqui(con.raiz, penwatch.UI_LOCK_REL) is not None
         if ventana:
             con.pausa = ahora
-        otro = self._otro_servicio(con)
         if otro is not None and con.lock is not None:
             con.lock = None                 # el lock ya es de otro
         self._cargar_servicio(con)
@@ -922,6 +1030,8 @@ class Agente:
             return "preguntando si atenderla"
         if con.respuesta == pl.AHORA_NO:
             return "«Ahora no» en esta conexión"
+        if con.cambiada:
+            return "su código ha cambiado desde que se atendió"
         unidad = self.ajustes.unidades.get(con.id)
         if unidad is None:
             return "sin atender"
@@ -932,13 +1042,29 @@ class Agente:
         return info.get("pid") == os.getpid() and info.get("host") == HOST
 
     def _tomar(self, con: Conexion) -> None:
+        """Se hace servicio de la raíz, si nadie vivo lo es.
+
+        Mirar y escribir son UN paso (`store.tomar_registro()`, O_EXCL), y el
+        servicio de runsync toma el mismo fichero igual (`runsync.tomar_lock()`):
+        de los dos que llegan a la vez, solo uno lo crea y el otro se aparta.
+        Mirar primero y escribir después dejaba que los dos se creyeran el
+        servicio. Un runsync de antes todavía escribe sin mirar: lo que queda es
+        la pareja en curso, y en la vuelta siguiente el agente ve su lock y se
+        aparta (`_otro_servicio`)."""
         unidad = self.ajustes.unidades[con.id]
         datos = {"pid": os.getpid(), "host": HOST, "started": store.stamp(),
                  "pairs": [p.nombre for p in con.servicio.parejas],
                  "interval_min": con.servicio.minutos, "agente": True,
                  "modo": unidad.modo}
         destino = en_la_raiz(con.raiz, con.raiz / penwatch.DAEMON_LOCK_REL)
-        if destino is not None and store.write_json(destino, datos):
+        if destino is None:
+            return
+        tomado, otro = store.tomar_registro(destino, datos, equipo.vivo_aqui)
+        if tomado is False and otro and otro.get("pid") == os.getpid() \
+                and otro.get("host") == HOST:
+            # El nuestro, que no se pudo borrar al soltarlo (`soltando`).
+            tomado = store.write_json(destino, datos)
+        if tomado:
             con.lock = datos
             con.soltando = False        # el fichero vuelve a ser uno vivo
             dlog(con.raiz, f"servicio (agente del equipo, pid {os.getpid()}) atendiendo: "
@@ -978,6 +1104,26 @@ class Agente:
             raices.append(pl.Raiz(con.id, con.servicio.parejas, intervalo))
         return raices
 
+    def _heredada(self) -> bool:
+        """¿Sigue viva la pasada que dejó en marcha el agente anterior? (Se fue
+        con SIGTERM al cerrar sesión, o el instalador lo terminó a la fuerza: la
+        pasada es otro proceso y sigue.) Mientras viva no se lanza otra: serían
+        dos a la vez, quizá sobre la misma pareja."""
+        if self.heredada is None:
+            return False
+        viva = equipo.pasada_viva()
+        if viva is not None:
+            texto = (f"sigue la pasada de {viva.get('pareja')} en {viva.get('unidad')} "
+                     f"que dejó en marcha el agente anterior (pid {viva.get('pid')})")
+            if self.retenido != texto:
+                diario(f"no se lanza nada: {texto}")
+                self.retenido = texto
+            return True
+        diario("ha acabado la pasada que dejó en marcha el agente anterior")
+        self.heredada = None
+        self.retenido = None
+        return False
+
     def _decidir(self, ahora: float) -> pl.Decision:
         entorno = replace(self.entorno, pausado=self.pausado)
         decision = pl.decidir(self._raices(), self.marcas, entorno, ahora,
@@ -992,6 +1138,12 @@ class Agente:
 
     def _lanzar(self, tarea: pl.Tarea, ahora: float) -> None:
         con = self.conexiones[tarea.raiz]
+        if tarea.tipo == pl.PASADA and not self._lock_es_nuestro(con):
+            # Justo antes de lanzar, otra vez: un runsync de antes escribe su
+            # lock sin mirar, y el que haya ahí es el servicio.
+            con.lock = None
+            diario(f"[{con.nombre}] el lock ya no es mío; no lanzo {tarea.pareja}")
+            return
         if tarea.urgente:
             self.urgentes = [u for u in self.urgentes if u != (tarea.raiz, tarea.pareja)]
         if tarea.tipo == pl.SONDA:
@@ -1014,8 +1166,10 @@ class Agente:
         try:
             equipo.DIR.mkdir(parents=True, exist_ok=True)
             with salida.open("wb") as f:
+                # En su propio grupo: si hay que cortarla (`install/agente.
+                # parar_agente()`, pasado su plazo), se corta con su rclone.
                 proc = lanzar(args, stdout=f, stderr=subprocess.STDOUT,
-                              **_opciones_hijo(cwd))
+                              **_opciones_hijo(cwd, separado=tarea.tipo == pl.PASADA))
         except OSError as e:
             diario(f"[{con.nombre}] no he podido lanzar {que}: {e}")
             if tarea.tipo == pl.PASADA:
@@ -1023,6 +1177,10 @@ class Agente:
                     self.marcas.get((tarea.raiz, tarea.pareja), pl.Marca()), FALLO, ahora)
             return
         self.pasada = Pasada(proc, tarea, ahora, salida, con.nombre)
+        if tarea.tipo == pl.PASADA:
+            equipo.apuntar_pasada({"pid": getattr(proc, "pid", None), "agente": os.getpid(),
+                                   "unidad": con.nombre, "pareja": tarea.pareja,
+                                   "desde": store.stamp()})
         diario(f"[{con.nombre}] {que}" + (" (a petición)" if tarea.urgente else ""))
 
     def _fin_de_pasada(self, ahora: float) -> None:
@@ -1033,6 +1191,8 @@ class Agente:
         if rc is None:
             return
         self.pasada = None
+        if store.read_json(equipo.pasada_json()).get("agente") == os.getpid():
+            equipo.pasada_json().unlink(missing_ok=True)
         texto = ""
         try:
             with pasada.salida.open("rb") as f:
@@ -1378,7 +1538,7 @@ class Agente:
         (`equipo.PIDE_SERVICIO`). El de una unidad que no está en la lista ni se
         mira: de ella solo se lee su id y su nombre."""
         for con in list(self.conexiones.values()):
-            if con.id not in self.ajustes.unidades:
+            if con.id not in self.ajustes.unidades or con.cambiada:
                 continue
             for p in equipo.recoger(estado_de(con.raiz) / equipo.BUZON_SERVICIO):
                 if p.get("pide") not in equipo.PIDE_SERVICIO:
@@ -1410,7 +1570,7 @@ class Agente:
             con = self.conexiones.get(uid)
             if con is None:
                 diario(f"atender {uid[:8]}: no está conectada; se atiende enchufada")
-            elif uid in self.ajustes.unidades:
+            elif uid in self.ajustes.unidades and not con.cambiada:
                 diario(f"atender {con.nombre}: ya estaba en la lista")
             else:
                 if con.hijo is not None and con.hijo.poll() is None:
@@ -1427,8 +1587,17 @@ class Agente:
                 return
             nombre = p.get("nombre") if isinstance(p.get("nombre"), str) else ""
             unidad = self.ajustes.unidades.get(uid) or equipo.Unidad(uid, modo, nombre)
-            self._guardar(self.ajustes.con_unidad(
-                replace(unidad, modo=modo, nombre=unidad.nombre or nombre)))
+            unidad = replace(unidad, modo=modo, nombre=unidad.nombre or nombre)
+            con = self.conexiones.get(uid)
+            if con is not None and (uid not in self.ajustes.unidades or con.cambiada):
+                # Pedido a mano con ella enchufada: es el sí, con su código de ahora.
+                if con.hijo is not None and con.hijo.poll() is None:
+                    con.hijo.terminate()
+                con.pregunta, con.hijo, con.respuesta = None, None, None
+                con.huella = huella(con.raiz)
+                con.cambiada = False
+                unidad = replace(unidad, codigo=con.huella or "")
+            self._guardar(self.ajustes.con_unidad(unidad))
             diario(f"{unidad.nombre or nombre or uid[:8]}: modo {modo}")
         elif que == equipo.PIDE_RAIZ:
             # Lo que pide el asistente vuelto a pasar con el agente instalado:
@@ -1505,8 +1674,9 @@ class Agente:
         bloqueada se desbloquea antes, y su ventana sale al verla abierta."""
         unidad = self.ajustes.unidades.get(uid)
         con = self.conexiones.get(uid)
-        if unidad is None:
-            diario(f"abrir {uid[:8]!r}: no está en la lista; no se ejecuta nada suyo")
+        if unidad is None or (con is not None and con.cambiada):
+            diario(f"abrir {uid[:8]!r}: no está en la lista, o su código ha cambiado; "
+                   f"no se ejecuta nada suyo")
         elif con is not None:
             self._lanzar_ventana(con)
         elif unidad.cifrada and uid not in self.ausentes:
@@ -1541,7 +1711,8 @@ class Agente:
                              "modo": unidad.modo if unidad else None,
                              "atendida": con.lock is not None,
                              "motivo": con.motivo,
-                             "en_lista": unidad is not None,
+                             "en_lista": unidad is not None and not con.cambiada,
+                             "cambiada": con.cambiada,
                              "ahora_no": con.respuesta == pl.AHORA_NO,
                              "preguntando": con.pregunta is not None,
                              "error": con.error,
@@ -2038,7 +2209,7 @@ def cmd_actualizar(_args: argparse.Namespace) -> int:
 
 def cmd_pregunta(args: argparse.Namespace) -> int:
     from ui import tk_agente
-    return tk_agente.main(args.nombre, args.segundos)
+    return tk_agente.main(args.nombre, args.segundos, args.cambiada)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -2089,6 +2260,7 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("pregunta", help=argparse.SUPPRESS)
     p.add_argument("--nombre", required=True)
     p.add_argument("--segundos", type=int, default=int(equipo.ESPERA_UNIDAD_NUEVA))
+    p.add_argument("--cambiada", action="store_true")
     p.set_defaults(func=cmd_pregunta)
     args = ap.parse_args(argv)
     return args.func(args)

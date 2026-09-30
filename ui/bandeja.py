@@ -217,7 +217,10 @@ def _unidades(resumen: Mapping[str, Any]) -> list[Entrada]:
         if u.get("en_lista"):
             entradas.append(Entrada(f"Abrir {nombre}", _pide(equipo.PIDE_ABRIR, id=uid)))
         elif u.get("ahora_no") or u.get("preguntando"):
-            entradas.append(Entrada(f"{nombre}, conectada · Atender…",
+            # Con otro código que el aceptado (`agente.huella()`), se dice: el
+            # sí de ahora es a ese código.
+            que = "código cambiado" if u.get("cambiada") else "conectada"
+            entradas.append(Entrada(f"{nombre}, {que} · Atender…",
                                     _pide(equipo.PIDE_ATENDER, id=uid)))
     return entradas
 

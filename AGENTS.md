@@ -1360,6 +1360,41 @@ whatever you build that only a real host can prove.
   - **«Actualizar» skips a ghost**: `install/agente.actualizar_raices()` treats
     an encrypted root whose `.hc` is free (`vestibulo.retenido() is False`) as
     locked, like the agent does.
+  - **One service per root**: the agent (`Agente._tomar()`) and runsync's
+    service (`runsync.tomar_lock()`) both take `daemon.lock.json` with
+    `store.tomar_registro()` (O_EXCL + compare-and-delete), never a
+    check-then-write. runsync's service finding the agent's lock touches
+    `daemon.stop` and waits (`ESPERA_AGENTE`) for it to let go; the launcher's
+    `stop_previous_daemon()` no longer deletes the **agent's** lock on timeout;
+    the agent leaves a `daemon.stop` alone while another live service holds the
+    lock (it is for that one), re-checks the lock is its own right before each
+    pass, and a fresh connection clears a lock with its own pid left by the
+    previous one. A runsync service steps down when a live record of someone
+    else appears. What remains: a drive with an older runsync still writes
+    without looking, and that overlaps at most the pair in flight.
+  - **Stopping the agent waits for its pass**: each pass runs in its own
+    session / process group and is recorded in `equipo.pasada_json()` (pid,
+    drive, pair, and the boot time: `store.arranque_del_sistema()`, so a pid
+    from another boot is ignored). `install/agente.parar_agente(avance)` waits
+    for the agent AND that pass up to `ESPERA_PASADA` (10 min), saying so
+    (`avance(fracción, texto)`; the wizard shows it under the bar, the CLI
+    prints it once per text), then kills the pass with its rclone
+    (`matar_arbol()`: `killpg`, `taskkill /T`) and says which pair may need
+    «Reparación». A new agent launches nothing while the previous one's pass is
+    alive (`Agente.heredada`).
+  - **The id is not a credential**: «Atender» records `agente.huella(raiz)` —
+    sha256 of everything in `.prdrive/` except what changes with use (`state/`,
+    `logs/`, `filters/`, `keys/`, `runtime/`, `sync_config.toml`, the control
+    file, `.ico`, `__pycache__`) plus this host's rclone — in
+    `equipo.Unidad.codigo`. Another hash on connect = `Conexion.cambiada`: not
+    served, no window, the tray offers «…, código cambiado · Atender…», and
+    `agente.py pregunta --cambiada` asks again; the yes keeps the mode. An empty
+    `codigo` (listed by the wizard or `atender ID` unplugged) is recorded on the
+    first connection. Children get `PYTHONPYCACHEPREFIX` in `equipo.DIR`, so a
+    drive's `__pycache__` is never read. Every update of a drive therefore asks
+    once. **Not covered:** rclone flags in `sync_config.toml` (e.g.
+    `--password-command`), which the window edits and the hash cannot pin, and
+    the travelling VeraCrypt the vestibule of a listed drive opens.
 - **Dependency rules:** the agent imports penwatch, never the reverse; penwatch
   still imports nothing of the project (`test_install_agente.py` walks its AST).
   `agente.py` is in `build_installer.DATOS_FICHEROS` but NOT in
@@ -1932,7 +1967,7 @@ keeps the target's existing header.
   `bandeja_windows.Api`, `agente.hilo()` / `buscar_version()` / `ejecutar()` /
   `cache_version()`, `runsync.pedir_reanudar()` / `agente_sirve()`,
   `watch.pedir_al_agente()`, `agente.arrancar_agente()`, `tk_equipo.escritorio()`,
-  `install.pintar_iconos`,
+  `install.pintar_iconos`, `install.agente.matar_arbol()`,
   the Linux tray's `conectar` / `conectar_sistema`, and `equipo.DIR`. Keep new
   ones in that shape.
 

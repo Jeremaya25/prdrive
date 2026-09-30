@@ -356,7 +356,7 @@ c("  y sin menú no dice nada", ia.quitar_menu(), None)
 
 # Desinstalar nunca borra la raíz, y lo dice.
 ia.desregistrar = lambda: "sin registro"
-ia.parar_agente = lambda: None
+ia.parar_agente = lambda avance=None: None
 msgs = ia.desinstalar()
 c("desinstalar dice dónde sigue la raíz",
   any(str(nueva) in m and "sigue" in m for m in msgs), True)

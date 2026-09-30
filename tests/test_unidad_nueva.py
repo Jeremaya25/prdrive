@@ -23,6 +23,7 @@ import os
 from _harness import Checks
 
 import _agente_falso as F
+import agente
 from common import equipo, planificador as pl
 
 c = Checks("agente: una unidad nueva")
@@ -82,8 +83,9 @@ c("  ni se añade a la lista", UID in equipo.leer_ajustes().unidades, False)
 # «Atender» desde la bandeja, mientras sigue conectada.
 equipo.pedir({"pide": equipo.PIDE_ATENDER, "id": UID})
 F.vueltas(ag, 1)
-c("el «Atender» de la bandeja la añade a la lista",
-  equipo.leer_ajustes().unidades.get(UID), equipo.Unidad(UID, equipo.DAEMON, "PRDRIVE-2"))
+c("el «Atender» de la bandeja la añade a la lista, con la huella de su código",
+  equipo.leer_ajustes().unidades.get(UID),
+  equipo.Unidad(UID, equipo.DAEMON, "PRDRIVE-2", codigo=agente.huella(RAIZ)))
 F.vueltas(ag, 1)
 c("  y la atiende enseguida", F.lock(RAIZ).get("pid"), os.getpid())
 c("  ahora sí con sus rutas: su sync.py", len(F.pasadas(RAIZ)), 1)

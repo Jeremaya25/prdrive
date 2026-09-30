@@ -89,6 +89,10 @@ def lock_json() -> Path:
     return DIR / "agente.lock.json"
 
 
+def pasada_json() -> Path:
+    return DIR / "pasada.json"
+
+
 def buzon() -> Path:
     return DIR / "agente.pide"
 
@@ -130,6 +134,13 @@ class Unidad:
     # él, `ruta` es donde se monta —la letra `P:\` en Windows, una carpeta fija
     # como `~/PRDRIVE` en Linux— y la raíz solo está mientras está abierto.
     contenedor: str = ""
+    # La huella del código que tenía la unidad cuando se dijo que sí
+    # (`agente.huella()`, sha256 en hex). Con otra, se vuelve a preguntar: el id
+    # lo lleva escrito la unidad y se copia, así que no basta para ejecutar lo
+    # que traiga. Vacía: atendida sin haberla visto (el asistente, `atender ID`
+    # desenchufada); se apunta la primera vez que se conecta. Las raíces del
+    # equipo no la llevan: se encuentran por su ruta, no por lo que se enchufa.
+    codigo: str = ""
 
     @property
     def es_raiz(self) -> bool:
@@ -201,8 +212,10 @@ def desde_dict(datos: Mapping[str, Any]) -> Ajustes:
             nombre = u.get("nombre") if isinstance(u.get("nombre"), str) else ""
             ruta = u.get("ruta") if isinstance(u.get("ruta"), str) else ""
             hc = u.get("contenedor") if isinstance(u.get("contenedor"), str) else ""
+            codigo = u.get("codigo") if isinstance(u.get("codigo"), str) else ""
             unidades[uid.strip()] = Unidad(uid.strip(), modo, nombre, ruta.strip(),
-                                           hc.strip() if ruta.strip() else "")
+                                           hc.strip() if ruta.strip() else "",
+                                           codigo.strip())
     m = datos.get("moderacion") if isinstance(datos.get("moderacion"), dict) else {}
     fabrica = Politica()
     politica = replace(
@@ -228,7 +241,8 @@ def a_dict(aj: Ajustes) -> dict:
     return {
         "unidades": {u.id: {"modo": u.modo, "nombre": u.nombre,
                             **({"ruta": u.ruta} if u.ruta else {}),
-                            **({"contenedor": u.contenedor} if u.contenedor else {})}
+                            **({"contenedor": u.contenedor} if u.contenedor else {}),
+                            **({"codigo": u.codigo} if u.codigo else {})}
                      for u in aj.unidades.values()},
         "espera_unidad_nueva": aj.espera_unidad_nueva,
         "moderacion": {"con_bateria": aj.politica.con_bateria,
@@ -283,35 +297,34 @@ def agente_vivo() -> dict | None:
     return info if pid_alive(pid) else None
 
 
-ESPERA_REGISTRO = 1.0      # lo que se le da a quien acaba de crear el lock para llenarlo
+def apuntar_pasada(datos: dict) -> bool:
+    """La pasada que el agente acaba de lanzar (`pid`, `unidad`, `pareja`), en
+    `pasada.json`. Es un proceso aparte: si el agente se va —SIGTERM al cerrar
+    sesión, o el instalador lo termina—, la pasada sigue, y quien venga detrás
+    tiene que saber que está ahí antes de lanzar otra o de sustituir el código
+    (`pasada_viva()`)."""
+    return store.write_json(pasada_json(), {**datos, "host": HOST,
+                                            "arranque": store.arranque_del_sistema()})
 
 
-def _leer_lock() -> dict | None:
-    """El lock tal como está: None si no hay, {} si hay y no se entiende. Quien
-    lo toma lo crea y LUEGO lo llena, así que uno vacío puede ser de otro agente
-    a medio escribir: se le da `ESPERA_REGISTRO`."""
-    import json
-    import time
-    limite = time.monotonic() + ESPERA_REGISTRO
-    while True:
-        try:
-            texto = lock_json().read_text(encoding="utf-8")
-        except FileNotFoundError:
-            return None
-        except OSError:
-            texto = ""
-        try:
-            info = json.loads(texto)
-            if isinstance(info, dict):
-                return info
-        except ValueError:
-            pass
-        if time.monotonic() >= limite:
-            return {}
-        time.sleep(0.05)
+def pasada_viva() -> dict | None:
+    """El registro de `pasada.json` si esa pasada sigue viva EN ESTE EQUIPO, o None.
+
+    Un pid de otro arranque del sistema no dice nada (tras reiniciar se
+    reutilizan), así que se compara también cuándo arrancó el sistema."""
+    info = store.read_json(pasada_json())
+    if not vivo_aqui(info):
+        return None
+    antes, ahora = info.get("arranque"), store.arranque_del_sistema()
+    if isinstance(antes, (int, float)) and ahora is not None \
+            and abs(antes - ahora) > store.HOLGURA_ARRANQUE:
+        return None
+    return info
 
 
-def _vivo(info: dict | None) -> bool:
+def vivo_aqui(info: dict | None) -> bool:
+    """¿Es el registro de un proceso vivo DE ESTE EQUIPO? Un pid muerto, de otro
+    equipo o ilegible es un resto."""
     if not info or info.get("host") != HOST:
         return False
     try:
@@ -324,27 +337,12 @@ def tomar_lock(datos: dict) -> dict | None:
     """Apunta que este proceso es el agente de este equipo, si no lo es otro.
     None si lo ha tomado; si no, el registro del agente que lo es.
 
-    Mirar y escribir son UN paso (`store.crear_exclusivo()`): de dos arranques a
+    Mirar y escribir son UN paso (`store.tomar_registro()`): de dos arranques a
     la vez —la tarea del inicio de sesión y el acceso del menú, por ejemplo—
-    solo uno lo crea, y el otro se va. Un resto (pid muerto, otro equipo,
-    ilegible) se retira comparando antes de borrar y se vuelve a intentar una
-    vez. Sin poder escribir en la carpeta del agente, sigue: no hay dónde
-    apuntar a otro, y así es como era antes."""
-    import json
-    texto = json.dumps(datos, ensure_ascii=False, indent=1).encode("utf-8")
-    ultimo: dict | None = None
-    for intento in range(2):
-        creado = store.crear_exclusivo(lock_json(), texto)
-        if creado is not False:
-            return None
-        ultimo = _leer_lock()
-        if ultimo is None:
-            continue                    # se soltó entre medias: otra vez
-        if _vivo(ultimo):
-            return ultimo
-        if not intento:
-            store.retirar_si_sigue(lock_json(), ultimo, _leer_lock)
-    return ultimo or {}
+    solo uno lo crea, y el otro se va. Sin poder escribir en la carpeta del
+    agente, sigue: no hay dónde apuntar a otro, y así es como era antes."""
+    tomado, otro = store.tomar_registro(lock_json(), datos, vivo_aqui)
+    return None if tomado is not False else (otro or {})
 
 
 def leer_estado() -> dict:

@@ -17,6 +17,10 @@ bandeja.
 
 Antes del sí no se ejecuta nada de la unidad, y esta ventana tampoco: el nombre
 le llega por argumento, leído por el agente de `state/fleet.json`.
+
+Con `cambiada`, la unidad ya estaba en la lista pero su código no es el que se
+aceptó (`agente.huella()`): se vuelve a preguntar, diciéndolo. Tras actualizar
+la unidad es lo esperado; con una unidad que no se ha actualizado, no.
 """
 
 from __future__ import annotations
@@ -33,7 +37,22 @@ def cuenta(segundos: int) -> str:
             "sola y cuenta como «Ahora no».")
 
 
-def construir(root, nombre: str, segundos: int, responder) -> dict:
+def texto(cambiada: bool) -> tuple[str, str]:
+    """El título (con `{nombre}`) y la explicación de la pregunta."""
+    if cambiada:
+        return ("{nombre}: su código ha cambiado",
+                "Esta unidad ya estaba en la lista, pero su programa no es el que "
+                "había cuando dijiste que sí. Si la acabas de actualizar, es eso: "
+                "atiéndela. Si no, puede que no sea tu unidad: el agente no ejecuta "
+                "nada suyo hasta que contestes.")
+    return ("Se ha conectado {nombre}",
+            "¿Atender esta unidad en este equipo? Si dices que sí, el agente "
+            "la sincroniza en segundo plano cada vez que la enchufes; el modo "
+            "se cambia después en sus ajustes.")
+
+
+def construir(root, nombre: str, segundos: int, responder,
+              cambiada: bool = False) -> dict:
     """Pinta la pregunta dentro de `root` y devuelve sus piezas vivas (para la
     cuenta atrás y para los tests). `responder(código)` cierra con esa
     respuesta."""
@@ -43,10 +62,8 @@ def construir(root, nombre: str, segundos: int, responder) -> dict:
 
     marco = tkui.cuerpo_visible(root, padding=(22, 20, 22, 18))
     marco.columnconfigure(0, weight=1)
-    tkui.cabecera(marco, f"Se ha conectado {nombre}",
-                  "¿Atender esta unidad en este equipo? Si dices que sí, el agente "
-                  "la sincroniza en segundo plano cada vez que la enchufes; el modo "
-                  "se cambia después en sus ajustes.",
+    titulo, explicacion = texto(cambiada)
+    tkui.cabecera(marco, titulo.format(nombre=nombre), explicacion,
                   ancho=420, estilo="Dialogo.TLabel").grid(row=0, column=0, sticky="w")
 
     nota = ttk.Label(marco, text=cuenta(segundos), style="Pista.TLabel",
@@ -69,7 +86,7 @@ def construir(root, nombre: str, segundos: int, responder) -> dict:
     return {"marco": marco, "nota": nota, "atender": atender, "ahora_no": ahora_no}
 
 
-def preguntar(nombre: str, segundos: int) -> int:
+def preguntar(nombre: str, segundos: int, cambiada: bool = False) -> int:
     """Abre la ventana y espera la respuesta. Lanza si no hay Tk o pantalla."""
     import gc
     import tkinter as tk
@@ -91,7 +108,7 @@ def preguntar(nombre: str, segundos: int) -> int:
             respuesta[0] = codigo
             root.destroy()
 
-        piezas = construir(root, nombre, segundos, responder)
+        piezas = construir(root, nombre, segundos, responder, cambiada)
         root.protocol("WM_DELETE_WINDOW", lambda: responder(AHORA_NO))
         quedan = [max(0, int(segundos))]
 
@@ -123,8 +140,8 @@ def preguntar(nombre: str, segundos: int) -> int:
     return respuesta[0]
 
 
-def main(nombre: str, segundos: int) -> int:
+def main(nombre: str, segundos: int, cambiada: bool = False) -> int:
     try:
-        return preguntar(nombre, segundos)
+        return preguntar(nombre, segundos, cambiada)
     except Exception:                                   # noqa: BLE001
         return SIN_VENTANA

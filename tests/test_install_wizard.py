@@ -840,7 +840,7 @@ PREP = ia.Preparado(equipo.DIR / "agente" / "0.4.0", equipo.DIR / "runtime" / "x
                     "sello")
 ia.preparar = lambda progreso=None: preparados.append(1) or PREP
 pedir_dado = []
-ia.activar = lambda prep, elegidas, espera, raiz=None, pedir_al_iniciar=None: (
+ia.activar = lambda prep, elegidas, espera, raiz=None, pedir_al_iniciar=None, avance=None: (
     pedir_dado.append(pedir_al_iniciar)
     or activados.append((prep, elegidas, espera, raiz)) or ["Agente arrancado."])
 ia.candidatas = lambda: [ia.Candidata("u" * 32, "PRDRIVE-2", equipo.DAEMON,

@@ -313,7 +313,7 @@ def cmd_update_agente() -> int:
 
 def cmd_desinstalar_agente() -> int:
     from install import agente
-    for linea in agente.desinstalar():
+    for linea in agente.desinstalar(progreso=print):
         print(f"  {linea}")
     return 0
 

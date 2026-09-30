@@ -103,6 +103,10 @@ def write_lock(data: dict) -> None:
     store.write_json(LOCK, data)
 
 
+def _lock_mio(info: dict | None) -> bool:
+    return bool(info) and info.get("pid") == os.getpid() and info.get("host") == HOST
+
+
 def dlog(msg: str) -> None:
     """Diario del servicio. Se abre y cierra en cada línea para no mantener
     ningún descriptor abierto sobre el dispositivo (bloquearía la extracción segura)."""
@@ -360,20 +364,26 @@ def stop_previous_daemon() -> str | None:
                 f"(pid {pid}, host {info.get('host')}); limpiado.")
 
     STOP.touch()
+    que = "esta carpeta" if model.es_equipo() else "este dispositivo"
     deadline = time.monotonic() + STOP_WAIT_SECONDS
     while time.monotonic() < deadline:
         if read_lock() is None:
             # El agente residente (`agente.py`) no se va: suelta el dispositivo
             # mientras haya una ventana abierta y vuelve cuando se cierra.
             if info.get("agente"):
-                que = "esta carpeta" if model.es_equipo() else "este dispositivo"
                 return (f"El agente de este equipo deja de sincronizar {que} "
                         f"mientras la ventana esté abierta.")
             return f"Servicio anterior (pid {pid}) detenido."
         time.sleep(0.3)
 
     # No ha contestado a tiempo: probablemente está en mitad de una pareja.
-    # Se le deja el daemon.stop puesto (parará al terminarla) y se libera el lock.
+    # Se le deja el daemon.stop puesto (parará al terminarla). El lock del
+    # agente se queda: lo suelta él al acabar la pareja, y mientras lo tenga
+    # ningún servicio nuevo lo toma (`tomar_lock()` espera), así que no hay dos
+    # pasadas a la vez. El de un servicio de runsync se libera, como siempre.
+    if info.get("agente"):
+        return (f"El agente de este equipo está a mitad de una pareja; deja de "
+                f"sincronizar {que} en cuanto la acabe.")
     LOCK.unlink(missing_ok=True)
     return (f"El servicio (pid {pid}) está ocupado (¿sincronización en curso?); "
             f"parará al terminar la pareja actual.")
@@ -455,7 +465,10 @@ def daemon_cycle(pairs: list[str], lock_data: dict) -> None:
             dlog(f"[{name}] OK ({secs:.0f}s)")
     lock_data["last_cycle"] = store.stamp()
     lock_data["last_results"] = results
-    write_lock(lock_data)
+    if _lock_mio(read_lock()):
+        # Solo si sigue siendo nuestro: si el lanzador se cansó de esperar y lo
+        # borró, o lo tiene ya otro servicio, reescribirlo sería quitárselo.
+        write_lock(lock_data)
 
     # Solo cuando algo EMPIEZA a fallar. Un servicio sano no dice nada, y uno
     # que lleva horas sin red no abre una ventana cada media hora: ya lo ha
@@ -477,6 +490,40 @@ def daemon_cycle(pairs: list[str], lock_data: dict) -> None:
         dlog(f"no he podido mirar si hay versión nueva: {e}")
 
 
+ESPERA_AGENTE = 30 * 60   # s que el servicio espera a que el agente suelte la unidad
+
+
+def tomar_lock(lock_data: dict) -> dict | None:
+    """Apunta que este proceso es el servicio del dispositivo, si no lo es otro.
+    None si lo ha tomado (o si no se puede escribir: así era antes); si no, el
+    registro del servicio vivo que lo tiene.
+
+    Mirar y escribir son UN paso (`store.tomar_registro()`, O_EXCL), y el agente
+    del equipo toma el mismo fichero igual: escribirlo sin mirar dejaba que el
+    agente y este servicio se creyeran los dos el servicio y sincronizaran a la
+    vez. Si lo tiene el agente, se le pide que se aparte como lo pide el
+    lanzador (`daemon.stop`), y se espera a que acabe su pareja: se aparta y
+    borra el stop. Si lo tiene otro servicio de runsync, manda ese."""
+    limite = time.monotonic() + ESPERA_AGENTE
+    pedido = False
+    while True:
+        tomado, otro = store.tomar_registro(LOCK, lock_data, _viva_aqui)
+        if tomado is not False:
+            if pedido:
+                STOP.unlink(missing_ok=True)    # el agente se apartó por su cuenta
+            return None
+        if not (otro or {}).get("agente") or time.monotonic() >= limite \
+                or not pen_present():
+            return otro or {}
+        if not stop_requested():
+            try:
+                STOP.touch()
+                pedido = True
+            except OSError:
+                return otro
+        time.sleep(0.3)
+
+
 def daemon_main(pairs: list[str], interval_min: float) -> int:
     # Fuera del dispositivo: mantener el cwd en el USB impediría su extracción segura.
     os.chdir(tempfile.gettempdir())
@@ -489,7 +536,11 @@ def daemon_main(pairs: list[str], interval_min: float) -> int:
         "pairs": pairs,
         "interval_min": interval_min,
     }
-    write_lock(lock_data)
+    otro = tomar_lock(lock_data)
+    if otro is not None:
+        quien = "el agente de este equipo" if otro.get("agente") else "otro servicio"
+        dlog(f"servicio no iniciado: ya atiende {quien} (pid {otro.get('pid')})")
+        return 0
     dlog(f"servicio iniciado: pid={os.getpid()} host={HOST} "
          f"parejas={','.join(pairs)} intervalo={interval_min:g}m")
 
@@ -511,6 +562,14 @@ def daemon_main(pairs: list[str], interval_min: float) -> int:
                     break
                 if stop_requested():
                     reason, stop = "parada solicitada por el lanzador", True
+                    break
+                otro = read_lock()
+                if otro is not None and not _lock_mio(otro) and _viva_aqui(otro):
+                    # El lanzador se cansó de esperar, borró nuestro registro y
+                    # arrancó otro servicio, que al empezar borra el stop que
+                    # iba para nosotros: el que está ahí es el servicio, y dos
+                    # a la vez es lo que no puede ser.
+                    reason, stop = f"otro servicio (pid {otro.get('pid')}) tiene el registro", True
                     break
                 time.sleep(POLL_SECONDS)
             if stop:

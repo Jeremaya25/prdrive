@@ -20,6 +20,20 @@ arregla sin cambiar el diseño:
     letra y el id pero el `.hc` libre (H-10) cuenta como bloqueada.
   * **`install/` no importa `ui/`**: los iconos los pinta quien lanza la
     instalación (`install.pintar_iconos`).
+
+Y lo que pedía cambiar el diseño, en una segunda vuelta:
+
+  * **Un solo servicio por unidad**: el agente y el servicio de runsync toman
+    `daemon.lock.json` en UN paso (`store.tomar_registro()`); el servicio le
+    pide al agente que se aparte y espera a que suelte, el lanzador no le
+    quita el lock al agente a mitad de pareja, y el agente mira que el lock
+    sigue siendo suyo justo antes de lanzar.
+  * **Parar el agente espera a su pasada**: la pasada queda apuntada
+    (`pasada.json`), `parar_agente()` espera a que acabe, y pasado el plazo la
+    corta con su rclone; un agente nuevo no lanza nada mientras siga viva la
+    del anterior.
+  * **El id no es una credencial**: al decir que sí se apunta la huella del
+    código de la unidad (`agente.huella()`), y con otra se vuelve a preguntar.
 """
 
 import ast
@@ -173,5 +187,243 @@ install.pintar_iconos = lambda carpeta, bandeja: 1 / 0
 install.pintar(Path("y"))
 c("  pinta quien se lo diga, y un fallo no tumba la instalación", pintadas, [("x", True)])
 install.pintar_iconos = None
+
+# === Segunda vuelta ================================================================
+import subprocess  # noqa: E402
+import threading  # noqa: E402
+import time  # noqa: E402
+
+import penwatch  # noqa: E402
+import runsync  # noqa: E402
+from common import planificador as pl  # noqa: E402
+
+F.RAICES[:] = []
+
+
+def servida(uid: str, **kw):
+    """Un agente nuevo con una unidad de la lista ya conectada y atendida."""
+    r = F.unidad(uid, **kw)
+    equipo.guardar_ajustes(equipo.leer_ajustes().con_unidad(
+        equipo.Unidad(uid, equipo.DAEMON, "U", codigo=agente.huella(r) or "")))
+    F.RAICES[:] = [r]
+    a = F.nuevo()
+    F.vueltas(a, 2)
+    return a, r
+
+
+# --- un solo servicio: el agente toma el lock en un paso ---------------------------------
+S = "5" * 32
+RS = F.unidad(S, parejas=("docs",))
+equipo.guardar_ajustes(equipo.leer_ajustes().con_unidad(
+    equipo.Unidad(S, equipo.DAEMON, "S", codigo=agente.huella(RS) or "")))
+F.RAICES[:] = [RS]
+ag = F.nuevo()
+F.vueltas(ag, 1)
+# El servicio de runsync escribe su lock justo entre que el agente mira y
+# escribe: se simula haciendo que el agente no vea a nadie al mirar.
+F.otro_servicio(RS)
+ag._otro_servicio = lambda con: None
+F.vueltas(ag, 2)
+c("con otro servicio vivo en el lock al ir a escribir, el agente no lo pisa",
+  (F.lock(RS).get("pid"), ag.conexiones[S].lock, len(F.pasadas(RS))),
+  (os.getppid(), None, 0))
+del ag._otro_servicio
+(RS / penwatch.DAEMON_LOCK_REL).unlink()
+F.vueltas(ag, 1)
+c("  sin nadie, lo toma", F.lock(RS).get("pid"), os.getpid())
+F.acabar(F.pasadas(RS)[-1])
+F.vueltas(ag, 1)
+F.otro_servicio(RS)                     # un runsync de antes, escribiendo sin mirar
+antes = len(F.pasadas(RS))
+ag._lanzar(pl.Tarea(pl.PASADA, S, "docs"), F.reloj())
+c("justo antes de lanzar, si el lock ya no es suyo, no lanza",
+  (len(F.pasadas(RS)), ag.conexiones[S].lock), (antes, None))
+F.stop(RS).touch()
+F.vueltas(ag, 2)
+c("el stop de OTRO servicio no se lo come el agente: es para ese",
+  F.stop(RS).exists(), True)
+F.stop(RS).unlink()
+(RS / penwatch.DAEMON_LOCK_REL).unlink()
+
+# --- un solo servicio: el lado de runsync -------------------------------------------------
+estado_rs = tmpdir("prdrive-runsync-")
+runsync.LOCK = estado_rs / "daemon.lock.json"
+runsync.STOP = estado_rs / "daemon.stop"
+runsync.HOST = equipo.HOST
+runsync.pen_present = lambda: True
+datos = {"pid": os.getpid(), "host": equipo.HOST, "started": "x", "pairs": ["docs"]}
+c("el servicio de runsync toma el lock libre", (runsync.tomar_lock(dict(datos)),
+                                                 runsync.read_lock()["pid"]), (None, os.getpid()))
+runsync.LOCK.unlink()
+store.write_json(runsync.LOCK, {"pid": os.getppid(), "host": equipo.HOST})
+c("  con otro servicio de runsync vivo, manda ese",
+  (runsync.tomar_lock(dict(datos)) or {}).get("pid"), os.getppid())
+store.write_json(runsync.LOCK, {"pid": 2 ** 22 + 9, "host": equipo.HOST})
+c("  el de un pid muerto se retira", runsync.tomar_lock(dict(datos)), None)
+runsync.LOCK.unlink()
+
+# El agente lo tiene: se le pide que se aparte (daemon.stop) y se espera a que
+# suelte, como hace él al acabar su pareja.
+store.write_json(runsync.LOCK, {"pid": os.getppid(), "host": equipo.HOST, "agente": True})
+
+
+def agente_que_suelta():
+    limite = time.monotonic() + 5
+    while time.monotonic() < limite and not runsync.STOP.exists():
+        time.sleep(0.02)
+    time.sleep(0.2)                     # acaba su pareja
+    runsync.LOCK.unlink()
+    runsync.STOP.unlink()
+
+
+hilo = threading.Thread(target=agente_que_suelta)
+hilo.start()
+tomado = runsync.tomar_lock(dict(datos))
+hilo.join()
+c("con el lock del agente, el servicio le pide que se aparte y espera a que suelte",
+  (tomado, runsync.read_lock()["pid"], runsync.STOP.exists()), (None, os.getpid(), False))
+runsync.LOCK.unlink()
+store.write_json(runsync.LOCK, {"pid": os.getppid(), "host": equipo.HOST, "agente": True})
+runsync.ESPERA_AGENTE = 0.5
+c("  un agente que no suelta: pasado el plazo, el servicio no arranca",
+  (runsync.tomar_lock(dict(datos)) or {}).get("agente"), True)
+runsync.STOP.unlink(missing_ok=True)
+runsync.STOP_WAIT_SECONDS = 0.3
+dicho = runsync.stop_previous_daemon()
+c("el lanzador no le quita el lock al agente a mitad de pareja",
+  ("a mitad de una pareja" in (dicho or ""), runsync.read_lock().get("agente")), (True, True))
+runsync.LOCK.unlink()
+runsync.STOP.unlink(missing_ok=True)
+
+# --- parar el agente espera a su pasada ----------------------------------------------------
+P = "4" * 32
+ag, RP = servida(P, parejas=("docs",))
+apuntada = store.read_json(equipo.pasada_json())
+c("la pasada queda apuntada fuera de la unidad, con qué es",
+  (apuntada.get("agente"), apuntada.get("unidad"), apuntada.get("pareja")),
+  (os.getpid(), "U", "docs"))
+lanzada = F.pasadas(RP)[-1]
+if os.name != "nt":
+    c("  en su propia sesión, para poder cortarla con su rclone",
+      lanzada.kwargs.get("start_new_session"), True)
+c("  y los .pyc de sus hijos, en la carpeta del agente",
+  lanzada.kwargs.get("env", {}).get("PYTHONPYCACHEPREFIX"), str(equipo.DIR / "pycache"))
+F.acabar(lanzada)
+F.vueltas(ag, 1)
+c("acabada, se borra", equipo.pasada_json().exists(), False)
+
+viva = {"pid": os.getppid(), "agente": 2 ** 22 + 3, "unidad": "U", "pareja": "docs"}
+equipo.apuntar_pasada(viva)
+c("una pasada viva de este arranque cuenta", (equipo.pasada_viva() or {}).get("pid"),
+  os.getppid())
+arr = store.arranque_del_sistema()
+if arr is not None:
+    store.write_json(equipo.pasada_json(), {**viva, "host": equipo.HOST,
+                                            "arranque": arr - 10_000})
+    c("  la de otro arranque del sistema, no (el pid se reutiliza)",
+      equipo.pasada_viva(), None)
+equipo.apuntar_pasada(viva)
+F.pasar(3600)
+ag2 = F.nuevo()
+c("un agente nuevo ve la pasada que dejó viva el anterior", ag2.heredada is not None, True)
+antes = len(F.pasadas(RP))
+F.vueltas(ag2, 3)
+c("  y no lanza nada mientras siga", (len(F.pasadas(RP)), "agente anterior" in
+                                       (ag2.retenido or "")), (antes, True))
+equipo.apuntar_pasada({**viva, "pid": 2 ** 22 + 5})
+F.vueltas(ag2, 1)
+c("  acabada, vuelve a lo suyo", (ag2.heredada, len(F.pasadas(RP))), (None, antes + 1))
+F.acabar(F.pasadas(RP)[-1])
+F.vueltas(ag2, 1)
+
+ia.ESPERA_PASADA = 0.8
+avances: list = []
+hijo = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(0.3)"],
+                        start_new_session=os.name != "nt")
+# Quien la recoge al acabar es su padre (el agente); aquí, un hilo: sin eso
+# quedaría zombi, y un zombi sigue «vivo» para pid_alive().
+threading.Thread(target=hijo.wait, daemon=True).start()
+equipo.apuntar_pasada({**viva, "pid": hijo.pid})
+dicho = ia.parar_agente(lambda f, t: avances.append(t))
+c("parar_agente() espera a que acabe la pasada", "tras acabar su pasada" in (dicho or ""),
+  True)
+c("  y dice a qué espera", any("«docs»" in t for t in avances), True)
+hijo = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"],
+                        start_new_session=os.name != "nt")
+equipo.apuntar_pasada({**viva, "pid": hijo.pid})
+t0 = time.monotonic()
+dicho = ia.parar_agente()
+try:
+    hijo.wait(5)
+except subprocess.TimeoutExpired:
+    hijo.kill()
+c("  pasado el plazo, la corta con su árbol y dice qué pareja era",
+  (hijo.returncode is not None and hijo.returncode != 0, "se ha cortado" in (dicho or ""),
+   "«docs»" in (dicho or "")), (True, True, True))
+equipo.pasada_json().unlink(missing_ok=True)
+
+# --- el id no es una credencial: la huella del código --------------------------------------
+H = "3" * 32
+RH = F.unidad(H, parejas=("docs",))
+base = agente.huella(RH)
+app_h = RH / ".prdrive"
+(app_h / "state" / "algo.json").write_text("{}", encoding="utf-8")
+(app_h / "sync_config.toml").write_text((app_h / "sync_config.toml").read_text(
+    encoding="utf-8") + "\n# editado desde la ventana\n", encoding="utf-8")
+(app_h / "icono-verde.ico").write_bytes(b"ico")
+(app_h / "__pycache__").mkdir()
+(app_h / "__pycache__" / "sync.cpython-312.pyc").write_bytes(b"pyc")
+c("la huella no cambia con lo que cambia con el uso (estado, config, iconos, pyc)",
+  agente.huella(RH), base)
+(app_h / "json.py").write_text("print('hola')\n", encoding="utf-8")
+c("  sí con un .py nuevo junto al programa (se importaría antes que el de verdad)",
+  agente.huella(RH) != base, True)
+(app_h / "json.py").unlink()
+(app_h / "rclone.conf").write_text("[nas]\ntype = sftp\nssh = evil\n", encoding="utf-8")
+c("  y con rclone.conf (la opción ssh de sftp es una orden)", agente.huella(RH) != base, True)
+(app_h / "rclone.conf").unlink()
+
+F.RAICES[:] = []
+ag, RH2 = servida(H.replace("3", "2"), parejas=("docs",))
+H2 = "2" * 32
+c("atendida con su huella, se sirve", F.lock(RH2).get("pid"), os.getpid())
+F.acabar(F.pasadas(RH2)[-1])
+F.vueltas(ag, 1)
+F.RAICES[:] = []
+F.vueltas(ag, 2)
+(RH2 / ".prdrive" / "sync.py").write_text("import os  # otro\n", encoding="utf-8")
+preguntas_antes = [x for x in F.LANZADOS if "pregunta" in x.args]
+F.RAICES[:] = [RH2]
+pasadas_antes = len(F.pasadas(RH2))
+F.vueltas(ag, 4)
+preguntas = [x for x in F.LANZADOS if "pregunta" in x.args][len(preguntas_antes):]
+c("con otro código, se vuelve a preguntar, diciéndolo",
+  (len(preguntas), "--cambiada" in (preguntas[-1].args if preguntas else [])), (1, True))
+c("  y hasta el sí no se ejecuta nada suyo: ni lock ni pasadas",
+  (F.lock(RH2), len(F.pasadas(RH2))), ({}, pasadas_antes))
+fila = next(u for u in ag.resumen()["unidades"] if u["id"] == H2)
+c("  la bandeja la ofrece para atender, como cambiada", (fila["en_lista"], fila["cambiada"]),
+  (False, True))
+equipo.pedir({"pide": equipo.PIDE_ABRIR, "id": H2})
+F.vueltas(ag, 1)
+c("  «Abrir» no abre su ventana",
+  [x for x in F.LANZADOS if x.args[-1].endswith("runsync.py")
+   and x.args[-1].startswith(str(RH2))], [])
+preguntas[-1].rc = 0                    # «Atender»
+F.vueltas(ag, 2)
+c("al decir que sí, apunta la huella nueva y conserva su modo",
+  (equipo.leer_ajustes().unidades[H2].codigo, equipo.leer_ajustes().unidades[H2].modo),
+  (agente.huella(RH2), equipo.DAEMON))
+c("  y la vuelve a servir", F.lock(RH2).get("pid"), os.getpid())
+
+T = "1" * 32
+RT = F.unidad(T, parejas=("docs",))
+equipo.guardar_ajustes(equipo.leer_ajustes().con_unidad(equipo.Unidad(T, equipo.DAEMON)))
+F.RAICES[:] = [RT]
+ag = F.nuevo()
+F.vueltas(ag, 2)
+c("atendida sin haberla visto (el asistente): la huella se apunta al conectarla",
+  (equipo.leer_ajustes().unidades[T].codigo, F.lock(RT).get("pid")),
+  (agente.huella(RT), os.getpid()))
 
 sys.exit(c.report())

@@ -228,6 +228,17 @@ funciona con unidades que llevan código viejo.
   `daemon.lock.json` con otro pid vivo), el agente **se aparta**. La regla es un
   servicio por raíz, el que tenga el lock. Si no lo ha arrancado, el agente
   vuelve a atenderla.
+- **Tomar el lock es un solo paso** (tras la revisión del #54): el agente y el
+  servicio de `runsync` lo crean con O_EXCL (`store.tomar_registro()`), de modo
+  que de dos que llegan a la vez solo uno es el servicio. El de `runsync` que
+  encuentra el lock del agente le pide que se aparte (`daemon.stop`) y espera a
+  que acabe su pareja; el agente vuelve a mirar que el lock es suyo justo antes
+  de cada pasada. Un `runsync` viejo escribe sin mirar: con él se solapa, como
+  mucho, la pareja en curso.
+- **Parar el agente espera a su pasada.** La pasada es otro proceso y queda
+  apuntada en `pasada.json`; reinstalar, «Actualizar» o desinstalar esperan a
+  que acabe (hasta 10 min, diciéndolo) y solo entonces la cortan, con su
+  rclone. Un agente nuevo no lanza nada mientras siga viva la del anterior.
 - **Qué unidades atiende:** una lista explícita de ids en `agente.json`, cada uno
   con su modo al enchufar. Son los tres de penwatch (`ui`, `daemon`, `sync`) más
   `nada`. Una unidad que no está en la lista nunca se sincroniza sin preguntar
@@ -260,6 +271,12 @@ Cuando aparece una unidad prdrive cuyo id no está en la lista:
 - **«Atender»** la añade a la lista con el modo `daemon`, lo natural para un
   programa en segundo plano, y la atiende enseguida. El modo se cambia después
   en los ajustes.
+- **El id no es una credencial** (tras la revisión del #54): lo lleva escrito la
+  unidad y se copia. Así que «Atender» apunta también la huella de su código
+  (`agente.huella()`: todo `.prdrive/` menos lo que cambia con el uso, y su
+  rclone), y una unidad de la lista que se conecta con otra huella se trata
+  como nueva, con la pregunta «su código ha cambiado». Tras actualizar una
+  unidad se pregunta una vez más: no hay firmas de las que fiarse.
 - **Quién lleva el reloj: el agente, no la ventana.** El plazo es un dato del
   planificador. La ventana solo enseña la cuenta atrás y se cierra sola al
   llegar a cero. Si contesta tarde, la respuesta se ignora; para eso está la

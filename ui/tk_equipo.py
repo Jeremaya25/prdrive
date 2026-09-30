@@ -803,11 +803,16 @@ def paso_arranque(cuerpo, wiz) -> None:
                                                      pedir_al_iniciar=pedir),
                                "Dejándole lo elegido en su buzón.")
         else:
+            # Si el agente de antes tiene una pasada en marcha, se espera a que
+            # acabe (`parar_agente()`), y eso se dice debajo de la barra.
+            avance: list = []
             ok, msgs = working(wiz.root, "registrando el agente",
                                lambda: agente.activar(
                                    wiz.agente_prep, elegidas(wiz), wiz.agente_espera,
-                                   raiz=la_raiz(wiz), pedir_al_iniciar=pedir),
-                               "Registrando el agente y arrancándolo.")
+                                   raiz=la_raiz(wiz), pedir_al_iniciar=pedir,
+                                   avance=lambda f, t: avance.append((f, t))),
+                               "Registrando el agente y arrancándolo.",
+                               progreso=lambda: avance[-1] if avance else None)
         if not ok:
             resultado.configure(text=str(msgs), foreground=theme.PELIGRO)
             wiz.revisar()
