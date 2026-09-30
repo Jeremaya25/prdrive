@@ -110,6 +110,27 @@ def pixmaps(estado: str) -> list[tuple[int, int, bytes]]:
 # El menú como lo pide dbusmenu
 # ---------------------------------------------------------------------------
 
+# Los iconos de las entradas (`bandeja.I_*`) como nombres del tema del
+# escritorio, la propiedad `icon-name` de dbusmenu: el anfitrión los pinta a su
+# tamaño y en su color, también en modo oscuro, que un glifo pintado aquí no
+# sabría. Casi todos son de la *Icon Naming Specification* de freedesktop;
+# `changes-allow` no, pero lo traen Adwaita y Breeze. Un nombre que el tema no
+# tenga deja la entrada sin icono, nada más.
+ICONOS_DEL_TEMA = {
+    bandeja.I_ABRIR: "folder-open",
+    bandeja.I_SINCRONIZAR: "view-refresh",
+    bandeja.I_PAUSAR: "media-playback-pause",
+    bandeja.I_REANUDAR: "media-playback-start",
+    bandeja.I_BLOQUEAR: "system-lock-screen",
+    bandeja.I_DESBLOQUEAR: "changes-allow",
+    bandeja.I_ATENDER: "list-add",
+    bandeja.I_ACTUALIZAR: "system-software-update",
+    bandeja.I_CERRAR: "application-exit",
+    bandeja.I_AVISO: "dialog-warning",
+    bandeja.I_REINTENTAR: "view-refresh",
+}
+
+
 class Menu:
     """El árbol de `bandeja.Entrada` numerado para dbusmenu.
 
@@ -169,6 +190,8 @@ class Menu:
                     p["toggle-state"] = V("i", 1 if e.marcada else 0)
                 if e.hijos:
                     p["children-display"] = V("s", "submenu")
+                if e.icono in ICONOS_DEL_TEMA:
+                    p["icon-name"] = V("s", ICONOS_DEL_TEMA[e.icono])
         if nombres:
             p = {k: v for k, v in p.items() if k in nombres}
         return p

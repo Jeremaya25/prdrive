@@ -30,7 +30,10 @@ dependencias, y **sin probar en un Windows real** (ver
     ventana propia, y después un `WM_NULL`: sin eso el menú no se cierra al
     pinchar fuera (es la receta de la documentación de `TrackPopupMenu`).
     Se abre con el botón derecho y con el izquierdo; la entrada `defecto` va
-    en negrita.
+    en negrita. Las entradas con `icono` llevan su glifo de `ui/icons.py`
+    (`icons.pixeles_menu()`) como `hbmpItem`: un DIB de 32 bits con alfa
+    premultiplicado, del color del texto del menú (`GetSysColor`), al tamaño
+    del icono pequeño. Se crean al abrir el menú y se borran al cerrarlo.
   * **Los avisos** cuelgan del propio icono (`NIM_MODIFY` + `NIF_INFO`), que
     en Windows 10 y 11 salen como notificación del sistema:
     `common/avisos.GLOBO` apunta a `globo()` mientras la bandeja vive.
@@ -80,6 +83,8 @@ ID_ICONO = 1
 
 # Menús.
 MF_STRING, MF_GRAYED, MF_CHECKED, MF_POPUP, MF_SEPARATOR = 0x0, 0x1, 0x8, 0x10, 0x800
+MIIM_BITMAP = 0x80
+COLOR_MENUTEXT = 7
 TPM_RIGHTBUTTON, TPM_NONOTIFY, TPM_RETURNCMD = 0x2, 0x80, 0x100
 PRIMER_ID = 100
 
@@ -337,6 +342,40 @@ class Api:
                                      ctypes.c_int, ctypes.c_int, wintypes.HWND,
                                      wintypes.LPVOID]
         u.DestroyMenu.argtypes = [wintypes.HMENU]
+        u.GetMenuItemCount.restype = ctypes.c_int
+        u.GetMenuItemCount.argtypes = [wintypes.HMENU]
+        u.GetSysColor.restype = wintypes.DWORD
+        u.GetSysColor.argtypes = [ctypes.c_int]
+
+        class MENUITEMINFOW(ctypes.Structure):
+            _fields_ = [("cbSize", wintypes.UINT), ("fMask", wintypes.UINT),
+                        ("fType", wintypes.UINT), ("fState", wintypes.UINT),
+                        ("wID", wintypes.UINT), ("hSubMenu", wintypes.HMENU),
+                        ("hbmpChecked", wintypes.HBITMAP),
+                        ("hbmpUnchecked", wintypes.HBITMAP),
+                        ("dwItemData", ctypes.c_size_t), ("dwTypeData", wintypes.LPWSTR),
+                        ("cch", wintypes.UINT), ("hbmpItem", wintypes.HBITMAP)]
+
+        class BITMAPINFOHEADER(ctypes.Structure):
+            _fields_ = [("biSize", wintypes.DWORD), ("biWidth", wintypes.LONG),
+                        ("biHeight", wintypes.LONG), ("biPlanes", wintypes.WORD),
+                        ("biBitCount", wintypes.WORD), ("biCompression", wintypes.DWORD),
+                        ("biSizeImage", wintypes.DWORD), ("biXPelsPerMeter", wintypes.LONG),
+                        ("biYPelsPerMeter", wintypes.LONG), ("biClrUsed", wintypes.DWORD),
+                        ("biClrImportant", wintypes.DWORD)]
+
+        self.MENUITEMINFOW, self.BITMAPINFOHEADER = MENUITEMINFOW, BITMAPINFOHEADER
+        u.SetMenuItemInfoW.argtypes = [wintypes.HMENU, wintypes.UINT, wintypes.BOOL,
+                                       ctypes.POINTER(MENUITEMINFOW)]
+        self.gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
+        self.gdi32.CreateDIBSection.restype = wintypes.HBITMAP
+        self.gdi32.CreateDIBSection.argtypes = [wintypes.HDC,
+                                                ctypes.POINTER(BITMAPINFOHEADER),
+                                                wintypes.UINT,
+                                                ctypes.POINTER(ctypes.c_void_p),
+                                                wintypes.HANDLE, wintypes.DWORD]
+        self.gdi32.DeleteObject.argtypes = [wintypes.HGDIOBJ]
+        self._pixeles: dict[tuple, bytes] = {}      # glifos ya pintados, por tamaño y color
         u.SetForegroundWindow.argtypes = [wintypes.HWND]
         u.GetCursorPos.argtypes = [ctypes.POINTER(wintypes.POINT)]
         u.GetMessageW.argtypes = [ctypes.POINTER(wintypes.MSG), wintypes.HWND,
@@ -422,12 +461,52 @@ class Api:
         datos.dwInfoFlags = info_flags
         return bool(self.shell32.Shell_NotifyIconW(accion, self.ct.byref(datos)))
 
+    def _bitmap(self, nombre: str, lado: int, color: str):
+        """El glifo `nombre` como mapa de bits de menú, o None si no se puede:
+        una entrada sin icono sigue siendo una entrada."""
+        ct = self.ct
+        try:
+            clave = (nombre, lado, color)
+            if clave not in self._pixeles:
+                self._pixeles[clave] = icons.pixeles_menu(nombre, lado, color)
+            datos = self._pixeles[clave]
+            cabecera = self.BITMAPINFOHEADER(biSize=ct.sizeof(self.BITMAPINFOHEADER),
+                                             biWidth=lado, biHeight=-lado, biPlanes=1,
+                                             biBitCount=32, biCompression=0)
+            bits = ct.c_void_p()
+            h = self.gdi32.CreateDIBSection(None, ct.byref(cabecera), 0, ct.byref(bits),
+                                            None, 0)
+            if not h or not bits.value:
+                return None
+            ct.memmove(bits.value, datos, len(datos))
+            return h
+        except Exception:                               # noqa: BLE001
+            return None
+
     def menu(self, hwnd, entradas: tuple[bandeja.Entrada, ...],
              ids: dict[int, bandeja.Entrada]) -> int:
         """Construye el menú, lo enseña donde está el ratón y devuelve el id
         elegido (0: ninguno)."""
         u = self.user32
         por_entrada = {id(e): n for n, e in ids.items()}
+        SM_CXSMICON = 49
+        lado = u.GetSystemMetrics(SM_CXSMICON) or 16
+        c = int(u.GetSysColor(COLOR_MENUTEXT))          # 0x00BBGGRR
+        tinta = f"#{c & 0xFF:02x}{(c >> 8) & 0xFF:02x}{(c >> 16) & 0xFF:02x}"
+        bitmaps: list = []
+
+        def poner_icono(h, e) -> None:
+            if not e.icono or e.icono not in icons.GLIFOS:
+                return
+            b = self._bitmap(e.icono, lado, tinta)
+            if b is None:
+                return
+            bitmaps.append(b)
+            info = self.MENUITEMINFOW()
+            info.cbSize = self.ct.sizeof(self.MENUITEMINFOW)
+            info.fMask = MIIM_BITMAP
+            info.hbmpItem = b
+            u.SetMenuItemInfoW(h, u.GetMenuItemCount(h) - 1, True, self.ct.byref(info))
 
         def construir(lista) -> Any:
             h = u.CreatePopupMenu()
@@ -437,10 +516,12 @@ class Api:
                 elif e.hijos:
                     u.AppendMenuW(h, MF_POPUP | (0 if e.activa else MF_GRAYED),
                                   construir(e.hijos), texto_menu(e.texto))
+                    poner_icono(h, e)
                 else:
                     n = por_entrada[id(e)]
                     u.AppendMenuW(h, MF_STRING | (0 if e.activa else MF_GRAYED)
                                   | (MF_CHECKED if e.marcada else 0), n, texto_menu(e.texto))
+                    poner_icono(h, e)
                     if e.defecto:
                         u.SetMenuDefaultItem(h, n, 0)
             return h
@@ -455,4 +536,6 @@ class Api:
             u.PostMessageW(hwnd, WM_NULL, 0, 0)
         finally:
             u.DestroyMenu(raiz)             # destruye también los submenús
+            for b in bitmaps:               # pero no sus mapas de bits: son nuestros
+                self.gdi32.DeleteObject(b)
         return int(elegido or 0)

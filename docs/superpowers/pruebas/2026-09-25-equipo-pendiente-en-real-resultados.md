@@ -453,6 +453,15 @@ Observaciones, ninguna bloquea:
      atenderla» en su diario, y «reanudado» en el `daemon.log` de la unidad.
 
    La 3 queda para otra PR.
+
+   **La 1 y la 2, cambiadas después** (sin ver en real: E8 de la lista):
+   - el texto del ratón dice cuándo acabó bien la última pasada: «prdrive ·
+     sincronizado hace 5 min»;
+   - el menú ya no tiene cabecera gris. Con algo mal, arriba van los avisos, y
+     cada uno lleva a su arreglo: «PRUEBA-G: falla docs · Abrir…», «Sin
+     conexión: … · Probar ahora» o «Volumen fantasma en … · Bloquear»;
+   - las entradas llevan icono: en Windows, glifos de `ui/icons.py` del color
+     del texto del menú; en Linux, los del tema del escritorio.
 6. B1: un cambio de escala **en caliente** estira el icono y el menú, porque el
    proceso declara DPI de sistema y toma el de la sesión al empezar. Es lo
    normal en Windows; con la escala puesta al iniciar la sesión, se ve bien.

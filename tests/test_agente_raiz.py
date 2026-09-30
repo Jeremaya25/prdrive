@@ -146,7 +146,7 @@ c("  una unidad conectada se abre por su id (del estado del agente)",
   (agente.main(["abrir", "u" * 32]), len(F.LANZADOS)), (0, 1))
 c("aviso_de_estado sin avisos: lo que atiende",
   bandeja.aviso_de_estado({"unidades": [{"nombre": "Azul", "atendida": True}]}),
-  ("prdrive: al día", "Atiende: Azul."))
+  ("prdrive: esperando la primera pasada", "Atiende: Azul."))
 c("  en pausa, cómo seguir",
   bandeja.aviso_de_estado({"pausado": True})[1].splitlines()[-1],
   "Para que siga: python agente.py sigue")

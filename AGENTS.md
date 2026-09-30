@@ -1555,7 +1555,31 @@ draws**, and neither imports tkinter (`test_install_agente.py` checks it).
   UI lock — our own service lock is expected and runsync pauses it; a locked
   encrypted root is unlocked first with `abrir=True` and its window opens on
   connect) and `PIDE_DESPERTAR` (back from suspend: re-read battery/network,
-  probe every offline remote now, burst the walk).
+  probe every offline remote now, burst the walk; Windows sends it twice, so
+  a second one within `DESPERTAR_DOBLE` is not logged again).
+- **What it says, after the third real run** (30/09):
+  - The **tooltip** says when the last pass ended well: «prdrive · sincronizado
+    hace 5 min». That is `resumen()["ultima_pasada"]` (`Agente.ultima_buena`,
+    set on `OK` only), put into words by `bandeja.hace()`. `vista(resumen,
+    ahora)` takes the clock, and `_escribir_estado()` compares the **vista**,
+    not the summary, because the «hace» changes on its own.
+  - The **menu has no grey status header**. At the top, only when something is
+    wrong, go up to `MAX_AVISOS` lines (`bandeja._avisos()`, one list shared
+    with `avisos()`). Each one is **clickable and leads to its fix**:
+    - a failing pair or a drive's config error → «· Abrir…» its window;
+    - an offline remote → «· Probar ahora» (`PIDE_SONDEAR`: its probe now,
+      nothing else re-read);
+    - a ghost → «· Bloquear».
+    What has no fix from here (a missing root) stays greyed out.
+  - **Menu icons.** `Entrada.icono` is a `bandeja.I_*` key, the name of a glyph
+    in `icons.GLIFOS`: what the entry means, not how it is drawn.
+    - Windows paints that glyph as the item's `hbmpItem`
+      (`icons.pixeles_menu()`): a 32-bit top-down DIB with premultiplied alpha,
+      at `SM_CXSMICON`, in the menu's text colour (`GetSysColor`). The bitmaps
+      are created per menu and deleted after `DestroyMenu`.
+    - Linux sends the desktop theme's name (`bandeja_linux.ICONOS_DEL_TEMA`,
+      `icon-name`), so it follows the theme's colour and dark mode.
+    - `test_bandeja_linux` checks every key has a theme name.
 - **Never «Abrir» for a drive that is not in the list**, even asked by hand:
   that is running its code before the yes. It gets «…, conectada · Atender…».
 - **Icon priority** (`bandeja.estado()`): pause > a pass in flight > avisos

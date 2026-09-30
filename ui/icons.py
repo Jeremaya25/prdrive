@@ -100,6 +100,16 @@ GLIFOS: dict[str, list[tuple]] = {
     # contenedor cifrado para poder quitar la unidad.
     "expulsar": [("p", [(3.2, 9.6), (8, 4.2), (12.8, 9.6), (3.2, 9.6)]),
                  ("l", 3.2, 12.6, 12.8, 12.6)],
+    # Los del menú de la bandeja (`ui/bandeja.py`, `I_*`): abrir una raíz, la
+    # pausa y su vuelta, y el candado de la raíz cifrada, cerrado y abierto.
+    "carpeta": [("p", [(2.2, 4), (6.2, 4), (7.7, 5.6), (13.8, 5.6), (13.8, 12.8),
+                       (2.2, 12.8), (2.2, 4)])],
+    "pausa": [("l", 5.5, 3.5, 5.5, 12.5), ("l", 10.5, 3.5, 10.5, 12.5)],
+    "play": [("p", [(5, 3.2), (12.8, 8), (5, 12.8), (5, 3.2)])],
+    "candado": [("r", 3.5, 8.2, 9, 5.6), ("a", 8, 6.2, 2.8, 180, 360),
+                ("l", 5.2, 6.2, 5.2, 8.2), ("l", 10.8, 6.2, 10.8, 8.2)],
+    "candado_abierto": [("r", 3.5, 8.2, 9, 5.6), ("a", 8, 5.2, 2.8, 180, 360),
+                        ("l", 5.2, 5.2, 5.2, 8.2)],
 }
 
 # El icono de la aplicación: campo, los dos brazos del ciclo y el cuerpo del dispositivo.
@@ -754,6 +764,19 @@ def capas_bandeja(size: int, estado: str) -> list[tuple[str, float, list[tuple]]
 def ico_bandeja(estado: str, tamanos=BANDEJA_TAMANOS) -> bytes:
     """El icono de la bandeja en ese estado, como `.ico`."""
     return _ico_de(tamanos, lambda size: capas_bandeja(size, estado))
+
+
+def pixeles_menu(nombre: str, size: int, color: str) -> bytes:
+    """Un glifo como imagen de una entrada de menú de Windows: los píxeles de
+    un DIB de 32 bits de arriba abajo (alto negativo en su cabecera), BGRA con
+    el alfa PREMULTIPLICADO, que es como Windows compone la `hbmpItem` de un
+    `MENUITEMINFOW` con transparencia (`AlphaBlend` con `AC_SRC_ALPHA`). Del
+    color que se pida: el del texto del menú, para que siga al tema."""
+    datos = bytearray()
+    for fila in _capas_rgba([(color, TRAZO, GLIFOS[nombre])], 16.0, size):
+        for r, g, b, a in fila:
+            datos += bytes((round(b * a), round(g * a), round(r * a), round(a * 255)))
+    return bytes(datos)
 
 
 def pixmap_bandeja(estado: str, size: int) -> bytes:

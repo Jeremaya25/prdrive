@@ -16,7 +16,13 @@ no carga Tk nunca.
 
 Lo que ofrece el menú (sección 5 del diseño, y «Una unidad nueva» de la 3):
 
-  * el estado, en gris, y debajo hasta `MAX_AVISOS` avisos;
+  * arriba, solo si algo va mal, hasta `MAX_AVISOS` avisos, y cada uno lleva a
+    donde se arregla: «PRUEBA-G: falla docs · Abrir…» abre su ventana (y en ella
+    «Reparación»), un remoto sin conexión se vuelve a probar, un volumen
+    fantasma se bloquea. Sin nada que decir no hay cabecera: una línea gris con
+    «al día» encima de todo no servía para nada (tercera pasada en real, B5). El
+    estado va en el texto del ratón, que dice cuándo se sincronizó por última
+    vez;
   * **Abrir** la raíz de este equipo (con ella bloqueada, desbloquea antes) y
     cada unidad conectada que está en la lista; nunca una que no lo está, que
     sería ejecutar su código sin el sí;
@@ -29,6 +35,7 @@ Lo que ofrece el menú (sección 5 del diseño, y «Una unidad nueva» de la 3):
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -44,8 +51,26 @@ FANTASMA = "fantasma"
 AUSENTE = "ausente"
 BUSCANDO = "buscando"       # sin cifrar y todavía no vista: el agente acaba de arrancar
 
-MAX_AVISOS = 3              # las líneas de aviso bajo el estado; el resto, «y N más»
+MAX_AVISOS = 3              # las líneas de aviso del menú; el resto, «y N más»
 MAX_TIP = 127               # `szTip` de NOTIFYICONDATAW: 128 con el nulo
+
+# Los iconos de las entradas del menú, por nombre de `icons.GLIFOS`: lo que
+# significa la entrada, no cómo se pinta. Windows pinta ese glifo
+# (`ui/bandeja_windows.py`); Linux pide al tema del escritorio el suyo
+# (`ui/bandeja_linux.ICONOS_DEL_TEMA`), que sigue su color y su modo oscuro.
+I_ABRIR = "carpeta"
+I_SINCRONIZAR = "sync"
+I_PAUSAR = "pausa"
+I_REANUDAR = "play"
+I_BLOQUEAR = "candado"
+I_DESBLOQUEAR = "candado_abierto"
+I_ATENDER = "plus"
+I_ACTUALIZAR = "down"
+I_CERRAR = "arranque"
+I_AVISO = "warn"
+I_REINTENTAR = "reload"
+ICONOS = (I_ABRIR, I_SINCRONIZAR, I_PAUSAR, I_REANUDAR, I_BLOQUEAR, I_DESBLOQUEAR,
+          I_ATENDER, I_ACTUALIZAR, I_CERRAR, I_AVISO, I_REINTENTAR)
 
 
 @dataclass(frozen=True)
@@ -54,13 +79,14 @@ class Entrada:
 
     `pide` son las peticiones al agente (dicts del buzón); `marcada` no None la
     hace casilla; `defecto` es la que hace el doble clic en el icono; con
-    `hijos` es un submenú."""
+    `hijos` es un submenú; `icono`, uno de `ICONOS` o nada."""
     texto: str = ""
     pide: tuple[Mapping[str, Any], ...] = ()
     activa: bool = True
     marcada: bool | None = None
     defecto: bool = False
     hijos: tuple["Entrada", ...] = ()
+    icono: str = ""
 
     @property
     def separador(self) -> bool:
@@ -92,30 +118,70 @@ def _todas(entradas):
 # El estado
 # ---------------------------------------------------------------------------
 
+def _avisos(resumen: Mapping[str, Any]) -> list[tuple[str, Entrada]]:
+    """Lo que va mal: cada cosa con su frase corta (la del icono y los avisos)
+    y su entrada del menú, que lleva a donde se arregla. Lo que no tiene
+    arreglo desde aquí —una raíz que no está en su sitio— queda apagado."""
+    salida: list[tuple[str, Entrada]] = []
+    for u in resumen.get("unidades") or []:
+        nombre = u.get("nombre")
+        abrir = _pide(equipo.PIDE_ABRIR, id=u.get("id", ""))
+        for pareja in u.get("fallando") or []:
+            frase = f"{nombre}: falla {pareja}"
+            salida.append((frase, Entrada(f"{frase} · Abrir…", abrir, icono=I_AVISO)))
+        if u.get("error"):
+            frase = f"{nombre}: {u['error']}"
+            salida.append((frase, Entrada(f"{frase} · Abrir…", abrir, icono=I_AVISO)))
+    for linea in resumen.get("sin_conexion") or []:
+        frase = f"Sin conexión: {linea}"
+        salida.append((frase, Entrada(f"{frase} · Probar ahora",
+                                      _pide(equipo.PIDE_SONDEAR), icono=I_REINTENTAR)))
+    for ruta in resumen.get("ausentes") or []:
+        frase = f"Falta la raíz de este equipo: {ruta}"
+        salida.append((frase, Entrada(frase, activa=False, icono=I_AVISO)))
+    fantasmas = {r.get("ruta"): r.get("id", "") for r in resumen.get("equipo") or []
+                 if r.get("estado") == FANTASMA}
+    for ruta in resumen.get("fantasmas") or []:
+        frase = f"Volumen fantasma en {ruta}: bloquéala y vuelve a desbloquearla"
+        if ruta in fantasmas:
+            salida.append((frase, Entrada(f"Volumen fantasma en {ruta} · Bloquear",
+                                          _pide(equipo.PIDE_BLOQUEAR, id=fantasmas[ruta]),
+                                          icono=I_BLOQUEAR)))
+        else:
+            salida.append((frase, Entrada(frase, activa=False, icono=I_AVISO)))
+    return salida
+
+
 def avisos(resumen: Mapping[str, Any]) -> list[str]:
     """Lo que va mal y merece que el icono lo diga, en frases cortas."""
-    lineas: list[str] = []
-    for u in resumen.get("unidades") or []:
-        for pareja in u.get("fallando") or []:
-            lineas.append(f"{u.get('nombre')}: falla {pareja}")
-        if u.get("error"):
-            lineas.append(f"{u.get('nombre')}: {u['error']}")
-    for linea in resumen.get("sin_conexion") or []:
-        lineas.append(f"Sin conexión: {linea}")
-    for ruta in resumen.get("ausentes") or []:
-        lineas.append(f"Falta la raíz de este equipo: {ruta}")
-    for ruta in resumen.get("fantasmas") or []:
-        lineas.append(f"Volumen fantasma en {ruta}: bloquéala y vuelve a desbloquearla")
-    return lineas
+    return [frase for frase, _entrada in _avisos(resumen)]
 
 
-def estado(resumen: Mapping[str, Any]) -> tuple[str, str]:
+def hace(segundos: float, cuando: float) -> str:
+    """Cuándo fue algo, dicho corto: «hace un momento», «hace 5 min», «a las
+    11:55» (hoy, hace más de una hora) o «el 29/09 a las 11:55»."""
+    if segundos < 60:
+        return "hace un momento"
+    if segundos < 3600:
+        return f"hace {int(segundos // 60)} min"
+    fecha = time.localtime(cuando)
+    hora = time.strftime("%H:%M", fecha)
+    if time.localtime(cuando + segundos)[:3] == fecha[:3]:
+        return f"a las {hora}"
+    return f"el {time.strftime('%d/%m', fecha)} a las {hora}"
+
+
+def estado(resumen: Mapping[str, Any], ahora: float | None = None) -> tuple[str, str]:
     """(icono, frase) del agente, en este orden de prioridad:
 
     la pausa pedida (lo ha decidido alguien) > una pasada en marcha > los avisos
     > lo que retiene sin ser pausa (batería, red de uso medido) > la raíz
     cifrada bloqueada > bien. Bloqueada no es un aviso: es lo normal con el
-    contenedor cerrado, y el icono lo enseña sin alarmar."""
+    contenedor cerrado, y el icono lo enseña sin alarmar.
+
+    Bien, la frase dice cuándo acabó bien la última pasada (`ultima_pasada`,
+    segundos de época; `ahora`, por defecto el reloj): «al día» a secas no
+    decía nada que el icono no dijera ya."""
     if resumen.get("pausado"):
         return icons.PAUSA, "en pausa"
     pasada = resumen.get("pasada")
@@ -135,13 +201,19 @@ def estado(resumen: Mapping[str, Any]) -> tuple[str, str]:
                 return icons.BLOQUEADO, f"{r.get('nombre')} {frase}"
     if not raices and not resumen.get("unidades"):
         return icons.BIEN, "esperando unidades"
-    return icons.BIEN, "al día"
+    ultima = resumen.get("ultima_pasada")
+    if isinstance(ultima, (int, float)):
+        ahora = time.time() if ahora is None else ahora
+        return icons.BIEN, f"sincronizado {hace(max(0.0, ahora - ultima), ultima)}"
+    if any(u.get("atendida") for u in resumen.get("unidades") or []):
+        return icons.BIEN, "esperando la primera pasada"
+    return icons.BIEN, "sin nada que sincronizar ahora"
 
 
 def aviso_de_estado(resumen: Mapping[str, Any]) -> tuple[str, str]:
     """(título, texto) del aviso con el que el acceso «prdrive» del menú dice
     cómo va el agente donde no hay bandeja que lo enseñe (fase 6): lo mismo
-    que su icono y la cabecera de su menú."""
+    que su icono, su texto y los avisos de su menú."""
     _icono, frase = estado(resumen)
     lineas = avisos(resumen)
     texto = lineas[:MAX_AVISOS]
@@ -158,7 +230,7 @@ def aviso_de_estado(resumen: Mapping[str, Any]) -> tuple[str, str]:
 
 
 def tip(frase: str) -> str:
-    texto = f"{APP_NAME} — {frase}"
+    texto = f"{APP_NAME} · {frase}"
     return texto if len(texto) <= MAX_TIP else texto[:MAX_TIP - 1] + "…"
 
 
@@ -185,12 +257,13 @@ def _raices_del_equipo(resumen: Mapping[str, Any]) -> list[Entrada]:
         entradas.append(Entrada(f"Abrir {nombre}" + ("…" if cerrada else ""),
                                 _pide(equipo.PIDE_ABRIR, id=uid),
                                 activa=est in (ABIERTA, BLOQUEADA, DESBLOQUEANDO),
-                                defecto=i == 0))
+                                defecto=i == 0, icono=I_ABRIR))
         if not r.get("cifrada"):
             continue
         if est == BLOQUEADA:
             entradas.append(Entrada(f"Desbloquear {nombre}…",
-                                    _pide(equipo.PIDE_DESBLOQUEAR, id=uid)))
+                                    _pide(equipo.PIDE_DESBLOQUEAR, id=uid),
+                                    icono=I_DESBLOQUEAR))
         elif est == DESBLOQUEANDO:
             entradas.append(Entrada(f"Desbloqueando {nombre}: la contraseña la pide "
                                     f"VeraCrypt", activa=False))
@@ -198,7 +271,7 @@ def _raices_del_equipo(resumen: Mapping[str, Any]) -> list[Entrada]:
             entradas.append(Entrada(f"Bloqueando {nombre}…", activa=False))
         else:                               # abierta, o un fantasma: bloquear lo arregla
             entradas.append(Entrada(f"Bloquear {nombre}",
-                                    _pide(equipo.PIDE_BLOQUEAR, id=uid)))
+                                    _pide(equipo.PIDE_BLOQUEAR, id=uid), icono=I_BLOQUEAR))
     if any(r.get("cifrada") for r in raices):
         pedir = bool(resumen.get("pedir_al_iniciar", True))
         entradas.append(Entrada("Pedir la contraseña al iniciar sesión",
@@ -220,30 +293,32 @@ def _unidades(resumen: Mapping[str, Any]) -> list[Entrada]:
             entradas.append(Entrada(f"{nombre}: actualízala para que la atienda",
                                     activa=False))
         elif u.get("en_lista"):
-            entradas.append(Entrada(f"Abrir {nombre}", _pide(equipo.PIDE_ABRIR, id=uid)))
+            entradas.append(Entrada(f"Abrir {nombre}", _pide(equipo.PIDE_ABRIR, id=uid),
+                                    icono=I_ABRIR))
         elif u.get("ahora_no") or u.get("preguntando"):
             # Con otro código que el aceptado (`agente.huella()`), se dice: el
             # sí de ahora es a ese código.
             que = "código cambiado" if u.get("cambiada") else "conectada"
             entradas.append(Entrada(f"{nombre}, {que} · Atender…",
-                                    _pide(equipo.PIDE_ATENDER, id=uid)))
+                                    _pide(equipo.PIDE_ATENDER, id=uid), icono=I_ATENDER))
     return entradas
 
 
 def _sincronizar(resumen: Mapping[str, Any]) -> Entrada:
     atendidas = [u for u in resumen.get("unidades") or [] if u.get("atendida")]
     if not atendidas:
-        return Entrada("Sincronizar ahora", activa=False)
+        return Entrada("Sincronizar ahora", activa=False, icono=I_SINCRONIZAR)
     if len(atendidas) == 1:
         return Entrada("Sincronizar ahora",
-                       _pide(equipo.PIDE_PASADA, id=atendidas[0].get("id"), parejas=[]))
+                       _pide(equipo.PIDE_PASADA, id=atendidas[0].get("id"), parejas=[]),
+                       icono=I_SINCRONIZAR)
     todas = tuple(p for u in atendidas
                   for p in _pide(equipo.PIDE_PASADA, id=u.get("id"), parejas=[]))
     return Entrada("Sincronizar ahora", hijos=(
         Entrada("Todas", todas), SEPARADOR,
         *(Entrada(str(u.get("nombre")),
                   _pide(equipo.PIDE_PASADA, id=u.get("id"), parejas=[]))
-          for u in atendidas)))
+          for u in atendidas)), icono=I_SINCRONIZAR)
 
 
 def _actualizar(resumen: Mapping[str, Any]) -> list[Entrada]:
@@ -254,7 +329,8 @@ def _actualizar(resumen: Mapping[str, Any]) -> list[Entrada]:
         return []
     if resumen.get("actualizando"):
         return [Entrada(f"Actualizando a la {nueva}…", activa=False)]
-    return [Entrada(f"Actualizar a la {nueva}", _pide(equipo.PIDE_ACTUALIZAR))]
+    return [Entrada(f"Actualizar a la {nueva}", _pide(equipo.PIDE_ACTUALIZAR),
+                    icono=I_ACTUALIZAR)]
 
 
 def _bloques(*bloques: list[Entrada]) -> tuple[Entrada, ...]:
@@ -268,20 +344,20 @@ def _bloques(*bloques: list[Entrada]) -> tuple[Entrada, ...]:
     return tuple(salida)
 
 
-def vista(resumen: Mapping[str, Any]) -> Vista:
-    """Todo lo que enseña la bandeja, a partir del resumen del agente."""
-    icono, frase = estado(resumen)
-    cabecera = [Entrada(frase[:1].upper() + frase[1:], activa=False)]
-    hay = avisos(resumen)
-    if len(hay) > 1 or (hay and hay[0] != frase):
-        cabecera += [Entrada(f"  {a}", activa=False) for a in hay[:MAX_AVISOS]]
-        if len(hay) > MAX_AVISOS:
-            cabecera.append(Entrada(f"  y {len(hay) - MAX_AVISOS} más", activa=False))
+def vista(resumen: Mapping[str, Any], ahora: float | None = None) -> Vista:
+    """Todo lo que enseña la bandeja, a partir del resumen del agente. `ahora`
+    es para el «hace N min» del texto (por defecto, el reloj)."""
+    icono, frase = estado(resumen, ahora)
+    hay = [entrada for _frase, entrada in _avisos(resumen)]
+    cabecera = hay[:MAX_AVISOS]
+    if len(hay) > MAX_AVISOS:
+        cabecera.append(Entrada(f"y {len(hay) - MAX_AVISOS} más", activa=False))
     pausado = bool(resumen.get("pausado"))
     menu = _bloques(cabecera, _raices_del_equipo(resumen), _unidades(resumen),
                     [_sincronizar(resumen),
-                     Entrada("Reanudar", _pide(equipo.PIDE_SIGUE)) if pausado
-                     else Entrada("Pausar", _pide(equipo.PIDE_PAUSA))],
+                     Entrada("Reanudar", _pide(equipo.PIDE_SIGUE), icono=I_REANUDAR)
+                     if pausado
+                     else Entrada("Pausar", _pide(equipo.PIDE_PAUSA), icono=I_PAUSAR)],
                     [*_actualizar(resumen),
-                     Entrada("Cerrar el agente", _pide(equipo.PIDE_PARAR))])
+                     Entrada("Cerrar el agente", _pide(equipo.PIDE_PARAR), icono=I_CERRAR)])
     return Vista(icono, tip(frase), menu, frase[:1].upper() + frase[1:])

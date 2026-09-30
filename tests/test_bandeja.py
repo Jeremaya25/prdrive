@@ -70,10 +70,13 @@ ag.bandeja = falsa = BandejaFalsa()
 F.vueltas(ag, 1)
 v = falsa.vistas[-1]
 c("sin raíces ni unidades: bien, esperando unidades", (v.icono, v.tip),
-  (icons.BIEN, "prdrive — esperando unidades"))
-c("  el menú: estado, sincronizar (apagado), pausar, cerrar",
-  textos(v), ["Esperando unidades", "", "Sincronizar ahora", "Pausar", "",
-              "Cerrar el agente"])
+  (icons.BIEN, "prdrive · esperando unidades"))
+c("  el menú, sin cabecera gris: sincronizar (apagado), pausar, cerrar",
+  textos(v), ["Sincronizar ahora", "Pausar", "", "Cerrar el agente"])
+c("  cada entrada con su icono, y todos existen como glifo y en el tema de Linux",
+  ([e.icono for e in v.menu if e.texto],
+   all(i in icons.GLIFOS for i in bandeja.ICONOS)),
+  ([bandeja.I_SINCRONIZAR, bandeja.I_PAUSAR, bandeja.I_CERRAR], True))
 c("  «Sincronizar ahora» sin nada atendido está apagado",
   entrada(v, "Sincronizar ahora").activa, False)
 F.vueltas(ag, 3)
@@ -90,28 +93,52 @@ F.RAICES[:] = [raiz1]
 F.vueltas(ag, 3)
 v = falsa.vistas[-1]
 c("una pasada en marcha: sincronizando, con la unidad y la pareja",
-  (v.icono, v.tip), (icons.SINCRONIZANDO, "prdrive — sincronizando PRDRIVE-1 · docs"))
+  (v.icono, v.tip), (icons.SINCRONIZANDO, "prdrive · sincronizando PRDRIVE-1 · docs"))
 c("  el menú ofrece abrirla y sincronizar",
-  textos(v), ["Sincronizando PRDRIVE-1 · docs", "", "Abrir PRDRIVE-1", "",
-              "Sincronizar ahora", "Pausar", "", "Cerrar el agente"])
+  textos(v), ["Abrir PRDRIVE-1", "", "Sincronizar ahora", "Pausar", "", "Cerrar el agente"])
+c("  «Abrir» con el icono de la carpeta", entrada(v, "Abrir PRDRIVE-1").icono,
+  bandeja.I_ABRIR)
 c("  «Sincronizar ahora» pide su pasada, con todas sus parejas",
   entrada(v, "Sincronizar ahora").pide,
   ({"pide": equipo.PIDE_PASADA, "id": UNO, "parejas": []},))
 F.acabar(F.pasadas()[-1], rc=0)
 F.vueltas(ag, 1)
+# La siguiente pareja ya ha empezado: lo de «sincronizado» se mira sin ella.
+en_marcha, ag.pasada = ag.pasada, None
+buena = ag.resumen()["ultima_pasada"]
+c("acabada bien: el resumen lleva cuándo, y el ratón lo dice",
+  (isinstance(buena, float),
+   bandeja.vista(ag.resumen(), buena + 5).tip,
+   bandeja.vista(ag.resumen(), buena + 7 * 60 + 5).tip),
+  (True, "prdrive · sincronizado hace un momento", "prdrive · sincronizado hace 7 min"))
+falsa.vistas.clear()
+ag._escribir_estado()
+F.pasar(60)
+ag._escribir_estado()
+ag._escribir_estado()
+c("  el agente se la vuelve a pasar a la bandeja cuando cambia el «hace», y solo entonces",
+  [v.tip for v in falsa.vistas],
+  ["prdrive · sincronizado hace un momento", "prdrive · sincronizado hace 1 min"])
+ag.pasada = en_marcha
 F.acabar(F.pasadas()[-1], rc=1, salida="ERROR : algo raro\n")
 F.vueltas(ag, 1)
 v = falsa.vistas[-1]
 c("una pareja que falla: aviso, y lo dice", (v.icono, v.tip),
-  (icons.AVISO, "prdrive — PRDRIVE-1: falla fotos"))
+  (icons.AVISO, "prdrive · PRDRIVE-1: falla fotos"))
+c("  y en el menú, arriba, una línea que lleva a su ventana",
+  (textos(v)[0], entrada(v, "PRDRIVE-1: falla fotos · Abrir…").pide,
+   entrada(v, "PRDRIVE-1: falla fotos · Abrir…").activa,
+   entrada(v, "PRDRIVE-1: falla fotos · Abrir…").icono),
+  ("PRDRIVE-1: falla fotos · Abrir…", ({"pide": equipo.PIDE_ABRIR, "id": UNO},), True,
+   bandeja.I_AVISO))
 
 elegir(ag, v, "Pausar")
 F.vueltas(ag, 1)
 v = falsa.vistas[-1]
 c("«Pausar» lo pide al agente, que se pausa", (ag.pausado, v.icono), (True, icons.PAUSA))
 c("  y el menú ofrece «Reanudar»", entrada(v, "Reanudar") is not None, True)
-c("  con el aviso debajo del estado", textos(v)[:2],
-  ["En pausa", "  PRDRIVE-1: falla fotos"])
+c("  en pausa, el aviso sigue arriba y no hay cabecera de estado", textos(v)[:2],
+  ["PRDRIVE-1: falla fotos · Abrir…", ""])
 elegir(ag, v, "Reanudar")
 F.vueltas(ag, 1)
 c("«Reanudar» también", ag.pausado, False)
@@ -213,9 +240,9 @@ ag.bandeja = falsa = BandejaFalsa()
 F.vueltas(ag, 3)
 v = falsa.vistas[-1]
 c("la raíz cifrada cerrada: icono de bloqueada, sin alarmar",
-  (v.icono, v.tip), (icons.BLOQUEADO, "prdrive — Mi portátil bloqueada"))
+  (v.icono, v.tip), (icons.BLOQUEADO, "prdrive · Mi portátil bloqueada"))
 c("  el menú: abrir (desbloqueando antes), desbloquear y la casilla",
-  textos(v), ["Mi portátil bloqueada", "", "Abrir Mi portátil…", "Desbloquear Mi portátil…",
+  textos(v), ["Abrir Mi portátil…", "Desbloquear Mi portátil…",
               "Pedir la contraseña al iniciar sesión", "", "Sincronizar ahora", "Pausar",
               "", "Cerrar el agente"])
 c("  «Abrir» es la entrada del doble clic", v.defecto().texto, "Abrir Mi portátil…")
@@ -302,18 +329,56 @@ ag._buzon(F.RELOJ[0] + 1 + agente.DESPERTAR_DOBLE)
 c("  otra suspensión más tarde, sí",
   sum(x == "el equipo vuelve de la suspensión" for x in F.DIARIO), 2)
 
+# --- «Probar ahora» en un aviso de «Sin conexión» ------------------------------------
+ag.entorno = agente.pl.sin_conexion(ag.entorno, UNO, "nas", F.RELOJ[0] + 3600)
+leido = ag.entorno_leido = F.RELOJ[0]
+ag.pedir({"pide": equipo.PIDE_SONDEAR})
+ag._buzon(F.RELOJ[0])
+c("«Probar ahora»: el remoto sin conexión se sondea ya, sin releer lo demás",
+  (ag.entorno.sin_conexion[(UNO, "nas")] <= F.RELOJ[0], ag.entorno_leido), (True, leido))
+
 # --- lo puro, suelto -----------------------------------------------------------------
 largo = bandeja.tip("x" * 300)
 c("la línea del ratón cabe en szTip (127)", (len(largo), largo.endswith("…")), (127, True))
 muchos = {"unidades": [{"id": "u", "nombre": "U", "fallando": ["a", "b", "c", "d", "e"]}]}
 v = bandeja.vista(muchos)
-c("con muchos avisos: la cuenta, tres líneas y «y N más»",
-  textos(v)[:5], ["5 avisos", "  U: falla a", "  U: falla b", "  U: falla c", "  y 2 más"])
+c("con muchos avisos: tres líneas y «y N más», apagada",
+  (textos(v)[:4], entrada(v, "y 2 más").activa),
+  (["U: falla a · Abrir…", "U: falla b · Abrir…", "U: falla c · Abrir…", "y 2 más"],
+   False))
+fuera = bandeja.vista({"sin_conexion": ["U: nas"], "ausentes": ["C:\\x.hc"],
+                       "fantasmas": ["P:\\"],
+                       "equipo": [{"id": "e", "ruta": "P:\\", "estado": bandeja.FANTASMA}],
+                       "unidades": [{"id": "u", "nombre": "U"}]})
+c("un remoto sin conexión se prueba ya; un fantasma se bloquea; una raíz que no "
+  "está, apagada",
+  [(e.texto, e.pide, e.activa) for e in fuera.menu[:3]],
+  [("Sin conexión: U: nas · Probar ahora", ({"pide": equipo.PIDE_SONDEAR},), True),
+   ("Falta la raíz de este equipo: C:\\x.hc", (), False),
+   ("Volumen fantasma en P:\\ · Bloquear", ({"pide": equipo.PIDE_BLOQUEAR, "id": "e"},),
+    True)])
+c("«hace»: un momento, minutos, la hora de hoy, y la fecha de otro día",
+  (bandeja.hace(30, 0), bandeja.hace(125, 0),
+   bandeja.hace(2 * 3600, time.mktime((2026, 9, 30, 9, 5, 0, 0, 0, -1))),
+   bandeja.hace(2 * 86400, time.mktime((2026, 9, 28, 9, 5, 0, 0, 0, -1)))),
+  ("hace un momento", "hace 2 min", "a las 09:05", "el 28/09 a las 09:05"))
+c("bien y sin pasadas todavía: con algo atendido, se espera; sin nada, se dice",
+  (bandeja.estado({"unidades": [{"atendida": True}]})[1],
+   bandeja.estado({"unidades": [{"atendida": False}]})[1]),
+  ("esperando la primera pasada", "sin nada que sincronizar ahora"))
 c("lo que retiene sin ser pausa (red de uso medido) usa el icono de pausa",
   bandeja.estado({"retenido": "red de uso medido", "unidades": [{}]}),
   (icons.PAUSA, "esperando: red de uso medido"))
 
 # --- los iconos -----------------------------------------------------------------------
+negro = icons.pixeles_menu(bandeja.I_PAUSAR, 16, "#000000")
+blanco = icons.pixeles_menu(bandeja.I_PAUSAR, 16, "#ffffff")
+alfas = negro[3::4]
+c("el glifo de un menú de Windows: 16×16 BGRA, con transparencia",
+  (len(negro), min(alfas), max(alfas)), (16 * 16 * 4, 0, 255))
+c("  premultiplicado: ningún canal por encima de su alfa, y blanco = alfa",
+  (all(max(blanco[i:i + 3]) <= blanco[i + 3] for i in range(0, len(blanco), 4)),
+   all(blanco[i] == blanco[i + 3] for i in range(0, len(blanco), 4))), (True, True))
 destino = tmpdir("prdrive-iconos-")
 rutas = icons.write_bandeja(destino)
 c("se pintan los cinco estados", sorted(p.name for p in rutas),

@@ -114,13 +114,13 @@ c("  con NIM_ADD, el icono de «bien» y el mensaje de vuelta",
   (bw.NIM_ADD, "H:bandeja-bien.ico", bw.WM_ICONO, bw.NIF_MESSAGE | bw.NIF_ICON | bw.NIF_TIP))
 c("  y los avisos pasan a colgarse de él", avisos.GLOBO == b.globo, True)
 
-vista = bandeja.vista({"pausado": True, "unidades": [
+vista = bandeja.vista({"pausado": True, "ausentes": ["C:\\x.hc"], "unidades": [
     {"id": "u1", "nombre": "PRDRIVE-1", "atendida": True, "en_lista": True}]})
 b.poner(vista)
 c("poner() desde otro hilo cambia icono y línea (NIM_MODIFY)",
   esperar(lambda: api.llamadas[-1][0] == bw.NIM_MODIFY
           and api.llamadas[-1][1]["icono"] == "H:bandeja-pausa.ico"), True)
-c("  con la línea de la vista", api.llamadas[-1][1]["tip"], "prdrive — en pausa")
+c("  con la línea de la vista", api.llamadas[-1][1]["tip"], "prdrive · en pausa")
 
 # --- el menú ---------------------------------------------------------------------
 ids = bw.numerar(vista.menu)
@@ -167,7 +167,7 @@ antes = len([a for a, _ in api.llamadas if a == bw.NIM_ADD])
 api.enviar(TASKBAR)
 c("TaskbarCreated (el Explorador reiniciado) vuelve a poner el icono",
   esperar(lambda: len([a for a, _ in api.llamadas if a == bw.NIM_ADD]) == antes + 1), True)
-c("  con la última vista", api.llamadas[-1][1]["tip"], "prdrive — en pausa")
+c("  con la última vista", api.llamadas[-1][1]["tip"], "prdrive · en pausa")
 
 # --- los avisos --------------------------------------------------------------------
 c("un aviso se cuelga del icono", b.globo("PRDRIVE-1: falla docs", "Mira la ventana", True),

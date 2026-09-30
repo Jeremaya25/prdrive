@@ -45,7 +45,8 @@ def esperar(cond, segundos=3.0):
 # --- el menú de dbusmenu, sin bus ---------------------------------------------------
 
 E = bandeja.Entrada
-ABRIR = E("Abrir mi_raíz", ({"pide": equipo.PIDE_ABRIR, "id": "r"},), defecto=True)
+ABRIR = E("Abrir mi_raíz", ({"pide": equipo.PIDE_ABRIR, "id": "r"},), defecto=True,
+          icono=bandeja.I_ABRIR)
 MENU = (E("Al día", activa=False), bandeja.SEPARADOR, ABRIR,
         E("Pedir la contraseña al iniciar sesión",
           ({"pide": equipo.PIDE_AJUSTE, "clave": "pedir_al_iniciar", "valor": False},),
@@ -66,6 +67,11 @@ c("  el separador, con su tipo", m.propiedades(ids[1]),
   {"type": dbus.Variante("s", "separator")})
 c("  un _ del nombre se dobla (dbusmenu lo leería como tecla de acceso)",
   m.propiedades(ids[2])["label"].valor, "Abrir mi__raíz")
+c("  su icono, por nombre del tema del escritorio (icon-name)",
+  m.propiedades(ids[2])["icon-name"], dbus.Variante("s", "folder-open"))
+c("  sin icono, sin icon-name", "icon-name" in m.propiedades(ids[3]), False)
+c("  todos los iconos de la bandeja tienen nombre en el tema",
+  sorted(set(bandeja.ICONOS) - set(bl.ICONOS_DEL_TEMA)), [])
 c("  la casilla, marcada", (m.propiedades(ids[3])["toggle-type"].valor,
                             m.propiedades(ids[3])["toggle-state"].valor), ("checkmark", 1))
 sub = hijos[4].valor

@@ -608,6 +608,8 @@ class Agente:
     rafaga_hasta: float = -math.inf
     despertado: float = -math.inf   # la última vuelta de la suspensión apuntada
     ultimo_estado: dict | None = None
+    ultima_vista: Any = None        # la última `bandeja.Vista` puesta
+    ultima_buena: float | None = None   # cuándo acabó bien la última pasada (el reloj)
     # Las raíces del equipo que no están donde dice su `ruta`, ya avisadas.
     ausentes: set[str] = field(default_factory=set)
     # La raíz cifrada: cuándo se lanzó VeraCrypt para abrirla, las que ya se
@@ -1296,6 +1298,8 @@ class Agente:
                            f"mano desde la ventana")
         else:
             dlog(con.raiz, f"[{tarea.pareja}] OK ({segundos:.0f}s)")
+            if como == OK:
+                self.ultima_buena = ahora
         diario(f"[{con.nombre}] {tarea.pareja}: {TEXTO_RESULTADO[como]} "
                f"(rc={rc}, {segundos:.0f}s)")
         self._apuntar_en_lock(con, tarea.pareja, como, rc, segundos)
@@ -1705,6 +1709,12 @@ class Agente:
             if ahora - self.despertado >= DESPERTAR_DOBLE:
                 diario("el equipo vuelve de la suspensión")
             self.despertado = ahora
+        elif que == equipo.PIDE_SONDEAR:
+            # «Probar ahora» en un aviso de «Sin conexión»: la sonda de cada
+            # remoto sin conexión, ya, en vez de a su hora.
+            self.entorno = replace(self.entorno, sin_conexion={
+                k: min(v, ahora) for k, v in self.entorno.sin_conexion.items()})
+            diario("se prueban ya los remotos sin conexión")
         elif que == equipo.PIDE_AJUSTE:
             clave, valor = p.get("clave"), p.get("valor")
             if clave not in equipo.AJUSTES_PEDIBLES:
@@ -1817,6 +1827,7 @@ class Agente:
                             "cifrada": u.cifrada, "estado": self._estado_raiz(uid, u)}
                            for uid, u in self.ajustes.raices.items()],
                 "pedir_al_iniciar": self.ajustes.pedir_al_iniciar,
+                "ultima_pasada": self.ultima_buena,
                 "version": self.version, "nueva": self.nueva,
                 "actualizando": self.actualizando is not None
                 and self.actualizando.poll() is None}
@@ -1826,11 +1837,16 @@ class Agente:
         if resumen != self.ultimo_estado:
             self.ultimo_estado = resumen
             store.write_json(equipo.estado_json(), {**resumen, "actualizado": store.stamp()})
-            if self.bandeja is not None:
-                try:
-                    self.bandeja.poner(bandeja.vista(resumen))
-                except Exception as e:                  # noqa: BLE001
-                    diario(f"la bandeja no se ha podido poner al día: {e}")
+        if self.bandeja is not None:
+            # Se compara la vista y no el resumen: el texto del ratón dice
+            # «sincronizado hace N min», que cambia sin que cambie nada más.
+            try:
+                vista = bandeja.vista(resumen, self.reloj())
+                if vista != self.ultima_vista:
+                    self.ultima_vista = vista
+                    self.bandeja.poner(vista)
+            except Exception as e:                  # noqa: BLE001
+                diario(f"la bandeja no se ha podido poner al día: {e}")
 
     def cerrar(self) -> None:
         """Al terminar: se sueltan los locks que sean nuestros. Una pasada en

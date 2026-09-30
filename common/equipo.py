@@ -377,6 +377,7 @@ PIDE_DESBLOQUEAR = "desbloquear"    # [id]: abrir el contenedor de la raíz cifr
 PIDE_BLOQUEAR = "bloquear"          # [id]: cerrarlo
 PIDE_ABRIR = "abrir"            # id: la ventana de esa raíz (la cifrada, desbloqueándola antes)
 PIDE_DESPERTAR = "despertar"    # el equipo vuelve de la suspensión: mirarlo todo ya
+PIDE_SONDEAR = "sondear"        # los remotos sin conexión: probarlos ya («Probar ahora»)
 PIDE_ACTUALIZAR = "actualizar"  # bajar la versión nueva y ponerla (agente y raíces del equipo)
 PIDE_REANUDAR = "reanudar"      # (buzón de la raíz) «Iniciar servicio» con el agente: volver ya
 AJUSTES_PEDIBLES = ("espera_unidad_nueva", "pedir_al_iniciar")
