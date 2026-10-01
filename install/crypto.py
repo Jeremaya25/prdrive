@@ -1,44 +1,52 @@
 #!/usr/bin/env python3
-"""
-crypto.py — VeraCrypt y BitLocker. Sin Tkinter.
+r"""VeraCrypt y BitLocker para cifrar el dispositivo, sin Tkinter.
 
-Dos formas de cifrar el dispositivo, con repartos de trabajo muy distintos:
-
-  * **VeraCrypt** hace un contenedor `PRDRIVE.hc` en la raíz del volumen físico. Lo
-    crea y lo monta este módulo, y la estructura del dispositivo vive DENTRO. Es lo que
-    hace portable el cifrado: no depende de la edición de Windows ni de nada
-    instalado en el equipo. Tampoco de VeraCrypt: en Windows, si no está
-    instalado, se usa el VeraCrypt Portable oficial, bajado y comprobado por
-    `install/veracrypt_bin.py` (en Linux sí tiene que estar instalado).
-
-  * **BitLocker** cifra el volumen entero, y aquí solo se guía y se comprueba:
-    cifrar de verdad lo hace el diálogo de Windows. Comprobarlo no pasa por
-    `manage-bde` ni por `Get-BitLockerVolume` —los dos exigen elevar— sino por
-    la propiedad del shell que usa el Explorador, que se lee sin permisos y sin
-    lanzar nada; la nota larga está en la sección de BitLocker. Aun así «no he
-    podido comprobarlo» sigue siendo una respuesta de primera clase y no se
-    disfraza de «está todo bien».
+Dos formas de cifrar, con repartos de trabajo muy distintos:
+- **VeraCrypt**: este módulo crea y monta un contenedor `PRDRIVE.hc` en la raíz
+  del volumen físico, y la estructura del dispositivo vive DENTRO. Es lo que
+  hace portable el cifrado: no depende de la edición de Windows ni de nada
+  instalado en el equipo. Tampoco de VeraCrypt: en Windows, si no está
+  instalado, se usa el VeraCrypt Portable oficial, bajado y comprobado por
+  `install/veracrypt_bin.py`; en Linux, el instalado o el AppImage oficial.
+- **BitLocker**: cifra el volumen entero y aquí solo se guía y se comprueba;
+  cifrar de verdad lo hace el diálogo de Windows. Comprobarlo no pasa por
+  `manage-bde` ni por `Get-BitLockerVolume` (los dos exigen elevar) sino por la
+  propiedad del shell que usa el Explorador, que se lee sin permisos y sin
+  lanzar nada (ver la sección de BitLocker). «No he podido comprobarlo» sigue
+  siendo una respuesta de primera clase y no se disfraza de «está todo bien».
 
 Tres reglas que no se pueden relajar:
+- **Regla 1. La passphrase nunca se enseña ni se registra.** En Windows la CLI
+  de VeraCrypt solo admite la contraseña como argumento, así que ya es visible
+  en la lista de procesos mientras dura la orden (no se puede evitar), pero
+  nada de lo que sale de aquí para pintar o para un log la lleva: para eso está
+  `redact()`. En Linux se usa `--stdin`, que evita el problema del todo.
+- **Regla 2. El montaje no se da por bueno por el código de retorno.**
+  VeraCrypt eleva a un ayudante por UAC y lo que devuelve el proceso lanzado no
+  dice si el volumen quedó montado. Se comprueba mirando si el punto de montaje
+  se puede leer.
+- **Regla 3. `/dynamic` se pregunta antes, nunca se prueba a ver.** VeraCrypt
+  aborta con ERR_DYNAMIC_NOT_SUPPORTED si el anfitrión no admite ficheros
+  dispersos, y esa comprobación es nuestra: `soporta_dispersos()`.
 
-  1. **La passphrase nunca se enseña ni se registra.** En Windows la CLI de
-     VeraCrypt solo admite la contraseña como argumento, así que ya es visible en
-     la lista de procesos mientras dura la orden —eso no lo podemos evitar—, pero
-     sí podemos no repetirlo: nada de lo que sale de aquí para pintar o para un
-     log lleva la contraseña. Para eso está `redact()`, y en Linux se usa
-     `--stdin`, que evita el problema del todo.
-  2. **El montaje no se da por bueno por el código de retorno.** VeraCrypt eleva
-     a un ayudante por UAC y lo que devuelve el proceso que lanzamos no dice si
-     el volumen quedó montado. Se comprueba mirando si el punto de montaje se
-     puede leer.
-  3. **`/dynamic` se pregunta antes, nunca se prueba a ver.** VeraCrypt aborta
-     con ERR_DYNAMIC_NOT_SUPPORTED si el anfitrión no admite ficheros dispersos,
-     y esa comprobación es nuestra: `soporta_dispersos()`. Ver la sección
-     «Cuánto tarda».
+No hay favorito de VeraCrypt para montar al conectar. Hubo uno
+(`write_favorite()`) y no funcionaba ni tenía arreglo que mereciera la pena
+(VeraCrypt, tag 1.26.24, igual en `master`):
+- Guardaba el contenedor como `\\?\Volume{GUID}\PRDRIVE.hc` para no depender de
+  la letra. El temporizador de `Mount/Mount.c` resuelve esa forma con
+  `VolumeGuidPathToDevicePath()` (`Common/Dlgcode.c`), que solo acepta rutas
+  que TERMINAN en `}\` (un volumen entero): con un fichero detrás devuelve
+  vacío y el favorito se salta con `continue`.
+- `StartOnLogon=1` en `Configuration.xml` no registraba nada: el arranque con
+  Windows lo escribe `ManageStartupSeq()` en el registro y solo se llama desde
+  los diálogos de Preferencias y de Favoritos.
+- `Favorite Volumes.xml` se escribía desde cero y borraba los favoritos de la
+  persona.
 
-Lo que NO hay aquí: un favorito de VeraCrypt para montar al conectar. Estaba,
-y no funcionaba —ver la sección «Por qué no hay favorito», al final de la de
-VeraCrypt—; lo sustituye el vestíbulo que abre el contenedor desde fuera.
+Hacerlo bien exigiría guardar el contenedor por LETRA, escribir en el registro
+de otra aplicación y depender de que la letra esté libre. Lo sustituye el
+vestíbulo: `penwatch` abre el contenedor al conectar en cualquier equipo que lo
+tenga, y fuera de eso está «Abrir PRDRIVE».
 """
 
 from __future__ import annotations
@@ -57,13 +65,21 @@ from common import model, store
 from . import CREATE_NO_WINDOW, DEVICE_LABEL, IS_WIN, InstallError
 from . import veracrypt_bin
 
-MOUNT_TIMEOUT = 90.0       # VeraCrypt puede pedir UAC y tardar lo suyo
+MOUNT_TIMEOUT = 90.0
+"""Segundos que se espera a ver el volumen montado.
+
+VeraCrypt puede pedir UAC y tardar lo suyo.
+"""
 MOUNT_POLL = 0.5
+"""Segundos entre cada comprobación de si el volumen ya está montado."""
 PASSWORD_MARK = "***"
+"""Lo que sustituye a la contraseña en cualquier texto que salga de aquí."""
 
 FILE_SUPPORTS_SPARSE_FILES = 0x00000040     # winnt.h
-SONDA_BYTES = 8 * 1024 ** 2                 # lo que se escribe para medir
+SONDA_BYTES = 8 * 1024 ** 2
+"""Bytes que se escriben para medir la velocidad de la unidad."""
 SONDA_NOMBRE = ".prdrive-sonda.tmp"
+"""Fichero temporal de esa medida, que se borra al acabar."""
 
 WIN_CANDIDATES = {
     "mount": ["VeraCrypt.exe", r"C:\Program Files\VeraCrypt\VeraCrypt.exe",
@@ -72,26 +88,39 @@ WIN_CANDIDATES = {
                r"C:\Program Files\VeraCrypt\VeraCrypt Format.exe",
                r"C:\Program Files (x86)\VeraCrypt\VeraCrypt Format.exe"],
 }
+"""Dónde buscar los ejecutables de VeraCrypt en Windows.
+
+Primero el `PATH` y luego las carpetas de instalación habituales.
+"""
 POSIX_CANDIDATES = [
     "veracrypt", "/usr/bin/veracrypt", "/usr/local/bin/veracrypt",
     "/Applications/VeraCrypt.app/Contents/MacOS/VeraCrypt",
 ]
+"""Dónde buscar `veracrypt` en Linux y macOS."""
 
 FILESYSTEMS = ("exFAT", "NTFS", "FAT") if IS_WIN else ("exFAT", "NTFS", "ext4")
+"""Sistemas de ficheros que se ofrecen para el volumen de dentro."""
 
-# La contraseña, con los números de VeraCrypt (`Common/Password.h`, tag
-# VeraCrypt_1.26.24): `MAX_PASSWORD` y `PASSWORD_LEN_WARNING`. Los dos miden
-# BYTES en UTF-8 —la CLI convierte con `WideCharToMultiByte(CP_UTF8, …)`—, así
-# que una letra con tilde cuenta dos.
 CONTRASENA_MAX = 128
+"""Longitud máxima de la contraseña, en bytes UTF-8.
+
+Es `MAX_PASSWORD` de `Common/Password.h` (tag VeraCrypt_1.26.24). VeraCrypt
+mide BYTES y no letras (la CLI convierte con `WideCharToMultiByte(CP_UTF8,
+…)`): una letra con tilde cuenta dos.
+"""
 CONTRASENA_AVISO = 20
+"""Longitud, en bytes UTF-8, por debajo de la cual VeraCrypt avisa.
 
+Es `PASSWORD_LEN_WARNING`: pregunta si de verdad se quiere una contraseña tan
+corta.
+"""
 
-# ---------------------------------------------------------------------------
-# Localizar VeraCrypt
-# ---------------------------------------------------------------------------
 
 def _first_exe(candidatos: list[str]) -> str | None:
+    """Devuelve el primer candidato que existe, o `None`.
+
+    Un nombre con separador se busca como ruta; uno sin él, en el `PATH`.
+    """
     for c in candidatos:
         if os.sep in c or (os.altsep and os.altsep in c):
             if Path(c).is_file():
@@ -104,27 +133,29 @@ def _first_exe(candidatos: list[str]) -> str | None:
 
 
 def arquitectura_vc() -> str:
-    """'arm64' en un Windows ARM64 y 'x64' en los demás: qué ejecutables del
-    VeraCrypt Portable usa ESTE equipo.
+    """Devuelve `arm64` en un Windows ARM64 y `x64` en los demás.
 
-    VeraCrypt elige su driver por la máquina NATIVA (`IsARM()` en
-    `Common/Dlgcode.c` pregunta a `IsWow64Process2`), y aquí se pregunta lo
-    mismo por el mismo camino que todo lo demás del proyecto
-    (`model.machine_arch()`, que cuelga de `model.maquina_nativa_windows()`): el
-    instalador es un .exe x64 y en un Windows ARM oiría «AMD64» de cualquier
-    otro sitio. El x64 emulado también cargaría el driver arm64 que viaja a su
-    lado, pero no hay por qué emular lo que existe nativo."""
+    Es qué ejecutables del VeraCrypt Portable usa ESTE equipo. VeraCrypt elige
+    su driver por la máquina NATIVA (`IsARM()` en `Common/Dlgcode.c` pregunta a
+    `IsWow64Process2`) y aquí se pregunta lo mismo por el mismo camino que todo
+    lo demás del proyecto (`model.machine_arch()`, que cuelga de
+    `model.maquina_nativa_windows()`): el instalador es un .exe x64 y en un
+    Windows ARM oiría «AMD64» de cualquier otro sitio. El x64 emulado también
+    cargaría el driver arm64 que viaja a su lado, pero no hay por qué emular lo
+    que existe nativo.
+    """
     return "arm64" if model.machine_arch() in ("arm64", "aarch64") else "x64"
 
 
 def _en_carpeta(carpeta: Path) -> dict | None:
-    """Los ejecutables de montar y de formatear de esa carpeta, o None.
+    """Devuelve los ejecutables de montar y de formatear de esa carpeta, o `None`.
 
-    Con los nombres del portable oficial —`VeraCrypt-<arq>.exe` y
-    `VeraCrypt Format-<arq>.exe`, los de este equipo (#38: el portable no trae
-    ningún `VeraCrypt.exe`)— o con los de una instalación. Los dos de la misma
+    Valen los nombres del portable oficial (`VeraCrypt-<arq>.exe` y `VeraCrypt
+    Format-<arq>.exe`, los de este equipo: el portable no trae ningún
+    `VeraCrypt.exe`, #38) o los de una instalación. Los dos de la misma
     disposición: mezclar el de montar de una con el de formatear de otra es
-    mezclar versiones."""
+    mezclar versiones.
+    """
     arq = arquitectura_vc()
     for montar, formatear in ((veracrypt_bin.montar(arq), veracrypt_bin.formatear(arq)),
                               ("VeraCrypt.exe", "VeraCrypt Format.exe")):
@@ -138,33 +169,36 @@ def _en_carpeta(carpeta: Path) -> dict | None:
 
 
 def portatil(vc: dict | None) -> bool:
-    """¿Es ese el VeraCrypt Portable (los nombres llevan la arquitectura)?
+    """Indica si ese VeraCrypt es el Portable (los nombres llevan la arquitectura).
 
     Lo que cambia para quien lo usa es el UAC: sin su driver instalado, cada
     operación se relanza elevada (`InitApp`, `LaunchElevatedProcess` en
-    `Common/Dlgcode.c`), y la pantalla lo avisa."""
+    `Common/Dlgcode.c`), y la pantalla lo avisa.
+    """
     nombre = Path((vc or {}).get("mount") or "").name.lower()
     return nombre in {veracrypt_bin.montar(a).lower()
                       for a in veracrypt_bin.ARQUITECTURAS}
 
 
 def find_veracrypt(extra_dir: str | Path | None = None) -> dict | None:
-    """Los ejecutables de VeraCrypt, o None.
+    """Devuelve los ejecutables de VeraCrypt, o `None`.
 
-    En Windows son dos binarios distintos (montar y formatear); en Linux y macOS
-    los dos papeles los hace el mismo `veracrypt --text`. `extra_dir` es la
-    carpeta que indique el usuario cuando no está donde se espera: una
-    instalación o un VeraCrypt Portable descomprimido, las dos valen.
+    En Windows son dos binarios distintos (montar y formatear); en Linux y
+    macOS los dos papeles los hace el mismo `veracrypt --text`. Bajarlo no se
+    hace aquí: es una descarga y la pide la pantalla con su botón.
 
-    En Linux, esa carpeta, el instalado y, si no hay, el AppImage oficial
-    fijado que ya esté en la caché (`veracrypt_bin.appimage_en_cache()`).
+    Orden en Windows: la carpeta del usuario, el VeraCrypt INSTALADO (con otro
+    instalado y su driver cargado, el portable falla con ERR_DRIVER_VERSION:
+    `Common/Dlgcode.c`, `DriverAttach`) y, si no hay ninguno, el Portable
+    oficial que ya esté en la caché del instalador y siga siendo el comprobado
+    (`veracrypt_bin.cached()`). En Linux: esa carpeta, el instalado y el
+    AppImage oficial fijado que ya esté en la caché
+    (`veracrypt_bin.appimage_en_cache()`).
 
-    En Windows, por este orden: esa carpeta, el VeraCrypt INSTALADO —con otro
-    VeraCrypt instalado y su driver cargado, el portable falla con
-    ERR_DRIVER_VERSION (`Common/Dlgcode.c`, `DriverAttach`)— y, si no hay
-    ninguno, el VeraCrypt Portable oficial que ya esté en la caché del
-    instalador y siga siendo el comprobado (`veracrypt_bin.cached()`). Bajarlo
-    no se hace aquí: es una descarga, y la pide la pantalla con su botón."""
+    Args:
+        extra_dir: Carpeta que indique el usuario cuando no está donde se
+            espera: una instalación o un Portable descomprimido, las dos valen.
+    """
     if IS_WIN:
         if extra_dir:
             hallado = _en_carpeta(Path(extra_dir))
@@ -184,9 +218,8 @@ def find_veracrypt(extra_dir: str | Path | None = None) -> dict | None:
     vc = _first_exe(candidatos)
     if vc:
         return {"mount": vc, "format": vc}
-    # Sin instalado, el AppImage oficial que ya esté en la caché y siga siendo
-    # el comprobado (`veracrypt_bin.appimage_en_cache()`); bajarlo lo pide la
-    # pantalla, como el Portable en Windows.
+    # Sin instalado, el AppImage oficial de la caché si sigue siendo el
+    # comprobado; bajarlo lo pide la pantalla, como el Portable en Windows.
     cache = veracrypt_bin.en_cache_para_este_equipo()
     if cache is None:
         return None
@@ -195,37 +228,44 @@ def find_veracrypt(extra_dir: str | Path | None = None) -> dict | None:
 
 
 def appimage(vc: dict | None) -> bool:
-    """¿Es el AppImage oficial fijado (Linux, sin instalar)?"""
+    """Indica si ese VeraCrypt es el AppImage oficial fijado (Linux, sin instalar)."""
     return bool((vc or {}).get("appimage"))
 
 
-# ---------------------------------------------------------------------------
-# Tamaños y letras
-# ---------------------------------------------------------------------------
-
 UNIDADES = {"k": 1024, "m": 1024 ** 2, "g": 1024 ** 3, "t": 1024 ** 4}
-MARGEN = 50 * 1024 ** 2         # lo que se deja libre al pedir 'max'
+"""Multiplicador de cada sufijo de tamaño (`20G`, `500M`)."""
+MARGEN = 50 * 1024 ** 2
+"""Bytes que se dejan libres al pedir `max`."""
 
-# Lo que se deja libre al pedir 'max' si la unidad va a llevar VeraCrypt en su
-# raíz física (`install/traveler.py`). Son ~29 MB, pero ponerlo al día copia el
-# nuevo AL LADO del viejo antes de cambiarlos (nunca encima), así que en ese
-# momento hace falta el doble, más el vestíbulo y el `autorun.inf`, y algo para
-# versiones que pesen más. Con 50 MiB, un contenedor 'max' dejaba la unidad sin
-# sitio para su primera actualización —y uno dinámico, al crecer, se lo comía—.
 RESERVA_VIAJERO = 256 * 1024 ** 2
+"""Bytes que se dejan libres al pedir `max` con VeraCrypt de viaje.
+
+Se aplica si la unidad va a llevar VeraCrypt en su raíz física
+(`install/traveler.py`). Son ~29 MB, pero ponerlo al día copia el nuevo AL LADO
+del viejo antes de cambiarlos, así que en ese momento hace falta el doble, más
+el vestíbulo y el `autorun.inf`, y algo para versiones que pesen más. Con
+`MARGEN`, un contenedor `max` dejaba la unidad sin sitio para su primera
+actualización (y uno dinámico, al crecer, se lo comía).
+"""
 
 
 def size_to_bytes(raw: str, free: int, tope: int | None = None,
                   viajero: bool = False) -> int:
-    """'20G' / '500M' / 'max' -> bytes.
+    """Convierte `20G`, `500M` o `max` en bytes.
 
-    `tope` es lo más que admite el sistema de ficheros de la unidad
-    (`tope_contenedor()`). Solo recorta 'max', que es «todo lo que quepa»: un
-    tamaño escrito a mano por encima no se rebaja en silencio, lo rechaza
-    `create_container()` diciendo por qué.
+    Args:
+        raw: El tamaño escrito.
+        free: Bytes libres en la unidad.
+        tope: Lo más que admite el sistema de ficheros (`tope_contenedor()`).
+            Solo recorta `max`, que es «todo lo que quepa»: un tamaño escrito a
+            mano por encima no se rebaja en silencio, lo rechaza
+            `create_container()` diciendo por qué.
+        viajero: La unidad va a llevar VeraCrypt fuera del contenedor, y `max`
+            deja `RESERVA_VIAJERO` en vez de `MARGEN`.
 
-    `viajero`: la unidad va a llevar VeraCrypt fuera del contenedor, y 'max'
-    deja `RESERVA_VIAJERO` en vez de `MARGEN`."""
+    Raises:
+        InstallError: Si el tamaño no se entiende.
+    """
     texto = str(raw).strip().lower()
     if texto in {"max", ""}:
         maximo = max(0, free - (RESERVA_VIAJERO if viajero else MARGEN))
@@ -239,23 +279,25 @@ def size_to_bytes(raw: str, free: int, tope: int | None = None,
             f"No entiendo el tamaño '{raw}'. Usa 20G, 500M o 'max'.") from e
 
 
-# Un contenedor es UN fichero, y FAT32 no admite ficheros de 4 GiB o más. La
-# mayoría de pendrives de 32 GB o menos vienen así de fábrica, y sin dispersos
-# (FAT no los tiene) se proponía «el hueco, con tope de 64G»: VeraCrypt fallaba
-# al crear con un error que no decía esto. El tope no es 4 GiB − 1 porque
-# VeraCrypt redondea `/size` HACIA ARRIBA al tamaño de sector
-# (`Format/Tcformat.c`, tag VeraCrypt_1.26.24: «correct volume size to be
-# multiple of sector size»); 4095 MiB es múltiplo de cualquier sector.
 SISTEMAS_FAT = {"fat", "fat12", "fat16", "fat32", "vfat", "msdos"}
+"""Nombres de sistema de ficheros que no admiten ficheros de 4 GiB o más."""
 TOPE_FAT = 4095 * 1024 ** 2
+"""Lo más grande que puede ser un contenedor en FAT: 4095 MiB.
+
+Un contenedor es UN fichero y FAT32 no admite 4 GiB o más; la mayoría de
+pendrives de 32 GB o menos vienen así de fábrica. No son 4 GiB − 1 porque
+VeraCrypt redondea `/size` HACIA ARRIBA al tamaño de sector
+(`Format/Tcformat.c`, tag VeraCrypt_1.26.24: «correct volume size to be
+multiple of sector size»); 4095 MiB es múltiplo de cualquier sector.
+"""
 
 
 def sistema_de_ficheros(root: str | Path) -> str:
-    """El sistema de ficheros de la unidad de `root`, o "" si no se sabe.
-    `root` puede ser una carpeta: se pregunta a su volumen.
+    """Devuelve el sistema de ficheros de la unidad de `root`, o `""` si no se sabe.
 
-    Función de módulo para que los tests la sustituyan, como
-    `soporta_dispersos()`."""
+    `root` puede ser una carpeta: se pregunta a su volumen. Es función de
+    módulo para que los tests la sustituyan, como `soporta_dispersos()`.
+    """
     from . import device
     try:
         return device.volume_for(device.raiz_del_volumen(root)).filesystem or ""
@@ -264,28 +306,37 @@ def sistema_de_ficheros(root: str | Path) -> str:
 
 
 def tope_contenedor(filesystem: str) -> int | None:
-    """Lo más grande que puede ser un contenedor en ese sistema de ficheros.
+    """Devuelve lo más grande que puede ser un contenedor en ese sistema de ficheros.
 
-    None es «sin tope que importe». Se compara el nombre entero y en minúsculas:
-    `exfat` contiene «fat» y no tiene nada que ver."""
+    `None` es «sin tope que importe». Se compara el nombre entero y en
+    minúsculas: `exfat` contiene «fat» y no tiene nada que ver.
+    """
     return TOPE_FAT if (filesystem or "").strip().lower() in SISTEMAS_FAT else None
 
 
-# Sin dispersos, cada giga propuesto es un giga que hay que ESCRIBIR en la
-# unidad antes de poder seguir instalando. Proponer casi el disco entero —lo que
-# se hacía— convierte un disco de 1 TB en una espera de horas, y encima de un
-# contenedor que casi nadie va a llenar. Con dispersos no cuesta nada y el
-# tamaño deja de ser una decisión.
-TOPE_SIN_DISPERSOS = 64 * 1024 ** 3     # a partir de aquí no se propone más
+TOPE_SIN_DISPERSOS = 64 * 1024 ** 3
+"""Bytes a partir de los cuales no se propone más tamaño sin ficheros dispersos.
+
+Sin dispersos, cada giga propuesto es un giga que hay que ESCRIBIR en la unidad
+antes de poder seguir instalando: proponer casi el disco entero convertía uno
+de 1 TB en una espera de horas, para un contenedor que casi nadie va a llenar.
+Con dispersos no cuesta nada y el tamaño deja de ser una decisión.
+"""
 
 
 def suggested_size(free: int, dinamico: bool = False, tope: int | None = None) -> str:
-    """Lo que se propone por defecto.
+    """Devuelve el tamaño que se propone por defecto.
 
     Con contenedor dinámico, `max`: solo ocupa lo que se guarde dentro. Sin él,
-    el hueco menos un giga de respiro pero con tope, porque ese número es
-    minutos de escritura (ver la sección «Cuánto tarda»). Y nunca más de lo que
-    admite la unidad (`tope`, ver `tope_contenedor()`)."""
+    el hueco menos un giga de respiro pero con `TOPE_SIN_DISPERSOS`, porque ese
+    número es minutos de escritura (ver `soporta_dispersos()`). Y nunca más de
+    lo que admite la unidad.
+
+    Args:
+        free: Bytes libres en la unidad.
+        dinamico: Si el contenedor se crea disperso.
+        tope: Lo más que admite el sistema de ficheros (`tope_contenedor()`).
+    """
     if dinamico:
         return "max"
     limite = min(max(0, free - 1024 ** 3), TOPE_SIN_DISPERSOS)
@@ -295,8 +346,14 @@ def suggested_size(free: int, dinamico: bool = False, tope: int | None = None) -
 
 
 def free_drive_letter(preferida: str = "P") -> str:
-    """Una letra libre. Sin PowerShell: preguntarle al kernel es instantáneo y no
-    abre ninguna ventana."""
+    """Devuelve una letra de unidad libre, la preferida si puede ser.
+
+    Se le pregunta al kernel (`GetLogicalDrives`): es instantáneo, no abre
+    ninguna ventana y no hace falta PowerShell. Fuera de Windows devuelve `""`.
+
+    Raises:
+        InstallError: Si no queda ninguna letra libre.
+    """
     if not IS_WIN:
         return ""
     import ctypes
@@ -308,49 +365,39 @@ def free_drive_letter(preferida: str = "P") -> str:
     raise InstallError("No queda ninguna letra de unidad libre.")
 
 
-# ---------------------------------------------------------------------------
-# Cuánto tarda, y cómo dejar de tardar
-# ---------------------------------------------------------------------------
-#
-# Crear el contenedor en un disco externo tarda muchísimo más que en el interno,
-# y la culpa NO es del cifrado. Con `/quick` sobre un contenedor-fichero,
-# `FormatVolume()` preasigna el fichero con `SetEndOfFile()` y después
-# `FormatNoFs()` entra en la rama `else if (!bDevice && !hiddenVol)`, que escribe
-# un sector a cero cada 128 MiB *a propósito* —su propio comentario lo dice:
-# «forcing Windows to allocate the disk space of each 128 MiB chunk
-# immediately»—. Cada una de esas escrituras cae más allá del valid data length,
-# así que NTFS rellena de ceros todo el hueco anterior: se acaba escribiendo el
-# contenedor entero. En un SSD interno a 500 MB/s no se nota; en un USB a
-# 30 MB/s son media hora por cada 50 GiB. (src/Common/Format.c, tag
-# VeraCrypt_1.26.24.)
-#
-# La salida es `/dynamic`: el fichero se marca como disperso con FSCTL_SET_SPARSE
-# (Format.c:407, que además exige quickFormat, ya se pasa) y entonces esa
-# caminata solo asigna un clúster por tramo, porque NTFS no materializa el hueco.
-# La creación pasa a segundos sea cual sea el tamaño. Lo que se paga: el
-# contenedor deja de tener negación plausible —se ve cuánto ocupa de verdad— y
-# si la unidad se llena, el volumen de dentro da errores de E/S.
-
 def soporta_dispersos(root: str | Path) -> bool:
-    """¿Admite ficheros dispersos el sistema de ficheros de `root`?
+    """Indica si el sistema de ficheros de `root` admite ficheros dispersos.
 
     Es LA pregunta de la que depende que crear el contenedor tarde segundos o
-    media hora, y hay que contestarla ANTES: al recibir `/dynamic`, VeraCrypt
-    hace esta misma consulta y **aborta** con ERR_DYNAMIC_NOT_SUPPORTED si sale
-    que no (Tcformat.c:6338). Por eso se pregunta por la bandera y no por el
-    nombre del sistema de ficheros: es la misma prueba que hace él, y así no hay
-    que mantener aquí una lista de qué sistemas la cumplen.
+    media hora, y hay que contestarla ANTES. Con `/quick` sobre un
+    contenedor-fichero, `FormatNoFs()` (src/Common/Format.c, tag
+    VeraCrypt_1.26.24) escribe un sector a cero cada 128 MiB *a propósito*
+    («forcing Windows to allocate the disk space of each 128 MiB chunk
+    immediately»). Cada escritura cae más allá del valid data length y NTFS
+    rellena de ceros todo el hueco anterior: se acaba escribiendo el contenedor
+    entero, que en un USB a 30 MB/s son media hora por cada 50 GiB. `/dynamic`
+    marca el fichero como disperso con FSCTL_SET_SPARSE (Format.c:407, que
+    además exige quickFormat, ya se pasa) y esa caminata solo asigna un clúster
+    por tramo. Se paga en negación plausible (se ve cuánto ocupa de verdad) y
+    en errores de E/S dentro del volumen si la unidad se llena.
+
+    Al recibir `/dynamic`, VeraCrypt hace esta misma consulta y **aborta** con
+    ERR_DYNAMIC_NOT_SUPPORTED si sale que no (Tcformat.c:6338). Por eso se
+    pregunta por la bandera y no por el nombre del sistema de ficheros: es la
+    misma prueba que hace él y no hay que mantener aquí una lista de los que la
+    cumplen.
 
     En POSIX no hay bandera que leer: se prueba (`_dispersos_posix()`). Ahí no
-    decide `/dynamic` —no existe en su CLI—, sino si el `--quick` de la
+    decide `/dynamic`, que no existe en su CLI, sino si el `--quick` de la
     1.26.29 dejará el contenedor disperso (`creacion_dispersa()`).
 
     `root` puede ser una carpeta (la del contenedor de la raíz de un equipo):
     `GetVolumeInformationW` solo acepta la raíz de un volumen, así que se le
     pregunta a la suya (`device.raiz_del_volumen()`).
 
-    Función de módulo para que los tests la sustituyan, como
-    `_leer_estado_bitlocker()`."""
+    Es función de módulo para que los tests la sustituyan, como
+    `_leer_estado_bitlocker()`.
+    """
     if not IS_WIN:
         return _dispersos_posix(root)
     import ctypes
@@ -373,17 +420,19 @@ def soporta_dispersos(root: str | Path) -> bool:
 
 
 DISPERSO_NOMBRE = ".prdrive-disperso.tmp"
+"""Fichero temporal de la prueba de ficheros dispersos en POSIX."""
 
 
 def _dispersos_posix(root: str | Path) -> bool:
-    """¿Deja este sistema de ficheros un fichero con un hueco sin ocupar?
+    """Indica si este sistema de ficheros deja un fichero con un hueco sin ocupar.
 
     La prueba es la evidencia misma: 1 MiB de tamaño con un solo byte al final,
     y se mira cuánto ocupa de verdad (`st_blocks`, en bloques de 512 bytes).
     ext4, btrfs o xfs lo dejan en un bloque; FAT y exFAT, que no saben de
     dispersos, lo rellenan entero. Se escribe en la propia carpeta y se borra.
     Cualquier fallo es «no»: prometer que ocupa poco y que ocupe entero es peor
-    que lo contrario."""
+    que lo contrario.
+    """
     prueba = Path(root) / DISPERSO_NOMBRE
     try:
         with open(prueba, "wb") as f:
@@ -402,14 +451,15 @@ def _dispersos_posix(root: str | Path) -> bool:
 
 
 def creacion_dispersa(root: str | Path, vc: dict | None) -> bool | None:
-    """¿El contenedor que se cree en `root` con `vc` saldrá disperso?
+    """Indica si el contenedor que se cree en `root` con `vc` saldrá disperso.
 
-    True o False cuando se sabe, None cuando depende de algo que no se puede
-    preguntar sin ejecutarlo. En Windows es `/dynamic`, que se pasa solo si el
-    disco lo admite: `soporta_dispersos()`. En Linux, `--quick` se pasa siempre
-    (`create_command`) y deja el contenedor disperso desde la 1.26.29; antes se
-    ignora. Con el AppImage fijado la versión se sabe; con un VeraCrypt
-    instalado no, y la pantalla lo dice así en vez de prometer nada."""
+    `True` o `False` cuando se sabe, `None` cuando depende de algo que no se
+    puede preguntar sin ejecutarlo. En Windows es `/dynamic`, que se pasa solo
+    si el disco lo admite (`soporta_dispersos()`). En Linux, `--quick` se pasa
+    siempre (`create_command`) y deja el contenedor disperso desde la 1.26.29;
+    antes se ignora. Con el AppImage fijado la versión se sabe; con un
+    VeraCrypt instalado no, y la pantalla lo dice así en vez de prometer nada.
+    """
     if not soporta_dispersos(root):
         return False
     if IS_WIN or appimage(vc):
@@ -418,15 +468,19 @@ def creacion_dispersa(root: str | Path, vc: dict | None) -> bool | None:
 
 
 def medir_escritura(root: str | Path, muestra: int = SONDA_BYTES) -> float | None:
-    """Bytes por segundo que admite esa unidad, medidos. None si no se puede.
+    """Devuelve los bytes por segundo que admite esa unidad, medidos, o `None`.
 
     Sirve para poder decir «≈ 14 min» en vez de «esto puede tardar bastante»,
     que es lo único honesto cuando no hay dispersos y hay que escribir el
-    contenedor entero. El `fsync` no es opcional: sin él se mediría la caché del
-    sistema, que en un USB miente por un orden de magnitud. La sonda se borra
-    siempre, también si falla a medias.
+    contenedor entero. El `fsync` no es opcional: sin él se mediría la caché
+    del sistema, que en un USB miente por un orden de magnitud. La sonda se
+    borra siempre, también si falla a medias. Es función de módulo: los tests
+    la sustituyen y así ninguno escribe nada.
 
-    Función de módulo: los tests la sustituyen, y así ninguno escribe nada."""
+    Args:
+        root: Carpeta de la unidad donde se escribe la sonda.
+        muestra: Bytes que se escriben.
+    """
     sonda = Path(root) / SONDA_NOMBRE
     bloque = b"\0" * (1024 ** 2)
     vueltas = max(1, muestra // len(bloque))
@@ -451,35 +505,38 @@ def medir_escritura(root: str | Path, muestra: int = SONDA_BYTES) -> float | Non
 
 
 def estimar_creacion(root: str | Path, size_bytes: int) -> float | None:
-    """Segundos que va a costar escribir un contenedor de ese tamaño, o None.
+    """Devuelve los segundos que costará escribir un contenedor así, o `None`.
 
-    Solo describe el caso lento —el que hay que escribir entero—. Con contenedor
-    dinámico no se escribe el volumen y esto no se pregunta: quien llama lo sabe
-    por `soporta_dispersos()`."""
+    Solo describe el caso lento, el que hay que escribir entero: con contenedor
+    dinámico no se escribe el volumen y esto no se pregunta (quien llama lo
+    sabe por `soporta_dispersos()`).
+    """
     velocidad = medir_escritura(root)
     if not velocidad:
         return None
     return size_bytes / velocidad
 
 
-# Lo que la sonda NO puede saber, dicho siempre al lado de su número. Mide la
-# ráfaga: muchas memorias USB escriben rápido los primeros gigas en una caché
-# (SLC) y, llena esa caché, bajan a su velocidad real, a menudo la mitad o la
-# cuarta parte. Una sonda más grande no lo arregla, porque esa caché puede ser
-# de varios gigas. Caso real (#46): más de 100 GB en exFAT, la sonda midió unos
-# 75 MB/s, se dijo «unos 23 min» y a los 40 seguía escribiendo. Por eso el
-# número es un mínimo, y el de verdad lo da el avance medido mientras se crea
-# (sección «Progreso de la creación»).
 AVISO_RAFAGA = ("en memorias USB suele tardar bastante más, porque la velocidad "
                 "baja cuando se llena su caché. Mientras se crea verás el avance "
                 "real, si la unidad deja medirlo")
+"""Lo que la sonda NO puede saber, dicho siempre al lado de su número.
+
+Mide la ráfaga: muchas memorias USB escriben rápido los primeros gigas en una
+caché (SLC) y, llena, bajan a su velocidad real, a menudo la mitad o la cuarta
+parte. Una sonda más grande no lo arregla, porque esa caché puede ser de varios
+gigas. Caso real (#46): más de 100 GB en exFAT, la sonda midió unos 75 MB/s, se
+dijo «unos 23 min» y a los 40 seguía escribiendo. Por eso el número es un
+mínimo, y el de verdad lo da el avance medido mientras se crea (`Seguimiento`).
+"""
 
 
 def _duracion(segundos: float) -> str:
-    """«unos 23 min» o «unas 1,5 h»: una espera de más de minuto y medio.
+    """Devuelve la espera en palabras: «unos 23 min» o «unas 1,5 h».
 
     Las horas empiezan en hora y media, que es la primera cifra que no se lee
-    mejor en minutos («unas 1,0 h» no la diría nadie), y con coma decimal."""
+    mejor en minutos («unas 1,0 h» no la diría nadie), y con coma decimal.
+    """
     if segundos < 90 * 60:
         return f"unos {max(2, round(segundos / 60))} min"
     horas = f"{segundos / 3600:.1f}".replace(".", ",").removesuffix(",0")
@@ -487,11 +544,11 @@ def _duracion(segundos: float) -> str:
 
 
 def describir_espera(segundos: float | None) -> str:
-    """La estimación, en algo que se pueda leer de un vistazo.
+    """Devuelve la estimación en algo que se pueda leer de un vistazo.
 
-    Es un MÍNIMO, y lo dice: sale de la velocidad de ráfaga (ver
-    `AVISO_RAFAGA`). Quien llama pone delante lo que se va a escribir y detrás
-    el punto."""
+    Es un MÍNIMO y lo dice: sale de la velocidad de ráfaga (`AVISO_RAFAGA`).
+    Quien llama pone delante lo que se va a escribir y detrás el punto.
+    """
     if segundos is None:
         return "no he podido medir la velocidad de la unidad"
     if segundos < 90:
@@ -499,44 +556,27 @@ def describir_espera(segundos: float | None) -> str:
     return f"al menos {_duracion(segundos)}; {AVISO_RAFAGA}"
 
 
-# ---------------------------------------------------------------------------
-# Progreso de la creación
-# ---------------------------------------------------------------------------
-#
-# VeraCrypt crea con `/silent` y no cuenta nada, pero lo que escribe acaba en el
-# disco, y el disco lleva la cuenta de lo que se le escribe. Se apunta ese
-# contador justo antes de lanzar la orden y se vuelve a leer cada segundo desde
-# un hilo propio: lo que ha crecido, entre lo que mide el contenedor, es cuánto
-# va. Es el único canal, igual que el log de rclone lo es para `progress.py`, y
-# con las mismas reglas: puramente informativo, y **mejor sin número que con uno
-# falso**. Si el contador no se puede leer, baja o se queda quieto, no hay
-# avance y la ventana vuelve a la barra sin cifra, que es lo que había antes.
-#
-# SIN VERIFICAR EN HARDWARE (#46, pruebas P1–P7): que Windows conteste sin
-# administrador, que su cuenta incluya el relleno de ceros del sistema de
-# ficheros y lo que escribe la copia elevada de Format, y el camino de Linux
-# sobre una memoria USB. Mientras no se pruebe, lo que protege es la vuelta a la
-# barra indeterminada: con un contador que no sirve, nada cambia respecto a no
-# tenerlo.
-
-MUESTREO_S = 1.0        # cada cuánto se lee el contador
-VENTANA_S = 60.0        # la velocidad que vale es la de este último rato
-VENTANA_MIN_S = 30.0    # con menos rato escribiendo, no se da tiempo restante
-PARADO_S = 30.0         # sin moverse este rato, el contador ya no dice nada
-TOPE_AVANCE = 0.99      # hasta que create_container() vuelva, nunca el 100 %
+MUESTREO_S = 1.0  # segundos entre lecturas del contador
+VENTANA_S = 60.0  # la velocidad que vale es la de este último rato
+VENTANA_MIN_S = 30.0  # con menos rato escribiendo, no se da tiempo restante
+PARADO_S = 30.0  # sin moverse este rato, el contador ya no dice nada
+TOPE_AVANCE = 0.99  # hasta que create_container() vuelva, nunca el 100 %
 
 SECTOR_SYSFS = 512
+"""Bytes por sector de `/sys/dev/block/…/stat`: siempre 512."""
 SYS_DEV_BLOCK = Path("/sys/dev/block")
+"""Carpeta de sysfs con un enlace a cada dispositivo de bloques, por `mayor:menor`."""
 
 # winioctl.h: `IOCTL_DISK_PERFORMANCE` es CTL_CODE(IOCTL_DISK_BASE, 0x0008,
-# METHOD_BUFFERED, FILE_ANY_ACCESS), con IOCTL_DISK_BASE = FILE_DEVICE_DISK = 7 y
-# CTL_CODE(t, f, m, a) = (t << 16) | (a << 14) | (f << 2) | m.
+# METHOD_BUFFERED, FILE_ANY_ACCESS), con IOCTL_DISK_BASE = FILE_DEVICE_DISK = 7
+# y CTL_CODE(t, f, m, a) = (t << 16) | (a << 14) | (f << 2) | m.
 FILE_DEVICE_DISK = 0x00000007
 METHOD_BUFFERED = 0
 FILE_ANY_ACCESS = 0
 
 
 def _ctl_code(tipo: int, funcion: int, metodo: int, acceso: int) -> int:
+    """Compone un código de control de E/S como la macro `CTL_CODE` de winioctl.h."""
     return (tipo << 16) | (acceso << 14) | (funcion << 2) | metodo
 
 
@@ -548,7 +588,7 @@ OPEN_EXISTING = 3
 
 
 def _disk_performance():
-    """La estructura `DISK_PERFORMANCE` de winioctl.h, campo a campo:
+    """Devuelve la clase `DISK_PERFORMANCE` de winioctl.h, campo a campo.
 
         LARGE_INTEGER BytesRead, BytesWritten, ReadTime, WriteTime, IdleTime;
         DWORD         ReadCount, WriteCount, QueueDepth, SplitCount;
@@ -556,13 +596,15 @@ def _disk_performance():
         DWORD         StorageDeviceNumber;
         WCHAR         StorageManagerName[8];
 
-    88 bytes en total. Con tipos de tamaño fijo y no los de `wintypes`, para que
-    la disposición se pueda comprobar en cualquier sistema (un `c_wchar` son
-    cuatro bytes en Linux; un WCHAR, dos). Se construye al llamarla, como el
-    resto de ctypes de este módulo."""
+    88 bytes en total. Con tipos de tamaño fijo y no los de `wintypes`, para
+    que la disposición se pueda comprobar en cualquier sistema (un `c_wchar`
+    son cuatro bytes en Linux; un WCHAR, dos). Se construye al llamarla, como
+    el resto de ctypes de este módulo.
+    """
     import ctypes
 
     class DISK_PERFORMANCE(ctypes.Structure):
+        """Estructura `DISK_PERFORMANCE` de winioctl.h."""
         _fields_ = [("BytesRead", ctypes.c_int64),
                     ("BytesWritten", ctypes.c_int64),
                     ("ReadTime", ctypes.c_int64),
@@ -580,13 +622,14 @@ def _disk_performance():
 
 
 def _escritos_windows(root: str | Path) -> int | None:
-    """`DISK_PERFORMANCE.BytesWritten` del volumen de `root` (`\\\\.\\G:`).
+    r"""Devuelve `BytesWritten` de `DISK_PERFORMANCE` del volumen de `root`, o `None`.
 
-    Se abre con acceso 0 y compartido para leer y escribir: la documentación de
-    `CreateFileW` dice que con acceso 0 se pueden consultar los atributos de un
-    dispositivo sin acceder a él —ni al medio—, y `IOCTL_DISK_PERFORMANCE` es
-    FILE_ANY_ACCESS, así que el administrador de E/S no le pide nada más al
-    handle. Que el driver tampoco pida administrador es la prueba P1.
+    El volumen es `\\.\G:`. Se abre con acceso 0 y compartido para leer y
+    escribir: la documentación de `CreateFileW` dice que con acceso 0 se pueden
+    consultar los atributos de un dispositivo sin acceder a él ni al medio, y
+    `IOCTL_DISK_PERFORMANCE` es FILE_ANY_ACCESS, así que el administrador de
+    E/S no le pide nada más al handle. Que el driver tampoco pida administrador
+    es la prueba P1.
 
     Un handle por lectura, cerrado enseguida: uno abierto toda la creación
     sería una cosa más agarrada al volumen del que cuelga el contenedor. Y la
@@ -594,10 +637,11 @@ def _escritos_windows(root: str | Path) -> int | None:
     de esa IOCTL dice «enables performance counters»): por eso solo vale la
     diferencia con la inicial, que se lee antes de lanzar VeraCrypt.
 
-    La alternativa que queda para P1 si el volumen no contesta es el disco
-    (`\\\\.\\PhysicalDriveN`, vía IOCTL_STORAGE_GET_DEVICE_NUMBER). No está
-    aquí a propósito: mezclar las dos cuentas en una misma creación daría un
-    salto que se leería como avance."""
+    La alternativa para P1 si el volumen no contesta es el disco
+    (`\\.\PhysicalDriveN`, vía IOCTL_STORAGE_GET_DEVICE_NUMBER). No está aquí a
+    propósito: mezclar las dos cuentas en una misma creación daría un salto que
+    se leería como avance.
+    """
     unidad = str(root)[:2]
     if len(unidad) != 2 or unidad[1] != ":" or not unidad[0].isalpha():
         return None                 # una ruta UNC o sin letra: no hay volumen que abrir
@@ -637,16 +681,20 @@ def _escritos_windows(root: str | Path) -> int | None:
 
 
 def _escritos_linux(root: str | Path) -> int | None:
-    """Sectores escritos en el dispositivo de bloques de `root`, en bytes.
+    """Devuelve los bytes escritos en el dispositivo de bloques de `root`.
 
     `/sys/dev/block/<mayor>:<menor>` es el enlace al dispositivo del `st_dev`
     (Documentation/ABI/testing/sysfs-dev del kernel), y si es una partición su
-    `stat` ya es solo de ella. El séptimo campo son los sectores escritos, y son
-    siempre de 512 bytes, sea cual sea el tamaño de sector del disco
+    `stat` ya es solo de ella. El séptimo campo son los sectores escritos,
+    siempre de 512 bytes sea cual sea el tamaño de sector del disco
     (Documentation/block/stat.rst: «standard UNIX 512-byte sectors»). Cuenta lo
     que llega al dispositivo, después de la caché de páginas: lo que de verdad
-    se ha escrito. Un sistema de ficheros sin dispositivo de bloques (tmpfs, o
-    el número anónimo de btrfs) no tiene ese fichero, y eso es un None."""
+    se ha escrito.
+
+    Raises:
+        OSError: Si el sistema de ficheros no tiene dispositivo de bloques
+            (tmpfs, o el número anónimo de btrfs), que no tiene ese fichero.
+    """
     st = os.stat(root)
     ruta = SYS_DEV_BLOCK / f"{os.major(st.st_dev)}:{os.minor(st.st_dev)}" / "stat"
     campos = ruta.read_text(encoding="ascii").split()
@@ -654,15 +702,14 @@ def _escritos_linux(root: str | Path) -> int | None:
 
 
 def bytes_escritos(root: str | Path) -> int | None:
-    """Bytes escritos hasta ahora en el dispositivo donde está `root`, o None.
+    """Devuelve los bytes escritos hasta ahora en el dispositivo de `root`, o `None`.
 
-    Un contador del sistema, no de esta creación: lo que vale es la diferencia
-    entre dos lecturas. Cualquier fallo es None —se captura `Exception`, como en
-    `bitlocker_status()`, porque en Windows hay ctypes debajo y esto es un
-    adorno: no puede tumbar la creación—.
-
-    Función de módulo para que los tests la sustituyan, como
-    `soporta_dispersos()`."""
+    Es un contador del sistema, no de esta creación: lo que vale es la
+    diferencia entre dos lecturas. Cualquier fallo es `None` y se captura
+    `Exception`, como en `bitlocker_status()`: en Windows hay ctypes debajo y
+    esto es un adorno que no puede tumbar la creación. Es función de módulo
+    para que los tests la sustituyan, como `soporta_dispersos()`.
+    """
     try:
         valor = _escritos_windows(root) if IS_WIN else _escritos_linux(root)
     except Exception:                             # noqa: BLE001 — ver docstring
@@ -672,30 +719,35 @@ def bytes_escritos(root: str | Path) -> int | None:
 
 def avance(muestras: list[tuple[float, int | None]],
            size_bytes: int) -> tuple[float, float | None] | None:
-    """(fracción, segundos que quedan) a partir de las lecturas, o None.
+    """Devuelve `(fracción, segundos que quedan)` a partir de las lecturas, o `None`.
 
-    `muestras` son `(t, bytes)` en orden, con `t` en segundos de un reloj
-    monótono y la primera leída ANTES de lanzar VeraCrypt; `bytes` es None
-    cuando esa lectura falló. Pura: toda la aritmética, nada de disco.
-
-    None —«no se sabe»— cuando:
-      * falta la inicial o falla la última lectura;
-      * el contador baja en algún momento: se reinició o cuenta otra cosa, y ya
-        no hay manera de fiarse de él en toda la creación;
-      * no se ha movido nunca: todavía no se escribe (el aviso de UAC de la
-        copia elevada) o este contador no ve estas escrituras;
-      * lleva más de `PARADO_S` sin moverse.
+    Es pura: toda la aritmética, nada de disco. Devuelve `None` («no se sabe»)
+    cuando:
+    - falta la lectura inicial o falla la última;
+    - el contador baja en algún momento: se reinició o cuenta otra cosa, y ya
+      no hay manera de fiarse de él en toda la creación;
+    - no se ha movido nunca: todavía no se escribe (el aviso de UAC de la copia
+      elevada) o este contador no ve estas escrituras;
+    - lleva más de `PARADO_S` sin moverse.
 
     La fracción es lo escrito entre el tamaño, con tope en `TOPE_AVANCE`: el
     contador ve también lo que escriba cualquier otro en esa unidad, y después
     del relleno aún quedan la cabecera de respaldo y el formato de dentro.
 
-    El tiempo que queda sale de la velocidad de los últimos `VENTANA_S`, no de la
-    de la sonda: cuando se llena la caché de la memoria USB y la velocidad cae,
-    en un minuto el tiempo que queda sube con ella. La ventana empieza como
-    pronto en la última lectura antes del primer movimiento, para que la espera
-    del UAC no pase por lentitud; y con menos de `VENTANA_MIN_S` de escritura el
-    tiempo que queda es None: hay fracción, pero todavía no hay velocidad."""
+    El tiempo que queda sale de la velocidad de los últimos `VENTANA_S`, no de
+    la de la sonda: cuando se llena la caché de la memoria USB y la velocidad
+    cae, en un minuto el tiempo que queda sube con ella. La ventana empieza
+    como pronto en la última lectura antes del primer movimiento, para que la
+    espera del UAC no pase por lentitud; y con menos de `VENTANA_MIN_S` de
+    escritura el tiempo que queda es `None`: hay fracción, pero todavía no hay
+    velocidad.
+
+    Args:
+        muestras: Lecturas `(t, bytes)` en orden, con `t` en segundos de un
+            reloj monótono y la primera leída ANTES de lanzar VeraCrypt;
+            `bytes` es `None` cuando esa lectura falló.
+        size_bytes: Tamaño del contenedor.
+    """
     if not muestras or size_bytes <= 0:
         return None
     if muestras[0][1] is None or muestras[-1][1] is None:
@@ -728,6 +780,7 @@ def avance(muestras: list[tuple[float, int | None]],
 
 
 def describir_restante(segundos: float) -> str:
+    """Devuelve el tiempo que queda en palabras."""
     if segundos < 60:
         return "queda menos de un minuto"
     if segundos < 90:
@@ -736,7 +789,10 @@ def describir_restante(segundos: float) -> str:
 
 
 def describir_avance(fraccion: float, restante: float | None) -> str:
-    """«43 % · quedan unos 25 min». La cifra se trunca: 99,9 % no es 100 %."""
+    """Devuelve el avance en palabras: «43 % · quedan unos 25 min».
+
+    La cifra se trunca: 99,9 % no es 100 %.
+    """
     cifra = f"{int(fraccion * 100 + 1e-9)} %"
     if restante is None:
         return f"{cifra} · calculando cuánto queda"
@@ -746,13 +802,35 @@ def describir_avance(fraccion: float, restante: float | None) -> str:
 class Seguimiento:
     """El avance de una creación, leído del volumen en un hilo propio.
 
-    Lo arranca `create_container()` —que es quien sabe cuándo se lanza
-    VeraCrypt— y lo lee la ventana con `progreso()`, que no toca el disco: solo
+    VeraCrypt crea con `/silent` y no cuenta nada, pero lo que escribe acaba en
+    el disco y el disco lleva la cuenta. Se apunta ese contador justo antes de
+    lanzar la orden y se vuelve a leer cada segundo: lo que ha crecido, entre
+    lo que mide el contenedor, es cuánto va. Es el único canal, igual que el
+    log de rclone lo es para `progress.py`, y con las mismas reglas: puramente
+    informativo y **mejor sin número que con uno falso**. Si el contador no se
+    puede leer, baja o se queda quieto, no hay avance y la ventana vuelve a la
+    barra sin cifra.
+
+    Lo arranca `create_container()`, que es quien sabe cuándo se lanza
+    VeraCrypt, y lo lee la ventana con `progreso()`, que no toca el disco: solo
     devuelve lo último que calculó el hilo. Leer el contador puede tardar (una
-    IOCTL a una memoria USB ocupada escribiendo), y el hilo de Tk no puede
-    esperar a nadie."""
+    IOCTL a una memoria USB ocupada escribiendo) y el hilo de Tk no puede
+    esperar a nadie.
+
+    Sin verificar en hardware (#46, pruebas P1–P7): que Windows conteste sin
+    administrador, que su cuenta incluya el relleno de ceros del sistema de
+    ficheros y lo que escribe la copia elevada de Format, y el camino de Linux
+    sobre una memoria USB. Mientras no se pruebe protege la vuelta a la barra
+    indeterminada: con un contador que no sirve, nada cambia respecto a no
+    tenerlo.
+
+    Args:
+        cada: Segundos entre lecturas.
+        reloj: Reloj monótono; los tests lo sustituyen.
+    """
 
     def __init__(self, cada: float = MUESTREO_S, reloj=time.monotonic):
+        """Prepara el seguimiento sin leer nada todavía."""
         self.cada = cada
         self.reloj = reloj
         self.muestras: list[tuple[float, int | None]] = []
@@ -763,9 +841,15 @@ class Seguimiento:
         self._hilo: threading.Thread | None = None
 
     def empezar(self, raiz: str | Path, size_bytes: int) -> None:
-        """Apunta la lectura inicial y arranca el hilo. Se llama justo antes de
-        lanzar VeraCrypt. Nada de aquí puede impedir la creación: si falla, no
-        hay avance."""
+        """Apunta la lectura inicial y arranca el hilo.
+
+        Se llama justo antes de lanzar VeraCrypt. Nada de aquí puede impedir la
+        creación: si falla, no hay avance.
+
+        Args:
+            raiz: Carpeta de la unidad donde se crea el contenedor.
+            size_bytes: Tamaño del contenedor.
+        """
         self._raiz, self._tamano = raiz, size_bytes
         try:
             self._apuntar()
@@ -776,10 +860,16 @@ class Seguimiento:
             self._ultimo = None
 
     def _apuntar(self) -> None:
+        """Lee el contador y recalcula el avance."""
         self.muestras.append((self.reloj(), bytes_escritos(self._raiz)))
         self._ultimo = avance(self.muestras, self._tamano)
 
     def _bucle(self) -> None:
+        """Lee el contador cada `cada` segundos hasta que se pare o falle.
+
+        Es un adorno: cualquier excepción lo deja sin avance en vez de
+        molestar.
+        """
         while not self._parar.wait(self.cada):
             try:
                 self._apuntar()
@@ -788,33 +878,34 @@ class Seguimiento:
                 return
 
     def parar(self) -> None:
+        """Para el hilo."""
         self._parar.set()
         if self._hilo is not None:
             self._hilo.join(timeout=2)      # solo espera si una lectura se colgó
 
     def leer(self) -> tuple[float, float | None] | None:
-        """(fracción, segundos que quedan), o None. Si el hilo lleva más de
-        `PARADO_S` sin apuntar nada —colgado en una lectura—, lo último que
-        calculó ya no vale."""
+        """Devuelve `(fracción, segundos que quedan)`, o `None`.
+
+        Si el hilo lleva más de `PARADO_S` sin apuntar nada (colgado en una
+        lectura), lo último que calculó ya no vale.
+        """
         if not self.muestras or self.reloj() - self.muestras[-1][0] > PARADO_S:
             return None
         return self._ultimo
 
     def progreso(self) -> tuple[float, str] | None:
-        """Lo que pide `ui.tk.working()`: (fracción, texto), o None."""
+        """Devuelve `(fracción, texto)` para `ui.tk.working()`, o `None`."""
         medida = self.leer()
         return None if medida is None else (medida[0], describir_avance(*medida))
 
 
-# ---------------------------------------------------------------------------
-# Las órdenes de VeraCrypt
-# ---------------------------------------------------------------------------
-
 def redact(cmd: list[str], password: str) -> list[str]:
-    """La misma orden, con la contraseña tapada. Para enseñar o registrar.
+    """Devuelve la misma orden con la contraseña tapada.
 
-    Se compara por valor y no por posición porque la contraseña aparece pegada al
-    flag en unas formas (`--password=X`) y suelta en otras (`/password X`)."""
+    Es para enseñarla o registrarla. Se compara por valor y no por posición
+    porque la contraseña aparece pegada al flag en unas formas (`--password=X`)
+    y suelta en otras (`/password X`).
+    """
     limpio = []
     for arg in cmd:
         if password and arg == password:
@@ -828,17 +919,25 @@ def redact(cmd: list[str], password: str) -> list[str]:
 
 def create_command(vc: dict, container: Path, size_bytes: int, password: str,
                    filesystem: str, dinamico: bool = False) -> list[str]:
-    """La orden de crear el contenedor.
+    """Devuelve la orden de crear el contenedor.
 
-    `/quick` (Windows) evita rellenar el fichero entero de datos ALEATORIOS, que
-    en un contenedor de varios gigas sobre USB son horas. A cambio, el espacio
-    libre de dentro no queda indistinguible del contenido: no es un problema
-    para un dispositivo de trabajo, pero conviene saberlo. Ojo: `/quick` no
-    evita que se escriba el contenedor entero de CEROS —eso es `dinamico`, y la
-    sección «Cuánto tarda» explica por qué.
+    `/quick` (Windows) evita rellenar el fichero entero de datos ALEATORIOS,
+    que en un contenedor de varios gigas sobre USB son horas. A cambio, el
+    espacio libre de dentro no queda indistinguible del contenido: no es un
+    problema para un dispositivo de trabajo, pero conviene saberlo. No evita
+    que se escriba el contenedor entero de CEROS: eso es `dinamico` (ver
+    `soporta_dispersos()`).
 
-    `dinamico` añade `/dynamic`, y quien llama tiene que haber preguntado antes
-    por `soporta_dispersos()`: sobre exFAT, VeraCrypt aborta."""
+    Args:
+        vc: Los ejecutables de VeraCrypt.
+        container: Dónde se crea el `.hc`.
+        size_bytes: Tamaño del contenedor.
+        password: La contraseña.
+        filesystem: Sistema de ficheros de dentro.
+        dinamico: Añade `/dynamic`; quien llama tiene que haber preguntado
+            antes por `soporta_dispersos()`, porque sobre exFAT VeraCrypt
+            aborta.
+    """
     if IS_WIN:
         extra = ["/dynamic"] if dinamico else []
         return [vc["format"], "/create", str(container),
@@ -846,18 +945,18 @@ def create_command(vc: dict, container: Path, size_bytes: int, password: str,
                 "/encryption", "AES", "/hash", "sha512",
                 "/filesystem", filesystem, "/pim", "0",
                 *extra, "/quick", "/silent", "/force"]
-    # --stdin: en Linux la contraseña va por la entrada estándar y no aparece en
-    # la lista de procesos.
+    # --stdin: en Linux la contraseña va por la entrada estándar y no aparece
+    # en la lista de procesos.
     #
-    # Aquí NO hay /dynamic —no existe en su CLI—, pero desde la 1.26.29
+    # Aquí NO hay /dynamic (no existe en su CLI), pero desde la 1.26.29
     # `--quick` hace lo mismo con un contenedor-fichero: hasta la 1.26.24,
     # TextUserInterface.cpp forzaba `options->Quick = false` en esa rama (el
-    # volumen se escribía entero pase lo que pase), y en la 1.26.29 esa línea ya
-    # no está y el aviso de `--quick` dice que el ahorro depende de que el
-    # sistema de ficheros admita dispersos. Visto con el AppImage 1.26.29: un
-    # contenedor FAT de 20 MiB ocupa 352 KiB. Se pasa siempre: una versión
-    # anterior lo ignora sin quejarse (visto con el AppImage 1.26.24: sale con 0
-    # y el fichero ocupa sus 20 MiB), y con el AppImage fijado es la 1.26.29.
+    # volumen se escribía entero), y la 1.26.29 ya no tiene esa línea y el
+    # aviso de `--quick` dice que el ahorro depende de que el sistema de
+    # ficheros admita dispersos. Visto con el AppImage 1.26.29: un contenedor
+    # FAT de 20 MiB ocupa 352 KiB. Se pasa siempre: la 1.26.24 lo ignora sin
+    # quejarse (sale con 0 y el fichero ocupa sus 20 MiB) y el AppImage fijado
+    # es la 1.26.29.
     return [vc["format"], "--text", "--create", str(container),
             "--volume-type=normal", f"--size={size_bytes}",
             "--encryption=AES", "--hash=sha512", f"--filesystem={filesystem}",
@@ -867,10 +966,10 @@ def create_command(vc: dict, container: Path, size_bytes: int, password: str,
 
 def mount_command(vc: dict, container: Path, password: str,
                   destino: str | Path, etiqueta: str = "") -> list[str]:
-    """La orden de montar.
+    """Devuelve la orden de montar el contenedor.
 
-    `/m rm` monta como MEDIO EXTRAÍBLE, y no es un adorno: sin él Windows crea
-    `$RECYCLE.BIN` DENTRO del contenedor —o sea, dentro de lo que mira rclone— y
+    `/m rm` monta como MEDIO EXTRAÍBLE y no es un adorno: sin él Windows crea
+    `$RECYCLE.BIN` DENTRO del contenedor, o sea dentro de lo que mira rclone, y
     además fuerza más desmontajes. `System Volume Information` no lo evita: en
     Windows 11 24H2 aparece al montar igual que en cualquier USB (visto en las
     pruebas en G:, H-5). No molesta: ninguna pareja sincroniza la raíz del
@@ -881,9 +980,17 @@ def mount_command(vc: dict, container: Path, password: str,
     `/m label=` es solo cómo lo llama el Explorador; no toca el sistema de
     ficheros de dentro, así que no depende de haberlo formateado de una manera.
 
-    En POSIX no se pasa `rm`: su propio parser lo tiene bajo `#ifdef TC_WINDOWS`
-    (CommandLineInterface.cpp) y allí no hace falta, porque Linux no deja esas
-    carpetas."""
+    En POSIX no se pasa `rm`: su propio parser lo tiene bajo `#ifdef
+    TC_WINDOWS` (CommandLineInterface.cpp) y allí no hace falta, porque Linux
+    no deja esas carpetas.
+
+    Args:
+        vc: Los ejecutables de VeraCrypt.
+        container: El `.hc`.
+        password: La contraseña.
+        destino: La letra (Windows) o la carpeta (POSIX) donde montar.
+        etiqueta: Cómo lo llama el Explorador (solo Windows).
+    """
     if IS_WIN:
         etiquetado = ["/m", f"label={etiqueta}"] if etiqueta else []
         return [vc["mount"], "/volume", str(container), "/letter", str(destino),
@@ -895,6 +1002,7 @@ def mount_command(vc: dict, container: Path, password: str,
 
 
 def dismount_command(vc: dict, punto: Path) -> list[str]:
+    """Devuelve la orden de desmontar lo que hay en `punto`."""
     if IS_WIN:
         # En Windows se desmonta por letra, no por ruta.
         return [vc["mount"], "/dismount", str(punto)[0], "/quit", "/silent"]
@@ -902,13 +1010,14 @@ def dismount_command(vc: dict, punto: Path) -> list[str]:
 
 
 def _run(cmd: list[str], password: str = "", timeout: float | None = None):
-    """Lanza una orden de VeraCrypt.
+    """Lanza una orden de VeraCrypt y devuelve el `CompletedProcess`.
 
     En POSIX la contraseña va por la entrada estándar (`--stdin`) y así no
     aparece en la lista de procesos. En Windows su CLI no lo admite y va como
     argumento; ahí lo único que se puede hacer es no repetirlo en ningún sitio
-    (ver `redact`). La entrada se cierra cuando no se usa: esto corre sin
-    terminal y una orden esperando una respuesta se quedaría colgada."""
+    (ver `redact()`). La entrada se cierra cuando no se usa: esto corre sin
+    terminal y una orden esperando una respuesta se quedaría colgada.
+    """
     kwargs: dict = {"text": True, "encoding": "utf-8", "errors": "replace",
                     "capture_output": True}
     if IS_WIN:
@@ -924,38 +1033,37 @@ def _run(cmd: list[str], password: str = "", timeout: float | None = None):
 
 
 def _procesos(nombre: str) -> set[int]:
-    """Los pid de los procesos vivos cuyo ejecutable se llama `nombre`.
+    """Devuelve los pid de los procesos vivos cuyo ejecutable se llama `nombre`.
 
-    Solo Windows. Indirección de módulo, como `_volumenes_con_control()`: los
-    tests la sustituyen. La instantánea de Toolhelp está en `common/store.py`
-    porque el agente la necesita también y no lleva `install/`."""
+    Solo Windows. Es una indirección de módulo, como
+    `_volumenes_con_control()`: los tests la sustituyen. La instantánea de
+    Toolhelp está en `common/store.py` porque el agente la necesita también y
+    no lleva `install/`.
+    """
     return store.procesos_llamados(nombre)
 
-
-# ---------------------------------------------------------------------------
-# Crear, montar, desmontar
-# ---------------------------------------------------------------------------
 
 def _esperar_copia_elevada(ejecutable: str, antes: set[int]) -> None:
     """Espera a que terminen los `ejecutable` que no estaban en `antes`.
 
-    Es la regla 2 aplicada a crear. VeraCrypt sin su driver instalado —el que
-    viaja— y sin administrador se relanza elevado con `/q UAC` y el proceso que
-    lanzamos sale con 0 a los dos segundos (`Common/Dlgcode.c`, `InitApp` y
-    `LaunchElevatedProcess`), mientras la copia sigue escribiendo el contenedor.
-    Esa copia es hija de la nuestra y cuando la nuestra sale ya existe: sale
-    después del UAC, no antes. En G: Format volvía con el fichero 128 KiB corto
-    y seguía de 5 s a casi 3 min más; montar en ese hueco dejaba el volumen sin
-    sistema de ficheros.
+    Es la regla 2 aplicada a crear. VeraCrypt sin su driver instalado (el que
+    viaja) y sin administrador se relanza elevado con `/q UAC` y el proceso
+    lanzado sale con 0 a los dos segundos (`Common/Dlgcode.c`, `InitApp` y
+    `LaunchElevatedProcess`), mientras la copia sigue escribiendo el
+    contenedor. Esa copia es hija de la nuestra y cuando la nuestra sale ya
+    existe: sale después del UAC, no antes. En G: Format volvía con el fichero
+    128 KiB corto y seguía de 5 s a casi 3 min más; montar en ese hueco dejaba
+    el volumen sin sistema de ficheros.
 
-    Se reconoce por el nombre y por no estar antes de lanzar la orden: un Format
-    que la persona ya tuviera abierto no hace esperar. El nombre es el del
-    ejecutable que se ha lanzado —`VeraCrypt Format.exe` de una instalación,
-    `VeraCrypt Format-x64.exe` o `-arm64.exe` del portable—, porque la copia
+    Se reconoce por el nombre y por no estar antes de lanzar la orden: un
+    Format que la persona ya tuviera abierto no hace esperar. El nombre es el
+    del ejecutable lanzado (`VeraCrypt Format.exe` de una instalación,
+    `VeraCrypt Format-x64.exe` o `-arm64.exe` del portable) porque la copia
     elevada es la misma imagen: `InitApp` relanza lo que le da
     `GetModuleFileNameW` (`Common/Dlgcode.c`). Sin límite de tiempo, como la
     orden sin relanzar: crear un contenedor grande sin `/dynamic` en un USB
-    lento son minutos de verdad."""
+    lento son minutos de verdad.
+    """
     while _procesos(ejecutable) - antes:
         time.sleep(MOUNT_POLL)
 
@@ -963,18 +1071,29 @@ def _esperar_copia_elevada(ejecutable: str, antes: set[int]) -> None:
 def create_container(vc: dict, container: Path, size_bytes: int, password: str,
                      filesystem: str = "exFAT", dinamico: bool = False,
                      seguimiento: Seguimiento | None = None) -> None:
-    """Crea el contenedor. Lanza InstallError con lo que dijo VeraCrypt.
+    """Crea el contenedor.
 
     Lo que se puede saber antes se dice antes: un tamaño que el sistema de
     ficheros de la unidad no admite se rechaza sin lanzar VeraCrypt, que
-    fallaría a medias y sin decir por qué.
+    fallaría a medias y sin decir por qué. Y lo que se sabe después, después de
+    verdad: no vuelve hasta que termina la copia elevada, si VeraCrypt se ha
+    relanzado (`_esperar_copia_elevada()`).
 
-    Y lo que se sabe después, después de verdad: no vuelve hasta que termina la
-    copia elevada, si VeraCrypt se ha relanzado (`_esperar_copia_elevada()`).
+    Args:
+        vc: Los ejecutables de VeraCrypt.
+        container: Dónde se crea el `.hc`.
+        size_bytes: Tamaño del contenedor.
+        password: La contraseña.
+        filesystem: Sistema de ficheros de dentro.
+        dinamico: Si se crea disperso (`/dynamic`).
+        seguimiento: Si lo hay, apunta el contador de la unidad justo antes de
+            lanzar la orden y lo va leyendo hasta que vuelve: la espera es la
+            misma, solo que medida.
 
-    `seguimiento`, si lo hay, apunta el contador de la unidad justo antes de
-    lanzar la orden y lo va leyendo hasta aquí: la espera es la misma, solo que
-    medida (sección «Progreso de la creación»)."""
+    Raises:
+        InstallError: Con lo que dijo VeraCrypt, o si el contenedor ya existe o
+            no cabe en el sistema de ficheros.
+    """
     if container.exists():
         raise InstallError(
             f"Ya existe {container}. Si quieres rehacerlo, bórralo tú a mano: "
@@ -1008,15 +1127,16 @@ def create_container(vc: dict, container: Path, size_bytes: int, password: str,
 
 
 def wait_until_readable(punto: Path, timeout: float = MOUNT_TIMEOUT) -> bool:
-    """Espera a que el punto de montaje se pueda LEER de verdad.
+    """Espera a poder LEER el punto de montaje y devuelve si lo logra.
 
     Que exista la letra no basta: entre que VeraCrypt dice que ha montado y que
-    el volumen contesta pasa un rato, y en ese hueco un `iterdir()` falla."""
+    el volumen contesta pasa un rato, y en ese hueco un `iterdir()` falla.
+    """
     limite = time.monotonic() + timeout
     while time.monotonic() < limite:
         try:
-            # Con `default` no lanza StopIteration, así que un volumen recién
-            # formateado —vacío— también cuenta como legible.
+            # Con `default` no lanza StopIteration: un volumen recién
+            # formateado, vacío, también cuenta como legible.
             next(iter(punto.iterdir()), None)
             return True
         except OSError:
@@ -1026,7 +1146,7 @@ def wait_until_readable(punto: Path, timeout: float = MOUNT_TIMEOUT) -> bool:
 
 
 def en_uso(container: Path) -> bool:
-    """¿Tiene alguien abierto el contenedor? Casi siempre: ya está montado.
+    """Indica si alguien tiene abierto el contenedor (si está montado).
 
     Mismo truco que `components.rclone_en_uso()`: se abre para escritura, que
     contesta sin enumerar procesos. Mientras el volumen está montado, VeraCrypt
@@ -1035,7 +1155,8 @@ def en_uso(container: Path) -> bool:
 
     En POSIX esto NO es una respuesta: allí el contenedor se abre por un
     dispositivo de bucle y un segundo `open()` no molesta a nadie. Por eso
-    `mounted_container()` pregunta a VeraCrypt y solo cae aquí en Windows."""
+    `mounted_container()` pregunta a VeraCrypt y solo cae aquí en Windows.
+    """
     try:
         if not Path(container).is_file():
             return False
@@ -1046,36 +1167,39 @@ def en_uso(container: Path) -> bool:
 
 
 def _volumenes_con_control() -> list[Path]:
-    """Las unidades montadas que llevan el fichero de control de prdrive.
+    """Devuelve las unidades montadas que llevan el fichero de control de prdrive.
 
-    Indirección de módulo, como `_leer_estado_bitlocker()`: los tests la
-    sustituyen y así el barrido de unidades no entra en la batería."""
+    Es una indirección de módulo, como `_leer_estado_bitlocker()`: los tests la
+    sustituyen y así el barrido de unidades no entra en la batería.
+    """
     from . import device
     return [v.root for v in device.list_volumes() if v.has_control]
 
 
 def _entre_comillas(texto: str) -> str:
-    """Lo que hace con una ruta `StringConverter::QuoteSpaces()` de VeraCrypt
-    (src/Platform/StringConverter.cpp, igual en los tags VeraCrypt_1.26.24 y
-    VeraCrypt_1.26.29 y en `master`).
+    """Devuelve la ruta tal como la escribe `StringConverter::QuoteSpaces()`.
 
-    Solo entrecomilla si hay algún espacio —L' ', no un tabulador—, con comillas
-    simples, y dobla las simples de dentro: `/media/u/USB DISK` sale como
-    `'/media/u/USB DISK'`, y `/media/u/O'Neil x` como `'/media/u/O''Neil x'`.
-    Nada más: ni barras invertidas ni saltos de línea."""
+    Es la de VeraCrypt y sale de src/Platform/StringConverter.cpp, igual en los
+    tags VeraCrypt_1.26.24 y VeraCrypt_1.26.29 y en `master`. Solo entrecomilla
+    si hay algún espacio (L' ', no un tabulador), con comillas simples, y dobla
+    las simples de dentro: `/media/u/USB DISK` sale como `'/media/u/USB DISK'`,
+    y `/media/u/O'Neil x` como `'/media/u/O''Neil x'`. Nada más: ni barras
+    invertidas ni saltos de línea.
+    """
     if " " not in texto:
         return texto
     return "'" + texto.replace("'", "''") + "'"
 
 
 def _sin_comillas(campo: str) -> str | None:
-    """La inversa exacta de `_entre_comillas()`, o None si `campo` no es algo
-    que `QuoteSpaces()` haya podido escribir.
+    """Devuelve la inversa de `_entre_comillas()`, o `None` si no es suya.
 
-    No hay ambigüedad: lo que devuelve QuoteSpaces lleva un espacio si y solo si
-    lo ha entrecomillado. Un campo sin espacios es literal, aunque tenga
+    Es `None` si `campo` no es algo que `QuoteSpaces()` haya podido escribir.
+    No hay ambigüedad: lo que devuelve QuoteSpaces lleva un espacio si y solo
+    si lo ha entrecomillado. Un campo sin espacios es literal, aunque tenga
     comillas; uno con espacios tiene que ser `'…'` con todas las de dentro
-    dobladas."""
+    dobladas.
+    """
     if " " not in campo:
         return campo
     if campo[0] != "'" or campo[-1] != "'":
@@ -1087,38 +1211,38 @@ def _sin_comillas(campo: str) -> str | None:
 
 
 def _punto_en_listado(listado: str, container: Path) -> Path | None:
-    """Dónde dice la salida de `veracrypt --text --list` que está montado
-    `container`, o None.
+    r"""Devuelve dónde lista `veracrypt --list` el montaje de `container`, o `None`.
 
     El formato es el de `UserInterface::ListMountedVolumes()`
     (src/Main/UserInterface.cpp, igual en los tags VeraCrypt_1.26.24 y
     VeraCrypt_1.26.29 y en `master`), un registro por volumen:
 
-        <ranura>": " Q(ruta) (" " dispositivo | " - ") (" " Q(punto) | " - ") "\\n"
+        <ranura>": " Q(ruta) (" " dispositivo | " - ") (" " Q(punto) | " - ") "\n"
 
     con Q = `QuoteSpaces()`. El dispositivo va sin comillas, pero es un nodo de
     /dev y no lleva espacios. La ruta del anfitrión es absoluta
     (CommandLineInterface.cpp la pasa por `wxFileName::Normalize` con
     `wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS`, sin resolver enlaces). El punto
-    de montaje sale de `getmntent()` (src/Core/Unix/Linux/CoreLinux.cpp), que ya
-    ha convertido el `\\040` de /etc/mtab en un espacio de verdad: udisks monta
-    en `/media/<usuario>/<ETIQUETA>`, y una etiqueta como «USB DISK» llega
-    entre comillas en los dos campos.
+    de montaje sale de `getmntent()` (src/Core/Unix/Linux/CoreLinux.cpp), que
+    ya ha convertido el `\040` de /etc/mtab en un espacio de verdad: udisks
+    monta en `/media/<usuario>/<ETIQUETA>`, y una etiqueta como «USB DISK»
+    llega entre comillas en los dos campos.
 
     Por eso la ruta no se trocea: se CODIFICA. Se escribe la nuestra como la
-    escribiría VeraCrypt y se mira si el registro empieza por ella y un espacio.
-    Con las comillas de dentro dobladas, una comilla seguida de un espacio solo
-    puede ser el cierre de ese campo, así que no hace falta adivinar dónde
-    acaba. El punto de montaje es el último campo, o sea el resto del registro,
-    y `-` sigue queriendo decir «sin montar».
+    escribiría VeraCrypt y se mira si el registro empieza por ella y un
+    espacio. Con las comillas de dentro dobladas, una comilla seguida de un
+    espacio solo puede ser el cierre de ese campo, así que no hace falta
+    adivinar dónde acaba. El punto de montaje es el último campo, o sea el
+    resto del registro, y `-` sigue queriendo decir «sin montar».
 
     Lo único que QuoteSpaces no escapa es el salto de línea: una ruta que lo
-    lleve parte su registro en dos, y entonces ya no se sabe dónde acaba. Por la
-    salida estándar solo salen registros —avisos y errores van a `wcerr`
-    (TextUserInterface.cpp)— y cada uno termina en '\\n', así que una línea que
-    no empieza por `<ranura>: `, o una última que no llega entera, invalida el
-    listado entero. Mejor contestar None, intentar el montaje y que VeraCrypt
-    diga lo suyo, que devolver una carpeta que no es."""
+    lleve parte su registro en dos y entonces ya no se sabe dónde acaba. Por la
+    salida estándar solo salen registros (avisos y errores van a `wcerr`,
+    TextUserInterface.cpp) y cada uno termina en '\n', así que una línea que no
+    empieza por `<ranura>: `, o una última que no llega entera, invalida el
+    listado entero. Mejor contestar `None`, intentar el montaje y que VeraCrypt
+    diga lo suyo, que devolver una carpeta que no es.
+    """
     *registros, cola = listado.split("\n")
     if cola:
         return None                 # el último registro no llegó entero
@@ -1135,27 +1259,28 @@ def _punto_en_listado(listado: str, container: Path) -> Path | None:
 
 
 def mounted_container(vc: dict, container: Path) -> Path | None:
-    """Dónde está YA montado ese contenedor, o None.
+    """Devuelve dónde está YA montado ese contenedor, o `None`.
 
     En POSIX se le pregunta a VeraCrypt: `--text --list` imprime, por volumen
     montado, la ruta del anfitrión y el punto de montaje
-    (CommandLineInterface.cpp registra `--list`). Respuesta exacta, siempre que
-    se lea con su formato: `_punto_en_listado()`.
+    (CommandLineInterface.cpp registra `--list`). Es una respuesta exacta
+    siempre que se lea con su formato (`_punto_en_listado()`).
 
-    En Windows NO hay listado por línea de órdenes —el suyo vive en el driver— y
-    hay que ir por el otro lado, con dos condiciones que tienen que darse las
+    En Windows NO hay listado por línea de órdenes (el suyo vive en el driver)
+    y hay que ir por el otro lado, con dos condiciones que tienen que darse las
     dos. La primera es `en_uso()`, y es la que impide el falso positivo que
-    importa: sin ella, otro prdrive enchufado a la vez —con su fichero de
-    control, como es natural— se leería como «aquí está montado el nuestro», y el
-    instalador seguiría adelante sobre el dispositivo equivocado. La segunda es
-    que haya **exactamente una** unidad candidata, por lo mismo que
-    `Conflicto.version(lado)` devuelve None con cero o con dos: cuando hay dos,
-    adivinar es peor que no saberlo.
+    importa: sin ella, otro prdrive enchufado a la vez (con su fichero de
+    control, como es natural) se leería como «aquí está montado el nuestro» y
+    el instalador seguiría adelante sobre el dispositivo equivocado. La segunda
+    es que haya **exactamente una** unidad candidata, por lo mismo que
+    `Conflicto.version(lado)` devuelve `None` con cero o con dos: cuando hay
+    dos, adivinar es peor que no saberlo.
 
     La asimetría es real y se dice en vez de disimularse: en Windows, un
-    contenedor recién creado —que todavía no tiene fichero de control— no se
-    reconoce aquí, y el que llama acaba intentando el montaje. No pasa nada: el
-    mensaje de `explicar_montaje()` sí sabe leer `en_uso()`."""
+    contenedor recién creado, que todavía no tiene fichero de control, no se
+    reconoce aquí y quien llama acaba intentando el montaje. No pasa nada: el
+    mensaje de `explicar_montaje()` sí sabe leer `en_uso()`.
+    """
     if not IS_WIN:
         try:
             res = _run([vc["mount"], "--text", "--list", "--non-interactive"],
@@ -1177,17 +1302,29 @@ def mount_container(vc: dict, container: Path, password: str,
                     punto_fijo: Path | None = None) -> Path:
     """Monta el contenedor y devuelve dónde ha quedado.
 
-    NO se mira el código de retorno para decidir si ha ido bien: VeraCrypt eleva
-    por UAC a un proceso aparte y lo que devuelve el que lanzamos no dice nada del
-    montaje. Lo que decide es que el punto de montaje se pueda leer.
+    NO se mira el código de retorno para decidir si ha ido bien: VeraCrypt
+    eleva por UAC a un proceso aparte y lo que devuelve el lanzado no dice nada
+    del montaje. Lo que decide es que el punto de montaje se pueda leer.
 
     Si ya estaba montado no se vuelve a montar: montar dos veces el mismo
-    contenedor da una segunda letra o un error, y ninguna de las dos cosas es lo
-    que quiere quien vuelve atrás en el asistente.
+    contenedor da una segunda letra o un error, y ninguna de las dos cosas es
+    lo que quiere quien vuelve atrás en el asistente.
 
-    `punto_fijo` es para la raíz cifrada de un equipo en POSIX: se monta en esa
-    carpeta (`~/PRDRIVE`) y no en una temporal, porque es donde el agente la
-    buscará y donde apuntan los programas. En Windows, lo fijo es la `letra`."""
+    Args:
+        vc: Los ejecutables de VeraCrypt.
+        container: El `.hc`.
+        password: La contraseña.
+        letra: La letra de unidad (solo Windows); si falta, una libre.
+        etiqueta: Cómo lo llama el Explorador.
+        punto_fijo: Para la raíz cifrada de un equipo en POSIX: se monta en esa
+            carpeta (`~/PRDRIVE`) y no en una temporal, porque es donde el
+            agente la buscará y donde apuntan los programas. En Windows lo fijo
+            es la `letra`.
+
+    Raises:
+        InstallError: Si no existe el contenedor o no se llega a poder leer el
+            montaje.
+    """
     if not container.is_file():
         raise InstallError(f"No existe el contenedor {container}.")
 
@@ -1227,7 +1364,13 @@ def mount_container(vc: dict, container: Path, password: str,
 
 
 def dismount(vc: dict, punto: Path) -> None:
-    """Desmonta. Que falle no es grave: el usuario puede hacerlo desde VeraCrypt."""
+    """Desmonta lo que hay en `punto`.
+
+    Que falle no es grave: la persona puede hacerlo desde VeraCrypt.
+
+    Raises:
+        InstallError: Si VeraCrypt no ha podido desmontarlo.
+    """
     try:
         res = _run(dismount_command(vc, punto), timeout=60)
     except (OSError, subprocess.TimeoutExpired) as e:
@@ -1239,14 +1382,12 @@ def dismount(vc: dict, punto: Path) -> None:
 
 
 def _salida(res) -> str:
+    """Devuelve la salida de una orden como un texto para enseñar."""
     if res is None:
         return ""
     return ((res.stdout or "") + "\n" + (res.stderr or "")).strip() or "(sin salida)"
 
 
-# Agujas concretas en lo que dice VeraCrypt, y su traducción. Mismo criterio que
-# `sync.KNOWN_ERRORS`: lo específico primero y, si no casa nada, el texto general
-# SIN inventarse una causa. Se comparan en minúsculas.
 FALLOS_MONTAJE = (
     ("incorrect password", "La contraseña no es la de este contenedor."),
     ("not a veracrypt volume",
@@ -1256,16 +1397,22 @@ FALLOS_MONTAJE = (
      "aviso, o este usuario no puede darlos."),
     ("no such file", "VeraCrypt dice que no encuentra el contenedor."),
 )
+"""Agujas concretas en lo que dice VeraCrypt y su traducción, en minúsculas.
+
+Mismo criterio que `sync.KNOWN_ERRORS`: lo específico primero y, si no casa
+nada, el texto general SIN inventarse una causa.
+"""
 
 
 def explicar_montaje(res, container: Path) -> str:
-    """Por qué no aparece montado el contenedor.
+    """Devuelve por qué no aparece montado el contenedor.
 
     En Windows `/silent` se traga los mensajes y el código de retorno no dice
-    nada del montaje, así que lo normal es no tener ninguna aguja que buscar; ahí
-    lo único que se puede afirmar es lo que se ha COMPROBADO —que el fichero
-    está abierto— y, si tampoco, el texto general, que dice «lo más habitual» y
-    no «ha pasado esto». Una causa inventada es peor que ninguna."""
+    nada del montaje, así que lo normal es no tener ninguna aguja que buscar;
+    ahí lo único que se puede afirmar es lo que se ha COMPROBADO (que el
+    fichero está abierto) y, si tampoco, el texto general, que dice «lo más
+    habitual» y no «ha pasado esto». Una causa inventada es peor que ninguna.
+    """
     salida = _salida(res).lower()
     for aguja, explicacion in FALLOS_MONTAJE:
         if aguja in salida:
@@ -1278,21 +1425,18 @@ def explicar_montaje(res, container: Path) -> str:
             "aviso de permisos de administrador que pide VeraCrypt para montar.")
 
 
-# ---------------------------------------------------------------------------
-# Lo que se revisa antes de crear
-# ---------------------------------------------------------------------------
-
 def revisar_contrasena(password: str) -> tuple[str | None, str | None]:
-    """(error, aviso) sobre la contraseña de un contenedor NUEVO.
+    """Devuelve `(error, aviso)` sobre la contraseña de un contenedor NUEVO.
 
     El error impide seguir; el aviso se pregunta. Es lo que diría VeraCrypt si
     no le pasáramos `/silent`: su CLI de creación llama a
     `CheckPasswordLength(…, Silent, Silent)` (`Format/Tcformat.c`) y con
-    `/silent` se salta la pregunta de «contraseña corta»
-    (`Common/Password.c`). Nadie la hacía, y se aceptaba cualquier contraseña
-    no vacía para proteger la clave privada del remoto.
+    `/silent` se salta la pregunta de «contraseña corta» (`Common/Password.c`).
+    Sin esto se aceptaba cualquier contraseña no vacía para proteger la clave
+    privada del remoto.
 
-    Se mide en bytes UTF-8, como mide VeraCrypt (ver `CONTRASENA_MAX`)."""
+    Se mide en bytes UTF-8, como mide VeraCrypt (ver `CONTRASENA_MAX`).
+    """
     largo = len(password.encode("utf-8"))
     if largo == 0:
         return "Falta la contraseña.", None
@@ -1309,17 +1453,19 @@ def revisar_contrasena(password: str) -> tuple[str | None, str | None]:
 
 
 def restos_en_claro(raiz_fisica: str | Path) -> list[str]:
-    """Lo que un prdrive SIN cifrar dejó en la raíz física, si lo hay.
+    """Devuelve lo que un prdrive SIN cifrar dejó en la raíz física, si lo hay.
 
     Pasa al «Reinstalar desde cero» con VeraCrypt sobre un dispositivo que iba
-    sin cifrar: el contenedor se crea al lado, y la instalación anterior —con
-    `.prdrive/keys/` y la clave del remoto en claro, y las carpetas de datos—
+    sin cifrar: el contenedor se crea al lado y la instalación anterior, con
+    `.prdrive/keys/` y la clave del remoto en claro y las carpetas de datos,
     sigue ahí. Crear el contenedor no la mueve ni la borra, y no debe hacerlo
     solo: esas carpetas pueden llevar cambios que no están en el remoto.
 
-    Devuelve `.prdrive/` y lo que haya en la raíz que no sea ruido
-    (`device.es_ruido()`: las carpetas de datos), o la lista vacía si ahí no hay
-    un prdrive."""
+    Returns:
+        `.prdrive/` y lo que haya en la raíz que no sea ruido
+        (`device.es_ruido()`: las carpetas de datos), o la lista vacía si ahí
+        no hay un prdrive.
+    """
     from . import device
     raiz = Path(raiz_fisica)
     try:
@@ -1335,7 +1481,7 @@ def restos_en_claro(raiz_fisica: str | Path) -> list[str]:
 
 
 def aviso_restos(restos: list[str]) -> str:
-    """El texto que se enseña cuando `restos_en_claro()` encuentra algo."""
+    """Devuelve el texto que se enseña cuando `restos_en_claro()` encuentra algo."""
     lista = ", ".join(restos[:6]) + ("…" if len(restos) > 6 else "")
     return (
         f"En la raíz de la unidad sigue una instalación SIN CIFRAR: {lista}. "
@@ -1349,7 +1495,7 @@ def aviso_restos(restos: list[str]) -> str:
 
 
 def comprobar_restos(raiz_fisica: str | Path) -> list:
-    """La fila del último paso: vacía si no hay restos, roja si los hay."""
+    """Devuelve la fila del último paso: vacía si no hay restos, roja si los hay."""
     from .device import Check
     restos = restos_en_claro(raiz_fisica)
     if not restos:
@@ -1360,60 +1506,20 @@ def comprobar_restos(raiz_fisica: str | Path) -> list:
                   + ": bórrala a mano cuando compruebes que no falta nada")]
 
 
-# Por qué no hay favorito
-# -----------------------
-#
-# Hubo un `write_favorite()` que registraba el contenedor en los favoritos de
-# VeraCrypt con «montar al conectar». No funcionaba, y no tenía arreglo que
-# mereciera la pena. Contra el código de VeraCrypt (tag 1.26.24, igual en
-# `master`):
-#
-#   * Guardaba el contenedor como `\\?\Volume{GUID}\PRDRIVE.hc` para no
-#     depender de la letra. El temporizador del montaje al conectar
-#     (`Mount/Mount.c`) resuelve esa forma con `VolumeGuidPathToDevicePath()`
-#     (`Common/Dlgcode.c`), que solo acepta rutas que TERMINAN en `}\` —un
-#     volumen entero—: con un fichero detrás devuelve vacío y el favorito se
-#     salta con `continue`. No se montaba nunca.
-#   * Ponía `StartOnLogon=1` en `Configuration.xml`. El arranque con Windows lo
-#     escribe `ManageStartupSeq()` en el registro, y solo se llama desde los
-#     diálogos de Preferencias y de Favoritos: tocar el XML no registraba nada.
-#   * Escribía `Favorite Volumes.xml` desde cero: borraba los favoritos que el
-#     usuario ya tuviera.
-#
-# Hacerlo bien exigiría guardar el contenedor por LETRA (la única forma que ese
-# temporizador resuelve para un fichero), escribir en el registro de otra
-# aplicación y seguir dependiendo de que la letra esté libre. Lo sustituye el
-# vestíbulo: `penwatch` abre el contenedor al conectar en cualquier equipo que
-# lo tenga, y fuera de eso está «Abrir PRDRIVE».
-
-
-# ---------------------------------------------------------------------------
-# BitLocker
-# ---------------------------------------------------------------------------
-
-# El estado de BitLocker se lee por la MISMA vía que usa el Explorador para
-# pintar el candado: la propiedad `System.Volume.BitLockerProtection` del almacén
-# de propiedades del shell. Que sea esa y no otra importa por dos razones:
-#
-#   * `Get-BitLockerVolume` y `manage-bde -status` le contestan «acceso denegado»
-#     a un usuario normal, así que la comprobación tenía que relanzarse elevada.
-#     Un .exe sin firmar, corriendo desde %TEMP%, que lanza un PowerShell ELEVADO
-#     y con la ventana oculta es —visto desde un antivirus— la forma exacta de un
-#     bypass de UAC: Sophos lo paraba con su mitigación 'Lockdown'. Esto no eleva,
-#     no lanza ningún proceso y no enseña ninguna ventana.
-#   * La clave canónica hay que PEDÍRSELA a Windows con `PSGetPropertyKeyFromName`.
-#     La que circula por ahí —la del conjunto System.Volume.*, {9B174B35-…} pid 8—
-#     es otra distinta, y con ella la consulta devuelve ERROR_NOT_FOUND.
-#
-# Lo que se pierde frente a `Get-BitLockerVolume` es el porcentaje: se sabe que
-# se está cifrando, no por cuánto va. A cambio se gana la distinción que el
-# código anterior no hacía; ver `BitLockerStatus.protected`.
 IID_ISHELLITEM2 = "{7E9FB0D3-919F-4307-AB2E-9B1860310C93}"
+"""IID de la interfaz `IShellItem2`."""
 PKEY_BITLOCKER_FMTID = "{2D15A9A1-A556-4189-91AD-027458F11A07}"
-PKEY_BITLOCKER_PID = 1717
+"""`fmtid` de la clave `System.Volume.BitLockerProtection`.
 
-# La enumeración es de Windows, no nuestra: se relee cuando haga falta pasándole
-# cada valor a `PSFormatForDisplay` con esa misma clave.
+La canónica hay que PEDÍRSELA a Windows con `PSGetPropertyKeyFromName`: la que
+circula por ahí (la del conjunto System.Volume.*, {9B174B35-…} pid 8) es otra
+distinta y con ella la consulta devuelve ERROR_NOT_FOUND.
+"""
+PKEY_BITLOCKER_PID = 1717
+"""`pid` de esa clave."""
+
+# Enumeración de Windows, no nuestra: se relee pasando cada valor a
+# `PSFormatForDisplay` con esa misma clave.
 BDE_ON = 1                   # cifrado Y protegido: el único estado que vale
 BDE_OFF = 2
 BDE_ENCRYPTING = 3
@@ -1435,6 +1541,7 @@ BDE_TEXTOS = {
     BDE_WAITING: "BitLocker activado pero SIN proteger todavía: la clave sigue "
                  "guardada en claro a la espera de reiniciar",
 }
+"""Cómo se cuenta cada estado de BitLocker; el único que deja seguir es `BDE_ON`."""
 
 
 @dataclass(frozen=True)
@@ -1443,52 +1550,79 @@ class BitLockerStatus:
 
     `known=False` no es «no está cifrado»: es «no he podido comprobarlo».
     Distinguirlo importa, porque decirle a alguien que su dispositivo está
-    cifrado sin haberlo mirado es peor que no decir nada."""
+    cifrado sin haberlo mirado es peor que no decir nada.
+
+    Args:
+        known: Si se ha podido comprobar.
+        state: El valor de `System.Volume.BitLockerProtection` (los `BDE_*`).
+        detail: Qué ha pasado, para enseñarlo.
+    """
     known: bool
     state: int = 0
     detail: str = ""
 
     @property
     def protected(self) -> bool:
-        """Cifrado Y con la protección puesta. Lo único que autoriza a seguir.
+        """Indica si el volumen está cifrado Y con la protección puesta.
 
-        Antes esto se calculaba como «VolumeStatus empieza por FullyEncrypted, o
-        el porcentaje pasa de cero», y el `ProtectionStatus` que la consulta sí
-        pedía se tiraba sin llegar a leerlo. Un volumen recién activado —el
-        estado 'Waiting for activation'— está cifrado, se lee sin problemas y
-        tiene su clave guardada EN CLARO en el propio disco esperando un
-        reinicio: pasaba la comprobación, y encima de él se dejaba la clave
-        privada del remoto. Aquí solo vale 'On'."""
+        Es lo único que autoriza a seguir. Un volumen recién activado (estado
+        «Waiting for activation») está cifrado, se lee sin problemas y tiene su
+        clave guardada EN CLARO en el propio disco esperando un reinicio: si
+        pasara la comprobación, encima de él se dejaría la clave privada del
+        remoto. Aquí solo vale `On`.
+        """
         return self.state == BDE_ON
 
     @property
     def resumen(self) -> str:
+        """Devuelve el estado en palabras."""
         if not self.known:
             return f"sin comprobar — {self.detail}"
         return BDE_TEXTOS.get(self.state, f"estado desconocido ({self.state})")
 
 
 def _leer_estado_bitlocker(ruta: str) -> int:
-    """El valor de `System.Volume.BitLockerProtection` de un volumen.
+    """Devuelve el valor de `System.Volume.BitLockerProtection` de un volumen.
 
-    Con ctypes y a mano porque el proyecto no admite dependencias y la biblioteca
-    estándar no trae COM. Son tres llamadas: crear el item del shell para esa
-    ruta, pedirle la propiedad como entero, y soltarlo."""
+    Se lee por la MISMA vía que usa el Explorador para pintar el candado: la
+    propiedad del almacén de propiedades del shell. Que sea esa y no otra
+    importa por dos razones:
+    - `Get-BitLockerVolume` y `manage-bde -status` contestan «acceso denegado»
+      a un usuario normal, así que la comprobación tenía que relanzarse
+      elevada. Un .exe sin firmar, corriendo desde %TEMP%, que lanza un
+      PowerShell ELEVADO y con la ventana oculta es, visto desde un antivirus,
+      la forma exacta de un bypass de UAC: Sophos lo paraba con su mitigación
+      «Lockdown». Esto no eleva, no lanza ningún proceso y no enseña ninguna
+      ventana.
+    - La clave canónica hay que pedírsela a Windows (ver
+      `PKEY_BITLOCKER_FMTID`).
+
+    Lo que se pierde frente a `Get-BitLockerVolume` es el porcentaje: se sabe
+    que se está cifrando, no por cuánto va. A cambio se distingue lo que otras
+    formas no distinguían (ver `BitLockerStatus.protected`).
+
+    Es COM a mano con ctypes porque el proyecto no admite dependencias y la
+    biblioteca estándar no trae COM. Son tres llamadas: crear el item del shell
+    para esa ruta, pedirle la propiedad como entero y soltarlo.
+    """
     import ctypes
     from ctypes import POINTER, byref, c_int, c_void_p, c_wchar_p
     from ctypes.wintypes import DWORD, ULONG
 
     class GUID(ctypes.Structure):
+        """Estructura `GUID` de Windows."""
         _fields_ = [("Data1", ctypes.c_ulong), ("Data2", ctypes.c_ushort),
                     ("Data3", ctypes.c_ushort), ("Data4", ctypes.c_ubyte * 8)]
 
     class PROPERTYKEY(ctypes.Structure):
+        """Estructura `PROPERTYKEY` de Windows."""
         _fields_ = [("fmtid", GUID), ("pid", DWORD)]
 
     ole32 = ctypes.windll.ole32
     shell32 = ctypes.windll.shell32
 
     def guid(texto: str) -> GUID:
+        """Convierte un texto `{...}` en un `GUID`."""
         g = GUID()
         if ole32.CLSIDFromString(c_wchar_p(texto), byref(g)) < 0:
             raise OSError(f"GUID ilegible: {texto}")
@@ -1501,8 +1635,9 @@ def _leer_estado_bitlocker(ruta: str) -> int:
 
     # COINIT_APARTMENTTHREADED. Hay que inicializar COM en ESTE hilo, sea cual
     # sea. Un HRESULT negativo aquí es RPC_E_CHANGED_MODE: COM ya estaba puesto
-    # en el otro modelo, que para esto sirve igual. Solo se cierra lo que se haya
-    # abierto aquí, porque cerrar de más se lleva por delante el COM de los demás.
+    # en el otro modelo, que para esto sirve igual. Solo se cierra lo que se
+    # haya abierto aquí, porque cerrar de más se lleva por delante el COM de
+    # los demás.
     hr_init = ole32.CoInitializeEx(None, 2)
     try:
         item = c_void_p()
@@ -1512,9 +1647,9 @@ def _leer_estado_bitlocker(ruta: str) -> int:
             raise OSError(f"SHCreateItemFromParsingName: 0x{hr & 0xFFFFFFFF:08X}")
         vtbl = ctypes.cast(item, POINTER(POINTER(c_void_p))).contents
         try:
-            # Huecos de la vtabla de IShellItem2: el 2 es Release, de IUnknown, y
-            # el 16 es GetInt32 —detrás de los 3 de IUnknown, los 5 de IShellItem
-            # y los 8 primeros de IShellItem2—.
+            # Huecos de la vtabla de IShellItem2: el 2 es Release, de IUnknown,
+            # y el 16 es GetInt32, detrás de los 3 de IUnknown, los 5 de
+            # IShellItem y los 8 primeros de IShellItem2.
             get_int32 = ctypes.WINFUNCTYPE(
                 ctypes.c_long, c_void_p, POINTER(PROPERTYKEY),
                 POINTER(c_int))(vtbl[16])
@@ -1531,13 +1666,14 @@ def _leer_estado_bitlocker(ruta: str) -> int:
 
 
 def bitlocker_status(letra: str) -> BitLockerStatus:
-    """Estado de BitLocker de una unidad. Ni eleva, ni lanza nada, ni tarda.
+    """Devuelve el estado de BitLocker de una unidad: ni eleva, ni lanza nada, ni tarda.
 
-    Cualquier fallo sale como `known=False`, y esa es la dirección segura: quien
-    llama solo deja seguir con `protected`, así que no poder comprobarlo frena el
-    asistente en vez de dejarlo pasar. Por eso se captura `Exception` y no una
-    lista de tipos: aquí debajo hay COM, y equivocarse de excepción significaría
-    dar por buena una unidad sin haberla mirado."""
+    Cualquier fallo sale como `known=False`, y esa es la dirección segura:
+    quien llama solo deja seguir con `protected`, así que no poder comprobarlo
+    frena el asistente en vez de dejarlo pasar. Por eso se captura `Exception`
+    y no una lista de tipos: aquí debajo hay COM, y equivocarse de excepción
+    significaría dar por buena una unidad sin haberla mirado.
+    """
     if not IS_WIN:
         return BitLockerStatus(False, detail="BitLocker es solo de Windows.")
     letra = letra.rstrip(":").upper()
@@ -1556,18 +1692,20 @@ def open_bitlocker_setup(letra: str) -> None:
     """Abre el asistente de BitLocker de Windows para esa unidad.
 
     Cifrar lo hace Windows, no nosotros: automatizarlo con manage-bde exige
-    permisos, tarda mucho y falla de formas distintas en cada edición. Lo que sí
-    aporta el instalador es abrirlo en el sitio y comprobar después.
+    permisos, tarda mucho y falla de formas distintas en cada edición. Lo que
+    sí aporta el instalador es abrirlo en el sitio y comprobar después.
 
-    Dos `os.startfile` y no un PowerShell con dos `Start-Process`: hacen lo mismo
-    sin lanzar un intérprete de órdenes, que es justo lo que mira un antivirus.
-    `ms-settings:` abre la página de cifrado, y la unidad abre el Explorador, que
-    es donde está «Activar BitLocker» en las ediciones que no traen esa página.
+    Son dos `os.startfile` y no un PowerShell con dos `Start-Process`: hacen lo
+    mismo sin lanzar un intérprete de órdenes, que es justo lo que mira un
+    antivirus. `ms-settings:` abre la página de cifrado, y la unidad abre el
+    Explorador, que es donde está «Activar BitLocker» en las ediciones que no
+    traen esa página. Se intentan por separado: si esta edición de Windows no
+    resuelve `ms-settings:`, eso no puede llevarse por delante la ventana del
+    Explorador, que es la que sirve en todas.
 
-    Los dos se intentan por separado, como los dos `Start-Process` de antes: si
-    esta edición de Windows no resuelve el `ms-settings:`, lo que no puede pasar
-    es que se lleve por delante la ventana del Explorador, que es la que sirve en
-    todas. Solo se da por fallado si no se abre ninguna de las dos."""
+    Raises:
+        InstallError: Si no es Windows o no se abre ninguna de las dos.
+    """
     if not IS_WIN:
         raise InstallError("BitLocker es solo de Windows.")
     letra = letra.rstrip(":").upper()

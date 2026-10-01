@@ -114,6 +114,7 @@ def ui_lock() -> Path:
     """
     return STATE_DIR / "ui.lock.json"
 
+
 class ConfigError(Exception):
     """El config es inválido.
 
