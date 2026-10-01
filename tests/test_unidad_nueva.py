@@ -1,19 +1,17 @@
 #!/usr/bin/env python3
-"""
-«Se ha conectado PRDRIVE-2. ¿Atenderla en este equipo?»
+"""«Se ha conectado PRDRIVE-2. ¿Atenderla en este equipo?»
 
 Una unidad cuyo id no está en la lista del agente nunca se sincroniza sin
 preguntar. Se comprueba que:
-
-  * sin respuesta en `espera_unidad_nueva` cuenta como «Ahora no»;
-  * «Ahora no» dura hasta que la raíz desaparece, y se vuelve a preguntar al
-    reaparecer;
-  * una respuesta tardía de la ventana se ignora;
-  * el «Atender» de la bandeja (el buzón) funciona mientras sigue conectada;
-  * sin entorno gráfico es «Ahora no» al momento;
-  * «Atender» la añade en modo daemon y la atiende;
-  * y, sobre todo, que **antes del sí no se lanza ningún proceso con rutas de
-    la unidad**.
+- Sin respuesta en `espera_unidad_nueva` cuenta como «Ahora no».
+- «Ahora no» dura hasta que la raíz desaparece, y se vuelve a preguntar al
+  reaparecer.
+- Una respuesta tardía de la ventana se ignora.
+- El «Atender» de la bandeja (el buzón) funciona mientras sigue conectada.
+- Sin entorno gráfico es «Ahora no» al momento.
+- «Atender» la añade en modo daemon y la atiende.
+- Y, sobre todo, que **antes del sí no se lanza ningún proceso con rutas de la
+  unidad**.
 
 Y la ventanita (`ui/tk_agente.py`), si hay Tk y pantalla.
 """
@@ -36,11 +34,13 @@ equipo.guardar_ajustes(equipo.Ajustes(espera_unidad_nueva=120))
 
 
 def con_rutas_de_la_unidad() -> list:
+    """Devuelve los procesos lanzados que llevan rutas de la unidad."""
     return [p.args for p in F.LANZADOS if any(str(RAIZ) in a for a in p.args)
             or str(RAIZ) in str(p.kwargs.get("cwd", ""))]
 
 
 def preguntas() -> list:
+    """Devuelve los procesos lanzados que son la pregunta por la unidad."""
     return [p for p in F.LANZADOS if "pregunta" in p.args]
 
 
@@ -147,7 +147,7 @@ c("ninguna unidad sin aceptar ha visto un proceso con sus rutas",
    if any(str(r) in a for r in (R3, R4, R5))], [])
 
 
-# --- la ventanita ----------------------------------------------------------------
+# la ventanita
 from ui import tk_agente  # noqa: E402
 
 c("la cuenta atrás en minutos y segundos", tk_agente.cuenta(105),

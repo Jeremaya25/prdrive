@@ -1,20 +1,19 @@
 #!/usr/bin/env python3
-"""
-El VeraCrypt que viaja en el dispositivo (Traveler's Disk).
+"""El VeraCrypt que viaja en el dispositivo (Traveler's Disk).
 
 Sin esto, un dispositivo cifrado con VeraCrypt solo sirve en equipos que ya lo
-tengan instalado, justo lo contrario de lo que hace el resto del proyecto. Lo que
-viaja es el VeraCrypt Portable oficial, con sus dos arquitecturas y sus nombres
-—`DriverLoad()` carga de la carpeta del ejecutable un `.sys` con la arquitectura
-en el nombre—, y es un componente: lleva sello, se sustituye entero y nunca se
-copia encima. Sin red, la copia del VeraCrypt instalado en el equipo, con los
-nombres del portable leídos de la cabecera PE.
+tengan instalado, justo lo contrario de lo que hace el resto del proyecto. Lo
+que viaja es el VeraCrypt Portable oficial, con sus dos arquitecturas y sus
+nombres (`DriverLoad()` carga de la carpeta del ejecutable un `.sys` con la
+arquitectura en el nombre), y es un componente: lleva sello, se sustituye
+entero y nunca se copia encima. Sin red, la copia del VeraCrypt instalado en el
+equipo, con los nombres del portable leídos de la cabecera PE.
 
 Todo sobre árboles falsos: ni se baja ni se copia un VeraCrypt de verdad
-(`veracrypt_bin.ensure_veracrypt` se sustituye por una carpeta de mentira con su
-sello) ni se toca ninguna unidad. Y la trampa de integración que estaría callada
-hasta el segundo uso del dispositivo: la carpeta —y lo que deja a medias un
-intercambio— tiene que contar como ruido para `device`.
+(`veracrypt_bin.ensure_veracrypt` se sustituye por una carpeta de mentira con
+su sello) ni se toca ninguna unidad. Y la trampa de integración que estaría
+callada hasta el segundo uso del dispositivo: la carpeta (y lo que deja a
+medias un intercambio) tiene que contar como ruido para `device`.
 """
 
 from _harness import Checks, falso_portatil, pe, tmpdir
@@ -50,14 +49,17 @@ def falso_veracrypt(drivers=None, con_expander=True, exe=X64):
 
 
 def destinos(vc, raiz):
+    """Devuelve los nombres que tendría cada fichero del plan en el destino."""
     return sorted(destino.name for _, destino in traveler.plan(vc, raiz))
 
 
 def lo_que_hay(raiz):
+    """Devuelve los ficheros que hay en la carpeta del traveler, ordenados."""
     return sorted(p.name for p in (raiz / traveler.CARPETA).iterdir())
 
 
 def fallo_de(funcion, *args):
+    """Devuelve el mensaje del `InstallError` que lanza `funcion`, o `None`."""
     try:
         funcion(*args)
         return None
@@ -77,6 +79,7 @@ bajadas: list[str] = []
 
 
 def desde_cache(progreso=None, allow_download=True):
+    """`ensure_veracrypt` de mentira: apunta la descarga y devuelve la caché."""
     bajadas.append("portable")
     return cache
 
@@ -85,7 +88,7 @@ try:
     traveler.IS_WIN = True
     veracrypt_bin.ensure_veracrypt = desde_cache
 
-    # --- 1. el portable: lo que viaja, tal cual y con su sello -------------------
+    # 1. el portable: lo que viaja, tal cual y con su sello
     raiz = tmpdir("prdrive-volumen-")
     puesto = traveler.instalar(None, raiz)
     c("viaja el portable entero, con sus nombres y su sello",
@@ -113,10 +116,11 @@ try:
     c("y queda bien", (raiz / traveler.CARPETA / "veracrypt-x64.sys").read_bytes(),
       (cache / "veracrypt-x64.sys").read_bytes())
 
-    # --- 2. sustituir, nunca copiar encima -----------------------------------------
+    # 2. sustituir, nunca copiar encima
     #
-    # Un dispositivo de antes: la copia de una instalación, con `VeraCrypt.exe`.
-    # Lo nuevo no se mezcla con lo viejo: la carpeta se cambia entera.
+    # Un dispositivo de antes: la copia de una instalación, con
+    # `VeraCrypt.exe`. Lo nuevo no se mezcla con lo viejo: la carpeta se cambia
+    # entera.
     viejo = tmpdir("prdrive-volumen-")
     (viejo / traveler.CARPETA).mkdir()
     (viejo / traveler.CARPETA / "VeraCrypt.exe").write_bytes(pe(X64))
@@ -142,6 +146,7 @@ try:
     reemplazar = traveler.os.replace
 
     def no_se_aparta(a, b):
+        """`os.replace` que no deja apartar la carpeta del traveler."""
         if str(a).endswith(traveler.CARPETA):
             raise PermissionError("en uso")
         return reemplazar(a, b)
@@ -167,12 +172,14 @@ try:
     traveler.instalar(None, raiz)
     c("un resto de la vez pasada se barre", resto.exists(), False)
 
-    # --- 3. sin red: la copia de la instalación, sin sello ---------------------------
+    # 3. sin red: la copia de la instalación, sin sello
     #
-    # El instalador de VeraCrypt deja `VeraCrypt.exe` y `veracrypt.sys` (Setup.c)
-    # y `DriverLoad()` busca `veracrypt-<arq>.sys`: se renombra según la cabecera,
-    # como hace el propio diálogo de VeraCrypt con una instalación MSI.
+    # El instalador de VeraCrypt deja `VeraCrypt.exe` y `veracrypt.sys`
+    # (Setup.c) y `DriverLoad()` busca `veracrypt-<arq>.sys`: se renombra según
+    # la cabecera, como hace el propio diálogo de VeraCrypt con una instalación
+    # MSI.
     def sin_red(progreso=None, allow_download=True):
+        """`ensure_veracrypt` que falla por falta de red."""
         raise veracrypt_bin.SinRed("No he podido descargar VeraCrypt: sin red")
 
     veracrypt_bin.ensure_veracrypt = sin_red
@@ -245,6 +252,7 @@ try:
 
     # Un paquete que se baja y no cuadra NO cae en la copia: se dice.
     def no_cuadra(progreso=None, allow_download=True):
+        """`ensure_veracrypt` que falla porque lo descargado no cuadra."""
         raise InstallError("Lo descargado no es el paquete de VeraCrypt fijado.")
 
     veracrypt_bin.ensure_veracrypt = no_cuadra
@@ -253,12 +261,13 @@ try:
                fallo or "", "no es el paquete")
     veracrypt_bin.ensure_veracrypt = desde_cache
 
-    # --- 4. el autorun.inf: se edita, no se reescribe --------------------------------
+    # 4. el autorun.inf: se edita, no se reescribe
     #
     # No ejecuta nada al conectar —AutoRun lleva desactivado para extraíbles
-    # desde Windows 7—, pero la etiqueta y el icono sí los lee el Explorador. Las
-    # órdenes `shell\…` Windows no las enseña en un extraíble (M2), y las de las
-    # versiones anteriores apuntaban a un VeraCrypt.exe que el portable no trae.
+    # desde Windows 7—, pero la etiqueta y el icono sí los lee el Explorador.
+    # Las órdenes `shell\…` Windows no las enseña en un extraíble (M2), y las
+    # de las versiones anteriores apuntaban a un VeraCrypt.exe que el portable
+    # no trae.
     texto = traveler.autorun_texto("PRDRIVE")
     c("pone nombre a la unidad y su icono, y nada más",
       autorun.claves(texto), {"label": "PRDRIVE", "icon": autorun.ICONO_VERACRYPT})
@@ -303,7 +312,7 @@ try:
     c("sin x64, el icono es el que haya", autorun.leer(solo_arm).icono,
       "VeraCrypt\\VeraCrypt-arm64.exe")
 
-    # --- 5. lo que se le cuenta al usuario -------------------------------------------
+    # 5. lo que se le cuenta al usuario
     etiquetas = {chk.etiqueta: chk for chk in traveler.comprobar(raiz)}
     c("dice que lleva VeraCrypt", etiquetas["VeraCrypt portátil"].ok, True)
     c("con las dos arquitecturas", etiquetas["Driver de VeraCrypt"].detalle, "arm64, x64")
@@ -345,7 +354,7 @@ try:
       [("VeraCrypt portátil", False)])
     c("y no hay nada que decir de él", traveler.lo_que_hara(vacio), "")
 
-    # --- 6. fuera de Windows no hay traveler -----------------------------------------
+    # 6. fuera de Windows no hay traveler
     traveler.IS_WIN = False
     c.contains("en Linux no se lleva", fallo_de(traveler.instalar, None, tmpdir()) or "",
                "cosa de Windows")
@@ -355,11 +364,11 @@ finally:
     veracrypt_bin.ensure_veracrypt = reales["ensure"]
     traveler.espacio_libre = reales["libre"]
 
-# --- 7. la trampa de integración -----------------------------------------------------
+# 7. la trampa de integración
 #
 # Con contenedor, la raíz FÍSICA lleva el .hc, el autorun.inf y la carpeta
-# VeraCrypt/. Si esa carpeta no está en RUIDO, la siguiente vez que se enchufe el
-# dispositivo el asistente lo lee como «aquí hay cosas de otro» y esconde el
+# VeraCrypt/. Si esa carpeta no está en RUIDO, la siguiente vez que se enchufe
+# el dispositivo el asistente lo lee como «aquí hay cosas de otro» y esconde el
 # recorrido corto. Lo mismo lo que deja a medias un intercambio que no se pudo
 # terminar de barrer.
 c("la carpeta de VeraCrypt no cuenta como contenido ajeno",

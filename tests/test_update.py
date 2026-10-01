@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""
-El aviso de versión nueva (common/update.py).
+"""El aviso de versión nueva (`common/update.py`).
 
 `update.fetch` se sustituye entera: aquí no se habla con GitHub. Lo que se
-comprueba es lo que puede hacer daño —que no se le deje tocar el dispositivo a
+comprueba es lo que puede hacer daño (que no se le deje tocar el dispositivo a
 un zip que no es el que se pidió, ni a uno con rutas que se salen de su
-carpeta— y lo que sostiene la ventana: que mirar no lance nunca, que el primer
+carpeta) y lo que sostiene la ventana: que mirar no lance nunca, que el primer
 pintado no vaya a la red, y que no se pregunte una vez por apertura.
 """
 
@@ -33,6 +32,7 @@ def responder(*respuestas):
     llamadas.clear()
 
     def _fetch(url, timeout):
+        """Apunta la URL y contesta con la siguiente respuesta de la cola."""
         llamadas.append(url)
         if not cola:
             raise OSError("no quedan respuestas preparadas")
@@ -44,6 +44,7 @@ def responder(*respuestas):
 
 
 def api(crudo=None) -> bytes:
+    """Devuelve el JSON de la API de GitHub con esos datos."""
     return json.dumps(crudo or CRUDO).encode()
 
 
@@ -61,7 +62,8 @@ def zip_codigo(version="9.9.9", raiz="prdrive-9.9.9", quitar=(), extra=()) -> by
     return buf.getvalue()
 
 
-# --- comparar versiones ------------------------------------------------------
+# comparar versiones
+#
 # Por tuplas de enteros y no por cadenas: comparando texto, "0.0.9" va después
 # de "0.0.10" y el aviso desaparecería justo al llegar a la décima release.
 c("0.0.10 es posterior a 0.0.9", update.is_newer("0.0.10", "0.0.9"), True)
@@ -78,7 +80,7 @@ c("sin fichero VERSION la versión es desconocida",
   update.installed_version(tmpdir("prdrive-sinver-")), "")
 
 
-# --- mirar: nunca lanza, y no va a la red más de la cuenta -------------------
+# mirar: nunca lanza, y no va a la red más de la cuenta
 with sandbox():
     responder(api())
     rel, motivo = update.check()
@@ -115,7 +117,7 @@ with sandbox():
     c.contains("y se explica", motivo or "", "tag_name")
 
 
-# --- el primer pintado de la ventana: caché y solo caché ---------------------
+# el primer pintado de la ventana: caché y solo caché
 with sandbox():
     responder(api())
     update.check()
@@ -140,7 +142,7 @@ with sandbox():
     c("un update.json corrupto no impide abrir", update.pending(), None)
 
 
-# --- traerse el código: lo que NO se acepta ----------------------------------
+# traerse el código: lo que NO se acepta
 with sandbox():
     responder(zip_codigo())
     destino = tmpdir("prdrive-ok-")
@@ -184,7 +186,7 @@ with sandbox():
         c.contains("una descarga cortada se explica", str(e), "se cayó la red")
 
 
-# --- la orden que instala ----------------------------------------------------
+# la orden que instala
 orden = update.apply_command(Path("/tmp/staged"), Path("/media/pen"))
 c("se ejecuta el prdrive-install.py DESCARGADO, no el del dispositivo",
   Path(orden[2]).name, "prdrive-install.py")
@@ -193,7 +195,7 @@ c("con --update y la raíz del volumen", orden[3:], ["--update", str(Path("/medi
 c("sin buffer, para que la ventana de salida enseñe línea a línea",
   "-u" in orden, True)
 
-# --- la orden que pone al día los componentes --------------------------------
+# la orden que pone al día los componentes
 #
 # El zip que hay que bajar es el de la versión INSTALADA, no el de la última
 # release: los pines viajan con el programa, así que la maquinaria que baja

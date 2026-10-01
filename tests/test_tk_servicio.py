@@ -1,21 +1,20 @@
 #!/usr/bin/env python3
-"""
-La ventana principal y el servicio (#14): un servicio, dos maneras de arrancarlo.
+"""La ventana principal y el servicio (#14): un servicio, dos maneras de arrancarlo.
 
 Las casillas son las mismas para «Sincronizar ahora» y para «Iniciar servicio»,
-salen marcadas con lo del servicio, y solo «Iniciar servicio» lo guarda. Aquí se
-comprueba lo que se ve y se toca en la ventana:
+salen marcadas con lo del servicio, y solo «Iniciar servicio» lo guarda. Aquí
+se comprueba lo que se ve y se toca en la ventana:
+- El botón de marcar o desmarcar todas, y el «N de M» que sigue a las casillas.
+- Que una pasada manual no escribe la configuración del servicio.
+- La línea que dice qué hace este equipo al enchufar, en cada estado, y que su
+  botón lleva a la pantalla del vigilante y al volver se repinta.
+- Que con lo más largo que puede salir (doce parejas, el botón de marcar, la
+  línea en ámbar y «Expulsar» en el pie) la ventana cabe o se desplaza, en la
+  matriz de resolución y `tk scaling` de `test_tk_medidas`.
 
-  * el botón de marcar o desmarcar todas, y el «N de M» que sigue a las casillas;
-  * que una pasada manual no escribe la configuración del servicio;
-  * la línea que dice qué hace este equipo al enchufar, en cada estado, y que
-    su botón lleva a la pantalla del vigilante y al volver se repinta;
-  * que con lo más largo que puede salir —doce parejas, el botón de marcar, la
-    línea en ámbar y «Expulsar» en el pie— la ventana cabe o se desplaza, en la
-    matriz de resolución y `tk scaling` de `test_tk_medidas`.
-
-Nada se enseña ni se lanza: el bucle de eventos se sustituye por lo que se quiere
-pulsar, y la salida de sync.py y la pantalla del vigilante por un apunte.
+Nada se enseña ni se lanza: el bucle de eventos se sustituye por lo que se
+quiere pulsar, y la salida de `sync.py` y la pantalla del vigilante por un
+apunte.
 """
 
 import re
@@ -57,6 +56,7 @@ INSTALADO = watch.Resumen("instalado", "daemon")
 
 
 def recorrer(w):
+    """Recorre los widgets que cuelgan de `w`, en profundidad."""
     pila = [w]
     while pila:
         actual = pila.pop()
@@ -65,31 +65,40 @@ def recorrer(w):
 
 
 def botones(w) -> dict:
+    """Devuelve los botones de `w` por su texto."""
     return {b.cget("text"): b for b in recorrer(w) if isinstance(b, ttk.Button)}
 
 
 def textos(w) -> list[str]:
+    """Devuelve los textos de las etiquetas de `w`."""
     return [str(x.cget("text")) for x in recorrer(w) if isinstance(x, ttk.Label)]
 
 
 def casillas(w) -> dict:
+    """Devuelve las casillas de `w` por su texto."""
     return {b.cget("text"): b for b in recorrer(w) if isinstance(b, ttk.Checkbutton)}
 
 
 def marcadas(w) -> list[str]:
+    """Devuelve los textos de las casillas marcadas, ordenados."""
     return sorted(n for n, b in casillas(w).items() if b.instate(["selected"]))
 
 
 def cuenta(w) -> str:
+    """Devuelve el «N de M» de la ventana, o `""`."""
     return next((t for t in textos(w) if re.match(r"^\d+ de \d+", t)), "")
 
 
 def ventana(cfg, conducir, resumen=INSTALADO):
-    """Abre la principal con ese arranque automático y, en vez de su bucle de
-    eventos, ejecuta `conducir`. Devuelve la elección con que se cierra."""
+    """Abre la principal con ese arranque automático y la conduce.
+
+    En vez de su bucle de eventos ejecuta `conducir`. Devuelve la elección con
+    que se cierra.
+    """
     watch.resumen = lambda: resumen
 
     def _mainloop(self):
+        """Conduce la ventana y cancela lo que dejó programado."""
         conducir(self)
         try:
             for pendiente in self.tk.splitlist(self.tk.call("after", "info")):
@@ -101,12 +110,13 @@ def ventana(cfg, conducir, resumen=INSTALADO):
     return uitk.main_window(cfg, None)
 
 
-# --- marcar o desmarcar todas ---------------------------------------------------
+# marcar o desmarcar todas
 with sandbox():
     prefs.PREFS.unlink(missing_ok=True)
     visto: dict = {}
 
     def todas(root) -> None:
+        """Apunta las casillas y pulsa «Marcar todas»."""
         visto["al abrir"] = (marcadas(root), cuenta(root), "Marcar todas" in botones(root))
         botones(root)["Marcar todas"].invoke()
         visto["todas"] = (marcadas(root), cuenta(root),
@@ -137,12 +147,13 @@ with sandbox():
       ("Marcar todas" in nombres, "Desmarcar todas" in nombres), (False, False))
 
 
-# --- una pasada manual no toca el servicio; arrancarlo sí lleva lo elegido -------
+# una pasada manual no toca el servicio; arrancarlo sí lleva lo elegido
 with sandbox():
     prefs.PREFS.unlink(missing_ok=True)
     lanzadas.clear()
 
     def a_mano(root) -> None:
+        """Desmarca una pareja y pulsa «Sincronizar ahora»."""
         casillas(root)["claves"].invoke()
         botones(root)["Sincronizar ahora"].invoke()
 
@@ -152,6 +163,7 @@ with sandbox():
     c("y no escribe la configuración del servicio", prefs.PREFS.exists(), False)
 
     def servicio(root) -> None:
+        """Cambia las parejas y el intervalo y pulsa «Iniciar servicio»."""
         casillas(root)["upload"].invoke()
         spin = next(w for w in recorrer(root) if isinstance(w, ttk.Spinbox))
         spin.set("12")
@@ -163,7 +175,7 @@ with sandbox():
       ("daemon", ("upload", "docs"), 12.0))
 
 
-# --- la línea del arranque automático -------------------------------------------
+# la línea del arranque automático
 ESTADOS = (watch.Resumen("sin_instalar"), watch.Resumen("otro_dispositivo"),
            watch.Resumen("desfasado", "daemon"), watch.Resumen("instalado", "ui"),
            watch.Resumen("instalado", "daemon"), watch.Resumen("instalado", "sync"),
@@ -206,12 +218,14 @@ with sandbox():
     real_open = tk_watch.open_dialog
 
     def instalar_desde_la_pantalla(parent) -> None:
+        """Hace de pantalla del vigilante: deja el arranque automático instalado."""
         abiertas.append(parent)
         watch.resumen = lambda: watch.Resumen("instalado", "sync")
 
     tk_watch.open_dialog = instalar_desde_la_pantalla
     try:
         def cambiar(root) -> None:
+            """Pulsa «Configurar…» y apunta los textos al volver."""
             botones(root)["Configurar…"].invoke()
             visto["textos"] = textos(root)
 
@@ -223,7 +237,6 @@ with sandbox():
       "Al enchufarlo en este equipo: una pasada de estas parejas." in visto["textos"], True)
 
 
-
 # Con el agente, el botón abre «Qué hace el agente», y la línea enseña lo pedido.
 with sandbox():
     pedidos: list = []
@@ -232,6 +245,7 @@ with sandbox():
     tk_watch.open_agente = lambda parent, res: pedidos.append(res) or "nada"
     try:
         def cambiar_agente(root) -> None:
+            """Pulsa «Cambiar…» y apunta los textos al volver."""
             botones(root)["Cambiar…"].invoke()
             visto["textos"] = textos(root)
 
@@ -244,11 +258,13 @@ with sandbox():
       "El agente de este equipo no hace nada con él." in visto["textos"], True)
 
 
-# --- que quepa ---------------------------------------------------------------------
-# La ventana principal abre su propio intérprete de Tk, así que la escala no se le
-# puede cambiar desde fuera como en `test_tk_medidas`: se pone en el momento en
-# que se le aplica el tema, que es lo primero que hace con su `Tk()` y antes de
-# crear ningún widget. La pantalla, igual que allí: sustituyendo `pantalla_util`.
+# que quepa
+#
+# La ventana principal abre su propio intérprete de Tk, así que la escala no se
+# le puede cambiar desde fuera como en `test_tk_medidas`: se pone en el momento
+# en que se le aplica el tema, que es lo primero que hace con su `Tk()` y antes
+# de crear ningún widget. La pantalla, igual que allí: sustituyendo
+# `pantalla_util`.
 PANTALLAS = (
     ("1080p", 1920, 1080, 1.3333),
     ("1080p al 150 %", 1920, 1080, 2.0),
@@ -266,7 +282,7 @@ REAL_UTIL, REAL_APPLY = uitk.pantalla_util, theme.apply
 
 
 def medir(root) -> None:
-    """(cabe, recortado), como `cabe()` y `recortado()` de test_tk_medidas."""
+    """Devuelve si la ventana cabe y si queda recortada, como en `test_tk_medidas`."""
     root.update_idletasks()
     util_x, util_y = uitk.pantalla_util(root)
     visor = root.visor
@@ -286,6 +302,7 @@ try:
         uitk.pantalla_util = lambda win, a=ancho, h=alto: (a, h)
 
         def con_escala(widget, e=escala):
+            """Pone la escala a Tk antes de aplicar el tema."""
             widget.tk.call("tk", "scaling", e)
             REAL_APPLY(widget)
 

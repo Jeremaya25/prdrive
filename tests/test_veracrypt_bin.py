@@ -1,20 +1,18 @@
 #!/usr/bin/env python3
-"""
-El VeraCrypt Portable oficial, abierto sin ejecutarlo (install/veracrypt_bin.py).
+"""El VeraCrypt Portable oficial, abierto sin ejecutarlo (`install/veracrypt_bin.py`).
 
 El paquete es un autoextraíble de VeraCrypt: el `.exe` del extractor y, detrás,
 un bloque con su propio formato (`src/Setup/SelfExtract.c`, tag
-VeraCrypt_1.26.24). Aquí se fabrica uno de mentira con ESE formato —el mismo
-LZMA, los mismos marcadores, los mismos CRC— y se comprueba lo que puede hacer
+VeraCrypt_1.26.24). Aquí se fabrica uno de mentira con ESE formato (el mismo
+LZMA, los mismos marcadores, los mismos CRC) y se comprueba lo que puede hacer
 daño:
-
-  * que lo que sale es lo que había dentro, y solo lo que viaja;
-  * que un fichero con su CRC mal, un paquete con el suyo mal o un SHA-256 que
-    no es el fijado no escriben nada —y la caché queda como estaba—;
-  * que un nombre que se sale de la carpeta tumba el paquete entero antes de
-    escribir el primero;
-  * y la trampa del formato: `VCINSTRT` aparece también en el código del
-    extractor, y el bueno es el último.
+- Que lo que sale es lo que había dentro, y solo lo que viaja.
+- Que un fichero con su CRC mal, un paquete con el suyo mal o un SHA-256 que no
+  es el fijado no escriben nada (y la caché queda como estaba).
+- Que un nombre que se sale de la carpeta tumba el paquete entero antes de
+  escribir el primero.
+- Y la trampa del formato: `VCINSTRT` aparece también en el código del
+  extractor, y el bueno es el último.
 
 Ninguno habla con la red: `fetch()` se sustituye, y la caché va a un
 `LOCALAPPDATA` de mentira.
@@ -40,6 +38,7 @@ c = Checks("VeraCrypt Portable: abrirlo sin ejecutarlo (install/veracrypt_bin.py
 
 
 def contenido_de(arq_o_nada, nombre):
+    """Devuelve el contenido de un fichero de mentira: un PE de esa CPU o su nombre."""
     maquinas = {"x64": 0x8664, "arm64": 0xAA64}
     return pe(maquinas[arq_o_nada], nombre.encode()) if arq_o_nada else nombre.encode()
 
@@ -61,12 +60,13 @@ def ficheros_portable():
 
 def paquete(ficheros, crc_malo=None, crc_paquete_malo=False, codigo=b"",
             firma_en_zona=b""):
-    """Un `VeraCrypt Portable X.exe` de mentira, como lo escribe
-    `MakeSelfExtractingPackage()`.
+    """Devuelve un `VeraCrypt Portable X.exe` de mentira.
 
-    `codigo` va en el «extractor», antes del bloque: ahí es donde el de verdad
-    lleva otro `VCINSTRT`. `firma_en_zona` cambia bytes entre 0x130 y 0x1ff
-    DESPUÉS de calcular el CRC, como hace firmar el `.exe`."""
+    Lo escribe como `MakeSelfExtractingPackage()`. `codigo` va en el
+    «extractor», antes del bloque: ahí es donde el de verdad lleva otro
+    `VCINSTRT`. `firma_en_zona` cambia bytes entre 0x130 y 0x1ff DESPUÉS de
+    calcular el CRC, como hace firmar el `.exe`.
+    """
     plano = b""
     for nombre, contenido in ficheros:
         crc = zlib.crc32(contenido)
@@ -92,6 +92,7 @@ def paquete(ficheros, crc_malo=None, crc_paquete_malo=False, codigo=b"",
 
 
 def fallo_de(funcion, *args):
+    """Devuelve el mensaje del `InstallError` que lanza `funcion`, o `None`."""
     try:
         funcion(*args)
         return None
@@ -99,7 +100,7 @@ def fallo_de(funcion, *args):
         return str(e)
 
 
-# --- 1. abrirlo -------------------------------------------------------------------
+# 1. abrirlo
 bueno = paquete(ficheros_portable())
 todos = veracrypt_bin.abrir_paquete(bueno)
 c("salen todos los ficheros, en su orden",
@@ -122,16 +123,16 @@ c("firmar el .exe no rompe el CRC del paquete",
   fallo_de(veracrypt_bin.abrir_paquete,
            paquete(ficheros_portable(), firma_en_zona=b"FIRMA" * 10)), None)
 
-# --- 2. el VCINSTRT del extractor --------------------------------------------------
+# 2. el VCINSTRT del extractor
 #
 # En el paquete de verdad `VCINSTRT` sale dos veces: en el código del extractor
-# (es una cadena suya) y delante del bloque. `FindStringInFile()` busca desde el
-# final; tomar el primero es leer como cabecera un trozo de código.
+# (es una cadena suya) y delante del bloque. `FindStringInFile()` busca desde
+# el final; tomar el primero es leer como cabecera un trozo de código.
 repetido = paquete(ficheros_portable(), codigo=b"...VCINSTRT...codigo del extractor")
 c("con VCINSTRT también en el código del extractor, se toma el último",
   list(veracrypt_bin.abrir_paquete(repetido)), [n for n, _ in ficheros_portable()])
 
-# --- 3. lo que tiene que tumbarlo --------------------------------------------------
+# 3. lo que tiene que tumbarlo
 fallo = fallo_de(veracrypt_bin.abrir_paquete,
                  paquete(ficheros_portable(), crc_malo="VeraCrypt-x64.exe"))
 c.contains("un fichero con su CRC-32 mal no pasa", fallo or "", "VeraCrypt-x64.exe")
@@ -160,7 +161,7 @@ c.contains("sin un imprescindible no se copia a medias",
                veracrypt_bin.abrir_paquete(paquete(falta)))) or "",
            "veracrypt-arm64.sys")
 
-# --- 4. bajarlo y dejarlo en la caché ---------------------------------------------
+# 4. bajarlo y dejarlo en la caché
 equipo = tmpdir("prdrive-localappdata-")
 os.environ["LOCALAPPDATA"] = str(equipo)
 real_fetch, real_sha = veracrypt_bin.fetch, pins.VERACRYPT_SHA256
@@ -226,6 +227,7 @@ try:
 
     # Sin red: `SinRed`, que es lo que deja a traveler copiar el instalado.
     def sin_red(url, timeout=0):
+        """`fetch` que falla por falta de red."""
         raise urllib.error.URLError("getaddrinfo failed")
 
     veracrypt_bin.fetch = sin_red
@@ -248,6 +250,7 @@ try:
     intentos = []
 
     def corte_y_luego_bien(url, timeout=0):
+        """`fetch` que se corta la primera vez y luego trae el paquete."""
         intentos.append(url)
         if len(intentos) == 1:
             raise TimeoutError("la red se queda muda")
@@ -284,7 +287,8 @@ try:
 finally:
     veracrypt_bin.fetch, pins.VERACRYPT_SHA256 = real_fetch, real_sha
 
-# --- 4b. Linux: el AppImage oficial -------------------------------------------------
+# 4b. Linux: el AppImage oficial
+#
 # Un solo fichero: se comprueba entero en memoria, se deja en su propia caché
 # como `veracrypt`, ejecutable, con un sello que lo resume.
 appimage_bueno = b"\x7fELF un AppImage de mentira"
@@ -342,7 +346,7 @@ finally:
     pins.VERACRYPT_APPIMAGE.clear()
     pins.VERACRYPT_APPIMAGE.update(real_appimage)
 
-# --- 5. lo fijado, sin inventar -----------------------------------------------------
+# 5. lo fijado, sin inventar
 c("la URL lleva la versión, no un «último»",
   pins.VERACRYPT_VERSION in pins.VERACRYPT_URL, True)
 c("y es del paquete portable", pins.VERACRYPT_URL.endswith(

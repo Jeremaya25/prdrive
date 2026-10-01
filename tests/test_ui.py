@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""Los dos frontends salen precargados con las parejas y el intervalo del
-servicio, y una pasada manual no los toca."""
+"""Los dos frontends salen precargados con lo del servicio.
+
+Son las parejas y el intervalo del servicio, y una pasada manual no los toca.
+"""
 
 import builtins
 import sys
@@ -37,7 +39,7 @@ CFG = mkcfg(["upload", "claves", "docs", "prdrive"],
 prefs.save_prefs("daemon", ["upload", "claves"], 12.0, CFG.names)
 
 
-# --- consola ---------------------------------------------------------------
+# consola
 respuestas = iter(["3", "", ""])
 salida: list[str] = []
 real_input, real_print = builtins.input, builtins.print
@@ -61,7 +63,8 @@ c.contains("consola: avisa de la versión nueva", texto, "v9.9.9")
 c.contains("consola: y dice cuál lleva puesta", texto, "0.0.1")
 
 
-# --- ventana Tk -------------------------------------------------------------
+# ventana Tk
+#
 # Se prueba antes de usarla: sin tkinter (un Python sin `python3-tk`) el import
 # falla con ModuleNotFoundError, no con TclError, y `tk` ni siquiera existe.
 try:
@@ -75,6 +78,7 @@ except Exception as e:                                   # sin entorno gráfico
 
 if hay_pantalla:
     def walk(w):
+        """Recorre los widgets que cuelgan de `w`, en profundidad."""
         for hijo in w.winfo_children():
             yield hijo
             yield from walk(hijo)

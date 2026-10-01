@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ui.start(): elegir frontend, y caer a la consola cuando el gráfico no se puede."""
+"""`ui.start()`: elegir frontend, y caer a la consola cuando el gráfico no se puede."""
 
 import builtins
 import sys
@@ -24,6 +24,7 @@ try:
     from tkinter import ttk
 
     def walk(w):
+        """Recorre los widgets que cuelgan de `w`, en profundidad."""
         for hijo in w.winfo_children():
             yield hijo
             yield from walk(hijo)
@@ -31,6 +32,7 @@ try:
     # «Iniciar servicio» es lo único que sale ya de la ventana: sincronizar y el
     # doctor corren dentro, en una salida hija, sin devolver ninguna elección.
     def fake_mainloop(self):
+        """Bucle de mentira: pulsa «Iniciar servicio» y vuelve."""
         for w in walk(self):
             if isinstance(w, ttk.Button) and w.cget("text") == "Iniciar servicio":
                 w.invoke()

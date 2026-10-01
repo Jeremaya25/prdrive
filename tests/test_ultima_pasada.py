@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""
-La fecha de «última pasada» de la ventana principal (ui.pair_times).
+"""La fecha de «última pasada» de la ventana principal (`ui.pair_times`).
 
 Sale de dos sitios, y por eso tiene test propio: los listados de bisync solo
-existen para las parejas bisync, así que todo lo demás —un `up`, un
-`down-mirror`— se quedaba sin fecha para siempre. Lo que llena ese hueco es
-`state/last_run.json`, que apunta cualquier pasada real la lance quien la lance:
-la ventana, una terminal, el servicio periódico o el vigilante al enchufar.
+existen para las parejas bisync, así que todo lo demás (un `up`, un
+`down-mirror`) se quedaría sin fecha para siempre. Lo que llena ese hueco es
+`state/last_run.json`, que apunta cualquier pasada real la lance quien la
+lance: la ventana, una terminal, el servicio periódico o el vigilante al
+enchufar.
 
-Solo cuentan las pasadas buenas: la columna dice cuándo quedó esa pareja al día,
-y de un fallo ya avisa el banner ámbar.
+Solo cuentan las pasadas buenas: la columna dice cuándo quedó esa pareja al
+día, y de un fallo ya avisa el banner ámbar.
 """
 
 import os
