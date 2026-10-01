@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
-"""
-sync.py — Sincronización portable entre un remoto de rclone y un dispositivo local.
+"""Sincronización portable entre un remoto de rclone y un dispositivo local.
 
 Todo vive en el dispositivo y no depende de nada instalado en la máquina salvo
-Python 3.11+ (para tomllib). El binario de rclone es portable (carpeta bin/).
+Python 3.11+ (para `tomllib`). El binario de rclone es portable (carpeta
+`bin/`).
 
     common/model.py   el TOML convertido en objetos ya resueltos
     common/bisync.py  lo que replica el comportamiento interno de rclone bisync
-    ui/               la ventana y el menu de consola (los usa runsync.py)
+    ui/               la ventana y el menú de consola (los usa runsync.py)
     sync.py           este fichero: construir el comando, ejecutarlo y contarlo
 
-Estructura esperada en el dispositivo:
+Estructura en el dispositivo:
 
     PEN/
-    ├── rclone-sync/
+    ├── .prdrive/
     │   ├── sync.py            <- este script
     │   ├── common/            <- config, bisync y ficheros de estado
     │   ├── ui/                <- la interfaz (la usa runsync.py)
@@ -27,6 +27,7 @@ Estructura esperada en el dispositivo:
     └── sync-data/             <- aquí viven las carpetas locales que se sincronizan
 
 Uso:
+
     python sync.py                 # ejecuta todas las parejas del config
     python sync.py obsidian fotos  # solo esas parejas
     python sync.py --list          # lista las parejas configuradas
@@ -54,14 +55,20 @@ from common import (bisync, conflicts, fleet, historial, model, moderacion, prog
                     results, revision)
 from common.model import Config, Pair
 
-LOG_TAIL_LINES = 15  # líneas de log que se vuelcan a consola cuando algo falla
-SKIPPED = -1         # código interno: pareja no ejecutada (ni OK ni fallo)
-CONFLICTS_SHOWN = 5  # ficheros en conflicto que se nombran en la salida
-PROGRESS_POLL_S = 0.5  # cada cuánto se mira si rclone ha escrito más en su log
+LOG_TAIL_LINES = 15
+"""Líneas de log que se vuelcan a consola cuando algo falla."""
+SKIPPED = -1
+"""Código interno: pareja no ejecutada (ni OK ni fallo)."""
+CONFLICTS_SHOWN = 5
+"""Ficheros en conflicto que se nombran en la salida."""
+PROGRESS_POLL_S = 0.5
+"""Cada cuántos segundos se mira si rclone ha escrito más en su log."""
 
-# La cabecera con la que se marca, dentro del log, lo que rclone sacó por
-# consola en vez de por --log-file. Ver append_output().
 DIRECT_OUTPUT_HEADER = "--- salida directa de rclone (no pasó por --log-file) ---"
+"""Cabecera que marca, en el log, lo que rclone sacó por consola.
+
+Es lo que no llegó a `--log-file` (ver `append_output()`).
+"""
 
 KNOWN_ERRORS = [
     (bisync.MISSING_LISTINGS,
@@ -74,11 +81,10 @@ KNOWN_ERRORS = [
      "Primer uso de este fichero de filtros. Solución: --resync."),
     ("must run --resync",
      "bisync ha invalidado el baseline y exige rehacerlo. Solución: --resync."),
-    # bisync no dice "--max-delete": excessDeletes() (cmd/bisync/deltas.go)
-    # aborta con "too many deletes (>N%, X of Y)", porque ahí el freno es un
-    # PORCENTAJE del listado anterior, no una cuenta de ficheros (ver el
-    # comentario de MODES["bisync"] en common/model.py). Esta entrada va antes
-    # que la de más abajo para que una pareja bisync lea el aviso correcto.
+    # bisync no dice «--max-delete»: `excessDeletes()` (cmd/bisync/deltas.go)
+    # aborta con «too many deletes (>N%, X of Y)», un PORCENTAJE del listado
+    # anterior (ver `MODES["bisync"]` en `common/model.py`). Va antes de la
+    # entrada siguiente para que bisync lea este aviso.
     ("too many deletes",
      "Se ha superado el porcentaje de borrados permitido en esta pasada de "
      "bisync (--max-delete es un % del listado anterior, no una cuenta de "
@@ -90,10 +96,9 @@ KNOWN_ERRORS = [
      "antes de forzar nada."),
     ("Access is denied",
      "Fichero bloqueado por otro proceso (Obsidian, KeePass, antivirus)."),
-    # Lo que dice bisync al encontrar el lock de otra (cmd/bisync/lockfile.go,
-    # setLockFile). "lock file" a secas no vale: con --max-lock, cada pasada que
-    # coge el lock apunta "lock file renewed", y todo fallo de bisync salía
-    # explicado como un lock que no existía.
+    # Lo que dice bisync al encontrar el lock de otra pasada
+    # (cmd/bisync/lockfile.go, `setLockFile`). «lock file» a secas casaría
+    # también con el «lock file renewed» de `--max-lock`.
     ("prior lock file found",
      "Hay un lock de otra ejecución. Si no hay ninguna corriendo, borra el .lck "
      "del workdir de la pareja."),
@@ -101,23 +106,18 @@ KNOWN_ERRORS = [
      "rclone no encuentra el fichero de known_hosts indicado en rclone.conf. "
      "Las rutas relativas de rclone.conf se resuelven contra rclone-sync/; "
      "comprueba que keys/known_hosts existe ahí."),
-    # Sin conexión: el DNS que no resuelve, el servidor que no contesta. Es una
-    # categoría y no una aguja —una función que mira varias, sin distinguir
-    # mayúsculas— porque el agente residente la usa para dejar de lanzar pareja
-    # tras pareja contra un remoto caído, y no lleva este fichero: la lista
-    # vive en `common/moderacion.py`. Va antes de la de abajo, que casi siempre
-    # la acompaña («Failed to create file system … no such host») y explica
-    # menos.
+    # Sin conexión. Es una función y no una aguja porque el agente residente la
+    # comparte y no lleva este fichero: la lista vive en
+    # `common/moderacion.py`. Va antes de la siguiente, que suele acompañarla y
+    # explica menos.
     (moderacion.es_de_red, moderacion.EXPLICACION_RED),
     ("Failed to create file system",
      "rclone no ha podido montar uno de los dos extremos. Suele ser una ruta o "
      "credencial mal resuelta en rclone.conf (revisa key_file y "
      "known_hosts_file), o el remoto inalcanzable."),
-    # Los dos últimos son errores de ARRANQUE: rclone rechaza la orden antes de
-    # instalar el --log-file, así que solo se ven desde que execute() captura su
-    # consola. Van al final a propósito: si un log trae además uno de los de
-    # arriba, ese es el que hay que explicar, porque el de arriba es el que
-    # ocurrió de verdad durante la sincronización.
+    # Errores de ARRANQUE: rclone rechaza la orden antes de instalar
+    # `--log-file`. Van al final para que gane cualquier error ocurrido durante
+    # la sincronización.
     ("unknown flag",
      "rclone no conoce uno de los flags. Está escrito en sync_config.toml (o en "
      "el editor de flags de la ventana de parejas): rclone lo rechaza antes de "
@@ -127,40 +127,41 @@ KNOWN_ERRORS = [
      "conflict-resolve = \"new\" cuando lo válido es \"newer\"). El mensaje de "
      "arriba enumera los buenos. Se corrige en sync_config.toml."),
 ]
+"""Agujas de lo que dice rclone al fallar y su explicación; gana la primera que casa.
 
+Una aguja es un texto o una función del log. Los casos nuevos se añaden aquí,
+nunca en quien llama. Las dos entradas de flags (`--max-delete` y las de
+arranque) van al final: un volcado de ayuda con esos nombres no puede explicar
+un fallo ajeno.
+"""
 
-# ---------------------------------------------------------------------------
-# Logs
-# ---------------------------------------------------------------------------
 
 def temp_log(name: str) -> Path:
-    """rclone escribe siempre a un log, pero en un temporal del sistema.
+    """Devuelve un log temporal del sistema donde escribe rclone.
 
-    Solo se conserva (moviéndolo a logs/) si la ejecución ha fallado. Si todo va
-    bien no queda rastro y no se escribe en el dispositivo: menos ciclos de escritura y
-    una carpeta logs/ que solo contiene lo que hay que mirar."""
+    Solo se conserva (en `logs/`) si la ejecución falla: así una pasada buena
+    no escribe en el dispositivo (menos ciclos de escritura) y `logs/` solo
+    contiene lo que hay que mirar.
+    """
     fd, path = tempfile.mkstemp(prefix=f"rclone-sync-{name}-", suffix=".log")
     os.close(fd)
     return Path(path)
 
 
 def keep_log(name: str, tmp: Path) -> Path:
-    """Mueve un log temporal a logs/ y devuelve dónde ha quedado.
+    """Mueve un log temporal a `logs/` y devuelve dónde ha quedado.
 
-    Normalmente en logs/, pero esto va justo detrás de un fallo, y el fallo
-    puede ser que el dispositivo haya desaparecido a mitad de pasada (#36): ni
-    logs/ se deja crear ni el log mover, y el traceback que salía tapaba en la
-    ventana la cola del log y su explicación, que es lo que hay que leer en ese
-    momento. Ahora se dice en una línea y el log se queda en el temporal del
-    sistema, que está en el equipo: esa es la ruta que se devuelve, y de ahí
-    leen `print_log_tail` y `explain_failure`.
+    Va justo detrás de un fallo, que puede ser el dispositivo desaparecido a
+    mitad de pasada (#36): si `logs/` no se deja crear o el log mover, se avisa
+    en una línea y el log se queda en el temporal del sistema, que es la ruta
+    devuelta (de ahí leen `print_log_tail` y `explain_failure`).
 
-    `OSError` y no `PermissionError`, que es como llega en Windows
-    ([WinError 21]): en otro sistema, o con el dispositivo lleno o de solo
-    lectura, llega otro. Y el movimiento dentro: entre dos unidades
-    `shutil.move` copia y borra el origen al final, así que puede fallar con la
-    copia a medias y el temporal entero. Esa copia se quita, para que en logs/
-    no quede un log cortado con nombre de completo."""
+    Se captura `OSError` y no `PermissionError` (Windows: `[WinError 21]`): en
+    otro sistema, o con el dispositivo lleno o de solo lectura, llega otro. El
+    movimiento va dentro del `try` porque entre dos unidades `shutil.move`
+    copia y borra al final: puede fallar con la copia a medias, y esa copia se
+    quita.
+    """
     destino = None
     try:
         model.LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -189,18 +190,14 @@ def keep_log(name: str, tmp: Path) -> Path:
 def strip_usage(text: str) -> str:
     """Quita el volcado de ayuda con el que rclone acompaña un error de flags.
 
-    Ante un flag malo, rclone escribe el error y detrás la ayuda entera del
-    subcomando: 12 KB documentando todos los flags que existen. Meter eso en el
-    log tiene dos efectos y los dos son malos. El primero es que las 15 líneas de
-    `print_log_tail` se van en documentación y el mensaje queda enterrado. El
-    segundo es peor: `explain_failure` busca agujas de `KNOWN_ERRORS` dentro del
-    texto, y esa ayuda menciona `--max-delete`, `lock file` y compañía, así que
-    un error de flags salía explicado como «se han superado los borrados
-    permitidos» — un diagnóstico falso, que es peor que ninguno.
+    Ante un flag malo rclone escribe el error y la ayuda entera del subcomando
+    (12 KB). Enterraría el mensaje en `print_log_tail` y, peor,
+    `explain_failure` casaría agujas de `KNOWN_ERRORS` (`--max-delete`, `lock
+    file`) dentro de la documentación: un diagnóstico falso, peor que ninguno.
 
-    El bloque va desde la línea `Usage:` hasta la última que empieza por
-    `Use "rclone`, que es como lo cierra siempre. Lo de fuera —el `Error:` de
-    arriba y el `Fatal error:` de abajo— es justo lo que hay que leer."""
+    El bloque va de la línea `Usage:` a la última que empieza por `Use
+    "rclone`; lo de fuera (`Error:` y `Fatal error:`) es lo que hay que leer.
+    """
     lineas = text.splitlines()
     inicio = next((i for i, l in enumerate(lineas) if l.strip() == "Usage:"), None)
     if inicio is None:
@@ -214,15 +211,12 @@ def strip_usage(text: str) -> str:
 def append_output(logfile: Path, text: str) -> None:
     """Añade al log lo que rclone haya escrito por consola.
 
-    Con `--log-file`, rclone manda al fichero todo lo que registra... pero solo
-    desde que lo instala. Lo que falla ANTES —un flag que no existe, o un valor
-    que no admite, como `--conflict-resolve new` cuando lo válido es `newer`—
-    sale por stderr y no llega nunca al fichero: el log quedaba de 0 bytes,
-    `print_log_tail` no tenía nada que enseñar y `explain_failure` nada que
-    reconocer, justo en el caso en el que ese es el único mensaje que hay.
-
-    Va marcado y no mezclado a secas porque no son líneas de log de rclone: no
-    llevan su fecha ni su nivel, y sin el aviso no se sabría quién las escribió."""
+    Con `--log-file`, rclone solo registra desde que lo instala: lo que falla
+    ANTES (un flag que no existe, un valor que no admite) sale por stderr y
+    dejaba el log vacío, sin nada que enseñar ni reconocer. Va marcado con
+    `DIRECT_OUTPUT_HEADER` porque no son líneas de log de rclone (sin fecha ni
+    nivel).
+    """
     limpio = strip_usage(text)
     if not limpio.strip():
         return
@@ -235,7 +229,7 @@ def append_output(logfile: Path, text: str) -> None:
 
 
 def dispose_log(name: str, tmp: Path, rc: int, keep_always: bool) -> Path | None:
-    """Descarta el log si la ejecución fue bien; si no, lo guarda en logs/."""
+    """Descarta el log si la ejecución fue bien; si no, lo guarda en `logs/`."""
     if rc == 0 and not keep_always:
         tmp.unlink(missing_ok=True)
         return None
@@ -243,6 +237,7 @@ def dispose_log(name: str, tmp: Path, rc: int, keep_always: bool) -> Path | None
 
 
 def print_log_tail(lpath: Path | None, lines: int = LOG_TAIL_LINES) -> None:
+    """Imprime las últimas líneas del log, sin las estadísticas de progreso."""
     if lpath is None:
         return
     try:
@@ -250,14 +245,13 @@ def print_log_tail(lpath: Path | None, lines: int = LOG_TAIL_LINES) -> None:
             return
         todas = lpath.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError as e:
-        # Guardado en el dispositivo, que se ha ido justo después (#36): un
-        # volumen de VeraCrypt desenchufado sin expulsar sigue aceptando
-        # escrituras en caché y luego no deja leer. Una línea, no un traceback.
+        # Dispositivo ido justo después de guardar el log (#36): un VeraCrypt
+        # desenchufado sin expulsar acepta escrituras en caché y luego no deja
+        # leer. Una línea, no un traceback.
         print(f"  (no he podido leer {lpath}: {e.strerror or e})")
         return
-    # Sin las estadísticas. Con una cada pocos segundos, una pasada que se queda
-    # pensando antes de fallar llenaba estas líneas de números y el error se
-    # quedaba fuera; lo que llegó a transferir ya lo ha contado el progreso.
+    # Sin las estadísticas: llenarían las líneas de números y dejarían el error
+    # fuera.
     tail = [linea for linea in todas if progress.leer(linea) is None][-lines:]
     print(f"--- últimas {len(tail)} líneas de {lpath.name} ---")
     for line in tail:
@@ -266,8 +260,10 @@ def print_log_tail(lpath: Path | None, lines: int = LOG_TAIL_LINES) -> None:
 
 
 def explain_failure(lpath: Path | None) -> None:
-    """Traduce el error de rclone a algo accionable. Los casos nuevos se añaden a
-    KNOWN_ERRORS, nunca en quien llama."""
+    """Traduce el error de rclone a algo accionable.
+
+    Los casos nuevos se añaden a `KNOWN_ERRORS`, nunca en quien llama.
+    """
     if lpath is None:
         return
     try:
@@ -283,7 +279,10 @@ def explain_failure(lpath: Path | None) -> None:
 
 
 def ask_yes_no(question: str, default: bool = False) -> bool:
-    """Sí/no por consola. Sin terminal interactiva no bloquea: devuelve 'default'."""
+    """Pregunta sí o no por consola.
+
+    Sin terminal interactiva no bloquea: devuelve `default`.
+    """
     if not sys.stdin or not sys.stdin.isatty():
         return default
     suffix = " [S/n] " if default else " [s/N] "
@@ -297,13 +296,13 @@ def ask_yes_no(question: str, default: bool = False) -> bool:
     return answer in {"s", "si", "sí", "y", "yes"}
 
 
-# ---------------------------------------------------------------------------
-# Construcción del comando
-# ---------------------------------------------------------------------------
-
 def filter_args(pair: Pair, ffile: Path | None) -> list[str]:
-    """Con fichero de filtros no se emiten --include/--exclude: se duplicarían
-    las reglas y bisync dejaría de poder detectar cambios de filtrado."""
+    """Devuelve los argumentos de filtrado de la pareja.
+
+    Con fichero de filtros no se emiten `--include` ni `--exclude`: se
+    duplicarían las reglas y bisync dejaría de poder detectar cambios de
+    filtrado.
+    """
     if ffile is not None:
         return ["--filters-file", str(ffile)]
     args: list[str] = []
@@ -316,29 +315,45 @@ def filter_args(pair: Pair, ffile: Path | None) -> list[str]:
 
 @dataclass(frozen=True)
 class RunContext:
-    """Lo que no cambia de una pareja a otra dentro de una misma ejecución."""
+    """Lo que no cambia de una pareja a otra dentro de una misma ejecución.
+
+    Args:
+        binary: El rclone.
+        env: Las variables de entorno que se le añaden (el remote `combine` del
+            dispositivo).
+        dry_run: Si es un simulacro.
+        force_resync: Si se pidió `--resync`.
+        resync_approved: Si se aprueban los `--resync` que hagan falta.
+        keep_logs: Si se guarda también el log de las pasadas buenas.
+        sello: El sufijo de las versiones guardadas (`--suffix`), en hora local
+            como el resto de fechas que ve la persona. Se calcula UNA vez por
+            invocación y no por pareja: así todo lo que aparta una misma pasada
+            comparte marca, que es lo que luego permite leer «esto se perdió
+            junto».
+    """
     binary: str
     env: Mapping[str, str]
     dry_run: bool = False
     force_resync: bool = False
     resync_approved: bool = False
     keep_logs: bool = False
-    # El sufijo que llevan las versiones guardadas (`--suffix`), en hora local
-    # como el resto de fechas que ve el usuario. Se calcula UNA vez por
-    # invocación y no por pareja: así todo lo que aparta una misma pasada
-    # comparte marca, que es lo que luego permite leer «esto se perdió junto».
     sello: str = ""
 
     @property
     def tag(self) -> str:
+        """Devuelve ` [DRY-RUN]` si es un simulacro, y nada si no."""
         return " [DRY-RUN]" if self.dry_run else ""
 
 
 def build_command(ctx: RunContext, pair: Pair, ffile: Path | None,
                   need_resync: bool) -> tuple[list[str], Path]:
-    """Los flags de la pareja llegan ya fusionados desde model.Pair; aquí solo se
-    añaden los que dependen de ESTA ejecución y por eso no se configuran en el
-    TOML. Para añadir un flag nuevo no se toca esta función: se escribe en el TOML."""
+    """Devuelve la orden de rclone de la pareja y su log temporal.
+
+    Los flags de la pareja llegan ya fusionados desde `model.Pair`; aquí solo
+    se añaden los que dependen de ESTA ejecución y por eso no se configuran en
+    el TOML. Para añadir un flag nuevo no se toca esta función: se escribe en
+    el TOML.
+    """
     logfile = temp_log(pair.name)
 
     flags = dict(pair.flags)
@@ -353,15 +368,15 @@ def build_command(ctx: RunContext, pair: Pair, ffile: Path | None,
 
     if pair.versions:
         # El parseo ya garantiza que es bisync. El sello depende de la pasada,
-        # que es justo por lo que esto no se puede escribir en el TOML.
+        # por eso no va en el TOML.
         flags["backup-dir1"] = pair.versions_path1
         flags["backup-dir2"] = pair.versions_path2
         flags["suffix"] = ctx.sello
         flags["suffix-keep-extension"] = True
-        # Con `delete`, el perdedor de un conflicto no se borra: sale por el
-        # backup-dir y acaba en `.prversions/` con su marca de tiempo, en vez de
-        # quedarse dentro del pair como `<nombre>.conflicto-remoto1` y viajar al
-        # otro lado. Va con setdefault para que un `[pair.flags]` siga mandando.
+        # Con `delete`, el perdedor de un conflicto sale por el backup-dir
+        # (`.prversions/`) en vez de quedarse como `<nombre>.conflicto-remoto1`
+        # y viajar al otro lado. `setdefault`: un `[pair.flags]` sigue
+        # mandando.
         flags.setdefault("conflict-loser", "delete")
 
     cmd = [ctx.binary, pair.mode.verb, pair.source, pair.dest]
@@ -372,9 +387,11 @@ def build_command(ctx: RunContext, pair: Pair, ffile: Path | None,
 
 
 def _seguir(logfile: Path, parar: threading.Event) -> None:
-    """El hilo de `seguir_progreso`: lee lo nuevo del log hasta que le avisan,
-    y una vez más después, que es cuando rclone ya ha escrito su última
-    estadística."""
+    """Lee lo nuevo del log hasta que le avisan, y una vez más después.
+
+    Es el hilo de `seguir_progreso`. La última vez es cuando rclone ya ha
+    escrito su última estadística.
+    """
     try:
         seguidor = progress.Seguidor()
         with logfile.open("rb") as f:
@@ -386,20 +403,20 @@ def _seguir(logfile: Path, parar: threading.Event) -> None:
                 if acabado:
                     return
     except Exception:                                    # noqa: BLE001
-        # Cualquier fallo aquí es del progreso, no de la pasada: un log que no
-        # se deja abrir o un error del lector no pueden cortar la sincronización
-        # ni llenar la ventana con un traceback. Sin progreso, y ya está.
+        # Un fallo aquí es del progreso, no de la pasada: sin progreso, y ya
+        # está.
         return
 
 
 @contextmanager
 def seguir_progreso(logfile: Path | None):
-    """Mientras dura el bloque, cuenta por la salida cómo va rclone.
+    """Cuenta por la salida cómo va rclone mientras dura el bloque.
 
     Lee el log temporal de la pareja desde otro hilo, porque quien lanza rclone
     se queda esperando a que termine. El fichero se cierra antes de salir del
     bloque: en Windows no se puede borrar ni mover un fichero abierto, y justo
-    después `dispose_log` hace una de las dos cosas."""
+    después `dispose_log` hace una de las dos cosas.
+    """
     if logfile is None:
         yield
         return
@@ -414,27 +431,22 @@ def seguir_progreso(logfile: Path | None):
 
 
 def execute(ctx: RunContext, cmd: list[str], logfile: Path | None = None) -> int:
+    """Ejecuta rclone y devuelve su código de salida."""
     print(f"  ejecutando{ctx.tag}: " + " ".join(cmd))
-    # cwd FIJO en rclone-sync/: rclone.conf usa rutas relativas (key_file,
-    # known_hosts_file) para que el dispositivo siga siendo portable, y esas rutas se
-    # resuelven contra el directorio de trabajo. No se puede depender de quién
-    # nos haya lanzado ni desde dónde.
+    # cwd fijo: `rclone.conf` usa rutas relativas (`key_file`,
+    # `known_hosts_file`) que se resuelven contra él.
     kwargs: dict = {"cwd": str(model.APP_DIR)}
     if os.name == "nt":
-        # Sin esto, cada invocación abre una ventana de consola cuando quien
-        # llama no tiene una (pythonw, el servicio).
+        # Sin consola propia (`pythonw`, el servicio), evita una ventana por
+        # invocación.
         kwargs["creationflags"] = model.CREATE_NO_WINDOW
-    # La consola de rclone se CAPTURA, no se hereda. Con --log-file puesto, por
-    # aquí solo sale lo que rclone no ha llegado a registrar —lo que falla antes
-    # de instalar el log—, y heredarlo significaba perderlo: sin consola detrás
-    # (pythonw, el servicio) no va a ninguna parte, y aun con ella se quedaba
-    # fuera del fichero que luego se guarda, se enseña y se explica. Es poco
-    # texto por definición: todo lo demás está en el log. Y el log se lee
-    # mientras tanto: de ahí sale el progreso (common/progress.py).
+    # Consola capturada, no heredada: con `--log-file` solo sale lo que falla
+    # antes de instalarlo, y heredado se perdería (sin consola) o quedaría
+    # fuera del log que se guarda. El log se lee mientras tanto: de ahí sale el
+    # progreso (`common/progress.py`).
     with seguir_progreso(logfile):
-        # encoding explícito: rclone escribe UTF-8 en todas las plataformas, y
-        # sin decirlo Python decodifica con la del sistema (cp1252 en Windows).
-        # Un nombre de fichero con tilde llegaba roto al log que luego se guarda.
+        # `encoding` explícito: rclone escribe UTF-8 y el del sistema (cp1252
+        # en Windows) rompería las tildes del log.
         proc = subprocess.run(cmd, env={**os.environ, **ctx.env},
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                               text=True, encoding="utf-8", errors="replace",
@@ -444,15 +456,13 @@ def execute(ctx: RunContext, cmd: list[str], logfile: Path | None = None) -> int
     return proc.returncode
 
 
-# ---------------------------------------------------------------------------
-# Ejecución de una pareja
-# ---------------------------------------------------------------------------
-
 def _bisync_preflight(ctx: RunContext, pair: Pair) -> tuple[bool, int | None]:
-    """Comprobaciones previas de una pareja bisync.
+    """Hace las comprobaciones previas de una pareja bisync.
 
-    Devuelve (hace_falta_resync, código_con_el_que_abortar). Con código None se
-    puede seguir adelante."""
+    Returns:
+        `(hace_falta_resync, código_con_el_que_abortar)`. Con código `None` se
+        puede seguir adelante.
+    """
     bisync.migrate_legacy_state(pair)
 
     state = bisync.pair_state(pair)
@@ -466,8 +476,8 @@ def _bisync_preflight(ctx: RunContext, pair: Pair) -> tuple[bool, int | None]:
         print(f"[{pair.name}] Saltada: requiere --resync y no está aprobado.")
         return need_resync, SKIPPED
 
-    # Si YA había baseline y la carpeta local no está, algo va mal (dispositivo a medio
-    # montar). Crearla vacía haría que bisync viese "han borrado todo".
+    # Con baseline y sin carpeta local (dispositivo a medio montar), crearla
+    # vacía haría que bisync viese «han borrado todo».
     if state.has_baseline and not pair.local_abs.exists():
         print(f"[{pair.name}] ERROR: existe baseline pero la ruta local "
               f"'{pair.local_abs}' no existe. Se aborta (no se crea vacía a propósito).")
@@ -479,20 +489,21 @@ def _bisync_preflight(ctx: RunContext, pair: Pair) -> tuple[bool, int | None]:
 def record_result(ctx: RunContext, pair: Pair, rc: int, log: Path | None,
                   reloj: historial.Reloj | None = None,
                   final: progress.Progreso | None = None) -> None:
-    """Deja apuntado cómo acabó la pareja, para que la ventana y el servicio lo
-    enseñen (ver common/results.py). Un dry-run no apunta nada: no dice cómo
-    está la pareja de verdad, y un simulacro bueno no puede tapar un fallo real.
+    """Apunta cómo acabó la pareja, para que la ventana y el servicio lo enseñen.
 
-    Con el mismo criterio va al diario de pasadas (common/historial.py), que es
-    lo que dice desde cuándo falla: `reloj` sabe cuándo empezó la pareja y
-    `final` es la última estadística de rclone, si la hubo. Sin reloj, la
-    pasada consta igual, con la hora de ahora y sin duración."""
+    Un dry-run no apunta nada: un simulacro bueno no puede tapar un fallo real.
+    Con el mismo criterio va al diario de pasadas (`common/historial.py`), que
+    dice desde cuándo falla. Sin `reloj`, la pasada consta igual, con la hora
+    de ahora y sin duración.
+
+    Args:
+        reloj: Cuándo empezó la pareja.
+        final: Última estadística de rclone, si la hubo.
+    """
     if ctx.dry_run or rc == SKIPPED:
         return
-    # `results` apunta el log por su nombre y lo busca en logs/. Uno que se ha
-    # quedado en el temporal del sistema porque el dispositivo ya no estaba
-    # (`keep_log`, #36) no se encontraría ahí: apuntarlo sería dar un nombre
-    # que no lleva a ninguna parte.
+    # `results` busca el log en `logs/`: uno que se quedó en el temporal
+    # (`keep_log`, #36) no se encontraría.
     if log is not None and log.parent != model.LOG_DIR:
         log = None
     results.apuntar(pair.name, rc, log)
@@ -501,12 +512,13 @@ def record_result(ctx: RunContext, pair: Pair, rc: int, log: Path | None,
 
 
 def report_conflicts(ctx: RunContext, pair: Pair) -> None:
-    """Busca los ficheros en conflicto que haya dejado bisync y los apunta.
+    """Apunta y avisa de los ficheros en conflicto que haya dejado bisync.
 
-    Va después de CADA pasada, buena o mala: rclone renombra al perdedor en
-    cuanto lo detecta, así que un fallo más adelante no quita el conflicto. Si
-    el recorrido falla (el dispositivo ha desaparecido a medias), se calla: es
-    un aviso, no puede tumbar la sincronización."""
+    Va tras CADA pasada, buena o mala: rclone renombra al perdedor al
+    detectarlo y un fallo posterior no quita el conflicto. Si el recorrido
+    falla (dispositivo desaparecido a medias) se calla: es un aviso y no puede
+    tumbar la sincronización.
+    """
     if not pair.is_bisync or ctx.dry_run:
         return
     try:
@@ -524,6 +536,7 @@ def report_conflicts(ctx: RunContext, pair: Pair) -> None:
 
 
 def run_pair(ctx: RunContext, pair: Pair) -> int:
+    """Ejecuta una pareja y devuelve su código de salida."""
     print(f"\n=== {pair.name} ({pair.mode.name}){ctx.tag} ===")
     reloj = historial.Reloj()
 
@@ -541,8 +554,8 @@ def run_pair(ctx: RunContext, pair: Pair) -> int:
     ffile = bisync.filters_file_for(pair)
     cmd, logfile = build_command(ctx, pair, ffile, need_resync)
     rc = execute(ctx, cmd, logfile)
-    # Antes de dispose_log(): si la pasada fue bien, el log se tira ahí, y con
-    # él lo único que dice cuánto movió.
+    # Antes de `dispose_log()`: si la pasada fue bien, el log se tira y con él
+    # lo que dice cuánto movió.
     final = progress.final_del_log(logfile)
 
     saved = dispose_log(pair.name, logfile, rc, ctx.keep_logs)
@@ -558,8 +571,10 @@ def run_pair(ctx: RunContext, pair: Pair) -> int:
 
 
 def resolve_resync_approval(selected: list[Pair], assume_yes: bool) -> bool:
-    """Decide UNA vez si se aprueban los --resync auto-detectados, en lugar de ir
-    preguntando pareja por pareja a mitad de faena."""
+    """Decide UNA vez si se aprueban los `--resync` autodetectados.
+
+    Es en lugar de ir preguntando pareja por pareja a mitad de faena.
+    """
     pending = []
     for pair in selected:
         if not pair.is_bisync:
@@ -587,18 +602,16 @@ def resolve_resync_approval(selected: list[Pair], assume_yes: bool) -> bool:
 
 
 def run_all(ctx: RunContext, selected: list[Pair]) -> int:
+    """Ejecuta las parejas elegidas y devuelve 1 si alguna ha fallado."""
     ok = failures = skipped = 0
     for pair in selected:
         try:
             rc = run_pair(ctx, pair)
         except OSError as e:
-            # Si el dispositivo desaparece a mitad de pasada (#36), la pareja que
-            # estaba en marcha falla con su log y su explicación, pero las de
-            # detrás ni llegan a rclone: crear su carpeta local, escribir sus
-            # filtros o arrancar el rclone, que vive en el dispositivo, fallan
-            # antes. Cada una con su línea y contada como fallo, no con un
-            # traceback que se lleva por delante el resumen y la nota de la flota.
-            # Nada de esto se salta una comprobación: la pareja se corta ahí.
+            # Dispositivo desaparecido a mitad de pasada (#36): las de detrás
+            # fallan antes de llegar a rclone (carpeta local, filtros, el
+            # propio rclone). Cada una con su línea y contada como fallo, sin
+            # traceback que se lleve el resumen y la nota de la flota.
             print(f"[{pair.name}] FALLÓ: {e}")
             rc = 1                  # el «error sin clasificar» de rclone
             record_result(ctx, pair, rc, None)
@@ -618,11 +631,8 @@ def run_all(ctx: RunContext, selected: list[Pair]) -> int:
     return 1 if failures else 0
 
 
-# ---------------------------------------------------------------------------
-# Informes (no tocan nada)
-# ---------------------------------------------------------------------------
-
 def list_pairs(config: Config) -> int:
+    """Imprime las parejas configuradas."""
     print("Parejas configuradas:")
     for pair in config.pairs:
         print(f"  - {pair.name:<15} {pair.mode.name:<12} "
@@ -631,22 +641,18 @@ def list_pairs(config: Config) -> int:
 
 
 def doctor(config: Config) -> int:
-    """El estado del dispositivo, en texto. No toca nada.
+    """Imprime el estado del dispositivo, en texto, sin tocar nada.
 
-    El diagnóstico no está aquí: lo hace `common/revision.py`, que es también de
-    donde saca sus averías la pantalla de «Reparación». Aquí solo se imprime, y
-    por eso esta función es tan corta como debe: dos sitios que decidan qué está
-    roto acaban discrepando, y el que se equivoque será el que no se mire."""
+    El diagnóstico lo hace `common/revision.py`, que también alimenta
+    «Reparación»: dos sitios que decidan qué está roto acaban discrepando.
+    """
     for linea in revision.informe(config):
         print(linea)
     return 0
 
 
-# ---------------------------------------------------------------------------
-# main
-# ---------------------------------------------------------------------------
-
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Devuelve los argumentos de la línea de comandos."""
     parser = argparse.ArgumentParser(
         description="Sincronización portable entre un remoto de rclone y un dispositivo local."
     )
@@ -672,18 +678,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def preparar_salida() -> None:
     """Deja stdout y stderr línea a línea y en UTF-8.
 
-    Línea a línea aunque la salida sea una tubería, que es lo que es cuando
-    lanza sync.py la ventana: Python llena las tuberías por bloques, y lo
-    escrito llegaba todo junto al final, progreso incluido.
-
-    Y en UTF-8, que no se coge solo: hacia una tubería Python codifica con la
-    del sistema, que en Windows es cp1252. Todo lo que escribe este script está
-    en castellano, así que las tildes llegaban descompuestas a la ventana y al
-    diario del servicio, que leen UTF-8. En una consola de verdad ya era UTF-8,
-    así que ahí no cambia nada.
-
-    stderr también: por ahí salen los ConfigError («No existe el fichero de
-    configuración…»), que es justo el texto que lee quien tiene un problema."""
+    Línea a línea aunque sea una tubería (lo es cuando la ventana lanza
+    `sync.py`): por bloques, el progreso llegaba todo junto al final. En UTF-8
+    porque hacia una tubería Python usa la codificación del sistema (cp1252 en
+    Windows) y las tildes llegarían rotas a quien lee UTF-8. stderr también:
+    por ahí salen los `ConfigError`.
+    """
     for flujo in (sys.stdout, sys.stderr):
         reconfigurar = getattr(flujo, "reconfigure", None)
         if reconfigurar is not None:
@@ -691,10 +691,11 @@ def preparar_salida() -> None:
 
 
 def main() -> int:
+    """Hace la ejecución completa y devuelve el código de salida."""
     preparar_salida()
     args = parse_args()
 
-    # logs/ se crea solo cuando hay algo que guardar (ver dispose_log).
+    # `logs/` se crea solo si hay algo que guardar (`dispose_log`).
     for d in (model.STATE_DIR, model.FILTERS_DIR):
         d.mkdir(parents=True, exist_ok=True)
 
@@ -724,10 +725,8 @@ def main() -> int:
     )
     rc = run_all(ctx, selected)
 
-    # Deja constancia en la flota de que este dispositivo se ha usado, y de cómo
-    # le ha ido. Va detrás de la pasada y nunca lanza (ver common/fleet.py): es
-    # una nota para la ventana de parejas, no parte de la sincronización. Un
-    # simulacro no cuenta, por lo mismo que no apunta resultados.
+    # Constancia en la flota de cómo le ha ido; nunca lanza
+    # (`common/fleet.py`). Un simulacro no cuenta, como no apunta resultados.
     if not ctx.dry_run:
         fleet.publicar(config)
     return rc
