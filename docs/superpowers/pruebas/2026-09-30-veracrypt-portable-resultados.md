@@ -10,7 +10,7 @@ V2 y V3 (Windows ARM64) quedan para otro equipo.
 |---|---|
 | V1 | OK |
 | V2, V3 | pendientes (Windows ARM64) |
-| V4 | pendiente |
+| V4 | **no hecha** (pospuesta, sin VeraCrypt instalado) |
 | V5 | OK |
 | V6 | OK |
 | V7 | OK |
@@ -30,6 +30,12 @@ V2 y V3 (Windows ARM64) quedan para otro equipo.
   `veracrypt.sys.borrar`, reinicio.
 - La caché real (`%LOCALAPPDATA%\prdrive-install\veracrypt\1.26.24`) se borró
   antes de V1 para que descargue desde cero.
+- Antes de V1, G: tenía la instalación anterior en claro (`.prdrive/`,
+  `sync-data/`, `README.md`, `runsync.*`). Después de V1 no estaba, y
+  `System Volume Information` tenía fecha de las 13:39, antes del reinicio. El
+  asistente no borra nada de eso (`crypto.restos_en_claro()` solo avisa) y el
+  usuario cree que formateó G: a mano. **No se cuenta como fallo, pero el aviso
+  de restos en claro no se ha visto en esta pasada.**
 
 ## V6 — paquete corrupto y descarga cortada: OK
 
@@ -119,4 +125,29 @@ carpeta era siempre una versión entera o la otra. La ventana entre los dos
 Nota: con un componente pospuesto la salida acaba en «Hecho.» y rc 0; solo el
 `FALLO` da rc 1.
 
-## V4 — pendiente (al final: deja un VeraCrypt instalado)
+## Expulsar con el Portable (de paso): OK, con un hallazgo
+
+01/10: `G:\Expulsar PRDRIVE.bat` con doble clic, sin quitar la unidad. Q: ya
+no está y `PRDRIVE.hc` se abre en exclusiva (libre).
+
+Hallazgo **P-3**: el driver del Portable **sigue cargado** después de expulsar.
+- El servicio `veracrypt` sigue RUNNING, con `Start = 4` y `ImagePath` en la
+  caché (`…\prdrive-install\veracrypt\1.26.24\veracrypt-x64.sys`).
+- Lo cargó el `VeraCrypt-x64.exe` de la caché al montar en el asistente con
+  `/quit`, y ese proceso salió con el volumen montado. El que desmonta (el de
+  `G:\VeraCrypt\`) no lo cargó, así que no lo descarga.
+- Queda cargado hasta reiniciar. Con `Start = 4` no debería volver a cargarse
+  al arrancar; falta comprobar si la clave del servicio sobrevive al reinicio.
+- Consecuencia probable: instalar después un VeraCrypt de otra versión pide
+  reiniciar, y es la misma familia de problemas que P-1.
+
+## V4 — NO HECHA
+
+Pospuesta a petición del usuario (01/10): no se instaló ningún VeraCrypt. El
+plan sigue siendo el de #50:
+1. instalar un VeraCrypt de otra versión (reiniciando si lo pide, por P-3);
+2. `Abrir PRDRIVE.bat` usa el instalado y monta sin `ERR_DRIVER_VERSION`;
+3. el asistente («Reinstalar desde cero» → VeraCrypt) ofrece el instalado y no
+   el Portable.
+
+Va la última porque deja un VeraCrypt instalado en el equipo.
