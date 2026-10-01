@@ -1,26 +1,24 @@
 #!/usr/bin/env python3
-"""
-El vestíbulo: lo que un dispositivo VeraCrypt deja FUERA del contenedor.
+"""El vestíbulo: lo que un dispositivo VeraCrypt deja FUERA del contenedor.
 
-Sin él, abrir el dispositivo en otro equipo era cosa de saber que había que abrir
+Sin él, abrir el dispositivo en otro equipo exigiría saber que hay que abrir
 VeraCrypt, elegir `PRDRIVE.hc`, una letra y la contraseña, y la guía que lo
-explicaba estaba dentro del contenedor. Lo que se comprueba:
-
-  * Los `.bat` hacen lo que el código de VeraCrypt dice que hay que hacer (la
-    orden de montar sin contraseña, el instalado antes que el que viaja,
-    `/dismount` y no `/unmount`, sin `/silent` al cerrar), y siguen las reglas de
-    `runsync.bat`: CRLF, sin bloques entre paréntesis, `chcp 65001` antes de
-    cualquier acento. No se pueden ejecutar aquí: se lee su texto.
-  * Los `.sh` sí se ejecutan (con sh, y con dash y bash si están), contra un
-    `veracrypt`, un `udisksctl` y un `cryptsetup` de mentira que «montan» en un
-    sistema de juguete: el orden de las vías (VeraCrypt > udisks2 con
-    tcrypt.conf > cryptsetup > el mensaje), reconocer lo ya abierto, no
-    confundirse de dispositivo, cerrar con lo mismo que abrió deduciéndolo del
-    estado, y que la contraseña no aparezca nunca en una línea de órdenes. Nada
-    toca una unidad de verdad, ni un sudo de verdad.
-  * La marca une las dos mitades: el mismo id que el fichero de control.
-  * Los nombres nuevos están en `device.RUIDO`, o un dispositivo recién hecho se
-    leería como ajeno la vez siguiente.
+explica estaría dentro del contenedor. Lo que se comprueba:
+- Los `.bat` hacen lo que el código de VeraCrypt dice que hay que hacer (la
+  orden de montar sin contraseña, el instalado antes que el que viaja,
+  `/dismount` y no `/unmount`, sin `/silent` al cerrar), y siguen las reglas de
+  `runsync.bat`: CRLF, sin bloques entre paréntesis, `chcp 65001` antes de
+  cualquier acento. No se pueden ejecutar aquí: se lee su texto.
+- Los `.sh` sí se ejecutan (con sh, y con dash y bash si están), contra un
+  `veracrypt`, un `udisksctl` y un `cryptsetup` de mentira que «montan» en un
+  sistema de juguete: el orden de las vías (VeraCrypt > udisks2 con tcrypt.conf
+  > cryptsetup > el mensaje), reconocer lo ya abierto, no confundirse de
+  dispositivo, cerrar con lo mismo que abrió deduciéndolo del estado, y que la
+  contraseña no aparezca nunca en una línea de órdenes. Nada toca una unidad de
+  verdad, ni un sudo de verdad.
+- La marca une las dos mitades: el mismo id que el fichero de control.
+- Los nombres nuevos están en `device.RUIDO`, o un dispositivo recién hecho se
+  leería como ajeno la vez siguiente.
 """
 
 import os
@@ -39,15 +37,16 @@ c = Checks("vestíbulo: la entrada de un dispositivo VeraCrypt")
 
 ID = "3f9c1a2b4d5e6f708192a3b4c5d6e7f8"
 
-# --- 1. los nombres, una sola vez ----------------------------------------------
+# 1. los nombres, una sola vez
 c("el contenedor de common y el de install son el mismo", v.CONTENEDOR, CONTAINER_NAME)
 c("la marca empieza por punto: oculta en POSIX", v.MARCA.startswith("."), True)
 for nombre in v.TODOS:
     c(f"«{nombre}» no cuenta como contenido ajeno", nombre.lower() in device.RUIDO, True)
 
 
-# --- 2. los .bat ---------------------------------------------------------------
+# 2. los .bat
 def lineas_de_orden(texto):
+    """Devuelve las líneas del `.bat` que son órdenes, sin `rem` ni `echo`."""
     return [ln for ln in texto.splitlines()
             if ln.strip() and not ln.lower().startswith(("rem", "echo"))]
 
@@ -246,6 +245,7 @@ if IS_WIN:
                    encoding="ascii")
 
     def correr():
+        """Ejecuta el `.bat` con `cmd` y devuelve su salida."""
         r = subprocess.run(["cmd", "/c", str(bat)], capture_output=True, text=True)
         return (r.stdout + r.stderr).strip()
 
@@ -268,8 +268,11 @@ if IS_WIN:
     pendiente = prueba / "pendiente.bat"
 
     def pendiente_da(al_empezar=True):
-        """VC_ANTES y el código de `:vc_pendiente`, como «VC_ANTES-código».
-        `al_empezar=False`: sin mirar antes, como si VeraCrypt no estuviera."""
+        """Devuelve `VC_ANTES-código` de la subrutina `:vc_pendiente`.
+
+        Con `al_empezar=False` no se mira antes, como si VeraCrypt no
+        estuviera.
+        """
         # VC_IMAGEN lo fija `_ELEGIR_BAT` según el VeraCrypt que se lanza; aquí,
         # el de una instalación, que es como se llama el ping falso.
         pendiente.write_text("@echo off\r\nset \"VC_IMAGEN=VeraCrypt.exe\"\r\n"
@@ -287,6 +290,7 @@ if IS_WIN:
         return (r.stdout + r.stderr).strip()
 
     def vivos():
+        """Indica si hay un `VeraCrypt.exe` vivo."""
         r = subprocess.run(["tasklist", "/fi", "imagename eq VeraCrypt.exe", "/nh"],
                            capture_output=True, text=True, timeout=30)
         return "veracrypt.exe" in r.stdout.lower()
@@ -313,7 +317,7 @@ if IS_WIN:
             proc.kill()
             proc.wait()
 
-# --- 3. escribirlo -------------------------------------------------------------
+# 3. escribirlo
 fisica = tmpdir("prdrive-fisica-")
 (fisica / CONTAINER_NAME).write_bytes(b"x")
 escritos = vestibulo.escribir(fisica, ID)
@@ -357,7 +361,7 @@ c("sin id no se escribe una entrada que nadie reconocería", fallo, "InstallErro
 estado, _ = device.install_target(fisica)
 c("una raíz con contenedor y vestíbulo no se lee como ajena", estado, device.VACIO)
 
-# --- 4. lo que se dice en la verificación ---------------------------------------
+# 4. lo que se dice en la verificación
 fila = vestibulo.comprobar(fisica, ID)
 c("completo, en verde", [(k.etiqueta, k.ok) for k in fila],
   [("Entrada del dispositivo", True)])
@@ -368,7 +372,7 @@ c.contains("si falta un lanzador, lo nombra", vestibulo.comprobar(fisica, ID)[0]
 c("sin marca, en rojo", vestibulo.comprobar(tmpdir(), ID)[0].ok, False)
 vestibulo.escribir(fisica, ID)
 
-# --- 5. dónde va: solo con el dispositivo dentro de un contenedor ---------------
+# 5. dónde va: solo con el dispositivo dentro de un contenedor
 montado = tmpdir("prdrive-montado-")
 estado = SimpleNamespace(device=fisica, device_root=montado)
 c("con contenedor y montado en otro sitio, en la raíz física",
@@ -380,19 +384,19 @@ c("sin .hc al lado, tampoco",
 c("sin destino todavía, tampoco",
   vestibulo.destino(SimpleNamespace(device=fisica, device_root=None)), None)
 
-# --- 6. los .sh, ejecutados ------------------------------------------------------
+# 6. los .sh, ejecutados
 #
-# Contra un equipo de mentira: `veracrypt`, `udisksctl`, `cryptsetup`, `losetup`,
-# `mount`, `umount`, `sudo` y `pkexec` falsos que apuntan con qué se les llama y
-# cambian un /sys, un /proc/mounts y un /run/media de juguete bajo
-# PRDRIVE_SISTEMA, como cambiaría el de verdad. El PATH lleva solo esos falsos y
-# unas pocas herramientas de verdad, para que nada del equipo real se cuele (ni un
-# sudo ni un cryptsetup de verdad). La raíz del sistema lleva un espacio: el
-# montaje de udisks2 también, y /proc/mounts lo escapa como \040.
+# Contra un equipo de mentira: `veracrypt`, `udisksctl`, `cryptsetup`,
+# `losetup`, `mount`, `umount`, `sudo` y `pkexec` falsos que apuntan con qué se
+# les llama y cambian un /sys, un /proc/mounts y un /run/media de juguete bajo
+# PRDRIVE_SISTEMA, como cambiaría el de verdad. El PATH lleva solo esos falsos
+# y unas pocas herramientas de verdad, para que nada del equipo real se cuele
+# (ni un sudo ni un cryptsetup de verdad). La raíz del sistema lleva un
+# espacio: el montaje de udisks2 también, y /proc/mounts lo escapa como \040.
 #
 # «La contraseña» es una línea que se escribe en la terminal (un pty) antes de
-# lanzar el script: los falsos la leen de ahí, como udisksctl y cryptsetup, y el
-# test comprueba que no aparece en ningún argumento de ninguna orden.
+# lanzar el script: los falsos la leen de ahí, como udisksctl y cryptsetup, y
+# el test comprueba que no aparece en ningún argumento de ninguna orden.
 sh = shutil.which("sh")
 if IS_WIN or not sh:
     print("  (saltado) sin sh: los .sh solo se leen")
@@ -490,6 +494,7 @@ quitar_loop() { rm -rf "$S/sys/block/$1" "$S/estado/loop"; }
 ''', encoding="utf-8")
 
     def falso(nombre, cuerpo, carpeta=None):
+        """Crea una herramienta falsa con ese cuerpo y devuelve su ruta."""
         d = falsos / (carpeta or nombre)
         d.mkdir(exist_ok=True)
         f = d / nombre
@@ -579,7 +584,7 @@ desmontar "$1" >/dev/null
         registro.unlink(missing_ok=True)
 
     def estado():
-        """(loop, montajes) del equipo de mentira."""
+        """Devuelve `(loop, montajes)` del equipo de mentira."""
         loop = sistema / "estado" / "loop"
         return (loop.read_text(encoding="utf-8").strip() if loop.exists() else None,
                 (sistema / "proc" / "mounts").read_text(encoding="utf-8").splitlines())
@@ -587,6 +592,7 @@ desmontar "$1" >/dev/null
     todo: list[str] = []            # todo lo que se ha llamado, para la contraseña
 
     def leer():
+        """Devuelve las órdenes llamadas desde la última lectura y las apunta todas."""
         texto = registro.read_text(encoding="utf-8") if registro.exists() else ""
         registro.unlink(missing_ok=True)
         todo.extend(texto.splitlines())
@@ -594,6 +600,18 @@ desmontar "$1" >/dev/null
 
     def lanzar(script, con=("veracrypt",), terminal=True, display=True,
                falso_id=ID, clave=CLAVE, concha=(sh,), **extra):
+        """Lanza un script del vestíbulo en el equipo de mentira.
+
+        Args:
+            script: El script, relativo a la raíz física.
+            con: Las herramientas falsas que hay en el PATH.
+            terminal: Si hay una terminal (un pty) con la contraseña ya
+                escrita.
+            display: Si hay sesión gráfica.
+            falso_id: El id con el que «montan» los falsos.
+            clave: La contraseña que se escribe en la terminal.
+            concha: La concha con la que se ejecuta.
+        """
         entorno = {"PATH": ":".join([*(str(falsos / n) for n in con),
                                      str(falsos / "comunes"), str(herramientas)]),
                    "HOME": str(trabajo), "USER": "prueba", "REGISTRO": str(registro),
@@ -620,9 +638,11 @@ desmontar "$1" >/dev/null
 
     for concha, orden in conchas:
         def correr(script, **kw):
+            """Lanza el script con la concha de esta vuelta."""
             return lanzar(script, concha=orden, **kw)
 
         def caso(titulo):
+            """Devuelve el título del caso, con la concha delante."""
             return f"[{concha}] {titulo}"
 
         # -- VeraCrypt instalado: como hasta ahora ------------------------------

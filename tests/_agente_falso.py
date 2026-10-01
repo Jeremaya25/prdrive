@@ -127,8 +127,11 @@ def stop(raiz: Path) -> Path:
 
 
 def ventana_abierta(raiz: Path) -> None:
-    """Lo que escribe runsync al abrir su ventana: un pid vivo de este equipo
-    que no es el del agente (el del proceso padre de los tests)."""
+    """Escribe lo que escribe runsync al abrir su ventana.
+
+    Es un pid vivo de este equipo que no es el del agente (el del proceso padre
+    de los tests).
+    """
     store.write_json(raiz / penwatch.UI_LOCK_REL,
                      {"pid": os.getppid(), "host": penwatch.HOST, "started": "x"})
 

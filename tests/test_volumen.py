@@ -1,25 +1,22 @@
 #!/usr/bin/env python3
-"""
-El nombre y el icono de la unidad: `common/autorun.py`, `ui/volumen.py` y su
-ventana.
+"""El nombre y el icono de la unidad: `common/autorun.py`, `ui/volumen.py` y su ventana.
 
 Lo que se comprueba:
-
-  * El `autorun.inf` se EDITA, no se reescribe: cambiar `label` e `icon` deja
-    intactas las órdenes del traveler de VeraCrypt, otras secciones y
-    comentarios. Y se escribe como el de VeraCrypt: UTF-16 y CRLF.
-  * Qué icono hay puesto se lee del propio `icon=`, sin estado aparte, y uno que
-    no puso prdrive no se pierde por cambiar solo el nombre.
-  * El icono va dentro de `.prdrive/` en una unidad sin cifrar o con BitLocker,
-    y junto al autorun.inf, oculto, en la raíz física de un contenedor de
-    VeraCrypt, que no tiene `.prdrive/`. Guardar deja un solo icono de prdrive:
-    el que se usa, y se lleva también los que quedaron en la raíz. Y el nombre
-    del fichero cambia con el dibujo, que es lo que evita la caché del
-    Explorador.
-  * El traveler, al volver a llevar VeraCrypt, respeta lo elegido.
-  * Los iconos no cuentan como contenido ajeno para el asistente.
-  * La ventana llama a `volumen.guardar()` con lo que dice el formulario, y
-    «Ajustes» la ofrece.
+- El `autorun.inf` se EDITA, no se reescribe: cambiar `label` e `icon` deja
+  intactas las órdenes del traveler de VeraCrypt, otras secciones y
+  comentarios. Y se escribe como el de VeraCrypt: UTF-16 y CRLF.
+- Qué icono hay puesto se lee del propio `icon=`, sin estado aparte, y uno que
+  no puso prdrive no se pierde por cambiar solo el nombre.
+- El icono va dentro de `.prdrive/` en una unidad sin cifrar o con BitLocker, y
+  junto al `autorun.inf`, oculto, en la raíz física de un contenedor de
+  VeraCrypt, que no tiene `.prdrive/`. Guardar deja un solo icono de prdrive:
+  el que se usa, y se lleva también los que quedaron en la raíz. Y el nombre
+  del fichero cambia con el dibujo, que es lo que evita la caché del
+  Explorador.
+- El traveler, al volver a llevar VeraCrypt, respeta lo elegido.
+- Los iconos no cuentan como contenido ajeno para el asistente.
+- La ventana llama a `volumen.guardar()` con lo que dice el formulario, y
+  «Ajustes» la ofrece.
 
 Ningún test toca una unidad de verdad: todo va sobre directorios temporales.
 """
@@ -42,6 +39,7 @@ pintados: list[str] = []
 
 
 def ico_rapido(tamanos=icons.ICO_TAMANOS, campo=icons.CAMPO):
+    """Pinta el icono en un solo tamaño y apunta el color."""
     pintados.append(campo)
     return ICO_DE_VERDAD((16,), campo)
 
@@ -50,6 +48,7 @@ icons.ico = ico_rapido
 
 
 def utf16(ruta: Path) -> str:
+    """Devuelve el texto de un fichero escrito en UTF-16."""
     return ruta.read_bytes().decode("utf-16")
 
 
@@ -72,7 +71,7 @@ HIDE_DE_VERDAD = store.hide
 ocultados: list[str] = []
 
 
-# --- 1. el fichero: se edita, no se reescribe ---------------------------------
+# 1. el fichero: se edita, no se reescribe
 
 # El que dejaban las versiones anteriores del traveler, con sus órdenes: es lo
 # que hay en las unidades de antes, y editarlo no puede llevárselas por delante
@@ -133,7 +132,7 @@ autorun.escribir(mayus, "[autorun]\nlabel=B\n")
 c("y se reescribe ESE, no uno al lado con otro nombre",
   sorted(p.name for p in mayus.iterdir()), ["AUTORUN.INF"])
 
-# --- 2. qué icono es cada `icon=` ------------------------------------------------
+# 2. qué icono es cada `icon=`
 
 for icono, clave in (("", volumen.NINGUNO),
                      ("VeraCrypt\\VeraCrypt.exe", volumen.VERACRYPT),
@@ -157,7 +156,7 @@ for icono, clave in (("", volumen.NINGUNO),
                      ("%SystemRoot%\\system32\\shell32.dll,8", volumen.OTRO)):
     c(f"«{icono}» es {clave}", volumen.clave_de(icono), clave)
 
-# --- 3. el nombre y el .ico propio ---------------------------------------------------
+# 3. el nombre y el .ico propio
 
 c("el nombre se guarda sin espacios alrededor",
   volumen.revisar_nombre("  Pendrive de Pere  "), "Pendrive de Pere")
@@ -165,6 +164,7 @@ c("vacío vale: es quitarlo", volumen.revisar_nombre("   "), "")
 
 
 def rechaza(funcion, *args) -> str:
+    """Devuelve el mensaje del `VolumenError` que lanza `funcion`."""
     try:
         funcion(*args)
     except volumen.VolumenError as e:
@@ -194,7 +194,7 @@ volumen.MAX_ICO = 10
 c("ni uno que ocupa como una foto", bool(rechaza(volumen.leer_ico, bueno)), True)
 volumen.MAX_ICO = maximo
 
-# --- 4. guardar ----------------------------------------------------------------------
+# 4. guardar
 
 store.hide = lambda ruta: ocultados.append(Path(ruta).name)
 
@@ -298,6 +298,7 @@ with sandbox() as dispositivo:
     escribir = autorun.escribir
 
     def falla(raiz, texto):
+        """Hace que escribir falle: acceso denegado."""
         raise PermissionError("acceso denegado")
 
     autorun.escribir = falla
@@ -312,7 +313,7 @@ with sandbox() as dispositivo:
     c("sin nombre y sin icono no queda autorun.inf", autorun.buscar(dispositivo), None)
     c("y en .prdrive/ solo lo que era suyo", iconos(programa), ["runsync.ico"])
 
-# --- 5. con VeraCrypt: la raíz física, y el traveler ---------------------------------
+# 5. con VeraCrypt: la raíz física, y el traveler
 
 with sandbox() as dentro:
     fisica = tmpdir("prdrive-fisica-")
@@ -390,7 +391,7 @@ c("un traveler sin autorun.inf previo pone el nombre y el icono de VeraCrypt",
   ("PRDRIVE", "VeraCrypt\\VeraCrypt-x64.exe"))
 c("y ninguna orden", "shell" in autorun.leer(nuevo).texto, False)
 
-# --- 6. el asistente no los toma por contenido de otro ---------------------------------
+# 6. el asistente no los toma por contenido de otro
 
 for nombre in (".prdrive-icono-verde.ico", ".prdrive-icono-propio-0123abcd.ico",
                "autorun.inf", "AUTORUN.INF"):
@@ -402,7 +403,7 @@ limpio = tmpdir("prdrive-limpio-")
 c("un volumen con solo su nombre y su icono se lee vacío",
   device.install_target(limpio)[0], device.VACIO)
 
-# --- 7. lo que se movió de sitio sigue donde se buscaba ---------------------------------
+# 7. lo que se movió de sitio sigue donde se buscaba
 
 c("deploy.hide es el de common/store", deploy.hide, store.hide)
 c("y deploy.unhide también", deploy.unhide, store.unhide)
@@ -414,7 +415,7 @@ salida = tmpdir("prdrive-ico-") / "runsync.ico"
 icons.write_ico(salida, (16,))
 c("write_ico escribe lo mismo que ico()", salida.read_bytes(), ICO_DE_VERDAD((16,)))
 
-# --- 8. la ventana: el cableado --------------------------------------------------------
+# 8. la ventana: el cableado
 
 try:
     import tkinter as tk
@@ -442,7 +443,9 @@ volumen.leer = lambda: volumen.Estado(Path("E:/"), False, "PRDRIVE", "azul",
 
 
 def rellenar_y_pulsar(nombre: str, clave: str, boton: str = "Guardar"):
+    """Devuelve un `mostrar` que rellena el formulario y pulsa el botón."""
     def falso_mostrar(dlg, parent=None):
+        """Rellena el nombre y el icono del diálogo y pulsa el botón."""
         pila = [dlg]
         while pila:
             w = pila.pop()

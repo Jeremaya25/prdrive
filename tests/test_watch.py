@@ -40,7 +40,7 @@ c("log_tail devuelve una lista", isinstance(watch.log_tail(), list), True)
 c("is_installed responde un booleano", isinstance(watch.is_installed(), bool), True)
 
 
-# --- construcción de órdenes -------------------------------------------------
+# construcción de órdenes
 def sin_python(cmd):
     """Quita el intérprete y la ruta al script: lo que importa son los flags."""
     c("la orden apunta a penwatch.py", cmd[1], str(model.PENWATCH_PY))
@@ -66,7 +66,8 @@ c("los valores vacíos no ensucian la orden",
 c("desinstalar", sin_python(watch.uninstall_command()), ["uninstall"])
 
 
-# --- qué hace este equipo al enchufar (la línea de la ventana principal) -------
+# qué hace este equipo al enchufar (la línea de la ventana principal)
+#
 # Se sustituyen el penwatch importado y el id de este dispositivo: lo que se
 # prueba es la decisión, no el disco de quien ejecuta el test.
 from common import fleet  # noqa: E402
@@ -78,12 +79,15 @@ class _Pw:
     POLL_SECONDS = 5.0
 
     def __init__(self, cfg, al_dia=True):
+        """Prepara el penwatch de mentira con su `watch.json`."""
         self.cfg, self.al_dia = cfg, al_dia
 
     def read_json(self, _ruta):
+        """Devuelve el `watch.json` de mentira, sea cual sea la ruta."""
         return dict(self.cfg)
 
     def copia_al_dia(self):
+        """Devuelve si su copia está al día."""
         return self.al_dia
 
 
@@ -93,11 +97,13 @@ fleet.device_id = lambda app_dir=None: "aaaa"
 
 
 def resumen_con(cfg, al_dia=True):
+    """Devuelve el resumen de `watch` con ese `watch.json`."""
     watch._penwatch = lambda: _Pw(cfg, al_dia)
     return watch.resumen()
 
 
 def _roto():
+    """Hace que importar penwatch falle."""
     raise ImportError("sin penwatch")
 
 
@@ -139,7 +145,7 @@ try:
     c("installed_options ya no devuelve parejas ni intervalo",
       sorted(watch.installed_options()), ["device_id", "extra_roots", "mode", "poll"])
 
-    # --- con el agente residente instalado en este equipo -----------------------
+    # con el agente residente instalado en este equipo
     from common import equipo  # noqa: E402
     codigo = equipo.DIR / "agente" / "0.4.0"
     codigo.mkdir(parents=True)

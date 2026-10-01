@@ -1,18 +1,16 @@
 #!/usr/bin/env python3
-"""
-Versionado por pareja: `.prversions/` dentro de la raíz del pair.
+"""Versionado por pareja: `.prversions/` dentro de la raíz del pair.
 
-Lo que hay que sujetar aquí no es el formato del nombre —eso lo pone rclone con
-`--suffix`— sino las dos cosas que pueden costar caro:
-
-* **La regla de exclusión tiene que salir, y tiene que salir la primera.** No es
-  una preferencia de filtrado: rclone rechaza un `--backup-dir` que solape con el
-  destino («destination and parameter to --backup-dir mustn't overlap») y aborta
-  la pareja con error crítico. Excluirla es la condición para que la carpeta
-  pueda vivir dentro del pair. Y va la primera porque rclone aplica las reglas en
-  orden y gana la que casa antes: detrás de un `+ **/*.md` no serviría de nada.
-
-* **Encender o apagar `versions` no puede mover `expected_prefix()`.** Si lo
+Lo que hay que sujetar aquí no es el formato del nombre (eso lo pone rclone con
+`--suffix`) sino las dos cosas que pueden costar caro:
+- **La regla de exclusión tiene que salir, y tiene que salir la primera.** No
+  es una preferencia de filtrado: rclone rechaza un `--backup-dir` que solape
+  con el destino («destination and parameter to --backup-dir mustn't overlap»)
+  y aborta la pareja con error crítico. Excluirla es la condición para que la
+  carpeta pueda vivir dentro del pair. Y va la primera porque rclone aplica las
+  reglas en orden y gana la que casa antes: detrás de un `+ **/*.md` no
+  serviría de nada.
+- **Encender o apagar `versions` no puede mover `expected_prefix()`.** Si lo
   moviera, un baseline se reaprovecharía bajo un nombre nuevo, que es la
   operación que provoca borrados masivos (ver el docstring de
   `bisync.shelve_baseline`).
@@ -44,7 +42,7 @@ def pareja(extra=None, defaults=None, nombre="obsidian"):
 
 
 with sandbox() as root:
-    # --- 1. los dos extremos ---------------------------------------------------
+    # 1. los dos extremos
     suelta = pareja({"versions": True})
     c("sin device_remote, path1 cuelga de la ruta local",
       suelta.versions_path1,
@@ -61,7 +59,7 @@ with sandbox() as root:
 
     c("una pareja sin la clave no tiene versionado", pareja().versions, False)
 
-    # --- 2. solo tiene sentido en bisync ---------------------------------------
+    # 2. solo tiene sentido en bisync
     for modo in ("up", "down", "up-mirror", "down-mirror"):
         try:
             pareja({"versions": True, "mode": modo})
@@ -70,7 +68,7 @@ with sandbox() as root:
             salta = modo in str(e) or "bisync" in str(e)
         c(f"versions=true en modo '{modo}' se rechaza al parsear", salta, True)
 
-    # --- 3. la regla de exclusión, y la primera ---------------------------------
+    # 3. la regla de exclusión, y la primera
     texto = bisync.filters_content(pareja({"versions": True}))
     reglas = [l for l in texto.splitlines() if not l.startswith("#")]
     c("con versiones se emite la regla de exclusión",
@@ -87,12 +85,12 @@ with sandbox() as root:
     c("los include siguen estando", "+ **/*.md" in reglas, True)
     c("y los exclude del usuario también", "- basura/**" in reglas, True)
 
-    # --- 4. sin versiones, ni rastro -------------------------------------------
+    # 4. sin versiones, ni rastro
     texto = bisync.filters_content(pareja({"exclude": ["basura/**"]}))
     c("sin versiones no se emite la regla",
       model.VERSIONS_DIR in texto, False)
 
-    # --- 5. los flags que pone sync.py ------------------------------------------
+    # 5. los flags que pone sync.py
     ctx = sync.RunContext(binary="rclone", env={}, sello="~20260922-093000")
     versionada = pareja({"versions": True})
     cmd, _log = sync.build_command(ctx, versionada, None, False)
@@ -118,7 +116,7 @@ with sandbox() as root:
     c("el sello es el mismo para otra pareja de la misma pasada",
       cmd.count("~20260922-093000"), cmd_b.count("~20260922-093000"))
 
-    # --- 6. el [pair.flags] del usuario sigue mandando --------------------------
+    # 6. el [pair.flags] del usuario sigue mandando
     mia = pareja({"versions": True, "flags": {"conflict-loser": "num"}})
     orden = " ".join(sync.build_command(ctx, mia, None, False)[0])
     c("un conflict-loser propio gana al que pone el versionado",
@@ -126,16 +124,17 @@ with sandbox() as root:
     c("y entonces no se cuela también el 'delete'",
       "--conflict-loser delete" in orden, False)
 
-    # --- 7. sin versiones no aparece ninguno de los cinco -----------------------
+    # 7. sin versiones no aparece ninguno de los cinco
     cmd, _ = sync.build_command(ctx, pareja(), None, False)
     for flag in ("--backup-dir1", "--backup-dir2", "--suffix",
                  "--suffix-keep-extension", "--conflict-loser"):
         c(f"sin versiones no se emite {flag}", flag in cmd, False)
 
-    # --- 8. LO QUE NO PUEDE MOVERSE: el prefijo ---------------------------------
+    # 8. LO QUE NO PUEDE MOVERSE: el prefijo
+    #
     # Si `versions` moviera el prefijo, encenderla reaprovecharía el baseline
-    # bajo un nombre nuevo y bisync leería como borrado todo lo que no estuviera
-    # en el destino anterior.
+    # bajo un nombre nuevo y bisync leería como borrado todo lo que no
+    # estuviera en el destino anterior.
     base = pareja(defaults={"remote": "synology", "device_remote": "disp"})
     con = pareja({"versions": True},
                  defaults={"remote": "synology", "device_remote": "disp"})
@@ -143,7 +142,7 @@ with sandbox() as root:
       bisync.expected_prefix(con), bisync.expected_prefix(base))
     c("ni el workdir de la pareja", con.workdir, base.workdir)
 
-    # --- 9. el TOML aguanta el ida y vuelta -------------------------------------
+    # 9. el TOML aguanta el ida y vuelta
     raw = {"defaults": {"remote": "synology"},
            "pair": [{"name": "obsidian", "local": "sync-data/obsidian",
                      "remote_path": "/PJ/Obsidian", "mode": "bisync",
@@ -152,7 +151,7 @@ with sandbox() as root:
     c("dumps_checked escribe la clave nueva", "versions = true" in texto, True)
     c("y se relee idéntica", tomllib.loads(texto), raw)
 
-    # --- 10. los flags que ya no se dejan escribir a mano ------------------------
+    # 10. los flags que ya no se dejan escribir a mano
     for flag in ("backup-dir", "backup-dir1", "backup-dir2", "suffix",
                  "suffix-keep-extension"):
         c(f"'{flag}' está reservado en el editor de flags",
@@ -160,9 +159,10 @@ with sandbox() as root:
     c("'conflict-loser' NO se reserva: es un setdefault y se puede cambiar",
       "conflict-loser" in flags_editor.RESERVED, False)
 
-    # --- 11. el formulario y los booleanos ---------------------------------------
-    # str(False) es "False", una cadena no vacía: sin una rama para bool, apagar
-    # la casilla guardaría la clave como texto en el TOML.
+    # 11. el formulario y los booleanos
+    #
+    # str(False) es "False", una cadena no vacía: sin una rama para bool,
+    # apagar la casilla guardaría la clave como texto en el TOML.
     c("clean_form conserva versions=True",
       pair_editor.clean_form({"name": "x", "versions": True}).get("versions"), True)
     c("clean_form quita versions=False en vez de guardar 'False'",
@@ -171,7 +171,7 @@ with sandbox() as root:
       "versions" in pair_editor.merge_form({"name": "x", "versions": True},
                                            {"name": "x"}), False)
 
-    # --- 12. leer el nombre: la fecha sale de ahí, no del mtime -----------------
+    # 12. leer el nombre: la fecha sale de ahí, no del mtime
     c("un nombre con sello se lee entero",
       versions_editor.leer_nombre("nota~20260922-093000.md"),
       ("nota.md", datetime(2026, 9, 22, 9, 30)))
@@ -183,7 +183,7 @@ with sandbox() as root:
       versions_editor.leer_nombre("Makefile~20260101-000000"),
       ("Makefile", datetime(2026, 1, 1, 0, 0)))
 
-    # --- 13. leer el lado de aquí -----------------------------------------------
+    # 13. leer el lado de aquí
     pair = pareja({"versions": True})
     raiz_v = pair.local_abs / model.VERSIONS_DIR
     (raiz_v / "sub").mkdir(parents=True, exist_ok=True)
@@ -197,9 +197,11 @@ with sandbox() as root:
     c("un fichero sin sello no cuenta como versión",
       [v.original for v in local.versiones], ["nueva.md", "vieja.md"])
 
-    # --- 14. leer el lado remoto, con rclone sustituido --------------------------
+    # 14. leer el lado remoto, con rclone sustituido
+    #
     # `--csv`, no el separador de fábrica: un nombre con ';' partiría la línea.
     class Salida:
+        """Resultado de `rclone lsf` de mentira, con dos nombres entre comillas."""
         returncode = 0
         stdout = 'con;punto~20260101-130000.md,7\n"con,coma~20260101-140000.md",9\n'
         stderr = ""
@@ -224,7 +226,7 @@ with sandbox() as root:
     c("un remoto caído sí, y se dice",
       versions_editor.leer_remoto(pair).disponible, False)
 
-    # --- 15. purgar: primero el plan, y solo después el disco --------------------
+    # 15. purgar: primero el plan, y solo después el disco
     remoto = versions_editor.Lado(
         versions_editor.REMOTO, pair.versions_path2, True, "",
         (versions_editor.Version("r/vieja~20260101-120000.md", "vieja.md",
@@ -250,7 +252,7 @@ with sandbox() as root:
     c("al remoto se le pasa la lista exacta", borrados, ["r/vieja~20260101-120000.md"])
     c("y cuenta lo hecho por lados", len(hechos), 2)
 
-    # --- 16. un lado ilegible no se purga a ciegas -------------------------------
+    # 16. un lado ilegible no se purga a ciegas
     caido = versions_editor.Lado(versions_editor.REMOTO, pair.versions_path2,
                                  False, "no route to host")
     plan = versions_editor.plan_purgar(pair, local, caido, date(2026, 6, 1))

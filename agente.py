@@ -468,7 +468,7 @@ def nombre_de(raiz: Path, uid: str, recordado: str = "") -> str:
 class Servicio:
     """Lo que el servicio de una raíz sincroniza: sus parejas y cada cuánto.
 
-    Attributes:
+    Args:
         parejas: Las parejas, con su remoto.
         minutos: El intervalo entre pasadas.
     """
@@ -671,7 +671,7 @@ def resultado(rc: int, texto: str) -> str:
 class Conexion:
     """Lo que el agente recuerda de una unidad conectada.
 
-    Attributes:
+    Args:
         id: El id de la unidad (el de su fichero de control).
         raiz: Dónde está montada.
         nombre: Su nombre en la flota.
@@ -724,7 +724,7 @@ class Conexion:
 class Desbloqueo:
     """«Desbloquear», lanzado: VeraCrypt está pidiendo la contraseña.
 
-    Attributes:
+    Args:
         desde: Cuándo se lanzó.
         proc: El VeraCrypt que monta.
         salio: Cuándo se vio que había salido.
@@ -742,7 +742,7 @@ class Desbloqueo:
 class Bloqueo:
     """«Bloquear», pedido y todavía no hecho.
 
-    Attributes:
+    Args:
         desde: Cuándo se pidió.
         proc: El VeraCrypt que desmonta, ya lanzado.
         lanzado: Cuándo se lanzó.
@@ -768,7 +768,7 @@ class Copia:
     esto, un «Desbloquear» se daría por cancelado con la persona todavía en el
     aviso de UAC, y un «Bloquear», por fallido mientras VeraCrypt pregunta.
 
-    Attributes:
+    Args:
         imagen: Nombre del ejecutable.
         antes: Los pid con esa imagen antes de lanzar el nuestro.
     """
@@ -801,7 +801,7 @@ def _sigue_vivo(proc: Any, copia: Copia | None) -> bool:
 class Pasada:
     """Una pasada en marcha: el `sync.py` hijo de una pareja.
 
-    Attributes:
+    Args:
         proc: El proceso hijo.
         tarea: Lo que se está sincronizando.
         desde: Cuándo empezó.
@@ -819,7 +819,7 @@ class Pasada:
 class Agente:
     """Lo que el agente recuerda y decide, vuelta a vuelta.
 
-    Attributes:
+    Args:
         reloj: La hora, en segundos; los tests la sustituyen.
         ajustes: Su configuración (`agente.json`).
         conexiones: Las unidades conectadas y contadas, por id.

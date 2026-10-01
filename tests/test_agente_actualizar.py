@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """«Actualizar» el agente residente (fase 5, sección 8 del diseño).
+
+Lo que se comprueba:
 - El agente mira de tarde en tarde si hay una versión más nueva que la suya (en
   un hilo: es la red) y lo dice UNA vez; la bandeja ofrece «Actualizar a la vX»
   y, mientras se actualiza, «Actualizando…» apagado.

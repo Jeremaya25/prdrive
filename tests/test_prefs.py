@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""La configuración del servicio (ui/prefs.py): qué recuerda, qué olvida y qué
-no llega a escribir."""
+"""La configuración del servicio (`ui/prefs.py`).
+
+Qué recuerda, qué olvida y qué no llega a escribir.
+"""
 
 import json
 import sys

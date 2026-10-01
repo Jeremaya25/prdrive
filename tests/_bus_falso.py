@@ -70,8 +70,12 @@ class BusFalso(threading.Thread):
 
     def llamar(self, ruta, interfaz, miembro, firma="", cuerpo=(), espera=5.0,
                flags=0, destino=CLIENTE):
-        """Llama al cliente como lo haría otro programa del bus. Devuelve
-        ("ok", cuerpo) o ("error", nombre, texto); None si no contesta."""
+        """Llama al cliente como lo haría otro programa del bus.
+
+        Returns:
+            `("ok", cuerpo)` o `("error", nombre, texto)`; `None` si no
+            contesta.
+        """
         hecho = threading.Event()
         caja: list = [hecho, None]
         campos = {dbus.PATH: ruta, dbus.MEMBER: miembro, dbus.SENDER: ANFITRION,

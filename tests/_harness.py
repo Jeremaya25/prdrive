@@ -109,10 +109,12 @@ def tmpdir(prefix: str = "prdrive-test-") -> Path:
 
 
 def en_exec(ruta) -> str:
-    """Cómo queda una ruta dentro de las comillas del `Exec=` de un .desktop,
-    según la *Desktop Entry Specification*: la barra invertida se escapa para
+    r"""Devuelve cómo queda una ruta dentro de las comillas del `Exec=` de un .desktop.
+
+    Según la *Desktop Entry Specification*: la barra invertida se escapa para
     las comillas y, encima, la regla de las cadenas la dobla. Cada `\\` de una
-    ruta de Windows son cuatro; una de Linux no lleva ninguna."""
+    ruta de Windows son cuatro; una de Linux no lleva ninguna.
+    """
     return str(ruta).replace("\\", "\\" * 4)
 
 
