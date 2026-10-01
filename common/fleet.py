@@ -75,6 +75,7 @@ RESULTADO_OK = "ok"
 
 MAX_EQUIPOS = 5
 """Cuántos equipos recuerda la nota.
+
 Los últimos, que son los que contestan «¿dónde estaba?».
 
 Con un tope la nota no crece con los años.
@@ -234,6 +235,7 @@ def fichero(endpoint_catalogo: str, device_id: str) -> str:
 
 def _tabla(disp: Dispositivo) -> dict[str, Any]:
     """Devuelve la nota como dict.
+
     Lo que se publica y lo que se recuerda haber publicado.
 
     Tienen que ser lo mismo o el freno compararía con otra cosa. Los equipos
@@ -505,6 +507,7 @@ def _equipos_previos(app_dir: Path | str | None,
 def _con_equipo(previos: tuple[Equipo, ...], aqui: str,
                 cuando: str) -> tuple[Equipo, ...]:
     """Devuelve la lista con el equipo de ahora delante.
+
     Sin repetirlo y cortada al tope.
 
     Sin nombre de equipo no hay nada que poner delante: la lista se queda como
@@ -520,6 +523,7 @@ def nota_de(app_dir: Path | str | None, como_se_llama: str,
             version: str, last_result: str,
             ultima_buena: str = "") -> Dispositivo | None:
     """Devuelve la nota de un dispositivo cualquiera.
+
     El id y las plataformas salen de él.
 
     Con `app_dir` se describe uno que no es este, que es lo que necesita el

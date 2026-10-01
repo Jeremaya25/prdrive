@@ -1,40 +1,35 @@
 #!/usr/bin/env python3
-"""
-deploy.py — Instalar el código en el dispositivo, dejarle su config y arrancar
-las parejas.
+"""Instalar el código en el dispositivo, dejarle su config y arrancar las parejas.
 
-Cuatro cosas, en este orden, y el orden importa:
+Son cuatro cosas, en este orden, y el orden importa:
 
-  1. **Código.** `deploy_code()` copia a `<dispositivo>/.prdrive/` el árbol que el
-     instalador lleva dentro; `apply_platforms()` le pone rclone y —en la
-     instalación completa— un Python propio para cada plataforma elegida, y
-     `write_launchers()` los lanzadores de la raíz.
-  2. **Conexión.** `write_device_remote()` escribe el `rclone.conf` del
-     dispositivo y su clave. Va DESPUÉS del código porque vive dentro de
-     `.prdrive/`, y con rutas RELATIVAS porque es lo que hace que el dispositivo
-     funcione con otra letra de unidad: rclone las resuelve contra su cwd, y todo
-     el proyecto lanza rclone con `cwd = model.APP_DIR`.
-  3. **Config.** El `sync_config.toml` con las parejas elegidas, escrito con
-     `common/config_file.py` —el mismo serializador que usa la ventana de
-     parejas, que vuelve a parsear lo que genera y se niega a escribir si no
-     cuadra—.
-  4. **Inicialización.** Un `--resync` de las parejas bisync elegidas, lanzando
-     el `sync.py` que acaba de aterrizar.
+1. Código: `deploy_code()` copia a `<dispositivo>/.prdrive/` el árbol que el
+instalador lleva dentro; `apply_platforms()` le pone rclone y, en la
+instalación completa, un Python propio para cada plataforma elegida;
+`write_launchers()` escribe los lanzadores de la raíz.
 
-**Esto sustituye a la siembra**, que era un `rclone sync` del espejo maestro del
-remoto hacia el dispositivo. El cambio no es de comodidad:
+2. Conexión: `write_device_remote()` escribe el `rclone.conf` del dispositivo y
+su clave. Va DESPUÉS del código porque vive dentro de `.prdrive/`, y con rutas
+RELATIVAS porque es lo que hace que el dispositivo funcione con otra letra de
+unidad: rclone las resuelve contra su cwd y todo el proyecto lanza rclone con
+`cwd = model.APP_DIR`.
 
-  * el remoto ya no tiene que guardar el programa, solo la configuración;
-  * la clave privada deja de dar la vuelta por el servidor para volver a cada
-     dispositivo nuevo;
-  * y copiar aquí **no borra nada** fuera de `.prdrive/`, mientras que un espejo
-     borraba en destino todo lo que no estuviera en el origen. Era lo más
-     peligroso del proyecto y ya no existe.
+3. Config: el `sync_config.toml` con las parejas elegidas, escrito con
+`common/config_file.py`, el mismo serializador que usa la ventana de parejas,
+que vuelve a parsear lo que genera y se niega a escribir si no cuadra.
 
-Lo que NO hace, y sigue siendo deliberado: no inicializa parejas `*-mirror`. Un
-espejo borra en el otro lado, y lanzarlo con la selección recién hecha y sin
-mirar es la forma más rápida de vaciar el destino. Esas se ejecutan a mano y con
-`--dry-run`.
+4. Inicialización: un `--resync` de las parejas bisync elegidas, lanzando el
+`sync.py` que acaba de aterrizar.
+
+Es una copia y no una siembra: el remoto no guarda el programa sino la
+configuración, la clave privada no da la vuelta por el servidor para volver a
+cada dispositivo nuevo y copiar aquí NO borra nada fuera de `.prdrive/` (un
+espejo borraba en destino todo lo que no estuviera en el origen, y era lo más
+peligroso del proyecto).
+
+Lo que NO hace, a propósito: inicializar parejas `*-mirror`. Un espejo borra en
+el otro lado, y lanzarlo con la selección recién hecha y sin mirar es la forma
+más rápida de vaciar el destino; esas se ejecutan a mano y con `--dry-run`.
 """
 
 from __future__ import annotations
@@ -52,7 +47,7 @@ from typing import Callable, Mapping
 from common import components, config_file, fleet, model
 from common.pins import PLATAFORMAS, Plataforma
 # Viven en `common/` porque el dispositivo también esconde cosas; se importan
-# aquí con su nombre para que `deploy.hide()` siga siendo lo que era.
+# aquí con su nombre para que `deploy.hide()` siga existiendo.
 from common.store import hide, unhide  # noqa: F401
 from common.store import pid_alive
 
@@ -63,44 +58,37 @@ from .profile import Profile, render_conf
 from .rclone_bin import bin_subdir, exe_name
 from .remote import Catalog, Rclone
 
-# El punto la oculta en Linux y macOS por convención; en Windows hace falta
-# además el atributo, que pone `hide()`. Con las dos cosas la carpeta está
-# escondida en los dos mundos con un solo nombre.
 APP_SUBDIR = f".{APP_NAME}"
+"""Nombre de la carpeta del programa en el dispositivo (`.prdrive`).
 
-# Qué se copia al dispositivo. `install/` NO está y es a propósito: el
-# dispositivo no instala nada, y meter el instalador dentro sería arrastrar el
-# camino de la clave incrustada a un sitio donde no pinta nada.
-#
-# `VERSION` sí va, y no es documentación: es lo único que le dice al dispositivo
-# qué versión lleva puesta, y sin ello `common/update.py` no tiene contra qué
-# comparar la última release. Un dispositivo sin ese fichero es uno instalado
-# antes de que existiera el aviso, y se lee como versión desconocida.
+El punto la oculta en Linux y macOS por convención; en Windows hace falta
+además el atributo que pone `hide()`. Con las dos cosas la carpeta está
+escondida en los dos mundos con un solo nombre.
+"""
+
 DEPLOY_FILES = ("sync.py", "runsync.py", "penwatch.py", "VERSION")
+"""Ficheros sueltos que se copian al dispositivo.
+
+`install/` NO está, a propósito: el dispositivo no instala nada y meter el
+instalador dentro sería arrastrar el camino de la clave incrustada a un sitio
+donde no pinta nada. `VERSION` sí va y no es documentación: es lo único que le
+dice al dispositivo qué versión lleva puesta, y sin él `common/update.py` no
+tiene contra qué comparar la última release (un dispositivo sin ese fichero es
+uno instalado antes del aviso y se lee como versión desconocida).
+"""
 DEPLOY_TREES = ("common", "ui")
+"""Paquetes que se copian al dispositivo."""
 
-# La guía rápida que se le deja al usuario en la raíz, con el nombre con el que
-# la va a buscar. Antes vivía ahí y viajaba al remoto por el espejo maestro; sin
-# espejo, o la escribe el instalador o no llega. Va aparte de DEPLOY_FILES
-# porque es documentación: que falte no puede abortar una instalación.
 GUIDE_SOURCE = "device-readme.md"
-GUIDE_TARGET = "README.md"
-NO_COPIAR = shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo")
+"""Guía rápida del instalador que se deja en la raíz con el nombre `GUIDE_TARGET`.
 
-# --- Los lanzadores de la raíz --------------------------------------------------
-#
-# Se escriben al APROVISIONAR y no se vuelven a tocar: actualizar el programa
-# (`--update`, el aviso de la ventana, el recorrido corto del asistente) cambia lo
-# que hay dentro de `.prdrive/`, nunca la forma de arrancarlo. Lo que sí los
-# reescribe es aprovisionar otra vez: la instalación entera o «Añadir
-# plataformas…».
-#
-# El .bat y el .sh van SIEMPRE, también en la ligera: un dispositivo hecho en
-# Windows tiene que arrancar igual al enchufarlo en Linux, que es la premisa del
-# proyecto. Los dos prefieren el Python del dispositivo y caen al del equipo.
-#
-# No hay lanzador .vbs —Microsoft retira VBScript— ni ejecutable propio: nada que
-# no sea texto o un binario de su publicador.
+Va aparte de `DEPLOY_FILES` porque es documentación: que falte no puede abortar
+una instalación.
+"""
+GUIDE_TARGET = "README.md"
+"""Nombre con el que el usuario va a buscar la guía en la raíz."""
+NO_COPIAR = shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo")
+"""Patrones de ficheros que se ignoran al copiar el código."""
 
 LAUNCHER_BAT = f'''\
 @echo off
@@ -141,6 +129,19 @@ echo.
 pause
 exit /b 1
 '''
+"""Lanzador de la raíz para Windows (`runsync.bat`).
+
+Los lanzadores se escriben al APROVISIONAR y no se vuelven a tocar: actualizar
+el programa (`--update`, el aviso de la ventana, el recorrido corto del
+asistente) cambia lo que hay dentro de `.prdrive/` y nunca la forma de
+arrancarlo. Lo que sí los reescribe es aprovisionar otra vez: la instalación
+entera o «Añadir plataformas…». El `.bat` y el `.sh` van SIEMPRE, también en la
+ligera: un dispositivo hecho en Windows tiene que arrancar igual al enchufarlo
+en Linux, que es la premisa del proyecto, y los dos prefieren el Python del
+dispositivo y caen al del equipo. No hay lanzador `.vbs` (Microsoft retira
+VBScript) ni ejecutable propio: nada que no sea texto o un binario de su
+publicador.
+"""
 
 LAUNCHER_SH = f'''\
 #!/bin/sh
@@ -183,6 +184,7 @@ if [ -z "$py" ]; then
 fi
 exec "$py" "$base/runsync.py" "$@"
 '''
+"""Lanzador de la raíz para Linux (`runsync.sh`); ver `LAUNCHER_BAT`."""
 
 LAUNCHER_PYW = f'''\
 # runsync.pyw — Lanzador Windows de la instalación LIGERA: usa el Python de este
@@ -196,47 +198,51 @@ base = Path(__file__).resolve().parent / "{APP_SUBDIR}"
 sys.path.insert(0, str(base))
 runpy.run_path(str(base / "runsync.py"), run_name="__main__")
 '''
+"""Lanzador de la raíz para Windows de la instalación LIGERA (`runsync.pyw`).
+
+Ver `LAUNCHER_BAT`.
+"""
 
 
 def app_dir(device_root: Path | str) -> Path:
-    """Dónde vive el código dentro del dispositivo."""
+    """Devuelve dónde vive el código dentro del dispositivo."""
     return Path(device_root) / APP_SUBDIR
 
 
-# ---------------------------------------------------------------------------
-# El código
-# ---------------------------------------------------------------------------
-
 def deploy_source() -> Path:
-    """De dónde se copia el código.
+    """Devuelve de dónde se copia el código.
 
     Congelados es el directorio que PyInstaller extrae (ahí lo deja el
-    `--add-data` de `build_installer.py`); ejecutando el .py es la raíz del
+    `--add-data` de `build_installer.py`); ejecutando el `.py` es la raíz del
     checkout. `bundle_dir()` ya distingue los dos casos, así que aquí no hay
-    ninguna rama."""
+    ninguna rama.
+    """
     return bundle_dir()
 
 
 def deploy_code(device_root: Path | str, rclone_binary: Path | str | None = None,
                 origen: Path | str | None = None) -> list[Path]:
-    """Copia el programa al dispositivo. Devuelve lo que ha escrito.
+    """Copia el programa al dispositivo y devuelve lo que ha escrito.
 
-    Es una copia, no un espejo: lo que ya hubiera en `.prdrive/` de una versión
+    Es una copia y no un espejo: lo que hubiera en `.prdrive/` de una versión
     anterior se sobrescribe fichero a fichero, pero nada de fuera se toca. Por
-    eso este paso no necesita el «simular y luego hacer» que sí exigía la
-    siembra.
+    eso este paso no necesita el «simular y luego hacer» que exigía la siembra.
+    Que sea copia tiene una pega asumida: un módulo que se elimine del proyecto
+    se queda para siempre en los dispositivos ya instalados. Se prefiere a
+    renombrar `.prdrive/` y montar el árbol nuevo al lado, que en Windows choca
+    con el rclone que puede estar corriendo desde `bin/`, hace perder a
+    penwatch su marcador de estructura (y relanzar la interfaz solo) y apaga un
+    servicio en marcha al desaparecerle el `sync_config.toml`.
 
-    Sin `rclone_binary` no se toca `bin/`, que es el caso de actualizar: el
-    binario ya está puesto, no hace falta volver a bajarlo, y pasarle el que hay
-    en el propio dispositivo daría `SameFileError`.
+    Args:
+        rclone_binary: El rclone a dejar en `bin/`. Sin él no se toca `bin/`,
+            que es el caso de actualizar: el binario ya está puesto y pasarle
+            el que hay en el propio dispositivo daría `SameFileError`.
+        origen: De dónde copiar; por defecto, `deploy_source()`.
 
-    Que sea copia y no espejo tiene una pega asumida: un módulo que se elimine
-    del proyecto se queda para siempre en los dispositivos ya instalados. Se
-    prefiere a la alternativa —renombrar `.prdrive/` y montar el árbol nuevo al
-    lado—, que en Windows choca con el rclone que puede estar corriendo desde
-    `bin/`, le hace perder a penwatch su marcador de estructura (y relanzar la
-    interfaz solo) y apaga un servicio en marcha al desaparecerle el
-    `sync_config.toml`."""
+    Raises:
+        InstallError: Si falta algo en el origen o no se puede copiar.
+    """
     base = Path(origen) if origen else deploy_source()
     destino = app_dir(device_root)
     escrito: list[Path] = []
@@ -280,18 +286,16 @@ def deploy_code(device_root: Path | str, rclone_binary: Path | str | None = None
 
 def write_rclone_stamp(binario: Path | str, plat: Plataforma | None,
                        version: str) -> None:
-    """Deja —o quita— el sello que dice qué rclone hay en `binario`.
+    """Deja, o quita, el sello que dice qué rclone hay en `binario`.
 
-    Es lo único que le permite al dispositivo saber qué versión lleva: un rclone
-    de otra plataforma no se puede ejecutar aquí para preguntárselo, y el de la
-    propia tampoco merece la pena arrancarlo cada vez que se pinta una ventana.
-
-    Sin versión afirmable se BORRA el que hubiera. «No consta» es la respuesta
-    honesta, y un sello viejo al lado de un binario nuevo sería peor que ninguno:
-    el dispositivo dejaría de ofrecer justo la actualización que le hace falta.
-
-    Best-effort, como `hide()` o `write_guide()`: que no se pueda escribir un
-    sello no puede tumbar una instalación que por lo demás ha ido bien."""
+    Es lo único que le permite al dispositivo saber qué versión lleva: un
+    rclone de otra plataforma no se puede ejecutar aquí para preguntárselo y el
+    de la propia no merece arrancarlo cada vez que se pinta una ventana. Sin
+    versión afirmable se BORRA el que hubiera: «no consta» es la respuesta
+    honesta y un sello viejo al lado de un binario nuevo sería peor que ninguno
+    (el dispositivo dejaría de ofrecer justo la actualización que le hace
+    falta). Es a mejor esfuerzo, como `hide()` o `write_guide()`.
+    """
     ruta = Path(binario)
     sello = ruta.with_name(ruta.name + components.RCLONE_STAMP_SUFIJO)
     try:
@@ -306,19 +310,25 @@ def write_rclone_stamp(binario: Path | str, plat: Plataforma | None,
 
 def copy_rclone(device_root: Path | str, rclone_binary: Path | str,
                 plat: Plataforma | None = None, version: str = "") -> Path:
-    """Deja el binario en `bin/<arch>/`, que es donde lo va a buscar el modelo.
+    """Deja el binario en `bin/<arch>/`, donde lo va a buscar el modelo.
 
-    Sin `plat` es el de este equipo, y se pregunta a `bin_subdir()` en vez de
-    repetir la tabla de arquitecturas: es el mismo `bin/` que usará `sync.py`
-    luego, y si dejaran de coincidir el instalador verificaría un binario y el
-    dispositivo usaría otro. Con `plat`, el de esa plataforma.
+    Sin `plat` es el de este equipo y se pregunta a `bin_subdir()` en vez de
+    repetir la tabla de arquitecturas: es el mismo `bin/` que usará `sync.py`,
+    y si dejaran de coincidir el instalador verificaría un binario y el
+    dispositivo usaría otro. Va SIN el bit de ejecución en exFAT, que no lo
+    tiene, y por eso `model.rclone_binary()` se copia a un temporal cuando hace
+    falta.
 
-    `version` es la versión que se puede AFIRMAR de ese binario (la que devuelve
-    `rclone_bin.pinned_version()`), no la fijada: de un rclone encontrado en el
-    PATH no se sabe nada, y entonces se deja sin sello a propósito.
+    Args:
+        plat: La plataforma del binario; por defecto, la de este equipo.
+        version: La versión que se puede AFIRMAR de ese binario (la de
+            `rclone_bin.pinned_version()`), no la fijada: de un rclone
+            encontrado en el `PATH` no se sabe nada y entonces se deja sin
+            sello a propósito.
 
-    Va SIN el bit de ejecución en exFAT —que no lo tiene—, y por eso
-    `model.rclone_binary()` se copia a un temporal cuando hace falta."""
+    Raises:
+        InstallError: Si no se puede copiar.
+    """
     destino = (platforms.rclone_path(device_root, plat) if plat is not None
                else app_dir(device_root) / "bin" / bin_subdir() / exe_name())
     try:
@@ -331,34 +341,36 @@ def copy_rclone(device_root: Path | str, rclone_binary: Path | str,
             destino.chmod(destino.stat().st_mode | stat.S_IXUSR | stat.S_IRUSR)
         except OSError:
             pass        # exFAT: no hay permisos que poner, y no pasa nada
-    # `plat or platforms.host()` y no una tabla propia: sin plataforma es el de
-    # este equipo, y en un macOS `host()` contesta None —no hay plataforma que
-    # sellar— en vez de colarlo como si fuera Linux.
+    # `plat or platforms.host()` y no una tabla propia: sin plataforma es la de
+    # este equipo, y en un macOS `host()` contesta `None` (no hay plataforma
+    # que sellar) en vez de colarlo como Linux.
     write_rclone_stamp(destino, plat or platforms.host(), version)
     return destino
 
 
-# ---------------------------------------------------------------------------
-# rclone y Python por plataforma
-# ---------------------------------------------------------------------------
-
 # Lo que dejan a medias `install_runtime()` y `remove_platform()`:
 # `.windows-x64.nuevo-1234`, `.windows-x64.viejo-1234`, `.windows-x64.borrar-1234`.
 _RESTO_RUNTIME = re.compile(r"^\.(?P<clave>[a-z0-9-]+)\.(?:nuevo|viejo|borrar)-(?P<pid>\d+)$")
+"""Patrón de lo que dejan a medias `install_runtime()` y `remove_platform()`.
+
+Son `.windows-x64.nuevo-1234`, `.windows-x64.viejo-1234` y
+`.windows-x64.borrar-1234`.
+"""
 
 
 def barrer_restos_runtime(device_root: Path | str) -> list[Path]:
-    """Borra de `runtime/` lo que dejaron intercambios de otros procesos. Devuelve
-    lo borrado.
+    """Borra de `runtime/` lo que dejaron intercambios de otros procesos.
 
-    Cada proceso limpia su propio `.nuevo-<pid>` si algo falla, pero no el de
-    otro: uno que murió a mitad de extraer —cerrado a la fuerza, el dispositivo
-    retirado, un error que no era InstallError— deja decenas de megas en una
-    carpeta oculta de un volumen extraíble, y nadie volvía a mirarlos. Solo los
-    de plataformas que existen (el nombre es exactamente el que escriben esas dos
-    funciones) y solo si su pid no está vivo en este equipo: dos instaladores a la
-    vez no se barren el uno al otro. Un pid de otro equipo que coincida con uno
-    vivo aquí se queda para la próxima; nunca se borra de más."""
+    Devuelve lo borrado. Cada proceso limpia su propio `.nuevo-<pid>` si algo
+    falla, pero no el de otro: uno que murió a mitad de extraer (cerrado a la
+    fuerza, dispositivo retirado, un error que no era `InstallError`) deja
+    decenas de megas en una carpeta oculta de un volumen extraíble. Solo se
+    barren los de plataformas que existen (el nombre es exactamente el que
+    escriben esas dos funciones) y solo si su pid no está vivo en este equipo:
+    dos instaladores a la vez no se barren el uno al otro. Un pid de otro
+    equipo que coincida con uno vivo aquí se queda para la próxima; nunca se
+    borra de más.
+    """
     base = platforms.runtime_dir(device_root, PLATAFORMAS[0]).parent
     claves = {p.clave for p in PLATAFORMAS}
     borrado: list[Path] = []
@@ -381,14 +393,22 @@ def barrer_restos_runtime(device_root: Path | str) -> list[Path]:
 
 def install_runtime(device_root: Path | str, plat: Plataforma,
                     archivo: Path) -> Path | None:
-    """Deja en `runtime/<clave>/` el Python de ese archivo. None si ya estaba.
+    """Deja en `runtime/<clave>/` el Python de ese archivo.
 
     Se extrae al lado, en una carpeta de trabajo, y se INTERCAMBIA con la que
     hubiera: nunca se escribe encima de un runtime que funciona. Si el de antes
-    no se puede apartar —en Windows no se puede renombrar la carpeta de un
+    no se puede apartar (en Windows no se puede renombrar la carpeta de un
     `pythonw.exe` que está corriendo, o sea un prdrive abierto desde el
-    dispositivo—, falla entero y el de antes sigue como estaba. Lo que no puede
-    pasar es quedarse con medio runtime."""
+    dispositivo), falla entero y el de antes sigue como estaba. Lo que no puede
+    pasar es quedarse con medio runtime.
+
+    Returns:
+        La carpeta del runtime, o `None` si ya estaba ese mismo.
+
+    Raises:
+        InstallError: Si no se puede extraer, apartar el anterior o colocar el
+            nuevo.
+    """
     sha = runtime_bin.recorded_sha256(archivo) or runtime_bin.file_sha256(archivo)
     if platforms.runtime_stamp(device_root, plat) == runtime_bin.stamp_text(plat, sha):
         return None
@@ -433,21 +453,25 @@ def install_runtime(device_root: Path | str, plat: Plataforma,
 
 
 def remove_platform(device_root: Path | str, plat: Plataforma) -> list[Path]:
-    """Borra el rclone y el Python de esa plataforma. Devuelve lo borrado.
+    """Borra el rclone y el Python de esa plataforma y devuelve lo borrado.
 
     Solo lo suyo: el `bin/x64/` de Windows x64 es también el de Linux x64, así
-    que se borra el fichero, no la carpeta. El runtime se aparta primero con un
-    renombrado —que en Windows falla entero si está en uso— y luego se borra;
-    así nunca queda uno a medio borrar que parezca instalado."""
+    que se borra el fichero y no la carpeta. El runtime se aparta primero con
+    un renombrado (que en Windows falla entero si está en uso) y luego se
+    borra, así que nunca queda uno a medio borrar que parezca instalado.
+
+    Raises:
+        InstallError: Si no se puede borrar.
+    """
     borrado: list[Path] = []
     binario = platforms.rclone_path(device_root, plat)
     try:
         if binario.is_file():
             binario.unlink()
             borrado.append(binario)
-            # El sello se va con él, pero no se apunta como borrado: no es un
-            # componente, es la etiqueta de uno. Dejarlo sería que la siguiente
-            # instalación leyera un rclone que ya no está.
+            # El sello se va con él pero no se apunta como borrado: no es un
+            # componente sino la etiqueta de uno, y dejarlo haría que la
+            # siguiente instalación leyera un rclone que ya no está.
             binario.with_name(binario.name +
                               components.RCLONE_STAMP_SUFIJO).unlink(missing_ok=True)
     except OSError as e:
@@ -471,20 +495,28 @@ def remove_platform(device_root: Path | str, plat: Plataforma) -> list[Path]:
 
 @dataclass
 class Conseguido:
-    """Lo que `apply_platforms()` va a poner, ya comprobado y en la caché de este
-    equipo: el binario de rclone y el archivo de Python de cada plataforma, por
-    clave. Nada de esto está todavía en el dispositivo."""
+    """Lo que `apply_platforms()` va a poner.
+
+    Ya comprobado y en la caché de este equipo.
+
+    Nada de esto está todavía en el dispositivo.
+
+    Args:
+        rclone: Binario de rclone de cada plataforma, por clave.
+        runtime: Archivo de Python de cada plataforma, por clave.
+    """
     rclone: dict[str, Path] = field(default_factory=dict)
     runtime: dict[str, Path] = field(default_factory=dict)
 
 
 def _falta(plat: Plataforma, que: str, motivo: Exception) -> InstallError:
-    """El error de una plataforma que no se ha podido conseguir.
+    """Devuelve el error de una plataforma que no se ha podido conseguir.
 
     Nombra la plataforma, dice que el dispositivo no se ha tocado y da las dos
-    salidas: reintentar —lo ya bajado no se vuelve a bajar— o desmarcarla. Antes
-    solo se leía la URL del zip, y quien había marcado las cuatro plataformas no
-    sabía que bastaba con quitar una para seguir (#49)."""
+    salidas: reintentar (lo ya bajado no se vuelve a bajar) o desmarcarla. Sin
+    esto, quien había marcado las cuatro plataformas no sabía que bastaba con
+    quitar una para seguir.
+    """
     return InstallError(
         f"No he podido conseguir {que} para {plat.nombre}. No se ha tocado el "
         f"dispositivo.\n\n{motivo}\n\n"
@@ -498,22 +530,22 @@ def conseguir_plataformas(plan: platforms.Plan,
                           ) -> Conseguido:
     """Consigue todo lo que el plan va a poner, SIN tocar el dispositivo.
 
-    Caché, archivo dejado a mano o descarga, y siempre comprobado: lo mismo que
-    `rclone_bin.rclone_for()` y `runtime_bin.ensure_runtime()`, que son quienes
-    lo hacen. Solo se escribe en la caché de este equipo.
+    Es caché, archivo dejado a mano o descarga, y siempre comprobado: lo mismo
+    que `rclone_bin.rclone_for()` y `runtime_bin.ensure_runtime()`, que son
+    quienes lo hacen. Solo se escribe en la caché de este equipo. Es la primera
+    mitad de `apply_platforms()` y existe aparte para que el paso «Instalación»
+    la llame ANTES de copiar el programa: así un rclone de otra plataforma que
+    no llega no deja el dispositivo con el código nuevo y sin lanzadores ni
+    `rclone.conf`, o con una plataforma ya borrada. Se para en la primera que
+    falla: cada descarga ya se ha reintentado (`descarga.con_reintentos()`),
+    así que lo que llega aquí es una red que acaba de fallar tres veces
+    seguidas, y probar el resto sería tener a alguien varios minutos más
+    delante de una barra que no dice nada para acabar igual. Lo conseguido
+    hasta ahí se queda en la caché y el reintento solo baja lo que faltaba.
 
-    Es la primera mitad de `apply_platforms()`, y existe aparte para que el paso
-    «Instalación» la llame ANTES de copiar el programa: así un rclone de otra
-    plataforma que no llega no deja el dispositivo con el código nuevo y sin
-    lanzadores ni `rclone.conf` —o con una plataforma ya borrada—. Si algo falta,
-    no se ha tocado nada (#49).
-
-    Se para en la primera que falla, y no intenta las demás: cada descarga ya se
-    ha reintentado (`descarga.con_reintentos()`), así que lo que llega aquí es una
-    red que acaba de fallar tres veces seguidas, y probar el resto sería tener a
-    alguien varios minutos más delante de una barra que no dice nada para acabar
-    igual. Lo conseguido hasta ahí se queda en la caché, y el reintento solo baja
-    lo que faltaba."""
+    Raises:
+        InstallError: Nombrando la primera plataforma que no se pudo conseguir.
+    """
     conseguido = Conseguido()
     for plat in plan.rclone:
         try:
@@ -532,13 +564,14 @@ def apply_platforms(device_root: Path | str, plan: platforms.Plan,
                     progreso: Callable[[str], None] | None = None,
                     conseguido: Conseguido | None = None
                     ) -> tuple[list[Path], list[Path]]:
-    """Ejecuta el plan de la lista de plataformas. Devuelve (escrito, borrado).
+    """Ejecuta el plan de la lista de plataformas y devuelve `(escrito, borrado)`.
 
     Primero se CONSIGUE todo, en la caché del usuario y comprobado
-    (`conseguir_plataformas()`, o lo que ya traiga `conseguido`): si falta algo,
-    el dispositivo no se ha tocado, ni siquiera para borrar lo que se desmarcó.
-    Luego se borra —libera el sitio que lo demás va a ocupar—, luego rclone y
-    luego Python."""
+    (`conseguir_plataformas()`, o lo que ya traiga `conseguido`): si falta
+    algo, el dispositivo no se ha tocado, ni siquiera para borrar lo que se
+    desmarcó. Luego se borra (libera el sitio que lo demás va a ocupar), luego
+    rclone y luego Python.
+    """
     if conseguido is None:
         conseguido = conseguir_plataformas(plan, progreso)
     escrito: list[Path] = []
@@ -557,20 +590,21 @@ def apply_platforms(device_root: Path | str, plan: platforms.Plan,
 
 
 def write_launchers(device_root: Path | str, completa: bool = True) -> list[Path]:
-    """Los lanzadores, en la raíz del volumen. Solo al aprovisionar.
+    """Escribe los lanzadores en la raíz del volumen; solo al aprovisionar.
 
     La completa deja exactamente `runsync.bat` y `runsync.sh`; la ligera añade
     `runsync.pyw`, que solo sirve donde hay un Python instalado (depende de la
-    asociación .pyw -> pythonw.exe). Una completa sobre una que fue ligera quita
-    ese .pyw: es nuestro, y ya no hace falta.
+    asociación `.pyw` → `pythonw.exe`). Una completa sobre una que fue ligera
+    quita ese `.pyw`: es nuestro y ya no hace falta. Van en `device_root` y no
+    en el dispositivo físico: con VeraCrypt eso es dentro del contenedor, junto
+    a los datos, que es lo coherente (todo lo del producto vive dentro de lo
+    cifrado) a costa de montar primero el contenedor. El `.bat` va con CRLF:
+    cmd lee los `.bat` con LF casi siempre bien, y el «casi» son los `goto` a
+    una etiqueta, que es justo lo que usa este.
 
-    Van en `device_root` y no en el dispositivo físico: con VeraCrypt eso significa
-    dentro del contenedor, junto a los datos. Es la decisión coherente —todo lo
-    del producto vive dentro de lo cifrado— y el precio es que primero hay que
-    montar el contenedor.
-
-    El .bat va con CRLF: cmd lee los .bat con LF casi siempre bien, y el «casi»
-    son los `goto` a una etiqueta, que es justo lo que usa este."""
+    Raises:
+        InstallError: Si no se puede escribir un lanzador.
+    """
     raiz = Path(device_root)
     escrito = []
     lanzadores = [("runsync.bat", LAUNCHER_BAT, "\r\n"), ("runsync.sh", LAUNCHER_SH, "\n")]
@@ -598,11 +632,15 @@ def write_launchers(device_root: Path | str, completa: bool = True) -> list[Path
 
 
 def write_guide(device_root: Path | str, origen: Path | str | None = None) -> Path | None:
-    """Deja la guía rápida en la raíz. None si el instalador no la lleva dentro.
+    """Deja la guía rápida en la raíz.
 
-    Best-effort a propósito: es un documento, y un documento que falte no puede
-    dejar a medias una instalación que por lo demás ha ido bien. El mismo
-    criterio que `hide()` y que `icons.get()`."""
+    Es a mejor esfuerzo a propósito: es un documento, y uno que falte no puede
+    dejar a medias una instalación que por lo demás ha ido bien (el mismo
+    criterio que `hide()` y `icons.get()`).
+
+    Returns:
+        La ruta, o `None` si el instalador no la lleva dentro.
+    """
     base = Path(origen) if origen else deploy_source()
     fuente = base / GUIDE_SOURCE
     destino = Path(device_root) / GUIDE_TARGET
@@ -615,20 +653,22 @@ def write_guide(device_root: Path | str, origen: Path | str | None = None) -> Pa
     return destino
 
 
-# ---------------------------------------------------------------------------
-# La conexión del dispositivo
-# ---------------------------------------------------------------------------
-
 def write_device_remote(device_root: Path | str, profile: Profile) -> list[Path]:
-    """El `rclone.conf` del dispositivo y su clave, con rutas relativas.
+    """Escribe el `rclone.conf` del dispositivo y su clave, con rutas relativas.
 
     Relativas y no absolutas porque el dispositivo se monta con la letra que le
-    toque: `key_file = keys/id_ed25519` vale en `F:` y en `/media/quien/PRDRIVE`,
-    y una ruta absoluta solo en el equipo donde se instaló.
+    toque: `key_file = keys/id_ed25519` vale en `F:` y en
+    `/media/quien/PRDRIVE`, y una ruta absoluta solo en el equipo donde se
+    instaló. La clave se escribe aquí y NO viaja por el remoto: ninguna pareja
+    espeja `.prdrive/`, así que se queda en el dispositivo protegida por lo que
+    lo proteja a él (BitLocker, VeraCrypt o nada).
 
-    La clave se escribe aquí y **no viaja por el remoto**: no hay ninguna pareja
-    que espeje `.prdrive/`, así que se queda en el dispositivo, protegida por lo
-    que lo proteja a él (BitLocker, VeraCrypt o nada)."""
+    Returns:
+        Lo escrito.
+
+    Raises:
+        InstallError: Si no hay conexión configurada o no se puede escribir.
+    """
     if not profile.configured:
         raise InstallError("No hay conexión configurada que escribir.")
 
@@ -671,25 +711,31 @@ def write_device_remote(device_root: Path | str, profile: Profile) -> list[Path]
     return escrito
 
 
-# ---------------------------------------------------------------------------
-# El sync_config.toml del dispositivo
-# ---------------------------------------------------------------------------
-
 def device_config(catalog: Catalog, selected: list[str],
                   catalog_path: str = "", locales: Mapping[str, str] | None = None,
                   equipo: bool = False) -> dict:
-    """El dict crudo del config de ESTE dispositivo: los defaults del catálogo,
-    su [daemon] si lo trae, y solo las parejas elegidas.
+    """Devuelve el dict crudo del config de ESTE dispositivo.
 
-    `locales` cambia el `local` de alguna pareja solo aquí ({nombre: local}): es
-    lo que ofrece el paso «Parejas» de una raíz del equipo con la carpeta
-    personal, donde la ruta pensada para una unidad caería suelta en `~`. La
-    pareja queda como «modificada aquí», que es lo que es. `equipo` valida con
-    las reglas de esa raíz (`model.problema_local_equipo`).
+    Lleva los defaults del catálogo, su `[daemon]` si lo trae y solo las
+    parejas elegidas. Es crudo y no `model.Config` porque las `Pair` del modelo
+    llegan con los `[defaults]` ya fundidos y volcarlas duplicaría los defaults
+    dentro de cada pareja.
 
-    Crudo y no `model.Config` porque las `Pair` del modelo llegan con los
-    `[defaults]` ya fundidos: volcarlas duplicaría los defaults dentro de cada
-    pareja."""
+    Args:
+        selected: Nombres de las parejas elegidas.
+        catalog_path: Ruta del catálogo tecleada en el asistente; se escribe en
+            los `[defaults]` para que el dispositivo instalado no vuelva a la
+            de por defecto.
+        locales: `{nombre: local}` que cambia el `local` de alguna pareja solo
+            aquí: lo ofrece el paso «Parejas» de una raíz del equipo con la
+            carpeta personal, donde la ruta pensada para una unidad caería
+            suelta en `~`. La pareja queda como «modificada aquí».
+        equipo: Si la raíz es de un equipo; entonces valida con sus reglas
+            (`model.problema_local_equipo`).
+
+    Raises:
+        InstallError: Si falta una pareja del catálogo o no se eligió ninguna.
+    """
     faltan = [n for n in selected if catalog.pair(n) is None]
     if faltan:
         raise InstallError(
@@ -702,23 +748,21 @@ def device_config(catalog: Catalog, selected: list[str],
     raw: dict = {}
     if catalog.raw.get("defaults"):
         raw["defaults"] = dict(catalog.raw["defaults"])
-    # El lado local va como remote 'combine' desde el primer día. Sin esto, el
-    # nombre de los listados de bisync lleva dentro la letra de unidad, y el
-    # dispositivo deja de sincronizar en cuanto se monta en otra: era la herida
-    # que tapaba el renombrado automático de los listados, que ya no existe.
-    # Se escribe en los [defaults] de ESTE dispositivo y no en el catálogo
-    # porque cambiarlo en el catálogo invalidaría los baselines de todos los
-    # dispositivos ya instalados, igual que `catalog_path` de aquí abajo.
+    # El lado local va como remote `combine` desde el primer día: sin esto el
+    # nombre de los listados de bisync lleva dentro la letra de unidad y el
+    # dispositivo deja de sincronizar en cuanto se monta en otra. Se escribe en
+    # los `[defaults]` de ESTE dispositivo y no en el catálogo porque cambiarlo
+    # en el catálogo invalidaría los baselines de todos los dispositivos ya
+    # instalados, igual que `catalog_path` de aquí abajo.
     raw.setdefault("defaults", {}).setdefault(
         "device_remote", model.DEFAULT_DEVICE_REMOTE)
     daemon = _daemon_section(catalog, selected)
     if daemon:
         raw["daemon"] = daemon
     if catalog_path:
-        # La ruta del catálogo se teclea en el paso 1 y hasta aquí solo servía
-        # para descargarlo: no quedaba escrita en ningún sitio, así que el
-        # dispositivo instalado volvía a la de por defecto y la ventana de
-        # parejas buscaba el catálogo donde no estaba.
+        # La ruta del catálogo se teclea en el paso 1 y sin esto solo servía
+        # para descargarlo: el dispositivo instalado volvía a la de por defecto
+        # y la ventana de parejas buscaba el catálogo donde no estaba.
         raw.setdefault("defaults", {})["catalog_path"] = catalog_path
     raw["pair"] = [dict(catalog.pair(n)) for n in selected]      # type: ignore[arg-type]
     for pareja in raw["pair"]:
@@ -730,10 +774,13 @@ def device_config(catalog: Catalog, selected: list[str],
 
 
 def _daemon_section(catalog: Catalog, selected: list[str]) -> dict:
-    """El [daemon] del catálogo, recortado a lo que existe en este dispositivo.
+    """Devuelve el `[daemon]` del catálogo.
 
-    Si nombrara una pareja que este dispositivo no lleva, el servicio fallaría en
-    cada ciclo intentando sincronizar algo que no está en su config."""
+    Recortado a lo que existe en este dispositivo.
+
+    Si nombrara una pareja que este dispositivo no lleva, el servicio fallaría
+    en cada ciclo intentando sincronizar algo que no está en su config.
+    """
     daemon = catalog.raw.get("daemon")
     if not isinstance(daemon, dict) or not daemon:
         return {}
@@ -748,11 +795,12 @@ def _daemon_section(catalog: Catalog, selected: list[str]) -> dict:
 
 
 def device_header(catalog: Catalog, endpoint: str = "") -> str:
-    """La cabecera del config generado: de dónde sale y cuándo.
+    """Devuelve la cabecera del config generado: de dónde sale y cuándo.
 
-    El endpoint del catálogo entra por parámetro y no escrito a mano: durante
-    años decía una ruta fija que dejaba de ser verdad en cuanto alguien movía el
-    catálogo, y una cabecera que miente es peor que no tener cabecera."""
+    El endpoint del catálogo entra por parámetro y no escrito a mano: una
+    cabecera con una ruta fija dejaba de ser verdad en cuanto alguien movía el
+    catálogo, y una cabecera que miente es peor que no tener cabecera.
+    """
     donde = endpoint or "el catálogo del remoto"
     propia = (
         f"# Generado por {APP_NAME}-install el {datetime.now():%Y-%m-%d %H:%M}.\n"
@@ -764,6 +812,7 @@ def device_header(catalog: Catalog, endpoint: str = "") -> str:
 
 
 def config_path(device_root: Path | str) -> Path:
+    """Devuelve la ruta del `sync_config.toml` del dispositivo."""
     return app_dir(device_root) / "sync_config.toml"
 
 
@@ -771,10 +820,11 @@ def write_device_config(device_root: Path | str, catalog: Catalog,
                         selected: list[str], endpoint: str = "",
                         catalog_path: str = "",
                         locales: Mapping[str, str] | None = None) -> Path:
-    """Escribe el sync_config.toml del dispositivo. Devuelve su ruta.
+    """Escribe el `sync_config.toml` del dispositivo y devuelve su ruta.
 
     Si la raíz es la de un equipo (su fichero de control ya lo dice: el paso
-    «Instalación» va antes), se valida con sus reglas."""
+    «Instalación» va antes) se valida con sus reglas.
+    """
     destino = config_path(device_root)
     destino.parent.mkdir(parents=True, exist_ok=True)
     equipo = model.es_equipo(app_dir(device_root))
@@ -783,17 +833,14 @@ def write_device_config(device_root: Path | str, catalog: Catalog,
     return destino
 
 
-# ---------------------------------------------------------------------------
-# Carpetas locales
-# ---------------------------------------------------------------------------
-
 def local_dirs(catalog: Catalog, selected: list[str],
                locales: Mapping[str, str] | None = None) -> list[Path]:
-    """Las carpetas del dispositivo que necesitan las parejas elegidas, con el
-    `local` cambiado aquí si lo hay (ver `device_config`).
+    """Devuelve las carpetas del dispositivo que necesitan las parejas elegidas.
 
-    Una pareja con `local = "."` no cuenta: es la raíz del volumen, que ya
-    existe."""
+    Se tiene en cuenta el `local` cambiado aquí, si lo hay (ver
+    `device_config`). Una pareja con `local = "."` no cuenta: es la raíz del
+    volumen, que ya existe.
+    """
     salida = []
     for nombre in selected:
         pareja = catalog.pair(nombre) or {}
@@ -807,7 +854,7 @@ def local_dirs(catalog: Catalog, selected: list[str],
 def make_local_dirs(device_root: Path | str, catalog: Catalog,
                     selected: list[str],
                     locales: Mapping[str, str] | None = None) -> list[Path]:
-    """Crea esas carpetas. Devuelve las que se han creado ahora."""
+    """Crea esas carpetas y devuelve las que se han creado ahora."""
     creadas = []
     for rel in local_dirs(catalog, selected, locales):
         destino = Path(device_root) / rel
@@ -821,32 +868,27 @@ def make_local_dirs(device_root: Path | str, catalog: Catalog,
     return creadas
 
 
-# ---------------------------------------------------------------------------
-# La nota de presencia en la flota
-# ---------------------------------------------------------------------------
-
 NOTA_INICIAL = "recién instalado"
+"""Resultado que consta en la primera nota de presencia de un dispositivo."""
 
 
 def publish_fleet_note(rclone: Rclone, device_root: Path | str,
                        endpoint_catalogo: str, timeout: float = 45.0) -> str | None:
     """Apunta el dispositivo recién sembrado en el registro de la flota.
 
-    Devuelve dónde ha quedado la nota, o None si no se ha podido dejar. Es
-    **mejor esfuerzo**, como `write_guide()`: el registro sirve para mirar la
-    flota desde la ventana, y que el remoto no acepte un fichero de 200 bytes no
-    puede tumbar una instalación que ya está hecha.
+    Es a mejor esfuerzo, como `write_guide()`: el registro sirve para mirar la
+    flota desde la ventana, y que el remoto no acepte un fichero de 200 bytes
+    no puede tumbar una instalación ya hecha. Va por el rclone del instalador y
+    no por el del dispositivo, que todavía no ha ejecutado nada. De paso deja
+    escrito en el dispositivo cómo se llama y qué se ha publicado
+    (`state/fleet.json`), lo que hace que el nombre no cambie al cambiar de
+    ordenador y que la primera pasada no repita la misma nota. El equipo que lo
+    aprovisiona entra como el primero donde ha estado, que es verdad; la lista
+    la sigue después cada pasada (`fleet.nota_de()`).
 
-    Va por el rclone del instalador y no por el del dispositivo porque el
-    dispositivo todavía no ha ejecutado nada: sus claves están puestas, pero
-    quien tiene la conexión abierta en este momento es el asistente.
-
-    De paso deja escrito en el dispositivo cómo se llama y qué se ha publicado
-    (`state/fleet.json`), que es lo que hace que el nombre no cambie al cambiar
-    de ordenador y que la primera pasada no repita la misma nota.
-
-    El equipo que lo aprovisiona entra como el primero donde ha estado, que es
-    verdad; la lista la sigue después cada pasada (`fleet.nota_de()`)."""
+    Returns:
+        Dónde ha quedado la nota, o `None` si no se ha podido dejar.
+    """
     app = app_dir(device_root)
     estado = app / "state"
     como_se_llama = fleet.nombre(estado)
@@ -870,40 +912,40 @@ def publish_fleet_note(rclone: Rclone, device_root: Path | str,
     return destino
 
 
-# ---------------------------------------------------------------------------
-# Inicialización de las parejas
-# ---------------------------------------------------------------------------
-
 def resync_targets(catalog: Catalog, selected: list[str]) -> list[str]:
-    """Las parejas elegidas que hay que inicializar: solo las bisync.
+    """Devuelve las parejas elegidas que hay que inicializar: solo las bisync.
 
-    Las `*-mirror` se quedan fuera a propósito: un espejo borra en el otro lado,
-    y lanzarlo recién instalado el dispositivo y con las carpetas locales todavía
-    vacías propagaría ese vacío. Esas se ejecutan a mano y con --dry-run."""
+    Las `*-mirror` se quedan fuera a propósito: un espejo borra en el otro lado
+    y lanzarlo recién instalado el dispositivo, con las carpetas locales
+    todavía vacías, propagaría ese vacío. Esas se ejecutan a mano y con
+    `--dry-run`.
+    """
     return [n for n in selected
             if (catalog.pair(n) or {}).get("mode", model.DEFAULT_MODE) == "bisync"]
 
 
 def mirror_pairs(catalog: Catalog, selected: list[str]) -> list[str]:
-    """Las elegidas que son espejo, para poder avisar de ellas."""
+    """Devuelve las elegidas que son espejo, para poder avisar de ellas."""
     return [n for n in selected
             if (catalog.pair(n) or {}).get("mode", "") in ("up-mirror", "down-mirror")]
 
 
 def sync_py(device_root: Path | str) -> Path:
+    """Devuelve la ruta del `sync.py` del dispositivo."""
     return app_dir(device_root) / "sync.py"
 
 
 def device_python(device_root: Path | str) -> list[str] | None:
-    """El Python con el que el instalador lanza cosas DEL dispositivo.
+    """Devuelve el Python con el que el instalador lanza cosas DEL dispositivo.
 
-    El del propio dispositivo si lleva uno que sirva en este equipo —en el mismo
-    orden que el `runsync.bat`—, y si no, uno instalado (`python_command()`). Es
-    el de consola: lo que se lanza así lo lee alguien en la ventana de salida.
-
-    Es lo que hace que «nada que instalar» valga también para el instalador: con
-    la instalación completa, inicializar las parejas o registrar el vigilante ya
-    no piden un Python en el equipo desde el que se instala."""
+    Es el del propio dispositivo si lleva uno que sirva en este equipo (en el
+    mismo orden que `runsync.bat`) y, si no, uno instalado
+    (`python_command()`). Es el de consola: lo que se lanza así lo lee alguien
+    en la ventana de salida. Hace que «nada que instalar» valga también para el
+    instalador: con la instalación completa, inicializar las parejas o
+    registrar el vigilante ya no piden un Python en el equipo desde el que se
+    instala.
+    """
     propio = platforms.device_interpreter(device_root, platforms.host(), consola=True)
     if propio is not None:
         return [str(propio)]
@@ -914,23 +956,30 @@ SIN_PYTHON = ("El dispositivo no lleva un Python que sirva en este equipo, y aqu
               "tampoco hay ninguno instalado.\n\nVuelve al paso «Instalación» y "
               "elige la instalación completa con la plataforma de este equipo, o "
               "instala Python 3.11+; el código ya instalado no se pierde.")
+"""Mensaje para cuando no hay con qué lanzar nada del dispositivo."""
 
 
 def resync_command(device_root: Path | str, names: list[str],
                    python: list[str] | None = None) -> list[str]:
-    """La orden que inicializa las parejas bisync del dispositivo.
+    """Devuelve la orden que inicializa las parejas bisync del dispositivo.
 
     Aquí está la trampa que hace fracasar al instalador compilado:
-    `sys.executable` es el propio .exe, no Python, así que usarlo relanzaría el
-    instalador en vez de sincronizar. Hay que buscar un intérprete de verdad, y
-    el primero que se mira es el que lleva el propio dispositivo.
+    `sys.executable` es el propio `.exe` y no Python, así que usarlo relanzaría
+    el instalador en vez de sincronizar. Hay que buscar un intérprete de verdad
+    y el primero que se mira es el que lleva el propio dispositivo. Va con
+    `--yes` porque se lanza sin terminal: sin él, la pregunta del resync
+    tomaría el valor por defecto (no) y las parejas se saltarían en silencio,
+    justo lo contrario de lo pedido.
 
-    Va con --yes porque se lanza sin terminal: sin él, la pregunta del resync
-    tomaría el valor por defecto (no) y las parejas se saltarían en silencio, que
-    es justo lo contrario de lo que se ha pedido.
+    Args:
+        names: Parejas bisync a inicializar.
+        python: Para la raíz de un equipo, que no lleva Python propio: lo
+            inicializa el Python del agente, el mismo que la sincronizará
+            después.
 
-    `python` es para la raíz de un equipo, que no lleva Python propio: la
-    inicializa el Python del agente, el mismo que la sincronizará después."""
+    Raises:
+        InstallError: Si falta el `sync.py`, no hay parejas o no hay Python.
+    """
     destino = sync_py(device_root)
     if not destino.is_file():
         raise InstallError(
@@ -944,17 +993,17 @@ def resync_command(device_root: Path | str, names: list[str],
     return [*python, str(destino), *names, "--resync", "--yes"]
 
 
-# ---------------------------------------------------------------------------
-# penwatch, desde el dispositivo ya instalado
-# ---------------------------------------------------------------------------
-
 def penwatch_install_command(device_root: Path | str, mode: str = "ui") -> list[str]:
-    """Instala el vigilante EN ESTE EQUIPO usando el penwatch del dispositivo.
+    """Devuelve la orden que instala el vigilante EN ESTE EQUIPO.
 
-    Se usa el del dispositivo y no el que lleve el instalador dentro porque es el
-    que va a quedarse: así lo que se registra apunta al dispositivo recién
-    hecho. Y se lanza con el Python del dispositivo, que penwatch copia al equipo
-    para no depender de ningún Python instalado."""
+    Usa el penwatch del dispositivo. Se usa el del dispositivo y no el que
+    lleve el instalador porque es el que va a quedarse: así lo que se registra
+    apunta al dispositivo recién hecho. Se lanza con el Python del dispositivo,
+    que penwatch copia al equipo para no depender de ningún Python instalado.
+
+    Raises:
+        InstallError: Si falta el `penwatch.py` o no hay Python.
+    """
     destino = app_dir(device_root) / "penwatch.py"
     if not destino.is_file():
         raise InstallError(f"No encuentro {destino}. ¿Se ha instalado el código?")
@@ -966,7 +1015,10 @@ def penwatch_install_command(device_root: Path | str, mode: str = "ui") -> list[
 
 
 def summary(catalog: Catalog, selected: list[str]) -> list[tuple[str, str]]:
-    """Filas «pareja -> qué le va a pasar», para enseñar antes de tocar nada."""
+    """Devuelve filas `(pareja, qué le va a pasar)`.
+
+    Para enseñar antes de tocar nada.
+    """
     filas = []
     for nombre in selected:
         pareja: Mapping = catalog.pair(nombre) or {}

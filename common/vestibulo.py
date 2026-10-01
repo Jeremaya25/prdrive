@@ -60,6 +60,7 @@ unidad y la ventana del nombre y el icono (`ui/volumen.py`) lo ofrece si está.
 """
 TRAVELER_EXE = "VeraCrypt.exe"
 """Ejecutable de una INSTALACIÓN de VeraCrypt.
+
 La disposición que dejaban versiones anteriores de prdrive.
 
 Lo que viaja ahora es el paquete «VeraCrypt Portable» oficial, con sus nombres:

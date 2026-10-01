@@ -122,6 +122,7 @@ def ultimas_buenas(nombres: Iterable[str]) -> dict[str, float]:
 
 def fallos(config: Config) -> list[Fallo]:
     """Devuelve las parejas del config cuya última pasada falló.
+
     En el orden del config.
     """
     return fallos_de(config.names)

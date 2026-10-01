@@ -136,6 +136,7 @@ def _linea(p: Pasada) -> str:
 
 def _entero(valor) -> bool:
     """Indica si es un entero de verdad.
+
     En JSON `true` llega como un `int` de Python.
     """
     return isinstance(valor, int) and not isinstance(valor, bool)

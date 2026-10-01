@@ -287,6 +287,7 @@ def cuenta(hallazgos: list[Hallazgo]) -> int:
 
 def _informe_pareja(pair: Pair) -> list[str]:
     """Devuelve las líneas del informe de una pareja.
+
     Con una línea en blanco al final.
     """
     lineas = [f"[{pair.name}] {pair.mode.name}",

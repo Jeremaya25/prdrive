@@ -119,6 +119,7 @@ def _energia_windows() -> Energia:
 
 def _leer(ruta: Path) -> str:
     """Devuelve el contenido de un fichero de `/sys` sin espacios.
+
     Vacío si no se lee.
     """
     try:

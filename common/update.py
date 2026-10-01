@@ -481,6 +481,7 @@ def components_command(staged: Path | str, device_root: Path | str,
 
 def agent_command(staged: Path | str, python: str | None = None) -> list[str]:
     """Devuelve la orden que pone al día el agente residente.
+
     Ejecutada DESDE lo descargado.
 
     Como `apply_command()`: la versión nueva se instala a sí misma.

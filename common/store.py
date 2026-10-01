@@ -54,6 +54,7 @@ def desde_sello(texto: str) -> float | None:
 
 def read_json(path: Path) -> dict:
     """Lee un JSON que es un objeto.
+
     Si falta, está a medias o no lo es, devuelve `{}`.
     """
     try:

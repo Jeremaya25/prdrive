@@ -1,43 +1,87 @@
 #!/usr/bin/env python3
-"""
-vestibulo.py — Escribir la entrada de un dispositivo cifrado con VeraCrypt. Sin Tkinter.
+"""Escribir la entrada de un dispositivo cifrado con VeraCrypt. Sin Tkinter.
 
 Qué es el vestíbulo y por qué existe está en `common/vestibulo.py`. Aquí están
-los textos de los lanzadores y la escritura, que es cosa del instalador: se hace
-al aprovisionar (paso 5) y en «Añadir plataformas…», y **nunca** al actualizar el
-programa, igual que los lanzadores de dentro.
-
-En Linux, sin VeraCrypt, los `.sh` abren y cierran con udisks2 o cryptsetup: por
-qué y con qué citas, en «Linux: los .sh», más abajo.
+los textos de los lanzadores y su escritura, que es cosa del instalador: se
+hace al aprovisionar (paso 5) y en «Añadir plataformas…», y NUNCA al actualizar
+el programa, igual que los lanzadores de dentro.
 
 Lo que no se puede relajar, todo contra el código de VeraCrypt (tag
 VeraCrypt_1.26.24; las citas, en la spec
 `docs/superpowers/specs/2026-09-23-veracrypt-ciclo-de-vida-design.md`):
+- La contraseña no pasa por aquí: `VeraCrypt.exe /volume X /quit` sin
+  `/password` la pide con SU diálogo (`Mount/Mount.c`, `WM_INITDIALOG`: «Ask
+  user for password»). Ni el `.bat` ni ningún proceso nuestro la ven, y no
+  aparece en ninguna línea de órdenes.
+- El VeraCrypt instalado va antes que el que viaja: con otra versión instalada
+  y su driver cargado, el que viaja falla con `ERR_DRIVER_VERSION`
+  (`Common/Dlgcode.c`, `DriverAttach`).
+- El código de salida no dice si se ha montado: el que viaja, sin permisos de
+  administrador, se relanza elevado con `/q UAC`, espera dos segundos y sale
+  con 0 (`Common/Dlgcode.c`, `InitApp` y `LaunchElevatedProcess`); la
+  contraseña la pide la otra instancia. Por eso se espera a VER la unidad, y
+  con el que viaja se espera más.
+- `/dismount`, no `/unmount`: el segundo no existe antes de la 1.26.24.
+- Sin `/auto`: además de montar, abre una ventana del Explorador
+  (`ExtractCommandLine`: `bExplore = TRUE`). Con `/quit` y `/volume` ya monta.
+- La letra no dice si el contenedor está abierto, en ningún sentido: tras
+  forzar el cierre con algo abierto dentro la letra se va y Windows sigue sin
+  dejar quitar la unidad; tras quitarla sin expulsar la letra se queda y sirve
+  el fichero de control de la caché. Lo que sí lo dice es el propio `.hc`:
+  montado, el driver lo retiene. Eso mira `:libre` (`_LIBRE_BAT`).
 
-  * **La contraseña no pasa por aquí.** `VeraCrypt.exe /volume X /quit` sin
-    `/password` pide la contraseña con SU diálogo (`Mount/Mount.c`,
-    `WM_INITDIALOG`: «Ask user for password»). Ni el `.bat` ni ningún proceso
-    nuestro la ven, y no aparece en ninguna línea de órdenes.
-  * **El VeraCrypt instalado va antes que el que viaja.** Con otra versión
-    instalada y su driver cargado, el que viaja falla con `ERR_DRIVER_VERSION`
-    (`Common/Dlgcode.c`, `DriverAttach`).
-  * **El código de salida no dice si se ha montado.** El que viaja, sin
-    permisos de administrador, se relanza elevado con `/q UAC`, espera dos
-    segundos y sale con 0 (`Common/Dlgcode.c`, `InitApp` y
-    `LaunchElevatedProcess`): la contraseña la pide la otra instancia. Por eso
-    se espera a VER la unidad, y con el que viaja se espera más.
-  * **`/dismount`, no `/unmount`**: el segundo no existe antes de la 1.26.24.
-  * **Sin `/auto`**: además de montar, abre una ventana del Explorador
-    (`ExtractCommandLine`: `bExplore = TRUE`). Con `/quit` y `/volume` ya monta.
-  * **La letra no dice si el contenedor está abierto**, en ningún sentido. Tras
-    forzar el cierre con algo abierto dentro, la letra se va y Windows sigue
-    sin dejar quitar la unidad; tras quitarla sin expulsar, la letra se queda y
-    sirve el fichero de control de la caché. Lo que sí lo dice es el propio
-    `.hc`: montado, el driver lo retiene. Eso mira `:libre` (`_LIBRE_BAT`).
+Los `.bat` siguen las reglas de `runsync.bat` (`deploy.LAUNCHER_BAT`): CRLF,
+sin bloques entre paréntesis (una ruta con «)» los rompe) y `chcp 65001` solo
+antes de escribir algo con acentos.
 
-Los `.bat` siguen las reglas de `runsync.bat` (`deploy.LAUNCHER_BAT`): CRLF, sin
-bloques entre paréntesis —una ruta con «)» los rompe— y `chcp 65001` solo antes
-de escribir algo con acentos.
+Linux sin VeraCrypt: en Linux no viaja VeraCrypt, pero un volumen como los que
+crea prdrive (AES, SHA-512, PIM 0, sin oculto) lo abren también dos
+herramientas que traen casi todas las distribuciones. `abrir-prdrive.sh` usa la
+primera que haya, por este orden. Va contra el código de udisks (`master`) y
+cryptsetup (`main`), con las citas en la spec; lo de cada distribución puede
+diferir y está sin probar en hardware:
+
+1. VeraCrypt instalado, como siempre: su ventana pide la contraseña y la de
+administrador que montar exige.
+
+2. udisks2, sin administrador, si reconoce contenedores VeraCrypt. Su cabecera
+no tiene firma, así que udisks solo da un dispositivo desconocido por cifrado
+(`IdType` `crypto_unknown` y, con él, la interfaz `Encrypted` que `Unlock`
+exige) con `enable_tcrypt` activo (`src/udiskslinuxblock.c`,
+`bd_crypto_device_seems_encrypted()`; `encrypted_check()` en
+`src/udiskslinuxblockobject.c`), y eso es que exista `TCRYPT_CONF` al arrancar
+el servicio (`src/main.c`). Con él, polkit deja a quien tiene la sesión activa
+`loop-setup`, `encrypted-unlock` y `filesystem-mount` sin contraseña de
+administrador (`data/org.freedesktop.UDisks2.policy.in`), porque el loop lo ha
+puesto él (`udisks_daemon_util_setup_by_user()`). Abre siempre en modo
+VeraCrypt (`tcrypt_open_job_func()`, `veracrypt = TRUE`) y con PIM 0. prdrive
+NO crea ese fichero (es tocar `/etc` como root y reiniciar un servicio del
+sistema, y eso lo decide quien administra el equipo): se dice cómo
+(`ACTIVAR_UDISKS`).
+
+3. cryptsetup, con sudo (device-mapper es de root). VeraCrypt va por defecto
+(`--veracrypt` se ignora en las versiones nuevas y en las viejas hacía falta,
+así que se pasa siempre; `man/common_options.adoc`) y con un fichero pone el
+loop él solo (`man/cryptsetup.8.adoc`, «Notes on loopback device use»). Monta
+en `PUNTO_CRYPTSETUP`.
+
+La contraseña no pasa por aquí: `udisksctl unlock` la lee de la terminal que
+controla el proceso (`read_passphrase()` en `tools/udisksctl.c`, con
+`ctermid()`) y cryptsetup de la terminal si stdin lo es y, si no, DE STDIN
+(`tools_get_key()` en `src/utils_password.c`). Por eso sin VeraCrypt hace falta
+una terminal, y por eso NO se abre con `pkexec`: sin terminal cryptsetup leería
+la contraseña de lo que llegara por stdin, y dársela así es justo lo que no se
+hace. `pkexec` sí vale para cerrar: ahí no hay contraseña del contenedor.
+
+Se cierra con lo mismo que abrió, y eso no se apunta: se deduce (`estado` en
+`_ESTADO_SH`). `losetup -j` da el loop que tiene el contenedor,
+`/sys/block/loopN/holders/` el dm que cuelga de él y su nombre quién lo abrió:
+`veracryptN` es VeraCrypt (`MountVolumeNative()` en
+`Core/Unix/Linux/CoreLinux.cpp` pone el fichero en un loop y llama así al dm),
+`prdrive-<id>` es cryptsetup desde aquí y cualquier otro es udisks2
+(`tcrypt-…`, `udisks_linux_block_make_dm_name()`). `/proc/mounts` dice dónde
+está montado. Sin loop, VeraCrypt si está: sin el cifrado del kernel no usa
+ninguno.
 """
 
 from __future__ import annotations
@@ -51,25 +95,27 @@ from . import IS_WIN, InstallError
 from .device import CONTROL_FILE, Check
 
 URL_VERACRYPT = "https://veracrypt.jp/en/Downloads.html"
+"""Dónde descargar VeraCrypt."""
 
-# Como se ven en el Explorador, que esconde la extensión.
 NOMBRE_ABRIR = Path(v.ABRIR_BAT).stem
+"""Nombre de los lanzadores como se ven en el Explorador, que esconde la extensión."""
 NOMBRE_EXPULSAR = Path(v.EXPULSAR_BAT).stem
+"""Nombre del lanzador de expulsar, sin extensión."""
 
-# Cuánto se espera a ver la unidad después de VeraCrypt, en segundos. Con el
-# instalado su código de salida sí es el del montaje; con el que viaja no (ver
-# el docstring), y hay que dejarle a la persona el tiempo de escribir la
-# contraseña en la ventana elevada.
 ESPERA_INSTALADO = 10
+"""Segundos que se espera a ver la unidad tras lanzar el VeraCrypt instalado.
+
+Con el instalado su código de salida sí es el del montaje.
+"""
 ESPERA_VIAJERO = 180
+"""Segundos que se espera a ver la unidad tras lanzar el VeraCrypt que viaja.
+
+Su código de salida no vale (ver el docstring del módulo) y hay que dejar a la
+persona el tiempo de escribir la contraseña en la ventana elevada.
+"""
 
 _CONTROL_BAT = str(CONTROL_FILE).replace("/", "\\")
 
-# Buscar la unidad donde ha quedado el contenedor: la que tenga el fichero de
-# control con ESTE id. `/b` y no `/x`: el fichero puede venir de Linux (LF) o de
-# Windows (CRLF), y el id es un uuid4 de longitud fija, así que empezar igual es
-# ser igual. A y B al final, como hace VeraCrypt al elegir letra
-# (`GetFirstAvailableDrive`).
 _BUSCAR_BAT = (
     ":buscar\n"
     'set "RAIZ="\n'
@@ -78,18 +124,14 @@ _BUSCAR_BAT = (
     f'findstr /b /l /c:"id=%ID%" "%%L:\\{_CONTROL_BAT}" >nul 2>&1 && set "RAIZ=%%L:"\n'
     "exit /b 0\n"
 )
+"""Subrutina `:buscar`: la unidad donde ha quedado el contenedor.
 
-# ¿Ha quedado suelto el contenedor? 0 si nadie lo tiene abierto. Con el volumen
-# montado, el driver lo tiene abierto sin dejar escribir a nadie más
-# (`TCOpenVolume()`, `Driver/Ntvol.c`, con `bExclusiveAccess`), así que abrirlo
-# para añadir falla. La excepción: si al montar otro proceso ya tenía el
-# fichero abierto, `MountVolume()` (`Common/Dlgcode.c`) monta compartido —con
-# `/silent` sin preguntar, sin él preguntando— y entonces esto lo ve suelto
-# aunque esté montado. `type nul` no añade nada: ni el contenido ni la fecha
-# cambian. Sin el contenedor al lado devuelve 1 y no lo crea: sin él no se
-# puede afirmar nada, y quien llama sigue como antes. El `2>nul` va en el `call`
-# porque en la misma línea que `>>` no tapa el mensaje de cmd cuando la
-# apertura falla, y sin paréntesis no hay otra forma de envolverla.
+Es la que tenga el fichero de control con ESTE id. Usa `/b` y no `/x`: el
+fichero puede venir de Linux (LF) o de Windows (CRLF) y el id es un uuid4 de
+longitud fija, así que empezar igual es ser igual. A y B van al final, como
+hace VeraCrypt al elegir letra (`GetFirstAvailableDrive`).
+"""
+
 _LIBRE_BAT = (
     ":libre\n"
     f'if not exist "%~dp0{v.CONTENEDOR}" exit /b 1\n'
@@ -100,38 +142,55 @@ _LIBRE_BAT = (
     f'>>"%~dp0{v.CONTENEDOR}" type nul || exit /b 1\n'
     "exit /b 0\n"
 )
+"""Subrutina `:libre`: devuelve 0 si nadie tiene abierto el contenedor.
 
-# ¿Sigue VeraCrypt con el desmontaje? 0 si hay que seguir esperando sin contar.
-# El que viaja, sin administrador, se relanza elevado y sale a los dos segundos
-# (`InitApp`, `LaunchElevatedProcess` en `Common/Dlgcode.c`), así que `start
-# /wait` no espera a la copia elevada, que es la que pregunta si forzar: los 30
-# intentos se gastaban mientras la pregunta seguía en pantalla. `tasklist` ve el
-# nombre de un proceso elevado sin serlo. La copia elevada es la misma imagen
-# (`InitApp` relanza lo que le da `GetModuleFileNameW`), así que se busca por el
-# nombre del que se ha lanzado, `VC_IMAGEN`: `VeraCrypt.exe` instalado o de
-# antes, `VeraCrypt-x64.exe` o `VeraCrypt-arm64.exe` del portable. Solo vale si
-# al empezar no había ninguno (`VC_ANTES`): con uno en segundo plano no se sabe
-# cuál es el nuestro, y se cuenta como siempre. Sin tope, igual que `start
-# /wait` con el instalado espera lo que tarde la respuesta.
+Es la pregunta «¿ha quedado suelto?». Con el volumen montado, el driver lo
+tiene abierto sin dejar escribir a nadie más (`TCOpenVolume()`,
+`Driver/Ntvol.c`, con `bExclusiveAccess`), así que abrirlo para añadir falla.
+La excepción: si al montar otro proceso ya tenía el fichero abierto,
+`MountVolume()` (`Common/Dlgcode.c`) monta compartido (con `/silent` sin
+preguntar, sin él preguntando) y entonces esto lo ve suelto aunque esté
+montado. `type nul` no añade nada: ni el contenido ni la fecha cambian. Sin el
+contenedor al lado devuelve 1 y no lo crea: sin él no se puede afirmar nada. El
+`2>nul` va en el `call` porque en la misma línea que `>>` no tapa el mensaje de
+cmd cuando la apertura falla, y sin paréntesis no hay otra forma de envolverla.
+"""
+
 _VC_PENDIENTE_BAT = (
     ":vc_pendiente\n"
     "if defined VC_ANTES exit /b 1\n"
     'tasklist /fi "imagename eq %VC_IMAGEN%" /nh 2>nul | find /i "%VC_IMAGEN%" >nul\n'
     "exit /b\n"
 )
+"""Subrutina `:vc_pendiente`: ¿sigue VeraCrypt con el desmontaje?
 
-# El que viaja, con los nombres del portable oficial (`veracrypt_bin`): uno por
-# arquitectura. `%PROCESSOR_ARCHITECTURE%` dice la verdad aquí porque cmd corre
-# nativo —lo mismo que ya da por hecho `runsync.bat`—, y hay que elegir la de
-# este equipo: `IsARM()` escoge el driver por la máquina NATIVA, y un driver no
-# se emula (ver `install/traveler.py`).
+Devuelve 0 si hay que seguir esperando sin contar. El que viaja, sin
+administrador, se relanza elevado y sale a los dos segundos (`InitApp`,
+`LaunchElevatedProcess` en `Common/Dlgcode.c`), así que `start /wait` no espera
+a la copia elevada, que es la que pregunta si forzar: los 30 intentos se
+gastaban mientras la pregunta seguía en pantalla. `tasklist` ve el nombre de un
+proceso elevado sin serlo. La copia elevada es la misma imagen (`InitApp`
+relanza lo que le da `GetModuleFileNameW`), así que se busca por el nombre del
+que se ha lanzado, `VC_IMAGEN`: `VeraCrypt.exe` instalado o de antes,
+`VeraCrypt-x64.exe` o `VeraCrypt-arm64.exe` del portable. Solo vale si al
+empezar no había ninguno (`VC_ANTES`): con uno en segundo plano no se sabe cuál
+es el nuestro y se cuenta como siempre. No tiene tope, como `start /wait` con
+el instalado: espera lo que tarde la respuesta.
+"""
+
 _VIAJERO_BAT = f"%~dp0{v.TRAVELER}\\{v.TRAVELER_PORTATIL.format(arq='%VC_ARQ%')}"
+"""Ruta del VeraCrypt portable que viaja.
+
+Con los nombres del portable oficial (`veracrypt_bin`): uno por arquitectura.
+
+`%PROCESSOR_ARCHITECTURE%` dice la verdad aquí porque cmd corre nativo (lo
+mismo que ya da por hecho `runsync.bat`), y hay que elegir la de este equipo:
+`IsARM()` escoge el driver por la máquina NATIVA y un driver no se emula (ver
+`install/traveler.py`).
+"""
 _VIAJERO_IMAGEN = v.TRAVELER_PORTATIL.format(arq="%VC_ARQ%")
 _VIAJERO_ANTES_BAT = f"%~dp0{v.TRAVELER}\\{v.TRAVELER_EXE}"
 
-# El VeraCrypt que se usa: el instalado antes que el que viaja; y del que viaja,
-# el portable de la arquitectura de este equipo antes que la copia de una
-# instalación que dejaban las versiones anteriores (`VeraCrypt\VeraCrypt.exe`).
 _ELEGIR_BAT = (
     'set "VC="\n'
     'set "VC_IMAGEN=VeraCrypt.exe"\n'
@@ -149,6 +208,12 @@ _ELEGIR_BAT = (
     f'set "VC={_VIAJERO_ANTES_BAT}"\n'
     "if not defined VC goto sin_veracrypt\n"
 )
+r"""Elige el VeraCrypt que se usa: el instalado antes que el que viaja.
+
+Del que viaja, el portable de la arquitectura de este equipo antes que la copia
+de una instalación que dejaban versiones anteriores
+(`VeraCrypt\VeraCrypt.exe`).
+"""
 
 _SIN_VERACRYPT_BAT = (
     ":sin_veracrypt\n"
@@ -162,10 +227,14 @@ _SIN_VERACRYPT_BAT = (
     "pause\n"
     "exit /b 1\n"
 )
+"""Subrutina `:sin_veracrypt`: el mensaje cuando no hay VeraCrypt."""
 
 
 def bat_abrir(device_id: str) -> str:
-    """`Abrir PRDRIVE.bat`: abre el contenedor y lanza el `runsync.bat` de dentro."""
+    """Devuelve `Abrir PRDRIVE.bat`.
+
+    Abre el contenedor y lanza el `runsync.bat` de dentro.
+    """
     return (
         "@echo off\n"
         f"rem {v.ABRIR_BAT} - Abre el contenedor cifrado de prdrive y lanza la ventana.\n"
@@ -260,7 +329,10 @@ def bat_abrir(device_id: str) -> str:
 
 
 def bat_expulsar(device_id: str) -> str:
-    """`Expulsar PRDRIVE.bat`: cierra el contenedor para poder quitar la unidad."""
+    """Devuelve `Expulsar PRDRIVE.bat`.
+
+    Cierra el contenedor para poder quitar la unidad.
+    """
     return (
         "@echo off\n"
         f"rem {v.EXPULSAR_BAT} - Cierra el contenedor cifrado de prdrive.\n"
@@ -363,83 +435,56 @@ def bat_expulsar(device_id: str) -> str:
     )
 
 
-# ---------------------------------------------------------------------------
-# Linux: los .sh
-# ---------------------------------------------------------------------------
-#
-# En Linux no viaja VeraCrypt, pero un volumen como los que crea prdrive (AES,
-# SHA-512, PIM 0, sin oculto) lo abren también dos herramientas que traen casi
-# todas las distribuciones. `abrir-prdrive.sh` usa la primera que haya, por este
-# orden. Contra el código de udisks (`master`) y cryptsetup (`main`), con las
-# citas en la spec; lo de cada distribución puede diferir, y está sin probar en
-# hardware (U1–U10 en #51):
-#
-#   1. **VeraCrypt instalado**, como hasta ahora: su ventana pide la contraseña,
-#      y la de administrador que montar exige.
-#   2. **udisks2, sin administrador**, si reconoce contenedores VeraCrypt. Su
-#      cabecera no tiene firma, así que udisks solo da un dispositivo desconocido
-#      por cifrado (`IdType` `crypto_unknown`, y con él la interfaz `Encrypted`
-#      que `Unlock` exige) con `enable_tcrypt` activo (`src/udiskslinuxblock.c`,
-#      `bd_crypto_device_seems_encrypted()`; `encrypted_check()` en
-#      `src/udiskslinuxblockobject.c`), y eso es que exista `TCRYPT_CONF` al
-#      arrancar el servicio (`src/main.c`). Con él, polkit deja a quien tiene la
-#      sesión activa `loop-setup`, `encrypted-unlock` y `filesystem-mount` sin
-#      contraseña de administrador (`data/org.freedesktop.UDisks2.policy.in`),
-#      porque el loop lo ha puesto él (`udisks_daemon_util_setup_by_user()`).
-#      Abre siempre en modo VeraCrypt (`tcrypt_open_job_func()`, `veracrypt =
-#      TRUE`) y con PIM 0. **prdrive no crea ese fichero**: es tocar /etc como
-#      root y reiniciar un servicio del sistema, y eso lo decide quien administra
-#      el equipo. Se dice cómo (`ACTIVAR_UDISKS`).
-#   3. **cryptsetup, con sudo** (device-mapper es de root). VeraCrypt va por
-#      defecto —`--veracrypt` se ignora en las versiones nuevas y en las viejas
-#      hacía falta, así que se pasa siempre (`man/common_options.adoc`)— y con un
-#      fichero pone el loop él solo (`man/cryptsetup.8.adoc`, «Notes on loopback
-#      device use»). Monta en `PUNTO_CRYPTSETUP`.
-#
-# **La contraseña no pasa por aquí.** `udisksctl unlock` la lee de la terminal
-# que controla el proceso (`read_passphrase()` en `tools/udisksctl.c`, con
-# `ctermid()`), y cryptsetup de la terminal si stdin lo es y, si no, DE STDIN
-# (`tools_get_key()` en `src/utils_password.c`). Por eso sin VeraCrypt hace falta
-# una terminal, y por eso NO se abre con `pkexec`: sin terminal cryptsetup leería
-# la contraseña de lo que le llegara por stdin, y dársela así es justo lo que no
-# se hace. `pkexec` sí vale para cerrar: ahí no hay contraseña del contenedor.
-#
-# **Se cierra con lo mismo que abrió, y eso no se apunta: se deduce** (`estado`
-# en `_ESTADO_SH`). `losetup -j` da el loop que tiene el contenedor,
-# `/sys/block/loopN/holders/` el dm que cuelga de él y su nombre quién lo abrió:
-# `veracryptN` es VeraCrypt (`MountVolumeNative()` en
-# `Core/Unix/Linux/CoreLinux.cpp` pone el fichero en un loop y llama así al dm),
-# `prdrive-<id>` es cryptsetup desde aquí, y cualquier otro es udisks2
-# (`tcrypt-…`, `udisks_linux_block_make_dm_name()`). `/proc/mounts` dice dónde
-# está montado. Sin loop, VeraCrypt si está: sin el cifrado del kernel no usa
-# ninguno.
-
 # Lo que hace que udisks2 reconozca contenedores VeraCrypt, y cómo se activa: una
 # vez por equipo. penwatch repite la ruta (no importa nada del proyecto) y un
 # test comprueba que no se separan.
 TCRYPT_CONF = "/etc/udisks2/tcrypt.conf"
+"""Fichero que hace que udisks2 reconozca contenedores VeraCrypt.
+
+Se crea una vez por equipo (ver `ACTIVAR_UDISKS`). penwatch repite la ruta (no
+importa nada del proyecto) y un test comprueba que no se separan.
+"""
 ACTIVAR_UDISKS = f"sudo touch {TCRYPT_CONF} && sudo systemctl restart udisks2"
+"""Orden que activa `TCRYPT_CONF` y reinicia udisks2."""
 
-# cryptsetup: el nombre del mapeo y dónde se monta, fijos y distintos para cada
-# dispositivo (ocho cifras de su id), así que dos no se pisan y cerrar lo
-# reconoce por el nombre. En /mnt porque es donde el FHS pone lo que se monta a
-# mano, ningún escritorio se lo disputa (udisks2 usa /media/$USER y
-# /run/media/$USER) y el vigilante ya mira ahí (`penwatch.posix_roots()`). El
-# directorio vacío se queda al cerrar: quitarlo sería otra orden con sudo.
 PREFIJO_MAPEO = f"{v.ETIQUETA.lower()}-"
-PUNTO_CRYPTSETUP = "/mnt"
+"""Prefijo del nombre del mapeo de cryptsetup.
 
-# Solo para los tests: la raíz del sistema que miran los .sh (/etc, /sys, /proc,
-# /media, /mnt, /sbin). Vacía, que es lo normal, el de verdad.
+Que lleva ocho cifras del id del dispositivo.
+
+El nombre del mapeo y el punto de montaje son fijos y distintos para cada
+dispositivo, así que dos no se pisan y cerrar lo reconoce por el nombre.
+"""
+PUNTO_CRYPTSETUP = "/mnt"
+"""Carpeta donde monta cryptsetup.
+
+Es `/mnt` porque es donde el FHS pone lo que se monta a mano: ningún escritorio
+se lo disputa (udisks2 usa `/media/$USER` y `/run/media/$USER`) y el vigilante
+ya mira ahí (`penwatch.posix_roots()`). El directorio vacío se queda al cerrar:
+quitarlo sería otra orden con sudo.
+"""
+
 VAR_SISTEMA = "PRDRIVE_SISTEMA"
+"""Variable de entorno solo para los tests: la raíz del sistema que miran los `.sh`.
+
+Cubre `/etc`, `/sys`, `/proc`, `/media`, `/mnt` y `/sbin`. Vacía, que es lo
+normal, es el de verdad.
+"""
 
 
 def mapeo(device_id: str) -> str:
-    """El nombre del mapeo de cryptsetup, y de su punto de montaje."""
+    """Devuelve el nombre del mapeo de cryptsetup.
+
+    Que es también el de su punto de montaje.
+    """
     return PREFIJO_MAPEO + device_id[:8]
 
 
 def _cabecera_sh() -> str:
+    """Devuelve el arranque común de los `.sh`.
+
+    Ruta del contenedor, raíz del sistema y `PATH`.
+    """
     return (
         'dir="$(cd "$(dirname "$0")" && pwd)"\n'
         f'contenedor="$dir/{v.CONTENEDOR}"\n'
@@ -452,9 +497,6 @@ def _cabecera_sh() -> str:
     )
 
 
-# Lo que el sistema dice del contenedor. Nada se apunta en ningún sitio: el loop
-# que lo tiene, el dm que cuelga de ese loop, su nombre y dónde está montado.
-# `/proc/mounts` escapa los espacios como `\040`, y `printf %b` los devuelve.
 _ESTADO_SH = (
     "estado() {\n"
     '    loop=""; dm=""; nombre=""; montado=""\n'
@@ -475,14 +517,13 @@ _ESTADO_SH = (
     "    return 0\n"
     "}\n"
 )
+r"""Función `estado()` de los `.sh`: lo que el sistema dice del contenedor.
 
-# Dónde puede estar abierto: donde diga `estado` y, además, donde montan los
-# tres. VeraCrypt: `CoreUnix::GetDefaultMountPointPrefix()`
-# (`Core/Unix/CoreUnix.cpp`) elige `VERACRYPT_MOUNT_PREFIX`, o /media/veracrypt,
-# /run/media/veracrypt, /mnt/veracrypt o `<tmp>/veracrypt_mnt`, y le añade el
-# número de ranura. udisks2: /media/$USER/<etiqueta> (Debian, Ubuntu) o
-# /run/media/$USER/<etiqueta> (Fedora, Arch). cryptsetup: `PUNTO_CRYPTSETUP`.
-# Lo que decide es el id del fichero de control, no el nombre de la carpeta.
+Nada se apunta en ningún sitio: el loop que lo tiene, el dm que cuelga de ese
+loop, su nombre y dónde está montado. `/proc/mounts` escapa los espacios como
+`\040` y `printf %b` los devuelve.
+"""
+
 _BUSCAR_SH = (
     "buscar() {\n"
     "    estado\n"
@@ -507,11 +548,17 @@ _BUSCAR_SH = (
     "    return 1\n"
     "}\n"
 )
+"""Función `buscar()` de los `.sh`: dónde puede estar abierto el contenedor.
 
-# udisks2: 0 abierto, 1 no (la contraseña no era, o se ha cancelado), 2 udisks2
-# no lo reconoce y hay que probar otra vía. El loop que se pone y no se llega a
-# abrir se quita: si no, retiene el contenedor y la unidad no se puede quitar.
-# `unlock` lo mira udisks al aparecer el loop, así que se le deja un momento.
+Es donde diga `estado` y, además, donde montan los tres. VeraCrypt:
+`CoreUnix::GetDefaultMountPointPrefix()` (`Core/Unix/CoreUnix.cpp`) elige
+`VERACRYPT_MOUNT_PREFIX`, o `/media/veracrypt`, `/run/media/veracrypt`,
+`/mnt/veracrypt` o `<tmp>/veracrypt_mnt`, y le añade el número de ranura.
+udisks2: `/media/$USER/<etiqueta>` (Debian, Ubuntu) o
+`/run/media/$USER/<etiqueta>` (Fedora, Arch). cryptsetup: `PUNTO_CRYPTSETUP`.
+Lo que decide es el id del fichero de control, no el nombre de la carpeta.
+"""
+
 _ABRIR_UDISKS_SH = (
     "abrir_udisks() {\n"
     "    estado\n"
@@ -545,11 +592,15 @@ _ABRIR_UDISKS_SH = (
     "    return 0\n"
     "}\n"
 )
+"""Función `abrir_udisks()` de los `.sh`.
 
-# cryptsetup: 0 abierto, 1 no. `uid`/`gid` porque exFAT y NTFS no guardan dueño y
-# sin ellos todo sería de root; ext4 (un contenedor hecho en Linux) no los admite
-# y sus ficheros ya tienen dueño, así que se monta sin ellos. Si no se monta, el
-# mapeo no se queda abierto.
+Devuelve 0 si abre, 1 si no (la contraseña no era, o se ha cancelado) y 2 si
+udisks2 no lo reconoce y hay que probar otra vía. El loop que se pone y no se
+llega a abrir se quita: si no, retiene el contenedor y la unidad no se puede
+quitar. `unlock` lo mira udisks al aparecer el loop, así que se le deja un
+momento.
+"""
+
 _ABRIR_CRYPTSETUP_SH = (
     "abrir_cryptsetup() {\n"
     '    echo "Sin VeraCrypt: lo abro con cryptsetup. sudo te pedirá tu contraseña de"\n'
@@ -573,10 +624,20 @@ _ABRIR_CRYPTSETUP_SH = (
     "    return 1\n"
     "}\n"
 )
+"""Función `abrir_cryptsetup()` de los `.sh`: devuelve 0 si abre y 1 si no.
+
+Usa `uid`/`gid` porque exFAT y NTFS no guardan dueño y sin ellos todo sería de
+root; ext4 (un contenedor hecho en Linux) no los admite y sus ficheros ya
+tienen dueño, así que se monta sin ellos. Si no se monta, el mapeo no se queda
+abierto.
+"""
 
 
 def _sin_via_sh() -> str:
-    """El mensaje cuando el equipo no tiene con qué abrirlo: las tres salidas."""
+    """Devuelve la función `sin_via()` de los `.sh`.
+
+    El mensaje de las tres salidas cuando no hay con qué abrirlo.
+    """
     lineas = (
         "prdrive: no encuentro con qué abrir el contenedor. En Linux vale cualquiera de",
         "  estas tres cosas:",
@@ -599,10 +660,14 @@ _SIN_TERMINAL_SH = (
     f'    echo "    sh \\"$dir/{v.ABRIR_SH}\\"" >&2\n'
     "}\n"
 )
+"""Función `sin_terminal()` de los `.sh`: sin VeraCrypt hace falta una terminal."""
 
 
 def sh_abrir(device_id: str) -> str:
-    """`abrir-prdrive.sh`: abre el contenedor y lanza el `runsync.sh` de dentro."""
+    """Devuelve `abrir-prdrive.sh`.
+
+    Abre el contenedor y lanza el `runsync.sh` de dentro.
+    """
     return (
         "#!/bin/sh\n"
         f"# {v.ABRIR_SH} — Abre el contenedor cifrado de prdrive y lanza la ventana.\n"
@@ -679,7 +744,6 @@ def sh_abrir(device_id: str) -> str:
     )
 
 
-# Cerrar, por cada vía. `sigue_abierto` sale: lo que queda es no quitar la unidad.
 _CERRAR_SH = (
     "sigue_abierto() {\n"
     '    echo "prdrive: el contenedor sigue abierto. ¿Queda algún programa usando la" >&2\n'
@@ -699,7 +763,8 @@ _CERRAR_SH = (
     "    fi\n"
     "}\n"
     "\n"
-    # El orden inverso al de abrir: desmontar, cerrar el cifrado, soltar el loop.
+    # El orden inverso al de abrir: desmontar, cerrar el cifrado, soltar el
+    # loop.
     "cerrar_udisks() {\n"
     '    if [ -n "$montado" ] && ! udisksctl unmount -b "/dev/$dm"; then\n'
     "        sigue_abierto\n"
@@ -710,10 +775,10 @@ _CERRAR_SH = (
     '    udisksctl loop-delete -b "$loop"\n'
     "}\n"
     "\n"
-    # Una sola orden con privilegios, así que con pkexec sale una sola ventana. En
-    # una terminal, sudo; sin ella —el botón «Expulsar» de la ventana lo lanza
-    # suelto—, pkexec, que la pide con el diálogo del escritorio. El loop se
-    # suelta solo al cerrar: lo puso cryptsetup.
+    # Una sola orden con privilegios, así que con `pkexec` sale una sola
+    # ventana. En una terminal, `sudo`; sin ella (el botón «Expulsar» de la
+    # ventana lo lanza suelto), `pkexec`, que la pide con el diálogo del
+    # escritorio. El loop se suelta solo al cerrar: lo puso cryptsetup.
     "cerrar_cryptsetup() {\n"
     "    if [ -t 0 ]; then\n"
     "        como=sudo\n"
@@ -729,10 +794,17 @@ _CERRAR_SH = (
     '        sh "$montado" "$nombre" || sigue_abierto\n'
     "}\n"
 )
+"""Funciones de los `.sh` para cerrar, por cada vía.
+
+`sigue_abierto` sale: lo que queda es no quitar la unidad.
+"""
 
 
 def sh_expulsar() -> str:
-    """`expulsar-prdrive.sh`: cierra el contenedor, con lo mismo que lo abrió."""
+    """Devuelve `expulsar-prdrive.sh`.
+
+    Cierra el contenedor con lo mismo que lo abrió.
+    """
     return (
         "#!/bin/sh\n"
         f"# {v.EXPULSAR_SH} — Cierra el contenedor cifrado de prdrive.\n"
@@ -813,7 +885,10 @@ def sh_expulsar() -> str:
 
 
 def leeme() -> str:
-    """`LEEME-PRDRIVE.txt`: lo único que se puede leer sin abrir el contenedor."""
+    """Devuelve `LEEME-PRDRIVE.txt`.
+
+    Lo único que se puede leer sin abrir el contenedor.
+    """
     return (
         f"{v.ETIQUETA} — dispositivo de sincronización cifrado con VeraCrypt\n"
         "\n"
@@ -845,7 +920,7 @@ def leeme() -> str:
 
 
 def marca(device_id: str) -> str:
-    """El contenido de `.prdrive-vestibulo`."""
+    """Devuelve el contenido de `.prdrive-vestibulo`."""
     return (
         f"# {v.ETIQUETA} — entrada de un dispositivo prdrive cifrado con VeraCrypt. "
         "NO LA BORRES.\n"
@@ -858,11 +933,14 @@ def marca(device_id: str) -> str:
 
 
 def escribir(raiz_fisica: Path | str, device_id: str) -> list[Path]:
-    """Deja el vestíbulo en la raíz física. Devuelve lo escrito.
+    """Deja el vestíbulo en la raíz física y devuelve lo escrito.
 
-    Se sobrescribe lo que hubiera: es también la forma de ponerlo al día. Lanza
-    InstallError si no se puede, porque sin esto el dispositivo solo se abre a
-    mano."""
+    Sobrescribe lo que hubiera: es también la forma de ponerlo al día.
+
+    Raises:
+        InstallError: Si no hay id o no se puede escribir; sin esto el
+            dispositivo solo se abre a mano.
+    """
     if not device_id:
         raise InstallError("Sin el id del dispositivo no se puede escribir su "
                            "entrada: nadie sabría reconocerlo desde fuera.")
@@ -901,7 +979,10 @@ def escribir(raiz_fisica: Path | str, device_id: str) -> list[Path]:
 
 
 def comprobar(raiz_fisica: Path | str, device_id: str | None) -> list[Check]:
-    """La fila del último paso: ¿se podrá abrir este dispositivo desde fuera?"""
+    """Devuelve la fila del último paso.
+
+    ¿se podrá abrir este dispositivo desde fuera?
+    """
     raiz = Path(raiz_fisica)
     try:
         faltan = [n for n in (v.ABRIR_BAT, v.EXPULSAR_BAT, v.ABRIR_SH,
@@ -922,13 +1003,14 @@ def comprobar(raiz_fisica: Path | str, device_id: str | None) -> list[Check]:
 
 
 def destino(state) -> Path | None:
-    """Dónde va el vestíbulo de lo que el asistente está preparando, o None.
+    """Devuelve dónde va el vestíbulo de lo que el asistente está preparando, o `None`.
 
     Solo cuando el dispositivo vive dentro de un contenedor: `device_root` (lo
     montado) no es `device` (el volumen físico) y en el físico está el `.hc`.
     Se mira el disco y no `state.encryption` porque en el recorrido corto
-    —«Añadir plataformas…» sobre un dispositivo que ya existe— lo que cuenta es
-    lo que hay, no lo que se eligió en otra pasada."""
+    («Añadir plataformas…» sobre un dispositivo que ya existe) lo que cuenta es
+    lo que hay y no lo que se eligió en otra pasada.
+    """
     if state.device is None or state.device_root is None:
         return None
     fisica = Path(state.device)

@@ -1,35 +1,33 @@
 #!/usr/bin/env python3
-"""
-install/raiz_equipo.py — La raíz de ESTE equipo: una carpeta del ordenador que
-es un prdrive más.
+"""La raíz de ESTE equipo: una carpeta del ordenador que es un prdrive más.
 
-Fase 2 del diseño (`docs/superpowers/specs/2026-09-25-instalacion-en-el-equipo-
-design.md`, secciones 1 y 7): la raíz del equipo SIN cifrar. El motor no sabe que
-está en un USB —`model.DEVICE_ROOT` es el padre de `.prdrive/` y nada más—, así
-que una carpeta con `.prdrive/` dentro es un dispositivo más para `sync.py`, la
-ventana y la flota. Lo que cambia es poco y está aquí:
-
-  * **Dónde.** Una carpeta propia (`~/PRDRIVE`, por defecto: el modelo de
-    Dropbox, nada de fuera se toca) o la carpeta personal (`~`: se sincroniza
-    `~/Documentos/Obsidian` sin moverlo, a cambio de que el límite sea todo el
-    usuario). Se elige al instalar y no se cambia después: mover la raíz deja
-    cada línea base apuntando a una carpeta que ya no está.
-  * **Qué lleva.** `.prdrive/` con el código, rclone para ESTE equipo, la
-    conexión y la clave, y el fichero de control con `tipo=equipo`. Sin Python
-    propio ni lanzadores: la sincroniza y la abre el agente, con el suyo.
-  * **Qué no vale.** La pareja de la raíz entera, ni nada que salga de ella
-    (`model.problema_local_equipo`, que también para al parsear).
-  * **Qué se avisa.** La clave queda en claro en el disco del equipo (con el
-    estado de BitLocker del disco, como información), y una carpeta que ya
-    sincroniza otro programa —OneDrive, Dropbox— se pisaría los borrados con él.
-  * **Cifrada (fase 3).** Con la carpeta propia, la raíz puede vivir en un
-    contenedor VeraCrypt: `~/PRDRIVE-cifrado/PRDRIVE.hc`, con la marca del
-    vestíbulo al lado, montado en una letra fija (Windows) o en `~/PRDRIVE`
-    (Linux). Con el VeraCrypt instalado si lo hay; si no, con el VeraCrypt
-    oficial fijado sin instalar —el Portable en Windows, con un aviso de
-    administrador (UAC) cada vez que se abre o se cierra; el AppImage en
-    Linux—, que el agente se lleva a su carpeta. Lo abre y lo cierra el agente; el asistente lo crea y lo monta una
-    vez, con la contraseña que acaba de pedir, y lo deja abierto.
+Es la fase 2 del diseño
+(`docs/superpowers/specs/2026-09-25-instalacion-en-el-equipo-design.md`,
+secciones 1 y 7). El motor no sabe que está en un USB (`model.DEVICE_ROOT` es
+el padre de `.prdrive/` y nada más), así que una carpeta con `.prdrive/` dentro
+es un dispositivo más para `sync.py`, la ventana y la flota. Lo que cambia es
+poco y está aquí:
+- Dónde: una carpeta propia (`~/PRDRIVE` por defecto, el modelo de Dropbox:
+  nada de fuera se toca) o la carpeta personal (`~`: se sincroniza
+  `~/Documentos/Obsidian` sin moverlo, a cambio de que el límite sea todo el
+  usuario). Se elige al instalar y no se cambia después: mover la raíz deja
+  cada línea base apuntando a una carpeta que ya no está.
+- Qué lleva: `.prdrive/` con el código, rclone para ESTE equipo, la conexión y
+  la clave, y el fichero de control con `tipo=equipo`. Sin Python propio ni
+  lanzadores: la sincroniza y la abre el agente, con el suyo.
+- Qué no vale: la pareja de la raíz entera ni nada que salga de ella
+  (`model.problema_local_equipo`, que también para al parsear).
+- Qué se avisa: la clave queda en claro en el disco del equipo (con el estado
+  de BitLocker del disco, como información) y una carpeta que ya sincroniza
+  otro programa (OneDrive, Dropbox) se pisaría los borrados con él.
+- Cifrada (fase 3): con la carpeta propia, la raíz puede vivir en un contenedor
+  VeraCrypt, `~/PRDRIVE-cifrado/PRDRIVE.hc`, con la marca del vestíbulo al
+  lado, montado en una letra fija (Windows) o en `~/PRDRIVE` (Linux). Se usa el
+  VeraCrypt instalado si lo hay; si no, el oficial fijado sin instalar (el
+  Portable en Windows, con un aviso de administrador cada vez que se abre o se
+  cierra; el AppImage en Linux), que el agente se lleva a su carpeta. Lo abre y
+  lo cierra el agente; el asistente lo crea y lo monta una vez con la
+  contraseña que acaba de pedir y lo deja abierto.
 
 Sin Tk, como todo `install/`: lo dibuja `ui/tk_equipo.py`.
 """
@@ -48,53 +46,75 @@ from common import vestibulo as vest
 
 from . import InstallError, IS_WIN, crypto, deploy, device, pintar, platforms
 
-# Qué raíz se pone. «Ninguna» es la instalación «solo agente» de la fase 1.
 PROPIA, PERSONAL, NINGUNA = "propia", "personal", "ninguna"
+"""Forma de raíz: una carpeta propia, `~/PRDRIVE` por defecto.
+
+Las tres formas son `PROPIA`, `PERSONAL` (la carpeta personal) y `NINGUNA`, la
+instalación «solo agente» de la fase 1.
+"""
 FORMAS = (PROPIA, PERSONAL, NINGUNA)
 
 
 def carpeta_propia() -> Path:
+    """Devuelve la carpeta propia por defecto, `~/PRDRIVE`."""
     return Path.home() / APP_NAME.upper()
 
 
 def carpeta_personal() -> Path:
+    """Devuelve la carpeta personal del usuario."""
     return Path.home()
 
 
 def por_defecto(forma: str) -> Path | None:
+    """Devuelve la carpeta por defecto de esa forma de raíz, o `None` para `NINGUNA`."""
     return {PROPIA: carpeta_propia(), PERSONAL: carpeta_personal()}.get(forma)
 
 
-# ---------------------------------------------------------------------------
-# ¿Vale esta carpeta?
-# ---------------------------------------------------------------------------
-
-NUEVA = "nueva"             # no existe o está vacía
-YA_EQUIPO = "ya_equipo"     # ya es la raíz de un equipo: se reinstala con su id
-CON_COSAS = "con_cosas"     # tiene cosas; no se borra nada
+NUEVA = "nueva"
+"""Resultado de `examinar`: no existe o está vacía."""
+YA_EQUIPO = "ya_equipo"
+"""Resultado de `examinar`: ya es la raíz de un equipo; se reinstala con su id."""
+CON_COSAS = "con_cosas"
+"""Resultado de `examinar`: tiene cosas; no se borra nada."""
 NO_VALE = "no_vale"
+"""Resultado de `examinar`: no puede ser la raíz."""
 
 
 @dataclass(frozen=True)
 class Examen:
+    """Qué hay en una carpeta y si puede ser la raíz de este equipo.
+
+    Args:
+        estado: `NUEVA`, `YA_EQUIPO`, `CON_COSAS` o `NO_VALE`.
+        texto: Lo que se le dice al usuario.
+        aviso: Si se dice en ámbar pero se puede seguir.
+    """
     estado: str
     texto: str
-    aviso: bool = False             # se dice en ámbar, pero se puede seguir
+    aviso: bool = False
 
     @property
     def vale(self) -> bool:
+        """Indica si la carpeta puede ser la raíz."""
         return self.estado != NO_VALE
 
 
 def _contiene(a: str, b: str) -> bool:
+    """Indica si `a` es `b` o está dentro.
+
+    Sin distinguir mayúsculas donde el sistema no las distingue.
+    """
     a, b = os.path.normcase(a), os.path.normcase(b)
     return a == b or a.startswith(b.rstrip("\\/") + os.sep)
 
 
 def _real(ruta: Path | str) -> str:
-    """La ruta con los enlaces resueltos: symlinks y, en Windows, junctions y
-    demás puntos de reanálisis (`os.path.realpath` los sigue desde 3.8). Lo que
-    todavía no existe se deja como está."""
+    """Devuelve la ruta con los enlaces resueltos.
+
+    Cubre symlinks y, en Windows, junctions y demás puntos de reanálisis
+    (`os.path.realpath` los sigue desde 3.8). Lo que todavía no existe se deja
+    como está.
+    """
     try:
         return os.path.realpath(str(ruta))
     except (OSError, ValueError):
@@ -102,18 +122,19 @@ def _real(ruta: Path | str) -> str:
 
 
 def _dentro(ruta: Path | str, carpeta: Path | str) -> bool:
-    """¿`ruta` es `carpeta` o está dentro? Se mira dos veces, con las rutas
-    como se escriben y con los enlaces resueltos, y basta con que una lo diga:
-    una raíz elegida por un enlace que lleva a la carpeta del agente se cruza
-    con ella aunque el texto no lo diga, y el programa, la configuración y la
-    clave acabarían escritos allí. Sin distinguir mayúsculas donde el sistema
-    no las distingue."""
+    """Indica si `ruta` es `carpeta` o está dentro.
+
+    Se mira dos veces, con las rutas como se escriben y con los enlaces
+    resueltos, y basta con que una lo diga: una raíz elegida por un enlace que
+    lleva a la carpeta del agente se cruza con ella aunque el texto no lo diga,
+    y el programa, la configuración y la clave acabarían escritos allí.
+    """
     return (_contiene(os.path.abspath(str(ruta)), os.path.abspath(str(carpeta)))
             or _contiene(_real(ruta), _real(carpeta)))
 
 
 def examinar(ruta: Path | str, forma: str = PROPIA) -> Examen:
-    """Qué hay en esa carpeta y si puede ser la raíz de este equipo."""
+    """Devuelve qué hay en esa carpeta y si puede ser la raíz de este equipo."""
     texto = str(ruta).strip()
     if not texto:
         return Examen(NO_VALE, "Escribe la carpeta.")
@@ -123,10 +144,11 @@ def examinar(ruta: Path | str, forma: str = PROPIA) -> Examen:
     personal = forma == PERSONAL or _dentro(raiz, carpeta_personal()) \
         and _dentro(carpeta_personal(), raiz)
     if _dentro(raiz, equipo.DIR) or (_dentro(equipo.DIR, raiz) and not personal):
-        # Lo segundo es el caso de elegir `~/.local` o `%LOCALAPPDATA%`: la raíz
-        # contendría al agente, que no vive dentro de lo que atiende. La carpeta
-        # personal lo contiene siempre, en una carpeta oculta que ninguna pareja
-        # puede nombrar entera (`..` y `.` no valen) salvo a propósito.
+        # Lo segundo es el caso de elegir `~/.local` o `%LOCALAPPDATA%`: la
+        # raíz contendría al agente, que no vive dentro de lo que atiende. La
+        # carpeta personal lo contiene siempre, en una carpeta oculta que
+        # ninguna pareja puede nombrar entera (`..` y `.` no valen) salvo a
+        # propósito.
         return Examen(NO_VALE, f"Esa carpeta se cruza con la del agente ({equipo.DIR}). "
                                f"Elige otra.")
     try:
@@ -154,8 +176,8 @@ def examinar(ruta: Path | str, forma: str = PROPIA) -> Examen:
             f"programas sincronizando lo mismo se pisan los borrados: mejor una "
             f"carpeta fuera."), aviso=True)
     # Lo que queda es que la raíz CONTENGA lo de otro cliente. La carpeta
-    # personal contiene a OneDrive en casi cualquier Windows 11, y ahí lo que se
-    # pisaría es solo una pareja que caiga dentro, que ya avisa «Parejas»
+    # personal contiene a OneDrive en casi cualquier Windows 11, y ahí solo se
+    # pisaría una pareja que caiga dentro, que ya avisa «Parejas»
     # (`revisar_local`): se dice sin alarmar y sin tapar lo de la personal.
     cliente = otro_cliente(raiz)
     if personal:
@@ -178,19 +200,20 @@ def examinar(ruta: Path | str, forma: str = PROPIA) -> Examen:
     return Examen(NUEVA, f"Se creará {raiz} con el programa dentro, en .prdrive/.")
 
 
-# ---------------------------------------------------------------------------
-# Otros clientes de sincronización
-# ---------------------------------------------------------------------------
-
-# Las variables que el cliente de OneDrive deja en el entorno del usuario, con la
-# carpeta de cada cuenta. Se saben sin adivinar, que es lo que pide el diseño.
 VARIABLES_ONEDRIVE = ("OneDrive", "OneDriveConsumer", "OneDriveCommercial")
+"""Variables de entorno con la carpeta de cada cuenta de OneDrive.
+
+Las deja el cliente de OneDrive en el entorno del usuario: se saben sin
+adivinar, que es lo que pide el diseño.
+"""
 
 
 def _info_dropbox() -> list[Path]:
-    """Dónde deja Dropbox su `info.json`, con la ruta de cada cuenta. Según su
-    ayuda («Find the Dropbox folder path programmatically»): `%APPDATA%` o
-    `%LOCALAPPDATA%` en Windows, `~/.dropbox/` en los demás."""
+    """Devuelve dónde deja Dropbox su `info.json`, con la ruta de cada cuenta.
+
+    Según su ayuda («Find the Dropbox folder path programmatically»):
+    `%APPDATA%` o `%LOCALAPPDATA%` en Windows, `~/.dropbox/` en los demás.
+    """
     if IS_WIN:
         return [Path(os.environ[v]) / "Dropbox" / "info.json"
                 for v in ("APPDATA", "LOCALAPPDATA") if os.environ.get(v)]
@@ -198,9 +221,10 @@ def _info_dropbox() -> list[Path]:
 
 
 def carpetas_sincronizadas() -> list[tuple[str, Path]]:
-    """(programa, carpeta) de lo que ya sincroniza otro cliente en este equipo.
+    """Devuelve `(programa, carpeta)` de lo que sincroniza otro cliente.
 
-    Punto de indirección: los tests ponen sus propias carpetas."""
+    Es un punto de indirección: los tests ponen sus propias carpetas.
+    """
     salida: list[tuple[str, Path]] = []
     for var in VARIABLES_ONEDRIVE:
         valor = os.environ.get(var)
@@ -229,9 +253,14 @@ def carpetas_sincronizadas() -> list[tuple[str, Path]]:
 
 
 def otro_cliente(ruta: Path | str) -> str | None:
-    """El programa que ya sincroniza esa carpeta, la contenga o esté dentro, o
-    None. En los dos sentidos: una pareja `Documentos` con OneDrive en
-    `Documentos/OneDrive` también pisaría lo suyo."""
+    """Devuelve el programa que ya sincroniza esa carpeta, la contenga o esté dentro.
+
+    Va en los dos sentidos: una pareja `Documentos` con OneDrive en
+    `Documentos/OneDrive` también pisaría lo suyo.
+
+    Returns:
+        `programa (carpeta)`, o `None`.
+    """
     for nombre, carpeta in carpetas_sincronizadas():
         if _dentro(ruta, carpeta) or _dentro(carpeta, ruta):
             return f"{nombre} ({carpeta})"
@@ -239,42 +268,50 @@ def otro_cliente(ruta: Path | str) -> str | None:
 
 
 def _cliente_que_la_contiene(ruta: Path | str) -> str | None:
-    """Como `otro_cliente()`, pero solo cuando `ruta` está DENTRO de lo que
-    sincroniza otro programa (o es eso mismo), no cuando lo contiene."""
+    """Devuelve lo mismo que `otro_cliente()`.
+
+    Pero solo si `ruta` está DENTRO de lo que sincroniza otro programa (o es
+    eso mismo).
+    """
     for nombre, carpeta in carpetas_sincronizadas():
         if _dentro(ruta, carpeta):
             return f"{nombre} ({carpeta})"
     return None
 
 
-# ---------------------------------------------------------------------------
-# El `local` de cada pareja, visto desde esta raíz
-# ---------------------------------------------------------------------------
-
 @dataclass(frozen=True)
 class Local:
-    local: str                      # normalizado, como lo escribirá el config
-    ruta: Path | None               # dónde cae de verdad
-    error: str | None = None        # no vale: no se puede guardar así
+    """El `local` de una pareja visto desde esta raíz.
+
+    Args:
+        local: Normalizado, como lo escribirá el config.
+        ruta: Dónde cae de verdad, o `None` si no vale.
+        error: Por qué no vale, o `None`.
+        avisos: Cosas a decir aunque valga.
+    """
+    local: str
+    ruta: Path | None
+    error: str | None = None
     avisos: tuple[str, ...] = ()
 
 
 def revisar_local(raiz: Path | str, local: str) -> Local:
-    """Dónde cae el `local` de una pareja en esta raíz, y qué hay que decir.
+    """Devuelve dónde cae el `local` de una pareja en esta raíz y qué hay que decir.
 
     Lo que no vale lo decide `model.problema_local_equipo()`, el mismo que para
-    al parsear. Lo que se avisa: otro programa sincronizando lo mismo, y una
+    al parsear. Lo que se avisa: otro programa sincronizando lo mismo y una
     carpeta que ya existe con cosas (el `--resync` las junta con lo del remoto,
-    que es lo que se quiere si ya estaban sincronizadas por otro camino)."""
+    que es lo que se quiere si ya estaban sincronizadas por otro camino).
+    """
     normal = str(local).strip().replace("\\", "/").strip("/")
     problema = model.problema_local_equipo(normal or ".")
     if problema:
         return Local(normal, None, problema)
     ruta = Path(raiz) / normal
-    # `problema_local_equipo()` mira el texto; un enlace dentro de la raíz puede
-    # llevar la pareja a otra parte, y el asistente crearía allí su carpeta.
-    # Fuera de la raíz no vale (en la personal, «la raíz» es todo el usuario),
-    # y en la carpeta del agente, nunca.
+    # `problema_local_equipo()` mira el texto; un enlace dentro de la raíz
+    # puede llevar la pareja a otra parte y el asistente crearía allí su
+    # carpeta. Fuera de la raíz no vale (en la personal, «la raíz» es todo el
+    # usuario) y en la carpeta del agente, nunca.
     real = _real(ruta)
     if _contiene(real, _real(equipo.DIR)):
         return Local(normal, None, f"por un enlace, cae en la carpeta del agente "
@@ -294,19 +331,20 @@ def revisar_local(raiz: Path | str, local: str) -> Local:
     return Local(normal, ruta, None, tuple(avisos))
 
 
-# ---------------------------------------------------------------------------
-# Lo que se avisa antes de instalar
-# ---------------------------------------------------------------------------
-
 AVISO_CLAVE = ("Sin cifrar, la clave del remoto queda en claro en el disco de este "
                "equipo, en .prdrive/keys/: la lee cualquier programa de tu sesión, "
                "y quien se lleve el disco. Es lo mismo que en una unidad sin cifrar.")
+"""Aviso: sin cifrar, la clave del remoto queda en claro en el disco."""
 
 
 def cifrado_del_disco(raiz: Path | str) -> str:
-    """Una frase sobre el cifrado del disco donde irá la raíz, o '' si no hay
-    nada que decir. Solo en Windows: BitLocker leído como en `install/crypto.py`
-    (solo `On` cuenta como protegido). Es información, no una exigencia."""
+    """Devuelve una frase sobre el cifrado del disco donde irá la raíz.
+
+    O `''` si no hay nada que decir.
+
+    Solo en Windows: BitLocker leído como en `install/crypto.py` (solo `On`
+    cuenta como protegido). Es información, no una exigencia.
+    """
     if not IS_WIN:
         return ""
     letra = Path(os.path.abspath(str(raiz))).drive[:1]
@@ -321,13 +359,14 @@ def cifrado_del_disco(raiz: Path | str) -> str:
     return f"El disco {letra}: no tiene BitLocker activado ({estado.resumen})."
 
 
-# ---------------------------------------------------------------------------
-# Instalar
-# ---------------------------------------------------------------------------
-
 def plan_rclone() -> platforms.Plan:
-    """Solo rclone, y solo para este equipo: la raíz no sale de aquí, y el
-    Python es el del agente."""
+    """Devuelve el plan de instalación: solo rclone y solo para este equipo.
+
+    La raíz no sale de aquí y el Python es el del agente.
+
+    Raises:
+        InstallError: Si este equipo no es Windows ni Linux.
+    """
     plat = platforms.host()
     if plat is None:
         raise InstallError("La raíz del equipo es para Windows y Linux, y este equipo "
@@ -337,17 +376,27 @@ def plan_rclone() -> platforms.Plan:
 
 def instalar(raiz: Path | str, perfil, progreso=None,
              fisica: Path | str | None = None) -> tuple[list[Path], str]:
-    """Deja el programa en la raíz del equipo. Devuelve (lo escrito, el id).
+    """Deja el programa en la raíz del equipo.
 
-    Lo mismo que el paso «Instalación» de una unidad, menos lo que es de viajar:
-    rclone solo de este equipo, sin Python ni lanzadores ni guía. Lo de fuera
-    (rclone) se consigue ANTES de escribir nada, como en las unidades (#49). Una
-    raíz que ya era del equipo conserva su id: el agente la tiene en su lista por
-    él.
+    Es lo mismo que el paso «Instalación» de una unidad, menos lo que es de
+    viajar: rclone solo de este equipo, sin Python ni lanzadores ni guía. Lo de
+    fuera (rclone) se consigue ANTES de escribir nada, como en las unidades.
+    Una raíz que ya era del equipo conserva su id: el agente la tiene en su
+    lista por él.
 
-    Con `fisica` (la raíz va cifrada y `raiz` es el volumen montado), al final
-    la marca fuera del contenedor con el mismo id: es lo que une las dos
-    mitades, como en una unidad cifrada."""
+    Args:
+        perfil: La conexión.
+        progreso: Recibe los mensajes de avance.
+        fisica: Si la raíz va cifrada (`raiz` es el volumen montado), dónde
+            está el contenedor: al final se deja ahí la marca con el mismo id,
+            que une las dos mitades como en una unidad cifrada.
+
+    Returns:
+        `(lo escrito, el id)`.
+
+    Raises:
+        InstallError: Si la carpeta no vale o no se puede escribir.
+    """
     raiz = Path(raiz).expanduser()
     examen = examinar(raiz)
     if not examen.vale:
@@ -371,13 +420,17 @@ def instalar(raiz: Path | str, perfil, progreso=None,
 
 
 def nombre(raiz: Path | str) -> str:
-    """Cómo se llama en la flota: el que ya tenga, o el del equipo."""
+    """Devuelve cómo se llama en la flota: el que ya tenga, o el del equipo."""
     return fleet.nombre(deploy.app_dir(raiz) / "state")
 
 
 def python_consola(python: Path | str) -> list[str]:
-    """El Python del agente con consola, para lo que se lee en una ventana de
-    salida (la inicialización). En Windows el del agente es `pythonw.exe`."""
+    """Devuelve el Python del agente con consola.
+
+    Para lo que se lee en una ventana de salida.
+
+    Es lo que usa la inicialización; en Windows el del agente es `pythonw.exe`.
+    """
     ruta = Path(python)
     if IS_WIN and ruta.name.lower() == "pythonw.exe":
         consola = ruta.with_name("python.exe")
@@ -389,10 +442,15 @@ def python_consola(python: Path | str) -> list[str]:
 def verificar(raiz: Path | str, esperadas: list[str] | None = None,
               key_name: str | None = None,
               contenedor: Path | str | None = None) -> list[device.Check]:
-    """Lo que tiene que estar en la raíz para que el agente la sincronice. Es
-    `device.verify_device()`, que ya sabe que una raíz del equipo no lleva
-    lanzadores ni Python propio. Cifrada, además, su contenedor y la marca de
-    fuera con el mismo id."""
+    """Devuelve lo que tiene que estar en la raíz para que el agente la sincronice.
+
+    Es `device.verify_device()`, que ya sabe que una raíz del equipo no lleva
+    lanzadores ni Python propio. Si va cifrada añade su contenedor y la marca
+    de fuera con el mismo id.
+
+    Args:
+        contenedor: El `.hc`, si va cifrada.
+    """
     checks = device.verify_device(Path(raiz), esperadas, key_name)
     if contenedor is None:
         return checks
@@ -410,17 +468,18 @@ def verificar(raiz: Path | str, esperadas: list[str] | None = None,
     return checks
 
 
-# ---------------------------------------------------------------------------
-# Cifrada: la raíz dentro de un contenedor VeraCrypt (fase 3)
-# ---------------------------------------------------------------------------
-
 SIN_CIFRAR, VERACRYPT = "ninguno", "veracrypt"
+"""Valores de `cifrado` de una raíz: `SIN_CIFRAR` y `VERACRYPT` (en un contenedor)."""
 LETRA_PREFERIDA = "P"
-# El sistema de ficheros de DENTRO. En Windows, NTFS: el contenedor no sale del
-# equipo, y NTFS no tiene el tope de 4 GiB por fichero ni pierde permisos. En
-# Linux, exFAT, como en las unidades: VeraCrypt lo monta con el uid del usuario
-# y se puede escribir sin más, mientras que un ext4 recién hecho es de root.
+"""Letra que se prefiere para montar la raíz cifrada en Windows."""
 SISTEMA_DENTRO = "NTFS" if IS_WIN else "exFAT"
+"""Sistema de ficheros de DENTRO del contenedor: NTFS en Windows, exFAT en Linux.
+
+En Windows el contenedor no sale del equipo y NTFS no tiene el tope de 4 GiB
+por fichero ni pierde permisos. En Linux es exFAT, como en las unidades:
+VeraCrypt lo monta con el uid del usuario y se puede escribir sin más, mientras
+que un ext4 recién hecho es de root.
+"""
 
 COMO_INSTALAR = (
     f"No hay VeraCrypt en este equipo. Con «Descargar VeraCrypt Portable» se usa "
@@ -433,6 +492,7 @@ COMO_INSTALAR = (
     f"(≈13 MB) y se comprueba contra el SHA-256 que fija este programa antes de "
     f"usarlo. O instala VeraCrypt desde veracrypt.jp/en/Downloads.html y vuelve a "
     f"este paso.")
+"""Qué decir cuando no hay VeraCrypt en este equipo."""
 
 AVISO_PORTATIL = (
     f"Sin VeraCrypt instalado, la raíz se crea y se abre con el VeraCrypt Portable "
@@ -446,14 +506,19 @@ AVISO_PORTATIL = (
     f"de VeraCrypt {pins.VERACRYPT_VERSION}, que el agente se lleva a su carpeta. "
     f"No instala nada. Como el instalado, pide la contraseña de administrador "
     f"para montar. Si más adelante instalas VeraCrypt, el agente usará ese.")
+"""Qué decir cuando se usa el VeraCrypt sin instalar."""
 
 
 def veracrypt_instalado() -> dict | None:
-    """El VeraCrypt INSTALADO en este equipo, montar y formatear, o None.
+    """Devuelve el VeraCrypt INSTALADO en este equipo, montar y formatear.
 
     Es el mismo que usará el agente para abrir y cerrar si lo hay
-    (`penwatch.installed_veracrypt()`), y va antes que el portable. Punto de
-    indirección para los tests."""
+    (`penwatch.installed_veracrypt()`), y va antes que el portable. Es un punto
+    de indirección para los tests.
+
+    Returns:
+        `{'mount': ..., 'format': ...}`, o `None`.
+    """
     import penwatch
     exe = penwatch.installed_veracrypt()
     if exe is None:
@@ -465,12 +530,19 @@ def veracrypt_instalado() -> dict | None:
 
 
 def veracrypt_portatil() -> dict | None:
-    """El VeraCrypt sin instalar fijado —el Portable en Windows, el AppImage en
-    Linux—, si ya está en la caché del instalador y sigue siendo el comprobado;
-    None si no (bajarlo lo pide la pantalla con su botón). Es el mismo que el
-    agente copiará a su carpeta (`install/agente.poner_veracrypt()`), así que lo
-    que crea el asistente lo podrá abrir el agente. Punto de indirección para
-    los tests."""
+    """Devuelve el VeraCrypt sin instalar fijado.
+
+    Si ya está en la caché y es el comprobado.
+
+    Es el Portable en Windows y el AppImage en Linux. Es el mismo que el agente
+    copiará a su carpeta (`install/agente.poner_veracrypt()`), así que lo que
+    crea el asistente lo podrá abrir el agente. Es un punto de indirección para
+    los tests.
+
+    Returns:
+        El VeraCrypt, o `None` si no (bajarlo lo pide la pantalla con su
+        botón).
+    """
     from . import veracrypt_bin
     cache = veracrypt_bin.en_cache_para_este_equipo()
     if cache is None:
@@ -482,25 +554,36 @@ def veracrypt_portatil() -> dict | None:
 
 
 def veracrypt_para_raiz() -> dict | None:
-    """Con qué VeraCrypt se crea la raíz cifrada: el instalado, y si no, el
-    portable de la caché. None si no hay ninguno."""
+    """Devuelve con qué VeraCrypt se crea la raíz cifrada.
+
+    El instalado y, si no, el portable de la caché.
+
+    Returns:
+        El VeraCrypt, o `None` si no hay ninguno.
+    """
     return veracrypt_instalado() or veracrypt_portatil()
 
 
 def portatil(vc: dict | None) -> bool:
-    """¿Es el VeraCrypt sin instalar (el Portable, que en Windows pide
-    administrador en cada apertura y cierre; o el AppImage de Linux)?"""
+    """Indica si es el VeraCrypt sin instalar.
+
+    Son el Portable (que en Windows pide administrador en cada apertura y
+    cierre) y el AppImage de Linux.
+    """
     return vc is not None and (crypto.portatil(vc) or crypto.appimage(vc))
 
 
 def fisica_por_defecto(carpeta: Path | str) -> Path:
-    """Dónde va el contenedor: al lado de la carpeta, con «-cifrado» detrás."""
+    """Devuelve dónde va el contenedor: al lado de la carpeta, con «-cifrado» detrás."""
     carpeta = Path(str(carpeta).strip() or carpeta_propia()).expanduser()
     return carpeta.with_name(carpeta.name + "-cifrado")
 
 
 def letras_libres(preferida: str = LETRA_PREFERIDA) -> list[str]:
-    """Las letras que se pueden elegir, la preferida delante. Solo Windows."""
+    """Devuelve las letras que se pueden elegir, la preferida delante.
+
+    Solo en Windows.
+    """
     if not IS_WIN:
         return []
     import ctypes
@@ -511,7 +594,10 @@ def letras_libres(preferida: str = LETRA_PREFERIDA) -> list[str]:
 
 
 def punto_de_montaje(carpeta: Path | str, letra: str = "") -> str:
-    """Dónde queda la raíz abierta: la letra en Windows, la carpeta en Linux."""
+    """Devuelve dónde queda la raíz abierta.
+
+    La letra en Windows, la carpeta en Linux.
+    """
     if IS_WIN:
         return f"{letra.rstrip(':').upper()}:\\"
     return str(Path(str(carpeta).strip()).expanduser())
@@ -519,11 +605,13 @@ def punto_de_montaje(carpeta: Path | str, letra: str = "") -> str:
 
 def examinar_contenedor(fisica: Path | str, carpeta: Path | str,
                         forma: str = PROPIA) -> Examen:
-    """¿Puede ir ahí el contenedor, y montarse donde toca?
+    """Dice si el contenedor puede ir ahí y montarse donde toca.
 
-    NUEVA: se crea. YA_EQUIPO: ya hay un `PRDRIVE.hc`, y se abre con su
-    contraseña (reinstalar conserva su id). En Linux el punto de montaje es la
-    carpeta, y tiene que estar vacía: lo que hubiera quedaría tapado al montar."""
+    `NUEVA` es que se crea; `YA_EQUIPO`, que ya hay un `PRDRIVE.hc` y se abre
+    con su contraseña (reinstalar conserva su id). En Linux el punto de montaje
+    es la carpeta y tiene que estar vacía: lo que hubiera quedaría tapado al
+    montar.
+    """
     if forma == PERSONAL:
         return Examen(NO_VALE, (
             "Con la carpeta personal no hay contenedor: la raíz es todo tu usuario, "
@@ -563,21 +651,30 @@ def examinar_contenedor(fisica: Path | str, carpeta: Path | str,
 
 
 def restos(carpeta: Path | str) -> list[str]:
-    """La raíz SIN cifrar que haya en la carpeta: pasar a cifrado la deja donde
-    estaba, con la clave en claro, y nada la borra (`crypto.restos_en_claro`)."""
+    """Devuelve la raíz SIN cifrar que haya en la carpeta.
+
+    Pasar a cifrado la deja donde estaba, con la clave en claro, y nada la
+    borra (`crypto.restos_en_claro`).
+    """
     return crypto.restos_en_claro(Path(str(carpeta).strip()).expanduser())
 
 
 def abrir_o_crear(vc: dict, fisica: Path | str, carpeta: Path | str, letra: str,
                   password: str, tamano: str) -> Path:
-    """Crea el contenedor si no está, y lo monta donde se quedará. Devuelve la
-    raíz montada. Lanza InstallError.
+    """Crea el contenedor si no está y lo monta donde se quedará.
 
-    Disperso (`/dynamic`) solo si el disco lo admite, preguntado antes
-    (`crypto.soporta_dispersos()`): en un NTFS lo normal es que sí, y entonces el
-    tamaño casi no cuesta. En Linux no hay `/dynamic`: se escribe entero. El
-    montaje lleva `/m rm` (`crypto.mount_command`) y la letra o la carpeta
-    fija, que es donde lo buscará el agente."""
+    Es disperso (`/dynamic`) solo si el disco lo admite, preguntado antes
+    (`crypto.soporta_dispersos()`): en un NTFS lo normal es que sí y entonces
+    el tamaño casi no cuesta. En Linux no hay `/dynamic` y se escribe entero.
+    El montaje lleva `/m rm` (`crypto.mount_command`) y la letra o la carpeta
+    fija, que es donde lo buscará el agente.
+
+    Returns:
+        La raíz montada.
+
+    Raises:
+        InstallError: Si no se puede crear o montar.
+    """
     fisica = Path(str(fisica).strip()).expanduser()
     hc = fisica / vest.CONTENEDOR
     try:
@@ -597,9 +694,14 @@ def abrir_o_crear(vc: dict, fisica: Path | str, carpeta: Path | str, letra: str,
 
 
 def marcar(fisica: Path | str, ident: str) -> Path:
-    """La marca de fuera, `.prdrive-vestibulo`, con el id de la raíz. Solo la
-    marca: sin «Abrir/Expulsar PRDRIVE» ni guía, porque la raíz del equipo la
-    abre y la cierra el agente."""
+    """Escribe la marca de fuera, `.prdrive-vestibulo`, con el id de la raíz.
+
+    Solo la marca: sin «Abrir/Expulsar PRDRIVE» ni guía, porque la raíz del
+    equipo la abre y la cierra el agente.
+
+    Raises:
+        InstallError: Si no se puede escribir.
+    """
     from . import vestibulo as escritor
     ruta = Path(fisica) / vest.MARCA
     deploy.unhide(ruta)
@@ -611,18 +713,17 @@ def marcar(fisica: Path | str, ident: str) -> Path:
     return ruta
 
 
-# ---------------------------------------------------------------------------
-# Las unidades de la flota, para el paso «Unidades»
-# ---------------------------------------------------------------------------
-
 def de_la_flota(rclone, endpoint_catalogo: str, timeout: float = 45.0
                 ) -> list[fleet.Dispositivo]:
-    """Las unidades apuntadas en el registro de la flota, sin las raíces de
-    otros equipos (no se enchufan). Mejor esfuerzo: sin red, ninguna.
+    """Devuelve las unidades apuntadas en el registro de la flota.
 
-    Una sola llamada: la carpeta `devices/` se copia a un temporal y se lee aquí.
-    Un `cat` de la carpeta las concatenaría (#48), y uno por nota serían N
-    viajes al remoto con alguien delante de la barra."""
+    Sin las raíces de otros equipos.
+
+    Las raíces no se enchufan. Es a mejor esfuerzo: sin red, ninguna. Se hace
+    en una sola llamada: la carpeta `devices/` se copia a un temporal y se lee
+    aquí, porque un `cat` de la carpeta las concatenaría y uno por nota serían
+    N viajes al remoto con alguien delante de la barra.
+    """
     tmp = Path(tempfile.mkdtemp(prefix="prdrive-flota-"))
     try:
         res = rclone.run("copy", fleet.carpeta_de(endpoint_catalogo), str(tmp),

@@ -1,30 +1,26 @@
 #!/usr/bin/env python3
-"""
-device.py — Qué unidades hay, cuál va a ser el dispositivo, y si al final quedó bien.
+"""Qué unidades hay, cuál va a ser el dispositivo y si al final quedó bien.
 
-Tres cosas, y las tres son de seguridad más que de comodidad:
+Tres cosas, las tres de seguridad más que de comodidad:
+- `list_volumes()` NO filtra por «extraíble». Muchos pendrives (y casi todos
+  los SSD por USB) se declaran `Fixed`, así que filtrar por ahí hace que el
+  dispositivo del usuario no aparezca. Se listan todos y se marca cuáles lo
+  parecen; decide el usuario con los datos delante. Solo se descartan las
+  unidades de red (`TIPOS_OCULTOS`): ninguna puede ser un dispositivo y
+  `GetLogicalDrives` sí las devuelve.
+- `install_target()` mira qué hay en el destino ANTES de escribir. Instalar no
+  borra nada (es una copia local), pero seguir adelante sobre la carpeta
+  equivocada deja el programa desperdigado entre los datos de otro, así que se
+  pide confirmación antes de tocarla.
+- `ensure_control_file()` pone el `id=` del fichero PRDRIVE, que distingue este
+  dispositivo de cualquier otro: sin id propio, un vigilante configurado para
+  uno concreto se confundiría con el de al lado.
 
-  * `list_volumes()` NO filtra por «extraíble». Muchos pendrives —y casi todos
-    los SSD por USB— se declaran `Fixed`, así que filtrar por ahí es justo lo que
-    hace que el dispositivo del usuario no aparezca en la lista. Se listan todos y se
-    marca cuáles lo parecen; quien decide es el usuario, con los datos delante.
-    Lo único que se descarta son las unidades de red (`TIPOS_OCULTOS`): ninguna
-    puede ser un dispositivo, y `GetLogicalDrives` sí las devuelve.
-
-  * `install_target()` mira qué hay en el destino ANTES de escribir. Instalar ya
-    no borra nada —era un espejo del remoto y ahora es una copia local—, pero
-    seguir adelante sobre la carpeta equivocada deja el programa desperdigado
-    entre los datos de otro, así que se pide confirmación antes de tocarla.
-
-  * `ensure_control_file()` pone el `id=` del fichero PRDRIVE. Es lo que
-    distingue este dispositivo de cualquier otro: sin id propio, un vigilante
-    configurado para uno concreto se confundiría con el de al lado.
-
-`CONTROL_FILE` y `CONTROL_TEMPLATE` están copiados de `penwatch.py` a propósito y
-no importados: penwatch se copia al equipo del usuario y tiene que funcionar con
-el dispositivo desconectado, así que no puede depender de este paquete, y este
-paquete acaba dentro de un .exe donde importar un script hermano es un lío. Hay
-un test que comprueba que las dos copias no se separan.
+`CONTROL_FILE` y `CONTROL_TEMPLATE` están copiados de `penwatch.py` a propósito
+y no importados: penwatch se copia al equipo del usuario y tiene que funcionar
+con el dispositivo desconectado, así que no puede depender de este paquete, y
+este paquete acaba dentro de un `.exe` donde importar un script hermano es un
+lío. Un test comprueba que las dos copias no se separan.
 """
 
 from __future__ import annotations
@@ -42,73 +38,99 @@ from . import DEVICE_LABEL, IS_WIN, InstallError
 from .rclone_bin import bin_subdir, exe_name
 
 CONTAINER_SUFFIX = ".hc"
+"""Extensión del contenedor VeraCrypt."""
 APP_SUBDIR = ".prdrive"
+"""Carpeta del programa en la raíz del dispositivo."""
 STRUCT_MARKER = Path(APP_SUBDIR) / "runsync.py"
+"""Fichero cuya presencia dice que el programa está instalado."""
 
-# El fichero de control, DENTRO de la carpeta del programa y no en la raíz del
-# volumen. Lo que hace es identificar la unidad se monte donde se monte, y para
-# eso da igual dónde esté mientras la ruta sea relativa a la raíz: en `.prdrive/`
-# cumple lo mismo sin dejar un fichero suelto entre los datos del usuario, y de
-# paso no se puede borrar sin borrar también el programa.
 CONTROL_FILE = Path(APP_SUBDIR) / DEVICE_LABEL
+"""Fichero de control, DENTRO de la carpeta del programa y no en la raíz del volumen.
+
+Identifica la unidad se monte donde se monte, y para eso da igual dónde esté
+mientras la ruta sea relativa a la raíz: en `.prdrive/` cumple lo mismo sin
+dejar un fichero suelto entre los datos del usuario y no se puede borrar sin
+borrar también el programa.
+"""
 CONTROL_TEMPLATE = """\
 # PRDRIVE — fichero de control del dispositivo. NO LO BORRES.
 # Es lo que permite reconocer esta unidad se monte donde se monte (F:, /media/...).
 # Lo usa .prdrive/penwatch.py para lanzar la sincronización al conectarla.
 id={device_id}
 """
+"""Contenido del fichero de control; `{device_id}` es el id del dispositivo."""
 
-# Lo que el sistema deja en cualquier volumen —o lo que ponemos nosotros— y no
-# cuenta como «aquí hay cosas de otro». Se compara con `p.name.lower()`, así que
-# va todo en minúsculas. Olvidar aquí algo que escribe el instalador hace que un
-# dispositivo recién hecho se clasifique como AJENO la siguiente vez.
 RUIDO = {
     "system volume information", "$recycle.bin", "recycler", "lost+found",
     ".ds_store", ".spotlight-v100", ".fseventsd", ".trashes", "desktop.ini",
     "autorun.inf", "prdrive.hc", ".prdrive", "veracrypt",
     "runsync.pyw", "runsync.bat", "runsync.sh", "runsync.ico",
-    # El vestíbulo de un dispositivo VeraCrypt (`common/vestibulo.py`), sacado de
-    # sus constantes y no tecleado: son seis nombres y crecerán.
     *(nombre.lower() for nombre in vestibulo.TODOS),
 }
+"""Lo que el sistema deja en cualquier volumen, o lo que ponemos nosotros.
+
+Y no cuenta como «aquí hay cosas de otro».
+
+Se compara con `p.name.lower()`, así que va todo en minúsculas. Olvidar aquí
+algo que escribe el instalador hace que un dispositivo recién hecho se
+clasifique como AJENO la siguiente vez. El vestíbulo de un dispositivo
+VeraCrypt (`common/vestibulo.py`) sale de sus constantes y no se teclea: son
+seis nombres y crecerán.
+"""
 
 
 def es_ruido(nombre: str) -> bool:
-    """¿No cuenta como «aquí hay cosas de otro»? `RUIDO`, y además el icono de la
-    unidad (`common/autorun.py`), que no cabe en un conjunto de nombres: el suyo
-    cambia con el dibujo, y así el Explorador no enseña el de antes. Y lo que
-    deja a medias un intercambio del VeraCrypt de viaje (`.VeraCrypt.viejo-<pid>`,
-    `vestibulo.es_resto_traveler()`), que lleva el pid en el nombre."""
+    """Indica si ese nombre no cuenta como «aquí hay cosas de otro».
+
+    Además de `RUIDO` cuenta el icono de la unidad (`common/autorun.py`), cuyo
+    nombre cambia con el dibujo y no cabe en un conjunto, y lo que deja a
+    medias un intercambio del VeraCrypt de viaje (`.VeraCrypt.viejo-<pid>`,
+    `vestibulo.es_resto_traveler()`), que lleva el pid en el nombre.
+    """
     return (nombre.lower() in RUIDO or autorun.es_icono(nombre)
             or vestibulo.es_resto_traveler(nombre))
 
 
-# Puntos de montaje donde los escritorios de Linux/macOS cuelgan los extraíbles.
+# Puntos de montaje donde los escritorios de Linux y macOS cuelgan los
+# extraíbles.
 POSIX_BASES = ("/media", "/run/media", "/mnt", "/Volumes")
 
 
-# ---------------------------------------------------------------------------
-# Volúmenes
-# ---------------------------------------------------------------------------
-
 @dataclass(frozen=True)
 class Volume:
-    """Una unidad candidata. Todo lo que se sabe de ella sin abrirla."""
+    """Una unidad candidata, con todo lo que se sabe de ella sin abrirla.
+
+    Args:
+        root: Su raíz.
+        label: Su etiqueta.
+        filesystem: Su sistema de ficheros.
+        drive_type: `Removable`, `Fixed`…; vacío en POSIX.
+        size: Tamaño total en bytes.
+        free: Bytes libres.
+        is_system: Si es la unidad del sistema.
+    """
     root: Path
     label: str = ""
     filesystem: str = ""
-    drive_type: str = ""            # Removable | Fixed | ... ; vacío en POSIX
+    drive_type: str = ""
     size: int = 0
     free: int = 0
     is_system: bool = False
 
     @property
     def removable(self) -> bool:
+        """Indica si el sistema la declara extraíble."""
         return self.drive_type.lower() == "removable"
 
     def _exists(self, rel) -> bool:
-        """Un volumen bloqueado por BitLocker responde con error de permisos, no
-        con «no existe»: cualquier OSError significa «ahora mismo no se sabe»."""
+        """Indica si existe esa ruta dentro del volumen.
+
+        Un `OSError` cuenta como que no.
+
+        Un volumen bloqueado por BitLocker responde con error de permisos y no
+        con «no existe»: cualquier `OSError` significa «ahora mismo no se
+        sabe».
+        """
         try:
             return (self.root / rel).exists()
         except OSError:
@@ -116,28 +138,31 @@ class Volume:
 
     @property
     def has_control(self) -> bool:
+        """Indica si tiene el fichero de control."""
         return self._exists(CONTROL_FILE)
 
     @property
     def has_container(self) -> bool:
+        """Indica si tiene un contenedor VeraCrypt."""
         return self._exists(DEVICE_LABEL + CONTAINER_SUFFIX)
 
     @property
     def has_structure(self) -> bool:
+        """Indica si tiene el programa instalado."""
         return self._exists(STRUCT_MARKER)
 
     @property
     def nota(self) -> str:
-        """Lo que hay que saber de un vistazo al elegir destino."""
+        """Devuelve lo que hay que saber de un vistazo al elegir destino."""
         partes = []
         if self.is_system:
             partes.append("¡UNIDAD DEL SISTEMA!")
         if self.has_container:
             partes.append("contenedor VeraCrypt")
         if self.has_control:
-            # Con el control dentro de `.prdrive/`, que falte la estructura ya no
-            # es «no hay carpeta»: la carpeta está y lo que falta es el programa,
-            # o sea una instalación a medias.
+            # Con el control dentro de `.prdrive/`, que falte la estructura ya
+            # no es «no hay carpeta»: la carpeta está y lo que falta es el
+            # programa (una instalación a medias).
             partes.append("ya es un prdrive" if self.has_structure
                           else f"tiene {CONTROL_FILE} pero le falta el programa")
         if not partes and not self.removable:
@@ -146,17 +171,15 @@ class Volume:
 
     @property
     def size_gb(self) -> float:
+        """Devuelve el tamaño en GiB, con un decimal."""
         return round(self.size / 1024 ** 3, 1)
 
     @property
     def free_gb(self) -> float:
+        """Devuelve el espacio libre en GiB, con un decimal."""
         return round(self.free / 1024 ** 3, 1)
 
 
-# Los tipos que devuelve `GetDriveTypeW`, con los mismos nombres que daba
-# `Get-Volume`: son los que enseña la tabla del asistente y los que mira
-# `Volume.removable`, así que traducirlos a otra cosa sería cambiar la pantalla y
-# la lógica a la vez sin ninguna necesidad.
 DRIVE_TYPES = {
     2: "Removable",
     3: "Fixed",
@@ -164,22 +187,31 @@ DRIVE_TYPES = {
     5: "CD-ROM",
     6: "RAM disk",
 }
+"""Tipos de `GetDriveTypeW` con los mismos nombres que daba `Get-Volume`.
 
-# Se enumeran pero NO se ofrecen. Una unidad de red no puede ser el dispositivo,
-# y `Get-Volume` tampoco las devolvía: sin este filtro el selector de destino se
-# llena de unidades mapeadas que nadie puede elegir.
+Son los que enseña la tabla del asistente y los que mira `Volume.removable`:
+traducirlos a otra cosa sería cambiar la pantalla y la lógica a la vez sin
+necesidad.
+"""
+
 TIPOS_OCULTOS = ("Network",)
+"""Tipos que se enumeran pero NO se ofrecen.
+
+Una unidad de red no puede ser el dispositivo; sin este filtro el selector se
+llena de unidades mapeadas que nadie puede elegir.
+"""
 
 
 def make_volume(letra: str, drive_type: str = "", label: str = "",
                 filesystem: str = "", size: int = 0, free: int = 0,
                 system_drive: str = "") -> Volume:
-    """Un `Volume` a partir de lo que haya contestado el sistema.
+    """Construye un `Volume` a partir de lo que haya contestado el sistema.
 
-    Es la mitad pura de la enumeración, y por eso es la que se prueba:
-    `_win_volumes()` no hace más que traducir llamadas de kernel32 a estos
-    argumentos, igual que `_leer_estado_bitlocker` en `crypto.py` es la parte que
-    los tests sustituyen en vez de simular."""
+    Es la mitad pura de la enumeración y por eso la que se prueba:
+    `_win_volumes()` solo traduce llamadas de kernel32 a estos argumentos,
+    igual que `_leer_estado_bitlocker` en `crypto.py` es la parte que los tests
+    sustituyen en vez de simular.
+    """
     system = (system_drive or os.environ.get("SystemDrive", "C:")).rstrip(":").upper()
     letra = letra.strip().rstrip(":").upper()
     return Volume(
@@ -194,28 +226,24 @@ def make_volume(letra: str, drive_type: str = "", label: str = "",
 
 
 def _win_volumes() -> list[Volume]:
-    """Las unidades con letra, preguntándole a kernel32 en vez de a PowerShell.
+    """Devuelve las unidades con letra, preguntando a kernel32 en vez de a PowerShell.
 
-    Cuatro llamadas, ninguna eleva. Antes esto era un `Get-Volume` lanzado con
-    `powershell -Command`, y se cambió por dos razones:
+    Son cuatro llamadas y ninguna eleva. Se evita PowerShell por dos razones:
+    tardaba 3,5 s constantes (contra unos 35 ms de esto) y
+    `ui.tk_install._paso_destino` lo llama en el hilo de Tk al dibujar la
+    primera pantalla y en cada «Actualizar lista», que es lo que se pulsa tras
+    enchufar el pendrive; y un `.exe` sin firmar que corre desde `%TEMP%` y
+    lanza PowerShell es la forma que puntúa en un antivirus (ver la nota de
+    BitLocker en `crypto.py`).
 
-      * **Tardaba 3,5 segundos**, medidos y constantes —no era arranque en frío—,
-        contra unos 35 ms de esto. Y `ui.tk_install._paso_destino` lo llama en el
-        hilo de Tk al dibujar la PRIMERA pantalla del asistente, y otra vez en
-        cada «Actualizar lista», que es justo lo que se pulsa tras enchufar el
-        pendrive: la ventana se quedaba muerta esos 3,5 s cada vez.
-      * Era el último proceso hijo que lanzaba el instalador en el camino normal.
-        Un .exe sin firmar que corre desde %TEMP% y lanza PowerShell es la forma
-        que puntúa en un antivirus; ver la nota larga de BitLocker en `crypto.py`.
-
-    Dos cosas hay que hacer aquí que `Get-Volume` hacía por su cuenta:
-
-      * **Callar el diálogo de «No hay ningún disco en la unidad».** Un lector de
-        tarjetas o un CD vacíos lo sacan en cuanto se les pregunta, y sale ENCIMA
-        del asistente a esperar a que alguien lo cierre. `SetThreadErrorMode` es
-        la versión por hilo de `SetErrorMode`, que es global al proceso: se
-        restaura al salir para no cambiarle el modo a nadie más.
-      * **Quitar las unidades de red**, que `GetLogicalDrives` sí devuelve."""
+    Hace dos cosas que `Get-Volume` hacía por su cuenta:
+    - Callar el diálogo «No hay ningún disco en la unidad»: un lector de
+      tarjetas o un CD vacíos lo sacan en cuanto se les pregunta, ENCIMA del
+      asistente. `SetThreadErrorMode` es la versión por hilo de `SetErrorMode`,
+      global al proceso, y se restaura al salir para no cambiarle el modo a
+      nadie más.
+    - Quitar las unidades de red, que `GetLogicalDrives` sí devuelve.
+    """
     import ctypes
     from ctypes import byref, c_ulonglong, c_wchar_p, create_unicode_buffer
     from ctypes.wintypes import DWORD
@@ -244,13 +272,13 @@ def _win_volumes() -> list[Volume]:
             if not k32.GetVolumeInformationW(raiz, etiqueta, LARGO,
                                              None, None, None, sistema, LARGO):
                 # Sin medio dentro, o bloqueada. La unidad sigue saliendo en la
-                # lista y sin etiqueta: que la letra exista ya es un dato, y
-                # esconderla es lo que dejaba al usuario sin ver su dispositivo.
+                # lista, sin etiqueta: que la letra exista ya es un dato, y
+                # esconderla dejaba al usuario sin ver su dispositivo.
                 etiqueta.value = sistema.value = ""
 
             total, libre = c_ulonglong(0), c_ulonglong(0)
-            # El segundo hueco es el libre PARA QUIEN PREGUNTA (cuotas); el que
-            # se quiere aquí es el total libre, que es lo que decía SizeRemaining.
+            # El segundo hueco es el libre PARA QUIEN PREGUNTA (cuotas); aquí
+            # se quiere el total libre.
             if not k32.GetDiskFreeSpaceExW(raiz, None, byref(total), byref(libre)):
                 total.value = libre.value = 0
 
@@ -262,11 +290,12 @@ def _win_volumes() -> list[Volume]:
 
 
 def _posix_volumes() -> list[Volume]:
-    """Lo que haya montado bajo los sitios habituales de los extraíbles.
+    """Devuelve lo que haya montado bajo los sitios habituales de los extraíbles.
 
     Se miran DOS niveles porque los escritorios no se ponen de acuerdo:
     `/media/<etiqueta>` y `/media/<usuario>/<etiqueta>` son igual de comunes, y
-    quedarse en el primero deja fuera medio Linux."""
+    quedarse en el primero deja fuera medio Linux.
+    """
     puntos: list[Path] = []
     for base in POSIX_BASES:
         raiz = Path(base)
@@ -298,16 +327,13 @@ def _posix_volumes() -> list[Volume]:
 def _con_tamano(vol: Volume) -> Volume:
     """Rellena tamaño y hueco cuando la enumeración los ha dejado a cero.
 
-    Visto una vez: `Get-Volume` devolvió el pendrive con `Size` y `SizeRemaining`
-    a cero mientras el volumen estaba montado y se leía sin problemas —un
-    `disk_usage` sobre esa misma ruta contestaba bien—, y el asistente lo
-    enseñaba como «0 GB». No ha vuelto a reproducirse, así que la causa no se
-    sabe y no se finge saberla. Lo que sí se sabe es que un cero aquí merece una
-    segunda opinión antes de enseñárselo a nadie: quien ve «0 GB» descarta esa
-    unidad.
-
-    Se hace aquí y no en `make_volume` para que ese siga siendo una traducción
-    pura de lo que conteste el sistema, que es como está probado."""
+    Un cero aquí merece una segunda opinión antes de enseñárselo a nadie: se
+    vio una vez `Get-Volume` devolver `Size` y `SizeRemaining` a cero con el
+    volumen montado y legible (un `disk_usage` sobre esa misma ruta contestaba
+    bien) y quien ve «0 GB» descarta esa unidad. No ha vuelto a reproducirse,
+    así que no se finge saber la causa. Se hace aquí y no en `make_volume` para
+    que este siga siendo una traducción pura de lo que conteste el sistema.
+    """
     if vol.size:
         return vol
     try:
@@ -318,11 +344,11 @@ def _con_tamano(vol: Volume) -> Volume:
 
 
 def list_volumes() -> list[Volume]:
-    """Todas las unidades candidatas, sin filtrar por «extraíble».
+    """Devuelve todas las unidades candidatas, sin filtrar por «extraíble».
 
-    Los pendrives que se declaran `Fixed` son la norma, no la excepción, así que
-    filtrar por el tipo es la forma más rápida de que el dispositivo del usuario no salga
-    en la lista. Se ordenan poniendo delante lo que más se parece a un dispositivo."""
+    Los pendrives que se declaran `Fixed` son la norma y no la excepción. Salen
+    ordenadas poniendo delante lo que más se parece a un dispositivo.
+    """
     volumenes = [_con_tamano(v) for v in
                  (_win_volumes() if IS_WIN else _posix_volumes())]
     return sorted(volumenes, key=lambda v: (v.is_system, not v.has_control,
@@ -331,14 +357,15 @@ def list_volumes() -> list[Volume]:
 
 
 def raiz_del_volumen(ruta: Path | str) -> Path:
-    """La raíz del volumen que guarda `ruta`, exista ya o no: `C:\\` para
-    `C:\\Users\\x\\PRDRIVE-cifrado`, o el punto de montaje en POSIX.
+    r"""Devuelve la raíz del volumen que guarda `ruta`, exista ya o no.
 
-    Lo que se le pregunta al sistema de ficheros —cuál es, si admite dispersos—
-    se pregunta ahí: `GetVolumeInformationW` solo acepta la raíz de un volumen,
-    y con una carpeta falla. La raíz cifrada de un equipo vive en una carpeta
-    (H-1 de las pruebas en real). `GetVolumePathNameW` y no la letra de la
-    ruta, porque un volumen puede estar montado en una carpeta de otro."""
+    Por ejemplo, `C:\` para `C:\Users\x\PRDRIVE-cifrado`, o el punto de montaje
+    en POSIX. Lo que se pregunta al sistema de ficheros (cuál es, si admite
+    dispersos) se pregunta ahí: `GetVolumeInformationW` solo acepta la raíz de
+    un volumen y con una carpeta falla, y la raíz cifrada de un equipo vive en
+    una carpeta. Se usa `GetVolumePathNameW` y no la letra de la ruta porque un
+    volumen puede estar montado en una carpeta de otro.
+    """
     ruta = Path(os.path.abspath(str(ruta)))
     if IS_WIN:
         import ctypes
@@ -356,7 +383,10 @@ def raiz_del_volumen(ruta: Path | str) -> Path:
 
 
 def volume_for(root: Path) -> Volume:
-    """El Volume de una ruta escrita a mano, con lo que se pueda averiguar."""
+    """Devuelve el `Volume` de una ruta escrita a mano.
+
+    Con lo que se pueda averiguar.
+    """
     root = Path(root)
     for vol in list_volumes():
         try:
@@ -374,23 +404,28 @@ def volume_for(root: Path) -> Volume:
                   is_system=str(root).rstrip("\\/").upper() == f"{system}:")
 
 
-# ---------------------------------------------------------------------------
-# ¿Se puede instalar aquí?
-# ---------------------------------------------------------------------------
-
 VACIO = "vacio"
+"""Resultado de `install_target`: no hay nada."""
 YA_INSTALADO = "instalado"
+"""Resultado de `install_target`: ya es un dispositivo prdrive."""
 AJENO = "ajeno"
+"""Resultado de `install_target`: hay contenido que no es de un prdrive."""
 
 
 def install_target(root: Path) -> tuple[str, str]:
-    """Qué hay en el destino, para decidir si se puede instalar sin preguntar.
+    """Dice qué hay en el destino, para decidir si se puede instalar sin preguntar.
 
-    Devuelve ('vacio'|'instalado'|'ajeno', explicación). Instalar es copiar, así
-    que 'ajeno' ya no significa «esto se borraría»: significa que el volumen es
-    de otra cosa y que dejar ahí el programa y sus lanzadores probablemente no es
-    lo que se quería. Quien llama pide confirmación, pero no es la confirmación
-    destructiva que hacía falta con la siembra."""
+    Instalar es copiar, así que `ajeno` no significa «esto se borraría» sino
+    que el volumen es de otra cosa y dejar ahí el programa y sus lanzadores
+    probablemente no es lo que se quería. Quien llama pide confirmación, pero
+    no es la destructiva que hacía falta con la siembra.
+
+    Returns:
+        `(vacio | instalado | ajeno, explicación)`.
+
+    Raises:
+        InstallError: Si no se puede leer el volumen (¿bloqueado?).
+    """
     root = Path(root)
     try:
         if not root.exists():
@@ -402,12 +437,11 @@ def install_target(root: Path) -> tuple[str, str]:
             "¿Está el volumen desbloqueado (BitLocker/VeraCrypt)?") from e
 
     # Reconocer el dispositivo va ANTES de mirar si hay algo dentro, y el orden
-    # no es cosmético: `.prdrive` está en RUIDO —tiene que estarlo, o el
-    # dispositivo que el instalador acaba de hacer se leería como ajeno la vez
-    # siguiente—, así que un volumen recién provisionado, con el programa dentro
-    # y todavía sin datos del usuario, no deja NINGÚN contenido a la vista y se
-    # leía como vacío. El asistente entonces no ofrecía el recorrido corto justo
-    # en el dispositivo más nuevo que existe.
+    # no es cosmético: `.prdrive` está en `RUIDO` (tiene que estarlo, o el
+    # dispositivo recién hecho se leería como ajeno la vez siguiente), así que
+    # un volumen recién provisionado, con el programa y aún sin datos del
+    # usuario, no deja NINGÚN contenido a la vista y se leería como vacío, y el
+    # asistente no ofrecería el recorrido corto en el dispositivo más nuevo.
     tiene_control = (root / CONTROL_FILE).exists()
     tiene_estructura = (root / STRUCT_MARKER).exists()
     if tiene_control and tiene_estructura:
@@ -424,12 +458,8 @@ def install_target(root: Path) -> tuple[str, str]:
         f"pero el programa quedaría instalado dentro de este volumen.")
 
 
-# ---------------------------------------------------------------------------
-# El fichero de control
-# ---------------------------------------------------------------------------
-
 def control_id(root: Path) -> str | None:
-    """El 'id=' de dentro del PRDRIVE, o None si no lleva ninguno."""
+    """Devuelve el `id=` del PRDRIVE, o `None` si no lleva ninguno."""
     try:
         texto = (Path(root) / CONTROL_FILE).read_text(encoding="utf-8", errors="replace")
     except OSError:
@@ -445,15 +475,22 @@ def ensure_control_file(root: Path, renew: bool = False,
                         tipo: str = model.TIPO_UNIDAD) -> str:
     """Deja un PRDRIVE con id dentro de `.prdrive/` y devuelve ese id.
 
-    `renew=True` fuerza un id nuevo aunque ya hubiera uno. Hace falta al reutilizar
-    un volumen que ya fue de otro dispositivo: dos dispositivos con el mismo id no
-    se pueden distinguir, y un vigilante atado a ese id lanzaría con el
-    equivocado. Actualizar es justo el caso contrario y va con `renew=False`:
-    es el MISMO dispositivo, y cambiarle el id dejaría colgado al vigilante que
-    ya estuviera apuntándole.
+    `renew=True` fuerza un id nuevo aunque ya hubiera uno. Hace falta al
+    reutilizar un volumen que ya fue de otro dispositivo: dos con el mismo id
+    no se pueden distinguir y un vigilante atado a ese id lanzaría con el
+    equivocado. Actualizar es el caso contrario y va con `renew=False`: es el
+    MISMO dispositivo, y cambiarle el id dejaría colgado al vigilante que ya le
+    apuntara.
 
-    `tipo` es qué raíz es (`model.TIPO_EQUIPO` para la carpeta de un equipo). Va
-    en su propia línea, que un penwatch viejo no lee; cambiarlo conserva el id."""
+    Args:
+        renew: Si se fuerza un id nuevo.
+        tipo: Qué raíz es (`model.TIPO_EQUIPO` para la carpeta de un equipo).
+            Va en su propia línea, que un penwatch viejo no lee; cambiarlo
+            conserva el id.
+
+    Raises:
+        InstallError: Si no se puede escribir el fichero.
+    """
     path = Path(root) / CONTROL_FILE
     actual = control_id(root)
     if actual and not renew and control_tipo(root) == tipo:
@@ -464,7 +501,7 @@ def ensure_control_file(root: Path, renew: bool = False,
         texto += f"tipo={tipo}\n"
     try:
         # En la instalación el directorio ya está (lo crea `deploy_code`), pero
-        # penwatch también adopta unidades, y ahí puede no estarlo.
+        # penwatch también adopta unidades y ahí puede no estarlo.
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(texto, encoding="utf-8")
     except OSError as e:
@@ -473,17 +510,23 @@ def ensure_control_file(root: Path, renew: bool = False,
 
 
 def control_tipo(root: Path) -> str:
-    """El `tipo=` del PRDRIVE: `model.TIPO_EQUIPO` en la raíz de un equipo, y una
-    unidad si no lo dice (que es como están todas las de antes)."""
+    """Devuelve el `tipo=` del PRDRIVE.
+
+    Es `model.TIPO_EQUIPO` en la raíz de un equipo y una unidad si no lo dice,
+    que es como están todas las de antes.
+    """
     return model.tipo_raiz(Path(root) / APP_SUBDIR)
 
 
-# ---------------------------------------------------------------------------
-# Verificación final
-# ---------------------------------------------------------------------------
-
 @dataclass(frozen=True)
 class Check:
+    """Una comprobación de la verificación final.
+
+    Args:
+        etiqueta: Qué se comprueba.
+        ok: Si está bien.
+        detalle: Lo que se ha visto.
+    """
     etiqueta: str
     ok: bool
     detalle: str
@@ -491,21 +534,27 @@ class Check:
 
 def verify_device(root: Path, esperadas: list[str] | None = None,
                   key_name: str | None = None) -> list[Check]:
-    """La lista de comprobación del último paso: ¿este dispositivo va a funcionar?
+    """Devuelve la lista de comprobación del último paso.
 
-    Mira lo que de verdad hace falta para que `runsync.py` arranque en cualquier
-    equipo: el lanzador, el binario de rclone de esta arquitectura, la conexión,
-    el config, y que el config se pueda leer. Lo que falte aquí es lo que
-    fallaría luego sin que se entienda por qué.
+    ¿va a funcionar este dispositivo?
 
-    `key_name` llega del perfil porque el nombre del fichero de clave lo elige el
-    usuario. Sin clave —un backend con contraseña o con agente— no se comprueba
-    ninguna: no falta nada."""
+    Mira lo que de verdad hace falta para que `runsync.py` arranque en
+    cualquier equipo: el lanzador, el binario de rclone de esta arquitectura,
+    la conexión, el config y que el config se pueda leer. Lo que falte aquí es
+    lo que fallaría luego sin que se entienda por qué.
+
+    Args:
+        esperadas: Parejas que tienen que estar en el config.
+        key_name: Nombre del fichero de clave, que lo elige el usuario; sin
+            clave (un backend con contraseña o con agente) no se comprueba
+            ninguna.
+    """
     root = Path(root)
     app = root / APP_SUBDIR
     checks: list[Check] = []
 
     def mirar(etiqueta: str, ruta: Path, pista: str = "") -> bool:
+        """Anota una comprobación de existencia y devuelve si existe."""
         try:
             existe = ruta.exists()
         except OSError as e:
@@ -516,15 +565,16 @@ def verify_device(root: Path, esperadas: list[str] | None = None,
         return existe
 
     device_id = control_id(root)
-    # La raíz de un equipo no lleva lanzadores ni Python propio: la abre y la
-    # sincroniza el agente del equipo, con el suyo (`install/raiz_equipo.py`).
+    # La raíz de un equipo no lleva lanzadores ni Python propio: la abre y
+    # sincroniza el agente del equipo con el suyo (`install/raiz_equipo.py`).
     equipo = control_tipo(root) == model.TIPO_EQUIPO
     checks.append(Check("Fichero de control", bool(device_id),
                         (f"id {device_id[:8]}…" + (", raíz del equipo" if equipo else ""))
                         if device_id else
                         f"falta {root / CONTROL_FILE} o no tiene id propio"))
 
-    # El de ESTE sistema. El .pyw ya no: la instalación completa no lo lleva.
+    # El lanzador de ESTE sistema; el `.pyw` ya no: la instalación completa no
+    # lo lleva.
     lanzador = "runsync.bat" if IS_WIN else "runsync.sh"
     if not equipo:
         mirar(f"Lanzador ({lanzador})", root / lanzador)
@@ -546,6 +596,7 @@ def verify_device(root: Path, esperadas: list[str] | None = None,
 
 
 def _check_config(config: Path, esperadas: list[str], equipo: bool = False) -> Check:
+    """Comprueba que el config se lee y trae las parejas esperadas."""
     try:
         with config.open("rb") as f:
             cfg = model.parse_config(tomllib.load(f), equipo=equipo)
@@ -560,13 +611,14 @@ def _check_config(config: Path, esperadas: list[str], equipo: bool = False) -> C
 
 
 def check_python(root: Path | None = None) -> Check:
-    """Con qué Python arrancará el dispositivo EN ESTE EQUIPO.
+    """Devuelve con qué Python arrancará el dispositivo EN ESTE EQUIPO.
 
-    Con `root`, lo primero es el del propio dispositivo —el que usará el
-    `runsync.bat`—, y entonces no hace falta ninguno instalado. Si no lleva uno
-    que sirva aquí, cuenta el del equipo, con Tkinter o sin él. Sin `root` (el
+    Con `root`, lo primero es el del propio dispositivo (el que usará
+    `runsync.bat`) y entonces no hace falta ninguno instalado; si no lleva uno
+    que sirva aquí cuenta el del equipo, con Tkinter o sin él. Sin `root` (el
     paso de comprobaciones, antes de que exista el dispositivo) solo se mira el
-    del equipo, y que falte no es grave: la instalación completa lleva el suyo."""
+    del equipo, y que falte no es grave: la instalación completa lleva el suyo.
+    """
     from . import platforms, python_command
     if root is not None:
         anfitrion = platforms.host()

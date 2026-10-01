@@ -1,39 +1,32 @@
 #!/usr/bin/env python3
-"""
-profile.py — La conexión con el remoto, como objeto y no como constantes.
-
-Antes esto eran ocho constantes de módulo con el NAS de una persona dentro. El
-problema no era que fueran secretas —no lo son: son rutas y un usuario— sino que
-no había ninguna forma de moverlas: ni parámetro, ni fichero, ni pantalla. Quien
-se bajara el proyecto no podía usarlo.
+"""La conexión con el remoto, como objeto y no como constantes.
 
 Un `Profile` es lo que hace falta para hablar con el remoto **antes** de que
 exista ningún dispositivo: cómo se llama el remote, qué opciones lo definen, la
-clave privada si el backend usa una, y dónde está el catálogo. De ahí salen dos
-cosas distintas y no hay que confundirlas:
-
-  * el `rclone.conf` **efímero** del instalador (`remote.EphemeralConf`), con la
-    clave en un temporal que se borra al salir;
-  * el `rclone.conf` **del dispositivo** (`deploy.write_device_remote`), con la
-    clave en `.prdrive/keys/` y rutas relativas.
+clave privada si el backend usa una y dónde está el catálogo. Quien se baje el
+proyecto tiene que poder cambiarlo (por parámetro, fichero o pantalla); no es
+un secreto, son rutas y un usuario. De un perfil salen dos cosas distintas que
+no hay que confundir:
+- el `rclone.conf` EFÍMERO del instalador (`remote.EphemeralConf`), con la
+  clave en un temporal que se borra al salir;
+- el `rclone.conf` DEL DISPOSITIVO (`deploy.write_device_remote`), con la clave
+  en `.prdrive/keys/` y rutas relativas.
 
 Por eso `render_conf()` recibe las rutas de la clave: son lo único que cambia
-entre los dos, y son justo lo que no se puede guardar dentro del perfil.
+entre los dos y lo que no se puede guardar dentro del perfil.
 
 De dónde sale un perfil, en orden (`load()`):
-
-    1. `install/secret.py`, que genera `build_installer.py` al compilar el .exe.
-       Es el caso del binario llave en mano que se comparte en privado.
-    2. `keys/` + `prdrive-profile.toml` junto al instalador, cuando se ejecuta el
-       .py desde un checkout provisionado. Es el caso de desarrollo.
-    3. Ninguno: `empty()`. **Esto no es un error**, es el arranque normal de
-       quien acaba de clonar el repo, y es la diferencia con lo que había antes:
-       el asistente abre su formulario de conexión en vez de morir explicando que
-       falta una clave que nunca ha tenido.
+- `install/secret.py`, que genera `build_installer.py` al compilar el `.exe`:
+  el binario llave en mano que se comparte en privado.
+- `keys/` + `prdrive-profile.toml` junto al instalador, al ejecutar el `.py`
+  desde un checkout provisionado: el caso de desarrollo.
+- Ninguno: `empty()`. No es un error sino el arranque normal de quien acaba de
+  clonar el repo: el asistente abre su formulario de conexión en vez de morir
+  explicando que falta una clave que nunca ha tenido.
 
 El backend no se interpreta en ningún sitio: `options` es lo que vaya a ir bajo
-`[nombre]` en el rclone.conf, sea sftp, webdav, s3 o lo que sea. El proyecto solo
-sabe de `nombre:ruta`.
+`[nombre]` en el `rclone.conf`, sea sftp, webdav, s3 o lo que sea. El proyecto
+solo sabe de `nombre:ruta`.
 """
 
 from __future__ import annotations
@@ -52,32 +45,46 @@ from common.catalog import DEFAULT_CATALOG_PATH, problema_de_ruta
 from . import InstallError, bundle_dir
 
 INJECT_MARKER = "__INJECT"
+"""Marcador que deja `build_installer.py` donde falta la clave privada."""
 PROFILE_FILE = "prdrive-profile.toml"
+"""Fichero con el perfil junto al instalador."""
 DEFAULT_KEY_NAME = "id_ed25519"
 DEFAULT_REMOTE_NAME = "remote"
 
-# Las dos opciones que NO se guardan en el perfil: son rutas del disco de quien
-# ejecuta, y valen una cosa en el temporal del instalador y otra en el
-# dispositivo. Si viajaran dentro de `options`, un rclone.conf importado
-# apuntaría a la clave del equipo del que salió.
-# La lista es de `pairing`, que es quien lee el rclone.conf, y se toma de allí
-# para que no puedan separarse: si una de las dos creciera sin la otra, la ruta
-# nueva viajaría dentro del perfil en un sitio y no en el otro.
 RUTAS_DERIVADAS = pairing.RUTAS_DERIVADAS
+"""Opciones que NO se guardan en el perfil: `key_file` y `known_hosts_file`.
 
-# rclone acepta como nombre de remote bastante más que esto, pero el proyecto lo
-# mete en `RCLONE_CONFIG_<NOMBRE>_*` cuando hay `device_remote`, y ahí no cabe
-# cualquier cosa. Se valida al entrar, no al fallar tres pasos después.
+Son rutas del disco de quien ejecuta y valen una cosa en el temporal del
+instalador y otra en el dispositivo; si viajaran dentro de `options`, un
+`rclone.conf` importado apuntaría a la clave del equipo del que salió. La lista
+es de `pairing`, que es quien lee el `rclone.conf`, y se toma de allí para que
+no puedan separarse.
+"""
+
 NOMBRE_VALIDO = re.compile(r"[A-Za-z0-9_.-]+")
+"""Patrón de los nombres de remote que se aceptan.
+
+rclone acepta bastante más, pero el proyecto lo mete en
+`RCLONE_CONFIG_<NOMBRE>_*` cuando hay `device_remote` y ahí no cabe cualquier
+cosa. Se valida al entrar, no al fallar tres pasos después.
+"""
 
 
 @dataclass(frozen=True)
 class Profile:
     """Todo lo necesario para hablar con el remoto, sin nada del disco de nadie.
 
-    `origen` no es adorno: es lo que enseña el paso de comprobaciones para que se
-    vea si el instalador lleva la conexión dentro o la acaba de teclear el
-    usuario."""
+    Args:
+        remote_name: Nombre del remote.
+        options: Lo que irá bajo `[nombre]` en el `rclone.conf`.
+        private_key: La clave privada, si el backend usa una.
+        known_hosts: Contenido de `known_hosts`, o vacío.
+        key_name: Nombre del fichero de la clave.
+        catalog_path: Ruta del catálogo dentro del remote.
+        origen: De dónde sale (incrustada, tecleada, importada…); lo enseña el
+            paso de comprobaciones para que se vea si el instalador lleva la
+            conexión dentro o la acaba de teclear el usuario.
+    """
     remote_name: str = ""
     options: Mapping[str, str] = field(default_factory=dict)
     private_key: bytes | None = None
@@ -88,30 +95,38 @@ class Profile:
 
     @property
     def configured(self) -> bool:
-        """¿Hay al menos un remote con tipo? Es lo mínimo para intentar conectar."""
+        """Indica si hay al menos un remote con tipo.
+
+        Lo mínimo para intentar conectar.
+        """
         return bool(self.remote_name and self.options.get("type"))
 
     @property
     def needs_key(self) -> bool:
-        """¿El backend se autentica con un fichero de clave?
+        """Indica si el backend se autentica con un fichero de clave.
 
-        No se deduce del tipo sino de si hay clave: un sftp con contraseña en el
-        conf importado es perfectamente válido y no necesita escribir nada."""
+        No se deduce del tipo sino de si hay clave: un sftp con contraseña en
+        el conf importado es perfectamente válido y no necesita escribir nada.
+        """
         return self.private_key is not None
 
     @property
     def endpoint_catalog(self) -> str:
+        """Devuelve el endpoint del catálogo, `remote:ruta`."""
         return f"{self.remote_name}:{self.catalog_path}"
 
     @property
     def problema_catalogo(self) -> str | None:
-        """Qué le pasa a la ruta del catálogo, o None. Es aparte de `configured`
-        porque una ruta mala no deja de ser una conexión: `load()` no debe
-        saltarse por eso un perfil incrustado, y el paso Conexión la enseña."""
+        """Devuelve qué le pasa a la ruta del catálogo, o `None`.
+
+        Es aparte de `configured` porque una ruta mala no deja de ser una
+        conexión: `load()` no debe saltarse por eso un perfil incrustado, y el
+        paso Conexión la enseña.
+        """
         return problema_de_ruta(self.catalog_path)
 
     def describe(self) -> str:
-        """Una línea para la pantalla: el backend y adónde apunta."""
+        """Devuelve una línea para la pantalla: el backend y adónde apunta."""
         tipo = self.options.get("type", "?")
         destino = self.options.get("host") or self.options.get("url") or ""
         usuario = self.options.get("user", "")
@@ -119,19 +134,23 @@ class Profile:
         return f"{self.remote_name} ({tipo}){cola}".rstrip()
 
 
-# ---------------------------------------------------------------------------
-# De perfil a rclone.conf
-# ---------------------------------------------------------------------------
-
 def render_conf(profile: Profile, key_file: Path | str | None = None,
                 known_file: Path | str | None = None) -> str:
-    """El texto del rclone.conf de este perfil.
+    """Devuelve el texto del `rclone.conf` de este perfil.
 
     Las dos rutas van por parámetro y no dentro del perfil porque son lo único
-    que cambia entre el conf efímero del instalador (temporal, absoluto) y el del
-    dispositivo (`keys/…`, relativo). Relativo es lo que hace portable el
-    dispositivo: rclone las resuelve contra su cwd, y todo el proyecto ejecuta
-    rclone con `cwd = model.APP_DIR`."""
+    que cambia entre el conf efímero del instalador (temporal, absoluto) y el
+    del dispositivo (`keys/…`, relativo). Lo relativo es lo que hace portable
+    al dispositivo: rclone las resuelve contra su cwd y todo el proyecto
+    ejecuta rclone con `cwd = model.APP_DIR`.
+
+    Args:
+        key_file: Ruta de la clave en este conf, o `None` si no hay.
+        known_file: Ruta de los known_hosts en este conf, o `None`.
+
+    Raises:
+        InstallError: Si el perfil no dice cómo se llama el remote.
+    """
     if not profile.remote_name:
         raise InstallError("El perfil no dice cómo se llama el remote.")
     lineas = [f"[{profile.remote_name}]"]
@@ -142,29 +161,31 @@ def render_conf(profile: Profile, key_file: Path | str | None = None,
     if key_file is not None:
         lineas.append(f"key_file = {key_file}")
     # Sin known_hosts se acepta la clave de host a la primera (TOFU). Es peor,
-    # pero escribir la opción apuntando a un fichero vacío es peor todavía:
-    # rclone falla en vez de avisar.
+    # pero escribir la opción apuntando a un fichero vacío lo es más: rclone
+    # falla en vez de avisar.
     if known_file is not None and profile.known_hosts.strip():
         lineas.append(f"known_hosts_file = {known_file}")
     return "\n".join(lineas) + "\n"
 
 
-# ---------------------------------------------------------------------------
-# Leer un rclone.conf de fuera
-# ---------------------------------------------------------------------------
-
-# El lector de rclone.conf vive en `common/pairing.py` y se reexporta aquí, que
-# es donde lo busca todo el instalador. Está allí porque el dispositivo también
-# tiene que leer su propio rclone.conf —para enseñar el QR de emparejamiento— y
-# `install/` no viaja al dispositivo. Una sola implementación, no dos.
 parse_rclone_conf = pairing.parse_rclone_conf
+"""Lector de `rclone.conf` de `common/pairing.py`, reexportado aquí.
+
+Allí porque el dispositivo también tiene que leer su propio `rclone.conf` (para
+enseñar el QR de emparejamiento) y `install/` no viaja a él: una sola
+implementación, no dos.
+"""
 
 
 def remotes_in(path: Path | str) -> list[str]:
-    """Los remotes que define un rclone.conf, para poder ofrecerlos.
+    """Devuelve los remotes que define un `rclone.conf`, para poder ofrecerlos.
 
-    Vive aquí y no en el asistente por la misma regla que rige todo `ui/tk_*`:
-    ahí solo se dibuja, y elegir de una lista exige antes tener la lista."""
+    Vive aquí y no en el asistente por la regla de todo `ui/tk_*`: ahí solo se
+    dibuja, y elegir de una lista exige antes tener la lista.
+
+    Raises:
+        InstallError: Si no se puede leer el fichero.
+    """
     ruta = Path(path).expanduser()
     try:
         texto = ruta.read_text(encoding="utf-8")
@@ -174,13 +195,18 @@ def remotes_in(path: Path | str) -> list[str]:
 
 
 def parse_options(texto: str) -> dict[str, str]:
-    """El cuadro de texto del formulario -> las opciones del remote.
+    """Convierte el cuadro de texto del formulario en las opciones del remote.
 
-    Una línea por opción, `clave = valor`, que es exactamente lo que va a ir al
-    rclone.conf. Un formulario con un campo por backend sería mentira: rclone
+    Una línea por opción, `clave = valor`, que es exactamente lo que irá al
+    `rclone.conf`. Un formulario con un campo por backend sería mentira: rclone
     tiene decenas y cada uno con sus opciones, y el proyecto no interpreta
-    ninguna. Es la misma decisión que en el editor de flags: se enseña la sintaxis
-    de destino en vez de inventar una intermedia."""
+    ninguna. Es la misma decisión que en el editor de flags: se enseña la
+    sintaxis de destino en vez de inventar una intermedia.
+
+    Raises:
+        InstallError: Si una línea no tiene `=` ni nombre, o pone una de
+            `RUTAS_DERIVADAS`.
+    """
     opciones: dict[str, str] = {}
     for numero, linea in enumerate(texto.splitlines(), 1):
         linea = linea.strip()
@@ -202,51 +228,62 @@ def parse_options(texto: str) -> dict[str, str]:
 
 
 def dump_options(profile: Profile) -> str:
-    """Lo contrario: las opciones tal y como se enseñan en el formulario."""
+    """Devuelve las opciones tal como se enseñan en el formulario.
+
+    Es lo contrario de `parse_options`.
+    """
     return "\n".join(f"{k} = {v}" for k, v in profile.options.items())
 
 
 PLANTILLAS: dict[str, str] = {
-    # Puntos de partida, no una lista cerrada: el campo «tipo» acepta cualquier
-    # backend de rclone y las opciones son texto libre.
     "sftp": ("host = \nport = 22\nuser = \n"
              "disable_hashcheck = true\nshell_type = none"),
     "webdav": "url = \nvendor = other\nuser = ",
     "s3": ("provider = \naccess_key_id = \n"
            "secret_access_key = \nregion = "),
 }
+"""Puntos de partida para el formulario, por tipo de backend.
 
-# Lo que un backend de las plantillas NO puede no tener, con para qué sirve.
-# Criterio conservador: solo lo que rclone marca `Required: true` en la
-# definición del backend y no admite otra salida, porque esto BLOQUEA —«Usar esta
-# conexión» no hace un perfil sin ello—. Lo que rclone rellena por su cuenta
-# (el puerto, el usuario) no está aquí: eso, si acaso, es un aviso (`avisos()`).
-#
-#   * sftp → `host` (`backend/sftp/sftp.go`). Sin él rclone ni siquiera falla:
-#     marca `f.opt.Host+":"+f.opt.Port`, o sea `:22`, y Go entiende un host vacío
-#     como este mismo equipo. La excepción es `ssh`, el ssh externo: con él rclone
-#     ignora host, user y port del conf (`NewFsWithConnection`) y los espera
-#     dentro de esa orden.
-#   * webdav → `url` (`backend/webdav/webdav.go`).
-#   * s3 → nada. Sus `Required` son el `endpoint` de proveedores concretos, que
-#     la plantilla no pone, y sin claves rclone entra como anónimo
-#     (`AnonymousCredentials` en `backend/s3/s3.go`): mal para escribir el
-#     catálogo, pero eso lo dice el paso de comprobaciones, no una suposición.
-#
-# Un tipo que no esté aquí no se valida: rclone tiene decenas de backends y el
-# proyecto no interpreta ninguno. Tampoco se comprueba que el tipo exista —haría
-# falta rclone, que se consigue en el paso siguiente—: allí rclone lo dice solo.
+No es una lista cerrada: el campo «tipo» acepta cualquier backend de rclone y
+las opciones son texto libre.
+"""
+
 OBLIGATORIAS: dict[str, tuple[tuple[str, str], ...]] = {
     "sftp": (("host", "saber a qué servidor conectarse"),),
     "webdav": (("url", "saber la dirección del servidor"),),
 }
+"""Por tipo de backend, lo que NO puede no tener, con para qué sirve.
+
+Criterio conservador: solo lo que rclone marca `Required: true` en la
+definición del backend y no admite otra salida, porque esto BLOQUEA («Usar esta
+conexión» no hace un perfil sin ello). Lo que rclone rellena por su cuenta (el
+puerto, el usuario) no está aquí: eso, si acaso, es un aviso (`avisos()`).
+- sftp → `host` (`backend/sftp/sftp.go`). Sin él rclone ni siquiera falla:
+  marca `f.opt.Host+":"+f.opt.Port`, o sea `:22`, y Go entiende un host vacío
+  como este mismo equipo. La excepción es `ssh`, el ssh externo: con él rclone
+  ignora host, user y port del conf (`NewFsWithConnection`) y los espera dentro
+  de esa orden.
+- webdav → `url` (`backend/webdav/webdav.go`).
+- s3 → nada. Sus `Required` son el `endpoint` de proveedores concretos, que la
+  plantilla no pone, y sin claves rclone entra como anónimo
+  (`AnonymousCredentials` en `backend/s3/s3.go`): mal para escribir el
+  catálogo, pero eso lo dice el paso de comprobaciones, no una suposición.
+
+Un tipo que no esté aquí no se valida: rclone tiene decenas de backends y el
+proyecto no interpreta ninguno. Tampoco se comprueba que el tipo exista (haría
+falta rclone, que se consigue en el paso siguiente): allí rclone lo dice solo.
+"""
 
 
 def faltan(options: Mapping[str, str]) -> list[tuple[str, str]]:
-    """Las opciones obligatorias de ese backend que no están o están vacías.
+    """Devuelve las opciones obligatorias de ese backend que no están o están vacías.
 
     Vacías cuentan como ausentes porque es lo que deja la plantilla (`host = `)
-    y lo que trae un rclone.conf a medio escribir."""
+    y lo que trae un `rclone.conf` a medio escribir.
+
+    Returns:
+        Pares `(clave, para qué sirve)`.
+    """
     tipo = str(options.get("type", "")).strip()
     if tipo == "sftp" and str(options.get("ssh", "")).strip():
         return []
@@ -255,7 +292,7 @@ def faltan(options: Mapping[str, str]) -> list[tuple[str, str]]:
 
 
 def _falta(options: Mapping[str, str], donde: str) -> str:
-    """La frase del error de `faltan()`: qué falta, dónde, y para qué hace falta."""
+    """Devuelve la frase del error de `faltan()`: qué falta, dónde y para qué."""
     falta = faltan(options)
     claves = " y ".join(f"«{clave} = …»" for clave, _ in falta)
     para = " y ".join(para for _, para in falta)
@@ -265,17 +302,19 @@ def _falta(options: Mapping[str, str], donde: str) -> str:
 
 
 def avisos(perfil: Profile) -> list[str]:
-    """Lo que no impide seguir pero conviene saber antes de probar la conexión.
+    """Devuelve lo que no impide seguir pero conviene saber antes de probar la conexión.
 
-    No bloquea porque no es seguro que falle: puede funcionar en el equipo donde
-    se instala y dejar de hacerlo en otro, que es justo lo que el paso de
-    comprobaciones no puede ver."""
+    No bloquea porque no es seguro que falle: puede funcionar en el equipo
+    donde se instala y dejar de hacerlo en otro, que es justo lo que el paso de
+    comprobaciones no puede ver.
+    """
     notas: list[str] = []
     opciones = perfil.options
     # Sin `user`, rclone usa `currentUser` (`env.CurrentUser()` en
-    # `backend/sftp/sftp.go`): el de la sesión del equipo donde se ejecuta, que en
-    # Windows además viene como EQUIPO\usuario. El dispositivo viaja, así que
-    # entra o no según dónde se enchufe. Con `ssh` el usuario va en esa orden.
+    # `backend/sftp/sftp.go`): el de la sesión del equipo donde se ejecuta, que
+    # en Windows además viene como `EQUIPO\usuario`. El dispositivo viaja, así
+    # que entra o no según dónde se enchufe. Con `ssh` el usuario va en esa
+    # orden.
     if (opciones.get("type") == "sftp"
             and not str(opciones.get("ssh", "")).strip()
             and not str(opciones.get("user", "")).strip()):
@@ -287,11 +326,23 @@ def avisos(perfil: Profile) -> list[str]:
 
 
 def _leer_clave(options: Mapping[str, str], base: Path) -> tuple[bytes | None, str, str]:
-    """La clave y los known_hosts a los que apunte un rclone.conf importado.
+    """Devuelve la clave y los known_hosts a los que apunta un `rclone.conf` importado.
 
-    Se leen ahora y se meten dentro del perfil porque el dispositivo va a llevar
-    su propia copia: dejar la ruta original significaría que el dispositivo solo funciona
-    en el equipo del que salió."""
+    Se leen ahora y se meten dentro del perfil porque el dispositivo llevará su
+    propia copia: dejar la ruta original significaría que solo funciona en el
+    equipo del que salió.
+
+    Args:
+        options: Opciones del remote importado.
+        base: Carpeta contra la que se resuelven las rutas relativas.
+
+    Returns:
+        `(clave, known_hosts, nombre de la clave)`; sin `key_file`, `(None, '',
+        nombre por defecto)`.
+
+    Raises:
+        InstallError: Si no se puede leer la clave.
+    """
     key_file = options.get("key_file", "")
     if not key_file:
         return None, "", DEFAULT_KEY_NAME
@@ -319,7 +370,12 @@ def _leer_clave(options: Mapping[str, str], base: Path) -> tuple[bytes | None, s
 
 def from_rclone_conf(path: Path | str, remote_name: str,
                      catalog_path: str = DEFAULT_CATALOG_PATH) -> Profile:
-    """Importar un remote del rclone.conf que ya tenga el usuario."""
+    """Importa un remote del `rclone.conf` que ya tenga el usuario.
+
+    Raises:
+        InstallError: Si no se puede leer, no define ese remote, le falta el
+            tipo o una opción obligatoria, o no se puede leer su clave.
+    """
     ruta = Path(path).expanduser()
     try:
         texto = ruta.read_text(encoding="utf-8")
@@ -335,9 +391,9 @@ def from_rclone_conf(path: Path | str, remote_name: str,
             f"Tiene: {', '.join(sorted(remotes))}.")
 
     options = dict(remotes[remote_name])
-    # Lo mismo que se le exige al formulario. Sin esto un remote sin `type` salía
-    # de aquí como perfil, sin estar `configured`: la pantalla lo daba por bueno
-    # y «Siguiente» se quedaba gris sin que nada dijera por qué.
+    # Se le exige lo mismo que al formulario: sin esto un remote sin `type`
+    # salía de aquí como perfil sin estar `configured`, la pantalla lo daba por
+    # bueno y «Siguiente» se quedaba gris sin decir por qué.
     donde = f"en el remote '{remote_name}' de {ruta}"
     if not options.get("type", "").strip():
         raise InstallError(
@@ -354,15 +410,18 @@ def from_rclone_conf(path: Path | str, remote_name: str,
         catalog_path=_ruta_catalogo(catalog_path), origen=f"importada de {ruta}")
 
 
-# ---------------------------------------------------------------------------
-# El formulario
-# ---------------------------------------------------------------------------
-
 def from_form(remote_name: str, options: Mapping[str, str],
               key_path: Path | str | None = None,
               known_path: Path | str | None = None,
               catalog_path: str = DEFAULT_CATALOG_PATH) -> Profile:
-    """Lo que se ha tecleado en el asistente, validado antes de intentar nada."""
+    """Convierte lo tecleado en el asistente en un perfil.
+
+    Validado antes de intentar nada.
+
+    Raises:
+        InstallError: Si falta o no vale el nombre o el tipo, falta una opción
+            obligatoria o no se pueden leer los ficheros.
+    """
     remote_name = (remote_name or "").strip()
     if not remote_name:
         raise InstallError("Hay que darle un nombre al remote.")
@@ -401,9 +460,12 @@ def from_form(remote_name: str, options: Mapping[str, str],
 
 
 def _ruta_catalogo(ruta: str | None) -> str:
-    """La ruta del catálogo tecleada: limpia, la de fábrica si está vacía, y
-    rechazada si nombra una carpeta en vez de un fichero `.toml` (#48). Antes
-    eso no se notaba hasta el paso de comprobaciones, con un error de TOML."""
+    """Devuelve la ruta del catálogo tecleada: limpia, y la de fábrica si está vacía.
+
+    Raises:
+        InstallError: Si nombra una carpeta en vez de un fichero `.toml`; se
+            avisa aquí y no en el paso de comprobaciones, con un error de TOML.
+    """
     limpia = (ruta or "").strip() or DEFAULT_CATALOG_PATH
     problema = problema_de_ruta(limpia)
     if problema:
@@ -412,12 +474,13 @@ def _ruta_catalogo(ruta: str | None) -> str:
 
 
 def with_catalog_remote(profile: Profile, tabla: Mapping[str, object]) -> Profile:
-    """El `[remote]` del catálogo, aplicado sobre el perfil que ya conecta.
+    """Devuelve el perfil con el `[remote]` del catálogo aplicado.
 
     Es lo que hace que la conexión se teclee UNA vez: el primer dispositivo la
     escribe en el catálogo y todos los demás la heredan. Solo toca las opciones
-    del backend —la clave nunca viaja por ahí— y respeta el nombre de remote de
-    la tabla, porque es el que van a usar los `remote_path` de las parejas."""
+    del backend (la clave nunca viaja por ahí) y respeta el nombre de remote de
+    la tabla, porque es el que usarán los `remote_path` de las parejas.
+    """
     if not tabla:
         return profile
     datos = {str(k): v for k, v in tabla.items()}
@@ -431,25 +494,22 @@ def with_catalog_remote(profile: Profile, tabla: Mapping[str, object]) -> Profil
 
 def align_with_catalog(perfil: Profile,
                        catalog_raw: Mapping[str, object]) -> tuple[Profile, list[str]]:
-    """El perfil que se le escribe al dispositivo, según lo que diga el catálogo.
+    """Devuelve el perfil que se escribe al dispositivo, según lo que diga el catálogo.
 
-    Aquí se cierra el círculo del encargo: la conexión se teclea UNA vez y el
-    catálogo la reparte. Pero hay una regla que manda sobre la comodidad, y es la
-    razón de que esto no sea un simple «copia lo que haya»:
+    Aquí se cierra el círculo: la conexión se teclea UNA vez y el catálogo la
+    reparte. Pero hay una regla que manda sobre la comodidad: el nombre del
+    remote lo decide el catálogo, no el usuario. Los `remote_path` de todas las
+    parejas se resuelven contra `[defaults].remote`, y si el `rclone.conf` del
+    dispositivo llamara al remote de otra forma cada sincronización fallaría
+    con un «unknown remote» que no se parece a la causa. Las opciones del
+    backend sí son del usuario, salvo que el catálogo traiga un `[remote]`
+    completo (el que dejó el primer dispositivo), que entonces es la definición
+    buena. La clave privada NUNCA sale de aquí ni entra por aquí: viaja con el
+    dispositivo.
 
-    **el nombre del remote lo decide el catálogo, no el usuario.** Los
-    `remote_path` de todas las parejas se resuelven contra `[defaults].remote`, y
-    si el rclone.conf del dispositivo llamara al remote de otra forma, cada
-    sincronización fallaría con un «unknown remote» que no se parece en nada a la
-    causa. Da igual cómo lo llamara quien tecleó la conexión: en este dispositivo
-    se llama como digan las parejas que va a usar.
-
-    Las opciones del backend sí son del usuario, salvo que el catálogo traiga un
-    `[remote]` completo —el que dejó el primer dispositivo—, que entonces es la
-    definición buena. La clave privada NUNCA sale de aquí ni entra por aquí: viaja
-    con el dispositivo y punto.
-
-    Devuelve el perfil ajustado y qué se ha cambiado, para poder decirlo.
+    Returns:
+        El perfil ajustado y las notas de lo que se ha cambiado, para poder
+        decirlo.
     """
     notas: list[str] = []
     tabla = dict(catalog_raw.get("remote") or {})          # type: ignore[union-attr]
@@ -476,37 +536,34 @@ def align_with_catalog(perfil: Profile,
 
 
 def with_catalog_path(perfil: Profile, ruta: str) -> Profile:
-    """El mismo perfil con otra ruta de catálogo.
+    """Devuelve el mismo perfil con otra ruta de catálogo.
 
     La ruta se teclea en su propia caja, aparte de la conexión, y por eso puede
-    cambiar sin que se vuelva a construir el perfil entero: sin esto, editarla
-    con una conexión ya dada no llegaba a ningún sitio. Vacía vuelve a la de por
-    defecto, igual que en `from_form`.
-
-    A diferencia de `from_form`, no rechaza una ruta mala: se aplica a cada
-    tecla, y a medio escribir ninguna termina en `.toml`. Lo que impide seguir
-    con ella es la condición del paso (`Profile.problema_catalogo`)."""
+    cambiar sin reconstruir el perfil entero. Vacía vuelve a la de por defecto,
+    como en `from_form`. A diferencia de `from_form` no rechaza una ruta mala:
+    se aplica a cada tecla y a medio escribir ninguna termina en `.toml`; lo
+    que impide seguir con ella es la condición del paso
+    (`Profile.problema_catalogo`).
+    """
     return replace(perfil,
                    catalog_path=(ruta or "").strip() or DEFAULT_CATALOG_PATH)
 
 
 def to_catalog_remote(profile: Profile) -> dict[str, str]:
-    """El `[remote]` que se guarda en el catálogo. Sin nada secreto dentro."""
+    """Devuelve el `[remote]` que se guarda en el catálogo, sin nada secreto dentro."""
     tabla = {"name": profile.remote_name}
     tabla.update({k: v for k, v in profile.options.items()
                   if k not in RUTAS_DERIVADAS})
     return tabla
 
 
-# ---------------------------------------------------------------------------
-# Serialización del perfil (secret.py y prdrive-profile.toml comparten formato)
-# ---------------------------------------------------------------------------
-
 def dumps(profile: Profile) -> str:
-    """El perfil como TOML, SIN la clave privada.
+    """Devuelve el perfil como TOML, SIN la clave privada.
 
-    La clave va aparte —en `keys/` o en base64 dentro de `secret.py`— para que
-    este texto se pueda enseñar, guardar y versionar sin pensárselo."""
+    La clave va aparte (en `keys/` o en base64 dentro de `secret.py`) para que
+    este texto se pueda enseñar, guardar y versionar sin pensárselo.
+    `secret.py` y `prdrive-profile.toml` comparten este formato.
+    """
     lineas = [
         f'remote_name = "{profile.remote_name}"',
         f'key_name = "{profile.key_name}"',
@@ -520,7 +577,11 @@ def dumps(profile: Profile) -> str:
 
 def loads(texto: str, *, private_key: bytes | None = None,
           known_hosts: str = "", origen: str = "") -> Profile:
-    """Lee lo que escribió `dumps()` y le engancha la clave, que viaja aparte."""
+    """Lee lo que escribió `dumps()` y le engancha la clave, que viaja aparte.
+
+    Raises:
+        InstallError: Si no es TOML válido.
+    """
     try:
         raw = tomllib.loads(texto)
     except tomllib.TOMLDecodeError as e:
@@ -537,12 +598,13 @@ def loads(texto: str, *, private_key: bytes | None = None,
         origen=origen or "leída de un perfil")
 
 
-# ---------------------------------------------------------------------------
-# La cascada
-# ---------------------------------------------------------------------------
-
 def from_secret() -> Profile | None:
-    """Lo que inyectó `build_installer.py`, si es que se compiló con perfil."""
+    """Devuelve lo que inyectó `build_installer.py`, si se compiló con perfil, o `None`.
+
+    Raises:
+        InstallError: Si quedó el marcador de clave sin sustituir o la clave no
+            es base64.
+    """
     try:
         from . import secret            # type: ignore[attr-defined]
     except ImportError:
@@ -571,10 +633,11 @@ def from_secret() -> Profile | None:
 
 
 def from_bundle() -> Profile | None:
-    """`prdrive-profile.toml` + `keys/` junto al instalador.
+    """Devuelve `prdrive-profile.toml` y `keys/` junto al instalador, o `None`.
 
     `bundle_dir()` se llama aquí y no al importar el módulo porque los tests lo
-    sustituyen para apuntar a un directorio de mentira."""
+    sustituyen para apuntar a un directorio de mentira.
+    """
     base = bundle_dir()
     fichero = base / PROFILE_FILE
     try:
@@ -602,18 +665,19 @@ def from_bundle() -> Profile | None:
 
 
 def empty() -> Profile:
-    """El punto de partida de quien acaba de clonar el repo."""
+    """Devuelve el punto de partida de quien acaba de clonar el repo."""
     return Profile(remote_name=DEFAULT_REMOTE_NAME, options={},
                    origen="sin configurar")
 
 
 def load() -> Profile:
-    """El perfil con el que arranca el asistente. NUNCA lanza por no encontrar.
+    """Devuelve el perfil con el que arranca el asistente; NUNCA lanza por no encontrar.
 
     Que no haya perfil no es un error: es el caso normal la primera vez. Lo que
-    sí lanza es un perfil corrupto —un secret.py a medio compilar, un TOML
-    inválido—, porque ahí callarse significaría intentar conectar con basura y
-    enseñar el error de rclone en vez del de verdad."""
+    sí lanza es un perfil corrupto (un `secret.py` a medio compilar, un TOML
+    inválido), porque callarse significaría intentar conectar con basura y
+    enseñar el error de rclone en vez del de verdad.
+    """
     for fuente in (from_secret, from_bundle):
         perfil = fuente()
         if perfil is not None and perfil.configured:

@@ -1,43 +1,42 @@
 #!/usr/bin/env python3
-"""
-runtime_bin.py — Conseguir el Python que viaja dentro del dispositivo.
+"""Conseguir el Python que viaja dentro del dispositivo.
 
-El hermano de `rclone_bin.py`, con el mismo contrato: lo que se descarga se
-COMPRUEBA contra el `SHA256SUMS` que publica su autor antes de escribir nada, y si
-no cuadra no se guarda nada. Esto se va a ejecutar en cada equipo donde se
+Es el hermano de `rclone_bin.py`, con el mismo contrato: lo que se descarga se
+COMPRUEBA contra el `SHA256SUMS` que publica su autor antes de escribir nada, y
+si no cuadra no se guarda nada. Esto se ejecutará en cada equipo donde se
 enchufe el dispositivo, así que «lo que haya llegado» no vale.
 
-**Qué se baja.** La distribución `install_only_stripped` de python-build-standalone
+Qué se baja: la distribución `install_only_stripped` de python-build-standalone
 (astral-sh), de la release fijada en `common/pins.py`. Es un Python reubicable
-—se descomprime donde sea y funciona— y, a diferencia del zip embebible oficial,
-trae tkinter. Por eso es este y no aquel: sin tkinter no hay ventana.
+(se descomprime donde sea y funciona) y, a diferencia del zip embebible
+oficial, trae tkinter: sin tkinter no hay ventana.
 
-**Dónde se guarda.** El archivo comprobado va a la caché del usuario
+Dónde se guarda: el archivo comprobado va a la caché del usuario
 (`%LOCALAPPDATA%/prdrive-install/runtime/<release>/`), con su suma apuntada al
 lado. La caché es por release y los ficheros se llaman por su destino, así que
-distintas plataformas y distintas versiones no se pisan. Al dispositivo llega una
-EXTRACCIÓN de ese archivo, que hace `extract()` y coloca `deploy.install_runtime()`.
+distintas plataformas y versiones no se pisan. Al dispositivo llega una
+EXTRACCIÓN de ese archivo, que hace `extract()` y coloca
+`deploy.install_runtime()`.
 
-**Ponerlo a mano** (`a_mano()`, `adoptar()`) es dejar ahí mismo el archivo con su
+Ponerlo a mano (`a_mano()`, `adoptar()`) es dejar ahí mismo el archivo con su
 nombre exacto, junto al SHA256SUMS de la release: se comprueba igual que una
-descarga, sin red, y solo entonces cuenta como caché. Un fallo de red al bajarlo
-se reintenta (`descarga.con_reintentos()`); una suma que no cuadra, no.
+descarga, sin red, y solo entonces cuenta como caché. Un fallo de red al
+bajarlo se reintenta (`descarga.con_reintentos()`); una suma que no cuadra, no.
 
-**Qué se escribe al extraer, y qué no.**
-
-  * Todo miembro se valida ANTES de escribir el primero: uno solo que pretenda
-    salirse del destino tumba la extracción entera. Un `extractall()` a secas es
-    el clásico agujero, y un archivo es contenido ajeno aunque venga comprobado.
-  * No se crean enlaces simbólicos: exFAT no los tiene, y el dispositivo casi
-    siempre es exFAT. El único que hace falta —`bin/python3` en Linux, que en el
-    archivo es un enlace a `python3.13`— se materializa escribiendo su destino con
-    ese nombre (y no dos veces: son 30 MB).
-  * Se poda lo que no hace falta para ejecutar prdrive: pip, ensurepip, idle, los
-    tests, las cabeceras y bibliotecas de C, y en Linux `share/` (terminfo, man) y
-    la `libpython.so`, que es para quien incrusta Python —el intérprete de
-    python-build-standalone la lleva enlazada estática—.
-  * El sello (`STAMP`) se escribe el ÚLTIMO. Un runtime a medias no lo tiene, y
-    sin sello no cuenta como instalado: ni para el asistente, ni para penwatch.
+Qué se escribe al extraer, y qué no:
+- Todo miembro se valida ANTES de escribir el primero: uno solo que pretenda
+  salirse del destino tumba la extracción entera. Un `extractall()` a secas es
+  el clásico agujero, y un archivo es contenido ajeno aunque venga comprobado.
+- No se crean enlaces simbólicos: exFAT no los tiene y el dispositivo casi
+  siempre es exFAT. El único que hace falta (`bin/python3` en Linux, que en el
+  archivo es un enlace a `python3.13`) se materializa escribiendo su destino
+  con ese nombre, y no dos veces: son 30 MB.
+- Se poda lo que no hace falta para ejecutar prdrive: pip, ensurepip, idle, los
+  tests, las cabeceras y bibliotecas de C y, en Linux, `share/` (terminfo, man)
+  y la `libpython.so`, que es para quien incrusta Python (el intérprete de
+  python-build-standalone la lleva enlazada estática).
+- El sello (`STAMP`) se escribe el ÚLTIMO. Un runtime a medias no lo tiene, y
+  sin sello no cuenta como instalado: ni para el asistente ni para penwatch.
 """
 
 from __future__ import annotations
@@ -60,36 +59,46 @@ from common.update import _ruta_segura
 from . import APP_NAME, IS_WIN, InstallError
 from . import descarga
 
-DOWNLOAD_TIMEOUT = 60          # segundos por lectura, no en total
+DOWNLOAD_TIMEOUT = 60  # segundos por lectura, no en total
 USER_AGENT = f"{APP_NAME}-install"
+"""`User-Agent` de las peticiones a GitHub."""
 Progreso = Callable[[str], None]
+"""Función que recibe cada mensaje de avance."""
 
-# El sello de versión de cada runtime del dispositivo: `runtime/<clave>/STAMP`.
-# Los nombres los define `common/components.py`, que es quien los LEE desde el
-# dispositivo; aquí solo se escriben. Un segundo literal aquí sería el que se
-# quedaría atrás el día que cambiara el otro. penwatch los repite —no puede
-# importar nada del proyecto— y un test impide que las copias se separen.
 STAMP = components.RUNTIME_STAMP
+"""Nombre del sello de versión de cada runtime: `runtime/<clave>/STAMP`.
+
+Los nombres los define `common/components.py`, que es quien los LEE desde el
+dispositivo; aquí solo se escriben. Un segundo literal aquí sería el que se
+quedaría atrás el día que cambiara el otro. penwatch los repite (no puede
+importar nada del proyecto) y un test impide que las copias se separen.
+"""
 RUNTIME_SUBDIR = components.RUNTIME_SUBDIR
+"""Carpeta de los runtimes dentro de `.prdrive/`."""
 
 SUMS_URL = f"{pins.PBS_BASE_URL}/{pins.PYTHON_RELEASE}/SHA256SUMS"
+"""URL del SHA256SUMS de la release fijada."""
 
-# El directorio raíz de todos los archivos de python-build-standalone.
 RAIZ_ARCHIVO = "python"
+"""Directorio raíz de todos los archivos de python-build-standalone."""
 
 
 def _mm() -> str:
-    """'3.13' de '3.13.15': el tramo que aparece en las rutas del runtime."""
+    """Devuelve `3.13` a partir de `3.13.15`.
+
+    El tramo que aparece en las rutas del runtime.
+    """
     return ".".join(pins.PYTHON_VERSION.split(".")[:2])
 
 
 def podar(plat: Plataforma) -> tuple[str, ...]:
-    """Los prefijos (relativos a la raíz del runtime) que NO viajan.
+    """Devuelve los prefijos, relativos a la raíz del runtime, que NO viajan.
 
-    Lo que hay aquí es lo que ninguna parte de prdrive importa. Quitarlo ahorra
-    unos 15 MB por plataforma en Windows y bastante más en Linux; lo que no está
-    aquí se queda, aunque parezca que sobra, porque un runtime al que le falta un
-    módulo falla en el equipo de otro y lejos de quien lo podría arreglar."""
+    Es lo que ninguna parte de prdrive importa. Quitarlo ahorra unos 15 MB por
+    plataforma en Windows y bastante más en Linux; lo que no está aquí se queda
+    aunque parezca que sobra, porque un runtime al que le falta un módulo falla
+    en el equipo de otro y lejos de quien lo podría arreglar.
+    """
     if plat.es_windows:
         return ("Lib/site-packages/", "Lib/ensurepip/", "Lib/idlelib/",
                 "Lib/test/", "Lib/turtledemo/", "include/", "libs/", "Scripts/")
@@ -100,50 +109,54 @@ def podar(plat: Plataforma) -> tuple[str, ...]:
 
 
 def _podado(rel: str, prefijos: tuple[str, ...], plat: Plataforma) -> bool:
+    """Indica si ese miembro se poda."""
     if any(rel.startswith(p) or rel == p.rstrip("/") for p in prefijos):
         return True
-    # En bin/ de Linux solo hace falta el intérprete: pip, idle, pydoc y los
-    # *-config son guiones que apuntan al nombre versionado y aquí no se usan.
+    # En `bin/` de Linux solo hace falta el intérprete: pip, idle, pydoc y los
+    # `*-config` son guiones que apuntan al nombre versionado y aquí no se
+    # usan.
     return (not plat.es_windows and rel.startswith("bin/")
             and rel not in (plat.interprete, plat.interprete_consola))
 
 
-# ---------------------------------------------------------------------------
-# Nombres y URL
-# ---------------------------------------------------------------------------
-
 def archive_name(plat: Plataforma) -> str:
+    """Devuelve el nombre del archivo de python-build-standalone para esa plataforma."""
     return (f"cpython-{pins.PYTHON_VERSION}+{pins.PYTHON_RELEASE}-{plat.triple}"
             f"-install_only_stripped.tar.gz")
 
 
 def download_url(plat: Plataforma) -> str:
-    """La URL del archivo de ESA release. El '+' del nombre va escapado: GitHub
-    lo sirve igual, pero en una ruta es un espacio para más de un proxy."""
+    """Devuelve la URL del archivo de ESA release.
+
+    El `+` del nombre va escapado: GitHub lo sirve igual, pero en una ruta es
+    un espacio para más de un proxy.
+    """
     return (f"{pins.PBS_BASE_URL}/{pins.PYTHON_RELEASE}/"
             f"{urllib.parse.quote(archive_name(plat))}")
 
 
 def fetch(url: str, timeout: float = DOWNLOAD_TIMEOUT) -> bytes:
-    """La única puerta de salida a la red de este módulo.
+    """Descarga una URL; es la única puerta de salida a la red de este módulo.
 
-    De módulo a propósito, igual que `rclone_bin.fetch()`: los tests la
+    Es de módulo a propósito, como `rclone_bin.fetch()`: los tests la
     sustituyen entera y ninguno habla con GitHub. Devuelve bytes y no un flujo
     porque lo que baja hay que resumirlo entero para comprobarlo, y lo que no
-    está comprobado no se escribe en disco."""
+    está comprobado no se escribe en disco.
+    """
     peticion = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     with urllib.request.urlopen(peticion, timeout=timeout) as resp:
         return resp.read()
 
 
 def a_mano(plat: Plataforma) -> str:
-    """Cómo ponerlo a mano cuando la descarga no sale. Con los nombres exactos.
+    """Devuelve cómo ponerlo a mano cuando la descarga no sale, con los nombres exactos.
 
-    El archivo va donde lo dejaría la descarga —la caché ya guarda archivos, no
-    extracciones—, junto al SHA256SUMS de la misma release: con los dos,
-    `adoptar()` lo comprueba igual que una descarga y sin red. El nombre se dice
-    entero porque la URL lleva el '+' escapado y el navegador puede guardarlo de
-    cualquiera de las dos maneras; el que cuenta es el de aquí."""
+    El archivo va donde lo dejaría la descarga (la caché guarda archivos, no
+    extracciones), junto al SHA256SUMS de la misma release: con los dos,
+    `adoptar()` lo comprueba igual que una descarga y sin red. El nombre se
+    dice entero porque la URL lleva el `+` escapado y el navegador puede
+    guardarlo de cualquiera de las dos maneras; el que cuenta es el de aquí.
+    """
     return (f"Para ponerlo a mano, baja con el navegador estos dos ficheros:\n"
             f"    {download_url(plat)}\n"
             f"    {SUMS_URL}\n"
@@ -155,10 +168,14 @@ def a_mano(plat: Plataforma) -> str:
 
 
 def published_sha256(plat: Plataforma, progreso: Progreso | None = None) -> str:
-    """El SHA-256 que python-build-standalone publica para ese archivo.
+    """Devuelve el SHA-256 que python-build-standalone publica para ese archivo.
 
-    Del SHA256SUMS que haya dejado alguien a mano en la caché o, si no hay, de
-    la red con reintentos (`descarga.sumas()`)."""
+    Sale del SHA256SUMS que haya dejado alguien a mano en la caché o, si no
+    hay, de la red con reintentos (`descarga.sumas()`).
+
+    Raises:
+        InstallError: Si no se puede leer o no trae suma para ese archivo.
+    """
     nombre = archive_name(plat)
     try:
         texto, origen = descarga.sumas(SUMS_URL, cache_dir() / descarga.SUMAS,
@@ -181,16 +198,13 @@ def published_sha256(plat: Plataforma, progreso: Progreso | None = None) -> str:
         f"cómo publica sus releases? La versión fijada está en common/pins.py.")
 
 
-# ---------------------------------------------------------------------------
-# La caché
-# ---------------------------------------------------------------------------
-
 def cache_dir() -> Path:
-    """La caché de runtimes, una carpeta por release.
+    """Devuelve la caché de runtimes, una carpeta por release.
 
-    Por release y no por arquitectura (como la de rclone) porque aquí el nombre
-    del fichero ya lleva el destino dentro: lo que no puede mezclarse es una
-    release con otra."""
+    Va por release y no por arquitectura, como la de rclone, porque aquí el
+    nombre del fichero ya lleva el destino dentro: lo que no puede mezclarse es
+    una release con otra.
+    """
     base = os.environ.get("LOCALAPPDATA") or tempfile.gettempdir()
     d = Path(base) / f"{APP_NAME}-install" / RUNTIME_SUBDIR / pins.PYTHON_RELEASE
     d.mkdir(parents=True, exist_ok=True)
@@ -198,11 +212,12 @@ def cache_dir() -> Path:
 
 
 def _suma_apuntada(archivo: Path) -> Path:
+    """Devuelve el fichero `.sha256` que acompaña al archivo."""
     return archivo.with_name(archivo.name + ".sha256")
 
 
 def recorded_sha256(archivo: Path) -> str:
-    """La suma que se comprobó al descargar ese archivo ('' si no hay)."""
+    """Devuelve la suma que se comprobó al descargar ese archivo, o `''` si no hay."""
     try:
         return _suma_apuntada(archivo).read_text(encoding="ascii").strip()
     except OSError:
@@ -210,7 +225,7 @@ def recorded_sha256(archivo: Path) -> str:
 
 
 def file_sha256(ruta: Path) -> str:
-    """El SHA-256 de un fichero, leído a trozos (son decenas de megas)."""
+    """Devuelve el SHA-256 de un fichero, leído a trozos (son decenas de megas)."""
     h = hashlib.sha256()
     with open(ruta, "rb") as f:
         for bloque in iter(lambda: f.read(1 << 20), b""):
@@ -219,10 +234,11 @@ def file_sha256(ruta: Path) -> str:
 
 
 def cached(plat: Plataforma) -> Path | None:
-    """El archivo de la caché, si está y sigue siendo el que se comprobó.
+    """Devuelve el archivo de la caché si está y sigue siendo el que se comprobó.
 
-    Se vuelve a resumir cada vez: son unos 30 MB y cuesta menos de un segundo, y
-    a cambio una caché truncada o estropeada no llega nunca a un dispositivo."""
+    Se vuelve a resumir cada vez: son unos 30 MB y cuesta menos de un segundo,
+    y a cambio una caché truncada o estropeada no llega nunca a un dispositivo.
+    """
     archivo = cache_dir() / archive_name(plat)
     try:
         if not archivo.is_file():
@@ -236,18 +252,23 @@ def cached(plat: Plataforma) -> Path | None:
 
 
 def download_runtime(plat: Plataforma, progreso: Progreso | None = None) -> Path:
-    """Baja el archivo, COMPRUEBA su SHA-256, y lo deja en la caché.
+    """Baja el archivo, COMPRUEBA su SHA-256 y lo deja en la caché.
 
-    El alcance de la comprobación es el mismo que el de rclone, y conviene
-    decirlo igual de claro: la suma viaja por el mismo TLS y desde la misma
-    release que el archivo, así que no protege de un GitHub —o una cuenta de
-    astral-sh— comprometidos. Ataja todo lo demás: una descarga truncada, un
-    proxy que devuelve otra cosa, una caché que sirve algo viejo. Y la release
-    está FIJADA en `common/pins.py`: no se baja «lo último», se baja lo probado.
+    El alcance de la comprobación es el mismo que el de rclone: la suma viaja
+    por el mismo TLS y desde la misma release que el archivo, así que no
+    protege de un GitHub (o una cuenta de astral-sh) comprometidos. Ataja todo
+    lo demás: una descarga truncada, un proxy que devuelve otra cosa, una caché
+    que sirve algo viejo. Y la release está FIJADA en `common/pins.py`: no se
+    baja «lo último», se baja lo probado. Los fallos van como los de rclone: un
+    corte o un tiempo de espera se reintentan (`descarga.con_reintentos()`),
+    una suma que no cuadra no.
 
-    Lo mismo que rclone también en los fallos: un corte o un tiempo de espera se
-    reintentan (`descarga.con_reintentos()`), una suma que no cuadra no."""
+    Raises:
+        InstallError: Si no se puede leer el SHA256SUMS, descargar o guardar, o
+            lo descargado no es lo publicado.
+    """
     def decir(msg: str) -> None:
+        """Pasa un mensaje a `progreso`, si lo hay."""
         if progreso:
             progreso(msg)
 
@@ -288,19 +309,26 @@ def download_runtime(plat: Plataforma, progreso: Progreso | None = None) -> Path
 
 
 def adoptar(plat: Plataforma, progreso: Progreso | None = None) -> Path | None:
-    """El archivo que alguien ha dejado a mano en la caché, ya comprobado.
+    """Devuelve el archivo que alguien ha dejado a mano en la caché, ya comprobado.
 
-    None si no hay ninguno SIN suma apuntada: uno con su `.sha256` al lado salió
-    de una descarga, y si ya no cuadra es una caché estropeada, que se vuelve a
-    descargar como siempre (`cached()`). Uno sin `.sha256` es otra cosa: o lo ha
-    puesto alguien con el nombre de `a_mano()`, o una descarga se cortó justo
-    entre el renombrado y apuntar la suma. Los dos se comprueban contra el
-    SHA256SUMS —el de al lado si se dejó, si no el de la red— y solo entonces se
-    apunta su suma y cuenta como caché.
+    Solo vale uno SIN suma apuntada: uno con su `.sha256` al lado salió de una
+    descarga y, si ya no cuadra, es una caché estropeada que se vuelve a
+    descargar como siempre (`cached()`). Uno sin `.sha256` es otra cosa: o lo
+    ha puesto alguien con el nombre de `a_mano()`, o una descarga se cortó
+    justo entre el renombrado y apuntar la suma. Los dos se comprueban contra
+    el SHA256SUMS (el de al lado si se dejó, si no el de la red) y solo
+    entonces se apunta su suma y cuenta como caché. Si no cuadra se dice y NO
+    se descarga encima: alguien lo ha puesto ahí a propósito, y pisarlo en
+    silencio sería no enterarse de que lo que tiene en la mano no es lo
+    publicado.
 
-    Si no cuadra se dice y NO se descarga encima: alguien lo ha puesto ahí a
-    propósito, y pisarlo en silencio sería no enterarse de que lo que tiene en
-    la mano no es lo publicado."""
+    Returns:
+        El archivo, o `None` si no hay ninguno por comprobar.
+
+    Raises:
+        InstallError: Si no se puede leer, no cuadra con la suma publicada o no
+            se puede apuntar su suma.
+    """
     archivo = cache_dir() / archive_name(plat)
     try:
         if not archivo.is_file() or _suma_apuntada(archivo).exists():
@@ -330,10 +358,14 @@ def adoptar(plat: Plataforma, progreso: Progreso | None = None) -> Path | None:
 
 def ensure_runtime(plat: Plataforma, progreso: Progreso | None = None,
                    allow_download: bool = True) -> Path:
-    """El archivo comprobado de esa plataforma. Descarga solo si hace falta.
+    """Devuelve el archivo comprobado de esa plataforma; descarga solo si hace falta.
 
     Un archivo dejado a mano (`adoptar()`) cuenta aunque no se permita
-    descargar, como en `rclone_bin.rclone_for()`: es un fichero de este equipo."""
+    descargar, como en `rclone_bin.rclone_for()`: es un fichero de este equipo.
+
+    Raises:
+        InstallError: Si no hay archivo y no se permite descargar.
+    """
     encontrado = cached(plat) or adoptar(plat, progreso)
     if encontrado:
         return encontrado
@@ -344,15 +376,12 @@ def ensure_runtime(plat: Plataforma, progreso: Progreso | None = None,
     return download_runtime(plat, progreso)
 
 
-# ---------------------------------------------------------------------------
-# Extraer
-# ---------------------------------------------------------------------------
-
 def stamp_text(plat: Plataforma, sha256: str) -> str:
-    """El sello de un runtime: de qué archivo exacto salió.
+    """Devuelve el sello de un runtime: de qué archivo exacto salió.
 
     penwatch compara el texto entero con el de su copia en el equipo; cualquier
-    diferencia —otra versión, otra release, otro archivo— es «refrescar»."""
+    diferencia (otra versión, otra release, otro archivo) es «refrescar».
+    """
     return (f"# {APP_NAME} — el Python de este dispositivo. Lo escribe el "
             f"instalador y lo compara penwatch. No lo toques.\n"
             f"python = {pins.PYTHON_VERSION}\n"
@@ -362,11 +391,17 @@ def stamp_text(plat: Plataforma, sha256: str) -> str:
 
 
 def _relativo(nombre: str) -> str | None:
-    """La ruta del miembro relativa a la raíz del runtime, sin el 'python/'.
+    """Devuelve la ruta del miembro relativa a la raíz del runtime, sin el `python/`.
 
-    None para la raíz misma. InstallError si pretende salirse o no está bajo la
-    raíz que publica python-build-standalone: un cambio de empaquetado se dice,
-    no se extrae a ciegas."""
+    Un cambio de empaquetado se dice, no se extrae a ciegas.
+
+    Returns:
+        La ruta, o `None` para la raíz misma.
+
+    Raises:
+        InstallError: Si pretende salirse o no está bajo la raíz que publica
+            python-build-standalone.
+    """
     limpio = _ruta_segura(nombre)
     if limpio is None:
         raise InstallError(f"El archivo trae un miembro que se sale del destino: "
@@ -381,18 +416,25 @@ def _relativo(nombre: str) -> str | None:
 
 
 def extract(archivo: Path, destino: Path, plat: Plataforma, sha256: str) -> int:
-    """Extrae el runtime en `destino` y le pone el sello. Devuelve cuántos
-    ficheros ha escrito (el sello incluido).
+    """Extrae el runtime en `destino` y le pone el sello.
 
-    Dos pasadas: la primera valida y decide, sin tocar el disco; la segunda
-    escribe. Así un archivo con un solo miembro malo no deja nada a medias."""
+    Son dos pasadas: la primera valida y decide sin tocar el disco; la segunda
+    escribe. Así un archivo con un solo miembro malo no deja nada a medias.
+
+    Returns:
+        Cuántos ficheros ha escrito, el sello incluido.
+
+    Raises:
+        InstallError: Si el archivo no es válido, algún miembro es peligroso o
+            no se puede escribir.
+    """
     prefijos = podar(plat)
     estables = {plat.interprete, plat.interprete_consola}
     try:
         with tarfile.open(archivo, "r:gz") as tf:
             miembros = tf.getmembers()
 
-            # --- primera pasada: validar y decidir ---------------------------
+            # Primera pasada: validar y decidir.
             regulares: dict[str, tarfile.TarInfo] = {}
             enlaces: dict[str, str] = {}
             for m in miembros:
@@ -432,7 +474,7 @@ def extract(archivo: Path, destino: Path, plat: Plataforma, sha256: str) -> int:
                     f"El archivo de Python para {plat.nombre} no trae "
                     f"{', '.join(faltan)}. No se ha escrito nada.")
 
-            # --- segunda pasada: escribir ---------------------------------------
+            # Segunda pasada: escribir.
             destino.mkdir(parents=True, exist_ok=True)
             for salida, m in escribir:
                 ruta = destino.joinpath(*salida.split("/"))
@@ -446,13 +488,14 @@ def extract(archivo: Path, destino: Path, plat: Plataforma, sha256: str) -> int:
                     try:
                         ruta.chmod(ruta.stat().st_mode | 0o755)
                     except OSError:
-                        pass        # exFAT: no hay permisos que poner
+                        pass  # exFAT: no hay permisos que poner
     except (tarfile.TarError, EOFError) as e:
         raise InstallError(f"{archivo} no es un archivo válido: {e}") from e
     except OSError as e:
         raise InstallError(f"No he podido extraer Python en {destino}: {e}") from e
 
-    # El ÚLTIMO: sin sello, lo de arriba no cuenta como un runtime instalado.
+    # Va el ÚLTIMO: sin sello, lo de arriba no cuenta como un runtime
+    # instalado.
     try:
         (destino / STAMP).write_text(stamp_text(plat, sha256), encoding="utf-8",
                                      newline="\n")
