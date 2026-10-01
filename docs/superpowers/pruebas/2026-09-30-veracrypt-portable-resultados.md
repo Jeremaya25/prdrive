@@ -4,6 +4,13 @@ Fecha: 30/09/2026. Equipo: Windows 11 IoT Enterprise LTSC 2024 (26100), x64.
 Unidad de pruebas: **G:** (115 GB, exFAT, prdrive 0.5.0 sin cifrar, id
 `73cb9c4b…`). Código: `main` en `f3aab97` (0.5.0). Plan: la tabla de #50.
 
+**Con el pin todavía en la 1.26.24.** Mientras se hacían, `main` pasó a 0.5.2
+con VeraCrypt fijado en la 1.26.29 (`8ad92ee`) y reunió el plan completo en
+`2026-09-30-veracrypt-sin-instalar.md`. Esto cubre V1, V6 y V7 de su sección 1
+con el código de 0.5.0. V5 se hizo con un pin falso (1.26.24 → «1.26.99»), no
+con el paso real a la 1.26.29, que es K1 de ese plan. Lo que cambió en
+`veracrypt_bin.py` / `crypto.py` desde entonces no está probado aquí.
+
 V2 y V3 (Windows ARM64) quedan para otro equipo.
 
 | Prueba | Estado |
@@ -21,10 +28,14 @@ V2 y V3 (Windows ARM64) quedan para otro equipo.
   con un driver suelto**: servicio `veracrypt` (inicio `System`, tipo kernel)
   con `C:\WINDOWS\system32\drivers\veracrypt.sys` **1.26.29.3**, cargado. Sin
   filtros de clase que lo nombren.
-  - Hallazgo **P-1**: un driver de otra versión sin instalación visible.
+  - Hallazgo **P-1**: un driver cargado sin instalación visible.
     `penwatch.installed_veracrypt()` / `crypto.find_veracrypt()` no ven nada
-    instalado y eligen el Portable 1.26.24, que con ese driver cargado fallaría
-    con `ERR_DRIVER_VERSION`. Ni el asistente ni el `.bat` lo detectan hoy.
+    instalado y eligen el Portable. Ni el asistente ni el `.bat` miran qué
+    driver hay cargado. **Corregido después de redactarlo:** `DriverAttach()`
+    compara `VERSION_NUM`, que es 0x0126 para toda la 1.26.x (ver AGENTS.md),
+    así que este 1.26.29 probablemente **no** habría chocado con el Portable
+    1.26.24. Solo choca con otra versión minor (una 1.25.x suelta: V4b del
+    plan). No se comprobó: el driver se quitó antes de V1.
 - Se quitó para V1: `sc stop` (se queda en `STOP_PENDING`: el driver no se
   descarga en caliente), `sc delete`, `.sys` renombrado a
   `veracrypt.sys.borrar`, reinicio.

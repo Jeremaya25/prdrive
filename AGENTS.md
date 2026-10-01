@@ -734,11 +734,12 @@ gathered as one plan in
 - the new eject wait;
 - Linux;
 - the VeraCrypt Portable of #50 (tests V1–V7 in the issue): V1, V5, V6 and V7
-  passed on Windows x64
-  (`docs/superpowers/pruebas/2026-09-30-veracrypt-portable-resultados.md`, with
-  the P-1 finding: a leftover driver of another version with no installation
-  goes unnoticed, and the Portable would hit `ERR_DRIVER_VERSION`). Still
-  pending: V2/V3 the same drive opened on Windows ARM64 and back, the `.bat`
+  passed on Windows x64 **with 0.5.0 and the 1.26.24 pin**, before the move to
+  1.26.29
+  (`docs/superpowers/pruebas/2026-09-30-veracrypt-portable-resultados.md`: a
+  loaded driver with no installation goes unnoticed, which only matters for
+  another minor version; and the Portable's driver stays loaded after
+  «Expulsar» until a reboot). Still pending: V2/V3 the same drive opened on Windows ARM64 and back, the `.bat`
   choosing by `%PROCESSOR_ARCHITECTURE%`; V4 another VeraCrypt version installed
   (installed first, no `ERR_DRIVER_VERSION`). Also unverified: whether the
   traveler's `.sys` is held open while its driver is loaded
