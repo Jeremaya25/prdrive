@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
-"""
-La ventanita de espera (`ui.tk.working()`) con avance, conducida sin nadie delante.
+"""La ventanita de espera (`ui.tk.working()`) con avance, conducida sin nadie delante.
 
-Crear un contenedor fijo escribe el volumen entero, minutos u horas, y hasta
-#46 esa espera era una barra que iba y venía con una estimación que no se movía.
-Ahora `working()` acepta un `progreso` y, mientras diga algo, llena la barra y
-pone la cifra debajo; cuando deja de decirlo, vuelve a la barra sin cifra. Lo
-que se comprueba es ese ir y venir, y lo que no puede pasar nunca: que un
-`progreso` que falla deje la ventanita abierta —no se puede cerrar a mano—.
+Crear un contenedor fijo escribe el volumen entero, minutos u horas (#46).
+`working()` acepta un `progreso` y, mientras diga algo, llena la barra y pone
+la cifra debajo; cuando deja de decirlo, vuelve a la barra sin cifra. Lo que se
+comprueba es ese ir y venir, y lo que no puede pasar nunca: que un `progreso`
+que falla deje la ventanita abierta (no se puede cerrar a mano).
 
 No se entra en el bucle de eventos de verdad: se sustituye `mostrar()` por uno
 que va dando vueltas a `update()` mientras cambia lo que dice el avance.
@@ -54,10 +52,12 @@ def conducir(pasos, progreso=None, funcion=None):
     visto: dict = {}
 
     def trabajo():
+        """Espera a que el test lo suelte y devuelve el resultado de la función."""
         soltar.wait(5)
         return funcion() if funcion else "hecho"
 
     def falso_mostrar(dlg, parent=None):
+        """Apunta el diálogo, ejecuta los pasos del test y comprueba que se cierre."""
         visto["dlg"] = dlg
         pasos(dlg)
         soltar.set()
@@ -73,21 +73,23 @@ def conducir(pasos, progreso=None, funcion=None):
 
 
 def modo(dlg) -> str:
+    """Devuelve el modo de la barra: `determinate` o `indeterminate`."""
     return str(dlg.barra.cget("mode"))
 
 
-# --- 1. sin progreso, la de siempre ------------------------------------------
+# 1. sin progreso, la de siempre
 ok, valor, visto = conducir(lambda dlg: esperar_a(lambda: False, 0.3))
 c("sin progreso no hay hueco para la cifra", visto["dlg"].cifra, None)
 c("y se cierra sola al terminar", visto["cerrada"], True)
 c("devolviendo lo que dio la función", (ok, valor), (True, "hecho"))
 
 
-# --- 2. con progreso: la barra va y viene, se llena, y vuelve ----------------
+# 2. con progreso: la barra va y viene, se llena, y vuelve
 dice: dict = {"medida": None, "llamadas": 0}
 
 
 def progreso():
+    """Hace de `progreso`: cuenta la llamada y devuelve la medida o lanza."""
     dice["llamadas"] += 1
     medida = dice["medida"]
     if isinstance(medida, Exception):
@@ -102,6 +104,7 @@ def ronda() -> None:
 
 
 def pasos(dlg) -> None:
+    """Conduce la ventanita por los casos de avance, apuntando lo que ve."""
     ronda()
     visto["al_abrir"] = (modo(dlg), str(dlg.cifra.cget("text")))
 
@@ -145,8 +148,9 @@ c("con todo eso, la ventanita se cierra sola al terminar", ventana["cerrada"], T
 c("y devuelve lo de la función", (ok, valor), (True, "hecho"))
 
 
-# --- 3. un progreso que falla desde el principio no cuelga nada --------------
+# 3. un progreso que falla desde el principio no cuelga nada
 def roto():
+    """`progreso` que falla desde el principio."""
     raise OSError("sin contador")
 
 
@@ -156,8 +160,9 @@ c("con un progreso roto desde el principio, la barra de siempre",
 c("y el resultado llega igual", (ok, valor), (True, "hecho"))
 
 
-# --- 4. si la función falla, se devuelve la excepción ------------------------
+# 4. si la función falla, se devuelve la excepción
 def falla():
+    """Función de trabajo que falla."""
     raise ValueError("no ha ido")
 
 
@@ -168,12 +173,13 @@ c("si falla el trabajo, (False, excepción)", (ok, type(valor).__name__),
 c("y la ventanita también se cierra", visto["cerrada"], True)
 
 
-# --- 5. colgada de una raíz que no se enseña ---------------------------------
+# 5. colgada de una raíz que no se enseña
 #
-# La del relevo cuelga de `root_oculto()`. Un `transient` hereda el estado de su
-# padre, y en Windows la ventanita no llegaba a verse: el relevo trabajaba
+# La del relevo cuelga de `root_oculto()`. Un `transient` hereda el estado de
+# su padre, y en Windows la ventanita no llegaba a verse: el relevo trabajaba
 # minutos sin nada en pantalla. Suelta no es transient de nadie.
 def transitoria_de(suelto: bool) -> str:
+    """Devuelve de quién cuelga la ventanita (su `transient`)."""
     dlg = uitk.modal(raiz, "probando", suelto=suelto)
     try:
         return str(dlg.wm_transient() or "")
@@ -188,6 +194,7 @@ visto = {}
 
 
 def mirar_suelta(dlg) -> None:
+    """Apunta de quién cuelga el diálogo mostrado."""
     visto["transient"] = str(dlg.wm_transient() or "")
 
 

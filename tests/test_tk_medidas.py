@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
-"""
-Que las pantallas quepan en la pantalla.
+"""Que las pantallas quepan en la pantalla.
 
 Lo que se comprueba no es el aspecto sino una sola cosa medible: **ninguna
 ventana pide más de lo que hay**, y **nada queda recortado sin barra que lo
-avise**. Es el fallo que tuvo el asistente: el hueco de los pasos era un marco de
-820x430 px con `grid_propagate(False)`, el paso 1 pedía 486 px de alto en una
-pantalla normal y el último campo simplemente no se dibujaba, sin ningún aviso.
+avise**. Es el fallo que tuvo el asistente: el hueco de los pasos era un marco
+de 820x430 px con `grid_propagate(False)`, el paso 1 pedía 486 px de alto en
+una pantalla normal y el último campo simplemente no se dibujaba, sin ningún
+aviso.
 
 Cada pantalla de la lista son **dos** cosas y las dos importan: los píxeles que
 dice tener y el `tk scaling` con el que se dibuja. `tk scaling` son píxeles por
-punto —1,3333 es 96 ppp, o sea el zoom del sistema al 100 %; 2,0 es el 150 % y
-2,6667 el 200 %—, y es lo que de verdad rompe las medidas, porque las fuentes van
-en puntos y crecen con él mientras que un recuadro en píxeles no. Una 4K sola no
-prueba gran cosa (sobra sitio por todos lados); una 4K al 200 %, o peor, una
-1080p al 200 %, es donde el contenido deja de caber.
+punto (1,3333 es 96 ppp, o sea el zoom del sistema al 100 %; 2,0 es el 150 % y
+2,6667 el 200 %), y es lo que de verdad rompe las medidas, porque las fuentes
+van en puntos y crecen con él mientras que un recuadro en píxeles no. Una 4K
+sola no prueba gran cosa (sobra sitio por todos lados); una 4K al 200 %, o
+peor, una 1080p al 200 %, es donde el contenido deja de caber.
 
-Las medidas dependen de las fuentes del equipo, así que aquí no se fijan cifras:
-se compara lo que pide cada ventana con lo que dice `tk.pantalla_util`, que es
-justo lo que mira el código. Para probar una pantalla que no se tiene se
+Las medidas dependen de las fuentes del equipo, así que aquí no se fijan
+cifras: se compara lo que pide cada ventana con lo que dice `tk.pantalla_util`,
+que es justo lo que mira el código. Para probar una pantalla que no se tiene se
 sustituye esa función, que por eso es de módulo, y se le cambia la escala al
 intérprete de Tk: es reversible y la cogen los widgets que se creen después.
 
@@ -190,6 +190,7 @@ def pantalla(ancho, alto, escala):
 
 
 def cabe(ventana) -> bool:
+    """Indica si la ventana pide menos de lo que hay en la pantalla útil."""
     ventana.update_idletasks()
     util_x, util_y = uitk.pantalla_util(ventana)
     return (ventana.winfo_reqwidth() <= util_x
@@ -207,9 +208,12 @@ def recortado(visor) -> bool:
 
 
 def usar_conexion(wiz) -> None:
-    """Pulsa «Usar esta conexión» con lo que deja más alto el paso: la línea de
-    «preparada», larga, y debajo el aviso de un sftp sin usuario (#47). Las dos
-    aparecen con el paso ya pintado, que es cuando un hueco se queda corto."""
+    """Pulsa «Usar esta conexión» con lo que deja más alto el paso.
+
+    La línea de «preparada», larga, y debajo el aviso de un sftp sin usuario
+    (#47). Las dos aparecen con el paso ya pintado, que es cuando un hueco se
+    queda corto.
+    """
     pendientes, caja, usar = list(wiz.cuerpo.winfo_children()), None, None
     while pendientes:
         w = pendientes.pop()
@@ -236,6 +240,7 @@ def medir_dialogo(fabricar, ancho, alto, escala, modulo=None) -> tuple[bool, boo
     modulo = modulo or tk_pairs
 
     def falso_mostrar(dlg, parent=None):
+        """Encaja el diálogo y apunta si cabe y si queda recortado."""
         dlg.visor.encajar(dlg)
         medida["cabe"] = cabe(dlg)
         medida["recortado"] = recortado(dlg.visor)
@@ -251,10 +256,11 @@ def medir_dialogo(fabricar, ancho, alto, escala, modulo=None) -> tuple[bool, boo
 
 
 try:
-    # --- el asistente, paso a paso ---------------------------------------------------
-    # Instalación, Parejas y Verificación necesitan un dispositivo elegido; los que
-    # se pueden pintar sin nada montado son los que llevan formulario, que son los
-    # que se salían.
+    # el asistente, paso a paso
+    #
+    # Instalación, Parejas y Verificación necesitan un dispositivo elegido; los
+    # que se pueden pintar sin nada montado son los que llevan formulario, que
+    # son los que se salían.
     #
     # Por NOMBRE y no por índice: el orden de los pasos ya ha cambiado una vez
     # (el dispositivo pasó a ser el primero), y una lista de números habría
@@ -402,15 +408,16 @@ try:
             raiz_equipo.veracrypt_instalado = reales_vc
         top.destroy()
 
-    # --- lo que aparece DESPUÉS de pintar el paso -----------------------------
+    # lo que aparece DESPUÉS de pintar el paso
     #
     # Reportado: al elegir una unidad que ya es un prdrive, el panel del desvío
     # sale por debajo del borde y sin barra que lo avise. Lo que fallaba era el
     # momento: `repintar()` ajustaba el hueco al terminar de dibujar, pero este
     # panel lo monta el `<<TreeviewSelect>>`, o sea después. Y no basta con que
     # el visor se entere solo, porque su interior es un item del lienzo con la
-    # altura fijada: al añadirle widgets cambia lo que PIDE y no lo que MIDE, así
-    # que el <Configure> del que cuelga la barra tampoco llega a dispararse.
+    # altura fijada: al añadirle widgets cambia lo que PIDE y no lo que MIDE,
+    # así que el <Configure> del que cuelga la barra tampoco llega a
+    # dispararse.
     #
     # Se mide en una pantalla amplia y en una pequeña porque la respuesta
     # correcta es distinta y las dos valen: crecer donde hay sitio, y poner la
@@ -461,7 +468,7 @@ try:
     finally:
         device.list_volumes = volumenes_real
 
-    # --- #49: el error de una descarga no se come el botón ----------------------
+    # #49: el error de una descarga no se come el botón
     #
     # Reportado: tras un fallo al descargar el rclone de otra plataforma, el
     # mensaje —varias líneas— hacía crecer el paso, y como la rama de error no
@@ -471,9 +478,10 @@ try:
     # mira en la 1080p; en las pantallas pequeñas, que nada quede recortado sin
     # barra que lo enseñe.
     #
-    # El mensaje es el de verdad, el que sale de `deploy.conseguir_plataformas()`
-    # cuando la red no contesta ni al tercer intento: la plataforma, la URL, cómo
-    # ponerlo a mano con sus rutas y cómo seguir sin ella. Sin red y sin dormir.
+    # El mensaje es el de verdad, el que sale de
+    # `deploy.conseguir_plataformas()` cuando la red no contesta ni al tercer
+    # intento: la plataforma, la URL, cómo ponerlo a mano con sus rutas y cómo
+    # seguir sin ella. Sin red y sin dormir.
     from install import (InstallError, deploy, descarga, platforms,  # noqa: E402
                          rclone_bin)
 
@@ -502,6 +510,7 @@ try:
                               progreso=None: (False, ERROR_LARGO))
 
         def boton_de(wiz, texto):
+            """Devuelve el botón con ese texto del cuerpo del asistente."""
             pila = [wiz.cuerpo]
             while pila:
                 w = pila.pop()
@@ -645,7 +654,7 @@ try:
           recortado(wiz.visor), False)
         top.destroy()
 
-    # --- los diálogos -----------------------------------------------------------------
+    # los diálogos
     REAL_MOSTRAR, REAL_WAIT = tk_pairs.mostrar, tk.Toplevel.wait_window
     try:
         for nombre, ancho, alto, escala in PANTALLAS:
@@ -831,6 +840,7 @@ try:
                 recorrido: dict = {"cortes": [], "pide": set(), "barras": set()}
 
                 def recorrer(dlg, parent=None):
+                    """Encaja el diálogo y recorre sus widgets en busca de un árbol."""
                     dlg.visor.encajar(dlg)
                     pila, arbol = [dlg], None
                     while pila and arbol is None:
@@ -874,6 +884,7 @@ try:
                 vista: dict = {}
 
                 def esperar_a(condicion, limite=5.0) -> bool:
+                    """Da vueltas al bucle hasta la condición o el límite."""
                     fin = time.monotonic() + limite
                     while time.monotonic() < fin:
                         raiz.update()
@@ -883,6 +894,7 @@ try:
                     return False
 
                 def medir_espera(dlg, parent=None):
+                    """Mide la ventanita de espera, sin cifra y con la más ancha."""
                     dlg.update_idletasks()
                     vista["sin_cifra"] = (dlg.winfo_reqwidth(), dlg.winfo_reqheight())
                     dice["medida"] = (0.99, ESPERA_CIFRA)

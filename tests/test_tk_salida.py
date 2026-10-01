@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""
-El progreso en la ventana de salida.
+"""El progreso en la ventana de salida.
 
-sync.py cuenta cómo va cada pareja con una línea de progreso cada pocos segundos
-(ver test_progress.py). Aquí se comprueba el otro lado: que la ventana la
-reconoce, la pinta con su tono y la reescribe en su sitio en vez de apilar una
-por lectura —una línea viva por pareja, que al terminar se queda con la última—.
+`sync.py` cuenta cómo va cada pareja con una línea de progreso cada pocos
+segundos (ver `test_progress.py`). Aquí se comprueba el otro lado: que la
+ventana la reconoce, la pinta con su tono y la reescribe en su sitio en vez de
+apilar una por lectura: una línea viva por pareja, que al terminar se queda con
+la última.
 
 La ventana se abre con un proceso de verdad que escribe lo que escribiría
-sync.py, oculta y colgada de una raíz que tampoco se enseña.
+`sync.py`, oculta y colgada de una raíz que tampoco se enseña.
 """
 
 import sys
@@ -23,10 +23,11 @@ c = Checks("progreso en la ventana de salida")
 
 
 def linea(texto):
+    """Devuelve una línea de progreso con ese texto."""
     return f"  {progress.ETIQUETA} {texto}\n"
 
 
-# --- el tono: sin Tk -----------------------------------------------------------------
+# el tono: sin Tk
 c("la línea de progreso tiene su tono", uitk._tono(linea("1,1 MB de 3,4 MB · 32 % · 0 B/s")),
   "progreso")
 c("también la de cero", uitk._tono(linea("0 B de 0 B · 0 B/s")), "progreso")
@@ -35,7 +36,7 @@ c("y lo demás sigue como estaba",
                            "[notas] OK.", "[notas] FALLÓ (código 1). Log: x")],
   ["cabecera", "orden", "ok", "fallo"])
 
-# --- la ventana ----------------------------------------------------------------------
+# la ventana
 try:
     import tkinter as tk
     raiz = tk.Tk()
@@ -73,6 +74,7 @@ ESCRIBIR = ("import sys, time\n"
 
 
 def recorrer(w):
+    """Recorre los widgets que cuelgan de `w`, en profundidad."""
     pila = [w]
     while pila:
         x = pila.pop()
@@ -119,11 +121,13 @@ try:
       uitk.theme.ACENTO)
     ventana.destroy()
 
-    # --- un código que quien llama no da por error ---------------------------
+    # un código que quien llama no da por error
     #
-    # El aplicador de componentes sale con 3 cuando lo ha dejado todo listo para
-    # el relevo, y la ventana decía «ERROR (código 3)» justo en el caso bueno.
+    # El aplicador de componentes sale con 3 cuando lo ha dejado todo listo
+    # para el relevo, y la ventana decía «ERROR (código 3)» justo en el caso
+    # bueno.
     def terminar(rc, veredictos):
+        """Abre la ventana con un proceso que sale con `rc` y devuelve la ventana."""
         antes = set(raiz.winfo_children())
         uitk.output_window("Prueba", [sys.executable, "-c", f"raise SystemExit({rc})"],
                            parent=raiz, modal=False, veredictos=veredictos)

@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
-"""
-La ventana principal: el aviso de arranque se puede descartar, y solo ese.
+"""La ventana principal: el aviso de arranque se puede descartar, y solo ese.
 
 `main_window()` acaba en `mainloop()`, así que para conducirla se sustituye el
 bucle por una sonda: cuando Tk le cede el control, la sonda mira la ventana ya
 pintada, pulsa lo que tenga que pulsar y la cierra. Los `after(300, …)` que
 consultan GitHub y recorren carpetas quedan encolados y no llegan a ejecutarse
-nunca, que es justo lo que se quiere: aquí no se toca la red ni se recorre nada.
+nunca, que es justo lo que se quiere: aquí no se toca la red ni se recorre
+nada.
 
 Lo que se comprueba es la diferencia entre un aviso y un estado. El aviso de
-arranque —«se ha parado el servicio que había»— es algo que pasó y se lee una
+arranque («se ha parado el servicio que había») es algo que pasó y se lee una
 vez. Los otros recuadros ámbar describen cómo está el dispositivo, y descartar
-uno de esos sería esconder trabajo pendiente: por eso ninguno lleva «Descartar».
+uno de esos sería esconder trabajo pendiente: por eso ninguno lleva
+«Descartar».
 """
 
 import sys
@@ -50,6 +51,7 @@ components.pendientes = lambda: []
 
 
 def recorrer(widget):
+    """Recorre los widgets que cuelgan de `widget`, en profundidad."""
     pila = [widget]
     while pila:
         w = pila.pop()
@@ -58,6 +60,7 @@ def recorrer(widget):
 
 
 def botones(ventana, texto):
+    """Devuelve los botones de la ventana con ese texto."""
     return [w for w in recorrer(ventana)
             if isinstance(w, ttk.Button) and w.cget("text") == texto]
 
@@ -84,11 +87,12 @@ def conducir(sonda, aviso=AVISO):
         tk.Tk.mainloop = real
 
 
-# --- el aviso sale con su botón, y al pulsarlo se va -------------------------
+# el aviso sale con su botón, y al pulsarlo se va
 with sandbox():
     visto = {}
 
     def sonda(self, *_a, **_k):
+        """Sonda: mira el aviso, pulsa «Descartar» y mira de nuevo."""
         visto["antes"] = any(AVISO in t for t in textos(self))
         visto["boton"] = len(botones(self, "Descartar"))
         visto["alto_antes"] = self.winfo_reqheight()
@@ -107,28 +111,31 @@ with sandbox():
     c("la ventana encoge, que es la señal de que el bloque se ha ido",
       visto["alto_despues"] < visto["alto_antes"], True)
 
-# --- sin aviso no hay nada que descartar -------------------------------------
+# sin aviso no hay nada que descartar
 with sandbox():
     sin = {}
 
     def sonda_sin(self, *_a, **_k):
+        """Sonda: cuenta los botones «Descartar» de una ventana sin aviso."""
         sin["boton"] = len(botones(self, "Descartar"))
         self.destroy()
 
     conducir(sonda_sin, aviso=None)
     c("sin aviso de arranque no aparece ningún «Descartar»", sin["boton"], 0)
 
-# --- un estado NO se descarta ------------------------------------------------
+# un estado NO se descarta
+#
 # Una pareja que falló es estado del dispositivo: se va cuando haya una pasada
 # buena, no cuando alguien cierre el aviso. Ya no tiene recuadro propio —lo
-# cuenta la línea que lleva a «Reparación»—, pero la regla es la misma: si algún
-# día esa línea estrena un «Descartar», que sea leyendo esto.
+# cuenta la línea que lleva a «Reparación»—, pero la regla es la misma: si
+# algún día esa línea estrena un «Descartar», que sea leyendo esto.
 with sandbox():
     estado = {}
     results.fallos = lambda cfg: [results.Fallo(
         pareja="notas", cuando="2026-01-01 00:00:00", codigo=1, log=None)]
 
     def sonda_fallo(self, *_a, **_k):
+        """Sonda: mira si el fallo es un estado sin «Descartar»."""
         estado["falla"] = any("que revisar" in t for t in textos(self))
         estado["descartables"] = len(botones(self, "Descartar"))
         self.destroy()
@@ -138,10 +145,11 @@ with sandbox():
     c("y no se puede descartar", estado["descartables"], 0)
 results.fallos = lambda cfg: []
 
-# --- «Expulsar»: solo dentro de un contenedor VeraCrypt ------------------------
-# Cerrar la ventana no cierra el contenedor, y con él abierto no se puede quitar
-# la unidad. El botón no desmonta nada él mismo —este proceso corre desde dentro
-# del contenedor—: lanza el script del vestíbulo y se cierra.
+# «Expulsar»: solo dentro de un contenedor VeraCrypt
+#
+# Cerrar la ventana no cierra el contenedor, y con él abierto no se puede
+# quitar la unidad. El botón no desmonta nada él mismo —este proceso corre
+# desde dentro del contenedor—: lanza el script del vestíbulo y se cierra.
 from pathlib import Path  # noqa: E402
 from tkinter import messagebox  # noqa: E402
 
@@ -156,6 +164,7 @@ try:
         sin_boton = {}
 
         def sonda_sin_contenedor(self, *_a, **_k):
+            """Sonda: cuenta los botones «Expulsar» fuera de un contenedor."""
             sin_boton["n"] = len(botones(self, "Expulsar"))
             self.destroy()
 
@@ -171,6 +180,7 @@ try:
         messagebox.askokcancel = lambda *a, **k: False
 
         def sonda_cancelar(self, *_a, **_k):
+            """Sonda: pulsa «Expulsar» y comprueba que cancelar no cierra la ventana."""
             cancelado["n"] = len(botones(self, "Expulsar"))
             botones(self, "Expulsar")[0].invoke()
             cancelado["viva"] = bool(self.winfo_exists())
@@ -186,6 +196,7 @@ try:
         messagebox.askokcancel = lambda *a, **k: True
 
         def sonda_expulsar(self, *_a, **_k):
+            """Sonda: pulsa «Expulsar» y mira si la ventana se cierra."""
             botones(self, "Expulsar")[0].invoke()
             try:
                 hecho["viva"] = bool(self.winfo_exists())
@@ -201,7 +212,8 @@ try:
 finally:
     cifrado.expulsion, cifrado.lanzar_expulsion, messagebox.askokcancel = reales
 
-# --- «Bloquear»: la raíz cifrada de un equipo --------------------------------------
+# «Bloquear»: la raíz cifrada de un equipo
+#
 # No hay script del vestíbulo: el contenedor lo cierra el agente residente. El
 # botón se lo pide por su buzón y cierra la ventana.
 reales = (cifrado.bloqueo, cifrado.pedir_bloqueo, messagebox.askokcancel,
@@ -220,6 +232,7 @@ try:
         cifrado.pedir_bloqueo = lambda uid: False
 
         def sonda_sin_agente(self, *_a, **_k):
+            """Sonda: pulsa «Bloquear» sin agente vivo y mira qué botones hay."""
             sin_agente["botones"] = (len(botones(self, "Bloquear")),
                                      len(botones(self, "Expulsar")))
             botones(self, "Bloquear")[0].invoke()
@@ -237,6 +250,7 @@ try:
         cifrado.pedir_bloqueo = lambda uid: pedidos.append(uid) or True
 
         def sonda_bloquear(self, *_a, **_k):
+            """Sonda: pulsa «Bloquear» y mira si la ventana se cierra."""
             botones(self, "Bloquear")[0].invoke()
             try:
                 hecho["viva"] = bool(self.winfo_exists())

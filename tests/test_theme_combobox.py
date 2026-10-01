@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""
-El desplegable de un Combobox tiene que abrirse.
+"""El desplegable de un Combobox tiene que abrirse.
 
 Su lista es una `listbox` de tk que ttk crea la primera vez que se despliega,
 leyendo la base de opciones. `theme.apply()` deja ahí la fuente, y si el valor
-no es una lista de Tcl válida —una familia con espacio sin llaves, «Segoe UI
-10», que Tcl parte en tres— la creación de la listbox falla,
+no es una lista de Tcl válida (una familia con espacio sin llaves, «Segoe UI
+10», que Tcl parte en tres) la creación de la listbox falla,
 `ttk::combobox::Post` se corta antes de enseñar nada y el desplegable no se
 abre nunca: el usuario se queda con el valor con el que nació.
 
@@ -32,7 +31,7 @@ from ui import theme
 
 theme.apply(raiz)
 
-# --- la fuente que se deja en la base de opciones la entiende Tcl -----------
+# la fuente que se deja en la base de opciones la entiende Tcl
 for rol in ("texto", "titulo", "dialogo", "seccion", "rotulo", "fuerte",
             "pista", "mono", "mono_pequena", "etiqueta"):
     spec = theme.fuente_tcl(rol)
@@ -43,7 +42,7 @@ for rol in ("texto", "titulo", "dialogo", "seccion", "rotulo", "fuerte",
         problema = str(e)
     c(f"«{spec}» ({rol}) es una fuente que Tcl entiende", problema, "")
 
-# --- y el desplegable se abre ----------------------------------------------
+# y el desplegable se abre
 var = tk.StringVar(value="uno")
 combo = ttk.Combobox(raiz, textvariable=var, state="readonly",
                      values=["uno", "dos", "tres"])

@@ -1,21 +1,20 @@
 #!/usr/bin/env python3
-"""
-La ventana se dibuja a la densidad real de la pantalla.
+"""La ventana se dibuja a la densidad real de la pantalla.
 
 Un proceso que no declara ser consciente de los ppp recibe de Windows una
-pantalla de mentira —en un 4K al 200 %, 1472x920 a 96 ppp en lugar de 2944x1840
-a 192— y el compositor **estira** después el mapa de bits hasta el panel de
+pantalla de mentira (en un 4K al 200 %, 1472x920 a 96 ppp en lugar de 2944x1840
+a 192) y el compositor **estira** después el mapa de bits hasta el panel de
 verdad. Todo sale borroso, y no hay tamaño de letra que lo arregle: la letra se
 está pintando con la mitad de píxeles de los que hay.
 
-Declarada la densidad, `tk scaling` pasa de 1,33 a 2,67 y crece solo todo lo que
-va en puntos, que es toda la tipografía. Lo que NO crece es lo que va en píxeles
-sueltos, y ahí están los dos daños que este test vigila: una fila de tabla más
-baja que su propia letra la recorta, y un párrafo con el ancho de corte en
-píxeles se queda en una columna de la mitad de ancho.
+Declarada la densidad, `tk scaling` pasa de 1,33 a 2,67 y crece solo todo lo
+que va en puntos, que es toda la tipografía. Lo que NO crece es lo que va en
+píxeles sueltos, y ahí están los dos daños que este test vigila: una fila de
+tabla más baja que su propia letra la recorta, y un párrafo con el ancho de
+corte en píxeles se queda en una columna de la mitad de ancho.
 
 Se comprueba también el origen, no solo el efecto: que ningún módulo de `ui/`
-vuelva a escribir esas dos medidas como un entero suelto.
+escriba esas dos medidas como un entero suelto.
 """
 
 from __future__ import annotations
@@ -30,7 +29,7 @@ c = Checks("densidad: la ventana se dibuja a los ppp de la pantalla")
 from ui import theme  # noqa: E402
 
 
-# --- 1. el proceso se declara consciente, y antes de que exista ningún Tk ---
+# 1. el proceso se declara consciente, y antes de que exista ningún Tk
 #
 # Va lo primero del fichero a propósito: Tk lee la densidad al arrancar su
 # intérprete y no la vuelve a mirar, así que un `Tk()` anterior a esta llamada
@@ -58,17 +57,17 @@ except Exception as e:                                   # sin entorno gráfico
     sys.exit(c.report())
 
 
-# --- 2. una medida del diseño crece con la escala ---------------------------
+# 2. una medida del diseño crece con la escala
 #
-# 1,3333 es `tk scaling` a 96 ppp, que es la densidad para la que están pensadas
-# las medidas del diseño; 2,6667 es la misma pantalla al 200 %.
+# 1,3333 es `tk scaling` a 96 ppp, que es la densidad para la que están
+# pensadas las medidas del diseño; 2,6667 es la misma pantalla al 200 %.
 for escala, esperado in ((1.3333, 760), (2.6667, 1521)):
     raiz.tk.call("tk", "scaling", escala)
     c(f"medida(760) son {esperado} px con la escala en {escala}",
       round(raiz.winfo_pixels(theme.medida(760)) / 3), round(esperado / 3))
 
 
-# --- 3. la fila de la tabla cabe la letra que la pinta ----------------------
+# 3. la fila de la tabla cabe la letra que la pinta
 #
 # `rowheight` va en píxeles sueltos: con 28 fijos y una letra de 37 px de alto
 # —Segoe UI 10 al 200 %—, la tabla de parejas recorta sus propias filas.
@@ -82,12 +81,13 @@ for escala in (1.3333, 2.6667):
       alto_fila >= alto_letra, True)
 
 
-# --- 4. un rótulo de sección cabe entero -----------------------------------
+# 4. un rótulo de sección cabe entero
 #
 # El tercer daño de la misma familia: `width=` en un ttk.Label son CARACTERES,
 # del ancho medio de la fuente, y `theme.rotulo()` separa las letras a mano.
-# «Este dispositivo» sale de ahí con 31 caracteres, no 16, así que un `width=18`
-# calibrado con «Catálogo» —15 espaciado— cortaba el otro por la mitad.
+# «Este dispositivo» sale de ahí con 31 caracteres, no 16, así que un
+# `width=18` calibrado con «Catálogo» —15 espaciado— cortaba el otro por la
+# mitad.
 raiz = tk.Tk()
 raiz.withdraw()
 theme._puestos.clear()
@@ -113,7 +113,7 @@ c("un rótulo sin width pide el ancho de lo que va a pintar",
 raiz.destroy()
 
 
-# --- 5. y que no vuelva a colarse una de esas medidas en píxeles -----------
+# 5. y que no vuelva a colarse una de esas medidas en píxeles
 #
 # El efecto se arregla una vez; el hábito vuelve. Estas dos opciones son las
 # únicas de `ui/` que miden en píxeles algo que compite con el texto, así que

@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""
-La pantalla de «Reparación» y la ventana principal, conducidas sin nadie delante.
+"""La pantalla de «Reparación» y la ventana principal, conducidas sin nadie delante.
 
-Como en test_tk_screens: no se mira el aspecto sino el cableado. Que un botón de
-la sección de conflictos acabe dejando en disco la versión que dice, que una
+Como en `test_tk_screens`: no se mira el aspecto sino el cableado. Que un botón
+de la sección de conflictos acabe dejando en disco la versión que dice, que una
 avería se arregle desde su fila, que la ventana principal cuente lo que hay que
-revisar en una línea —y no en tres recuadros ámbar— y que siga viva, y al día,
+revisar en una línea (y no en tres recuadros ámbar) y que siga viva, y al día,
 después de cerrar la ventana de salida de una sincronización.
 
 Las ventanas se crean ocultas y no se entra nunca en el bucle de eventos.
@@ -53,7 +52,9 @@ confirmaciones: list[str] = []
 
 
 def confirmar(respuesta):
+    """Devuelve un `confirmar_plan` de mentira que contesta `respuesta`."""
     def _confirmar(parent, plan, titulo, nota):
+        """Apunta el título de la confirmación y contesta."""
         confirmaciones.append(titulo)
         return respuesta
     return _confirmar
@@ -92,33 +93,39 @@ def preparar(sana: bool = True):
 
 
 def escribir(ruta, texto):
+    """Escribe un fichero y devuelve su ruta."""
     ruta.parent.mkdir(parents=True, exist_ok=True)
     ruta.write_text(texto, encoding="utf-8")
     return ruta
 
 
 def recorrer(w):
+    """Recorre los widgets que cuelgan de `w`, en profundidad."""
     for hijo in w.winfo_children():
         yield hijo
         yield from recorrer(hijo)
 
 
 def botones(w) -> dict:
+    """Devuelve los botones de `w` por su texto."""
     return {b.cget("text"): b for b in recorrer(w) if isinstance(b, ttk.Button)}
 
 
 def textos(w) -> list[str]:
+    """Devuelve los textos de las etiquetas de `w`."""
     return [str(l.cget("text")) for l in recorrer(w) if isinstance(l, ttk.Label)]
 
 
 def en_la_ventana(accion):
     """Un wait_window que, en vez de esperar, hace algo con el diálogo."""
     def _wait(self, *_a, **_k):
+        """Hace la acción con el diálogo en vez de esperar a que se cierre."""
         accion(self)
     return _wait
 
 
 def elegir(dlg, iid):
+    """Selecciona esa fila del árbol del diálogo."""
     arbol = next(w for w in recorrer(dlg) if isinstance(w, ttk.Treeview))
     arbol.selection_set(iid)
     arbol.event_generate("<<TreeviewSelect>>")
@@ -128,8 +135,11 @@ desde_reparacion: list[tuple] = []
 
 
 def lanzar_falso(titulo, args):
-    """El `lanzar` de la ventana principal: «Reparación» no abre la salida, la
-    pide. Aquí solo se apunta lo que habría lanzado."""
+    """Hace de `lanzar` de la ventana principal.
+
+    «Reparación» no abre la salida, la pide: aquí solo se apunta lo que habría
+    lanzado.
+    """
     desde_reparacion.append((titulo, args))
 
 
@@ -143,7 +153,7 @@ def reparacion(cfg, conducir, marcadas=None):
     return tk_repair.open_dialog(raiz, cfg, lanzar_falso, marcadas)
 
 
-# --- la ventana de conflictos -----------------------------------------------------
+# la ventana de conflictos
 with sandbox():
     cfg, p = preparar()
     escribir(p.local_abs / "plan.md", "del remoto")
@@ -152,6 +162,7 @@ with sandbox():
     estados = {}
 
     def mirar_y_pulsar(dlg):
+        """Apunta el estado de los botones y se queda con la de este dispositivo."""
         b = botones(dlg)
         estados.update({t: str(b[t].cget("state")) for t in b})
         b["Quedarme con la de este dispositivo"].invoke()
@@ -199,6 +210,7 @@ with sandbox():
     estados = {}
 
     def elegir_la_copia(dlg):
+        """Apunta el estado de los botones antes y después de elegir una copia."""
         b = botones(dlg)
         estados["lado"] = str(b["Quedarme con la de este dispositivo"].cget("state"))
         elegir(dlg, "c0v1")
@@ -217,6 +229,7 @@ with sandbox():
     puesta = []
 
     def mirar(dlg):
+        """Apunta lo que dice la pantalla."""
         vistos.extend(textos(dlg))
         # La sección de conflictos se monta siempre y se quita de la rejilla
         # cuando no hay ninguno, así que lo que dice si se ve o no es su
@@ -231,7 +244,7 @@ with sandbox():
     c("y la sección de conflictos no se enseña", puesta, [False])
 
 
-# --- las reparaciones de la pantalla ------------------------------------------------
+# las reparaciones de la pantalla
 with sandbox():
     # Un baseline guardado con el prefijo de otro destino: la avería que de
     # verdad puede acabar en un borrado masivo si se reaprovecha. Se aparta.
@@ -245,6 +258,7 @@ with sandbox():
     visto = {}
 
     def apartar(dlg):
+        """Apunta el aviso, pulsa «Apartar el baseline…» y apunta el resultado."""
         visto["antes"] = [x for x in textos(dlg) if "baseline no es" in x]
         botones(dlg)["Apartar el baseline…"].invoke()
         visto["despues"] = [x for x in textos(dlg) if "baseline no es" in x]
@@ -280,6 +294,7 @@ with sandbox():
     vivas = []
 
     def resincronizar(dlg):
+        """Pulsa «Resincronizar…» y apunta si el diálogo sigue vivo."""
         botones(dlg)["Resincronizar…"].invoke()
         vivas.append(bool(dlg.winfo_exists()))
 
@@ -302,11 +317,12 @@ with sandbox():
       [("Informe del estado", ["--doctor"])])
 
 
-# --- la ventana principal ------------------------------------------------------------
+# la ventana principal
 lanzadas: list[dict] = []
 
 
 def salida_falsa(titulo, cmd, parent=None, subtitulo="", modal=True, al_cerrar=None):
+    """Hace de ventana de salida: apunta lo pedido y no abre nada."""
     lanzadas.append({"titulo": titulo, "cmd": cmd, "parent": parent, "modal": modal,
                      "al_cerrar": al_cerrar})
     return None
@@ -319,6 +335,7 @@ uitk.output_window = salida_falsa
 def ventana_principal(cfg, conducir):
     """Abre la principal y, en vez de su bucle de eventos, ejecuta `conducir`."""
     def _mainloop(self):
+        """Conduce la ventana en vez de entrar en el bucle de eventos."""
         conducir(self)
         try:
             # Lo que la ventana dejó programado (la versión, el escaneo) no se
@@ -345,6 +362,7 @@ with sandbox():
     abiertas = []
 
     def mirar_fallo(root):
+        """Apunta lo que dice la ventana con un fallo y entra en «Reparación»."""
         vistos["textos"] = textos(root)
         vistos["botones"] = sorted(botones(root))
         botones(root)["Reparación…"].invoke()
@@ -401,6 +419,7 @@ with sandbox():
     vistos = {}
 
     def mirar_conflicto(root):
+        """Apunta lo que dice la ventana con un conflicto y entra en «Reparación»."""
         vistos["textos"] = textos(root)
         botones(root)["Reparación…"].invoke()
 
@@ -425,6 +444,7 @@ with sandbox():
     servicio_antes = prefs.read_prefs()
 
     def sincronizar_y_volver(root):
+        """Pulsa «Sincronizar ahora» y apunta cómo queda la ventana."""
         b = botones(root)
         b["Sincronizar ahora"].invoke()
         vistos["viva"] = bool(root.winfo_exists())
@@ -471,6 +491,7 @@ with sandbox():
     abiertas = []
 
     def dentro_de_ajustes(dlg) -> None:
+        """Apunta las entradas de «Ajustes» y entra en «Reparación…»."""
         botones_ajustes = botones(dlg)
         visto["entradas"] = sorted(botones_ajustes)
         botones_ajustes["Reparación…"].invoke()
@@ -500,7 +521,7 @@ with sandbox():
       (eleccion.action, eleccion.pairs), ("daemon", ("notas",)))
 
 
-# --- la ventana de salida sin bloquear, con un proceso de verdad -----------------------
+# la ventana de salida sin bloquear, con un proceso de verdad
 real_deiconify = tk.Toplevel.deiconify
 tk.Toplevel.deiconify = lambda self: None               # nada se enseña en un test
 recibido: list = []

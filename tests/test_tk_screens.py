@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
-"""
-Las dos pantallas nuevas, conducidas sin nadie delante.
+"""Las dos pantallas nuevas, conducidas sin nadie delante.
 
 No se comprueba el aspecto: se comprueba el cableado. Que pulsar un botón acabe
 llamando al editor que toca con lo que dice el formulario, que un cambio se
 refleje donde debe, y que la pantalla de penwatch sepa pintar sus filas.
 
 El catálogo se sustituye entero (`catalog.load` / `catalog.push`): aquí no se
-toca la red, y así se puede comprobar lo que de verdad importa de esta pantalla,
-que es que un botón del bloque «Catálogo» NO cambie el config de este dispositivo y uno
-del bloque «Este dispositivo» NO cambie el catálogo.
+toca la red, y así se puede comprobar lo que de verdad importa de esta
+pantalla, que es que un botón del bloque «Catálogo» NO cambie el config de este
+dispositivo y uno del bloque «Este dispositivo» NO cambie el catálogo.
 
 Las ventanas se crean ocultas y no se entra nunca en el bucle de eventos.
 """
@@ -53,6 +52,7 @@ def ocultar(modulo):
 def pulsar(texto):
     """Un wait_window que, en vez de esperar, pulsa un botón y vuelve."""
     def _wait(self, *_a, **_k):
+        """Recorre la ventana, pulsa el botón y vuelve."""
         pila = [self]
         while pila:
             w = pila.pop()
@@ -66,6 +66,7 @@ def pulsar(texto):
 def elegir_y_pulsar(texto, pareja=None):
     """Como pulsar(), pero seleccionando antes una fila de la lista."""
     def _wait(self, *_a, **_k):
+        """Elige la fila del árbol, pulsa el botón y vuelve."""
         pila, arbol, boton = [self], None, None
         while pila:
             w = pila.pop()
@@ -110,6 +111,7 @@ subidos: list[dict] = []
 
 
 def falso_catalogo(raw=None):
+    """Devuelve un catálogo de mentira, sin error."""
     texto = config_file.dumps(CAT)
     return catalog.Catalog(raw=tomllib.loads(texto), text=texto,
                            source="remote", stamp="2026-01-01 00:00:00",
@@ -117,6 +119,7 @@ def falso_catalogo(raw=None):
 
 
 def falso_push(new_raw, base_text, raw_local=None):
+    """`push` de mentira: apunta lo subido."""
     subidos.append(dict(new_raw))
     return ["Catálogo actualizado (de mentira)"]
 
@@ -128,11 +131,13 @@ catalog.run = lambda args: (_ for _ in ()).throw(
 
 
 def preparar():
+    """Escribe el config de prueba y lo devuelve ya parseado."""
     model.CONFIG_FILE.write_text(config_file.dumps(BASE), encoding="utf-8")
     return model.parse_config(BASE)
 
 
 def dar_baseline(cfg, name):
+    """Deja a esa pareja con un baseline válido."""
     from common import bisync
     pareja = next(p for p in cfg.pairs if p.name == name)
     pareja.workdir.mkdir(parents=True, exist_ok=True)
@@ -141,12 +146,13 @@ def dar_baseline(cfg, name):
         (pareja.workdir / f"{prefijo}{sufijo}").write_text("x", encoding="utf-8")
 
 
-# --- la lista une el catálogo y el dispositivo ---------------------------------------
+# la lista une el catálogo y el dispositivo
 with sandbox():
     cfg = preparar()
     filas = {}
 
     def mirar(self, *_a, **_k):
+        """Recorre la ventana y apunta lo que ve."""
         pila = [self]
         while pila:
             w = pila.pop()
@@ -164,7 +170,7 @@ with sandbox():
     c("'notas' sale marcada y viniendo del catálogo",
       (filas["notas"][0], filas["notas"][5]), ("✓", "catálogo"))
 
-# --- 'Usar aquí' trae una pareja del catálogo a este dispositivo ---------------------
+# 'Usar aquí' trae una pareja del catálogo a este dispositivo
 with sandbox():
     cfg = preparar()
     tk.Toplevel.wait_window = elegir_y_pulsar("Usar aquí", "fotos")
@@ -174,7 +180,7 @@ with sandbox():
       ["notas", "subida", "fotos"])
     c("y no se ha tocado el catálogo", subidos, [])
 
-# --- 'Modificar aquí' aparta el baseline, como manda el editor ---------------
+# 'Modificar aquí' aparta el baseline, como manda el editor
 with sandbox():
     cfg = preparar()
     dar_baseline(cfg, "notas")
@@ -193,7 +199,7 @@ with sandbox():
       any(p.name.startswith("notas.old-") for p in model.STATE_DIR.iterdir()), True)
     c("el catálogo sigue sin tocarse", subidos, [])
 
-# --- 'Volver al catálogo' deshace la modificación local ----------------------
+# 'Volver al catálogo' deshace la modificación local
 with sandbox():
     cfg = preparar()
     tk.Toplevel.wait_window = elegir_y_pulsar("Volver al catálogo", "notas")
@@ -213,7 +219,7 @@ with sandbox():
       next(p.remote_path for p in model.load_config().pairs if p.name == "notas"),
       "/R/notas")
 
-# --- el bloque del catálogo escribe en el catálogo, no en el dispositivo -------------
+# el bloque del catálogo escribe en el catálogo, no en el dispositivo
 with sandbox():
     subidos.clear()
     cfg = preparar()
@@ -238,7 +244,7 @@ with sandbox():
       [p["name"] for p in subidos[-1]["pair"]], ["notas", "subida"])
     c("este dispositivo no se entera", model.load_config().names, ["notas", "subida"])
 
-# --- sin red: el bloque del catálogo se deshabilita --------------------------
+# sin red: el bloque del catálogo se deshabilita
 with sandbox():
     cfg = preparar()
     texto = config_file.dumps(CAT)
@@ -250,6 +256,7 @@ with sandbox():
     estados = {}
 
     def mirar_botones(self, *_a, **_k):
+        """Recorre la ventana y apunta los botones."""
         pila = [self]
         while pila:
             w = pila.pop()
@@ -266,7 +273,8 @@ with sandbox():
 
     catalog.load = falso_catalogo
 
-# --- el explorador del remoto -------------------------------------------------
+# el explorador del remoto
+#
 # El remoto se sustituye entero: lo que se comprueba es que navegar y elegir
 # devuelvan la ruta que se está mirando, y que sin conexión el botón esté
 # apagado en vez de abrir un explorador que no puede listar nada.
@@ -274,12 +282,14 @@ LSD = "          -1 2026-01-01 12:00:00        -1 documentos\n"
 
 
 def falso_lsd(args):
+    """Devuelve un `rclone lsd` de mentira."""
     return subprocess.CompletedProcess(args, 0, stdout=LSD, stderr="")
 
 
 def navegar_y_elegir(entrar_veces=1):
     """Entra en la primera carpeta N veces y pulsa «Elegir esta carpeta»."""
     def _wait(self, *_a, **_k):
+        """Entra en las carpetas y pulsa «Elegir esta carpeta»."""
         for _ in range(entrar_veces):
             arbol, boton = None, None
             pila = [self]
@@ -320,6 +330,7 @@ try:
     # La pareja apuntaba a una carpeta que ya no está: se empieza por la raíz en
     # vez de abrir un diálogo vacío del que no se puede ir a ningún sitio.
     def solo_la_raiz(args):
+        """`rclone lsd` que solo conoce la raíz del remoto."""
         if args[-1] == "nas:/":
             return subprocess.CompletedProcess(args, 0, stdout=LSD, stderr="")
         return subprocess.CompletedProcess(args, 3, stdout="",
@@ -341,6 +352,7 @@ def examinar_remoto_activo(explorable):
     estados = []
 
     def _wait(self, *_a, **_k):
+        """Apunta si «Examinar…» está activo en el formulario."""
         pila = [self]
         while pila:
             w = pila.pop(0)
@@ -359,7 +371,8 @@ c("desde la copia local, no; el disco de aquí sí",
   sorted(examinar_remoto_activo(False)), ["disabled", "normal"])
 
 
-# --- «Simular» lanza un dry-run, no una pasada --------------------------------
+# «Simular» lanza un dry-run, no una pasada
+#
 # La ventana de salida se sustituye: lo que importa es QUÉ orden se lanza, y
 # ningún test ejecuta sync.py de verdad.
 with sandbox():
@@ -387,7 +400,7 @@ with sandbox():
         tk_pairs.output_window = real_salida
 
 
-# --- la flota: se abre desde parejas, y solo toca la nota de ESTE dispositivo ---
+# la flota: se abre desde parejas, y solo toca la nota de ESTE dispositivo
 #
 # La lista la sirve `common/fleet.py`, que aquí se sustituye entera: lo que se
 # comprueba es el cableado de la ventana, no el remoto.
@@ -414,6 +427,7 @@ with sandbox():
     filas = {}
 
     def mirar_flota(self, *_a, **_k):
+        """Recorre la ventana de la flota y apunta lo que ve."""
         pila = [self]
         while pila:
             w = pila.pop()
@@ -429,7 +443,7 @@ with sandbox():
     c("la tabla se queda en cuándo se le vio y cómo acabó (lo demás, a la ficha)",
       (len(filas["otro"]), filas["otro"][3]), (4, "ok"))
 
-# --- la ficha: qué dice, sin dibujarla -----------------------------------------
+# la ficha: qué dice, sin dibujarla
 Linea = tk_fleet.Linea
 AYER = f"{datetime.now() - timedelta(days=1):%Y-%m-%d %H:%M:%S}"
 COMPLETA = fleet.Dispositivo(
@@ -502,6 +516,7 @@ with sandbox():
     cfg = preparar()
 
     def quitar_otro(self, *_a, **_k):
+        """Elige la nota de otro dispositivo y pulsa «Quitar de la lista…»."""
         elegir(self, buscar(self, ttk.Treeview), "otro")
         buscar(self, ttk.Button, "Quitar de la lista…").invoke()
 
@@ -567,6 +582,7 @@ with sandbox():
     vacia: dict = {}
 
     def mirar_vacia(self, *_a, **_k):
+        """Apunta el aviso y la fila de la flota vacía."""
         aviso = buscar(self, ttk.Label, tk_fleet.SIN_NOTA)
         vacia["aviso"], vacia["fila"] = aviso, aviso.master.grid_slaves(row=2)
 
@@ -599,7 +615,7 @@ with sandbox():
       ["notas", "subida"])
 
 
-# --- la pantalla de penwatch pinta su estado ---------------------------------
+# la pantalla de penwatch pinta su estado
 with sandbox():
     cfg = preparar()
     tk.Toplevel.wait_window = pulsar("Cerrar")
@@ -616,13 +632,15 @@ with sandbox():
     except Exception as e:
         c("'Detectar el dispositivo' no revienta", f"{type(e).__name__}: {e}", True)
 
-# --- «Qué hace el agente»: se le pide por su buzón, no se escribe -------------------
+# «Qué hace el agente»: se le pide por su buzón, no se escribe
 pedidos_modo: list = []
 watch.pedir_modo = lambda modo: pedidos_modo.append(modo) or True
 
 
 def elegir_modo(texto_radio, boton):
+    """Devuelve un `wait_window` que elige ese modo y pulsa el botón."""
     def _wait(self, *_a, **_k):
+        """Elige el radiobutton, pulsa el botón y vuelve."""
         pila = [self]
         while pila:
             w = pila.pop()
@@ -653,6 +671,7 @@ watch.pedir_ajuste = lambda clave, valor: ajustes_pedidos.append((clave, valor))
 
 
 def desmarcar_y_cerrar(self, *_a, **_k):
+    """Desmarca lo que toca y cierra el diálogo."""
     pila = [self]
     while pila:
         w = pila.pop()
@@ -680,6 +699,7 @@ visto_form: dict = {}
 
 
 def inspeccionar_y_aceptar(self, *_a, **_k):
+    """Apunta los textos y los radios del diálogo y lo acepta."""
     pila, textos, radios = [self], [], []
     while pila:
         w = pila.pop()
@@ -704,8 +724,7 @@ c("el vigilante: lo que devuelve es lo del equipo",
   sorted(opciones), ["extra_roots", "mode", "poll", "start"])
 
 
-
-# --- el editor de flags: se escribe TOML y sale lo que recibirá rclone -------
+# el editor de flags: se escribe TOML y sale lo que recibirá rclone
 #
 # Lo que se comprueba es la parte peligrosa: que lo que no se puede escribir en
 # el TOML no salga del diálogo. Si saliera, el fallo aparecería al guardar, con
@@ -719,6 +738,7 @@ def flags_escritos(texto, extra="", boton="Aceptar"):
     filas, quejas = [], []
 
     def _wait(self, *_a, **_k):
+        """Escribe en los cuadros, pulsa el botón y vuelve."""
         cajas, botones, tabla = {}, {}, None
         pila = [self]
         while pila:
@@ -773,13 +793,14 @@ datos, _, _ = flags_escritos("transfers = 8", boton="Cancelar")
 c("cancelar no devuelve nada", datos, None)
 
 
-# --- y el formulario de la pareja recoge lo que diga ese diálogo -------------
+# y el formulario de la pareja recoge lo que diga ese diálogo
 
 tk_pairs.flags_form = lambda *a, **k: {"flags": {"transfers": 8},
                                        "extra_flags": ["--stats", "10s"]}
 
 
 def _abrir_y_guardar(self, *_a, **_k):
+    """Abre el editor de flags de la pareja y guarda."""
     botones = {}
     pila = [self]
     while pila:
