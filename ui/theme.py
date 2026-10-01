@@ -1,24 +1,23 @@
 #!/usr/bin/env python3
-"""
-theme.py — El sistema visual del rediseño, traducido a ttk.
+"""El sistema visual del rediseño, traducido a ttk.
 
-Papel cálido, tinta casi negra, un solo acento azul; el vocabulario que la
-aplicación ya tenía —gris para las pistas, ámbar para los avisos, monoespaciada
-para rutas y flags— con forma. Sin esquinas redondeadas y sin sombras, porque
+Papel cálido, tinta casi negra y un solo acento azul; el vocabulario que la
+aplicación ya tenía (gris para las pistas, ámbar para los avisos, monoespaciada
+para rutas y flags) con forma. Sin esquinas redondeadas y sin sombras, porque
 son las dos cosas que ttk no sabe pintar y fingirlas con imágenes sería cambiar
 de tecnología para adornar.
 
 El tema es **clam** y no el nativo: es el único de los que trae Tk que deja
-elegir el color de cada borde (`bordercolor`, `lightcolor`, `darkcolor`), y sin
+elegir el color de cada borde (`bordercolor`, `lightcolor`, `darkcolor`) y sin
 eso no hay forma de que un botón sea una caja de 1 px del color que dice el
 diseño. A cambio, hay que repintarlo todo, que es lo que hace `apply()`.
 
 Los estilos se generan cruzando **rol** (normal, pista, rótulo, monoespaciada…)
 con **superficie** (papel, tarjeta, franja gris, bloque de aviso). Hace falta
-cruzarlos porque una `ttk.Label` no hereda el fondo de su padre: una pista sobre
-una tarjeta blanca y la misma pista sobre el papel son dos estilos distintos, y
-la alternativa —dar el color a mano en cada llamada— es la que garantiza que
-alguno se quede sin cambiar el día que se retoque la paleta.
+cruzarlos porque una `ttk.Label` no hereda el fondo de su padre: una pista
+sobre una tarjeta blanca y la misma pista sobre el papel son dos estilos
+distintos, y la alternativa (dar el color a mano en cada llamada) es la que
+garantiza que alguno se quede sin cambiar el día que se retoque la paleta.
 
 `import tkinter` va dentro de las funciones, como en todo `ui/`: este módulo lo
 puede importar quien no tenga entorno gráfico.
@@ -28,44 +27,41 @@ from __future__ import annotations
 
 import sys
 
-# ---------------------------------------------------------------------------
-# Densidad de pantalla
-#
-# Todo lo de más abajo —los tamaños en puntos, los iconos de `icons.px`— da por
-# hecho que Tk sabe cuántos píxeles tiene de verdad la pantalla. No lo sabe por
-# defecto, y ahí es donde se pierde la nitidez.
-# ---------------------------------------------------------------------------
-
 _densidad_declarada = False
+"""Si ya se declaró la densidad de pantalla en este proceso."""
 
 
 def nitidez() -> None:
     """Declara ante Windows que la aplicación dibuja a la densidad real.
 
-    Un proceso que no lo declara es «no consciente de ppp», y entonces Windows
-    le miente sobre la pantalla: en un 4K al 200 % le dice que mide 1472x920 a
-    96 ppp en lugar de 2944x1840 a 192. Tk dibuja a esa medida de mentira y el
-    compositor **estira** después el mapa de bits hasta el panel de verdad. Ese
-    estirado es lo que se ve borroso, y no hay nada en la tipografía que lo
-    arregle: el problema no es el tamaño de la letra, es que la letra se está
+    Todo lo de este módulo (los tamaños en puntos, los iconos de `icons.px`) da
+    por hecho que Tk sabe cuántos píxeles tiene de verdad la pantalla, y no lo
+    sabe por defecto: ahí es donde se pierde la nitidez. Un proceso que no lo
+    declara es «no consciente de ppp» y Windows le miente sobre la pantalla: en
+    un 4K al 200 % le dice que mide 1472x920 a 96 ppp en lugar de 2944x1840 a
+    192. Tk dibuja a esa medida de mentira y el compositor **estira** después
+    el mapa de bits hasta el panel de verdad. Ese estirado es lo que se ve
+    borroso y no hay nada en la tipografía que lo arregle: la letra se está
     pintando con la mitad de los píxeles que hay para pintarla.
 
-    Declarada la densidad, Tk mide la pantalla entera, `tk scaling` pasa de 1,33
-    a 2,67 y crece solo todo lo que va en puntos —que es toda la tipografía de
-    `fuente()`—, ya sin estirar nada.
+    Declarada la densidad, Tk mide la pantalla entera, `tk scaling` pasa de
+    1,33 a 2,67 y crece solo todo lo que va en puntos (toda la tipografía de
+    `fuente()`), ya sin estirar nada.
 
-    **Consciencia del sistema y no por monitor**, a propósito: Tk 8.6 no atiende
-    `WM_DPICHANGED`, así que no sabe redibujarse cuando la ventana pasa a una
-    pantalla con otro zoom. Con la del sistema, Windows estira la ventana en ese
-    caso —borrosa como hasta ahora, pero del tamaño que toca—; con la de por
-    monitor no la estiraría, y la ventana saldría a la mitad de su tamaño
-    físico, que es peor que borrosa. Cuando el proyecto llegue a Tk 9, esta es
-    la línea que cambia.
+    **Consciencia del sistema y no por monitor**, a propósito: Tk 8.6 no
+    atiende `WM_DPICHANGED`, así que no sabe redibujarse cuando la ventana pasa
+    a una pantalla con otro zoom. Con la del sistema, Windows estira la ventana
+    en ese caso (borrosa, pero del tamaño que toca); con la de por monitor no
+    la estiraría y la ventana saldría a la mitad de su tamaño físico, que es
+    peor que borrosa. Cuando el proyecto llegue a Tk 9, esta es la línea que
+    cambia.
 
-    Tiene que correr **antes** del primer `Tk()`: Tk lee la densidad al arrancar
-    su intérprete y no la vuelve a mirar. Es una propiedad del proceso, así que
-    basta una vez; se llama desde todos los sitios que abren una raíz porque
-    cuál de ellos es el primero depende de por dónde se haya entrado."""
+    Tiene que correr **antes** del primer `Tk()`: Tk lee la densidad al
+    arrancar su intérprete y no la vuelve a mirar. Es una propiedad del
+    proceso, así que basta una vez; se llama desde todos los sitios que abren
+    una raíz porque cuál de ellos es el primero depende de por dónde se haya
+    entrado.
+    """
     global _densidad_declarada
     if _densidad_declarada or sys.platform != "win32":
         return
@@ -73,8 +69,8 @@ def nitidez() -> None:
 
     import ctypes
 
-    # De la más nueva a la más vieja. Todas fallan sin ruido —devolviendo cero,
-    # o un HRESULT que no es cero, o no existiendo— si esta versión de Windows
+    # De la más nueva a la más vieja. Todas fallan sin ruido (devolviendo cero,
+    # o un HRESULT que no es cero, o no existiendo) si esta versión de Windows
     # no las conoce o si la consciencia ya venía puesta desde el manifiesto del
     # .exe, que es un sitio perfectamente válido para haberla puesto.
     try:                                        # Windows 10 1703 en adelante
@@ -95,28 +91,27 @@ def nitidez() -> None:
 
 
 def medida(px_diseno: int) -> str:
-    """Una distancia del diseño en la unidad que Tk sí escala: puntos.
+    """Devuelve una distancia del diseño en la unidad que Tk sí escala: puntos.
 
     Tk convierte un número suelto en píxeles tal cual, y un número con «p» en
-    puntos, que multiplica por `tk scaling`. Un ancho de corte de párrafo escrito
-    como 760 mide 760 px tanto al 100 % como al 200 %, así que en una pantalla
-    densa el mismo texto —que sí ha crecido— se queda en una columna de la mitad
-    de ancho y el triple de alta. Escrito como `medida(760)` acompaña a la letra.
+    puntos, que multiplica por `tk scaling`. Un ancho de corte de párrafo
+    escrito como 760 mide 760 px tanto al 100 % como al 200 %, así que en una
+    pantalla densa el mismo texto (que sí ha crecido) se queda en una columna
+    de la mitad de ancho y el triple de alta. Escrito como `medida(760)`
+    acompaña a la letra.
 
-    La conversión es la de 96 ppp, que es la densidad para la que están pensadas
-    las medidas del diseño, y sale exacta: 760 px son 570 puntos justos.
+    La conversión es la de 96 ppp, que es la densidad para la que están
+    pensadas las medidas del diseño, y sale exacta: 760 px son 570 puntos
+    justos.
 
-    Hermana de `icons.px()` y con el mismo cometido; son dos porque van a sitios
-    distintos. `px()` devuelve un entero, para lo que Tk no sabe escalar de
-    ninguna manera (los mapas de bits de los iconos) y para lo que solo admite
-    un entero (`rowheight`); `medida()` devuelve la distancia de Tk, que no
-    necesita tener el widget a mano para calcularse."""
+    Es hermana de `icons.px()` y con el mismo cometido; son dos porque van a
+    sitios distintos. `px()` devuelve un entero, para lo que Tk no sabe escalar
+    de ninguna manera (los mapas de bits de los iconos) y para lo que solo
+    admite un entero (`rowheight`); `medida()` devuelve la distancia de Tk, que
+    no necesita tener el widget a mano para calcularse.
+    """
     return f"{round(px_diseno * 72 / 96)}p"
 
-
-# ---------------------------------------------------------------------------
-# Color
-# ---------------------------------------------------------------------------
 
 PAPEL = "#FAF9F7"           # fondo de toda ventana
 SUPERFICIE = "#FFFFFF"      # listas, cajas, tablas
@@ -146,33 +141,31 @@ PELIGRO = "#A0392E"         # fallo, borrar
 PELIGRO_FONDO = "#F9EBE8"
 PELIGRO_BORDE = "#E4C6C0"
 
-# El ámbar #E0A34A del diseño no está aquí porque solo sale en el icono de la
-# aplicación, y ahí lo define `icons.AMBAR`: un color con un único sitio donde
-# se usa vive en ese sitio.
+# El ámbar #E0A34A del diseño no está aquí: solo sale en el icono de la
+# aplicación y lo define `icons.AMBAR`, que es donde se usa.
 
 GRIS_FONDO = "#F4F2EE"      # la franja de [defaults]
 APAGADO = "#A9A398"         # lo que está ahí pero no cuenta
 APAGADO_FONDO = "#F6F4F0"
 
 
-# ---------------------------------------------------------------------------
-# Tipografía
-#
-# Los tamaños son los de la hoja de estilo y van en PUNTOS, no en píxeles: en
-# puntos es Tk quien los escala si la pantalla tiene más densidad, y en píxeles
-# saldría todo diminuto en un portátil moderno.
-# ---------------------------------------------------------------------------
-
 _FAMILIAS = {
     "texto": ("Segoe UI", "Noto Sans", "DejaVu Sans", "TkDefaultFont"),
     "fuerte": ("Segoe UI Semibold", "Segoe UI", "Noto Sans", "TkDefaultFont"),
     "mono": ("Consolas", "DejaVu Sans Mono", "Menlo", "TkFixedFont"),
 }
+"""Las familias de letra que valen para cada papel, por orden de preferencia.
+
+Los tamaños de `fuente()` son los de la hoja de estilo y van en PUNTOS, no en
+píxeles: en puntos es Tk quien los escala si la pantalla tiene más densidad, y
+en píxeles saldría todo diminuto en un portátil moderno.
+"""
 _elegidas: dict[str, str] = {}
+"""La familia que se eligió para cada papel."""
 
 
 def familia(cual: str) -> str:
-    """La primera familia instalada de las que valen para ese papel."""
+    """Devuelve la primera familia instalada de las que valen para ese papel."""
     if cual not in _elegidas:
         from tkinter import font
         try:
@@ -185,7 +178,7 @@ def familia(cual: str) -> str:
 
 
 def fuente(rol: str = "texto"):
-    """La fuente de un rol, en el formato que aceptan tanto tk como ttk."""
+    """Devuelve la fuente de un rol, en el formato que aceptan tanto tk como ttk."""
     if rol == "titulo":
         return (familia("fuerte"), 16)
     if rol == "dialogo":
@@ -208,13 +201,14 @@ def fuente(rol: str = "texto"):
 
 
 def fuente_tcl(rol: str = "texto") -> str:
-    """La misma fuente, pero como **lista de Tcl** en una sola cadena.
+    """Devuelve la misma fuente como **lista de Tcl** en una sola cadena.
 
     Hace falta allí donde el valor no lo pone tkinter sino la base de opciones
-    (`option_add`), que guarda texto: Tcl lo parte por espacios, y «Segoe UI 10»
+    (`option_add`), que guarda texto: Tcl lo parte por espacios y «Segoe UI 10»
     se lee como familia «Segoe», tamaño «UI». Ese error no aparece al crear el
-    widget, sino cuando ttk crea la listbox del desplegable, y entonces
-    `ttk::combobox::Post` se corta y la lista no llega a abrirse."""
+    widget sino cuando ttk crea la listbox del desplegable, y entonces
+    `ttk::combobox::Post` se corta y la lista no llega a abrirse.
+    """
     familia_, *resto = fuente(rol)
     if " " in familia_:
         familia_ = "{%s}" % familia_
@@ -222,28 +216,30 @@ def fuente_tcl(rol: str = "texto") -> str:
 
 
 def rotulo(texto: str) -> str:
-    """Un rótulo de sección: mayúsculas y letras separadas.
+    """Devuelve un rótulo de sección: mayúsculas y letras separadas.
 
     Tk no sabe de `letter-spacing`, así que el espaciado se hace a mano: un
-    espacio fino entre las letras de cada palabra, y TRES espacios entre
-    palabras. Tres y no uno porque el espacio de Segoe UI mide casi lo mismo que
-    el fino, y con uno solo «ESTE PEN» se lee «ESTEPEN»."""
+    espacio fino entre las letras de cada palabra y TRES espacios entre
+    palabras. Tres y no uno porque el espacio de Segoe UI mide casi lo mismo
+    que el fino, y con uno solo «ESTE PEN» se lee «ESTEPEN».
+    """
     return "   ".join(" ".join(p) for p in texto.upper().split())
 
 
 def ancho_rotulo(widget, *textos: str) -> int:
-    """Lo que ocupa el más ancho de esos rótulos, en píxeles de esta pantalla.
+    """Devuelve lo que ocupa el más ancho de esos rótulos, en píxeles de esta pantalla.
 
     Para reservarles canalón hay que medirlos con su fuente, no contar sus
     letras. Un `width=` en un `ttk.Label` son caracteres del ancho MEDIO de la
-    fuente, y `rotulo()` separa las letras a mano: «Este dispositivo» sale de
-    ahí con 31 caracteres, no 16. Un `width=18` calibrado con «Catálogo» —que
-    espaciado son 15— parecía de sobra y cortaba el otro por la mitad.
+    fuente y `rotulo()` separa las letras a mano: «Este dispositivo» sale de
+    ahí con 31 caracteres, no 16. Un `width=18` calibrado con «Catálogo» (que
+    espaciado son 15) parecía de sobra y cortaba el otro por la mitad.
 
     Se le pasan los textos SIN espaciar, los mismos que reciben `rotulo()`, y
-    mide el espaciado, que es el que se pinta. Devuelve 0 si no se puede medir,
-    y entonces el canalón se queda en lo que pida la rejilla: un rótulo pegado a
-    su fila de botones se lee, uno cortado no."""
+    mide el espaciado, que es el que se pinta. Devuelve 0 si no se puede medir
+    y entonces el canalón se queda en lo que pida la rejilla: un rótulo pegado
+    a su fila de botones se lee, uno cortado no.
+    """
     from tkinter import font as tkfont
     try:
         letra = tkfont.Font(root=widget, font=fuente("rotulo"))
@@ -252,11 +248,6 @@ def ancho_rotulo(widget, *textos: str) -> int:
         return 0
 
 
-# ---------------------------------------------------------------------------
-# Los estilos
-# ---------------------------------------------------------------------------
-
-# rol -> (color de letra, fuente). El fondo lo pone la superficie.
 _ROLES = {
     "": (TINTA, "texto"),
     "Fuerte.": (TINTA, "fuerte"),
@@ -272,8 +263,11 @@ _ROLES = {
     "Aviso.": (AVISO, "texto"),
     "Peligro.": (PELIGRO, "texto"),
 }
+"""Cada rol de texto: color de letra y fuente.
 
-# superficie -> (fondo, color de letra que manda sobre el del rol o None)
+El fondo lo pone la superficie.
+"""
+
 _SUPERFICIES = {
     "": (PAPEL, None),
     "Card.": (SUPERFICIE, None),
@@ -282,8 +276,8 @@ _SUPERFICIES = {
     "Rojo.": (PELIGRO_FONDO, PELIGRO),
     "Azul.": (ACENTO_SUAVE, ACENTO_OSCURO),
 }
+"""Cada superficie: fondo y color de letra que manda sobre el del rol, o `None`."""
 
-# Los chips: fondo, borde y letra de cada estado.
 _CHIPS = {
     "": (SUPERFICIE, LINEA, TINTA2),
     "Ok.": (OK_FONDO, OK_BORDE, OK),
@@ -292,14 +286,19 @@ _CHIPS = {
     "Acento.": (ACENTO_SUAVE, ACENTO_BORDE, ACENTO_OSCURO),
     "Apagado.": (GRIS_FONDO, LINEA, TINTA3),
 }
+"""Los chips: fondo, borde y letra de cada estado."""
 
 _puestos: dict[int, object] = {}
+"""Los intérpretes de Tk que ya tienen el tema, por `id`."""
 
 
 def olvidar(interp) -> None:
-    """Deja de recordar un intérprete ya cerrado. Hermana de `icons.olvidar()`,
-    y por lo mismo: el de la ventanita del servicio vive en otro hilo, y si este
-    diccionario lo retuviera lo acabaría soltando el hilo principal."""
+    """Deja de recordar un intérprete ya cerrado.
+
+    Es hermana de `icons.olvidar()` y por lo mismo: el de la ventanita del
+    servicio vive en otro hilo y, si este diccionario lo retuviera, lo acabaría
+    soltando el hilo principal.
+    """
     if _puestos.get(id(interp)) is interp:
         del _puestos[id(interp)]
 
@@ -307,11 +306,12 @@ def olvidar(interp) -> None:
 def _casilla_propia(widget, style) -> None:
     """Cambia el indicador del Checkbutton por el cuadrado del diseño.
 
-    El de clam pinta una especie de aspa y no hay forma de decirle que dibuje un
-    visto: lo único que deja elegir son los colores. Así que el indicador pasa a
-    ser un elemento de imagen, con una imagen por estado, y el resto de la
-    disposición se conserva tal cual. Si algo falla se deja el de clam: una
-    casilla fea sigue marcándose, y una ventana que no abre no."""
+    El de clam pinta una especie de aspa y no hay forma de decirle que dibuje
+    un visto: lo único que deja elegir son los colores. Así que el indicador
+    pasa a ser un elemento de imagen, con una imagen por estado, y el resto de
+    la disposición se conserva tal cual. Si algo falla se deja el de clam: una
+    casilla fea sigue marcándose y una ventana que no abre no.
+    """
     from . import icons
     try:
         estados = {e: icons.casilla(widget, e)
@@ -334,9 +334,10 @@ def _casilla_propia(widget, style) -> None:
 def apply(widget) -> None:
     """Pinta el tema en el intérprete de Tk al que pertenece `widget`.
 
-    Se hace una sola vez por intérprete —los estilos son globales dentro de
-    uno—, y hay más de uno a lo largo de una sesión: la ventana principal abre
-    el suyo, lo cierra, y el asistente abre otro."""
+    Se hace una sola vez por intérprete (los estilos son globales dentro de
+    uno) y hay más de uno a lo largo de una sesión: la ventana principal abre
+    el suyo, lo cierra y el asistente abre otro.
+    """
     interp = widget.tk
     if _puestos.get(id(interp)) is interp:
         return
@@ -356,7 +357,7 @@ def apply(widget) -> None:
     style.configure(".", background=PAPEL, foreground=TINTA, font=fuente(),
                     focuscolor=ACENTO, troughcolor=GRIS_FONDO, **linea)
 
-    # --- superficies y textos ----------------------------------------------
+    # Superficies y textos.
     for sup, (fondo, manda) in _SUPERFICIES.items():
         style.configure(f"{sup}TFrame", background=fondo)
         for rol, (color, tipo) in _ROLES.items():
@@ -388,7 +389,7 @@ def apply(widget) -> None:
     style.configure("TSeparator", background=LINEA)
     style.configure("Card.TSeparator", background=LINEA_SUAVE)
 
-    # --- chips --------------------------------------------------------------
+    # Chips.
     style.configure("Chip.TLabel", padding=(8, 2), relief="solid", borderwidth=1,
                     font=fuente("pista"))
     for tipo, (fondo, color, letra) in _CHIPS.items():
@@ -400,7 +401,7 @@ def apply(widget) -> None:
                     foreground=TINTA3, bordercolor=LINEA, lightcolor=LINEA,
                     darkcolor=LINEA)
 
-    # --- botones ------------------------------------------------------------
+    # Botones.
     style.configure("TButton", background=SUPERFICIE, foreground=TINTA,
                     padding=(12, 5), relief="solid", borderwidth=1,
                     font=fuente(), **borde)
@@ -467,7 +468,7 @@ def apply(widget) -> None:
                               ("disabled", APAGADO_FONDO)],
                   foreground=[("disabled", APAGADO)])
 
-    # --- lo que se marca y lo que se escribe --------------------------------
+    # Lo que se marca y lo que se escribe.
     style.configure("TCheckbutton", padding=(0, 3), focuscolor=PAPEL)
     style.map("TCheckbutton", foreground=[("disabled", APAGADO)])
     _casilla_propia(widget, style)
@@ -501,7 +502,7 @@ def apply(widget) -> None:
         except Exception:
             pass
 
-    # --- listas, barras y demás --------------------------------------------
+    # Listas, barras y demás.
     style.configure("Treeview", background=SUPERFICIE, fieldbackground=SUPERFICIE,
                     foreground=TINTA, rowheight=icons.px(widget, 28),
                     borderwidth=0, relief="flat",
@@ -535,13 +536,14 @@ def apply(widget) -> None:
     _puestos[id(interp)] = interp
 
 
-# ---------------------------------------------------------------------------
-# Piezas que se repiten
-# ---------------------------------------------------------------------------
-
 def chip(parent, texto: str, tipo: str = "", icono: str | None = None):
-    """Una etiqueta de estado. `tipo` es '', 'Ok.', 'Aviso.', 'Peligro.',
-    'Acento.' o 'Apagado.'; el icono, si se pide, va del color del chip."""
+    """Devuelve una etiqueta de estado.
+
+    Args:
+        tipo: `''`, `'Ok.'`, `'Aviso.'`, `'Peligro.'`, `'Acento.'` o
+            `'Apagado.'`.
+        icono: Si se pide, va del color del chip.
+    """
     from tkinter import ttk
 
     from . import icons
@@ -559,22 +561,23 @@ def chip(parent, texto: str, tipo: str = "", icono: str | None = None):
 
 def boton_icono(boton, nombre: str, color: str = TINTA, fondo: str = PAPEL,
                 size: int = 15):
-    """Le pone un icono a la izquierda del texto a un botón ya creado.
+    """Le pone un icono a la izquierda del texto a un botón ya creado y lo devuelve.
 
     El icono va bajado un poco dentro de su propia imagen. ttk la centra en la
     caja de la línea (ascenso + descenso), pero el texto no ocupa esa caja: sus
     mayúsculas empiezan bastante por debajo del ascenso, que reserva sitio para
-    las tildes —y en castellano se usan—. Ese hueco de arriba deja la masa del
-    texto más baja que el centro de la caja, y el icono se veía flotando por
+    las tildes (y en castellano se usan). Ese hueco de arriba deja la masa del
+    texto más baja que el centro de la caja y el icono se veía flotando por
     encima: medido sobre la ventana de verdad, 1 px a 96 ppp.
 
     La imagen se hace tan alta como la línea y el dibujo se baja el descenso,
-    sin pasarse de lo que quepa. Dando la altura entera el botón no crece —si
-    creciera volvería a mover el texto y no se llegaría nunca—, y el descenso es
+    sin pasarse de lo que quepa. Dando la altura entera el botón no crece (si
+    creciera volvería a mover el texto y no se llegaría nunca) y el descenso es
     la medida que Tk sí da y que acompaña al tamaño de la fuente.
 
     Si el icono no se puede pintar el botón se queda con su texto y ya está: un
-    adorno no puede dejar sin usar una acción."""
+    adorno no puede dejar sin usar una acción.
+    """
     from tkinter import font as tkfont
     from . import icons
     real, alto, bajar = icons.px(boton, size), None, 0
@@ -592,8 +595,11 @@ def boton_icono(boton, nombre: str, color: str = TINTA, fondo: str = PAPEL,
 
 
 def caja_texto(parent, **kw):
-    """Un `tk.Text` con la ropa del diseño. Sigue siendo un tk.Text pelado: lo
-    que se le pide es un fondo blanco, un borde de 1 px y la monoespaciada."""
+    """Devuelve un `tk.Text` con la ropa del diseño.
+
+    Sigue siendo un `tk.Text` pelado: lo que se le pide es un fondo blanco, un
+    borde de 1 px y la monoespaciada.
+    """
     import tkinter as tk
     opciones = dict(background=SUPERFICIE, foreground=TINTA, font=fuente("mono"),
                     relief="flat", borderwidth=0, highlightthickness=1,
@@ -605,14 +611,15 @@ def caja_texto(parent, **kw):
 
 
 def marcar_lista(tree) -> None:
-    """Los colores de fila de una lista de parejas, por estado.
+    """Configura los colores de fila de una lista de parejas, por estado.
 
-    El diseño pide un chip de color en la columna de estado y una `ttk.Treeview`
-    no sabe pintar una celda suelta, así que el color va a la fila entera: fondo
-    para lo que hay que mirar —ámbar si pide un resync, rojo si es un espejo que
-    borra— y letra gris para lo que está ahí pero este dispositivo no usa. Fondo y no
-    letra porque una ruta monoespaciada en ámbar se lee peor, y porque así el
-    azul de la fila elegida sigue viéndose encima."""
+    El diseño pide un chip de color en la columna de estado y una
+    `ttk.Treeview` no sabe pintar una celda suelta, así que el color va a la
+    fila entera: fondo para lo que hay que mirar (ámbar si pide un resync, rojo
+    si es un espejo que borra) y letra gris para lo que está ahí pero este
+    dispositivo no usa. Fondo y no letra porque una ruta monoespaciada en ámbar
+    se lee peor y porque así el azul de la fila elegida sigue viéndose encima.
+    """
     tree.tag_configure("ok", background=SUPERFICIE, foreground=TINTA)
     tree.tag_configure("aviso", background=AVISO_FONDO, foreground=TINTA)
     tree.tag_configure("peligro", background=PELIGRO_FONDO, foreground=PELIGRO)

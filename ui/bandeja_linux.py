@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-bandeja_linux.py — La bandeja del agente en Linux: StatusNotifierItem + dbusmenu.
+"""La bandeja del agente en Linux, con StatusNotifierItem y dbusmenu.
 
 Solo DIBUJA, como `ui/bandeja_windows.py`: qué icono, qué texto y qué menú lo
 decide `ui/bandeja.py`, y lo que se elige en el menú son peticiones al agente
@@ -10,37 +9,35 @@ un escritorio real** (ver
 `docs/superpowers/pruebas/2026-09-25-equipo-pendiente-en-real.md`).
 
 Dos especificaciones, citadas como `common/bisync.py` cita a rclone:
-
-  * **StatusNotifierItem** (freedesktop.org, la que KDE propuso y usan Plasma,
-    la extensión AppIndicator de GNOME, waybar…): el icono es un objeto
-    `org.kde.StatusNotifierItem` en `/StatusNotifierItem`, bajo un nombre
-    `org.kde.StatusNotifierItem-<pid>-<n>`, que se registra con
-    `RegisterStatusNotifierItem` en `org.kde.StatusNotifierWatcher`. El dibujo
-    viaja como `IconPixmap`, `a(iiay)` en ARGB32 de orden de red, que pinta
-    `icons.pixmap_bandeja()`; los cambios se anuncian con `NewIcon`,
-    `NewToolTip` y `NewStatus`. `ItemIsMenu` hace que el clic izquierdo
-    también saque el menú, como en Windows; quien llame a `Activate` de todos
-    modos recibe la entrada `defecto` (abrir la raíz del equipo).
-  * **dbusmenu** (`com.canonical.dbusmenu`, versión 3): el menú es otro objeto,
-    en `/MenuBar`, que el icono señala con su propiedad `Menu`. El anfitrión lo
-    pide entero con `GetLayout` —cada entrada un `(ia{sv}av)` con su id, sus
-    propiedades y sus hijos— y dice los clics con `Event(id, "clicked", …)`.
-    Cada vez que el menú cambia se renumera y se emite `LayoutUpdated`; un
-    clic en una entrada de la numeración anterior (el menú estaba abierto)
-    vale lo que decía esa entrada. dbusmenu no tiene «entrada por defecto»:
-    la negrita de Windows aquí no existe.
+- **StatusNotifierItem** (freedesktop.org, la que KDE propuso y usan Plasma, la
+  extensión AppIndicator de GNOME, waybar…): el icono es un objeto
+  `org.kde.StatusNotifierItem` en `/StatusNotifierItem`, bajo un nombre
+  `org.kde.StatusNotifierItem-<pid>-<n>`, que se registra con
+  `RegisterStatusNotifierItem` en `org.kde.StatusNotifierWatcher`. El dibujo
+  viaja como `IconPixmap`, `a(iiay)` en ARGB32 de orden de red, que pinta
+  `icons.pixmap_bandeja()`; los cambios se anuncian con `NewIcon`, `NewToolTip`
+  y `NewStatus`. `ItemIsMenu` hace que el clic izquierdo también saque el menú,
+  como en Windows; quien llame a `Activate` de todos modos recibe la entrada
+  `defecto` (abrir la raíz del equipo).
+- **dbusmenu** (`com.canonical.dbusmenu`, versión 3): el menú es otro objeto,
+  en `/MenuBar`, que el icono señala con su propiedad `Menu`. El anfitrión lo
+  pide entero con `GetLayout` (cada entrada un `(ia{sv}av)` con su id, sus
+  propiedades y sus hijos) y dice los clics con `Event(id, "clicked", …)`. Cada
+  vez que el menú cambia se renumera y se emite `LayoutUpdated`; un clic en una
+  entrada de la numeración anterior (el menú estaba abierto) vale lo que decía
+  esa entrada. dbusmenu no tiene «entrada por defecto»: la negrita de Windows
+  aquí no existe.
 
 Lo que no es la bandeja pero vive en su hilo:
-
-  * **Sin `StatusNotifierWatcher`** (GNOME sin la extensión AppIndicator, un
-    escritorio mínimo) el icono no se puede poner: `puesta` es False, y hace
-    sus veces el acceso «prdrive» del menú de aplicaciones (`agente.py
-    abrir`). Se escucha `NameOwnerChanged` del watcher: si aparece después
-    (el escritorio termina de arrancar después que el agente, o se activa la
-    extensión), el icono se pone solo; si se reinicia, se vuelve a registrar.
-    Es lo mismo que `TaskbarCreated` en Windows.
-  * **`PrepareForSleep(false)`** de logind, en el bus del sistema: la vuelta
-    de la suspensión pide `despertar`, como `WM_POWERBROADCAST` en Windows.
+- **Sin `StatusNotifierWatcher`** (GNOME sin la extensión AppIndicator, un
+  escritorio mínimo) el icono no se puede poner: `puesta` es `False` y hace sus
+  veces el acceso «prdrive» del menú de aplicaciones (`agente.py abrir`). Se
+  escucha `NameOwnerChanged` del watcher: si aparece después (el escritorio
+  termina de arrancar después que el agente, o se activa la extensión), el
+  icono se pone solo; si se reinicia, se vuelve a registrar. Es lo mismo que
+  `TaskbarCreated` en Windows.
+- **`PrepareForSleep(false)`** de logind, en el bus del sistema: la vuelta de
+  la suspensión pide `despertar`, como `WM_POWERBROADCAST` en Windows.
 
 Un hilo propio con su conexión: el bus solo se toca desde él. El agente le
 habla con `poner()` y `cerrar()`, que despiertan el hilo por un pipe.
@@ -57,65 +54,74 @@ from common import APP_NAME, dbus, equipo
 from ui import bandeja, icons
 
 SNI = "org.kde.StatusNotifierItem"
+"""La interfaz del icono, de la especificación StatusNotifierItem."""
 RUTA_SNI = "/StatusNotifierItem"
 WATCHER = "org.kde.StatusNotifierWatcher"
+"""El nombre (y la interfaz) del watcher donde se registra el icono."""
 RUTA_WATCHER = "/StatusNotifierWatcher"
 DBUSMENU = "com.canonical.dbusmenu"
+"""La interfaz del menú, de la especificación dbusmenu."""
 RUTA_MENU = "/MenuBar"
 VERSION_DBUSMENU = 3
 
 LOGIND = "org.freedesktop.login1"
 LOGIND_MANAGER = "org.freedesktop.login1.Manager"
 
-# `Category` y `Status` de la especificación. `Passive` escondería el icono en
-# el desbordamiento de Plasma: nunca se usa. `NeedsAttention` con un aviso.
 CATEGORIA = "ApplicationStatus"
+"""La `Category` de la especificación."""
 ACTIVO, ATENCION = "Active", "NeedsAttention"
+"""El `Status` de la especificación: `Active`, y `NeedsAttention` con un aviso.
 
-# Los tamaños que se mandan en `IconPixmap`: el anfitrión elige. Plasma usa 22
-# a escala 1 y GNOME 16 × la escala; el resto, pantallas con más densidad.
+`Passive` escondería el icono en el desbordamiento de Plasma: nunca se usa.
+"""
+
 TAMANOS = (16, 22, 24, 32, 48, 64)
+"""Los tamaños que se mandan en `IconPixmap`: el anfitrión elige.
+
+Plasma usa 22 a escala 1 y GNOME 16 × la escala; el resto, pantallas con más
+densidad.
+"""
 
 ESPERA_ARRANQUE = 5.0
 ESPERA_BUCLE = 30.0             # sin nada que hacer, el hilo se despierta igual
 
 REGLA_WATCHER = (f"type='signal',sender='{dbus.BUS}',interface='{dbus.BUS}',"
                  f"member='NameOwnerChanged',arg0='{WATCHER}'")
+"""La regla para oír cuándo el watcher llega, se va o se reinicia."""
 REGLA_ANFITRION = (f"type='signal',interface='{WATCHER}',"
                    "member='StatusNotifierHostRegistered'")
+"""La regla para oír cuándo se registra un anfitrión de iconos."""
 REGLA_SUSPENDER = (f"type='signal',interface='{LOGIND_MANAGER}',"
                    "member='PrepareForSleep'")
+"""La regla para oír la suspensión y su vuelta (logind, en el bus del sistema)."""
 
 V = dbus.Variante
+"""Atajo para crear variantes."""
 
 
 def etiqueta(texto: str) -> str:
-    """dbusmenu marca con `_` la tecla de acceso de la letra siguiente y pide
-    `__` para un guion bajo de verdad: el de un nombre de unidad se dobla."""
+    """Devuelve el texto de una entrada con los `_` doblados.
+
+    dbusmenu marca con `_` la tecla de acceso de la letra siguiente y pide `__`
+    para un guion bajo de verdad: el de un nombre de unidad se dobla.
+    """
     return texto.replace("_", "__")
 
 
 _PIXMAPS: dict[str, list[tuple[int, int, bytes]]] = {}
+"""Los `IconPixmap` ya pintados, por estado."""
 
 
 def pixmaps(estado: str) -> list[tuple[int, int, bytes]]:
-    """El `IconPixmap` de ese estado, `a(iiay)`: (ancho, alto, ARGB32) por
-    tamaño. Se pinta la primera vez (poco más de 0,1 s) y se guarda."""
+    """Devuelve el `IconPixmap` de ese estado: `(ancho, alto, ARGB32)` por tamaño.
+
+    `a(iiay)`. Se pinta la primera vez (poco más de 0,1 s) y se guarda.
+    """
     if estado not in _PIXMAPS:
         _PIXMAPS[estado] = [(s, s, icons.pixmap_bandeja(estado, s)) for s in TAMANOS]
     return _PIXMAPS[estado]
 
 
-# ---------------------------------------------------------------------------
-# El menú como lo pide dbusmenu
-# ---------------------------------------------------------------------------
-
-# Los iconos de las entradas (`bandeja.I_*`) como nombres del tema del
-# escritorio, la propiedad `icon-name` de dbusmenu: el anfitrión los pinta a su
-# tamaño y en su color, también en modo oscuro, que un glifo pintado aquí no
-# sabría. Casi todos son de la *Icon Naming Specification* de freedesktop;
-# `changes-allow` no, pero lo traen Adwaita y Breeze. Un nombre que el tema no
-# tenga deja la entrada sin icono, nada más.
 ICONOS_DEL_TEMA = {
     bandeja.I_ABRIR: "folder-open",
     bandeja.I_SINCRONIZAR: "view-refresh",
@@ -129,16 +135,26 @@ ICONOS_DEL_TEMA = {
     bandeja.I_AVISO: "dialog-warning",
     bandeja.I_REINTENTAR: "view-refresh",
 }
+"""Los iconos de las entradas (`bandeja.I_*`) como nombres del tema del escritorio.
+
+Es la propiedad `icon-name` de dbusmenu: el anfitrión los pinta a su tamaño y
+en su color, también en modo oscuro, que un glifo pintado aquí no sabría. Casi
+todos son de la *Icon Naming Specification* de freedesktop; `changes-allow` no,
+pero lo traen Adwaita y Breeze. Un nombre que el tema no tenga deja la entrada
+sin icono, nada más.
+"""
 
 
 class Menu:
     """El árbol de `bandeja.Entrada` numerado para dbusmenu.
 
     El 0 es la raíz. Cada vez que las entradas cambian se renumeran con ids
-    NUEVOS y sube la revisión; la numeración anterior se guarda para el clic
-    de alguien que tenía el menú abierto."""
+    NUEVOS y sube la revisión; la numeración anterior se guarda para el clic de
+    alguien que tenía el menú abierto.
+    """
 
     def __init__(self) -> None:
+        """Crea un menú vacío, en la revisión 0."""
         self.revision = 0
         self.entradas: tuple[bandeja.Entrada, ...] = ()
         self.por_id: dict[int, bandeja.Entrada] = {}
@@ -147,13 +163,17 @@ class Menu:
         self._siguiente = 1
 
     def poner(self, entradas: tuple[bandeja.Entrada, ...]) -> bool:
-        """True si ha cambiado (hay que emitir `LayoutUpdated`)."""
+        """Pone esas entradas y devuelve si han cambiado.
+
+        Si han cambiado, hay que emitir `LayoutUpdated`.
+        """
         if self.revision and entradas == self.entradas:
             return False
         self._anterior = self.por_id
         self.por_id, self.hijos = {}, {0: []}
 
         def numerar(lista, padre: int) -> None:
+            """Numera las entradas de una lista y las de sus submenús."""
             for e in lista:
                 n = self._siguiente
                 # Un id es un `i`: da la vuelta antes de pasarse, sin el 0.
@@ -169,12 +189,15 @@ class Menu:
         return True
 
     def existe(self, n: int) -> bool:
+        """Indica si ese id existe en la numeración actual."""
         return n == 0 or n in self.por_id
 
     def propiedades(self, n: int, nombres=()) -> dict[str, dbus.Variante]:
-        """Las propiedades de una entrada. Las que valen lo de por defecto
-        (`visible` sí, `enabled` sí, `type` «standard») no se mandan, como pide
-        la especificación."""
+        """Devuelve las propiedades de una entrada.
+
+        Las que valen lo de por defecto (`visible` sí, `enabled` sí, `type`
+        «standard») no se mandan, como pide la especificación.
+        """
         if n == 0:
             p = {"children-display": V("s", "submenu")}
         else:
@@ -197,41 +220,51 @@ class Menu:
         return p
 
     def disposicion(self, padre: int, profundidad: int, nombres=()) -> tuple:
-        """`GetLayout`: el `(ia{sv}av)` de `padre`. Profundidad -1 es todo; 0,
-        sin hijos; n, n niveles por debajo."""
+        """Devuelve el `(ia{sv}av)` de `padre`, para `GetLayout`.
+
+        Profundidad -1 es todo; 0, sin hijos; n, n niveles por debajo.
+        """
         if not self.existe(padre):
             raise dbus.Error(dbus.E_ARGUMENTOS, f"no hay entrada {padre}")
 
         def nodo(n: int, queda: int) -> tuple:
+            """Devuelve una entrada con sus hijos hasta la profundidad que queda."""
             hijos = [] if queda == 0 else [
                 V("(ia{sv}av)", nodo(h, queda - 1)) for h in self.hijos.get(n, [])]
             return (n, self.propiedades(n, nombres), hijos)
         return nodo(padre, profundidad)
 
     def pulsada(self, n: int) -> tuple[dict, ...]:
-        """Las peticiones de la entrada `n`, de esta numeración o de la anterior.
-        Nada si no se puede elegir (apagada, separador, submenú)."""
+        """Devuelve las peticiones de la entrada `n`.
+
+        Son de esta numeración o de la anterior. No devuelve nada si no se
+        puede elegir (apagada, separador, submenú).
+        """
         e = self.por_id.get(n) or self._anterior.get(n)
         if e is None or e.separador or e.hijos or not e.activa:
             return ()
         return tuple(dict(p) for p in e.pide)
 
 
-# ---------------------------------------------------------------------------
-# La bandeja
-# ---------------------------------------------------------------------------
-
 class Bandeja:
     """El icono del agente en la bandeja de un escritorio Linux.
 
-    `pedir(peticion)` se llama desde el hilo de la bandeja: tiene que ser barato
-    y seguro entre hilos (el agente lo mete en una cola y se despierta).
+    `pedir(peticion)` se llama desde el hilo de la bandeja: tiene que ser
+    barato y seguro entre hilos (el agente lo mete en una cola y se despierta).
     `conectar()` y `conectar_sistema()` abren los buses; los tests ponen unos
-    falsos."""
+    falsos.
+
+    Args:
+        pedir: Lo que se elige en el menú, como petición al agente.
+        conectar: Abre el bus de sesión; por defecto, `dbus.Conexion.sesion`.
+        conectar_sistema: Abre el bus del sistema; por defecto,
+            `dbus.Conexion.sistema`.
+    """
 
     def __init__(self, pedir: Callable[[dict], None],
                  conectar: Callable[[], dbus.Conexion] | None = None,
                  conectar_sistema: Callable[[], dbus.Conexion] | None = None) -> None:
+        """Prepara la bandeja sin conectar todavía a ningún bus."""
         self.pedir = pedir
         self._conectar = conectar or dbus.Conexion.sesion
         self._conectar_sistema = conectar_sistema or dbus.Conexion.sistema
@@ -251,13 +284,13 @@ class Bandeja:
         self._hilo: threading.Thread | None = None
         self._listo = threading.Event()
 
-    # --- desde el hilo del agente --------------------------------------------------
-
     def arrancar(self) -> bool:
-        """Conecta, exporta y se registra, en su hilo. True si hay bus de sesión:
-        con él llegan la suspensión y el watcher que aparezca más tarde, aunque
-        el icono todavía no esté (`puesta`). False sin bus: el agente sigue sin
-        bandeja, y el acceso del menú hace sus veces."""
+        """Conecta, exporta y se registra, en su hilo; devuelve si hay bus de sesión.
+
+        Con él llegan la suspensión y el watcher que aparezca más tarde, aunque
+        el icono todavía no esté (`puesta`). Sin bus, el agente sigue sin
+        bandeja y el acceso del menú hace sus veces.
+        """
         self._hilo = threading.Thread(target=self._correr, name="bandeja", daemon=True)
         self._hilo.start()
         self._listo.wait(ESPERA_ARRANQUE)
@@ -265,30 +298,38 @@ class Bandeja:
 
     @property
     def puesta(self) -> bool:
-        """¿Hay un icono en alguna bandeja? Registrado en un watcher que tiene
-        un anfitrión que lo enseñe."""
+        """Indica si hay un icono en alguna bandeja.
+
+        Es decir, si está registrado en un watcher que tiene un anfitrión que
+        lo enseñe.
+        """
         return self._registrado and self._anfitrion
 
     def poner(self, vista: bandeja.Vista) -> None:
+        """Pide al hilo de la bandeja que enseñe esa vista."""
         with self._cerrojo:
             self._pendiente = vista
         self._despertar()
 
     def cerrar(self) -> None:
+        """Pide al hilo que acabe y espera a que se vaya."""
         self._salir = True
         self._despertar()
         if self._hilo is not None and self._hilo is not threading.current_thread():
             self._hilo.join(ESPERA_ARRANQUE)
 
     def _despertar(self) -> None:
+        """Despierta al hilo de la bandeja por el pipe."""
         try:
             os.write(self._pipe[1], b"!")
         except OSError:
             pass                # lleno: ya hay un despertar pendiente
 
-    # --- en el hilo de la bandeja ----------------------------------------------------
-
     def _correr(self) -> None:
+        """Es el hilo de la bandeja.
+
+        Conecta a los buses, se registra y corre el bucle.
+        """
         try:
             try:
                 self.bus = self._conectar()
@@ -322,6 +363,10 @@ class Bandeja:
             self._registrado = False
 
     def _bucle(self) -> None:
+        """Atiende los buses y las vistas pendientes.
+
+        Sigue hasta que se cierre la bandeja o acabe la sesión.
+        """
         while not self._salir:
             try:
                 self._atender_buses()
@@ -346,6 +391,7 @@ class Bandeja:
                     return
 
     def _atender_buses(self) -> None:
+        """Atiende las señales de los dos buses."""
         for s in self.bus.atender(0):
             self._senal(s)
         if self.sistema is not None:
@@ -357,6 +403,7 @@ class Bandeja:
                 self.sistema = None     # sin él solo se pierde el aviso de suspender
 
     def _senal(self, s: dbus.Mensaje) -> None:
+        """Hace lo que toca con una señal: el watcher, un anfitrión o la suspensión."""
         if s.miembro == "NameOwnerChanged" and s.cuerpo[:1] == [WATCHER]:
             if len(s.cuerpo) >= 3 and s.cuerpo[2]:
                 self._registrar()       # ha llegado, o se ha reiniciado
@@ -368,9 +415,11 @@ class Bandeja:
             self.pedir({"pide": equipo.PIDE_DESPERTAR})
 
     def _registrar(self) -> None:
-        """`RegisterStatusNotifierItem` con nuestro nombre, si hay watcher. Si
-        no hay anfitrión que enseñe los iconos, el registro vale igual y se
-        espera a `StatusNotifierHostRegistered`."""
+        """Llama a `RegisterStatusNotifierItem` con nuestro nombre, si hay watcher.
+
+        Si no hay anfitrión que enseñe los iconos, el registro vale igual y se
+        espera a `StatusNotifierHostRegistered`.
+        """
         self._registrado = False
         try:
             if not self.bus.tiene_dueno(WATCHER):
@@ -387,6 +436,7 @@ class Bandeja:
             self._anfitrion = True      # quien no lo dice, lo tendrá: se da por puesto
 
     def _poner_pendiente(self) -> None:
+        """Aplica la vista pendiente y anuncia lo que ha cambiado en ella."""
         with self._cerrojo:
             vista, self._pendiente = self._pendiente, None
         if vista is None:
@@ -402,23 +452,27 @@ class Bandeja:
             self.bus.emitir(RUTA_MENU, DBUSMENU, "LayoutUpdated", "ui",
                             [self.menu.revision, 0])
 
-    # --- lo que se exporta -----------------------------------------------------------
-
     @staticmethod
     def _estado(vista: bandeja.Vista) -> str:
+        """Devuelve el `Status` del icono para esa vista."""
         return ATENCION if vista.icono == icons.AVISO else ACTIVO
 
     def _tooltip(self) -> tuple:
-        """`ToolTip`, `(sa(iiay)ss)`: icono (ninguno), título y descripción."""
+        """Devuelve el `ToolTip`, de tipo `(sa(iiay)ss)`.
+
+        Son un icono (ninguno), el título y la descripción.
+        """
         return ("", [], APP_NAME, self.vista.frase or self.vista.tip)
 
     def _por_defecto(self) -> None:
+        """Hace las peticiones de la entrada `defecto` (abrir la raíz del equipo)."""
         e = self.vista.defecto()
         if e is not None:
             for p in e.pide:
                 self.pedir(dict(p))
 
     def _item(self) -> dbus.Interfaz:
+        """Devuelve la interfaz `org.kde.StatusNotifierItem` que se exporta."""
         nada = dbus.Metodo("ii", "", lambda x, y: None)
         return dbus.Interfaz(SNI, metodos={
             "ContextMenu": nada,
@@ -446,7 +500,10 @@ class Bandeja:
                     "NewOverlayIcon": "", "NewToolTip": "", "NewStatus": "s"})
 
     def _evento(self, n: int, tipo: str) -> bool:
-        """Un evento del menú. Solo `clicked` hace algo. False si el id no existe."""
+        """Atiende un evento del menú y devuelve si el id existe.
+
+        Solo `clicked` hace algo.
+        """
         if not self.menu.existe(n) and n not in self.menu._anterior:
             return False
         if tipo == "clicked":
@@ -455,13 +512,19 @@ class Bandeja:
         return True
 
     def _dbusmenu(self) -> dbus.Interfaz:
+        """Devuelve la interfaz `com.canonical.dbusmenu` que se exporta."""
         m = self.menu
 
         def grupo(ids, nombres):
+            """Devuelve las propiedades de un grupo de entradas.
+
+            Si no se piden ids, son las de todas.
+            """
             ids = list(ids) or [0, *m.por_id]
             return [[(n, m.propiedades(n, nombres)) for n in ids if m.existe(n)]]
 
         def propiedad(n, nombre):
+            """Devuelve una propiedad de una entrada."""
             if not m.existe(n):
                 raise dbus.Error(dbus.E_ARGUMENTOS, f"no hay entrada {n}")
             p = m.propiedades(n, (nombre,))
@@ -470,6 +533,7 @@ class Bandeja:
             return [p[nombre]]
 
         def eventos(lista):
+            """Atiende un grupo de eventos y devuelve los ids que no existen."""
             return [[n for n, tipo, _dato, _t in lista if not self._evento(n, tipo)]]
 
         return dbus.Interfaz(DBUSMENU, metodos={
@@ -493,5 +557,8 @@ class Bandeja:
 
 
 def hay_bandeja(bus: dbus.Conexion) -> bool:
-    """¿Tiene este escritorio dónde poner el icono? Lo pregunta el asistente."""
+    """Indica si este escritorio tiene dónde poner el icono.
+
+    Lo pregunta el asistente.
+    """
     return bus.tiene_dueno(WATCHER)

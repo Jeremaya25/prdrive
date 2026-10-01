@@ -1,46 +1,44 @@
 #!/usr/bin/env python3
-"""
-bandeja_windows.py — La bandeja del agente en Windows: `Shell_NotifyIconW`.
+"""La bandeja del agente en Windows, con `Shell_NotifyIconW`.
 
 Solo DIBUJA: qué icono, qué texto y qué menú lo decide `ui/bandeja.py`, y lo
 que se elige en el menú son peticiones al agente (`pedir(dict)`), las mismas
 que las del buzón. Nada de Tk: ctypes contra user32 y shell32, sin
 dependencias, y **sin probar en un Windows real** (ver
 `docs/superpowers/pruebas/2026-09-25-equipo-pendiente-en-real.md`).
-
-  * **Un hilo propio con su ventana y su bucle de mensajes.** Windows entrega
-    los mensajes de una ventana al hilo que la creó, y solo ese hilo puede
-    destruirla. El agente sigue en el suyo; se hablan con `PostMessageW` (de
-    aquí para allá: `poner()`, `globo()`, `cerrar()`) y con `pedir()` (de allá
-    para aquí: lo que se elige en el menú).
-  * **Una ventana oculta de nivel superior, NO de solo mensajes.** El diseño
-    decía «de solo mensajes», pero esas no reciben difusiones («Message-Only
-    Windows», en la documentación de Win32), y dos de las que hacen falta lo
-    son: `WM_DEVICECHANGE` con `DBT_DEVICEARRIVAL` de un volumen (VeraCrypt
-    anuncia así sus montajes, `BroadcastDeviceChange()` en
-    `Common/Dlgcode.c`) y `TaskbarCreated`, que llega cuando el Explorador se
-    reinicia y hay que volver a poner el icono. Nunca se enseña.
-  * **`WM_DEVICECHANGE`** despierta al agente para que recorra las unidades en
-    racha (`montajes()`), en vez de recorrerlas cada 5 s como penwatch.
-  * **`WM_POWERBROADCAST`** con `PBT_APMRESUMEAUTOMATIC` (vuelta de la
-    suspensión) pide `despertar`: la batería, la red y los remotos sin
-    conexión se miran enseguida (sección 6 del diseño).
-  * **El menú** es `TrackPopupMenu` con `TPM_RETURNCMD`: devuelve el id
-    elegido en vez de mandar `WM_COMMAND`. Antes, `SetForegroundWindow` a la
-    ventana propia, y después un `WM_NULL`: sin eso el menú no se cierra al
-    pinchar fuera (es la receta de la documentación de `TrackPopupMenu`).
-    Se abre con el botón derecho y con el izquierdo; la entrada `defecto` va
-    en negrita. Las entradas con `icono` llevan su glifo de `ui/icons.py`
-    (`icons.pixeles_menu()`) como `hbmpItem`: un DIB de 32 bits con alfa
-    premultiplicado, del color del texto del menú (`GetSysColor`), al tamaño
-    del icono pequeño. Se crean al abrir el menú y se borran al cerrarlo.
-  * **Los avisos** cuelgan del propio icono (`NIM_MODIFY` + `NIF_INFO`), que
-    en Windows 10 y 11 salen como notificación del sistema:
-    `common/avisos.GLOBO` apunta a `globo()` mientras la bandeja vive.
-  * **Los iconos** son los cinco `bandeja-<estado>.ico` que `ui/icons.py`
-    repinta en la carpeta del agente, cargados con `LoadImageW` al tamaño del
-    icono pequeño del sistema (`SM_CXSMICON`), con la densidad declarada
-    (`theme.nitidez()`) para que ese tamaño sea el de verdad.
+- **Un hilo propio con su ventana y su bucle de mensajes.** Windows entrega los
+  mensajes de una ventana al hilo que la creó y solo ese hilo puede destruirla.
+  El agente sigue en el suyo; se hablan con `PostMessageW` (de aquí para allá:
+  `poner()`, `globo()`, `cerrar()`) y con `pedir()` (de allá para aquí: lo que
+  se elige en el menú).
+- **Una ventana oculta de nivel superior, NO de solo mensajes.** El diseño
+  decía «de solo mensajes», pero esas no reciben difusiones («Message-Only
+  Windows», en la documentación de Win32) y dos de las que hacen falta lo son:
+  `WM_DEVICECHANGE` con `DBT_DEVICEARRIVAL` de un volumen (VeraCrypt anuncia
+  así sus montajes, `BroadcastDeviceChange()` en `Common/Dlgcode.c`) y
+  `TaskbarCreated`, que llega cuando el Explorador se reinicia y hay que volver
+  a poner el icono. Nunca se enseña.
+- **`WM_DEVICECHANGE`** despierta al agente para que recorra las unidades en
+  racha (`montajes()`), en vez de recorrerlas cada 5 s como penwatch.
+- **`WM_POWERBROADCAST`** con `PBT_APMRESUMEAUTOMATIC` (vuelta de la
+  suspensión) pide `despertar`: la batería, la red y los remotos sin conexión
+  se miran enseguida (sección 6 del diseño).
+- **El menú** es `TrackPopupMenu` con `TPM_RETURNCMD`: devuelve el id elegido
+  en vez de mandar `WM_COMMAND`. Antes, `SetForegroundWindow` a la ventana
+  propia y después un `WM_NULL`: sin eso el menú no se cierra al pinchar fuera
+  (es la receta de la documentación de `TrackPopupMenu`). Se abre con el botón
+  derecho y con el izquierdo; la entrada `defecto` va en negrita. Las entradas
+  con `icono` llevan su glifo de `ui/icons.py` (`icons.pixeles_menu()`) como
+  `hbmpItem`: un DIB de 32 bits con alfa premultiplicado, del color del texto
+  del menú (`GetSysColor`), al tamaño del icono pequeño. Se crean al abrir el
+  menú y se borran al cerrarlo.
+- **Los avisos** cuelgan del propio icono (`NIM_MODIFY` + `NIF_INFO`), que en
+  Windows 10 y 11 salen como notificación del sistema: `common/avisos.GLOBO`
+  apunta a `globo()` mientras la bandeja vive.
+- **Los iconos** son los cinco `bandeja-<estado>.ico` que `ui/icons.py` repinta
+  en la carpeta del agente, cargados con `LoadImageW` al tamaño del icono
+  pequeño del sistema (`SM_CXSMICON`), con la densidad declarada
+  (`theme.nitidez()`) para que ese tamaño sea el de verdad.
 
 Todo lo que toca Windows está en `Api`; `Bandeja` habla con ella y los tests le
 ponen una de mentira (`tests/test_bandeja_windows.py`).
@@ -87,24 +85,34 @@ MIIM_BITMAP = 0x80
 COLOR_MENUTEXT = 7
 TPM_RIGHTBUTTON, TPM_NONOTIFY, TPM_RETURNCMD = 0x2, 0x80, 0x100
 PRIMER_ID = 100
+"""El primer id de las entradas del menú: los que devuelve `TrackPopupMenu`."""
 
-ESPERA_ARRANQUE = 5.0           # lo que espera `arrancar()` a saber si hay icono
+ESPERA_ARRANQUE = 5.0
+"""Segundos que espera `arrancar()` a saber si hay ventana."""
 ESPERA_GLOBO = 2.0
+"""Segundos que espera `globo()` a que Windows acepte el aviso."""
 
 
 def texto_menu(texto: str) -> str:
-    """Un `&` en un menú marca la tecla de acceso de la letra siguiente: el de
-    un nombre de unidad se dobla para que salga tal cual."""
+    """Devuelve el texto de una entrada con los `&` doblados.
+
+    Un `&` en un menú marca la tecla de acceso de la letra siguiente: el de un
+    nombre de unidad se dobla para que salga tal cual.
+    """
     return texto.replace("&", "&&")
 
 
 def numerar(menu: tuple[bandeja.Entrada, ...], primero: int = PRIMER_ID
             ) -> dict[int, bandeja.Entrada]:
-    """Un id por entrada que se puede elegir (ni separadores ni submenús), en
-    el orden del árbol. Es lo que devuelve `TrackPopupMenu`."""
+    """Devuelve un id por entrada que se puede elegir, en el orden del árbol.
+
+    No lo llevan los separadores ni los submenús. Es lo que devuelve
+    `TrackPopupMenu`.
+    """
     ids: dict[int, bandeja.Entrada] = {}
 
     def recorrer(entradas) -> None:
+        """Numera las entradas y las de los submenús, en orden."""
         for e in entradas:
             if e.separador:
                 continue
@@ -121,10 +129,19 @@ class Bandeja:
 
     `pedir(peticion)` y `montajes()` se llaman desde el hilo de la bandeja:
     tienen que ser baratos y seguros entre hilos (el agente los mete en una
-    cola y se despierta)."""
+    cola y se despierta).
+
+    Args:
+        carpeta_iconos: Donde están los `bandeja-<estado>.ico`.
+        pedir: Lo que se elige en el menú, como petición al agente.
+        montajes: Avisa de que ha cambiado algún volumen.
+        api: Las llamadas a Windows; por defecto, `Api`. Los tests le ponen una
+            de mentira.
+    """
 
     def __init__(self, carpeta_iconos: Path, pedir: Callable[[dict], None],
                  montajes: Callable[[], None], api: Any = None) -> None:
+        """Prepara la bandeja sin crear todavía la ventana."""
         self.carpeta = Path(carpeta_iconos)
         self.pedir = pedir
         self.montajes = montajes
@@ -140,15 +157,15 @@ class Bandeja:
         self._hilo: threading.Thread | None = None
         self._listo = threading.Event()
 
-    # --- desde el hilo del agente --------------------------------------------------
-
     def arrancar(self) -> bool:
-        """Crea la ventana y pone el icono, en su hilo. True si la ventana
-        existe: con ella llegan `WM_DEVICECHANGE` y los demás, aunque el icono
-        todavía no esté (al iniciar sesión la barra de tareas puede no existir
-        aún, y entonces se pone al llegar `TaskbarCreated`). False sin ventana:
-        el agente sigue sin bandeja, sondea como penwatch y avisa con el icono
-        de paso."""
+        """Crea la ventana y pone el icono, en su hilo; devuelve si la ventana existe.
+
+        Con ventana llegan `WM_DEVICECHANGE` y los demás aunque el icono
+        todavía no esté: al iniciar sesión la barra de tareas puede no existir
+        aún y entonces se pone al llegar `TaskbarCreated`. Sin ventana, el
+        agente sigue sin bandeja, sondea como penwatch y avisa con el icono de
+        paso.
+        """
         self._hilo = threading.Thread(target=self._correr, name="bandeja", daemon=True)
         self._hilo.start()
         self._listo.wait(ESPERA_ARRANQUE)
@@ -158,16 +175,17 @@ class Bandeja:
 
     @property
     def puesta(self) -> bool:
-        """¿Está el icono en la barra de tareas?"""
+        """Indica si el icono está en la barra de tareas."""
         return self._puesto
 
     def poner(self, vista: bandeja.Vista) -> None:
+        """Pide al hilo de la bandeja que enseñe esa vista."""
         with self._cerrojo:
             self._pendiente = vista
         self._avisar(WM_PONER)
 
     def globo(self, titulo: str, texto: str, urgente: bool = False) -> bool:
-        """Cuelga un aviso del icono. True si Windows lo ha aceptado."""
+        """Cuelga un aviso del icono y devuelve si Windows lo ha aceptado."""
         if self.hwnd is None or not self._puesto:
             return False
         hecho, resultado = threading.Event(), [False]
@@ -181,6 +199,7 @@ class Bandeja:
         return resultado[0]
 
     def cerrar(self) -> None:
+        """Cierra la ventana y espera a que el hilo acabe."""
         if avisos.GLOBO == self.globo:
             avisos.GLOBO = None
         self._avisar(WM_CLOSE)
@@ -188,11 +207,11 @@ class Bandeja:
             self._hilo.join(ESPERA_ARRANQUE)
 
     def _avisar(self, mensaje: int) -> bool:
+        """Manda un mensaje a la ventana de la bandeja y devuelve si se ha podido."""
         return self.hwnd is not None and bool(self.api.post(self.hwnd, mensaje))
 
-    # --- en el hilo de la bandeja ----------------------------------------------------
-
     def _correr(self) -> None:
+        """Es el hilo de la bandeja: crea la ventana, pone el icono y corre el bucle."""
         try:
             if self.api is None:
                 self.api = Api()
@@ -211,8 +230,11 @@ class Bandeja:
             self.api.bucle()
 
     def _mensaje(self, hwnd, msg: int, wparam: int, lparam: int) -> int | None:
-        """Lo que hace la bandeja con cada mensaje. None: lo que haga Windows
-        por defecto (`DefWindowProcW`)."""
+        """Hace lo que toca con cada mensaje de la ventana.
+
+        Devuelve `None` para dejar lo que haga Windows por defecto
+        (`DefWindowProcW`).
+        """
         if msg == WM_ICONO:
             if lparam in (WM_RBUTTONUP, WM_LBUTTONUP, WM_CONTEXTMENU):
                 self._menu()
@@ -252,12 +274,14 @@ class Bandeja:
         return None
 
     def _icono(self, estado: str):
+        """Devuelve el icono de ese estado, cargado una vez; si falta, el de `BIEN`."""
         if estado not in self._iconos:
             ruta = icons.fichero_bandeja(self.carpeta, estado)
             self._iconos[estado] = self.api.icono(ruta) if ruta.is_file() else None
         return self._iconos[estado] or self._iconos.get(icons.BIEN)
 
     def _poner_icono(self) -> None:
+        """Pone el icono en la barra de tareas, o lo cambia si ya está."""
         with self._cerrojo:
             vista, self._pendiente = self._pendiente, None
         if vista is not None:
@@ -271,6 +295,7 @@ class Bandeja:
             self._puesto = bool(self.api.notificar(NIM_ADD, **campos))
 
     def _colgar_globos(self) -> None:
+        """Cuelga del icono los avisos pendientes y dice a quien espera cómo ha ido."""
         with self._cerrojo:
             globos, self._globos = self._globos, []
         for titulo, texto, urgente, hecho, resultado in globos:
@@ -281,6 +306,7 @@ class Bandeja:
             hecho.set()
 
     def _menu(self) -> None:
+        """Enseña el menú y manda al agente las peticiones de la entrada elegida."""
         ids = numerar(self.vista.menu)
         elegido = self.api.menu(self.hwnd, self.vista.menu, ids)
         entrada = ids.get(elegido) if elegido else None
@@ -289,17 +315,16 @@ class Bandeja:
                 self.pedir(dict(peticion))
 
 
-# ---------------------------------------------------------------------------
-# Windows de verdad
-# ---------------------------------------------------------------------------
-
 class Api:
-    """Las llamadas a user32 y shell32 que hace la bandeja. Se crea en el hilo
-    de la bandeja, que es el dueño de la ventana."""
+    """Las llamadas a user32 y shell32 que hace la bandeja.
+
+    Se crea en el hilo de la bandeja, que es el dueño de la ventana.
+    """
 
     CLASE = f"{APP_NAME}Bandeja"
 
     def __init__(self) -> None:
+        """Carga las bibliotecas de Windows y declara las firmas de lo que se usa."""
         import ctypes
         from ctypes import wintypes
 
@@ -348,6 +373,7 @@ class Api:
         u.GetSysColor.argtypes = [ctypes.c_int]
 
         class MENUITEMINFOW(ctypes.Structure):
+            """Estructura `MENUITEMINFOW` de winuser.h."""
             _fields_ = [("cbSize", wintypes.UINT), ("fMask", wintypes.UINT),
                         ("fType", wintypes.UINT), ("fState", wintypes.UINT),
                         ("wID", wintypes.UINT), ("hSubMenu", wintypes.HMENU),
@@ -357,6 +383,7 @@ class Api:
                         ("cch", wintypes.UINT), ("hbmpItem", wintypes.HBITMAP)]
 
         class BITMAPINFOHEADER(ctypes.Structure):
+            """Estructura `BITMAPINFOHEADER` de wingdi.h."""
             _fields_ = [("biSize", wintypes.DWORD), ("biWidth", wintypes.LONG),
                         ("biHeight", wintypes.LONG), ("biPlanes", wintypes.WORD),
                         ("biBitCount", wintypes.WORD), ("biCompression", wintypes.DWORD),
@@ -390,14 +417,20 @@ class Api:
         self._proc = None                   # la referencia que ctypes necesita viva
 
     def mensaje_registrado(self, nombre: str) -> int:
+        """Devuelve el número de un mensaje registrado con `RegisterWindowMessageW`."""
         return int(self.user32.RegisterWindowMessageW(nombre))
 
     def ventana(self, manejar: Callable) -> Any:
-        """La ventana oculta, con `manejar(hwnd, msg, wparam, lparam)` como
-        procedimiento (None → `DefWindowProcW`)."""
+        """Crea la ventana oculta y devuelve su `hwnd`.
+
+        Args:
+            manejar: El procedimiento `manejar(hwnd, msg, wparam, lparam)`; si
+                devuelve `None`, hace `DefWindowProcW`.
+        """
         ct, wt, u = self.ct, self.wt, self.user32
 
         def proc(hwnd, msg, wparam, lparam):
+            """Llama a `manejar` sin dejar que un fallo suyo tumbe el bucle."""
             try:
                 r = manejar(hwnd, msg, wparam, lparam)
             except Exception:                           # noqa: BLE001
@@ -405,6 +438,7 @@ class Api:
             return u.DefWindowProcW(hwnd, msg, wparam, lparam) if r is None else r
 
         class WNDCLASSW(ct.Structure):
+            """Estructura `WNDCLASSW` de winuser.h."""
             _fields_ = [("style", wt.UINT), ("lpfnWndProc", self.WNDPROC),
                         ("cbClsExtra", ct.c_int), ("cbWndExtra", ct.c_int),
                         ("hInstance", wt.HINSTANCE), ("hIcon", wt.HICON),
@@ -424,32 +458,45 @@ class Api:
                                  0, 0, 0, 0, None, None, instancia, None)
 
     def bucle(self) -> None:
+        """Corre el bucle de mensajes hasta que llega `WM_QUIT`."""
         msg = self.wt.MSG()
         while self.user32.GetMessageW(self.ct.byref(msg), None, 0, 0) > 0:
             self.user32.TranslateMessage(self.ct.byref(msg))
             self.user32.DispatchMessageW(self.ct.byref(msg))
 
     def salir(self) -> None:
+        """Pide que acabe el bucle de mensajes."""
         self.user32.PostQuitMessage(0)
 
     def destruir(self, hwnd) -> None:
+        """Destruye la ventana."""
         self.user32.DestroyWindow(hwnd)
 
     def post(self, hwnd, mensaje: int) -> bool:
+        """Manda un mensaje a la ventana sin esperar y devuelve si se ha podido."""
         return bool(self.user32.PostMessageW(hwnd, mensaje, 0, 0))
 
     def icono(self, ruta: Path):
+        """Carga un `.ico` al tamaño del icono pequeño del sistema.
+
+        Devuelve `None` si no se puede.
+        """
         SM_CXSMICON, IMAGE_ICON, LR_LOADFROMFILE = 49, 1, 0x10
         lado = self.user32.GetSystemMetrics(SM_CXSMICON) or 16
         return self.user32.LoadImageW(None, str(ruta), IMAGE_ICON, lado, lado,
                                       LR_LOADFROMFILE) or None
 
     def soltar_icono(self, h) -> None:
+        """Libera un icono cargado con `icono()`."""
         self.user32.DestroyIcon(h)
 
     def notificar(self, accion: int, hwnd=None, id: int = ID_ICONO, flags: int = 0,
                   callback: int = 0, icono=None, tip: str = "", info: str = "",
                   info_titulo: str = "", info_flags: int = 0) -> bool:
+        """Hace una operación de `Shell_NotifyIconW` sobre el icono.
+
+        Devuelve si ha ido bien.
+        """
         datos = self.NOTIFYICONDATAW()
         datos.cbSize = self.ct.sizeof(self.NOTIFYICONDATAW)
         datos.hWnd, datos.uID, datos.uFlags = hwnd, id, flags
@@ -462,8 +509,11 @@ class Api:
         return bool(self.shell32.Shell_NotifyIconW(accion, self.ct.byref(datos)))
 
     def _bitmap(self, nombre: str, lado: int, color: str):
-        """El glifo `nombre` como mapa de bits de menú, o None si no se puede:
-        una entrada sin icono sigue siendo una entrada."""
+        """Devuelve el glifo `nombre` como mapa de bits de menú.
+
+        Es `None` si no se puede: una entrada sin icono sigue siendo una
+        entrada.
+        """
         ct = self.ct
         try:
             clave = (nombre, lado, color)
@@ -485,8 +535,10 @@ class Api:
 
     def menu(self, hwnd, entradas: tuple[bandeja.Entrada, ...],
              ids: dict[int, bandeja.Entrada]) -> int:
-        """Construye el menú, lo enseña donde está el ratón y devuelve el id
-        elegido (0: ninguno)."""
+        """Construye el menú, lo enseña donde está el ratón y devuelve el id elegido.
+
+        Devuelve 0 si no se elige ninguno.
+        """
         u = self.user32
         por_entrada = {id(e): n for n, e in ids.items()}
         SM_CXSMICON = 49
@@ -496,6 +548,7 @@ class Api:
         bitmaps: list = []
 
         def poner_icono(h, e) -> None:
+            """Le pone a la última entrada de `h` el glifo de `e`, si lo tiene."""
             if not e.icono or e.icono not in icons.GLIFOS:
                 return
             b = self._bitmap(e.icono, lado, tinta)
@@ -509,6 +562,7 @@ class Api:
             u.SetMenuItemInfoW(h, u.GetMenuItemCount(h) - 1, True, self.ct.byref(info))
 
         def construir(lista) -> Any:
+            """Construye el menú de una lista de entradas, con sus submenús."""
             h = u.CreatePopupMenu()
             for e in lista:
                 if e.separador:

@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""
-icons.py — Los iconos del rediseño, dibujados aquí mismo.
+"""Los iconos del rediseño, dibujados aquí mismo.
 
 El diseño pide iconos de trazo sobre rejilla de 16 y dice explícitamente «sin
 emoji»: un ✓ o un ⚠ salen con la fuente de emoji del sistema, en color, de un
 tamaño que no controlamos y distinto en cada equipo. Como el proyecto no tiene
-dependencias —nada de Pillow, nada de cairosvg—, la única salida es pintarlos, y
-como Tk 8.6 no sabe leer SVG, se pintan a mano.
+dependencias (nada de Pillow, nada de cairosvg), la única salida es pintarlos,
+y como Tk 8.6 no sabe leer SVG, se pintan a mano.
 
 Cada icono es una lista de primitivas (segmentos, arcos, círculos, rectángulos)
 en el sistema de coordenadas del artboard, y `_rasterizar()` las convierte en
@@ -16,10 +15,10 @@ icono para 20 px, se pide con `size=20`.
 
 **El fondo se pasa y no se elige**: `PhotoImage.put()` no admite transparencia,
 así que el icono se compone contra el color sobre el que va a caer. No es una
-limitación cara porque toda la paleta es plana —papel, superficie, acento— y ese
-color se sabe siempre en el sitio donde se pone el icono.
+limitación cara porque toda la paleta es plana (papel, superficie, acento) y
+ese color se sabe siempre en el sitio donde se pone el icono.
 
-Nada de aquí puede tumbar la interfaz: `get()` devuelve None si algo falla, y
+Nada de aquí puede tumbar la interfaz: `get()` devuelve `None` si algo falla y
 quien lo llama pinta el texto sin icono. Un adorno no puede impedir que se abra
 la ventana.
 """
@@ -28,23 +27,8 @@ from __future__ import annotations
 
 import math
 
-# Anchura de trazo del diseño, en unidades de la rejilla de 16.
 TRAZO = 1.6
-
-# ---------------------------------------------------------------------------
-# Las primitivas
-#
-#   ("l",  x1, y1, x2, y2)          segmento
-#   ("p",  [(x, y), ...])           polilínea
-#   ("a",  cx, cy, r, a0, a1)       arco, grados que CRECEN de a0 a a1
-#   ("c",  cx, cy, r)               círculo
-#   ("r",  x, y, w, h)              rectángulo de trazo
-#   ("fr", x, y, w, h)              rectángulo relleno
-#   ("rr", x, y, w, h, radio)       rectángulo relleno de esquinas redondeadas
-#
-# Los ángulos van en el sentido de la pantalla (la y crece hacia abajo), que es
-# el mismo en el que los escribe SVG: 0° a la derecha, 90° abajo.
-# ---------------------------------------------------------------------------
+"""Anchura de trazo del diseño, en unidades de la rejilla de 16."""
 
 GLIFOS: dict[str, list[tuple]] = {
     # Los dos sentidos de bisync, que es también la marca de la aplicación.
@@ -70,17 +54,12 @@ GLIFOS: dict[str, list[tuple]] = {
              ("l", 14, 8, 12.5, 8), ("l", 3.5, 8, 2, 8),
              ("l", 12.6, 3.4, 11.2, 4.8), ("l", 4.8, 11.2, 3.4, 12.6),
              ("l", 12.6, 12.6, 11.2, 11.2), ("l", 4.8, 4.8, 3.4, 3.4)],
-    # Una pareja es un ida y vuelta entre dos sitios: dos flechas opuestas. La
-    # rejilla de cuatro cuadrados que había antes no decía nada, y a 15 px cada
-    # cuadrado se quedaba en un borde grueso con un agujero de dos píxeles.
+    # Una pareja es un ida y vuelta entre dos sitios: dos flechas opuestas.
     "parejas": [("l", 2.6, 5.4, 12.9, 5.4), ("p", [(10.4, 2.9), (12.9, 5.4), (10.4, 7.9)]),
                 ("l", 13.4, 10.6, 3.1, 10.6), ("p", [(5.6, 8.1), (3.1, 10.6), (5.6, 13.1)])],
-    # El símbolo de encendido, que es lo que se está activando. El enchufe que
-    # había era literal —arranca al enchufar el dispositivo— pero a 15 px sus
-    # dos patillas quedaban en muñones planos y el cuerpo en una mancha.
+    # El símbolo de encendido, que es lo que se está activando.
     "arranque": [("a", 8, 8.4, 5.2, -55, 235), ("l", 8, 2.2, 8, 7.6)],
-    # Un electrocardiograma: mirar cómo está algo. La cruz dentro de un círculo
-    # se leía como «añadir», que es justo lo que el doctor no hace.
+    # Un electrocardiograma: mirar cómo está algo.
     "doctor": [("p", [(2.2, 8), (5.0, 8), (6.4, 4.0), (9.0, 12.0), (10.4, 8), (13.8, 8)])],
     "flag": [("p", [(4, 14), (4, 2.5), (12, 2.5), (10, 5.5), (12, 8.5), (4, 8.5)])],
     # El ojo: dos arcos de una circunferencia grande que se cortan en las puntas.
@@ -111,17 +90,34 @@ GLIFOS: dict[str, list[tuple]] = {
     "candado_abierto": [("r", 3.5, 8.2, 9, 5.6), ("a", 8, 5.2, 2.8, 180, 360),
                         ("l", 5.2, 5.2, 5.2, 8.2)],
 }
+"""Los glifos de la interfaz, por nombre: listas de primitivas sobre una rejilla de 16.
 
-# El icono de la aplicación: campo, los dos brazos del ciclo y el cuerpo del dispositivo.
-# Rejilla de 64 y capas de colores distintos, por eso no cabe en GLIFOS.
+Cada primitiva es una tupla:
+
+    ("l",  x1, y1, x2, y2)          segmento
+    ("p",  [(x, y), ...])           polilínea
+    ("a",  cx, cy, r, a0, a1)       arco, grados que CRECEN de a0 a a1
+    ("c",  cx, cy, r)               círculo
+    ("d",  x, y)                    punto
+    ("r",  x, y, w, h)              rectángulo de trazo
+    ("fr", x, y, w, h)              rectángulo relleno
+    ("rr", x, y, w, h, radio)       rectángulo relleno de esquinas redondeadas
+
+Los ángulos van en el sentido de la pantalla (la y crece hacia abajo), que es
+el mismo en el que los escribe SVG: 0° a la derecha, 90° abajo.
+"""
+
 CAMPO = "#2E4763"
-MARCA = "#FAF9F7"
-AMBAR = "#E0A34A"
+"""El color del campo (el fondo) de la marca de la aplicación.
 
-# Los campos con los que se puede pintar la marca como icono de la UNIDAD
-# (`ui/volumen.py`), para distinguir un dispositivo de otro a simple vista. El
-# primero es el de la aplicación. Todos oscuros y apagados, como él: encima van
-# el blanco y el ámbar de siempre, y tienen que seguir leyéndose.
+La marca es una rejilla de 64 con capas de colores distintos, por eso no cabe
+en `GLIFOS`.
+"""
+MARCA = "#FAF9F7"
+"""El blanco de la marca: uno de sus brazos y el cuerpo del dispositivo."""
+AMBAR = "#E0A34A"
+"""El ámbar del otro brazo de la marca."""
+
 CAMPOS = {
     "azul": CAMPO,
     "verde": "#2F5A48",
@@ -129,16 +125,25 @@ CAMPOS = {
     "morado": "#4B3D6E",
     "grafito": "#3B362F",
 }
+"""Los campos con los que se puede pintar la marca como icono de la UNIDAD.
+
+Es lo que usa `ui/volumen.py` para distinguir un dispositivo de otro a simple
+vista. El primero es el de la aplicación. Todos son oscuros y apagados, como
+él: encima van el blanco y el ámbar de siempre y tienen que seguir leyéndose.
+"""
 
 
 def _capas_marca(size: int, campo: str = CAMPO) -> list[tuple[str, float, list[tuple]]]:
-    """Las capas del icono. A 16 px se simplifica, como manda el diseño: trazo
-    más grueso, sin puntas de flecha y con el cuerpo entero. Lo que queda es un
-    anillo partido, que sigue leyéndose como «sincroniza».
+    """Devuelve las capas del icono de la marca.
+
+    A 16 px se simplifica, como manda el diseño: trazo más grueso, sin puntas
+    de flecha y con el cuerpo entero. Lo que queda es un anillo partido, que
+    sigue leyéndose como «sincroniza».
 
     El ORDEN es el del diseño y no es decorativo: las dos puntas van después de
-    los dos arcos. Agrupadas por color —arco blanco y punta blanca juntos— el
-    arco ámbar, que se pinta después, se come media punta blanca."""
+    los dos arcos. Agrupadas por color (arco blanco y punta blanca juntos) el
+    arco ámbar, que se pinta después, se come media punta blanca.
+    """
     campo = [(campo, 0.0, [("rr", 0, 0, 64, 64, 13)])]
     if size <= 20:
         return campo + [
@@ -155,18 +160,16 @@ def _capas_marca(size: int, campo: str = CAMPO) -> list[tuple[str, float, list[t
     ]
 
 
-# ---------------------------------------------------------------------------
-# El rasterizador
-# ---------------------------------------------------------------------------
-
 def _dist_segmento(x: float, y: float, x1: float, y1: float, x2: float, y2: float,
                    semi: float) -> float:
-    """Distancia con signo a un segmento de trazo `2*semi`, con extremos planos.
+    """Devuelve la distancia con signo a un segmento de trazo `2*semi`.
 
-    Un segmento con extremo plano es un rectángulo girado, así que se lleva el
-    punto al sistema del propio segmento —cuánto avanza y cuánto se separa— y ahí
-    ya es la distancia a una caja. Los extremos cuadrados y los ingletes NO se
-    hacen aquí: los pone `_expandir()` antes de rasterizar, moviendo los puntos."""
+    Tiene los extremos planos. Un segmento con extremo plano es un rectángulo
+    girado, así que se lleva el punto al sistema del propio segmento (cuánto
+    avanza y cuánto se separa) y ahí ya es la distancia a una caja. Los
+    extremos cuadrados y los ingletes NO se hacen aquí: los pone `_expandir()`
+    antes de rasterizar, moviendo los puntos.
+    """
     dx, dy = x2 - x1, y2 - y1
     largo = math.hypot(dx, dy)
     if largo == 0:                        # un punto es un cuadradito
@@ -181,9 +184,10 @@ def _dist_segmento(x: float, y: float, x1: float, y1: float, x2: float, y2: floa
 
 
 def _dist_triangulo(x: float, y: float, p0, p1, p2) -> float:
-    """Distancia con signo a un triángulo relleno: negativa dentro.
+    """Devuelve la distancia con signo a un triángulo relleno: negativa dentro.
 
-    Solo se usa para las cuñas de los ingletes, que son siempre triángulos."""
+    Solo se usa para las cuñas de los ingletes, que son siempre triángulos.
+    """
     lados = ((p0, p1), (p1, p2), (p2, p0))
     fuera = min(_dist_segmento(x, y, *a, *b, 0.0) for a, b in lados)
     signos = [(b[0] - a[0]) * (y - a[1]) - (b[1] - a[1]) * (x - a[0])
@@ -194,9 +198,12 @@ def _dist_triangulo(x: float, y: float, p0, p1, p2) -> float:
 
 def _dist_arco(x: float, y: float, cx: float, cy: float, r: float,
                a0: float, a1: float) -> float:
-    """Distancia al arco: al propio anillo si el punto cae dentro del sector, y
-    si no, a la punta más cercana —que es lo que hace que un arco no se coma la
-    pantalla entera—."""
+    """Devuelve la distancia a un arco.
+
+    Es la del propio anillo si el punto cae dentro del sector y, si no, la de
+    la punta más cercana, que es lo que hace que un arco no se coma la pantalla
+    entera.
+    """
     dx, dy = x - cx, y - cy
     rho = math.hypot(dx, dy)
     ang = math.degrees(math.atan2(dy, dx))
@@ -211,7 +218,7 @@ def _dist_arco(x: float, y: float, cx: float, cy: float, r: float,
 
 def _sdf_caja(x: float, y: float, rx: float, ry: float,
               w: float, h: float) -> float:
-    """Distancia con signo a un rectángulo: negativa dentro."""
+    """Devuelve la distancia con signo a un rectángulo: negativa dentro."""
     dx = max(rx - x, x - (rx + w))
     dy = max(ry - y, y - (ry + h))
     if dx > 0 and dy > 0:
@@ -220,8 +227,11 @@ def _sdf_caja(x: float, y: float, rx: float, ry: float,
 
 
 def _sdf(prim: tuple, x: float, y: float, semi: float) -> float:
-    """Distancia con signo a la tinta de una primitiva. `semi` es la mitad del
-    trazo; los rellenos van con semi = 0 y su propia distancia con signo."""
+    """Devuelve la distancia con signo a la tinta de una primitiva.
+
+    `semi` es la mitad del trazo; los rellenos van con `semi = 0` y su propia
+    distancia con signo.
+    """
     clase = prim[0]
     if clase == "s":                       # segmento ya alargado por _expandir()
         return _dist_segmento(x, y, *prim[1:], semi)
@@ -242,32 +252,26 @@ def _sdf(prim: tuple, x: float, y: float, semi: float) -> float:
 
 
 def _rgb(color: str) -> tuple[int, int, int]:
+    """Devuelve las componentes de un color `#rrggbb`."""
     c = color.lstrip("#")
     return int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
 
 
-# ---------------------------------------------------------------------------
-# Extremos cuadrados e ingletes
-#
-# El diseño dibuja todo con `stroke-linecap="square"` y `stroke-linejoin="miter"`,
-# y a trazo grueso eso no es un detalle: las puntas de flecha del icono son dos
-# segmentos en ángulo recto, y sin inglete salen como un rombo en vez de como una
-# punta. Se resuelve moviendo puntos —alargar las puntas libres, meter un
-# triangulito en cada esquina— y se hace UNA vez por capa, no por píxel: son
-# cuatro cuentas frente a los 65.536 puntos de un icono de 256.
-# ---------------------------------------------------------------------------
-
-# El mismo tope que trae SVG: sin él, una esquina muy cerrada dispara una aguja.
 MITER_LIMITE = 4.0
+"""Tope del inglete, el mismo que trae SVG.
+
+Sin él, una esquina muy cerrada dispara una aguja.
+"""
 
 
 def _unitario(dx: float, dy: float):
+    """Devuelve el vector unitario de `(dx, dy)`, o `None` si es nulo."""
     largo = math.hypot(dx, dy)
     return None if largo == 0 else (dx / largo, dy / largo)
 
 
 def _alargar(x1, y1, x2, y2, ini: float, fin: float):
-    """El segmento con sus puntas corridas hacia fuera: el extremo cuadrado."""
+    """Devuelve el segmento con sus puntas corridas hacia fuera: el extremo cuadrado."""
     u = _unitario(x2 - x1, y2 - y1)
     if u is None:
         return x1, y1, x2, y2
@@ -275,15 +279,17 @@ def _alargar(x1, y1, x2, y2, ini: float, fin: float):
 
 
 def _inglete(a, b, c, semi: float) -> list[tuple]:
-    """Las cuñas que rellenan la esquina de fuera en `b`. Vacío si no hace falta.
+    """Devuelve las cuñas que rellenan la esquina de fuera en `b`.
 
-    `bis` sale de `u1 - u2` y apunta siempre al exterior del giro; la punta cae a
-    `semi / sen(mitad del ángulo)`, que es la definición del inglete.
+    Es vacío si no hace falta. `bis` sale de `u1 - u2` y apunta siempre al
+    exterior del giro; la punta cae a `semi / sen(mitad del ángulo)`, que es la
+    definición del inglete.
 
-    Lo que hay que rellenar es el CUADRILÁTERO b-A-T-C, no el triángulo A-T-C:
-    los dos rectángulos del trazo se cruzan en `b` y dejan sin cubrir también el
-    trozo entre el vértice y la línea A-C. Con solo el triángulo, la punta de
-    flecha salía separada del resto por una rendija."""
+    Lo que hay que rellenar es el CUADRILÁTERO b-A-T-C y no el triángulo A-T-C:
+    los dos rectángulos del trazo se cruzan en `b` y dejan sin cubrir también
+    el trozo entre el vértice y la línea A-C. Con solo el triángulo, la punta
+    de flecha salía separada del resto por una rendija.
+    """
     u1 = _unitario(b[0] - a[0], b[1] - a[1])
     u2 = _unitario(c[0] - b[0], c[1] - b[1])
     if u1 is None or u2 is None:
@@ -297,7 +303,7 @@ def _inglete(a, b, c, semi: float) -> list[tuple]:
     punta = min(semi / seno, semi * MITER_LIMITE)
 
     def normal(u):
-        """La perpendicular a `u` que mira al mismo lado que la bisectriz."""
+        """Devuelve la perpendicular a `u` que mira al mismo lado que la bisectriz."""
         n = (-u[1], u[0])
         return n if n[0] * bis[0] + n[1] * bis[1] >= 0 else (u[1], -u[0])
 
@@ -309,7 +315,16 @@ def _inglete(a, b, c, semi: float) -> list[tuple]:
 
 
 def _expandir(prims, semi: float) -> list[tuple]:
-    """Las primitivas de un glifo listas para rasterizar con este grosor."""
+    """Devuelve las primitivas de un glifo listas para rasterizar con este grosor.
+
+    Los extremos cuadrados y los ingletes se resuelven moviendo puntos (alargar
+    las puntas libres, meter un triangulito en cada esquina) y se hacen UNA vez
+    por capa y no por píxel: son cuatro cuentas frente a los 65.536 puntos de
+    un icono de 256. El diseño dibuja todo con `stroke-linecap="square"` y
+    `stroke-linejoin="miter"`, y a trazo grueso eso no es un detalle: las
+    puntas de flecha del icono son dos segmentos en ángulo recto y sin inglete
+    salen como un rombo en vez de como una punta.
+    """
     salida: list[tuple] = []
     for prim in prims:
         clase = prim[0]
@@ -337,16 +352,18 @@ def _expandir(prims, semi: float) -> list[tuple]:
 
 
 def _capas_rgba(capas, caja: float, size: int) -> list[list[tuple]]:
-    """Las capas compuestas entre sí sobre transparente: filas de (r, g, b, a).
+    """Devuelve las capas compuestas entre sí sobre transparente.
 
-    Se recorre píxel a píxel midiendo la distancia a la tinta: dentro del trazo
-    la cobertura es 1, fuera 0, y en el borde el valor intermedio que suaviza el
-    dibujo. Es caro por píxel y barato de verdad: 16×16 son 256 puntos.
+    Son filas de `(r, g, b, a)`. Se recorre píxel a píxel midiendo la distancia
+    a la tinta: dentro del trazo la cobertura es 1, fuera 0 y en el borde el
+    valor intermedio que suaviza el dibujo. Es caro por píxel y barato de
+    verdad: 16×16 son 256 puntos.
 
     El alfa se conserva en vez de aplanarlo aquí porque hay dos destinos con
     necesidades distintas: `PhotoImage` no sabe de transparencia y quiere el
-    dibujo ya compuesto contra un color, y un `.ico` la necesita —si no, las
-    esquinas redondeadas del icono saldrían recortadas sobre un cuadrado—."""
+    dibujo ya compuesto contra un color, y un `.ico` la necesita (si no, las
+    esquinas redondeadas del icono saldrían recortadas sobre un cuadrado).
+    """
     unidad = caja / size                   # cuánto mide un píxel en la rejilla
     colores = [(_rgb(color), ancho / 2, _expandir(prims, ancho / 2))
                for color, ancho, prims in capas]
@@ -377,18 +394,20 @@ def _capas_rgba(capas, caja: float, size: int) -> list[list[tuple]]:
 
 def _rasterizar(capas, caja: float, size: int, fondo: str,
                 bajar: int = 0, alto: int | None = None) -> str:
-    """Lo mismo, ya aplanado contra `fondo` y en el texto que entiende
-    `PhotoImage.put()`.
+    """Devuelve las capas aplanadas contra `fondo`, listas para `put()`.
 
-    La imagen mide `alto` de alta y el dibujo empieza en la fila `bajar`; el
-    resto son filas de fondo, invisibles porque el icono ya viene aplanado
-    contra el fondo del botón. Es la única forma de mover un icono dentro de un
-    botón: ttk lo centra en la caja de la línea y no hay ningún hueco que tocar.
+    Es el texto que entiende `PhotoImage.put()`. La imagen mide `alto` de alta
+    y el dibujo empieza en la fila `bajar`; el resto son filas de fondo,
+    invisibles porque el icono ya viene aplanado contra el fondo del botón. Es
+    la única forma de mover un icono dentro de un botón: ttk lo centra en la
+    caja de la línea y no hay ningún hueco que tocar.
 
     Se da la altura ENTERA y no solo cuántas filas poner encima porque ttk
-    centra la imagen: añadir filas arriba y dejar que crezca la mueve solo media
-    fila por cada una, y encima crece el botón, que vuelve a mover el texto. Con
-    la altura fija el sitio del dibujo se decide aquí y no se mueve nada más."""
+    centra la imagen: añadir filas arriba y dejar que crezca la mueve solo
+    media fila por cada una, y encima crece el botón, que vuelve a mover el
+    texto. Con la altura fija el sitio del dibujo se decide aquí y no se mueve
+    nada más.
+    """
     fr, fg, fb = _rgb(fondo)
     alto = size + bajar if alto is None else alto
     vacia = "{" + " ".join(["#%02x%02x%02x" % (fr, fg, fb)] * size) + "}"
@@ -404,16 +423,15 @@ def _rasterizar(capas, caja: float, size: int, fondo: str,
     return " ".join(salida[:alto])
 
 
-# ---------------------------------------------------------------------------
-# La cara pública
-# ---------------------------------------------------------------------------
-
-# Las imágenes hay que guardarlas: Tk no se queda con ellas y una PhotoImage sin
-# referencias en Python desaparece del widget. La clave lleva el intérprete de Tk
-# porque una imagen pertenece al suyo, y aquí se abren varios a lo largo de una
-# sesión (la ventana principal, luego el asistente); guardar el intérprete en el
-# valor evita además que `id()` se reutilice mientras la caché siga viva.
 _CACHE: dict[tuple, tuple] = {}
+"""Las imágenes ya pintadas.
+
+Hay que guardarlas: Tk no se queda con ellas y una `PhotoImage` sin referencias
+en Python desaparece del widget. La clave lleva el intérprete de Tk porque una
+imagen pertenece al suyo y aquí se abren varios a lo largo de una sesión (la
+ventana principal, luego el asistente); guardar el intérprete en el valor evita
+además que `id()` se reutilice mientras la caché siga viva.
+"""
 
 
 def olvidar(interp) -> None:
@@ -422,18 +440,21 @@ def olvidar(interp) -> None:
     La caché las guarda por intérprete y no se vacía nunca, lo que no importa
     en el hilo principal. Sí importa en la ventanita del servicio, que vive en
     un hilo propio (`ui.avisar_fallo`): si sus imágenes siguieran aquí, las
-    borraría el hilo principal al salir, y a Tk solo se le habla desde el suyo."""
+    borraría el hilo principal al salir, y a Tk solo se le habla desde el suyo.
+    """
     for ficha in [f for f, (dueno, _img) in _CACHE.items() if dueno is interp]:
         del _CACHE[ficha]
 
 
 def px(widget, medida: int) -> int:
-    """Una medida del diseño llevada a los píxeles de esta pantalla.
+    """Devuelve una medida del diseño llevada a los píxeles de esta pantalla.
 
-    Los iconos son mapas de bits y Tk no los escala, pero sí escala las fuentes:
-    en una pantalla densa un icono de 15 px fijos quedaría de juguete al lado de
-    su texto. `tk scaling` son píxeles por punto, y 1,333 es el valor a 96 ppp,
-    que es la densidad para la que están pensadas las medidas del diseño."""
+    Los iconos son mapas de bits y Tk no los escala, pero sí escala las
+    fuentes: en una pantalla densa un icono de 15 px fijos quedaría de juguete
+    al lado de su texto. `tk scaling` son píxeles por punto y 1,333 es el valor
+    a 96 ppp, que es la densidad para la que están pensadas las medidas del
+    diseño.
+    """
     try:
         escala = float(widget.tk.call("tk", "scaling"))
     except Exception:
@@ -443,6 +464,7 @@ def px(widget, medida: int) -> int:
 
 def _dibujar(widget, clave: tuple, capas, caja: float, size: int, fondo: str,
              bajar: int = 0, alto: int | None = None):
+    """Devuelve la imagen de esas capas, pintándola solo si no está en la caché."""
     interp = widget.tk
     ficha = (id(interp), *clave)
     guardado = _CACHE.get(ficha)
@@ -458,13 +480,15 @@ def _dibujar(widget, clave: tuple, capas, caja: float, size: int, fondo: str,
 
 def get(widget, nombre: str, size: int = 16, color: str = "#3B362F",
         fondo: str = "#FAF9F7", bajar: int = 0, alto: int | None = None):
-    """El icono `nombre` al tamaño del diseño, ya compuesto contra `fondo`.
+    """Devuelve el icono `nombre` al tamaño del diseño, ya compuesto contra `fondo`.
 
-    `bajar` lo mueve hacia abajo esos píxeles dentro de su propia imagen; lo usa
-    `theme.boton_icono` para alinearlo con el texto de al lado.
+    Devuelve `None` si no se puede pintar (un nombre que no existe, un Tk que
+    se está cerrando) y quien llama se queda sin icono pero con su texto.
 
-    Devuelve None si no se puede pintar —un nombre que no existe, un Tk que se
-    está cerrando—, y quien llama se queda sin icono pero con su texto."""
+    Args:
+        bajar: Lo mueve hacia abajo esos píxeles dentro de su propia imagen; lo
+            usa `theme.boton_icono` para alinearlo con el texto de al lado.
+    """
     try:
         real = px(widget, size)
         capas = [(color, TRAZO, GLIFOS[nombre])]
@@ -474,27 +498,31 @@ def get(widget, nombre: str, size: int = 16, color: str = "#3B362F",
         return None
 
 
-# La casilla de marcar del diseño: cuadrado de 15, azul con el visto en blanco
-# cuando está marcada. Se pinta aquí porque el indicador de clam dibuja una
-# especie de aspa, y el diseño pide un visto.
 _CASILLAS = {
-    #  estado  -> (relleno, borde, color del visto)
     "marcada": ("#3D5A80", "#3D5A80", "#FFFFFF"),
     "vacia": ("#FFFFFF", "#B9B2A6", None),
     "apagada": ("#F6F4F0", "#E4E0D8", None),
     "apagada-marcada": ("#C9C3B8", "#C9C3B8", "#F6F4F0"),
 }
+"""Las casillas de marcar por estado: relleno, borde y color del visto.
+
+Son un cuadrado de 15, azul con el visto en blanco cuando está marcada. Se
+pintan aquí porque el indicador de clam dibuja una especie de aspa y el diseño
+pide un visto.
+"""
 _VISTO = [("p", [(3.5, 8.5), (6.5, 11.5), (12.5, 4.5)])]
+"""El trazo del visto de la casilla marcada."""
 
 
 def casilla(widget, estado: str, size: int = 15, margen: int = 7):
-    """La casilla de marcar, con `margen` píxeles en blanco a su derecha.
+    """Devuelve la casilla de marcar, con `margen` píxeles en blanco a su derecha.
 
-    Ese margen es lo que separa el cuadrado de su texto: el elemento de imagen de
-    ttk no entiende de `indicatormargin`, así que el hueco se pinta —mejor dicho,
-    NO se pinta— dentro de la propia imagen: una PhotoImage recién creada es
-    transparente y solo se escribe el cuadrado, así que por el resto se ve el
-    fondo que haya detrás, sea papel o tarjeta."""
+    Ese margen es lo que separa el cuadrado de su texto: el elemento de imagen
+    de ttk no entiende de `indicatormargin`, así que el hueco se pinta (mejor
+    dicho, NO se pinta) dentro de la propia imagen: una `PhotoImage` recién
+    creada es transparente y solo se escribe el cuadrado, así que por el resto
+    se ve el fondo que haya detrás, sea papel o tarjeta.
+    """
     import tkinter as tk
     relleno, borde, visto = _CASILLAS[estado]
     lado, hueco = px(widget, size), px(widget, margen)
@@ -512,30 +540,38 @@ def casilla(widget, estado: str, size: int = 15, margen: int = 7):
     return img
 
 
-# El código QR no se pinta con el rasterizador de arriba y es a propósito: ese
-# mide distancias a un trazo para suavizar los bordes, y un QR es justo lo
-# contrario —una rejilla de cuadrados que tiene que salir con el canto duro—.
-# Un módulo medio gris es lo que hace que un lector dude. Así que se compone la
-# cadena de `put()` directamente, repitiendo cada módulo `escala` veces.
-QR_TINTA = "#000000"        # negro y blanco puros, no la paleta: lo lee una cámara
+QR_TINTA = "#000000"
+"""El color de los módulos oscuros del QR: negro puro.
+
+No es el de la paleta porque lo lee una cámara. El QR no se pinta con el
+rasterizador de arriba, a propósito: ese mide distancias a un trazo para
+suavizar los bordes y un QR es justo lo contrario, una rejilla de cuadrados que
+tiene que salir con el canto duro. Un módulo medio gris es lo que hace que un
+lector dude. Por eso `matriz()` compone la cadena de `put()` directamente,
+repitiendo cada módulo `escala` veces.
+"""
 QR_PAPEL = "#FFFFFF"
-QR_SILENCIO = 4             # los módulos de margen que exige ISO/IEC 18004
+"""El color de los módulos claros del QR: blanco puro."""
+QR_SILENCIO = 4
+"""Los módulos de margen que exige ISO/IEC 18004."""
 
 
 def matriz(widget, modulos, escala: int = 4, silencio: int = QR_SILENCIO):
-    """Una matriz de módulos (True = oscuro) como PhotoImage cuadrada.
+    """Devuelve una matriz de módulos (`True` es oscuro) como `PhotoImage` cuadrada.
 
-    `escala` son los píxeles de lado de cada módulo: entero y nunca fraccionario,
-    porque un módulo de 3,5 px reparte el medio píxel entre sus vecinos y el
-    resultado ya no es una rejilla. `silencio` es la zona de silencio, que se
-    pone aquí y no en `qr.py` porque es parte de cómo se dibuja, no del código.
+    `escala` son los píxeles de lado de cada módulo: entero y nunca
+    fraccionario, porque un módulo de 3,5 px reparte el medio píxel entre sus
+    vecinos y el resultado ya no es una rejilla. `silencio` es la zona de
+    silencio, que se pone aquí y no en `qr.py` porque es parte de cómo se
+    dibuja y no del código.
 
-    Devuelve None si algo falla, como el resto del módulo: quien llama enseña
+    Devuelve `None` si algo falla, como el resto del módulo: quien llama enseña
     entonces el texto y no se queda sin ventana.
 
-    **La imagen se la guarda quien llama.** Aquí no entra en `_CACHE` —cada
-    código es distinto y guardarlos todos sería acumular basura—, y una
-    PhotoImage sin referencias en Python desaparece del widget."""
+    **La imagen se la guarda quien llama.** Aquí no entra en `_CACHE` (cada
+    código es distinto y guardarlos todos sería acumular basura) y una
+    `PhotoImage` sin referencias en Python desaparece del widget.
+    """
     try:
         import tkinter as tk
         lado = len(modulos)
@@ -558,12 +594,13 @@ def matriz(widget, modulos, escala: int = 4, silencio: int = QR_SILENCIO):
 
 
 def app_icon(widget, size: int = 64, campo: str = CAMPO, fondo: str | None = None):
-    """La marca de la aplicación, para `iconphoto()`. None si no se puede.
+    """Devuelve la marca de la aplicación para `iconphoto()`, o `None` si no se puede.
 
-    `campo` la pinta en otro color (`CAMPOS`), y `fondo` es contra qué se
-    componen las esquinas redondeadas: para una ventana da igual —se aplana
-    contra el propio campo, como siempre—, pero una muestra sobre el papel de un
-    formulario tiene que llevar las esquinas del color del papel."""
+    `campo` la pinta en otro color (`CAMPOS`) y `fondo` es contra qué se
+    componen las esquinas redondeadas: para una ventana da igual (se aplana
+    contra el propio campo, como siempre), pero una muestra sobre el papel de
+    un formulario tiene que llevar las esquinas del color del papel.
+    """
     try:
         return _dibujar(widget, ("@marca", size, campo, fondo),
                         _capas_marca(size, campo), 64.0, size, fondo or campo)
@@ -572,8 +609,11 @@ def app_icon(widget, size: int = 64, campo: str = CAMPO, fondo: str | None = Non
 
 
 def poner_icono(ventana) -> None:
-    """Le pone la marca a una ventana. Con `default=True` la heredan también los
-    diálogos que cuelguen de ella, así que basta llamarlo en las raíces."""
+    """Le pone la marca a una ventana.
+
+    Con `default=True` la heredan también los diálogos que cuelguen de ella,
+    así que basta llamarlo en las raíces.
+    """
     import tkinter as tk
     imgs = [i for i in (app_icon(ventana, 64), app_icon(ventana, 32),
                         app_icon(ventana, 16)) if i is not None]
@@ -585,36 +625,24 @@ def poner_icono(ventana) -> None:
         pass
 
 
-# ---------------------------------------------------------------------------
-# runsync.ico
-#
-# Lo que `iconphoto()` no cubre: el icono de un acceso directo, el de la barra de
-# tareas anclada y el del ejecutable del instalador. Eso lo pide Windows en `.ico`
-# y como fichero, así que hay que escribirlo.
-#
-# El formato se escribe a mano por lo mismo que el TOML de `config_file.py`: no
-# hay dependencias, y un `.ico` es una cabecera de seis bytes, una entrada de
-# dieciséis por tamaño y un DIB detrás. Los DIB van a 32 bits con alfa —el icono
-# tiene las esquinas redondeadas y sin alfa saldrían recortadas sobre un cuadrado
-# blanco— y de abajo arriba, que es como los quiere BMP.
-#
-# NADA de aquí toca Tkinter: `_capas_rgba` es Python puro, así que esto se puede
-# generar en un equipo sin entorno gráfico y desde el script de compilación.
-# ---------------------------------------------------------------------------
-
-# Los tamaños que Windows busca dentro de un .ico: lista pequeña, escritorio,
-# ventana, y los dos grandes de las vistas de iconos grandes.
 ICO_TAMANOS = (16, 24, 32, 48, 64, 128, 256)
+"""Los tamaños que Windows busca dentro de un `.ico`.
 
-# De aquí arriba, la imagen va como PNG en vez de como DIB. Un `.ico` admite las
-# dos cosas desde Vista, y para los tamaños grandes la comprimida es además la
-# que Windows espera: un 256×256 en crudo son 270 KB, y en PNG unos 3, porque
-# esto son dos colores planos. El fichero pasa de 364 KB a 40.
+Son la lista pequeña, el escritorio, la ventana y los dos grandes de las vistas
+de iconos grandes.
+"""
+
 ICO_PNG_DESDE = 128
+"""Desde este tamaño la imagen del `.ico` va como PNG en vez de como DIB.
+
+Un `.ico` admite las dos cosas desde Vista y para los tamaños grandes la
+comprimida es además la que Windows espera: un 256×256 en crudo son 270 KB y en
+PNG unos 3, porque son dos colores planos. El fichero pasa de 364 KB a 40.
+"""
 
 
 def _dib(rgba, size: int) -> bytes:
-    """Una imagen del .ico: BITMAPINFOHEADER + píxeles BGRA + máscara AND."""
+    """Devuelve una imagen del `.ico`: BITMAPINFOHEADER + píxeles BGRA + máscara AND."""
     import struct
 
     # El alto va DOBLE en la cabecera: el formato cuenta la máscara como si
@@ -643,12 +671,13 @@ def _dib(rgba, size: int) -> bytes:
 
 
 def _png(rgba, size: int) -> bytes:
-    """La misma imagen como PNG de 8 bits con alfa, sin filtrar.
+    """Devuelve la misma imagen como PNG de 8 bits con alfa, sin filtrar.
 
     Un PNG son cuatro trozos con su longitud, su nombre y su CRC, y los píxeles
     comprimidos con zlib, que está en la biblioteca estándar. Cada línea lleva
     delante un byte de filtro: 0, «ninguno». Filtrar mejoraría la compresión de
-    una foto; de dos colores planos no tiene nada que sacar."""
+    una foto; de dos colores planos no tiene nada que sacar.
+    """
     import struct
     import zlib
 
@@ -659,6 +688,7 @@ def _png(rgba, size: int) -> bytes:
             crudo += bytes((r, g, b, round(a * 255)))
 
     def trozo(nombre: bytes, datos: bytes) -> bytes:
+        """Devuelve un trozo del PNG con su longitud, su nombre y su CRC."""
         return (struct.pack(">I", len(datos)) + nombre + datos
                 + struct.pack(">I", zlib.crc32(nombre + datos) & 0xFFFFFFFF))
 
@@ -669,15 +699,27 @@ def _png(rgba, size: int) -> bytes:
 
 
 def ico(tamanos=ICO_TAMANOS, campo: str = CAMPO) -> bytes:
-    """La marca como `.ico` con todos sus tamaños, en bytes.
+    """Devuelve la marca como `.ico` con todos sus tamaños, en bytes.
 
-    Tarda: son unos dos segundos, casi todos del de 256 px. Quien lo pida desde
-    una ventana, que lo haga en `tk.working()`."""
+    Es lo que `iconphoto()` no cubre: el icono de un acceso directo, el de la
+    barra de tareas anclada y el del ejecutable del instalador. Windows lo pide
+    en `.ico` y como fichero, así que hay que escribirlo. El formato se escribe
+    a mano por lo mismo que el TOML de `config_file.py`: no hay dependencias, y
+    un `.ico` es una cabecera de seis bytes, una entrada de dieciséis por
+    tamaño y un DIB detrás. Los DIB van a 32 bits con alfa (el icono tiene las
+    esquinas redondeadas y sin alfa saldrían recortadas sobre un cuadrado
+    blanco) y de abajo arriba, que es como los quiere BMP. Nada de aquí toca
+    Tkinter: `_capas_rgba` es Python puro, así que se puede generar en un
+    equipo sin entorno gráfico y desde el script de compilación.
+
+    Tarda unos dos segundos, casi todos del de 256 px: quien lo pida desde una
+    ventana, que lo haga en `tk.working()`.
+    """
     return _ico_de(tamanos, lambda size: _capas_marca(size, campo))
 
 
 def _ico_de(tamanos, capas_de) -> bytes:
-    """Un `.ico` con esos tamaños, cada uno pintado con `capas_de(size)`."""
+    """Devuelve un `.ico` con esos tamaños, cada uno pintado con `capas_de(size)`."""
     import struct
 
     imagenes = []
@@ -699,7 +741,7 @@ def _ico_de(tamanos, capas_de) -> bytes:
 
 
 def write_ico(destino, tamanos=ICO_TAMANOS, campo: str = CAMPO):
-    """Escribe la marca como `.ico` con todos sus tamaños. Devuelve la ruta."""
+    """Escribe la marca como `.ico` con todos sus tamaños y devuelve la ruta."""
     from pathlib import Path
 
     destino = Path(destino)
@@ -707,37 +749,46 @@ def write_ico(destino, tamanos=ICO_TAMANOS, campo: str = CAMPO):
     return destino
 
 
-# ---------------------------------------------------------------------------
-# La bandeja del agente
-#
-# Cinco estados (`ui/bandeja.py` decide cuál): la marca de siempre y, en la
-# esquina de abajo a la derecha, una pastilla que lo dice. A 16 px lo que se lee
-# es el COLOR de la pastilla —azul, ámbar, oscura— y el campo gris de la pausa;
-# el dibujo de dentro (la admiración, las dos barras, el candado) solo aparece
-# desde 24 px, que es la bandeja al 150 %. Todo va en `.ico` porque Windows
-# carga el icono de la bandeja con `LoadImageW` desde un fichero, y se REPINTA
-# en la carpeta del agente, como `runsync.ico`: nunca se copia.
-# ---------------------------------------------------------------------------
-
 BIEN, SINCRONIZANDO, AVISO, PAUSA, BLOQUEADO = (
     "bien", "sincronizando", "aviso", "pausa", "bloqueado")
-BANDEJA_ESTADOS = (BIEN, SINCRONIZANDO, AVISO, PAUSA, BLOQUEADO)
-# Los tamaños del icono pequeño de Windows a 100, 125, 150, 200 y 300 %.
-BANDEJA_TAMANOS = (16, 20, 24, 32, 48)
+"""Los cinco estados del icono de la bandeja (`ui/bandeja.py` decide cuál).
 
-TINTA_PASTILLA = "#1C1A17"      # la tinta de `theme.TINTA`
+Son la marca de siempre y, en la esquina de abajo a la derecha, una pastilla
+que lo dice. A 16 px lo que se lee es el COLOR de la pastilla (azul, ámbar,
+oscura) y el campo gris de la pausa; el dibujo de dentro (la admiración, las
+dos barras, el candado) solo aparece desde 24 px, que es la bandeja al 150 %.
+Todo va en `.ico` porque Windows carga el icono de la bandeja con `LoadImageW`
+desde un fichero, y se REPINTA en la carpeta del agente, como `runsync.ico`:
+nunca se copia.
+"""
+BANDEJA_ESTADOS = (BIEN, SINCRONIZANDO, AVISO, PAUSA, BLOQUEADO)
+"""Los cinco estados, en orden."""
+BANDEJA_TAMANOS = (16, 20, 24, 32, 48)
+"""Los tamaños del icono pequeño de Windows a 100, 125, 150, 200 y 300 %."""
+
+TINTA_PASTILLA = "#1C1A17"
+"""La tinta de `theme.TINTA`."""
 _PASTILLA = {SINCRONIZANDO: "#6F9BD1", AVISO: AMBAR, PAUSA: MARCA,
              BLOQUEADO: TINTA_PASTILLA}
+"""El color de la pastilla de cada estado; `BIEN` no lleva."""
 _PASTILLA_CENTRO, _PASTILLA_RADIO = 49.0, 14.0
+"""El centro y el radio de la pastilla, en la rejilla de 64."""
 
 
 def _disco(color: str, radio: float) -> tuple:
-    """Un círculo relleno: un anillo de radio r/2 y trazo r cubre de 0 a r."""
+    """Devuelve la capa de un círculo relleno.
+
+    Un anillo de radio r/2 y trazo r cubre de 0 a r.
+    """
     return (color, radio, [("c", _PASTILLA_CENTRO, _PASTILLA_CENTRO, radio / 2)])
 
 
 def capas_bandeja(size: int, estado: str) -> list[tuple[str, float, list[tuple]]]:
-    """Las capas del icono de la bandeja en ese estado. ValueError si no es uno."""
+    """Devuelve las capas del icono de la bandeja en ese estado.
+
+    Raises:
+        ValueError: Si no es uno de `BANDEJA_ESTADOS`.
+    """
     if estado not in BANDEJA_ESTADOS:
         raise ValueError(f"estado de la bandeja desconocido: {estado}")
     capas = _capas_marca(size, CAMPOS["grafito"] if estado == PAUSA else CAMPO)
@@ -762,16 +813,19 @@ def capas_bandeja(size: int, estado: str) -> list[tuple[str, float, list[tuple]]
 
 
 def ico_bandeja(estado: str, tamanos=BANDEJA_TAMANOS) -> bytes:
-    """El icono de la bandeja en ese estado, como `.ico`."""
+    """Devuelve el icono de la bandeja en ese estado, como `.ico`."""
     return _ico_de(tamanos, lambda size: capas_bandeja(size, estado))
 
 
 def pixeles_menu(nombre: str, size: int, color: str) -> bytes:
-    """Un glifo como imagen de una entrada de menú de Windows: los píxeles de
-    un DIB de 32 bits de arriba abajo (alto negativo en su cabecera), BGRA con
-    el alfa PREMULTIPLICADO, que es como Windows compone la `hbmpItem` de un
-    `MENUITEMINFOW` con transparencia (`AlphaBlend` con `AC_SRC_ALPHA`). Del
-    color que se pida: el del texto del menú, para que siga al tema."""
+    """Devuelve un glifo como imagen de una entrada de menú de Windows.
+
+    Son los píxeles de un DIB de 32 bits de arriba abajo (alto negativo en su
+    cabecera), BGRA con el alfa PREMULTIPLICADO, que es como Windows compone la
+    `hbmpItem` de un `MENUITEMINFOW` con transparencia (`AlphaBlend` con
+    `AC_SRC_ALPHA`). Van del color que se pida: el del texto del menú, para que
+    siga al tema.
+    """
     datos = bytearray()
     for fila in _capas_rgba([(color, TRAZO, GLIFOS[nombre])], 16.0, size):
         for r, g, b, a in fila:
@@ -780,10 +834,13 @@ def pixeles_menu(nombre: str, size: int, color: str) -> bytes:
 
 
 def pixmap_bandeja(estado: str, size: int) -> bytes:
-    """El icono de la bandeja en ese estado para Linux: el `IconPixmap` de un
-    StatusNotifierItem, que es «ARGB32 … in network byte order», es decir, cada
-    píxel A, R, G, B (sin premultiplicar, como el `QImage::Format_ARGB32` de
-    KDE) y las filas de arriba abajo. Sin `.ico` de por medio: se pinta aquí."""
+    """Devuelve el icono de la bandeja en ese estado para Linux.
+
+    Es el `IconPixmap` de un StatusNotifierItem, que es «ARGB32 … in network
+    byte order»: cada píxel A, R, G, B (sin premultiplicar, como el
+    `QImage::Format_ARGB32` de KDE) y las filas de arriba abajo. Sin `.ico` de
+    por medio: se pinta aquí.
+    """
     datos = bytearray()
     for fila in _capas_rgba(capas_bandeja(size, estado), 64.0, size):
         for r, g, b, a in fila:
@@ -792,16 +849,17 @@ def pixmap_bandeja(estado: str, size: int) -> bytes:
 
 
 def fichero_bandeja(carpeta, estado: str):
-    """Dónde va el `.ico` de ese estado dentro de la carpeta del agente."""
+    """Devuelve dónde va el `.ico` de ese estado dentro de la carpeta del agente."""
     from pathlib import Path
     return Path(carpeta) / f"bandeja-{estado}.ico"
 
 
 def write_bandeja(carpeta, solo_si_faltan: bool = False) -> list:
-    """Pinta los cinco iconos de la bandeja en `carpeta`. Devuelve las rutas.
+    """Pinta los cinco iconos de la bandeja en `carpeta` y devuelve las rutas.
 
     Con `solo_si_faltan`, los que ya están se dejan: es lo que hace el agente
-    al arrancar, por si lo instaló una versión que no los pintaba."""
+    al arrancar, por si lo instaló una versión que no los pintaba.
+    """
     rutas = []
     for estado in BANDEJA_ESTADOS:
         ruta = fichero_bandeja(carpeta, estado)
@@ -812,8 +870,10 @@ def write_bandeja(carpeta, solo_si_faltan: bool = False) -> list:
 
 
 def pintar(carpeta, bandeja: bool = False) -> None:
-    """`runsync.ico` en `carpeta` y, con `bandeja`, los cinco de la bandeja:
-    lo que pinta una instalación (`install.pintar_iconos`)."""
+    """Pinta `runsync.ico` en `carpeta` y, con `bandeja`, los cinco de la bandeja.
+
+    Es lo que pinta una instalación (`install.pintar_iconos`).
+    """
     from pathlib import Path
     write_ico(Path(carpeta) / "runsync.ico")
     if bandeja:
@@ -823,9 +883,9 @@ def pintar(carpeta, bandeja: bool = False) -> None:
 if __name__ == "__main__":                        # python -m ui.icons [destino]
     import sys
 
-    # El .ico va DENTRO de la carpeta de la aplicación, junto al resto del
-    # código, y no en la raíz del volumen: esa carpeta está oculta, así que un
-    # icono suelto entre los datos del usuario sería el único resto visible.
+    # El `.ico` va DENTRO de la carpeta de la aplicación, junto al código, y no
+    # en la raíz del volumen: esa carpeta está oculta, así que un icono suelto
+    # entre los datos de la persona sería el único resto visible.
     from common import model                      # solo aquí: APP_DIR vive ahí
     ruta = write_ico(sys.argv[1] if len(sys.argv) > 1
                      else model.APP_DIR / "runsync.ico")
