@@ -1,113 +1,91 @@
 #!/usr/bin/env python3
-"""
-penwatch.py — Arranque automático al conectar el dispositivo.
+"""Vigilante de arranque automático: lanza `runsync.py` al conectar el dispositivo.
 
-Instala EN EL EQUIPO (no en el dispositivo) un vigilante que detecta en qué unidad se ha
-montado el dispositivo y lanza `runsync.py` en cuanto es legible. Sin permisos de
-administrador: tarea programada de usuario en Windows, servicio de usuario de
-systemd en Linux (autostart XDG si no hay systemd).
+Se instala EN EL EQUIPO (no en el dispositivo), detecta en qué unidad se ha
+montado el dispositivo y lanza `runsync.py` en cuanto es legible. Sin permisos
+de administrador: tarea programada de usuario en Windows, servicio de usuario
+de systemd en Linux (autostart XDG si no hay systemd).
 
     python penwatch.py install [--mode ui|sync|daemon] [--poll N]
                                [--extra-root RUTA]
     python penwatch.py uninstall     # quita la tarea/servicio y el vigilante
-    python penwatch.py status        # qué hay instalado y si ve el dispositivo ahora
+    python penwatch.py status        # qué hay instalado y si ve el dispositivo
     python penwatch.py probe         # solo detección: dónde busca y qué encuentra
     python penwatch.py run [--once]  # el bucle del vigilante (lo llama la tarea)
 
-Cómo se reconoce el dispositivo
------------------------
-Por el fichero de control `.prdrive/PRDRIVE`. Ni la letra ni el punto de montaje
-sirven: cambian de equipo a equipo y de un día para otro. El fichero puede llevar
-dentro una línea `id=<hex>` (`install` la escribe si el PRDRIVE no existía o
-estaba vacío; si ya tenía contenido, no lo toca), y entonces se exige además que
-el id coincida, para no confundir este dispositivo con otro USB que también
-llevara un PRDRIVE. Antes de lanzar nada se comprueba que esté
-`.prdrive/runsync.py`: sin eso, la unidad no es este proyecto.
+Cómo reconoce el dispositivo: por el fichero de control `.prdrive/PRDRIVE`. Ni
+la letra ni el punto de montaje sirven: cambian de equipo a equipo y de un día
+a otro. El fichero puede llevar una línea `id=<hex>` (`install` la escribe si
+no existía o estaba vacío) y entonces se exige que el id coincida, para no
+confundirlo con otro USB que también llevara un PRDRIVE. Antes de lanzar nada
+se comprueba que esté `.prdrive/runsync.py`. Va dentro de `.prdrive/` para no
+dejar un fichero suelto entre los datos del usuario: da igual dónde esté
+mientras la ruta sea relativa a la raíz.
 
-Va dentro de `.prdrive/` y no en la raíz del volumen a propósito: para identificar
-la unidad da igual dónde esté mientras la ruta sea relativa a su raíz, y ahí no
-deja un fichero suelto entre los datos del usuario.
+Con VeraCrypt, `.prdrive/` está DENTRO del contenedor y hasta abrirlo no hay
+nada que ver. Fuera queda el vestíbulo (`common/vestibulo.py`), con una marca
+que lleva el mismo id: con ella el vigilante reconoce el dispositivo cerrado y
+le pide a VeraCrypt que lo abra (VeraCrypt pide la contraseña en su ventana),
+una vez por conexión. Cuando el volumen aparece montado se sigue como siempre.
+En Linux sin VeraCrypt no lo abre él (udisks2 y cryptsetup piden la contraseña
+por una terminal): lo apunta en el diario, y si alguien lo abre con
+`abrir-prdrive.sh` lo encuentra montado y sigue igual.
 
-Con VeraCrypt, `.prdrive/` está DENTRO del contenedor y hasta abrirlo no hay nada
-que ver. Fuera queda el vestíbulo (`common/vestibulo.py`), con una marca que lleva
-el mismo id: con ella el vigilante reconoce el dispositivo cerrado y le pide a
-VeraCrypt que lo abra —VeraCrypt pide la contraseña en su ventana—, una vez por
-conexión. Cuando el volumen aparece montado, se sigue como siempre. En Linux sin
-VeraCrypt no lo abre él (udisks2 y cryptsetup piden la contraseña por una
-terminal): lo apunta en el diario, y si alguien lo abre con `abrir-prdrive.sh`,
-lo encuentra montado y sigue igual.
+Por qué sondea y no espera un evento del sistema: el volumen cifrado no se
+puede leer hasta desbloquearlo (BitLocker/LUKS), y eso tarda lo que tarde la
+persona en teclear la contraseña. El evento útil no es «ha llegado» sino «ya se
+lee», y eso solo se sabe intentándolo. Sondear un marcador cuesta un `stat`
+cada pocos segundos, funciona igual en los dos sistemas y da lo mismo que el
+dispositivo estuviera puesto desde el arranque o se enchufe a media sesión.
 
-Por qué un vigilante que sondea y no un evento del sistema
-----------------------------------------------------------
-El dispositivo va cifrado. Windows y Linux avisan de la llegada del DISPOSITIVO, pero el
-volumen no se puede leer hasta que se desbloquea (BitLocker/LUKS), lo que puede
-tardar lo que tarde el usuario en teclear la contraseña. El evento útil no es
-"ha llegado" sino "ya se lee", y eso solo se sabe intentándolo. Sondear un
-marcador cuesta un stat cada pocos segundos, funciona igual en los dos sistemas,
-y da lo mismo si el dispositivo estaba puesto desde el arranque o se enchufa a media
-sesión.
+Permanencia: se registra para el USUARIO que ejecuta `install` y arranca solo
+en cada inicio de sesión, así que sobrevive a reinicios y apagados. En Windows
+es una tarea con disparador de inicio de sesión; en Linux, una unidad de
+usuario con `WantedBy=default.target` (más `loginctl enable-linger`, que
+`install` intenta activar, para que vigile también sin sesión abierta).
 
-Permanencia
------------
-El vigilante se registra para el USUARIO que ejecuta `install` y arranca solo en
-cada inicio de sesión de ese usuario, así que sobrevive a reinicios y apagados
-sin volver a tocar nada. En Windows es una tarea con disparador de inicio de
-sesión; en Linux, una unidad de usuario con `WantedBy=default.target` (más
-`loginctl enable-linger`, que `install` intenta activar, para que también vigile
-sin sesión abierta).
+Convivencia con un medio que puede desaparecer a media frase:
+- Nunca escribe en el dispositivo ni se mete dentro (ni cwd ni ficheros
+  abiertos): bloquearía la extracción segura. Su configuración, su estado y su
+  diario viven en el equipo.
+- Toda lectura del dispositivo va en `try/except OSError`: un volumen cifrado y
+  bloqueado, o retirado en mitad de la llamada, responde con error, no con un
+  educado «no existe».
+- Solo lanza runsync cuando el marcador se ha leído bien en dos sondeos
+  seguidos, para no arrancar sobre un montaje a medias.
+- Nada se relanza mientras el dispositivo siga puesto: hace falta que
+  desaparezca para volver a armar el disparo.
 
-Convivencia con un medio que puede desaparecer a media frase
-------------------------------------------------------------
-  * El vigilante NUNCA escribe en el dispositivo ni se mete dentro de él (ni cwd ni
-    ficheros abiertos): eso bloquearía la extracción segura. Su configuración,
-    su estado y su diario viven en el equipo.
-  * Toda lectura del dispositivo va envuelta en try/except OSError: un volumen cifrado y
-    bloqueado, o retirado en mitad de la llamada, responde con error, no con un
-    educado "no existe".
-  * Solo se lanza runsync cuando el marcador se ha leído bien en dos sondeos
-    seguidos, para no arrancar sobre un montaje a medias.
-  * Nada se relanza mientras el dispositivo siga puesto: hace falta que desaparezca para
-    volver a armar el disparo.
+Su propio Python: no depende de un Python instalado en el equipo. `install`
+copia el Python que lleva el dispositivo para esta plataforma a `runtime/<id>/`
+y registra la tarea con esa copia: así sigue funcionando cuando alguien
+actualiza o desinstala su Python, que antes lo rompía en silencio (se guardaba
+el `sys.executable`). Cada versión va en su carpeta, con el `id` sacado del
+sello del runtime. En cada detección se compara el sello del dispositivo con el
+de la copia y, si difieren, se copia la nueva AL LADO y se cambia el puntero de
+`watch.json` de una vez: sustituir la carpeta en su sitio no se puede, porque
+en Windows no se renombra la carpeta de un `pythonw.exe` que corre (y el
+vigilante corre justo desde ahí). Luego se vuelve a registrar la tarea y se
+recogen las viejas. Si el dispositivo no lleva Python para este equipo
+(instalación ligera) se usa el del sistema y `status` lo dice.
 
-Su propio Python
-----------------
-El vigilante NO depende de un Python instalado en el equipo. `install` copia el
-Python que lleva el dispositivo para esta plataforma a su carpeta del equipo
-(`runtime/<id>/`) y registra la tarea con esa copia; así sigue funcionando cuando
-alguien actualiza o desinstala su Python, que es justo lo que antes lo rompía en
-silencio (se guardaba el `sys.executable` de la instalación).
+Modos (`--mode`, se decide al instalar y se guarda en el equipo):
 
-Cada versión va en su propia carpeta, con el `id` sacado del sello del runtime.
-En cada detección se compara el sello del dispositivo con el de la copia y, si
-difieren, se copia la versión nueva AL LADO y se cambia el puntero de
-`watch.json` de una vez: sustituir la carpeta en su sitio no se puede, porque en
-Windows no se renombra la carpeta de un `pythonw.exe` que está corriendo —y el
-vigilante corre justo desde ahí—. Luego se vuelve a registrar la tarea con la
-copia nueva y se recogen las viejas que ya no usa nadie.
-
-Si el dispositivo no lleva Python para este equipo (una instalación ligera, o
-una que no se preparó para esta plataforma), se usa el del sistema y `status` lo
-dice.
-
-Modos (--mode, se decide al instalar y se guarda en el equipo)
---------------------------------------------------------------
-  ui      (por defecto) abre la UI de runsync.py: tú decides qué hacer.
-  sync    una pasada del servicio, en silencio, y nada más (runsync --auto --once).
-  daemon  arranca el servicio periódico (runsync --auto).
+    ui      (por defecto) abre la UI de runsync.py: tú decides qué hacer.
+    sync    una pasada del servicio, en silencio, y nada más (runsync --auto --once).
+    daemon  arranca el servicio periódico (runsync --auto).
 
 Qué parejas y cada cuánto NO se decide aquí: son los del servicio, que viven en
-el dispositivo y se eligen en su ventana. El vigilante no los lee —no lee
-configuración del dispositivo—: lanza runsync sin ellos y runsync los lee allí.
-Así el servicio es uno solo, se arranque a mano o al enchufar, y el intervalo que
-se ve en la ventana es el que se usa.
+el dispositivo y se eligen en su ventana. El vigilante no lee configuración del
+dispositivo: lanza runsync sin ellos y runsync los lee allí. Así el servicio es
+uno solo, se arranque a mano o al enchufar, y el intervalo que se ve en la
+ventana es el que se usa. En los tres modos, una pareja bisync que necesite
+`--resync` se SALTA: un resync no se lanza solo.
 
-En los tres casos, una pareja bisync que necesite --resync se SALTA: un resync no
-se lanza solo, igual que en el resto del proyecto.
-
-La copia que corre en el equipo es la que hizo `install`, y NADA la pone al día
-sola: `refresh_runtime()` refresca el Python, no este fichero. Por eso
-`copia_al_dia()` la compara con la del dispositivo, y `status` —y la ventana— lo
-dicen cuando no coinciden: reinstalar es lo que la pone al día.
+La copia que corre en el equipo es la que hizo `install` y NADA la pone al día
+sola: `refresh_runtime()` refresca el Python, no este fichero. `copia_al_dia()`
+la compara con la del dispositivo, y `status` (y la ventana) lo dicen cuando no
+coinciden: reinstalar es lo que la pone al día.
 """
 
 from __future__ import annotations
@@ -128,58 +106,85 @@ from datetime import datetime
 from pathlib import Path
 from xml.sax.saxutils import escape as xml_escape
 
-# La marca. `common/__init__.py` la tiene también, y esta es la única copia
-# consentida: penwatch se copia al equipo del usuario y tiene que arrancar con
-# el dispositivo desconectado, así que no puede importar nada del proyecto.
-# Hay un test que comprueba que las dos copias no se separan.
 APP_NAME = "prdrive"
+"""Nombre de la marca.
+
+Copia de `common/__init__.py`, la única consentida: penwatch se copia al equipo
+y tiene que arrancar con el dispositivo desconectado, así que no puede importar
+nada del proyecto. Un test comprueba que las dos copias no se separan.
+"""
 APP = "PrDriveWatch"
-TASK_NAME = APP                       # Windows: nombre de la tarea programada
-UNIT_NAME = f"{APP_NAME}-watch.service"   # Linux: unidad de usuario de systemd
+"""Nombre del vigilante en el equipo (su carpeta en Windows y su tarea)."""
+TASK_NAME = APP
+"""Windows: nombre de la tarea programada."""
+UNIT_NAME = f"{APP_NAME}-watch.service"
+"""Linux: nombre de la unidad de usuario de systemd."""
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-APP_SUBDIR = f".{APP_NAME}"                           # la carpeta oculta del código
-STRUCT_MARKER = Path(APP_SUBDIR) / "runsync.py"       # lo que se va a lanzar
-CONTROL_FILE = Path(APP_SUBDIR) / APP_NAME.upper()    # quién es esta unidad
-# El vestíbulo de un dispositivo VeraCrypt, fuera del contenedor. Copias de
-# `common/vestibulo.py`, con su test, como las de arriba.
+APP_SUBDIR = f".{APP_NAME}"
+"""Carpeta oculta del código, en la raíz del dispositivo."""
+STRUCT_MARKER = Path(APP_SUBDIR) / "runsync.py"
+"""Lo que se va a lanzar: si no está, la unidad no es este proyecto."""
+CONTROL_FILE = Path(APP_SUBDIR) / APP_NAME.upper()
+"""Fichero de control: dice quién es esta unidad."""
 CONTAINER_FILE = f"{APP_NAME.upper()}.hc"
+"""Contenedor VeraCrypt del dispositivo, en su raíz física.
+
+Es copia de `common/vestibulo.py`, con su test, igual que `VESTIBULE_MARKER`,
+las `TRAVELER_*`, `OPEN_SCRIPT` y `UDISKS_TCRYPT_CONF`.
+"""
 VESTIBULE_MARKER = f".{APP_NAME}-vestibulo"
-# El VeraCrypt que viaja junto al contenedor: el portable oficial, un ejecutable
-# por arquitectura, y detrás el `VeraCrypt.exe` de los dispositivos de antes.
-# Copias de `common/vestibulo.py` (TRAVELER*), con su test, como las de arriba.
+"""Marca oculta del vestíbulo, fuera del contenedor; lleva el mismo `id=`."""
 TRAVELER_DIR = "VeraCrypt"
+"""Carpeta del VeraCrypt que viaja junto al contenedor."""
 TRAVELER_EXE = "VeraCrypt.exe"
+"""El `VeraCrypt.exe` de los dispositivos de antes."""
 TRAVELER_PORTABLE = "VeraCrypt-{arq}.exe"
+"""Nombre del portable oficial: un ejecutable por arquitectura."""
 TRAVELER_ARCHS = ("x64", "arm64")
-# Linux sin VeraCrypt: el script del vestíbulo que lo abre con udisks2 o
-# cryptsetup, y el fichero sin el que udisks2 no reconoce un contenedor VeraCrypt
-# (lo mira al arrancar el servicio: `src/main.c` de udisks). Copias de
-# `common/vestibulo.py` y `install/vestibulo.py`, con su test.
+"""Arquitecturas para las que viaja el portable."""
 OPEN_SCRIPT = f"abrir-{APP_NAME}.sh"
+"""Script del vestíbulo que abre el contenedor con udisks2 o cryptsetup."""
 UDISKS_TCRYPT_CONF = Path("/etc/udisks2/tcrypt.conf")
-# El Python del dispositivo, uno por plataforma, y su sello de versión. Copiados
-# de `install/runtime_bin.py` por lo mismo que los de arriba; el test comprueba
-# que no se separan.
+"""Fichero sin el que udisks2 no reconoce un contenedor VeraCrypt.
+
+Lo mira al arrancar el servicio (`src/main.c` de udisks).
+"""
 RUNTIME_SUBDIR = Path(APP_SUBDIR) / "runtime"
+"""Carpeta de los Python del dispositivo, uno por plataforma.
+
+Copiada de `install/runtime_bin.py`, con su test, igual que `RUNTIME_STAMP`.
+"""
 RUNTIME_STAMP = "PRDRIVE-RUNTIME"
-# Los dos registros de runsync: quién tiene la ventana abierta y quién es el
-# servicio. Se LEEN para no lanzar una segunda instancia encima, nunca se
-# escriben —en el dispositivo no escribe nadie desde aquí—. Copiados de
-# `runsync.py` por lo mismo que los de arriba, y con su test.
+"""Sello de versión de cada runtime."""
 UI_LOCK_REL = Path(APP_SUBDIR) / "state" / "ui.lock.json"
+"""Registro de la ventana abierta de runsync.
+
+Copiado de `runsync.py`, con su test, igual que `DAEMON_LOCK_REL`. Se LEE para
+no lanzar una segunda instancia encima y nunca se escribe: desde aquí nadie
+escribe en el dispositivo.
+"""
 DAEMON_LOCK_REL = Path(APP_SUBDIR) / "state" / "daemon.lock.json"
-HOST = socket.gethostname()           # el mismo que apunta `ui/prefs.py`
+"""Registro del servicio de runsync."""
+HOST = socket.gethostname()
+"""Nombre de este equipo; el mismo que apunta `ui/prefs.py`."""
 
 POLL_SECONDS = 5.0
-STABLE_CHECKS = 2            # sondeos seguidos legibles antes de dar el dispositivo por montado
+"""Segundos entre sondeos del dispositivo."""
+STABLE_CHECKS = 2
+"""Sondeos seguidos legibles antes de dar el dispositivo por montado."""
 STOP_WAIT_SECONDS = 8.0
+"""Segundos que `stop` espera a que pare el vigilante."""
 LOG_MAX_BYTES = 256 * 1024
+"""Tamaño del diario a partir del cual `log` lo recorta."""
 LOG_KEEP_LINES = 400
+"""Líneas con las que se queda el diario al recortarlo."""
 
 IS_WIN = os.name == "nt"
 CREATE_NO_WINDOW = 0x08000000
+"""Flag de creación de procesos de Windows: sin consola."""
 CREATE_NEW_PROCESS_GROUP = 0x00000200
+"""Flag de creación de procesos de Windows: grupo propio."""
 
 CONTROL_TEMPLATE = """\
 # PRDRIVE — fichero de control del dispositivo. NO LO BORRES.
@@ -187,10 +192,11 @@ CONTROL_TEMPLATE = """\
 # Lo usa .prdrive/penwatch.py para lanzar la sincronización al conectarla.
 id={device_id}
 """
+"""Contenido del fichero de control; `device_id` es el `id=` que lo ata al vestíbulo."""
 
 
 def host_dir() -> Path:
-    """Dónde vive el vigilante en el equipo. Por usuario, sin privilegios."""
+    """Devuelve dónde vive el vigilante en el equipo: por usuario, sin privilegios."""
     if IS_WIN:
         base = os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local")
         return Path(base) / APP
@@ -199,26 +205,32 @@ def host_dir() -> Path:
 
 
 HOST_DIR = host_dir()
+"""Carpeta del vigilante en el equipo: su configuración, estado, diario y Python."""
 CONFIG_FILE = HOST_DIR / "watch.json"
+"""`watch.json`: la configuración con la que se instaló."""
 STATE_FILE = HOST_DIR / "state.json"
+"""Estado del vigilante entre sondeos (qué ha lanzado y qué ha visto)."""
 LOG_FILE = HOST_DIR / "penwatch.log"
 STOP_FILE = HOST_DIR / "stop"
+"""Fichero que, si existe, le pide al vigilante que pare."""
 SELF_COPY = HOST_DIR / "penwatch.py"
-RUNTIMES_DIR = HOST_DIR / "runtime"      # las copias del Python del dispositivo
+"""La copia de este script que corre en el equipo."""
+RUNTIMES_DIR = HOST_DIR / "runtime"
+"""Copias del Python del dispositivo, una carpeta por versión."""
 UNIT_FILE = Path.home() / ".config" / "systemd" / "user" / UNIT_NAME
 DESKTOP_FILE = Path.home() / ".config" / "autostart" / f"{APP_NAME}-watch.desktop"
 
 
-# ---------------------------------------------------------------------------
-# Utilidades (todo en el equipo: aquí sí se puede dar por hecho que el disco está)
-# ---------------------------------------------------------------------------
-
 def stamp() -> str:
+    """Devuelve la hora actual con el formato de los diarios."""
     return f"{datetime.now():%Y-%m-%d %H:%M:%S}"
 
 
 def log(msg: str) -> None:
-    """Diario del vigilante. Se abre y cierra en cada línea; se recorta solo."""
+    """Añade una línea al diario del vigilante.
+
+    Se abre y cierra en cada línea y se recorta solo (`LOG_MAX_BYTES`).
+    """
     try:
         HOST_DIR.mkdir(parents=True, exist_ok=True)
         if LOG_FILE.exists() and LOG_FILE.stat().st_size > LOG_MAX_BYTES:
@@ -231,6 +243,7 @@ def log(msg: str) -> None:
 
 
 def read_json(path: Path) -> dict:
+    """Lee un JSON del equipo; si no está o no es válido, `{}`."""
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -238,7 +251,10 @@ def read_json(path: Path) -> dict:
 
 
 def write_json(path: Path, data: dict) -> None:
-    """Escritura atómica: 'status' puede estar leyendo a la vez."""
+    """Escribe un JSON del equipo de forma atómica.
+
+    Hace falta porque `status` puede estar leyendo a la vez.
+    """
     try:
         HOST_DIR.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".tmp")
@@ -249,9 +265,12 @@ def write_json(path: Path, data: dict) -> None:
 
 
 def pid_alive(pid: int) -> bool:
-    """Duplicado a propósito de runsync.py: el vigilante vive en el equipo y no
-    puede importar nada del dispositivo (que puede no estar). OJO: en Windows NO vale
-    os.kill(pid, 0), que MATA el proceso en vez de comprobarlo."""
+    """Indica si el proceso `pid` está vivo.
+
+    Duplicado a propósito de `runsync.py`: el vigilante vive en el equipo y no
+    puede importar nada del dispositivo, que puede no estar. En Windows NO vale
+    `os.kill(pid, 0)`, que MATA el proceso en vez de comprobarlo.
+    """
     if pid <= 0:
         return False
     if IS_WIN:
@@ -276,6 +295,7 @@ def pid_alive(pid: int) -> bool:
 
 
 def kill_pid(pid: int) -> None:
+    """Termina el proceso `pid`; si no se puede, no hace nada."""
     try:
         if IS_WIN:
             subprocess.run(["taskkill", "/PID", str(pid), "/F"],
@@ -288,6 +308,10 @@ def kill_pid(pid: int) -> None:
 
 
 def run_quiet(cmd: list[str]) -> subprocess.CompletedProcess:
+    """Ejecuta una orden capturando su salida, sin consola.
+
+    Si no se puede lanzar, devuelve un resultado con código 127.
+    """
     kwargs: dict = {"capture_output": True, "text": True, "errors": "replace"}
     if IS_WIN:
         kwargs["creationflags"] = CREATE_NO_WINDOW
@@ -297,27 +321,18 @@ def run_quiet(cmd: list[str]) -> subprocess.CompletedProcess:
         return subprocess.CompletedProcess(cmd, 127, "", str(e))
 
 
-# ---------------------------------------------------------------------------
-# Detección del dispositivo
-#
-# No se busca "una letra de unidad" ni "un punto de montaje": se busca el fichero
-# de control `.prdrive/PRDRIVE`, que es lo único que sobrevive a cambiar de
-# equipo, de sistema y de letra. Va dentro de la carpeta del programa y no en la
-# raíz porque para identificar la unidad da igual dónde esté, mientras la ruta
-# sea relativa a ella, y ahí no estorba entre los ficheros del usuario.
-# ---------------------------------------------------------------------------
-
 _ERRORMODE_SET = False
+"""Si ya se ha cambiado el modo de error del proceso, que se hace una sola vez."""
 
 
 def windows_roots() -> list[Path]:
-    """Raíces de las unidades existentes, sin tocar letras vacías."""
+    """Devuelve las raíces de las unidades de Windows, sin tocar letras vacías."""
     global _ERRORMODE_SET
     import ctypes
     k32 = ctypes.windll.kernel32
     if not _ERRORMODE_SET:
-        # Sin esto, sondear una unidad sin medio puede sacar el diálogo
-        # "No hay disco en la unidad" en la cara del usuario.
+        # Sin esto, sondear una unidad sin medio saca el diálogo «No hay disco
+        # en la unidad».
         k32.SetErrorMode(0x0001 | 0x8000)  # SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX
         _ERRORMODE_SET = True
     DRIVE_REMOVABLE, DRIVE_FIXED = 2, 3
@@ -334,25 +349,35 @@ def windows_roots() -> list[Path]:
 
 
 def _unescape_mount(mp: str) -> str:
+    """Deshace los escapes octales de `/proc/self/mounts` en un punto de montaje."""
     for esc, ch in (("\\040", " "), ("\\011", "\t"), ("\\012", "\n"), ("\\134", "\\")):
         mp = mp.replace(esc, ch)
     return mp
 
 
-# Dónde montan lo extraíble en POSIX, un nivel o dos por debajo: VeraCrypt
-# (/media/veracrypt1…), udisks2 (/media/$USER/… en Debian y Ubuntu,
-# /run/media/$USER/… en Fedora y Arch), cryptsetup desde `abrir-prdrive.sh`
-# (/mnt/prdrive-<id>) y macOS (/Volumes). Con /proc/self/mounts, que ya lista
-# todo lo montado desde un /dev (también /dev/mapper/…), cualquiera de las vías
-# que abren un contenedor sale dos veces. Sustituibles, para que los tests no
-# miren el sistema de verdad.
 MOUNTS_FILE = Path("/proc/self/mounts")
+"""Lista de montajes de Linux.
+
+Sustituible, para que los tests no miren el sistema de verdad. Lista todo lo
+montado desde un `/dev` (también `/dev/mapper/…`), de modo que cualquiera de
+las vías que abren un contenedor sale dos veces: aquí y bajo
+`POSIX_MOUNT_BASES`.
+"""
 POSIX_MOUNT_BASES = ("/media", "/run/media", "/mnt", "/Volumes")
+"""Dónde montan lo extraíble en POSIX, uno o dos niveles por debajo.
+
+VeraCrypt (`/media/veracrypt1`…), udisks2 (`/media/$USER/…` en Debian y Ubuntu,
+`/run/media/$USER/…` en Fedora y Arch), cryptsetup desde `abrir-prdrive.sh`
+(`/mnt/prdrive-<id>`) y macOS (`/Volumes`). Sustituible, como `MOUNTS_FILE`.
+"""
 
 
 def posix_roots() -> list[Path]:
-    """Puntos de montaje respaldados por un dispositivo de bloque, más los sitios
-    donde los escritorios montan lo extraíble."""
+    """Devuelve los puntos de montaje respaldados por un dispositivo de bloque.
+
+    Más los sitios donde los escritorios montan lo extraíble
+    (`POSIX_MOUNT_BASES`).
+    """
     roots: list[Path] = []
     try:
         for line in MOUNTS_FILE.read_text(encoding="utf-8").splitlines():
@@ -377,6 +402,10 @@ def posix_roots() -> list[Path]:
 
 
 def candidate_roots(cfg: dict) -> list[Path]:
+    """Devuelve las raíces donde buscar el dispositivo, sin repetidas.
+
+    Las `extra_roots` de la configuración van primero.
+    """
     roots = [Path(r) for r in cfg.get("extra_roots", [])]
     roots += windows_roots() if IS_WIN else posix_roots()
     seen: set[str] = set()
@@ -390,8 +419,10 @@ def candidate_roots(cfg: dict) -> list[Path]:
 
 
 def control_id(root: Path) -> str | None:
-    """El 'id=' de dentro del PRDRIVE, o None si no lleva ninguno.
-    Propaga OSError: quien llama decide qué significa no poder leerlo."""
+    """Devuelve el `id=` del fichero de control de `root`, o `None` si no lleva ninguno.
+
+    Propaga `OSError`: quien llama decide qué significa no poder leerlo.
+    """
     for line in (root / CONTROL_FILE).read_text(
             encoding="utf-8", errors="replace").splitlines():
         line = line.strip()
@@ -401,8 +432,11 @@ def control_id(root: Path) -> str | None:
 
 
 def find_pen(cfg: dict) -> Path | None:
-    """La raíz del dispositivo, o None. Cualquier OSError significa 'ahora mismo no': un
-    volumen bloqueado responde con error de permisos, no con 'no existe'."""
+    """Devuelve la raíz del dispositivo, o `None`.
+
+    Cualquier `OSError` significa «ahora mismo no»: un volumen bloqueado
+    responde con un error de permisos y no con «no existe».
+    """
     want = cfg.get("device_id")
     for root in candidate_roots(cfg):
         try:
@@ -419,18 +453,11 @@ def find_pen(cfg: dict) -> Path | None:
     return None
 
 
-# ---------------------------------------------------------------------------
-# El dispositivo cifrado, antes de abrirlo
-# ---------------------------------------------------------------------------
-#
-# Lo que se hace aquí es lo mismo que `Abrir PRDRIVE.bat` (install/vestibulo.py,
-# con las citas del código de VeraCrypt), menos lanzar runsync: eso lo hace el
-# bucle de siempre cuando el volumen aparece montado, y así se respeta el modo
-# (`daemon` no abre ventana) y no hay dos lanzamientos peleándose por el
-# registro de la ventana.
-
 def vestibule_id(root: Path) -> str | None:
-    """El 'id=' de la marca del vestíbulo. Propaga OSError, como control_id()."""
+    """Devuelve el `id=` de la marca del vestíbulo, o `None` si no lleva ninguno.
+
+    Propaga `OSError`, como `control_id()`.
+    """
     for line in (root / VESTIBULE_MARKER).read_text(
             encoding="utf-8", errors="replace").splitlines():
         line = line.strip()
@@ -440,10 +467,11 @@ def vestibule_id(root: Path) -> str | None:
 
 
 def find_vestibule(cfg: dict) -> Path | None:
-    """La raíz FÍSICA de este dispositivo, cerrado, o None.
+    """Devuelve la raíz FÍSICA de este dispositivo, cerrado, o `None`.
 
     Solo con id: sin él no se sabe de quién es el contenedor, y pedir la
-    contraseña de otro dispositivo sería peor que no pedir ninguna."""
+    contraseña de otro dispositivo sería peor que no pedir ninguna.
+    """
     want = cfg.get("device_id")
     if not want:
         return None
@@ -458,9 +486,10 @@ def find_vestibule(cfg: dict) -> Path | None:
 
 
 def installed_veracrypt() -> str | None:
-    """El VeraCrypt INSTALADO en este equipo, o None. Nunca el que viaja.
+    """Devuelve el VeraCrypt INSTALADO en este equipo, o `None`; nunca el que viaja.
 
-    En Windows, el de Archivos de programa; en Linux, `veracrypt` en el PATH."""
+    En Windows, el de Archivos de programa; en Linux, `veracrypt` en el PATH.
+    """
     if IS_WIN:
         for k in ("ProgramFiles", "ProgramW6432"):
             if not os.environ.get(k):
@@ -476,29 +505,36 @@ def installed_veracrypt() -> str | None:
 
 
 def _con_escritorio() -> bool:
+    """Indica si hay una sesión gráfica (donde pedir la contraseña)."""
     return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
 
 
 def veracrypt_command(root: Path | None, container: Path | None = None,
                       dest: str = "", respaldo: str | None = None) -> list[str] | None:
-    """La orden que abre el contenedor de `root`, o None si no hay con qué.
+    """Devuelve la orden que abre el contenedor, o `None` si no hay con qué.
 
-    Sin contraseña, que la pide VeraCrypt en su ventana. El VeraCrypt instalado
-    antes que el que viaja en la unidad: con otra versión instalada, el que viaja
-    no puede cargar su driver (ERR_DRIVER_VERSION). Del que viaja, el portable de
-    la arquitectura NATIVA de este equipo —VeraCrypt escoge el driver por ella, y
-    un driver no se emula—, y detrás el `VeraCrypt.exe` de un dispositivo de
-    antes. En Linux, solo con escritorio: sin él no hay dónde pedir la
-    contraseña, ni la de administrador que montar exige.
+    Sin contraseña: la pide VeraCrypt en su ventana. El VeraCrypt instalado va
+    antes que el que viaja en la unidad: con otra versión instalada, el que
+    viaja no puede cargar su driver (`ERR_DRIVER_VERSION`). Del que viaja, el
+    portable de la arquitectura NATIVA del equipo (VeraCrypt escoge el driver
+    por ella y un driver no se emula) y detrás el `VeraCrypt.exe` de un
+    dispositivo de antes. En Linux, solo con escritorio: sin él no hay dónde
+    pedir la contraseña, ni la de administrador que montar exige.
 
-    Con `container` es la raíz cifrada de un EQUIPO (la abre el agente): el
-    contenedor no está en la raíz de ninguna unidad, así que se da entero. El
-    VeraCrypt instalado primero, por lo mismo que en una unidad; si no hay,
-    `respaldo`, el que lleva el agente en su carpeta (que se lo pasa ya
-    comprobado: penwatch no importa nada del proyecto). Ese es el portable, y
-    pide administrador cada vez que carga su driver. `dest` es dónde montarlo:
-    la letra fija (`/letter`) en Windows, porque los programas apuntan a la raíz
-    y no puede cambiar de un día a otro; la carpeta fija en Linux."""
+    Con `container` es la raíz cifrada de un EQUIPO, que abre el agente: el
+    contenedor no está en la raíz de ninguna unidad y se da entero. Va el
+    VeraCrypt instalado y, si no hay, `respaldo`.
+
+    Args:
+        root: Raíz física del dispositivo.
+        container: Ruta del contenedor de una raíz de equipo.
+        dest: Dónde montarlo: la letra fija (`/letter`) en Windows, porque los
+            programas apuntan a la raíz y no puede cambiar de un día a otro; la
+            carpeta fija en Linux.
+        respaldo: El portable del agente, que se lo pasa ya comprobado
+            (penwatch no importa nada del proyecto); pide administrador cada
+            vez que carga su driver.
+    """
     if container is not None:
         exe = installed_veracrypt() or respaldo
         if exe is None:
@@ -539,11 +575,24 @@ def veracrypt_command(root: Path | None, container: Path | None = None,
 def open_container(root: Path, cwd: Path | None = None) -> bool:
     """Le pide a VeraCrypt que abra el contenedor de `root`. No espera.
 
-    Si se ha abierto lo dirá `find_pen()` en los sondeos siguientes: VeraCrypt,
-    sin permisos de administrador y en modo portátil, se relanza elevado y sale
-    con 0 antes de que nadie haya escrito la contraseña, así que su salida no
-    dice nada. cwd en el equipo, como `launch()`: la carpeta del vigilante, o la
-    que diga quien llama (el agente residente, que tiene la suya)."""
+    Hace lo mismo que `Abrir PRDRIVE.bat` (`install/vestibulo.py`, con las
+    citas del código de VeraCrypt) menos lanzar runsync: eso lo hace el bucle
+    cuando el volumen aparece montado, así se respeta el modo (`daemon` no abre
+    ventana) y no hay dos lanzamientos peleándose por el registro de la
+    ventana. Si se ha abierto lo dirá `find_pen()` en los sondeos siguientes:
+    VeraCrypt, sin administrador y en modo portátil, se relanza elevado y sale
+    con 0 antes de que nadie escriba la contraseña, así que su salida no dice
+    nada.
+
+    Args:
+        root: Raíz física del dispositivo.
+        cwd: Carpeta de trabajo del proceso, en el equipo como en `launch()`:
+            la del vigilante por defecto, o la de quien llama (el agente
+            residente).
+
+    Returns:
+        `True` si lo ha lanzado.
+    """
     cmd = veracrypt_command(root)
     if cmd is None and not IS_WIN:
         log(linux_closed_note(root))
@@ -568,23 +617,14 @@ def open_container(root: Path, cwd: Path | None = None) -> bool:
     return True
 
 
-# Linux sin VeraCrypt. `abrir-prdrive.sh` lo abre con udisks2 o cryptsetup
-# (install/vestibulo.py, con las citas), pero los dos piden la contraseña por una
-# terminal —`udisksctl unlock` la lee de la que controla el proceso, cryptsetup
-# de stdin— y el vigilante no tiene ninguna. Que el escritorio la pida solo tras
-# un `udisksctl loop-setup` (GNOME Shell, Files, Dolphin) está POR PROBAR (U4 en
-# #51): hasta entonces el vigilante no pone el loop por su cuenta, y deja en el
-# diario qué vía tiene este equipo y cómo abrirlo. Abierto a mano por cualquiera
-# de las dos, `posix_roots()` lo encuentra y el lanzamiento sigue como siempre;
-# la regla de una vez por conexión no cambia.
-
 def linux_open_route() -> str | None:
-    """Con qué abriría `abrir-prdrive.sh` el contenedor en este equipo Linux.
+    """Devuelve con qué abriría `abrir-prdrive.sh` el contenedor en este Linux.
 
-    El mismo orden que el script: 'veracrypt', 'udisks2' (si existe
-    `UDISKS_TCRYPT_CONF`) o 'cryptsetup'; None si con nada. Con /usr/sbin y
-    /sbin, como el script: Debian no los pone en el PATH de un usuario, y ahí
-    vive cryptsetup."""
+    El mismo orden que el script: `veracrypt`, `udisks2` (si existe
+    `UDISKS_TCRYPT_CONF`) o `cryptsetup`; `None` si con nada. Con `/usr/sbin` y
+    `/sbin`, como el script: Debian no los pone en el PATH de un usuario y ahí
+    vive cryptsetup.
+    """
     path = os.pathsep.join(p for p in (os.environ.get("PATH", ""), "/usr/sbin", "/sbin")
                            if p)
     if shutil.which("veracrypt", path=path):
@@ -601,7 +641,17 @@ def linux_open_route() -> str | None:
 
 
 def linux_closed_note(root: Path) -> str:
-    """La línea del diario cuando el vigilante no puede abrirlo: por qué, y cómo sí."""
+    """Devuelve la línea del diario cuando no puede abrirlo: por qué, y cómo sí.
+
+    `abrir-prdrive.sh` lo abre con udisks2 o cryptsetup, pero los dos piden la
+    contraseña por una terminal (`udisksctl unlock` la lee de la que controla
+    el proceso, cryptsetup de stdin) y el vigilante no tiene ninguna. Que el
+    escritorio la pida solo tras un `udisksctl loop-setup` (GNOME Shell, Files,
+    Dolphin) está POR PROBAR (U4 en #51): hasta entonces no pone el loop por su
+    cuenta y deja dicho qué vía tiene este equipo. Abierto a mano,
+    `posix_roots()` lo encuentra y el lanzamiento sigue; la regla de una vez
+    por conexión no cambia.
+    """
     route = linux_open_route()
     if route is None:
         return (f"{root}: dispositivo cifrado y cerrado, y este equipo no tiene con "
@@ -615,16 +665,13 @@ def linux_closed_note(root: Path) -> str:
             f"una terminal: «sh {root / OPEN_SCRIPT}»")
 
 
-# ---------------------------------------------------------------------------
-# El Python del vigilante: una copia del del dispositivo, en el equipo
-# ---------------------------------------------------------------------------
-
 def native_arch() -> str:
-    """La CPU del equipo: 'x64', 'arm64' u otra cosa en minúsculas.
+    """Devuelve la CPU del equipo: `x64`, `arm64` u otra cosa en minúsculas.
 
-    En Windows se pregunta a IsWow64Process2, por lo mismo que en
+    En Windows se pregunta a `IsWow64Process2`, por lo mismo que en
     `common/model.py` (que no se puede importar desde aquí): un Python x64
-    emulado en un ARM64 oye 'AMD64' de todos los demás sitios."""
+    emulado en un ARM64 oye `AMD64` en todos los demás sitios.
+    """
     if IS_WIN:
         try:
             import ctypes
@@ -650,10 +697,15 @@ def native_arch() -> str:
 
 
 def runtime_keys_for(so: str, arch: str) -> list[str]:
-    """Los runtimes del dispositivo que sirven en ese equipo, por preferencia.
+    """Devuelve los runtimes del dispositivo que sirven en ese equipo, por preferencia.
 
-    La misma cadena que el `runsync.bat` y que `install/platforms.candidates()`:
-    un Windows ARM64 prefiere el suyo y ejecuta el x64 emulado; Linux no emula."""
+    La misma cadena que `runsync.bat` y `install/platforms.candidates()`: un
+    Windows ARM64 prefiere el suyo y ejecuta el x64 emulado; Linux no emula.
+
+    Args:
+        so: `windows` o `linux`.
+        arch: `x64` o `arm64`.
+    """
     if so == "windows":
         return {"arm64": ["windows-arm64", "windows-x64"],
                 "x64": ["windows-x64"]}.get(arch, [])
@@ -663,24 +715,33 @@ def runtime_keys_for(so: str, arch: str) -> list[str]:
 
 
 def host_runtime_keys() -> list[str]:
-    """Los de ESTE equipo. De módulo para que los tests elijan la plataforma."""
+    """Devuelve los runtimes que sirven en ESTE equipo.
+
+    Función de módulo para que los tests elijan la plataforma.
+    """
     so = "windows" if IS_WIN else ("linux" if sys.platform.startswith("linux")
                                    else sys.platform)
     return runtime_keys_for(so, native_arch())
 
 
 def interpreter_rel(key: str, windowless: bool = False) -> str:
-    """El intérprete de un runtime, relativo a su carpeta."""
+    """Devuelve el intérprete de un runtime, relativo a su carpeta.
+
+    Args:
+        key: Clave de la plataforma del runtime.
+        windowless: `pythonw` en vez de `python` (Windows).
+    """
     if key.startswith("windows-"):
         return "pythonw.exe" if windowless else "python.exe"
     return "bin/python3"
 
 
 def device_runtime(root: Path) -> tuple[str, Path, str] | None:
-    """(clave, carpeta, sello) del Python del dispositivo para este equipo.
+    """Devuelve `(clave, carpeta, sello)` del Python del dispositivo para este equipo.
 
-    None si no lleva ninguno que sirva. Solo lee: un runtime sin intérprete o
-    sin sello es uno a medias, y no cuenta."""
+    Es `None` si no lleva ninguno que sirva. Solo lee: un runtime sin
+    intérprete o sin sello es uno a medias y no cuenta.
+    """
     for key in host_runtime_keys():
         carpeta = root / RUNTIME_SUBDIR / key
         try:
@@ -694,18 +755,21 @@ def device_runtime(root: Path) -> tuple[str, Path, str] | None:
 
 
 def stamp_id(stamp: str) -> str:
-    """El nombre de la carpeta de una versión: sale del sello, así que dos
-    sellos distintos nunca comparten carpeta."""
+    """Devuelve el nombre de la carpeta de una versión.
+
+    Sale del sello, así que dos sellos distintos nunca comparten carpeta.
+    """
     return hashlib.sha256(stamp.encode("utf-8")).hexdigest()[:12]
 
 
 def copy_runtime(key: str, src: Path, stamp: str) -> Path:
-    """Copia el runtime del dispositivo a `RUNTIMES_DIR/<id>/`. Devuelve la carpeta.
+    """Copia el runtime del dispositivo a `RUNTIMES_DIR/<id>/` y devuelve la carpeta.
 
     Si esa versión ya está copiada no hace nada. Si no, copia a una carpeta de
     trabajo y la renombra al final: una copia interrumpida (el dispositivo se
     desenchufa a mitad) no deja nada que parezca bueno. Del dispositivo solo se
-    lee, y cada fichero se cierra al copiarlo."""
+    lee, y cada fichero se cierra al copiarlo.
+    """
     destino = RUNTIMES_DIR / stamp_id(stamp)
     try:
         if ((destino / RUNTIME_STAMP).read_text(encoding="utf-8") == stamp
@@ -732,6 +796,7 @@ def copy_runtime(key: str, src: Path, stamp: str) -> Path:
 
 
 def _dentro(ruta: Path, raiz: Path) -> bool:
+    """Indica si `ruta` está dentro de `raiz`, una vez resueltas."""
     try:
         ruta.resolve().relative_to(raiz.resolve())
         return True
@@ -740,8 +805,14 @@ def _dentro(ruta: Path, raiz: Path) -> bool:
 
 
 def host_python(root: Path | None = None) -> str | None:
-    """Un Python del EQUIPO, o None. Uno que viva en el dispositivo no vale: al
-    desenchufarlo, la tarea se quedaría sin intérprete."""
+    """Devuelve un Python del EQUIPO, o `None`.
+
+    Uno que viva en el dispositivo no vale: al desenchufarlo, la tarea se
+    quedaría sin intérprete.
+
+    Args:
+        root: El dispositivo, cuyos Python se descartan.
+    """
     nombres = ("python", "python3") if IS_WIN else ("python3", "python")
     for exe in (sys.executable, *(shutil.which(n) for n in nombres)):
         if not exe:
@@ -753,10 +824,17 @@ def host_python(root: Path | None = None) -> str | None:
 
 
 def choose_python(root: Path) -> tuple[str, dict | None, str]:
-    """(python, runtime, nota): con qué Python va a arrancar el vigilante.
+    """Elige con qué Python arrancará el vigilante.
 
     La copia del del dispositivo si lleva uno para este equipo; si no, el del
-    sistema, con una nota que `status` enseña. RuntimeError si no hay ninguno."""
+    sistema, con una nota que `status` enseña.
+
+    Returns:
+        `(python, runtime, nota)`.
+
+    Raises:
+        RuntimeError: Si no hay ninguno.
+    """
     encontrado = device_runtime(root)
     if encontrado:
         key, src, stamp = encontrado
@@ -776,7 +854,7 @@ def choose_python(root: Path) -> tuple[str, dict | None, str]:
 
 
 def _runtime_root(exe: str | None) -> Path | None:
-    """La carpeta de `RUNTIMES_DIR` a la que pertenece ese intérprete, si alguna."""
+    """Devuelve la carpeta de `RUNTIMES_DIR` de ese intérprete, si es de allí."""
     if not exe:
         return None
     try:
@@ -787,12 +865,13 @@ def _runtime_root(exe: str | None) -> Path | None:
 
 
 def prune_runtimes(cfg: dict) -> None:
-    """Recoge las copias que ya no usa nadie.
+    """Recoge las copias del Python que ya no usa nadie.
 
     Se conservan tres: la de `python_exe` (con la que se lanza), la de
     `task_python` (con la que arranca la tarea al iniciar sesión, que puede ser
-    otra si no se pudo volver a registrar) y la del proceso actual. Lo que no se
-    pueda borrar —en uso— se queda para la próxima vez."""
+    otra si no se pudo volver a registrar) y la del proceso actual. Lo que no
+    se pueda borrar (en uso) se queda para la próxima vez.
+    """
     guardar = {r.name for r in (_runtime_root(cfg.get("python_exe")),
                                 _runtime_root(cfg.get("task_python")),
                                 _runtime_root(sys.executable)) if r}
@@ -808,16 +887,23 @@ def prune_runtimes(cfg: dict) -> None:
 def register(cfg: dict) -> str:
     """Registra la tarea (Windows) o el servicio de usuario (Linux) con `cfg`.
 
-    De módulo para que los tests no registren nada de verdad."""
+    Función de módulo para que los tests no registren nada de verdad.
+
+    Returns:
+        El mensaje de lo que ha hecho, para el diario.
+    """
     return register_windows(cfg) if IS_WIN else register_linux(cfg)
 
 
 def refresh_runtime(root: Path, cfg: dict) -> dict:
-    """Si el dispositivo trae otro Python que el de la copia, la refresca.
+    """Refresca la copia del Python si el dispositivo trae otro.
 
-    Devuelve el `cfg` con el que seguir (el mismo si no había nada que hacer).
     Nunca lanza: un refresco que falla deja el vigilante con la copia que ya
-    tenía, que sigue funcionando, y lo apunta en el diario."""
+    tenía, que sigue funcionando, y lo apunta en el diario.
+
+    Returns:
+        El `cfg` con el que seguir (el mismo si no había nada que hacer).
+    """
     encontrado = device_runtime(root)
     if encontrado is None:
         return cfg
@@ -846,14 +932,14 @@ def refresh_runtime(root: Path, cfg: dict) -> dict:
     return nuevo
 
 
-# ---------------------------------------------------------------------------
-# Lanzamiento de runsync
-# ---------------------------------------------------------------------------
-
 def python_for_launch(cfg: dict) -> str:
+    """Devuelve el Python con el que lanzar runsync.
+
+    En Windows, `pythonw`: sin él cada lanzamiento abre una consola.
+    """
     exe = cfg.get("python_exe") or sys.executable
     if IS_WIN:
-        # pythonw: sin él, cada lanzamiento abre una consola en la cara.
+        # Sin pythonw, cada lanzamiento abre una consola.
         w = Path(exe).with_name("pythonw.exe")
         if w.exists():
             return str(w)
@@ -861,12 +947,13 @@ def python_for_launch(cfg: dict) -> str:
 
 
 def _vivo_aqui(root: Path, rel: Path) -> dict | None:
-    """Ese registro del dispositivo, si es de un proceso vivo de ESTE equipo.
+    """Devuelve ese registro del dispositivo si es de un proceso vivo de ESTE equipo.
 
-    Solo de este equipo: el fichero viaja dentro del dispositivo, así que el pid
-    que dejó otra máquina no dice nada de la nuestra. No se limpia lo que haya
-    quedado rancio —de eso se encarga runsync—: aquí no se escribe en el
-    dispositivo, que bloquearía su extracción."""
+    Solo de este equipo: el fichero viaja dentro del dispositivo, así que el
+    pid de otra máquina no dice nada de la nuestra. No limpia lo rancio (de eso
+    se encarga runsync): aquí no se escribe en el dispositivo, que bloquearía
+    su extracción.
+    """
     info = read_json(root / rel)
     if not isinstance(info, dict) or info.get("host") != HOST:
         return None
@@ -878,12 +965,13 @@ def _vivo_aqui(root: Path, rel: Path) -> dict | None:
 
 
 def aplicacion_en_marcha(root: Path) -> str | None:
-    """Qué hay ya en marcha para este dispositivo en este equipo, o None.
+    """Devuelve qué hay ya en marcha para este dispositivo en este equipo, o `None`.
 
-    Lanzar encima de una ventana abierta o de un servicio en marcha no aporta
-    nada y puede estorbar: dos sincronizaciones a la vez se pelean por el lock de
-    bisync, y una segunda ventana le quitaría el servicio a la primera. Se
-    devuelve la frase para el diario, que es lo único que se hace con esto."""
+    Lanzar encima de una ventana abierta o de un servicio no aporta nada y
+    estorba: dos sincronizaciones a la vez se pelean por el lock de bisync, y
+    una segunda ventana le quitaría el servicio a la primera. Se devuelve la
+    frase para el diario, que es lo único que se hace con esto.
+    """
     ventana = _vivo_aqui(root, UI_LOCK_REL)
     if ventana is not None:
         return f"la ventana de runsync ya está abierta (pid {ventana.get('pid')})"
@@ -894,12 +982,17 @@ def aplicacion_en_marcha(root: Path) -> str | None:
 
 
 def launch(root: Path, cfg: dict) -> bool:
+    """Lanza runsync según el modo de `cfg`.
+
+    Returns:
+        `True` si lo ha lanzado.
+    """
     mode = cfg.get("mode", "ui")
     args = [python_for_launch(cfg), str(root / STRUCT_MARKER)]
     # Ni parejas ni intervalo: son los del servicio y runsync los lee del
-    # dispositivo. Un watch.json de una versión anterior que los traiga no
-    # manda. Y `sync` va por --auto --once y no por `runsync.py <parejas>`:
-    # sin parejas eso era `runsync.py` a secas, que abre la ventana.
+    # dispositivo (un `watch.json` antiguo que los traiga no manda). `sync` va
+    # por `--auto --once`: sin parejas, `runsync.py` a secas abriría la
+    # ventana.
     if mode == "daemon":
         args.append("--auto")
     elif mode == "sync":
@@ -911,7 +1004,7 @@ def launch(root: Path, cfg: dict) -> bool:
         log("aviso: modo 'ui' sin DISPLAY; runsync no podrá abrir ventana "
             "(usa --mode daemon o --mode sync en equipos sin escritorio)")
 
-    # cwd en el equipo, NUNCA en el dispositivo: un cwd dentro del dispositivo impide extraerlo.
+    # cwd en el equipo, NUNCA en el dispositivo: impediría extraerlo.
     kwargs: dict = {"stdin": subprocess.DEVNULL, "cwd": str(HOST_DIR), "close_fds": True}
     handle = None
     if mode == "sync":
@@ -938,11 +1031,16 @@ def launch(root: Path, cfg: dict) -> bool:
     return True
 
 
-# ---------------------------------------------------------------------------
-# El bucle del vigilante
-# ---------------------------------------------------------------------------
-
 def watch_loop(once: bool = False) -> int:
+    """Es el bucle del vigilante: sondea y lanza una vez por conexión.
+
+    Args:
+        once: Una sola pasada, sin dormir (`run --once`) y sin esperar el
+            segundo sondeo.
+
+    Returns:
+        0 al terminar.
+    """
     cfg = read_json(CONFIG_FILE)
     poll = max(1.0, float(cfg.get("poll_seconds", POLL_SECONDS)))
     STOP_FILE.unlink(missing_ok=True)
@@ -963,10 +1061,10 @@ def watch_loop(once: bool = False) -> int:
                 if state.get("launched") or state.get("root"):
                     log("dispositivo no disponible; disparo rearmado")
                     state.update({"launched": False, "root": None})
-                    # Si lo que queda es su entrada, se ha cerrado el contenedor
-                    # con la unidad puesta: es «Expulsar», no una conexión nueva.
-                    # Sin apuntarlo aquí, un vigilante que no lo vio cerrado
-                    # —instalado con el contenedor abierto— pedía la contraseña.
+                    # Si lo que queda es su entrada, se ha cerrado el
+                    # contenedor con la unidad puesta: es «Expulsar», no una
+                    # conexión nueva. Sin apuntarlo, un vigilante instalado con
+                    # el contenedor abierto pediría la contraseña.
                     if not state.get("vestibule"):
                         cerrado = find_vestibule(cfg)
                         if cerrado is not None:
@@ -975,8 +1073,8 @@ def watch_loop(once: bool = False) -> int:
                 stable = 0
                 # ¿Está el dispositivo, pero cerrado? Una vez por conexión: si
                 # se cancela la contraseña no se vuelve a preguntar hasta que
-                # desaparezca y vuelva. Tampoco después de «Expulsar»: la unidad
-                # sigue puesta y lo que se quiere es quitarla.
+                # desaparezca y vuelva, ni tras «Expulsar» (la unidad sigue
+                # puesta y lo que se quiere es quitarla).
                 vestibule = find_vestibule(cfg)
                 if vestibule is None:
                     stable_vestibule = 0
@@ -1000,25 +1098,25 @@ def watch_loop(once: bool = False) -> int:
                     log(f"dispositivo detectado en {root}")
                     ocupado = aplicacion_en_marcha(root)
                     if ocupado:
-                        # El disparo se da por gastado igual que si se hubiera
-                        # lanzado: reintentarlo cada minuto mientras el usuario
-                        # tiene la ventana abierta solo llenaría el diario. Se
-                        # rearma al desaparecer el dispositivo, como siempre.
+                        # El disparo se da por gastado como si se hubiera
+                        # lanzado: reintentarlo cada minuto con la ventana
+                        # abierta solo llenaría el diario. Se rearma al
+                        # desaparecer el dispositivo.
                         log(f"no lanzo nada: {ocupado}")
                         state.update({"launched": True, "root": str(root),
                                       "last_launch": stamp(), "last_launch_ok": None,
                                       "last_skip": ocupado})
                         stable = 0
                     else:
-                        # Antes de lanzar: si el dispositivo trae otro Python, se
-                        # lanza ya con la copia nueva.
+                        # Antes de lanzar: si el dispositivo trae otro Python,
+                        # se lanza ya con la copia nueva.
                         cfg = refresh_runtime(root, cfg)
                         ok = launch(root, cfg)
                         state.update({"launched": ok, "root": str(root),
                                       "last_launch": stamp(), "last_launch_ok": ok,
                                       "last_skip": None})
-                        # Si el lanzamiento falla no se da por hecho: se reintenta
-                        # en ~1 min, por si el dispositivo se estaba desbloqueando.
+                        # Si falla se reintenta en ~1 min, por si el
+                        # dispositivo se estaba desbloqueando.
                         stable = 0 if ok else -int(60 / poll)
                     write_json(STATE_FILE, state)
             else:
@@ -1045,8 +1143,13 @@ def watch_loop(once: bool = False) -> int:
 
 
 def stop_running_watcher() -> str | None:
-    """Para el vigilante que hubiera: primero por las buenas (fichero 'stop'),
-    y por las malas si no contesta."""
+    """Para el vigilante que hubiera.
+
+    Primero por las buenas (fichero `stop`) y, si no contesta, por las malas.
+
+    Returns:
+        Qué ha hecho, o `None` si no había ninguno en marcha.
+    """
     if IS_WIN:
         run_quiet(["schtasks", "/End", "/TN", TASK_NAME])
     elif shutil.which("systemctl"):
@@ -1069,13 +1172,6 @@ def stop_running_watcher() -> str | None:
         return f"vigilante anterior (pid {pid}) terminado a la fuerza."
     return f"vigilante anterior (pid {pid}) detenido."
 
-
-# ---------------------------------------------------------------------------
-# Registro en el sistema: tarea (Windows) / servicio de usuario (Linux)
-#
-# Siempre para el USUARIO que ejecuta 'install', y disparado por su inicio de
-# sesión: así el vigilante vuelve solo tras un reinicio o un apagado.
-# ---------------------------------------------------------------------------
 
 TASK_XML = """<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
@@ -1128,10 +1224,15 @@ TASK_XML = """<?xml version="1.0" encoding="UTF-16"?>
   </Actions>
 </Task>
 """
+"""Plantilla de la tarea programada de Windows.
+
+Siempre para el USUARIO que ejecuta `install` y disparada por su inicio de
+sesión: así el vigilante vuelve solo tras un reinicio o un apagado.
+"""
 
 
 def current_user() -> str:
-    """El usuario que está ejecutando esto; es para quien se registra la tarea."""
+    """Devuelve el usuario que ejecuta esto, para quien se registra la tarea."""
     if IS_WIN:
         domain = os.environ.get("USERDOMAIN", "")
         user = os.environ.get("USERNAME", "")
@@ -1144,16 +1245,18 @@ def current_user() -> str:
 
 TASK_DESCRIPTION = ("Vigila la conexion del dispositivo (fichero PRDRIVE) y lanza "
                     "runsync.py.")
+"""Descripción de la tarea programada del vigilante."""
 
 
 def task_xml(user: str, command: str, arguments: str, workdir: str,
              description: str) -> str:
-    """El XML de una tarea por usuario que arranca al iniciar sesión.
+    """Devuelve el XML de una tarea por usuario que arranca al iniciar sesión.
 
-    Aparte de `register_windows()` para que el agente residente registre la suya
-    con las mismas trampas ya resueltas: UTF-16, `DisallowStartIfOnBatteries`
-    en false (un portátil a batería no arrancaba nada) y `ExecutionTimeLimit`
-    PT0S (sin él, Windows la mata a las 72 h)."""
+    Está aparte de `register_windows()` para que el agente residente registre
+    la suya con las mismas trampas ya resueltas: UTF-16,
+    `DisallowStartIfOnBatteries` en false (un portátil a batería no arrancaba
+    nada) y `ExecutionTimeLimit` PT0S (sin él, Windows la mata a las 72 h).
+    """
     return TASK_XML.format(user=xml_escape(user), command=xml_escape(command),
                            arguments=xml_escape(arguments), workdir=xml_escape(workdir),
                            description=xml_escape(description))
@@ -1161,7 +1264,11 @@ def task_xml(user: str, command: str, arguments: str, workdir: str,
 
 def register_task(name: str, command: str, arguments: str, workdir: Path,
                   description: str, user: str | None = None) -> str:
-    """Registra (o sustituye) la tarea `name`. Lanza RuntimeError si no puede."""
+    """Registra (o sustituye) la tarea `name` y devuelve el mensaje de lo hecho.
+
+    Raises:
+        RuntimeError: Si no puede crearla.
+    """
     user = user or current_user()
     xml = task_xml(user, command, arguments, str(workdir), description)
     workdir.mkdir(parents=True, exist_ok=True)
@@ -1184,17 +1291,20 @@ def register_task(name: str, command: str, arguments: str, workdir: Path,
 
 
 def register_windows(cfg: dict) -> str:
+    """Registra la tarea del vigilante con la copia de este script en el equipo."""
     return register_task(TASK_NAME, python_for_launch(cfg), f'"{SELF_COPY}" run',
                          HOST_DIR, TASK_DESCRIPTION, cfg.get("user"))
 
 
 def desktop_exec(args: list[str]) -> str:
-    """La línea `Exec=` de un .desktop, según la *Desktop Entry Specification*
-    («The Exec key»): cada argumento entre comillas dobles, con `"`, `` ` ``,
-    `$` y la barra invertida escapados con una barra; ENCIMA, la regla de
-    escape de todo valor de tipo cadena dobla cada barra; y el `%` (códigos de
-    campo) se dobla. Sin comillas, una ruta con espacios —un usuario «Ana
-    María»— partía la orden en dos."""
+    """Devuelve la línea `Exec=` de un `.desktop`.
+
+    Según la *Desktop Entry Specification* («The Exec key»): cada argumento
+    entre comillas dobles, con `"`, `` ` ``, `$` y la barra invertida escapados
+    con una barra; ENCIMA, la regla de escape de todo valor de tipo cadena
+    dobla cada barra; y el `%` (códigos de campo) se dobla. Sin comillas, una
+    ruta con espacios (un usuario «Ana María») partía la orden en dos.
+    """
     partes = []
     for arg in args:
         citado = "".join("\\" + ch if ch in '"`$\\' else ch for ch in arg)
@@ -1203,7 +1313,7 @@ def desktop_exec(args: list[str]) -> str:
 
 
 def autostart_desktop(name: str, args: list[str], comment: str = "") -> str:
-    """Un autostart XDG (~/.config/autostart/*.desktop) que lanza `args`."""
+    """Devuelve un autostart XDG (`~/.config/autostart/*.desktop`) que lanza `args`."""
     return ("[Desktop Entry]\nType=Application\n"
             f"Name={name}\n"
             + (f"Comment={comment}\n" if comment else "")
@@ -1224,9 +1334,15 @@ WorkingDirectory={workdir}
 [Install]
 WantedBy=default.target
 """
+"""Unidad de usuario de systemd del vigilante."""
 
 
 def register_linux(cfg: dict) -> str:
+    """Registra la unidad de usuario de systemd o, sin systemd, un autostart XDG.
+
+    Returns:
+        El mensaje de lo hecho.
+    """
     python = cfg.get("python_exe") or sys.executable
     user = cfg.get("user") or current_user()
     if shutil.which("systemctl"):
@@ -1260,6 +1376,11 @@ def register_linux(cfg: dict) -> str:
 
 
 def unregister() -> list[str]:
+    """Quita la tarea, la unidad y el autostart que hubiera.
+
+    Returns:
+        Un mensaje por cada cosa quitada.
+    """
     msgs = []
     if IS_WIN:
         res = run_quiet(["schtasks", "/Delete", "/TN", TASK_NAME, "/F"])
@@ -1280,6 +1401,11 @@ def unregister() -> list[str]:
 
 
 def start_now(cfg: dict) -> str:
+    """Arranca el vigilante ya, sin esperar al próximo inicio de sesión.
+
+    Returns:
+        El mensaje de cómo ha ido.
+    """
     if IS_WIN:
         res = run_quiet(["schtasks", "/Run", "/TN", TASK_NAME])
         if res.returncode == 0:
@@ -1302,13 +1428,14 @@ def start_now(cfg: dict) -> str:
         return f"No he podido arrancarlo ahora ({e}); arrancará al iniciar sesión."
 
 
-# ---------------------------------------------------------------------------
-# Órdenes
-# ---------------------------------------------------------------------------
-
 def device_root_from_here() -> Path:
-    """'install' se ejecuta desde el dispositivo: la raíz es el padre de
-    la carpeta de la aplicación."""
+    """Devuelve la raíz del dispositivo desde el que se ejecuta `install`.
+
+    Es el padre de la carpeta de la aplicación.
+
+    Raises:
+        SystemExit: Si no se ejecuta desde un dispositivo.
+    """
     root = SCRIPT_DIR.parent
     if not (root / STRUCT_MARKER).is_file():
         sys.exit(f"'install' hay que ejecutarlo desde el dispositivo: no "
@@ -1317,12 +1444,15 @@ def device_root_from_here() -> Path:
 
 
 def ensure_control_file(root: Path) -> str | None:
-    """Se asegura de que hay un `.prdrive/PRDRIVE` y devuelve su 'id'.
+    """Se asegura de que hay un `.prdrive/PRDRIVE` y devuelve su `id`.
 
-    Un PRDRIVE que ya traiga contenido NO se toca (es tuyo): la unidad se
-    reconocerá por su sola presencia. Uno vacío sí se rellena con la plantilla,
-    que no pierde nada y añade el id. Si el volumen es de solo lectura, se sigue
-    adelante sin id.
+    Un PRDRIVE que ya traiga contenido NO se toca (es de quien lo puso): la
+    unidad se reconocerá por su sola presencia. Uno vacío sí se rellena con la
+    plantilla, que no pierde nada y añade el id. Si el volumen es de solo
+    lectura se sigue adelante sin id.
+
+    Returns:
+        El `id`, o `None` si no lo hay.
     """
     path = root / CONTROL_FILE
     try:
@@ -1345,6 +1475,14 @@ def ensure_control_file(root: Path) -> str | None:
 
 
 def cmd_install(args: argparse.Namespace) -> int:
+    """Instala el vigilante en este equipo.
+
+    Para el vigilante anterior, copia este script y el Python del dispositivo,
+    escribe `watch.json`, registra la tarea y la arranca.
+
+    Returns:
+        0 si ha ido bien; 1 si no ha podido.
+    """
     dispositivo = device_root_from_here()
     user = current_user()
     print(f"Dispositivo: {dispositivo}")
@@ -1382,8 +1520,8 @@ def cmd_install(args: argparse.Namespace) -> int:
     }
     write_json(CONFIG_FILE, cfg)
 
-    # El dispositivo está puesto AHORA (se está instalando desde él): se marca como ya
-    # atendido para no abrir una UI en la cara nada más instalar.
+    # El dispositivo está puesto AHORA (se instala desde él): se marca como ya
+    # atendido para no abrir una UI nada más instalar.
     write_json(STATE_FILE, {"launched": True, "root": str(dispositivo),
                             "note": "montaje presente durante la instalación"})
 
@@ -1411,6 +1549,7 @@ def cmd_install(args: argparse.Namespace) -> int:
 
 
 def cmd_uninstall(_args: argparse.Namespace) -> int:
+    """Quita el vigilante de este equipo; el dispositivo no se toca."""
     for m in unregister():
         print(f"  {m}")
     msg = stop_running_watcher()
@@ -1428,6 +1567,7 @@ def cmd_uninstall(_args: argparse.Namespace) -> int:
 
 
 def registered_state() -> str:
+    """Devuelve una frase con lo que el sistema tiene registrado del vigilante."""
     if IS_WIN:
         res = run_quiet(["schtasks", "/Query", "/TN", TASK_NAME])
         return (f"tarea '{TASK_NAME}': registrada" if res.returncode == 0
@@ -1442,18 +1582,18 @@ def registered_state() -> str:
 
 
 def copia_al_dia() -> bool:
-    """¿La copia del vigilante en este equipo es este mismo penwatch.py?
+    """Indica si la copia del vigilante en este equipo es este mismo `penwatch.py`.
 
-    Llamado desde el dispositivo —la ventana, o `penwatch status` desde
-    `.prdrive/`—, compara la copia que corre en el equipo con la que trae el
-    dispositivo. Nada pone esa copia al día salvo `install`, así que tras
-    actualizar el dispositivo el equipo puede seguir con la anterior, haciendo
-    lo que hacía entonces.
+    Llamado desde el dispositivo (la ventana, o `penwatch status` desde
+    `.prdrive/`), compara la copia que corre en el equipo con la que trae el
+    dispositivo. Nada la pone al día salvo `install`, así que tras actualizar
+    el dispositivo el equipo puede seguir con la anterior.
 
-    Desde la propia copia no hay con qué comparar, y sin poder leerse a sí mismo
-    tampoco: en los dos casos True, no se acusa a nadie sin pruebas. Sin copia
-    en el equipo, False: lo que el sistema tenga registrado apunta a un fichero
-    que no existe."""
+    Desde la propia copia no hay con qué comparar, y sin poder leerse a sí
+    mismo tampoco: en los dos casos `True`, no se acusa a nadie sin pruebas.
+    Sin copia en el equipo, `False`: lo que el sistema tenga registrado apunta
+    a un fichero que no existe.
+    """
     propio = Path(__file__).resolve()
     if propio == SELF_COPY.resolve():
         return True
@@ -1467,13 +1607,15 @@ def copia_al_dia() -> bool:
         return False
 
 
-# Ancho de la columna de etiquetas de 'status'. Se saca aquí para que la CLI y
-# la UI de runsync pinten lo mismo sin repetir el formato.
 LABEL_WIDTH = 23
+"""Ancho de la columna de etiquetas de `status`.
+
+La CLI y la UI de runsync pintan lo mismo sin repetir el formato.
+"""
 
 
 def _python_row(cfg: dict) -> str:
-    """Con qué Python arranca el vigilante, y si es el suyo o el del sistema."""
+    """Devuelve con qué Python arranca el vigilante: el suyo o el del sistema."""
     exe = cfg.get("python_exe") or "(sin apuntar)"
     runtime = cfg.get("runtime")
     if runtime:
@@ -1483,11 +1625,12 @@ def _python_row(cfg: dict) -> str:
 
 
 def _disparo_row(state: dict) -> str:
-    """El último disparo: cuándo fue y cómo acabó.
+    """Devuelve el último disparo: cuándo fue y cómo acabó.
 
-    Un disparo puede no haber lanzado nada a propósito —ya había ventana abierta
-    o servicio en marcha—, y eso no es un fallo: poner ahí «FALLÓ» mandaría a
-    buscar una avería que no existe."""
+    Un disparo puede no haber lanzado nada a propósito (ya había ventana
+    abierta o servicio en marcha) y eso no es un fallo: poner «FALLÓ» mandaría
+    a buscar una avería que no existe.
+    """
     cuando = state.get("last_launch") or "(ninguno)"
     if state.get("last_skip"):
         return f"{cuando} — sin lanzar: {state['last_skip']}"
@@ -1497,11 +1640,12 @@ def _disparo_row(state: dict) -> str:
 
 
 def status_rows() -> list[tuple[str, str]]:
-    """Qué hay instalado y cómo está, como (etiqueta, valor).
+    """Devuelve qué hay instalado y cómo está, como pares `(etiqueta, valor)`.
 
-    Una etiqueta vacía es una línea suelta, sin columna. Devolver filas en vez de
-    imprimirlas permite que la UI de runsync enseñe exactamente lo mismo que la
-    línea de comandos sin tener que analizar texto."""
+    Una etiqueta vacía es una línea suelta, sin columna. Devolver filas en vez
+    de imprimirlas permite que la UI de runsync enseñe exactamente lo mismo que
+    la línea de comandos sin analizar texto.
+    """
     cfg = read_json(CONFIG_FILE)
     state = read_json(STATE_FILE)
     filas = [
@@ -1512,9 +1656,8 @@ def status_rows() -> list[tuple[str, str]]:
     if not cfg:
         filas.append(("", "Sin configuración: este equipo no tiene el vigilante instalado."))
     else:
-        # Parejas e intervalo ya no se escriben, pero un watch.json de una
-        # versión anterior los trae, y la copia vieja que lo lee los sigue
-        # usando: se enseñan mientras estén, que es justo cuando importan.
+        # Parejas e intervalo solo los traen los `watch.json` antiguos, y la
+        # copia vieja que los lee los usa: se enseñan mientras estén.
         filas += [
             ("Usuario registrado", f"{cfg.get('user')}"),
             ("Modo", f"{cfg.get('mode')}"
@@ -1542,14 +1685,14 @@ def status_rows() -> list[tuple[str, str]]:
 
 
 def _cerrado_row(cfg: dict) -> str:
-    """Sin dispositivo a la vista: ¿está puesto pero cifrado y cerrado?"""
+    """Devuelve si, sin dispositivo a la vista, está puesto pero cifrado y cerrado."""
     vestibule = find_vestibule(cfg)
     return (f"cifrado y cerrado, en {vestibule}" if vestibule is not None
             else "no detectado")
 
 
 def log_tail(lines: int = 10) -> list[str]:
-    """Las últimas líneas del diario del vigilante, si lo hay."""
+    """Devuelve las últimas líneas del diario del vigilante, si lo hay."""
     try:
         if not LOG_FILE.exists():
             return []
@@ -1559,7 +1702,7 @@ def log_tail(lines: int = 10) -> list[str]:
 
 
 def probe_rows() -> list[tuple[str, str]]:
-    """(raíz candidata, qué se ha encontrado en ella)."""
+    """Devuelve `(raíz candidata, qué se ha encontrado en ella)`."""
     cfg = read_json(CONFIG_FILE)
     filas = []
     for root in candidate_roots(cfg):
@@ -1583,10 +1726,12 @@ def probe_rows() -> list[tuple[str, str]]:
 
 
 def detected_pen() -> Path | None:
+    """Devuelve la raíz del dispositivo con la configuración instalada, o `None`."""
     return find_pen(read_json(CONFIG_FILE))
 
 
 def cmd_status(_args: argparse.Namespace) -> int:
+    """Imprime qué hay instalado y la cola del diario."""
     for label, value in status_rows():
         print(f"{label:<{LABEL_WIDTH}} : {value}" if label else value)
     tail = log_tail()
@@ -1598,6 +1743,7 @@ def cmd_status(_args: argparse.Namespace) -> int:
 
 
 def cmd_probe(_args: argparse.Namespace) -> int:
+    """Imprime dónde busca el dispositivo y qué encuentra."""
     print(f"Buscando el fichero de control '{CONTROL_FILE}' en la raíz de:")
     for root, note in probe_rows():
         print(f"  {root:<28} {note}")
@@ -1607,10 +1753,15 @@ def cmd_probe(_args: argparse.Namespace) -> int:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
+    """Ejecuta el bucle del vigilante; es lo que lanza la tarea."""
     return watch_loop(once=args.once)
 
 
 def main() -> int:
+    """Atiende la línea de comandos del vigilante.
+
+    Los subcomandos son `install`, `uninstall`, `status`, `probe` y `run`.
+    """
     ap = argparse.ArgumentParser(
         description="Arranque automático de runsync al conectar el dispositivo.")
     sub = ap.add_subparsers(dest="cmd", required=True)
