@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
-"""
-El registro de la flota: un fichero por dispositivo, y cada uno solo el suyo.
+"""El registro de la flota: un fichero por dispositivo, y cada uno solo el suyo.
 
-Lo que se comprueba es lo que hace que esto no pueda estropear nada: que la ruta
-sale del catálogo y lleva el id dentro (así ningún dispositivo escribe sobre la
-nota de otro), que lo que se publica se relee igual, que una nota rota o de una
-versión futura no tumba la lista, y que la obsolescencia es una cuenta de días y
-no una impresión. Y lo de la ficha: que la lista de equipos se hereda de la nota
-anterior sin crecer ni repetirse, que el freno solo la deja pasar al cambiar de
-equipo, y desde cuándo falla.
+Lo que se comprueba es lo que hace que esto no pueda estropear nada: que la
+ruta sale del catálogo y lleva el id dentro (así ningún dispositivo escribe
+sobre la nota de otro), que lo que se publica se relee igual, que una nota rota
+o de una versión futura no tumba la lista, y que la obsolescencia es una cuenta
+de días y no una impresión. Y lo de la ficha: que la lista de equipos se hereda
+de la nota anterior sin crecer ni repetirse, que el freno solo la deja pasar al
+cambiar de equipo, y desde cuándo falla.
 
 El remoto se sustituye entero (`catalog.run`): aquí no se toca la red.
 """
@@ -33,7 +32,7 @@ DISP = fleet.Dispositivo(id="a1b2c3", nombre="el pendrive azul", version="0.1.4"
                          last_seen=AYER, last_result=fleet.RESULTADO_OK)
 
 
-# --- dónde va cada nota ------------------------------------------------------
+# dónde va cada nota
 c("la carpeta cuelga de la del catálogo", fleet.carpeta_de(ENDPOINT),
   "nas:/prdrive-catalog/devices")
 c("y sigue al catálogo si lo mueven",
@@ -44,7 +43,7 @@ c("dos dispositivos, dos ficheros",
   fleet.fichero(ENDPOINT, "otro") != fleet.fichero(ENDPOINT, "a1b2c3"), True)
 
 
-# --- el texto de la nota -----------------------------------------------------
+# el texto de la nota
 texto = fleet.dumps(DISP)
 c("lo publicado se relee exactamente igual", fleet.parse(texto), DISP)
 c.contains("y lleva cabecera de quién lo escribe", texto, "nota de presencia")
@@ -60,9 +59,11 @@ futura = fleet.parse('id = "z9"\nnombre = "el nuevo"\ncosa_nueva = 42\n')
 c("una nota de una versión futura se lee igual", (futura.id, futura.nombre), ("z9", "el nuevo"))
 c("y lo que falta se enseña como desconocido", futura.version, "desconocida")
 
-# --- dónde ha estado, y desde cuándo falla ------------------------------------
+# dónde ha estado, y desde cuándo falla
+#
 # Dos listas paralelas y no una lista de tablas: el serializador solo escribe
-# escalares y listas de cadenas, y una nota de presencia no merece enseñarle más.
+# escalares y listas de cadenas, y una nota de presencia no merece enseñarle
+# más.
 Equipo = fleet.Equipo
 COMPLETA = DISP._replace(
     equipos=(Equipo("PORTATIL", AYER), Equipo("OFICINA-07", HACE_UN_MES)),
@@ -93,7 +94,7 @@ c("más equipos de la cuenta se cortan al leer", len(larga.equipos), fleet.MAX_E
 c("y se quedan los primeros, que son los más recientes", larga.equipos[0].nombre, "E0")
 
 
-# --- obsoleto es una cuenta de días -------------------------------------------
+# obsoleto es una cuenta de días
 c("visto ayer no es obsoleto", DISP.obsoleto(), False)
 c("visto hace un mes sí", DISP._replace(last_seen=HACE_UN_MES).obsoleto(), True)
 c("justo en el límite todavía no",
@@ -108,9 +109,11 @@ c("los vistos hace poco van primero",
   ["a1b2c3", "viejo"])
 
 
-# --- publicar ----------------------------------------------------------------
+# publicar
 def falso_run(llamadas, rc=0, stderr=""):
+    """Devuelve un `catalog.run` de mentira que apunta las órdenes."""
     def _run(args):
+        """Apunta la orden y contesta con ese código y ese error."""
         llamadas.append(list(args))
         return subprocess.CompletedProcess(args, rc, stdout="", stderr=stderr)
     return _run
@@ -169,15 +172,18 @@ try:
             fleet.ruta_estado())["publicado"]["last_result"], "fallo en notas")
 
         def publicado():
+            """Devuelve lo último que el dispositivo apuntó como publicado."""
             return store.read_json(fleet.ruta_estado())["publicado"]
 
         c("con desde cuándo: de esa pareja no consta ninguna pasada buena",
           publicado()["ultima_buena"], fleet.SIN_BUENA)
 
-        # --- dónde ha estado ---------------------------------------------------
-        # La lista se hereda de la última nota publicada, con el equipo de ahora
-        # delante: ninguna escritura nueva en el dispositivo.
+        # dónde ha estado
+        #
+        # La lista se hereda de la última nota publicada, con el equipo de
+        # ahora delante: ninguna escritura nueva en el dispositivo.
         def equipos():
+            """Devuelve la lista de equipos de la última nota publicada."""
             return list(publicado().get("equipos", []))
 
         c("la nota lleva el equipo desde el que se publica", equipos(), ["PORTATIL"])
@@ -238,17 +244,23 @@ try:
           [e.nombre for e in fleet.nota(cfg).equipos], ["SOBREMESA"])
         (model.APP_DIR / "PRDRIVE").write_text("id=a1b2c3\n", encoding="utf-8")
 
-        # --- desde cuándo falla ----------------------------------------------
-        # Resultado y fecha salen de UNA lectura de `results`, así que no pueden
-        # contradecirse.
+        # desde cuándo falla
+        #
+        # Resultado y fecha salen de UNA lectura de `results`, así que no
+        # pueden contradecirse.
         cfg2 = model.parse_config({"defaults": CFG["defaults"], "pair": [
             CFG["pair"][0],
             {"name": "fotos", "local": "sync-data/fotos", "remote_path": "/R/fotos"}]})
 
         def registro(**parejas):
+            """Escribe el estado de las últimas pasadas con esas parejas."""
             store.write_json(results.ruta_estado(), {"parejas": parejas})
 
         def fallo(buena):
+            """Devuelve el registro de una pareja que falla.
+
+            Lleva la fecha de su última pasada buena.
+            """
             return {"cuando": "2026-09-20 10:00:00", "codigo": 1, "log": None,
                     "buena": buena}
 
@@ -273,6 +285,7 @@ try:
           fleet.publicar(cfg, CFG, forzar=True), False)
 
         def reventar(args):
+            """Hace que la orden falle como un remoto que ha desaparecido."""
             raise OSError("el remoto ha desaparecido")
         catalog.run = reventar
         c("y una excepción tampoco sale de aquí",
@@ -284,7 +297,7 @@ try:
         catalog.run = falso_run([])
         c("sin fichero de control no se publica nada", fleet.publicar(None, CFG), False)
 
-    # --- leer la flota -------------------------------------------------------
+    # leer la flota
     with sandbox():
         otros = [DISP, DISP._replace(id="d2", nombre="el del trabajo",
                                      last_seen=HACE_UN_MES)]
@@ -321,10 +334,12 @@ try:
         c("una carpeta que aún no existe es una flota vacía, sin aviso",
           fleet.leer(CFG), ([], None))
 
-        # --- quitar de la lista la nota de otro ------------------------------
-        # La única escritura de este módulo sobre el fichero de OTRO. No destruye
-        # nada —el dueño vuelve a publicarla en cuanto se enchufe—, pero sí tiene
-        # a alguien esperando respuesta, así que dice qué ha pasado.
+        # quitar de la lista la nota de otro
+        #
+        # La única escritura de este módulo sobre el fichero de OTRO. No
+        # destruye nada —el dueño vuelve a publicarla en cuanto se enchufe—,
+        # pero sí tiene a alguien esperando respuesta, así que dice qué ha
+        # pasado.
         llamadas = []
         catalog.run = falso_run(llamadas)
         c("quitar la nota de otro sale bien", fleet.olvidar("d2", CFG), None)
@@ -348,6 +363,7 @@ try:
         c("una nota que ya no está no es un fallo", fleet.olvidar("d2", CFG), None)
 
         def reventar_borrado(args):
+            """Hace que el borrado falle como un remoto caído a media orden."""
             raise OSError("el remoto se ha caído a media orden")
 
         catalog.run = reventar_borrado

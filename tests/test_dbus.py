@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
-"""
-El cliente de D-Bus (`common/dbus.py`), los avisos (`common/avisos.py`) y las
-sondas de la moderación (`common/moderacion.py`).
+"""El cliente de D-Bus (`common/dbus.py`), los avisos y las sondas de moderación.
 
-Nada de esto habla con un bus de verdad: el bus es falso, un hilo al otro lado
-de un `socketpair` (o de un socket en un temporal, para lo que abre el bus por
-su dirección) que saluda como dice la especificación y contesta lo que el test
-le manda. La serialización se compara con bytes calculados a mano con las
-reglas de la *D-Bus Specification* y con el `Hello` canónico que cualquier
-cliente manda al conectarse.
+Cubre `common/dbus.py`, `common/avisos.py` y `common/moderacion.py`. Nada de
+esto habla con un bus de verdad: el bus es falso, un hilo al otro lado de un
+`socketpair` (o de un socket en un temporal, para lo que abre el bus por su
+dirección) que saluda como dice la especificación y contesta lo que el test le
+manda. La serialización se compara con bytes calculados a mano con las reglas
+de la *D-Bus Specification* y con el `Hello` canónico que cualquier cliente
+manda al conectarse.
 """
 
 import os
@@ -24,9 +23,10 @@ from common import avisos, dbus, moderacion
 c = Checks("D-Bus, avisos y moderación")
 
 
-# --- serialización ---------------------------------------------------------------
+# serialización
 
 def b(firma, *valores) -> bytes:
+    """Devuelve los bytes que serializa el escritor para esa firma y esos valores."""
     return bytes(dbus.Escritor().escribir(firma, valores).buf)
 
 
@@ -94,14 +94,17 @@ c("dirección: path con %XX, abstract y lo que no es unix",
   ["/run/user/1000/bus", b"\0/tmp/y"])
 
 
-# --- un bus falso ------------------------------------------------------------------
+# un bus falso
 
 class BusFalso(threading.Thread):
-    """El otro lado del socket: saluda, apunta lo que recibe y contesta con
-    `responder(mensaje)` → ("ok", firma, cuerpo) | ("error", nombre, texto) |
-    ("señal", Mensaje, luego) | None."""
+    """El otro lado del socket: saluda, apunta lo que recibe y contesta.
+
+    Contesta con `responder(mensaje)`, que devuelve `("ok", firma, cuerpo)`,
+    `("error", nombre, texto)`, `("señal", Mensaje, luego)` o `None`.
+    """
 
     def __init__(self, sock, responder=None):
+        """Prepara el bus sobre `sock`."""
         super().__init__(daemon=True)
         self.sock = sock
         self.responder = responder or (lambda m: None)
@@ -110,6 +113,11 @@ class BusFalso(threading.Thread):
         self.serie = 100
 
     def _linea(self, pendiente: bytes) -> tuple[bytes, bytes]:
+        """Lee del socket una línea del saludo.
+
+        Returns:
+            La línea y lo que sobra.
+        """
         while b"\r\n" not in pendiente:
             trozo = self.sock.recv(4096)
             if not trozo:
@@ -119,12 +127,14 @@ class BusFalso(threading.Thread):
         return linea, resto
 
     def mandar(self, tipo, campos, firma="", cuerpo=()):
+        """Manda un mensaje al cliente."""
         self.serie += 1
         if firma:
             campos = {**campos, dbus.SIGNATURE: firma}
         self.sock.sendall(dbus.Mensaje(tipo, self.serie, 0, campos, list(cuerpo)).a_bytes())
 
     def run(self):
+        """Hace el saludo y atiende los mensajes del cliente hasta que cierra."""
         try:
             nulo = self.sock.recv(1)
             self.auth.append(nulo)
@@ -166,6 +176,7 @@ class BusFalso(threading.Thread):
 
 
 def conectar(responder=None):
+    """Devuelve `(conexión del cliente, bus falso ya en marcha)`."""
     uno, otro = socket.socketpair()
     bus = BusFalso(otro, responder)
     bus.start()
@@ -174,6 +185,7 @@ def conectar(responder=None):
 
 
 def responder(m):
+    """Contesta `Suma` con la suma y `Rompe` con un error."""
     if m.miembro == "Suma":
         return ("ok", "i", [sum(m.cuerpo)])
     if m.miembro == "Rompe":
@@ -224,11 +236,12 @@ c("escuchar es un AddMatch con la regla",
 con.cerrar()
 
 
-# --- la mitad que contesta ------------------------------------------------------------
+# la mitad que contesta
 import _bus_falso as B  # noqa: E402
 
 
 def rompe():
+    """Manejador que falla adrede."""
     raise ValueError("adrede")
 
 
@@ -262,6 +275,7 @@ hilo.join()
 
 
 def reentrante(m):
+    """Contesta, y antes pregunta algo al que llama, como un watcher."""
     # Como un watcher que, antes de contestar, le pregunta algo al que llama.
     if m.miembro == "Registra":
         bus.mandar_despues = bus.llamar("/e/uno", dbus.PROPIEDADES, "Get", "ss",
@@ -283,7 +297,7 @@ c("emitir(): una señal con su ruta, interfaz y cuerpo",
 con.cerrar()
 
 
-# --- abrir por dirección ---------------------------------------------------------------
+# abrir por dirección
 
 def servir(ruta: Path, responder):
     """Un bus falso escuchando en un socket de fichero; atiende lo que llegue."""
@@ -293,6 +307,7 @@ def servir(ruta: Path, responder):
     atendidos: list[BusFalso] = []
 
     def aceptar():
+        """Atiende las conexiones que lleguen al socket de fichero."""
         while True:
             try:
                 s, _ = servidor.accept()
@@ -311,6 +326,7 @@ notificaciones: list[dbus.Mensaje] = []
 
 
 def escritorio(m):
+    """Hace de servidor de notificaciones: apunta `Notify` y devuelve un id."""
     if m.miembro == "Notify":
         notificaciones.append(m)
         return ("ok", "u", [7])
@@ -338,10 +354,12 @@ else:
     servidor.close()
 
 
-# --- moderación ------------------------------------------------------------------------
+# moderación
 
 def nm(valor):
+    """Devuelve el responder de NetworkManager con ese valor de `Metered`."""
     def responde(m):
+        """Contesta `Metered`, o error si preguntan otra cosa."""
         if m.miembro == "Get" and m.cuerpo == [moderacion.NM, "Metered"]:
             return ("ok", "v", [dbus.Variante("u", valor)])
         return ("error", "org.freedesktop.DBus.Error.ServiceUnknown", "no está")
@@ -373,6 +391,7 @@ c("en itinerancia: medida",
 
 
 def fuentes(**cada):
+    """Monta un `power_supply` de mentira y devuelve la energía leída."""
     raiz = tmpdir("prdrive-power-")
     for nombre, ficheros in cada.items():
         (raiz / nombre).mkdir()

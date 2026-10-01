@@ -1,19 +1,18 @@
 #!/usr/bin/env python3
-"""
-Detección de unidades, fichero de control y verificación final.
+"""Detección de unidades, fichero de control y verificación final.
 
-Las unidades ya no salen de un `Get-Volume` por PowerShell —tardaba 3,5 segundos
-medidos, y `_paso_destino` lo llamaba en el hilo de Tk al dibujar la primera
-pantalla del asistente— sino de cuatro llamadas a kernel32. Lo que se prueba aquí
-es `make_volume()`, la mitad pura de esa enumeración, más la tabla de tipos:
-`GetLogicalDrives` devuelve TAMBIÉN las unidades de red, que `Get-Volume` no
-devolvía y que no pueden ser el dispositivo, así que hay que descartarlas.
+Las unidades salen de cuatro llamadas a kernel32, no de un `Get-Volume` por
+PowerShell (3,5 segundos medidos, en el hilo de Tk al dibujar la primera
+pantalla del asistente). Lo que se prueba aquí es `make_volume()`, la mitad
+pura de esa enumeración, más la tabla de tipos: `GetLogicalDrives` devuelve
+TAMBIÉN las unidades de red, que no pueden ser el dispositivo, así que hay que
+descartarlas.
 
 También se comprueba que la copia de `CONTROL_FILE`/`CONTROL_TEMPLATE` que vive
-en `install/device.py` no se ha separado de la de `penwatch.py`. Están duplicadas
-a propósito —penwatch no puede depender del dispositivo, y el instalador acaba dentro de
-un .exe— pero si dejan de coincidir, el vigilante no reconocería los dispositivos que
-haga el instalador.
+en `install/device.py` no se ha separado de la de `penwatch.py`. Están
+duplicadas a propósito (penwatch no puede depender del dispositivo, y el
+instalador acaba dentro de un .exe) pero si dejan de coincidir, el vigilante no
+reconocería los dispositivos que haga el instalador.
 """
 
 import sys
@@ -25,7 +24,7 @@ from install import device
 
 c = Checks("instalador: unidades y verificación del dispositivo")
 
-# --- de lo que conteste el sistema a un Volume --------------------------------
+# de lo que conteste el sistema a un Volume
 sistema = device.make_volume("C", "Fixed", "Windows", "NTFS",
                              509604786176, 184530755584, system_drive="C:")
 pen = device.make_volume("E", "Removable", "PRDRIVE", "exFAT",
@@ -66,7 +65,7 @@ c("una unidad sin medio dentro no revienta", str(vacia.root), str(PureWindowsPat
 c("sale sin etiqueta", vacia.label, "")
 c("y sin tamaño", vacia.size, 0)
 
-# --- la tabla de tipos de GetDriveTypeW ---------------------------------------
+# la tabla de tipos de GetDriveTypeW
 c("DRIVE_REMOVABLE", device.DRIVE_TYPES[2], "Removable")
 c("DRIVE_FIXED", device.DRIVE_TYPES[3], "Fixed")
 c("DRIVE_REMOTE", device.DRIVE_TYPES[4], "Network")
@@ -80,7 +79,7 @@ c("las extraíbles sí", "Removable" in device.TIPOS_OCULTOS, False)
 c("y las fijas también, que muchos pendrives lo son",
   "Fixed" in device.TIPOS_OCULTOS, False)
 
-# --- el fichero de control ----------------------------------------------------
+# el fichero de control
 base = tmpdir()
 primero = device.ensure_control_file(base)
 c("se crea con un id", len(primero), 32)
@@ -94,7 +93,7 @@ c("renovar sí lo cambia", device.ensure_control_file(base, renew=True) != prime
 c("un PRDRIVE sin id se trata como si no lo tuviera",
   device.control_id(tmpdir()), None)
 
-# --- no separarse de penwatch -------------------------------------------------
+# no separarse de penwatch
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import penwatch  # noqa: E402
 
@@ -113,7 +112,7 @@ c("y la marca no se ha separado de la de common/", penwatch.APP_NAME, APP_NAME)
 c("la carpeta del código es la misma en los dos",
   penwatch.APP_SUBDIR, device.APP_SUBDIR)
 
-# --- la verificación final ----------------------------------------------------
+# la verificación final
 dispositivo = tmpdir()
 faltan = {chk.etiqueta: chk.ok for chk in device.verify_device(dispositivo)}
 c("un dispositivo vacío no pasa la verificación", any(faltan.values()) and

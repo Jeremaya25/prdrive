@@ -1,19 +1,17 @@
 #!/usr/bin/env python3
-"""
-El instalador y la ruta del catálogo: el fichero, no su carpeta (#48).
+"""El instalador y la ruta del catálogo: el fichero, no su carpeta (#48).
 
-Con `/prdrive-catalog` en vez de `/prdrive-catalog/pairs.toml`, el paso de
-comprobaciones decía «El catálogo del remoto no es TOML válido: Cannot declare
-('defaults',) twice», porque `rclone cat` de una carpeta no falla: junta todo lo
-que hay dentro. Se comprueba:
-
-  * Que el formulario de Conexión rechaza la carpeta sin tocar la red, y que la
-    caja del catálogo lo dice según se teclea y no deja seguir con ella.
-  * Que `pull_catalog()`, si aun así le llega una carpeta —un perfil incrustado,
-    `--check`—, lo dice como carpeta y sugiere el pairs.toml de dentro.
-  * Que en el camino bueno no se pregunta nada más al remoto, y que un fichero
-    que de verdad no es TOML sigue diciendo eso: un diagnóstico falso es peor
-    que ninguno.
+Con `/prdrive-catalog` en vez de `/prdrive-catalog/pairs.toml`, `rclone cat` de
+una carpeta no falla: junta todo lo que hay dentro, y el paso de comprobaciones
+diría «El catálogo del remoto no es TOML válido: Cannot declare ('defaults',)
+twice». Se comprueba:
+- Que el formulario de Conexión rechaza la carpeta sin tocar la red, y que la
+  caja del catálogo lo dice según se teclea y no deja seguir con ella.
+- Que `pull_catalog()`, si aun así le llega una carpeta (un perfil incrustado,
+  `--check`), lo dice como carpeta y sugiere el `pairs.toml` de dentro.
+- Que en el camino bueno no se pregunta nada más al remoto, y que un fichero
+  que de verdad no es TOML sigue diciendo eso: un diagnóstico falso es peor que
+  ninguno.
 
 Ningún rclone se ejecuta: el runner de `remote.Rclone` es de mentira, y las
 respuestas de `lsjson --stat` son las de rclone v1.75.1 contra una carpeta y un
@@ -52,12 +50,18 @@ llamadas: list[list[str]] = []
 
 
 def rclone(*respuestas) -> remote.Rclone:
-    """Un Rclone cuyo runner contesta por orden y apunta cada orden (sin el
-    `--config` de delante, que no es lo que se comprueba)."""
+    """Devuelve un Rclone cuyo runner contesta por orden y apunta cada orden.
+
+    Se apunta sin el `--config` de delante, que no es lo que se comprueba.
+    """
     cola = list(respuestas)
     llamadas.clear()
 
     def runner(cmd, **_kw):
+        """Contesta con la siguiente respuesta de la cola.
+
+        Si toca un tiempo de espera, lo simula.
+        """
         llamadas.append(list(cmd[3:]))
         rc, salida, error = cola.pop(0) if cola else (0, "", "")
         if rc == "timeout":
@@ -74,7 +78,7 @@ def trae(rc: remote.Rclone, ruta: str):
         return None, str(e)
 
 
-# --- el formulario, sin red ----------------------------------------------------
+# el formulario, sin red
 for como, hacer in (
         ("from_form", lambda ruta: profile.from_form(
             "nas", {"type": "sftp", "host": "nas.example"}, catalog_path=ruta)),
@@ -110,7 +114,7 @@ c.contains("pero el perfil sabe lo que le pasa", a_medias.problema_catalogo or "
            "no termina en .toml")
 c("y sigue siendo una conexión configurada", a_medias.configured, True)
 
-# --- el lector del instalador ---------------------------------------------------
+# el lector del instalador
 cat, _ = trae(rclone((0, CATALOGO, "")), "/prdrive-catalog/pairs.toml")
 c("un fichero se lee como siempre", cat.names if cat else None, ["docs"])
 c("sin ninguna pregunta más", llamadas, [["cat", "nas:/prdrive-catalog/pairs.toml"]])
@@ -154,7 +158,7 @@ _, motivo = trae(rclone((1, "", "no route to host")), "/prdrive-catalog")
 c.contains("si falla el cat se cuenta el cat", motivo, "no route to host")
 c("y no se pregunta nada más", len(llamadas), 1)
 
-# --- el paso Conexión del asistente -------------------------------------------
+# el paso Conexión del asistente
 try:
     import tkinter as tk
     from tkinter import messagebox, ttk
@@ -170,6 +174,7 @@ messagebox.showerror = lambda *a, **k: None
 
 
 def widgets(w, tipo):
+    """Devuelve los widgets de ese tipo que cuelgan de `w`."""
     pila, salida = [w], []
     while pila:
         actual = pila.pop()
@@ -180,6 +185,7 @@ def widgets(w, tipo):
 
 
 def estado(wiz) -> ttk.Label | None:
+    """Devuelve la etiqueta con el estado de la conexión, o `None`."""
     for lbl in widgets(wiz.root, ttk.Label):
         if str(lbl.cget("text")).startswith(("✘", "Conexión preparada")):
             return lbl

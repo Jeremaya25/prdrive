@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""
-Una sola instancia: la ventana, el servicio y el vigilante no se pisan.
+"""Una sola instancia: la ventana, el servicio y el vigilante no se pisan.
 
 Abrir runsync detiene el servicio anterior, así que dos ventanas a la vez se lo
-quitarían la una a la otra. Aquí se comprueban las tres mitades de
-evitarlo: que la segunda ventana no se abre y no toca el servicio, que el
-registro se suelta al cerrar, y que el vigilante del equipo no lanza nada
-mientras haya ventana o servicio vivos.
+quitarían la una a la otra. Aquí se comprueban las tres mitades de evitarlo:
+que la segunda ventana no se abre y no toca el servicio, que el registro se
+suelta al cerrar, y que el vigilante del equipo no lanza nada mientras haya
+ventana o servicio vivos.
 """
 
 import os
@@ -27,13 +26,15 @@ MUERTO = 2 ** 22          # un pid que no existe (por encima del máximo habitua
 
 
 def registro(fichero: Path, pid: int, host: str) -> None:
+    """Escribe un registro de ventana o servicio con ese pid y ese equipo."""
     store.write_json(fichero, {"pid": pid, "host": host, "started": "2026-09-22 08:00:00"})
 
 
-# --- las dos copias de las rutas, que no pueden separarse -------------------
-# Lo primero, antes de que el resto del test reapunte estas constantes: penwatch
-# no importa nada del proyecto, así que sabe estas rutas de memoria y solo un
-# test puede atarlas a las de runsync.
+# las dos copias de las rutas, que no pueden separarse
+#
+# Lo primero, antes de que el resto del test reapunte estas constantes:
+# penwatch no importa nada del proyecto, así que sabe estas rutas de memoria y
+# solo un test puede atarlas a las de runsync.
 c("el vigilante busca el registro de la ventana donde runsync lo escribe",
   str(penwatch.UI_LOCK_REL).replace("\\", "/"),
   f"{penwatch.APP_SUBDIR}/state/{runsync.UI_LOCK.name}")
@@ -43,7 +44,7 @@ c("y el del servicio también",
 c("y sabe llamar a este equipo como lo llama la UI", penwatch.HOST, prefs.HOST)
 
 
-# --- el cerrojo de la ventana ----------------------------------------------
+# el cerrojo de la ventana
 with sandbox():
     runsync.UI_LOCK = model.STATE_DIR / "ui.lock.json"
     runsync.LOCK = model.STATE_DIR / "daemon.lock.json"
@@ -65,10 +66,11 @@ with sandbox():
     registro(runsync.UI_LOCK, os.getpid(), "otro-equipo")
     c("un registro de otro equipo tampoco", runsync.ui_en_marcha(), None)
 
-    # --- tomarlo es atómico --------------------------------------------------
-    # Lo que pasó en G: el 28/09/2026: dos runsync con 6 s de diferencia miraron
-    # los dos, no vieron a nadie y abrieron dos ventanas. Mirar y escribir eran
-    # dos pasos; ahora tomar ES mirar, y la segunda toma sin soltar la primera
+    # tomarlo es atómico
+    #
+    # Lo que pasó el 28/09/2026: dos runsync con 6 s de diferencia miraron los
+    # dos, no vieron a nadie y abrieron dos ventanas, porque mirar y escribir
+    # eran dos pasos. Tomar ES mirar: la segunda toma sin soltar la primera
     # tiene que perder.
     runsync.UI_LOCK.unlink(missing_ok=True)
     c("la primera toma se la queda", runsync.tomar_ui(), None)
@@ -156,7 +158,7 @@ with sandbox():
     c("y no es un error: no había nada que hacer", rc, 0)
 
 
-# --- el vigilante, en el equipo --------------------------------------------
+# el vigilante, en el equipo
 with sandbox() as raiz:
     penwatch.UI_LOCK_REL = Path("state/ui.lock.json")
     penwatch.DAEMON_LOCK_REL = Path("state/daemon.lock.json")
@@ -195,7 +197,7 @@ with sandbox() as raiz:
     c("y mirar no deja nada escrito en el dispositivo",
       sorted(p.name for p in (raiz / "state").iterdir()), antes)
 
-# --- la fila de estado del vigilante ---------------------------------------
+# la fila de estado del vigilante
 c("un disparo que no lanzó nada no se cuenta como fallo",
   penwatch._disparo_row({"last_launch": "hoy", "last_launch_ok": None,
                          "last_skip": "la ventana de runsync ya está abierta"}),

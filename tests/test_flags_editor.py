@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""
-El editor de flags: lo que se escribe en el cuadro y lo que acaba en el TOML.
+"""El editor de flags: lo que se escribe en el cuadro y lo que acaba en el TOML.
 
 Lo que importa aquí es que no se cuele nada que luego no se pueda escribir
-—`config_file.save()` se niega a escribir lo que no se relee igual, y ese "no"
-llegaría con el diálogo ya cerrado— y que los frenos de rclone no cambien en
+(`config_file.save()` se niega a escribir lo que no se relee igual, y ese «no»
+llegaría con el diálogo ya cerrado) y que los frenos de rclone no cambien en
 silencio: `--max-delete` es lo que impide que un lado vacío arrase el otro.
 """
 
@@ -38,7 +37,7 @@ def falla(texto: str) -> str:
         return str(e)
 
 
-# --- texto <-> tabla ---------------------------------------------------------
+# texto <-> tabla
 
 c("clave = valor, con su tipo", fe.parse('transfers = 4\nchecksum = true\n'
                                          'conflict-resolve = "newer"'),
@@ -72,7 +71,7 @@ c("los argumentos extra van uno por línea y tal cual",
 c("y vuelven igual", fe.dump_extra(["--bwlimit", "8M"]), "--bwlimit\n8M")
 
 
-# --- qué acaba recibiendo rclone ---------------------------------------------
+# qué acaba recibiendo rclone
 
 filas = dict(fe.effective("bisync", {"transfers": 4}, {"max-delete": 50}))
 c("los flags de siempre están", filas.get("--verbose"), "siempre")
@@ -105,9 +104,10 @@ c("el botón resume lo propio", fe.summary({"a": 1, "b": 2}, ["--x"]), "2 flags 
 c("y dice cuándo no hay nada propio", fe.summary(None, None), "ninguno propio")
 
 
-# --- avisos: el freno de los borrados ----------------------------------------
+# avisos: el freno de los borrados
 
 def avisos(antes, despues, mode_antes="bisync", mode_despues="bisync", comunes=None):
+    """Devuelve los avisos de pasar de unos flags a otros, ya fusionados con el modo."""
     return fe.warnings(fe.merge(mode_antes, comunes, antes),
                        fe.merge(mode_despues, comunes, despues))
 
@@ -126,7 +126,7 @@ c("los cambios se cuentan flag a flag",
   ["quita max-delete (vuelve a valer el de la capa de debajo)", "añade transfers = 4"])
 
 
-# --- y de ahí al TOML --------------------------------------------------------
+# y de ahí al TOML
 
 with sandbox():
     raw = {"defaults": {"remote": "nas"}, "pair": [dict(p) for p in BASE]}

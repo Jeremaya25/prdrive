@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
-"""
-Instalar el agente residente en el equipo (`install/agente.py`), y quitarlo.
+"""Instalar el agente residente en el equipo (`install/agente.py`), y quitarlo.
 
 Se comprueba, sin tocar el equipo de verdad: que el código y el Python van cada
-uno a su carpeta por versión y no se vuelven a extraer si ya están; qué unidades
-se ofrecen (la de penwatch, las enchufadas, las de la lista); que `agente.json`
-lo escribe el instalador solo la primera vez y después se le pide al agente; que
-penwatch se desinstala y se dice; el texto del registro (la tarea de Windows y el
-autostart de Linux); la poda de versiones viejas; y que desinstalar no deja nada
-del agente. Y dos reglas de dependencias: penwatch sigue sin importar nada del
-proyecto, y el agente no carga Tk.
+uno a su carpeta por versión y no se vuelven a extraer si ya están; qué
+unidades se ofrecen (la de penwatch, las enchufadas, las de la lista); que
+`agente.json` lo escribe el instalador solo la primera vez y después se le pide
+al agente; que penwatch se desinstala y se dice; el texto del registro (la
+tarea de Windows y el autostart de Linux); la poda de versiones viejas; y que
+desinstalar no deja nada del agente. Y dos reglas de dependencias: penwatch
+sigue sin importar nada del proyecto, y el agente no carga Tk.
 """
 
 import ast
@@ -43,8 +42,11 @@ RAICES: list[Path] = []
 
 
 def archivo_runtime() -> Path:
-    """Un python-build-standalone de mentira, con los intérpretes de las dos
-    familias (así sirve en el equipo que ejecute el test)."""
+    """Devuelve un python-build-standalone de mentira.
+
+    Lleva los intérpretes de las dos familias, así que sirve en el equipo que
+    ejecute el test.
+    """
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tf:
         for nombre in ("python/bin/python3", "python/python.exe", "python/pythonw.exe",
@@ -91,7 +93,7 @@ ia.conseguir_veracrypt = lambda progreso=None: pedidos_vc.append(1) or VC_CACHE
 VC_INSTALADO: list = [None]
 penwatch.installed_veracrypt = lambda: VC_INSTALADO[0]
 
-# --- preparar: código y Python ---------------------------------------------------
+# preparar: código y Python
 prep = ia.preparar()
 c("el código va a agente/<versión>/", prep.codigo, equipo.dir_codigo() / version())
 for nombre in ("agente.py", "penwatch.py", "VERSION", "common/planificador.py",
@@ -121,7 +123,7 @@ c("  pedido para la plataforma de este equipo", pedidos_rclone[:1], [plat])
 c("  y apuntado en instalacion.json al activar (instalado_prep() lo lee)",
   ia._instalacion(prep).get("rclone"), str(prep.rclone))
 
-# --- su VeraCrypt: solo con una raíz cifrada y sin VeraCrypt instalado ---------------
+# su VeraCrypt: solo con una raíz cifrada y sin VeraCrypt instalado
 c("sin raíz cifrada no lleva VeraCrypt", (prep.veracrypt, pedidos_vc,
                                           "veracrypt" in ia._instalacion(prep)),
   (None, [], False))
@@ -164,7 +166,7 @@ c("  ni deja carpetas de trabajo",
   [p.name for p in equipo.dir_runtimes().iterdir()],
   [version(), penwatch.stamp_id(prep.sello)])
 
-# --- las unidades que se ofrecen ----------------------------------------------------
+# las unidades que se ofrecen
 penwatch.HOST_DIR.mkdir(parents=True)
 store.write_json(penwatch.CONFIG_FILE, {"device_id": "p" * 32, "mode": "sync"})
 ENCH = tmpdir("prdrive-ench-")
@@ -179,7 +181,7 @@ c("se ofrece la que vigilaba penwatch, con su modo",
 c("y la enchufada, con su nombre, en modo daemon",
   (ofrecidas["e" * 32].nombre, ofrecidas["e" * 32].modo), ("Azul", equipo.DAEMON))
 
-# --- agente.json: el instalador lo escribe una vez ------------------------------------
+# agente.json: el instalador lo escribe una vez
 elegidas = {x.id: (x.modo, x.nombre) for x in ofrecidas.values()}
 print("   ", ia.aplicar_unidades(elegidas, 90))
 aj = equipo.leer_ajustes()
@@ -200,7 +202,7 @@ c("  se lo pide al agente: los modos que cambian y las nuevas, y el plazo",
    for p in peticiones],
   [("modo", "e", "ui"), ("modo", "n", "daemon"), ("ajuste", "e", 60)])
 
-# --- penwatch fuera --------------------------------------------------------------
+# penwatch fuera
 llamado = []
 penwatch.unregister = lambda: llamado.append("unregister") or ["Tarea eliminada."]
 penwatch.stop_running_watcher = lambda: llamado.append("stop") or None
@@ -211,7 +213,7 @@ c("  y se dice que el agente lo sustituye",
   any("sustituye a penwatch" in m for m in msgs), True)
 c("sin penwatch, no hay nada que decir", ia.quitar_penwatch(), [])
 
-# --- el registro -------------------------------------------------------------------
+# el registro
 print("   ", ia.registrar(prep))
 texto = AUTOSTART.read_text(encoding="utf-8")
 c("Linux: autostart XDG que arranca el agente con su Python",
@@ -236,7 +238,7 @@ c("Exec cita cada argumento (una ruta con espacios no se parte)",
 c("  y escapa lo especial dos veces, como pide la especificación",
   penwatch.desktop_exec(['a"$b\\c', "50%"]), '"a\\\\"\\\\$b\\\\\\\\c" "50%%"')
 
-# --- activar: todo junto -------------------------------------------------------------
+# activar: todo junto
 (equipo.dir_codigo() / "0.0.1").mkdir()
 (equipo.dir_runtimes() / "viejo").mkdir()
 lanzados = []
@@ -262,7 +264,7 @@ c("  el de siempre, bajo XDG_DATA_HOME (en los tests, un temporal)",
 c("  en Windows sin raíz no (la bandeja no falta)",
   (ia.quiere_menu(False), ia.quiere_menu(True)), (not ia.IS_WIN, True))
 
-# --- añadir con el agente de esta versión ya puesto: solo el buzón -----------------------
+# añadir con el agente de esta versión ya puesto: solo el buzón
 c("el agente recién activado es de esta versión", ia.misma_version(), True)
 c("  y se puede leer como un Preparado", (ia.instalado_prep().codigo,
                                           ia.instalado_prep().python),
@@ -283,7 +285,8 @@ c("  que ya abre su ventana", ia.COMENTARIO_MENU in MENU.read_text(encoding="utf
 c("  y como el agente no está en marcha, se arranca",
   [a for a, _ in lanzados], [ia.orden(prep.python, prep.codigo)])
 
-# --- actualizar: la versión de este instalador en lugar de la puesta ---------------------
+# actualizar: la versión de este instalador en lugar de la puesta
+#
 # Una raíz del equipo abierta y una cifrada bloqueada; un Python viejo que es
 # el que corre este proceso (el de «Actualizar»), y uno viejo que no.
 ABIERTA = tmpdir("prdrive-abierta-")
@@ -355,7 +358,7 @@ except ia.InstallError as e:
     c("sin agente instalado no hay nada que actualizar", "ningún agente" in str(e), True)
 equipo.instalacion_json().write_bytes(guardado)
 
-# --- la línea de órdenes del instalador -------------------------------------------------
+# la línea de órdenes del instalador
 import importlib.util  # noqa: E402
 
 spec = importlib.util.spec_from_file_location("instalador", REPO / "prdrive-install.py")
@@ -368,7 +371,7 @@ c("--update-agente también", instalador.parse_args(["--update-agente"]).update_
 c("--desinstalar-agente también",
   instalador.parse_args(["--desinstalar-agente"]).desinstalar_agente, True)
 
-# --- desinstalar ------------------------------------------------------------------------
+# desinstalar
 msgs = ia.desinstalar()
 c("desinstalar quita el autostart", AUTOSTART.exists(), False)
 c("  y la carpeta del agente entera", equipo.DIR.exists(), False)
@@ -383,7 +386,7 @@ c("la unidad enchufada sigue como estaba",
   (ENCH / ".prdrive" / "PRDRIVE").read_text(encoding="utf-8"), "id=" + "e" * 32 + "\n")
 c("ya no cuenta como instalado", equipo.instalado(), False)
 
-# --- las reglas de dependencias ------------------------------------------------------------
+# las reglas de dependencias
 importados = set()
 for nodo in ast.walk(ast.parse((REPO / "penwatch.py").read_text(encoding="utf-8"))):
     if isinstance(nodo, ast.Import):

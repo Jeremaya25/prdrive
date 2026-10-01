@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
-"""
-Del catálogo del remoto al sync_config.toml de un dispositivo.
+"""Del catálogo del remoto al `sync_config.toml` de un dispositivo.
 
-Lo que se comprueba es que el instalador escribe un config que sync.py sabe leer,
-que no se inventa nada y que no pierde nada por el camino: los flags de cada
-pareja pegados a SU pareja, el [daemon] recortado a lo que existe, y los
-[defaults] SIN duplicar dentro de cada [[pair]] —que es justo lo que pasaría si
-se volcara un model.Config en vez del dict crudo—.
-
-No toca la red: el catálogo es un texto de aquí.
+Lo que se comprueba es que el instalador escribe un config que `sync.py` sabe
+leer, que no se inventa nada y que no pierde nada por el camino: los flags de
+cada pareja pegados a SU pareja, el `[daemon]` recortado a lo que existe, y los
+`[defaults]` SIN duplicar dentro de cada `[[pair]]`, que es justo lo que
+pasaría si se volcara un `model.Config` en vez del dict crudo. No toca la red:
+el catálogo es un texto de aquí.
 """
 
 import sys
@@ -63,7 +61,7 @@ mode = "up"
 
 cat = remote.parse_catalog(CATALOGO)
 
-# --- lo que se ha leído -------------------------------------------------------
+# lo que se ha leído
 c("las parejas del catálogo", cat.names, ["docs", "prdrive", "upload"])
 c("la cabecera de comentarios se conserva",
   cat.head.splitlines()[0], "# Catálogo global de parejas — vive en el remoto.")
@@ -71,7 +69,7 @@ c("la cabecera se corta donde empieza el TOML", "[defaults]" in cat.head, False)
 c("pair() encuentra por nombre", (cat.pair("upload") or {}).get("mode"), "up")
 c("pair() de una que no está", cat.pair("fantasma"), None)
 
-# --- un catálogo inválido se rechaza AL LEERLO, no al usarlo -------------------
+# un catálogo inválido se rechaza AL LEERLO, no al usarlo
 try:
     remote.parse_catalog('[[pair]]\nname="x"\nlocal="a"\nremote_path="/b"\nmode="raro"\n')
     c("un modo inválido en el catálogo se rechaza", "no lanzó", "InstallError")
@@ -84,7 +82,7 @@ try:
 except InstallError:
     c("un catálogo que no es TOML se rechaza", True, True)
 
-# --- el dict del dispositivo --------------------------------------------------
+# el dict del dispositivo
 raw = deploy.device_config(cat, ["docs", "upload"])
 c("solo las parejas elegidas", [p["name"] for p in raw["pair"]], ["docs", "upload"])
 c("los defaults viajan enteros", raw["defaults"]["flags"], {"transfers": 4, "checkers": 8})
@@ -113,9 +111,11 @@ c("la ruta del catálogo se guarda en los defaults",
 c("y sin ella los defaults no se inventan la clave",
   "catalog_path" in raw.get("defaults", {}), False)
 
-# --- el lado local, como remote propio desde el primer día --------------------
-# Sin `device_remote`, el nombre de los listados de bisync lleva dentro la letra
-# de unidad y el dispositivo deja de sincronizar en cuanto se monta en otra.
+# el lado local, como remote propio desde el primer día
+#
+# Sin `device_remote`, el nombre de los listados de bisync lleva dentro la
+# letra de unidad y el dispositivo deja de sincronizar en cuanto se monta en
+# otra.
 c("un dispositivo nuevo se instala con device_remote",
   raw["defaults"]["device_remote"], model.DEFAULT_DEVICE_REMOTE)
 pareja_bisync = model.parse_config(raw).pairs[0]
@@ -129,7 +129,7 @@ con_suyo = deploy.device_config(remote.parse_catalog(
     ["docs"])
 c("y el del catálogo no se pisa", con_suyo["defaults"]["device_remote"], "pen")
 
-# --- lo que no se permite -----------------------------------------------------
+# lo que no se permite
 for etiqueta, seleccion in (("ninguna pareja", []), ("una que no existe", ["fantasma"])):
     try:
         deploy.device_config(cat, seleccion)
@@ -137,7 +137,7 @@ for etiqueta, seleccion in (("ninguna pareja", []), ("una que no existe", ["fant
     except InstallError:
         c(f"se rechaza {etiqueta}", True, True)
 
-# --- el fichero escrito de verdad --------------------------------------------
+# el fichero escrito de verdad
 dispositivo = tmpdir() / "dispositivo"
 destino = deploy.write_device_config(dispositivo, cat, ["docs", "prdrive"])
 c("se escribe donde toca", destino, dispositivo / deploy.APP_SUBDIR / "sync_config.toml")

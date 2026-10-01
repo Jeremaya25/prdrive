@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
-"""
-El icono de un botón cae a la altura de su texto.
+"""El icono de un botón cae a la altura de su texto.
 
 ttk centra la imagen en la caja de la línea (ascenso + descenso), pero el texto
 no ocupa esa caja: sus mayúsculas empiezan bastante por debajo del ascenso, que
 reserva sitio para las tildes. Ese hueco de arriba deja la masa del texto más
-baja que el centro de la caja, y el icono se veía flotando por encima —1 px a
-96 ppp, medido sobre la ventana de verdad—.
+baja que el centro de la caja, y el icono se vería flotando por encima (1 px a
+96 ppp, medido sobre la ventana de verdad).
 
-El arreglo es dar la imagen ya con la altura de la línea y el dibujo bajado, en
-vez de dejar que ttk la centre. Aquí se comprueban las dos cosas que lo hacen
+Por eso la imagen se da ya con la altura de la línea y el dibujo bajado, en vez
+de dejar que ttk la centre. Aquí se comprueban las dos cosas que lo hacen
 funcionar: que el dibujo cae donde se pide, y que la imagen NO es más alta que
-la línea — si creciera, crecería el botón, se movería el texto con él y no se
+la línea: si creciera, crecería el botón, se movería el texto con él y no se
 llegaría nunca.
 """
 
@@ -53,7 +52,7 @@ def filas_con_tinta(img, fondo=FONDO):
             if any(tuple(img.get(x, y)[:3]) != fondo_rgb for x in range(ancho))]
 
 
-# --- el dibujo cae donde se le dice -------------------------------------------
+# el dibujo cae donde se le dice
 suelto = icons.get(raiz, "parejas", 15, theme.ACENTO, FONDO)
 c("sin pedir nada, la imagen es cuadrada", (suelto.width(), suelto.height()), (15, 15))
 arriba = filas_con_tinta(suelto)[0]
@@ -63,7 +62,7 @@ c("con altura dada, la imagen la respeta", (bajado.width(), bajado.height()), (1
 c("y el dibujo baja justo lo pedido", filas_con_tinta(bajado)[0], arriba + 2)
 c("las filas de encima son fondo", filas_con_tinta(bajado)[0] >= 2, True)
 
-# --- lo que monta `boton_icono` sobre un botón de verdad -----------------------
+# lo que monta `boton_icono` sobre un botón de verdad
 m = tkfont.Font(root=raiz, font=theme.fuente("normal")).metrics()
 real = icons.px(raiz, 15)
 
@@ -87,7 +86,8 @@ c("el botón mide lo mismo que antes del ajuste",
   (boton.winfo_reqwidth(), boton.winfo_reqheight()),
   (crudo.winfo_reqwidth(), crudo.winfo_reqheight()))
 
-# --- ningún glifo toca el borde de su mapa de bits -----------------------------
+# ningún glifo toca el borde de su mapa de bits
+#
 # Un trazo sale media anchura por fuera de su punto (`_expandir`), así que un
 # glifo dibujado hasta el borde de la rejilla se recorta al rasterizar y se ve
 # partido. Pasaba con el electrocardiograma del doctor.

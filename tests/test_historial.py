@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""
-El diario de pasadas (common/historial.py).
+"""El diario de pasadas (`common/historial.py`).
 
 Es lo que dice desde cuándo falla una pareja: `last_run.json` solo guarda la
-última pasada, y cada una pisa la anterior. Aquí se comprueba lo que se ve desde
-fuera —qué se lee después de apuntar— y las dos cosas que el medio exige: que lo
-normal sea AÑADIR una línea y no reescribir el fichero (los ciclos de escritura
-del pendrive), y que una línea a medias o con basura no arrastre a las demás.
+última pasada, y cada una pisa la anterior. Aquí se comprueba lo que se ve
+desde fuera (qué se lee después de apuntar) y las dos cosas que el medio exige:
+que lo normal sea AÑADIR una línea y no reescribir el fichero (los ciclos de
+escritura del pendrive), y que una línea a medias o con basura no arrastre a
+las demás.
 """
 
 import sys
@@ -21,6 +21,7 @@ N = historial.POR_PAREJA
 
 
 def pasada(pareja, codigo=0, dia=1, hora=0, minuto=0, segundos=1.0, transferido=None):
+    """Devuelve una pasada de mentira con esos datos."""
     return historial.Pasada(pareja, f"2026-09-{dia:02d} {hora:02d}:{minuto:02d}:00",
                             codigo, segundos, transferido)
 
@@ -31,7 +32,7 @@ def secuencia(pareja, codigos):
             for i, cod in enumerate(codigos)]
 
 
-# --- apuntar y leer ---------------------------------------------------------------
+# apuntar y leer
 with sandbox():
     c("sin fichero no hay pasadas", historial.leer(), [])
     c("ni rachas", historial.rachas(["notas"]), {})
@@ -79,7 +80,7 @@ with sandbox():
     c("y leer sigue sin fallar", historial.leer(), [])
 
 
-# --- líneas rotas -----------------------------------------------------------------
+# líneas rotas
 with sandbox():
     buena1 = pasada("notas", 0, dia=1)
     buena2 = pasada("notas", 1, dia=2)
@@ -122,12 +123,13 @@ with sandbox():
     c("bytes que no son UTF-8 no impiden leer lo demás", len(historial.leer()), 1)
 
 
-# --- el recorte -------------------------------------------------------------------
+# el recorte
 with sandbox():
     reescrituras = []
     real = store.write_text
 
     def contar(ruta, texto):
+        """Escribe el texto como lo haría el original y apunta cada reescritura."""
         reescrituras.append(ruta)
         return real(ruta, texto)
 
@@ -198,7 +200,7 @@ with sandbox():
         historial.TOPE_BYTES = tope_real
 
 
-# --- desde cuándo falla -----------------------------------------------------------
+# desde cuándo falla
 c("sin pasadas no hay racha", historial.racha([]), None)
 c("si la última fue bien, tampoco", historial.racha(secuencia("n", [1, 1, 0])), None)
 

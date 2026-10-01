@@ -1,22 +1,20 @@
 #!/usr/bin/env python3
-"""
-El perfil de conexión: de dónde sale y cuánto rato está la clave en el disco.
+"""El perfil de conexión: de dónde sale y cuánto rato está la clave en el disco.
 
 Esto es lo más delicado del instalador. Se comprueba:
-
-  * La cascada: primero el perfil incrustado al compilar, luego el del checkout
-    desde el que se ejecuta el .py, y si no hay ninguno, uno **vacío**. Que no
-    haya perfil NO es un error: es el arranque normal de quien acaba de clonar el
-    repositorio, y antes ahí el asistente se moría.
-  * Que una compilación mal hecha —con el marcador `__INJECT` todavía puesto— se
-    niega en vez de intentar conectarse con una clave de mentira.
-  * Que el rclone.conf sale bien tanto en su forma efímera (rutas absolutas al
-    temporal) como en la del dispositivo (relativas), y que al cerrar el temporal
-    no queda nada.
-  * Que el barrido de arranque se lleva las claves que dejaron instaladores
-    muertos, pero NO las de uno que siga vivo (dos instalaciones a la vez).
-  * Que el backend no se interpreta en ningún sitio: lo que se teclea es lo que
-    va al conf.
+- La cascada: primero el perfil incrustado al compilar, luego el del checkout
+  desde el que se ejecuta el .py y, si no hay ninguno, uno **vacío**. Que no
+  haya perfil NO es un error: es el arranque normal de quien acaba de clonar el
+  repositorio.
+- Que una compilación mal hecha (con el marcador `__INJECT` todavía puesto) se
+  niega en vez de intentar conectarse con una clave de mentira.
+- Que el `rclone.conf` sale bien tanto en su forma efímera (rutas absolutas al
+  temporal) como en la del dispositivo (relativas), y que al cerrar el temporal
+  no queda nada.
+- Que el barrido de arranque se lleva las claves que dejaron instaladores
+  muertos, pero NO las de uno que siga vivo (dos instalaciones a la vez).
+- Que el backend no se interpreta en ningún sitio: lo que se teclea es lo que
+  va al conf.
 
 No se usa ninguna clave de verdad: todas las de aquí son inventadas.
 """
@@ -50,12 +48,13 @@ def fingir_secreto(b64, perfil_toml=PERFIL_TOML):
 
 
 def quitar_secreto():
+    """Quita el `install.secret` de mentira de los módulos cargados."""
     sys.modules.pop("install.secret", None)
     if hasattr(install, "secret"):
         del install.secret
 
 
-# --- 1. el perfil incrustado al compilar --------------------------------------
+# 1. el perfil incrustado al compilar
 import base64  # noqa: E402
 
 fingir_secreto(base64.b64encode(CLAVE).decode("ascii"))
@@ -66,7 +65,7 @@ c("con sus known_hosts", p.known_hosts, CONOCIDOS)
 c("y con la conexión entera", (p.remote_name, p.options["host"]), ("nas", "nas.example"))
 c("un perfil con tipo está configurado", p.configured, True)
 
-# --- 2. una compilación sin clave no arranca ---------------------------------
+# 2. una compilación sin clave no arranca
 fingir_secreto("__INJECT__")
 try:
     profile.load()
@@ -84,7 +83,7 @@ except InstallError as e:
 
 quitar_secreto()
 
-# --- 3. el perfil del checkout desde el que se ejecuta ------------------------
+# 3. el perfil del checkout desde el que se ejecuta
 falso = tmpdir()
 (falso / profile.PROFILE_FILE).write_text(PERFIL_TOML, encoding="utf-8")
 (falso / "keys").mkdir()
@@ -99,9 +98,9 @@ try:
     c.contains("y se dice de dónde", p.origen, profile.PROFILE_FILE)
     c("con su conexión", p.options["host"], "nas.example")
 
-    # LA diferencia con lo de antes: sin nada, se sigue adelante. El asistente
-    # abre su formulario en vez de morir explicando que falta una clave que quien
-    # acaba de clonar el repo nunca ha tenido.
+    # Sin nada, se sigue adelante: el asistente abre su formulario en vez de
+    # morir explicando que falta una clave que quien acaba de clonar el repo
+    # nunca ha tenido.
     vacio = tmpdir()
     profile.bundle_dir = lambda: vacio
     p = profile.load()
@@ -114,7 +113,7 @@ try:
 finally:
     profile.bundle_dir = original
 
-# --- 4. el rclone.conf efímero ------------------------------------------------
+# 4. el rclone.conf efímero
 perfil = profile.Profile(
     remote_name="nas",
     options={"type": "sftp", "host": "nas.example", "port": "22",
@@ -160,7 +159,7 @@ c("sin clave privada no se emite key_file",
   "key_file" in sin_clave.conf_file.read_text(encoding="utf-8"), False)
 sin_clave.close()
 
-# --- 5. el barrido de claves huérfanas ---------------------------------------
+# 5. el barrido de claves huérfanas
 barrido = tmpdir()
 muerto = barrido / (remote.TMP_PREFIX + "muerto")
 muerto.mkdir()
@@ -179,7 +178,7 @@ c("y la de uno sin dueño legible", huerfano.exists(), False)
 # Dos instalaciones a la vez: la del otro proceso NO se toca.
 c("pero no la de uno que sigue vivo", vivo.exists(), True)
 
-# --- 6. importar un rclone.conf ajeno ----------------------------------------
+# 6. importar un rclone.conf ajeno
 ajeno = tmpdir()
 (ajeno / "keys").mkdir()
 (ajeno / "keys" / "mi_clave").write_bytes(CLAVE)
@@ -218,9 +217,9 @@ try:
 except InstallError as e:
     c.contains("un remote que no está se dice", str(e), "personal")
 
-# Importar exige lo mismo que el formulario (#47). Antes un remote sin `type`
-# salía de aquí como perfil sin estar `configured`: la pantalla pintaba ✔ y
-# «Siguiente» se quedaba gris, sin decir por qué.
+# Importar exige lo mismo que el formulario (#47): un remote sin `type` no
+# puede salir de aquí como perfil sin estar `configured` (la pantalla pintaría
+# ✔ y «Siguiente» se quedaría gris, sin decir por qué).
 (ajeno / "incompleto.conf").write_text(
     "[sintipo]\n"
     "host = otro.example\n"
@@ -251,14 +250,14 @@ ssh = profile.from_rclone_conf(ajeno / "incompleto.conf", "conssh")
 c("un sftp con ssh externo se importa sin host", ssh.configured, True)
 c("y sin avisar del usuario, que va en la orden", profile.avisos(ssh), [])
 
-# --- 7. el conf del dispositivo: relativo ------------------------------------
+# 7. el conf del dispositivo: relativo
 c("el conf efímero usa rutas absolutas",
   "key_file = /tmp/x" in profile.render_conf(perfil, key_file="/tmp/x"), True)
 c("y el del dispositivo, relativas",
   "key_file = keys/id_ed25519" in profile.render_conf(
       perfil, key_file="keys/id_ed25519"), True)
 
-# --- 8. el formulario ---------------------------------------------------------
+# 8. el formulario
 c("las opciones se leen como en un rclone.conf",
   profile.parse_options("type = sftp\n# comentario\n\nhost = x\n"),
   {"type": "sftp", "host": "x"})
@@ -290,7 +289,7 @@ except InstallError as e:
     c.contains("sin tipo de backend se rechaza", str(e), "tipo de remote")
 
 # La plantilla tal cual (#47): `from_form` descarta los valores vacíos, así que
-# quedaba `{"type": "sftp"}`, y eso daba un perfil «configurado» que rclone
+# queda `{"type": "sftp"}`, y eso daría un perfil «configurado» que rclone
 # llevaría a `:22`, este mismo equipo.
 for tipo, falta in (("sftp", "host = …"), ("webdav", "url = …")):
     opciones = profile.parse_options(profile.PLANTILLAS[tipo])
@@ -336,7 +335,7 @@ c("con user no hay nada que avisar", profile.avisos(profile.from_form(
 c("y un webdav sin user tampoco: es anónimo a propósito", profile.avisos(
     profile.from_form("nas", {"type": "webdav", "url": "https://dav.example/"})), [])
 
-# --- 9. el perfil va y vuelve, sin la clave -----------------------------------
+# 9. el perfil va y vuelve, sin la clave
 vuelta = profile.loads(profile.dumps(perfil))
 c("el perfil se relee igual",
   (vuelta.remote_name, dict(vuelta.options), vuelta.catalog_path),
@@ -344,11 +343,12 @@ c("el perfil se relee igual",
 c("y el texto NO lleva la clave dentro",
   "PRIVATE" in profile.dumps(perfil), False)
 
-# --- 10. cómo se le habla a rclone -------------------------------------------
+# 10. cómo se le habla a rclone
 llamadas = []
 
 
 def falso_runner(cmd, **kw):
+    """Runner de mentira: apunta la orden y sale bien."""
     import subprocess
     llamadas.append((cmd, kw))
     return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
@@ -364,6 +364,7 @@ c("y el timeout viaja", llamadas[-1][1]["timeout"], 5)
 
 
 def falla(cmd, **kw):
+    """Runner de mentira que falla: el remoto no existe."""
     import subprocess
     return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="no such host")
 

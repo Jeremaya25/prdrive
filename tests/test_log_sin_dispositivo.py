@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
-"""
-El log de un fallo cuando el dispositivo ya no está (#36).
+"""El log de un fallo cuando el dispositivo ya no está (#36).
 
-Desenchufar la unidad a mitad de pasada hace fallar a rclone, como debe; lo que
-fallaba después era `sync.py`, al guardar el log en `.prdrive/logs/` de un
-dispositivo que ya no estaba: `PermissionError: [WinError 21] El dispositivo no
-está listo` sin capturar, y la ventana enseñaba el traceback en vez de la cola
+Desenchufar la unidad a mitad de pasada hace fallar a rclone, como debe;
+después `sync.py` guarda el log en `.prdrive/logs/` de un dispositivo que ya no
+está (`PermissionError: [WinError 21] El dispositivo no está listo`), y eso no
+puede acabar en un traceback sin capturar: la ventana tiene que enseñar la cola
 del log y su explicación.
 
 Aquí el dispositivo «desaparece» de las dos maneras en que puede hacerlo a esas
-alturas: logs/ que no se deja crear, y un movimiento que falla a medias. Y
+alturas: `logs/` que no se deja crear, y un movimiento que falla a medias. Y
 detrás, las parejas que quedaban por pasar: tampoco pueden acabar en un
 traceback.
 """
@@ -47,14 +46,17 @@ EXPLICACION = dict(sync.KNOWN_ERRORS)["Failed to create file system"]
 
 
 def sin_carpeta_de_logs(root: Path) -> None:
-    """logs/ cuelga de un FICHERO: su mkdir lanza OSError, como con la unidad
-    fuera (en Linux NotADirectoryError; en Windows era [WinError 21])."""
+    """Hace que `logs/` cuelgue de un FICHERO.
+
+    Su `mkdir` lanza `OSError`, como con la unidad fuera (en Linux
+    `NotADirectoryError`; en Windows, `[WinError 21]`).
+    """
     (root / "fuera").write_text("no soy una carpeta", encoding="utf-8")
     model.LOG_DIR = root / "fuera" / "logs"
 
 
 def capturar(funcion, *args):
-    """(lo que devuelve o la excepción que lanza, lo que ha impreso)."""
+    """Ejecuta `funcion` y devuelve su resultado (o su excepción) y lo que imprimió."""
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         try:
@@ -65,12 +67,13 @@ def capturar(funcion, *args):
 
 
 def temporal_con(texto: str) -> Path:
+    """Devuelve un log temporal con ese texto."""
     tmp = sync.temp_log("bi")
     tmp.write_text(texto, encoding="utf-8")
     return tmp
 
 
-# --- logs/ no se deja crear --------------------------------------------------------
+# logs/ no se deja crear
 with sandbox() as root:
     sin_carpeta_de_logs(root)
     tmp = temporal_con(LOG)
@@ -100,13 +103,16 @@ with sandbox() as root:
       (saved, tmp.exists()), (tmp, True))
     tmp.unlink(missing_ok=True)
 
-# --- logs/ se crea, pero el movimiento falla a medias ---------------------------------
-# Entre dos unidades, shutil.move copia y borra el origen al final. Aquí la copia
-# se corta a la mitad, que es lo que pasa si la unidad se va mientras tanto.
+# logs/ se crea, pero el movimiento falla a medias
+#
+# Entre dos unidades, shutil.move copia y borra el origen al final. Aquí la
+# copia se corta a la mitad, que es lo que pasa si la unidad se va mientras
+# tanto.
 MITAD = len(LOG) // 2
 
 
 def mover_a_medias(origen, destino, *args, **kwargs):
+    """Copia solo la mitad del log y falla, como una unidad que se va a medio mover."""
     Path(destino).write_text(Path(origen).read_text(encoding="utf-8")[:MITAD],
                              encoding="utf-8")
     raise OSError(errno.EIO, "El dispositivo no está listo")
@@ -130,7 +136,7 @@ with sandbox():
         c.contains("la explicación sale del temporal", salida, EXPLICACION)
     tmp.unlink(missing_ok=True)
 
-# --- con el dispositivo en su sitio, nada cambia ------------------------------------
+# con el dispositivo en su sitio, nada cambia
 with sandbox():
     tmp = temporal_con(LOG)
     saved, salida = capturar(sync.dispose_log, "bi", tmp, 7, False)
@@ -150,10 +156,11 @@ with sandbox():
     saved, _ = capturar(sync.dispose_log, "bi", tmp, 0, False)
     c("sin keep_logs, una pasada buena no deja log", (saved, tmp.exists()), (None, False))
 
-# --- un log que no se deja leer ----------------------------------------------------
+# un log que no se deja leer
+#
 # Guardado en el dispositivo, que se va justo después: un volumen de VeraCrypt
-# desenchufado sin expulsar acepta escrituras en caché y luego no deja leer. Una
-# carpeta en su lugar da el mismo OSError al leer.
+# desenchufado sin expulsar acepta escrituras en caché y luego no deja leer.
+# Una carpeta en su lugar da el mismo OSError al leer.
 with sandbox() as root:
     ilegible = root / "ilegible.log"
     ilegible.mkdir()
@@ -164,7 +171,7 @@ with sandbox() as root:
     c("ni la explicación, que calla", (isinstance(devuelto, OSError), salida), (False, ""))
 
 
-# --- la pasada entera: la pareja que falla y las de detrás ----------------------------
+# la pasada entera: la pareja que falla y las de detrás
 def correr_todas(pares, rc_seq):
     """run_all con rclone simulado. Devuelve (config, rc, salida, órdenes, logs)."""
     config = model.parse_config({"defaults": DEF, "pair": pares})
@@ -172,6 +179,7 @@ def correr_todas(pares, rc_seq):
     codigos = iter(rc_seq)
 
     def execute_simulado(ctx, cmd, logfile=None):
+        """Simula la ejecución de rclone: apunta la orden y escribe el log."""
         ordenes.append(cmd)
         logs.append(logfile)
         logfile.write_text(LOG, encoding="utf-8")

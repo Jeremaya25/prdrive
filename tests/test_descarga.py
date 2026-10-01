@@ -1,17 +1,14 @@
 #!/usr/bin/env python3
-"""
-Reintentar lo que falla por la red, y solo eso (`install/descarga.py`).
+"""Reintentar lo que falla por la red, y solo eso (`install/descarga.py`).
 
-Es la pieza que faltaba en el #49: UN tiempo de espera leyendo el zip de rclone
-de una plataforma que ni siquiera era la de este equipo tumbaba la instalación,
-sin segundo intento. Lo que se prueba aquí es la frontera, que es donde está el
-criterio:
-
-  * lo que otro intento podría no tener —un tiempo de espera, una conexión
-    cortada, una transferencia incompleta, un 5xx— se reintenta, con esperas
-    crecientes, y al final se rinde con el error de verdad;
-  * lo que no —un 404, un certificado que no se deja verificar, un fallo del
-    propio código— sale a la primera.
+Un tiempo de espera leyendo el zip de rclone de una plataforma que ni siquiera
+es la de este equipo no puede tumbar la instalación sin un segundo intento
+(#49). Lo que se prueba aquí es la frontera, que es donde está el criterio:
+- Lo que otro intento podría no tener (un tiempo de espera, una conexión
+  cortada, una transferencia incompleta, un 5xx) se reintenta, con esperas
+  crecientes, y al final se rinde con el error de verdad.
+- Lo que no (un 404, un certificado que no se deja verificar, un fallo del
+  propio código) sale a la primera.
 
 Una suma que no cuadra tampoco se reintenta, pero eso no es asunto de este
 módulo sino de quien llama: se prueba en `test_rclone_bin.py` y
@@ -41,6 +38,7 @@ def falla(*errores, luego=b"hecho"):
     llamadas = {"n": 0}
 
     def pedir():
+        """Lanza el siguiente error pendiente y, cuando no quedan, contesta."""
         llamadas["n"] += 1
         if pendientes:
             raise pendientes.pop(0)
@@ -53,7 +51,7 @@ try:
     c("con esperas crecientes", list(descarga.ESPERAS),
       sorted(descarga.ESPERAS))
 
-    # --- qué se reintenta -----------------------------------------------------
+    # qué se reintenta
     for nombre, error in (
             ("el tiempo de espera del #49", TimeoutError("The read operation timed out")),
             ("una conexión reiniciada", ConnectionResetError(104, "reset")),
@@ -72,7 +70,7 @@ try:
             ("un fallo del propio código", ValueError("otra cosa"))):
         c(f"NO se reintenta {nombre}", descarga.reintentable(error), False)
 
-    # --- con_reintentos ---------------------------------------------------------
+    # con_reintentos
     pedir, llamadas = falla(TimeoutError("uno"), TimeoutError("dos"))
     dicho: list[str] = []
     c("dos fallos de red y el tercero contesta: sale bien",
@@ -118,7 +116,7 @@ try:
     c("y no se lo inventa de lo que no lo era",
       descarga.describir(ValueError("otra cosa")), "otra cosa")
 
-    # --- el SHA256SUMS ------------------------------------------------------------
+    # el SHA256SUMS
     texto = ("-----BEGIN PGP SIGNED MESSAGE-----\nHash: SHA256\n\n"
              f"{'a' * 64}  rclone-v1-linux-arm64.zip\n"
              f"{'B' * 64}  *rclone-v1-windows-amd64.zip\n")

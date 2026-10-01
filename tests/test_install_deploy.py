@@ -1,17 +1,14 @@
 #!/usr/bin/env python3
-"""
-El despliegue: qué deja el instalador en el dispositivo y dónde.
+"""El despliegue: qué deja el instalador en el dispositivo y dónde.
 
-Antes esto era la siembra —un `rclone sync` del espejo maestro del remoto—, y lo
-que había que vigilar era que no arrasara el destino. Ahora el instalador lleva el
-programa dentro y lo copia, así que lo que se comprueba es otra cosa:
-
-  * que aterriza TODO lo que el dispositivo necesita para arrancar solo, y en la
-    carpeta oculta que le toca;
-  * que el `rclone.conf` que se escribe usa rutas RELATIVAS, que es lo que hace
-    que el dispositivo funcione con otra letra de unidad;
-  * que copiar no toca nada de fuera de esa carpeta;
-  * y que `install_target()` sigue distinguiendo un volumen ajeno.
+El instalador lleva el programa dentro y lo copia, así que lo que se comprueba
+es:
+- Que aterriza TODO lo que el dispositivo necesita para arrancar solo, y en la
+  carpeta oculta que le toca.
+- Que el `rclone.conf` que se escribe usa rutas RELATIVAS, que es lo que hace
+  que el dispositivo funcione con otra letra de unidad.
+- Que copiar no toca nada de fuera de esa carpeta.
+- Y que `install_target()` sigue distinguiendo un volumen ajeno.
 
 Ningún test lanza rclone ni toca la red: se comprueban ficheros y listas de
 argumentos, nunca la ejecución.
@@ -75,7 +72,7 @@ def arbol_falso() -> Path:
     return base
 
 
-# --- copiar el programa -------------------------------------------------------
+# copiar el programa
 origen = arbol_falso()
 rclone_falso = origen / "rclone-de-mentira"
 rclone_falso.write_bytes(b"MZ")
@@ -108,7 +105,8 @@ c("se dice todo lo que se ha escrito", len(escrito) >= 6, True)
 c("lo que había en el volumen no se toca",
   (destino / "mis-cosas.txt").read_text(encoding="utf-8"), "no me toques\n")
 
-# --- actualizar: lo mismo, pero sin tocar el rclone ni nada del usuario -------
+# actualizar: lo mismo, pero sin tocar el rclone ni nada del usuario
+#
 # Es el camino de `prdrive-install.py --update`, que corre desde el zip recién
 # descargado sobre un dispositivo que ya existe. Lo que se vigila es lo único
 # que puede hacer daño: que se lleve por delante la configuración o la clave.
@@ -142,7 +140,8 @@ c("su sync_config.toml sigue intacto",
 c("y la línea base de bisync no se ha movido",
   (app_usada / "state" / "docs" / "listado.lst").is_file(), True)
 
-# --- los lanzadores -----------------------------------------------------------
+# los lanzadores
+#
 # La completa lleva Python propio, así que no depende de la asociación .pyw ->
 # pythonw.exe que solo existe con un Python instalado: .bat y .sh, y nada más.
 lanzadores = deploy.write_launchers(destino, completa=True)
@@ -209,10 +208,11 @@ c("la guía se deja en la raíz con el nombre que se busca",
 c("y si el instalador no la lleva dentro, no pasa nada",
   deploy.write_guide(destino, origen=tmpdir()), None)
 
-# --- los lanzadores no se tocan al actualizar ---------------------------------
-# Se escriben al aprovisionar y ya está: el camino de actualizar —el aviso de la
-# ventana, que ejecuta `prdrive-install.py --update` desde el zip descargado—
-# cambia el programa, no la forma de arrancarlo.
+# los lanzadores no se tocan al actualizar
+#
+# Se escriben al aprovisionar y ya está: el camino de actualizar —el aviso de
+# la ventana, que ejecuta `prdrive-install.py --update` desde el zip
+# descargado— cambia el programa, no la forma de arrancarlo.
 import importlib.util  # noqa: E402
 
 spec = importlib.util.spec_from_file_location(
@@ -235,7 +235,7 @@ c("--update no reescribe el .bat",
 c("ni el .sh", (inmutable / "runsync.sh").read_text(encoding="utf-8"), "# el mío\n")
 c("ni se inventa un .pyw", (inmutable / "runsync.pyw").exists(), False)
 
-# --- rclone y Python por plataforma --------------------------------------------
+# rclone y Python por plataforma
 from common import components, pins  # noqa: E402
 from install import platforms, rclone_bin, runtime_bin  # noqa: E402
 
@@ -285,7 +285,7 @@ try:
       ["linux-x64", "windows-x64"])
     c("nada borrado en un dispositivo nuevo", borrados, [])
 
-    # --- el sello de rclone ---------------------------------------------------
+    # el sello de rclone
     #
     # De un rclone que salió de find_rclone() —el del PATH, el del checkout— no
     # se sabe la versión, y el sello tiene que decir «no consta» en vez de
@@ -368,7 +368,7 @@ try:
 finally:
     rclone_bin.rclone_for, runtime_bin.ensure_runtime = reales
 
-# --- #49: si falta lo de una plataforma, el dispositivo no se toca ---------------
+# #49: si falta lo de una plataforma, el dispositivo no se toca
 #
 # Antes se borraba, se copiaba rclone plataforma a plataforma y luego Python, y
 # el primer fallo de descarga —el de una plataforma que ni siquiera era la de
@@ -378,6 +378,7 @@ fallidas = {"linux-arm64"}
 
 
 def rclone_o_nada(plat, progreso=None, allow_download=True):
+    """Descarga de rclone de mentira: falla para las plataformas marcadas."""
     if plat.clave in fallidas:
         raise InstallError("No he podido descargar rclone de https://x/rclone-"
                            "linux-arm64.zip: The read operation timed out")
@@ -449,9 +450,10 @@ try:
 finally:
     rclone_bin.rclone_for, runtime_bin.ensure_runtime = reales
 
-# --- un runtime en uso no se deja a medias ---------------------------------------
-# En Windows, el runtime del que está corriendo prdrive no se puede renombrar. El
-# intercambio falla ENTERO —el runtime viejo sigue ahí y funciona— en vez de
+# un runtime en uso no se deja a medias
+#
+# En Windows, el runtime del que está corriendo prdrive no se puede renombrar.
+# El intercambio falla ENTERO —el runtime viejo sigue ahí y funciona— en vez de
 # dejar la carpeta medio borrada.
 enuso = tmpdir() / "en-uso"
 deploy.install_runtime(enuso, WIN, archivo_runtime(WIN, b"viejo"))
@@ -460,6 +462,7 @@ llamadas = {"n": 0}
 
 
 def replace_que_falla(a, b):
+    """`os.replace` que falla en la primera llamada (el runtime está en uso)."""
     llamadas["n"] += 1
     if llamadas["n"] == 1:
         raise PermissionError("en uso")
@@ -480,7 +483,8 @@ c("el runtime de antes sigue entero",
 c("y no quedan restos", sorted(p.name for p in (deploy.app_dir(enuso) / "runtime").iterdir()),
   ["windows-x64"])
 
-# --- el instalador usa el Python del dispositivo -----------------------------------
+# el instalador usa el Python del dispositivo
+#
 # Es lo que hace real «nada que instalar»: inicializar las parejas (paso 7) y
 # registrar el vigilante ya no piden un Python en el equipo que instala.
 propio = tmpdir() / "con-python"
@@ -495,7 +499,7 @@ if anfitrion is not None:
     c("y registrar el vigilante, también",
       deploy.penwatch_install_command(propio)[0], str(consola))
 
-# --- la conexión del dispositivo ----------------------------------------------
+# la conexión del dispositivo
 perfil = profile.from_form(
     "nas", {"type": "sftp", "host": "servidor.ejemplo", "user": "quien"})
 perfil = profile.Profile(**{**perfil.__dict__, "private_key": b"CLAVE-PRIVADA",
@@ -531,7 +535,7 @@ conf2 = (otro / deploy.APP_SUBDIR / "rclone.conf").read_text(encoding="utf-8")
 c("sin clave privada no se escribe key_file", "key_file" in conf2, False)
 c("ni carpeta de claves", (otro / deploy.APP_SUBDIR / "keys").exists(), False)
 
-# --- un origen incompleto se dice, no se instala a medias ---------------------
+# un origen incompleto se dice, no se instala a medias
 roto = tmpdir() / "roto"
 roto.mkdir()
 try:
@@ -540,7 +544,7 @@ try:
 except InstallError as e:
     c.contains("un instalador sin el árbol dentro se queja", str(e), "sync.py")
 
-# --- carpetas locales ---------------------------------------------------------
+# carpetas locales
 c("las carpetas de las parejas elegidas",
   [str(p) for p in deploy.local_dirs(cat, ["docs", "upload"])],
   [str(Path("sync-data/docs")), str(Path("sync-data/upload"))])
@@ -553,7 +557,7 @@ c("se crean de verdad", (dispositivo / "sync-data" / "docs").is_dir(), True)
 c("y se dice cuáles", len(creadas), 1)
 c("llamarlo dos veces no repite", deploy.make_local_dirs(dispositivo, cat, ["docs"]), [])
 
-# --- qué se inicializa y qué no ----------------------------------------------
+# qué se inicializa y qué no
 todas = ["respaldo", "docs", "upload"]
 c("solo se inicializan las bisync", deploy.resync_targets(cat, todas), ["docs"])
 c("los espejos se identifican para poder avisar",
@@ -584,7 +588,8 @@ try:
 except InstallError:
     c("sin parejas no hay nada que inicializar", True, True)
 
-# --- la trampa que solo aparece compilado ------------------------------------
+# la trampa que solo aparece compilado
+#
 # Congelado con PyInstaller, sys.executable es el propio instalador: usarlo
 # relanzaría el asistente en vez de sincronizar. Se finge ese estado para poder
 # comprobarlo sin compilar nada.
@@ -622,7 +627,7 @@ finally:
     else:
         sys.frozen = frozen_antes
 
-# --- el guardián del destino --------------------------------------------------
+# el guardián del destino
 from install import device  # noqa: E402
 
 base = tmpdir()
@@ -693,11 +698,12 @@ deploy.app_dir(a_medias).mkdir(exist_ok=True)
 c("con el control pero sin el programa no es un dispositivo",
   device.install_target(a_medias)[0], device.VACIO)
 
-# --- la nota de presencia en la flota -----------------------------------------
-# El dispositivo recién hecho queda apuntado en el registro para que se vea desde
-# los demás. Va por el rclone del instalador —el dispositivo todavía no ha
-# ejecutado nada suyo— y es mejor esfuerzo: un remoto que no la acepta no puede
-# tumbar una instalación ya hecha.
+# la nota de presencia en la flota
+#
+# El dispositivo recién hecho queda apuntado en el registro para que se vea
+# desde los demás. Va por el rclone del instalador —el dispositivo todavía no
+# ha ejecutado nada suyo— y es mejor esfuerzo: un remoto que no la acepta no
+# puede tumbar una instalación ya hecha.
 from common import fleet, store                                        # noqa: E402
 
 flota = tmpdir()
@@ -708,6 +714,7 @@ ordenes: list[list[str]] = []
 
 
 def runner_flota(cmd, **kwargs):
+    """Runner de mentira que apunta las órdenes de la flota y sale bien."""
     ordenes.append(list(cmd))
     return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
@@ -740,6 +747,7 @@ c("sin fichero de control no hay nota que publicar",
 
 
 def runner_roto(cmd, **kwargs):
+    """Runner de mentira que falla: el remoto no existe."""
     return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="no such host")
 
 

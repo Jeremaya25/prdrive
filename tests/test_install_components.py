@@ -1,22 +1,20 @@
 #!/usr/bin/env python3
-"""
-Sustituir el rclone y el Python de un dispositivo (install/components.py).
+"""Sustituir el rclone y el Python de un dispositivo (`install/components.py`).
 
 Nada de esto habla con la red ni toca un dispositivo real: `pinned_rclone()` y
 `ensure_runtime()` se sustituyen enteros, y las dos preguntas sobre el sistema
-—¿está ese rclone en marcha?, ¿corre este proceso desde ese runtime?— son
+(¿está ese rclone en marcha?, ¿corre este proceso desde ese runtime?) son
 funciones de módulo justo para poder contestarlas a mano aquí.
 
 Lo que se comprueba es lo que puede hacer daño:
-
-  * que el intercambio no pase nunca por «medio rclone en bin/», porque es el
-    único que el dispositivo tiene;
-  * que lo que está en uso se POSPONGA con su motivo en vez de forzarse, y sin
-    haberse bajado nada;
-  * que un fallo de verificación deje el binario de antes exactamente como
-    estaba;
-  * y que después de una pasada buena el dispositivo ya no tenga nada pendiente,
-    que es lo que apaga el recuadro ámbar.
+- Que el intercambio no pase nunca por «medio rclone en bin/», porque es el
+  único que el dispositivo tiene.
+- Que lo que está en uso se POSPONGA con su motivo en vez de forzarse, y sin
+  haberse bajado nada.
+- Que un fallo de verificación deje el binario de antes exactamente como
+  estaba.
+- Y que después de una pasada buena el dispositivo ya no tenga nada pendiente,
+  que es lo que apaga el recuadro ámbar.
 """
 
 import sys
@@ -67,6 +65,7 @@ reales = (rclone_bin.pinned_rclone, runtime_bin.ensure_runtime,
 
 
 def falso_runtime(plat, progreso=None, allow_download=True):
+    """Descarga de mentira de un runtime: apunta la plataforma y no baja nada."""
     bajados.append("python " + plat.clave)
     return Path("archivo-de-mentira")
 
@@ -91,7 +90,7 @@ components.rclone_en_uso = lambda ruta: False
 components.runtime_en_uso = lambda carpeta: False
 
 try:
-    # --- la pasada buena -----------------------------------------------------
+    # la pasada buena
     raiz = dispositivo()
     c("se ve lo que hay que poner al día", len(components.pendientes(raiz)), 4)
     bajados.clear()
@@ -118,7 +117,7 @@ try:
     c("una segunda pasada no baja nada", bajados, [])
     c("ni dice haber hecho nada", res.hechos, [])
 
-    # --- lo que está en uso se pospone, y sin bajar nada ---------------------
+    # lo que está en uso se pospone, y sin bajar nada
     #
     # Postergar es una decisión: en Windows el renombrado colaría igual, pero
     # cambiarle el binario a una sincronización a media pasada no puede ocurrir
@@ -153,10 +152,11 @@ try:
     c("y no se ha bajado", "python windows-x64" in bajados, False)
     components.runtime_en_uso = lambda carpeta: False
 
-    # --- un fallo de verificación no toca nada -------------------------------
+    # un fallo de verificación no toca nada
     raiz = dispositivo()
 
     def revienta(plat, progreso=None):
+        """Hace que la descarga falle: lo descargado no es lo que rclone publica."""
         raise InstallError("lo descargado no es lo que rclone publica")
 
     rclone_bin.pinned_rclone = revienta
@@ -174,10 +174,11 @@ try:
     rclone_bin.pinned_rclone = lambda plat, progreso=None: (
         bajados.append("rclone " + plat.clave) or nuevo_rclone)
 
-    # --- y lo que falla del lado del Python se cuenta igual ------------------
+    # y lo que falla del lado del Python se cuenta igual
     raiz = dispositivo()
 
     def runtime_que_revienta(plat, progreso=None, allow_download=True):
+        """Hace que el runtime falle: el archivo no cuadra con su suma."""
         raise InstallError("el archivo descargado no cuadra con su suma")
 
     runtime_bin.ensure_runtime = runtime_que_revienta
@@ -188,16 +189,17 @@ try:
     c("los rclone de esa misma pasada sí se han puesto", len(res.hechos), 2)
     runtime_bin.ensure_runtime = falso_runtime
 
-    # --- sin red no hay ni InstallError --------------------------------------
+    # sin red no hay ni InstallError
     #
-    # `urllib.error.URLError` ES un OSError, y sale crudo de `published_sha256()`
-    # nada más ir a leer el SHA256SUMS —el primer sitio al que va una descarga—,
-    # así que quedarse sin red, un proxy o un tiempo de espera llegan por ahí. Si
-    # se escapara, se perdería el parte entero de una pasada que a lo mejor ya
-    # había puesto al día media docena de componentes.
+    # `urllib.error.URLError` ES un OSError, y sale crudo de
+    # `published_sha256()` nada más ir a leer el SHA256SUMS —el primer sitio al
+    # que va una descarga—, así que quedarse sin red, un proxy o un tiempo de
+    # espera llegan por ahí. Si se escapara, se perdería el parte entero de una
+    # pasada que a lo mejor ya había puesto al día media docena de componentes.
     raiz = dispositivo()
 
     def sin_red(plat, progreso=None):
+        """Hace que Windows se quede sin red; para el resto, descarga de mentira."""
         if plat == WIN:
             raise URLError("getaddrinfo failed")
         return bajados.append("rclone " + plat.clave) or nuevo_rclone
@@ -216,17 +218,18 @@ try:
     rclone_bin.pinned_rclone = lambda plat, progreso=None: (
         bajados.append("rclone " + plat.clave) or nuevo_rclone)
 
-    # --- el intercambio no pasa por «medio rclone» ---------------------------
+    # el intercambio no pasa por «medio rclone»
     #
     # Si el renombrado final falla, el de antes vuelve a su sitio: nunca queda
-    # `bin/` sin rclone, que es el estado en el que el dispositivo no sincroniza
-    # en ningún equipo.
+    # `bin/` sin rclone, que es el estado en el que el dispositivo no
+    # sincroniza en ningún equipo.
     raiz = dispositivo()
     destino = platforms.rclone_path(raiz, WIN)
     reemplazar = components.os.replace
     llamadas = {"n": 0}
 
     def replace_que_falla(a, b):
+        """`os.replace` que falla en la segunda llamada, la que coloca el nuevo."""
         llamadas["n"] += 1
         if llamadas["n"] == 2:        # la 1ª aparta el viejo; la 2ª coloca
             raise PermissionError("justo ahora no")
@@ -273,6 +276,7 @@ try:
     destino = platforms.rclone_path(raiz, WIN)
 
     def replace_que_no_va(a, b):
+        """`os.replace` que siempre falla."""
         raise PermissionError("ocupado")
 
     components.os.replace = replace_que_no_va
@@ -299,6 +303,7 @@ try:
     llamadas = {"n": 0}
 
     def replace_que_falla_siempre_menos_la_primera(a, b):
+        """`os.replace` que solo deja pasar la primera llamada, la que aparta."""
         llamadas["n"] += 1
         if llamadas["n"] >= 2:    # la 1ª aparta; fallan colocar y devolver
             raise PermissionError("justo ahora no")
@@ -322,7 +327,7 @@ try:
       [p.read_bytes() for p in destino.parent.glob(".*.viejo-*")],
       [b"rclone viejo"])
 
-    # --- los restos de un intento anterior se barren -------------------------
+    # los restos de un intento anterior se barren
     raiz = dispositivo()
     destino = platforms.rclone_path(raiz, WIN)
     resto = destino.with_name(f".{destino.name}.viejo-4242")
@@ -347,7 +352,7 @@ try:
       detras.exists(), False)
     c("y él se queda para la próxima vez", atascado.is_dir(), True)
 
-    # --- lo que se va contando mientras tanto --------------------------------
+    # lo que se va contando mientras tanto
     #
     # Es lo que imprime la orden de consola, así que se mira como lo leería
     # alguien: «consiguiendo la v1.75.1» sería un artículo sin nombre detrás.
@@ -361,13 +366,13 @@ try:
     c.contains("y se dice también lo que se sustituye",
                "\n".join(dicho), "sustituyendo")
 
-    # --- el VeraCrypt de viaje (#50) ------------------------------------------
+    # el VeraCrypt de viaje (#50)
     #
-    # Su carpeta vive en la raíz FÍSICA, junto al .hc, y se sustituye entera con
-    # el mismo intercambio. Lo que se comprueba: que con sello se pone al día,
-    # que en uso se pospone sin bajar nada, que uno SIN sello no se toca nunca
-    # desde aquí —su vestíbulo solo sabe abrir esa disposición— y que si no cabe
-    # no se toca nada.
+    # Su carpeta vive en la raíz FÍSICA, junto al .hc, y se sustituye entera
+    # con el mismo intercambio. Lo que se comprueba: que con sello se pone al
+    # día, que en uso se pospone sin bajar nada, que uno SIN sello no se toca
+    # nunca desde aquí —su vestíbulo solo sabe abrir esa disposición— y que si
+    # no cabe no se toca nada.
     import shutil
 
     from _harness import falso_portatil
@@ -395,6 +400,7 @@ try:
         return disp, fis
 
     def lo_de(fis):
+        """Devuelve los ficheros de la carpeta del VeraCrypt de viaje y su contenido."""
         carpeta = comp.veracrypt_dir(fis)
         return {p.name: p.read_bytes() for p in carpeta.iterdir()}
 
@@ -453,10 +459,10 @@ try:
         (veracrypt_bin.ensure_veracrypt, components.veracrypt_en_uso,
          traveler.espacio_libre) = reales_vc
 
-    # --- los restos de un runtime a medias se barren --------------------------
+    # los restos de un runtime a medias se barren
     #
     # Un `.windows-arm64.nuevo-27804` con 28 MB a medio extraer se quedó para
-    # siempre en un dispositivo real: cada proceso solo limpiaba el suyo. Ahora
+    # siempre en un dispositivo real porque cada proceso solo limpiaba el suyo:
     # se barren los de procesos muertos, y solo esos.
     import contextlib
     import importlib.util
@@ -467,6 +473,7 @@ try:
     from common import update
 
     def pid_muerto() -> int:
+        """Devuelve el pid de un proceso que ya ha acabado."""
         proc = subprocess.Popen([sys.executable, "-c", ""])
         proc.wait()
         return proc.pid
@@ -495,10 +502,10 @@ try:
     c("y los runtimes de verdad siguen ahí",
       (platforms.runtime_dir(raiz, WIN) / WIN.interprete).is_file(), True)
 
-    # --- el relevo: el Python con el que está abierta la ventana -------------
+    # el relevo: el Python con el que está abierta la ventana
     #
-    # Desde la ventana, el runtime de esta plataforma no se podía cambiar nunca:
-    # es el suyo, y Windows no deja apartar la carpeta de un pythonw.exe vivo. El
+    # Desde la ventana el runtime de esta plataforma no se puede cambiar: es el
+    # suyo, y Windows no deja apartar la carpeta de un pythonw.exe vivo. El
     # relevo lo cambia con la ventana cerrada, desde el temporal del equipo.
     raiz = dispositivo()
     components.runtime_en_uso = lambda carpeta: (
@@ -529,6 +536,7 @@ try:
     extraidos: list[tuple] = []
 
     def falso_extract(archivo, destino, plat, sha):
+        """Extracción de mentira: apunta la plataforma y deja un intérprete nuevo."""
         extraidos.append((plat.clave, sha))
         (destino / plat.interprete).parent.mkdir(parents=True, exist_ok=True)
         (destino / plat.interprete).write_bytes(b"py NUEVO")
@@ -572,6 +580,7 @@ try:
 
         # Si la extracción falla, no queda nada en el temporal.
         def extract_que_revienta(archivo, destino, plat, sha):
+            """Extracción que falla a medias: el archivo no cuadra."""
             destino.mkdir(parents=True)
             raise InstallError("el archivo no cuadra")
 
@@ -599,10 +608,11 @@ try:
         c("y se queda la de uno vivo",
           sorted(p.name for p in viejos.iterdir()), [components.RELEVO_PREFIJO + "b"])
 
-        # --- la orden, con --relevo, dentro de este proceso ------------------
+        # la orden, con --relevo, dentro de este proceso
         entrada = Path(__file__).resolve().parent.parent / "prdrive-install.py"
 
         def cargar(ruta: Path):
+            """Carga el instalador desde `ruta` como un módulo aparte."""
             spec = importlib.util.spec_from_file_location("prdrive_install", ruta)
             modulo = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(modulo)
@@ -702,7 +712,8 @@ try:
                        "«Actualizar…»")
             components.runtime_en_uso = lambda carpeta: False
 
-            # --- el relevo en sí ---------------------------------------------
+            # el relevo en sí
+            #
             # Se carga desde una copia en su carpeta, como en la vida real: el
             # registro va al lado del código, no al checkout.
             relevo = tmpdir("prdrive-relevo-prueba-")
@@ -729,6 +740,7 @@ try:
 
             # Sin ventanita (sin Tk, sin pantalla) el trabajo se hace igual.
             def sin_pantalla(mensaje, funcion, progreso):
+                """Ventanita de mentira que falla como una sesión sin pantalla."""
                 raise RuntimeError("no display name")
 
             tk_relevo.mientras = sin_pantalla
@@ -743,6 +755,7 @@ try:
             veces = {"n": 0}
 
             def cae_a_medias(mensaje, funcion, progreso):
+                """Ventanita de mentira que hace el trabajo y luego se cae."""
                 veces["n"] += 1
                 funcion()
                 raise RuntimeError("la ventanita se ha caído")
@@ -785,7 +798,7 @@ try:
     finally:
         runtime_bin.extract, runtime_bin.recorded_sha256 = reales_rt
 
-    # --- quién corre desde una carpeta, de verdad ----------------------------
+    # quién corre desde una carpeta, de verdad
     #
     # Sin sustituir nada: es lo único que dice qué retiene un runtime, y en G:
     # lo que lo retenía era un proceso que nadie veía.
@@ -798,7 +811,7 @@ try:
     c("y desde una carpeta cualquiera no corre nadie",
       components.procesos_desde(tmpdir("prdrive-nadie-")), {})
 
-    # --- esperar a que la carpeta quede libre --------------------------------
+    # esperar a que la carpeta quede libre
     turnos = [{12344: "G:/pythonw.exe"}, {12344: "G:/pythonw.exe"}, {}]
     reales_espera = (components.procesos_desde, components.time.sleep)
     components.procesos_desde = lambda carpeta: turnos.pop(0) if turnos else {}
@@ -815,7 +828,7 @@ try:
     finally:
         components.procesos_desde, components.time.sleep = reales_espera
 
-    # --- lo que enseña la ventanita del relevo -------------------------------
+    # lo que enseña la ventanita del relevo
     raiz = dispositivo()
     referencia = tmpdir("prdrive-referencia-")
     (referencia / "grande.bin").write_bytes(b"x" * 1000)
@@ -840,12 +853,12 @@ try:
     c("y al final lo dice", avance.progreso(), (1.0, "Volviendo a abrir prdrive…"))
     shutil.rmtree(nuevo)
 
-    # --- la orden de consola --------------------------------------------------
+    # la orden de consola
     #
-    # Se lanza un proceso de VERDAD, así que solo se prueban los dos caminos que
-    # no llegan a descargar nada: el que no es un dispositivo y el que ya está al
-    # día. En cuanto hubiera algo pendiente, el descargador real saldría a
-    # Internet, y en este proyecto ningún test habla con la red.
+    # Se lanza un proceso de VERDAD, así que solo se prueban los dos caminos
+    # que no llegan a descargar nada: el que no es un dispositivo y el que ya
+    # está al día. En cuanto hubiera algo pendiente, el descargador real
+    # saldría a Internet, y en este proyecto ningún test habla con la red.
     import subprocess
 
     entrada = Path(__file__).resolve().parent.parent / "prdrive-install.py"
