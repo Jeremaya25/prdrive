@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""
-_harness.py — Lo que comparten los tests.
+"""Lo que comparten los tests.
 
 No hay framework: son scripts que devuelven 0 o 1. El proyecto no admite
-dependencias y esto tiene que poder ejecutarse desde el dispositivo en cualquier equipo,
-así que la raíz del proyecto se deduce de la ubicación de este fichero y nunca
-de la letra de unidad.
+dependencias y esto tiene que poder ejecutarse desde el dispositivo en
+cualquier equipo, así que la raíz del proyecto se deduce de la ubicación de
+este fichero y nunca de la letra de unidad.
 """
 
 from __future__ import annotations
@@ -18,11 +17,10 @@ import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 
-# Los tests escriben en castellano, y sus mensajes de fallo enseñan lo que se
-# obtuvo — que puede llevar cualquier cosa, incluido el carácter de reemplazo.
-# Lanzados por run_all.py o con la salida redirigida, Python codifica con la del
-# sistema (cp1252 en Windows) y el propio arnés petaba al imprimir el fallo, que
-# es justo cuando hace falta leerlo. Mismo criterio que `sync.preparar_salida`.
+# La salida va en UTF-8: los mensajes de fallo enseñan lo obtenido, que puede
+# llevar cualquier cosa, y con la codificación del sistema (cp1252 en Windows)
+# el propio arnés petaba al imprimir el fallo, que es cuando hace falta leerlo.
+# Mismo criterio que `sync.preparar_salida`.
 for _flujo in (sys.stdout, sys.stderr):
     _reconfigurar = getattr(_flujo, "reconfigure", None)
     if _reconfigurar is not None:
@@ -36,15 +34,27 @@ from common import model  # noqa: E402
 
 
 class Checks:
-    """Contador de comprobaciones. `checks.report()` es el código de salida."""
+    """Contador de comprobaciones. `checks.report()` es el código de salida.
+
+    Attributes:
+        titulo: El título de la batería.
+        total: Cuántas comprobaciones lleva.
+        fallos: Cuántas han fallado.
+    """
 
     def __init__(self, titulo: str) -> None:
+        """Empieza una batería y escribe su título."""
         self.titulo = titulo
         self.total = 0
         self.fallos = 0
         print(f"=== {titulo} ===")
 
     def __call__(self, label: str, got, want) -> bool:
+        """Comprueba que `got` sea `want`, lo cuenta y lo imprime.
+
+        Returns:
+            `True` si coinciden.
+        """
         self.total += 1
         if got == want:
             print(f"  OK     {label}")
@@ -56,9 +66,14 @@ class Checks:
         return False
 
     def contains(self, label: str, haystack: str, needle: str) -> bool:
+        """Comprueba que `needle` esté en `haystack`."""
         return self(label, needle in haystack, True)
 
     def report(self) -> int:
+        """Imprime el resumen y devuelve el código de salida.
+
+        Es 0 si todo está bien y 1 si algo falló.
+        """
         if self.fallos:
             print(f"--- {self.titulo}: {self.fallos} de {self.total} FALLAN\n")
             return 1
@@ -79,6 +94,7 @@ def mkcfg(names, daemon=None, defaults=None, pairs=None) -> model.Config:
 
 
 _TEMPORALES: list[Path] = []
+"""Los directorios temporales que se barren al salir."""
 
 
 def tmpdir(prefix: str = "prdrive-test-") -> Path:
@@ -101,6 +117,7 @@ def en_exec(ruta) -> str:
 
 
 MAQUINAS_PE ={"x64": 0x8664, "arm64": 0xAA64, "x86": 0x014C}
+"""Código de máquina de la cabecera PE de cada CPU."""
 
 
 def pe(maquina: int | None, relleno: bytes = b"") -> bytes:
@@ -149,28 +166,32 @@ def falso_portatil(version: str | None = None, sin: tuple[str, ...] = ()) -> Pat
     return carpeta
 
 
-# La carpeta del agente residente en el equipo (`common/equipo.py`), en un
-# temporal para TODOS los tests: en el equipo de quien los ejecuta puede haber
-# un agente instalado de verdad, y ni su configuración puede cambiar lo que ve
-# un test ni un test puede escribirle en el buzón.
+# La carpeta del agente residente en un temporal para TODOS los tests: en el
+# equipo de quien los ejecuta puede haber un agente instalado de verdad, y ni
+# su configuración puede cambiar lo que ve un test ni un test puede escribirle
+# en el buzón.
 from common import equipo  # noqa: E402
 
 equipo.DIR = tmpdir("prdrive-equipo-harness-")
-# Y lo que el instalador del agente escribe en el escritorio (el acceso del
-# menú, el autostart), también en temporales: un test que se olvide de
-# sustituirlo no puede dejarle un «prdrive» en el menú a quien los ejecuta.
+# Lo mismo con lo que el instalador del agente escribe en el escritorio (el
+# acceso del menú, el autostart): un test que se olvide de sustituirlo no puede
+# dejarle un «prdrive» en el menú a quien los ejecuta.
 os.environ["XDG_DATA_HOME"] = str(tmpdir("prdrive-xdg-data-"))
 os.environ["XDG_CONFIG_HOME"] = str(tmpdir("prdrive-xdg-config-"))
 
 # Varios tests fuerzan `IS_WIN = False` para pasar por la rama de Linux, y ahí
 # «¿vive este pid?» es `os.kill(pid, 0)`. En Windows eso NO pregunta: 0 es
-# CTRL_C_EVENT, y le manda un Ctrl+C a toda la consola —el test, run_all y el
-# terminal de quien la ha lanzado—. Aquí la señal 0 hace lo mismo que en POSIX:
-# nada si el proceso existe, ProcessLookupError si no.
+# CTRL_C_EVENT y le manda un Ctrl+C a toda la consola (el test, run_all y el
+# terminal de quien la lanzó). Aquí la señal 0 hace lo mismo que en POSIX: nada
+# si el proceso existe, `ProcessLookupError` si no.
 if os.name == "nt":
     _kill_real = os.kill
 
     def _kill_de_prueba(pid: int, sig: int) -> None:
+        """Sustituye a `os.kill` en Windows.
+
+        La señal 0 se comporta como en POSIX.
+        """
         if sig == 0:
             from common.store import pid_alive
             if not pid_alive(pid):
@@ -183,6 +204,7 @@ if os.name == "nt":
 
 @atexit.register
 def _limpiar_temporales() -> None:
+    """Borra los directorios temporales al salir."""
     for destino in _TEMPORALES:
         shutil.rmtree(destino, ignore_errors=True)
 

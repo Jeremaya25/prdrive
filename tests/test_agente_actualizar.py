@@ -1,19 +1,17 @@
 #!/usr/bin/env python3
-"""
-«Actualizar» el agente residente (fase 5, sección 8 del diseño).
-
-  * El agente mira de tarde en tarde si hay una versión más nueva que la suya
-    (en un hilo: es la red) y lo dice UNA vez; la bandeja ofrece «Actualizar a
-    la vX», y mientras se actualiza, «Actualizando…» apagado.
-  * «Actualizar» lanza un hijo suelto (`agente.py actualizar`), uno solo aunque
-    se pida dos veces, y no espera nada: la cola no se para.
-  * `agente.py actualizar` baja el código de la release con `update.download()`
-    (a un temporal, nunca a una raíz), ejecuta SU instalador con
-    `--update-agente` y el Python del agente, copia lo que dice al diario y
-    borra el temporal. Sin versión nueva no baja nada; una descarga que no se
-    comprueba no ejecuta nada.
-  * `update.check()` y `pending()` guardan su caché donde se les diga: la del
-    agente vive en su carpeta del equipo, no en ninguna raíz.
+"""«Actualizar» el agente residente (fase 5, sección 8 del diseño).
+- El agente mira de tarde en tarde si hay una versión más nueva que la suya (en
+  un hilo: es la red) y lo dice UNA vez; la bandeja ofrece «Actualizar a la vX»
+  y, mientras se actualiza, «Actualizando…» apagado.
+- «Actualizar» lanza un hijo suelto (`agente.py actualizar`), uno solo aunque
+  se pida dos veces, y no espera nada: la cola no se para.
+- `agente.py actualizar` baja el código de la release con `update.download()`
+  (a un temporal, nunca a una raíz), ejecuta SU instalador con
+  `--update-agente` y el Python del agente, copia lo que dice al diario y borra
+  el temporal. Sin versión nueva no baja nada; una descarga que no se comprueba
+  no ejecuta nada.
+- `update.check()` y `pending()` guardan su caché donde se les diga: la del
+  agente vive en su carpeta del equipo, no en ninguna raíz.
 """
 
 import subprocess
@@ -33,7 +31,7 @@ update.fetch = lambda url, timeout: c("ningún test toca la red", url, "nada")
 
 REL = update.Release("v9.9.9", "9.9.9", "prdrive 9.9.9", update.PAGINA, "")
 
-# --- mirar si hay versión nueva ----------------------------------------------------
+# mirar si hay versión nueva
 buscadas: list = []
 agente.buscar_version = lambda: buscadas.append(1) or REL
 ag = F.nuevo()
@@ -48,6 +46,7 @@ c("  sin bandeja, cómo ponerla a mano",
 
 
 class Icono:
+    """Bandeja de mentira que dice si su icono está puesto."""
     puesta = False
 
 
@@ -80,7 +79,7 @@ c("sin red no pasa nada: se apunta y se sigue",
   (ag.nueva, any("no he podido mirar si hay versión nueva" in d for d in F.DIARIO)),
   ("v9.9.9", True))
 
-# --- «Actualizar»: un hijo suelto ----------------------------------------------------
+# «Actualizar»: un hijo suelto
 ag.pedir({"pide": equipo.PIDE_ACTUALIZAR})
 F.vueltas(ag, 1)
 hijos = [p for p in F.LANZADOS if p.args[-1] == "actualizar"]
@@ -100,7 +99,7 @@ F.vueltas(ag, 1)
 c("si acaba y el agente sigue siendo este, se puede volver a pedir",
   (ag.actualizando, ag.resumen()["actualizando"]), (None, False))
 
-# --- agente.py actualizar ----------------------------------------------------------------
+# agente.py actualizar
 cache = tmpdir("prdrive-cache-") / "update.json"
 agente.cache_version = lambda: cache
 comprobado: list = []
@@ -109,6 +108,7 @@ bajadas: list = []
 
 
 def bajar(tag, destino, progreso=None):
+    """Descarga de mentira: apunta lo pedido y deja un instalador vacío."""
     bajadas.append((tag, Path(destino)))
     Path(destino).mkdir(parents=True)
     (Path(destino) / "prdrive-install.py").write_text("", encoding="utf-8")
@@ -147,6 +147,7 @@ update.installed_version = lambda root=None: "0.4.0"
 
 
 def bajar_mal(tag, destino, progreso=None):
+    """Descarga que falla porque el zip está dañado."""
     raise update.UpdateError("El zip descargado está dañado (x). No se ha extraído nada.")
 
 
@@ -162,7 +163,7 @@ c("si el instalador falla, se dice", (agente.main(["actualizar"]),
                                       [t for t, _ in F.AVISOS]),
   (1, ["prdrive: no he podido actualizar"]))
 
-# --- la caché de update, donde se le diga --------------------------------------------------
+# la caché de update, donde se le diga
 import importlib  # noqa: E402
 
 importlib.reload(update)

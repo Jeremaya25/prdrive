@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""
-El agente hace de servicio de una unidad con los ficheros que ya existen en su
-`state/`, escritos como los escribiría un runsync viejo: `daemon.lock.json`,
-`daemon.stop` y `ui.lock.json`.
+"""El agente como servicio de una unidad, por los ficheros de su `state/`.
+
+Los ficheros son los que ya existen, escritos como los escribiría un runsync
+viejo: `daemon.lock.json`, `daemon.stop` y `ui.lock.json`.
 
 Se comprueba el contrato de la sección 3 del diseño: toma el lock, obedece el
-stop acabando la pareja en curso, se queda en pausa con la ventana abierta y
-un rato después, se aparta ante otro servicio vivo, vuelve cuando se va, y no
+stop acabando la pareja en curso, se queda en pausa con la ventana abierta y un
+rato después, se aparta ante otro servicio vivo, vuelve cuando se va, y no
 cuenta como fallo una unidad desenchufada a mitad de pasada. Y lo que el agente
 hace con cada pasada: dónde la lanza, cuándo avisa, el «sin conexión», los
 modos, el buzón y el vestíbulo de una unidad VeraCrypt cerrada.
@@ -59,7 +59,7 @@ F.vueltas(ag, 3)
 c("mientras corre no se lanza otra (una cola para todo el equipo)",
   len(F.pasadas(RAIZ)), 1)
 
-# --- runsync abre su ventana: daemon.stop -----------------------------------------
+# runsync abre su ventana: daemon.stop
 F.stop(RAIZ).touch()
 F.vueltas(ag, 1)
 c("con un stop y una pareja en curso, la acaba: el lock sigue",
@@ -96,7 +96,7 @@ c("  y sigue con la pareja pendiente", F.pasadas(RAIZ)[-1].args[-1], "fotos")
 F.acabar(F.pasadas(RAIZ)[-1])
 F.vueltas(ag, 1)
 
-# --- la ventana arranca su propio servicio: el agente se aparta --------------------
+# la ventana arranca su propio servicio: el agente se aparta
 F.stop(RAIZ).touch()
 F.vueltas(ag, 1)
 F.otro_servicio(RAIZ)                  # runsync --daemon, vivo en este equipo
@@ -122,7 +122,7 @@ ag.conexiones[UID].lock = None
 F.vueltas(ag, 1)
 c("un lock de un pid muerto, también", F.lock(RAIZ).get("pid"), os.getpid())
 
-# --- el runsync de verdad: stop_previous_daemon() contra el agente ---------------
+# el runsync de verdad: stop_previous_daemon() contra el agente
 import runsync  # noqa: E402
 
 for p in F.pasadas(RAIZ):
@@ -146,7 +146,7 @@ c("el runsync de siempre ve parar al servicio sin esperar a su plazo",
           "la ventana esté abierta."])
 c("  y deja la unidad sin lock ni stop", (F.lock(RAIZ), F.stop(RAIZ).exists()), ({}, False))
 
-# --- desenchufada a mitad de pasada -------------------------------------------------
+# desenchufada a mitad de pasada
 F.vueltas(ag, 1, cada=agente.GRACIA + 1)
 F.pasar(3600)
 F.vueltas(ag, 1)
@@ -166,7 +166,7 @@ c("  ni avisa de nada", len(F.AVISOS), avisos_antes)
 F.RAICES[:] = [RAIZ]
 
 
-# --- fallos, avisos y el «sin conexión» ------------------------------------------------
+# fallos, avisos y el «sin conexión»
 
 def fresco(uid, modo=equipo.DAEMON, **kw):
     """Un agente nuevo con una unidad nueva ya conectada y atendida."""
@@ -259,7 +259,7 @@ c("si la sonda contesta en seguida, aquel «fallo de red» era de la pareja",
   ag.marcas[(C, "docs")].fallos, 1)
 c("  y ahora sí avisa como fallo", F.AVISOS[avisos_antes:][0][0], "U: falla docs")
 
-# --- los modos ---------------------------------------------------------------------------
+# los modos
 D = "d" * 32
 ag, RD = fresco(D, modo=equipo.SYNC, parejas=("docs",))
 F.acabar(F.pasadas(RD)[-1])
@@ -287,7 +287,7 @@ ventanas = [x for x in F.LANZADOS if x.args[-1] == str(RG / ".prdrive" / "runsyn
 c("  una vez por conexión", len(ventanas), 1)
 c("  y sin servicio del agente", F.lock(RG), {})
 
-# --- el buzón ------------------------------------------------------------------------------
+# el buzón
 H = "f" * 32
 ag, RH = fresco(H, parejas=("docs", "fotos"))
 F.acabar(F.pasadas(RH)[-1])
@@ -331,7 +331,7 @@ equipo.pedir({"pide": equipo.PIDE_PARAR})
 F.vueltas(ag, 1)
 c("uno de ahora, sí", ag.terminar, True)
 
-# --- el vestíbulo de una unidad VeraCrypt cerrada ------------------------------------------
+# el vestíbulo de una unidad VeraCrypt cerrada
 V = "9" * 32
 FISICA = F.unidad("vestibulo")
 for nombre in (".prdrive",):
@@ -368,7 +368,7 @@ ag = F.nuevo()
 F.vueltas(ag, 4)
 c("una cifrada que no está en la lista: nunca se ejecuta nada suyo", F.ABIERTOS, [])
 
-# --- Windows no deja borrar un fichero que otro tiene abierto ------------------------------
+# Windows no deja borrar un fichero que otro tiene abierto
 #
 # runsync lee daemon.lock.json cada 0,3 s mientras espera a que el servicio pare,
 # y Python abre sin FILE_SHARE_DELETE: si el agente lo borra justo entonces,
@@ -394,6 +394,7 @@ en_uso = [3]                        # tres intentos seguidos con runsync leyénd
 
 
 def unlink_en_uso(self, missing_ok=False):
+    """`unlink` que falla como en Windows con runsync leyendo el lock."""
     if self.name == "daemon.lock.json" and en_uso[0]:
         en_uso[0] -= 1
         raise PermissionError(32, "El proceso no tiene acceso al archivo porque está "

@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-_agente_falso.py — Lo que comparten los tests del agente residente.
+"""Lo que comparten los tests del agente residente.
 
 Un equipo de mentira para `agente.py`: su carpeta en un temporal, unidades
 falsas (carpetas con `.prdrive/PRDRIVE`, `runsync.py`, `sync.py` y un
@@ -25,6 +24,7 @@ class Proc:
     """Un proceso que no se lanza: el test decide cuándo acaba y con qué."""
 
     def __init__(self, args, **kwargs):
+        """Apunta el proceso en `LANZADOS`, sin lanzar nada."""
         self.args = [str(a) for a in args]
         self.kwargs = kwargs
         self.rc: int | None = None
@@ -32,24 +32,35 @@ class Proc:
         LANZADOS.append(self)
 
     def poll(self):
+        """Devuelve el código de salida, o `None` si sigue vivo."""
         return self.rc
 
     def terminate(self):
+        """Lo termina (código -15) si no había acabado."""
         self.terminado = True
         if self.rc is None:
             self.rc = -15
 
 
 LANZADOS: list[Proc] = []
+"""Los procesos que el agente ha «lanzado»."""
 AVISOS: list[tuple[str, str]] = []
+"""Los avisos que ha dado, como `(título, texto)`."""
 DIARIO: list[str] = []
-ABIERTOS: list[Path] = []           # contenedores que se han pedido abrir
-RAICES: list[Path] = []             # lo que «encuentra» el recorrido
+"""Lo que ha dicho en su diario."""
+ABIERTOS: list[Path] = []
+"""Los contenedores que se han pedido abrir."""
+RAICES: list[Path] = []
+"""Lo que «encuentra» el recorrido."""
 RELOJ = [1_000_000.0]
+"""La hora, en una lista de un elemento para poder avanzarla (`pasar()`)."""
 PANTALLA = [True]
-RCLONE: list = [None]               # el rclone del agente; [None] = sin él
+"""Si hay pantalla donde abrir ventanas, en una lista para poder cambiarla."""
+RCLONE: list = [None]
+"""El rclone del agente; `[None]` es sin él."""
 VERSION = (Path(__file__).resolve().parent.parent / "VERSION").read_text(
-    encoding="utf-8").strip()       # la de las unidades de mentira: la de este código
+    encoding="utf-8").strip()
+"""La de las unidades de mentira: la de este código."""
 
 
 def preparar() -> Path:
@@ -63,7 +74,7 @@ def preparar() -> Path:
     penwatch.candidate_roots = lambda cfg: list(RAICES)
     moderacion.energia = lambda: moderacion.Energia()
     moderacion.red_medida = lambda: False
-    # Ni una pregunta a GitHub: la versión nueva la pone el test que la quiera,
+    # Ni una pregunta a GitHub: la versión nueva la pone el test que la quiera
     # y lo que iría en un hilo corre en el sitio.
     agente.buscar_version = lambda: None
     agente.hilo = lambda funcion: funcion()
@@ -77,10 +88,12 @@ def preparar() -> Path:
 
 
 def reloj() -> float:
+    """Devuelve la hora del reloj de mentira."""
     return RELOJ[0]
 
 
 def pasar(segundos: float) -> None:
+    """Avanza el reloj de mentira `segundos`."""
     RELOJ[0] += segundos
 
 
@@ -104,10 +117,12 @@ def unidad(uid: str, parejas=("docs", "fotos"), nombre: str | None = None,
 
 
 def lock(raiz: Path) -> dict:
+    """Devuelve el `daemon.lock.json` de la raíz, o `{}` si no hay."""
     return store.read_json(raiz / penwatch.DAEMON_LOCK_REL)
 
 
 def stop(raiz: Path) -> Path:
+    """Devuelve la ruta del `daemon.stop` de la raíz."""
     return raiz / penwatch.APP_SUBDIR / "state" / "daemon.stop"
 
 
@@ -119,6 +134,15 @@ def ventana_abierta(raiz: Path) -> None:
 
 
 def otro_servicio(raiz: Path, host: str | None = None, pid: int | None = None) -> None:
+    """Escribe en la raíz el lock de otro servicio.
+
+    Por defecto es de este equipo y de un pid vivo.
+
+    Args:
+        raiz: La raíz de la unidad.
+        host: El equipo del lock; por defecto, este.
+        pid: El pid del lock; por defecto, el del padre de este proceso.
+    """
     store.write_json(raiz / penwatch.DAEMON_LOCK_REL,
                      {"pid": os.getppid() if pid is None else pid,
                       "host": host or penwatch.HOST, "started": "x", "pairs": ["docs"]})
@@ -138,10 +162,16 @@ def acabar(proc: Proc, rc: int = 0, salida: str = "") -> None:
 
 
 def nuevo() -> "agente.Agente":
+    """Devuelve un agente con el reloj de mentira."""
     return agente.Agente(reloj=reloj)
 
 
 def vueltas(ag, n: int = 1, cada: float = agente.TICK, recorrer: bool = True):
+    """Da `n` vueltas al agente, avanzando el reloj `cada` segundos.
+
+    Returns:
+        La decisión de la última vuelta.
+    """
     decision = None
     for _ in range(n):
         decision = ag.vuelta(recorrer)

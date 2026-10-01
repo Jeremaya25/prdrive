@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
-"""
-run_all.py — Ejecuta todos los tests.
+"""Ejecuta todos los tests.
 
-    python tests/run_all.py
-
-Cada test es un script independiente que devuelve 0 o 1; se lanzan en procesos
-separados a propósito, porque varios sustituyen funciones del proyecto (el bucle
-de Tk, print, las rutas del modelo) y no deben contaminarse entre sí.
-
-Ninguno toca el dispositivo: todos trabajan sobre directorios temporales.
+Se usa como `python tests/run_all.py`. Cada test es un script independiente que
+devuelve 0 o 1; se lanzan en procesos separados a propósito, porque varios
+sustituyen funciones del proyecto (el bucle de Tk, print, las rutas del modelo)
+y no deben contaminarse entre sí. Ninguno toca el dispositivo: todos trabajan
+sobre directorios temporales.
 """
 
 from __future__ import annotations
@@ -18,9 +15,11 @@ import sys
 from pathlib import Path
 
 TESTS_DIR = Path(__file__).resolve().parent
+"""Carpeta de los tests."""
 
 
 def main() -> int:
+    """Lanza cada `test_*.py` y devuelve 1 si alguno falla."""
     scripts = sorted(p for p in TESTS_DIR.glob("test_*.py"))
     if not scripts:
         print("No hay tests que ejecutar.")

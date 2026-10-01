@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
-"""
-_bus_falso.py — Un bus de sesión de mentira que también pregunta.
+"""Un bus de sesión de mentira que también pregunta.
 
 El otro lado de un `socketpair`: saluda como dice la *D-Bus Specification*,
 contesta lo que contesta el propio bus (`Hello`, `RequestName`, `AddMatch`,
 `NameHasOwner`), hace de `StatusNotifierWatcher` si se le dice, apunta lo que
 recibe (llamadas y señales) y puede LLAMAR al cliente como lo haría el
 anfitrión de la bandeja (`llamar()`), esperando su respuesta. Lo que no sabe
-contestar se lo pasa a `responder(mensaje)`, que devuelve ("ok", firma, cuerpo),
-("error", nombre, texto) o None (no contesta).
+contestar se lo pasa a `responder(mensaje)`, que devuelve `("ok", firma,
+cuerpo)`, `("error", nombre, texto)` o `None` (no contesta).
 """
 
 from __future__ import annotations
@@ -19,11 +18,33 @@ import threading
 from common import dbus
 
 CLIENTE = ":1.42"
+"""Nombre único que el bus le da al cliente."""
 ANFITRION = ":1.7"
+"""Nombre único del anfitrión de la bandeja, el que llama al cliente."""
 
 
 class BusFalso(threading.Thread):
+    """El bus de mentira: un hilo que lee al cliente y le contesta.
+
+    Attributes:
+        sock: El socket del lado del bus.
+        responder: Lo que contesta a lo que el bus no sabe.
+        dueños: Los nombres con dueño en el bus.
+        recibidos: Las llamadas que ha recibido el bus.
+        senales: Las señales que ha recibido.
+        registrados: Los items registrados en el `StatusNotifierWatcher`.
+        anfitrion: Si hay un anfitrión de bandeja registrado.
+        serie: El último número de serie que ha usado.
+        cerrado: Se activa cuando acaba el hilo.
+    """
     def __init__(self, sock, responder=None, dueños=()):
+        """Prepara el bus sobre `sock`.
+
+        Args:
+            sock: El socket del lado del bus.
+            responder: Lo que contesta a lo que el bus no sabe: `fn(mensaje)`.
+            dueños: Los nombres que ya tienen dueño.
+        """
         super().__init__(daemon=True)
         self.sock = sock
         self.responder = responder or (lambda m: None)
@@ -37,9 +58,8 @@ class BusFalso(threading.Thread):
         self._cerrojo = threading.Lock()
         self.cerrado = threading.Event()
 
-    # --- lo que hace el test ---------------------------------------------------------
-
     def mandar(self, tipo, campos, firma="", cuerpo=()):
+        """Manda un mensaje al cliente y devuelve su número de serie."""
         with self._cerrojo:
             self.serie += 1
             serie = self.serie
@@ -70,6 +90,7 @@ class BusFalso(threading.Thread):
         return caja[1]
 
     def senal(self, ruta, interfaz, miembro, firma="", cuerpo=(), remitente=dbus.BUS):
+        """Manda una señal al cliente."""
         self.mandar(dbus.SIGNAL, {dbus.PATH: ruta, dbus.INTERFACE: interfaz,
                                   dbus.MEMBER: miembro, dbus.SENDER: remitente},
                     firma, cuerpo)
@@ -85,11 +106,15 @@ class BusFalso(threading.Thread):
                    [nombre, viejo, nuevo])
 
     def emitidas(self, miembro):
+        """Devuelve las señales recibidas con ese miembro."""
         return [s for s in list(self.senales) if s.miembro == miembro]
 
-    # --- el bus -------------------------------------------------------------------------
-
     def _linea(self, pendiente: bytes) -> tuple[bytes, bytes]:
+        """Lee del socket una línea del saludo.
+
+        Returns:
+            La línea y lo que sobra.
+        """
         while b"\r\n" not in pendiente:
             trozo = self.sock.recv(4096)
             if not trozo:
@@ -99,9 +124,11 @@ class BusFalso(threading.Thread):
         return linea, resto
 
     def _contestar(self, m, firma="", cuerpo=()):
+        """Contesta a `m` con un `METHOD_RETURN`."""
         self.mandar(dbus.METHOD_RETURN, {dbus.REPLY_SERIAL: m.serie}, firma, cuerpo)
 
     def run(self):
+        """Hace el saludo y atiende los mensajes del cliente hasta que cierra."""
         try:
             self.sock.recv(1)
             _linea, pendiente = self._linea(b"")
@@ -123,6 +150,7 @@ class BusFalso(threading.Thread):
             self.cerrado.set()
 
     def _uno(self, m):
+        """Atiende un mensaje: lo apunta y contesta lo que contesta un bus."""
         if m.tipo in (dbus.METHOD_RETURN, dbus.ERROR):
             caja = self._esperando.pop(m.campos.get(dbus.REPLY_SERIAL), None)
             if caja is not None:
@@ -162,7 +190,7 @@ class BusFalso(threading.Thread):
 
 
 def conectar(responder=None, dueños=()):
-    """(conexión del cliente, bus falso ya en marcha)."""
+    """Devuelve `(conexión del cliente, bus falso ya en marcha)`."""
     uno, otro = socket.socketpair()
     bus = BusFalso(otro, responder, dueños)
     bus.start()

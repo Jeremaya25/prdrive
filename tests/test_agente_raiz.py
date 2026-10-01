@@ -1,18 +1,16 @@
 #!/usr/bin/env python3
-"""
-El agente residente con la raíz de ESTE equipo (fase 2).
+"""El agente residente con la raíz de ESTE equipo (fase 2).
 
 La raíz del equipo es una raíz más de su lista, con `ruta`: se busca ahí y no
 recorriendo volúmenes, y lo demás es el mismo contrato que con una unidad
 (`test_agente_contrato.py`). Se comprueba lo que cambia:
-
-  * se atiende sin preguntar (está en la lista), con su ruta como raíz extra;
-  * si la carpeta no está, se avisa UNA vez y no se lanza nada; al volver, se
-    dice y se sigue;
-  * `añadir_raiz` por el buzón la mete en la lista (es el asistente vuelto a
-    pasar con el agente instalado);
-  * los avisos de fallo mandan a la ventana del equipo, no «desde la unidad»;
-  * `agente.py abrir` lanza el `runsync.py` de la raíz con el Python del agente.
+- Se atiende sin preguntar (está en la lista), con su ruta como raíz extra.
+- Si la carpeta no está, se avisa UNA vez y no se lanza nada; al volver, se
+  dice y se sigue.
+- `añadir_raiz` por el buzón la mete en la lista (es el asistente vuelto a
+  pasar con el agente instalado).
+- Los avisos de fallo mandan a la ventana del equipo, no «desde la unidad».
+- `agente.py abrir` lanza el `runsync.py` de la raíz con el Python del agente.
 """
 
 import os
@@ -30,8 +28,11 @@ from ui import bandeja
 
 
 def suelto(kwargs: dict) -> bool:
-    """¿Se lanzó desligado de quien lo lanza? Una sesión nueva en POSIX; en
-    Windows, su propio grupo de procesos (`agente._opciones_hijo`)."""
+    """Indica si se lanzó desligado de quien lo lanza.
+
+    Una sesión nueva en POSIX; en Windows, su propio grupo de procesos
+    (`agente._opciones_hijo`).
+    """
     if agente.IS_WIN:
         return bool(kwargs.get("creationflags", 0) & penwatch.CREATE_NEW_PROCESS_GROUP)
     return bool(kwargs.get("start_new_session"))

@@ -1,25 +1,23 @@
 #!/usr/bin/env python3
-"""
-El agente residente con la raíz de este equipo CIFRADA con VeraCrypt (fase 3).
+"""El agente residente con la raíz de este equipo CIFRADA con VeraCrypt (fase 3).
 
 Con un VeraCrypt de mentira: lo que se lanza se apunta (`_agente_falso.Proc`) y
 «montar» es que aparezca la raíz en su punto de montaje. Se comprueba:
-
-  * la orden de abrir no lleva nunca la contraseña, y sí el destino fijo
-    (`/letter` y `rm` en Windows; la carpeta en Linux);
-  * abierta se decide al VER el id, no por la salida de VeraCrypt;
-  * bloqueada, solo con el volumen de verdad cerrado; con «No» a forzar, sigue
-    abierta y se dice;
-  * `pedir_al_iniciar`: una vez al arrancar, no tras cancelar, nunca si está
-    desactivado; y el ajuste lo escribe el agente, no quien lo pide;
-  * el fantasma (letra con id y `.hc` libre) no se atiende;
-  * un punto de montaje con cosas no se tapa;
-  * `vestibulo.raiz_fisica()` encuentra la carpeta del contenedor por las
-    raíces extra;
-  * sin VeraCrypt instalado, el del agente (`veracrypt/<versión>/`), solo si
-    cuadra con su sello, y siguiendo la copia elevada que el portable lanza de
-    sí mismo: ni un «Desbloquear» se da por cancelado ni un «Bloquear» por
-    fallido mientras ella sigue.
+- La orden de abrir no lleva nunca la contraseña, y sí el destino fijo
+  (`/letter` y `rm` en Windows; la carpeta en Linux).
+- Abierta se decide al VER el id, no por la salida de VeraCrypt.
+- Bloqueada, solo con el volumen de verdad cerrado; con «No» a forzar, sigue
+  abierta y se dice.
+- `pedir_al_iniciar`: una vez al arrancar, no tras cancelar, nunca si está
+  desactivado; y el ajuste lo escribe el agente, no quien lo pide.
+- El fantasma (letra con id y `.hc` libre) no se atiende.
+- Un punto de montaje con cosas no se tapa.
+- `vestibulo.raiz_fisica()` encuentra la carpeta del contenedor por las raíces
+  extra.
+- Sin VeraCrypt instalado, el del agente (`veracrypt/<versión>/`), solo si
+  cuadra con su sello, y siguiendo la copia elevada que el portable lanza de sí
+  mismo: ni un «Desbloquear» se da por cancelado ni un «Bloquear» por fallido
+  mientras ella sigue.
 """
 
 import hashlib
@@ -76,11 +74,13 @@ def montar() -> None:
 
 
 def desmontar() -> None:
+    """Vacía el punto de montaje: lo que hace VeraCrypt al cerrarlo."""
     for hijo in PUNTO.iterdir():
         shutil.rmtree(hijo) if hijo.is_dir() else hijo.unlink()
 
 
 def veracrypts() -> list:
+    """Devuelve los procesos lanzados que son el VeraCrypt de mentira."""
     return [p for p in F.LANZADOS if p.args and p.args[0] == VC]
 
 
@@ -88,7 +88,7 @@ equipo.guardar_ajustes(equipo.Ajustes().con_unidad(UNIDAD))
 c("la unidad sabe que es cifrada, y sin letra en Linux",
   (equipo.leer_ajustes().unidades[UID].cifrada, UNIDAD.letra), (True, ""))
 
-# --- al iniciar sesión --------------------------------------------------------------
+# al iniciar sesión
 ag = F.nuevo()
 F.vueltas(ag, 1)
 c("antes de recorrer lo bastante, no pide nada", veracrypts(), [])
@@ -104,7 +104,7 @@ c("cerrada no es «no la encuentro»: ningún aviso", F.AVISOS, [])
 c("  el estado la da por bloqueada", ag.resumen()["bloqueadas"], ["Mi portátil"])
 c("  y nada se lanza", F.pasadas(), [])
 
-# --- abrir: se decide al verla ---------------------------------------------------
+# abrir: se decide al verla
 montar()
 F.vueltas(ag, 3)
 c("abierta en cuanto se ve su id: se atiende", UID in ag.conexiones, True)
@@ -115,7 +115,7 @@ equipo.pedir({"pide": equipo.PIDE_DESBLOQUEAR})
 F.vueltas(ag, 1)
 c("desbloquear algo abierto no lanza nada", len(veracrypts()), 1)
 
-# --- bloquear ---------------------------------------------------------------------
+# bloquear
 equipo.pedir({"pide": equipo.PIDE_BLOQUEAR, "id": UID})
 F.vueltas(ag, 2)
 c("bloquear espera a la pareja en curso", len(veracrypts()), 1)
@@ -136,7 +136,7 @@ c("bloqueada cuando el volumen se ha ido de verdad",
 c("  el diario lo dice", any("bloqueada" in d for d in F.DIARIO), True)
 c("  y el estado", ag.resumen()["bloqueadas"], ["Mi portátil"])
 
-# --- desbloquear a mano, y «No» a forzar ---------------------------------------------
+# desbloquear a mano, y «No» a forzar
 equipo.pedir({"pide": equipo.PIDE_DESBLOQUEAR, "id": UID})
 F.vueltas(ag, 1)
 c("desbloquear a mano vuelve a lanzar VeraCrypt", len(veracrypts()), 3)
@@ -154,7 +154,7 @@ c("si sigue montada tras salir VeraCrypt, se dice",
 c("  y se sigue atendiendo", (UID in ag.bloqueos, F.lock(PUNTO).get("agente")),
   (False, True))
 
-# --- bloquear con su ventana abierta --------------------------------------------------
+# bloquear con su ventana abierta
 F.ventana_abierta(PUNTO)
 F.AVISOS.clear()
 antes = len(veracrypts())
@@ -167,7 +167,7 @@ c("  y si no se cierra, lo dice y no bloquea",
   ([t for t, _ in F.AVISOS], len(veracrypts())), (["Mi portátil: no la bloqueo"], antes))
 (PUNTO / penwatch.UI_LOCK_REL).unlink()
 
-# --- el fantasma ------------------------------------------------------------------
+# el fantasma
 RETENIDO[0] = False
 F.AVISOS.clear()
 F.vueltas(ag, 3)
@@ -185,7 +185,7 @@ RETENIDO[0] = None
 F.vueltas(ag, 2)
 c("  y queda bloqueada", (UID in ag.bloqueos, ag.resumen()["fantasmas"]), (False, []))
 
-# --- un punto de montaje con cosas no se tapa ---------------------------------------
+# un punto de montaje con cosas no se tapa
 (PUNTO / "suelto.txt").write_text("x", encoding="utf-8")
 F.AVISOS.clear()
 antes = len(veracrypts())
@@ -196,7 +196,7 @@ c("con cosas en el punto de montaje no monta encima",
 c("  y dice por qué", "quedarían tapadas" in F.AVISOS[0][1], True)
 (PUNTO / "suelto.txt").unlink()
 
-# --- el contenedor, desaparecido ---------------------------------------------------
+# el contenedor, desaparecido
 HC.rename(HC.with_suffix(".aparte"))
 F.AVISOS.clear()
 F.vueltas(ag, 4)
@@ -207,7 +207,7 @@ HC.with_suffix(".aparte").rename(HC)
 F.vueltas(ag, 1)
 c("  y vuelve", ag.resumen()["ausentes"], [])
 
-# --- pedir_al_iniciar ----------------------------------------------------------------
+# pedir_al_iniciar
 equipo.pedir({"pide": equipo.PIDE_AJUSTE, "clave": "pedir_al_iniciar", "valor": False})
 F.vueltas(ag, 1)
 c("el ajuste lo escribe el agente", equipo.leer_ajustes().pedir_al_iniciar, False)
@@ -220,7 +220,7 @@ c("ajuste por la línea de órdenes: un sí/no que no lo es se rechaza",
   agente.main(["ajuste", "pedir_al_iniciar", "talvez"]), 2)
 c("  «sí» vale", agente.valor_ajuste("pedir_al_iniciar", "Sí"), True)
 
-# --- añadir_raiz con contenedor ---------------------------------------------------
+# añadir_raiz con contenedor
 OTRA = "d" * 32
 equipo.pedir({"pide": equipo.PIDE_RAIZ, "id": OTRA, "ruta": "/x/P", "nombre": "Otra",
               "contenedor": "/x/PRDRIVE-cifrado/PRDRIVE.hc"})
@@ -231,12 +231,12 @@ c("añadir_raiz guarda su contenedor", (u.cifrada, u.contenedor),
 c("  y no pide su contraseña: la dejó abierta el asistente", OTRA in otro.pedidas, True)
 equipo.guardar_ajustes(equipo.Ajustes().con_unidad(UNIDAD))
 
-# --- raiz_fisica por las raíces extra ----------------------------------------------
+# raiz_fisica por las raíces extra
 (FISICA / vestibulo.MARCA).write_text(f"id={UID}\n", encoding="utf-8")
 c("raiz_fisica() encuentra la carpeta del contenedor", vestibulo.raiz_fisica(UID), FISICA)
 c("  que es una de las raíces extra", vestibulo.carpetas_de_contenedor(), [str(FISICA)])
 
-# --- las órdenes de Windows ----------------------------------------------------------
+# las órdenes de Windows
 penwatch.IS_WIN, agente.IS_WIN = True, True
 equipo.Unidad.letra = LETRA_REAL
 try:
@@ -258,7 +258,7 @@ finally:
     equipo.Unidad.letra = property(lambda self: "")
     penwatch.installed_veracrypt = lambda: VC
 
-# --- sin VeraCrypt instalado: el del agente ------------------------------------------
+# sin VeraCrypt instalado: el del agente
 PROPIO = equipo.dir_veracrypt() / pins.VERACRYPT_VERSION
 PROPIO.mkdir(parents=True)
 resumenes = {}
@@ -304,6 +304,7 @@ agente.procesos = lambda nombre: set(VIVOS.get(nombre, ()))
 
 
 def propios() -> list:
+    """Devuelve los procesos lanzados que son el VeraCrypt del agente."""
     return [p for p in F.LANZADOS if p.args and p.args[0] == EXE]
 
 
@@ -357,7 +358,7 @@ F.vueltas(ag4, 2)
 agente.procesos = lambda nombre: set()
 penwatch.installed_veracrypt = lambda: VC
 
-# --- abrir con la raíz cerrada -------------------------------------------------------
+# abrir con la raíz cerrada
 F.LANZADOS.clear()
 agente.ESPERA_ABRIR = 0
 equipo.recoger()

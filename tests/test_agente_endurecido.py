@@ -1,39 +1,37 @@
 #!/usr/bin/env python3
-"""
-Lo que la revisión del PR #54 encontró en el agente y su instalación, y que se
-arregla sin cambiar el diseño:
+"""Lo que la revisión del PR #54 encontró en el agente y su instalación.
 
-  * **Nombres de pareja que no son solo nombres.** `--resync` como nombre sería
-    la opción de `sync.py` (y con ella, todas las parejas); `a/b` o `..`
-    saldrían de `state/` y `filters/`. El parser común los rechaza, el agente no
-    los lanza aunque el `sync.py` de la raíz sea de antes, y a `sync.py` le pasa
-    el nombre detrás de un `--`.
-  * **Un solo agente por equipo**, con el lock tomado en UN paso (O_EXCL): dos
-    arranques a la vez no pueden ver los dos que no hay nadie.
-  * **Escribir en una raíz sin seguir enlaces**: el diario y el lock del
-    servicio que el agente deja en una unidad no pueden acabar, por un enlace,
-    en un fichero del equipo; y el temporal de `store.write_json()` tampoco.
-  * **La raíz del equipo, por enlaces**: una raíz elegida por un enlace que
-    lleva a la carpeta del agente se rechaza, y una pareja cuyo `local` sale por
-    un enlace de la raíz, también.
-  * **«Actualizar» no escribe en un volumen fantasma**: una raíz cifrada con la
-    letra y el id pero el `.hc` libre (H-10) cuenta como bloqueada.
-  * **`install/` no importa `ui/`**: los iconos los pinta quien lanza la
-    instalación (`install.pintar_iconos`).
+Se arregla sin cambiar el diseño:
+- **Nombres de pareja que no son solo nombres.** `--resync` como nombre sería
+  la opción de `sync.py` (y con ella, todas las parejas); `a/b` o `..` saldrían
+  de `state/` y `filters/`. El parser común los rechaza, el agente no los lanza
+  aunque el `sync.py` de la raíz sea de antes, y a `sync.py` le pasa el nombre
+  detrás de un `--`.
+- **Un solo agente por equipo**, con el lock tomado en UN paso (O_EXCL): dos
+  arranques a la vez no pueden ver los dos que no hay nadie.
+- **Escribir en una raíz sin seguir enlaces**: el diario y el lock del servicio
+  que el agente deja en una unidad no pueden acabar, por un enlace, en un
+  fichero del equipo; y el temporal de `store.write_json()` tampoco.
+- **La raíz del equipo, por enlaces**: una raíz elegida por un enlace que lleva
+  a la carpeta del agente se rechaza, y una pareja cuyo `local` sale por un
+  enlace de la raíz, también.
+- **«Actualizar» no escribe en un volumen fantasma**: una raíz cifrada con la
+  letra y el id pero el `.hc` libre (H-10) cuenta como bloqueada.
+- **`install/` no importa `ui/`**: los iconos los pinta quien lanza la
+  instalación (`install.pintar_iconos`).
 
 Y lo que pedía cambiar el diseño, en una segunda vuelta:
-
-  * **Un solo servicio por unidad**: el agente y el servicio de runsync toman
-    `daemon.lock.json` en UN paso (`store.tomar_registro()`); el servicio le
-    pide al agente que se aparte y espera a que suelte, el lanzador no le
-    quita el lock al agente a mitad de pareja, y el agente mira que el lock
-    sigue siendo suyo justo antes de lanzar.
-  * **Parar el agente espera a su pasada**: la pasada queda apuntada
-    (`pasada.json`), `parar_agente()` espera a que acabe, y pasado el plazo la
-    corta con su rclone; un agente nuevo no lanza nada mientras siga viva la
-    del anterior.
-  * **El id no es una credencial**: al decir que sí se apunta la huella del
-    código de la unidad (`agente.huella()`), y con otra se vuelve a preguntar.
+- **Un solo servicio por unidad**: el agente y el servicio de runsync toman
+  `daemon.lock.json` en UN paso (`store.tomar_registro()`); el servicio le pide
+  al agente que se aparte y espera a que suelte, el lanzador no le quita el
+  lock al agente a mitad de pareja, y el agente mira que el lock sigue siendo
+  suyo justo antes de lanzar.
+- **Parar el agente espera a su pasada**: la pasada queda apuntada
+  (`pasada.json`), `parar_agente()` espera a que acabe y, pasado el plazo, la
+  corta con su rclone; un agente nuevo no lanza nada mientras siga viva la del
+  anterior.
+- **El id no es una credencial**: al decir que sí se apunta la huella del
+  código de la unidad (`agente.huella()`), y con otra se vuelve a preguntar.
 """
 
 import ast
@@ -63,7 +61,7 @@ def enlace(destino: Path, nombre: Path, carpeta: bool = False) -> bool:
         return False
 
 
-# --- nombres de pareja ------------------------------------------------------------
+# nombres de pareja
 for nombre in ("--resync", "-x", "a/b", "a\\b", "..", ".", "c:d", "x\ty"):
     c(f"el nombre {nombre!r} no vale", model.problema_nombre(nombre) is not None, True)
 for nombre in ("docs", "Mis fotos", "notas-2024", "ñandú_1"):
@@ -83,7 +81,7 @@ conf.write_text(conf.read_text(encoding="utf-8")
 c("el agente no lanza una pareja con un nombre así, aunque su sync.py sea de antes",
   [p.nombre for p in agente.leer_servicio(raiz).parejas], ["docs"])
 
-# --- un solo agente ------------------------------------------------------------------
+# un solo agente
 equipo.lock_json().unlink(missing_ok=True)
 yo = {"pid": os.getpid(), "host": equipo.HOST, "started": "x"}
 c("el primer agente toma el lock", equipo.tomar_lock(yo), None)
@@ -104,7 +102,7 @@ c("cmd_run se va sin tocar nada si otro agente está vivo",
   (True, 0, os.getppid()))
 equipo.lock_json().unlink()
 
-# --- escribir en una raíz sin seguir enlaces ---------------------------------------------
+# escribir en una raíz sin seguir enlaces
 fuera = tmpdir("prdrive-fuera-")
 victima = fuera / "bashrc"
 victima.write_text("original\n", encoding="utf-8")
@@ -131,7 +129,7 @@ if enlace(fuera, estado_otra, carpeta=True):
 c("dentro de la raíz, sí", agente.en_la_raiz(raiz, estado / "daemon.lock.json"),
   estado / "daemon.lock.json")
 
-# --- la raíz del equipo, por enlaces ------------------------------------------------------
+# la raíz del equipo, por enlaces
 casa = tmpdir("prdrive-casa-")
 raiz_equipo.carpeta_personal = lambda: casa
 raiz_equipo.carpetas_sincronizadas = lambda: []
@@ -150,7 +148,7 @@ if enlace(equipo.DIR, mia / "agente", carpeta=True):
       "carpeta del agente" in (raiz_equipo.revisar_local(mia, "agente").error or ""), True)
 c("una pareja normal dentro, sí", raiz_equipo.revisar_local(mia, "fotos").error, None)
 
-# --- «Actualizar» y el volumen fantasma -----------------------------------------------------
+# «Actualizar» y el volumen fantasma
 fantasma = tmpdir("prdrive-fantasma-")
 (fantasma / ".prdrive").mkdir()
 (fantasma / ".prdrive" / "PRDRIVE").write_text("id=" + "g" * 32 + "\ntipo=equipo\n",
@@ -170,7 +168,7 @@ ia.actualizar_raices()
 c("  abierta de verdad (el .hc retenido), sí", desplegadas, [fantasma])
 ia_deploy.deploy_code = real_deploy
 
-# --- install/ no importa ui/ -------------------------------------------------------------------
+# install/ no importa ui/
 carpeta = Path(install.__file__).parent
 importa_ui = []
 for fichero in sorted(carpeta.glob("*.py")):
@@ -188,7 +186,7 @@ install.pintar(Path("y"))
 c("  pinta quien se lo diga, y un fallo no tumba la instalación", pintadas, [("x", True)])
 install.pintar_iconos = None
 
-# === Segunda vuelta ================================================================
+# Segunda vuelta
 import subprocess  # noqa: E402
 import threading  # noqa: E402
 import time  # noqa: E402
@@ -211,7 +209,7 @@ def servida(uid: str, **kw):
     return a, r
 
 
-# --- un solo servicio: el agente toma el lock en un paso ---------------------------------
+# un solo servicio: el agente toma el lock en un paso
 S = "5" * 32
 RS = F.unidad(S, parejas=("docs",))
 equipo.guardar_ajustes(equipo.leer_ajustes().con_unidad(
@@ -245,7 +243,7 @@ c("el stop de OTRO servicio no se lo come el agente: es para ese",
 F.stop(RS).unlink()
 (RS / penwatch.DAEMON_LOCK_REL).unlink()
 
-# --- un solo servicio: el lado de runsync -------------------------------------------------
+# un solo servicio: el lado de runsync
 estado_rs = tmpdir("prdrive-runsync-")
 runsync.LOCK = estado_rs / "daemon.lock.json"
 runsync.STOP = estado_rs / "daemon.stop"
@@ -268,6 +266,7 @@ store.write_json(runsync.LOCK, {"pid": os.getppid(), "host": equipo.HOST, "agent
 
 
 def agente_que_suelta():
+    """Hace de agente: espera el `daemon.stop`, acaba su pareja y suelta el lock."""
     limite = time.monotonic() + 5
     while time.monotonic() < limite and not runsync.STOP.exists():
         time.sleep(0.02)
@@ -295,7 +294,7 @@ c("el lanzador no le quita el lock al agente a mitad de pareja",
 runsync.LOCK.unlink()
 runsync.STOP.unlink(missing_ok=True)
 
-# --- parar el agente espera a su pasada ----------------------------------------------------
+# parar el agente espera a su pasada
 P = "4" * 32
 ag, RP = servida(P, parejas=("docs",))
 apuntada = store.read_json(equipo.pasada_json())
@@ -425,7 +424,7 @@ ia.ESPERA_PASADA = 0.8
 equipo.lock_json().unlink(missing_ok=True)
 equipo.pasada_json().unlink(missing_ok=True)
 
-# --- el id no es una credencial: la huella del código --------------------------------------
+# el id no es una credencial: la huella del código
 H = "3" * 32
 RH = F.unidad(H, parejas=("docs",))
 base = agente.huella(RH)
@@ -479,7 +478,7 @@ c("al decir que sí, apunta la huella nueva y conserva su modo",
   (agente.huella(RH2), equipo.DAEMON))
 c("  y la vuelve a servir", F.lock(RH2).get("pid"), os.getpid())
 
-# --- el rclone es el del agente, nunca el de la unidad --------------------------------------
+# el rclone es el del agente, nunca el de la unidad
 base = agente.huella(RH)
 (app_h / "bin" / "x64").mkdir(parents=True)
 (app_h / "bin" / "x64" / "rclone").write_bytes(b"otro binario cualquiera")
@@ -502,7 +501,7 @@ c("sin el agente, el de la unidad como siempre",
   model.rclone_path() in (None, *(d / model.rclone_name() for d in
                                   (model.BIN_DIR, *model.BIN_FALLBACK_DIRS))), True)
 
-# --- unidades de antes de la 0.5.0: no se atienden -----------------------------------------
+# unidades de antes de la 0.5.0: no se atienden
 V = "6" * 32
 RV = F.unidad(V, parejas=("docs",))
 (RV / ".prdrive" / "VERSION").write_text("0.4.3\n", encoding="utf-8")
