@@ -1,54 +1,54 @@
 #!/usr/bin/env python3
-"""
-runsync.py — Lanzador del sync del dispositivo.
+"""Lanzador del sync del dispositivo: la ventana y el servicio periódico.
 
-Sin argumentos abre la UI (paquete `ui/`: Tkinter si se puede, menú de consola si
-no) con dos caminos:
-
-  * Sincronizar ahora (todas las parejas o una selección).
-  * Iniciar un SERVICIO periódico: un proceso en segundo plano, sin ventana, que
-    sincroniza las parejas elegidas cada N minutos.
-
-Este fichero no dibuja nada: le pregunta a `ui` qué se quiere hacer y lo hace. Lo
-suyo es el servicio y la coordinación con él.
+Sin argumentos abre la UI (paquete `ui/`: Tkinter o, si no se puede, menú de
+consola) con dos caminos: sincronizar ahora (todas las parejas o una selección)
+o iniciar un SERVICIO periódico, un proceso en segundo plano y sin ventana que
+sincroniza las parejas elegidas cada N minutos. Este fichero no dibuja nada: le
+pregunta a `ui` qué se quiere hacer y lo hace; lo suyo es el servicio y la
+coordinación con él.
 
 El servicio solo se detiene en dos casos:
-  1. El dispositivo deja de estar conectado (se comprueba cada pocos segundos).
-  2. Se vuelve a ejecutar runsync: el lanzador detecta el servicio anterior, le
-     pide parar, espera, y muestra la UI inicial de nuevo.
+- El dispositivo deja de estar conectado (se comprueba cada pocos segundos).
+- Se vuelve a ejecutar runsync: el lanzador detecta el servicio anterior, le
+  pide parar, espera y muestra la UI de nuevo.
 
-Y de ventana solo hay una a la vez: la segunda se niega a abrirse en vez de
+De ventana solo hay una a la vez: la segunda se niega a abrirse en vez de
 apilarse, porque abrir runsync detiene el servicio anterior y dos ventanas se
-lo quitarían la una a la otra. Mientras haya ventana o servicio vivos,
-el vigilante de `penwatch.py` tampoco lanza nada al enchufar el dispositivo.
+lo quitarían la una a la otra. Mientras haya ventana o servicio vivos, el
+vigilante de `penwatch.py` tampoco lanza nada al enchufar el dispositivo.
 
-Coordinación servicio <-> lanzador (todo en state/, viaja con el dispositivo):
+Coordinación servicio <-> lanzador (todo en `state/`, viaja con el
+dispositivo):
+
     daemon.lock.json  <- quién es el servicio (pid, host, arranque, último ciclo)
     daemon.stop       <- su presencia le pide al servicio que pare
     daemon.log        <- diario del servicio (recortado automáticamente)
     ui.lock.json      <- quién tiene la ventana abierta (pid, host, arranque)
-    ui_prefs.json     <- parejas e intervalo del servicio (lo gestiona ui.prefs)
+    ui_prefs.json     <- parejas e intervalo del servicio (lo gestiona `ui.prefs`)
 
-El servicio es uno, se arranque a mano o al enchufar: esa memoria es su
-configuración, precarga la UI siguiente y sirve de valor por defecto a --auto,
-por delante de [daemon] del TOML. Solo la escribe la UI, y solo al arrancar el
-servicio: una pasada manual no la toca, y --auto y --daemon únicamente la leen,
-para que un arranque automático no reescriba lo que decidiste a mano.
+El servicio es uno, se arranque a mano o al enchufar: `ui_prefs.json` es su
+configuración, precarga la UI siguiente y es el valor por defecto de `--auto`,
+por delante de `[daemon]` del TOML. Solo la escribe la UI, y solo al arrancar
+el servicio: una pasada manual no la toca, y `--auto` y `--daemon` únicamente
+la leen.
 
-Con el agente residente (`agente.py`) como servicio de esta raíz —vivo, y con
-ella en modo `daemon`—, «Iniciar servicio» no arranca otro: guarda esa memoria
-y le deja un `reanudar` en `state/servicio.pide`, y el agente vuelve en cuanto
-se cierra la ventana.
+Con el agente residente (`agente.py`) como servicio de esta raíz (vivo y en
+modo `daemon`), «Iniciar servicio» no arranca otro: guarda esa memoria y deja
+un `reanudar` en `state/servicio.pide`, y el agente vuelve en cuanto se cierra
+la ventana.
 
-Con argumentos, se pasan tal cual a sync.py (así `runsync.bat --doctor` sigue
+Con argumentos se pasan tal cual a `sync.py` (así `runsync.bat --doctor` sigue
 funcionando), salvo dos flags propios:
 
-  --auto [--once] [--interval N] [parejas]  arranca el servicio sin UI y sin
-      preguntar nada, con las parejas y el intervalo del servicio (o, si no hay,
-      con los valores de [daemon] del TOML); lo que se indique aquí manda sobre
-      ambos. Con --once, una sola pasada de esas parejas y nada más. Es lo que
-      lanza penwatch.py al detectar el dispositivo (modos daemon y sync).
-  --daemon                          punto de entrada interno del servicio.
+    --auto [--once] [--interval N] [parejas]
+        Arranca el servicio sin UI y sin preguntar, con las parejas y el
+        intervalo del servicio (o, si no hay, los de [daemon] del TOML); lo
+        indicado aquí manda sobre ambos. Con --once, una sola pasada de esas
+        parejas y nada más. Es lo que lanza penwatch.py al detectar el
+        dispositivo (modos daemon y sync).
+    --daemon
+        Punto de entrada interno del servicio.
 """
 
 from __future__ import annotations
@@ -69,26 +69,32 @@ from common.store import pid_alive  # noqa: E402
 from ui import prefs  # noqa: E402
 
 SELF = Path(__file__).resolve()
-SENTINEL = model.CONFIG_FILE          # si esto no se ve, el dispositivo no está
-LOCK = model.daemon_lock()            # quién es el servicio
+SENTINEL = model.CONFIG_FILE
+"""Fichero cuya presencia dice que el dispositivo está conectado."""
+LOCK = model.daemon_lock()
+"""Registro del servicio: quién es."""
 STOP = model.STATE_DIR / "daemon.stop"
+"""Fichero que, si existe, le pide al servicio que pare."""
 DLOG = model.STATE_DIR / "daemon.log"
-UI_LOCK = model.ui_lock()             # quién tiene la ventana abierta
+"""Diario del servicio."""
+UI_LOCK = model.ui_lock()
+"""Registro de la ventana abierta: quién la tiene."""
 
-POLL_SECONDS = 2.0        # cadencia de comprobación de parada / dispositivo ausente
-STOP_WAIT_SECONDS = 15.0  # cuánto espera el lanzador a que pare el servicio
+POLL_SECONDS = 2.0
+"""Cada cuántos segundos mira el servicio si debe parar o si se fue el dispositivo."""
+STOP_WAIT_SECONDS = 15.0
+"""Segundos que espera el lanzador a que pare el servicio anterior."""
 DLOG_MAX_BYTES = 256 * 1024
+"""Tamaño del diario a partir del cual `dlog` lo recorta."""
 HOST = prefs.HOST
 
 CREATE_NO_WINDOW = model.CREATE_NO_WINDOW
 CREATE_NEW_PROCESS_GROUP = 0x00000200
+"""Flag de creación de procesos de Windows: grupo propio para el servicio."""
 
-
-# ---------------------------------------------------------------------------
-# Utilidades comunes
-# ---------------------------------------------------------------------------
 
 def pen_present() -> bool:
+    """Indica si el dispositivo está conectado (se ve su fichero de config)."""
     try:
         return SENTINEL.exists()
     except OSError:
@@ -96,20 +102,27 @@ def pen_present() -> bool:
 
 
 def read_lock() -> dict | None:
+    """Devuelve el registro del servicio, o `None` si no hay."""
     return store.read_json(LOCK) or None
 
 
 def write_lock(data: dict) -> None:
+    """Escribe el registro del servicio."""
     store.write_json(LOCK, data)
 
 
 def _lock_mio(info: dict | None) -> bool:
+    """Indica si el registro es de este proceso."""
     return bool(info) and info.get("pid") == os.getpid() and info.get("host") == HOST
 
 
 def dlog(msg: str) -> None:
-    """Diario del servicio. Se abre y cierra en cada línea para no mantener
-    ningún descriptor abierto sobre el dispositivo (bloquearía la extracción segura)."""
+    """Añade una línea con la hora al diario del servicio.
+
+    Abre y cierra el fichero en cada línea para no mantener ningún descriptor
+    abierto sobre el dispositivo: bloquearía su extracción segura. Pasado
+    `DLOG_MAX_BYTES`, se queda con las últimas 300 líneas.
+    """
     line = f"{store.stamp()} {msg}\n"
     try:
         if DLOG.exists() and DLOG.stat().st_size > DLOG_MAX_BYTES:
@@ -121,19 +134,20 @@ def dlog(msg: str) -> None:
         pass  # dispositivo ausente o de solo lectura: el diario no es vital
 
 
-# ---------------------------------------------------------------------------
-# Una sola ventana a la vez (lado lanzador)
-# ---------------------------------------------------------------------------
-
-ESPERA_REGISTRO = 1.0     # lo que se da a quien acaba de crear el registro para llenarlo
+ESPERA_REGISTRO = 1.0
+"""Segundos que se dan a quien acaba de crear el registro para llenarlo."""
 
 
 def _leer_ui() -> dict | None:
-    """El registro tal como está: None si no hay, {} si hay y no se entiende.
+    """Lee el registro de la ventana tal como está.
 
-    Quien toma el registro lo crea y LUEGO lo llena (ver `tomar_ui`), así que un
-    fichero vacío puede ser el de otra ventana a medio escribir, no un resto. Se
-    le da `ESPERA_REGISTRO` antes de darlo por ilegible."""
+    Quien toma el registro lo crea y LUEGO lo llena (ver `tomar_ui`): un
+    fichero vacío puede ser el de otra ventana a medio escribir y no un resto,
+    así que se espera `ESPERA_REGISTRO` antes de darlo por ilegible.
+
+    Returns:
+        `None` si no hay registro, `{}` si lo hay y no se entiende.
+    """
     limite = time.monotonic() + ESPERA_REGISTRO
     while True:
         try:
@@ -154,12 +168,13 @@ def _leer_ui() -> dict | None:
 
 
 def _viva_aqui(info: dict | None) -> bool:
-    """¿Es el registro de una ventana viva EN ESTE EQUIPO?
+    """Indica si el registro es de una ventana viva EN ESTE EQUIPO.
 
-    Mismo criterio que el registro del servicio: un pid muerto o un registro de
-    otro anfitrión es rastro de un dispositivo que se extrajo sin cerrar nada.
-    Solo cuenta este equipo porque el fichero viaja con el dispositivo: el pid
-    de otra máquina aquí no quiere decir nada."""
+    Mismo criterio que el registro del servicio: un pid muerto o de otro
+    anfitrión es rastro de un dispositivo extraído sin cerrar nada. El fichero
+    viaja con el dispositivo, así que el pid de otra máquina aquí no significa
+    nada.
+    """
     if not info:
         return False
     try:
@@ -170,12 +185,16 @@ def _viva_aqui(info: dict | None) -> bool:
 
 
 def _crear_exclusivo(ruta: Path, datos: bytes) -> bool | None:
-    """Crea `ruta` con `datos` solo si no existe: True creado, False ya estaba,
-    None no se puede escribir (dispositivo de solo lectura o ya extraído).
+    """Crea `ruta` con `datos` solo si no existe.
 
-    O_EXCL es lo que hace de esto un cerrojo: de dos que lo intentan a la vez
-    solo uno lo crea. `store.write_json` no sirve para esto: escribe a un
-    temporal y renombra, y el renombrado pisa lo que haya."""
+    `O_EXCL` es lo que lo hace un cerrojo: de dos que lo intentan a la vez solo
+    uno lo crea. `store.write_json` no sirve: escribe a un temporal y renombra,
+    y el renombrado pisa lo que haya.
+
+    Returns:
+        `True` si lo ha creado, `False` si ya estaba, `None` si no se puede
+        escribir (dispositivo de solo lectura o ya extraído).
+    """
     try:
         fd = os.open(ruta, os.O_WRONLY | os.O_CREAT | os.O_EXCL
                      | getattr(os, "O_BINARY", 0))
@@ -193,11 +212,15 @@ def _crear_exclusivo(ruta: Path, datos: bytes) -> bool | None:
 
 
 def _borrar(ruta: Path) -> bool:
-    """Borra `ruta` aunque otro la esté leyendo en ese momento. True si ya no está.
+    """Borra `ruta` aunque otro proceso la esté leyendo.
 
-    En Windows no se puede borrar ni renombrar un fichero que otro proceso
-    tiene abierto (WinError 32): con varios runsync mirando el registro a la
-    vez, el primer intento falla casi siempre. Se reintenta un rato."""
+    En Windows no se puede borrar un fichero abierto por otro (WinError 32) y,
+    con varios runsync mirando el registro a la vez, el primer intento falla
+    casi siempre: se reintenta hasta `ESPERA_REGISTRO`.
+
+    Returns:
+        `True` si ya no está.
+    """
     limite = time.monotonic() + ESPERA_REGISTRO
     while True:
         try:
@@ -213,24 +236,28 @@ def _borrar(ruta: Path) -> bool:
             return False
 
 
-ROMPER_ABANDONADO = 5.0   # s: un «romper» más viejo es de un proceso que murió dentro
+ROMPER_ABANDONADO = 5.0
+"""Segundos tras los que un «romper» se da por de un proceso que murió dentro."""
 
 
 def _retirar_ui(visto: dict | None) -> bool:
-    """Quita el resto `visto` si sigue siendo ese. True si lo ha quitado.
+    """Quita el resto `visto` del registro si sigue siendo ese.
 
     Borrar a secas no vale: entre leer el resto y borrarlo, otra ventana puede
-    haberlo retirado ya y haber tomado el suyo, y el borrado se llevaría ese.
-    Así que retirar pide antes otro cerrojo exclusivo, `ui.lock.json.romper`,
-    que se tiene unos milisegundos: con él puesto se vuelve a leer, y solo si
-    sigue ahí el mismo resto se borra. Nadie más borra el registro mientras
-    tanto (su dueño está muerto o en otro equipo) y crearlo exige que no esté,
-    así que lo que se comprueba es lo que se borra.
+    haberlo retirado y haber tomado el suyo. Retirar pide antes otro cerrojo
+    exclusivo, `ui.lock.json.romper`, que se tiene unos milisegundos: con él
+    puesto se vuelve a leer y solo se borra si sigue el mismo resto. Nadie más
+    lo borra mientras tanto (su dueño está muerto o en otro equipo) y crear el
+    cerrojo exige que no esté.
 
-    Si el «romper» es de un proceso que murió con él puesto, pasado
-    `ROMPER_ABANDONADO` se quita. Eso tiene su propio hueco (dos que lo vean
-    viejo a la vez), pero exige morir en esos milisegundos Y dos ventanas en el
-    mismo instante: no merece más maquinaria."""
+    Un «romper» más viejo que `ROMPER_ABANDONADO` es de un proceso que murió
+    con él puesto y se quita. Eso deja un hueco (dos que lo vean viejo a la
+    vez), pero exige morir en esos milisegundos Y dos ventanas a la vez: no
+    merece más maquinaria.
+
+    Returns:
+        `True` si lo ha quitado.
+    """
     romper = UI_LOCK.with_name(f"{UI_LOCK.name}.romper")
     marca = str(os.getpid()).encode("ascii")
     limite = time.monotonic() + ROMPER_ABANDONADO + 1.0
@@ -257,10 +284,11 @@ def _retirar_ui(visto: dict | None) -> bool:
 
 
 def ui_en_marcha() -> dict | None:
-    """El registro de una ventana de runsync viva EN ESTE EQUIPO, o None.
+    """Devuelve el registro de una ventana de runsync viva EN ESTE EQUIPO, o `None`.
 
-    Solo mira: el resto de una ventana muerta o de otro equipo se limpia, pero
-    esto no toma nada. Para abrir una ventana, `tomar_ui()`."""
+    Solo mira: retira el resto de una ventana muerta o de otro equipo, pero no
+    toma nada. Para abrir una ventana, `tomar_ui()`.
+    """
     info = _leer_ui()
     if info is None:
         return None
@@ -273,21 +301,21 @@ def ui_en_marcha() -> dict | None:
 def tomar_ui() -> dict | None:
     """Apunta que esta ventana es la de este dispositivo, si nadie la tiene.
 
-    None si la ha tomado; si no, el registro de la ventana que la tiene.
+    Mirar y escribir son UN paso: el fichero se crea con `O_EXCL`
+    (`_crear_exclusivo`). Como dos pasos, el 28/09/2026 dos ventanas lanzadas
+    con 6 s de diferencia miraron las dos antes de que ninguna escribiera y se
+    abrieron a la vez.
 
-    Mirar y escribir son UN paso: el fichero se crea con O_EXCL
-    (`_crear_exclusivo`), así que de dos runsync que llegan a la vez solo uno
-    lo crea. Eran dos pasos, y el 28/09/2026 dos ventanas lanzadas con 6 s de
-    diferencia miraron las dos antes de que ninguna escribiera y se abrieron a
-    la vez.
+    Si hay un resto (pid muerto, otro equipo, ilegible) se retira y se
+    reintenta una sola vez: si otra ventana se ha adelantado, manda esa.
 
-    Si lo que hay es un resto (pid muerto, otro equipo, ilegible) se retira y se
-    vuelve a intentar crearlo, una sola vez: si en ese instante otra ventana se
-    ha adelantado, manda esa.
+    Si no se puede escribir (dispositivo de solo lectura) o el resto no se deja
+    quitar, la ventana se abre igual: el registro es para que la SIGUIENTE no
+    se abra encima, no un permiso para abrir esta.
 
-    Si no se puede escribir (dispositivo de solo lectura), o el resto no se deja
-    quitar, la ventana se abre igual, como antes: el registro es para que la
-    SIGUIENTE no se abra encima, no un permiso para abrir esta."""
+    Returns:
+        `None` si la ha tomado; si no, el registro de la ventana que la tiene.
+    """
     datos = json.dumps({"pid": os.getpid(), "host": HOST, "started": store.stamp()},
                        ensure_ascii=False, indent=1).encode("utf-8")
     for intento in range(2):
@@ -305,20 +333,23 @@ def tomar_ui() -> dict | None:
 
 
 def soltar_ui() -> None:
-    """Suelta el registro si sigue siendo el nuestro. Lo de «si sigue siendo»
-    es por el mismo motivo que en el servicio: si otro lo ha tomado ya —el
-    dispositivo se extrajo y se volvió a enchufar—, no es nuestro para borrarlo."""
+    """Suelta el registro si sigue siendo el nuestro.
+
+    Si otro lo ha tomado ya (el dispositivo se extrajo y se volvió a enchufar),
+    no es nuestro para borrarlo.
+    """
     info = store.read_json(UI_LOCK)
     if info.get("pid") == os.getpid() and info.get("host") == HOST:
         UI_LOCK.unlink(missing_ok=True)
 
 
 def vigilante_instalado() -> bool:
-    """¿Hay en este equipo un arranque automático que atienda a este dispositivo?
+    """Indica si este equipo tiene un arranque automático para este dispositivo.
 
-    Solo para decirlo en un mensaje. Bajo `except` porque penwatch es un script
-    hermano que puede no poder importarse, y porque no saberlo no es motivo para
-    no abrir la ventana."""
+    Solo sirve para decirlo en un mensaje: va bajo `except` porque penwatch es
+    un script hermano que puede no importarse, y no saberlo no es motivo para
+    no abrir la ventana.
+    """
     try:
         from ui import watch
         return watch.resumen().vigila_este
@@ -327,8 +358,11 @@ def vigilante_instalado() -> bool:
 
 
 def agente_sirve() -> bool:
-    """¿El servicio de esta raíz es el agente residente, vivo, en modo daemon?
-    (`watch.Resumen.servicio_del_agente`). Bajo `except`, como el de arriba."""
+    """Indica si el servicio de esta raíz es el agente residente.
+
+    Vivo y en modo `daemon` (`watch.Resumen.servicio_del_agente`); va bajo
+    `except` por lo mismo que `vigilante_instalado`.
+    """
     try:
         from ui import watch
         return watch.resumen().servicio_del_agente
@@ -337,20 +371,25 @@ def agente_sirve() -> bool:
 
 
 def pedir_reanudar() -> bool:
-    """«Iniciar servicio» con el agente: `reanudar` en el buzón de esta raíz
-    (`state/servicio.pide`). De módulo para que los tests la sustituyan."""
+    """Deja `reanudar` en el buzón de esta raíz (`state/servicio.pide`).
+
+    Es «Iniciar servicio» cuando el servicio es el agente. Punto de
+    indirección: los tests la sustituyen.
+
+    Returns:
+        Si se pudo dejar el pedido.
+    """
     from common import equipo
     return equipo.pedir({"pide": equipo.PIDE_REANUDAR},
                         model.STATE_DIR / equipo.BUZON_SERVICIO)
 
 
-# ---------------------------------------------------------------------------
-# Parada del servicio anterior (lado lanzador)
-# ---------------------------------------------------------------------------
-
 def stop_previous_daemon() -> str | None:
-    """Si hay un servicio registrado, le pide parar y espera. Devuelve un mensaje
-    para el usuario, o None si no había nada."""
+    """Pide parar al servicio registrado y espera a que pare.
+
+    Returns:
+        El mensaje para la persona, o `None` si no había nada.
+    """
     info = read_lock()
     if info is None:
         return None
@@ -376,10 +415,10 @@ def stop_previous_daemon() -> str | None:
             return f"Servicio anterior (pid {pid}) detenido."
         time.sleep(0.3)
 
-    # No ha contestado a tiempo: probablemente está en mitad de una pareja.
-    # Se le deja el daemon.stop puesto (parará al terminarla). El lock del
-    # agente se queda: lo suelta él al acabar la pareja, y mientras lo tenga
-    # ningún servicio nuevo lo toma (`tomar_lock()` espera), así que no hay dos
+    # No ha contestado a tiempo: probablemente está en mitad de una pareja. Se
+    # le deja el `daemon.stop` (parará al terminarla). El lock del agente se
+    # queda: lo suelta él al acabar la pareja y mientras lo tenga ningún
+    # servicio nuevo lo toma (`tomar_lock()` espera), así que no hay dos
     # pasadas a la vez. El de un servicio de runsync se libera, como siempre.
     if info.get("agente"):
         return (f"El agente de este equipo está a mitad de una pareja; deja de "
@@ -389,15 +428,12 @@ def stop_previous_daemon() -> str | None:
             f"parará al terminar la pareja actual.")
 
 
-# ---------------------------------------------------------------------------
-# El servicio (lado daemon)
-# ---------------------------------------------------------------------------
-
 def servicio_en_marcha() -> dict | None:
-    """El registro del servicio si es de un proceso vivo de ESTE equipo, o None.
+    """Devuelve el registro del servicio si es de un proceso vivo de ESTE equipo.
 
-    Solo lee: limpiar lo rancio es de `stop_previous_daemon()`, que es quien va
-    a sustituirlo. Quien pregunta esto no lo sustituye."""
+    Si no, `None`. Solo lee: limpiar lo rancio es de `stop_previous_daemon()`,
+    que es quien lo va a sustituir.
+    """
     info = read_lock()
     if info is None or info.get("host") != HOST:
         return None
@@ -409,6 +445,7 @@ def servicio_en_marcha() -> dict | None:
 
 
 def stop_requested() -> bool:
+    """Indica si hay una petición de parada (existe `daemon.stop`)."""
     try:
         return STOP.exists()
     except OSError:
@@ -416,16 +453,22 @@ def stop_requested() -> bool:
 
 
 def run_pair_quiet(name: str) -> tuple[int, str]:
-    """Ejecuta sync.py para una pareja, sin terminal. Con stdin cerrado, las
-    preguntas interactivas de sync.py toman el valor por defecto: una pareja que
-    requiera --resync se SALTA (a propósito: un resync no se lanza solo)."""
+    """Ejecuta `sync.py` para una pareja, sin terminal.
+
+    Con stdin cerrado, las preguntas de `sync.py` toman su valor por defecto:
+    una pareja que requiera `--resync` se SALTA (a propósito: un resync no se
+    lanza solo).
+
+    Returns:
+        `(código_de_salida, salida)`.
+    """
     proc = subprocess.run(
         [sys.executable, str(model.SYNC_PY), name],
         stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
-        # sync.py escribe UTF-8 (ver su main()); sin decirlo aquí se decodifica
-        # con la del sistema y las tildes acaban descompuestas en daemon.log.
+        # `sync.py` escribe UTF-8 (ver su `main()`): sin decirlo, las tildes
+        # llegarían rotas a `daemon.log`.
         encoding="utf-8",
         errors="replace",
     )
@@ -433,10 +476,15 @@ def run_pair_quiet(name: str) -> tuple[int, str]:
 
 
 def notificar_fallo(nombres: list[str]) -> None:
-    """Enseña que ha fallado un ciclo: una ventanita del propio servicio, en su
-    mismo intérprete y sin lanzar nada (ver `ui.avisar_fallo`). Sin pantalla
-    —un servicio de systemd sin DISPLAY, por ejemplo— el aviso se queda en el
-    diario, que es donde estaba antes. De módulo para que un test la sustituya."""
+    """Enseña que ha fallado un ciclo, con una ventanita del propio servicio.
+
+    Es `ui.avisar_fallo`, en el mismo intérprete y sin lanzar nada. Sin
+    pantalla (un servicio de systemd sin DISPLAY, por ejemplo) el aviso se
+    queda en el diario. Punto de indirección: los tests la sustituyen.
+
+    Args:
+        nombres: Las parejas que fallan.
+    """
     if ui.avisar_fallo(nombres):
         dlog(f"aviso de fallo en pantalla: {', '.join(nombres)}")
     else:
@@ -444,6 +492,15 @@ def notificar_fallo(nombres: list[str]) -> None:
 
 
 def daemon_cycle(pairs: list[str], lock_data: dict) -> None:
+    """Hace un ciclo del servicio: una pasada de cada pareja.
+
+    Apunta `last_cycle` y `last_results` en el registro y avisa solo si alguna
+    EMPIEZA a fallar. Corta si se pide parada o desaparece el dispositivo.
+
+    Args:
+        pairs: Las parejas a sincronizar.
+        lock_data: El registro propio, que se reescribe con el resultado.
+    """
     previos = lock_data.get("last_results") or {}
     results = {}
     for name in pairs:
@@ -466,21 +523,21 @@ def daemon_cycle(pairs: list[str], lock_data: dict) -> None:
     lock_data["last_cycle"] = store.stamp()
     lock_data["last_results"] = results
     if _lock_mio(read_lock()):
-        # Solo si sigue siendo nuestro: si el lanzador se cansó de esperar y lo
-        # borró, o lo tiene ya otro servicio, reescribirlo sería quitárselo.
+        # Solo si sigue siendo nuestro: si el lanzador lo borró o lo tiene ya
+        # otro servicio, reescribirlo sería quitárselo.
         write_lock(lock_data)
 
-    # Solo cuando algo EMPIEZA a fallar. Un servicio sano no dice nada, y uno
-    # que lleva horas sin red no abre una ventana cada media hora: ya lo ha
-    # dicho, y la ventana principal lo sigue enseñando hasta que se arregle.
+    # Solo cuando algo EMPIEZA a fallar: un servicio sano no dice nada, y uno
+    # que lleva horas sin red no abre una ventana cada media hora (la ventana
+    # principal lo sigue enseñando hasta que se arregle).
     fallidas = [n for n, r in results.items() if r.startswith("ERROR")]
     if any(not str(previos.get(n, "")).startswith("ERROR") for n in fallidas):
         notificar_fallo(fallidas)
 
-    # De paso, refrescar la caché de versiones. Con las 24 h de `CACHE_HORAS`
-    # esto es como mucho una consulta al día, y es lo único que la mantiene al
-    # día para el menú de consola, que nunca va a la red por su cuenta. El
-    # servicio no tiene interfaz, así que aquí no se enseña nada: solo se apunta.
+    # De paso, refresca la caché de versiones (a lo sumo una consulta al día,
+    # por `CACHE_HORAS`): es lo único que la mantiene al día para el menú de
+    # consola, que nunca va a la red por su cuenta. El servicio no tiene
+    # interfaz: solo lo apunta.
     try:
         update.check()                  # respeta la caché: no sale cada ciclo
         nueva = update.pending()
@@ -490,20 +547,24 @@ def daemon_cycle(pairs: list[str], lock_data: dict) -> None:
         dlog(f"no he podido mirar si hay versión nueva: {e}")
 
 
-ESPERA_AGENTE = 30 * 60   # s que el servicio espera a que el agente suelte la unidad
+ESPERA_AGENTE = 30 * 60
+"""Segundos que el servicio espera a que el agente suelte la unidad."""
 
 
 def tomar_lock(lock_data: dict) -> dict | None:
     """Apunta que este proceso es el servicio del dispositivo, si no lo es otro.
-    None si lo ha tomado (o si no se puede escribir: así era antes); si no, el
-    registro del servicio vivo que lo tiene.
 
-    Mirar y escribir son UN paso (`store.tomar_registro()`, O_EXCL), y el agente
+    Mirar y escribir son UN paso (`store.tomar_registro()`, O_EXCL) y el agente
     del equipo toma el mismo fichero igual: escribirlo sin mirar dejaba que el
     agente y este servicio se creyeran los dos el servicio y sincronizaran a la
-    vez. Si lo tiene el agente, se le pide que se aparte como lo pide el
-    lanzador (`daemon.stop`), y se espera a que acabe su pareja: se aparta y
-    borra el stop. Si lo tiene otro servicio de runsync, manda ese."""
+    vez. Si lo tiene el agente se le pide que se aparte, como hace el lanzador
+    (`daemon.stop`), y se espera a que acabe su pareja: se aparta y borra el
+    stop. Si lo tiene otro servicio de runsync, manda ese.
+
+    Returns:
+        `None` si lo ha tomado (o no se puede escribir); si no, el registro del
+        servicio vivo que lo tiene.
+    """
     limite = time.monotonic() + ESPERA_AGENTE
     pedido = False
     while True:
@@ -525,7 +586,16 @@ def tomar_lock(lock_data: dict) -> dict | None:
 
 
 def daemon_main(pairs: list[str], interval_min: float) -> int:
-    # Fuera del dispositivo: mantener el cwd en el USB impediría su extracción segura.
+    """Es el servicio: sincroniza las parejas cada `interval_min` hasta que le paren.
+
+    Se detiene al desaparecer el dispositivo, al pedirlo el lanzador
+    (`daemon.stop`) o cuando otro servicio se queda el registro.
+
+    Args:
+        pairs: Las parejas a sincronizar.
+        interval_min: Minutos entre ciclos.
+    """
+    # Fuera del dispositivo: un cwd en el USB impediría su extracción segura.
     os.chdir(tempfile.gettempdir())
 
     STOP.unlink(missing_ok=True)
@@ -566,9 +636,9 @@ def daemon_main(pairs: list[str], interval_min: float) -> int:
                 otro = read_lock()
                 if otro is not None and not _lock_mio(otro) and _viva_aqui(otro):
                     # El lanzador se cansó de esperar, borró nuestro registro y
-                    # arrancó otro servicio, que al empezar borra el stop que
-                    # iba para nosotros: el que está ahí es el servicio, y dos
-                    # a la vez es lo que no puede ser.
+                    # arrancó otro servicio (que borra el stop que iba para
+                    # nosotros): el que está ahí es el servicio, y dos a la vez
+                    # no puede ser.
                     reason, stop = f"otro servicio (pid {otro.get('pid')}) tiene el registro", True
                     break
                 time.sleep(POLL_SECONDS)
@@ -576,8 +646,8 @@ def daemon_main(pairs: list[str], interval_min: float) -> int:
                 break
     finally:
         dlog(f"servicio detenido: {reason}")
-        # Limpiar solo lo propio: si el lanzador ya "robó" el lock y hay un
-        # servicio nuevo, su registro no se toca.
+        # Solo lo propio: si el lanzador ya robó el lock y hay un servicio
+        # nuevo, su registro no se toca.
         info = read_lock()
         if info and info.get("pid") == os.getpid() and info.get("host") == HOST:
             LOCK.unlink(missing_ok=True)
@@ -586,6 +656,10 @@ def daemon_main(pairs: list[str], interval_min: float) -> int:
 
 
 def spawn_daemon(pairs: list[str], interval_min: float) -> str:
+    """Lanza el servicio en un proceso aparte y devuelve el mensaje que lo confirma.
+
+    En Windows con `pythonw` y sin consola; en POSIX, en sesión propia.
+    """
     cmd = [str(SELF), "--daemon", "--interval", str(interval_min), *pairs]
     kwargs: dict = {
         "stdin": subprocess.DEVNULL,
@@ -610,21 +684,21 @@ def spawn_daemon(pairs: list[str], interval_min: float) -> str:
 
 
 def run_interactive(extra_args: list[str]) -> int:
-    """sync.py en la consola actual, heredando stdin/stdout (preguntas incluidas)."""
+    """Ejecuta `sync.py` en la consola actual, heredando stdin y stdout.
+
+    Las preguntas de `sync.py` llegan a quien teclea.
+
+    Returns:
+        El código de salida de `sync.py`.
+    """
     return subprocess.run([sys.executable, str(model.SYNC_PY), *extra_args]).returncode
 
 
-# ---------------------------------------------------------------------------
-# Caminos de entrada
-# ---------------------------------------------------------------------------
-
 def ui_flow() -> int:
-    """Sin argumentos: parar el servicio anterior, preguntar, y hacer lo pedido."""
-    # Lo PRIMERO, antes de parar nada: si ya hay una ventana abierta, esta sobra
-    # y además haría daño. Abrir runsync detiene el servicio anterior, así que
-    # una segunda ventana mataría el que acaba de arrancar la primera. Mirar y
-    # tomar el registro son un solo paso (`tomar_ui`): mirar primero y tomarlo
-    # después dejaba pasar a dos ventanas que llegaran casi a la vez.
+    """Hace el camino sin argumentos: para el servicio anterior, pregunta y obedece."""
+    # Lo PRIMERO, antes de parar nada: abrir runsync detiene el servicio
+    # anterior, así que una segunda ventana mataría el que acaba de arrancar la
+    # primera. Mirar y tomar el registro son un solo paso (`tomar_ui`).
     abierta = tomar_ui()
     if abierta is not None:
         return ui.fatal(
@@ -634,9 +708,6 @@ def ui_flow() -> int:
             "tareas y vuelve a intentarlo.")
 
     try:
-        # Que el vigilante no lanza nada mientras esta ventana esté abierta ya
-        # no se dice aquí: lo dice la línea del arranque automático, que está
-        # siempre a la vista y no desaparece con el siguiente repintado.
         startup_msg = stop_previous_daemon()
 
         try:
@@ -650,17 +721,23 @@ def ui_flow() -> int:
 
 
 def _atender(config: model.Config, startup_msg: str | None) -> int:
-    """Preguntar y hacer lo pedido. Aparte de `ui_flow()` para que el registro
-    de la ventana se suelte pase lo que pase, incluida una elección que arranca
-    el servicio y se va."""
+    """Pregunta qué hacer y lo hace.
+
+    Está aparte de `ui_flow()` para que el registro de la ventana se suelte
+    pase lo que pase, incluida una elección que arranca el servicio y se va.
+
+    Args:
+        config: La configuración del dispositivo.
+        startup_msg: Lo que dijo la parada del servicio anterior, si dijo algo.
+    """
     choice, frontend = ui.start(config, startup_msg)
     if choice is None:
         return 0
 
     if choice.action == "daemon":
-        # Es la configuración del servicio: la precarga de la próxima ventana y
-        # lo que usa --auto. Solo se guarda aquí; una pasada manual con unas
-        # pocas parejas no decide qué sincroniza el servicio (ver ui/prefs.py).
+        # Es la configuración del servicio (precarga la próxima ventana y la
+        # usa `--auto`): solo se guarda aquí, una pasada manual con unas pocas
+        # parejas no decide qué sincroniza el servicio (ver `ui/prefs.py`).
         prefs.save_prefs(choice.action, list(choice.pairs), choice.minutes,
                          config.names)
         if agente_sirve() and pedir_reanudar():
@@ -682,22 +759,25 @@ def _atender(config: model.Config, startup_msg: str | None) -> int:
     if choice.action == "doctor":
         return frontend.run_sync("Comprobación", ["--doctor"])
 
-    # 'manual' solo llega aquí desde el menú de consola: la ventana sincroniza
-    # sin cerrarse y no devuelve esta elección.
+    # `manual` solo llega desde el menú de consola: la ventana sincroniza sin
+    # cerrarse.
     args = ui.manual_args(config, choice.pairs, frontend.approve_resync)
     return frontend.run_sync("Sincronización manual", args)
 
 
 def auto_start(rest: list[str]) -> int:
-    """--auto: arranca el servicio sin UI, para quien lo lanza sin nadie delante
-    (penwatch.py al conectar el dispositivo, un acceso directo, cron). Las parejas y el
-    intervalo son los del servicio (`prefs.startup_defaults`), y si no hay, los de
-    [daemon] del TOML; lo que se indique aquí manda sobre ambos. Solo lee esa
-    memoria: un arranque automático nunca reescribe lo decidido a mano.
-    Se para antes el servicio anterior, si lo hubiera.
+    """Hace `--auto`: arranca el servicio sin UI, para quien lo lanza sin nadie delante.
 
-    Con --once no hay servicio: una pasada de esas mismas parejas y se acaba
-    (ver `una_pasada`)."""
+    Lo lanzan `penwatch.py`, un acceso directo o cron. Las parejas y el
+    intervalo son los del servicio (`prefs.startup_defaults`) o, si no hay, los
+    de `[daemon]` del TOML; lo indicado aquí manda sobre ambos. Solo lee esa
+    memoria: un arranque automático nunca reescribe lo decidido a mano. Para
+    antes el servicio anterior, si lo hubiera. Con `--once` no hay servicio
+    (ver `una_pasada`).
+
+    Args:
+        rest: Lo que sigue a `--auto`: `--interval N`, `--once` y parejas.
+    """
     interval: float | None = None
     once = False
     while rest and rest[0] in ("--interval", "--once"):
@@ -715,9 +795,8 @@ def auto_start(rest: list[str]) -> int:
     except model.ConfigError as e:
         return ui.fatal(str(e))
 
-    # El vigilante ya no llama aquí con la ventana abierta, pero esto también lo
-    # lanzan un acceso directo o un cron: arrancar el servicio por detrás de una
-    # ventana abierta pondría dos cosas a sincronizar las mismas parejas.
+    # También lo lanzan un acceso directo o un cron: arrancar el servicio tras
+    # una ventana abierta pondría dos cosas a sincronizar las mismas parejas.
     abierta = ui_en_marcha()
     if abierta is not None:
         msg = (f"Hay una ventana de {APP_NAME} abierta (pid {abierta.get('pid')}): "
@@ -749,17 +828,17 @@ def auto_start(rest: list[str]) -> int:
 
 
 def una_pasada(pairs: list[str]) -> int:
-    """--auto --once: las parejas del servicio, una vez, sin servicio detrás.
+    """Hace `--auto --once`: las parejas del servicio, una vez, sin servicio detrás.
 
-    Es el modo `sync` del vigilante. Con un servicio vivo en este equipo no hace
-    nada: el vigilante ya no lanzaría en ese caso, pero un cron sí, y una pasada
-    al lado del servicio chocaría con el lock de bisync. Y NO lo para, a
-    diferencia de --auto: cambiar un servicio por una sola pasada dejaría el
-    dispositivo sin servicio, que no es lo que se ha pedido.
+    Es el modo `sync` del vigilante. Con un servicio vivo en este equipo no
+    hace nada: una pasada al lado del servicio chocaría con el lock de bisync.
+    Y NO lo para, a diferencia de `--auto`: cambiar un servicio por una sola
+    pasada dejaría el dispositivo sin servicio.
 
-    `sync.py` hereda la entrada y la salida. Sin terminal —así lo lanza el
-    vigilante—, una pareja que pide --resync se salta, y la salida va a su
-    diario."""
+    `sync.py` hereda entrada y salida. Sin terminal (así lo lanza el
+    vigilante), una pareja que pide `--resync` se salta, y la salida va a su
+    diario.
+    """
     servicio = servicio_en_marcha()
     if servicio is not None:
         msg = (f"El servicio periódico ya está en marcha (pid {servicio.get('pid')}): "
@@ -772,6 +851,11 @@ def una_pasada(pairs: list[str]) -> int:
 
 
 def main() -> int:
+    """Despacha según los argumentos: `--auto`, `--daemon`, `sync.py` o la UI.
+
+    Returns:
+        El código de salida.
+    """
     args = sys.argv[1:]
 
     if args and args[0] == "--auto":
@@ -788,8 +872,8 @@ def main() -> int:
         return daemon_main(rest, interval)
 
     if args:
-        # Passthrough: runsync.bat --doctor, runsync.bat obsidian --resync, etc.
-        # También se para el servicio: va a tocar el mismo estado.
+        # Passthrough (`runsync.bat --doctor`, `obsidian --resync`…). También
+        # para el servicio: va a tocar el mismo estado.
         msg = stop_previous_daemon()
         if msg:
             print(msg)
