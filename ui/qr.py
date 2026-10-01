@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""
-qr.py — Un codificador de códigos QR, escrito aquí por la misma razón que
-`ui/icons.py` dibuja sus iconos: el proyecto no admite dependencias.
+"""Un codificador de códigos QR, sin dependencias.
 
-Lo que hace falta es enseñar en pantalla la conexión con el remoto para que un
-móvil la lea, y eso son unos 800 bytes: demasiados para un código pequeño y
-muy pocos para justificar traerse una librería. Así que se codifica.
+Está escrito aquí por la misma razón que `ui/icons.py` dibuja sus iconos: el
+proyecto no admite dependencias. Lo que hace falta es enseñar en pantalla la
+conexión con el remoto para que un móvil la lea, y eso son unos 800 bytes:
+demasiados para un código pequeño y muy pocos para justificar traerse una
+librería. Así que se codifica.
 
 **Solo modo byte.** El QR tiene cuatro modos (numérico, alfanumérico, byte,
 kanji) y los tres que no son byte existen para apretar textos de un alfabeto
@@ -15,15 +15,15 @@ multiplicaría por tres el código que hay que mantener.
 
 Todo lo demás sí está entero: las 40 versiones, los cuatro niveles de
 corrección, el troceado en bloques con su Reed-Solomon intercalado, las ocho
-máscaras y la puntuación que elige la mejor. Recortar ahí no es simplificar:
-un lector que no es nuestro es el que decide si el código vale, y todo esto es
+máscaras y la puntuación que elige la mejor. Recortar ahí no es simplificar: un
+lector que no es nuestro es el que decide si el código vale y todo esto es
 justo lo que mira.
 
-Las referencias son a la norma **ISO/IEC 18004**, y se citan igual que
+Las referencias son a la norma **ISO/IEC 18004** y se citan igual que
 `common/bisync.py` cita el fuente de rclone: cuando una constante o un número
 mágico sale de una tabla de la norma, se dice de cuál. Las tablas que no se
-pueden deducir —cuántos codewords de corrección lleva cada versión y en cuántos
-bloques se parte— están abajo, copiadas literalmente.
+pueden deducir (cuántos codewords de corrección lleva cada versión y en cuántos
+bloques se parte) están abajo, copiadas literalmente.
 
     >>> codigo = codificar("hola")
     >>> codigo.version, codigo.tamano
@@ -40,35 +40,24 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-# ---------------------------------------------------------------------------
-# Los niveles de corrección
-#
-# El número NO es el orden de menos a más corrección: es lo que va escrito en la
-# información de formato del propio código (ISO/IEC 18004, tabla 12), y ahí L y
-# M están cambiados respecto al orden intuitivo. Guardarlo ya en ese orden
-# evita una traducción más adelante, que es donde se cuela el error.
-# ---------------------------------------------------------------------------
-
 NIVELES: dict[str, int] = {"L": 1, "M": 0, "Q": 3, "H": 2}
+"""Los niveles de corrección, con el número que va escrito en el formato.
 
-# El de por defecto. M recupera un 15 % del código, que en una pantalla —sin
-# arrugas, sin reflejos, sin impresora— sobra, y a cambio deja el dibujo bastante
-# más pequeño que Q. L sería aún menor, pero el emparejamiento se hace una vez y
-# con la cámara a pulso: no es el sitio donde apurar.
+El número NO es el orden de menos a más corrección: es lo que va en la
+información de formato del propio código (ISO/IEC 18004, tabla 12) y ahí L y M
+están cambiados respecto al orden intuitivo. Guardarlo ya en ese orden evita
+una traducción más adelante, que es donde se cuela el error.
+"""
+
 NIVEL_POR_DEFECTO = "M"
+"""El nivel de corrección por defecto.
 
+M recupera un 15 % del código, que en una pantalla (sin arrugas, sin reflejos,
+sin impresora) sobra, y a cambio deja el dibujo bastante más pequeño que Q. L
+sería aún menor, pero el emparejamiento se hace una vez y con la cámara a
+pulso: no es el sitio donde apurar.
+"""
 
-# ---------------------------------------------------------------------------
-# Las dos tablas que no se deducen (ISO/IEC 18004, tabla 9)
-#
-# Todo lo demás del formato se calcula: cuántos módulos tiene una versión, dónde
-# van los patrones de alineación, la información de formato y de versión. Esto
-# no: cuántos codewords de corrección lleva cada bloque y en cuántos bloques se
-# parte el mensaje son decisiones de la norma, y van copiadas.
-#
-# Índice 0 sin usar, para poder indexar por versión directamente y no restar uno
-# en cada sitio.
-# ---------------------------------------------------------------------------
 
 _CORRECCION_POR_BLOQUE: dict[str, tuple[int, ...]] = {
     "L": (0, 7, 10, 15, 20, 26, 18, 20, 24, 30, 18, 20, 24, 26, 30, 22, 24, 28,
@@ -84,6 +73,15 @@ _CORRECCION_POR_BLOQUE: dict[str, tuple[int, ...]] = {
           28, 26, 28, 30, 24, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30,
           30, 30, 30, 30, 30, 30),
 }
+"""Codewords de corrección por bloque, por nivel y versión (ISO/IEC 18004, tabla 9).
+
+Es una de las dos tablas que no se deducen: todo lo demás del formato se
+calcula (cuántos módulos tiene una versión, dónde van los patrones de
+alineación, la información de formato y de versión), pero cuántos codewords de
+corrección lleva cada bloque y en cuántos bloques se parte el mensaje son
+decisiones de la norma y van copiadas. El índice 0 no se usa, para indexar por
+versión directamente y no restar uno en cada sitio.
+"""
 
 _BLOQUES: dict[str, tuple[int, ...]] = {
     "L": (0, 1, 1, 1, 1, 1, 2, 2, 2, 2, 4, 4, 4, 4, 4, 6, 6, 6, 6, 7, 8, 8, 9,
@@ -98,44 +96,54 @@ _BLOQUES: dict[str, tuple[int, ...]] = {
           25, 25, 34, 30, 32, 35, 37, 40, 42, 45, 48, 51, 54, 57, 60, 63, 66,
           70, 74, 77, 81),
 }
+"""Bloques en que se parte el mensaje, por nivel y versión (ISO/IEC 18004, tabla 9)."""
 
 MIN_VERSION, MAX_VERSION = 1, 40
+"""Primera y última versión del QR."""
 
 # El indicador de modo byte, 4 bits (ISO/IEC 18004, tabla 2).
 _MODO_BYTE = 0b0100
 
-# Los polinomios generadores de los tres códigos que usa el QR, y que son la
-# razón de que aquí no haya ninguna constante «mágica» suelta:
-#   * 0x11D  el campo de Galois GF(2^8) de Reed-Solomon (x^8+x^4+x^3+x^2+1)
-#   * 0x537  el BCH (15,5) de la información de formato
-#   * 0x1F25 el BCH (18,6) de la información de versión
 _GF = 0x11D
+"""El polinomio de GF(2^8) de Reed-Solomon: x^8+x^4+x^3+x^2+1."""
 _BCH_FORMATO = 0x537
+"""El polinomio generador del BCH (15,5) de la información de formato."""
 _BCH_VERSION = 0x1F25
+"""El polinomio generador del BCH (18,6) de la información de versión."""
 
-# La máscara que se le aplica a la información de formato para que un código con
-# los 15 bits a cero no exista (ISO/IEC 18004, 8.9).
 _MASCARA_FORMATO = 0b101010000010010
+"""La máscara de la información de formato.
 
-# Los pesos de las cuatro reglas de penalización (ISO/IEC 18004, tabla 11).
+Evita que exista un código con los 15 bits a cero (ISO/IEC 18004, 8.9).
+"""
+
 _N1, _N2, _N3, _N4 = 3, 3, 40, 10
+"""Los pesos de las cuatro reglas de penalización (ISO/IEC 18004, tabla 11)."""
 
 
 class QRError(ValueError):
     """Lo que se quiere codificar no cabe, o el nivel no existe.
 
     Hereda de `ValueError` y no de `model.ConfigError` a propósito: esto no es
-    un problema de configuración del usuario sino de quien llama, y la ventana
-    que lo enseña ya sabe traducirlo a una frase."""
+    un problema de configuración de la persona sino de quien llama, y la
+    ventana que lo enseña ya sabe traducirlo a una frase.
+    """
 
 
 @dataclass(frozen=True)
 class Codigo:
-    """Un QR ya resuelto: qué versión salió, con qué máscara, y los módulos.
+    """Un QR ya resuelto: qué versión salió, con qué máscara y los módulos.
 
-    `modulos[fila][columna]`, True = oscuro. **Sin zona de silencio**: el borde
-    blanco de cuatro módulos que exige la norma es cosa de quien lo pinta, que
-    es el único que sabe sobre qué fondo cae. `icons.matriz()` lo pone."""
+    **Sin zona de silencio**: el borde blanco de cuatro módulos que exige la
+    norma es cosa de quien lo pinta, que es el único que sabe sobre qué fondo
+    cae. `icons.matriz()` lo pone.
+
+    Args:
+        version: La versión, de 1 a 40.
+        nivel: El nivel de corrección (`NIVELES`).
+        mascara: La máscara que ganó, de 0 a 7.
+        modulos: La rejilla, `modulos[fila][columna]`; `True` es oscuro.
+    """
     version: int
     nivel: str
     mascara: int
@@ -143,20 +151,18 @@ class Codigo:
 
     @property
     def tamano(self) -> int:
+        """Devuelve el lado de la rejilla, en módulos."""
         return len(self.modulos)
 
 
-# ---------------------------------------------------------------------------
-# Aritmética de Reed-Solomon sobre GF(2^8)
-# ---------------------------------------------------------------------------
-
 def _multiplicar(x: int, y: int) -> int:
-    """El producto de dos elementos del campo, sin tablas.
+    """Devuelve el producto de dos elementos del campo, sin tablas.
 
-    Multiplicación rusa reduciendo por el polinomio del campo en cada paso. Se
-    hace así y no con tablas de logaritmos porque son 256 entradas que habría
-    que construir al importar el módulo para ahorrar unos microsegundos en algo
-    que se ejecuta cuando alguien abre una ventana."""
+    Es multiplicación rusa reduciendo por el polinomio del campo en cada paso.
+    Se hace así y no con tablas de logaritmos porque son 256 entradas que
+    habría que construir al importar el módulo para ahorrar unos microsegundos
+    en algo que se ejecuta cuando alguien abre una ventana.
+    """
     z = 0
     for i in reversed(range(8)):
         z = (z << 1) ^ ((z >> 7) * _GF)
@@ -165,10 +171,11 @@ def _multiplicar(x: int, y: int) -> int:
 
 
 def _divisor(grado: int) -> list[int]:
-    """El polinomio generador de grado `grado`: (x-r^0)(x-r^1)…(x-r^(g-1)).
+    """Devuelve el polinomio generador de grado `grado`: (x-r^0)(x-r^1)…(x-r^(g-1)).
 
-    Se devuelve sin el coeficiente principal, que siempre es 1, porque así es
-    como lo quiere la división de abajo."""
+    Va sin el coeficiente principal, que siempre es 1, porque así es como lo
+    quiere la división de `_resto`.
+    """
     if not 1 <= grado <= 255:
         raise QRError(f"grado {grado} fuera de rango para Reed-Solomon")
     resultado = [0] * (grado - 1) + [1]
@@ -183,7 +190,7 @@ def _divisor(grado: int) -> list[int]:
 
 
 def _resto(datos: bytes | list[int], divisor: list[int]) -> list[int]:
-    """Los codewords de corrección de un bloque: el resto de la división."""
+    """Devuelve los codewords de corrección de un bloque: el resto de la división."""
     resultado = [0] * len(divisor)
     for b in datos:
         factor = b ^ resultado.pop(0)
@@ -193,24 +200,21 @@ def _resto(datos: bytes | list[int], divisor: list[int]) -> list[int]:
     return resultado
 
 
-# ---------------------------------------------------------------------------
-# Geometría de una versión
-# ---------------------------------------------------------------------------
-
 def tamano(version: int) -> int:
-    """El lado en módulos. La versión 1 mide 21 y cada una suma 4."""
+    """Devuelve el lado en módulos: la versión 1 mide 21 y cada una suma 4."""
     return version * 4 + 17
 
 
 def _modulos_de_datos(version: int) -> int:
-    """Cuántos módulos quedan para datos y corrección en esta versión.
+    """Devuelve cuántos módulos quedan para datos y corrección en esta versión.
 
-    Es el total menos lo que ocupan los patrones de función, y se calcula en vez
-    de tabularse porque la norma da la fórmula (ISO/IEC 18004, anexo D): del
-    cuadrado se descuentan los tres patrones de búsqueda con su separador y sus
-    franjas de formato (64 módulos), las dos líneas de temporización, cada
-    patrón de alineación (25 módulos, menos los solapes con la temporización) y,
-    desde la versión 7, los dos bloques de información de versión."""
+    Es el total menos lo que ocupan los patrones de función, y se calcula en
+    vez de tabularse porque la norma da la fórmula (ISO/IEC 18004, anexo D):
+    del cuadrado se descuentan los tres patrones de búsqueda con su separador y
+    sus franjas de formato (64 módulos), las dos líneas de temporización, cada
+    patrón de alineación (25 módulos, menos los solapes con la temporización)
+    y, desde la versión 7, los dos bloques de información de versión.
+    """
     resultado = (16 * version + 128) * version + 64
     if version >= 2:
         alineaciones = version // 7 + 2
@@ -221,23 +225,32 @@ def _modulos_de_datos(version: int) -> int:
 
 
 def _codewords_de_datos(version: int, nivel: str) -> int:
-    """Cuántos bytes de mensaje caben de verdad, ya descontada la corrección."""
+    """Devuelve cuántos bytes de mensaje caben de verdad.
+
+    Es ya con la corrección descontada.
+    """
     return (_modulos_de_datos(version) // 8
             - _CORRECCION_POR_BLOQUE[nivel][version] * _BLOQUES[nivel][version])
 
 
 def capacidad(version: int, nivel: str = NIVEL_POR_DEFECTO) -> int:
-    """Cuántos bytes de contenido admite esta versión y este nivel.
+    """Devuelve cuántos bytes de contenido admite esta versión con este nivel.
 
     Es `_codewords_de_datos` menos la cabecera: 4 bits de modo más el contador
     de caracteres, que mide 8 bits hasta la versión 9 y 16 de la 10 en adelante
-    (ISO/IEC 18004, tabla 3)."""
+    (ISO/IEC 18004, tabla 3).
+    """
     _comprobar(version, nivel)
     bits_cabecera = 4 + (8 if version <= 9 else 16)
     return _codewords_de_datos(version, nivel) - (bits_cabecera + 7) // 8
 
 
 def _comprobar(version: int, nivel: str) -> None:
+    """Comprueba que la versión y el nivel existen.
+
+    Raises:
+        QRError: Si no existen.
+    """
     if nivel not in NIVELES:
         raise QRError(f"nivel de corrección desconocido: {nivel!r}; "
                       f"los que hay son {', '.join(NIVELES)}.")
@@ -247,11 +260,12 @@ def _comprobar(version: int, nivel: str) -> None:
 
 
 def _alineaciones(version: int) -> list[int]:
-    """Los centros de los patrones de alineación, en fila y en columna.
+    """Devuelve los centros de los patrones de alineación, en fila y en columna.
 
-    Se calculan (ISO/IEC 18004, anexo E da la tabla equivalente): el primero
-    siempre en 6, el último a 7 del borde, y el resto repartidos con un paso
-    par. La versión 32 es la excepción que la propia norma tabula a mano."""
+    Se calculan (ISO/IEC 18004, el anexo E da la tabla equivalente): el primero
+    siempre en 6, el último a 7 del borde y el resto repartidos con un paso
+    par. La versión 32 es la excepción que la propia norma tabula a mano.
+    """
     if version == 1:
         return []
     cuantos = version // 7 + 2
@@ -261,12 +275,12 @@ def _alineaciones(version: int) -> list[int]:
     return centros
 
 
-# ---------------------------------------------------------------------------
-# El mensaje: de bytes a codewords con su corrección intercalada
-# ---------------------------------------------------------------------------
-
 def _elegir_version(cuantos: int, nivel: str) -> int:
-    """La versión más pequeña en la que caben `cuantos` bytes."""
+    """Devuelve la versión más pequeña en la que caben `cuantos` bytes.
+
+    Raises:
+        QRError: Si no caben ni en la 40.
+    """
     for version in range(MIN_VERSION, MAX_VERSION + 1):
         if capacidad(version, nivel) >= cuantos:
             return version
@@ -277,17 +291,19 @@ def _elegir_version(cuantos: int, nivel: str) -> int:
 
 
 def _bits(datos: bytes, version: int, nivel: str) -> list[int]:
-    """La secuencia de bits del mensaje, ya rellenada hasta llenar la versión.
+    """Devuelve la secuencia de bits del mensaje, ya rellenada hasta llenar la versión.
 
     El relleno tiene tres tramos y los tres son de la norma (ISO/IEC 18004,
-    8.4.9): hasta cuatro ceros de terminador, los que hagan falta para cerrar el
-    byte, y luego 0xEC y 0x11 alternándose hasta el final. Los dos bytes de
+    8.4.9): hasta cuatro ceros de terminador, los que hagan falta para cerrar
+    el byte y luego 0xEC y 0x11 alternándose hasta el final. Los dos bytes de
     relleno no son arbitrarios: están elegidos para no formar patrones que se
-    parezcan a los de búsqueda."""
+    parezcan a los de búsqueda.
+    """
     contador = 8 if version <= 9 else 16
     bits: list[int] = []
 
     def meter(valor: int, cuantos: int) -> None:
+        """Añade `valor` como `cuantos` bits, el más significativo primero."""
         bits.extend((valor >> i) & 1 for i in reversed(range(cuantos)))
 
     meter(_MODO_BYTE, 4)
@@ -304,16 +320,17 @@ def _bits(datos: bytes, version: int, nivel: str) -> list[int]:
 
 
 def _bloques(datos: bytes, version: int, nivel: str) -> bytes:
-    """Los codewords de datos y de corrección, troceados e intercalados.
+    """Devuelve los codewords de datos y de corrección, troceados e intercalados.
 
     El QR no guarda «primero todos los datos y luego toda la corrección»: parte
     el mensaje en bloques, calcula el Reed-Solomon de cada uno y luego los lee
-    **en columnas** —el primer byte de cada bloque, el segundo de cada bloque…—
+    **en columnas** (el primer byte de cada bloque, el segundo de cada bloque…)
     para que un borrón que se coma una zona del dibujo reparta el daño entre
     todos los bloques en vez de destrozar uno entero (ISO/IEC 18004, 8.6).
 
     Los bloques no miden todos igual: los `cortos` primeros llevan un codeword
-    menos, y el hueco que dejan al intercalar hay que saltarlo."""
+    menos, y el hueco que dejan al intercalar hay que saltarlo.
+    """
     por_bloque = _CORRECCION_POR_BLOQUE[nivel][version]
     cuantos = _BLOQUES[nivel][version]
     total = _modulos_de_datos(version) // 8
@@ -328,10 +345,10 @@ def _bloques(datos: bytes, version: int, nivel: str) -> bytes:
         datos_bloque = datos[k:k + largo]
         k += largo
         # A los bloques cortos se les mete un byte de mentira en el hueco que
-        # les falta, para que TODOS midan lo mismo y el intercalado de abajo sea
-        # un recorrido rectangular. Ese byte no se escribe nunca: se salta al
-        # intercalar, y va después de los datos y antes de la corrección para
-        # caer justo en el índice que se salta.
+        # les falta, para que TODOS midan lo mismo y el intercalado de abajo
+        # sea un recorrido rectangular. Ese byte no se escribe nunca: se salta
+        # al intercalar, y va después de los datos y antes de la corrección
+        # para caer justo en el índice que se salta.
         relleno = [0] if i < cortos else []
         trozos.append(list(datos_bloque) + relleno + _resto(datos_bloque, divisor))
 
@@ -345,32 +362,32 @@ def _bloques(datos: bytes, version: int, nivel: str) -> bytes:
     return bytes(salida)
 
 
-# ---------------------------------------------------------------------------
-# El dibujo
-# ---------------------------------------------------------------------------
-
 class _Lienzo:
     """La rejilla mientras se construye: módulos y qué casillas son de función.
 
-    Las dos matrices van juntas porque casi todo lo que se hace aquí —colocar
-    los datos, aplicar la máscara, puntuarla— necesita saber si una casilla es
-    de función, y esa pregunta se hace una vez por módulo y por máscara."""
+    Las dos matrices van juntas porque casi todo lo que se hace aquí (colocar
+    los datos, aplicar la máscara, puntuarla) necesita saber si una casilla es
+    de función, y esa pregunta se hace una vez por módulo y por máscara.
+    """
 
     def __init__(self, version: int) -> None:
+        """Crea una rejilla vacía del tamaño de esa versión."""
         self.version = version
         self.lado = tamano(version)
         self.modulos = [[False] * self.lado for _ in range(self.lado)]
         self.funcion = [[False] * self.lado for _ in range(self.lado)]
 
     def poner(self, x: int, y: int, oscuro: bool) -> None:
+        """Pone un módulo y lo marca como de función."""
         self.modulos[y][x] = oscuro
         self.funcion[y][x] = True
 
-    # --- patrones de función ------------------------------------------------
-
     def dibujar_funciones(self, nivel: str) -> None:
-        """Todo lo que no depende del mensaje: búsqueda, temporización,
-        alineación y el hueco reservado de formato y versión."""
+        """Dibuja todo lo que no depende del mensaje.
+
+        Son los patrones de búsqueda, la temporización, la alineación y el
+        hueco reservado de formato y versión.
+        """
         for i in range(self.lado):
             self.poner(6, i, i % 2 == 0)
             self.poner(i, 6, i % 2 == 0)
@@ -393,7 +410,7 @@ class _Lienzo:
         self._version_info()
 
     def _busqueda(self, cx: int, cy: int) -> None:
-        """El ojo de buey de 7x7 y su separador blanco alrededor."""
+        """Dibuja el ojo de buey de 7x7 y su separador blanco alrededor."""
         for dy in range(-4, 5):
             for dx in range(-4, 5):
                 x, y = cx + dx, cy + dy
@@ -402,18 +419,19 @@ class _Lienzo:
                     self.poner(x, y, lejos != 2 and lejos != 4)
 
     def _alineacion(self, cx: int, cy: int) -> None:
-        """El cuadrado de 5x5 con su centro: anillo blanco a distancia 1."""
+        """Dibuja el cuadrado de 5x5 con su centro: anillo blanco a distancia 1."""
         for dy in range(-2, 3):
             for dx in range(-2, 3):
                 self.poner(cx + dx, cy + dy, max(abs(dx), abs(dy)) != 1)
 
     def dibujar_formato(self, nivel: str, mascara: int) -> None:
-        """Los 15 bits de formato, dos veces, y el módulo oscuro.
+        """Dibuja los 15 bits de formato, dos veces, y el módulo oscuro.
 
-        Van duplicados —junto al patrón de búsqueda de arriba a la izquierda y
-        repartidos entre los otros dos— para que un código al que le falte una
+        Van duplicados (junto al patrón de búsqueda de arriba a la izquierda y
+        repartidos entre los otros dos) para que un código al que le falte una
         esquina siga diciendo con qué máscara está hecho. El bit menos
-        significativo va primero (ISO/IEC 18004, 8.9)."""
+        significativo va primero (ISO/IEC 18004, 8.9).
+        """
         datos = NIVELES[nivel] << 3 | mascara
         resto = datos
         for _ in range(10):
@@ -421,6 +439,7 @@ class _Lienzo:
         bits = (datos << 10 | resto) ^ _MASCARA_FORMATO
 
         def bit(i: int) -> bool:
+            """Devuelve el bit `i` de la información de formato."""
             return (bits >> i) & 1 != 0
 
         # La copia de arriba a la izquierda, saltando la línea de temporización.
@@ -442,10 +461,11 @@ class _Lienzo:
         self.poner(8, self.lado - 8, True)
 
     def _version_info(self) -> None:
-        """Los 18 bits de versión, en dos bloques de 3x6. Solo desde la 7.
+        """Dibuja los 18 bits de versión, en dos bloques de 3x6; solo desde la 7.
 
         Antes de la versión 7 no existen: el lector deduce la versión del
-        tamaño, que hasta ahí es suficiente."""
+        tamaño, que hasta ahí es suficiente.
+        """
         if self.version < 7:
             return
         resto = self.version
@@ -459,15 +479,14 @@ class _Lienzo:
             self.poner(a, b, oscuro)
             self.poner(b, a, oscuro)
 
-    # --- los datos ----------------------------------------------------------
-
     def dibujar_datos(self, datos: bytes) -> None:
-        """Los codewords, en zigzag de dos columnas de derecha a izquierda.
+        """Coloca los codewords en zigzag de dos columnas, de derecha a izquierda.
 
-        El recorrido sube y baja alternando por pares de columnas, saltándose la
-        columna 6 —la de temporización, que no lleva datos— y todo lo que sea de
-        función. Si sobran módulos al final se quedan en claro: la norma los
-        llama «restantes» y el lector los ignora."""
+        El recorrido sube y baja alternando por pares de columnas, saltándose
+        la columna 6 (la de temporización, que no lleva datos) y todo lo que
+        sea de función. Si sobran módulos al final se quedan en claro: la norma
+        los llama «restantes» y el lector los ignora.
+        """
         i = 0
         derecha = self.lado - 1
         while derecha >= 1:
@@ -484,25 +503,25 @@ class _Lienzo:
             derecha -= 2
 
     def aplicar(self, mascara: int) -> None:
-        """Aplica (o quita: es un XOR) una de las ocho máscaras.
+        """Aplica una de las ocho máscaras, o la quita: es un XOR.
 
-        Enmascarar no protege nada, sirve para que el dibujo no salga con
+        Enmascarar no protege nada: sirve para que el dibujo no salga con
         manchas grandes ni con algo que se parezca a un patrón de búsqueda, que
-        es lo que despista al lector (ISO/IEC 18004, tabla 10)."""
+        es lo que despista al lector (ISO/IEC 18004, tabla 10).
+        """
         formula = _MASCARAS[mascara]
         for y in range(self.lado):
             for x in range(self.lado):
                 if not self.funcion[y][x] and formula(x, y):
                     self.modulos[y][x] = not self.modulos[y][x]
 
-    # --- la puntuación ------------------------------------------------------
-
     def penalizacion(self) -> int:
-        """Lo malo que es este dibujo para un lector. Menos es mejor.
+        """Devuelve lo malo que es este dibujo para un lector; menos es mejor.
 
         Son las cuatro reglas de la norma (ISO/IEC 18004, 8.8.2): rachas largas
         del mismo color, bloques de 2x2, cosas que se parecen a un patrón de
-        búsqueda, y un reparto de claro y oscuro que se aleje del 50 %."""
+        búsqueda y un reparto de claro y oscuro que se aleje del 50 %.
+        """
         total = 0
         lado = self.lado
         modulos = self.modulos
@@ -525,13 +544,14 @@ class _Lienzo:
         return total + k * _N4
 
     def _linea(self, celdas: list[bool]) -> int:
-        """Las reglas 1 y 3 sobre una fila o una columna.
+        """Devuelve las penalizaciones de las reglas 1 y 3 sobre una fila o una columna.
 
         La 3 no busca el patrón 1:1:3:1:1 a pelo sino que lleva un historial de
         las últimas siete rachas, porque lo que penaliza la norma es ese patrón
         **con cuatro módulos claros a un lado**, y eso incluye el borde del
         código: por eso al empezar y al terminar la línea se le suma un tramo
-        claro del tamaño del lado."""
+        claro del tamaño del lado.
+        """
         total = 0
         historial = [0] * 7
         color = False
@@ -559,6 +579,7 @@ class _Lienzo:
         return total + self._buscar_falsos(historial) * _N3
 
     def _apuntar(self, racha: int, historial: list[int]) -> None:
+        """Anota una racha en el historial de las últimas siete."""
         if historial[0] == 0:
             racha += self.lado          # el blanco de antes de empezar
         historial.pop()
@@ -566,7 +587,7 @@ class _Lienzo:
 
     @staticmethod
     def _buscar_falsos(historial: list[int]) -> int:
-        """Cuántos patrones 1:1:3:1:1 con su margen hay en el historial."""
+        """Devuelve cuántos patrones 1:1:3:1:1 con su margen hay en el historial."""
         n = historial[1]
         nucleo = (n > 0 and historial[2] == historial[4] == historial[5] == n
                   and historial[3] == n * 3)
@@ -574,7 +595,6 @@ class _Lienzo:
                 + (1 if nucleo and historial[6] >= n * 4 and historial[0] >= n else 0))
 
 
-# Las ocho máscaras (ISO/IEC 18004, tabla 10). x es la columna, y la fila.
 _MASCARAS = (
     lambda x, y: (x + y) % 2 == 0,
     lambda x, y: y % 2 == 0,
@@ -585,22 +605,26 @@ _MASCARAS = (
     lambda x, y: (x * y % 2 + x * y % 3) % 2 == 0,
     lambda x, y: ((x + y) % 2 + x * y % 3) % 2 == 0,
 )
+"""Las ocho máscaras (ISO/IEC 18004, tabla 10); `x` es la columna e `y` la fila."""
 
-
-# ---------------------------------------------------------------------------
-# La cara pública
-# ---------------------------------------------------------------------------
 
 def codificar(contenido: bytes | str, nivel: str = NIVEL_POR_DEFECTO,
               version: int | None = None) -> Codigo:
-    """El código QR de `contenido`, en la versión más pequeña donde quepa.
+    """Devuelve el código QR de `contenido`, en la versión más pequeña donde quepa.
 
     El texto se codifica en UTF-8, que es lo que espera cualquier lector de hoy
-    ante el modo byte. `version` fuerza un tamaño concreto —lo usan los tests
-    para medir una versión determinada—; lo normal es dejar que lo elija.
+    ante el modo byte.
 
-    Lanza `QRError` si el nivel no existe, si la versión forzada no vale o si el
-    contenido no cabe ni en la versión 40."""
+    Args:
+        contenido: Lo que se codifica.
+        nivel: El nivel de corrección (`NIVELES`).
+        version: Fuerza un tamaño concreto (lo usan los tests para medir una
+            versión determinada); lo normal es dejar que lo elija.
+
+    Raises:
+        QRError: Si el nivel no existe, si la versión forzada no vale o si el
+            contenido no cabe ni en la versión 40.
+    """
     datos = contenido.encode("utf-8") if isinstance(contenido, str) else bytes(contenido)
     if nivel not in NIVELES:
         raise QRError(f"nivel de corrección desconocido: {nivel!r}; "
@@ -619,9 +643,9 @@ def codificar(contenido: bytes | str, nivel: str = NIVEL_POR_DEFECTO,
     lienzo.dibujar_datos(_bloques(_empaquetar(_bits(datos, version, nivel)),
                                   version, nivel))
 
-    # Se prueban las ocho y gana la de menos penalización. Probarlas todas es lo
-    # que manda la norma y cuesta ocho recorridos de una rejilla que como mucho
-    # mide 177x177: nada al lado de abrir la ventana que lo va a enseñar.
+    # Se prueban las ocho y gana la de menos penalización. Probarlas todas es
+    # lo que manda la norma y cuesta ocho recorridos de una rejilla que como
+    # mucho mide 177x177: nada al lado de abrir la ventana que lo va a enseñar.
     mejor, mejor_puntos = 0, None
     for mascara in range(8):
         lienzo.aplicar(mascara)
@@ -638,6 +662,6 @@ def codificar(contenido: bytes | str, nivel: str = NIVEL_POR_DEFECTO,
 
 
 def _empaquetar(bits: list[int]) -> bytes:
-    """Los bits en grupos de ocho. La cuenta ya viene cuadrada de `_bits()`."""
+    """Devuelve los bits en grupos de ocho; la cuenta ya viene cuadrada de `_bits()`."""
     return bytes(int("".join(str(b) for b in bits[i:i + 8]), 2)
                  for i in range(0, len(bits), 8))

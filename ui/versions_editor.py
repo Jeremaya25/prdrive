@@ -1,26 +1,26 @@
 #!/usr/bin/env python3
-"""
-versions_editor.py — Qué hay guardado en `.prversions/` y cómo se purga. Sin Tkinter.
+"""Qué hay guardado en `.prversions/` y cómo se purga, sin Tkinter.
 
 Mismo guion que `pair_editor` y `conflict_editor`: la ventana
 (`ui/tk_versions.py`) pide un plan, enseña sus consecuencias en
-`tk_pairs.confirmar_plan()` y solo lo ejecuta si el usuario dice que sí. Aquí no
-se dibuja nada.
+`tk_pairs.confirmar_plan()` y solo lo ejecuta si la persona dice que sí. Aquí
+no se dibuja nada.
 
-**La fecha sale del NOMBRE, no del mtime.** Es la única parte de esto que podría
-haberse hecho de dos maneras, así que conviene decir por qué. rclone bautiza cada
-versión con la marca de la pasada que la apartó (`--suffix`), y ese nombre no
-vuelve a cambiar nunca. El mtime sí: copiar la carpeta a otro disco, restaurar un
-backup o cualquier herramienta que la toque lo reescribe, y entonces una purga
-«anterior al 1 de septiembre» borraría cosas de agosto que parecen de hoy, o al
-revés. El nombre es el dato que el propio formato existe para llevar.
+**La fecha sale del NOMBRE, no del mtime.** Es la única parte de esto que
+podría haberse hecho de dos maneras, así que conviene decir por qué. rclone
+bautiza cada versión con la marca de la pasada que la apartó (`--suffix`) y ese
+nombre no vuelve a cambiar nunca. El mtime sí: copiar la carpeta a otro disco,
+restaurar un backup o cualquier herramienta que la toque lo reescribe, y
+entonces una purga «anterior al 1 de septiembre» borraría cosas de agosto que
+parecen de hoy, o al revés. El nombre es el dato que el propio formato existe
+para llevar.
 
 **Y se purga en los dos lados a la vez.** Las dos carpetas son independientes
-—`bisync` las excluye, así que no se replican— y cada una guarda lo que perdió su
-lado, de modo que purgar solo una deja la mitad del histórico. El lado remoto se
-borra con una sola invocación de `rclone delete --files-from`: la lista exacta de
-ficheros, ni una edad ni un patrón, para que lo que se borra sea exactamente lo
-que se ha enseñado.
+(`bisync` las excluye, así que no se replican) y cada una guarda lo que perdió
+su lado, de modo que purgar solo una deja la mitad del histórico. El lado
+remoto se borra con una sola invocación de `rclone delete --files-from`: la
+lista exacta de ficheros, ni una edad ni un patrón, para que lo que se borra
+sea exactamente lo que se ha enseñado.
 """
 
 from __future__ import annotations
@@ -37,30 +37,37 @@ from typing import Iterable, NamedTuple
 from common import catalog, model
 from common.model import Pair
 
-# `<lo que sea>~YYYYMMDD-HHMMSS` con su extensión detrás, que es lo que produce
-# `--suffix ~%Y%m%d-%H%M%S --suffix-keep-extension`. Un fichero que no case con
-# esto no lo ha puesto el versionado y no se toca.
 SELLO = re.compile(r"^(?P<base>.+)~(?P<fecha>\d{8}-\d{6})(?P<ext>\.[^.]*)?$")
+"""Un nombre guardado: `<lo que sea>~YYYYMMDD-HHMMSS` con su extensión detrás.
+
+Es lo que produce `--suffix ~%Y%m%d-%H%M%S --suffix-keep-extension`. Un fichero
+que no case con esto no lo ha puesto el versionado y no se toca.
+"""
 
 DISPOSITIVO = "dispositivo"
+"""Clave del lado local."""
 REMOTO = "remoto"
+"""Clave del lado remoto."""
 TITULO_LADO = {DISPOSITIVO: "En este dispositivo", REMOTO: "En el remoto"}
+"""Cómo se titula cada lado en la ventana."""
 
-
-# ---------------------------------------------------------------------------
-# Puntos de indirección: todo lo que toca el disco o la red, sustituible
-# ---------------------------------------------------------------------------
 
 def borrar_local(ruta: Path) -> None:
+    """Borra una versión del dispositivo; es de módulo para que un test lo sustituya."""
     ruta.unlink()
 
 
 def borrar_remoto(raiz: str, rutas: Iterable[str]) -> tuple[bool, str]:
     """Borra del remoto exactamente esas rutas, relativas a `raiz`.
 
-    Una sola invocación con `--files-from`: sobre SFTP, una por fichero serían
-    cientos de conexiones, y una purga por edad borraría lo que rclone decida y
-    no lo que se ha enseñado."""
+    Va en una sola invocación con `--files-from`: sobre SFTP, una por fichero
+    serían cientos de conexiones, y una purga por edad borraría lo que rclone
+    decida y no lo que se ha enseñado. Es de módulo para que un test lo
+    sustituya.
+
+    Returns:
+        `(ok, error)`.
+    """
     lista = Path(tempfile.mkstemp(prefix="prdrive-purga-", suffix=".txt")[1])
     try:
         lista.write_text("\n".join(rutas) + "\n", encoding="utf-8", newline="\n")
@@ -74,20 +81,32 @@ def borrar_remoto(raiz: str, rutas: Iterable[str]) -> tuple[bool, str]:
         lista.unlink(missing_ok=True)
 
 
-# ---------------------------------------------------------------------------
-# Lo que hay guardado
-# ---------------------------------------------------------------------------
-
 class Version(NamedTuple):
-    ruta: str          # relativa a la raíz de .prversions, con /
-    original: str      # el nombre que tenía el fichero, sin el sello
+    """Una versión guardada.
+
+    Args:
+        ruta: Ruta relativa a la raíz de `.prversions`, con `/`.
+        original: El nombre que tenía el fichero, sin el sello.
+        cuando: La fecha de la pasada que la apartó, sacada del nombre.
+        tamano: Bytes.
+    """
+    ruta: str
+    original: str
     cuando: datetime
     tamano: int
 
 
 @dataclass(frozen=True)
 class Lado:
-    """Lo guardado en un lado, o por qué no se ha podido saber."""
+    """Lo guardado en un lado, o por qué no se ha podido saber.
+
+    Args:
+        clave: `DISPOSITIVO` o `REMOTO`.
+        endpoint: Dónde está la carpeta de versiones de ese lado.
+        disponible: Si se ha podido leer.
+        detalle: Por qué no, si no se ha podido.
+        versiones: Lo que hay.
+    """
     clave: str
     endpoint: str
     disponible: bool
@@ -96,22 +115,30 @@ class Lado:
 
     @property
     def titulo(self) -> str:
+        """Devuelve cómo se titula este lado en la ventana."""
         return TITULO_LADO[self.clave]
 
     @property
     def total(self) -> int:
+        """Devuelve cuántas versiones hay."""
         return len(self.versiones)
 
     @property
     def tamano(self) -> int:
+        """Devuelve los bytes que ocupan todas."""
         return sum(v.tamano for v in self.versiones)
 
     def anteriores_a(self, corte: date) -> tuple[Version, ...]:
+        """Devuelve las versiones de antes del día `corte`."""
         return tuple(v for v in self.versiones if v.cuando.date() < corte)
 
 
 def leer_nombre(nombre: str) -> tuple[str, datetime] | None:
-    """`nota~20260922-093000.md` → ('nota.md', 2026-09-22 09:30:00)."""
+    """Devuelve el nombre original y la fecha de un nombre guardado, o `None`.
+
+    Por ejemplo `nota~20260922-093000.md` es `('nota.md', 2026-09-22
+    09:30:00)`.
+    """
     m = SELLO.match(nombre)
     if not m:
         return None
@@ -123,6 +150,7 @@ def leer_nombre(nombre: str) -> tuple[str, datetime] | None:
 
 
 def _version(ruta: str, tamano: int) -> Version | None:
+    """Devuelve la `Version` de esa ruta, o `None` si no es un nombre del versionado."""
     leido = leer_nombre(ruta.rsplit("/", 1)[-1])
     if leido is None:
         return None
@@ -131,6 +159,7 @@ def _version(ruta: str, tamano: int) -> Version | None:
 
 
 def leer_local(pair: Pair) -> Lado:
+    """Devuelve lo guardado en el dispositivo."""
     raiz = pair.local_abs / model.VERSIONS_DIR
     endpoint = pair.versions_path1
     if not raiz.exists():
@@ -151,11 +180,12 @@ def leer_local(pair: Pair) -> Lado:
 
 
 def leer_remoto(pair: Pair) -> Lado:
-    """Lo guardado en el otro lado, con `rclone lsf`.
+    """Devuelve lo guardado en el otro lado, con `rclone lsf`.
 
-    `--csv` y no el separador de fábrica: el de `lsf` es ';', y un fichero con un
-    ';' en el nombre partiría la línea en dos. Con CSV, quien escribe la línea y
-    quien la lee usan las mismas reglas."""
+    Se usa `--csv` y no el separador de fábrica: el de `lsf` es `;` y un
+    fichero con un `;` en el nombre partiría la línea en dos. Con CSV, quien
+    escribe la línea y quien la lee usan las mismas reglas.
+    """
     endpoint = pair.versions_path2
     try:
         salida = catalog.run(["lsf", "-R", "--files-only", "--csv",
@@ -184,10 +214,12 @@ def leer_remoto(pair: Pair) -> Lado:
 
 
 def lados(pair: Pair) -> tuple[Lado, Lado]:
+    """Devuelve lo guardado en los dos lados, el del dispositivo primero."""
     return leer_local(pair), leer_remoto(pair)
 
 
 def legible(octetos: int) -> str:
+    """Devuelve un tamaño en bytes como texto («12,3 KiB»)."""
     for unidad in ("B", "KiB", "MiB", "GiB"):
         if octetos < 1024 or unidad == "GiB":
             entero = unidad == "B" or octetos >= 100
@@ -196,13 +228,20 @@ def legible(octetos: int) -> str:
     return f"{octetos:.1f} GiB"
 
 
-# ---------------------------------------------------------------------------
-# Purgar
-# ---------------------------------------------------------------------------
-
 @dataclass
 class PurgaPlan:
-    """Qué se va a borrar, antes de borrarlo."""
+    """Qué se va a borrar, antes de borrarlo.
+
+    Args:
+        pair_name: La pareja.
+        corte: Se borra lo anterior a este día.
+        local: Las versiones que se borrarían del dispositivo.
+        remoto: Las que se borrarían del remoto.
+        raiz_local: La carpeta `.prversions` del dispositivo.
+        raiz_remota: La del remoto.
+        consequences: Una línea por consecuencia.
+        warnings: Lo que conviene saber antes de confirmar.
+    """
     pair_name: str
     corte: date
     local: tuple[Version, ...] = ()
@@ -214,16 +253,18 @@ class PurgaPlan:
 
     @property
     def vacio(self) -> bool:
+        """Indica si no hay nada que borrar."""
         return not (self.local or self.remoto)
 
     def execute(self) -> list[str]:
-        """Primero el dispositivo, después el remoto.
+        """Borra primero el dispositivo y después el remoto, y devuelve qué ha hecho.
 
-        En ese orden porque el de aquí se puede deshacer mirando la papelera del
-        sistema y el del remoto no; y porque si el remoto falla, lo que queda es
-        «purgado aquí, pendiente allí», que se arregla repitiendo. Al revés
-        quedaría el remoto vacío y el dispositivo lleno, y la siguiente pasada de
-        bisync no lo corregiría: la carpeta está excluida."""
+        Va en ese orden porque lo de aquí se puede deshacer mirando la papelera
+        del sistema y lo del remoto no, y porque si el remoto falla lo que
+        queda es «purgado aquí, pendiente allí», que se arregla repitiendo. Al
+        revés quedaría el remoto vacío y el dispositivo lleno, y la siguiente
+        pasada de bisync no lo corregiría: la carpeta está excluida.
+        """
         hechos: list[str] = []
         fallos = 0
         if self.local and self.raiz_local is not None:
@@ -247,8 +288,9 @@ class PurgaPlan:
 def _podar(raiz: Path) -> None:
     """Quita las carpetas que se hayan quedado sin nada dentro.
 
-    Best-effort: una carpeta vacía de más no rompe nada, y aquí ya se ha borrado
-    lo que importaba."""
+    Es best-effort: una carpeta vacía de más no rompe nada y aquí ya se ha
+    borrado lo que importaba.
+    """
     try:
         for carpeta in sorted(raiz.rglob("*"), key=lambda p: len(p.parts), reverse=True):
             if carpeta.is_dir() and not any(carpeta.iterdir()):
@@ -258,7 +300,7 @@ def _podar(raiz: Path) -> None:
 
 
 def plan_purgar(pair: Pair, local: Lado, remoto: Lado, corte: date) -> PurgaPlan:
-    """Lo que se borraría al purgar lo anterior a `corte`. No toca nada."""
+    """Devuelve lo que se borraría al purgar lo anterior a `corte`; no toca nada."""
     plan = PurgaPlan(
         pair_name=pair.name,
         corte=corte,

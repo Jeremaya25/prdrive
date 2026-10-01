@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""
-console.py — La interfaz de consola.
+"""La interfaz de consola.
 
-Se usa cuando no hay entorno gráfico (Linux sin escritorio, sesión SSH) o cuando
-Tkinter falla. Al haber terminal de verdad, este frontend tiene menos trabajo que
-el gráfico: la salida de sync.py va directa a la consola heredando los
-descriptores, y las preguntas las hace el propio sync.py.
+Se usa cuando no hay entorno gráfico (Linux sin escritorio, sesión SSH) o
+cuando Tkinter falla. Con terminal de verdad este frontend tiene menos trabajo
+que el gráfico: la salida de `sync.py` va directa a la consola heredando los
+descriptores, y las preguntas las hace el propio `sync.py`.
 """
 
 from __future__ import annotations
@@ -20,28 +19,37 @@ from . import Choice, pair_status_notes, prefs, watch
 
 
 class ConsoleFrontend:
-    """El frontend de consola. Ver el protocolo `ui.Frontend`."""
+    """El frontend de consola; implementa el protocolo `ui.Frontend`."""
 
     def ask(self, config: Config, startup_msg: str | None) -> Choice | None:
+        """Enseña el menú de consola y devuelve la elección."""
         return main_menu(config, startup_msg)
 
     def approve_resync(self, pending: list[str]) -> bool:
-        """Siempre False, y no es un "no": es un "aquí no hace falta preguntar".
-        Con consola, sync.py hereda stdin y plantea él mismo la pregunta, con más
-        contexto del que se puede meter en un cuadro de diálogo. Devolver True
-        aquí añadiría --yes y le quitaría al usuario esa conversación."""
+        """Devuelve siempre `False`: aquí no hace falta preguntar.
+
+        No es un «no» sino un «aquí no hace falta». Con consola, `sync.py`
+        hereda stdin y plantea él mismo la pregunta, con más contexto del que
+        cabe en un cuadro de diálogo. Devolver `True` añadiría `--yes` y le
+        quitaría a la persona esa conversación.
+        """
         return False
 
     def info(self, msg: str) -> None:
+        """Imprime el mensaje."""
         print(msg)
 
     def run_sync(self, title: str, args: list[str]) -> int:
-        """sync.py en la consola actual, heredando stdin/stdout (preguntas
-        incluidas). El título no se usa: la consola ya enseña lo que pasa."""
+        """Lanza `sync.py` en la consola actual y devuelve su código.
+
+        Hereda stdin y stdout, preguntas incluidas. El título no se usa: la
+        consola ya enseña lo que pasa.
+        """
         return subprocess.run([sys.executable, str(model.SYNC_PY), *args]).returncode
 
 
 def main_menu(config: Config, startup_msg: str | None) -> Choice | None:
+    """Imprime el menú y devuelve la elección, o `None` si se sale."""
     names = config.names
     notes = pair_status_notes(config)
     d_pairs, d_interval, memo = prefs.startup_defaults(config)
@@ -55,7 +63,7 @@ def main_menu(config: Config, startup_msg: str | None) -> Choice | None:
     if memo:
         print(f"\n{memo}: {' '.join(d_pairs)}, cada {d_interval:g} min.")
     # Lo mismo que dice la línea de la ventana: qué hace este equipo al
-    # enchufar, y que mientras esto siga abierto no lo hace.
+    # enchufar y que, mientras esto siga abierto, no lo hace.
     try:
         vigilante = watch.resumen()
         dicho = watch.linea(vigilante)
@@ -65,21 +73,19 @@ def main_menu(config: Config, startup_msg: str | None) -> Choice | None:
         print(f"\n{dicho.texto}"
               + (f" {watch.PAUSA}" if vigilante.vigila_este else ""))
 
-    # El aviso de versión nueva se pinta aquí y no llega por `startup_msg`,
-    # porque ese canal lo comparten los dos frontends y la ventana ya se lo
-    # dibuja ella sola en ámbar: pasarlo por ahí lo enseñaría dos veces.
-    # `pending()` y no `check()`: solo caché, cero red. Nadie va a esperar a
-    # GitHub para ver un menú de texto, y la caché ya la refrescan la ventana y
-    # el servicio periódico.
+    # El aviso de versión nueva se pinta aquí y no llega por `startup_msg`: ese
+    # canal lo comparten los dos frontends y la ventana ya lo dibuja en ámbar,
+    # así que se enseñaría dos veces. Es `pending()` y no `check()`: solo
+    # caché, cero red; nadie va a esperar a GitHub para ver un menú de texto.
     nueva = update.pending()
     if nueva is not None:
         print(f"\nHay una actualización disponible: {nueva.tag} "
               f"(tienes la {update.installed_version() or 'desconocida'}).")
         print(f"Actualiza desde la ventana, o pasa el instalador: {nueva.url}")
 
-    # Los componentes no necesitan caché ni red: sus sellos están en el propio
-    # dispositivo. Aquí solo se avisa —ponerlos al día es de la ventana, que es
-    # donde está la ceremonia de confirmar y ver la salida—.
+    # Los componentes no necesitan caché ni red (sus sellos están en el
+    # dispositivo). Aquí solo se avisa: ponerlos al día es de la ventana, que
+    # es donde están la confirmación y la salida.
     pend = components.pendientes()
     if pend:
         print("\nLos componentes de este dispositivo están anticuados:")

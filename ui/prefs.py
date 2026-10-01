@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""
-prefs.py — Las parejas y el intervalo del servicio.
+"""Las parejas y el intervalo del servicio.
 
 El servicio periódico es uno solo, se arranque a mano («Iniciar servicio») o al
-enchufar el dispositivo (el vigilante, `runsync --auto`), y su configuración vive
-en `state/ui_prefs.json`: viaja en el dispositivo y acompaña al usuario de una
-máquina a otra. Es también con lo que sale precargada la ventana. Ese recuerdo
-manda sobre `[daemon]` del TOML, que a su vez manda sobre los valores de fábrica.
+enchufar el dispositivo (el vigilante, `runsync --auto`), y su configuración
+vive en `state/ui_prefs.json`: viaja en el dispositivo y acompaña a la persona
+de una máquina a otra. Es también con lo que sale precargada la ventana. Ese
+recuerdo manda sobre `[daemon]` del TOML, que a su vez manda sobre los valores
+de fábrica.
 
-Solo se escribe al ARRANCAR el servicio (`save_prefs`, desde runsync). Una pasada
-manual no lo toca: marcar una sola pareja para sincronizarla ahora no puede
-decidir qué sincroniza el servicio la próxima vez que se enchufe el dispositivo.
-`--auto` y el servicio únicamente leen, para que un arranque automático nunca
-reescriba lo que se decidió a mano.
+Solo se escribe al ARRANCAR el servicio (`save_prefs`, desde `runsync`). Una
+pasada manual no lo toca: marcar una sola pareja para sincronizarla ahora no
+puede decidir qué sincroniza el servicio la próxima vez que se enchufe el
+dispositivo. `--auto` y el servicio únicamente leen, para que un arranque
+automático nunca reescriba lo que se decidió a mano.
 
 El fichero conserva el nombre de cuando era «lo último que se eligió en la UI»:
 renombrarlo pediría una migración para cambiar una palabra.
@@ -27,23 +27,32 @@ from common import model, store
 from common.model import Config
 
 PREFS = model.STATE_DIR / "ui_prefs.json"
+"""El fichero con la elección del servicio, en `state/` del dispositivo."""
 HOST = socket.gethostname()
+"""El nombre de este equipo, para anotar quién guardó la elección."""
 
 
 def read_prefs() -> dict:
-    """La última elección de la UI; vacío si aún no hay ninguna."""
+    """Devuelve la última elección guardada; vacío si aún no hay ninguna."""
     return store.read_json(PREFS)
 
 
 def save_prefs(action: str, pairs: list[str], interval_min: float,
                all_names: list[str]) -> None:
-    """Recuerda lo elegido para el servicio. 'known' anota qué parejas existían
-    en ese momento: así una pareja añadida al TOML más tarde no se confunde con
-    una que el usuario había desmarcado (ver startup_defaults).
+    """Recuerda lo elegido para el servicio.
 
-    `action` se sigue guardando aunque ya solo llegue 'daemon': es lo que
-    distingue los registros de antes, cuando una pasada manual también
-    escribía aquí (ver `startup_defaults`)."""
+    `action` se sigue guardando aunque ya solo llegue `daemon`: es lo que
+    distingue los registros de antes, cuando una pasada manual también escribía
+    aquí (ver `elegir`).
+
+    Args:
+        action: Qué se eligió.
+        pairs: Las parejas elegidas.
+        interval_min: El intervalo, en minutos.
+        all_names: Las parejas que existían en ese momento (`known`): así una
+            pareja añadida al TOML más tarde no se confunde con una que se
+            había desmarcado.
+    """
     data = {
         "action": action,
         "pairs": list(pairs),
@@ -59,11 +68,12 @@ def save_prefs(action: str, pairs: list[str], interval_min: float,
 
 
 def daemon_defaults(config: Config) -> tuple[list[str], float]:
-    """Los valores de [daemon] del TOML, saneados contra las parejas que existen."""
+    """Devuelve `[daemon]` del TOML, saneado contra las parejas que existen."""
     return _de_daemon(config.names, config.daemon)
 
 
 def _de_daemon(names: list[str], daemon: Mapping[str, Any]) -> tuple[list[str], float]:
+    """Devuelve las parejas y el intervalo de una tabla `[daemon]`, saneados."""
     pedidas = daemon.get("pairs", names)
     pairs = [n for n in (pedidas if isinstance(pedidas, list) else names)
              if n in names] or list(names)
@@ -75,29 +85,36 @@ def _de_daemon(names: list[str], daemon: Mapping[str, Any]) -> tuple[list[str], 
 
 
 def startup_defaults(config: Config) -> tuple[list[str], float, str | None]:
-    """Las parejas y el intervalo del servicio: con qué sale precargada la UI y
-    con qué arranca --auto sin argumentos. Precedencia: lo guardado al arrancar
-    el servicio > [daemon] del TOML > todas las parejas cada 30 min. Devuelve
-    (parejas, minutos, nota); la nota es None si no hay recuerdo, y si no, el
-    texto con el que la UI dice de dónde salen las casillas marcadas."""
+    """Devuelve las parejas, el intervalo y una nota con los que sale el servicio.
+
+    Es con lo que sale precargada la UI y con lo que arranca `--auto` sin
+    argumentos. Precedencia: lo guardado al arrancar el servicio > `[daemon]`
+    del TOML > todas las parejas cada 30 min.
+
+    Returns:
+        `(parejas, minutos, nota)`. La nota es `None` si no hay recuerdo y, si
+        lo hay, el texto con el que la UI dice de dónde salen las casillas
+        marcadas.
+    """
     return elegir(config.names, config.daemon, read_prefs())
 
 
 def elegir(all_names: list[str], daemon: Mapping[str, Any],
            prefs: Mapping[str, Any]) -> tuple[list[str], float, str | None]:
-    """`startup_defaults()` con los datos ya leídos: las parejas de la raíz, su
-    tabla `[daemon]` y su `ui_prefs.json`.
+    """Devuelve lo mismo que `startup_defaults()` con los datos ya leídos.
 
-    Aparte y sin tocar el disco porque el agente del equipo (`agente.py`) hace de
-    servicio de raíces que no son la suya: lee esos tres datos de cada una y
+    Son las parejas de la raíz, su tabla `[daemon]` y su `ui_prefs.json`. Está
+    aparte y sin tocar el disco porque el agente del equipo (`agente.py`) hace
+    de servicio de raíces que no son la suya: lee esos tres datos de cada una y
     decide con esta misma regla, en vez de con una segunda copia que se
-    separaría de esta."""
+    separaría de esta.
+    """
     d_pairs, d_interval = _de_daemon(all_names, daemon)
 
-    # Un registro 'manual' solo puede ser de antes de que las pasadas manuales
-    # dejaran de escribir aquí, y es justo el recuerdo de una pasada suelta que
-    # no debe decidir el servicio. Se descarta por 'manual' y no por «distinto
-    # de 'daemon'»: uno sin `action`, escrito a mano, sigue valiendo.
+    # Un registro `manual` solo puede ser de antes de que las pasadas manuales
+    # dejaran de escribir aquí, y es el recuerdo de una pasada suelta que no
+    # debe decidir el servicio. Se descarta por `manual` y no por «distinto de
+    # `daemon`»: uno sin `action`, escrito a mano, sigue valiendo.
     if not prefs or prefs.get("action") == "manual":
         return d_pairs, d_interval, None
 
@@ -106,13 +123,13 @@ def elegir(all_names: list[str], daemon: Mapping[str, Any],
     known = prefs.get("known")
     if isinstance(known, list):
         # Parejas añadidas al TOML después de aquella elección: nadie las ha
-        # desmarcado nunca, así que entran marcadas.
+        # desmarcado, así que entran marcadas.
         remembered |= {n for n in all_names if n not in known}
     # Recortado a lo que sigue existiendo y en el orden del TOML.
     pairs = [n for n in all_names if n in remembered]
     if not pairs:
         # Nada de aquello existe ya (parejas renombradas, TOML regenerado): el
-        # recuerdo entero es basura, se vuelve al TOML sin anunciar nada.
+        # recuerdo entero es basura y se vuelve al TOML sin anunciar nada.
         return d_pairs, d_interval, None
 
     try:

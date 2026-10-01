@@ -1,23 +1,22 @@
 #!/usr/bin/env python3
-"""
-conflict_editor.py — Resolver un conflicto de bisync. Sin Tkinter.
+"""Resolver un conflicto de bisync, sin Tkinter.
 
 Mismo guion que `pair_editor`: la ventana (`ui/tk_conflicts.py`) pide un plan,
-enseña sus consecuencias en `tk_pairs.confirmar_plan()` y solo si el usuario
+enseña sus consecuencias en `tk_pairs.confirmar_plan()` y solo si la persona
 dice que sí lo ejecuta. Aquí se decide qué fichero se queda con el nombre bueno
 y cuáles se borran; allí solo se dibuja.
 
 Resolver es siempre LOCAL. No se habla con el remoto: basta con dejar en este
 dispositivo un solo fichero con el nombre de verdad, y la siguiente pasada de
-bisync lleva el resultado al otro lado —el fichero que cambia se sube, las
-copias que desaparecen se borran allí también—. Así la aplicación no escribe en
+bisync lleva el resultado al otro lado (el fichero que cambia se sube, las
+copias que desaparecen se borran allí también). Así la aplicación no escribe en
 el remoto por ningún camino que no sea el de siempre.
 
-Qué hace «quedarse con la versión de este dispositivo» depende de dónde esté esa
-versión, y por eso no es una regla fija de «borrar la copia»: si perdió este
-dispositivo, su versión ES la copia y hay que devolverle el nombre; si ganó, es
-el original y lo que sobra es la copia. `common/conflicts.py` ya sabe cuál es
-cuál; este módulo solo pregunta.
+Qué hace «quedarse con la versión de este dispositivo» depende de dónde esté
+esa versión, y por eso no es una regla fija de «borrar la copia»: si perdió
+este dispositivo, su versión ES la copia y hay que devolverle el nombre; si
+ganó, es el original y lo que sobra es la copia. `common/conflicts.py` ya sabe
+cuál es cuál; este módulo solo pregunta.
 """
 
 from __future__ import annotations
@@ -34,41 +33,49 @@ ETIQUETA_LADO = {
     conflicts.DISPOSITIVO: "versión de este dispositivo",
     conflicts.REMOTO: "versión del remoto",
 }
-ETIQUETA_ORIGINAL = "versión con su nombre"   # la que no se sabe de qué lado viene
+"""Cómo se llama para la persona la versión de cada lado."""
+ETIQUETA_ORIGINAL = "versión con su nombre"
+"""Nombre de la versión con el nombre de verdad cuando no se sabe de qué lado viene."""
 ETIQUETA_COPIA = "otra versión"
+"""Nombre de una copia de conflicto cuando no se sabe de qué lado viene."""
 
 NOTA_LOCAL = ("Solo se tocan ficheros de este dispositivo. La próxima sincronización "
               "lleva el resultado al remoto y borra allí las copias.")
+"""Lo que se dice siempre al resolver: solo se toca este dispositivo."""
 
 
 class ResolucionImposible(Exception):
-    """El plan no se puede pensar o no se puede ejecutar. El mensaje es para el usuario."""
+    """El plan no se puede pensar o ejecutar.
 
+    El mensaje es para la persona.
+    """
 
-# --- las dos operaciones de disco, de módulo para que un test las haga fallar ---
 
 def mover(origen: Path, destino: Path) -> None:
-    """`os.replace` y no `rename`: sustituye al destino si existe, y lo hace de
+    """Mueve un fichero sobre otro y devuelve cuando está hecho.
+
+    Es `os.replace` y no `rename`: sustituye al destino si existe y lo hace de
     una vez. O la versión elegida queda con su nombre y la anterior se va, o no
-    ha cambiado nada; no hay un momento intermedio sin fichero."""
+    ha cambiado nada; no hay un momento intermedio sin fichero. Es de módulo
+    para que un test lo haga fallar.
+    """
     os.replace(origen, destino)
 
 
 def borrar(ruta: Path) -> None:
+    """Borra un fichero; es de módulo para que un test lo haga fallar."""
     ruta.unlink()
 
 
-# ---------------------------------------------------------------------------
-# Cómo se le enseña cada versión al usuario
-# ---------------------------------------------------------------------------
-
 def etiquetas(conflicto: Conflicto) -> list[tuple[Version, str]]:
-    """Cada versión con su nombre para el usuario, en el orden del conflicto.
+    """Devuelve cada versión con su nombre para la persona, en el orden del conflicto.
 
-    Nunca el sufijo: `.conflicto-remoto1` es cosa de rclone. Si dos versiones se
-    llaman igual —dos conflictos seguidos que perdió el mismo lado— se numeran
-    en el orden en que rclone las fue apartando."""
+    Nunca el sufijo: `.conflicto-remoto1` es cosa de rclone. Si dos versiones
+    se llaman igual (dos conflictos seguidos que perdió el mismo lado) se
+    numeran en el orden en que rclone las fue apartando.
+    """
     def base(v: Version) -> str:
+        """Devuelve el nombre de una versión sin numerar."""
         if v.lado in ETIQUETA_LADO:
             return ETIQUETA_LADO[v.lado]
         return ETIQUETA_ORIGINAL if v.es_original else ETIQUETA_COPIA
@@ -84,11 +91,12 @@ def etiquetas(conflicto: Conflicto) -> list[tuple[Version, str]]:
 
 
 def etiqueta(conflicto: Conflicto, version: Version) -> str:
+    """Devuelve el nombre para la persona de esa versión del conflicto."""
     return dict((v.ruta, e) for v, e in etiquetas(conflicto))[version.ruta]
 
 
 def huella(ruta: Path) -> tuple[int, int] | None:
-    """(tamaño, fecha en ns), o None si el fichero no está."""
+    """Devuelve `(tamaño, fecha en ns)` del fichero, o `None` si no está."""
     try:
         st = ruta.stat()
     except OSError:
@@ -97,6 +105,7 @@ def huella(ruta: Path) -> tuple[int, int] | None:
 
 
 def tamano(octetos: int) -> str:
+    """Devuelve un tamaño en octetos como texto («12,3 KB»)."""
     valor = float(octetos)
     for unidad in ("B", "KB", "MB", "GB"):
         if valor < 1024 or unidad == "GB":
@@ -107,50 +116,60 @@ def tamano(octetos: int) -> str:
 
 
 def fecha(ns: int) -> str:
+    """Devuelve una fecha en nanosegundos como texto («10/09/2026 18:20»)."""
     return f"{datetime.fromtimestamp(ns / 1e9):%d/%m/%Y %H:%M}"
 
 
 def describir(ruta: Path) -> str:
-    """«12,3 KB · 10/09/2026 18:20», lo que hace falta para elegir."""
+    """Devuelve lo que hace falta para elegir: «12,3 KB · 10/09/2026 18:20»."""
     dato = huella(ruta)
     if dato is None:
         return "ya no está"
     return f"{tamano(dato[0])} · {fecha(dato[1])}"
 
 
-# ---------------------------------------------------------------------------
-# El plan
-# ---------------------------------------------------------------------------
-
 @dataclass
 class ResolvePlan:
     """Qué versión se queda con el nombre de verdad y qué se borra.
 
     `consequences` y `warnings` se enseñan antes de confirmar (mismo contrato
-    que `pair_editor.EditPlan`); `execute()` solo se llama si el usuario dice
-    que sí."""
+    que `pair_editor.EditPlan`); `execute()` solo se llama si la persona dice
+    que sí.
+
+    Args:
+        conflicto: El conflicto que se resuelve.
+        conserva: La versión que se queda con el nombre de verdad.
+        descartar: Las copias que se borran.
+        huellas: Tamaño y fecha de cada fichero cuando se pensó el plan.
+        consequences: Una línea por consecuencia.
+        warnings: Lo que conviene saber antes de confirmar.
+    """
     conflicto: Conflicto
     conserva: Version
-    descartar: list[Path]           # copias que se borran
+    descartar: list[Path]
     huellas: dict[Path, tuple[int, int] | None]
     consequences: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
     def execute(self) -> list[str]:
-        """Primero se pone la versión elegida en su sitio y después se borra lo
-        demás. Devuelve qué se ha hecho.
+        """Pone la versión elegida en su sitio, borra lo demás y devuelve qué ha hecho.
 
-        No hace falta deshacer nada, y es por el orden. Lo primero que cambia el
-        disco es `mover()`, que es atómico: si falla, no ha cambiado nada. Después
-        solo quedan borrados de versiones que el usuario ha decidido descartar;
-        si alguno falla, la elegida ya está en su sitio y lo que no se ha podido
-        borrar sigue teniendo su nombre de conflicto, así que vuelve a salir en
-        la lista. El único estado a medias posible es «falta por borrar una
-        copia», que no pierde nada y se arregla repitiendo.
+        No hace falta deshacer nada, y es por el orden. Lo primero que cambia
+        el disco es `mover()`, que es atómico: si falla, no ha cambiado nada.
+        Después solo quedan borrados de versiones que se han decidido
+        descartar; si alguno falla, la elegida ya está en su sitio y lo que no
+        se ha podido borrar sigue teniendo su nombre de conflicto, así que
+        vuelve a salir en la lista. El único estado a medias posible es «falta
+        por borrar una copia», que no pierde nada y se arregla repitiendo.
 
         Antes de tocar nada se comprueba que ningún fichero haya cambiado desde
-        que se pensó el plan: lo que el usuario confirmó eran esos tamaños y esas
-        fechas, no los de ahora."""
+        que se pensó el plan: lo que se confirmó eran esos tamaños y esas
+        fechas, no los de ahora.
+
+        Raises:
+            ResolucionImposible: Si algo ha cambiado o no se ha podido mover o
+                borrar.
+        """
         for ruta, antes in self.huellas.items():
             if huella(ruta) != antes:
                 raise ResolucionImposible(
@@ -187,13 +206,16 @@ class ResolvePlan:
 
 
 def puede(conflicto: Conflicto, lado: str) -> bool:
-    """¿Hay UNA versión de ese lado que conservar? Es lo que habilita cada botón."""
+    """Indica si hay UNA versión de ese lado que conservar; habilita cada botón."""
     version = conflicto.version(lado)
     return version is not None and huella(version.ruta) is not None
 
 
 def plan_lado(conflicto: Conflicto, lado: str) -> ResolvePlan:
-    """Quedarse con la versión de este dispositivo o con la del remoto."""
+    """Devuelve el plan de quedarse con la versión de un lado.
+
+    Es la de este dispositivo o la del remoto.
+    """
     version = conflicto.version(lado)
     if version is None:
         raise ResolucionImposible(
@@ -203,7 +225,10 @@ def plan_lado(conflicto: Conflicto, lado: str) -> ResolvePlan:
 
 
 def plan_conservar(conflicto: Conflicto, version: Version) -> ResolvePlan:
-    """Quedarse con `version` con el nombre de verdad y borrar todas las demás."""
+    """Devuelve el plan de conservar `version` y borrar las demás.
+
+    La elegida se queda con el nombre de verdad.
+    """
     if huella(version.ruta) is None:
         raise ResolucionImposible(
             f"«{version.ruta.name}» ya no está: no se puede conservar. Vuelve a "

@@ -1,20 +1,18 @@
 #!/usr/bin/env python3
-"""
-repair.py — Qué se puede hacer con una avería. Sin Tkinter.
+"""Qué se puede hacer con una avería, sin Tkinter.
 
 Mismo guion que `pair_editor` y `conflict_editor`, y por el mismo motivo: aquí
-se piensa un plan y se enseñan sus consecuencias, y solo si el usuario dice que
+se piensa un plan y se enseñan sus consecuencias, y solo si la persona dice que
 sí se toca el disco. Apartar un baseline es la operación que puede acabar en un
-borrado masivo —por eso se quitó el renombrado automático de listados—, así que
-no hay ninguna reparación que ocurra sola, ni al abrir la pantalla ni después.
+borrado masivo, así que no hay ninguna reparación que ocurra sola, ni al abrir
+la pantalla ni después.
 
 Qué está mal lo dice `common/revision.py`; aquí solo se contesta a «¿y qué hago
-con esto?». Tres respuestas posibles:
-
-  * un plan (`plan_*`), que se confirma y se ejecuta;
-  * una orden para `sync.py` (`args_*`), que se lanza en la ventana de salida
-    porque eso es una sincronización de verdad, con su registro y su log;
-  * nada, que es el caso de la carpeta local que no está: ver `revision._local`.
+con esto?». Hay tres respuestas posibles:
+- un plan (`plan_*`), que se confirma y se ejecuta;
+- una orden para `sync.py` (`args_*`), que se lanza en la ventana de salida
+  porque eso es una sincronización de verdad, con su registro y su log;
+- nada, que es el caso de la carpeta local que no está (ver `revision._local`).
 """
 
 from __future__ import annotations
@@ -31,30 +29,35 @@ from . import prefs
 
 
 class ReparacionImposible(Exception):
-    """No se puede hacer, y el mensaje es para el usuario."""
+    """Lo que se pide no se puede hacer; el mensaje es para la persona."""
 
-
-# --- las operaciones de disco, de módulo para que un test las haga fallar ---
 
 def borrar(ruta: Path) -> None:
+    """Borra un fichero.
+
+    Es de módulo para que un test lo haga fallar.
+    """
     ruta.unlink()
 
 
 def apartar(nombre: str) -> Path | None:
+    """Aparta el baseline de esa pareja.
+
+    Es de módulo para que un test lo haga fallar.
+    """
     return bisync.shelve_baseline(nombre)
 
 
 def sincronizacion_en_curso() -> str | None:
-    """Quién está sincronizando ahora mismo, si alguien. None si nadie.
+    """Devuelve quién está sincronizando ahora mismo, o `None` si nadie.
 
     Se mira antes de borrar un bloqueo, que es lo único de aquí que podría
     hacer daño en caliente: quitarle el lock a una pasada viva deja que empiece
-    otra sobre los mismos ficheros.
-
-    Ante la duda se dice que sí lo hay. Un registro de OTRO equipo no se puede
-    comprobar —`pid_alive` solo sabe de los procesos de esta máquina—, y
-    equivocarse hacia «no se puede borrar» no rompe nada, mientras que
-    equivocarse hacia el otro lado sí."""
+    otra sobre los mismos ficheros. Ante la duda se dice que sí lo hay: un
+    registro de OTRO equipo no se puede comprobar (`pid_alive` solo sabe de los
+    procesos de esta máquina) y equivocarse hacia «no se puede borrar» no rompe
+    nada, mientras que equivocarse hacia el otro lado sí.
+    """
     info = store.read_json(model.daemon_lock())
     if not info:
         return None
@@ -74,18 +77,31 @@ class RepairPlan:
     """Lo que se va a hacer, antes de hacerlo.
 
     Mismo contrato que `pair_editor.EditPlan`: `consequences` y `warnings` se
-    enseñan en `tk_pairs.confirmar_plan()` y `execute()` solo se llama si el
-    usuario ha dicho que sí. Devuelve qué ha hecho, para poder contarlo."""
+    enseñan en `tk_pairs.confirmar_plan()` y `execute()` solo se llama si la
+    persona ha dicho que sí.
+
+    Args:
+        titulo: Cómo se llama la reparación.
+        consequences: Una línea por consecuencia.
+        warnings: Lo que conviene saber antes de confirmar.
+        _hacer: Lo que toca el disco; devuelve qué ha hecho.
+    """
     titulo: str
     consequences: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     _hacer: Callable[[], list[str]] | None = None
 
     def execute(self) -> list[str]:
+        """Hace la reparación y devuelve qué ha hecho, para poder contarlo."""
         return list(self._hacer()) if self._hacer is not None else []
 
 
 def _pareja(config: Config, nombre: str | None) -> Pair:
+    """Devuelve la pareja de ese nombre.
+
+    Raises:
+        ReparacionImposible: Si ya no está en la configuración.
+    """
     pair = next((p for p in config.pairs if p.name == nombre), None)
     if pair is None:
         raise ReparacionImposible(
@@ -94,18 +110,18 @@ def _pareja(config: Config, nombre: str | None) -> Pair:
     return pair
 
 
-# ---------------------------------------------------------------------------
-# Apartar un baseline que no es de esta pareja
-# ---------------------------------------------------------------------------
-
 def plan_apartar(config: Config, hallazgo: Hallazgo) -> RepairPlan:
-    """Aparta el baseline de una pareja para que se rehaga con un --resync.
+    """Devuelve el plan de apartar el baseline de una pareja.
 
-    Se APARTA, no se borra: el directorio se renombra a `state/<pareja>.old-…`
-    y queda inerte, por si hiciera falta volver a mirarlo. Y no se reaprovecha
-    bajo el nombre nuevo, que es la tentación: eso le diría a bisync que el
-    listado del destino viejo describe el nuevo, y todo lo que no estuviera en
-    el nuevo se leería como borrado."""
+    Es para rehacerlo con un `--resync`. Se APARTA, no se borra: el directorio
+    se renombra a `state/<pareja>.old-…` y queda inerte, por si hiciera falta
+    volver a mirarlo. Y no se reaprovecha bajo el nombre nuevo, que es la
+    tentación: eso le diría a bisync que el listado del destino viejo describe
+    el nuevo y todo lo que no estuviera en el nuevo se leería como borrado.
+
+    Raises:
+        ReparacionImposible: Si la pareja o su baseline ya no están.
+    """
     pair = _pareja(config, hallazgo.pareja)
     estado = bisync.pair_state(pair)
     if not estado.has_baseline:
@@ -114,6 +130,7 @@ def plan_apartar(config: Config, hallazgo: Hallazgo) -> RepairPlan:
             "pantalla para ver cómo está ahora.")
 
     def hacer() -> list[str]:
+        """Aparta el baseline y dice dónde ha quedado."""
         destino = apartar(pair.name)
         if destino is None:
             raise ReparacionImposible(
@@ -130,17 +147,18 @@ def plan_apartar(config: Config, hallazgo: Hallazgo) -> RepairPlan:
         hacer)
 
 
-# ---------------------------------------------------------------------------
-# Borrar bloqueos que han quedado sueltos
-# ---------------------------------------------------------------------------
-
 def plan_locks(config: Config, hallazgo: Hallazgo) -> RepairPlan:
-    """Borra los `.lck` que dejó una pasada cortada a medias.
+    """Devuelve el plan de borrar los `.lck` que dejó una pasada cortada a medias.
 
     Lo único que hace falta saber para que esto sea seguro es que no haya nada
     sincronizando, y eso el programa sí lo sabe: el servicio se apunta en
     `state/daemon.lock.json` y la ventana, mientras hay una pasada en curso,
-    apaga lo que toca el mismo estado."""
+    apaga lo que toca el mismo estado.
+
+    Raises:
+        ReparacionImposible: Si hay una sincronización en marcha o los bloqueos
+            ya no están.
+    """
     pair = _pareja(config, hallazgo.pareja)
     ocupado = sincronizacion_en_curso()
     if ocupado:
@@ -155,6 +173,7 @@ def plan_locks(config: Config, hallazgo: Hallazgo) -> RepairPlan:
             "soltado la pasada que los dejó.")
 
     def hacer() -> list[str]:
+        """Borra los bloqueos sueltos y dice cuáles."""
         hechos = []
         for ruta in sueltos:
             try:
@@ -177,10 +196,15 @@ def plan_locks(config: Config, hallazgo: Hallazgo) -> RepairPlan:
 
 
 PLANES = {"prefijo": plan_apartar, "lock": plan_locks}
+"""Qué plan resuelve cada clave de hallazgo."""
 
 
 def plan_para(config: Config, hallazgo: Hallazgo) -> RepairPlan:
-    """El plan de esa avería. `ReparacionImposible` si no tiene."""
+    """Devuelve el plan de esa avería.
+
+    Raises:
+        ReparacionImposible: Si no tiene.
+    """
     fabricar = PLANES.get(hallazgo.clave)
     if fabricar is None:
         raise ReparacionImposible("Esta avería no se arregla desde aquí.")
@@ -188,34 +212,37 @@ def plan_para(config: Config, hallazgo: Hallazgo) -> RepairPlan:
 
 
 def tiene_plan(hallazgo: Hallazgo) -> bool:
+    """Indica si esa avería tiene un plan de reparación."""
     return hallazgo.clave in PLANES
 
 
-# ---------------------------------------------------------------------------
-# Lo que no es un plan, sino una pasada de sync.py
-# ---------------------------------------------------------------------------
-
 def args_resync(hallazgo: Hallazgo) -> list[str]:
-    """Rehacer el baseline de esa pareja.
+    """Devuelve los argumentos de `sync.py` para rehacer el baseline de esa pareja.
 
-    Con `--yes` porque la pregunta ya se ha hecho: quien pulsa aquí acaba de
+    Lleva `--yes` porque la pregunta ya se ha hecho: quien pulsa aquí acaba de
     leer en su confirmación qué es un resync. Sin él, `sync.py` la haría por
-    stdin, que detrás de una ventana no existe, y la pareja se saltaría."""
+    stdin, que detrás de una ventana no existe, y la pareja se saltaría.
+    """
     return [str(hallazgo.pareja), "--resync", "--yes"]
 
 
 def args_simular(nombres: list[str]) -> list[str]:
-    """Una pasada de mentira de esas parejas.
+    """Devuelve los argumentos de `sync.py` para una pasada de mentira de esas parejas.
 
-    Sin `--yes`, a propósito y por lo mismo que en `pair_editor.simular_args()`:
-    una pareja sin baseline tiene que volver «Saltada: requiere --resync», que es
-    justo lo que interesa leer antes de aprobar nada."""
+    Sin `--yes`, a propósito y por lo mismo que en
+    `pair_editor.simular_args()`: una pareja sin baseline tiene que volver
+    «Saltada: requiere --resync», que es justo lo que interesa leer antes de
+    aprobar nada.
+    """
     return [*nombres, "--dry-run"]
 
 
 def aviso_resync(hallazgo: Hallazgo) -> RepairPlan:
-    """El resync no es un plan de disco —lo hace rclone—, pero se confirma igual:
-    es la operación que vuelve a comparar los dos lados enteros."""
+    """Devuelve el plan, sin disco, de confirmar un resync.
+
+    No es un plan de disco (lo hace rclone), pero se confirma igual: es la
+    operación que vuelve a comparar los dos lados enteros.
+    """
     return RepairPlan(
         f"Resincronizar «{hallazgo.pareja}»",
         ["Se rehace el baseline de la pareja: rclone compara los dos lados "
@@ -227,7 +254,9 @@ def aviso_resync(hallazgo: Hallazgo) -> RepairPlan:
 
 
 def hallazgos_reparables(hallazgos: list[Hallazgo]) -> list[Hallazgo]:
-    """Los que tienen algún botón: un plan, o una pasada que lanzar."""
-    return [h for h in hallazgos if tiene_plan(h) or h.clave in ("resync", "conflicto")]
+    """Devuelve los hallazgos que tienen algún botón.
 
+    Es un plan o una pasada que lanzar.
+    """
+    return [h for h in hallazgos if tiene_plan(h) or h.clave in ("resync", "conflicto")]
 

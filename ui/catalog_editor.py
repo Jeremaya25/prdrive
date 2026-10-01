@@ -1,26 +1,25 @@
 #!/usr/bin/env python3
-"""
-catalog_editor.py — Alta, edición y baja en el catálogo del remoto. Sin Tkinter.
+"""Alta, edición y baja en el catálogo del remoto, sin Tkinter.
 
-Simétrico a `pair_editor.py` y con el mismo guion —plan, consecuencias,
-confirmación, ejecución—, pero lo que hay al otro lado no es el disco de este
-dispositivo: es un fichero del remoto que gobierna a TODOS. Eso cambia dos cosas.
+Es simétrico a `pair_editor.py` y con el mismo guion (plan, consecuencias,
+confirmación, ejecución), pero lo que hay al otro lado no es el disco de este
+dispositivo: es un fichero del remoto que gobierna a TODOS. Eso cambia dos
+cosas.
 
 La primera es qué se puede romper. Aquí no hay baselines que apartar (este
 dispositivo no cambia por editar el catálogo), pero un error se propaga a todos
 los demás la próxima vez que alguien mire. Por eso `catalog.push()` verifica el
-TOML antes de subirlo, se niega si el remoto ha cambiado desde que se leyó y deja
-un `.bak`.
+TOML antes de subirlo, se niega si el remoto ha cambiado desde que se leyó y
+deja un `.bak`.
 
 La segunda es que **editar el catálogo no toca este dispositivo**. Dar de alta
-una pareja la deja disponible, no puesta; darla de baja la deja huérfana aquí, no
-quitada. Elegir qué usa este dispositivo es el otro módulo, y es a propósito: son
-dos decisiones distintas y mezclarlas es justo lo que se quería evitar.
+una pareja la deja disponible, no puesta; darla de baja la deja huérfana aquí,
+no quitada. Elegir qué usa este dispositivo es el otro módulo, y es a
+propósito: son dos decisiones distintas y mezclarlas es justo lo que se quería
+evitar.
 
-**Ya no hay ninguna pareja intocable.** Cuando el código del dispositivo bajaba
-del remoto, la pareja que describía ese espejo era imprescindible para instalar y
-el editor se negaba a borrarla. Ahora el instalador lleva el código dentro, así
-que el catálogo son parejas de datos y todas valen lo mismo.
+Ninguna pareja es intocable: el instalador lleva el código dentro, así que el
+catálogo son parejas de datos y todas valen lo mismo.
 """
 
 from __future__ import annotations
@@ -35,16 +34,32 @@ from common.model import ConfigError
 from . import pair_editor
 
 ALCANCE = "Afecta a TODOS los dispositivos, no solo a este."
+"""Lo que se dice siempre al cambiar el catálogo."""
 NO_APLICA_AQUI = ("Los dispositivos que ya usan esta pareja no cambian solos: "
                   "cada uno tiene que volver al catálogo cuando quiera el cambio.")
+"""Lo que se dice al cambiar una pareja o los `[defaults]`.
+
+Los demás dispositivos no se enteran solos.
+"""
 PIERDE_COMENTARIOS = ("El fichero se reescribe entero: se conserva la cabecera y se "
                       "pierden los comentarios intercalados. Antes se guarda una "
                       "copia en pairs.toml.bak.")
+"""Lo que se dice siempre antes de reescribir el fichero del catálogo."""
 
 
 @dataclass
 class CatalogPlan:
-    """Un cambio pensado sobre el catálogo, todavía sin subir."""
+    """Un cambio pensado sobre el catálogo, todavía sin subir.
+
+    Args:
+        new_raw: El catálogo resultante, en bruto.
+        base_text: El texto del remoto sobre el que se piensa; `push()` se
+            niega si ha cambiado.
+        consequences: Una línea por consecuencia.
+        warnings: Lo que conviene saber antes de confirmar.
+        raw_local: El `sync_config.toml` de este dispositivo, si hay que
+            tenerlo en cuenta.
+    """
     new_raw: dict
     base_text: str
     consequences: list[str] = field(default_factory=list)
@@ -52,10 +67,16 @@ class CatalogPlan:
     raw_local: dict | None = None
 
     def execute(self) -> list[str]:
+        """Sube el cambio al remoto y devuelve qué ha hecho."""
         return catalog.push(self.new_raw, self.base_text, self.raw_local)
 
 
 def _editable(cat: catalog.Catalog | None) -> catalog.Catalog:
+    """Devuelve el catálogo si se puede editar.
+
+    Raises:
+        ConfigError: Si no hay catálogo o es la copia local.
+    """
     if cat is None:
         raise ConfigError("No hay catálogo: sin él no se pueden dar de alta ni de "
                           "baja parejas.")
@@ -69,6 +90,7 @@ def _editable(cat: catalog.Catalog | None) -> catalog.Catalog:
 
 def _plan(cat: catalog.Catalog, nuevo_raw: dict,
           raw_local: Mapping[str, Any] | None) -> CatalogPlan:
+    """Devuelve un plan vacío sobre ese catálogo, con el alcance ya dicho."""
     plan = CatalogPlan(new_raw=nuevo_raw, base_text=cat.text,
                        raw_local=dict(raw_local) if raw_local is not None else None)
     plan.consequences.append(ALCANCE)
@@ -78,7 +100,14 @@ def _plan(cat: catalog.Catalog, nuevo_raw: dict,
 def plan_catalog_save(cat: catalog.Catalog | None, edited: Mapping[str, Any],
                       original_name: str | None = None,
                       raw_local: Mapping[str, Any] | None = None) -> CatalogPlan:
-    """Dar de alta (original_name=None) o modificar una pareja del catálogo."""
+    """Devuelve el plan de dar de alta o modificar una pareja.
+
+    Con `original_name=None` es un alta.
+
+    Raises:
+        ConfigError: Si el formulario no vale, no cambia nada o el catálogo no
+            se puede editar.
+    """
     cat = _editable(cat)
     problemas = pair_editor.validate(cat.raw, edited, original_name)
     if problemas:
@@ -98,9 +127,9 @@ def plan_catalog_save(cat: catalog.Catalog | None, edited: Mapping[str, Any],
     else:
         i = pair_editor.pair_index(nuevo_raw, original_name)
         anterior = dict(nuevo_raw["pair"][i])
-        # La misma regla que en el editor local, y por eso la función es la misma:
-        # se parte de lo anterior para no perder lo que el formulario no edita, y
-        # lo que se haya vaciado a mano sí desaparece.
+        # La misma regla que en el editor local, y por eso la función es la
+        # misma: se parte de lo anterior para no perder lo que el formulario no
+        # edita, y lo que se haya vaciado a mano sí desaparece.
         resultante = pair_editor.merge_form(anterior, campos)
         nuevo_raw["pair"][i] = resultante
 
@@ -123,7 +152,10 @@ def plan_catalog_save(cat: catalog.Catalog | None, edited: Mapping[str, Any],
 
 def plan_catalog_remove(cat: catalog.Catalog | None, name: str,
                         raw_local: Mapping[str, Any] | None = None) -> CatalogPlan:
-    """Borrar una pareja del catálogo. No toca ningún dispositivo."""
+    """Devuelve el plan de borrar una pareja del catálogo.
+
+    No toca ningún dispositivo.
+    """
     cat = _editable(cat)
     i = pair_editor.pair_index(cat.raw, name)
     nuevo_raw = copy.deepcopy(dict(cat.raw))
@@ -145,7 +177,7 @@ def plan_catalog_remove(cat: catalog.Catalog | None, name: str,
 
 def plan_catalog_defaults(cat: catalog.Catalog | None, edited: Mapping[str, Any],
                           raw_local: Mapping[str, Any] | None = None) -> CatalogPlan:
-    """Cambiar los [defaults] del catálogo."""
+    """Devuelve el plan de cambiar los `[defaults]` del catálogo."""
     cat = _editable(cat)
     nuevo_raw = copy.deepcopy(dict(cat.raw))
     nuevo_raw["defaults"] = copy.deepcopy(dict(edited))

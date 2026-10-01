@@ -1,29 +1,28 @@
 #!/usr/bin/env python3
-"""
-pair_editor.py — Lo que este dispositivo hace con las parejas. Sin Tkinter.
+"""Lo que este dispositivo hace con las parejas, sin Tkinter.
 
 Aquí no se dibuja nada: la pantalla (`ui/tk_pairs.py`) pide un plan, enseña sus
-consecuencias y, si el usuario confirma, lo ejecuta. Esa separación existe porque
-lo delicado no es el formulario, es lo que pasa en disco.
+consecuencias y, si la persona confirma, lo ejecuta. Esa separación existe
+porque lo delicado no es el formulario sino lo que pasa en disco.
 
-El alta y la baja de una pareja NO viven aquí: pasan primero por el catálogo del
-remoto (`ui/catalog_editor.py`), porque una pareja es la misma para todos los
-dispositivos. Lo que decide este módulo es de este dispositivo: cuáles de las del
-catálogo se usan aquí (`plan_enable` / `plan_remove`), si alguna se modifica solo
-aquí (`plan_override`) y cómo se vuelve a lo que dice el catálogo
+El alta y la baja de una pareja NO viven aquí: pasan primero por el catálogo
+del remoto (`ui/catalog_editor.py`), porque una pareja es la misma para todos
+los dispositivos. Lo que decide este módulo es de este dispositivo: cuáles de
+las del catálogo se usan aquí (`plan_enable` / `plan_remove`), si alguna se
+modifica solo aquí (`plan_override`) y cómo se vuelve a lo que dice el catálogo
 (`plan_revert`).
 
-Lo delicado, en una frase: **cambiar un extremo de una pareja bisync sin apartar
-su baseline puede provocar borrados masivos.** El nombre de los listados sale de
-los extremos (`bisync.expected_prefix`), y un baseline que se reaprovechara con
-el nombre nuevo le estaría diciendo a bisync que el listado del destino ANTERIOR
-describe el NUEVO: todo lo que no estuviera en el nuevo se leería como borrado y
-se propagaría, con `--max-delete 25` de único freno. Por eso el plan aparta el
-baseline él mismo.
+Lo delicado, en una frase: **cambiar un extremo de una pareja bisync sin
+apartar su baseline puede provocar borrados masivos.** El nombre de los
+listados sale de los extremos (`bisync.expected_prefix`) y un baseline que se
+reaprovechara con el nombre nuevo le estaría diciendo a bisync que el listado
+del destino ANTERIOR describe el NUEVO: todo lo que no estuviera en el nuevo se
+leería como borrado y se propagaría, con `--max-delete 25` de único freno. Por
+eso el plan aparta el baseline él mismo.
 
-Y por eso la decisión de apartarlo no se toma mirando qué claves ha tocado el
-usuario, sino comparando el `expected_prefix` de antes con el de después
-(`_prefixes`). Es lo único que importa de verdad, y así no se escapa nada: un
+Y por eso la decisión de apartarlo no se toma mirando qué claves ha tocado la
+persona sino comparando el `expected_prefix` de antes con el de después
+(`_prefixes`). Es lo único que importa de verdad y así no se escapa nada: un
 cambio en `[defaults]` (`remote`, `device_remote`) mueve el prefijo de VARIAS
 parejas a la vez sin que ninguna de ellas se haya tocado.
 """
@@ -40,23 +39,35 @@ from common.model import Config, ConfigError
 
 from . import flags_editor
 
-# Los campos de los que depende el nombre de los listados de bisync. Ya no
-# deciden nada (eso lo hace `_prefixes`), pero son lo que se le enseña al
-# usuario: "cambia local, mode" se entiende y "cambia el prefijo" no.
 ENDPOINT_KEYS = ("local", "remote", "remote_path", "mode")
+"""Campos de los que depende el nombre de los listados de bisync.
 
-# Lo que edita el formulario. Lo que no aparece aquí (use_filters_file...) se
-# conserva tal cual: la UI no lo toca.
+Ya no deciden nada (eso lo hace `_prefixes`), pero son lo que se le enseña a la
+persona: «cambia local, mode» se entiende y «cambia el prefijo» no.
+"""
+
 FORM_KEYS = ("name", "local", "remote_path", "remote", "mode", "include", "exclude",
              "flags", "extra_flags", "versions")
+"""Lo que edita el formulario.
 
-# Claves opcionales: si el formulario las devuelve vacías, desaparecen de la
-# pareja en vez de quedarse a medias. Es lo que hace que vaciar el cuadro de
-# flags devuelva la pareja a lo que digan [defaults] y el modo.
+Lo que no aparece aquí (`use_filters_file`…) se conserva tal cual: la UI no lo
+toca.
+"""
+
 OPTIONAL_KEYS = ("include", "exclude", "flags", "extra_flags", "versions")
+"""Claves opcionales: si el formulario las devuelve vacías, desaparecen de la pareja.
+
+Es lo que hace que vaciar el cuadro de flags devuelva la pareja a lo que digan
+`[defaults]` y el modo, en vez de quedarse a medias.
+"""
 
 MIRROR_MODES = ("up-mirror", "down-mirror")
+"""Los modos que BORRAN en el destino lo que no está en el origen."""
 NOMBRE_PROHIBIDO = set('/\\:*?"<>|')
+"""Caracteres que no puede llevar el nombre de una pareja.
+
+Es también el de una carpeta de `state/`.
+"""
 
 # De dónde sale cada fila de la lista, comparando con el catálogo.
 ORIGEN_CATALOGO = "catálogo"
@@ -67,20 +78,31 @@ ORIGEN_DESCONOCIDO = "—"          # no hay catálogo con el que comparar
 
 
 class PairRow(NamedTuple):
-    """Una línea de la lista de parejas."""
+    """Una línea de la lista de parejas.
+
+    Args:
+        name: La pareja.
+        mode: Su modo.
+        local: El extremo local.
+        remote: El extremo remoto.
+        estado: El estado del baseline.
+        aviso: Lo que hay que mirar dos veces, si hay algo.
+    """
     name: str
     mode: str
     local: str
     remote: str
     estado: str
-    aviso: str | None      # lo que hay que mirar dos veces
+    aviso: str | None
 
 
 def _mode_of(pair: Mapping[str, Any]) -> str:
+    """Devuelve el modo de una pareja en bruto, o el de fábrica."""
     return pair.get("mode", model.DEFAULT_MODE)
 
 
 def mirror_warning(mode: str) -> str | None:
+    """Devuelve el aviso de un modo espejo, o `None` si el modo no lo es."""
     if mode not in MIRROR_MODES:
         return None
     destino = "el remoto" if model.MODES[mode].dest == "remote" else "el dispositivo"
@@ -89,7 +111,7 @@ def mirror_warning(mode: str) -> str | None:
 
 
 def rows(config: Config) -> list[PairRow]:
-    """Lo que se pinta en la lista, con el estado ya resuelto."""
+    """Devuelve lo que se pinta en la lista, con el estado ya resuelto."""
     salida = []
     for pair in config.pairs:
         estado = "—"
@@ -107,13 +129,9 @@ def rows(config: Config) -> list[PairRow]:
     return salida
 
 
-# ---------------------------------------------------------------------------
-# Validación
-# ---------------------------------------------------------------------------
-
 def validate(raw: Mapping[str, Any], edited: Mapping[str, Any],
              original_name: str | None) -> list[str]:
-    """Problemas que impiden guardar. Lista vacía = adelante."""
+    """Devuelve los problemas que impiden guardar; vacía es «adelante»."""
     problemas = []
     name = str(edited.get("name") or "").strip()
 
@@ -136,11 +154,13 @@ def validate(raw: Mapping[str, Any], edited: Mapping[str, Any],
     return problemas
 
 
-# ---------------------------------------------------------------------------
-# Planes: primero qué va a pasar, y solo después hacerlo
-# ---------------------------------------------------------------------------
-
 class Move(NamedTuple):
+    """Una carpeta movida, para poder deshacerlo.
+
+    Args:
+        origen: Donde estaba.
+        destino: Donde está ahora.
+    """
     origen: Path
     destino: Path
 
@@ -149,27 +169,37 @@ class Move(NamedTuple):
 class EditPlan:
     """El resultado de pensar un cambio, antes de ejecutarlo.
 
-    `consequences` se le enseña al usuario ANTES de confirmar; `execute()` solo se
-    llama si dice que sí."""
+    `consequences` se le enseña a la persona ANTES de confirmar; `execute()`
+    solo se llama si dice que sí.
+
+    Args:
+        raw: El config resultante, en bruto.
+        consequences: Una línea por consecuencia.
+        warnings: Lo que conviene saber antes de confirmar.
+        shelve: Las parejas cuyo baseline apartar.
+        rename: `(nombre viejo, nombre nuevo)` si se renombra una pareja.
+        borrar_filtros: Los ficheros de filtros que sobran.
+    """
     raw: dict
     consequences: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
-    shelve: list[str] = field(default_factory=list)  # parejas cuyo baseline apartar
-    rename: tuple[str, str] | None = None            # (nombre viejo, nombre nuevo)
+    shelve: list[str] = field(default_factory=list)
+    rename: tuple[str, str] | None = None
     borrar_filtros: list[Path] = field(default_factory=list)
 
     def execute(self) -> list[str]:
-        """Primero el disco, luego el config. Devuelve qué se ha hecho.
+        """Hace el cambio, primero el disco y luego el config, y devuelve qué ha hecho.
 
-        El orden no es casual. La combinación peligrosa es "config nuevo con
-        baseline viejo": escribiendo el config primero, un fallo al mover el
+        El orden no es casual. La combinación peligrosa es «config nuevo con
+        baseline viejo»: escribiendo el config primero, un fallo al mover el
         estado dejaría exactamente eso. Al revés, el peor caso es un baseline
-        apartado de más, que se arregla con un --resync.
+        apartado de más, que se arregla con un `--resync`.
 
         Dentro del disco, el renombrado va ANTES de apartar: así, cuando un
         cambio toca el nombre y un extremo a la vez, el estado y los filtros
         viajan juntos al nombre nuevo y es ese el que se aparta. Al revés
-        quedarían `filters/<nombre viejo>.txt` huérfanos que nadie recoge."""
+        quedarían `filters/<nombre viejo>.txt` huérfanos que nadie recoge.
+        """
         movimientos: list[Move] = []
         hechos: list[str] = []
         try:
@@ -207,6 +237,11 @@ class EditPlan:
 
 
 def pair_index(raw: Mapping[str, Any], name: str) -> int:
+    """Devuelve la posición de la pareja con ese nombre.
+
+    Raises:
+        ConfigError: Si no hay ninguna.
+    """
     for i, pair in enumerate(raw.get("pair", [])):
         if pair.get("name") == name:
             return i
@@ -214,12 +249,13 @@ def pair_index(raw: Mapping[str, Any], name: str) -> int:
 
 
 def _prefixes(raw: Mapping[str, Any]) -> dict[str, str]:
-    """El nombre que bisync le pondría a los listados de cada pareja, hoy.
+    """Devuelve el nombre que bisync le pondría a los listados de cada pareja, hoy.
 
     Solo las bisync: son las únicas con baseline que se pueda invalidar. Un
-    config que no parsea devuelve {}, y entonces nadie aparta nada; da igual,
+    config que no parsea devuelve `{}` y entonces nadie aparta nada; da igual,
     porque `plan_*` acaba llamando a `model.parse_config` y no llegaría a
-    ejecutarse."""
+    ejecutarse.
+    """
     try:
         config = model.parse_config(raw)
     except ConfigError:
@@ -229,13 +265,14 @@ def _prefixes(raw: Mapping[str, Any]) -> dict[str, str]:
 
 def _analizar_prefijo(plan: EditPlan, antes_raw: Mapping[str, Any],
                       nombres: Mapping[str, str]) -> list[str]:
-    """Apunta en el plan qué baselines dejan de valer. Devuelve sus nombres.
+    """Apunta en el plan qué baselines dejan de valer y devuelve sus nombres.
 
     `nombres` mapea el nombre que tenía cada pareja ANTES al que tiene DESPUÉS
     (iguales salvo en un renombrado). Se aparta cuando el prefijo cambia y
-    también cuando desaparece —pasar de bisync a otro modo—: dejar ahí un
-    baseline que ya no se comprueba es sembrar el caso peligroso para el día que
-    se vuelva a bisync con otro destino."""
+    también cuando desaparece (pasar de bisync a otro modo): dejar ahí un
+    baseline que ya no se comprueba es sembrar el caso peligroso para el día
+    que se vuelva a bisync con otro destino.
+    """
     antes = _prefixes(antes_raw)
     despues = _prefixes(plan.raw)
     afectadas = [nuevo for viejo, nuevo in nombres.items()
@@ -246,16 +283,16 @@ def _analizar_prefijo(plan: EditPlan, antes_raw: Mapping[str, Any],
 
 
 def clean_form(edited: Mapping[str, Any]) -> dict:
-    """Los campos del formulario, sin los que se han dejado vacíos."""
+    """Devuelve los campos del formulario, sin los que se han dejado vacíos."""
     salida: dict[str, Any] = {}
     for key in FORM_KEYS:
         if key not in edited:
             continue
         value = edited[key]
         if isinstance(value, bool):
-            # Antes de la rama de bool: str(False) es "False", una cadena no
-            # vacía, así que una casilla apagada se guardaba en el TOML como
-            # texto. Apagada la clave desaparece, como el resto de opcionales.
+            # Antes de la rama de bool: `str(False)` es «False», una cadena no
+            # vacía, y una casilla apagada se guardaba en el TOML como texto.
+            # Apagada, la clave desaparece como el resto de opcionales.
             if value:
                 salida[key] = True
         elif isinstance(value, dict):      # flags: los valores van con su tipo
@@ -271,12 +308,14 @@ def clean_form(edited: Mapping[str, Any]) -> dict:
 
 
 def merge_form(anterior: Mapping[str, Any], campos: Mapping[str, Any]) -> dict:
-    """La pareja de antes con lo que trae el formulario encima.
+    """Devuelve la pareja de antes con lo que trae el formulario encima.
 
     Se parte de la anterior para no perder lo que el formulario no edita, pero
     las claves opcionales que se hayan vaciado a mano sí desaparecen: si no,
-    borrar un flag del cuadro no lo borraría del TOML. Lo usan los dos editores,
-    el de este dispositivo y el del catálogo, porque la regla tiene que ser la misma."""
+    borrar un flag del cuadro no lo borraría del TOML. Lo usan los dos
+    editores, el de este dispositivo y el del catálogo, porque la regla tiene
+    que ser la misma.
+    """
     resultante = {**dict(anterior), **dict(campos)}
     for key in OPTIONAL_KEYS:
         if key in anterior and key not in campos:
@@ -286,7 +325,13 @@ def merge_form(anterior: Mapping[str, Any], campos: Mapping[str, Any]) -> dict:
 
 def plan_save(raw: Mapping[str, Any], edited: Mapping[str, Any],
               original_name: str | None = None) -> EditPlan:
-    """El plan de dar de alta (original_name=None) o de modificar una pareja."""
+    """Devuelve el plan de dar de alta o modificar una pareja.
+
+    Con `original_name=None` es un alta.
+
+    Raises:
+        ConfigError: Si el formulario no vale o el config resultante no parsea.
+    """
     problemas = validate(raw, edited, original_name)
     if problemas:
         raise ConfigError("\n".join(problemas))
@@ -324,7 +369,7 @@ def plan_save(raw: Mapping[str, Any], edited: Mapping[str, Any],
 
 def _analizar_pareja(plan: EditPlan, antes_raw: Mapping[str, Any], original_name: str,
                      anterior: Mapping[str, Any], resultante: Mapping[str, Any]) -> None:
-    """Las consecuencias de cambiar una pareja que este dispositivo ya tenía."""
+    """Apunta las consecuencias de cambiar una pareja que este dispositivo ya tenía."""
     nuevo_nombre = resultante["name"]
     if nuevo_nombre != original_name:
         plan.rename = (original_name, nuevo_nombre)
@@ -366,14 +411,15 @@ def _analizar_pareja(plan: EditPlan, antes_raw: Mapping[str, Any], original_name
 
 def _analizar_versiones(plan: EditPlan, anterior: Mapping[str, Any],
                         resultante: Mapping[str, Any]) -> None:
-    """Encender o apagar el versionado de una pareja.
+    """Apunta las consecuencias de encender o apagar el versionado de una pareja.
 
-    No toca el baseline —el nombre de los listados no depende de `versions`—,
-    pero sí el fichero de filtros, porque la regla que excluye
-    `.prversions/` entra y sale con la clave. Y apagarlo tiene una consecuencia
-    que no se ve venir: esa carpeta deja de estar excluida, así que lo que ya
-    hubiera guardado pasa a ser contenido normal de la pareja y se sincroniza al
-    otro lado en la siguiente pasada."""
+    No toca el baseline (el nombre de los listados no depende de `versions`)
+    pero sí el fichero de filtros, porque la regla que excluye `.prversions/`
+    entra y sale con la clave. Y apagarlo tiene una consecuencia que no se ve
+    venir: esa carpeta deja de estar excluida, así que lo que ya hubiera
+    guardado pasa a ser contenido normal de la pareja y se sincroniza al otro
+    lado en la siguiente pasada.
+    """
     antes = bool(anterior.get("versions"))
     ahora = bool(resultante.get("versions"))
     if antes == ahora:
@@ -398,12 +444,13 @@ def _analizar_versiones(plan: EditPlan, anterior: Mapping[str, Any],
 
 def _analizar_flags(plan: EditPlan, defaults: Mapping[str, Any],
                     anterior: Mapping[str, Any], resultante: Mapping[str, Any]) -> None:
-    """Lo que cambia en los flags de rclone de una pareja.
+    """Apunta lo que cambia en los flags de rclone de una pareja.
 
-    Los flags no tocan el baseline —el nombre de los listados no depende de
-    ellos—, así que aquí no se aparta nada. Lo que sí se hace es enseñarlos: son
-    lo que acaba en la línea de comandos, y el freno de los borrados es uno de
-    ellos."""
+    Los flags no tocan el baseline (el nombre de los listados no depende de
+    ellos), así que aquí no se aparta nada. Lo que sí se hace es enseñarlos:
+    son lo que acaba en la línea de comandos, y el freno de los borrados es uno
+    de ellos.
+    """
     cambios = flags_editor.changes(anterior.get("flags"), resultante.get("flags"))
     if cambios:
         plan.consequences.append("Flags de la pareja: " + "; ".join(cambios) + ".")
@@ -421,13 +468,18 @@ def _analizar_flags(plan: EditPlan, defaults: Mapping[str, Any],
 
 
 def ruta_local_relativa(elegida: Path | str) -> str:
-    """La ruta `local` de una pareja a partir de una carpeta elegida del disco.
+    """Devuelve la ruta `local` de una pareja a partir de una carpeta elegida del disco.
 
-    `local` es SIEMPRE relativa a la raíz del dispositivo, y eso no es un detalle
-    de formato: es lo que hace que la misma pareja valga con cualquier letra de
-    unidad y en cualquier equipo. Una carpeta de fuera del dispositivo no cabe
-    ahí, y escribirla como '../../otra/cosa' sería una pareja que sincroniza algo
-    del ordenador de turno, así que se rechaza."""
+    `local` es SIEMPRE relativa a la raíz del dispositivo, y eso no es un
+    detalle de formato: es lo que hace que la misma pareja valga con cualquier
+    letra de unidad y en cualquier equipo. Una carpeta de fuera del dispositivo
+    no cabe ahí, y escribirla como `../../otra/cosa` sería una pareja que
+    sincroniza algo del ordenador de turno, así que se rechaza.
+
+    Raises:
+        ConfigError: Si la carpeta está fuera del dispositivo, o es la raíz
+            entera en un equipo.
+    """
     destino = Path(elegida).resolve()
     raiz = model.DEVICE_ROOT.resolve()
     try:
@@ -449,16 +501,16 @@ def ruta_local_relativa(elegida: Path | str) -> str:
 
 
 def simular_args(raw: Mapping[str, Any], name: str) -> list[str]:
-    """Los argumentos de `sync.py` para ver qué haría una pareja sin hacerlo.
+    """Devuelve los argumentos de `sync.py` para ver qué haría una pareja sin hacerlo.
 
-    Es la otra mitad de la ceremonia que gobierna los borrados. `confirmar_plan`
-    enseña lo que va a pasar con la CONFIGURACIÓN; esto enseña lo que va a pasar
-    con los FICHEROS, que es lo que de verdad preocupa de un espejo o de una
-    pareja que lleva tiempo sin sincronizar: un `--dry-run` de rclone enumera
-    cada copia y cada borrado y no toca nada.
-
-    No lleva `--yes`: una pareja sin baseline se salta, y ese «requiere --resync»
-    es exactamente lo que hay que leer antes de aprobar nada."""
+    Es la otra mitad de la ceremonia que gobierna los borrados:
+    `confirmar_plan` enseña lo que va a pasar con la CONFIGURACIÓN y esto lo
+    que va a pasar con los FICHEROS, que es lo que de verdad preocupa de un
+    espejo o de una pareja que lleva tiempo sin sincronizar (un `--dry-run` de
+    rclone enumera cada copia y cada borrado y no toca nada). No lleva `--yes`:
+    una pareja sin baseline se salta, y ese «requiere --resync» es exactamente
+    lo que hay que leer antes de aprobar nada.
+    """
     if not any(p.get("name") == name for p in raw.get("pair") or []):
         raise ConfigError(f"'{name}' no se usa en este dispositivo, así que aquí no "
                           f"hay nada que simular. Úsala primero.")
@@ -466,7 +518,7 @@ def simular_args(raw: Mapping[str, Any], name: str) -> list[str]:
 
 
 def plan_remove(raw: Mapping[str, Any], name: str, clean_state: bool = False) -> EditPlan:
-    """El plan de quitar una pareja. No toca nada."""
+    """Devuelve el plan de quitar una pareja; no toca nada."""
     i = pair_index(raw, name)
     nuevo_raw = copy.deepcopy(dict(raw))
     del nuevo_raw["pair"][i]
@@ -503,12 +555,8 @@ def plan_remove(raw: Mapping[str, Any], name: str, clean_state: bool = False) ->
     return plan
 
 
-# ---------------------------------------------------------------------------
-# Este dispositivo frente al catálogo
-# ---------------------------------------------------------------------------
-
 def plan_enable(raw: Mapping[str, Any], cat: catalog.Catalog | None, name: str) -> EditPlan:
-    """Empezar a usar aquí una pareja que ya existe en el catálogo."""
+    """Devuelve el plan de empezar a usar aquí una pareja del catálogo."""
     entrada = catalog.find_pair(cat, name)
     if entrada is None:
         raise ConfigError(f"El catálogo no tiene ninguna pareja llamada '{name}'. "
@@ -539,7 +587,10 @@ def plan_enable(raw: Mapping[str, Any], cat: catalog.Catalog | None, name: str) 
 
 def plan_override(raw: Mapping[str, Any], cat: catalog.Catalog | None,
                   name: str, edited: Mapping[str, Any]) -> EditPlan:
-    """Modificar una pareja SOLO en este dispositivo. El catálogo no se entera."""
+    """Devuelve el plan de modificar una pareja SOLO en este dispositivo.
+
+    El catálogo no se entera.
+    """
     plan = plan_save(raw, edited, name)
     entrada = catalog.find_pair(cat, name)
     resultante = plan.raw["pair"][pair_index(plan.raw, clean_form(edited).get("name", name))]
@@ -558,7 +609,10 @@ def plan_override(raw: Mapping[str, Any], cat: catalog.Catalog | None,
 
 
 def plan_revert(raw: Mapping[str, Any], cat: catalog.Catalog | None, name: str) -> EditPlan:
-    """Deshacer la modificación local: volver a lo que dice el catálogo."""
+    """Devuelve el plan de deshacer la modificación local.
+
+    Es volver a lo que dice el catálogo.
+    """
     entrada = catalog.find_pair(cat, name)
     if entrada is None:
         raise ConfigError(f"El catálogo no tiene '{name}', así que no hay a qué "
@@ -586,12 +640,13 @@ def plan_revert(raw: Mapping[str, Any], cat: catalog.Catalog | None, name: str) 
 
 
 def plan_defaults(raw: Mapping[str, Any], edited: Mapping[str, Any]) -> EditPlan:
-    """Cambiar los [defaults] de este dispositivo.
+    """Devuelve el plan de cambiar los `[defaults]` de este dispositivo.
 
     Es el plan con más alcance de todos: `[defaults]` aporta el `remote` y el
-    `device_remote` a TODAS las parejas, así que un solo cambio aquí puede invalidar
-    varios baselines de golpe sin que ninguna pareja se haya tocado. Por eso
-    `EditPlan.shelve` es una lista."""
+    `device_remote` a TODAS las parejas, así que un solo cambio aquí puede
+    invalidar varios baselines de golpe sin que ninguna pareja se haya tocado.
+    Por eso `EditPlan.shelve` es una lista.
+    """
     nuevo_raw = copy.deepcopy(dict(raw))
     nuevo_raw["defaults"] = copy.deepcopy(dict(edited))
     catalog.validar_ruta_editada(raw.get("defaults"), nuevo_raw["defaults"])
@@ -629,11 +684,12 @@ def plan_defaults(raw: Mapping[str, Any], edited: Mapping[str, Any]) -> EditPlan
 
 def _avisos_de_flags(antes_raw: Mapping[str, Any],
                      despues_raw: Mapping[str, Any]) -> list[str]:
-    """Los avisos de un cambio en [defaults.flags], pareja a pareja.
+    """Devuelve los avisos de un cambio en `[defaults.flags]`, pareja a pareja.
 
     Se mira pareja por pareja porque el aviso depende del valor efectivo, y ese
-    sale de fundir modo, [defaults] y los flags propios: la misma línea en
-    [defaults] puede ser inocua en una pareja y quitarle el freno a otra."""
+    sale de fundir modo, `[defaults]` y los flags propios: la misma línea en
+    `[defaults]` puede ser inocua en una pareja y quitarle el freno a otra.
+    """
     comunes_antes = (antes_raw.get("defaults") or {}).get("flags") or {}
     comunes = (despues_raw.get("defaults") or {}).get("flags") or {}
     avisos: list[str] = []
@@ -650,7 +706,7 @@ def _avisos_de_flags(antes_raw: Mapping[str, Any],
 
 
 def plan_revert_defaults(raw: Mapping[str, Any], cat: catalog.Catalog | None) -> EditPlan:
-    """Volver a los [defaults] del catálogo."""
+    """Devuelve el plan de volver a los `[defaults]` del catálogo."""
     if cat is None:
         raise ConfigError("No hay catálogo con el que comparar.")
     if not catalog.diff_keys(raw.get("defaults"), cat.defaults):
@@ -660,12 +716,20 @@ def plan_revert_defaults(raw: Mapping[str, Any], cat: catalog.Catalog | None) ->
     return plan
 
 
-# ---------------------------------------------------------------------------
-# La lista que se pinta: parejas del catálogo + las que solo tiene este dispositivo
-# ---------------------------------------------------------------------------
-
 class CatalogRow(NamedTuple):
-    """Una línea de la lista, ya resuelta contra el catálogo."""
+    """Una línea de la lista, ya resuelta contra el catálogo.
+
+    Args:
+        name: La pareja.
+        mode: Su modo.
+        local: El extremo local.
+        remote: El extremo remoto.
+        estado: El estado del baseline.
+        aviso: Lo que hay que mirar dos veces, si hay algo.
+        en_pen: Si este dispositivo la usa.
+        origen: De dónde sale: una de las `ORIGEN_*`.
+        difiere: En qué claves difiere del catálogo.
+    """
     name: str
     mode: str
     local: str
@@ -678,10 +742,12 @@ class CatalogRow(NamedTuple):
 
 
 def _display(entrada: Mapping[str, Any], defaults: Mapping[str, Any]) -> tuple[str, str, str]:
-    """Modo y extremos de una pareja que este dispositivo NO tiene.
+    """Devuelve el modo y los extremos de una pareja que este dispositivo NO tiene.
 
-    No pasa por `model.Pair` a propósito: sus rutas se resuelven contra el dispositivo y
-    aquí lo que se enseña es lo que dice el catálogo, no dónde caería."""
+    No pasa por `model.Pair` a propósito: sus rutas se resuelven contra el
+    dispositivo y aquí lo que se enseña es lo que dice el catálogo, no dónde
+    caería.
+    """
     mode = entrada.get("mode", model.DEFAULT_MODE)
     local = str(entrada.get("local", "?")).replace("\\", "/").strip("/") or "."
     remote = entrada.get("remote") or defaults.get("remote") or model.DEFAULT_REMOTE
@@ -690,7 +756,10 @@ def _display(entrada: Mapping[str, Any], defaults: Mapping[str, Any]) -> tuple[s
 
 def catalog_rows(config: Config, raw: Mapping[str, Any],
                  cat: catalog.Catalog | None) -> list[CatalogRow]:
-    """Las del catálogo primero y en su orden, y detrás las que solo hay aquí."""
+    """Devuelve las filas de la lista: primero el catálogo y luego lo local.
+
+    Las del catálogo van en su orden y, detrás, las que solo hay aquí.
+    """
     locales = {p["name"]: dict(p) for p in raw.get("pair") or [] if p.get("name")}
     del_cat = catalog.pairs_by_name(cat)
     filas = {f.name: f for f in rows(config)}
@@ -717,7 +786,7 @@ def catalog_rows(config: Config, raw: Mapping[str, Any],
 
 def defaults_origin(raw: Mapping[str, Any],
                     cat: catalog.Catalog | None) -> tuple[str, tuple[str, ...]]:
-    """Si los [defaults] de este dispositivo son los del catálogo, y en qué difieren."""
+    """Devuelve si los `[defaults]` son los del catálogo y en qué difieren."""
     if cat is None:
         return ORIGEN_DESCONOCIDO, ()
     difiere = catalog.diff_keys(raw.get("defaults"), cat.defaults)

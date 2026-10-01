@@ -1,28 +1,26 @@
 #!/usr/bin/env python3
-"""
-flags_editor.py — Los flags de rclone de una pareja (o de [defaults]). Sin Tkinter.
+"""Los flags de rclone de una pareja (o de `[defaults]`), sin Tkinter.
 
-Aquí se traduce entre lo que el usuario escribe en un cuadro de texto y lo que
+Aquí se traduce entre lo que la persona escribe en un cuadro de texto y lo que
 acaba en el TOML, en los dos sentidos, y se comprueba que lo escrito se puede
 escribir de verdad. Dibujar es cosa de `ui/tk_pairs.py`.
 
-Dos decisiones que conviene no deshacer:
+Hay dos decisiones que conviene no deshacer:
+- **El texto se parsea con `tomllib`, no a mano.** El destino de estas líneas
+  es una tabla `[pair.flags]` del TOML, así que la única forma de que el
+  formulario y el fichero entiendan lo mismo es usar el mismo parser. Un
+  mini-parser propio acabaría aceptando `max-delete = 1_000` o `"true"` y
+  guardando algo distinto de lo que se lee en pantalla.
+- **No se admite cualquier flag.** `sync.py` pone los suyos en cada ejecución
+  (`--config`, `--log-file`, `--dry-run`, `--workdir`, `--resync`) y los de
+  filtrado salen de los patrones incluir/excluir (`filter_args`). Repetirlos
+  aquí no los sustituye: rclone recibiría el flag dos veces y, en el caso de
+  `--workdir` o `--filters-file`, eso es apuntar a bisync a un baseline que no
+  es el suyo. Por eso `RESERVED` se rechaza al parsear y no al ejecutar.
 
-**El texto se parsea con `tomllib`, no a mano.** El destino de estas líneas es
-una tabla `[pair.flags]` del TOML, así que la única forma de que el formulario y
-el fichero entiendan lo mismo es usar el mismo parser. Un mini-parser propio
-acabaría aceptando `max-delete = 1_000` o `"true"` y guardando algo distinto de
-lo que se lee en pantalla.
-
-**No se admite cualquier flag.** `sync.py` pone los suyos en cada ejecución
-(`--config`, `--log-file`, `--dry-run`, `--workdir`, `--resync`) y los de
-filtrado salen de los patrones incluir/excluir (`filter_args`). Repetirlos aquí
-no los sustituye: rclone recibiría el flag dos veces, y en el caso de `--workdir`
-o `--filters-file` eso es apuntar a bisync a un baseline que no es el suyo. Por
-eso `RESERVED` se rechaza al parsear, no al ejecutar.
-
-Lo demás se admite sin lista blanca: quién sabe qué flags existen es rclone, y la
-regla del proyecto es que un flag nuevo se añade escribiéndolo, no tocando código.
+Lo demás se admite sin lista blanca: quién sabe qué flags existen es rclone, y
+la regla del proyecto es que un flag nuevo se añade escribiéndolo, no tocando
+código.
 """
 
 from __future__ import annotations
@@ -34,7 +32,6 @@ from typing import Any, Mapping, NamedTuple
 from common import config_file, model
 from common.model import ConfigError
 
-# Los que pone sync.py por su cuenta: build_command() y filter_args().
 RESERVED = {
     "config": "lo pone sync.py: es el rclone.conf del dispositivo",
     "log-file": "lo pone sync.py: cada pasada escribe en su propio log",
@@ -46,52 +43,68 @@ RESERVED = {
     "filter-from": "usa los patrones incluir/excluir; mezclarlos rompe el filtrado",
     "include": "usa el cuadro «Incluir»",
     "exclude": "usa el cuadro «Excluir»",
-    # Los cuatro del versionado: salen de la casilla «Guardar versiones», y el
-    # sufijo además depende de la pasada (lleva su fecha y su hora), así que no
-    # hay forma de escribirlo aquí que signifique algo.
+    # Los cuatro del versionado salen de la casilla «Guardar versiones», y el
+    # sufijo además depende de la pasada (lleva su fecha y su hora): no hay
+    # forma de escribirlo aquí que signifique algo.
     "backup-dir": "el versionado de bisync usa --backup-dir1/2, no este",
     "backup-dir1": "sale de la casilla «Guardar versiones»: es <pareja>/.prversions",
     "backup-dir2": "sale de la casilla «Guardar versiones»: es <pareja>/.prversions",
     "suffix": "lo pone sync.py: la marca de tiempo de ESTA pasada",
     "suffix-keep-extension": "lo pone sync.py junto con --suffix",
 }
+"""Flags que `sync.py` pone por su cuenta, con el motivo de cada uno.
 
-# El nombre es lo que va detrás de `--`, y flags_to_args() convierte _ en -.
+Salen de `build_command()` y `filter_args()`.
+"""
+
 _NOMBRE = re.compile(r"[A-Za-z][A-Za-z0-9_-]*")
+"""Un nombre de flag válido: lo que va detrás de `--`.
+
+`flags_to_args()` convierte `_` en `-`.
+"""
 
 ESCALARES = (bool, int, float, str)
+"""Tipos de valor que admite un flag, solo o dentro de una lista."""
 
-# Flags cuyo valor es un freno de mano, no una preferencia: cambiarlos se avisa.
 FRENOS = ("max-delete", "max-delete-size")
+"""Flags cuyo valor es un freno de mano y no una preferencia: cambiarlos se avisa."""
 
 
 class Row(NamedTuple):
-    """Una línea de la tabla de flags efectivos."""
-    flag: str            # tal cual se le pasa a rclone: --transfers 4
-    origen: str          # la capa que ha ganado
+    """Una línea de la tabla de flags efectivos.
 
+    Args:
+        flag: El flag tal cual se le pasa a rclone (`--transfers 4`).
+        origen: La capa que ha ganado.
+    """
+    flag: str
+    origen: str
 
-# ---------------------------------------------------------------------------
-# Texto <-> tabla
-# ---------------------------------------------------------------------------
 
 def normalize(key: str) -> str:
-    """El nombre con el que rclone lo verá: `_` es `-` y no distingue mayúsculas."""
+    """Devuelve el nombre con el que rclone verá el flag.
+
+    En él `_` es `-` y no se distingue entre mayúsculas y minúsculas.
+    """
     return str(key).strip().replace("_", "-").lower()
 
 
 def dump(flags: Mapping[str, Any] | None) -> str:
-    """La tabla como texto editable: exactamente lo que escribiría el TOML."""
+    """Devuelve la tabla como texto editable: exactamente lo que escribiría el TOML."""
     return config_file.dumps_table(dict(flags or {}))
 
 
 def parse(text: str) -> dict:
-    """El texto del cuadro como tabla de flags. ConfigError si no vale.
+    """Devuelve el texto del cuadro como tabla de flags.
 
     Solo se acepta lo que `common/config_file.py` sabe volver a escribir
-    —escalares y arrays de escalares—, porque `save()` se niega a escribir un
-    config que no se relea igual y ese "no" llegaría demasiado tarde: con el
-    diálogo ya cerrado y el plan ya confirmado."""
+    (escalares y arrays de escalares), porque `save()` se niega a escribir un
+    config que no se relea igual y ese «no» llegaría demasiado tarde: con el
+    diálogo ya cerrado y el plan ya confirmado.
+
+    Raises:
+        ConfigError: Si el texto no vale.
+    """
     lineas = [l for l in text.splitlines() if l.strip()]
     for linea in lineas:
         if linea.lstrip().startswith("-"):
@@ -112,6 +125,7 @@ def parse(text: str) -> dict:
 
 
 def _validar(key: str, value: Any) -> None:
+    """Comprueba un flag del cuadro y lanza `ConfigError` si no vale."""
     if not _NOMBRE.fullmatch(key):
         raise ConfigError(f"'{key}' no puede ser el nombre de un flag: es lo que va "
                           f"detrás de '--', o sea letras, números, '-' y '_'.")
@@ -132,27 +146,26 @@ def _validar(key: str, value: Any) -> None:
 
 
 def dump_extra(extra: Any) -> str:
-    """`extra_flags` como texto: un argumento por línea."""
+    """Devuelve `extra_flags` como texto: un argumento por línea."""
     return "\n".join(model._as_tuple(extra))
 
 
 def parse_extra(text: str) -> list[str]:
-    """El cuadro de `extra_flags`: un argumento de rclone por línea, tal cual.
+    """Devuelve el cuadro de `extra_flags`: un argumento de rclone por línea, tal cual.
 
-    Es la salida de emergencia para lo que `clave = valor` no sabe expresar, y va
-    sin tocar a la línea de comandos: por eso el valor de un flag ocupa su propia
-    línea (`--bwlimit` y `8M` son dos argumentos, no uno)."""
+    Es la salida de emergencia para lo que `clave = valor` no sabe expresar y
+    va sin tocar a la línea de comandos: por eso el valor de un flag ocupa su
+    propia línea (`--bwlimit` y `8M` son dos argumentos, no uno).
+    """
     return [l.strip() for l in text.splitlines() if l.strip()]
 
 
-# ---------------------------------------------------------------------------
-# Qué flags acaban valiendo
-# ---------------------------------------------------------------------------
-
 def merge(mode_name: str | None, defaults_flags: Mapping[str, Any] | None,
           pair_flags: Mapping[str, Any] | None) -> dict:
-    """Las capas fundidas igual que en `model._build_pair`: base < modo <
-    [defaults.flags] < [pair.flags]."""
+    """Devuelve las capas fundidas igual que en `model._build_pair`.
+
+    El orden es base < modo < `[defaults.flags]` < `[pair.flags]`.
+    """
     modo = model.MODES.get(mode_name or "")
     return {**model.BASE_FLAGS,
             **(modo.flags if modo else {}),
@@ -162,10 +175,12 @@ def merge(mode_name: str | None, defaults_flags: Mapping[str, Any] | None,
 
 def effective(mode_name: str | None, defaults_flags: Mapping[str, Any] | None,
               pair_flags: Mapping[str, Any] | None) -> list[Row]:
-    """Los flags que recibiría rclone y de qué capa sale cada uno.
+    """Devuelve los flags que recibiría rclone y de qué capa sale cada uno.
 
     Es el sentido de todo esto: se escriben en cuatro sitios y hasta ahora solo
-    se veían juntos en la línea de comandos, o sea cuando ya se está ejecutando."""
+    se veían juntos en la línea de comandos, o sea cuando ya se está
+    ejecutando.
+    """
     modo = model.MODES.get(mode_name or "")
     capas = [(model.BASE_FLAGS, "siempre"),
              (modo.flags if modo else {}, f"modo {mode_name}"),
@@ -187,7 +202,7 @@ def effective(mode_name: str | None, defaults_flags: Mapping[str, Any] | None,
 
 
 def summary(flags: Mapping[str, Any] | None, extra: Any = None) -> str:
-    """Lo que dice el botón: cuántos propios hay sin tener que abrirlos."""
+    """Devuelve lo que dice el botón: cuántos propios hay sin tener que abrirlos."""
     n, m = len(dict(flags or {})), len(model._as_tuple(extra))
     if not n and not m:
         return "ninguno propio"
@@ -199,13 +214,9 @@ def summary(flags: Mapping[str, Any] | None, extra: Any = None) -> str:
     return " + ".join(partes)
 
 
-# ---------------------------------------------------------------------------
-# Qué cambia
-# ---------------------------------------------------------------------------
-
 def changes(antes: Mapping[str, Any] | None,
             despues: Mapping[str, Any] | None) -> list[str]:
-    """Flag a flag, qué se ha tocado. Alimenta las consecuencias del plan."""
+    """Devuelve, flag a flag, qué se ha tocado; alimenta las consecuencias del plan."""
     uno, otro = dict(antes or {}), dict(despues or {})
     salida = []
     for key in sorted(set(uno) | set(otro)):
@@ -223,20 +234,22 @@ def changes(antes: Mapping[str, Any] | None,
 def warnings(antes: Mapping[str, Any] | None,
              despues: Mapping[str, Any] | None,
              mode_name: str | None = None) -> list[str]:
-    """Los avisos que merecen leerse dos veces antes de guardar.
+    """Devuelve los avisos que merecen leerse dos veces antes de guardar.
 
-    Recibe los flags YA FUNDIDOS (los de `merge()`), no los de una capa suelta, y
-    es lo único que hace bien esta comprobación: quitar un flag de la pareja lo
-    sube o lo baja según lo que diga la capa de debajo, y cambiar de modo lo
-    cambia sin que nadie haya tocado ningún flag.
+    Recibe los flags YA FUNDIDOS (los de `merge()`) y no los de una capa
+    suelta, que es lo único que hace bien esta comprobación: quitar un flag de
+    la pareja lo sube o lo baja según lo que diga la capa de debajo, y cambiar
+    de modo lo cambia sin que nadie haya tocado ningún flag.
 
-    `--max-delete` es el freno que impide que un lado vacío —una ruta que no está
-    montada, un baseline que se ha quedado viejo— arrase el otro. Subirlo o
-    quitarlo no es una preferencia de rendimiento. En bisync, además, NO es una
-    cuenta de ficheros: `Options.applyContext()` (cmd/bisync/cmd.go) lo reduce a
-    un porcentaje de 0 a 100 y `excessDeletes()` (cmd/bisync/deltas.go) lo compara
-    contra `borrados / ficheros_del_listado_anterior`, así que `mode_name` decide
-    la unidad del aviso; en copy/mirror sí es la cuenta corriente de `sync`."""
+    `--max-delete` es el freno que impide que un lado vacío (una ruta que no
+    está montada, un baseline que se ha quedado viejo) arrase el otro: subirlo
+    o quitarlo no es una preferencia de rendimiento. En bisync, además, NO es
+    una cuenta de ficheros: `Options.applyContext()` (cmd/bisync/cmd.go) lo
+    reduce a un porcentaje de 0 a 100 y `excessDeletes()`
+    (cmd/bisync/deltas.go) lo compara contra `borrados /
+    ficheros_del_listado_anterior`, así que `mode_name` decide la unidad del
+    aviso. En copy/mirror sí es la cuenta corriente de `sync`.
+    """
     avisos = []
     efectivos_antes = dict(antes or {})
     efectivos = dict(despues or {})

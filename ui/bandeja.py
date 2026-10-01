@@ -1,36 +1,32 @@
 #!/usr/bin/env python3
-"""
-bandeja.py — Qué enseña la bandeja del agente: su icono, su texto y su menú.
+"""Qué enseña la bandeja del agente: su icono, su texto y su menú.
 
-Es la mitad que DECIDE, y es pura: recibe el resumen del agente
-(`Agente.resumen()`, lo mismo que va a `estado.json`) y devuelve una `Vista`
-—uno de los cinco iconos de `icons.BANDEJA_ESTADOS`, la línea que sale al pasar
-el ratón y el árbol del menú—. Cada entrada del menú lleva las peticiones que
-hace al elegirla, con la misma forma que el buzón (`equipo.pedir()`), así que el
-agente las atiende por un solo camino venga de donde vengan.
+Es la mitad que DECIDE y es pura: recibe el resumen del agente
+(`Agente.resumen()`, lo mismo que va a `estado.json`) y devuelve una `Vista`:
+uno de los cinco iconos de `icons.BANDEJA_ESTADOS`, la línea que sale al pasar
+el ratón y el árbol del menú. Cada entrada del menú lleva las peticiones que
+hace al elegirla, con la misma forma que el buzón (`equipo.pedir()`), así que
+el agente las atiende por un solo camino venga de donde vengan.
 
-La mitad que DIBUJA es de cada sistema: `ui/bandeja_windows.py` (fase 4) con
-`Shell_NotifyIconW`, y `ui/bandeja_linux.py` (fase 6) con StatusNotifierItem y
-dbusmenu. Ninguna de las dos decide nada, y ninguna importa tkinter: el agente
-no carga Tk nunca.
+La mitad que DIBUJA es de cada sistema: `ui/bandeja_windows.py` con
+`Shell_NotifyIconW` y `ui/bandeja_linux.py` con StatusNotifierItem y dbusmenu.
+Ninguna decide nada y ninguna importa tkinter: el agente no carga Tk nunca.
 
-Lo que ofrece el menú (sección 5 del diseño, y «Una unidad nueva» de la 3):
-
-  * arriba, solo si algo va mal, hasta `MAX_AVISOS` avisos, y cada uno lleva a
-    donde se arregla: «PRUEBA-G: falla docs · Abrir…» abre su ventana (y en ella
-    «Reparación»), un remoto sin conexión se vuelve a probar, un volumen
-    fantasma se bloquea. Sin nada que decir no hay cabecera: una línea gris con
-    «al día» encima de todo no servía para nada (tercera pasada en real, B5). El
-    estado va en el texto del ratón, que dice cuándo se sincronizó por última
-    vez;
-  * **Abrir** la raíz de este equipo (con ella bloqueada, desbloquea antes) y
-    cada unidad conectada que está en la lista; nunca una que no lo está, que
-    sería ejecutar su código sin el sí;
-  * **Desbloquear / Bloquear** la raíz cifrada, y la casilla de
-    `pedir_al_iniciar`;
-  * «PRDRIVE-2, conectada · **Atender…**» para una unidad a la que se dijo
-    «Ahora no» (o se le está preguntando) mientras siga enchufada;
-  * **Sincronizar ahora**, **Pausar** / **Reanudar** y **Cerrar el agente**.
+Lo que ofrece el menú (sección 5 del diseño y «Una unidad nueva» de la 3):
+- Arriba, solo si algo va mal, hasta `MAX_AVISOS` avisos, y cada uno lleva a
+  donde se arregla: «PRUEBA-G: falla docs · Abrir…» abre su ventana (y en ella
+  «Reparación»), un remoto sin conexión se vuelve a probar, un volumen fantasma
+  se bloquea. Sin nada que decir no hay cabecera: una línea gris con «al día»
+  encima de todo no servía para nada (tercera pasada en real, B5). El estado va
+  en el texto del ratón, que dice cuándo se sincronizó por última vez.
+- **Abrir** la raíz de este equipo (con ella bloqueada, desbloquea antes) y
+  cada unidad conectada que está en la lista; nunca una que no lo está, que
+  sería ejecutar su código sin el sí.
+- **Desbloquear / Bloquear** la raíz cifrada, y la casilla de
+  `pedir_al_iniciar`.
+- «PRUEBA-2, conectada · **Atender…**» para una unidad a la que se dijo «Ahora
+  no» (o se le está preguntando) mientras siga enchufada.
+- **Sincronizar ahora**, **Pausar** / **Reanudar** y **Cerrar el agente**.
 """
 
 from __future__ import annotations
@@ -54,7 +50,7 @@ BUSCANDO = "buscando"       # sin cifrar y todavía no vista: el agente acaba de
 MAX_AVISOS = 3              # las líneas de aviso del menú; el resto, «y N más»
 MAX_TIP = 127               # `szTip` de NOTIFYICONDATAW: 128 con el nulo
 
-# Los iconos de las entradas del menú, por nombre de `icons.GLIFOS`: lo que
+# Iconos de las entradas del menú, por nombre de `icons.GLIFOS`: lo que
 # significa la entrada, no cómo se pinta. Windows pinta ese glifo
 # (`ui/bandeja_windows.py`); Linux pide al tema del escritorio el suyo
 # (`ui/bandeja_linux.ICONOS_DEL_TEMA`), que sigue su color y su modo oscuro.
@@ -71,15 +67,23 @@ I_AVISO = "warn"
 I_REINTENTAR = "reload"
 ICONOS = (I_ABRIR, I_SINCRONIZAR, I_PAUSAR, I_REANUDAR, I_BLOQUEAR, I_DESBLOQUEAR,
           I_ATENDER, I_ACTUALIZAR, I_CERRAR, I_AVISO, I_REINTENTAR)
+"""Todos los iconos que puede llevar una entrada."""
 
 
 @dataclass(frozen=True)
 class Entrada:
-    """Una línea del menú. Sin texto es un separador.
+    """Una línea del menú; sin texto es un separador.
 
-    `pide` son las peticiones al agente (dicts del buzón); `marcada` no None la
-    hace casilla; `defecto` es la que hace el doble clic en el icono; con
-    `hijos` es un submenú; `icono`, uno de `ICONOS` o nada."""
+    Args:
+        texto: Lo que dice.
+        pide: Las peticiones al agente que hace al elegirla (dicts del buzón).
+        activa: Si se puede elegir.
+        marcada: Si no es `None`, la entrada es una casilla y esto dice si está
+            marcada.
+        defecto: Si es la que hace el doble clic en el icono.
+        hijos: Si no está vacío, la entrada es un submenú.
+        icono: Uno de `ICONOS`, o nada.
+    """
     texto: str = ""
     pide: tuple[Mapping[str, Any], ...] = ()
     activa: bool = True
@@ -90,38 +94,48 @@ class Entrada:
 
     @property
     def separador(self) -> bool:
+        """Indica si la entrada es un separador."""
         return not self.texto
 
 
 SEPARADOR = Entrada()
+"""La entrada que hace de separador."""
 
 
 @dataclass(frozen=True)
 class Vista:
-    icono: str                          # uno de icons.BANDEJA_ESTADOS
+    """Todo lo que enseña la bandeja.
+
+    Args:
+        icono: Uno de `icons.BANDEJA_ESTADOS`.
+        tip: La línea que sale al pasar el ratón.
+        menu: El árbol del menú.
+        frase: El estado sin el nombre delante (Linux).
+    """
+    icono: str
     tip: str
     menu: tuple[Entrada, ...]
-    frase: str = ""                     # el estado sin el nombre delante (Linux)
+    frase: str = ""
 
     def defecto(self) -> Entrada | None:
-        """La entrada del doble clic, si hay una."""
+        """Devuelve la entrada del doble clic, si hay una."""
         return next((e for e in _todas(self.menu) if e.defecto and e.activa), None)
 
 
 def _todas(entradas):
+    """Recorre las entradas y sus hijos, en orden."""
     for e in entradas:
         yield e
         yield from _todas(e.hijos)
 
 
-# ---------------------------------------------------------------------------
-# El estado
-# ---------------------------------------------------------------------------
-
 def _avisos(resumen: Mapping[str, Any]) -> list[tuple[str, Entrada]]:
-    """Lo que va mal: cada cosa con su frase corta (la del icono y los avisos)
-    y su entrada del menú, que lleva a donde se arregla. Lo que no tiene
-    arreglo desde aquí —una raíz que no está en su sitio— queda apagado."""
+    """Devuelve lo que va mal, cada cosa con su frase corta y su entrada del menú.
+
+    La frase es la del icono y de los avisos; la entrada lleva a donde se
+    arregla. Lo que no tiene arreglo desde aquí (una raíz que no está en su
+    sitio) queda apagado.
+    """
     salida: list[tuple[str, Entrada]] = []
     for u in resumen.get("unidades") or []:
         nombre = u.get("nombre")
@@ -153,13 +167,16 @@ def _avisos(resumen: Mapping[str, Any]) -> list[tuple[str, Entrada]]:
 
 
 def avisos(resumen: Mapping[str, Any]) -> list[str]:
-    """Lo que va mal y merece que el icono lo diga, en frases cortas."""
+    """Devuelve lo que va mal y merece que el icono lo diga, en frases cortas."""
     return [frase for frase, _entrada in _avisos(resumen)]
 
 
 def hace(segundos: float, cuando: float) -> str:
-    """Cuándo fue algo, dicho corto: «hace un momento», «hace 5 min», «a las
-    11:55» (hoy, hace más de una hora) o «el 29/09 a las 11:55»."""
+    """Devuelve cuándo fue algo, dicho corto.
+
+    Son «hace un momento», «hace 5 min», «a las 11:55» (hoy, hace más de una
+    hora) o «el 29/09 a las 11:55».
+    """
     if segundos < 60:
         return "hace un momento"
     if segundos < 3600:
@@ -172,16 +189,22 @@ def hace(segundos: float, cuando: float) -> str:
 
 
 def estado(resumen: Mapping[str, Any], ahora: float | None = None) -> tuple[str, str]:
-    """(icono, frase) del agente, en este orden de prioridad:
+    """Devuelve el icono y la frase del agente.
 
-    la pausa pedida (lo ha decidido alguien) > una pasada en marcha > los avisos
-    > lo que retiene sin ser pausa (batería, red de uso medido) > la raíz
-    cifrada bloqueada > bien. Bloqueada no es un aviso: es lo normal con el
-    contenedor cerrado, y el icono lo enseña sin alarmar.
+    El orden de prioridad es: la pausa pedida (lo ha decidido alguien) > una
+    pasada en marcha > los avisos > lo que retiene sin ser pausa (batería, red
+    de uso medido) > la raíz cifrada bloqueada > bien. Bloqueada no es un
+    aviso: es lo normal con el contenedor cerrado y el icono lo enseña sin
+    alarmar.
 
-    Bien, la frase dice cuándo acabó bien la última pasada (`ultima_pasada`,
-    segundos de época; `ahora`, por defecto el reloj): «al día» a secas no
-    decía nada que el icono no dijera ya."""
+    Cuando va bien, la frase dice cuándo acabó bien la última pasada
+    (`ultima_pasada`, segundos de época): «al día» a secas no decía nada que el
+    icono no dijera ya.
+
+    Args:
+        resumen: El resumen del agente.
+        ahora: El reloj; por defecto, el del sistema.
+    """
     if resumen.get("pausado"):
         return icons.PAUSA, "en pausa"
     pasada = resumen.get("pasada")
@@ -211,9 +234,11 @@ def estado(resumen: Mapping[str, Any], ahora: float | None = None) -> tuple[str,
 
 
 def aviso_de_estado(resumen: Mapping[str, Any]) -> tuple[str, str]:
-    """(título, texto) del aviso con el que el acceso «prdrive» del menú dice
-    cómo va el agente donde no hay bandeja que lo enseñe (fase 6): lo mismo
-    que su icono, su texto y los avisos de su menú."""
+    """Devuelve el título y el texto del aviso que dice cómo va el agente.
+
+    Es con el que el acceso «prdrive» del menú lo dice donde no hay bandeja que
+    lo enseñe: lo mismo que su icono, su texto y los avisos de su menú.
+    """
     _icono, frase = estado(resumen)
     lineas = avisos(resumen)
     texto = lineas[:MAX_AVISOS]
@@ -230,19 +255,21 @@ def aviso_de_estado(resumen: Mapping[str, Any]) -> tuple[str, str]:
 
 
 def tip(frase: str) -> str:
+    """Devuelve el texto del ratón, recortado a lo que cabe en `MAX_TIP`."""
     texto = f"{APP_NAME} · {frase}"
     return texto if len(texto) <= MAX_TIP else texto[:MAX_TIP - 1] + "…"
 
 
-# ---------------------------------------------------------------------------
-# El menú
-# ---------------------------------------------------------------------------
-
 def _pide(que: str, **campos) -> tuple[dict, ...]:
+    """Devuelve la petición del buzón que hace una entrada."""
     return ({"pide": que, **campos},)
 
 
 def _raices_del_equipo(resumen: Mapping[str, Any]) -> list[Entrada]:
+    """Devuelve las entradas de las raíces de este equipo.
+
+    Incluye la casilla de `pedir_al_iniciar`.
+    """
     entradas: list[Entrada] = []
     raices = resumen.get("equipo") or []
     for i, r in enumerate(raices):
@@ -282,6 +309,7 @@ def _raices_del_equipo(resumen: Mapping[str, Any]) -> list[Entrada]:
 
 
 def _unidades(resumen: Mapping[str, Any]) -> list[Entrada]:
+    """Devuelve las entradas de las unidades conectadas."""
     entradas: list[Entrada] = []
     for u in resumen.get("unidades") or []:
         if u.get("del_equipo"):
@@ -305,6 +333,10 @@ def _unidades(resumen: Mapping[str, Any]) -> list[Entrada]:
 
 
 def _sincronizar(resumen: Mapping[str, Any]) -> Entrada:
+    """Devuelve la entrada «Sincronizar ahora».
+
+    Lleva un submenú si hay varias unidades.
+    """
     atendidas = [u for u in resumen.get("unidades") or [] if u.get("atendida")]
     if not atendidas:
         return Entrada("Sincronizar ahora", activa=False, icono=I_SINCRONIZAR)
@@ -322,8 +354,10 @@ def _sincronizar(resumen: Mapping[str, Any]) -> Entrada:
 
 
 def _actualizar(resumen: Mapping[str, Any]) -> list[Entrada]:
-    """«Actualizar» cuando el agente sabe de una versión más nueva que la suya
-    (sección 8 del diseño). Mientras se actualiza, dicho y apagado."""
+    """Devuelve la entrada «Actualizar» cuando el agente sabe de una versión más nueva.
+
+    Es la sección 8 del diseño. Mientras se actualiza, se dice y queda apagada.
+    """
     nueva = resumen.get("nueva")
     if not nueva:
         return []
@@ -334,7 +368,7 @@ def _actualizar(resumen: Mapping[str, Any]) -> list[Entrada]:
 
 
 def _bloques(*bloques: list[Entrada]) -> tuple[Entrada, ...]:
-    """Los bloques no vacíos, con un separador entre cada dos."""
+    """Devuelve los bloques no vacíos, con un separador entre cada dos."""
     salida: list[Entrada] = []
     for bloque in bloques:
         if bloque:
@@ -345,8 +379,12 @@ def _bloques(*bloques: list[Entrada]) -> tuple[Entrada, ...]:
 
 
 def vista(resumen: Mapping[str, Any], ahora: float | None = None) -> Vista:
-    """Todo lo que enseña la bandeja, a partir del resumen del agente. `ahora`
-    es para el «hace N min» del texto (por defecto, el reloj)."""
+    """Devuelve todo lo que enseña la bandeja, a partir del resumen del agente.
+
+    Args:
+        resumen: El resumen del agente.
+        ahora: Para el «hace N min» del texto; por defecto, el reloj.
+    """
     icono, frase = estado(resumen, ahora)
     hay = [entrada for _frase, entrada in _avisos(resumen)]
     cabecera = hay[:MAX_AVISOS]
