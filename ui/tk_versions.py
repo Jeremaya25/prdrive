@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
-"""
-tk_versions.py — La ventana de las versiones guardadas (`.prversions/`).
+"""La ventana de las versiones guardadas (`.prversions/`).
 
-Solo dibuja. Qué hay guardado y qué se borraría lo sabe `ui/versions_editor.py`,
-y confirmar el borrado es `tk_pairs.confirmar_plan()`, la misma ventana que
-gobierna los demás borrados de la aplicación.
+Solo dibuja. Qué hay guardado y qué se borraría lo sabe
+`ui/versions_editor.py`, y confirmar el borrado es `tk_pairs.confirmar_plan()`,
+la misma ventana que gobierna los demás borrados de la aplicación.
 
-Cuelga de «Ajustes» y no de la principal porque mirar el histórico es de las cosas
-que se hacen de tarde en tarde. La ventana enseña lo que ocupa cada lado, deja
-abrir la carpeta de aquí y purgar lo anterior a una fecha; **restaurar no está**,
-a propósito: con la carpeta abierta y el nombre `nota~20260922-093000.md`
-delante, devolverle su nombre a una versión es copiar y renombrar, y hacerlo
-desde aquí —escribiendo encima del fichero vivo, y también en el remoto— sería
-otro mecanismo entero con sus propias formas de salir mal.
+Cuelga de «Ajustes» y no de la principal porque mirar el histórico es de las
+cosas que se hacen de tarde en tarde. La ventana enseña lo que ocupa cada lado,
+deja abrir la carpeta de aquí y purgar lo anterior a una fecha; **restaurar no
+está**, a propósito: con la carpeta abierta y el nombre
+`nota~20260922-093000.md` delante, devolverle su nombre a una versión es copiar
+y renombrar, y hacerlo desde aquí (escribiendo encima del fichero vivo, y
+también en el remoto) sería otro mecanismo entero con sus propias formas de
+salir mal.
 
 Leer el lado remoto es una llamada a rclone, así que va por `tk.working()`: con
-el remoto caído tarda lo que tarden los tiempos de espera de `catalog.NET_FLAGS`,
-y mientras tanto la ventana no puede quedarse en blanco.
+el remoto caído tarda lo que tarden los tiempos de espera de
+`catalog.NET_FLAGS` y mientras tanto la ventana no puede quedarse en blanco.
 """
 
 from __future__ import annotations
@@ -29,24 +29,30 @@ from common.model import Config
 from . import abrir, theme, versions_editor
 from .tk import TITLE, cabecera, cuerpo_visible, modal, mostrar, separador_fila, working
 
-# Lo que se ofrece purgar. Fechas no: un desplegable con tres antigüedades se
-# entiende sin pensar, y «anterior al 14/07/2026» hay que calcularlo mentalmente.
 ANTIGUEDADES = (
     ("Más de 30 días", 30),
     ("Más de 90 días", 90),
     ("Más de un año", 365),
 )
+"""Lo que se ofrece purgar: tres antigüedades y no fechas.
+
+Un desplegable con tres antigüedades se entiende sin pensar; «anterior al
+14/07/2026» hay que calcularlo mentalmente.
+"""
 
 SIN_VERSIONES = (
     "Ninguna pareja de este dispositivo guarda versiones. Se activa en la "
     "pantalla de parejas, editando una pareja bisync: «Guardar en .prversions/ "
     "lo que se sobrescriba o se borre»."
 )
+"""Lo que se dice si ninguna pareja guarda versiones."""
 
 
 def open_dialog(parent, config: Config) -> None:
-    """Abre la ventana. No devuelve nada: purgar no cambia nada que la ventana
-    principal enseñe."""
+    """Abre la ventana; no devuelve nada.
+
+    Purgar no cambia nada que la ventana principal enseñe.
+    """
     from tkinter import StringVar, messagebox, ttk
 
     from . import tk_pairs
@@ -75,7 +81,7 @@ def open_dialog(parent, config: Config) -> None:
 
     estado: dict = {"pareja": parejas[0], "local": None, "remoto": None}
 
-    # --- elegir pareja ----------------------------------------------------------
+    # Elegir pareja.
     fila = 1
     if len(parejas) > 1:
         barra = ttk.Frame(marco)
@@ -89,7 +95,7 @@ def open_dialog(parent, config: Config) -> None:
     else:
         elegida = StringVar(value=parejas[0].name)
 
-    # --- lo que hay en cada lado ------------------------------------------------
+    # Lo que hay en cada lado.
     tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(14, 12))
     tarjeta.grid(row=fila, column=0, sticky="ew", pady=(14, 0))
     tarjeta.columnconfigure(1, weight=1)
@@ -109,7 +115,7 @@ def open_dialog(parent, config: Config) -> None:
         ruta.grid(row=i * 3 + 1, column=0, columnspan=2, sticky="w", pady=(2, 8))
         lineas[clave] = (cifra, ruta)
 
-    # --- purgar ------------------------------------------------------------------
+    # Purgar.
     caja = ttk.Frame(marco)
     caja.grid(row=fila, column=0, sticky="ew", pady=(16, 0))
     caja.columnconfigure(2, weight=1)
@@ -121,16 +127,21 @@ def open_dialog(parent, config: Config) -> None:
     fila += 1
 
     def corte() -> date:
+        """Devuelve el día anterior al cual se purga, según la antigüedad elegida."""
         dias = dict(ANTIGUEDADES)[antiguedad.get()]
         return date.today() - timedelta(days=dias)
 
-    # --- releer ------------------------------------------------------------------
+    # Releer.
 
     def pareja_actual():
+        """Devuelve la pareja elegida en el desplegable."""
         return next(p for p in parejas if p.name == elegida.get())
 
     def refrescar(*_) -> None:
-        """Relee los dos lados. El remoto va por `working()`: es red."""
+        """Relee los dos lados y repinta la ventana.
+
+        El remoto va por `working()`: es red.
+        """
         pair = pareja_actual()
         estado["pareja"] = pair
         estado["local"] = versions_editor.leer_local(pair)
@@ -161,9 +172,10 @@ def open_dialog(parent, config: Config) -> None:
 
     elegida.trace_add("write", refrescar)
 
-    # --- acciones ----------------------------------------------------------------
+    # Acciones.
 
     def abrir_carpeta() -> None:
+        """Abre la carpeta de versiones de la pareja, en este dispositivo."""
         destino = estado["pareja"].local_abs / model.VERSIONS_DIR
         try:
             abrir(destino)
@@ -172,6 +184,7 @@ def open_dialog(parent, config: Config) -> None:
                                  parent=dlg)
 
     def purgar() -> None:
+        """Pide confirmación del plan de purga y lo ejecuta."""
         plan = versions_editor.plan_purgar(estado["pareja"], estado["local"],
                                            estado["remoto"], corte())
         if plan.vacio:
@@ -208,6 +221,7 @@ def open_dialog(parent, config: Config) -> None:
 
 
 def _pie(marco, dlg, fila: int) -> None:
+    """Pone el pie de la ventana, con el botón «Cerrar»."""
     from tkinter import ttk
     ttk.Separator(marco, orient="horizontal").grid(row=fila, column=0, sticky="ew",
                                                    pady=(16, 0))

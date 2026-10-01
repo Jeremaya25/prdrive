@@ -1,27 +1,26 @@
 #!/usr/bin/env python3
-"""
-tk_fleet.py — La ventana de la flota: qué otros dispositivos llevan este catálogo.
+"""La ventana de la flota: qué otros dispositivos llevan este catálogo.
 
 Solo dibuja. Quién es cada uno, cuándo se le vio por última vez y a partir de
-cuándo eso es demasiado tiempo lo sabe `common/fleet.py`, que no importa Tk y se
-prueba sin pantalla.
+cuándo eso es demasiado tiempo lo sabe `common/fleet.py`, que no importa Tk y
+se prueba sin pantalla.
 
-Cuelga de la pantalla de parejas y no de la principal a propósito: es información
-para cuando uno se pregunta «¿dónde estaba el otro pendrive?», no algo que haya
-que ver cada vez que se sincroniza. La ventana principal ya tiene sus avisos, y
-son los urgentes.
+Cuelga de la pantalla de parejas y no de la principal a propósito: es
+información para cuando uno se pregunta «¿dónde estaba el otro pendrive?», no
+algo que haya que ver cada vez que se sincroniza. La ventana principal ya tiene
+sus avisos, y son los urgentes.
 
 De la nota de otro dispositivo, desde aquí solo se puede hacer una cosa:
-**quitarla de la lista**. Ningún dispositivo escribe la nota de otro —por eso
-son ficheros separados—, y quitarla no es escribirla: es borrar un rastro que el
+**quitarla de la lista**. Ningún dispositivo escribe la nota de otro (por eso
+son ficheros separados) y quitarla no es escribirla: es borrar un rastro que el
 dueño vuelve a dejar en cuanto se enchufa. El contenido de una nota lo sigue
-decidiendo solo quien la firma, y lo único que se puede *cambiar* desde aquí es
+decidiendo solo quien la firma y lo único que se puede *cambiar* desde aquí es
 el nombre de ESTE dispositivo.
 
 Debajo de la lista va la **ficha** del elegido: versión, plataformas, desde
-cuándo falla y en qué equipos ha estado. En la misma ventana y no en otra: sería
-el tercer modal en fila (principal → Parejas → Dispositivos → Ficha). Lo que dice
-la ficha lo decide `ficha()`, que no toca Tk; aquí solo se dibuja.
+cuándo falla y en qué equipos ha estado. Va en la misma ventana y no en otra:
+sería el tercer modal en fila (principal → Parejas → Dispositivos → Ficha). Lo
+que dice la ficha lo decide `ficha()`, que no toca Tk; aquí solo se dibuja.
 """
 
 from __future__ import annotations
@@ -34,52 +33,76 @@ from common.model import Config
 from . import cuando_sello, icons, theme
 from .tk import TITLE, cabecera, cuerpo_visible, modal, mostrar
 
-# La versión y las plataformas se fueron a la ficha: en la tabla queda lo que se
-# compara de un vistazo entre dispositivos.
 COLUMNAS = [
     ("aqui", "Este", 46),
     ("nombre", "Dispositivo", 250),
     ("visto", "Visto", 100),
     ("estado", "Última pasada", 300),
 ]
+"""Las columnas de la tabla: clave, título y ancho en medidas del diseño.
+
+La versión y las plataformas se fueron a la ficha: en la tabla queda lo que se
+compara de un vistazo entre dispositivos.
+"""
 
 SIN_NOTA = ("Todavía no hay ningún dispositivo apuntado. Cada uno deja su nota al "
             "sincronizar, así que aparecerán aquí en cuanto se usen.")
+"""Lo que se dice cuando todavía no hay ningún dispositivo apuntado."""
 
 ROTULOS_FICHA = ("Versión", "Para", "Estado", "Equipos")
+"""Los rótulos de los apartados de la ficha."""
 ESTE_EQUIPO = " · este equipo"
+"""Lo que se añade al nombre del equipo desde el que se mira."""
 SIN_EQUIPOS = "No consta: las versiones anteriores no lo apuntaban."
+"""Lo que se dice de un dispositivo que no apuntó dónde ha estado."""
 SIN_BUENA = "No consta ninguna pasada buena."
+"""Lo que se dice cuando no consta ninguna pasada buena."""
 EN_UN_EQUIPO = "Una carpeta de un equipo, no una unidad"
+"""Lo que dice el apartado «Para» de la raíz de un equipo."""
 MARCA_EQUIPO = " (equipo)"
+"""Lo que se añade al nombre en la tabla para la raíz de un equipo."""
 MARCA_EQUIPO_CIFRADO = " (equipo, cifrado)"
+"""Lo mismo para la raíz de un equipo cifrada."""
 EN_UN_EQUIPO_CIFRADO = "Una carpeta de un equipo, cifrada con VeraCrypt"
+"""Lo que dice el apartado «Para» de la raíz de un equipo cifrada."""
 
 
 class Linea(NamedTuple):
-    """Una línea de la ficha."""
+    """Una línea de la ficha.
+
+    Args:
+        texto: Lo que dice.
+        fecha: Cuándo, a la derecha y en monoespaciada.
+        pista: Si acompaña al dato en vez de ser el dato.
+    """
     texto: str
-    fecha: str = ""             # a la derecha, en mono: cuándo
-    pista: bool = False         # lo que acompaña al dato, no el dato
+    fecha: str = ""
+    pista: bool = False
 
 
 class Fila(NamedTuple):
-    """Un apartado de la ficha: su rótulo y sus líneas."""
+    """Un apartado de la ficha: su rótulo y sus líneas.
+
+    Args:
+        rotulo: El título del apartado.
+        lineas: Lo que dice.
+        reserva: Las líneas que se reservan aunque no haya tantas, que es lo
+            que hace que la ficha mida lo mismo con un equipo que con cinco.
+    """
     rotulo: str
     lineas: tuple[Linea, ...]
-    # Las líneas que se reservan aunque no haya tantas. Es lo que hace que la
-    # ficha mida lo mismo con un equipo que con cinco.
     reserva: int = 0
 
 
 def _fecha(sello: str) -> str:
-    """Una fecha de la nota. Las recientes, con el formato de la ventana
-    («ayer», «08:20»); las de hace una semana o más, con la fecha entera.
+    """Devuelve una fecha de la nota como se enseña en la tabla.
 
-    Aquí sí hace falta el año, a diferencia del resto de la aplicación: entre un
-    dispositivo visto hace tres semanas y otro visto hace dos años, un «12/09» a
-    secas no distingue nada, y distinguirlos es justo para lo que se abre esta
-    lista."""
+    Las recientes llevan el formato de la ventana («ayer», «08:20»); las de
+    hace una semana o más, la fecha entera. Aquí sí hace falta el año, a
+    diferencia del resto de la aplicación: entre un dispositivo visto hace tres
+    semanas y otro visto hace dos años, un «12/09» a secas no distingue nada, y
+    distinguirlos es justo para lo que se abre esta lista.
+    """
     if not sello:
         return "—"
     if fleet.sello_obsoleto(sello):
@@ -88,11 +111,14 @@ def _fecha(sello: str) -> str:
 
 
 def ficha(disp: fleet.Dispositivo, equipo_aqui: str) -> list[Fila]:
-    """Lo que dice la ficha de un dispositivo, apartado por apartado.
+    """Devuelve lo que dice la ficha de un dispositivo, apartado por apartado.
 
-    `equipo_aqui` es el nombre de red de este equipo: la entrada que coincide se
-    marca, y eso contesta sin más si el otro pendrive ha estado en este
-    ordenador."""
+    Args:
+        disp: El dispositivo.
+        equipo_aqui: El nombre de red de este equipo: la entrada que coincide
+            se marca, y eso contesta sin más si el otro pendrive ha estado en
+            este ordenador.
+    """
     estado = [Linea(disp.last_result)]
     if disp.ultima_buena == fleet.SIN_BUENA:
         estado.append(Linea(SIN_BUENA, pista=True))
@@ -117,24 +143,29 @@ def ficha(disp: fleet.Dispositivo, equipo_aqui: str) -> list[Fila]:
 
 
 def marca(disp: fleet.Dispositivo) -> str:
-    """Lo que se le añade al nombre en la tabla: nada en una unidad."""
+    """Devuelve lo que se le añade al nombre en la tabla: nada en una unidad."""
     if not disp.es_equipo:
         return ""
     return MARCA_EQUIPO_CIFRADO if disp.cifrado else MARCA_EQUIPO
 
 
 def _tono(disp: fleet.Dispositivo) -> str:
-    """El color de una fila: apagado el que lleva una semana sin aparecer, ámbar
-    el que acabó mal. El olvido va antes que el fallo a propósito —de uno que no
-    se enchufa desde hace un mes, lo que falló hace un mes ya no es la noticia—."""
+    """Devuelve el color de una fila: apagado, ok o aviso.
+
+    Sale apagado el que lleva una semana sin aparecer y en aviso el que acabó
+    mal. El olvido va antes que el fallo a propósito: de uno que no se enchufa
+    desde hace un mes, lo que falló hace un mes ya no es la noticia.
+    """
     if disp.obsoleto():
         return "apagado"
     return "ok" if disp.bien else "aviso"
 
 
 def open_dialog(parent, config: Config, raw: dict | None = None) -> bool:
-    """Abre la ventana. Devuelve True si se ha cambiado el nombre de este
-    dispositivo (quien llama repinta: el nombre sale también en su pie)."""
+    """Abre la ventana y devuelve si se ha cambiado el nombre de este dispositivo.
+
+    Quien llama repinta: el nombre sale también en su pie.
+    """
     from tkinter import messagebox, ttk
 
     dlg = modal(parent, "Dispositivos")
@@ -185,12 +216,12 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> bool:
     vacio = ttk.Label(marco, text=SIN_NOTA, style="Pista.TLabel",
                       wraplength=theme.medida(620), justify="left")
 
-    # --- la ficha del elegido ------------------------------------------------
-    # `hueco` es el sitio que se le reserva y `hoja` lo que se pinta dentro. Van
-    # separados porque el sitio se mide para la ficha más grande de la flota
-    # (`reservar()`). El `Visor` encaja una sola vez, al abrir; sin la reserva,
-    # elegir una ficha más larga que la primera hacía crecer el contenido y
-    # sacaba una barra de desplazamiento que al abrir no estaba.
+    # La ficha del elegido. `hueco` es el sitio que se le reserva y `hoja` lo
+    # que se pinta dentro: van separados porque el sitio se mide para la ficha
+    # más grande de la flota (`reservar()`). El `Visor` encaja una sola vez, al
+    # abrir; sin la reserva, elegir una ficha más larga que la primera hacía
+    # crecer el contenido y sacaba una barra de desplazamiento que al abrir no
+    # estaba.
     hueco = ttk.Frame(marco)
     hueco.grid(row=2, column=0, sticky="ew", pady=(10, 0))
     hueco.columnconfigure(0, weight=1)
@@ -202,6 +233,7 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> bool:
     aqui = fleet.equipo_actual()
 
     def pintar_ficha(disp: fleet.Dispositivo) -> None:
+        """Pinta la ficha de ese dispositivo en `hoja`."""
         for widget in hoja.winfo_children():
             widget.destroy()
         ttk.Label(hoja, text=disp.nombre, style="Card.Fuerte.TLabel",
@@ -231,11 +263,12 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> bool:
                 fila += 1
 
     def reservar() -> None:
-        """El sitio de la ficha: el que pide la más grande de esta flota.
+        """Reserva el sitio de la ficha: el que pide la más grande de esta flota.
 
-        Los equipos ya reservan siempre sus `MAX_EQUIPOS` líneas, pero hay texto
-        que sí cambia de alto —un «fallo en a, b, c…» que parte en dos líneas,
-        un nombre largo—, y medirlo es la única forma de no suponerlo."""
+        Los equipos ya reservan siempre sus `MAX_EQUIPOS` líneas, pero hay
+        texto que sí cambia de alto (un «fallo en a, b, c…» que parte en dos
+        líneas, un nombre largo) y medirlo es la única forma de no suponerlo.
+        """
         ancho = alto = 0
         for disp in estado["flota"]:
             pintar_ficha(disp)
@@ -246,12 +279,14 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> bool:
         hueco.rowconfigure(0, minsize=alto)
 
     def pintar_chip(texto: str, tipo: str, icono: str) -> None:
+        """Cambia el chip de arriba a la derecha."""
         if chip["widget"] is not None:
             chip["widget"].destroy()
         chip["widget"] = theme.chip(donde, texto, tipo, icono)
         chip["widget"].grid(row=0, column=0, sticky="e")
 
     def refrescar(nota: str = "") -> None:
+        """Relee la flota y repinta la tabla y la ficha."""
         flota, aviso = fleet.leer(raw)
         estado["flota"] = flota
         if aviso:
@@ -266,7 +301,7 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> bool:
                                 disp.nombre + marca(disp),
                                 _fecha(disp.last_seen),
                                 disp.last_result))
-        # Más baja que antes: la ficha se lleva parte de la ventana.
+        # La lista es más baja porque la ficha se lleva parte de la ventana.
         tree.configure(height=min(8, max(3, len(flota))))
         reservar()
         if flota:
@@ -283,18 +318,20 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> bool:
             dlg.visor.crecer(dlg)
 
     def elegido() -> fleet.Dispositivo | None:
+        """Devuelve el dispositivo de la fila elegida, o `None`."""
         seleccion = tree.selection()
         if not seleccion:
             return None
         return next((d for d in estado["flota"] if d.id == seleccion[0]), None)
 
     def repasar(_evento=None) -> None:
-        """Lo que cuelga de la fila elegida: su ficha, y el botón de quitar.
+        """Repinta lo que cuelga de la fila elegida: su ficha y el botón de quitar.
 
-        Sin nada elegido —flota vacía, o recién quitado uno— la ficha se
-        esconde entera. Quitar de la lista se apaga sobre este mismo
-        dispositivo: `fleet` lo rechaza igualmente —la regla es suya—, pero un
-        botón encendido que siempre contesta que no es peor que uno apagado."""
+        Sin nada elegido (flota vacía, o recién quitado uno) la ficha se
+        esconde entera. «Quitar de la lista» se apaga sobre este mismo
+        dispositivo: `fleet` lo rechaza igualmente (la regla es suya), pero un
+        botón encendido que siempre contesta que no es peor que uno apagado.
+        """
         disp = elegido()
         if disp is None:
             hueco.grid_remove()
@@ -305,12 +342,13 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> bool:
                          else "disabled")
 
     def cambiar_nombre() -> None:
-        """Ponerle nombre a este dispositivo, y contárselo al remoto.
+        """Le pone nombre a este dispositivo y se lo cuenta al remoto.
 
         Se guarda en el propio dispositivo (`state/fleet.json`) ANTES de
         publicar: es lo que hace que siga llamándose igual cuando no hay red y
         al cambiar de ordenador. La nota se fuerza para que el cambio se vea
-        desde los demás sin esperar a la siguiente pasada."""
+        desde los demás sin esperar a la siguiente pasada.
+        """
         nuevo = pedir_nombre(dlg, fleet.nombre())
         if nuevo is None:
             return
@@ -326,12 +364,13 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> bool:
                       f"podido avisar al remoto: se hará en la próxima pasada.")
 
     def quitar_de_la_lista() -> None:
-        """Quitar la nota de un dispositivo que ya no existe.
+        """Quita la nota de un dispositivo que ya no existe.
 
-        Un `askokcancel` y no `confirmar_plan()`: esa ventana gobierna los
-        borrados que pierden datos, y esto no pierde ninguno —si el dispositivo
-        vuelve a enchufarse, publica otra vez y reaparece—. Lo que sí hace falta
-        es decirlo, porque «quitar» suena a más de lo que es."""
+        Es un `askokcancel` y no `confirmar_plan()`: esa ventana gobierna los
+        borrados que pierden datos y esto no pierde ninguno (si el dispositivo
+        vuelve a enchufarse, publica otra vez y reaparece). Lo que sí hace
+        falta es decirlo, porque «quitar» suena a más de lo que es.
+        """
         disp = elegido()
         if disp is None or disp.id == yo:
             return
@@ -379,11 +418,13 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> bool:
 
 
 def pedir_nombre(parent, actual: str) -> str | None:
-    """El nombre de este dispositivo. None si se cancela o no se escribe nada.
+    """Pide el nombre de este dispositivo; `None` si se cancela o no se escribe nada.
 
-    Una ventana propia y no un `simpledialog`: el resto de la aplicación no abre
-    ninguno, y aquí hace falta explicar en una línea para qué sirve el nombre —lo
-    ven los demás dispositivos— y que no cambia nada de la sincronización."""
+    Es una ventana propia y no un `simpledialog`: el resto de la aplicación no
+    abre ninguno y aquí hace falta explicar en una línea para qué sirve el
+    nombre (lo ven los demás dispositivos) y que no cambia nada de la
+    sincronización.
+    """
     import tkinter as tk
     from tkinter import ttk
 
@@ -405,6 +446,7 @@ def pedir_nombre(parent, actual: str) -> str | None:
     entrada.grid(row=2, column=0, sticky="w", pady=(14, 0))
 
     def aceptar() -> None:
+        """Guarda el nombre escrito y cierra; sin nombre no hace nada."""
         limpio = texto.get().strip()
         if not limpio:
             return          # sin nombre no se guarda nada: el de antes vale más

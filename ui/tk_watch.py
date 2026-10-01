@@ -1,21 +1,20 @@
 #!/usr/bin/env python3
-"""
-tk_watch.py — La pantalla del arranque automático (penwatch.py).
+"""La pantalla del arranque automático (`penwatch.py`).
 
-Solo dibuja. Lo que sabe de penwatch está en `ui/watch.py`, y la división es la
-misma de siempre: lo que se lee (estado, detección) se pregunta en el sitio, y lo
-que escribe en el equipo (instalar, desinstalar) se lanza como proceso y su
-salida se enseña en la ventana de salida de siempre. Así se ve exactamente lo que
-ha hecho, igual que cuando se lanza una sincronización.
+Solo dibuja. Lo que sabe de penwatch está en `ui/watch.py` y la división es la
+misma de siempre: lo que se lee (estado, detección) se pregunta en el sitio, y
+lo que escribe en el equipo (instalar, desinstalar) se lanza como proceso y su
+salida se enseña en la ventana de salida de siempre. Así se ve exactamente lo
+que ha hecho, igual que cuando se lanza una sincronización.
 
-Lo que el diseño cambia aquí es de dónde se lee cada cosa: el estado deja de ser
-una lista de pares «etiqueta: valor» a secas y pasa a una tarjeta donde lo que se
-mira de un vistazo —si está instalado, si la tarea está activa, si el dispositivo se ve
-ahora mismo— son chips, y el resto texto normal.
+Lo que el diseño cambia aquí es de dónde se lee cada cosa: el estado deja de
+ser una lista de pares «etiqueta: valor» a secas y pasa a una tarjeta donde lo
+que se mira de un vistazo (si está instalado, si la tarea está activa, si el
+dispositivo se ve ahora mismo) son chips, y el resto texto normal.
 
 Aquí solo se decide QUÉ se hace al enchufar. Las parejas y el intervalo son los
-del servicio, que se eligen en la ventana principal y viajan con el dispositivo:
-el servicio es uno, se arranque a mano o al enchufar.
+del servicio, que se eligen en la ventana principal y viajan con el
+dispositivo: el servicio es uno, se arranque a mano o al enchufar.
 """
 
 from __future__ import annotations
@@ -23,25 +22,27 @@ from __future__ import annotations
 from . import theme, watch
 from .tk import TITLE, cabecera, cuerpo_visible, modal, mostrar, output_window
 
-# Las filas de estado que además de un valor llevan un veredicto, y por eso se
-# pintan como chip en vez de como texto. La clave es la etiqueta tal cual la
-# devuelve `penwatch.status_rows()`; lo que no esté aquí sale como texto, así que
-# añadir una fila allí no rompe nada aquí.
-#
-#   etiqueta -> (resumen si va bien, resumen si no, qué palabra decide)
 CHIPS = {
     "Registro en el sistema": ("activo", "sin registrar", "NO registrada"),
     "Vigilante": ("en marcha", "parado", "parado"),
     "Dispositivo ahora mismo": ("visible", "no se ve", "no detectado"),
 }
+"""Las filas de estado que llevan un veredicto y se pintan como chip.
+
+Además de un valor, llevan un veredicto. La clave es la etiqueta tal cual la
+devuelve `penwatch.status_rows()`; lo que no esté aquí sale como texto, así que
+añadir una fila allí no rompe nada aquí. Cada valor es: el resumen si va bien,
+el resumen si no y qué palabra decide.
+"""
 
 
 def _chip_de(etiqueta: str, valor: str):
-    """El chip que le toca a una fila de estado, o None si es texto normal.
+    """Devuelve el chip que le toca a una fila de estado, o `None` si es texto normal.
 
     Se decide por la palabra que penwatch usa para el caso malo y no por la
-    buena: los valores buenos traen detalles pegados (el pid, la ruta del dispositivo) y
-    buscar en ellos sería adivinar."""
+    buena: los valores buenos traen detalles pegados (el pid, la ruta del
+    dispositivo) y buscar en ellos sería adivinar.
+    """
     regla = CHIPS.get(etiqueta)
     if regla is None:
         return None
@@ -52,6 +53,7 @@ def _chip_de(etiqueta: str, valor: str):
 
 
 def open_dialog(parent) -> None:
+    """Abre la pantalla del vigilante."""
     from tkinter import messagebox, ttk
 
     dlg = modal(parent, "Arranque automático")
@@ -83,6 +85,7 @@ def open_dialog(parent) -> None:
     diario.grid(row=3, column=0, sticky="ew")
 
     def pintar(filas, titulo: str, lineas: list[str]) -> None:
+        """Pinta las filas de estado y el texto de debajo."""
         for hijo in tarjeta.winfo_children():
             hijo.destroy()
         for i, (etiqueta, valor) in enumerate(filas):
@@ -116,6 +119,7 @@ def open_dialog(parent) -> None:
         diario.configure(state="disabled")
 
     def ver_estado() -> None:
+        """Pinta el estado del vigilante y su diario."""
         pintar(watch.status_rows(), "Diario del vigilante", watch.log_tail())
         if chip_estado["widget"] is not None:
             chip_estado["widget"].destroy()
@@ -127,20 +131,24 @@ def open_dialog(parent) -> None:
         instalar_btn.configure(text="Reinstalar…" if puesto else "Instalar…")
 
     def ver_deteccion() -> None:
+        """Pinta dónde se ha buscado el dispositivo."""
         filas = [(raiz, nota) for raiz, nota in watch.probe_rows()]
         pintar(filas, "Dónde se ha buscado el dispositivo", [])
 
     def lanzar(cmd: list[str], titulo: str) -> None:
+        """Lanza una orden en la ventana de salida y repinta el estado."""
         output_window(titulo, cmd, parent=dlg)
         ver_estado()
 
     def instalar() -> None:
+        """Pide las opciones e instala el vigilante."""
         opciones = formulario_instalacion(dlg)
         if opciones is None:
             return
         lanzar(watch.install_command(**opciones), "instalar el vigilante")
 
     def desinstalar() -> None:
+        """Pide confirmación y desinstala el vigilante."""
         if not watch.is_installed():
             messagebox.showinfo(TITLE, "En este equipo no hay nada instalado.", parent=dlg)
             return
@@ -174,7 +182,7 @@ def open_dialog(parent) -> None:
 
 
 def formulario_instalacion(parent) -> dict | None:
-    """Las opciones de `penwatch install`. None si se cancela."""
+    """Devuelve las opciones de `penwatch install`, o `None` si se cancela."""
     import tkinter as tk
     from tkinter import ttk
 
@@ -192,6 +200,7 @@ def formulario_instalacion(parent) -> dict | None:
         row=1, column=0, columnspan=3, sticky="w", pady=(5, 14))
 
     def etiqueta(texto: str, en: int, arriba: bool = False) -> None:
+        """Pone la etiqueta de un campo en la columna de la izquierda."""
         ttk.Label(marco, text=texto, style="Campo.TLabel", anchor="e",
                   width=22).grid(row=en, column=0, sticky="ne" if arriba else "e",
                                  padx=(0, 12), pady=(5, 0) if arriba else 3)
@@ -237,7 +246,9 @@ def formulario_instalacion(parent) -> dict | None:
     fila += 1
 
     def aceptar():
+        """Guarda las opciones del formulario y lo cierra."""
         def numero(var):
+            """Devuelve el número que hay en el campo, o `None` si no lo es."""
             try:
                 return float(var.get().replace(",", "."))
             except ValueError:
@@ -266,12 +277,13 @@ def formulario_instalacion(parent) -> dict | None:
 
 
 def open_agente(parent, res: watch.Resumen) -> str | None:
-    """«Qué hace el agente» con esta raíz: el sucesor de la pantalla del
-    vigilante cuando hay agente residente. Devuelve el modo pedido, o None.
+    """Abre «Qué hace el agente» con esta raíz y devuelve el modo pedido, o `None`.
 
-    No escribe la configuración del equipo: se lo pide al agente por su buzón
+    Es el sucesor de la pantalla del vigilante cuando hay agente residente. No
+    escribe la configuración del equipo: se lo pide al agente por su buzón
     (`watch.pedir_modo`), que lo aplica en unos segundos. Con la unidad fuera
-    de su lista, elegir un modo es decirle que sí desde aquí."""
+    de su lista, elegir un modo es decirle que sí desde aquí.
+    """
     import tkinter as tk
     from tkinter import messagebox, ttk
 
@@ -315,6 +327,7 @@ def open_agente(parent, res: watch.Resumen) -> str | None:
         fila += 1
 
     def aceptar() -> None:
+        """Le pide el modo al agente y cierra la pantalla."""
         if not watch.pedir_modo(modo.get()):
             messagebox.showerror(TITLE, "No he podido dejarle la petición al agente.",
                                  parent=dlg)

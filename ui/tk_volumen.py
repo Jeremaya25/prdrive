@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
-"""
-tk_volumen.py — «Nombre e icono de la unidad»: cómo la enseña el Explorador.
+"""«Nombre e icono de la unidad»: cómo la enseña el Explorador.
 
 Solo dibuja. Qué hay puesto, qué se puede poner y cómo se escribe lo decide
 `ui/volumen.py`, que no importa Tk y se prueba sin pantalla.
 
-Cuelga de «Ajustes» porque se hace una vez —o cuando se tiene un segundo
-dispositivo y hace falta distinguirlos—, no cada vez que se sincroniza.
+Cuelga de «Ajustes» porque se hace una vez (o cuando se tiene un segundo
+dispositivo y hace falta distinguirlos), no cada vez que se sincroniza.
 
-Tres cosas se dicen en la propia ventana porque sin ellas parece que no funciona:
-el Explorador lee el fichero **al llegar la unidad**, así que el cambio se ve la
-próxima vez que se conecte, no al pulsar «Guardar»; con BitLocker no lo lee
-mientras esté bloqueada; y con VeraCrypt lo que cambia es la unidad que se
-enchufa, no el volumen que aparece al abrir el contenedor.
+Tres cosas se dicen en la propia ventana porque sin ellas parece que no
+funciona: el Explorador lee el fichero **al llegar la unidad**, así que el
+cambio se ve la próxima vez que se conecte y no al pulsar «Guardar»; con
+BitLocker no lo lee mientras esté bloqueada; y con VeraCrypt lo que cambia es
+la unidad que se enchufa, no el volumen que aparece al abrir el contenedor.
 """
 
 from __future__ import annotations
@@ -22,13 +21,16 @@ from common import autorun
 from . import icons, theme, volumen
 from .tk import TITLE, cabecera, corto, cuerpo_visible, modal, mostrar, working
 
-# El lado de las muestras de color, en medidas del diseño.
 MUESTRA = 32
+"""El lado de las muestras de color, en medidas del diseño."""
 
 
 def open_dialog(parent) -> None:
-    """Abre la ventana. No devuelve nada: lo que cambia es un fichero de la
-    raíz de la unidad, y nada de lo que enseña la ventana principal depende de él."""
+    """Abre la ventana; no devuelve nada.
+
+    Lo que cambia es un fichero de la raíz de la unidad y nada de lo que enseña
+    la ventana principal depende de él.
+    """
     import tkinter as tk
     from tkinter import filedialog, messagebox, ttk
 
@@ -45,11 +47,12 @@ def open_dialog(parent) -> None:
                                                       sticky="w")
 
     def etiqueta(texto: str, fila: int, arriba: bool = False) -> None:
+        """Pone la etiqueta de un campo en la columna de la izquierda."""
         ttk.Label(marco, text=texto, style="Campo.TLabel").grid(
             row=fila, column=0, sticky="nw" if arriba else "w", padx=(0, 14),
             pady=(18, 0))
 
-    # --- el nombre ---------------------------------------------------------
+    # El nombre.
     etiqueta("Nombre", 1)
     nombre = tk.StringVar(value=estado.nombre)
     ttk.Entry(marco, textvariable=nombre, width=autorun.MAX_NOMBRE + 2).grid(
@@ -58,7 +61,7 @@ def open_dialog(parent) -> None:
               text=f"Hasta {autorun.MAX_NOMBRE} caracteres. Vacío, el que le "
                    "ponga Windows.").grid(row=2, column=1, sticky="w", pady=(4, 0))
 
-    # --- el icono ----------------------------------------------------------
+    # El icono.
     etiqueta("Icono", 3, arriba=True)
     eleccion = tk.StringVar(value=estado.clave)
     iconos = ttk.Frame(marco)
@@ -98,6 +101,7 @@ def open_dialog(parent) -> None:
                         else "")
 
     def elegir() -> None:
+        """Deja elegir un `.ico` propio y lo lee."""
         ruta = filedialog.askopenfilename(
             parent=dlg, title="Un icono para la unidad",
             filetypes=[("Iconos de Windows", "*.ico"), ("Todos los ficheros", "*")])
@@ -125,7 +129,7 @@ def open_dialog(parent) -> None:
                     variable=eleccion).grid(row=fila, column=0, columnspan=3,
                                             sticky="w")
 
-    # --- dónde se escribe y cuándo se ve ------------------------------------
+    # Dónde se escribe y cuándo se ve.
     inf = estado.raiz / autorun.FICHERO
     if estado.fisica:
         donde = (f"Se guarda en {inf}, fuera del contenedor, con el icono al "
@@ -146,6 +150,7 @@ def open_dialog(parent) -> None:
                                                  sticky="w", pady=(18, 0))
 
     def guardar() -> None:
+        """Guarda el nombre y el icono, en un hilo, y cierra la ventana."""
         try:
             texto = volumen.revisar_nombre(nombre.get())
         except volumen.VolumenError as e:

@@ -1,24 +1,23 @@
 #!/usr/bin/env python3
-"""
-tk_doctor.py — «Ajustes»: lo que se hace de vez en cuando y no cada vez.
+"""«Ajustes»: lo que se hace de vez en cuando y no cada vez.
 
-Hasta aquí «Doctor» era un botón que lanzaba `sync.py --doctor` y nada más. Se
-convirtió en una pantalla por una razón concreta: la ventana principal ya está
-llena —sus avisos, la lista de parejas, el intervalo, tres botones y dos
-acciones— y todo lo que se hace una vez en la vida del dispositivo tiene que
-caber en algún sitio que no sea esa ventana. Esta es ese sitio.
+Era «Doctor», un botón que lanzaba `sync.py --doctor` y nada más. Se convirtió
+en una pantalla por una razón concreta: la ventana principal ya está llena (sus
+avisos, la lista de parejas, el intervalo, tres botones y dos acciones) y todo
+lo que se hace una vez en la vida del dispositivo tiene que caber en algún
+sitio que no sea esa ventana. Esta es ese sitio.
 
 En la ventana se llama «Ajustes», detrás de un engranaje, y no «Doctor»: el
-doctor es una de sus entradas —la primera—, no la pantalla, y aquí es donde irá
+doctor es una de sus entradas (la primera), no la pantalla, y aquí es donde irá
 también lo que se configure. El módulo conserva su nombre porque el subcomando
 `sync.py --doctor` no cambia y porque es a esta pantalla a la que apunta el
 rediseño de la pantalla de reparación.
 
 Solo dibuja, y menos que ninguna otra: no lee estado, no escribe nada y no
-decide nada. Cada entrada es un botón y una frase que dice qué pasa al pulsarlo;
-lo que pasa lo hace el módulo de turno. La única casilla, «Pedir la contraseña
-al iniciar sesión» de la raíz cifrada de un equipo, también: lo que vale y cómo
-se le pide al agente es de `ui/watch.py`.
+decide nada. Cada entrada es un botón y una frase que dice qué pasa al
+pulsarlo; lo que pasa lo hace el módulo de turno. La única casilla, «Pedir la
+contraseña al iniciar sesión» de la raíz cifrada de un equipo, también: lo que
+vale y cómo se le pide al agente es de `ui/watch.py`.
 
 `lanzar` llega desde la ventana principal en vez de importarse: la comprobación
 se enseña en su ventana de salida, que es hija de la principal y no de esta, y
@@ -33,7 +32,6 @@ from common.model import Config
 from . import theme, watch
 from .tk import TITLE, cabecera, cuerpo_visible, modal, mostrar, separador_fila
 
-# rótulo del botón, icono, frase, clave de la acción
 ENTRADAS = (
     ("Reparación…", "doctor",
      "Lo que está mal en este dispositivo y qué hacer con ello: baselines que no "
@@ -53,20 +51,27 @@ ENTRADAS = (
      "distinguir un dispositivo de otro a simple vista.",
      "volumen"),
 )
+"""Las entradas de la pantalla: rótulo del botón, icono, frase y clave de la acción."""
 
 
 def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None,
                 abrir_reparacion=None) -> None:
-    """Abre «Ajustes». `lanzar(titulo, args)` es el de la ventana principal.
+    """Abre «Ajustes»; no devuelve nada.
 
-    No devuelve nada: de aquí no sale ninguna decisión que quien llama tenga que
-    repintar. Lo que cambia estado —si algún día algo lo hace— abrirá su propia
-    ventana y se encargará él.
+    De aquí no sale ninguna decisión que quien llama tenga que repintar. Lo que
+    cambia estado (si algún día algo lo hace) abrirá su propia ventana y se
+    encargará él.
 
-    `abrir_reparacion` llega de la ventana principal por lo mismo que `lanzar`:
-    «Reparación» puede acabar lanzando una pasada, y su ventana de salida es
-    hija de la principal, no de esta. Además esta se cierra antes de abrirla,
-    para no tener dos modales disputándose la captura del ratón."""
+    Args:
+        config: La configuración, que se pasa a las pantallas que la necesitan.
+        lanzar: `lanzar(titulo, args)`, el de la ventana principal.
+        raw_local: El `sync_config.toml` en crudo, para el emparejamiento.
+        abrir_reparacion: Llega de la ventana principal por lo mismo que
+            `lanzar`: «Reparación» puede acabar lanzando una pasada y su
+            ventana de salida es hija de la principal, no de esta. Además esta
+            se cierra antes de abrirla, para no tener dos modales disputándose
+            la captura del ratón.
+    """
     from tkinter import ttk
 
     dlg = modal(parent, "Ajustes")
@@ -79,22 +84,28 @@ def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None,
              ancho=560, estilo="Dialogo.TLabel").grid(row=0, column=0, sticky="w")
 
     def reparacion() -> None:
-        """«Reparación» se abre desde la principal y por eso esta se cierra
-        antes: son dos modales, y la de allí puede abrir a su vez la ventana de
-        salida, que es hija de la principal."""
+        """Cierra «Ajustes» y abre «Reparación».
+
+        Se abre desde la principal y por eso esta se cierra antes: son dos
+        modales y la de allí puede abrir a su vez la ventana de salida, que es
+        hija de la principal.
+        """
         dlg.destroy()
         if abrir_reparacion is not None:
             abrir_reparacion()
 
     def emparejar() -> None:
+        """Abre el emparejamiento de un móvil."""
         from . import tk_qr
         tk_qr.open_dialog(dlg, raw_local)
 
     def versiones() -> None:
+        """Abre las versiones guardadas."""
         from . import tk_versions
         tk_versions.open_dialog(dlg, config)
 
     def nombre_e_icono() -> None:
+        """Abre el nombre y el icono de la unidad."""
         from . import tk_volumen
         tk_volumen.open_dialog(dlg)
 
@@ -123,7 +134,7 @@ def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None,
     # La raíz cifrada de este equipo: si el agente pide su contraseña al
     # iniciar sesión. Es un ajuste del EQUIPO y no de la raíz, así que no se
     # escribe aquí: se le pide al agente por su buzón. Así lo tiene también
-    # quien no tiene bandeja (Linux, hasta la fase 6).
+    # quien no tiene bandeja.
     pedir = watch.pedir_al_iniciar()
     fila_pie = 2
     if pedir is not None:
@@ -136,6 +147,7 @@ def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None,
         marcada = tk.BooleanVar(value=pedir)
 
         def cambiar() -> None:
+            """Le pide al agente el ajuste y, si no ha podido, deshace la casilla."""
             if not watch.pedir_ajuste("pedir_al_iniciar", bool(marcada.get())):
                 marcada.set(not marcada.get())
                 messagebox.showerror(TITLE, "No he podido dejarle la petición al "

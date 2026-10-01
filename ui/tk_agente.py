@@ -1,21 +1,20 @@
 #!/usr/bin/env python3
-"""
-tk_agente.py — «Se ha conectado PRDRIVE-2. ¿Atenderla en este equipo?»
+"""«Se ha conectado PRDRIVE-2. ¿Atenderla en este equipo?»
 
 La ventanita con la que el agente pregunta por una unidad que no conoce. Solo
 dibuja: el agente la lanza como proceso hijo (`agente.py pregunta`) para no
-cargar Tk nunca en su propio proceso, y lee la respuesta en el código de salida:
+cargar Tk nunca en su propio proceso y lee la respuesta en el código de salida:
 
     0  «Atender»
     1  «Ahora no», o cerrada sin contestar, o la cuenta atrás llegó a cero
     2  no se ha podido abrir (sin Tk o sin pantalla)
 
-Quién lleva el reloj es el agente (`planificador.Pregunta`), no esta ventana: la
-cuenta atrás es para que se vea, y al llegar a cero se cierra sola. Si alguien
-contesta tarde, el agente no le hace caso; para eso está la entrada de la
-bandeja.
+Quién lleva el reloj es el agente (`planificador.Pregunta`) y no esta ventana:
+la cuenta atrás es para que se vea y al llegar a cero se cierra sola. Si
+alguien contesta tarde, el agente no le hace caso; para eso está la entrada de
+la bandeja.
 
-Antes del sí no se ejecuta nada de la unidad, y esta ventana tampoco: el nombre
+Antes del sí no se ejecuta nada de la unidad y esta ventana tampoco: el nombre
 le llega por argumento, leído por el agente de `state/fleet.json`.
 
 Con `cambiada`, la unidad ya estaba en la lista pero su código no es el que se
@@ -28,17 +27,21 @@ from __future__ import annotations
 from . import icons, theme
 
 ATENDER, AHORA_NO, SIN_VENTANA = 0, 1, 2
+"""Los códigos de salida: `ATENDER`, `AHORA_NO` y `SIN_VENTANA`."""
 
 
 def cuenta(segundos: int) -> str:
-    """El texto de la cuenta atrás: «Se cierra sola en 1:45 …»."""
+    """Devuelve el texto de la cuenta atrás.
+
+    Dice, por ejemplo, «Si no contestas, en 1:45 se cierra sola…».
+    """
     segundos = max(0, int(segundos))
     return (f"Si no contestas, en {segundos // 60}:{segundos % 60:02d} se cierra "
             "sola y cuenta como «Ahora no».")
 
 
 def texto(cambiada: bool) -> tuple[str, str]:
-    """El título (con `{nombre}`) y la explicación de la pregunta."""
+    """Devuelve el título (con `{nombre}`) y la explicación de la pregunta."""
     if cambiada:
         return ("{nombre}: su código ha cambiado",
                 "Esta unidad ya estaba en la lista, pero su programa no es el que "
@@ -53,9 +56,17 @@ def texto(cambiada: bool) -> tuple[str, str]:
 
 def construir(root, nombre: str, segundos: int, responder,
               cambiada: bool = False) -> dict:
-    """Pinta la pregunta dentro de `root` y devuelve sus piezas vivas (para la
-    cuenta atrás y para los tests). `responder(código)` cierra con esa
-    respuesta."""
+    """Pinta la pregunta dentro de `root` y devuelve sus piezas vivas.
+
+    Las piezas son para la cuenta atrás y para los tests.
+
+    Args:
+        root: Donde se pinta.
+        nombre: El nombre de la unidad.
+        segundos: La cuenta atrás.
+        responder: `responder(código)` cierra con esa respuesta.
+        cambiada: Si la unidad ya estaba en la lista pero con otro código.
+    """
     from tkinter import ttk
 
     from . import tk as tkui
@@ -87,7 +98,11 @@ def construir(root, nombre: str, segundos: int, responder,
 
 
 def preguntar(nombre: str, segundos: int, cambiada: bool = False) -> int:
-    """Abre la ventana y espera la respuesta. Lanza si no hay Tk o pantalla."""
+    """Abre la ventana, espera la respuesta y devuelve su código de salida.
+
+    Raises:
+        Exception: Si no hay Tk o pantalla.
+    """
     import gc
     import tkinter as tk
 
@@ -105,6 +120,7 @@ def preguntar(nombre: str, segundos: int, cambiada: bool = False) -> int:
         root.withdraw()
 
         def responder(codigo: int) -> None:
+            """Guarda la respuesta y cierra la ventana."""
             respuesta[0] = codigo
             root.destroy()
 
@@ -113,6 +129,10 @@ def preguntar(nombre: str, segundos: int, cambiada: bool = False) -> int:
         quedan = [max(0, int(segundos))]
 
         def tic() -> None:
+            """Resta un segundo a la cuenta atrás.
+
+            Al llegar a cero cierra con «Ahora no».
+            """
             quedan[0] -= 1
             if quedan[0] <= 0:
                 responder(AHORA_NO)
@@ -141,6 +161,7 @@ def preguntar(nombre: str, segundos: int, cambiada: bool = False) -> int:
 
 
 def main(nombre: str, segundos: int, cambiada: bool = False) -> int:
+    """Pregunta y devuelve el código de salida; sin ventana, `SIN_VENTANA`."""
     try:
         return preguntar(nombre, segundos, cambiada)
     except Exception:                                   # noqa: BLE001

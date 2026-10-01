@@ -1,32 +1,30 @@
 #!/usr/bin/env python3
-"""
-tk_repair.py — «Reparación»: lo que está mal y qué hacer con ello.
+"""«Reparación»: lo que está mal y qué hacer con ello.
 
 Solo dibuja. Qué está mal lo dice `common/revision.py` y qué se puede hacer con
-ello lo decide `ui/repair.py`; aquí se pinta una fila por avería con su botón al
-lado, y se pide confirmación con `tk_pairs.confirmar_plan()`, que es la misma
+ello lo decide `ui/repair.py`; aquí se pinta una fila por avería con su botón
+al lado y se pide confirmación con `tk_pairs.confirmar_plan()`, que es la misma
 ventana que gobierna todos los borrados de la aplicación.
 
-Esta pantalla sustituye a tres recuadros ámbar de la ventana principal —los
-fallos, los conflictos y el aviso de resync—, que apilados dejaban de ser
-jerarquía para ser ruido. Allí queda una línea que dice cuántas cosas hay y trae
-aquí.
+Esta pantalla sustituye a tres recuadros ámbar de la ventana principal (los
+fallos, los conflictos y el aviso de resync), que apilados dejaban de ser
+jerarquía para ser ruido. Allí queda una línea que dice cuántas cosas hay y
+trae aquí.
 
-Dos cosas que no puede hacer y son a propósito:
-
-  * **No repara sola.** Ni al abrirse ni al pulsar: todo plan enseña sus
-    consecuencias y espera un sí. Apartar un baseline es la operación que puede
-    acabar en un borrado masivo, y por eso se quitó el renombrado automático de
-    listados.
-  * **No repara mientras se sincroniza.** Mover ficheros o apartar un baseline
-    bajo los pies de rclone es exactamente lo que no puede pasar, así que la
-    ventana principal no deja abrir esto durante una pasada y `repair` vuelve a
-    mirarlo antes de borrar un bloqueo.
+Hay dos cosas que no puede hacer, a propósito:
+- **No repara sola.** Ni al abrirse ni al pulsar: todo plan enseña sus
+  consecuencias y espera un sí. Apartar un baseline es la operación que puede
+  acabar en un borrado masivo, y por eso se quitó el renombrado automático de
+  listados.
+- **No repara mientras se sincroniza.** Mover ficheros o apartar un baseline
+  bajo los pies de rclone es exactamente lo que no puede pasar, así que la
+  ventana principal no deja abrir esto durante una pasada y `repair` vuelve a
+  mirarlo antes de borrar un bloqueo.
 
 `lanzar` llega de la ventana principal, como en «Ajustes»: la salida de una
-pasada se enseña en la ventana de salida, que es hija de la principal y se apaga
-sola mientras hay otra en curso. Esta pantalla se cierra antes de ceder el paso,
-porque dos modales no pueden tener la captura a la vez.
+pasada se enseña en la ventana de salida, que es hija de la principal y se
+apaga sola mientras hay otra en curso. Esta pantalla se cierra antes de ceder
+el paso, porque dos modales no pueden tener la captura a la vez.
 """
 
 from __future__ import annotations
@@ -37,32 +35,41 @@ from common.model import Config
 from . import abrir, icons, repair, theme
 from .tk import TITLE, cabecera, cuerpo_visible, modal, mostrar, separador_fila
 
-# gravedad -> (icono, estilo del chip, rótulo del chip)
 SEMAFORO = {
     revision.GRAVE: ("warn", "Peligro.", "grave"),
     revision.AVISO: ("warn", "Aviso.", "hay que hacer algo"),
     revision.NOTA: ("clock", "Apagado.", "se arregla sola"),
 }
+"""Por gravedad: el icono, el estilo del chip y el rótulo del chip."""
 
 TODO_BIEN = ("No hay nada que revisar: las parejas tienen su baseline, no hay "
              "conflictos y la última pasada de cada una fue bien.")
+"""Lo que se dice cuando no hay nada que revisar."""
 
-# Qué botón lleva cada avería. Lo que no está aquí no tiene botón, y eso también
-# es una respuesta: la carpeta local que falta no se arregla creándola.
 BOTONES = {
     "prefijo": "Apartar el baseline…",
     "lock": "Borrar los bloqueos…",
     "resync": "Resincronizar…",
     "fallo": "Ver el log",
 }
+"""Qué botón lleva cada avería.
+
+Lo que no está aquí no tiene botón, y eso también es una respuesta: la carpeta
+local que falta no se arregla creándola.
+"""
 
 
 def open_dialog(parent, config: Config, lanzar, marcadas=None) -> bool:
-    """Abre «Reparación». Devuelve True si se ha cambiado algo del dispositivo,
-    para que quien llama vuelva a leer `state/` y repinte.
+    """Abre «Reparación» y devuelve si se ha cambiado algo del dispositivo.
 
-    `marcadas` son las parejas elegidas en la ventana principal: es lo que se
-    simula si se pide una pasada de prueba. Sin ellas, todas."""
+    Es `True` para que quien llama vuelva a leer `state/` y repinte.
+
+    Args:
+        config: La configuración del dispositivo.
+        lanzar: `lanzar(titulo, args)`, el de la ventana principal.
+        marcadas: Las parejas elegidas en la ventana principal; es lo que se
+            simula si se pide una pasada de prueba. Sin ellas, todas.
+    """
     from tkinter import messagebox, ttk
 
     from . import tk_conflicts, tk_pairs
@@ -82,10 +89,10 @@ def open_dialog(parent, config: Config, lanzar, marcadas=None) -> bool:
     tarjeta.grid(row=1, column=0, sticky="ew", pady=(16, 0))
     tarjeta.columnconfigure(0, weight=1)
 
-    # --- las acciones ------------------------------------------------------------
+    # Las acciones.
 
     def aplicar(hallazgo) -> None:
-        """Un plan de disco: se piensa, se enseña y solo entonces se ejecuta."""
+        """Hace un plan de disco: se piensa, se enseña y solo entonces se ejecuta."""
         try:
             plan = repair.plan_para(config, hallazgo)
         except repair.ReparacionImposible as e:
@@ -105,10 +112,12 @@ def open_dialog(parent, config: Config, lanzar, marcadas=None) -> bool:
         messagebox.showinfo(TITLE, "\n".join(hechos) or "Hecho.", parent=dlg)
 
     def resincronizar(hallazgo) -> None:
-        """Esto no es un plan de disco: es una pasada de rclone, con su log y su
-        registro, así que se lanza en la ventana de salida como cualquier otra.
-        La confirmación se hace igual, que un resync compara los dos lados
-        enteros."""
+        """Pide confirmación y lanza el resync en la ventana de salida.
+
+        No es un plan de disco sino una pasada de rclone, con su log y su
+        registro, así que se lanza como cualquier otra. La confirmación se hace
+        igual, que un resync compara los dos lados enteros.
+        """
         if not tk_pairs.confirmar_plan(dlg, repair.aviso_resync(hallazgo),
                                        f"Resincronizar «{hallazgo.pareja}»", ""):
             return
@@ -117,6 +126,7 @@ def open_dialog(parent, config: Config, lanzar, marcadas=None) -> bool:
         lanzar(f"Resincronizar «{hallazgo.pareja}»", repair.args_resync(hallazgo))
 
     def ver_log(hallazgo) -> None:
+        """Abre el log de la pasada que falló, si quedó."""
         ruta = hallazgo.dato[0] if hallazgo.dato else None
         if ruta is None:
             messagebox.showinfo(TITLE, "De aquella pasada no quedó log: solo se "
@@ -132,9 +142,10 @@ def open_dialog(parent, config: Config, lanzar, marcadas=None) -> bool:
     ACCIONES = {"prefijo": aplicar, "lock": aplicar,
                 "resync": resincronizar, "fallo": ver_log}
 
-    # --- la lista de averías ------------------------------------------------------
+    # La lista de averías.
 
     def fila(padre, hallazgo, linea: int) -> int:
+        """Pinta una avería con su detalle y devuelve la siguiente fila libre."""
         icono, chip, rotulo = SEMAFORO.get(hallazgo.gravedad, SEMAFORO[revision.AVISO])
         cabeza = ttk.Frame(padre, style="Plano.Card.TFrame")
         cabeza.grid(row=linea, column=0, sticky="ew", pady=(8, 0))
@@ -168,8 +179,9 @@ def open_dialog(parent, config: Config, lanzar, marcadas=None) -> bool:
         """Vuelve a mirar el dispositivo y redibuja la lista.
 
         Se relee entero en vez de tachar la fila que se acaba de arreglar: una
-        reparación cambia el estado, y lo que había antes en la pantalla es de
-        antes. Que la lista encoja es la señal de que ha funcionado."""
+        reparación cambia el estado y lo que había antes en la pantalla es de
+        antes. Que la lista encoja es la señal de que ha funcionado.
+        """
         for hijo in tarjeta.winfo_children():
             hijo.destroy()
         try:
@@ -203,15 +215,17 @@ def open_dialog(parent, config: Config, lanzar, marcadas=None) -> bool:
             visor.encajar(dlg)
 
     def al_resolver() -> None:
+        """Anota el cambio y repinta tras resolver un conflicto."""
         estado["cambiado"] = True
         repintar()
 
     conflictos = tk_conflicts.seccion(marco, dlg, config, al_resolver)
     conflictos.grid(row=2, column=0, sticky="ew", pady=(18, 0))
 
-    # --- el pie ------------------------------------------------------------------
+    # El pie.
 
     def simular() -> None:
+        """Cierra y lanza una pasada de mentira de las parejas marcadas."""
         nombres = list(marcadas or [p.name for p in config.pairs])
         if not nombres:
             return
@@ -219,6 +233,7 @@ def open_dialog(parent, config: Config, lanzar, marcadas=None) -> bool:
         lanzar("Simulación", repair.args_simular(nombres))
 
     def informe() -> None:
+        """Cierra y lanza el informe completo del estado (`--doctor`)."""
         dlg.destroy()
         lanzar("Informe del estado", ["--doctor"])
 

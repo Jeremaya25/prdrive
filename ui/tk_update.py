@@ -1,32 +1,30 @@
 #!/usr/bin/env python3
-"""
-tk_update.py — La pantalla de «hay versión nueva».
+"""La pantalla de «hay versión nueva».
 
 Solo dibuja. Lo que sabe de versiones, descargas y verificación está en
 `common/update.py`, que no importa Tk y se prueba sin ventana.
 
-El reparto de las tres formas de enseñar algo en marcha es el de siempre:
-
-  * la descarga va en `working()` —son unos segundos y no tienen nada que
-    contar—,
-  * y la instalación en `output_window()`, porque sustituir ficheros dentro del
-    dispositivo es exactamente lo que hay que poder mirar. Es la misma decisión
-    que toma `tk_watch` al lanzar `penwatch install`.
+El reparto de las formas de enseñar algo en marcha es el de siempre:
+- La descarga va en `working()`: son unos segundos y no tienen nada que contar.
+- La instalación va en `output_window()`, porque sustituir ficheros dentro del
+  dispositivo es exactamente lo que hay que poder mirar. Es la misma decisión
+  que toma `tk_watch` al lanzar `penwatch install`.
 
 Y al terminar bien no se vuelve aquí: se relanza el programa y se cierra la
-ventana. No es una cortesía, es obligatorio: este proceso tiene cargados en
-memoria los módulos que se acaban de sustituir en disco.
+ventana. No es una cortesía sino algo obligatorio: este proceso tiene cargados
+en memoria los módulos que se acaban de sustituir en disco.
 
 Aquí viven las dos pantallas de actualizar, que son la misma historia contada
 dos veces: `open_dialog()` cambia el PROGRAMA y `open_components_dialog()` los
-COMPONENTES —el rclone y el Python que el dispositivo lleva dentro—. Las dos
-bajan el mismo zip del código y lanzan el mismo `prdrive-install.py` descargado,
-porque `install/` no viaja al dispositivo. La diferencia de fondo: sustituir el
-programa obliga a reabrir la ventana (sus módulos ya no son los de disco);
-sustituir los componentes no, porque nada de lo que se toca está cargado en
-memoria. Salvo el Python con el que corre esta ventana, que no se puede cambiar
-con ella abierta: ése lo cambia un relevo que corre desde el temporal del
-equipo, después de que la ventana se cierre, y que la vuelve a abrir.
+COMPONENTES (el rclone y el Python que el dispositivo lleva dentro). Las dos
+bajan el mismo zip del código y lanzan el mismo `prdrive-install.py`
+descargado, porque `install/` no viaja al dispositivo. La diferencia de fondo:
+sustituir el programa obliga a reabrir la ventana (sus módulos ya no son los de
+disco); sustituir los componentes no, porque nada de lo que se toca está
+cargado en memoria. Salvo el Python con el que corre esta ventana, que no se
+puede cambiar con ella abierta: ése lo cambia un relevo que corre desde el
+temporal del equipo, después de que la ventana se cierre, y que la vuelve a
+abrir.
 """
 
 from __future__ import annotations
@@ -44,18 +42,19 @@ from . import prefs, theme
 from .tk import (TITLE, bloque_aviso, cabecera, cuerpo_visible, modal, mostrar,
                  output_window, working)
 
-# Lo que devuelve `open_components_dialog()` cuando la ventana tiene que cerrarse.
 CERRAR = "cerrar"
+"""Lo que devuelve `open_components_dialog()` cuando la ventana tiene que cerrarse."""
 
 
 def servicio_vivo() -> bool:
-    """¿Hay un servicio periódico corriendo en este equipo ahora mismo?
+    """Indica si hay un servicio periódico corriendo en este equipo ahora mismo.
 
-    `ui_flow()` lo para antes de abrir la ventana, pero `stop_previous_daemon()`
-    se rinde a los 15 segundos y devuelve un mensaje conforme si el servicio
-    está a media pareja. Ese es el único caso en que actualizar pilla a otro
-    proceso usando el código, así que se avisa. Avisar y no impedir: es raro, y
-    quien decide es quien mira."""
+    `ui_flow()` lo para antes de abrir la ventana, pero
+    `stop_previous_daemon()` se rinde a los 15 segundos y devuelve un mensaje
+    conforme si el servicio está a media pareja. Ese es el único caso en que
+    actualizar pilla a otro proceso usando el código, así que se avisa. Se
+    avisa y no se impide: es raro y quien decide es quien mira.
+    """
     info = store.read_json(model.STATE_DIR / "daemon.lock.json")
     try:
         return (info.get("host") == prefs.HOST
@@ -65,7 +64,7 @@ def servicio_vivo() -> bool:
 
 
 def open_dialog(parent, nueva) -> bool:
-    """La pantalla. Devuelve True si se ha actualizado y hay que cerrar todo."""
+    """Abre la pantalla y devuelve si se ha actualizado y hay que cerrar todo."""
     from tkinter import messagebox, ttk
 
     if nueva is None:
@@ -87,7 +86,7 @@ def open_dialog(parent, nueva) -> bool:
     theme.chip(arriba, nueva.version, "Acento.").grid(row=0, column=1,
                                                       sticky="ne", pady=(4, 0))
 
-    # --- qué se sustituye y qué se conserva ----------------------------------
+    # Qué se sustituye y qué se conserva.
     tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(14, 12))
     tarjeta.grid(row=1, column=0, sticky="ew", pady=(16, 0))
     tarjeta.columnconfigure(1, weight=1)
@@ -124,8 +123,12 @@ def open_dialog(parent, nueva) -> bool:
                      ancho=520).grid(row=fila, column=0, sticky="ew", pady=(14, 0))
         fila += 1
 
-    # --- lo que hace el botón ------------------------------------------------
+    # Lo que hace el botón.
     def actualizar() -> None:
+        """Descarga la versión, la instala y relanza el programa.
+
+        La instalación se ve en la ventana de salida.
+        """
         if not messagebox.askokcancel(TITLE, (
                 f"Se va a sustituir el programa de este dispositivo por la "
                 f"{nueva.tag}.\n\n"
@@ -194,14 +197,15 @@ def open_dialog(parent, nueva) -> bool:
 
 
 def open_components_dialog(parent, pends) -> bool | str:
-    """La pantalla de «los componentes están anticuados».
+    """Abre la pantalla de «los componentes están anticuados».
 
-    Devuelve True si se ha tocado algo, para que la ventana relea los sellos y
-    repinte. No hace falta reabrir el programa, a diferencia de la otra: lo que
-    se sustituye son binarios que este proceso no tiene cargados en memoria.
-    La excepción es el Python con el que corre esta misma ventana: entonces
-    devuelve `CERRAR`, y quien llama cierra la ventana para que el relevo lo
-    cambie y la reabra."""
+    Devuelve `True` si se ha tocado algo, para que la ventana relea los sellos
+    y repinte. No hace falta reabrir el programa, a diferencia de la otra: lo
+    que se sustituye son binarios que este proceso no tiene cargados en
+    memoria. La excepción es el Python con el que corre esta misma ventana:
+    entonces devuelve `CERRAR` y quien llama cierra la ventana para que el
+    relevo lo cambie y la reabra.
+    """
     from tkinter import messagebox, ttk
 
     if not pends:
@@ -219,7 +223,7 @@ def open_components_dialog(parent, pends) -> bool | str:
              "esta versión del programa.", ancho=520,
              estilo="Dialogo.TLabel").grid(row=0, column=0, sticky="w")
 
-    # --- qué lleva y qué toca ------------------------------------------------
+    # Qué lleva y qué toca.
     tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(14, 12))
     tarjeta.grid(row=1, column=0, sticky="ew", pady=(16, 0))
     tarjeta.columnconfigure(1, weight=1)
@@ -232,7 +236,7 @@ def open_components_dialog(parent, pends) -> bool | str:
                   wraplength=theme.medida(340), justify="left").grid(
             row=i, column=1, sticky="w", pady=(0, 6))
 
-    # --- qué respalda la descarga, sin adornos -------------------------------
+    # Qué respalda la descarga, sin adornos.
     notas = ttk.Frame(marco, style="Gris.TFrame", padding=(12, 10))
     notas.grid(row=2, column=0, sticky="ew", pady=(14, 0))
     notas.columnconfigure(0, weight=1)
@@ -268,6 +272,7 @@ def open_components_dialog(parent, pends) -> bool | str:
     propio = components.propio(pends)
 
     def actualizar() -> None:
+        """Descarga el instalador y pone los componentes en la ventana de salida."""
         aviso = ("Se van a sustituir los componentes que lleva este dispositivo "
                  "por los que fija esta versión del programa.\n\n"
                  "El programa, tu configuración, tus claves y tus datos no se "

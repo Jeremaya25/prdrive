@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
-"""
-tk_conflicts.py — Los ficheros en conflicto, dentro de «Reparación».
+"""Los ficheros en conflicto, dentro de «Reparación».
 
-Solo dibuja. Qué versión es de quién lo sabe `common/conflicts.py`, y qué pasa
+Solo dibuja. Qué versión es de quién lo sabe `common/conflicts.py` y qué pasa
 en disco al elegir una lo decide `ui/conflict_editor.py`. El guion es el de la
 pantalla de parejas: se pide un plan, se enseñan sus consecuencias en
-`tk_pairs.confirmar_plan()` —la misma ventana que gobierna los demás borrados de
-la aplicación— y solo si el usuario dice que sí se ejecuta.
+`tk_pairs.confirmar_plan()` (la misma ventana que gobierna los demás borrados
+de la aplicación) y solo si la persona dice que sí se ejecuta.
 
 **Esto ya no es una ventana suelta**: era una modal a la que solo se llegaba
-desde un recuadro ámbar de la ventana principal, o sea por un susto y no por una
-tarea. Un fichero en conflicto es una avería como las demás, así que vive donde
-las demás: `seccion()` devuelve el bloque y quien lo coloca es `tk_repair`.
+desde un recuadro ámbar de la ventana principal, o sea por un susto y no por
+una tarea. Un fichero en conflicto es una avería como las demás, así que vive
+donde las demás: `seccion()` devuelve el bloque y quien lo coloca es
+`tk_repair`.
 
 La lista es un árbol: cada fichero en conflicto con sus versiones debajo, cada
 una con su tamaño y su fecha, que es lo que hace falta para elegir. El sufijo
-con el que rclone renombró la copia no aparece por ningún lado: la etiqueta dice
-«versión de este dispositivo» o «versión del remoto», y el que quiera ver los
-ficheros tiene «Abrir la carpeta».
+con el que rclone renombró la copia no aparece por ningún lado: la etiqueta
+dice «versión de este dispositivo» o «versión del remoto» y quien quiera ver
+los ficheros tiene «Abrir la carpeta».
 """
 
 from __future__ import annotations
@@ -35,21 +35,29 @@ COLUMNAS = [
     ("tamano", "Tamaño", 90),
     ("fecha", "Modificada", 140),
 ]
+"""Las columnas de la lista: clave, título y ancho en medidas del diseño."""
 
 NOTA = "Solo cambian ficheros de este dispositivo"
+"""Lo que se dice siempre al confirmar: solo se tocan ficheros de este dispositivo."""
 
 EXPLICACION = ("Cambiaron en los dos lados entre dos pasadas. rclone se quedó con "
                "la más reciente y guardó la otra al lado: elige con cuál te "
                "quedas, y la próxima sincronización lo lleva al remoto.")
+"""Lo que se explica sobre qué es un conflicto."""
 
 
 def seccion(padre, ventana, config: Config,
             al_cambiar: Callable[[], None] | None = None):
-    """El bloque de conflictos, listo para colocar con `grid`.
+    """Devuelve el bloque de conflictos, listo para colocar con `grid`.
 
-    `ventana` es de quien cuelgan los diálogos (el aviso de error, la
-    confirmación del plan); `al_cambiar` lo llama cuando se ha resuelto algo,
-    para que quien lo enseñe pueda repintar su cuenta."""
+    Args:
+        padre: Donde se pinta el bloque.
+        ventana: De quien cuelgan los diálogos (el aviso de error, la
+            confirmación del plan).
+        config: La configuración del dispositivo.
+        al_cambiar: Lo llama cuando se ha resuelto algo, para que quien lo
+            enseñe pueda repintar su cuenta.
+    """
     from tkinter import messagebox, ttk
 
     from . import tk_pairs
@@ -88,17 +96,21 @@ def seccion(padre, ventana, config: Config,
     vacio = ttk.Label(marco, text="No queda ningún fichero en conflicto.",
                       style="Pista.TLabel")
 
-    # --- qué hay elegido --------------------------------------------------------
+    # Qué hay elegido.
 
     def elegido():
-        """(conflicto, versión) de la fila elegida; la versión es None si la
-        fila es la del fichero y no una de sus versiones."""
+        """Devuelve el conflicto y la versión de la fila elegida.
+
+        La versión es `None` si la fila es la del fichero y no una de sus
+        versiones.
+        """
         seleccion = tree.selection()
         if not seleccion:
             return None, None
         return estado["filas"].get(seleccion[0], (None, None))
 
     def repasar_botones(_evento=None) -> None:
+        """Habilita cada botón según lo que hay elegido."""
         conflicto, version = elegido()
         for boton, lado in ((conservar_aqui, conflicts.DISPOSITIVO),
                             (conservar_remoto, conflicts.REMOTO)):
@@ -109,9 +121,12 @@ def seccion(padre, ventana, config: Config,
             boton.configure(state="normal" if conflicto is not None else "disabled")
 
     def refrescar(nota: str = "", escanear: bool = False) -> None:
-        """Repinta la lista. Con `escanear`, recorre de nuevo las parejas que
-        tenían conflictos: después de resolver uno hay que ver cómo ha quedado
-        el disco, no lo que decía el escaneo anterior."""
+        """Repinta la lista.
+
+        Con `escanear`, recorre de nuevo las parejas que tenían conflictos:
+        después de resolver uno hay que ver cómo ha quedado el disco y no lo
+        que decía el escaneo anterior.
+        """
         if escanear:
             nombres = {x.pareja for x in estado["conflictos"]}
             for nombre in nombres:
@@ -146,9 +161,10 @@ def seccion(padre, ventana, config: Config,
         pie_nota.configure(text=nota)
         repasar_botones()
 
-    # --- las acciones ------------------------------------------------------------
+    # Las acciones.
 
     def resolver(pensar, titulo: str) -> None:
+        """Pide el plan, lo confirma y lo ejecuta."""
         try:
             plan = pensar()
         except conflict_editor.ResolucionImposible as e:
@@ -167,6 +183,7 @@ def seccion(padre, ventana, config: Config,
             al_cambiar()
 
     def por_lado(lado: str) -> None:
+        """Resuelve quedándose con la versión de un lado."""
         conflicto, _ = elegido()
         if conflicto is None:
             return
@@ -174,6 +191,7 @@ def seccion(padre, ventana, config: Config,
                  f"Quedarse con la {conflict_editor.ETIQUETA_LADO[lado]}")
 
     def la_elegida() -> None:
+        """Resuelve quedándose con la versión elegida en la lista."""
         conflicto, version = elegido()
         if version is None:
             return
@@ -181,6 +199,7 @@ def seccion(padre, ventana, config: Config,
                  f"Quedarse con la {conflict_editor.etiqueta(conflicto, version)}")
 
     def abrir_todo(que) -> None:
+        """Abre lo que devuelva `que(conflicto)` con el programa del sistema."""
         conflicto, _ = elegido()
         if conflicto is None:
             return
