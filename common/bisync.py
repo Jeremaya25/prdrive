@@ -1,23 +1,19 @@
 #!/usr/bin/env python3
-"""
-bisync.py — Todo lo que replica el comportamiento interno de rclone bisync.
+"""Todo lo que replica el comportamiento interno de `rclone bisync`.
 
-Aquí vive la parte incómoda del proyecto, y vive junta a propósito: bisync guarda
-su baseline en ficheros cuyo nombre deduce de los dos extremos, y no perdona que
+Aquí vive la parte incómoda del proyecto, y junta a propósito: bisync guarda su
+baseline en ficheros cuyo nombre deduce de los dos extremos y no perdona que
 ese nombre cambie. Saber calcular ANTES de ejecutar el nombre que rclone va a
-buscar es lo que permite decidir si el baseline que hay en disco sirve para esta
-pareja o hay que apartarlo y rehacerlo (`ui/pair_editor.py`).
+buscar permite decidir si el baseline que hay en disco sirve para esta pareja o
+hay que apartarlo y rehacerlo (`ui/pair_editor.py`).
 
-Lo que YA NO hay es un renombrado automático de los listados. Existió mientras el
-nombre dependía de dónde estuviera montado el dispositivo (`F:` un día, `G:` al
-siguiente), y era un apaño peligroso: renombrar es decirle a bisync que el
+Los listados NO se renombran jamás: renombrar es decirle a bisync que el
 listado del destino ANTERIOR describe el NUEVO, y no hay forma de distinguir el
-caso benigno del maligno. Desde que el lado local va como `device_remote` —un
-remote 'combine' propio— el nombre no depende de la máquina, así que la herida
-está cerrada y la venda sobra.
+caso benigno del maligno. El nombre no depende de la máquina porque el lado
+local va como `device_remote` (un remote `combine` propio).
 
-Cada apartado cita el fichero de rclone cuyo comportamiento imita. Si se toca
-algo de aquí, es contra esas fuentes contra lo que hay que contrastarlo.
+Cada apartado cita el fichero de rclone cuyo comportamiento imita: es contra
+esas fuentes contra lo que hay que contrastar cualquier cambio.
 """
 
 from __future__ import annotations
@@ -37,30 +33,27 @@ PATH1_SUFFIX = ".path1.lst"
 PATH2_SUFFIX = ".path2.lst"
 ERR_SUFFIX = ".lst-err"
 
-# El mensaje con el que rclone se queja de que no encuentra el baseline.
 MISSING_LISTINGS = "cannot find prior Path1 or Path2 listings"
+"""Mensaje con el que rclone se queja de que no encuentra el baseline."""
 
-
-# ---------------------------------------------------------------------------
-# Nombre de sesión
-#
-# Réplica exacta de cmd/bisync/bilib/canonical.go (rclone master):
-#
-#   FsPath(f)        -> "F:\ruta\" para el backend local, "remote:ruta/" para el resto
-#   CanonicalPath(s) -> quita / y \ de los extremos y sustituye [\s\\/:?*] por _
-#   SessionName      -> CanonicalPath(path1) + ".." + CanonicalPath(path2), sin el
-#                       sufijo {hexstring} que rclone añade cuando la config del
-#                       remote viene de flags/env/connection string.
-# ---------------------------------------------------------------------------
 
 _NON_CANONICAL = re.compile(r"[\s\\/:?*]")
 
 
 def canonical_path(remote: str) -> str:
+    r"""Réplica de `CanonicalPath` (cmd/bisync/bilib/canonical.go, rclone master).
+
+    Quita `/` y `\` de los extremos y sustituye `[\s\\/:?*]` por `_`.
+    """
     return _NON_CANONICAL.sub("_", remote.strip("\\/"))
 
 
 def strip_hex_string(path: str) -> str:
+    """Quita el sufijo `{hexstring}` que rclone añade a la ruta.
+
+    rclone lo añade cuando la config del remote viene de flags, entorno o
+    connection string.
+    """
     opening, closing = path.find("{"), path.find("}")
     if opening >= 0 and closing > opening:
         return path[:opening] + path[closing + 1:]
@@ -68,6 +61,11 @@ def strip_hex_string(path: str) -> str:
 
 
 def fs_path_local(p: str) -> str:
+    r"""Réplica de `FsPath` de canonical.go para el backend local: `F:\ruta\`.
+
+    Termina siempre en el separador del sistema; en Windows quita el prefijo
+    `\\?\`.
+    """
     sep = os.sep
     if os.name == "nt":
         p = p.replace("/", sep)
@@ -77,16 +75,23 @@ def fs_path_local(p: str) -> str:
 
 
 def fs_path_remote(s: str) -> str:
+    """Réplica de `FsPath` de canonical.go para el resto de backends: `remote:ruta/`."""
     return s if s.endswith("/") else s + "/"
 
 
 def session_name(path1: str, path2: str) -> str:
+    """Réplica de `SessionName` de canonical.go.
+
+    Es `CanonicalPath(path1) + ".." + CanonicalPath(path2)`, sin el sufijo
+    `{hexstring}`.
+    """
     return strip_hex_string(canonical_path(path1)) + ".." + strip_hex_string(canonical_path(path2))
 
 
 def expected_prefix(pair: Pair) -> str:
-    """Nombre base (.path1.lst / .path2.lst) que rclone buscará para esta pareja."""
+    """Devuelve el nombre base de los `.path1.lst` y `.path2.lst` que rclone buscará."""
     def render(kind: str) -> str:
+        """Devuelve el extremo tal como lo escribe rclone al nombrar la sesión."""
         endpoint = pair.endpoint(kind)
         if kind == "local" and not pair.device_remote:
             return fs_path_local(endpoint)
@@ -95,54 +100,60 @@ def expected_prefix(pair: Pair) -> str:
     return session_name(render(pair.mode.source), render(pair.mode.dest))
 
 
-# ---------------------------------------------------------------------------
-# Filtros
-#
-# bisync guarda el md5 del fichero de filtros JUNTO AL PROPIO FICHERO
-# (filtersFile + ".md5", ver cmd/bisync/cmd.go: applyFilters) y solo lo escribe
-# durante un --resync. Si el fichero cambia sin resync, aborta con error crítico.
-# Aquí se compara el md5 ANTES de ejecutar y se trata como "hace falta resync",
-# que es una conversación y no un log rojo.
-# ---------------------------------------------------------------------------
-
 FILTERS_HEADER = (
     "# Generado por sync.py desde sync_config.toml. No editar a mano:\n"
     "# se regenera en cada ejecución. Cambiar los patrones exige --resync."
 )
+"""Cabecera del fichero de filtros generado."""
 
 
 class FiltersState(NamedTuple):
-    status: str          # 'ok' | 'new' | 'changed'
+    """Si el fichero de filtros coincide con el que se usó en el último resync.
+
+    Args:
+        status: `ok`, `new` (sin hash previo) o `changed`.
+        detail: Frase que lo explica.
+    """
+    status: str
     detail: str
 
     @property
     def needs_resync(self) -> bool:
+        """Indica si hace falta un `--resync` por culpa de los filtros."""
         return self.status != "ok"
 
 
 def filters_content(pair: Pair) -> str:
+    """Devuelve el contenido del fichero de filtros de la pareja.
+
+    Las reglas van en orden de prioridad: gana la primera que casa.
+    """
     lines = [FILTERS_HEADER]
     if pair.versions:
-        # Esta regla NO es filtrado: es la condición que pone rclone para dejar
-        # que `.prversions/` viva dentro del pair. Sin ella, `--backup-dir1`
-        # solapa con Path1 y la pasada muere con «destination and parameter to
-        # --backup-dir mustn't overlap», error crítico que además invalida el
-        # baseline. Va la PRIMERA porque rclone aplica las reglas en orden y gana
-        # la que casa antes: detrás de un `+ **/*.md` no excluiría nada.
+        # No es filtrado: es la condición de rclone para que `.prversions/`
+        # viva dentro del pair. Sin ella `--backup-dir1` solapa con Path1 y la
+        # pasada muere con «destination and parameter to --backup-dir mustn't
+        # overlap», error crítico que invalida el baseline. Va PRIMERA: rclone
+        # aplica las reglas en orden y detrás de un `+ **/*.md` no excluiría
+        # nada.
         lines.append(f"- {model.VERSIONS_DIR}/**")
     lines += [f"+ {p}" for p in pair.includes]
     lines += [f"- {p}" for p in pair.excludes]
     if pair.includes:
-        # Igual que --include: si hay reglas '+', todo lo demás queda fuera.
+        # Como `--include`: si hay reglas `+`, todo lo demás queda fuera.
         lines.append("- **")
     return "\n".join(lines) + "\n"
 
 
 def filters_file_for(pair: Pair) -> Path | None:
-    """Genera (si hace falta) filters/<pareja>.txt y devuelve su ruta.
+    """Genera `filters/<pareja>.txt` si hace falta y devuelve su ruta.
 
-    El contenido es determinista: si no cambia, no se reescribe el fichero, para
-    no gastar ciclos del dispositivo ni invalidar el md5 sin motivo."""
+    El contenido es determinista: si no cambia no se reescribe el fichero, para
+    no gastar ciclos del dispositivo ni invalidar el md5 sin motivo.
+
+    Returns:
+        La ruta, o `None` si la pareja no usa fichero de filtros.
+    """
     if not pair.wants_filters_file:
         return None
 
@@ -155,7 +166,17 @@ def filters_file_for(pair: Pair) -> Path | None:
 
 
 def filters_state(ffile: Path | None) -> FiltersState:
-    """Compara el fichero de filtros con el .md5 que dejó el último resync."""
+    """Compara el fichero de filtros con el `.md5` que dejó el último resync.
+
+    bisync guarda el md5 junto al propio fichero (`filtersFile + ".md5"`,
+    cmd/bisync/cmd.go: `applyFilters`) y solo lo escribe durante un `--resync`;
+    si el fichero cambia sin resync aborta con error crítico. Aquí se compara
+    ANTES de ejecutar y se trata como «hace falta resync», que es una
+    conversación y no un log rojo.
+
+    Args:
+        ffile: El fichero de filtros, o `None` si la pareja no tiene.
+    """
     if ffile is None:
         return FiltersState("ok", "sin fichero de filtros")
     digest = hashlib.md5(ffile.read_bytes()).hexdigest()
@@ -167,33 +188,38 @@ def filters_state(ffile: Path | None) -> FiltersState:
     return FiltersState("ok", f"{ffile.name} sin cambios")
 
 
-# ---------------------------------------------------------------------------
-# Estado del baseline
-# ---------------------------------------------------------------------------
-
 class PairState(NamedTuple):
-    status: str          # 'fresh' | 'ok' | 'broken'
+    """El estado real del baseline de una pareja.
+
+    Args:
+        status: `fresh` (sin listados), `ok` o `broken`.
+        detail: Frase que lo explica.
+        prefix: Prefijo de los listados; solo con `status == "ok"`.
+    """
+    status: str
     detail: str
-    prefix: str | None   # solo cuando status == 'ok'
+    prefix: str | None
 
     @property
     def has_baseline(self) -> bool:
+        """Indica si hay un baseline utilizable."""
         return self.status == "ok"
 
 
 def _prefixes(paths: list[Path], suffix: str) -> set[str]:
+    """Devuelve los prefijos de los listados, sin el sufijo `suffix`."""
     return {p.name[: -len(suffix)] for p in paths}
 
 
 def pair_state(pair: Pair) -> PairState:
-    """El estado real del baseline, mirando los .lst que hay en el workdir."""
+    """Devuelve el estado real del baseline, mirando los `.lst` del workdir."""
     workdir = pair.workdir
     if not workdir.exists():
         return PairState("fresh", "sin workdir (nunca sincronizada)", None)
 
-    # OJO al orden: los .lst-err NO los limpia nadie (rclone solo renombra
-    # .lst -> .lst-err al abortar; ver cmd/bisync/operations.go). Si después hay
-    # un juego de listados válido, el baseline es bueno y esos son residuo.
+    # Los `.lst-err` no los limpia nadie (rclone solo renombra `.lst` a
+    # `.lst-err` al abortar; cmd/bisync/operations.go): si después hay un juego
+    # de listados válido, el baseline es bueno y esos son residuo.
     path1 = sorted(workdir.glob("*" + PATH1_SUFFIX))
     path2 = sorted(workdir.glob("*" + PATH2_SUFFIX))
     errors = sorted(workdir.glob("*" + ERR_SUFFIX))
@@ -219,13 +245,17 @@ def pair_state(pair: Pair) -> PairState:
 
 
 def last_run(pair: Pair) -> float | None:
-    """Cuándo fue la última pasada buena, o None si no hay forma de saberlo.
+    """Devuelve cuándo fue la última pasada buena.
 
-    No existe un registro de pasadas y no hace falta inventarlo: bisync reescribe
-    sus dos listados justo al terminar bien (ver cmd/bisync/operations.go), así
-    que la fecha del más nuevo ES la de la última sincronización correcta. Fuera
-    de bisync no queda rastro —un `copy` no deja estado—, y esas parejas se
-    quedan sin hora antes que enseñar una inventada."""
+    No hay registro de pasadas ni hace falta inventarlo: bisync reescribe sus
+    dos listados justo al terminar bien (cmd/bisync/operations.go), así que la
+    fecha del más nuevo ES la de la última sincronización correcta. Fuera de
+    bisync no queda rastro (un `copy` no deja estado) y esas parejas se quedan
+    sin hora antes que enseñar una inventada.
+
+    Returns:
+        La marca de tiempo, o `None` si no se puede saber.
+    """
     if not pair.is_bisync:
         return None
     try:
@@ -233,15 +263,19 @@ def last_run(pair: Pair) -> float | None:
                   for sufijo in (PATH1_SUFFIX, PATH2_SUFFIX)
                   for p in pair.workdir.glob("*" + sufijo)]
     except OSError:
-        return None                      # el dispositivo ya no está: no es asunto de aquí
+        return None  # el dispositivo ya no está
     return max(marcas) if marcas else None
 
 
 def resync_reasons(pair: Pair, state: PairState | None = None) -> list[str]:
-    """Por qué esta pareja necesita --resync. Lista vacía = no lo necesita.
+    """Devuelve por qué esta pareja necesita `--resync`.
 
-    `state` se puede pasar ya calculado: quien acaba de mirarlo no tiene por qué
-    volver a recorrer el workdir."""
+    Args:
+        state: El estado ya calculado, para no recorrer otra vez el workdir.
+
+    Returns:
+        Los motivos; lista vacía si no lo necesita (también fuera de bisync).
+    """
     if not pair.is_bisync:
         return []
     if state is None:
@@ -255,13 +289,12 @@ def resync_reasons(pair: Pair, state: PairState | None = None) -> list[str]:
     return reasons
 
 
-# ---------------------------------------------------------------------------
-# Reparaciones del baseline
-# ---------------------------------------------------------------------------
-
 def migrate_legacy_state(pair: Pair) -> None:
-    """Mueve los listados del layout antiguo (todo suelto en state/) al workdir
-    por pareja, identificando la pareja por el token del remoto en el nombre."""
+    """Mueve los listados del layout antiguo al workdir de la pareja.
+
+    El layout antiguo los tenía sueltos en `state/`. La pareja se identifica
+    por el token del remoto en el nombre; si no es inequívoca no se toca nada.
+    """
     workdir = pair.workdir
     if workdir.exists() and any(workdir.glob("*.lst")):
         return
@@ -285,10 +318,11 @@ def migrate_legacy_state(pair: Pair) -> None:
 
 
 def pair_state_paths(name: str) -> list[Path]:
-    """Lo que hay en disco atado a esa pareja: su workdir y su fichero de filtros.
+    """Devuelve lo que hay en disco atado a esa pareja.
 
-    Sirve para avisar de qué queda huérfano al quitar una pareja, y para
-    limpiarlo si se pide."""
+    Son su workdir y su fichero de filtros. Sirve para avisar de qué queda
+    huérfano al quitar una pareja y para limpiarlo si se pide.
+    """
     encontrados = [model.STATE_DIR / name]
     encontrados += [model.FILTERS_DIR / f"{name}.txt",
                     model.FILTERS_DIR / f"{name}.txt.md5"]
@@ -296,20 +330,21 @@ def pair_state_paths(name: str) -> list[Path]:
 
 
 def shelve_baseline(name: str) -> Path | None:
-    """Aparta el baseline de una pareja: state/<n>/ -> state/<n>.old-<fecha>/.
+    """Aparta el baseline de una pareja: `state/<n>/` pasa a `state/<n>.old-<fecha>/`.
 
-    Es lo que hay que hacer cuando cambia un EXTREMO de la pareja (local, remote,
-    remote_path o mode). Reaprovechar los listados con el prefijo nuevo —lo que
-    hacía el renombrado automático que ya no existe— le estaría diciendo a bisync
-    que el listado del destino VIEJO describe el destino NUEVO, y todo lo que no
-    esté en el nuevo se leería como borrado y se propagaría al otro lado.
-    Apartándolo, la pareja queda 'fresh' y exige un --resync explícito, que es
-    una conversación.
+    Es lo que hay que hacer cuando cambia un EXTREMO de la pareja (`local`,
+    `remote`, `remote_path` o `mode`): reaprovechar los listados con el prefijo
+    nuevo diría a bisync que el listado del destino VIEJO describe el NUEVO, y
+    todo lo que falte en el nuevo se leería como borrado y se propagaría.
+    Apartándolo, la pareja queda `fresh` y exige un `--resync` explícito.
 
     Se renombra en vez de borrar por si hay que volver atrás; el directorio
-    apartado queda inerte, porque lo que recorre state/ solo mira su primer nivel.
+    apartado queda inerte porque lo que recorre `state/` solo mira su primer
+    nivel.
 
-    Devuelve dónde ha quedado, o None si no había baseline que apartar."""
+    Returns:
+        Dónde ha quedado, o `None` si no había baseline que apartar.
+    """
     workdir = model.STATE_DIR / name
     if not workdir.is_dir():
         return None
@@ -324,14 +359,17 @@ def shelve_baseline(name: str) -> Path | None:
 
 
 def rename_pair_state(old: str, new: str) -> list[tuple[Path, Path]]:
-    """Mueve el estado de una pareja cuando solo le cambia el nombre.
+    """Mueve el estado de una pareja cuando solo cambia su nombre.
 
-    El prefijo de los listados NO depende del nombre (ver expected_prefix: sale de
-    los extremos), así que renombrar no invalida el baseline. Lo que sí cuelga del
-    nombre son las rutas: state/<nombre>/ y filters/<nombre>.txt, con su .md5 al
-    lado. Se mueven juntos para que el hash que guarda bisync siga cuadrando.
+    El prefijo de los listados NO depende del nombre (sale de los extremos:
+    `expected_prefix`), así que renombrar no invalida el baseline. Lo que
+    cuelga del nombre son `state/<nombre>/` y `filters/<nombre>.txt` con su
+    `.md5`, que se mueven juntos para que el hash que guarda bisync siga
+    cuadrando.
 
-    Devuelve los movimientos como (origen, destino) para poder deshacerlos."""
+    Returns:
+        Los movimientos como `(origen, destino)`, para poder deshacerlos.
+    """
     movimientos: list[tuple[Path, Path]] = []
     origen, destino = model.STATE_DIR / old, model.STATE_DIR / new
     if origen.is_dir() and not destino.exists():

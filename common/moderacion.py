@@ -1,22 +1,20 @@
 #!/usr/bin/env python3
-"""
-moderacion.py — Lo que el agente mide fuera antes de sincronizar.
+"""Lo que el agente mide fuera antes de sincronizar.
 
 El planificador (`common/planificador.py`) decide con datos; esto los consigue.
 Cada sonda es una función de módulo para que los tests pongan la suya, y
 ninguna lanza: no saber algo cuenta como «lo normal» (enchufado, red sin
 medir), porque dejar de sincronizar por una sonda rota sería peor que
 sincronizar en una red cara.
-
-  * `energia()`: ¿va a batería, y con cuánta? Windows con
-    `GetSystemPowerStatus`; Linux con `/sys/class/power_supply/*`.
-  * `red_medida()`: ¿es la red de uso medido? Windows con
-    `INetworkCostManager::GetCost` (COM por vtabla, como `IShellItem2` en
-    `install/crypto.py`); Linux con la propiedad `Metered` de NetworkManager,
-    leída con `common/dbus.py`. Sin NetworkManager no se sabe.
-  * `es_de_red(texto)`: ¿ese fallo de rclone es de la red? Son las mismas
-    agujas que `sync.KNOWN_ERRORS` usa para explicarlo, y viven aquí porque el
-    agente no lleva `sync.py`: lo que ejecuta es el de cada raíz.
+- `energia()`: ¿va a batería y con cuánta? Windows con `GetSystemPowerStatus`;
+  Linux con `/sys/class/power_supply/*`.
+- `red_medida()`: ¿es la red de uso medido? Windows con
+  `INetworkCostManager::GetCost` (COM por vtabla, como `IShellItem2` en
+  `install/crypto.py`); Linux con la propiedad `Metered` de NetworkManager,
+  leída con `common/dbus.py`. Sin NetworkManager no se sabe.
+- `es_de_red(texto)`: ¿ese fallo de rclone es de la red? Son las mismas agujas
+  que `sync.KNOWN_ERRORS` usa para explicarlo y viven aquí porque el agente no
+  lleva `sync.py`: lo que ejecuta es el de cada raíz.
 """
 
 from __future__ import annotations
@@ -27,17 +25,6 @@ from pathlib import Path
 
 IS_WIN = os.name == "nt"
 
-# --- Los fallos de red --------------------------------------------------------
-#
-# Lo que escriben rclone y Go cuando no llegan al otro lado: la resolución de
-# nombres (`net.DNSError`: «no such host», y en Windows «No such host is
-# known»), el dial que no conecta (`dial tcp`, «connection refused», «actively
-# refused it», «no route to host», «network is unreachable»), los plazos
-# (`--contimeout`: «i/o timeout»; los de contexto: «context deadline
-# exceeded»), el SFTP que no llega a abrir su SSH («couldn't connect SSH») y el
-# TLS que no termina su saludo. Todas son de CONEXIÓN: un remoto que contesta
-# con un error propio (credenciales, permisos, una ruta que no existe) no es un
-# problema de red y no tiene que marcarse «sin conexión».
 ERRORES_DE_RED = (
     "no such host",
     "temporary failure in name resolution",
@@ -52,25 +39,44 @@ ERRORES_DE_RED = (
     "couldn't connect ssh",
     "did not properly respond after a period of time",
 )
+"""Agujas, en minúsculas, de lo que escriben rclone y Go cuando no llegan al otro lado.
+
+Son la resolución de nombres (`net.DNSError`: «no such host» y, en Windows, «No
+such host is known»), el dial que no conecta (`dial tcp`, «connection refused»,
+«actively refused it», «no route to host», «network is unreachable»), los
+plazos (`--contimeout`: «i/o timeout»; los de contexto: «context deadline
+exceeded»), el SFTP que no llega a abrir su SSH («couldn't connect SSH») y el
+TLS que no termina su saludo.
+
+Todas son de CONEXIÓN: un remoto que contesta con un error propio
+(credenciales, permisos, una ruta que no existe) no es un problema de red y no
+tiene que marcarse «sin conexión».
+"""
 
 EXPLICACION_RED = (
     "No se ha podido llegar al remoto: sin red, el servidor apagado o un nombre "
     "que no se resuelve. No es un fallo de la pareja; cuando vuelva la conexión, "
     "la siguiente pasada seguirá donde lo dejó.")
+"""Lo que se le dice al usuario cuando un fallo es de red."""
 
 
 def es_de_red(texto: str) -> bool:
-    """¿Lo que ha escrito una pasada fallida dice que no llegó al remoto?"""
+    """Indica si lo que ha escrito una pasada fallida dice que no llegó al remoto."""
     bajo = texto.lower()
     return any(aguja in bajo for aguja in ERRORES_DE_RED)
 
 
-# --- La batería ----------------------------------------------------------------
-
 @dataclass(frozen=True)
 class Energia:
-    con_bateria: bool = False           # ¿está funcionando ahora a batería?
-    porcentaje: int | None = None       # None si no se sabe o no hay batería
+    """Cómo está la alimentación del equipo.
+
+    Args:
+        con_bateria: Si está funcionando ahora a batería.
+        porcentaje: Carga de la batería, o `None` si no se sabe o no hay
+            batería.
+    """
+    con_bateria: bool = False
+    porcentaje: int | None = None
 
 
 # Sustituible por los tests: dónde mira Linux.
@@ -78,7 +84,10 @@ POWER_SUPPLY = Path("/sys/class/power_supply")
 
 
 def energia() -> Energia:
-    """Cómo está la alimentación ahora. Nunca lanza: sin saberlo, enchufado."""
+    """Devuelve cómo está la alimentación ahora; nunca lanza.
+
+    Si no puede saberlo, devuelve «enchufado».
+    """
     try:
         return _energia_windows() if IS_WIN else _energia_linux()
     except Exception:                                   # noqa: BLE001
@@ -86,9 +95,11 @@ def energia() -> Energia:
 
 
 def _energia_windows() -> Energia:
+    """Lee la alimentación con `GetSystemPowerStatus`."""
     import ctypes
 
     class SYSTEM_POWER_STATUS(ctypes.Structure):
+        """Estructura `SYSTEM_POWER_STATUS` de Windows."""
         _fields_ = [("ACLineStatus", ctypes.c_ubyte), ("BatteryFlag", ctypes.c_ubyte),
                     ("BatteryLifePercent", ctypes.c_ubyte),
                     ("SystemStatusFlag", ctypes.c_ubyte),
@@ -98,8 +109,8 @@ def _energia_windows() -> Energia:
     estado = SYSTEM_POWER_STATUS()
     if not ctypes.windll.kernel32.GetSystemPowerStatus(ctypes.byref(estado)):
         return Energia()
-    # BatteryFlag 128: «No system battery». ACLineStatus 0: desenchufado; 255:
-    # desconocido. BatteryLifePercent 255: desconocido.
+    # `BatteryFlag` 128: «No system battery». `ACLineStatus` 0: desenchufado;
+    # 255: desconocido. `BatteryLifePercent` 255: desconocido.
     if estado.BatteryFlag == 128:
         return Energia()
     porcentaje = None if estado.BatteryLifePercent == 255 else int(estado.BatteryLifePercent)
@@ -107,6 +118,9 @@ def _energia_windows() -> Energia:
 
 
 def _leer(ruta: Path) -> str:
+    """Devuelve el contenido de un fichero de `/sys` sin espacios.
+    Vacío si no se lee.
+    """
     try:
         return ruta.read_text(encoding="ascii", errors="replace").strip()
     except OSError:
@@ -114,10 +128,13 @@ def _leer(ruta: Path) -> str:
 
 
 def _energia_linux() -> Energia:
-    """`type` dice qué es cada fuente: `Mains`/`USB` enchufada si `online` es 1;
-    `Battery` con su `capacity` y su `status` («Discharging» es ir a batería).
-    Las baterías de un ratón o un auriculares llevan `scope = Device`: no
-    alimentan el equipo y no cuentan."""
+    """Lee la alimentación de `/sys/class/power_supply`.
+
+    `type` dice qué es cada fuente: `Mains`/`USB` es enchufada si `online` es
+    1; `Battery` trae su `capacity` y su `status` («Discharging» es ir a
+    batería). Las baterías de un ratón o unos auriculares llevan `scope =
+    Device`: no alimentan el equipo y no cuentan.
+    """
     try:
         fuentes = sorted(POWER_SUPPLY.iterdir())
     except OSError:
@@ -148,16 +165,14 @@ def _energia_linux() -> Energia:
     return Energia(True, porcentaje)
 
 
-# --- La red de uso medido ------------------------------------------------------
-
 # NetworkManager, `NMMetered` (libnm/nm-dbus-interface.h): 0 desconocido, 1 sí,
 # 2 no, 3 se supone que sí, 4 se supone que no.
 NM_METERED_SI = (1, 3)
 NM = "org.freedesktop.NetworkManager"
 NM_RUTA = "/org/freedesktop/NetworkManager"
 
-# INetworkCostManager (netlistmgr.h): el CLSID de NetworkListManager y el IID
-# de la interfaz, y los bits de NLM_CONNECTION_COST.
+# `INetworkCostManager` (netlistmgr.h): el CLSID de `NetworkListManager`, el
+# IID de la interfaz y los bits de `NLM_CONNECTION_COST`.
 CLSID_NETWORK_LIST_MANAGER = "{DCB00C01-570F-4A9B-8D69-199FDBA5723B}"
 IID_INETWORK_COST_MANAGER = "{DCB00008-570F-4A9B-8D69-199FDBA5723B}"
 NLM_COST_UNRESTRICTED = 0x1
@@ -170,14 +185,20 @@ _COSTE_MEDIDO = (NLM_COST_FIXED | NLM_COST_VARIABLE | NLM_COST_OVERDATALIMIT
 
 
 def coste_medido(coste: int) -> bool:
-    """¿Ese `NLM_CONNECTION_COST` es una red de uso medido? Es lo que Windows
-    enseña como «conexión de uso medido»: tarifa fija o variable, pasado del
-    límite o en itinerancia."""
+    """Indica si ese `NLM_CONNECTION_COST` es una red de uso medido.
+
+    Es lo que Windows enseña como «conexión de uso medido»: tarifa fija o
+    variable, pasado del límite o en itinerancia.
+    """
     return bool(coste & _COSTE_MEDIDO)
 
 
 def red_medida() -> bool | None:
-    """¿Es de uso medido la red por la que sale el equipo? None si no se sabe."""
+    """Indica si es de uso medido la red por la que sale el equipo.
+
+    Returns:
+        True o False, o `None` si no se sabe.
+    """
     try:
         return _medida_windows() if IS_WIN else _medida_linux()
     except Exception:                                   # noqa: BLE001
@@ -185,6 +206,11 @@ def red_medida() -> bool | None:
 
 
 def _medida_linux() -> bool | None:
+    """Lee la propiedad `Metered` de NetworkManager por el bus del sistema.
+
+    Returns:
+        True o False, o `None` si NetworkManager no lo sabe.
+    """
     from . import dbus
     with dbus.Conexion.sistema() as bus:
         valor = bus.propiedad(NM, NM_RUTA, NM, "Metered", espera=2.0)
@@ -194,26 +220,37 @@ def _medida_linux() -> bool | None:
 
 
 def _medida_windows() -> bool | None:
+    """Pide el coste de la conexión a `INetworkCostManager` por COM.
+
+    Returns:
+        True o False, o `None` si no se puede saber.
+    """
     import ctypes
     from ctypes import POINTER, byref, c_void_p, c_wchar_p
     from ctypes.wintypes import DWORD, ULONG
 
     class GUID(ctypes.Structure):
+        """Estructura `GUID` de Windows."""
         _fields_ = [("Data1", ctypes.c_ulong), ("Data2", ctypes.c_ushort),
                     ("Data3", ctypes.c_ushort), ("Data4", ctypes.c_ubyte * 8)]
 
     ole32 = ctypes.windll.ole32
 
     def guid(texto: str) -> GUID:
+        """Convierte un texto `{...}` en un `GUID`.
+
+        Raises:
+            OSError: Si el texto no es un GUID.
+        """
         g = GUID()
         if ole32.CLSIDFromString(c_wchar_p(texto), byref(g)) < 0:
             raise OSError(f"GUID ilegible: {texto}")
         return g
 
     clsid, iid = guid(CLSID_NETWORK_LIST_MANAGER), guid(IID_INETWORK_COST_MANAGER)
-    # COINIT_MULTITHREADED: el agente no tiene ventana ni bucle de mensajes en
-    # este hilo. Un HRESULT negativo es que ya estaba en otro modelo, que sirve
-    # igual; solo se cierra lo que se abre aquí.
+    # `COINIT_MULTITHREADED`: el agente no tiene ventana ni bucle de mensajes
+    # en este hilo. Un HRESULT negativo es que ya estaba en otro modelo, que
+    # sirve igual; solo se cierra lo que se abre aquí.
     hr_init = ole32.CoInitializeEx(None, 0)
     try:
         objeto = c_void_p()

@@ -1,37 +1,34 @@
 #!/usr/bin/env python3
-"""
-pairing.py — La conexión de este dispositivo, empaquetada para que se la lleve
-otro aparato (hoy, un móvil) leyendo un código QR de la pantalla.
+"""La conexión de este dispositivo, empaquetada para llevársela a otro aparato.
 
-**Qué problema resuelve.** El dispositivo ya tiene todo lo que hace falta para
-hablar con el remoto: su `rclone.conf` y su clave en `keys/`. Un móvil no puede
-enchufarse a él, y teclear a mano el host, el usuario y —sobre todo— una clave
-privada de 400 bytes no es una opción. Así que se enseña en pantalla y se lee
-con la cámara, que es lo único que los dos aparatos tienen en común.
+Hoy ese aparato es un móvil que la lee de un código QR en pantalla. El
+dispositivo ya tiene todo lo necesario para hablar con el remoto (su
+`rclone.conf` y su clave en `keys/`); un móvil no puede enchufarse a él y
+teclear a mano el host, el usuario y una clave privada de 400 bytes no es una
+opción. Se enseña en pantalla y se lee con la cámara, que es lo único que los
+dos aparatos tienen en común.
 
-**El formato es el de `install/profile.py`, a propósito.** La carga útil es el
-TOML que escribe `profile.dumps()` con tres claves más —la marca, la clave
-privada en base64 y los known_hosts—, y como esas tres le sobran a
-`profile.loads()`, el MISMO texto se le puede pasar tal cual:
+El formato es el de `install/profile.py`, a propósito: la carga es el TOML que
+escribe `profile.dumps()` con tres claves más (la marca, la clave privada en
+base64 y los known_hosts). Como esas tres le sobran a `profile.loads()`, el
+MISMO texto se le puede pasar tal cual:
 
     carga = pairing.leer(texto)
     perfil = profile.loads(carga.texto, private_key=carga.private_key,
                            known_hosts=carga.known_hosts)
 
-No se inventa un formato nuevo porque ya hay uno que sabe leer el instalador, y
-dos formatos para la misma cosa acabarían separándose. `tests/test_qr.py` da esa
-vuelta completa y es lo que impide que se separen.
+No se inventa un formato nuevo porque ya hay uno que sabe leer el instalador y
+dos formatos para lo mismo acabarían separándose; `tests/test_qr.py` da la
+vuelta completa y lo impide.
 
-**Por qué esto vive en `common/` y no en `install/`.** `install/` no viaja al
-dispositivo —el actualizador se ejecuta desde la descarga, no desde el
-dispositivo—, y esto lo tiene que ejecutar la ventana de Doctor con el
-dispositivo puesto y sin red. Por la misma razón `parse_rclone_conf()` está aquí
-y `install/profile.py` lo importa de aquí: es el único lector de rclone.conf del
-proyecto, y duplicarlo sería exactamente lo que no se quiere.
+Vive en `common/` y no en `install/` porque `install/` no viaja al dispositivo
+y esto lo ejecuta la ventana de Doctor con el dispositivo puesto y sin red. Por
+la misma razón `parse_rclone_conf()` está aquí y `install/profile.py` lo
+importa: es el único lector de `rclone.conf` del proyecto.
 
-**Esto lleva la clave privada dentro.** No se guarda en ningún fichero, no se
-copia al portapapeles y no sale de la pantalla: `construir()` devuelve texto y
-quien lo llama lo dibuja. Quien lo enseña avisa.
+La carga lleva la clave privada dentro: no se guarda en ningún fichero, no se
+copia al portapapeles y no sale de la pantalla. `construir()` devuelve texto y
+quien lo llama lo dibuja y avisa.
 """
 
 from __future__ import annotations
@@ -44,38 +41,41 @@ from typing import Mapping
 from . import config_file, model
 from .catalog import DEFAULT_CATALOG_PATH
 
-# La marca y la versión del formato. Van dentro para que el lector pueda
-# rechazar de plano un QR que no es nuestro: una cámara apuntando a una pantalla
-# lee lo que le pongan delante, y «este código no es de prdrive» es un mensaje
-# mucho mejor que el error que daría intentar conectar con una URL.
 MARCA = "prdrive"
-FORMATO = 1
+"""Marca que va dentro de la carga para que el lector rechace un QR que no es nuestro.
 
-# Las dos opciones que no viajan: son rutas del disco de quien las escribió, y
-# en el aparato que las recibe valen otra cosa. Es la misma regla —y la misma
-# lista— que `profile.RUTAS_DERIVADAS`, que las deja fuera del perfil.
+Una cámara apuntando a una pantalla lee lo que le pongan delante, y «este
+código no es de prdrive» es mucho mejor mensaje que el error de conectar con
+una URL.
+"""
+FORMATO = 1
+"""Versión del formato de la carga."""
+
 RUTAS_DERIVADAS = ("key_file", "known_hosts_file")
+"""Opciones de rclone.conf que no viajan en la carga.
+
+Son rutas del disco de quien las escribió y en el aparato que las recibe valen
+otra cosa. Es la misma regla, y la misma lista, que `profile.RUTAS_DERIVADAS`.
+"""
 
 
 class PairingError(model.ConfigError):
-    """No se puede montar la carga: falta el rclone.conf, el remote o la clave.
+    """No se puede montar la carga: falta el `rclone.conf`, el remote o la clave.
 
     Hereda de `ConfigError` porque es lo mismo que le pasa al resto del
-    proyecto: un dispositivo mal montado o a medio provisionar. Y como
-    `ConfigError`, no mata el proceso —esto lo abre una ventana—."""
+    proyecto (un dispositivo mal montado o a medio provisionar) y, como ella,
+    no mata el proceso: esto lo abre una ventana.
+    """
 
-
-# ---------------------------------------------------------------------------
-# Leer un rclone.conf
-# ---------------------------------------------------------------------------
 
 def parse_rclone_conf(text: str) -> dict[str, dict[str, str]]:
-    """{nombre: {opción: valor}} de un rclone.conf.
+    """Devuelve `{nombre: {opción: valor}}` de un `rclone.conf`.
 
-    A mano y no con `configparser` porque rclone escribe algún valor con `%`
-    dentro (los `%` de las plantillas de nombre) y `configparser` los interpreta
-    como interpolación y revienta. El formato que hace falta entender es una
-    cabecera entre corchetes y `clave = valor`; nada más."""
+    Se lee a mano y no con `configparser` porque rclone escribe algún valor con
+    `%` dentro (las plantillas de nombre) y `configparser` lo interpreta como
+    interpolación y revienta. Basta entender una cabecera entre corchetes y
+    `clave = valor`.
+    """
     remotes: dict[str, dict[str, str]] = {}
     actual: dict[str, str] | None = None
     for linea in text.splitlines():
@@ -93,17 +93,18 @@ def parse_rclone_conf(text: str) -> dict[str, dict[str, str]]:
     return remotes
 
 
-# ---------------------------------------------------------------------------
-# La carga útil
-# ---------------------------------------------------------------------------
-
 @dataclass(frozen=True)
 class Carga:
-    """Lo que lleva un QR de emparejamiento, ya separado en sus tres piezas.
+    """Lo que lleva un QR de emparejamiento, separado en sus piezas.
 
-    `texto` es la carga entera y sin tocar: es TOML válido y es lo que hay que
-    pasarle a `profile.loads()`. Las otras dos se sacan aparte porque `loads()`
-    las recibe por parámetro —la clave nunca ha estado dentro del perfil—."""
+    Args:
+        texto: La carga entera y sin tocar: TOML válido, lo que hay que pasar a
+            `profile.loads()`.
+        private_key: La clave privada, que se saca aparte porque `loads()` la
+            recibe por parámetro (nunca ha estado dentro del perfil).
+        known_hosts: Contenido de `known_hosts`, o vacío.
+        remote_name: Nombre del remote.
+    """
     texto: str
     private_key: bytes | None
     known_hosts: str
@@ -111,37 +112,46 @@ class Carga:
 
 
 def nombre_del_remote(raw_local: Mapping[str, object] | None = None) -> str:
-    """Cómo se llama en este dispositivo el remote que usan las parejas.
+    """Devuelve cómo se llama en este dispositivo el remote que usan las parejas.
 
-    Sale de `[defaults].remote` y no del rclone.conf porque es el catálogo quien
-    decide ese nombre: todos los `remote_path` se resuelven contra él, y un
-    rclone.conf puede definir más de una sección."""
+    Sale de `[defaults].remote` y no del `rclone.conf` porque es el catálogo
+    quien decide ese nombre: todos los `remote_path` se resuelven contra él, y
+    un `rclone.conf` puede definir más de una sección.
+    """
     defaults = dict((raw_local or {}).get("defaults") or {})   # type: ignore[union-attr]
     return str(defaults.get("remote") or model.DEFAULT_REMOTE)
 
 
 def _ruta_del_catalogo(raw_local: Mapping[str, object] | None = None) -> str:
+    """Devuelve `catalog_path` del dispositivo, o el de fábrica."""
     defaults = dict((raw_local or {}).get("defaults") or {})   # type: ignore[union-attr]
     return str(defaults.get("catalog_path") or DEFAULT_CATALOG_PATH)
 
 
 def _leer_relativa(valor: str, app: Path) -> Path:
-    """Una ruta del rclone.conf del dispositivo, resuelta como la resuelve rclone.
+    """Resuelve una ruta del `rclone.conf` como la resuelve rclone.
 
-    Relativa al directorio de la aplicación, que es el `cwd` con el que todo el
-    proyecto ejecuta rclone. Es justo lo que hace portable al dispositivo, y lo
-    que hay que repetir aquí para encontrar la clave."""
+    Es relativa al directorio de la aplicación, el `cwd` con el que todo el
+    proyecto ejecuta rclone: es lo que hace portable al dispositivo y lo que
+    hay que repetir aquí para encontrar la clave.
+    """
     ruta = Path(valor).expanduser()
     return ruta if ruta.is_absolute() else app / ruta
 
 
 def construir(raw_local: Mapping[str, object] | None = None,
               app_dir: Path | None = None) -> str:
-    """El texto que va dentro del QR, leído del dispositivo que lo enseña.
+    """Devuelve el texto que va dentro del QR, leído del dispositivo que lo enseña.
 
-    `raw_local` es el `sync_config.toml` en crudo —de ahí salen el nombre del
-    remote y la ruta del catálogo—; si no se da, se lee. `app_dir` existe para
-    los tests: por defecto es la carpeta de la aplicación de verdad."""
+    Args:
+        raw_local: El `sync_config.toml` en crudo, de donde salen el nombre del
+            remote y la ruta del catálogo; si no se da, se lee.
+        app_dir: Carpeta de la aplicación; por defecto la de verdad (el
+            parámetro es para los tests).
+
+    Raises:
+        PairingError: Si falta el `rclone.conf`, el remote o la clave.
+    """
     app = app_dir or model.APP_DIR
     if raw_local is None:
         raw_local = config_file.load_raw(app / "sync_config.toml")
@@ -196,12 +206,13 @@ def construir(raw_local: Mapping[str, object] | None = None,
 def dumps(remote_name: str, options: Mapping[str, str], *, key_name: str,
           catalog_path: str, private_key: bytes | None = None,
           known_hosts: str = "") -> str:
-    """El TOML de la carga. El orden importa y no es estético.
+    """Devuelve el TOML de la carga.
 
-    Las claves sueltas van TODAS antes de `[options]`: en TOML, lo que viene
-    después de una cabecera de tabla pertenece a esa tabla, así que una sola
-    línea traspapelada metería la clave privada dentro de las opciones del
-    backend y de ahí acabaría en el rclone.conf del móvil."""
+    El orden importa y no es estético: las claves sueltas van TODAS antes de
+    `[options]`, porque en TOML lo que viene después de una cabecera de tabla
+    pertenece a esa tabla y una línea traspapelada metería la clave privada en
+    las opciones del backend, y de ahí en el `rclone.conf` del móvil.
+    """
     cabeza: dict[str, object] = {
         MARCA: FORMATO,
         "remote_name": remote_name,
@@ -219,11 +230,16 @@ def dumps(remote_name: str, options: Mapping[str, str], *, key_name: str,
 
 
 def leer(texto: str) -> Carga:
-    """Lo contrario: comprobar que es nuestro y separar lo que no es perfil.
+    """Comprueba que la carga es nuestra y separa lo que no es perfil.
 
-    Esto en producción lo hace el móvil, en Kotlin. Vive aquí porque es la
-    definición ejecutable del formato —lo que el lado Kotlin tiene que
-    reproducir— y porque es lo que permite probar la vuelta entera sin cámara."""
+    En producción lo hace el móvil, en Kotlin. Vive aquí porque es la
+    definición ejecutable del formato (lo que el lado Kotlin tiene que
+    reproducir) y permite probar la vuelta entera sin cámara.
+
+    Raises:
+        PairingError: Si no es TOML válido, no es de prdrive, es de otro
+            formato o la clave no es base64.
+    """
     import tomllib
     try:
         raw = tomllib.loads(texto)

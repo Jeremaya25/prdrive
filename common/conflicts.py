@@ -1,26 +1,24 @@
 #!/usr/bin/env python3
-"""
-conflicts.py — Los ficheros en conflicto que deja bisync, vistos desde el dispositivo.
+"""Los ficheros en conflicto que deja bisync, vistos desde el dispositivo.
 
 Cuando un mismo fichero cambia en los dos lados entre dos pasadas, bisync no
-elige en silencio: con `--conflict-resolve newer` se queda con el más reciente y
-al otro le cambia el nombre (le añade un sufijo), y copia los dos a los dos
-lados. Eso es todo lo que queda: una línea en el log de rclone, que se borra si
-la pasada fue bien, y un fichero con un nombre raro que nadie mira. Mientras
-tanto las dos versiones siguen separándose.
+elige en silencio: con `--conflict-resolve newer` se queda con el más reciente,
+renombra al otro con un sufijo y copia los dos a los dos lados. Solo queda una
+línea en el log de rclone (que se borra si la pasada fue bien) y un fichero con
+un nombre raro que nadie mira, mientras las dos versiones siguen separándose.
 
 Este módulo encuentra esos ficheros y dice de qué lado viene cada uno. No
 decide nada ni toca ninguno: resolver es cosa de `ui/conflict_editor.py`.
 
-El estado es DERIVADO. Lo que se guarda en `state/conflicts.json` es solo lo
-que encontró el último recorrido, para poder pintar la ventana sin recorrer el
-árbol entero; al leerlo se comprueba que cada fichero sigue ahí, así que en
-cuanto desaparecen los ficheros desaparece el aviso, lo borre quien lo borre.
+El estado es DERIVADO: `state/conflicts.json` solo guarda lo que encontró el
+último recorrido, para pintar la ventana sin recorrer el árbol; al leerlo se
+comprueba que cada fichero sigue ahí, así que el aviso desaparece cuando
+desaparecen los ficheros, los borre quien los borre.
 
 Réplica de rclone, como `bisync.py`: el nombre del perdedor lo decide
 cmd/bisync/resolve.go (`setResolveDefaults`, `resolve`, `SuffixName`) y la
 posición del sufijo lib/transform/transform.go (`SuffixKeepExtension`). Se lee
-de los flags YA FUNDIDOS de la pareja, que es exactamente lo que recibe rclone.
+de los flags YA FUNDIDOS de la pareja, que es lo que recibe rclone.
 """
 
 from __future__ import annotations
@@ -36,37 +34,48 @@ from .model import Config, Pair
 DISPOSITIVO = "dispositivo"
 REMOTO = "remoto"
 
-# Lo que rclone pone si no se le dice nada (setResolveDefaults). Aunque la
-# pareja lleve otros sufijos, estos se siguen reconociendo: son los de los
-# conflictos que ya había antes de cambiarlos, y siguen ahí hasta que alguien
-# los resuelva.
 SUFIJO_RCLONE = "conflict"
+"""Sufijo de conflicto que rclone pone por defecto (`setResolveDefaults`).
+
+Se sigue reconociendo aunque la pareja lleve otros: son los de conflictos
+anteriores al cambio, que siguen ahí hasta que alguien los resuelva.
+"""
 PERDEDOR_RCLONE = "num"
+"""Valor por defecto de `--conflict-loser` (`setResolveDefaults`)."""
 
 
 def ruta_estado() -> Path:
-    """Función y no constante: los tests cambian `model.STATE_DIR` al vuelo."""
+    """Devuelve la ruta de `state/conflicts.json`.
+
+    Es función y no constante porque los tests cambian `model.STATE_DIR` al
+    vuelo.
+    """
     return model.STATE_DIR / "conflicts.json"
 
 
-# ---------------------------------------------------------------------------
-# El nombre del perdedor
-# ---------------------------------------------------------------------------
-
 class Esquema(NamedTuple):
-    """Cómo nombra rclone a los perdedores de una pareja concreta."""
-    sufijo1: str             # el de path1, ya con su punto delante
-    sufijo2: str             # el de path2
-    perdedor: str            # --conflict-loser: 'num' | 'pathname' | 'delete'
-    mantener_extension: bool  # --suffix-keep-extension
+    """Cómo nombra rclone a los perdedores de una pareja concreta.
+
+    Args:
+        sufijo1: Sufijo de path1, ya con su punto delante.
+        sufijo2: Sufijo de path2.
+        perdedor: Valor de `--conflict-loser`: `num`, `pathname` o `delete`.
+        mantener_extension: Valor de `--suffix-keep-extension`.
+    """
+    sufijo1: str
+    sufijo2: str
+    perdedor: str
+    mantener_extension: bool
 
 
 def _flag(pair: Pair, nombre: str):
-    """Un flag de la pareja escrito con guiones o con guiones bajos: los dos
-    acaban siendo el mismo argumento (`model.flags_to_args`). Si están los dos
-    —el modo trae `conflict-suffix` y la pareja escribe `conflict_suffix`—,
-    rclone recibe el flag dos veces y se queda con el último, que es el que va
-    más tarde en el diccionario fundido."""
+    """Devuelve un flag de la pareja, con guiones o con guiones bajos.
+
+    Los dos acaban siendo el mismo argumento (`model.flags_to_args`). Si están
+    los dos (el modo trae `conflict-suffix` y la pareja escribe
+    `conflict_suffix`), rclone recibe el flag dos veces y se queda con el
+    último, que es el que va más tarde en el diccionario fundido.
+    """
     valor = None
     for clave, v in pair.flags.items():
         if str(clave).replace("_", "-") == nombre:
@@ -75,10 +84,13 @@ def _flag(pair: Pair, nombre: str):
 
 
 def esquema(pair: Pair) -> Esquema:
-    """Lo que hace `setResolveDefaults()`: un sufijo vale para los dos lados, dos
-    separados por coma son uno para cada uno, y a los dos se les pone un punto
+    """Calcula el esquema de nombres de conflicto de una pareja.
+
+    Replica `setResolveDefaults()`: un sufijo vale para los dos lados; dos
+    separados por coma son uno para cada uno; a los dos se les pone un punto
     delante. Los comodines de fecha (`{DateOnly}`…) no se pueden deshacer desde
-    el nombre, así que una pareja que los use verá sus conflictos sin lado."""
+    el nombre, así que una pareja que los use verá sus conflictos sin lado.
+    """
     crudo = str(_flag(pair, "conflict-suffix") or SUFIJO_RCLONE)
     partes = [p for p in crudo.split(",") if p] or [SUFIJO_RCLONE]
     s1, s2 = (partes[0], partes[0]) if len(partes) == 1 else (partes[0], partes[1])
@@ -88,25 +100,31 @@ def esquema(pair: Pair) -> Esquema:
 
 
 def _patron(sufijo: str, mantener_extension: bool) -> re.Pattern:
-    """`SuffixName` pone el sufijo al final (`plan.md.conflict1`) o, con
-    --suffix-keep-extension, delante de la extensión (`plan.conflict1.md`)."""
+    """Devuelve el patrón de nombre de un perdedor.
+
+    `SuffixName` pone el sufijo al final (`plan.md.conflict1`) o, con
+    `--suffix-keep-extension`, delante de la extensión (`plan.conflict1.md`).
+    """
     extension = r"(?P<ext>(?:\.[^.]+)+)" if mantener_extension else r"(?P<ext>)"
     return re.compile(rf"^(?P<base>.+){re.escape(sufijo)}(?P<n>\d*){extension}$")
 
 
 def leer_nombre(nombre: str, esq: Esquema) -> tuple[str, str | None, int] | None:
-    """(nombre original, 'path1'|'path2'|None, número) o None si no es un conflicto.
+    """Interpreta el nombre de un fichero como el de un perdedor de conflicto.
 
     Qué significa el número depende del esquema, y es justo lo que hay que
     acertar (ver `resolve()`):
+    - sufijos distintos: el sufijo es el lado y el número solo un orden;
+    - un sufijo y `--conflict-loser pathname`: `1` es path1 y `2` es path2;
+    - un sufijo y `--conflict-loser num`: el número es el primero que estaba
+      libre (`numerate`), así que el lado no se sabe.
 
-      * sufijos distintos: el sufijo es el lado, el número solo un orden;
-      * un sufijo y --conflict-loser pathname: `1` es path1 y `2` es path2;
-      * un sufijo y --conflict-loser num: el número es el primero que estaba
-        libre (`numerate`), así que el lado no se sabe.
+    Returns:
+        `(nombre original, 'path1' | 'path2' | None, número)`, o `None` si no
+        es un conflicto.
     """
     candidatos = [esq.sufijo1, esq.sufijo2, "." + SUFIJO_RCLONE]
-    for sufijo in dict.fromkeys(candidatos):          # sin repetir, en orden
+    for sufijo in dict.fromkeys(candidatos):  # sin repetir, en orden
         m = _patron(sufijo, esq.mantener_extension).match(nombre)
         if m is None:
             continue
@@ -115,7 +133,7 @@ def leer_nombre(nombre: str, esq: Esquema) -> tuple[str, str | None, int] | None
         if esq.sufijo1 != esq.sufijo2 and sufijo in (esq.sufijo1, esq.sufijo2):
             return original, ("path1" if sufijo == esq.sufijo1 else "path2"), numero
         if not m["n"]:
-            continue              # un solo sufijo sin número no lo escribe rclone
+            continue  # un solo sufijo sin número no lo escribe rclone
         if sufijo == esq.sufijo1 and esq.perdedor == "pathname" and numero in (1, 2):
             return original, f"path{numero}", numero
         return original, None, numero
@@ -123,38 +141,52 @@ def leer_nombre(nombre: str, esq: Esquema) -> tuple[str, str | None, int] | None
 
 
 def lado(pair: Pair, camino: str | None) -> str | None:
-    """'path1'/'path2' traducido a este dispositivo / el remoto.
+    """Traduce `path1`/`path2` a este dispositivo o el remoto.
 
     En bisync path1 es el primer extremo de la orden (`sync.build_command` pone
-    `pair.source` delante), y ese es el lado local según `model.MODES`."""
+    `pair.source` delante) y ese es el lado local según `model.MODES`.
+
+    Returns:
+        `DISPOSITIVO` o `REMOTO`; `None` si el camino se desconoce.
+    """
     if camino is None:
         return None
     extremo = pair.mode.source if camino == "path1" else pair.mode.dest
     return DISPOSITIVO if extremo == "local" else REMOTO
 
 
-# ---------------------------------------------------------------------------
-# Los conflictos
-# ---------------------------------------------------------------------------
-
 class Version(NamedTuple):
-    """Uno de los ficheros de un conflicto."""
+    """Uno de los ficheros de un conflicto.
+
+    Args:
+        ruta: Dónde está el fichero.
+        lado: `DISPOSITIVO`, `REMOTO` o `None` si no se sabe.
+        es_original: Si tiene el nombre de verdad.
+        numero: El número del sufijo, o 0 si no lleva.
+    """
     ruta: Path
-    lado: str | None          # DISPOSITIVO | REMOTO | None = no se sabe
-    es_original: bool         # el que tiene el nombre de verdad
+    lado: str | None
+    es_original: bool
     numero: int = 0
 
 
 class Conflicto(NamedTuple):
-    """Un fichero con más de una versión en disco."""
+    """Un fichero con más de una versión en disco.
+
+    Args:
+        pareja: Nombre de la pareja.
+        raiz: La carpeta local de la pareja.
+        original: El nombre de verdad, que puede no existir.
+        versiones: Todas las versiones, el original primero si existe.
+    """
     pareja: str
-    raiz: Path                # la carpeta local de la pareja
-    original: Path            # el nombre de verdad (puede no existir)
+    raiz: Path
+    original: Path
     versiones: tuple[Version, ...]
 
     @property
     def relativa(self) -> str:
-        """La ruta que se enseña: dentro de la pareja y con barras normales."""
+        """Devuelve la ruta que se enseña: dentro de la pareja y con barras normales."""
         try:
             return self.original.relative_to(self.raiz).as_posix()
         except ValueError:
@@ -162,28 +194,36 @@ class Conflicto(NamedTuple):
 
     @property
     def copias(self) -> tuple[Path, ...]:
-        """Los ficheros con sufijo: lo que tiene que desaparecer para resolverlo."""
+        """Devuelve los ficheros con sufijo, que son los que hay que quitar.
+
+        Para resolver el conflicto tienen que desaparecer.
+        """
         return tuple(v.ruta for v in self.versiones if not v.es_original)
 
     def version(self, cual: str) -> Version | None:
-        """LA versión de ese lado, o None si no hay una sola.
+        """Devuelve LA versión de ese lado.
 
         Dos copias del mismo lado son dos conflictos seguidos sin resolver en
         medio: las dos son «de este dispositivo», de momentos distintos, y
-        elegir una por su cuenta sería decidir por el usuario."""
+        elegir una por su cuenta sería decidir por el usuario.
+
+        Returns:
+            La versión, o `None` si el lado tiene cero o más de una.
+        """
         del_lado = [v for v in self.versiones if v.lado == cual]
         return del_lado[0] if len(del_lado) == 1 else None
 
 
 def _agrupar(pair: Pair, copias: list[Path]) -> list[Conflicto]:
-    """Las copias, juntadas con su original.
+    """Junta las copias con su original.
 
     El lado del original se deduce: tras un conflicto con ganador, rclone deja
-    el ganador con el nombre de verdad y renombra al perdedor (`resolve()`, caso
-    winningPath 1 o 2), así que si hay UNA copia de un lado, el original es la
-    versión del otro. Con varias copias, o con alguna sin lado, eso ya no se
+    el ganador con el nombre de verdad y renombra al perdedor (`resolve()`,
+    caso winningPath 1 o 2), así que si hay UNA copia de un lado el original es
+    la versión del otro. Con varias copias, o con alguna sin lado, ya no se
     puede afirmar y el original se queda sin lado: una etiqueta inventada es
-    peor que ninguna."""
+    peor que ninguna.
+    """
     esq = esquema(pair)
     grupos: dict[Path, list[Version]] = {}
     for ruta in copias:
@@ -208,6 +248,7 @@ def _agrupar(pair: Pair, copias: list[Path]) -> list[Conflicto]:
 
 
 def _existe(ruta: Path) -> bool:
+    """Indica si es un fichero, sin lanzar."""
     try:
         return ruta.is_file()
     except OSError:
@@ -215,20 +256,26 @@ def _existe(ruta: Path) -> bool:
 
 
 def recorrer(raiz: Path) -> Iterator[Path]:
-    """Todos los ficheros bajo `raiz`. De módulo para que un test la sustituya.
+    """Recorre todos los ficheros bajo `raiz`.
 
-    `os.walk` y no `Path.rglob`: se salta sin ruido lo que no puede leer (una
-    carpeta sin permiso, el dispositivo que desaparece a medias), y eso es lo
-    que se quiere de un recorrido que solo busca avisos."""
+    Es de módulo para que un test la sustituya. Usa `os.walk` y no `Path.rglob`
+    porque se salta sin ruido lo que no puede leer (una carpeta sin permiso, el
+    dispositivo que desaparece a medias), que es lo que se quiere de un
+    recorrido que solo busca avisos.
+
+    Yields:
+        La ruta de cada fichero.
+    """
     for carpeta, _subcarpetas, ficheros in os.walk(raiz):
         for nombre in ficheros:
             yield Path(carpeta) / nombre
 
 
 def escanear(pair: Pair) -> list[Conflicto]:
-    """Los conflictos de una pareja, recorriendo su carpeta local.
+    """Devuelve los conflictos de una pareja, recorriendo su carpeta local.
 
-    Solo bisync deja conflictos: los demás modos copian en un sentido."""
+    Solo bisync deja conflictos: los demás modos copian en un sentido.
+    """
     if not pair.is_bisync or not pair.local_abs.is_dir():
         return []
     esq = esquema(pair)
@@ -237,13 +284,12 @@ def escanear(pair: Pair) -> list[Conflicto]:
     return _agrupar(pair, copias)
 
 
-# ---------------------------------------------------------------------------
-# Lo que se recuerda entre una ventana y la siguiente
-# ---------------------------------------------------------------------------
-
 def _relativa(ruta: Path) -> str:
-    """Relativa a la raíz del dispositivo: la letra de unidad cambia de un equipo
-    a otro y el fichero viaja con el dispositivo."""
+    """Devuelve la ruta relativa a la raíz del dispositivo.
+
+    La letra de unidad cambia de un equipo a otro y el fichero viaja con el
+    dispositivo.
+    """
     try:
         return ruta.relative_to(model.DEVICE_ROOT).as_posix()
     except ValueError:
@@ -251,6 +297,13 @@ def _relativa(ruta: Path) -> str:
 
 
 def _guardar(parejas: dict[str, list[Conflicto]], data: dict | None = None) -> None:
+    """Escribe en `state/conflicts.json` las copias encontradas de esas parejas.
+
+    Args:
+        parejas: Conflictos por pareja.
+        data: Estado previo con el que mezclar; por defecto, el que hay en
+            disco.
+    """
     data = data if data is not None else store.read_json(ruta_estado())
     guardadas = data.get("parejas") if isinstance(data.get("parejas"), dict) else {}
     for nombre, encontrados in parejas.items():
@@ -259,23 +312,28 @@ def _guardar(parejas: dict[str, list[Conflicto]], data: dict | None = None) -> N
 
 
 def actualizar_pareja(pair: Pair) -> list[Conflicto]:
-    """Escanea una pareja y apunta el resultado. Lo llama sync.py tras cada pasada."""
+    """Escanea una pareja y apunta el resultado; lo llama `sync.py` tras cada pasada."""
     encontrados = escanear(pair)
     _guardar({pair.name: encontrados})
     return encontrados
 
 
 def refrescar(config: Config) -> dict[str, list[Conflicto]]:
-    """Escanea todas las parejas y reescribe el estado entero: las que ya no
-    están en el config se caen de él."""
+    """Escanea todas las parejas y reescribe el estado entero.
+
+    Las que ya no están en el config se caen de él.
+    """
     todos = {pair.name: escanear(pair) for pair in config.pairs if pair.is_bisync}
     _guardar(todos, data={})
     return todos
 
 
 def cargar(config: Config) -> dict[str, list[Conflicto]]:
-    """Lo del último escaneo, sin recorrer nada: solo se mira que cada copia
-    siga existiendo. Es lo que pinta la ventana nada más abrirse."""
+    """Devuelve lo del último escaneo, sin recorrer nada.
+
+    Solo se mira que cada copia siga existiendo. Es lo que pinta la ventana
+    nada más abrirse.
+    """
     guardadas = store.read_json(ruta_estado()).get("parejas")
     if not isinstance(guardadas, dict):
         guardadas = {}
@@ -291,5 +349,5 @@ def cargar(config: Config) -> dict[str, list[Conflicto]]:
 
 
 def contar(por_pareja: dict[str, list[Conflicto]]) -> dict[str, int]:
-    """Cuántos conflictos tiene cada pareja, solo las que tienen alguno."""
+    """Devuelve cuántos conflictos tiene cada pareja, solo las que tienen alguno."""
     return {nombre: len(lista) for nombre, lista in por_pareja.items() if lista}

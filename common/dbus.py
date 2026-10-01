@@ -1,37 +1,35 @@
 #!/usr/bin/env python3
-"""
-dbus.py — D-Bus sin dependencias: la mitad que LLAMA y la que CONTESTA.
+"""D-Bus sin dependencias: la mitad que LLAMA y la que CONTESTA.
 
 Linux habla con el escritorio por D-Bus: los avisos
 (`org.freedesktop.Notifications`), si la red es de uso medido (la propiedad
 `Metered` de NetworkManager), la bandeja (`ui/bandeja_linux.py`) y la señal de
 suspender. Python no trae D-Bus y el proyecto no admite dependencias, así que
-esto lo implementa con el mismo espíritu que `ui/qr.py`: completo en lo que usa,
-y con las constantes citando la especificación, como `common/bisync.py` cita a
-rclone. Todo lo de aquí sale de la *D-Bus Specification* de freedesktop.org
+esto lo implementa con el espíritu de `ui/qr.py`: completo en lo que usa y con
+las constantes citando la especificación, como `common/bisync.py` cita a
+rclone. Todo sale de la *D-Bus Specification* de freedesktop.org
 (https://dbus.freedesktop.org/doc/dbus-specification.html); cada sección dice
 de qué apartado.
 
 Lo que hay:
+- las direcciones de los buses (`sesion()`, `sistema()`), «Server Addresses»;
+- el saludo `EXTERNAL`, «Authentication Protocol»;
+- la serialización de mensajes, «Message Protocol» → «Marshaling»: firmas,
+  alineación, arrays, diccionarios, estructuras y variantes;
+- llamar a un método y esperar su respuesta o su error, leer una propiedad y
+  escuchar señales (`AddMatch`), «Message Bus Specification»;
+- exportar objetos (la bandeja de Linux): pedir un nombre (`RequestName`),
+  contestar a las llamadas que llegan a una ruta, las tres interfaces estándar
+  (`Peer`, `Introspectable`, `Properties`; «Standard Interfaces») y emitir
+  señales.
 
-  * las direcciones de los buses (`sesion()`, `sistema()`), «Server Addresses»;
-  * el saludo `EXTERNAL`, «Authentication Protocol»;
-  * la serialización de mensajes, «Message Protocol» → «Marshaling»: firmas,
-    alineación, arrays, diccionarios, estructuras y variantes;
-  * llamar a un método y esperar su respuesta o su error, leer una propiedad y
-    escuchar señales (`AddMatch`), «Message Bus Specification»;
-  * exportar objetos (fase 6, la bandeja de Linux): pedir un nombre
-    (`RequestName`), contestar a las llamadas que llegan a una ruta, las tres
-    interfaces estándar que cualquiera puede preguntar («Standard Interfaces»:
-    `Peer`, `Introspectable`, `Properties`) y emitir señales.
+Lo que NO hay, a propósito: pasar descriptores de fichero (`h` se serializa
+como el índice que es, pero no se mandan descriptores), la autenticación
+`DBUS_COOKIE_SHA1`, que un bus de sesión local no pide, y propiedades
+escribibles: nada de lo que se exporta aquí las tiene.
 
-Lo que NO hay, a propósito: pasar descriptores de fichero (`h` se serializa como
-el índice que es, pero no se mandan descriptores), la autenticación
-`DBUS_COOKIE_SHA1`, que un bus de sesión local no pide, y propiedades que se
-puedan escribir: nada de lo que se exporta aquí las tiene.
-
-Está en `common/` porque lo usan cosas que no son la ventana —los avisos y la
-moderación del agente— y no importa nada de Tk. Nada aquí es imprescindible:
+Está en `common/` porque lo usan cosas que no son la ventana (los avisos y la
+moderación del agente) y no importa nada de Tk. Nada aquí es imprescindible:
 quien lo usa captura `Error` y `OSError` y sigue sin D-Bus, que es lo que pasa
 en un equipo sin escritorio.
 """
@@ -48,10 +46,18 @@ from typing import Any, Callable, Iterable, NamedTuple
 
 
 class Error(Exception):
-    """Un error de D-Bus: la respuesta ERROR a una llamada, o el bus que no
-    contesta como la especificación dice que tiene que contestar."""
+    """Un error de D-Bus.
+
+    Es la respuesta ERROR a una llamada, o el bus que no contesta como dice la
+    especificación.
+
+    Args:
+        nombre: Nombre del error (`org.freedesktop.DBus.Error.*`).
+        mensaje: Texto que lo acompaña.
+    """
 
     def __init__(self, nombre: str, mensaje: str = "") -> None:
+        """Crea el error con su nombre y su mensaje."""
         super().__init__(f"{nombre}: {mensaje}" if mensaje else nombre)
         self.nombre = nombre
         self.mensaje = mensaje
@@ -60,34 +66,51 @@ class Error(Exception):
 class Variante(NamedTuple):
     """Un valor con su firma, para mandar una `v`.
 
-    Al leer, las variantes se desenvuelven y llega el valor a secas; al escribir
-    hace falta decir el tipo, porque un 1 de Python puede ser un `y`, un `i`, un
-    `u` o un `x`, y quien lo recibe los distingue."""
+    Al leer, las variantes se desenvuelven y llega el valor a secas; al
+    escribir hace falta decir el tipo, porque un 1 de Python puede ser un `y`,
+    un `i`, un `u` o un `x` y quien lo recibe los distingue.
+
+    Args:
+        firma: La firma del valor.
+        valor: El valor.
+    """
     firma: str
     valor: Any
 
 
-# ---------------------------------------------------------------------------
-# Marshaling («Message Protocol» → «Marshaling (Wire Format)»)
-# ---------------------------------------------------------------------------
+# Marshaling («Message Protocol» → «Marshaling (Wire Format)»).
 
-# La alineación de cada tipo básico, de la tabla del apartado «Marshaling».
-# Las estructuras y las entradas de diccionario se alinean a 8; las variantes,
-# a 1 (su firma es una `g`). El relleno es siempre de ceros.
 ALINEACION = {"y": 1, "b": 4, "n": 2, "q": 2, "i": 4, "u": 4, "x": 8, "t": 8,
               "d": 8, "h": 4, "s": 4, "o": 4, "g": 1, "a": 4, "(": 8, "{": 8,
               "v": 1}
+"""Alineación de cada tipo básico, de la tabla del apartado «Marshaling».
+
+Las estructuras y las entradas de diccionario se alinean a 8 y las variantes a
+1 (su firma es una `g`). El relleno es siempre de ceros.
+"""
 _FIJOS = {"y": "B", "n": "h", "q": "H", "i": "i", "u": "I", "x": "q", "t": "Q",
           "d": "d", "h": "I"}
-# «Valid Signatures»: un array no puede pasar de 2^26 bytes (64 MiB), y un
-# mensaje entero de 2^27 (128 MiB). Se comprueba al leer: un bus que manda más
-# no es uno de verdad.
+"""Formato de `struct` de los tipos de tamaño fijo, sin el orden de bytes."""
 MAX_ARRAY = 1 << 26
+"""Tamaño máximo de un array: 2^26 bytes (64 MiB), según «Valid Signatures».
+
+Se comprueba al leer: un bus que manda más no es uno de verdad.
+"""
 MAX_MENSAJE = 1 << 27
+"""Tamaño máximo de un mensaje entero: 2^27 bytes (128 MiB).
+
+Es el de «Valid Signatures».
+"""
 
 
 def partir(firma: str) -> list[str]:
-    """Una firma partida en sus tipos completos: 'sa{sv}(ii)' → ['s', 'a{sv}', '(ii)']."""
+    """Parte una firma en sus tipos completos.
+
+    Por ejemplo, `'sa{sv}(ii)'` da `['s', 'a{sv}', '(ii)']`.
+
+    Raises:
+        Error: Si la firma no es válida.
+    """
     tipos, i = [], 0
     while i < len(firma):
         fin = _fin_de_tipo(firma, i)
@@ -97,6 +120,11 @@ def partir(firma: str) -> list[str]:
 
 
 def _fin_de_tipo(firma: str, i: int) -> int:
+    """Devuelve la posición donde acaba el tipo completo que empieza en `i`.
+
+    Raises:
+        Error: Si la firma no es válida.
+    """
     if i >= len(firma):
         raise Error("org.freedesktop.DBus.Error.InvalidSignature", firma)
     c = firma[i]
@@ -120,9 +148,13 @@ def _fin_de_tipo(firma: str, i: int) -> int:
 
 
 def firma_de(valor: Any) -> str:
-    """La firma que se le supone a un valor de Python sin `Variante`.
+    """Devuelve la firma que se le supone a un valor de Python sin `Variante`.
 
-    Solo para lo inequívoco; lo demás tiene que ir con su `Variante`."""
+    Solo para lo inequívoco; lo demás tiene que ir con su `Variante`.
+
+    Raises:
+        TypeError: Si el tipo del valor no tiene una firma inequívoca.
+    """
     if isinstance(valor, Variante):
         return "v"
     if isinstance(valor, bool):
@@ -139,15 +171,27 @@ def firma_de(valor: Any) -> str:
 
 
 class Escritor:
-    """Serializa valores en little-endian, que es lo que escribe este lado."""
+    """Serializa valores en little-endian, que es lo que escribe este lado.
+
+    Attributes:
+        buf: Los bytes escritos hasta ahora.
+    """
 
     def __init__(self) -> None:
+        """Crea un escritor vacío."""
         self.buf = bytearray()
 
     def alinear(self, n: int) -> None:
+        """Rellena con ceros hasta alinear la posición a `n` bytes."""
         self.buf += b"\0" * (-len(self.buf) % n)
 
     def escribir(self, firma: str, valores: Iterable[Any]) -> "Escritor":
+        """Serializa los valores según la firma y devuelve el propio escritor.
+
+        Raises:
+            TypeError: Si el número de valores no es el que pide la firma.
+            Error: Si la firma no es válida.
+        """
         tipos = partir(firma)
         valores = list(valores)
         if len(tipos) != len(valores):
@@ -158,6 +202,7 @@ class Escritor:
         return self
 
     def _uno(self, tipo: str, valor: Any) -> None:
+        """Serializa un valor de un tipo completo."""
         c = tipo[0]
         self.alinear(ALINEACION[c])
         if c in _FIJOS:
@@ -183,6 +228,7 @@ class Escritor:
             raise Error("org.freedesktop.DBus.Error.InvalidSignature", tipo)
 
     def _array(self, elemento: str, valor: Any) -> None:
+        """Serializa un array de elementos del tipo dado."""
         # «The array length is a UINT32 giving the length in bytes of the array
         # data, NOT including the padding after the length». El relleno hasta
         # la alineación del elemento va SIEMPRE, también con el array vacío.
@@ -206,17 +252,30 @@ class Escritor:
 
 
 class Lector:
-    """Lee valores de un mensaje, en el orden de bytes que diga su cabecera."""
+    """Lee valores de un mensaje, en el orden de bytes que diga su cabecera.
+
+    Args:
+        datos: Los bytes del mensaje.
+        orden: `<` (little-endian) o `>` (big-endian).
+        pos: Posición desde la que empezar a leer.
+    """
 
     def __init__(self, datos: bytes, orden: str = "<", pos: int = 0) -> None:
+        """Crea un lector sobre `datos`."""
         self.datos = datos
         self.orden = orden
         self.pos = pos
 
     def alinear(self, n: int) -> None:
+        """Avanza hasta alinear la posición a `n` bytes."""
         self.pos += -self.pos % n
 
     def _tomar(self, n: int) -> bytes:
+        """Devuelve los siguientes `n` bytes y avanza.
+
+        Raises:
+            Error: Si el mensaje se acaba antes.
+        """
         if self.pos + n > len(self.datos):
             raise Error("org.freedesktop.DBus.Error.InvalidArgs", "mensaje corto")
         trozo = self.datos[self.pos:self.pos + n]
@@ -224,9 +283,11 @@ class Lector:
         return trozo
 
     def leer(self, firma: str) -> list[Any]:
+        """Devuelve la lista de valores que describe la firma."""
         return [self._uno(t) for t in partir(firma)]
 
     def _uno(self, tipo: str) -> Any:
+        """Lee un valor de un tipo completo."""
         c = tipo[0]
         self.alinear(ALINEACION[c])
         if c in _FIJOS:
@@ -251,6 +312,13 @@ class Lector:
         raise Error("org.freedesktop.DBus.Error.InvalidSignature", tipo)
 
     def _array(self, elemento: str) -> Any:
+        """Lee un array de elementos del tipo dado.
+
+        Los arrays de `y` salen como bytes y los de `{kv}` como diccionario.
+
+        Raises:
+            Error: Si el array supera `MAX_ARRAY`.
+        """
         n = struct.unpack(self.orden + "I", self._tomar(4))[0]
         if n > MAX_ARRAY:
             raise Error("org.freedesktop.DBus.Error.LimitsExceeded",
@@ -273,9 +341,7 @@ class Lector:
         return lista
 
 
-# ---------------------------------------------------------------------------
-# Mensajes («Message Protocol» → «Message Format»)
-# ---------------------------------------------------------------------------
+# Mensajes («Message Protocol» → «Message Format»).
 
 # Tipos de mensaje.
 METHOD_CALL, METHOD_RETURN, ERROR, SIGNAL = 1, 2, 3, 4
@@ -288,13 +354,25 @@ _TIPO_CAMPO = {PATH: "o", INTERFACE: "s", MEMBER: "s", ERROR_NAME: "s",
                REPLY_SERIAL: "u", DESTINATION: "s", SENDER: "s", SIGNATURE: "g",
                UNIX_FDS: "u"}
 VERSION_PROTOCOLO = 1
-# La parte fija de la cabecera: orden de bytes, tipo, flags, versión, longitud
-# del cuerpo, serie y la longitud del array de campos (firma `yyyyuua(yv)`).
 _FIJA = 16
+"""Parte fija de la cabecera, 16 bytes.
+
+Son el orden de bytes, el tipo, los flags, la versión, la longitud del cuerpo,
+la serie y la longitud del array de campos (firma `yyyyuua(yv)`).
+"""
 
 
 @dataclass
 class Mensaje:
+    """Un mensaje D-Bus.
+
+    Args:
+        tipo: `METHOD_CALL`, `METHOD_RETURN`, `ERROR` o `SIGNAL`.
+        serie: Número de serie, que asigna `Conexion.enviar`.
+        flags: Flags del mensaje (`NO_REPLY_EXPECTED`).
+        campos: Campos de la cabecera por código.
+        cuerpo: Los valores del cuerpo, según la firma.
+    """
     tipo: int
     serie: int = 0
     flags: int = 0
@@ -303,21 +381,26 @@ class Mensaje:
 
     @property
     def firma(self) -> str:
+        """Devuelve la firma del cuerpo."""
         return self.campos.get(SIGNATURE, "")
 
     @property
     def miembro(self) -> str:
+        """Devuelve el nombre del método o la señal."""
         return self.campos.get(MEMBER, "")
 
     @property
     def interfaz(self) -> str:
+        """Devuelve la interfaz del mensaje."""
         return self.campos.get(INTERFACE, "")
 
     @property
     def ruta(self) -> str:
+        """Devuelve la ruta del objeto."""
         return self.campos.get(PATH, "")
 
     def a_bytes(self) -> bytes:
+        """Serializa el mensaje entero, cabecera y cuerpo."""
         cuerpo = Escritor()
         if self.firma:
             cuerpo.escribir(self.firma, self.cuerpo)
@@ -333,8 +416,15 @@ class Mensaje:
 
 
 def longitud(datos: bytes) -> int | None:
-    """Cuántos bytes ocupa el mensaje que empieza en `datos`, o None si todavía
-    no ha llegado su parte fija."""
+    """Devuelve cuántos bytes ocupa el mensaje que empieza en `datos`.
+
+    Returns:
+        La longitud total, o `None` si todavía no ha llegado su parte fija.
+
+    Raises:
+        Error: Si el orden de bytes es desconocido o el mensaje supera
+            `MAX_MENSAJE`.
+    """
     if len(datos) < _FIJA:
         return None
     orden = {ord("l"): "<", ord("B"): ">"}.get(datos[0])
@@ -351,7 +441,11 @@ def longitud(datos: bytes) -> int | None:
 
 
 def leer_mensaje(datos: bytes) -> Mensaje:
-    """Un mensaje entero (`longitud()` bytes) convertido en `Mensaje`."""
+    """Convierte un mensaje entero (`longitud()` bytes) en un `Mensaje`.
+
+    Raises:
+        Error: Si la versión del protocolo no es la 1.
+    """
     orden = "<" if datos[0] == ord("l") else ">"
     lector = Lector(datos, orden)
     _o, tipo, flags, version, _largo, serie = lector.leer("yyyyuu")
@@ -366,12 +460,10 @@ def leer_mensaje(datos: bytes) -> Mensaje:
     return m
 
 
-# ---------------------------------------------------------------------------
-# Direcciones («Server Addresses», «Well-known Message Bus Instances»)
-# ---------------------------------------------------------------------------
+# Direcciones («Server Addresses», «Well-known Message Bus Instances»).
 
 def _desescapar(texto: str) -> str:
-    """Los valores de una dirección van con los bytes raros como %XX."""
+    """Deshace los `%XX` con que van los bytes raros de una dirección."""
     salida = bytearray()
     i = 0
     while i < len(texto):
@@ -388,12 +480,13 @@ def _desescapar(texto: str) -> str:
 
 
 def destinos(direccion: str) -> list[str | bytes]:
-    """A qué sockets se puede llamar con esa dirección, en orden.
+    """Devuelve, en orden, los sockets a los que se puede llamar con esa dirección.
 
-    Una dirección son varias separadas por ';', cada una `transporte:clave=valor,…`.
-    Solo se entiende `unix` (con `path`, `abstract` o `runtime=yes`): el bus de
-    un escritorio Linux es eso. Un socket abstracto se devuelve como bytes con
-    el nulo delante, que es como lo nombra Linux."""
+    Una dirección son varias separadas por `;`, cada una
+    `transporte:clave=valor,…`. Solo se entiende `unix` (con `path`, `abstract`
+    o `runtime=yes`): el bus de un escritorio Linux es eso. Un socket abstracto
+    se devuelve como bytes con el nulo delante, que es como lo nombra Linux.
+    """
     salida: list[str | bytes] = []
     for trozo in direccion.split(";"):
         transporte, _, resto = trozo.partition(":")
@@ -414,8 +507,14 @@ def destinos(direccion: str) -> list[str | bytes]:
 
 
 def direccion_sesion() -> str | None:
-    """«The address of the session bus is … DBUS_SESSION_BUS_ADDRESS». Sin ella,
-    la de los sistemas con systemd: `$XDG_RUNTIME_DIR/bus`."""
+    """Devuelve la dirección del bus de sesión.
+
+    «The address of the session bus is … DBUS_SESSION_BUS_ADDRESS». Sin ella,
+    la de los sistemas con systemd: `$XDG_RUNTIME_DIR/bus`.
+
+    Returns:
+        La dirección, o `None` si no hay ninguna.
+    """
     direccion = os.environ.get("DBUS_SESSION_BUS_ADDRESS")
     if direccion:
         return direccion
@@ -423,17 +522,20 @@ def direccion_sesion() -> str | None:
     return f"unix:path={runtime}/bus" if runtime else None
 
 
-# «If DBUS_SYSTEM_BUS_ADDRESS is not set, … unix:path=/var/run/dbus/system_bus_socket».
 SISTEMA_POR_DEFECTO = "unix:path=/var/run/dbus/system_bus_socket"
+"""Dirección del bus del sistema por defecto.
+
+«If DBUS_SYSTEM_BUS_ADDRESS is not set, …
+unix:path=/var/run/dbus/system_bus_socket».
+"""
 
 
 def direccion_sistema() -> str:
+    """Devuelve la dirección del bus del sistema."""
     return os.environ.get("DBUS_SYSTEM_BUS_ADDRESS") or SISTEMA_POR_DEFECTO
 
 
-# ---------------------------------------------------------------------------
-# Lo que se exporta («Standard Interfaces», «Introspection Data Format»)
-# ---------------------------------------------------------------------------
+# Lo que se exporta («Standard Interfaces», «Introspection Data Format»).
 
 BUS = "org.freedesktop.DBus"
 RUTA_BUS = "/org/freedesktop/DBus"
@@ -452,8 +554,8 @@ E_PROPIEDAD = "org.freedesktop.DBus.Error.UnknownProperty"
 E_SOLO_LECTURA = "org.freedesktop.DBus.Error.PropertyReadOnly"
 
 # `RequestName` («Message Bus Messages»): DBUS_NAME_FLAG_DO_NOT_QUEUE, para no
-# quedarse esperando en la cola de un nombre que ya tiene otro, y las dos
-# respuestas que dicen «es tuyo»: PRIMARY_OWNER y ALREADY_OWNER.
+# esperar en la cola de un nombre que ya tiene otro, y las dos respuestas que
+# dicen «es tuyo»: PRIMARY_OWNER y ALREADY_OWNER.
 NOMBRE_SIN_COLA = 0x4
 NOMBRE_PRINCIPAL, NOMBRE_YA_ERA = 1, 4
 
@@ -463,9 +565,16 @@ ID_MAQUINA = ("/etc/machine-id", "/var/lib/dbus/machine-id")
 
 @dataclass(frozen=True)
 class Metodo:
-    """Un método exportado: la firma de lo que recibe y de lo que devuelve, y
-    `hacer(*argumentos)`, que devuelve los valores de la respuesta (o None si
-    no devuelve nada). Para contestar con un error, que lance `Error`."""
+    """Un método exportado.
+
+    Para contestar con un error, `hacer` lanza `Error`.
+
+    Args:
+        entrada: Firma de lo que recibe.
+        salida: Firma de lo que devuelve.
+        hacer: `hacer(*argumentos)`, que devuelve los valores de la respuesta,
+            o `None` si no devuelve nada.
+    """
     entrada: str
     salida: str
     hacer: Callable[..., Iterable[Any] | None]
@@ -473,9 +582,16 @@ class Metodo:
 
 @dataclass
 class Interfaz:
-    """Una interfaz exportada en una ruta. Las propiedades son de solo lectura:
-    nombre → (firma, leer()), y se leen cada vez que alguien pregunta. Las
-    señales solo están para la introspección; se emiten con `Conexion.emitir()`."""
+    """Una interfaz exportada en una ruta.
+
+    Args:
+        nombre: Nombre de la interfaz.
+        metodos: Sus métodos, por nombre.
+        propiedades: Sus propiedades, de solo lectura: `nombre: (firma,
+            leer())`, que se leen cada vez que alguien pregunta.
+        senales: Sus señales, solo para la introspección (se emiten con
+            `Conexion.emitir()`).
+    """
     nombre: str
     metodos: dict[str, Metodo] = field(default_factory=dict)
     propiedades: dict[str, tuple[str, Callable[[], Any]]] = field(default_factory=dict)
@@ -507,8 +623,12 @@ _ESTANDAR = (
 
 
 def introspeccion(interfaces: Iterable[Interfaz], hijos: Iterable[str] = ()) -> str:
-    """El XML que devuelve `Introspect`: las interfaces de la ruta, las
-    estándar y los nodos hijos (el nombre relativo de cada uno)."""
+    """Devuelve el XML que contesta `Introspect`.
+
+    Args:
+        interfaces: Las interfaces de la ruta; las estándar se añaden solas.
+        hijos: Nombre relativo de cada nodo hijo.
+    """
     from xml.sax.saxutils import quoteattr
 
     partes = [_DOCTYPE, "<node>\n"]
@@ -533,6 +653,11 @@ def introspeccion(interfaces: Iterable[Interfaz], hijos: Iterable[str] = ()) -> 
 
 
 def id_maquina() -> str:
+    """Devuelve el id de la máquina que pide `Peer.GetMachineId`.
+
+    Raises:
+        Error: Si no hay ningún fichero de id de máquina legible.
+    """
     for ruta in ID_MAQUINA:
         try:
             texto = open(ruta, encoding="ascii").read().strip()
@@ -543,29 +668,44 @@ def id_maquina() -> str:
     raise Error(E_FALLO, "no hay id de máquina")
 
 
-# ---------------------------------------------------------------------------
-# La conexión
-# ---------------------------------------------------------------------------
-
-
 class Conexion:
-    """Una conexión autenticada a un bus, con su nombre único ya pedido."""
+    """Una conexión autenticada a un bus, con su nombre único ya pedido.
+
+    Args:
+        sock: El socket ya conectado.
+        uid: El uid con el que autenticar; por defecto, el del proceso.
+
+    Attributes:
+        nombre: El nombre único que el bus asignó a la conexión (`Hello`).
+        guid: El identificador del servidor, de la respuesta `OK`.
+        senales: Señales recibidas y aún no entregadas.
+        llamadas: Llamadas hechas a este lado y aún no atendidas.
+        objetos: Interfaces exportadas, por ruta.
+    """
 
     def __init__(self, sock: socket.socket, uid: int | None = None) -> None:
+        """Autentica contra el bus y le pide el nombre único."""
         self.sock = sock
         self._serie = 0
         self._pendiente = b""
         self.senales: list[Mensaje] = []
-        self.llamadas: list[Mensaje] = []        # llamadas que nos hacen a nosotros
-        self.objetos: dict[str, dict[str, Interfaz]] = {}   # ruta → sus interfaces
+        self.llamadas: list[Mensaje] = []
+        self.objetos: dict[str, dict[str, Interfaz]] = {}
         self._autenticar(os.getuid() if uid is None and hasattr(os, "getuid")
                          else (uid or 0))
         self.nombre = self.llamar(BUS, RUTA_BUS, BUS, "Hello")[0]
 
-    # --- abrir -----------------------------------------------------------------
-
     @classmethod
     def abrir(cls, direccion: str, espera: float = ESPERA) -> "Conexion":
+        """Abre una conexión probando cada destino de la dirección por orden.
+
+        Args:
+            direccion: Dirección del bus.
+            espera: Segundos que se espera en cada operación del socket.
+
+        Raises:
+            Error: Si ningún destino acepta, o `BadAddress` si no hay ninguno.
+        """
         ultimo: Exception | None = None
         for destino in destinos(direccion):
             sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -580,6 +720,11 @@ class Conexion:
 
     @classmethod
     def sesion(cls) -> "Conexion":
+        """Abre una conexión al bus de sesión.
+
+        Raises:
+            Error: Si no hay bus de sesión o no se puede conectar.
+        """
         direccion = direccion_sesion()
         if not direccion:
             raise Error("org.freedesktop.DBus.Error.NoServer", "sin bus de sesión")
@@ -587,23 +732,30 @@ class Conexion:
 
     @classmethod
     def sistema(cls) -> "Conexion":
+        """Abre una conexión al bus del sistema."""
         return cls.abrir(direccion_sistema())
 
     def cerrar(self) -> None:
+        """Cierra el socket; si ya estaba cerrado no pasa nada."""
         try:
             self.sock.close()
         except OSError:
             pass
 
     def __enter__(self) -> "Conexion":
+        """Devuelve la propia conexión para usarla con `with`."""
         return self
 
     def __exit__(self, *_exc) -> None:
+        """Cierra la conexión al salir del `with`."""
         self.cerrar()
 
-    # --- «Authentication Protocol» ---------------------------------------------
-
     def _linea(self) -> str:
+        """Lee del socket una línea del saludo, terminada en CRLF.
+
+        Raises:
+            Error: Si el bus cierra durante el saludo o la línea es enorme.
+        """
         while b"\r\n" not in self._pendiente:
             trozo = self.sock.recv(4096)
             if not trozo:
@@ -616,9 +768,16 @@ class Conexion:
         return linea.decode("ascii", errors="replace")
 
     def _autenticar(self, uid: int) -> None:
-        """«The client must first send a single nul byte», y luego `AUTH EXTERNAL`
-        con el uid en decimal escrito en hexadecimal ASCII. El servidor contesta
-        `OK <guid>` y el cliente cierra con `BEGIN`; a partir de ahí, mensajes."""
+        """Hace el saludo `EXTERNAL` de «Authentication Protocol».
+
+        «The client must first send a single nul byte», y luego `AUTH EXTERNAL`
+        con el uid en decimal escrito en hexadecimal ASCII. El servidor
+        contesta `OK <guid>` y el cliente cierra con `BEGIN`; a partir de ahí,
+        mensajes.
+
+        Raises:
+            Error: Si el servidor no contesta `OK`.
+        """
         self.sock.sendall(b"\0")
         self.sock.sendall(b"AUTH EXTERNAL " + str(uid).encode("ascii").hex().encode("ascii")
                           + b"\r\n")
@@ -628,20 +787,27 @@ class Conexion:
         self.guid = respuesta[3:].strip()
         self.sock.sendall(b"BEGIN\r\n")
 
-    # --- enviar y recibir --------------------------------------------------------
-
     def _siguiente_serie(self) -> int:
+        """Devuelve el siguiente número de serie, que nunca es cero."""
         # «The serial … must not be zero». Da la vuelta mucho antes de importar.
         self._serie = self._serie % 0xFFFFFFFF + 1
         return self._serie
 
     def enviar(self, m: Mensaje) -> int:
+        """Envía un mensaje, le asigna serie y devuelve esa serie."""
         m.serie = self._siguiente_serie()
         self.sock.sendall(m.a_bytes())
         return m.serie
 
     def _recibir(self, hasta: float) -> Mensaje | None:
-        """El siguiente mensaje que llegue antes de `hasta` (monotónico), o None."""
+        """Devuelve el siguiente mensaje que llegue antes de `hasta`, o `None`.
+
+        Args:
+            hasta: Instante límite según `time.monotonic()`.
+
+        Raises:
+            Error: Si el bus cierra la conexión.
+        """
         while True:
             total = longitud(self._pendiente)
             if total is not None and len(self._pendiente) >= total:
@@ -663,12 +829,24 @@ class Conexion:
                espera: float = ESPERA) -> list[Any]:
         """Llama a un método y devuelve el cuerpo de la respuesta.
 
-        Lanza `Error` con el nombre de error que mande el otro lado, o con
-        `NoReply` si no contesta a tiempo. Lo que llegue entretanto no se
-        pierde: las señales se guardan, y una llamada a nosotros se contesta
-        ya si exportamos algo (quien nos llama puede estar preguntándonos
-        antes de contestarnos, como un `StatusNotifierWatcher` al registrar un
-        icono) y si no, se guarda."""
+        Lo que llegue entretanto no se pierde: las señales se guardan, y una
+        llamada a nosotros se contesta ya si exportamos algo (quien nos llama
+        puede estar preguntándonos antes de contestarnos, como un
+        `StatusNotifierWatcher` al registrar un icono) y si no, se guarda.
+
+        Args:
+            destino: Nombre del servicio, o `None`.
+            ruta: Ruta del objeto.
+            interfaz: Interfaz del método, o `None`.
+            metodo: Nombre del método.
+            firma: Firma de los argumentos.
+            args: Los argumentos.
+            espera: Segundos que se espera la respuesta.
+
+        Raises:
+            Error: Con el nombre de error que mande el otro lado, o `NoReply`
+                si no contesta a tiempo.
+        """
         campos = {PATH: ruta, MEMBER: metodo}
         if destino:
             campos[DESTINATION] = destino
@@ -694,6 +872,7 @@ class Conexion:
                 self._guardar(m)
 
     def _guardar(self, m: Mensaje) -> None:
+        """Guarda para más tarde una señal o una llamada que llega a destiempo."""
         if m.tipo == SIGNAL:
             self.senales.append(m)
         elif m.tipo == METHOD_CALL:
@@ -701,17 +880,28 @@ class Conexion:
 
     def propiedad(self, destino: str, ruta: str, interfaz: str, nombre: str,
                   espera: float = ESPERA) -> Any:
-        """`org.freedesktop.DBus.Properties.Get`: el valor, ya desenvuelto."""
+        """Lee una propiedad con `org.freedesktop.DBus.Properties.Get`.
+
+        Returns:
+            El valor, ya desenvuelto.
+        """
         return self.llamar(destino, ruta, PROPIEDADES, "Get", "ss",
                            [interfaz, nombre], espera)[0]
 
     def escuchar(self, regla: str) -> None:
-        """Pide al bus las señales que casen con la regla («Match Rules»), p. ej.
-        "type='signal',interface='org.freedesktop.login1.Manager'"."""
+        """Pide al bus las señales que casen con la regla («Match Rules»).
+
+        Por ejemplo,
+        `"type='signal',interface='org.freedesktop.login1.Manager'"`.
+        """
         self.llamar(BUS, RUTA_BUS, BUS, "AddMatch", "s", [regla])
 
     def senal(self, espera: float = 0.0) -> Mensaje | None:
-        """La siguiente señal recibida, esperando como mucho `espera` segundos."""
+        """Devuelve la siguiente señal recibida, esperando como mucho `espera` segundos.
+
+        Returns:
+            La señal, o `None` si no llega ninguna.
+        """
         hasta = time.monotonic() + espera
         while not self.senales:
             m = self._recibir(hasta)
@@ -721,18 +911,23 @@ class Conexion:
         return self.senales.pop(0)
 
     def tiene_dueno(self, nombre: str) -> bool:
-        """¿Hay alguien registrado con ese nombre en el bus? (`NameHasOwner`)."""
+        """Indica si alguien tiene ese nombre en el bus (`NameHasOwner`)."""
         return bool(self.llamar(BUS, RUTA_BUS, BUS, "NameHasOwner", "s", [nombre])[0])
 
     def fileno(self) -> int:
-        """Para vigilar la conexión con `select` junto a otras cosas. Ojo: lo que
-        ya está leído y sin atender no se ve ahí; `atender(0)` antes de esperar."""
+        """Devuelve el descriptor del socket, para vigilarlo con `select`.
+
+        Lo ya leído y sin atender no se ve ahí: llama a `atender(0)` antes de
+        esperar.
+        """
         return self.sock.fileno()
 
-    # --- la mitad que CONTESTA ---------------------------------------------------
-
     def pedir_nombre(self, nombre: str) -> bool:
-        """`RequestName` sin quedarse en cola: True si el nombre es nuestro."""
+        """Pide un nombre con `RequestName`, sin quedarse en cola.
+
+        Returns:
+            True si el nombre es nuestro.
+        """
         r = self.llamar(BUS, RUTA_BUS, BUS, "RequestName", "su", [nombre, NOMBRE_SIN_COLA])[0]
         return r in (NOMBRE_PRINCIPAL, NOMBRE_YA_ERA)
 
@@ -742,7 +937,7 @@ class Conexion:
 
     def emitir(self, ruta: str, interfaz: str, miembro: str, firma: str = "",
                args: Iterable[Any] = ()) -> None:
-        """Una señal, a quien la escuche («Message Types» → SIGNAL)."""
+        """Emite una señal para quien la escuche («Message Types» → SIGNAL)."""
         campos = {PATH: ruta, INTERFACE: interfaz, MEMBER: miembro}
         if firma:
             campos[SIGNATURE] = firma
@@ -751,9 +946,12 @@ class Conexion:
     def atender(self, espera: float = 0.0) -> list[Mensaje]:
         """Contesta las llamadas que nos hagan y devuelve las señales que lleguen.
 
-        Espera como mucho `espera` segundos a que llegue el primer mensaje, y
-        luego atiende sin esperar todo lo que ya esté aquí. Lanza `Error`
-        (`Disconnected`) si el bus se ha ido."""
+        Espera como mucho `espera` segundos a que llegue el primer mensaje y
+        luego atiende sin esperar todo lo que ya esté aquí.
+
+        Raises:
+            Error: `Disconnected`, si el bus se ha ido.
+        """
         while self.llamadas:
             self._despachar(self.llamadas.pop(0))
         hasta = time.monotonic() + espera
@@ -771,6 +969,7 @@ class Conexion:
 
     def _contestar(self, llamada: Mensaje, firma: str = "",
                    cuerpo: Iterable[Any] = ()) -> None:
+        """Contesta una llamada con éxito, salvo que no se quiera respuesta."""
         # «NO_REPLY_EXPECTED»: quien llama ha dicho que no quiere respuesta.
         if llamada.flags & NO_REPLY_EXPECTED:
             return
@@ -782,6 +981,7 @@ class Conexion:
         self.enviar(Mensaje(METHOD_RETURN, campos=campos, cuerpo=list(cuerpo)))
 
     def _contestar_error(self, llamada: Mensaje, nombre: str, texto: str) -> None:
+        """Contesta una llamada con un error, salvo que no se quiera respuesta."""
         if llamada.flags & NO_REPLY_EXPECTED:
             return
         campos: dict[int, Any] = {REPLY_SERIAL: llamada.serie, ERROR_NAME: nombre,
@@ -791,14 +991,17 @@ class Conexion:
         self.enviar(Mensaje(ERROR, campos=campos, cuerpo=[texto]))
 
     def _hijos(self, ruta: str) -> list[str]:
-        """Los nombres de los nodos que cuelgan directamente de `ruta`."""
+        """Devuelve los nombres de los nodos que cuelgan directamente de `ruta`."""
         base = ruta.rstrip("/") + "/"
         return sorted({r[len(base):].split("/")[0] for r in self.objetos
                        if r.startswith(base) and r != ruta})
 
     def _despachar(self, m: Mensaje) -> None:
-        """Contesta una llamada que nos hacen. Un fallo de quien la atiende es
-        un error para quien llama, nunca una excepción aquí."""
+        """Contesta una llamada que nos hacen.
+
+        Un fallo de quien la atiende es un error para quien llama, nunca una
+        excepción aquí.
+        """
         try:
             firma, cuerpo = self._resolver(m)
         except Error as e:
@@ -809,6 +1012,12 @@ class Conexion:
             self._contestar(m, firma, cuerpo)
 
     def _resolver(self, m: Mensaje) -> tuple[str, list[Any]]:
+        """Resuelve una llamada y devuelve la firma y el cuerpo de la respuesta.
+
+        Raises:
+            Error: Si el objeto, la interfaz, el método o la firma no existen o
+                no cuadran, o lo que lance el método exportado.
+        """
         ruta, interfaz, miembro = m.ruta, m.interfaz, m.miembro
         interfaces = self.objetos.get(ruta)
         if interfaz == PEER or (not interfaz and miembro in ("Ping", "GetMachineId")):
@@ -843,8 +1052,14 @@ class Conexion:
 
     def _propiedades(self, m: Mensaje, interfaces: dict[str, Interfaz]
                      ) -> tuple[str, list[Any]]:
-        """`org.freedesktop.DBus.Properties`: Get, GetAll y un Set que siempre
-        dice que no."""
+        """Contesta `org.freedesktop.DBus.Properties`.
+
+        Atiende `Get`, `GetAll` y un `Set` que siempre dice que no.
+
+        Raises:
+            Error: Si el método, la firma o la propiedad no valen, o se intenta
+                escribir.
+        """
         esperada = {"Get": "ss", "GetAll": "s", "Set": "ssv"}.get(m.miembro)
         if esperada is None:
             raise Error(E_METODO, f"{PROPIEDADES}.{m.miembro}")

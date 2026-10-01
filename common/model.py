@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
-"""
-model.py — El modelo de datos de sync_config.toml.
+"""El modelo de datos de `sync_config.toml`.
 
-El TOML se lee UNA vez y se convierte en objetos ya resueltos: `Config` con sus
-`Pair`, y cada pareja con su `Mode`. A partir de ahí nadie vuelve a preguntar por
-claves del TOML ni repite `.get(clave, por_defecto)`, y `defaults` deja de viajar
-por todas las firmas: la jerarquía de configuración se conoce y se resuelve aquí,
-que es el único sitio que la entiende.
+El TOML se lee una vez y se convierte en objetos ya resueltos (`Config` con sus
+`Pair`, y cada pareja con su `Mode`). A partir de ahí nadie vuelve a preguntar
+por claves del TOML ni repite `.get(clave, defecto)`, y `defaults` deja de
+viajar por las firmas: la jerarquía de configuración se resuelve solo aquí.
 
-Añadir un flag de rclone sigue siendo cosa del TOML, no de este fichero.
+Añadir un flag de rclone sigue siendo cosa del TOML, no de este módulo.
 """
 
 from __future__ import annotations
@@ -24,7 +22,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
-# tomllib es stdlib desde Python 3.11. Fallback a 'tomli' en versiones viejas.
+# tomllib es stdlib desde Python 3.11; en versiones anteriores se recurre a
+# `tomli`.
 try:
     import tomllib
 except ModuleNotFoundError:  # pragma: no cover
@@ -34,40 +33,51 @@ except ModuleNotFoundError:  # pragma: no cover
         sys.exit("Necesitas Python 3.11+ (tomllib) o instalar tomli: pip install tomli")
 
 
-# --- Rutas, todas deducidas de la ubicación de este fichero -------------------
-#
-# Este módulo vive en <carpeta de la app>/common/, así que la carpeta de la
-# aplicación —la que contiene sync_config.toml, rclone.conf, bin/, keys/, y contra
-# la que rclone resuelve las rutas relativas de su config— es el directorio padre,
-# y el dispositivo el siguiente. En un dispositivo provisionado la carpeta se
-# llama `.prdrive`; en un checkout, como se llame. Nada de esto depende de la
-# letra de unidad ni del nombre, porque todo sale de `__file__`.
 APP_DIR = Path(__file__).resolve().parent.parent
-DEVICE_ROOT = APP_DIR.parent  # las rutas 'local' del config son relativas a aquí
+"""La carpeta de la aplicación (`.prdrive/` en un dispositivo provisionado).
+
+Contiene `sync_config.toml`, `rclone.conf`, `bin/` y `keys/`, y contra ella
+rclone resuelve las rutas relativas de su config. Sale de `__file__` (este
+módulo vive en `<app>/common/`), así que nada depende de la letra de unidad ni
+del nombre de la carpeta.
+"""
+DEVICE_ROOT = APP_DIR.parent  # las rutas `local` del config son relativas a aquí
 CONFIG_FILE = APP_DIR / "sync_config.toml"
 RCLONE_CONF = APP_DIR / "rclone.conf"
 STATE_DIR = APP_DIR / "state"
 FILTERS_DIR = APP_DIR / "filters"
 LOG_DIR = APP_DIR / "logs"
 
-SYNC_PY = APP_DIR / "sync.py"       # a quien lanzan la UI y el servicio
+SYNC_PY = APP_DIR / "sync.py"  # a quien lanzan la UI y el servicio
 PENWATCH_PY = APP_DIR / "penwatch.py"
 
-# Qué es esta raíz, según la línea `tipo=` de su fichero de control
-# (`.prdrive/PRDRIVE`). Sin línea es una unidad, que es lo de siempre; la raíz
-# que el asistente «En este equipo» deja en una carpeta del ordenador lleva
-# `tipo=equipo`. Un penwatch viejo solo lee `id=` y la ignora.
 TIPO_UNIDAD = "unidad"
+"""Tipo de raíz por defecto: un dispositivo extraíble.
+
+Es lo que se asume cuando el fichero de control no tiene línea `tipo=`.
+"""
 TIPO_EQUIPO = "equipo"
+"""Tipo de la raíz que deja el asistente «En este equipo» en el ordenador.
+
+Lleva `tipo=equipo` en el fichero de control.
+
+Un penwatch viejo solo lee `id=` y lo ignora.
+"""
 
 
 def tipo_raiz(app_dir: Path | str | None = None) -> str:
-    """El `tipo=` del fichero de control de esa carpeta del programa (la que está
-    corriendo si no se dice). Sin fichero, o sin la línea: una unidad.
+    """Lee el tipo de raíz del fichero de control de una carpeta de programa.
 
-    El nombre del fichero se repite aquí (`<app>/PRDRIVE`) como en `fleet.py`: es
-    la misma ruta que `penwatch.CONTROL_FILE` sin la carpeta, y hay un test que
-    las ata."""
+    Repite el nombre del fichero (`<app>/PRDRIVE`) como `fleet.py` y
+    `penwatch.CONTROL_FILE`; un test las ata.
+
+    Args:
+        app_dir: Carpeta del programa; por defecto, la que está corriendo.
+
+    Returns:
+        El valor de la línea `tipo=`, o `TIPO_UNIDAD` si falta el fichero o la
+        línea.
+    """
     ruta = Path(app_dir or APP_DIR) / "PRDRIVE"
     try:
         texto = ruta.read_text(encoding="utf-8", errors="replace")
@@ -81,79 +91,93 @@ def tipo_raiz(app_dir: Path | str | None = None) -> str:
 
 
 def es_equipo(app_dir: Path | str | None = None) -> bool:
+    """Indica si la carpeta de programa es una raíz de equipo (`tipo=equipo`)."""
     return tipo_raiz(app_dir) == TIPO_EQUIPO
 
 
-# Los dos registros que dicen quién está usando el dispositivo ahora mismo: el
-# servicio periódico y la ventana. Los escribe `runsync.py`, y los lee también
-# quien necesita saber si hay algo en marcha antes de tocar el estado —borrar un
-# bloqueo de bisync, por ejemplo—. Funciones y no constantes porque los tests
-# mueven `STATE_DIR` al vuelo, igual que `results.ruta_estado()`.
-# (`penwatch.py` tiene su propia copia de estas rutas a la fuerza: no puede
-# importar nada del dispositivo. Hay un test que ata las dos.)
-
 def daemon_lock() -> Path:
+    """Devuelve la ruta del registro del servicio (`daemon.lock.json`).
+
+    Lo escribe `runsync.py` y lo lee quien deba saber si hay algo en marcha
+    antes de tocar el estado (p. ej. borrar un bloqueo de bisync). Es una
+    función y no una constante porque los tests mueven `STATE_DIR` al vuelo.
+    `penwatch.py` guarda su propia copia de la ruta (no puede importar nada del
+    dispositivo) y un test las ata.
+    """
     return STATE_DIR / "daemon.lock.json"
 
 
 def ui_lock() -> Path:
+    """Devuelve la ruta del registro de la ventana abierta (`ui.lock.json`).
+
+    Ver `daemon_lock`.
+    """
     return STATE_DIR / "ui.lock.json"
 
 class ConfigError(Exception):
     """El config es inválido.
 
-    Se lanza en vez de hacer sys.exit porque este módulo lo usa también la UI,
-    donde matar el proceso significa cerrarle la ventana al usuario en las
-    narices en vez de enseñarle qué línea del TOML está mal. Los puntos de
-    entrada por línea de comandos la capturan y salen con su mensaje, así que
-    por consola no se nota la diferencia."""
+    Se lanza en vez de llamar a `sys.exit` porque la UI comparte este modelo y
+    matar el proceso le cerraría la ventana al usuario. Los puntos de entrada
+    por línea de comandos la capturan y salen con su mensaje.
+    """
 
 
 DEFAULT_REMOTE = "remote"
 DEFAULT_MODE = "bisync"
 
-# El nombre del remote 'combine' con el que el lado local deja de ser una ruta
-# absoluta. Lo escribe el instalador en los [defaults] de cada dispositivo nuevo
-# (ver install/deploy.device_config), y está aquí porque es este módulo el que
-# sabe qué nombres valen (`_device_remote_name`) y qué se hace con ellos
-# (`Config.pen_environment`).
 DEFAULT_DEVICE_REMOTE = "disp"
-# El upstream de la RAÍZ del dispositivo, para la pareja cuyo `local` es "."
-# (ver `Pair.top_level_dir`). Tiene que ser un nombre y no ".", y sale en el
-# prefijo de los listados de bisync: cambiarlo invalida esos baselines.
+"""Nombre del remote `combine` con el que el lado local deja de ser una ruta absoluta.
+
+Lo escribe el instalador en los `[defaults]` de cada dispositivo nuevo
+(`install/deploy.device_config`). Vive aquí porque este módulo decide qué
+nombres valen (`_device_remote_name`) y qué se hace con ellos
+(`Config.pen_environment`).
+"""
 RAIZ_UPSTREAM = "raiz"
-# La carpeta de versiones de una pareja, DENTRO de su propia raíz (ver
-# `Pair.versions_path1`). Vive dentro del pair porque es del pair: se lleva con
-# él y no hay nada que configurar. Que quepa ahí depende de que el fichero de
-# filtros la excluya —rclone rechaza un `--backup-dir` que solape con el destino
-# («destination and parameter to --backup-dir mustn't overlap») y aborta la
-# pareja con error crítico—, así que `bisync.filters_content` la emite y lo hace
-# como PRIMERA regla, porque rclone aplica las reglas en orden y gana la que
-# casa antes.
+"""Nombre del upstream `combine` de la RAÍZ del dispositivo (pareja con `local = "."`).
+
+Tiene que ser un nombre y no `.`. Sale en el prefijo de los listados de bisync,
+así que cambiarlo invalida esos baselines. Ver `Pair.top_level_dir`.
+"""
 VERSIONS_DIR = ".prversions"
-DEFAULT_INTERVAL_MIN = 30.0         # minutos entre ciclos del servicio
+"""Carpeta de versiones de una pareja, dentro de su propia raíz (`Pair.versions_path1`).
 
-# rclone es una app de consola: lanzada desde un proceso sin consola (pythonw, el
-# servicio) Windows le abriría UNA VENTANA NUEVA por invocación.
+rclone rechaza un `--backup-dir` que solape con el destino («destination and
+parameter to --backup-dir mustn't overlap») y aborta la pareja con error
+crítico. Por eso `bisync.filters_content` la excluye siempre con la PRIMERA
+regla: rclone aplica las reglas en orden y gana la primera que casa.
+"""
+DEFAULT_INTERVAL_MIN = 30.0  # minutos entre ciclos del servicio
+
 CREATE_NO_WINDOW = 0x08000000
+"""Flag de creación de procesos de Windows: no abrir consola.
+
+rclone es una app de consola: lanzada desde un proceso sin consola (`pythonw`,
+el servicio), Windows le abriría una ventana nueva por invocación.
+"""
 
 
-# Tipos de máquina de la cabecera PE: es en lo que contesta IsWow64Process2.
 _MAQUINAS_PE = {
     0x8664: "amd64",
     0xAA64: "arm64",
-    0x01C4: "arm",      # ARM de 32 bits (ARMNT)
+    0x01C4: "arm",  # ARM de 32 bits (ARMNT)
     0x014C: "x86",
 }
+"""Tipos de máquina de la cabecera PE: lo que contesta `IsWow64Process2`."""
 
 
 def maquina_nativa_windows() -> int | None:
-    """El tipo de máquina nativa según IsWow64Process2, o None si no se sabe.
+    """Devuelve el tipo de máquina nativa según `IsWow64Process2`.
 
-    Función de módulo, y no un bloque dentro de `machine_arch()`, por lo mismo
-    que `catalog.run()` y `update.fetch()`: es lo único de aquí que depende del
-    equipo donde corre, así que es lo que un test sustituye para preguntar qué
-    pasaría en un ARM sin necesitar uno."""
+    Es función de módulo y no un bloque de `machine_arch()` porque es lo único
+    de aquí que depende del equipo donde corre: un test la sustituye para
+    simular un ARM sin necesitar uno.
+
+    Returns:
+        El código de máquina PE (p. ej. 0xAA64 para arm64), o `None` si no se
+        sabe: fuera de Windows, antes de Windows 10 1709 o sin ctypes.
+    """
     if os.name != "nt":
         return None
     try:
@@ -172,26 +196,23 @@ def maquina_nativa_windows() -> int | None:
             return None
         return nativa.value or None
     except (OSError, AttributeError, ValueError):
-        return None     # Windows anterior a 1709, o sin ctypes: queda platform
+        return None
 
 
 def machine_arch() -> str:
-    """La arquitectura del EQUIPO en minúsculas: platform.machine() corregido.
+    """Devuelve la arquitectura del equipo (`platform.machine()` corregido).
 
-    Windows on ARM ejecuta los binarios x64 emulados y les miente sobre dónde
-    están. En un Python x64 sobre un Snapdragon, `platform.machine()` y
-    `PROCESSOR_ARCHITECTURE` contestan 'AMD64'; también `GetNativeSystemInfo()`,
-    que promete justo lo contrario, porque para el emulador la máquina nativa ES
-    x64; y `PROCESSOR_ARCHITEW6432`, el apaño clásico, solo lo pone Windows en
-    los procesos de 32 bits, no en los x64 emulados. La única que contesta la
-    verdad es `IsWow64Process2()` (Windows 10 1709+), que devuelve por separado
-    el tipo de máquina nativa.
+    Windows on ARM ejecuta los binarios x64 emulados y les miente: en un Python
+    x64 sobre un Snapdragon, `platform.machine()`, `PROCESSOR_ARCHITECTURE` y
+    `GetNativeSystemInfo()` contestan 'AMD64', y `PROCESSOR_ARCHITEW6432` solo
+    lo pone Windows en procesos de 32 bits. Solo `IsWow64Process2()` (Windows
+    10 1709+) da por separado la máquina nativa.
 
-    Importa porque los dos lados no corren con el mismo Python: el instalador es
-    un .exe x64 —se compila en un runner x64— y el `runsync.py` del dispositivo
-    corre con el Python del equipo, que en un portátil ARM es ARM64 nativo. Sin
-    esto el instalador dejaba rclone en `bin/x64` y el dispositivo lo buscaba en
-    `bin/arm`."""
+    Importa porque instalador y dispositivo no corren con el mismo Python: el
+    instalador es un .exe x64 y el `runsync.py` del dispositivo corre con el
+    Python del equipo, ARM64 nativo en un portátil ARM. Sin esto rclone iría a
+    `bin/x64` y el dispositivo lo buscaría en `bin/arm`.
+    """
     nativa = maquina_nativa_windows()
     if nativa in _MAQUINAS_PE:
         return _MAQUINAS_PE[nativa]
@@ -199,7 +220,10 @@ def machine_arch() -> str:
 
 
 def arch_dir() -> str:
-    """Subdirectorio de bin/ según la arquitectura de la CPU."""
+    """Devuelve el subdirectorio de `bin/` que corresponde a la CPU: `arm` o `x64`.
+
+    Si no reconoce la arquitectura avisa por consola y usa `x64`.
+    """
     machine = machine_arch()
     if machine.startswith("arm") or machine in {"aarch64", "aarch64_be", "arm64"}:
         return "arm"
@@ -210,16 +234,16 @@ def arch_dir() -> str:
 
 
 def carpetas_bin(app_dir: Path) -> tuple[Path, ...]:
-    """Dónde buscar rclone en la carpeta de programa `app_dir`, por orden.
+    """Devuelve, por orden, dónde buscar rclone dentro de una carpeta de programa.
 
-    Un Windows ARM64 ejecuta los x64 emulados, así que un dispositivo provisionado
-    por un instalador que se creyó x64 —lo que pasaba antes de `machine_arch()`—
-    sigue arrancando en vez de quedarse sin rclone. Al revés no vale: un x64 no
-    ejecuta ARM, y por eso la lista no es simétrica.
+    En Windows ARM64 la lista añade `bin/x64`: los x64 se ejecutan emulados,
+    pero un x64 no ejecuta ARM, así que la lista no es simétrica.
 
-    Recibe la carpeta porque el agente residente (`agente.py`) busca el rclone de
-    raíces que no son la suya; para este dispositivo son `BIN_DIR` y
-    `BIN_FALLBACK_DIRS`."""
+    Args:
+        app_dir: Carpeta del programa. Se recibe porque el agente residente
+            busca el rclone de raíces que no son la suya; para este dispositivo
+            son `BIN_DIR` y `BIN_FALLBACK_DIRS`.
+    """
     propia = app_dir / "bin" / arch_dir()
     if os.name == "nt" and arch_dir() == "arm":
         return (propia, app_dir / "bin" / "x64")
@@ -228,31 +252,36 @@ def carpetas_bin(app_dir: Path) -> tuple[Path, ...]:
 
 BIN_DIR, *_recambios = carpetas_bin(APP_DIR)
 BIN_FALLBACK_DIRS: tuple[Path, ...] = tuple(_recambios)
+"""Carpetas alternativas donde buscar rclone (`bin/x64` en Windows ARM64)."""
 
 
 def rclone_name() -> str:
+    """Devuelve el nombre del ejecutable de rclone en este sistema."""
     return "rclone.exe" if os.name == "nt" else "rclone"
 
 
-# El agente residente (`agente.py`) pasa su propio rclone, comprobado contra la
-# versión fijada al instalarlo, en esta variable: así no ejecuta el binario que
-# traiga la unidad, que es lo único suyo que la huella del código no cubre
-# barato (`agente.huella()`). Llega sola a todo lo que cuelga del agente: la
-# pasada, la ventana que abre y lo que esa ventana lance.
 RCLONE_DEL_AGENTE = "PRDRIVE_RCLONE"
+"""Variable de entorno con la que el agente residente pasa su propio rclone.
+
+Es el rclone comprobado contra la versión fijada al instalarlo: así el agente
+no ejecuta el binario que traiga la unidad, lo único suyo que la huella de
+`agente.huella()` no cubre barato. Llega sola a todo lo que cuelga del agente:
+la pasada, la ventana que abre y lo que esa ventana lance.
+"""
 
 
 def rclone_del_agente() -> Path | None:
-    """El rclone que ha pasado el agente, o None si no ha pasado ninguno."""
+    """Devuelve el rclone que ha pasado el agente, o `None` si no ha pasado ninguno."""
     ruta = os.environ.get(RCLONE_DEL_AGENTE, "").strip()
     return Path(ruta) if ruta else None
 
 
 def rclone_path() -> Path | None:
-    """El rclone del dispositivo, o None si no hay ninguno utilizable.
+    """Devuelve el rclone del dispositivo, o `None` si no hay ninguno utilizable.
 
-    Si el agente ha pasado el suyo, ese y solo ese: si falta, None. Caer en el
-    de la unidad sería justo lo que el agente quiere evitar."""
+    Si el agente ha pasado el suyo, ese y solo ese (`None` si falta): caer en
+    el de la unidad es justo lo que el agente quiere evitar.
+    """
     del_agente = rclone_del_agente()
     if del_agente is not None:
         try:
@@ -270,7 +299,12 @@ def rclone_path() -> Path | None:
 
 
 def rclone_binary() -> str:
-    """Ruta ejecutable al binario portable de rclone (apaño para exFAT sin +x)."""
+    """Devuelve la ruta ejecutable del rclone de este dispositivo.
+
+    Raises:
+        SystemExit: Si no hay rclone utilizable, con el mensaje que dice cómo
+            arreglarlo.
+    """
     binary = rclone_path()
     if binary is None and rclone_del_agente() is not None:
         sys.exit(
@@ -278,9 +312,9 @@ def rclone_binary() -> str:
             f"y no está ahí. Vuelve a instalar el agente o actualízalo."
         )
     if binary is None:
-        # Lo normal es un dispositivo que no se preparó para este equipo: la cura
-        # es el instalador, que baja el rclone fijado y lo comprueba, no que
-        # alguien busque uno a mano.
+        # Lo normal es un dispositivo sin preparar para este equipo: la cura es
+        # el instalador, que baja el rclone fijado y lo comprueba, no buscar
+        # uno a mano.
         sys.exit(
             f"No encuentro el binario de rclone en: {BIN_DIR / rclone_name()}\n"
             f"Este dispositivo no se preparó para esta plataforma. Vuelve a "
@@ -291,11 +325,18 @@ def rclone_binary() -> str:
 
 
 def ejecutable(binary: Path) -> str:
-    """Una ruta que se pueda ejecutar para ese rclone.
+    """Devuelve una ruta desde la que se pueda ejecutar ese rclone.
 
-    En exFAT no hay bit de ejecución: en POSIX se copia al temporal y se le pone.
-    Aparte de `rclone_binary()` para que el agente lo use con el rclone de otra
-    raíz."""
+    En exFAT no hay bit de ejecución: en POSIX se copia al temporal y se le
+    pone. Está aparte de `rclone_binary()` para que el agente lo use con el
+    rclone de otra raíz.
+
+    Args:
+        binary: Ruta del binario de rclone.
+
+    Returns:
+        La misma ruta, o la de la copia ejecutable en el directorio temporal.
+    """
     if os.name == "nt" or os.access(binary, os.X_OK):
         return str(binary)
     tmp = Path(tempfile.gettempdir()) / "rclone_portable"
@@ -305,18 +346,21 @@ def ejecutable(binary: Path) -> str:
 
 
 def flags_to_args(flags: Mapping[str, Any]) -> list[str]:
-    """{nombre: valor} -> argumentos de rclone.
+    """Traduce `{nombre: valor}` a argumentos de línea de comandos de rclone.
 
         clave = true          -> --clave
         clave = false / None  -> (se omite)
         clave = 4 / "texto"   -> --clave 4 / --clave texto
         clave = ["a", "b"]    -> --clave a --clave b
 
-    Vive aquí, y no en sync.py, porque es el último paso de la traducción
-    config -> comando: quien funde las capas de flags es este módulo, y hay dos
-    sitios más que tienen que traducirlos exactamente igual sin arrastrar el
-    motor —la UI, que enseña en qué se convierten, y el instalador, que monta
-    órdenes de rclone antes de que exista ningún dispositivo—.
+    Vive aquí y no en `sync.py` porque es el último paso de la traducción
+    config -> comando y hay dos sitios más que deben traducir igual sin
+    arrastrar el motor: la UI, que enseña en qué se convierten, y el
+    instalador, que monta órdenes de rclone antes de que exista ningún
+    dispositivo.
+
+    Args:
+        flags: Flags ya fusionados; los `_` de las claves pasan a `-`.
     """
     args: list[str] = []
     for key, value in flags.items():
@@ -332,33 +376,36 @@ def flags_to_args(flags: Mapping[str, Any]) -> list[str]:
     return args
 
 
-# ---------------------------------------------------------------------------
-# Modos
-# ---------------------------------------------------------------------------
-
-# Flags que lleva toda ejecución, sea del modo que sea.
-#
-# --stats / --stats-one-line: cómo va la pasada, una línea cada pocos segundos
-#               en el log (la de fábrica es un bloque cada minuto). De ahí saca
-#               sync.py el progreso en vivo (common/progress.py). Van en esta
-#               capa y no en el código para que una pareja los pueda cambiar
-#               como cualquier otro flag; sin ellos no hay progreso, y la
-#               pasada va igual.
 BASE_FLAGS: Mapping[str, Any] = {
     "verbose": True,
     "create-empty-src-dirs": True,
     "stats": "2s",
     "stats-one-line": True,
 }
+"""Flags que lleva toda ejecución, sea cual sea el modo.
+
+`stats` y `stats-one-line` hacen que rclone escriba una línea de progreso cada
+pocos segundos (la de fábrica es un bloque por minuto); de ahí saca `sync.py`
+el progreso en vivo (`common/progress.py`). Van en esta capa y no en el código
+para que una pareja pueda cambiarlos como cualquier otro flag; sin ellos no hay
+progreso, pero la pasada va igual.
+"""
 
 
 @dataclass(frozen=True)
 class Mode:
     """Qué subcomando de rclone es cada modo, en qué sentido va y con qué flags.
 
-    `source`/`dest` son los nombres de los extremos ('local' o 'remote'), no las
-    rutas: quién es origen y quién destino es justo lo que distingue `up` de
-    `down`."""
+    Args:
+        name: Nombre del modo en el TOML (`bisync`, `up`, `down`, `up-mirror`,
+            `down-mirror`).
+        verb: Subcomando de rclone (`bisync`, `copy` o `sync`).
+        source: Extremo de origen (`local` o `remote`): un nombre, no una ruta.
+            Quién es origen y quién destino es justo lo que distingue `up` de
+            `down`.
+        dest: Extremo de destino, con el mismo criterio.
+        flags: Flags propios del modo.
+    """
     name: str
     verb: str
     source: str
@@ -367,33 +414,10 @@ class Mode:
 
     @property
     def is_bisync(self) -> bool:
+        """Indica si el modo usa `rclone bisync`."""
         return self.verb == "bisync"
 
 
-# --resilient : errores "menores" no obligan a --resync en la siguiente pasada.
-# --recover   : una interrupción brusca se recupera sola en la siguiente pasada.
-# --max-lock  : caduca el .lck que deja un proceso muerto (mínimo 2m).
-# --max-delete: una ruta local vacía o desmontada no debe arrasar el otro lado.
-#               El 25 de bisync NO es una cuenta de ficheros: es un porcentaje.
-#               Options.applyContext() (cmd/bisync/cmd.go) lee el --max-delete
-#               global, lo acota a 0..100 y acto seguido pone ci.MaxDelete = -1
-#               ("reset MaxDelete for fs/operations, bisync handles this
-#               parameter specially"), así que fs/operations ya no lo cuenta
-#               como número de borrados. excessDeletes() (cmd/bisync/deltas.go)
-#               compara deleted / oldCount contra ese porcentaje del listado
-#               ANTERIOR. El 50 de up-mirror/down-mirror sí es una cuenta: ahí
-#               es el --max-delete corriente de `sync`. No iguales los dos
-#               números pensando que miden lo mismo.
-# --conflict-suffix: un sufijo POR LADO. Con el de fábrica ("conflict") y
-#               --conflict-loser num, rclone llama al perdedor `.conflictN` con
-#               el primer número libre (cmd/bisync/resolve.go: resolve y
-#               numerate), y ese número es un orden, no un lado: no hay forma
-#               de saber después si la copia era la de este dispositivo o la
-#               del remoto. Con dos sufijos distintos el nombre lo dice, y sigue
-#               numerado, así que un segundo conflicto en el mismo fichero no
-#               pisa la copia del primero (con --conflict-loser pathname sí la
-#               pisaría: el nombre sería otra vez `.conflict1`). Quien lo lee es
-#               common/conflicts.py.
 MODES: Mapping[str, Mode] = {m.name: m for m in (
     Mode("bisync", "bisync", "local", "remote", {
         "conflict-resolve": "newer",
@@ -408,13 +432,32 @@ MODES: Mapping[str, Mode] = {m.name: m for m in (
     Mode("up-mirror", "sync", "local", "remote", {"max-delete": 50}),
     Mode("down-mirror", "sync", "remote", "local", {"max-delete": 50}),
 )}
+"""Los modos disponibles, por nombre.
 
+Flags propios de `bisync`:
+- `resilient`: los errores «menores» no obligan a `--resync` en la pasada
+  siguiente.
+- `recover`: una interrupción brusca se recupera sola en la pasada siguiente.
+- `max-lock`: caduca el `.lck` que deja un proceso muerto (mínimo 2m).
+- `max-delete`: una ruta local vacía o desmontada no debe arrasar el otro lado.
+  El 25 NO es una cuenta de ficheros sino un porcentaje:
+  `Options.applyContext()` (cmd/bisync/cmd.go) lee el `--max-delete` global, lo
+  acota a 0..100 y pone `ci.MaxDelete = -1` («reset MaxDelete for
+  fs/operations, bisync handles this parameter specially»), y `excessDeletes()`
+  (cmd/bisync/deltas.go) compara deleted / oldCount contra ese porcentaje del
+  listado ANTERIOR. El 50 de `up-mirror` y `down-mirror` sí es una cuenta: el
+  `--max-delete` corriente de `sync`. No iguales los dos números.
+- `conflict-suffix`: un sufijo POR LADO. Con el de fábrica y `--conflict-loser
+  num`, rclone llama al perdedor `.conflictN` con el primer número libre
+  (cmd/bisync/resolve.go: `resolve`, `numerate`), que es un orden y no un lado.
+  Con dos sufijos el nombre dice el lado y sigue numerado, así que un segundo
+  conflicto sobre el mismo fichero no pisa la copia del primero (con
+  `--conflict-loser pathname` sí). Lo lee `common/conflicts.py`.
+"""
 
-# ---------------------------------------------------------------------------
-# Pareja
-# ---------------------------------------------------------------------------
 
 def _as_tuple(value: Any) -> tuple[str, ...]:
+    """Normaliza un valor del TOML (nada, un string o una lista) a tupla de strings."""
     if not value:
         return ()
     if isinstance(value, str):
@@ -424,13 +467,31 @@ def _as_tuple(value: Any) -> tuple[str, ...]:
 
 @dataclass(frozen=True)
 class Pair:
-    """Una [[pair]] del TOML con todas sus capas ya fusionadas.
+    """Una `[[pair]]` del TOML con todas sus capas ya fusionadas.
 
-    `flags` y los patrones de filtrado llegan aquí resueltos; nadie aguas abajo
-    necesita saber que existían unos `[defaults]`."""
+    `flags` y los patrones de filtrado llegan resueltos: nadie aguas abajo
+    necesita saber que existían unos `[defaults]`.
+
+    Args:
+        name: Nombre de la pareja.
+        mode: Su modo.
+        local: Ruta relativa al dispositivo, con `/` y sin barras sueltas.
+        remote_path: Ruta dentro del remote.
+        remote_name: Nombre del remote de rclone.
+        includes: Patrones `include`.
+        excludes: Patrones `exclude`.
+        flags: Flags de rclone ya fusionados (`BASE_FLAGS` < modo <
+            `[defaults.flags]` < `[pair.flags]`).
+        extra_flags: Argumentos en bruto añadidos al final del comando.
+        use_filters_file: Si los patrones van en un fichero de filtros (solo
+            bisync).
+        device_remote: Nombre del remote `combine` del lado local, o `None` si
+            el local es una ruta.
+        versions: Si la pareja guarda versiones de lo que pierde cada lado.
+    """
     name: str
     mode: Mode
-    local: str                 # relativa al dispositivo, con / y sin barras sueltas
+    local: str
     remote_path: str
     remote_name: str
     includes: tuple[str, ...]
@@ -441,105 +502,130 @@ class Pair:
     device_remote: str | None
     versions: bool
 
-    # --- extremos tal y como se le pasan a rclone --------------------------
-
     @property
     def local_abs(self) -> Path:
+        """Devuelve la carpeta local de la pareja, resuelta bajo la raíz."""
         return (DEVICE_ROOT / self.local).resolve()
 
     @property
     def local_endpoint(self) -> str:
-        """Con `device_remote` el lado local es un remote propio, y entonces su
-        nombre ya no depende de dónde esté montado el dispositivo."""
+        """Devuelve el extremo local tal como se le pasa a rclone.
+
+        Con `device_remote` el lado local es un remote propio y su nombre ya no
+        depende de dónde esté montado el dispositivo.
+        """
         if self.device_remote:
             return f"{self.device_remote}:{self.ruta_en_combine}"
         return str(self.local_abs)
 
     @property
     def remote_endpoint(self) -> str:
+        """Devuelve el extremo remoto (`remote:ruta`)."""
         return f"{self.remote_name}:{self.remote_path}"
 
     def endpoint(self, kind: str) -> str:
+        """Devuelve el extremo `local` o `remote` tal como se le pasa a rclone."""
         return self.local_endpoint if kind == "local" else self.remote_endpoint
 
     @property
     def source(self) -> str:
+        """Devuelve el extremo de origen según el modo de la pareja."""
         return self.endpoint(self.mode.source)
 
     @property
     def dest(self) -> str:
+        """Devuelve el extremo de destino según el modo de la pareja."""
         return self.endpoint(self.mode.dest)
-
-    # --- resto ---------------------------------------------------------------
 
     @property
     def is_bisync(self) -> bool:
+        """Indica si la pareja usa `rclone bisync`."""
         return self.mode.is_bisync
 
     @property
     def workdir(self) -> Path:
-        """Workdir de bisync: uno por pareja, para que sus listados no se mezclen."""
+        """Devuelve el workdir de bisync: uno por pareja.
+
+        Así sus listados no se mezclan.
+        """
         return STATE_DIR / self.name
 
     @property
     def tramos_locales(self) -> tuple[str, ...]:
-        """La ruta local partida, sin los tramos que no dicen nada ("." y "")."""
+        """Devuelve la ruta local partida, sin los tramos vacíos ni `.`."""
         partida = self.local.replace("\\", "/").split("/")
         return tuple(t for t in partida if t not in ("", "."))
 
     @property
     def top_level_dir(self) -> str:
-        """Primer tramo de la ruta local: lo que se declara como upstream del
-        remote 'combine' cuando se usa `device_remote`.
+        """Devuelve el primer tramo de la ruta local: el upstream de `combine`.
 
         Una pareja que sincroniza la RAÍZ del dispositivo (`local = "."`) no
-        tiene primer tramo, y no vale dejarlo en ".": rclone limpia la ruta antes
-        de buscar el upstream, así que `disp:.` se convierte en el upstream ""
-        y falla con «combine for remote "": directory not found». Por eso la raíz
-        se declara con un nombre de verdad."""
+        tiene primer tramo y no vale dejarlo en `.`: rclone limpia la ruta
+        antes de buscar el upstream, así que `disp:.` pasa a ser el upstream ""
+        y falla con «combine for remote "": directory not found». Por eso la
+        raíz se declara con un nombre de verdad (`RAIZ_UPSTREAM`).
+        """
         tramos = self.tramos_locales
         return tramos[0] if tramos else RAIZ_UPSTREAM
 
     @property
     def top_level_abs(self) -> Path:
-        """La carpeta a la que apunta ese upstream."""
+        """Devuelve la carpeta a la que apunta `top_level_dir`."""
         tramos = self.tramos_locales
         return (DEVICE_ROOT / tramos[0]).resolve() if tramos else DEVICE_ROOT.resolve()
 
     @property
     def ruta_en_combine(self) -> str:
-        """La ruta de la pareja vista desde dentro del remote 'combine'. Para
-        todas menos la raíz es la ruta local tal cual."""
+        """Devuelve la ruta de la pareja vista desde dentro del remote `combine`.
+
+        Para todas menos la raíz es la ruta local tal cual.
+        """
         return "/".join((self.top_level_dir,) + self.tramos_locales[1:])
 
     @property
     def wants_filters_file(self) -> bool:
-        """--filters-file es exclusivo de bisync; en el resto van --include/--exclude."""
-        return self.is_bisync and self.use_filters_file
+        """Indica si la pareja usa `--filters-file` (exclusivo de bisync).
 
-    # --- versiones -----------------------------------------------------------
-    #
-    # Los dos extremos son los de la pareja con la carpeta detrás, y no hay una
-    # tercera ruta que configurar. Path1 es `source` y Path2 es `dest` porque es
-    # así como se los pasa `build_command` a rclone, y en bisync `source` es el
-    # lado local. Se construyen con "/" también en Windows: rclone admite la
-    # barra en una ruta local y así la propiedad no tiene dos ramas.
+        En el resto de modos van `--include` y `--exclude`.
+        """
+        return self.is_bisync and self.use_filters_file
 
     @property
     def versions_path1(self) -> str:
-        """--backup-dir1: lo que pierde el lado local."""
+        """Devuelve el `--backup-dir1`: lo que pierde el lado local.
+
+        Los dos extremos son los de la pareja con la carpeta detrás; no hay una
+        tercera ruta que configurar. Path1 es `source` y Path2 es `dest`, que
+        es como `build_command` se los pasa a rclone (en bisync `source` es el
+        lado local). Se construyen con `/` también en Windows: rclone admite la
+        barra en una ruta local y así no hay dos ramas.
+        """
         return f"{self.source.rstrip('/')}/{VERSIONS_DIR}"
 
     @property
     def versions_path2(self) -> str:
-        """--backup-dir2: lo que pierde el lado remoto."""
+        """Devuelve el `--backup-dir2`: lo que pierde el lado remoto."""
         return f"{self.dest.rstrip('/')}/{VERSIONS_DIR}"
 
 
 def _build_pair(raw: Mapping[str, Any], defaults: Mapping[str, Any],
                 equipo: bool = False) -> Pair:
-    """Funde las capas de configuración de una pareja. El orden de los flags va
-    de menos a más prioridad: base < modo < [defaults.flags] < [pair.flags]."""
+    """Construye una `Pair` fundiendo las capas de configuración.
+
+    Los flags van de menos a más prioridad: `BASE_FLAGS` < modo <
+    `[defaults.flags]` < `[pair.flags]`.
+
+    Args:
+        raw: La `[[pair]]` tal como sale del TOML.
+        defaults: La tabla `[defaults]`.
+        equipo: Si la raíz es de equipo; entonces `local` tiene que ser una
+            carpeta de dentro.
+
+    Raises:
+        ConfigError: Si falta una clave obligatoria, el nombre o el modo no
+            valen, o `versions` se pide en un modo que no es bisync.
+    """
     name = raw.get("name")
     if not name:
         raise ConfigError("Hay una [[pair]] sin 'name' en el config.")
@@ -557,10 +643,9 @@ def _build_pair(raw: Mapping[str, Any], defaults: Mapping[str, Any],
     if mode is None:
         raise ConfigError(f"[{name}] modo inválido: '{mode_name}'. Válidos: {sorted(MODES)}")
 
-    # El versionado se apoya en --backup-dir1/--backup-dir2 y en que el perdedor
-    # de un conflicto se aparte en vez de quedarse suelto: las tres cosas son de
-    # bisync. En un copy/sync no hay dos lados que guardar, así que la clave no
-    # significa nada ahí y vale más decirlo al parsear que dejarla sin efecto.
+    # El versionado se apoya en `--backup-dir1/2` y en apartar al perdedor de
+    # un conflicto, que son cosas de bisync. En copy/sync no hay dos lados que
+    # guardar: vale más decirlo al parsear que dejar la clave sin efecto.
     versions = bool(raw.get("versions", False))
     if versions and not mode.is_bisync:
         raise ConfigError(
@@ -586,13 +671,17 @@ def _build_pair(raw: Mapping[str, Any], defaults: Mapping[str, Any],
 
 
 def problema_nombre(name: Any) -> str | None:
-    """Por qué ese nombre de pareja no vale, o None si vale.
+    """Dice por qué un nombre de pareja no vale.
 
-    El nombre acaba en tres sitios donde no es solo un nombre: en la línea de
-    órdenes de `sync.py` (un `--resync` como nombre sería la opción, y con ella
-    todas las parejas), en `state/<pareja>/` y en `filters/<pareja>.txt` (con
-    `/` o `..` saldría de esas carpetas). La ventana no deja escribirlos, pero el
-    TOML se edita a mano y llega de otras versiones: la regla es del parser."""
+    El nombre acaba en la línea de órdenes de `sync.py` (un `--resync` como
+    nombre se leería como la opción y arrastraría a todas las parejas), en
+    `state/<pareja>/` y en `filters/<pareja>.txt` (con `/` o `..` saldría de
+    esas carpetas). La ventana no deja escribirlos, pero el TOML se edita a
+    mano y llega de otras versiones: la regla es del parser.
+
+    Returns:
+        El motivo, o `None` si el nombre vale.
+    """
     if not isinstance(name, str):
         return "el nombre tiene que ser un texto"
     if name.startswith("-"):
@@ -605,13 +694,17 @@ def problema_nombre(name: Any) -> str | None:
 
 
 def problema_local_equipo(local: str) -> str | None:
-    """Por qué ese `local` no vale en una raíz del equipo, o None si vale.
+    """Dice por qué un `local` no vale en una raíz del equipo.
 
-    Tiene que ser una carpeta DENTRO de la raíz. La raíz entera (`local = "."`)
-    sería sincronizar el propio `.prdrive/`, con la clave dentro, y con la
-    carpeta personal como raíz, todo `~`. Y un `..` o una ruta absoluta
-    saldrían de la raíz a cualquier sitio del ordenador. Función aparte para que
-    el asistente lo diga al teclearlo, con las mismas palabras que al parsear."""
+    Tiene que ser una carpeta DENTRO de la raíz: la raíz entera sincronizaría
+    el propio `.prdrive/` con la clave dentro (y todo `~` si la raíz es la
+    carpeta personal), y un `..` o una ruta absoluta saldrían de la raíz a
+    cualquier sitio del ordenador. Es una función aparte para que el asistente
+    lo diga al teclearlo con las mismas palabras que al parsear.
+
+    Returns:
+        El motivo, o `None` si el `local` vale.
+    """
     texto = str(local)
     tramos = [t for t in texto.replace("\\", "/").split("/") if t not in ("", ".")]
     if not tramos:
@@ -627,16 +720,31 @@ def problema_local_equipo(local: str) -> str | None:
 
 
 def _local_de_equipo(name: str, local: str) -> None:
-    """Se rechaza al parsear y no en la ventana para que un TOML editado a mano
-    tampoco se lo salte (`problema_local_equipo`)."""
+    """Rechaza al parsear un `local` que `problema_local_equipo` no admite.
+
+    Se rechaza aquí y no en la ventana para que un TOML editado a mano tampoco
+    se lo salte.
+
+    Raises:
+        ConfigError: Si el `local` no vale en una raíz del equipo.
+    """
     problema = problema_local_equipo(local)
     if problema:
         raise ConfigError(f"[{name}] {problema}")
 
 
 def _device_remote_name(defaults: Mapping[str, Any]) -> str | None:
-    """El nombre viaja en variables de entorno RCLONE_CONFIG_<NOMBRE>_*, que no
-    admiten cualquier cosa."""
+    """Devuelve el nombre del remote `combine` del dispositivo, validado.
+
+    El nombre viaja en variables de entorno `RCLONE_CONFIG_<NOMBRE>_*`, que no
+    admiten cualquier cosa.
+
+    Returns:
+        El nombre, o `None` si `[defaults]` no define `device_remote`.
+
+    Raises:
+        ConfigError: Si el nombre no es alfanumérico sin guiones.
+    """
     name = defaults.get("device_remote")
     if not name:
         return None
@@ -647,22 +755,17 @@ def _device_remote_name(defaults: Mapping[str, Any]) -> str | None:
     return name
 
 
-# ---------------------------------------------------------------------------
-# Configuración completa
-# ---------------------------------------------------------------------------
-
 def _upstream(nombre: str, ruta: Path) -> str:
-    r"""Un tramo del `upstreams` del remote 'combine', tal y como rclone lo lee.
+    r"""Devuelve un tramo del `upstreams` del remote `combine`, tal como rclone lo lee.
 
-    rclone parsea `upstreams` como `fs.SpaceSepList` (fs/types.go), que es un
-    CSV con el espacio de separador: un campo solo va entrecomillado si empieza
-    por comilla, y una comilla dentro de un campo que no empezaba por comilla es
-    un error de sintaxis. Por eso las comillas envuelven el PAR ENTERO
-    `nombre=ruta` y no la ruta: entrecomillar solo la ruta daba `.="F:\"`, que
-    rclone rechaza con «bare " in non-quoted-field» y tumbaba TODAS las parejas
-    del dispositivo. Entre comillas caben tanto la barra final de la raíz de una
-    unidad (`F:\`) como los espacios de la ruta, que es para lo que hacían
-    falta. Una comilla dentro de la ruta se dobla, como manda el CSV.
+    rclone parsea `upstreams` como `fs.SpaceSepList` (fs/types.go): un CSV con
+    el espacio de separador, donde un campo solo va entrecomillado si empieza
+    por comilla y una comilla dentro de un campo sin entrecomillar es un error
+    de sintaxis. Por eso las comillas envuelven el PAR ENTERO `nombre=ruta` y
+    no la ruta: `.="F:\"` lo rechaza con «bare " in non-quoted-field» y tumba
+    TODAS las parejas del dispositivo. Entre comillas caben la barra final de
+    la raíz de una unidad (`F:\`) y los espacios de la ruta, que es para lo que
+    hacen falta. Una comilla dentro de la ruta se dobla, como manda el CSV.
     """
     texto = str(ruta).replace('"', '""')
     return f'"{nombre}={texto}"'
@@ -670,6 +773,14 @@ def _upstream(nombre: str, ruta: Path) -> str:
 
 @dataclass(frozen=True)
 class Config:
+    """La configuración completa del dispositivo, resuelta.
+
+    Args:
+        pairs: Las parejas, en el orden del TOML.
+        daemon: La tabla `[daemon]` en bruto.
+        keep_logs: Si se guardan también los logs de las pasadas buenas.
+        device_remote: Nombre del remote `combine` del lado local, o `None`.
+    """
     pairs: tuple[Pair, ...]
     daemon: Mapping[str, Any]
     keep_logs: bool
@@ -677,11 +788,18 @@ class Config:
 
     @property
     def names(self) -> list[str]:
+        """Devuelve los nombres de las parejas, en el orden del TOML."""
         return [p.name for p in self.pairs]
 
     def select(self, wanted: Iterable[str]) -> list[Pair]:
-        """Las parejas pedidas, en el orden del TOML. Aborta si alguna no existe:
-        un nombre mal escrito no puede acabar en 'pues no sincronizo eso'."""
+        """Devuelve las parejas pedidas, en el orden del TOML.
+
+        Aborta si alguna no existe: un nombre mal escrito no puede acabar en
+        «pues no sincronizo eso».
+
+        Raises:
+            ConfigError: Si alguna pareja pedida no existe.
+        """
         wanted = set(wanted)
         chosen = [p for p in self.pairs if p.name in wanted]
         missing = wanted - {p.name for p in chosen}
@@ -691,25 +809,33 @@ class Config:
         return chosen
 
     def pen_environment(self) -> dict[str, str]:
-        """Variables que definen el remote 'combine' del dispositivo en ejecución.
+        """Devuelve las variables que definen el remote `combine` del dispositivo.
 
-        Un remote 'alias' NO sirve: backend/alias/alias.go devuelve el Fs de
-        destino tal cual, así que con destino local f.Name() vuelve a ser "local"
-        y la ruta absoluta reaparece en el nombre de los listados. Un 'combine' sí
-        es un Fs propio y el lado local pasa a llamarse "dispositivo:sync-data/x"
-        en cualquier máquina.
+        Un remote `alias` NO sirve: `backend/alias/alias.go` devuelve el Fs de
+        destino tal cual, así que con destino local `f.Name()` vuelve a ser
+        "local" y la ruta absoluta reaparece en el nombre de los listados. Un
+        `combine` sí es un Fs propio y el lado local pasa a llamarse
+        `dispositivo:sync-data/x` en cualquier máquina.
 
-        Se calcula con TODAS las parejas, no solo las seleccionadas, para que el
-        remote sea idéntico ejecutes lo que ejecutes."""
+        Se calcula con TODAS las parejas, no solo las seleccionadas, para que
+        el remote sea idéntico ejecutes lo que ejecutes.
+
+        Returns:
+            Las variables, o un diccionario vacío si no hay `device_remote`.
+
+        Raises:
+            ConfigError: Si dos parejas piden el mismo upstream para carpetas
+                distintas.
+        """
         if not self.device_remote:
             return {}
         tops: dict[str, Path] = {}
         for pareja in self.pairs:
             nombre, ruta = pareja.top_level_dir, pareja.top_level_abs
-            # Dos parejas que pidan el mismo nombre para carpetas distintas solo
-            # puede pasar con la raíz: `local = "."` la declara como RAIZ_UPSTREAM
-            # y otra pareja tiene una carpeta que se llama justo así. Sería un
-            # upstream apuntando a donde no es, callando.
+            # El mismo nombre para carpetas distintas solo ocurre con la raíz
+            # (`local = "."` es `RAIZ_UPSTREAM`) y otra pareja con una carpeta
+            # que se llama igual: sería un upstream apuntando a donde no es, en
+            # silencio.
             if tops.setdefault(nombre, ruta) != ruta:
                 raise ConfigError(
                     f"Dos parejas declaran el upstream '{nombre}' apuntando a "
@@ -723,10 +849,18 @@ class Config:
 
 
 def parse_config(data: Mapping[str, Any], equipo: bool = False) -> Config:
-    """El config crudo, resuelto. `equipo=True` es el de una raíz del equipo
-    (`es_equipo()`), donde cada `local` tiene que ser una carpeta de dentro
-    (`_local_de_equipo`). No se deduce aquí: el catálogo pasa por esta misma
-    función, y en él una pareja de la raíz entera es legítima para las unidades."""
+    """Resuelve el config en bruto a un `Config`.
+
+    Args:
+        data: El TOML ya leído.
+        equipo: Si es el de una raíz del equipo (`es_equipo()`), donde cada
+            `local` tiene que ser una carpeta de dentro. No se deduce aquí
+            porque el catálogo pasa por esta misma función y en él una pareja
+            de la raíz entera es legítima para las unidades.
+
+    Raises:
+        ConfigError: Si no hay ninguna `[[pair]]` o alguna no es válida.
+    """
     defaults = data.get("defaults", {})
     raw_pairs = data.get("pair", [])
     if not raw_pairs:
@@ -740,6 +874,11 @@ def parse_config(data: Mapping[str, Any], equipo: bool = False) -> Config:
 
 
 def load_config() -> Config:
+    """Lee y resuelve el `sync_config.toml` de este dispositivo.
+
+    Raises:
+        ConfigError: Si el fichero no existe o su contenido no es válido.
+    """
     if not CONFIG_FILE.exists():
         raise ConfigError(f"No existe el fichero de configuración: {CONFIG_FILE}")
     with CONFIG_FILE.open("rb") as f:

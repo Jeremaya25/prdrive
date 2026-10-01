@@ -1,22 +1,18 @@
 #!/usr/bin/env python3
-"""
-revision.py — Qué está mal en este dispositivo, como datos.
+"""Qué está mal en este dispositivo, como datos.
 
-Esto era texto dentro de `sync.py --doctor`: una lista de averías impresa, que
-acababa mandando al usuario a arreglarlo a mano («apártalo y haz --resync»,
-«bórralos si no hay ninguna ejecución en curso»). Para que la interfaz pueda
-poner un botón al lado de cada avería hace falta que la avería sea un dato, no
-una línea.
+Es el diagnóstico de `sync.py --doctor` convertido en datos: para que la
+interfaz pueda poner un botón al lado de cada avería hace falta que la avería
+sea un dato y no una línea impresa.
 
-Vive en `common/` y no en `ui/` por una razón concreta: **`sync.py` no importa
-`ui/`**. Si el diagnóstico viviera del lado de la ventana habría dos: el que
-enseña la pantalla y el que imprime el subcomando, y se separarían a la primera.
-Aquí solo hay uno; `--doctor` imprime `informe()` y la pantalla dibuja
-`revisar()`.
+Vive en `common/` y no en `ui/` porque `sync.py` no importa `ui/`: si el
+diagnóstico viviera del lado de la ventana habría dos (el que enseña la
+pantalla y el que imprime el subcomando) y se separarían a la primera. Aquí
+solo hay uno: `--doctor` imprime `informe()` y la pantalla dibuja `revisar()`.
 
-Este módulo **no toca nada y no decide nada**: mira el estado y cuenta lo que
-ve. Qué se puede hacer con cada avería —y cómo— es de `ui/repair.py`, que es
-quien sabe pedir confirmación antes de mover un baseline.
+No toca nada y no decide nada: mira el estado y cuenta lo que ve. Qué se puede
+hacer con cada avería, y cómo, es de `ui/repair.py`, que es quien sabe pedir
+confirmación antes de mover un baseline.
 """
 
 from __future__ import annotations
@@ -28,11 +24,16 @@ from pathlib import Path
 from . import bisync, conflicts, historial, model, results, store, vestibulo
 from .model import Config, Pair
 
-# Cuánto pesa una avería. No son tres colores: son tres respuestas distintas a
-# «¿puedo seguir usando esto?».
-GRAVE = "grave"     # no se puede sincronizar, o hacerlo arriesga datos
-AVISO = "aviso"     # hay algo que hacer, pero nada está en peligro
-NOTA = "nota"       # informativo; normalmente se arregla solo
+GRAVE = "grave"
+"""Gravedad: no se puede sincronizar, o hacerlo arriesga datos.
+
+Las tres gravedades no son tres colores: son tres respuestas distintas a
+«¿puedo seguir usando esto?».
+"""
+AVISO = "aviso"
+"""Gravedad: hay algo que hacer, pero nada está en peligro."""
+NOTA = "nota"
+"""Gravedad: informativa; normalmente se arregla sola."""
 
 
 @dataclass(frozen=True)
@@ -40,26 +41,37 @@ class Hallazgo:
     """Una avería concreta.
 
     `clave` es lo que mira quien repara para saber de qué habla; el texto es
-    para quien lo lee. `dato` lleva lo que la reparación necesita y el diagnóstico
-    ya ha averiguado —las rutas de los locks, por ejemplo—, para no recorrer el
-    disco dos veces."""
-    clave: str                  # 'local' | 'prefijo' | 'resync' | 'lock' | 'espacio' | …
+    para quien lo lee. `dato` lleva lo que la reparación necesita y el
+    diagnóstico ya ha averiguado (las rutas de los locks, por ejemplo), para no
+    recorrer el disco dos veces.
+
+    Args:
+        clave: Tipo de avería: `local`, `prefijo`, `resync`, `lock`, `espacio`,
+            `conflicto`, `fallo`, `listados`.
+        titulo: Frase corta.
+        detalle: Explicación completa.
+        pareja: La pareja afectada, o `None` si es del dispositivo.
+        gravedad: `GRAVE`, `AVISO` o `NOTA`.
+        dato: Lo que necesita la reparación.
+    """
+    clave: str
     titulo: str
     detalle: str
-    pareja: str | None = None   # None: es del dispositivo, no de una pareja
+    pareja: str | None = None
     gravedad: str = AVISO
     dato: tuple = field(default_factory=tuple)
 
 
 def _local(pair: Pair, estado: bisync.PairState) -> Hallazgo | None:
-    """La carpeta local que no está.
+    """Devuelve la avería de una carpeta local que no está.
 
-    Es la única avería de la lista que NO se repara desde aquí, y a propósito:
-    crearla es exactamente lo que `sync._bisync_preflight()` se niega a hacer
-    cuando hay baseline, porque un lado local vacío se lee como «se ha borrado
-    todo» y eso se propaga al remoto. Lo que hay que arreglar está fuera del
-    programa —el volumen no está montado donde se cree, o la carpeta se movió—,
-    así que aquí solo se dice."""
+    Es la única de la lista que NO se repara desde aquí, a propósito: crearla
+    es exactamente lo que `sync._bisync_preflight()` se niega a hacer cuando
+    hay baseline, porque un lado local vacío se lee como «se ha borrado todo» y
+    eso se propaga al remoto. Lo que hay que arreglar está fuera del programa
+    (el volumen no está montado donde se cree, o la carpeta se movió), así que
+    aquí solo se dice.
+    """
     if pair.local_abs.exists():
         return None
     if pair.is_bisync and estado.has_baseline:
@@ -79,7 +91,7 @@ def _local(pair: Pair, estado: bisync.PairState) -> Hallazgo | None:
 
 
 def _prefijo(pair: Pair, estado: bisync.PairState) -> Hallazgo | None:
-    """Un baseline guardado con el prefijo de OTRO destino."""
+    """Devuelve la avería de un baseline guardado con el prefijo de OTRO destino."""
     esperado = bisync.expected_prefix(pair)
     if not estado.prefix or estado.prefix == esperado:
         return None
@@ -93,7 +105,7 @@ def _prefijo(pair: Pair, estado: bisync.PairState) -> Hallazgo | None:
 
 
 def _resync(pair: Pair, estado: bisync.PairState) -> Hallazgo | None:
-    """La pareja pide un --resync y nadie lo ha hecho."""
+    """Devuelve la avería de una pareja que pide `--resync` y nadie lo ha hecho."""
     razones = bisync.resync_reasons(pair, estado)
     if not razones:
         return None
@@ -105,7 +117,7 @@ def _resync(pair: Pair, estado: bisync.PairState) -> Hallazgo | None:
 
 
 def _locks(pair: Pair) -> Hallazgo | None:
-    """Locks de bisync que han quedado sueltos."""
+    """Devuelve la avería de los locks de bisync que han quedado sueltos."""
     try:
         sueltos = sorted(pair.workdir.glob("*.lck"))
     except OSError:
@@ -121,8 +133,11 @@ def _locks(pair: Pair) -> Hallazgo | None:
 
 
 def _conflictos(config: Config) -> list[Hallazgo]:
-    """Ficheros que cambiaron en los dos lados. Se lee lo apuntado, no se
-    recorre el disco: esto lo llama la ventana al pintarse."""
+    """Devuelve las averías de ficheros que cambiaron en los dos lados.
+
+    Se lee lo apuntado y no se recorre el disco: lo llama la ventana al
+    pintarse.
+    """
     try:
         cuentas = conflicts.contar(conflicts.cargar(config))
     except Exception:                                   # noqa: BLE001
@@ -137,19 +152,20 @@ def _conflictos(config: Config) -> list[Hallazgo]:
 
 
 def _dia(sello: str) -> str:
-    """«12/09», o «12/09/2025» si no es de este año."""
+    """Devuelve la fecha como «12/09», o «12/09/2025» si no es de este año."""
     cuando = datetime.strptime(sello, store.FORMATO)
     return f"{cuando:%d/%m}" if cuando.year == datetime.now().year else f"{cuando:%d/%m/%Y}"
 
 
 def _frase_racha(racha: historial.Racha) -> str:
-    """Desde cuándo falla y cuántas de sus últimas pasadas fueron bien, en una
-    frase: «Falla desde el 12/09 · 0 de las últimas 14 bien.»
+    """Resume en una frase desde cuándo falla y cuántas pasadas recientes fueron bien.
 
-    «Al menos» cuando el diario no ve dónde empezó la racha —todas las que
-    constan fallaron—: puede que lleve fallando desde antes de que el diario
-    existiera, y una fecha que parece exacta y no lo es haría buscar la causa
-    en el día equivocado."""
+    Por ejemplo: «Falla desde el 12/09 · 0 de las últimas 14 bien.» Dice «al
+    menos» cuando el diario no ve dónde empezó la racha (todas las que constan
+    fallaron): puede que fallara desde antes de que el diario existiera, y una
+    fecha que parece exacta y no lo es haría buscar la causa en el día
+    equivocado.
+    """
     desde = ("Falla desde el " if racha.exacta else "Falla al menos desde el ")
     cuenta = ("es la única pasada que consta" if racha.pasadas == 1
               else f"{racha.buenas} de las últimas {racha.pasadas} bien")
@@ -157,12 +173,13 @@ def _frase_racha(racha: historial.Racha) -> str:
 
 
 def _fallos(config: Config) -> list[Hallazgo]:
-    """La última pasada de esa pareja falló. No tiene reparación: es un informe,
-    y lo que se ofrece es el log que lo explica.
+    """Devuelve las averías de las parejas cuya última pasada falló.
 
-    Del diario de pasadas sale desde cuándo falla, que es lo que distingue un
-    tropiezo de una avería. Sin diario (un dispositivo recién actualizado, o
-    uno que no se deja leer) la avería se cuenta igual, sin esa frase."""
+    No tienen reparación: son un informe, y lo que se ofrece es el log que lo
+    explica. Del diario de pasadas sale desde cuándo falla, que distingue un
+    tropiezo de una avería; sin diario (un dispositivo recién actualizado o que
+    no se deja leer) la avería se cuenta igual, sin esa frase.
+    """
     try:
         fallos = results.fallos(config)
     except Exception:                                   # noqa: BLE001
@@ -185,7 +202,10 @@ def _fallos(config: Config) -> list[Hallazgo]:
 
 
 def _listados_sueltos() -> Hallazgo | None:
-    """Listados en la raíz de state/, del layout de una sola carpeta."""
+    """Devuelve la avería de los listados sueltos en la raíz de `state/`.
+
+    Son del layout de una sola carpeta.
+    """
     try:
         sueltos = sorted(model.STATE_DIR.glob("*.lst")) if model.STATE_DIR.exists() else []
     except OSError:
@@ -200,16 +220,18 @@ def _listados_sueltos() -> Hallazgo | None:
 
 
 def _espacio() -> Hallazgo | None:
-    """Un contenedor VeraCrypt dinámico al que se le acaba el sitio de fuera.
+    """Devuelve la avería de un contenedor dinámico al que se acaba el sitio fuera.
 
-    Uno dinámico (disperso) crece a medida que se escribe dentro, así que su
-    sitio libre de verdad es el de la unidad física. Cuando se acaba, el volumen
-    de dentro da errores de E/S en mitad de lo que esté escribiendo —un bisync,
-    por ejemplo—, y rclone no puede explicar por qué: desde dentro, el disco no
-    está lleno. No tiene botón: la salida es liberar sitio fuera del contenedor.
+    Un contenedor dinámico (disperso) crece a medida que se escribe dentro, así
+    que su sitio libre de verdad es el de la unidad física. Cuando se acaba, el
+    volumen de dentro da errores de E/S en mitad de lo que esté escribiendo (un
+    bisync, por ejemplo) y rclone no puede explicar por qué: desde dentro el
+    disco no está lleno. No tiene botón: la salida es liberar sitio fuera del
+    contenedor.
 
-    `fleet` se importa aquí dentro: es el que sabe leer el id del fichero de
-    control, y arrastra el catálogo, que el resto de este módulo no necesita."""
+    `fleet` se importa dentro: es el que sabe leer el id del fichero de control
+    y arrastra el catálogo, que el resto de este módulo no necesita.
+    """
     try:
         from . import fleet
         falta = vestibulo.sin_sitio_fuera(fleet.device_id())
@@ -228,15 +250,14 @@ def _espacio() -> Hallazgo | None:
 
 
 def revisar(config: Config) -> list[Hallazgo]:
-    """Todo lo que está mal ahora mismo, lo más grave primero.
+    """Devuelve todo lo que está mal ahora mismo, lo más grave primero.
 
-    No habla con el remoto ni lanza rclone: lee el dispositivo. Es lo que
-    permite llamarlo mientras se pinta una ventana.
-
-    Lo único que puede escribir es `filters/<pareja>.txt`, y no es cosa suya:
-    lo regenera `bisync.resync_reasons()` cuando el contenido ha cambiado, que
-    es justo lo que hace falta saber para decir si la pareja pide un resync. La
-    ventana principal ya lo hacía al pintarse, por el mismo camino."""
+    No habla con el remoto ni lanza rclone: lee el dispositivo, lo que permite
+    llamarlo mientras se pinta una ventana. Lo único que puede escribir es
+    `filters/<pareja>.txt`, y no es cosa suya: lo regenera
+    `bisync.resync_reasons()` cuando el contenido ha cambiado, que es justo lo
+    que hace falta saber para decir si la pareja pide un resync.
+    """
     hallazgos: list[Hallazgo] = []
     for pair in config.pairs:
         estado = (bisync.pair_state(pair) if pair.is_bisync
@@ -256,16 +277,18 @@ def revisar(config: Config) -> list[Hallazgo]:
 
 
 def cuenta(hallazgos: list[Hallazgo]) -> int:
-    """Cuántas cosas hay que mirar. Las notas no cuentan: se arreglan solas, y
-    un aviso que no pide nada de nadie es ruido en la ventana principal."""
+    """Devuelve cuántas cosas hay que mirar.
+
+    Las notas no cuentan: se arreglan solas, y un aviso que no pide nada de
+    nadie es ruido en la ventana principal.
+    """
     return sum(1 for h in hallazgos if h.gravedad in (GRAVE, AVISO))
 
 
-# ---------------------------------------------------------------------------
-# El mismo diagnóstico, en texto: lo que imprime `sync.py --doctor`
-# ---------------------------------------------------------------------------
-
 def _informe_pareja(pair: Pair) -> list[str]:
+    """Devuelve las líneas del informe de una pareja.
+    Con una línea en blanco al final.
+    """
     lineas = [f"[{pair.name}] {pair.mode.name}",
               f"  local : {pair.local_endpoint} "
               f"{'(OK)' if pair.local_abs.exists() else '(NO EXISTE)'}",
@@ -288,12 +311,13 @@ def _informe_pareja(pair: Pair) -> list[str]:
 
 
 def informe(config: Config) -> list[str]:
-    """El informe completo, línea a línea, para quien no tiene pantalla.
+    """Devuelve el informe completo, línea a línea, para quien no tiene pantalla.
 
-    Lleva más que `revisar()` —las rutas resueltas, el entorno del combine, los
-    ficheros del workdir con su fecha— porque eso es lo que se pega en un
+    Lleva más que `revisar()` (las rutas resueltas, el entorno del combine, los
+    ficheros del workdir con su fecha) porque eso es lo que se pega en un
     mensaje cuando algo no cuadra. Las averías son las mismas: salen de
-    `revisar()`, así que el subcomando y la pantalla no pueden discrepar."""
+    `revisar()`, así que el subcomando y la pantalla no pueden discrepar.
+    """
     lineas = [f"Dispositivo detectado en: {model.DEVICE_ROOT}",
               f"Workdir de estado: {model.STATE_DIR}"]
     lineas += [f"  {clave}={valor}" for clave, valor in config.pen_environment().items()]

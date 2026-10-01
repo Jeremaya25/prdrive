@@ -1,39 +1,37 @@
 #!/usr/bin/env python3
-"""
-planificador.py — Qué le toca hacer ahora al agente, y cuándo volver a mirar.
+"""Qué le toca hacer ahora al agente, y cuándo volver a mirar.
 
-Es la cabeza de `agente.py` y es PURO: no tiene reloj, ni disco, ni procesos.
-Recibe todo como datos —las raíces que atiende y en qué estado están, cómo le fue
-a cada pareja la última vez, la batería, la red, la hora— y devuelve una
-decisión. Así cada regla se prueba con una tabla de casos y un reloj de mentira
+Es la cabeza de `agente.py` y es PURO: sin reloj, ni disco, ni procesos. Recibe
+todo como datos (las raíces que atiende y su estado, cómo le fue a cada pareja
+la última vez, la batería, la red, la hora) y devuelve una decisión. Así cada
+regla se prueba con una tabla de casos y un reloj de mentira
 (`tests/test_planificador.py`), sin lanzar un solo proceso.
 
 Las reglas, en el orden en que se aplican:
-
-  * **Una cola para todo el equipo.** Mientras hay una pasada en marcha no se
-    decide otra: una sola a la vez, sea de la raíz del equipo o de una unidad.
-    Ahorra ancho de banda y evita que la misma pareja, en el equipo y en la
-    unidad enchufada, vaya contra el mismo `remote_path` a la vez.
-  * **«Sincronizar ahora» va primero** y se salta toda la moderación: la pausa,
-    la batería, la red de uso medido, la espera tras un fallo y el «sin
-    conexión». Lo ha pedido alguien que está delante.
-  * **Moderarse.** En pausa, con la batería por debajo del mínimo, o en una red
-    de uso medido (si la política lo dice), no se lanza nada.
-  * **Sin conexión.** Lo que va a un remoto que ha fallado por red no se lanza
-    pareja tras pareja para que falle igual: se sondea ese remoto de vez en
-    cuando (`Tarea` de tipo `SONDA`) y, cuando contesta, sus parejas vuelven.
-  * **Espera creciente por pareja:** `intervalo · 2^k` tras k fallos seguidos,
-    con un tope de 4 h, y a cero tras una pasada buena.
-  * **Una raíz bloqueada, ausente, en pausa o apartada** simplemente no está: no
-    es un fallo, no hace esperar más y no avisa de nada.
+- Una cola para todo el equipo: mientras hay una pasada en marcha no se decide
+  otra, sea de la raíz del equipo o de una unidad. Ahorra ancho de banda y
+  evita que la misma pareja, en el equipo y en la unidad enchufada, vaya contra
+  el mismo `remote_path` a la vez.
+- «Sincronizar ahora» va primero y se salta toda la moderación (pausa, batería,
+  red de uso medido, espera tras un fallo y «sin conexión»): lo ha pedido
+  alguien que está delante.
+- Moderarse: en pausa, con la batería por debajo del mínimo o en una red de uso
+  medido (si la política lo dice) no se lanza nada.
+- Sin conexión: lo que va a un remoto que ha fallado por red no se lanza pareja
+  tras pareja para que falle igual; se sondea ese remoto de vez en cuando
+  (`Tarea` de tipo `SONDA`) y, cuando contesta, sus parejas vuelven.
+- Espera creciente por pareja: `intervalo · 2^k` tras k fallos seguidos, con
+  tope de 4 h, y a cero tras una pasada buena.
+- Una raíz bloqueada, ausente, en pausa o apartada simplemente no está: no es
+  un fallo, no hace esperar más y no avisa de nada.
 
 Nada de esto hace un `--resync`: una pareja que lo pide la salta su propio
-`sync.py` (sin terminal, la pregunta toma el «no»), y aquí cuenta como
-`SALTADA`, que no es ni un fallo ni una pasada buena.
+`sync.py` (sin terminal la pregunta toma el «no») y aquí cuenta como `SALTADA`,
+que no es ni un fallo ni una pasada buena.
 
-Al final, `Pregunta`: el plazo de «¿Atender esta unidad?». También es un dato
-del planificador y no de la ventana que la hace, para que la cuenta atrás no
-dependa de que la ventana llegue a abrirse, ni una respuesta tardía cuente.
+`Pregunta` es el plazo de «¿Atender esta unidad?». Es también un dato del
+planificador y no de la ventana que la hace, para que la cuenta atrás no
+dependa de que la ventana llegue a abrirse ni una respuesta tardía cuente.
 """
 
 from __future__ import annotations
@@ -53,38 +51,64 @@ RED = "red"             # falló, y por la red: el remoto pasa a «sin conexión
 SALTADA = "saltada"     # pedía --resync y nadie lo ha aprobado
 
 HORA = 3600.0
+"""Segundos que tiene una hora."""
 
 
 @dataclass(frozen=True)
 class Politica:
-    """Cómo se modera el agente. Sale de `agente.json`; aquí, sus valores de
-    fábrica, que son los del diseño: sincroniza con batería, se para por
-    debajo del 20 %, se pausa en una red de uso medido."""
+    """Cómo se modera el agente.
+
+    Sale de `agente.json`; aquí están sus valores de fábrica, que son los del
+    diseño: sincroniza con batería, se para por debajo del 20 % y se pausa en
+    una red de uso medido.
+
+    Args:
+        con_bateria: Si se sincroniza funcionando a batería.
+        bateria_minima: Porcentaje por debajo del cual se para.
+        pausar_red_medida: Si se pausa en una red de uso medido.
+        tope_espera: Segundos máximos de espera tras fallos seguidos.
+        sondeo_sin_conexion: Segundos entre sondas de un remoto sin conexión.
+        mirar_maximo: Cada cuánto se vuelve a mirar como mucho, aunque nada
+            toque: el entorno (batería, red) se lee de nuevo en cada vuelta y
+            puede haber cambiado.
+        mirar_ocupado: Con una pasada en marcha, cada cuánto se mira si ha
+            terminado.
+    """
     con_bateria: bool = True
     bateria_minima: int = 20
     pausar_red_medida: bool = True
     tope_espera: float = 4 * HORA
     sondeo_sin_conexion: float = 5 * 60.0
-    # Cada cuánto se vuelve a mirar como mucho, aunque nada toque: el entorno
-    # (batería, red) se lee de nuevo en cada vuelta y puede haber cambiado.
     mirar_maximo: float = 60.0
-    # Con una pasada en marcha, cada cuánto se mira si ha terminado.
     mirar_ocupado: float = 2.0
 
 
 @dataclass(frozen=True)
 class Pareja:
+    """Una pareja de una raíz, con el remote al que va.
+
+    Args:
+        nombre: Nombre de la pareja.
+        remoto: El remote de rclone al que va; agrupa el «sin conexión».
+    """
     nombre: str
-    remoto: str = ""        # el remote de rclone al que va; agrupa el «sin conexión»
+    remoto: str = ""
 
 
 @dataclass(frozen=True)
 class Raiz:
     """Una raíz atendida: la del equipo o una unidad.
 
-    `atendible` resume su estado —abierta y sin nadie más sirviéndola—; el
-    motivo cuando no lo es lo sabe el agente, que es quien lo enseña. Un
-    intervalo infinito es el modo `sync`: una pasada por conexión y ya."""
+    `atendible` resume su estado (abierta y sin nadie más sirviéndola); el
+    motivo cuando no lo es lo sabe el agente, que es quien lo enseña.
+
+    Args:
+        clave: Identificador de la raíz.
+        parejas: Sus parejas.
+        intervalo: Segundos entre pasadas; infinito es el modo `sync` (una
+            pasada por conexión y ya).
+        atendible: Si se la puede atender ahora.
+    """
     clave: str
     parejas: tuple[Pareja, ...]
     intervalo: float                    # segundos
@@ -93,54 +117,87 @@ class Raiz:
 
 @dataclass(frozen=True)
 class Marca:
-    """Lo que se recuerda de una pareja entre pasadas."""
+    """Lo que se recuerda de una pareja entre pasadas.
+
+    Args:
+        ultimo_intento: Cuándo se intentó por última vez, o `None` si nunca o
+            si tocó volver a intentarlo.
+        fallos: Fallos seguidos.
+    """
     ultimo_intento: float | None = None
-    fallos: int = 0                     # fallos seguidos
+    fallos: int = 0
 
 
 @dataclass(frozen=True)
 class Entorno:
-    """Lo que el agente ha medido fuera: todo son sondas sustituibles."""
+    """Lo que el agente ha medido fuera; todo son sondas sustituibles.
+
+    Args:
+        pausado: Si el usuario ha pausado el agente.
+        con_bateria: Si el equipo funciona ahora a batería.
+        bateria: Porcentaje de batería, si se sabe.
+        red_medida: Si la red es de uso medido; `None` es «no se sabe» y cuenta
+            como normal.
+        sin_conexion: `(raíz, remoto)` sin conexión, con cuándo toca sondearlo
+            otra vez.
+    """
     pausado: bool = False
-    con_bateria: bool = False           # ¿funciona ahora a batería?
-    bateria: int | None = None          # porcentaje, si se sabe
-    red_medida: bool | None = None      # None: no se sabe, y cuenta como normal
-    # (raíz, remoto) sin conexión → cuándo toca sondearlo otra vez.
+    con_bateria: bool = False
+    bateria: int | None = None
+    red_medida: bool | None = None
     sin_conexion: Mapping[tuple[str, str], float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
 class Tarea:
+    """Una pasada de una pareja o la sonda de un remoto.
+
+    Args:
+        tipo: `PASADA` o `SONDA`.
+        raiz: Clave de la raíz.
+        pareja: Nombre de la pareja; `None` en una sonda.
+        remoto: El remote de rclone.
+        urgente: Si la pidió alguien a mano («Sincronizar ahora»).
+    """
     tipo: str
     raiz: str
-    pareja: str | None = None           # None en una SONDA
+    pareja: str | None = None
     remoto: str = ""
     urgente: bool = False
 
 
 @dataclass(frozen=True)
 class Decision:
+    """Lo que decide el planificador.
+
+    Args:
+        tarea: La tarea a lanzar, o `None` si no toca nada.
+        mirar_en: Segundos hasta la próxima vuelta.
+        retenido: Por qué no se lanza nada, si es global.
+    """
     tarea: Tarea | None
-    mirar_en: float                     # segundos hasta la próxima vuelta
-    retenido: str | None = None         # por qué no se lanza nada, si es global
+    mirar_en: float
+    retenido: str | None = None
 
 
 def espera(intervalo: float, fallos: int, tope: float = 4 * HORA) -> float:
-    """Cuánto esperar tras la última pasada: `intervalo · 2^fallos`, con tope.
+    """Devuelve cuánto esperar tras la última pasada: `intervalo · 2^fallos`, con tope.
 
     El tope nunca acorta el intervalo elegido: con un intervalo de 6 h, fallar
-    no puede hacer que se intente antes que sin fallar."""
+    no puede hacer que se intente antes que sin fallar.
+    """
     if fallos <= 0 or math.isinf(intervalo):
         return intervalo
     return min(intervalo * (2 ** min(fallos, 32)), max(tope, intervalo))
 
 
 def registrar(marca: Marca, resultado: str, ahora: float) -> Marca:
-    """La marca de una pareja después de una pasada.
+    """Devuelve la marca de una pareja después de una pasada.
 
-    Una pasada de `RED` no cuenta como intento: la pareja espera al remoto, no a
-    su intervalo, y en cuanto la sonda diga que contesta vuelve a tocarle. Ni
-    suma un fallo: el problema es la red, no la pareja."""
+    Una pasada de `RED` no cuenta como intento: la pareja espera al remoto, no
+    a su intervalo, y en cuanto la sonda diga que contesta vuelve a tocarle.
+    Tampoco suma un fallo: el problema es la red, no la pareja.
+    """
     if resultado == OK or resultado == SALTADA:
         return Marca(ahora, 0)
     if resultado == RED:
@@ -149,13 +206,20 @@ def registrar(marca: Marca, resultado: str, ahora: float) -> Marca:
 
 
 def empieza_a_fallar(antes: Marca, despues: Marca) -> bool:
-    """¿Esta pasada es la primera que falla? Solo entonces se avisa: un servicio
-    que lleva horas sin poder no manda un aviso por ciclo."""
+    """Indica si esta pasada es la primera que falla.
+
+    Solo entonces se avisa: un servicio que lleva horas sin poder no manda un
+    aviso por ciclo.
+    """
     return antes.fallos == 0 and despues.fallos > 0
 
 
 def moderacion(entorno: Entorno, politica: Politica) -> str | None:
-    """Por qué no se lanza nada ahora mismo, o None si se puede."""
+    """Devuelve por qué no se lanza nada ahora mismo.
+
+    Returns:
+        El motivo, o `None` si se puede lanzar.
+    """
     if entorno.pausado:
         return "en pausa"
     if entorno.con_bateria:
@@ -172,7 +236,18 @@ def decidir(raices: Iterable[Raiz], marcas: Mapping[tuple[str, str], Marca],
             entorno: Entorno, ahora: float, politica: Politica = Politica(),
             ocupado: bool = False,
             urgentes: Iterable[tuple[str, str]] = ()) -> Decision:
-    """La siguiente tarea, o ninguna y cuándo volver a mirar."""
+    """Devuelve la siguiente tarea o, si no hay, cuándo volver a mirar.
+
+    Args:
+        raices: Las raíces que atiende el agente.
+        marcas: Lo recordado de cada pareja, por `(raíz, pareja)`.
+        entorno: Lo medido fuera.
+        ahora: La hora, en segundos.
+        politica: La moderación.
+        ocupado: Si ya hay una pasada en marcha.
+        urgentes: `(raíz, pareja)` pedidos a mano, en el orden en que se
+            pidieron.
+    """
     if ocupado:
         return Decision(None, politica.mirar_ocupado)
 
@@ -228,50 +303,68 @@ def decidir(raices: Iterable[Raiz], marcas: Mapping[tuple[str, str], Marca],
 
 def sin_conexion(entorno: Entorno, raiz: str, remoto: str,
                  proxima_sonda: float) -> Entorno:
-    """El entorno con ese remoto marcado sin conexión, y cuándo sondearlo.
+    """Devuelve el entorno con ese remoto marcado sin conexión.
 
-    Tras la primera pasada que falla por red, la sonda va enseguida: si el
+    Tras la primera pasada que falla por red la sonda va enseguida: si el
     remoto contesta, aquel fallo no era de la red (ver `agente.py`). Una sonda
-    que falla pone la siguiente a `Politica.sondeo_sin_conexion`."""
+    que falla pone la siguiente a `Politica.sondeo_sin_conexion`.
+
+    Args:
+        proxima_sonda: Cuándo toca sondarlo.
+    """
     nuevo = dict(entorno.sin_conexion)
     nuevo[(raiz, remoto)] = proxima_sonda
     return replace(entorno, sin_conexion=nuevo)
 
 
 def con_conexion(entorno: Entorno, raiz: str, remoto: str) -> Entorno:
-    """El entorno con ese remoto otra vez disponible."""
+    """Devuelve el entorno con ese remoto otra vez disponible."""
     nuevo = {k: v for k, v in entorno.sin_conexion.items() if k != (raiz, remoto)}
     return replace(entorno, sin_conexion=nuevo)
 
 
-# ---------------------------------------------------------------------------
-# «¿Atender esta unidad?» — el plazo
-# ---------------------------------------------------------------------------
-
 ATENDER = "atender"
+"""Respuesta de la ventana a «¿Atender esta unidad?»: sí."""
 AHORA_NO = "ahora_no"
+"""Respuesta de la ventana a «¿Atender esta unidad?»: ahora no."""
 
 
 @dataclass(frozen=True)
 class Pregunta:
-    """Una unidad nueva a la que se le ha preguntado si atenderla."""
+    """Una unidad nueva a la que se le ha preguntado si atenderla.
+
+    Args:
+        id: Id de la unidad.
+        desde: Cuándo se preguntó.
+        plazo: Segundos para contestar (`espera_unidad_nueva`).
+    """
     id: str
     desde: float
-    plazo: float                        # segundos: `espera_unidad_nueva`
+    plazo: float
 
     @property
     def hasta(self) -> float:
+        """Devuelve cuándo vence el plazo."""
         return self.desde + self.plazo
 
 
 def resolver(pregunta: Pregunta, respuesta: str | None, ahora: float,
              cuando: float | None = None) -> str | None:
-    """Qué vale la respuesta a esa pregunta, o None si todavía se espera.
+    """Devuelve qué vale la respuesta a esa pregunta.
 
-    `respuesta` es lo que ha contestado la ventana (`ATENDER`/`AHORA_NO`) o None
-    si no ha contestado; `cuando`, a qué hora llegó —por defecto, ahora—. Lo que
-    llega después del plazo no cuenta: para decir que sí tarde está la bandeja.
-    Sin respuesta, al vencer el plazo es «Ahora no»."""
+    Lo que llega después del plazo no cuenta: para decir que sí tarde está la
+    bandeja. Sin respuesta, al vencer el plazo es «Ahora no».
+
+    Args:
+        pregunta: La pregunta hecha.
+        respuesta: Lo que ha contestado la ventana (`ATENDER` o `AHORA_NO`), o
+            `None` si no ha contestado.
+        ahora: La hora actual.
+        cuando: A qué hora llegó la respuesta; por defecto, ahora.
+
+    Returns:
+        La respuesta válida, o `None` si todavía se espera.
+    """
     llegada = ahora if cuando is None else cuando
     if respuesta in (ATENDER, AHORA_NO) and llegada <= pregunta.hasta:
         return respuesta

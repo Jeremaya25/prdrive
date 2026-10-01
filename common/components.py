@@ -1,52 +1,45 @@
 #!/usr/bin/env python3
-"""
-components.py — Qué lleva el dispositivo de fuera, y si sigue siendo lo fijado.
+r"""Qué componentes externos lleva el dispositivo y si siguen siendo los fijados.
 
-Tres cosas del dispositivo no son código de este proyecto: el binario de rclone,
-el Python que lo ejecuta y, en uno cifrado con VeraCrypt, el VeraCrypt que viaja
-fuera del contenedor. `common/pins.py` dice cuáles TOCAN; aquí se lee cuáles
-LLEVA, y se restan.
+Tres cosas del dispositivo no son código de este proyecto: el binario de
+rclone, el Python que lo ejecuta y, en uno cifrado con VeraCrypt, el VeraCrypt
+que viaja fuera del contenedor. `common/pins.py` dice cuáles TOCAN; aquí se lee
+cuáles LLEVA y se restan.
 
-Vive en `common/` y no en `install/` porque quien tiene que preguntárselo es el
-dispositivo: la ventana pinta ese aviso en su primer pintado, y ahí no hay ni
-red ni instalador. Todo lo de este módulo es leer ficheros diminutos del propio
-dispositivo, así que contesta al instante y no lanza nunca —la misma regla que
-`update.pending()` y `store.read_json()`—.
+Vive en `common/` y no en `install/` porque quien lo pregunta es el
+dispositivo: la ventana pinta ese aviso en su primer pintado, sin red ni
+instalador. Solo lee ficheros diminutos del propio dispositivo, así que
+contesta al instante y no lanza nunca (la misma regla que `update.pending()` y
+`store.read_json()`). Quien ARREGLA lo detectado es `install/components.py`,
+que baja y verifica y se ejecuta desde el zip del código, como el aplicador de
+la actualización del programa.
 
-Quien ARREGLA lo que aquí se detecta es `install/components.py`, que sí baja y
-verifica, y que no viaja al dispositivo: se ejecuta desde el zip del código, como
-el aplicador de la actualización del programa.
+Por qué hay sellos: un binario no dice su versión sin ejecutarlo y el de otra
+plataforma no se puede ejecutar aquí (un Windows no arranca el rclone de Linux
+ni un x64 el de ARM). Cada componente deja escrito de dónde salió:
+- `runtime/<clave>/PRDRIVE-RUNTIME`: lo escribe `runtime_bin.extract()` el
+  último de todo, así que una extracción a medias no tiene sello.
+- `bin/<arch>/<rclone>.PRDRIVE-RCLONE`: lo escribe `deploy.copy_rclone()`.
+  Lleva el nombre del binario porque `bin/x64/` es de dos plataformas a la vez
+  (`rclone.exe` y `rclone`).
+- `VeraCrypt/PRDRIVE-VERACRYPT`: en la raíz FÍSICA, no en `.prdrive/` (el
+  VeraCrypt que abre el contenedor no puede vivir dentro de él). Lo escribe
+  `install/traveler.py` el último, con la versión y el SHA-256 de cada fichero.
 
-**Por qué hay sellos.** Un binario no dice su versión sin ejecutarlo, y el de
-otra plataforma no se puede ejecutar aquí: un Windows no arranca el rclone de
-Linux ni un x64 el de ARM. Así que cada componente deja escrito de dónde salió:
+Un dispositivo aprovisionado antes de los sellos no tiene el de rclone: se lee
+como «no consta» y eso CUENTA como pendiente, que es la única respuesta
+honesta.
 
-  * `runtime/<clave>/PRDRIVE-RUNTIME` — lo escribe `runtime_bin.extract()`, el
-    último de todo, de modo que una extracción a medias no tiene sello.
-  * `bin/<arch>/<rclone>.PRDRIVE-RCLONE` — lo escribe `deploy.copy_rclone()`. Va
-    junto al binario y lleva su nombre porque `bin/x64/` es de dos plataformas a
-    la vez: ahí conviven el `rclone.exe` de Windows y el `rclone` de Linux.
-  * `VeraCrypt/PRDRIVE-VERACRYPT` — en la raíz FÍSICA, no en `.prdrive/`: el
-    VeraCrypt que abre el contenedor no puede vivir dentro de él. Lo escribe
-    `install/traveler.py` el último, dentro de la carpeta nueva y antes de
-    ponerla en su sitio, con la versión y el SHA-256 de cada fichero.
+Con VeraCrypt no es igual, a propósito: una carpeta `VeraCrypt\` sin sello es
+la copia de una instalación (`VeraCrypt.exe` de una sola arquitectura) y el
+vestíbulo de ese dispositivo solo sabe abrir esa disposición. Cambiarla sin
+cambiar a la vez el vestíbulo dejaría la unidad sin forma de abrirse, y el
+vestíbulo no lo toca una actualización de componentes (solo el paso 5 y «Añadir
+plataformas…»). Sale como pendiente marcada `asistente`: se dice y no se toca.
 
-Un dispositivo aprovisionado antes de que existieran los sellos no tiene el de
-rclone. Eso se lee como «no consta», y no consta **cuenta como pendiente**: es
-la única respuesta honesta, y una actualización lo deja apuntado para siempre.
-
-Con VeraCrypt no es igual, y a propósito. Una carpeta `VeraCrypt\\` sin sello es
-la copia de una instalación que dejaban las versiones anteriores —`VeraCrypt.exe`
-de una sola arquitectura—, y el vestíbulo de ese mismo dispositivo solo sabe
-abrir esa disposición. Cambiarla por el portable sin cambiar a la vez el
-vestíbulo dejaría la unidad sin forma de abrirse, y el vestíbulo no lo toca una
-actualización de componentes (solo el paso 5 y «Añadir plataformas…»). Así que
-sale como pendiente, pero marcada `asistente`: se dice, y no se toca.
-
-Aquí viven también las rutas de los dos componentes dentro de `.prdrive/`, y
-viven aquí para que haya UNA copia: `install/platforms.py` las importa en vez de
-repetirlas. Es lo que garantiza que el instalador escriba donde el dispositivo
-lee.
+También viven aquí las rutas de los componentes dentro de `.prdrive/` para que
+haya UNA copia: `install/platforms.py` las importa, y eso garantiza que el
+instalador escriba donde el dispositivo lee.
 """
 
 from __future__ import annotations
@@ -58,81 +51,95 @@ from pathlib import Path
 from . import APP_NAME, model, pins, vestibulo
 from .pins import PLATAFORMAS, Plataforma
 
-# La carpeta y el sello del runtime. `install/runtime_bin.py` los reexporta y
-# `penwatch.py` repite el nombre del sello —no puede importar nada del
-# proyecto—, con un test que impide que las copias se separen.
 RUNTIME_SUBDIR = "runtime"
+"""Carpeta del runtime dentro de `.prdrive/`.
+
+`install/runtime_bin.py` la reexporta y `penwatch.py` repite el nombre del
+sello (no puede importar nada del proyecto); un test impide que las copias se
+separen.
+"""
 RUNTIME_STAMP = "PRDRIVE-RUNTIME"
+"""Nombre del sello del runtime; ver `RUNTIME_SUBDIR`."""
 
-# El de rclone es un sufijo y no un nombre fijo porque el sello acompaña a un
-# fichero, no a una carpeta: `bin/x64/rclone.exe.PRDRIVE-RCLONE` y
-# `bin/x64/rclone.PRDRIVE-RCLONE` conviven en el mismo sitio sin pisarse.
 RCLONE_STAMP_SUFIJO = ".PRDRIVE-RCLONE"
+"""Sufijo del sello de rclone, que acompaña a un fichero y no a una carpeta.
 
-# El del VeraCrypt de viaje va DENTRO de su carpeta, `VeraCrypt/`, en la raíz
-# física: la carpeta entera se sustituye de un renombrado, y el sello con ella.
+Por eso es un sufijo: `bin/x64/rclone.exe.PRDRIVE-RCLONE` y
+`bin/x64/rclone.PRDRIVE-RCLONE` conviven sin pisarse.
+"""
+
 VERACRYPT_STAMP = "PRDRIVE-VERACRYPT"
-# Las líneas de un fichero en ese sello: `fichero <nombre> = <sha256>`.
+"""Nombre del sello del VeraCrypt de viaje.
+
+Va DENTRO de su carpeta `VeraCrypt/`, en la raíz física: la carpeta entera se
+sustituye con un renombrado y el sello con ella.
+"""
 FICHERO_SELLO = "fichero "
+"""Prefijo de las líneas de fichero del sello del VeraCrypt.
+
+Cada una es `fichero <nombre> = <sha256>`.
+"""
 
 RCLONE = "rclone"
 PYTHON = "python"
 VERACRYPT = "veracrypt"
 
-# Lo que se enseña cuando no hay sello. No es un error: es un dispositivo de
-# antes de que esto existiera, y lo que le hace falta es justo una actualización.
 DESCONOCIDA = "no consta"
+"""Lo que se enseña cuando no hay sello.
 
+No es un error: es un dispositivo de antes de que existieran los sellos, y lo
+que le hace falta es justo una actualización.
+"""
 
-# ---------------------------------------------------------------------------
-# Dónde vive cada componente
-# ---------------------------------------------------------------------------
 
 def _base(app_dir: Path | str | None) -> Path:
-    """La carpeta del código. Sin argumento, la de ESTE dispositivo.
+    """Devuelve la carpeta del código; sin argumento, la de ESTE dispositivo.
 
-    Se resuelve al llamar y no al importar por lo mismo que
-    `update.installed_version()` admite un `root`: el instalador pregunta por un
-    volumen que no es el suyo, y `tests/_harness.sandbox()` no reengancha
-    `model.APP_DIR`."""
+    Se resuelve al llamar y no al importar: el instalador pregunta por un
+    volumen que no es el suyo y `tests/_harness.sandbox()` no reengancha
+    `model.APP_DIR`.
+    """
     return Path(app_dir) if app_dir is not None else model.APP_DIR
 
 
 def runtime_dir(app_dir: Path | str | None, plat: Plataforma) -> Path:
+    """Devuelve la carpeta del runtime de esa plataforma."""
     return _base(app_dir) / RUNTIME_SUBDIR / plat.clave
 
 
 def rclone_path(app_dir: Path | str | None, plat: Plataforma) -> Path:
+    """Devuelve la ruta del rclone de esa plataforma."""
     return _base(app_dir) / "bin" / plat.bin_dir / plat.rclone_exe
 
 
 def rclone_stamp_path(app_dir: Path | str | None, plat: Plataforma) -> Path:
+    """Devuelve la ruta del sello de ese rclone."""
     ruta = rclone_path(app_dir, plat)
     return ruta.with_name(ruta.name + RCLONE_STAMP_SUFIJO)
 
 
 def veracrypt_dir(raiz_fisica: Path | str) -> Path:
-    """La carpeta del VeraCrypt de viaje. Cuelga de la raíz FÍSICA del volumen,
-    junto al `.hc`, y no de `.prdrive/`: dentro del contenedor haría falta
-    VeraCrypt para llegar a VeraCrypt."""
+    """Devuelve la carpeta del VeraCrypt de viaje.
+
+    Cuelga de la raíz FÍSICA del volumen, junto al `.hc`, y no de `.prdrive/`:
+    dentro del contenedor haría falta VeraCrypt para llegar a VeraCrypt.
+    """
     return Path(raiz_fisica) / vestibulo.TRAVELER
 
 
 def veracrypt_stamp_path(raiz_fisica: Path | str) -> Path:
+    """Devuelve la ruta del sello del VeraCrypt de viaje."""
     return veracrypt_dir(raiz_fisica) / VERACRYPT_STAMP
 
 
-# ---------------------------------------------------------------------------
-# Los sellos
-# ---------------------------------------------------------------------------
-
 def leer_sello(texto: str) -> dict[str, str]:
-    """Un sello `clave = valor` como diccionario. Lo que no se entienda, fuera.
+    """Devuelve un sello `clave = valor` como diccionario; lo que no se entienda, fuera.
 
-    Tolerante a propósito, igual que `store.read_json()`: esto lo lee la ventana
-    al abrirse, y un fichero a medias —el dispositivo se extrajo a mitad de una
-    escritura— tiene que significar «aquí no consta nada», no una excepción en
-    el arranque."""
+    Es tolerante a propósito, como `store.read_json()`: la ventana lo lee al
+    abrirse y un fichero a medias (el dispositivo se extrajo a mitad de una
+    escritura) tiene que significar «aquí no consta nada», no una excepción en
+    el arranque.
+    """
     datos: dict[str, str] = {}
     for linea in texto.splitlines():
         if linea.lstrip().startswith("#") or "=" not in linea:
@@ -143,24 +150,24 @@ def leer_sello(texto: str) -> dict[str, str]:
 
 
 def _texto(ruta: Path) -> str:
+    """Lee un fichero como texto; cadena vacía si no se puede."""
     try:
         return ruta.read_text(encoding="utf-8")
     except (OSError, ValueError):
-        # ValueError además de OSError: un `.read_text` sobre un fichero a
-        # medias —el dispositivo se extrajo a mitad de una escritura— no falla
-        # con un error de E/S, falla con un `UnicodeDecodeError` (que ES un
-        # ValueError), y es el mismo suceso que el resto de este módulo trata
-        # como «no consta»: un fichero que no se puede leer como texto.
+        # También `ValueError`: un fichero a medias (dispositivo extraído a
+        # mitad de escritura) falla con `UnicodeDecodeError`, no con un error
+        # de E/S, y es el mismo suceso que el resto del módulo trata como «no
+        # consta».
         return ""
 
 
 def rclone_stamp_text(plat: Plataforma, version: str) -> str:
-    """El sello de un rclone: qué versión se copió y para qué plataforma.
+    """Devuelve el sello de un rclone: qué versión se copió y para qué plataforma.
 
-    Sin sha256, a diferencia del sello del runtime. Aquel lo lleva porque
-    penwatch compara el TEXTO ENTERO para decidir si refresca su copia; aquí lo
-    único que hay que poder contestar es «¿es la versión fijada?», y un resumen
-    que nadie lee es un resumen que se queda sin comprobar."""
+    Sin sha256, a diferencia del sello del runtime: aquel lo lleva porque
+    penwatch compara el TEXTO ENTERO para decidir si refresca su copia, y aquí
+    solo hay que contestar «¿es la versión fijada?».
+    """
     return (f"# {APP_NAME} — el rclone de este dispositivo. Lo escribe el "
             f"instalador y lo lee la ventana. No lo toques.\n"
             f"rclone = {version}\n"
@@ -169,15 +176,20 @@ def rclone_stamp_text(plat: Plataforma, version: str) -> str:
 
 def veracrypt_stamp_text(version: str, sha256_paquete: str,
                          ficheros: dict[str, str], paquete: str | None = None) -> str:
-    """El sello del VeraCrypt de viaje: de qué paquete salió y qué hay en él.
+    """Devuelve el sello del VeraCrypt de viaje: de qué paquete salió y qué hay en él.
 
-    A diferencia del de rclone, este SÍ lleva el resumen de cada fichero, y no
-    para adornar: es a la vez el manifiesto de la caché del instalador
-    (`install/veracrypt_bin.py` vuelve a resumir cada fichero contra él antes de
-    usarlo) y el de la carpeta de la unidad, que es una copia exacta de esa
-    caché. Así «qué versión es» y «qué ficheros son» salen del mismo sitio.
-    `paquete` es el nombre de lo descargado cuando no es el Portable de Windows
-    (el AppImage de Linux, `install/veracrypt_bin.py`)."""
+    A diferencia del de rclone, este SÍ lleva el resumen de cada fichero: es a
+    la vez el manifiesto de la caché del instalador (`install/veracrypt_bin.py`
+    vuelve a resumir cada fichero contra él antes de usarlo) y el de la carpeta
+    de la unidad, que es una copia exacta de esa caché.
+
+    Args:
+        version: La versión de VeraCrypt.
+        sha256_paquete: SHA-256 de lo descargado.
+        ficheros: `{nombre: sha256}` de cada fichero que se conserva.
+        paquete: Nombre de lo descargado cuando no es el Portable de Windows
+            (el AppImage de Linux, `install/veracrypt_bin.py`).
+    """
     lineas = [f"# {APP_NAME} — el VeraCrypt que viaja en esta unidad. Lo escribe "
               f"el instalador y lo lee la ventana. No lo toques.",
               f"{VERACRYPT} = {version}",
@@ -189,11 +201,12 @@ def veracrypt_stamp_text(version: str, sha256_paquete: str,
 
 
 def veracrypt_ficheros(texto: str) -> dict[str, str]:
-    """{nombre: sha256} de los ficheros que dice un sello del VeraCrypt de viaje.
+    """Devuelve `{nombre: sha256}` de los ficheros que declara el sello.
 
-    Un nombre que no sea un nombre suelto —con barra, `..` o unidad— no cuenta:
-    esto se va a usar para leer y copiar, y un sello escrito a mano no puede
-    llevar a nadie fuera de la carpeta."""
+    Un nombre que no sea suelto (con barra, `..` o unidad) no cuenta: esto se
+    usa para leer y copiar, y un sello escrito a mano no puede llevar a nadie
+    fuera de la carpeta.
+    """
     salida: dict[str, str] = {}
     for clave, valor in leer_sello(texto).items():
         if not clave.startswith(FICHERO_SELLO):
@@ -207,14 +220,23 @@ def veracrypt_ficheros(texto: str) -> dict[str, str]:
 
 def veracrypt_integro(carpeta: Path | str, necesarios: tuple[str, ...] = (),
                       version: str | None = None) -> bool:
-    """¿Esa carpeta de VeraCrypt es la que dice su sello, byte a byte?
+    """Comprueba que esa carpeta de VeraCrypt es la que dice su sello, byte a byte.
 
-    Sello presente (y de `version`, si se pide), cada fichero que nombra con
-    su SHA-256, y ninguno de `necesarios` sin nombrar. Es la comprobación de
-    `install/veracrypt_bin.verificada()` en `common/`, porque la hace también el
+    Exige el sello (y de `version`, si se pide), cada fichero que nombra con su
+    SHA-256 y ninguno de `necesarios` sin nombrar. Es
+    `install/veracrypt_bin.verificada()` en `common/` porque también lo hace el
     agente, que no lleva `install/`, cada vez que va a lanzar SU VeraCrypt: lo
-    que se lanza pide administrador, y lo que pide administrador tiene que ser
-    lo que se comprobó al instalar. No lanza nunca."""
+    que pide administrador tiene que ser lo que se comprobó al instalar. No
+    lanza nunca.
+
+    Args:
+        carpeta: La carpeta del VeraCrypt.
+        necesarios: Ficheros que el sello tiene que nombrar.
+        version: Versión que debe declarar el sello, si se exige.
+
+    Returns:
+        True si todo cuadra.
+    """
     import hashlib
     carpeta = Path(carpeta)
     try:
@@ -240,51 +262,61 @@ def veracrypt_integro(carpeta: Path | str, necesarios: tuple[str, ...] = (),
 
 
 def runtime_stamp(app_dir: Path | str | None, plat: Plataforma) -> str | None:
-    """El sello del runtime de esa plataforma, o None si no hay uno completo.
+    """Devuelve el sello del runtime de esa plataforma.
 
-    Sin sello no hay runtime: `runtime_bin.extract()` lo escribe el último, así
-    que una extracción interrumpida no lo tiene. Y sin intérprete tampoco."""
+    Sin sello no hay runtime (`runtime_bin.extract()` lo escribe el último, así
+    que una extracción interrumpida no lo tiene) y sin intérprete tampoco.
+
+    Returns:
+        El texto del sello, o `None` si no hay uno completo.
+    """
     d = runtime_dir(app_dir, plat)
     try:
         if not (d / plat.interprete).is_file():
             return None
         return (d / RUNTIME_STAMP).read_text(encoding="utf-8")
     except (OSError, ValueError):
-        # Mismo motivo que en `_texto()`: un sello a medio escribir se lee como
-        # `UnicodeDecodeError`, no como `OSError`, y el contrato de este módulo
-        # —nunca lanza, la ventana lo llama en su primer pintado— es el mismo
-        # para los dos.
+        # Mismo motivo que en `_texto()`: un sello a medio escribir falla con
+        # `UnicodeDecodeError`, y el contrato del módulo (nunca lanza, la
+        # ventana lo llama en su primer pintado) es el mismo para los dos.
         return None
 
-
-# ---------------------------------------------------------------------------
-# Qué está anticuado
-# ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
 class Pendiente:
     """Un componente que el dispositivo lleva y que no es el que el programa fija.
 
-    El VeraCrypt de viaje no es de ninguna plataforma —lleva las dos
-    arquitecturas de Windows a la vez— y vive fuera de `.prdrive/`: su
-    `plataforma` es None y `ruta` dice dónde está su carpeta. `asistente` es el
-    VeraCrypt sin sello de un dispositivo de antes: pendiente sí, pero no lo pone
-    al día una actualización de componentes (ver el docstring del módulo)."""
+    El VeraCrypt de viaje no es de ninguna plataforma (lleva las dos
+    arquitecturas de Windows a la vez) y vive fuera de `.prdrive/`: su
+    `plataforma` es `None` y `ruta` dice dónde está su carpeta. `asistente` es
+    el VeraCrypt sin sello de un dispositivo de antes: pendiente, pero no lo
+    pone al día una actualización de componentes (ver el docstring del módulo).
+
+    Args:
+        plataforma: La plataforma del componente, o `None` para el VeraCrypt.
+        que: `RCLONE`, `PYTHON` o `VERACRYPT`.
+        lleva: Lo que hay ahora, o `DESCONOCIDA`.
+        deberia: Lo que dice `common/pins.py`.
+        ruta: Carpeta del componente, para el VeraCrypt.
+        asistente: Si solo se arregla desde el asistente del instalador.
+    """
     plataforma: Plataforma | None
-    que: str                  # RCLONE | PYTHON | VERACRYPT
-    lleva: str                # lo que hay ahora, o DESCONOCIDA
-    deberia: str              # lo que dice common/pins.py
+    que: str
+    lleva: str
+    deberia: str
     ruta: Path | None = None
     asistente: bool = False
 
     @property
     def titulo(self) -> str:
+        """Devuelve el nombre del componente para mostrar."""
         if self.que == VERACRYPT:
             return "VeraCrypt de la unidad"
         nombre = "rclone" if self.que == RCLONE else "Python"
         return f"{nombre} de {self.plataforma.nombre}"
 
     def describe(self) -> str:
+        """Devuelve una frase con lo que lleva, lo que toca y cómo se arregla."""
         if self.asistente:
             return (f"{self.titulo}: una copia de antes, sin sello; se pone al día "
                     f"con «Añadir plataformas…» del instalador")
@@ -292,6 +324,10 @@ class Pendiente:
 
 
 def _existe(ruta: Path) -> bool:
+    """Indica si es un fichero, sin lanzar.
+
+    Un volumen bloqueado o desenchufado cuenta como que no.
+    """
     try:
         return ruta.is_file()
     except OSError:
@@ -300,6 +336,11 @@ def _existe(ruta: Path) -> bool:
 
 def rclone_pendiente(app_dir: Path | str | None,
                      plat: Plataforma) -> Pendiente | None:
+    """Devuelve el rclone de esa plataforma si no es el fijado.
+
+    Returns:
+        El `Pendiente`, o `None` si no lleva rclone o es el correcto.
+    """
     if not _existe(rclone_path(app_dir, plat)):
         return None
     sello = leer_sello(_texto(rclone_stamp_path(app_dir, plat)))
@@ -311,6 +352,11 @@ def rclone_pendiente(app_dir: Path | str | None,
 
 def python_pendiente(app_dir: Path | str | None,
                      plat: Plataforma) -> Pendiente | None:
+    """Devuelve el Python de esa plataforma si no es el fijado.
+
+    Returns:
+        El `Pendiente`, o `None` si no lleva runtime o es el correcto.
+    """
     texto = runtime_stamp(app_dir, plat)
     if texto is None:
         return None
@@ -324,12 +370,13 @@ def python_pendiente(app_dir: Path | str | None,
 
 
 def veracrypt_pendiente(raiz_fisica: Path | str) -> Pendiente | None:
-    """El VeraCrypt de viaje de esa raíz física, si no es el que fija el programa.
+    """Devuelve el VeraCrypt de viaje de esa raíz física si no es el fijado.
 
-    Sin carpeta —o sin ningún ejecutable de montar dentro— no lleva, y lo que no
-    lleva no está anticuado. Con sello de otra versión, pendiente y actualizable.
-    Sin sello es la copia de una instalación que dejaba prdrive antes: pendiente,
-    marcada `asistente` (ver el docstring del módulo)."""
+    Sin carpeta (o sin ningún ejecutable de montar dentro) no lleva, y lo que
+    no lleva no está anticuado. Con sello de otra versión es pendiente y
+    actualizable; sin sello es la copia de una instalación anterior y sale
+    marcada `asistente`.
+    """
     if not vestibulo.traveler_ejecutables(raiz_fisica):
         return None
     carpeta = veracrypt_dir(raiz_fisica)
@@ -341,13 +388,16 @@ def veracrypt_pendiente(raiz_fisica: Path | str) -> Pendiente | None:
 
 
 def raiz_fisica(app_dir: Path | str | None = None) -> Path | None:
-    """La raíz física del contenedor VeraCrypt en el que vive ese dispositivo, o
-    None si no vive en uno (o no se ve desde aquí).
+    """Devuelve la raíz física del contenedor VeraCrypt en el que vive ese dispositivo.
 
-    Por el id del fichero de control y la marca del vestíbulo, que es lo que une
+    Se busca por el id del fichero de control y la marca del vestíbulo, que une
     las dos mitades (`vestibulo.raiz_fisica()`: un stat por unidad, sin red).
-    `fleet` se importa aquí dentro porque importa este módulo. Función de módulo
-    para que los tests la sustituyan; nunca lanza."""
+    `fleet` se importa dentro porque importa este módulo. Es función de módulo
+    para que los tests la sustituyan; nunca lanza.
+
+    Returns:
+        La raíz, o `None` si no vive en un contenedor o no se ve desde aquí.
+    """
     try:
         from . import fleet
         return vestibulo.raiz_fisica(fleet.device_id(app_dir))
@@ -356,23 +406,24 @@ def raiz_fisica(app_dir: Path | str | None = None) -> Path | None:
 
 
 _BUSCAR = object()
+"""Valor centinela de `pendientes(fisica=...)`: «buscar la raíz física»."""
 
 
 def pendientes(app_dir: Path | str | None = None,
                fisica: Path | str | None | object = _BUSCAR) -> list[Pendiente]:
-    """Los componentes del dispositivo que no son los que fija el programa.
+    r"""Devuelve los componentes del dispositivo que no son los que fija el programa.
 
-    Solo mira lo que el dispositivo LLEVA. Una plataforma que no tiene no está
-    anticuada: está sin instalar, y eso lo resuelve «Añadir plataformas…» del
-    asistente, que es una decisión con sitio en disco de por medio y no cabe en
-    un botón de un recuadro. Lo mismo el VeraCrypt de viaje: sin carpeta
-    `VeraCrypt\\` no hay nada que poner al día.
+    Solo mira lo que el dispositivo LLEVA: una plataforma que no tiene no está
+    anticuada sino sin instalar, y eso lo resuelve «Añadir plataformas…», que
+    es una decisión con espacio en disco de por medio. Igual el VeraCrypt de
+    viaje: sin carpeta `VeraCrypt\` no hay nada que poner al día. Ni lanza ni
+    toca la red: lo pregunta la ventana al pintarse.
 
-    `fisica` es la raíz física del contenedor, si se sabe; sin ella se busca
-    (`raiz_fisica()`), y None es «no vive en un contenedor».
-
-    Ni lanza ni toca la red: es lo que pregunta la ventana al pintarse, y lo
-    mismo que `update.pending()` a su manera."""
+    Args:
+        app_dir: Carpeta del código; por defecto, la de este dispositivo.
+        fisica: Raíz física del contenedor si se sabe; por defecto se busca
+            (`raiz_fisica()`), y `None` es «no vive en un contenedor».
+    """
     salida: list[Pendiente] = []
     for plat in PLATAFORMAS:
         # rclone primero: es el que sincroniza, y sin él el dispositivo no hace
@@ -394,12 +445,14 @@ def pendientes(app_dir: Path | str | None = None,
 
 
 def corre_desde(carpeta: Path | str) -> bool:
-    """¿El intérprete de ESTE proceso vive dentro de esa carpeta?
+    """Indica si el intérprete de ESTE proceso vive dentro de esa carpeta.
 
-    Aquí y no en `install/` porque las dos puntas lo preguntan: la ventana, para
-    avisar antes de empezar de que tendrá que cerrarse, y el aplicador, para no
-    cambiar la carpeta de un intérprete vivo —Windows deja apartarla, pero luego
-    no borrarla, y lo que sí borra es su biblioteca estándar—. Nunca lanza."""
+    Está aquí y no en `install/` porque lo preguntan las dos puntas: la
+    ventana, para avisar antes de empezar de que tendrá que cerrarse, y el
+    aplicador, para no cambiar la carpeta de un intérprete vivo (Windows deja
+    apartarla pero luego no borrarla, y lo que sí borra es su biblioteca
+    estándar). Nunca lanza.
+    """
     try:
         Path(sys.executable).resolve().relative_to(Path(carpeta).resolve())
         return True
@@ -409,11 +462,16 @@ def corre_desde(carpeta: Path | str) -> bool:
 
 def propio(pends: list[Pendiente],
            app_dir: Path | str | None = None) -> Pendiente | None:
-    """El Python pendiente con el que corre este mismo proceso, o None.
+    """Devuelve el Python pendiente con el que corre este mismo proceso.
 
-    Es el caso normal de un dispositivo con instalación completa: la ventana
-    arranca desde `runtime/<clave>/` de este equipo, así que el runtime de esta
-    plataforma no se puede cambiar mientras siga abierta. Hay como mucho uno."""
+    Es el caso normal de una instalación completa: la ventana arranca desde
+    `runtime/<clave>/` de este equipo, así que ese runtime no se puede cambiar
+    mientras siga abierta. Hay como mucho uno.
+
+    Returns:
+        El `Pendiente`, o `None` si el proceso no corre de ningún runtime
+        pendiente.
+    """
     for p in pends:
         if (p.que == PYTHON and p.plataforma is not None
                 and corre_desde(runtime_dir(app_dir, p.plataforma))):
@@ -422,11 +480,14 @@ def propio(pends: list[Pendiente],
 
 
 def actualizables(pends: list[Pendiente]) -> list[Pendiente]:
-    """Los que puede poner al día una actualización de componentes: todos menos
-    el VeraCrypt sin sello, que es cosa de «Añadir plataformas…»."""
+    """Devuelve los pendientes que puede poner al día una actualización de componentes.
+
+    Son todos menos el VeraCrypt sin sello, que es cosa de «Añadir
+    plataformas…».
+    """
     return [p for p in pends if not p.asistente]
 
 
 def resumen(pends: list[Pendiente]) -> str:
-    """Una línea por componente, para el recuadro de la ventana y el menú."""
+    """Devuelve una línea por componente, para el recuadro de la ventana y el menú."""
     return "\n".join(p.describe() for p in pends)

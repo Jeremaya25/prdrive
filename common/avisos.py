@@ -1,25 +1,22 @@
 #!/usr/bin/env python3
-"""
-avisos.py — Avisos nativos del sistema, sin Tk.
+"""Avisos nativos del sistema, sin Tk.
 
-El servicio de antes avisaba de un fallo con una ventanita Tk en un hilo propio
-(`ui.avisar_fallo`), y todo lo que hubo que aprender de intérpretes Tk en hilos
-(`Tcl_AsyncDelete`) venía de ahí. El agente no carga Tk nunca: avisa con lo que
-el sistema ya tiene para eso.
+El agente no carga Tk nunca: avisa con lo que el sistema ya tiene para eso.
+Evita así los intérpretes Tk en hilos propios (`Tcl_AsyncDelete`) que exigía la
+ventanita de `ui.avisar_fallo`.
+- Linux: `org.freedesktop.Notifications.Notify` en el bus de sesión (*Desktop
+  Notifications Specification*), con `common/dbus.py`. Sin bus o sin nadie que
+  atienda ese nombre, no hay aviso.
+- Windows: `Shell_NotifyIconW` con `NIF_INFO`, que en Windows 10 y 11 sale como
+  notificación del sistema sin registrar un AppUserModelID. El globo necesita
+  un icono del área de notificación donde colgarse: el de la bandeja del agente
+  (`GLOBO`, que pone `ui/bandeja_windows.py`) o, si no la hay, uno de paso
+  sobre una ventana de solo mensajes que se quita a los pocos segundos. Sin
+  probar en un Windows real.
 
-  * **Linux:** `org.freedesktop.Notifications.Notify` en el bus de sesión
-    (*Desktop Notifications Specification*), con `common/dbus.py`. Sin bus o sin
-    nadie que atienda ese nombre, no hay aviso.
-  * **Windows:** `Shell_NotifyIconW` con `NIF_INFO`: en Windows 10 y 11 sale como
-    notificación del sistema sin registrar un AppUserModelID. Hace falta un
-    icono en el área de notificación para colgarle el globo: el de la bandeja
-    del agente (`GLOBO`, que pone `ui/bandeja_windows.py`), y si no la hay, uno
-    de paso sobre una ventana de solo mensajes, que se quita a los pocos
-    segundos. **Sin probar en un Windows real.**
-
-`enviar()` es un punto de indirección de módulo, como `catalog.run()`: los tests
-lo sustituyen, y quien lo llama apunta el aviso en su diario cuando devuelve
-False, que es la misma caída que tenía `avisar_fallo()` sin pantalla.
+`enviar()` es un punto de indirección de módulo, como `catalog.run()`: los
+tests lo sustituyen, y quien lo llama apunta el aviso en su diario cuando
+devuelve False.
 """
 
 from __future__ import annotations
@@ -33,40 +30,51 @@ from . import APP_NAME
 
 IS_WIN = os.name == "nt"
 
-# Cuánto se queda el icono de paso en Windows. Quitarlo antes retira también el
-# aviso de la pantalla.
 SEGUNDOS_WINDOWS = 12.0
+"""Segundos que se queda el icono de paso en Windows.
 
-# El icono de los avisos de Windows: lo pone quien sabe dónde está el .ico
-# repintado (el agente, al arrancar). Sin él, el de información del sistema.
+Quitarlo antes retira también el aviso de la pantalla.
+"""
+
 ICONO: Path | None = None
+"""Icono de los avisos de Windows, o `None` para el de información del sistema.
 
-# La bandeja, si está puesta: `GLOBO(titulo, texto, urgente) -> bool` cuelga el
-# aviso de su propio icono. Si devuelve False, se pone el icono de paso.
+Lo pone quien sabe dónde está el `.ico` repintado (el agente, al arrancar).
+"""
+
 GLOBO = None
+"""Función de la bandeja que cuelga el aviso de su propio icono, si está puesta.
+
+Firma: `GLOBO(titulo, texto, urgente) -> bool`. Si devuelve False se usa el
+icono de paso.
+"""
 
 
 def enviar(titulo: str, texto: str, urgente: bool = False) -> bool:
-    """Enseña un aviso del sistema. True si se ha podido; nunca lanza."""
+    """Enseña un aviso del sistema; nunca lanza.
+
+    Returns:
+        True si se ha podido mostrar.
+    """
     try:
         return _windows(titulo, texto, urgente) if IS_WIN else _linux(titulo, texto, urgente)
     except Exception:                                   # noqa: BLE001
         return False
 
 
-# --- Linux -------------------------------------------------------------------
-
 NOTIFICACIONES = "org.freedesktop.Notifications"
 RUTA_NOTIFICACIONES = "/org/freedesktop/Notifications"
 # Hint `urgency` de la especificación: 0 baja, 1 normal, 2 crítica. Un fallo es
-# normal, no crítico: crítico no se va solo en muchos escritorios.
+# normal: una crítica no se va sola en muchos escritorios.
 URGENCIA_NORMAL, URGENCIA_BAJA = 1, 0
 
 
 def argumentos_notify(titulo: str, texto: str, urgente: bool) -> list:
-    """Los ocho argumentos de `Notify(susssasa{sv}i)`: aplicación, a quién
-    sustituye (0: a nadie), icono, título, cuerpo, acciones, hints y cuánto dura
-    (-1: lo que decida el servidor)."""
+    """Devuelve los ocho argumentos de `Notify(susssasa{sv}i)`.
+
+    Son: aplicación, a quién sustituye (0: a nadie), icono, título, cuerpo,
+    acciones, hints y duración (-1: la que decida el servidor).
+    """
     from .dbus import Variante
     return [APP_NAME, 0, "", titulo, texto, [],
             {"urgency": Variante("y", URGENCIA_NORMAL if urgente else URGENCIA_BAJA)},
@@ -74,6 +82,7 @@ def argumentos_notify(titulo: str, texto: str, urgente: bool) -> list:
 
 
 def _linux(titulo: str, texto: str, urgente: bool) -> bool:
+    """Envía el aviso por D-Bus a `org.freedesktop.Notifications`."""
     from . import dbus
     with dbus.Conexion.sesion() as bus:
         bus.llamar(NOTIFICACIONES, RUTA_NOTIFICACIONES, NOTIFICACIONES, "Notify",
@@ -81,8 +90,7 @@ def _linux(titulo: str, texto: str, urgente: bool) -> bool:
     return True
 
 
-# --- Windows -----------------------------------------------------------------
-
+# Constantes de la API de Windows (shellapi.h, winuser.h).
 NIM_ADD, NIM_DELETE = 0, 2
 NIF_ICON, NIF_TIP, NIF_INFO = 0x2, 0x4, 0x10
 NIIF_INFO, NIIF_WARNING = 0x1, 0x2
@@ -92,27 +100,33 @@ IMAGE_ICON, LR_LOADFROMFILE, LR_DEFAULTSIZE = 1, 0x10, 0x40
 
 
 def _windows(titulo: str, texto: str, urgente: bool) -> bool:
+    """Cuelga el aviso del icono de la bandeja o, si no hay, de uno de paso."""
     if GLOBO is not None and GLOBO(titulo, texto, urgente):
         return True
     return _de_paso(titulo, texto, urgente)
 
 
 _TIPOS: dict = {}
+"""Caché de los tipos `ctypes`, que solo se definen en Windows y una vez."""
 
 
 def notifyicondata():
-    """`NOTIFYICONDATAW` en la forma de Vista en adelante (shellapi.h), con
-    `hBalloonIcon` al final. Una sola definición: la usan el icono de paso y
-    la bandeja."""
+    """Devuelve el tipo `NOTIFYICONDATAW` en la forma de Vista en adelante.
+
+    Sigue `shellapi.h`, con `hBalloonIcon` al final. Es la única definición: la
+    usan el icono de paso y la bandeja.
+    """
     if "NOTIFYICONDATAW" not in _TIPOS:
         import ctypes
         from ctypes import wintypes
 
         class GUID(ctypes.Structure):
+            """Estructura `GUID` de Windows."""
             _fields_ = [("Data1", ctypes.c_ulong), ("Data2", ctypes.c_ushort),
                         ("Data3", ctypes.c_ushort), ("Data4", ctypes.c_ubyte * 8)]
 
         class NOTIFYICONDATAW(ctypes.Structure):
+            """Estructura `NOTIFYICONDATAW` de `shellapi.h`."""
             _fields_ = [("cbSize", wintypes.DWORD), ("hWnd", wintypes.HWND),
                         ("uID", wintypes.UINT), ("uFlags", wintypes.UINT),
                         ("uCallbackMessage", wintypes.UINT), ("hIcon", wintypes.HICON),
@@ -131,11 +145,16 @@ def _de_paso(titulo: str, texto: str, urgente: bool) -> bool:
 
     La ventana y el icono son de ese hilo de principio a fin (Windows solo deja
     destruir una ventana al hilo que la creó), y el hilo se queda los segundos
-    que dura el aviso para quitar el icono después."""
+    que dura el aviso para quitar el icono después.
+
+    Returns:
+        True si el aviso se ha puesto en pantalla antes de 5 segundos.
+    """
     listo = threading.Event()
     resultado = [False]
 
     def hilo() -> None:
+        """Ejecuta `_globo` y avisa de que ha terminado, salga como salga."""
         try:
             _globo(titulo, texto, urgente, listo, resultado)
         finally:
@@ -148,6 +167,12 @@ def _de_paso(titulo: str, texto: str, urgente: bool) -> bool:
 
 def _globo(titulo: str, texto: str, urgente: bool, listo: threading.Event,
            resultado: list) -> None:
+    """Muestra el aviso con un icono temporal sobre una ventana de solo mensajes.
+
+    Args:
+        listo: Se activa en cuanto se sabe si el aviso se puso.
+        resultado: Lista de un elemento donde se deja ese resultado.
+    """
     import ctypes
     from ctypes import wintypes
 
@@ -169,7 +194,7 @@ def _globo(titulo: str, texto: str, urgente: bool, listo: threading.Event,
     user32.DestroyIcon.argtypes = [wintypes.HICON]
     shell32.Shell_NotifyIconW.argtypes = [wintypes.DWORD, ctypes.POINTER(NOTIFYICONDATAW)]
 
-    # Una ventana de solo mensajes de la clase "STATIC", que ya existe: no hay que
+    # Ventana de solo mensajes de la clase `STATIC`, que ya existe: no hay que
     # registrar clase ni procedimiento, y no recibe difusiones.
     ventana = user32.CreateWindowExW(0, "STATIC", APP_NAME, 0, 0, 0, 0, 0,
                                      wintypes.HWND(HWND_MESSAGE), None, None, None)
