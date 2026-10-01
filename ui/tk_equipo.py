@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""
-tk_equipo.py — Los pasos del asistente «En este equipo».
+"""Los pasos del asistente «En este equipo».
 
 Solo dibuja. Lo que decide y lo que toca el disco está en `install/agente.py` y
-`install/raiz_equipo.py`, igual que el resto del asistente con `install/`. Dos
-recorridos, que elige el paso «Raíz» (ver `tk_install.PASOS_EQUIPO`):
+`install/raiz_equipo.py`, igual que el resto del asistente con `install/`. Hay
+dos recorridos, que elige el paso «Raíz» (ver `tk_install.PASOS_EQUIPO`):
 
     Raíz           la raíz de este equipo: carpeta propia, la personal, o ninguna
     Cifrado        sin cifrar, o en un contenedor VeraCrypt (solo la carpeta propia;
@@ -21,10 +20,10 @@ recorridos, que elige el paso «Raíz» (ver `tk_install.PASOS_EQUIPO`):
     Verificación   lo que de verdad quedó puesto
 
 Con «Ninguna: solo atender unidades» sobran conexión, catálogo y parejas: cada
-unidad trae los suyos, y es la instalación «solo agente» de la fase 1.
+unidad trae los suyos. Es la instalación «solo agente».
 
 Lo que el asistente va sabiendo vive en el propio `Wizard` (`agente_*`,
-`equipo_*`), no en los widgets: `repintar()` los destruye al cambiar de paso.
+`equipo_*`) y no en los widgets: `repintar()` los destruye al cambiar de paso.
 """
 
 from __future__ import annotations
@@ -35,21 +34,28 @@ from . import theme
 from .tk import working
 
 ANCHO = 780
+"""El ancho del texto de los pasos, en medidas del diseño."""
 
-# En la lista de «Unidades», además de los modos del agente: no meterla en su
-# lista, y que pregunte al enchufarla. Es lo que se propone para las que salen de
-# la flota: nunca se sincroniza una unidad sin que se haya dicho que sí.
 PREGUNTAR = "preguntar"
+"""Una opción de la lista de «Unidades» además de los modos del agente.
+
+Es no meterla en su lista y que pregunte al enchufarla. Es lo que se propone
+para las que salen de la flota: nunca se sincroniza una unidad sin que se haya
+dicho que sí.
+"""
 TEXTO_PREGUNTAR = "preguntar al enchufarla"
+"""Cómo se llama en la lista la opción `PREGUNTAR`."""
 
 
 def _texto(cuerpo, texto: str, fila: int, **kw) -> None:
+    """Pone un párrafo de texto en la fila de un paso."""
     from tkinter import ttk
     ttk.Label(cuerpo, justify="left", wraplength=theme.medida(ANCHO), text=texto,
               **kw).grid(row=fila, column=0, sticky="w", pady=(0, 10))
 
 
 def _ambar(cuerpo, texto: str, fila: int):
+    """Pone un recuadro ámbar en la fila de un paso y lo devuelve."""
     from tkinter import ttk
     caja = ttk.Frame(cuerpo, style="Ambar.TFrame", padding=(11, 9))
     caja.grid(row=fila, column=0, sticky="ew", pady=(0, 10))
@@ -61,13 +67,15 @@ def _ambar(cuerpo, texto: str, fila: int):
 def al_cambiar(entrada, funcion) -> None:
     """Llama a `funcion(texto)` con cada cambio de la caja, tecleado o no.
 
-    Con `validatecommand` y no con un `trace` de la variable: el comando se
-    registra en la propia caja y muere con ella (`Misc.destroy()` borra sus
-    `_tclCommands`), mientras que el de un trace sobrevive al widget y retiene la
-    ventana entera (AGENTS.md, la ventana principal). Se llama ANTES de que el
-    texto cambie, por eso recibe el nuevo; y devuelve siempre True, porque si
-    no, Tk apagaría la validación de la caja para siempre."""
+    Se hace con `validatecommand` y no con un `trace` de la variable: el
+    comando se registra en la propia caja y muere con ella (`Misc.destroy()`
+    borra sus `_tclCommands`), mientras que el de un trace sobrevive al widget
+    y retiene la ventana entera (AGENTS.md, la ventana principal). Se llama
+    ANTES de que el texto cambie, por eso recibe el nuevo; y devuelve siempre
+    `True`, porque si no, Tk apagaría la validación de la caja para siempre.
+    """
     def validar(nuevo: str) -> bool:
+        """Llama a `funcion` con el texto nuevo y deja siempre que cambie."""
         try:
             funcion(nuevo)
         finally:
@@ -77,25 +85,24 @@ def al_cambiar(entrada, funcion) -> None:
 
 
 def con_raiz(wiz) -> bool:
-    """¿Este recorrido pone una raíz en el equipo, o es «solo agente»?"""
+    """Indica si este recorrido pone una raíz en el equipo o es «solo agente»."""
     from install import raiz_equipo
     return wiz.equipo_forma != raiz_equipo.NINGUNA
 
 
 def raiz(wiz) -> Path | None:
+    """Devuelve la raíz de este equipo, o `None` en el recorrido «solo agente»."""
     return wiz.state.device_root if con_raiz(wiz) else None
 
 
-# ---------------------------------------------------------------------------
-# Raíz
-# ---------------------------------------------------------------------------
-
 def paso_raiz(cuerpo, wiz) -> None:
-    """Qué raíz tiene este equipo: una carpeta propia, la personal, o ninguna.
-    Solo la forma: si va cifrada lo pregunta «Cifrado», y la carpeta exacta
-    «Carpeta», por ese orden, porque cifrar cambia qué carpeta se pide. Cambiar
-    de respuesta cambia la lista de pasos (`tk_install.pasos_equipo`), como
-    «¿Dónde?»."""
+    """Pinta el paso que pregunta qué raíz tiene este equipo.
+
+    Es una carpeta propia, la personal o ninguna. Solo la forma: si va cifrada
+    lo pregunta «Cifrado» y la carpeta exacta «Carpeta», por ese orden, porque
+    cifrar cambia qué carpeta se pide. Cambiar de respuesta cambia la lista de
+    pasos (`tk_install.pasos_equipo`), como «¿Dónde?».
+    """
     import tkinter as tk
     from tkinter import ttk
 
@@ -109,6 +116,7 @@ def paso_raiz(cuerpo, wiz) -> None:
     eleccion = tk.StringVar(value=wiz.equipo_forma)
 
     def elegir() -> None:
+        """Apunta la forma elegida y rehace la lista de pasos."""
         forma = eleccion.get()
         if forma != wiz.equipo_forma:
             wiz.equipo_forma = forma
@@ -145,20 +153,20 @@ def paso_raiz(cuerpo, wiz) -> None:
         wiz.state.device_root = None
 
 
-# ---------------------------------------------------------------------------
-# Cifrado
-# ---------------------------------------------------------------------------
-
 def cifrada(wiz) -> bool:
+    """Indica si la raíz de este equipo va en un contenedor VeraCrypt."""
     from install import raiz_equipo
     return con_raiz(wiz) and wiz.equipo_cifrado == raiz_equipo.VERACRYPT
 
 
 def paso_cifrado(cuerpo, wiz) -> None:
-    """Sin cifrar o en un contenedor VeraCrypt, antes de pedir la carpeta: sin
-    cifrar, «Carpeta» pide la raíz; cifrada, dónde va el contenedor y dónde se
-    abre (una letra fija en Windows, una carpeta vacía en Linux), y ESE volumen
-    es la raíz. Aquí solo se elige, y se consigue VeraCrypt si falta."""
+    """Pinta el paso que elige entre sin cifrar y un contenedor VeraCrypt.
+
+    Va antes de pedir la carpeta: sin cifrar, «Carpeta» pide la raíz; cifrada,
+    dónde va el contenedor y dónde se abre (una letra fija en Windows, una
+    carpeta vacía en Linux), y ESE volumen es la raíz. Aquí solo se elige y se
+    consigue VeraCrypt si falta.
+    """
     import tkinter as tk
     from tkinter import messagebox, ttk
 
@@ -174,6 +182,7 @@ def paso_cifrado(cuerpo, wiz) -> None:
     eleccion = tk.StringVar(value=wiz.equipo_cifrado)
 
     def elegir() -> None:
+        """Apunta si se cifra y repinta."""
         wiz.equipo_cifrado = eleccion.get()
         wiz.repintar()
 
@@ -216,6 +225,7 @@ def paso_cifrado(cuerpo, wiz) -> None:
             # (`install/veracrypt_bin.py`), el mismo que se llevará el agente
             # para abrirla y cerrarla.
             def descargar() -> None:
+                """Baja VeraCrypt sin instalarlo y repinta si se ha podido."""
                 from common import pins
                 from install import veracrypt_bin
                 ok, res = working(
@@ -246,16 +256,15 @@ def paso_cifrado(cuerpo, wiz) -> None:
 
 
 def ok_cifrado(wiz) -> bool:
+    """Indica si se puede seguir desde el paso de cifrado."""
     return True
 
 
-# ---------------------------------------------------------------------------
-# Carpeta
-# ---------------------------------------------------------------------------
-
 def paso_carpeta(cuerpo, wiz) -> None:
-    """La carpeta exacta, según lo elegido en «Cifrado»: sin cifrar, la raíz;
-    cifrada, el contenedor (`_carpeta_cifrada`)."""
+    """Pinta el paso de la carpeta exacta, según lo elegido en «Cifrado».
+
+    Sin cifrar es la raíz; cifrada, el contenedor (`_carpeta_cifrada`).
+    """
     if cifrada(wiz):
         _carpeta_cifrada(cuerpo, wiz)
         return
@@ -285,6 +294,7 @@ def paso_carpeta(cuerpo, wiz) -> None:
            style="Pista.TLabel")
 
     def revisar(texto: str | None = None) -> None:
+        """Examina la carpeta escrita y dice si vale como raíz."""
         wiz.equipo_ruta = ruta.get() if texto is None else texto
         ex = re_.examinar(wiz.equipo_ruta, wiz.equipo_forma)
         wiz.equipo_examen = ex
@@ -296,6 +306,7 @@ def paso_carpeta(cuerpo, wiz) -> None:
         wiz.revisar()
 
     def examinar_carpeta() -> None:
+        """Deja elegir la carpeta con el diálogo del sistema."""
         elegida = filedialog.askdirectory(parent=wiz.root, mustexist=False,
                                           initialdir=str(Path.home()))
         if elegida:
@@ -312,14 +323,18 @@ def paso_carpeta(cuerpo, wiz) -> None:
 
 
 def ok_carpeta(wiz) -> bool:
+    """Indica si se puede seguir desde el paso de la carpeta."""
     if cifrada(wiz):
         return wiz.equipo_montada is not None
     return not con_raiz(wiz) or wiz.state.device_root is not None
 
 
 def _existente(ruta: Path) -> Path:
-    """La carpeta que ya existe más cerca de `ruta`: el disco del que se
-    pregunta el sitio libre y si admite dispersos antes de crear nada."""
+    """Devuelve la carpeta que ya existe más cerca de `ruta`.
+
+    Es el disco del que se pregunta el sitio libre y si admite dispersos antes
+    de crear nada.
+    """
     for candidata in (ruta, *ruta.parents):
         try:
             if candidata.is_dir():
@@ -330,11 +345,15 @@ def _existente(ruta: Path) -> Path:
 
 
 def _carpeta_cifrada(cuerpo, wiz) -> None:
-    """El contenedor: se crea donde se diga (al lado de la carpeta propia, de
-    salida), se monta en una letra fija (Windows) o en una carpeta vacía
-    (Linux, `equipo_ruta`), y ESE volumen es la raíz. La contraseña se pide aquí
-    para crear y montar, una vez; a partir de ahí abrir y cerrar es del agente,
-    con la ventana de VeraCrypt, y nada la guarda."""
+    """Pinta el paso del contenedor.
+
+    Dice dónde se guarda, dónde se abre y con qué contraseña. Se crea donde se
+    diga (al lado de la carpeta propia, de salida), se monta en una letra fija
+    (Windows) o en una carpeta vacía (Linux, `equipo_ruta`) y ESE volumen es la
+    raíz. La contraseña se pide aquí para crear y montar, una vez; a partir de
+    ahí abrir y cerrar es del agente, con la ventana de VeraCrypt, y nada la
+    guarda.
+    """
     import shutil
     import tkinter as tk
     from tkinter import messagebox, ttk
@@ -448,6 +467,7 @@ def _carpeta_cifrada(cuerpo, wiz) -> None:
     estado = {"examen": None}
 
     def revisar(texto: str | None = None) -> None:
+        """Examina dónde irá el contenedor y dónde se abrirá."""
         wiz.equipo_fisica = fisica.get() if texto is None else texto
         ex = re_.examinar_contenedor(wiz.equipo_fisica, wiz.equipo_ruta,
                                      wiz.equipo_forma)
@@ -467,6 +487,7 @@ def _carpeta_cifrada(cuerpo, wiz) -> None:
         wiz.revisar()
 
     def revisar_punto(texto: str) -> None:
+        """Mueve el contenedor con la carpeta mientras sea el de salida."""
         # El contenedor sigue a la carpeta mientras sea el de salida.
         if fisica.get() == str(re_.fisica_por_defecto(wiz.equipo_ruta)):
             fisica.set(str(re_.fisica_por_defecto(texto)))
@@ -474,6 +495,7 @@ def _carpeta_cifrada(cuerpo, wiz) -> None:
         revisar(fisica.get())
 
     def crear() -> None:
+        """Comprueba la contraseña y crea o abre el contenedor, dejándolo montado."""
         ex = estado["examen"]
         if ex is None or not ex.vale:
             return
@@ -521,11 +543,8 @@ def _carpeta_cifrada(cuerpo, wiz) -> None:
     revisar()
 
 
-# ---------------------------------------------------------------------------
-# Instalación
-# ---------------------------------------------------------------------------
-
 def paso_instalar(cuerpo, wiz) -> None:
+    """Pinta el paso que instala el programa en la raíz y el agente en el equipo."""
     from tkinter import ttk
 
     from common import equipo
@@ -576,6 +595,7 @@ def paso_instalar(cuerpo, wiz) -> None:
     resultado.grid(row=fila + 1, column=0, sticky="w", pady=(12, 0))
 
     def pintar() -> None:
+        """Enseña lo que ya se ha instalado y revisa los botones del asistente."""
         lineas = []
         if donde is not None and wiz.state.deployed and wiz.equipo_id:
             lineas.append(f"✔ Programa en {deploy.app_dir(donde)} "
@@ -591,7 +611,9 @@ def paso_instalar(cuerpo, wiz) -> None:
         wiz.revisar()
 
     def instalar() -> None:
+        """Instala, en un hilo, lo que toque."""
         def trabajo():
+            """Instala la raíz y prepara el agente, o reusa el que ya hay."""
             ident = None
             if donde is not None:
                 fisica = (Path(wiz.equipo_contenedor).parent if cifrada(wiz)
@@ -625,20 +647,20 @@ def paso_instalar(cuerpo, wiz) -> None:
 
 
 def ok_instalar(wiz) -> bool:
+    """Indica si se puede seguir desde el paso de la instalación."""
     if con_raiz(wiz) and not wiz.state.deployed:
         return False
     return wiz.agente_prep is not None
 
 
-# ---------------------------------------------------------------------------
-# Parejas: las del catálogo, con la ruta de cada una en ESTE equipo
-# ---------------------------------------------------------------------------
-
 def paso_parejas(cuerpo, wiz) -> None:
-    """Como el paso «Parejas» de una unidad, más una cosa: la ruta resuelta de
+    """Pinta el paso de las parejas, con la ruta de cada una en ESTE equipo.
+
+    Es como el paso «Parejas» de una unidad, más una cosa: la ruta resuelta de
     cada pareja, que se puede cambiar solo en este equipo. Con la carpeta
     personal, una ruta pensada para una unidad (`sync-data/…`) caería suelta en
-    `~`; y una carpeta que ya sincroniza otro programa se dice en ámbar."""
+    `~`; y una carpeta que ya sincroniza otro programa se dice en ámbar.
+    """
     import tkinter as tk
     from tkinter import ttk
 
@@ -658,6 +680,7 @@ def paso_parejas(cuerpo, wiz) -> None:
     notas: dict[str, object] = {}
 
     def revisar_fila(nombre: str, local: str | None = None) -> None:
+        """Examina la ruta de una pareja y dice dónde cae y qué avisos tiene."""
         local = cajas[nombre].get() if local is None else local
         wiz.equipo_locales[nombre] = local
         info = raiz_equipo.revisar_local(donde, local)
@@ -707,6 +730,7 @@ def paso_parejas(cuerpo, wiz) -> None:
     resultado.grid(row=3, column=0, sticky="w", pady=(12, 0))
 
     def guardar() -> None:
+        """Escribe el config con las parejas elegidas y crea sus carpetas."""
         seleccion = [n for n, v in elegidas.items() if v.get()]
         malas = [n for n in seleccion
                  if raiz_equipo.revisar_local(donde, cajas[n].get()).error]
@@ -743,14 +767,12 @@ def paso_parejas(cuerpo, wiz) -> None:
 
 
 def ok_parejas(wiz) -> bool:
+    """Indica si se puede seguir desde el paso de las parejas."""
     return wiz.state.config_written
 
 
-# ---------------------------------------------------------------------------
-# Unidades
-# ---------------------------------------------------------------------------
-
 def paso_unidades(cuerpo, wiz) -> None:
+    """Pinta el paso que elige qué unidades atiende el agente y cómo."""
     import tkinter as tk
     from tkinter import ttk
 
@@ -789,6 +811,7 @@ def paso_unidades(cuerpo, wiz) -> None:
         var = tk.StringVar(value=etiquetas[modo])
 
         def cambiar(_evento=None, u=uid, v=var, n=nombre) -> None:
+            """Apunta el modo elegido para una unidad."""
             wiz.agente_unidades[u] = (por_texto[v.get()], n)
 
         caja = ttk.Combobox(tabla, textvariable=var, state="readonly",
@@ -801,6 +824,7 @@ def paso_unidades(cuerpo, wiz) -> None:
 
     if wiz.rclone is not None and con_raiz(wiz):
         def de_la_flota() -> None:
+            """Añade, para preguntar al enchufarlas, las unidades que anota la flota."""
             ok, flota = working(wiz.root, "leyendo la flota",
                                 lambda: raiz_equipo.de_la_flota(
                                     wiz.rclone, wiz.perfil.endpoint_catalog),
@@ -824,6 +848,7 @@ def paso_unidades(cuerpo, wiz) -> None:
     segundos = tk.StringVar(value=f"{wiz.agente_espera:g}")
 
     def cambiar_plazo(*_) -> None:
+        """Apunta el plazo para contestar a una unidad nueva, acotado."""
         try:
             valor = float(segundos.get())
         except ValueError:
@@ -844,17 +869,16 @@ def paso_unidades(cuerpo, wiz) -> None:
 
 
 def elegidas(wiz) -> dict[str, tuple[str, str]]:
-    """Las unidades que entran en la lista del agente: sin las de «preguntar»."""
+    """Devuelve las unidades que entran en la lista del agente.
+
+    No entran las de «preguntar».
+    """
     return {uid: (modo, nombre) for uid, (modo, nombre)
             in (wiz.agente_unidades or {}).items() if modo != PREGUNTAR}
 
 
-# ---------------------------------------------------------------------------
-# Arranque
-# ---------------------------------------------------------------------------
-
 def la_raiz(wiz):
-    """La raíz de este equipo como entrada de la lista del agente, o None."""
+    """Devuelve la raíz de este equipo como entrada de la lista del agente, o `None`."""
     from common import equipo
     from install import raiz_equipo
     donde = raiz(wiz)
@@ -865,6 +889,7 @@ def la_raiz(wiz):
 
 
 def paso_arranque(cuerpo, wiz) -> None:
+    """Pinta el paso que registra y arranca el agente."""
     from tkinter import ttk
 
     import penwatch
@@ -909,6 +934,7 @@ def paso_arranque(cuerpo, wiz) -> None:
     resultado.grid(row=5, column=0, sticky="w", pady=(12, 0))
 
     def activar() -> None:
+        """Registra el agente o se lo pide por su buzón, y cuenta qué ha hecho."""
         pedir = wiz.equipo_pedir if cifrada(wiz) else None
         if wiz.agente_reusado:
             ok, msgs = working(wiz.root, "pidiéndoselo al agente",
@@ -945,20 +971,19 @@ def paso_arranque(cuerpo, wiz) -> None:
 
 
 def ok_arranque(wiz) -> bool:
+    """Indica si se puede seguir desde el paso del arranque."""
     return bool(wiz.agente_hecho)
 
-
-# ---------------------------------------------------------------------------
-# Verificación
-# ---------------------------------------------------------------------------
 
 def comprobaciones(donde: Path | None = None, esperadas: list[str] | None = None,
                    clave: str | None = None, contenedor: str | None = None,
                    carpeta_clara: str | None = None) -> list[tuple[str, bool, str]]:
-    """(qué, bien, detalle) de lo que quedó puesto. Sin Tk: lo mira el test.
+    """Devuelve `(qué, bien, detalle)` de lo que quedó puesto; lo mira el test, sin Tk.
 
-    Con `donde`, primero la raíz de este equipo: lo que `device.verify_device()`
-    pide a cualquier raíz, y que esté en la lista del agente con esa ruta."""
+    Con `donde`, primero la raíz de este equipo: lo que
+    `device.verify_device()` pide a cualquier raíz y que esté en la lista del
+    agente con esa ruta.
+    """
     import penwatch
     from common import equipo
     from install import agente, device, raiz_equipo
@@ -1024,15 +1049,16 @@ def comprobaciones(donde: Path | None = None, esperadas: list[str] | None = None
     return filas
 
 
-# Lo que dice «Verificación» en un escritorio sin StatusNotifierWatcher, con el
-# nombre de la extensión que lo pone en GNOME (sección 5 del diseño).
 EXTENSION_GNOME = "AppIndicator and KStatusNotifierItem Support"
+"""La extensión que pone la bandeja en GNOME (sección 5 del diseño)."""
 SIN_BANDEJA = (f"este escritorio no tiene bandeja. En GNOME la pone la extensión "
                f"«{EXTENSION_GNOME}» (Ubuntu ya la trae); mientras, el acceso «prdrive» "
                f"del menú de aplicaciones hace sus veces")
+"""Lo que dice «Verificación» en un escritorio sin StatusNotifierWatcher."""
 
 
 def _existe(ruta) -> bool:
+    """Indica si hay un fichero en esa ruta."""
     try:
         return bool(ruta) and Path(ruta).is_file()
     except OSError:
@@ -1040,9 +1066,12 @@ def _existe(ruta) -> bool:
 
 
 def escritorio() -> tuple[bool | None, bool | None]:
-    """(¿hay avisos?, ¿hay bandeja?) en el bus de sesión: quién atiende
-    `org.freedesktop.Notifications` y `org.kde.StatusNotifierWatcher`. None,
-    lo que no se ha podido preguntar. Punto de indirección para los tests."""
+    """Devuelve si hay avisos y si hay bandeja en el bus de sesión.
+
+    Pregunta quién atiende `org.freedesktop.Notifications` y
+    `org.kde.StatusNotifierWatcher`; `None` es lo que no se ha podido
+    preguntar. Es un punto de indirección para los tests.
+    """
     try:
         from common import avisos, dbus
         from ui import bandeja_linux
@@ -1054,6 +1083,7 @@ def escritorio() -> tuple[bool | None, bool | None]:
 
 
 def paso_final(cuerpo, wiz) -> None:
+    """Pinta el paso de verificación: lo que ha quedado puesto en este equipo."""
     from tkinter import ttk
 
     _texto(cuerpo, "Lo que ha quedado puesto en este equipo.", 0)
@@ -1061,6 +1091,7 @@ def paso_final(cuerpo, wiz) -> None:
     tabla.grid(row=1, column=0, sticky="w")
 
     def revisar() -> None:
+        """Repinta las comprobaciones."""
         for hijo in tabla.winfo_children():
             hijo.destroy()
         perfil = wiz.perfil_final
