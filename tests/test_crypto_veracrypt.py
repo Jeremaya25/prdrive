@@ -1,22 +1,21 @@
 #!/usr/bin/env python3
-"""
-VeraCrypt: cuánto tarda crear el contenedor, cómo se monta y qué se revisa antes.
+"""VeraCrypt: cuánto tarda crear el contenedor, cómo se monta y qué se revisa antes.
 
-Crear el contenedor en un disco externo tardaba media hora, y la causa no era el
-cifrado: con `/quick`, VeraCrypt preasigna el fichero y después escribe un sector
-cada 128 MiB *a propósito* para forzar a Windows a materializar cada tramo, así
-que NTFS acaba rellenando de ceros el contenedor entero. La salida es `/dynamic`,
+Con `/quick`, VeraCrypt preasigna el fichero y después escribe un sector cada
+128 MiB *a propósito* para forzar a Windows a materializar cada tramo, así que
+NTFS acaba rellenando de ceros el contenedor entero: crearlo en un disco
+externo tarda media hora y la causa no es el cifrado. La salida es `/dynamic`,
 que **solo vale si el anfitrión admite ficheros dispersos**: si no, VeraCrypt
-aborta con ERR_DYNAMIC_NOT_SUPPORTED. Esa decisión —la que convierte media hora
-en segundos, o la instalación en un error— es lo que se comprueba aquí.
+aborta con ERR_DYNAMIC_NOT_SUPPORTED. Esa decisión, la que convierte media hora
+en segundos o la instalación en un error, es lo que se comprueba aquí.
 
 Nada de esto lanza VeraCrypt ni toca una unidad: se sustituyen las sondas de
 módulo (`soporta_dispersos`, `medir_escritura`, `sistema_de_ficheros`, `_run`,
 `_volumenes_con_control`), que para eso son funciones de módulo.
 
-El avance de una creación larga (#46) se prueba igual: `avance()` es pura y se le
-dan secuencias de lecturas escritas a mano, y `bytes_escritos` se sustituye para
-que `create_container()` lo lea sin que haya ninguna unidad detrás.
+El avance de una creación larga (#46) se prueba igual: `avance()` es pura y se
+le dan secuencias de lecturas escritas a mano, y `bytes_escritos` se sustituye
+para que `create_container()` lo lea sin que haya ninguna unidad detrás.
 """
 
 import os
@@ -41,7 +40,7 @@ sondas = {n: getattr(crypto, n) for n in
            "_run", "_procesos", "_volumenes_con_control", "Path", "MOUNT_POLL",
            "bytes_escritos", "SYS_DEV_BLOCK")}
 try:
-    # --- 1. /dynamic solo cuando se pide, y nunca a ciegas -------------------
+    # 1. /dynamic solo cuando se pide, y nunca a ciegas
     #
     # Pasárselo sobre exFAT no es «una opción que no hace nada»: VeraCrypt
     # aborta, y la instalación se cae en el primer paso que escribe algo.
@@ -102,7 +101,7 @@ try:
     finally:
         crypto._first_exe, _vb.en_cache_para_este_equipo = reales_linux
 
-    # --- 2. el montaje, como medio extraíble --------------------------------
+    # 2. el montaje, como medio extraíble
     #
     # Sin `/m rm`, Windows crea `System Volume Information` y `$RECYCLE.BIN`
     # DENTRO del contenedor, o sea dentro de lo que mira rclone.
@@ -118,10 +117,10 @@ try:
       True)
     c("y no deja ni un rastro", "s3cr3t" in crypto.redact(cmd, "s3cr3t"), False)
 
-    # --- 3. el tamaño propuesto deja de ser una espera de horas -------------
+    # 3. el tamaño propuesto no es una espera de horas
     #
-    # Antes se proponía «libre − 1 GiB» siempre, y en un disco de 1 TB eso son
-    # gigas que hay que ESCRIBIR antes de poder seguir instalando.
+    # Proponer siempre «libre − 1 GiB» en un disco de 1 TB serían gigas que hay
+    # que ESCRIBIR antes de poder seguir instalando.
     TERA = 1024 ** 4
     c("con dinámico el tamaño deja de importar", crypto.suggested_size(TERA, True), "max")
     c("sin dinámico se pone tope", crypto.suggested_size(TERA, False), "64G")
@@ -129,7 +128,7 @@ try:
       crypto.suggested_size(9 * 1024 ** 3, False), "8G")
     c("nunca se propone cero", crypto.suggested_size(0, False), "1G")
 
-    # --- 4. la espera se mide, no se adivina --------------------------------
+    # 4. la espera se mide, no se adivina
     #
     # Y lo que se mide es la RÁFAGA: una sonda de 8 MiB no ve la caché de la
     # memoria USB llenarse. El caso de #46: más de 100 GB en exFAT, «unos 23
@@ -161,12 +160,13 @@ try:
     c("y el texto lo reconoce",
       crypto.describir_espera(None), "no he podido medir la velocidad de la unidad")
 
-    # --- 5. FAT32: un fichero no llega a 4 GiB ------------------------------
+    # 5. FAT32: un fichero no llega a 4 GiB
     #
-    # Casi todos los pendrives de 32 GB o menos vienen en FAT32, y el contenedor
-    # es un fichero. Se proponía «el hueco, hasta 64G» y VeraCrypt fallaba al
-    # crear sin decir esto. El tope es 4095 MiB y no 4 GiB − 1 porque VeraCrypt
-    # redondea /size HACIA ARRIBA al tamaño de sector (Tcformat.c).
+    # Casi todos los pendrives de 32 GB o menos vienen en FAT32, y el
+    # contenedor es un fichero: proponer «el hueco, hasta 64G» haría que
+    # VeraCrypt fallase al crear sin decir esto. El tope es 4095 MiB y no 4 GiB
+    # − 1 porque VeraCrypt redondea /size HACIA ARRIBA al tamaño de sector
+    # (Tcformat.c).
     MIB, GIB = 1024 ** 2, 1024 ** 3
     for nombre in ("FAT32", "FAT", "fat16", "vfat", "msdos"):
         c(f"{nombre} tiene tope", crypto.tope_contenedor(nombre), 4095 * MIB)
@@ -200,7 +200,7 @@ try:
     c.contains("y la salida", fallo, "exFAT o NTFS")
     c("sin llegar a lanzar VeraCrypt", lanzado, [])
 
-    # --- 5b. la contraseña: lo que VeraCrypt diría sin /silent ---------------
+    # 5b. la contraseña: lo que VeraCrypt diría sin /silent
     #
     # Con /silent, VeraCrypt Format se salta la pregunta de «contraseña corta»
     # (CheckPasswordLength con bSkipPasswordWarning = Silent). Nadie la hacía.
@@ -216,7 +216,7 @@ try:
     c("65 eñes son 130 bytes: error aunque sean 65 letras",
       crypto.revisar_contrasena("ñ" * 65)[0] is not None, True)
 
-    # --- 5c. la instalación en claro que se queda al recifrar ----------------
+    # 5c. la instalación en claro que se queda al recifrar
     #
     # «Reinstalar desde cero» con VeraCrypt sobre un prdrive sin cifrar crea el
     # contenedor al lado: la instalación de antes, con la clave en claro, sigue
@@ -244,11 +244,11 @@ try:
     c("una ruta que no existe no revienta",
       crypto.restos_en_claro(fisica / "no-existe"), [])
 
-    # --- 5d. crear: no hay contenedor hasta que termina la copia elevada -----
+    # 5d. crear: no hay contenedor hasta que termina la copia elevada
     #
     # El VeraCrypt Format que viaja, sin administrador, se relanza elevado y el
-    # proceso que lanzamos sale con 0 mientras la copia sigue escribiendo. Darlo
-    # por creado ahí era montar un contenedor a medio hacer, que se quedaba sin
+    # proceso que lanzamos sale con 0 mientras la copia sigue escribiendo.
+    # Darlo por creado ahí sería montar un contenedor a medio hacer, sin
     # sistema de ficheros e inservible (H-4 en
     # docs/superpowers/pruebas/2026-09-24-veracrypt-unidad-g-resultados.md).
     crypto.IS_WIN = True
@@ -259,11 +259,13 @@ try:
     vistas = []
 
     def lanzar(cmd, password="", timeout=None):
+        """Lanzamiento de mentira: deja el `.hc` a medias y una copia elevada viva."""
         hc.write_bytes(b"a medias")
         tabla.add(26060)            # la copia elevada, que sigue trabajando
         return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
 
     def procesos(nombre):
+        """Lista de procesos de mentira: la copia elevada termina a la cuarta mirada."""
         vistas.append(nombre)
         if len(vistas) > 50:
             raise RuntimeError("esperando sin fin")
@@ -298,18 +300,21 @@ try:
     c.contains("si al terminar no hay contenedor, se dice", fallo,
                "no ha podido crear el contenedor")
 
-    # --- 5e. el avance de una creación larga: la aritmética -----------------
+    # 5e. el avance de una creación larga: la aritmética
     #
     # Con un contenedor fijo se escribe el volumen entero, y la ventana solo
-    # tenía una barra que iba y venía. `avance()` convierte las lecturas del
+    # tendría una barra que va y viene. `avance()` convierte las lecturas del
     # contador de la unidad en «cuánto va» y «cuánto queda», y cuando el
     # contador no merece confianza no dice nada: mejor sin número que con uno
     # falso.
     MB = 1024 ** 2
 
     def serie(tramos, base=7 * GIB, t0=1000.0):
-        """[(segundos, bytes por segundo), …] → una lectura por segundo, con la
-        inicial delante (la de antes de lanzar VeraCrypt)."""
+        """Convierte tramos en lecturas del contador, una por segundo.
+
+        Cada tramo es `(segundos, bytes por segundo)`. La lectura inicial va
+        delante: es la de antes de lanzar VeraCrypt.
+        """
         muestras = [(t0, base)]
         t, b = t0, base
         for segundos, velocidad in tramos:
@@ -319,6 +324,7 @@ try:
         return muestras
 
     def redondo(medida):
+        """Redondea una medida de avance para poder compararla."""
         return None if medida is None else (
             round(medida[0], 4), None if medida[1] is None else round(medida[1]))
 
@@ -389,7 +395,7 @@ try:
     c("sin lecturas, nada", crypto.avance([], TAM), None)
     c("y con un tamaño que no es, tampoco", crypto.avance(lecturas, 0), None)
 
-    # --- 5f. el avance, dicho --------------------------------------------------
+    # 5f. el avance, dicho
     c("«43 % · quedan unos 25 min»", crypto.describir_avance(0.43, 25 * 60),
       "43 % · quedan unos 25 min")
     c("la cifra se trunca: el tope es 99 %, no 100 %",
@@ -400,7 +406,7 @@ try:
     c("sin velocidad todavía, se dice", crypto.describir_avance(0.02, None),
       "2 % · calculando cuánto queda")
 
-    # --- 5g. el contador de la unidad ------------------------------------------
+    # 5g. el contador de la unidad
     #
     # Lo de verdad solo se puede leer con una unidad de verdad (pruebas P1–P7
     # de #46). Lo que sí se puede fijar aquí es cómo se lee: el campo, la
@@ -448,7 +454,7 @@ try:
           crypto.bytes_escritos("G:\\"), None)
         crypto.IS_WIN = False
 
-    # --- 5h. crear, midiendo: el contador se apunta antes de lanzar ----------
+    # 5h. crear, midiendo: el contador se apunta antes de lanzar
     #
     # `create_container()` apunta la lectura inicial ANTES de lanzar VeraCrypt
     # —lo de antes no es de esta creación— y la va leyendo en otro hilo hasta
@@ -458,6 +464,7 @@ try:
     contador = {"bytes": 5000, "lecturas": []}
 
     def escritos(root):
+        """Contador de bytes escritos de mentira: crece un mega por lectura."""
         contador["lecturas"].append(str(root))
         contador["bytes"] += MB
         return contador["bytes"]
@@ -466,6 +473,7 @@ try:
     al_lanzar = []
 
     def lanzar_escribiendo(cmd, password="", timeout=None):
+        """Lanzamiento de mentira que escribe el volumen mientras se lee el contador."""
         al_lanzar.append(len(contador["lecturas"]))
         time.sleep(0.3)                     # VeraCrypt escribiendo el volumen
         al_lanzar.append(len(contador["lecturas"]))
@@ -507,6 +515,7 @@ try:
 
     # Si VeraCrypt no llega a lanzarse, el hilo no se queda leyendo.
     def no_lanza(cmd, password="", timeout=None):
+        """Lanzamiento de mentira que falla porque VeraCrypt no existe."""
         raise OSError("no existe")
 
     crypto._run = no_lanza
@@ -533,7 +542,7 @@ try:
     c("sin lecturas en PARADO_S, deja de haberlo", seguimiento.leer(), None)
     seguimiento.parar()
 
-    # --- 6. no montar dos veces lo que ya está montado ----------------------
+    # 6. no montar dos veces lo que ya está montado
     #
     # En POSIX se lo preguntamos a VeraCrypt. En Windows no hay listado por CLI
     # y se mira por el otro lado: una unidad con el fichero de control es este
@@ -549,6 +558,7 @@ try:
     crypto.Path = PurePosixPath
 
     def montado(listado, ruta):
+        """Devuelve dónde dice `listado` que está montado `ruta`, o `None`."""
         crypto._run = lambda cmd, password="", timeout=None: type(
             "R", (), {"stdout": listado, "stderr": "", "returncode": 0})()
         punto = crypto.mounted_container(VC, PurePosixPath(ruta))
@@ -618,8 +628,9 @@ try:
     crypto._volumenes_con_control = lambda: []
     c("y con ninguna, tampoco", crypto.mounted_container(VC, CONT), None)
 
-    # --- 7. por qué ha fallado, sin inventárselo ---------------------------
+    # 7. por qué ha fallado, sin inventárselo
     def salida(texto):
+        """Devuelve un resultado de proceso fallido con ese texto."""
         return type("R", (), {"stdout": texto, "stderr": "", "returncode": 1})()
 
     crypto.IS_WIN = False
@@ -634,13 +645,14 @@ try:
     c.contains("y si no casa ninguna, se dice «lo más habitual», no una causa",
                generico, "Lo más habitual")
 
-    # --- 8. sin VeraCrypt instalado: el portable (#50, #38) ------------------
+    # 8. sin VeraCrypt instalado: el portable (#50, #38)
     #
-    # El paquete portable no trae ningún `VeraCrypt.exe`: trae `VeraCrypt-x64.exe`,
-    # `VeraCrypt Format-x64.exe` y los `-arm64`. Con una carpeta así, «dime dónde
-    # está» no encontraba nada (#38). Y cuál de los dos usar lo dice la máquina
-    # NATIVA, como a VeraCrypt (`IsARM()`), no lo que oye un instalador x64
-    # emulado: la sonda del sistema se sustituye, como en tests/test_arch.py.
+    # El paquete portable no trae ningún `VeraCrypt.exe`: trae
+    # `VeraCrypt-x64.exe`, `VeraCrypt Format-x64.exe` y los `-arm64`. Con una
+    # carpeta así, «dime dónde está» no encontraba nada (#38). Y cuál de los
+    # dos usar lo dice la máquina NATIVA, como a VeraCrypt (`IsARM()`), no lo
+    # que oye un instalador x64 emulado: la sonda del sistema se sustituye,
+    # como en tests/test_arch.py.
     from _harness import falso_portatil
     from common import model
     from install import veracrypt_bin
@@ -707,9 +719,9 @@ try:
         veracrypt_bin.cached = cached_original
         crypto.WIN_CANDIDATES = candidatos_originales
 
-    # --- 9. 'max' deja sitio para el VeraCrypt de viaje ------------------------
+    # 9. 'max' deja sitio para el VeraCrypt de viaje
     #
-    # Con 50 MiB libres fuera, un contenedor 'max' dejaba la unidad sin sitio
+    # Con 50 MiB libres fuera, un contenedor 'max' dejaría la unidad sin sitio
     # para poner al día el VeraCrypt que viaja: la carpeta nueva se copia al
     # lado de la vieja antes de cambiarlas.
     c("con VeraCrypt de viaje, 'max' deja la reserva",

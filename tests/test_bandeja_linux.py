@@ -1,23 +1,21 @@
 #!/usr/bin/env python3
-"""
-La bandeja de Linux (`ui/bandeja_linux.py`): StatusNotifierItem + dbusmenu.
+"""La bandeja de Linux (`ui/bandeja_linux.py`): StatusNotifierItem + dbusmenu.
 
 Sin escritorio: el bus es `_bus_falso`, que hace de bus, de
 `StatusNotifierWatcher` y de anfitrión que pregunta. Se comprueba:
-
-  * el menú como lo pide dbusmenu (`GetLayout`, propiedades, casillas,
-    submenús, separadores, `_` doblados) y que un cambio renumera y avisa con
-    `LayoutUpdated`, sin que un clic tardío haga otra cosa;
-  * que el icono se registra en el watcher con su nombre
-    `org.kde.StatusNotifierItem-<pid>-1` y contesta lo que pregunta un
-    anfitrión (`GetAll`, `IconPixmap` en ARGB32 de orden de red, `ToolTip`,
-    `Menu`, introspección);
-  * que un clic en el menú o `Activate` son las peticiones de la entrada, al
-    agente; una apagada no pide nada;
-  * la caída: sin watcher `puesta` es False (el acceso del menú hace sus
-    veces), y si aparece después se registra solo; si se va, deja de estarlo;
-  * la vuelta de la suspensión (`PrepareForSleep(false)` de logind) pide
-    `despertar`; sin bus de sesión no hay bandeja; y `cerrar()` acaba el hilo.
+- El menú como lo pide dbusmenu (`GetLayout`, propiedades, casillas, submenús,
+  separadores, `_` doblados) y que un cambio renumera y avisa con
+  `LayoutUpdated`, sin que un clic tardío haga otra cosa.
+- Que el icono se registra en el watcher con su nombre
+  `org.kde.StatusNotifierItem-<pid>-1` y contesta lo que pregunta un anfitrión
+  (`GetAll`, `IconPixmap` en ARGB32 de orden de red, `ToolTip`, `Menu`,
+  introspección).
+- Que un clic en el menú o `Activate` son las peticiones de la entrada, al
+  agente; una apagada no pide nada.
+- La caída: sin watcher `puesta` es False (el acceso del menú hace sus veces)
+  y, si aparece después, se registra solo; si se va, deja de estarlo.
+- La vuelta de la suspensión (`PrepareForSleep(false)` de logind) pide
+  `despertar`; sin bus de sesión no hay bandeja; y `cerrar()` acaba el hilo.
 """
 
 import os
@@ -34,6 +32,7 @@ c = Checks("La bandeja de Linux")
 
 
 def esperar(cond, segundos=3.0):
+    """Espera hasta `segundos` a que `cond()` sea cierta; devuelve si lo fue."""
     limite = time.monotonic() + segundos
     while time.monotonic() < limite:
         if cond():
@@ -42,7 +41,7 @@ def esperar(cond, segundos=3.0):
     return cond()
 
 
-# --- el menú de dbusmenu, sin bus ---------------------------------------------------
+# el menú de dbusmenu, sin bus
 
 E = bandeja.Entrada
 ABRIR = E("Abrir mi_raíz", ({"pide": equipo.PIDE_ABRIR, "id": "r"},), defecto=True,
@@ -116,18 +115,25 @@ if os.name == "nt":
     sys.exit(c.report())
 
 
-# --- en el bus: con watcher ------------------------------------------------------------
+# en el bus: con watcher
 
 def bandeja_con(dueños=(bl.WATCHER,), sistema=None):
+    """Arranca una bandeja sobre buses falsos.
+
+    Returns:
+        `(bandeja, arrancó, bus de sesión, peticiones recibidas)`.
+    """
     pedidas: list[dict] = []
     buses = []
 
     def conectar():
+        """Conecta con un bus de sesión falso y lo apunta."""
         con, bus = B.conectar(dueños=dueños)
         buses.append(bus)
         return con
 
     def conectar_sistema():
+        """Conecta con un bus del sistema falso, si el test lo ofrece."""
         if sistema is None:
             raise OSError("sin bus del sistema")
         con, bus = B.conectar()
@@ -232,14 +238,14 @@ c("  y los argumentos que no son, InvalidArgs",
   bus.llamar(bl.RUTA_SNI, bl.SNI, "Activate", "s", ["x"])[:2], ("error", dbus.E_ARGUMENTOS))
 c("Peer.Ping contesta", bus.llamar(bl.RUTA_SNI, dbus.PEER, "Ping"), ("ok", []))
 
-# --- el watcher se va y vuelve (Plasma se reinicia) ----------------------------------------
+# el watcher se va y vuelve (Plasma se reinicia)
 bus.dueño(bl.WATCHER, "")
 c("si el watcher se va, el icono ya no está", esperar(lambda: not b.puesta), True)
 bus.dueño(bl.WATCHER, ":1.99")
 c("  y al volver, se registra otra vez él solo",
   (esperar(lambda: b.puesta), bus.registrados), (True, [nombre, nombre]))
 
-# --- la suspensión --------------------------------------------------------------------
+# la suspensión
 sis = sistema[0]
 c("el bus del sistema escucha PrepareForSleep",
   [x.cuerpo[0] for x in sis.recibidos if x.miembro == "AddMatch"], [bl.REGLA_SUSPENDER])
@@ -253,7 +259,7 @@ b.cerrar()
 c("cerrar() acaba el hilo y cierra la conexión",
   (b._hilo.is_alive(), esperar(bus.cerrado.is_set)), (False, True))
 
-# --- sin watcher: la caída al lanzador ------------------------------------------------------
+# sin watcher: la caída al lanzador
 b, ok, bus, pedidas = bandeja_con(dueños=())
 c("sin StatusNotifierWatcher: hay bus pero no icono", (ok, b.puesta, bus.registrados),
   (True, False, []))
@@ -267,6 +273,7 @@ b.cerrar()
 
 
 def sin_bus():
+    """Falla como un equipo sin bus de sesión."""
     raise dbus.Error("org.freedesktop.DBus.Error.NoServer", "sin bus de sesión")
 
 
@@ -278,21 +285,25 @@ c("hay_bandeja(): pregunta por el watcher", bl.hay_bandeja(con), True)
 con.cerrar()
 
 
-# --- el agente la pone -----------------------------------------------------------------
+# el agente la pone
 import agente  # noqa: E402
 
 pedidas_ag: list = []
 
 
 class AgenteFalso:
+    """Agente de mentira que apunta las peticiones que recibe."""
     def pedir(self, p):
+        """Apunta la petición."""
         pedidas_ag.append(p)
 
 
 class VigiaFalso:
+    """Vigía de mentira que cuenta los despertares."""
     despertado = 0
 
     def despertar(self, montajes=False):
+        """Cuenta un despertar."""
         VigiaFalso.despertado += 1
 
 
@@ -303,7 +314,9 @@ real = bl.Bandeja
 
 
 class SinWatcher(real):
+    """Bandeja a la que nadie contesta como `StatusNotifierWatcher`."""
     def __init__(self, pedir):
+        """Arranca con un bus de sesión falso y sin bus del sistema."""
         super().__init__(pedir, lambda: B.conectar()[0], sin_bus)
 
 

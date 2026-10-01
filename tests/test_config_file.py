@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""
-El serializador de TOML: lo que escribe tiene que releerse exactamente igual.
+"""El serializador de TOML: lo que escribe tiene que releerse exactamente igual.
 
 Este fichero gobierna qué se sincroniza y qué se borra, así que la prueba que
-importa es la ida y vuelta, y se hace también contra el sync_config.toml real
+importa es la ida y vuelta, y se hace también contra el `sync_config.toml` real
 del dispositivo (en memoria: no se escribe nada sobre él).
 """
 
@@ -18,6 +17,7 @@ c = Checks("serializador de sync_config.toml")
 
 
 def ida_y_vuelta(raw, etiqueta):
+    """Comprueba que `raw` se relee igual tras escribirlo con `dumps`."""
     texto = config_file.dumps(raw)
     try:
         vuelta = tomllib.loads(texto)
@@ -28,9 +28,11 @@ def ida_y_vuelta(raw, etiqueta):
     return vuelta
 
 
-# --- el config real del dispositivo -------------------------------------------------
-# Solo si lo hay: sync_config.toml es de cada dispositivo y no va en el repo, así
-# que un checkout recién clonado no lo tiene. El resto del fichero no lo necesita.
+# el config real del dispositivo
+#
+# Solo si lo hay: sync_config.toml es de cada dispositivo y no va en el repo,
+# así que un checkout recién clonado no lo tiene. El resto del fichero no lo
+# necesita.
 if model.CONFIG_FILE.exists():
     real = config_file.load_raw()
     vuelta = ida_y_vuelta(real, "config real")
@@ -42,7 +44,7 @@ if model.CONFIG_FILE.exists():
 else:
     print(f"  (saltado) config real: no hay {model.CONFIG_FILE}")
 
-# --- casos que el esquema permite -------------------------------------------
+# casos que el esquema permite
 ida_y_vuelta({
     "defaults": {"remote": "nas", "device_remote": "dispositivo", "keep_logs": True,
                  "exclude": ["a/**"], "include": [],
@@ -78,7 +80,7 @@ if vuelta:
       [p.get("flags") for p in vuelta["pair"]],
       [None, {"conflict-resolve": "path2"}, None])
 
-# --- save(): valida antes de escribir, y deja copia --------------------------
+# save(): valida antes de escribir, y deja copia
 with sandbox() as root:
     destino = root / "sync_config.toml"
     destino.write_text("# cabecera que debe sobrevivir\n\n[defaults]\nremote = \"viejo\"\n",
@@ -109,7 +111,7 @@ with sandbox() as root:
     except model.ConfigError:
         c("save rechaza un config sin parejas", True, True)
 
-# --- lo que comparten save() y el catálogo del remoto ----------------------------
+# lo que comparten save() y el catálogo del remoto
 BUENO = {"defaults": {"remote": "nas"},
          "pair": [{"name": "notas", "local": "sync-data/notas",
                    "remote_path": "/R/notas", "mode": "bisync"}]}

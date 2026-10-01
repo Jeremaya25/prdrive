@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""
-El catálogo del remoto (common/catalog.py).
+"""El catálogo del remoto (`common/catalog.py`).
 
-`catalog.run` se sustituye entera: aquí no se habla con ningún remoto. Lo que se
-comprueba es lo que puede hacer daño de verdad —que escribir se niegue cuando el
-remoto ha cambiado bajo nuestros pies, y que la copia de seguridad se suba ANTES
-que el fichero nuevo— y lo que sostiene la pantalla cuando no hay red.
+`catalog.run` se sustituye entera: aquí no se habla con ningún remoto. Lo que
+se comprueba es lo que puede hacer daño de verdad (que escribir se niegue
+cuando el remoto ha cambiado bajo nuestros pies, y que la copia de seguridad se
+suba ANTES que el fichero nuevo) y lo que sostiene la pantalla cuando no hay
+red.
 """
 
 import subprocess
@@ -37,6 +37,7 @@ def responder(*respuestas):
     llamadas.clear()
 
     def _run(args):
+        """Contesta con la siguiente respuesta de la cola y apunta la orden."""
         llamadas.append(list(args))
         rc, salida, error = cola.pop(0) if cola else (0, "", "")
         return subprocess.CompletedProcess(args, rc, salida, error)
@@ -44,19 +45,20 @@ def responder(*respuestas):
 
 
 def ok(salida=TEXTO):
+    """Devuelve una respuesta de rclone que sale bien."""
     return (0, salida, "")
 
 
 def falla(error="no route to host"):
+    """Devuelve una respuesta de rclone que falla."""
     return (1, "", error)
 
 
-# --- de dónde se lee ---------------------------------------------------------
+# de dónde se lee
 c("el endpoint por defecto sale de las constantes compartidas", catalog.endpoint(),
   f"{model.DEFAULT_REMOTE}:{catalog.DEFAULT_CATALOG_PATH}")
-# El instalador lee el catálogo cuando todavía no hay dispositivo, así que tiene
-# que buscarlo en el mismo sitio. Antes eran dos cadenas iguales en dos módulos
-# que no se importaban; ahora hay una sola y esto lo vigila.
+# El instalador lee el catálogo cuando todavía no hay dispositivo, así que
+# tiene que buscarlo en el mismo sitio: hay una sola cadena y esto la vigila.
 c("y el instalador usa exactamente esa", profile.empty().catalog_path,
   catalog.DEFAULT_CATALOG_PATH)
 c("[defaults] puede moverlo",
@@ -68,7 +70,7 @@ c("diff_keys ve altas, bajas y cambios",
 c("y dice que no hay diferencia cuando no la hay",
   catalog.diff_keys({"a": 1}, {"a": 1}), ())
 
-# --- leer deja copia, y la copia salva la pantalla sin red -------------------
+# leer deja copia, y la copia salva la pantalla sin red
 with sandbox():
     responder(ok())
     cat = catalog.pull(CAT)
@@ -102,7 +104,7 @@ with sandbox():
     c("un catálogo ilegible tampoco revienta", cat, None)
     c("y dice que no es TOML válido", "TOML" in aviso, True)
 
-# --- escribir: lo peligroso ---------------------------------------------------
+# escribir: lo peligroso
 with sandbox():
     nuevo = {**CAT, "pair": CAT["pair"] + [{"name": "fotos", "local": "sync-data/fotos",
                                             "remote_path": "/R/fotos", "mode": "up"}]}
@@ -152,11 +154,12 @@ with sandbox():
           "ninguna [[pair]]" in str(e), True)
     c("ni siquiera se ha releído el remoto", llamadas, [])
 
-# --- una carpeta no es un catálogo (#48) ---------------------------------------
+# una carpeta no es un catálogo (#48)
+#
 # `rclone cat` de una carpeta no falla: junta todo lo que hay dentro. Con el
 # pairs.toml y el .bak que deja push(), son dos copias seguidas del catálogo, y
-# eso es exactamente el error que se veía. Las respuestas de `lsjson --stat` son
-# las de rclone v1.75.1 contra una carpeta y un fichero de verdad.
+# eso es exactamente el error que se veía. Las respuestas de `lsjson --stat`
+# son las de rclone v1.75.1 contra una carpeta y un fichero de verdad.
 DOS_COPIAS = TEXTO + TEXTO
 try:
     tomllib.loads(DOS_COPIAS)
@@ -249,7 +252,7 @@ with sandbox():
       lee(sin_extension), None)
     c("a costa de una sola pregunta", len(llamadas), 2)
 
-# --- la ruta tecleada ----------------------------------------------------------
+# la ruta tecleada
 c.contains("una carpeta tecleada se rechaza sin red",
            catalog.problema_de_ruta("/prdrive-catalog") or "",
            "«/prdrive-catalog/pairs.toml»")

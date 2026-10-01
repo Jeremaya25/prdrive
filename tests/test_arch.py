@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
-"""
-La arquitectura del equipo y el bin/ que le toca.
+"""La arquitectura del equipo y el `bin/` que le toca.
 
-Windows on ARM ejecuta los binarios x64 emulados y les miente: `platform.machine()`
-contesta 'AMD64' en un Snapdragon. Como el instalador es un .exe x64 y el
-`runsync.py` del dispositivo corre con el Python del equipo —ARM64 nativo en un
-portátil ARM—, los dos lados sacaban respuestas distintas: uno dejaba rclone en
-`bin/x64` y el otro lo buscaba en `bin/arm`.
+Windows on ARM ejecuta los binarios x64 emulados y les miente:
+`platform.machine()` contesta 'AMD64' en un Snapdragon. Como el instalador es
+un .exe x64 y el `runsync.py` del dispositivo corre con el Python del equipo
+(ARM64 nativo en un portátil ARM), los dos lados sacaban respuestas distintas:
+uno dejaba rclone en `bin/x64` y el otro lo buscaba en `bin/arm`.
 
 Lo que se comprueba aquí es esa coincidencia, no la tabla por separado: la
 carpeta que elige el dispositivo y el zip que descarga el instalador tienen que
 hablar de la MISMA CPU. No hace falta un equipo ARM para preguntarlo, porque la
-sonda del sistema —`model.maquina_nativa_windows()`— es una función de módulo y
+sonda del sistema (`model.maquina_nativa_windows()`) es una función de módulo y
 se sustituye.
 """
 
@@ -30,7 +29,7 @@ IMAGE_FILE_MACHINE_AMD64 = 0x8664
 IMAGE_FILE_MACHINE_I386 = 0x014C
 
 
-# --- La sonda manda sobre platform.machine() --------------------------------
+# La sonda manda sobre platform.machine()
 #
 # El caso del bug: un proceso x64 emulado en un ARM64. platform.machine() dice
 # 'AMD64' y hay que ignorarlo.
@@ -61,7 +60,7 @@ finally:
     model.maquina_nativa_windows = original_sonda
 
 
-# --- La carpeta y el zip no pueden describir CPUs distintas ------------------
+# La carpeta y el zip no pueden describir CPUs distintas
 #
 # Ésta es la comprobación que habría cazado el bug: las dos tablas viven en
 # ficheros distintos (model.arch_dir y rclone_bin.os_arch) y nada las ataba.
@@ -81,7 +80,7 @@ finally:
     rclone_bin.machine_arch = original_bin
 
 
-# --- Un dispositivo ya provisionado con la carpeta equivocada ----------------
+# Un dispositivo ya provisionado con la carpeta equivocada
 #
 # Los que instaló la versión con el bug tienen el rclone en bin/x64 y nada en
 # bin/arm. Un ARM64 ejecuta los x64 emulados, así que ahí se tira de lo que hay
@@ -121,7 +120,7 @@ finally:
     model.BIN_DIR, model.BIN_FALLBACK_DIRS = originales
 
 
-# --- La caché de descargas va por arquitectura ------------------------------
+# La caché de descargas va por arquitectura
 #
 # Si fuera una sola, el rclone de amd64 que dejó el instalador con el bug se
 # reutilizaría para siempre y la URL corregida no llegaría a usarse nunca.

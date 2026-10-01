@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""
-Lo que se le pregunta al sistema de ficheros de una CARPETA se pregunta a su volumen.
+r"""Lo que se pregunta al sistema de ficheros de una CARPETA se pregunta a su volumen.
 
-`crypto.soporta_dispersos()` y `crypto.sistema_de_ficheros()` nacieron para la
-raíz de una unidad (`G:\\`), que es lo que les pasan el asistente y el paso
+`crypto.soporta_dispersos()` y `crypto.sistema_de_ficheros()` se hicieron para
+la raíz de una unidad (`G:\\`), que es lo que les pasan el asistente y el paso
 «Cifrado» de una unidad. La raíz cifrada de un equipo les pasa una carpeta
 (`~/PRDRIVE-cifrado`), y `GetVolumeInformationW` solo acepta la raíz de un
 volumen: con una carpeta fallaba, el contenedor se creaba fijo en un NTFS y el
@@ -25,9 +24,11 @@ c = Checks("VeraCrypt: el sistema de ficheros de una carpeta es el de su volumen
 
 
 def raiz_de(ruta: Path) -> Path:
-    """La raíz del volumen, calculada aquí y no con el código que se prueba: en
-    Windows, la unidad de la ruta; en los demás, el primer punto de montaje
-    subiendo."""
+    """Devuelve la raíz del volumen de una ruta.
+
+    La calcula aquí y no con el código que se prueba: en Windows, la unidad de
+    la ruta; en los demás, el primer punto de montaje subiendo.
+    """
     ruta = Path(os.path.abspath(ruta))
     if crypto.IS_WIN:
         return Path(ruta.anchor)

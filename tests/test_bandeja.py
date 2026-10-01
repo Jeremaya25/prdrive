@@ -1,23 +1,21 @@
 #!/usr/bin/env python3
-"""
-La bandeja del agente (fase 4): lo que enseña y lo que pide, sin Windows.
+"""La bandeja del agente (fase 4): lo que enseña y lo que pide, sin Windows.
 
 `ui/bandeja.py` es puro: del resumen del agente sale el icono, la línea del
 ratón y el menú, y cada entrada lleva las peticiones del buzón que hace. Aquí
 se comprueba con el resumen de un agente de verdad (unidades y raíces de
 mentira, `_agente_falso`), y que lo que pide la bandeja lo atiende el agente
 por el mismo camino que el buzón:
-
-  * los cinco estados, con su orden de prioridad;
-  * «Abrir», «Sincronizar ahora», «Pausar»/«Reanudar», «Cerrar el agente»;
-  * «Atender…» para una unidad con «Ahora no», y NUNCA «Abrir» para una que no
-    está en la lista;
-  * la raíz cifrada: «Desbloquear…», «Bloquear», la casilla de
-    `pedir_al_iniciar`; «Abrir» con ella cerrada desbloquea y abre al verla;
-  * un desbloqueo cancelado se olvida y se vuelve a ofrecer;
-  * `despertar` (vuelta de la suspensión) sondea ya los remotos sin conexión;
-  * el agente le pasa la vista a la bandeja solo cuando cambia;
-  * los iconos de los cinco estados, y el `Vigia` que se despierta.
+- Los cinco estados, con su orden de prioridad.
+- «Abrir», «Sincronizar ahora», «Pausar»/«Reanudar», «Cerrar el agente».
+- «Atender…» para una unidad con «Ahora no», y NUNCA «Abrir» para una que no
+  está en la lista.
+- La raíz cifrada: «Desbloquear…», «Bloquear», la casilla de
+  `pedir_al_iniciar`; «Abrir» con ella cerrada desbloquea y abre al verla.
+- Un desbloqueo cancelado se olvida y se vuelve a ofrecer.
+- `despertar` (vuelta de la suspensión) sondea ya los remotos sin conexión.
+- El agente le pasa la vista a la bandeja solo cuando cambia.
+- Los iconos de los cinco estados, y el `Vigia` que se despierta.
 """
 
 import shutil
@@ -40,10 +38,12 @@ F.preparar()
 
 
 def textos(vista) -> list[str]:
+    """Devuelve los textos del menú de una vista."""
     return [e.texto for e in vista.menu]
 
 
 def entrada(vista, texto: str):
+    """Devuelve la entrada del menú con ese texto, o `None`."""
     for e in bandeja._todas(vista.menu):
         if e.texto == texto:
             return e
@@ -57,14 +57,21 @@ def elegir(ag, vista, texto: str) -> None:
 
 
 class BandejaFalsa:
+    """Bandeja de mentira que apunta las vistas que le ponen.
+
+    Attributes:
+        vistas: Las vistas recibidas, en orden.
+    """
     def __init__(self):
+        """Empieza sin ninguna vista."""
         self.vistas = []
 
     def poner(self, vista):
+        """Apunta la vista recibida."""
         self.vistas.append(vista)
 
 
-# --- sin nada --------------------------------------------------------------------
+# sin nada
 ag = F.nuevo()
 ag.bandeja = falsa = BandejaFalsa()
 F.vueltas(ag, 1)
@@ -82,7 +89,7 @@ c("  «Sincronizar ahora» sin nada atendido está apagado",
 F.vueltas(ag, 3)
 c("el agente solo pasa la vista cuando cambia", len(falsa.vistas), 1)
 
-# --- una unidad atendida ---------------------------------------------------------
+# una unidad atendida
 UNO = "1" * 32
 raiz1 = F.unidad(UNO, nombre="PRDRIVE-1")
 equipo.guardar_ajustes(equipo.leer_ajustes().con_unidad(
@@ -158,7 +165,7 @@ c("  con su ventana ya abierta no lanza otra", len(F.LANZADOS), antes)
 (raiz1 / penwatch.UI_LOCK_REL).unlink()
 F.pasar(agente.GRACIA)                  # la gracia tras cerrarse la ventana
 
-# --- una unidad a la que se dijo «Ahora no» ------------------------------------------
+# una unidad a la que se dijo «Ahora no»
 DOS = "2" * 32
 raiz2 = F.unidad(DOS, nombre="PRDRIVE-2")
 F.PANTALLA[0] = False                   # sin pantalla: «Ahora no» al momento
@@ -191,7 +198,7 @@ c("«Cerrar el agente» lo termina (en cuanto acabe lo que esté en marcha)",
   ag.terminar, True)
 F.RAICES[:] = []
 
-# --- la raíz cifrada ---------------------------------------------------------------
+# la raíz cifrada
 penwatch.candidate_roots = lambda cfg: ([Path(r) for r in cfg.get("extra_roots", [])]
                                         + list(F.RAICES))
 VC = "/opt/veracrypt/veracrypt"
@@ -213,6 +220,7 @@ PUNTO = tmpdir("prdrive-punto-")
 
 
 def montar() -> None:
+    """Hace lo que VeraCrypt al abrirlo: aparece la raíz en su punto."""
     app = PUNTO / penwatch.APP_SUBDIR
     (app / "state").mkdir(parents=True, exist_ok=True)
     (app / "PRDRIVE").write_text(f"id={UID}\ntipo=equipo\n", encoding="utf-8")
@@ -225,11 +233,13 @@ def montar() -> None:
 
 
 def desmontar() -> None:
+    """Vacía el punto de montaje, como al cerrar el contenedor."""
     for hijo in PUNTO.iterdir():
         shutil.rmtree(hijo) if hijo.is_dir() else hijo.unlink()
 
 
 def veracrypts() -> list:
+    """Devuelve los procesos lanzados que son el VeraCrypt de mentira."""
     return [p for p in F.LANZADOS if p.args and p.args[0] == VC]
 
 
@@ -311,7 +321,7 @@ vestibulo.retenido = lambda hc: None
 F.vueltas(ag, 2)
 penwatch.IS_WIN, agente.IS_WIN, equipo.Unidad.letra = LINUX_FINGIDO
 
-# --- despertar ---------------------------------------------------------------------
+# despertar
 ag.entorno = agente.pl.sin_conexion(ag.entorno, UNO, "nas", F.RELOJ[0] + 3600)
 ag.entorno_leido = F.RELOJ[0]
 ag.pedir({"pide": equipo.PIDE_DESPERTAR})
@@ -329,7 +339,7 @@ ag._buzon(F.RELOJ[0] + 1 + agente.DESPERTAR_DOBLE)
 c("  otra suspensión más tarde, sí",
   sum(x == "el equipo vuelve de la suspensión" for x in F.DIARIO), 2)
 
-# --- «Probar ahora» en un aviso de «Sin conexión» ------------------------------------
+# «Probar ahora» en un aviso de «Sin conexión»
 ag.entorno = agente.pl.sin_conexion(ag.entorno, UNO, "nas", F.RELOJ[0] + 3600)
 leido = ag.entorno_leido = F.RELOJ[0]
 ag.pedir({"pide": equipo.PIDE_SONDEAR})
@@ -337,7 +347,7 @@ ag._buzon(F.RELOJ[0])
 c("«Probar ahora»: el remoto sin conexión se sondea ya, sin releer lo demás",
   (ag.entorno.sin_conexion[(UNO, "nas")] <= F.RELOJ[0], ag.entorno_leido), (True, leido))
 
-# --- lo puro, suelto -----------------------------------------------------------------
+# lo puro, suelto
 largo = bandeja.tip("x" * 300)
 c("la línea del ratón cabe en szTip (127)", (len(largo), largo.endswith("…")), (127, True))
 muchos = {"unidades": [{"id": "u", "nombre": "U", "fallando": ["a", "b", "c", "d", "e"]}]}
@@ -370,7 +380,7 @@ c("lo que retiene sin ser pausa (red de uso medido) usa el icono de pausa",
   bandeja.estado({"retenido": "red de uso medido", "unidades": [{}]}),
   (icons.PAUSA, "esperando: red de uso medido"))
 
-# --- los iconos -----------------------------------------------------------------------
+# los iconos
 negro = icons.pixeles_menu(bandeja.I_PAUSAR, 16, "#000000")
 blanco = icons.pixeles_menu(bandeja.I_PAUSAR, 16, "#ffffff")
 alfas = negro[3::4]
@@ -397,7 +407,7 @@ try:
 except ValueError:
     c("un estado desconocido es un error", True, True)
 
-# --- el vigía se despierta -------------------------------------------------------------
+# el vigía se despierta
 vigia = agente.Vigia()
 vigia.despertar()
 t = time.monotonic()

@@ -370,11 +370,12 @@ c("una cifrada que no está en la lista: nunca se ejecuta nada suyo", F.ABIERTOS
 
 # Windows no deja borrar un fichero que otro tiene abierto
 #
-# runsync lee daemon.lock.json cada 0,3 s mientras espera a que el servicio pare,
-# y Python abre sin FILE_SHARE_DELETE: si el agente lo borra justo entonces,
-# WinError 32. La vuelta no puede caerse por eso, ni el lock quedarse en la
-# unidad con el pid del agente: se reintenta en la siguiente. El fallo se
-# provoca aquí a mano para que salga igual en Linux (H-2 de las pruebas en real).
+# runsync lee daemon.lock.json cada 0,3 s mientras espera a que el servicio
+# pare, y Python abre sin FILE_SHARE_DELETE: si el agente lo borra justo
+# entonces, WinError 32. La vuelta no puede caerse por eso, ni el lock quedarse
+# en la unidad con el pid del agente: se reintenta en la siguiente. El fallo se
+# provoca aquí a mano para que salga igual en Linux (H-2 de las pruebas en
+# real).
 import pathlib  # noqa: E402
 
 L = "7" * 32

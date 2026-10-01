@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""
-Los ficheros en conflicto de bisync: cómo se llaman, de qué lado vienen y cuánto
-dura el aviso.
+"""Los ficheros en conflicto de bisync: su nombre, su lado y el aviso.
+
+Cómo se llaman, de qué lado vienen y cuánto dura el aviso.
 
 Lo que se fija aquí es la traducción del nombre al lado, que es la parte que no
 se puede equivocar: una etiqueta «versión de este dispositivo» puesta sobre la
@@ -21,6 +21,7 @@ c = Checks("conflictos de bisync (common/conflicts.py)")
 
 
 def pareja(flags=None, mode="bisync", name="notas"):
+    """Devuelve una pareja de mentira con esos flags y modo."""
     raw = {"name": name, "local": f"sync-data/{name}", "remote_path": f"/R/{name}",
            "mode": mode}
     if flags:
@@ -29,12 +30,13 @@ def pareja(flags=None, mode="bisync", name="notas"):
 
 
 def escribir(ruta: Path, texto: str = "x") -> Path:
+    """Escribe un fichero y devuelve su ruta."""
     ruta.parent.mkdir(parents=True, exist_ok=True)
     ruta.write_text(texto, encoding="utf-8")
     return ruta
 
 
-# --- el esquema de nombres sale de los flags, como en rclone -----------------
+# el esquema de nombres sale de los flags, como en rclone
 por_defecto = conflicts.esquema(pareja())
 c("bisync trae sufijos distintos para cada lado",
   (por_defecto.sufijo1, por_defecto.sufijo2),
@@ -56,8 +58,9 @@ c("el flag escrito con guion bajo también cuenta (flags_to_args los iguala)",
   (guion_bajo.sufijo1, guion_bajo.sufijo2), (".a", ".b"))
 
 
-# --- del nombre al lado ------------------------------------------------------
+# del nombre al lado
 def leer(nombre, esq=por_defecto):
+    """Devuelve el lado y el original que `conflicts` lee en un nombre."""
     return conflicts.leer_nombre(nombre, esq)
 
 
@@ -92,7 +95,7 @@ c("en bisync path1 es el dispositivo",
 c("y path2 el remoto", conflicts.lado(p, "path2"), conflicts.REMOTO)
 
 
-# --- el escaneo ----------------------------------------------------------------
+# el escaneo
 with sandbox():
     p = pareja()
     raiz = p.local_abs
@@ -146,7 +149,7 @@ with sandbox():
     c("sin carpeta local no hay nada que escanear", conflicts.escanear(pareja()), [])
 
 
-# --- el estado persiste y se aclara solo ---------------------------------------
+# el estado persiste y se aclara solo
 with sandbox():
     p = pareja()
     cfg = model.parse_config({"defaults": {"remote": "nas"},

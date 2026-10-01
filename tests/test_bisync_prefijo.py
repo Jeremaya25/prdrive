@@ -1,19 +1,18 @@
 #!/usr/bin/env python3
-"""
-El nombre de los listados de bisync ya no depende de la máquina.
+"""El nombre de los listados de bisync ya no depende de la máquina.
 
-bisync guarda su baseline en ficheros cuyo nombre deduce de los dos extremos. Con
-el lado local como ruta absoluta, ese nombre lleva dentro el punto de montaje
-(`F__sync-data_notas..nas_datos_notas`), así que el mismo dispositivo en otra
-letra de unidad —o en un Linux— ya no encontraba su baseline. Esa herida la
-tapaba un renombrado automático de los listados, que era peligroso por
+bisync guarda su baseline en ficheros cuyo nombre deduce de los dos extremos.
+Con el lado local como ruta absoluta, ese nombre lleva dentro el punto de
+montaje (`F__sync-data_notas..nas_datos_notas`), así que el mismo dispositivo
+en otra letra de unidad (o en un Linux) ya no encontraba su baseline. Esa
+herida la tapaba un renombrado automático de los listados, peligroso por
 definición: renombrar es decirle a bisync que el listado del destino ANTERIOR
 describe el NUEVO.
 
-La cura es `device_remote`: el lado local va como un remote 'combine' propio y el
-prefijo deja de saber dónde está montado nada. Esto comprueba las dos mitades —el
-prefijo y las variables de entorno que definen ese remote— y que la venda ya no
-está.
+La cura es `device_remote`: el lado local va como un remote 'combine' propio y
+el prefijo deja de saber dónde está montado nada. Esto comprueba las dos
+mitades (el prefijo y las variables de entorno que definen ese remote) y que la
+venda ya no está.
 """
 
 import csv
@@ -50,7 +49,7 @@ def config(device_remote=None, raiz=None):
 with sandbox() as root:
     original = model.DEVICE_ROOT
 
-    # --- sin device_remote: el punto de montaje está DENTRO del nombre --------
+    # sin device_remote: el punto de montaje está DENTRO del nombre
     suelto = config(raiz=root).pairs[0]
     prefijo_suelto = bisync.expected_prefix(suelto)
     # `resolve()`: en Windows la ruta del temporal llega en formato 8.3
@@ -59,7 +58,7 @@ with sandbox() as root:
     c("sin device_remote el prefijo lleva el punto de montaje",
       marca in prefijo_suelto, True)
 
-    # --- con device_remote: el mismo nombre en cualquier equipo ---------------
+    # con device_remote: el mismo nombre en cualquier equipo
     pareja = config("disp", raiz=root).pairs[0]
     prefijo = bisync.expected_prefix(pareja)
     c("con device_remote el prefijo sale del nombre del remote",
@@ -76,7 +75,7 @@ with sandbox() as root:
     c("sin device_remote sí cambiaba",
       bisync.expected_prefix(config(raiz=otra_raiz).pairs[0]) == prefijo_suelto, False)
 
-    # --- las variables que definen el remote 'combine' ------------------------
+    # las variables que definen el remote 'combine'
     model.DEVICE_ROOT = root
     entorno = config("disp", raiz=root).pen_environment()
     c("el remote del dispositivo es un 'combine'",
@@ -89,7 +88,8 @@ with sandbox() as root:
                  f'"sync-data={(root / "sync-data").resolve()}"')
     c("sin device_remote no hay entorno que poner", config(raiz=root).pen_environment(), {})
 
-    # --- y ese texto lo tiene que saber leer rclone ---------------------------
+    # y ese texto lo tiene que saber leer rclone
+    #
     # rclone lee `upstreams` como fs.SpaceSepList (fs/types.go), que es un CSV
     # con el espacio de separador. `releer` hace lo mismo: si lo que generamos
     # no vuelve a salir entero, rclone tampoco lo va a entender.
@@ -108,12 +108,13 @@ with sandbox() as root:
 
     model.DEVICE_ROOT = original
 
-# --- la pareja que sincroniza la RAÍZ del dispositivo ---------------------------
+# la pareja que sincroniza la RAÍZ del dispositivo
+#
 # `local = "."` no tiene primer tramo. Dejarlo en "." daba el upstream "." y el
 # extremo `disp:.`, y rclone limpia la ruta ANTES de buscar el upstream: se
 # quedaba buscando el upstream "" y fallaba con «combine for remote "":
-# directory not found». Ni siquiera es un fallo de la pareja de la raíz sola: es
-# la pareja que se lleva el dispositivo entero.
+# directory not found». Ni siquiera es un fallo de la pareja de la raíz sola:
+# es la pareja que se lleva el dispositivo entero.
 with sandbox() as root:
     original = model.DEVICE_ROOT
     model.DEVICE_ROOT = Path(root)
@@ -155,17 +156,19 @@ with sandbox() as root:
     model.DEVICE_ROOT = original
 
 
-# --- la forma exacta que tumbó el dispositivo de pruebas ------------------------
-# Un dispositivo montado en F: tiene la propia raíz como upstream (la pareja cuyo
-# `local` es "."), y `F:\` acaba en barra. Entrecomillando solo la ruta salía
-# `.="F:\"`: un campo que no empieza por comilla con una comilla dentro. rclone
-# rechazaba la línea entera con «bare " in non-quoted-field», así que NINGUNA
-# pareja del dispositivo podía correr. Con el par entero entre comillas la barra
-# final queda dentro y se relee bien.
+# la forma exacta que tumbó el dispositivo de pruebas
+#
+# Un dispositivo montado en F: tiene la propia raíz como upstream (la pareja
+# cuyo `local` es "."), y `F:\` acaba en barra. Entrecomillando solo la ruta
+# salía `.="F:\"`: un campo que no empieza por comilla con una comilla dentro.
+# rclone rechazaba la línea entera con «bare " in non-quoted-field», así que
+# NINGUNA pareja del dispositivo podía correr. Con el par entero entre comillas
+# la barra final queda dentro y se relee bien.
 c("la raíz de una unidad acaba en barra y aun así se relee",
   releer(r'".=F:\" "sync-data=F:\sync-data"'), ['.=F:\\', 'sync-data=F:\\sync-data'])
 
-# --- la venda, retirada ----------------------------------------------------------
+# la venda, retirada
+#
 # No es una comprobación de aspecto: renombrar los listados al prefijo nuevo es
 # la operación que puede provocar borrados masivos (ver el docstring de
 # `bisync.shelve_baseline`). Si alguien la reintroduce, que sea leyendo esto.

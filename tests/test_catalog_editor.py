@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""
-El editor del catálogo (ui/catalog_editor.py).
+"""El editor del catálogo (`ui/catalog_editor.py`).
 
-Dos cosas que comprobar. La primera, que un plan del catálogo NO toca este dispositivo:
-crear, editar o borrar allí deja el sync_config.toml exactamente igual, y es
-justo la separación que da sentido a todo esto. La segunda, los vetos: no se
-puede borrar la pareja con la que se siembra un dispositivo nuevo, ni escribir partiendo
-de la copia local.
+Dos cosas que comprobar. La primera, que un plan del catálogo NO toca este
+dispositivo: crear, editar o borrar allí deja el `sync_config.toml` exactamente
+igual, y es justo la separación que da sentido a todo esto. La segunda, los
+vetos: no se puede borrar la pareja con la que se siembra un dispositivo nuevo,
+ni escribir partiendo de la copia local.
 """
 
 import sys
@@ -33,6 +32,7 @@ NUEVA = {"name": "fotos", "local": "sync-data/fotos", "remote_path": "/R/fotos",
 
 
 def falso(source="remote", raw=None):
+    """Devuelve un catálogo de mentira con esos datos."""
     datos = raw if raw is not None else CAT
     texto = config_file.dumps(datos)
     return catalog.Catalog(raw=tomllib.loads(texto), text=texto, source=source,
@@ -41,6 +41,7 @@ def falso(source="remote", raw=None):
 
 
 def rechaza(etiqueta, hacer, fragmento):
+    """Comprueba que `hacer()` lance `ConfigError` con ese fragmento en el mensaje."""
     try:
         hacer()
         c(etiqueta, "no lanzó", "ConfigError")
@@ -48,7 +49,7 @@ def rechaza(etiqueta, hacer, fragmento):
         c(etiqueta, fragmento in str(e), True)
 
 
-# --- alta ---------------------------------------------------------------------
+# alta
 cat = falso()
 plan = catalog_editor.plan_catalog_save(cat, NUEVA, None)
 c("el alta añade la pareja al catálogo",
@@ -63,7 +64,7 @@ c("y de que aquí todavía no se usa",
 c("y de que se pierden los comentarios",
   any("comentarios intercalados" in x for x in plan.consequences), True)
 
-# --- edición ------------------------------------------------------------------
+# edición
 plan = catalog_editor.plan_catalog_save(
     cat, {**CAT["pair"][1], "mode": "down-mirror", "include": [], "exclude": []}, "notas")
 c("editar cambia solo esa pareja",
@@ -79,16 +80,15 @@ rechaza("editar sin cambiar nada no sube nada",
             cat, {**CAT["pair"][1], "include": [], "exclude": []}, "notas"),
         "exactamente igual")
 
-# --- baja ---------------------------------------------------------------------
+# baja
 plan = catalog_editor.plan_catalog_remove(cat, "notas")
 c("borrar quita la pareja del catálogo",
   [p["name"] for p in plan.new_raw["pair"]], ["respaldo"])
 c("y se dice que los dispositivos que la usan no la pierden",
   any("huérfana" in x for x in plan.consequences), True)
 
-# Ya no hay ninguna pareja intocable: cuando el código bajaba del remoto, la que
-# describía ese espejo era imprescindible para instalar y el editor se negaba a
-# borrarla. Ahora el instalador lleva el código dentro y todas valen lo mismo.
+# No hay ninguna pareja intocable: el instalador lleva el código dentro y todas
+# valen lo mismo.
 plan = catalog_editor.plan_catalog_remove(cat, "respaldo")
 c("ninguna pareja es imprescindible ya",
   [p["name"] for p in plan.new_raw["pair"]], ["notas"])
@@ -102,7 +102,7 @@ rechaza("no se puede dejar el catálogo vacío",
         lambda: catalog_editor.plan_catalog_remove(solo_una, "notas"),
         "sin ninguna pareja")
 
-# --- [defaults] ---------------------------------------------------------------
+# [defaults]
 plan = catalog_editor.plan_catalog_defaults(cat, {"remote": "otro", "keep_logs": True})
 c("los defaults del catálogo se sustituyen enteros",
   plan.new_raw["defaults"], {"remote": "otro", "keep_logs": True})
@@ -117,7 +117,7 @@ rechaza("una carpeta por ruta del catálogo no sube",
             cat, {**CAT["defaults"], "catalog_path": "/prdrive-catalog"}),
         "no termina en .toml")
 
-# --- vetos de escritura -------------------------------------------------------
+# vetos de escritura
 rechaza("sin catálogo no se puede crear nada",
         lambda: catalog_editor.plan_catalog_save(None, NUEVA, None),
         "No hay catálogo")
@@ -129,7 +129,7 @@ rechaza("la validación es la misma que en el dispositivo",
             cat, {**NUEVA, "name": "a/b"}, None),
         "state/")
 
-# --- y lo importante: nada de esto toca este dispositivo ------------------------------
+# y lo importante: nada de esto toca este dispositivo
 with sandbox():
     model.CONFIG_FILE.write_text(config_file.dumps(LOCAL), encoding="utf-8")
     antes = model.CONFIG_FILE.read_text(encoding="utf-8")

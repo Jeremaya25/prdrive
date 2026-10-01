@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""--auto: precedencia de argumentos > configuración del servicio > [daemon]
-del TOML; y --auto --once, una sola pasada de esas parejas."""
+"""`--auto`: argumentos > configuración del servicio > `[daemon]` del TOML.
+
+Y `--auto --once`, una sola pasada de esas parejas.
+"""
 
 import sys
 from pathlib import Path
@@ -48,7 +50,8 @@ try:
     lanzado.clear(); runsync.auto_start(["upload"])
     c("--auto no reescribe el recuerdo", prefs.PREFS.read_text(encoding="utf-8"), antes)
 
-    # --- --once: una pasada de las parejas del servicio, sin servicio -------
+    # --once: una pasada de las parejas del servicio, sin servicio
+    #
     # Es el modo `sync` del vigilante. Ni arranca el servicio ni para el que
     # hubiera: si hay uno vivo en este equipo, no hace nada.
     pasadas: list = []

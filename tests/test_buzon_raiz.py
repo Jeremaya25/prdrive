@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
-"""
-El buzón de una raíz (`state/servicio.pide`, fase 5): lo que la ventana de esa
-raíz le pide al agente que la atiende.
+"""El buzón de una raíz (`state/servicio.pide`, fase 5).
 
-  * «Iniciar servicio» con el agente ya no arranca un servicio: guarda las
-    parejas y el intervalo, como siempre, y deja un `reanudar`. El agente
-    vuelve en cuanto se va la ventana, sin la `GRACIA`, y empieza con una
-    pasada, como el servicio que se arrancaba.
-  * Lo que llega por el buzón de una raíz es de ESA raíz, traiga el id que
-    traiga, y solo lo que es de una raíz: un ajuste del equipo ahí se ignora.
-  * El buzón de una unidad que no está en la lista ni se toca.
-  * «Bloquear» de la ventana va por ese buzón.
-  * Sin agente vivo, o con el agente en otro modo, «Iniciar servicio» arranca
-    el servicio de siempre.
+Es lo que la ventana de esa raíz le pide al agente que la atiende:
+- «Iniciar servicio» con el agente ya no arranca un servicio: guarda las
+  parejas y el intervalo, como siempre, y deja un `reanudar`. El agente vuelve
+  en cuanto se va la ventana, sin la `GRACIA`, y empieza con una pasada, como
+  el servicio que se arrancaba.
+- Lo que llega por el buzón de una raíz es de ESA raíz, traiga el id que
+  traiga, y solo lo que es de una raíz: un ajuste del equipo ahí se ignora.
+- El buzón de una unidad que no está en la lista ni se toca.
+- «Bloquear» de la ventana va por ese buzón.
+- Sin agente vivo, o con el agente en otro modo, «Iniciar servicio» arranca el
+  servicio de siempre.
 """
 
 import os
@@ -45,7 +44,7 @@ F.vueltas(ag, 1)
 lanzadas = len(F.pasadas(RAIZ))
 c("  las dos parejas, y a esperar el intervalo", lanzadas, 2)
 
-# --- la ventana se abre: pausa ---------------------------------------------------------
+# la ventana se abre: pausa
 F.stop(RAIZ).touch()
 F.ventana_abierta(RAIZ)
 F.vueltas(ag, 2)
@@ -78,7 +77,7 @@ F.pasar(agente.GRACIA)
 F.vueltas(ag, 1)
 c("  y después vuelve", F.lock(RAIZ).get("pid"), os.getpid())
 
-# --- lo que no es de una raíz ---------------------------------------------------------
+# lo que no es de una raíz
 antes = equipo.leer_ajustes().espera_unidad_nueva
 equipo.pedir({"pide": equipo.PIDE_AJUSTE, "clave": "espera_unidad_nueva",
               "valor": 30}, BUZON)
@@ -96,7 +95,7 @@ c("una pasada pedida por el buzón de la raíz es de esa raíz",
 F.acabar(F.pasadas(RAIZ)[-1], 0, "OK\n")
 F.vueltas(ag, 1)
 
-# --- una unidad que no está en la lista: su buzón ni se mira --------------------------
+# una unidad que no está en la lista: su buzón ni se mira
 AJENA = "c" * 32
 RAIZ_AJENA = F.unidad(AJENA, nombre="AJENA")
 F.RAICES[:] = [RAIZ, RAIZ_AJENA]
@@ -110,7 +109,7 @@ c("  ni se ha lanzado nada suyo", F.pasadas(RAIZ_AJENA), [])
 F.RAICES[:] = [RAIZ]
 F.vueltas(ag, 1)
 
-# --- la ventana: «Iniciar servicio» y «Bloquear» -----------------------------------------
+# la ventana: «Iniciar servicio» y «Bloquear»
 import runsync  # noqa: E402
 
 with sandbox():
@@ -123,9 +122,11 @@ with sandbox():
     runsync.pedir_reanudar = lambda: reanudar.append(1) or True
 
     class Frontal:
+        """Frontal de mentira que apunta lo que se le dice."""
         dicho: list = []
 
         def info(self, msg):
+            """Apunta el mensaje."""
             self.dicho.append(msg)
 
     config = mkcfg(["docs", "fotos"])

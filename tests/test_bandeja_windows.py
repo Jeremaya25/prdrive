@@ -1,21 +1,19 @@
 #!/usr/bin/env python3
-"""
-La bandeja de Windows (`ui/bandeja_windows.py`), con un Windows de mentira.
+"""La bandeja de Windows (`ui/bandeja_windows.py`), con un Windows de mentira.
 
 `Bandeja` habla con Windows solo a través de su `Api`; aquí se le pone una que
 apunta lo que se le pide y tiene un bucle de mensajes de verdad en el hilo de
 la bandeja (una cola). Así se comprueba, sin Windows:
-
-  * el icono se pone al arrancar, con el del estado y la línea del ratón, y se
-    cambia con `poner()` desde otro hilo;
-  * sin barra de tareas todavía (al iniciar sesión) la ventana vive igual, y el
-    icono se pone al llegar `TaskbarCreated`, que también lo repone si el
-    Explorador se reinicia;
-  * el menú: lo elegido son peticiones al agente; lo apagado no pide nada;
-  * `WM_DEVICECHANGE` despierta el recorrido; la vuelta de la suspensión pide
-    `despertar`;
-  * los avisos cuelgan del icono (`NIF_INFO`) y `avisos` los manda por ahí;
-  * al cerrar se quita el icono, se sueltan los iconos y acaba el hilo.
+- El icono se pone al arrancar, con el del estado y la línea del ratón, y se
+  cambia con `poner()` desde otro hilo.
+- Sin barra de tareas todavía (al iniciar sesión) la ventana vive igual, y el
+  icono se pone al llegar `TaskbarCreated`, que también lo repone si el
+  Explorador se reinicia.
+- El menú: lo elegido son peticiones al agente; lo apagado no pide nada.
+- `WM_DEVICECHANGE` despierta el recorrido; la vuelta de la suspensión pide
+  `despertar`.
+- Los avisos cuelgan del icono (`NIF_INFO`) y `avisos` los manda por ahí.
+- Al cerrar se quita el icono, se sueltan los iconos y acaba el hilo.
 
 Lo que llama de verdad a user32 y shell32 (`Api`) solo se puede probar en
 Windows: está en la lista de pruebas en real.
@@ -37,24 +35,40 @@ TASKBAR = 0xC123
 
 
 class ApiFalsa:
+    """La `Api` de mentira: apunta lo que se le pide y tiene un bucle de mensajes.
+
+    Attributes:
+        barra: Si existe ya la barra de tareas.
+        cola: Los mensajes que el bucle va a repartir.
+        llamadas: Las notificaciones pedidas, como `(acción, campos)`.
+        manejar: El manejador de mensajes de la ventana.
+        elegir: El id que «elige» el menú.
+        menus: Los menús que se han pedido.
+        soltados: Los iconos soltados.
+        fin: Se activa al acabar el bucle.
+    """
     def __init__(self, barra: bool = True):
-        self.barra = barra                  # ¿existe ya la barra de tareas?
+        """Prepara la `Api` de mentira, con o sin barra de tareas."""
+        self.barra = barra
         self.cola: queue.Queue = queue.Queue()
         self.llamadas: list = []
         self.manejar = None
-        self.elegir = 0                     # el id que «elige» el menú
+        self.elegir = 0
         self.menus: list = []
         self.soltados: list = []
         self.fin = threading.Event()
 
     def mensaje_registrado(self, nombre):
+        """Devuelve el id de `TaskbarCreated`, o 0 para otro nombre."""
         return TASKBAR if nombre == "TaskbarCreated" else 0
 
     def ventana(self, manejar):
+        """Guarda el manejador y devuelve un manejador de ventana de mentira."""
         self.manejar = manejar
         return 777
 
     def bucle(self):
+        """Reparte los mensajes de la cola hasta que llega el de salir."""
         while True:
             msg, w, l = self.cola.get()
             if msg is None:
@@ -63,12 +77,15 @@ class ApiFalsa:
         self.fin.set()
 
     def salir(self):
+        """Pide al bucle que acabe."""
         self.cola.put((None, 0, 0))
 
     def destruir(self, hwnd):
+        """Manda `WM_DESTROY` a la ventana."""
         self.manejar(hwnd, bw.WM_DESTROY, 0, 0)
 
     def post(self, hwnd, msg):
+        """Deja un mensaje en la cola, como `PostMessageW`."""
         self.cola.put((msg, 0, 0))
         return True
 
@@ -77,21 +94,26 @@ class ApiFalsa:
         self.cola.put((msg, w, l))
 
     def icono(self, ruta):
+        """Devuelve un manejador de icono de mentira."""
         return f"H:{ruta.name}"
 
     def soltar_icono(self, h):
+        """Apunta el icono soltado."""
         self.soltados.append(h)
 
     def notificar(self, accion, **campos):
+        """Apunta una notificación; `NIM_ADD` falla sin barra de tareas."""
         self.llamadas.append((accion, campos))
         return accion != bw.NIM_ADD or self.barra
 
     def menu(self, hwnd, entradas, ids):
+        """Apunta el menú y devuelve lo que «elige» el test."""
         self.menus.append((entradas, ids))
         return self.elegir
 
 
 def esperar(condicion, segundos=3.0) -> bool:
+    """Espera hasta `segundos` a que se cumpla la condición; devuelve si se cumplió."""
     limite = time.monotonic() + segundos
     while time.monotonic() < limite:
         if condicion():
@@ -122,7 +144,7 @@ c("poner() desde otro hilo cambia icono y línea (NIM_MODIFY)",
           and api.llamadas[-1][1]["icono"] == "H:bandeja-pausa.ico"), True)
 c("  con la línea de la vista", api.llamadas[-1][1]["tip"], "prdrive · en pausa")
 
-# --- el menú ---------------------------------------------------------------------
+# el menú
 ids = bw.numerar(vista.menu)
 api.elegir = next(n for n, e in ids.items() if e.texto == "Reanudar")
 api.enviar(bw.WM_ICONO, 0, bw.WM_RBUTTONUP)
@@ -153,7 +175,7 @@ c("numerar: ni separadores ni submenús llevan id; los hijos, sí",
 c("un & de un nombre sale tal cual en el menú", bw.texto_menu("Tom & Jerry"),
   "Tom && Jerry")
 
-# --- lo que difunde Windows --------------------------------------------------------
+# lo que difunde Windows
 api.enviar(bw.WM_DEVICECHANGE, bw.DBT_DEVICEARRIVAL, 0)
 c("WM_DEVICECHANGE (llega un volumen) despierta el recorrido",
   esperar(lambda: MONTAJES == [1]), True)
@@ -169,7 +191,7 @@ c("TaskbarCreated (el Explorador reiniciado) vuelve a poner el icono",
   esperar(lambda: len([a for a, _ in api.llamadas if a == bw.NIM_ADD]) == antes + 1), True)
 c("  con la última vista", api.llamadas[-1][1]["tip"], "prdrive · en pausa")
 
-# --- los avisos --------------------------------------------------------------------
+# los avisos
 c("un aviso se cuelga del icono", b.globo("PRDRIVE-1: falla docs", "Mira la ventana", True),
   True)
 accion, campos = api.llamadas[-1]
@@ -179,7 +201,7 @@ c("  con NIF_INFO, título y texto, y de aviso si es urgente",
 c("avisos.enviar en Windows usa la bandeja, sin icono de paso",
   (avisos._windows("t", "x", False), api.llamadas[-1][1]["info_titulo"]), (True, "t"))
 
-# --- cerrar --------------------------------------------------------------------------
+# cerrar
 b.cerrar()
 c("al cerrar se quita el icono", esperar(lambda: api.llamadas[-1][0] == bw.NIM_DELETE), True)
 c("  se sueltan los iconos cargados", sorted(api.soltados),
@@ -188,7 +210,7 @@ c("  acaba su hilo", api.fin.is_set(), True)
 c("  y los avisos vuelven a su icono de paso", avisos.GLOBO, None)
 c("  un aviso ya no se cuelga", b.globo("t", "x"), False)
 
-# --- sin barra de tareas al arrancar ---------------------------------------------------
+# sin barra de tareas al arrancar
 api = ApiFalsa(barra=False)
 b = bw.Bandeja(CARPETA, PEDIDAS.append, lambda: None, api=api)
 c("sin barra de tareas todavía, la ventana vive igual", (b.arrancar(), b.puesta),
@@ -199,9 +221,11 @@ api.enviar(TASKBAR)
 c("  al llegar TaskbarCreated se pone el icono", esperar(lambda: b.puesta), True)
 b.cerrar()
 
-# --- sin ventana ---------------------------------------------------------------------
+# sin ventana
 class SinVentana(ApiFalsa):
+    """`Api` que no consigue crear la ventana."""
     def ventana(self, manejar):
+        """Devuelve `None`: no hay ventana."""
         return None
 
 
@@ -209,7 +233,7 @@ b = bw.Bandeja(CARPETA, PEDIDAS.append, lambda: None, api=SinVentana())
 c("sin ventana no hay bandeja, y el agente sigue sin ella", b.arrancar(), False)
 c("  ni se tocan los avisos", avisos.GLOBO, None)
 
-# --- un icono que falta ----------------------------------------------------------------
+# un icono que falta
 (CARPETA / "bandeja-aviso.ico").unlink()
 api = ApiFalsa()
 b = bw.Bandeja(CARPETA, PEDIDAS.append, lambda: None, api=api)

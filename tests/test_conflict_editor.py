@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""
-Resolver un conflicto (ui/conflict_editor.py): qué fichero se queda, cuáles se
-borran, y qué pasa cuando algo falla a medias.
+"""Resolver un conflicto (`ui/conflict_editor.py`).
 
+Qué fichero se queda, cuáles se borran y qué pasa cuando algo falla a medias.
 Todo sobre ficheros de verdad en un sandbox: lo que importa aquí es el
 contenido que queda con el nombre bueno, no a qué funciones se llama.
 """
@@ -21,11 +20,13 @@ c = Checks("resolver conflictos (ui/conflict_editor.py)")
 
 
 def pareja():
+    """Devuelve la pareja `notas` de mentira."""
     return model.parse_config({"defaults": {"remote": "nas"}, "pair": [
         {"name": "notas", "local": "sync-data/notas", "remote_path": "/R/notas"}]}).pairs[0]
 
 
 def escribir(ruta: Path, texto: str, hace: float = 0) -> Path:
+    """Escribe un fichero, y lo envejece `hace` segundos si se dice."""
     ruta.parent.mkdir(parents=True, exist_ok=True)
     ruta.write_text(texto, encoding="utf-8")
     if hace:
@@ -35,21 +36,24 @@ def escribir(ruta: Path, texto: str, hace: float = 0) -> Path:
 
 
 def unico(p) -> conflicts.Conflicto:
+    """Devuelve el único conflicto que hay en la pareja."""
     encontrados = conflicts.escanear(p)
     assert len(encontrados) == 1, encontrados
     return encontrados[0]
 
 
 def leer(ruta: Path) -> str:
+    """Devuelve el texto de un fichero."""
     return ruta.read_text(encoding="utf-8")
 
 
 def en_disco(p) -> list[str]:
+    """Devuelve los ficheros de la pareja, relativos a su carpeta y ordenados."""
     return sorted(x.relative_to(p.local_abs).as_posix()
                   for x in p.local_abs.rglob("*") if x.is_file())
 
 
-# --- perdió este dispositivo: su versión es la copia ------------------------------
+# perdió este dispositivo: su versión es la copia
 with sandbox():
     p = pareja()
     escribir(p.local_abs / "plan.md", "del remoto", hace=60)
@@ -75,7 +79,7 @@ with sandbox():
     c("quedarse con la del remoto borra la copia", en_disco(p), ["plan.md"])
     c("y el original sigue como estaba", leer(p.local_abs / "plan.md"), "del remoto")
 
-# --- perdió el remoto: su versión es la copia ----------------------------------
+# perdió el remoto: su versión es la copia
 with sandbox():
     p = pareja()
     escribir(p.local_abs / "a.txt", "de aquí")
@@ -92,7 +96,7 @@ with sandbox():
     c("quedarse con la del remoto cuando perdió: la copia sustituye al original",
       (en_disco(p), leer(p.local_abs / "a.txt")), (["a.txt"], "del remoto"))
 
-# --- sin ganador: rclone renombró las dos ----------------------------------------
+# sin ganador: rclone renombró las dos
 with sandbox():
     p = pareja()
     escribir(p.local_abs / "b.txt.conflicto-dispositivo1", "de aquí")
@@ -101,7 +105,7 @@ with sandbox():
     c("sin ganador: la elegida recupera el nombre y la otra se borra",
       (en_disco(p), leer(p.local_abs / "b.txt")), (["b.txt"], "del remoto"))
 
-# --- conflictos viejos, sin lado ---------------------------------------------------
+# conflictos viejos, sin lado
 with sandbox():
     p = pareja()
     escribir(p.local_abs / "v.md", "actual")
@@ -130,7 +134,7 @@ with sandbox():
     c("dos versiones del mismo lado se distinguen por número",
       etiquetas[1:], ["versión de este dispositivo (1)", "versión de este dispositivo (2)"])
 
-# --- avisos -----------------------------------------------------------------------
+# avisos
 with sandbox():
     p = pareja()
     escribir(p.local_abs / "plan.md", "del remoto", hace=3600)
@@ -143,7 +147,7 @@ with sandbox():
     c.contains("siempre se dice que solo se toca este dispositivo",
                "\n".join(plan.consequences), "Solo se tocan ficheros de este dispositivo")
 
-# --- lo que puede salir mal ---------------------------------------------------------
+# lo que puede salir mal
 with sandbox():
     p = pareja()
     escribir(p.local_abs / "plan.md", "del remoto")
@@ -208,7 +212,7 @@ with sandbox():
     c("y lo que queda sigue saliendo como conflicto",
       [v.ruta.name for v in unico(p).versiones], ["b.txt", "b.txt.conflicto-remoto1"])
 
-# --- nunca fuera de la carpeta de la pareja -------------------------------------------
+# nunca fuera de la carpeta de la pareja
 with sandbox():
     p = pareja()
     escribir(p.local_abs / "x" / "plan.md", "del remoto")

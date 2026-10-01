@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""
-El servicio avisa cuando falla un ciclo, y solo entonces.
+"""El servicio avisa cuando falla un ciclo, y solo entonces.
 
-Un servicio que falla en silencio es peor que no tener servicio: el usuario cree
-que el dispositivo está al día. Lo que se comprueba es cuándo abre su ventanita
-(un ciclo que falla, no uno que va bien ni el mismo fallo repetido cada media
-hora), qué hace si no hay pantalla (lo apunta en el diario), y que sigue sin
-preguntar nada: stdin cerrado, así que una pareja que pide --resync se salta.
+Un servicio que falla en silencio es peor que no tener servicio: el usuario
+cree que el dispositivo está al día. Lo que se comprueba es cuándo abre su
+ventanita (un ciclo que falla, no uno que va bien ni el mismo fallo repetido
+cada media hora), qué hace si no hay pantalla (lo apunta en el diario), y que
+sigue sin preguntar nada: stdin cerrado, así que una pareja que pide `--resync`
+se salta.
 """
 
 import sys
@@ -38,6 +38,7 @@ runsync.run_pair_quiet = lambda name: (codigos.get(name, 0), "salida")
 
 
 def ciclo(lock: dict, **rc) -> None:
+    """Hace un ciclo del servicio con esos códigos de salida por pareja."""
     codigos.clear()
     codigos.update(rc)
     runsync.daemon_cycle(["notas", "fotos"], lock)
@@ -62,7 +63,7 @@ ciclo(lock, notas=1)
 c("tras un ciclo bueno, volver a fallar vuelve a avisar", avisos[-1], ["notas"])
 
 
-# --- lo que hace el aviso de verdad, con y sin pantalla ------------------------------
+# lo que hace el aviso de verdad, con y sin pantalla
 import ui.tk  # noqa: E402
 
 rs = runsync
@@ -89,6 +90,7 @@ with sandbox():
     recibidos = []
 
     def ventana_falsa(fallos, al_abrir=None):
+        """Ventana de aviso de mentira: apunta los fallos y llama a `al_abrir`."""
         recibidos.append([(f.pareja, f.log) for f in fallos])
         if al_abrir:
             al_abrir()
@@ -106,7 +108,8 @@ with sandbox():
         ui.tk.aviso_fallo = real
 
 
-# --- la ventanita de verdad, en su hilo -----------------------------------------------
+# la ventanita de verdad, en su hilo
+#
 # Tk en un hilo que no es el principal es lo delicado: todo lo suyo tiene que
 # nacer y morir ahí. Se abre de verdad (sin enseñarla) y se cierra sola.
 try:
@@ -124,7 +127,9 @@ if hay_pantalla:
         real_deiconify, real_mainloop = tk.Tk.deiconify, tk.Tk.mainloop
 
         def mainloop_breve(self):
+            """Bucle de Tk de mentira: mira los botones de la ventana y la cierra."""
             def mirar():
+                """Apunta el texto de los botones y destruye la ventana."""
                 pila = [self]
                 while pila:
                     w = pila.pop()
@@ -150,11 +155,12 @@ if hay_pantalla:
             tk.Tk.deiconify, tk.Tk.mainloop = real_deiconify, real_mainloop
 
 
-# --- el servicio no pregunta nunca ------------------------------------------------
+# el servicio no pregunta nunca
 llamadas = []
 
 
 class _Resultado:
+    """Resultado de un proceso que acaba bien y sin salida."""
     returncode = 0
     stdout = ""
     stderr = ""

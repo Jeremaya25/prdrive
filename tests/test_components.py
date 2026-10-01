@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""
-Qué lleva el dispositivo de fuera, y si sigue siendo lo fijado
-(common/components.py).
+"""Qué lleva el dispositivo de fuera, y si sigue siendo lo fijado.
+
+Es `common/components.py`.
 
 Aquí no se descarga nada ni se sustituye nada: eso es `install/components.py` y
 su propio test. Lo que se comprueba es la mitad que corre DENTRO del
 dispositivo, que es la que pinta la ventana en su primer pintado: que leer
 sellos no lance nunca, que un dispositivo sin sello de rclone se lea como «no
-consta» —y no como «al día», que sería la mentira cómoda—, y que una plataforma
+consta» (y no como «al día», que sería la mentira cómoda) y que una plataforma
 que el dispositivo no lleva no cuente como anticuada, porque no lo está: está
 sin instalar.
 
-Y una comprobación que no es de comportamiento sino de deriva: que las rutas que
-usa el instalador para ESCRIBIR sean las mismas que usa el dispositivo para
-LEER. El día que se separen, el instalador dejaría los componentes en un sitio y
-la ventana los buscaría en otro.
+Y una comprobación que no es de comportamiento sino de deriva: que las rutas
+que usa el instalador para ESCRIBIR sean las mismas que usa el dispositivo para
+LEER. El día que se separen, el instalador dejaría los componentes en un sitio
+y la ventana los buscaría en otro.
 """
 
 import sys
@@ -55,7 +55,7 @@ def poner_runtime(app: Path, plat, version=None, release=None,
         f"triple = {plat.triple}\nsha256 = abc\n", encoding="utf-8")
 
 
-# --- leer un sello: tolerante, como store.read_json --------------------------
+# leer un sello: tolerante, como store.read_json
 sello = components.leer_sello("# comentario\nrclone = v1.75.1\n\nbasura\n"
                               "plataforma = windows-x64\n")
 c("se leen las claves", sello.get("rclone"), "v1.75.1")
@@ -63,11 +63,11 @@ c("y las demás", sello.get("plataforma"), "windows-x64")
 c("una línea sin '=' se ignora en vez de reventar", "basura" in sello, False)
 c("un sello vacío es un diccionario vacío", components.leer_sello(""), {})
 
-# --- un dispositivo que no existe no lanza ----------------------------------
+# un dispositivo que no existe no lanza
 c("un dispositivo inexistente no tiene nada pendiente",
   components.pendientes(Path("/no/existe/.prdrive")), [])
 
-# --- rclone ------------------------------------------------------------------
+# rclone
 app = tmpdir("prdrive-comp-") / ".prdrive"
 c("sin rclone no hay nada anticuado: hay algo sin instalar",
   components.pendientes(app), [])
@@ -92,7 +92,7 @@ components.rclone_stamp_path(app, WIN).unlink(missing_ok=True)
 pend = components.pendientes(app)
 c("sin sello, no consta", [p.lleva for p in pend], [components.DESCONOCIDA])
 
-# --- el Python ---------------------------------------------------------------
+# el Python
 app2 = tmpdir("prdrive-comp2-") / ".prdrive"
 poner_runtime(app2, WIN)
 c("un runtime de la release fijada está al día", components.pendientes(app2), [])
@@ -111,7 +111,7 @@ app3 = tmpdir("prdrive-comp3-") / ".prdrive"
 poner_runtime(app3, LARM, version="3.13.1", interprete=False)
 c("un runtime sin intérprete no cuenta", components.pendientes(app3), [])
 
-# --- el resumen que pinta la ventana ----------------------------------------
+# el resumen que pinta la ventana
 app4 = tmpdir("prdrive-comp4-") / ".prdrive"
 poner_rclone(app4, WIN, "v1.60.0")
 poner_runtime(app4, WIN, release="20250101")
@@ -122,7 +122,7 @@ c("rclone primero, que es el que sincroniza",
 c("el resumen lleva una línea por componente",
   len(components.resumen(pend).splitlines()), 2)
 
-# --- un sello ilegible no lanza -----------------------------------------------
+# un sello ilegible no lanza
 #
 # `read_text(encoding="utf-8")` sobre un fichero a medias no falla con un
 # OSError, falla con un UnicodeDecodeError (que ES un ValueError) — el caso
@@ -143,12 +143,13 @@ poner_runtime(app6, WIN)
 c("un sello de runtime con bytes inválidos no lanza, sale como no instalado",
   components.pendientes(app6), [])
 
-# --- las claves del sello del runtime son las que escribe el productor --------
+# las claves del sello del runtime son las que escribe el productor
 #
 # Con fixtures escritas a mano, renombrar una clave en un lado y no en el otro
 # no lo detecta ningún test: cada dispositivo saldría con su Python
 # permanentemente pendiente. Esto usa el texto REAL de `runtime_bin.stamp_text`
-# (ya importado arriba), no una fixture reescrita a mano como las de más arriba.
+# (ya importado arriba), no una fixture reescrita a mano como las de más
+# arriba.
 app7 = tmpdir("prdrive-comp7-") / ".prdrive"
 d7 = components.runtime_dir(app7, WIN)
 (d7 / WIN.interprete).parent.mkdir(parents=True, exist_ok=True)
@@ -158,11 +159,12 @@ d7 = components.runtime_dir(app7, WIN)
 c("el sello real del productor se lee como al día",
   components.pendientes(app7), [])
 
-# --- el VeraCrypt de viaje (#50) ------------------------------------------------
+# el VeraCrypt de viaje (#50)
 #
 # Vive en la raíz FÍSICA, junto al .hc, y su sello va dentro de su carpeta. Se
-# le pasa la raíz física a `pendientes()`; sin pasarla se busca por el vestíbulo,
-# y un dispositivo sin fichero de control (estos de mentira) no vive en ninguno.
+# le pasa la raíz física a `pendientes()`; sin pasarla se busca por el
+# vestíbulo, y un dispositivo sin fichero de control (estos de mentira) no vive
+# en ninguno.
 from _harness import falso_portatil  # noqa: E402
 from common import vestibulo  # noqa: E402
 
@@ -238,7 +240,7 @@ sello_vc = components.veracrypt_stamp_text(
 c("un sello escrito a mano no saca a nadie de la carpeta",
   components.veracrypt_ficheros(sello_vc), {"VeraCrypt-x64.exe": "a" * 64})
 
-# --- deriva: el instalador escribe donde el dispositivo lee -------------------
+# deriva: el instalador escribe donde el dispositivo lee
 raiz = tmpdir("prdrive-deriva-")
 app_r = raiz / ".prdrive"
 c("la carpeta del runtime es la misma para los dos",
