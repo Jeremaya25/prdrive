@@ -52,22 +52,34 @@ from pathlib import Path
 RAIZ = Path(__file__).resolve().parent
 KEYS = RAIZ / "keys"
 SECRET = RAIZ / "install" / "secret.py"
+"""Vehículo del perfil de conexión.
+
+Lo genera `escribir_secreto()` y se borra siempre.
+"""
 ENTRADA = RAIZ / "prdrive-install.py"
 NOMBRE = "prdrive-install"
 
-# Lo que el instalador va a dejar en el dispositivo. Tiene que coincidir con
-# `install/deploy.py`: si aquí falta algo, el fallo aparece a mitad de una
-# instalación de verdad y no al compilar. `agente.py` no va al dispositivo: es
-# lo que `install/agente.py` copia al EQUIPO en la instalación «En este equipo».
 DATOS_FICHEROS = ("sync.py", "runsync.py", "penwatch.py", "VERSION",
                   "device-readme.md", "agente.py")
-DATOS_ARBOLES = ("common", "ui")
+"""Ficheros de la raíz que el instalador despliega.
 
-# Los datos del recurso de versión del .exe. La línea de copyright es la misma
-# que el apéndice de LICENSE: si cambia una, cambia la otra.
+Tiene que coincidir con `install/deploy.py`: si aquí falta algo, el fallo
+aparece a mitad de una instalación de verdad y no al compilar. `agente.py` no
+va al dispositivo: lo copia `install/agente.py` al EQUIPO en la instalación «En
+este equipo».
+"""
+DATOS_ARBOLES = ("common", "ui")
+"""Paquetes que se llevan enteros."""
+
 AUTOR = "Jeremaya"
+"""Autor en el recurso de versión del .exe."""
 COPYRIGHT = "Copyright 2026 Jeremaya - Apache License 2.0"
+"""Línea de copyright del recurso de versión del .exe.
+
+Es la misma que el apéndice de `LICENSE`: si cambia una, cambia la otra.
+"""
 DESCRIPCION = "Instalador de prdrive: sincronizacion portable con rclone"
+"""Descripción en el recurso de versión del .exe."""
 
 PLANTILLA = '''"""
 secret.py — GENERADO por build_installer.py. NO SE VERSIONA.
@@ -86,14 +98,19 @@ PRIVATE_KEY_B64 = "{clave}"
 KNOWN_HOSTS = """\\
 {known}"""
 '''
+"""Plantilla de `install/secret.py`, con el perfil, la clave y los known_hosts."""
 
 
 def leer_perfil() -> tuple[str, bytes | None, str] | None:
-    """El perfil del checkout, si lo hay. None si este es un build genérico.
+    """Devuelve el perfil del checkout, o `None` si este es un build genérico.
 
-    No es un error no tenerlo: es el caso de quien se ha bajado el repositorio y
+    No tenerlo no es un error: es el caso de quien ha bajado el repositorio y
     solo quiere el instalador. La diferencia se dice en voz alta al terminar,
-    porque de ella depende si el binario se puede repartir o no."""
+    porque de ella depende si el binario se puede repartir o no.
+
+    Returns:
+        `(perfil_toml, clave_privada, known_hosts)`.
+    """
     from install import profile
 
     perfil = profile.from_bundle()
@@ -106,7 +123,7 @@ def leer_perfil() -> tuple[str, bytes | None, str] | None:
 
 
 def escribir_secreto() -> Path | None:
-    """Genera install/secret.py. Devuelve None si no hay perfil que incrustar."""
+    """Genera `install/secret.py` y devuelve su ruta, o `None` si no hay perfil."""
     datos = leer_perfil()
     if datos is None:
         print(f"Sin {RAIZ / 'prdrive-profile.toml'}: el ejecutable saldrá genérico "
@@ -129,6 +146,11 @@ def escribir_secreto() -> Path | None:
 
 
 def comprobar_pyinstaller() -> None:
+    """Aborta si PyInstaller no está instalado.
+
+    Raises:
+        SystemExit: Si falta; solo hace falta para compilar.
+    """
     try:
         import PyInstaller  # noqa: F401
     except ImportError:
@@ -138,19 +160,18 @@ def comprobar_pyinstaller() -> None:
 
 
 def escribir_icono() -> Path | None:
-    """Pinta el .ico en build/, para que el .exe salga con la marca.
+    """Pinta el .ico en `build/`, para que el .exe salga con la marca.
 
     Se genera en vez de guardarse compilado porque el icono ES código: sale de
-    `ui/icons.py`, que es el mismo sitio del que salen los de la ventana, así que
-    no hay dos versiones que puedan separarse. No necesita Tkinter ni pantalla."""
+    `ui/icons.py`, el mismo sitio del que salen los de la ventana, así que no
+    hay dos versiones que puedan separarse. No necesita Tkinter ni pantalla.
+    """
     from ui import icons
     destino = RAIZ / "build" / "runsync.ico"
     destino.parent.mkdir(parents=True, exist_ok=True)
     return icons.write_ico(destino)
 
 
-# Se genera en ASCII a proposito, sin acentos: lo lee PyInstaller, no una
-# persona, y no merece la pena depender de con que codificacion lo abra.
 VERSION_INFO = """# GENERADO por build_installer.py. El recurso de version del .exe.
 VSVersionInfo(
   ffi=FixedFileInfo(
@@ -171,16 +192,22 @@ VSVersionInfo(
   ]
 )
 """
+"""Plantilla del recurso de versión del .exe.
+
+En ASCII a propósito, sin acentos: la lee PyInstaller, no una persona, y no
+merece la pena depender de con qué codificación la abra.
+"""
 
 
 def escribir_version_info() -> Path:
-    """Pinta build/version_info.txt: quién firma el .exe, qué es y qué versión."""
+    """Pinta `build/version_info.txt`: quién firma el .exe, qué es y qué versión."""
     from common import APP_NAME
     from common.update import installed_version
 
     version = installed_version(RAIZ) or "0.0.0"
-    # filevers exige cuatro enteros. 'v1.2' o un sufijo raro no pueden tumbar la
-    # compilación por un campo informativo: lo que no sea número cuenta como 0.
+    # `filevers` exige cuatro enteros: lo que no sea número cuenta como 0, para
+    # que un campo informativo no tumbe la compilación (`v1.2`, un sufijo
+    # raro).
     partes = [int(x) if x.isdigit() else 0 for x in version.split(".")[:4]]
     tupla = tuple(partes + [0] * (4 - len(partes)))
 
@@ -194,7 +221,11 @@ def escribir_version_info() -> Path:
 
 
 def datos() -> list[str]:
-    """Los `--add-data` del árbol que se despliega en el dispositivo."""
+    """Devuelve los `--add-data` del árbol que se despliega en el dispositivo.
+
+    Raises:
+        SystemExit: Si falta algún fichero o paquete.
+    """
     args: list[str] = []
     for nombre in DATOS_FICHEROS:
         origen = RAIZ / nombre
@@ -211,22 +242,30 @@ def datos() -> list[str]:
 
 
 def compilar(consola: bool, carpeta: bool) -> Path:
-    """Llama a PyInstaller y devuelve la ruta del entregable."""
+    """Llama a PyInstaller y devuelve la ruta del entregable.
+
+    Args:
+        consola: Deja la consola detrás del asistente.
+        carpeta: Entrega una carpeta (`--onedir`) en vez de un fichero único.
+
+    Raises:
+        SystemExit: Si PyInstaller falla.
+    """
     cmd = [
         sys.executable, "-m", "PyInstaller",
         "--onedir" if carpeta else "--onefile",
         "--noconfirm", "--clean",
-        # UPX comprime el ejecutable y es, a ojos de un antivirus, exactamente
-        # lo que hace un empaquetador de malware. PyInstaller lo usa solo si lo
-        # encuentra en el PATH, así que sin esto el binario saldría distinto
-        # según la máquina que compile.
+        # UPX comprime el ejecutable y, a ojos de un antivirus, es justo lo que
+        # hace un empaquetador de malware. PyInstaller lo usa si lo encuentra
+        # en el PATH: sin esto el binario saldría distinto según la máquina que
+        # compile.
         "--noupx",
         "--name", NOMBRE,
         "--distpath", str(RAIZ / "dist"),
         "--workpath", str(RAIZ / "build"),
         "--specpath", str(RAIZ / "build"),
-        # Se importan dentro de funciones o por nombre, así que el analizador de
-        # PyInstaller no siempre los ve venir.
+        # Se importan dentro de funciones o por nombre: el analizador de
+        # PyInstaller no siempre los ve.
         "--hidden-import", "install.secret",
         "--hidden-import", "ui.tk_install",
         "--hidden-import", "ui.tk_crypto",
@@ -235,7 +274,7 @@ def compilar(consola: bool, carpeta: bool) -> Path:
         "--console" if consola else "--windowed",
     ]
     # El icono solo lo entiende el PyInstaller de Windows; en Linux se compila
-    # igual, sin él, en vez de abortar por un adorno.
+    # sin él en vez de abortar por un adorno.
     if sys.platform == "win32":
         cmd += ["--icon", str(escribir_icono())]
         cmd += ["--version-file", str(escribir_version_info())]
@@ -245,13 +284,13 @@ def compilar(consola: bool, carpeta: bool) -> Path:
         raise SystemExit("PyInstaller ha fallado.")
 
     if carpeta:
-        # En modo carpeta el entregable ES dist/<nombre>/: el .exe de dentro no
-        # arranca sin el _internal/ que tiene al lado.
+        # En modo carpeta el entregable ES `dist/<nombre>/`: el .exe de dentro
+        # no arranca sin su `_internal/`.
         return RAIZ / "dist" / NOMBRE
 
-    # PyInstaller deja además el árbol sin empaquetar en dist/<nombre>/, que es
-    # una SEGUNDA copia de la aplicación —con el perfil dentro si lo hay—. El
-    # entregable es el fichero único, así que la otra sobra.
+    # PyInstaller deja además el árbol sin empaquetar en `dist/<nombre>/`: una
+    # SEGUNDA copia de la aplicación (con el perfil dentro, si lo hay). El
+    # entregable es el fichero único, así que sobra.
     shutil.rmtree(RAIZ / "dist" / NOMBRE, ignore_errors=True)
 
     sufijo = ".exe" if sys.platform == "win32" else ""
@@ -259,6 +298,11 @@ def compilar(consola: bool, carpeta: bool) -> Path:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Compila el instalador, con el perfil incrustado si lo hay.
+
+    Returns:
+        0 al terminar.
+    """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     parser.add_argument("--console", action="store_true",
                         help="Deja la consola detrás del asistente. Útil para "
@@ -285,13 +329,13 @@ def main(argv: list[str] | None = None) -> int:
         con_secreto = escribir_secreto() is not None
         binario = compilar(args.console, args.onedir)
     finally:
-        # Pase lo que pase. Un secret.py olvidado en el árbol es la fuga que este
-        # script existe para evitar.
+        # Pase lo que pase: un `secret.py` olvidado en el árbol es la fuga que
+        # este script existe para evitar.
         if SECRET.exists():
             SECRET.unlink()
             print(f"Borrado {SECRET}.")
-        # El intermedio de PyInstaller son otros 20 MB que no le hacen falta a
-        # nadie una vez está el ejecutable.
+        # El intermedio de PyInstaller son 20 MB que no hacen falta una vez
+        # está el ejecutable.
         shutil.rmtree(RAIZ / "build", ignore_errors=True)
 
     print(f"\nListo: {binario}")
