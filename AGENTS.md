@@ -2052,9 +2052,7 @@ keeps the target's existing header.
 
 ## Conventions
 
-- All comments, docstrings and user-facing output are **Spanish**. Keep it so.
-- Comments explain *why* against rclone's actual behaviour, often citing the
-  rclone source file. Preserve that when touching bisync-related code.
+- Code writing conventions are documented in `docs/agents/code-writing-conventions.md`, check it before making changes.
 - `sync_config.toml` is per-device: generated from the catalogue at provisioning,
   then maintained by the pairs screen. Still hand-editable — a pair that differs
   from the catalogue is *reported* as "modificada aquí", not corrected.
