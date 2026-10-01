@@ -1,20 +1,19 @@
 #!/usr/bin/env python3
-"""
-tk.py — La interfaz gráfica (Tkinter).
+"""La interfaz gráfica (Tkinter).
 
 Es la que se usa cuando se llega por doble clic en `runsync.bat` (o en el
 `runsync.pyw` de una instalación ligera), es decir con `pythonw` y sin consola
-detrás: por eso aquí no basta con elegir, hace falta además poder
-enseñar la salida de la sincronización y preguntar sí/no, cosas que en el modo
-consola hace la propia terminal.
+detrás: por eso aquí no basta con elegir, hace falta además poder enseñar la
+salida de la sincronización y preguntar sí/no, cosas que en el modo consola
+hace la propia terminal.
 
 El aspecto entero sale de `ui/theme.py` y los iconos de `ui/icons.py`: aquí no
 se escribe ningún color a mano. Cada ventana llama a `theme.apply()` nada más
 nacer, porque los estilos de ttk son globales dentro de un intérprete de Tk y a
 lo largo de una sesión se abre más de uno.
 
-`import tkinter` va dentro de cada función a propósito, no arriba: importar este
-módulo no puede fallar en un equipo sin tkinter, porque el fallo tiene que
+`import tkinter` va dentro de cada función a propósito y no arriba: importar
+este módulo no puede fallar en un equipo sin tkinter, porque el fallo tiene que
 saltar cuando se intenta abrir la ventana, que es cuando `ui.start()` puede
 recogerlo y caer al menú de consola.
 """
@@ -34,25 +33,30 @@ from common.model import Config
 from . import (Choice, abrir, cifrado, cuando, cuando_sello, icons, manual_args,
                pair_status_notes, pair_times, prefs, theme)
 
-TITLE = APP_NAME          # el nombre de la ventana sale de common/
+TITLE = APP_NAME
+"""El nombre de la ventana, que sale de `common/`."""
 
 
 def corto(texto: str, maximo: int = 30) -> str:
-    """Una ruta recortada por delante, que es por donde sobra.
+    r"""Devuelve una ruta recortada por delante, que es por donde sobra.
 
-    En el dispositivo esto no hace nada —`DEVICE_ROOT` es `F:\\`—, pero montado en un punto
-    con nombre largo (`/media/quien/PRDRIVE`) o corriendo desde el repositorio,
-    una ruta entera estira la ventana hasta salirse de la pantalla."""
+    En el dispositivo esto no hace nada (`DEVICE_ROOT` es `F:\`), pero montado
+    en un punto con nombre largo (`/media/quien/PRDRIVE`) o corriendo desde el
+    repositorio, una ruta entera estira la ventana hasta salirse de la
+    pantalla.
+    """
     return texto if len(texto) <= maximo else "…" + texto[-(maximo - 1):]
 
 
 class TkFrontend:
-    """El frontend gráfico. Ver el protocolo `ui.Frontend`."""
+    """El frontend gráfico; implementa el protocolo `ui.Frontend`."""
 
     def ask(self, config: Config, startup_msg: str | None) -> Choice | None:
+        """Enseña la ventana principal y devuelve la elección."""
         return main_window(config, startup_msg)
 
     def approve_resync(self, pending: list[str]) -> bool:
+        """Pregunta en una ventana si se aprueba el `--resync` de esas parejas."""
         root = root_oculto()
         try:
             return preguntar_resync(root, pending)
@@ -60,28 +64,34 @@ class TkFrontend:
             root.destroy()
 
     def info(self, msg: str) -> None:
+        """Enseña un mensaje en una ventana."""
         from tkinter import messagebox
         root = root_oculto()
         messagebox.showinfo(TITLE, msg)
         root.destroy()
 
     def run_sync(self, title: str, args: list[str]) -> int:
+        """Lanza `sync.py` en la ventana de salida y devuelve su código."""
         rc = output_window(title, orden_sync(args), subtitulo=subtitulo_sync(args))
         return rc if rc is not None else 1
 
 
 def orden_sync(args: list[str]) -> list[str]:
+    """Devuelve la orden que lanza `sync.py` con esos argumentos."""
     return [sys.executable, str(model.SYNC_PY), *args]
 
 
 def subtitulo_sync(args: list[str]) -> str:
-    """El subtítulo de la ventana son las parejas que se van a tocar: lo que se
-    pasa son sus nombres y, detrás, las opciones que empiezan por '-'."""
+    """Devuelve el subtítulo de la ventana: las parejas que se van a tocar.
+
+    Lo que se pasa son sus nombres y, detrás, las opciones que empiezan por
+    `-`.
+    """
     return ", ".join(a for a in args if not a.startswith("-"))
 
 
 def preguntar_resync(parent, pending: list[str]) -> bool:
-    """El sí/no del --resync, colgado de la ventana que pregunta."""
+    """Devuelve el sí/no del `--resync`, colgado de la ventana que pregunta."""
     from tkinter import messagebox
     return bool(messagebox.askyesno(
         TITLE,
@@ -93,11 +103,13 @@ def preguntar_resync(parent, pending: list[str]) -> bool:
 
 
 def root_oculto():
-    """Un Tk invisible en mitad de la pantalla, del que colgar un messagebox suelto.
+    """Devuelve un Tk invisible en mitad de la pantalla.
 
-    Los messagebox se colocan respecto a su ventana padre, y un Tk recién creado
-    está en la esquina superior izquierda: sin mover el padre, el aviso sale
-    arrinconado aunque no se vea la ventana de la que cuelga."""
+    Es para colgarle un messagebox suelto. Los messagebox se colocan respecto a
+    su ventana padre y un Tk recién creado está en la esquina superior
+    izquierda: sin mover el padre, el aviso sale arrinconado aunque no se vea
+    la ventana de la que cuelga.
+    """
     import tkinter as tk
     theme.nitidez()
     root = tk.Tk()
@@ -109,10 +121,11 @@ def root_oculto():
 
 
 def centrar(win, parent=None) -> None:
-    """Coloca una ventana en el centro: de su padre si lo hay, si no de la pantalla.
+    """Coloca una ventana en el centro de su padre o, sin él, de la pantalla.
 
     El `update_idletasks()` no es opcional: hasta que Tk no ha resuelto la
-    disposición, `winfo_width()` vale 1 y el centro saldría a ojo."""
+    disposición, `winfo_width()` vale 1 y el centro saldría a ojo.
+    """
     win.update_idletasks()
     ancho = max(win.winfo_width(), win.winfo_reqwidth())
     alto = max(win.winfo_height(), win.winfo_reqheight())
@@ -121,11 +134,11 @@ def centrar(win, parent=None) -> None:
     if parent is not None and parent.winfo_ismapped():
         x = parent.winfo_rootx() + (parent.winfo_width() - ancho) // 2
         y = parent.winfo_rooty() + (parent.winfo_height() - alto) // 2
-        # Un diálogo puede ser bastante mayor que su padre —la pantalla de
-        # parejas lo es—, así que centrado sobre un padre pegado a un borde se
+        # Un diálogo puede ser bastante mayor que su padre (la pantalla de
+        # parejas lo es), así que centrado sobre un padre pegado a un borde se
         # saldría. Solo se recoloca si el padre está en la pantalla principal:
-        # con dos monitores las coordenadas pueden ser negativas, y ahí
-        # "corregir" sería arrastrar el diálogo a la otra pantalla.
+        # con dos monitores las coordenadas pueden ser negativas y ahí
+        # «corregir» sería arrastrar el diálogo a la otra pantalla.
         if 0 <= parent.winfo_rootx() < pantalla_x:
             x = max(0, min(x, pantalla_x - ancho))
             y = max(0, min(y, pantalla_y - alto))
@@ -137,17 +150,14 @@ def centrar(win, parent=None) -> None:
     win.geometry(f"+{x}+{y}")
 
 
-# ---------------------------------------------------------------------------
-# Que quepa en la pantalla
-# ---------------------------------------------------------------------------
-
 def pantalla_util(win) -> tuple[int, int]:
-    """Lo que de verdad le queda a una ventana: la pantalla menos su marco y la
-    barra de tareas.
+    """Devuelve lo que de verdad le queda a una ventana.
 
-    Los márgenes van en medidas del diseño escaladas (`icons.px`) porque el
-    adorno del sistema crece con la densidad igual que el texto: una barra de
-    tareas ocupa más píxeles en una pantalla al 150 % que en una al 100 %."""
+    Es la pantalla menos su marco y la barra de tareas. Los márgenes van en
+    medidas del diseño escaladas (`icons.px`) porque el adorno del sistema
+    crece con la densidad igual que el texto: una barra de tareas ocupa más
+    píxeles en una pantalla al 150 % que en una al 100 %.
+    """
     return (max(480, win.winfo_screenwidth() - icons.px(win, 60)),
             max(360, win.winfo_screenheight() - icons.px(win, 110)))
 
@@ -157,23 +167,29 @@ class Visor:
 
     Existe porque una ventana no puede ser más alta que la pantalla y el
     contenido de estas sí: los tamaños de letra van en puntos, así que en una
-    pantalla densa —o con el zoom del sistema al 150 %— todo crece, mientras que
-    los recuadros de tamaño fijo no. Eso se veía como un asistente al que le
-    faltaba el último campo, sin nada que lo avisara: el paso 1 pide 486 px de
-    alto en una pantalla normal y el hueco medía 430.
+    pantalla densa (o con el zoom del sistema al 150 %) todo crece, mientras
+    que los recuadros de tamaño fijo no. Eso se veía como un asistente al que
+    le faltaba el último campo, sin nada que lo avisara: el paso 1 pide 486 px
+    de alto en una pantalla normal y el hueco medía 430.
 
     `interior` es donde se dibuja. El recuadro se ajusta cuando la ventana ya
     está montada (`encajar`/`crecer`) y no antes, porque hasta entonces no se
-    sabe cuánto ocupa el resto —cabecera, pie, márgenes—, y descontar una cifra
+    sabe cuánto ocupa el resto (cabecera, pie, márgenes) y descontar una cifra
     fija sería volver a suponer el tamaño de las letras.
 
     Las barras tienen su hueco reservado siempre, aparezcan o no: si lo ganaran
-    y lo perdieran, la ventana cambiaría de ancho al pasar de un paso a otro."""
+    y lo perdieran, la ventana cambiaría de ancho al pasar de un paso a otro.
+
+    Args:
+        padre: Donde se pone el recuadro.
+        ancho: El ancho de partida y el mínimo, no un tope.
+        alto: El alto de partida y el mínimo, no un tope: el recuadro nunca es
+            más pequeño que eso y crece con el contenido hasta donde llegue la
+            pantalla.
+    """
 
     def __init__(self, padre, ancho: int | None = None, alto: int | None = None):
-        """`ancho`/`alto` son el tamaño de partida y el mínimo, no un tope: el
-        recuadro nunca es más pequeño que eso, y crece con el contenido hasta
-        donde llegue la pantalla."""
+        """Crea el recuadro, su lienzo y sus barras, y engancha los eventos."""
         import tkinter as tk
         from tkinter import ttk
 
@@ -204,25 +220,27 @@ class Visor:
         self.lienzo.bind("<Leave>", lambda _e: self._rueda(False))
         self.lienzo.bind("<Destroy>", lambda _e: self._rueda(False))
 
-    # --- tamaño -------------------------------------------------------------
-
     def _medida(self) -> tuple[int, int]:
-        """Lo que mide el recuadro ahora mismo."""
+        """Devuelve lo que mide el recuadro ahora mismo."""
         return (int(self.lienzo.cget("width")), int(self.lienzo.cget("height")))
 
     def _natural(self) -> tuple[int, int]:
-        """Lo que pediría el contenido si nadie lo recortara, nunca por debajo
-        del tamaño de partida: `base` es un mínimo, no un tope."""
+        """Devuelve lo que pediría el contenido si nadie lo recortara.
+
+        Nunca es menos que el tamaño de partida: `base` es un mínimo, no un
+        tope.
+        """
         self.interior.update_idletasks()
         base_x, base_y = self.base
         return (max(base_x or 0, self.interior.winfo_reqwidth()),
                 max(base_y or 0, self.interior.winfo_reqheight()))
 
     def _tope(self, ventana) -> tuple[int, int]:
-        """Lo más grande que puede ser el recuadro sin que la ventana se salga.
+        """Devuelve lo más grande que puede ser el recuadro sin que la ventana se salga.
 
         Se mide el resto de la ventana en vez de descontar una cifra fija: la
-        cabecera y el pie ocupan lo que ocupen sus fuentes."""
+        cabecera y el pie ocupan lo que ocupen sus fuentes.
+        """
         ventana.update_idletasks()
         resto_x = max(0, ventana.winfo_reqwidth() - self.lienzo.winfo_reqwidth())
         resto_y = max(0, ventana.winfo_reqheight() - self.lienzo.winfo_reqheight())
@@ -230,13 +248,14 @@ class Visor:
         return (max(320, util_x - resto_x), max(240, util_y - resto_y))
 
     def _fijar(self, ancho: int, alto: int) -> bool:
-        """Devuelve si ha cambiado de tamaño.
+        """Pone el tamaño del recuadro y devuelve si ha cambiado.
 
         `_revisar()` se llama aunque no cambie: cambiar de paso cambia el
-        contenido sin cambiar el hueco, y entonces la barra que hace falta (o la
+        contenido sin cambiar el hueco y entonces la barra que hace falta (o la
         que sobra) es distinta. Dejarlo colgando del `<Configure>` significaba
-        que hasta el siguiente reposo del bucle de eventos la barra no estaba, y
-        el hueco parecía completo cuando no lo era."""
+        que hasta el siguiente reposo del bucle de eventos la barra no estaba y
+        el hueco parecía completo cuando no lo era.
+        """
         cambia = (ancho, alto) != self._medida()
         if cambia:
             self.lienzo.configure(width=ancho, height=alto)
@@ -255,9 +274,10 @@ class Visor:
         """Agranda el recuadro si lo de ahora pide más, y no lo encoge nunca.
 
         Es lo que necesita un asistente: el hueco tiene que valer para el paso
-        más grande, y una ventana que menguara y creciera a cada paso sería un
+        más grande y una ventana que menguara y creciera a cada paso sería un
         baile. Devuelve si ha cambiado de tamaño, que es cuando quien llama
-        tiene que volver a colocarla."""
+        tiene que volver a colocarla.
+        """
         ventana = ventana or self.marco.winfo_toplevel()
         pide_x, pide_y = self._natural()
         hay_x, hay_y = self._medida()
@@ -268,12 +288,13 @@ class Visor:
     def ver(self, widget) -> None:
         """Desplaza lo justo para que `widget` quede entero a la vista.
 
-        Para lo que crece con la pantalla ya pintada, cuando ni creciendo cabe: un
-        error de una docena de líneas encima del botón que hay que volver a
-        pulsar dejaba ese botón a medias por debajo del borde, con la barra
-        puesta pero sin que nada invitara a usarla (#49). Se mide por la cadena
-        de `winfo_y` hasta `interior` y no con coordenadas de pantalla, que en
-        una ventana todavía oculta no existen."""
+        Es para lo que crece con la pantalla ya pintada, cuando ni creciendo
+        cabe: un error de una docena de líneas encima del botón que hay que
+        volver a pulsar dejaba ese botón a medias por debajo del borde, con la
+        barra puesta pero sin que nada invitara a usarla (#49). Se mide por la
+        cadena de `winfo_y` hasta `interior` y no con coordenadas de pantalla,
+        que en una ventana todavía oculta no existen.
+        """
         self.interior.update_idletasks()
         arriba, w = 0, widget
         while w is not None and w is not self.interior:
@@ -292,15 +313,14 @@ class Visor:
             return
         self.lienzo.yview_moveto(max(0.0, desde) / max(1, self._puesto[1]))
 
-    # --- barras --------------------------------------------------------------
-
     def _revisar(self) -> None:
         """Enseña cada barra solo si por ese lado sobra contenido.
 
-        El interior se estira hasta llenar el hueco cuando no sobra, para que un
-        formulario colocado con `sticky='ew'` siga ocupando todo el ancho; y solo
-        se le habla cuando la medida cambia, porque redimensionarlo dispara otro
-        `<Configure>` y con él se volvería aquí sin parar."""
+        El interior se estira hasta llenar el hueco cuando no sobra, para que
+        un formulario colocado con `sticky='ew'` siga ocupando todo el ancho; y
+        solo se le habla cuando la medida cambia, porque redimensionarlo
+        dispara otro `<Configure>` y con él se volvería aquí sin parar.
+        """
         ancho, alto = self._medida()
         ancho = max(ancho, self.lienzo.winfo_width())
         alto = max(alto, self.lienzo.winfo_height())
@@ -324,6 +344,7 @@ class Visor:
                 barra.grid_remove()
 
     def _rueda(self, activar: bool) -> None:
+        """Activa o desactiva la rueda del ratón sobre el recuadro."""
         eventos = ("<MouseWheel>", "<Button-4>", "<Button-5>")   # Windows / X11
         for evento in eventos:
             if activar:
@@ -332,8 +353,10 @@ class Visor:
                 self.lienzo.unbind_all(evento)
 
     def _girar(self, evento):
-        """La rueda desplaza el recuadro, salvo sobre algo que ya se desplaza
-        solo: dentro de la caja de opciones o de una lista, la rueda es suya."""
+        """Desplaza el recuadro con la rueda, salvo sobre algo que ya se desplaza solo.
+
+        Dentro de la caja de opciones o de una lista, la rueda es suya.
+        """
         if not self.vertical.winfo_ismapped():
             return None
         if evento.widget is not self.lienzo and hasattr(evento.widget, "yview_scroll"):
@@ -344,13 +367,14 @@ class Visor:
 
 
 def cuerpo_visible(ventana, **opciones):
-    """El marco donde se dibuja una pantalla, ya dentro de un `Visor`.
+    """Devuelve el marco donde se dibuja una pantalla, ya dentro de un `Visor`.
 
     Sustituye al `ttk.Frame(ventana, padding=…)` + `.grid(sticky='nsew')` que
     hacían todos los diálogos. La única diferencia visible es que, cuando la
     pantalla es pequeña, el contenido se desplaza en vez de quedarse fuera. El
     visor queda colgado de la ventana para que `mostrar()` lo encaje al
-    enseñarla, sin que cada diálogo tenga que acordarse."""
+    enseñarla, sin que cada diálogo tenga que acordarse.
+    """
     from tkinter import ttk
     visor = Visor(ventana)
     visor.marco.grid(row=0, column=0, sticky="nsew")
@@ -365,16 +389,17 @@ def cuerpo_visible(ventana, **opciones):
 
 
 def modal(parent, title: str, suelto: bool = False):
-    """Un diálogo hijo, todavía OCULTO. Se enseña con `mostrar()`.
+    """Devuelve un diálogo hijo, todavía OCULTO; se enseña con `mostrar()`.
 
     Nace oculto porque hasta que no están puestos todos los widgets no se sabe
-    cuánto ocupa, y sin saberlo no se puede centrar. Enseñarlo antes sería verlo
+    cuánto ocupa y sin saberlo no se puede centrar. Enseñarlo antes sería verlo
     aparecer en una esquina y pegar el salto al centro.
 
     `suelto` es para un padre que no se enseña nunca (`root_oculto()`): un
-    `transient` hereda el estado de su padre, y colgado de uno oculto no llega a
-    verse aunque se le haga `deiconify()` —medido en Windows con la ventanita
-    del relevo—."""
+    `transient` hereda el estado de su padre y, colgado de uno oculto, no llega
+    a verse aunque se le haga `deiconify()` (medido en Windows con la ventanita
+    del relevo).
+    """
     import tkinter as tk
     dlg = tk.Toplevel(parent)
     theme.apply(dlg)
@@ -393,8 +418,9 @@ def mostrar(dlg, parent=None) -> None:
     El `grab_set()` va aquí y no en `modal()` porque Tk no deja capturar una
     ventana que no está visible, y por eso `deiconify()` lleva detrás un
     `update_idletasks()`: sin él el mapeo puede seguir pendiente. Si aun así
-    fallara, se sigue: un diálogo sin captura es un incordio, pero uno que no se
-    abre es un cuelgue."""
+    fallara, se sigue: un diálogo sin captura es un incordio, pero uno que no
+    se abre es un cuelgue.
+    """
     import tkinter as tk
     # Primero encoger el contenido a lo que quepa y solo después centrar: al
     # revés se centraría un tamaño que aún va a cambiar.
@@ -411,14 +437,12 @@ def mostrar(dlg, parent=None) -> None:
     dlg.wait_window()
 
 
-# ---------------------------------------------------------------------------
-# Piezas del diseño que aparecen en más de una pantalla
-# ---------------------------------------------------------------------------
-
 def cabecera(parent, titulo: str, pista: str = "", ancho: int = 620,
              estilo: str = "Titulo.TLabel"):
-    """El título de una pantalla con su frase debajo. Devuelve el marco, para
-    poder colgarle a la derecha un chip de estado."""
+    """Devuelve el título de una pantalla con su frase debajo.
+
+    Es el marco, para poder colgarle a la derecha un chip de estado.
+    """
     from tkinter import ttk
     marco = ttk.Frame(parent)
     marco.columnconfigure(0, weight=1)
@@ -431,14 +455,16 @@ def cabecera(parent, titulo: str, pista: str = "", ancho: int = 620,
 
 def bloque_aviso(parent, texto: str, ancho: int = 560, tipo: str = "Ambar",
                  icono: str = "warn", boton: tuple[str, object] | None = None):
-    """El recuadro ámbar (o rojo) con su triángulo: lo que hay que leer dos veces.
+    """Devuelve el recuadro ámbar (o rojo) con su triángulo.
 
-    `icono` y `boton` son opcionales porque el mismo recuadro sirve para dos
-    cosas distintas: un aviso que solo se lee (el servicio que se ha parado) y
-    uno sobre el que se actúa (hay versión nueva, y el botón la instala). Dos
-    funciones casi iguales serían dos sitios donde arreglar el mismo color.
-    El botón va en `AmbarQuiet.TButton`, que es el único cuyo fondo es el del
-    bloque: cualquier otro se recortaría contra el ámbar."""
+    Es lo que hay que leer dos veces. `icono` y `boton` son opcionales porque
+    el mismo recuadro sirve para dos cosas distintas: un aviso que solo se lee
+    (el servicio que se ha parado) y uno sobre el que se actúa (hay versión
+    nueva y el botón la instala). Dos funciones casi iguales serían dos sitios
+    donde arreglar el mismo color. El botón va en `AmbarQuiet.TButton`, que es
+    el único cuyo fondo es el del bloque: cualquier otro se recortaría contra
+    el ámbar.
+    """
     from tkinter import ttk
     fondo = theme.AVISO_FONDO if tipo == "Ambar" else theme.PELIGRO_FONDO
     color = theme.AVISO if tipo == "Ambar" else theme.PELIGRO
@@ -463,23 +489,25 @@ def bloque_aviso(parent, texto: str, ancho: int = 560, tipo: str = "Ambar",
 
 
 def separador_fila(parent, fila: int, columnas: int, superficie: str = "Card."):
-    """La línea fina entre dos filas de una lista dibujada a mano."""
+    """Pone la línea fina entre dos filas de una lista dibujada a mano."""
     from tkinter import ttk
     est = "Card.TSeparator" if superficie == "Card." else "TSeparator"
     ttk.Separator(parent, orient="horizontal", style=est).grid(
         row=fila, column=0, columnspan=columnas, sticky="ew")
 
 
-PASO_BARRA_MS = 12          # lo que tarda en avanzar la barra sin cifra
+PASO_BARRA_MS = 12
+"""Milisegundos que tarda en avanzar la barra sin cifra."""
 
 
 def _medir_avance(progreso) -> tuple[float, str] | None:
-    """Lo que dice `progreso()`, o None si no dice nada que se pueda pintar.
+    """Devuelve lo que dice `progreso()`, o `None` si no dice nada que se pueda pintar.
 
-    Se captura `Exception` a propósito: el avance es un adorno, y esto corre en
+    Se captura `Exception` a propósito: el avance es un adorno y esto corre en
     el sondeo de `working()`, que es lo único que cierra la ventanita. Un error
-    aquí que cortara ese sondeo dejaría la ventana abierta para siempre, y no se
-    puede cerrar a mano."""
+    aquí que cortara ese sondeo dejaría la ventana abierta para siempre y no se
+    puede cerrar a mano.
+    """
     try:
         medida = progreso()
         if medida is None:
@@ -491,8 +519,11 @@ def _medir_avance(progreso) -> tuple[float, str] | None:
 
 
 def _pintar_avance(barra, etiqueta, medida: tuple[float, str] | None) -> None:
-    """Con cifra, la barra determinada y el texto debajo; sin ella, la barra
-    que va y viene y el texto vacío: «mejor sin número que con uno falso»."""
+    """Pinta el avance en la barra y la etiqueta.
+
+    Con cifra, la barra determinada y el texto debajo; sin ella, la barra que
+    va y viene y el texto vacío: «mejor sin número que con uno falso».
+    """
     determinada = str(barra.cget("mode")) == "determinate"
     if medida is None:
         if determinada:
@@ -517,24 +548,30 @@ def working(parent, title: str, funcion, mensaje: str = "",
     Devuelve `(True, resultado)` o `(False, excepción)`.
 
     Existe porque `output_window` no sirve para todo: hay órdenes que tardan
-    minutos y no dicen nada por su salida —crear un contenedor VeraCrypt—, y
+    minutos y no dicen nada por su salida (crear un contenedor VeraCrypt) y
     otras cuya línea de órdenes NO se puede enseñar porque lleva la contraseña
     dentro. Lanzarlas en el hilo de Tk congelaría la ventana, así que van a un
     hilo y aquí solo se espera.
 
-    `progreso`, si se da, es una función sin argumentos que devuelve
-    `(fracción, texto)` o None, y se pregunta en cada vuelta del sondeo. Mientras
-    diga algo, la barra se llena y el texto va debajo («43 % · quedan unos 25
-    min»); cuando vuelva a None, la barra vuelve a ir y venir. La llama el hilo
-    de Tk, así que no puede tocar el disco ni esperar a nada: tiene que devolver
-    lo último que otro hilo haya medido (`crypto.Seguimiento.progreso`). El
-    hueco de ese texto se reserva desde el principio, para que la ventanita no
-    cambie de alto cuando llega la primera cifra.
+    No hay botón de cancelar a propósito: lo que se lanza así no se puede
+    cortar a medias sin dejar las cosas peor (un contenedor a medio formatear).
 
-    No hay botón de cancelar a propósito: lo que se lanza así no se puede cortar
-    a medias sin dejar las cosas peor (un contenedor a medio formatear).
-
-    `suelto`, como en `modal()`: para colgarla de una raíz que no se enseña."""
+    Args:
+        parent: De quién cuelga la ventanita.
+        title: Su título.
+        funcion: El trabajo, que corre en el hilo.
+        mensaje: Lo que dice la ventanita.
+        progreso: Si se da, es una función sin argumentos que devuelve
+            `(fracción, texto)` o `None` y se pregunta en cada vuelta del
+            sondeo. Mientras diga algo, la barra se llena y el texto va debajo
+            («43 % · quedan unos 25 min»); cuando vuelva a `None`, la barra
+            vuelve a ir y venir. La llama el hilo de Tk, así que no puede tocar
+            el disco ni esperar a nada: tiene que devolver lo último que otro
+            hilo haya medido (`crypto.Seguimiento.progreso`). El hueco de ese
+            texto se reserva desde el principio, para que la ventanita no
+            cambie de alto cuando llega la primera cifra.
+        suelto: Como en `modal()`: para colgarla de una raíz que no se enseña.
+    """
     from tkinter import ttk
 
     dlg = modal(parent, title, suelto=suelto)
@@ -558,6 +595,7 @@ def working(parent, title: str, funcion, mensaje: str = "",
     resultado: dict = {"ok": False, "valor": None, "hecho": False}
 
     def trabajar() -> None:
+        """Corre la función y apunta su resultado o su excepción."""
         try:
             resultado["valor"] = funcion()
             resultado["ok"] = True
@@ -569,6 +607,10 @@ def working(parent, title: str, funcion, mensaje: str = "",
     threading.Thread(target=trabajar, daemon=True).start()
 
     def mirar() -> None:
+        """Sondea cada 120 ms si ha acabado el trabajo.
+
+        Cuando acaba, cierra la ventanita.
+        """
         if resultado["hecho"]:
             barra.stop()
             dlg.destroy()
@@ -584,18 +626,19 @@ def working(parent, title: str, funcion, mensaje: str = "",
     return bool(resultado["ok"]), resultado["valor"]
 
 
-# ---------------------------------------------------------------------------
-# La ventana principal
-# ---------------------------------------------------------------------------
-
 def main_window(config: Config, startup_msg: str | None) -> Choice | None:
-    """La ventana principal: qué parejas, cada cuánto, y qué hacer con ellas.
+    """Abre la ventana principal: qué parejas, cada cuánto y qué hacer con ellas.
 
     Sincronizar y el doctor se hacen DESDE aquí, en una ventana de salida hija
-    que no la cierra: al terminar se vuelve a esta con todo al día. Lo único que
-    sale de la ventana es arrancar el servicio, que vive en otro proceso: la
-    elección 'daemon' se devuelve a runsync. None si se cierra sin más.
-    Lanza ImportError/TclError si no hay entorno gráfico."""
+    que no la cierra: al terminar se vuelve a esta con todo al día. Lo único
+    que sale de la ventana es arrancar el servicio, que vive en otro proceso:
+    la elección `daemon` se devuelve a `runsync`. Devuelve `None` si se cierra
+    sin más.
+
+    Raises:
+        ImportError: Si no hay tkinter.
+        TclError: Si no hay entorno gráfico.
+    """
     import tkinter as tk
     from tkinter import messagebox, ttk
 
@@ -611,10 +654,10 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
     root.withdraw()          # se enseña ya centrada, ver el final de la función
     result: dict = {"choice": None}
     # `nueva` es la release pendiente, si la hay. Se pregunta a la caché y no a
-    # la red: esto es el primer pintado y tiene que ser instantáneo. Quien va a
-    # GitHub es el hilo de `mirar_version()`, más abajo. Bajo `except` porque
-    # `ui.start()` envuelve toda la llamada a `ask()`: un estado ilegible aquí no
-    # daría un error, daría un menú de consola sin explicar por qué.
+    # la red: es el primer pintado y tiene que ser instantáneo. Quien va a
+    # GitHub es el hilo de `mirar_version()`. Bajo `except` porque `ui.start()`
+    # envuelve toda la llamada a `ask()`: un estado ilegible aquí no daría un
+    # error, daría un menú de consola sin explicar por qué.
     try:
         pendiente = update.pending()
     except Exception:                                # noqa: BLE001
@@ -628,12 +671,13 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
     frame.columnconfigure(0, weight=1)
 
     def leer_estado() -> None:
-        """Lo que hay que revisar: averías apuntadas y conflictos.
+        """Lee lo que hay que revisar: averías apuntadas, conflictos y componentes.
 
-        Se lee de state/ y no se recorre nada: es lo que pinta la ventana nada
-        más abrirse y al volver de una sincronización (sync.py lo acaba de
-        escribir). El recorrido de verdad lo hace `mirar_conflictos()` en un
-        hilo. Bajo `except` por lo mismo que `update.pending()` arriba."""
+        Se lee de `state/` y no se recorre nada: es lo que pinta la ventana
+        nada más abrirse y al volver de una sincronización (`sync.py` lo acaba
+        de escribir). El recorrido de verdad lo hace `mirar_conflictos()` en un
+        hilo. Va bajo `except` por lo mismo que `update.pending()` arriba.
+        """
         try:
             vista["hallazgos"] = revision.revisar(vista["config"])
         except Exception:                            # noqa: BLE001
@@ -672,20 +716,22 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
     leer_estado()
 
     def reajustar() -> None:
-        """Repintar sin mover la ventana si no ha cambiado de tamaño.
+        """Repinta sin mover la ventana si no ha cambiado de tamaño.
 
-        Lo que cambia aquí —un botón que se apaga mientras sincroniza, un chip
-        que pasa a ámbar— casi nunca cambia el tamaño, y recolocar una ventana
-        que el usuario ha movido sería arrastrársela."""
+        Lo que cambia aquí (un botón que se apaga mientras sincroniza, un chip
+        que pasa a ámbar) casi nunca cambia el tamaño, y recolocar una ventana
+        que la persona ha movido sería arrastrársela.
+        """
         render()
         if root.visor.encajar(root):
             centrar(root)
 
     def recargar() -> None:
-        """El config ha cambiado bajo nuestros pies: releerlo y repintar.
+        """Relee el config, que ha cambiado bajo nuestros pies, y repinta.
 
-        Si ha quedado ilegible se dice y se conserva el anterior en pantalla, que
-        es mejor que quedarse con una ventana en blanco."""
+        Si ha quedado ilegible se dice y se conserva el anterior en pantalla,
+        que es mejor que quedarse con una ventana en blanco.
+        """
         try:
             vista["config"] = model.load_config()
         except model.ConfigError as e:
@@ -698,30 +744,35 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         centrar(root)   # quitar o añadir parejas le cambia el alto
 
     def repintar() -> None:
-        """Repintar y recolocar. La ventana no es redimensionable y va dentro de
-        un visor, así que quitar o poner un bloque obliga a rehacer las dos
-        medidas; sin esto el aviso nuevo aparece recortado."""
+        """Repinta y recoloca la ventana.
+
+        La ventana no es redimensionable y va dentro de un visor, así que
+        quitar o poner un bloque obliga a rehacer las dos medidas; sin esto el
+        aviso nuevo aparece recortado.
+        """
         render()
         root.visor.encajar(root)
         centrar(root)
 
     def descartar_aviso() -> None:
-        """Quitar el aviso de arranque, que es lo único de la ventana que se lee
-        una vez.
+        """Quita el aviso de arranque, que es lo único de la ventana que se lee una vez.
 
         Los otros recuadros ámbar no se descartan y no deben poder hacerlo: una
         pareja que falló, un fichero en conflicto o un componente viejo son
-        ESTADO del dispositivo, y se van cuando se arreglan. Este cuenta un
-        suceso —«se ha parado el servicio que había»—, así que una vez leído no
-        tiene por qué seguir ocupando sitio."""
+        ESTADO del dispositivo y se van cuando se arreglan. Este cuenta un
+        suceso («se ha parado el servicio que había») y una vez leído no tiene
+        por qué seguir ocupando sitio.
+        """
         vista["aviso"] = None
         reajustar()
 
     def abrir_actualizacion() -> None:
-        """La pantalla de actualización. Si se ha actualizado, aquí no se vuelve:
-        `tk_update` relanza el programa y cierra esta ventana, porque este
-        proceso tiene cargados en memoria los módulos que se acaban de
-        sustituir."""
+        """Abre la pantalla de actualización.
+
+        Si se ha actualizado, aquí no se vuelve: `tk_update` relanza el
+        programa y cierra esta ventana, porque este proceso tiene cargados en
+        memoria los módulos que se acaban de sustituir.
+        """
         if tk_update.open_dialog(root, vista["nueva"]):
             result["choice"] = None
             root.destroy()
@@ -730,12 +781,14 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         repintar()
 
     def abrir_componentes() -> None:
-        """Poner al día el rclone y el Python que lleva el dispositivo.
+        """Abre la pantalla para poner al día el rclone y el Python del dispositivo.
 
-        Aquí sí se vuelve, a diferencia de la actualización del programa: lo que
-        se sustituye son binarios que este proceso no tiene cargados en memoria,
-        así que no hay que relanzar nada. Salvo el Python con el que corre esta
-        ventana: ése lo cambia el relevo cuando se cierra, y la reabre él."""
+        Aquí sí se vuelve, a diferencia de la actualización del programa: lo
+        que se sustituye son binarios que este proceso no tiene cargados en
+        memoria, así que no hay que relanzar nada. Salvo el Python con el que
+        corre esta ventana: ése lo cambia el relevo cuando se cierra y la
+        reabre él.
+        """
         tocado = tk_update.open_components_dialog(root, vista["componentes"])
         if tocado == tk_update.CERRAR:
             result["choice"] = None
@@ -746,14 +799,16 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         repintar()
 
     def mirar_version() -> None:
-        """Preguntarle a GitHub si hay algo nuevo, sin que se note.
+        """Le pregunta a GitHub si hay algo nuevo, sin que se note.
 
-        En un hilo porque la ventana ya está abierta y no puede quedarse quieta
-        esperando a la red, y devolviendo por `after` porque a Tk solo se le
-        habla desde su propio hilo. Todo bajo `except`: `ui.start()` envuelve la
-        llamada entera a `ask()`, así que una excepción suelta aquí no daría un
-        error, daría un menú de consola sin explicación."""
+        Va en un hilo porque la ventana ya está abierta y no puede quedarse
+        quieta esperando a la red, y devuelve por `after` porque a Tk solo se
+        le habla desde su propio hilo. Todo va bajo `except`: `ui.start()`
+        envuelve la llamada entera a `ask()`, así que una excepción suelta aquí
+        no daría un error sino un menú de consola sin explicación.
+        """
         def responder(nueva) -> None:
+            """Repinta si la versión pendiente ha cambiado."""
             # También cuando pasa a None: si la caché estaba adelantada, el
             # aviso tiene que irse, no quedarse puesto hasta la próxima vez.
             if nueva != vista["nueva"]:
@@ -761,6 +816,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
                 repintar()
 
         def trabajo() -> None:
+            """Pregunta a la red, en el hilo, y le pasa la respuesta a la ventana."""
             try:
                 update.check()
                 nueva = update.pending()
@@ -774,18 +830,21 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         threading.Thread(target=trabajo, daemon=True).start()
 
     def mirar_conflictos() -> None:
-        """Recorrer las carpetas de verdad, sin que se note.
+        """Recorre las carpetas de verdad, sin que se note.
 
         Lo que se pintó al abrir sale del último escaneo; esto lo pone al día
-        —conflictos que han llegado de otro dispositivo, o que se han resuelto a
-        mano—. En un hilo porque recorrer un árbol grande en un dispositivo USB
-        tarda, y devolviendo por `after` porque a Tk solo se le habla desde su
-        hilo. Mientras sincroniza no se mira: sync.py ya lo hace al acabar."""
+        (conflictos que han llegado de otro dispositivo, o que se han resuelto
+        a mano). Va en un hilo porque recorrer un árbol grande en un
+        dispositivo USB tarda, y devuelve por `after` porque a Tk solo se le
+        habla desde su hilo. Mientras sincroniza no se mira: `sync.py` ya lo
+        hace al acabar.
+        """
         if vista["en_curso"]:
             return
         config_ahora = vista["config"]
 
         def responder(cuentas) -> None:
+            """Repinta si la cuenta de conflictos ha cambiado."""
             if cuentas != vista["conflictos"] and not vista["en_curso"]:
                 # `leer_estado()` y no solo la cuenta nueva: los conflictos son
                 # una avería más, así que la línea de «cosas que revisar» y el
@@ -796,6 +855,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
                 reajustar()
 
         def trabajo() -> None:
+            """Recorre las parejas, en el hilo, y le pasa la cuenta a la ventana."""
             try:
                 cuentas = conflicts.contar(conflicts.refrescar(config_ahora))
             except Exception:                        # noqa: BLE001
@@ -808,11 +868,13 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         threading.Thread(target=trabajo, daemon=True).start()
 
     def abrir_arranque() -> None:
-        """La pantalla del vigilante. Al volver se relee qué hace este equipo al
-        enchufar: se puede haber instalado, cambiado de modo o quitado.
+        """Abre la pantalla del vigilante.
 
-        Con el agente residente, «Qué hace el agente», que se lo pide por su
-        buzón; la línea enseña lo pedido, que el agente aplica en unos segundos."""
+        Al volver relee qué hace este equipo al enchufar. Se puede haber
+        instalado, cambiado de modo o quitado. Con el agente residente se abre
+        «Qué hace el agente», que se lo pide por su buzón: la línea enseña lo
+        pedido, que el agente aplica en unos segundos.
+        """
         actual = vista["vigilante"]
         if actual.es_agente:
             modo = tk_watch.open_agente(root, actual)
@@ -828,10 +890,11 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         reajustar()
 
     def abrir_reparacion() -> None:
-        """La pantalla donde se ve lo que está mal y se arregla.
+        """Abre la pantalla donde se ve lo que está mal y se arregla.
 
         Se le pasan las parejas marcadas porque desde allí se puede simular una
-        pasada, y lo que interesa simular es lo que se iba a sincronizar."""
+        pasada, y lo que interesa simular es lo que se iba a sincronizar.
+        """
         from . import tk_repair
         marcadas = [n for n in vista["config"].names
                     if n in vista.get("casillas", {})
@@ -841,13 +904,14 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         reajustar()
 
     def expulsar() -> None:
-        """Cerrar la ventana y el contenedor, para poder quitar la unidad.
+        """Cierra la ventana y el contenedor, para poder quitar la unidad.
 
         No desmonta este proceso: corre desde DENTRO del contenedor y mientras
         viva no se puede desmontar sin forzar. Lanza el script del vestíbulo,
         que espera a que esta ventana se haya ido, y se cierra. Con la ventana
         abierta no hay servicio en marcha (abrirla lo para), así que no queda
-        nada nuestro con ficheros abiertos dentro."""
+        nada nuestro con ficheros abiertos dentro.
+        """
         script = vista.get("expulsion")
         if script is None or not messagebox.askokcancel(TITLE, (
                 "Se cierra esta ventana y, unos segundos después, el contenedor "
@@ -865,9 +929,11 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         root.destroy()
 
     def bloquear() -> None:
-        """«Bloquear» la raíz cifrada de este equipo: se lo pide al agente y se
-        cierra. El agente espera a que esta ventana se haya ido (y a la pareja
-        en curso) y desmonta sin `/silent`."""
+        """«Bloquear» la raíz cifrada de este equipo: se lo pide al agente y se cierra.
+
+        El agente espera a que esta ventana se haya ido (y a la pareja en
+        curso) y desmonta sin `/silent`.
+        """
         uid = vista.get("bloqueo")
         if uid is None or not messagebox.askokcancel(TITLE, (
                 "Se cierra esta ventana y el agente cierra el contenedor cifrado. "
@@ -885,6 +951,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         root.destroy()
 
     def abrir_log(ruta) -> None:
+        """Abre un log con el programa del sistema."""
         try:
             abrir(ruta)
         except OSError as e:
@@ -892,16 +959,18 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
                                  parent=root)
 
     def lanzar(titulo: str, args: list[str]) -> None:
-        """Ejecuta sync.py en la ventana de salida SIN cerrar esta.
+        """Ejecuta `sync.py` en la ventana de salida SIN cerrar esta.
 
-        La ventana de salida es hija de esta y no la bloquea; mientras corre, lo
-        que tocaría el mismo estado (otra pasada, el servicio, las parejas) queda
-        apagado. Al cerrarla se vuelve aquí con las horas, los chips y los avisos
-        ya al día: sync.py acaba de escribirlos en state/."""
+        La ventana de salida es hija de esta y no la bloquea; mientras corre,
+        lo que tocaría el mismo estado (otra pasada, el servicio, las parejas)
+        queda apagado. Al cerrarla se vuelve aquí con las horas, los chips y
+        los avisos ya al día: `sync.py` acaba de escribirlos en `state/`.
+        """
         vista["en_curso"] = True
         reajustar()
 
         def al_cerrar(_rc) -> None:
+            """Relee el estado y repinta al cerrarse la ventana de salida."""
             vista["en_curso"] = False
             try:
                 leer_estado()
@@ -913,9 +982,11 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
                       subtitulo=subtitulo_sync(args), modal=False, al_cerrar=al_cerrar)
 
     def render() -> None:
-        # Lo marcado a mano se conserva al repintar: esta ventana se repinta sola
-        # (vuelve una sincronización, llega el escaneo de conflictos) y perder
-        # las casillas que se acaban de tocar sería un castigo por esperar.
+        """Pinta la ventana entera, conservando lo marcado a mano."""
+        # Lo marcado a mano se conserva al repintar: esta ventana se repinta
+        # sola (vuelve una sincronización, llega el escaneo de conflictos) y
+        # perder las casillas que se acaban de tocar sería un castigo por
+        # esperar.
         if vista.get("casillas"):
             vista["marcadas"] = [n for n, v in vista["casillas"].items() if v.get()]
             vista["conocidas"] = list(vista["casillas"])
@@ -936,7 +1007,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         apagado = "disabled" if en_curso else "normal"
         fila = 0
 
-        # --- quién es este dispositivo y cómo está -----------------------------------
+        # Quién es este dispositivo y cómo está.
         arriba = ttk.Frame(frame)
         arriba.grid(row=fila, column=0, sticky="ew")
         arriba.columnconfigure(0, weight=1)
@@ -988,15 +1059,11 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
                 row=fila, column=0, sticky="ew", pady=(14, 0))
             fila += 1
 
-        # --- lo que hay que revisar -------------------------------------------
-        # Una línea, no tres recuadros. Aquí se apilaban el de la última pasada
-        # fallida, el de los ficheros en conflicto y el aviso de resync, los
-        # tres del mismo ámbar y con el mismo peso: eso ya no es jerarquía, es
-        # ruido. Lo que dicen —y, ahora sí, lo que se hace con ello— está en
-        # «Reparación»; aquí queda cuántas cosas son y por dónde se va.
-        #
-        # Mientras sincroniza no se enseña, por lo mismo que antes se apagaban
-        # sus botones: no se repara bajo los pies de rclone.
+        # Una línea y no un recuadro por cada cosa: apilados, del mismo ámbar y
+        # con el mismo peso, dejaban de ser jerarquía para ser ruido. Lo que
+        # dicen y lo que se hace con ello está en «Reparación»; aquí queda
+        # cuántas cosas son y por dónde se va. Mientras sincroniza no se
+        # enseña: no se repara bajo los pies de rclone.
         pendientes = revision.cuenta(vista["hallazgos"])
         if pendientes and not en_curso:
             aviso_linea = ttk.Frame(frame)
@@ -1018,9 +1085,9 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
             theme.boton_icono(revisar, "doctor", theme.ACENTO, theme.PAPEL)
             revisar.grid(row=0, column=2, sticky="e")
 
-        # --- hay versión nueva -----------------------------------------------
-        # Debajo del aviso de arranque y no encima: ese cuenta lo que acaba de
-        # pasar (el servicio que se ha parado), y esto puede esperar.
+        # Hay versión nueva. Va debajo del aviso de arranque y no encima: ese
+        # cuenta lo que acaba de pasar (el servicio que se ha parado) y esto
+        # puede esperar.
         nueva = vista["nueva"]
         if nueva is not None:
             actual = update.installed_version() or "desconocida"
@@ -1031,10 +1098,10 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
                 boton=("Actualizar…", abrir_actualizacion),
             ).grid(row=fila, column=0, sticky="ew", pady=(14, 0))
             fila += 1
-        # --- los componentes están anticuados ---------------------------------
-        # `elif` y no un bloque suyo: los pines viajan CON el programa, así que
-        # actualizarlo primero puede mover lo que toca. Ofrecer las dos cosas a
-        # la vez sería pedir el mismo trabajo dos veces, y en el orden malo.
+        # Los componentes están anticuados. Es un `elif` y no un bloque suyo:
+        # los pines viajan CON el programa, así que actualizarlo primero puede
+        # mover lo que toca; ofrecer las dos cosas a la vez sería pedir el
+        # mismo trabajo dos veces y en el orden malo.
         elif vista["componentes"]:
             # Sin botón si lo único pendiente es el VeraCrypt sin sello de un
             # dispositivo de antes: eso no lo arregla «Actualizar…» sino
@@ -1055,10 +1122,10 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
                     hijo.configure(state=apagado)
             fila += 1
 
-        # --- la lista de parejas ---------------------------------------------
-        # Las casillas son las mismas para «Sincronizar ahora» y para «Iniciar
-        # servicio», y salen marcadas con lo del servicio (`prefs`): lo que se
-        # ve marcado al abrir es lo que sincroniza el servicio.
+        # La lista de parejas. Las casillas son las mismas para «Sincronizar
+        # ahora» y «Iniciar servicio» y salen marcadas con lo del servicio
+        # (`prefs`): lo que se ve marcado al abrir es lo que sincroniza el
+        # servicio.
         rotulo = ttk.Frame(frame)
         rotulo.grid(row=fila, column=0, sticky="ew", pady=(20, 8))
         rotulo.columnconfigure(2, weight=1)
@@ -1085,12 +1152,13 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         vars_by_name: dict[str, tk.BooleanVar] = {}
 
         def contar() -> None:
-            """El «N de M» y el texto del botón siguen a las casillas.
+            """Pone el «N de M» y el texto del botón según las casillas.
 
             Lo llama cada casilla con su `command` y no un `trace` de la
-            variable: la orden de un widget se borra con él, y la de un trace
-            no, así que desde Tcl seguiría sujetando esta función —y con ella
-            la ventana entera y sus imágenes— hasta cerrar el intérprete."""
+            variable: la orden de un widget se borra con él y la de un trace
+            no, así que desde Tcl seguiría sujetando esta función (y con ella
+            la ventana entera y sus imágenes) hasta cerrar el intérprete.
+            """
             marcadas = sum(1 for v in vars_by_name.values() if v.get())
             texto = f"{marcadas} de {len(names)}"
             if ultima:
@@ -1101,7 +1169,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
                                 else "Marcar todas")
 
         def marcar_todas() -> None:
-            """Si falta alguna, todas; si están todas, ninguna."""
+            """Marca todas las casillas, o las desmarca si ya lo están."""
             valor = not all(v.get() for v in vars_by_name.values())
             for v in vars_by_name.values():
                 v.set(valor)
@@ -1143,7 +1211,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
             todas.configure(command=marcar_todas)
         contar()
 
-        # --- las pantallas de las que se vuelve aquí --------------------------
+        # Las pantallas de las que se vuelve aquí.
         pantallas = ttk.Frame(frame)
         pantallas.grid(row=fila, column=0, sticky="ew", pady=(18, 0))
         pantallas.columnconfigure(1, weight=1)
@@ -1169,8 +1237,8 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         theme.boton_icono(ajustes, "gear", theme.ACENTO, theme.PAPEL)
         ajustes.grid(row=0, column=2, sticky="e")
 
-        # --- el servicio: cada cuánto, y qué hace este equipo al enchufar -----
-        # Junto al pie y no junto a la lista: el intervalo es del servicio, y
+        # El servicio: cada cuánto, y qué hace este equipo al enchufar. Va
+        # junto al pie y no junto a la lista: el intervalo es del servicio y
         # una pasada manual no lo usa. Sale precargado con el del servicio.
         repetir = ttk.Frame(frame)
         repetir.grid(row=fila, column=0, sticky="w", pady=(18, 0))
@@ -1192,9 +1260,9 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
                   style="Pista.TLabel").grid(row=0, column=3, sticky="w", padx=(10, 0))
         vista["casillas"], vista["intervalo_var"] = vars_by_name, interval_var
 
-        # La línea del arranque automático: lo que antes solo se sabía abriendo
-        # su pantalla. Sigue encendida mientras sincroniza, como el botón al que
-        # sustituye: el vigilante no toca nada del dispositivo.
+        # La línea del arranque automático. Sigue encendida mientras
+        # sincroniza, como el botón al que sustituye: el vigilante no toca nada
+        # del dispositivo.
         vigilante = vista["vigilante"]
         dicho = watch.linea(vigilante)
         if dicho is not None:
@@ -1226,18 +1294,23 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
                 cambiar.grid(row=0, column=2, rowspan=2, sticky="e", padx=(10, 0))
 
         def selected() -> list[str]:
+            """Devuelve las parejas con la casilla marcada, en el orden del config."""
             return [n for n in names if vars_by_name[n].get()]
 
         def minutos() -> float:
+            """Devuelve el intervalo escrito, o el del servicio si no se entiende."""
             try:
                 return max(1.0, float(interval_var.get().replace(",", ".")))
             except ValueError:
                 return d_interval
 
         def sincronizar() -> None:
-            """La pasada manual, aquí mismo. No se recuerda nada: lo que se
-            guarda es la configuración del servicio, y una pasada suelta con
-            unas pocas parejas no puede decidir qué sincroniza el servicio."""
+            """Lanza la pasada manual, aquí mismo.
+
+            No se recuerda nada: lo que se guarda es la configuración del
+            servicio, y una pasada suelta con unas pocas parejas no puede
+            decidir qué sincroniza el servicio.
+            """
             sel = selected()
             if not sel:
                 return  # nada marcado, nada que hacer
@@ -1246,9 +1319,12 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
             lanzar("Sincronización manual", args)
 
         def servicio() -> None:
-            """El servicio sí cierra la ventana: corre en otro proceso, sin
-            ella, y quien lo arranca —y guarda lo elegido— es runsync al volver
-            de aquí."""
+            """Cierra la ventana pidiendo arrancar el servicio.
+
+            El servicio sí cierra la ventana: corre en otro proceso, sin ella,
+            y quien lo arranca (y guarda lo elegido) es `runsync` al volver de
+            aquí.
+            """
             sel = selected()
             if not sel:
                 return
@@ -1259,7 +1335,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
             row=fila, column=0, sticky="ew", pady=(14, 0))
         fila += 1
 
-        # --- la acción principal ---------------------------------------------
+        # La acción principal.
         pie = ttk.Frame(frame)
         pie.grid(row=fila, column=0, sticky="ew", pady=(14, 0))
         pie.columnconfigure(0, weight=1)
@@ -1297,23 +1373,23 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
     return result["choice"]
 
 
-# ---------------------------------------------------------------------------
-# El aviso del servicio
-# ---------------------------------------------------------------------------
-
 def aviso_fallo(fallos, al_abrir=None) -> None:
-    """La ventanita que abre el servicio cuando falla un ciclo. Bloquea hasta
-    que se cierra: quien la llama (`ui.avisar_fallo`) la tiene en su propio
-    hilo. `al_abrir()` se llama cuando ya se ve.
+    """Enseña la ventanita que abre el servicio cuando falla un ciclo.
 
-    Es lo mínimo: qué parejas, cuándo, y el log. Explicar el fallo es cosa de la
-    ventana principal, que ya tiene su bloque ámbar para esto; aquí solo hay
-    que conseguir que alguien se entere.
+    Bloquea hasta que se cierra: quien la llama (`ui.avisar_fallo`) la tiene en
+    su propio hilo. Es lo mínimo: qué parejas, cuándo y el log. Explicar el
+    fallo es cosa de la ventana principal, que ya tiene su bloque ámbar para
+    esto; aquí solo hay que conseguir que alguien se entere.
 
     Al cerrarse se suelta AQUÍ todo lo de Tk: lo que recuerdan `theme` e
-    `icons` de este intérprete, y los `PhotoImage` colgados de los widgets en
+    `icons` de este intérprete y los `PhotoImage` colgados de los widgets en
     ciclos de referencias. Si los soltara más tarde el hilo del servicio,
-    borrarlos sería hablarle a Tk desde un hilo que no es el suyo."""
+    borrarlos sería hablarle a Tk desde un hilo que no es el suyo.
+
+    Args:
+        fallos: Las parejas que han fallado.
+        al_abrir: Se llama cuando la ventana ya se ve.
+    """
     import gc
     try:
         _aviso_fallo(fallos, al_abrir)
@@ -1322,6 +1398,7 @@ def aviso_fallo(fallos, al_abrir=None) -> None:
 
 
 def _aviso_fallo(fallos, al_abrir) -> None:
+    """Pinta la ventanita del fallo y espera a que se cierre."""
     import tkinter as tk
     from tkinter import ttk
 
@@ -1353,6 +1430,7 @@ def _aviso_fallo(fallos, al_abrir) -> None:
                   style="Card.MonoPista.TLabel").grid(row=i * 2, column=1, sticky="e")
 
     def ver(ruta) -> None:
+        """Abre un log; sin visor, no pasa nada."""
         try:
             abrir(ruta)
         except OSError:
@@ -1388,16 +1466,15 @@ def _aviso_fallo(fallos, al_abrir) -> None:
     icons.olvidar(interp)
 
 
-# ---------------------------------------------------------------------------
-# La ventana de salida
-# ---------------------------------------------------------------------------
-
-# Cómo se colorea cada línea. Es el vocabulario que ya usa sync.py por su salida
-# —'=== pareja ===', '  ejecutando:', '[pareja] OK.', '[pareja] FALLÓ'—, así que
-# esta tabla se lee junto a los print() de sync.py: si allí cambia una fórmula,
-# aquí deja de pintarse, no se rompe nada. La excepción es la de progreso, que
-# no está escrita aquí sino importada (ver `progress.ETIQUETA`).
 def _tono(linea: str) -> str:
+    """Devuelve cómo se colorea una línea de la salida.
+
+    Es el vocabulario que ya usa `sync.py` por su salida (`=== pareja ===`, `
+    ejecutando:`, `[pareja] OK.`, `[pareja] FALLÓ`), así que esta tabla se lee
+    junto a los `print()` de `sync.py`: si allí cambia una fórmula, aquí deja
+    de pintarse, no se rompe nada. La excepción es la de progreso, que no está
+    escrita aquí sino importada (`progress.ETIQUETA`).
+    """
     limpia = linea.strip()
     if not limpia:
         return "normal"
@@ -1429,24 +1506,36 @@ def output_window(title: str, cmd: list[str], parent=None,
                   al_cerrar=None, veredictos: dict[int, str] | None = None) -> int | None:
     """Ejecuta una orden y muestra su salida en una ventana con desplazamiento.
 
-    `veredictos` son los códigos distintos de 0 que para quien llama NO son un
-    error, con lo que hay que decir en su lugar: el aplicador de componentes sale
-    con `update.CODIGO_RELEVO` cuando todo ha ido bien y falta cerrar la
-    ventana, y leer ahí «ERROR (código 3)» hacía pensar lo contrario.
+    Sustituye a la consola cuando no la hay, así que la usan tanto `sync.py`
+    como `penwatch.py`: recibe la orden entera y no supone a quién llama.
+    Cerrar la ventana a mitad de faena corta el proceso (bisync se recupera con
+    `--recover` en la siguiente pasada).
 
-    Sustituye a la consola cuando no la hay, así que la usan tanto sync.py como
-    penwatch.py: recibe la orden entera y no supone a quién llama. Cerrar la
-    ventana a mitad de faena corta el proceso (bisync se recupera con --recover
-    en la siguiente pasada).
-
-    Con `parent` se cuelga de una ventana existente en vez de crear un Tk nuevo:
-    tkinter no lleva bien dos intérpretes a la vez, y desde un diálogo ya hay uno
-    en marcha.
+    Con `parent` se cuelga de una ventana existente en vez de crear un Tk
+    nuevo: tkinter no lleva bien dos intérpretes a la vez y desde un diálogo ya
+    hay uno en marcha.
 
     Con `modal=False` (y `parent`) no espera ni captura: vuelve enseguida con
-    None y la ventana principal sigue viva debajo —es lo que la ventana
-    principal necesita para no desaparecer al sincronizar—. `al_cerrar(rc)` se
-    llama una vez, cuando la ventana se cierra, sea como sea."""
+    `None` y la ventana principal sigue viva debajo, que es lo que necesita
+    para no desaparecer al sincronizar.
+
+    Args:
+        title: Qué se está haciendo.
+        cmd: La orden entera.
+        parent: De quién cuelga la ventana.
+        subtitulo: Lo que se enseña bajo el título.
+        modal: Si espera y captura hasta que se cierra.
+        al_cerrar: `al_cerrar(rc)` se llama una vez, cuando la ventana se
+            cierra, sea como sea.
+        veredictos: Los códigos distintos de 0 que para quien llama NO son un
+            error, con lo que hay que decir en su lugar: el aplicador de
+            componentes sale con `update.CODIGO_RELEVO` cuando todo ha ido bien
+            y falta cerrar la ventana, y leer ahí «ERROR (código 3)» hacía
+            pensar lo contrario.
+
+    Returns:
+        El código de salida, o `None` si no espera.
+    """
     import tkinter as tk
     from tkinter import filedialog, font as tkfont, messagebox, ttk
 
@@ -1466,6 +1555,7 @@ def output_window(title: str, cmd: list[str], parent=None,
     DONE = object()
 
     def reader() -> None:
+        """Pasa a la cola, en el hilo, cada línea de la salida y marca el final."""
         assert proc.stdout is not None
         for line in proc.stdout:
             q.put(line)
@@ -1490,7 +1580,7 @@ def output_window(title: str, cmd: list[str], parent=None,
     root.rowconfigure(1, weight=1)
     arranque = time.monotonic()
 
-    # --- la barra de arriba: qué se está haciendo y cómo va ------------------
+    # La barra de arriba: qué se está haciendo y cómo va.
     barra = ttk.Frame(root, style="Card.TFrame", padding=(18, 13))
     barra.grid(row=0, column=0, columnspan=2, sticky="ew")
     barra.columnconfigure(1, weight=1)
@@ -1507,10 +1597,9 @@ def output_window(title: str, cmd: list[str], parent=None,
     estado = theme.chip(barra, "en marcha…", "Acento.")
     estado.grid(row=0, column=2, rowspan=2, sticky="e")
 
-    # --- el cuerpo ------------------------------------------------------------
-    # `wrap="char"` y no el "none" que trae `caja_texto`: aquí no hay barra
-    # horizontal, así que no ajustar sería perder el final de las líneas largas
-    # —y las órdenes de rclone lo son—.
+    # El cuerpo. `wrap="char"` y no el `none` que trae `caja_texto`: aquí no
+    # hay barra horizontal, así que no ajustar sería perder el final de las
+    # líneas largas (y las órdenes de rclone lo son).
     text = theme.caja_texto(root, width=104, height=28, state="disabled",
                             highlightthickness=0, padx=18, pady=12, wrap="char")
     text.grid(row=1, column=0, sticky="nsew")
@@ -1519,10 +1608,10 @@ def output_window(title: str, cmd: list[str], parent=None,
     scroll.grid(row=1, column=1, sticky="ns")
 
     # 104x28 son filas y columnas de texto, no píxeles: con el zoom del sistema
-    # al 150 % esas 28 líneas miden más que la pantalla y la ventana nace con el
-    # final fuera. Aquí no hace falta un `Visor` —el texto ya se desplaza solo—,
+    # al 150 % esas 28 líneas miden más que la pantalla y la ventana nace con
+    # el final fuera. No hace falta un `Visor` (el texto ya se desplaza solo):
     # basta con pedir las que caben. Se mide el resto de la ventana en vez de
-    # descontar una cifra fija, igual que hace `Visor._tope`.
+    # descontar una cifra fija, igual que `Visor._tope`.
     root.update_idletasks()
     resto_x = max(0, root.winfo_reqwidth() - text.winfo_reqwidth())
     resto_y = max(0, root.winfo_reqheight() - text.winfo_reqheight())
@@ -1546,12 +1635,16 @@ def output_window(title: str, cmd: list[str], parent=None,
     state = {"rc": None, "progreso": False}
 
     def append(line: str) -> None:
+        """Añade una línea al texto, con su color.
+
+        El progreso llega cada pocos segundos mientras dura la pareja: se
+        reescribe en su sitio y no se apila. Es una línea viva por pareja, que
+        al terminar se queda con la última lectura. La marca, con gravedad a la
+        izquierda, se queda al principio de esa línea aunque se escriba en
+        ella.
+        """
         tono = _tono(line)
         text.configure(state="normal")
-        # El progreso llega cada pocos segundos mientras dura la pareja: se
-        # reescribe en su sitio, no se apila. Una línea viva por pareja, que al
-        # terminar se queda con la última lectura. La marca, con gravedad a la
-        # izquierda, se queda al principio de esa línea aunque se escriba en ella.
         if tono == "progreso" and state["progreso"]:
             text.delete("progreso-vivo", "end-1c")
         elif tono == "progreso":
@@ -1563,8 +1656,11 @@ def output_window(title: str, cmd: list[str], parent=None,
         text.configure(state="disabled")
 
     def guardar() -> None:
-        """Llevarse la salida tal cual. Los logs de rclone solo se guardan
-        cuando algo falla, así que esta es la única copia de una pasada buena."""
+        """Se lleva la salida tal cual a un fichero.
+
+        Los logs de rclone solo se guardan cuando algo falla, así que esta es
+        la única copia de una pasada buena.
+        """
         destino = filedialog.asksaveasfilename(
             parent=root, title="Guardar el log", defaultextension=".txt",
             initialfile=f"{TITLE}-{time.strftime('%Y%m%d-%H%M%S')}.txt",
@@ -1578,7 +1674,7 @@ def output_window(title: str, cmd: list[str], parent=None,
             messagebox.showerror(TITLE, f"No se ha podido guardar:\n\n{e}",
                                  parent=root)
 
-    # --- el pie ---------------------------------------------------------------
+    # El pie.
     ttk.Separator(root, orient="horizontal").grid(row=2, column=0, columnspan=2,
                                                   sticky="ew")
     pie = ttk.Frame(root, padding=(18, 11))
@@ -1592,6 +1688,7 @@ def output_window(title: str, cmd: list[str], parent=None,
                command=lambda: root.destroy()).grid(row=0, column=2)
 
     def terminado() -> None:
+        """Apunta el código de salida y enseña el veredicto."""
         state["rc"] = proc.wait()
         segundos = int(time.monotonic() - arranque)
         especial = (veredictos or {}).get(state["rc"])
@@ -1606,6 +1703,7 @@ def output_window(title: str, cmd: list[str], parent=None,
         nuevo.grid(row=0, column=2, rowspan=2, sticky="e")
 
     def poll() -> None:
+        """Pasa a la ventana lo que haya en la cola, cada 120 ms."""
         # Sin ventana no hay a quién contárselo. Con la principal viva debajo el
         # bucle de eventos sigue, y sin esto el sondeo seguiría para siempre.
         if not root.winfo_exists():
@@ -1622,6 +1720,7 @@ def output_window(title: str, cmd: list[str], parent=None,
         root.after(120, poll)
 
     def on_close() -> None:
+        """Corta el proceso si sigue y cierra la ventana."""
         if state["rc"] is None and proc.poll() is None:
             proc.terminate()
         root.destroy()
@@ -1629,9 +1728,12 @@ def output_window(title: str, cmd: list[str], parent=None,
     avisado = {"ya": False}
 
     def al_destruir(evento) -> None:
-        """Cerrar por el botón, por la X o porque se cierra la ventana madre:
-        cualquiera de las tres acaba aquí, y en las tres hay que cortar el
-        proceso si sigue y avisar a quien espera, una sola vez."""
+        """Corta el proceso y avisa a quien espera, una sola vez.
+
+        Se llama al destruirse la ventana. Se cierra por el botón, por la X o
+        porque se cierra la ventana madre: cualquiera de las tres acaba aquí y
+        en las tres hay que cortar el proceso si sigue y avisar a quien espera.
+        """
         if evento.widget is not root or avisado["ya"]:
             return
         avisado["ya"] = True

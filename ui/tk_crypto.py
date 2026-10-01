@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-tk_crypto.py — El paso de cifrado del asistente de instalación.
+"""El paso de cifrado del asistente de instalación.
 
 Solo dibuja. Todo lo que habla con VeraCrypt o con BitLocker está en
 `install/crypto.py`, igual que `tk_pairs.py` no sabe nada de lo que hace
@@ -9,15 +8,14 @@ pantalla más enredada: dos tecnologías distintas, con dos repartos de trabajo
 distintos, y la única del asistente que maneja una contraseña.
 
 Reglas de esta pantalla:
-
-  * La passphrase **nunca** sale de aquí más que hacia `install.crypto`. No se
-    pinta, no se registra y no se pasa a la ventana de salida (que es lo que
-    enseña las órdenes de rclone): las órdenes de VeraCrypt van por
-    `ui.tk.working()`, que solo enseña una barra y, al crear un contenedor
-    fijo, cuánto lleva escrito la unidad.
-  * Nada se da por bueno sin comprobarlo. Un contenedor se da por montado cuando
-    se puede leer, y de BitLocker se dice «no lo he podido comprobar» tal cual
-    cuando no hay permisos, en vez de suponer que todo fue bien.
+- La passphrase **nunca** sale de aquí más que hacia `install.crypto`. No se
+  pinta, no se registra y no se pasa a la ventana de salida (que es lo que
+  enseña las órdenes de rclone): las órdenes de VeraCrypt van por
+  `ui.tk.working()`, que solo enseña una barra y, al crear un contenedor fijo,
+  cuánto lleva escrito la unidad.
+- Nada se da por bueno sin comprobarlo. Un contenedor se da por montado cuando
+  se puede leer y de BitLocker se dice «no lo he podido comprobar» tal cual
+  cuando no hay permisos, en vez de suponer que todo fue bien.
 """
 
 from __future__ import annotations
@@ -37,10 +35,16 @@ AVISO_AUTOARRANQUE = (
     "arranque automático, al conectar el dispositivo aparece directamente la "
     "contraseña de VeraCrypt."
 )
+"""Lo que se dice sobre dónde vive el programa cuando hay contenedor."""
 
 
 def dibujar(cuerpo, wiz) -> None:
-    """Pinta el paso de cifrado dentro de `cuerpo`. `wiz` es el asistente."""
+    """Pinta el paso de cifrado dentro de `cuerpo`.
+
+    Args:
+        cuerpo: Donde se pinta.
+        wiz: El asistente.
+    """
     import tkinter as tk
     from tkinter import ttk
 
@@ -70,6 +74,10 @@ def dibujar(cuerpo, wiz) -> None:
     resumen.grid(row=3, column=0, sticky="w", pady=(12, 0))
 
     def refrescar_resumen() -> None:
+        """Dice a dónde irán el programa y los datos.
+
+        Revisa también los botones del asistente.
+        """
         if estado.device_root:
             resumen.configure(
                 text=f"✔ El programa y los datos irán a: {estado.device_root}",
@@ -80,6 +88,7 @@ def dibujar(cuerpo, wiz) -> None:
         wiz.revisar()
 
     def repintar(*_) -> None:
+        """Pinta el panel de la forma de cifrar elegida."""
         for hijo in panel.winfo_children():
             hijo.destroy()
         estado.encryption = modo.get()
@@ -92,11 +101,8 @@ def dibujar(cuerpo, wiz) -> None:
     repintar()
 
 
-# ---------------------------------------------------------------------------
-# Sin cifrar
-# ---------------------------------------------------------------------------
-
 def _panel_ninguno(panel, wiz, hecho) -> None:
+    """Pinta el panel de «sin cifrar», con su advertencia."""
     from tkinter import ttk
 
     estado = wiz.state
@@ -108,6 +114,7 @@ def _panel_ninguno(panel, wiz, hecho) -> None:
         row=0, column=0, sticky="w")
 
     def usar() -> None:
+        """Da por bueno el dispositivo tal cual."""
         estado.device_root = estado.device
         estado.container = None
         estado.mounted_by_us = False
@@ -117,11 +124,11 @@ def _panel_ninguno(panel, wiz, hecho) -> None:
                command=usar).grid(row=1, column=0, sticky="w", pady=(10, 0))
 
 
-# ---------------------------------------------------------------------------
-# VeraCrypt
-# ---------------------------------------------------------------------------
-
 def _panel_veracrypt(panel, wiz, hecho) -> None:
+    """Pinta el panel de VeraCrypt.
+
+    Deja buscarlo o bajarlo y crear y montar el contenedor.
+    """
     import tkinter as tk
     from tkinter import messagebox, ttk
 
@@ -153,6 +160,10 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
         fila.grid(row=1, column=0, sticky="w", pady=(6, 0))
 
         def descargar() -> None:
+            """Baja VeraCrypt, lo comprueba y lo da por encontrado.
+
+            Es el Portable en Windows y el AppImage en Linux.
+            """
             ok, res = working(
                 wiz.root, "descargando VeraCrypt",
                 lambda: veracrypt_bin.para_este_equipo(),
@@ -175,6 +186,7 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
         ttk.Entry(fila, textvariable=ruta, width=52).grid(row=0, column=1)
 
         def buscar() -> None:
+            """Busca VeraCrypt en la carpeta escrita."""
             estado.veracrypt = crypto.find_veracrypt(ruta.get().strip() or None)
             if estado.veracrypt:
                 hecho()
@@ -208,13 +220,13 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
     fila = 0
 
     # La pregunta que decide si esto tarda segundos o media hora. Se rehace en
-    # cada repintado a propósito —es una consulta al sistema de ficheros, ni
+    # cada repintado a propósito: es una consulta al sistema de ficheros que ni
     # escribe ni tarda, y cachearla daría la respuesta de la unidad anterior si
-    # se cambia de destino—. Lo que sí se recuerda en el estado es la MEDIDA de
-    # velocidad, que sí escribe en la unidad: ver `refrescar_espera`.
-    # En Linux no hay casilla que valga: `--quick` va siempre, y si el
-    # contenedor sale disperso lo decide la versión de VeraCrypt y el disco
-    # (`crypto.creacion_dispersa()`, None si no se sabe). Se enseña marcada o
+    # se cambia de destino. Lo que sí se recuerda en el estado es la MEDIDA de
+    # velocidad, que sí escribe en la unidad (`refrescar_espera`). En Linux no
+    # hay casilla que valga: `--quick` va siempre y que el contenedor salga
+    # disperso lo decide la versión de VeraCrypt y el disco
+    # (`crypto.creacion_dispersa()`, `None` si no se sabe). Se enseña marcada o
     # no, sin poder cambiarla, y la frase de al lado dice por qué.
     disperso = (crypto.creacion_dispersa(estado.device, estado.veracrypt)
                 if not existe else False)
@@ -228,9 +240,9 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
     tam = tk.StringVar(value=crypto.suggested_size(libre, dinamico.get(), tope))
     sistema = tk.StringVar(value=crypto.FILESYSTEMS[0])
     # El traveler disk es cosa de Windows: en Linux y macOS VeraCrypt necesita
-    # instalarse (driver y FUSE) y no hay nada que llevar. Ni se ofrece. Se crea
-    # aquí arriba porque 'max' depende de él: con VeraCrypt de viaje deja más
-    # sitio fuera del contenedor (`crypto.RESERVA_VIAJERO`).
+    # instalarse (driver y FUSE) y no hay nada que llevar, ni se ofrece. Se
+    # crea aquí arriba porque `max` depende de él: con VeraCrypt de viaje deja
+    # más sitio fuera del contenedor (`crypto.RESERVA_VIAJERO`).
     traveler = tk.BooleanVar(value=estado.traveler and IS_WIN)
     espera = ttk.Label(formulario, foreground=theme.TINTA3, justify="left",
                        wraplength=theme.medida(560))
@@ -292,10 +304,11 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
     fila += 1
 
     def refrescar_espera(*_) -> None:
-        """Cuánto va a tardar esto, medido, no adivinado.
+        """Dice cuánto va a tardar la creación, medido y no adivinado.
 
-        La medida escribe en la unidad, así que se hace UNA vez y se guarda en el
-        estado; lo que se recalcula al cambiar el tamaño es la división."""
+        La medida escribe en la unidad, así que se hace UNA vez y se guarda en
+        el estado; lo que se recalcula al cambiar el tamaño es la división.
+        """
         estado.dinamico = bool(dinamico.get())
         if estado.dinamico:
             espera.configure(text="Creación prácticamente inmediata.")
@@ -316,6 +329,7 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
             f"Hay que escribir el contenedor entero: {crypto.describir_espera(segundos)}."))
 
     def al_cambiar_dinamico(*_) -> None:
+        """Propone el tamaño que toca al marcar o desmarcar el contenedor dinámico."""
         tam.set(crypto.suggested_size(libre, bool(dinamico.get()), tope))
         refrescar_espera()
 
@@ -335,6 +349,7 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
               text=AVISO_AUTOARRANQUE).grid(row=4, column=0, sticky="w", pady=(6, 0))
 
     def crear_y_montar() -> None:
+        """Comprueba la contraseña, crea el contenedor si hace falta y lo monta."""
         password = pw1.get()
         # Al crear, lo que diría VeraCrypt sin `/silent`; al montar uno que ya
         # existe, basta con que haya algo: la contraseña ya es la que es.
@@ -404,13 +419,15 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
 
 
 def _llevar_veracrypt(wiz) -> None:
-    """Copia VeraCrypt al volumen. **Mejor esfuerzo**: no puede tumbar la instalación.
+    """Copia VeraCrypt al volumen; es de mejor esfuerzo.
 
-    Va a la raíz FÍSICA, fuera del contenedor —dentro haría falta VeraCrypt para
-    llegar a VeraCrypt—, y es lo único de este paso que puede fallar sin que
-    importe: sin traveler disk el dispositivo funciona igual en cualquier equipo
-    que tenga VeraCrypt instalado. Por `working()`: puede tener que bajar el
-    VeraCrypt Portable (≈39 MB) y comprobarlo."""
+    No puede tumbar la instalación. Va a la raíz FÍSICA, fuera del contenedor
+    (dentro haría falta VeraCrypt para llegar a VeraCrypt), y es lo único de
+    este paso que puede fallar sin que importe: sin traveler disk el
+    dispositivo funciona igual en cualquier equipo que tenga VeraCrypt
+    instalado. Va por `working()`: puede tener que bajar el VeraCrypt Portable
+    (≈39 MB) y comprobarlo.
+    """
     from install import traveler
 
     estado = wiz.state
@@ -426,6 +443,7 @@ def _llevar_veracrypt(wiz) -> None:
 
 
 def _libre(root) -> int:
+    """Devuelve los bytes libres de ese volumen, o 0 si no se pueden saber."""
     import shutil
     try:
         return shutil.disk_usage(str(root)).free
@@ -433,11 +451,11 @@ def _libre(root) -> int:
         return 0
 
 
-# ---------------------------------------------------------------------------
-# BitLocker
-# ---------------------------------------------------------------------------
-
 def _panel_bitlocker(panel, wiz, hecho) -> None:
+    """Pinta el panel de BitLocker.
+
+    Abre el asistente de Windows y comprueba cómo quedó.
+    """
     from tkinter import messagebox, ttk
 
     estado = wiz.state
@@ -457,18 +475,21 @@ def _panel_bitlocker(panel, wiz, hecho) -> None:
     marca.grid(row=1, column=0, sticky="w", pady=(10, 0))
 
     def pintar_estado(st) -> None:
+        """Dice el estado de BitLocker, en verde solo si está protegido."""
         color = "#116611" if (st.known and st.protected) else "#775500"
         marca.configure(text=f"Estado de {letra}: {st.resumen}", foreground=color)
 
     pintar_estado(crypto.BitLockerStatus(False, detail="sin comprobar todavía"))
 
     def abrir() -> None:
+        """Abre el asistente de BitLocker de Windows."""
         try:
             crypto.open_bitlocker_setup(letra)
         except InstallError as e:
             messagebox.showerror(TITLE, str(e), parent=wiz.root)
 
     def comprobar() -> None:
+        """Comprueba el estado y, si está protegido, da por bueno el volumen."""
         res = crypto.bitlocker_status(letra)
         pintar_estado(res)
         if res.known and res.protected:
@@ -476,6 +497,7 @@ def _panel_bitlocker(panel, wiz, hecho) -> None:
             hecho()
 
     def seguir_igual() -> None:
+        """Sigue sin haber comprobado el cifrado, tras pedir confirmación."""
         if not messagebox.askokcancel(TITLE, (
                 "Vas a seguir sin haber comprobado que el volumen quedó "
                 "cifrado.\n\nDentro va la clave privada de tu remoto."),
