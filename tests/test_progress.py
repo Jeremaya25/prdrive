@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
-"""
-El progreso en vivo: leer las estadísticas del log de rclone y contarlas.
+"""El progreso en vivo: leer las estadísticas del log de rclone y contarlas.
 
-Los logs de aquí son de verdad: grabados con rclone v1.75 entre carpetas locales
-(`--stats 1s --stats-one-line -v --bwlimit 1M`, para que durasen unos segundos),
-con las rutas cambiadas y sin la línea del rclone.conf, que en una pasada de
-prdrive no sale porque `--config` va siempre. Cada línea se trata como lo que
-es, texto de otro programa: lo que no se entiende no da progreso, y nunca un
-error.
+Los logs de aquí son de verdad: grabados con rclone v1.75 entre carpetas
+locales (`--stats 1s --stats-one-line -v --bwlimit 1M`, para que durasen unos
+segundos), con las rutas cambiadas y sin la línea del rclone.conf, que en una
+pasada de prdrive no sale porque `--config` va siempre. Cada línea se trata
+como lo que es, texto de otro programa: lo que no se entiende no da progreso, y
+nunca un error.
 """
 
 import contextlib
@@ -26,7 +25,7 @@ c = Checks("progreso en vivo: lector de estadísticas y sync.py")
 
 MiB = 2 ** 20
 
-# --- los logs grabados -----------------------------------------------------------
+# los logs grabados
 
 COPIA = """\
 2026/09/11 12:44:36 INFO  : Starting bandwidth limiter at 1Mi Byte/s
@@ -110,7 +109,7 @@ Transferred:            3 / 3, 100%
 Elapsed time:         3.0s
 """
 
-# --- una línea -----------------------------------------------------------------------
+# una línea
 
 p = progress.leer("2026/09/11 12:44:38 INFO  :     2.086 MiB / 3.433 MiB, 61%, "
                   "1.086 MiB/s, ETA 1s")
@@ -133,7 +132,7 @@ c("y los GB",
   progress.leer("INFO  :   1.500 GiB / 3 GiB, 50%, 10 MiB/s, ETA 2m33s").texto(),
   "1,5 GB de 3,0 GB · 50 % · 10,0 MB/s")
 
-# --- lo que no es una línea de estadísticas -------------------------------------------
+# lo que no es una línea de estadísticas
 for etiqueta, linea in (
         ("línea vacía", ""),
         ("un fichero copiado", "2026/09/11 12:44:38 INFO  : b.bin: Copied (new)"),
@@ -152,7 +151,7 @@ for etiqueta, linea in (
 ):
     c(f"no da progreso: {etiqueta}", progress.leer(linea), None)
 
-# --- un log entero: manda la última ---------------------------------------------------
+# un log entero: manda la última
 fin = progress.ultimo(COPIA)
 c("copia: la última lectura es la del final", (fin.hecho, fin.total, fin.porcentaje),
   (round(3.433 * MiB), round(3.433 * MiB), 100))
@@ -166,9 +165,10 @@ c("un log sin estadísticas no da progreso",
   progress.ultimo("2026/09/11 12:44:39 INFO  : There was nothing to transfer\n"), None)
 c("uno vacío tampoco", progress.ultimo(""), None)
 
-# --- el log mientras se escribe -------------------------------------------------------
-# rclone escribe y sync.py lee a la vez, así que lo que llega en cada lectura es
-# un trozo cualquiera: puede acabar a media línea, o a media letra.
+# el log mientras se escribe
+#
+# rclone escribe y sync.py lee a la vez, así que lo que llega en cada lectura
+# es un trozo cualquiera: puede acabar a media línea, o a media letra.
 ESPERADAS = [f"  {progress.ETIQUETA} {t}" for t in (
     "1,1 MB de 3,4 MB · 32 % · 0 B/s",
     "2,1 MB de 3,4 MB · 61 % · 1,1 MB/s",
@@ -208,11 +208,13 @@ c("y lo siguiente se lee",
   s.alimentar(b"\nINFO  :     2.086 MiB / 3.433 MiB, 61%, 1.086 MiB/s, ETA 1s\n"),
   ESPERADAS[1])
 
-# --- el log ya terminado: lo que movió la pasada, para el diario -------------------
+# el log ya terminado: lo que movió la pasada, para el diario
+#
 # `sync.run_pair()` lo lee justo antes de tirar el log de una pasada buena. Lo
 # mismo que el progreso: de más, y nunca un número a medias.
 with sandbox() as root:
     def log_con(nombre, texto):
+        """Escribe un log con ese texto en el sandbox y devuelve su ruta."""
         ruta = root / nombre
         ruta.write_bytes(texto if isinstance(texto, bytes) else texto.encode("utf-8"))
         return ruta
@@ -265,7 +267,8 @@ except Exception as e:                                   # noqa: BLE001
     c("bytes al azar no lanzan nada", repr(e), "nada")
 
 
-# --- sync.py -------------------------------------------------------------------------
+# sync.py
+#
 # Los flags: en la capa base, para todos los modos, y se pueden cambiar.
 for modo in model.MODES:
     pair = model.parse_config({"defaults": {"remote": "nas"}, "pair": [
@@ -319,6 +322,7 @@ def ejecutar(lineas, pausa=0.0, rc=0, logfile=None):
 
 
 def progresos(salida):
+    """Devuelve las líneas de progreso de una salida."""
     return [l for l in salida.splitlines() if l.strip().startswith(progress.ETIQUETA)]
 
 
@@ -352,7 +356,9 @@ with sandbox() as root:
 
 
 class LectorRoto:
+    """Lector de progreso que falla siempre."""
     def alimentar(self, datos):
+        """Falla como un lector con un error."""
         raise RuntimeError("un fallo del lector")
 
 

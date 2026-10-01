@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
-"""
-Las plataformas del dispositivo: cuál es este equipo, qué lleva ya el
-dispositivo, y la lista que se marca en el paso de instalación.
+"""Las plataformas del dispositivo: este equipo, lo que lleva y la lista a marcar.
 
-Todo sin Tk: la ventana solo pinta lo que decide `install/platforms.py`, igual
-que `tk_pairs` pinta lo que decide `pair_editor`. Lo que se vigila aquí es sobre
-todo lo que puede borrar: quitar de la lista una plataforma que el dispositivo ya
-lleva no borra nada por sí solo —hay que confirmarlo—, y lo que no se confirma
-se queda donde está.
+Es la lista que se marca en el paso de instalación. Todo sin Tk: la ventana
+solo pinta lo que decide `install/platforms.py`, igual que `tk_pairs` pinta lo
+que decide `pair_editor`. Lo que se vigila aquí es sobre todo lo que puede
+borrar: quitar de la lista una plataforma que el dispositivo ya lleva no borra
+nada por sí solo (hay que confirmarlo), y lo que no se confirma se queda donde
+está.
 """
 
 import sys
@@ -22,7 +21,7 @@ c = Checks("instalador: las plataformas del dispositivo")
 WIN, WARM = pins.plataforma("windows-x64"), pins.plataforma("windows-arm64")
 LIN, LARM = pins.plataforma("linux-x64"), pins.plataforma("linux-arm64")
 
-# --- qué plataforma es este equipo --------------------------------------------
+# qué plataforma es este equipo
 c("sistema + arch_dir -> plataforma", pins.plataforma_para("windows", "arm"), WARM)
 c("Linux x64", pins.plataforma_para("linux", "x64"), LIN)
 c("macOS no es ninguna", pins.plataforma_para("darwin", "arm"), None)
@@ -40,7 +39,8 @@ try:
 finally:
     model.maquina_nativa_windows = sonda
 
-# --- en qué orden se prueba cada runtime ---------------------------------------
+# en qué orden se prueba cada runtime
+#
 # El mismo orden que el runsync.bat: un ARM64 prefiere el suyo, pero ejecuta el
 # x64 emulado; al revés no.
 c("un ARM64 de Windows prueba el suyo y luego el x64",
@@ -49,14 +49,16 @@ c("un x64 solo el suyo", platforms.candidates(WIN), [WIN])
 c("Linux no emula: solo el suyo", platforms.candidates(LARM), [LARM])
 
 
-# --- qué lleva ya un dispositivo ------------------------------------------------
+# qué lleva ya un dispositivo
 def poner_rclone(raiz, plat):
+    """Pone un rclone de mentira de esa plataforma en el dispositivo."""
     ruta = deploy.app_dir(raiz) / "bin" / plat.bin_dir / plat.rclone_exe
     ruta.parent.mkdir(parents=True, exist_ok=True)
     ruta.write_bytes(b"rclone")
 
 
 def poner_runtime(raiz, plat, sello=True):
+    """Pone un runtime de mentira de esa plataforma, con o sin sello."""
     d = platforms.runtime_dir(raiz, plat)
     (d / plat.interprete).parent.mkdir(parents=True, exist_ok=True)
     (d / plat.interprete).write_bytes(b"py")
@@ -82,7 +84,7 @@ c("un runtime sin sello no cuenta como instalado", "linux-arm64" in lleva, False
 c("el sello se lee", platforms.runtime_stamp(raiz, WIN),
   runtime_bin.stamp_text(WIN, "s"))
 
-# --- qué intérprete usaría este equipo -------------------------------------------
+# qué intérprete usaría este equipo
 c("el del dispositivo para su plataforma, sin consola",
   platforms.device_interpreter(raiz, WIN),
   platforms.runtime_dir(raiz, WIN) / "pythonw.exe")
@@ -96,7 +98,7 @@ c("Linux ARM64 a medias: ninguno", platforms.device_interpreter(raiz, LARM), Non
 c("sin plataforma conocida (macOS): ninguno",
   platforms.device_interpreter(raiz, None), None)
 
-# --- la lista del paso de instalación ----------------------------------------------
+# la lista del paso de instalación
 nueva = platforms.Matriz.para(tmpdir(), anfitrion=WIN)
 c("en un dispositivo nuevo, este equipo viene marcado", nueva.elegidas, {"windows-x64"})
 c("y la instalación completa", nueva.completa, True)
@@ -135,7 +137,7 @@ c("quitar una plataforma que no está no pide confirmación",
   nueva.quitar("linux-x64"), False)
 c("y deja de estar marcada", "linux-x64" in nueva.elegidas, False)
 
-# --- quitar lo que el dispositivo YA lleva: borrar se confirma ---------------------
+# quitar lo que el dispositivo YA lleva: borrar se confirma
 usado = platforms.Matriz.para(raiz, anfitrion=WIN)
 c("en un dispositivo usado vienen marcadas este equipo y lo que ya lleva",
   usado.elegidas, {"windows-x64", "linux-x64"})
@@ -157,7 +159,7 @@ c("la fila lo marca", [f.se_borra for f in usado.filas()
 usado.elegir("linux-x64")
 c("volver a marcarla anula el borrado", usado.plan().borrar, [])
 
-# --- avisos ------------------------------------------------------------------------
+# avisos
 sin_nada = platforms.Matriz.para(tmpdir(), anfitrion=WIN)
 sin_nada.quitar("windows-x64")
 c("sin ninguna marcada no se puede instalar", sin_nada.listo, False)

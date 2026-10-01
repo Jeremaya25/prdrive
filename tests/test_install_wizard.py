@@ -1,21 +1,20 @@
 #!/usr/bin/env python3
-"""
-El asistente de instalación, conducido sin nadie delante.
+"""El asistente de instalación, conducido sin nadie delante.
 
-No se comprueba el aspecto: se comprueba el cableado, y sobre todo las condiciones
-que impiden avanzar. Ese es el valor del asistente —que no te deje llegar a un
-paso sin haber resuelto los anteriores—, así que es lo que hay que probar:
+No se comprueba el aspecto: se comprueba el cableado, y sobre todo las
+condiciones que impiden avanzar. Ese es el valor del asistente (que no te deje
+llegar a un paso sin haber resuelto los anteriores), así que es lo que hay que
+probar:
+- «Siguiente» no se enciende hasta que el paso está resuelto, empezando por el
+  primero: sin conexión configurada no se va a ninguna parte.
+- El paso de instalación deja de verdad el programa en el dispositivo, y con un
+  destino ajeno no se enciende hasta escribir la ruta a mano.
+- El paso de parejas escribe de verdad el `sync_config.toml`.
+- La inicialización no toca los espejos.
 
-  * «Siguiente» no se enciende hasta que el paso está resuelto, empezando por el
-    primero: sin conexión configurada no se va a ninguna parte.
-  * El paso de instalación deja de verdad el programa en el dispositivo, y con un
-    destino ajeno no se enciende hasta escribir la ruta a mano.
-  * El paso de parejas escribe de verdad el sync_config.toml.
-  * La inicialización no toca los espejos.
-
-Se conduce el armazón de verdad (`tk_install.build`), no una copia. Las ventanas
-se crean ocultas y no se entra nunca en el bucle de eventos; ni rclone ni
-VeraCrypt llegan a ejecutarse, porque lo que los lanzaría está sustituido.
+Se conduce el armazón de verdad (`tk_install.build`), no una copia. Las
+ventanas se crean ocultas y no se entra nunca en el bucle de eventos; ni rclone
+ni VeraCrypt llegan a ejecutarse, porque lo que los lanzaría está sustituido.
 """
 
 import sys
@@ -74,6 +73,7 @@ esperas: list = []
 
 
 def working_directo(parent, titulo, funcion, mensaje="", progreso=None):
+    """Sustituye a `working()`: hace el trabajo en el sitio y apunta el progreso."""
     esperas.append((titulo, progreso))
     return True, funcion()
 
@@ -96,6 +96,7 @@ pedido: list[str] = []
 
 
 def archivo_python(plat) -> Path:
+    """Devuelve un archivo de Python de mentira con los intérpretes de la plataforma."""
     ruta = tmpdir() / f"{plat.clave}.tar.gz"
     with tarfile.open(ruta, "w:gz") as tf:
         for rel in {plat.interprete, plat.interprete_consola}:
@@ -121,6 +122,7 @@ ANFITRION = platforms.host() or pins.plataforma("windows-x64")
 
 
 def widgets(w, tipo):
+    """Devuelve los widgets de ese tipo que cuelgan de `w`."""
     pila, salida = [w], []
     while pila:
         actual = pila.pop()
@@ -131,6 +133,7 @@ def widgets(w, tipo):
 
 
 def boton(w, texto):
+    """Devuelve el botón con ese texto, o `None`."""
     for b in widgets(w, ttk.Button):
         if b.cget("text") == texto:
             return b
@@ -146,6 +149,7 @@ def casilla(w, plat):
 
 
 def radio(w, prefijo):
+    """Devuelve el radiobutton cuyo texto empieza así, o `None`."""
     for b in widgets(w, ttk.Radiobutton):
         if str(b.cget("text")).startswith(prefijo):
             return b
@@ -168,13 +172,14 @@ def nuevo_asistente(device_root=None, selected=()):
 
 
 def en_paso(wiz, indice):
+    """Lleva el asistente a ese paso y lo pinta."""
     wiz.indice = indice
     wiz.repintar()
 
 
 PASO = {titulo: i for i, (titulo, _, _) in enumerate(tk_install.PASOS_INSTALACION)}
 
-# --- todos los pasos se pintan -----------------------------------------------
+# todos los pasos se pintan
 dispositivo = tmpdir()
 wiz = nuevo_asistente(dispositivo)
 for i, (titulo, _, _) in enumerate(tk_install.PASOS_INSTALACION):
@@ -192,9 +197,11 @@ c("en el último paso el botón cambia de nombre",
 en_paso(wiz, 0)
 c("y en el primero no se puede ir atrás", str(wiz.boton_atras.cget("state")), "disabled")
 
-# --- la conexión es lo primero, y sin ella no se avanza ----------------------
-# Es el cambio que hace publicable el proyecto: quien clona el repositorio no
-# tiene ningún perfil, y antes eso mataba el asistente en el primer paso.
+# la conexión es lo primero, y sin ella no se avanza
+#
+# Quien clona el repositorio no tiene ningún perfil, y eso no puede matar el
+# asistente en el primer paso: sin conexión no se avanza, pero se puede
+# configurar una.
 sin_conexion = nuevo_asistente(dispositivo)
 sin_conexion.perfil = profile.empty()
 en_paso(sin_conexion, PASO["Conexión"])
@@ -206,10 +213,11 @@ sin_conexion.revisar()
 c("con conexión configurada sí", str(sin_conexion.boton_siguiente.cget("state")),
   "normal")
 
-# --- «Usar esta conexión» no promete lo que no ha probado (#47) ---------------
+# «Usar esta conexión» no promete lo que no ha probado (#47)
+#
 # El botón solo convierte el formulario en un perfil; con el remoto se habla en
-# «Comprobaciones». Antes pintaba «✔ nas (sftp)» en verde, que se leía como
-# «conexión comprobada», también con la plantilla sin rellenar.
+# «Comprobaciones». Pintar «✔ nas (sftp)» en verde se leería como «conexión
+# comprobada», también con la plantilla sin rellenar.
 
 
 def etiquetas(wiz, estilo=None):
@@ -225,19 +233,21 @@ def promete(wiz) -> bool:
 
 
 def opciones_del_formulario(wiz, texto):
+    """Escribe el texto en la caja de opciones del formulario de Conexión."""
     caja = widgets(wiz.cuerpo, tk.Text)[0]
     caja.delete("1.0", "end")
     caja.insert("1.0", texto)
 
 
 def siguiente(wiz):
+    """Devuelve el estado del botón «Siguiente»."""
     return str(wiz.boton_siguiente.cget("state"))
 
 
 usa = nuevo_asistente(dispositivo)
 usa.perfil = profile.empty()
 en_paso(usa, PASO["Conexión"])
-# La plantilla tal cual: `host = ` vacío. Antes daba ✔ con «Siguiente» encendido.
+# La plantilla tal cual (`host = ` vacío): ni ✔ ni «Siguiente» encendido.
 boton(usa.cuerpo, "Usar esta conexión").invoke()
 c("la plantilla sin rellenar no deja seguir", siguiente(usa), "disabled")
 c("y dice qué falta, en rojo, en el propio paso",
@@ -269,7 +279,7 @@ c("con el error a la vista", any("host = …" in t
                                  for t in etiquetas(usa, "Peligro.TLabel")), True)
 c("y sin el aviso de la conexión de antes", etiquetas(usa, "Aviso.TLabel"), [])
 
-# Importar un remote sin `type`: antes, ✔ verde y «Siguiente» gris a la vez.
+# Importar un remote sin `type`: ni ✔ verde ni «Siguiente» gris a la vez.
 conf_ajeno = tmpdir() / "rclone.conf"
 conf_ajeno.write_text("[sintipo]\nhost = nas.example\n", encoding="utf-8")
 importa = nuevo_asistente(dispositivo)
@@ -294,7 +304,7 @@ c("una conexión dada se puede usar", siguiente(dada), "normal")
 c("y tampoco se da por comprobada", promete(dada), False)
 c("dice de dónde sale", any(PERFIL.origen in t for t in etiquetas(dada)), True)
 
-# --- las condiciones de los demás pasos --------------------------------------
+# las condiciones de los demás pasos
 vacio = nuevo_asistente()
 vacio.catalog = None
 vacio.rclone = None
@@ -320,12 +330,12 @@ boton(vacio.cuerpo, "Entendido, usar el dispositivo tal cual").invoke()
 c("elegir «sin cifrar» deja el destino listo", vacio.state.device_root, dispositivo)
 c("y ya se puede seguir", str(vacio.boton_siguiente.cget("state")), "normal")
 
-# --- el panel de VeraCrypt ----------------------------------------------------
+# el panel de VeraCrypt
 #
 # Tres cosas que se dicen ANTES de crear nada: la instalación sin cifrar que se
 # quedaría al lado del contenedor, el tope de una unidad FAT32 y una contraseña
-# más corta de lo que VeraCrypt recomienda. Ni VeraCrypt ni una unidad de verdad:
-# las sondas de `crypto` se sustituyen.
+# más corta de lo que VeraCrypt recomienda. Ni VeraCrypt ni una unidad de
+# verdad: las sondas de `crypto` se sustituyen.
 from install import crypto  # noqa: E402
 from ui import tk_crypto  # noqa: E402
 
@@ -472,7 +482,7 @@ finally:
     for nombre, funcion in sondas_crypto.items():
         setattr(crypto, nombre, funcion)
 
-# --- el paso de instalación ---------------------------------------------------
+# el paso de instalación
 limpio = tmpdir()
 wiz = nuevo_asistente(limpio)
 en_paso(wiz, PASO["Instalación"])
@@ -517,8 +527,8 @@ from install import device                                # noqa: E402
 c("y el dispositivo recibe un identificador propio",
   len(device.control_id(limpio) or ""), 32)
 
-# Instalar NO es un espejo: nada de lo que hubiera fuera de .prdrive/ se toca.
-# Con la siembra esto no se podía prometer.
+# Instalar NO es un espejo: nada de lo que hubiera fuera de `.prdrive/` se
+# toca.
 c("y el resto del volumen sigue ahí",
   sorted(p.name for p in limpio.iterdir() if p.name.startswith("runsync")),
   ["runsync.bat", "runsync.sh"])
@@ -528,7 +538,7 @@ from common import vestibulo as vest                      # noqa: E402
 
 c("sin contenedor, nada de vestíbulo", (limpio / vest.MARCA).exists(), False)
 
-# --- con contenedor: la entrada de fuera, con el mismo id -----------------------
+# con contenedor: la entrada de fuera, con el mismo id
 #
 # El dispositivo vive en lo montado y el vestíbulo en la raíz física, junto al
 # .hc. Lo que las une es el id: el de la marca de fuera tiene que ser el del
@@ -552,7 +562,7 @@ c("fuera, el vestíbulo entero",
 c("con el mismo id que el fichero de control de dentro",
   vest.leer_id(fisica), device.control_id(montado))
 
-# --- la ligera: sin Python propio, con el .pyw ---------------------------------
+# la ligera: sin Python propio, con el .pyw
 ligero = tmpdir()
 wiz_l = nuevo_asistente(ligero)
 en_paso(wiz_l, PASO["Instalación"])
@@ -567,12 +577,12 @@ c("la ligera solo consigue rclone", pedido, [f"rclone {ANFITRION.clave}"])
 c("no deja Python propio", platforms.runtime_stamp(ligero, ANFITRION), None)
 c("y sí el .pyw, que usa el Python del equipo", (ligero / "runsync.pyw").is_file(), True)
 
-# --- #49: una plataforma que no llega no deja nada a medias --------------------
-# Lo reportado: con varias plataformas marcadas, el rclone de una que ni
-# siquiera era la de este equipo no llegaba, la instalación se abortaba después
-# de haber copiado el programa, y el mensaje no decía que bastaba con desmarcarla.
-# Ahora lo de fuera se consigue ANTES de copiar nada: el dispositivo no se toca,
-# el mensaje nombra la plataforma y el botón sigue ahí para reintentar.
+# #49: una plataforma que no llega no deja nada a medias
+#
+# Con varias plataformas marcadas, el rclone de una que ni siquiera es la de
+# este equipo puede no llegar. Lo de fuera se consigue ANTES de copiar nada: el
+# dispositivo no se toca, el mensaje nombra la plataforma y el botón sigue ahí
+# para reintentar.
 from install import InstallError  # noqa: E402
 
 otra_plat = next(p for p in pins.PLATAFORMAS if p.clave != ANFITRION.clave)
@@ -580,6 +590,7 @@ rclone_para, working_para = rclone_bin.rclone_for, tk_install.working
 
 
 def rclone_sin_otra(plat, progreso=None, allow_download=True):
+    """Descarga de rclone de mentira que falla para la plataforma `otra_plat`."""
     if plat.clave == otra_plat.clave:
         raise InstallError(f"No he podido descargar rclone de https://x/{plat.clave}"
                            f".zip: The read operation timed out")
@@ -627,7 +638,8 @@ try:
 finally:
     rclone_bin.rclone_for, tk_install.working = rclone_para, working_para
 
-# --- quitar una plataforma que el dispositivo ya lleva -------------------------
+# quitar una plataforma que el dispositivo ya lleva
+#
 # `limpio` ya lleva la de este equipo. Desmarcarla pregunta; lo que se conteste
 # decide si entra en el plan como borrado.
 quita = nuevo_asistente(limpio)
@@ -664,7 +676,7 @@ entrada.insert(0, str(ajeno))
 c("hay que escribir la ruta para desbloquearlo",
   str(boton(otro.cuerpo, "Instalar el programa").cget("state")), "normal")
 
-# --- el paso de parejas escribe el config ------------------------------------
+# el paso de parejas escribe el config
 wiz = nuevo_asistente(limpio)
 en_paso(wiz, PASO["Parejas y configuración"])
 c("sin config escrito no se sale del paso de parejas",
@@ -679,7 +691,7 @@ c("y ya se puede seguir", str(wiz.boton_siguiente.cget("state")), "normal")
 c.contains("la cabecera dice de qué catálogo sale",
            config.read_text(encoding="utf-8"), PERFIL.endpoint_catalog)
 
-# --- la inicialización no toca los espejos -----------------------------------
+# la inicialización no toca los espejos
 lanzadas.clear()
 en_paso(wiz, PASO["Inicialización"])
 boton(wiz.cuerpo, "Inicializar ahora").invoke()
@@ -690,17 +702,19 @@ c("se inicializa la pareja bisync", "docs" in orden, True)
 c("y NUNCA un espejo", "respaldo" in orden, False)
 c("con --resync", "--resync" in orden, True)
 
-# --- la verificación final ----------------------------------------------------
+# la verificación final
 en_paso(wiz, PASO["Verificación"])
 etiquetas = [w.cget("text") for w in widgets(wiz.cuerpo, ttk.Label)]
 c("el último paso enseña la lista de comprobación",
   any("sync_config.toml" in str(t) for t in etiquetas), True)
 
 
-# --- el recorrido corto: una unidad que YA es un prdrive ----------------------
-# `limpio` acaba de pasar por la instalación entera, así que sirve de dispositivo
-# de verdad. Lo que se comprueba aquí es el desvío: que se reconoce, que no deja
-# avanzar hasta elegir camino, y que actualizar no le cambia el identificador.
+# el recorrido corto: una unidad que YA es un prdrive
+#
+# `limpio` acaba de pasar por la instalación entera, así que sirve de
+# dispositivo de verdad. Lo que se comprueba aquí es el desvío: que se
+# reconoce, que no deja avanzar hasta elegir camino, y que actualizar no le
+# cambia el identificador.
 c("una unidad recién instalada se reconoce como prdrive",
   tk_install._ya_es_prdrive(limpio), True)
 c("y una vacía no", tk_install._ya_es_prdrive(tmpdir()), False)
@@ -751,7 +765,8 @@ c("reinstalar mantiene el recorrido largo",
   len(otro_corto.pasos), len(tk_install.PASOS_INSTALACION))
 c("y avanza al paso siguiente", otro_corto.indice, PASO["Cifrado"])
 
-# --- «Añadir plataformas…»: sin volver a aprovisionar ---------------------------
+# «Añadir plataformas…»: sin volver a aprovisionar
+#
 # Lleva la misma lista a un dispositivo que ya existe. La configuración, las
 # claves y el estado no se tocan: solo rclone y Python de lo que se marque.
 config_antes = config.read_bytes()
@@ -809,6 +824,7 @@ from install import traveler as trav, veracrypt_bin       # noqa: E402
 (fisica / "VeraCrypt" / "VeraCrypt.exe").write_bytes(b"MZ")
 (fisica / "VeraCrypt" / "veracrypt-x64.sys").write_bytes(b"MZ")
 def veracrypt_pendiente():
+    """Devuelve si «Añadir plataformas…» tiene un VeraCrypt pendiente de cambiar."""
     return [p.asistente for p in comp.pendientes(deploy.app_dir(montado), fisica)
             if p.que == comp.VERACRYPT]
 
@@ -845,12 +861,13 @@ finally:
     trav.IS_WIN, veracrypt_bin.ensure_veracrypt = reales_vc
 
 
-# --- no se puede pasar del paso «Instalación» sin instalar -----------------------
-# Bastaba con que `sync.py` estuviese ya en la unidad, así que al reinstalar sobre
-# un dispositivo existente el botón «Siguiente» llegaba activado y se podía saltar
-# la copia del código. El paso siguiente sí escribe un `sync_config.toml` nuevo, y
-# quedaba un dispositivo con config nuevo sobre código viejo —lo que pide ese
-# config su código no lo entiende— sin aviso ninguno hasta la primera pasada.
+# no se puede pasar del paso «Instalación» sin instalar
+#
+# Que `sync.py` estuviese ya en la unidad no basta: al reinstalar sobre un
+# dispositivo existente, «Siguiente» no puede llegar activado y permitir
+# saltarse la copia del código. El paso siguiente escribe un `sync_config.toml`
+# nuevo, y quedaría un dispositivo con config nuevo sobre código viejo (que no
+# entiende lo que pide ese config) sin aviso hasta la primera pasada.
 ya_instalado = tmpdir()
 app = ya_instalado / deploy.APP_SUBDIR
 app.mkdir(parents=True)
@@ -863,7 +880,8 @@ viejo.state.deployed = True
 c("y se enciende al haber instalado de verdad",
   tk_install._ok_instalacion(viejo), True)
 
-# --- «En este equipo»: el agente residente ------------------------------------
+# «En este equipo»: el agente residente
+#
 # El mismo asistente, otra lista de pasos. Nada de esto toca el equipo de
 # verdad: la carpeta del agente va a un temporal, y preparar y activar se
 # sustituyen por lo que apuntan (lo de dentro lo prueba test_install_agente).
@@ -892,6 +910,7 @@ raiz_equipo.veracrypt_instalado = lambda: None
 
 
 def elegir(wiz, texto: str) -> None:
+    """Pulsa el radiobutton con ese texto."""
     next(w for w in widgets(wiz.cuerpo, ttk.Radiobutton)
          if w.cget("text") == texto).invoke()
 
@@ -924,7 +943,7 @@ casa.ir(+1)
 c("«Raíz» propone la carpeta propia", casa.equipo_ruta,
   str(raiz_equipo.carpeta_propia()))
 
-# --- «Ninguna»: la instalación «solo agente» ----------------------------------
+# «Ninguna»: la instalación «solo agente»
 elegir(casa, "Ninguna: solo atender unidades")
 c("«Ninguna» es el recorrido corto, sin conexión ni parejas",
   [t for t, _, _ in casa.pasos],
@@ -985,7 +1004,7 @@ elegir(casa, "En una unidad")
 c("volver a «En una unidad» devuelve el recorrido de siempre",
   casa.pasos is tk_install.PASOS_INSTALACION, True)
 
-# --- con el agente de esta versión ya instalado: no se reinstala ----------------
+# con el agente de esta versión ya instalado: no se reinstala
 anadidos: list = []
 real_misma, real_prep_inst, real_anadir = ia.misma_version, ia.instalado_prep, ia.anadir
 real_instalado = ia.instalado
@@ -1015,9 +1034,11 @@ c("  y se puede seguir", str(otra.boton_siguiente.cget("state")), "normal")
 ia.misma_version, ia.instalado_prep, ia.anadir = real_misma, real_prep_inst, real_anadir
 ia.instalado = real_instalado
 
-# --- con raíz: una carpeta propia del equipo -----------------------------------
-# Se instala de verdad en un temporal (rclone y Python de mentira, como arriba):
-# lo que se comprueba es que la raíz queda hecha y que el agente la recibe.
+# con raíz: una carpeta propia del equipo
+#
+# Se instala de verdad en un temporal (rclone y Python de mentira, como
+# arriba): lo que se comprueba es que la raíz queda hecha y que el agente la
+# recibe.
 preparados.clear()
 activados.clear()
 propia = nuevo_asistente(None)
@@ -1190,16 +1211,21 @@ c("  y dice que no está en la lista del agente (activar era de mentira)",
   filas["En la lista del agente"], False)
 c("  sin cifrar, no se toca pedir_al_iniciar", pedir_dado[-1], None)
 
-# --- con raíz cifrada: VeraCrypt de mentira ---------------------------------------
+# con raíz cifrada: VeraCrypt de mentira
+#
 # «Montar» es crear la carpeta que haría de volumen: lo que se comprueba es el
 # recorrido —dónde va el contenedor, qué se instala dentro, qué marca queda
-# fuera y qué recibe el agente—, no VeraCrypt (lo sustituye test_agente_veracrypt
-# y lo prueba la lista de pruebas en real).
+# fuera y qué recibe el agente—, no VeraCrypt (lo sustituye
+# test_agente_veracrypt y lo prueba la lista de pruebas en real).
 raiz_equipo.veracrypt_instalado = lambda: {"mount": "vc", "format": "vc"}
 MONTADAS = []
 
 
 def abrir_o_crear_falso(vc, fisica, carpeta, letra, password, tamano):
+    """`abrir_o_crear` de mentira.
+
+    Deja un contenedor y una carpeta que hace de volumen.
+    """
     fisica = Path(fisica)
     fisica.mkdir(parents=True, exist_ok=True)
     (fisica / "PRDRIVE.hc").write_bytes(b"\0")

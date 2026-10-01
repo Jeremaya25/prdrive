@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""
-Qué lanza el vigilante al detectar el dispositivo, y si su copia está al día.
+"""Qué lanza el vigilante al detectar el dispositivo, y si su copia está al día.
 
-Las parejas y el intervalo son los del servicio: viven en el dispositivo y los lee
-runsync, así que el vigilante no pasa ninguno, ni aunque un watch.json de una
-versión anterior los traiga. Y el modo `sync` va por `--auto --once`: antes era
-`runsync.py <parejas>`, que sin parejas se quedaba en `runsync.py` a secas y
-abría la ventana en vez de sincronizar.
+Las parejas y el intervalo son los del servicio: viven en el dispositivo y los
+lee runsync, así que el vigilante no pasa ninguno, ni aunque un `watch.json` de
+una versión anterior los traiga. Y el modo `sync` va por `--auto --once`: con
+`runsync.py <parejas>`, sin parejas se quedaría en `runsync.py` a secas y
+abriría la ventana en vez de sincronizar.
 
-La copia del vigilante en el equipo la hace `install` y nada más la pone al día,
-así que `copia_al_dia()` la compara con la del dispositivo para poder decirlo.
+La copia del vigilante en el equipo la hace `install` y nada más la pone al
+día, así que `copia_al_dia()` la compara con la del dispositivo para poder
+decirlo.
 
 Nada de esto lanza un proceso ni escribe en el equipo de verdad: `Popen` y el
 diario se sustituyen, y las rutas del equipo se apuntan a un temporal.
@@ -32,9 +32,11 @@ lanzadas: list[list[str]] = []
 
 
 class _Popen:
+    """`Popen` de mentira: apunta los argumentos y no lanza nada."""
     pid = 4321
 
     def __init__(self, args, **_kwargs):
+        """Apunta los argumentos del lanzamiento."""
         lanzadas.append(list(args))
 
 
@@ -64,7 +66,7 @@ finally:
     penwatch.subprocess.Popen = real_popen
 
 
-# --- la copia del equipo frente a la del dispositivo ----------------------------
+# la copia del equipo frente a la del dispositivo
 real_copia = penwatch.SELF_COPY
 propio = Path(penwatch.__file__).resolve()
 try:

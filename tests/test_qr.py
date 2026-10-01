@@ -1,33 +1,29 @@
 #!/usr/bin/env python3
-"""
-El código QR de emparejamiento: el codificador y lo que va dentro.
+"""El código QR de emparejamiento: el codificador y lo que va dentro.
 
 Un codificador de QR no se puede probar «a ojo»: o lo lee una cámara o no vale,
 y aquí no hay cámara. Así que se comprueban tres cosas distintas, y las tres
 hacen falta:
-
-1. **Vectores conocidos**, los de la norma ISO/IEC 18004 y sus tablas
-   publicadas: los polinomios generadores de Reed-Solomon expresados en
-   exponentes de alfa, la información de formato y de versión, los centros de
-   los patrones de alineación y —la más valiosa— las capacidades en modo byte,
-   que dependen de las DOS tablas que están copiadas a mano en `ui/qr.py` y de
-   la fórmula de los módulos de datos. Si alguna cifra de esas tablas estuviera
-   mal, la capacidad de su versión no cuadraría.
-
-2. **La vuelta entera**: se decodifica el dibujo. El decodificador está aquí y
-   no en `ui/qr.py` porque el proyecto no necesita leer códigos QR —eso lo hace
-   el móvil—, pero sí necesita saber que lo que dibuja se puede leer. Deshace
-   la máscara, recorre el zigzag, deshace el intercalado de bloques y saca el
-   mensaje. Lo único que toma prestado del codificador es el mapa de patrones de
-   función, que va comprobado aparte en (3).
-
-3. **La estructura**: los tres patrones de búsqueda, las líneas de
-   temporización, el módulo oscuro y el tamaño.
+- **Vectores conocidos**, los de la norma ISO/IEC 18004 y sus tablas
+  publicadas: los polinomios generadores de Reed-Solomon expresados en
+  exponentes de alfa, la información de formato y de versión, los centros de
+  los patrones de alineación y (la más valiosa) las capacidades en modo byte,
+  que dependen de las DOS tablas copiadas a mano en `ui/qr.py` y de la fórmula
+  de los módulos de datos. Si alguna cifra de esas tablas estuviera mal, la
+  capacidad de su versión no cuadraría.
+- **La vuelta entera**: se decodifica el dibujo. El decodificador está aquí y
+  no en `ui/qr.py` porque el proyecto no necesita leer códigos QR (eso lo hace
+  el móvil), pero sí necesita saber que lo que dibuja se puede leer. Deshace la
+  máscara, recorre el zigzag, deshace el intercalado de bloques y saca el
+  mensaje. Lo único que toma prestado del codificador es el mapa de patrones de
+  función, que va comprobado aparte.
+- **La estructura**: los tres patrones de búsqueda, las líneas de
+  temporización, el módulo oscuro y el tamaño.
 
 Y encima de todo eso, el viaje que importa de verdad: de un dispositivo de
-mentira a `pairing.construir()`, al QR, de vuelta, y a `profile.loads()`, que es
-lo que leerá el móvil. Ese es el que impide que el formato de `common/pairing.py`
-y el de `install/profile.py` se separen.
+mentira a `pairing.construir()`, al QR, de vuelta, y a `profile.loads()`, que
+es lo que leerá el móvil. Ese es el que impide que el formato de
+`common/pairing.py` y el de `install/profile.py` se separen.
 """
 
 import sys
@@ -42,13 +38,13 @@ from ui import qr
 c = Checks("código QR de emparejamiento")
 
 
-# ---------------------------------------------------------------------------
 # 1. Vectores conocidos
-# ---------------------------------------------------------------------------
 
 def _exponentes(coeficientes):
-    """Los coeficientes de un polinomio como exponentes de alfa, que es como los
-    publica la tabla de la norma."""
+    """Devuelve los coeficientes de un polinomio como exponentes de alfa.
+
+    Es como los publica la tabla de la norma.
+    """
     log = [0] * 256
     x = 1
     for i in range(255):
@@ -91,9 +87,7 @@ c("tamaño de la versión 1", qr.tamano(1), 21)
 c("tamaño de la versión 40", qr.tamano(40), 177)
 
 
-# ---------------------------------------------------------------------------
 # 2. El decodificador
-# ---------------------------------------------------------------------------
 
 def _mapa_de_funciones(version: int):
     """Qué módulos son de función. Lo único prestado del codificador.
@@ -121,8 +115,11 @@ def _leer_formato(modulos) -> tuple[str, int]:
 
 
 def _flujo(modulos, funcion) -> bytes:
-    """Los codewords, recorriendo el zigzag de dos columnas de derecha a
-    izquierda, arriba y abajo alternando, saltando la columna 6."""
+    """Devuelve los codewords recorriendo el zigzag del dibujo.
+
+    Va de dos columnas en dos, de derecha a izquierda, alternando arriba y
+    abajo y saltando la columna 6.
+    """
     lado = len(modulos)
     bits: list[int] = []
     derecha = lado - 1
@@ -201,11 +198,10 @@ def decodificar(codigo: qr.Codigo) -> bytes:
     return cuerpo
 
 
-# ---------------------------------------------------------------------------
 # 3. La estructura del dibujo
-# ---------------------------------------------------------------------------
 
 def revisar_estructura(codigo: qr.Codigo, etiqueta: str) -> None:
+    """Comprueba la estructura de un código: lado, patrones y temporización."""
     modulos, lado = codigo.modulos, codigo.tamano
     c(f"{etiqueta}: el lado cuadra con la versión", lado, qr.tamano(codigo.version))
     c(f"{etiqueta}: la matriz es cuadrada",
@@ -240,9 +236,7 @@ def revisar_estructura(codigo: qr.Codigo, etiqueta: str) -> None:
       0 <= codigo.mascara <= 7, True)
 
 
-# ---------------------------------------------------------------------------
 # La vuelta entera, en varios tamaños
-# ---------------------------------------------------------------------------
 
 MENSAJES = [
     ("una letra", "a"),
@@ -295,9 +289,7 @@ c("17 bytes caben en la versión 1 con corrección L",
 c("18 bytes ya piden la versión 2", qr.codificar(b"x" * 18, "L").version, 2)
 
 
-# ---------------------------------------------------------------------------
 # El viaje de verdad: dispositivo -> QR -> perfil
-# ---------------------------------------------------------------------------
 
 CLAVE = (b"-----BEGIN OPENSSH PRIVATE KEY-----\n"
          + b"b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gt\n" * 5

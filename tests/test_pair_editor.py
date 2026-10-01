@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""
-El editor de parejas, que es lo que puede hacer daño.
+"""El editor de parejas, que es lo que puede hacer daño.
 
 La comprobación central es la primera: cambiar un extremo de una pareja bisync
 tiene que APARTAR su baseline. Reaprovecharlo con el nombre nuevo le diría a
-bisync que el listado del destino viejo describe el nuevo, y leería como borrados
-todos los ficheros que solo estaban en el anterior.
+bisync que el listado del destino viejo describe el nuevo, y leería como
+borrados todos los ficheros que solo estaban en el anterior.
 """
 
 import hashlib
@@ -31,6 +30,7 @@ BASE = [
 
 
 def preparar(pairs=None, daemon=None) -> dict:
+    """Escribe un config de mentira con esas parejas y devuelve el dict crudo."""
     raw = {"defaults": {"remote": "nas"},
            "pair": [dict(p) for p in (pairs or BASE)]}
     if daemon:
@@ -54,11 +54,12 @@ def dar_baseline(raw, name):
 
 
 def estado_de(name):
+    """Devuelve el estado del baseline y de los filtros de esa pareja."""
     pair = next(p for p in model.load_config().pairs if p.name == name)
     return bisync.pair_state(pair), bisync.filters_state(bisync.filters_file_for(pair))
 
 
-# --- LO IMPORTANTE: cambiar un extremo aparta el baseline --------------------
+# LO IMPORTANTE: cambiar un extremo aparta el baseline
 with sandbox():
     raw = preparar()
     dar_baseline(raw, "notas")
@@ -77,7 +78,7 @@ with sandbox():
     c("el config apunta al destino nuevo",
       next(p.remote_path for p in model.load_config().pairs if p.name == "notas"), "/R/otro")
 
-# --- renombrar es gratis: el baseline se conserva ----------------------------
+# renombrar es gratis: el baseline se conserva
 with sandbox():
     raw = preparar()
     dar_baseline(raw, "notas")
@@ -97,7 +98,7 @@ with sandbox():
       bisync.resync_reasons(next(p for p in model.load_config().pairs
                                  if p.name == "apuntes")), [])
 
-# --- cambiar filtros: sin cirugía, pero avisa -------------------------------
+# cambiar filtros: sin cirugía, pero avisa
 with sandbox():
     raw = preparar()
     dar_baseline(raw, "notas")
@@ -107,7 +108,7 @@ with sandbox():
     plan.execute()
     c("y bisync efectivamente lo pide", estado_de("notas")[1].needs_resync, True)
 
-# --- alta --------------------------------------------------------------------
+# alta
 with sandbox():
     raw = preparar()
     plan = pair_editor.plan_save(raw, {"name": "fotos", "local": "sync-data/fotos",
@@ -116,7 +117,7 @@ with sandbox():
     c("la pareja nueva está en el config", "fotos" in model.load_config().names, True)
     c("las anteriores siguen", model.load_config().names, ["notas", "subida", "fotos"])
 
-# --- baja ---------------------------------------------------------------------
+# baja
 with sandbox():
     raw = preparar(daemon={"pairs": ["notas", "subida"], "interval_minutes": 10})
     dar_baseline(raw, "notas")
@@ -143,11 +144,12 @@ with sandbox():
     except ConfigError as e:
         c("no se puede quitar la última pareja", "última pareja" in str(e), True)
 
-# --- validación ---------------------------------------------------------------
+# validación
 with sandbox():
     raw = preparar()
 
     def rechaza(etiqueta, edited, original=None, fragmento=""):
+        """Comprueba que `plan_save` lance `ConfigError` con ese fragmento."""
         try:
             pair_editor.plan_save(raw, edited, original)
             c(etiqueta, "no lanzó", "ConfigError")
@@ -165,14 +167,14 @@ with sandbox():
                                "mode": "espejito"}, None, "Modo inválido")
     c("el config no se ha tocado en ningún rechazo", config_file.load_raw(), raw)
 
-# --- el modo espejo se anuncia ------------------------------------------------
+# el modo espejo se anuncia
 with sandbox():
     raw = preparar()
     plan = pair_editor.plan_save(raw, {**BASE[1], "mode": "up-mirror"}, "subida")
     c("up-mirror avisa de que borra en el destino",
       any("BORRA en el remoto" in w for w in plan.warnings), True)
 
-# --- si falla el guardado, el estado vuelve a su sitio -------------------------
+# si falla el guardado, el estado vuelve a su sitio
 with sandbox():
     raw = preparar()
     dar_baseline(raw, "notas")
@@ -192,9 +194,11 @@ with sandbox():
     c("sin dejar restos apartados",
       [p.name for p in model.STATE_DIR.iterdir() if ".old-" in p.name], [])
 
-# --- renombrar Y cambiar un extremo a la vez ----------------------------------
-# El caso que se colaba: antes eran ramas excluyentes, así que se apartaba
-# state/notas/ y filters/notas.txt se quedaba huérfano con el nombre viejo.
+# renombrar Y cambiar un extremo a la vez
+#
+# Son dos operaciones que se suman, no ramas excluyentes: se aparta
+# `state/notas/` y `filters/notas.txt` no puede quedar huérfano con el nombre
+# viejo.
 with sandbox():
     raw = preparar()
     dar_baseline(raw, "notas")
@@ -209,7 +213,7 @@ with sandbox():
       [p.name for p in model.STATE_DIR.iterdir() if p.name.startswith("notas")], [])
     c("ni filtros huérfanos", (model.FILTERS_DIR / "notas.txt").exists(), False)
 
-# --- [defaults]: un cambio ahí invalida VARIOS baselines a la vez -------------
+# [defaults]: un cambio ahí invalida VARIOS baselines a la vez
 with sandbox():
     raw = preparar(pairs=[BASE[0], {"name": "otra", "local": "sync-data/otra",
                                     "remote_path": "/R/otra", "mode": "bisync"}])
@@ -235,7 +239,7 @@ with sandbox():
     c("y keep_logs ha quedado escrito",
       config_file.load_raw()["defaults"].get("keep_logs"), True)
 
-# --- la ruta del catálogo: el fichero, no su carpeta (#48) ---------------------
+# la ruta del catálogo: el fichero, no su carpeta (#48)
 with sandbox():
     raw = preparar()
     try:
@@ -254,7 +258,7 @@ with sandbox():
                                            "catalog_path": "/cat/pares"})
     c("una ruta que no cambia no se revisa", plan.shelve, [])
 
-# --- este dispositivo frente al catálogo ----------------------------------------------
+# este dispositivo frente al catálogo
 CAT = {"defaults": {"remote": "nas"},
        "pair": [dict(BASE[0]), dict(BASE[1]),
                 {"name": "fotos", "local": "sync-data/fotos",
@@ -262,6 +266,7 @@ CAT = {"defaults": {"remote": "nas"},
 
 
 def falso_catalogo(raw=None):
+    """Devuelve un catálogo de mentira con esos datos."""
     texto = config_file.dumps(raw if raw is not None else CAT)
     return catalog.Catalog(raw=tomllib.loads(texto), text=texto, source="remote",
                            stamp="2026-01-01 00:00:00", endpoint="nas:/x/pairs.toml")
@@ -356,7 +361,8 @@ with sandbox():
     c("volver a los defaults del catálogo los deja igual",
       config_file.load_raw()["defaults"], cat.defaults)
 
-# --- simular: ver lo que haría una pareja, sin hacerlo -------------------------
+# simular: ver lo que haría una pareja, sin hacerlo
+#
 # Lo que se comprueba es que la orden sea la de un simulacro y no la de una
 # pasada: este botón está para poder VER los borrados antes de aprobarlos.
 with sandbox():

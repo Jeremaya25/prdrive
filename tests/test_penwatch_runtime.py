@@ -1,23 +1,20 @@
 #!/usr/bin/env python3
-"""
-El Python del vigilante: una copia propia en el equipo, no el del sistema.
+"""El Python del vigilante: una copia propia en el equipo, no el del sistema.
 
-Antes penwatch apuntaba la tarea programada al `sys.executable` con el que se
-instaló, y eso se rompía en silencio el día que alguien actualizaba o
-desinstalaba su Python. Ahora copia el Python del dispositivo a su carpeta del
-equipo y arranca con esa copia, así que:
+Penwatch copia el Python del dispositivo a su carpeta del equipo y arranca con
+esa copia (con el `sys.executable` con el que se instaló, la tarea se rompería
+en silencio el día que alguien actualizara o desinstalara su Python). Así que:
+- La copia va en una carpeta por versión (`runtime/<id>/`), y cambiar de
+  versión es copiar al lado y cambiar el puntero de `watch.json` de golpe,
+  porque en Windows no se puede sustituir la carpeta de un `pythonw.exe` que
+  está corriendo, y el vigilante corre justo desde ahí.
+- En cada detección compara el sello del dispositivo con el de su copia y, si
+  difieren, la refresca y vuelve a registrar la tarea.
+- Si el dispositivo no lleva Python para este equipo, usa el del sistema y lo
+  dice en `status`.
 
-  * la copia va en una carpeta por versión (`runtime/<id>/`), y cambiar de
-    versión es copiar al lado y cambiar el puntero de `watch.json` —de golpe—,
-    porque en Windows no se puede sustituir la carpeta de un `pythonw.exe` que
-    está corriendo, y el vigilante corre justo desde ahí;
-  * en cada detección compara el sello del dispositivo con el de su copia, y si
-    difieren la refresca y vuelve a registrar la tarea;
-  * si el dispositivo no lleva Python para este equipo, usa el del sistema y lo
-    dice en `status`.
-
-Nada de esto registra una tarea de verdad ni toca el dispositivo real: las rutas
-del equipo se apuntan a un temporal y el registro se sustituye.
+Nada de esto registra una tarea de verdad ni toca el dispositivo real: las
+rutas del equipo se apuntan a un temporal y el registro se sustituye.
 """
 
 import sys
@@ -31,7 +28,7 @@ from install import platforms, runtime_bin
 
 c = Checks("penwatch: su propio Python en el equipo")
 
-# --- las constantes que penwatch repite ------------------------------------------
+# las constantes que penwatch repite
 c("el nombre del sello es el mismo que escribe el instalador",
   penwatch.RUNTIME_STAMP, runtime_bin.STAMP)
 c("y la carpeta del runtime en el dispositivo",
@@ -49,7 +46,7 @@ c("macOS no tiene runtime", penwatch.runtime_keys_for("darwin", "arm64"), [])
 c("el intérprete de Windows", penwatch.interpreter_rel("windows-x64"), "python.exe")
 c("y el de Linux", penwatch.interpreter_rel("linux-arm64"), "bin/python3")
 
-# --- un equipo de mentira -----------------------------------------------------------
+# un equipo de mentira
 equipo = tmpdir("prdrive-equipo-")
 for nombre in ("HOST_DIR", "RUNTIMES_DIR", "CONFIG_FILE", "STATE_FILE", "LOG_FILE",
                "STOP_FILE"):
@@ -63,6 +60,7 @@ penwatch.register = lambda cfg: registradas.append(dict(cfg)) or "registrado"
 
 
 def dispositivo_con_python(clave="windows-x64", sello="release = 1\n") -> Path:
+    """Devuelve la raíz de un dispositivo de mentira con un runtime de Python."""
     raiz = tmpdir("prdrive-dispositivo-")
     d = raiz / penwatch.RUNTIME_SUBDIR / clave
     (d / "Lib").mkdir(parents=True)
@@ -87,7 +85,7 @@ a_medias = dispositivo_con_python()
 (a_medias / penwatch.RUNTIME_SUBDIR / "windows-x64" / "python.exe").unlink()
 c("sin intérprete no hay runtime", penwatch.device_runtime(a_medias), None)
 
-# --- instalar: copiar y apuntar a la copia -----------------------------------------
+# instalar: copiar y apuntar a la copia
 python, runtime, nota = penwatch.choose_python(pen)
 copia = penwatch.RUNTIMES_DIR / penwatch.stamp_id("release = 1\n")
 c("se copia al equipo, en una carpeta por versión", Path(python), copia / "python.exe")
@@ -104,12 +102,12 @@ c("copiar otra vez lo mismo no cambia nada", penwatch.choose_python(pen)[0], pyt
 cfg = {"mode": "ui", "python_exe": python, "runtime": runtime, "task_python": python}
 penwatch.write_json(penwatch.CONFIG_FILE, cfg)
 
-# --- en cada detección: mismo sello, nada que hacer ---------------------------------
+# en cada detección: mismo sello, nada que hacer
 registradas.clear()
 c("con el mismo sello no se refresca nada", penwatch.refresh_runtime(pen, cfg), cfg)
 c("ni se vuelve a registrar la tarea", registradas, [])
 
-# --- el dispositivo trae otra versión: copia al lado y cambio de puntero -------------
+# el dispositivo trae otra versión: copia al lado y cambio de puntero
 nuevo_pen = dispositivo_con_python(sello="release = 2\n")
 nuevo = penwatch.refresh_runtime(nuevo_pen, cfg)
 copia2 = penwatch.RUNTIMES_DIR / penwatch.stamp_id("release = 2\n")
@@ -127,6 +125,7 @@ c("la copia vieja se recoge: nadie la usa ya",
 # Si no se puede volver a registrar, la tarea sigue apuntando a la copia vieja: esa
 # NO se puede recoger, o el próximo inicio de sesión no arrancaría nada.
 def registro_roto(_cfg):
+    """Registro de la tarea que falla."""
     raise RuntimeError("schtasks dice que no")
 
 
@@ -142,7 +141,7 @@ c.contains("y queda dicho en el diario",
            penwatch.LOG_FILE.read_text(encoding="utf-8"), "schtasks dice que no")
 penwatch.register = lambda cfg: registradas.append(dict(cfg)) or "registrado"
 
-# --- la detección lo hace antes de lanzar -------------------------------------------
+# la detección lo hace antes de lanzar
 penwatch.write_json(penwatch.CONFIG_FILE, tercero)
 penwatch.write_json(penwatch.STATE_FILE, {})
 cuarto_pen = dispositivo_con_python(sello="release = 4\n")
@@ -157,7 +156,7 @@ finally:
 c("al detectar el dispositivo se refresca ANTES de lanzar runsync",
   [Path(p).parent.name for p in lanzados], [penwatch.stamp_id("release = 4\n")])
 
-# --- un dispositivo sin Python para este equipo: el del sistema, y se dice ------------
+# un dispositivo sin Python para este equipo: el del sistema, y se dice
 ligero = tmpdir("prdrive-ligero-")
 python, runtime, nota = penwatch.choose_python(ligero)
 c("sin runtime propio se usa el Python del equipo", python, sys.executable)

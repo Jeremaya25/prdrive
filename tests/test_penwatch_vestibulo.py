@@ -1,24 +1,22 @@
 #!/usr/bin/env python3
-"""
-El dispositivo cifrado, antes de abrirlo y al cerrarlo.
+"""El dispositivo cifrado, antes de abrirlo y al cerrarlo.
 
-Con VeraCrypt, `.prdrive/PRDRIVE` está dentro del contenedor y el vigilante no
-veía nada hasta que alguien lo abría a mano. Ahora reconoce el dispositivo
-cerrado por la marca del vestíbulo (el mismo id) y le pide a VeraCrypt que lo
-abra. Lo que se comprueba:
+Con VeraCrypt, `.prdrive/PRDRIVE` está dentro del contenedor, y el vigilante
+reconoce el dispositivo cerrado por la marca del vestíbulo (el mismo id) y le
+pide a VeraCrypt que lo abra. Lo que se comprueba:
+- Una vez por conexión: si se cancela la contraseña, no se vuelve a preguntar
+  hasta que la unidad desaparezca y vuelva. Y tampoco después de «Expulsar»,
+  con la unidad todavía puesta: lo que se quiere entonces es quitarla.
+- Solo el dispositivo de ESTE vigilante: con otro id no se pide nada.
+- El vigilante no lanza runsync desde el vestíbulo: eso lo hace el bucle de
+  siempre al ver el volumen montado, respetando el modo.
+- La orden: el VeraCrypt instalado antes que el que viaja, y sin contraseña.
+- Desde dentro: la ventana encuentra la raíz física por el mismo id, y
+  «Reparación» avisa cuando a un contenedor dinámico se le acaba el sitio.
 
-  * Una vez por conexión: si se cancela la contraseña, no se vuelve a preguntar
-    hasta que la unidad desaparezca y vuelva. Y tampoco después de «Expulsar»,
-    con la unidad todavía puesta: lo que se quiere entonces es quitarla.
-  * Solo el dispositivo de ESTE vigilante: con otro id no se pide nada.
-  * El vigilante no lanza runsync desde el vestíbulo: eso lo hace el bucle de
-    siempre al ver el volumen montado, respetando el modo.
-  * La orden: el VeraCrypt instalado antes que el que viaja, y sin contraseña.
-  * Desde dentro: la ventana encuentra la raíz física por el mismo id, y
-    «Reparación» avisa cuando a un contenedor dinámico se le acaba el sitio.
-
-Ni VeraCrypt ni una unidad de verdad: raíces en carpetas temporales, un equipo de
-mentira para el estado del vigilante, y la apertura y el lanzamiento sustituidos.
+Ni VeraCrypt ni una unidad de verdad: raíces en carpetas temporales, un equipo
+de mentira para el estado del vigilante, y la apertura y el lanzamiento
+sustituidos.
 """
 
 import os
@@ -38,7 +36,7 @@ c = Checks("el dispositivo cifrado: abrirlo al conectar y cerrarlo al quitar")
 
 ID = "a" * 32
 
-# --- 1. las copias de penwatch no se separan ------------------------------------
+# 1. las copias de penwatch no se separan
 c("el contenedor de penwatch es el de common", penwatch.CONTAINER_FILE,
   vestibulo.CONTENEDOR)
 c("y la marca también", penwatch.VESTIBULE_MARKER, vestibulo.MARCA)
@@ -51,7 +49,7 @@ c("y el script de abrir en Linux", penwatch.OPEN_SCRIPT, vestibulo.ABRIR_SH)
 c("y el fichero que activa VeraCrypt en udisks2, el del script",
   penwatch.UDISKS_TCRYPT_CONF.as_posix(), escritor.TCRYPT_CONF)
 
-# --- 2. un equipo de mentira ------------------------------------------------------
+# 2. un equipo de mentira
 equipo = tmpdir("prdrive-equipo-")
 for nombre, ruta in (("HOST_DIR", equipo), ("CONFIG_FILE", equipo / "watch.json"),
                      ("STATE_FILE", equipo / "state.json"),
@@ -61,6 +59,7 @@ for nombre, ruta in (("HOST_DIR", equipo), ("CONFIG_FILE", equipo / "watch.json"
 
 
 def vestibulo_en(device_id=ID, con_contenedor=True) -> Path:
+    """Crea una raíz física con el vestíbulo (y su contenedor) y devuelve su ruta."""
     raiz = tmpdir("prdrive-fisica-")
     if con_contenedor:
         (raiz / vestibulo.CONTENEDOR).write_bytes(b"x")
@@ -84,7 +83,7 @@ c("otro dispositivo cerrado no es el suyo", penwatch.find_vestibule(cfg), None)
 raices[:] = [vestibulo_en(con_contenedor=False)]
 c("una marca sin contenedor al lado tampoco", penwatch.find_vestibule(cfg), None)
 
-# --- 3. la orden ----------------------------------------------------------------
+# 3. la orden
 reales = {"IS_WIN": penwatch.IS_WIN, "environ": dict(os.environ)}
 try:
     penwatch.IS_WIN = True
@@ -131,11 +130,11 @@ finally:
     os.environ.clear()
     os.environ.update(reales["environ"])
 
-# --- 3a. el que viaja es el portable: el de la arquitectura de este equipo -------
+# 3a. el que viaja es el portable: el de la arquitectura de este equipo
 #
-# Lo que deja ahora el instalador es el VeraCrypt Portable oficial, un ejecutable
-# por arquitectura (#50). Se elige por la máquina NATIVA —VeraCrypt escoge su
-# driver igual, y un driver no se emula—, y un dispositivo de antes, con su
+# Lo que deja el instalador es el VeraCrypt Portable oficial, un ejecutable por
+# arquitectura (#50). Se elige por la máquina NATIVA (VeraCrypt escoge su
+# driver igual, y un driver no se emula), y un dispositivo de antes, con su
 # `VeraCrypt.exe`, se sigue abriendo.
 reales_arq = {"IS_WIN": penwatch.IS_WIN, "native_arch": penwatch.native_arch,
               "environ": dict(os.environ)}
@@ -174,12 +173,12 @@ finally:
     os.environ.clear()
     os.environ.update(reales_arq["environ"])
 
-# --- 3b. Linux sin VeraCrypt: qué vía tiene el equipo --------------------------------
+# 3b. Linux sin VeraCrypt: qué vía tiene el equipo
 #
 # udisks2 y cryptsetup piden la contraseña por una terminal, y el vigilante no
-# tiene: no abre nada (el `loop-setup` automático espera a U4 en #51), pero dice
-# en el diario con qué se abre en este equipo. Qué programas hay y si existe
-# tcrypt.conf se sustituyen: `shutil.which` y `Path.is_file`.
+# tiene: no abre nada (el `loop-setup` automático espera a U4 en #51), pero
+# dice en el diario con qué se abre en este equipo. Qué programas hay y si
+# existe tcrypt.conf se sustituyen: `shutil.which` y `Path.is_file`.
 hay: set[str] = set()
 tcrypt = [False]
 lanzado: list = []
@@ -188,16 +187,19 @@ reales = {"IS_WIN": penwatch.IS_WIN, "which": shutil.which, "is_file": Path.is_f
 
 
 def which_falso(nombre, mode=None, path=None):
+    """`shutil.which` de mentira: solo encuentra lo que hay en `hay`."""
     return f"/usr/bin/{nombre}" if nombre in hay else None
 
 
 def is_file_falso(self):
+    """`Path.is_file` de mentira para `tcrypt.conf`; el resto, el de verdad."""
     if self == penwatch.UDISKS_TCRYPT_CONF:
         return tcrypt[0]
     return reales["is_file"](self)
 
 
 def diario() -> str:
+    """Devuelve el diario del vigilante, o `""` si no hay."""
     try:
         return penwatch.LOG_FILE.read_text(encoding="utf-8")
     except OSError:
@@ -276,6 +278,7 @@ sis = tmpdir("prdrive sistema-")
 
 
 def montado_en(ruta: Path, device_id: str) -> Path:
+    """Crea en `ruta` un dispositivo montado con ese id."""
     (ruta / ".prdrive").mkdir(parents=True)
     (ruta / ".prdrive" / "PRDRIVE").write_text(f"# control\r\nid={device_id}\r\n",
                                                encoding="utf-8")
@@ -312,7 +315,7 @@ finally:
     for nombre, valor in reales.items():
         setattr(penwatch, nombre, valor)
 
-# --- 4. el bucle: una vez por conexión ------------------------------------------
+# 4. el bucle: una vez por conexión
 #
 # Cada `watch_loop(once=True)` es un sondeo; el estado queda en el equipo de
 # mentira entre uno y otro, como entre dos sondeos de verdad.
@@ -328,6 +331,7 @@ penwatch.write_json(penwatch.STATE_FILE, {})
 
 
 def sondeo():
+    """Hace un sondeo del vigilante."""
     penwatch.watch_loop(once=True)
 
 
@@ -380,7 +384,7 @@ raices[:] = [fisica]
 sondeo()
 c("y al volver a conectarla sí", len(aperturas), antes + 1)
 
-# --- 5. lo que dicen status y probe ----------------------------------------------
+# 5. lo que dicen status y probe
 reales_estado = penwatch.registered_state
 penwatch.registered_state = lambda: "tarea: de mentira"
 try:
@@ -392,7 +396,7 @@ c.contains("status: el dispositivo está, cifrado y cerrado",
 notas = dict(penwatch.probe_rows())
 c.contains("probe: lo reconoce por su marca", notas[str(fisica)], "cifrado, cerrado")
 
-# --- 6. desde dentro: la raíz física y el espacio de fuera -------------------------
+# 6. desde dentro: la raíz física y el espacio de fuera
 raices[:] = [tmpdir(), vestibulo_en("otro-dispositivo"), fisica]
 c("la ventana encuentra su raíz física por el id", vestibulo.raiz_fisica(ID), fisica)
 c("sin id, ninguna", vestibulo.raiz_fisica(""), None)
@@ -435,7 +439,7 @@ with sandbox():
     finally:
         fleet.device_id, vestibulo.UMBRAL_LIBRE = real_id, real_umbral
 
-# --- 7. «Expulsar»: qué script, y lanzarlo suelto ------------------------------------
+# 7. «Expulsar»: qué script, y lanzarlo suelto
 raices[:] = [fisica]
 real_id = fleet.device_id
 fleet.device_id = lambda app_dir=None: ID

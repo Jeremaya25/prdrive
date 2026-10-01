@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""
-El planificador del agente: qué toca ahora y cuándo volver a mirar.
+"""El planificador del agente: qué toca ahora y cuándo volver a mirar.
 
 Es puro, así que todo esto es una tabla de casos con un reloj de mentira: la
 espera creciente tras un fallo, la batería, la red de uso medido, el «sin
-conexión», la raíz bloqueada, la cola única y «Sincronizar ahora». Y el plazo de
-«¿Atender esta unidad?».
+conexión», la raíz bloqueada, la cola única y «Sincronizar ahora». Y el plazo
+de «¿Atender esta unidad?».
 """
 
 import math
@@ -30,15 +29,17 @@ LARGA = pl.Politica(mirar_maximo=pl.HORA)
 
 
 def dec(raices=(A, B), marcas=None, entorno=pl.Entorno(), ahora=T0, politica=P, **kw):
+    """Pide una decisión al planificador con valores por defecto."""
     return pl.decidir(raices, marcas or {}, entorno, ahora, politica, **kw)
 
 
 def que(d):
+    """Devuelve `(tipo, raíz, pareja)` de la tarea decidida, o `None`."""
     t = d.tarea
     return None if t is None else (t.tipo, t.raiz, t.pareja)
 
 
-# --- la cola -----------------------------------------------------------------
+# la cola
 d = dec()
 c("sin historia, la primera pareja de la primera raíz", que(d),
   ("pasada", "equipo", "docs"))
@@ -67,7 +68,7 @@ lejos = {k: pl.Marca(T0) for k in todas}
 c("el tope de mirar: aunque nada toque en 10 min, se mira al minuto",
   dec(marcas=lejos).mirar_en, P.mirar_maximo)
 
-# --- espera creciente --------------------------------------------------------
+# espera creciente
 c("sin fallos, el intervalo", pl.espera(30 * MIN, 0), 30 * MIN)
 c("un fallo, el doble", pl.espera(30 * MIN, 1), 60 * MIN)
 c("dos fallos, el cuádruple", pl.espera(30 * MIN, 2), 120 * MIN)
@@ -97,14 +98,14 @@ c("  y vuelve a mirar a los 15", d.mirar_en, 15 * MIN)
 c("a los 61, sí", que(dec(solo_a, tras_fallo, ahora=T0 + 16 * MIN)),
   ("pasada", "equipo", "docs"))
 
-# --- modo sync: una vez por conexión ------------------------------------------
+# modo sync: una vez por conexión
 UNA = pl.Raiz("unidad", (pl.Pareja("claves"),), math.inf)
 c("modo sync: la primera vez, sí", que(dec((UNA,))), ("pasada", "unidad", "claves"))
 d = dec((UNA,), {("unidad", "claves"): pl.Marca(T0 - 9 * pl.HORA, 3)})
 c("modo sync: hecha, nunca más en esta conexión", que(d), None)
 c("  y se mira al tope, no nunca", d.mirar_en, P.mirar_maximo)
 
-# --- moderarse ----------------------------------------------------------------
+# moderarse
 bateria_baja = pl.Entorno(con_bateria=True, bateria=15)
 d = dec(entorno=bateria_baja)
 c("con batería por debajo del 20 % no se lanza nada", que(d), None)
@@ -128,7 +129,7 @@ c("la política puede no pausar en red medida",
   pl.moderacion(medida, pl.Politica(pausar_red_medida=False)), None)
 c("en pausa, nada", dec(entorno=pl.Entorno(pausado=True)).retenido, "en pausa")
 
-# --- «Sincronizar ahora» ------------------------------------------------------
+# «Sincronizar ahora»
 urg = [("unidad", "claves")]
 for nombre, ent in (("pausa", pl.Entorno(pausado=True)), ("batería", bateria_baja),
                     ("red medida", medida)):
@@ -146,7 +147,7 @@ c("ni lanza una raíz que no se puede atender",
 c("una pareja urgente que ya no existe se ignora",
   que(dec(urgentes=[("unidad", "fantasma")])), ("pasada", "equipo", "docs"))
 
-# --- sin conexión -------------------------------------------------------------
+# sin conexión
 ent = pl.sin_conexion(pl.Entorno(), "equipo", "nas", T0 + P.sondeo_sin_conexion)
 d = dec(entorno=ent)
 c("lo que va a un remoto sin conexión no se lanza; lo demás, sí",
@@ -168,7 +169,7 @@ c("una sonda de una raíz que ya no está no se lanza",
   que(dec((B,), entorno=pl.sin_conexion(pl.Entorno(), "equipo", "nas", T0 - 9999))),
   ("pasada", "unidad", "claves"))
 
-# --- raíz bloqueada o ausente -------------------------------------------------
+# raíz bloqueada o ausente
 cerrada = pl.Raiz("equipo", A.parejas, A.intervalo, atendible=False)
 d = dec((cerrada,))
 c("una raíz bloqueada no lanza nada", que(d), None)
@@ -176,7 +177,7 @@ c("  no es un fallo: no hay motivo global", d.retenido, None)
 c("  y no hace esperar más de lo normal", d.mirar_en, P.mirar_maximo)
 c("la otra raíz sigue su curso", que(dec((cerrada, B))), ("pasada", "unidad", "claves"))
 
-# --- el plazo de «¿Atender esta unidad?» --------------------------------------
+# el plazo de «¿Atender esta unidad?»
 q = pl.Pregunta("abc", T0, 120)
 c("sin respuesta, antes del plazo: se espera", pl.resolver(q, None, T0 + 60), None)
 c("sin respuesta, al vencer: «Ahora no»", pl.resolver(q, None, T0 + 120), pl.AHORA_NO)
