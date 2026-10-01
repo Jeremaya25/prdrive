@@ -1,21 +1,19 @@
 #!/usr/bin/env python3
-"""
-La raíz de un equipo: una carpeta del ordenador que es un prdrive más (fase 2).
+"""La raíz de un equipo: una carpeta del ordenador que es un prdrive más (fase 2).
 
 Lo que se comprueba es lo que la hace distinta de una unidad, y nada más:
-
-  * `tipo=equipo` en el fichero de control, y quién lo lee (`model`, `device`,
-    `fleet`), sin que un penwatch viejo deje de encontrar el id.
-  * La pareja de la raíz entera no vale, ni una que salga de ella: al parsear
-    (`model.parse_config(equipo=True)` y `load_config()`), al elegir la carpeta
-    (`pair_editor.ruta_local_relativa`) y en el asistente (`revisar_local`).
-  * Qué carpetas valen de raíz (`examinar`), y el aviso de otro cliente de
-    sincronización con ubicaciones de OneDrive y Dropbox falsas.
-  * Instalar la raíz en un temporal, de verdad, con un rclone de mentira: lleva
-    rclone, conexión y control, y no lleva lanzadores ni Python.
-  * El `local` cambiado solo aquí (`device_config(locales=)`).
-  * Lo que el agente recibe: la raíz en su lista con su ruta, y el acceso del
-    menú.
+- `tipo=equipo` en el fichero de control, y quién lo lee (`model`, `device`,
+  `fleet`), sin que un penwatch viejo deje de encontrar el id.
+- La pareja de la raíz entera no vale, ni una que salga de ella: al parsear
+  (`model.parse_config(equipo=True)` y `load_config()`), al elegir la carpeta
+  (`pair_editor.ruta_local_relativa`) y en el asistente (`revisar_local`).
+- Qué carpetas valen de raíz (`examinar`), y el aviso de otro cliente de
+  sincronización con ubicaciones de OneDrive y Dropbox falsas.
+- Instalar la raíz en un temporal, de verdad, con un rclone de mentira: lleva
+  rclone, conexión y control, y no lleva lanzadores ni Python.
+- El `local` cambiado solo aquí (`device_config(locales=)`).
+- Lo que el agente recibe: la raíz en su lista con su ruta, y el acceso del
+  menú.
 """
 
 import json
@@ -37,12 +35,14 @@ c = Checks("la raíz de un equipo")
 
 
 def config(*locales):
+    """Devuelve un config de mentira con una pareja por cada `local`."""
     return {"defaults": {"remote": "nas"},
             "pair": [{"name": f"p{i}", "local": l, "remote_path": f"/R/{i}"}
                      for i, l in enumerate(locales)]}
 
 
 def rechaza(etiqueta, crudo, equipo_=True):
+    """Comprueba que `parse_config` rechace ese config."""
     try:
         model.parse_config(crudo, equipo=equipo_)
     except model.ConfigError as e:
@@ -52,7 +52,7 @@ def rechaza(etiqueta, crudo, equipo_=True):
     return ""
 
 
-# --- el config: la raíz entera no es una pareja --------------------------------
+# el config: la raíz entera no es una pareja
 for local in (".", "", "./", "../fuera", "a/../../b", "/etc", "C:\\Users", "\\\\srv\\x"):
     rechaza(f"en un equipo, local = {local!r} no vale", config(local))
 c("en un equipo, una carpeta de dentro sí",
@@ -111,7 +111,7 @@ try:
 finally:
     model.APP_DIR, model.DEVICE_ROOT = viejos
 
-# --- el fichero de control ------------------------------------------------------
+# el fichero de control
 raiz_c = tmpdir("prdrive-control-")
 uid = device.ensure_control_file(raiz_c, renew=True, tipo=model.TIPO_EQUIPO)
 c("ensure_control_file(tipo=equipo) lo escribe", device.control_tipo(raiz_c), "equipo")
@@ -129,7 +129,7 @@ c("pasarla a equipo conserva el id",
 raiz_u = tmpdir("prdrive-unidad-")
 device.ensure_control_file(raiz_u, renew=True)
 
-# --- otros clientes de sincronización -------------------------------------------
+# otros clientes de sincronización
 casa = tmpdir("prdrive-casa-")
 onedrive = casa / "OneDrive - Empresa"
 dropbox = casa / "Dropbox"
@@ -161,7 +161,7 @@ c("  y una que contiene a OneDrive, también", raiz_equipo.otro_cliente(casa),
   f"OneDrive ({onedrive})")
 c("  y una al lado, no", raiz_equipo.otro_cliente(casa / "OneDriveNo"), None)
 
-# --- ¿vale esta carpeta? -------------------------------------------------------
+# ¿vale esta carpeta?
 equipo.DIR = tmpdir("prdrive-agente-") / "prdrive"
 nueva = tmpdir("prdrive-raiz-") / "PRDRIVE"
 c("examinar: una que no existe es nueva", raiz_equipo.examinar(nueva).estado,
@@ -203,7 +203,7 @@ c("  una propia que contiene OneDrive: lo dice así, no «dentro de»",
   (ex.aviso, "contiene" in ex.texto, "dentro de una carpeta" in ex.texto),
   (True, True, False))
 
-# --- el local de cada pareja, visto desde la raíz --------------------------------
+# el local de cada pareja, visto desde la raíz
 info = raiz_equipo.revisar_local(casa, "\\Documentos\\Obsidian\\")
 c("revisar_local normaliza y resuelve", (info.local, info.ruta, info.error),
   ("Documentos/Obsidian", casa / "Documentos" / "Obsidian", None))
@@ -220,7 +220,7 @@ c("  una carpeta con cosas, un aviso de que se juntan",
   ("ya existe y tiene cosas: la inicialización las junta con lo del remoto",))
 raiz_equipo.carpetas_sincronizadas = lambda: []
 
-# --- instalar la raíz, de verdad, con un rclone de mentira -----------------------
+# instalar la raíz, de verdad, con un rclone de mentira
 RCLONE = tmpdir("prdrive-rc-") / "rclone"
 RCLONE.write_bytes(b"\x7fELF")
 pedidos = []
@@ -247,7 +247,7 @@ try:
 except InstallError:
     c("instalar encima de una unidad se niega", True, True)
 
-# --- el config de la raíz: el local cambiado aquí --------------------------------
+# el config de la raíz: el local cambiado aquí
 CAT = remote.parse_catalog(
     '[defaults]\nremote = "nas"\n\n'
     '[[pair]]\nname = "todo"\nlocal = "."\nremote_path = "/t"\nmode = "up-mirror"\n\n'
@@ -270,7 +270,7 @@ c("local_dirs con los locales de aquí",
 c("en una unidad, device_config sigue aceptando la raíz",
   deploy.device_config(CAT, ["todo"])["pair"][0]["local"], ".")
 
-# --- verificar: sin lanzadores ni Python que pedirle -----------------------------
+# verificar: sin lanzadores ni Python que pedirle
 filas = {k.etiqueta: k for k in raiz_equipo.verificar(nueva, ["todo", "docs"])}
 c("verificar: control con «raíz del equipo»", filas["Fichero de control"].detalle.endswith(
     "raíz del equipo"), True)
@@ -278,7 +278,7 @@ c("  el config se lee con las reglas del equipo", filas["El config se lee"].ok, 
 c("  sin fila de lanzador ni de Python",
   [e for e in filas if e.startswith(("Lanzador", "Python para"))], [])
 
-# --- la nota de la flota ------------------------------------------------------
+# la nota de la flota
 nota = fleet.nota_de(nueva / ".prdrive", "Mi portátil", "0.4.0", "ok")
 c("fleet: la nota de la raíz lleva tipo = equipo", (nota.tipo, nota.es_equipo),
   ("equipo", True))
@@ -288,16 +288,18 @@ c("  la de una unidad no escribe la clave", "tipo" in fleet.dumps(nota_u), False
 c("tk_fleet: la ficha dice que es de un equipo",
   tk_fleet.ficha(nota, "")[1].lineas[0].texto, tk_fleet.EN_UN_EQUIPO)
 
-# --- la flota, para el paso «Unidades» ----------------------------------------
+# la flota, para el paso «Unidades»
 
 
 class RcFlota:
     """`copy` de la carpeta devices/: deja las notas en el destino."""
 
     def __init__(self, rc=0):
+        """Prepara el rclone de la flota con ese código de salida."""
         self.rc, self.pedido = rc, []
 
     def run(self, *args, capture=False, timeout=None):
+        """Hace de `copy`: deja las notas en el destino y apunta lo pedido."""
         self.pedido.append(args)
         destino = Path(args[2])
         for disp in (nota, nota_u):
@@ -305,6 +307,7 @@ class RcFlota:
         (destino / "roto.toml").write_text("esto no es toml [", encoding="utf-8")
 
         class R:
+            """Resultado de proceso con el código de salida de la flota."""
             returncode = self.rc
         return R()
 
@@ -317,7 +320,7 @@ c("  las unidades, sin las raíces de otros equipos ni las rotas",
   [d.id for d in flota], [nota_u.id])
 c("  sin red, ninguna", raiz_equipo.de_la_flota(RcFlota(rc=1), "nas:/c/pairs.toml"), [])
 
-# --- lo que recibe el agente ----------------------------------------------------
+# lo que recibe el agente
 equipo.DIR = tmpdir("prdrive-agente-2-")
 RAIZ = equipo.Unidad(ident, equipo.DAEMON, "Mi portátil", str(nueva))
 ia.aplicar_unidades({"u" * 32: (equipo.SYNC, "Azul")}, 90.0, RAIZ)
@@ -362,14 +365,14 @@ c("desinstalar dice dónde sigue la raíz",
   any(str(nueva) in m and "sigue" in m for m in msgs), True)
 c("  y no la toca", (nueva / ".prdrive" / "PRDRIVE").is_file(), True)
 
-# --- la línea de la ventana -----------------------------------------------------
+# la línea de la ventana
 c("watch: la raíz del equipo, atendida por el agente",
   watch.linea(watch.Resumen("agente_raiz", equipo.DAEMON, True)).texto,
   "Es la carpeta de este equipo: la sincroniza el agente, en segundo plano.")
 c("  y eso cuenta como que la vigila",
   watch.Resumen("agente_raiz", equipo.DAEMON).vigila_este, True)
 
-# --- fase 3: la raíz cifrada ----------------------------------------------------
+# fase 3: la raíz cifrada
 from common import vestibulo as vest  # noqa: E402
 from install import crypto  # noqa: E402
 from ui import cifrado  # noqa: E402
@@ -425,6 +428,7 @@ crypto.IS_WIN, raiz_equipo.SISTEMA_DENTRO = False, "exFAT"
 
 
 def run_falso(cmd, password="", timeout=None):
+    """`_run` de mentira: crea el contenedor al pedirlo y apunta las órdenes."""
     ordenes.append(crypto.redact(cmd, password))
     if "--create" in cmd:
         Path(cmd[cmd.index("--create") + 1]).write_bytes(b"\0")
@@ -433,6 +437,7 @@ def run_falso(cmd, password="", timeout=None):
         Path(cmd[3]).mkdir(parents=True, exist_ok=True)
 
     class R:
+        """Resultado de proceso que sale bien y sin salida."""
         returncode, stdout, stderr = 0, "", ""
     return R()
 

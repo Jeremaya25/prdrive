@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""
-Los caminos de run_pair(), con la ejecución de rclone simulada.
+"""Los caminos de `run_pair()`, con la ejecución de rclone simulada.
 
-Aquí viven los invariantes de seguridad del proyecto: que una pareja sin baseline
-aprobado se SALTA en vez de resincronizarse sola, y que un baseline con la carpeta
-local ausente ABORTA en vez de crearla vacía (una carpeta vacía se lee como "han
-borrado todo").
+Aquí viven los invariantes de seguridad del proyecto: que una pareja sin
+baseline aprobado se SALTA en vez de resincronizarse sola, y que un baseline
+con la carpeta local ausente ABORTA en vez de crearla vacía (una carpeta vacía
+se lee como «han borrado todo»).
 """
 
 import contextlib
@@ -49,6 +48,7 @@ def correr(raw, *, listings=False, make_local=True, rc_seq=(0,), texto_log="simu
     codigos = iter(rc_seq)
 
     def execute_simulado(ctx, cmd, logfile=None):
+        """Simula `execute()`: apunta la orden y escribe el log como rclone."""
         ordenes.append(cmd)
         rc = next(codigos, rc_seq[-1])
         for i, arg in enumerate(cmd):          # rclone escribe su log; se emula
@@ -124,15 +124,17 @@ with sandbox():
     c("bisync usa fichero de filtros", "--filters-file" in ordenes[0], True)
     c("bisync no duplica reglas con --include", "--include" in ordenes[0], False)
 
-# --- lo que queda apuntado tras cada pasada -------------------------------------
-# La ventana y el servicio no leen la salida de sync.py: leen state/. Así que lo
-# que importa es qué queda escrito ahí después de cada caso.
+# lo que queda apuntado tras cada pasada
+#
+# La ventana y el servicio no leen la salida de sync.py: leen state/. Así que
+# lo que importa es qué queda escrito ahí después de cada caso.
 from common import conflicts, results  # noqa: E402
 
 CFG_BI = model.parse_config({"defaults": DEF, "pair": [BI]})
 
 
 def conflicto_en_disco():
+    """Deja en la pareja un fichero y su conflicto."""
     carpeta = model.DEVICE_ROOT / "sync-data" / "bi"
     carpeta.mkdir(parents=True, exist_ok=True)
     (carpeta / "plan.md").write_text("ganó", encoding="utf-8")
@@ -181,7 +183,8 @@ with sandbox():
       [(f.pareja, f.codigo) for f in results.fallos(CFG_BI)], [("bi", 2)])
 
 
-# --- el diario de pasadas ------------------------------------------------------------
+# el diario de pasadas
+#
 # Va al lado de `results` y con su criterio (common/historial.py): cada pasada
 # real, buena o mala, deja una línea; un simulacro o una pareja saltada, no.
 from common import historial, store  # noqa: E402
@@ -250,12 +253,13 @@ with sandbox():
       [(p.pareja, p.codigo, p.segundos) for p in historial.leer()], [("bi", 1, None)])
 
 
-# --- la consola de rclone acaba dentro del log ------------------------------------
-# Aquí NO se simula execute(): se ejecuta un proceso de verdad, porque lo que se
-# comprueba es justamente el trozo que el simulador se salta. El caso real es un
-# flag que rclone rechaza antes de instalar el --log-file (conflict-resolve =
-# "new" en vez de "newer"): el log quedaba de 0 bytes y el único mensaje útil se
-# perdía.
+# la consola de rclone acaba dentro del log
+#
+# Aquí NO se simula execute(): se ejecuta un proceso de verdad, porque lo que
+# se comprueba es justamente el trozo que el simulador se salta. El caso real
+# es un flag que rclone rechaza antes de instalar el --log-file
+# (conflict-resolve = "new" en vez de "newer"): el log quedaba de 0 bytes y el
+# único mensaje útil se perdía.
 ESCUPIR = ("import sys; "
            "sys.stderr.write('Error: invalid argument \\\"new\\\" for "
            "\\\"--conflict-resolve\\\" flag: invalid choice \\\"new\\\"\\n'); "
@@ -294,10 +298,11 @@ with sandbox():
     c("una consola vacía no ensucia el log", log.stat().st_size, 0)
     log.unlink(missing_ok=True)
 
-# --- la ayuda de rclone no puede colarse en el log -------------------------------
-# Ante un flag malo rclone escribe el error y detrás la ayuda entera (12 KB). Si
-# entrara tal cual, `explain_failure` encontraría ahí dentro '--max-delete' y
-# explicaría un fallo que no ha ocurrido: un diagnóstico falso es peor que
+# la ayuda de rclone no puede colarse en el log
+#
+# Ante un flag malo rclone escribe el error y detrás la ayuda entera (12 KB).
+# Si entrara tal cual, `explain_failure` encontraría ahí dentro '--max-delete'
+# y explicaría un fallo que no ha ocurrido: un diagnóstico falso es peor que
 # ninguno. Este es el trozo de ayuda real, recortado.
 AYUDA = """Error: invalid argument "new" for "--conflict-resolve" flag: invalid choice "new"
 Usage:
@@ -334,10 +339,11 @@ with sandbox():
 c("sin ayuda que quitar, el texto se respeta entero",
   sync.strip_usage("Error: unknown flag: --x\n"), "Error: unknown flag: --x\n")
 
-# --- el lock de otra ejecución, no el de rutina ------------------------------------
+# el lock de otra ejecución, no el de rutina
+#
 # bisync con --max-lock apunta "lock file renewed" en CADA pasada que coge el
-# lock, también en las que luego fallan por otra cosa. Con la aguja "lock file" a
-# secas, cualquier fallo de bisync salía explicado como un lock de otra
+# lock, también en las que luego fallan por otra cosa. Con la aguja "lock file"
+# a secas, cualquier fallo de bisync salía explicado como un lock de otra
 # ejecución. Los dos logs son de verdad (rclone v1.75, rutas cambiadas).
 TODO_CAMBIADO = """\
 2026/09/11 13:05:29 INFO  : Bisyncing with Comparison Settings:
@@ -365,6 +371,7 @@ rclone deletefile "{LCK}"
 
 
 def explicar(texto):
+    """Devuelve lo que `explain_failure` dice de un log con ese texto."""
     with sandbox():
         log = sync.temp_log("explicar")
         log.write_text(texto, encoding="utf-8")

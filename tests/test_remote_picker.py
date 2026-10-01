@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
-"""
-El explorador del remoto: leer `rclone lsd`, navegar y crear una carpeta.
+"""El explorador del remoto: leer `rclone lsd`, navegar y crear una carpeta.
 
-Antes, `remote_path` se tecleaba de memoria y el error aparecía en la primera
-sincronización —o no aparecía, y la pareja acababa apuntando a una carpeta con
-una errata dentro—. Lo que se comprueba aquí es lo que hace que eso deje de
-pasar: que la salida de rclone se lee bien (incluidos los nombres con espacios),
-que navegar no se sale nunca de la raíz, y que crear una carpeta no puede colar
-una ruta entera disfrazada de nombre.
+Teclear `remote_path` de memoria deja el error para la primera sincronización
+(o para nunca: la pareja acaba apuntando a una carpeta con una errata dentro).
+Lo que se comprueba aquí es lo que lo evita: que la salida de rclone se lee
+bien (incluidos los nombres con espacios), que navegar no se sale nunca de la
+raíz, y que crear una carpeta no puede colar una ruta entera disfrazada de
+nombre.
 
 `catalog.run` se sustituye entero: ningún test toca la red.
 """
@@ -30,7 +29,7 @@ LSD = """\
           -1 2026-02-03 09:30:11        -1 .oculta
 """
 
-# --- leer lo que dice rclone ---------------------------------------------------
+# leer lo que dice rclone
 c("se leen los nombres de carpeta", remote_picker.parse_lsd(LSD),
   [".oculta", "documentos", "fotos de verano"])
 c("un nombre con espacios llega entero",
@@ -40,7 +39,7 @@ c("una salida vacía es una carpeta vacía, no un error",
 c("una línea que no cuadra se ignora",
   remote_picker.parse_lsd("esto no es una línea de lsd\n"), [])
 
-# --- navegar -------------------------------------------------------------------
+# navegar
 c("las rutas se normalizan como las escribe el proyecto",
   [remote_picker.normalizar(x) for x in ("datos/notas/", "/datos//notas", "", "/")],
   ["/datos/notas", "/datos/notas", "/", "/"])
@@ -52,18 +51,20 @@ c("el explorador abre en la carpeta que contiene a la pareja",
 c("y en la raíz si no hay nada escrito", remote_picker.carpeta_de(""), "/")
 c("el endpoint es el de siempre", remote_picker.endpoint("nas", "/datos"), "nas:/datos")
 
-# --- contra qué remote se navega ------------------------------------------------
+# contra qué remote se navega
 RAW = {"defaults": {"remote": "nas"}}
 c("sin remote propio, el de [defaults]", remote_picker.remote_de(RAW), "nas")
 c("con uno propio, el suyo", remote_picker.remote_de(RAW, " otro "), "otro")
 c("y sin defaults, el de fábrica", remote_picker.remote_de({}), model.DEFAULT_REMOTE)
 
-# --- las órdenes que se lanzan ---------------------------------------------------
+# las órdenes que se lanzan
 ordenes: list[list[str]] = []
 
 
 def responder(rc=0, stdout="", stderr=""):
+    """Devuelve un `catalog.run` de mentira que apunta las órdenes."""
     def _run(args):
+        """Apunta la orden y contesta con el resultado preparado."""
         ordenes.append(list(args))
         return subprocess.CompletedProcess(args, rc, stdout=stdout, stderr=stderr)
     return _run
@@ -84,6 +85,7 @@ try:
         c("una carpeta que no está se cuenta", "directory not found" in str(e), True)
 
     def reventar(args):
+        """Hace que la orden falle: no hay rclone."""
         raise OSError("no hay rclone")
     catalog.run = reventar
     try:
@@ -92,7 +94,7 @@ try:
     except ConfigError:
         c("y un rclone que no arranca también", True, True)
 
-    # --- crear ------------------------------------------------------------------
+    # crear
     ordenes.clear()
     catalog.run = responder()
     c("crear devuelve la ruta nueva",
@@ -111,9 +113,10 @@ try:
 finally:
     catalog.run = real_run
 
-# --- la otra mitad: la carpeta local ---------------------------------------------
-# `local` es siempre relativa a la raíz del dispositivo, que es lo que hace que la
-# misma pareja valga en cualquier equipo y con cualquier letra de unidad.
+# la otra mitad: la carpeta local
+#
+# `local` es siempre relativa a la raíz del dispositivo, que es lo que hace que
+# la misma pareja valga en cualquier equipo y con cualquier letra de unidad.
 raiz = model.DEVICE_ROOT.resolve()
 c("una carpeta del dispositivo se guarda relativa",
   pair_editor.ruta_local_relativa(raiz / "sync-data" / "notas"), "sync-data/notas")

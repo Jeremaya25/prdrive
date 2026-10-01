@@ -1,23 +1,20 @@
 #!/usr/bin/env python3
-"""
-El Python que viaja en el dispositivo: qué se descarga, qué se comprueba y qué
-acaba escrito.
+"""El Python que viaja en el dispositivo: qué se descarga, comprueba y escribe.
 
-Es el mismo contrato que `test_rclone_bin.py` —si el SHA-256 no es el que
-publica python-build-standalone, no se escribe nada— más lo que es propio de un
+Es el mismo contrato que `test_rclone_bin.py` (si el SHA-256 no es el que
+publica python-build-standalone, no se escribe nada) más lo que es propio de un
 runtime entero y no de un binario suelto:
-
-  * el archivo trae miles de ficheros, y uno solo que pretenda salirse del
-    destino tumba la extracción ANTES de escribir nada;
-  * exFAT no tiene enlaces simbólicos, así que el `bin/python3` de Linux —que en
-    el archivo es un enlace— tiene que acabar siendo un fichero de verdad;
-  * lo que no hace falta para ejecutar prdrive (pip, idle, los tests, las
-    cabeceras de C) no viaja;
-  * y el sello de versión se escribe el ÚLTIMO: un runtime a medias no lo tiene,
-    y sin sello no cuenta como instalado.
+- El archivo trae miles de ficheros, y uno solo que pretenda salirse del
+  destino tumba la extracción ANTES de escribir nada.
+- exFAT no tiene enlaces simbólicos, así que el `bin/python3` de Linux (que en
+  el archivo es un enlace) tiene que acabar siendo un fichero de verdad.
+- Lo que no hace falta para ejecutar prdrive (pip, idle, los tests, las
+  cabeceras de C) no viaja.
+- Y el sello de versión se escribe el ÚLTIMO: un runtime a medias no lo tiene,
+  y sin sello no cuenta como instalado.
 
 `runtime_bin.fetch()` y `cache_dir()` se sustituyen enteros: ningún test habla
-con GitHub ni ensucia el %LOCALAPPDATA% de nadie.
+con GitHub ni ensucia el `%LOCALAPPDATA%` de nadie.
 """
 
 import hashlib
@@ -37,7 +34,7 @@ LIN = pins.plataforma("linux-x64")
 MM = ".".join(pins.PYTHON_VERSION.split(".")[:2])       # '3.13'
 
 
-# --- las versiones fijadas y las plataformas ----------------------------------
+# las versiones fijadas y las plataformas
 c("los cuatro destinos de python-build-standalone",
   sorted(p.triple for p in pins.PLATAFORMAS),
   sorted(["x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc",
@@ -65,7 +62,7 @@ c("y el de consola", WIN.interprete_consola, "python.exe")
 c("en Linux es bin/python3 en los dos casos",
   (LIN.interprete, LIN.interprete_consola), ("bin/python3", "bin/python3"))
 
-# --- los nombres y las URL -----------------------------------------------------
+# los nombres y las URL
 NOMBRE_WIN = (f"cpython-{pins.PYTHON_VERSION}+{pins.PYTHON_RELEASE}-"
               f"x86_64-pc-windows-msvc-install_only_stripped.tar.gz")
 c("el nombre del archivo, con versión, release y destino",
@@ -80,9 +77,13 @@ c("las sumas se leen de la misma release",
   runtime_bin.SUMS_URL, f"{pins.PBS_BASE_URL}/{pins.PYTHON_RELEASE}/SHA256SUMS")
 
 
-# --- archivos de mentira con la forma de los de verdad -------------------------
+# archivos de mentira con la forma de los de verdad
 def tar_gz(miembros) -> bytes:
-    """miembros: (nombre, bytes | ('link', destino) | None=directorio, modo)."""
+    """Devuelve un tar.gz con esos miembros.
+
+    Cada miembro es `(nombre, bytes | ('link', destino) | None=directorio,
+    modo)`.
+    """
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tf:
         for nombre, dato, *resto in miembros:
@@ -134,8 +135,9 @@ ARCHIVO_LIN = tar_gz([
 ])
 
 
-# --- extraer: Windows -----------------------------------------------------------
+# extraer: Windows
 def archivo_en_disco(datos: bytes) -> "os.PathLike":
+    """Escribe los datos como archivo en un temporal y devuelve su ruta."""
     ruta = tmpdir() / "archivo.tar.gz"
     ruta.write_bytes(datos)
     return ruta
@@ -162,7 +164,7 @@ c.contains("y la suma del archivo del que salió", sello, "abc123")
 c("el sello es el que describe el runtime_bin",
   sello, runtime_bin.stamp_text(WIN, "abc123"))
 
-# --- extraer: Linux, con sus enlaces -----------------------------------------------
+# extraer: Linux, con sus enlaces
 destino = tmpdir() / "linux-x64"
 runtime_bin.extract(archivo_en_disco(ARCHIVO_LIN), destino, LIN, sha256="def")
 python3 = destino / "bin" / "python3"
@@ -188,7 +190,7 @@ c("libpython.so no viaja", sorted(p.name for p in (destino / "lib").glob("libpyt
 c("ni share/ (terminfo, man)", (destino / "share").exists(), False)
 c("el sello está", (destino / runtime_bin.STAMP).is_file(), True)
 
-# --- un archivo que pretende salirse no escribe NADA -----------------------------
+# un archivo que pretende salirse no escribe NADA
 malo = tar_gz([("python/python.exe", b"MZ"), ("python/../../fuera.txt", b"x")])
 destino = tmpdir() / "malo"
 try:
@@ -215,13 +217,16 @@ except InstallError as e:
     c.contains("y se dice qué falta", str(e), "pythonw.exe")
 
 
-# --- descargar, comprobar y guardar en la caché -------------------------------------
+# descargar, comprobar y guardar en la caché
 def red(respuestas: dict):
-    """URL -> bytes o excepción; una lista es una respuesta por petición, en
-    orden, y la última se repite."""
+    """Sustituye `fetch` por un diccionario de URL a bytes o excepción.
+
+    Una lista es una respuesta por petición, en orden, y la última se repite.
+    """
     pedidas: list[str] = []
 
     def falso(url, timeout=None):
+        """Apunta la URL y contesta con lo que haya para ella."""
         pedidas.append(url)
         if url not in respuestas:
             raise AssertionError(f"el código ha pedido una URL que no esperaba: {url}")
@@ -296,7 +301,7 @@ try:
     except InstallError:
         c("sin permiso para descargar, una caché rota no vale", "InstallError", "InstallError")
 
-    # --- y cuando la descarga NO cuadra: no se guarda nada ----------------------
+    # y cuando la descarga NO cuadra: no se guarda nada
     limpio = tmpdir("prdrive-runtime-malo-")
     runtime_bin.cache_dir = lambda: limpio
     red({runtime_bin.SUMS_URL: SUMS, URL_WIN: ARCHIVO_WIN + b"basura"})
@@ -311,7 +316,7 @@ try:
     c("y una suma que no cuadra no se reintenta: no es un corte de red",
       esperas, [])
 
-    # --- #49: un tiempo de espera ya no tumba la instalación ------------------
+    # #49: un tiempo de espera ya no tumba la instalación
     TIMEOUT = TimeoutError("The read operation timed out")
     reintento = tmpdir("prdrive-runtime-reintento-")
     runtime_bin.cache_dir = lambda: reintento
@@ -340,11 +345,11 @@ try:
     c.contains("y la carpeta exacta", mensaje, str(rendido))
     c("sin haber dejado nada en la caché", list(rendido.iterdir()), [])
 
-    # --- #49: ponerlo a mano ------------------------------------------------------
+    # #49: ponerlo a mano
     #
-    # El archivo va justo donde lo dejaría la descarga, con su nombre, y junto al
-    # SHA256SUMS de la release se comprueba sin red. Antes un archivo sin su
-    # `.sha256` al lado se ignoraba y se descargaba encima.
+    # El archivo va justo donde lo dejaría la descarga, con su nombre, y junto
+    # al SHA256SUMS de la release se comprueba sin red; uno sin su `.sha256` al
+    # lado no se ignora ni se descarga encima.
     a_mano = tmpdir("prdrive-runtime-a-mano-")
     runtime_bin.cache_dir = lambda: a_mano
     (a_mano / NOMBRE_WIN).write_bytes(ARCHIVO_WIN)

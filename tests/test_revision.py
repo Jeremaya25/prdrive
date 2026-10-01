@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""
-El diagnóstico compartido (common/revision.py).
+"""El diagnóstico compartido (`common/revision.py`).
 
 Es la lista de averías que imprime `sync.py --doctor` y que dibuja la pantalla
-de «Reparación», y es UNA: si aquí se deja de ver algo, deja de verse en los dos
-sitios a la vez. Por eso lo que se comprueba es qué se detecta y con qué
+de «Reparación», y es UNA: si aquí se deja de ver algo, deja de verse en los
+dos sitios a la vez. Por eso lo que se comprueba es qué se detecta y con qué
 gravedad, no cómo queda escrito.
 """
 
@@ -22,17 +21,21 @@ c = Checks("el diagnóstico compartido")
 
 
 def claves(hallazgos):
+    """Devuelve las claves de los hallazgos, ordenadas y sin repetir."""
     return sorted({h.clave for h in hallazgos})
 
 
 def uno(hallazgos, clave):
+    """Devuelve el hallazgo con esa clave, o `None`."""
     return next((h for h in hallazgos if h.clave == clave), None)
 
 
 def listados(pair, prefijo=None):
-    """Un baseline en disco, como lo deja un --resync: los dos listados y el
-    md5 de los filtros. Sin el md5 la pareja pide resync con razón, que es
-    precisamente una de las averías de más abajo."""
+    """Deja un baseline en disco, como lo deja un `--resync`.
+
+    Son los dos listados y el md5 de los filtros. Sin el md5 la pareja pide
+    resync con razón, que es precisamente una de las averías de más abajo.
+    """
     prefijo = prefijo or bisync.expected_prefix(pair)
     pair.workdir.mkdir(parents=True, exist_ok=True)
     for sufijo in (bisync.PATH1_SUFFIX, bisync.PATH2_SUFFIX):
@@ -139,21 +142,25 @@ with sandbox():
                "\n".join(revision.informe(cfg)), "Sin incidencias.")
 
 
-# --- desde cuándo falla: el diario de pasadas ----------------------------------------
-# El fallo dice desde cuándo y cuántas de las últimas fueron bien. La frase sale
-# de common/historial.py y llega a la pantalla y a --doctor desde aquí.
+# desde cuándo falla: el diario de pasadas
+#
+# El fallo dice desde cuándo y cuántas de las últimas fueron bien. La frase
+# sale de common/historial.py y llega a la pantalla y a --doctor desde aquí.
 ANO = datetime.now().year
 
 
 def diario(pareja, codigos, dia=1, ano=ANO):
-    """Una pasada por código, un día después de la anterior, empezando el `dia`
-    de septiembre."""
+    """Apunta una pasada por código, un día después de la anterior.
+
+    Empieza el `dia` de septiembre.
+    """
     for i, codigo in enumerate(codigos):
         historial.apuntar(historial.Pasada(
             pareja, f"{ano}-09-{dia + i:02d} 10:00:00", codigo, 5.0, None))
 
 
 def detalle_fallo(cfg):
+    """Devuelve el detalle del hallazgo `fallo`."""
     return uno(revision.revisar(cfg), "fallo").detalle
 
 

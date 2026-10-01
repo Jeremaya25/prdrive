@@ -1,19 +1,17 @@
 #!/usr/bin/env python3
-"""
-Conseguir rclone: qué se descarga y qué se comprueba antes de guardarlo.
+"""Conseguir rclone: qué se descarga y qué se comprueba antes de guardarlo.
 
 Lo que baja este módulo se ejecuta y acaba copiado dentro del dispositivo, así
-que la parte interesante no es la descarga sino la negativa: si el SHA-256 no es
-el que publica rclone, no se escribe nada. Antes no se comprobaba nada y
-cualquier cosa que contestara en esa URL acababa ejecutándose.
+que la parte interesante no es la descarga sino la negativa: si el SHA-256 no
+es el que publica rclone, no se escribe nada.
 
 `rclone_bin.fetch()` es de módulo justo para esto y aquí se sustituye entera:
 ningún test de este proyecto habla con la red. `cache_dir()` también, para no
-ensuciar el %LOCALAPPDATA% de quien corra los tests.
+ensuciar el `%LOCALAPPDATA%` de quien corra los tests.
 
-La versión ya no es «la que diga version.txt»: está fijada en `common/pins.py`,
-y lo que se descarga es esa. Y ya no es solo la de este equipo: el dispositivo
-puede llevar rclone para varias plataformas, cada una con su zip.
+La versión está fijada en `common/pins.py` y lo que se descarga es esa. Y no es
+solo la de este equipo: el dispositivo puede llevar rclone para varias
+plataformas, cada una con su zip.
 """
 
 import hashlib
@@ -66,6 +64,7 @@ def red(respuestas: dict):
     pedidas: list[str] = []
 
     def falso(url, timeout=None):
+        """Sustituye `fetch`: apunta la URL y contesta con lo que haya para ella."""
         pedidas.append(url)
         if url not in respuestas:
             raise AssertionError(f"el código ha pedido una URL que no esperaba: {url}")
@@ -86,7 +85,7 @@ URL_ZIP = f"{rclone_bin.RCLONE_BASE_URL}/{VERSION}/{NOMBRE_ZIP}"
 fetch_real = rclone_bin.fetch
 cache_real = rclone_bin.cache_dir
 try:
-    # --- la URL es la VERSIONADA, no el alias 'current' -----------------------
+    # la URL es la VERSIONADA, no el alias 'current'
     #
     # Importa: `current` se mueve con cada publicación, y la suma que se tiene
     # en la mano es la de la versión fijada, no la de lo que haya salido hoy.
@@ -95,9 +94,10 @@ try:
     c("y no es el alias 'current'",
       "current" in rclone_bin.download_url(VERSION), False)
 
-    # --- sacar la suma del SHA256SUMS ----------------------------------------
-    # Antes de ir a la red se mira si hay uno puesto a mano en la caché: que sea
-    # una vacía, y no la de quien corre los tests.
+    # sacar la suma del SHA256SUMS
+    #
+    # Antes de ir a la red se mira si hay uno puesto a mano en la caché: que
+    # sea una vacía, y no la de quien corre los tests.
     vacia = tmpdir("prdrive-rclone-vacia-")
     rclone_bin.cache_dir = lambda plat=None: vacia
     red({URL_SUMS: SUMS.encode()})
@@ -112,7 +112,7 @@ try:
         c("sin suma para nuestro zip no se sigue", "InstallError", "InstallError")
         c.contains("y se dice cuál falta", str(e), "nosuch-arch")
 
-    # --- la descarga completa, cuando todo cuadra ----------------------------
+    # la descarga completa, cuando todo cuadra
     destino = tmpdir("prdrive-rclone-")
     rclone_bin.cache_dir = lambda plat=None: destino
     pedidas = red({URL_SUMS: SUMS.encode(), URL_ZIP: ZIP})
@@ -126,7 +126,7 @@ try:
     c.contains("y se cuenta que la suma cuadró", " ".join(dicho), SUMA)
     c("el zip no se queda por ahí", (destino / "rclone.zip").exists(), False)
 
-    # --- otra plataforma: su zip, su binario, su caché ------------------------
+    # otra plataforma: su zip, su binario, su caché
     c("el zip de otra plataforma se nombra con la suya",
       rclone_bin.zip_name(VERSION, LINUX_ARM), f"rclone-{VERSION}-linux-arm64.zip")
     zip_arm = zip_de_mentira(b"rclone de linux arm", "linux", "arm64", "rclone")
@@ -135,6 +135,7 @@ try:
     otra = tmpdir("prdrive-rclone-otra-")
 
     def cache_por_arch(plat=None):
+        """Devuelve la carpeta de caché de esa plataforma (o la del equipo)."""
         d = otra / (plat.bin_dir if plat else "host")
         d.mkdir(exist_ok=True)
         return d
@@ -190,7 +191,7 @@ try:
         c.contains("nombrando la plataforma", str(e), "Windows ARM64")
     rclone_bin.cache_dir = lambda plat=None: destino
 
-    # --- y cuando NO cuadra --------------------------------------------------
+    # y cuando NO cuadra
     #
     # Ésta es la comprobación por la que existe el fichero. No basta con que
     # falle: no puede haber dejado nada escrito.
@@ -208,7 +209,7 @@ try:
     c("ni el zip", (limpio / "rclone.zip").exists(), False)
     c("la caché se queda como estaba", list(limpio.iterdir()), [])
 
-    # --- y si falla justo al apuntar la suma, tampoco queda nada a medias ----
+    # y si falla justo al apuntar la suma, tampoco queda nada a medias
     #
     # Este fallo llega DESPUÉS del `os.replace`: ya no hay `.part` que limpiar,
     # pero sí un `destino` recién renombrado. Si se dejara ahí sería un binario
@@ -234,7 +235,7 @@ try:
     c("la caché queda tan limpia como si no se hubiera tocado",
       list(suma_rota.iterdir()), [])
 
-    # --- y si falla ANTES de renombrar, lo que ya hubiera no se toca ---------
+    # y si falla ANTES de renombrar, lo que ya hubiera no se toca
     #
     # El caso simétrico al de arriba: aquí `destino` no es del intento que
     # falla, es un binario bueno de una descarga anterior, con su suma al lado.
@@ -270,12 +271,12 @@ try:
     c("y el .part a medias sí se limpia",
       (con_binario_previo / (EXE + ".part")).exists(), False)
 
-    # --- la caché va por versión fijada --------------------------------------
+    # la caché va por versión fijada
     #
     # Sin este tramo, mover `pins.RCLONE_VERSION` no servía de nada mientras la
     # caché del equipo tuviera el binario de antes: `rclone_for()` lo encuentra
-    # antes de plantearse descargar, así que la versión nueva no llegaba nunca a
-    # un dispositivo. Y desde R4 eso además le mentiría al sello.
+    # antes de plantearse descargar, así que la versión nueva no llegaba nunca
+    # a un dispositivo. Y desde R4 eso además le mentiría al sello.
     rclone_bin.cache_dir = cache_real
     version_real = rclone_bin.pins.RCLONE_VERSION
     try:
@@ -289,7 +290,7 @@ try:
     finally:
         rclone_bin.pins.RCLONE_VERSION = version_real
 
-    # --- la caché se vuelve a resumir cada vez que se usa ---------------------
+    # la caché se vuelve a resumir cada vez que se usa
     #
     # Igual que la de los runtimes: la carpeta ya garantiza la VERSIÓN, lo que
     # queda por garantizar son los bytes. Esto va a acabar ejecutándose en cada
@@ -312,7 +313,7 @@ try:
       rclone_bin.pinned_rclone(platforms.host()).read_bytes()
       if platforms.host() else b"soy rclone", b"soy rclone")
 
-    # --- de qué binario se puede AFIRMAR la versión --------------------------
+    # de qué binario se puede AFIRMAR la versión
     #
     # Solo del que salió de la caché, que va por versión. De uno encontrado en
     # el PATH o dejado a mano junto al instalador no se sabe nada, y el sello
@@ -334,7 +335,7 @@ try:
     c("estar en la carpeta de la caché sin su .sha256 no basta",
       rclone_bin.pinned_version(sin_verificar / EXE), "")
 
-    # --- #49: un tiempo de espera ya no tumba la instalación ------------------
+    # #49: un tiempo de espera ya no tumba la instalación
     #
     # Lo que se reportó: con las cuatro plataformas marcadas, UN «The read
     # operation timed out» leyendo el zip de Linux ARM64 abortaba el paso, sin
@@ -409,7 +410,7 @@ try:
         c.contains("una suma que no cuadra se dice", str(e), "no es lo que rclone publica")
     c("y no se reintenta", (pedidas.count(URL_ZIP), esperas), (1, []))
 
-    # --- #49: ponerlo a mano es dejar el zip, y se comprueba ------------------
+    # #49: ponerlo a mano es dejar el zip, y se comprueba
     #
     # El consejo de antes, «copia un rclone a mano en <caché>», no servía para
     # otra plataforma: un binario suelto no tiene suma con la que comprobarlo y

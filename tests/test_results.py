@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-El registro de la última pasada de cada pareja (common/results.py).
+"""El registro de la última pasada de cada pareja (`common/results.py`).
 
 Es lo que hace que un fallo no se quede escondido en `logs/`: la ventana
 principal lo lee al abrirse y el servicio al terminar un ciclo. Se comprueba lo

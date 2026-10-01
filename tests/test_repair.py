@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-Las reparaciones de la pantalla «Reparación» (ui/repair.py).
+"""Las reparaciones de la pantalla «Reparación» (`ui/repair.py`).
 
 Lo que se comprueba es lo mismo que en `pair_editor`: que un plan no toca nada
 hasta que se ejecuta, que dice de antemano lo que va a pasar, y que se niega
@@ -36,10 +35,11 @@ def listados(pair, prefijo=None):
 
 
 def hallazgo(hallazgos, clave):
+    """Devuelve el hallazgo con esa clave."""
     return next(h for h in hallazgos if h.clave == clave)
 
 
-# --- ¿hay alguien sincronizando? -------------------------------------------
+# ¿hay alguien sincronizando?
 with sandbox():
     c("sin registro del servicio, no hay nada en marcha",
       repair.sincronizacion_en_curso(), None)
@@ -58,7 +58,7 @@ with sandbox():
       "otro-equipo" in (repair.sincronizacion_en_curso() or ""), True)
 
 
-# --- borrar bloqueos sueltos ------------------------------------------------
+# borrar bloqueos sueltos
 with sandbox():
     cfg = mkcfg(["notas"])
     pair = cfg.pairs[0]
@@ -105,6 +105,7 @@ with sandbox():
     aviso = hallazgo(revision.revisar(cfg), "lock")
 
     def falla(ruta):
+        """Hace que borrar falle: el dispositivo dice que no."""
         raise OSError("el dispositivo dice que no")
 
     repair.borrar = falla
@@ -117,7 +118,7 @@ with sandbox():
         repair.borrar = lambda ruta: ruta.unlink()
 
 
-# --- apartar un baseline que no es de esta pareja ---------------------------
+# apartar un baseline que no es de esta pareja
 with sandbox():
     cfg = mkcfg(["notas"])
     pair = cfg.pairs[0]
@@ -147,7 +148,7 @@ with sandbox():
         c.contains("apartar dos veces no se puede", str(e), "ya no tiene baseline")
 
 
-# --- lo que no es un plan, sino una pasada ----------------------------------
+# lo que no es un plan, sino una pasada
 with sandbox():
     cfg = mkcfg(["notas", "fotos"])
     aviso = revision.Hallazgo("resync", "x", "y", "notas")
