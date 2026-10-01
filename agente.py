@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-agente.py — prdrive residente: un proceso por usuario que atiende las unidades.
+"""El agente residente de prdrive: un proceso por usuario que atiende las unidades.
 
 Es el sucesor de `penwatch.py` en los equipos donde se instala: vive en el
 equipo, FUERA de toda raíz (`common/equipo.py` dice dónde), arranca al iniciar
@@ -8,79 +7,77 @@ sesión con su propio Python y hace de servicio de cada unidad prdrive que se
 enchufa y que tiene en su lista. Sin Tk: la ventana de una unidad y la pregunta
 por una unidad nueva son procesos hijos.
 
-    python agente.py run                  el bucle (lo lanza el registro al iniciar sesión)
-    python agente.py status               qué atiende y cómo
-    python agente.py atender ID           atender la unidad conectada a la que se dijo «Ahora no»
-    python agente.py modo ID MODO         ui | daemon | sync | nada
-    python agente.py pasada ID [PAREJA…]  «Sincronizar ahora», sin moderación
-    python agente.py pausa | sigue        dejar de lanzar pasadas, y volver
-    python agente.py parar                que termine (lo usa el instalador)
-    python agente.py abrir [ID]           la ventana de la raíz de este equipo (o de esa)
-    python agente.py desbloquear [ID]     abrir el contenedor de la raíz cifrada
-    python agente.py bloquear [ID]        y cerrarlo
-    python agente.py ajuste CLAVE VALOR   pedir_al_iniciar sí|no · espera_unidad_nueva SEG
-    python agente.py actualizar           bajar la versión nueva y ponerla (lo que hace la bandeja)
+Se usa como `python agente.py ORDEN`:
+- `run`: el bucle (lo lanza el registro al iniciar sesión).
+- `status`: qué atiende y cómo.
+- `atender ID`: atiende la unidad conectada a la que se dijo «Ahora no».
+- `modo ID MODO`: `ui`, `daemon`, `sync` o `nada`.
+- `pasada ID [PAREJA…]`: «Sincronizar ahora», sin moderación.
+- `pausa` y `sigue`: dejar de lanzar pasadas, y volver.
+- `parar`: que termine (lo usa el instalador).
+- `abrir [ID]`: la ventana de la raíz de este equipo (o de esa).
+- `desbloquear [ID]` y `bloquear [ID]`: abrir y cerrar el contenedor de la raíz
+  cifrada.
+- `ajuste CLAVE VALOR`: `pedir_al_iniciar sí|no` o `espera_unidad_nueva SEG`.
+- `actualizar`: baja la versión nueva y la pone (lo que hace la bandeja).
 
 Las órdenes que no son `run` no hacen nada por sí mismas: dejan la petición en
 el buzón del agente (`equipo.pedir()`), que es quien escribe su configuración.
 
 Cómo trabaja, vuelta a vuelta (`Agente.vuelta()`):
-
-  1. **Detecta** las unidades con el mismo recorrido de siempre,
-     `penwatch.candidate_roots()`, pero no cada 5 s: en Linux se despierta
-     cuando cambia `/proc/self/mountinfo` (`POLLPRI`), y de ahí una racha de
-     sondeos, porque un volumen cifrado se lee bastante después de montarse. En
-     Windows, con el `WM_DEVICECHANGE` que recibe la ventana de la bandeja; sin
-     bandeja, sondea como penwatch. Una unidad cuenta cuando se ha visto dos
-     veces seguidas.
-  2. **Pregunta** por las unidades que no conoce (sección «Una unidad nueva» del
-     diseño): un aviso y una ventanita con cuenta atrás; sin respuesta es «Ahora
-     no», solo para esta conexión. Antes del sí no se ejecuta NADA de la unidad:
-     solo se leen su id y su nombre.
-  3. **Hace de su servicio** con los ficheros que ya existen en su `state/`, así
-     que funciona con unidades de código viejo: escribe `daemon.lock.json`,
-     obedece `daemon.stop` (acaba la pareja en curso y suelta), se queda en pausa
-     mientras haya una ventana de runsync abierta en este equipo, y se aparta si
-     otro servicio vivo tiene el lock. Un servicio por raíz: el que tenga el lock.
-  4. **Planifica** con `common/planificador.py`, que es puro: una sola pasada a la
-     vez en todo el equipo, espera creciente tras un fallo, batería, red de uso
-     medido, remotos sin conexión, «Sincronizar ahora».
-  5. **Cada pasada es el `sync.py` de esa raíz**, hijo, con el Python del agente y
-     el directorio de trabajo fuera de la raíz: cada raíz ejecuta su propio
-     código, un rclone colgado no tumba al agente, y entre pasadas no queda nada
-     abierto dentro de ninguna unidad, así que se puede expulsar.
+- **Detecta** las unidades con el mismo recorrido de siempre,
+  `penwatch.candidate_roots()`, pero no cada 5 s: en Linux se despierta cuando
+  cambia `/proc/self/mountinfo` (`POLLPRI`) y de ahí una racha de sondeos,
+  porque un volumen cifrado se lee bastante después de montarse. En Windows,
+  con el `WM_DEVICECHANGE` que recibe la ventana de la bandeja; sin bandeja,
+  sondea como penwatch. Una unidad cuenta cuando se ha visto dos veces
+  seguidas.
+- **Pregunta** por las unidades que no conoce («Una unidad nueva» del diseño):
+  un aviso y una ventanita con cuenta atrás; sin respuesta es «Ahora no», solo
+  para esta conexión. Antes del sí no se ejecuta NADA de la unidad: solo se
+  leen su id y su nombre.
+- **Hace de su servicio** con los ficheros que ya existen en su `state/`, así
+  que funciona con unidades de código viejo: escribe `daemon.lock.json`,
+  obedece `daemon.stop` (acaba la pareja en curso y suelta), se queda en pausa
+  mientras haya una ventana de runsync abierta en este equipo y se aparta si
+  otro servicio vivo tiene el lock. Un servicio por raíz: el que tenga el lock.
+- **Planifica** con `common/planificador.py`, que es puro: una sola pasada a la
+  vez en todo el equipo, espera creciente tras un fallo, batería, red de uso
+  medido, remotos sin conexión, «Sincronizar ahora».
+- **Ejecuta** cada pasada como el `sync.py` de esa raíz, hijo, con el Python
+  del agente y el directorio de trabajo fuera de la raíz: cada raíz ejecuta su
+  propio código, un rclone colgado no tumba al agente y entre pasadas no queda
+  nada abierto dentro de ninguna unidad, así que se puede expulsar.
 
 La raíz de ESTE equipo (una carpeta del ordenador con `.prdrive/` dentro, que
 pone el asistente «En este equipo») es una raíz más de la lista, con su `ruta`:
-se busca ahí en vez de recorriendo volúmenes, y todo lo demás es igual. Si falta
-—se ha movido o renombrado la carpeta—, se avisa una vez y no se lanza nada: una
+se busca ahí en vez de recorrer volúmenes y todo lo demás es igual. Si falta
+(se ha movido o renombrado la carpeta) se avisa una vez y no se lanza nada: una
 línea base sin su carpeta local es justo lo que `_bisync_preflight()` frena.
 
 La raíz del equipo puede vivir en un contenedor VeraCrypt (fase 3). Entonces el
 agente es quien lo abre y quien lo cierra, con el VeraCrypt INSTALADO y sin que
 la contraseña pase nunca por él:
-
-  * **Desbloquear** lanza VeraCrypt con `/letter` fija (Windows) o el punto de
-    montaje fijo (Linux) y sin `/password`: la pide su ventana. Abierta no es
-    que VeraCrypt salga con 0, sino VER el id en la letra con el `.hc`
-    retenido. Una letra con el id al lado de un `.hc` libre es el fantasma de
-    las unidades (H-10): no se atiende, y se dice «Bloquear y volver a
-    desbloquear». Con la letra de otro, o un punto de montaje con cosas, no se
-    lanza nada: se dice.
-  * **Al iniciar sesión**, con `pedir_al_iniciar`, se pide UNA vez; si se
-    cancela, hasta que se pida «Desbloquear».
-  * **Bloquear** deja de encolar la raíz, espera a la pareja en curso y a que
-    se cierre su ventana, suelta el lock y lanza el desmontaje SIN `/silent`:
-    si un programa tiene algo abierto dentro, VeraCrypt pregunta si forzar, y
-    eso lo decide la persona. Bloqueada es el `.hc` libre, no la letra ida.
-  * **Cerrada, simplemente no está**: no es un fallo, ni un aviso, ni una
-    espera más larga. Una raíz cerrada no tiene carpeta ni línea base.
+- **Desbloquear** lanza VeraCrypt con `/letter` fija (Windows) o el punto de
+  montaje fijo (Linux) y sin `/password`: la pide su ventana. Abierta no es que
+  VeraCrypt salga con 0, sino VER el id en la letra con el `.hc` retenido. Una
+  letra con el id al lado de un `.hc` libre es el fantasma de las unidades
+  (H-10): no se atiende y se dice «Bloquear y volver a desbloquear». Con la
+  letra de otro, o un punto de montaje con cosas, no se lanza nada: se dice.
+- **Al iniciar sesión**, con `pedir_al_iniciar`, se pide UNA vez; si se
+  cancela, hasta que se pida «Desbloquear».
+- **Bloquear** deja de encolar la raíz, espera a la pareja en curso y a que se
+  cierre su ventana, suelta el lock y lanza el desmontaje SIN `/silent`: si un
+  programa tiene algo abierto dentro, VeraCrypt pregunta si forzar, y eso lo
+  decide la persona. Bloqueada es el `.hc` libre, no la letra ida.
+- **Cerrada, simplemente no está**: no es un fallo, ni un aviso, ni una espera
+  más larga. Una raíz cerrada no tiene carpeta ni línea base.
 
 Avisa con los avisos del sistema (`common/avisos.py`), no con Tk, y solo cuando
 una pareja EMPIEZA a fallar. Sin avisos, queda en su diario.
 
 Tiene un icono en la bandeja: `ui/bandeja.py` decide qué enseña a partir de
-`resumen()`, y lo dibuja en su propio hilo `ui/bandeja_windows.py` en Windows
+`resumen()` y lo dibuja en su propio hilo `ui/bandeja_windows.py` en Windows
 (fase 4) o `ui/bandeja_linux.py` en Linux (fase 6, StatusNotifierItem). Lo que
 se elige en su menú llega como las peticiones del buzón (`Agente.pedir()`), por
 el mismo camino. Donde el escritorio no tiene bandeja (GNOME sin la extensión
@@ -89,9 +86,9 @@ AppIndicator), hace sus veces el acceso «prdrive» del menú de aplicaciones:
 sin raíz, dice con un aviso cómo va.
 
 La ventana de una raíz le habla por dos buzones (fase 5): lo del equipo por
-`agente.pide`, y lo de esa raíz —«Iniciar servicio» (`reanudar`), «Bloquear»—
+`agente.pide` y lo de esa raíz («Iniciar servicio» (`reanudar`), «Bloquear»)
 por el `state/servicio.pide` de la propia raíz, que solo se lee en las raíces
-de la lista. Y cuando hay una versión nueva, lo dice una vez; «Actualizar»
+de la lista. Cuando hay una versión nueva lo dice una vez; «Actualizar»
 (`agente.py actualizar`) baja el código de la release y ejecuta SU instalador,
 que pone el agente nuevo al lado de este, lo para y arranca el nuevo.
 
@@ -137,52 +134,86 @@ IS_WIN = os.name == "nt"
 HOST = equipo.HOST
 APP_SUBDIR = penwatch.APP_SUBDIR
 
-TICK = 2.0                      # cada cuánto se mira lo barato: stop, ventana, hijos
-RECORRIDO_WINDOWS = penwatch.POLL_SECONDS   # Windows sin bandeja: sin WM_DEVICECHANGE, como penwatch
-RECORRIDO_RESPALDO = 30.0       # aunque mountinfo o WM_DEVICECHANGE no digan nada
-RAFAGA = 60.0                   # tras un cambio de montajes, recorrer en cada vuelta
+TICK = 2.0
+"""Segundos entre las miradas a lo barato: stop, ventana, hijos."""
+RECORRIDO_WINDOWS = penwatch.POLL_SECONDS
+"""Segundos entre recorridos en Windows sin bandeja, como penwatch.
+
+Sin bandeja no llega `WM_DEVICECHANGE`.
+"""
+RECORRIDO_RESPALDO = 30.0
+"""Segundos entre recorridos aunque mountinfo o `WM_DEVICECHANGE` no digan nada."""
+RAFAGA = 60.0
+"""Segundos tras un cambio de montajes en que se recorre en cada vuelta."""
 ESTABLE = penwatch.STABLE_CHECKS
-GRACIA = 15.0                   # tras ver la ventana o un stop, antes de volver
-MIRAR_ENTORNO = 60.0            # batería y red, cada minuto
-DESPERTAR_DOBLE = 10.0          # Windows avisa dos veces de una vuelta de la suspensión
-PARAR_ESPERA = 10.0             # lo que espera `parar` a que el agente se vaya
-ESPERA_VENTANA = 60.0           # «Bloquear» con su ventana abierta: lo que se espera
-ESPERA_DESMONTAJE = 300.0       # a que VeraCrypt cierre (puede estar preguntando)
-GRACIA_DESMONTAJE = 5.0         # tras salir VeraCrypt, a que el `.hc` quede libre
-ESPERA_ABRIR = 180.0            # `abrir` con la raíz cerrada: a que se desbloquee
-GRACIA_ABRIR = 20.0             # tras salir VeraCrypt, a ver la raíz abierta; si no, cancelada
-COLA_SALIDA = 64 * 1024         # lo que se lee de la salida de una pasada
-MIRAR_VERSION = 6 * 3600.0      # si hay versión nueva (`update.check` guarda 24 h)
+"""Sondeos seguidos que hacen falta para que una unidad cuente."""
+GRACIA = 15.0
+"""Segundos tras ver la ventana o un stop, antes de volver."""
+MIRAR_ENTORNO = 60.0
+"""Segundos entre las lecturas de batería y red."""
+DESPERTAR_DOBLE = 10.0
+"""Segundos en que un segundo aviso de despertar se toma por el mismo.
+
+Windows avisa dos veces de una vuelta de la suspensión.
+"""
+PARAR_ESPERA = 10.0
+"""Segundos que `parar` espera a que el agente se vaya."""
+ESPERA_VENTANA = 60.0
+"""Segundos que «Bloquear» espera a que se cierre la ventana de la raíz."""
+ESPERA_DESMONTAJE = 300.0
+"""Segundos que se espera a que VeraCrypt cierre (puede estar preguntando)."""
+GRACIA_DESMONTAJE = 5.0
+"""Segundos tras salir VeraCrypt para que el `.hc` quede libre."""
+ESPERA_ABRIR = 180.0
+"""Segundos que `abrir` espera a que se desbloquee una raíz cerrada."""
+GRACIA_ABRIR = 20.0
+"""Segundos tras salir VeraCrypt para ver la raíz abierta.
+
+Si no se ve, se da por cancelada.
+"""
+COLA_SALIDA = 64 * 1024
+"""Bytes que se leen de la salida de una pasada."""
+MIRAR_VERSION = 6 * 3600.0
+"""Segundos entre comprobaciones de versión nueva (`update.check` guarda 24 h)."""
 
 OK, FALLO, RED, SALTADA = pl.OK, pl.FALLO, pl.RED, pl.SALTADA
 
-# La primera versión cuyo `sync.py` usa el rclone que le pasa el agente
-# (`model.RCLONE_DEL_AGENTE`). Las de antes ejecutarían el de la unidad, que la
-# huella no cubre: el agente no las atiende hasta que se actualicen.
 VERSION_MINIMA = "0.5.0"
+"""Primera versión cuyo `sync.py` usa el rclone del agente (`model.RCLONE_DEL_AGENTE`).
+
+Las anteriores ejecutarían el de la unidad, que la huella no cubre: el agente
+no las atiende hasta que se actualicen.
+"""
 SIN_VERACRYPT = ("No hay VeraCrypt en este equipo: ni instalado ni el del agente. "
                  "Vuelve a pasar el asistente, que se lo pone, o instala VeraCrypt.")
+"""Lo que se dice cuando hay que abrir una raíz y no hay VeraCrypt."""
 SIN_RCLONE = ("no encuentro el rclone del agente; sin él no ejecuto nada de las "
               "unidades. Reinstala el agente o actualízalo.")
+"""Lo que se dice cuando el agente no tiene rclone propio."""
 TEXTO_RESULTADO = {OK: "bien", FALLO: "FALLÓ", RED: "FALLÓ por la red",
                    SALTADA: "saltada: pide --resync"}
+"""Cómo se dice, en el diario, el resultado de una pasada."""
 
-
-# ---------------------------------------------------------------------------
-# Puntos de indirección: lo que toca procesos, pantalla y avisos
-# ---------------------------------------------------------------------------
 
 def lanzar(args: list[str], **kwargs) -> Any:
-    """Lanza un proceso hijo. De módulo para que los tests lo sustituyan."""
+    """Lanza un proceso hijo.
+
+    Punto de indirección: los tests lo sustituyen.
+    """
     return subprocess.Popen(args, **kwargs)
 
 
 def hay_pantalla() -> bool:
-    """¿Hay dónde abrir una ventana? En Windows, la sesión del usuario."""
+    """Indica si hay dónde abrir una ventana; en Windows, la sesión del usuario."""
     return IS_WIN or bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
 
 
 def avisar(titulo: str, texto: str, urgente: bool = False) -> bool:
+    """Avisa con las notificaciones del sistema y lo deja en el diario.
+
+    Returns:
+        `False` si no hay avisos del sistema y solo quedó en el diario.
+    """
     ok = avisos.enviar(titulo, texto, urgente)
     diario(f"aviso{'' if ok else ' (sin avisos del sistema: solo aquí)'}: "
            f"{titulo} — {texto}")
@@ -190,39 +221,55 @@ def avisar(titulo: str, texto: str, urgente: bool = False) -> bool:
 
 
 def abrir_contenedor(raiz: Path) -> bool:
+    """Le pide a VeraCrypt que abra el contenedor de `raiz`.
+
+    Lo lanza desde la carpeta del agente (`penwatch.open_container`).
+    """
     return penwatch.open_container(raiz, cwd=equipo.DIR)
 
 
 def diario(msg: str) -> None:
+    """Añade una línea al diario del agente (`penwatch.log`)."""
     penwatch.log(msg)
 
 
 def hilo(funcion) -> None:
     """Corre `funcion` en un hilo aparte, para lo que puede tardar (la red).
-    De módulo para que los tests la corran en el sitio."""
+
+    Punto de indirección: los tests la corren en el sitio.
+    """
     threading.Thread(target=funcion, daemon=True).start()
 
 
 def cache_version() -> Path:
-    """Lo último que dijo GitHub, en la carpeta del agente: no vive en ninguna
-    raíz, y el `state/` de su código se va con cada versión."""
+    """Devuelve dónde se guarda lo último que dijo GitHub sobre versiones.
+
+    Vive en la carpeta del agente: no es de ninguna raíz y el `state/` de su
+    código se va con cada versión.
+    """
     return equipo.DIR / "update.json"
 
 
 def buscar_version() -> "update.Release | None":
-    """La release más nueva que la versión de este agente, o None. Respeta la
-    caché de `update.check()` (24 h), así que casi nunca sale a la red."""
+    """Devuelve la release más nueva que este agente, o `None`.
+
+    Respeta la caché de `update.check()` (24 h), así que casi nunca sale a la
+    red.
+    """
     update.check(cache=cache_version())
     return update.pending(SCRIPT_DIR, cache=cache_version())
 
 
 def ejecutar(args: list[str], **kwargs) -> Any:
-    """Corre un proceso hasta que acaba. De módulo para los tests."""
+    """Corre un proceso hasta que acaba.
+
+    Punto de indirección: los tests la sustituyen.
+    """
     return subprocess.run(args, **kwargs)
 
 
 def python(ventana: bool = False) -> str:
-    """El Python del agente, para sus hijos: sin consola en Windows."""
+    """Devuelve el Python del agente, para sus hijos: sin consola en Windows."""
     exe = sys.executable
     if IS_WIN:
         w = Path(exe).with_name("pythonw.exe")
@@ -232,10 +279,13 @@ def python(ventana: bool = False) -> str:
 
 
 def rclone_propio() -> Path | None:
-    """El rclone del agente (`instalacion.json`, lo pone el instalador en
-    `rclone/<versión fijada>/`), o None si no está. Es el que se pasa a las
-    pasadas y a las ventanas, y con el que se sondea un remoto: el de una
-    unidad no se ejecuta nunca. De módulo para que los tests lo sustituyan."""
+    """Devuelve el rclone del agente, o `None` si no está.
+
+    Lo pone el instalador en `rclone/<versión fijada>/` y lo apunta
+    `instalacion.json`. Es el que se pasa a las pasadas y a las ventanas, y con
+    el que se sondea un remoto: el de una unidad no se ejecuta nunca. Punto de
+    indirección: los tests lo sustituyen.
+    """
     ruta = equipo.leer_instalacion().get("rclone")
     if not isinstance(ruta, str) or not ruta:
         return None
@@ -246,17 +296,18 @@ def rclone_propio() -> Path | None:
 
 
 def veracrypt_propio() -> str | None:
-    """El VeraCrypt del agente para ESTE equipo, comprobado, o None.
+    """Devuelve el VeraCrypt del agente para ESTE equipo, comprobado, o `None`.
 
     Lo pone el instalador en `veracrypt/<versión fijada>/` solo cuando atiende
-    una raíz cifrada y no hay VeraCrypt instalado (`install/agente.
-    quiere_veracrypt()`), y lo apunta en `instalacion.json`, que se lee aquí
-    cada vez: añadirlo no obliga a parar el agente. Se vuelve a resumir contra
-    su sello antes de devolverlo, porque lo que se lanza pide administrador
-    (UAC), y lo que pide administrador tiene que ser lo que se comprobó al
-    instalar. En Windows, el ejecutable y el driver de la arquitectura NATIVA,
-    como en el vestíbulo: VeraCrypt elige su driver por ella y un driver no se
-    emula. De módulo para que los tests lo sustituyan."""
+    una raíz cifrada y no hay VeraCrypt instalado
+    (`install/agente.quiere_veracrypt()`), y lo apunta en `instalacion.json`,
+    que se lee aquí cada vez: añadirlo no obliga a parar el agente. Se vuelve a
+    resumir contra su sello antes de devolverlo, porque lo que se lanza pide
+    administrador (UAC) y tiene que ser lo que se comprobó al instalar. En
+    Windows, el ejecutable y el driver de la arquitectura NATIVA, como en el
+    vestíbulo: VeraCrypt elige su driver por ella y un driver no se emula.
+    Punto de indirección: los tests lo sustituyen.
+    """
     carpeta = equipo.leer_instalacion().get("veracrypt")
     if not isinstance(carpeta, str) or not carpeta:
         return None
@@ -277,25 +328,37 @@ def veracrypt_propio() -> str | None:
 
 
 def veracrypt_de_la_raiz() -> str | None:
-    """Con qué VeraCrypt se abre y se cierra la raíz cifrada: el instalado
-    primero (con su driver cargado no pide administrador, y con otra versión
-    menor cargada el portable fallaría con ERR_DRIVER_VERSION), si no el del
-    agente. None si no hay ninguno."""
+    """Devuelve con qué VeraCrypt se abre y se cierra la raíz cifrada, o `None`.
+
+    El instalado primero: con su driver cargado no pide administrador, y con
+    otra versión menor cargada el portable fallaría con `ERR_DRIVER_VERSION`.
+    Si no, el del agente.
+    """
     return penwatch.installed_veracrypt() or veracrypt_propio()
 
 
 def procesos(nombre: str) -> set[int]:
-    """Los pid vivos con ese nombre de ejecutable (Windows; en POSIX, vacío).
-    De módulo para que los tests lo sustituyan."""
+    """Devuelve los pid vivos con ese nombre de ejecutable (Windows; en POSIX, vacío).
+
+    Punto de indirección: los tests lo sustituyen.
+    """
     return store.procesos_llamados(nombre)
 
 
 def _opciones_hijo(cwd: Path, separado: bool = False) -> dict:
-    # Los `.pyc` de sus hijos, en la carpeta del agente: los `__pycache__` de
-    # una raíz no entran en su huella (`huella()`), así que Python no debe
-    # leerlos de ahí. Y de paso no se escribe en la unidad.
-    # Y su rclone, siempre: sin él, una ruta que no existe, para que el
-    # `sync.py` de la raíz falle diciéndolo en vez de usar el de la unidad.
+    """Devuelve los argumentos de `Popen` para un hijo del agente.
+
+    Sus `.pyc` van a la carpeta del agente: los `__pycache__` de una raíz no
+    entran en su huella (`huella()`), así que Python no debe leerlos de ahí, y
+    de paso no se escribe en la unidad. Y siempre con su rclone: sin él, una
+    ruta que no existe, para que el `sync.py` de la raíz falle diciéndolo en
+    vez de usar el de la unidad.
+
+    Args:
+        cwd: Directorio de trabajo, fuera de la raíz.
+        separado: En su propio grupo de procesos (Windows) o sesión (POSIX),
+            para poder cortar la pasada entera.
+    """
     rclone = rclone_propio() or equipo.dir_rclone() / "falta" / model.rclone_name()
     kwargs: dict = {"stdin": subprocess.DEVNULL, "cwd": str(cwd), "close_fds": True,
                     "env": {**os.environ,
@@ -309,29 +372,29 @@ def _opciones_hijo(cwd: Path, separado: bool = False) -> dict:
     return kwargs
 
 
-# ---------------------------------------------------------------------------
-# Lo que se lee de una raíz (sin ejecutar nada suyo)
-# ---------------------------------------------------------------------------
-
 def app(raiz: Path) -> Path:
+    """Devuelve la carpeta del programa dentro de una raíz."""
     return raiz / APP_SUBDIR
 
 
-# Lo que la huella deja fuera: lo que cambia con el uso y no se ejecuta.
 HUELLA_SIN_CARPETAS = frozenset({"state", "logs", "filters", "keys", "runtime", "bin"})
+"""Carpetas que la huella deja fuera: lo que cambia con el uso y no se ejecuta."""
 HUELLA_SIN_FICHEROS = frozenset({"sync_config.toml", Path(penwatch.CONTROL_FILE).name})
+"""Ficheros que la huella deja fuera: la configuración y el fichero de control."""
 HUELLA_SIN_EXTENSIONES = frozenset({".ico"})
+"""Extensiones que la huella deja fuera."""
 
 
 def huella(raiz: Path) -> str | None:
-    """sha256 de lo que el agente ejecutaría de esa raíz, o None si no se lee.
+    """Devuelve el sha256 de lo que el agente ejecutaría de esa raíz.
 
-    El id del fichero de control lo lleva escrito la unidad: copiarlo junto a
-    un `.prdrive/` modificado bastaría para que el agente ejecutara ese código
-    como si fuera el de la unidad que se atendió. Así que al decir que sí se
-    apunta esta huella (`equipo.Unidad.codigo`), y con otra se vuelve a
-    preguntar. No hay firmas de las que fiarse: tras actualizar la unidad se
-    pregunta una vez más, y es lo esperado.
+    Es `None` si no se puede leer. El id del fichero de control lo lleva
+    escrito la unidad: copiarlo junto a un `.prdrive/` modificado bastaría para
+    que el agente ejecutara ese código como si fuera el de la unidad que se
+    atendió. Por eso al decir que sí se apunta esta huella
+    (`equipo.Unidad.codigo`) y con otra se vuelve a preguntar. No hay firmas de
+    las que fiarse: tras actualizar la unidad se pregunta una vez más, y es lo
+    esperado.
 
     Entra todo `.prdrive/` menos lo que cambia con el uso: `state/`, `logs/`,
     `filters/`, `keys/`, `runtime/` (el agente usa su propio Python),
@@ -343,7 +406,8 @@ def huella(raiz: Path) -> str | None:
     agente no ejecuta el rclone de la unidad, pasa el suyo
     (`model.RCLONE_DEL_AGENTE`), y por eso la huella cuesta milisegundos y no
     lo que tarda en leerse un binario de 60 MB. `rclone.conf` entra: la opción
-    `ssh` de un remoto sftp es una orden."""
+    `ssh` de un remoto sftp es una orden.
+    """
     base = app(raiz)
     rutas: list[Path] = []
     try:
@@ -371,9 +435,12 @@ def huella(raiz: Path) -> str | None:
 
 
 def version_vieja(raiz: Path) -> str | None:
-    """La versión de esa raíz si es anterior a `VERSION_MINIMA` («» si no se
-    sabe, que también es vieja), o None si vale. De una unidad de la lista la
-    `VERSION` es de fiar: entra en la huella que se aceptó."""
+    """Devuelve la versión de esa raíz si es anterior a `VERSION_MINIMA`.
+
+    Es `None` si vale y `""` si no se sabe, que también cuenta como vieja. De
+    una unidad de la lista la `VERSION` es de fiar: entra en la huella que se
+    aceptó.
+    """
     version = update.installed_version(app(raiz))
     if version and not update.is_newer(VERSION_MINIMA, version):
         return None
@@ -381,12 +448,16 @@ def version_vieja(raiz: Path) -> str | None:
 
 
 def estado_de(raiz: Path) -> Path:
+    """Devuelve la carpeta `state/` de una raíz."""
     return app(raiz) / "state"
 
 
 def nombre_de(raiz: Path, uid: str, recordado: str = "") -> str:
-    """El nombre de la unidad en la flota, de su `state/fleet.json` (solo se lee);
-    si no tiene, el que el agente recuerda de ella, y si no, el principio del id."""
+    """Devuelve el nombre de la unidad en la flota.
+
+    Sale de su `state/fleet.json` (solo se lee); si no tiene, el que el agente
+    recuerda de ella y, si no, el principio del id.
+    """
     guardado = store.read_json(estado_de(raiz) / "fleet.json").get("nombre")
     if isinstance(guardado, str) and guardado.strip():
         return guardado.strip()
@@ -395,19 +466,28 @@ def nombre_de(raiz: Path, uid: str, recordado: str = "") -> str:
 
 @dataclass(frozen=True)
 class Servicio:
-    """Lo que el servicio de una raíz sincroniza: sus parejas y cada cuánto."""
+    """Lo que el servicio de una raíz sincroniza: sus parejas y cada cuánto.
+
+    Attributes:
+        parejas: Las parejas, con su remoto.
+        minutos: El intervalo entre pasadas.
+    """
     parejas: tuple[pl.Pareja, ...]
     minutos: float
 
 
 def leer_servicio(raiz: Path) -> Servicio:
-    """Las parejas y el intervalo del servicio de esa raíz, como los elegiría su
-    propio runsync: `ui_prefs.json` > `[daemon]` > todas (`prefs.elegir()`).
+    """Devuelve las parejas y el intervalo del servicio de esa raíz.
 
-    Se lee el TOML a pelo y no con `model.parse_config()` porque la raíz puede
-    ir en otra versión que el agente: lo que valida es su `sync.py`, y un modo
-    que este agente no conozca no puede dejarla sin servicio. ValueError con la
-    frase que decir si no hay nada que atender."""
+    Los elige como su propio runsync: `ui_prefs.json` > `[daemon]` > todas
+    (`prefs.elegir()`). Se lee el TOML a pelo y no con `model.parse_config()`
+    porque la raíz puede ir en otra versión que el agente: lo que valida es su
+    `sync.py`, y un modo que este agente no conozca no puede dejarla sin
+    servicio.
+
+    Raises:
+        ValueError: Con la frase que decir si no hay nada que atender.
+    """
     try:
         crudo = tomllib.loads((app(raiz) / "sync_config.toml").read_text(encoding="utf-8"))
     except OSError as e:
@@ -417,9 +497,10 @@ def leer_servicio(raiz: Path) -> Servicio:
     defaults = crudo.get("defaults") if isinstance(crudo.get("defaults"), dict) else {}
     remotos: dict[str, str] = {}
     for p in crudo.get("pair") if isinstance(crudo.get("pair"), list) else []:
-        # El nombre va a la línea de órdenes de su sync.py y a sus carpetas de
-        # state/ y filters/: uno que su parser no admitiría (`--resync`, `a/b`)
-        # no se lanza, aunque el sync.py de esa raíz sea de antes de la regla.
+        # El nombre va a la línea de órdenes de su `sync.py` y a sus carpetas
+        # de `state/` y `filters/`: uno que su parser no admitiría (`--resync`,
+        # `a/b`) no se lanza, aunque el `sync.py` de esa raíz sea de antes de
+        # la regla.
         if isinstance(p, dict) and isinstance(p.get("name"), str) \
                 and model.problema_nombre(p["name"]) is None:
             remotos[p["name"]] = str(p.get("remote", defaults.get("remote",
@@ -433,11 +514,12 @@ def leer_servicio(raiz: Path) -> Servicio:
 
 
 def orden_sonda(raiz: Path, remoto: str) -> list[str] | None:
-    """rclone de esa raíz preguntando por el remoto, o None si no lleva rclone.
+    """Devuelve la orden que pregunta a rclone por el remoto de esa raíz.
 
-    `lsd` del remoto con `catalog.NET_FLAGS`: lo mínimo que exige conectar y
-    entrar, y con los plazos cortos para que un remoto caído no tenga la cola
-    parada."""
+    Es `None` sin rclone. Es `lsd` del remoto con `catalog.NET_FLAGS`: lo
+    mínimo que exige conectar y entrar, con plazos cortos para que un remoto
+    caído no tenga la cola parada.
+    """
     binario = rclone_propio()
     if binario is None:
         return None
@@ -446,13 +528,14 @@ def orden_sonda(raiz: Path, remoto: str) -> list[str] | None:
 
 
 def en_la_raiz(raiz: Path, ruta: Path) -> Path | None:
-    """`ruta` si, con los enlaces resueltos, sigue dentro de `raiz`; None si no.
+    """Devuelve `ruta` si, con los enlaces resueltos, sigue dentro de `raiz`.
 
-    Lo que el agente escribe en una raíz (el diario y el lock de su servicio)
-    va a donde diga ESA raíz, y una unidad es de quien la trae: un
+    Si no, `None`. Lo que el agente escribe en una raíz (el diario y el lock de
+    su servicio) va a donde diga ESA raíz, y una unidad es de quien la trae: un
     `state/daemon.log` que fuera un enlace a `~/.bashrc`, o un `state/` que
     llevara a la carpeta personal, haría que el agente escribiera en el equipo.
-    Solo se escribe donde la ruta resuelta sigue dentro de la raíz resuelta."""
+    Solo se escribe donde la ruta resuelta sigue dentro de la raíz resuelta.
+    """
     try:
         real, base = os.path.realpath(ruta), os.path.realpath(raiz)
         if os.path.commonpath([os.path.normcase(real), os.path.normcase(base)]) \
@@ -463,14 +546,19 @@ def en_la_raiz(raiz: Path, ruta: Path) -> Path | None:
     return ruta
 
 
-# Abrir para añadir sin seguir un enlace en el último tramo (POSIX); lo demás lo
-# descarta `en_la_raiz()`.
 _SIN_ENLACE = getattr(os, "O_NOFOLLOW", 0)
+"""Abre para añadir sin seguir un enlace en el último tramo (POSIX).
+
+Lo demás lo descarta `en_la_raiz()`.
+"""
 
 
 def dlog(raiz: Path, msg: str) -> None:
-    """El diario del servicio de la raíz (`state/daemon.log`), como el de runsync.
-    Se abre y se cierra en cada línea: nada se queda abierto en la unidad."""
+    """Añade una línea al diario del servicio de la raíz (`state/daemon.log`).
+
+    Como el de runsync. Se abre y se cierra en cada línea: nada se queda
+    abierto en la unidad.
+    """
     ruta = en_la_raiz(raiz, estado_de(raiz) / "daemon.log")
     if ruta is None:
         return
@@ -483,6 +571,7 @@ def dlog(raiz: Path, msg: str) -> None:
 
 
 def presente(raiz: Path) -> bool:
+    """Indica si la raíz tiene su fichero de control a la vista."""
     try:
         return (raiz / penwatch.CONTROL_FILE).is_file()
     except OSError:
@@ -490,12 +579,13 @@ def presente(raiz: Path) -> bool:
 
 
 def punto_ocupado(unidad: equipo.Unidad) -> str | None:
-    """Por qué no se puede montar ahí la raíz cifrada, o None si se puede.
+    r"""Devuelve por qué no se puede montar ahí la raíz cifrada, o `None` si se puede.
 
-    El agente no se inventa otra letra ni otro sitio: los programas apuntan a la
-    raíz, y un almacén de Obsidian en `P:\\obsidian` se rompería si mañana
+    El agente no se inventa otra letra ni otro sitio: los programas apuntan a
+    la raíz, y un almacén de Obsidian en `P:\\obsidian` se rompería si mañana
     fuera `Q:`. En Linux, el punto de montaje vacío es una carpeta normal, y lo
-    que se guarde ahí con el contenedor cerrado quedaría tapado al montarlo."""
+    que se guarde ahí con el contenedor cerrado quedaría tapado al montarlo.
+    """
     if unidad.letra:
         raiz = Path(f"{unidad.letra}:\\")
         try:
@@ -529,13 +619,14 @@ def punto_ocupado(unidad: equipo.Unidad) -> str | None:
 
 
 def bloqueada(unidad: equipo.Unidad) -> bool:
-    """¿Está cerrado ya el contenedor de esa raíz?
+    """Indica si el contenedor de esa raíz ya está cerrado.
 
     En Windows, que la letra se vaya no basta: forzando el desmontaje con un
     fichero abierto dentro, la letra desaparece y el driver sigue reteniendo el
-    `.hc`. Bloqueada es el `.hc` libre y la letra ida (la de un fantasma también
-    tiene que irse). En Linux no hay esa prueba (`vestibulo.retenido()` no
-    contesta): es el punto de montaje sin montar."""
+    `.hc`. Bloqueada es el `.hc` libre y la letra ida (la de un fantasma
+    también tiene que irse). En Linux no hay esa prueba (`vestibulo.retenido()`
+    no contesta): es el punto de montaje sin montar.
+    """
     raiz = Path(unidad.ruta)
     if unidad.letra:
         return vestibulo.retenido(unidad.contenedor) is not True and not presente(raiz)
@@ -546,10 +637,12 @@ def bloqueada(unidad: equipo.Unidad) -> bool:
 
 
 def orden_bloquear(unidad: equipo.Unidad) -> list[str] | None:
-    """El desmontaje de la raíz cifrada, SIN `/silent`, como `Expulsar
-    PRDRIVE.bat`: con un fichero abierto dentro VeraCrypt pregunta si forzar, y
-    esa decisión es de la persona. None sin VeraCrypt (ni instalado ni el del
-    agente)."""
+    """Devuelve el desmontaje de la raíz cifrada, o `None` sin VeraCrypt.
+
+    SIN `/silent`, como `Expulsar PRDRIVE.bat`: con un fichero abierto dentro
+    VeraCrypt pregunta si forzar, y esa decisión es de la persona. Sin
+    VeraCrypt es que no hay ni el instalado ni el del agente.
+    """
     exe = veracrypt_de_la_raiz()
     if exe is None:
         return None
@@ -561,7 +654,12 @@ def orden_bloquear(unidad: equipo.Unidad) -> list[str] | None:
 
 
 def resultado(rc: int, texto: str) -> str:
-    """Cómo acabó una pasada, con el mismo criterio que `runsync.daemon_cycle()`."""
+    """Devuelve cómo acabó una pasada, con el criterio de `runsync.daemon_cycle()`.
+
+    Args:
+        rc: Código de salida de `sync.py`.
+        texto: Su salida.
+    """
     if rc != 0:
         return RED if moderacion.es_de_red(texto) else FALLO
     if "saltada" in texto.lower():
@@ -569,59 +667,89 @@ def resultado(rc: int, texto: str) -> str:
     return OK
 
 
-# ---------------------------------------------------------------------------
-# Lo que el agente recuerda de cada unidad conectada
-# ---------------------------------------------------------------------------
-
 @dataclass
 class Conexion:
+    """Lo que el agente recuerda de una unidad conectada.
+
+    Attributes:
+        id: El id de la unidad (el de su fichero de control).
+        raiz: Dónde está montada.
+        nombre: Su nombre en la flota.
+        desde: Cuándo se la vio por primera vez.
+        pregunta: Si no está en la lista, la pregunta en curso.
+        hijo: La ventanita de la pregunta.
+        respuesta: `AHORA_NO`, para esta conexión.
+        lanzada: Modo `ui`: su ventana ya se ha abierto.
+        pausa: La última vez que se vio una ventana o un stop.
+        lock: El `daemon.lock.json` que tenemos escrito.
+        soltando: Soltado, pero su fichero sigue sin borrar.
+        servicio: Lo que sincroniza su servicio.
+        error: Por qué no hay servicio que atender.
+        avisado_error: Si ese error ya se ha dicho.
+        firma: Los mtimes de lo que decide el servicio.
+        motivo: Qué le pasa, para `status`.
+        reanudar: «Iniciar servicio» en su ventana (`reanudar` en su buzón): al
+            irse la ventana se vuelve enseguida, sin la `GRACIA` que se da a un
+            servicio que la ventana arrancara por su cuenta.
+        huella: Su huella al conectarla (`huella()`).
+        cambiada: La huella no es la que se aceptó: una unidad de la lista con
+            otro código se trata como una que no lo está hasta que se vuelva a
+            decir que sí.
+        vieja: Su versión (o «») si es anterior a `VERSION_MINIMA`: ejecutaría
+            el rclone de la unidad, así que no se atiende ni se abre.
+    """
     id: str
     raiz: Path
     nombre: str
     desde: float
-    # Una unidad que no está en la lista.
     pregunta: pl.Pregunta | None = None
-    hijo: Any = None                    # la ventanita de la pregunta
-    respuesta: str | None = None        # AHORA_NO, para esta conexión
-    # Una que sí.
-    lanzada: bool = False               # modo ui: su ventana ya se ha abierto
-    pausa: float | None = None          # la última vez que se vio ventana o stop
-    lock: dict | None = None            # el daemon.lock.json que tenemos escrito
-    soltando: bool = False              # soltado, pero su fichero sigue sin borrar
+    hijo: Any = None
+    respuesta: str | None = None
+    lanzada: bool = False
+    pausa: float | None = None
+    lock: dict | None = None
+    soltando: bool = False
     servicio: Servicio | None = None
-    error: str | None = None            # por qué no hay servicio que atender
+    error: str | None = None
     avisado_error: bool = False
-    firma: tuple = ()                   # mtimes de lo que decide el servicio
-    motivo: str = ""                    # qué le pasa, para `status`
-    # «Iniciar servicio» en su ventana (`reanudar` en su buzón): al irse la
-    # ventana se vuelve enseguida, sin la `GRACIA` que se da a un servicio que
-    # la ventana arrancara por su cuenta.
+    firma: tuple = ()
+    motivo: str = ""
     reanudar: bool = False
-    # Su huella al conectarla (`huella()`), y si no es la que se aceptó: una
-    # unidad de la lista con otro código se trata como una que no lo está
-    # hasta que se vuelva a decir que sí.
     huella: str | None = None
     cambiada: bool = False
-    # Su programa es anterior a `VERSION_MINIMA` (y esa es su versión, o «»):
-    # ejecutaría el rclone de la unidad, así que no se atiende ni se abre.
     vieja: str | None = None
 
 
 @dataclass
 class Desbloqueo:
-    """«Desbloquear», lanzado: VeraCrypt está pidiendo la contraseña."""
+    """«Desbloquear», lanzado: VeraCrypt está pidiendo la contraseña.
+
+    Attributes:
+        desde: Cuándo se lanzó.
+        proc: El VeraCrypt que monta.
+        salio: Cuándo se vio que había salido.
+        abrir: Abrir su ventana en cuanto se vea abierta.
+        copia: La copia elevada que puede seguir tras él.
+    """
     desde: float
-    proc: Any = None                    # el VeraCrypt que monta
-    salio: float | None = None          # cuándo se vio que había salido
-    abrir: bool = False                 # abrir su ventana en cuanto se vea abierta
-    copia: Copia | None = None          # la copia elevada que puede seguir tras él
+    proc: Any = None
+    salio: float | None = None
+    abrir: bool = False
+    copia: Copia | None = None
 
 
 @dataclass
 class Bloqueo:
-    """«Bloquear», pedido y todavía no hecho."""
+    """«Bloquear», pedido y todavía no hecho.
+
+    Attributes:
+        desde: Cuándo se pidió.
+        proc: El VeraCrypt que desmonta, ya lanzado.
+        lanzado: Cuándo se lanzó.
+        copia: La copia elevada que puede seguir tras él.
+    """
     desde: float
-    proc: Any = None                    # el VeraCrypt que desmonta, ya lanzado
+    proc: Any = None
     lanzado: float = 0.0
     copia: Copia | None = None
 
@@ -630,31 +758,40 @@ class Bloqueo:
 class Copia:
     """Los VeraCrypt que ya había antes de lanzar el nuestro, por nombre.
 
-    VeraCrypt sin su driver instalado y sin administrador —el portable del
-    agente— se relanza elevado (`/q UAC`) y el proceso que lanzamos sale con 0
+    VeraCrypt sin su driver instalado y sin administrador (el portable del
+    agente) se relanza elevado (`/q UAC`) y el proceso que lanzamos sale con 0
     a los dos segundos (`InitApp`, `LaunchElevatedProcess` en
-    `Common/Dlgcode.c`), mientras la copia elevada sigue: pide la contraseña, o
+    `Common/Dlgcode.c`), mientras la copia elevada sigue: pide la contraseña o
     pregunta si forzar el desmontaje. Esa copia es la misma imagen, así que se
     la reconoce por el nombre y por no estar antes, como hacen
     `crypto._esperar_copia_elevada()` y `:vc_pendiente` del vestíbulo. Sin
     esto, un «Desbloquear» se daría por cancelado con la persona todavía en el
-    aviso de UAC, y un «Bloquear», por fallido mientras VeraCrypt pregunta."""
+    aviso de UAC, y un «Bloquear», por fallido mientras VeraCrypt pregunta.
+
+    Attributes:
+        imagen: Nombre del ejecutable.
+        antes: Los pid con esa imagen antes de lanzar el nuestro.
+    """
     imagen: str
     antes: frozenset[int]
 
     @staticmethod
     def antes_de(cmd: list[str]) -> Copia:
-        # En Linux no hay copia (el que lanzamos es el que pregunta) y
-        # `procesos()` no ve nada: la copia no sigue nunca.
+        """Anota los procesos que hay con la imagen de `cmd[0]` antes de lanzarlo.
+
+        En Linux no hay copia (el que lanzamos es el que pregunta) y
+        `procesos()` no ve nada: la copia no sigue nunca.
+        """
         imagen = Path(cmd[0]).name
         return Copia(imagen, frozenset(procesos(imagen)))
 
     def sigue(self) -> bool:
+        """Indica si hay un proceso nuevo con esa imagen."""
         return bool(procesos(self.imagen) - self.antes)
 
 
 def _sigue_vivo(proc: Any, copia: Copia | None) -> bool:
-    """¿Sigue VeraCrypt en ello: el proceso lanzado, o su copia elevada?"""
+    """Indica si VeraCrypt sigue en ello: el proceso lanzado o su copia elevada."""
     if proc is not None and proc.poll() is None:
         return True
     return copia is not None and copia.sigue()
@@ -662,6 +799,15 @@ def _sigue_vivo(proc: Any, copia: Copia | None) -> bool:
 
 @dataclass
 class Pasada:
+    """Una pasada en marcha: el `sync.py` hijo de una pareja.
+
+    Attributes:
+        proc: El proceso hijo.
+        tarea: Lo que se está sincronizando.
+        desde: Cuándo empezó.
+        salida: Fichero temporal donde va su salida.
+        nombre: Nombre de la unidad a la que pertenece.
+    """
     proc: Any
     tarea: pl.Tarea
     desde: float
@@ -671,6 +817,65 @@ class Pasada:
 
 @dataclass
 class Agente:
+    """Lo que el agente recuerda y decide, vuelta a vuelta.
+
+    Attributes:
+        reloj: La hora, en segundos; los tests la sustituyen.
+        ajustes: Su configuración (`agente.json`).
+        conexiones: Las unidades conectadas y contadas, por id.
+        vistas: Las unidades abiertas que se han visto y cuántas veces seguidas
+            (hasta `ESTABLE`).
+        cerradas: Lo mismo para las VeraCrypt cerradas, por la marca de su
+            vestíbulo.
+        vestibulos: Los vestíbulos ya tratados en esta conexión, por id: su
+            raíz física, o `""` si ya se abrió y todavía no se ha visto la
+            entrada.
+        marcas: El estado de cada pareja para el planificador, por `(raíz,
+            pareja)`.
+        entorno: Batería, red de uso medido, remotos sin conexión y pausa, para
+            el planificador.
+        entorno_leido: Cuándo se leyó el entorno por última vez.
+        pasada: La pasada en marcha, si la hay.
+        heredada: La de un agente anterior que sigue viva al arrancar
+            (`pasada.json`).
+        cortada: La pasada que el instalador cortó al parar al agente anterior:
+            su pareja espera a que caduque el `.lck` que dejó
+            (`equipo.ESPERA_TRAS_CORTE`).
+        urgentes: Las parejas pedidas con «Sincronizar ahora», como `(raíz,
+            pareja)`.
+        pausado: Si se ha pedido pausa.
+        terminar: Si se ha pedido parar.
+        sospechas: Los fallos que parecen de red y esperan a la sonda, por
+            `(raíz, remoto)`: la pareja y su marca de antes.
+        sin_red_avisado: Los `(raíz, remoto)` sin conexión ya avisados.
+        retenido: Por qué no se lanza nada ahora, para no repetirlo en el
+            diario.
+        rafaga_hasta: Hasta cuándo se recorre en cada vuelta.
+        despertado: La última vuelta de la suspensión apuntada.
+        ultimo_estado: Lo último que se escribió en `estado.json`.
+        ultima_vista: La última `bandeja.Vista` puesta.
+        ultima_buena: Cuándo acabó bien la última pasada (el reloj).
+        ausentes: Las raíces del equipo que no están donde dice su `ruta`, ya
+            avisadas.
+        desbloqueos: Los «Desbloquear» lanzados, por id de la raíz cifrada.
+        pedidas: Las raíces cifradas cuya contraseña ya se pidió al iniciar
+            sesión.
+        bloqueos: Los «Bloquear» en marcha.
+        fantasmas: Los volúmenes fantasma ya dichos.
+        recorridos: Los recorridos hechos desde que arrancó.
+        sin_rclone_avisado: Si ya se dijo que el agente no tiene rclone.
+        peticiones: Lo que pide la bandeja, que corre en otro hilo: los mismos
+            diccionarios que el buzón, sin pasar por disco.
+        bandeja: La bandeja, si la hay (`poner(vista)`), para enseñarle el
+            estado.
+        inicio: Cuándo arrancó, en hora de verdad (`equipo.pedir()` sella con
+            ella): un «parar» de antes iba para el agente anterior.
+        version: La de este agente.
+        nueva: La más nueva que se sabe (su tag), o `None`.
+        version_mirada: Cuándo se miró.
+        nueva_avisada: La que ya se avisó.
+        actualizando: El `agente.py actualizar` en marcha.
+    """
     reloj: Any = time.time
     ajustes: equipo.Ajustes = field(default_factory=equipo.leer_ajustes)
     conexiones: dict[str, Conexion] = field(default_factory=dict)
@@ -681,10 +886,7 @@ class Agente:
     entorno: pl.Entorno = field(default_factory=pl.Entorno)
     entorno_leido: float = -math.inf
     pasada: Pasada | None = None
-    # La de un agente anterior que sigue viva al arrancar (`pasada.json`).
     heredada: dict | None = field(default_factory=equipo.pasada_viva)
-    # La pasada que el instalador cortó al parar al agente anterior: su pareja
-    # espera a que caduque el `.lck` que dejó (`equipo.ESPERA_TRAS_CORTE`).
     cortada: dict | None = field(default_factory=equipo.pasada_cortada)
     urgentes: list[tuple[str, str]] = field(default_factory=list)
     pausado: bool = False
@@ -693,40 +895,40 @@ class Agente:
     sin_red_avisado: set[tuple[str, str]] = field(default_factory=set)
     retenido: str | None = None
     rafaga_hasta: float = -math.inf
-    despertado: float = -math.inf   # la última vuelta de la suspensión apuntada
+    despertado: float = -math.inf
     ultimo_estado: dict | None = None
-    ultima_vista: Any = None        # la última `bandeja.Vista` puesta
-    ultima_buena: float | None = None   # cuándo acabó bien la última pasada (el reloj)
-    # Las raíces del equipo que no están donde dice su `ruta`, ya avisadas.
+    ultima_vista: Any = None
+    ultima_buena: float | None = None
     ausentes: set[str] = field(default_factory=set)
-    # La raíz cifrada: cuándo se lanzó VeraCrypt para abrirla, las que ya se
-    # pidieron al iniciar sesión (una vez), los «Bloquear» en marcha, y los
-    # volúmenes fantasma ya dichos.
     desbloqueos: dict[str, Desbloqueo] = field(default_factory=dict)
     pedidas: set[str] = field(default_factory=set)
     bloqueos: dict[str, Bloqueo] = field(default_factory=dict)
     fantasmas: set[str] = field(default_factory=set)
     recorridos: int = 0
     sin_rclone_avisado: bool = False
-    # Lo que pide la bandeja, que corre en otro hilo: los mismos diccionarios
-    # que el buzón, sin pasar por disco. Y la bandeja misma, si la hay
-    # (`poner(vista)`), para enseñarle el estado.
     peticiones: Any = field(default_factory=queue.SimpleQueue)
     bandeja: Any = None
-    # Cuándo arrancó, en hora de verdad (`equipo.pedir()` sella con ella): un
-    # «parar» de antes iba para el agente anterior.
     inicio: float = field(default_factory=time.time)
-    # Su versión, la más nueva que se sabe (su tag, o None), cuándo se miró,
-    # la que ya se avisó, y el `agente.py actualizar` en marcha.
     version: str = field(default_factory=lambda: update.installed_version(SCRIPT_DIR))
     nueva: str | None = None
     version_mirada: float = -math.inf
     nueva_avisada: str | None = None
     actualizando: Any = None
 
-    # --- la vuelta ---------------------------------------------------------------
-
     def vuelta(self, recorrer: bool = True) -> pl.Decision | None:
+        """Hace una vuelta del agente y devuelve lo que decidió lanzar, si algo.
+
+        Lee los buzones, recorre los volúmenes, gestiona las conexiones
+        (preguntas, fin de pasada, bloqueos, el contrato con el servicio de
+        cada raíz), lee el entorno, mira si hay versión nueva y, si no hay una
+        pasada en marcha, decide la siguiente. Termina escribiendo el estado.
+
+        Args:
+            recorrer: Si en esta vuelta toca recorrer los volúmenes.
+
+        Returns:
+            La decisión del planificador, o `None`.
+        """
         ahora = self.reloj()
         self._buzon(ahora)
         if recorrer:
@@ -750,14 +952,18 @@ class Agente:
         self._escribir_estado()
         return decision
 
-    # --- detectar ------------------------------------------------------------------
-
     def _recorrer(self, ahora: float) -> None:
+        """Recorre las unidades y pone al día conexiones, vestíbulos y raíces ausentes.
+
+        Una unidad cuenta cuando se ha visto `ESTABLE` veces seguidas. Las
+        abiertas se reconocen por su fichero de control y las de VeraCrypt
+        cerradas por la marca de su vestíbulo.
+        """
         abiertas: dict[str, Path] = {}
         cerradas: dict[str, Path] = {}
         # Las raíces del equipo, primero y por su ruta: son carpetas, no
         # volúmenes, y el recorrido no las vería. Van como las raíces extra de
-        # penwatch, así que el recorrido sigue siendo uno.
+        # penwatch: el recorrido sigue siendo uno.
         propias = [u.ruta for u in self.ajustes.raices.values()]
         for raiz in penwatch.candidate_roots(
                 {"extra_roots": propias + list(self.ajustes.extra_roots)}):
@@ -799,10 +1005,13 @@ class Agente:
         self.recorridos += 1
 
     def _fantasmas(self, abiertas: dict[str, Path]) -> None:
-        """Una raíz cifrada vista en su letra con el `.hc` LIBRE no está abierta:
+        """Quita de `abiertas` las raíces cifradas que son un volumen fantasma.
+
+        Una raíz cifrada vista en su letra con el `.hc` LIBRE no está abierta:
         es lo que deja un volumen que se fue sin desmontar (suspender con el
         cierre automático de VeraCrypt, H-10), que sirve el fichero de control
-        de la caché. No se atiende, y se dice una vez cómo salir."""
+        de la caché. No se atiende y se dice una vez cómo salir.
+        """
         for uid, unidad in self.ajustes.cifradas.items():
             if uid not in abiertas:
                 self.fantasmas.discard(uid)
@@ -818,9 +1027,12 @@ class Agente:
                        f"Bloquéala y vuelve a desbloquearla.", True)
 
     def _raices_ausentes(self, abiertas: dict[str, Path]) -> None:
-        """Una raíz del equipo que no está en su ruta se dice UNA vez. No se
-        busca en otro sitio ni se recrea: mover la carpeta deja las líneas base
-        apuntando a lo que ya no está, y eso se arregla reinstalando."""
+        """Dice UNA vez que una raíz del equipo no está en su ruta.
+
+        No se busca en otro sitio ni se recrea: mover la carpeta deja las
+        líneas base apuntando a lo que ya no está, y eso se arregla
+        reinstalando.
+        """
         for uid, unidad in self.ajustes.raices.items():
             if uid in abiertas:
                 if uid in self.ausentes:
@@ -829,8 +1041,8 @@ class Agente:
                            f"{unidad.ruta}")
                 continue
             if unidad.cifrada:
-                # Cerrada no es ausente: es lo normal con el contenedor bloqueado.
-                # Lo que falta es el contenedor mismo.
+                # Cerrada no es ausente: es lo normal con el contenedor
+                # bloqueado. Lo que falta es el contenedor mismo.
                 try:
                     hay = Path(unidad.contenedor).is_file()
                 except OSError:
@@ -854,24 +1066,30 @@ class Agente:
                        f"Si la has movido, vuelve a ponerla ahí o reinstala.", True)
 
     def _conectar(self, uid: str, raiz: Path, ahora: float) -> None:
+        """Da por conectada una unidad que se ha visto `ESTABLE` veces.
+
+        Una que no está en la lista se pregunta. De una de la lista con otro
+        código, o de una versión anterior a `VERSION_MINIMA`, no se ejecuta
+        nada suyo. Si no, se atiende según su modo.
+        """
         unidad = self.ajustes.unidades.get(uid)
         nombre = nombre_de(raiz, uid, unidad.nombre if unidad else "")
         con = Conexion(uid, raiz, nombre, ahora)
-        # Un lock con nuestro pid es de la conexión anterior (se desenchufó y no
-        # se escribe en una unidad que no está): si no se la vuelve a servir,
-        # se borra (`_soltar`); si sí, se reescribe (`_tomar`). De una que no
+        # Un lock con nuestro pid es de la conexión anterior (se desenchufó y
+        # no se escribe en una unidad que no está): si no se la vuelve a servir
+        # se borra (`_soltar`), si sí se reescribe (`_tomar`). De una que no
         # está en la lista no se lee más que su id y su nombre.
         con.soltando = unidad is not None and self._lock_es_nuestro(con)
         self.conexiones[uid] = con
         desbloqueo = self.desbloqueos.pop(uid, None)
         # Cada conexión empieza de cero, como el servicio que se arrancaba al
-        # enchufar: se sincroniza enseguida, y el modo `sync` vuelve a tocar.
+        # enchufar: se sincroniza enseguida y el modo `sync` vuelve a tocar.
         for clave in [k for k in self.marcas if k[0] == uid]:
             del self.marcas[clave]
         con.vieja = version_vieja(raiz)
         if con.vieja is not None:
-            # Antes de preguntar y antes de la huella: no hay nada que decidir
-            # hasta que se actualice.
+            # Antes de preguntar y de la huella: no hay nada que decidir hasta
+            # que se actualice.
             avisar(f"{nombre}: su programa es anterior a la {VERSION_MINIMA}",
                    f"Lleva la {con.vieja or 'versión desconocida'}. El agente no la "
                    f"atiende hasta que la actualices con el instalador («Actualizar»).",
@@ -886,7 +1104,8 @@ class Agente:
             con.huella = huella(raiz)
             if not unidad.codigo and con.huella:
                 # Atendida sin haberla visto (el asistente, `atender ID` con
-                # ella fuera): la huella se apunta la primera vez que se conecta.
+                # ella fuera): la huella se apunta la primera vez que se
+                # conecta.
                 unidad = replace(unidad, codigo=con.huella)
                 self._guardar(self.ajustes.con_unidad(unidad))
                 diario(f"{nombre}: apuntada la huella de su código")
@@ -906,6 +1125,13 @@ class Agente:
             self._lanzar_ventana(con)       # «Abrir» con ella bloqueada
 
     def _desconectar(self, uid: str, ahora: float, cerradas: dict[str, Path]) -> None:
+        """Olvida la conexión de una unidad que ya no está.
+
+        Args:
+            uid: El id de la unidad.
+            ahora: La hora del reloj del agente.
+            cerradas: Los vestíbulos que se ven ahora.
+        """
         con = self.conexiones.pop(uid, None)
         if con is None:
             return
@@ -914,11 +1140,11 @@ class Agente:
                 con.hijo.terminate()
             except OSError:
                 pass
-        # No se escribe en una unidad que ya no está. Y si sigue ahí la entrada del
-        # contenedor, se ha cerrado con la unidad puesta: es «Expulsar», no una
-        # conexión nueva, y no se vuelve a pedir la contraseña. Se apunta como ya
-        # pedida aunque no se sepa todavía (se ha notado entre dos recorridos):
-        # si en el siguiente no hay entrada, `_vestibulos()` la rearma.
+        # No se escribe en una unidad que ya no está. Si sigue ahí la entrada
+        # del contenedor, se ha cerrado con la unidad puesta: es «Expulsar», no
+        # una conexión nueva, y no se vuelve a pedir la contraseña. Se apunta
+        # como ya pedida aunque no se sepa todavía: si en el siguiente
+        # recorrido no hay entrada, `_vestibulos()` la rearma.
         self.vestibulos[uid] = str(cerradas.get(uid, ""))
         self.urgentes = [u for u in self.urgentes if u[0] != uid]
         self.entorno = replace(self.entorno, sin_conexion={
@@ -933,9 +1159,12 @@ class Agente:
                                    else "desconectada"))
 
     def _vestibulos(self, cerradas: dict[str, Path], ahora: float) -> None:
-        """Una unidad VeraCrypt de la lista, cerrada: se le pide a VeraCrypt que
-        la abra, una vez por conexión, como penwatch. Una que no está en la
-        lista, nunca: no se ejecuta nada de una unidad que no se ha aceptado."""
+        """Abre las unidades VeraCrypt de la lista que se ven cerradas.
+
+        Se le pide a VeraCrypt una vez por conexión, como hace penwatch. Una
+        que no está en la lista, nunca: no se ejecuta nada de una unidad que no
+        se ha aceptado.
+        """
         for uid in list(self.vestibulos):
             if uid not in cerradas:
                 if self.vestibulos.pop(uid):
@@ -958,9 +1187,12 @@ class Agente:
             diario(f"{unidad.nombre or uid[:8]}: cifrada y cerrada en {raiz}")
             abrir_contenedor(raiz)
 
-    # --- una unidad nueva -----------------------------------------------------------
-
     def _preguntar(self, con: Conexion, ahora: float) -> None:
+        """Pregunta por una unidad que no está en la lista, o cuyo código ha cambiado.
+
+        Avisa y abre la ventanita de la pregunta con cuenta atrás. Sin pantalla
+        donde preguntar cuenta como «Ahora no».
+        """
         espera = self.ajustes.espera_unidad_nueva
         if con.cambiada:
             avisar(f"{con.nombre}: su código ha cambiado",
@@ -988,6 +1220,11 @@ class Agente:
             con.hijo = None
 
     def _preguntas(self, ahora: float) -> None:
+        """Recoge las respuestas de las preguntas en curso.
+
+        El sí atiende la unidad; el no, o el tiempo, la deja sin atender
+        mientras siga conectada.
+        """
         for con in self.conexiones.values():
             if con.pregunta is None:
                 continue
@@ -1010,8 +1247,10 @@ class Agente:
                        f"conectada. Para atenderla: agente.py atender {con.id}")
 
     def _atender(self, con: Conexion) -> None:
-        """El sí: la unidad entra en la lista con la huella de su código de
-        ahora. Si ya estaba (su código había cambiado), conserva su modo."""
+        """Es el sí: la unidad entra en la lista con la huella de su código de ahora.
+
+        Si ya estaba (su código había cambiado), conserva su modo.
+        """
         con.respuesta = None
         codigo = huella(con.raiz) or ""
         con.huella = codigo or None
@@ -1028,15 +1267,21 @@ class Agente:
         diario(f"{con.nombre} añadida a la lista (modo {equipo.MODO_AL_ATENDER})")
 
     def _guardar(self, ajustes: equipo.Ajustes) -> None:
+        """Guarda los ajustes.
+
+        Si no se pueden escribir, el cambio vale hasta que se reinicie el
+        agente.
+        """
         self.ajustes = ajustes
         if not equipo.guardar_ajustes(ajustes):
             diario("no he podido escribir agente.json; el cambio vale hasta que "
                    "me reinicie")
 
-    # --- el modo ui ------------------------------------------------------------------
-
     def _abrir_ventana(self, con: Conexion) -> None:
-        """El modo `ui`: la ventana al conectarla, si no hay ya un servicio."""
+        """Hace el modo `ui`: abre la ventana al conectarla.
+
+        No la abre si ya hay una ventana o un servicio en marcha.
+        """
         con.lanzada = True
         ocupado = penwatch.aplicacion_en_marcha(con.raiz)
         if ocupado:
@@ -1045,9 +1290,12 @@ class Agente:
         self._lanzar_ventana(con)
 
     def _lanzar_ventana(self, con: Conexion) -> None:
-        """La ventana de runsync de esa raíz, con el Python del agente y fuera de
-        ella. Nuestro servicio no estorba: la ventana lo pausa al abrirse
-        (`daemon.stop`). Otra ventana sí, y runsync ya se negaría."""
+        """Abre la ventana de runsync de esa raíz.
+
+        Se lanza con el Python del agente y desde fuera de la raíz. Nuestro
+        servicio no estorba: la ventana lo pausa al abrirse (`daemon.stop`).
+        Otra ventana sí, y runsync ya se negaría.
+        """
         if con.vieja is not None or rclone_propio() is None:
             diario(f"{con.nombre}: no abro su ventana: "
                    + (self._motivo_sin_servicio(con) if con.vieja is not None
@@ -1069,16 +1317,21 @@ class Agente:
         except OSError as e:
             diario(f"{con.nombre}: no he podido abrir la ventana: {e}")
 
-    # --- el contrato del servicio ------------------------------------------------------
-
     def _sirve(self, con: Conexion) -> bool:
+        """Indica si el agente tiene que servir esa conexión.
+
+        Es una unidad de la lista, con su código aceptado, de una versión
+        válida y en modo `daemon` o `sync`.
+        """
         unidad = self.ajustes.unidades.get(con.id)
         return unidad is not None and not con.cambiada and con.vieja is None \
             and unidad.modo in (equipo.DAEMON, equipo.SYNC)
 
     def _cargar_servicio(self, con: Conexion) -> None:
-        """Relee las parejas y el intervalo si cambió el TOML o la memoria del
-        servicio: la ventana los edita mientras el agente sigue vivo."""
+        """Relee las parejas y el intervalo si cambió el TOML o la memoria del servicio.
+
+        La ventana los edita mientras el agente sigue vivo.
+        """
         firma = []
         for ruta in (app(con.raiz) / "sync_config.toml",
                      estado_de(con.raiz) / "ui_prefs.json"):
@@ -1098,6 +1351,10 @@ class Agente:
                 avisar(f"{con.nombre}: nada que sincronizar", con.error)
 
     def _otro_servicio(self, con: Conexion) -> dict | None:
+        """Devuelve el registro de otro servicio vivo de este equipo en esa raíz.
+
+        Es `None` si no hay otro.
+        """
         info = store.read_json(con.raiz / penwatch.DAEMON_LOCK_REL)
         if info.get("host") != HOST:
             return None
@@ -1110,6 +1367,12 @@ class Agente:
         return info
 
     def _contrato(self, con: Conexion, ahora: float) -> None:
+        """Cumple el contrato de servicio de esa raíz con los ficheros de su `state/`.
+
+        Toma o suelta el lock, obedece `daemon.stop`, se pone en pausa mientras
+        haya una ventana de runsync abierta y se aparta si otro servicio vivo
+        tiene el lock. Deja en `con.motivo` por qué no sirve, si no sirve.
+        """
         ocupada = self.pasada is not None and self.pasada.tarea.raiz == con.id
         if con.id in self.bloqueos:
             # Se está bloqueando: ni se encola ni se vuelve a tomar el lock.
@@ -1137,10 +1400,10 @@ class Agente:
             parar = False
         otro = self._otro_servicio(con)
         if parar and not ocupada and otro is None:
-            # Lo que hace runsync al abrir su ventana (o con --auto, o con
-            # cualquier orden pasada a sync.py, o su servicio al arrancar):
-            # acabada la pareja en curso, se suelta el lock y se borra el stop.
-            # Ya no se sale: se hace pausa. Con otro servicio vivo en el lock, el
+            # Lo que hace runsync al abrir su ventana (o con `--auto`, o con
+            # cualquier orden pasada a `sync.py`, o su servicio al arrancar):
+            # acabada la pareja en curso se suelta el lock y se borra el stop.
+            # No se sale: se hace pausa. Con otro servicio vivo en el lock, el
             # stop es para ESE: borrarlo lo dejaría corriendo.
             self._soltar(con)
             stop.unlink(missing_ok=True)
@@ -1163,8 +1426,9 @@ class Agente:
             con.motivo = f"sin servicio: {con.error}"
         else:
             if con.pausa is not None:
-                # La otra mitad de «en pausa»: sin ella, el diario no decía cuándo
-                # se volvía a atender tras cerrar la ventana (visto en real).
+                # La otra mitad de «en pausa»: sin ella, el diario no decía
+                # cuándo se volvía a atender tras cerrar la ventana (visto en
+                # real).
                 diario(f"{con.nombre}: sin ventana de runsync; vuelvo a atenderla")
                 dlog(con.raiz, "servicio (agente del equipo) reanudado")
             con.pausa = None
@@ -1179,6 +1443,7 @@ class Agente:
             self._soltar(con)
 
     def _motivo_sin_servicio(self, con: Conexion) -> str:
+        """Devuelve por qué el agente no atiende esa conexión, para `status`."""
         if con.pregunta is not None:
             return "preguntando si atenderla"
         if con.respuesta == pl.AHORA_NO:
@@ -1194,19 +1459,21 @@ class Agente:
         return f"modo {unidad.modo}: {equipo.TEXTO_MODO[unidad.modo]}"
 
     def _lock_es_nuestro(self, con: Conexion) -> bool:
+        """Indica si el `daemon.lock.json` de la raíz es de este agente."""
         info = store.read_json(con.raiz / penwatch.DAEMON_LOCK_REL)
         return info.get("pid") == os.getpid() and info.get("host") == HOST
 
     def _tomar(self, con: Conexion) -> None:
         """Se hace servicio de la raíz, si nadie vivo lo es.
 
-        Mirar y escribir son UN paso (`store.tomar_registro()`, O_EXCL), y el
-        servicio de runsync toma el mismo fichero igual (`runsync.tomar_lock()`):
-        de los dos que llegan a la vez, solo uno lo crea y el otro se aparta.
-        Mirar primero y escribir después dejaba que los dos se creyeran el
-        servicio. Un runsync de antes todavía escribe sin mirar: lo que queda es
-        la pareja en curso, y en la vuelta siguiente el agente ve su lock y se
-        aparta (`_otro_servicio`)."""
+        Mirar y escribir son UN paso (`store.tomar_registro()`, O_EXCL) y el
+        servicio de runsync toma el mismo fichero igual
+        (`runsync.tomar_lock()`): de los dos que llegan a la vez, solo uno lo
+        crea y el otro se aparta. Mirar primero y escribir después dejaba que
+        los dos se creyeran el servicio. Un runsync de antes todavía escribe
+        sin mirar: lo que queda es la pareja en curso, y en la vuelta siguiente
+        el agente ve su lock y se aparta (`_otro_servicio`).
+        """
         unidad = self.ajustes.unidades[con.id]
         datos = {"pid": os.getpid(), "host": HOST, "started": store.stamp(),
                  "pairs": [p.nombre for p in con.servicio.parejas],
@@ -1229,14 +1496,15 @@ class Agente:
                               else f" cada {con.servicio.minutos:g} min"))
 
     def _soltar(self, con: Conexion) -> None:
-        """Deja de atenderla y borra nuestro `daemon.lock.json`.
+        """Deja de atender la raíz y borra nuestro `daemon.lock.json`.
 
         En Windows no se borra un fichero que otro tiene abierto, y runsync lee
-        este cada 0,3 s mientras espera a que el servicio pare (WinError 32, H-2
-        de las pruebas en real). Entonces se deja de atender igual —`con.lock`
-        a None, que es lo que mira el planificador— y el fichero se reintenta
-        en la vuelta siguiente (`soltando`): con el pid del agente dentro,
-        runsync esperaría hasta rendirse."""
+        este cada 0,3 s mientras espera a que el servicio pare (WinError 32,
+        H-2 de las pruebas en real). Entonces se deja de atender igual
+        (`con.lock` a `None`, que es lo que mira el planificador) y el fichero
+        se reintenta en la vuelta siguiente (`soltando`): con el pid del agente
+        dentro, runsync esperaría hasta rendirse.
+        """
         if con.lock is None and not con.soltando:
             return
         con.lock = None
@@ -1248,9 +1516,12 @@ class Agente:
                 return
         con.soltando = False
 
-    # --- planificar y lanzar ------------------------------------------------------------
-
     def _raices(self) -> list[pl.Raiz]:
+        """Devuelve las raíces que el planificador puede atender.
+
+        Las que tienen nuestro lock y su servicio y no se están bloqueando. De
+        la raíz de la pasada cortada se quita su pareja mientras espera.
+        """
         raices = []
         cortada = self._cortada()
         for con in self.conexiones.values():
@@ -1265,10 +1536,12 @@ class Agente:
         return raices
 
     def _cortada(self) -> dict | None:
-        """La pasada que cortó el instalador, mientras su pareja tenga que
-        esperar: lanzarla antes de que caduque el `.lck` que dejó falla con
-        «prior lock file found», y se avisaría de un fallo que no es (H-15).
-        Solo esa pareja: las demás siguen como siempre."""
+        """Devuelve la pasada que cortó el instalador, mientras su pareja espere.
+
+        Lanzarla antes de que caduque el `.lck` que dejó falla con «prior lock
+        file found» y se avisaría de un fallo que no es (H-15). Solo esa
+        pareja: las demás siguen como siempre.
+        """
         c = self.cortada
         if c is None:
             return None
@@ -1284,10 +1557,12 @@ class Agente:
         return c
 
     def _heredada(self) -> bool:
-        """¿Sigue viva la pasada que dejó en marcha el agente anterior? (Se fue
-        con SIGTERM al cerrar sesión, o el instalador lo terminó a la fuerza: la
-        pasada es otro proceso y sigue.) Mientras viva no se lanza otra: serían
-        dos a la vez, quizá sobre la misma pareja."""
+        """Indica si sigue viva la pasada que dejó en marcha el agente anterior.
+
+        Se fue con SIGTERM al cerrar sesión, o el instalador lo terminó a la
+        fuerza: la pasada es otro proceso y sigue. Mientras viva no se lanza
+        otra: serían dos a la vez, quizá sobre la misma pareja.
+        """
         if self.heredada is None:
             return False
         viva = equipo.pasada_viva()
@@ -1304,6 +1579,11 @@ class Agente:
         return False
 
     def _decidir(self, ahora: float) -> pl.Decision:
+        """Pide al planificador la siguiente tarea y la lanza.
+
+        Returns:
+            La decisión, con la tarea o el motivo de no lanzar nada.
+        """
         entorno = replace(self.entorno, pausado=self.pausado)
         decision = pl.decidir(self._raices(), self.marcas, entorno, ahora,
                               self.ajustes.politica, urgentes=self.urgentes)
@@ -1316,6 +1596,11 @@ class Agente:
         return decision
 
     def _lanzar(self, tarea: pl.Tarea, ahora: float) -> None:
+        """Lanza una tarea: una pasada (el `sync.py` de la raíz) o una sonda del remoto.
+
+        Antes de una pasada se comprueba otra vez que el lock sigue siendo
+        nuestro.
+        """
         con = self.conexiones[tarea.raiz]
         if tarea.tipo == pl.PASADA and not self._lock_es_nuestro(con):
             # Justo antes de lanzar, otra vez: un runsync de antes escribe su
@@ -1329,9 +1614,9 @@ class Agente:
             args = orden_sonda(con.raiz, tarea.remoto)
             if args is None:
                 # Sin rclone para este equipo no hay con qué preguntar: se hace
-                # como si el remoto contestara. Así el fallo que se sospechaba de
-                # red cuenta como fallo de la pareja y espera lo suyo; tomarlo por
-                # red otra vez la relanzaría en cada vuelta.
+                # como si el remoto contestara. Así el fallo que se sospechaba
+                # de red cuenta como fallo de la pareja y espera lo suyo;
+                # tomarlo por red otra vez la relanzaría en cada vuelta.
                 self._fin_de_sonda(con, tarea.remoto, 0, "", ahora)
                 return
             cwd = app(con.raiz)             # rclone.conf resuelve contra aquí
@@ -1345,8 +1630,9 @@ class Agente:
         try:
             equipo.DIR.mkdir(parents=True, exist_ok=True)
             with salida.open("wb") as f:
-                # En su propio grupo: si hay que cortarla (`install/agente.
-                # parar_agente()`, pasado su plazo), se corta con su rclone.
+                # En su propio grupo: si hay que cortarla
+                # (`install/agente.parar_agente()`, pasado su plazo), se corta
+                # con su rclone.
                 proc = lanzar(args, stdout=f, stderr=subprocess.STDOUT,
                               **_opciones_hijo(cwd, separado=tarea.tipo == pl.PASADA))
         except OSError as e:
@@ -1364,6 +1650,12 @@ class Agente:
         diario(f"[{con.nombre}] {que}" + (" (a petición)" if tarea.urgente else ""))
 
     def _fin_de_pasada(self, ahora: float) -> None:
+        """Recoge el resultado de la pasada que haya acabado.
+
+        Lo apunta en el planificador, en el diario de la raíz y en su lock, y
+        avisa solo si la pareja EMPIEZA a fallar. Un fallo que parece de red
+        dispara la sonda.
+        """
         pasada = self.pasada
         if pasada is None:
             return
@@ -1385,8 +1677,8 @@ class Agente:
         tarea = pasada.tarea
         con = self.conexiones.get(tarea.raiz)
         if con is None or not presente(con.raiz):
-            # Una unidad desenchufada a mitad de pasada: no es un fallo de la
-            # pareja, y no se avisa de nada.
+            # Una unidad desenchufada a mitad de pasada no es un fallo de la
+            # pareja y no se avisa de nada.
             diario(f"[{pasada.nombre}] la unidad se ha ido a mitad de "
                    f"{tarea.pareja or 'la comprobación'}; no cuenta")
             return
@@ -1416,8 +1708,9 @@ class Agente:
         self._apuntar_en_lock(con, tarea.pareja, como, rc, segundos)
 
         if como == RED:
-            # ¿De verdad es la red? La sonda va ya: si el remoto contesta, aquel
-            # fallo era de la pareja y se apunta como tal (`_fin_de_sonda`).
+            # ¿De verdad es la red? La sonda va ya: si el remoto contesta,
+            # aquel fallo era de la pareja y se apunta como tal
+            # (`_fin_de_sonda`).
             self.sospechas[(tarea.raiz, tarea.remoto)] = (tarea.pareja, antes)
             self.entorno = pl.sin_conexion(self.entorno, tarea.raiz, tarea.remoto, ahora)
         elif pl.empieza_a_fallar(antes, despues):
@@ -1425,9 +1718,14 @@ class Agente:
 
     def _fin_de_sonda(self, con: Conexion, remoto: str, rc: int, texto: str,
                       ahora: float) -> None:
+        """Recoge el resultado de una sonda al remoto.
+
+        Si contesta, el fallo sospechado de red era de la pareja; si no, el
+        remoto queda sin conexión hasta el próximo sondeo.
+        """
         clave = (con.id, remoto)
         sospecha = self.sospechas.pop(clave, None)
-        # Un error que no es de red —credenciales, una ruta— es un remoto que
+        # Un error que no es de red (credenciales, una ruta) es un remoto que
         # contesta: no hay nada que esperar.
         if rc == 0 or not moderacion.es_de_red(texto):
             self.entorno = pl.con_conexion(self.entorno, con.id, remoto)
@@ -1451,6 +1749,10 @@ class Agente:
                    "Sus parejas esperan a que vuelva la red; no hace falta hacer nada.")
 
     def _donde_mirar(self, con: Conexion) -> str:
+        """Devuelve dónde mirar para ver qué ha pasado.
+
+        Depende de si es la raíz del equipo o una unidad.
+        """
         unidad = self.ajustes.unidades.get(con.id)
         if unidad is not None and unidad.es_raiz:
             return f"Abre la ventana de {APP_NAME} en este equipo para ver qué ha pasado."
@@ -1458,7 +1760,7 @@ class Agente:
 
     def _apuntar_en_lock(self, con: Conexion, pareja: str, como: str, rc: int,
                          segundos: float) -> None:
-        """Lo mismo que el servicio de runsync deja en su lock tras cada ciclo."""
+        """Deja en el lock lo mismo que el servicio de runsync tras cada ciclo."""
         if con.lock is None or not self._lock_es_nuestro(con):
             return
         texto = {OK: f"OK ({segundos:.0f}s)", SALTADA: "saltada (requiere --resync manual)"
@@ -1469,22 +1771,22 @@ class Agente:
         if destino is not None:
             store.write_json(destino, con.lock)
 
-    # --- la raíz cifrada ----------------------------------------------------------------
-
     def _cifrada(self, uid: str) -> equipo.Unidad | None:
-        """La raíz cifrada de ese id, o la única que haya si no se dice."""
+        """Devuelve la raíz cifrada de ese id, o la única que haya si no se dice."""
         cifradas = self.ajustes.cifradas
         if uid:
             return cifradas.get(uid)
         return next(iter(cifradas.values())) if len(cifradas) == 1 else None
 
     def _al_iniciar(self, ahora: float) -> None:
-        """`pedir_al_iniciar`: la contraseña, UNA vez por arranque del agente.
+        """Pide la contraseña de las raíces cifradas al iniciar sesión.
 
-        Se espera a haber recorrido lo bastante para saber que no está ya
-        abierta (una raíz cuenta al verla `ESTABLE` veces). Si se cancela, no se
-        vuelve a pedir hasta «Desbloquear»: es la misma regla de «una vez por
-        conexión» que tienen las unidades cifradas."""
+        Es `pedir_al_iniciar`, UNA vez por arranque del agente. Se espera a
+        haber recorrido lo bastante para saber que no está ya abierta (una raíz
+        cuenta al verla `ESTABLE` veces). Si se cancela, no se vuelve a pedir
+        hasta «Desbloquear»: es la regla de «una vez por conexión» de las
+        unidades cifradas.
+        """
         if self.recorridos < ESTABLE:
             return
         for uid, unidad in self.ajustes.cifradas.items():
@@ -1497,9 +1799,20 @@ class Agente:
 
     def _desbloquear(self, unidad: equipo.Unidad, ahora: float, por: str = "",
                      abrir: bool = False) -> bool:
-        """Le pide a VeraCrypt que abra la raíz cifrada. No espera: abierta es
-        cuando el recorrido VE su id con el `.hc` retenido. Con `abrir`, su
-        ventana se abre en cuanto se vea abierta (el «Abrir» de la bandeja)."""
+        """Le pide a VeraCrypt que abra la raíz cifrada. No espera.
+
+        Abierta es cuando el recorrido VE su id con el `.hc` retenido.
+
+        Args:
+            unidad: La raíz cifrada.
+            ahora: La hora del reloj del agente.
+            por: Por qué se desbloquea, para el diario.
+            abrir: Abrir su ventana en cuanto se vea abierta (el «Abrir» de la
+                bandeja).
+
+        Returns:
+            `True` si lanzó VeraCrypt.
+        """
         nombre = unidad.nombre or APP_NAME
         if unidad.id in self.conexiones or unidad.id in self.vistas:
             diario(f"{nombre}: ya está abierta")
@@ -1551,11 +1864,13 @@ class Agente:
         return True
 
     def _seguir_desbloqueos(self, ahora: float) -> None:
-        """Un «Desbloquear» que no acaba en la raíz abierta se ha cancelado (o
-        la contraseña no era): VeraCrypt ha salido y, pasado un rato, no se ve.
-        Se olvida, para que la bandeja vuelva a ofrecerlo. Con un VeraCrypt que
-        no sale (el de escritorio de Linux se queda abierto), al acabarse
-        `ESPERA_ABRIR`."""
+        """Olvida los «Desbloquear» que no han acabado en la raíz abierta.
+
+        Un «Desbloquear» así se ha cancelado (o la contraseña no era):
+        VeraCrypt ha salido y, pasado un rato, no se ve. Se olvida para que la
+        bandeja vuelva a ofrecerlo. Con un VeraCrypt que no sale (el de
+        escritorio de Linux se queda abierto), al acabarse `ESPERA_ABRIR`.
+        """
         for uid, d in list(self.desbloqueos.items()):
             if uid in self.conexiones or uid in self.vistas:
                 continue
@@ -1569,8 +1884,11 @@ class Agente:
                        f"desbloqueado (¿contraseña cancelada?); sigue bloqueada")
 
     def _bloqueos(self, ahora: float) -> None:
-        """Los «Bloquear» pedidos: primero se espera a que nada lo impida, luego
-        VeraCrypt desmonta y se espera a verlo cerrado de verdad."""
+        """Lleva los «Bloquear» pedidos hasta ver la raíz cerrada de verdad.
+
+        Primero se espera a que nada lo impida (la pareja en curso, su
+        ventana); luego VeraCrypt desmonta y se espera a verlo cerrado.
+        """
         for uid, b in list(self.bloqueos.items()):
             unidad = self.ajustes.unidades.get(uid)
             if unidad is None or not unidad.cifrada:
@@ -1630,9 +1948,8 @@ class Agente:
                        "VeraCrypt no la ha cerrado: si un programa tiene un fichero "
                        "abierto dentro, ciérralo y vuelve a bloquear.", True)
 
-    # --- el entorno ------------------------------------------------------------------
-
     def _leer_entorno(self, ahora: float) -> None:
+        """Lee la batería y la red, como mucho cada `MIRAR_ENTORNO` segundos."""
         if ahora - self.entorno_leido < MIRAR_ENTORNO:
             return
         self.entorno_leido = ahora
@@ -1641,15 +1958,15 @@ class Agente:
                                bateria=energia.porcentaje,
                                red_medida=moderacion.red_medida())
 
-    # --- la versión nueva ---------------------------------------------------------------
-
     def _mirar_version(self, ahora: float) -> None:
-        """¿Hay una versión más nueva que la de este agente? En un hilo, porque
-        es la red, y de tarde en tarde. Cuando la hay se dice una vez, y la
-        bandeja ofrece «Actualizar» (sección 8 del diseño)."""
+        """Mira, de tarde en tarde, si hay una versión más nueva que la de este agente.
+
+        Va en un hilo, porque es la red. Cuando la hay se dice una vez, y la
+        bandeja ofrece «Actualizar» (sección 8 del diseño).
+        """
         if self.actualizando is not None and self.actualizando.poll() is not None:
             # Si el agente sigue siendo este, la actualización no ha llegado a
-            # sustituirlo: lo cuenta su diario, y se puede volver a pedir.
+            # sustituirlo: lo cuenta su diario y se puede volver a pedir.
             self.actualizando = None
         if self.nueva and self.nueva != self.nueva_avisada:
             self.nueva_avisada = self.nueva
@@ -1662,6 +1979,10 @@ class Agente:
         self.version_mirada = ahora
 
         def trabajo() -> None:
+            """Busca la versión nueva y apunta su tag.
+
+            Si falla, lo deja en el diario.
+            """
             try:
                 rel = buscar_version()
             except Exception as e:                  # noqa: BLE001
@@ -1672,14 +1993,16 @@ class Agente:
         hilo(trabajo)
 
     def con_bandeja(self) -> bool:
-        """¿Hay un icono en la bandeja que ofrezca lo que se dice en un aviso?"""
+        """Indica si hay un icono en la bandeja que ofrezca lo que dice un aviso."""
         return self.bandeja is not None and bool(getattr(self.bandeja, "puesta", True))
 
     def _actualizar(self) -> None:
-        """«Actualizar»: un hijo suelto (`agente.py actualizar`) que baja la
-        versión nueva y la pone con su propio instalador, que para a este
-        agente y arranca el nuevo. Aquí no se espera nada: la red y la copia
-        no pueden tener parada la cola."""
+        """Hace el «Actualizar»: lanza un hijo suelto (`agente.py actualizar`).
+
+        Baja la versión nueva y la pone con su propio instalador, que para a
+        este agente y arranca el nuevo. Aquí no se espera nada: la red y la
+        copia no pueden tener parada la cola.
+        """
         if self.actualizando is not None and self.actualizando.poll() is None:
             diario("ya se está actualizando")
             return
@@ -1694,14 +2017,15 @@ class Agente:
         diario(f"actualizando a la {self.nueva or 'última versión'}; lo que pase, "
                f"aquí mismo")
 
-    # --- el buzón ---------------------------------------------------------------------
-
     def pedir(self, peticion: dict) -> None:
-        """Una petición de la bandeja (otro hilo): se atiende en la próxima
-        vuelta, en el hilo del agente, igual que una del buzón."""
+        """Deja una petición de la bandeja (otro hilo) para la próxima vuelta.
+
+        Se atiende en el hilo del agente, igual que una del buzón.
+        """
         self.peticiones.put(dict(peticion))
 
     def _buzon(self, ahora: float) -> None:
+        """Atiende las peticiones del buzón de `agente.pide` y las de la bandeja."""
         pendientes = equipo.recoger()
         while True:
             try:
@@ -1715,11 +2039,13 @@ class Agente:
                 diario(f"petición ilegible {p!r}: {e}")
 
     def _buzones_de_raices(self, ahora: float) -> None:
-        """El buzón de cada raíz conectada y en la lista (`state/servicio.pide`):
-        lo que su ventana le pide a su servicio. Lo que llega por ahí es de ESA
-        raíz, sea cual sea el id que traiga, y solo lo que es de una raíz
-        (`equipo.PIDE_SERVICIO`). El de una unidad que no está en la lista ni se
-        mira: de ella solo se lee su id y su nombre."""
+        """Atiende el buzón de cada raíz conectada y en la lista.
+
+        Es `state/servicio.pide`: lo que su ventana le pide a su servicio. Lo
+        que llega por ahí es de ESA raíz, sea cual sea el id que traiga, y solo
+        lo que es de una raíz (`equipo.PIDE_SERVICIO`). El de una unidad que no
+        está en la lista ni se mira: de ella solo se lee su id y su nombre.
+        """
         for con in list(self.conexiones.values()):
             if con.id not in self.ajustes.unidades or con.cambiada or con.vieja is not None:
                 continue
@@ -1734,10 +2060,21 @@ class Agente:
                     diario(f"petición ilegible {p!r}: {e}")
 
     def _atender_peticion(self, p: dict, ahora: float) -> None:
+        """Atiende una petición del buzón o de la bandeja.
+
+        Cada petición es un `equipo.PIDE_*`: reanudar el servicio de una raíz,
+        atender o poner modo a una unidad, añadir una raíz, desbloquear,
+        bloquear o abrir una raíz cifrada, despertar, sondear, cambiar un
+        ajuste, una pasada urgente, actualizar, pausa, sigue y parar.
+
+        Args:
+            p: La petición.
+            ahora: La hora del reloj del agente.
+        """
         que = p.get("pide")
         uid = p.get("id") if isinstance(p.get("id"), str) else ""
         if que == equipo.PIDE_REANUDAR:
-            # «Iniciar servicio» en la ventana de esa raíz: ya no arranca un
+            # «Iniciar servicio» en la ventana de esa raíz: no arranca un
             # servicio suyo, le dice al agente que vuelva en cuanto se cierre.
             # Como el servicio que se arrancaba, empieza con una pasada: las
             # parejas o el intervalo acaban de elegirse.
@@ -1761,9 +2098,9 @@ class Agente:
                 con.pregunta, con.hijo = None, None
                 self._atender(con)
         elif que == equipo.PIDE_MODO:
-            # Una que no está en la lista entra con ese modo: es como el
-            # asistente, vuelto a pasar con el agente ya instalado, añade las
-            # unidades que se eligen en su paso «Unidades».
+            # Una que no está en la lista entra con ese modo: es lo que hace el
+            # asistente vuelto a pasar con el agente ya instalado, que añade
+            # las unidades elegidas en su paso «Unidades».
             modo = p.get("modo")
             if not uid.strip() or modo not in equipo.MODOS:
                 diario(f"modo {modo!r} para {uid[:8]!r}: no es un id o no es un modo")
@@ -1810,14 +2147,14 @@ class Agente:
         elif que == equipo.PIDE_ABRIR:
             self._abrir(uid, ahora)
         elif que == equipo.PIDE_DESPERTAR:
-            # Vuelta de la suspensión: la batería y la red pueden ser otras, y
+            # Vuelta de la suspensión: la batería y la red pueden ser otras y
             # un remoto «sin conexión» quizá ya contesta. Se mira todo ya.
             self.entorno_leido = -math.inf
             self.entorno = replace(self.entorno, sin_conexion={
                 k: min(v, ahora) for k, v in self.entorno.sin_conexion.items()})
             self.rafaga_hasta = max(self.rafaga_hasta, ahora + RAFAGA)
-            # Windows manda dos eventos de reanudación seguidos (visto en real, a
-            # 1 s): lo de arriba no pasa nada por repetirlo, el diario sí.
+            # Windows manda dos eventos de reanudación seguidos (visto en real,
+            # a 1 s): repetir lo de arriba no hace daño; el diario sí.
             if ahora - self.despertado >= DESPERTAR_DOBLE:
                 diario("el equipo vuelve de la suspensión")
             self.despertado = ahora
@@ -1862,9 +2199,12 @@ class Agente:
             diario("parada pedida: termina en cuanto acabe lo que esté en marcha")
 
     def _abrir(self, uid: str, ahora: float) -> None:
-        """«Abrir» de la bandeja: la ventana de una raíz. Una unidad que no está
-        en la lista no: sería ejecutar su código sin el sí. Una raíz cifrada
-        bloqueada se desbloquea antes, y su ventana sale al verla abierta."""
+        """Hace el «Abrir» de la bandeja: la ventana de una raíz.
+
+        Una unidad que no está en la lista no: sería ejecutar su código sin el
+        sí. Una raíz cifrada bloqueada se desbloquea antes, y su ventana sale
+        al verla abierta.
+        """
         unidad = self.ajustes.unidades.get(uid)
         con = self.conexiones.get(uid)
         if unidad is None or (con is not None and (con.cambiada or con.vieja is not None)):
@@ -1877,10 +2217,8 @@ class Agente:
         else:
             diario(f"abrir {unidad.nombre or uid[:8]}: no está aquí ahora")
 
-    # --- estado ----------------------------------------------------------------------
-
     def _estado_raiz(self, uid: str, unidad: equipo.Unidad) -> str:
-        """En qué está una raíz de este equipo, para la bandeja."""
+        """Devuelve en qué está una raíz de este equipo, para la bandeja."""
         if uid in self.ausentes:
             return bandeja.AUSENTE
         if uid in self.fantasmas:
@@ -1895,6 +2233,11 @@ class Agente:
 
 
     def resumen(self) -> dict:
+        """Devuelve lo que el agente cuenta de sí mismo.
+
+        Es lo que va a `estado.json` y lo que la bandeja convierte en su vista
+        (`bandeja.vista()`).
+        """
         unidades = []
         for con in self.conexiones.values():
             unidad = self.ajustes.unidades.get(con.id)
@@ -1945,6 +2288,7 @@ class Agente:
                 and self.actualizando.poll() is None}
 
     def _escribir_estado(self) -> None:
+        """Escribe `estado.json` y le pasa la vista a la bandeja, si cambian."""
         resumen = self.resumen()
         if resumen != self.ultimo_estado:
             self.ultimo_estado = resumen
@@ -1961,19 +2305,18 @@ class Agente:
                 diario(f"la bandeja no se ha podido poner al día: {e}")
 
     def cerrar(self) -> None:
-        """Al terminar: se sueltan los locks que sean nuestros. Una pasada en
-        marcha sigue sola hasta acabar; nadie la mata desde aquí."""
+        """Se despide: suelta los locks que sean nuestros.
+
+        Una pasada en marcha sigue sola hasta acabar; nadie la mata desde aquí.
+        """
         for con in self.conexiones.values():
             if presente(con.raiz):
                 self._soltar(con)
         store.write_json(equipo.estado_json(), {"pid": None, "actualizado": store.stamp()})
 
 
-# ---------------------------------------------------------------------------
-# Despertarse cuando cambian los montajes
-# ---------------------------------------------------------------------------
-
 MOUNTINFO = Path("/proc/self/mountinfo")
+"""Tabla de montajes de Linux, que avisa con `POLLPRI` cuando cambia."""
 
 
 class Vigia:
@@ -1982,11 +2325,16 @@ class Vigia:
     En Linux, `/proc/self/mountinfo` avisa con `POLLPRI` (y `POLLERR`) cuando
     cambia la tabla de montajes; hay que releerlo entero para rearmar el aviso.
     En Windows los montajes los dice la bandeja (`WM_DEVICECHANGE`), desde su
-    hilo, con `despertar(montajes=True)`; y lo que se elige en su menú,
-    con `despertar()`, para no esperar al tic. En Linux ese despertar va por
-    un pipe que se vigila junto a mountinfo."""
+    hilo, con `despertar(montajes=True)`; y lo que se elige en su menú, con
+    `despertar()`, para no esperar al tic. En Linux ese despertar va por un
+    pipe que se vigila junto a mountinfo.
+    """
 
     def __init__(self) -> None:
+        """Prepara la espera.
+
+        En Linux, mountinfo y el pipe; en Windows, solo el evento.
+        """
         self._f = None
         self._poll = None
         self._evento = threading.Event()
@@ -2011,7 +2359,11 @@ class Vigia:
                 self._poll = None
 
     def despertar(self, montajes: bool = False) -> None:
-        """Que la espera acabe ya. Se puede llamar desde cualquier hilo."""
+        """Hace que la espera acabe ya; se puede llamar desde cualquier hilo.
+
+        Args:
+            montajes: Avisa además de que han cambiado los montajes.
+        """
         if montajes:
             self._montajes = True
         self._evento.set()
@@ -2022,12 +2374,17 @@ class Vigia:
                 pass                # lleno: ya hay un despertar pendiente
 
     def _tomar_montajes(self) -> bool:
+        """Devuelve si hubo aviso de montajes, y lo olvida."""
         montajes, self._montajes = self._montajes, False
         self._evento.clear()
         return montajes
 
     def esperar(self, segundos: float) -> bool:
-        """True si han cambiado los montajes (hay que recorrer en racha)."""
+        """Espera hasta `segundos`, o hasta que lo despierten o cambien los montajes.
+
+        Returns:
+            `True` si han cambiado los montajes (hay que recorrer en racha).
+        """
         if self._poll is None:
             self._evento.wait(segundos)
             return self._tomar_montajes()
@@ -2045,21 +2402,20 @@ class Vigia:
         return self._tomar_montajes() or montajes
 
 
-# ---------------------------------------------------------------------------
-# Órdenes
-# ---------------------------------------------------------------------------
-
 def poner_bandeja(agente: Agente, vigia: Vigia) -> Any:
-    """La bandeja del agente, o None si no se ha podido poner. Punto de
-    indirección: los tests no ponen ninguna.
+    """Devuelve la bandeja del agente, o `None` si no se ha podido poner.
+
+    Punto de indirección: los tests no ponen ninguna.
 
     Windows (fase 4): `Shell_NotifyIconW`. Linux (fase 6): StatusNotifierItem
-    en el bus de sesión; sin nadie que haga de `StatusNotifierWatcher` la
-    bandeja existe pero sin icono (`puesta` False), se dice en el diario, y el
+    en el bus de sesión; sin nadie que haga de `StatusNotifierWatcher`, la
+    bandeja existe pero sin icono (`puesta` False), se dice en el diario y el
     icono se pone solo si el watcher aparece después. Mientras, el acceso
-    «prdrive» del menú hace sus veces."""
+    «prdrive» del menú hace sus veces.
+    """
 
     def pedir(peticion: dict) -> None:
+        """Pasa al agente una petición de la bandeja y lo despierta."""
         agente.pedir(peticion)
         vigia.despertar()
 
@@ -2089,20 +2445,31 @@ def poner_bandeja(agente: Agente, vigia: Vigia) -> Any:
 
 
 def _enganchar_penwatch() -> None:
-    """Lo que penwatch escribe en su diario va al del agente: el agente lo
-    sustituye en este equipo y su carpeta ya no existe."""
+    """Lleva a penwatch al diario del agente.
+
+    Lo que penwatch escribe en su diario va al del agente: el agente lo
+    sustituye en este equipo y su carpeta ya no existe.
+    """
     penwatch.HOST_DIR = equipo.DIR
     penwatch.LOG_FILE = equipo.diario_log()
 
 
 def _terminar_con_finally(*_args) -> None:
-    """SIGTERM (cerrar sesión, `systemctl stop`, `timeout`) como salida normal:
-    sin esto Python muere sin pasar por los `finally` y el lock de la unidad
-    se queda escrito con un pid muerto."""
+    """Hace de SIGTERM una salida normal.
+
+    Cerrar sesión, `systemctl stop` o `timeout` mandan SIGTERM: sin esto Python
+    muere sin pasar por los `finally` y el lock de la unidad se queda escrito
+    con un pid muerto.
+    """
     raise SystemExit(0)
 
 
 def cmd_run(_args: argparse.Namespace) -> int:
+    """Es el bucle del agente: recorre, vuelve a vuelta y espera al tic.
+
+    Returns:
+        0 al terminar; 1 si no puede usar su carpeta.
+    """
     _enganchar_penwatch()
     if not IS_WIN:
         import signal
@@ -2129,7 +2496,7 @@ def cmd_run(_args: argparse.Namespace) -> int:
            f"unidades en la lista)")
     vigia = Vigia()
     agente.bandeja = poner_bandeja(agente, vigia)
-    # Sin quien avise de los montajes (Windows sin bandeja), se recorre como
+    # Sin quien avise de los montajes (Windows sin bandeja) se recorre como
     # penwatch; con él, el recorrido de respaldo y las rachas tras cada aviso.
     cada = RECORRIDO_WINDOWS if IS_WIN and agente.bandeja is None else RECORRIDO_RESPALDO
     proximo = -math.inf
@@ -2161,6 +2528,7 @@ def cmd_run(_args: argparse.Namespace) -> int:
 
 
 def cmd_status(_args: argparse.Namespace) -> int:
+    """Imprime qué atiende el agente y cómo."""
     aj = equipo.leer_ajustes()
     vivo = equipo.agente_vivo()
     print(f"Agente:         {'vivo (pid ' + str(vivo.get('pid')) + ')' if vivo else 'parado'}")
@@ -2209,6 +2577,11 @@ def cmd_status(_args: argparse.Namespace) -> int:
 
 
 def _pedir(peticion: dict) -> int:
+    """Deja una petición en el buzón del agente y dice cuándo se atenderá.
+
+    Returns:
+        0 si se dejó; 1 si no se pudo.
+    """
     if not equipo.pedir(peticion):
         print(f"No he podido dejar la petición en {equipo.buzon()}.", file=sys.stderr)
         return 1
@@ -2221,6 +2594,7 @@ def _pedir(peticion: dict) -> int:
 
 
 def cmd_parar(_args: argparse.Namespace) -> int:
+    """Pide parar al agente y espera un rato a que se vaya."""
     vivo = equipo.agente_vivo()
     if vivo is None:
         print("El agente no está en marcha.")
@@ -2235,9 +2609,14 @@ def cmd_parar(_args: argparse.Namespace) -> int:
 
 
 def raiz_para_abrir(uid: str | None) -> tuple[Path | None, str]:
-    """Qué raíz abre `agente.py abrir`: la de ese id (del equipo, o una unidad
-    conectada según el estado del agente), o la única raíz del equipo. (raíz,
-    por qué no) — la frase va vacía cuando hay raíz."""
+    """Devuelve qué raíz abre `agente.py abrir`, y por qué no hay ninguna.
+
+    Es la de ese id (del equipo, o una unidad conectada según el estado del
+    agente) o la única raíz del equipo.
+
+    Returns:
+        `(raíz, motivo)`; el motivo va vacío cuando hay raíz.
+    """
     aj = equipo.leer_ajustes()
     if uid:
         unidad = aj.unidades.get(uid)
@@ -2258,8 +2637,11 @@ def raiz_para_abrir(uid: str | None) -> tuple[Path | None, str]:
 
 
 def arrancar_agente() -> bool:
-    """El agente, arrancado desde `abrir` cuando no está en marcha (se cerró con
-    «Cerrar el agente», o la sesión no lo arrancó): suelto, fuera de toda raíz."""
+    """Arranca el agente desde `abrir` cuando no está en marcha.
+
+    Se cerró con «Cerrar el agente» o la sesión no lo arrancó. Va suelto y
+    fuera de toda raíz.
+    """
     try:
         lanzar([python(), str(SCRIPT_DIR / "agente.py"), "run"],
                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -2271,14 +2653,15 @@ def arrancar_agente() -> bool:
 
 
 def cmd_abrir(args: argparse.Namespace) -> int:
-    """El acceso «prdrive» del menú del sistema, que en un escritorio sin
-    bandeja hace sus veces (fase 6):
+    """Hace el acceso «prdrive» del menú del sistema, que sin bandeja hace sus veces.
 
-      * con el agente parado, lo arranca;
-      * con una raíz en este equipo, abre su ventana de runsync, con el Python
-        del agente y el directorio de trabajo fuera de ella (la raíz del equipo
-        no lleva Python propio); bloqueada, pide antes desbloquearla;
-      * sin raíz («solo agente»), dice con un aviso cómo va el agente."""
+    Es la fase 6:
+    - Con el agente parado, lo arranca.
+    - Con una raíz en este equipo, abre su ventana de runsync, con el Python
+      del agente y el directorio de trabajo fuera de ella (la raíz del equipo
+      no lleva Python propio); bloqueada, pide antes desbloquearla.
+    - Sin raíz («solo agente»), dice con un aviso cómo va el agente.
+    """
     _enganchar_penwatch()
     vivo = equipo.agente_vivo() is not None
     arrancado = False if vivo else arrancar_agente()
@@ -2339,12 +2722,18 @@ def cmd_abrir(args: argparse.Namespace) -> int:
 
 VERDAD = {"si": True, "sí": True, "s": True, "true": True, "1": True, "yes": True,
           "no": False, "n": False, "false": False, "0": False}
+"""Cómo se escribe un sí o un no en la línea de órdenes."""
 
 
 def valor_ajuste(clave: str, texto: str) -> Any:
-    """El valor de un ajuste escrito en la línea de órdenes, con su tipo. Un
-    texto donde va un sí o un no volvería al valor de fábrica al leerlo, sin
-    decir nada: por eso se rechaza aquí (ValueError)."""
+    """Devuelve el valor de un ajuste escrito en la línea de órdenes, con su tipo.
+
+    Un texto donde va un sí o un no volvería al valor de fábrica al leerlo, sin
+    decir nada: por eso se rechaza aquí.
+
+    Raises:
+        ValueError: Si no es un sí o un no, o un número.
+    """
     if clave == "pedir_al_iniciar":
         valor = VERDAD.get(texto.strip().lower())
         if valor is None:
@@ -2354,6 +2743,7 @@ def valor_ajuste(clave: str, texto: str) -> Any:
 
 
 def cmd_ajuste(args: argparse.Namespace) -> int:
+    """Pide cambiar un ajuste del agente."""
     try:
         valor = valor_ajuste(args.clave, args.valor)
     except ValueError as e:
@@ -2363,14 +2753,18 @@ def cmd_ajuste(args: argparse.Namespace) -> int:
 
 
 def cmd_actualizar(_args: argparse.Namespace) -> int:
-    """«Actualizar» de la bandeja (o a mano): baja el código de la última
-    release, lo comprueba (`update.download()`) y ejecuta SU instalador con
-    `--update-agente`, que pone el agente nuevo al lado, para a este, vuelve a
-    registrarlo, pone al día las raíces abiertas y arranca el nuevo. Lo que
-    dice va al diario del agente. Nunca se descarga dentro de ninguna raíz."""
+    """Hace el «Actualizar» de la bandeja (o a mano).
+
+    Baja el código de la última release, lo comprueba (`update.download()`) y
+    ejecuta SU instalador con `--update-agente`, que pone el agente nuevo al
+    lado, para a este, vuelve a registrarlo, pone al día las raíces abiertas y
+    arranca el nuevo. Lo que dice va al diario del agente. Nunca se descarga
+    dentro de ninguna raíz.
+    """
     _enganchar_penwatch()
 
     def decir(msg: str) -> None:
+        """Dice un mensaje por pantalla y en el diario."""
         print(msg)
         diario(f"actualizar: {msg}")
 
@@ -2409,11 +2803,13 @@ def cmd_actualizar(_args: argparse.Namespace) -> int:
 
 
 def cmd_pregunta(args: argparse.Namespace) -> int:
+    """Abre la ventanita que pregunta por una unidad nueva (proceso hijo del agente)."""
     from ui import tk_agente
     return tk_agente.main(args.nombre, args.segundos, args.cambiada)
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Atiende la línea de comandos del agente."""
     for flujo in (sys.stdout, sys.stderr):
         try:
             flujo.reconfigure(encoding="utf-8")
