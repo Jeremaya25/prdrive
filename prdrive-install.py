@@ -1,47 +1,46 @@
 #!/usr/bin/env python3
-"""
-prdrive-install.py — Aprovisiona un dispositivo prdrive nuevo.
+"""Aprovisiona un dispositivo prdrive nuevo: argumentos y asistente.
 
-Punto de entrada y poco más: aquí se miran los argumentos y se abre el asistente.
-Lo que sabe hacer está repartido:
+Punto de entrada y poco más: aquí se miran los argumentos y se abre el
+asistente. Lo que sabe hacer está repartido:
 
-    install/     lo que decide y lo que toca disco o red (sin Tkinter)
-    ui/tk_install.py, ui/tk_crypto.py   el asistente (solo dibujan)
+    install/              lo que decide y lo que toca disco o red (sin Tkinter)
+    ui/tk_install.py      el asistente (solo dibujan él y ui/tk_crypto.py)
 
 Lo que hace el asistente, en orden: pregunta la conexión con tu remoto (un
-formulario, o importar un remote de tu rclone.conf), consigue un rclone, lee el
-catálogo global de parejas, te deja elegir la unidad y cómo cifrarla (VeraCrypt o
-BitLocker), **copia el programa** en su carpeta oculta `.prdrive/`, escribe el
-`rclone.conf` y el `sync_config.toml` de ESE dispositivo, crea sus carpetas,
-inicializa las parejas bisync y comprueba que todo está.
+formulario, o importar un remote de tu `rclone.conf`), consigue un rclone, lee
+el catálogo global de parejas, te deja elegir la unidad y cómo cifrarla
+(VeraCrypt o BitLocker), **copia el programa** en su carpeta oculta
+`.prdrive/`, escribe el `rclone.conf` y el `sync_config.toml` de ESE
+dispositivo, crea sus carpetas, inicializa las parejas bisync y comprueba que
+todo está.
 
-    python prdrive-install.py                 el asistente
-    python prdrive-install.py --check         rclone + conexión + catálogo, y sale
-    python prdrive-install.py --probe         qué unidades ve, y sale
-    python prdrive-install.py --update RUTA   sustituye el código de un dispositivo
-    python prdrive-install.py --update-components RUTA   pone al día su rclone y su Python
-    python prdrive-install.py --instalar-agente      el agente residente en ESTE equipo
-    python prdrive-install.py --desinstalar-agente   y quitarlo (no toca ninguna unidad)
-    python prdrive-install.py --update-agente        poner el agente instalado a esta versión
+Sin argumentos abre el asistente. Los demás modos hacen una cosa y salen:
+- `--check`: rclone + conexión + catálogo.
+- `--probe`: qué unidades ve.
+- `--update RUTA`: sustituye el código de un dispositivo.
+- `--update-components RUTA`: pone al día su rclone y su Python.
+- `--instalar-agente`: instala el agente residente en ESTE equipo.
+- `--desinstalar-agente`: lo quita (no toca ninguna unidad).
+- `--update-agente`: pone el agente instalado a esta versión.
 
 `--update` es el otro extremo del aviso de versión nueva de la ventana: no
-aprovisiona nada, solo repite el paso 5 sobre un dispositivo que ya existe. Y no
-se ejecuta desde el dispositivo, sino desde el zip que `common/update.py` acaba
-de descargar y verificar: `install/` no viaja al dispositivo, así que **la
-versión nueva es la que se instala a sí misma**, y no hay una segunda copia del
-manifiesto de qué se despliega que se pueda quedar atrás.
+aprovisiona nada, solo repite el paso 5 sobre un dispositivo que ya existe. Y
+no se ejecuta desde el dispositivo sino desde el zip que `common/update.py`
+acaba de descargar y verificar: `install/` no viaja al dispositivo, así que
+**la versión nueva es la que se instala a sí misma** y no hay una segunda copia
+del manifiesto de qué se despliega que se pueda quedar atrás.
 
-El código que aterriza en el dispositivo viaja DENTRO del instalador; antes lo
-bajaba del remoto con un espejo del árbol entero. El remoto guarda configuración,
-no programas.
+El código que aterriza en el dispositivo viaja DENTRO del instalador. El remoto
+guarda configuración, no programas.
 
-La forma en que se reparte es un ejecutable de PyInstaller (`build_installer.py`),
-que además puede incrustar un perfil de conexión con su clave privada, para
-repartir dispositivos llave en mano. El .py de este repositorio NO lleva ninguno:
-sin perfil, el asistente abre su formulario de conexión y lo pregunta. Por eso
-esto se puede publicar sin filtrar nada.
+Se reparte como un ejecutable de PyInstaller (`build_installer.py`), que además
+puede incrustar un perfil de conexión con su clave privada, para repartir
+dispositivos llave en mano. El .py de este repositorio NO lleva ninguno: sin
+perfil, el asistente abre su formulario de conexión y lo pregunta. Por eso esto
+se puede publicar sin filtrar nada.
 
-Ojo con una trampa que solo aparece compilado: `sys.executable` es este mismo
+Una trampa que solo aparece compilado: `sys.executable` es este mismo
 ejecutable, no Python. Todo lo que lance el `sync.py` del dispositivo pasa por
 `deploy.device_python()`, que usa el Python que lleva el propio dispositivo y,
 si no lleva uno para este equipo, busca uno instalado.
@@ -56,8 +55,8 @@ import time
 import traceback
 from pathlib import Path
 
-# Ejecutado como .py hay que poner la raíz del proyecto en el path para importar
-# `install`, `ui` y `common`. Compilado no hace falta: PyInstaller ya los trae.
+# Como .py, la raíz del proyecto va al path para importar `install`, `ui` y
+# `common`; compilado, PyInstaller ya los trae.
 if not getattr(sys, "frozen", False):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -67,15 +66,20 @@ from common.update import CODIGO_RELEVO  # noqa: E402
 
 DESCRIPCION = ("Aprovisiona un dispositivo prdrive nuevo a partir del catálogo "
                "de tu remoto.")
+"""Descripción que enseña `--help`."""
 
 
 def report(lineas: list[str]) -> None:
     """Enseña un informe por donde se pueda.
 
-    Compilado con --windowed no hay consola: `sys.stdout` es None y `print()` se
-    convierte en un no-op silencioso, así que un `--check` desde el .exe no diría
-    nada. En ese caso se abre una ventana con el mismo texto. Lo mismo el relevo,
-    que corre con `pythonw.exe`."""
+    Compilado con `--windowed` no hay consola: `sys.stdout` es None y `print()`
+    no hace nada, así que un `--check` desde el .exe no diría nada. En ese caso
+    se abre una ventana con el mismo texto. Igual el relevo, que corre con
+    `pythonw.exe`.
+
+    Args:
+        lineas: Las líneas del informe.
+    """
     texto = "\n".join(lineas)
     if sys.stdout is not None:
         print(texto)
@@ -99,11 +103,15 @@ def report(lineas: list[str]) -> None:
 
 
 def cmd_check() -> int:
-    """Que haya rclone, que el remoto conteste y que su catálogo se entienda.
+    """Comprueba que haya rclone, que el remoto conteste y que su catálogo se entienda.
 
     Sin perfil incrustado no hay nada que comprobar y se dice: es el caso de
     quien acaba de clonar el repo, y la respuesta útil ahí es «abre el
-    asistente», no un error de conexión."""
+    asistente», no un error de conexión.
+
+    Returns:
+        0 si todo está bien; 1 si no hay conexión configurada.
+    """
     perfil = profile.load()
     if not perfil.configured:
         report(["Este instalador no lleva ninguna conexión configurada.",
@@ -137,7 +145,7 @@ def cmd_check() -> int:
 
 
 def cmd_probe() -> int:
-    """Las unidades que se ven, tal y como las vería el asistente."""
+    """Enseña las unidades que se ven, tal y como las vería el asistente."""
     volumenes = device.list_volumes()
     if not volumenes:
         report(["No veo ninguna unidad. En Linux/macOS se buscan los puntos de "
@@ -156,21 +164,28 @@ def cmd_probe() -> int:
 def cmd_update(raiz: str) -> int:
     """Sustituye el código de un dispositivo que ya existe. Nada más.
 
-    Es el paso 5 del asistente menos las plataformas —rclone y Python ya están
-    en `bin/` y `runtime/`— y menos todo lo demás: no se pregunta la conexión, no
-    se elige unidad, no se cifra nada, no se tocan las parejas. Se sobrescriben
-    los ficheros del programa y se conservan `rclone.conf`, `keys/`,
-    `sync_config.toml`, `state/`, `logs/`, `filters/`, `bin/`, `runtime/` y el
-    fichero de control del volumen.
+    Es el paso 5 del asistente menos las plataformas (rclone y Python ya están
+    en `bin/` y `runtime/`) y menos todo lo demás: no se pregunta la conexión,
+    no se elige unidad, no se cifra nada, no se tocan las parejas. Se
+    sobrescriben los ficheros del programa y se conservan `rclone.conf`,
+    `keys/`, `sync_config.toml`, `state/`, `logs/`, `filters/`, `bin/`,
+    `runtime/` y el fichero de control del volumen.
 
-    Tampoco se tocan los lanzadores de la raíz: se escriben al aprovisionar y
-    ya está. Actualizar cambia el programa, no la forma de arrancarlo —y el
-    runtime es un componente, no código: el zip de la release no lo lleva—.
+    Tampoco se tocan los lanzadores de la raíz: se escriben al aprovisionar.
+    Actualizar cambia el programa, no la forma de arrancarlo; y el runtime es
+    un componente, no código: el zip de la release no lo lleva.
 
     Se imprime línea a línea con `print()` y no con `report()` al final porque
-    esto solo se ejecuta desde un checkout —el zip que ha descargado
-    `common/update.py`—, nunca congelado: hay stdout de verdad, y quien mira es
-    la ventana de salida, que enseña lo que va llegando."""
+    solo se ejecuta desde un checkout (el zip descargado por
+    `common/update.py`), nunca congelado: hay stdout de verdad, y quien mira es
+    la ventana de salida, que enseña lo que va llegando.
+
+    Args:
+        raiz: La raíz del volumen.
+
+    Raises:
+        InstallError: Si ahí no hay un dispositivo.
+    """
     root = Path(raiz).expanduser()
     destino = deploy.app_dir(root)
     if not destino.is_dir():
@@ -200,20 +215,28 @@ def cmd_update(raiz: str) -> int:
 def cmd_update_components(raiz: str, relevo: int | None = None) -> int:
     """Pone al día el rclone y el Python que lleva un dispositivo. Nada más.
 
-    El hermano de `--update`: aquel cambia el CÓDIGO y deja los componentes,
-    éste cambia los componentes y no toca el código, la configuración, las
+    Es el hermano de `--update`: aquel cambia el CÓDIGO y deja los componentes;
+    este cambia los componentes y no toca el código, la configuración, las
     claves ni los lanzadores. Se ejecuta igual, desde el zip descargado, y por
-    el mismo motivo: `install/` no viaja al dispositivo, y la maquinaria de bajar
-    y comprobar rclone y Python vive aquí.
+    el mismo motivo: `install/` no viaja al dispositivo y la maquinaria de
+    bajar y comprobar rclone y Python vive aquí.
 
-    No se instala ninguna plataforma nueva. Eso es «Añadir plataformas…» del
+    No instala ninguna plataforma nueva: eso es «Añadir plataformas…» del
     asistente, que es una decisión con megas de por medio y una lista delante.
 
-    `relevo` es el pid de la ventana que lo ha lanzado. Si uno de los pendientes
-    es el Python con el que corre este proceso (el de la ventana), ése no se
-    intenta: se deja preparado el relevo que lo cambiará cuando la ventana se
-    cierre (`components.preparar_relevo()`) y se sale con
-    `update.CODIGO_RELEVO`, que es lo que le dice a la ventana que se cierre."""
+    Si uno de los pendientes es el Python con el que corre este proceso (el de
+    la ventana), no se intenta: se deja preparado el relevo que lo cambiará
+    cuando la ventana se cierre (`components.preparar_relevo()`) y se sale con
+    `update.CODIGO_RELEVO`, que le dice a la ventana que se cierre.
+
+    Args:
+        raiz: La raíz del volumen.
+        relevo: Pid de la ventana que lo ha lanzado, si la hay.
+
+    Returns:
+        0 si ha ido bien, 1 si algo no se ha podido, `CODIGO_RELEVO` si el
+        Python de la ventana queda para el relevo.
+    """
     root = Path(raiz).expanduser()
     destino = deploy.app_dir(root)
     if not destino.is_dir():
@@ -246,10 +269,10 @@ def cmd_update_components(raiz: str, relevo: int | None = None) -> int:
         print(f"  FALLO      {linea}")
 
     if propio is not None:
-        # Antes de cerrar nada: si algo más corre desde ese Python, cambiarlo le
-        # borraría la biblioteca estándar debajo (ver «El relevo» en
-        # install/components.py). Se dice aquí, con la ventana todavía abierta,
-        # y no después, con el relevo esperando a algo que nadie ve.
+        # Antes de cerrar nada: si algo más corre desde ese Python, cambiarlo
+        # le borraría la biblioteca estándar debajo (ver «El relevo» en
+        # `install/components.py`). Se dice ahora, con la ventana abierta, y no
+        # después, con el relevo esperando a algo que nadie ve.
         otros = components.quien_retiene(root, propio, [relevo, os.getpid()])
         if otros:
             print(f"  FALLO      {propio.titulo}: además de esta ventana, hay más "
@@ -285,10 +308,12 @@ def cmd_update_components(raiz: str, relevo: int | None = None) -> int:
 
 
 def cmd_instalar_agente() -> int:
-    """El agente residente sin asistente: el mismo recorrido «En este equipo»,
-    con las unidades que se sepan sin red (la de penwatch, las enchufadas) en
-    el modo que se les propone. Las demás llegarán con el aviso de «unidad
-    nueva»."""
+    """Instala el agente residente sin asistente.
+
+    Hace el mismo recorrido «En este equipo», con las unidades que se sepan sin
+    red (la de penwatch, las enchufadas) en el modo que se les propone. Las
+    demás llegarán con el aviso de «unidad nueva».
+    """
     from install import agente
     for linea in agente.instalar(progreso=print):
         print(f"  {linea}")
@@ -297,12 +322,15 @@ def cmd_instalar_agente() -> int:
 
 
 def cmd_update_agente() -> int:
-    """El agente residente de este equipo, a la versión de ESTE instalador: su
-    código y su Python al lado de los que hay, registrarlo de nuevo, las raíces
-    del equipo que estén abiertas y arrancarlo. Lo lanza «Actualizar» de la
-    bandeja desde el zip que acaba de descargar (`agente.py actualizar`), por
-    lo mismo que `--update`: la versión nueva se instala a sí misma. Se
-    imprime línea a línea: quien lo lanza lo copia en el diario del agente."""
+    """Pone el agente residente de este equipo a la versión de ESTE instalador.
+
+    Su código y su Python van al lado de los que hay; después se registra de
+    nuevo, se actualizan las raíces del equipo que estén abiertas y se arranca.
+    Lo lanza «Actualizar» de la bandeja desde el zip que acaba de descargar
+    (`agente.py actualizar`), por lo mismo que `--update`: la versión nueva se
+    instala a sí misma. Se imprime línea a línea porque quien lo lanza lo copia
+    en el diario del agente.
+    """
     from install import agente
     print(f"Actualizando el agente de este equipo a la versión {__version__}")
     for linea in agente.actualizar(progreso=print):
@@ -312,6 +340,7 @@ def cmd_update_agente() -> int:
 
 
 def cmd_desinstalar_agente() -> int:
+    """Quita el agente residente de este equipo; no toca ninguna unidad."""
     from install import agente
     for linea in agente.desinstalar(progreso=print):
         print(f"  {linea}")
@@ -319,19 +348,26 @@ def cmd_desinstalar_agente() -> int:
 
 
 def cmd_relevo(raiz: str, esperar: list[int], reabrir: str | None) -> int:
-    """El relevo: espera a que la ventana se cierre, pone al día y la reabre.
+    """Hace el relevo: espera a que la ventana se cierre, pone al día y la reabre.
 
     Corre desde el temporal de este equipo (`components.preparar_relevo()`) con
     un intérprete sin consola, así que no hay stdout: lo que diría va a
-    `relevo.log`, en su carpeta, y solo se enseña entero si algo ha salido mal
-    —con la ventana de `report()`—. Mientras trabaja, una ventanita dice cómo va
-    (`ui.tk_relevo`); si ha ido bien, lo que lo dice es la ventana reabierta sin
-    el recuadro ámbar.
+    `relevo.log`, en su carpeta, y solo se enseña entero si algo ha salido mal,
+    con la ventana de `report()`. Mientras trabaja, una ventanita dice cómo va
+    (`ui.tk_relevo`); si ha ido bien, lo que lo dice es la ventana reabierta
+    sin el recuadro ámbar.
 
     Espera a los pids de la ventana y del aplicador y, además, a que nada corra
     desde `runtime/`: a un prdrive abierto a mano mientras tanto, o a un aviso
     suyo olvidado detrás, el cambio le borraría la biblioteca estándar debajo.
-    La ventanita dice cuál es, para cerrarlo."""
+    La ventanita dice cuál es, para cerrarlo.
+
+    Args:
+        raiz: La raíz del volumen.
+        esperar: Pids de los procesos que tienen que acabar antes.
+        reabrir: Python con el que reabrir la ventana al terminar, si hay que
+            hacerlo.
+    """
     root = Path(raiz).expanduser()
     carpeta = Path(__file__).resolve().parent.parent
     log = carpeta / components.RELEVO_LOG
@@ -340,6 +376,10 @@ def cmd_relevo(raiz: str, esperar: list[int], reabrir: str | None) -> int:
     estado = {"rc": 1, "reabrir": False, "empezado": False, "terminado": False}
 
     def trabajar() -> None:
+        """Hace el cambio de componentes con la salida en `relevo.log`.
+
+        Deja en `estado` cómo ha ido, para quien lo espera.
+        """
         estado["empezado"] = True
         with open(log, "w", encoding="utf-8", buffering=1) as salida:
             antes = sys.stdout, sys.stderr
@@ -372,7 +412,7 @@ def cmd_relevo(raiz: str, esperar: list[int], reabrir: str | None) -> int:
                            f"tanto: se volverá a abrir solo al terminar.",
                            trabajar, avance.progreso)
     except Exception:                                # noqa: BLE001
-        # Sin Tk o sin pantalla, el trabajo es el mismo; solo no se ve. Y si la
+        # Sin Tk o sin pantalla el trabajo es el mismo, solo no se ve. Si la
         # ventanita cayó con el trabajo ya en marcha, se espera a que acabe:
         # empezarlo otra vez serían dos intercambios a la vez.
         if not estado["empezado"]:
@@ -398,20 +438,20 @@ def cmd_relevo(raiz: str, esperar: list[int], reabrir: str | None) -> int:
 
 
 def cmd_wizard() -> int:
-    """El asistente. Sin Tkinter no hay instalador: no hay menú de consola.
+    """Abre el asistente. Sin Tkinter no hay instalador: no hay menú de consola.
 
-    No lo hay a propósito. Todo lo que se decide aquí —elegir la unidad que se va
-    a usar, escribir una passphrase dos veces, teclear la conexión al remoto— se
-    hace UNA vez en la vida de un dispositivo y con la pantalla delante. Un menú
-    de texto que replicara eso sería el doble de código y el doble de sitios
-    donde equivocarse en la parte más delicada del proyecto."""
+    Es a propósito. Todo lo que se decide aquí (elegir la unidad, escribir una
+    passphrase dos veces, teclear la conexión al remoto) se hace UNA vez en la
+    vida de un dispositivo y con la pantalla delante. Un menú de texto que
+    replicara eso sería el doble de código y el doble de sitios donde
+    equivocarse en la parte más delicada del proyecto.
+    """
     try:
         from ui import tk_install
         return tk_install.run_wizard()
     except Exception as e:                           # noqa: BLE001
-        # Por report() y no por stderr: si el fallo es «no hay Tkinter», tampoco
-        # habrá ventana, pero compilado tampoco hay stderr, y este es justo el
-        # mensaje que hace falta leer.
+        # Por `report()` y no por stderr: compilado tampoco hay stderr, y este
+        # es justo el mensaje que hace falta leer.
         report([f"No puedo abrir el asistente: {type(e).__name__}: {e}",
                 "",
                 "Hace falta Tkinter. En Debian/Ubuntu: sudo apt install python3-tk",
@@ -420,6 +460,7 @@ def cmd_wizard() -> int:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Devuelve los argumentos de la línea de comandos."""
     parser = argparse.ArgumentParser(prog=f"{APP_NAME}-install",
                                      description=DESCRIPCION)
     parser.add_argument("--check", action="store_true",
@@ -456,9 +497,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def _con_quien_pintar() -> None:
-    """Los iconos de lo que instala `install/` los pinta `ui/icons.py`, que
-    `install/` no importa: se lo dice este lanzador, que sí conoce `ui/`
-    (`install.pintar_iconos`). Sin él, sin iconos; nada más."""
+    """Le dice a `install/` quién pinta los iconos que instala.
+
+    Los pinta `ui/icons.py`, que `install/` no importa: se lo dice este
+    lanzador, que sí conoce `ui/` (`install.pintar_iconos`). Sin él, sin
+    iconos; nada más.
+    """
     try:
         import install
         from ui import icons                    # sin Tk: rasteriza él solo
@@ -468,6 +512,11 @@ def _con_quien_pintar() -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Atiende la línea de comandos: el asistente o uno de sus subcomandos.
+
+    Returns:
+        El código de salida: 1 si hay un error, 130 si se cancela.
+    """
     for flujo in (sys.stdout, sys.stderr):
         try:
             flujo.reconfigure(encoding="utf-8")      # la salida va con acentos
@@ -496,8 +545,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_probe()
         return cmd_wizard()
     except InstallError as e:
-        # Por report() y no por stderr: compilado sin consola, stderr es None y
-        # el error se perdería justo cuando más falta hace verlo.
+        # Por `report()`: compilado sin consola, stderr es None y el error se
+        # perdería.
         report([str(e)])
         return 1
     except KeyboardInterrupt:
