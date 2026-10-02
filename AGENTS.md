@@ -1040,7 +1040,11 @@ absent), per-row sizes and a live total vs free space.
 - **Deselecting a provisioned platform deletes only if confirmed**
   (`Matriz.quitar()` → `_preguntar_borrado()`); unconfirmed = left in place.
 - **Downloads are pinned and verified** from `common/pins.py` (Python 3.13, not
-  3.14 — those builds ship Tk 9 and the UI is measured on Tk 8.6).
+  3.14 — those builds ship Tk 9 and the UI is measured on Tk 8.6). Even so, the
+  3.13 builds are Tk 8.6 only on **Windows** (8.6.15, `tcl86t.dll`/`tk86t.dll`);
+  the **Linux** ones (x64 and ARM64) already ship Tcl/Tk 9.0.4, in 20260901,
+  20260924 and 20261001 alike (measured 02/10/2026, see `pins.py`), so a Linux
+  runtime's window and the agent's run on Tk 9 today.
   `runtime_bin.extract()` validates every member before writing the first, prunes
   pip/idle/tests/C headers (on Linux also `share/` and `libpython*.so` — the
   interpreter is static), never creates symlinks (exFAT) but materialises

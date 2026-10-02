@@ -26,6 +26,13 @@ Por qué 3.13 y no 3.14: los 3.14 de python-build-standalone ya traen Tcl/Tk 9.0
 y la interfaz se ha hecho y medido con Tk 8.6 (el tema de ttk, los iconos
 rasterizados a mano, `tk scaling`). Subir a 3.14 es probar esas pantallas con
 Tk 9 primero, no cambiar un número.
+
+Qué Tk trae cada plataforma de 3.13, medido el 02/10/2026 en la release fijada
+(la 20260924 trae lo mismo): Windows x64 y ARM64, Tk 8.6.15 (`DLLs/tcl86t.dll` y
+`tk86t.dll`); Linux x64 y ARM64, Tcl/Tk 9.0.4 (`lib/tcl9.0/`, `lib/tk9.0/`,
+`libtcl9tk9.0.so`; `tkinter.TkVersion` da 9.0 en Linux x64). La ventana que abre
+un runtime de Linux, la del agente incluida, corre ya con Tk 9; solo la de
+Windows corre con el 8.6 con el que se hizo.
 """
 
 from __future__ import annotations
@@ -38,7 +45,7 @@ RCLONE_VERSION = "v1.75.1"
 Es fija: «la última» puede ser una que nadie ha probado.
 """
 
-PYTHON_RELEASE = "20260924"          # el tag de la release en GitHub
+PYTHON_RELEASE = "20261001"          # el tag de la release en GitHub
 """Tag de la release de python-build-standalone en GitHub.
 
 No bajar de 20260924: en todas las anteriores con 3.13 para Windows ARM64 (de
@@ -47,8 +54,12 @@ trae. `import _tkinter` falla con «DLL load failed» y, como el lanzador usa
 `pythonw.exe`, el doble clic en `runsync.bat` no abría nada ni decía por qué.
 La de x64 no depende de `zlib1.dll`. La 20260924 la lleva en `DLLs/`, que
 `podar()` no toca.
+
+La 20261001 lleva Python 3.13.16 (corrige CVE de `tarfile`, `ssl` y `urllib`) para
+las cuatro plataformas de `PLATAFORMAS` y conserva `DLLs/zlib1.dll` en Windows
+ARM64 (comprobado el 02/10/2026).
 """
-PYTHON_VERSION = "3.13.15"
+PYTHON_VERSION = "3.13.16"
 PBS_BASE_URL = ("https://github.com/astral-sh/python-build-standalone/"
                 "releases/download")
 """URL base de las releases de python-build-standalone."""
@@ -197,9 +208,9 @@ PLATAFORMAS: tuple[Plataforma, ...] = (
     Plataforma("windows-x64", "Windows x64", "windows", "x64", "amd64",
                "x86_64-pc-windows-msvc", 82, 45),
     Plataforma("windows-arm64", "Windows ARM64", "windows", "arm", "arm64",
-               "aarch64-pc-windows-msvc", 77, 47),
+               "aarch64-pc-windows-msvc", 77, 46),
     Plataforma("linux-x64", "Linux x64", "linux", "x64", "amd64",
-               "x86_64-unknown-linux-gnu", 82, 51),
+               "x86_64-unknown-linux-gnu", 82, 52),
     Plataforma("linux-arm64", "Linux ARM64", "linux", "arm", "arm64",
                "aarch64-unknown-linux-gnu", 77, 42),
 )
@@ -207,7 +218,9 @@ PLATAFORMAS: tuple[Plataforma, ...] = (
 
 Los tamaños están medidos con las versiones de arriba: el `rclone.exe` 1.75.1
 de amd64 son 81 MB descomprimido y los runtimes son lo que deja
-`runtime_bin.extract()` ya podado.
+`runtime_bin.extract()` ya podado, en MiB redondeados hacia arriba. Con la
+20261001, el 02/10/2026: Windows x64 44,30 MiB, Windows ARM64 45,16, Linux x64
+51,22 y Linux ARM64 41,88.
 """
 
 

@@ -150,7 +150,9 @@ runtime a medias no cuenta como instalado. rclone sigue en `.prdrive/bin/<arch>/
 Las versiones de los dos están **fijadas** en `common/pins.py` y se mueven con un
 commit, no porque alguien publicara algo anoche: se instala lo que se ha probado.
 Python va en 3.13 y no en 3.14 porque los 3.14 de python-build-standalone ya traen
-Tk 9, y la interfaz está hecha y medida con Tk 8.6.
+Tk 9, y la interfaz está hecha y medida con Tk 8.6. Eso sí, el 3.13 solo es Tk 8.6
+en Windows: el de Linux ya trae Tk 9.0.4 (comprobado el 02/10/2026), así que desde
+un runtime de Linux la ventana corre con Tk 9.
 
 **Desmarcar una plataforma que el dispositivo ya lleva pregunta si se borra.** Si
 dices que no, sus binarios se quedan donde están y simplemente no se reinstalan.
