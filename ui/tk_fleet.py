@@ -14,8 +14,9 @@ De la nota de otro dispositivo, desde aquí solo se puede hacer una cosa:
 **quitarla de la lista**. Ningún dispositivo escribe la nota de otro (por eso
 son ficheros separados) y quitarla no es escribirla: es borrar un rastro que el
 dueño vuelve a dejar en cuanto se enchufa. El contenido de una nota lo sigue
-decidiendo solo quien la firma y lo único que se puede *cambiar* desde aquí es
-el nombre de ESTE dispositivo.
+decidiendo solo quien la firma, y el nombre de ESTE dispositivo no se cambia
+aquí sino en «Nombre e icono de la unidad…» (`ui/tk_volumen.py`): esta ventana
+solo lo enseña.
 
 Debajo de la lista va la **ficha** del elegido: versión, plataformas, desde
 cuándo falla y en qué equipos ha estado. Va en la misma ventana y no en otra:
@@ -37,13 +38,19 @@ COLUMNAS = [
     ("aqui", "Este", 46),
     ("nombre", "Dispositivo", 250),
     ("visto", "Visto", 100),
-    ("estado", "Última pasada", 300),
+    ("equipo", "Último equipo", 150),
+    ("estado", "Última pasada", 250),
 ]
 """Las columnas de la tabla: clave, título y ancho en medidas del diseño.
 
 La versión y las plataformas se fueron a la ficha: en la tabla queda lo que se
-compara de un vistazo entre dispositivos.
+compara de un vistazo entre dispositivos. «Último equipo» es solo el más
+reciente (`Dispositivo.ultimo_equipo`); la lista entera, con sus fechas, está en
+el apartado «Equipos» de la ficha.
 """
+
+SIN_DATO = "—"
+"""Lo que se enseña en una celda de la tabla de la que la nota no dice nada."""
 
 SIN_NOTA = ("Todavía no hay ningún dispositivo apuntado. Cada uno deja su nota al "
             "sincronizar, así que aparecerán aquí en cuanto se usen.")
@@ -110,6 +117,15 @@ def _fecha(sello: str) -> str:
     return cuando_sello(sello) or sello[:10]
 
 
+def ultimo_equipo(disp: fleet.Dispositivo) -> str:
+    """Devuelve lo que dice la columna «Último equipo» de un dispositivo.
+
+    El equipo desde el que publicó por última vez, o `SIN_DATO` si su nota no
+    lo apunta (una de una versión que aún no llevaba la lista de equipos).
+    """
+    return disp.ultimo_equipo or SIN_DATO
+
+
 def ficha(disp: fleet.Dispositivo, equipo_aqui: str) -> list[Fila]:
     """Devuelve lo que dice la ficha de un dispositivo, apartado por apartado.
 
@@ -161,15 +177,23 @@ def _tono(disp: fleet.Dispositivo) -> str:
     return "ok" if disp.bien else "aviso"
 
 
-def open_dialog(parent, config: Config, raw: dict | None = None) -> bool:
-    """Abre la ventana y devuelve si se ha cambiado el nombre de este dispositivo.
+def open_dialog(parent, config: Config, raw: dict | None = None) -> None:
+    """Abre la ventana; no devuelve nada.
 
-    Quien llama repinta: el nombre sale también en su pie.
+    Lo único que escribe es quitar la nota de otro dispositivo del remoto, y no
+    hay nada local que repintar después.
+
+    Args:
+        parent: La ventana de la que cuelga.
+        config: El config de este dispositivo. Esta ventana no lo usa: la flota
+            sale del remoto y el dispositivo no se publica desde aquí.
+        raw: El config en bruto, para saber dónde está el catálogo y, junto a
+            él, la flota.
     """
     from tkinter import messagebox, ttk
 
     dlg = modal(parent, "Dispositivos")
-    estado: dict = {"flota": [], "cambiado": False}
+    estado: dict = {"flota": []}
     yo = fleet.device_id()
 
     marco = cuerpo_visible(dlg, padding=(20, 18, 20, 16))
@@ -185,7 +209,8 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> bool:
              "sincronizar —quién es, qué versión lleva, cómo le fue y en qué "
              "equipos se ha enchufado, por su nombre de red—, y nadie escribe la "
              "de otro. Los que llevan más de una semana sin aparecer salen "
-             "apagados.",
+             "apagados. El nombre de este dispositivo se cambia en «Ajustes» → "
+             "«Nombre e icono de la unidad…».",
              ancho=620, estilo="Dialogo.TLabel").grid(row=0, column=0, sticky="w")
 
     donde = ttk.Frame(arriba)
@@ -300,6 +325,7 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> bool:
                         values=("✓" if disp.id == yo else "",
                                 disp.nombre + marca(disp),
                                 _fecha(disp.last_seen),
+                                ultimo_equipo(disp),
                                 disp.last_result))
         # La lista es más baja porque la ficha se lleva parte de la ventana.
         tree.configure(height=min(8, max(3, len(flota))))
@@ -309,7 +335,6 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> bool:
             tree.selection_set(flota[0].id)
         else:
             vacio.grid(row=2, column=0, sticky="w", pady=(10, 0))
-        renombrar.configure(state="normal" if yo else "disabled")
         repasar()
         pie_nota.configure(text=nota or (aviso or ""))
         # Releer puede traer una ficha más grande que las que había al abrir:
@@ -341,28 +366,6 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> bool:
         quitar.configure(state="normal" if disp is not None and disp.id != yo
                          else "disabled")
 
-    def cambiar_nombre() -> None:
-        """Le pone nombre a este dispositivo y se lo cuenta al remoto.
-
-        Se guarda en el propio dispositivo (`state/fleet.json`) ANTES de
-        publicar: es lo que hace que siga llamándose igual cuando no hay red y
-        al cambiar de ordenador. La nota se fuerza para que el cambio se vea
-        desde los demás sin esperar a la siguiente pasada.
-        """
-        nuevo = pedir_nombre(dlg, fleet.nombre())
-        if nuevo is None:
-            return
-        if not fleet.guardar_nombre(nuevo):
-            messagebox.showerror(TITLE, "No se ha podido guardar el nombre: el "
-                                        "dispositivo no admite escritura.", parent=dlg)
-            return
-        estado["cambiado"] = True
-        if fleet.publicar(config, raw, forzar=True):
-            refrescar(f"Este dispositivo se llama ahora «{nuevo}».")
-        else:
-            refrescar(f"Este dispositivo se llama ahora «{nuevo}», pero no se ha "
-                      f"podido avisar al remoto: se hará en la próxima pasada.")
-
     def quitar_de_la_lista() -> None:
         """Quita la nota de un dispositivo que ya no existe.
 
@@ -389,20 +392,16 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> bool:
 
     acciones = ttk.Frame(marco)
     acciones.grid(row=3, column=0, sticky="ew", pady=(14, 0))
-    acciones.columnconfigure(2, weight=1)
-    renombrar = ttk.Button(acciones, text="Cambiar el nombre de este…",
-                           command=cambiar_nombre)
-    theme.boton_icono(renombrar, "edit", theme.TINTA2, theme.SUPERFICIE)
-    renombrar.grid(row=0, column=0, sticky="w")
+    acciones.columnconfigure(1, weight=1)
     quitar = ttk.Button(acciones, text="Quitar de la lista…", style="Danger.TButton",
                         command=quitar_de_la_lista, state="disabled")
     theme.boton_icono(quitar, "trash", theme.PELIGRO, theme.SUPERFICIE)
-    quitar.grid(row=0, column=1, sticky="w", padx=(6, 0))
+    quitar.grid(row=0, column=0, sticky="w")
     tree.bind("<<TreeviewSelect>>", repasar)
     releer = ttk.Button(acciones, text="Releer", style="Quiet.TButton",
                         command=lambda: refrescar("Flota releída."))
     theme.boton_icono(releer, "reload", theme.ACENTO, theme.PAPEL)
-    releer.grid(row=0, column=3, sticky="e")
+    releer.grid(row=0, column=2, sticky="e")
 
     cierre = ttk.Frame(marco)
     cierre.grid(row=4, column=0, sticky="ew", pady=(12, 0))
@@ -414,55 +413,3 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> bool:
 
     refrescar()
     mostrar(dlg, parent)
-    return estado["cambiado"]
-
-
-def pedir_nombre(parent, actual: str) -> str | None:
-    """Pide el nombre de este dispositivo; `None` si se cancela o no se escribe nada.
-
-    Es una ventana propia y no un `simpledialog`: el resto de la aplicación no
-    abre ninguno y aquí hace falta explicar en una línea para qué sirve el
-    nombre (lo ven los demás dispositivos) y que no cambia nada de la
-    sincronización.
-    """
-    import tkinter as tk
-    from tkinter import ttk
-
-    dlg = modal(parent, "Nombre del dispositivo")
-    marco = cuerpo_visible(dlg, padding=(22, 20, 22, 18))
-    marco.columnconfigure(0, weight=1)
-    resultado: dict = {"texto": None}
-
-    ttk.Label(marco, text="Cómo se llama este dispositivo",
-              style="Dialogo.TLabel").grid(row=0, column=0, sticky="w")
-    ttk.Label(marco, style="Pista.TLabel", wraplength=theme.medida(420), justify="left",
-              text=("Es lo que verán los demás dispositivos en esta lista. No cambia "
-                    "nada de la sincronización: sirve para reconocerlo de un vistazo "
-                    "(«el pendrive azul», «el del trabajo»).")).grid(
-        row=1, column=0, sticky="w", pady=(5, 0))
-
-    texto = tk.StringVar(value=actual)
-    entrada = ttk.Entry(marco, textvariable=texto, width=38)
-    entrada.grid(row=2, column=0, sticky="w", pady=(14, 0))
-
-    def aceptar() -> None:
-        """Guarda el nombre escrito y cierra; sin nombre no hace nada."""
-        limpio = texto.get().strip()
-        if not limpio:
-            return          # sin nombre no se guarda nada: el de antes vale más
-        resultado["texto"] = limpio
-        dlg.destroy()
-
-    entrada.bind("<Return>", lambda _e: aceptar())
-
-    ttk.Separator(marco, orient="horizontal").grid(row=3, column=0, sticky="ew",
-                                                   pady=(16, 0))
-    pie = ttk.Frame(marco)
-    pie.grid(row=4, column=0, sticky="e", pady=(14, 0))
-    ttk.Button(pie, text="Cancelar", command=dlg.destroy).grid(row=0, column=0,
-                                                               padx=(0, 6))
-    ttk.Button(pie, text="Guardar", style="Primary.TButton",
-               command=aceptar).grid(row=0, column=1)
-
-    mostrar(dlg, parent)
-    return resultado["texto"]

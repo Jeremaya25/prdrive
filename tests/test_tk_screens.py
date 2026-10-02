@@ -425,6 +425,7 @@ fleet.publicar = lambda cfg=None, raw=None, forzar=False: bool(
 with sandbox():
     cfg = preparar()
     filas = {}
+    titulos = []
 
     def mirar_flota(self, *_a, **_k):
         """Recorre la ventana de la flota y apunta lo que ve."""
@@ -433,15 +434,35 @@ with sandbox():
             w = pila.pop()
             pila += list(w.winfo_children())
             if isinstance(w, ttk.Treeview):
+                titulos.extend(str(w.heading(col)["text"]) for col in w["columns"])
                 for iid in w.get_children():
                     filas[iid] = w.item(iid)["values"]
 
     tk.Toplevel.wait_window = mirar_flota
-    tk_fleet.open_dialog(raiz, cfg, dict(BASE))
+    c("«Dispositivos…» no devuelve nada: ya no cambia nada de este dispositivo",
+      tk_fleet.open_dialog(raiz, cfg, dict(BASE)), None)
     c("la flota enseña un dispositivo por nota", sorted(filas), ["otro", "yo"])
     c("y marca cuál es este", (filas["yo"][0], filas["otro"][0]), ("✓", ""))
-    c("la tabla se queda en cuándo se le vio y cómo acabó (lo demás, a la ficha)",
-      (len(filas["otro"]), filas["otro"][3]), (4, "ok"))
+    c("la tabla: cuándo se le vio, desde qué equipo y cómo acabó (lo demás, a la ficha)",
+      titulos, ["Este", "Dispositivo", "Visto", "Último equipo", "Última pasada"])
+    c("cada fila lleva una celda por columna", {len(f) for f in filas.values()}, {5})
+    c("«Último equipo» es el desde el que publicó por última vez",
+      filas["otro"][3], "OFICINA-07")
+    c("y de una nota que no lo apunta, una raya", filas["yo"][3], tk_fleet.SIN_DATO)
+    c("la última pasada sigue al final", (filas["otro"][4], filas["yo"][4]), ("ok", "ok"))
+
+# la columna «Último equipo»: solo el más reciente, la lista entera es de la ficha
+Recientes = fleet.Dispositivo(
+    id="r", nombre="el del trabajo", version="0.2.1", plataformas=(),
+    last_seen="2026-09-02 09:12:40", last_result="ok",
+    equipos=(fleet.Equipo("OFICINA-07", "2026-09-02 09:12:40"),
+             fleet.Equipo("PORTATIL", "2026-09-01 10:00:00")))
+c("el último equipo es el más reciente de la nota",
+  tk_fleet.ultimo_equipo(Recientes), "OFICINA-07")
+c("sin equipos en la nota, una raya",
+  tk_fleet.ultimo_equipo(Recientes._replace(equipos=())), tk_fleet.SIN_DATO)
+c("la columna está en la tabla", [k for k, *_ in tk_fleet.COLUMNAS],
+  ["aqui", "nombre", "visto", "equipo", "estado"])
 
 # la ficha: qué dice, sin dibujarla
 Linea = tk_fleet.Linea
@@ -595,14 +616,35 @@ with sandbox():
     c("con la flota vacía la ficha no se enseña, solo el aviso",
       vacia["fila"], [vacia["aviso"]])
 
+# El nombre de este dispositivo se cambia en «Nombre e icono de la unidad…»: aquí
+# solo se lee. La ventana no ofrece cambiarlo, no guarda ni publica ninguno, y
+# dice dónde se hace.
 with sandbox():
     cfg = preparar()
-    tk_fleet.pedir_nombre = lambda parent, actual: "el pendrive azul"
-    tk.Toplevel.wait_window = pulsar("Cambiar el nombre de este…")
-    c("cambiar el nombre lo informa", tk_fleet.open_dialog(raiz, cfg, dict(BASE)), True)
-    c("se guarda en el dispositivo", guardados, ["el pendrive azul"])
-    c("y se publica en el acto, sin esperar a la siguiente pasada",
-      [forzar for _cfg, forzar in publicadas], [True])
+    lo_que_hay: dict = {}
+
+    def mirar_acciones(self, *_a, **_k):
+        """Apunta qué botones tiene la ventana de la flota y qué dice."""
+        botones, pila = [], [self]
+        while pila:
+            w = pila.pop()
+            pila += list(w.winfo_children())
+            if isinstance(w, ttk.Button):
+                botones.append(str(w.cget("text")))
+        lo_que_hay["botones"] = sorted(botones)
+        lo_que_hay["textos"] = textos(self)
+
+    tk.Toplevel.wait_window = mirar_acciones
+    tk_fleet.open_dialog(raiz, cfg, dict(BASE))
+    c("no hay botón para cambiar el nombre",
+      [b for b in lo_que_hay["botones"] if "nombre" in b.lower()], [])
+    c("solo quitar de la lista, releer y cerrar", lo_que_hay["botones"],
+      ["Cerrar", "Quitar de la lista…", "Releer"])
+    c("y la ventana ya no sabe pedir un nombre", hasattr(tk_fleet, "pedir_nombre"),
+      False)
+    c("abrirla no guarda ni publica ningún nombre", (guardados, publicadas), ([], []))
+    c("dice dónde se cambia",
+      any("Nombre e icono de la unidad" in t for t in lo_que_hay["textos"]), True)
 
 with sandbox():
     cfg = preparar()

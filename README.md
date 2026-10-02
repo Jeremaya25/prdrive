@@ -440,12 +440,14 @@ el otro cambia **solo este**. Cuatro cosas que se hacen desde ahí:
   cuando no hay conexión, igual que el bloque del catálogo. La ruta local usa el
   diálogo de carpetas del sistema y se guarda relativa a la raíz del dispositivo.
 - **Dispositivos…** enseña [la flota](#el-modelo): todos los que comparten este
-  catálogo, cuándo se les vio por última vez y cómo acabó su última pasada. Los
-  que llevan más de una semana sin aparecer salen apagados. Debajo, la **ficha**
-  del elegido: su versión, para qué plataformas sirve, desde cuándo falla si
-  falla, y los últimos equipos donde ha estado, con **«· este equipo»** en el
-  ordenador desde el que miras. Desde ahí se le puede poner nombre a **este**
-  dispositivo («el pendrive azul»); ningún dispositivo escribe la nota de otro.
+  catálogo, cuándo se les vio por última vez, **desde qué equipo** (el último
+  ordenador donde se enchufaron) y cómo acabó su última pasada. Los que llevan
+  más de una semana sin aparecer salen apagados. Debajo, la **ficha** del
+  elegido: su versión, para qué plataformas sirve, desde cuándo falla si falla, y
+  los últimos equipos donde ha estado, con **«· este equipo»** en el ordenador
+  desde el que miras. Es solo de lectura para los nombres: el de **este**
+  dispositivo se cambia en [«Nombre e icono de la unidad»](#nombre-e-icono-de-la-unidad)
+  y ningún dispositivo escribe la nota de otro.
 - **Editar flags…** enseña las cuatro capas resueltas y avisa si un cambio sube
   el `--max-delete` efectivo.
 
@@ -1179,6 +1181,12 @@ de Windows la unidad al conectarla: un nombre como «Pendrive de Pere» en vez d
 «Disco extraíble», y de icono la marca de prdrive en uno de cinco colores, un
 `.ico` tuyo, el de VeraCrypt si la unidad lo lleva, o ninguno. Los colores están
 para distinguir un dispositivo de otro a simple vista.
+
+**Es también el nombre del dispositivo** en [«Dispositivos…»](#la-ventana-de-parejas):
+es el único sitio donde se le pone nombre, y al guardar cambia en los dos. El
+nombre nuevo llega a esa lista con la siguiente sincronización, y no hace falta
+red para guardarlo. Si lo dejas vacío, la unidad se queda sin nombre propio pero
+el dispositivo conserva el que tenía.
 
 Se guarda en un `autorun.inf` en la raíz de la unidad que se enchufa. Ese
 fichero **no ejecuta nada**: Windows dejó de arrancar programas desde una unidad

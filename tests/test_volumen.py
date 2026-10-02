@@ -15,22 +15,32 @@ Lo que se comprueba:
   Explorador.
 - El traveler, al volver a llevar VeraCrypt, respeta lo elegido.
 - Los iconos no cuentan como contenido ajeno para el asistente.
-- La ventana llama a `volumen.guardar()` con lo que dice el formulario, y
-  «Ajustes» la ofrece.
+- El nombre es uno solo: guardarlo en la unidad lo pone también como el del
+  dispositivo en la flota (`state/fleet.json`), sin darlo por publicado, para
+  que salga en la siguiente pasada. Vacío no lo toca, y si la unidad no se puede
+  escribir tampoco.
+- La ventana llama a `volumen.guardar()` con lo que dice el formulario, dice que
+  ese nombre es también el del dispositivo, y «Ajustes» la ofrece.
 
 Ningún test toca una unidad de verdad: todo va sobre directorios temporales.
 """
 
 import sys
+from dataclasses import replace
 from pathlib import Path, PureWindowsPath
 
 from _harness import Checks, sandbox, tmpdir
 
-from common import autorun, model, store, vestibulo
+from common import autorun, fleet, model, store, vestibulo
 from install import deploy, device, traveler
 from ui import icons, volumen
 
 c = Checks("nombre e icono de la unidad")
+
+# El nombre que tiene un dispositivo que nadie ha nombrado es el del equipo, que
+# no es algo que un test pueda afirmar: se sustituye.
+EQUIPO_DE_VERDAD = fleet.equipo_actual
+fleet.equipo_actual = lambda: "PORTATIL-DE-PRUEBA"
 
 # Pintar la marca a 256 px son un par de segundos por color. Aquí basta con el
 # formato de verdad a un tamaño: lo que se prueba es qué fichero se deja y dónde.
@@ -180,6 +190,25 @@ c("ni uno más largo de lo que se deja",
   bool(rechaza(volumen.revisar_nombre, "x" * (autorun.MAX_NOMBRE + 1))), True)
 c("y con acentos, los que haga falta",
   volumen.revisar_nombre("Pendrive de Íñigo"), "Pendrive de Íñigo")
+c("lo que cabe en una unidad cabe en la flota: la nota no pone tope al nombre",
+  fleet.parse(fleet.dumps(fleet.Dispositivo(
+      "id", "ñ" * autorun.MAX_NOMBRE, "1", (), "", "ok"))).nombre,
+  "ñ" * autorun.MAX_NOMBRE)
+
+# Lo que dice la ventana: el límite, que es también el nombre del dispositivo
+# (con el de ahora, si se sabe) y qué pasa con el vacío.
+sin_estado = volumen.Estado(Path("E:/"), False, "", volumen.NINGUNO, "", False)
+pista = volumen.pista_nombre(replace(sin_estado, dispositivo="el pendrive azul"))
+c.contains("la pista dice el límite", pista, f"{autorun.MAX_NOMBRE} caracteres")
+c.contains("que es también el nombre del dispositivo", pista, "«Dispositivos…»")
+c.contains("cuál es ahora", pista, "«el pendrive azul»")
+c.contains("y qué pasa si se deja vacío", pista, "Vacío")
+c("sin saber el del dispositivo no promete uno",
+  "ahora" in volumen.pista_nombre(sin_estado), False)
+c.contains("al guardar con nombre se dice cuándo llega a «Dispositivos…»",
+           volumen.mensaje_guardado("Pendrive de Pere"), "«Dispositivos…»")
+c("y sin nombre no, que ahí no cambia nada",
+  "Dispositivos" in volumen.mensaje_guardado(""), False)
 
 sueltos = tmpdir("prdrive-ico-")
 bueno = sueltos / "bueno.ico"
@@ -208,6 +237,17 @@ with sandbox() as dispositivo:
     estado = volumen.leer()
     c("sin contenedor, la raíz es la del dispositivo",
       (estado.raiz, estado.fisica), (dispositivo, False))
+    c("y se sabe cómo se llama el dispositivo en la flota",
+      estado.dispositivo, "PORTATIL-DE-PRUEBA")
+
+    # Lo último que se publicó: el nombre que cambia aquí no puede darse por
+    # subido, o la siguiente pasada no lo contaría.
+    publicada = fleet.Dispositivo(id="a1b2", nombre=fleet.nombre(), version="0.1.4",
+                                  plataformas=(), last_seen=store.stamp(),
+                                  last_result=fleet.RESULTADO_OK)
+    fleet.recordar(publicada)
+    c("lo recién publicado no hace publicar", fleet.hace_falta_publicar(publicada),
+      False)
     c("y los iconos van en su carpeta del programa", estado.carpeta, programa)
     c("y sin autorun.inf no hay nombre ni icono",
       (estado.nombre, estado.clave), ("", volumen.NINGUNO))
@@ -218,6 +258,15 @@ with sandbox() as dispositivo:
     volumen.guardar(estado, "Pendrive de Pere", "verde")
     ahora = volumen.leer()
     c("guarda el nombre", ahora.nombre, "Pendrive de Pere")
+    c("que es también el del dispositivo en la flota",
+      (fleet.nombre(), ahora.dispositivo), ("Pendrive de Pere", "Pendrive de Pere"))
+    c("apuntado en el dispositivo, que tiene que saberlo sin red",
+      store.read_json(fleet.ruta_estado())["nombre"], "Pendrive de Pere")
+    c("sin darlo por publicado",
+      store.read_json(fleet.ruta_estado())["publicado"]["nombre"],
+      "PORTATIL-DE-PRUEBA")
+    c("así que la siguiente pasada sube la nota con el nombre nuevo",
+      fleet.hace_falta_publicar(publicada._replace(nombre=fleet.nombre())), True)
     c("y el color, con el icono dentro de la carpeta del programa",
       (ahora.clave, ahora.icono), ("verde", f"{DENTRO}\\icono-verde.ico"))
     c("pintado con su color", pintados[-1], icons.CAMPOS["verde"])
@@ -308,10 +357,31 @@ with sandbox() as dispositivo:
     c("y no deja el icono nuevo suelto",
       (programa / "icono-morado.ico").exists(), False)
     c("ni cambia lo que había", volumen.leer().nombre, "B")
+    c("ni el nombre del dispositivo: si la unidad no se guarda, nada cambia",
+      fleet.nombre(), "B")
+
+    # Si lo único que falla es el nombre del dispositivo (su `state/` no se
+    # puede escribir), la unidad ya está guardada y se dice cuál es la parte que
+    # falta, para poder reintentarla.
+    guardar_nombre = fleet.guardar_nombre
+    fleet.guardar_nombre = lambda texto, state_dir=None: False
+    error = rechaza(volumen.guardar, volumen.leer(), "D", "verde")
+    fleet.guardar_nombre = guardar_nombre
+    c.contains("si falla el nombre del dispositivo se dice cuál", error,
+               "«Dispositivos…»")
+    c.contains("y con la ruta que no se pudo escribir", error, "fleet.json")
+    c("pero la unidad ya quedó guardada",
+      (volumen.leer().nombre, volumen.leer().clave), ("D", "verde"))
+    c("y el dispositivo sigue llamándose como antes", fleet.nombre(), "B")
+    volumen.guardar(volumen.leer(), "D", "verde")
+    c("volver a guardar lo reintenta", fleet.nombre(), "D")
 
     volumen.guardar(volumen.leer(), "", volumen.NINGUNO)
     c("sin nombre y sin icono no queda autorun.inf", autorun.buscar(dispositivo), None)
     c("y en .prdrive/ solo lo que era suyo", iconos(programa), ["runsync.ico"])
+    c("quitar el nombre de la unidad no deja al dispositivo sin el suyo",
+      fleet.nombre(), "D")
+    c("ni lo vuelve el del equipo", fleet.nombre() != fleet.nombre_por_defecto(), True)
 
 # 5. con VeraCrypt: la raíz física, y el traveler
 
@@ -342,6 +412,8 @@ with sandbox() as dentro:
     volumen.guardar(estado, "Cifrado de Pere", "azul")
     texto = utf16(fisica / "autorun.inf")
     c.contains("el nombre nuevo", texto, "label=Cifrado de Pere")
+    c("y es el del dispositivo, el de dentro del contenedor, que es donde corre",
+      store.read_json(dentro / "state" / "fleet.json")["nombre"], "Cifrado de Pere")
     c.contains("sin perder la orden de montar", texto, '/q /m rm /v "PRDRIVE.hc"')
     c.contains("ni lo que no es de prdrive", texto, "open=otra-cosa.exe")
     c("el icono va fuera del contenedor, junto al autorun.inf",
@@ -433,13 +505,25 @@ c("«Ajustes» la ofrece",
 
 llamadas: list[tuple] = []
 avisos: list[str] = []
+etiquetas: list[str] = []
 messagebox.showinfo = lambda *a, **k: avisos.append("info")
 messagebox.showerror = lambda titulo, texto=None, **k: avisos.append(str(texto))
 tk_volumen.working = lambda parent, title, funcion, mensaje="": (True, funcion())
 volumen.guardar = lambda estado, nombre, clave, propio=None: llamadas.append(
     (estado.nombre, nombre, clave, propio))
 volumen.leer = lambda: volumen.Estado(Path("E:/"), False, "PRDRIVE", "azul",
-                                      ".prdrive\\icono-azul.ico", False)
+                                      ".prdrive\\icono-azul.ico", False,
+                                      "el pendrive azul")
+
+
+def mirar_etiquetas(dlg, parent=None):
+    """Apunta el texto de todas las etiquetas de la ventana, sin pulsar nada."""
+    pila = [dlg]
+    while pila:
+        w = pila.pop()
+        pila += list(w.winfo_children())
+        if isinstance(w, ttk.Label):
+            etiquetas.append(str(w.cget("text")))
 
 
 def rellenar_y_pulsar(nombre: str, clave: str, boton: str = "Guardar"):
@@ -465,6 +549,11 @@ def rellenar_y_pulsar(nombre: str, clave: str, boton: str = "Guardar"):
     return falso_mostrar
 
 
+tk_volumen.mostrar = mirar_etiquetas
+tk_volumen.open_dialog(tk_raiz)
+c("la ventana dice que el nombre es también el del dispositivo, y cuál es ahora",
+  any("«Dispositivos…»" in t and "«el pendrive azul»" in t for t in etiquetas), True)
+
 tk_volumen.mostrar = rellenar_y_pulsar("Pendrive de Pere", "morado")
 tk_volumen.open_dialog(tk_raiz)
 c("«Guardar» guarda lo que dice el formulario", llamadas,
@@ -484,4 +573,5 @@ tk_volumen.open_dialog(tk_raiz)
 c("«Cancelar» no guarda nada", llamadas, [])
 
 tk_raiz.destroy()
+fleet.equipo_actual = EQUIPO_DE_VERDAD
 sys.exit(c.report())

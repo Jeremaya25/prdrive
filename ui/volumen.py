@@ -30,6 +30,14 @@ aparte que pueda contradecir al fichero que manda.
 en caché por ruta: reescribir el mismo fichero con otro dibujo puede seguir
 enseñando el de antes. Por eso cada color tiene su nombre, uno propio lleva
 detrás un trozo de su hash y al guardar se recogen los que ya no se usan.
+
+**El nombre es uno solo.** Es también el de este dispositivo en la flota
+(«Dispositivos…», `state/fleet.json`), y esta es la única ventana que lo cambia:
+al guardar se pone en los dos sitios, para que el Explorador y la lista de
+dispositivos no lo llamen cada uno de una manera. Vacío, quita el de la unidad
+y deja el de la flota como está: un dispositivo sin nombre no existe, se
+llamaría como la máquina donde se mire. Lo que se sube al remoto no es cosa de
+aquí: la nota con el nombre nuevo sale en la siguiente pasada.
 """
 
 from __future__ import annotations
@@ -107,6 +115,9 @@ class Estado:
         icono: El `icon=` tal cual.
         veracrypt: Si la unidad lleva el VeraCrypt de viaje y su icono se
             ofrece.
+        dispositivo: Cómo se llama ahora este dispositivo en la flota
+            (`fleet.nombre()`), que puede no coincidir con `nombre`: es el que
+            «Guardar» sustituye.
     """
     raiz: Path
     fisica: bool
@@ -114,6 +125,7 @@ class Estado:
     clave: str
     icono: str
     veracrypt: bool
+    dispositivo: str = ""
 
     @property
     def carpeta(self) -> Path:
@@ -189,7 +201,7 @@ def leer() -> Estado:
     raiz, fisica = raiz_del_volumen()
     actual = autorun.leer(raiz)
     return Estado(raiz, fisica, actual.etiqueta, clave_de(actual.icono),
-                  actual.icono, lleva_veracrypt(raiz))
+                  actual.icono, lleva_veracrypt(raiz), fleet.nombre())
 
 
 def revisar_nombre(texto: str) -> str:
@@ -209,6 +221,31 @@ def revisar_nombre(texto: str) -> str:
         raise VolumenError(f"El nombre tiene {len(nombre)} caracteres, y el de "
                            f"una unidad cabe en {autorun.MAX_NOMBRE}.")
     return nombre
+
+
+def pista_nombre(estado: Estado) -> str:
+    """Devuelve lo que se dice bajo el campo del nombre.
+
+    Además del límite, que el nombre es también el del dispositivo en
+    «Dispositivos…» (con el de ahora, si se sabe) y qué pasa si se deja vacío.
+    """
+    ahora = f" (ahora, «{estado.dispositivo}»)" if estado.dispositivo else ""
+    return (f"Hasta {autorun.MAX_NOMBRE} caracteres. Es también el nombre de este "
+            f"dispositivo en «Dispositivos…»{ahora}. Vacío, la unidad se queda con "
+            "el que le ponga Windows y el dispositivo, con el suyo.")
+
+
+def mensaje_guardado(nombre: str) -> str:
+    """Devuelve lo que se dice al guardar.
+
+    Args:
+        nombre: El nombre guardado, ya revisado; vacío si se ha quitado.
+    """
+    texto = "Guardado. Se verá la próxima vez que conectes la unidad."
+    if nombre:
+        texto += (" En «Dispositivos…» el nombre nuevo llegará con la próxima "
+                  "sincronización.")
+    return texto
 
 
 def leer_ico(ruta: Path | str) -> bytes:
@@ -302,8 +339,21 @@ def guardar(estado: Estado, nombre: str, clave: str,
     a un icono que no está: primero el icono, luego el fichero y, solo al
     final, se recogen los iconos que ya no se usan.
 
+    Con nombre, ese mismo nombre pasa a ser el de este dispositivo en la flota
+    (`fleet.guardar_nombre()`), y lo último de todo: si la unidad no se pudo
+    escribir, el dispositivo no cambia de nombre. Sin nombre no se toca el de
+    la flota. No sube nada al remoto.
+
+    Args:
+        estado: Lo que tiene la unidad ahora, de `leer()`.
+        nombre: El nombre nuevo, vacío para quitarlo de la unidad.
+        clave: Qué icono poner.
+        propio: Los bytes del `.ico` de la persona, si ha elegido uno.
+
     Raises:
-        VolumenError: Si no se puede guardar.
+        VolumenError: Si no se puede guardar. Si lo único que falla es el
+            nombre del dispositivo, la unidad ya quedó guardada y el mensaje lo
+            dice: volver a guardar lo reintenta.
     """
     nombre = revisar_nombre(nombre)
     icono, fichero, datos = _icono(estado, clave, propio)
@@ -337,6 +387,11 @@ def guardar(estado: Estado, nombre: str, clave: str,
         raise VolumenError(f"No he podido escribir {destino}: {e}") from e
 
     recoger(estado, icono)
+    if nombre and not fleet.guardar_nombre(nombre):
+        raise VolumenError(
+            "He guardado el nombre y el icono de la unidad, pero no he podido "
+            "ponerle ese nombre al dispositivo en «Dispositivos…»: no puedo "
+            f"escribir {fleet.ruta_estado()}. Vuelve a guardar para reintentarlo.")
     return escrito
 
 

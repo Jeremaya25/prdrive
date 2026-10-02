@@ -130,11 +130,16 @@ pairing.construir = lambda raw=None, app_dir=None: pairing.dumps(
 # VeraCrypt ofrecido (una fila más), un icono que no puso prdrive con una ruta
 # larga, y la raíz en una ruta larga, que es lo que alarga la nota. Las dos notas:
 # la de la raíz física de un contenedor, y la de la unidad sin cifrar o con
-# BitLocker, que lleva la ruta dos veces (el autorun.inf y `.prdrive/`).
+# BitLocker, que lleva la ruta dos veces (el autorun.inf y `.prdrive/`). Y el
+# nombre del dispositivo en la flota, que sale en la pista bajo el campo y puede
+# ser largo (el del equipo, o uno que se le puso antes de que esa ventana lo
+# limitara a lo que cabe en una unidad).
 VOLUMENES = [volumen.Estado(
     __import__("pathlib").Path("/media/usuario-de-nombre-largo/PENDRIVE-DE-LA-OFICINA"),
     fisica, "Pendrive de la oficina de arriba", volumen.OTRO,
-    "%SystemRoot%\\System32\\imageres.dll,-30", True) for fisica in (True, False)]
+    "%SystemRoot%\\System32\\imageres.dll,-30", True,
+    "el pendrive de la oficina de arriba, el del armario de la sala de reuniones")
+    for fisica in (True, False)]
 
 # El panel de VeraCrypt sin VeraCrypt: se le da uno de mentira, una unidad
 # FAT32 (la pista del tope) y sin dispersos (la estimación de la espera), que es
@@ -690,16 +695,11 @@ try:
 
                 # La flota crece con cada dispositivo y con lo largo que sea su
                 # nombre, que lo pone el usuario.
-                for que, fabricar in (
-                        ("la flota",
-                         lambda: tk_fleet.open_dialog(raiz, cfg, dict(BASE))),
-                        ("el nombre del dispositivo",
-                         lambda: tk_fleet.pedir_nombre(
-                             raiz, "el pendrive de la oficina de arriba"))):
-                    entra, corta = medir_dialogo(fabricar, ancho, alto, escala,
-                                                 modulo=tk_fleet)
-                    c(f"{nombre}: {que} cabe", entra, True)
-                    c(f"{nombre}: {que} no queda recortado", corta, False)
+                entra, corta = medir_dialogo(
+                    lambda: tk_fleet.open_dialog(raiz, cfg, dict(BASE)),
+                    ancho, alto, escala, modulo=tk_fleet)
+                c(f"{nombre}: la flota cabe", entra, True)
+                c(f"{nombre}: la flota no queda recortado", corta, False)
 
                 # «Reparación» es la pantalla que más crece de todas: una fila
                 # por avería, con su explicación, y debajo la lista de conflictos

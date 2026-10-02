@@ -78,7 +78,8 @@ Los dos últimos borran de verdad. Antes de estrenar uno, pruébalo con
 
 **Ajustes (el engranaje) → Nombre e icono de la unidad…** Así la verás en el
 Explorador de Windows con tu nombre y tu icono en vez de «Disco extraíble». Se
-nota la próxima vez que la conectes.
+nota la próxima vez que la conectes. Ese nombre es también el del dispositivo en
+la lista de **Dispositivos…** (en Parejas).
 
 ## Si algo va mal
 

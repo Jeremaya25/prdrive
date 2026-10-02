@@ -606,6 +606,32 @@ it shows **after replugging**, and the window says so.
   icons, at the root too, which moves an old root icon into `.prdrive/` on the
   next save. An `icon=` prdrive did not write reads as `OTRO` and survives a
   name-only save.
+- **The name is the device's name too (#62).** This window is the ONE place a
+  device is named: `volumen.guardar()` also calls `fleet.guardar_nombre()`
+  (`state/fleet.json`, the name «Dispositivos…» shows and the fleet note
+  publishes), so Explorer and the list never call one device two things.
+  «Dispositivos…» only reads it (no rename button there any more).
+  - **`guardar_nombre()`, never `fleet.recordar()`.** `recordar()` writes
+    `publicado` — what was last *uploaded* — so using it would mark the new name
+    as published without a single byte sent, and `hace_falta_publicar()` would
+    see no change. `guardar_nombre()` leaves `publicado` alone: the old name
+    there no longer matches `nombre()`, which is exactly what lets the next real
+    pass publish the note (`tests/test_fleet.py`, `tests/test_volumen.py` pin
+    both halves). The save itself uploads nothing and needs no network; the
+    window says the new name reaches «Dispositivos…» with the next sync.
+  - **An empty name removes the drive's `label=` and leaves the fleet name
+    alone**: `fleet.nombre()` treats a blank stored name as «the machine's
+    name», so blanking it would silently rename the device after whatever
+    computer it is plugged into.
+  - **The fleet part goes last.** If the drive could not be written nothing
+    about the device changes; if only `state/fleet.json` fails, `guardar()`
+    raises a `VolumenError` that says the drive IS saved and which part is
+    missing (saving again retries it). Every save converges both names on the
+    form's, also when only the icon changed.
+  - `Estado.dispositivo` (the fleet name now) feeds `volumen.pista_nombre()`,
+    the hint under the field. The fleet name has no limit of its own, so what
+    fits `autorun.MAX_NOMBRE` always fits it; older, longer names are only
+    replaced when the person types a new one.
 - The five colours are `icons.CAMPOS` (brand field only; white and amber stay).
   Painting one is ~2 s (the 256 px size), so the save runs in `tk.working()` and
   an existing file is never repainted. Unverified on real Windows: an icon
@@ -1982,7 +2008,12 @@ protects a file governing deletions; this is a presence note).
 - `nombre` lives in `state/fleet.json` on the device, not only in the note: it
   must survive with no network, and reading a hostname would rename the device on
   every machine it is plugged into. `deploy` writes it at provisioning and calls
-  `fleet.recordar()` so the first pass doesn't repeat it.
+  `fleet.recordar()` so the first pass doesn't repeat it. **After that it changes
+  in one place only**, «Ajustes» → «Nombre e icono de la unidad…» (see «The
+  drive's name and icon»): «Dispositivos…» shows the name and cannot edit it, so
+  `tk_fleet` has no `pedir_nombre()` and `open_dialog()` returns nothing. A
+  rename publishes on the next real pass, not at once: `guardar_nombre()` leaves
+  `publicado` untouched and `hace_falta_publicar()` compares the name.
 - **Published after every real pass, good or bad** (`sync.py main()`, never for
   `--dry-run`): a fleet where everyone says 'ok' cannot show which device has
   been failing for weeks. `hace_falta_publicar()` throttles it, because the
@@ -2021,6 +2052,14 @@ publish time, with **no new write on the device**:
   `ultima_buena`: same machine → the 6 h rhythm is unchanged; another machine →
   published on the first pass; `ultima_buena` only moves with `last_result`. A
   `publicado` from before these keys publishes once after updating.
+- **The table's «Último equipo» column** is the host the device last published
+  from: `Dispositivo.ultimo_equipo` = `equipos[0]` (the list is latest-first; the
+  same value `_sin_fecha()` compares), shown by `tk_fleet.ultimo_equipo()` with
+  `SIN_DATO` («—») for a note that predates the list. Only the most recent one:
+  the full list with dates is the card's «Equipos», so the two do not repeat
+  each other. It is one more `COLUMNAS` entry and one more value in `refrescar()`'s
+  `tree.insert`; the table widths were rebalanced (the «Última pasada» column gave
+  50 units) so the window only grew ~100.
 - **The card** (`tk_fleet.ficha()`, pure, no Tk) sits under the table, in the
   same window — a fourth-level modal was the alternative. The table dropped
   «Versión» and «Para» into it. Its space is **reserved for the largest card in

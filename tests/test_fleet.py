@@ -78,6 +78,12 @@ c("una nota sin equipos ni fallo no escribe esas claves",
 vieja = fleet.parse('id = "v"\nnombre = "de la 0.2.3"\n')
 c("una nota de antes de los equipos no trae ninguno", vieja.equipos, ())
 c("ni última buena", vieja.ultima_buena, "")
+c("el último equipo es el primero de la lista, que va con el más reciente delante",
+  COMPLETA.ultimo_equipo, "PORTATIL")
+c("y de una nota sin equipos no consta ninguno",
+  (DISP.ultimo_equipo, vieja.ultimo_equipo), ("", ""))
+c("un último equipo se relee igual que se publicó",
+  fleet.parse(fleet.dumps(COMPLETA)).ultimo_equipo, "PORTATIL")
 c("unos equipos que no son una lista no son ninguno",
   fleet.parse('id = "x"\nequipos = "PORTATIL"\n').equipos, ())
 c("listas desparejadas: al que le falta la fecha se le deja vacía",
@@ -162,6 +168,40 @@ try:
         c("y queda apuntado lo último publicado",
           store.read_json(fleet.ruta_estado())["publicado"]["nombre"], "el pendrive rojo")
 
+        # El nombre se cambia SIN publicar (así lo hace «Nombre e icono de la
+        # unidad», que no habla con el remoto): la nota con el nombre nuevo tiene
+        # que salir sola en la siguiente pasada, y `guardar_nombre()` no puede dar
+        # por subido lo que no se ha subido (eso es `recordar()`, y es del que
+        # publica).
+        subidas: list[str] = []
+
+        def run_que_lee(args):
+            """Se queda con el texto de la nota que se sube y contesta que bien."""
+            subidas.append(Path(args[1]).read_text(encoding="utf-8"))
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+        catalog.run = run_que_lee
+        antes = store.read_json(fleet.ruta_estado())["publicado"]
+        c("sin cambiar nada, la pasada siguiente no publica",
+          fleet.hace_falta_publicar(fleet.nota(cfg)), False)
+        fleet.guardar_nombre("el pendrive verde")
+        c("cambiar el nombre lo guarda en el dispositivo", fleet.nombre(),
+          "el pendrive verde")
+        c("pero no toca lo que consta publicado",
+          store.read_json(fleet.ruta_estado())["publicado"], antes)
+        c("y el freno ve que hay algo nuevo que contar",
+          fleet.hace_falta_publicar(fleet.nota(cfg)), True)
+        c("la pasada siguiente sube la nota", fleet.publicar(cfg, CFG), True)
+        c("con el nombre nuevo", fleet.parse(subidas[-1]).nombre, "el pendrive verde")
+        c("y entonces sí consta publicado",
+          store.read_json(fleet.ruta_estado())["publicado"]["nombre"],
+          "el pendrive verde")
+        fleet.guardar_nombre("el pendrive verde")
+        c("ponerle el mismo nombre no hace publicar otra vez",
+          fleet.publicar(cfg, CFG), False)
+        c("ni habla con el remoto", len(subidas), 1)
+        catalog.run = falso_run(llamadas)
+
         # Un fallo de la pasada viaja en la nota: una flota en la que todos dicen
         # 'ok' no sirve para encontrar el dispositivo que lleva semanas fallando.
         from common import results
@@ -197,11 +237,15 @@ try:
         c("enchufado en otro equipo se publica en la primera pasada",
           fleet.publicar(cfg, CFG), True)
         c("con el nuevo delante", equipos(), ["OFICINA-07", "PORTATIL"])
+        c("y es el último equipo de la nota", fleet.nota(cfg).ultimo_equipo,
+          "OFICINA-07")
 
         fleet.equipo_actual = lambda: "PORTATIL"
         fleet.publicar(cfg, CFG)
         c("volver a uno que ya estaba lo pasa al frente sin repetirlo",
           equipos(), ["PORTATIL", "OFICINA-07"])
+        c("y vuelve a ser el último equipo", fleet.nota(cfg).ultimo_equipo,
+          "PORTATIL")
 
         for i in range(fleet.MAX_EQUIPOS):
             fleet.equipo_actual = lambda i=i: f"AULA-{i}"
