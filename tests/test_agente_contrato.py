@@ -141,10 +141,29 @@ while hilo.is_alive() and time.monotonic() < limite:
     F.vueltas(ag, 1)
     time.sleep(0.2)
 hilo.join(1)
-c("el runsync de siempre ve parar al servicio sin esperar a su plazo",
-  dicho, ["El agente de este equipo deja de sincronizar este dispositivo mientras "
-          "la ventana esté abierta."])
+c("el runsync de siempre ve parar al servicio sin esperar a su plazo, y no dice nada",
+  dicho, [None])
 c("  y deja la unidad sin lock ni stop", (F.lock(RAIZ), F.stop(RAIZ).exists()), ({}, False))
+
+# Con un servicio de runsync, en cambio, sí se dice que se ha detenido.
+F.otro_servicio(RAIZ)
+
+
+def servicio_que_para():
+    """Hace de servicio clásico: espera el `daemon.stop` y suelta su lock."""
+    limite = time.monotonic() + 5
+    while time.monotonic() < limite and not runsync.STOP.exists():
+        time.sleep(0.02)
+    runsync.LOCK.unlink()
+    runsync.STOP.unlink()
+
+
+hilo = threading.Thread(target=servicio_que_para)
+hilo.start()
+detenido = runsync.stop_previous_daemon()
+hilo.join()
+c("un servicio de runsync que para, sí lo dice",
+  detenido, f"Servicio anterior (pid {os.getppid()}) detenido.")
 
 # desenchufada a mitad de pasada
 F.vueltas(ag, 1, cada=agente.GRACIA + 1)

@@ -387,8 +387,13 @@ def pedir_reanudar() -> bool:
 def stop_previous_daemon() -> str | None:
     """Pide parar al servicio registrado y espera a que pare.
 
+    Con el agente residente como servicio no se dice nada: suelta la unidad
+    mientras haya una ventana abierta y vuelve al cerrarla, y eso ya lo cuenta
+    el botón «Cambiar…» de su línea en la ventana.
+
     Returns:
-        El mensaje para la persona, o `None` si no había nada.
+        El mensaje para la persona, o `None` si no había nada que decir (ni
+        servicio registrado, ni el agente soltando la unidad).
     """
     info = read_lock()
     if info is None:
@@ -407,11 +412,8 @@ def stop_previous_daemon() -> str | None:
     deadline = time.monotonic() + STOP_WAIT_SECONDS
     while time.monotonic() < deadline:
         if read_lock() is None:
-            # El agente residente (`agente.py`) no se va: suelta el dispositivo
-            # mientras haya una ventana abierta y vuelve cuando se cierra.
             if info.get("agente"):
-                return (f"El agente de este equipo deja de sincronizar {que} "
-                        f"mientras la ventana esté abierta.")
+                return None
             return f"Servicio anterior (pid {pid}) detenido."
         time.sleep(0.3)
 

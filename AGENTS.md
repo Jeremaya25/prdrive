@@ -1314,8 +1314,10 @@ whatever you build that only a real host can prove.
   this host exists and for `GRACIA` seconds after (so a service started from the
   window has time to write its lock), and **steps aside** while another live
   pid of this host holds the lock. A stale lock (dead pid / other host) is
-  overwritten. `runsync.stop_previous_daemon()` says "pauses" when the lock is
-  the agent's. `tests/test_agente_contrato.py` drives the real
+  overwritten. `runsync.stop_previous_daemon()` says nothing (returns `None`)
+  when the lock is the agent's: pausing for the window is what the «Cambiar…»
+  button of the agent's line already describes, and the callers print or show a
+  message only when there is one. `tests/test_agente_contrato.py` drives the real
   `stop_previous_daemon()` against it. **Releasing survives Windows**: runsync
   reads the lock every 0.3 s while it waits, and Windows will not delete a file
   someone has open (WinError 32); `_soltar()` stops serving at once
