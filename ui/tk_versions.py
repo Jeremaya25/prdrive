@@ -17,6 +17,7 @@ salir mal.
 Leer el lado remoto es una llamada a rclone, así que va por `tk.working()`: con
 el remoto caído tarda lo que tarden los tiempos de espera de
 `catalog.NET_FLAGS` y mientras tanto la ventana no puede quedarse en blanco.
+Purgar también: borra en el remoto.
 """
 
 from __future__ import annotations
@@ -194,10 +195,9 @@ def open_dialog(parent, config: Config) -> None:
                 dlg, plan, f"Purgar versiones de '{plan.pair_name}'",
                 "Se borran en los dos lados"):
             return
-        try:
-            hechos = plan.execute()
-        except Exception as e:                                    # noqa: BLE001
-            messagebox.showerror(TITLE, str(e), parent=dlg)
+        ok, hechos = working(dlg, "Versiones", plan.execute, "Purgando las versiones…")
+        if not ok:
+            messagebox.showerror(TITLE, str(hechos), parent=dlg)
             return
         refrescar()
         messagebox.showinfo(TITLE, "\n".join(hechos) or "No se ha borrado nada.",

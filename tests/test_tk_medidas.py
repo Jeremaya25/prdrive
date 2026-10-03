@@ -49,7 +49,7 @@ except Exception as e:                                   # sin entorno gráfico
     sys.exit(0)
 
 from ui import tk as uitk
-from ui import remote_picker
+from ui import remote_picker, segundo_plano
 from ui import (tk_doctor, tk_fleet, tk_install, tk_pairs, tk_qr, tk_repair,
                 tk_update, tk_versions, tk_volumen, tk_watch, versions_editor, volumen,
                 watch)
@@ -114,6 +114,21 @@ versions_editor.leer_remoto = lambda pair: VERSIONES_REMOTAS
 # `working()` lanza un hilo y abre su propia ventanita: aquí se mide la de
 # versiones, no esa.
 tk_versions.working = lambda parent, title, funcion, mensaje="": (True, funcion())
+# Y lo mismo en Parejas, que lista las carpetas del remoto por `working()`, y
+# con lo que esa pantalla y la flota leen en segundo plano: llega en el sitio,
+# así que se mide la pantalla ya leída. La de la espera se mide aparte.
+tk_pairs.working = lambda parent, title, funcion, mensaje="": (True, funcion())
+segundo_plano.lanzar = segundo_plano.en_el_acto
+# Un encargo que no termina nunca: la pantalla se queda esperando al remoto.
+NUNCA = segundo_plano.Encargo
+# Lo que dice `catalog.load()` con el remoto caído, con lo que suele añadir rclone.
+AVISO_CAIDO = (
+    "Sin conexión con el catálogo. Se enseña la copia local del 2026-01-01 00:00:00; "
+    "no se puede editar el catálogo hasta que vuelva la conexión.\n"
+    "No pude leer el catálogo nas:/prdrive-catalog/pairs.toml: 2026/01/01 00:00:00 "
+    "ERROR : error reading source root directory: couldn't connect SSH: dial tcp "
+    "192.168.100.200:22: i/o timeout\n2026/01/01 00:00:00 Failed to cat: couldn't "
+    "connect SSH: dial tcp 192.168.100.200:22: i/o timeout")
 
 # La ventana de emparejar dibuja un código QR cuyo tamaño sale del tamaño de la
 # carga, y la carga lleva una clave privada. Aquí se le da una del tamaño real
@@ -700,6 +715,46 @@ try:
                     ancho, alto, escala, modulo=tk_fleet)
                 c(f"{nombre}: la flota cabe", entra, True)
                 c(f"{nombre}: la flota no queda recortado", corta, False)
+
+                # Lo que esas dos pantallas leen en segundo plano (#66), en sus
+                # casos más altos: Parejas leyendo, con la copia local de las doce
+                # parejas y el indicador bajo la cabecera; Parejas con el remoto
+                # caído, que deja en esa línea el aviso entero de `catalog.load()`
+                # con lo que dijo rclone; y la flota leyendo. Un encargo que no
+                # termina nunca deja la pantalla esperando; se cierra al medirla
+                # para que su sondeo no siga.
+                copia = catalog.Catalog(
+                    raw=tomllib.loads(config_file.dumps(BASE)), text=config_file.dumps(BASE),
+                    source="cache", stamp="2026-01-01 00:00:00",
+                    endpoint="nas:/prdrive-catalog/pairs.toml")
+                caido = (copia, AVISO_CAIDO)
+                previos = (catalog.cached, catalog.load, segundo_plano.lanzar)
+                catalog.cached = lambda: copia
+                try:
+                    for que, lanzar, cargar, abrir, modulo, espera in (
+                            ("Parejas leyendo la copia local", NUNCA, previos[1],
+                             lambda: tk_pairs.open_dialog(raiz, cfg), tk_pairs, True),
+                            ("Parejas con el remoto caído", segundo_plano.en_el_acto,
+                             lambda raw=None: caido,
+                             lambda: tk_pairs.open_dialog(raiz, cfg), tk_pairs, False),
+                            ("la flota leyendo", NUNCA, previos[1],
+                             lambda: tk_fleet.open_dialog(raiz, cfg, dict(BASE)),
+                             tk_fleet, True)):
+                        segundo_plano.lanzar, catalog.load = lanzar, cargar
+                        antes = set(raiz.winfo_children())
+                        entra, corta = medir_dialogo(abrir, ancho, alto, escala,
+                                                     modulo=modulo)
+                        nuevas = [w for w in raiz.winfo_children() if w not in antes]
+                        indicador = nuevas[0].indicador
+                        c(f"{nombre}: {que} cabe", entra, True)
+                        c(f"{nombre}: {que} no queda recortada", corta, False)
+                        c(f"{nombre}: (y se ha medido con su línea puesta)",
+                          (indicador.esperando, bool(indicador.marco.grid_info()),
+                           bool(str(indicador.texto.cget("text")))), (espera, True, True))
+                        for ventana in nuevas:
+                            ventana.destroy()
+                finally:
+                    catalog.cached, catalog.load, segundo_plano.lanzar = previos
 
                 # «Reparación» es la pantalla que más crece de todas: una fila
                 # por avería, con su explicación, y debajo la lista de conflictos

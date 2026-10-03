@@ -20,13 +20,16 @@ evitar.
 
 Ninguna pareja es intocable: el instalador lleva el código dentro, así que el
 catálogo son parejas de datos y todas valen lo mismo.
+
+La pantalla se abre con la copia local y lee el remoto en segundo plano; qué
+dice mientras tanto, y qué deja hacer, lo decide `lectura()`.
 """
 
 from __future__ import annotations
 
 import copy
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any, Mapping, NamedTuple
 
 from common import catalog, model
 from common.model import ConfigError
@@ -45,6 +48,81 @@ PIERDE_COMENTARIOS = ("El fichero se reescribe entero: se conserva la cabecera y
                       "pierden los comentarios intercalados. Antes se guarda una "
                       "copia en pairs.toml.bak.")
 """Lo que se dice siempre antes de reescribir el fichero del catálogo."""
+
+LEYENDO_SIN_COPIA = ("Leyendo el catálogo del remoto. Este dispositivo no tiene copia "
+                     "local, así que hasta que llegue solo se ven sus propias parejas.")
+"""Lo que se dice mientras se lee el remoto sin copia local que enseñar."""
+RELEYENDO = "Releyendo el catálogo del remoto. Mientras tanto no se puede editar."
+"""Lo que se dice mientras se relee un catálogo que ya se había leído del remoto."""
+SIN_CATALOGO = ("No hay catálogo ni copia local, así que solo se puede trabajar con "
+                "las parejas que ya tiene este dispositivo.")
+"""Lo que se dice sin catálogo cuando la lectura no ha dejado su propio aviso."""
+
+
+class Lectura(NamedTuple):
+    """Lo que la pantalla de parejas dice del catálogo que enseña, y lo que deja hacer.
+
+    Args:
+        chip: El estado en dos palabras, para el chip de arriba.
+        tipo: El estilo del chip: `Acento.`, `Aviso.`, `Peligro.` o `Apagado.`.
+        icono: El icono del chip.
+        linea: La explicación de debajo de la cabecera; vacía si no hay nada
+            que explicar.
+        tono: El rol de esa explicación: `Pista.`, `Aviso.` o `Peligro.`.
+        leyendo: Si se está esperando al remoto: el indicador va y viene.
+        editable: Si los botones que escriben en el catálogo se pueden pulsar.
+    """
+    chip: str
+    tipo: str
+    icono: str
+    linea: str
+    tono: str
+    leyendo: bool
+    editable: bool
+
+
+def _de_cuando(stamp: str) -> str:
+    """Devuelve «del <fecha>» para una copia, o que no se sabe de cuándo es."""
+    if not stamp or stamp == catalog.SIN_FECHA:
+        return "(no consta de cuándo es)"
+    return f"del {stamp}"
+
+
+def lectura(cat: catalog.Catalog | None, aviso: str | None,
+            leyendo: bool) -> Lectura:
+    """Dice qué enseña la pantalla de parejas del catálogo y si se puede editar.
+
+    Solo se edita lo que se acaba de leer del remoto (`Catalog.editable`) y
+    nunca mientras se está leyendo: lo que se enseña entonces es la copia
+    local, o lo que había antes de releer, y subir partiendo de ahí sería
+    escribir a ciegas. «Examinar…» depende de la misma respuesta.
+
+    Args:
+        cat: Lo que se enseña ahora: el del remoto, la copia local o nada.
+        aviso: Lo que dijo `catalog.load()` si no pudo leer el remoto.
+        leyendo: Si hay una lectura del remoto en marcha.
+    """
+    if leyendo:
+        if cat is None:
+            return Lectura("leyendo el catálogo…", "Apagado.", "clock",
+                           LEYENDO_SIN_COPIA, "Pista.", True, False)
+        if cat.editable:
+            return Lectura(f"catálogo leído · {cat.stamp}", "Acento.", "ok",
+                           RELEYENDO, "Pista.", True, False)
+        return Lectura(f"copia local · {cat.stamp}", "Apagado.", "clock",
+                       f"Leyendo el catálogo del remoto. Mientras llega se enseña "
+                       f"la copia local {_de_cuando(cat.stamp)}, que no se puede "
+                       f"editar.", "Pista.", True, False)
+    if cat is None:
+        return Lectura("sin catálogo", "Peligro.", "warn", aviso or SIN_CATALOGO,
+                       "Peligro.", False, False)
+    if cat.editable:
+        return Lectura(f"catálogo leído · {cat.stamp}", "Acento.", "ok", "",
+                       "Pista.", False, True)
+    return Lectura(f"copia local · {cat.stamp}", "Aviso.", "warn",
+                   aviso or (f"Se enseña la copia local {_de_cuando(cat.stamp)}: el "
+                             f"catálogo solo se puede editar recién leído del remoto."),
+                   "Aviso.", False, False)
 
 
 @dataclass

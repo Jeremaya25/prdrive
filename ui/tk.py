@@ -556,6 +556,10 @@ def working(parent, title: str, funcion, mensaje: str = "",
     No hay botón de cancelar a propósito: lo que se lanza así no se puede
     cortar a medias sin dejar las cosas peor (un contenedor a medio formatear).
 
+    Al cerrarse devuelve la captura a quien la tuviera antes: Tk no guarda
+    una pila de capturas y, sin esto, un diálogo modal que espera aquí dejaría
+    de serlo (el explorador del remoto espera en cada carpeta).
+
     Args:
         parent: De quién cuelga la ventanita.
         title: Su título.
@@ -621,9 +625,165 @@ def working(parent, title: str, funcion, mensaje: str = "",
         if cifra is not None:
             _pintar_avance(barra, cifra, _medir_avance(progreso))
 
+    try:
+        previa = dlg.grab_current()
+    except Exception:                                # noqa: BLE001 — una que Tkinter no conoce
+        previa = None
     dlg.after(120, mirar)
     mostrar(dlg, parent)
+    _devolver_captura(previa)
     return bool(resultado["ok"]), resultado["valor"]
+
+
+def _devolver_captura(ventana) -> None:
+    """Le devuelve la captura a una ventana que sigue viva y a la vista."""
+    if ventana is None:
+        return
+    try:
+        if ventana.winfo_exists() and ventana.winfo_viewable():
+            ventana.grab_set()
+    except Exception:                                # noqa: BLE001 — sin captura, se sigue
+        pass
+
+
+SONDEO_MS = 120
+"""Milisegundos entre dos miradas de `Sondeo` a su encargo, como en `working()`."""
+
+
+class Sondeo:
+    """Recoge en el hilo de Tk lo que una pantalla encargó a `ui.segundo_plano`.
+
+    Es la mitad de Tk de un `Encargo`: mira cada `SONDEO_MS` si ha terminado
+    y, cuando termina, llama a quien lo esperaba desde este hilo, nunca desde
+    el del trabajo. Hay uno por pantalla y espera un encargo cada vez: uno
+    nuevo deja sin respuesta al anterior.
+
+    Si la pantalla se cierra antes, la espera se cancela con ella
+    (`after_cancel`) y nadie pinta en widgets que ya no existen. Sin eso, el
+    `after` pendiente llamaría a una orden que Tk ya ha borrado con la ventana.
+
+    Args:
+        ventana: La pantalla de la que cuelga la espera.
+    """
+
+    def __init__(self, ventana) -> None:
+        """Engancha la espera al cierre de la ventana."""
+        self.ventana = ventana
+        self._id = None
+        self._encargo = None
+        self._al_llegar = None
+        ventana.bind("<Destroy>", self._al_destruir, add="+")
+
+    @property
+    def esperando(self) -> bool:
+        """Indica si hay un encargo pendiente de recoger."""
+        return self._id is not None
+
+    def esperar(self, encargo, al_llegar) -> None:
+        """Llama a `al_llegar(encargo)` cuando el encargo termine.
+
+        Si ya ha terminado, en el acto: es lo que hace que una pantalla cuyos
+        tests corren el encargo en el sitio (`segundo_plano.en_el_acto`) se
+        pinte entera antes de enseñarse.
+        """
+        self.cancelar()
+        if encargo.hecho:
+            al_llegar(encargo)
+            return
+        self._encargo, self._al_llegar = encargo, al_llegar
+        self._id = self.ventana.after(SONDEO_MS, self._mirar)
+
+    def cancelar(self) -> None:
+        """Deja de esperar; lo que llegue después no se recoge."""
+        if self._id is not None:
+            try:
+                self.ventana.after_cancel(self._id)
+            except Exception:                        # noqa: BLE001 — ya no está
+                pass
+        self._id = self._encargo = self._al_llegar = None
+
+    def _mirar(self) -> None:
+        """Mira si el encargo ha terminado y, si no, vuelve a mirar luego."""
+        self._id = None
+        try:
+            viva = bool(self.ventana.winfo_exists())
+        except Exception:                            # noqa: BLE001 — intérprete cerrado
+            viva = False
+        if not viva or self._encargo is None:
+            self.cancelar()
+            return
+        if not self._encargo.hecho:
+            self._id = self.ventana.after(SONDEO_MS, self._mirar)
+            return
+        encargo, al_llegar = self._encargo, self._al_llegar
+        self._encargo = self._al_llegar = None
+        al_llegar(encargo)
+
+    def _al_destruir(self, evento) -> None:
+        """Cancela la espera si lo que se destruye es la ventana, no un hijo suyo."""
+        if str(evento.widget) == str(self.ventana):
+            self.cancelar()
+
+
+LARGO_INDICADOR = 90
+"""El largo de la barra del `Indicador`, en medidas del diseño."""
+
+
+class Indicador:
+    """La línea que dice que una pantalla espera a la red, o por qué ya no.
+
+    Una barra que va y viene, como la de `working()`, y al lado su frase. La
+    barra solo está mientras se espera; la frase puede quedarse después (la
+    pantalla se quedó con la copia local y explica por qué) y, sin nada que
+    decir, la línea desaparece entera. Quien la crea la coloca con
+    `indicador.marco.grid(...)` y luego solo la `poner()`.
+
+    Args:
+        padre: Donde va la línea.
+        ancho: El corte de la frase, en medidas del diseño.
+
+    Attributes:
+        marco: La línea entera.
+        barra: La barra que va y viene.
+        texto: La frase.
+    """
+
+    def __init__(self, padre, ancho: int = 560) -> None:
+        """Dibuja la línea, todavía sin colocar."""
+        from tkinter import ttk
+        self.marco = ttk.Frame(padre)
+        self.marco.columnconfigure(1, weight=1)
+        self.barra = ttk.Progressbar(self.marco, mode="indeterminate",
+                                     length=theme.medida(LARGO_INDICADOR))
+        self.barra.grid(row=0, column=0, sticky="w", padx=(0, 10))
+        self.texto = ttk.Label(self.marco, style="Pista.TLabel", justify="left",
+                               wraplength=theme.medida(ancho))
+        self.texto.grid(row=0, column=1, sticky="w")
+
+    @property
+    def esperando(self) -> bool:
+        """Indica si la barra está puesta."""
+        return bool(self.barra.grid_info())
+
+    def poner(self, texto: str, esperando: bool, tono: str = "Pista.") -> None:
+        """Pone la frase y la barra; sin ninguna de las dos, quita la línea.
+
+        Args:
+            texto: Lo que dice la línea.
+            esperando: Si la barra va y viene.
+            tono: El rol de la frase (`Pista.`, `Aviso.`, `Peligro.`).
+        """
+        if esperando:
+            self.barra.grid()
+            self.barra.start(PASO_BARRA_MS)
+        else:
+            self.barra.stop()
+            self.barra.grid_remove()
+        self.texto.configure(text=texto, style=f"{tono}TLabel")
+        if texto or esperando:
+            self.marco.grid()
+        else:
+            self.marco.grid_remove()
 
 
 def main_window(config: Config, startup_msg: str | None) -> Choice | None:

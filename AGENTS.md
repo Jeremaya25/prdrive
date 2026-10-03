@@ -64,7 +64,9 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 │   ├── catalog_editor.py · remote_picker.py · conflict_editor.py ·
 │   │   flags_editor.py · watch.py · versions_editor.py · volumen.py
 │   │                   the other decision halves, no Tk
-│   ├── tk.py          TkFrontend: main + output window, modal()/mostrar()/working()
+│   ├── segundo_plano.py  what a screen waits for from the network, on a thread, no Tk
+│   ├── tk.py          TkFrontend: main + output window, modal()/mostrar()/working(),
+│   │                   Sondeo + Indicador (the screen-level wait)
 │   ├── cifrado.py     is this device inside a VeraCrypt container? «Expulsar»
 │   ├── tk_install.py  the install wizard          (every tk_* draws only)
 │   ├── tk_equipo.py   the wizard's «En este equipo» steps
@@ -507,7 +509,30 @@ paths and flags; no rounded corners, no shadows. Styles cross **role** with
   is asked from the Tk thread every 120 ms, so it must only read what another
   thread measured, and any exception counts as None — the poll is the only
   thing that closes the window. The text's row is reserved from the start
-  (`tests/test_tk_espera.py`, and the matrix in `test_tk_medidas.py`).
+  (`tests/test_tk_espera.py`, and the matrix in `test_tk_medidas.py`). On
+  closing it hands the grab back to whoever held it (`_devolver_captura()`):
+  Tk keeps no grab stack, and a modal that waits in it — the remote folder
+  picker, at every folder — would stop being modal.
+- **A screen that waits for the network opens first and reads after (#66)**,
+  instead of `working()` in front of an empty window. `ui/segundo_plano.py`
+  (no Tk) runs the read on a daemon thread into an `Encargo` (`hecho`,
+  `resultado`, `error`); `tk.Sondeo(dlg)` — one per screen — polls it from the
+  Tk thread every `SONDEO_MS` and calls back there, never from the worker, and
+  **cancels with the window** (`<Destroy>` → `after_cancel`), so closing early
+  leaves nobody painting dead widgets. The function handed over is a
+  `functools.partial` of data, never a lambda among widgets: a worker holding
+  the last reference to a Tk object frees it off-thread (`Tcl_AsyncDelete`).
+  `tk.Indicador` is the line under the header: the same indeterminate bar as
+  `working()` (`LARGO_INDICADOR`, `theme.medida`) plus a sentence; the bar only
+  while waiting, the sentence may stay (why the screen kept the local copy),
+  nothing to say → the line goes. Both hang off the dialog (`dlg.indicador`,
+  `dlg.sondeo`) for tests. `segundo_plano.lanzar()` is an indirection point:
+  `test_tk_screens`/`test_tk_medidas` set it to `en_el_acto()` (the result is
+  in before the screen shows, as they never enter the event loop), and
+  `tests/test_tk_segundo_plano.py` runs real threads against a `catalog.run()`
+  that answers late or not at all. Writes to the remote (a catalogue push,
+  deleting a fleet note, purging versions, creating or listing a remote folder)
+  stay in `working()`: modal, nothing to cut halfway.
 
 ### «Ajustes» (`ui/tk_doctor.py`) — where new affordances go
 
@@ -1933,7 +1958,8 @@ Preserve the citations like the bisync ones.
   copying the folder rewrites mtimes, and the stamp in the name is the whole
   reason the format exists. Purging is «Ajustes» → «Versiones…», both sides in one
   plan through `confirmar_plan()`; the remote side goes out as a single
-  `rclone delete --files-from` with the exact list, never an age or a pattern.
+  `rclone delete --files-from` with the exact list, never an age or a pattern,
+  behind `working()` like the read of that side.
   **Restoring is deliberately not offered** (v1).
 - Turning it **off** removes the exclusion, so whatever is stored starts syncing
   as ordinary content. `pair_editor._analizar_versiones()` says so as a warning
@@ -1963,6 +1989,22 @@ rewriting keeps the header block and **loses interleaved comments**.
 `catalog.load()` never raises — no network falls back to `state/catalog.toml`,
 and a cached catalogue is **not editable** (`Catalog.editable`).
 `catalog.NET_FLAGS` keeps a dead remote from freezing the window.
+
+**The pairs screen opens with the local copy and reads the remote in the
+background (#66).** `open_dialog()` paints `catalog.cached()` (nothing, on a
+fresh device: only its own pairs) and `leer_catalogo()` hands `catalog.load()`
+to `segundo_plano`; on arrival it repaints with the remote, keeping the selected
+row, or keeps the copy and says why. What it says and allows is
+`catalog_editor.lectura(cat, aviso, leyendo)`, pure: the chip in two words
+(«copia local · <fecha>», «catálogo leído · <fecha>», «sin catálogo»), the line
+under the header (`tk.Indicador`: the long `catalog.load()` warning lives there
+now, not in the chip) and `editable` — **only what was just read from the
+remote, and never while reading**, so the catalogue buttons and «Releer» stay
+off until the real answer, and «Examinar…» follows the same answer. «Releer»
+reads the same way. A catalogue change goes up through `working()`, then the
+screen shows what `push()` left in the copy (still not editable) while it
+re-reads; device-side plans stay synchronous (local disk). `catalog.SIN_FECHA`
+is the stamp of a copy without metadata.
 
 **The path names the file, never its folder (#48).** `rclone cat` of a folder
 does not fail: it concatenates every file inside, recursively — `pairs.toml`,
@@ -2031,7 +2073,11 @@ line that is not a listing must not become a folder. `crear()` is the only thing
 that writes and it is a `mkdir`. **Deleting remote folders is deliberately not
 offered** — the remote belongs to the whole fleet and there is no consequences
 ceremony behind this dialog. The button is disabled exactly when the catalogue
-block is (`cat.editable`), the proxy for "there is a connection".
+block is (`catalog_editor.lectura().editable`: just read from the remote, not
+while reading), the proxy for "there is a connection". Listing and `mkdir` go
+through `working()`: its window is modal, so the path being looked at and its
+contents still cannot contradict each other mid-navigation; the first listing,
+before the picker shows, hangs off the form that opened it.
 
 ## The fleet registry (`common/fleet.py` + `ui/tk_fleet.py`)
 
@@ -2064,6 +2110,14 @@ protects a file governing deletions; this is a presence note).
 - `publicar()` and `leer()` **never raise**; a note is not the sync, and
   `parse()` tolerates a half-written or future-version one. Staleness is
   `DIAS_OBSOLETO = 7`; an unreadable date counts as stale.
+- **«Dispositivos…» opens at once and reads in the background (#66).** There is
+  no local copy of the notes, so `refrescar()` shows the chip «leyendo la
+  flota…» and `tk.Indicador` (`tk_fleet.LEYENDO`), keeps what the table had
+  (nothing, on opening: not even `SIN_NOTA`, which is not known yet), switches
+  «Quitar de la lista…» and «Releer» off (`repasar()` keeps quitar off while
+  `dlg.sondeo.esperando`), and hands `fleet.leer()` to `segundo_plano`;
+  `pintar()` is what used to be the body of `refrescar()`. `olvidar()` goes
+  through `working()`, then the list is re-read the same way.
 
 **Where it has been, and since when it fails (#17).** Everything is computed at
 publish time, with **no new write on the device**:
@@ -2100,7 +2154,7 @@ publish time, with **no new write on the device**:
   same value `_sin_fecha()` compares), shown by `tk_fleet.ultimo_equipo()` with
   `SIN_DATO` («—») for a note that predates the list. Only the most recent one:
   the full list with dates is the card's «Equipos», so the two do not repeat
-  each other. It is one more `COLUMNAS` entry and one more value in `refrescar()`'s
+  each other. It is one more `COLUMNAS` entry and one more value in `pintar()`'s
   `tree.insert`; the table widths were rebalanced (the «Última pasada» column gave
   50 units) so the window only grew ~100.
 - **The card** (`tk_fleet.ficha()`, pure, no Tk) sits under the table, in the
@@ -2157,7 +2211,8 @@ keeps the target's existing header.
   `vestibulo.raiz_fisica()`, `cifrado.lanzar_expulsion()`,
   `crypto.sistema_de_ficheros()`, `crypto.bytes_escritos()`,
   `_leer_estado_bitlocker()`, `_preguntar_borrado()`, `pairing.construir()`,
-  `watch.resumen()`, `tk.mostrar()` / `confirmar_plan()`, and for the agent
+  `watch.resumen()`, `tk.mostrar()` / `confirmar_plan()`,
+  `segundo_plano.lanzar()` (tests set it to `en_el_acto()`), and for the agent
   `agente.lanzar()` / `hay_pantalla()` / `avisar()` / `abrir_contenedor()` /
   `diario()`, `avisos.enviar()`, `moderacion.energia()` / `red_medida()`,
   `install.agente.conseguir_runtime()` / `lanzar()` / `autostart_file()` /

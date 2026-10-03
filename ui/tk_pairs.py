@@ -18,17 +18,25 @@ Las consecuencias no se enseñan en un `messagebox`: `confirmar_plan()` es una
 ventana de verdad, con las consecuencias como lista y los avisos en su recuadro
 ámbar. Un `askokcancel` con seis líneas de texto corrido es justo lo que nadie
 lee, y esto gobierna borrados.
+
+Nada de lo que espera a la red congela la pantalla. Se abre con la copia local
+del catálogo y lo lee del remoto en segundo plano (`ui.segundo_plano`), con el
+indicador puesto y el bloque del catálogo apagado hasta que llega. Subir un
+cambio al catálogo y recorrer las carpetas del remoto van por `working()`: son
+cosas que se esperan con la ventana quieta.
 """
 
 from __future__ import annotations
+
+from functools import partial
 
 from common import catalog, config_file, model
 from common.model import ConfigError
 
 from . import (catalog_editor, flags_editor, icons, pair_editor,
-               remote_picker, theme)
-from .tk import (TITLE, bloque_aviso, cabecera, cuerpo_visible, modal,
-                 mostrar, orden_sync, output_window)
+               remote_picker, segundo_plano, theme)
+from .tk import (TITLE, Indicador, Sondeo, bloque_aviso, cabecera, cuerpo_visible,
+                 modal, mostrar, orden_sync, output_window, working)
 
 COLUMNAS = [
     ("usa", "En el dispositivo", 62),
@@ -98,13 +106,18 @@ def _estado(fila) -> str:
 
 
 def open_dialog(parent, config) -> bool:
-    """Abre la pantalla y devuelve si se ha cambiado el config de este dispositivo."""
+    """Abre la pantalla y devuelve si se ha cambiado el config de este dispositivo.
+
+    Se pinta con la copia local del catálogo (`catalog.cached()`) y el remoto
+    se lee en segundo plano; al llegar, la pantalla se repinta con él.
+    """
     from tkinter import messagebox, ttk
 
     dlg = modal(parent, "Parejas")
     raw = config_file.load_raw()
-    cat, aviso = catalog.load(raw)
-    estado = {"raw": raw, "config": config, "cat": cat, "cambiado": False}
+    estado = {"raw": raw, "config": config, "cat": catalog.cached(), "aviso": None,
+              "leyendo": False, "cambiado": False}
+    sondeo = Sondeo(dlg)
 
     marco = cuerpo_visible(dlg, padding=(20, 18, 20, 16))
     marco.columnconfigure(0, weight=1)
@@ -124,6 +137,10 @@ def open_dialog(parent, config) -> bool:
     chip_cat = {"widget": None}
     endpoint = ttk.Label(donde, style="MonoPista.TLabel")
     endpoint.grid(row=1, column=0, sticky="e", pady=(6, 0))
+    # Lo que se enseña mientras se lee el remoto, o por qué se quedó sin él.
+    indicador = Indicador(arriba, ancho=700)
+    indicador.marco.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+    dlg.indicador, dlg.sondeo = indicador, sondeo   # como `visor`: los tests los miran
 
     # La franja de `[defaults]`: tiene su propia línea y sus propios botones.
     # No es una pareja más y sus botones dicen casi lo mismo que los de abajo,
@@ -159,24 +176,28 @@ def open_dialog(parent, config) -> bool:
 
     botones_catalogo: list = []
 
-    def refrescar(nota: str = "") -> None:
-        """Relee el config y repinta la lista, el chip y la franja de defaults."""
+    def lectura() -> catalog_editor.Lectura:
+        """Dice qué se enseña del catálogo ahora y si se puede escribir en él."""
+        return catalog_editor.lectura(estado["cat"], estado["aviso"], estado["leyendo"])
+
+    def refrescar(nota: str | None = None) -> None:
+        """Relee el config y repinta la lista, el chip y la franja de defaults.
+
+        Args:
+            nota: Lo que se pone en el pie; `None` lo deja como esté.
+        """
         estado["raw"] = config_file.load_raw()
         estado["config"] = model.parse_config(estado["raw"], equipo=model.es_equipo())
         cat = estado["cat"]
+        lect = lectura()
 
         sitio = cat.endpoint if cat else catalog.endpoint(estado["raw"])
-        if cat is None:
-            texto, tipo, icono = aviso or "sin catálogo", "Peligro.", "warn"
-        elif cat.editable:
-            texto, tipo, icono = f"catálogo leído · {cat.stamp}", "Acento.", "ok"
-        else:
-            texto, tipo, icono = aviso or "copia local", "Aviso.", "warn"
         if chip_cat["widget"] is not None:
             chip_cat["widget"].destroy()
-        chip_cat["widget"] = theme.chip(donde, texto, tipo, icono)
+        chip_cat["widget"] = theme.chip(donde, lect.chip, lect.tipo, lect.icono)
         chip_cat["widget"].grid(row=0, column=0, sticky="e")
         endpoint.configure(text=sitio)
+        indicador.poner(lect.linea, lect.leyendo, lect.tono)
 
         origen, difiere = pair_editor.defaults_origin(estado["raw"], cat)
         if origen_defaults["widget"] is not None:
@@ -187,6 +208,9 @@ def open_dialog(parent, config) -> bool:
         origen_defaults["widget"].grid(row=0, column=1, sticky="w", padx=(10, 0))
         linea_defaults.configure(text=_resumen_defaults(estado["raw"], difiere))
 
+        # Lo elegido sobrevive al repintado: el catálogo del remoto puede llegar
+        # con una fila ya elegida, y perderla sería pulsar luego sobre nada.
+        elegida = tree.selection()
         tree.delete(*tree.get_children())
         filas = pair_editor.catalog_rows(estado["config"], estado["raw"], cat)
         # La lista crece con lo que hay, hasta un tope: dejar hueco vacío por si
@@ -198,11 +222,49 @@ def open_dialog(parent, config) -> bool:
             tree.insert("", "end", iid=fila.name, tags=(_tono(fila),),
                         values=(marca, fila.name, fila.mode, fila.local, fila.remote,
                                 origen, _estado(fila)))
+        if elegida and tree.exists(elegida[0]):
+            tree.selection_set(elegida[0])
 
-        puede = "normal" if (cat is not None and cat.editable) else "disabled"
+        puede = "normal" if lect.editable else "disabled"
         for boton in botones_catalogo:
             boton.configure(state=puede)
-        pie_nota.configure(text=nota)
+        releer.configure(state="disabled" if lect.leyendo else "normal")
+        if nota is not None:
+            pie_nota.configure(text=nota)
+        # Lo que llega del remoto puede traer una explicación más larga que la
+        # de la espera: entonces el recuadro crece, en vez de meterla tras una
+        # barra.
+        if dlg.winfo_ismapped():
+            dlg.visor.crecer(dlg)
+
+    def leer_catalogo(nota: str | None = None) -> None:
+        """Pide el catálogo al remoto en segundo plano y repinta cuando llega.
+
+        Mientras tanto se enseña lo que ya había (la copia local, o lo que se
+        acaba de subir) con el indicador puesto y el bloque del catálogo
+        apagado. `catalog.load()` nunca lanza; si el hilo lanzara igualmente,
+        se queda la copia local y se dice por qué.
+
+        Args:
+            nota: Lo que se pone en el pie si contesta el remoto; `None` deja
+                el pie como esté.
+        """
+        estado["leyendo"] = True
+        refrescar()
+
+        def llegado(encargo) -> None:
+            """Se queda con lo que ha llegado y repinta."""
+            estado["leyendo"] = False
+            if encargo.error is not None:
+                estado["cat"] = catalog.cached()
+                estado["aviso"] = f"No se ha podido leer el catálogo: {encargo.error}"
+            else:
+                estado["cat"], estado["aviso"] = encargo.resultado
+            contesto = estado["cat"] is not None and estado["cat"].editable
+            refrescar(nota if contesto else None)
+
+        sondeo.esperar(segundo_plano.lanzar(partial(catalog.load, dict(estado["raw"]))),
+                       llegado)
 
     def fila_elegida():
         """Devuelve la fila elegida resuelta contra el catálogo, o `None`."""
@@ -216,19 +278,33 @@ def open_dialog(parent, config) -> bool:
         return None
 
     def aplicar(plan, del_catalogo: bool = False, titulo: str = "") -> None:
-        """Confirma y ejecuta un plan; uno del catálogo no cambia este dispositivo."""
+        """Confirma y ejecuta un plan; uno del catálogo no cambia este dispositivo.
+
+        Uno del catálogo se sube por `working()`, que no se puede cortar a
+        medias, y después se relee el remoto en segundo plano. Mientras llega
+        se enseña lo recién subido, que `catalog.push()` deja en la copia
+        local, con el bloque del catálogo apagado.
+        """
         if not confirmar_plan(dlg, plan, titulo or "Confirmar el cambio",
                               NOTA_CATALOGO if del_catalogo else NOTA_PEN):
+            return
+        if del_catalogo:
+            ok, valor = working(dlg, "Catálogo", plan.execute,
+                                "Subiendo el catálogo al remoto…")
+            if not ok:
+                messagebox.showerror(TITLE, f"No se ha podido guardar:\n\n{valor}",
+                                     parent=dlg)
+                return
+            estado["cat"] = catalog.cached() or estado["cat"]
+            pie_nota.configure(text="  ·  ".join(valor))
+            leer_catalogo()
             return
         try:
             hechos = plan.execute()
         except (ConfigError, OSError) as e:
             messagebox.showerror(TITLE, f"No se ha podido guardar:\n\n{e}", parent=dlg)
             return
-        if del_catalogo:
-            estado["cat"], _ = catalog.load(estado["raw"])
-        else:
-            estado["cambiado"] = True
+        estado["cambiado"] = True
         refrescar("  ·  ".join(hechos))
 
     def fallo(e) -> None:
@@ -240,10 +316,10 @@ def open_dialog(parent, config) -> bool:
 
         Es la misma pregunta que gobierna el bloque del catálogo y por eso la
         misma respuesta: el catálogo se acaba de leer del remoto, o sea que hay
-        con quién hablar. Desde la copia local no se navega nada.
+        con quién hablar. Desde la copia local, o mientras se lee el remoto, no
+        se navega nada.
         """
-        cat = estado["cat"]
-        return cat is not None and cat.editable
+        return lectura().editable
 
     # Este dispositivo.
 
@@ -441,10 +517,8 @@ def open_dialog(parent, config) -> bool:
         tk_fleet.open_dialog(dlg, estado["config"], estado["raw"])
 
     def recargar_catalogo() -> None:
-        """Relee el catálogo del remoto y repinta."""
-        nonlocal aviso
-        estado["cat"], aviso = catalog.load(estado["raw"])
-        refrescar("Catálogo releído." if estado["cat"] else "")
+        """Relee el catálogo del remoto en segundo plano y repinta al llegar."""
+        leer_catalogo("Catálogo releído.")
 
     # Los dos bloques de botones.
 
@@ -525,7 +599,7 @@ def open_dialog(parent, config) -> bool:
     flota_btn.grid(row=0, column=1, padx=(10, 6))
     ttk.Button(cierre, text="Cerrar", command=dlg.destroy).grid(row=0, column=2)
 
-    refrescar()
+    leer_catalogo()
     mostrar(dlg, parent)
     return estado["cambiado"]
 
@@ -911,10 +985,11 @@ def explorador_remoto(parent, remote: str, inicial: str = "") -> str | None:
     de ser teclearla de memoria, que es de donde salían las parejas apuntando a
     una carpeta con una errata dentro.
 
-    Listar va sin hilo a propósito: `catalog.run` lleva tiempos de espera
-    cortos (unos segundos contra un remoto caído, no los cinco minutos de
-    fábrica) y, a cambio, la ruta que se está mirando y lo que hay dentro nunca
-    pueden contradecirse a media navegación.
+    Listar y crear van por `working()`: son red, y su ventanita es modal, así
+    que mientras rclone contesta no se puede pedir otra carpeta y la ruta que
+    se está mirando y lo que hay dentro nunca pueden contradecirse a media
+    navegación. `catalog.run` lleva tiempos de espera cortos (unos segundos
+    contra un remoto caído, no los cinco minutos de fábrica).
     """
     import tkinter as tk
     from tkinter import messagebox, ttk
@@ -958,13 +1033,22 @@ def explorador_remoto(parent, remote: str, inicial: str = "") -> str | None:
                      justify="left")
     nota.grid(row=3, column=0, sticky="w", pady=(8, 0))
 
-    def ir(ruta: str) -> bool:
-        """Enseña esa carpeta; si no se puede leer, se queda donde estaba."""
-        try:
-            nombres = remote_picker.listar(remote, ruta)
-        except ConfigError as e:
-            nota.configure(text=str(e), style="Peligro.TLabel")
+    def ir(ruta: str, sobre=None) -> bool:
+        """Enseña esa carpeta; si no se puede leer, se queda donde estaba.
+
+        Args:
+            ruta: La carpeta del remoto.
+            sobre: De qué ventana cuelga la espera; por defecto, este diálogo.
+                Al abrir es la de quien lo llama: este todavía no se ve, y la
+                ventanita de un padre oculto tampoco se vería.
+        """
+        ok, valor = working(sobre or dlg, "Carpetas del remoto",
+                            partial(remote_picker.listar, remote, ruta),
+                            f"Leyendo {remote_picker.endpoint(remote, ruta)}…")
+        if not ok:
+            nota.configure(text=str(valor), style="Peligro.TLabel")
             return False
+        nombres = valor
         estado["ruta"] = remote_picker.normalizar(ruta)
         ruta_lbl.configure(text=f"{remote}:{estado['ruta']}")
         lista.delete(*lista.get_children())
@@ -988,12 +1072,13 @@ def explorador_remoto(parent, remote: str, inicial: str = "") -> str | None:
                              f"Se creará dentro de {remote}:{estado['ruta']}.")
         if nombre is None:
             return
-        try:
-            destino = remote_picker.crear(remote, estado["ruta"], nombre)
-        except ConfigError as e:
-            messagebox.showerror(TITLE, str(e), parent=dlg)
+        ok, valor = working(dlg, "Carpetas del remoto",
+                            partial(remote_picker.crear, remote, estado["ruta"], nombre),
+                            f"Creando la carpeta en {remote}:{estado['ruta']}…")
+        if not ok:
+            messagebox.showerror(TITLE, str(valor), parent=dlg)
             return
-        ir(destino)
+        ir(valor)
 
     def elegir() -> None:
         """Elige la carpeta que se está mirando y cierra."""
@@ -1028,8 +1113,8 @@ def explorador_remoto(parent, remote: str, inicial: str = "") -> str | None:
     # Si la carpeta de la que se venía ya no existe —la pareja apuntaba a una
     # ruta borrada, o con una errata— se empieza por la raíz en vez de abrir un
     # diálogo vacío del que no se puede salir a ningún sitio.
-    if not ir(estado["ruta"]) and estado["ruta"] != remote_picker.RAIZ:
-        ir(remote_picker.RAIZ)
+    if not ir(estado["ruta"], parent) and estado["ruta"] != remote_picker.RAIZ:
+        ir(remote_picker.RAIZ, parent)
     mostrar(dlg, parent)
     return estado["elegida"]
 

@@ -34,11 +34,29 @@ except Exception as e:                                   # sin entorno gráfico
     print(f"  (saltado) no hay entorno gráfico: {e}")
     sys.exit(0)
 
-from ui import tk_fleet, tk_pairs, tk_watch, watch
+from ui import segundo_plano, tk_fleet, tk_pairs, tk_watch, watch
 
 # El de verdad: más abajo hay tramos que lo sustituyen por un formulario de
 # mentira, y el último los necesita a los dos.
 FORMULARIO = tk_pairs.formulario
+
+# Lo que esas pantallas leen del remoto llega por sondeo, y aquí no se entra
+# nunca en el bucle de eventos: se lee en el sitio, y la pantalla está entera
+# antes de enseñarse. Lo que pasa con un remoto lento o caído, con hilos de
+# verdad, es de test_tk_segundo_plano.py.
+segundo_plano.lanzar = segundo_plano.en_el_acto
+
+
+def working_en_el_acto(parent, title, funcion, mensaje="", **_k):
+    """Sustituye a `working()`: hace el trabajo en el sitio, sin ventanita."""
+    try:
+        return True, funcion()
+    except Exception as e:                               # noqa: BLE001 — como working()
+        return False, e
+
+
+tk_pairs.working = working_en_el_acto
+tk_fleet.working = working_en_el_acto
 
 
 def ocultar(modulo):

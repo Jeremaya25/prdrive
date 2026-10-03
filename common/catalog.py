@@ -64,6 +64,8 @@ mala congela la UI varios minutos; con estos, un remoto inalcanzable se
 resuelve en segundos y se cae a la copia.
 """
 TIMEOUT = 90  # segundos; red de seguridad del subproceso, no el tiempo normal
+SIN_FECHA = "fecha desconocida"
+"""El `stamp` de una copia local cuyos metadatos no dicen cuándo se leyó."""
 
 
 def cache_toml() -> Path:
@@ -363,7 +365,7 @@ def cached() -> Catalog | None:
         return None
     meta = store.read_json(cache_meta())
     return Catalog(raw=raw, text=text, source="cache",
-                   stamp=str(meta.get("pulled_at") or "fecha desconocida"),
+                   stamp=str(meta.get("pulled_at") or SIN_FECHA),
                    endpoint=str(meta.get("endpoint") or endpoint()))
 
 
