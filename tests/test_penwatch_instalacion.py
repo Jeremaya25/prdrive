@@ -210,7 +210,7 @@ frase = desinstala({"device_id": ID}, [plano])
 c.contains("sin cifrar: dice que sigue el fichero de control", frase, CONTROL)
 c("sin cifrar: y no habla de la marca del vestíbulo", MARCA in frase, False)
 
-# Cifrado: fuera solo queda la marca, y el fichero de control está dentro.
+# Cifrado: fuera lo reconoce la marca, y el fichero de control está dentro.
 fisica = raiz_con(MARCA)
 (fisica / penwatch.CONTAINER_FILE).write_bytes(b"x")
 frase = desinstala({"device_id": ID}, [fisica])

@@ -1480,10 +1480,10 @@ def restos_en_claro(raiz_fisica: str | Path) -> list[str]:
     solo: esas carpetas pueden llevar cambios que no están en el remoto.
 
     Returns:
-        `.prdrive/` y lo que haya en la raíz que no sea ruido
-        (`device.es_ruido()`: las carpetas de datos) ni la guía rápida del
-        instalador (`_es_la_guia()`: no lleva datos ni clave), o la lista vacía
-        si ahí no hay un prdrive.
+        `.prdrive/` y lo que haya en la raíz que no sea ruido (`device.es_ruido()`:
+        lo que deja el sistema o escribe el instalador) ni la guía rápida del
+        instalador (`_es_la_guia()`: no lleva datos ni clave); es decir, las
+        carpetas y ficheros de datos. La lista vacía si ahí no hay un prdrive.
     """
     from . import device
     raiz = Path(raiz_fisica)

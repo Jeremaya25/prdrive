@@ -243,11 +243,10 @@ def _lista(partes: list[str]) -> str:
 class Hecho:
     """Lo que ha escrito y borrado «Añadir plataformas…», contado por partes.
 
-    Es más que la lista de plataformas: esa pantalla también rehace los
-    lanzadores, la entrada de fuera del contenedor y el VeraCrypt que viaja, y
-    decir solo cuántas piezas de rclone y Python se pusieron parecía no haber
-    hecho nada más (un «Hecho: 1 elementos puestos» tras escribir seis ficheros
-    de la entrada).
+    Esa pantalla no solo pone y quita plataformas: también rehace los
+    lanzadores, la entrada de fuera del contenedor y el VeraCrypt que viaja.
+    Cada cosa se cuenta aparte para que lo hecho no se reduzca a las piezas de
+    rclone y Python.
 
     Args:
         puestos: Piezas de rclone y de Python copiadas al dispositivo.

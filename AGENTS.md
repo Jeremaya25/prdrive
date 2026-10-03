@@ -1417,8 +1417,10 @@ script to `%LOCALAPPDATA%\prdriveWatch` / `~/.local/share/prdrive-watch`, writes
   «pedido» and to look at `status` shortly, never «arrancado».
 - **`uninstall` words what stays on the device by what it is** (`uninstall_note()`,
   reading `watch.json` *before* deleting it): an encrypted device keeps
-  `.prdrive/PRDRIVE` inside the container and only its vestibule marker outside,
-  a plain one keeps the control file; unplugged, it says both.
+  `.prdrive/PRDRIVE` inside the container and, outside, its vestibule marker
+  (which is what recognises it closed) beside the container, the open/eject
+  scripts and the travelling `VeraCrypt\`; a plain one keeps the control file;
+  unplugged, it says both.
 
 ## The resident agent (`agente.py` + `common/planificador.py` + `install/agente.py`)
 
@@ -1934,9 +1936,11 @@ draws**, and neither imports tkinter (`test_install_agente.py` checks it).
   «Sincronizar todo ahora» only with two or more `atendida` devices — with one
   it would repeat its own). Abnormal states go in the label, in parentheses
   (`ESTADO_DE_RAIZ`: «bloqueada», «no responde», «no está en su sitio»…; a
-  drive «sin atender», «código cambiado», «por actualizar»; root or drive
-  «en pausa», `EN_PAUSA`, when its window paused it, #64), and what cannot be
-  done is greyed, so a root's submenu keeps its shape.
+  drive «sin atender», «código cambiado»; root or drive «por actualizar»,
+  `POR_ACTUALIZAR`, whose Configurar / Abrir / Sincronizar are greyed because
+  `Agente._abrir()` refuses it; root or drive «en pausa», `EN_PAUSA`, when its
+  window paused it, #64), and what cannot be done is greyed, so a root's
+  submenu keeps its shape.
   - **`pedir_al_iniciar` stays global** (one key in `agente.json`, one
     `PIDE_AJUSTE`; the window's checkbox is unchanged). Several encrypted host
     roots can exist (`PIDE_RAIZ` adds one per wizard run;
@@ -1971,7 +1975,9 @@ draws**, and neither imports tkinter (`test_install_agente.py` checks it).
     decoded (alpha, or its AND mask) and re-encoded with `icons._png()`, 8/24
     bits are not understood. VeraCrypt's exe, an `OTRO` icon or anything that
     fails → the brand. Never raises out of the menu; cached by path, size and
-    mtime (the name already changes with the drawing).
+    mtime (the name already changes with the drawing), in a bounded cache
+    (`bandeja.CacheAcotada`, `TOPE_CACHE` entries, the oldest out): every save
+    of «Nombre e icono…» is a new key.
   - **Click on the submenu itself.** Windows: the submenu's default item is
     what a **double click** on the submenu item picks («Default Menu Items» in
     *About Menus*), so `SetMenuDefaultItem` on «Configurar» (bold) makes a
@@ -2519,7 +2525,8 @@ keeps the target's existing header.
   `huella_local()` (the photo of a watched folder, over `huella.de_carpeta()`) /
   `buscar_version()` / `ejecutar()` /
   `cache_version()`, `runsync.pedir_reanudar()` / `agente_sirve()`,
-  `watch.pedir_al_agente()`, `agente.arrancar_agente()`, `tk_equipo.escritorio()`,
+  `watch.pedir_al_agente()` / `pedir_a_la_raiz()`, `agente.arrancar_agente()`,
+  `tk_equipo.escritorio()`,
   `install.pintar_iconos`, `install.agente.matar_arbol()` / `conseguir_rclone()` /
   `conseguir_veracrypt()`, `agente.rclone_propio()` / `veracrypt_propio()` /
   `procesos()`, `raiz_equipo.veracrypt_portatil()`,

@@ -1599,10 +1599,11 @@ def cmd_install(args: argparse.Namespace) -> int:
 def uninstall_note(cfg: dict) -> str:
     """Devuelve lo que queda en el dispositivo tras desinstalar, dicho como es.
 
-    En uno cifrado el fichero de control está DENTRO del contenedor y fuera solo
-    queda la marca del vestíbulo; en uno sin cifrar, el fichero de control. Se
-    mira el dispositivo (si está puesto) y, sin poder saberlo, se dicen las dos
-    cosas.
+    En uno cifrado el fichero de control está DENTRO del contenedor y desde
+    fuera lo reconoce la marca del vestíbulo, que sigue junto al contenedor, los
+    scripts de abrir y expulsar y, si se llevó, la carpeta del VeraCrypt de
+    viaje; en uno sin cifrar, el fichero de control. Se mira el dispositivo (si
+    está puesto) y, sin poder saberlo, se dicen las dos cosas.
 
     Args:
         cfg: La configuración del vigilante, leída antes de borrarla.
@@ -1613,17 +1614,19 @@ def uninstall_note(cfg: dict) -> str:
     cifrado = find_vestibule(cfg)
     if cifrado is not None:
         return (f"Desinstalado. El dispositivo no se ha tocado: está cifrado, así que "
-                f"{CONTROL_FILE} está dentro del contenedor y fuera solo queda su "
-                f"marca {VESTIBULE_MARKER} (en {cifrado}); puedes borrarla si no "
-                f"vas a usar esto en ningún equipo.")
+                f"{CONTROL_FILE} está dentro del contenedor y desde fuera lo "
+                f"reconoce su marca {VESTIBULE_MARKER} (en {cifrado}), junto al "
+                f"contenedor y a los scripts de abrir y expulsar; puedes borrar la "
+                f"marca si no vas a usar esto en ningún equipo.")
     if find_pen(cfg) is not None:
         return (f"Desinstalado. El dispositivo no se ha tocado (el fichero "
                 f"{CONTROL_FILE} sigue ahí; puedes borrarlo si no vas a usar esto "
                 f"en ningún equipo).")
     return (f"Desinstalado. El dispositivo no se ha tocado: sigue en él el fichero "
-            f"{CONTROL_FILE} (si es cifrado, dentro del contenedor, y fuera solo "
-            f"su marca {VESTIBULE_MARKER}); puedes borrarlos si no vas a usar esto "
-            f"en ningún equipo.")
+            f"{CONTROL_FILE} (si es cifrado, dentro del contenedor, y fuera su "
+            f"marca {VESTIBULE_MARKER}, junto al contenedor y a los scripts de "
+            f"abrir y expulsar); puedes borrarlos si no vas a usar esto en ningún "
+            f"equipo.")
 
 
 def cmd_uninstall(_args: argparse.Namespace) -> int:
