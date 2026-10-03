@@ -36,6 +36,16 @@ from . import (Choice, abrir, cifrado, cuando, cuando_sello, icons, manual_args,
 TITLE = APP_NAME
 """El nombre de la ventana, que sale de `common/`."""
 
+IS_WIN = sys.platform == "win32"
+"""Si esto corre en Windows; los tests lo fuerzan para pasar por la otra rama."""
+
+CAPTURA_NINGUNA = 0
+"""`WDA_NONE`: la ventana no ha quedado protegida de las capturas."""
+CAPTURA_EN_NEGRO = 0x1
+"""`WDA_MONITOR`: en una captura la ventana sale, pero como un rectángulo negro."""
+CAPTURA_EXCLUIDA = 0x11
+"""`WDA_EXCLUDEFROMCAPTURE`: en una captura la ventana no sale (Windows 10 2004)."""
+
 
 def corto(texto: str, maximo: int = 30) -> str:
     r"""Devuelve una ruta recortada por delante, que es por donde sobra.
@@ -435,6 +445,95 @@ def mostrar(dlg, parent=None) -> None:
     except tk.TclError:
         pass
     dlg.wait_window()
+
+
+def _afinidad_de_pantalla(hwnd: int, afinidad: int) -> bool:
+    """Pone la afinidad de pantalla de una ventana de Windows.
+
+    Es la única llamada a user32 de `proteger_de_capturas()` y un punto de
+    indirección: los tests la sustituyen, porque `ctypes.WinDLL` solo existe en
+    Windows.
+
+    Args:
+        hwnd: El manejador de la ventana de nivel superior.
+        afinidad: Uno de `CAPTURA_EN_NEGRO` o `CAPTURA_EXCLUIDA`.
+
+    Returns:
+        Si Windows la aceptó. Windows la rechaza (`ERROR_INVALID_PARAMETER`)
+        con un valor que su versión no conoce.
+    """
+    import ctypes
+    from ctypes import wintypes
+    poner = ctypes.WinDLL("user32", use_last_error=True).SetWindowDisplayAffinity
+    poner.argtypes = [wintypes.HWND, wintypes.DWORD]
+    poner.restype = wintypes.BOOL
+    return bool(poner(hwnd, afinidad))
+
+
+def proteger_de_capturas(ventana) -> int:
+    """Hace que la ventana no salga en capturas ni al compartir pantalla (Windows).
+
+    Pide a Windows que la ventana solo se vea en el monitor, con
+    `SetWindowDisplayAffinity` (user32, vía `ctypes`: sin dependencias ni
+    shell). Prueba primero `WDA_EXCLUDEFROMCAPTURE` (Windows 10 2004 en
+    adelante: en la captura la ventana no está) y, si Windows no lo conoce,
+    `WDA_MONITOR` (en la captura sale un rectángulo negro). En el monitor la
+    ventana se ve igual en los dos casos. Si no queda ninguna, la ventana sigue
+    sin protección y se abre igual: esto nunca lanza.
+
+    Se llama entre `modal()` y `mostrar()`, con la ventana todavía retirada:
+    así no se enseña ni un fotograma sin proteger.
+
+    **El manejador es `wm frame`, y antes hay un `update_idletasks()`.** Tk en
+    Windows mete cada ventana de nivel superior en una ventana envoltorio
+    (`UpdateWrapper`, `win/tkWinWm.c`) que solo crea al mapearla por primera vez,
+    en reposo (`MapFrame` → `TkWmMapWindow`); un `withdraw()` no la crea, pero el
+    mapeo la crea oculta (`SW_HIDE`: `initial_state` es `WithdrawnState`). Hasta
+    entonces `wm frame` devuelve la ventana propia de Tk, la misma que
+    `winfo_id()` (`WmFrameCmd`; `TkpMakeWindow` en `win/tkWinWindow.c`, un
+    `WS_POPUP` sin padre): aceptaría la afinidad y la perdería cuando Tk la
+    mete dentro del envoltorio, con la ventana creyéndose protegida. Por eso,
+    si `wm frame` sigue igual a `winfo_id()` no se protege nada.
+
+    **Después de llamarla no se toca el estilo de la ventana** (`resizable`,
+    `transient`, `overrideredirect`, `attributes` de estilo): `UpdateWrapper`
+    destruye el envoltorio y crea otro, y la afinidad es de la ventana, no de
+    Tk. `modal()` hace las suyas antes; `mostrar()` solo usa `geometry` y
+    `deiconify`, que no lo recrean.
+
+    **Lo que no cubre:** una foto con otro móvil, un programa con privilegios
+    que lea la pantalla, la Lupa y las herramientas de accesibilidad, y el
+    Escritorio remoto, donde quien se conecta la ve en negro. En Linux no hay
+    equivalente (X11 no tiene esa API y en Wayland lo decide el portal): ahí no
+    hace nada.
+
+    Args:
+        ventana: Un `Toplevel` (o la raíz) todavía sin enseñar.
+
+    Returns:
+        La protección que ha quedado: `CAPTURA_EXCLUIDA`, `CAPTURA_EN_NEGRO` o
+        `CAPTURA_NINGUNA`. Es el valor que daría `GetWindowDisplayAffinity`, y
+        sirve de booleano (solo la última es falsa). Dice cuál y no solo si
+        porque la frase que cabe decir es otra: con la segunda la ventana
+        sí aparece en la captura, en negro. Fuera de Windows devuelve
+        `CAPTURA_NINGUNA` sin tocar la ventana.
+    """
+    if not IS_WIN:
+        return CAPTURA_NINGUNA
+    try:
+        ventana.update_idletasks()
+        hwnd = int(ventana.wm_frame(), 16)
+        if hwnd == int(ventana.winfo_id()):
+            return CAPTURA_NINGUNA
+    except Exception:
+        return CAPTURA_NINGUNA
+    for afinidad in (CAPTURA_EXCLUIDA, CAPTURA_EN_NEGRO):
+        try:
+            if _afinidad_de_pantalla(hwnd, afinidad):
+                return afinidad
+        except Exception:
+            pass        # cualquier fallo es no haberla puesto: se prueba la otra
+    return CAPTURA_NINGUNA
 
 
 def cabecera(parent, titulo: str, pista: str = "", ancho: int = 620,

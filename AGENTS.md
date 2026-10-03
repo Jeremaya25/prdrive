@@ -718,6 +718,51 @@ phone can read it. Three pieces, none of which knows about the other two's mediu
 - **This shows a private key on screen and says so**, in an amber block. It is
   not a token and it does not expire: whoever photographs the screen gets the
   remote. The window stores nothing and copies nothing to the clipboard.
+- **On Windows the window is kept out of screen captures (#59).** That stops an
+  accident (a shared screen, an OBS recording, a Snipping Tool shot that ends in
+  a chat), not an attacker: the amber block stays the real barrier.
+  `tk.proteger_de_capturas(window)` runs between `modal()` and `mostrar()`, with
+  the dialog still withdrawn (not a frame unprotected) and only when a code is on
+  screen. It is `SetWindowDisplayAffinity` through ctypes: `WDA_EXCLUDEFROMCAPTURE`
+  (0x11, Windows 10 2004+: the window is not in the capture) and, if refused,
+  `WDA_MONITOR` (0x1: it is there, as a black rectangle); neither, and the window
+  goes unprotected. It never raises and never stops the window from opening; off
+  Windows it does nothing.
+  - **It returns WHICH protection took, not a bool**: `CAPTURA_EXCLUIDA`,
+    `CAPTURA_EN_NEGRO` or `CAPTURA_NINGUNA` (the value `GetWindowDisplayAffinity`
+    would give; falsy only for the last, so `if proteger_de_capturas(w):` still
+    reads «is it protected»). A bool cannot carry it because the line under the
+    amber block has to be true for each: «no aparece» is false for the black
+    rectangle (`tk_qr.LINEA_CAPTURA`, one sentence per value). No protection means
+    no line — silence promises nothing, and Linux, which has no equivalent (X11 has
+    no API, Wayland decides in the portal), must not hint otherwise.
+  - **The HWND is `wm frame`, never `winfo_id()`, and the wrapper has to exist
+    first** (Tk 8.6.15, `win/tkWinWm.c`, `win/tkWinWindow.c`, `generic/tkFrame.c`).
+    Tk wraps each toplevel in a wrapper window that `UpdateWrapper` creates the
+    first time it is mapped, at idle (`MapFrame` → `TkWmMapWindow`); `withdraw()`
+    does not create it, but the mapping does, hidden (`SW_HIDE`). Until then
+    `wm frame` returns Tk's own window — the same one `winfo_id()` gives, a
+    parentless `WS_POPUP` — which accepts the affinity and loses it when Tk moves it
+    into the wrapper: protected on paper, not in fact. So the function runs
+    `update_idletasks()` first and protects nothing if `wm frame` still equals
+    `winfo_id()`. `centrar()` already does that `update_idletasks()` on the
+    withdrawn window, so the early one changes nothing about the flow.
+  - **After it, nothing may restyle the window** (`resizable`, `transient`,
+    `overrideredirect`, style `attributes`): `UpdateWrapper` destroys the wrapper
+    and builds another, and the affinity belongs to the HWND. `modal()` does its
+    own before the wrapper exists and `mostrar()` only uses `geometry` and
+    `deiconify`, which do not rebuild it.
+  - **Not covered, and the docstring says so:** a photo with another phone; a
+    privileged program reading the screen; Magnifier and accessibility tools; Remote
+    Desktop, where whoever connects sees it black. The window's line does not list
+    them: the amber block already says a photo is enough.
+  - `tests/test_captura_pantalla.py` fakes the window (its wrapper appears at the
+    first idle, like Tk's) and `_afinidad_de_pantalla`, and runs the real ctypes
+    wrapper against a fake `ctypes.WinDLL`. What only Windows can say — `wm frame`
+    with the window withdrawn, the captures themselves, Remote Desktop, ARM64,
+    a Windows older than 2004 — is in
+    `docs/superpowers/pruebas/2026-10-02-captura-qr-pendiente-en-real.md`
+    (C0 checks the HWND with a stdlib script).
 - The pairing window asks for correction **L**, not the module's default M: the
   medium is a screen (no creases, no print, no dirt) and what is scarce is
   capacity — an RSA-3072 key does not fit in *any* version at M. It fails with a
@@ -2338,6 +2383,7 @@ keeps the target's existing header.
   `lanzar_suelto()` / `esperar_a()` / `procesos_desde()`,
   `common.components.raiz_fisica()`, `traveler.espacio_libre()`, `_win_volumes()`,
   `vestibulo.raiz_fisica()`, `cifrado.lanzar_expulsion()`,
+  `tk.proteger_de_capturas()` / `tk._afinidad_de_pantalla()`,
   `crypto.sistema_de_ficheros()`, `crypto.bytes_escritos()`,
   `_leer_estado_bitlocker()`, `_preguntar_borrado()`, `pairing.construir()`,
   `watch.resumen()`, `tk.mostrar()` / `confirmar_plan()`,

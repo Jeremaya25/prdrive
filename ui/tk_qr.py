@@ -14,6 +14,12 @@ el código desaparece al cerrarla.
 
 Cuelga de «Ajustes» y no de la ventana principal porque emparejar un móvil se
 hace una vez, no cada vez que se sincroniza.
+
+En Windows la ventana se excluye además de las capturas de pantalla y de
+compartir pantalla (`tk.proteger_de_capturas`), y lo dice con una línea bajo el
+aviso según lo que haya conseguido. Es un descuido lo que evita, no un
+atacante: una foto con otro móvil no la para, y por eso el recuadro ámbar sigue
+siendo la barrera principal.
 """
 
 from __future__ import annotations
@@ -22,13 +28,28 @@ from common import pairing
 from common.model import ConfigError
 
 from . import icons, qr, theme
-from .tk import cabecera, cuerpo_visible, bloque_aviso, modal, mostrar
+from .tk import (CAPTURA_EN_NEGRO, CAPTURA_EXCLUIDA, cabecera, cuerpo_visible,
+                 bloque_aviso, modal, mostrar, proteger_de_capturas)
 
 AVISO = ("El código lleva dentro la clave privada de la conexión. Cualquiera "
          "que le haga una foto a esta pantalla tendrá el mismo acceso al "
          "remoto que este dispositivo. Enséñalo solo al móvil que vayas a "
          "emparejar y ciérralo al terminar.")
 """Lo que se dice en el recuadro ámbar sobre la clave privada."""
+
+LINEA_CAPTURA = {
+    CAPTURA_EXCLUIDA: "Esta ventana no aparece en capturas de pantalla ni al "
+                      "compartir pantalla.",
+    CAPTURA_EN_NEGRO: "En las capturas de pantalla y al compartir pantalla, "
+                      "esta ventana sale en negro.",
+}
+"""La línea bajo el aviso, según la protección que ha quedado puesta.
+
+Solo dice lo que hay: con `CAPTURA_EN_NEGRO` la ventana sí sale en la captura,
+así que «no aparece» sería falso. Sin protección (Linux, o un Windows que no
+admite ninguna) no hay línea: callar no promete nada, y el aviso ámbar ya dice
+que una foto a la pantalla basta.
+"""
 
 PISTA = ("Abre prdrive en el móvil, elige «Escanear código» y apunta la cámara "
          "aquí. El móvil se queda con la conexión y con el catálogo; las "
@@ -103,8 +124,9 @@ def open_dialog(parent, raw_local: dict | None = None) -> None:
     # puede llegar hasta el borde del dibujo: la zona de silencio tiene que ser
     # blanca o el lector se come una fila de módulos.
     tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(16, 16, 16, 16))
-    tarjeta.grid(row=2, column=0, pady=(16, 0))
+    tarjeta.grid(row=3, column=0, pady=(16, 0))
 
+    en_pantalla = False
     try:
         texto = pairing.construir(raw_local)
         codigo = qr.codificar(texto, CORRECCION)
@@ -132,22 +154,34 @@ def open_dialog(parent, raw_local: dict | None = None) -> None:
             # el recolector en cuanto vuelve esta función.
             etiqueta.imagen = imagen        # type: ignore[attr-defined]
             etiqueta.grid(row=0, column=0)
+            en_pantalla = True
 
     ttk.Label(marco, text=PISTA, style="Pista.TLabel", justify="left",
-              wraplength=theme.medida(560)).grid(row=3, column=0, sticky="w",
+              wraplength=theme.medida(560)).grid(row=4, column=0, sticky="w",
                                                  pady=(14, 0))
 
     if codigo is not None:
         ttk.Label(marco, style="MonoPista.TLabel",
                   text=f"versión {codigo.version} · corrección {codigo.nivel} "
                        f"· {codigo.tamano}×{codigo.tamano} módulos").grid(
-            row=4, column=0, sticky="w", pady=(6, 0))
+            row=5, column=0, sticky="w", pady=(6, 0))
 
-    ttk.Separator(marco, orient="horizontal").grid(row=5, column=0, sticky="ew",
+    ttk.Separator(marco, orient="horizontal").grid(row=6, column=0, sticky="ew",
                                                    pady=(16, 0))
     pie = ttk.Frame(marco)
-    pie.grid(row=6, column=0, sticky="e", pady=(14, 0))
+    pie.grid(row=7, column=0, sticky="e", pady=(14, 0))
     ttk.Button(pie, text="Cerrar", style="Primary.TButton",
                command=dlg.destroy).grid(row=0, column=0)
+
+    # Solo con un código a la vista hay algo que proteger (y una línea que
+    # decir). Va justo antes de `mostrar()` y con la ventana aún retirada: ni un
+    # fotograma sin proteger. La línea se pone después porque depende de lo que
+    # Windows haya aceptado; ocupa la fila 2, que sin ella queda vacía.
+    if en_pantalla:
+        linea = LINEA_CAPTURA.get(proteger_de_capturas(dlg))
+        if linea is not None:
+            ttk.Label(marco, text=linea, style="Pista.TLabel", justify="left",
+                      wraplength=theme.medida(560)).grid(row=2, column=0,
+                                                         sticky="w", pady=(8, 0))
 
     mostrar(dlg, parent)

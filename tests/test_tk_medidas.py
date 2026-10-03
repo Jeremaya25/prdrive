@@ -881,12 +881,39 @@ try:
                 # que mide en píxeles y no puede encoger —un módulo por debajo
                 # de dos píxeles no lo lee ninguna cámara—, así que en una
                 # pantalla pequeña la respuesta correcta es la barra.
-                entra, corta = medir_dialogo(
-                    lambda: tk_qr.open_dialog(raiz, dict(BASE)),
-                    ancho, alto, escala, modulo=tk_qr)
-                c(f"{nombre}: la ventana de emparejar cabe", entra, True)
-                c(f"{nombre}: la ventana de emparejar no queda recortada",
-                  corta, False)
+                # Con la línea de las capturas (#59) que cada protección dice,
+                # y sin ninguna: la protección se fija aquí en vez de dejar
+                # que la decida el sistema que corre el test. Cada variante
+                # mide además que la línea esté de verdad en la ventana
+                # medida: un peor caso sin la línea no mediría nada.
+                proteger_real = tk_qr.proteger_de_capturas
+                try:
+                    for que, captura in (
+                            ("sin línea de capturas", uitk.CAPTURA_NINGUNA),
+                            ("con «no aparece en capturas»", uitk.CAPTURA_EXCLUIDA),
+                            ("con «sale en negro»", uitk.CAPTURA_EN_NEGRO)):
+                        tk_qr.proteger_de_capturas = lambda dlg, v=captura: v
+                        entra, corta = medir_dialogo(
+                            lambda: tk_qr.open_dialog(raiz, dict(BASE)),
+                            ancho, alto, escala, modulo=tk_qr)
+                        c(f"{nombre}: la ventana de emparejar {que} cabe",
+                          entra, True)
+                        c(f"{nombre}: la ventana de emparejar {que} no queda "
+                          "recortada", corta, False)
+                        medida_qr = [w for w in raiz.winfo_children()
+                                     if isinstance(w, tk.Toplevel)][-1]
+                        pila_qr, dicho_qr = [medida_qr], []
+                        while pila_qr:
+                            w_qr = pila_qr.pop()
+                            pila_qr += list(w_qr.winfo_children())
+                            if isinstance(w_qr, ttk.Label):
+                                dicho_qr.append(str(w_qr.cget("text")))
+                        c(f"{nombre}: la ventana de emparejar {que} lleva la "
+                          "línea que toca",
+                          tk_qr.LINEA_CAPTURA.get(captura) in dicho_qr,
+                          captura != uitk.CAPTURA_NINGUNA)
+                finally:
+                    tk_qr.proteger_de_capturas = proteger_real
 
         # La ficha de la flota cambia con la fila elegida, y el recuadro se
         # encaja una sola vez, al abrir: lo que se reservó entonces tiene que

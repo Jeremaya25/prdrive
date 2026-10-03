@@ -1176,6 +1176,15 @@ dispositivo.
 > aparato que vayas a emparejar y cierra la ventana al terminar. No se guarda en
 > ningún fichero ni pasa por el portapapeles.
 
+En Windows la ventana se excluye de las capturas de pantalla y de compartir
+pantalla (Recortes, Teams, Meet, OBS…) para que un descuido no la deje en un
+chat o en una videollamada, y lo dice con una línea bajo el aviso. En el monitor
+se ve igual y el móvil la lee igual. Con un Windows anterior a la 2004 no se
+puede excluir del todo y sale **en negro** en la captura; la línea lo dice así.
+No cubre una foto hecha con otro móvil, la Lupa ni los programas con privilegios,
+y en el Escritorio remoto quien se conecta la ve en negro. En Linux no hay forma
+de hacerlo y la ventana no dice nada al respecto.
+
 Funciona con claves ed25519, que es lo que usa prdrive por defecto. Una clave RSA
 grande no cabe en un código QR y la ventana lo dice.
 
