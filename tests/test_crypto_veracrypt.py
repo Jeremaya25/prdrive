@@ -234,10 +234,48 @@ try:
     (fisica / "notas.txt").write_text("x", encoding="utf-8")
     c("con un prdrive en claro: el programa, y las carpetas de datos",
       crypto.restos_en_claro(fisica), [".prdrive/", "notas.txt", "sync-data/"])
-    c.contains("el aviso nombra la clave", crypto.aviso_restos(
-        crypto.restos_en_claro(fisica)), ".prdrive/keys/")
-    c.contains("y dice que la borre a mano, no que se va a borrar",
-               crypto.aviso_restos(crypto.restos_en_claro(fisica)), "bórrala a mano")
+    # La clave solo se nombra si hay un fichero de clave: un remoto sin clave no
+    # deja nada en `.prdrive/keys/` (K2, #41).
+    c("sin fichero de clave, no se dice que lo haya", crypto.hay_clave_en_claro(fisica), False)
+    sin_clave = crypto.aviso_restos(crypto.restos_en_claro(fisica), fisica)
+    c("el aviso no inventa una clave", (".prdrive/keys/" in sin_clave,
+                                        "la clave" in sin_clave), (False, False))
+    c.contains("pero sigue avisando de lo que puede faltar en el remoto", sin_clave,
+               "tener cambios que todavía no están en el remoto")
+    c.contains("y de que borrar en flash no es del todo", sin_clave, "no garantiza")
+    c("sin el consejo de cambiar una clave que no hay", "cambia la clave" in sin_clave, False)
+    (fisica / device.APP_SUBDIR / "keys").mkdir()
+    c("una carpeta de claves vacía, tampoco", crypto.hay_clave_en_claro(fisica), False)
+    (fisica / device.APP_SUBDIR / "keys" / "id_ed25519").write_text("x", encoding="utf-8")
+    c("con un fichero de clave, sí", crypto.hay_clave_en_claro(fisica), True)
+    c("y sin la carpeta de la instalación, no", crypto.hay_clave_en_claro(
+        fisica / "no-existe"), False)
+    con_clave = crypto.aviso_restos(crypto.restos_en_claro(fisica), fisica)
+    c.contains("con clave, el aviso nombra la clave", con_clave, ".prdrive/keys/")
+    c.contains("y aconseja cambiarla", con_clave, "cambia la clave del remoto")
+    c.contains("y dice que la borre a mano, no que se va a borrar", con_clave,
+               "bórrala a mano")
+    c.contains("el aviso empieza igual con o sin clave", sin_clave,
+               "En la raíz de la unidad sigue una instalación SIN CIFRAR")
+
+    # El `README.md` del instalador es su guía rápida: sin datos ni clave, no es un
+    # resto. Pero solo si es idéntico a la guía que lleva este instalador: uno de
+    # la persona, con lo que sea, sí cuenta.
+    guia = crypto.bundle_dir() / "device-readme.md"
+    (fisica / "README.md").write_bytes(guia.read_bytes())
+    c("la guía del instalador no cuenta como resto",
+      crypto.restos_en_claro(fisica), [".prdrive/", "notas.txt", "sync-data/"])
+    (fisica / "README.md").write_text("# mis apuntes\nlo que sea\n", encoding="utf-8")
+    c("un README.md distinto es de la persona y cuenta",
+      crypto.restos_en_claro(fisica), [".prdrive/", "notas.txt", "README.md", "sync-data/"])
+    (fisica / "README.md").write_bytes(guia.read_bytes() + b"\nuna linea mas\n")
+    c("también la guía con algo añadido (no se da por nuestra a ojo)",
+      "README.md" in crypto.restos_en_claro(fisica), True)
+    (fisica / "README.md").unlink()
+    (fisica / "README.md").mkdir()
+    c("y una carpeta que se llame README.md", "README.md/" in crypto.restos_en_claro(fisica),
+      True)
+    (fisica / "README.md").rmdir()
     fila = crypto.comprobar_restos(fisica)
     c("y la verificación lleva una fila roja",
       [(k.etiqueta, k.ok) for k in fila], [("Instalación sin cifrar", False)])

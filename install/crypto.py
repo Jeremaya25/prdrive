@@ -62,7 +62,7 @@ from pathlib import Path
 
 from common import model, store
 
-from . import CREATE_NO_WINDOW, DEVICE_LABEL, IS_WIN, InstallError
+from . import CREATE_NO_WINDOW, DEVICE_LABEL, IS_WIN, InstallError, bundle_dir
 from . import veracrypt_bin
 
 MOUNT_TIMEOUT = 90.0
@@ -1452,6 +1452,24 @@ def revisar_contrasena(password: str) -> tuple[str | None, str | None]:
     return None, None
 
 
+def _es_la_guia(ruta: Path) -> bool:
+    """Indica si `ruta` es la guía rápida que el instalador deja en la raíz.
+
+    Es el `README.md` de `deploy.write_guide()`, y lo es solo si es idéntico a la
+    guía que lleva este instalador: un `README.md` de la persona, con lo que sea
+    dentro, es contenido suyo y cuenta como resto como cualquier otro. Una guía
+    de otra versión tampoco se reconoce (y se lista): no se la da por nuestra a
+    ojo.
+    """
+    from . import deploy
+    try:
+        return (ruta.name.lower() == deploy.GUIDE_TARGET.lower() and ruta.is_file()
+                and ruta.read_bytes()
+                == (bundle_dir() / deploy.GUIDE_SOURCE).read_bytes())
+    except OSError:
+        return False
+
+
 def restos_en_claro(raiz_fisica: str | Path) -> list[str]:
     """Devuelve lo que un prdrive SIN cifrar dejó en la raíz física, si lo hay.
 
@@ -1463,8 +1481,9 @@ def restos_en_claro(raiz_fisica: str | Path) -> list[str]:
 
     Returns:
         `.prdrive/` y lo que haya en la raíz que no sea ruido
-        (`device.es_ruido()`: las carpetas de datos), o la lista vacía si ahí
-        no hay un prdrive.
+        (`device.es_ruido()`: las carpetas de datos) ni la guía rápida del
+        instalador (`_es_la_guia()`: no lleva datos ni clave), o la lista vacía
+        si ahí no hay un prdrive.
     """
     from . import device
     raiz = Path(raiz_fisica)
@@ -1472,7 +1491,8 @@ def restos_en_claro(raiz_fisica: str | Path) -> list[str]:
         if not ((raiz / device.CONTROL_FILE).exists()
                 or (raiz / device.STRUCT_MARKER).exists()):
             return []
-        otros = sorted((p for p in raiz.iterdir() if not device.es_ruido(p.name)),
+        otros = sorted((p for p in raiz.iterdir()
+                        if not device.es_ruido(p.name) and not _es_la_guia(p)),
                        key=lambda p: p.name.lower())
         return [f"{device.APP_SUBDIR}/"] + [
             p.name + ("/" if p.is_dir() else "") for p in otros]
@@ -1480,18 +1500,42 @@ def restos_en_claro(raiz_fisica: str | Path) -> list[str]:
         return []
 
 
-def aviso_restos(restos: list[str]) -> str:
-    """Devuelve el texto que se enseña cuando `restos_en_claro()` encuentra algo."""
+def hay_clave_en_claro(raiz_fisica: str | Path) -> bool:
+    """Indica si la instalación sin cifrar de esa raíz tiene un fichero de clave.
+
+    Es `.prdrive/keys/` con algún fichero dentro. Un remoto sin clave (otra
+    forma de autenticarse, o ninguna) no la deja, y entonces no se puede decir
+    que esté ahí.
+    """
+    from . import device
+    try:
+        return any(p.is_file() for p in (Path(raiz_fisica) / device.APP_SUBDIR
+                                         / "keys").iterdir())
+    except OSError:
+        return False
+
+
+def aviso_restos(restos: list[str], raiz_fisica: str | Path) -> str:
+    """Devuelve el texto que se enseña cuando `restos_en_claro()` encuentra algo.
+
+    Args:
+        restos: Lo que devolvió `restos_en_claro()`.
+        raiz_fisica: La raíz de la que salieron: dice si de verdad hay una clave
+            en claro (`hay_clave_en_claro()`) de la que avisar.
+    """
     lista = ", ".join(restos[:6]) + ("…" if len(restos) > 6 else "")
+    cambios = "las carpetas pueden tener cambios que todavía no están en el remoto."
+    clave = hay_clave_en_claro(raiz_fisica)
     return (
         f"En la raíz de la unidad sigue una instalación SIN CIFRAR: {lista}. "
-        "Crear el contenedor no la mueve ni la borra. Ahí está la clave de tu "
-        "remoto en claro (.prdrive/keys/), y las carpetas pueden tener cambios "
-        "que todavía no están en el remoto.\n\n"
+        "Crear el contenedor no la mueve ni la borra. "
+        + ("Ahí está la clave de tu remoto en claro (.prdrive/keys/), y " + cambios
+           if clave else cambios.capitalize())
+        + "\n\n"
         "Cuando hayas comprobado que no falta nada, bórrala a mano. Y en memoria "
-        "flash borrar no garantiza que no se pueda recuperar: si alguien pudo "
-        "copiar el dispositivo mientras iba sin cifrar, cambia la clave del "
-        "remoto.")
+        "flash borrar no garantiza que no se pueda recuperar"
+        + (": si alguien pudo copiar el dispositivo mientras iba sin cifrar, "
+           "cambia la clave del remoto." if clave else "."))
 
 
 def comprobar_restos(raiz_fisica: str | Path) -> list:

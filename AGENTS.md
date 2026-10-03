@@ -1022,6 +1022,12 @@ at nothing) and hangs `tasklist | find`. Use PowerShell for both.
   `crypto.restos_en_claro()` finds the plaintext `.prdrive/` (with the key) and
   the data folders, the panel says so in red before creating, and step 8 keeps a
   red row. **Nothing deletes it**: those folders may hold unsynced changes.
+  Two things the red box must not get wrong (K2, #41): the installer's own
+  guide (`README.md`, `deploy.write_guide()`) is not a leftover — recognised
+  only when byte-identical to the guide this installer carries, so a person's
+  own `README.md` still counts — and it names a key in `.prdrive/keys/` only
+  when a key file is there (`crypto.hay_clave_en_claro()`): a remote with no key
+  leaves none.
 
 **The vestibule (`common/vestibulo.py` + `install/vestibulo.py`).** With
 VeraCrypt everything — code, launchers, guide, control file — is inside

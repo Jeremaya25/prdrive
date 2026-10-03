@@ -212,7 +212,7 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
     # clave en claro. Se dice antes de crear nada, y no se borra sola.
     restos = crypto.restos_en_claro(estado.device)
     if restos:
-        bloque_aviso(panel, crypto.aviso_restos(restos), ancho=720,
+        bloque_aviso(panel, crypto.aviso_restos(restos, estado.device), ancho=720,
                      tipo="Rojo").grid(row=1, column=0, sticky="ew", pady=(10, 0))
 
     formulario = ttk.Frame(panel)

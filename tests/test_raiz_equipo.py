@@ -482,6 +482,22 @@ c("  una marca de otra raíz es roja",
 raiz_equipo.marcar(fisica, ident_c)
 c("restos: una raíz en claro en la carpeta se encuentra",
   raiz_equipo.restos(nueva)[0], ".prdrive/")
+# El aviso de esa raíz solo habla de la clave si hay un fichero de clave (K2,
+# #41), y la carpeta se lee como se escribió en el paso: con espacios y todo.
+claves = nueva / ".prdrive" / "keys"
+hay_clave = (claves.is_dir() and any(claves.iterdir()))
+c("restos: el aviso nombra la clave solo si existe",
+  ".prdrive/keys/" in raiz_equipo.aviso_restos(raiz_equipo.restos(nueva), f"  {nueva}  "),
+  hay_clave)
+existia = claves.is_dir()
+claves.mkdir(exist_ok=True)
+(claves / "id_ed25519").write_text("x", encoding="utf-8")
+c("restos: con un fichero de clave, la nombra",
+  ".prdrive/keys/" in raiz_equipo.aviso_restos(raiz_equipo.restos(nueva), f"  {nueva}  "),
+  True)
+(claves / "id_ed25519").unlink()
+if not existia:
+    claves.rmdir()
 
 # lo que recibe el agente: la raíz con su contenedor, y pedir_al_iniciar.
 RAIZ_C = equipo.Unidad(ident_c, equipo.DAEMON, "Cifrada", str(volumen),

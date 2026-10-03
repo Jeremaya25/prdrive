@@ -336,7 +336,7 @@ c("y ya se puede seguir", str(vacio.boton_siguiente.cget("state")), "normal")
 # quedaría al lado del contenedor, el tope de una unidad FAT32 y una contraseña
 # más corta de lo que VeraCrypt recomienda. Ni VeraCrypt ni una unidad de
 # verdad: las sondas de `crypto` se sustituyen.
-from install import crypto  # noqa: E402
+from install import crypto, deploy  # noqa: E402
 from ui import tk_crypto  # noqa: E402
 
 # El panel importa su propio `working`: el mismo cambio que arriba.
@@ -361,6 +361,10 @@ try:
     (en_claro / ".prdrive").mkdir()
     (en_claro / ".prdrive" / "PRDRIVE").write_text("id=viejo\n", encoding="utf-8")
     (en_claro / "sync-data").mkdir()
+    # La guía que deja el instalador en la raíz no es un resto (K2, #41), y un
+    # remoto sin clave no deja nada en `.prdrive/keys/`.
+    (en_claro / "README.md").write_bytes(
+        (deploy.deploy_source() / deploy.GUIDE_SOURCE).read_bytes())
     vc = nuevo_asistente(en_claro)
     vc.state.device_root = None
     vc.state.encryption = "veracrypt"
@@ -368,6 +372,9 @@ try:
     textos = " ".join(str(w.cget("text")) for w in widgets(vc.cuerpo, ttk.Label))
     c.contains("la instalación sin cifrar se avisa antes de crear", textos, "SIN CIFRAR")
     c.contains("nombrando lo que queda fuera", textos, "sync-data/")
+    c("pero sin contar la guía del instalador", "README.md" in textos, False)
+    c("y sin decir que hay una clave si no hay ninguna", "clave de tu remoto" in textos,
+      False)
     c.contains("el tope de FAT32 se dice junto al tamaño", textos, "como mucho 4095M")
     campos = widgets(vc.cuerpo, ttk.Entry)
     c("y el tamaño propuesto ya lo respeta",
