@@ -22,7 +22,10 @@ VeraCrypt_1.26.24; las citas, en la spec
   contraseña la pide la otra instancia. Por eso se espera a VER la unidad, y
   con el que viaja se espera sin contar mientras esa copia siga viva
   (`:vc_pendiente`): cuando sale sin que aparezca la unidad, la contraseña se
-  ha cancelado y no hay nada más que esperar.
+  ha cancelado y no hay nada más que esperar. Esa espera sin contar tiene un
+  tope explícito (`ESPERA_PENDIENTE`, 10 minutos): pasado, la ventana de la
+  contraseña o del aviso de permisos puede estar tapada por otras y la consola
+  lo dice en vez de quedarse colgada.
 - `/dismount`, no `/unmount`: el segundo no existe antes de la 1.26.24.
 - Sin `/auto`: además de montar, abre una ventana del Explorador
   (`ExtractCommandLine`: `bExplore = TRUE`). Con `/quit` y `/volume` ya monta.
@@ -119,6 +122,19 @@ dejar a la persona el tiempo de escribir la contraseña en la ventana elevada.
 Con la copia a la vista no se cuenta; cuando sale, valen `ESPERA_INSTALADO`.
 """
 
+ESPERA_PENDIENTE = 600
+"""Vueltas de un segundo que «Abrir» espera sin contar a la copia elevada: 10 minutos.
+
+Mientras `:vc_pendiente` vea viva la copia elevada del VeraCrypt que viaja, la
+espera no gasta `ESPERA`: la persona está escribiendo la contraseña o decidiendo
+el aviso de permisos. Sin tope, una ventana que se quedó detrás de otras (o un
+aviso de UAC sin responder) dejaría la consola colgada para siempre. Al
+cumplirse dice que la ventana puede estar oculta y qué hacer (`:sin_respuesta`).
+Se cuenta en vueltas de la espera, de un segundo más lo que tarde `tasklist`, así
+que son «unos 10 minutos» y no un reloj exacto: un `.bat` sin paréntesis no tiene
+otra forma barata de contar. «Expulsar» no lo usa.
+"""
+
 _CONTROL_BAT = str(CONTROL_FILE).replace("/", "\\")
 
 _BUSCAR_BAT = (
@@ -192,8 +208,9 @@ copia elevada es la misma imagen (`InitApp` relanza lo que le da
 `VC_IMAGEN`: `VeraCrypt.exe` instalado o de antes, `VeraCrypt-x64.exe` o
 `VeraCrypt-arm64.exe` del portable. Solo vale si al empezar no había ninguno
 (`VC_ANTES`): con uno en segundo plano no se sabe cuál es el nuestro y se cuenta
-como siempre. No tiene tope, como `start /wait` con el instalado: espera lo que
-tarde la respuesta.
+como siempre. La subrutina no tiene tope, como `start /wait` con el instalado:
+el de «Abrir» lo pone quien la llama (`ESPERA_PENDIENTE`) y «Expulsar» espera lo
+que tarde la respuesta.
 """
 
 _VIAJERO_BAT = f"%~dp0{v.TRAVELER}\\{v.TRAVELER_PORTATIL.format(arq='%VC_ARQ%')}"
@@ -272,8 +289,9 @@ def bat_abrir(device_id: str) -> str:
         "rem No se fia del codigo de salida: el VeraCrypt que viaja, sin permisos de\n"
         "rem administrador, se relanza elevado y sale enseguida con 0 mientras la\n"
         "rem otra ventana pide la contrasena. Por eso espera a ver la unidad.\n"
-        "rem Mientras esa copia siga viva, la espera no cuenta; si sale sin que haya\n"
-        "rem unidad, la contrasena se ha cancelado y no espera mas.\n"
+        "rem Mientras esa copia siga viva, la espera no cuenta, hasta unos 10 minutos\n"
+        "rem (despues avisa de que la ventana puede estar tapada); si sale sin que\n"
+        "rem haya unidad, la contrasena se ha cancelado y no espera mas.\n"
         "rem\n"
         "rem Lo escribe el instalador de prdrive. Sin bloques entre parentesis a\n"
         "rem proposito: una ruta con \")\" los romperia.\n"
@@ -291,6 +309,7 @@ def bat_abrir(device_id: str) -> str:
         + _ELEGIR_BAT
         + _VC_ANTES_BAT +
         f'set "ESPERA={ESPERA_INSTALADO}"\n'
+        f'set "ESPERA_PENDIENTE={ESPERA_PENDIENTE}"\n'
         f'if defined VIAJERO if defined VC_ANTES set "ESPERA={ESPERA_VIAJERO}"\n'
         f"echo Abriendo {v.ETIQUETA}: escribe la contrasena en la ventana de VeraCrypt.\n"
         "if defined VIAJERO if defined VC_ANTES "
@@ -299,13 +318,18 @@ def bat_abrir(device_id: str) -> str:
         f"/mountoption label={v.ETIQUETA} /history n /cache n /quit\n"
         'if errorlevel 1 if not defined VIAJERO set "ESPERA=1"\n'
         'set "INTENTOS=0"\n'
+        'set "PENDIENTE=0"\n'
         ":esperar\n"
         "call :buscar\n"
         "if defined RAIZ goto lanzar\n"
         "call :vc_pendiente\n"
-        "if not errorlevel 1 goto esperar_vc\n"
+        "if not errorlevel 1 goto esperar_pendiente\n"
         "set /a INTENTOS+=1\n"
         "if %INTENTOS% geq %ESPERA% goto no_abierto\n"
+        "goto esperar_vc\n"
+        ":esperar_pendiente\n"
+        "set /a PENDIENTE+=1\n"
+        "if %PENDIENTE% geq %ESPERA_PENDIENTE% goto sin_respuesta\n"
         ":esperar_vc\n"
         "timeout /t 1 /nobreak >nul\n"
         "goto esperar\n"
@@ -340,6 +364,18 @@ def bat_abrir(device_id: str) -> str:
         "echo.\n"
         "echo   El contenedor no se ha abierto: la contraseña no era esa, se ha\n"
         "echo   cancelado, o no se ha aceptado el aviso de permisos de administrador.\n"
+        "echo.\n"
+        "pause\n"
+        "exit /b 1\n"
+        "\n"
+        ":sin_respuesta\n"
+        "chcp 65001 >nul\n"
+        "echo.\n"
+        "echo   VeraCrypt lleva unos 10 minutos esperando una respuesta. La ventana\n"
+        "echo   de la contraseña, o el aviso de permisos de administrador, puede\n"
+        "echo   haber quedado detrás de otras: búscala en la barra de tareas o con\n"
+        "echo   Alt+Tab y contéstala, o ciérrala para cancelar. Cuando el contenedor\n"
+        f"echo   esté abierto, vuelve a abrir «{NOMBRE_ABRIR}».\n"
         "echo.\n"
         "pause\n"
         "exit /b 1\n"

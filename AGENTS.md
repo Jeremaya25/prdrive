@@ -1080,7 +1080,13 @@ writes the texts. Five things not to weaken:
   password, and when it exits with no drive the password was cancelled, so
   after 10 more seconds the `.bat` says so instead of waiting 180 s. Only with
   a same-named VeraCrypt already running (`VC_ANTES`) it cannot tell which is
-  ours and falls back to the 180 s.
+  ours and falls back to the 180 s. **That wait that does not count has a cap**
+  (`ESPERA_PENDIENTE`, 600 turns of one second ≈ 10 minutes, its own `PENDIENTE`
+  counter): a password window hidden behind others, or an unanswered UAC prompt,
+  would otherwise hang the console for ever. Past it `:sin_respuesta` says the
+  window may be hidden (taskbar, Alt+Tab), to answer or close it and open
+  «Abrir PRDRIVE» again, and leaves the wait. **Eject has no such cap** — it is
+  not a thing to give up on halfway, and it is left as it was.
 - **Eject is `/dismount <letter> /quit` without `/silent`**, after a short
   wait: VeraCrypt only retries 30 × 50 ms (`Common/Dlgcode.h`), and without
   `/silent` it asks whether to force. `/unmount` does not exist before 1.26.24.
