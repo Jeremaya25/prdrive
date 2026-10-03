@@ -439,6 +439,9 @@ try:
       [e for e, _ in eventos], ["mostrar"])
     c("  y no dice nada de capturas",
       any("captura" in t.lower() for t in textos(dlg)), False)
+    c("  el motivo sale con el estilo de pista de la tarjeta, que existe",
+      [str(w.cget("text")) for w in buscar(dlg, "Card.Pista.TLabel")],
+      ["Este dispositivo no tiene conexión"])
     dlg.destroy()
     uitk.IS_WIN = True
     try:
@@ -458,6 +461,9 @@ try:
     eventos, dlg = abrir(uitk.CAPTURA_EXCLUIDA)
     c("si el código no se pudo dibujar: tampoco protege (no hay nada en pantalla)",
       [e for e, _ in eventos], ["mostrar"])
+    c("  y lo dice con el estilo de pista de la tarjeta, que existe",
+      [str(w.cget("text")) for w in buscar(dlg, "Card.Pista.TLabel")],
+      ["No se ha podido dibujar el código."])
     dlg.destroy()
     tk_qr.icons.matriz = matriz_real
 

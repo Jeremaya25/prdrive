@@ -90,11 +90,13 @@ def open_dialog(parent, config: Config) -> None:
         ttk.Label(barra, text="Pareja", style="Campo.TLabel").grid(row=0, column=0,
                                                                    padx=(0, 10))
         elegida = StringVar(value=parejas[0].name)
-        ttk.Combobox(barra, textvariable=elegida, state="readonly", width=24,
-                     values=[p.name for p in parejas]).grid(row=0, column=1)
+        selector = ttk.Combobox(barra, textvariable=elegida, state="readonly",
+                                width=24, values=[p.name for p in parejas])
+        selector.grid(row=0, column=1)
         fila += 1
     else:
         elegida = StringVar(value=parejas[0].name)
+        selector = None
 
     # Lo que hay en cada lado.
     tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(14, 12))
@@ -171,7 +173,8 @@ def open_dialog(parent, config: Config) -> None:
             or (estado["remoto"].disponible and estado["remoto"].total) else "disabled")
         abrir_btn.configure(state="normal" if estado["local"].total else "disabled")
 
-    elegida.trace_add("write", refrescar)
+    if selector is not None:
+        selector.bind("<<ComboboxSelected>>", refrescar)
 
     # Acciones.
 

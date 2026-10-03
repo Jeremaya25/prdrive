@@ -164,14 +164,14 @@ def open_dialog(parent, raw_local: dict | None = None) -> None:
         # normal. Que no quepa es distinto y merece su propia frase: la persona
         # no tiene por qué saber qué es una versión de código QR.
         fallo = DEMASIADO.format(e=e) if isinstance(e, qr.QRError) else str(e)
-        ttk.Label(tarjeta, text=fallo, style="CardPista.TLabel", justify="left",
+        ttk.Label(tarjeta, text=fallo, style="Card.Pista.TLabel", justify="left",
                   wraplength=theme.medida(500)).grid(row=0, column=0)
         codigo = None
     else:
         imagen = icons.matriz(tarjeta, codigo.modulos, _escala(tarjeta, codigo))
         if imagen is None:
             ttk.Label(tarjeta, text="No se ha podido dibujar el código.",
-                      style="CardPista.TLabel").grid(row=0, column=0)
+                      style="Card.Pista.TLabel").grid(row=0, column=0)
         else:
             # `Card.TLabel` y no un color propio: la superficie de la tarjeta
             # es blanca, que es justo el papel contra el que se compone el

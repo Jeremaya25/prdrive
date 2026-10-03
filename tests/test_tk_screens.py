@@ -34,7 +34,7 @@ except Exception as e:                                   # sin entorno gráfico
     print(f"  (saltado) no hay entorno gráfico: {e}")
     sys.exit(0)
 
-from ui import segundo_plano, tk_fleet, tk_pairs, tk_watch, watch
+from ui import segundo_plano, tk_fleet, tk_pairs, tk_versions, tk_watch, versions_editor, watch
 
 # El de verdad: más abajo hay tramos que lo sustituyen por un formulario de
 # mentira, y el último los necesita a los dos.
@@ -966,6 +966,46 @@ datos = FORMULARIO(raiz, BASE, "notas", dict(BASE["pair"][1]))
 c("en un modo donde el local es origen la casilla está activa",
   visto["despues"][0], "normal")
 c("y apagada por defecto", datos["watch"], False)
+
+# «Versiones»: elegir otra pareja en el desplegable relee esa
+#
+# El desplegable avisa por `<<ComboboxSelected>>` (un trace sobre la variable
+# sobreviviría al widget); lo que se mira es qué pareja lee el diálogo.
+leidas: list = []
+versions_editor.leer_local = lambda pair: (
+    leidas.append(pair.name) or versions_editor.Lado(
+        versions_editor.DISPOSITIVO, str(pair.local_abs), True, "", ()))
+versions_editor.leer_remoto = lambda pair: versions_editor.Lado(
+    versions_editor.REMOTO, pair.versions_path2, True, "", ())
+tk_versions.working = working_en_el_acto
+ocultar(tk_versions)
+
+
+def _elegir_pareja(nombre):
+    """Devuelve un `wait_window` que elige esa pareja en el desplegable."""
+    def _wait(self, *_a, **_k):
+        """Cambia el desplegable y avisa, como lo hace quien lo usa."""
+        pila = [self]
+        while pila:
+            w = pila.pop()
+            pila += list(w.winfo_children())
+            if isinstance(w, ttk.Combobox) and nombre in w.cget("values"):
+                w.set(nombre)
+                w.event_generate("<<ComboboxSelected>>")
+                return
+    return _wait
+
+
+with sandbox():
+    dos = {"defaults": {"remote": "nas"},
+           "pair": [{"name": "notas", "local": "sync-data/notas", "remote_path": "/R/notas",
+                     "mode": "bisync", "versions": True},
+                    {"name": "fotos", "local": "sync-data/fotos", "remote_path": "/R/fotos",
+                     "mode": "bisync", "versions": True}]}
+    tk.Toplevel.wait_window = _elegir_pareja("fotos")
+    tk_versions.open_dialog(raiz, model.parse_config(dos))
+    c("«Versiones» lee la primera pareja al abrir y la que se elige después",
+      leidas, ["notas", "fotos"])
 
 
 sys.exit(c.report())
