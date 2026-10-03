@@ -99,7 +99,7 @@ ha dejado nota nadie, y enseñarla como «sin conexión» sería mentir.
 CABECERA = (
     f"# {APP_NAME} — nota de presencia de un dispositivo.\n"
     "# La escribe el propio dispositivo al sincronizar. No la edites a mano: se\n"
-    "# reescribe entera, y el nombre se cambia desde la ventana de parejas.\n"
+    "# reescribe entera, y el nombre se cambia en «Nombre e icono de la unidad».\n"
 )
 """Cabecera de comentarios de cada nota."""
 
@@ -156,6 +156,16 @@ class Dispositivo(NamedTuple):
     def bien(self) -> bool:
         """Indica si su última pasada acabó bien."""
         return self.last_result == RESULTADO_OK
+
+    @property
+    def ultimo_equipo(self) -> str:
+        """Devuelve el equipo desde el que publicó por última vez.
+
+        Es el primero de `equipos`, que va con el más reciente delante. Una
+        cadena vacía si la nota no dice ninguno (la escribió una versión sin
+        esa lista, o nadie conocía el nombre de la máquina).
+        """
+        return self.equipos[0].nombre if self.equipos else ""
 
     def visto(self) -> datetime | None:
         """Devuelve cuándo publicó por última vez, o `None` si la fecha no se lee."""
@@ -226,8 +236,8 @@ def carpeta_de(endpoint_catalogo: str) -> str:
 def fichero(endpoint_catalogo: str, device_id: str) -> str:
     """Devuelve la ruta de la nota de UN dispositivo.
 
-    Va por su id y no por su nombre: el nombre se cambia desde la ventana, y un
-    fichero que se renombra deja el anterior ahí para siempre, contando como un
+    Va por su id y no por su nombre: el nombre se puede cambiar, y un fichero
+    que se renombra deja el anterior ahí para siempre, contando como un
     dispositivo más.
     """
     return f"{carpeta_de(endpoint_catalogo)}/{device_id}{SUFIJO}"
@@ -423,6 +433,13 @@ def guardar_nombre(texto: str, state_dir: Path | str | None = None) -> bool:
     tiene que seguir sabiendo cómo se llama sin red, y porque si dependiera del
     equipo cambiaría de nombre al cambiar de ordenador.
 
+    No toca `publicado`: eso es lo último que SE SUBIÓ, y que ya no coincida
+    con el nombre es justo lo que hace que `hace_falta_publicar()` deje pasar
+    la nota nueva en la siguiente pasada. Apuntarlo ahí con `recordar()` la
+    daría por subida sin haberla subido. Este es el único sitio donde se
+    cambia el nombre: lo llama «Nombre e icono de la unidad» (`ui/volumen.py`)
+    y, al aprovisionar, el instalador.
+
     Returns:
         True si se ha podido escribir.
     """
@@ -590,8 +607,7 @@ def _sin_fecha(disp: Dispositivo) -> tuple:
     añade notas.
     """
     return (disp.id, disp.nombre, disp.version, disp.plataformas, disp.last_result,
-            disp.equipos[0].nombre if disp.equipos else "", disp.ultima_buena,
-            disp.tipo, disp.cifrado)
+            disp.ultimo_equipo, disp.ultima_buena, disp.tipo, disp.cifrado)
 
 
 def hace_falta_publicar(disp: Dispositivo, ahora: datetime | None = None) -> bool:

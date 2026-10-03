@@ -141,10 +141,29 @@ while hilo.is_alive() and time.monotonic() < limite:
     F.vueltas(ag, 1)
     time.sleep(0.2)
 hilo.join(1)
-c("el runsync de siempre ve parar al servicio sin esperar a su plazo",
-  dicho, ["El agente de este equipo deja de sincronizar este dispositivo mientras "
-          "la ventana esté abierta."])
+c("el runsync de siempre ve parar al servicio sin esperar a su plazo, y no dice nada",
+  dicho, [None])
 c("  y deja la unidad sin lock ni stop", (F.lock(RAIZ), F.stop(RAIZ).exists()), ({}, False))
+
+# Con un servicio de runsync, en cambio, sí se dice que se ha detenido.
+F.otro_servicio(RAIZ)
+
+
+def servicio_que_para():
+    """Hace de servicio clásico: espera el `daemon.stop` y suelta su lock."""
+    limite = time.monotonic() + 5
+    while time.monotonic() < limite and not runsync.STOP.exists():
+        time.sleep(0.02)
+    runsync.LOCK.unlink()
+    runsync.STOP.unlink()
+
+
+hilo = threading.Thread(target=servicio_que_para)
+hilo.start()
+detenido = runsync.stop_previous_daemon()
+hilo.join()
+c("un servicio de runsync que para, sí lo dice",
+  detenido, f"Servicio anterior (pid {os.getppid()}) detenido.")
 
 # desenchufada a mitad de pasada
 F.vueltas(ag, 1, cada=agente.GRACIA + 1)
@@ -258,6 +277,68 @@ F.vueltas(ag, 1)
 c("si la sonda contesta en seguida, aquel «fallo de red» era de la pareja",
   ag.marcas[(C, "docs")].fallos, 1)
 c("  y ahora sí avisa como fallo", F.AVISOS[avisos_antes:][0][0], "U: falla docs")
+
+# La sospecha de red es de cada pareja, no del remoto: el fallo «de red» de una
+# no se pierde porque otra pareja del mismo remoto falle detrás (un urgente va
+# antes que la sonda), ni se anuncia el de una que ya ha funcionado.
+C2 = "c" * 31 + "2"
+ag, R2 = fresco(C2, parejas=("docs", "fotos"))
+F.AVISOS.clear()
+
+
+def sondas_de(raiz):
+    """Las sondas lanzadas contra esa raíz."""
+    return [x for x in F.LANZADOS if "lsd" in x.args and str(raiz) in " ".join(x.args)]
+
+
+c("la unidad de dos parejas empieza por docs", F.pasadas(R2)[-1].args[-1], "docs")
+equipo.pedir({"pide": equipo.PIDE_PASADA, "id": C2, "parejas": ["fotos"]})
+F.acabar(F.pasadas(R2)[-1], 1, RED)
+F.vueltas(ag, 1)
+c("con otra pareja del mismo remoto pedida, va ella antes que la sonda",
+  (F.pasadas(R2)[-1].args[-1], len(sondas_de(R2))), ("fotos", 0))
+F.acabar(F.pasadas(R2)[-1], 1, RED)
+F.vueltas(ag, 1)
+c("las dos sospechas siguen en pie, una por pareja",
+  sorted(k[1] for k in ag.sospechas), ["docs", "fotos"])
+c("  y la sonda es una, del remoto", len(sondas_de(R2)), 1)
+F.acabar(sondas_de(R2)[-1], 0, "")
+F.vueltas(ag, 1)
+c("el remoto contesta: el fallo de LAS DOS no era de la red",
+  (ag.marcas[(C2, "docs")].fallos, ag.marcas[(C2, "fotos")].fallos), (1, 1))
+c("  y se avisa de las dos", sorted(a[0] for a in F.AVISOS), ["U: falla docs", "U: falla fotos"])
+c("  sin sospechas que sobren", ag.sospechas, {})
+
+C3 = "c" * 31 + "3"
+ag, R3 = fresco(C3, parejas=("docs",))
+F.AVISOS.clear()
+equipo.pedir({"pide": equipo.PIDE_PASADA, "id": C3, "parejas": ["docs"]})
+F.acabar(F.pasadas(R3)[-1], 1, RED)
+F.vueltas(ag, 1)
+c("con otra pasada de la misma pareja pedida, va antes que la sonda",
+  (len(F.pasadas(R3)), len(sondas_de(R3)), list(ag.sospechas)), (2, 0, [(C3, "docs")]))
+F.acabar(F.pasadas(R3)[-1], 0, "")
+F.vueltas(ag, 1)
+c("si esa pasada sale bien, la sospecha de red de esa pareja se cierra",
+  (ag.sospechas, ag.marcas[(C3, "docs")].fallos), ({}, 0))
+sondas = sondas_de(R3)
+if sondas:
+    F.acabar(sondas[-1], 0, "")
+    F.vueltas(ag, 1)
+c("  y cuando el remoto contesta no se le apunta el fallo de antes",
+  (ag.marcas[(C3, "docs")].fallos, [a[0] for a in F.AVISOS]), (0, []))
+
+# Y si la marca cambió por otra vía mientras esperaba la sonda, no se pisa.
+C4 = "c" * 31 + "4"
+ag, R4 = fresco(C4, parejas=("docs",))
+F.AVISOS.clear()
+F.acabar(F.pasadas(R4)[-1], 1, RED)
+F.vueltas(ag, 1)
+ag.marcas[(C4, "docs")] = pl.Marca(F.reloj(), 0)       # otra vía: la pareja ya está al día
+F.acabar(sondas_de(R4)[-1], 0, "")
+F.vueltas(ag, 1)
+c("una pareja que ya no está como la dejó el fallo de red no recibe el fallo",
+  (ag.marcas[(C4, "docs")].fallos, [a[0] for a in F.AVISOS]), (0, []))
 
 # los modos
 D = "d" * 32

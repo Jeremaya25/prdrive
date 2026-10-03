@@ -10,6 +10,9 @@ Es lo que la ventana de esa raíz le pide al agente que la atiende:
   traiga, y solo lo que es de una raíz: un ajuste del equipo ahí se ignora.
 - El buzón de una unidad que no está en la lista ni se toca.
 - «Bloquear» de la ventana va por ese buzón.
+- «Pausar» de la ventana (#64) es la pausa de ESA raíz: se guarda en
+  `agente.json`, no vuelve al cerrarse la ventana ni al reiniciarse el agente,
+  la bandeja la enseña, y «Reanudar» la quita y vuelve enseguida.
 - Sin agente vivo, o con el agente en otro modo, «Iniciar servicio» arranca el
   servicio de siempre.
 """
@@ -22,7 +25,7 @@ from _harness import Checks, mkcfg, sandbox
 import _agente_falso as F
 import agente
 from common import equipo, model, store
-from ui import cifrado, prefs, watch
+from ui import bandeja, cifrado, icons, prefs, watch
 
 c = Checks("el buzón de una raíz: la ventana le habla al agente")
 F.preparar()
@@ -109,6 +112,60 @@ c("  ni se ha lanzado nada suyo", F.pasadas(RAIZ_AJENA), [])
 F.RAICES[:] = [RAIZ]
 F.vueltas(ag, 1)
 
+
+def acabar_lo_que_haya(a) -> None:
+    """Termina bien las pasadas que el agente tenga en marcha."""
+    while a.pasada is not None:
+        F.acabar(F.pasadas(RAIZ)[-1], 0, "OK\n")
+        F.vueltas(a, 1)
+
+
+# «Pausar» en la ventana: la pausa de ESTA raíz, guardada (#64)
+acabar_lo_que_haya(ag)
+F.stop(RAIZ).touch()
+F.ventana_abierta(RAIZ)
+F.vueltas(ag, 2)
+equipo.pedir({"pide": equipo.PIDE_PAUSAR_RAIZ, "id": "otra-cosa"}, BUZON)
+F.vueltas(ag, 1)
+c("«Pausar» por el buzón de la raíz: queda en agente.json, para ESA raíz",
+  {u.id: u.pausada for u in equipo.leer_ajustes().unidades.values()}, {UID: True})
+c("  y no es la pausa de todo", ag.pausado, False)
+resumida = next(u for u in ag.resumen()["unidades"] if u["id"] == UID)
+c("  el estado lo dice, con su motivo",
+  (resumida["pausada"], resumida["atendida"], "«Reanudar»" in resumida["motivo"]),
+  (True, False, True))
+antes = len(F.pasadas(RAIZ))
+(RAIZ / ".prdrive" / "state" / "ui.lock.json").unlink()
+F.pasar(agente.GRACIA)
+F.vueltas(ag, 3)
+c("  al cerrarse la ventana, el agente NO vuelve", (F.lock(RAIZ), len(F.pasadas(RAIZ))),
+  ({}, antes))
+
+ag = F.nuevo()
+F.vueltas(ag, 4)
+c("  reiniciado el agente, sigue en pausa", (F.lock(RAIZ), len(F.pasadas(RAIZ))),
+  ({}, antes))
+c("  la bandeja lo enseña: el icono de pausa y su nombre",
+  bandeja.estado(ag.resumen()), (icons.PAUSA, "PRDRIVE-3 en pausa"))
+
+# «Reanudar»: la quita y, al irse la ventana, vuelve YA, con una pasada.
+F.ventana_abierta(RAIZ)
+equipo.pedir({"pide": equipo.PIDE_REANUDAR}, BUZON)
+F.vueltas(ag, 1)
+c("«Reanudar» quita la pausa de agente.json", equipo.leer_ajustes().unidades[UID].pausada,
+  False)
+c("  con la ventana abierta, todavía no", F.lock(RAIZ), {})
+(RAIZ / ".prdrive" / "state" / "ui.lock.json").unlink()
+F.vueltas(ag, 1)
+c("  al irse la ventana vuelve enseguida, con una pasada",
+  (F.lock(RAIZ).get("pid"), len(F.pasadas(RAIZ))), (os.getpid(), antes + 1))
+acabar_lo_que_haya(ag)
+equipo.pedir({"pide": equipo.PIDE_PAUSAR_RAIZ, "id": "z" * 32})
+F.vueltas(ag, 1)
+c("pausar una raíz que no está en la lista no apunta nada",
+  ("z" * 32 in equipo.leer_ajustes().unidades,
+   any("no está en la lista" in d for d in F.DIARIO)), (False, True))
+
 # la ventana: «Iniciar servicio» y «Bloquear»
 import runsync  # noqa: E402
 
@@ -139,7 +196,8 @@ with sandbox():
       (reanudar, lanzados), ([1], []))
     c("  guarda las parejas y el intervalo, como siempre", guardado,
       [("daemon", ["docs"], 7.0)])
-    c("  y lo dice", "El agente de este equipo vuelve" in Frontal.dicho[-1], True)
+    c("  y lo dice", "El agente de este equipo es el servicio" in Frontal.dicho[-1],
+      True)
 
     for res, por in ((watch.Resumen("agente", "daemon", False, False), "sin agente vivo"),
                      (watch.Resumen("agente", "sync", True, False), "en modo sync"),

@@ -659,6 +659,16 @@ def restos(carpeta: Path | str) -> list[str]:
     return crypto.restos_en_claro(Path(str(carpeta).strip()).expanduser())
 
 
+def aviso_restos(restos_: list[str], carpeta: Path | str) -> str:
+    """Devuelve el texto rojo de la raíz sin cifrar que `restos()` ha encontrado.
+
+    Args:
+        restos_: Lo que devolvió `restos()`.
+        carpeta: La carpeta de la que salió, tal como se escribió en el paso.
+    """
+    return crypto.aviso_restos(restos_, Path(str(carpeta).strip()).expanduser())
+
+
 def abrir_o_crear(vc: dict, fisica: Path | str, carpeta: Path | str, letra: str,
                   password: str, tamano: str) -> Path:
     """Crea el contenedor si no está y lo monta donde se quedará.

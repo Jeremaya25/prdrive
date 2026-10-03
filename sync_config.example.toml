@@ -88,6 +88,7 @@ local = "sync-data/docs"      # relativa a la raíz del dispositivo
 remote_path = "/datos/docs"   # ruta dentro del remote
 mode = "bisync"
 versions = true               # ver más abajo
+watch = true                  # ver más abajo
 
 [pair.flags]
 conflict-resolve = "newer"    # con qué copia se queda si los dos lados cambiaron;
@@ -124,6 +125,45 @@ resilient = true              # un error menor no obliga a --resync la próxima 
 #     antes si no lo quieres allí.
 #
 # Nadie la limpia sola: se mira y se purga desde «Ajustes…» → «Versiones…».
+
+# ---------------------------------------------------------------------------
+# watch — sincronizar al cambiar los ficheros, no al llegar el intervalo
+# ---------------------------------------------------------------------------
+# Con `watch = true` el AGENTE RESIDENTE sincroniza la pareja poco después de que
+# cambien sus ficheros locales, en vez de esperar a los 30 minutos del servicio.
+# Solo vale donde el lado local es origen (bisync, up, up-mirror) y el config se
+# rechaza en down y down-mirror. Sin la clave, la pareja va por su intervalo,
+# como siempre. Se pide en cada `[[pair]]`: en `[defaults]` no se admite (el
+# config se rechaza), porque ahí no haría nada. El servicio de runsync (sin
+# agente) no mira los cambios.
+#
+# Cómo funciona, y lo que conviene saber antes de encenderlo:
+#
+#   * Mira la carpeta cada 10 s con `os.scandir`, sin abrir ficheros ni usar
+#     eventos del sistema (valen una exFAT, un contenedor de VeraCrypt o una
+#     carpeta de red). Compara rutas, tamaños y mtimes con la vuelta anterior.
+#   * Espera 20 s sin más cambios antes de lanzar la pasada: una ráfaga de
+#     ficheros es UNA pasada. Y no lanza dos pasadas de la misma pareja con
+#     menos de 2 minutos entre ellas.
+#   * Es una pasada corriente adelantada, no «Sincronizar ahora»: con el agente en
+#     pausa, con batería o en una red de uso medido, espera como las demás.
+#     Una pareja que está fallando mantiene su espera creciente.
+#   * Solo ve los cambios LOCALES. Lo que cambie en el remoto espera al
+#     intervalo. Tampoco ve lo que se cambie mientras la propia pasada corre: al
+#     acabar se vuelve a mirar la carpeta, para que lo que rclone escribió no
+#     dispare otra pasada, y eso se lleva por delante lo que la persona tocara
+#     entre medias; también espera al intervalo.
+#   * Con más de 20 000 ficheros y carpetas la pareja deja de vigilarse (el
+#     agente lo apunta una vez en su diario) y sigue por su intervalo: recorrer
+#     una carpeta así cada pocos segundos cuesta más de lo que da, sobre todo en
+#     un pendrive. `.prversions/` y `.prdrive/` no cuentan, y con `local = "."`
+#     (la raíz de la unidad) tampoco lo que el sistema deja en ella: `System
+#     Volume Information`, `$RECYCLE.BIN`, `.Trash-<uid>`…
+#   * Si el agente no puede mirar la carpeta (tres recorridos seguidos sin
+#     foto), lo apunta en su diario y la pareja sigue por su intervalo.
+#   * Solo en una raíz que el agente sirve en modo `daemon` y mientras esté
+#     abierta, sin pausar y sin ventana delante; en modo `sync` (una pasada por
+#     conexión) no hace nada.
 
 
 [[pair]]

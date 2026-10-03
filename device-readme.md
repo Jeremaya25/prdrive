@@ -34,10 +34,12 @@ modo *ligero* (con un `runsync.pyw` en la raíz), entonces sí hace falta **Pyth
 
 - **Sincronizar ahora** — una pasada de lo marcado, en una ventana aparte; al
   cerrarla vuelves aquí con todo al día.
-- **Iniciar servicio** — sincroniza lo marcado cada N minutos (lo pones justo
-  encima) mientras la unidad siga conectada. Se para solo al extraerla, o al
-  volver a abrir la ventana. Lo marcado y el intervalo se recuerdan para la
-  próxima vez.
+- **Iniciar servicio** — sincroniza lo marcado cada N minutos (se cambia en
+  «Ajustes…» → «Configuración…») mientras la unidad siga conectada. Se para solo
+  al extraerla, o al volver a abrir la ventana. Lo marcado se recuerda para la
+  próxima vez. Si en este ordenador la sincroniza el agente de prdrive, en su
+  lugar salen **Pausar** / **Reanudar**: que no la sincronice hasta que lo
+  pidas, y que vuelva a hacerlo.
 - **Diagnóstico** — cuando algo no cuadra. Enseña dónde apunta cada carpeta y si
   su sincronización está sana.
 - **Expulsar** — solo si la unidad va cifrada con VeraCrypt. Cierra la ventana y
@@ -78,7 +80,8 @@ Los dos últimos borran de verdad. Antes de estrenar uno, pruébalo con
 
 **Ajustes (el engranaje) → Nombre e icono de la unidad…** Así la verás en el
 Explorador de Windows con tu nombre y tu icono en vez de «Disco extraíble». Se
-nota la próxima vez que la conectes.
+nota la próxima vez que la conectes. Ese nombre es también el del dispositivo en
+la lista de **Dispositivos…** (en Parejas).
 
 ## Si algo va mal
 

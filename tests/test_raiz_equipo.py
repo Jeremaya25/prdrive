@@ -389,6 +389,16 @@ cif = equipo.Unidad("k" * 32, equipo.DAEMON, "C", "/home/u/PRDRIVE", "/home/u/P-
 c("  y se relee igual, con su contenedor",
   equipo.desde_dict(equipo.a_dict(equipo.Ajustes().con_unidad(cif))).cifradas,
   {cif.id: cif})
+# El «Pausar» de la ventana de una raíz (#64): se guarda solo si está, y solo
+# un `true` de verdad cuenta.
+pausada = equipo.Unidad("p" * 32, equipo.DAEMON, "P", pausada=True)
+c("equipo: una raíz pausada se relee pausada",
+  equipo.desde_dict(equipo.a_dict(equipo.Ajustes().con_unidad(pausada))).unidades,
+  {pausada.id: pausada})
+c("  sin pausa no se escribe la clave, y «sí» no es true",
+  ("pausada" in equipo.a_dict(equipo.Ajustes().con_unidad(cif))["unidades"][cif.id],
+   equipo.desde_dict({"unidades": {"q" * 32: {"pausada": "sí"}}})
+   .unidades["q" * 32].pausada), (False, False))
 
 c("fisica_por_defecto: al lado de la carpeta, con -cifrado",
   raiz_equipo.fisica_por_defecto("/home/u/PRDRIVE"), Path("/home/u/PRDRIVE-cifrado"))
@@ -472,6 +482,22 @@ c("  una marca de otra raíz es roja",
 raiz_equipo.marcar(fisica, ident_c)
 c("restos: una raíz en claro en la carpeta se encuentra",
   raiz_equipo.restos(nueva)[0], ".prdrive/")
+# El aviso de esa raíz solo habla de la clave si hay un fichero de clave (K2,
+# #41), y la carpeta se lee como se escribió en el paso: con espacios y todo.
+claves = nueva / ".prdrive" / "keys"
+hay_clave = (claves.is_dir() and any(claves.iterdir()))
+c("restos: el aviso nombra la clave solo si existe",
+  ".prdrive/keys/" in raiz_equipo.aviso_restos(raiz_equipo.restos(nueva), f"  {nueva}  "),
+  hay_clave)
+existia = claves.is_dir()
+claves.mkdir(exist_ok=True)
+(claves / "id_ed25519").write_text("x", encoding="utf-8")
+c("restos: con un fichero de clave, la nombra",
+  ".prdrive/keys/" in raiz_equipo.aviso_restos(raiz_equipo.restos(nueva), f"  {nueva}  "),
+  True)
+(claves / "id_ed25519").unlink()
+if not existia:
+    claves.rmdir()
 
 # lo que recibe el agente: la raíz con su contenedor, y pedir_al_iniciar.
 RAIZ_C = equipo.Unidad(ident_c, equipo.DAEMON, "Cifrada", str(volumen),

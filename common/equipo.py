@@ -10,8 +10,9 @@ hay ningún secreto aquí: ni clave, ni `rclone.conf`, ni listados.
     agente/<versión>/     la copia del código con la que corre el agente
     runtime/<stamp_id>/   su Python, uno por versión (como el de penwatch)
     agente.json           QUÉ hace: raíces que atiende (unidades y la del equipo,
-                          con su contenedor si va cifrada), su modo, plazos,
-                          moderación, `pedir_al_iniciar`
+                          con su contenedor si va cifrada), su modo, si su
+                          ventana la ha pausado, plazos, moderación,
+                          `pedir_al_iniciar`
     instalacion.json      DÓNDE está: código, Python, cuándo se registró
     agente.lock.json      una sola instancia por usuario
     agente.pide           el buzón: lo que otros le piden al agente
@@ -175,6 +176,11 @@ class Unidad:
             ejecutar lo que traiga. Vacía: atendida sin haberla visto (el
             asistente, `atender ID` desenchufada); se apunta la primera vez que
             se conecta. Las raíces del equipo no la llevan.
+        pausada: «Pausar» en la ventana de esa raíz (`PIDE_PAUSAR_RAIZ`): el
+            agente no la sincroniza, ni al cerrarse la ventana ni tras
+            reiniciarse, hasta «Reanudar» (`PIDE_REANUDAR`). Solo esa raíz:
+            la pausa de todo es la de la bandeja (`PIDE_PAUSA`), que no se
+            guarda.
     """
     id: str
     modo: str = MODO_AL_ATENDER
@@ -182,6 +188,7 @@ class Unidad:
     ruta: str = ""
     contenedor: str = ""
     codigo: str = ""
+    pausada: bool = False
 
     @property
     def es_raiz(self) -> bool:
@@ -279,7 +286,7 @@ def desde_dict(datos: Mapping[str, Any]) -> Ajustes:
             codigo = u.get("codigo") if isinstance(u.get("codigo"), str) else ""
             unidades[uid.strip()] = Unidad(uid.strip(), modo, nombre, ruta.strip(),
                                            hc.strip() if ruta.strip() else "",
-                                           codigo.strip())
+                                           codigo.strip(), u.get("pausada") is True)
     m = datos.get("moderacion") if isinstance(datos.get("moderacion"), dict) else {}
     fabrica = Politica()
     politica = replace(
@@ -307,7 +314,8 @@ def a_dict(aj: Ajustes) -> dict:
         "unidades": {u.id: {"modo": u.modo, "nombre": u.nombre,
                             **({"ruta": u.ruta} if u.ruta else {}),
                             **({"contenedor": u.contenedor} if u.contenedor else {}),
-                            **({"codigo": u.codigo} if u.codigo else {})}
+                            **({"codigo": u.codigo} if u.codigo else {}),
+                            **({"pausada": True} if u.pausada else {})}
                      for u in aj.unidades.values()},
         "espera_unidad_nueva": aj.espera_unidad_nueva,
         "moderacion": {"con_bateria": aj.politica.con_bateria,
@@ -483,22 +491,26 @@ PIDE_RAIZ = "añadir_raiz"       # id, ruta, nombre[, contenedor]: la raíz de e
 PIDE_DESBLOQUEAR = "desbloquear"    # [id]: abrir el contenedor de la raíz cifrada
 PIDE_BLOQUEAR = "bloquear"          # [id]: cerrarlo
 PIDE_ABRIR = "abrir"            # id: la ventana de esa raíz (la cifrada, desbloqueándola antes)
+PIDE_EXPLORAR = "explorar"      # id: esa raíz en el explorador de archivos (ídem)
 PIDE_DESPERTAR = "despertar"    # el equipo vuelve de la suspensión: mirarlo todo ya
 PIDE_SONDEAR = "sondear"        # los remotos sin conexión: probarlos ya («Probar ahora»)
+PIDE_CAMBIO_DE_RED = "cambio_de_red"  # el sistema dice que hay red otra vez (`common/red.py`)
 PIDE_ACTUALIZAR = "actualizar"  # bajar la versión nueva y ponerla (agente y raíces del equipo)
-PIDE_REANUDAR = "reanudar"      # (buzón de la raíz) «Iniciar servicio» con el agente: volver ya
+PIDE_REANUDAR = "reanudar"      # (buzón de la raíz) «Reanudar»: sin pausa propia, y volver ya
+PIDE_PAUSAR_RAIZ = "pausar_raiz"    # (buzón de la raíz) «Pausar»: no sincronizarla hasta «Reanudar»
 AJUSTES_PEDIBLES = ("espera_unidad_nueva", "pedir_al_iniciar")
 
 BUZON_SERVICIO = "servicio.pide"
 """Nombre del buzón de UNA raíz, dentro de su `state/`.
 
 Es lo que la ventana de esa raíz pide al servicio que la atiende, y solo lo que
-es de ella (`PIDE_SERVICIO`): `reanudar`, `pasada` con sus parejas y
+es de ella (`PIDE_SERVICIO`): `pausar_raiz` y `reanudar` («Pausar» y
+«Reanudar» cuando el agente es su servicio), `pasada` con sus parejas y
 `bloquear`. El id no hace falta: es el de la raíz donde está el fichero. Lo del
-equipo (un ajuste, el modo de una unidad, añadir una raíz) va al buzón del
-agente.
+equipo (un ajuste, el modo de una unidad, añadir una raíz, la pausa de todo) va
+al buzón del agente.
 """
-PIDE_SERVICIO = (PIDE_REANUDAR, PIDE_PASADA, PIDE_BLOQUEAR)
+PIDE_SERVICIO = (PIDE_REANUDAR, PIDE_PAUSAR_RAIZ, PIDE_PASADA, PIDE_BLOQUEAR)
 
 
 def pedir(peticion: Mapping[str, Any], buzon_de: Path | None = None) -> bool:

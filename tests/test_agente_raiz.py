@@ -16,6 +16,7 @@ recorriendo volúmenes, y lo demás es el mismo contrato que con una unidad
 import os
 import shutil
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 from _harness import Checks
@@ -101,6 +102,23 @@ aj = equipo.leer_ajustes()
 c("añadir_raiz la escribe el agente, en modo daemon y con su ruta",
   aj.unidades[OTRA], equipo.Unidad(OTRA, equipo.DAEMON, "Otra", "/home/x/PRDRIVE"))
 c("  una sin id no entra", len(aj.unidades), 2)
+
+# El asistente vuelto a pasar sobre una raíz que ya está: cambia su ruta, su
+# modo y su nombre, pero no la pausa de su ventana ni el código aceptado.
+ag._guardar(ag.ajustes.con_unidad(replace(ag.ajustes.unidades[OTRA], pausada=True,
+                                          codigo="a" * 64)))
+equipo.pedir({"pide": equipo.PIDE_RAIZ, "id": OTRA, "ruta": "/home/x/OTRO", "modo": equipo.NADA,
+              "nombre": "Renombrada", "contenedor": "/home/x/OTRO-cifrado/PRDRIVE.hc"})
+F.vueltas(ag, 1)
+u = equipo.leer_ajustes().unidades[OTRA]
+c("añadir_raiz sobre una que ya está cambia su ruta, modo, nombre y contenedor",
+  (u.ruta, u.modo, u.nombre, u.contenedor),
+  ("/home/x/OTRO", equipo.NADA, "Renombrada", "/home/x/OTRO-cifrado/PRDRIVE.hc"))
+c("  y respeta su pausa y su código", (u.pausada, u.codigo), (True, "a" * 64))
+equipo.pedir({"pide": equipo.PIDE_RAIZ, "id": OTRA, "ruta": "/home/x/OTRO"})
+F.vueltas(ag, 1)
+c("  sin nombre en la petición se queda con el que tenía",
+  equipo.leer_ajustes().unidades[OTRA].nombre, "Renombrada")
 
 # agente.py abrir
 equipo.guardar_ajustes(equipo.Ajustes().con_unidad(

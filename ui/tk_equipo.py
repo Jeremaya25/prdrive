@@ -455,7 +455,7 @@ def _carpeta_cifrada(cuerpo, wiz) -> None:
     restos = re_.restos(wiz.equipo_ruta) if IS_WIN else []
     if restos:
         from .tk import bloque_aviso
-        bloque_aviso(cuerpo, crypto.aviso_restos(restos), ancho=ANCHO - 40,
+        bloque_aviso(cuerpo, re_.aviso_restos(restos, wiz.equipo_ruta), ancho=ANCHO - 40,
                      tipo="Rojo").grid(row=2, column=0, sticky="ew", pady=(8, 0))
 
     botones = ttk.Frame(cuerpo)

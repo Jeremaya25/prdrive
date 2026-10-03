@@ -34,11 +34,29 @@ except Exception as e:                                   # sin entorno gráfico
     print(f"  (saltado) no hay entorno gráfico: {e}")
     sys.exit(0)
 
-from ui import tk_fleet, tk_pairs, tk_watch, watch
+from ui import segundo_plano, tk_fleet, tk_pairs, tk_versions, tk_watch, versions_editor, watch
 
 # El de verdad: más abajo hay tramos que lo sustituyen por un formulario de
 # mentira, y el último los necesita a los dos.
 FORMULARIO = tk_pairs.formulario
+
+# Lo que esas pantallas leen del remoto llega por sondeo, y aquí no se entra
+# nunca en el bucle de eventos: se lee en el sitio, y la pantalla está entera
+# antes de enseñarse. Lo que pasa con un remoto lento o caído, con hilos de
+# verdad, es de test_tk_segundo_plano.py.
+segundo_plano.lanzar = segundo_plano.en_el_acto
+
+
+def working_en_el_acto(parent, title, funcion, mensaje="", **_k):
+    """Sustituye a `working()`: hace el trabajo en el sitio, sin ventanita."""
+    try:
+        return True, funcion()
+    except Exception as e:                               # noqa: BLE001 — como working()
+        return False, e
+
+
+tk_pairs.working = working_en_el_acto
+tk_fleet.working = working_en_el_acto
 
 
 def ocultar(modulo):
@@ -425,6 +443,7 @@ fleet.publicar = lambda cfg=None, raw=None, forzar=False: bool(
 with sandbox():
     cfg = preparar()
     filas = {}
+    titulos = []
 
     def mirar_flota(self, *_a, **_k):
         """Recorre la ventana de la flota y apunta lo que ve."""
@@ -433,15 +452,35 @@ with sandbox():
             w = pila.pop()
             pila += list(w.winfo_children())
             if isinstance(w, ttk.Treeview):
+                titulos.extend(str(w.heading(col)["text"]) for col in w["columns"])
                 for iid in w.get_children():
                     filas[iid] = w.item(iid)["values"]
 
     tk.Toplevel.wait_window = mirar_flota
-    tk_fleet.open_dialog(raiz, cfg, dict(BASE))
+    c("«Dispositivos…» no devuelve nada: ya no cambia nada de este dispositivo",
+      tk_fleet.open_dialog(raiz, cfg, dict(BASE)), None)
     c("la flota enseña un dispositivo por nota", sorted(filas), ["otro", "yo"])
     c("y marca cuál es este", (filas["yo"][0], filas["otro"][0]), ("✓", ""))
-    c("la tabla se queda en cuándo se le vio y cómo acabó (lo demás, a la ficha)",
-      (len(filas["otro"]), filas["otro"][3]), (4, "ok"))
+    c("la tabla: cuándo se le vio, desde qué equipo y cómo acabó (lo demás, a la ficha)",
+      titulos, ["Este", "Dispositivo", "Visto", "Último equipo", "Última pasada"])
+    c("cada fila lleva una celda por columna", {len(f) for f in filas.values()}, {5})
+    c("«Último equipo» es el desde el que publicó por última vez",
+      filas["otro"][3], "OFICINA-07")
+    c("y de una nota que no lo apunta, una raya", filas["yo"][3], tk_fleet.SIN_DATO)
+    c("la última pasada sigue al final", (filas["otro"][4], filas["yo"][4]), ("ok", "ok"))
+
+# la columna «Último equipo»: solo el más reciente, la lista entera es de la ficha
+Recientes = fleet.Dispositivo(
+    id="r", nombre="el del trabajo", version="0.2.1", plataformas=(),
+    last_seen="2026-09-02 09:12:40", last_result="ok",
+    equipos=(fleet.Equipo("OFICINA-07", "2026-09-02 09:12:40"),
+             fleet.Equipo("PORTATIL", "2026-09-01 10:00:00")))
+c("el último equipo es el más reciente de la nota",
+  tk_fleet.ultimo_equipo(Recientes), "OFICINA-07")
+c("sin equipos en la nota, una raya",
+  tk_fleet.ultimo_equipo(Recientes._replace(equipos=())), tk_fleet.SIN_DATO)
+c("la columna está en la tabla", [k for k, *_ in tk_fleet.COLUMNAS],
+  ["aqui", "nombre", "visto", "equipo", "estado"])
 
 # la ficha: qué dice, sin dibujarla
 Linea = tk_fleet.Linea
@@ -595,14 +634,35 @@ with sandbox():
     c("con la flota vacía la ficha no se enseña, solo el aviso",
       vacia["fila"], [vacia["aviso"]])
 
+# El nombre de este dispositivo se cambia en «Nombre e icono de la unidad…»: aquí
+# solo se lee. La ventana no ofrece cambiarlo, no guarda ni publica ninguno, y
+# dice dónde se hace.
 with sandbox():
     cfg = preparar()
-    tk_fleet.pedir_nombre = lambda parent, actual: "el pendrive azul"
-    tk.Toplevel.wait_window = pulsar("Cambiar el nombre de este…")
-    c("cambiar el nombre lo informa", tk_fleet.open_dialog(raiz, cfg, dict(BASE)), True)
-    c("se guarda en el dispositivo", guardados, ["el pendrive azul"])
-    c("y se publica en el acto, sin esperar a la siguiente pasada",
-      [forzar for _cfg, forzar in publicadas], [True])
+    lo_que_hay: dict = {}
+
+    def mirar_acciones(self, *_a, **_k):
+        """Apunta qué botones tiene la ventana de la flota y qué dice."""
+        botones, pila = [], [self]
+        while pila:
+            w = pila.pop()
+            pila += list(w.winfo_children())
+            if isinstance(w, ttk.Button):
+                botones.append(str(w.cget("text")))
+        lo_que_hay["botones"] = sorted(botones)
+        lo_que_hay["textos"] = textos(self)
+
+    tk.Toplevel.wait_window = mirar_acciones
+    tk_fleet.open_dialog(raiz, cfg, dict(BASE))
+    c("no hay botón para cambiar el nombre",
+      [b for b in lo_que_hay["botones"] if "nombre" in b.lower()], [])
+    c("solo quitar de la lista, releer y cerrar", lo_que_hay["botones"],
+      ["Cerrar", "Quitar de la lista…", "Releer"])
+    c("y la ventana ya no sabe pedir un nombre", hasattr(tk_fleet, "pedir_nombre"),
+      False)
+    c("abrirla no guarda ni publica ningún nombre", (guardados, publicadas), ([], []))
+    c("dice dónde se cambia",
+      any("Nombre e icono de la unidad" in t for t in lo_que_hay["textos"]), True)
 
 with sandbox():
     cfg = preparar()
@@ -662,35 +722,73 @@ tk.Toplevel.wait_window = pulsar("Atender")
 c("  sin estar en su lista, «Atender» lo añade en daemon",
   tk_watch.open_agente(raiz, watch.Resumen("agente_nueva", "", True)), "daemon")
 
-# «Ajustes» de la raíz cifrada de un equipo: la casilla de pedir_al_iniciar.
-from ui import tk_doctor  # noqa: E402
+# «Ajustes → Configuración» de la raíz cifrada de un equipo: la casilla de
+# pedir_al_iniciar, que se pide al agente al «Guardar» y solo si ha cambiado.
+from ui import prefs, tk_configuracion  # noqa: E402
 
 ajustes_pedidos: list = []
 watch.pedir_al_iniciar = lambda: True
 watch.pedir_ajuste = lambda clave, valor: ajustes_pedidos.append((clave, valor)) or True
 
 
-def desmarcar_y_cerrar(self, *_a, **_k):
-    """Desmarca lo que toca y cierra el diálogo."""
-    pila = [self]
-    while pila:
-        w = pila.pop()
-        pila += list(w.winfo_children())
-        if isinstance(w, ttk.Checkbutton) and "contraseña" in str(w.cget("text")):
-            w.invoke()
-    pulsar("Cerrar")(self)
+def desmarcar_y(boton):
+    """Devuelve un `wait_window` que desmarca la casilla y pulsa `boton`."""
+    def _wait(self, *_a, **_k):
+        """Desmarca la casilla de la contraseña y pulsa el botón."""
+        pila = [self]
+        while pila:
+            w = pila.pop()
+            pila += list(w.winfo_children())
+            if isinstance(w, ttk.Checkbutton) and "contraseña" in str(w.cget("text")):
+                w.invoke()
+        pulsar(boton)(self)
+    return _wait
 
 
+REAL_PREFS = prefs.PREFS
 with sandbox():
     cfg = preparar()
-    tk.Toplevel.wait_window = desmarcar_y_cerrar
-    tk_doctor.open_dialog(raiz, cfg, lambda *a: None)
-    c("«Ajustes» de la raíz cifrada: la casilla se lo pide al agente",
-      ajustes_pedidos, [("pedir_al_iniciar", False)])
+    prefs.PREFS = model.STATE_DIR / "ui_prefs.json"
+    tk.Toplevel.wait_window = desmarcar_y("Cancelar")
+    c("«Configuración» de la raíz cifrada: «Cancelar» no pide nada",
+      (tk_configuracion.open_dialog(raiz, cfg), ajustes_pedidos), (False, []))
+    tk.Toplevel.wait_window = desmarcar_y("Guardar")
+    c("  «Guardar» con la casilla cambiada se lo pide al agente",
+      (tk_configuracion.open_dialog(raiz, cfg), ajustes_pedidos),
+      (True, [("pedir_al_iniciar", False)]))
+    c("  y no escribe el intervalo, que no ha cambiado", prefs.PREFS.exists(), False)
     watch.pedir_al_iniciar = lambda: None
     ajustes_pedidos.clear()
-    tk_doctor.open_dialog(raiz, cfg, lambda *a: None)
-    c("  en cualquier otra raíz no está", ajustes_pedidos, [])
+    tk.Toplevel.wait_window = desmarcar_y("Guardar")
+    c("  en cualquier otra raíz no está",
+      (tk_configuracion.open_dialog(raiz, cfg), ajustes_pedidos), (False, []))
+
+    def escribir_y_guardar(minutos):
+        """Devuelve un `wait_window` que escribe esos minutos y pulsa «Guardar»."""
+        def _wait(self, *_a, **_k):
+            """Escribe en la casilla del intervalo y pulsa «Guardar»."""
+            pila = [self]
+            while pila:
+                w = pila.pop()
+                pila += list(w.winfo_children())
+                if isinstance(w, ttk.Spinbox):
+                    w.set(minutos)
+            pulsar("Guardar")(self)
+            if self.winfo_exists():
+                pulsar("Cancelar")(self)
+        return _wait
+
+    errores.clear()
+    tk.Toplevel.wait_window = escribir_y_guardar("0")
+    c("un intervalo de 0 minutos no se guarda, y se dice por qué",
+      (tk_configuracion.open_dialog(raiz, cfg), prefs.PREFS.exists(), errores),
+      (False, False, ["El intervalo tiene que ser un número de minutos: 1 o más."]))
+    tk.Toplevel.wait_window = escribir_y_guardar("7,5")
+    c("  uno con coma decimal sí, y solo el intervalo",
+      (tk_configuracion.open_dialog(raiz, cfg), prefs.read_prefs().get("interval_min"),
+       "pairs" in prefs.read_prefs()), (True, 7.5, False))
+    errores.clear()
+prefs.PREFS = REAL_PREFS
 
 # El formulario de instalación ya no pregunta parejas ni intervalo: son los del
 # servicio, que viven en el dispositivo. Lo que queda es del equipo: qué hacer al
@@ -816,6 +914,98 @@ tk.Toplevel.wait_window = _abrir_y_guardar
 datos = FORMULARIO(raiz, BASE, "notas", dict(BASE["pair"][0]))
 c("el formulario devuelve los flags del diálogo", datos["flags"], {"transfers": 8})
 c("y sus argumentos extra", datos["extra_flags"], ["--stats", "10s"])
+
+# el formulario de la pareja: «Vigilar» sigue al modo, como «Versiones»
+#
+# Solo vale donde el local es origen: al pasar a down la casilla se apaga y se
+# desmarca, y lo guardado ya no lleva `watch` (si no, el parseo lo rechazaría).
+
+
+def _form_vigilar(modo_elegido):
+    """Devuelve un `wait_window` que cambia el modo, mira la casilla y guarda."""
+    visto: dict = {}
+
+    def _wait(self, *_a, **_k):
+        """Elige el modo en el desplegable, anota la casilla y pulsa «Guardar…»."""
+        pila, botones, desplegable, casilla = [self], {}, None, None
+        while pila:
+            w = pila.pop()
+            pila += list(w.winfo_children())
+            if isinstance(w, ttk.Button):
+                botones[w.cget("text")] = w
+            elif isinstance(w, ttk.Combobox) and w.get() in model.MODES:
+                desplegable = w
+            elif isinstance(w, ttk.Checkbutton) and "ficheros locales" in w.cget("text"):
+                casilla = w
+        visto["antes"] = (str(casilla.cget("state")), casilla.instate(["selected"]))
+        if modo_elegido:
+            desplegable.set(modo_elegido)
+            desplegable.event_generate("<<ComboboxSelected>>")
+        visto["despues"] = (str(casilla.cget("state")), casilla.instate(["selected"]))
+        botones["Guardar…"].invoke()
+    return _wait, visto
+
+
+vigilada = {"name": "diaria", "local": "sync-data/diaria", "remote_path": "/R/diaria",
+            "mode": "up", "watch": True}
+espera, visto = _form_vigilar(None)
+tk.Toplevel.wait_window = espera
+datos = FORMULARIO(raiz, BASE, "notas", dict(vigilada))
+c("«Vigilar» abre marcada si la pareja vigila", visto["antes"], ("normal", True))
+c("y se guarda marcada", datos["watch"], True)
+
+espera, visto = _form_vigilar("down")
+tk.Toplevel.wait_window = espera
+datos = FORMULARIO(raiz, BASE, "notas", dict(vigilada))
+c("pasar a down apaga y desmarca «Vigilar»", visto["despues"], ("disabled", False))
+c("y lo guardado ya no la pide", datos["watch"], False)
+
+espera, visto = _form_vigilar("bisync")
+tk.Toplevel.wait_window = espera
+datos = FORMULARIO(raiz, BASE, "notas", dict(BASE["pair"][1]))
+c("en un modo donde el local es origen la casilla está activa",
+  visto["despues"][0], "normal")
+c("y apagada por defecto", datos["watch"], False)
+
+# «Versiones»: elegir otra pareja en el desplegable relee esa
+#
+# El desplegable avisa por `<<ComboboxSelected>>` (un trace sobre la variable
+# sobreviviría al widget); lo que se mira es qué pareja lee el diálogo.
+leidas: list = []
+versions_editor.leer_local = lambda pair: (
+    leidas.append(pair.name) or versions_editor.Lado(
+        versions_editor.DISPOSITIVO, str(pair.local_abs), True, "", ()))
+versions_editor.leer_remoto = lambda pair: versions_editor.Lado(
+    versions_editor.REMOTO, pair.versions_path2, True, "", ())
+tk_versions.working = working_en_el_acto
+ocultar(tk_versions)
+
+
+def _elegir_pareja(nombre):
+    """Devuelve un `wait_window` que elige esa pareja en el desplegable."""
+    def _wait(self, *_a, **_k):
+        """Cambia el desplegable y avisa, como lo hace quien lo usa."""
+        pila = [self]
+        while pila:
+            w = pila.pop()
+            pila += list(w.winfo_children())
+            if isinstance(w, ttk.Combobox) and nombre in w.cget("values"):
+                w.set(nombre)
+                w.event_generate("<<ComboboxSelected>>")
+                return
+    return _wait
+
+
+with sandbox():
+    dos = {"defaults": {"remote": "nas"},
+           "pair": [{"name": "notas", "local": "sync-data/notas", "remote_path": "/R/notas",
+                     "mode": "bisync", "versions": True},
+                    {"name": "fotos", "local": "sync-data/fotos", "remote_path": "/R/fotos",
+                     "mode": "bisync", "versions": True}]}
+    tk.Toplevel.wait_window = _elegir_pareja("fotos")
+    tk_versions.open_dialog(raiz, model.parse_config(dos))
+    c("«Versiones» lee la primera pareja al abrir y la que se elige después",
+      leidas, ["notas", "fotos"])
 
 
 sys.exit(c.report())

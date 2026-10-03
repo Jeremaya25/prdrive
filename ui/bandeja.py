@@ -12,21 +12,31 @@ La mitad que DIBUJA es de cada sistema: `ui/bandeja_windows.py` con
 `Shell_NotifyIconW` y `ui/bandeja_linux.py` con StatusNotifierItem y dbusmenu.
 Ninguna decide nada y ninguna importa tkinter: el agente no carga Tk nunca.
 
-Lo que ofrece el menú (sección 5 del diseño y «Una unidad nueva» de la 3):
+Lo que ofrece el menú (sección 5 del diseño, «Una unidad nueva» de la 3 y el
+#68):
 - Arriba, solo si algo va mal, hasta `MAX_AVISOS` avisos, y cada uno lleva a
   donde se arregla: «PRUEBA-G: falla docs · Abrir…» abre su ventana (y en ella
   «Reparación»), un remoto sin conexión se vuelve a probar, un volumen fantasma
   se bloquea. Sin nada que decir no hay cabecera: una línea gris con «al día»
   encima de todo no servía para nada (tercera pasada en real, B5). El estado va
   en el texto del ratón, que dice cuándo se sincronizó por última vez.
-- **Abrir** la raíz de este equipo (con ella bloqueada, desbloquea antes) y
-  cada unidad conectada que está en la lista; nunca una que no lo está, que
-  sería ejecutar su código sin el sí.
-- **Desbloquear / Bloquear** la raíz cifrada, y la casilla de
-  `pedir_al_iniciar`.
-- «PRUEBA-2, conectada · **Atender…**» para una unidad a la que se dijo «Ahora
-  no» (o se le está preguntando) mientras siga enchufada.
-- **Sincronizar ahora**, **Pausar** / **Reanudar** y **Cerrar el agente**.
+- **Un desplegable por dispositivo** (las raíces de este equipo y luego las
+  unidades conectadas), con SU icono (`Emblema`) y todo lo suyo dentro, sin
+  repetir su nombre: «Configurar» (su ventana de runsync), «Abrir en
+  explorador» (su carpeta), «Sincronizar ahora» (solo él) y, en una raíz
+  cifrada, «Bloquear» / «Desbloquear…» y la casilla de `pedir_al_iniciar`. A
+  una unidad que no está en la lista no se le ofrece nada de eso, que sería
+  ejecutar su código sin el sí: su desplegable dice «(sin atender)» y lleva
+  «Atender…». Lo que no está bien lo dice el rótulo entre paréntesis
+  («bloqueada», «por actualizar»…).
+- Fuera, lo del agente entero: **Sincronizar todo ahora** (solo con dos o más
+  dispositivos que sincronizar), **Pausar** / **Reanudar**, **Actualizar** y
+  **Cerrar el agente**.
+
+«Configurar» es la entrada por defecto de cada desplegable: en Windows sale en
+negrita y es lo que hace el doble clic sobre el propio desplegable
+(`ui/bandeja_windows.py`); dbusmenu no tiene nada parecido y en Linux es solo
+la primera entrada.
 """
 
 from __future__ import annotations
@@ -54,7 +64,8 @@ MAX_TIP = 127               # `szTip` de NOTIFYICONDATAW: 128 con el nulo
 # significa la entrada, no cómo se pinta. Windows pinta ese glifo
 # (`ui/bandeja_windows.py`); Linux pide al tema del escritorio el suyo
 # (`ui/bandeja_linux.ICONOS_DEL_TEMA`), que sigue su color y su modo oscuro.
-I_ABRIR = "carpeta"
+I_CONFIGURAR = "gear"
+I_EXPLORAR = "carpeta"
 I_SINCRONIZAR = "sync"
 I_PAUSAR = "pausa"
 I_REANUDAR = "play"
@@ -65,9 +76,64 @@ I_ACTUALIZAR = "down"
 I_CERRAR = "arranque"
 I_AVISO = "warn"
 I_REINTENTAR = "reload"
-ICONOS = (I_ABRIR, I_SINCRONIZAR, I_PAUSAR, I_REANUDAR, I_BLOQUEAR, I_DESBLOQUEAR,
-          I_ATENDER, I_ACTUALIZAR, I_CERRAR, I_AVISO, I_REINTENTAR)
+ICONOS = (I_CONFIGURAR, I_EXPLORAR, I_SINCRONIZAR, I_PAUSAR, I_REANUDAR, I_BLOQUEAR,
+          I_DESBLOQUEAR, I_ATENDER, I_ACTUALIZAR, I_CERRAR, I_AVISO, I_REINTENTAR)
 """Todos los iconos que puede llevar una entrada."""
+
+
+@dataclass(frozen=True)
+class Emblema:
+    """El icono a color de un dispositivo en el menú: el suyo o la marca de prdrive.
+
+    No es un glifo de `ICONOS`: es lo que se le puso en «Nombre e icono de la
+    unidad…» (su `autorun.inf`). Lo averigua el agente (`volumen.emblema()`),
+    y solo de una raíz de su lista, conectada y abierta; de cualquier otra se
+    pinta la marca de prdrive. Cada sistema lo pinta a su manera
+    (`bandeja_windows.pixeles_emblema()`, `bandeja_linux.png_emblema()`) y
+    nunca falla por él: lo que no se pueda leer o pintar es la marca.
+
+    Args:
+        campo: El color del campo de la marca (uno de `icons.CAMPOS`).
+        ico: El `.ico` propio de la unidad, o nada. Si no se puede leer o no se
+            entiende, se pinta la marca con `campo`.
+    """
+    campo: str = icons.CAMPO
+    ico: str = ""
+
+
+MARCA = Emblema()
+"""El icono de un dispositivo sin uno suyo que enseñar: la marca de prdrive."""
+
+TOPE_CACHE = 64
+"""Cuántos iconos pintados guarda como mucho cada caché de la bandeja.
+
+Cada guardado de «Nombre e icono…» da un `.ico` con otro nombre (la ruta es la
+clave) y sin tope no se soltaría ninguno mientras el agente viva.
+"""
+
+
+class CacheAcotada(dict):
+    """Un diccionario que, al llenarse, suelta la entrada que lleva más tiempo dentro.
+
+    Es la caché de los iconos ya pintados de `bandeja_windows` y
+    `bandeja_linux`: una clave nueva con la caché llena saca la más antigua
+    (la primera que entró), no la menos usada; con un tope de decenas de
+    entradas, volver a pintar un icono es lo bastante barato.
+
+    Args:
+        tope: Cuántas entradas caben como mucho.
+    """
+
+    def __init__(self, tope: int = TOPE_CACHE) -> None:
+        """Crea la caché vacía."""
+        super().__init__()
+        self.tope = tope
+
+    def __setitem__(self, clave: Any, valor: Any) -> None:
+        """Guarda la entrada; si la clave es nueva y no cabe, saca la más antigua."""
+        if clave not in self and len(self) >= self.tope:
+            del self[next(iter(self))]
+        super().__setitem__(clave, valor)
 
 
 @dataclass(frozen=True)
@@ -80,9 +146,11 @@ class Entrada:
         activa: Si se puede elegir.
         marcada: Si no es `None`, la entrada es una casilla y esto dice si está
             marcada.
-        defecto: Si es la que hace el doble clic en el icono.
+        defecto: Si es la entrada por defecto de su menú: en Windows va en
+            negrita y la elige el doble clic en el desplegable que la contiene.
         hijos: Si no está vacío, la entrada es un submenú.
         icono: Uno de `ICONOS`, o nada.
+        emblema: El icono a color de un dispositivo; con él, `icono` no cuenta.
     """
     texto: str = ""
     pide: tuple[Mapping[str, Any], ...] = ()
@@ -91,6 +159,7 @@ class Entrada:
     defecto: bool = False
     hijos: tuple["Entrada", ...] = ()
     icono: str = ""
+    emblema: Emblema | None = None
 
     @property
     def separador(self) -> bool:
@@ -118,7 +187,12 @@ class Vista:
     frase: str = ""
 
     def defecto(self) -> Entrada | None:
-        """Devuelve la entrada del doble clic, si hay una."""
+        """Devuelve la primera entrada por defecto que se puede elegir, si hay una.
+
+        Es el «Configurar» del primer dispositivo (la raíz de este equipo, si
+        la hay): lo que hace `Activate` en Linux, con los anfitriones que lo
+        llaman al pinchar en el icono.
+        """
         return next((e for e in _todas(self.menu) if e.defecto and e.activa), None)
 
 
@@ -193,9 +267,11 @@ def estado(resumen: Mapping[str, Any], ahora: float | None = None) -> tuple[str,
 
     El orden de prioridad es: la pausa pedida (lo ha decidido alguien) > una
     pasada en marcha > los avisos > lo que retiene sin ser pausa (batería, red
-    de uso medido) > la raíz cifrada bloqueada > bien. Bloqueada no es un
-    aviso: es lo normal con el contenedor cerrado y el icono lo enseña sin
-    alarmar.
+    de uso medido) > una raíz en el «Pausar» de su ventana > la raíz cifrada
+    bloqueada > bien. Bloqueada no es un aviso: es lo normal con el contenedor
+    cerrado y el icono lo enseña sin alarmar. La raíz pausada tampoco: lo ha
+    decidido alguien, y el icono de pausa y su nombre bastan para saber por qué
+    no se sincroniza.
 
     Cuando va bien, la frase dice cuándo acabó bien la última pasada
     (`ultima_pasada`, segundos de época): «al día» a secas no decía nada que el
@@ -216,6 +292,10 @@ def estado(resumen: Mapping[str, Any], ahora: float | None = None) -> tuple[str,
         return icons.AVISO, hay[0] if len(hay) == 1 else f"{len(hay)} avisos"
     if resumen.get("retenido"):
         return icons.PAUSA, f"esperando: {resumen['retenido']}"
+    pausadas = [str(u.get("nombre")) for u in resumen.get("unidades") or []
+                if u.get("pausada")]
+    if pausadas:
+        return icons.PAUSA, f"{', '.join(pausadas)} en pausa"
     raices = resumen.get("equipo") or []
     for estado_, frase in ((DESBLOQUEANDO, "desbloqueando"), (BLOQUEANDO, "bloqueando"),
                            (BLOQUEADA, "bloqueada")):
@@ -265,92 +345,174 @@ def _pide(que: str, **campos) -> tuple[dict, ...]:
     return ({"pide": que, **campos},)
 
 
-def _raices_del_equipo(resumen: Mapping[str, Any]) -> list[Entrada]:
-    """Devuelve las entradas de las raíces de este equipo.
+EN_PAUSA = "en pausa"
+"""Lo que dice el desplegable de un dispositivo pausado desde su ventana (#64)."""
+POR_ACTUALIZAR = "por actualizar"
+"""Lo que dice el desplegable de un dispositivo cuyo programa es anterior a la versión mínima."""
 
-    Incluye la casilla de `pedir_al_iniciar`.
+ESTADO_DE_RAIZ = {BLOQUEADA: "bloqueada", DESBLOQUEANDO: "desbloqueando…",
+                  BLOQUEANDO: "bloqueando…", FANTASMA: "no responde",
+                  AUSENTE: "no está en su sitio", BUSCANDO: "buscándola…"}
+"""Lo que dice el rótulo de una raíz de este equipo entre paréntesis; abierta, nada."""
+
+
+def _emblema(u: Mapping[str, Any] | None) -> Emblema:
+    """Devuelve el icono de un dispositivo a partir de su fila del resumen.
+
+    Solo cuenta el de una unidad de la lista (`en_lista`): de las demás no se
+    enseña nada suyo, tampoco el icono. Lo que no se entienda es la marca.
     """
-    entradas: list[Entrada] = []
+    if not u or not u.get("en_lista"):
+        return MARCA
+    dato = u.get("emblema")
+    if not isinstance(dato, Mapping):
+        return MARCA
+    ico = dato.get("ico")
+    if isinstance(ico, str) and ico:
+        return Emblema(ico=ico)
+    clave = dato.get("marca")
+    if isinstance(clave, str) and clave in icons.CAMPOS:
+        return Emblema(campo=icons.CAMPOS[clave])
+    return MARCA
+
+
+def _acciones(uid: str, abrir: bool, cerrada: bool, sincronizar: bool) -> list[Entrada]:
+    """Devuelve «Configurar», «Abrir en explorador» y «Sincronizar ahora» de un dispositivo.
+
+    Args:
+        uid: Su id.
+        abrir: Si se puede abrir su ventana y su carpeta.
+        cerrada: Si es una raíz cifrada bloqueada: abrirla la desbloquea antes,
+            y los puntos suspensivos dicen que antes sale la contraseña.
+        sincronizar: Si el agente la está atendiendo y se le puede pedir una
+            pasada.
+    """
+    puntos = "…" if cerrada else ""
+    return [Entrada(f"Configurar{puntos}", _pide(equipo.PIDE_ABRIR, id=uid), activa=abrir,
+                    defecto=abrir, icono=I_CONFIGURAR),
+            Entrada(f"Abrir en explorador{puntos}", _pide(equipo.PIDE_EXPLORAR, id=uid),
+                    activa=abrir, icono=I_EXPLORAR),
+            Entrada("Sincronizar ahora", _pide(equipo.PIDE_PASADA, id=uid, parejas=[]),
+                    activa=sincronizar, icono=I_SINCRONIZAR)]
+
+
+def _pedir_al_iniciar(resumen: Mapping[str, Any], varias: bool) -> Entrada:
+    """Devuelve la casilla de `pedir_al_iniciar`, que pide lo contrario de lo que hay.
+
+    El ajuste es del agente y vale para todas sus raíces cifradas: con una
+    sola va en su desplegable y se lee como suyo; con varias va fuera, y lo
+    dice.
+    """
+    pedir = bool(resumen.get("pedir_al_iniciar", True))
+    texto = ("Pedir la contraseña de cada raíz cifrada al iniciar sesión" if varias
+             else "Pedir la contraseña al iniciar sesión")
+    return Entrada(texto, _pide(equipo.PIDE_AJUSTE, clave="pedir_al_iniciar",
+                                valor=not pedir), marcada=pedir)
+
+
+def _cerrojo(uid: str, est: str | None) -> Entrada:
+    """Devuelve la entrada de bloquear o desbloquear una raíz cifrada, según su estado."""
+    if est == BLOQUEADA:
+        return Entrada("Desbloquear…", _pide(equipo.PIDE_DESBLOQUEAR, id=uid),
+                       icono=I_DESBLOQUEAR)
+    if est == DESBLOQUEANDO:
+        return Entrada("Desbloqueando: la contraseña la pide VeraCrypt", activa=False)
+    if est == BLOQUEANDO:
+        return Entrada("Bloqueando…", activa=False)
+    if est in (ABIERTA, FANTASMA):                  # a un fantasma, bloquear lo arregla
+        return Entrada("Bloquear", _pide(equipo.PIDE_BLOQUEAR, id=uid), icono=I_BLOQUEAR)
+    return Entrada("Desbloquear…", activa=False, icono=I_DESBLOQUEAR)
+
+
+def _raices_del_equipo(resumen: Mapping[str, Any]) -> list[Entrada]:
+    """Devuelve el desplegable de cada raíz de este equipo.
+
+    Con una sola raíz cifrada, la casilla de `pedir_al_iniciar` va en el suyo.
+    Una raíz abierta cuyo programa es anterior a la versión mínima del agente
+    se dice «por actualizar» y no deja abrir nada suyo, como una unidad: el
+    agente lo rechazaría en silencio (`Agente._abrir()`).
+    """
+    filas = {u.get("id"): u for u in resumen.get("unidades") or []}
     raices = resumen.get("equipo") or []
-    for i, r in enumerate(raices):
+    una_cifrada = sum(bool(r.get("cifrada")) for r in raices) == 1
+    entradas: list[Entrada] = []
+    for r in raices:
         uid, nombre, est = r.get("id", ""), r.get("nombre") or APP_NAME, r.get("estado")
-        if est == AUSENTE:
-            entradas.append(Entrada(f"{nombre}: no está en su sitio", activa=False))
-            continue
-        if est == BUSCANDO:
-            entradas.append(Entrada(f"{nombre}: buscándola…", activa=False))
-            continue
-        cerrada = est in (BLOQUEADA, DESBLOQUEANDO)
-        entradas.append(Entrada(f"Abrir {nombre}" + ("…" if cerrada else ""),
-                                _pide(equipo.PIDE_ABRIR, id=uid),
-                                activa=est in (ABIERTA, BLOQUEADA, DESBLOQUEANDO),
-                                defecto=i == 0, icono=I_ABRIR))
-        if not r.get("cifrada"):
-            continue
-        if est == BLOQUEADA:
-            entradas.append(Entrada(f"Desbloquear {nombre}…",
-                                    _pide(equipo.PIDE_DESBLOQUEAR, id=uid),
-                                    icono=I_DESBLOQUEAR))
-        elif est == DESBLOQUEANDO:
-            entradas.append(Entrada(f"Desbloqueando {nombre}: la contraseña la pide "
-                                    f"VeraCrypt", activa=False))
-        elif est == BLOQUEANDO:
-            entradas.append(Entrada(f"Bloqueando {nombre}…", activa=False))
-        else:                               # abierta, o un fantasma: bloquear lo arregla
-            entradas.append(Entrada(f"Bloquear {nombre}",
-                                    _pide(equipo.PIDE_BLOQUEAR, id=uid), icono=I_BLOQUEAR))
-    if any(r.get("cifrada") for r in raices):
-        pedir = bool(resumen.get("pedir_al_iniciar", True))
-        entradas.append(Entrada("Pedir la contraseña al iniciar sesión",
-                                _pide(equipo.PIDE_AJUSTE, clave="pedir_al_iniciar",
-                                      valor=not pedir),
-                                marcada=pedir))
+        fila = filas.get(uid) if est == ABIERTA else None
+        vieja = bool(fila) and fila.get("vieja") is not None
+        hijos = _acciones(uid, abrir=not vieja and est in (ABIERTA, BLOQUEADA, DESBLOQUEANDO),
+                          cerrada=est in (BLOQUEADA, DESBLOQUEANDO),
+                          sincronizar=not vieja and bool(fila and fila.get("atendida")))
+        if vieja:
+            hijos.append(Entrada("Actualízala para que la atienda", activa=False))
+        if r.get("cifrada"):
+            hijos += [SEPARADOR, _cerrojo(uid, est)]
+            if una_cifrada:
+                hijos.append(_pedir_al_iniciar(resumen, varias=False))
+        que = POR_ACTUALIZAR if vieja else (
+            ESTADO_DE_RAIZ.get(est) or (EN_PAUSA if fila and fila.get("pausada") else None))
+        entradas.append(Entrada(f"{nombre} ({que})" if que else nombre, hijos=tuple(hijos),
+                                emblema=_emblema(fila)))
     return entradas
 
 
 def _unidades(resumen: Mapping[str, Any]) -> list[Entrada]:
-    """Devuelve las entradas de las unidades conectadas."""
+    """Devuelve el desplegable de cada unidad conectada.
+
+    Una que no está en la lista (o cuyo código ha cambiado, o anterior a la
+    versión mínima del agente) solo lleva lo que se puede hacer con ella sin
+    ejecutar nada suyo, y la marca de prdrive por icono.
+    """
     entradas: list[Entrada] = []
     for u in resumen.get("unidades") or []:
         if u.get("del_equipo"):
             continue
-        uid, nombre = u.get("id", ""), u.get("nombre")
+        uid, nombre = u.get("id", ""), str(u.get("nombre") or APP_NAME)
         if u.get("vieja") is not None:
-            # Anterior a la versión mínima del agente: no hay nada que pedirle
-            # hasta que se actualice, y se dice en el propio menú.
-            entradas.append(Entrada(f"{nombre}: actualízala para que la atienda",
-                                    activa=False))
+            # No hay nada que pedirle hasta que se actualice, y se dice.
+            entradas.append(Entrada(f"{nombre} ({POR_ACTUALIZAR})", hijos=(
+                Entrada("Actualízala para que la atienda", activa=False),), emblema=MARCA))
         elif u.get("en_lista"):
-            entradas.append(Entrada(f"Abrir {nombre}", _pide(equipo.PIDE_ABRIR, id=uid),
-                                    icono=I_ABRIR))
+            # La pausa de su ventana (#64) se dice: si no, el desplegable
+            # parecería atendido y no lo está.
+            entradas.append(Entrada(
+                f"{nombre} ({EN_PAUSA})" if u.get("pausada") else nombre,
+                hijos=tuple(_acciones(uid, abrir=True, cerrada=False,
+                                      sincronizar=bool(u.get("atendida")))),
+                emblema=_emblema(u)))
         elif u.get("ahora_no") or u.get("preguntando"):
             # Con otro código que el aceptado (`agente.huella()`), se dice: el
             # sí de ahora es a ese código.
-            que = "código cambiado" if u.get("cambiada") else "conectada"
-            entradas.append(Entrada(f"{nombre}, {que} · Atender…",
-                                    _pide(equipo.PIDE_ATENDER, id=uid), icono=I_ATENDER))
+            cambiada = bool(u.get("cambiada"))
+            entradas.append(Entrada(
+                f"{nombre} ({'código cambiado' if cambiada else 'sin atender'})",
+                hijos=(Entrada("Atender con su código nuevo…" if cambiada else "Atender…",
+                               _pide(equipo.PIDE_ATENDER, id=uid), icono=I_ATENDER),),
+                emblema=MARCA))
     return entradas
 
 
-def _sincronizar(resumen: Mapping[str, Any]) -> Entrada:
-    """Devuelve la entrada «Sincronizar ahora».
+def _del_agente(resumen: Mapping[str, Any]) -> list[Entrada]:
+    """Devuelve lo que es del agente entero y no de un dispositivo.
 
-    Lleva un submenú si hay varias unidades.
+    «Sincronizar todo ahora» solo con dos o más dispositivos atendidos: con
+    uno, repetiría su «Sincronizar ahora». Con varias raíces cifradas, la
+    casilla de `pedir_al_iniciar`, que vale para todas.
     """
+    entradas: list[Entrada] = []
     atendidas = [u for u in resumen.get("unidades") or [] if u.get("atendida")]
-    if not atendidas:
-        return Entrada("Sincronizar ahora", activa=False, icono=I_SINCRONIZAR)
-    if len(atendidas) == 1:
-        return Entrada("Sincronizar ahora",
-                       _pide(equipo.PIDE_PASADA, id=atendidas[0].get("id"), parejas=[]),
-                       icono=I_SINCRONIZAR)
-    todas = tuple(p for u in atendidas
-                  for p in _pide(equipo.PIDE_PASADA, id=u.get("id"), parejas=[]))
-    return Entrada("Sincronizar ahora", hijos=(
-        Entrada("Todas", todas), SEPARADOR,
-        *(Entrada(str(u.get("nombre")),
-                  _pide(equipo.PIDE_PASADA, id=u.get("id"), parejas=[]))
-          for u in atendidas)), icono=I_SINCRONIZAR)
+    if len(atendidas) >= 2:
+        entradas.append(Entrada("Sincronizar todo ahora", tuple(
+            p for u in atendidas
+            for p in _pide(equipo.PIDE_PASADA, id=u.get("id"), parejas=[])),
+            icono=I_SINCRONIZAR))
+    if resumen.get("pausado"):
+        entradas.append(Entrada("Reanudar", _pide(equipo.PIDE_SIGUE), icono=I_REANUDAR))
+    else:
+        entradas.append(Entrada("Pausar", _pide(equipo.PIDE_PAUSA), icono=I_PAUSAR))
+    if sum(bool(r.get("cifrada")) for r in resumen.get("equipo") or []) > 1:
+        entradas.append(_pedir_al_iniciar(resumen, varias=True))
+    return entradas
 
 
 def _actualizar(resumen: Mapping[str, Any]) -> list[Entrada]:
@@ -390,12 +552,8 @@ def vista(resumen: Mapping[str, Any], ahora: float | None = None) -> Vista:
     cabecera = hay[:MAX_AVISOS]
     if len(hay) > MAX_AVISOS:
         cabecera.append(Entrada(f"y {len(hay) - MAX_AVISOS} más", activa=False))
-    pausado = bool(resumen.get("pausado"))
-    menu = _bloques(cabecera, _raices_del_equipo(resumen), _unidades(resumen),
-                    [_sincronizar(resumen),
-                     Entrada("Reanudar", _pide(equipo.PIDE_SIGUE), icono=I_REANUDAR)
-                     if pausado
-                     else Entrada("Pausar", _pide(equipo.PIDE_PAUSA), icono=I_PAUSAR)],
+    menu = _bloques(cabecera, _raices_del_equipo(resumen) + _unidades(resumen),
+                    _del_agente(resumen),
                     [*_actualizar(resumen),
                      Entrada("Cerrar el agente", _pide(equipo.PIDE_PARAR), icono=I_CERRAR)])
     return Vista(icono, tip(frase), menu, frase[:1].upper() + frase[1:])

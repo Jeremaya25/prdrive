@@ -3,11 +3,12 @@
 
 Linux habla con el escritorio por D-Bus: los avisos
 (`org.freedesktop.Notifications`), si la red es de uso medido (la propiedad
-`Metered` de NetworkManager), la bandeja (`ui/bandeja_linux.py`) y la señal de
-suspender. Python no trae D-Bus y el proyecto no admite dependencias, así que
-esto lo implementa con el espíritu de `ui/qr.py`: completo en lo que usa y con
-las constantes citando la especificación, como `common/bisync.py` cita a
-rclone. Todo sale de la *D-Bus Specification* de freedesktop.org
+`Metered` de NetworkManager), la bandeja (`ui/bandeja_linux.py`), la señal de
+suspender y la de que vuelve la red (`StateChanged` de NetworkManager, en
+`common/red.py`). Python no trae D-Bus y el proyecto no admite dependencias,
+así que esto lo implementa con el espíritu de `ui/qr.py`: completo en lo que
+usa y con las constantes citando la especificación, como `common/bisync.py`
+cita a rclone. Todo sale de la *D-Bus Specification* de freedesktop.org
 (https://dbus.freedesktop.org/doc/dbus-specification.html); cada sección dice
 de qué apartado.
 

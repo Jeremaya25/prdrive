@@ -30,6 +30,14 @@ aparte que pueda contradecir al fichero que manda.
 en caché por ruta: reescribir el mismo fichero con otro dibujo puede seguir
 enseñando el de antes. Por eso cada color tiene su nombre, uno propio lleva
 detrás un trozo de su hash y al guardar se recogen los que ya no se usan.
+
+**El nombre es uno solo.** Es también el de este dispositivo en la flota
+(«Dispositivos…», `state/fleet.json`), y esta es la única ventana que lo cambia:
+al guardar se pone en los dos sitios, para que el Explorador y la lista de
+dispositivos no lo llamen cada uno de una manera. Vacío, quita el de la unidad
+y deja el de la flota como está: un dispositivo sin nombre no existe, se
+llamaría como la máquina donde se mire. Lo que se sube al remoto no es cosa de
+aquí: la nota con el nombre nuevo sale en la siguiente pasada.
 """
 
 from __future__ import annotations
@@ -76,12 +84,11 @@ NINGUNO = "ninguno"
 OTRO = "otro"
 """Clave de un `icon=` que no puso prdrive: se deja mientras no se cambie."""
 
-MAX_ICO = 4 * 1024 * 1024
+MAX_ICO = icons.MAX_ICO
 """Bytes que puede ocupar un `.ico` que trae la persona.
 
-Uno de verdad cabe de sobra: el de la marca, con siete tamaños, son 43 KB, y
-uno con el de 256 px sin comprimir anda por los 400. Esto es para no copiar a
-la unidad una foto de 50 MB porque se llamaba `.ico`.
+Es para no copiar a la unidad una foto de 50 MB porque se llamaba `.ico`. Es
+el mismo límite con que la bandeja del agente lo lee para pintarlo.
 """
 
 _NOMBRE = re.compile(f"(?P<fuera>{re.escape(autorun.PREFIJO_RAIZ)})?"
@@ -107,6 +114,9 @@ class Estado:
         icono: El `icon=` tal cual.
         veracrypt: Si la unidad lleva el VeraCrypt de viaje y su icono se
             ofrece.
+        dispositivo: Cómo se llama ahora este dispositivo en la flota
+            (`fleet.nombre()`), que puede no coincidir con `nombre`: es el que
+            «Guardar» sustituye.
     """
     raiz: Path
     fisica: bool
@@ -114,6 +124,7 @@ class Estado:
     clave: str
     icono: str
     veracrypt: bool
+    dispositivo: str = ""
 
     @property
     def carpeta(self) -> Path:
@@ -149,36 +160,85 @@ def lleva_veracrypt(raiz: Path) -> bool:
     return bool(vestibulo.traveler_ejecutables(raiz))
 
 
-def _nuestro(carpetas: tuple[str, ...], nombre: str) -> re.Match | None:
+def _nuestro(carpetas: tuple[str, ...], nombre: str,
+             app: str | None = None) -> re.Match | None:
     """Devuelve el encaje del nombre si es un icono nuestro bien puesto.
 
     Bien puesto es donde lo dejaría prdrive: en la raíz con el prefijo o en
-    `.prdrive/` sin él. `carpetas` son las de la ruta relativa a la raíz.
+    `.prdrive/` sin él.
+
+    Args:
+        carpetas: Las de la ruta relativa a la raíz.
+        nombre: El nombre del fichero.
+        app: El nombre de la carpeta del programa en la raíz; por defecto, el
+            de `APP_DIR` (el de este dispositivo).
     """
     hallado = _NOMBRE.fullmatch(nombre)
     if hallado is None:
         return None
-    donde = () if hallado["fuera"] else (model.APP_DIR.name.lower(),)
+    donde = () if hallado["fuera"] else ((app or model.APP_DIR.name).lower(),)
     return hallado if tuple(c.lower() for c in carpetas) == donde else None
 
 
-def clave_de(icono: str) -> str:
+def clave_de(icono: str, app: str | None = None) -> str:
     """Devuelve qué opción es ese `icon=`.
 
     Uno que no se reconozca es `OTRO` y no `NINGUNO`: lo puso alguien y guardar
     solo el nombre no tiene por qué llevárselo.
+
+    Args:
+        icono: El valor de `icon=`.
+        app: El nombre de la carpeta del programa en la raíz; por defecto, el
+            de `APP_DIR`. Quien mira una raíz desde fuera (el agente, cuyo
+            `APP_DIR` es su propia carpeta) lo dice.
     """
     if not icono:
         return NINGUNO
     if autorun.es_icono_veracrypt(icono):
         return VERACRYPT
     *carpetas, nombre = PureWindowsPath(icono).parts
-    hallado = _nuestro(tuple(carpetas), nombre)
+    hallado = _nuestro(tuple(carpetas), nombre, app)
     if hallado:
         clave = hallado["clave"].lower()
         if clave == PROPIO or clave in {m.clave for m in MARCAS}:
             return clave
     return OTRO
+
+
+def emblema(raiz: Path | str, app: str) -> dict:
+    """Devuelve el icono de una raíz tal como lo enseña la bandeja del agente.
+
+    Sale de lo que dice su `autorun.inf` (`raiz` es donde vive: la raíz física
+    si la unidad va en un contenedor) y de nada más:
+    - uno de los colores de la marca (`MARCAS`) no se lee: la clave va en el
+      nombre del fichero y la bandeja pinta la marca en ese color;
+    - un `.ico` propio se da por su ruta, solo si está donde lo dejaría prdrive
+      (`_nuestro()`, así que no sale de la raíz) y es un fichero que cabe en
+      `MAX_ICO`; lo lee y lo pinta la bandeja, con sus límites;
+    - el de VeraCrypt, uno que no puso prdrive o ninguno: la marca de prdrive.
+
+    Lo llama el agente solo para una raíz de su lista, conectada y abierta. No
+    lanza: cualquier fallo es la marca de prdrive.
+
+    Args:
+        raiz: La carpeta del `autorun.inf`.
+        app: El nombre de la carpeta del programa en esa raíz (`.prdrive`).
+
+    Returns:
+        `{"marca": clave}`, `{"ico": ruta}` o `{}` (la marca de prdrive).
+    """
+    try:
+        icono = autorun.leer(raiz).icono
+        clave = clave_de(icono, app)
+        if clave in {m.clave for m in MARCAS}:
+            return {"marca": clave}
+        if clave == PROPIO:
+            fichero = Path(raiz).joinpath(*PureWindowsPath(icono).parts)
+            if fichero.is_file() and fichero.stat().st_size <= MAX_ICO:
+                return {"ico": str(fichero)}
+    except Exception:                                   # noqa: BLE001
+        pass
+    return {}
 
 
 def leer() -> Estado:
@@ -189,7 +249,7 @@ def leer() -> Estado:
     raiz, fisica = raiz_del_volumen()
     actual = autorun.leer(raiz)
     return Estado(raiz, fisica, actual.etiqueta, clave_de(actual.icono),
-                  actual.icono, lleva_veracrypt(raiz))
+                  actual.icono, lleva_veracrypt(raiz), fleet.nombre())
 
 
 def revisar_nombre(texto: str) -> str:
@@ -209,6 +269,31 @@ def revisar_nombre(texto: str) -> str:
         raise VolumenError(f"El nombre tiene {len(nombre)} caracteres, y el de "
                            f"una unidad cabe en {autorun.MAX_NOMBRE}.")
     return nombre
+
+
+def pista_nombre(estado: Estado) -> str:
+    """Devuelve lo que se dice bajo el campo del nombre.
+
+    Además del límite, que el nombre es también el del dispositivo en
+    «Dispositivos…» (con el de ahora, si se sabe) y qué pasa si se deja vacío.
+    """
+    ahora = f" (ahora, «{estado.dispositivo}»)" if estado.dispositivo else ""
+    return (f"Hasta {autorun.MAX_NOMBRE} caracteres. Es también el nombre de este "
+            f"dispositivo en «Dispositivos…»{ahora}. Vacío, la unidad se queda con "
+            "el que le ponga Windows y el dispositivo, con el suyo.")
+
+
+def mensaje_guardado(nombre: str) -> str:
+    """Devuelve lo que se dice al guardar.
+
+    Args:
+        nombre: El nombre guardado, ya revisado; vacío si se ha quitado.
+    """
+    texto = "Guardado. Se verá la próxima vez que conectes la unidad."
+    if nombre:
+        texto += (" En «Dispositivos…» el nombre nuevo llegará con la próxima "
+                  "sincronización.")
+    return texto
 
 
 def leer_ico(ruta: Path | str) -> bytes:
@@ -302,8 +387,21 @@ def guardar(estado: Estado, nombre: str, clave: str,
     a un icono que no está: primero el icono, luego el fichero y, solo al
     final, se recogen los iconos que ya no se usan.
 
+    Con nombre, ese mismo nombre pasa a ser el de este dispositivo en la flota
+    (`fleet.guardar_nombre()`), y lo último de todo: si la unidad no se pudo
+    escribir, el dispositivo no cambia de nombre. Sin nombre no se toca el de
+    la flota. No sube nada al remoto.
+
+    Args:
+        estado: Lo que tiene la unidad ahora, de `leer()`.
+        nombre: El nombre nuevo, vacío para quitarlo de la unidad.
+        clave: Qué icono poner.
+        propio: Los bytes del `.ico` de la persona, si ha elegido uno.
+
     Raises:
-        VolumenError: Si no se puede guardar.
+        VolumenError: Si no se puede guardar. Si lo único que falla es el
+            nombre del dispositivo, la unidad ya quedó guardada y el mensaje lo
+            dice: volver a guardar lo reintenta.
     """
     nombre = revisar_nombre(nombre)
     icono, fichero, datos = _icono(estado, clave, propio)
@@ -337,6 +435,11 @@ def guardar(estado: Estado, nombre: str, clave: str,
         raise VolumenError(f"No he podido escribir {destino}: {e}") from e
 
     recoger(estado, icono)
+    if nombre and not fleet.guardar_nombre(nombre):
+        raise VolumenError(
+            "He guardado el nombre y el icono de la unidad, pero no he podido "
+            "ponerle ese nombre al dispositivo en «Dispositivos…»: no puedo "
+            f"escribir {fleet.ruta_estado()}. Vuelve a guardar para reintentarlo.")
     return escrito
 
 

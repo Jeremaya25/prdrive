@@ -5,7 +5,9 @@ Solo dibuja. Qué hay puesto, qué se puede poner y cómo se escribe lo decide
 `ui/volumen.py`, que no importa Tk y se prueba sin pantalla.
 
 Cuelga de «Ajustes» porque se hace una vez (o cuando se tiene un segundo
-dispositivo y hace falta distinguirlos), no cada vez que se sincroniza.
+dispositivo y hace falta distinguirlos), no cada vez que se sincroniza. Es el
+único sitio donde se cambia el nombre del dispositivo: «Dispositivos…» solo lo
+enseña.
 
 Tres cosas se dicen en la propia ventana porque sin ellas parece que no
 funciona: el Explorador lee el fichero **al llegar la unidad**, así que el
@@ -28,8 +30,9 @@ MUESTRA = 32
 def open_dialog(parent) -> None:
     """Abre la ventana; no devuelve nada.
 
-    Lo que cambia es un fichero de la raíz de la unidad y nada de lo que enseña
-    la ventana principal depende de él.
+    Lo que cambia es un fichero de la raíz de la unidad y el nombre de este
+    dispositivo en `state/fleet.json`; nada de lo que enseña la ventana
+    principal depende de ellos.
     """
     import tkinter as tk
     from tkinter import filedialog, messagebox, ttk
@@ -57,9 +60,9 @@ def open_dialog(parent) -> None:
     nombre = tk.StringVar(value=estado.nombre)
     ttk.Entry(marco, textvariable=nombre, width=autorun.MAX_NOMBRE + 2).grid(
         row=1, column=1, sticky="w", pady=(18, 0))
-    ttk.Label(marco, style="Pista.TLabel",
-              text=f"Hasta {autorun.MAX_NOMBRE} caracteres. Vacío, el que le "
-                   "ponga Windows.").grid(row=2, column=1, sticky="w", pady=(4, 0))
+    ttk.Label(marco, style="Pista.TLabel", text=volumen.pista_nombre(estado),
+              wraplength=theme.medida(460), justify="left").grid(
+        row=2, column=1, sticky="w", pady=(4, 0))
 
     # El icono.
     etiqueta("Icono", 3, arriba=True)
@@ -164,8 +167,7 @@ def open_dialog(parent) -> None:
         if not ok:
             messagebox.showerror(TITLE, str(valor), parent=dlg)
             return
-        messagebox.showinfo(TITLE, "Guardado. Se verá la próxima vez que "
-                                   "conectes la unidad.", parent=dlg)
+        messagebox.showinfo(TITLE, volumen.mensaje_guardado(texto), parent=dlg)
         dlg.destroy()
 
     ttk.Separator(marco, orient="horizontal").grid(row=5, column=0, columnspan=2,

@@ -220,10 +220,22 @@ def pair_state(pair: Pair) -> PairState:
     # Los `.lst-err` no los limpia nadie (rclone solo renombra `.lst` a
     # `.lst-err` al abortar; cmd/bisync/operations.go): si después hay un juego
     # de listados válido, el baseline es bueno y esos son residuo.
+    #
+    # Contra rclone v1.75.1: ante un error crítico `Bisync()` renombra los dos
+    # listados a `.lst-err` («the prior listings are renamed to .lst-err to lock
+    # out further runs»), y una interrupción que no se cierra bien hace lo mismo
+    # con `markFailed()` (cmd/bisync/lockfile.go), que antes borra el `-err` que
+    # hubiera. Con `--recover` la pasada siguiente vuelve a los `.lst-old` y
+    # rehace los `.lst` (operations.go, «Reverting to prior backup»), y los
+    # `-err` se quedan como estaban: ahí no se vuelven a leer, solo se
+    # renombran. Se explican, nunca se borran: lo que hay en el workdir de
+    # bisync no es cosa nuestra.
     path1 = sorted(workdir.glob("*" + PATH1_SUFFIX))
     path2 = sorted(workdir.glob("*" + PATH2_SUFFIX))
     errors = sorted(workdir.glob("*" + ERR_SUFFIX))
-    residuo = f" (+{len(errors)} {ERR_SUFFIX} residuales)" if errors else ""
+    residuo = (f" (+{len(errors)} {ERR_SUFFIX}: el baseline que rclone apartó al "
+               f"abortar una pasada; ya no lo usa y se puede borrar a mano)"
+               if errors else "")
 
     if path1 and path2:
         pre1 = _prefixes(path1, PATH1_SUFFIX)
@@ -237,7 +249,9 @@ def pair_state(pair: Pair) -> PairState:
     if errors:
         return PairState(
             "broken",
-            f"{len(errors)} listado(s) marcados {ERR_SUFFIX} por un fallo crítico previo",
+            f"{len(errors)} listado(s) {ERR_SUFFIX}: rclone aparta así el baseline "
+            f"cuando una pasada aborta con un error crítico, para bloquear las "
+            f"siguientes",
             None)
     if path1 or path2:
         return PairState("broken", "falta uno de los dos listados (.path1/.path2)", None)

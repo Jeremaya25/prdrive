@@ -13,8 +13,9 @@ que se mira de un vistazo (si está instalado, si la tarea está activa, si el
 dispositivo se ve ahora mismo) son chips, y el resto texto normal.
 
 Aquí solo se decide QUÉ se hace al enchufar. Las parejas y el intervalo son los
-del servicio, que se eligen en la ventana principal y viajan con el
-dispositivo: el servicio es uno, se arranque a mano o al enchufar.
+del servicio, que se eligen en la ventana principal (las parejas) y en «Ajustes
+→ Configuración» (el intervalo) y viajan con el dispositivo: el servicio es
+uno, se arranque a mano o al enchufar.
 """
 
 from __future__ import annotations
@@ -219,8 +220,9 @@ def formulario_instalacion(parent) -> dict | None:
         ttk.Label(modos, text=watch.MODE_HELP[clave], style="Pista.TLabel").grid(
             row=i, column=1, sticky="w", padx=(12, 0))
     ttk.Label(marco, style="Pista.TLabel", wraplength=theme.medida(480), justify="left",
-              text="Las parejas y el intervalo son los del servicio: se eligen en la "
-                   "ventana principal y viajan con el dispositivo.").grid(
+              text="Las parejas y el intervalo son los del servicio: las parejas se "
+                   "marcan en la ventana principal, el intervalo está en «Ajustes → "
+                   "Configuración», y viajan con el dispositivo.").grid(
         row=3, column=1, columnspan=2, sticky="w", pady=(6, 4))
 
     fila = 4
@@ -314,9 +316,10 @@ def open_agente(parent, res: watch.Resumen) -> str | None:
                                                   padx=(12, 0))
     fila = 2
     ttk.Label(marco, style="Pista.TLabel", wraplength=theme.medida(520), justify="left",
-              text="Las parejas y el intervalo son los del servicio: se eligen en la "
-                   "ventana principal y viajan con " + ("la carpeta." if raiz
-                                                         else "el dispositivo.")).grid(
+              text="Las parejas y el intervalo son los del servicio: las parejas se "
+                   "marcan en la ventana principal, el intervalo está en «Ajustes → "
+                   "Configuración», y viajan con " + ("la carpeta." if raiz
+                                                     else "el dispositivo.")).grid(
         row=fila, column=0, sticky="w", pady=(10, 0))
     fila += 1
     if not res.vivo:

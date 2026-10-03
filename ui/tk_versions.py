@@ -17,6 +17,7 @@ salir mal.
 Leer el lado remoto es una llamada a rclone, así que va por `tk.working()`: con
 el remoto caído tarda lo que tarden los tiempos de espera de
 `catalog.NET_FLAGS` y mientras tanto la ventana no puede quedarse en blanco.
+Purgar también: borra en el remoto.
 """
 
 from __future__ import annotations
@@ -89,11 +90,13 @@ def open_dialog(parent, config: Config) -> None:
         ttk.Label(barra, text="Pareja", style="Campo.TLabel").grid(row=0, column=0,
                                                                    padx=(0, 10))
         elegida = StringVar(value=parejas[0].name)
-        ttk.Combobox(barra, textvariable=elegida, state="readonly", width=24,
-                     values=[p.name for p in parejas]).grid(row=0, column=1)
+        selector = ttk.Combobox(barra, textvariable=elegida, state="readonly",
+                                width=24, values=[p.name for p in parejas])
+        selector.grid(row=0, column=1)
         fila += 1
     else:
         elegida = StringVar(value=parejas[0].name)
+        selector = None
 
     # Lo que hay en cada lado.
     tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(14, 12))
@@ -170,7 +173,8 @@ def open_dialog(parent, config: Config) -> None:
             or (estado["remoto"].disponible and estado["remoto"].total) else "disabled")
         abrir_btn.configure(state="normal" if estado["local"].total else "disabled")
 
-    elegida.trace_add("write", refrescar)
+    if selector is not None:
+        selector.bind("<<ComboboxSelected>>", refrescar)
 
     # Acciones.
 
@@ -194,10 +198,9 @@ def open_dialog(parent, config: Config) -> None:
                 dlg, plan, f"Purgar versiones de '{plan.pair_name}'",
                 "Se borran en los dos lados"):
             return
-        try:
-            hechos = plan.execute()
-        except Exception as e:                                    # noqa: BLE001
-            messagebox.showerror(TITLE, str(e), parent=dlg)
+        ok, hechos = working(dlg, "Versiones", plan.execute, "Purgando las versiones…")
+        if not ok:
+            messagebox.showerror(TITLE, str(hechos), parent=dlg)
             return
         refrescar()
         messagebox.showinfo(TITLE, "\n".join(hechos) or "No se ha borrado nada.",

@@ -144,4 +144,49 @@ with sandbox():
       model.CONFIG_FILE.read_text(encoding="utf-8"), antes)
     c("no ha aparecido ningún state/", list(model.STATE_DIR.iterdir()), [])
 
+# lo que dice la pantalla del catálogo que enseña (#66)
+#
+# Se abre con la copia local y lee el remoto en segundo plano. Lo que se comprueba
+# es la regla: solo se edita lo recién leído del remoto, y nunca mientras se lee.
+lectura = catalog_editor.lectura
+copia, remoto = falso("cache"), falso("remote")
+
+leyendo = lectura(copia, None, True)
+c("leyendo con copia: el chip dice que es la copia, y de cuándo",
+  leyendo.chip, "copia local · 2026-01-01 00:00:00")
+c("  la línea lo explica y la barra va", (leyendo.leyendo, "copia local del 2026-01-01"
+                                          in leyendo.linea), (True, True))
+c("  y no se puede editar", leyendo.editable, False)
+
+sin_copia = lectura(None, None, True)
+c("leyendo sin copia: se dice que se está leyendo",
+  (sin_copia.chip, sin_copia.linea, sin_copia.editable),
+  ("leyendo el catálogo…", catalog_editor.LEYENDO_SIN_COPIA, False))
+
+releyendo = lectura(remoto, None, True)
+c("releyendo lo ya leído: tampoco se edita mientras", (releyendo.editable,
+                                                         releyendo.linea),
+  (False, catalog_editor.RELEYENDO))
+
+leido = lectura(remoto, None, False)
+c("leído del remoto: se edita y no hay nada que explicar",
+  (leido.chip, leido.linea, leido.leyendo, leido.editable),
+  ("catálogo leído · 2026-01-01 00:00:00", "", False, True))
+
+caido = lectura(copia, "Sin conexión con el catálogo. motivo", False)
+c("remoto caído: se queda la copia, en ámbar, con el aviso de catalog.load()",
+  (caido.chip, caido.tipo, caido.tono, caido.linea, caido.editable),
+  ("copia local · 2026-01-01 00:00:00", "Aviso.", "Aviso.",
+   "Sin conexión con el catálogo. motivo", False))
+
+nada = lectura(None, None, False)
+c("sin catálogo ni aviso: en rojo, y dice qué queda",
+  (nada.chip, nada.tipo, nada.linea), ("sin catálogo", "Peligro.",
+                                       catalog_editor.SIN_CATALOGO))
+
+sin_fecha = lectura(falso("cache")._replace(stamp=catalog.SIN_FECHA), None, True)
+c("una copia sin fecha no dice «del fecha desconocida»",
+  ("del fecha" in sin_fecha.linea, "no consta de cuándo es" in sin_fecha.linea),
+  (False, True))
+
 sys.exit(c.report())

@@ -19,10 +19,12 @@ Sin escritorio: el bus es `_bus_falso`, que hace de bus, de
 """
 
 import os
+import struct
 import sys
 import time
+import zlib
 
-from _harness import Checks
+from _harness import Checks, tmpdir
 
 import _bus_falso as B
 from common import dbus, equipo
@@ -45,7 +47,7 @@ def esperar(cond, segundos=3.0):
 
 E = bandeja.Entrada
 ABRIR = E("Abrir mi_raíz", ({"pide": equipo.PIDE_ABRIR, "id": "r"},), defecto=True,
-          icono=bandeja.I_ABRIR)
+          icono=bandeja.I_EXPLORAR)
 MENU = (E("Al día", activa=False), bandeja.SEPARADOR, ABRIR,
         E("Pedir la contraseña al iniciar sesión",
           ({"pide": equipo.PIDE_AJUSTE, "clave": "pedir_al_iniciar", "valor": False},),
@@ -106,6 +108,128 @@ c("  y el campo de la marca es opaco y del color de la marca",
 c("pixmaps(): un (ancho, alto, datos) por tamaño",
   [(w, h, len(d)) for w, h, d in bl.pixmaps(icons.BIEN)],
   [(s, s, s * s * 4) for s in bl.TAMANOS])
+
+# el icono de un dispositivo: icon-data, un PNG
+
+def png_rgba(datos: bytes) -> tuple[int, list[tuple[int, int, int, int]]]:
+    """Decodifica un PNG RGBA de 8 bits sin filtrar (como los de `icons._png`).
+
+    Returns:
+        `(lado, píxeles RGBA de arriba abajo)`.
+    """
+    assert datos.startswith(icons.FIRMA_PNG)
+    pos, ancho, idat = 8, 0, b""
+    while pos < len(datos):
+        n, = struct.unpack(">I", datos[pos:pos + 4])
+        tipo, cuerpo = datos[pos + 4:pos + 8], datos[pos + 8:pos + 8 + n]
+        if tipo == b"IHDR":
+            ancho = struct.unpack(">I", cuerpo[:4])[0]
+        elif tipo == b"IDAT":
+            idat += cuerpo
+        pos += 12 + n
+    crudo, pixeles = zlib.decompress(idat), []
+    fila = 1 + ancho * 4
+    for y in range(ancho):
+        assert crudo[y * fila] == 0
+        trozo = crudo[y * fila + 1:(y + 1) * fila]
+        pixeles += [tuple(trozo[i:i + 4]) for i in range(0, len(trozo), 4)]
+    return ancho, pixeles
+
+
+def ico_de(*imagenes: tuple[int, bytes], tipo: int = 1, cuantas: int | None = None) -> bytes:
+    """Monta un .ico con esas imágenes `(lado, bytes)`."""
+    n = len(imagenes) if cuantas is None else cuantas
+    cabeza, cuerpo = struct.pack("<HHH", 0, tipo, n), b""
+    desde = 6 + 16 * len(imagenes)
+    for lado, img in imagenes:
+        cabeza += struct.pack("<BBBBHHII", lado % 256, lado % 256, 0, 0, 1, 32, len(img),
+                              desde + len(cuerpo))
+        cuerpo += img
+    return cabeza + cuerpo
+
+
+def dib(lado: int, bgra: bytes, mascara: bytes = b"", bits: int = 32) -> bytes:
+    """Una imagen DIB de .ico: cabecera, píxeles de abajo arriba y máscara AND."""
+    return struct.pack("<IiiHHIIiiII", 40, lado, 2 * lado, 1, bits, 0, 0, 0, 0, 0, 0) \
+        + bgra + mascara
+
+
+def esperado(capas_rgba) -> list[tuple[int, int, int, int]]:
+    """Los píxeles RGBA que deja `icons._png` de unas capas ya compuestas."""
+    return [(r, g, b, round(a * 255)) for fila in capas_rgba for r, g, b, a in fila]
+
+
+DISPOSITIVO = E("PRDRIVE_1", hijos=(
+    E("Configurar", ({"pide": equipo.PIDE_ABRIR, "id": "u"},), defecto=True,
+      icono=bandeja.I_CONFIGURAR),), emblema=bandeja.Emblema(campo=icons.CAMPOS["verde"]))
+m = bl.Menu()
+m.poner((DISPOSITIVO,))
+d_id = m.hijos[0][0]
+props = m.propiedades(d_id)
+c("un dispositivo es un submenú con su icono como icon-data (un PNG), no icon-name",
+  (props["children-display"].valor, props["icon-data"].firma, "icon-name" in props,
+   props["label"].valor),
+  ("submenu", "ay", False, "PRDRIVE__1"))
+c("  la marca en el color de su campo, a TAMANO_EMBLEMA px",
+  props["icon-data"].valor, icons.png_marca(bl.TAMANO_EMBLEMA, icons.CAMPOS["verde"]))
+c("  pulsar el propio submenú no hace nada: «Configurar» es la primera de dentro",
+  (m.pulsada(d_id), m.pulsada(m.hijos[d_id][0])),
+  ((), ({"pide": equipo.PIDE_ABRIR, "id": "u"},)))
+c("  y «Configurar» lleva el engranaje del tema",
+  m.propiedades(m.hijos[d_id][0])["icon-name"].valor, "preferences-system")
+
+rgba32 = icons._capas_rgba(icons._capas_marca(32), 64.0, 32)
+lado, pix = png_rgba(icons.png_de_ico(icons.ico((16, 32, 48)), 32))
+c("png_de_ico: de un .ico de la marca, la imagen de 32 px (un DIB) como PNG, igual",
+  (lado, pix == esperado(rgba32)), (32, True))
+grande = icons.png_de_ico(icons.ico((16, 128)), 32)
+c("  si la más cercana por arriba es un PNG, va tal cual",
+  (grande.startswith(icons.FIRMA_PNG), struct.unpack(">I", grande[16:20])[0]),
+  (True, 128))
+c("  sin ninguna tan grande, la mayor", png_rgba(icons.png_de_ico(icons.ico((16, 32)), 256))[0],
+  32)
+rojo = bytes([0, 0, 255, 0]) * 4                # 2×2 BGRA sin alfa
+mascara = bytes([0x40, 0, 0, 0, 0x00, 0, 0, 0])  # abajo: transparente el de la derecha
+lado, pix = png_rgba(icons.png_de_ico(ico_de((2, dib(2, rojo, mascara))), 2))
+c("  un DIB de 32 bits sin alfa toma la transparencia de su máscara AND",
+  pix, [(255, 0, 0, 255), (255, 0, 0, 255), (255, 0, 0, 255), (255, 0, 0, 0)])
+buenos = ico_de((16, dib(16, bytes([1, 2, 3, 255]) * 256)))
+basura = os.urandom(200)
+c("  lo que no es un icono, o miente, no da nada y no lanza", [icons.png_de_ico(x, 16) for x in (
+    b"", b"\0" * 5, basura, buenos[:40], buenos[:-10],
+    ico_de((16, dib(16, b"\0" * 1024)), tipo=2),
+    ico_de((16, dib(16, b"\0" * 1024)), cuantas=0),
+    ico_de((16, dib(16, b"\0" * 1024)), cuantas=1000),
+    ico_de((16, dib(16, b"\0" * 768, bits=24))),
+    ico_de((16, icons.FIRMA_PNG + b"\0\0\0\x0dIHDR" + struct.pack(">II", 99, 99) + b"\0" * 9)),
+    buenos + b"\0" * icons.MAX_ICO)], [None] * 11)
+desplazado = bytearray(buenos)
+struct.pack_into("<I", desplazado, 6 + 12, len(buenos) + 5)   # la imagen fuera del fichero
+c("  ni una imagen que apunta fuera del fichero", icons.png_de_ico(bytes(desplazado), 16), None)
+
+carpeta = tmpdir("prdrive-emblemas-")
+propio = carpeta / "icono-propio-0123abcd.ico"
+propio.write_bytes(icons.ico((16, 32)))
+c("png_emblema: un .ico propio que se entiende, su imagen",
+  bl.png_emblema(bandeja.Emblema(ico=str(propio))), icons.png_de_ico(propio.read_bytes(), 32))
+roto = carpeta / "icono-propio-roto.ico"
+roto.write_bytes(b"no es un icono")
+morado = bandeja.Emblema(campo=icons.CAMPOS["morado"])
+c("  uno roto, uno que no está o una carpeta: la marca de su campo",
+  [bl.png_emblema(bandeja.Emblema(campo=morado.campo, ico=str(r))) for r in
+   (roto, carpeta / "no.ico", carpeta)], [icons.png_marca(bl.TAMANO_EMBLEMA, morado.campo)] * 3)
+bl._EMBLEMAS.clear()
+for i in range(bandeja.TOPE_CACHE + 20):
+    bl.png_emblema(bandeja.Emblema(campo=f"#{i:06x}"))
+c("  la caché de emblemas tiene tope: cada icono nuevo no se queda para siempre",
+  (len(bl._EMBLEMAS), isinstance(bl._PIXMAPS, bandeja.CacheAcotada)),
+  (bandeja.TOPE_CACHE, True))
+tope = icons.MAX_ICO
+icons.MAX_ICO = 10
+bl._EMBLEMAS.clear()
+c("  y uno que pasa de MAX_ICO, también", bl.png_emblema(bandeja.Emblema(ico=str(propio))),
+  icons.png_marca(bl.TAMANO_EMBLEMA))
+icons.MAX_ICO = tope
 
 if os.name == "nt":
     # Lo que sigue corre el hilo de la bandeja, que se despierta con un pipe

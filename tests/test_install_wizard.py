@@ -336,7 +336,7 @@ c("y ya se puede seguir", str(vacio.boton_siguiente.cget("state")), "normal")
 # quedaría al lado del contenedor, el tope de una unidad FAT32 y una contraseña
 # más corta de lo que VeraCrypt recomienda. Ni VeraCrypt ni una unidad de
 # verdad: las sondas de `crypto` se sustituyen.
-from install import crypto  # noqa: E402
+from install import crypto, deploy  # noqa: E402
 from ui import tk_crypto  # noqa: E402
 
 # El panel importa su propio `working`: el mismo cambio que arriba.
@@ -361,6 +361,10 @@ try:
     (en_claro / ".prdrive").mkdir()
     (en_claro / ".prdrive" / "PRDRIVE").write_text("id=viejo\n", encoding="utf-8")
     (en_claro / "sync-data").mkdir()
+    # La guía que deja el instalador en la raíz no es un resto (K2, #41), y un
+    # remoto sin clave no deja nada en `.prdrive/keys/`.
+    (en_claro / "README.md").write_bytes(
+        (deploy.deploy_source() / deploy.GUIDE_SOURCE).read_bytes())
     vc = nuevo_asistente(en_claro)
     vc.state.device_root = None
     vc.state.encryption = "veracrypt"
@@ -368,6 +372,9 @@ try:
     textos = " ".join(str(w.cget("text")) for w in widgets(vc.cuerpo, ttk.Label))
     c.contains("la instalación sin cifrar se avisa antes de crear", textos, "SIN CIFRAR")
     c.contains("nombrando lo que queda fuera", textos, "sync-data/")
+    c("pero sin contar la guía del instalador", "README.md" in textos, False)
+    c("y sin decir que hay una clave si no hay ninguna", "clave de tu remoto" in textos,
+      False)
     c.contains("el tope de FAT32 se dice junto al tamaño", textos, "como mucho 4095M")
     campos = widgets(vc.cuerpo, ttk.Entry)
     c("y el tamaño propuesto ya lo respeta",
@@ -794,6 +801,23 @@ c("y con los lanzadores de una completa", (limpio / "runsync.bat").is_file()
   and (limpio / "runsync.sh").is_file(), True)
 c("sin contenedor, tampoco aquí hay vestíbulo", (limpio / vest.MARCA).exists(), False)
 
+
+def lo_dicho(wiz) -> str:
+    """Devuelve los textos de las etiquetas del paso, juntos."""
+    return " ".join(str(w.cget("text")) for w in widgets(wiz.cuerpo, ttk.Label))
+
+
+# Lo que cuenta al terminar es todo lo escrito (L2, #41): los dos lanzadores
+# también, y sin contenedor no hay entrada de fuera de la que hablar.
+dicho = lo_dicho(mas)
+c.contains("dice cuántas piezas de rclone y Python se pusieron", dicho,
+           "de rclone o Python")
+c.contains("cuenta también los dos lanzadores", dicho, "2 lanzadores")
+c("y sin contenedor no habla de una entrada de fuera",
+  "la entrada de fuera" in dicho, False)
+c("nunca «elementos puestos», que contaba solo las piezas", "elementos puestos" in dicho,
+  False)
+
 # Un dispositivo VeraCrypt de antes no tiene vestíbulo, y este es el camino para
 # ponérselo sin reinstalar: el mismo que ya existe para los lanzadores. Se
 # simula quitándoselo al que se acaba de hacer con contenedor.
@@ -809,6 +833,10 @@ boton(viejo_vc.cuerpo, "Añadir plataformas…").invoke()
 boton(viejo_vc.cuerpo, "Aplicar").invoke()
 c("«Añadir plataformas…» le pone el vestíbulo a un dispositivo VeraCrypt de antes",
   all((fisica / n).is_file() for n in vest.TODOS), True)
+dicho = lo_dicho(viejo_vc)
+c.contains("y lo cuenta: los seis ficheros de la entrada", dicho,
+           f"la entrada de fuera del contenedor ({len(vest.TODOS)} ficheros)")
+c.contains("junto a los lanzadores de dentro", dicho, "2 lanzadores")
 c("con su id de siempre", vest.leer_id(fisica), device.control_id(montado))
 
 # Un dispositivo VeraCrypt de antes lleva además, en VeraCrypt\, la copia de una

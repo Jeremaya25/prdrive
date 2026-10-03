@@ -142,6 +142,52 @@ with sandbox():
                "\n".join(revision.informe(cfg)), "Sin incidencias.")
 
 
+# Los `.lst-err` que deja una pasada abortada (H3, #41). No los borra nadie: ni
+# rclone ni nosotros. Lo que se hace es decir qué son, sin llamarlos «residuales»
+# a secas, y no tocarlos.
+with sandbox():
+    cfg = mkcfg(["notas"])
+    pair = cfg.pairs[0]
+    pair.local_abs.mkdir(parents=True, exist_ok=True)
+    listados(pair)
+    prefijo = bisync.expected_prefix(pair)
+    errores = [pair.workdir / f"{prefijo}{suf}-err" for suf in (".path1.lst", ".path2.lst")]
+    for e in errores:
+        e.write_text("listado de la pasada abortada\n", encoding="utf-8")
+    estado = bisync.pair_state(pair)
+    c("con un baseline bueno y `.lst-err` detrás, el baseline vale",
+      (estado.status, estado.prefix), ("ok", prefijo))
+    c.contains("el estado cuenta cuántos son", estado.detail, "+2 .lst-err")
+    c.contains("dice qué son: el baseline que rclone apartó al abortar", estado.detail,
+               "el baseline que rclone apartó al abortar una pasada")
+    c.contains("que ya no lo usa y se puede borrar a mano", estado.detail,
+               "ya no lo usa y se puede borrar a mano")
+    c("sin la palabra que no explicaba nada", "residuales" in estado.detail, False)
+    c("no es una avería: no sale en «Reparación»", uno(revision.revisar(cfg), "listados"),
+      None)
+    c("y lo dice también el informe de `--doctor`",
+      "se puede borrar a mano" in "\n".join(revision.informe(cfg)), True)
+    c("nada se borra: los `.lst-err` siguen donde estaban",
+      all(e.is_file() for e in errores), True)
+
+with sandbox():
+    cfg = mkcfg(["notas"])
+    pair = cfg.pairs[0]
+    pair.workdir.mkdir(parents=True, exist_ok=True)
+    errores = [pair.workdir / f"{bisync.expected_prefix(pair)}{suf}-err"
+               for suf in (".path1.lst", ".path2.lst")]
+    for e in errores:
+        e.write_text("x\n", encoding="utf-8")
+    estado = bisync.pair_state(pair)
+    c("solo `.lst-err`, sin listados buenos: baseline roto", estado.status, "broken")
+    c.contains("y dice por qué están así: rclone aparta el baseline al abortar",
+               estado.detail, "rclone aparta así el baseline")
+    c.contains("para que no empiece otra pasada", estado.detail, "bloquear las siguientes")
+    c("sigue pidiendo --resync, que es lo que lo arregla",
+      any("--resync" in h.titulo for h in revision.revisar(cfg)), True)
+    c("y tampoco aquí se borra nada", all(e.is_file() for e in errores), True)
+
+
 # desde cuándo falla: el diario de pasadas
 #
 # El fallo dice desde cuándo y cuántas de las últimas fueron bien. La frase

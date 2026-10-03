@@ -47,14 +47,14 @@ persona: «cambia local, mode» se entiende y «cambia el prefijo» no.
 """
 
 FORM_KEYS = ("name", "local", "remote_path", "remote", "mode", "include", "exclude",
-             "flags", "extra_flags", "versions")
+             "flags", "extra_flags", "versions", "watch")
 """Lo que edita el formulario.
 
 Lo que no aparece aquí (`use_filters_file`…) se conserva tal cual: la UI no lo
 toca.
 """
 
-OPTIONAL_KEYS = ("include", "exclude", "flags", "extra_flags", "versions")
+OPTIONAL_KEYS = ("include", "exclude", "flags", "extra_flags", "versions", "watch")
 """Claves opcionales: si el formulario las devuelve vacías, desaparecen de la pareja.
 
 Es lo que hace que vaciar el cuadro de flags devuelva la pareja a lo que digan
@@ -99,6 +99,20 @@ class PairRow(NamedTuple):
 def _mode_of(pair: Mapping[str, Any]) -> str:
     """Devuelve el modo de una pareja en bruto, o el de fábrica."""
     return pair.get("mode", model.DEFAULT_MODE)
+
+
+def admite_watch(mode: str) -> bool:
+    """Dice si `watch` tiene sentido en ese modo: el local es origen.
+
+    Es la regla de `model._leer_watch()`, que rechaza la clave al parsear en los
+    demás modos; el formulario la consulta para apagar la casilla, y
+    `clean_form()` para no dejar pasar una `watch` que ya no vale.
+
+    Args:
+        mode: El nombre del modo; uno que no existe no lo admite.
+    """
+    modo = model.MODES.get(mode)
+    return modo is not None and modo.origen_local
 
 
 def mirror_warning(mode: str) -> str | None:
@@ -283,7 +297,11 @@ def _analizar_prefijo(plan: EditPlan, antes_raw: Mapping[str, Any],
 
 
 def clean_form(edited: Mapping[str, Any]) -> dict:
-    """Devuelve los campos del formulario, sin los que se han dejado vacíos."""
+    """Devuelve los campos del formulario, sin los que se han dejado vacíos.
+
+    Una `watch` marcada en un modo donde el local no es origen
+    (`admite_watch()`) tampoco sale: el cambio de modo la apaga.
+    """
     salida: dict[str, Any] = {}
     for key in FORM_KEYS:
         if key not in edited:
@@ -304,6 +322,11 @@ def clean_form(edited: Mapping[str, Any]) -> dict:
                 salida[key] = items
         elif str(value).strip():
             salida[key] = str(value).strip()
+    # Cambiar el modo a uno donde el local no es origen deja sin sentido una
+    # `watch` marcada: se quita en vez de dejar que el parseo la rechace y el
+    # formulario no pueda arreglarlo.
+    if "watch" in salida and not admite_watch(_mode_of(salida)):
+        del salida["watch"]
     return salida
 
 
@@ -345,6 +368,7 @@ def plan_save(raw: Mapping[str, Any], edited: Mapping[str, Any],
         resultante = campos
         nuevo_raw["pair"].append(resultante)
         plan.consequences.append(f"Se añade la pareja '{campos['name']}'.")
+        _analizar_watch(plan, {}, resultante)
         _analizar_flags(plan, raw.get("defaults") or {}, {"mode": _mode_of(campos)},
                         resultante)
         if _mode_of(campos) == "bisync":
@@ -403,6 +427,7 @@ def _analizar_pareja(plan: EditPlan, antes_raw: Mapping[str, Any], original_name
                 "saber qué ficheros excluidos existían antes.")
 
     _analizar_versiones(plan, anterior, resultante)
+    _analizar_watch(plan, anterior, resultante)
     _analizar_flags(plan, antes_raw.get("defaults") or {}, anterior, resultante)
 
     if not plan.consequences:
@@ -440,6 +465,32 @@ def _analizar_versiones(plan: EditPlan, anterior: Mapping[str, Any],
             "regla deja de estar excluido: en la siguiente pasada se sincronizará "
             "al otro lado como un fichero más. Vacíalo o exclúyelo a mano si no lo "
             "quieres allí.")
+
+
+def _analizar_watch(plan: EditPlan, anterior: Mapping[str, Any],
+                    resultante: Mapping[str, Any]) -> None:
+    """Apunta las consecuencias de encender o apagar la vigilancia de una pareja.
+
+    No toca el baseline ni los filtros: solo cambia cuándo la sincroniza el
+    agente residente. Que el cambio de modo la apague se dice igual, porque la
+    casilla se desmarca sola y la persona tiene que enterarse.
+    """
+    antes = bool(anterior.get("watch"))
+    ahora = bool(resultante.get("watch"))
+    if antes == ahora:
+        return
+
+    if ahora:
+        plan.consequences.append(
+            "El agente residente la sincronizará poco después de que cambien sus "
+            "ficheros locales, sin esperar al intervalo. Solo lo hace el agente: "
+            "el servicio de runsync no mira los cambios.")
+    else:
+        plan.consequences.append(
+            "Se deja de vigilar: la pareja se sincroniza solo por el intervalo."
+            + ("" if admite_watch(_mode_of(resultante)) else
+               f" Con el modo '{_mode_of(resultante)}' el local no es origen y "
+               "'watch' no vale."))
 
 
 def _analizar_flags(plan: EditPlan, defaults: Mapping[str, Any],

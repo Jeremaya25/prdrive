@@ -150,7 +150,11 @@ runtime a medias no cuenta como instalado. rclone sigue en `.prdrive/bin/<arch>/
 Las versiones de los dos están **fijadas** en `common/pins.py` y se mueven con un
 commit, no porque alguien publicara algo anoche: se instala lo que se ha probado.
 Python va en 3.13 y no en 3.14 porque los 3.14 de python-build-standalone ya traen
-Tk 9, y la interfaz está hecha y medida con Tk 8.6.
+Tk 9 en todas las plataformas, y en Windows la interfaz está hecha con Tk 8.6. El
+3.13 solo es Tk 8.6 en Windows: el de Linux ya trae Tk 9.0.4 (comprobado el
+02/10/2026), así que desde un runtime de Linux la ventana corre con Tk 9. Las
+medidas de las pantallas (que quepan, sin recortes) se han pasado con las dos
+versiones de Tk (03/10/2026); el aspecto no se ha revisado a ojo con Tk 9.
 
 **Desmarcar una plataforma que el dispositivo ya lleva pregunta si se borra.** Si
 dices que no, sus binarios se quedan donde están y simplemente no se reinstalan.
@@ -438,12 +442,14 @@ el otro cambia **solo este**. Cuatro cosas que se hacen desde ahí:
   cuando no hay conexión, igual que el bloque del catálogo. La ruta local usa el
   diálogo de carpetas del sistema y se guarda relativa a la raíz del dispositivo.
 - **Dispositivos…** enseña [la flota](#el-modelo): todos los que comparten este
-  catálogo, cuándo se les vio por última vez y cómo acabó su última pasada. Los
-  que llevan más de una semana sin aparecer salen apagados. Debajo, la **ficha**
-  del elegido: su versión, para qué plataformas sirve, desde cuándo falla si
-  falla, y los últimos equipos donde ha estado, con **«· este equipo»** en el
-  ordenador desde el que miras. Desde ahí se le puede poner nombre a **este**
-  dispositivo («el pendrive azul»); ningún dispositivo escribe la nota de otro.
+  catálogo, cuándo se les vio por última vez, **desde qué equipo** (el último
+  ordenador donde se enchufaron) y cómo acabó su última pasada. Los que llevan
+  más de una semana sin aparecer salen apagados. Debajo, la **ficha** del
+  elegido: su versión, para qué plataformas sirve, desde cuándo falla si falla, y
+  los últimos equipos donde ha estado, con **«· este equipo»** en el ordenador
+  desde el que miras. Es solo de lectura para los nombres: el de **este**
+  dispositivo se cambia en [«Nombre e icono de la unidad»](#nombre-e-icono-de-la-unidad)
+  y ningún dispositivo escribe la nota de otro.
 - **Editar flags…** enseña las cuatro capas resueltas y avisa si un cambio sube
   el `--max-delete` efectivo.
 
@@ -773,7 +779,7 @@ Tres cosas que conviene saber:
 `runsync.py` puede quedarse sincronizando cada N minutos. Es **un solo servicio con
 dos maneras de arrancarlo**: a mano, con «Iniciar servicio», o al enchufar el
 dispositivo en un equipo que tenga [el vigilante](#el-vigilante). Las dos usan las
-mismas parejas y el mismo intervalo, los que se ven en la ventana. Su coordinación
+mismas parejas y el mismo intervalo, los que se eligen en la ventana. Su coordinación
 vive en `state/`, dentro del dispositivo, para que viaje con él:
 
 | fichero | qué es |
@@ -807,12 +813,14 @@ de 100, para dejarla en 50.
 **Qué parejas y cada cuánto.** Las casillas de la ventana son las mismas para
 «Sincronizar ahora» y para «Iniciar servicio», y salen marcadas con las del
 servicio; «Marcar todas» y «Desmarcar todas» están en el rótulo de la lista. El
-intervalo, «El servicio repite cada N minutos», va junto al pie porque solo lo usa
-el servicio. **Solo «Iniciar servicio» guarda** lo marcado y el intervalo: una
-pasada manual con dos parejas marcadas no decide qué sincroniza el servicio la
-próxima vez que enchufes el dispositivo. Lo guardado manda sobre `[daemon]` del
-TOML, que manda sobre «todas las parejas / 30 minutos», y vale igual para la
-ventana, para `--auto` y para el vigilante. `--auto` lo lee pero no lo pisa.
+intervalo, «El servicio repite cada N minutos», está en **«Ajustes…» →
+«Configuración…»**: solo lo usa el servicio y se toca pocas veces. **Las parejas
+solo las guarda «Iniciar servicio»**, y «Configuración» guarda solo el
+intervalo, sin fijar las parejas: una pasada manual con dos parejas marcadas no
+decide qué sincroniza el servicio la próxima vez que enchufes el dispositivo. Lo
+guardado manda sobre `[daemon]` del TOML, que manda sobre «todas las parejas /
+30 minutos», y vale igual para la ventana, para `--auto` y para el vigilante.
+`--auto` lo lee pero no lo pisa.
 
 El servicio se para cuando el dispositivo desaparece o cuando se vuelve a lanzar
 `runsync.py`. En Windows se lanza con `pythonw.exe` y sin consola, y hace `chdir`
@@ -927,18 +935,21 @@ agente»**. El diseño completo está en
   suyo y vuelve a preguntar, diciendo que su código ha cambiado.
 - **Hace de servicio de la unidad con sus mismos ficheros** (`daemon.lock.json`,
   `daemon.stop`, `ui.lock.json`). **El único cambio que se nota: abrir la ventana de la unidad ya no apaga el
-  servicio para siempre, lo pausa mientras está abierta.** Si desde la ventana
-  pulsas «Iniciar servicio» y el agente la sincroniza en segundo plano, no se
-  arranca otro servicio: se guardan las parejas y el intervalo, y el agente
-  vuelve en cuanto cierras la ventana, con una pasada. En cualquier otro caso
-  (otro modo, o el agente parado) arranca el servicio de siempre y el agente se
-  aparta: un servicio por unidad, el que tenga el lock. Para pararlo todo,
-  `python agente.py pausa` (y `sigue`).
+  servicio para siempre, lo pausa mientras está abierta.** Si el agente la
+  sincroniza en segundo plano, la ventana no ofrece «Iniciar servicio» sino
+  **«Pausar»**: el agente no vuelve al cerrarla, ni aunque se reinicie, hasta
+  que pulses **«Reanudar»** en esa misma ventana (vuelve en cuanto la cierras,
+  con una pasada). Es la pausa de esa unidad sola, y el icono de la bandeja la
+  enseña con su nombre. En cualquier otro caso (otro modo, o el agente parado)
+  sigue estando «Iniciar servicio», que arranca el servicio de siempre, y el
+  agente se aparta: un servicio por unidad, el que tenga el lock. Para pararlo
+  todo, «Pausar» en la bandeja o `python agente.py pausa` (y `sigue`; con esa
+  pausa puesta, la ventana ofrece «Reanudar todo»).
 - **La ventana de la unidad dice qué hace el agente con ella**, si está en pausa
   y si no está en marcha, y su botón **«Cambiar…»** (o **«Atender…»**, si no la
   tiene en su lista) le pide otro modo. La ventana no escribe la configuración
   del equipo: se lo pide al agente por su buzón (`agente.pide`), y lo que es de
-  una unidad («reanudar», «bloquear») por el de la unidad,
+  una unidad («pausar», «reanudar», «bloquear») por el de la unidad,
   `.prdrive/state/servicio.pide`.
 - **Se actualiza solo, cuando se lo pides.** Mira de vez en cuando si hay una
   versión nueva y avisa una vez; **«Actualizar a la vX»** en la bandeja (o
@@ -978,6 +989,15 @@ agente»**. El diseño completo está en
   Windows con el aviso de dispositivo que recibe la ventana oculta de la bandeja. Las
   unidades VeraCrypt de su lista se abren como con penwatch: VeraCrypt pide la
   contraseña en su ventana, una vez por conexión.
+- **Sincroniza al cambiar los ficheros, si una pareja lo pide.** Con `watch = true`
+  (solo donde el local es origen: bisync, up y up-mirror) el agente mira cada
+  10 s la carpeta de la pareja —sin abrir ficheros ni eventos del sistema— y,
+  20 s después de que dejen de cambiar, adelanta su pasada al intervalo; nunca
+  dos pasadas de la misma pareja con menos de 2 minutos entre ellas. Es una
+  pasada corriente: en pausa, con batería o en una red de uso medido espera como
+  las demás. No ve los cambios del remoto, ni lo que se cambie mientras la pasada
+  corre, y una carpeta de más de 20 000 entradas deja de vigilarse (lo dice el
+  diario) y sigue por su intervalo. Detalles en `sync_config.example.toml`.
 - **Se registra por usuario, sin administrador**: en Windows con una tarea
   programada; en Linux con un autostart del escritorio (y no con systemd: los
   avisos y la pregunta por una unidad nueva necesitan la sesión gráfica).
@@ -1167,6 +1187,15 @@ dispositivo.
 > aparato que vayas a emparejar y cierra la ventana al terminar. No se guarda en
 > ningún fichero ni pasa por el portapapeles.
 
+En Windows la ventana se excluye de las capturas de pantalla y de compartir
+pantalla (Recortes, Teams, Meet, OBS…) para que un descuido no la deje en un
+chat o en una videollamada, y lo dice con una línea bajo el aviso. En el monitor
+se ve igual y el móvil la lee igual. Con un Windows anterior a la 2004 no se
+puede excluir del todo y sale **en negro** en la captura; la línea lo dice así.
+No cubre una foto hecha con otro móvil, la Lupa ni los programas con privilegios,
+y en el Escritorio remoto quien se conecta la ve en negro. En Linux no hay forma
+de hacerlo y la ventana no dice nada al respecto.
+
 Funciona con claves ed25519, que es lo que usa prdrive por defecto. Una clave RSA
 grande no cabe en un código QR y la ventana lo dice.
 
@@ -1177,6 +1206,12 @@ de Windows la unidad al conectarla: un nombre como «Pendrive de Pere» en vez d
 «Disco extraíble», y de icono la marca de prdrive en uno de cinco colores, un
 `.ico` tuyo, el de VeraCrypt si la unidad lo lleva, o ninguno. Los colores están
 para distinguir un dispositivo de otro a simple vista.
+
+**Es también el nombre del dispositivo** en [«Dispositivos…»](#la-ventana-de-parejas):
+es el único sitio donde se le pone nombre, y al guardar cambia en los dos. El
+nombre nuevo llega a esa lista con la siguiente sincronización, y no hace falta
+red para guardarlo. Si lo dejas vacío, la unidad se queda sin nombre propio pero
+el dispositivo conserva el que tenía.
 
 Se guarda en un `autorun.inf` en la raíz de la unidad que se enchufa. Ese
 fichero **no ejecuta nada**: Windows dejó de arrancar programas desde una unidad
@@ -1275,6 +1310,7 @@ prdrive/
 │   ├── pairing.py     la conexión del dispositivo, empaquetada para un móvil
 │   ├── vestibulo.py   lo que un dispositivo VeraCrypt deja fuera del contenedor
 │   ├── planificador.py qué le toca al agente y cuándo: puro, sin reloj ni disco
+│   ├── huella.py      la foto barata de la carpeta de una pareja con `watch = true`
 │   ├── equipo.py      dónde vive el agente en el equipo, su configuración y su buzón
 │   ├── moderacion.py  batería, red de uso medido, fallos de red
 │   ├── dbus.py        un cliente de D-Bus sin dependencias

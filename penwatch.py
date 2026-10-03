@@ -175,6 +175,13 @@ STABLE_CHECKS = 2
 """Sondeos seguidos legibles antes de dar el dispositivo por montado."""
 STOP_WAIT_SECONDS = 8.0
 """Segundos que `stop` espera a que pare el vigilante."""
+START_WAIT_SECONDS = 10.0
+"""Segundos que `start_now` espera a que el vigilante pedido diga que vive.
+
+`schtasks /Run` y `systemctl start` vuelven al pedir el arranque, no cuando el
+proceso ya ha apuntado su pid en `state.json`; hasta entonces `status` lo da por
+parado.
+"""
 LOG_MAX_BYTES = 256 * 1024
 """Tamaño del diario a partir del cual `log` lo recorta."""
 LOG_KEEP_LINES = 400
@@ -1400,8 +1407,49 @@ def unregister() -> list[str]:
     return msgs
 
 
+def watcher_alive() -> bool:
+    """Indica si el vigilante ha apuntado su pid en `state.json` y sigue vivo."""
+    try:
+        pid = int(read_json(STATE_FILE).get("watcher_pid") or -1)
+    except (TypeError, ValueError):
+        return False
+    return pid_alive(pid)
+
+
+def wait_started(seconds: float = START_WAIT_SECONDS) -> bool:
+    """Espera a que el vigilante recién pedido apunte su pid.
+
+    Args:
+        seconds: Lo máximo que espera.
+
+    Returns:
+        `True` en cuanto está vivo; `False` si pasa el tiempo sin que aparezca.
+    """
+    deadline = time.monotonic() + seconds
+    while not watcher_alive():
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.2)
+    return True
+
+
+def started_message() -> str:
+    """Devuelve lo que se dice tras pedir el arranque.
+
+    «Arrancado» solo cuando el vigilante ya lo ha confirmado; si aún no, se dice
+    que está pedido, porque `status` lo vería parado.
+    """
+    if wait_started():
+        return "Vigilante arrancado."
+    return ("Vigilante pedido, pero aún no ha dicho que está vivo: mira `status` "
+            "dentro de unos segundos.")
+
+
 def start_now(cfg: dict) -> str:
     """Arranca el vigilante ya, sin esperar al próximo inicio de sesión.
+
+    Tras pedirlo espera a que el vigilante apunte su pid (`START_WAIT_SECONDS`),
+    para que un `status` justo después no lo vea parado.
 
     Returns:
         El mensaje de cómo ha ido.
@@ -1409,13 +1457,13 @@ def start_now(cfg: dict) -> str:
     if IS_WIN:
         res = run_quiet(["schtasks", "/Run", "/TN", TASK_NAME])
         if res.returncode == 0:
-            return "Vigilante arrancado."
+            return started_message()
         return (f"No he podido arrancarlo ahora ({res.stderr.strip()}); "
                 f"arrancará al iniciar sesión.")
     if shutil.which("systemctl") and UNIT_FILE.exists():
         res = run_quiet(["systemctl", "--user", "start", UNIT_NAME])
         if res.returncode == 0:
-            return "Vigilante arrancado."
+            return started_message()
         return (f"No he podido arrancarlo ahora ({res.stderr.strip()}); "
                 f"arrancará al iniciar sesión.")
     try:
@@ -1423,7 +1471,7 @@ def start_now(cfg: dict) -> str:
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL, cwd=str(HOST_DIR),
                          start_new_session=True, close_fds=True)
-        return "Vigilante arrancado."
+        return started_message()
     except OSError as e:
         return f"No he podido arrancarlo ahora ({e}); arrancará al iniciar sesión."
 
@@ -1548,8 +1596,43 @@ def cmd_install(args: argparse.Namespace) -> int:
     return 0
 
 
+def uninstall_note(cfg: dict) -> str:
+    """Devuelve lo que queda en el dispositivo tras desinstalar, dicho como es.
+
+    En uno cifrado el fichero de control está DENTRO del contenedor y desde
+    fuera lo reconoce la marca del vestíbulo, que sigue junto al contenedor, los
+    scripts de abrir y expulsar y, si se llevó, la carpeta del VeraCrypt de
+    viaje; en uno sin cifrar, el fichero de control. Se mira el dispositivo (si
+    está puesto) y, sin poder saberlo, se dicen las dos cosas.
+
+    Args:
+        cfg: La configuración del vigilante, leída antes de borrarla.
+
+    Returns:
+        La frase final de `uninstall`.
+    """
+    cifrado = find_vestibule(cfg)
+    if cifrado is not None:
+        return (f"Desinstalado. El dispositivo no se ha tocado: está cifrado, así que "
+                f"{CONTROL_FILE} está dentro del contenedor y desde fuera lo "
+                f"reconoce su marca {VESTIBULE_MARKER} (en {cifrado}), junto al "
+                f"contenedor y a los scripts de abrir y expulsar; puedes borrar la "
+                f"marca si no vas a usar esto en ningún equipo.")
+    if find_pen(cfg) is not None:
+        return (f"Desinstalado. El dispositivo no se ha tocado (el fichero "
+                f"{CONTROL_FILE} sigue ahí; puedes borrarlo si no vas a usar esto "
+                f"en ningún equipo).")
+    return (f"Desinstalado. El dispositivo no se ha tocado: sigue en él el fichero "
+            f"{CONTROL_FILE} (si es cifrado, dentro del contenedor, y fuera su "
+            f"marca {VESTIBULE_MARKER}, junto al contenedor y a los scripts de "
+            f"abrir y expulsar); puedes borrarlos si no vas a usar esto en ningún "
+            f"equipo.")
+
+
 def cmd_uninstall(_args: argparse.Namespace) -> int:
     """Quita el vigilante de este equipo; el dispositivo no se toca."""
+    cfg = read_json(CONFIG_FILE)
+    nota = uninstall_note(cfg)
     for m in unregister():
         print(f"  {m}")
     msg = stop_running_watcher()
@@ -1561,8 +1644,7 @@ def cmd_uninstall(_args: argparse.Namespace) -> int:
             print(f"  Eliminado {HOST_DIR}")
         except OSError as e:
             print(f"  Aviso: no he podido borrar {HOST_DIR}: {e}")
-    print(f"Desinstalado. El dispositivo no se ha tocado (el fichero {CONTROL_FILE} sigue "
-          f"ahí; puedes borrarlo si no vas a usar esto en ningún equipo).")
+    print(nota)
     return 0
 
 

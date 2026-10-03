@@ -27,11 +27,24 @@ dependencias, y **sin probar en un Windows real** (ver
   en vez de mandar `WM_COMMAND`. Antes, `SetForegroundWindow` a la ventana
   propia y después un `WM_NULL`: sin eso el menú no se cierra al pinchar fuera
   (es la receta de la documentación de `TrackPopupMenu`). Se abre con el botón
-  derecho y con el izquierdo; la entrada `defecto` va en negrita. Las entradas
-  con `icono` llevan su glifo de `ui/icons.py` (`icons.pixeles_menu()`) como
-  `hbmpItem`: un DIB de 32 bits con alfa premultiplicado, del color del texto
-  del menú (`GetSysColor`), al tamaño del icono pequeño. Se crean al abrir el
-  menú y se borran al cerrarlo.
+  derecho y con el izquierdo. Las entradas con `icono` llevan su glifo de
+  `ui/icons.py` (`icons.pixeles_menu()`) como `hbmpItem`: un DIB de 32 bits con
+  alfa premultiplicado, del color del texto del menú (`GetSysColor`), al tamaño
+  del icono pequeño. Se crean al abrir el menú y se borran al cerrarlo.
+- **El desplegable de cada dispositivo** lleva su icono a color
+  (`bandeja.Emblema`, `pixeles_emblema()`): la marca pintada en su color o su
+  `.ico` propio, que carga Windows (`LoadImageW` con `LR_LOADFROMFILE`, lo
+  mismo que hace el Explorador con el `icon=` de su `autorun.inf`) y se pasa a
+  un DIB con `DrawIconEx`. Un icono sin alfa sale transparente donde lo dice su
+  máscara (`alfa_desde_mascara()`). Lo que no se pueda leer es la marca: el
+  menú no falla por un icono.
+- **El doble clic en un desplegable es su «Configurar»**: la entrada `defecto`
+  de un submenú (`SetMenuDefaultItem`, en negrita) es la que Windows elige
+  cuando se abre ese submenú con doble clic, y cierra el menú como si se
+  hubiera elegido («Default Menu Items», en «About Menus» de la documentación
+  de Win32), así que `TrackPopupMenu` devuelve su id. Un clic simple abre el
+  submenú, como en todo Windows: hacer que ejecutara algo obligaría a
+  interceptar el ratón dentro del menú y rompería la forma normal de abrirlo.
 - **Los avisos** cuelgan del propio icono (`NIM_MODIFY` + `NIF_INFO`), que en
   Windows 10 y 11 salen como notificación del sistema: `common/avisos.GLOBO`
   apunta a `globo()` mientras la bandeja vive.
@@ -46,6 +59,8 @@ ponen una de mentira (`tests/test_bandeja_windows.py`).
 
 from __future__ import annotations
 
+import os
+import stat
 import threading
 from pathlib import Path
 from typing import Any, Callable
@@ -83,6 +98,9 @@ ID_ICONO = 1
 MF_STRING, MF_GRAYED, MF_CHECKED, MF_POPUP, MF_SEPARATOR = 0x0, 0x1, 0x8, 0x10, 0x800
 MIIM_BITMAP = 0x80
 COLOR_MENUTEXT = 7
+SM_CXSMICON = 49
+IMAGE_ICON, LR_LOADFROMFILE = 1, 0x10
+DI_MASK, DI_IMAGE, DI_NORMAL = 0x1, 0x2, 0x3
 TPM_RIGHTBUTTON, TPM_NONOTIFY, TPM_RETURNCMD = 0x2, 0x80, 0x100
 PRIMER_ID = 100
 """El primer id de las entradas del menú: los que devuelve `TrackPopupMenu`."""
@@ -122,6 +140,92 @@ def numerar(menu: tuple[bandeja.Entrada, ...], primero: int = PRIMER_ID
                 ids[primero + len(ids)] = e
     recorrer(menu)
     return ids
+
+
+def alfa_desde_mascara(color: bytes, mascara: bytes) -> bytes:
+    """Devuelve el dibujo de un icono sin alfa con la transparencia de su máscara.
+
+    Es lo que hace falta con un `.ico` de 24 bits o menos: `DrawIconEx` con
+    `DI_NORMAL` lo pinta con la máscara AND (operaciones de bits que no tocan
+    el alfa), así que en un DIB de 32 bits vacío queda todo a alfa 0, que en un
+    menú es invisible. Con `DI_MASK` sobre otro DIB vacío la máscara sale negra
+    donde el icono es opaco y blanca donde es transparente (el color de texto y
+    el de fondo por defecto del DC).
+
+    Args:
+        color: El dibujo con `DI_NORMAL`, BGRA.
+        mascara: La máscara con `DI_MASK`, BGRA, del mismo tamaño.
+
+    Returns:
+        BGRA con alfa 255 donde la máscara es negra y todo a cero donde no.
+    """
+    salida = bytearray(len(color))
+    for i in range(0, min(len(color), len(mascara)) - 3, 4):
+        if not any(mascara[i:i + 3]):
+            salida[i:i + 3] = color[i:i + 3]
+            salida[i + 3] = 255
+    return bytes(salida)
+
+
+def pixeles_emblema(emblema: bandeja.Emblema, lado: int,
+                    de_ico: Callable[[str, int], bytes | None]) -> bytes:
+    """Devuelve el icono de un dispositivo como imagen de su entrada de menú.
+
+    Es su `.ico` propio si es un fichero que cabe en `icons.MAX_ICO` y `de_ico`
+    lo pinta; si no, o si algo falla, la marca en el color de `emblema.campo`.
+    Nunca lanza: el menú no se queda sin abrir por un icono.
+
+    Args:
+        emblema: Lo que decide `ui/bandeja.py`.
+        lado: El tamaño del icono pequeño del sistema, en píxeles.
+        de_ico: Pinta un `.ico` a `lado` × `lado` (`Api._pixeles_ico()`):
+            BGRA premultiplicado de arriba abajo, o `None`.
+
+    Returns:
+        `lado` × `lado` × 4 bytes, BGRA premultiplicado de arriba abajo.
+    """
+    if emblema.ico:
+        try:
+            info = os.stat(emblema.ico)
+            if stat.S_ISREG(info.st_mode) and info.st_size <= icons.MAX_ICO:
+                datos = de_ico(emblema.ico, lado)
+                if datos and len(datos) == lado * lado * 4:
+                    return datos
+        except Exception:                               # noqa: BLE001
+            pass
+    try:
+        return icons.pixeles_marca(lado, emblema.campo)
+    except Exception:                                   # noqa: BLE001
+        return icons.pixeles_marca(lado)
+
+
+def estructuras(ct: Any, wt: Any) -> tuple[Any, Any]:
+    """Devuelve las estructuras `MENUITEMINFOW` y `BITMAPINFOHEADER`.
+
+    Están fuera de `Api` para que los tests monten una con bibliotecas de
+    mentira.
+    """
+
+    class MENUITEMINFOW(ct.Structure):
+        """Estructura `MENUITEMINFOW` de winuser.h."""
+        _fields_ = [("cbSize", wt.UINT), ("fMask", wt.UINT),
+                    ("fType", wt.UINT), ("fState", wt.UINT),
+                    ("wID", wt.UINT), ("hSubMenu", wt.HMENU),
+                    ("hbmpChecked", wt.HBITMAP),
+                    ("hbmpUnchecked", wt.HBITMAP),
+                    ("dwItemData", ct.c_size_t), ("dwTypeData", wt.LPWSTR),
+                    ("cch", wt.UINT), ("hbmpItem", wt.HBITMAP)]
+
+    class BITMAPINFOHEADER(ct.Structure):
+        """Estructura `BITMAPINFOHEADER` de wingdi.h."""
+        _fields_ = [("biSize", wt.DWORD), ("biWidth", wt.LONG),
+                    ("biHeight", wt.LONG), ("biPlanes", wt.WORD),
+                    ("biBitCount", wt.WORD), ("biCompression", wt.DWORD),
+                    ("biSizeImage", wt.DWORD), ("biXPelsPerMeter", wt.LONG),
+                    ("biYPelsPerMeter", wt.LONG), ("biClrUsed", wt.DWORD),
+                    ("biClrImportant", wt.DWORD)]
+
+    return MENUITEMINFOW, BITMAPINFOHEADER
 
 
 class Bandeja:
@@ -372,26 +476,11 @@ class Api:
         u.GetSysColor.restype = wintypes.DWORD
         u.GetSysColor.argtypes = [ctypes.c_int]
 
-        class MENUITEMINFOW(ctypes.Structure):
-            """Estructura `MENUITEMINFOW` de winuser.h."""
-            _fields_ = [("cbSize", wintypes.UINT), ("fMask", wintypes.UINT),
-                        ("fType", wintypes.UINT), ("fState", wintypes.UINT),
-                        ("wID", wintypes.UINT), ("hSubMenu", wintypes.HMENU),
-                        ("hbmpChecked", wintypes.HBITMAP),
-                        ("hbmpUnchecked", wintypes.HBITMAP),
-                        ("dwItemData", ctypes.c_size_t), ("dwTypeData", wintypes.LPWSTR),
-                        ("cch", wintypes.UINT), ("hbmpItem", wintypes.HBITMAP)]
-
-        class BITMAPINFOHEADER(ctypes.Structure):
-            """Estructura `BITMAPINFOHEADER` de wingdi.h."""
-            _fields_ = [("biSize", wintypes.DWORD), ("biWidth", wintypes.LONG),
-                        ("biHeight", wintypes.LONG), ("biPlanes", wintypes.WORD),
-                        ("biBitCount", wintypes.WORD), ("biCompression", wintypes.DWORD),
-                        ("biSizeImage", wintypes.DWORD), ("biXPelsPerMeter", wintypes.LONG),
-                        ("biYPelsPerMeter", wintypes.LONG), ("biClrUsed", wintypes.DWORD),
-                        ("biClrImportant", wintypes.DWORD)]
-
+        MENUITEMINFOW, BITMAPINFOHEADER = estructuras(ctypes, wintypes)
         self.MENUITEMINFOW, self.BITMAPINFOHEADER = MENUITEMINFOW, BITMAPINFOHEADER
+        u.DrawIconEx.argtypes = [wintypes.HDC, ctypes.c_int, ctypes.c_int, wintypes.HICON,
+                                 ctypes.c_int, ctypes.c_int, wintypes.UINT,
+                                 wintypes.HBRUSH, wintypes.UINT]
         u.SetMenuItemInfoW.argtypes = [wintypes.HMENU, wintypes.UINT, wintypes.BOOL,
                                        ctypes.POINTER(MENUITEMINFOW)]
         self.gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
@@ -402,7 +491,12 @@ class Api:
                                                 ctypes.POINTER(ctypes.c_void_p),
                                                 wintypes.HANDLE, wintypes.DWORD]
         self.gdi32.DeleteObject.argtypes = [wintypes.HGDIOBJ]
-        self._pixeles: dict[tuple, bytes] = {}      # glifos ya pintados, por tamaño y color
+        self.gdi32.CreateCompatibleDC.restype = wintypes.HDC
+        self.gdi32.CreateCompatibleDC.argtypes = [wintypes.HDC]
+        self.gdi32.SelectObject.restype = wintypes.HGDIOBJ
+        self.gdi32.SelectObject.argtypes = [wintypes.HDC, wintypes.HGDIOBJ]
+        self.gdi32.DeleteDC.argtypes = [wintypes.HDC]
+        self._pixeles: dict[tuple, bytes] = bandeja.CacheAcotada()   # iconos ya pintados
         u.SetForegroundWindow.argtypes = [wintypes.HWND]
         u.GetCursorPos.argtypes = [ctypes.POINTER(wintypes.POINT)]
         u.GetMessageW.argtypes = [ctypes.POINTER(wintypes.MSG), wintypes.HWND,
@@ -481,7 +575,6 @@ class Api:
 
         Devuelve `None` si no se puede.
         """
-        SM_CXSMICON, IMAGE_ICON, LR_LOADFROMFILE = 49, 1, 0x10
         lado = self.user32.GetSystemMetrics(SM_CXSMICON) or 16
         return self.user32.LoadImageW(None, str(ruta), IMAGE_ICON, lado, lado,
                                       LR_LOADFROMFILE) or None
@@ -508,30 +601,121 @@ class Api:
         datos.dwInfoFlags = info_flags
         return bool(self.shell32.Shell_NotifyIconW(accion, self.ct.byref(datos)))
 
+    def _seccion(self, lado: int, hdc=None) -> tuple[Any, Any]:
+        """Crea un DIB de 32 bits de arriba abajo, a ceros.
+
+        Returns:
+            `(mapa de bits, dirección de sus píxeles)`, o `(None, None)`.
+        """
+        ct = self.ct
+        cabecera = self.BITMAPINFOHEADER(biSize=ct.sizeof(self.BITMAPINFOHEADER),
+                                         biWidth=lado, biHeight=-lado, biPlanes=1,
+                                         biBitCount=32, biCompression=0)
+        bits = ct.c_void_p()
+        h = self.gdi32.CreateDIBSection(hdc, ct.byref(cabecera), 0, ct.byref(bits),
+                                        None, 0)
+        if not h or not bits.value:
+            if h:
+                self.gdi32.DeleteObject(h)
+            return None, None
+        return h, bits.value
+
+    def _dib(self, datos: bytes, lado: int):
+        """Devuelve un mapa de bits de menú con esos píxeles, o `None` si no se puede."""
+        try:
+            h, bits = self._seccion(lado)
+            if h is None:
+                return None
+            self.ct.memmove(bits, datos, len(datos))
+            return h
+        except Exception:                               # noqa: BLE001
+            return None
+
     def _bitmap(self, nombre: str, lado: int, color: str):
         """Devuelve el glifo `nombre` como mapa de bits de menú.
 
         Es `None` si no se puede: una entrada sin icono sigue siendo una
         entrada.
         """
-        ct = self.ct
         try:
             clave = (nombre, lado, color)
             if clave not in self._pixeles:
                 self._pixeles[clave] = icons.pixeles_menu(nombre, lado, color)
-            datos = self._pixeles[clave]
-            cabecera = self.BITMAPINFOHEADER(biSize=ct.sizeof(self.BITMAPINFOHEADER),
-                                             biWidth=lado, biHeight=-lado, biPlanes=1,
-                                             biBitCount=32, biCompression=0)
-            bits = ct.c_void_p()
-            h = self.gdi32.CreateDIBSection(None, ct.byref(cabecera), 0, ct.byref(bits),
-                                            None, 0)
-            if not h or not bits.value:
-                return None
-            ct.memmove(bits.value, datos, len(datos))
-            return h
+            return self._dib(self._pixeles[clave], lado)
         except Exception:                               # noqa: BLE001
             return None
+
+    def _bitmap_emblema(self, emblema: bandeja.Emblema, lado: int):
+        """Devuelve el icono de un dispositivo como mapa de bits de menú, o `None`.
+
+        Lo pintado se guarda por tamaño y, para un `.ico`, por su ruta, su
+        tamaño y su fecha: el nombre ya cambia con el dibujo
+        (`icono-propio-<hash>.ico`), así que no se vuelve a leer de la unidad
+        cada vez que se abre el menú.
+        """
+        try:
+            clave: tuple = ("emblema", emblema.campo, lado)
+            if emblema.ico:
+                info = os.stat(emblema.ico)
+                clave += (emblema.ico, info.st_size, info.st_mtime_ns)
+        except OSError:
+            clave = ("emblema", emblema.campo, lado)
+            emblema = bandeja.Emblema(campo=emblema.campo)
+        try:
+            if clave not in self._pixeles:
+                self._pixeles[clave] = pixeles_emblema(emblema, lado, self._pixeles_ico)
+            return self._dib(self._pixeles[clave], lado)
+        except Exception:                               # noqa: BLE001
+            return None
+
+    def _dibujar_icono(self, icono, lado: int, como: int) -> bytes | None:
+        """Pinta un icono cargado en un DIB de 32 bits vacío y devuelve sus píxeles.
+
+        Args:
+            icono: El `HICON`.
+            lado: El tamaño, en píxeles.
+            como: `DI_NORMAL` (el dibujo) o `DI_MASK` (la máscara).
+        """
+        g = self.gdi32
+        hdc = g.CreateCompatibleDC(None)
+        if not hdc:
+            return None
+        try:
+            h, bits = self._seccion(lado, hdc)
+            if h is None:
+                return None
+            anterior = g.SelectObject(hdc, h)
+            try:
+                if not self.user32.DrawIconEx(hdc, 0, 0, icono, lado, lado, 0, None, como):
+                    return None
+                g.GdiFlush()
+                return self.ct.string_at(bits, lado * lado * 4)
+            finally:
+                g.SelectObject(hdc, anterior)
+                g.DeleteObject(h)
+        finally:
+            g.DeleteDC(hdc)
+
+    def _pixeles_ico(self, ruta: str, lado: int) -> bytes | None:
+        """Pinta un `.ico` a `lado` px como imagen de menú, o devuelve `None`.
+
+        Lo lee Windows (`LoadImageW` con `LR_LOADFROMFILE`, que elige la imagen
+        que mejor sirve a ese tamaño) y lo pinta `DrawIconEx` en un DIB vacío:
+        con alfa, sale ya premultiplicado (`AlphaBlend`); sin él, la
+        transparencia la pone su máscara (`alfa_desde_mascara()`).
+        """
+        icono = self.user32.LoadImageW(None, str(ruta), IMAGE_ICON, lado, lado,
+                                       LR_LOADFROMFILE)
+        if not icono:
+            return None
+        try:
+            color = self._dibujar_icono(icono, lado, DI_NORMAL)
+            if color is None or any(color[3::4]):
+                return color
+            mascara = self._dibujar_icono(icono, lado, DI_MASK)
+            return None if mascara is None else alfa_desde_mascara(color, mascara)
+        finally:
+            self.user32.DestroyIcon(icono)
 
     def menu(self, hwnd, entradas: tuple[bandeja.Entrada, ...],
              ids: dict[int, bandeja.Entrada]) -> int:
@@ -541,17 +725,22 @@ class Api:
         """
         u = self.user32
         por_entrada = {id(e): n for n, e in ids.items()}
-        SM_CXSMICON = 49
         lado = u.GetSystemMetrics(SM_CXSMICON) or 16
         c = int(u.GetSysColor(COLOR_MENUTEXT))          # 0x00BBGGRR
         tinta = f"#{c & 0xFF:02x}{(c >> 8) & 0xFF:02x}{(c >> 16) & 0xFF:02x}"
         bitmaps: list = []
 
         def poner_icono(h, e) -> None:
-            """Le pone a la última entrada de `h` el glifo de `e`, si lo tiene."""
-            if not e.icono or e.icono not in icons.GLIFOS:
+            """Le pone a la última entrada de `h` el icono de `e`, si lo tiene.
+
+            El de un dispositivo (`emblema`) o, si no, su glifo.
+            """
+            if e.emblema is not None:
+                b = self._bitmap_emblema(e.emblema, lado)
+            elif e.icono and e.icono in icons.GLIFOS:
+                b = self._bitmap(e.icono, lado, tinta)
+            else:
                 return
-            b = self._bitmap(e.icono, lado, tinta)
             if b is None:
                 return
             bitmaps.append(b)

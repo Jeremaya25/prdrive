@@ -47,8 +47,10 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 │   ├── vestibulo.py   what a VeraCrypt device leaves OUTSIDE its container
 │   ├── autorun.py     the root's autorun.inf: the drive's name and icon, edited
 │   ├── planificador.py the agent's scheduler: PURE (data in, decision out)
+│   ├── huella.py      the photo of a `watch = true` pair's folder: scandir only, no events
 │   ├── equipo.py      the agent's host dir: agente.json, instalacion.json, buzón
 │   ├── moderacion.py  battery, metered network, "is this failure the network?"
+│   ├── red.py         "the network is back": netlink, NetworkManager, Windows' hint
 │   ├── dbus.py        a stdlib D-Bus client (the calling half)
 │   ├── avisos.py      native notifications, no Tk
 │   └── store.py       device JSON state + pid_alive(); atomic writes; hide()
@@ -63,7 +65,9 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 │   ├── catalog_editor.py · remote_picker.py · conflict_editor.py ·
 │   │   flags_editor.py · watch.py · versions_editor.py · volumen.py
 │   │                   the other decision halves, no Tk
-│   ├── tk.py          TkFrontend: main + output window, modal()/mostrar()/working()
+│   ├── segundo_plano.py  what a screen waits for from the network, on a thread, no Tk
+│   ├── tk.py          TkFrontend: main + output window, modal()/mostrar()/working(),
+│   │                   Sondeo + Indicador (the screen-level wait)
 │   ├── cifrado.py     is this device inside a VeraCrypt container? «Expulsar»
 │   ├── tk_install.py  the install wizard          (every tk_* draws only)
 │   ├── tk_equipo.py   the wizard's «En este equipo» steps
@@ -73,7 +77,7 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 │   ├── bandeja_linux.py    the Linux tray: StatusNotifierItem + dbusmenu, its own thread
 │   ├── tk_pairs.py · tk_repair.py · tk_conflicts.py · tk_fleet.py ·
 │   │   tk_watch.py · tk_update.py · tk_crypto.py · tk_doctor.py ·
-│   │   tk_qr.py · tk_versions.py · tk_volumen.py
+│   │   tk_configuracion.py · tk_qr.py · tk_versions.py · tk_volumen.py
 │   └── console.py     ConsoleFrontend: the text menu
 ├── install/           what the installer knows; no Tk, no device needed
 │   ├── __init__.py    brand constants, InstallError, InstallState, python_command()
@@ -290,6 +294,11 @@ source it mirrors. **Preserve those citations.**
   `.lst` files. `resync_reasons(pair)` returns why a pair needs `--resync` (`[]`
   for non-bisync; the mode guard is inside it). `last_run(pair)` is the mtime of
   the newest listing, which **is** the last good pass; non-bisync pairs get None.
+  A `.lst-err` is the baseline rclone sets aside when a pass aborts
+  (`cmd/bisync/operations.go`, `markFailed()` in `lockfile.go`; with `--recover`
+  the next pass goes back to `.lst-old` and leaves them): the state line says
+  what they are and that they can be deleted by hand, and **nothing deletes
+  them** — bisync's workdir is not ours to clean.
 - **Resync approval.** `resolve_resync_approval()` asks **once** for all pairs
   before anything runs, and `ask_yes_no()` returns the default when stdin is not
   a tty — non-interactive runs skip those pairs (`SKIPPED = -1`) rather than
@@ -355,15 +364,25 @@ when runsync is launched again.
 
 **One service, two ways to start it (#14).** By hand («Iniciar servicio») or on
 plugging in (the watcher → `runsync --auto`), it is the same service with the
-same config (with the resident agent as this root's service, «Iniciar
-servicio» asks it to resume instead: «The window ↔ the agent», below): pairs + interval in `ui_prefs.json`, on the device.
+same config (with the resident agent as this root's service, the window offers
+«Pausar» / «Reanudar» instead: «The window ↔ the agent», below): pairs +
+interval in `ui_prefs.json`, on the device.
 `startup_defaults()` layers that record > `[daemon]` in the TOML > all pairs /
 30 min, for the window, `--auto` and the watcher alike; explicit `--auto`
-arguments still win (shortcuts, cron, and watchers not yet reinstalled). **Only
-starting the service writes it** (`_atender()`, action `daemon`): a manual pass
-with a few pairs ticked must not decide what the service syncs at the next plug-in.
-A record with `action == "manual"` predates that and is ignored (by `== "manual"`,
-so a hand-written record without `action` still counts). The file keeps its old
+arguments still win (shortcuts, cron, and watchers not yet reinstalled). **Two
+writers, each with its own part** (#65): starting the service (`_atender()`,
+action `daemon`) writes the ticked pairs with the interval already saved, and
+«Ajustes → Configuración» (`prefs.guardar_intervalo()`) writes **only the
+interval**. That screen keeps a record's `pairs`/`known`/`action` untouched when
+`elegir()` honours them; otherwise it leaves a record **without `pairs`**, which
+`elegir()` reads as «the saved interval, the TOML's pairs» — so saving the
+interval never pins the pair selection, and a later hand edit of `[daemon]
+pairs` still counts. (An agent older than this reads such a record as no record
+and falls back to `[daemon]`'s interval: degraded, never wrong pairs.) A manual
+pass writes nothing: a few pairs ticked must not decide what the service syncs
+at the next plug-in. A record with `action == "manual"` predates that and is
+ignored (by `== "manual"`, so a hand-written record without `action` still
+counts); saving the interval over one replaces it. The file keeps its old
 name: renaming it would need a migration to change a word. `--auto --once`
 (`una_pasada()`) is one pass of those pairs with no service behind it; with a
 live service on this host it does nothing and does **not** stop it — swapping a
@@ -406,6 +425,14 @@ interpreter**, and everything Tk must die there: `theme.olvidar()` /
 `icons.olvidar()` drop the per-interpreter caches and `gc.collect()` runs in that
 thread, or the main thread frees the images at exit (`Tcl_AsyncDelete`). No
 display → False, and the notice stays in `daemon.log`. One window at a time.
+**That thread is one per process and never ends** (`ui._aviso_abierto`, a queue
+of jobs): Tcl/Tk 9.0.4 — the Linux runtimes — aborts with `Tcl_Panic: epoll_ctl:
+Invalid argument` when a NEW thread creates a Tk interpreter after another
+thread had created its own and exited (reproduced with four lines of tkinter, no
+prdrive code; several interpreters in a row in the SAME thread, or in threads
+alive at once, are fine). A thread per notice would have killed the service on
+the second pop-up of a Linux runtime. `tests/test_daemon_aviso.py` pins «same
+thread, still alive»; the abort itself only shows with the runtime's own Python.
 
 ## UI (`ui/`)
 
@@ -440,15 +467,20 @@ it** — a window cannot dump output to a console that does not exist.
   «Reparación» hands back, open a
   modeless `output_window`, the window disables whatever touches the same state,
   and on close re-reads `state/` and repaints. Only «Iniciar servicio» returns a
-  `Choice` to runsync. The checkboxes are shared by both buttons and open with
-  the service's pairs; «Marcar todas»/«Desmarcar todas» (two pairs or more)
-  and the «N de M» follow them through each checkbox's `command`, **not** a
-  variable `trace`: a widget's command dies with it, a trace's Tcl command does
-  not, and it would hold the whole window and its images until exit. «Repetir
-  cada» sits by the footer because the interval is the service's.
-  `ui.manual_args()` (resync question + `--yes`) is shared with the console
-  path. The pairs screen's «Simular», «Examinar…» and «Dispositivos…» write
-  nothing, so none makes `open_dialog` return True.
+  `Choice` to runsync (and it is not there when the agent is this root's
+  service: «Pausar» / «Reanudar» take its place, see phase 5). The checkboxes
+  are shared by both buttons and open with the service's pairs; «Marcar
+  todas»/«Desmarcar todas» (two pairs or more) and the «N de M» follow them
+  through each checkbox's `command`, **not** a variable `trace`: a widget's
+  command dies with it, a trace's Tcl command does not, and it would hold the
+  whole window and its images until exit. The
+  interval is **not** in the main window (#65): it is set once in a device's
+  life, so it lives in «Ajustes → Configuración», and «Iniciar servicio» reads
+  the saved one (`prefs.startup_defaults()`) when clicked, not when painted.
+  The console menu still asks it when starting the service: it is not the main
+  window. `ui.manual_args()` (resync question + `--yes`) is shared with the
+  console path. The pairs screen's «Simular», «Examinar…» and «Dispositivos…»
+  write nothing, so none makes `open_dialog` return True.
 - **The watcher line** replaced the «Arranque automático…» button: what this host
   does when the device is plugged in, from `watch.resumen()` (files only, no
   `schtasks`/`systemctl`: it is asked on first paint) and worded by
@@ -506,19 +538,60 @@ paths and flags; no rounded corners, no shadows. Styles cross **role** with
   is asked from the Tk thread every 120 ms, so it must only read what another
   thread measured, and any exception counts as None — the poll is the only
   thing that closes the window. The text's row is reserved from the start
-  (`tests/test_tk_espera.py`, and the matrix in `test_tk_medidas.py`).
+  (`tests/test_tk_espera.py`, and the matrix in `test_tk_medidas.py`). On
+  closing it hands the grab back to whoever held it (`_devolver_captura()`):
+  Tk keeps no grab stack, and a modal that waits in it — the remote folder
+  picker, at every folder — would stop being modal.
+- **A screen that waits for the network opens first and reads after (#66)**,
+  instead of `working()` in front of an empty window. `ui/segundo_plano.py`
+  (no Tk) runs the read on a daemon thread into an `Encargo` (`hecho`,
+  `resultado`, `error`); `tk.Sondeo(dlg)` — one per screen — polls it from the
+  Tk thread every `SONDEO_MS` and calls back there, never from the worker, and
+  **cancels with the window** (`<Destroy>` → `after_cancel`), so closing early
+  leaves nobody painting dead widgets. The function handed over is a
+  `functools.partial` of data, never a lambda among widgets: a worker holding
+  the last reference to a Tk object frees it off-thread (`Tcl_AsyncDelete`).
+  `tk.Indicador` is the line under the header: the same indeterminate bar as
+  `working()` (`LARGO_INDICADOR`, `theme.medida`) plus a sentence; the bar only
+  while waiting, the sentence may stay (why the screen kept the local copy),
+  nothing to say → the line goes. Both hang off the dialog (`dlg.indicador`,
+  `dlg.sondeo`) for tests. `segundo_plano.lanzar()` is an indirection point:
+  `test_tk_screens`/`test_tk_medidas` set it to `en_el_acto()` (the result is
+  in before the screen shows, as they never enter the event loop), and
+  `tests/test_tk_segundo_plano.py` runs real threads against a `catalog.run()`
+  that answers late or not at all. **One read alive per kind**: a thread cannot
+  be cut, and closing the screen does not stop it, so reopening Parejas (or
+  pressing «Releer») with the previous thread still running used to start a
+  second `catalog.pull()` that wrote `state/catalog.toml` at the same time.
+  Both screens go through `segundo_plano.lanzar_sin_repetir(clave, firma,
+  funcion)`: the same key and the same raw config while the thread lives hands
+  back that `Encargo` (the newest screen waits on it); another config launches
+  a new one, and so does a thread older than `VIDA_MAXIMA` (120 s; `catalog.run()`
+  already bounds its subprocess at 90 s), so one that hangs cannot block every
+  later read. It calls `lanzar()` through the module, so the tests' `en_el_acto()`
+  (always `hecho`) never reuses anything; a test that swaps `lanzar()` for an
+  `Encargo` that never ends (`test_tk_medidas`) calls `olvidar_lecturas()`
+  between screens. Writes to the remote (a catalogue push, deleting a fleet
+  note, purging versions, creating or listing a remote folder) stay in
+  `working()`: modal, nothing to cut halfway.
 
 ### «Ajustes» (`ui/tk_doctor.py`) — where new affordances go
 
 The main window is deliberately lean, so **anything done once in a device's life
 belongs behind the gear, not beside «Sincronizar ahora»**. The screen is
 «Ajustes» —the module keeps the old name— and it is not the `--doctor` command:
-«Reparación» is its first entry, the pairing code its second, and
-`ENTRADAS` is the list to add to. It receives `lanzar` and `abrir_reparacion`
-from the main window rather than importing them, because the output window and
-«Reparación» are the *main* window's children and it disables itself while a
-pass runs — this screen knows none of that, and closes itself before handing
-over so two modals never hold the grab at once.
+«Reparación» is its first entry, «Configuración» its second, and `ENTRADAS` is
+the list to add to. **«Configuración»** (`ui/tk_configuracion.py`, #65) holds
+what is *configured* rather than done: the service's interval (`ui/prefs.py`
+decides what is written, see «Daemon») and, only for the encrypted host root,
+the agent's `pedir_al_iniciar` checkbox (sent as `PIDE_AJUSTE`). Nothing is
+written until «Guardar», and what did not change is not written.
+
+«Ajustes» receives `lanzar` and `abrir_reparacion` from the main window rather
+than importing them, because the output window and «Reparación» are the *main*
+window's children and it disables itself while a pass runs — this screen knows
+none of that, and closes itself before handing over so two modals never hold
+the grab at once.
 
 ### «Reparación» (`common/revision.py` + `ui/repair.py` + `ui/tk_repair.py`)
 
@@ -606,6 +679,32 @@ it shows **after replugging**, and the window says so.
   icons, at the root too, which moves an old root icon into `.prdrive/` on the
   next save. An `icon=` prdrive did not write reads as `OTRO` and survives a
   name-only save.
+- **The name is the device's name too (#62).** This window is the ONE place a
+  device is named: `volumen.guardar()` also calls `fleet.guardar_nombre()`
+  (`state/fleet.json`, the name «Dispositivos…» shows and the fleet note
+  publishes), so Explorer and the list never call one device two things.
+  «Dispositivos…» only reads it (no rename button there any more).
+  - **`guardar_nombre()`, never `fleet.recordar()`.** `recordar()` writes
+    `publicado` — what was last *uploaded* — so using it would mark the new name
+    as published without a single byte sent, and `hace_falta_publicar()` would
+    see no change. `guardar_nombre()` leaves `publicado` alone: the old name
+    there no longer matches `nombre()`, which is exactly what lets the next real
+    pass publish the note (`tests/test_fleet.py`, `tests/test_volumen.py` pin
+    both halves). The save itself uploads nothing and needs no network; the
+    window says the new name reaches «Dispositivos…» with the next sync.
+  - **An empty name removes the drive's `label=` and leaves the fleet name
+    alone**: `fleet.nombre()` treats a blank stored name as «the machine's
+    name», so blanking it would silently rename the device after whatever
+    computer it is plugged into.
+  - **The fleet part goes last.** If the drive could not be written nothing
+    about the device changes; if only `state/fleet.json` fails, `guardar()`
+    raises a `VolumenError` that says the drive IS saved and which part is
+    missing (saving again retries it). Every save converges both names on the
+    form's, also when only the icon changed.
+  - `Estado.dispositivo` (the fleet name now) feeds `volumen.pista_nombre()`,
+    the hint under the field. The fleet name has no limit of its own, so what
+    fits `autorun.MAX_NOMBRE` always fits it; older, longer names are only
+    replaced when the person types a new one.
 - The five colours are `icons.CAMPOS` (brand field only; white and amber stay).
   Painting one is ~2 s (the 256 px size), so the save runs in `tk.working()` and
   an existing file is never repainted. Unverified on real Windows: an icon
@@ -645,6 +744,56 @@ phone can read it. Three pieces, none of which knows about the other two's mediu
 - **This shows a private key on screen and says so**, in an amber block. It is
   not a token and it does not expire: whoever photographs the screen gets the
   remote. The window stores nothing and copies nothing to the clipboard.
+- **On Windows the window is kept out of screen captures (#59).** That stops an
+  accident (a shared screen, an OBS recording, a Snipping Tool shot that ends in
+  a chat), not an attacker: the amber block stays the real barrier.
+  `tk.proteger_de_capturas(window)` runs between `modal()` and `mostrar()`, with
+  the dialog still withdrawn (not a frame unprotected) and only when a code is on
+  screen. It is `SetWindowDisplayAffinity` through ctypes: `WDA_EXCLUDEFROMCAPTURE`
+  (0x11, Windows 10 2004+: the window is not in the capture) and, if refused,
+  `WDA_MONITOR` (0x1: it is there, as a black rectangle); neither, and the window
+  goes unprotected. It never raises and never stops the window from opening; off
+  Windows it does nothing.
+  - **It returns WHICH protection took, not a bool**: `CAPTURA_EXCLUIDA`,
+    `CAPTURA_EN_NEGRO` or `CAPTURA_NINGUNA` (the value `GetWindowDisplayAffinity`
+    would give; falsy only for the last, so `if proteger_de_capturas(w):` still
+    reads «is it protected»). A bool cannot carry it because the line under the
+    amber block has to be true for each: «no aparece» is false for the black
+    rectangle (`tk_qr.LINEA_CAPTURA`, one sentence per value). **No protection
+    on Windows says so** (`tk_qr.LINEA_SIN_PROTECCION`, «No se ha podido proteger
+    esta ventana de las capturas de pantalla.», chosen by `tk_qr.linea_de_captura()`
+    from `tk.IS_WIN`): whoever shares the screen trusting the protection has to
+    learn it did not take, and a silent failure would read as success. **Off
+    Windows it stays silent** — silence promises nothing, and Linux, which has no
+    equivalent (X11 has no API, Wayland decides in the portal), must not hint
+    otherwise. No code on screen, no line at all.
+  - **The HWND is `wm frame`, never `winfo_id()`, and the wrapper has to exist
+    first** (Tk 8.6.15, `win/tkWinWm.c`, `win/tkWinWindow.c`, `generic/tkFrame.c`).
+    Tk wraps each toplevel in a wrapper window that `UpdateWrapper` creates the
+    first time it is mapped, at idle (`MapFrame` → `TkWmMapWindow`); `withdraw()`
+    does not create it, but the mapping does, hidden (`SW_HIDE`). Until then
+    `wm frame` returns Tk's own window — the same one `winfo_id()` gives, a
+    parentless `WS_POPUP` — which accepts the affinity and loses it when Tk moves it
+    into the wrapper: protected on paper, not in fact. So the function runs
+    `update_idletasks()` first and protects nothing if `wm frame` still equals
+    `winfo_id()`. `centrar()` already does that `update_idletasks()` on the
+    withdrawn window, so the early one changes nothing about the flow.
+  - **After it, nothing may restyle the window** (`resizable`, `transient`,
+    `overrideredirect`, style `attributes`): `UpdateWrapper` destroys the wrapper
+    and builds another, and the affinity belongs to the HWND. `modal()` does its
+    own before the wrapper exists and `mostrar()` only uses `geometry` and
+    `deiconify`, which do not rebuild it.
+  - **Not covered, and the docstring says so:** a photo with another phone; a
+    privileged program reading the screen; Magnifier and accessibility tools; Remote
+    Desktop, where whoever connects sees it black. The window's line does not list
+    them: the amber block already says a photo is enough.
+  - `tests/test_captura_pantalla.py` fakes the window (its wrapper appears at the
+    first idle, like Tk's) and `_afinidad_de_pantalla`, and runs the real ctypes
+    wrapper against a fake `ctypes.WinDLL`. What only Windows can say — `wm frame`
+    with the window withdrawn, the captures themselves, Remote Desktop, ARM64,
+    a Windows older than 2004 — is in
+    `docs/superpowers/pruebas/2026-10-02-captura-qr-pendiente-en-real.md`
+    (C0 checks the HWND with a stdlib script).
 - The pairing window asks for correction **L**, not the module's default M: the
   medium is a screen (no creases, no print, no dirt) and what is scarce is
   capacity — an RSA-3072 key does not fit in *any* version at M. It fails with a
@@ -903,6 +1052,12 @@ at nothing) and hangs `tasklist | find`. Use PowerShell for both.
   `crypto.restos_en_claro()` finds the plaintext `.prdrive/` (with the key) and
   the data folders, the panel says so in red before creating, and step 8 keeps a
   red row. **Nothing deletes it**: those folders may hold unsynced changes.
+  Two things the red box must not get wrong (K2, #41): the installer's own
+  guide (`README.md`, `deploy.write_guide()`) is not a leftover — recognised
+  only when byte-identical to the guide this installer carries, so a person's
+  own `README.md` still counts — and it names a key in `.prdrive/keys/` only
+  when a key file is there (`crypto.hay_clave_en_claro()`): a remote with no key
+  leaves none.
 
 **The vestibule (`common/vestibulo.py` + `install/vestibulo.py`).** With
 VeraCrypt everything — code, launchers, guide, control file — is inside
@@ -927,8 +1082,19 @@ writes the texts. Five things not to weaken:
 - **The exit code is not the mount.** The traveller without admin rights
   relaunches itself elevated with `/q UAC` and exits 0 after two seconds
   (`InitApp`, `LaunchElevatedProcess`), so the `.bat` waits to *see* the drive
-  (by the control file's id) — 10 s with the installed one, 180 s with the
-  traveller.
+  (by the control file's id) — 10 s with the installed one. With the traveller
+  the wait does not count while the elevated copy is alive (`:vc_pendiente`,
+  the same one eject uses, noted as `VC_ANTES` before launching): it asks the
+  password, and when it exits with no drive the password was cancelled, so
+  after 10 more seconds the `.bat` says so instead of waiting 180 s. Only with
+  a same-named VeraCrypt already running (`VC_ANTES`) it cannot tell which is
+  ours and falls back to the 180 s. **That wait that does not count has a cap**
+  (`ESPERA_PENDIENTE`, 600 turns of one second ≈ 10 minutes, its own `PENDIENTE`
+  counter): a password window hidden behind others, or an unanswered UAC prompt,
+  would otherwise hang the console for ever. Past it `:sin_respuesta` says the
+  window may be hidden (taskbar, Alt+Tab), to answer or close it and open
+  «Abrir PRDRIVE» again, and leaves the wait. **Eject has no such cap** — it is
+  not a thing to give up on halfway, and it is left as it was.
 - **Eject is `/dismount <letter> /quit` without `/silent`**, after a short
   wait: VeraCrypt only retries 30 × 50 ms (`Common/Dlgcode.h`), and without
   `/silent` it asks whether to force. `/unmount` does not exist before 1.26.24.
@@ -1040,7 +1206,19 @@ absent), per-row sizes and a live total vs free space.
 - **Deselecting a provisioned platform deletes only if confirmed**
   (`Matriz.quitar()` → `_preguntar_borrado()`); unconfirmed = left in place.
 - **Downloads are pinned and verified** from `common/pins.py` (Python 3.13, not
-  3.14 — those builds ship Tk 9 and the UI is measured on Tk 8.6).
+  3.14 — those builds ship Tk 9 on every platform, Windows included, and that is
+  untested). The 3.13 builds are Tk 8.6 only on **Windows** (8.6.15,
+  `tcl86t.dll`/`tk86t.dll`); the **Linux** ones (x64 and ARM64) already ship
+  Tcl/Tk 9.0.4, in 20260901, 20260924 and 20261001 alike (measured 02/10/2026,
+  see `pins.py`), so a Linux runtime's window and the agent's run on Tk 9 today.
+  **The UI is measured on both**: the normal suite runs with the system Python
+  (Tk 8.6) and the Linux runtime's Tk 9.0.4 is measured by running the same
+  scripts with its interpreter (`xvfb-run -a <runtime>/bin/python3
+  tests/test_tk_medidas.py`, and `test_tk_servicio`, `test_tk_densidad`,
+  `test_daemon_aviso`). 03/10/2026, runtime 20261001: measures and service pass
+  whole, density fails the same 1-px Xvfb rounding it fails with Tk 8.6, and the
+  failure pop-up aborted the process (next to «Failure pop-up»). That is
+  dimensions, not looks: nobody has reviewed Tk 9 by eye.
   `runtime_bin.extract()` validates every member before writing the first, prunes
   pip/idle/tests/C headers (on Linux also `share/` and `libpython*.so` — the
   interpreter is static), never creates symlinks (exFAT) but materialises
@@ -1270,6 +1448,18 @@ script to `%LOCALAPPDATA%\prdriveWatch` / `~/.local/share/prdrive-watch`, writes
   re-`register()`s, and `prune_runtimes()` keeps `python_exe`'s, `task_python`'s
   and the running process's dirs. No device runtime for this host → host Python,
   never one living on the device.
+- **`start_now()` says «arrancado» only when it has seen the watcher.**
+  `schtasks /Run` / `systemctl start` return when the start is *requested*, and
+  `status` reads `watcher_pid` from `state.json`, which the process writes once
+  it is running: a `status` right after read «parado» (J1). `started_message()`
+  waits up to `START_WAIT_SECONDS` for a live pid and otherwise says it is
+  «pedido» and to look at `status` shortly, never «arrancado».
+- **`uninstall` words what stays on the device by what it is** (`uninstall_note()`,
+  reading `watch.json` *before* deleting it): an encrypted device keeps
+  `.prdrive/PRDRIVE` inside the container and, outside, its vestibule marker
+  (which is what recognises it closed) beside the container, the open/eject
+  scripts and the travelling `VeraCrypt\`; a plain one keeps the control file;
+  unplugged, it says both.
 
 ## The resident agent (`agente.py` + `common/planificador.py` + `install/agente.py`)
 
@@ -1314,8 +1504,10 @@ whatever you build that only a real host can prove.
   this host exists and for `GRACIA` seconds after (so a service started from the
   window has time to write its lock), and **steps aside** while another live
   pid of this host holds the lock. A stale lock (dead pid / other host) is
-  overwritten. `runsync.stop_previous_daemon()` says "pauses" when the lock is
-  the agent's. `tests/test_agente_contrato.py` drives the real
+  overwritten. `runsync.stop_previous_daemon()` says nothing (returns `None`)
+  when the lock is the agent's: pausing for the window is what the «Cambiar…»
+  button of the agent's line already describes, and the callers print or show a
+  message only when there is one. `tests/test_agente_contrato.py` drives the real
   `stop_previous_daemon()` against it. **Releasing survives Windows**: runsync
   reads the lock every 0.3 s while it waits, and Windows will not delete a file
   someone has open (WinError 32); `_soltar()` stops serving at once
@@ -1333,9 +1525,144 @@ whatever you build that only a real host can prove.
   (`SONDA`, an `rclone lsd remote:` with `catalog.NET_FLAGS`) instead of
   retried. A `RED` result doesn't count a failure; the agent probes at once and,
   if the remote answers, re-records it as `FALLO` (the classification was
-  wrong). Network needles live in `moderacion.ERRORES_DE_RED`, and
+  wrong). The suspicion is **per pair** (`Agente.sospechas`, `(root, pair)` →
+  `Sospecha`): two pairs of one remote failing before its probe both get
+  re-recorded; a non-`RED` result for that pair closes it, and a pair whose
+  mark is no longer the one the `RED` left (`Sospecha.tras`) is not touched. Network needles live in `moderacion.ERRORES_DE_RED`, and
   `sync.KNOWN_ERRORS` uses `moderacion.es_de_red` as a **callable needle** —
   one list, because the agent doesn't carry `sync.py`.
+- **An offline remote is probed when the network comes back (#67)**, not on a
+  blind timer. `common/red.py` (`AvisosDeRed`; Tk-free, its own thread on
+  Linux, none on Windows, and **independent of the tray**: `agente.poner_red()`,
+  an indirection point) hears the system and each notice becomes a
+  `PIDE_CAMBIO_DE_RED` in the agent's queue. Cite the APIs like `common/dbus.py`
+  cites its spec. The sources:
+  - **Windows**: `NotifyNetworkConnectivityHintChange` (iphlpapi, netioapi.h;
+    **Windows 10 2004, build 19041, or later** — an older one lacks the export,
+    `AttributeError`, no notices), with `NL_NETWORK_CONNECTIVITY_HINT` **by
+    value** in the ctypes callback, notifying on the levels that mean some
+    network (`NIVELES_CON_RED`: local, internet, captive portal). Cancelled with
+    `CancelMibChangeNotify2` from the agent thread, never from the callback (its
+    docs: deadlock); `ApiWindows` keeps the `WINFUNCTYPE` alive until then.
+  - **Linux, rtnetlink** (`RTMGRP_IPV4_IFADDR | RTMGRP_IPV6_IFADDR`, no
+    privileges): `Direcciones` dumps the address list first (silent) and then
+    notifies only for a **new** global, non-tentative address — a network back,
+    a VPN interface up, a cable plugged. A DHCP/RA renewal repeats a known
+    address and says nothing. Kernel-level, so it works without NetworkManager
+    (networkd, ifupdown, iwd…): no networkd-specific source is needed.
+  - **Linux, NetworkManager** on the system bus: `StateChanged(u)` into 50/60/70
+    (`NM_CONECTADO`, `NMState`) — it sees a captive portal letting through
+    (SITE → GLOBAL) with no address change. `NameOwnerChanged` tracks it going
+    and coming back; without it, netlink stays.
+  - **The burst is coalesced in the planner** (`pl.CambioDeRed`,
+    `cambia_la_red()`, `red_asentada()`): one probe per offline remote
+    `ASENTAR_RED` (5 s) after the last notice, at most `TOPE_RAFAGA_RED` (30 s)
+    after the first, and **not while a task is in flight** — a failing probe
+    would push its next one to the fallback and swallow the notice. A burst
+    with no offline remote is dropped silently. `pl.sondear_ya()` is the one
+    «probe now» for this, «Probar ahora» and `despertar`.
+  - **The timer stays, as the fallback**: `pl.sondeo(politica, avisa_la_red)` is
+    `Politica.sondeo_de_respaldo` (30 min, the service's default interval) while
+    a source is `activa`, `sondeo_sin_conexion` (5 min, as before) otherwise.
+    The trade-off, said out loud: what no notice sees waits up to 30 min — the
+    remote coming back with nothing changed on this host (the NAS powered on),
+    a VPN on Windows that leaves the connectivity level as it was, a captive
+    portal on Linux without NetworkManager, or a source that subscribed fine and
+    never fires. «Probar ahora» in the tray is the shortcut.
+  - `agente.log` says at start what is heard; `estado.json` carries
+    `cambios_de_red` and `agente.py status` prints it. Unverified on real
+    hardware (N1–N8 in the checklist); the rtnetlink half was seen against this
+    machine's real kernel only (a new address notifies, a renewal does not).
+- **A pair with `watch = true` is synced soon after its LOCAL files change
+  (#61)**, instead of waiting for the interval. Agent only (runsync's service
+  never looks), opt-in per pair, and only where the local side is a source
+  (`Mode.origen_local`: bisync, up, up-mirror): `model._leer_watch()` rejects the
+  rest at parse time (and `[defaults]` carrying `watch` too: it is read from
+  `[[pair]]` only, so there it would do nothing and look like it watched every
+  pair), and the agent, which reads the raw TOML, asks the same rule without
+  raising (`model.pide_watch()`; `Servicio.locales` keeps each watched pair's
+  `local`, normalised as the engine does it, `model.normalizar_local()`:
+  `sync-data\docs` syncs, so that is the folder to look at).
+  - **Stat polling, no OS events** (exFAT, a VeraCrypt container and a network
+    folder have none). `common/huella.py` `de_carpeta()` runs `os.scandir` over
+    the pair's folder — no file opened, no link followed — and returns a
+    `planificador.Huella(entradas, firma, cortada)`: a sum of one hash per entry
+    (relative path, size, `mtime_ns`), **not** the newest mtime or the total
+    size, which a rename or a same-size swap leaves still. Folders count by
+    name only (their mtime moves with things that are not content).
+    `.prversions/` and `.prdrive/` at the top of the folder are not looked at
+    (`agente.IGNORAR_CAMBIOS`: a `local = "."` pair would otherwise be fired by
+    what each pass writes into `state/`), and when the folder IS the device
+    root (`local = "."`) neither is the OS noise at its top
+    (`model.RUIDO_DEL_SISTEMA` through `agente.ruido_en()`: `System Volume
+    Information`, `$RECYCLE.BIN`, `.Trash-<uid>`…, matched without case; it is
+    the list `install/device.RUIDO` is built from, so the two cannot drift).
+    A SUBFOLDER `scandir` cannot open (`PermissionError`, which Windows gives
+    for `System Volume Information`) is skipped by name and its contents are
+    not looked at; only the folder itself failing voids the photo (`None`).
+  - **The rules are pure** (`PoliticaCambios`: `sondeo` 10 s, `calma` 20 s,
+    `separacion` 120 s, `tope_entradas` 20 000; `observar`, `tras_pasada`,
+    `toca_por_cambios`, `a_recorrer`). `decidir()` brings the pair's pass
+    forward to `max(cambio + calma, ultimo_intento + separacion)` when that is
+    earlier than its interval: an ordinary pass flagged `Tarea.por_cambios` —
+    **not** an urgent one — so pause, battery and metered network hold it like
+    any other. A burst is one pass (each change moves the calm), a pair that
+    is failing keeps its growing wait, and one never tried is due anyway.
+  - **The walk never blocks `vuelta()`.** ~20 000 entries on a USB stick take
+    seconds. `Agente._vigilar()` asks `pl.a_recorrer()` what to walk (not while
+    moderation holds passes — walking would spend what moderation wants to save —
+    and not the pair whose pass is running), a `Muestreo` takes the photos on a
+    thread through `hilo()` (indirection point; at most ONE in flight) and the
+    next turn `_recoger_fotos()` feeds them to `pl.observar()`. The folder goes
+    through `en_la_raiz()` on that thread: a `local` that `..` or a link takes
+    out of the root is abandoned, said once, never walked. The photo itself is
+    `agente.huella_local()` (indirection point, wraps `huella.de_carpeta()`).
+    While a walk of a root is in flight the thread holds its folder open, so
+    «Bloquear» waits for it (`_mirando()`, up to `ESPERA_VENTANA`; then VeraCrypt
+    asks before forcing, as ever). A walk that hangs (a network folder) keeps
+    the one-at-a-time slot: no other pair is walked until it returns, and the
+    interval rules meanwhile.
+  - **Served means what it means for passes.** Only roots in `_raices()` with
+    `Conexion.motivo == ""` are walked: a root paused from its window (#64), a
+    runsync window open (or inside its `GRACIA`), another service holding the
+    lock, a root being locked and the cut pair of `cortada` are not. What was
+    remembered of a pair that stops being served is DROPPED, so the first photo
+    after it comes back is a baseline and whatever changed meanwhile (the window
+    syncs by itself) fires nothing; a root that disconnects loses all of it
+    (`_olvidar_vigiladas()`). `urgentes` ignore all of this.
+  - **The pass's own writes must not fire it.** When a pair's pass ends
+    (`_fin_de_pasada()` → `_rehacer_foto()`) its memory goes back to «baseline
+    pending» (`pl.tras_pasada(v, None, ahora)`, asked at once) and any photo of
+    that pair that was in flight when the pass ended (`Muestreo.descartar`),
+    arrives while its pass runs, or comes from an earlier connection of the root
+    (`Mirar.con`) is thrown away. The price, said out loud: what the person
+    changes WHILE the pass runs, and in the turn or two until the new baseline,
+    is absorbed into it and waits for the interval.
+  - **The cap.** Past `tope_entradas` the pair is abandoned for this connection:
+    said once in `agente.log` and in the root's `daemon.log` (`pl.se_abandona`),
+    the interval rules. `de_carpeta()` cuts at the cap and says so with
+    `Huella.cortada` (not «signature 0»), so finding out is cheap.
+  - **A watch that cannot see says so.** A photo that comes back `None` is «not
+    a change», which on its own is what a quiet folder looks like.
+    `Vigilada.fallidas` counts the walks in a row without a photo
+    (`PoliticaCambios.fotos_fallidas`, 3): the third is one line in
+    `agente.log` and the root's `daemon.log` (`pl.se_queda_sin_foto`), and the
+    first good photo after it another (`pl.vuelve_a_haber_foto`). A pass does
+    not reset the count (it proves nothing about the agent reading the folder),
+    so a dead watch is told once per connection, not once per pass.
+  - **Known limit: sticky abandonment.** Inside one connection an abandoned pair
+    stays abandoned (the folder may have shrunk, the agent will not know until
+    the root reconnects), and `Mirar.con` does not notice a root remounted at
+    another letter while a walk was in flight: at most a swallowed change or an
+    extra pass.
+  - **Not seen:** remote changes (they wait for the interval), changes made
+    during a pass, and any root that is not served in `daemon` mode (`sync` mode
+    has an infinite interval: nothing to bring forward).
+  - `resumen()` / `estado.json` carry `vigila` and `vigila_abandonada` per
+    unit (names) and `agente.py status` prints them. `tests/test_watch_pareja.py`
+    covers the model, the photo and the rules; `tests/test_agente_watch.py` the
+    wiring, with a fake photo and a fake clock. Unverified on real hardware: see
+    the checklist (walk cost, exFAT's 2 s mtime, VeraCrypt, network folders).
 - **Notifications only when a pair STARTS failing** (`planificador.empieza_a_fallar`)
   or a remote goes offline — `common/avisos.py` (D-Bus `Notify`; Windows
   `Shell_NotifyIconW` NIF_INFO on a temporary message-only window, **unverified
@@ -1429,7 +1756,8 @@ whatever you build that only a real host can prove.
     `logs/`, `filters/`, `keys/`, `runtime/`, `bin/`, `sync_config.toml`, the
     control file, `.ico`, `__pycache__`), a few MB, milliseconds — in
     `equipo.Unidad.codigo`. Another hash on connect = `Conexion.cambiada`: not
-    served, no window, the tray offers «…, código cambiado · Atender…», and
+    served, no window, the tray offers «… (código cambiado)» · «Atender con su
+    código nuevo…», and
     `agente.py pregunta --cambiada` asks again; the yes keeps the mode. An empty
     `codigo` (listed by the wizard or `atender ID` unplugged) is recorded on the
     first connection. Children get `PYTHONPYCACHEPREFIX` in `equipo.DIR`, so a
@@ -1451,8 +1779,8 @@ whatever you build that only a real host can prove.
     than `agente.VERSION_MINIMA` (0.5.0)** would ignore the variable, so they
     are not served, not asked about, not opened (`Conexion.vieja`,
     `version_vieja()` — their `VERSION` is inside the accepted fingerprint),
-    notified once per connection, and the tray shows «…: actualízala para que
-    la atienda», greyed out. A drive synced by the agent and by its own window
+    notified once per connection, and the tray shows «… (por actualizar)» with
+    «Actualízala para que la atienda» greyed out inside. A drive synced by the agent and by its own window
     uses two rclones; with both on the same prdrive version they are the same
     pin.
 - **Dependency rules:** the agent imports penwatch, never the reverse; penwatch
@@ -1625,9 +1953,82 @@ draws**, and neither imports tkinter (`test_install_agente.py` checks it).
   `PIDE_ABRIR` (the window of a root: `_lanzar_ventana()`, which checks only the
   UI lock — our own service lock is expected and runsync pauses it; a locked
   encrypted root is unlocked first with `abrir=True` and its window opens on
-  connect) and `PIDE_DESPERTAR` (back from suspend: re-read battery/network,
-  probe every offline remote now, burst the walk; Windows sends it twice, so
-  a second one within `DESPERTAR_DOBLE` is not logged again).
+  connect), `PIDE_EXPLORAR` (its folder in the file manager: `agente.explorar()`,
+  an indirection point over `orden_explorar()` — `explorer.exe <folder>` on
+  Windows, never `os.startfile()` and its Shell verbs on a drive root;
+  `xdg-open` on Linux —, same guard as `PIDE_ABRIR` in `Agente._abrir(…,
+  explorador=True)`; a locked encrypted root is unlocked first with
+  `Desbloqueo.explorar` and its folder opens on connect, no window) and
+  `PIDE_DESPERTAR` (back from suspend: re-read battery/network, probe every
+  offline remote now, burst the walk; Windows sends it twice, so a second one
+  within `DESPERTAR_DOBLE` is not logged again).
+- **One submenu per device (#68)**: the host roots first, then the connected
+  drives, each an `Entrada` with `hijos` and its `emblema`, and inside —
+  never repeating the name — «Configurar» (`PIDE_ABRIR`, first, the submenu's
+  `defecto`), «Abrir en explorador» (`PIDE_EXPLORAR`, the folder glyph now
+  meaning a folder), «Sincronizar ahora» (that device only, live when
+  `atendida`) and, for an encrypted root, «Bloquear» / «Desbloquear…» and the
+  `pedir_al_iniciar` checkbox. A locked root's «Configurar…» / «Abrir en
+  explorador…» unlock first (the ellipsis says a password comes). The rule:
+  what is about ONE device goes in ITS submenu; what is about the whole agent
+  stays outside («Pausar»/«Reanudar», «Actualizar», «Cerrar el agente», and
+  «Sincronizar todo ahora» only with two or more `atendida` devices — with one
+  it would repeat its own). Abnormal states go in the label, in parentheses
+  (`ESTADO_DE_RAIZ`: «bloqueada», «no responde», «no está en su sitio»…; a
+  drive «sin atender», «código cambiado»; root or drive «por actualizar»,
+  `POR_ACTUALIZAR`, whose Configurar / Abrir / Sincronizar are greyed because
+  `Agente._abrir()` refuses it; root or drive «en pausa», `EN_PAUSA`, when its
+  window paused it, #64), and what cannot be done is greyed, so a root's
+  submenu keeps its shape.
+  - **`pedir_al_iniciar` stays global** (one key in `agente.json`, one
+    `PIDE_AJUSTE`; the window's checkbox is unchanged). Several encrypted host
+    roots can exist (`PIDE_RAIZ` adds one per wizard run;
+    `raiz_para_abrir()` already handles more than one), so with exactly one it
+    goes in that root's submenu, where it reads as its own and is; with two or
+    more it goes outside, worded «Pedir la contraseña de cada raíz cifrada al
+    iniciar sesión».
+  - **The device icon (`bandeja.Emblema`) is decided by the agent, as data.**
+    `Agente._emblema(con)` → `volumen.emblema(donde, APP_SUBDIR)` reads the
+    `autorun.inf` where «Nombre e icono…» writes it (`Conexion.fisica`, the
+    vestibule seen by the walk, for a drive in a container; the `.hc`'s folder
+    for an encrypted host root; else the root) and returns `{"marca": clave}`,
+    `{"ico": path}` or `{}`; `resumen()` carries it per drive as `emblema`. Only
+    for a LISTED root with its code accepted and a valid version, connected
+    (so unlocked); read on connect and then at most every `MIRAR_EMBLEMA`
+    (60 s), so an icon changed from the window shows within a minute without
+    reading the drive every turn. `bandeja._emblema()` checks `en_lista` again:
+    an unlisted, changed, old or locked device always gets `bandeja.MARCA`.
+    `clave_de(icono, app=)` exists because the agent's `APP_DIR` is its own
+    folder, not `.prdrive`.
+  - **Parsing policy.** A brand colour (`icono-<clave>.ico`, the key is in the
+    name) is never read: the tray paints the brand in `icons.CAMPOS[clave]`
+    (`icons.pixeles_marca()` / `png_marca()`). A user's `icono-propio-<hash>.ico`
+    is passed by path, only where prdrive would put it (so it cannot leave the
+    root) and under `icons.MAX_ICO` (4 MiB, the same cap `volumen.leer_ico()`
+    applies). Windows lets Windows parse it (`LoadImageW(LR_LOADFROMFILE)` →
+    `DrawIconEx` into the menu DIB, `alfa_desde_mascara()` for icons without
+    alpha) — what Explorer already does with that `icon=` on every plug-in, so
+    no new exposure; Linux reads it with `icons.png_de_ico()`, strictly
+    bounded (`MAX_IMAGENES_ICO`, every image inside the file, square, ≤ 256 px):
+    a PNG entry goes as-is after its signature and IHDR, a 32-bit DIB entry is
+    decoded (alpha, or its AND mask) and re-encoded with `icons._png()`, 8/24
+    bits are not understood. VeraCrypt's exe, an `OTRO` icon or anything that
+    fails → the brand. Never raises out of the menu; cached by path, size and
+    mtime (the name already changes with the drawing), in a bounded cache
+    (`bandeja.CacheAcotada`, `TOPE_CACHE` entries, the oldest out): every save
+    of «Nombre e icono…» is a new key.
+  - **Click on the submenu itself.** Windows: the submenu's default item is
+    what a **double click** on the submenu item picks («Default Menu Items» in
+    *About Menus*), so `SetMenuDefaultItem` on «Configurar» (bold) makes a
+    double click on the device open its window, and `TrackPopupMenu` returns its
+    id; a single click opens the submenu as everywhere in Windows (making it
+    act would need a menu hook and break the normal way to open it). Linux:
+    dbusmenu has no default entry and the known hosts send no `clicked` for a
+    `children-display = submenu` node (Qt's importer, GNOME AppIndicator's
+    `PopupSubMenuMenuItem`); acting on one would open the window on the click
+    that opens the submenu, so `Menu.pulsada()` ignores it and «Configurar» is
+    the path. `Vista.defecto()` (Linux `Activate`) is the first device's
+    «Configurar».
 - **What it says, after the third real run** (30/09):
   - The **tooltip** says when the last pass ended well: «prdrive · sincronizado
     hace 5 min». That is `resumen()["ultima_pasada"]` (`Agente.ultima_buena`,
@@ -1651,12 +2052,20 @@ draws**, and neither imports tkinter (`test_install_agente.py` checks it).
     - Linux sends the desktop theme's name (`bandeja_linux.ICONOS_DEL_TEMA`,
       `icon-name`), so it follows the theme's colour and dark mode.
     - `test_bandeja_linux` checks every key has a theme name.
-- **Never «Abrir» for a drive that is not in the list**, even asked by hand:
-  that is running its code before the yes. It gets «…, conectada · Atender…».
+    - A device submenu carries an `Entrada.emblema` instead (a colour icon, not
+      a glyph): Windows paints it into the same DIB
+      (`bandeja_windows.pixeles_emblema()`, cached in `Api._pixeles`); Linux
+      sends `icon-data`, the PNG bytes dbusmenu takes
+      (`bandeja_linux.png_emblema()`, `TAMANO_EMBLEMA` = 32 px).
+- **Never «Configurar» nor «Abrir en explorador» for a drive that is not in the
+  list**, even asked by hand: the first runs its code before the yes, and the
+  folder follows the same rule. Its submenu reads «… (sin atender)» and holds
+  only «Atender…».
 - **Icon priority** (`bandeja.estado()`): pause > a pass in flight > avisos
   (failing pairs, a root's `error`, offline remotes, a missing root, a ghost) >
-  held by battery/metered (pause icon) > an encrypted root locked (not an
-  aviso: it is the normal state) > bien. The five `.ico` are
+  held by battery/metered (pause icon) > a root paused from its window (pause
+  icon and its name, #64) > an encrypted root locked (not an aviso: it is the
+  normal state) > bien. The five `.ico` are
   `icons.capas_bandeja()` — the brand plus a corner badge whose **colour** is
   what reads at 16 px — painted by `copiar_codigo()` and, if missing, by the
   agent on start (`write_bandeja(solo_si_faltan=True)`), never copied.
@@ -1697,12 +2106,14 @@ weaken:
   byte order, not premultiplied** (`icons.pixmap_bandeja()`, 16–64 px, painted
   lazily and cached); changes are `NewIcon` / `NewToolTip` / `NewStatus`, and
   `NeedsAttention` with avisos. `ItemIsMenu` so the left click opens the menu
-  too; `Activate` (for hosts that call it anyway) does the `defecto` entry.
+  too; `Activate` (for hosts that call it anyway) does the `defecto` entry
+  (the first device's «Configurar»).
 - **dbusmenu ids are renumbered on every change** (`bl.Menu.poner()`, only when
   the entries actually differ) and `LayoutUpdated` is emitted; the previous
   numbering is kept, so a click from a menu that was open means what it said.
   `_` in labels is doubled (dbusmenu mnemonic). There is no default entry, so
-  no bold.
+  no bold and no double click on a device submenu; clicking a submenu node does
+  nothing (see «One submenu per device»).
 - **No watcher is not «no tray forever»**: `arrancar()` succeeds with the
   session bus, `puesta` is False until a watcher with a host exists, and
   `NameOwnerChanged` / `StatusNotifierHostRegistered` register it when one
@@ -1729,27 +2140,55 @@ the agent renaming them first (`equipo.pedir(…, buzon_de=)` /
   drains it only for connected roots **in its list** (`_buzones_de_raices()`;
   an unlisted drive's is not even read), takes the id from WHERE the file is,
   never from the request, and accepts only `equipo.PIDE_SERVICIO`
-  (`reanudar`, `pasada`, `bloquear`); anything else is logged and ignored. The
-  window's «Bloquear» goes through it (`cifrado.pedir_bloqueo()`); the agent
-  still takes `bloquear` from `agente.pide` too (the CLI, the tray).
-- **«Iniciar servicio»** (`runsync._atender()`) still saves `ui_prefs.json`,
-  then, only when the agent IS this root's service (`watch.Resumen.
-  servicio_del_agente`: alive, listed, mode `daemon`), writes `reanudar`
-  (`runsync.pedir_reanudar()`) instead of spawning a daemon. Any other case
-  (mode `sync`/`ui`/`nada`, agent dead, drive unlisted) spawns the classic
-  service, and the agent steps aside as in phase 1. `reanudar` sets
-  `Conexion.reanudar`: when the window's UI lock goes, the agent resumes at
-  once (no `GRACIA`) and drops that root's `marcas`, so it starts with a pass
-  like the service it replaces.
+  (`pausar_raiz`, `reanudar`, `pasada`, `bloquear`); anything else is logged
+  and ignored. The window's «Bloquear» goes through it
+  (`cifrado.pedir_bloqueo()`); the agent still takes `bloquear` from
+  `agente.pide` too (the CLI, the tray).
+- **With the agent as this root's service, the footer offers «Pausar» /
+  «Reanudar», not «Iniciar servicio»** (#64). `watch.boton_servicio(res)` is the
+  one pure rule: agent alive and root listed → «Reanudar» if the root is paused
+  (whatever the mode: that pause must never be left without a way out), else,
+  when `watch.Resumen.servicio_del_agente` (alive, listed, mode `daemon`),
+  «Pausar», or «Reanudar todo» while the tray's global pause is on (the label
+  says it is everything); any other case (mode `sync`/`ui`/`nada`, agent
+  dead, drive unlisted) is «Iniciar servicio», which spawns the classic service
+  and the agent steps aside as in phase 1. These buttons leave a request
+  (`watch.pedir_servicio()`: «Pausar»/«Reanudar» to the root's mailbox through
+  `watch.pedir_a_la_raiz()`, an indirection point; «Reanudar todo» `sigue` to
+  `agente.pide`), keep the window open, show what was asked
+  (`watch.tras_servicio()`, like `pedido()`), and stay enabled during a pass.
+- **The pause is per root, and it is kept.** The agent's own pause
+  (`pausa`/`sigue`, the tray) stops every drive and lives in memory only; a
+  «Pausar» in one drive's window pausing all of them would surprise. So
+  `pausar_raiz` sets `equipo.Unidad.pausada` in `agente.json` (written by the
+  agent, as always): `_sirve()` stops counting the root, `_contrato()` releases
+  its lock after the pair in flight, `resumen()` carries `pausada` per drive
+  (the tray shows the pause icon and «PRDRIVE-3 en pausa» below avisos), and
+  it survives an agent restart. What it means is «don't come back when I close
+  the window»: while the window is open the agent already steps aside, so
+  `watch.pausa(res)` reads «al cerrarla vuelve el agente, salvo que pulses
+  «Pausar»» (`PAUSA_AGENTE`) under the line, and the line itself says when the
+  root is paused. `reanudar` clears `pausada` and sets `Conexion.reanudar`:
+  when the window's UI lock goes, the agent resumes at once (no `GRACIA`) and
+  drops that root's `marcas`, so it starts with a pass like the service it
+  replaces. A mode change does not touch the pause; `agente.py status` shows
+  it per root.
+- **«Iniciar servicio» from the console** (`runsync._atender()`) still saves
+  `ui_prefs.json` and, when the agent IS this root's service, writes `reanudar`
+  (`runsync.pedir_reanudar()`, which also lifts a per-root pause) instead of
+  spawning a daemon. The window reaches that path only if the agent came up
+  after it was painted.
 - **The agent's line** (`watch._agente_linea()`): what it does with this root,
-  «en pausa para todo» from `estado.json`, and amber when no agent process is
-  alive. Its button («Cambiar…», «Atender…» for an unlisted drive) opens
+  «en pausa desde esta ventana» from `agente.json`, «en pausa para todo» from
+  `estado.json`, and amber when no agent process is alive. Its button
+  («Cambiar…», «Atender…» for an unlisted drive) opens
   `tk_watch.open_agente()`, which asks the mode with `PIDE_MODO`
   (`watch.pedir_modo()` → `watch.pedir_al_agente()`, an indirection point); the
   line then shows what was asked (`watch.pedido()`), since `agente.json` only
   changes when the agent reads it. A host root is offered `daemon`/`nada` only.
-- **`pedir_al_iniciar` in «Ajustes»**: a checkbox, only for the encrypted host
-  root (`watch.pedir_al_iniciar()` → None otherwise), sent as `PIDE_AJUSTE`.
+- **`pedir_al_iniciar` in «Ajustes → Configuración»**: a checkbox, only for the
+  encrypted host root (`watch.pedir_al_iniciar()` → None otherwise), sent as
+  `PIDE_AJUSTE` on «Guardar» if it changed.
 - **Wizard re-run with the agent of the same version** (`install/agente.
   misma_version()`): «Instalación» reuses it (`instalado_prep()`), «Arranque»
   is «Pedírselo al agente» → `anadir()`: mailbox only, menu entry if a root is
@@ -1858,7 +2297,8 @@ Preserve the citations like the bisync ones.
   copying the folder rewrites mtimes, and the stamp in the name is the whole
   reason the format exists. Purging is «Ajustes» → «Versiones…», both sides in one
   plan through `confirmar_plan()`; the remote side goes out as a single
-  `rclone delete --files-from` with the exact list, never an age or a pattern.
+  `rclone delete --files-from` with the exact list, never an age or a pattern,
+  behind `working()` like the read of that side.
   **Restoring is deliberately not offered** (v1).
 - Turning it **off** removes the exclusion, so whatever is stored starts syncing
   as ordinary content. `pair_editor._analizar_versiones()` says so as a warning
@@ -1888,6 +2328,22 @@ rewriting keeps the header block and **loses interleaved comments**.
 `catalog.load()` never raises — no network falls back to `state/catalog.toml`,
 and a cached catalogue is **not editable** (`Catalog.editable`).
 `catalog.NET_FLAGS` keeps a dead remote from freezing the window.
+
+**The pairs screen opens with the local copy and reads the remote in the
+background (#66).** `open_dialog()` paints `catalog.cached()` (nothing, on a
+fresh device: only its own pairs) and `leer_catalogo()` hands `catalog.load()`
+to `segundo_plano`; on arrival it repaints with the remote, keeping the selected
+row, or keeps the copy and says why. What it says and allows is
+`catalog_editor.lectura(cat, aviso, leyendo)`, pure: the chip in two words
+(«copia local · <fecha>», «catálogo leído · <fecha>», «sin catálogo»), the line
+under the header (`tk.Indicador`: the long `catalog.load()` warning lives there
+now, not in the chip) and `editable` — **only what was just read from the
+remote, and never while reading**, so the catalogue buttons and «Releer» stay
+off until the real answer, and «Examinar…» follows the same answer. «Releer»
+reads the same way. A catalogue change goes up through `working()`, then the
+screen shows what `push()` left in the copy (still not editable) while it
+re-reads; device-side plans stay synchronous (local disk). `catalog.SIN_FECHA`
+is the stamp of a copy without metadata.
 
 **The path names the file, never its folder (#48).** `rclone cat` of a folder
 does not fail: it concatenates every file inside, recursively — `pairs.toml`,
@@ -1956,7 +2412,11 @@ line that is not a listing must not become a folder. `crear()` is the only thing
 that writes and it is a `mkdir`. **Deleting remote folders is deliberately not
 offered** — the remote belongs to the whole fleet and there is no consequences
 ceremony behind this dialog. The button is disabled exactly when the catalogue
-block is (`cat.editable`), the proxy for "there is a connection".
+block is (`catalog_editor.lectura().editable`: just read from the remote, not
+while reading), the proxy for "there is a connection". Listing and `mkdir` go
+through `working()`: its window is modal, so the path being looked at and its
+contents still cannot contradict each other mid-navigation; the first listing,
+before the picker shows, hangs off the form that opened it.
 
 ## The fleet registry (`common/fleet.py` + `ui/tk_fleet.py`)
 
@@ -1976,7 +2436,12 @@ protects a file governing deletions; this is a presence note).
 - `nombre` lives in `state/fleet.json` on the device, not only in the note: it
   must survive with no network, and reading a hostname would rename the device on
   every machine it is plugged into. `deploy` writes it at provisioning and calls
-  `fleet.recordar()` so the first pass doesn't repeat it.
+  `fleet.recordar()` so the first pass doesn't repeat it. **After that it changes
+  in one place only**, «Ajustes» → «Nombre e icono de la unidad…» (see «The
+  drive's name and icon»): «Dispositivos…» shows the name and cannot edit it, so
+  `tk_fleet` has no `pedir_nombre()` and `open_dialog()` returns nothing. A
+  rename publishes on the next real pass, not at once: `guardar_nombre()` leaves
+  `publicado` untouched and `hace_falta_publicar()` compares the name.
 - **Published after every real pass, good or bad** (`sync.py main()`, never for
   `--dry-run`): a fleet where everyone says 'ok' cannot show which device has
   been failing for weeks. `hace_falta_publicar()` throttles it, because the
@@ -1984,6 +2449,14 @@ protects a file governing deletions; this is a presence note).
 - `publicar()` and `leer()` **never raise**; a note is not the sync, and
   `parse()` tolerates a half-written or future-version one. Staleness is
   `DIAS_OBSOLETO = 7`; an unreadable date counts as stale.
+- **«Dispositivos…» opens at once and reads in the background (#66).** There is
+  no local copy of the notes, so `refrescar()` shows the chip «leyendo la
+  flota…» and `tk.Indicador` (`tk_fleet.LEYENDO`), keeps what the table had
+  (nothing, on opening: not even `SIN_NOTA`, which is not known yet), switches
+  «Quitar de la lista…» and «Releer» off (`repasar()` keeps quitar off while
+  `dlg.sondeo.esperando`), and hands `fleet.leer()` to `segundo_plano`;
+  `pintar()` is what used to be the body of `refrescar()`. `olvidar()` goes
+  through `working()`, then the list is re-read the same way.
 
 **Where it has been, and since when it fails (#17).** Everything is computed at
 publish time, with **no new write on the device**:
@@ -2015,6 +2488,14 @@ publish time, with **no new write on the device**:
   `ultima_buena`: same machine → the 6 h rhythm is unchanged; another machine →
   published on the first pass; `ultima_buena` only moves with `last_result`. A
   `publicado` from before these keys publishes once after updating.
+- **The table's «Último equipo» column** is the host the device last published
+  from: `Dispositivo.ultimo_equipo` = `equipos[0]` (the list is latest-first; the
+  same value `_sin_fecha()` compares), shown by `tk_fleet.ultimo_equipo()` with
+  `SIN_DATO` («—») for a note that predates the list. Only the most recent one:
+  the full list with dates is the card's «Equipos», so the two do not repeat
+  each other. It is one more `COLUMNAS` entry and one more value in `pintar()`'s
+  `tree.insert`; the table widths were rebalanced (the «Última pasada» column gave
+  50 units) so the window only grew ~100.
 - **The card** (`tk_fleet.ficha()`, pure, no Tk) sits under the table, in the
   same window — a fourth-level modal was the alternative. The table dropped
   «Versión» and «Para» into it. Its space is **reserved for the largest card in
@@ -2067,22 +2548,30 @@ keeps the target's existing header.
   `lanzar_suelto()` / `esperar_a()` / `procesos_desde()`,
   `common.components.raiz_fisica()`, `traveler.espacio_libre()`, `_win_volumes()`,
   `vestibulo.raiz_fisica()`, `cifrado.lanzar_expulsion()`,
+  `tk.proteger_de_capturas()` / `tk._afinidad_de_pantalla()`,
   `crypto.sistema_de_ficheros()`, `crypto.bytes_escritos()`,
   `_leer_estado_bitlocker()`, `_preguntar_borrado()`, `pairing.construir()`,
-  `watch.resumen()`, `tk.mostrar()` / `confirmar_plan()`, and for the agent
+  `watch.resumen()`, `tk.mostrar()` / `confirmar_plan()`,
+  `segundo_plano.lanzar()` (tests set it to `en_el_acto()`), and for the agent
   `agente.lanzar()` / `hay_pantalla()` / `avisar()` / `abrir_contenedor()` /
   `diario()`, `avisos.enviar()`, `moderacion.energia()` / `red_medida()`,
   `install.agente.conseguir_runtime()` / `lanzar()` / `autostart_file()` /
   `acceso_menu()` / `crear_lnk()`, `raiz_equipo.carpetas_sincronizadas()` /
   `veracrypt_instalado()` / `abrir_o_crear()`, `penwatch.installed_veracrypt()`,
-  `vestibulo.retenido()`, `cifrado.pedir_bloqueo()`, `agente.poner_bandeja()`, the tray's
-  `bandeja_windows.Api`, `agente.hilo()` / `buscar_version()` / `ejecutar()` /
+  `vestibulo.retenido()`, `cifrado.pedir_bloqueo()`, `agente.poner_bandeja()` /
+  `explorar()`, the tray's
+  `bandeja_windows.Api`, `agente.hilo()` (the version check and the `watch` walks) /
+  `huella_local()` (the photo of a watched folder, over `huella.de_carpeta()`) /
+  `buscar_version()` / `ejecutar()` /
   `cache_version()`, `runsync.pedir_reanudar()` / `agente_sirve()`,
-  `watch.pedir_al_agente()`, `agente.arrancar_agente()`, `tk_equipo.escritorio()`,
+  `watch.pedir_al_agente()` / `pedir_a_la_raiz()`, `agente.arrancar_agente()`,
+  `tk_equipo.escritorio()`,
   `install.pintar_iconos`, `install.agente.matar_arbol()` / `conseguir_rclone()` /
   `conseguir_veracrypt()`, `agente.rclone_propio()` / `veracrypt_propio()` /
   `procesos()`, `raiz_equipo.veracrypt_portatil()`,
-  the Linux tray's `conectar` / `conectar_sistema`, and `equipo.DIR`. Keep new
+  the Linux tray's `conectar` / `conectar_sistema`, `agente.poner_red()` and
+  `red.AvisosDeRed`'s `api` (`red.ApiWindows`) / `conectar_sistema` /
+  `conectar_netlink`, and `equipo.DIR`. Keep new
   ones in that shape.
 
 ## Documentation

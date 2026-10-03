@@ -98,8 +98,20 @@ def pasar(segundos: float) -> None:
 
 
 def unidad(uid: str, parejas=("docs", "fotos"), nombre: str | None = None,
-           daemon: str = "") -> Path:
-    """Una unidad prdrive de mentira, con su id y sus parejas."""
+           daemon: str = "", extra: dict | None = None,
+           locales: dict | None = None) -> Path:
+    """Una unidad prdrive de mentira, con su id y sus parejas.
+
+    Args:
+        uid: El id de la unidad.
+        parejas: Los nombres de sus parejas.
+        nombre: Su nombre en la flota, si lo tiene.
+        daemon: Lo que va tras `[defaults]` (la tabla `[daemon]`).
+        extra: Líneas de TOML que añadir a algunas parejas, por nombre
+            (`{"docs": "watch = true\\n"}`).
+        locales: La `local` de las parejas que no usan `sync-data/<nombre>`.
+    """
+    extra, locales = extra or {}, locales or {}
     raiz = tmpdir(f"prdrive-unidad-{uid[:4]}-")
     app = raiz / penwatch.APP_SUBDIR
     (app / "state").mkdir(parents=True)
@@ -107,8 +119,8 @@ def unidad(uid: str, parejas=("docs", "fotos"), nombre: str | None = None,
     (app / "VERSION").write_text(VERSION + "\n", encoding="utf-8")
     for nombre_py in ("runsync.py", "sync.py"):
         (app / nombre_py).write_text("# de mentira\n", encoding="utf-8")
-    pares = "".join(f'[[pair]]\nname = "{p}"\nlocal = "sync-data/{p}"\n'
-                    f'remote_path = "/R/{p}"\n\n' for p in parejas)
+    pares = "".join(f'[[pair]]\nname = "{p}"\nlocal = "{locales.get(p, f"sync-data/{p}")}"\n'
+                    f'remote_path = "/R/{p}"\n{extra.get(p, "")}\n' for p in parejas)
     (app / "sync_config.toml").write_text(
         f'[defaults]\nremote = "nas"\n\n{daemon}\n{pares}', encoding="utf-8")
     if nombre:

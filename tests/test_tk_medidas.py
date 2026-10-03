@@ -49,10 +49,10 @@ except Exception as e:                                   # sin entorno gráfico
     sys.exit(0)
 
 from ui import tk as uitk
-from ui import remote_picker
-from ui import (tk_doctor, tk_fleet, tk_install, tk_pairs, tk_qr, tk_repair,
-                tk_update, tk_versions, tk_volumen, tk_watch, versions_editor, volumen,
-                watch)
+from ui import remote_picker, segundo_plano
+from ui import (tk_configuracion, tk_doctor, tk_fleet, tk_install, tk_pairs, tk_qr,
+                tk_repair, tk_update, tk_versions, tk_volumen, tk_watch, versions_editor,
+                volumen, watch)
 
 # Ni una petición a GitHub desde un test.
 update.fetch = lambda url, timeout: c("ningún test toca la red", "fetch", "nada")
@@ -114,6 +114,21 @@ versions_editor.leer_remoto = lambda pair: VERSIONES_REMOTAS
 # `working()` lanza un hilo y abre su propia ventanita: aquí se mide la de
 # versiones, no esa.
 tk_versions.working = lambda parent, title, funcion, mensaje="": (True, funcion())
+# Y lo mismo en Parejas, que lista las carpetas del remoto por `working()`, y
+# con lo que esa pantalla y la flota leen en segundo plano: llega en el sitio,
+# así que se mide la pantalla ya leída. La de la espera se mide aparte.
+tk_pairs.working = lambda parent, title, funcion, mensaje="": (True, funcion())
+segundo_plano.lanzar = segundo_plano.en_el_acto
+# Un encargo que no termina nunca: la pantalla se queda esperando al remoto.
+NUNCA = segundo_plano.Encargo
+# Lo que dice `catalog.load()` con el remoto caído, con lo que suele añadir rclone.
+AVISO_CAIDO = (
+    "Sin conexión con el catálogo. Se enseña la copia local del 2026-01-01 00:00:00; "
+    "no se puede editar el catálogo hasta que vuelva la conexión.\n"
+    "No pude leer el catálogo nas:/prdrive-catalog/pairs.toml: 2026/01/01 00:00:00 "
+    "ERROR : error reading source root directory: couldn't connect SSH: dial tcp "
+    "192.168.100.200:22: i/o timeout\n2026/01/01 00:00:00 Failed to cat: couldn't "
+    "connect SSH: dial tcp 192.168.100.200:22: i/o timeout")
 
 # La ventana de emparejar dibuja un código QR cuyo tamaño sale del tamaño de la
 # carga, y la carga lleva una clave privada. Aquí se le da una del tamaño real
@@ -130,11 +145,16 @@ pairing.construir = lambda raw=None, app_dir=None: pairing.dumps(
 # VeraCrypt ofrecido (una fila más), un icono que no puso prdrive con una ruta
 # larga, y la raíz en una ruta larga, que es lo que alarga la nota. Las dos notas:
 # la de la raíz física de un contenedor, y la de la unidad sin cifrar o con
-# BitLocker, que lleva la ruta dos veces (el autorun.inf y `.prdrive/`).
+# BitLocker, que lleva la ruta dos veces (el autorun.inf y `.prdrive/`). Y el
+# nombre del dispositivo en la flota, que sale en la pista bajo el campo y puede
+# ser largo (el del equipo, o uno que se le puso antes de que esa ventana lo
+# limitara a lo que cabe en una unidad).
 VOLUMENES = [volumen.Estado(
     __import__("pathlib").Path("/media/usuario-de-nombre-largo/PENDRIVE-DE-LA-OFICINA"),
     fisica, "Pendrive de la oficina de arriba", volumen.OTRO,
-    "%SystemRoot%\\System32\\imageres.dll,-30", True) for fisica in (True, False)]
+    "%SystemRoot%\\System32\\imageres.dll,-30", True,
+    "el pendrive de la oficina de arriba, el del armario de la sala de reuniones")
+    for fisica in (True, False)]
 
 # El panel de VeraCrypt sin VeraCrypt: se le da uno de mentira, una unidad
 # FAT32 (la pista del tope) y sin dispersos (la estimación de la espera), que es
@@ -690,16 +710,53 @@ try:
 
                 # La flota crece con cada dispositivo y con lo largo que sea su
                 # nombre, que lo pone el usuario.
-                for que, fabricar in (
-                        ("la flota",
-                         lambda: tk_fleet.open_dialog(raiz, cfg, dict(BASE))),
-                        ("el nombre del dispositivo",
-                         lambda: tk_fleet.pedir_nombre(
-                             raiz, "el pendrive de la oficina de arriba"))):
-                    entra, corta = medir_dialogo(fabricar, ancho, alto, escala,
-                                                 modulo=tk_fleet)
-                    c(f"{nombre}: {que} cabe", entra, True)
-                    c(f"{nombre}: {que} no queda recortado", corta, False)
+                entra, corta = medir_dialogo(
+                    lambda: tk_fleet.open_dialog(raiz, cfg, dict(BASE)),
+                    ancho, alto, escala, modulo=tk_fleet)
+                c(f"{nombre}: la flota cabe", entra, True)
+                c(f"{nombre}: la flota no queda recortado", corta, False)
+
+                # Lo que esas dos pantallas leen en segundo plano (#66), en sus
+                # casos más altos: Parejas leyendo, con la copia local de las doce
+                # parejas y el indicador bajo la cabecera; Parejas con el remoto
+                # caído, que deja en esa línea el aviso entero de `catalog.load()`
+                # con lo que dijo rclone; y la flota leyendo. Un encargo que no
+                # termina nunca deja la pantalla esperando; se cierra al medirla
+                # para que su sondeo no siga.
+                copia = catalog.Catalog(
+                    raw=tomllib.loads(config_file.dumps(BASE)), text=config_file.dumps(BASE),
+                    source="cache", stamp="2026-01-01 00:00:00",
+                    endpoint="nas:/prdrive-catalog/pairs.toml")
+                caido = (copia, AVISO_CAIDO)
+                previos = (catalog.cached, catalog.load, segundo_plano.lanzar)
+                catalog.cached = lambda: copia
+                try:
+                    for que, lanzar, cargar, abrir, modulo, espera in (
+                            ("Parejas leyendo la copia local", NUNCA, previos[1],
+                             lambda: tk_pairs.open_dialog(raiz, cfg), tk_pairs, True),
+                            ("Parejas con el remoto caído", segundo_plano.en_el_acto,
+                             lambda raw=None: caido,
+                             lambda: tk_pairs.open_dialog(raiz, cfg), tk_pairs, False),
+                            ("la flota leyendo", NUNCA, previos[1],
+                             lambda: tk_fleet.open_dialog(raiz, cfg, dict(BASE)),
+                             tk_fleet, True)):
+                        segundo_plano.lanzar, catalog.load = lanzar, cargar
+                        segundo_plano.olvidar_lecturas()   # el `NUNCA` de antes no vale
+                        antes = set(raiz.winfo_children())
+                        entra, corta = medir_dialogo(abrir, ancho, alto, escala,
+                                                     modulo=modulo)
+                        nuevas = [w for w in raiz.winfo_children() if w not in antes]
+                        indicador = nuevas[0].indicador
+                        c(f"{nombre}: {que} cabe", entra, True)
+                        c(f"{nombre}: {que} no queda recortada", corta, False)
+                        c(f"{nombre}: (y se ha medido con su línea puesta)",
+                          (indicador.esperando, bool(indicador.marco.grid_info()),
+                           bool(str(indicador.texto.cget("text")))), (espera, True, True))
+                        for ventana in nuevas:
+                            ventana.destroy()
+                finally:
+                    catalog.cached, catalog.load, segundo_plano.lanzar = previos
+                    segundo_plano.olvidar_lecturas()
 
                 # «Reparación» es la pantalla que más crece de todas: una fila
                 # por avería, con su explicación, y debajo la lista de conflictos
@@ -761,19 +818,27 @@ try:
                   corta, False)
 
                 # «Ajustes»: una tarjeta con una entrada por acción, que crece
-                # con cada una que se le añada. Su peor caso es la raíz cifrada
-                # de un equipo, que añade la casilla de `pedir_al_iniciar`.
+                # con cada una que se le añada.
+                entra, corta = medir_dialogo(
+                    lambda: tk_doctor.open_dialog(raiz, cfg, lambda *a: None),
+                    ancho, alto, escala, modulo=tk_doctor)
+                c(f"{nombre}: la pantalla de Ajustes cabe", entra, True)
+                c(f"{nombre}: la pantalla de Ajustes no queda recortada",
+                  corta, False)
+
+                # «Configuración» (#65): el intervalo, con la frase larga de un
+                # dispositivo que se desenchufa, y su peor caso, la casilla de
+                # `pedir_al_iniciar` de la raíz cifrada de un equipo.
                 previo_pedir = watch.pedir_al_iniciar
                 watch.pedir_al_iniciar = lambda: True
                 try:
                     entra, corta = medir_dialogo(
-                        lambda: tk_doctor.open_dialog(raiz, cfg, lambda *a: None),
-                        ancho, alto, escala, modulo=tk_doctor)
+                        lambda: tk_configuracion.open_dialog(raiz, cfg),
+                        ancho, alto, escala, modulo=tk_configuracion)
                 finally:
                     watch.pedir_al_iniciar = previo_pedir
-                c(f"{nombre}: la pantalla de Ajustes cabe", entra, True)
-                c(f"{nombre}: la pantalla de Ajustes no queda recortada",
-                  corta, False)
+                c(f"{nombre}: «Configuración» cabe", entra, True)
+                c(f"{nombre}: «Configuración» no queda recortada", corta, False)
 
                 # «Qué hace el agente»: los cuatro modos de una unidad, y el
                 # aviso de que el agente no está en marcha.
@@ -818,12 +883,50 @@ try:
                 # que mide en píxeles y no puede encoger —un módulo por debajo
                 # de dos píxeles no lo lee ninguna cámara—, así que en una
                 # pantalla pequeña la respuesta correcta es la barra.
-                entra, corta = medir_dialogo(
-                    lambda: tk_qr.open_dialog(raiz, dict(BASE)),
-                    ancho, alto, escala, modulo=tk_qr)
-                c(f"{nombre}: la ventana de emparejar cabe", entra, True)
-                c(f"{nombre}: la ventana de emparejar no queda recortada",
-                  corta, False)
+                # Con la línea de las capturas (#59) que cada protección dice,
+                # y sin ninguna: la protección se fija aquí en vez de dejar
+                # que la decida el sistema que corre el test. Cada variante
+                # mide además que la línea esté de verdad en la ventana
+                # medida: un peor caso sin la línea no mediría nada.
+                #
+                # Sin protección hay dos casos: fuera de Windows no se dice nada
+                # y en Windows se dice que no se ha podido, que es la línea más
+                # larga de las tres.
+                proteger_real, windows_real = tk_qr.proteger_de_capturas, uitk.IS_WIN
+                try:
+                    for que, captura, en_windows, linea_esperada in (
+                            ("sin línea de capturas", uitk.CAPTURA_NINGUNA, False, None),
+                            ("con «no aparece en capturas»", uitk.CAPTURA_EXCLUIDA,
+                             True, tk_qr.LINEA_CAPTURA[uitk.CAPTURA_EXCLUIDA]),
+                            ("con «sale en negro»", uitk.CAPTURA_EN_NEGRO,
+                             True, tk_qr.LINEA_CAPTURA[uitk.CAPTURA_EN_NEGRO]),
+                            ("con «no se ha podido proteger»", uitk.CAPTURA_NINGUNA,
+                             True, tk_qr.LINEA_SIN_PROTECCION)):
+                        tk_qr.proteger_de_capturas = lambda dlg, v=captura: v
+                        uitk.IS_WIN = en_windows
+                        entra, corta = medir_dialogo(
+                            lambda: tk_qr.open_dialog(raiz, dict(BASE)),
+                            ancho, alto, escala, modulo=tk_qr)
+                        c(f"{nombre}: la ventana de emparejar {que} cabe",
+                          entra, True)
+                        c(f"{nombre}: la ventana de emparejar {que} no queda "
+                          "recortada", corta, False)
+                        medida_qr = [w for w in raiz.winfo_children()
+                                     if isinstance(w, tk.Toplevel)][-1]
+                        pila_qr, dicho_qr = [medida_qr], []
+                        while pila_qr:
+                            w_qr = pila_qr.pop()
+                            pila_qr += list(w_qr.winfo_children())
+                            if isinstance(w_qr, ttk.Label):
+                                dicho_qr.append(str(w_qr.cget("text")))
+                        c(f"{nombre}: la ventana de emparejar {que} lleva la "
+                          "línea que toca",
+                          linea_esperada in dicho_qr if linea_esperada else
+                          not any("captura" in t.lower() for t in dicho_qr),
+                          True)
+                finally:
+                    tk_qr.proteger_de_capturas = proteger_real
+                    uitk.IS_WIN = windows_real
 
         # La ficha de la flota cambia con la fila elegida, y el recuadro se
         # encaja una sola vez, al abrir: lo que se reservó entonces tiene que

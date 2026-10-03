@@ -84,7 +84,7 @@ RAIZ_ARCHIVO = "python"
 
 
 def _mm() -> str:
-    """Devuelve `3.13` a partir de `3.13.15`.
+    """Devuelve `3.13` a partir de `3.13.16`.
 
     El tramo que aparece en las rutas del runtime.
     """

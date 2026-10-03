@@ -817,6 +817,15 @@ def ico_bandeja(estado: str, tamanos=BANDEJA_TAMANOS) -> bytes:
     return _ico_de(tamanos, lambda size: capas_bandeja(size, estado))
 
 
+def _premultiplicado(rgba) -> bytes:
+    """Devuelve filas de `(r, g, b, a)` como BGRA de arriba abajo, con el alfa premultiplicado."""
+    datos = bytearray()
+    for fila in rgba:
+        for r, g, b, a in fila:
+            datos += bytes((round(b * a), round(g * a), round(r * a), round(a * 255)))
+    return bytes(datos)
+
+
 def pixeles_menu(nombre: str, size: int, color: str) -> bytes:
     """Devuelve un glifo como imagen de una entrada de menú de Windows.
 
@@ -826,11 +835,162 @@ def pixeles_menu(nombre: str, size: int, color: str) -> bytes:
     `AC_SRC_ALPHA`). Van del color que se pida: el del texto del menú, para que
     siga al tema.
     """
-    datos = bytearray()
-    for fila in _capas_rgba([(color, TRAZO, GLIFOS[nombre])], 16.0, size):
-        for r, g, b, a in fila:
-            datos += bytes((round(b * a), round(g * a), round(r * a), round(a * 255)))
-    return bytes(datos)
+    return _premultiplicado(_capas_rgba([(color, TRAZO, GLIFOS[nombre])], 16.0, size))
+
+
+def pixeles_marca(size: int, campo: str = CAMPO) -> bytes:
+    """Devuelve la marca como imagen de una entrada de menú de Windows.
+
+    Es el icono de un dispositivo en el menú de la bandeja cuando no lleva un
+    `.ico` propio que se pueda leer: el formato de `pixeles_menu()`, pero a
+    color, con `campo` de fondo (uno de `CAMPOS`).
+    """
+    return _premultiplicado(_capas_rgba(_capas_marca(size, campo), 64.0, size))
+
+
+def png_marca(size: int, campo: str = CAMPO) -> bytes:
+    """Devuelve la marca como PNG, con `campo` de fondo.
+
+    Es el `icon-data` de dbusmenu (bandeja de Linux) para un dispositivo sin
+    `.ico` propio que se pueda leer.
+    """
+    return _png(_capas_rgba(_capas_marca(size, campo), 64.0, size), size)
+
+
+MAX_ICO = 4 * 1024 * 1024
+"""Bytes que puede ocupar el `.ico` propio de una unidad.
+
+Es lo que `ui/volumen.py` deja poner y lo que se lee, como mucho, para
+pintarlo en la bandeja del agente. Uno de verdad cabe de sobra: el de la
+marca, con siete tamaños, son 43 KB, y uno con el de 256 px sin comprimir anda
+por los 400.
+"""
+MAX_IMAGENES_ICO = 64
+"""Imágenes que se miran, como mucho, en el directorio de un `.ico` ajeno."""
+FIRMA_PNG = b"\x89PNG\r\n\x1a\n"
+"""Los ocho bytes con que empieza todo PNG (sección 5.2 de la especificación PNG)."""
+
+
+def _imagenes_ico(datos: bytes) -> list[tuple[int, bytes]]:
+    """Devuelve las imágenes cuadradas de un `.ico` como `(lado, bytes)`, sin fiarse de él.
+
+    Lee el ICONDIR (reservado 0, tipo 1 de icono, cuántas imágenes) y una
+    ICONDIRENTRY de dieciséis bytes por imagen (ancho y alto, donde 0 es 256;
+    colores, reservado, planos, bits, tamaño y desplazamiento), que es lo que
+    escribe `_ico_de()`. Se descarta la imagen que no es cuadrada o no cabe en
+    el fichero. Un fichero que no es un icono, que pasa de `MAX_ICO` o que dice
+    tener más de `MAX_IMAGENES_ICO` imágenes no da ninguna.
+    """
+    import struct
+
+    if len(datos) < 6 or len(datos) > MAX_ICO:
+        return []
+    reservado, tipo, cuantas = struct.unpack_from("<HHH", datos, 0)
+    if reservado != 0 or tipo != 1 or not 0 < cuantas <= MAX_IMAGENES_ICO:
+        return []
+    inicio = 6 + 16 * cuantas
+    if inicio > len(datos):
+        return []
+    imagenes = []
+    for i in range(cuantas):
+        ancho, alto, _colores, _res, _planos, _bits, tam, desde = struct.unpack_from(
+            "<BBBBHHII", datos, 6 + 16 * i)
+        ancho, alto = ancho or 256, alto or 256
+        if ancho != alto or tam == 0 or desde < inicio or desde + tam > len(datos):
+            continue
+        imagenes.append((ancho, datos[desde:desde + tam]))
+    return imagenes
+
+
+def _png_de_lado(img: bytes, lado: int) -> bool:
+    """Indica si una imagen de un `.ico` es un PNG de `lado` × `lado` px.
+
+    Se mira la firma y la cabecera IHDR, que va primero y mide 13 bytes
+    (sección 11.2.2 de la especificación PNG). El resto lo decodifica quien lo
+    pinte.
+    """
+    import struct
+
+    if len(img) < 33 or not img.startswith(FIRMA_PNG) or img[8:16] != b"\0\0\0\x0dIHDR":
+        return False
+    ancho, alto = struct.unpack_from(">II", img, 16)
+    return ancho == alto == lado
+
+
+def _rgba_de_dib(img: bytes, lado: int) -> list[list[tuple]] | None:
+    """Devuelve una imagen DIB de 32 bits de un `.ico` como filas de `(r, g, b, a)`.
+
+    Solo entiende la que escribe `_dib()`: BITMAPINFOHEADER de 40 bytes, el
+    alto doble (el dibujo y la máscara AND), un plano, 32 bits sin comprimir
+    (BI_RGB), BGRA de abajo arriba y el alfa sin premultiplicar. Si ningún
+    píxel trae alfa (iconos guardados a 32 bits sin él), la transparencia sale
+    de la máscara AND, si está entera.
+
+    Returns:
+        Las filas de arriba abajo, o `None` si la imagen es de otra clase.
+    """
+    import struct
+
+    if len(img) < 40:
+        return None
+    tam, ancho, alto, planos, bits, compresion = struct.unpack_from("<IiiHHI", img, 0)
+    if (tam, ancho, alto, planos, bits, compresion) != (40, lado, 2 * lado, 1, 32, 0):
+        return None
+    n = lado * lado * 4
+    if 40 + n > len(img):
+        return None
+    pixeles = img[40:40 + n]
+    fila_mascara = ((lado + 31) // 32) * 4
+    mascara = img[40 + n:40 + n + fila_mascara * lado]
+    con_alfa = any(pixeles[3::4])
+    con_mascara = len(mascara) == fila_mascara * lado
+    filas = []
+    for y in range(lado):
+        fuente = lado - 1 - y
+        fila = []
+        for x in range(lado):
+            i = (fuente * lado + x) * 4
+            b, g, r, a = pixeles[i:i + 4]
+            if con_alfa:
+                alfa = a / 255
+            elif con_mascara:
+                alfa = 0.0 if mascara[fuente * fila_mascara + x // 8] & (0x80 >> (x % 8)) \
+                    else 1.0
+            else:
+                alfa = 1.0
+            fila.append((r, g, b, alfa))
+        filas.append(fila)
+    return filas
+
+
+def png_de_ico(datos: bytes, lado: int) -> bytes | None:
+    """Devuelve la imagen de un `.ico` que mejor sirve a `lado` px, como PNG.
+
+    Es el `icon-data` de dbusmenu para el `.ico` propio de una unidad. El
+    fichero viene de la unidad y no se da por bueno: se lee con límites
+    (`MAX_ICO`, `MAX_IMAGENES_ICO`, cada imagen dentro del fichero, a lo sumo
+    256 px, que es lo que cabe en su directorio) y cualquier cosa rara es «no
+    hay imagen», nunca una excepción. Se prueba primero la más pequeña de al
+    menos `lado` px y luego las demás por cercanía. Un PNG va tal cual tras
+    mirar su firma y su IHDR; un DIB de 32 bits se convierte (`_rgba_de_dib()`);
+    los de 8 o 24 bits no se entienden.
+
+    Returns:
+        Los bytes del PNG, o `None` si ninguna imagen sirve.
+    """
+    try:
+        imagenes = _imagenes_ico(datos)
+        for tam, img in sorted(imagenes, key=lambda i: (i[0] < lado, abs(i[0] - lado))):
+            if img.startswith(FIRMA_PNG):
+                if _png_de_lado(img, tam):
+                    return img
+                continue
+            rgba = _rgba_de_dib(img, tam)
+            if rgba is not None:
+                return _png(rgba, tam)
+    except Exception:                                   # noqa: BLE001
+        return None
+    return None
 
 
 def pixmap_bandeja(estado: str, size: int) -> bytes:
