@@ -46,6 +46,13 @@ Cómo trabaja, vuelta a vuelta (`Agente.vuelta()`):
   medido, remotos sin conexión, «Sincronizar ahora». Un remoto sin conexión se
   sondea cuando el sistema dice que vuelve a haber red (`common/red.py`), una
   vez por ráfaga de avisos, y si no, cada 5 min (cada 30 si hay avisos).
+- **Mira los cambios locales** de las parejas con `watch = true`: una foto
+  barata de su carpeta cada 10 s (`common/huella.py`, en un hilo: un pendrive
+  tarda segundos), y si cambia y se calma, la pasada de esa pareja se adelanta
+  a su intervalo. La modera todo lo demás (pausa, batería, red de uso medido,
+  la pausa de la ventana de la raíz, su ventana abierta) y, al acabar, se
+  vuelve a tomar la foto para que lo que escribió rclone no la dispare otra
+  vez. No ve los cambios del remoto: esos esperan al intervalo.
 - **Ejecuta** cada pasada como el `sync.py` de esa raíz, hijo, con el Python
   del agente y el directorio de trabajo fuera de la raíz: cada raíz ejecuta su
   propio código, un rclone colgado no tumba al agente y entre pasadas no queda
@@ -118,7 +125,7 @@ import threading
 import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping, NamedTuple
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
@@ -127,6 +134,7 @@ if str(SCRIPT_DIR) not in sys.path:
 import penwatch  # noqa: E402
 from common import (APP_NAME, avisos, catalog, components, equipo, model,  # noqa: E402
                     moderacion, store, update, vestibulo)
+from common import huella as huellas  # noqa: E402  (`huella()` es la del código de una raíz)
 from common import planificador as pl  # noqa: E402
 from common.store import pid_alive  # noqa: E402
 from ui import bandeja, prefs, volumen  # noqa: E402
@@ -186,6 +194,14 @@ MIRAR_EMBLEMA = 60.0
 
 Se lee al conectarla y luego como mucho una vez por minuto: así se ve un icono
 cambiado desde su ventana sin leer la unidad en cada vuelta.
+"""
+
+IGNORAR_CAMBIOS = huellas.IGNORAR + (APP_SUBDIR,)
+"""Carpetas de la raíz de una pareja vigilada que no se miran.
+
+Además de `.prversions/`, el propio `.prdrive/`: una pareja con `local = "."`
+lo tendría dentro, y lo que escribe cada pasada en su `state/` la dispararía
+otra vez.
 """
 
 OK, FALLO, RED, SALTADA = pl.OK, pl.FALLO, pl.RED, pl.SALTADA
@@ -281,11 +297,29 @@ def diario(msg: str) -> None:
 
 
 def hilo(funcion) -> None:
-    """Corre `funcion` en un hilo aparte, para lo que puede tardar (la red).
+    """Corre `funcion` en un hilo aparte, para lo que puede tardar (la red o un disco).
 
     Punto de indirección: los tests la corren en el sitio.
     """
     threading.Thread(target=funcion, daemon=True).start()
+
+
+def huella_local(ruta: Path, tope: int, ignorar: tuple[str, ...]) -> pl.Huella | None:
+    """Toma la foto de la carpeta local de una pareja vigilada (`watch = true`).
+
+    Es `huella.de_carpeta()`: recorre la carpeta sin abrir ningún fichero y sin
+    seguir enlaces. Punto de indirección: los tests devuelven la foto que
+    quieren, sin tocar el disco.
+
+    Args:
+        ruta: La carpeta.
+        tope: Cuántas entradas se cuentan como mucho.
+        ignorar: Carpetas de su raíz que no se miran.
+
+    Returns:
+        La foto, o `None` si no se pudo tomar.
+    """
+    return huellas.de_carpeta(ruta, tope, ignorar)
 
 
 def cache_version() -> Path:
@@ -518,9 +552,12 @@ class Servicio:
     Args:
         parejas: Las parejas, con su remoto.
         minutos: El intervalo entre pasadas.
+        locales: La carpeta local, tal como está escrita en el TOML, de cada
+            pareja que pide vigilar sus cambios (`watch = true`), por nombre.
     """
     parejas: tuple[pl.Pareja, ...]
     minutos: float
+    locales: Mapping[str, str] = field(default_factory=dict)
 
 
 def leer_servicio(raiz: Path) -> Servicio:
@@ -543,6 +580,7 @@ def leer_servicio(raiz: Path) -> Servicio:
         raise ValueError(f"sync_config.toml no es TOML válido ({e})") from e
     defaults = crudo.get("defaults") if isinstance(crudo.get("defaults"), dict) else {}
     remotos: dict[str, str] = {}
+    locales: dict[str, str] = {}
     for p in crudo.get("pair") if isinstance(crudo.get("pair"), list) else []:
         # El nombre va a la línea de órdenes de su `sync.py` y a sus carpetas
         # de `state/` y `filters/`: uno que su parser no admitiría (`--resync`,
@@ -552,12 +590,20 @@ def leer_servicio(raiz: Path) -> Servicio:
                 and model.problema_nombre(p["name"]) is None:
             remotos[p["name"]] = str(p.get("remote", defaults.get("remote",
                                                                   model.DEFAULT_REMOTE)))
+            # Se vigila solo lo que pide `watch = true` en un modo con el local
+            # de origen (`model.pide_watch()`) y tiene dónde mirar.
+            local = p.get("local")
+            if model.pide_watch(p) and isinstance(local, str) and local.strip():
+                locales[p["name"]] = local
+            else:
+                locales.pop(p["name"], None)
     if not remotos:
         raise ValueError("sync_config.toml no tiene ninguna pareja")
     daemon = crudo.get("daemon") if isinstance(crudo.get("daemon"), dict) else {}
     elegidas, minutos, _ = prefs.elegir(list(remotos), daemon,
                                         store.read_json(estado_de(raiz) / "ui_prefs.json"))
-    return Servicio(tuple(pl.Pareja(n, remotos[n]) for n in elegidas), minutos)
+    return Servicio(tuple(pl.Pareja(n, remotos[n], vigila=n in locales) for n in elegidas),
+                    minutos, {n: locales[n] for n in elegidas if n in locales})
 
 
 def orden_sonda(raiz: Path, remoto: str) -> list[str] | None:
@@ -873,6 +919,75 @@ class Pasada:
     nombre: str
 
 
+class Mirar(NamedTuple):
+    """Una carpeta que toca mirar en un muestreo.
+
+    Args:
+        clave: `(raíz, pareja)`.
+        con: La conexión de la raíz cuando se pidió: si al recoger la foto ya
+            no es esa, la unidad se fue (o se fue y volvió) y la foto no vale.
+        raiz: Dónde estaba montada la raíz.
+        carpeta: La carpeta local de la pareja, sin resolver.
+    """
+    clave: tuple[str, str]
+    con: Conexion
+    raiz: Path
+    carpeta: Path
+
+
+class Muestreo:
+    """Una vuelta a las carpetas vigiladas, corriendo en su propio hilo.
+
+    Recorrer una carpeta de un pendrive o de la red puede llevar segundos, y la
+    vuelta del agente (la cola, la bandeja, los buzones) no puede esperar a
+    ella: el hilo toma las fotos y las deja aquí, y la vuelta siguiente las
+    recoge. Solo hay un muestreo a la vez. El hilo escribe y el del agente lee;
+    `hecho` se pone el último, así que quien lo ve a `True` ya tiene el resto.
+
+    Args:
+        trabajo: Las carpetas que hay que mirar.
+        tope: Cuántas entradas se cuentan como mucho en cada una.
+        ignorar: Carpetas de su raíz que no se miran.
+
+    Attributes:
+        fotos: La foto de cada pareja, o `None` si no se pudo tomar.
+        fuera: Las parejas cuya carpeta, con los enlaces resueltos, queda fuera
+            de su raíz: no se mira.
+        descartar: Las parejas cuya pasada ha empezado o acabado mientras se
+            miraba. Su foto es de antes o de a medias y no cuenta.
+        hecho: Si ya ha terminado.
+    """
+
+    def __init__(self, trabajo: list[Mirar], tope: int, ignorar: tuple[str, ...]) -> None:
+        """Prepara el muestreo sin correrlo."""
+        self.trabajo = trabajo
+        self.tope = tope
+        self.ignorar = ignorar
+        self.fotos: dict[tuple[str, str], pl.Huella | None] = {}
+        self.fuera: set[tuple[str, str]] = set()
+        self.descartar: set[tuple[str, str]] = set()
+        self.hecho = False
+
+    def correr(self) -> None:
+        """Toma la foto de cada carpeta; es lo que corre el hilo.
+
+        Una carpeta que no se deja mirar (cualquier error) queda sin foto: es
+        «no sé», no un cambio, y el hilo no se cae.
+        """
+        try:
+            for mirar in self.trabajo:
+                if en_la_raiz(mirar.raiz, mirar.carpeta) is None:
+                    self.fuera.add(mirar.clave)
+                    continue
+                try:
+                    self.fotos[mirar.clave] = huella_local(mirar.carpeta, self.tope,
+                                                           self.ignorar)
+                except Exception:                   # noqa: BLE001
+                    self.fotos[mirar.clave] = None
+        finally:
+            self.hecho = True
+
+
 @dataclass
 class Agente:
     """Lo que el agente recuerda y decide, vuelta a vuelta.
@@ -938,6 +1053,10 @@ class Agente:
             red y el temporizador es solo el respaldo largo.
         cambio_de_red: La ráfaga de avisos de red que todavía no se ha
             sondeado (`pl.CambioDeRed`).
+        cambios: Las reglas de los cambios locales (`watch = true`).
+        vigiladas: Lo que se recuerda de cada pareja que pide `watch`, por
+            `(raíz, pareja)`; se olvida al irse la raíz.
+        muestreo: El muestreo de carpetas en marcha, si lo hay.
     """
     reloj: Any = time.time
     ajustes: equipo.Ajustes = field(default_factory=equipo.leer_ajustes)
@@ -979,14 +1098,18 @@ class Agente:
     actualizando: Any = None
     avisos_de_red: Any = None
     cambio_de_red: pl.CambioDeRed | None = None
+    cambios: pl.PoliticaCambios = field(default_factory=pl.PoliticaCambios)
+    vigiladas: dict[tuple[str, str], pl.Vigilada] = field(default_factory=dict)
+    muestreo: Muestreo | None = None
 
     def vuelta(self, recorrer: bool = True) -> pl.Decision | None:
         """Hace una vuelta del agente y devuelve lo que decidió lanzar, si algo.
 
         Lee los buzones, recorre los volúmenes, gestiona las conexiones
         (preguntas, fin de pasada, bloqueos, el contrato con el servicio de
-        cada raíz), lee el entorno, mira si hay versión nueva y, si no hay una
-        pasada en marcha, decide la siguiente. Termina escribiendo el estado.
+        cada raíz), lee el entorno, mira si hay versión nueva, mira los cambios
+        locales de las parejas con `watch = true` y, si no hay una pasada en
+        marcha, decide la siguiente. Termina escribiendo el estado.
 
         Args:
             recorrer: Si en esta vuelta toca recorrer los volúmenes.
@@ -1012,6 +1135,7 @@ class Agente:
             self._contrato(con, ahora)
         self._leer_entorno(ahora)
         self._mirar_version(ahora)
+        self._vigilar(ahora)
         decision = None
         if self.pasada is None and not self.terminar and not self._heredada():
             decision = self._decidir(ahora)
@@ -1154,6 +1278,7 @@ class Agente:
         # enchufar: se sincroniza enseguida y el modo `sync` vuelve a tocar.
         for clave in [k for k in self.marcas if k[0] == uid]:
             del self.marcas[clave]
+        self._olvidar_vigiladas(uid)
         con.vieja = version_vieja(raiz)
         if con.vieja is not None:
             # Antes de preguntar y de la huella: no hay nada que decidir hasta
@@ -1221,6 +1346,7 @@ class Agente:
             k: v for k, v in self.entorno.sin_conexion.items() if k[0] != uid})
         self.sospechas = {k: v for k, v in self.sospechas.items() if k[0] != uid}
         self.sin_red_avisado = {k for k in self.sin_red_avisado if k[0] != uid}
+        self._olvidar_vigiladas(uid)
         unidad = self.ajustes.unidades.get(uid)
         diario(f"{con.nombre} " + ("bloqueada: su contenedor se ha cerrado"
                                    if unidad is not None and unidad.cifrada else
@@ -1658,7 +1784,8 @@ class Agente:
         """
         entorno = replace(self.entorno, pausado=self.pausado)
         decision = pl.decidir(self._raices(), self.marcas, entorno, ahora,
-                              self.ajustes.politica, urgentes=self.urgentes)
+                              self.ajustes.politica, urgentes=self.urgentes,
+                              vigiladas=self.vigiladas, cambios=self.cambios)
         if decision.retenido != self.retenido:
             diario(f"no se lanza nada: {decision.retenido}" if decision.retenido
                    else "se vuelve a sincronizar")
@@ -1666,6 +1793,123 @@ class Agente:
         if decision.tarea is not None:
             self._lanzar(decision.tarea, ahora)
         return decision
+
+    def _olvidar_vigiladas(self, uid: str) -> None:
+        """Olvida lo recordado de las parejas vigiladas de una raíz."""
+        self.vigiladas = {k: v for k, v in self.vigiladas.items() if k[0] != uid}
+
+    def _vigilar(self, ahora: float) -> None:
+        """Mira los ficheros locales de las parejas con `watch = true`.
+
+        Cada vuelta recoge el muestreo que haya terminado y, si no hay otro en
+        marcha, pide el de las parejas a las que les toca (`pl.a_recorrer()`:
+        cada `sondeo` segundos, y no mientras la moderación retenga las
+        pasadas). Solo se mira donde el servicio de la raíz está en marcha: sin
+        pausa de su ventana (`Unidad.pausada`), sin ventana de runsync abierta,
+        sin otro servicio y sin estar bloqueándose. Lo recordado de una pareja
+        que deja de estarlo se olvida: al volver, la primera foto es la de
+        partida y los cambios de entretanto (hechos, por ejemplo, desde la
+        ventana, que sincroniza por su cuenta) no disparan nada. Una pareja
+        abandonada por grande no se vuelve a mirar en esta conexión.
+
+        El recorrido va en un hilo (`hilo()`): en un pendrive tarda segundos y
+        esta vuelta no espera.
+        """
+        raices = [r for r in self._raices() if not self.conexiones[r.clave].motivo]
+        validas = {(r.clave, p.nombre) for r in raices for p in r.parejas if p.vigila}
+        for clave in [k for k, v in self.vigiladas.items()
+                      if k not in validas and not v.abandonada]:
+            del self.vigiladas[clave]
+        self._recoger_fotos(ahora, validas)
+        if self.muestreo is not None or self.terminar or self.heredada is not None:
+            return
+        retenido = pl.moderacion(replace(self.entorno, pausado=self.pausado),
+                                 self.ajustes.politica) is not None
+        pasada = self.pasada
+        ocupadas = [(pasada.tarea.raiz, pasada.tarea.pareja)] \
+            if pasada is not None and pasada.tarea.tipo == pl.PASADA else []
+        claves = pl.a_recorrer(raices, self.vigiladas, ahora, self.cambios, retenido,
+                               ocupadas)
+        if not claves:
+            return
+        trabajo = []
+        for raiz, pareja in claves:
+            con = self.conexiones[raiz]
+            trabajo.append(Mirar((raiz, pareja), con, con.raiz,
+                                 con.raiz / con.servicio.locales[pareja]))
+        self.muestreo = Muestreo(trabajo, self.cambios.tope_entradas, IGNORAR_CAMBIOS)
+        hilo(self.muestreo.correr)
+
+    def _mirando(self, uid: str) -> bool:
+        """Indica si hay una foto en marcha de alguna carpeta de esa raíz.
+
+        Mientras dura, el hilo tiene la carpeta abierta: desmontar el
+        contenedor en ese momento haría que VeraCrypt preguntara si forzar.
+        """
+        m = self.muestreo
+        return m is not None and not m.hecho and any(x.clave[0] == uid for x in m.trabajo)
+
+    def _recoger_fotos(self, ahora: float, validas: set[tuple[str, str]]) -> None:
+        """Pone en lo recordado de cada pareja la foto del muestreo terminado.
+
+        No cuenta la foto de una pareja que ya no se vigila, de una unidad que
+        se fue (aunque volviera), ni de una cuya pasada está en marcha o ha
+        empezado o acabado mientras se miraba: lo que ve ahí lo ha escrito
+        rclone, no la persona. La pareja que supera el tope o cuya carpeta cae
+        fuera de la raíz se abandona, y se dice una vez en el diario y en el de
+        la raíz.
+
+        Args:
+            ahora: La hora del reloj del agente.
+            validas: Las parejas que se vigilan ahora.
+        """
+        m = self.muestreo
+        if m is None or not m.hecho:
+            return
+        self.muestreo = None
+        pasada = self.pasada
+        en_curso = (pasada.tarea.raiz, pasada.tarea.pareja) \
+            if pasada is not None and pasada.tarea.tipo == pl.PASADA else None
+        for mirar in m.trabajo:
+            clave = mirar.clave
+            con = self.conexiones.get(clave[0])
+            if con is not mirar.con or clave not in validas or clave in m.descartar \
+                    or clave == en_curso:
+                continue
+            antes = self.vigiladas.get(clave, pl.Vigilada())
+            if clave in m.fuera:
+                self.vigiladas[clave] = pl.Vigilada(None, None, ahora, abandonada=True)
+                diario(f"[{con.nombre}] {clave[1]}: su carpeta cae fuera de la raíz; "
+                       f"no se vigilan sus cambios")
+                dlog(con.raiz, f"[{clave[1]}] watch: su carpeta cae fuera de la raíz; no se "
+                               f"vigila")
+                continue
+            despues = pl.observar(antes, m.fotos.get(clave), ahora, self.cambios)
+            self.vigiladas[clave] = despues
+            if pl.se_abandona(antes, despues):
+                diario(f"[{con.nombre}] {clave[1]}: más de {self.cambios.tope_entradas} "
+                       f"entradas; deja de vigilarse y sigue por su intervalo")
+                dlog(con.raiz, f"[{clave[1]}] watch: más de {self.cambios.tope_entradas} "
+                               f"entradas; no se vigila, manda el intervalo")
+
+    def _rehacer_foto(self, clave: tuple[str, str], ahora: float) -> None:
+        """Deja una pareja lista para tomar su foto de después de una pasada.
+
+        La pasada, buena o mala, ha escrito en su carpeta: la foto siguiente es
+        la de partida y no dispara nada (`pl.tras_pasada()`), y se pide ya, sin
+        esperar al sondeo. Si había un muestreo en marcha, lo que vea de esa
+        pareja es de antes de acabar la pasada y no cuenta.
+
+        Args:
+            clave: `(raíz, pareja)` de la pasada que acaba de terminar.
+            ahora: La hora del reloj del agente.
+        """
+        if self.muestreo is not None:
+            self.muestreo.descartar.add(clave)
+        antes = self.vigiladas.get(clave)
+        if antes is not None:
+            self.vigiladas[clave] = replace(pl.tras_pasada(antes, None, ahora),
+                                            revisada=None)
 
     def _lanzar(self, tarea: pl.Tarea, ahora: float) -> None:
         """Lanza una tarea: una pasada (el `sync.py` de la raíz) o una sonda del remoto.
@@ -1719,7 +1963,9 @@ class Agente:
                                    "raiz": tarea.raiz,
                                    "unidad": con.nombre, "pareja": tarea.pareja,
                                    "desde": store.stamp()})
-        diario(f"[{con.nombre}] {que}" + (" (a petición)" if tarea.urgente else ""))
+        diario(f"[{con.nombre}] {que}" + (" (a petición)" if tarea.urgente
+                                          else " (han cambiado sus ficheros)"
+                                          if tarea.por_cambios else ""))
 
     def _fin_de_pasada(self, ahora: float) -> None:
         """Recoge el resultado de la pasada que haya acabado.
@@ -1764,6 +2010,7 @@ class Agente:
         antes = self.marcas.get(clave, pl.Marca())
         despues = pl.registrar(antes, como, ahora)
         self.marcas[clave] = despues
+        self._rehacer_foto(clave, ahora)
         if como == FALLO or como == RED:
             dlog(con.raiz, f"[{tarea.pareja}] FALLÓ (rc={rc}, {segundos:.0f}s); salida:")
             for linea in texto.splitlines()[-12:]:
@@ -1982,8 +2229,9 @@ class Agente:
     def _bloqueos(self, ahora: float) -> None:
         """Lleva los «Bloquear» pedidos hasta ver la raíz cerrada de verdad.
 
-        Primero se espera a que nada lo impida (la pareja en curso, su
-        ventana); luego VeraCrypt desmonta y se espera a verlo cerrado.
+        Primero se espera a que nada lo impida (la pareja en curso, la foto de
+        una de sus carpetas durante `ESPERA_VENTANA` como mucho, su ventana);
+        luego VeraCrypt desmonta y se espera a verlo cerrado.
         """
         for uid, b in list(self.bloqueos.items()):
             unidad = self.ajustes.unidades.get(uid)
@@ -1999,6 +2247,8 @@ class Agente:
                     continue
                 if self.pasada is not None and self.pasada.tarea.raiz == uid:
                     continue                # acaba la pareja en curso
+                if self._mirando(uid) and ahora - b.desde < ESPERA_VENTANA:
+                    continue                # y la foto en curso: tiene la carpeta abierta
                 if con is not None and penwatch._vivo_aqui(
                         con.raiz, penwatch.UI_LOCK_REL) is not None:
                     # Su ventana pide bloquear y se cierra; se le da un rato.
@@ -2406,6 +2656,22 @@ class Agente:
             return bandeja.DESBLOQUEANDO
         return bandeja.BLOQUEADA if unidad.cifrada else bandeja.BUSCANDO
 
+    def _vigilancia(self, con: Conexion) -> tuple[list[str], list[str]]:
+        """Devuelve las parejas de una raíz que se vigilan y las que se abandonaron.
+
+        Solo cuentan las del servicio del agente en modo `daemon` (en `sync` no
+        hay intervalo que adelantar). Las abandonadas son las que pasaron del
+        tope de entradas o cuya carpeta cae fuera de la raíz: siguen por su
+        intervalo.
+        """
+        unidad = self.ajustes.unidades.get(con.id)
+        if con.lock is None or con.servicio is None or unidad is None \
+                or unidad.modo != equipo.DAEMON:
+            return [], []
+        pedidas = [p.nombre for p in con.servicio.parejas if p.vigila]
+        dejadas = [n for n in pedidas
+                   if self.vigiladas.get((con.id, n), pl.Vigilada()).abandonada]
+        return sorted(set(pedidas) - set(dejadas)), sorted(dejadas)
 
     def resumen(self) -> dict:
         """Devuelve lo que el agente cuenta de sí mismo.
@@ -2416,6 +2682,7 @@ class Agente:
         unidades = []
         for con in self.conexiones.values():
             unidad = self.ajustes.unidades.get(con.id)
+            vigila, abandonadas = self._vigilancia(con)
             unidades.append({"id": con.id, "nombre": con.nombre, "raiz": str(con.raiz),
                              "del_equipo": bool(unidad and unidad.es_raiz),
                              "cifrada": bool(unidad and unidad.cifrada),
@@ -2432,6 +2699,8 @@ class Agente:
                              "pausada": bool(unidad and unidad.pausada),
                              "fallando": sorted(p for (r, p), m in self.marcas.items()
                                                 if r == con.id and m.fallos > 0),
+                             "vigila": vigila,
+                             "vigila_abandonada": abandonadas,
                              "emblema": self._emblema(con)})
         cerradas = [u.nombre or u.id[:8] for u in self.ajustes.cifradas.values()
                     if u.id not in self.conexiones and u.id not in self.ausentes]
@@ -2778,6 +3047,11 @@ def cmd_status(_args: argparse.Namespace) -> int:
         print(f"{'Raíz' if u.get('del_equipo') else 'Conectada'}: {u.get('nombre')} "
               f"en {u.get('raiz')}"
               + (f" — {u['motivo']}" if u.get("motivo") else " — atendida"))
+        if u.get("vigila"):
+            print(f"  Sincroniza al cambiar sus ficheros: {', '.join(u['vigila'])}")
+        if u.get("vigila_abandonada"):
+            print(f"  No vigila sus cambios (demasiado grande o fuera de la raíz; "
+                  f"sigue por su intervalo): {', '.join(u['vigila_abandonada'])}")
     for ruta in estado.get("ausentes") or []:
         print(f"Falta la raíz del equipo: no está en {ruta}")
     for nombre in estado.get("bloqueadas") or []:
