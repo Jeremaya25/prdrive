@@ -294,6 +294,11 @@ source it mirrors. **Preserve those citations.**
   `.lst` files. `resync_reasons(pair)` returns why a pair needs `--resync` (`[]`
   for non-bisync; the mode guard is inside it). `last_run(pair)` is the mtime of
   the newest listing, which **is** the last good pass; non-bisync pairs get None.
+  A `.lst-err` is the baseline rclone sets aside when a pass aborts
+  (`cmd/bisync/operations.go`, `markFailed()` in `lockfile.go`; with `--recover`
+  the next pass goes back to `.lst-old` and leaves them): the state line says
+  what they are and that they can be deleted by hand, and **nothing deletes
+  them** — bisync's workdir is not ours to clean.
 - **Resync approval.** `resolve_resync_approval()` asks **once** for all pairs
   before anything runs, and `ask_yes_no()` returns the default when stdin is not
   a tty — non-interactive runs skip those pairs (`SKIPPED = -1`) rather than
