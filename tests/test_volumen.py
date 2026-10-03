@@ -223,6 +223,41 @@ volumen.MAX_ICO = 10
 c("ni uno que ocupa como una foto", bool(rechaza(volumen.leer_ico, bueno)), True)
 volumen.MAX_ICO = maximo
 
+# 3b. el icono que enseña la bandeja del agente (`emblema()`)
+
+# El agente mira la raíz desde fuera: su `APP_DIR` es su propia carpeta, así
+# que dice cómo se llama la del programa en la raíz.
+c("desde fuera, la carpeta del programa se dice: «.prdrive\\icono-verde.ico» es verde",
+  (volumen.clave_de(".prdrive\\icono-verde.ico", app=".prdrive"),
+   volumen.clave_de(".prdrive\\icono-verde.ico", app="0.6.0")), ("verde", volumen.OTRO))
+fuera = tmpdir("prdrive-emblema-")
+(fuera / ".prdrive").mkdir()
+c("sin autorun.inf, la marca de prdrive", volumen.emblema(fuera, ".prdrive"), {})
+autorun.escribir(fuera, "[autorun]\nicon=.prdrive\\icono-morado.ico\n")
+c("un color de la marca, por su clave: el fichero ni se mira (ni hace falta que esté)",
+  volumen.emblema(fuera, ".prdrive"), {"marca": "morado"})
+autorun.escribir(fuera, "[autorun]\nicon=.prdrive\\icono-propio-0123abcd.ico\n")
+c("un .ico propio que no está: la marca", volumen.emblema(fuera, ".prdrive"), {})
+(fuera / ".prdrive" / "icono-propio-0123abcd.ico").write_bytes(ICO_DE_VERDAD((16,)))
+c("  y si está, su ruta",
+  volumen.emblema(fuera, ".prdrive"),
+  {"ico": str(fuera / ".prdrive" / "icono-propio-0123abcd.ico")})
+volumen.MAX_ICO = 10
+c("  salvo que pase de MAX_ICO", volumen.emblema(fuera, ".prdrive"), {})
+volumen.MAX_ICO = maximo
+autorun.escribir(fuera, "[autorun]\nicon=.prdrive-icono-propio-0123abcd.ico\n")
+(fuera / ".prdrive-icono-propio-0123abcd.ico").write_bytes(ICO_DE_VERDAD((16,)))
+c("en la raíz física de un contenedor, con su prefijo, también",
+  volumen.emblema(fuera, ".prdrive"),
+  {"ico": str(fuera / ".prdrive-icono-propio-0123abcd.ico")})
+for icono in ("..\\..\\icono-propio-0123abcd.ico", "C:\\icono-propio-0123abcd.ico",
+              "VeraCrypt\\VeraCrypt-x64.exe", "miicono.ico", "otra\\icono-verde.ico"):
+    autorun.escribir(fuera, f"[autorun]\nicon={icono}\n")
+    c(f"  «{icono}» (fuera de su sitio, de VeraCrypt o ajeno): la marca",
+      volumen.emblema(fuera, ".prdrive"), {})
+c("una carpeta que no se puede leer, la marca, sin lanzar",
+  volumen.emblema(fuera / "no-existe", ".prdrive"), {})
+
 # 4. guardar
 
 store.hide = lambda ruta: ocultados.append(Path(ruta).name)

@@ -84,12 +84,11 @@ NINGUNO = "ninguno"
 OTRO = "otro"
 """Clave de un `icon=` que no puso prdrive: se deja mientras no se cambie."""
 
-MAX_ICO = 4 * 1024 * 1024
+MAX_ICO = icons.MAX_ICO
 """Bytes que puede ocupar un `.ico` que trae la persona.
 
-Uno de verdad cabe de sobra: el de la marca, con siete tamaños, son 43 KB, y
-uno con el de 256 px sin comprimir anda por los 400. Esto es para no copiar a
-la unidad una foto de 50 MB porque se llamaba `.ico`.
+Es para no copiar a la unidad una foto de 50 MB porque se llamaba `.ico`. Es
+el mismo límite con que la bandeja del agente lo lee para pintarlo.
 """
 
 _NOMBRE = re.compile(f"(?P<fuera>{re.escape(autorun.PREFIJO_RAIZ)})?"
@@ -161,36 +160,85 @@ def lleva_veracrypt(raiz: Path) -> bool:
     return bool(vestibulo.traveler_ejecutables(raiz))
 
 
-def _nuestro(carpetas: tuple[str, ...], nombre: str) -> re.Match | None:
+def _nuestro(carpetas: tuple[str, ...], nombre: str,
+             app: str | None = None) -> re.Match | None:
     """Devuelve el encaje del nombre si es un icono nuestro bien puesto.
 
     Bien puesto es donde lo dejaría prdrive: en la raíz con el prefijo o en
-    `.prdrive/` sin él. `carpetas` son las de la ruta relativa a la raíz.
+    `.prdrive/` sin él.
+
+    Args:
+        carpetas: Las de la ruta relativa a la raíz.
+        nombre: El nombre del fichero.
+        app: El nombre de la carpeta del programa en la raíz; por defecto, el
+            de `APP_DIR` (el de este dispositivo).
     """
     hallado = _NOMBRE.fullmatch(nombre)
     if hallado is None:
         return None
-    donde = () if hallado["fuera"] else (model.APP_DIR.name.lower(),)
+    donde = () if hallado["fuera"] else ((app or model.APP_DIR.name).lower(),)
     return hallado if tuple(c.lower() for c in carpetas) == donde else None
 
 
-def clave_de(icono: str) -> str:
+def clave_de(icono: str, app: str | None = None) -> str:
     """Devuelve qué opción es ese `icon=`.
 
     Uno que no se reconozca es `OTRO` y no `NINGUNO`: lo puso alguien y guardar
     solo el nombre no tiene por qué llevárselo.
+
+    Args:
+        icono: El valor de `icon=`.
+        app: El nombre de la carpeta del programa en la raíz; por defecto, el
+            de `APP_DIR`. Quien mira una raíz desde fuera (el agente, cuyo
+            `APP_DIR` es su propia carpeta) lo dice.
     """
     if not icono:
         return NINGUNO
     if autorun.es_icono_veracrypt(icono):
         return VERACRYPT
     *carpetas, nombre = PureWindowsPath(icono).parts
-    hallado = _nuestro(tuple(carpetas), nombre)
+    hallado = _nuestro(tuple(carpetas), nombre, app)
     if hallado:
         clave = hallado["clave"].lower()
         if clave == PROPIO or clave in {m.clave for m in MARCAS}:
             return clave
     return OTRO
+
+
+def emblema(raiz: Path | str, app: str) -> dict:
+    """Devuelve el icono de una raíz tal como lo enseña la bandeja del agente.
+
+    Sale de lo que dice su `autorun.inf` (`raiz` es donde vive: la raíz física
+    si la unidad va en un contenedor) y de nada más:
+    - uno de los colores de la marca (`MARCAS`) no se lee: la clave va en el
+      nombre del fichero y la bandeja pinta la marca en ese color;
+    - un `.ico` propio se da por su ruta, solo si está donde lo dejaría prdrive
+      (`_nuestro()`, así que no sale de la raíz) y es un fichero que cabe en
+      `MAX_ICO`; lo lee y lo pinta la bandeja, con sus límites;
+    - el de VeraCrypt, uno que no puso prdrive o ninguno: la marca de prdrive.
+
+    Lo llama el agente solo para una raíz de su lista, conectada y abierta. No
+    lanza: cualquier fallo es la marca de prdrive.
+
+    Args:
+        raiz: La carpeta del `autorun.inf`.
+        app: El nombre de la carpeta del programa en esa raíz (`.prdrive`).
+
+    Returns:
+        `{"marca": clave}`, `{"ico": ruta}` o `{}` (la marca de prdrive).
+    """
+    try:
+        icono = autorun.leer(raiz).icono
+        clave = clave_de(icono, app)
+        if clave in {m.clave for m in MARCAS}:
+            return {"marca": clave}
+        if clave == PROPIO:
+            fichero = Path(raiz).joinpath(*PureWindowsPath(icono).parts)
+            if fichero.is_file() and fichero.stat().st_size <= MAX_ICO:
+                return {"ico": str(fichero)}
+    except Exception:                                   # noqa: BLE001
+        pass
+    return {}
 
 
 def leer() -> Estado:

@@ -18,7 +18,8 @@ Dos especificaciones, citadas como `common/bisync.py` cita a rclone:
   `icons.pixmap_bandeja()`; los cambios se anuncian con `NewIcon`, `NewToolTip`
   y `NewStatus`. `ItemIsMenu` hace que el clic izquierdo también saque el menú,
   como en Windows; quien llame a `Activate` de todos modos recibe la entrada
-  `defecto` (abrir la raíz del equipo).
+  `defecto` (el «Configurar» del primer dispositivo, la raíz del equipo si la
+  hay).
 - **dbusmenu** (`com.canonical.dbusmenu`, versión 3): el menú es otro objeto,
   en `/MenuBar`, que el icono señala con su propiedad `Menu`. El anfitrión lo
   pide entero con `GetLayout` (cada entrada un `(ia{sv}av)` con su id, sus
@@ -26,7 +27,17 @@ Dos especificaciones, citadas como `common/bisync.py` cita a rclone:
   vez que el menú cambia se renumera y se emite `LayoutUpdated`; un clic en una
   entrada de la numeración anterior (el menú estaba abierto) vale lo que decía
   esa entrada. dbusmenu no tiene «entrada por defecto»: la negrita de Windows
-  aquí no existe.
+  aquí no existe, y tampoco el doble clic que en Windows hace el «Configurar»
+  de un desplegable. Un clic en una entrada con `children-display = submenu`
+  abre el submenú y el anfitrión no lo manda como `clicked` (ni el importador
+  de Qt de Plasma ni el `PopupSubMenuMenuItem` de la extensión AppIndicator de
+  GNOME); si alguno lo mandara al abrirlo, hacer algo con él abriría la
+  ventana al querer ver el submenú. Así que un submenú no hace nada al
+  pulsarlo y «Configurar» es su primera entrada.
+- **El icono de un dispositivo** va en `icon-data`, los bytes de un PNG
+  (`png_emblema()`): la marca pintada en su color, o la imagen de su `.ico`
+  propio que mejor sirve (`icons.png_de_ico()`, leído con límites). Las demás
+  entradas llevan `icon-name`, un nombre del tema.
 
 Lo que no es la bandeja pero vive en su hilo:
 - **Sin `StatusNotifierWatcher`** (GNOME sin la extensión AppIndicator, un
@@ -47,6 +58,7 @@ from __future__ import annotations
 
 import os
 import select
+import stat
 import threading
 from typing import Any, Callable
 
@@ -123,7 +135,8 @@ def pixmaps(estado: str) -> list[tuple[int, int, bytes]]:
 
 
 ICONOS_DEL_TEMA = {
-    bandeja.I_ABRIR: "folder-open",
+    bandeja.I_CONFIGURAR: "preferences-system",
+    bandeja.I_EXPLORAR: "folder-open",
     bandeja.I_SINCRONIZAR: "view-refresh",
     bandeja.I_PAUSAR: "media-playback-pause",
     bandeja.I_REANUDAR: "media-playback-start",
@@ -143,6 +156,60 @@ todos son de la *Icon Naming Specification* de freedesktop; `changes-allow` no,
 pero lo traen Adwaita y Breeze. Un nombre que el tema no tenga deja la entrada
 sin icono, nada más.
 """
+
+
+TAMANO_EMBLEMA = 32
+"""Lado, en píxeles, del PNG del icono de un dispositivo: el anfitrión lo escala.
+
+Un menú pide 16 px a escala 1 y 32 a escala 2.
+"""
+
+_EMBLEMAS: dict[tuple, bytes] = {}
+"""Los `icon-data` ya pintados: la marca por color y cada `.ico` por ruta, tamaño y fecha."""
+
+
+def _png_de_fichero(ruta: str) -> bytes | None:
+    """Devuelve el PNG de un `.ico` propio, o `None` si no se puede leer o no se entiende.
+
+    Solo un fichero normal de hasta `icons.MAX_ICO`, y no se lee más que eso
+    aunque crezca entre medias. Se guarda por ruta, tamaño y fecha: el nombre
+    ya cambia con el dibujo, así que no se relee de la unidad cada vez que el
+    anfitrión pide el menú.
+    """
+    try:
+        info = os.stat(ruta)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > icons.MAX_ICO:
+            return None
+        clave = ("ico", ruta, info.st_size, info.st_mtime_ns)
+        if clave not in _EMBLEMAS:
+            with open(ruta, "rb") as f:
+                datos = f.read(icons.MAX_ICO + 1)
+            _EMBLEMAS[clave] = icons.png_de_ico(datos, TAMANO_EMBLEMA) or b""
+        return _EMBLEMAS[clave] or None
+    except Exception:                                   # noqa: BLE001
+        return None
+
+
+def png_emblema(emblema: bandeja.Emblema) -> bytes:
+    """Devuelve el `icon-data` de un dispositivo: su `.ico` si se entiende, si no la marca.
+
+    Es la propiedad `icon-data` de dbusmenu, «PNG data of the icon». Nunca
+    lanza: lo que no se pueda leer es la marca en el color de `emblema.campo`
+    (o en el de prdrive, si ese tampoco se pudiera pintar).
+    """
+    if emblema.ico:
+        datos = _png_de_fichero(emblema.ico)
+        if datos:
+            return datos
+    for campo in (emblema.campo, icons.CAMPO):
+        clave = ("marca", campo)
+        try:
+            if clave not in _EMBLEMAS:
+                _EMBLEMAS[clave] = icons.png_marca(TAMANO_EMBLEMA, campo)
+            return _EMBLEMAS[clave]
+        except Exception:                               # noqa: BLE001
+            continue
+    return b""
 
 
 class Menu:
@@ -213,7 +280,11 @@ class Menu:
                     p["toggle-state"] = V("i", 1 if e.marcada else 0)
                 if e.hijos:
                     p["children-display"] = V("s", "submenu")
-                if e.icono in ICONOS_DEL_TEMA:
+                if e.emblema is not None:
+                    png = png_emblema(e.emblema)
+                    if png:
+                        p["icon-data"] = V("ay", png)
+                elif e.icono in ICONOS_DEL_TEMA:
                     p["icon-name"] = V("s", ICONOS_DEL_TEMA[e.icono])
         if nombres:
             p = {k: v for k, v in p.items() if k in nombres}
@@ -465,7 +536,7 @@ class Bandeja:
         return ("", [], APP_NAME, self.vista.frase or self.vista.tip)
 
     def _por_defecto(self) -> None:
-        """Hace las peticiones de la entrada `defecto` (abrir la raíz del equipo)."""
+        """Hace las peticiones de la entrada `defecto` («Configurar» del primer dispositivo)."""
         e = self.vista.defecto()
         if e is not None:
             for p in e.pide:

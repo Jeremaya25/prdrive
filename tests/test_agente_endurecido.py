@@ -521,8 +521,10 @@ c("  lo avisa diciendo qué versión lleva",
 c("  y lo dice como motivo", "0.4.3" in ag.conexiones[V].motivo, True)
 from ui import bandeja  # noqa: E402
 menu = [e for e in bandeja.vista(ag.resumen()).menu if "Vieja" in e.texto]
-c("  la bandeja lo dice, sin ofrecer abrirla",
-  [(e.texto, e.activa) for e in menu], [("Vieja: actualízala para que la atienda", False)])
+c("  la bandeja lo dice en su desplegable, sin ofrecer abrirla ni su carpeta",
+  [(e.texto, [(h.texto, h.activa, h.pide) for h in e.hijos], e.emblema) for e in menu],
+  [("Vieja (por actualizar)", [("Actualízala para que la atienda", False, ())],
+    bandeja.MARCA)])
 W = "2" * 31 + "9"
 RW = F.unidad(W, parejas=("docs",))
 (RW / ".prdrive" / "VERSION").unlink()

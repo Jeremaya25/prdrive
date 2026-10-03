@@ -1550,7 +1550,8 @@ whatever you build that only a real host can prove.
     `logs/`, `filters/`, `keys/`, `runtime/`, `bin/`, `sync_config.toml`, the
     control file, `.ico`, `__pycache__`), a few MB, milliseconds — in
     `equipo.Unidad.codigo`. Another hash on connect = `Conexion.cambiada`: not
-    served, no window, the tray offers «…, código cambiado · Atender…», and
+    served, no window, the tray offers «… (código cambiado)» · «Atender con su
+    código nuevo…», and
     `agente.py pregunta --cambiada` asks again; the yes keeps the mode. An empty
     `codigo` (listed by the wizard or `atender ID` unplugged) is recorded on the
     first connection. Children get `PYTHONPYCACHEPREFIX` in `equipo.DIR`, so a
@@ -1572,8 +1573,8 @@ whatever you build that only a real host can prove.
     than `agente.VERSION_MINIMA` (0.5.0)** would ignore the variable, so they
     are not served, not asked about, not opened (`Conexion.vieja`,
     `version_vieja()` — their `VERSION` is inside the accepted fingerprint),
-    notified once per connection, and the tray shows «…: actualízala para que
-    la atienda», greyed out. A drive synced by the agent and by its own window
+    notified once per connection, and the tray shows «… (por actualizar)» with
+    «Actualízala para que la atienda» greyed out inside. A drive synced by the agent and by its own window
     uses two rclones; with both on the same prdrive version they are the same
     pin.
 - **Dependency rules:** the agent imports penwatch, never the reverse; penwatch
@@ -1746,9 +1747,77 @@ draws**, and neither imports tkinter (`test_install_agente.py` checks it).
   `PIDE_ABRIR` (the window of a root: `_lanzar_ventana()`, which checks only the
   UI lock — our own service lock is expected and runsync pauses it; a locked
   encrypted root is unlocked first with `abrir=True` and its window opens on
-  connect) and `PIDE_DESPERTAR` (back from suspend: re-read battery/network,
-  probe every offline remote now, burst the walk; Windows sends it twice, so
-  a second one within `DESPERTAR_DOBLE` is not logged again).
+  connect), `PIDE_EXPLORAR` (its folder in the file manager: `agente.explorar()`,
+  an indirection point over `orden_explorar()` — `explorer.exe <folder>` on
+  Windows, never `os.startfile()` and its Shell verbs on a drive root;
+  `xdg-open` on Linux —, same guard as `PIDE_ABRIR` in `Agente._abrir(…,
+  explorador=True)`; a locked encrypted root is unlocked first with
+  `Desbloqueo.explorar` and its folder opens on connect, no window) and
+  `PIDE_DESPERTAR` (back from suspend: re-read battery/network, probe every
+  offline remote now, burst the walk; Windows sends it twice, so a second one
+  within `DESPERTAR_DOBLE` is not logged again).
+- **One submenu per device (#68)**: the host roots first, then the connected
+  drives, each an `Entrada` with `hijos` and its `emblema`, and inside —
+  never repeating the name — «Configurar» (`PIDE_ABRIR`, first, the submenu's
+  `defecto`), «Abrir en explorador» (`PIDE_EXPLORAR`, the folder glyph now
+  meaning a folder), «Sincronizar ahora» (that device only, live when
+  `atendida`) and, for an encrypted root, «Bloquear» / «Desbloquear…» and the
+  `pedir_al_iniciar` checkbox. A locked root's «Configurar…» / «Abrir en
+  explorador…» unlock first (the ellipsis says a password comes). The rule:
+  what is about ONE device goes in ITS submenu; what is about the whole agent
+  stays outside («Pausar»/«Reanudar», «Actualizar», «Cerrar el agente», and
+  «Sincronizar todo ahora» only with two or more `atendida` devices — with one
+  it would repeat its own). Abnormal states go in the label, in parentheses
+  (`ESTADO_DE_RAIZ`: «bloqueada», «no responde», «no está en su sitio»…; a
+  drive «sin atender», «código cambiado», «por actualizar»), and what cannot be
+  done is greyed, so a root's submenu keeps its shape.
+  - **`pedir_al_iniciar` stays global** (one key in `agente.json`, one
+    `PIDE_AJUSTE`; the window's checkbox is unchanged). Several encrypted host
+    roots can exist (`PIDE_RAIZ` adds one per wizard run;
+    `raiz_para_abrir()` already handles more than one), so with exactly one it
+    goes in that root's submenu, where it reads as its own and is; with two or
+    more it goes outside, worded «Pedir la contraseña de cada raíz cifrada al
+    iniciar sesión».
+  - **The device icon (`bandeja.Emblema`) is decided by the agent, as data.**
+    `Agente._emblema(con)` → `volumen.emblema(donde, APP_SUBDIR)` reads the
+    `autorun.inf` where «Nombre e icono…» writes it (`Conexion.fisica`, the
+    vestibule seen by the walk, for a drive in a container; the `.hc`'s folder
+    for an encrypted host root; else the root) and returns `{"marca": clave}`,
+    `{"ico": path}` or `{}`; `resumen()` carries it per drive as `emblema`. Only
+    for a LISTED root with its code accepted and a valid version, connected
+    (so unlocked); read on connect and then at most every `MIRAR_EMBLEMA`
+    (60 s), so an icon changed from the window shows within a minute without
+    reading the drive every turn. `bandeja._emblema()` checks `en_lista` again:
+    an unlisted, changed, old or locked device always gets `bandeja.MARCA`.
+    `clave_de(icono, app=)` exists because the agent's `APP_DIR` is its own
+    folder, not `.prdrive`.
+  - **Parsing policy.** A brand colour (`icono-<clave>.ico`, the key is in the
+    name) is never read: the tray paints the brand in `icons.CAMPOS[clave]`
+    (`icons.pixeles_marca()` / `png_marca()`). A user's `icono-propio-<hash>.ico`
+    is passed by path, only where prdrive would put it (so it cannot leave the
+    root) and under `icons.MAX_ICO` (4 MiB, the same cap `volumen.leer_ico()`
+    applies). Windows lets Windows parse it (`LoadImageW(LR_LOADFROMFILE)` →
+    `DrawIconEx` into the menu DIB, `alfa_desde_mascara()` for icons without
+    alpha) — what Explorer already does with that `icon=` on every plug-in, so
+    no new exposure; Linux reads it with `icons.png_de_ico()`, strictly
+    bounded (`MAX_IMAGENES_ICO`, every image inside the file, square, ≤ 256 px):
+    a PNG entry goes as-is after its signature and IHDR, a 32-bit DIB entry is
+    decoded (alpha, or its AND mask) and re-encoded with `icons._png()`, 8/24
+    bits are not understood. VeraCrypt's exe, an `OTRO` icon or anything that
+    fails → the brand. Never raises out of the menu; cached by path, size and
+    mtime (the name already changes with the drawing).
+  - **Click on the submenu itself.** Windows: the submenu's default item is
+    what a **double click** on the submenu item picks («Default Menu Items» in
+    *About Menus*), so `SetMenuDefaultItem` on «Configurar» (bold) makes a
+    double click on the device open its window, and `TrackPopupMenu` returns its
+    id; a single click opens the submenu as everywhere in Windows (making it
+    act would need a menu hook and break the normal way to open it). Linux:
+    dbusmenu has no default entry and the known hosts send no `clicked` for a
+    `children-display = submenu` node (Qt's importer, GNOME AppIndicator's
+    `PopupSubMenuMenuItem`); acting on one would open the window on the click
+    that opens the submenu, so `Menu.pulsada()` ignores it and «Configurar» is
+    the path. `Vista.defecto()` (Linux `Activate`) is the first device's
+    «Configurar».
 - **What it says, after the third real run** (30/09):
   - The **tooltip** says when the last pass ended well: «prdrive · sincronizado
     hace 5 min». That is `resumen()["ultima_pasada"]` (`Agente.ultima_buena`,
@@ -1772,8 +1841,15 @@ draws**, and neither imports tkinter (`test_install_agente.py` checks it).
     - Linux sends the desktop theme's name (`bandeja_linux.ICONOS_DEL_TEMA`,
       `icon-name`), so it follows the theme's colour and dark mode.
     - `test_bandeja_linux` checks every key has a theme name.
-- **Never «Abrir» for a drive that is not in the list**, even asked by hand:
-  that is running its code before the yes. It gets «…, conectada · Atender…».
+    - A device submenu carries an `Entrada.emblema` instead (a colour icon, not
+      a glyph): Windows paints it into the same DIB
+      (`bandeja_windows.pixeles_emblema()`, cached in `Api._pixeles`); Linux
+      sends `icon-data`, the PNG bytes dbusmenu takes
+      (`bandeja_linux.png_emblema()`, `TAMANO_EMBLEMA` = 32 px).
+- **Never «Configurar» nor «Abrir en explorador» for a drive that is not in the
+  list**, even asked by hand: the first runs its code before the yes, and the
+  folder follows the same rule. Its submenu reads «… (sin atender)» and holds
+  only «Atender…».
 - **Icon priority** (`bandeja.estado()`): pause > a pass in flight > avisos
   (failing pairs, a root's `error`, offline remotes, a missing root, a ghost) >
   held by battery/metered (pause icon) > a root paused from its window (pause
@@ -1819,12 +1895,14 @@ weaken:
   byte order, not premultiplied** (`icons.pixmap_bandeja()`, 16–64 px, painted
   lazily and cached); changes are `NewIcon` / `NewToolTip` / `NewStatus`, and
   `NeedsAttention` with avisos. `ItemIsMenu` so the left click opens the menu
-  too; `Activate` (for hosts that call it anyway) does the `defecto` entry.
+  too; `Activate` (for hosts that call it anyway) does the `defecto` entry
+  (the first device's «Configurar»).
 - **dbusmenu ids are renumbered on every change** (`bl.Menu.poner()`, only when
   the entries actually differ) and `LayoutUpdated` is emitted; the previous
   numbering is kept, so a click from a menu that was open means what it said.
   `_` in labels is doubled (dbusmenu mnemonic). There is no default entry, so
-  no bold.
+  no bold and no double click on a device submenu; clicking a submenu node does
+  nothing (see «One submenu per device»).
 - **No watcher is not «no tray forever»**: `arrancar()` succeeds with the
   session bus, `puesta` is False until a watcher with a host exists, and
   `NameOwnerChanged` / `StatusNotifierHostRegistered` register it when one
@@ -2268,7 +2346,8 @@ keeps the target's existing header.
   `install.agente.conseguir_runtime()` / `lanzar()` / `autostart_file()` /
   `acceso_menu()` / `crear_lnk()`, `raiz_equipo.carpetas_sincronizadas()` /
   `veracrypt_instalado()` / `abrir_o_crear()`, `penwatch.installed_veracrypt()`,
-  `vestibulo.retenido()`, `cifrado.pedir_bloqueo()`, `agente.poner_bandeja()`, the tray's
+  `vestibulo.retenido()`, `cifrado.pedir_bloqueo()`, `agente.poner_bandeja()` /
+  `explorar()`, the tray's
   `bandeja_windows.Api`, `agente.hilo()` / `buscar_version()` / `ejecutar()` /
   `cache_version()`, `runsync.pedir_reanudar()` / `agente_sirve()`,
   `watch.pedir_al_agente()`, `agente.arrancar_agente()`, `tk_equipo.escritorio()`,

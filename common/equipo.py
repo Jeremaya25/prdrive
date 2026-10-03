@@ -491,6 +491,7 @@ PIDE_RAIZ = "añadir_raiz"       # id, ruta, nombre[, contenedor]: la raíz de e
 PIDE_DESBLOQUEAR = "desbloquear"    # [id]: abrir el contenedor de la raíz cifrada
 PIDE_BLOQUEAR = "bloquear"          # [id]: cerrarlo
 PIDE_ABRIR = "abrir"            # id: la ventana de esa raíz (la cifrada, desbloqueándola antes)
+PIDE_EXPLORAR = "explorar"      # id: esa raíz en el explorador de archivos (ídem)
 PIDE_DESPERTAR = "despertar"    # el equipo vuelve de la suspensión: mirarlo todo ya
 PIDE_SONDEAR = "sondear"        # los remotos sin conexión: probarlos ya («Probar ahora»)
 PIDE_CAMBIO_DE_RED = "cambio_de_red"  # el sistema dice que hay red otra vez (`common/red.py`)

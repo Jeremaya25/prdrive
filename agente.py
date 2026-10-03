@@ -129,7 +129,7 @@ from common import (APP_NAME, avisos, catalog, components, equipo, model,  # noq
                     moderacion, store, update, vestibulo)
 from common import planificador as pl  # noqa: E402
 from common.store import pid_alive  # noqa: E402
-from ui import bandeja, prefs  # noqa: E402
+from ui import bandeja, prefs, volumen  # noqa: E402
 
 try:
     import tomllib
@@ -181,6 +181,12 @@ COLA_SALIDA = 64 * 1024
 """Bytes que se leen de la salida de una pasada."""
 MIRAR_VERSION = 6 * 3600.0
 """Segundos entre comprobaciones de versión nueva (`update.check` guarda 24 h)."""
+MIRAR_EMBLEMA = 60.0
+"""Segundos entre lecturas del `autorun.inf` de una raíz para el icono de la bandeja.
+
+Se lee al conectarla y luego como mucho una vez por minuto: así se ve un icono
+cambiado desde su ventana sin leer la unidad en cada vuelta.
+"""
 
 OK, FALLO, RED, SALTADA = pl.OK, pl.FALLO, pl.RED, pl.SALTADA
 
@@ -232,6 +238,41 @@ def abrir_contenedor(raiz: Path) -> bool:
     Lo lanza desde la carpeta del agente (`penwatch.open_container`).
     """
     return penwatch.open_container(raiz, cwd=equipo.DIR)
+
+
+def orden_explorar(ruta: Path) -> list[str] | None:
+    """Devuelve la orden que abre el explorador de archivos en `ruta`, o `None`.
+
+    En Windows, `explorer.exe` con la carpeta, y no `os.startfile()`: abrir una
+    raíz de unidad «como documento» pasa por los verbos del Shell para esa
+    unidad, y explorer.exe con una ruta solo la enseña. En Linux, `xdg-open`,
+    que la abre con el gestor de archivos del escritorio; sin él, `None`.
+    """
+    if IS_WIN:
+        sistema = os.environ.get("SystemRoot") or os.environ.get("WINDIR") or r"C:\Windows"
+        return [str(Path(sistema) / "explorer.exe"), str(ruta)]
+    xdg = shutil.which("xdg-open")
+    return [xdg, str(ruta)] if xdg else None
+
+
+def explorar(ruta: Path) -> bool:
+    """Abre el explorador de archivos en `ruta`, sin esperar.
+
+    Se lanza desde la carpeta del agente, fuera de toda raíz. Punto de
+    indirección: los tests lo sustituyen o miran lo que pasa a `lanzar()`.
+
+    Returns:
+        `False` si este equipo no tiene con qué (Linux sin `xdg-open`).
+
+    Raises:
+        OSError: Si no se ha podido lanzar.
+    """
+    orden = orden_explorar(ruta)
+    if orden is None:
+        return False
+    lanzar(orden, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+           stderr=subprocess.DEVNULL, cwd=str(equipo.DIR), close_fds=True)
+    return True
 
 
 def diario(msg: str) -> None:
@@ -703,6 +744,11 @@ class Conexion:
             decir que sí.
         vieja: Su versión (o «») si es anterior a `VERSION_MINIMA`: ejecutaría
             el rclone de la unidad, así que no se atiende ni se abre.
+        fisica: Su raíz física, si va en un contenedor VeraCrypt: la del
+            vestíbulo, donde está su `autorun.inf`.
+        emblema: Su icono para la bandeja (`volumen.emblema()`), o `None` si
+            todavía no se ha leído.
+        emblema_leido: Cuándo se leyó.
     """
     id: str
     raiz: Path
@@ -724,6 +770,9 @@ class Conexion:
     huella: str | None = None
     cambiada: bool = False
     vieja: str | None = None
+    fisica: Path | None = None
+    emblema: dict | None = None
+    emblema_leido: float = -math.inf
 
 
 @dataclass
@@ -736,12 +785,15 @@ class Desbloqueo:
         salio: Cuándo se vio que había salido.
         abrir: Abrir su ventana en cuanto se vea abierta.
         copia: La copia elevada que puede seguir tras él.
+        explorar: Abrirla en el explorador de archivos en cuanto se vea
+            abierta.
     """
     desde: float
     proc: Any = None
     salio: float | None = None
     abrir: bool = False
     copia: Copia | None = None
+    explorar: bool = False
 
 
 @dataclass
@@ -1014,6 +1066,8 @@ class Agente:
         for uid in list(self.conexiones):
             if uid not in abiertas:
                 self._desconectar(uid, ahora, cerradas)
+        for uid, con in self.conexiones.items():
+            con.fisica = cerradas.get(uid)      # su vestíbulo, con el contenedor abierto
         self._vestibulos(cerradas, ahora)
         self._raices_ausentes(abiertas)
         self.recorridos += 1
@@ -1137,6 +1191,8 @@ class Agente:
             self._abrir_ventana(con)
         elif desbloqueo is not None and desbloqueo.abrir:
             self._lanzar_ventana(con)       # «Abrir» con ella bloqueada
+        if desbloqueo is not None and desbloqueo.explorar:
+            self._explorar(con)             # «Abrir en explorador» con ella bloqueada
 
     def _desconectar(self, uid: str, ahora: float, cerradas: dict[str, Path]) -> None:
         """Olvida la conexión de una unidad que ya no está.
@@ -1834,7 +1890,7 @@ class Agente:
                 self._desbloquear(unidad, ahora, "al iniciar sesión")
 
     def _desbloquear(self, unidad: equipo.Unidad, ahora: float, por: str = "",
-                     abrir: bool = False) -> bool:
+                     abrir: bool = False, explorar: bool = False) -> bool:
         """Le pide a VeraCrypt que abra la raíz cifrada. No espera.
 
         Abierta es cuando el recorrido VE su id con el `.hc` retenido.
@@ -1843,8 +1899,10 @@ class Agente:
             unidad: La raíz cifrada.
             ahora: La hora del reloj del agente.
             por: Por qué se desbloquea, para el diario.
-            abrir: Abrir su ventana en cuanto se vea abierta (el «Abrir» de la
-                bandeja).
+            abrir: Abrir su ventana en cuanto se vea abierta («Configurar» en
+                la bandeja).
+            explorar: Abrirla en el explorador de archivos en cuanto se vea
+                abierta («Abrir en explorador» en la bandeja).
 
         Returns:
             `True` si lanzó VeraCrypt.
@@ -1860,6 +1918,7 @@ class Agente:
             # VeraCrypt ya está pidiendo la contraseña: una segunda ventana
             # suya no ayuda.
             self.desbloqueos[unidad.id].abrir |= abrir
+            self.desbloqueos[unidad.id].explorar |= explorar
             diario(f"{nombre}: ya se está desbloqueando")
             return False
         try:
@@ -1894,7 +1953,8 @@ class Agente:
         except OSError as e:
             avisar(f"{nombre}: no he podido lanzar VeraCrypt", str(e), True)
             return False
-        self.desbloqueos[unidad.id] = Desbloqueo(ahora, proc, abrir=abrir, copia=copia)
+        self.desbloqueos[unidad.id] = Desbloqueo(ahora, proc, abrir=abrir, copia=copia,
+                                                 explorar=explorar)
         diario(f"{nombre}: desbloqueando" + (f" ({por})" if por else "")
                + f" en {unidad.ruta}; la contraseña la pide VeraCrypt")
         return True
@@ -2100,9 +2160,9 @@ class Agente:
 
         Cada petición es un `equipo.PIDE_*`: pausar o reanudar el servicio de
         una raíz, atender o poner modo a una unidad, añadir una raíz,
-        desbloquear, bloquear o abrir una raíz cifrada, despertar, sondear, un
-        cambio de red, cambiar un ajuste, una pasada urgente, actualizar,
-        pausa, sigue y parar.
+        desbloquear o bloquear una raíz cifrada, abrir la ventana o la carpeta
+        de una raíz, despertar, sondear, un cambio de red, cambiar un ajuste,
+        una pasada urgente, actualizar, pausa, sigue y parar.
 
         Args:
             p: La petición.
@@ -2207,6 +2267,8 @@ class Agente:
                 self.urgentes = [u for u in self.urgentes if u[0] != unidad.id]
         elif que == equipo.PIDE_ABRIR:
             self._abrir(uid, ahora)
+        elif que == equipo.PIDE_EXPLORAR:
+            self._abrir(uid, ahora, explorador=True)
         elif que == equipo.PIDE_DESPERTAR:
             # Vuelta de la suspensión: la batería y la red pueden ser otras y
             # un remoto «sin conexión» quizá ya contesta. Se mira todo ya.
@@ -2262,24 +2324,73 @@ class Agente:
             self.terminar = True
             diario("parada pedida: termina en cuanto acabe lo que esté en marcha")
 
-    def _abrir(self, uid: str, ahora: float) -> None:
-        """Hace el «Abrir» de la bandeja: la ventana de una raíz.
+    def _abrir(self, uid: str, ahora: float, explorador: bool = False) -> None:
+        """Hace el «Configurar» de la bandeja (la ventana de una raíz) o su «Abrir en explorador».
 
         Una unidad que no está en la lista no: sería ejecutar su código sin el
-        sí. Una raíz cifrada bloqueada se desbloquea antes, y su ventana sale
-        al verla abierta.
+        sí, y tampoco se abre su carpeta (la misma regla, sin excepciones). Una
+        raíz cifrada bloqueada se desbloquea antes, y su ventana o su carpeta
+        salen al verla abierta.
+
+        Args:
+            uid: El id de la raíz.
+            ahora: La hora del reloj del agente.
+            explorador: Abrirla en el explorador de archivos en vez de su
+                ventana.
         """
+        que = "abrir en el explorador" if explorador else "abrir"
         unidad = self.ajustes.unidades.get(uid)
         con = self.conexiones.get(uid)
         if unidad is None or (con is not None and (con.cambiada or con.vieja is not None)):
-            diario(f"abrir {uid[:8]!r}: no está en la lista, o su código ha cambiado; "
+            diario(f"{que} {uid[:8]!r}: no está en la lista, o su código ha cambiado; "
                    f"no se ejecuta nada suyo")
         elif con is not None:
-            self._lanzar_ventana(con)
+            if explorador:
+                self._explorar(con)
+            else:
+                self._lanzar_ventana(con)
         elif unidad.cifrada and uid not in self.ausentes:
-            self._desbloquear(unidad, ahora, "para abrirla", abrir=True)
+            self._desbloquear(unidad, ahora, "para abrirla en el explorador" if explorador
+                              else "para abrirla", abrir=not explorador, explorar=explorador)
         else:
-            diario(f"abrir {unidad.nombre or uid[:8]}: no está aquí ahora")
+            diario(f"{que} {unidad.nombre or uid[:8]}: no está aquí ahora")
+
+    def _explorar(self, con: Conexion) -> None:
+        """Abre esa raíz en el explorador de archivos (`explorar()`)."""
+        if not hay_pantalla():
+            diario(f"{con.nombre}: sin entorno gráfico; no hay dónde abrir su carpeta")
+            return
+        try:
+            if explorar(con.raiz):
+                diario(f"{con.nombre}: abierta en el explorador de archivos")
+            else:
+                diario(f"{con.nombre}: no hay con qué abrir su carpeta en este equipo "
+                       f"(falta xdg-open)")
+        except OSError as e:
+            diario(f"{con.nombre}: no he podido abrir su carpeta: {e}")
+
+    def _emblema(self, con: Conexion) -> dict:
+        """Devuelve el icono de esa raíz para la bandeja (`volumen.emblema()`).
+
+        Solo de una raíz de la lista, con su código aceptado y de una versión
+        válida: de las demás no se lee nada más que su id y su nombre, y llevan
+        la marca de prdrive (`{}`). Se lee su `autorun.inf` donde lo pone
+        «Nombre e icono…»: en la raíz física de una unidad en un contenedor, en
+        la carpeta del contenedor de una raíz cifrada del equipo y, si no, en
+        la propia raíz. Como mucho una vez cada `MIRAR_EMBLEMA`.
+        """
+        unidad = self.ajustes.unidades.get(con.id)
+        if unidad is None or con.cambiada or con.vieja is not None:
+            return {}
+        ahora = self.reloj()
+        if con.emblema is None or ahora - con.emblema_leido >= MIRAR_EMBLEMA:
+            if unidad.cifrada:
+                donde = Path(unidad.contenedor).parent
+            else:
+                donde = con.fisica or con.raiz
+            con.emblema = volumen.emblema(donde, APP_SUBDIR)
+            con.emblema_leido = ahora
+        return con.emblema
 
     def _estado_raiz(self, uid: str, unidad: equipo.Unidad) -> str:
         """Devuelve en qué está una raíz de este equipo, para la bandeja."""
@@ -2320,7 +2431,8 @@ class Agente:
                              "error": con.error,
                              "pausada": bool(unidad and unidad.pausada),
                              "fallando": sorted(p for (r, p), m in self.marcas.items()
-                                                if r == con.id and m.fallos > 0)})
+                                                if r == con.id and m.fallos > 0),
+                             "emblema": self._emblema(con)})
         cerradas = [u.nombre or u.id[:8] for u in self.ajustes.cifradas.values()
                     if u.id not in self.conexiones and u.id not in self.ausentes]
         return {"pid": os.getpid(), "pausado": self.pausado, "retenido": self.retenido,

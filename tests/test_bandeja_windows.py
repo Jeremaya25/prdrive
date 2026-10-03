@@ -150,10 +150,13 @@ api.elegir = next(n for n, e in ids.items() if e.texto == "Reanudar")
 api.enviar(bw.WM_ICONO, 0, bw.WM_RBUTTONUP)
 c("clic derecho: menú, y lo elegido va al agente",
   esperar(lambda: PEDIDAS == [{"pide": equipo.PIDE_SIGUE}]), True)
-api.elegir = next(n for n, e in ids.items() if e.texto == "Abrir PRDRIVE-1")
+api.elegir = next(n for n, e in ids.items() if e.texto == "Configurar")
 api.enviar(bw.WM_ICONO, 0, bw.WM_LBUTTONUP)
-c("  el izquierdo también abre el menú",
+c("  el izquierdo también abre el menú; «Configurar» de su desplegable abre su ventana",
   esperar(lambda: PEDIDAS[-1] == {"pide": equipo.PIDE_ABRIR, "id": "u1"}), True)
+c("  el desplegable del dispositivo no lleva id (lo abre Windows) y sí su icono",
+  ([e.texto for e in ids.values() if e.hijos], vista.menu[2].texto,
+   vista.menu[2].emblema), ([], "PRDRIVE-1", bandeja.MARCA))
 api.elegir = next(n for n, e in ids.items() if not e.activa)
 antes = len(PEDIDAS)
 api.enviar(bw.WM_ICONO, 0, bw.WM_RBUTTONUP)
@@ -243,5 +246,172 @@ c("sin el .ico de un estado se usa el de «bien»",
   esperar(lambda: api.llamadas[-1][1].get("icono") == "H:bandeja-bien.ico"
           and "falla" in api.llamadas[-1][1].get("tip", "")), True)
 b.cerrar()
+
+# el icono de un dispositivo
+VERDE = bandeja.Emblema(campo=icons.CAMPOS["verde"])
+llamado: list = []
+
+
+def de_ico(ruta, lado):
+    """Pinta un .ico de mentira: un cuadro opaco del tamaño pedido."""
+    llamado.append(ruta)
+    return bytes([1, 2, 3, 255]) * (lado * lado)
+
+
+ICO = CARPETA / "icono-propio-0123abcd.ico"
+ICO.write_bytes(icons.ico((16,)))
+c("la marca en el color de su campo, sin leer nada",
+  (bw.pixeles_emblema(VERDE, 16, de_ico), llamado), (icons.pixeles_marca(16, VERDE.campo), []))
+c("  un .ico propio lo pinta Windows (de_ico), al tamaño del menú",
+  bw.pixeles_emblema(bandeja.Emblema(ico=str(ICO)), 16, de_ico),
+  bytes([1, 2, 3, 255]) * 256)
+marca = icons.pixeles_marca(16)
+c("  si no se puede pintar, o no del tamaño, o falla: la marca, sin error",
+  [bw.pixeles_emblema(bandeja.Emblema(ico=str(ICO)), 16, f) == marca for f in
+   (lambda r, l: None, lambda r, l: b"\0" * 10, lambda r, l: 1 / 0)], [True, True, True])
+llamado.clear()
+c("  si no está, ni se intenta",
+  (bw.pixeles_emblema(bandeja.Emblema(ico=str(CARPETA / "no.ico")), 16, de_ico) == marca,
+   llamado), (True, []))
+tope = icons.MAX_ICO
+icons.MAX_ICO = 10
+c("  ni si pasa de MAX_ICO",
+  (bw.pixeles_emblema(bandeja.Emblema(ico=str(ICO)), 16, de_ico) == marca, llamado),
+  (True, []))
+icons.MAX_ICO = tope
+c("un icono sin alfa toma la transparencia de su máscara (negro = opaco)",
+  bw.alfa_desde_mascara(bytes([10, 20, 30, 0, 40, 50, 60, 0]),
+                        bytes([0, 0, 0, 0, 255, 255, 255, 0])),
+  bytes([10, 20, 30, 255, 0, 0, 0, 0]))
+
+
+# el menú de verdad (Api.menu) sobre un user32 y un gdi32 de mentira
+import ctypes  # noqa: E402
+from ctypes import wintypes  # noqa: E402
+
+
+class User32:
+    """user32 de mentira: apunta los menús que se construyen.
+
+    Attributes:
+        menus: Lo añadido a cada menú, `(flags, id o submenú, texto)`.
+        defecto: Las entradas por defecto puestas, `(menú, id)`.
+        bitmaps: Los mapas de bits puestos, `(menú, posición, mapa)`.
+        elegir: El id que «elige» la persona.
+    """
+    def __init__(self):
+        """Empieza sin menús."""
+        self.menus, self.defecto, self.bitmaps, self.destruidos = {}, [], [], []
+        self.elegir = 0
+        self.cargados: list = []
+
+    def GetSystemMetrics(self, n):
+        """El icono pequeño: 16 px."""
+        return 16
+
+    def GetSysColor(self, n):
+        """El texto del menú, negro."""
+        return 0
+
+    def CreatePopupMenu(self):
+        """Un menú nuevo."""
+        h = 1000 + len(self.menus)
+        self.menus[h] = []
+        return h
+
+    def AppendMenuW(self, h, flags, ident, texto):
+        """Añade una entrada."""
+        self.menus[h].append((flags, ident, texto))
+
+    def GetMenuItemCount(self, h):
+        """Cuántas entradas tiene."""
+        return len(self.menus[h])
+
+    def SetMenuItemInfoW(self, h, pos, por_posicion, info):
+        """Apunta el mapa de bits de una entrada."""
+        self.bitmaps.append((h, pos, info._obj.hbmpItem))
+
+    def SetMenuDefaultItem(self, h, ident, por_posicion):
+        """Apunta la entrada por defecto de un menú."""
+        self.defecto.append((h, ident))
+
+    def LoadImageW(self, *args):
+        """No carga nada: como un .ico que Windows no entiende."""
+        self.cargados.append(args[1])
+        return 0
+
+    def GetCursorPos(self, punto):
+        """El ratón, en el origen."""
+
+    def SetForegroundWindow(self, hwnd):
+        """Nada."""
+
+    def TrackPopupMenu(self, *args):
+        """Devuelve lo que «elige» la persona."""
+        return self.elegir
+
+    def PostMessageW(self, *args):
+        """Nada."""
+
+    def DestroyMenu(self, h):
+        """Apunta el menú destruido."""
+        self.destruidos.append(h)
+
+
+class Gdi32:
+    """gdi32 de mentira: DIB de verdad en memoria de Python.
+
+    Attributes:
+        dibs: Cada mapa de bits creado y su memoria.
+        borrados: Los mapas de bits borrados.
+    """
+    def __init__(self):
+        """Empieza sin mapas de bits."""
+        self.dibs, self.borrados = {}, []
+
+    def CreateDIBSection(self, hdc, cabecera, uso, bits, seccion, desde):
+        """Crea un DIB a ceros y devuelve su manejador."""
+        c_ = cabecera._obj
+        memoria = ctypes.create_string_buffer(c_.biWidth * -c_.biHeight * 4)
+        bits._obj.value = ctypes.addressof(memoria)
+        h = 5000 + len(self.dibs)
+        self.dibs[h] = memoria
+        return h
+
+    def DeleteObject(self, h):
+        """Apunta el mapa de bits borrado."""
+        self.borrados.append(h)
+
+
+api = object.__new__(bw.Api)
+api.ct, api.wt = ctypes, wintypes
+api.MENUITEMINFOW, api.BITMAPINFOHEADER = bw.estructuras(ctypes, wintypes)
+api.user32, api.gdi32, api._pixeles = User32(), Gdi32(), {}
+vista = bandeja.vista({"unidades": [
+    {"id": "u1", "nombre": "Verde & Co", "en_lista": True, "atendida": True,
+     "emblema": {"marca": "verde"}},
+    {"id": "u2", "nombre": "Propia", "en_lista": True, "emblema": {"ico": str(ICO)}}]})
+ids = bw.numerar(vista.menu)
+configurar = [n for n, e in ids.items() if e.texto == "Configurar"]
+api.user32.elegir = configurar[1]
+c("Api.menu devuelve el id elegido: el «Configurar» del segundo dispositivo",
+  ids[api.menu(777, vista.menu, ids)].pide, ({"pide": equipo.PIDE_ABRIR, "id": "u2"},))
+u, g = api.user32, api.gdi32
+raiz = min(u.menus)
+populares = [(f, sub, t) for f, sub, t in u.menus[raiz] if f & bw.MF_POPUP]
+c("  cada dispositivo es un submenú (MF_POPUP) con su nombre, & doblado",
+  [t for _f, _s, t in populares], ["Verde && Co", "Propia"])
+c("  en cada submenú, «Configurar» es la entrada por defecto: el doble clic la elige",
+  sorted(u.defecto), sorted(zip([s for _f, s, _t in populares], configurar)))
+iconos_raiz = {pos: h for m, pos, h in u.bitmaps if m == raiz}
+c("  los dos desplegables llevan su icono (y «Pausar» y «Cerrar el agente», su glifo)",
+  sorted(iconos_raiz), [0, 1, 3, 5])
+c("  el primero, la marca en verde",
+  bytes(g.dibs[iconos_raiz[0]]), icons.pixeles_marca(16, icons.CAMPOS["verde"]))
+c("  el segundo, su .ico, que Windows no ha sabido cargar: la marca de prdrive",
+  (u.cargados, bytes(g.dibs[iconos_raiz[1]]) == icons.pixeles_marca(16)),
+  ([str(ICO)], True))
+c("  y al cerrar se destruye el menú y se borran todos los mapas de bits",
+  (u.destruidos, sorted(g.borrados)), ([raiz], sorted(g.dibs)))
 
 sys.exit(c.report())
