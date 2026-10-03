@@ -10,6 +10,7 @@ se salta.
 """
 
 import sys
+import threading
 import time
 
 from _harness import Checks, sandbox
@@ -120,6 +121,16 @@ except Exception as e:                                   # noqa: BLE001
     print(f"  (saltado) la ventanita: no hay entorno gráfico: {e}")
     hay_pantalla = False
 
+def esperar_a(condicion, limite=10.0) -> bool:
+    """Espera (sin Tk) a que se cumpla la condición, o a que pase el límite."""
+    fin = time.monotonic() + limite
+    while time.monotonic() < fin:
+        if condicion():
+            return True
+        time.sleep(0.02)
+    return False
+
+
 if hay_pantalla:
     with sandbox():
         results.apuntar("notas", 1, None)
@@ -145,12 +156,24 @@ if hay_pantalla:
         try:
             import tkinter.ttk  # noqa: F401
             c("en un hilo propio, la ventanita se abre", ui.avisar_fallo(["notas"]), True)
-            ui._aviso_abierto["hilo"].join(10)
-            c("y el hilo acaba al cerrarla", ui._aviso_abierto["hilo"].is_alive(), False)
+            primero = ui._aviso_abierto["hilo"]
+            c("  y no es el hilo del servicio",
+              primero is not threading.current_thread(), True)
+            c("y se cierra: el aviso acaba", esperar_a(lambda: not ui._aviso_abierto["activo"]),
+              True)
             c("sin log conservado, solo ofrece cerrar", visto.get("botones"), ["Cerrar"])
+            c("el hilo no acaba con el aviso: espera al siguiente", primero.is_alive(), True)
             c("se puede volver a abrir en el ciclo siguiente", ui.avisar_fallo(["notas"]),
               True)
-            ui._aviso_abierto["hilo"].join(10)
+            c("  en el mismo hilo (Tk 9 aborta con uno nuevo tras acabar el anterior)",
+              ui._aviso_abierto["hilo"] is primero, True)
+            c("  y también acaba", esperar_a(lambda: not ui._aviso_abierto["activo"]), True)
+            c("  y con una ventana en curso no se abre otra",
+              (ui._aviso_abierto.__setitem__("activo", True),
+               ui.avisar_fallo(["notas"]))[1], True)
+            ui._aviso_abierto["activo"] = False
+            c("  y las dos ventanas que se abrieron llevaban el botón de cerrar",
+              visto["botones"], ["Cerrar", "Cerrar"])
         finally:
             tk.Tk.deiconify, tk.Tk.mainloop = real_deiconify, real_mainloop
 

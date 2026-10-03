@@ -425,6 +425,14 @@ interpreter**, and everything Tk must die there: `theme.olvidar()` /
 `icons.olvidar()` drop the per-interpreter caches and `gc.collect()` runs in that
 thread, or the main thread frees the images at exit (`Tcl_AsyncDelete`). No
 display → False, and the notice stays in `daemon.log`. One window at a time.
+**That thread is one per process and never ends** (`ui._aviso_abierto`, a queue
+of jobs): Tcl/Tk 9.0.4 — the Linux runtimes — aborts with `Tcl_Panic: epoll_ctl:
+Invalid argument` when a NEW thread creates a Tk interpreter after another
+thread had created its own and exited (reproduced with four lines of tkinter, no
+prdrive code; several interpreters in a row in the SAME thread, or in threads
+alive at once, are fine). A thread per notice would have killed the service on
+the second pop-up of a Linux runtime. `tests/test_daemon_aviso.py` pins «same
+thread, still alive»; the abort itself only shows with the runtime's own Python.
 
 ## UI (`ui/`)
 

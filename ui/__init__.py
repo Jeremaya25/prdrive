@@ -118,8 +118,38 @@ def abrir(ruta: Path) -> None:
                      start_new_session=True)
 
 
-_aviso_abierto: dict = {"hilo": None}
-"""El hilo de la ventanita de fallo, si hay una abierta."""
+_aviso_abierto: dict = {"hilo": None, "cola": None, "activo": False}
+"""El hilo de las ventanitas de fallo, su cola de trabajos y si hay una en curso.
+
+El hilo es uno por proceso y no acaba entre un aviso y el siguiente: espera en
+su cola. Con Tcl/Tk 9 (los runtimes de Linux) crear un intérprete de Tk en un
+hilo NUEVO después de que otro hilo hubiera creado el suyo y acabado hace
+abortar el proceso (`Tcl_Panic: epoll_ctl: Invalid argument`, medido con
+Tcl/Tk 9.0.4 en una prueba de cuatro líneas, sin código de prdrive). Crear y
+destruir varios intérpretes seguidos en el MISMO hilo, o varios hilos a la vez,
+va bien.
+"""
+
+
+def _hilo_de_avisos():
+    """Devuelve la cola del hilo de las ventanitas, arrancándolo si no está vivo."""
+    import queue
+    import threading
+
+    hilo = _aviso_abierto["hilo"]
+    if hilo is not None and hilo.is_alive():
+        return _aviso_abierto["cola"]
+    cola: queue.SimpleQueue = queue.SimpleQueue()
+
+    def servir() -> None:
+        """Corre los trabajos de la cola, uno tras otro, sin acabar nunca."""
+        while True:
+            cola.get()()
+
+    hilo = threading.Thread(target=servir, daemon=True, name="aviso-fallo")
+    _aviso_abierto["hilo"], _aviso_abierto["cola"] = hilo, cola
+    hilo.start()
+    return cola
 
 
 def avisar_fallo(nombres: list[str], espera: float = 10.0) -> bool:
@@ -132,9 +162,10 @@ def avisar_fallo(nombres: list[str], espera: float = 10.0) -> bool:
     servicio, porque el servicio tiene que seguir: una ventana que nadie cierra
     no puede parar la sincronización de las demás parejas, y bombearla desde el
     bucle del servicio la dejaría congelada mientras rclone trabaja. Todo lo de
-    Tk ocurre dentro de ese hilo, que es lo que Tk exige. No se lanza ningún
-    proceso: un servicio sin ventana que de repente arranca otro programa es
-    justo lo que un antivirus mira mal (ver `install/`).
+    Tk ocurre dentro de ese hilo, que es lo que Tk exige. Ese hilo es siempre el
+    mismo (`_aviso_abierto`): uno nuevo por aviso hace abortar a Tk 9. No se
+    lanza ningún proceso: un servicio sin ventana que de repente arranca otro
+    programa es justo lo que un antivirus mira mal (ver `install/`).
 
     Si ya hay una abierta no se abre otra: esa ya dice que falla.
 
@@ -147,8 +178,7 @@ def avisar_fallo(nombres: list[str], espera: float = 10.0) -> bool:
     """
     import threading
 
-    hilo = _aviso_abierto["hilo"]
-    if hilo is not None and hilo.is_alive():
+    if _aviso_abierto["activo"]:
         return True
 
     from common import results
@@ -164,11 +194,15 @@ def avisar_fallo(nombres: list[str], espera: float = 10.0) -> bool:
         except Exception:                            # noqa: BLE001
             pass                 # sin tkinter o sin display: lo dirá el diario
         finally:
+            _aviso_abierto["activo"] = False
             hecho.set()
 
-    hilo = threading.Thread(target=trabajar, daemon=True, name="aviso-fallo")
-    _aviso_abierto["hilo"] = hilo
-    hilo.start()
+    _aviso_abierto["activo"] = True
+    try:
+        _hilo_de_avisos().put(trabajar)
+    except BaseException:
+        _aviso_abierto["activo"] = False
+        raise
     limite = espera
     while limite > 0 and not abierta.is_set() and not hecho.is_set():
         abierta.wait(0.05)
