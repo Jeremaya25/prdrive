@@ -31,6 +31,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
 import tomllib
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Mapping, NamedTuple
@@ -306,18 +307,33 @@ def explicar_carpeta(ejecutar: Ejecutar, donde: str,
     return f"{motivo} Por ejemplo «{_dentro(ruta)}», si es ahí donde está."
 
 
+_ESCRIBIENDO = threading.Lock()
+"""Un solo hilo a la vez escribe la copia local.
+
+Las pantallas leen el catálogo en hilos (`ui/segundo_plano.py`) y dos lecturas
+seguidas pueden acabar a la vez. `store.write_text()` es atómico por fichero,
+pero el texto y sus metadatos comparten el nombre del temporal
+(`catalog.tmp`) y ni dos escrituras del mismo fichero ni un texto con los
+metadatos de otra lectura deben mezclarse.
+"""
+
+
 def _write_cache(cat: Catalog) -> None:
     """Guarda la copia local; que falle no es un error.
 
     El dispositivo puede estar de solo lectura o haberse extraído a media
-    frase.
+    frase. La escritura es atómica (`store.write_text()`): quien lee la copia
+    desde la ventana (`cached()`) ve la anterior o la nueva entera, nunca la
+    mitad ni un fichero vacío.
     """
-    try:
-        cache_toml().parent.mkdir(parents=True, exist_ok=True)
-        cache_toml().write_text(cat.text, encoding="utf-8", newline="\n")
-    except OSError:
-        return
-    store.write_json(cache_meta(), {"pulled_at": cat.stamp, "endpoint": cat.endpoint})
+    with _ESCRIBIENDO:
+        try:
+            cache_toml().parent.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return
+        if not store.write_text(cache_toml(), cat.text):
+            return
+        store.write_json(cache_meta(), {"pulled_at": cat.stamp, "endpoint": cat.endpoint})
 
 
 def pull(raw_local: Mapping[str, Any] | None = None) -> Catalog:

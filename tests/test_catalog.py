@@ -10,11 +10,12 @@ red.
 
 import subprocess
 import sys
+import threading
 import tomllib
 
 from _harness import Checks, sandbox
 
-from common import catalog, config_file, model
+from common import catalog, config_file, model, store
 from install import profile
 from common.model import ConfigError
 
@@ -103,6 +104,60 @@ with sandbox():
     cat, aviso = catalog.load()
     c("un catálogo ilegible tampoco revienta", cat, None)
     c("y dice que no es TOML válido", "TOML" in aviso, True)
+
+# la copia local se escribe de forma atómica y las lecturas en hilos no se pisan
+with sandbox():
+    escritos = []
+    real_write_text = store.write_text
+
+    def apunta(ruta, texto):
+        """`store.write_text` apuntando qué ficheros se escriben por él."""
+        escritos.append(ruta.name)
+        return real_write_text(ruta, texto)
+
+    store.write_text = apunta
+    try:
+        catalog._write_cache(catalog.Catalog(raw=CAT, text=TEXTO, source="remote",
+                                             stamp="2026-10-03 10:00", endpoint="nas:/x"))
+    finally:
+        store.write_text = real_write_text
+    c("la copia local pasa por store.write_text (atómico), el texto y los metadatos",
+      escritos, ["catalog.toml", "catalog.json"])
+    c("  sin dejar temporales", sorted(p.name for p in catalog.cache_toml().parent.iterdir()),
+      ["catalog.json", "catalog.toml"])
+
+    # Dos lecturas que acaban a la vez, y la ventana leyendo la copia entretanto:
+    # nunca un fichero a medias ni vacío (que se leería como «sin catálogo» o como
+    # un catálogo sin parejas).
+    otro = {**CAT, "pair": CAT["pair"][:1]}
+    textos = [TEXTO, config_file.dumps(otro, CABECERA)]
+    vistos: list[int | None] = []
+    activo = threading.Event()
+    activo.set()
+
+    def escribe_siempre(texto):
+        """Escribe la copia una y otra vez, como lo hace cada lectura que acaba."""
+        for _ in range(150):
+            catalog._write_cache(catalog.Catalog(raw=tomllib.loads(texto), text=texto,
+                                                 source="remote", stamp="x", endpoint="nas:/x"))
+
+    def lee_siempre():
+        """Lee la copia mientras se escribe y apunta cuántas parejas ve."""
+        while activo.is_set():
+            cat = catalog.cached()
+            vistos.append(None if cat is None else len(cat.raw.get("pair") or []))
+
+    hilos = [threading.Thread(target=escribe_siempre, args=(t,)) for t in textos]
+    lector = threading.Thread(target=lee_siempre)
+    lector.start()
+    for h in hilos:
+        h.start()
+    for h in hilos:
+        h.join()
+    activo.clear()
+    lector.join()
+    c("dos escrituras a la vez y una lectura en medio: siempre una copia entera",
+      (len(vistos) > 0, set(vistos) <= {1, 2}), (True, True))
 
 # escribir: lo peligroso
 with sandbox():
