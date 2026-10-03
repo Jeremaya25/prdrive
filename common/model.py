@@ -418,6 +418,15 @@ class Mode:
         """Indica si el modo usa `rclone bisync`."""
         return self.verb == "bisync"
 
+    @property
+    def origen_local(self) -> bool:
+        """Indica si el lado local es origen: lo que cambia allí hay que subirlo.
+
+        Es la condición de `watch`: en `down` y `down-mirror` un cambio local
+        no es algo que la pasada vaya a enviar.
+        """
+        return self.source == "local"
+
 
 MODES: Mapping[str, Mode] = {m.name: m for m in (
     Mode("bisync", "bisync", "local", "remote", {
@@ -489,6 +498,9 @@ class Pair:
         device_remote: Nombre del remote `combine` del lado local, o `None` si
             el local es una ruta.
         versions: Si la pareja guarda versiones de lo que pierde cada lado.
+        watch: Si el agente residente la sincroniza poco después de que cambien
+            sus ficheros locales, sin esperar al intervalo (solo en los modos
+            donde el local es origen).
     """
     name: str
     mode: Mode
@@ -502,6 +514,7 @@ class Pair:
     use_filters_file: bool
     device_remote: str | None
     versions: bool
+    watch: bool = False
 
     @property
     def local_abs(self) -> Path:
@@ -653,6 +666,8 @@ def _build_pair(raw: Mapping[str, Any], defaults: Mapping[str, Any],
             f"[{name}] 'versions' solo vale en modo bisync, y esta pareja es "
             f"'{mode_name}'. Quita la clave o cambia el modo.")
 
+    watch = _leer_watch(name, raw, mode)
+
     return Pair(
         name=name,
         mode=mode,
@@ -668,7 +683,55 @@ def _build_pair(raw: Mapping[str, Any], defaults: Mapping[str, Any],
                                  defaults.get("use_filters_file", True)),
         device_remote=_device_remote_name(defaults),
         versions=versions,
+        watch=watch,
     )
+
+
+def _leer_watch(name: str, raw: Mapping[str, Any], mode: Mode) -> bool:
+    """Lee y valida la clave `watch` de una pareja.
+
+    Args:
+        name: Nombre de la pareja, para el mensaje.
+        raw: La `[[pair]]` tal como sale del TOML.
+        mode: Su modo ya resuelto.
+
+    Returns:
+        Si la pareja pide vigilar sus cambios locales.
+
+    Raises:
+        ConfigError: Si no es un booleano, o se pide (`true`) en un modo donde
+            el local no es origen. `watch = false` vale en cualquiera.
+    """
+    valor = raw.get("watch", False)
+    if not isinstance(valor, bool):
+        raise ConfigError(
+            f"[{name}] 'watch' tiene que ser true o false, no {valor!r}.")
+    if valor and not mode.origen_local:
+        validos = ", ".join(m.name for m in MODES.values() if m.origen_local)
+        raise ConfigError(
+            f"[{name}] 'watch' solo vale donde el origen es el dispositivo "
+            f"({validos}), y esta pareja es '{mode.name}'. Quita la clave o "
+            "cambia el modo.")
+    return valor
+
+
+def pide_watch(raw: Mapping[str, Any]) -> bool:
+    """Dice si una `[[pair]]` en bruto pide vigilar sus cambios locales.
+
+    Es la misma regla que `_leer_watch()` pero sin lanzar: quien lee el TOML a
+    pelo (el agente, que no pasa por `parse_config()` porque la unidad puede
+    ser de otra versión) solo quiere un sí o un no. Cuenta únicamente el `true`
+    literal y solo en un modo conocido donde el local es origen; cualquier otra
+    cosa (un string, un número, una clave en un modo que no la admite) es no.
+
+    Args:
+        raw: La `[[pair]]` tal como sale del TOML.
+    """
+    if raw.get("watch") is not True:
+        return False
+    nombre = raw.get("mode", DEFAULT_MODE)
+    mode = MODES.get(nombre) if isinstance(nombre, str) else None
+    return mode is not None and mode.origen_local
 
 
 def problema_nombre(name: Any) -> str | None:

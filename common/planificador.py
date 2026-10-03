@@ -27,6 +27,14 @@ Las reglas, en el orden en que se aplican:
   tope de 4 h, y a cero tras una pasada buena.
 - Una raíz bloqueada, ausente, en pausa o apartada simplemente no está: no es
   un fallo, no hace esperar más y no avisa de nada.
+- Cambios locales (`watch = true`): una pareja que lo pide se sincroniza poco
+  después de que cambien sus ficheros, sin esperar al intervalo. Es una pasada
+  corriente ADELANTADA, no una urgente: la modera todo lo anterior. Se la mira
+  con una foto barata de su carpeta (`Huella`), una ráfaga de cambios es una
+  sola pasada (`PoliticaCambios.calma`) y no hay dos pasadas de la misma pareja
+  más cerca que `separacion`. Al terminar una pasada se vuelve a tomar la foto,
+  para que lo que la propia pasada escribió no la dispare otra vez. Los
+  cambios del remoto no se ven: esperan al intervalo.
 
 Nada de esto hace un `--resync`: una pareja que lo pide la salta su propio
 `sync.py` (sin terminal la pregunta toma el «no») y aquí cuenta como `SALTADA`,
@@ -41,7 +49,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field, replace
-from typing import Iterable, Mapping
+from typing import Iterable, Mapping, NamedTuple
 
 # El tipo de cada tarea.
 PASADA = "pasada"
@@ -101,9 +109,12 @@ class Pareja:
     Args:
         nombre: Nombre de la pareja.
         remoto: El remote de rclone al que va; agrupa el «sin conexión».
+        vigila: Si pide sincronizarse al cambiar sus ficheros locales
+            (`model.pide_watch()`).
     """
     nombre: str
     remoto: str = ""
+    vigila: bool = False
 
 
 @dataclass(frozen=True)
@@ -169,12 +180,15 @@ class Tarea:
         pareja: Nombre de la pareja; `None` en una sonda.
         remoto: El remote de rclone.
         urgente: Si la pidió alguien a mano («Sincronizar ahora»).
+        por_cambios: Si es una pasada que los cambios locales han adelantado
+            respecto de su intervalo.
     """
     tipo: str
     raiz: str
     pareja: str | None = None
     remoto: str = ""
     urgente: bool = False
+    por_cambios: bool = False
 
 
 @dataclass(frozen=True)
@@ -246,7 +260,9 @@ def moderacion(entorno: Entorno, politica: Politica) -> str | None:
 def decidir(raices: Iterable[Raiz], marcas: Mapping[tuple[str, str], Marca],
             entorno: Entorno, ahora: float, politica: Politica = Politica(),
             ocupado: bool = False,
-            urgentes: Iterable[tuple[str, str]] = ()) -> Decision:
+            urgentes: Iterable[tuple[str, str]] = (),
+            vigiladas: Mapping[tuple[str, str], Vigilada] | None = None,
+            cambios: PoliticaCambios | None = None) -> Decision:
     """Devuelve la siguiente tarea o, si no hay, cuándo volver a mirar.
 
     Args:
@@ -258,7 +274,12 @@ def decidir(raices: Iterable[Raiz], marcas: Mapping[tuple[str, str], Marca],
         ocupado: Si ya hay una pasada en marcha.
         urgentes: `(raíz, pareja)` pedidos a mano, en el orden en que se
             pidieron.
+        vigiladas: Lo recordado de cada pareja que pide `watch`, por
+            `(raíz, pareja)`. Sin esto ninguna pasada se adelanta.
+        cambios: Las reglas de los cambios locales; por defecto las de fábrica.
     """
+    vigiladas = vigiladas or {}
+    cambios = cambios or PoliticaCambios()
     if ocupado:
         return Decision(None, politica.mirar_ocupado)
 
@@ -296,15 +317,21 @@ def decidir(raices: Iterable[Raiz], marcas: Mapping[tuple[str, str], Marca],
             if (raiz.clave, pareja.remoto) in entorno.sin_conexion:
                 continue
             marca = marcas.get((raiz.clave, pareja.nombre), Marca())
+            por_cambios = False
             if marca.ultimo_intento is None:
                 toca = -math.inf        # nunca se ha intentado: ya
             else:
                 toca = marca.ultimo_intento + espera(raiz.intervalo, marca.fallos,
                                                      politica.tope_espera)
+                if pareja.vigila and not math.isinf(raiz.intervalo):
+                    antes = toca_por_cambios(
+                        vigiladas.get((raiz.clave, pareja.nombre)), marca, cambios)
+                    if antes < toca:
+                        toca, por_cambios = antes, True
             if toca <= ahora:
                 if elegida is None or toca < elegida[0]:
                     elegida = (toca, Tarea(PASADA, raiz.clave, pareja.nombre,
-                                           pareja.remoto))
+                                           pareja.remoto, por_cambios=por_cambios))
             else:
                 proxima = min(proxima, toca)
     if elegida is not None:
@@ -462,3 +489,180 @@ def resolver(pregunta: Pregunta, respuesta: str | None, ahora: float,
     if ahora >= pregunta.hasta:
         return AHORA_NO
     return None
+
+
+# ---------------------------------------------------------------------------
+# Cambios locales: `watch = true`
+# ---------------------------------------------------------------------------
+
+
+class Huella(NamedTuple):
+    """La foto barata de una carpeta: cuántas entradas tiene y una firma de ellas.
+
+    La firma es la suma (módulo 2**64) de un hash de cada entrada —su ruta
+    relativa, su tamaño y su mtime en nanosegundos— y no el máximo de los mtime
+    ni la suma de los tamaños: con esos agregados renombrar un fichero, o
+    cambiar uno por otro del mismo tamaño, no mueve nada. Sumar hashes no
+    depende del orden en que `scandir` entrega las entradas.
+
+    Args:
+        entradas: Cuántos ficheros y carpetas hay.
+        firma: La firma de todos ellos.
+    """
+    entradas: int
+    firma: int
+
+
+@dataclass(frozen=True)
+class PoliticaCambios:
+    """Las reglas de los cambios locales; sus valores de fábrica son los del diseño.
+
+    Args:
+        sondeo: Segundos entre dos recorridos de la carpeta de una pareja.
+        calma: Segundos sin más cambios antes de lanzar la pasada: una ráfaga
+            de ficheros es una sola pasada, no una por fichero.
+        separacion: Segundos mínimos entre el final de la última pasada de una
+            pareja y una pasada adelantada por cambios: un editor que guarda
+            cada medio minuto no convierte el intervalo en una pasada por
+            guardado.
+        tope_entradas: Más entradas que esto y la pareja deja de vigilarse:
+            recorrer una carpeta enorme cada pocos segundos cuesta más de lo
+            que da, sobre todo en un pendrive.
+    """
+    sondeo: float = 10.0
+    calma: float = 20.0
+    separacion: float = 120.0
+    tope_entradas: int = 20_000
+
+
+@dataclass(frozen=True)
+class Vigilada:
+    """Lo que se recuerda de una pareja que pide `watch`.
+
+    Args:
+        huella: La última foto tomada, o `None` si todavía no hay ninguna o la
+            última se perdió: la próxima será la de partida y no dispara nada.
+        cambio: Cuándo se vio el último cambio que aún no ha atendido una
+            pasada, o `None` si no hay ninguno pendiente. Cada cambio nuevo lo
+            adelanta: es la calma.
+        revisada: Cuándo se recorrió por última vez, con foto o sin ella.
+        abandonada: Si ya pasó de `PoliticaCambios.tope_entradas`: no se vuelve
+            a recorrer en esta conexión y manda el intervalo.
+    """
+    huella: Huella | None = None
+    cambio: float | None = None
+    revisada: float | None = None
+    abandonada: bool = False
+
+
+def observar(vigilada: Vigilada, huella: Huella | None, ahora: float,
+             politica: PoliticaCambios = PoliticaCambios()) -> Vigilada:
+    """Devuelve lo recordado de una pareja tras recorrer su carpeta.
+
+    Args:
+        vigilada: Lo recordado hasta ahora.
+        huella: La foto de este recorrido, o `None` si no se pudo tomar (la
+            unidad se retiró a medias): no es un cambio ni borra lo sabido.
+        ahora: La hora.
+        politica: Las reglas.
+    """
+    if vigilada.abandonada:
+        return vigilada
+    if huella is None:
+        return replace(vigilada, revisada=ahora)
+    if huella.entradas > politica.tope_entradas:
+        return Vigilada(None, None, ahora, abandonada=True)
+    if vigilada.huella is None:
+        return replace(vigilada, huella=huella, revisada=ahora)
+    if huella != vigilada.huella:
+        return replace(vigilada, huella=huella, cambio=ahora, revisada=ahora)
+    return replace(vigilada, revisada=ahora)
+
+
+def tras_pasada(vigilada: Vigilada, huella: Huella | None, ahora: float) -> Vigilada:
+    """Devuelve lo recordado de una pareja cuando termina una pasada suya.
+
+    La pasada, buena o mala, ha escrito en la carpeta (en bisync, lo que baja
+    del remoto): la foto de después es la de partida y no cuenta como cambio.
+    Lo que la persona cambió mientras la pasada corría queda dentro de esa foto
+    y espera al intervalo; es el precio de no distinguir sus ficheros de los de
+    rclone. Sin foto (`None`), la próxima recorrida vuelve a partir de cero.
+
+    Args:
+        vigilada: Lo recordado hasta ahora.
+        huella: La foto tomada al terminar la pasada, o `None` si no se pudo.
+        ahora: La hora.
+    """
+    if vigilada.abandonada:
+        return vigilada
+    return Vigilada(huella, None, ahora)
+
+
+def se_abandona(antes: Vigilada, despues: Vigilada) -> bool:
+    """Indica si esta observación es la que deja de vigilar la pareja.
+
+    Solo entonces se anota en el diario: una pareja abandonada no se vuelve a
+    recorrer, pero el aviso no tiene que repetirse.
+    """
+    return despues.abandonada and not antes.abandonada
+
+
+def toca_por_cambios(vigilada: Vigilada | None, marca: Marca,
+                     politica: PoliticaCambios = PoliticaCambios()) -> float:
+    """Devuelve cuándo tocaría la pasada de una pareja por sus cambios locales.
+
+    Returns:
+        La hora, o infinito si no hay cambio pendiente, la pareja está
+        abandonada, nunca se ha intentado (esa ya toca por su intervalo) o está
+        fallando: la espera creciente es para que un fallo no se reintente a
+        cada cambio, y un cambio no la anula.
+    """
+    if (vigilada is None or vigilada.abandonada or vigilada.cambio is None
+            or marca.ultimo_intento is None or marca.fallos > 0):
+        return math.inf
+    return max(vigilada.cambio + politica.calma,
+               marca.ultimo_intento + politica.separacion)
+
+
+def a_recorrer(raices: Iterable[Raiz], vigiladas: Mapping[tuple[str, str], Vigilada],
+               ahora: float, politica: PoliticaCambios = PoliticaCambios(),
+               retenido: bool = False,
+               ocupadas: Iterable[tuple[str, str]] = ()) -> list[tuple[str, str]]:
+    """Devuelve las parejas cuya carpeta toca recorrer ahora.
+
+    Solo cuentan las de una raíz atendible, que piden `watch`, no están
+    abandonadas y no son de una raíz en modo `sync` (una pasada por conexión y
+    ya: el intervalo infinito dice que nadie quiere más).
+
+    Args:
+        raices: Las raíces que atiende el agente.
+        vigiladas: Lo recordado de cada pareja, por `(raíz, pareja)`.
+        ahora: La hora.
+        politica: Las reglas.
+        retenido: Si la moderación (pausa, batería, red de uso medido) retiene
+            hoy cualquier pasada: recorrer entonces gasta lo mismo que
+            moderarse quiere ahorrar, y el cambio se verá en el primer
+            recorrido de después.
+        ocupadas: Parejas con una pasada en marcha: las escribe rclone, no la
+            persona.
+
+    Returns:
+        `(raíz, pareja)` en el orden de las raíces.
+    """
+    if retenido:
+        return []
+    ocupadas = set(ocupadas)
+    salida: list[tuple[str, str]] = []
+    for raiz in raices:
+        if not raiz.atendible or math.isinf(raiz.intervalo):
+            continue
+        for pareja in raiz.parejas:
+            clave = (raiz.clave, pareja.nombre)
+            if not pareja.vigila or clave in ocupadas:
+                continue
+            v = vigiladas.get(clave, Vigilada())
+            if v.abandonada:
+                continue
+            if v.revisada is None or ahora - v.revisada >= politica.sondeo:
+                salida.append(clave)
+    return salida
