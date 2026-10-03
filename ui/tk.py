@@ -787,7 +787,7 @@ class Indicador:
 
 
 def main_window(config: Config, startup_msg: str | None) -> Choice | None:
-    """Abre la ventana principal: qué parejas, cada cuánto y qué hacer con ellas.
+    """Abre la ventana principal: qué parejas y qué hacer con ellas.
 
     Sincronizar y el doctor se hacen DESDE aquí, en una ventana de salida hija
     que no la cierra: al terminar se vuelve a esta con todo al día. Lo único
@@ -1150,7 +1150,6 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         if vista.get("casillas"):
             vista["marcadas"] = [n for n, v in vista["casillas"].items() if v.get()]
             vista["conocidas"] = list(vista["casillas"])
-            vista["intervalo"] = vista["intervalo_var"].get()
         for hijo in frame.winfo_children():
             hijo.destroy()
 
@@ -1159,7 +1158,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         notes = pair_status_notes(config)
         marcas = pair_times(config)
         cuentas = {n: k for n, k in vista["conflictos"].items() if n in names}
-        d_pairs, d_interval, _ = prefs.startup_defaults(config)
+        d_pairs, _, _ = prefs.startup_defaults(config)
         if "marcadas" in vista:
             d_pairs = [n for n in names
                        if n in vista["marcadas"] or n not in vista["conocidas"]]
@@ -1385,10 +1384,9 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         theme.boton_icono(boton, "parejas", theme.ACENTO, theme.PAPEL)
         boton.grid(row=0, column=0, sticky="w")
         # El engranaje, apartado a la derecha: detrás está lo que se hace de
-        # tarde en tarde —la comprobación del doctor, emparejar un móvil, las
-        # versiones—, para que esta ventana no crezca con cada cosa nueva. Se
-        # llama «Ajustes» y no «Doctor» porque ahí es donde irá también lo que
-        # se configure: el doctor es una de sus entradas, no la pantalla.
+        # tarde en tarde —la comprobación del doctor, el intervalo del
+        # servicio, emparejar un móvil, las versiones—, para que esta ventana
+        # no crezca con cada cosa nueva.
         ajustes = ttk.Button(pantallas, text="Ajustes…", style="Quiet.TButton",
                              command=lambda: tk_doctor.open_dialog(
                                  root, vista["config"], lanzar,
@@ -1397,28 +1395,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         theme.boton_icono(ajustes, "gear", theme.ACENTO, theme.PAPEL)
         ajustes.grid(row=0, column=2, sticky="e")
 
-        # El servicio: cada cuánto, y qué hace este equipo al enchufar. Va
-        # junto al pie y no junto a la lista: el intervalo es del servicio y
-        # una pasada manual no lo usa. Sale precargado con el del servicio.
-        repetir = ttk.Frame(frame)
-        repetir.grid(row=fila, column=0, sticky="w", pady=(18, 0))
-        fila += 1
-        img = icons.get(repetir, "clock", 15, theme.TINTA3, theme.PAPEL)
-        reloj = ttk.Label(repetir)
-        if img is not None:
-            reloj.configure(image=img)
-            reloj.image = img
-        reloj.grid(row=0, column=0, sticky="w")
-        ttk.Label(repetir, text="El servicio repite cada", style="Campo.TLabel").grid(
-            row=0, column=1, sticky="w", padx=(8, 10))
-        interval_var = tk.StringVar(value=vista.get("intervalo") or f"{d_interval:g}")
-        ttk.Spinbox(repetir, from_=1, to=1440, textvariable=interval_var,
-                    width=5, font=theme.fuente("mono")).grid(row=0, column=2)
-        # La raíz de un equipo no se desenchufa: el servicio repite sin más.
-        ttk.Label(repetir, text="minutos" if model.es_equipo() else
-                  "minutos, mientras el dispositivo siga puesto",
-                  style="Pista.TLabel").grid(row=0, column=3, sticky="w", padx=(10, 0))
-        vista["casillas"], vista["intervalo_var"] = vars_by_name, interval_var
+        vista["casillas"] = vars_by_name
 
         # La línea del arranque automático. Sigue encendida mientras
         # sincroniza, como el botón al que sustituye: el vigilante no toca nada
@@ -1427,7 +1404,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         dicho = watch.linea(vigilante)
         if dicho is not None:
             arranque = ttk.Frame(frame)
-            arranque.grid(row=fila, column=0, sticky="ew", pady=(10, 0))
+            arranque.grid(row=fila, column=0, sticky="ew", pady=(18, 0))
             arranque.columnconfigure(1, weight=1)
             fila += 1
             img = icons.get(arranque, "warn" if dicho.aviso else "arranque", 15,
@@ -1457,13 +1434,6 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
             """Devuelve las parejas con la casilla marcada, en el orden del config."""
             return [n for n in names if vars_by_name[n].get()]
 
-        def minutos() -> float:
-            """Devuelve el intervalo escrito, o el del servicio si no se entiende."""
-            try:
-                return max(1.0, float(interval_var.get().replace(",", ".")))
-            except ValueError:
-                return d_interval
-
         def sincronizar() -> None:
             """Lanza la pasada manual, aquí mismo.
 
@@ -1482,13 +1452,16 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
             """Cierra la ventana pidiendo arrancar el servicio.
 
             El servicio sí cierra la ventana: corre en otro proceso, sin ella,
-            y quien lo arranca (y guarda lo elegido) es `runsync` al volver de
-            aquí.
+            y quien lo arranca (y guarda las parejas marcadas) es `runsync` al
+            volver de aquí. El intervalo es el guardado («Ajustes →
+            Configuración»), que se lee ahora y no al pintar: se ha podido
+            cambiar con la ventana abierta.
             """
             sel = selected()
             if not sel:
                 return
-            result["choice"] = Choice("daemon", tuple(sel), minutos())
+            minutos = prefs.startup_defaults(vista["config"])[1]
+            result["choice"] = Choice("daemon", tuple(sel), minutos)
             root.destroy()
 
         ttk.Separator(frame, orient="horizontal").grid(

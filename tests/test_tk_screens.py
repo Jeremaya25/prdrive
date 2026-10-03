@@ -722,35 +722,73 @@ tk.Toplevel.wait_window = pulsar("Atender")
 c("  sin estar en su lista, «Atender» lo añade en daemon",
   tk_watch.open_agente(raiz, watch.Resumen("agente_nueva", "", True)), "daemon")
 
-# «Ajustes» de la raíz cifrada de un equipo: la casilla de pedir_al_iniciar.
-from ui import tk_doctor  # noqa: E402
+# «Ajustes → Configuración» de la raíz cifrada de un equipo: la casilla de
+# pedir_al_iniciar, que se pide al agente al «Guardar» y solo si ha cambiado.
+from ui import prefs, tk_configuracion  # noqa: E402
 
 ajustes_pedidos: list = []
 watch.pedir_al_iniciar = lambda: True
 watch.pedir_ajuste = lambda clave, valor: ajustes_pedidos.append((clave, valor)) or True
 
 
-def desmarcar_y_cerrar(self, *_a, **_k):
-    """Desmarca lo que toca y cierra el diálogo."""
-    pila = [self]
-    while pila:
-        w = pila.pop()
-        pila += list(w.winfo_children())
-        if isinstance(w, ttk.Checkbutton) and "contraseña" in str(w.cget("text")):
-            w.invoke()
-    pulsar("Cerrar")(self)
+def desmarcar_y(boton):
+    """Devuelve un `wait_window` que desmarca la casilla y pulsa `boton`."""
+    def _wait(self, *_a, **_k):
+        """Desmarca la casilla de la contraseña y pulsa el botón."""
+        pila = [self]
+        while pila:
+            w = pila.pop()
+            pila += list(w.winfo_children())
+            if isinstance(w, ttk.Checkbutton) and "contraseña" in str(w.cget("text")):
+                w.invoke()
+        pulsar(boton)(self)
+    return _wait
 
 
+REAL_PREFS = prefs.PREFS
 with sandbox():
     cfg = preparar()
-    tk.Toplevel.wait_window = desmarcar_y_cerrar
-    tk_doctor.open_dialog(raiz, cfg, lambda *a: None)
-    c("«Ajustes» de la raíz cifrada: la casilla se lo pide al agente",
-      ajustes_pedidos, [("pedir_al_iniciar", False)])
+    prefs.PREFS = model.STATE_DIR / "ui_prefs.json"
+    tk.Toplevel.wait_window = desmarcar_y("Cancelar")
+    c("«Configuración» de la raíz cifrada: «Cancelar» no pide nada",
+      (tk_configuracion.open_dialog(raiz, cfg), ajustes_pedidos), (False, []))
+    tk.Toplevel.wait_window = desmarcar_y("Guardar")
+    c("  «Guardar» con la casilla cambiada se lo pide al agente",
+      (tk_configuracion.open_dialog(raiz, cfg), ajustes_pedidos),
+      (True, [("pedir_al_iniciar", False)]))
+    c("  y no escribe el intervalo, que no ha cambiado", prefs.PREFS.exists(), False)
     watch.pedir_al_iniciar = lambda: None
     ajustes_pedidos.clear()
-    tk_doctor.open_dialog(raiz, cfg, lambda *a: None)
-    c("  en cualquier otra raíz no está", ajustes_pedidos, [])
+    tk.Toplevel.wait_window = desmarcar_y("Guardar")
+    c("  en cualquier otra raíz no está",
+      (tk_configuracion.open_dialog(raiz, cfg), ajustes_pedidos), (False, []))
+
+    def escribir_y_guardar(minutos):
+        """Devuelve un `wait_window` que escribe esos minutos y pulsa «Guardar»."""
+        def _wait(self, *_a, **_k):
+            """Escribe en la casilla del intervalo y pulsa «Guardar»."""
+            pila = [self]
+            while pila:
+                w = pila.pop()
+                pila += list(w.winfo_children())
+                if isinstance(w, ttk.Spinbox):
+                    w.set(minutos)
+            pulsar("Guardar")(self)
+            if self.winfo_exists():
+                pulsar("Cancelar")(self)
+        return _wait
+
+    errores.clear()
+    tk.Toplevel.wait_window = escribir_y_guardar("0")
+    c("un intervalo de 0 minutos no se guarda, y se dice por qué",
+      (tk_configuracion.open_dialog(raiz, cfg), prefs.PREFS.exists(), errores),
+      (False, False, ["El intervalo tiene que ser un número de minutos: 1 o más."]))
+    tk.Toplevel.wait_window = escribir_y_guardar("7,5")
+    c("  uno con coma decimal sí, y solo el intervalo",
+      (tk_configuracion.open_dialog(raiz, cfg), prefs.read_prefs().get("interval_min"),
+       "pairs" in prefs.read_prefs()), (True, 7.5, False))
+    errores.clear()
+prefs.PREFS = REAL_PREFS
 
 # El formulario de instalación ya no pregunta parejas ni intervalo: son los del
 # servicio, que viven en el dispositivo. Lo que queda es del equipo: qué hacer al

@@ -3,21 +3,21 @@
 
 Era «Doctor», un botón que lanzaba `sync.py --doctor` y nada más. Se convirtió
 en una pantalla por una razón concreta: la ventana principal ya está llena (sus
-avisos, la lista de parejas, el intervalo, tres botones y dos acciones) y todo
-lo que se hace una vez en la vida del dispositivo tiene que caber en algún
-sitio que no sea esa ventana. Esta es ese sitio.
+avisos, la lista de parejas, tres botones y dos acciones) y todo lo que se hace
+una vez en la vida del dispositivo tiene que caber en algún sitio que no sea
+esa ventana. Esta es ese sitio.
 
 En la ventana se llama «Ajustes», detrás de un engranaje, y no «Doctor»: el
-doctor es una de sus entradas (la primera), no la pantalla, y aquí es donde irá
-también lo que se configure. El módulo conserva su nombre porque el subcomando
+doctor es una de sus entradas (la primera), no la pantalla, y aquí es donde va
+también lo que se configura. El módulo conserva su nombre porque el subcomando
 `sync.py --doctor` no cambia y porque es a esta pantalla a la que apunta el
 rediseño de la pantalla de reparación.
 
 Solo dibuja, y menos que ninguna otra: no lee estado, no escribe nada y no
 decide nada. Cada entrada es un botón y una frase que dice qué pasa al
-pulsarlo; lo que pasa lo hace el módulo de turno. La única casilla, «Pedir la
-contraseña al iniciar sesión» de la raíz cifrada de un equipo, también: lo que
-vale y cómo se le pide al agente es de `ui/watch.py`.
+pulsarlo; lo que pasa lo hace el módulo de turno. Lo que se configura (el
+intervalo del servicio y, en la raíz cifrada de un equipo, si se pide la
+contraseña al iniciar sesión) va en «Configuración…» (`ui/tk_configuracion.py`).
 
 `lanzar` llega desde la ventana principal en vez de importarse: la comprobación
 se enseña en su ventana de salida, que es hija de la principal y no de esta, y
@@ -29,8 +29,8 @@ from __future__ import annotations
 
 from common.model import Config
 
-from . import theme, watch
-from .tk import TITLE, cabecera, cuerpo_visible, modal, mostrar, separador_fila
+from . import theme
+from .tk import cabecera, cuerpo_visible, modal, mostrar, separador_fila
 
 ENTRADAS = (
     ("Reparación…", "doctor",
@@ -38,6 +38,10 @@ ENTRADAS = (
      "son de su pareja, bloqueos sueltos, ficheros en conflicto. Nada se toca "
      "sin confirmarlo.",
      "reparacion"),
+    ("Configuración…", "clock",
+     "Cada cuánto sincroniza el servicio y, en la carpeta cifrada de un equipo, "
+     "si el agente pide la contraseña al iniciar sesión.",
+     "configuracion"),
     ("Emparejar un móvil…", "dispositivo",
      "Enseña la conexión con el remoto como código QR para que la lea otro "
      "aparato. Lleva la clave privada dentro: el código avisa.",
@@ -94,6 +98,11 @@ def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None,
         if abrir_reparacion is not None:
             abrir_reparacion()
 
+    def configuracion() -> None:
+        """Abre «Configuración»: el intervalo del servicio y lo del agente."""
+        from . import tk_configuracion
+        tk_configuracion.open_dialog(dlg, config)
+
     def emparejar() -> None:
         """Abre el emparejamiento de un móvil."""
         from . import tk_qr
@@ -109,8 +118,8 @@ def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None,
         from . import tk_volumen
         tk_volumen.open_dialog(dlg)
 
-    acciones = {"reparacion": reparacion, "qr": emparejar, "versiones": versiones,
-                "volumen": nombre_e_icono}
+    acciones = {"reparacion": reparacion, "configuracion": configuracion,
+                "qr": emparejar, "versiones": versiones, "volumen": nombre_e_icono}
 
     tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(14, 12, 14, 12))
     tarjeta.grid(row=1, column=0, sticky="ew", pady=(16, 0))
@@ -126,50 +135,15 @@ def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None,
         theme.boton_icono(boton, icono, theme.ACENTO, theme.SUPERFICIE)
         boton.grid(row=fila, column=0, sticky="w", pady=(8, 0))
         fila += 1
-        ttk.Label(tarjeta, text=frase, style="CardPista.TLabel", justify="left",
+        ttk.Label(tarjeta, text=frase, style="Card.Pista.TLabel", justify="left",
                   wraplength=theme.medida(540)).grid(row=fila, column=0,
                                                      sticky="w", pady=(3, 10))
         fila += 1
 
-    # La raíz cifrada de este equipo: si el agente pide su contraseña al
-    # iniciar sesión. Es un ajuste del EQUIPO y no de la raíz, así que no se
-    # escribe aquí: se le pide al agente por su buzón. Así lo tiene también
-    # quien no tiene bandeja.
-    pedir = watch.pedir_al_iniciar()
-    fila_pie = 2
-    if pedir is not None:
-        import tkinter as tk
-        from tkinter import messagebox
-
-        cifrada = ttk.Frame(marco, style="Card.TFrame", padding=(14, 12, 14, 12))
-        cifrada.grid(row=2, column=0, sticky="ew", pady=(12, 0))
-        cifrada.columnconfigure(0, weight=1)
-        marcada = tk.BooleanVar(value=pedir)
-
-        def cambiar() -> None:
-            """Le pide al agente el ajuste y, si no ha podido, deshace la casilla."""
-            if not watch.pedir_ajuste("pedir_al_iniciar", bool(marcada.get())):
-                marcada.set(not marcada.get())
-                messagebox.showerror(TITLE, "No he podido dejarle la petición al "
-                                     "agente.", parent=dlg)
-
-        ttk.Checkbutton(cifrada, text="Pedir la contraseña al iniciar sesión",
-                        variable=marcada, command=cambiar,
-                        style="Card.Fuerte.TCheckbutton").grid(row=0, column=0,
-                                                              sticky="w")
-        ttk.Label(cifrada, style="CardPista.TLabel", justify="left",
-                  wraplength=theme.medida(540),
-                  text="Al iniciar sesión, el agente le pide a VeraCrypt que abra "
-                       "esta carpeta cifrada, una vez. Sin marcar, se queda "
-                       "bloqueada hasta que pidas «Desbloquear». Lo guarda el agente "
-                       "de este equipo, no la carpeta.").grid(
-            row=1, column=0, sticky="w", pady=(3, 0))
-        fila_pie = 3
-
-    ttk.Separator(marco, orient="horizontal").grid(row=fila_pie, column=0, sticky="ew",
+    ttk.Separator(marco, orient="horizontal").grid(row=2, column=0, sticky="ew",
                                                    pady=(16, 0))
     pie = ttk.Frame(marco)
-    pie.grid(row=fila_pie + 1, column=0, sticky="e", pady=(14, 0))
+    pie.grid(row=3, column=0, sticky="e", pady=(14, 0))
     ttk.Button(pie, text="Cerrar", command=dlg.destroy).grid(row=0, column=0)
 
     mostrar(dlg, parent)

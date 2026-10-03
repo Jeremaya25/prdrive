@@ -34,9 +34,9 @@ modo *ligero* (con un `runsync.pyw` en la raíz), entonces sí hace falta **Pyth
 
 - **Sincronizar ahora** — una pasada de lo marcado, en una ventana aparte; al
   cerrarla vuelves aquí con todo al día.
-- **Iniciar servicio** — sincroniza lo marcado cada N minutos (lo pones justo
-  encima) mientras la unidad siga conectada. Se para solo al extraerla, o al
-  volver a abrir la ventana. Lo marcado y el intervalo se recuerdan para la
+- **Iniciar servicio** — sincroniza lo marcado cada N minutos (se cambia en
+  «Ajustes…» → «Configuración…») mientras la unidad siga conectada. Se para solo
+  al extraerla, o al volver a abrir la ventana. Lo marcado se recuerda para la
   próxima vez.
 - **Diagnóstico** — cuando algo no cuadra. Enseña dónde apunta cada carpeta y si
   su sincronización está sana.

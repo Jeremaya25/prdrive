@@ -76,7 +76,7 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 │   ├── bandeja_linux.py    the Linux tray: StatusNotifierItem + dbusmenu, its own thread
 │   ├── tk_pairs.py · tk_repair.py · tk_conflicts.py · tk_fleet.py ·
 │   │   tk_watch.py · tk_update.py · tk_crypto.py · tk_doctor.py ·
-│   │   tk_qr.py · tk_versions.py · tk_volumen.py
+│   │   tk_configuracion.py · tk_qr.py · tk_versions.py · tk_volumen.py
 │   └── console.py     ConsoleFrontend: the text menu
 ├── install/           what the installer knows; no Tk, no device needed
 │   ├── __init__.py    brand constants, InstallError, InstallState, python_command()
@@ -362,11 +362,20 @@ same config (with the resident agent as this root's service, «Iniciar
 servicio» asks it to resume instead: «The window ↔ the agent», below): pairs + interval in `ui_prefs.json`, on the device.
 `startup_defaults()` layers that record > `[daemon]` in the TOML > all pairs /
 30 min, for the window, `--auto` and the watcher alike; explicit `--auto`
-arguments still win (shortcuts, cron, and watchers not yet reinstalled). **Only
-starting the service writes it** (`_atender()`, action `daemon`): a manual pass
-with a few pairs ticked must not decide what the service syncs at the next plug-in.
-A record with `action == "manual"` predates that and is ignored (by `== "manual"`,
-so a hand-written record without `action` still counts). The file keeps its old
+arguments still win (shortcuts, cron, and watchers not yet reinstalled). **Two
+writers, each with its own part** (#65): starting the service (`_atender()`,
+action `daemon`) writes the ticked pairs with the interval already saved, and
+«Ajustes → Configuración» (`prefs.guardar_intervalo()`) writes **only the
+interval**. That screen keeps a record's `pairs`/`known`/`action` untouched when
+`elegir()` honours them; otherwise it leaves a record **without `pairs`**, which
+`elegir()` reads as «the saved interval, the TOML's pairs» — so saving the
+interval never pins the pair selection, and a later hand edit of `[daemon]
+pairs` still counts. (An agent older than this reads such a record as no record
+and falls back to `[daemon]`'s interval: degraded, never wrong pairs.) A manual
+pass writes nothing: a few pairs ticked must not decide what the service syncs
+at the next plug-in. A record with `action == "manual"` predates that and is
+ignored (by `== "manual"`, so a hand-written record without `action` still
+counts); saving the interval over one replaces it. The file keeps its old
 name: renaming it would need a migration to change a word. `--auto --once`
 (`una_pasada()`) is one pass of those pairs with no service behind it; with a
 live service on this host it does nothing and does **not** stop it — swapping a
@@ -447,11 +456,14 @@ it** — a window cannot dump output to a console that does not exist.
   the service's pairs; «Marcar todas»/«Desmarcar todas» (two pairs or more)
   and the «N de M» follow them through each checkbox's `command`, **not** a
   variable `trace`: a widget's command dies with it, a trace's Tcl command does
-  not, and it would hold the whole window and its images until exit. «Repetir
-  cada» sits by the footer because the interval is the service's.
-  `ui.manual_args()` (resync question + `--yes`) is shared with the console
-  path. The pairs screen's «Simular», «Examinar…» and «Dispositivos…» write
-  nothing, so none makes `open_dialog` return True.
+  not, and it would hold the whole window and its images until exit. The
+  interval is **not** in the main window (#65): it is set once in a device's
+  life, so it lives in «Ajustes → Configuración», and «Iniciar servicio» reads
+  the saved one (`prefs.startup_defaults()`) when clicked, not when painted.
+  The console menu still asks it when starting the service: it is not the main
+  window. `ui.manual_args()` (resync question + `--yes`) is shared with the
+  console path. The pairs screen's «Simular», «Examinar…» and «Dispositivos…»
+  write nothing, so none makes `open_dialog` return True.
 - **The watcher line** replaced the «Arranque automático…» button: what this host
   does when the device is plugged in, from `watch.resumen()` (files only, no
   `schtasks`/`systemctl`: it is asked on first paint) and worded by
@@ -539,12 +551,18 @@ paths and flags; no rounded corners, no shadows. Styles cross **role** with
 The main window is deliberately lean, so **anything done once in a device's life
 belongs behind the gear, not beside «Sincronizar ahora»**. The screen is
 «Ajustes» —the module keeps the old name— and it is not the `--doctor` command:
-«Reparación» is its first entry, the pairing code its second, and
-`ENTRADAS` is the list to add to. It receives `lanzar` and `abrir_reparacion`
-from the main window rather than importing them, because the output window and
-«Reparación» are the *main* window's children and it disables itself while a
-pass runs — this screen knows none of that, and closes itself before handing
-over so two modals never hold the grab at once.
+«Reparación» is its first entry, «Configuración» its second, and `ENTRADAS` is
+the list to add to. **«Configuración»** (`ui/tk_configuracion.py`, #65) holds
+what is *configured* rather than done: the service's interval (`ui/prefs.py`
+decides what is written, see «Daemon») and, only for the encrypted host root,
+the agent's `pedir_al_iniciar` checkbox (sent as `PIDE_AJUSTE`). Nothing is
+written until «Guardar», and what did not change is not written.
+
+«Ajustes» receives `lanzar` and `abrir_reparacion` from the main window rather
+than importing them, because the output window and «Reparación» are the *main*
+window's children and it disables itself while a pass runs — this screen knows
+none of that, and closes itself before handing over so two modals never hold
+the grab at once.
 
 ### «Reparación» (`common/revision.py` + `ui/repair.py` + `ui/tk_repair.py`)
 
@@ -1848,8 +1866,9 @@ the agent renaming them first (`equipo.pedir(…, buzon_de=)` /
   (`watch.pedir_modo()` → `watch.pedir_al_agente()`, an indirection point); the
   line then shows what was asked (`watch.pedido()`), since `agente.json` only
   changes when the agent reads it. A host root is offered `daemon`/`nada` only.
-- **`pedir_al_iniciar` in «Ajustes»**: a checkbox, only for the encrypted host
-  root (`watch.pedir_al_iniciar()` → None otherwise), sent as `PIDE_AJUSTE`.
+- **`pedir_al_iniciar` in «Ajustes → Configuración»**: a checkbox, only for the
+  encrypted host root (`watch.pedir_al_iniciar()` → None otherwise), sent as
+  `PIDE_AJUSTE` on «Guardar» if it changed.
 - **Wizard re-run with the agent of the same version** (`install/agente.
   misma_version()`): «Instalación» reuses it (`instalado_prep()`), «Arranque»
   is «Pedírselo al agente» → `anadir()`: mailbox only, menu entry if a root is

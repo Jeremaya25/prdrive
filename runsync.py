@@ -29,9 +29,9 @@ dispositivo):
 
 El servicio es uno, se arranque a mano o al enchufar: `ui_prefs.json` es su
 configuración, precarga la UI siguiente y es el valor por defecto de `--auto`,
-por delante de `[daemon]` del TOML. Solo la escribe la UI, y solo al arrancar
-el servicio: una pasada manual no la toca, y `--auto` y `--daemon` únicamente
-la leen.
+por delante de `[daemon]` del TOML. Solo la escribe la UI: las parejas, al
+arrancar el servicio, y el intervalo solo, en «Ajustes → Configuración». Una
+pasada manual no la toca, y `--auto` y `--daemon` únicamente la leen.
 
 Con el agente residente (`agente.py`) como servicio de esta raíz (vivo y en
 modo `daemon`), «Iniciar servicio» no arranca otro: guarda esa memoria y deja
@@ -738,8 +738,10 @@ def _atender(config: model.Config, startup_msg: str | None) -> int:
 
     if choice.action == "daemon":
         # Es la configuración del servicio (precarga la próxima ventana y la
-        # usa `--auto`): solo se guarda aquí, una pasada manual con unas pocas
-        # parejas no decide qué sincroniza el servicio (ver `ui/prefs.py`).
+        # usa `--auto`): las parejas solo se guardan aquí, una pasada manual
+        # con unas pocas parejas no decide qué sincroniza el servicio. El
+        # intervalo de la ventana es el ya guardado («Ajustes →
+        # Configuración»); el de la consola, el que se teclea (ver `ui/prefs.py`).
         prefs.save_prefs(choice.action, list(choice.pairs), choice.minutes,
                          config.names)
         if agente_sirve() and pedir_reanudar():

@@ -2,15 +2,21 @@
 """Las parejas y el intervalo del servicio.
 
 El servicio periódico es uno solo, se arranque a mano («Iniciar servicio») o al
-enchufar el dispositivo (el vigilante, `runsync --auto`), y su configuración
-vive en `state/ui_prefs.json`: viaja en el dispositivo y acompaña a la persona
-de una máquina a otra. Es también con lo que sale precargada la ventana. Ese
-recuerdo manda sobre `[daemon]` del TOML, que a su vez manda sobre los valores
-de fábrica.
+enchufar el dispositivo (el vigilante, `runsync --auto`, o el agente del
+equipo), y su configuración vive en `state/ui_prefs.json`: viaja en el
+dispositivo y acompaña a la persona de una máquina a otra. Es también con lo
+que sale precargada la ventana. Ese recuerdo manda sobre `[daemon]` del TOML,
+que a su vez manda sobre los valores de fábrica.
 
-Solo se escribe al ARRANCAR el servicio (`save_prefs`, desde `runsync`). Una
-pasada manual no lo toca: marcar una sola pareja para sincronizarla ahora no
-puede decidir qué sincroniza el servicio la próxima vez que se enchufe el
+Lo escriben dos sitios, cada uno con lo suyo:
+- «Iniciar servicio» (`save_prefs`, desde `runsync`): las parejas marcadas y
+  el intervalo con el que arranca, que es el que ya estaba guardado.
+- «Ajustes → Configuración» (`guardar_intervalo`): SOLO el intervalo. Si ya
+  había parejas elegidas se conservan tal cual; si no, el registro queda sin
+  parejas y estas siguen saliendo de `[daemon]` del TOML.
+
+Una pasada manual no lo toca: marcar una sola pareja para sincronizarla ahora
+no puede decidir qué sincroniza el servicio la próxima vez que se enchufe el
 dispositivo. `--auto` y el servicio únicamente leen, para que un arranque
 automático nunca reescriba lo que se decidió a mano.
 
@@ -20,6 +26,7 @@ renombrarlo pediría una migración para cambiar una palabra.
 
 from __future__ import annotations
 
+import math
 import socket
 from typing import Any, Mapping
 
@@ -67,6 +74,51 @@ def save_prefs(action: str, pairs: list[str], interval_min: float,
     store.write_json(PREFS, data)  # si el dispositivo ya no está, recordar no es vital
 
 
+def revisar_intervalo(texto: str) -> float:
+    """Devuelve los minutos escritos en «Configuración», con la coma decimal admitida.
+
+    Raises:
+        ValueError: Con la frase que enseñar si no es un número de minutos de 1
+            o más.
+    """
+    try:
+        minutos = float(str(texto).strip().replace(",", "."))
+    except ValueError:
+        minutos = math.nan
+    if not math.isfinite(minutos) or minutos < 1:
+        raise ValueError("El intervalo tiene que ser un número de minutos: 1 o más.")
+    return minutos
+
+
+def guardar_intervalo(config: Config, minutos: float) -> bool:
+    """Guarda el intervalo del servicio sin tocar sus parejas.
+
+    Es lo que guarda «Ajustes → Configuración». Si el registro tiene parejas
+    que siguen valiendo (las que `elegir` respeta), se conservan, y con ellas
+    `action` y `known`: solo cambia el intervalo. Si no las tiene (no hay
+    registro, es uno `manual` de antes o ninguna de sus parejas existe ya),
+    queda un registro sin `pairs`, y las parejas del servicio siguen saliendo
+    de `[daemon]` del TOML: guardar el intervalo no fija qué se sincroniza.
+
+    Args:
+        config: La configuración del dispositivo, para saber qué parejas hay.
+        minutos: El intervalo, ya revisado (`revisar_intervalo`).
+
+    Returns:
+        False si no se ha podido escribir; True si se ha escrito o ya estaba
+        así.
+    """
+    old = read_prefs()
+    sin_sello = {k: v for k, v in old.items() if k not in ("host", "saved")}
+    if "pairs" in old and _recordadas(config.names, old):
+        data = {**sin_sello, "interval_min": max(1.0, float(minutos))}
+    else:
+        data = {"interval_min": max(1.0, float(minutos))}
+    if data == sin_sello:
+        return True  # ya estaba así: no se gasta escritura en el dispositivo
+    return store.write_json(PREFS, {**data, "host": HOST, "saved": store.stamp()})
+
+
 def daemon_defaults(config: Config) -> tuple[list[str], float]:
     """Devuelve `[daemon]` del TOML, saneado contra las parejas que existen."""
     return _de_daemon(config.names, config.daemon)
@@ -88,15 +140,46 @@ def startup_defaults(config: Config) -> tuple[list[str], float, str | None]:
     """Devuelve las parejas, el intervalo y una nota con los que sale el servicio.
 
     Es con lo que sale precargada la UI y con lo que arranca `--auto` sin
-    argumentos. Precedencia: lo guardado al arrancar el servicio > `[daemon]`
-    del TOML > todas las parejas cada 30 min.
+    argumentos. Precedencia: lo guardado (al arrancar el servicio, o el
+    intervalo de «Configuración») > `[daemon]` del TOML > todas las parejas
+    cada 30 min.
 
     Returns:
         `(parejas, minutos, nota)`. La nota es `None` si no hay recuerdo y, si
-        lo hay, el texto con el que la UI dice de dónde salen las casillas
-        marcadas.
+        lo hay, el texto con el que la UI dice de dónde salen.
     """
     return elegir(config.names, config.daemon, read_prefs())
+
+
+def _recordadas(all_names: list[str], prefs: Mapping[str, Any]) -> list[str]:
+    """Devuelve las parejas del recuerdo que siguen valiendo, en el orden del TOML.
+
+    Es una lista vacía si el recuerdo no decide las parejas: no lo hay, es un
+    registro `manual` o nada de lo que nombra existe ya.
+    """
+    # Un registro `manual` solo puede ser de antes de que las pasadas manuales
+    # dejaran de escribir aquí, y es el recuerdo de una pasada suelta que no
+    # debe decidir el servicio. Se descarta por `manual` y no por «distinto de
+    # `daemon`»: uno sin `action`, escrito a mano, sigue valiendo.
+    if not prefs or prefs.get("action") == "manual":
+        return []
+    saved = prefs.get("pairs")
+    remembered = {n for n in saved if isinstance(n, str)} if isinstance(saved, list) else set()
+    known = prefs.get("known")
+    if isinstance(known, list):
+        # Parejas añadidas al TOML después de aquella elección: nadie las ha
+        # desmarcado, así que entran marcadas.
+        remembered |= {n for n in all_names if n not in known}
+    return [n for n in all_names if n in remembered]
+
+
+def _minutos(prefs: Mapping[str, Any], defecto: float | None) -> float | None:
+    """Devuelve el intervalo guardado, como mínimo 1 min, o `defecto` si no vale."""
+    try:
+        minutos = float(prefs.get("interval_min", defecto))
+    except (TypeError, ValueError):
+        return defecto
+    return max(1.0, minutos) if math.isfinite(minutos) else defecto
 
 
 def elegir(all_names: list[str], daemon: Mapping[str, Any],
@@ -108,35 +191,26 @@ def elegir(all_names: list[str], daemon: Mapping[str, Any],
     de servicio de raíces que no son la suya: lee esos tres datos de cada una y
     decide con esta misma regla, en vez de con una segunda copia que se
     separaría de esta.
+
+    Un registro sin `pairs` es el que deja «Configuración» cuando no había
+    parejas elegidas: vale su intervalo, y las parejas son las del TOML.
     """
     d_pairs, d_interval = _de_daemon(all_names, daemon)
-
-    # Un registro `manual` solo puede ser de antes de que las pasadas manuales
-    # dejaran de escribir aquí, y es el recuerdo de una pasada suelta que no
-    # debe decidir el servicio. Se descarta por `manual` y no por «distinto de
-    # `daemon`»: uno sin `action`, escrito a mano, sigue valiendo.
     if not prefs or prefs.get("action") == "manual":
         return d_pairs, d_interval, None
+    when = prefs.get("saved")
 
-    saved = prefs.get("pairs")
-    remembered = {n for n in saved if isinstance(n, str)} if isinstance(saved, list) else set()
-    known = prefs.get("known")
-    if isinstance(known, list):
-        # Parejas añadidas al TOML después de aquella elección: nadie las ha
-        # desmarcado, así que entran marcadas.
-        remembered |= {n for n in all_names if n not in known}
-    # Recortado a lo que sigue existiendo y en el orden del TOML.
-    pairs = [n for n in all_names if n in remembered]
+    if "pairs" not in prefs:
+        interval = _minutos(prefs, None)
+        if interval is None:
+            return d_pairs, d_interval, None
+        return d_pairs, interval, ("Intervalo del servicio"
+                                   + (f", elegido el {when}" if when else ""))
+
+    pairs = _recordadas(all_names, prefs)
     if not pairs:
         # Nada de aquello existe ya (parejas renombradas, TOML regenerado): el
         # recuerdo entero es basura y se vuelve al TOML sin anunciar nada.
         return d_pairs, d_interval, None
-
-    try:
-        interval = max(1.0, float(prefs.get("interval_min", d_interval)))
-    except (TypeError, ValueError):
-        interval = d_interval
-
-    when = prefs.get("saved")
-    return pairs, interval, ("Parejas e intervalo del servicio"
-                             + (f", elegidos el {when}" if when else ""))
+    return pairs, _minutos(prefs, d_interval), ("Parejas e intervalo del servicio"
+                                                + (f", elegidos el {when}" if when else ""))

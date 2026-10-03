@@ -2,10 +2,14 @@
 """La ventana principal y el servicio (#14): un servicio, dos maneras de arrancarlo.
 
 Las casillas son las mismas para «Sincronizar ahora» y para «Iniciar servicio»,
-salen marcadas con lo del servicio, y solo «Iniciar servicio» lo guarda. Aquí
-se comprueba lo que se ve y se toca en la ventana:
+salen marcadas con lo del servicio, y solo «Iniciar servicio» las guarda. El
+intervalo ya no está en la ventana sino en «Ajustes → Configuración» (#65), que
+guarda solo el intervalo. Aquí se comprueba lo que se ve y se toca en la
+ventana:
 - El botón de marcar o desmarcar todas, y el «N de M» que sigue a las casillas.
 - Que una pasada manual no escribe la configuración del servicio.
+- Que «Configuración», desde el engranaje, guarda el intervalo sin las parejas,
+  y que «Iniciar servicio» sale después con él.
 - La línea que dice qué hace este equipo al enchufar, en cada estado, y que su
   botón lleva a la pantalla del vigilante y al volver se repinta.
 - Que con lo más largo que puede salir (doce parejas, el botón de marcar, la
@@ -33,9 +37,12 @@ except Exception as e:                                   # sin entorno gráfico
     print(f"  (saltado) no hay entorno gráfico: {e}")
     sys.exit(c.report())
 
+import json  # noqa: E402
+
 import ui.tk as uitk  # noqa: E402
 from common import update  # noqa: E402
-from ui import cifrado, prefs, theme, tk_watch, watch  # noqa: E402
+from ui import (cifrado, prefs, theme, tk_configuracion, tk_doctor,  # noqa: E402
+                tk_watch, watch)
 
 # Nada de red ni del estado de quien ejecuta el test.
 update.pending = lambda root=None: None
@@ -163,16 +170,73 @@ with sandbox():
     c("y no escribe la configuración del servicio", prefs.PREFS.exists(), False)
 
     def servicio(root) -> None:
-        """Cambia las parejas y el intervalo y pulsa «Iniciar servicio»."""
+        """Cambia las parejas y pulsa «Iniciar servicio»."""
+        visto["spinbox"] = any(isinstance(w, ttk.Spinbox) for w in recorrer(root))
         casillas(root)["upload"].invoke()
-        spin = next(w for w in recorrer(root) if isinstance(w, ttk.Spinbox))
-        spin.set("12")
         botones(root)["Iniciar servicio"].invoke()
 
+    visto = {}
     eleccion = ventana(CUATRO, servicio)
-    c("«Iniciar servicio» sale con lo marcado y el intervalo",
+    c("el intervalo ya no está en la ventana principal", visto["spinbox"], False)
+    c("«Iniciar servicio» sale con lo marcado y el intervalo del servicio",
       (eleccion.action, eleccion.pairs, eleccion.minutes),
-      ("daemon", ("upload", "docs"), 12.0))
+      ("daemon", ("upload", "docs"), 15.0))
+
+
+# «Ajustes → Configuración»: el intervalo, guardado sin las parejas (#65)
+REAL_DOCTOR_MOSTRAR, REAL_CONF_MOSTRAR = tk_doctor.mostrar, tk_configuracion.mostrar
+
+
+def pulsar_en(dlg, texto) -> None:
+    """Pulsa el botón de `dlg` que dice `texto`."""
+    botones(dlg)[texto].invoke()
+
+
+with sandbox():
+    prefs.PREFS.unlink(missing_ok=True)
+    visto = {}
+
+    def en_ajustes(dlg, parent=None) -> None:
+        """Hace de «Ajustes»: apunta sus entradas y abre «Configuración…»."""
+        visto["entradas"] = [b for b in botones(dlg) if b.endswith("…")]
+        visto["casilla en ajustes"] = any("contraseña" in t for t in casillas(dlg))
+        pulsar_en(dlg, "Configuración…")
+        if dlg.winfo_exists():
+            pulsar_en(dlg, "Cerrar")
+
+    def en_configuracion(dlg, parent=None) -> None:
+        """Hace de «Configuración»: escribe 20 minutos y guarda."""
+        spin = next(w for w in recorrer(dlg) if isinstance(w, ttk.Spinbox))
+        visto["al abrir"] = spin.get()
+        visto["sin casilla"] = not casillas(dlg)
+        spin.set("20")
+        pulsar_en(dlg, "Guardar")
+
+    tk_doctor.mostrar, tk_configuracion.mostrar = en_ajustes, en_configuracion
+    try:
+        def configurar_y_arrancar(root) -> None:
+            """Abre Ajustes → Configuración y luego pulsa «Iniciar servicio»."""
+            botones(root)["Ajustes…"].invoke()
+            visto["guardado"] = json.loads(prefs.PREFS.read_text(encoding="utf-8"))
+            visto["marcadas"] = marcadas(root)
+            botones(root)["Iniciar servicio"].invoke()
+
+        eleccion = ventana(CUATRO, configurar_y_arrancar)
+    finally:
+        tk_doctor.mostrar, tk_configuracion.mostrar = REAL_DOCTOR_MOSTRAR, REAL_CONF_MOSTRAR
+    c("«Ajustes» tiene «Configuración…»", "Configuración…" in visto["entradas"], True)
+    c("  como segunda entrada, tras «Reparación…»",
+      [rotulo for rotulo, *_ in tk_doctor.ENTRADAS][:2], ["Reparación…", "Configuración…"])
+    c("  la casilla de la contraseña ya no está en «Ajustes»",
+      visto["casilla en ajustes"], False)
+    c("  abre con el intervalo del servicio ([daemon] del TOML)", visto["al abrir"], "15")
+    c("  y sin la casilla, que es de la raíz cifrada de un equipo", visto["sin casilla"],
+      True)
+    c("«Guardar» escribe el intervalo y no las parejas",
+      ("pairs" in visto["guardado"], visto["guardado"]["interval_min"]), (False, 20.0))
+    c("  las casillas siguen con las del servicio", visto["marcadas"], ["docs"])
+    c("«Iniciar servicio» después sale con el intervalo guardado",
+      (eleccion.pairs, eleccion.minutes), (("docs",), 20.0))
 
 
 # la línea del arranque automático
@@ -198,8 +262,8 @@ for res in ESTADOS:
           watch.PAUSA in visto["textos"], res.vigila_este)
         c(f"{nombre}: ya no hay botón «Arranque automático…»",
           "Arranque automático…" in visto["botones"], False)
-        c(f"{nombre}: el intervalo es del servicio",
-          "El servicio repite cada" in visto["textos"], True)
+        c(f"{nombre}: el intervalo no está en la ventana, está en «Configuración»",
+          "El servicio repite cada" in visto["textos"], False)
 
 with sandbox():
     visto = {}

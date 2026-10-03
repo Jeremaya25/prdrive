@@ -50,9 +50,9 @@ except Exception as e:                                   # sin entorno gráfico
 
 from ui import tk as uitk
 from ui import remote_picker, segundo_plano
-from ui import (tk_doctor, tk_fleet, tk_install, tk_pairs, tk_qr, tk_repair,
-                tk_update, tk_versions, tk_volumen, tk_watch, versions_editor, volumen,
-                watch)
+from ui import (tk_configuracion, tk_doctor, tk_fleet, tk_install, tk_pairs, tk_qr,
+                tk_repair, tk_update, tk_versions, tk_volumen, tk_watch, versions_editor,
+                volumen, watch)
 
 # Ni una petición a GitHub desde un test.
 update.fetch = lambda url, timeout: c("ningún test toca la red", "fetch", "nada")
@@ -816,19 +816,27 @@ try:
                   corta, False)
 
                 # «Ajustes»: una tarjeta con una entrada por acción, que crece
-                # con cada una que se le añada. Su peor caso es la raíz cifrada
-                # de un equipo, que añade la casilla de `pedir_al_iniciar`.
+                # con cada una que se le añada.
+                entra, corta = medir_dialogo(
+                    lambda: tk_doctor.open_dialog(raiz, cfg, lambda *a: None),
+                    ancho, alto, escala, modulo=tk_doctor)
+                c(f"{nombre}: la pantalla de Ajustes cabe", entra, True)
+                c(f"{nombre}: la pantalla de Ajustes no queda recortada",
+                  corta, False)
+
+                # «Configuración» (#65): el intervalo, con la frase larga de un
+                # dispositivo que se desenchufa, y su peor caso, la casilla de
+                # `pedir_al_iniciar` de la raíz cifrada de un equipo.
                 previo_pedir = watch.pedir_al_iniciar
                 watch.pedir_al_iniciar = lambda: True
                 try:
                     entra, corta = medir_dialogo(
-                        lambda: tk_doctor.open_dialog(raiz, cfg, lambda *a: None),
-                        ancho, alto, escala, modulo=tk_doctor)
+                        lambda: tk_configuracion.open_dialog(raiz, cfg),
+                        ancho, alto, escala, modulo=tk_configuracion)
                 finally:
                     watch.pedir_al_iniciar = previo_pedir
-                c(f"{nombre}: la pantalla de Ajustes cabe", entra, True)
-                c(f"{nombre}: la pantalla de Ajustes no queda recortada",
-                  corta, False)
+                c(f"{nombre}: «Configuración» cabe", entra, True)
+                c(f"{nombre}: «Configuración» no queda recortada", corta, False)
 
                 # «Qué hace el agente»: los cuatro modos de una unidad, y el
                 # aviso de que el agente no está en marcha.

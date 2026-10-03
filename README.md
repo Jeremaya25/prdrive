@@ -777,7 +777,7 @@ Tres cosas que conviene saber:
 `runsync.py` puede quedarse sincronizando cada N minutos. Es **un solo servicio con
 dos maneras de arrancarlo**: a mano, con «Iniciar servicio», o al enchufar el
 dispositivo en un equipo que tenga [el vigilante](#el-vigilante). Las dos usan las
-mismas parejas y el mismo intervalo, los que se ven en la ventana. Su coordinación
+mismas parejas y el mismo intervalo, los que se eligen en la ventana. Su coordinación
 vive en `state/`, dentro del dispositivo, para que viaje con él:
 
 | fichero | qué es |
@@ -811,12 +811,14 @@ de 100, para dejarla en 50.
 **Qué parejas y cada cuánto.** Las casillas de la ventana son las mismas para
 «Sincronizar ahora» y para «Iniciar servicio», y salen marcadas con las del
 servicio; «Marcar todas» y «Desmarcar todas» están en el rótulo de la lista. El
-intervalo, «El servicio repite cada N minutos», va junto al pie porque solo lo usa
-el servicio. **Solo «Iniciar servicio» guarda** lo marcado y el intervalo: una
-pasada manual con dos parejas marcadas no decide qué sincroniza el servicio la
-próxima vez que enchufes el dispositivo. Lo guardado manda sobre `[daemon]` del
-TOML, que manda sobre «todas las parejas / 30 minutos», y vale igual para la
-ventana, para `--auto` y para el vigilante. `--auto` lo lee pero no lo pisa.
+intervalo, «El servicio repite cada N minutos», está en **«Ajustes…» →
+«Configuración…»**: solo lo usa el servicio y se toca pocas veces. **Las parejas
+solo las guarda «Iniciar servicio»**, y «Configuración» guarda solo el
+intervalo, sin fijar las parejas: una pasada manual con dos parejas marcadas no
+decide qué sincroniza el servicio la próxima vez que enchufes el dispositivo. Lo
+guardado manda sobre `[daemon]` del TOML, que manda sobre «todas las parejas /
+30 minutos», y vale igual para la ventana, para `--auto` y para el vigilante.
+`--auto` lo lee pero no lo pisa.
 
 El servicio se para cuando el dispositivo desaparece o cuando se vuelve a lanzar
 `runsync.py`. En Windows se lanza con `pythonw.exe` y sin consola, y hace `chdir`

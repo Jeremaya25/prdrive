@@ -13,7 +13,8 @@ salida se enseña en la misma ventana que se usa para `sync.py`.
 
 El vigilante solo decide QUÉ se hace al enchufar. Las parejas y el intervalo
 son los del servicio, que viven en el dispositivo y se eligen en la ventana
-principal: el servicio es uno, se arranque a mano o al enchufar.
+principal (las parejas) y en «Ajustes → Configuración» (el intervalo): el
+servicio es uno, se arranque a mano o al enchufar.
 """
 
 from __future__ import annotations
