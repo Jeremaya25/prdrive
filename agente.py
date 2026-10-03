@@ -2500,8 +2500,13 @@ class Agente:
             nombre = p.get("nombre") if isinstance(p.get("nombre"), str) else ""
             modo = p.get("modo") if p.get("modo") in equipo.MODOS else equipo.DAEMON
             hc = p.get("contenedor") if isinstance(p.get("contenedor"), str) else ""
+            # Se parte de la que ya hay: el asistente vuelto a pasar cambia la
+            # ruta, el modo o el contenedor, no la pausa de su ventana ni el
+            # código que se aceptó.
+            previa = self.ajustes.unidades.get(uid) or equipo.Unidad(uid)
             self._guardar(self.ajustes.con_unidad(
-                equipo.Unidad(uid, modo, nombre, ruta.strip(), hc.strip())))
+                replace(previa, modo=modo, nombre=nombre or previa.nombre,
+                        ruta=ruta.strip(), contenedor=hc.strip())))
             self.ausentes.discard(uid)
             self.pedidas.add(uid)           # la acaba de dejar abierta el asistente
             diario(f"raíz de este equipo añadida: {nombre or uid[:8]} en {ruta}"
