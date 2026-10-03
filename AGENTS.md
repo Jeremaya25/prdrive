@@ -1206,11 +1206,19 @@ absent), per-row sizes and a live total vs free space.
 - **Deselecting a provisioned platform deletes only if confirmed**
   (`Matriz.quitar()` → `_preguntar_borrado()`); unconfirmed = left in place.
 - **Downloads are pinned and verified** from `common/pins.py` (Python 3.13, not
-  3.14 — those builds ship Tk 9 and the UI is measured on Tk 8.6). Even so, the
-  3.13 builds are Tk 8.6 only on **Windows** (8.6.15, `tcl86t.dll`/`tk86t.dll`);
-  the **Linux** ones (x64 and ARM64) already ship Tcl/Tk 9.0.4, in 20260901,
-  20260924 and 20261001 alike (measured 02/10/2026, see `pins.py`), so a Linux
-  runtime's window and the agent's run on Tk 9 today.
+  3.14 — those builds ship Tk 9 on every platform, Windows included, and that is
+  untested). The 3.13 builds are Tk 8.6 only on **Windows** (8.6.15,
+  `tcl86t.dll`/`tk86t.dll`); the **Linux** ones (x64 and ARM64) already ship
+  Tcl/Tk 9.0.4, in 20260901, 20260924 and 20261001 alike (measured 02/10/2026,
+  see `pins.py`), so a Linux runtime's window and the agent's run on Tk 9 today.
+  **The UI is measured on both**: the normal suite runs with the system Python
+  (Tk 8.6) and the Linux runtime's Tk 9.0.4 is measured by running the same
+  scripts with its interpreter (`xvfb-run -a <runtime>/bin/python3
+  tests/test_tk_medidas.py`, and `test_tk_servicio`, `test_tk_densidad`,
+  `test_daemon_aviso`). 03/10/2026, runtime 20261001: measures and service pass
+  whole, density fails the same 1-px Xvfb rounding it fails with Tk 8.6, and the
+  failure pop-up aborted the process (next to «Failure pop-up»). That is
+  dimensions, not looks: nobody has reviewed Tk 9 by eye.
   `runtime_bin.extract()` validates every member before writing the first, prunes
   pip/idle/tests/C headers (on Linux also `share/` and `libpython*.so` — the
   interpreter is static), never creates symlinks (exFAT) but materialises

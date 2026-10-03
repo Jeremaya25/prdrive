@@ -23,16 +23,33 @@ sí, son reubicables (se descomprimen donde sea y funcionan) y publican un
 `SHA256SUMS` por release con la misma forma que el de rclone.
 
 Por qué 3.13 y no 3.14: los 3.14 de python-build-standalone ya traen Tcl/Tk 9.0
-y la interfaz se ha hecho y medido con Tk 8.6 (el tema de ttk, los iconos
-rasterizados a mano, `tk scaling`). Subir a 3.14 es probar esas pantallas con
-Tk 9 primero, no cambiar un número.
+en todas las plataformas, y la interfaz se hizo con Tk 8.6 (el tema de ttk, los
+iconos rasterizados a mano, `tk scaling`). Subir a 3.14 pondría también Windows
+en Tk 9, y eso no está probado: lo de Linux (abajo) no vale por Windows, donde
+además la protección de capturas de #59 depende de cómo envuelve Tk 8.6.15 sus
+ventanas (`wm frame`).
 
 Qué Tk trae cada plataforma de 3.13, medido el 02/10/2026 en la release fijada
 (la 20260924 trae lo mismo): Windows x64 y ARM64, Tk 8.6.15 (`DLLs/tcl86t.dll` y
 `tk86t.dll`); Linux x64 y ARM64, Tcl/Tk 9.0.4 (`lib/tcl9.0/`, `lib/tk9.0/`,
 `libtcl9tk9.0.so`; `tkinter.TkVersion` da 9.0 en Linux x64). La ventana que abre
-un runtime de Linux, la del agente incluida, corre ya con Tk 9; solo la de
-Windows corre con el 8.6 con el que se hizo.
+un runtime de Linux, la del agente incluida, corre ya con Tk 9.
+
+Cómo se mide cada una: la suite normal corre con el Python del sistema (Tk 8.6),
+así que las pantallas de Linux se miden aparte, con el intérprete del propio
+runtime: `xvfb-run -a <runtime>/bin/python3 tests/test_tk_medidas.py` (y
+`test_tk_servicio.py`, `test_tk_densidad.py`, `test_daemon_aviso.py`). Resultado
+del 03/10/2026 con la 20261001 (Python 3.13.16, Tcl/Tk 9.0.4): `test_tk_medidas`
+(1074 comprobaciones, la matriz de resoluciones por `tk scaling`) y
+`test_tk_servicio` (178) pasan enteros; `test_tk_densidad` falla una de once por
+un píxel de redondeo (508 donde esperaba 507 a escala 2,6667), igual que con Tk
+8.6 en Xvfb; y `test_daemon_aviso` abortaba el proceso con `Tcl_Panic: epoll_ctl:
+Invalid argument` al abrir la segunda ventanita de fallo, porque Tk 9.0.4 no
+admite crear un intérprete en un hilo nuevo después de que otro hilo hubiera
+creado el suyo y acabado (se reproduce sin código de prdrive): `ui.avisar_fallo()`
+usa ahora un único hilo que no acaba, y pasa. Así que la interfaz está medida con
+Tk 8.6 (Windows) y con Tk 9.0.4 (Linux). Medida es que cabe, sin recortes y sin
+barras de más: el aspecto no se ha revisado a ojo con Tk 9.
 """
 
 from __future__ import annotations
