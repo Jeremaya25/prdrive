@@ -17,9 +17,9 @@ hace una vez, no cada vez que se sincroniza.
 
 En Windows la ventana se excluye además de las capturas de pantalla y de
 compartir pantalla (`tk.proteger_de_capturas`), y lo dice con una línea bajo el
-aviso según lo que haya conseguido. Es un descuido lo que evita, no un
-atacante: una foto con otro móvil no la para, y por eso el recuadro ámbar sigue
-siendo la barrera principal.
+aviso según lo que haya conseguido; si no ha conseguido nada, también lo dice.
+Es un descuido lo que evita, no un atacante: una foto con otro móvil no la
+para, y por eso el recuadro ámbar sigue siendo la barrera principal.
 """
 
 from __future__ import annotations
@@ -28,6 +28,7 @@ from common import pairing
 from common.model import ConfigError
 
 from . import icons, qr, theme
+from . import tk as uitk
 from .tk import (CAPTURA_EN_NEGRO, CAPTURA_EXCLUIDA, cabecera, cuerpo_visible,
                  bloque_aviso, modal, mostrar, proteger_de_capturas)
 
@@ -46,9 +47,17 @@ LINEA_CAPTURA = {
 """La línea bajo el aviso, según la protección que ha quedado puesta.
 
 Solo dice lo que hay: con `CAPTURA_EN_NEGRO` la ventana sí sale en la captura,
-así que «no aparece» sería falso. Sin protección (Linux, o un Windows que no
-admite ninguna) no hay línea: callar no promete nada, y el aviso ámbar ya dice
-que una foto a la pantalla basta.
+así que «no aparece» sería falso. Sin protección, `linea_de_captura()` decide
+qué se dice.
+"""
+
+LINEA_SIN_PROTECCION = ("No se ha podido proteger esta ventana de las capturas de "
+                        "pantalla.")
+"""Lo que se dice en Windows cuando ninguna protección ha quedado puesta.
+
+Es verdad en ese caso y solo en ese: la persona que comparte pantalla tiene que
+saber que esta ventana sí se vería. El aviso ámbar sigue diciendo que una foto
+basta.
 """
 
 PISTA = ("Abre prdrive en el móvil, elige «Escanear código» y apunta la cámara "
@@ -83,6 +92,25 @@ DEMASIADO = ("La clave de este dispositivo es demasiado grande para caber en un 
              "que es lo que usa prdrive por defecto. Con una clave RSA grande "
              "habrá que llevar la conexión al móvil de otra manera.")
 """Lo que se dice cuando la clave no cabe en un código QR."""
+
+
+def linea_de_captura(proteccion: int) -> str | None:
+    """Devuelve la línea que va bajo el aviso ámbar, o `None` si no hay nada que decir.
+
+    Con una protección puesta, la que corresponde (`LINEA_CAPTURA`). Sin ella,
+    en Windows se dice que no se ha podido (`LINEA_SIN_PROTECCION`: el fallo no
+    puede ser silencioso, hay quien comparte pantalla confiando en la
+    protección). Fuera de Windows no hay protección que prometer ni que
+    lamentar (Linux no tiene equivalente: X11 no ofrece ninguna API y Wayland lo
+    decide el portal), y callar no promete nada.
+
+    Args:
+        proteccion: Lo que devolvió `tk.proteger_de_capturas()`.
+    """
+    linea = LINEA_CAPTURA.get(proteccion)
+    if linea is None and uitk.IS_WIN:
+        return LINEA_SIN_PROTECCION
+    return linea
 
 
 def _escala(widget, codigo: qr.Codigo) -> int:
@@ -178,7 +206,7 @@ def open_dialog(parent, raw_local: dict | None = None) -> None:
     # fotograma sin proteger. La línea se pone después porque depende de lo que
     # Windows haya aceptado; ocupa la fila 2, que sin ella queda vacía.
     if en_pantalla:
-        linea = LINEA_CAPTURA.get(proteger_de_capturas(dlg))
+        linea = linea_de_captura(proteger_de_capturas(dlg))
         if linea is not None:
             ttk.Label(marco, text=linea, style="Pista.TLabel", justify="left",
                       wraplength=theme.medida(560)).grid(row=2, column=0,

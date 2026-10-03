@@ -888,13 +888,22 @@ try:
                 # que la decida el sistema que corre el test. Cada variante
                 # mide además que la línea esté de verdad en la ventana
                 # medida: un peor caso sin la línea no mediría nada.
-                proteger_real = tk_qr.proteger_de_capturas
+                #
+                # Sin protección hay dos casos: fuera de Windows no se dice nada
+                # y en Windows se dice que no se ha podido, que es la línea más
+                # larga de las tres.
+                proteger_real, windows_real = tk_qr.proteger_de_capturas, uitk.IS_WIN
                 try:
-                    for que, captura in (
-                            ("sin línea de capturas", uitk.CAPTURA_NINGUNA),
-                            ("con «no aparece en capturas»", uitk.CAPTURA_EXCLUIDA),
-                            ("con «sale en negro»", uitk.CAPTURA_EN_NEGRO)):
+                    for que, captura, en_windows, linea_esperada in (
+                            ("sin línea de capturas", uitk.CAPTURA_NINGUNA, False, None),
+                            ("con «no aparece en capturas»", uitk.CAPTURA_EXCLUIDA,
+                             True, tk_qr.LINEA_CAPTURA[uitk.CAPTURA_EXCLUIDA]),
+                            ("con «sale en negro»", uitk.CAPTURA_EN_NEGRO,
+                             True, tk_qr.LINEA_CAPTURA[uitk.CAPTURA_EN_NEGRO]),
+                            ("con «no se ha podido proteger»", uitk.CAPTURA_NINGUNA,
+                             True, tk_qr.LINEA_SIN_PROTECCION)):
                         tk_qr.proteger_de_capturas = lambda dlg, v=captura: v
+                        uitk.IS_WIN = en_windows
                         entra, corta = medir_dialogo(
                             lambda: tk_qr.open_dialog(raiz, dict(BASE)),
                             ancho, alto, escala, modulo=tk_qr)
@@ -912,10 +921,12 @@ try:
                                 dicho_qr.append(str(w_qr.cget("text")))
                         c(f"{nombre}: la ventana de emparejar {que} lleva la "
                           "línea que toca",
-                          tk_qr.LINEA_CAPTURA.get(captura) in dicho_qr,
-                          captura != uitk.CAPTURA_NINGUNA)
+                          linea_esperada in dicho_qr if linea_esperada else
+                          not any("captura" in t.lower() for t in dicho_qr),
+                          True)
                 finally:
                     tk_qr.proteger_de_capturas = proteger_real
+                    uitk.IS_WIN = windows_real
 
         # La ficha de la flota cambia con la fila elegida, y el recuadro se
         # encaja una sola vez, al abrir: lo que se reservó entonces tiene que

@@ -376,14 +376,55 @@ try:
       any("no aparece" in t for t in dicho), False)
     dlg.destroy()
 
-    eventos, dlg = abrir(uitk.CAPTURA_NINGUNA)
-    c("sin protección: protege y muestra igual, en ese orden",
+    # Sin protección: en Windows se dice (el fallo no es silencioso); fuera, no.
+    previo_win = uitk.IS_WIN
+    uitk.IS_WIN = False
+    try:
+        eventos, dlg = abrir(uitk.CAPTURA_NINGUNA)
+    finally:
+        uitk.IS_WIN = previo_win
+    c("sin protección fuera de Windows: protege y muestra igual, en ese orden",
       [e for e, _ in eventos], ["proteger", "mostrar"])
     c("  y no promete nada: ninguna línea habla de capturas",
       any("captura" in t.lower() or "compartir" in t.lower()
           for t in textos(dlg)), False)
     c("  pero el aviso ámbar sigue diciendo que una foto basta",
       tk_qr.AVISO in textos(dlg), True)
+    dlg.destroy()
+
+    uitk.IS_WIN = True
+    try:
+        eventos, dlg = abrir(uitk.CAPTURA_NINGUNA)
+    finally:
+        uitk.IS_WIN = previo_win
+    dicho = textos(dlg)
+    c("sin protección en Windows: protege y muestra igual, en ese orden",
+      [e for e, _ in eventos], ["proteger", "mostrar"])
+    c("  y dice que no se ha podido, con esas palabras",
+      dicho.count("No se ha podido proteger esta ventana de las capturas de "
+                  "pantalla."), 1)
+    c("  y no dice ninguna de las otras dos frases",
+      [t for t in dicho if t in tk_qr.LINEA_CAPTURA.values()], [])
+    etiquetas = [w for w in buscar(dlg, "Pista.TLabel")
+                 if str(w.cget("text")) == tk_qr.LINEA_SIN_PROTECCION]
+    c("  la línea va justo debajo del aviso ámbar y encima de la tarjeta",
+      (len(etiquetas),
+       int(etiquetas[0].grid_info()["row"]) - 1
+       == int(buscar(dlg, "Ambar.TFrame")[0].grid_info()["row"]),
+       int(etiquetas[0].grid_info()["row"])
+       < int(buscar(dlg, "Card.TFrame")[0].grid_info()["row"])),
+      (1, True, True))
+    c("  y el aviso ámbar sigue diciendo que una foto basta",
+      tk_qr.AVISO in dicho, True)
+    dlg.destroy()
+
+    uitk.IS_WIN = True
+    try:
+        eventos, dlg = abrir(uitk.CAPTURA_EXCLUIDA)
+    finally:
+        uitk.IS_WIN = previo_win
+    c("con protección en Windows no se añade la frase del fallo",
+      tk_qr.LINEA_SIN_PROTECCION in textos(dlg), False)
     dlg.destroy()
 
     c("las dos frases de la tabla son las que se prueban aquí",
@@ -397,6 +438,14 @@ try:
     c("sin conexión que enseñar: no protege, y la ventana se muestra",
       [e for e, _ in eventos], ["mostrar"])
     c("  y no dice nada de capturas",
+      any("captura" in t.lower() for t in textos(dlg)), False)
+    dlg.destroy()
+    uitk.IS_WIN = True
+    try:
+        eventos, dlg = abrir(uitk.CAPTURA_NINGUNA)
+    finally:
+        uitk.IS_WIN = previo_win
+    c("  ni siquiera en Windows: sin código a la vista no hay nada que lamentar",
       any("captura" in t.lower() for t in textos(dlg)), False)
     dlg.destroy()
 

@@ -751,9 +751,14 @@ phone can read it. Three pieces, none of which knows about the other two's mediu
     would give; falsy only for the last, so `if proteger_de_capturas(w):` still
     reads «is it protected»). A bool cannot carry it because the line under the
     amber block has to be true for each: «no aparece» is false for the black
-    rectangle (`tk_qr.LINEA_CAPTURA`, one sentence per value). No protection means
-    no line — silence promises nothing, and Linux, which has no equivalent (X11 has
-    no API, Wayland decides in the portal), must not hint otherwise.
+    rectangle (`tk_qr.LINEA_CAPTURA`, one sentence per value). **No protection
+    on Windows says so** (`tk_qr.LINEA_SIN_PROTECCION`, «No se ha podido proteger
+    esta ventana de las capturas de pantalla.», chosen by `tk_qr.linea_de_captura()`
+    from `tk.IS_WIN`): whoever shares the screen trusting the protection has to
+    learn it did not take, and a silent failure would read as success. **Off
+    Windows it stays silent** — silence promises nothing, and Linux, which has no
+    equivalent (X11 has no API, Wayland decides in the portal), must not hint
+    otherwise. No code on screen, no line at all.
   - **The HWND is `wm frame`, never `winfo_id()`, and the wrapper has to exist
     first** (Tk 8.6.15, `win/tkWinWm.c`, `win/tkWinWindow.c`, `generic/tkFrame.c`).
     Tk wraps each toplevel in a wrapper window that `UpdateWrapper` creates the
