@@ -1769,7 +1769,8 @@ draws**, and neither imports tkinter (`test_install_agente.py` checks it).
   «Sincronizar todo ahora» only with two or more `atendida` devices — with one
   it would repeat its own). Abnormal states go in the label, in parentheses
   (`ESTADO_DE_RAIZ`: «bloqueada», «no responde», «no está en su sitio»…; a
-  drive «sin atender», «código cambiado», «por actualizar»), and what cannot be
+  drive «sin atender», «código cambiado», «por actualizar»; root or drive
+  «en pausa», `EN_PAUSA`, when its window paused it, #64), and what cannot be
   done is greyed, so a root's submenu keeps its shape.
   - **`pedir_al_iniciar` stays global** (one key in `agente.json`, one
     `PIDE_AJUSTE`; the window's checkbox is unchanged). Several encrypted host

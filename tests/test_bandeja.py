@@ -527,6 +527,12 @@ rotulos.append(textos(bandeja.vista({"equipo": [{"id": "e", "nombre": "Casa",
 c("  el rótulo de una raíz dice entre paréntesis lo que no está bien", rotulos,
   ["Casa (no responde)", "Casa (no está en su sitio)", "Casa (bloqueando…)",
    "Casa (buscándola…)"])
+pausadas = {"equipo": [{"id": "e", "nombre": "Casa", "estado": bandeja.ABIERTA}],
+            "unidades": [{**fila, "pausada": True, "atendida": False},
+                         {"id": "e", "nombre": "Casa", "del_equipo": True,
+                          "en_lista": True, "pausada": True}]}
+c("  pausadas desde su ventana (#64), raíz y unidad lo dicen en su desplegable",
+  textos(bandeja.vista(pausadas))[:2], ["Casa (en pausa)", "U (en pausa)"])
 ausente = bandeja.vista({"equipo": [{"id": "e", "nombre": "Casa", "estado": bandeja.AUSENTE,
                                      "cifrada": True}]})
 c("  sin su carpeta, todo apagado: no hay nada que hacer desde aquí",

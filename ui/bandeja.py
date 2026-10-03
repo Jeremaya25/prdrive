@@ -314,6 +314,9 @@ def _pide(que: str, **campos) -> tuple[dict, ...]:
     return ({"pide": que, **campos},)
 
 
+EN_PAUSA = "en pausa"
+"""Lo que dice el desplegable de un dispositivo pausado desde su ventana (#64)."""
+
 ESTADO_DE_RAIZ = {BLOQUEADA: "bloqueada", DESBLOQUEANDO: "desbloqueando…",
                   BLOQUEANDO: "bloqueando…", FANTASMA: "no responde",
                   AUSENTE: "no está en su sitio", BUSCANDO: "buscándola…"}
@@ -407,7 +410,7 @@ def _raices_del_equipo(resumen: Mapping[str, Any]) -> list[Entrada]:
             hijos += [SEPARADOR, _cerrojo(uid, est)]
             if una_cifrada:
                 hijos.append(_pedir_al_iniciar(resumen, varias=False))
-        que = ESTADO_DE_RAIZ.get(est)
+        que = ESTADO_DE_RAIZ.get(est) or (EN_PAUSA if fila and fila.get("pausada") else None)
         entradas.append(Entrada(f"{nombre} ({que})" if que else nombre, hijos=tuple(hijos),
                                 emblema=_emblema(fila)))
     return entradas
@@ -430,8 +433,12 @@ def _unidades(resumen: Mapping[str, Any]) -> list[Entrada]:
             entradas.append(Entrada(f"{nombre} (por actualizar)", hijos=(
                 Entrada("Actualízala para que la atienda", activa=False),), emblema=MARCA))
         elif u.get("en_lista"):
-            entradas.append(Entrada(nombre, hijos=tuple(_acciones(
-                uid, abrir=True, cerrada=False, sincronizar=bool(u.get("atendida")))),
+            # La pausa de su ventana (#64) se dice: si no, el desplegable
+            # parecería atendido y no lo está.
+            entradas.append(Entrada(
+                f"{nombre} ({EN_PAUSA})" if u.get("pausada") else nombre,
+                hijos=tuple(_acciones(uid, abrir=True, cerrada=False,
+                                      sincronizar=bool(u.get("atendida")))),
                 emblema=_emblema(u)))
         elif u.get("ahora_no") or u.get("preguntando"):
             # Con otro código que el aceptado (`agente.huella()`), se dice: el
