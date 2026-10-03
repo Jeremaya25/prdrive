@@ -496,7 +496,7 @@ class Api:
         self.gdi32.SelectObject.restype = wintypes.HGDIOBJ
         self.gdi32.SelectObject.argtypes = [wintypes.HDC, wintypes.HGDIOBJ]
         self.gdi32.DeleteDC.argtypes = [wintypes.HDC]
-        self._pixeles: dict[tuple, bytes] = {}      # iconos ya pintados, por tamaño y color
+        self._pixeles: dict[tuple, bytes] = bandeja.CacheAcotada()   # iconos ya pintados
         u.SetForegroundWindow.argtypes = [wintypes.HWND]
         u.GetCursorPos.argtypes = [ctypes.POINTER(wintypes.POINT)]
         u.GetMessageW.argtypes = [ctypes.POINTER(wintypes.MSG), wintypes.HWND,

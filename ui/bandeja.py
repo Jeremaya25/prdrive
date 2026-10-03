@@ -104,6 +104,37 @@ class Emblema:
 MARCA = Emblema()
 """El icono de un dispositivo sin uno suyo que enseñar: la marca de prdrive."""
 
+TOPE_CACHE = 64
+"""Cuántos iconos pintados guarda como mucho cada caché de la bandeja.
+
+Cada guardado de «Nombre e icono…» da un `.ico` con otro nombre (la ruta es la
+clave) y sin tope no se soltaría ninguno mientras el agente viva.
+"""
+
+
+class CacheAcotada(dict):
+    """Un diccionario que, al llenarse, suelta la entrada que lleva más tiempo dentro.
+
+    Es la caché de los iconos ya pintados de `bandeja_windows` y
+    `bandeja_linux`: una clave nueva con la caché llena saca la más antigua
+    (la primera que entró), no la menos usada; con un tope de decenas de
+    entradas, volver a pintar un icono es lo bastante barato.
+
+    Args:
+        tope: Cuántas entradas caben como mucho.
+    """
+
+    def __init__(self, tope: int = TOPE_CACHE) -> None:
+        """Crea la caché vacía."""
+        super().__init__()
+        self.tope = tope
+
+    def __setitem__(self, clave: Any, valor: Any) -> None:
+        """Guarda la entrada; si la clave es nueva y no cabe, saca la más antigua."""
+        if clave not in self and len(self) >= self.tope:
+            del self[next(iter(self))]
+        super().__setitem__(clave, valor)
+
 
 @dataclass(frozen=True)
 class Entrada:
@@ -316,6 +347,8 @@ def _pide(que: str, **campos) -> tuple[dict, ...]:
 
 EN_PAUSA = "en pausa"
 """Lo que dice el desplegable de un dispositivo pausado desde su ventana (#64)."""
+POR_ACTUALIZAR = "por actualizar"
+"""Lo que dice el desplegable de un dispositivo cuyo programa es anterior a la versión mínima."""
 
 ESTADO_DE_RAIZ = {BLOQUEADA: "bloqueada", DESBLOQUEANDO: "desbloqueando…",
                   BLOQUEANDO: "bloqueando…", FANTASMA: "no responde",
@@ -395,6 +428,9 @@ def _raices_del_equipo(resumen: Mapping[str, Any]) -> list[Entrada]:
     """Devuelve el desplegable de cada raíz de este equipo.
 
     Con una sola raíz cifrada, la casilla de `pedir_al_iniciar` va en el suyo.
+    Una raíz abierta cuyo programa es anterior a la versión mínima del agente
+    se dice «por actualizar» y no deja abrir nada suyo, como una unidad: el
+    agente lo rechazaría en silencio (`Agente._abrir()`).
     """
     filas = {u.get("id"): u for u in resumen.get("unidades") or []}
     raices = resumen.get("equipo") or []
@@ -403,14 +439,18 @@ def _raices_del_equipo(resumen: Mapping[str, Any]) -> list[Entrada]:
     for r in raices:
         uid, nombre, est = r.get("id", ""), r.get("nombre") or APP_NAME, r.get("estado")
         fila = filas.get(uid) if est == ABIERTA else None
-        hijos = _acciones(uid, abrir=est in (ABIERTA, BLOQUEADA, DESBLOQUEANDO),
+        vieja = bool(fila) and fila.get("vieja") is not None
+        hijos = _acciones(uid, abrir=not vieja and est in (ABIERTA, BLOQUEADA, DESBLOQUEANDO),
                           cerrada=est in (BLOQUEADA, DESBLOQUEANDO),
-                          sincronizar=bool(fila and fila.get("atendida")))
+                          sincronizar=not vieja and bool(fila and fila.get("atendida")))
+        if vieja:
+            hijos.append(Entrada("Actualízala para que la atienda", activa=False))
         if r.get("cifrada"):
             hijos += [SEPARADOR, _cerrojo(uid, est)]
             if una_cifrada:
                 hijos.append(_pedir_al_iniciar(resumen, varias=False))
-        que = ESTADO_DE_RAIZ.get(est) or (EN_PAUSA if fila and fila.get("pausada") else None)
+        que = POR_ACTUALIZAR if vieja else (
+            ESTADO_DE_RAIZ.get(est) or (EN_PAUSA if fila and fila.get("pausada") else None))
         entradas.append(Entrada(f"{nombre} ({que})" if que else nombre, hijos=tuple(hijos),
                                 emblema=_emblema(fila)))
     return entradas
@@ -430,7 +470,7 @@ def _unidades(resumen: Mapping[str, Any]) -> list[Entrada]:
         uid, nombre = u.get("id", ""), str(u.get("nombre") or APP_NAME)
         if u.get("vieja") is not None:
             # No hay nada que pedirle hasta que se actualice, y se dice.
-            entradas.append(Entrada(f"{nombre} (por actualizar)", hijos=(
+            entradas.append(Entrada(f"{nombre} ({POR_ACTUALIZAR})", hijos=(
                 Entrada("Actualízala para que la atienda", activa=False),), emblema=MARCA))
         elif u.get("en_lista"):
             # La pausa de su ventana (#64) se dice: si no, el desplegable

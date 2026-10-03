@@ -386,7 +386,7 @@ class Gdi32:
 api = object.__new__(bw.Api)
 api.ct, api.wt = ctypes, wintypes
 api.MENUITEMINFOW, api.BITMAPINFOHEADER = bw.estructuras(ctypes, wintypes)
-api.user32, api.gdi32, api._pixeles = User32(), Gdi32(), {}
+api.user32, api.gdi32, api._pixeles = User32(), Gdi32(), bandeja.CacheAcotada()
 vista = bandeja.vista({"unidades": [
     {"id": "u1", "nombre": "Verde & Co", "en_lista": True, "atendida": True,
      "emblema": {"marca": "verde"}},
@@ -413,5 +413,10 @@ c("  el segundo, su .ico, que Windows no ha sabido cargar: la marca de prdrive",
   ([str(ICO)], True))
 c("  y al cerrar se destruye el menú y se borran todos los mapas de bits",
   (u.destruidos, sorted(g.borrados)), ([raiz], sorted(g.dibs)))
+
+for i in range(bandeja.TOPE_CACHE + 20):
+    api._bitmap_emblema(bandeja.Emblema(campo=f"#{i:06x}"), 16)
+c("la caché de iconos pintados tiene tope: cada icono nuevo no se queda para siempre",
+  len(api._pixeles), bandeja.TOPE_CACHE)
 
 sys.exit(c.report())

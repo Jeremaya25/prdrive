@@ -120,8 +120,8 @@ def etiqueta(texto: str) -> str:
     return texto.replace("_", "__")
 
 
-_PIXMAPS: dict[str, list[tuple[int, int, bytes]]] = {}
-"""Los `IconPixmap` ya pintados, por estado."""
+_PIXMAPS: dict[str, list[tuple[int, int, bytes]]] = bandeja.CacheAcotada()
+"""Los `IconPixmap` ya pintados, por estado (con tope: `bandeja.TOPE_CACHE`)."""
 
 
 def pixmaps(estado: str) -> list[tuple[int, int, bytes]]:
@@ -164,8 +164,11 @@ TAMANO_EMBLEMA = 32
 Un menú pide 16 px a escala 1 y 32 a escala 2.
 """
 
-_EMBLEMAS: dict[tuple, bytes] = {}
-"""Los `icon-data` ya pintados: la marca por color y cada `.ico` por ruta, tamaño y fecha."""
+_EMBLEMAS: dict[tuple, bytes] = bandeja.CacheAcotada()
+"""Los `icon-data` ya pintados: la marca por color y cada `.ico` por ruta, tamaño y fecha.
+
+Con tope (`bandeja.TOPE_CACHE`): cada `.ico` nuevo del usuario es una clave más.
+"""
 
 
 def _png_de_fichero(ruta: str) -> bytes | None:

@@ -218,6 +218,12 @@ morado = bandeja.Emblema(campo=icons.CAMPOS["morado"])
 c("  uno roto, uno que no está o una carpeta: la marca de su campo",
   [bl.png_emblema(bandeja.Emblema(campo=morado.campo, ico=str(r))) for r in
    (roto, carpeta / "no.ico", carpeta)], [icons.png_marca(bl.TAMANO_EMBLEMA, morado.campo)] * 3)
+bl._EMBLEMAS.clear()
+for i in range(bandeja.TOPE_CACHE + 20):
+    bl.png_emblema(bandeja.Emblema(campo=f"#{i:06x}"))
+c("  la caché de emblemas tiene tope: cada icono nuevo no se queda para siempre",
+  (len(bl._EMBLEMAS), isinstance(bl._PIXMAPS, bandeja.CacheAcotada)),
+  (bandeja.TOPE_CACHE, True))
 tope = icons.MAX_ICO
 icons.MAX_ICO = 10
 bl._EMBLEMAS.clear()

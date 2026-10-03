@@ -555,6 +555,28 @@ c("una unidad vieja y una con el código cambiado: lo dicen, sin abrir nada",
    ("Otra (código cambiado)", [("Atender con su código nuevo…", True)])])
 c("  las dos con la marca de prdrive, aunque el resumen trajera otra cosa",
   [e.emblema for e in otras.menu if e.hijos], [bandeja.MARCA, bandeja.MARCA])
+vieja_raiz = bandeja.vista({"equipo": [{"id": "e", "nombre": "Casa", "estado": bandeja.ABIERTA}],
+                            "unidades": [{"id": "e", "nombre": "Casa", "del_equipo": True,
+                                          "vieja": "0.4.3", "en_lista": False,
+                                          "atendida": True,
+                                          "emblema": {"marca": "morado"}}]})
+raiz = next(e for e in vieja_raiz.menu if e.hijos)
+c("una raíz del equipo con un programa antiguo lo dice, como una unidad",
+  raiz.texto, "Casa (por actualizar)")
+c("  y no deja abrir nada suyo: Configurar, Abrir y Sincronizar, apagados",
+  [(h.texto, h.activa) for h in raiz.hijos],
+  [("Configurar", False), ("Abrir en explorador", False), ("Sincronizar ahora", False),
+   ("Actualízala para que la atienda", False)])
+c("  con la marca de prdrive y no su icono", raiz.emblema, bandeja.MARCA)
+cifrada_vieja = bandeja.vista({"equipo": [{"id": "e", "nombre": "Casa", "cifrada": True,
+                                           "estado": bandeja.ABIERTA}],
+                               "unidades": [{"id": "e", "nombre": "Casa", "del_equipo": True,
+                                             "vieja": "", "en_lista": False}]})
+hijos_cifrada = next(e for e in cifrada_vieja.menu if e.hijos).hijos
+c("  una cifrada y de versión desconocida (\"\") también, y sigue pudiendo bloquearse",
+  (next(e for e in cifrada_vieja.menu if e.hijos).texto,
+   [h.activa for h in hijos_cifrada if h.texto == "Bloquear"]),
+  ("Casa (por actualizar)", [True]))
 c("el icono, de la fila de una unidad de la lista: color, .ico, y lo raro es la marca",
   [bandeja._emblema({"en_lista": True, "emblema": d}) for d in
    ({"marca": "morado"}, {"ico": "/x/i.ico"}, {"marca": "fucsia"}, {"ico": 3}, "verde", {})],
@@ -562,6 +584,16 @@ c("el icono, de la fila de una unidad de la lista: color, .ico, y lo raro es la 
    bandeja.MARCA, bandeja.MARCA, bandeja.MARCA, bandeja.MARCA])
 c("  de una que no está en la lista, la marca", bandeja._emblema(
     {"en_lista": False, "emblema": {"marca": "morado"}}), bandeja.MARCA)
+
+# la caché de iconos pintados no crece sin tope
+cache = bandeja.CacheAcotada(3)
+for i in range(5):
+    cache[i] = f"icono {i}"
+c("la caché acotada suelta la entrada más antigua al llenarse",
+  (list(cache), len(cache)), ([2, 3, 4], 3))
+cache[3] = "otro dibujo"
+c("  cambiar una que ya está no saca nada", (list(cache), cache[3]), ([2, 3, 4], "otro dibujo"))
+c("  y por defecto cabe `TOPE_CACHE`", bandeja.CacheAcotada().tope, bandeja.TOPE_CACHE)
 
 # el explorador de cada sistema
 EXPLORADOR_WIN = agente.IS_WIN
