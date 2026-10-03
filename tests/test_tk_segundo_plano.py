@@ -561,6 +561,69 @@ with sandbox():
       "Catálogo releído." in vista["despues"]["textos"], True)
     c("  nada ha reventado por el camino", errores, [])
 
+# Lo que llega puede ser más largo que lo que había: la ventana crece y se
+# recoloca (como el asistente); si no ha crecido, se queda donde está.
+LARGO = ("Failed to cat: couldn't connect SSH: dial tcp 192.168.100.200:22: "
+         "i/o timeout " * 12)
+colocadas: list = []
+PANTALLA_REAL = uitk.pantalla_util
+uitk.pantalla_util = lambda win: (3000, 3000)         # sitio de sobra para crecer
+tk_pairs.centrar = lambda win, parent=None: colocadas.append((win, parent))
+tk_fleet.centrar = tk_pairs.centrar
+
+
+def enseñada(self) -> None:
+    """Deja la pantalla puesta y visible, como la deja `mostrar()` antes de esperar."""
+    self.visor.encajar(self)
+    self.deiconify()
+    self.update()
+
+
+with sandbox():
+    cfg = preparar()
+    dejar_copia(CAT_LOCAL)
+    remoto = RemotoLento(rc=1, stderr=LARGO)
+    catalog.run = remoto
+    vista = {}
+
+    def crece_parejas(self, *_a, **_k):
+        """Enseña la pantalla, y suelta un remoto caído con una explicación larga."""
+        enseñada(self)
+        vista["alto_antes"] = self.visor._medida()[1]
+        remoto.soltar.set()
+        dar_vueltas(lambda: not self.sondeo.esperando)
+        vista["alto_despues"] = self.visor._medida()[1]
+        vista["raiz"] = self
+
+    tk.Toplevel.wait_window = crece_parejas
+    tk_pairs.open_dialog(raiz, cfg)
+    catalog.run = nadie
+    c("parejas: una explicación larga hace crecer el recuadro",
+      vista["alto_despues"] > vista["alto_antes"], True)
+    c("  y la ventana se recoloca, sobre su padre, una sola vez",
+      [(w is vista["raiz"], p is raiz) for w, p in colocadas], [(True, True)])
+    colocadas.clear()
+
+with sandbox():
+    cfg = preparar()
+    dejar_copia(CAT_LOCAL)
+    remoto = RemotoLento(config_file.dumps(CAT_REMOTO))
+    catalog.run = remoto
+
+    def no_crece_parejas(self, *_a, **_k):
+        """Enseña la pantalla y suelta un remoto que contesta sin nada que explicar."""
+        enseñada(self)
+        remoto.soltar.set()
+        dar_vueltas(lambda: not self.sondeo.esperando)
+
+    tk.Toplevel.wait_window = no_crece_parejas
+    tk_pairs.open_dialog(raiz, cfg)
+    catalog.run = nadie
+    c("parejas: si no ha crecido, la ventana no se mueve", colocadas, [])
+
+uitk.pantalla_util = PANTALLA_REAL
+
+
 # 4. «Dispositivos…»
 FLOTA = [fleet.Dispositivo(id="aaa", nombre="el azul", version="0.5.0",
                            plataformas=("linux-x64",), last_seen="2026-09-30 08:00:00",
@@ -703,6 +766,58 @@ with sandbox():
     catalog.run = nadie
     c("flota cerrada antes: sin `after` pendiente ni nadie pintando",
       (vista["espera"] in pendientes(), errores), (False, []))
+
+# Lo mismo en «Dispositivos…».
+uitk.pantalla_util = lambda win: (3000, 3000)
+tk_fleet.centrar = tk_pairs.centrar
+
+with sandbox():
+    cfg = preparar()
+    remoto = FlotaLenta(rc=1, stderr=LARGO)
+    catalog.run = remoto
+    vista = {}
+
+    def crece_flota(self, *_a, **_k):
+        """Enseña la flota, y suelta un remoto caído con una explicación larga."""
+        enseñada(self)
+        vista["alto_antes"] = self.visor._medida()[1]
+        remoto.soltar.set()
+        dar_vueltas(lambda: not self.sondeo.esperando)
+        vista["alto_despues"] = self.visor._medida()[1]
+        vista["raiz"] = self
+
+    tk.Toplevel.wait_window = crece_flota
+    tk_fleet.open_dialog(raiz, cfg, dict(BASE))
+    catalog.run = nadie
+    c("flota: una explicación larga hace crecer el recuadro",
+      vista["alto_despues"] > vista["alto_antes"], True)
+    c("  y la ventana se recoloca, sobre su padre, una sola vez",
+      [(w is vista["raiz"], p is raiz) for w, p in colocadas], [(True, True)])
+    colocadas.clear()
+
+with sandbox():
+    cfg = preparar()
+    remoto = FlotaLenta()
+    catalog.run = remoto
+
+    def no_crece_flota(self, *_a, **_k):
+        """Enseña la flota, deja que lleguen las notas y las vuelve a leer."""
+        enseñada(self)
+        remoto.soltar.set()
+        dar_vueltas(lambda: not self.sondeo.esperando)
+        colocadas.clear()               # llegar la primera vez sí hizo sitio a la tabla
+        remoto.soltar = threading.Event()
+        buscar(self, ttk.Button, "Releer").invoke()
+        remoto.soltar.set()
+        dar_vueltas(lambda: not self.sondeo.esperando)
+
+    tk.Toplevel.wait_window = no_crece_flota
+    tk_fleet.open_dialog(raiz, cfg, dict(BASE))
+    catalog.run = nadie
+    c("flota: releer lo mismo no hace crecer nada, y la ventana no se mueve",
+      colocadas, [])
+c("  nada ha reventado por el camino", errores, [])
+uitk.pantalla_util = PANTALLA_REAL
 
 raiz.destroy()
 sys.exit(c.report())

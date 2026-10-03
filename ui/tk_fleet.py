@@ -38,8 +38,8 @@ from common import fleet
 from common.model import Config
 
 from . import cuando_sello, icons, segundo_plano, theme
-from .tk import (TITLE, Indicador, Sondeo, cabecera, cuerpo_visible, modal, mostrar,
-                 working)
+from .tk import (TITLE, Indicador, Sondeo, cabecera, centrar, cuerpo_visible, modal,
+                 mostrar, working)
 
 COLUMNAS = [
     ("aqui", "Este", 46),
@@ -374,9 +374,11 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> None:
         repasar()
         pie_nota.configure(text=nota or (aviso or ""))
         # Releer puede traer una ficha más grande que las que había al abrir:
-        # entonces el recuadro crece, en vez de meter la ventana tras una barra.
-        if dlg.winfo_ismapped():
-            dlg.visor.crecer(dlg)
+        # entonces el recuadro crece, en vez de meter la ventana tras una barra,
+        # y la ventana se recoloca (como el asistente) para que lo que ha
+        # crecido no quede por debajo del borde de la pantalla.
+        if dlg.winfo_ismapped() and dlg.visor.crecer(dlg):
+            centrar(dlg, parent)
 
     def elegido() -> fleet.Dispositivo | None:
         """Devuelve el dispositivo de la fila elegida, o `None`."""

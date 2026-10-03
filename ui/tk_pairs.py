@@ -35,8 +35,8 @@ from common.model import ConfigError
 
 from . import (catalog_editor, flags_editor, icons, pair_editor,
                remote_picker, segundo_plano, theme)
-from .tk import (TITLE, Indicador, Sondeo, bloque_aviso, cabecera, cuerpo_visible,
-                 modal, mostrar, orden_sync, output_window, working)
+from .tk import (TITLE, Indicador, Sondeo, bloque_aviso, cabecera, centrar,
+                 cuerpo_visible, modal, mostrar, orden_sync, output_window, working)
 
 COLUMNAS = [
     ("usa", "En el dispositivo", 62),
@@ -233,9 +233,10 @@ def open_dialog(parent, config) -> bool:
             pie_nota.configure(text=nota)
         # Lo que llega del remoto puede traer una explicación más larga que la
         # de la espera: entonces el recuadro crece, en vez de meterla tras una
-        # barra.
-        if dlg.winfo_ismapped():
-            dlg.visor.crecer(dlg)
+        # barra, y la ventana se recoloca (como el asistente) para que lo que
+        # ha crecido no quede por debajo del borde de la pantalla.
+        if dlg.winfo_ismapped() and dlg.visor.crecer(dlg):
+            centrar(dlg, parent)
 
     def leer_catalogo(nota: str | None = None) -> None:
         """Pide el catálogo al remoto en segundo plano y repinta cuando llega.
