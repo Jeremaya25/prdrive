@@ -987,6 +987,15 @@ agente»**. El diseño completo está en
   Windows con el aviso de dispositivo que recibe la ventana oculta de la bandeja. Las
   unidades VeraCrypt de su lista se abren como con penwatch: VeraCrypt pide la
   contraseña en su ventana, una vez por conexión.
+- **Sincroniza al cambiar los ficheros, si una pareja lo pide.** Con `watch = true`
+  (solo donde el local es origen: bisync, up y up-mirror) el agente mira cada
+  10 s la carpeta de la pareja —sin abrir ficheros ni eventos del sistema— y,
+  20 s después de que dejen de cambiar, adelanta su pasada al intervalo; nunca
+  dos pasadas de la misma pareja con menos de 2 minutos entre ellas. Es una
+  pasada corriente: en pausa, con batería o en una red de uso medido espera como
+  las demás. No ve los cambios del remoto, ni lo que se cambie mientras la pasada
+  corre, y una carpeta de más de 20 000 entradas deja de vigilarse (lo dice el
+  diario) y sigue por su intervalo. Detalles en `sync_config.example.toml`.
 - **Se registra por usuario, sin administrador**: en Windows con una tarea
   programada; en Linux con un autostart del escritorio (y no con systemd: los
   avisos y la pregunta por una unidad nueva necesitan la sesión gráfica).
@@ -1299,6 +1308,7 @@ prdrive/
 │   ├── pairing.py     la conexión del dispositivo, empaquetada para un móvil
 │   ├── vestibulo.py   lo que un dispositivo VeraCrypt deja fuera del contenedor
 │   ├── planificador.py qué le toca al agente y cuándo: puro, sin reloj ni disco
+│   ├── huella.py      la foto barata de la carpeta de una pareja con `watch = true`
 │   ├── equipo.py      dónde vive el agente en el equipo, su configuración y su buzón
 │   ├── moderacion.py  batería, red de uso medido, fallos de red
 │   ├── dbus.py        un cliente de D-Bus sin dependencias

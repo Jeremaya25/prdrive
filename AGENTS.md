@@ -47,6 +47,7 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 │   ├── vestibulo.py   what a VeraCrypt device leaves OUTSIDE its container
 │   ├── autorun.py     the root's autorun.inf: the drive's name and icon, edited
 │   ├── planificador.py the agent's scheduler: PURE (data in, decision out)
+│   ├── huella.py      the photo of a `watch = true` pair's folder: scandir only, no events
 │   ├── equipo.py      the agent's host dir: agente.json, instalacion.json, buzón
 │   ├── moderacion.py  battery, metered network, "is this failure the network?"
 │   ├── red.py         "the network is back": netlink, NetworkManager, Windows' hint
@@ -1502,6 +1503,72 @@ whatever you build that only a real host can prove.
     `cambios_de_red` and `agente.py status` prints it. Unverified on real
     hardware (N1–N8 in the checklist); the rtnetlink half was seen against this
     machine's real kernel only (a new address notifies, a renewal does not).
+- **A pair with `watch = true` is synced soon after its LOCAL files change
+  (#61)**, instead of waiting for the interval. Agent only (runsync's service
+  never looks), opt-in per pair, and only where the local side is a source
+  (`Mode.origen_local`: bisync, up, up-mirror): `model._leer_watch()` rejects the
+  rest at parse time, and the agent, which reads the raw TOML, asks the same
+  rule without raising (`model.pide_watch()`; `Servicio.locales` keeps each
+  watched pair's `local`).
+  - **Stat polling, no OS events** (exFAT, a VeraCrypt container and a network
+    folder have none). `common/huella.py` `de_carpeta()` runs `os.scandir` over
+    the pair's folder — no file opened, no link followed — and returns a
+    `planificador.Huella(entradas, firma)`: a sum of one hash per entry
+    (relative path, size, `mtime_ns`), **not** the newest mtime or the total
+    size, which a rename or a same-size swap leaves still. Folders count by
+    name only (their mtime moves with things that are not content).
+    `.prversions/` and `.prdrive/` at the top of the folder are not looked at
+    (`agente.IGNORAR_CAMBIOS`: a `local = "."` pair would otherwise be fired by
+    what each pass writes into `state/`).
+  - **The rules are pure** (`PoliticaCambios`: `sondeo` 10 s, `calma` 20 s,
+    `separacion` 120 s, `tope_entradas` 20 000; `observar`, `tras_pasada`,
+    `toca_por_cambios`, `a_recorrer`). `decidir()` brings the pair's pass
+    forward to `max(cambio + calma, ultimo_intento + separacion)` when that is
+    earlier than its interval: an ordinary pass flagged `Tarea.por_cambios` —
+    **not** an urgent one — so pause, battery and metered network hold it like
+    any other. A burst is one pass (each change moves the calm), a pair that
+    is failing keeps its growing wait, and one never tried is due anyway.
+  - **The walk never blocks `vuelta()`.** ~20 000 entries on a USB stick take
+    seconds. `Agente._vigilar()` asks `pl.a_recorrer()` what to walk (not while
+    moderation holds passes — walking would spend what moderation wants to save —
+    and not the pair whose pass is running), a `Muestreo` takes the photos on a
+    thread through `hilo()` (indirection point; at most ONE in flight) and the
+    next turn `_recoger_fotos()` feeds them to `pl.observar()`. The folder goes
+    through `en_la_raiz()` on that thread: a `local` that `..` or a link takes
+    out of the root is abandoned, said once, never walked. The photo itself is
+    `agente.huella_local()` (indirection point, wraps `huella.de_carpeta()`).
+    While a walk of a root is in flight the thread holds its folder open, so
+    «Bloquear» waits for it (`_mirando()`, up to `ESPERA_VENTANA`; then VeraCrypt
+    asks before forcing, as ever). A walk that hangs (a network folder) keeps
+    the one-at-a-time slot: no other pair is walked until it returns, and the
+    interval rules meanwhile.
+  - **Served means what it means for passes.** Only roots in `_raices()` with
+    `Conexion.motivo == ""` are walked: a root paused from its window (#64), a
+    runsync window open (or inside its `GRACIA`), another service holding the
+    lock, a root being locked and the cut pair of `cortada` are not. What was
+    remembered of a pair that stops being served is DROPPED, so the first photo
+    after it comes back is a baseline and whatever changed meanwhile (the window
+    syncs by itself) fires nothing; a root that disconnects loses all of it
+    (`_olvidar_vigiladas()`). `urgentes` ignore all of this.
+  - **The pass's own writes must not fire it.** When a pair's pass ends
+    (`_fin_de_pasada()` → `_rehacer_foto()`) its memory goes back to «baseline
+    pending» (`pl.tras_pasada(v, None, ahora)`, asked at once) and any photo of
+    that pair that was in flight when the pass ended (`Muestreo.descartar`),
+    arrives while its pass runs, or comes from an earlier connection of the root
+    (`Mirar.con`) is thrown away. The price, said out loud: what the person
+    changes WHILE the pass runs, and in the turn or two until the new baseline,
+    is absorbed into it and waits for the interval.
+  - **The cap.** Past `tope_entradas` the pair is abandoned for this connection:
+    said once in `agente.log` and in the root's `daemon.log` (`pl.se_abandona`),
+    the interval rules. `de_carpeta()` cuts at the cap, so finding out is cheap.
+  - **Not seen:** remote changes (they wait for the interval), changes made
+    during a pass, and any root that is not served in `daemon` mode (`sync` mode
+    has an infinite interval: nothing to bring forward).
+  - `resumen()` / `estado.json` carry `vigila` and `vigila_abandonada` per
+    unit (names) and `agente.py status` prints them. `tests/test_watch_pareja.py`
+    covers the model, the photo and the rules; `tests/test_agente_watch.py` the
+    wiring, with a fake photo and a fake clock. Unverified on real hardware: see
+    the checklist (walk cost, exFAT's 2 s mtime, VeraCrypt, network folders).
 - **Notifications only when a pair STARTS failing** (`planificador.empieza_a_fallar`)
   or a remote goes offline — `common/avisos.py` (D-Bus `Notify`; Windows
   `Shell_NotifyIconW` NIF_INFO on a temporary message-only window, **unverified
@@ -2395,7 +2462,9 @@ keeps the target's existing header.
   `veracrypt_instalado()` / `abrir_o_crear()`, `penwatch.installed_veracrypt()`,
   `vestibulo.retenido()`, `cifrado.pedir_bloqueo()`, `agente.poner_bandeja()` /
   `explorar()`, the tray's
-  `bandeja_windows.Api`, `agente.hilo()` / `buscar_version()` / `ejecutar()` /
+  `bandeja_windows.Api`, `agente.hilo()` (the version check and the `watch` walks) /
+  `huella_local()` (the photo of a watched folder, over `huella.de_carpeta()`) /
+  `buscar_version()` / `ejecutar()` /
   `cache_version()`, `runsync.pedir_reanudar()` / `agente_sirve()`,
   `watch.pedir_al_agente()`, `agente.arrancar_agente()`, `tk_equipo.escritorio()`,
   `install.pintar_iconos`, `install.agente.matar_arbol()` / `conseguir_rclone()` /

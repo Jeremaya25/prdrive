@@ -154,7 +154,7 @@ resilient = true              # un error menor no obliga a --resync la próxima 
 #   * Con más de 20 000 ficheros y carpetas la pareja deja de vigilarse (el
 #     agente lo apunta una vez en su diario) y sigue por su intervalo: recorrer
 #     una carpeta así cada pocos segundos cuesta más de lo que da, sobre todo en
-#     un pendrive. `.prversions/` no cuenta.
+#     un pendrive. `.prversions/` y `.prdrive/` no cuentan.
 #   * Solo en una raíz que el agente sirve en modo `daemon` y mientras esté
 #     abierta, sin pausar y sin ventana delante; en modo `sync` (una pasada por
 #     conexión) no hace nada.
