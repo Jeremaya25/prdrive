@@ -20,7 +20,9 @@ VeraCrypt_1.26.24; las citas, en la spec
   administrador, se relanza elevado con `/q UAC`, espera dos segundos y sale
   con 0 (`Common/Dlgcode.c`, `InitApp` y `LaunchElevatedProcess`); la
   contraseña la pide la otra instancia. Por eso se espera a VER la unidad, y
-  con el que viaja se espera más.
+  con el que viaja se espera sin contar mientras esa copia siga viva
+  (`:vc_pendiente`): cuando sale sin que aparezca la unidad, la contraseña se
+  ha cancelado y no hay nada más que esperar.
 - `/dismount`, no `/unmount`: el segundo no existe antes de la 1.26.24.
 - Sin `/auto`: además de montar, abre una ventana del Explorador
   (`ExtractCommandLine`: `bExplore = TRUE`). Con `/quit` y `/volume` ya monta.
@@ -110,8 +112,11 @@ Con el instalado su código de salida sí es el del montaje.
 ESPERA_VIAJERO = 180
 """Segundos que se espera a ver la unidad tras lanzar el VeraCrypt que viaja.
 
-Su código de salida no vale (ver el docstring del módulo) y hay que dejar a la
-persona el tiempo de escribir la contraseña en la ventana elevada.
+Solo cuando no se puede saber si la copia elevada sigue viva: con un VeraCrypt
+del mismo nombre ya en marcha (`VC_ANTES`) `:vc_pendiente` no distingue cuál es
+el nuestro. Su código de salida no vale (ver el docstring del módulo) y hay que
+dejar a la persona el tiempo de escribir la contraseña en la ventana elevada.
+Con la copia a la vista no se cuenta; cuando sale, valen `ESPERA_INSTALADO`.
 """
 
 _CONTROL_BAT = str(CONTROL_FILE).replace("/", "\\")
@@ -156,26 +161,39 @@ contenedor al lado devuelve 1 y no lo crea: sin él no se puede afirmar nada. El
 cmd cuando la apertura falla, y sin paréntesis no hay otra forma de envolverla.
 """
 
+_VC_ANTES_BAT = (
+    'set "VC_ANTES="\n'
+    'tasklist /fi "imagename eq %VC_IMAGEN%" /nh 2>nul '
+    '| find /i "%VC_IMAGEN%" >nul && set "VC_ANTES=1"\n'
+)
+"""Apunta en `VC_ANTES` si ya había un VeraCrypt de la imagen `VC_IMAGEN`.
+
+Va antes de lanzar el nuestro: `:vc_pendiente` solo sirve si al empezar no había
+ninguno.
+"""
+
 _VC_PENDIENTE_BAT = (
     ":vc_pendiente\n"
     "if defined VC_ANTES exit /b 1\n"
     'tasklist /fi "imagename eq %VC_IMAGEN%" /nh 2>nul | find /i "%VC_IMAGEN%" >nul\n'
     "exit /b\n"
 )
-"""Subrutina `:vc_pendiente`: ¿sigue VeraCrypt con el desmontaje?
+"""Subrutina `:vc_pendiente`: ¿sigue VeraCrypt con lo que se le ha pedido?
 
 Devuelve 0 si hay que seguir esperando sin contar. El que viaja, sin
 administrador, se relanza elevado y sale a los dos segundos (`InitApp`,
 `LaunchElevatedProcess` en `Common/Dlgcode.c`), así que `start /wait` no espera
-a la copia elevada, que es la que pregunta si forzar: los 30 intentos se
-gastaban mientras la pregunta seguía en pantalla. `tasklist` ve el nombre de un
-proceso elevado sin serlo. La copia elevada es la misma imagen (`InitApp`
-relanza lo que le da `GetModuleFileNameW`), así que se busca por el nombre del
-que se ha lanzado, `VC_IMAGEN`: `VeraCrypt.exe` instalado o de antes,
-`VeraCrypt-x64.exe` o `VeraCrypt-arm64.exe` del portable. Solo vale si al
-empezar no había ninguno (`VC_ANTES`): con uno en segundo plano no se sabe cuál
-es el nuestro y se cuenta como siempre. No tiene tope, como `start /wait` con
-el instalado: espera lo que tarde la respuesta.
+a la copia elevada, que es la que pregunta: al desmontar, si forzar (los 30
+intentos se gastaban mientras la pregunta seguía en pantalla); al montar, la
+contraseña (y cuando sale sin que aparezca la unidad es que se ha cancelado, sin
+esperar los 180 s). `tasklist` ve el nombre de un proceso elevado sin serlo. La
+copia elevada es la misma imagen (`InitApp` relanza lo que le da
+`GetModuleFileNameW`), así que se busca por el nombre del que se ha lanzado,
+`VC_IMAGEN`: `VeraCrypt.exe` instalado o de antes, `VeraCrypt-x64.exe` o
+`VeraCrypt-arm64.exe` del portable. Solo vale si al empezar no había ninguno
+(`VC_ANTES`): con uno en segundo plano no se sabe cuál es el nuestro y se cuenta
+como siempre. No tiene tope, como `start /wait` con el instalado: espera lo que
+tarde la respuesta.
 """
 
 _VIAJERO_BAT = f"%~dp0{v.TRAVELER}\\{v.TRAVELER_PORTATIL.format(arq='%VC_ARQ%')}"
@@ -254,6 +272,8 @@ def bat_abrir(device_id: str) -> str:
         "rem No se fia del codigo de salida: el VeraCrypt que viaja, sin permisos de\n"
         "rem administrador, se relanza elevado y sale enseguida con 0 mientras la\n"
         "rem otra ventana pide la contrasena. Por eso espera a ver la unidad.\n"
+        "rem Mientras esa copia siga viva, la espera no cuenta; si sale sin que haya\n"
+        "rem unidad, la contrasena se ha cancelado y no espera mas.\n"
         "rem\n"
         "rem Lo escribe el instalador de prdrive. Sin bloques entre parentesis a\n"
         "rem proposito: una ruta con \")\" los romperia.\n"
@@ -268,11 +288,13 @@ def bat_abrir(device_id: str) -> str:
         "\n"
         ":montar\n"
         'set "VIAJERO="\n'
-        + _ELEGIR_BAT +
+        + _ELEGIR_BAT
+        + _VC_ANTES_BAT +
         f'set "ESPERA={ESPERA_INSTALADO}"\n'
-        f'if defined VIAJERO set "ESPERA={ESPERA_VIAJERO}"\n'
+        f'if defined VIAJERO if defined VC_ANTES set "ESPERA={ESPERA_VIAJERO}"\n'
         f"echo Abriendo {v.ETIQUETA}: escribe la contrasena en la ventana de VeraCrypt.\n"
-        "if defined VIAJERO echo Si la has cancelado, cierra esta ventana.\n"
+        "if defined VIAJERO if defined VC_ANTES "
+        "echo Si la has cancelado, cierra esta ventana.\n"
         f'start "" /wait "%VC%" /volume "%~dp0{v.CONTENEDOR}" /mountoption rm '
         f"/mountoption label={v.ETIQUETA} /history n /cache n /quit\n"
         'if errorlevel 1 if not defined VIAJERO set "ESPERA=1"\n'
@@ -280,8 +302,11 @@ def bat_abrir(device_id: str) -> str:
         ":esperar\n"
         "call :buscar\n"
         "if defined RAIZ goto lanzar\n"
+        "call :vc_pendiente\n"
+        "if not errorlevel 1 goto esperar_vc\n"
         "set /a INTENTOS+=1\n"
         "if %INTENTOS% geq %ESPERA% goto no_abierto\n"
+        ":esperar_vc\n"
         "timeout /t 1 /nobreak >nul\n"
         "goto esperar\n"
         "\n"
@@ -293,6 +318,8 @@ def bat_abrir(device_id: str) -> str:
         + _BUSCAR_BAT +
         "\n"
         + _LIBRE_BAT +
+        "\n"
+        + _VC_PENDIENTE_BAT +
         "\n"
         + _SIN_VERACRYPT_BAT +
         "\n"
@@ -359,9 +386,7 @@ def bat_expulsar(device_id: str) -> str:
         + _ELEGIR_BAT +
         f"echo Cerrando {v.ETIQUETA}...\n"
         "timeout /t 3 /nobreak >nul\n"
-        'set "VC_ANTES="\n'
-        'tasklist /fi "imagename eq %VC_IMAGEN%" /nh 2>nul '
-        '| find /i "%VC_IMAGEN%" >nul && set "VC_ANTES=1"\n'
+        + _VC_ANTES_BAT +
         'start "" /wait "%VC%" /dismount %RAIZ:~0,1% /quit\n'
         'set "INTENTOS=0"\n'
         ":esperar\n"

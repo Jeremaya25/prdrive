@@ -1046,8 +1046,13 @@ writes the texts. Five things not to weaken:
 - **The exit code is not the mount.** The traveller without admin rights
   relaunches itself elevated with `/q UAC` and exits 0 after two seconds
   (`InitApp`, `LaunchElevatedProcess`), so the `.bat` waits to *see* the drive
-  (by the control file's id) — 10 s with the installed one, 180 s with the
-  traveller.
+  (by the control file's id) — 10 s with the installed one. With the traveller
+  the wait does not count while the elevated copy is alive (`:vc_pendiente`,
+  the same one eject uses, noted as `VC_ANTES` before launching): it asks the
+  password, and when it exits with no drive the password was cancelled, so
+  after 10 more seconds the `.bat` says so instead of waiting 180 s. Only with
+  a same-named VeraCrypt already running (`VC_ANTES`) it cannot tell which is
+  ours and falls back to the 180 s.
 - **Eject is `/dismount <letter> /quit` without `/silent`**, after a short
   wait: VeraCrypt only retries 30 × 50 ms (`Common/Dlgcode.h`), and without
   `/silent` it asks whether to force. `/unmount` does not exist before 1.26.24.

@@ -136,8 +136,13 @@ c("abrir: sin /auto, que además abre el Explorador", "/auto" in orden, False)
 c("abrir: sin guardar el contenedor en el historial ni la contraseña en caché",
   ("/history n" in orden, "/cache n" in orden), (True, True))
 c("abrir: espera a que VeraCrypt termine", orden.startswith('start "" /wait'), True)
-c("abrir: con el que viaja espera más (se relanza elevado y sale con 0)",
-  f'if defined VIAJERO set "ESPERA={vestibulo.ESPERA_VIAJERO}"' in abrir, True)
+c("abrir: con el que viaja espera más solo si no puede ver su copia elevada",
+  f'if defined VIAJERO if defined VC_ANTES set "ESPERA={vestibulo.ESPERA_VIAJERO}"'
+  in abrir.splitlines(), True)
+c("abrir: y si la ve, tras salir ella solo espera lo que con el instalado",
+  (f'set "ESPERA={vestibulo.ESPERA_INSTALADO}"' in abrir.splitlines(),
+   f'if defined VIAJERO set "ESPERA={vestibulo.ESPERA_VIAJERO}"' in abrir.splitlines()),
+  (True, False))
 c("abrir: lanza el runsync.bat de DENTRO", 'call "%RAIZ%\\runsync.bat"' in abrir, True)
 
 orden = next(ln for ln in expulsar.splitlines() if "/dismount" in ln)
@@ -209,6 +214,45 @@ c("expulsar: y esperar sin contar vuelve a mirar la letra",
   bloque(expulsar, "esperar_vc")[:2], ["timeout /t 1 /nobreak >nul", "goto esperar"])
 c("expulsar: con uno de antes vivo, no se puede saber cuál es el suyo: se cuenta",
   bloque(expulsar, "vc_pendiente")[:1], ["if defined VC_ANTES exit /b 1"])
+
+# «Abrir» con el que viaja tenía el mismo problema al revés (F3, #41): el que
+# lanzamos sale a los dos segundos y la contraseña la pide la copia elevada, así
+# que cancelarla dejaba la consola esperando los 180 s enteros. Se hace lo mismo
+# que al expulsar: mientras viva la copia, la espera no cuenta; cuando sale sin
+# que haya unidad, la contraseña se ha cancelado y se dice, sin más espera.
+esperar_abrir = bloque(abrir, "esperar")
+c("abrir: mira si ya había un VeraCrypt antes de lanzar el suyo",
+  "VC_ANTES" in abrir and abrir.index("VC_ANTES") < abrir.index("/volume"), True)
+c("abrir: apunta VC_ANTES con la misma orden que expulsar, y tras elegir VeraCrypt",
+  (vestibulo._VC_ANTES_BAT in abrir and vestibulo._VC_ANTES_BAT in expulsar,
+   abrir.index('set "VC_IMAGEN=VeraCrypt.exe"') < abrir.index(vestibulo._VC_ANTES_BAT)
+   < abrir.index("/volume")),
+  (True, True))
+c("abrir: mientras VeraCrypt siga con lo suyo, espera sin gastar intentos",
+  (despues(esperar_abrir, "call :vc_pendiente"),
+   "call :vc_pendiente" in esperar_abrir
+   and esperar_abrir.index("call :vc_pendiente") < esperar_abrir.index("set /a INTENTOS+=1")),
+  ("if not errorlevel 1 goto esperar_vc", True))
+c("abrir: la unidad se mira antes de preguntar por VeraCrypt (si ya está, se lanza)",
+  esperar_abrir.index("if defined RAIZ goto lanzar") < esperar_abrir.index("call :vc_pendiente"),
+  True)
+c("abrir: y esperar sin contar vuelve a mirar la unidad",
+  bloque(abrir, "esperar_vc")[:2], ["timeout /t 1 /nobreak >nul", "goto esperar"])
+c("abrir: sin la copia elevada a la vista, el tope sigue siendo no_abierto",
+  "if %INTENTOS% geq %ESPERA% goto no_abierto" in esperar_abrir, True)
+c("abrir: `:vc_pendiente` es la misma subrutina que la de expulsar",
+  (bool(bloque(abrir, "vc_pendiente")),
+   bloque(abrir, "vc_pendiente") == bloque(expulsar, "vc_pendiente")), (True, True))
+c("abrir: con uno de antes vivo no se sabe cuál es el suyo, y se avisa de cómo salir",
+  (bloque(abrir, "vc_pendiente")[:1],
+   "if defined VIAJERO if defined VC_ANTES echo Si la has cancelado, cierra esta ventana."
+   in abrir.splitlines()),
+  (["if defined VC_ANTES exit /b 1"], True))
+c("abrir: sin uno de antes ya no pide cerrar a mano: lo dice la propia consola",
+  "echo Si la has cancelado, cierra esta ventana." in abrir.splitlines(), False)
+no_abierto = "\n".join(bloque(abrir, "no_abierto"))
+c.contains("abrir: al salir sin unidad, dice que ha podido cancelarse", no_abierto,
+           "cancelado")
 
 libre = bloque(expulsar, "libre")
 c("comprobar el contenedor no lo crea si no está",
