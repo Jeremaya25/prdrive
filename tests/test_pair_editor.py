@@ -378,4 +378,66 @@ with sandbox():
         c("simular una que este dispositivo no usa se rechaza",
           "no se usa en este dispositivo" in str(e), True)
 
+# watch: el formulario la edita, y el cambio de modo la apaga en vez de fallar
+#
+# Solo vale donde el local es origen. Antes el formulario no la conocía, así que
+# una pareja con `watch = true` a la que se le cambiaba el modo a `down` acababa
+# en un ConfigError del parseo sin que el formulario pudiera quitar la clave.
+with sandbox():
+    c("watch es del formulario y opcional",
+      ("watch" in pair_editor.FORM_KEYS, "watch" in pair_editor.OPTIONAL_KEYS),
+      (True, True))
+    c("se admite donde el local es origen",
+      [pair_editor.admite_watch(m) for m in ("bisync", "up", "up-mirror")],
+      [True, True, True])
+    c("y no donde el origen es el remoto, ni en un modo que no existe",
+      [pair_editor.admite_watch(m) for m in ("down", "down-mirror", "nada")],
+      [False, False, False])
+
+    raw = preparar()
+    base = {"name": "diaria", "local": "sync-data/diaria", "remote_path": "/R/diaria",
+            "mode": "up", "watch": True}
+    plan = pair_editor.plan_save(raw, base)
+    c("un alta con watch la guarda",
+      next(p for p in plan.raw["pair"] if p["name"] == "diaria").get("watch"), True)
+    c("y lo cuenta", any("agente residente" in x for x in plan.consequences), True)
+    plan.execute()
+    raw = config_file.load_raw()
+    c("watch sobrevive a escribirse y leerse",
+      next(p for p in model.load_config().pairs if p.name == "diaria").watch, True)
+
+    # Apagarla desde la casilla: desaparece la clave, no queda un `false`.
+    plan = pair_editor.plan_save(raw, {**base, "watch": False}, "diaria")
+    c("desmarcar la casilla quita la clave",
+      "watch" in next(p for p in plan.raw["pair"] if p["name"] == "diaria"), False)
+    c("y lo cuenta", any("Se deja de vigilar" in x for x in plan.consequences), True)
+
+    # Cambiar el modo a uno donde no vale, con la casilla aún marcada (un
+    # formulario que no la desmarcara): no falla, la quita y lo dice.
+    try:
+        plan = pair_editor.plan_save(raw, {**base, "mode": "down"}, "diaria")
+    except ConfigError as e:
+        c("pasar a down con watch marcada no falla", str(e), "no lanzó")
+    else:
+        hecha = next(p for p in plan.raw["pair"] if p["name"] == "diaria")
+        c("pasar a down con watch marcada la quita", ("watch" in hecha, hecha["mode"]),
+          (False, "down"))
+        c("y se dice por qué",
+          any("Se deja de vigilar" in x and "'down'" in x for x in plan.consequences),
+          True)
+        plan.execute()
+        c("el config resultante parsea",
+          next(p for p in model.load_config().pairs if p.name == "diaria").watch, False)
+
+    # Lo mismo con el formulario tal como lo devuelve la casilla ya desmarcada.
+    c("clean_form no deja pasar watch en down",
+      "watch" in pair_editor.clean_form({"name": "x", "mode": "down-mirror",
+                                         "watch": True}), False)
+    c("y en bisync sí",
+      pair_editor.clean_form({"name": "x", "mode": "bisync", "watch": True})["watch"],
+      True)
+    c("una casilla apagada no escribe false",
+      "watch" in pair_editor.clean_form({"name": "x", "mode": "up", "watch": False}),
+      False)
+
 sys.exit(c.report())

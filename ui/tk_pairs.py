@@ -855,9 +855,9 @@ def formulario(parent, raw: dict, original_name: str | None, actual: dict,
 
     etiqueta("Modo", fila)
     modo = tk.StringVar(value=actual.get("mode", model.DEFAULT_MODE))
-    ttk.Combobox(marco, textvariable=modo, state="readonly", width=36,
-                 values=sorted(model.MODES)).grid(row=fila, column=1, sticky="w",
-                                                  pady=3)
+    selector_modo = ttk.Combobox(marco, textvariable=modo, state="readonly", width=36,
+                                 values=sorted(model.MODES))
+    selector_modo.grid(row=fila, column=1, sticky="w", pady=3)
     aviso_modo = ttk.Label(marco, style="Aviso.TLabel", wraplength=theme.medida(250),
                            justify="left")
     aviso_modo.grid(row=fila, column=2, sticky="w", padx=(12, 0))
@@ -878,8 +878,22 @@ def formulario(parent, raw: dict, original_name: str | None, actual: dict,
     pista_versiones.grid(row=fila, column=2, sticky="w", padx=(12, 0))
     fila += 1
 
+    # Vigilar. Solo vale donde el local es origen (`pair_editor.admite_watch`):
+    # igual que `versions`, la casilla se apaga y se desmarca con el modo en vez
+    # de dejar guardar algo que el modelo rechaza al parsear.
+    etiqueta("Vigilar", fila)
+    vigilar = tk.BooleanVar(value=bool(actual.get("watch", False)))
+    casilla_vigilar = ttk.Checkbutton(
+        marco, variable=vigilar,
+        text="Sincronizar cuando cambien los ficheros locales")
+    casilla_vigilar.grid(row=fila, column=1, sticky="w", pady=3)
+    pista_vigilar = ttk.Label(marco, style="Pista.TLabel",
+                              wraplength=theme.medida(250), justify="left")
+    pista_vigilar.grid(row=fila, column=2, sticky="w", padx=(12, 0))
+    fila += 1
+
     def modo_cambiado(*_):
-        """Pone el aviso del modo y habilita o no la casilla de versiones."""
+        """Pone el aviso del modo y habilita o no las casillas que dependen de él."""
         aviso = pair_editor.mirror_warning(modo.get())
         aviso_modo.configure(text=aviso or pista("mode", ""),
                              style="Aviso.TLabel" if aviso else "Pista.TLabel")
@@ -891,7 +905,15 @@ def formulario(parent, raw: dict, original_name: str | None, actual: dict,
             "Dentro de la pareja, en los dos lados. También el perdedor de un "
             "conflicto, en vez de dejarlo suelto." if es_bisync else
             "Solo en bisync: en copy/sync no hay dos lados que guardar."))
-    modo.trace_add("write", modo_cambiado)
+        vale_vigilar = pair_editor.admite_watch(modo.get())
+        casilla_vigilar.configure(state="normal" if vale_vigilar else "disabled")
+        if not vale_vigilar:
+            vigilar.set(False)
+        pista_vigilar.configure(text=(
+            "Solo con el agente residente. Lo del remoto espera al intervalo."
+            if vale_vigilar else
+            "Solo donde el origen es el dispositivo (no en down ni down-mirror)."))
+    selector_modo.bind("<<ComboboxSelected>>", modo_cambiado)
     modo_cambiado()
 
     textos: dict[str, tk.Text] = {}
@@ -955,6 +977,7 @@ def formulario(parent, raw: dict, original_name: str | None, actual: dict,
             **{k: v.get() for k, v in campos.items()},
             "mode": modo.get(),
             "versions": bool(versiones.get()),
+            "watch": bool(vigilar.get()),
             **{k: caja.get("1.0", "end").splitlines() for k, caja in textos.items()},
             "flags": dict(avanzado["flags"]),
             "extra_flags": list(avanzado["extra_flags"]),

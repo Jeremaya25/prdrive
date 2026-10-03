@@ -915,5 +915,57 @@ datos = FORMULARIO(raiz, BASE, "notas", dict(BASE["pair"][0]))
 c("el formulario devuelve los flags del diálogo", datos["flags"], {"transfers": 8})
 c("y sus argumentos extra", datos["extra_flags"], ["--stats", "10s"])
 
+# el formulario de la pareja: «Vigilar» sigue al modo, como «Versiones»
+#
+# Solo vale donde el local es origen: al pasar a down la casilla se apaga y se
+# desmarca, y lo guardado ya no lleva `watch` (si no, el parseo lo rechazaría).
+
+
+def _form_vigilar(modo_elegido):
+    """Devuelve un `wait_window` que cambia el modo, mira la casilla y guarda."""
+    visto: dict = {}
+
+    def _wait(self, *_a, **_k):
+        """Elige el modo en el desplegable, anota la casilla y pulsa «Guardar…»."""
+        pila, botones, desplegable, casilla = [self], {}, None, None
+        while pila:
+            w = pila.pop()
+            pila += list(w.winfo_children())
+            if isinstance(w, ttk.Button):
+                botones[w.cget("text")] = w
+            elif isinstance(w, ttk.Combobox) and w.get() in model.MODES:
+                desplegable = w
+            elif isinstance(w, ttk.Checkbutton) and "ficheros locales" in w.cget("text"):
+                casilla = w
+        visto["antes"] = (str(casilla.cget("state")), casilla.instate(["selected"]))
+        if modo_elegido:
+            desplegable.set(modo_elegido)
+            desplegable.event_generate("<<ComboboxSelected>>")
+        visto["despues"] = (str(casilla.cget("state")), casilla.instate(["selected"]))
+        botones["Guardar…"].invoke()
+    return _wait, visto
+
+
+vigilada = {"name": "diaria", "local": "sync-data/diaria", "remote_path": "/R/diaria",
+            "mode": "up", "watch": True}
+espera, visto = _form_vigilar(None)
+tk.Toplevel.wait_window = espera
+datos = FORMULARIO(raiz, BASE, "notas", dict(vigilada))
+c("«Vigilar» abre marcada si la pareja vigila", visto["antes"], ("normal", True))
+c("y se guarda marcada", datos["watch"], True)
+
+espera, visto = _form_vigilar("down")
+tk.Toplevel.wait_window = espera
+datos = FORMULARIO(raiz, BASE, "notas", dict(vigilada))
+c("pasar a down apaga y desmarca «Vigilar»", visto["despues"], ("disabled", False))
+c("y lo guardado ya no la pide", datos["watch"], False)
+
+espera, visto = _form_vigilar("bisync")
+tk.Toplevel.wait_window = espera
+datos = FORMULARIO(raiz, BASE, "notas", dict(BASE["pair"][1]))
+c("en un modo donde el local es origen la casilla está activa",
+  visto["despues"][0], "normal")
+c("y apagada por defecto", datos["watch"], False)
+
 
 sys.exit(c.report())
