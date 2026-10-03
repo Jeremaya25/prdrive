@@ -118,8 +118,13 @@ raw = {"defaults": {"remote": "nas"}, "pair": [{**RAW, "mode": "up", "watch": Tr
 c("watch se escribe y se relee igual (dumps_checked)",
   "watch = true" in config_file.dumps_checked(raw), True)
 anterior = raw["pair"][0]
-c("el formulario de parejas no pierde watch al guardar otra cosa",
-  pair_editor.merge_form(anterior, {"local": "b"}).get("watch"), True)
+FORM = {"name": "a", "local": "b", "remote_path": "/a", "mode": "up"}
+c("el formulario de parejas guarda watch mientras la casilla siga marcada",
+  pair_editor.merge_form(anterior, pair_editor.clean_form({**FORM, "watch": True}))
+  .get("watch"), True)
+c("y la quita al desmarcarla: la casilla es del formulario, como la de versiones",
+  "watch" in pair_editor.merge_form(
+      anterior, pair_editor.clean_form({**FORM, "watch": False})), False)
 
 # ---------------------------------------------------------------------------
 # 2. huella: la foto de una carpeta
