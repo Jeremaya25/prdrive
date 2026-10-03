@@ -461,18 +461,24 @@ class AvisosDeRed:
             self._cerrar_sistema()
 
     def _abrir(self) -> None:
-        """Abre netlink (y pide la lista de direcciones) y el bus del sistema."""
+        """Abre netlink (y pide la lista de direcciones) y el bus del sistema.
+
+        Cualquier fallo al abrir una fuente, previsto o no, la cierra y la deja
+        sin contar (`activa` y `fuente` no la cuentan): una excepción que se
+        escapara mataría el hilo con el socket o el bus abiertos y el agente
+        creería que oye algo que nadie atiende.
+        """
         try:
             self._netlink = self._conectar_netlink()
             self._netlink.send(self.direcciones.peticion())
-        except (OSError, AttributeError):
+        except Exception:                               # noqa: BLE001
             self._cerrar_netlink()
         try:
             self.sistema = self._conectar_sistema()
             self.sistema.escuchar(REGLA_NM_ESTADO)
             self.sistema.escuchar(REGLA_NM_DUENO)
             self._nm = self.sistema.tiene_dueno(NM)
-        except (dbus.Error, OSError):
+        except Exception:                               # noqa: BLE001
             self._cerrar_sistema()
 
     def _bucle(self) -> None:
@@ -546,8 +552,11 @@ class AvisosDeRed:
         self._netlink = None
 
     def _cerrar_sistema(self) -> None:
-        """Cierra el bus del sistema, si está abierto."""
-        if self.sistema is not None:
-            self.sistema.cerrar()
-        self.sistema = None
+        """Cierra el bus del sistema, si está abierto; que falle al cerrar no lo deja contado."""
+        sistema, self.sistema = self.sistema, None
         self._nm = False
+        if sistema is not None:
+            try:
+                sistema.cerrar()
+            except Exception:                           # noqa: BLE001
+                pass

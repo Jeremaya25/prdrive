@@ -336,6 +336,52 @@ else:
     c("sin nada: no escucha, y no pasa nada", (ok, f.activa, f.fuente), (False, False, ""))
     f.cerrar()
 
+    # Una excepción que nadie preveía al abrir una fuente (no un OSError ni un
+    # dbus.Error): se cierra todo, la fuente no se cuenta y el hilo no se cae
+    # dejando el socket y el bus abiertos.
+    lados_rotos = {}
+
+    def abrir_nl_roto():
+        uno, otro = netlink_falso()
+        lados_rotos["nl"], lados_rotos["nucleo"] = uno, otro
+
+        def send_roto(datos):
+            raise RuntimeError("algo que nadie esperaba")
+        uno.send = send_roto
+        return uno
+
+    def abrir_bus_roto():
+        con, bus = B.conectar()
+        lados_rotos["bus"] = bus
+
+        def escuchar_roto(regla):
+            raise ValueError("algo que nadie esperaba")
+        con.escuchar = escuchar_roto
+        return con
+
+    f = red.AvisosDeRed(lambda: None, conectar_sistema=abrir_bus_roto,
+                        conectar_netlink=abrir_nl_roto)
+    ok = f.arrancar()
+    c("una excepción inesperada al abrir las fuentes: no escucha nada",
+      (ok, f.activa, f.fuente), (False, False, ""))
+    c("  cierra el socket de netlink", lados_rotos["nl"].sock.fileno(), -1)
+    c("  y el bus del sistema", esperar(lados_rotos["bus"].cerrado.is_set), True)
+    c("  y el hilo acaba, sin dejar nada contado",
+      (esperar(lambda: not f._hilo.is_alive()), f._netlink, f.sistema), (True, None, None))
+    f.cerrar()
+    lados_rotos["nucleo"].close()
+
+    class BusQueNoCierra:
+        """Un bus cuyo cierre falla."""
+        def cerrar(self):
+            raise OSError(errno.EBADF, "ya estaba cerrado")
+
+    f = red.AvisosDeRed(lambda: None)
+    f.sistema, f._nm = BusQueNoCierra(), True
+    f._cerrar_sistema()
+    c("si cerrar el bus falla, la fuente deja de contarse igual", (f.sistema, f._nm),
+      (None, False))
+
     # La de verdad, si este núcleo la deja abrir: la lista llega y no avisa.
     try:
         de_verdad = red.abrir_netlink()
