@@ -133,7 +133,9 @@ resilient = true              # un error menor no obliga a --resync la próxima 
 # cambien sus ficheros locales, en vez de esperar a los 30 minutos del servicio.
 # Solo vale donde el lado local es origen (bisync, up, up-mirror) y el config se
 # rechaza en down y down-mirror. Sin la clave, la pareja va por su intervalo,
-# como siempre. El servicio de runsync (sin agente) no mira los cambios.
+# como siempre. Se pide en cada `[[pair]]`: en `[defaults]` no se admite (el
+# config se rechaza), porque ahí no haría nada. El servicio de runsync (sin
+# agente) no mira los cambios.
 #
 # Cómo funciona, y lo que conviene saber antes de encenderlo:
 #
@@ -154,7 +156,11 @@ resilient = true              # un error menor no obliga a --resync la próxima 
 #   * Con más de 20 000 ficheros y carpetas la pareja deja de vigilarse (el
 #     agente lo apunta una vez en su diario) y sigue por su intervalo: recorrer
 #     una carpeta así cada pocos segundos cuesta más de lo que da, sobre todo en
-#     un pendrive. `.prversions/` y `.prdrive/` no cuentan.
+#     un pendrive. `.prversions/` y `.prdrive/` no cuentan, y con `local = "."`
+#     (la raíz de la unidad) tampoco lo que el sistema deja en ella: `System
+#     Volume Information`, `$RECYCLE.BIN`, `.Trash-<uid>`…
+#   * Si el agente no puede mirar la carpeta (tres recorridos seguidos sin
+#     foto), lo apunta en su diario y la pareja sigue por su intervalo.
 #   * Solo en una raíz que el agente sirve en modo `daemon` y mientras esté
 #     abierta, sin pausar y sin ventana delante; en modo `sync` (una pasada por
 #     conexión) no hace nada.

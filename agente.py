@@ -201,8 +201,31 @@ IGNORAR_CAMBIOS = huellas.IGNORAR + (APP_SUBDIR,)
 
 Además de `.prversions/`, el propio `.prdrive/`: una pareja con `local = "."`
 lo tendría dentro, y lo que escribe cada pasada en su `state/` la dispararía
-otra vez.
+otra vez. Si esa carpeta es la raíz del dispositivo se añade lo que el sistema
+deja en un volumen (`model.RUIDO_DEL_SISTEMA`, vía `ruido_en()`).
 """
+
+
+def ruido_en(raiz: Path, carpeta: Path) -> tuple[str, ...]:
+    """Devuelve lo que se añade a `IGNORAR_CAMBIOS` en la carpeta de una pareja vigilada.
+
+    El ruido que el sistema deja en un volumen (`model.RUIDO_DEL_SISTEMA`:
+    `System Volume Information`, `$RECYCLE.BIN`…) cuando la carpeta ES la raíz
+    de la unidad (`local = "."`): ahí entra en la foto, no es contenido de
+    nadie y en Windows ni siquiera se deja abrir. En cualquier otra carpeta,
+    nada: lo que se llame así dentro de los datos de alguien es suyo.
+
+    Args:
+        raiz: Dónde está montada la raíz.
+        carpeta: La carpeta local de la pareja.
+    """
+    try:
+        es_la_raiz = os.path.normcase(os.path.realpath(carpeta)) \
+            == os.path.normcase(os.path.realpath(raiz))
+    except (OSError, ValueError):
+        es_la_raiz = False
+    return model.RUIDO_DEL_SISTEMA if es_la_raiz else ()
+
 
 OK, FALLO, RED, SALTADA = pl.OK, pl.FALLO, pl.RED, pl.SALTADA
 
@@ -314,7 +337,7 @@ def huella_local(ruta: Path, tope: int, ignorar: tuple[str, ...]) -> pl.Huella |
     Args:
         ruta: La carpeta.
         tope: Cuántas entradas se cuentan como mucho.
-        ignorar: Carpetas de su raíz que no se miran.
+        ignorar: Patrones de las entradas de su raíz que no se miran.
 
     Returns:
         La foto, o `None` si no se pudo tomar.
@@ -552,8 +575,9 @@ class Servicio:
     Args:
         parejas: Las parejas, con su remoto.
         minutos: El intervalo entre pasadas.
-        locales: La carpeta local, tal como está escrita en el TOML, de cada
-            pareja que pide vigilar sus cambios (`watch = true`), por nombre.
+        locales: La carpeta local, normalizada como la entiende el motor
+            (`model.normalizar_local()`), de cada pareja que pide vigilar sus
+            cambios (`watch = true`), por nombre.
     """
     parejas: tuple[pl.Pareja, ...]
     minutos: float
@@ -592,9 +616,12 @@ def leer_servicio(raiz: Path) -> Servicio:
                                                                   model.DEFAULT_REMOTE)))
             # Se vigila solo lo que pide `watch = true` en un modo con el local
             # de origen (`model.pide_watch()`) y tiene dónde mirar.
+            # El `local` se normaliza como lo hace el motor (`model.normalizar_local()`):
+            # `sync-data\docs` sincroniza, y sin eso se miraría una carpeta que
+            # no existe.
             local = p.get("local")
             if model.pide_watch(p) and isinstance(local, str) and local.strip():
-                locales[p["name"]] = local
+                locales[p["name"]] = model.normalizar_local(local)
             else:
                 locales.pop(p["name"], None)
     if not remotos:
@@ -947,7 +974,8 @@ class Muestreo:
     Args:
         trabajo: Las carpetas que hay que mirar.
         tope: Cuántas entradas se cuentan como mucho en cada una.
-        ignorar: Carpetas de su raíz que no se miran.
+        ignorar: Patrones de las entradas de la raíz de cada carpeta que no se
+            miran; en la raíz de la unidad se suma `ruido_en()`.
 
     Attributes:
         fotos: La foto de cada pareja, o `None` si no se pudo tomar.
@@ -980,8 +1008,9 @@ class Muestreo:
                     self.fuera.add(mirar.clave)
                     continue
                 try:
-                    self.fotos[mirar.clave] = huella_local(mirar.carpeta, self.tope,
-                                                           self.ignorar)
+                    self.fotos[mirar.clave] = huella_local(
+                        mirar.carpeta, self.tope,
+                        self.ignorar + ruido_en(mirar.raiz, mirar.carpeta))
                 except Exception:                   # noqa: BLE001
                     self.fotos[mirar.clave] = None
         finally:
@@ -1857,7 +1886,9 @@ class Agente:
         empezado o acabado mientras se miraba: lo que ve ahí lo ha escrito
         rclone, no la persona. La pareja que supera el tope o cuya carpeta cae
         fuera de la raíz se abandona, y se dice una vez en el diario y en el de
-        la raíz.
+        la raíz. También se dice una vez cuando `PoliticaCambios.fotos_fallidas`
+        recorridos seguidos de una pareja no dan foto (y cuando vuelve a darla):
+        sin esa línea, una carpeta que no se deja mirar parece una quieta.
 
         Args:
             ahora: La hora del reloj del agente.
@@ -1891,6 +1922,18 @@ class Agente:
                        f"entradas; deja de vigilarse y sigue por su intervalo")
                 dlog(con.raiz, f"[{clave[1]}] watch: más de {self.cambios.tope_entradas} "
                                f"entradas; no se vigila, manda el intervalo")
+            elif pl.se_queda_sin_foto(antes, despues, self.cambios):
+                # Sin foto no hay cambio que ver: una carpeta que no se deja
+                # mirar y una quieta serían lo mismo sin esta línea.
+                veces = self.cambios.fotos_fallidas
+                diario(f"[{con.nombre}] {clave[1]}: no se puede mirar su carpeta "
+                       f"({veces} recorridos seguidos); no se ven sus cambios y "
+                       f"manda el intervalo")
+                dlog(con.raiz, f"[{clave[1]}] watch: no se puede mirar su carpeta "
+                               f"({veces} recorridos seguidos); manda el intervalo")
+            elif pl.vuelve_a_haber_foto(antes, despues, self.cambios):
+                diario(f"[{con.nombre}] {clave[1]}: su carpeta vuelve a poder mirarse")
+                dlog(con.raiz, f"[{clave[1]}] watch: su carpeta vuelve a poder mirarse")
 
     def _rehacer_foto(self, clave: tuple[str, str], ahora: float) -> None:
         """Deja una pareja lista para tomar su foto de después de una pasada.

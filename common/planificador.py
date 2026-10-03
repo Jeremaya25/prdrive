@@ -506,11 +506,16 @@ class Huella(NamedTuple):
     depende del orden en que `scandir` entrega las entradas.
 
     Args:
-        entradas: Cuántos ficheros y carpetas hay.
-        firma: La firma de todos ellos.
+        entradas: Cuántos ficheros y carpetas hay; si `cortada`, hasta donde se
+            contó.
+        firma: La firma de todos ellos; 0 si `cortada`.
+        cortada: Si el recorrido se paró al pasar el tope de entradas: la
+            carpeta no cabe, y ni `entradas` es la cuenta entera ni `firma`
+            vale para comparar.
     """
     entradas: int
     firma: int
+    cortada: bool = False
 
 
 @dataclass(frozen=True)
@@ -528,11 +533,15 @@ class PoliticaCambios:
         tope_entradas: Más entradas que esto y la pareja deja de vigilarse:
             recorrer una carpeta enorme cada pocos segundos cuesta más de lo
             que da, sobre todo en un pendrive.
+        fotos_fallidas: Cuántos recorridos seguidos sin foto hacen que se diga:
+            una carpeta que no se deja mirar no es un cambio, y sin esa línea
+            es indistinguible de una carpeta quieta.
     """
     sondeo: float = 10.0
     calma: float = 20.0
     separacion: float = 120.0
     tope_entradas: int = 20_000
+    fotos_fallidas: int = 3
 
 
 @dataclass(frozen=True)
@@ -548,11 +557,15 @@ class Vigilada:
         revisada: Cuándo se recorrió por última vez, con foto o sin ella.
         abandonada: Si ya pasó de `PoliticaCambios.tope_entradas`: no se vuelve
             a recorrer en esta conexión y manda el intervalo.
+        fallidas: Cuántos recorridos seguidos acabaron sin foto. Una foto, buena
+            o la de partida, lo pone a cero; una pasada no lo toca: no prueba
+            que el agente pueda leer la carpeta.
     """
     huella: Huella | None = None
     cambio: float | None = None
     revisada: float | None = None
     abandonada: bool = False
+    fallidas: int = 0
 
 
 def observar(vigilada: Vigilada, huella: Huella | None, ahora: float,
@@ -562,21 +575,23 @@ def observar(vigilada: Vigilada, huella: Huella | None, ahora: float,
     Args:
         vigilada: Lo recordado hasta ahora.
         huella: La foto de este recorrido, o `None` si no se pudo tomar (la
-            unidad se retiró a medias): no es un cambio ni borra lo sabido.
+            unidad se retiró a medias): no es un cambio ni borra lo sabido, y
+            cuenta como una foto fallida (`Vigilada.fallidas`).
         ahora: La hora.
         politica: Las reglas.
     """
     if vigilada.abandonada:
         return vigilada
     if huella is None:
-        return replace(vigilada, revisada=ahora)
-    if huella.entradas > politica.tope_entradas:
+        return replace(vigilada, revisada=ahora, fallidas=vigilada.fallidas + 1)
+    if huella.cortada or huella.entradas > politica.tope_entradas:
         return Vigilada(None, None, ahora, abandonada=True)
+    vista = replace(vigilada, revisada=ahora, fallidas=0)
     if vigilada.huella is None:
-        return replace(vigilada, huella=huella, revisada=ahora)
+        return replace(vista, huella=huella)
     if huella != vigilada.huella:
-        return replace(vigilada, huella=huella, cambio=ahora, revisada=ahora)
-    return replace(vigilada, revisada=ahora)
+        return replace(vista, huella=huella, cambio=ahora)
+    return vista
 
 
 def tras_pasada(vigilada: Vigilada, huella: Huella | None, ahora: float) -> Vigilada:
@@ -586,7 +601,9 @@ def tras_pasada(vigilada: Vigilada, huella: Huella | None, ahora: float) -> Vigi
     del remoto): la foto de después es la de partida y no cuenta como cambio.
     Lo que la persona cambió mientras la pasada corría queda dentro de esa foto
     y espera al intervalo; es el precio de no distinguir sus ficheros de los de
-    rclone. Sin foto (`None`), la próxima recorrida vuelve a partir de cero.
+    rclone. Sin foto (`None`), la próxima recorrida vuelve a partir de cero y
+    las fotos fallidas seguidas se conservan: la pasada no prueba que la
+    carpeta se pueda mirar.
 
     Args:
         vigilada: Lo recordado hasta ahora.
@@ -595,7 +612,8 @@ def tras_pasada(vigilada: Vigilada, huella: Huella | None, ahora: float) -> Vigi
     """
     if vigilada.abandonada:
         return vigilada
-    return Vigilada(huella, None, ahora)
+    return Vigilada(huella, None, ahora,
+                    fallidas=vigilada.fallidas if huella is None else 0)
 
 
 def se_abandona(antes: Vigilada, despues: Vigilada) -> bool:
@@ -605,6 +623,22 @@ def se_abandona(antes: Vigilada, despues: Vigilada) -> bool:
     recorrer, pero el aviso no tiene que repetirse.
     """
     return despues.abandonada and not antes.abandonada
+
+
+def se_queda_sin_foto(antes: Vigilada, despues: Vigilada,
+                      politica: PoliticaCambios = PoliticaCambios()) -> bool:
+    """Indica si esta observación es la que completa las fotos fallidas seguidas.
+
+    Solo entonces se anota en el diario: mientras siga sin verse la carpeta el
+    aviso no se repite.
+    """
+    return antes.fallidas < politica.fotos_fallidas <= despues.fallidas
+
+
+def vuelve_a_haber_foto(antes: Vigilada, despues: Vigilada,
+                        politica: PoliticaCambios = PoliticaCambios()) -> bool:
+    """Indica si esta observación es la primera foto tras haberse dicho que no la había."""
+    return antes.fallidas >= politica.fotos_fallidas and despues.fallidas == 0
 
 
 def toca_por_cambios(vigilada: Vigilada | None, marca: Marca,

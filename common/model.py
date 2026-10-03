@@ -11,6 +11,7 @@ Añadir un flag de rclone sigue siendo cosa del TOML, no de este módulo.
 
 from __future__ import annotations
 
+import fnmatch
 import os
 import platform
 import re
@@ -148,6 +149,22 @@ rclone rechaza un `--backup-dir` que solape con el destino («destination and
 parameter to --backup-dir mustn't overlap») y aborta la pareja con error
 crítico. Por eso `bisync.filters_content` la excluye siempre con la PRIMERA
 regla: rclone aplica las reglas en orden y gana la primera que casa.
+"""
+RUIDO_DEL_SISTEMA = (
+    "system volume information", "$recycle.bin", "recycler", "lost+found",
+    ".ds_store", ".spotlight-v100", ".fseventsd", ".trashes", "desktop.ini",
+    "autorun.inf", ".trash-*",
+)
+"""Lo que el sistema deja en la raíz de cualquier volumen, en minúsculas.
+
+Cada entrada es un patrón de `fnmatch` (`.Trash-1000` lleva el uid de quien
+tiró algo) que se compara con el nombre en minúsculas: Windows escribe
+`$RECYCLE.BIN` y `$Recycle.Bin` según la versión. No es contenido de nadie, y
+de ahí sale lo que el instalador no cuenta como «cosas de otro»
+(`install/device.RUIDO`) y lo que el agente no mira al vigilar una pareja que
+sincroniza la raíz del dispositivo (`common/huella.py`): un recorrido que
+tropieza con el `System Volume Information` de Windows (acceso denegado)
+dejaría esa pareja sin vigilancia.
 """
 DEFAULT_INTERVAL_MIN = 30.0  # minutos entre ciclos del servicio
 
@@ -671,7 +688,7 @@ def _build_pair(raw: Mapping[str, Any], defaults: Mapping[str, Any],
     return Pair(
         name=name,
         mode=mode,
-        local=str(raw["local"]).replace("\\", "/").strip("/"),
+        local=normalizar_local(raw["local"]),
         remote_path=raw["remote_path"],
         remote_name=raw.get("remote", defaults.get("remote", DEFAULT_REMOTE)),
         includes=_as_tuple(defaults.get("include")) + _as_tuple(raw.get("include")),
@@ -732,6 +749,32 @@ def pide_watch(raw: Mapping[str, Any]) -> bool:
     nombre = raw.get("mode", DEFAULT_MODE)
     mode = MODES.get(nombre) if isinstance(nombre, str) else None
     return mode is not None and mode.origen_local
+
+
+def es_ruido_del_sistema(nombre: str) -> bool:
+    """Indica si ese nombre es de lo que el sistema deja en la raíz de un volumen.
+
+    Args:
+        nombre: El nombre de una entrada, sin ruta y con cualquier mayúscula.
+
+    Returns:
+        Si casa con algún patrón de `RUIDO_DEL_SISTEMA`.
+    """
+    minusculas = nombre.lower()
+    return any(fnmatch.fnmatchcase(minusculas, patron) for patron in RUIDO_DEL_SISTEMA)
+
+
+def normalizar_local(local: Any) -> str:
+    """Devuelve el `local` de una pareja como lo entiende el motor.
+
+    Las barras invertidas pasan a `/` y se quitan las de los extremos: es lo
+    que hace `_build_pair()` y lo que tiene que hacer quien lea el TOML a pelo
+    (el agente, al decidir qué carpeta vigilar). `.` queda como `.`.
+
+    Args:
+        local: El valor de `local` tal como está en el TOML.
+    """
+    return str(local).replace("\\", "/").strip("/")
 
 
 def problema_nombre(name: Any) -> str | None:
@@ -923,12 +966,19 @@ def parse_config(data: Mapping[str, Any], equipo: bool = False) -> Config:
             de la raíz entera es legítima para las unidades.
 
     Raises:
-        ConfigError: Si no hay ninguna `[[pair]]` o alguna no es válida.
+        ConfigError: Si no hay ninguna `[[pair]]`, alguna no es válida o
+            `[defaults]` lleva `watch`, que es de cada pareja.
     """
     defaults = data.get("defaults", {})
     raw_pairs = data.get("pair", [])
     if not raw_pairs:
         raise ConfigError("El config no tiene ninguna [[pair]] definida.")
+    if isinstance(defaults, Mapping) and "watch" in defaults:
+        # Solo se lee de `[[pair]]` (`_leer_watch()`): en `[defaults]` no haría
+        # nada y parecería que vigila todas las parejas.
+        raise ConfigError(
+            "[defaults] no admite 'watch': vigilar los cambios locales se pide "
+            "pareja a pareja, con 'watch = true' en cada [[pair]] que lo quiera.")
     return Config(
         pairs=tuple(_build_pair(p, defaults, equipo) for p in raw_pairs),
         daemon=data.get("daemon", {}),

@@ -1533,19 +1533,29 @@ whatever you build that only a real host can prove.
   (#61)**, instead of waiting for the interval. Agent only (runsync's service
   never looks), opt-in per pair, and only where the local side is a source
   (`Mode.origen_local`: bisync, up, up-mirror): `model._leer_watch()` rejects the
-  rest at parse time, and the agent, which reads the raw TOML, asks the same
-  rule without raising (`model.pide_watch()`; `Servicio.locales` keeps each
-  watched pair's `local`).
+  rest at parse time (and `[defaults]` carrying `watch` too: it is read from
+  `[[pair]]` only, so there it would do nothing and look like it watched every
+  pair), and the agent, which reads the raw TOML, asks the same rule without
+  raising (`model.pide_watch()`; `Servicio.locales` keeps each watched pair's
+  `local`, normalised as the engine does it, `model.normalizar_local()`:
+  `sync-data\docs` syncs, so that is the folder to look at).
   - **Stat polling, no OS events** (exFAT, a VeraCrypt container and a network
     folder have none). `common/huella.py` `de_carpeta()` runs `os.scandir` over
     the pair's folder — no file opened, no link followed — and returns a
-    `planificador.Huella(entradas, firma)`: a sum of one hash per entry
+    `planificador.Huella(entradas, firma, cortada)`: a sum of one hash per entry
     (relative path, size, `mtime_ns`), **not** the newest mtime or the total
     size, which a rename or a same-size swap leaves still. Folders count by
     name only (their mtime moves with things that are not content).
     `.prversions/` and `.prdrive/` at the top of the folder are not looked at
     (`agente.IGNORAR_CAMBIOS`: a `local = "."` pair would otherwise be fired by
-    what each pass writes into `state/`).
+    what each pass writes into `state/`), and when the folder IS the device
+    root (`local = "."`) neither is the OS noise at its top
+    (`model.RUIDO_DEL_SISTEMA` through `agente.ruido_en()`: `System Volume
+    Information`, `$RECYCLE.BIN`, `.Trash-<uid>`…, matched without case; it is
+    the list `install/device.RUIDO` is built from, so the two cannot drift).
+    A SUBFOLDER `scandir` cannot open (`PermissionError`, which Windows gives
+    for `System Volume Information`) is skipped by name and its contents are
+    not looked at; only the folder itself failing voids the photo (`None`).
   - **The rules are pure** (`PoliticaCambios`: `sondeo` 10 s, `calma` 20 s,
     `separacion` 120 s, `tope_entradas` 20 000; `observar`, `tras_pasada`,
     `toca_por_cambios`, `a_recorrer`). `decidir()` brings the pair's pass
@@ -1586,7 +1596,21 @@ whatever you build that only a real host can prove.
     is absorbed into it and waits for the interval.
   - **The cap.** Past `tope_entradas` the pair is abandoned for this connection:
     said once in `agente.log` and in the root's `daemon.log` (`pl.se_abandona`),
-    the interval rules. `de_carpeta()` cuts at the cap, so finding out is cheap.
+    the interval rules. `de_carpeta()` cuts at the cap and says so with
+    `Huella.cortada` (not «signature 0»), so finding out is cheap.
+  - **A watch that cannot see says so.** A photo that comes back `None` is «not
+    a change», which on its own is what a quiet folder looks like.
+    `Vigilada.fallidas` counts the walks in a row without a photo
+    (`PoliticaCambios.fotos_fallidas`, 3): the third is one line in
+    `agente.log` and the root's `daemon.log` (`pl.se_queda_sin_foto`), and the
+    first good photo after it another (`pl.vuelve_a_haber_foto`). A pass does
+    not reset the count (it proves nothing about the agent reading the folder),
+    so a dead watch is told once per connection, not once per pass.
+  - **Known limit: sticky abandonment.** Inside one connection an abandoned pair
+    stays abandoned (the folder may have shrunk, the agent will not know until
+    the root reconnects), and `Mirar.con` does not notice a root remounted at
+    another letter while a walk was in flight: at most a swallowed change or an
+    extra pass.
   - **Not seen:** remote changes (they wait for the interval), changes made
     during a pass, and any root that is not served in `daemon` mode (`sync` mode
     has an infinite interval: nothing to bring forward).

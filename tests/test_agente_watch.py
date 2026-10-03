@@ -31,7 +31,7 @@ from _harness import Checks, tmpdir
 import _agente_falso as F
 import agente
 import penwatch
-from common import equipo, huella, moderacion, store, vestibulo
+from common import equipo, huella, model, moderacion, store, vestibulo
 from common import planificador as pl
 
 c = Checks("agente: cambios locales de una pareja (watch)")
@@ -431,7 +431,7 @@ MIRADAS.clear()
 def foto_enorme(ruta, tope, ignorar):
     """Una carpeta con más entradas que el tope."""
     MIRADAS.append((Path(ruta).name, tope, tuple(ignorar)))
-    return pl.Huella(tope + 1, 0)
+    return pl.Huella(tope + 1, 0, cortada=True)
 
 
 agente.huella_local = foto_enorme
@@ -535,6 +535,71 @@ c("  y se dice, una vez",
 if enlace:
     c("un enlace que saca la carpeta de la raíz tampoco se sigue",
       (ag6.vigiladas[(UID6, "enlace")].abandonada, MIRADAS), (True, []))
+
+# ---------------------------------------------------------------------------
+# 11b. Qué carpeta se mira, y una que no se deja mirar
+# ---------------------------------------------------------------------------
+# El `local` se lee como el motor (`\` pasa a `/`, sin las de los extremos), el ruido del
+# sistema solo se deja fuera si la carpeta es la raíz de la unidad, y una
+# carpeta que sale sin foto varias veces seguidas se dice una vez.
+F.preparar()
+MIRADAS.clear()
+CIEGAS: set[str] = set()
+"""Las carpetas (su ruta) cuya foto sale `None` ahora mismo."""
+
+
+def foto_a_ratos(ruta, tope, ignorar):
+    """Apunta qué se mira; las carpetas de `CIEGAS` no dan foto."""
+    MIRADAS.append((str(ruta), tope, tuple(ignorar)))
+    return None if str(ruta) in CIEGAS else pl.Huella(3, 1)
+
+
+agente.huella_local = foto_a_ratos
+UID8 = "8" * 32
+RAIZ8 = poner(UID8, parejas=("docs", "raiz", "otra"), nombre="CIEGA",
+              extra={"docs": VIGILA, "raiz": VIGILA, "otra": VIGILA},
+              locales={"docs": "sync-data\\\\docs", "raiz": ".", "otra": "/sync-data/otra/"})
+c("el `local` se lee como lo lee el motor: barras normales y sin las de los extremos",
+  dict(agente.leer_servicio(RAIZ8).locales),
+  {"docs": "sync-data/docs", "raiz": ".", "otra": "sync-data/otra"})
+F.RAICES[:] = [RAIZ8]
+CIEGAS.add(str(RAIZ8 / "sync-data" / "otra"))
+ag8 = F.nuevo()
+F.vueltas(ag8, 2)
+terminar(ag8, RAIZ8)
+quieto(ag8, 20)
+ignoradas = {m[0]: m[2] for m in MIRADAS}
+c("se mira la carpeta que sincroniza el motor, no una con la barra invertida",
+  sorted(ignoradas), sorted(str(RAIZ8 / x) for x in ("sync-data/docs", ".", "sync-data/otra")))
+c("  en una carpeta cualquiera no se deja fuera nada más que lo de siempre",
+  ignoradas[str(RAIZ8 / "sync-data" / "docs")], agente.IGNORAR_CAMBIOS)
+c("  en la raíz de la unidad (`local = \".\"`), también el ruido del sistema",
+  ignoradas[str(RAIZ8)], agente.IGNORAR_CAMBIOS + model.RUIDO_DEL_SISTEMA)
+c("  y con él lo que hay que dejar fuera: System Volume Information y $RECYCLE.BIN",
+  {"system volume information", "$recycle.bin"} <= set(ignoradas[str(RAIZ8)]), True)
+
+quieto(ag8, 60)
+c("una carpeta que no da foto varios recorridos seguidos se dice, una vez, en el diario",
+  sum("otra: no se puede mirar su carpeta" in m for m in F.DIARIO), 1)
+c("  y en el de la raíz",
+  (RAIZ8 / ".prdrive" / "state" / "daemon.log").read_text(encoding="utf-8").count(
+      "[otra] watch: no se puede mirar su carpeta"), 1)
+c("  las demás no dicen nada", [m for m in F.DIARIO if "no se puede mirar" in m
+                                 and "otra:" not in m], [])
+c("  y no por eso se pierde la vigilancia: sigue sin foto, ni cambio ni abandono",
+  (ag8.vigiladas[(UID8, "otra")].huella, ag8.vigiladas[(UID8, "otra")].cambio,
+   ag8.vigiladas[(UID8, "otra")].abandonada), (None, None, False))
+ag8.urgentes.append((UID8, "otra"))
+F.vueltas(ag8, 2)
+terminar(ag8, RAIZ8)
+quieto(ag8, 60)
+c("  una pasada de esa pareja entremedias no repite la línea",
+  sum("otra: no se puede mirar su carpeta" in m for m in F.DIARIO), 1)
+CIEGAS.clear()
+quieto(ag8, 60)
+c("al volver a poder mirarla, se dice una vez",
+  sum("otra: su carpeta vuelve a poder mirarse" in m for m in F.DIARIO), 1)
+c("  y la foto es la de partida", ag8.vigiladas[(UID8, "otra")].fallidas, 0)
 
 # ---------------------------------------------------------------------------
 # 12. «Bloquear» espera a la foto en marcha

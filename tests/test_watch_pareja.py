@@ -3,13 +3,17 @@
 
 Tres capas, de abajo arriba:
 - `model`: `watch` se lee una vez, solo vale donde el local es origen (bisync,
-  up, up-mirror) y de otro tipo que un booleano se rechaza al parsear;
-  `pide_watch()` es la misma regla sin lanzar, para quien lee el TOML a pelo.
+  up, up-mirror) y de otro tipo que un booleano se rechaza al parsear, y en
+  `[defaults]` tampoco vale; `pide_watch()` es la misma regla sin lanzar, para
+  quien lee el TOML a pelo, y `normalizar_local()` la del `local`.
 - `huella`: la foto barata de una carpeta, sobre un directorio temporal de
-  verdad: ve renombrados y cambios de contenido, ignora `.prversions/`, no
-  sigue enlaces, se corta en el tope y devuelve `None` si no puede.
+  verdad: ve renombrados y cambios de contenido, ignora `.prversions/` y el
+  ruido del sistema, no sigue enlaces, se corta en el tope (y lo dice con
+  `cortada`), se salta una subcarpeta que no se deja abrir y devuelve `None`
+  si no puede.
 - `planificador`: las reglas, con un reloj de mentira: la calma, la ráfaga, la
-  separación, el tope, la moderación, la foto de después de una pasada.
+  separación, el tope, la moderación, la foto de después de una pasada, las
+  fotos fallidas seguidas.
 """
 
 import math
@@ -60,6 +64,37 @@ for malo in ("true", "yes", 1, 0, ["x"], {"a": 1}, 1.0, None):
 c("el modo por omisión (bisync) también admite watch",
   model.parse_config({"defaults": {"remote": "nas"}, "pair": [
       {"name": "a", "local": "a", "remote_path": "/a", "watch": True}]}).pairs[0].watch, True)
+
+# `watch` es de cada pareja: en `[defaults]` no haría nada y parecería que vigila todas
+try:
+    model.parse_config({"defaults": {"remote": "nas", "watch": True}, "pair": [
+        {"name": "a", "local": "a", "remote_path": "/a"}]})
+    rechazo_defaults = ""
+except ConfigError as e:
+    rechazo_defaults = str(e)
+c("watch en [defaults] se rechaza al parsear y el mensaje manda ponerlo en cada pareja",
+  all(t in rechazo_defaults for t in ("[defaults]", "'watch'", "[[pair]]")), True)
+try:
+    model.parse_config({"defaults": {"remote": "nas", "watch": False}, "pair": [
+        {"name": "a", "local": "a", "remote_path": "/a"}]})
+    rechazada_false = False
+except ConfigError:
+    rechazada_false = True
+c("  también con false: la clave no se lee de ahí, y que esté da a entender lo contrario",
+  rechazada_false, True)
+c("  la misma clave en una pareja sigue valiendo", pareja({"watch": True}).watch, True)
+
+# el `local` como lo entiende el motor, y como lo lee quien mira el TOML a pelo
+for crudo, esperado in (("sync-data\\docs", "sync-data/docs"), ("/sync-data/docs/", "sync-data/docs"),
+                        ("\\docs\\", "docs"), (".", "."), ("/", ""), ("a/b", "a/b")):
+    c(f"normalizar_local({crudo!r}) = {esperado!r}", model.normalizar_local(crudo), esperado)
+    c(f"  y es el `local` que resuelve la pareja", pareja({"local": crudo}).local,
+      model.normalizar_local(crudo))
+for nombre, es in (("System Volume Information", True), ("$RECYCLE.BIN", True),
+                   ("$Recycle.Bin", True), (".Trash-1000", True), (".Spotlight-V100", True),
+                   (".fseventsd", True), ("desktop.ini", True), ("docs", False),
+                   ("Trash", False), ("notas.txt", False)):
+    c(f"es_ruido_del_sistema({nombre!r}) = {es}", model.es_ruido_del_sistema(nombre), es)
 
 # lo que lee el agente: el TOML a pelo, sin lanzar
 RAW = {"name": "a", "local": "a", "remote_path": "/a"}
@@ -173,6 +208,9 @@ c("justo en el tope cabe", huella.de_carpeta(base_grande, tope=12).entradas, 12)
 corta = huella.de_carpeta(base_grande, tope=5)
 c("pasado el tope se corta y dice que no cabe", corta.entradas > 5, True)
 c("  y no se molesta en firmar", corta.firma, 0)
+c("  y lo dice con `cortada`, que una foto entera no lleva",
+  (corta.cortada, huella.de_carpeta(base_grande, tope=12).cortada,
+   huella.de_carpeta(base_grande).cortada), (True, False, False))
 
 # lo que no se puede mirar
 c("una carpeta que no existe no tiene foto", huella.de_carpeta(base / "no-existe"), None)
@@ -220,6 +258,68 @@ try:
 finally:
     os.scandir = real
     os.stat = real_stat
+
+# el ruido que el sistema deja en la raíz de un volumen, y lo que no se deja abrir
+volumen = tmpdir("prdrive-volumen-")
+escribe(volumen / "a.txt", "uno", MTIME)
+escribe(volumen / "System Volume Information" / "x.dat", "no es de nadie", MTIME)
+escribe(volumen / "$RECYCLE.BIN" / "S-1-5-21" / "basura.txt", "tampoco", MTIME)
+escribe(volumen / ".Trash-1000" / "files" / "viejo.txt", "ni esto", MTIME)
+escribe(volumen / "desktop.ini", "[.ShellClassInfo]", MTIME)
+solo_a = tmpdir("prdrive-solo-a-")
+escribe(solo_a / "a.txt", "uno", MTIME)
+sin_ruido = huella.IGNORAR + model.RUIDO_DEL_SISTEMA
+c("con el ruido del sistema fuera, la raíz de un volumen es lo que hay de verdad",
+  huella.de_carpeta(volumen, ignorar=sin_ruido), huella.de_carpeta(solo_a))
+c("  sin decir que se ignore, entra en la foto",
+  huella.de_carpeta(volumen).entradas > huella.de_carpeta(solo_a).entradas, True)
+escribe(volumen / "$Recycle.Bin" / "otro.txt", "otra mayúscula", MTIME)
+c("  el nombre se compara sin mirar mayúsculas ($Recycle.Bin y $RECYCLE.BIN)",
+  huella.de_carpeta(volumen, ignorar=sin_ruido), huella.de_carpeta(solo_a))
+escribe(volumen / "docs" / "System Volume Information" / "mio.txt", "es de la carpeta", MTIME)
+c("  pero solo en la raíz: con ese nombre más adentro es contenido",
+  huella.de_carpeta(volumen, ignorar=sin_ruido) != huella.de_carpeta(solo_a), True)
+
+
+INTENTOS: list[str] = []
+"""Las veces que se intentó abrir el `System Volume Information` de la raíz."""
+
+
+def sin_permiso(ruta, *a, **k):
+    """`scandir` de Windows ante `System Volume Information`: acceso denegado."""
+    if str(ruta) == str(volumen / "System Volume Information"):
+        INTENTOS.append(str(ruta))
+        raise PermissionError(13, "Permission denied")
+    return real(ruta, *a, **k)
+
+
+def raiz_sin_permiso(ruta, *a, **k):
+    """`scandir` de una raíz que no se deja abrir."""
+    if str(ruta) == str(volumen):
+        raise PermissionError(13, "Permission denied")
+    return real(ruta, *a, **k)
+
+
+completa = huella.de_carpeta(volumen)
+os.scandir = sin_permiso
+try:
+    sin_acceso = huella.de_carpeta(volumen)
+    c("una subcarpeta que no se deja abrir (permiso denegado) se salta y la foto sale",
+      sin_acceso is not None, True)
+    c("  cuenta por su nombre y no se mira dentro (le falta su único fichero)",
+      sin_acceso.entradas, completa.entradas - 1)
+    INTENTOS.clear()
+    huella.de_carpeta(volumen, ignorar=sin_ruido)
+    c("  y con el ruido fuera ni se intenta abrir", INTENTOS, [])
+finally:
+    os.scandir = real
+
+os.scandir = raiz_sin_permiso
+try:
+    c("pero si es la propia raíz la que no se deja abrir, no hay foto",
+      huella.de_carpeta(volumen), None)
+finally:
+    os.scandir = real
 
 # ---------------------------------------------------------------------------
 # 3. planificador: las reglas, con un reloj de mentira
@@ -365,7 +465,7 @@ c("de dos parejas con cambios, primero la que antes estuvo lista",
   que(dec(vig2, T0, raices=(DOS,), marcas=marcas2)), ("equipo", "notas"))
 
 # el tope
-grande = pl.Huella(V.tope_entradas + 1, 0)
+grande = pl.Huella(V.tope_entradas + 1, 0, cortada=True)
 v0 = pl.Vigilada(H1, T0 - 60, T0 - 10)
 v1 = pl.observar(v0, grande, T0)
 c("pasar del tope abandona la pareja", v1.abandonada, True)
@@ -377,6 +477,10 @@ c("  nada más la saca de ahí", pl.observar(v1, H1, T0 + 10).abandonada, True)
 c("  y ya no tiene hora por cambios", pl.toca_por_cambios(v1, HECHAS[DOCS]), math.inf)
 c("justo en el tope, no se abandona", pl.observar(v0, pl.Huella(V.tope_entradas, 5), T0)
   .abandonada, False)
+c("una foto cortada abandona aunque su cuenta no pase del tope de las reglas "
+  "(se recorrió con otro tope)", pl.observar(v0, pl.Huella(7, 0, cortada=True), T0).abandonada, True)
+c("una foto entera con más entradas que el tope también",
+  pl.observar(v0, pl.Huella(V.tope_entradas + 1, 99), T0).abandonada, True)
 c("una abandonada no se adelanta: manda el intervalo",
   que(dec({DOCS: v1}, T0 + 3600 * 0.4)), None)
 
@@ -396,6 +500,34 @@ c("si no se pudo tomar la foto de después, la próxima es la de partida",
 c("  y esa no cuenta como cambio", pl.observar(sin_foto, H1, T0 + 10).cambio, None)
 c("una abandonada sigue abandonada tras una pasada",
   pl.tras_pasada(v1, H1, T0 + 20).abandonada, True)
+
+# las fotos fallidas seguidas: sin foto no hay cambio, pero tiene que saberse
+N = V.fotos_fallidas
+c("el valor de fábrica: 3 recorridos sin foto seguidos", N, 3)
+v = pl.Vigilada(H1, None, T0)
+historia = []
+for i in range(1, N + 2):
+    nueva = pl.observar(v, None, T0 + 10 * i)
+    historia.append((nueva.fallidas, pl.se_queda_sin_foto(v, nueva)))
+    v = nueva
+c("cada recorrido sin foto suma uno, y solo el N-ésimo lo dice",
+  historia, [(1, False), (2, False), (3, True), (4, False)])
+c("  sin foto no hay cambio ni se pierde lo sabido", (v.huella, v.cambio), (H1, None))
+vuelta = pl.observar(v, H1, T0 + 100)
+c("la primera foto buena lo pone a cero, y eso también se dice una vez",
+  (vuelta.fallidas, pl.vuelve_a_haber_foto(v, vuelta),
+   pl.vuelve_a_haber_foto(vuelta, pl.observar(vuelta, H1, T0 + 110))), (0, True, False))
+c("una foto buena antes de llegar a N no se dice",
+  pl.vuelve_a_haber_foto(pl.observar(pl.Vigilada(H1), None, T0),
+                         pl.observar(pl.observar(pl.Vigilada(H1), None, T0), H1, T0 + 10)), False)
+c("una pasada no prueba que se pueda mirar: con su foto perdida, la cuenta sigue",
+  pl.tras_pasada(v, None, T0 + 200).fallidas, N + 1)
+c("  y con foto de después, empieza de cero", pl.tras_pasada(v, H3, T0 + 200).fallidas, 0)
+c("una política con otro número manda", pl.se_queda_sin_foto(
+    pl.Vigilada(None, fallidas=1), pl.Vigilada(None, fallidas=2),
+    pl.PoliticaCambios(fotos_fallidas=2)), True)
+c("una abandonada no cuenta fotos fallidas",
+  pl.observar(pl.Vigilada(abandonada=True), None, T0).fallidas, 0)
 
 # a qué parejas toca recorrer
 otra = pl.Raiz("unidad", (pl.Pareja("claves", "otro", vigila=True),), 10 * MIN)

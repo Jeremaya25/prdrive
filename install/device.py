@@ -61,9 +61,8 @@ id={device_id}
 """Contenido del fichero de control; `{device_id}` es el id del dispositivo."""
 
 RUIDO = {
-    "system volume information", "$recycle.bin", "recycler", "lost+found",
-    ".ds_store", ".spotlight-v100", ".fseventsd", ".trashes", "desktop.ini",
-    "autorun.inf", "prdrive.hc", ".prdrive", "veracrypt",
+    *(nombre for nombre in model.RUIDO_DEL_SISTEMA if "*" not in nombre),
+    "prdrive.hc", ".prdrive", "veracrypt",
     "runsync.pyw", "runsync.bat", "runsync.sh", "runsync.ico",
     *(nombre.lower() for nombre in vestibulo.TODOS),
 }
@@ -71,7 +70,9 @@ RUIDO = {
 
 Y no cuenta como «aquí hay cosas de otro».
 
-Se compara con `p.name.lower()`, así que va todo en minúsculas. Olvidar aquí
+Se compara con `p.name.lower()`, así que va todo en minúsculas. Lo del sistema
+sale de `model.RUIDO_DEL_SISTEMA`, la lista que también usa el agente; sus
+patrones (`.Trash-<uid>`) los cubre `es_ruido()`, no este conjunto. Olvidar aquí
 algo que escribe el instalador hace que un dispositivo recién hecho se
 clasifique como AJENO la siguiente vez. El vestíbulo de un dispositivo
 VeraCrypt (`common/vestibulo.py`) sale de sus constantes y no se teclea: son
@@ -82,13 +83,15 @@ seis nombres y crecerán.
 def es_ruido(nombre: str) -> bool:
     """Indica si ese nombre no cuenta como «aquí hay cosas de otro».
 
-    Además de `RUIDO` cuenta el icono de la unidad (`common/autorun.py`), cuyo
-    nombre cambia con el dibujo y no cabe en un conjunto, y lo que deja a
-    medias un intercambio del VeraCrypt de viaje (`.VeraCrypt.viejo-<pid>`,
-    `vestibulo.es_resto_traveler()`), que lleva el pid en el nombre.
+    Además de `RUIDO` cuenta lo del sistema que lleva un dato en el nombre
+    (`.Trash-<uid>`, `model.es_ruido_del_sistema()`), el icono de la unidad
+    (`common/autorun.py`), cuyo nombre cambia con el dibujo y no cabe en un
+    conjunto, y lo que deja a medias un intercambio del VeraCrypt de viaje
+    (`.VeraCrypt.viejo-<pid>`, `vestibulo.es_resto_traveler()`), que lleva el
+    pid en el nombre.
     """
-    return (nombre.lower() in RUIDO or autorun.es_icono(nombre)
-            or vestibulo.es_resto_traveler(nombre))
+    return (nombre.lower() in RUIDO or model.es_ruido_del_sistema(nombre)
+            or autorun.es_icono(nombre) or vestibulo.es_resto_traveler(nombre))
 
 
 # Puntos de montaje donde los escritorios de Linux y macOS cuelgan los
