@@ -227,6 +227,70 @@ class Plan:
         return lineas
 
 
+def _cuenta(n: int, uno: str, varios: str) -> str:
+    """Devuelve `n` con su sustantivo en singular o plural: «1 lanzador», «2 lanzadores»."""
+    return f"{n} {uno if n == 1 else varios}"
+
+
+def _lista(partes: list[str]) -> str:
+    """Une las partes como en español: «a, b y c»."""
+    if len(partes) < 2:
+        return "".join(partes)
+    return ", ".join(partes[:-1]) + " y " + partes[-1]
+
+
+@dataclass(frozen=True)
+class Hecho:
+    """Lo que ha escrito y borrado «Añadir plataformas…», contado por partes.
+
+    Es más que la lista de plataformas: esa pantalla también rehace los
+    lanzadores, la entrada de fuera del contenedor y el VeraCrypt que viaja, y
+    decir solo cuántas piezas de rclone y Python se pusieron parecía no haber
+    hecho nada más (un «Hecho: 1 elementos puestos» tras escribir seis ficheros
+    de la entrada).
+
+    Args:
+        puestos: Piezas de rclone y de Python copiadas al dispositivo.
+        borrados: Elementos quitados de las plataformas desmarcadas.
+        lanzadores: Lanzadores de dentro reescritos.
+        entrada: Ficheros de la entrada de fuera del contenedor reescritos.
+        veracrypt: Ficheros del VeraCrypt que viaja puestos en la unidad.
+    """
+    puestos: int = 0
+    borrados: int = 0
+    lanzadores: int = 0
+    entrada: int = 0
+    veracrypt: int = 0
+
+    def texto(self) -> str:
+        """Devuelve la frase que cuenta lo hecho, con cada cosa en su plural.
+
+        Returns:
+            «Hecho. Puesto: …» con lo escrito y, si se quitó algo, «Borrado: …».
+            Sin nada que contar, «Hecho. No había nada que cambiar.».
+        """
+        puesto = []
+        if self.puestos:
+            puesto.append(_cuenta(self.puestos, "pieza de rclone o Python",
+                                  "piezas de rclone o Python"))
+        if self.veracrypt:
+            puesto.append("VeraCrypt (" + _cuenta(self.veracrypt, "fichero", "ficheros")
+                          + ")")
+        if self.lanzadores:
+            puesto.append(_cuenta(self.lanzadores, "lanzador", "lanzadores"))
+        if self.entrada:
+            puesto.append("la entrada de fuera del contenedor ("
+                          + _cuenta(self.entrada, "fichero", "ficheros") + ")")
+        frases = ["Hecho."]
+        if puesto:
+            frases.append(f"Puesto: {_lista(puesto)}.")
+        if self.borrados:
+            frases.append("Borrado: " + _cuenta(self.borrados, "elemento", "elementos") + ".")
+        if len(frases) == 1:
+            frases.append("No había nada que cambiar.")
+        return " ".join(frases)
+
+
 @dataclass
 class Matriz:
     """Lo marcado en la lista y lo que el dispositivo ya lleva.

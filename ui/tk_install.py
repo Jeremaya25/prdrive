@@ -1413,8 +1413,7 @@ def _paso_plataformas(cuerpo, wiz) -> None:
             # que existe para ponérsela sin reinstalar.
             fisica = vestibulo.destino(wiz.state)
             ident = device.control_id(raiz) if fisica is not None else None
-            if ident:
-                lanzadores += vestibulo.escribir(fisica, ident)
+            entrada = vestibulo.escribir(fisica, ident) if ident else []
             # Y el VeraCrypt que viaja, si lleva uno: el vestíbulo que se acaba
             # de escribir sabe abrir el portable y la copia de antes, así que
             # primero él y después la carpeta, y los dos quedan coherentes pase
@@ -1422,14 +1421,18 @@ def _paso_plataformas(cuerpo, wiz) -> None:
             # SIN sello: `--update-components` no lo toca
             # (`install/components.py`).
             nota = ""
+            viajero: list = []
             if fisica is not None and traveler.lleva(fisica):
                 try:
                     puesto = traveler.llevar(wiz.state.veracrypt, fisica)
-                    nuevos += puesto.ficheros
+                    viajero = puesto.ficheros
                     nota = puesto.aviso
                 except InstallError as e:
                     nota = f"El VeraCrypt de la unidad se queda como estaba: {e}"
-            return nuevos, borrados, lanzadores, nota
+            hecho = platforms.Hecho(puestos=len(nuevos), borrados=len(borrados),
+                                    lanzadores=len(lanzadores), entrada=len(entrada),
+                                    veracrypt=len(viajero))
+            return hecho, nota
 
         ok, res = working(wiz.root, "plataformas", trabajo,
                           "Descargando y copiando rclone y Python.")
@@ -1439,13 +1442,11 @@ def _paso_plataformas(cuerpo, wiz) -> None:
             wiz.revisar()           # lo mismo que en «Instalación» (#49)
             wiz.visor.ver(boton)
             return
-        nuevos, borrados, _, nota = res
+        hecho, nota = res
         wiz.rehacer_matriz(raiz)
         refrescar_lista()
         estado_lbl.configure(
-            text=(f"Hecho: {len(nuevos)} elementos puestos"
-                  + (f", {len(borrados)} borrados" if borrados else "")
-                  + ". Ya puedes cerrar." + (f"\n\n{nota}" if nota else "")),
+            text=(f"{hecho.texto()} Ya puedes cerrar." + (f"\n\n{nota}" if nota else "")),
             foreground=theme.AVISO if nota else theme.OK)
         wiz.revisar()
 

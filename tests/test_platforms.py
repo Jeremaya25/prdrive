@@ -182,4 +182,30 @@ ya = platforms.Matriz.para(raiz, anfitrion=WIN)
 c("lo que ya lleva no cuenta como nuevo: solo falta el Python de Linux x64",
   ya.nuevo_mb(), LIN.mb_python)
 
+# lo que se cuenta tras «Añadir plataformas…» (L2 en
+# docs/superpowers/pruebas/…-resultados.md, #41): también escribe lanzadores y la
+# entrada de fuera, y decía «Hecho: 1 elementos puestos» tras escribir seis
+# ficheros de esa entrada.
+Hecho = platforms.Hecho
+c("una pieza, los dos lanzadores y la entrada de seis ficheros (el caso visto)",
+  Hecho(puestos=1, lanzadores=2, entrada=6).texto(),
+  "Hecho. Puesto: 1 pieza de rclone o Python, 2 lanzadores y la entrada de fuera "
+  "del contenedor (6 ficheros).")
+c("en singular no dice «1 elementos»",
+  "1 elementos" in Hecho(puestos=1, borrados=1).texto(), False)
+c("ni «1 piezas» ni «1 ficheros»", any(f"1 {mal}" in Hecho(
+    puestos=1, lanzadores=1, entrada=1, veracrypt=1).texto()
+    for mal in ("piezas", "lanzadores", "ficheros", "elementos")), False)
+c("todo en singular",
+  Hecho(puestos=1, lanzadores=1, entrada=1, veracrypt=1, borrados=1).texto(),
+  "Hecho. Puesto: 1 pieza de rclone o Python, VeraCrypt (1 fichero), 1 lanzador y "
+  "la entrada de fuera del contenedor (1 fichero). Borrado: 1 elemento.")
+c("en plural, con cada cosa en su sitio",
+  Hecho(puestos=4, lanzadores=3, veracrypt=5, borrados=2).texto(),
+  "Hecho. Puesto: 4 piezas de rclone o Python, VeraCrypt (5 ficheros) y 3 "
+  "lanzadores. Borrado: 2 elementos.")
+c("una sola cosa, sin «y»", Hecho(lanzadores=2).texto(), "Hecho. Puesto: 2 lanzadores.")
+c("solo borrar", Hecho(borrados=3).texto(), "Hecho. Borrado: 3 elementos.")
+c("sin nada que contar, lo dice", Hecho().texto(), "Hecho. No había nada que cambiar.")
+
 sys.exit(c.report())

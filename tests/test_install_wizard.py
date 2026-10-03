@@ -794,6 +794,23 @@ c("y con los lanzadores de una completa", (limpio / "runsync.bat").is_file()
   and (limpio / "runsync.sh").is_file(), True)
 c("sin contenedor, tampoco aquí hay vestíbulo", (limpio / vest.MARCA).exists(), False)
 
+
+def lo_dicho(wiz) -> str:
+    """Devuelve los textos de las etiquetas del paso, juntos."""
+    return " ".join(str(w.cget("text")) for w in widgets(wiz.cuerpo, ttk.Label))
+
+
+# Lo que cuenta al terminar es todo lo escrito (L2, #41): los dos lanzadores
+# también, y sin contenedor no hay entrada de fuera de la que hablar.
+dicho = lo_dicho(mas)
+c.contains("dice cuántas piezas de rclone y Python se pusieron", dicho,
+           "de rclone o Python")
+c.contains("cuenta también los dos lanzadores", dicho, "2 lanzadores")
+c("y sin contenedor no habla de una entrada de fuera",
+  "la entrada de fuera" in dicho, False)
+c("nunca «elementos puestos», que contaba solo las piezas", "elementos puestos" in dicho,
+  False)
+
 # Un dispositivo VeraCrypt de antes no tiene vestíbulo, y este es el camino para
 # ponérselo sin reinstalar: el mismo que ya existe para los lanzadores. Se
 # simula quitándoselo al que se acaba de hacer con contenedor.
@@ -809,6 +826,10 @@ boton(viejo_vc.cuerpo, "Añadir plataformas…").invoke()
 boton(viejo_vc.cuerpo, "Aplicar").invoke()
 c("«Añadir plataformas…» le pone el vestíbulo a un dispositivo VeraCrypt de antes",
   all((fisica / n).is_file() for n in vest.TODOS), True)
+dicho = lo_dicho(viejo_vc)
+c.contains("y lo cuenta: los seis ficheros de la entrada", dicho,
+           f"la entrada de fuera del contenedor ({len(vest.TODOS)} ficheros)")
+c.contains("junto a los lanzadores de dentro", dicho, "2 lanzadores")
 c("con su id de siempre", vest.leer_id(fisica), device.control_id(montado))
 
 # Un dispositivo VeraCrypt de antes lleva además, en VeraCrypt\, la copia de una
