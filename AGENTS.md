@@ -49,6 +49,7 @@ prdrive/               (the checkout; on a provisioned device it is `.prdrive/`)
 │   ├── planificador.py the agent's scheduler: PURE (data in, decision out)
 │   ├── equipo.py      the agent's host dir: agente.json, instalacion.json, buzón
 │   ├── moderacion.py  battery, metered network, "is this failure the network?"
+│   ├── red.py         "the network is back": netlink, NetworkManager, Windows' hint
 │   ├── dbus.py        a stdlib D-Bus client (the calling half)
 │   ├── avisos.py      native notifications, no Tk
 │   └── store.py       device JSON state + pid_alive(); atomic writes; hide()
@@ -1368,6 +1369,48 @@ whatever you build that only a real host can prove.
   wrong). Network needles live in `moderacion.ERRORES_DE_RED`, and
   `sync.KNOWN_ERRORS` uses `moderacion.es_de_red` as a **callable needle** —
   one list, because the agent doesn't carry `sync.py`.
+- **An offline remote is probed when the network comes back (#67)**, not on a
+  blind timer. `common/red.py` (`AvisosDeRed`; Tk-free, its own thread on
+  Linux, none on Windows, and **independent of the tray**: `agente.poner_red()`,
+  an indirection point) hears the system and each notice becomes a
+  `PIDE_CAMBIO_DE_RED` in the agent's queue. Cite the APIs like `common/dbus.py`
+  cites its spec. The sources:
+  - **Windows**: `NotifyNetworkConnectivityHintChange` (iphlpapi, netioapi.h;
+    **Windows 10 2004, build 19041, or later** — an older one lacks the export,
+    `AttributeError`, no notices), with `NL_NETWORK_CONNECTIVITY_HINT` **by
+    value** in the ctypes callback, notifying on the levels that mean some
+    network (`NIVELES_CON_RED`: local, internet, captive portal). Cancelled with
+    `CancelMibChangeNotify2` from the agent thread, never from the callback (its
+    docs: deadlock); `ApiWindows` keeps the `WINFUNCTYPE` alive until then.
+  - **Linux, rtnetlink** (`RTMGRP_IPV4_IFADDR | RTMGRP_IPV6_IFADDR`, no
+    privileges): `Direcciones` dumps the address list first (silent) and then
+    notifies only for a **new** global, non-tentative address — a network back,
+    a VPN interface up, a cable plugged. A DHCP/RA renewal repeats a known
+    address and says nothing. Kernel-level, so it works without NetworkManager
+    (networkd, ifupdown, iwd…): no networkd-specific source is needed.
+  - **Linux, NetworkManager** on the system bus: `StateChanged(u)` into 50/60/70
+    (`NM_CONECTADO`, `NMState`) — it sees a captive portal letting through
+    (SITE → GLOBAL) with no address change. `NameOwnerChanged` tracks it going
+    and coming back; without it, netlink stays.
+  - **The burst is coalesced in the planner** (`pl.CambioDeRed`,
+    `cambia_la_red()`, `red_asentada()`): one probe per offline remote
+    `ASENTAR_RED` (5 s) after the last notice, at most `TOPE_RAFAGA_RED` (30 s)
+    after the first, and **not while a task is in flight** — a failing probe
+    would push its next one to the fallback and swallow the notice. A burst
+    with no offline remote is dropped silently. `pl.sondear_ya()` is the one
+    «probe now» for this, «Probar ahora» and `despertar`.
+  - **The timer stays, as the fallback**: `pl.sondeo(politica, avisa_la_red)` is
+    `Politica.sondeo_de_respaldo` (30 min, the service's default interval) while
+    a source is `activa`, `sondeo_sin_conexion` (5 min, as before) otherwise.
+    The trade-off, said out loud: what no notice sees waits up to 30 min — the
+    remote coming back with nothing changed on this host (the NAS powered on),
+    a VPN on Windows that leaves the connectivity level as it was, a captive
+    portal on Linux without NetworkManager, or a source that subscribed fine and
+    never fires. «Probar ahora» in the tray is the shortcut.
+  - `agente.log` says at start what is heard; `estado.json` carries
+    `cambios_de_red` and `agente.py status` prints it. Unverified on real
+    hardware (N1–N8 in the checklist); the rtnetlink half was seen against this
+    machine's real kernel only (a new address notifies, a renewal does not).
 - **Notifications only when a pair STARTS failing** (`planificador.empieza_a_fallar`)
   or a remote goes offline — `common/avisos.py` (D-Bus `Notify`; Windows
   `Shell_NotifyIconW` NIF_INFO on a temporary message-only window, **unverified
@@ -2127,7 +2170,9 @@ keeps the target's existing header.
   `install.pintar_iconos`, `install.agente.matar_arbol()` / `conseguir_rclone()` /
   `conseguir_veracrypt()`, `agente.rclone_propio()` / `veracrypt_propio()` /
   `procesos()`, `raiz_equipo.veracrypt_portatil()`,
-  the Linux tray's `conectar` / `conectar_sistema`, and `equipo.DIR`. Keep new
+  the Linux tray's `conectar` / `conectar_sistema`, `agente.poner_red()` and
+  `red.AvisosDeRed`'s `api` (`red.ApiWindows`) / `conectar_sistema` /
+  `conectar_netlink`, and `equipo.DIR`. Keep new
   ones in that shape.
 
 ## Documentation

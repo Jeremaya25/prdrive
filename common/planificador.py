@@ -18,8 +18,11 @@ Las reglas, en el orden en que se aplican:
 - Moderarse: en pausa, con la batería por debajo del mínimo o en una red de uso
   medido (si la política lo dice) no se lanza nada.
 - Sin conexión: lo que va a un remoto que ha fallado por red no se lanza pareja
-  tras pareja para que falle igual; se sondea ese remoto de vez en cuando
-  (`Tarea` de tipo `SONDA`) y, cuando contesta, sus parejas vuelven.
+  tras pareja para que falle igual; se sondea ese remoto (`Tarea` de tipo
+  `SONDA`) y, cuando contesta, sus parejas vuelven. Se sondea cuando el sistema
+  dice que la red ha cambiado (`common/red.py`), una vez por ráfaga de avisos
+  (`CambioDeRed`), y si no, de tarde en tarde (`sondeo()`): cada 5 min donde
+  no hay avisos, cada 30 donde los hay y el temporizador solo es el respaldo.
 - Espera creciente por pareja: `intervalo · 2^k` tras k fallos seguidos, con
   tope de 4 h, y a cero tras una pasada buena.
 - Una raíz bloqueada, ausente, en pausa o apartada simplemente no está: no es
@@ -67,7 +70,14 @@ class Politica:
         bateria_minima: Porcentaje por debajo del cual se para.
         pausar_red_medida: Si se pausa en una red de uso medido.
         tope_espera: Segundos máximos de espera tras fallos seguidos.
-        sondeo_sin_conexion: Segundos entre sondas de un remoto sin conexión.
+        sondeo_sin_conexion: Segundos entre sondas de un remoto sin conexión
+            cuando el sistema no avisa de los cambios de red.
+        sondeo_de_respaldo: Segundos entre sondas de un remoto sin conexión
+            cuando el sistema sí avisa (`common/red.py`): la sonda va con cada
+            cambio de red y el temporizador solo cubre lo que el aviso no ve,
+            sobre todo el remoto que vuelve sin que cambie nada en este equipo
+            (el NAS que se enciende). Es el intervalo de fábrica del servicio:
+            ese remoto se nota, como mucho, una pasada normal más tarde.
         mirar_maximo: Cada cuánto se vuelve a mirar como mucho, aunque nada
             toque: el entorno (batería, red) se lee de nuevo en cada vuelta y
             puede haber cambiado.
@@ -79,6 +89,7 @@ class Politica:
     pausar_red_medida: bool = True
     tope_espera: float = 4 * HORA
     sondeo_sin_conexion: float = 5 * 60.0
+    sondeo_de_respaldo: float = 30 * 60.0
     mirar_maximo: float = 60.0
     mirar_ocupado: float = 2.0
 
@@ -307,7 +318,7 @@ def sin_conexion(entorno: Entorno, raiz: str, remoto: str,
 
     Tras la primera pasada que falla por red la sonda va enseguida: si el
     remoto contesta, aquel fallo no era de la red (ver `agente.py`). Una sonda
-    que falla pone la siguiente a `Politica.sondeo_sin_conexion`.
+    que falla pone la siguiente a lo que diga `sondeo()`.
 
     Args:
         proxima_sonda: Cuándo toca sondarlo.
@@ -321,6 +332,86 @@ def con_conexion(entorno: Entorno, raiz: str, remoto: str) -> Entorno:
     """Devuelve el entorno con ese remoto otra vez disponible."""
     nuevo = {k: v for k, v in entorno.sin_conexion.items() if k != (raiz, remoto)}
     return replace(entorno, sin_conexion=nuevo)
+
+
+def sondear_ya(entorno: Entorno, ahora: float) -> Entorno:
+    """Devuelve el entorno con la sonda de cada remoto sin conexión adelantada a ahora.
+
+    Es lo que piden «Probar ahora», la vuelta de la suspensión y una ráfaga de
+    cambios de red ya asentada. La que ya tocaba antes se queda como estaba.
+    """
+    return replace(entorno, sin_conexion={k: min(v, ahora)
+                                          for k, v in entorno.sin_conexion.items()})
+
+
+def sondeo(politica: Politica, avisa_la_red: bool) -> float:
+    """Devuelve cuánto esperar a la siguiente sonda de un remoto que no contesta.
+
+    Args:
+        politica: La moderación.
+        avisa_la_red: Si el sistema dice ahora al agente cuándo cambia la red
+            (`common/red.py`). Entonces la sonda va con el aviso y esto es
+            solo el respaldo.
+    """
+    return politica.sondeo_de_respaldo if avisa_la_red else politica.sondeo_sin_conexion
+
+
+ASENTAR_RED = 5.0
+"""Segundos sin otro aviso de cambio de red antes de sondear.
+
+Una red que vuelve avisa varias veces seguidas (cada interfaz, cada dirección,
+la comprobación de conectividad): se sondea cuando se calma, una vez por
+ráfaga, y para entonces el DHCP y el DNS ya han terminado.
+"""
+TOPE_RAFAGA_RED = 30.0
+"""Segundos como mucho entre el primer aviso de una ráfaga y su sonda.
+
+Una red que no para de cambiar (un Wi-Fi que cae y sube) no la aplaza siempre.
+"""
+
+
+@dataclass(frozen=True)
+class CambioDeRed:
+    """Una ráfaga de avisos de «la red ha cambiado» que todavía no se ha sondeado.
+
+    Args:
+        primero: Cuándo llegó el primer aviso de la ráfaga.
+        ultimo: Cuándo llegó el último.
+    """
+    primero: float
+    ultimo: float
+
+    @property
+    def sondear_en(self) -> float:
+        """Devuelve cuándo toca sondear: asentada la ráfaga, o a su tope."""
+        return min(self.ultimo + ASENTAR_RED, self.primero + TOPE_RAFAGA_RED)
+
+
+def cambia_la_red(rafaga: CambioDeRed | None, ahora: float) -> CambioDeRed:
+    """Devuelve la ráfaga con un aviso más de que la red ha cambiado.
+
+    Args:
+        rafaga: La ráfaga que está en curso, o `None` si no hay ninguna.
+        ahora: Cuándo llega el aviso.
+    """
+    if rafaga is None:
+        return CambioDeRed(ahora, ahora)
+    return replace(rafaga, ultimo=max(rafaga.ultimo, ahora))
+
+
+def red_asentada(rafaga: CambioDeRed | None, ahora: float, ocupado: bool) -> bool:
+    """Indica si toca ya sondear los remotos sin conexión por esa ráfaga.
+
+    Con una tarea en marcha se espera a que acabe: si fuera la sonda de un
+    remoto sin conexión y fallara, apuntaría su siguiente sonda a la hora de
+    `sondeo()` y el aviso de la red, que llegó mientras, se perdería.
+
+    Args:
+        rafaga: La ráfaga en curso, o `None`.
+        ahora: La hora.
+        ocupado: Si hay una pasada o una sonda en marcha.
+    """
+    return rafaga is not None and not ocupado and ahora >= rafaga.sondear_en
 
 
 ATENDER = "atender"

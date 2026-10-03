@@ -43,7 +43,7 @@ Equipos que hacen falta:
 | A7 | L | Lo mismo que A6 en KDE y en GNOME. | Aviso por `org.freedesktop.Notifications.Notify`, con el icono. Sin sesión D-Bus, solo en `agente.log`. | `common/dbus.py`, `common/avisos.py` |
 | A8 | W | Portátil a batería, por debajo del 20 %. Después, una red Wi-Fi marcada como «de uso medido». | `agente.py status` dice «batería por debajo del 20 %» / «red de uso medido» y no lanza nada. «Sincronizar ahora» (`agente.py pasada ID`) sí lanza. | `moderacion._energia_windows()`, `_medida_windows()` (`INetworkCostManager` por vtabla) |
 | A9 | L | Lo mismo que A8, con NetworkManager marcando la red como medida (`nmcli connection modify … connection.metered yes`). | Igual que A8. | `moderacion._energia_linux()`, `_medida_linux()` |
-| A10 | W, L | Desconectar la red con una pareja en marcha. | Un aviso «sin conexión con …»; ya no se lanzan las parejas una a una, sino una sonda cada 5 min. Al volver la red, sigue sola. | `Agente._fin_de_sonda()` |
+| A10 | W, L | Desconectar la red con una pareja en marcha. | Un aviso «sin conexión con …»; ya no se lanzan las parejas una a una, sino una sonda cuando vuelve la red (N1–N8) y, si no, cada 30 min (cada 5 donde no se oyen los cambios de red). Al volver la red, sigue sola. | `Agente._fin_de_sonda()`, `pl.sondeo()` |
 | A11 | L | Enchufar una unidad y medir cuánto tarda en verla. | Unos segundos, no los 30 del respaldo: `POLLPRI` de `/proc/self/mountinfo`. | `agente.Vigia` |
 | A12 | W, L | Con la unidad atendida, abrir su ventana (`runsync.py`) desde la unidad. | El agente se pausa (`status`: «en pausa: hay una ventana…»). Al cerrarla, vuelve a atenderla. «Iniciar servicio» en la ventana: ver V1 y V2 (fase 5). | contrato de la sección 3, `Agente._contrato()` |
 | A13 | W | Unidad VeraCrypt de la lista, enchufada cerrada. | VeraCrypt pide la contraseña **una** vez por conexión. Tras «Expulsar» con la unidad puesta no la vuelve a pedir. | `Agente._vestibulos()`, `penwatch.open_container()` |
@@ -115,7 +115,7 @@ prueba.
 | B7 | W | Enchufar una unidad que no está en la lista y dejar pasar la pregunta. | La entrada «PRDRIVE-2, conectada · Atender…» la añade a la lista y la atiende. Nunca sale «Abrir» para ella antes del sí. | `bandeja._unidades()`, `PIDE_ATENDER` |
 | B8 | W | Raíz cifrada: «Desbloquear…», «Bloquear», la casilla «Pedir la contraseña al iniciar sesión», y «Abrir …» con la raíz bloqueada. | Como C4–C9, desde el menú. «Abrir» con ella bloqueada pide la contraseña y abre la ventana sola al montarse. Cancelar la contraseña: a los ~20 s vuelve a ofrecer «Desbloquear…». La casilla cambia `agente.json` (lo escribe el agente). | `Agente._abrir()`, `_desbloquear(abrir=)`, `_seguir_desbloqueos()`, `PIDE_AJUSTE` |
 | B9 | W | Un aviso (una pareja que empieza a fallar, una unidad nueva). | Sale como notificación del sistema **colgada del icono de la bandeja** (sin el icono de paso que aparece y desaparece), con el título y el texto; de aviso si es urgente. | `Bandeja.globo()`, `avisos.GLOBO`, `NIF_INFO` |
-| B10 | W | Suspender y volver, con un remoto «sin conexión» (red caída antes de suspender, y de vuelta al despertar). | Al volver se sondea el remoto enseguida y se lee la batería y la red, sin esperar los 5 min del sondeo. | `WM_POWERBROADCAST` / `PBT_APMRESUMEAUTOMATIC`, `PIDE_DESPERTAR` |
+| B10 | W | Suspender y volver, con un remoto «sin conexión» (red caída antes de suspender, y de vuelta al despertar). | Al volver se sondea el remoto enseguida y se lee la batería y la red, sin esperar al sondeo de respaldo. | `WM_POWERBROADCAST` / `PBT_APMRESUMEAUTOMATIC`, `PIDE_DESPERTAR` |
 | B11 | W | Cerrar sesión y volver a entrar; y `agente.py parar`. | No queda un icono huérfano en la bandeja (`NIM_DELETE` al cerrar); si queda por un cierre a la fuerza, desaparece al pasar el ratón. | `Bandeja.cerrar()`, `WM_DESTROY` |
 | B12 | WA | B1, B3 y B6 en Windows ARM64 con el runtime ARM64. | Lo mismo. | ctypes en ARM64 |
 
@@ -179,6 +179,29 @@ anfitrión).
 | T10 | K, U | Suspender y volver con un remoto sin conexión (B10). | Al volver, el diario muestra el sondeo enseguida (`PrepareForSleep(false)` de logind en el bus del sistema). | `REGLA_SUSPENDER`, `PIDE_DESPERTAR` |
 | T11 | K, U | Enchufar y quitar una unidad con la bandeja puesta. | Igual de rápido que sin ella: en Linux los montajes siguen llegando por `mountinfo`, no por la bandeja. | `Vigia` |
 | T12 | K | Cerrar sesión y volver a entrar; `agente.py parar`. | No queda un icono huérfano: al irse el agente, el watcher lo quita al perder su nombre el dueño. | `Bandeja.cerrar()` |
+
+## Los avisos de que vuelve la red (#67)
+
+Con un remoto «sin conexión», el agente ya no lo sondea cada 5 min: lo sondea
+cuando el sistema dice que vuelve a haber red (`common/red.py`), una vez por
+ráfaga de avisos, y si no, cada 30 min. Nada de esto ha visto una red de verdad
+salvo una cosa: en Linux, con el núcleo de una máquina de pruebas, añadir una
+dirección global avisa, quitarla no, y volver a añadirla avisa otra vez. Lo
+demás (la llamada de Windows, NetworkManager de verdad, una VPN, un portal
+cautivo, la suspensión) solo ha hablado con fuentes de mentira. En cada prueba
+mirar `agente.log` (al arrancar dice qué oye) y `agente.py status` (la línea
+«Cambios de red»).
+
+| Código | Dónde | Qué hacer | Qué se espera | Código a prueba |
+|---|---|---|---|---|
+| N1 | W | Con un remoto «sin conexión» (cortar el Wi-Fi a mitad de una pasada), volver a conectar el Wi-Fi. | Al arrancar, «oigo los cambios de red (NotifyNetworkConnectivityHintChange)». Al volver la red, en unos segundos, UNA línea «la red ha cambiado: se prueban ya los remotos sin conexión», la sonda y «vuelve la conexión con …»; la pareja sigue sola. | `red.ApiWindows` (la estructura `NL_NETWORK_CONNECTIVITY_HINT` va por valor en la llamada de ctypes: si el nivel sale mal o el agente cae al cambiar la red, es eso), `pl.CambioDeRed` |
+| N2 | W, L | Con el remoto sin conexión y SIN tocar la red, esperar 10 min mirando `agente.log` y los procesos. | Ninguna sonda (`rclone lsd`) entre medias: la siguiente, a los 30 min del último intento. | `pl.sondeo()`, `Politica.sondeo_de_respaldo` |
+| N3 | W, L | Que la red caiga y vuelva varias veces seguidas: desactivar y activar el adaptador tres veces en 20 s, o reiniciar el router. | Una sonda por ráfaga, no una por aviso: la línea «la red ha cambiado…» una vez, unos 5 s después del último aviso (30 s como mucho desde el primero). | `ASENTAR_RED`, `TOPE_RAFAGA_RED`, `red_asentada()` |
+| N4 | L | N1 en KDE y en GNOME con NetworkManager (`nmcli radio wifi off`, luego `on`); y en un equipo sin NetworkManager (systemd-networkd o iwd). | Con NetworkManager, «oigo los cambios de red (netlink y NetworkManager)»; sin él, «(netlink)», y la red que vuelve se oye igual (una dirección nueva). Un DHCP que solo renueva no lanza nada. | `red.Direcciones`, `abrir_netlink()`, `REGLA_NM_ESTADO` |
+| N5 | W, L | Un remoto solo accesible por VPN (WireGuard u OpenVPN): con él sin conexión, levantar la VPN. | Linux: la dirección de la interfaz de la VPN avisa y la sonda va en segundos. Windows: depende de si la VPN cambia el nivel de conectividad; si no avisa, la sonda llega con el respaldo de 30 min o con «Probar ahora». Apuntar lo que pase. | `Direcciones`, `NIVELES_CON_RED` |
+| N6 | W, L | Un portal cautivo (hotel, tren): conectarse, ver el remoto sin conexión, pasar el portal. | Linux con NetworkManager (y su comprobación de conectividad): de `CONNECTED_SITE` a `CONNECTED_GLOBAL` avisa y la sonda va. Windows: de `ConstrainedInternetAccess` a `InternetAccess` avisa. | `NM_CONECTADO`, `NIVELES_CON_RED` |
+| N7 | W, L | Suspender con el remoto sin conexión y volver en otra red (con B10 / T10). | Al volver, `despertar` sondea enseguida (quizá sin red todavía, y falla) y, cuando la red llega, el aviso sondea otra vez: no se queda esperando 30 min. | `PIDE_DESPERTAR`, `PIDE_CAMBIO_DE_RED`, `red_asentada()` |
+| N8 | W, L | `agente.py parar` y «Cerrar el agente» con el agente oyendo la red; y, si hay uno a mano, un Windows 10 anterior a la 2004. | Se va sin colgarse (`CancelMibChangeNotify2` desde el hilo del agente, nunca desde la llamada; en Linux el hilo «red» acaba). En el Windows viejo: «no oigo los cambios de red: … cada 5 min» y todo lo demás igual. | `AvisosDeRed.cerrar()`, `ApiWindows.cancelar()` |
 
 ## Tras la revisión del PR #54
 

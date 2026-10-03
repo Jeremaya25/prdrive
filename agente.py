@@ -43,7 +43,9 @@ Cómo trabaja, vuelta a vuelta (`Agente.vuelta()`):
   otro servicio vivo tiene el lock. Un servicio por raíz: el que tenga el lock.
 - **Planifica** con `common/planificador.py`, que es puro: una sola pasada a la
   vez en todo el equipo, espera creciente tras un fallo, batería, red de uso
-  medido, remotos sin conexión, «Sincronizar ahora».
+  medido, remotos sin conexión, «Sincronizar ahora». Un remoto sin conexión se
+  sondea cuando el sistema dice que vuelve a haber red (`common/red.py`), una
+  vez por ráfaga de avisos, y si no, cada 5 min (cada 30 si hay avisos).
 - **Ejecuta** cada pasada como el `sync.py` de esa raíz, hijo, con el Python
   del agente y el directorio de trabajo fuera de la raíz: cada raíz ejecuta su
   propio código, un rclone colgado no tumba al agente y entre pasadas no queda
@@ -875,6 +877,11 @@ class Agente:
         version_mirada: Cuándo se miró.
         nueva_avisada: La que ya se avisó.
         actualizando: El `agente.py actualizar` en marcha.
+        avisos_de_red: Lo que oye los cambios de red (`red.AvisosDeRed`), si
+            lo hay: con él, un remoto sin conexión se sondea cuando vuelve la
+            red y el temporizador es solo el respaldo largo.
+        cambio_de_red: La ráfaga de avisos de red que todavía no se ha
+            sondeado (`pl.CambioDeRed`).
     """
     reloj: Any = time.time
     ajustes: equipo.Ajustes = field(default_factory=equipo.leer_ajustes)
@@ -914,6 +921,8 @@ class Agente:
     version_mirada: float = -math.inf
     nueva_avisada: str | None = None
     actualizando: Any = None
+    avisos_de_red: Any = None
+    cambio_de_red: pl.CambioDeRed | None = None
 
     def vuelta(self, recorrer: bool = True) -> pl.Decision | None:
         """Hace una vuelta del agente y devuelve lo que decidió lanzar, si algo.
@@ -940,6 +949,7 @@ class Agente:
                 self._desconectar(con.id, ahora, {})
         self._preguntas(ahora)
         self._fin_de_pasada(ahora)
+        self._cambios_de_red(ahora)
         self._buzones_de_raices(ahora)
         self._bloqueos(ahora)
         for con in self.conexiones.values():
@@ -1741,12 +1751,32 @@ class Agente:
                 self.sin_red_avisado.discard(clave)
                 diario(f"[{con.nombre}] vuelve la conexión con {remoto}")
             return
-        self.entorno = pl.sin_conexion(self.entorno, con.id, remoto,
-                                       ahora + self.ajustes.politica.sondeo_sin_conexion)
+        self.entorno = pl.sin_conexion(
+            self.entorno, con.id, remoto,
+            ahora + pl.sondeo(self.ajustes.politica, self.avisa_la_red()))
         if clave not in self.sin_red_avisado:
             self.sin_red_avisado.add(clave)
             avisar(f"{con.nombre}: sin conexión con {remoto}",
                    "Sus parejas esperan a que vuelva la red; no hace falta hacer nada.")
+
+    def avisa_la_red(self) -> bool:
+        """Indica si el sistema le dice ahora al agente cuándo vuelve la red."""
+        return bool(self.avisos_de_red is not None
+                    and getattr(self.avisos_de_red, "activa", False))
+
+    def _cambios_de_red(self, ahora: float) -> None:
+        """Sondea los remotos sin conexión cuando se calma una ráfaga de avisos de red.
+
+        Una sonda por remoto y por ráfaga (`pl.red_asentada()`); con una tarea
+        en marcha espera a que acabe. Si no hay ningún remoto sin conexión, la
+        ráfaga se olvida sin más.
+        """
+        if not pl.red_asentada(self.cambio_de_red, ahora, self.pasada is not None):
+            return
+        self.cambio_de_red = None
+        if self.entorno.sin_conexion:
+            self.entorno = pl.sondear_ya(self.entorno, ahora)
+            diario("la red ha cambiado: se prueban ya los remotos sin conexión")
 
     def _donde_mirar(self, con: Conexion) -> str:
         """Devuelve dónde mirar para ver qué ha pasado.
@@ -2064,8 +2094,9 @@ class Agente:
 
         Cada petición es un `equipo.PIDE_*`: reanudar el servicio de una raíz,
         atender o poner modo a una unidad, añadir una raíz, desbloquear,
-        bloquear o abrir una raíz cifrada, despertar, sondear, cambiar un
-        ajuste, una pasada urgente, actualizar, pausa, sigue y parar.
+        bloquear o abrir una raíz cifrada, despertar, sondear, un cambio de
+        red, cambiar un ajuste, una pasada urgente, actualizar, pausa, sigue y
+        parar.
 
         Args:
             p: La petición.
@@ -2150,8 +2181,7 @@ class Agente:
             # Vuelta de la suspensión: la batería y la red pueden ser otras y
             # un remoto «sin conexión» quizá ya contesta. Se mira todo ya.
             self.entorno_leido = -math.inf
-            self.entorno = replace(self.entorno, sin_conexion={
-                k: min(v, ahora) for k, v in self.entorno.sin_conexion.items()})
+            self.entorno = pl.sondear_ya(self.entorno, ahora)
             self.rafaga_hasta = max(self.rafaga_hasta, ahora + RAFAGA)
             # Windows manda dos eventos de reanudación seguidos (visto en real,
             # a 1 s): repetir lo de arriba no hace daño; el diario sí.
@@ -2161,9 +2191,13 @@ class Agente:
         elif que == equipo.PIDE_SONDEAR:
             # «Probar ahora» en un aviso de «Sin conexión»: la sonda de cada
             # remoto sin conexión, ya, en vez de a su hora.
-            self.entorno = replace(self.entorno, sin_conexion={
-                k: min(v, ahora) for k, v in self.entorno.sin_conexion.items()})
+            self.entorno = pl.sondear_ya(self.entorno, ahora)
             diario("se prueban ya los remotos sin conexión")
+        elif que == equipo.PIDE_CAMBIO_DE_RED:
+            # El sistema dice que vuelve a haber red (`common/red.py`). No se
+            # sondea ya: se agrupa la ráfaga y va una sonda por remoto cuando
+            # se calma (`_cambios_de_red`).
+            self.cambio_de_red = pl.cambia_la_red(self.cambio_de_red, ahora)
         elif que == equipo.PIDE_AJUSTE:
             clave, valor = p.get("clave"), p.get("valor")
             if clave not in equipo.AJUSTES_PEDIBLES:
@@ -2265,6 +2299,8 @@ class Agente:
                 "sin_conexion": sorted(f"{self.conexiones[r].nombre}: {m}"
                                        for r, m in self.entorno.sin_conexion
                                        if r in self.conexiones),
+                "cambios_de_red": self.avisos_de_red.fuente
+                if self.avisa_la_red() else "",
                 "unidades": unidades,
                 "ausentes": sorted((self.ajustes.unidades[u].contenedor
                                     or self.ajustes.unidades[u].ruta)
@@ -2444,6 +2480,40 @@ def poner_bandeja(agente: Agente, vigia: Vigia) -> Any:
     return b
 
 
+def poner_red(agente: Agente, vigia: Vigia) -> Any:
+    """Devuelve lo que oye los cambios de red, o `None` si no se oye ninguno.
+
+    Punto de indirección: los tests no ponen ninguno.
+
+    Es `common/red.py`, independiente de la bandeja: el agente sin icono también
+    se entera. Cada aviso es un `equipo.PIDE_CAMBIO_DE_RED` en la cola del
+    agente, que lo despierta. Sin avisos, un remoto sin conexión se sigue
+    sondeando cada `Politica.sondeo_sin_conexion`.
+    """
+    from common import red
+
+    def avisar() -> None:
+        """Pasa al agente el aviso de que vuelve a haber red y lo despierta."""
+        agente.pedir({"pide": equipo.PIDE_CAMBIO_DE_RED})
+        vigia.despertar()
+
+    avisos_de_red = red.AvisosDeRed(avisar)
+    respaldo = pl.sondeo(agente.ajustes.politica, True) / 60
+    sin_avisos = pl.sondeo(agente.ajustes.politica, False) / 60
+    if not avisos_de_red.arrancar():
+        avisos_de_red.cerrar()
+        diario(f"no oigo los cambios de red: un remoto sin conexión se prueba cada "
+               f"{sin_avisos:g} min")
+        return None
+    if avisos_de_red.activa:
+        diario(f"oigo los cambios de red ({avisos_de_red.fuente}): un remoto sin "
+               f"conexión se prueba cuando vuelve la red, y si no, cada {respaldo:g} min")
+    else:
+        diario(f"todavía no oigo los cambios de red (sin NetworkManager): un remoto sin "
+               f"conexión se prueba cada {sin_avisos:g} min")
+    return avisos_de_red
+
+
 def _enganchar_penwatch() -> None:
     """Lleva a penwatch al diario del agente.
 
@@ -2496,6 +2566,7 @@ def cmd_run(_args: argparse.Namespace) -> int:
            f"unidades en la lista)")
     vigia = Vigia()
     agente.bandeja = poner_bandeja(agente, vigia)
+    agente.avisos_de_red = poner_red(agente, vigia)
     # Sin quien avise de los montajes (Windows sin bandeja) se recorre como
     # penwatch; con él, el recorrido de respaldo y las rachas tras cada aviso.
     cada = RECORRIDO_WINDOWS if IS_WIN and agente.bandeja is None else RECORRIDO_RESPALDO
@@ -2518,6 +2589,8 @@ def cmd_run(_args: argparse.Namespace) -> int:
         diario("interrumpido por teclado")
     finally:
         agente.cerrar()
+        if agente.avisos_de_red is not None:
+            agente.avisos_de_red.cerrar()
         if agente.bandeja is not None:
             agente.bandeja.cerrar()
         info = store.read_json(equipo.lock_json())
@@ -2573,6 +2646,15 @@ def cmd_status(_args: argparse.Namespace) -> int:
         print(f"Volumen fantasma en {ruta}: bloquéala y vuelve a desbloquearla")
     for linea in estado.get("sin_conexion") or []:
         print(f"Sin conexión: {linea}")
+    if vivo:
+        oye = estado.get("cambios_de_red")
+        if oye:
+            print(f"Cambios de red: los oye ({oye}); un remoto sin conexión se prueba "
+                  f"cuando vuelve la red, y si no, cada "
+                  f"{pl.sondeo(aj.politica, True) / 60:g} min")
+        else:
+            print(f"Cambios de red: no los oye; un remoto sin conexión se prueba cada "
+                  f"{pl.sondeo(aj.politica, False) / 60:g} min")
     return 0
 
 

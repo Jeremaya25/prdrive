@@ -3,8 +3,9 @@
 
 Es puro, así que todo esto es una tabla de casos con un reloj de mentira: la
 espera creciente tras un fallo, la batería, la red de uso medido, el «sin
-conexión», la raíz bloqueada, la cola única y «Sincronizar ahora». Y el plazo
-de «¿Atender esta unidad?».
+conexión» (con su sondeo de respaldo y la ráfaga de avisos de red que se
+agrupa en una sonda), la raíz bloqueada, la cola única y «Sincronizar ahora».
+Y el plazo de «¿Atender esta unidad?».
 """
 
 import math
@@ -168,6 +169,40 @@ c("la que falló por red es la primera en cuanto vuelve",
 c("una sonda de una raíz que ya no está no se lanza",
   que(dec((B,), entorno=pl.sin_conexion(pl.Entorno(), "equipo", "nas", T0 - 9999))),
   ("pasada", "unidad", "claves"))
+
+# cuándo se vuelve a sondear un remoto que no contesta
+c("sin avisos de red, cada 5 min, como siempre", pl.sondeo(P, False), 5 * MIN)
+c("con avisos de red, el temporizador es solo el respaldo: 30 min",
+  pl.sondeo(P, True), 30 * MIN)
+c("  mucho más que los 5 min de antes", pl.sondeo(P, True) >= 6 * pl.sondeo(P, False),
+  True)
+dos = pl.sin_conexion(pl.sin_conexion(pl.Entorno(), "equipo", "nas", T0 + 3600),
+                      "unidad", "otro", T0 - 10)
+ya = pl.sondear_ya(dos, T0)
+c("sondear ya: cada remoto sin conexión toca ahora; el que ya tocaba, igual",
+  dict(ya.sin_conexion), {("equipo", "nas"): T0, ("unidad", "otro"): T0 - 10})
+c("  y lo demás del entorno no cambia",
+  pl.sondear_ya(pl.Entorno(pausado=True), T0), pl.Entorno(pausado=True))
+
+# la ráfaga de avisos de red: una sonda por ráfaga
+r = pl.cambia_la_red(None, T0)
+c("el primer aviso abre una ráfaga", r, pl.CambioDeRed(T0, T0))
+c("  que se sondea cuando se calma", r.sondear_en, T0 + pl.ASENTAR_RED)
+c("  no antes", pl.red_asentada(r, T0 + pl.ASENTAR_RED - 1, False), False)
+c("  y a su hora, sí", pl.red_asentada(r, T0 + pl.ASENTAR_RED, False), True)
+r = pl.cambia_la_red(pl.cambia_la_red(r, T0 + 2), T0 + 3)
+c("más avisos seguidos (cada interfaz, el Wi-Fi que cae y sube) la alargan",
+  (r.primero, r.ultimo, r.sondear_en), (T0, T0 + 3, T0 + 3 + pl.ASENTAR_RED))
+c("  un aviso que llega desordenado no la acorta",
+  pl.cambia_la_red(r, T0 + 1).ultimo, T0 + 3)
+continua = None
+for s in range(0, 100, 2):
+    continua = pl.cambia_la_red(continua, T0 + s)
+c("una red que no para de cambiar se sondea igual, a su tope",
+  continua.sondear_en, T0 + pl.TOPE_RAFAGA_RED)
+c("con una pasada o una sonda en marcha, la ráfaga espera a que acabe",
+  pl.red_asentada(r, T0 + 999, True), False)
+c("sin ráfaga, nada que sondear", pl.red_asentada(None, T0 + 999, False), False)
 
 # raíz bloqueada o ausente
 cerrada = pl.Raiz("equipo", A.parejas, A.intervalo, atendible=False)
