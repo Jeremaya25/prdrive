@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import copy
 import threading
+import time
 from typing import Any, Callable, Hashable
 
 
@@ -90,8 +91,16 @@ def en_el_acto(funcion: Callable[[], Any]) -> Encargo:
     return encargo
 
 
-_EN_VUELO: dict[Hashable, tuple[Any, Encargo]] = {}
-"""La lectura viva de cada clave: `(firma, encargo)`, la última que se lanzó."""
+_EN_VUELO: dict[Hashable, tuple[Any, Encargo, float]] = {}
+"""La lectura viva de cada clave: `(firma, encargo, instante de lanzarla)`, la última."""
+
+VIDA_MAXIMA = 120.0  # segundos
+"""Cuánto se espera a una lectura viva antes de darla por perdida.
+
+Un hilo no se puede cortar, y `catalog.run()` ya acota su subproceso (90 s):
+pasado esto el hilo se da por colgado y la lectura nueva lanza el suyo en vez de
+esperar para siempre a uno que no va a contestar.
+"""
 
 
 def lanzar_sin_repetir(clave: Hashable, firma: Any,
@@ -107,7 +116,7 @@ def lanzar_sin_repetir(clave: Hashable, firma: Any,
     «La misma» es misma clave y misma `firma`: con otra (el catálogo apunta a
     otro remoto desde que se lanzó el vivo) el resultado del vivo no sirve, y
     como a un hilo no se le puede cortar se lanza uno nuevo, que pasa a ser el
-    que se reutiliza.
+    que se reutiliza. Tampoco se espera a uno de más de `VIDA_MAXIMA`.
 
     Args:
         clave: Qué se lee, p. ej. `"catalogo"` o `"flota"`.
@@ -119,8 +128,20 @@ def lanzar_sin_repetir(clave: Hashable, firma: Any,
         El encargo, nuevo o el que ya corría.
     """
     vivo = _EN_VUELO.get(clave)
-    if vivo is not None and not vivo[1].hecho and vivo[0] == firma:
+    if (vivo is not None and not vivo[1].hecho and vivo[0] == firma
+            and time.monotonic() - vivo[2] < VIDA_MAXIMA):
         return vivo[1]
     encargo = lanzar(funcion)
-    _EN_VUELO[clave] = (copy.deepcopy(firma), encargo)
+    _EN_VUELO[clave] = (copy.deepcopy(firma), encargo, time.monotonic())
     return encargo
+
+
+def olvidar_lecturas() -> None:
+    """Deja de reconocer las lecturas vivas: la siguiente petición lanza la suya.
+
+    Es para los tests que sustituyen `lanzar()` entre una pantalla y otra: sin
+    esto, un encargo que nunca termina (el de «esperando al remoto») se
+    reutilizaría en la pantalla siguiente en vez de pasar por el `lanzar()` de
+    ese momento.
+    """
+    _EN_VUELO.clear()

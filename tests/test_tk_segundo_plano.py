@@ -92,6 +92,27 @@ nuevo = segundo_plano.lanzar_sin_repetir("prueba", {"remote": "otro"}, trabajo)
 c("  acabado el hilo, la siguiente lectura sí lanza otro",
   (nuevo is distinta, len(lanzadas)), (False, 4))
 
+# Un hilo que lleva demasiado vivo se da por perdido: no se espera a uno colgado.
+soltar = threading.Event()
+colgado = segundo_plano.lanzar_sin_repetir("colgada", {}, trabajo)
+vida_real = segundo_plano.VIDA_MAXIMA
+segundo_plano.VIDA_MAXIMA = 0.0
+try:
+    relevo = segundo_plano.lanzar_sin_repetir("colgada", {}, trabajo)
+finally:
+    segundo_plano.VIDA_MAXIMA = vida_real
+c("  y uno que lleva más de VIDA_MAXIMA vivo no se espera: se lanza otro",
+  relevo is colgado, False)
+soltar.set()
+
+# Olvidar las lecturas vivas hace que la siguiente pase por `lanzar()`.
+soltar = threading.Event()
+viva = segundo_plano.lanzar_sin_repetir("olvidada", {}, trabajo)
+segundo_plano.olvidar_lecturas()
+c("  y tras olvidar_lecturas() tampoco se reutiliza el vivo",
+  segundo_plano.lanzar_sin_repetir("olvidada", {}, trabajo) is viva, False)
+soltar.set()
+
 
 # 2. con Tk
 try:

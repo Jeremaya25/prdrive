@@ -741,6 +741,7 @@ try:
                              lambda: tk_fleet.open_dialog(raiz, cfg, dict(BASE)),
                              tk_fleet, True)):
                         segundo_plano.lanzar, catalog.load = lanzar, cargar
+                        segundo_plano.olvidar_lecturas()   # el `NUNCA` de antes no vale
                         antes = set(raiz.winfo_children())
                         entra, corta = medir_dialogo(abrir, ancho, alto, escala,
                                                      modulo=modulo)
@@ -755,6 +756,7 @@ try:
                             ventana.destroy()
                 finally:
                     catalog.cached, catalog.load, segundo_plano.lanzar = previos
+                    segundo_plano.olvidar_lecturas()
 
                 # «Reparación» es la pantalla que más crece de todas: una fila
                 # por avería, con su explicación, y debajo la lista de conflictos

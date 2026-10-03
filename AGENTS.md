@@ -558,10 +558,14 @@ paths and flags; no rounded corners, no shadows. Styles cross **role** with
   Both screens go through `segundo_plano.lanzar_sin_repetir(clave, firma,
   funcion)`: the same key and the same raw config while the thread lives hands
   back that `Encargo` (the newest screen waits on it); another config launches
-  a new one. It calls `lanzar()` through the module, so the tests' `en_el_acto()`
-  (always `hecho`) never reuses anything. Writes to the remote (a catalogue
-  push, deleting a fleet note, purging versions, creating or listing a remote
-  folder) stay in `working()`: modal, nothing to cut halfway.
+  a new one, and so does a thread older than `VIDA_MAXIMA` (120 s; `catalog.run()`
+  already bounds its subprocess at 90 s), so one that hangs cannot block every
+  later read. It calls `lanzar()` through the module, so the tests' `en_el_acto()`
+  (always `hecho`) never reuses anything; a test that swaps `lanzar()` for an
+  `Encargo` that never ends (`test_tk_medidas`) calls `olvidar_lecturas()`
+  between screens. Writes to the remote (a catalogue push, deleting a fleet
+  note, purging versions, creating or listing a remote folder) stay in
+  `working()`: modal, nothing to cut halfway.
 
 ### «Ajustes» (`ui/tk_doctor.py`) — where new affordances go
 
