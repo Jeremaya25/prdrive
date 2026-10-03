@@ -358,8 +358,9 @@ when runsync is launched again.
 
 **One service, two ways to start it (#14).** By hand («Iniciar servicio») or on
 plugging in (the watcher → `runsync --auto`), it is the same service with the
-same config (with the resident agent as this root's service, «Iniciar
-servicio» asks it to resume instead: «The window ↔ the agent», below): pairs + interval in `ui_prefs.json`, on the device.
+same config (with the resident agent as this root's service, the window offers
+«Pausar» / «Reanudar» instead: «The window ↔ the agent», below): pairs +
+interval in `ui_prefs.json`, on the device.
 `startup_defaults()` layers that record > `[daemon]` in the TOML > all pairs /
 30 min, for the window, `--auto` and the watcher alike; explicit `--auto`
 arguments still win (shortcuts, cron, and watchers not yet reinstalled). **Two
@@ -452,11 +453,13 @@ it** — a window cannot dump output to a console that does not exist.
   «Reparación» hands back, open a
   modeless `output_window`, the window disables whatever touches the same state,
   and on close re-reads `state/` and repaints. Only «Iniciar servicio» returns a
-  `Choice` to runsync. The checkboxes are shared by both buttons and open with
-  the service's pairs; «Marcar todas»/«Desmarcar todas» (two pairs or more)
-  and the «N de M» follow them through each checkbox's `command`, **not** a
-  variable `trace`: a widget's command dies with it, a trace's Tcl command does
-  not, and it would hold the whole window and its images until exit. The
+  `Choice` to runsync (and it is not there when the agent is this root's
+  service: «Pausar» / «Reanudar» take its place, see phase 5). The checkboxes
+  are shared by both buttons and open with the service's pairs; «Marcar
+  todas»/«Desmarcar todas» (two pairs or more) and the «N de M» follow them
+  through each checkbox's `command`, **not** a variable `trace`: a widget's
+  command dies with it, a trace's Tcl command does not, and it would hold the
+  whole window and its images until exit. The
   interval is **not** in the main window (#65): it is set once in a device's
   life, so it lives in «Ajustes → Configuración», and «Iniciar servicio» reads
   the saved one (`prefs.startup_defaults()`) when clicked, not when painted.
@@ -1773,8 +1776,9 @@ draws**, and neither imports tkinter (`test_install_agente.py` checks it).
   that is running its code before the yes. It gets «…, conectada · Atender…».
 - **Icon priority** (`bandeja.estado()`): pause > a pass in flight > avisos
   (failing pairs, a root's `error`, offline remotes, a missing root, a ghost) >
-  held by battery/metered (pause icon) > an encrypted root locked (not an
-  aviso: it is the normal state) > bien. The five `.ico` are
+  held by battery/metered (pause icon) > a root paused from its window (pause
+  icon and its name, #64) > an encrypted root locked (not an aviso: it is the
+  normal state) > bien. The five `.ico` are
   `icons.capas_bandeja()` — the brand plus a corner badge whose **colour** is
   what reads at 16 px — painted by `copiar_codigo()` and, if missing, by the
   agent on start (`write_bandeja(solo_si_faltan=True)`), never copied.
@@ -1847,21 +1851,48 @@ the agent renaming them first (`equipo.pedir(…, buzon_de=)` /
   drains it only for connected roots **in its list** (`_buzones_de_raices()`;
   an unlisted drive's is not even read), takes the id from WHERE the file is,
   never from the request, and accepts only `equipo.PIDE_SERVICIO`
-  (`reanudar`, `pasada`, `bloquear`); anything else is logged and ignored. The
-  window's «Bloquear» goes through it (`cifrado.pedir_bloqueo()`); the agent
-  still takes `bloquear` from `agente.pide` too (the CLI, the tray).
-- **«Iniciar servicio»** (`runsync._atender()`) still saves `ui_prefs.json`,
-  then, only when the agent IS this root's service (`watch.Resumen.
-  servicio_del_agente`: alive, listed, mode `daemon`), writes `reanudar`
-  (`runsync.pedir_reanudar()`) instead of spawning a daemon. Any other case
-  (mode `sync`/`ui`/`nada`, agent dead, drive unlisted) spawns the classic
-  service, and the agent steps aside as in phase 1. `reanudar` sets
-  `Conexion.reanudar`: when the window's UI lock goes, the agent resumes at
-  once (no `GRACIA`) and drops that root's `marcas`, so it starts with a pass
-  like the service it replaces.
+  (`pausar_raiz`, `reanudar`, `pasada`, `bloquear`); anything else is logged
+  and ignored. The window's «Bloquear» goes through it
+  (`cifrado.pedir_bloqueo()`); the agent still takes `bloquear` from
+  `agente.pide` too (the CLI, the tray).
+- **With the agent as this root's service, the footer offers «Pausar» /
+  «Reanudar», not «Iniciar servicio»** (#64). `watch.boton_servicio(res)` is the
+  one pure rule: agent alive and root listed → «Reanudar» if the root is paused
+  (whatever the mode: that pause must never be left without a way out), else,
+  when `watch.Resumen.servicio_del_agente` (alive, listed, mode `daemon`),
+  «Pausar», or «Reanudar todo» while the tray's global pause is on (the label
+  says it is everything); any other case (mode `sync`/`ui`/`nada`, agent
+  dead, drive unlisted) is «Iniciar servicio», which spawns the classic service
+  and the agent steps aside as in phase 1. These buttons leave a request
+  (`watch.pedir_servicio()`: «Pausar»/«Reanudar» to the root's mailbox through
+  `watch.pedir_a_la_raiz()`, an indirection point; «Reanudar todo» `sigue` to
+  `agente.pide`), keep the window open, show what was asked
+  (`watch.tras_servicio()`, like `pedido()`), and stay enabled during a pass.
+- **The pause is per root, and it is kept.** The agent's own pause
+  (`pausa`/`sigue`, the tray) stops every drive and lives in memory only; a
+  «Pausar» in one drive's window pausing all of them would surprise. So
+  `pausar_raiz` sets `equipo.Unidad.pausada` in `agente.json` (written by the
+  agent, as always): `_sirve()` stops counting the root, `_contrato()` releases
+  its lock after the pair in flight, `resumen()` carries `pausada` per drive
+  (the tray shows the pause icon and «PRDRIVE-3 en pausa» below avisos), and
+  it survives an agent restart. What it means is «don't come back when I close
+  the window»: while the window is open the agent already steps aside, so
+  `watch.pausa(res)` reads «al cerrarla vuelve el agente, salvo que pulses
+  «Pausar»» (`PAUSA_AGENTE`) under the line, and the line itself says when the
+  root is paused. `reanudar` clears `pausada` and sets `Conexion.reanudar`:
+  when the window's UI lock goes, the agent resumes at once (no `GRACIA`) and
+  drops that root's `marcas`, so it starts with a pass like the service it
+  replaces. A mode change does not touch the pause; `agente.py status` shows
+  it per root.
+- **«Iniciar servicio» from the console** (`runsync._atender()`) still saves
+  `ui_prefs.json` and, when the agent IS this root's service, writes `reanudar`
+  (`runsync.pedir_reanudar()`, which also lifts a per-root pause) instead of
+  spawning a daemon. The window reaches that path only if the agent came up
+  after it was painted.
 - **The agent's line** (`watch._agente_linea()`): what it does with this root,
-  «en pausa para todo» from `estado.json`, and amber when no agent process is
-  alive. Its button («Cambiar…», «Atender…» for an unlisted drive) opens
+  «en pausa desde esta ventana» from `agente.json`, «en pausa para todo» from
+  `estado.json`, and amber when no agent process is alive. Its button
+  («Cambiar…», «Atender…» for an unlisted drive) opens
   `tk_watch.open_agente()`, which asks the mode with `PIDE_MODO`
   (`watch.pedir_modo()` → `watch.pedir_al_agente()`, an indirection point); the
   line then shows what was asked (`watch.pedido()`), since `agente.json` only

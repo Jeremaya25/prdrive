@@ -933,18 +933,21 @@ agente»**. El diseño completo está en
   suyo y vuelve a preguntar, diciendo que su código ha cambiado.
 - **Hace de servicio de la unidad con sus mismos ficheros** (`daemon.lock.json`,
   `daemon.stop`, `ui.lock.json`). **El único cambio que se nota: abrir la ventana de la unidad ya no apaga el
-  servicio para siempre, lo pausa mientras está abierta.** Si desde la ventana
-  pulsas «Iniciar servicio» y el agente la sincroniza en segundo plano, no se
-  arranca otro servicio: se guardan las parejas y el intervalo, y el agente
-  vuelve en cuanto cierras la ventana, con una pasada. En cualquier otro caso
-  (otro modo, o el agente parado) arranca el servicio de siempre y el agente se
-  aparta: un servicio por unidad, el que tenga el lock. Para pararlo todo,
-  `python agente.py pausa` (y `sigue`).
+  servicio para siempre, lo pausa mientras está abierta.** Si el agente la
+  sincroniza en segundo plano, la ventana no ofrece «Iniciar servicio» sino
+  **«Pausar»**: el agente no vuelve al cerrarla, ni aunque se reinicie, hasta
+  que pulses **«Reanudar»** en esa misma ventana (vuelve en cuanto la cierras,
+  con una pasada). Es la pausa de esa unidad sola, y el icono de la bandeja la
+  enseña con su nombre. En cualquier otro caso (otro modo, o el agente parado)
+  sigue estando «Iniciar servicio», que arranca el servicio de siempre, y el
+  agente se aparta: un servicio por unidad, el que tenga el lock. Para pararlo
+  todo, «Pausar» en la bandeja o `python agente.py pausa` (y `sigue`; con esa
+  pausa puesta, la ventana ofrece «Reanudar todo»).
 - **La ventana de la unidad dice qué hace el agente con ella**, si está en pausa
   y si no está en marcha, y su botón **«Cambiar…»** (o **«Atender…»**, si no la
   tiene en su lista) le pide otro modo. La ventana no escribe la configuración
   del equipo: se lo pide al agente por su buzón (`agente.pide`), y lo que es de
-  una unidad («reanudar», «bloquear») por el de la unidad,
+  una unidad («pausar», «reanudar», «bloquear») por el de la unidad,
   `.prdrive/state/servicio.pide`.
 - **Se actualiza solo, cuando se lo pides.** Mira de vez en cuando si hay una
   versión nueva y avisa una vez; **«Actualizar a la vX»** en la bandeja (o

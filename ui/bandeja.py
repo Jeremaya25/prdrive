@@ -193,9 +193,11 @@ def estado(resumen: Mapping[str, Any], ahora: float | None = None) -> tuple[str,
 
     El orden de prioridad es: la pausa pedida (lo ha decidido alguien) > una
     pasada en marcha > los avisos > lo que retiene sin ser pausa (batería, red
-    de uso medido) > la raíz cifrada bloqueada > bien. Bloqueada no es un
-    aviso: es lo normal con el contenedor cerrado y el icono lo enseña sin
-    alarmar.
+    de uso medido) > una raíz en el «Pausar» de su ventana > la raíz cifrada
+    bloqueada > bien. Bloqueada no es un aviso: es lo normal con el contenedor
+    cerrado y el icono lo enseña sin alarmar. La raíz pausada tampoco: lo ha
+    decidido alguien, y el icono de pausa y su nombre bastan para saber por qué
+    no se sincroniza.
 
     Cuando va bien, la frase dice cuándo acabó bien la última pasada
     (`ultima_pasada`, segundos de época): «al día» a secas no decía nada que el
@@ -216,6 +218,10 @@ def estado(resumen: Mapping[str, Any], ahora: float | None = None) -> tuple[str,
         return icons.AVISO, hay[0] if len(hay) == 1 else f"{len(hay)} avisos"
     if resumen.get("retenido"):
         return icons.PAUSA, f"esperando: {resumen['retenido']}"
+    pausadas = [str(u.get("nombre")) for u in resumen.get("unidades") or []
+                if u.get("pausada")]
+    if pausadas:
+        return icons.PAUSA, f"{', '.join(pausadas)} en pausa"
     raices = resumen.get("equipo") or []
     for estado_, frase in ((DESBLOQUEANDO, "desbloqueando"), (BLOQUEANDO, "bloqueando"),
                            (BLOQUEADA, "bloqueada")):

@@ -34,9 +34,11 @@ arrancar el servicio, y el intervalo solo, en «Ajustes → Configuración». Un
 pasada manual no la toca, y `--auto` y `--daemon` únicamente la leen.
 
 Con el agente residente (`agente.py`) como servicio de esta raíz (vivo y en
-modo `daemon`), «Iniciar servicio» no arranca otro: guarda esa memoria y deja
-un `reanudar` en `state/servicio.pide`, y el agente vuelve en cuanto se cierra
-la ventana.
+modo `daemon`), la ventana no ofrece «Iniciar servicio» sino «Pausar» /
+«Reanudar», que se lo piden por `state/servicio.pide` sin pasar por aquí
+(`ui/watch.py`). La consola sí lo ofrece, y entonces no se arranca otro: se
+guarda esa memoria y se deja un `reanudar`, y el agente vuelve en cuanto se
+sale de ella.
 
 Con argumentos se pasan tal cual a `sync.py` (así `runsync.bat --doctor` sigue
 funcionando), salvo dos flags propios:
@@ -373,15 +375,16 @@ def agente_sirve() -> bool:
 def pedir_reanudar() -> bool:
     """Deja `reanudar` en el buzón de esta raíz (`state/servicio.pide`).
 
-    Es «Iniciar servicio» cuando el servicio es el agente. Punto de
-    indirección: los tests la sustituyen.
+    Es «Iniciar servicio» cuando el servicio es el agente: también le quita a
+    la raíz el «Pausar» de su ventana. Punto de indirección: los tests la
+    sustituyen.
 
     Returns:
         Si se pudo dejar el pedido.
     """
     from common import equipo
-    return equipo.pedir({"pide": equipo.PIDE_REANUDAR},
-                        model.STATE_DIR / equipo.BUZON_SERVICIO)
+    from ui import watch
+    return watch.pedir_a_la_raiz({"pide": equipo.PIDE_REANUDAR})
 
 
 def stop_previous_daemon() -> str | None:
@@ -747,10 +750,13 @@ def _atender(config: model.Config, startup_msg: str | None) -> int:
         if agente_sirve() and pedir_reanudar():
             # El servicio de esta raíz ya es el agente residente: arrancar otro
             # solo lo apartaría. Lee lo que se acaba de guardar y vuelve en
-            # cuanto se cierre esta ventana.
-            que = "esta carpeta" if model.es_equipo() else "este dispositivo"
-            frontend.info(f"El agente de este equipo vuelve a sincronizar {que} en "
-                          f"cuanto se cierre esta ventana: "
+            # cuanto se suelte la ventana. Desde la ventana no se llega aquí
+            # (ofrece «Reanudar»), salvo que el agente arrancara con ella
+            # abierta; desde la consola, sí.
+            que, lo = (("esta carpeta", "la") if model.es_equipo()
+                       else ("este dispositivo", "lo"))
+            frontend.info(f"El agente de este equipo es el servicio de {que}: vuelve "
+                          f"a sincronizar{lo} en cuanto salgas, "
                           f"{', '.join(choice.pairs)} cada {choice.minutes:g} min.")
             return 0
         msg = spawn_daemon(list(choice.pairs), choice.minutes)

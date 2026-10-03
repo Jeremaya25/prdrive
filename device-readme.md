@@ -37,7 +37,9 @@ modo *ligero* (con un `runsync.pyw` en la raíz), entonces sí hace falta **Pyth
 - **Iniciar servicio** — sincroniza lo marcado cada N minutos (se cambia en
   «Ajustes…» → «Configuración…») mientras la unidad siga conectada. Se para solo
   al extraerla, o al volver a abrir la ventana. Lo marcado se recuerda para la
-  próxima vez.
+  próxima vez. Si en este ordenador la sincroniza el agente de prdrive, en su
+  lugar salen **Pausar** / **Reanudar**: que no la sincronice hasta que lo
+  pidas, y que vuelva a hacerlo.
 - **Diagnóstico** — cuando algo no cuadra. Enseña dónde apunta cada carpeta y si
   su sincronización está sana.
 - **Expulsar** — solo si la unidad va cifrada con VeraCrypt. Cierra la ventana y

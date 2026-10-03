@@ -389,6 +389,16 @@ cif = equipo.Unidad("k" * 32, equipo.DAEMON, "C", "/home/u/PRDRIVE", "/home/u/P-
 c("  y se relee igual, con su contenedor",
   equipo.desde_dict(equipo.a_dict(equipo.Ajustes().con_unidad(cif))).cifradas,
   {cif.id: cif})
+# El «Pausar» de la ventana de una raíz (#64): se guarda solo si está, y solo
+# un `true` de verdad cuenta.
+pausada = equipo.Unidad("p" * 32, equipo.DAEMON, "P", pausada=True)
+c("equipo: una raíz pausada se relee pausada",
+  equipo.desde_dict(equipo.a_dict(equipo.Ajustes().con_unidad(pausada))).unidades,
+  {pausada.id: pausada})
+c("  sin pausa no se escribe la clave, y «sí» no es true",
+  ("pausada" in equipo.a_dict(equipo.Ajustes().con_unidad(cif))["unidades"][cif.id],
+   equipo.desde_dict({"unidades": {"q" * 32: {"pausada": "sí"}}})
+   .unidades["q" * 32].pausada), (False, False))
 
 c("fisica_por_defecto: al lado de la carpeta, con -cifrado",
   raiz_equipo.fisica_por_defecto("/home/u/PRDRIVE"), Path("/home/u/PRDRIVE-cifrado"))

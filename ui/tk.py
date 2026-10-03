@@ -792,8 +792,9 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
     Sincronizar y el doctor se hacen DESDE aquí, en una ventana de salida hija
     que no la cierra: al terminar se vuelve a esta con todo al día. Lo único
     que sale de la ventana es arrancar el servicio, que vive en otro proceso:
-    la elección `daemon` se devuelve a `runsync`. Devuelve `None` si se cierra
-    sin más.
+    la elección `daemon` se devuelve a `runsync`. Si el servicio de esta raíz
+    es el agente del equipo, en su lugar están «Pausar» / «Reanudar», que se
+    lo piden por su buzón sin cerrarla. Devuelve `None` si se cierra sin más.
 
     Raises:
         ImportError: Si no hay tkinter.
@@ -1418,11 +1419,14 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
                       style="Aviso.TLabel" if dicho.aviso else "Campo.TLabel",
                       wraplength=theme.medida(380), justify="left").grid(
                 row=0, column=1, sticky="w")
-            if vigilante.vigila_este:
+            pausa = watch.pausa(vigilante)
+            if pausa is not None:
                 # El vigilante no lanza nada mientras esta ventana esté abierta;
                 # sin decirlo, enchufar con la ventana abierta parecería que el
-                # arranque automático se ha roto.
-                ttk.Label(arranque, text=watch.PAUSA, style="Pista.TLabel").grid(
+                # arranque automático se ha roto. Con el agente como servicio,
+                # dice además qué cambia «Pausar».
+                ttk.Label(arranque, text=pausa, style="Pista.TLabel",
+                          wraplength=theme.medida(380), justify="left").grid(
                     row=1, column=1, sticky="w")
             if dicho.boton:
                 cambiar = ttk.Button(arranque, text=dicho.boton, style="Quiet.TButton",
@@ -1464,6 +1468,20 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
             result["choice"] = Choice("daemon", tuple(sel), minutos)
             root.destroy()
 
+        def pausa_del_agente(accion: str) -> None:
+            """«Pausar», «Reanudar» o «Reanudar todo»: se lo pide al agente y sigue aquí.
+
+            A diferencia de «Iniciar servicio», no cierra la ventana: no hay
+            nada que arrancar, el agente ya es el servicio. La línea enseña lo
+            pedido, que el agente aplica en unos segundos (`watch.tras_servicio`).
+            """
+            if not watch.pedir_servicio(accion):
+                messagebox.showerror(TITLE, "No he podido dejarle la petición al "
+                                            "agente.", parent=root)
+                return
+            vista["vigilante"] = watch.tras_servicio(vista["vigilante"], accion)
+            reajustar()
+
         ttk.Separator(frame, orient="horizontal").grid(
             row=fila, column=0, sticky="ew", pady=(14, 0))
         fila += 1
@@ -1476,8 +1494,21 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
                            padding=(14, 8), command=sincronizar, state=apagado)
         theme.boton_icono(ahora, "sync", theme.SUPERFICIE, theme.ACENTO, 16)
         ahora.grid(row=0, column=0, sticky="ew", padx=(0, 8))
-        ttk.Button(pie, text="Iniciar servicio", padding=(12, 8),
-                   command=servicio, state=apagado).grid(row=0, column=1)
+        # «Iniciar servicio», o, si el agente de este equipo es el servicio de
+        # esta raíz, «Pausar» / «Reanudar» (`watch.boton_servicio`). Estos no
+        # cierran la ventana ni tocan nada de la raíz, así que no se apagan
+        # mientras sincroniza.
+        del_servicio = watch.boton_servicio(vigilante)
+        if del_servicio.accion == watch.INICIAR:
+            ttk.Button(pie, text=del_servicio.texto, padding=(12, 8),
+                       command=servicio, state=apagado).grid(row=0, column=1)
+        else:
+            accion = del_servicio.accion
+            al_agente = ttk.Button(pie, text=del_servicio.texto, padding=(12, 8),
+                                   command=lambda: pausa_del_agente(accion))
+            theme.boton_icono(al_agente, "pausa" if accion == watch.PAUSAR else "play",
+                              theme.TINTA2, theme.SUPERFICIE)
+            al_agente.grid(row=0, column=1)
         # Solo en un dispositivo que vive en un contenedor VeraCrypt, y apagado
         # mientras sincroniza: cerrar el contenedor en mitad de una pasada es
         # arrancarle los ficheros a rclone.

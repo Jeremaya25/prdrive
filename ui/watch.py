@@ -58,7 +58,8 @@ _AL_ENCHUFAR = {
 class Resumen(NamedTuple):
     """Qué hace el arranque automático de este equipo con ESTE dispositivo.
 
-    Con agente, además, `vivo` y `pausado` salen de su `estado.json`.
+    Con agente, además, `vivo` y `pausado` salen de su `estado.json`, y
+    `pausada` de su `agente.json`.
 
     Args:
         estado: Uno de, de más a menos grave para quien lee la línea:
@@ -75,12 +76,15 @@ class Resumen(NamedTuple):
             `modo`).
         modo: Lo que se hace al enchufar.
         vivo: Si hay un proceso del agente en marcha en este equipo.
-        pausado: Si el agente está en su «Pausar», que para todo.
+        pausado: Si el agente está en el «Pausar» de su bandeja, que para todo.
+        pausada: Si ESTA raíz está en el «Pausar» de su ventana: el agente no
+            la sincroniza hasta «Reanudar» (`equipo.Unidad.pausada`).
     """
     estado: str
     modo: str = ""
     vivo: bool = False
     pausado: bool = False
+    pausada: bool = False
 
     @property
     def vigila_este(self) -> bool:
@@ -97,8 +101,9 @@ class Resumen(NamedTuple):
     def servicio_del_agente(self) -> bool:
         """Indica si el servicio periódico de esta raíz es el agente y está en marcha.
 
-        Entonces «Iniciar servicio» no arranca otro: se lo pide a él
-        (`reanudar`). Solo en modo `daemon`: en `sync` hace una pasada por
+        Entonces la ventana no ofrece «Iniciar servicio» sino «Pausar» /
+        «Reanudar» (`boton_servicio`), y la consola, si lo pide, se lo pide a
+        él (`reanudar`). Solo en modo `daemon`: en `sync` hace una pasada por
         conexión y quien pide un servicio cada N minutos no pide eso.
         """
         return (self.estado in ("agente", "agente_raiz") and self.modo == "daemon"
@@ -241,7 +246,7 @@ def _agente() -> Resumen | None:
     if unidad is None:
         return Resumen("agente_nueva", "", vivo, pausado)
     return Resumen("agente_raiz" if unidad.es_raiz else "agente", unidad.modo,
-                   vivo, pausado)
+                   vivo, pausado, unidad.pausada)
 
 
 _AGENTE_HACE = {
@@ -370,6 +375,10 @@ def _agente_linea(res: Resumen) -> Linea:
     if not res.vivo:
         return Linea(texto + " Ahora no está en marcha: arranca al iniciar sesión.",
                      True, boton)
+    if res.pausada:
+        texto += (" Está en pausa desde esta ventana: no "
+                  + ("la" if res.estado == "agente_raiz" else "lo")
+                  + " sincroniza hasta que pulses «Reanudar».")
     if res.pausado:
         texto += (" Está en pausa para todo: se reanuda desde su icono de la bandeja "
                   "o con «agente.py sigue».")
@@ -402,6 +411,113 @@ def linea(res: Resumen) -> Linea | None:
 
 PAUSA = "En pausa mientras esta ventana esté abierta."
 """Lo que se dice mientras la ventana tiene parado el servicio."""
+PAUSA_AGENTE = ("En pausa mientras esta ventana esté abierta; al cerrarla vuelve el "
+                "agente, salvo que pulses «Pausar».")
+"""Lo mismo cuando el servicio es el agente: dice qué cambia «Pausar»."""
+
+
+def pausa(res: Resumen, ventana: bool = True) -> str | None:
+    """Devuelve la frase que va debajo de la línea mientras la ventana está abierta.
+
+    Es `None` si no hay nada que decir: nadie atiende este dispositivo al
+    enchufarlo, o el agente ya lo tiene en pausa por otra cosa (el «Pausar» de
+    la ventana o el de la bandeja), que la línea ya dice.
+
+    Args:
+        res: Lo que hace el arranque automático con esta raíz.
+        ventana: Si es para la ventana, que tiene el botón «Pausar»; la consola
+            no lo tiene.
+    """
+    if res.es_agente and res.vivo and (res.pausada or res.pausado):
+        return None
+    if not res.vigila_este:
+        return None
+    return PAUSA_AGENTE if ventana and res.servicio_del_agente else PAUSA
+
+
+INICIAR, PAUSAR, REANUDAR, SEGUIR = "iniciar", "pausar", "reanudar", "seguir"
+"""Lo que hace el botón del servicio del pie de la ventana (`boton_servicio`)."""
+
+
+class BotonServicio(NamedTuple):
+    """El botón del servicio del pie de la ventana: qué dice y qué hace.
+
+    Args:
+        texto: Lo que dice.
+        accion: `INICIAR` (arrancar el servicio de runsync, que cierra la
+            ventana), `PAUSAR` / `REANUDAR` (la pausa de ESTA raíz en el
+            agente, por su buzón) o `SEGUIR` (quitar la pausa de todo del
+            agente, la de su bandeja).
+    """
+    texto: str
+    accion: str
+
+
+def boton_servicio(res: Resumen) -> BotonServicio:
+    """Devuelve el botón del servicio para esta raíz.
+
+    Sin agente que la atienda es «Iniciar servicio», como siempre. Con el
+    agente vivo y la raíz en su lista:
+    - pausada desde su ventana, «Reanudar», sea cual sea el modo: es la única
+      manera de quitar esa pausa, y no puede quedar escondida;
+    - siendo su servicio (modo `daemon`), «Pausar», o «Reanudar todo» si el
+      agente está en la pausa de su bandeja, que para todas las raíces y la
+      etiqueta lo dice.
+    En cualquier otro caso (modo `sync`/`ui`/`nada`, agente parado, unidad
+    fuera de la lista) el servicio de siempre.
+    """
+    if res.estado in ("agente", "agente_raiz") and res.vivo:
+        if res.pausada:
+            return BotonServicio("Reanudar", REANUDAR)
+        if res.servicio_del_agente:
+            return (BotonServicio("Reanudar todo", SEGUIR) if res.pausado
+                    else BotonServicio("Pausar", PAUSAR))
+    return BotonServicio("Iniciar servicio", INICIAR)
+
+
+def pedir_a_la_raiz(peticion: dict) -> bool:
+    """Deja una petición en el buzón de ESTA raíz (`state/servicio.pide`).
+
+    Es lo que la ventana le pide al servicio de la raíz desde la que corre.
+    Es de módulo para que los tests la sustituyan.
+    """
+    from common import equipo
+    return equipo.pedir(peticion, model.STATE_DIR / equipo.BUZON_SERVICIO)
+
+
+def pedir_servicio(accion: str) -> bool:
+    """Le pide al agente lo que hace el botón del servicio: `PAUSAR`, `REANUDAR` o `SEGUIR`.
+
+    «Pausar» y «Reanudar» van al buzón de esta raíz (son de ella); «Reanudar
+    todo», al del agente (`sigue`, la pausa de todo).
+
+    Returns:
+        Si se pudo dejar la petición; False también con una acción que no es
+        de las tres.
+    """
+    from common import equipo
+    if accion == PAUSAR:
+        return pedir_a_la_raiz({"pide": equipo.PIDE_PAUSAR_RAIZ})
+    if accion == REANUDAR:
+        return pedir_a_la_raiz({"pide": equipo.PIDE_REANUDAR})
+    if accion == SEGUIR:
+        return pedir_al_agente({"pide": equipo.PIDE_SIGUE})
+    return False
+
+
+def tras_servicio(res: Resumen, accion: str) -> Resumen:
+    """Devuelve cómo queda la línea tras pedirle esa acción al agente.
+
+    Por lo mismo que `pedido()`: el agente la aplica en unos segundos y la
+    ventana enseña lo pedido.
+    """
+    if accion == PAUSAR:
+        return res._replace(pausada=True)
+    if accion == REANUDAR:
+        return res._replace(pausada=False)
+    if accion == SEGUIR:
+        return res._replace(pausado=False)
+    return res
 
 
 def install_command(mode: str = "ui", poll=None, extra_roots=(),

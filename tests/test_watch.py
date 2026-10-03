@@ -3,7 +3,7 @@
 
 import sys
 
-from _harness import Checks
+from _harness import Checks, sandbox
 
 from common import model
 from ui import watch
@@ -190,6 +190,73 @@ try:
     c("  en pausa (su «Pausar»): lo dice", (r.pausado, "en pausa para todo"
                                             in watch.linea(r).texto), (True, True))
     equipo.estado_json().unlink()
+
+    # El botón del servicio del pie (#64): con el agente como servicio,
+    # «Pausar» / «Reanudar» en vez de «Iniciar servicio».
+    r = watch.resumen()
+    c("agente vivo en daemon: el pie ofrece «Pausar», no «Iniciar servicio»",
+      watch.boton_servicio(r), watch.BotonServicio("Pausar", watch.PAUSAR))
+    c("  y debajo de la línea dice qué cambia «Pausar»", watch.pausa(r), watch.PAUSA_AGENTE)
+    c("  la consola, sin ese botón, la frase de siempre", watch.pausa(r, ventana=False),
+      watch.PAUSA)
+    equipo.guardar_ajustes(equipo.Ajustes().con_unidad(
+        equipo.Unidad("aaaa", "daemon", pausada=True)))
+    r = watch.resumen()
+    c("pausada desde su ventana: se lee de agente.json", (r.pausada, r.pausado),
+      (True, False))
+    c("  el pie ofrece «Reanudar»", watch.boton_servicio(r),
+      watch.BotonServicio("Reanudar", watch.REANUDAR))
+    c("  la línea lo dice, sin ámbar", (watch.linea(r).aviso, watch.linea(r).texto),
+      (False, "El agente de este equipo lo sincroniza en segundo plano. Está en pausa "
+              "desde esta ventana: no lo sincroniza hasta que pulses «Reanudar»."))
+    c("  y no dice «en pausa mientras esta ventana esté abierta»", watch.pausa(r), None)
+    for modo in ("sync", "nada"):
+        equipo.guardar_ajustes(equipo.Ajustes().con_unidad(
+            equipo.Unidad("aaaa", modo, pausada=True)))
+        c(f"  en modo {modo} sigue ofreciendo «Reanudar»: la pausa no se esconde",
+          watch.boton_servicio(watch.resumen()).accion, watch.REANUDAR)
+    equipo.guardar_ajustes(equipo.Ajustes().con_unidad(equipo.Unidad("aaaa", "daemon")))
+    store.write_json(equipo.estado_json(), {"pausado": True})
+    r = watch.resumen()
+    c("con la pausa de todo de la bandeja: «Reanudar todo», que lo dice",
+      watch.boton_servicio(r), watch.BotonServicio("Reanudar todo", watch.SEGUIR))
+    c("  y tampoco la frase de la ventana", watch.pausa(r), None)
+    equipo.estado_json().unlink()
+    for res, por in ((watch.Resumen("agente", "daemon", False), "con el agente parado"),
+                     (watch.Resumen("agente", "sync", True), "en modo sync"),
+                     (watch.Resumen("agente", "ui", True), "en modo ui"),
+                     (watch.Resumen("agente_nueva", "", True), "fuera de su lista"),
+                     (watch.Resumen("agente", "daemon", False, False, True),
+                      "pausada con el agente parado"),
+                     (watch.Resumen("instalado", "daemon"), "con penwatch"),
+                     (watch.Resumen("sin_instalar"), "sin nada")):
+        c(f"  {por}: «Iniciar servicio», como siempre", watch.boton_servicio(res),
+          watch.BotonServicio("Iniciar servicio", watch.INICIAR))
+
+    # Lo que pide cada botón, y a qué buzón.
+    from common import model  # noqa: E402
+    with sandbox():
+        buzon_raiz = model.STATE_DIR / equipo.BUZON_SERVICIO
+        equipo.recoger()
+        c("«Pausar» deja pausar_raiz en el buzón de ESTA raíz",
+          (watch.pedir_servicio(watch.PAUSAR),
+           [p["pide"] for p in equipo.recoger(buzon_raiz)], equipo.recoger()),
+          (True, [equipo.PIDE_PAUSAR_RAIZ], []))
+        c("«Reanudar», reanudar en el mismo",
+          (watch.pedir_servicio(watch.REANUDAR),
+           [p["pide"] for p in equipo.recoger(buzon_raiz)]),
+          (True, [equipo.PIDE_REANUDAR]))
+        c("«Reanudar todo», sigue en el del agente",
+          (watch.pedir_servicio(watch.SEGUIR), [p["pide"] for p in equipo.recoger()],
+           equipo.recoger(buzon_raiz)), (True, [equipo.PIDE_SIGUE], []))
+        c("  y nada más", (watch.pedir_servicio(watch.INICIAR), equipo.recoger(),
+                           equipo.recoger(buzon_raiz)), (False, [], []))
+    viva = watch.Resumen("agente", "daemon", True)
+    c("tras_servicio(): la línea enseña lo pedido",
+      (watch.tras_servicio(viva, watch.PAUSAR).pausada,
+       watch.tras_servicio(viva._replace(pausada=True), watch.REANUDAR).pausada,
+       watch.tras_servicio(viva._replace(pausado=True), watch.SEGUIR).pausado),
+      (True, False, False))
     equipo.lock_json().unlink()
 
     # Lo que se le pide desde la ventana, por su buzón.

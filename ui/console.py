@@ -67,11 +67,11 @@ def main_menu(config: Config, startup_msg: str | None) -> Choice | None:
     try:
         vigilante = watch.resumen()
         dicho = watch.linea(vigilante)
+        pausa = watch.pausa(vigilante, ventana=False)
     except Exception:                                   # noqa: BLE001
         dicho = None
     if dicho is not None:
-        print(f"\n{dicho.texto}"
-              + (f" {watch.PAUSA}" if vigilante.vigila_este else ""))
+        print(f"\n{dicho.texto}" + (f" {pausa}" if pausa else ""))
 
     # El aviso de versión nueva se pinta aquí y no llega por `startup_msg`: ese
     # canal lo comparten los dos frontends y la ventana ya lo dibuja en ámbar,

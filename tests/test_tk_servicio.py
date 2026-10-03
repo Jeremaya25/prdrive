@@ -10,6 +10,9 @@ ventana:
 - Que una pasada manual no escribe la configuración del servicio.
 - Que «Configuración», desde el engranaje, guarda el intervalo sin las parejas,
   y que «Iniciar servicio» sale después con él.
+- Que con el agente como servicio de la raíz el pie ofrece «Pausar» /
+  «Reanudar» en vez de «Iniciar servicio» (#64), que cada uno deja su petición
+  en el buzón que toca y que la ventana sigue abierta enseñando lo pedido.
 - La línea que dice qué hace este equipo al enchufar, en cada estado, y que su
   botón lleva a la pantalla del vigilante y al volver se repinta.
 - Que con lo más largo que puede salir (doce parejas, el botón de marcar, la
@@ -247,7 +250,10 @@ ESTADOS = (watch.Resumen("sin_instalar"), watch.Resumen("otro_dispositivo"),
            watch.Resumen("agente", "daemon", True), watch.Resumen("agente", "ui", False),
            watch.Resumen("agente", "sync", True, True),
            watch.Resumen("agente_nueva", "", True),
-           watch.Resumen("agente_raiz", "daemon", True))
+           watch.Resumen("agente_raiz", "daemon", True),
+           # Pausada desde su ventana (#64), y con las dos pausas a la vez.
+           watch.Resumen("agente", "daemon", True, False, True),
+           watch.Resumen("agente_raiz", "daemon", True, True, True))
 for res in ESTADOS:
     with sandbox():
         visto = {}
@@ -258,8 +264,16 @@ for res in ESTADOS:
         nombre = res.estado + (f" ({res.modo})" if res.modo else "")
         c(f"{nombre}: la línea lo dice", dicho.texto in visto["textos"], True)
         c(f"{nombre}: con su botón", dicho.boton in visto["botones"], True)
-        c(f"{nombre}: la pausa solo si vigila este dispositivo",
-          watch.PAUSA in visto["textos"], res.vigila_este)
+        frase = watch.pausa(res)
+        c(f"{nombre}: la frase de la pausa, solo si vigila este dispositivo y nada "
+          f"más lo tiene en pausa",
+          [t for t in (watch.PAUSA, watch.PAUSA_AGENTE) if t in visto["textos"]],
+          [frase] if frase else [])
+        c(f"{nombre}: el botón del servicio es «{watch.boton_servicio(res).texto}»",
+          watch.boton_servicio(res).texto in visto["botones"], True)
+        c(f"{nombre}: «Iniciar servicio» solo si el servicio no es el agente",
+          "Iniciar servicio" in visto["botones"],
+          watch.boton_servicio(res).accion == watch.INICIAR)
         c(f"{nombre}: ya no hay botón «Arranque automático…»",
           "Arranque automático…" in visto["botones"], False)
         c(f"{nombre}: el intervalo no está en la ventana, está en «Configuración»",
@@ -322,6 +336,81 @@ with sandbox():
       "El agente de este equipo no hace nada con él." in visto["textos"], True)
 
 
+# «Pausar» / «Reanudar» con el agente como servicio (#64): la petición va al
+# buzón que toca, la ventana no se cierra y enseña lo pedido.
+from common import equipo, model  # noqa: E402
+
+with sandbox():
+    buzon_raiz = model.STATE_DIR / equipo.BUZON_SERVICIO
+    equipo.recoger()
+    visto = {}
+
+    def pausar_y_reanudar(root) -> None:
+        """Pulsa «Pausar», apunta, y luego «Reanudar»."""
+        visto["al abrir"] = sorted(b for b in botones(root)
+                                   if b in ("Iniciar servicio", "Pausar", "Reanudar"))
+        visto["frase al abrir"] = watch.PAUSA_AGENTE in textos(root)
+        botones(root)["Pausar"].invoke()
+        visto["buzón tras pausar"] = [p["pide"] for p in equipo.recoger(buzon_raiz)]
+        visto["sigue abierta"] = root.winfo_exists()
+        visto["tras pausar"] = ("Reanudar" in botones(root), "Pausar" in botones(root))
+        visto["línea en pausa"] = any("no lo sincroniza hasta que pulses «Reanudar»" in t
+                                      for t in textos(root))
+        botones(root)["Reanudar"].invoke()
+        visto["buzón tras reanudar"] = [p["pide"] for p in equipo.recoger(buzon_raiz)]
+        visto["tras reanudar"] = "Pausar" in botones(root)
+
+    eleccion = ventana(CUATRO, pausar_y_reanudar,
+                       resumen=watch.Resumen("agente", "daemon", True))
+    c("con el agente como servicio, el pie ofrece «Pausar» y no «Iniciar servicio»",
+      visto["al abrir"], ["Pausar"])
+    c("  y dice que al cerrar vuelve el agente, salvo «Pausar»", visto["frase al abrir"],
+      True)
+    c("«Pausar» deja pausar_raiz en el buzón de la raíz", visto["buzón tras pausar"],
+      [equipo.PIDE_PAUSAR_RAIZ])
+    c("  sin cerrar la ventana", visto["sigue abierta"], True)
+    c("  el botón pasa a «Reanudar»", visto["tras pausar"], (True, False))
+    c("  y la línea lo dice", visto["línea en pausa"], True)
+    c("«Reanudar» deja reanudar en el mismo buzón", visto["buzón tras reanudar"],
+      [equipo.PIDE_REANUDAR])
+    c("  y el botón vuelve a «Pausar»", visto["tras reanudar"], True)
+    c("  la ventana se cierra sin elección: no hay servicio que arrancar", eleccion, None)
+    c("  y nada ha ido al buzón del agente", equipo.recoger(), [])
+
+    visto = {}
+
+    def reanudar_todo(root) -> None:
+        """Pulsa «Reanudar todo» y apunta."""
+        botones(root)["Reanudar todo"].invoke()
+        visto["buzón"] = [p["pide"] for p in equipo.recoger()]
+        visto["después"] = "Pausar" in botones(root)
+
+    ventana(CUATRO, reanudar_todo, resumen=watch.Resumen("agente", "daemon", True, True))
+    c("con la pausa de todo, «Reanudar todo» deja sigue en el buzón del agente",
+      (visto["buzón"], equipo.recoger(buzon_raiz)), ([equipo.PIDE_SIGUE], []))
+    c("  y el botón pasa a «Pausar»", visto["después"], True)
+
+    visto = {}
+    real_pedir = watch.pedir_a_la_raiz
+    watch.pedir_a_la_raiz = lambda peticion: False
+    errores_pie: list = []
+    import tkinter.messagebox as mb  # noqa: E402
+    real_showerror = mb.showerror
+    mb.showerror = lambda titulo, texto=None, **k: errores_pie.append(texto)
+    try:
+        def pausar_sin_buzon(root) -> None:
+            """Pulsa «Pausar» sin poder escribir el buzón."""
+            botones(root)["Pausar"].invoke()
+            visto["sigue"] = "Pausar" in botones(root)
+
+        ventana(CUATRO, pausar_sin_buzon, resumen=watch.Resumen("agente", "daemon", True))
+    finally:
+        watch.pedir_a_la_raiz, mb.showerror = real_pedir, real_showerror
+    c("sin poder dejar la petición, lo dice y el botón no cambia",
+      (errores_pie, visto["sigue"]), (["No he podido dejarle la petición al agente."],
+                                      True))
+
+
 # que quepa
 #
 # La ventana principal abre su propio intérprete de Tk, así que la escala no se
@@ -380,6 +469,14 @@ try:
             c(f"{nombre}: con «Expulsar» en el pie", medida.get("expulsar"), True)
             c(f"{nombre}: la ventana principal cabe", medida.get("cabe"), True)
             c(f"{nombre}: y no queda recortada", medida.get("recortado"), False)
+        # Y con el agente como servicio y las dos pausas a la vez: la línea más
+        # larga del agente (cuatro renglones) y «Reanudar» en el pie (#64).
+        with sandbox():
+            medida = {}
+            ventana(DOCE, medir, resumen=watch.Resumen("agente", "daemon", True, True, True))
+            c(f"{nombre}: con el agente en pausa, cabe",
+              (medida.get("expulsar"), medida.get("cabe")), (True, True))
+            c(f"{nombre}:   y no queda recortada", medida.get("recortado"), False)
 finally:
     uitk.pantalla_util, theme.apply = REAL_UTIL, REAL_APPLY
     cifrado.expulsion = lambda: None

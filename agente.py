@@ -88,11 +88,15 @@ AppIndicator), hace sus veces el acceso «prdrive» del menú de aplicaciones:
 sin raíz, dice con un aviso cómo va.
 
 La ventana de una raíz le habla por dos buzones (fase 5): lo del equipo por
-`agente.pide` y lo de esa raíz («Iniciar servicio» (`reanudar`), «Bloquear»)
-por el `state/servicio.pide` de la propia raíz, que solo se lee en las raíces
-de la lista. Cuando hay una versión nueva lo dice una vez; «Actualizar»
-(`agente.py actualizar`) baja el código de la release y ejecuta SU instalador,
-que pone el agente nuevo al lado de este, lo para y arranca el nuevo.
+`agente.pide` y lo de esa raíz («Pausar» (`pausar_raiz`), «Reanudar»
+(`reanudar`), «Bloquear») por el `state/servicio.pide` de la propia raíz, que
+solo se lee en las raíces de la lista. Una raíz pausada desde su ventana se
+queda así en `agente.json` (`Unidad.pausada`) hasta «Reanudar», aunque el
+agente se reinicie; la pausa de todo (`pausa`, la bandeja) no se guarda.
+
+Cuando hay una versión nueva lo dice una vez; «Actualizar» (`agente.py
+actualizar`) baja el código de la release y ejecuta SU instalador, que pone el
+agente nuevo al lado de este, lo para y arranca el nuevo.
 
 Depende de `penwatch.py` para detectar, leer los registros de runsync y abrir
 VeraCrypt: el agente importa de penwatch, nunca al revés, y penwatch sigue sin
@@ -1331,11 +1335,11 @@ class Agente:
         """Indica si el agente tiene que servir esa conexión.
 
         Es una unidad de la lista, con su código aceptado, de una versión
-        válida y en modo `daemon` o `sync`.
+        válida, en modo `daemon` o `sync` y sin el «Pausar» de su ventana.
         """
         unidad = self.ajustes.unidades.get(con.id)
         return unidad is not None and not con.cambiada and con.vieja is None \
-            and unidad.modo in (equipo.DAEMON, equipo.SYNC)
+            and unidad.modo in (equipo.DAEMON, equipo.SYNC) and not unidad.pausada
 
     def _cargar_servicio(self, con: Conexion) -> None:
         """Relee las parejas y el intervalo si cambió el TOML o la memoria del servicio.
@@ -1466,6 +1470,8 @@ class Agente:
         unidad = self.ajustes.unidades.get(con.id)
         if unidad is None:
             return "sin atender"
+        if unidad.pausada and unidad.modo in (equipo.DAEMON, equipo.SYNC):
+            return "en pausa desde su ventana: no se sincroniza hasta «Reanudar»"
         return f"modo {unidad.modo}: {equipo.TEXTO_MODO[unidad.modo]}"
 
     def _lock_es_nuestro(self, con: Conexion) -> bool:
@@ -2092,11 +2098,11 @@ class Agente:
     def _atender_peticion(self, p: dict, ahora: float) -> None:
         """Atiende una petición del buzón o de la bandeja.
 
-        Cada petición es un `equipo.PIDE_*`: reanudar el servicio de una raíz,
-        atender o poner modo a una unidad, añadir una raíz, desbloquear,
-        bloquear o abrir una raíz cifrada, despertar, sondear, un cambio de
-        red, cambiar un ajuste, una pasada urgente, actualizar, pausa, sigue y
-        parar.
+        Cada petición es un `equipo.PIDE_*`: pausar o reanudar el servicio de
+        una raíz, atender o poner modo a una unidad, añadir una raíz,
+        desbloquear, bloquear o abrir una raíz cifrada, despertar, sondear, un
+        cambio de red, cambiar un ajuste, una pasada urgente, actualizar,
+        pausa, sigue y parar.
 
         Args:
             p: La petición.
@@ -2105,10 +2111,13 @@ class Agente:
         que = p.get("pide")
         uid = p.get("id") if isinstance(p.get("id"), str) else ""
         if que == equipo.PIDE_REANUDAR:
-            # «Iniciar servicio» en la ventana de esa raíz: no arranca un
-            # servicio suyo, le dice al agente que vuelva en cuanto se cierre.
-            # Como el servicio que se arrancaba, empieza con una pasada: las
-            # parejas o el intervalo acaban de elegirse.
+            # «Reanudar» (o «Iniciar servicio» desde la consola) en la ventana
+            # de esa raíz: no arranca un servicio suyo, le quita su pausa y le
+            # dice al agente que vuelva en cuanto se cierre. Como el servicio
+            # que se arrancaba, empieza con una pasada.
+            unidad = self.ajustes.unidades.get(uid)
+            if unidad is not None and unidad.pausada:
+                self._guardar(self.ajustes.con_unidad(replace(unidad, pausada=False)))
             con = self.conexiones.get(uid)
             if con is None:
                 diario(f"reanudar {uid[:8]}: no está conectada")
@@ -2117,6 +2126,27 @@ class Agente:
             for clave in [k for k in self.marcas if k[0] == uid]:
                 del self.marcas[clave]
             diario(f"{con.nombre}: su ventana pide volver a sincronizarla")
+            if unidad is not None and unidad.pausada:
+                dlog(con.raiz, "servicio (agente del equipo): «Reanudar» desde su ventana")
+        elif que == equipo.PIDE_PAUSAR_RAIZ:
+            # «Pausar» en la ventana de esa raíz: que no vuelva al cerrarla. Se
+            # guarda (`Unidad.pausada`) para que tampoco vuelva al reiniciarse
+            # el agente; el lock se suelta en `_contrato`, acabada la pareja en
+            # curso, porque `_sirve` ya no la cuenta.
+            unidad = self.ajustes.unidades.get(uid)
+            if unidad is None:
+                diario(f"pausar {uid[:8]!r}: no está en la lista")
+                return
+            if not unidad.pausada:
+                self._guardar(self.ajustes.con_unidad(replace(unidad, pausada=True)))
+            self.urgentes = [u for u in self.urgentes if u[0] != uid]
+            con = self.conexiones.get(uid)
+            nombre = con.nombre if con is not None else (unidad.nombre or uid[:8])
+            if con is not None:
+                con.reanudar = False
+                dlog(con.raiz, "servicio (agente del equipo) en pausa: «Pausar» desde su "
+                               "ventana")
+            diario(f"{nombre}: su ventana pide pausarla; no se sincroniza hasta «Reanudar»")
         elif que == equipo.PIDE_ATENDER:
             con = self.conexiones.get(uid)
             if con is None:
@@ -2288,6 +2318,7 @@ class Agente:
                              "ahora_no": con.respuesta == pl.AHORA_NO,
                              "preguntando": con.pregunta is not None,
                              "error": con.error,
+                             "pausada": bool(unidad and unidad.pausada),
                              "fallando": sorted(p for (r, p), m in self.marcas.items()
                                                 if r == con.id and m.fallos > 0)})
         cerradas = [u.nombre or u.id[:8] for u in self.ajustes.cifradas.values()
@@ -2610,9 +2641,10 @@ def cmd_status(_args: argparse.Namespace) -> int:
     print(f"Versión:        {update.installed_version(SCRIPT_DIR) or 'desconocida'}"
           + (f" (hay una nueva, {nueva.tag}: agente.py actualizar)" if nueva else ""))
     print(f"Unidad nueva:   se pregunta y se espera {aj.espera_unidad_nueva:g} s")
+    pausa = " · en pausa desde su ventana («Reanudar» para volver)"
     for u in aj.raices.values():
         print(f"Raíz del equipo: {u.nombre or '(sin nombre)'} en {u.ruta} ({u.modo}: "
-              f"{equipo.TEXTO_MODO[u.modo]})")
+              f"{equipo.TEXTO_MODO[u.modo]})" + (pausa if u.pausada else ""))
         if u.cifrada:
             print(f"  cifrada: {u.contenedor}; al iniciar sesión "
                   + ("se pide la contraseña" if aj.pedir_al_iniciar
@@ -2621,7 +2653,7 @@ def cmd_status(_args: argparse.Namespace) -> int:
     print("Unidades en la lista:" if unidades else "Unidades en la lista: ninguna")
     for u in unidades:
         print(f"  {u.nombre or '(sin nombre)':<20} {u.id[:12]}…  {u.modo}: "
-              f"{equipo.TEXTO_MODO[u.modo]}")
+              f"{equipo.TEXTO_MODO[u.modo]}" + (pausa if u.pausada else ""))
     estado = equipo.leer_estado() if vivo else {}
     if estado.get("retenido"):
         print(f"No se lanza nada: {estado['retenido']}")

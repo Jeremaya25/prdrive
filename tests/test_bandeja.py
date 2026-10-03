@@ -379,6 +379,15 @@ c("bien y sin pasadas todavía: con algo atendido, se espera; sin nada, se dice"
 c("lo que retiene sin ser pausa (red de uso medido) usa el icono de pausa",
   bandeja.estado({"retenido": "red de uso medido", "unidades": [{}]}),
   (icons.PAUSA, "esperando: red de uso medido"))
+# El «Pausar» de la ventana de una raíz (#64): pausa, con su nombre, por debajo
+# de los avisos y por encima de «sincronizado hace…».
+PAUSADA = {"nombre": "PRDRIVE-3", "pausada": True, "atendida": False}
+c("una raíz pausada desde su ventana: el icono de pausa y su nombre",
+  bandeja.estado({"unidades": [PAUSADA, {"nombre": "OTRA", "atendida": True}],
+                  "ultima_pasada": 0}, ahora=60),
+  (icons.PAUSA, "PRDRIVE-3 en pausa"))
+c("  un aviso manda sobre ella",
+  bandeja.estado({"unidades": [{**PAUSADA, "fallando": ["docs"]}]})[0], icons.AVISO)
 
 # los iconos
 negro = icons.pixeles_menu(bandeja.I_PAUSAR, 16, "#000000")
