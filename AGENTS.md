@@ -1398,6 +1398,16 @@ script to `%LOCALAPPDATA%\prdriveWatch` / `~/.local/share/prdrive-watch`, writes
   re-`register()`s, and `prune_runtimes()` keeps `python_exe`'s, `task_python`'s
   and the running process's dirs. No device runtime for this host → host Python,
   never one living on the device.
+- **`start_now()` says «arrancado» only when it has seen the watcher.**
+  `schtasks /Run` / `systemctl start` return when the start is *requested*, and
+  `status` reads `watcher_pid` from `state.json`, which the process writes once
+  it is running: a `status` right after read «parado» (J1). `started_message()`
+  waits up to `START_WAIT_SECONDS` for a live pid and otherwise says it is
+  «pedido» and to look at `status` shortly, never «arrancado».
+- **`uninstall` words what stays on the device by what it is** (`uninstall_note()`,
+  reading `watch.json` *before* deleting it): an encrypted device keeps
+  `.prdrive/PRDRIVE` inside the container and only its vestibule marker outside,
+  a plain one keeps the control file; unplugged, it says both.
 
 ## The resident agent (`agente.py` + `common/planificador.py` + `install/agente.py`)
 
