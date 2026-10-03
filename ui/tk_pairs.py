@@ -243,7 +243,8 @@ def open_dialog(parent, config) -> bool:
         Mientras tanto se enseña lo que ya había (la copia local, o lo que se
         acaba de subir) con el indicador puesto y el bloque del catálogo
         apagado. `catalog.load()` nunca lanza; si el hilo lanzara igualmente,
-        se queda la copia local y se dice por qué.
+        se queda la copia local y se dice por qué. Si ya hay una lectura viva
+        del mismo catálogo no se lanza otra: se espera a esa.
 
         Args:
             nota: Lo que se pone en el pie si contesta el remoto; `None` deja
@@ -263,8 +264,11 @@ def open_dialog(parent, config) -> bool:
             contesto = estado["cat"] is not None and estado["cat"].editable
             refrescar(nota if contesto else None)
 
-        sondeo.esperar(segundo_plano.lanzar(partial(catalog.load, dict(estado["raw"]))),
-                       llegado)
+        # Sin repetir: un hilo de una pantalla cerrada, o de esta misma, puede
+        # seguir vivo, y dos `pull()` a la vez se pisan la copia local.
+        sondeo.esperar(segundo_plano.lanzar_sin_repetir(
+            "catalogo", estado["raw"], partial(catalog.load, dict(estado["raw"]))),
+            llegado)
 
     def fila_elegida():
         """Devuelve la fila elegida resuelta contra el catálogo, o `None`."""

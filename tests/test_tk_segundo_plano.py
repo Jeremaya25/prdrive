@@ -60,6 +60,38 @@ c("y el resultado llega cuando el hilo acaba", (lento.hecho, lento.resultado),
   (True, "listo"))
 c("el hilo no se queda con la función de quien encargó", lento._funcion, None)
 
+# Sin repetir: una lectura viva se reutiliza, una acabada o distinta no.
+soltar = threading.Event()
+lanzadas: list = []
+
+
+def trabajo():
+    """Un trabajo que espera, y apunta cada vez que arranca."""
+    lanzadas.append(1)
+    soltar.wait(5)
+    return "leído"
+
+
+primero = segundo_plano.lanzar_sin_repetir("prueba", {"remote": "nas"}, trabajo)
+segundo = segundo_plano.lanzar_sin_repetir("prueba", {"remote": "nas"}, trabajo)
+c("sin repetir: con el hilo vivo, la misma lectura es el mismo encargo",
+  (segundo is primero, len(lanzadas)), (True, 1))
+otra_clave = segundo_plano.lanzar_sin_repetir("otra", {"remote": "nas"}, trabajo)
+c("  otra clave es otra lectura", otra_clave is primero, False)
+distinta = segundo_plano.lanzar_sin_repetir("prueba", {"remote": "otro"}, trabajo)
+c("  y con otra firma el vivo no sirve: se lanza uno nuevo",
+  (distinta is primero, len(lanzadas)), (False, 3))
+tras = segundo_plano.lanzar_sin_repetir("prueba", {"remote": "otro"}, trabajo)
+c("  que pasa a ser el que se reutiliza", tras is distinta, True)
+soltar.set()
+fin = time.monotonic() + 5
+while not (primero.hecho and distinta.hecho and otra_clave.hecho) \
+        and time.monotonic() < fin:
+    time.sleep(0.01)
+nuevo = segundo_plano.lanzar_sin_repetir("prueba", {"remote": "otro"}, trabajo)
+c("  acabado el hilo, la siguiente lectura sí lanza otro",
+  (nuevo is distinta, len(lanzadas)), (False, 4))
+
 
 # 2. con Tk
 try:
@@ -464,6 +496,71 @@ with sandbox():
     c("  y nadie ha pintado en la pantalla cerrada", errores, [])
 
 
+# Cerrar y volver a abrir con el hilo aún vivo: la segunda pantalla espera al
+# mismo hilo en vez de lanzar otro (dos `pull()` se pisarían la copia local).
+with sandbox():
+    cfg = preparar()
+    dejar_copia(CAT_LOCAL)
+    remoto = RemotoLento(config_file.dumps(CAT_REMOTO))
+    catalog.run = remoto
+    vista = {}
+
+    def cerrar_y_reabrir(self, *_a, **_k):
+        """Cierra la pantalla con el remoto callado: el hilo sigue vivo."""
+        self.destroy()
+
+    def reabierta(self, *_a, **_k):
+        """Mira la segunda pantalla con el mismo remoto callado, y lo suelta."""
+        vista["antes"] = foto(self)
+        vista["pedidos_antes"] = len(remoto.pedidos)
+        remoto.soltar.set()
+        vista["llego"] = dar_vueltas(lambda: not self.sondeo.esperando)
+        vista["despues"] = foto(self)
+
+    tk.Toplevel.wait_window = cerrar_y_reabrir
+    tk_pairs.open_dialog(raiz, cfg)
+    leido_uno = dar_vueltas(lambda: len(remoto.pedidos) == 1)
+    tk.Toplevel.wait_window = reabierta
+    tk_pairs.open_dialog(raiz, cfg)
+    catalog.run = nadie
+    c("reabrir con el hilo vivo: el remoto oyó un solo `cat`",
+      (leido_uno, vista["pedidos_antes"], remoto.pedidos), (True, 1, [["cat", ENDPOINT]]))
+    c("  la segunda pantalla enseña que espera",
+      (vista["antes"]["esperando"], vista["antes"]["botones"]["Releer"]),
+      (True, "disabled"))
+    c("  y recoge lo que lee el hilo de la primera",
+      (vista["llego"], vista["despues"]["filas"]),
+      (True, ["fotos", "notas", "subida"]))
+    c("  nada ha reventado por el camino", errores, [])
+
+# «Releer» con una lectura en marcha (forzando el botón, que la pantalla apaga):
+# no lanza otra, y lo que llega lleva la nota de la última petición.
+with sandbox():
+    cfg = preparar()
+    dejar_copia(CAT_LOCAL)
+    remoto = RemotoLento(config_file.dumps(CAT_REMOTO))
+    catalog.run = remoto
+    vista = {}
+
+    def releer_forzado(self, *_a, **_k):
+        """Pulsa «Releer» con la primera lectura todavía en el aire."""
+        boton = buscar(self, ttk.Button, "Releer")
+        boton.configure(state="normal")
+        boton.invoke()
+        vista["pedidos_antes"] = len(remoto.pedidos)
+        remoto.soltar.set()
+        vista["llego"] = dar_vueltas(lambda: not self.sondeo.esperando)
+        vista["despues"] = foto(self)
+
+    tk.Toplevel.wait_window = releer_forzado
+    tk_pairs.open_dialog(raiz, cfg)
+    catalog.run = nadie
+    c("releer con una lectura viva: no hay un segundo `cat`",
+      (vista["llego"], len(remoto.pedidos)), (True, 1))
+    c("  y la nota de esa petición sale al llegar",
+      "Catálogo releído." in vista["despues"]["textos"], True)
+    c("  nada ha reventado por el camino", errores, [])
+
 # 4. «Dispositivos…»
 FLOTA = [fleet.Dispositivo(id="aaa", nombre="el azul", version="0.5.0",
                            plataformas=("linux-x64",), last_seen="2026-09-30 08:00:00",
@@ -557,6 +654,36 @@ with sandbox():
            for t in caida["textos"])), (True, True))
     c("  sin indicador, y se puede volver a intentar",
       (caida["esperando"], caida["botones"]["Releer"]), (False, "normal"))
+
+with sandbox():
+    cfg = preparar()
+    remoto = FlotaLenta()
+    catalog.run = remoto
+    vista = {}
+
+    def cerrar_y_reabrir_flota(self, *_a, **_k):
+        """Cierra la flota con el remoto callado: el hilo sigue vivo."""
+        self.destroy()
+
+    def reabierta_flota(self, *_a, **_k):
+        """Mira la segunda ventana, suelta el remoto y recoge la flota."""
+        vista["pedidos_antes"] = len(remoto.pedidos)
+        remoto.soltar.set()
+        vista["llego"] = dar_vueltas(lambda: not self.sondeo.esperando)
+        vista["filas"] = foto(self)["filas"]
+
+    tk.Toplevel.wait_window = cerrar_y_reabrir_flota
+    tk_fleet.open_dialog(raiz, cfg, dict(BASE))
+    dar_vueltas(lambda: len(remoto.pedidos) == 1)
+    tk.Toplevel.wait_window = reabierta_flota
+    tk_fleet.open_dialog(raiz, cfg, dict(BASE))
+    catalog.run = nadie
+    c("flota reabierta con el hilo vivo: una sola lectura del remoto",
+      (vista["pedidos_antes"], len([p for p in remoto.pedidos if p[0] == "copy"])),
+      (1, 1))
+    c("  y la segunda ventana recoge lo que lee el hilo de la primera",
+      (vista["llego"], vista["filas"]), (True, ["aaa", "bbb"]))
+    c("  sin que nada reviente", errores, [])
 
 with sandbox():
     cfg = preparar()

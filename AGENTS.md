@@ -551,9 +551,17 @@ paths and flags; no rounded corners, no shadows. Styles cross **role** with
   `test_tk_screens`/`test_tk_medidas` set it to `en_el_acto()` (the result is
   in before the screen shows, as they never enter the event loop), and
   `tests/test_tk_segundo_plano.py` runs real threads against a `catalog.run()`
-  that answers late or not at all. Writes to the remote (a catalogue push,
-  deleting a fleet note, purging versions, creating or listing a remote folder)
-  stay in `working()`: modal, nothing to cut halfway.
+  that answers late or not at all. **One read alive per kind**: a thread cannot
+  be cut, and closing the screen does not stop it, so reopening Parejas (or
+  pressing «Releer») with the previous thread still running used to start a
+  second `catalog.pull()` that wrote `state/catalog.toml` at the same time.
+  Both screens go through `segundo_plano.lanzar_sin_repetir(clave, firma,
+  funcion)`: the same key and the same raw config while the thread lives hands
+  back that `Encargo` (the newest screen waits on it); another config launches
+  a new one. It calls `lanzar()` through the module, so the tests' `en_el_acto()`
+  (always `hecho`) never reuses anything. Writes to the remote (a catalogue
+  push, deleting a fleet note, purging versions, creating or listing a remote
+  folder) stay in `working()`: modal, nothing to cut halfway.
 
 ### «Ajustes» (`ui/tk_doctor.py`) — where new affordances go
 

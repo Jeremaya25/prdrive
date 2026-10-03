@@ -16,12 +16,18 @@ entre sus widgets.
 
 `lanzar()` es de módulo a propósito: los tests la sustituyen por `en_el_acto()`
 y el resultado ya está puesto cuando la pantalla se enseña.
+
+Una lectura que escribe en disco (el catálogo deja su copia en `state/`) no
+debe tener dos hilos vivos a la vez: cerrar la pantalla no mata al hilo, así
+que abrirla otra vez, o releer con ella abierta, juntaba dos. `lanzar_sin_repetir()`
+es el único paso por donde pasan esas pantallas.
 """
 
 from __future__ import annotations
 
+import copy
 import threading
-from typing import Any, Callable
+from typing import Any, Callable, Hashable
 
 
 class Encargo:
@@ -81,4 +87,40 @@ def en_el_acto(funcion: Callable[[], Any]) -> Encargo:
     """
     encargo = Encargo(funcion)
     encargo.correr()
+    return encargo
+
+
+_EN_VUELO: dict[Hashable, tuple[Any, Encargo]] = {}
+"""La lectura viva de cada clave: `(firma, encargo)`, la última que se lanzó."""
+
+
+def lanzar_sin_repetir(clave: Hashable, firma: Any,
+                       funcion: Callable[[], Any]) -> Encargo:
+    """Lanza `funcion`, o devuelve el encargo vivo de la misma lectura si lo hay.
+
+    Mientras el hilo de una lectura no haya acabado, pedir la misma otra vez
+    (la pantalla se cerró y se abrió, o se pulsó «Releer») no arranca otro: se
+    devuelve el que corre y quien lo pida lo espera, con lo que lo recoge la
+    última pantalla que lo pidió. Dos hilos del mismo catálogo se pisarían al
+    dejar su copia local.
+
+    «La misma» es misma clave y misma `firma`: con otra (el catálogo apunta a
+    otro remoto desde que se lanzó el vivo) el resultado del vivo no sirve, y
+    como a un hilo no se le puede cortar se lanza uno nuevo, que pasa a ser el
+    que se reutiliza.
+
+    Args:
+        clave: Qué se lee, p. ej. `"catalogo"` o `"flota"`.
+        firma: Los datos de los que depende la lectura (el config en bruto). Se
+            copia: lo que cambie luego en quien llama no altera la comparación.
+        funcion: El trabajo, con las mismas condiciones que en `lanzar()`.
+
+    Returns:
+        El encargo, nuevo o el que ya corría.
+    """
+    vivo = _EN_VUELO.get(clave)
+    if vivo is not None and not vivo[1].hecho and vivo[0] == firma:
+        return vivo[1]
+    encargo = lanzar(funcion)
+    _EN_VUELO[clave] = (copy.deepcopy(firma), encargo)
     return encargo

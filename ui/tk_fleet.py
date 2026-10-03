@@ -342,7 +342,8 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> None:
             else:
                 pintar(*encargo.resultado, nota)
 
-        sondeo.esperar(segundo_plano.lanzar(partial(fleet.leer, raw)), llegada)
+        sondeo.esperar(segundo_plano.lanzar_sin_repetir(
+            "flota", raw, partial(fleet.leer, raw)), llegada)
 
     def pintar(flota: list, aviso: str | None, nota: str = "") -> None:
         """Repinta la tabla, el chip y la ficha con la flota leída."""
