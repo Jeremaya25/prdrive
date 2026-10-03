@@ -1484,7 +1484,10 @@ whatever you build that only a real host can prove.
   (`SONDA`, an `rclone lsd remote:` with `catalog.NET_FLAGS`) instead of
   retried. A `RED` result doesn't count a failure; the agent probes at once and,
   if the remote answers, re-records it as `FALLO` (the classification was
-  wrong). Network needles live in `moderacion.ERRORES_DE_RED`, and
+  wrong). The suspicion is **per pair** (`Agente.sospechas`, `(root, pair)` →
+  `Sospecha`): two pairs of one remote failing before its probe both get
+  re-recorded; a non-`RED` result for that pair closes it, and a pair whose
+  mark is no longer the one the `RED` left (`Sospecha.tras`) is not touched. Network needles live in `moderacion.ERRORES_DE_RED`, and
   `sync.KNOWN_ERRORS` uses `moderacion.es_de_red` as a **callable needle** —
   one list, because the agent doesn't carry `sync.py`.
 - **An offline remote is probed when the network comes back (#67)**, not on a

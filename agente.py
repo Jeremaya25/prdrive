@@ -946,6 +946,22 @@ class Pasada:
     nombre: str
 
 
+class Sospecha(NamedTuple):
+    """Un fallo que parece de red y espera a la sonda de su remoto.
+
+    Args:
+        remoto: El remoto de la pareja, que es el que se sondea.
+        antes: La marca de la pareja antes de aquella pasada: la que, si el
+            remoto contesta, pasa a contar el fallo.
+        tras: La marca que dejó registrarla como `RED`. Si ya no es esa, la
+            pareja ha hecho otra cosa desde entonces y el fallo ya no se
+            discute.
+    """
+    remoto: str
+    antes: pl.Marca
+    tras: pl.Marca
+
+
 class Mirar(NamedTuple):
     """Una carpeta que toca mirar en un muestreo.
 
@@ -1047,8 +1063,9 @@ class Agente:
             pareja)`.
         pausado: Si se ha pedido pausa.
         terminar: Si se ha pedido parar.
-        sospechas: Los fallos que parecen de red y esperan a la sonda, por
-            `(raíz, remoto)`: la pareja y su marca de antes.
+        sospechas: Los fallos que parecen de red y esperan a la sonda de su
+            remoto, por `(raíz, pareja)`: uno por pareja, para que el segundo
+            fallo de otra pareja del mismo remoto no pise al primero.
         sin_red_avisado: Los `(raíz, remoto)` sin conexión ya avisados.
         retenido: Por qué no se lanza nada ahora, para no repetirlo en el
             diario.
@@ -1102,7 +1119,7 @@ class Agente:
     urgentes: list[tuple[str, str]] = field(default_factory=list)
     pausado: bool = False
     terminar: bool = False
-    sospechas: dict[tuple[str, str], tuple[str, pl.Marca]] = field(default_factory=dict)
+    sospechas: dict[tuple[str, str], Sospecha] = field(default_factory=dict)
     sin_red_avisado: set[tuple[str, str]] = field(default_factory=set)
     retenido: str | None = None
     rafaga_hasta: float = -math.inf
@@ -2073,33 +2090,46 @@ class Agente:
             # ¿De verdad es la red? La sonda va ya: si el remoto contesta,
             # aquel fallo era de la pareja y se apunta como tal
             # (`_fin_de_sonda`).
-            self.sospechas[(tarea.raiz, tarea.remoto)] = (tarea.pareja, antes)
+            self.sospechas[clave] = Sospecha(tarea.remoto, antes, despues)
             self.entorno = pl.sin_conexion(self.entorno, tarea.raiz, tarea.remoto, ahora)
-        elif pl.empieza_a_fallar(antes, despues):
-            avisar(f"{con.nombre}: falla {tarea.pareja}", self._donde_mirar(con), True)
+        else:
+            # Un resultado que no es de red cierra la duda de esa pareja: su
+            # pasada ya dice cómo está, y no se vuelve a apuntar el fallo de
+            # antes encima.
+            self.sospechas.pop(clave, None)
+            if pl.empieza_a_fallar(antes, despues):
+                avisar(f"{con.nombre}: falla {tarea.pareja}", self._donde_mirar(con), True)
 
     def _fin_de_sonda(self, con: Conexion, remoto: str, rc: int, texto: str,
                       ahora: float) -> None:
         """Recoge el resultado de una sonda al remoto.
 
-        Si contesta, el fallo sospechado de red era de la pareja; si no, el
-        remoto queda sin conexión hasta el próximo sondeo.
+        Si contesta, el fallo sospechado de red de cada pareja de ese remoto
+        era de la pareja y se apunta como tal, salvo en la que ya ha hecho otra
+        cosa desde entonces; si no, el remoto queda sin conexión hasta el
+        próximo sondeo.
         """
         clave = (con.id, remoto)
-        sospecha = self.sospechas.pop(clave, None)
+        dudosas = {k: v for k, v in self.sospechas.items()
+                   if k[0] == con.id and v.remoto == remoto}
+        for k in dudosas:
+            del self.sospechas[k]
         # Un error que no es de red (credenciales, una ruta) es un remoto que
         # contesta: no hay nada que esperar.
         if rc == 0 or not moderacion.es_de_red(texto):
             self.entorno = pl.con_conexion(self.entorno, con.id, remoto)
-            if sospecha is not None:
-                pareja, antes = sospecha
-                despues = pl.registrar(antes, FALLO, ahora)
+            apuntadas = False
+            for (_, pareja), sospecha in dudosas.items():
+                if self.marcas.get((con.id, pareja)) != sospecha.tras:
+                    continue
+                apuntadas = True
+                despues = pl.registrar(sospecha.antes, FALLO, ahora)
                 self.marcas[(con.id, pareja)] = despues
                 diario(f"[{con.nombre}] {remoto} contesta: el fallo de {pareja} no era "
                        f"de la red")
-                if pl.empieza_a_fallar(antes, despues):
+                if pl.empieza_a_fallar(sospecha.antes, despues):
                     avisar(f"{con.nombre}: falla {pareja}", self._donde_mirar(con), True)
-            elif clave in self.sin_red_avisado:
+            if not apuntadas and clave in self.sin_red_avisado:
                 self.sin_red_avisado.discard(clave)
                 diario(f"[{con.nombre}] vuelve la conexión con {remoto}")
             return
