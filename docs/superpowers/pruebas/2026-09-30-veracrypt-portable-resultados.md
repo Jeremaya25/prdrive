@@ -32,7 +32,8 @@ V2 y V3 (Windows ARM64) quedan para otro equipo.
     `penwatch.installed_veracrypt()` / `crypto.find_veracrypt()` no ven nada
     instalado y eligen el Portable. Ni el asistente ni el `.bat` miran qué
     driver hay cargado. **Corregido después de redactarlo:** `DriverAttach()`
-    compara `VERSION_NUM`, que es 0x0126 para toda la 1.26.x (ver AGENTS.md),
+    compara `VERSION_NUM`, que es 0x0126 para toda la 1.26.x (ver
+    `docs/agents/reference/veracrypt.md`),
     así que este 1.26.29 probablemente **no** habría chocado con el Portable
     1.26.24. Solo choca con otra versión minor (una 1.25.x suelta: V4b del
     plan). No se comprobó: el driver se quitó antes de V1.

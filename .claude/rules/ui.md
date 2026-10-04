@@ -1,0 +1,23 @@
+---
+paths:
+  - "ui/__init__.py"
+  - "ui/tk.py"
+  - "ui/theme.py"
+  - "ui/icons.py"
+  - "ui/console.py"
+  - "ui/segundo_plano.py"
+  - "ui/cifrado.py"
+  - "ui/tk_doctor.py"
+  - "ui/tk_configuracion.py"
+  - "ui/tk_pairs.py"
+  - "ui/watch.py"
+  - "ui/tk_watch.py"
+  - "tests/test_tk_*.py"
+  - "tests/test_ui.py"
+  - "tests/test_start.py"
+  - "tests/test_iconos.py"
+  - "tests/test_theme_combobox.py"
+  - "tests/test_ultima_pasada.py"
+  - "tests/test_watch.py"
+---
+Before changing these files, read `docs/agents/reference/ui.md` (frontends, theme and window sizing, `working()` and background reads, «Ajustes»). If you already read it this session, skip it.

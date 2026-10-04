@@ -34,7 +34,7 @@ enteros son big-endian porque son `mputWord`/`mputLong` (`Common/Endian.h`).
 Ejecutarlo sería lanzar un instalador con su interfaz y su UAC para sacar unos
 ficheros que ya se pueden sacar leyendo, y un `.exe` sin firmar en `%TEMP%` que
 lanza otro es justo la forma que no se quiere tener (ver «Nothing in the wizard
-spawns a shell» en AGENTS.md).
+spawns a shell» en `docs/agents/reference/provisioning.md`).
 
 Las tres comprobaciones, además del SHA-256, son las mismas que hace VeraCrypt
 antes de extraer, para que un paquete que él rechazaría tampoco pase aquí:

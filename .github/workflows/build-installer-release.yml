@@ -1,10 +1,11 @@
 name: Build Installer Release
 
-# VERSION es la única fuente de la versión (ver CLAUDE.md): lo que se copia al
-# dispositivo y contra lo que common/update.py compara la última release. Por eso
-# el disparador es ese fichero: al subir a main un commit que lo toque, se publica
-# la release con el tag v<VERSION>. El workflow_dispatch se queda como salida
-# manual (repetir una publicación fallida sin tener que tocar VERSION otra vez).
+# VERSION es la única fuente de la versión (ver
+# docs/agents/reference/updating.md): lo que se copia al dispositivo y contra lo
+# que common/update.py compara la última release. Por eso el disparador es ese
+# fichero: al subir a main un commit que lo toque, se publica la release con el
+# tag v<VERSION>. El workflow_dispatch se queda como salida manual (repetir una
+# publicación fallida sin tener que tocar VERSION otra vez).
 on:
   push:
     branches:

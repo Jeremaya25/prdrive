@@ -1,0 +1,14 @@
+# «Reparación» (`common/revision.py` + `ui/repair.py` + `ui/tk_repair.py`)
+
+Formerly AGENTS.md «Reparación».
+
+**One diagnosis, three layers.** `revision.revisar(config)` returns `Hallazgo`s (clave, título, detalle, pareja, gravedad, dato); `revision.informe(config)` returns the same thing as the text `sync.py --doctor` prints (all `doctor()` does now). It lives in `common/` because **`sync.py` does not import `ui/`**: a diagnosis on the window's side would be a second one and the two would drift. `ui/repair.py` answers "and what do I do about it" with plans in the `EditPlan` shape (`consequences`/`warnings`/`execute()`); `ui/tk_repair.py` only draws.
+
+- **What has a button.** `prefijo` shelves the baseline (`bisync.shelve_baseline`); `lock` deletes the stray `.lck`s; `resync` and `fallo` are not disk plans (a pass through `lanzar`; opening the log).
+  - **A missing local dir deliberately has none**: creating it is exactly what `_bisync_preflight()` refuses when a baseline exists, because an empty local side reads as "everything was deleted". The screen says so instead.
+  - Nor does **`espacio`**: a *dynamic* (sparse) VeraCrypt container with under `vestibulo.UMBRAL_LIBRE` (1 GiB) free on the physical drive. It grows as it is written, so when the drive fills the inner volume throws I/O errors mid-pass and rclone cannot say why; the fix is freeing space outside.
+- **Deleting a lock asks who is syncing first.** `repair.sincronizacion_en_curso()` reads `model.daemon_lock()` and errs towards "yes, someone is": another host's record cannot be checked with `pid_alive`, and refusing to delete costs nothing while deleting under a live pass does.
+- **A `fallo` says since when** (#20): `revision._fallos()` adds one sentence from the pass journal, «Falla desde el 12/09 · 0 de las últimas 14 bien.» («al menos desde» when every recorded pass failed: the streak may predate the journal). It goes in the `detalle`, so `--doctor` prints it too; with no journal, or one whose last line is not a failure, the finding reads as before.
+- **Nothing repairs itself**, on open or on click: every plan goes through `tk_pairs.confirmar_plan()`. After executing, the screen re-runs `revisar()` whole instead of crossing out the row it just fixed.
+- **The conflicts are a section, not a window**: `tk_conflicts.seccion()` builds the tree into whatever frame it is given; there is no `open_dialog`, so the only way in is «Reparación». `conflict_editor` is untouched.
+- **The main window says it in one line**: `revision.cuenta()` in the header chip plus one line with a «Reparación…» button, hidden while a pass runs (the rule that disabled the old per-fault blocks' buttons). The update/components block stays separate: an offer is not a fault, and counting them together made everything weigh the same.

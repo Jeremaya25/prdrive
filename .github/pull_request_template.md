@@ -61,7 +61,8 @@ probado ninguna ventana. -->
 
 ## Reglas del repositorio
 
-<!-- Las que se rompen sin querer. El detalle está en AGENTS.md. -->
+<!-- Las que se rompen sin querer. El detalle está en AGENTS.md y, por zonas, en
+docs/agents/reference/. -->
 
 - [ ] Solo biblioteca estándar, Python 3.11; `import tkinter` dentro de las funciones
 - [ ] Las capas siguen separadas: los `tk_*` solo dibujan; `penwatch.py` no importa `common/` ni `ui/`; `install/` no importa `ui/` fuera de `tk_install`
@@ -72,8 +73,8 @@ probado ninguna ventana. -->
 
 ## Documentación y versión
 
-- [ ] AGENTS.md
-- [ ] README.md
+- [ ] AGENTS.md (solo si cambia una regla que vale en toda sesión) o el doc de la zona en `docs/agents/reference/`
+- [ ] README.md (solo lo esencial para el usuario) o la guía de `docs/guia/`
 - [ ] `device-readme.md`: la guía corta que va al dispositivo, sin detalles internos
 - [ ] `sync_config.example.toml`, si cambia el esquema
 - [ ] `VERSION` sube a ____: **el merge a `main` publica la release**
