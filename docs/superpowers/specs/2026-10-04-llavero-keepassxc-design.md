@@ -1,527 +1,623 @@
-# El llavero: KeePassXC en el volumen, para contraseñas y passkeys
+# El llavero (`.keychain`): KeePassXC de viaje y una base que se sincroniza sola
 
-Fecha: 2026-10-04 · Estado: **propuesta**, por decidir (las preguntas abiertas
-están al final) · Versión objetivo: 0.6.0 · De dónde sale:
+Fecha: 2026-10-04 · Estado: **decidida en lo principal**. Queda una pregunta,
+al final · Versión objetivo: 0.6.0 · Sustituye a la primera propuesta del mismo
+día (`3cdf1d5`) · Pruebas de las que sale:
 `docs/superpowers/pruebas/2026-10-04-keepassxc-portatil.md` y sus resultados
-(`…-resultados.md`, solo en Windows ARM64; los códigos K/B/PK/V/A/S y los
-hallazgos H-n se citan tal cual).
+(solo Windows ARM64). Los códigos K/B/PK/V/A/S y los hallazgos H-n se citan tal
+cual.
 
 ## Qué se pide
 
-Que el volumen cifrado de prdrive guarde las **claves privadas de las
-passkeys** (y, de paso, las contraseñas) y que entrar en GitHub y en sitios
-parecidos sea rápido desde cualquier equipo donde se abra la unidad. Tiene que
-ser útil para quien lleva la unidad y no un montaje que haya que vigilar: sin
-pasos que se olvidan, sin restos en el equipo y sin perder entradas al
-sincronizar.
+Llevar en la unidad las claves privadas de las **passkeys** (y las
+contraseñas) en una base de KeePassXC, y entrar rápido en GitHub y en sitios
+parecidos desde cualquier equipo donde se abra la unidad. La base se mantiene
+igual en todos los dispositivos de la persona **sin que tenga que pensar en
+ello**: ni parejas que configurar, ni carpetas que crear en el remoto, ni pasos
+extra al expulsar.
 
-## Lo que dijeron las pruebas y lo que decide
+## Decidido al plantearlo
 
-| Hallazgo | Qué decide aquí |
+- **KeePassXC viaja dentro de `.prdrive/`** (`.prdrive/keepassxc/`). prdrive lo
+  descarga, lo comprueba y lo actualiza como rclone o VeraCrypt.
+- **La base vive en `.keychain/`**, en la raíz del volumen, oculta como
+  `.prdrive/`. **Una sola base**, con el nombre que traiga.
+- **La gestiona prdrive.** No es un `[[pair]]` ni sale en «Parejas»: el código
+  construye su pareja y fija sus filtros y su política de conflictos.
+- **En el remoto va junto al catálogo**, en una subcarpeta `keychain/` de la
+  carpeta del catálogo. No hay que crear ni elegir ninguna carpeta más.
+- **Lo que se guarda sube solo.** Vigilan el servicio del dispositivo, el agente
+  o, si no hay ninguno, un vigilante que arranca «Llavero» y vive lo mismo que
+  KeePassXC. Lo de otro dispositivo llega cada **5 min** mientras KeePassXC está
+  abierto.
+- **Expulsar**: si queda algo sin subir, hace una pasada **sin decir nada**.
+  Solo se habla si hay error, con un tope de 60 s. Sin red, una línea.
+- **Cualquier dispositivo**, cifrado o no.
+- **Se activa en el asistente dándole un `.kdbx`**, o trayendo el del remoto en
+  un segundo dispositivo. También desde «Ajustes → Llavero…» (§9).
+- **Fichero llave**: prdrive **no lo copia, no lo lee y no guarda ninguna huella
+  suya**. Solo recuerda dónde lo tiene la persona en cada equipo. En el catálogo
+  queda apuntado que la base lo pide, para avisar en otro dispositivo.
+  YubiKey, no.
+- **`pairs.toml` pasa a llamarse `remote.toml`**, porque ya no lleva solo
+  parejas (§3).
+- **rclone no vigila nada por su cuenta.** La documentación de bisync lo dice:
+  «Rclone does not yet have a built-in capability to monitor the local file
+  system for changes and must be blindly run periodically». En la v1.75.1 el
+  backend local no declara `ChangeNotify` (`backend/local/local.go`), y ese
+  mecanismo es para cambios **del remoto**: solo lo usa `mount`, y solo en
+  algunos remotos.
+  - Se descarta `rclone mount` con `--vfs-cache-mode writes` +
+    `--vfs-write-back`, lo más parecido: pide WinFsp o FUSE, la base dejaría de
+    estar en la unidad para vivir en la caché, no funciona sin red y no detecta
+    conflictos (gana el último que escribe).
+  - La vigilancia es la nuestra: el sondeo del agente (`huella.py`,
+    `PoliticaCambios`), aplicado a un solo fichero.
+
+## Lo que dijeron las pruebas y dónde se atiende
+
+| Hallazgo | Aquí |
 |---|---|
-| V1, V2: nadie rechazó el salto de BE/BS (webauthn.io en los dos sentidos, GitHub 1→0) | **Lo que importa es que viaje la base.** El programa de viaje se fija en una sola versión (≥ 2.7.12), pero el del equipo vale donde no haya uno de viaje (Linux ARM). §3, §9 |
-| A1 bien, A2 roto (H-7) | En Windows ARM se lleva el ZIP **x64**, que corre emulado. §3 |
-| K3 (deducido): el ZIP no trae el runtime de Visual C++ | Se detecta al arrancar y se explica qué hacer. §3, decisión 3 |
-| H-3: el ZIP ya trae `.portable` | No hay que prepararlo, solo dejarlo como viene. §3 |
-| B2, H-6: un equipo nuevo **no** se configura solo | **prdrive escribe las claves del registro** antes de abrir KeePassXC. §5 |
-| B4, H-18: desmarcar los navegadores no limpia el equipo | **prdrive las quita al expulsar** y deja como estaba lo que fuera de un KeePassXC instalado (B5). §5, §8 |
-| K5, K6, H-16: KeePassXC y el proxy del navegador retienen el volumen | «Expulsar» se ocupa de los dos antes de llamar a VeraCrypt. §8 |
-| H-1: Windows Hello crea una credencial en el equipo | `QuickUnlock` empieza apagado. §4 |
-| H-11 (S2): rclone ve los temporales del guardado, y el «¿Desactivar almacenajes seguros?» | La pareja del llavero solo deja pasar `*.kdbx`. prdrive vuelve a encender los guardados atómicos en cada arranque y comprueba que la base está entera antes de subirla. §6 |
-| H-12 (S3): bisync aborta con un solo fichero en la carpeta | Junto a la base va siempre un fichero fijo. §6 |
-| H-13: `--resync` en un dispositivo con la base vieja | `resync-mode = "newer"` en la pareja. §6 |
-| H-14 (S4): conflicto silencioso con `versions = true` | En esta pareja el conflicto **se ve**: `conflict-loser = "num"` y «Combinar». §7 |
-| S5: KeePassXC combina solo si tiene cambios sin guardar | Se aprovecha como está. §7 |
-| S6, H-15: exportaciones en claro | Nunca viajan, por la misma lista de lo que viaja. «Reparación» las enseña. §6 |
-| PK6, H-10, H-17: base bloqueada, extensión que no reconecta | Por ahora, la guía. Hay pruebas nuevas para saber más. §10, §13 |
-| H-2: tres formatos de `.DIGEST` | No afecta: la suma va fijada en el código, como la de VeraCrypt. §3 |
-
-## La idea
-
-> El **llavero** de un dispositivo es una carpeta `llavero/` con una o varias
-> bases `.kdbx`, sincronizada por una pareja más, la pareja `llavero`. Al lado
-> va un **KeePassXC de viaje** en `.prdrive/keepassxc/`, que se actualiza como
-> rclone o VeraCrypt. Y hay dos acciones nuevas: **«Abrir llavero»** prepara el
-> equipo (registro, configuración, la última versión de la base) y abre
-> KeePassXC. **«Expulsar»** lo cierra todo y deja el equipo como estaba.
-
-Lo que no cambia:
-
-- **La contraseña de la base nunca pasa por prdrive.** Cuando hace falta
-  (combinar dos versiones, §7), la pide `keepassxc-cli` en su propia consola,
-  como VeraCrypt pide la suya en su diálogo (`vestibule.md`).
-- **prdrive no descifra la base.** Solo comprueba su forma con lo que el
-  formato KDBX deja comprobar sin clave (§6).
-- **Las passkeys siguen siendo cosa de KeePassXC y de su extensión.** prdrive
-  no es un autenticador ni un gestor de contraseñas: lleva, actualiza, prepara y
-  limpia.
-- **Nada de `.prdrive/` viaja al remoto** (ya era así). El programa y su
-  configuración no se sincronizan; la base, sí.
+| V1, V2: ningún sitio rechazó el salto de BE/BS | Una sola versión de viaje (≥ 2.7.12) en todos los equipos; la mezcla deja de pasar. §11 para Linux ARM |
+| A1 bien, A2 roto (H-7) | En Windows ARM, el ZIP x64 emulado. §11 |
+| K3: el ZIP no trae el runtime de Visual C++ | Se detecta al arrancar y se explica. §6 |
+| B2, H-6: un equipo nuevo no se configura solo | prdrive escribe las claves del registro antes de abrir. §7 |
+| B4, H-18, B5: el registro no se limpia | prdrive las quita al expulsar, o las devuelve a un KeePassXC instalado. §7, §10 |
+| K5, K6, H-16: KeePassXC y el proxy retienen el volumen | «Expulsar» se encarga de los dos. §10 |
+| H-1: Windows Hello deja una credencial en el equipo | `QuickUnlock` empieza apagado. §6 |
+| H-11 (S2): temporales del guardado y «¿Desactivar almacenajes seguros?» | Solo viajan `*.kdbx`; `UseAtomicSaves` se reenciende en cada arranque; la base se comprueba antes de subir. §4, §6 |
+| H-12 (S3): bisync con un solo fichero | Un compañero fijo al lado de la base. §4 |
+| H-13: `--resync` con la base vieja | `resync-mode = "newer"`. §4 |
+| H-14 (S4): el conflicto silencioso | `conflict-loser = "num"` y «Combinar». §8 |
+| S5: KeePassXC combina si tiene cambios sin guardar | Se aprovecha tal cual. §8 |
+| S6, H-15, PK5: exportaciones en claro, y la carpeta personal del equipo | No viajan; KeePassXC propone la raíz del volumen. §4, §6 |
+| PK6, H-10, H-17 | La guía, y las pruebas R7–R8. §12, §15 |
+| H-2: tres formatos de `.DIGEST` | No afecta: la suma va fijada en el código. §5 |
 
 ## 1. Lo que vive la persona
 
-1. **Al preparar el dispositivo** (cifrado), el asistente ofrece una casilla:
-   «Llevar un llavero (KeePassXC) para contraseñas y passkeys». Si el catálogo
-   del remoto ya tiene la pareja `llavero` (de otro dispositivo), sale marcada.
-   En un dispositivo que ya existe, el panel «ya es un prdrive» suma «Añadir el
-   llavero…» a «Actualizar» y «Añadir plataformas…».
-2. **La primera vez**, con la unidad abierta, se pulsa «Llavero» (en la ventana
-   de prdrive o en `Llavero.bat` de la raíz del volumen). Una pantalla corta
-   explica tres cosas: que se va a crear la base, que su contraseña es
-   **distinta** de la de la unidad, y que se guarda donde KeePassXC proponga
-   (`llavero/`). KeePassXC se abre en su bienvenida, con el diálogo de guardar
-   ya en `llavero/` (`KPXC_INITIAL_DIR`, H-15). Por defecto crea KDBX 4 con
-   Argon2. Para usar una base que ya se tiene, se copia a `llavero/`.
-3. **En cada navegador** (una vez por perfil de navegador, no por equipo): se
-   instala KeePassXC-Browser, se pulsa «Conectar» y se activa «Enable
-   Passkeys». La asociación se guarda en la base y viaja con ella (B2).
-4. **Cada día**: abrir la unidad → «Llavero» → la contraseña de la base → los
-   sitios piden passkey y KeePassXC firma. GitHub la enseña como «Synced»
-   (PK2), y es normal.
-5. **En otro equipo** (u otra letra): el mismo «Llavero». prdrive escribe el
-   registro de ese equipo antes de abrir KeePassXC y no hay que marcar nada en
-   sus ajustes (arregla B2). Si ese navegador nunca se conectó, toca el paso 3.
-6. **Expulsar** (desde la ventana o con `Expulsar PRDRIVE.bat`): si KeePassXC
-   está abierto, se ofrece cerrarlo; el proxy se termina solo. Si hay cambios
-   sin subir, se suben. Las claves del registro se quitan y se desmonta como
-   siempre. La persona no tiene que cerrar el navegador (K6).
-7. **Otro dispositivo con el mismo remoto** recibe la base por la pareja
-   `llavero`. Si los dos cambiaron la base sin sincronizar en medio, «Llavero»
-   lo dice antes de abrir y ofrece combinar las dos versiones (§7).
+1. **Al preparar un dispositivo**, el asistente ofrece el llavero con tres
+   salidas:
+   - **«Usar esta base…»**: se elige un `.kdbx`.
+   - **«Traer el del remoto»**: solo si el catálogo ya tiene uno.
+   - **«Crear una nueva con KeePassXC»**: es una propuesta, §9.
+
+   Si es una base propia, pregunta **«¿Esta base usa un fichero llave?»** y, si
+   la respuesta es sí, **«¿Dónde está en este equipo?»**. Se apunta la ruta; el
+   fichero no se toca.
+2. **En cada navegador**, una vez por perfil: instalar KeePassXC-Browser,
+   «Conectar» y activar «Enable Passkeys». La asociación se guarda en la base y
+   viaja con ella (B2).
+3. **Cada día**: abrir la unidad → «Llavero» (en la ventana de prdrive o en
+   `Llavero.bat`) → KeePassXC se abre con la base y, si la hay, la ruta del
+   fichero llave ya puesta → contraseña → los sitios piden la passkey y
+   KeePassXC firma.
+4. **Lo que se guarda** sube unos 20 s después del último cambio. Lo de otro
+   dispositivo llega en 5 min como mucho mientras KeePassXC esté abierto, y
+   siempre al pulsar «Llavero».
+5. **En otro equipo**, el mismo «Llavero». prdrive prepara el registro de ese
+   equipo (arregla B2). Si la base pide fichero llave y en ese equipo no se ha
+   dicho dónde está, lo pregunta una vez.
+6. **Expulsar**: si KeePassXC está abierto, se ofrece cerrarlo. El proxy y el
+   vigilante se paran solos. Lo que quede sin subir, sube. El registro queda
+   como estaba y se desmonta. La persona no ve nada distinto, solo tarda un poco
+   más cuando había algo pendiente.
+7. **Un segundo dispositivo** con el mismo remoto: «Traer el del remoto». Si la
+   base pide fichero llave, el asistente lo avisa con su nombre («Esta base
+   pide el fichero llave "personal.keyx"…») y pregunta dónde está en ese equipo.
+8. **Si dos dispositivos cambiaron la base** sin sincronizar en medio,
+   «Llavero» lo dice antes de abrir y ofrece combinarlas (§8).
 
 ## 2. Dónde está cada cosa
 
 ```
-<volumen>/
+<raíz del volumen>/
 ├── .prdrive/
 │   ├── keepassxc/
-│   │   ├── windows-x64/            el ZIP 2.7.12 tal cual (trae .portable); también en Windows ARM
-│   │   │   ├── PRDRIVE-KEEPASSXC   el sello (§3)
-│   │   │   └── config/             lo que escribe KeePassXC en portátil: SOLO los JSON del navegador
-│   │   ├── linux-x64/              fase 2 (§9)
-│   │   └── config/
-│   │       ├── windows/            keepassxc.ini, keepassxc_local.ini, raiz.txt
-│   │       └── linux/              fase 2
-│   └── filters/llavero.txt         generado (§6)
-├── Llavero.bat · llavero.sh        lanzadores de la raíz del volumen, junto a runsync.*
-└── llavero/                        la pareja `llavero`
-    ├── LEEME-LLAVERO.txt           el fichero fijo de H-12, y qué es esta carpeta
-    └── <nombre>.kdbx
+│   │   ├── windows-x64/              el ZIP tal cual (trae .portable); también en Windows ARM
+│   │   │   ├── PRDRIVE-KEEPASSXC     el sello (§5)
+│   │   │   └── config/               SOLO los JSON del navegador, que KeePassXC rehace al arrancar
+│   │   └── config/windows/           keepassxc.ini, keepassxc_local.ini, raiz.txt
+│   ├── filters/keychain.txt          generado (§4)
+│   └── state/
+│       ├── keychain/                 la baseline de bisync, como cualquier pareja
+│       └── keychain.json             por equipo: dónde está el fichero llave
+├── .keychain/                        oculta: punto delante + deploy.hide()
+│   ├── LEEME.txt                     compañero fijo (H-12): qué es esto y que no se toque
+│   └── <base>.kdbx
+└── Llavero.bat · llavero.sh          lanzadores, junto a runsync.*
 ```
 
-- **El programa y la configuración van separados.** La configuración se pasa
-  con `--config` y `--localconfig`. Así cambiar de versión sustituye la carpeta
-  del programa entera, sin mover nada de la persona. Los JSON del navegador
-  siguen en `<exe>/config/` (`getNativeMessagePath()` en portátil), pero
-  KeePassXC los rehace en cada arranque (`updateBinaryPaths()`), así que
-  perderlos en un cambio de versión no importa.
-- **La configuración va por sistema** (`windows/`, `linux/`), porque lleva rutas
-  de ese sistema (`LastOpenedDatabases`…). Las dos empiezan con los mismos
-  valores (§4).
-- **Que el dispositivo lleva llavero se sabe por lo que hay**, como con
-  VeraCrypt: `.prdrive/keepassxc/` con su sello y la pareja `llavero` en
-  `sync_config.toml`. No hay otro registro.
-- `Llavero.bat` y `llavero.sh` siguen las reglas de `runsync.*`: CRLF, sin
-  bloques entre paréntesis, `chcp 65001`; los escribe `deploy.write_launchers()`
-  y no `--update`. Lanzan `runsync.py --llavero` con el Python del dispositivo,
-  sin consola. Se añaden a `device.RUIDO`.
+En el remoto:
 
-## 3. El componente KeePassXC
+```
+<catalog_remote>:/prdrive-catalog/    la carpeta de `catalog_path`
+├── remote.toml                       antes pairs.toml; lleva [keychain] (§3)
+├── remote.toml.bak                   el de push()
+├── devices/                          las notas de la flota
+└── keychain/
+    ├── LEEME.txt
+    ├── <base>.kdbx
+    └── .prversions/
+```
 
-- **El pin**, en `common/pins.py`: `KEEPASSXC_VERSION = "2.7.12"` y
-  `KEEPASSXC = {clave: (nombre, sha256)}` para `windows-x64` (el ZIP Win64). Se
-  añade `KEEPASSXC_PARA = {"windows-arm64": "windows-x64"}`, con el porqué
-  citado (A1, A2, H-7). La URL es la de las versiones de
-  `keepassxreboot/keepassxc` en GitHub.
-- **Mover el pin es a mano**, como con VeraCrypt: comprobar el `.sig` con la
-  clave de KeePassXC (huella `BF5A669F…6397D0D2`, K0) y escribir la suma. En
-  ejecución no se lee ningún `.DIGEST`, así que sus tres formatos (H-2) dan
-  igual.
-- **`install/keepassxc_bin.py`** copia el guion de `veracrypt_bin`:
+- **`.keychain/` es de prdrive.** Va en `device.RUIDO` y se reescribe pasando
+  antes por `deploy.unhide()`, como el marcador del vestíbulo. Lo que pase con
+  una pareja del usuario con `local = "."` (la raíz entera) se decide en §4.
+- **El programa y su configuración van separados**: la configuración se pasa con
+  `--config` y `--localconfig` (`src/main.cpp`, opciones `config` y
+  `localconfig`). Así cambiar de versión sustituye la carpeta del programa
+  entera. Los JSON del navegador quedan en `<exe>/config/` porque está
+  `.portable` (`getNativeMessagePath()`), y perderlos no importa: KeePassXC los
+  rehace en cada arranque (`updateBinaryPaths()`).
+- **La ruta del fichero llave queda en la unidad**, en `state/keychain.json`, por
+  equipo (`prefs.HOST`, el mismo que usa `ui_prefs.json`). En el equipo no queda
+  nada sin agente. En una unidad sin cifrar, esa ruta se puede leer: dice
+  **dónde** está el fichero llave en cada equipo, no qué tiene.
+- **Que el dispositivo lleva llavero se sabe por lo que hay**: `[keychain]` en
+  `sync_config.toml` y KeePassXC con su sello.
+
+## 3. El catálogo: `remote.toml` y su `[keychain]`
+
+### El nombre nuevo
+
+`pairs.toml` sale en 18 módulos y tests y en 8 documentos, y `catalog_path` en 76
+sitios. Además, cada dispositivo en uso lo lee. El cambio va en **su propio PR,
+antes que el llavero** (fase 0), con esta regla de compatibilidad:
+
+- **Para leer**: en la carpeta del catálogo, `remote.toml`; si no existe,
+  `pairs.toml`.
+- **Para escribir**: en el que exista. Nunca se crean los dos: un dispositivo
+  viejo seguiría leyendo el otro y la flota se partiría en dos catálogos.
+- **Un remoto nuevo** nace con `remote.toml`. El `catalog_path` por defecto pasa
+  a `/prdrive-catalog/remote.toml`, y con la regla de lectura un dispositivo con
+  el valor por defecto sigue encontrando el `pairs.toml` de siempre. Un
+  `catalog_path` escrito a mano no se toca.
+- **Un remoto que ya existe**: es la pregunta abierta.
+- `problema_de_ruta()` y `explicar_carpeta()` aceptan los dos nombres. Los
+  textos de la ventana dicen «el catálogo» sin nombrar el fichero.
+
+### `[keychain]`
+
+```toml
+[keychain]
+base = "personal.kdbx"
+fichero_llave = true
+nombre_llave = "personal.keyx"   # solo una pista para la persona: ni ruta ni huella
+```
+
+- Lo escribe la activación (§9) con el `push()` del catálogo, `.bak` incluido.
+  Lo cambia «Ajustes → Llavero…» si la persona añade o quita el fichero llave en
+  KeePassXC. prdrive no tiene cómo saberlo: la cabecera KDBX no dice qué
+  credenciales lleva la base.
+- **No se guarda ninguna huella del fichero llave.** Para un fichero que no sea
+  de los de KeePassXC, su clave es justo el SHA-256 del contenido
+  (`FileKey::loadHashed()`): guardar esa suma sería guardar la llave. Si se elige
+  el fichero equivocado, KeePassXC ya dice que la credencial no vale.
+- **Una versión vieja de prdrive ignora la tabla.** No se ha visto que el modelo
+  rechace tablas desconocidas. Lo deja fijado un test con un catálogo que la
+  lleva.
+- En el `sync_config.toml` del dispositivo basta con `[keychain] base = "…"`. El
+  resto lo deduce el código.
+
+## 4. La pareja del llavero, construida en código
+
+- **`model.parse_config()`** construye la pareja cuando hay `[keychain]`, y el
+  TOML no puede cambiarla:
+  ```
+  Pair(name="keychain", local=".keychain",
+       remote=<catalog_remote>, remote_path=<carpeta de catalog_path>/keychain,
+       mode=bisync, versions=True,
+       flags: conflict-loser="num", resync-mode="newer")
+  ```
+  - `conflict-loser = "num"` (§8) gana al `setdefault("conflict-loser", "delete")`
+    de `sync.py`:380.
+  - `resync-mode = "newer"` es por H-13.
+
+  El nombre `keychain` queda reservado solo si el llavero está activo, y activarlo
+  se niega si ya hay una pareja del usuario que se llame así.
+- **La baseline**: todo lo que entra en `bisync.expected_prefix()` está fijado,
+  salvo la carpeta del catálogo. Mover el catálogo (`catalog_path`,
+  `catalog_remote`) **aparca** la baseline y pide un `--resync`, como en cualquier
+  pareja; con `newer` no se pierde nada.
+- **Los filtros, generados**: solo entra lo que tiene que viajar. Es la misma
+  lógica que `- .prversions/**`: una condición previa, no un filtro
+  (`conflicts-versions.md`).
+  ```
+  - .prversions/**
+  - *.old.kdbx
+  + *.kdbx
+  + LEEME.txt
+  - **
+  ```
+  Así no viajan los temporales de `QSaveFile` (`<base>.kdbx.XXXXXX`, H-11 a),
+  ni los `.passkey`, ni un CSV/HTML/XML exportado, ni nada que una versión futura
+  de KeePassXC deje al lado. `+ *.kdbx` deja pasar también las copias de
+  conflicto, que acaban en `.kdbx` (`suffix-keep-extension`). El orden lo pone
+  esta pareja: `filters_content()` hoy escribe los `+` antes que los `-`.
+- **Antes de cada pasada, la base tiene que estar entera** (`common/kdbx.py`, sin
+  clave):
+  - firmas `0x9AA2D903`/`0xB54BFB67`;
+  - cabecera TLV hasta `EndOfHeader`;
+  - el SHA-256 de la cabecera que lleva KDBX 4;
+  - una cadena de bloques HMAC que acaba justo al final del fichero con un
+    bloque de tamaño 0.
+
+  Si no está entera, se espera 2 s y se mira otra vez. Si sigue igual, la pasada
+  no corre y se dice. KDBX 3.1 solo comprueba la cabecera; un formato que no se
+  conoce no bloquea. Es la red principal contra H-11. La otra es que rclone ya
+  falla un fichero que cambia mientras lo sube.
+- **El compañero fijo** (H-12): `LEEME.txt` no cambia nunca, así que un cambio
+  solo en la base nunca es «todos los ficheros han cambiado». Si falta,
+  «Reparación» lo repone.
+- **Una pareja del usuario con `local = "."`** recibe `- /.keychain/**` del código.
+  Si no, sincronizaría la base por otro camino, con otras reglas. El agente
+  añade `.keychain` a `IGNORAR_CAMBIOS`. (Hoy `.prdrive/` no tiene esa misma
+  protección en el código, y valdría la pena dársela, pero no es de este
+  cambio.)
+- **No sale en «Parejas»**, así que su estado va en una línea propia de la
+  ventana principal: «Llavero: al día · hace 3 min», «subiendo…», «cambios sin
+  subir (sin conexión)», «dos versiones: combinar», «la base no está entera».
+  Sus conflictos cuentan en el aviso de siempre. `sync.py` la corre con las
+  demás, y `sync.py keychain` sola. `--list` la enseña marcada.
+
+## 5. El componente KeePassXC
+
+- **Pin** (`common/pins.py`): `KEEPASSXC_VERSION = "2.7.12"`,
+  `KEEPASSXC = {"windows-x64": ("KeePassXC-2.7.12-Win64.zip", sha256)}` y
+  `KEEPASSXC_PARA = {"windows-arm64": "windows-x64"}`, con el porqué (A1, A2,
+  H-7). Mover el pin es a mano: comprobar el `.sig` con la clave de KeePassXC
+  (huella `BF5A669F…6397D0D2`, K0) y escribir la suma. En ejecución no se lee
+  ningún `.DIGEST` (H-2).
+- **`install/keepassxc_bin.py`** sigue el guion de `veracrypt_bin`:
   - descarga en la caché por versión, con `descarga.con_reintentos()`;
   - comprueba la suma antes de escribir nada;
-  - extrae con la misma defensa contra `../` que `update.py`;
-  - deja un sello `PRDRIVE-KEEPASSXC` (`keepassxc`, `paquete`, `sha256` y una
-    línea `fichero <rel> = <sha256>` por fichero, como el de VeraCrypt);
-  - cambia la carpeta con `.nuevo-<pid>` / `.viejo-<pid>` y `os.replace`, tras
-    mirar el espacio libre, como `traveler.sustituir()`.
-- **Actualizar**: `components.pendientes()` gana una fila. Con un proceso
-  corriendo desde `.prdrive/keepassxc/<clave>/` (KeePassXC o el proxy, que es
-  del navegador), la actualización **espera**. Lo dice el recuadro ámbar: «Cierra
-  KeePassXC y el navegador para poner al día el llavero». `procesos_desde()`
-  está hoy en `install/components.py`, que no viaja. Pasa a `common/store.py`
-  junto a `procesos_llamados()`, y `install/` lo reexporta.
-- **El runtime de Visual C++** (K3): el ZIP no lo trae. «Llavero» lo detecta
-  por el resultado: si KeePassXC sale enseguida con `0xC0000135`
-  (`STATUS_DLL_NOT_FOUND`), dice qué falta, que hace falta un administrador y
-  dónde está el instalador oficial de Microsoft. Llevar las DLL junto al `.exe`
-  es la decisión 3.
-- **Mientras KeePassXC corre, no se actualiza solo**: prdrive escribe
-  `GUI/CheckForUpdates=false` y `UpdateCheckMessageShown=true`. Si no, un
-  KeePassXC que se pone al día por su cuenta dejaría el sello mintiendo.
+  - extrae con la defensa contra `../` de `update.py`;
+  - escribe el sello `PRDRIVE-KEEPASSXC` (`keepassxc`, `paquete`, `sha256` y una
+    línea `fichero <rel> = <sha256>` por fichero);
+  - sustituye con `.nuevo-<pid>` / `.viejo-<pid>` y `os.replace`, tras mirar el
+    espacio libre, como `traveler.sustituir()`.
+- **Actualizar**: una fila más en `components.pendientes()`. Con KeePassXC o su
+  proxy corriendo desde `.prdrive/keepassxc/` (el proxy es del navegador), se
+  espera y el recuadro ámbar dice «Cierra KeePassXC y el navegador para poner al
+  día el llavero». Para eso `procesos_desde()` pasa de `install/components.py`
+  (que no viaja) a `common/store.py`, e `install/` lo reexporta.
+- **Con `[keychain]` y sin sello**, `pendientes()` lo cuenta como «no consta»,
+  igual que un rclone sin sello. Es lo que hace barato activarlo desde «Ajustes»
+  (§9).
 
-## 4. «Abrir llavero»
+## 5b. Vigilancia y pasadas
 
-`runsync.py --llavero`. Las decisiones están en `common/llavero.py` (sin Tk ni
-disco: devuelve planes). Lo que toca el equipo son funciones de módulo que los
-tests sustituyen (`registro.*`, `procesos_desde`, `lanzar`). En orden:
+- **Una sola cosa atiende el llavero en cada momento**, por este orden: el agente
+  si atiende el dispositivo, el servicio del dispositivo (`runsync --auto`) si
+  corre, y si no, el vigilante del llavero. Un cerrojo en `state/` decide, como
+  los de `model.ui_lock()` / `daemon_lock()`.
+- **Cambios locales**: cada 10 s, el tamaño y el `mtime_ns` de la base. Si exFAT
+  tuviera dos guardados del mismo tamaño en el mismo tic de reloj, se lee
+  además la semilla de la cabecera (`MasterSeed`, unos cientos de bytes del
+  principio), que KeePassXC cambia en cada guardado. Las reglas son las de
+  `planificador.PoliticaCambios`: calma 20 s, separación 120 s.
+  - Al salir 20 s después de la ráfaga, la pasada choca menos con un guardado
+    (S2) que una periódica.
+  - El servicio del dispositivo **gana esta vigilancia solo para el llavero**. La
+    general (`watch = true`) sigue siendo cosa del agente.
+- **Cambios del remoto**: cada 5 min mientras KeePassXC corre desde el volumen
+  (`procesos_desde`). Si no corre, el intervalo de siempre.
+- **El vigilante del llavero** (`runsync.py --vigilar-llavero`, `pythonw`, sin
+  ventana):
+  - vive mientras viva el KeePassXC del volumen;
+  - cuando ese KeePassXC sale, hace la pasada pendiente si la hay y sale él
+    también;
+  - corre desde el volumen, así que «Expulsar» lo para.
+- **«Pendiente de subir»** quiere decir que la base no coincide (tamaño,
+  `mtime`) con su línea en el listado `path1` de la última pasada buena de bisync
+  (`state/keychain/`). No hace falta otro registro, y pilla también lo que se
+  guardó **durante** una pasada, que la vigilancia absorbe hasta la siguiente
+  (`agent-scheduling.md`).
 
-1. **¿Ya está abierto?** Si hay un KeePassXC corriendo desde el volumen, se trae
-   delante (lanzarlo otra vez con la base hace eso, porque `SingleInstance`) y
-   ya está. Si hay otro KeePassXC **del equipo** abierto, se avisa: con
-   `SingleInstance`, el nuestro le pasaría la base a ese, que tiene otra
-   configuración. La persona elige entre cerrarlo o abrir la base con ese.
-2. **Traer la última versión**: una pasada de la pareja `llavero` si la última
-   tiene más de unos minutos y hay conexión. Lo pinta `working()`, como
-   «Sincronizar ahora». Si falla o no hay red, se abre igual y se dice que puede
-   no ser la última. Así abrir parte casi siempre de lo más nuevo, y los
-   conflictos son raros.
-3. **¿Hay dos versiones?** Si quedan copias de conflicto en `llavero/` (§7), se
-   ofrece «Combinar ahora» antes de abrir.
-4. **Configuración**, que solo se toca con KeePassXC cerrado, porque al salir
-   reescribe su `.ini`. Se edita línea a línea: se cambian las claves de esta
-   lista y el resto del fichero queda byte a byte.
-   - **En cada arranque, porque son de prdrive**:
-     - `UseAtomicSaves=true` (H-11: deshace un «Deshabilitar» de la sesión
-       anterior).
-     - `Browser/UpdateBinaryPath=true`.
-     - `GUI/CheckForUpdates=false`.
-     - Las rutas de `LastOpenedDatabases`, `LastDatabases`, `LastActiveDatabase`
-       y `LastDir` que empiezan por la raíz anterior pasan a la actual. La
-       anterior se apunta en `config/windows/raiz.txt`. Así otra letra no deja
-       bases «no encontradas».
-   - **Solo al crear la configuración, y luego manda la persona**:
-     - `Browser/Enabled=true`.
-     - `Security/QuickUnlock=false` (H-1). Encenderlo ata el desbloqueo rápido
-       a Windows Hello de cada equipo, y en uno prestado pide el PIN del dueño.
-     - `BackupBeforeSave=false`, que ya es el valor por defecto; con él no salen
-       los `.old.kdbx`.
-     - `GUI/MinimizeOnClose=false`, también por defecto: cerrar cierra, y eso
-       necesita «Expulsar».
-5. **El navegador** (§5): se escriben las claves del registro.
-6. **Lanzar**:
+## 6. «Abrir llavero»
+
+`runsync.py --llavero`, sin consola. Las decisiones están en
+`common/llavero.py`, puro. Lo que toca el equipo (`registro.*`,
+`procesos_desde`, `lanzar`, el diálogo de fichero) son funciones de módulo que
+los tests sustituyen. Los pasos:
+
+1. **Si ya está abierto desde el volumen**, se trae delante (por
+   `SingleInstance`, lanzarlo con la base hace eso) y no hay más pasos.
+2. **Si el equipo tiene otro KeePassXC abierto**, se avisa: con `SingleInstance`,
+   el nuestro le pasaría la base a ese, que tiene otra configuración.
+3. **Si hay copias de conflicto**, se ofrece «Combinar ahora» (§8).
+4. **Traer lo último**: una pasada si la última tiene más de 2 min y hay
+   conexión, pintada con `working()`. Si falla, se abre igual con una línea.
+5. **El fichero llave**, si `fichero_llave`: la ruta de este equipo sale de
+   `state/keychain.json`. Si no hay o ya no existe (estaba en otro pendrive que
+   no está puesto, se movió…), un diálogo: «¿Dónde está "personal.keyx" en este
+   equipo?». Se apunta la ruta. El fichero ni se abre.
+6. **La configuración**, solo con KeePassXC cerrado. Se edita línea a línea: se
+   cambian las claves de la lista y el resto queda byte a byte.
+   - **En cada arranque**:
+     - `UseAtomicSaves=true` (deshace un «Deshabilitar», H-11);
+     - `Browser/UpdateBinaryPath=true`;
+     - `GUI/CheckForUpdates=false` (la versión la pone prdrive);
+     - las rutas de `LastOpenedDatabases`, `LastDatabases`, `LastActiveDatabase`
+       y `LastDir` que empiezan por la raíz anterior (apuntada en `raiz.txt`)
+       pasan a la actual.
+   - **Solo al crearla**:
+     - `Browser/Enabled=true`;
+     - `Security/QuickUnlock=false` (H-1);
+     - `RememberLastKeyFiles=false` (la ruta del fichero llave la recuerda
+       prdrive por equipo; si no, KeePassXC propondría en un equipo la del otro);
+     - `UpdateCheckMessageShown=true`;
+     - `BackupBeforeSave=false` y `GUI/MinimizeOnClose=false`, que ya son los
+       valores por defecto.
+7. **El navegador**: §7.
+8. **Lanzar**:
    ```
    KeePassXC.exe --config …\config\windows\keepassxc.ini
                  --localconfig …\config\windows\keepassxc_local.ini
-                 <raíz>\llavero\<cada base>.kdbx
+                 [--keyfile <ruta de este equipo>]
+                 <raíz>\.keychain\<base>.kdbx
    ```
-   Lleva `KPXC_INITIAL_DIR=<raíz>\llavero` en el entorno. Si no hay ninguna base,
-   va sin rutas: es la bienvenida, y antes sale la pantalla de «la primera vez».
-   Las copias de conflicto no se pasan. Si sale con `0xC0000135`, se aplica §3.
+   - Entorno: `KPXC_INITIAL_DIR=<raíz>`. Lo que se exporte cae en la raíz del
+     volumen, a la vista. No en `.keychain/`, que está oculta y donde se quedaría
+     olvidado, ni en la carpeta personal del equipo, que fue lo que pasó en PK5.
+   - `--keyfile` rellena el campo del diálogo de desbloqueo
+     (`mainWindow.openDatabase(filename, password, keyfile)`).
+9. **El vigilante**: si nadie atiende el llavero, arranca uno (§5b).
+10. **Si sale con `0xC0000135`** (falta el runtime de Visual C++, K3): qué falta,
+    que hace falta un administrador y dónde está el instalador oficial de
+    Microsoft.
 
-## 5. El navegador en el equipo
+## 7. El navegador en el equipo (Windows)
 
-### Windows
+Las cuatro claves de `HKCU\Software\…\NativeMessagingHosts\org.keepassxc.keepassxc_browser`
+(`NativeMessageInstaller.cpp`, `TARGET_DIR_*`). Chrome, Brave y Vivaldi
+comparten una; Firefox y Tor, otra (H-5).
 
-Las claves son cuatro (`NativeMessageInstaller.cpp`, `TARGET_DIR_*`), todas en
-`HKCU`, sin administrador. Chrome, Brave y Vivaldi comparten una; Firefox y Tor,
-otra (H-5).
-
-| Clave `HKCU\Software\…\NativeMessagingHosts\org.keepassxc.keepassxc_browser` | JSON al que apunta prdrive |
+| Clave | JSON al que apunta prdrive |
 |---|---|
 | `Google\Chrome` | `<exe>\config\org.keepassxc.keepassxc_browser_chrome.json` |
 | `Microsoft\Edge` | `…_edge.json` |
 | `Mozilla` | `…_firefox.json` |
 | `Chromium` | `…_chromium.json` |
 
-- **Al abrir**: se escriben las cuatro (valor por defecto = ese JSON), haya lo
-  que haya. Basta con eso. En Windows, `isBrowserEnabled()` solo mira que la
-  clave tenga valor, y al arrancar `updateBinaryPaths()` reescribe los JSON y
-  las claves de todo lo «habilitado» con la ruta de verdad. Es el camino de B3,
-  provocado a propósito en un equipo nuevo. Hay que escribirlas aunque
-  apunten a otro sitio: KeePassXC se las quedaría igual (B5, «el último que
-  arranca se queda con la clave»).
-- **Al cerrar** (§8), para cada clave que apunte dentro de este volumen o a un
+- **Al abrir**: se escriben las cuatro, haya lo que haya. En Windows
+  `isBrowserEnabled()` solo mira que la clave tenga valor, y al arrancar
+  `updateBinaryPaths()` rehace los JSON y las claves de todo lo «habilitado».
+  Es el camino de B3, provocado en un equipo nuevo. KeePassXC se las quedaría
+  igualmente (B5).
+- **Al cerrar** (§10), para cada clave que apunte dentro del volumen o a un
   `…\.prdrive\keepassxc\…` que ya no existe:
   - si existe `%LOCALAPPDATA%\KeePassXC\org.keepassxc.keepassxc_browser_<n>.json`
-    (el JSON de un KeePassXC **instalado**, `getNativeMessagePath()` sin
-    portátil), la clave vuelve a apuntar ahí: el instalado sigue funcionando sin
-    volver a marcar nada;
-  - si no, se borran la clave y su valor (H-18). `NativeMessagingHosts` se borra
-    solo si queda vacía.
+    (un KeePassXC **instalado**), la clave vuelve a apuntar ahí;
+  - si no, se borra. `NativeMessagingHosts` se borra solo si queda vacía.
 
-  Las claves de otros programas (`com.microsoft.browsercore`…) no se tocan nunca.
-  La regla no necesita recordar el estado de antes: lo deduce, como el cierre de
-  Linux del vestíbulo.
-- **Lo que prdrive no hace por la persona**: instalar la extensión, conectarla y
-  activar «Enable Passkeys». Son ajustes de cada perfil del navegador. La guía
-  los cuenta con capturas.
-- Se escribe con `winreg`, que hoy no se usa en ningún sitio. Lo envuelve
-  `common/registro.py` (`leer`, `escribir`, `borrar`), punto de sustitución de
-  los tests. Encima va el plan puro de `llavero.py`: qué escribir, qué
-  restaurar, qué borrar.
+  Las claves de otros programas no se tocan. La regla no necesita recordar
+  nada: lo deduce.
+- Se escribe con `winreg` envuelto en `common/registro.py` (`leer`, `escribir`,
+  `borrar`), punto de sustitución de los tests. Encima va el plan puro de
+  `llavero.py`.
+- Lo que prdrive no hace por la persona: instalar la extensión, conectarla y
+  activar «Enable Passkeys», que son ajustes de cada perfil del navegador.
 
-### Linux (fase 2, §9)
+## 8. Conflictos: combinar, no elegir
 
-`isBrowserEnabled()` es «existe el JSON en `~/.config/<navegador>/NativeMessagingHosts/`»
-(o `~/.mozilla/native-messaging-hosts/`). prdrive escribe esos ficheros al
-abrir y quita al cerrar los que apunten al volumen. Es la misma regla con
-ficheros.
+Con `conflict-loser = "num"`, el perdedor se queda al lado como
+`<base>.conflicto-remoto1.kdbx` y entra en `conflicts.json` como cualquier otro
+conflicto.
 
-## 6. La pareja `llavero`
+- **«Combinar»**, la primera opción para el llavero, es un `EditPlan` de
+  `conflict_editor`:
+  - abre una consola con
+    `keepassxc-cli merge --same-credentials [-k <fichero llave de este equipo>] <base> <copia>`.
+    La contraseña la pide la CLI, nunca prdrive.
+  - Con código 0, la copia va a `.keychain/.prversions/`, recuperable, y la
+    siguiente pasada la quita del otro lado.
+  - Si falla, no se toca nada y se explica la vía de la ventana de KeePassXC
+    («Base de datos → Combinar desde base de datos…», S4).
+  - Las opciones de siempre («quedarse con…») siguen detrás, avisando de que
+    pierden lo de la otra.
+- **El mejor momento es al abrir el llavero** (§6, paso 3): antes de que la
+  ventana de KeePassXC tenga la base abierta. Si la tuviera, lo arregla la
+  recarga (S3) o el diálogo de combinar (S5).
+- **Se reutiliza para otro caso**: si al activar ya hay una base en el remoto y
+  la persona da otra (§9), la suya entra como copia de conflicto y se combina al
+  abrir.
+- **No se combina en silencio**: haría falta la contraseña.
 
-En el catálogo y en `sync_config.toml`:
+## 9. Activar el llavero
 
-```toml
-[[pair]]
-name = "llavero"
-tipo = "llavero"
-local = "llavero"
-remote_path = "llavero"
-mode = "bisync"
-versions = true
+- **En el asistente**, después de «Parejas y configuración», en dispositivos
+  cifrados o no:
+  - **«Usar esta base…»**: `kdbx.py` la comprueba sin contraseña (no es KDBX →
+    no; KDBX 3.1 → aviso de que KeePassXC la convierte a KDBX 4) y se **copia** a
+    `.keychain/<nombre>`. El texto dice que la original se queda donde estaba y
+    que **desde ahora la buena es la del dispositivo**. La original nunca se toca.
+  - **«Traer el del remoto»**, si el catálogo tiene `[keychain]`: la primera
+    pasada la baja. Si `fichero_llave`, se dice y se pregunta la ruta en este
+    equipo.
+  - **«Crear una nueva con KeePassXC»** (propuesta): se abre el KeePassXC recién
+    puesto en su bienvenida, con `KPXC_INITIAL_DIR=<raíz>\.keychain`; la
+    persona crea la base (KDBX 4 con Argon2 por defecto) y al cerrar KeePassXC el
+    asistente la encuentra. prdrive no ve la contraseña.
+  - Para una base propia o nueva, **«¿Usa un fichero llave?»** → **«¿Dónde está
+    en este equipo?»**.
+  - Al terminar: el sello de KeePassXC, `[keychain]` en `sync_config.toml` y en
+    el catálogo, `LEEME.txt`, `Llavero.bat`/`llavero.sh` y la primera pasada
+    (`--resync`, `newer`). Si el remoto ya tenía otra base, se aplica §8.
+- **En un dispositivo ya preparado**: el panel «ya es un prdrive» del instalador
+  suma «Añadir el llavero…» a «Actualizar» y «Añadir plataformas…».
+- **«Ajustes → Llavero…»** en la ventana del dispositivo. No es complicado,
+  porque el único paso que necesita el instalador es descargar KeePassXC, y eso
+  ya lo resuelve otro camino:
+  - activar pide lo mismo que el asistente y escribe `[keychain]` aquí y en el
+    catálogo (`catalog_editor` ya sabe hacer `push()`), sin red salvo para el
+    catálogo;
+  - KeePassXC queda como «no consta» en `components.pendientes()` (§5), y el
+    recuadro ámbar de siempre ofrece «Actualizar…». Eso lanza
+    `--update-components` desde la release descargada, que lo pone y escribe
+    `Llavero.bat`;
+  - la misma pantalla sirve después para decir si la base usa fichero llave,
+    cambiar su ruta en este equipo y desactivar el llavero. Desactivar quita
+    `[keychain]` de aquí; `.keychain/` y el remoto no se tocan, y se dice.
 
-[pair.flags]
-conflict-loser = "num"     # §7: el perdedor se queda al lado, a la vista
-resync-mode = "newer"      # H-13: un --resync no pisa la base nueva con la vieja
-```
+## 10. Expulsar
 
-- **`tipo = "llavero"`** es la única clave nueva del modelo
-  (`Pair.llavero: bool`). Hace tres cosas que no se pueden dejar a mano:
-  1. **Los filtros, generados por código.** Es el mismo razonamiento que
-     `- .prversions/**`: una condición previa, no un filtro (`conflicts-versions.md`).
-     Viajan **solo** las bases y su compañero:
-     ```
-     - .prversions/**
-     - *.old.kdbx
-     + *.kdbx
-     + LEEME-LLAVERO.txt
-     - **
-     ```
-     Así no viajan los temporales de `QSaveFile` (`<base>.kdbx.XXXXXX`, que no
-     acaban en `.kdbx`: H-11 a), ni el `.passkey`, ni un CSV/HTML/XML exportado
-     en claro, ni un fichero llave. Es una lista de lo que entra, no de lo que
-     sale: una exportación nueva de KeePassXC tampoco viajaría. El orden importa:
-     `filters_content()` hoy pone los `+` antes que los `-`, así que esta pareja
-     necesita el suyo. Cambiarlo en otra versión obliga a un `--resync` (suma
-     md5); con `resync-mode = "newer"` no se pierde nada.
-  2. **Antes de cada pasada, la base tiene que estar entera** (`common/kdbx.py`,
-     sin clave):
-     - firmas `0x9AA2D903`/`0xB54BFB67` y versión;
-     - cabecera TLV hasta `EndOfHeader`;
-     - el **SHA-256 de la cabecera** que guarda KDBX 4 (comprobable sin clave);
-     - la cadena de bloques HMAC (32 + 4 + datos) acaba **justo al final del
-       fichero con un bloque de tamaño 0**.
+El mismo paso previo, `llavero.cerrar()`, en los tres caminos:
 
-     Así se pilla una base cortada: un guardado no atómico a medias, o un tirón
-     de la unidad en mal momento. En KDBX 3.1 solo se puede comprobar la
-     cabecera. Si una base no está entera, se espera dos segundos y se mira otra
-     vez (puede estar guardándose); si sigue igual, **la pareja no corre** y lo
-     dice: «"x.kdbx" no está entera: no se sube. Ábrela en KeePassXC…». Un
-     formato desconocido no bloquea. Es la segunda red: la primera es que rclone
-     ya falla un fichero que cambia mientras lo sube («source file is being
-     updated»).
-  3. **Lo que sale en la ventana**: el botón «Llavero», «Combinar» en los
-     conflictos (§7) y, en «Reparación», las exportaciones en claro que haya en
-     `llavero/` (`*.passkey`, `*.csv`, `*.html`, `*.xml`). No viajan, pero están
-     ahí, descifradas, mientras la unidad esté abierta.
-- **El compañero fijo** (H-12): `LEEME-LLAVERO.txt` lo escribe el instalador y
-  no cambia. Así un cambio solo en la base nunca es «todos los ficheros han
-  cambiado». Si se borra, «Reparación» lo dice y lo repone.
-- **Pasadas con KeePassXC abierto: sí** (decisión 2). Lo que se vio en S2(b),
-  que KeePassXC no puede guardar mientras rclone lee, solo pasa si se guarda
-  justo mientras se **sube** la versión anterior. No se pierde nada: el cambio
-  se queda en «\*» y entra en el siguiente guardado. El peligro era contestar
-  «Deshabilitar» al tercer fallo. Contra eso: la guía dice «Cancelar», el
-  siguiente «Llavero» lo vuelve a encender, y quedan las dos redes de arriba.
-  Además, la pasada de «Abrir» y la de «Expulsar» van con KeePassXC cerrado.
-- **El aviso de `sync.py`:98** («Fichero bloqueado por otro proceso (Obsidian,
-  KeePass, antivirus)») tiene, para esta pareja, una versión concreta: «KeePassXC
-  estaba guardando; se reintenta en la próxima pasada».
+- la ventana, antes de `cifrado.lanzar_expulsion` (`ui/tk.py`:1183);
+- `Expulsar PRDRIVE.bat`, antes de `/dismount` (`install/vestibulo.py`:422-426),
+  llamando a `runsync.py --cerrar-llavero` con el Python del dispositivo, que
+  termina antes de desmontar;
+- y, en la fase 3, el agente.
 
-## 7. Conflictos: combinar, no elegir
+Los pasos:
 
-Con `conflict-loser = "num"` (un `[pair.flags]` manda sobre el `setdefault` de
-`sync.py`:380), el perdedor **se queda al lado** como
-`<base>.conflicto-remoto1.kdbx`. `suffix-keep-extension` va con `versions`.
-Pasa a `conflicts.json` y a la ventana como cualquier conflicto, y sigue
-acabando en `.kdbx`, así que se abre y viaja.
+1. **KeePassXC desde el volumen** → «KeePassXC está abierto. ¿Cerrarlo?». Se
+   cierra como lo haría la persona (`taskkill /PID` sin `/F`, que manda
+   `WM_CLOSE`), así que si hay algo sin guardar, KeePassXC pregunta. Se espera a
+   que salga. Nunca `/F`.
+2. **El proxy** (`keepassxc-proxy.exe` desde el volumen) → se termina. No guarda
+   estado, y es lo que obligaba a cerrar el navegador (K6, H-16).
+3. **El vigilante del llavero** → se para.
+4. **Si hay algo pendiente** (§5b) → una pasada, **sin decir nada**, con un tope
+   de 60 s:
+   - bien → nada;
+   - sin red o con el tope cumplido → una línea: «El llavero se subirá la
+     próxima vez»;
+   - conflicto, base que no está entera u otro fallo → se dice, y «Llavero» lo
+     retoma la próxima vez.
+5. **El registro** (§7, al cerrar).
+6. **Lo de siempre**: VeraCrypt, `:libre`, «ya puedes quitar la unidad».
 
-- **«Combinar»**, la primera opción para un `.kdbx` en `ui/tk_conflicts.py`, es
-  un `EditPlan` más de `conflict_editor`:
-  - consecuencias: «Se juntan las dos versiones en "x.kdbx". Lo de las dos se
-    queda; si una misma entrada cambió en las dos, gana la más nueva y la otra
-    queda en su historial»;
-  - `execute()` abre una consola con
-    `keepassxc-cli merge --same-credentials <base> <copia>`, y la contraseña la
-    pide la propia CLI;
-  - con código 0 mueve la copia a `llavero/.prversions/`. No la borra: queda
-    recuperable y la siguiente pasada la quita del otro lado;
-  - si falla (contraseña mal, credenciales distintas, fichero llave), no se toca
-    nada y se dice cómo hacerlo en la ventana de KeePassXC («Base de datos →
-    Combinar desde base de datos…»), que es lo que se vio en S4.
-
-  Las opciones de siempre («quedarse con…») siguen, detrás y con el aviso de que
-  pierden las entradas de la otra versión.
-- **El momento** es «Llavero» (§4, paso 3): combinar antes de abrir evita que la
-  ventana de KeePassXC tenga la base abierta mientras la CLI la reescribe.
-  Aunque la tuviera, lo arregla la recarga automática (S3), o S5 si había
-  cambios sin guardar.
-- **Lo que no se hace**: combinar en silencio. Haría falta la contraseña, y la
-  idea es que nunca pase por prdrive.
-
-## 8. Expulsar
-
-El mismo paso previo, `llavero.cerrar()`, en los tres caminos: la ventana
-(antes de `cifrado.lanzar_expulsion`, `ui/tk.py`:1183), `Expulsar PRDRIVE.bat`
-(antes de `/dismount`, `install/vestibulo.py`:422-426, llamando a
-`runsync.py --cerrar-llavero` con el Python del dispositivo, que acaba antes de
-desmontar) y, en la fase 3, el agente.
-
-1. **KeePassXC corriendo desde el volumen** → «KeePassXC está abierto.
-   ¿Cerrarlo?». «Cerrar» le pide que se cierre como lo haría la persona
-   (`taskkill /PID` sin `/F`, que manda `WM_CLOSE`), así que si queda algo sin
-   guardar, KeePassXC lo pregunta. Se espera a que salga. Nunca `/F`: S2 enseñó
-   que puede haber un «\*» pendiente.
-2. **`keepassxc-proxy.exe` desde el volumen** → se termina. Es un relevo sin
-   estado entre el navegador y KeePassXC, y es justo lo que obligaba a cerrar el
-   navegador (K6, H-16). La extensión se queda «no disponible», como sin
-   KeePassXC. **Por ver**: si al volver a abrir el llavero reconecta sola (H-17,
-   §13).
-3. **La última pasada del llavero**, si la base cambió después de la última. Si
-   no hay red: «Los cambios del llavero se subirán la próxima vez que se abra».
-   No bloquea.
-4. **El registro** (§5, «al cerrar»).
-5. Lo de siempre: VeraCrypt, `:libre`, «ya puedes quitar la unidad».
+**En un dispositivo sin cifrar** hoy no hay «Expulsar»: la ventana solo lo
+ofrece con VeraCrypt (`cifrado.expulsion()`). Con llavero, la ventana lo ofrece
+también ahí. Hace los pasos 1–5 y termina con «Ya puedes quitarla (Quitar
+hardware de forma segura)». Pedir a Windows la expulsión de verdad
+(`CM_Request_Device_EjectW`) puede venir después. El vigilante cubre casi todo
+lo demás: cuando se cierra KeePassXC, sube lo pendiente.
 
 **Sin expulsar** (un tirón): KeePassXC muere y la base sobrevive por el guardado
-atómico (K7, H-4). Quedan las claves apuntando a una letra muerta. No hacen
-daño: el navegador dice que no encuentra el programa. El siguiente «Llavero» en
-ese equipo las reescribe, y en la fase 3 el agente las quita al ver irse la
-unidad. Los rastros del propio Windows (`MuiCache`…) no son de prdrive y la guía
-lo dice.
+atómico (K7, H-4). Quedan claves apuntando a una letra muerta, que no hacen
+daño: el siguiente «Llavero» en ese equipo las rehace, y en la fase 3 las quita
+el agente.
 
-## 9. Linux (fase 2, cuando LX1–LX7 y LA1–LA3 digan)
+## 11. Linux y ARM (fase 2, cuando LX1–LX7 y LA1–LA3 digan)
 
-Lo que se sabe hoy es deducido. Lo que hay que decidir con esas pruebas:
+- **Linux x64**: el AppImage fijado en `.prdrive/keepassxc/linux-x64/`.
+  - Sin FUSE 2, o con el volumen `noexec`: se extrae una vez por equipo en
+    `~/.cache/prdrive/keepassxc/<versión>/` (el exFAT del volumen no admite sus
+    enlaces simbólicos) y se lanza `AppRun`. Hay precedente: `model.ejecutable()`.
+  - La configuración, en `config/linux/`.
+  - El proxy: `Browser/UseCustomProxy` + `CustomProxyLocation`, reescrito en cada
+    arranque, hacia un envoltorio que sepa lanzar lo uno o lo otro.
+  - Los manifiestos en `~/.config/…/NativeMessagingHosts/` y
+    `~/.mozilla/native-messaging-hosts/` se escriben al abrir y se quitan al
+    cerrar, con la misma regla que el registro.
+  - El Firefox snap (LX5), sin probar.
+- **Linux ARM**: no hay AppImage aarch64. Como V1/V2 no vieron rechazos con
+  versiones mezcladas, se usa el KeePassXC del equipo (Flathub 2.7.12, LA1–LA2,
+  o uno del sistema ≥ 2.7.7), con la misma base y el mismo fichero llave.
+  Debian 12 (2.7.4) y Ubuntu 24.04 (2.7.6) abren la base pero no tienen
+  passkeys: se dice.
 
-- **El programa**: el AppImage x86_64 fijado en `.prdrive/keepassxc/linux-x64/`.
-  - Sin FUSE 2 (LX2), o con el volumen `noexec`: se extrae **una vez por
-    equipo** en `~/.cache/prdrive/keepassxc/<versión>/`, porque el exFAT del
-    volumen no admite los enlaces simbólicos de la imagen, y se lanza `AppRun`
-    desde ahí. No hay secretos, como el runtime del agente. Ya hay un precedente
-    de copiar fuera del volumen lo que no se puede ejecutar dentro:
-    `model.ejecutable()`.
-  - La configuración, `--config`/`--localconfig` a `config/linux/` en el volumen
-    (LX3).
-- **El proxy**: el navegador lanza el `"path"` del JSON sin el entorno de
-  prdrive, así que se usa `Browser/UseCustomProxy` + `CustomProxyLocation`,
-  reescrito en cada arranque, hacia un `keepassxc-proxy.sh` que sepa lanzar el
-  AppImage o la copia extraída.
-- **Firefox snap** (LX5): sin probar. Si no hay mensajería nativa, la guía dice
-  qué Firefox usar.
-- **Linux ARM: el programa del equipo.** No hay AppImage aarch64, y V1/V2 dicen
-  que la base vale con cualquier KeePassXC ≥ 2.7.7. «Llavero» busca el Flatpak
-  (2.7.12 en Flathub, LA1–LA2) o un `keepassxc` del sistema con versión
-  suficiente y abre la base con él. Debian 12 (2.7.4) y Ubuntu 24.04 (2.7.6)
-  abren la base, pero sin passkeys: se dice.
+## 12. La guía
 
-## 10. Lo que la guía le cuenta a la persona
+`docs/guia/llavero.md`, más una línea en `device-readme.md`:
 
-`docs/guia/llavero.md`, más una línea en `device-readme.md`. Va sin tecnicismos:
-
-- **Dos cerraduras**: la de la unidad y la de la base. Mejor dos contraseñas
-  distintas. La copia del remoto solo tiene la segunda: que sea buena.
-- **Equipos prestados**: un equipo con algo malo instalado ve lo que se teclea y
-  lo que hay en la unidad abierta. Las passkeys no protegen de eso. Úsalo en
-  equipos de confianza.
-- **Qué queda en el equipo** mientras la unidad está abierta, que prdrive quita
+- Qué es el llavero, dónde está (oculto) y que no hay que tocar `.keychain/` a
+  mano.
+- Cada navegador, una vez: la extensión, «Conectar» y «Enable Passkeys», con
+  capturas.
+- El fichero llave: prdrive no lo copia ni lo sube. Tenlo en cada equipo donde
+  vayas a abrir el llavero; prdrive pregunta dónde una vez por equipo.
+- Lo que queda en el equipo mientras la unidad está abierta, que prdrive quita
   al expulsar, y qué pasa si se quita sin expulsar.
-- **Exportar** (passkey, CSV…) deja el contenido sin cifrar. No viaja nunca,
-  pero bórralo al acabar. «Reparación» lo recuerda.
-- **«¿Desactivar almacenajes seguros?» → «Cancelar»** (H-11).
-- **Con la base bloqueada**, un sitio que pide passkey se queda esperando:
-  desbloquea y **abre otra pestaña** (PK6, H-10). Tras reiniciar KeePassXC, si
-  la extensión dice «no disponible», recárgala desde su icono (H-17).
-- **«Synced» en GitHub** es normal (PK2).
-- **Las versiones viejas de la base** se guardan en `.prversions/`, en los dos
-  lados (S7). Combinar dos versiones: §7, con capturas.
-- **Desbloqueo rápido con Windows Hello**: qué hace y por qué empieza apagado
-  (H-1).
+- Exportar (passkey, CSV…) deja el contenido sin cifrar en la raíz del volumen,
+  y nunca viaja: bórralo al acabar.
+- «¿Desactivar almacenajes seguros?» → «Cancelar» (H-11).
+- Con la base bloqueada, desbloquea y abre otra pestaña (PK6). Tras reiniciar
+  KeePassXC, recarga la extensión desde su icono si dice «no disponible» (H-17).
+- «Synced» en GitHub es normal (PK2).
+- Las versiones viejas de la base, en `.prversions/` de los dos lados (S7), y
+  cómo se combinan dos versiones.
+- Los equipos prestados: lo que se teclea en un equipo con algo malo instalado
+  se puede leer, con passkeys o sin ellas.
 
-## 11. Lo que no hace
+## 13. Lo que no hace
 
-- No autorrellena nada ni habla con el navegador: eso es KeePassXC.
-- No crea passkeys ni lee la base.
-- macOS y móviles: fuera. La base es un `.kdbx` normal, así que otras
-  aplicaciones la abren, pero prdrive no las lleva ni las configura.
-- No combina sin preguntar, ni guarda la contraseña de la base en ningún sitio.
-- No convierte una unidad sin cifrar en una con llavero (decisión 1).
+- No copia, no lee, no sube ni guarda la huella del fichero llave. YubiKey,
+  tampoco.
+- No ve la contraseña de la base ni combina sin preguntar.
+- No autorrellena ni habla con el navegador: eso es KeePassXC.
+- Más de una base, macOS y móviles: fuera.
 
-## 12. Fases
+## 14. Fases
 
 | Fase | Qué | Ficheros |
 |---|---|---|
-| **1. Windows** (x64 y ARM con el x64) | Componente, «Llavero», registro, pareja con sus filtros y su comprobación, «Combinar», «Expulsar», asistente, guía | `common/pins.py`, `common/kdbx.py` (nuevo), `common/llavero.py` (nuevo), `common/registro.py` (nuevo), `common/store.py` (`procesos_desde`), `common/model.py` (`tipo`), `common/bisync.py` (filtros), `sync.py` (comprobación previa), `common/components.py`, `install/keepassxc_bin.py` (nuevo), `install/components.py`, `install/deploy.py` (lanzadores, `LEEME-LLAVERO.txt`), `install/vestibulo.py` (`.bat`), `install/device.py` (`RUIDO`), `runsync.py` (`--llavero`, `--cerrar-llavero`), `ui/conflict_editor.py`, `ui/tk_conflicts.py`, `ui/tk.py` (botón, expulsar), `ui/tk_llavero.py` (nuevo: primera vez, avisos), `ui/repair.py`/`common/revision.py` (exportaciones, compañero), `ui/tk_install.py` + `ui/tk_crypto.py` (casilla, «Añadir el llavero…») |
-| **2. Linux** | Lo de §9, tras LX/LA | `install/keepassxc_bin.py`, `common/llavero.py`, `install/vestibulo.py` (`.sh`) |
-| **3. El agente** | «Abrir llavero» en la bandeja; aviso nativo de un conflicto en el llavero (hoy los conflictos no avisan); quitar las claves cuando la unidad se va sin expulsar; el llavero en la raíz del equipo, para un KeePassXC instalado | `agente.py`, `ui/bandeja.py`, `common/avisos.py` |
+| **0. `remote.toml`** (PR propio) | Nombre nuevo con la regla de §3 | `common/catalog.py`, `common/fleet.py`, `install/remote.py`, `ui/catalog_editor.py`, `ui/tk_pairs.py`, sus tests, `catalogue.md`, `sync_config.example.toml`, `docs/guia/` |
+| **1. Windows** (x64, y ARM con el x64) | Todo lo demás | `common/pins.py`, `common/kdbx.py` (nuevo), `common/llavero.py` (nuevo), `common/registro.py` (nuevo), `common/store.py` (`procesos_desde`), `common/model.py` (`[keychain]` → pareja), `common/bisync.py` (filtros; `- /.keychain/**`), `common/components.py`, `sync.py` (comprobación previa), `runsync.py` (`--llavero`, `--vigilar-llavero`, `--cerrar-llavero`; vigilancia del llavero en el servicio), `install/keepassxc_bin.py` (nuevo), `install/components.py`, `install/deploy.py` (lanzadores, `LEEME.txt`, ocultar), `install/vestibulo.py` (`.bat`), `install/device.py` (`RUIDO`), `agente.py` (`IGNORAR_CAMBIOS`, atender el llavero), `ui/conflict_editor.py`, `ui/tk_conflicts.py`, `ui/tk.py` (botón, línea, «Expulsar» sin VeraCrypt), `ui/tk_llavero.py` (nuevo), `ui/tk_doctor.py` (`ENTRADAS`), `ui/tk_install.py` (paso, «Añadir el llavero…»), `common/revision.py` (compañero que falta) |
+| **2. Linux** | §11 | `install/keepassxc_bin.py`, `common/llavero.py`, `install/vestibulo.py` (`.sh`) |
+| **3. El agente** | «Llavero» en la bandeja; aviso nativo de un conflicto del llavero; quitar las claves del registro cuando la unidad se va sin expulsar; el llavero en la raíz del equipo | `agente.py`, `ui/bandeja.py`, `common/avisos.py` |
 
-Cada fase actualiza su documentación de área. La fase 1 crea
-`docs/agents/reference/llavero.md` y su regla en `.claude/rules/`, y añade una
-fila a la tabla de `AGENTS.md`; `test_reglas_claude.py` vigila que las tres
-cuadren.
+La fase 1 crea `docs/agents/reference/llavero.md`, su regla en `.claude/rules/` y
+una fila en la tabla de `AGENTS.md` (`test_reglas_claude.py` vigila que las tres
+cuadren). `catalogue.md` y `agent-scheduling.md` cuentan lo suyo.
 
-## 13. Pruebas
+## 15. Pruebas
 
-**Sin equipo** (scripts de `tests/`, como siempre):
+**Sin equipo:**
 
-- `test_kdbx.py`: bases sintéticas (las firmas, la cabecera y su SHA-256 se
-  construyen con `hashlib`, sin criptografía de KeePassXC): entera, cortada en
-  cada sitio, con firma mala, KDBX 3.1 y formato desconocido.
+- `test_kdbx.py`: bases sintéticas (entera, cortada en cada sitio, firma mala,
+  KDBX 3.1, desconocida) y la semilla como huella.
 - `test_llavero.py`:
-  - el plan del registro con un `registro` falso: equipo nuevo, letra cambiada,
-    KeePassXC instalado (restaurar), claves de otros programas intactas;
-  - la edición del `.ini` (byte a byte fuera de las claves de la lista) y las
-    rutas de otra raíz;
-  - los filtros y su orden;
-  - «Combinar» con una CLI falsa (0, error, copia que cambió);
-  - `cerrar()` con procesos falsos (KeePassXC, proxy, ninguno).
-- `test_keepassxc_bin.py`: `fetch` falso, suma mala, `../` en el ZIP, sello,
-  cambio de carpeta y espera por procesos. También la deriva entre pins y sello
-  (`test_components`).
-- Los lanzadores nuevos en los tests del vestíbulo y de `deploy` (CRLF, `RUIDO`,
-  `TODOS`).
+  - el plan del registro (equipo nuevo, otra letra, KeePassXC instalado, claves
+    ajenas);
+  - el `.ini` byte a byte;
+  - el fichero llave por equipo (sin ruta, ruta que ya no existe, otro equipo);
+  - `cerrar()` con procesos falsos;
+  - «pendiente de subir» contra un listado de bisync;
+  - quién atiende el llavero (agente, servicio, vigilante).
+- `test_model` / `test_bisync`: la pareja que sale de `[keychain]`, el nombre
+  reservado, los filtros y su orden, `- /.keychain/**` en una pareja de raíz, y
+  que mover el catálogo aparca la baseline.
+- `test_catalog`: `remote.toml` primero y `pairs.toml` si no hay; escribir en el
+  que exista; `[keychain]` ignorado por el lector de antes.
+- `test_keepassxc_bin.py`: `fetch` falso, suma mala, `../`, sello, sustitución y
+  espera por procesos; la deriva entre pins y sello (`test_components`).
+- «Combinar» con una CLI falsa (0, fallo, copia que cambió entretanto).
 
-**En real**: un plan nuevo con lo que el primero no pudo decir, más lo que esta
-especificación supone:
+**En real** (plan nuevo):
 
 | Código | Qué falta ver |
 |---|---|
-| R1 | K3 en un Windows x64 limpio: ¿`0xC0000135`, y el mensaje? |
+| R1 | K3 en un Windows x64 limpio: `0xC0000135` y el mensaje |
 | R2 | `--config`/`--localconfig` con `.portable`: la configuración en `config/windows/`, los JSON en `<exe>/config/` |
 | R3 | B2 con las claves de prdrive: un equipo nuevo conecta sin marcar nada (Chrome, Edge, Firefox) |
-| R4 | Terminar el proxy al expulsar: ¿la extensión reconecta al volver a abrir? (H-17) |
-| R5 | WI de verdad: el KeePassXC instalado sigue funcionando tras expulsar (restaurar la clave) |
-| R6 | «Combinar» desde prdrive, con la ventana de KeePassXC cerrada y abierta |
+| R4 | Terminar el proxy al expulsar: ¿reconecta la extensión al volver? (H-17) |
+| R5 | Con un KeePassXC instalado (WI): sigue funcionando tras expulsar |
+| R6 | «Combinar» desde prdrive, con fichero llave y sin él, con la ventana de KeePassXC abierta y cerrada |
 | R7 | PK3 a mano: «Enable Passkeys» en Firefox |
-| R8 | PK6 otra vez: ¿por qué no sale el diálogo de desbloqueo con `Browser/UnlockDatabase=true`? |
+| R8 | PK6 otra vez, con `Browser/UnlockDatabase=true` |
 | R9 | V2 en GitHub (0→1), con una cuenta de usar y tirar |
-| R10 | S2 con los filtros nuevos, y la comprobación de base entera contra un guardado no atómico («Deshabilitar») |
-| R11 | Actualizar KeePassXC con el proxy vivo: espera y lo dice |
-| R12 | Edge: B1, PK1 y R3 (en WA no había) |
+| R10 | S2 con los filtros nuevos y la vigilancia: guardar en ráfagas, y la comprobación de base entera frente a un «Deshabilitar» |
+| R11 | `--keyfile` con el fichero en otro pendrive con otra letra, y sin él puesto |
+| R12 | La vigilancia en exFAT: dos guardados seguidos de igual tamaño; la semilla |
+| R13 | Expulsar con algo pendiente: cuánto tarda de más, sin red y con el tope |
+| R14 | El vigilante: arranca con «Llavero», sube al cerrar KeePassXC y no retiene el volumen al expulsar |
+| R15 | Edge: B1, PK1 y R3 |
 
-## Preguntas abiertas (con lo que se recomienda)
+## Pregunta abierta
 
-1. **¿Solo en dispositivos cifrados?** Se recomienda **sí** en la v1. La base va
-   cifrada igual, pero la promesa de «dos cerraduras» y las exportaciones en
-   claro dentro de `llavero/` solo se sostienen con VeraCrypt debajo. La raíz
-   cifrada del equipo, en la fase 3.
-2. **¿Sincronizar el llavero con KeePassXC abierto?** Se recomienda **sí**, con
-   las tres redes del §6 y las pasadas de «Abrir» y «Expulsar» en frío. La
-   alternativa que dejaban los resultados, «solo con KeePassXC cerrado», es más
-   segura contra S2(b), pero los cambios de un dispositivo no llegarían al otro
-   mientras la persona lo tenga abierto todo el día.
-3. **¿El runtime de Visual C++?** Se recomienda **detectarlo y explicarlo** (§3).
-   Llevar las DLL junto a KeePassXC lo arreglaría sin administrador, pero antes
-   habría que mirar la licencia de redistribución de Microsoft, y hoy no hay
-   evidencia de cuántos equipos lo necesitan (R1).
-4. **¿Linux en la fase 1?** Se recomienda **no**: nada de §9 se ha visto, y las
-   pruebas fueron en Windows. Mejor una fase 1 entera en Windows que dos a medias.
-5. **«Una sola contraseña»** (un fichero llave dentro del volumen en vez de
-   contraseña maestra: abrir la unidad bastaría para abrir la base) es lo más
-   rápido para entrar en GitHub. Pero quita la segunda cerradura en el equipo y
-   obliga a llevar el fichero llave a cada dispositivo **sin** el remoto. Se
-   recomienda dejarlo para después, como opción explícita.
-6. **El nombre**: «Llavero» en la ventana y en la carpeta, con «(KeePassXC)» la
-   primera vez que sale. Para la passkey, la guía dice «passkey (llave de
-   acceso)». No «Cerrojo», que es la traducción de KeePassXC (H-9) y confunde.
+**Los remotos que ya existen con `pairs.toml`.** Hay dos opciones:
+
+- **(a) No se renombran nunca solos.** Los remotos nuevos nacen con
+  `remote.toml`, y los de antes siguen con `pairs.toml`, que todo lee igual.
+- **(b) «Ajustes» ofrece renombrarlo**, pero solo cuando las notas de la flota
+  (`devices/`) dicen que todos los dispositivos tienen ya la 0.6.0 o posterior.
+  Avisa de los que no se sabe (una nota vieja no trae versión). Un dispositivo
+  olvidado en un cajón con una versión vieja dejaría de encontrar el catálogo.
+
+Se recomienda **(b)**: el nombre nuevo llega a todos los remotos sin romper a
+nadie que la flota no conozca.
