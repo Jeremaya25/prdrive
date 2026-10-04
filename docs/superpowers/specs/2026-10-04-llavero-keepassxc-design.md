@@ -1,8 +1,8 @@
 # El llavero (`.keychain`): KeePassXC de viaje y una base que se sincroniza sola
 
-Fecha: 2026-10-04 · Estado: **decidida en lo principal**. Queda una pregunta,
-al final · Versión objetivo: 0.6.0 · Sustituye a la primera propuesta del mismo
-día (`3cdf1d5`) · Pruebas de las que sale:
+Fecha: 2026-10-04 · Estado: **decidida**, sin implementar · Versión objetivo:
+0.6.0 · Sustituye a la primera propuesta del mismo día (`3cdf1d5`) · Pruebas de
+las que sale:
 `docs/superpowers/pruebas/2026-10-04-keepassxc-portatil.md` y sus resultados
 (solo Windows ARM64). Los códigos K/B/PK/V/A/S y los hallazgos H-n se citan tal
 cual.
@@ -40,7 +40,9 @@ extra al expulsar.
   queda apuntado que la base lo pide, para avisar en otro dispositivo.
   YubiKey, no.
 - **`pairs.toml` pasa a llamarse `remote.toml`**, porque ya no lleva solo
-  parejas (§3).
+  parejas. Los remotos nuevos nacen así. En los que ya existen, «Ajustes» ofrece
+  renombrarlo, pero solo cuando las notas de la flota dicen que todos los
+  dispositivos leen ya el nombre nuevo (§3).
 - **rclone no vigila nada por su cuenta.** La documentación de bisync lo dice:
   «Rclone does not yet have a built-in capability to monitor the local file
   system for changes and must be blindly run periodically». En la v1.75.1 el
@@ -165,15 +167,29 @@ En el remoto:
 sitios. Además, cada dispositivo en uso lo lee. El cambio va en **su propio PR,
 antes que el llavero** (fase 0), con esta regla de compatibilidad:
 
-- **Para leer**: en la carpeta del catálogo, `remote.toml`; si no existe,
-  `pairs.toml`.
-- **Para escribir**: en el que exista. Nunca se crean los dos: un dispositivo
-  viejo seguiría leyendo el otro y la flota se partiría en dos catálogos.
+- **Para leer**: el fichero que nombra `catalog_path`; si no existe, el del otro
+  nombre en la misma carpeta. Así da igual que un dispositivo diga `pairs.toml` o
+  `remote.toml`, y da igual en qué punto del cambio esté su remoto.
+- **Para escribir**: en el que exista, mirándolo justo antes de escribir. Nunca
+  se crean los dos: un dispositivo viejo seguiría leyendo el otro y la flota se
+  partiría en dos catálogos. Si alguna vez aparecen los dos (una carrera con el
+  renombrado), manda `remote.toml` y «Reparación» lo dice.
 - **Un remoto nuevo** nace con `remote.toml`. El `catalog_path` por defecto pasa
   a `/prdrive-catalog/remote.toml`, y con la regla de lectura un dispositivo con
   el valor por defecto sigue encontrando el `pairs.toml` de siempre. Un
   `catalog_path` escrito a mano no se toca.
-- **Un remoto que ya existe**: es la pregunta abierta.
+- **Un remoto que ya existe** se renombra solo cuando la persona lo pide y la flota
+  dice que se puede:
+  - «Ajustes» ofrece «Renombrar el catálogo a remote.toml…» mientras el remoto
+    tenga `pairs.toml`.
+  - El botón solo se activa si **todas** las notas de `devices/` llevan una
+    versión con la regla de lectura de arriba (la de la fase 0 o posterior). La
+    pantalla nombra los que no la tienen y los que no se sabe, porque una nota
+    vieja no trae versión, con su última vez visto. Un dispositivo que nunca
+    publicó nota no se puede ver, y el texto lo dice.
+  - Renombrar es `moveto` de `pairs.toml` (y su `.bak`) a `remote.toml` en el
+    remoto, más el `catalog_path` de este dispositivo si lo nombraba a mano. Los
+    demás lo encuentran con la regla de lectura.
 - `problema_de_ruta()` y `explicar_carpeta()` aceptan los dos nombres. Los
   textos de la ventana dicen «el catálogo» sin nombrar el fichero.
 
@@ -556,7 +572,7 @@ el agente.
 
 | Fase | Qué | Ficheros |
 |---|---|---|
-| **0. `remote.toml`** (PR propio) | Nombre nuevo con la regla de §3 | `common/catalog.py`, `common/fleet.py`, `install/remote.py`, `ui/catalog_editor.py`, `ui/tk_pairs.py`, sus tests, `catalogue.md`, `sync_config.example.toml`, `docs/guia/` |
+| **0. `remote.toml`** (PR propio) | Nombre nuevo con la regla de §3 y «Renombrar el catálogo a remote.toml…» en «Ajustes» | `common/catalog.py`, `common/fleet.py`, `install/remote.py`, `ui/catalog_editor.py`, `ui/tk_pairs.py`, `ui/tk_doctor.py`, `common/revision.py` (los dos ficheros a la vez), sus tests, `catalogue.md`, `fleet.md`, `sync_config.example.toml`, `docs/guia/` |
 | **1. Windows** (x64, y ARM con el x64) | Todo lo demás | `common/pins.py`, `common/kdbx.py` (nuevo), `common/llavero.py` (nuevo), `common/registro.py` (nuevo), `common/store.py` (`procesos_desde`), `common/model.py` (`[keychain]` → pareja), `common/bisync.py` (filtros; `- /.keychain/**`), `common/components.py`, `sync.py` (comprobación previa), `runsync.py` (`--llavero`, `--vigilar-llavero`, `--cerrar-llavero`; vigilancia del llavero en el servicio), `install/keepassxc_bin.py` (nuevo), `install/components.py`, `install/deploy.py` (lanzadores, `LEEME.txt`, ocultar), `install/vestibulo.py` (`.bat`), `install/device.py` (`RUIDO`), `agente.py` (`IGNORAR_CAMBIOS`, atender el llavero), `ui/conflict_editor.py`, `ui/tk_conflicts.py`, `ui/tk.py` (botón, línea, «Expulsar» sin VeraCrypt), `ui/tk_llavero.py` (nuevo), `ui/tk_doctor.py` (`ENTRADAS`), `ui/tk_install.py` (paso, «Añadir el llavero…»), `common/revision.py` (compañero que falta) |
 | **2. Linux** | §11 | `install/keepassxc_bin.py`, `common/llavero.py`, `install/vestibulo.py` (`.sh`) |
 | **3. El agente** | «Llavero» en la bandeja; aviso nativo de un conflicto del llavero; quitar las claves del registro cuando la unidad se va sin expulsar; el llavero en la raíz del equipo | `agente.py`, `ui/bandeja.py`, `common/avisos.py` |
@@ -582,8 +598,13 @@ cuadren). `catalogue.md` y `agent-scheduling.md` cuentan lo suyo.
 - `test_model` / `test_bisync`: la pareja que sale de `[keychain]`, el nombre
   reservado, los filtros y su orden, `- /.keychain/**` en una pareja de raíz, y
   que mover el catálogo aparca la baseline.
-- `test_catalog`: `remote.toml` primero y `pairs.toml` si no hay; escribir en el
-  que exista; `[keychain]` ignorado por el lector de antes.
+- `test_catalog`:
+  - el nombre de `catalog_path` y, si falta, el otro;
+  - escribir en el que exista;
+  - los dos a la vez (manda `remote.toml`);
+  - `[keychain]` ignorado por el lector de antes;
+  - el botón de renombrar con una flota al día, con un dispositivo viejo y con
+    una nota sin versión (`fleet` falso).
 - `test_keepassxc_bin.py`: `fetch` falso, suma mala, `../`, sello, sustitución y
   espera por procesos; la deriva entre pins y sello (`test_components`).
 - «Combinar» con una CLI falsa (0, fallo, copia que cambió entretanto).
@@ -607,17 +628,4 @@ cuadren). `catalogue.md` y `agent-scheduling.md` cuentan lo suyo.
 | R13 | Expulsar con algo pendiente: cuánto tarda de más, sin red y con el tope |
 | R14 | El vigilante: arranca con «Llavero», sube al cerrar KeePassXC y no retiene el volumen al expulsar |
 | R15 | Edge: B1, PK1 y R3 |
-
-## Pregunta abierta
-
-**Los remotos que ya existen con `pairs.toml`.** Hay dos opciones:
-
-- **(a) No se renombran nunca solos.** Los remotos nuevos nacen con
-  `remote.toml`, y los de antes siguen con `pairs.toml`, que todo lee igual.
-- **(b) «Ajustes» ofrece renombrarlo**, pero solo cuando las notas de la flota
-  (`devices/`) dicen que todos los dispositivos tienen ya la 0.6.0 o posterior.
-  Avisa de los que no se sabe (una nota vieja no trae versión). Un dispositivo
-  olvidado en un cajón con una versión vieja dejaría de encontrar el catálogo.
-
-Se recomienda **(b)**: el nombre nuevo llega a todos los remotos sin romper a
-nadie que la flota no conozca.
+| R16 | Renombrar el catálogo de un remoto con dos dispositivos: el otro lo encuentra, y con uno viejo en la flota el botón no se activa |
