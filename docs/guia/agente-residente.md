@@ -95,7 +95,9 @@ agente»**. El diseño completo está en
   de su lista, **Sincronizar ahora**, **Pausar**/**Reanudar**, **Desbloquear**
   y **Bloquear** la raíz cifrada con la casilla «Pedir la contraseña al iniciar
   sesión», **Atender…** una unidad a la que dijiste «Ahora no» mientras siga
-  enchufada, y **Cerrar el agente** (vuelve a arrancar al iniciar sesión). En
+  enchufada, y **Cerrar el agente** (vuelve a arrancar al iniciar sesión).
+  Abajo del todo dice qué versión lleva el agente y, dentro del desplegable de
+  cada dispositivo, la de su programa. En
   Linux es un StatusNotifierItem (KDE, y GNOME con la extensión «AppIndicator
   and KStatusNotifierItem Support», que Ubuntu ya trae), hablado por D-Bus sin
   dependencias. **Donde el escritorio no tiene bandeja** (GNOME sin esa

@@ -28,10 +28,11 @@ Lo que ofrece el menú (sección 5 del diseño, «Una unidad nueva» de la 3 y e
   una unidad que no está en la lista no se le ofrece nada de eso, que sería
   ejecutar su código sin el sí: su desplegable dice «(sin atender)» y lleva
   «Atender…». Lo que no está bien lo dice el rótulo entre paréntesis
-  («bloqueada», «por actualizar»…).
+  («bloqueada», «por actualizar»…). Abajo del todo, apagada, la versión de su
+  programa, si se sabe.
 - Fuera, lo del agente entero: **Sincronizar todo ahora** (solo con dos o más
   dispositivos que sincronizar), **Pausar** / **Reanudar**, **Actualizar** y
-  **Cerrar el agente**.
+  **Cerrar el agente**; y la última línea, apagada, la versión del agente.
 
 «Configurar» es la entrada por defecto de cada desplegable: en Windows sale en
 negrita y es lo que hace el doble clic sobre el propio desplegable
@@ -376,6 +377,18 @@ def _emblema(u: Mapping[str, Any] | None) -> Emblema:
     return MARCA
 
 
+def _version(fila: Mapping[str, Any] | None) -> list[Entrada]:
+    """Devuelve la línea con la versión de un dispositivo, para el pie de su desplegable.
+
+    Va apagada, que no se elige, y separada de lo que sí. Sin fila (una raíz
+    cerrada no se puede leer) o sin versión que decir, nada.
+    """
+    version = fila.get("version") if fila else None
+    if not isinstance(version, str) or not version:
+        return []
+    return [SEPARADOR, Entrada(f"Versión {version}", activa=False)]
+
+
 def _acciones(uid: str, abrir: bool, cerrada: bool, sincronizar: bool) -> list[Entrada]:
     """Devuelve «Configurar», «Abrir en explorador» y «Sincronizar ahora» de un dispositivo.
 
@@ -449,6 +462,7 @@ def _raices_del_equipo(resumen: Mapping[str, Any]) -> list[Entrada]:
             hijos += [SEPARADOR, _cerrojo(uid, est)]
             if una_cifrada:
                 hijos.append(_pedir_al_iniciar(resumen, varias=False))
+        hijos += _version(fila)
         que = POR_ACTUALIZAR if vieja else (
             ESTADO_DE_RAIZ.get(est) or (EN_PAUSA if fila and fila.get("pausada") else None))
         entradas.append(Entrada(f"{nombre} ({que})" if que else nombre, hijos=tuple(hijos),
@@ -471,14 +485,15 @@ def _unidades(resumen: Mapping[str, Any]) -> list[Entrada]:
         if u.get("vieja") is not None:
             # No hay nada que pedirle hasta que se actualice, y se dice.
             entradas.append(Entrada(f"{nombre} ({POR_ACTUALIZAR})", hijos=(
-                Entrada("Actualízala para que la atienda", activa=False),), emblema=MARCA))
+                Entrada("Actualízala para que la atienda", activa=False), *_version(u)),
+                emblema=MARCA))
         elif u.get("en_lista"):
             # La pausa de su ventana (#64) se dice: si no, el desplegable
             # parecería atendido y no lo está.
             entradas.append(Entrada(
                 f"{nombre} ({EN_PAUSA})" if u.get("pausada") else nombre,
-                hijos=tuple(_acciones(uid, abrir=True, cerrada=False,
-                                      sincronizar=bool(u.get("atendida")))),
+                hijos=(*_acciones(uid, abrir=True, cerrada=False,
+                                  sincronizar=bool(u.get("atendida"))), *_version(u)),
                 emblema=_emblema(u)))
         elif u.get("ahora_no") or u.get("preguntando"):
             # Con otro código que el aceptado (`agente.huella()`), se dice: el
@@ -487,7 +502,8 @@ def _unidades(resumen: Mapping[str, Any]) -> list[Entrada]:
             entradas.append(Entrada(
                 f"{nombre} ({'código cambiado' if cambiada else 'sin atender'})",
                 hijos=(Entrada("Atender con su código nuevo…" if cambiada else "Atender…",
-                               _pide(equipo.PIDE_ATENDER, id=uid), icono=I_ATENDER),),
+                               _pide(equipo.PIDE_ATENDER, id=uid), icono=I_ATENDER),
+                       *_version(u)),
                 emblema=MARCA))
     return entradas
 
@@ -529,6 +545,18 @@ def _actualizar(resumen: Mapping[str, Any]) -> list[Entrada]:
                     icono=I_ACTUALIZAR)]
 
 
+def _version_del_agente(resumen: Mapping[str, Any]) -> list[Entrada]:
+    """Devuelve la última línea del menú: la versión del agente, apagada.
+
+    Es la del programa que lleva este equipo, la que «Actualizar» sustituye.
+    Sin `VERSION` que leer, nada.
+    """
+    version = resumen.get("version")
+    if not isinstance(version, str) or not version:
+        return []
+    return [Entrada(f"{APP_NAME} {version}", activa=False)]
+
+
 def _bloques(*bloques: list[Entrada]) -> tuple[Entrada, ...]:
     """Devuelve los bloques no vacíos, con un separador entre cada dos."""
     salida: list[Entrada] = []
@@ -555,5 +583,6 @@ def vista(resumen: Mapping[str, Any], ahora: float | None = None) -> Vista:
     menu = _bloques(cabecera, _raices_del_equipo(resumen) + _unidades(resumen),
                     _del_agente(resumen),
                     [*_actualizar(resumen),
-                     Entrada("Cerrar el agente", _pide(equipo.PIDE_PARAR), icono=I_CERRAR)])
+                     Entrada("Cerrar el agente", _pide(equipo.PIDE_PARAR), icono=I_CERRAR)],
+                    _version_del_agente(resumen))
     return Vista(icono, tip(frase), menu, frase[:1].upper() + frase[1:])
