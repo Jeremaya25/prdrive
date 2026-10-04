@@ -88,12 +88,6 @@ def open_dialog(parent) -> None:
     otros = ttk.Frame(iconos)
     otros.grid(row=1, column=0, sticky="w", pady=(10, 0))
     fila = 0
-    if estado.veracrypt or estado.clave == volumen.VERACRYPT:
-        ttk.Radiobutton(otros, text="El de VeraCrypt, que viaja en la unidad",
-                        value=volumen.VERACRYPT, variable=eleccion).grid(
-            row=fila, column=0, columnspan=3, sticky="w")
-        fila += 1
-
     # Uno propio: el fichero se elige aquí, pero no se copia hasta «Guardar».
     propio: dict = {"datos": None}
     ttk.Radiobutton(otros, text="Uno tuyo (.ico)", value=volumen.PROPIO,

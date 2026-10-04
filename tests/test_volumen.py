@@ -145,11 +145,9 @@ c("y se reescribe ESE, no uno al lado con otro nombre",
 # 2. qué icono es cada `icon=`
 
 for icono, clave in (("", volumen.NINGUNO),
-                     ("VeraCrypt\\VeraCrypt.exe", volumen.VERACRYPT),
-                     ("veracrypt\\veracrypt.EXE", volumen.VERACRYPT),
-                     # el portable de ahora, una por arquitectura (#50)
-                     ("VeraCrypt\\VeraCrypt-x64.exe", volumen.VERACRYPT),
-                     ("VeraCrypt/VeraCrypt-arm64.exe", volumen.VERACRYPT),
+                     # el de VeraCrypt no es de prdrive: se deja, no se ofrece
+                     ("VeraCrypt\\VeraCrypt.exe", volumen.OTRO),
+                     ("VeraCrypt\\VeraCrypt-x64.exe", volumen.OTRO),
                      # dentro de `.prdrive/`, sin cifrar o con BitLocker
                      (f"{DENTRO}\\icono-verde.ico", "verde"),
                      (f"{DENTRO.upper()}/ICONO-VERDE.ICO", "verde"),
@@ -197,7 +195,7 @@ c("lo que cabe en una unidad cabe en la flota: la nota no pone tope al nombre",
 
 # Lo que dice la ventana: el límite, que es también el nombre del dispositivo
 # (con el de ahora, si se sabe) y qué pasa con el vacío.
-sin_estado = volumen.Estado(Path("E:/"), None, "", volumen.NINGUNO, "", False)
+sin_estado = volumen.Estado(Path("E:/"), None, "", volumen.NINGUNO, "")
 pista = volumen.pista_nombre(replace(sin_estado, dispositivo="el pendrive azul"))
 c.contains("la pista dice el límite", pista, f"{autorun.MAX_NOMBRE} caracteres")
 c.contains("que es también el nombre del dispositivo", pista, "«Dispositivos…»")
@@ -359,24 +357,9 @@ with sandbox() as dispositivo:
       (volumen.leer().icono, en_disco(dispositivo, ahora.icono).is_file()),
       (a_mano, True))
 
-    c("VeraCrypt sin traveler no se puede elegir",
-      bool(rechaza(volumen.guardar, ahora, "x", volumen.VERACRYPT)), True)
-    ya_puesto = volumen.Estado(dispositivo, None, "A", volumen.VERACRYPT,
-                               autorun.ICONO_VERACRYPT, False)
-    c("pero si ya lo tenía, cambiar solo el nombre no lo pide",
-      rechaza(volumen.guardar, ya_puesto, "B", volumen.VERACRYPT), "")
-    # Con el traveler en la raíz, elegirlo pone el ejecutable que hay: el
-    # portable de ahora no trae el `VeraCrypt.exe` de antes.
-    for arq in vestibulo.TRAVELER_ARQUITECTURAS:
-        (dispositivo / vestibulo.TRAVELER).mkdir(exist_ok=True)
-        (dispositivo / vestibulo.TRAVELER / vestibulo.traveler_portatil(arq)).write_bytes(b"MZ")
-    con_traveler = volumen.leer()
-    volumen.guardar(con_traveler, "B", volumen.VERACRYPT)
-    c("con el traveler en la raíz se ofrece, y elegirlo pone su ejecutable x64",
-      (con_traveler.veracrypt, volumen.leer().icono),
-      (True, "VeraCrypt\\VeraCrypt-x64.exe"))
-    __import__("shutil").rmtree(dispositivo / vestibulo.TRAVELER)
-    sin_propio = volumen.Estado(dispositivo, None, "", volumen.NINGUNO, "", False)
+    c("el de VeraCrypt no es una opción", bool(rechaza(volumen.guardar, ahora, "x",
+                                                         "veracrypt")), True)
+    sin_propio = volumen.Estado(dispositivo, None, "", volumen.NINGUNO, "")
     c("ni «uno tuyo» sin haber elegido cuál",
       bool(rechaza(volumen.guardar, sin_propio, "x", volumen.PROPIO)), True)
 
@@ -453,8 +436,6 @@ with sandbox() as dentro:
     c("y los iconos van en su .prdrive/", estado.carpeta, dentro / DENTRO)
     c("lo de fuera no se lee: dentro no hay nombre ni icono",
       (estado.nombre, estado.clave), ("", volumen.NINGUNO))
-    c("y el icono de VeraCrypt no se ofrece: el traveler está fuera",
-      estado.veracrypt, False)
     c.contains("se verá al abrirla, no al enchufarla", volumen.cuando_se_ve(estado),
                "abras")
     c.contains("y lo dice al guardar",
@@ -477,8 +458,6 @@ with sandbox() as dentro:
     c("sin icono nuevo al lado", iconos(fisica), [])
     c("y no entra en el .prdrive/ en claro que quedó fuera",
       iconos(fisica / DENTRO), ["icono-verde.ico"])
-    c("VeraCrypt no se puede elegir dentro",
-      bool(rechaza(volumen.guardar, ahora, "x", volumen.VERACRYPT)), True)
 
     # Volver a llevar VeraCrypt toca solo el de fuera, y retira sus órdenes de
     # antes: Windows no las enseña en un extraíble (M2) y apuntaban a un
@@ -559,8 +538,7 @@ tk_volumen.working = lambda parent, title, funcion, mensaje="": (True, funcion()
 volumen.guardar = lambda estado, nombre, clave, propio=None: llamadas.append(
     (estado.nombre, nombre, clave, propio))
 volumen.leer = lambda: volumen.Estado(Path("E:/"), None, "PRDRIVE", "azul",
-                                      ".prdrive\\icono-azul.ico", False,
-                                      "el pendrive azul")
+                                      ".prdrive\\icono-azul.ico", "el pendrive azul")
 
 
 def mirar_etiquetas(dlg, parent=None):

@@ -141,9 +141,9 @@ pairing.construir = lambda raw=None, app_dir=None: pairing.dumps(
     private_key=(b"-----BEGIN OPENSSH PRIVATE KEY-----\n" + b"b3BlbnNza" * 40
                  + b"\n-----END OPENSSH PRIVATE KEY-----\n"))
 
-# El nombre y el icono de la unidad, en sus casos más altos: con el icono de
-# VeraCrypt ofrecido (una fila más), un icono que no puso prdrive con una ruta
-# larga, y la raíz en una ruta larga, que es lo que alarga la nota. Las dos notas:
+# El nombre y el icono de la unidad, en sus casos más altos: un icono que no
+# puso prdrive con una ruta larga (una fila más), y la raíz en una ruta larga,
+# que es lo que alarga la nota. Las dos notas:
 # la de un contenedor, que lleva la ruta tres veces (el autorun.inf, `.prdrive/`
 # y la raíz física), y la de la unidad sin cifrar o con BitLocker. Y el
 # nombre del dispositivo en la flota, que sale en la pista bajo el campo y puede
@@ -152,7 +152,7 @@ pairing.construir = lambda raw=None, app_dir=None: pairing.dumps(
 VOLUMENES = [volumen.Estado(
     __import__("pathlib").Path("/media/usuario-de-nombre-largo/PENDRIVE-DE-LA-OFICINA"),
     fuera, "Pendrive de la oficina de arriba", volumen.OTRO,
-    "%SystemRoot%\\System32\\imageres.dll,-30", True,
+    "%SystemRoot%\\System32\\imageres.dll,-30",
     "el pendrive de la oficina de arriba, el del armario de la sala de reuniones")
     for fuera in (__import__("pathlib").Path(
         "/media/usuario-de-nombre-largo/PENDRIVE-DE-LA-OFICINA-FUERA"), None)]

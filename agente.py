@@ -190,10 +190,11 @@ COLA_SALIDA = 64 * 1024
 MIRAR_VERSION = 6 * 3600.0
 """Segundos entre comprobaciones de versión nueva (`update.check` guarda 24 h)."""
 MIRAR_EMBLEMA = 60.0
-"""Segundos entre lecturas del `autorun.inf` de una raíz para el icono de la bandeja.
+"""Segundos entre lecturas de lo que una raíz enseña en la bandeja.
 
-Se lee al conectarla y luego como mucho una vez por minuto: así se ve un icono
-cambiado desde su ventana sin leer la unidad en cada vuelta.
+Son su icono (su `autorun.inf`) y su versión (su `VERSION`). Se leen al
+conectarla y luego como mucho una vez por minuto: así se ve un icono cambiado
+o una actualización hecha desde su ventana sin leer la unidad en cada vuelta.
 """
 
 IGNORAR_CAMBIOS = huellas.IGNORAR + (APP_SUBDIR,)
@@ -820,6 +821,9 @@ class Conexion:
         emblema: Su icono para la bandeja (`volumen.emblema()`), o `None` si
             todavía no se ha leído.
         emblema_leido: Cuándo se leyó.
+        version: La versión de su programa (`""` si no lleva `VERSION`), o
+            `None` si todavía no se ha leído.
+        version_leida: Cuándo se leyó.
     """
     id: str
     raiz: Path
@@ -843,6 +847,8 @@ class Conexion:
     vieja: str | None = None
     emblema: dict | None = None
     emblema_leido: float = -math.inf
+    version: str | None = None
+    version_leida: float = -math.inf
 
 
 @dataclass
@@ -2711,6 +2717,21 @@ class Agente:
             con.emblema_leido = ahora
         return con.emblema
 
+    def _version_de(self, con: Conexion) -> str:
+        """Devuelve la versión del programa de esa raíz, para su desplegable.
+
+        Es su `VERSION`, un fichero de texto que se lee y no se ejecuta, como
+        el de `version_vieja()` al conectarla: también la de una unidad que no
+        está en la lista. Como mucho una vez cada `MIRAR_EMBLEMA`, porque
+        actualizarla desde su ventana la cambia sin desconectarla. `""` si no
+        se sabe.
+        """
+        ahora = self.reloj()
+        if con.version is None or ahora - con.version_leida >= MIRAR_EMBLEMA:
+            con.version = update.installed_version(app(con.raiz))
+            con.version_leida = ahora
+        return con.version
+
     def _estado_raiz(self, uid: str, unidad: equipo.Unidad) -> str:
         """Devuelve en qué está una raíz de este equipo, para la bandeja."""
         if uid in self.ausentes:
@@ -2770,7 +2791,8 @@ class Agente:
                                                 if r == con.id and m.fallos > 0),
                              "vigila": vigila,
                              "vigila_abandonada": abandonadas,
-                             "emblema": self._emblema(con)})
+                             "emblema": self._emblema(con),
+                             "version": self._version_de(con)})
         cerradas = [u.nombre or u.id[:8] for u in self.ajustes.cifradas.values()
                     if u.id not in self.conexiones and u.id not in self.ausentes]
         return {"pid": os.getpid(), "pausado": self.pausado, "retenido": self.retenido,

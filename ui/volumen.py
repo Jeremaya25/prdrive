@@ -19,8 +19,7 @@ para no dejar nada más en la raíz.
 
 **El icono:** la marca de prdrive pintada aquí (`icons.ico()`) en uno de cinco
 colores (para distinguir un dispositivo de otro a simple vista, que es para lo
-que sirve cambiarlo), un `.ico` de la persona, el de VeraCrypt si la unidad lo
-lleva, o ninguno. Qué hay elegido se lee del propio `icon=`: el nombre del
+que sirve cambiarlo), un `.ico` de la persona o ninguno. Qué hay elegido se lee del propio `icon=`: el nombre del
 fichero lleva la clave (`icono-verde.ico`), así que no hay un estado
 aparte que pueda contradecir al fichero que manda.
 
@@ -73,8 +72,6 @@ MARCAS = tuple(Opcion(clave, nombre, icons.CAMPOS[clave]) for clave, nombre in (
     ("morado", "Morado"), ("grafito", "Grafito")))
 """Los cinco colores de la marca que se ofrecen."""
 
-VERACRYPT = "veracrypt"
-"""Clave del icono del ejecutable del VeraCrypt de viaje."""
 PROPIO = "propio"
 """Clave de un `.ico` que trae la persona."""
 NINGUNO = "ninguno"
@@ -110,10 +107,8 @@ class Estado:
             o `None` si no va en uno (o no se ve desde aquí). No se escribe
             en ella: está para que la ventana diga qué no cambia.
         nombre: El `label=`, vacío si no hay.
-        clave: Qué icono es: una de `MARCAS`, `VERACRYPT`, `PROPIO`…
+        clave: Qué icono es: una de `MARCAS`, `PROPIO`, `NINGUNO` u `OTRO`.
         icono: El `icon=` tal cual.
-        veracrypt: Si la unidad lleva el VeraCrypt de viaje y su icono se
-            ofrece.
         dispositivo: Cómo se llama ahora este dispositivo en la flota
             (`fleet.nombre()`), que puede no coincidir con `nombre`: es el que
             «Guardar» sustituye.
@@ -123,7 +118,6 @@ class Estado:
     nombre: str
     clave: str
     icono: str
-    veracrypt: bool
     dispositivo: str = ""
 
     @property
@@ -146,15 +140,6 @@ def raiz_del_volumen() -> tuple[Path, Path | None]:
     """
     fuera = vestibulo.raiz_fisica(fleet.device_id())
     return Path(model.DEVICE_ROOT), (Path(fuera) if fuera is not None else None)
-
-
-def lleva_veracrypt(raiz: Path) -> bool:
-    """Indica si la unidad lleva el VeraCrypt de viaje.
-
-    Es el portable de ahora (`VeraCrypt-x64.exe`, `-arm64.exe`) o la copia de
-    antes (`VeraCrypt.exe`).
-    """
-    return bool(vestibulo.traveler_ejecutables(raiz))
 
 
 def _nuestro(carpetas: tuple[str, ...], nombre: str,
@@ -191,8 +176,6 @@ def clave_de(icono: str, app: str | None = None) -> str:
     """
     if not icono:
         return NINGUNO
-    if autorun.es_icono_veracrypt(icono):
-        return VERACRYPT
     *carpetas, nombre = PureWindowsPath(icono).parts
     hallado = _nuestro(tuple(carpetas), nombre, app)
     if hallado:
@@ -212,7 +195,8 @@ def emblema(raiz: Path | str, app: str) -> dict:
     - un `.ico` propio se da por su ruta, solo si está donde lo dejaría prdrive
       (`_nuestro()`, así que no sale de la raíz) y es un fichero que cabe en
       `MAX_ICO`; lo lee y lo pinta la bandeja, con sus límites;
-    - el de VeraCrypt, uno que no puso prdrive o ninguno: la marca de prdrive.
+    - uno que no puso prdrive (el ejecutable de VeraCrypt, por ejemplo) o
+      ninguno: la marca de prdrive.
 
     Lo llama el agente solo para una raíz de su lista, conectada y abierta. No
     lanza: cualquier fallo es la marca de prdrive.
@@ -246,7 +230,7 @@ def leer() -> Estado:
     raiz, fuera = raiz_del_volumen()
     actual = autorun.leer(raiz)
     return Estado(raiz, fuera, actual.etiqueta, clave_de(actual.icono),
-                  actual.icono, lleva_veracrypt(raiz), fleet.nombre())
+                  actual.icono, fleet.nombre())
 
 
 def revisar_nombre(texto: str) -> str:
@@ -340,8 +324,8 @@ def nombre_icono(clave: str, datos: bytes | None = None) -> str:
 def ubicar(estado: Estado, nombre: str) -> tuple[Path, str]:
     r"""Devuelve el fichero en disco y el valor de `icon=` de un icono llamado `nombre`.
 
-    `icon=` va relativo a la raíz de la unidad, con la barra de Windows, como
-    el `VeraCrypt\VeraCrypt-x64.exe` del traveler.
+    `icon=` va relativo a la raíz de la unidad y con la barra de Windows, que
+    es como lo lee el Explorador.
     """
     return estado.carpeta / nombre, f"{estado.carpeta.name}\\{nombre}"
 
@@ -364,18 +348,6 @@ def _icono(estado: Estado, clave: str,
         if estado.clave == PROPIO:              # el que ya tiene, sin cambiarlo
             return estado.icono, None, None
         raise VolumenError("Elige primero el .ico que quieres ponerle.")
-    if clave == VERACRYPT:
-        # El ejecutable que lleva de verdad: el portable de ahora no trae el
-        # `VeraCrypt.exe` de antes. El que ya tenía se respeta aunque falte el
-        # traveler: cambiar solo el nombre no tiene por qué pedir explicaciones
-        # sobre el icono.
-        hallados = vestibulo.traveler_ejecutables(estado.raiz)
-        if hallados:
-            return hallados[0], None, None
-        if estado.clave == VERACRYPT:
-            return estado.icono, None, None
-        raise VolumenError("Esta unidad no lleva VeraCrypt, así que no hay "
-                           "icono suyo que ponerle.")
     if clave == OTRO:
         return estado.icono, None, None
     if clave == NINGUNO:

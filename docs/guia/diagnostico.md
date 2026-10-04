@@ -88,7 +88,7 @@ grande no cabe en un código QR y la ventana lo dice.
 **«Ajustes…» → «Nombre e icono de la unidad…»** cambia cómo enseña el Explorador
 de Windows la unidad al conectarla: un nombre como «Pendrive de Pere» en vez de
 «Disco extraíble», y de icono la marca de prdrive en uno de cinco colores, un
-`.ico` tuyo, el de VeraCrypt si la unidad lo lleva, o ninguno. Los colores están
+`.ico` tuyo o ninguno. Los colores están
 para distinguir un dispositivo de otro a simple vista.
 
 **Es también el nombre del dispositivo** en [«Dispositivos…»](uso.md#la-ventana-de-parejas):

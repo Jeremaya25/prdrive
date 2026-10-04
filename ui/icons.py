@@ -30,6 +30,29 @@ import math
 TRAZO = 1.6
 """Anchura de trazo del diseño, en unidades de la rejilla de 16."""
 
+
+def _engranaje(dientes: int = 8, radio: float = 4.2, pie: float = 4.8,
+               punta: float = 6.3, medio: float = 0.5) -> list[tuple]:
+    """Devuelve las primitivas de un engranaje: un anillo con dientes macizos.
+
+    Cada diente son dos segmentos paralelos, de `pie` a `punta` y a `medio` a
+    cada lado del radio, que con el trazo se funden en uno más ancho que el
+    trazo. Rayos sueltos de un trazo alrededor de un círculo se leen como un
+    sol; y un contorno dentado de una polilínea tiene tantas esquinas que a
+    16 px no se distingue de un círculo.
+    """
+    prims: list[tuple] = [("c", 8, 8, radio)]
+    for i in range(dientes):
+        angulo = math.radians(180 / dientes + i * 360 / dientes)
+        ux, uy = math.cos(angulo), math.sin(angulo)
+        for lado in (-medio, medio):
+            prims.append(("l", round(8 + pie * ux - lado * uy, 2),
+                          round(8 + pie * uy + lado * ux, 2),
+                          round(8 + punta * ux - lado * uy, 2),
+                          round(8 + punta * uy + lado * ux, 2)))
+    return prims
+
+
 GLIFOS: dict[str, list[tuple]] = {
     # Los dos sentidos de bisync, que es también la marca de la aplicación.
     "sync": [("a", 8, 8, 5, 180, 315), ("l", 11.5, 4.5, 13, 6),
@@ -49,11 +72,7 @@ GLIFOS: dict[str, list[tuple]] = {
     "warn": [("p", [(8, 3.9), (13.2, 12.8), (2.8, 12.8), (8, 3.9)]),
              ("l", 8, 7, 8, 9.8), ("d", 8, 11.6)],
     "clock": [("c", 8, 8, 6), ("p", [(8, 4.5), (8, 8), (10.5, 9.5)])],
-    "gear": [("c", 8, 8, 2.4),
-             ("l", 8, 2, 8, 3.5), ("l", 8, 12.5, 8, 14),
-             ("l", 14, 8, 12.5, 8), ("l", 3.5, 8, 2, 8),
-             ("l", 12.6, 3.4, 11.2, 4.8), ("l", 4.8, 11.2, 3.4, 12.6),
-             ("l", 12.6, 12.6, 11.2, 11.2), ("l", 4.8, 4.8, 3.4, 3.4)],
+    "gear": _engranaje(),
     # Una pareja es un ida y vuelta entre dos sitios: dos flechas opuestas.
     "parejas": [("l", 2.6, 5.4, 12.9, 5.4), ("p", [(10.4, 2.9), (12.9, 5.4), (10.4, 7.9)]),
                 ("l", 13.4, 10.6, 3.1, 10.6), ("p", [(5.6, 8.1), (3.1, 10.6), (5.6, 13.1)])],
