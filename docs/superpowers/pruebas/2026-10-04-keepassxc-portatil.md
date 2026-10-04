@@ -1,6 +1,9 @@
 # Plan: KeePassXC portátil en un volumen de prdrive, para passkeys
 
-Fecha: 2026-10-04 · Rama: `claude/gallant-lamport-95o1u2` · Estado: **por hacer**.
+Fecha: 2026-10-04 · Rama: `claude/gallant-lamport-95o1u2` · Estado: **hecho en
+parte** (solo en WA, el 2026-10-04; sin Linux ni un W x64 de verdad): ver los
+resultados. Discrepancias con lo deducido abajo: el punto 3 (B2, H-6), B4
+(H-18), S2, S4 y PK6.
 Los resultados van en un fichero aparte, al lado de este
 (`2026-10-04-keepassxc-portatil-resultados.md`), como los de la unidad G:.
 
