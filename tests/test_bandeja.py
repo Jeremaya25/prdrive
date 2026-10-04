@@ -366,8 +366,9 @@ c("  mientras, «Desbloqueando…», sin ofrecer otro desbloqueo",
 ag.pedir({"pide": equipo.PIDE_DESBLOQUEAR, "id": UID})
 F.vueltas(ag, 1)
 c("  pedirlo otra vez no abre una segunda ventana de VeraCrypt", len(veracrypts()), 1)
-autorun(FISICA, ".prdrive-icono-granate.ico")
+autorun(FISICA, ".prdrive-icono-morado.ico")       # junto al contenedor: no es el suyo
 montar()
+autorun(PUNTO, r".prdrive\icono-granate.ico")
 antes = len(F.LANZADOS)
 F.vueltas(ag, 3)
 ventanas = [p for p in F.LANZADOS[antes:] if p.args[-1].endswith("runsync.py")]
@@ -375,7 +376,7 @@ c("  abierta, sale su ventana sola", [p.args[-1] for p in ventanas],
   [str(PUNTO / penwatch.APP_SUBDIR / "runsync.py")])
 c("  y no su carpeta: eso es «Abrir en explorador»", explorados(), [str(raiz1)])
 v = falsa.vistas[-1]
-c("  abierta, sin paréntesis y con el icono del autorun.inf de junto al contenedor",
+c("  abierta, sin paréntesis y con el icono del autorun.inf del volumen montado",
   (textos(v)[0], desplegable(v, "Mi portátil").emblema),
   ("Mi portátil", bandeja.Emblema(campo=icons.CAMPOS["granate"])))
 c("  y se le puede pedir una pasada y bloquearla",
@@ -605,22 +606,22 @@ c("«Abrir en explorador»: explorer.exe con la carpeta en Windows, xdg-open en 
    in ([shutil.which("xdg-open"), "/media/x"], None)), ("explorer.exe", str(Path("E:/")), True))
 agente.IS_WIN = EXPLORADOR_WIN
 
-# una unidad en un contenedor VeraCrypt: su autorun.inf está en la raíz física
+# una unidad en un contenedor VeraCrypt: su autorun.inf está en el volumen montado
 VU = "4" * 32
 FIS = tmpdir("prdrive-fisica-")
 (FIS / vestibulo.MARCA).write_text(f"id={VU}\n", encoding="utf-8")
 (FIS / vestibulo.CONTENEDOR).write_bytes(b"\0" * 512)
-autorun(FIS, ".prdrive-icono-morado.ico")
+autorun(FIS, ".prdrive-icono-morado.ico")            # el del pendrive, no el suyo
 MONTADA = F.unidad(VU, nombre="Cifrada")
-autorun(MONTADA, r".prdrive\icono-verde.ico")       # dentro no lo ve el Explorador
+autorun(MONTADA, r".prdrive\icono-verde.ico")
 equipo.guardar_ajustes(equipo.leer_ajustes().con_unidad(
     equipo.Unidad(VU, equipo.NADA, "Cifrada")))
 ag = F.nuevo()
 F.RAICES[:] = [FIS, MONTADA]
 F.vueltas(ag, 3)
-c("una unidad en un contenedor: el icono sale del autorun.inf de su raíz física",
-  (ag.conexiones[VU].fisica, next(u for u in ag.resumen()["unidades"]
-                                  if u["id"] == VU)["emblema"]), (FIS, {"marca": "morado"}))
+c("una unidad en un contenedor: el icono sale del autorun.inf del volumen montado",
+  next(u for u in ag.resumen()["unidades"] if u["id"] == VU)["emblema"],
+  {"marca": "verde"})
 F.RAICES[:] = []
 
 # los iconos

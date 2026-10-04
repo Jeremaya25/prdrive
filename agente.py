@@ -817,8 +817,6 @@ class Conexion:
             decir que sí.
         vieja: Su versión (o «») si es anterior a `VERSION_MINIMA`: ejecutaría
             el rclone de la unidad, así que no se atiende ni se abre.
-        fisica: Su raíz física, si va en un contenedor VeraCrypt: la del
-            vestíbulo, donde está su `autorun.inf`.
         emblema: Su icono para la bandeja (`volumen.emblema()`), o `None` si
             todavía no se ha leído.
         emblema_leido: Cuándo se leyó.
@@ -843,7 +841,6 @@ class Conexion:
     huella: str | None = None
     cambiada: bool = False
     vieja: str | None = None
-    fisica: Path | None = None
     emblema: dict | None = None
     emblema_leido: float = -math.inf
 
@@ -1236,8 +1233,6 @@ class Agente:
         for uid in list(self.conexiones):
             if uid not in abiertas:
                 self._desconectar(uid, ahora, cerradas)
-        for uid, con in self.conexiones.items():
-            con.fisica = cerradas.get(uid)      # su vestíbulo, con el contenedor abierto
         self._vestibulos(cerradas, ahora)
         self._raices_ausentes(abiertas)
         self.recorridos += 1
@@ -2703,20 +2698,16 @@ class Agente:
         Solo de una raíz de la lista, con su código aceptado y de una versión
         válida: de las demás no se lee nada más que su id y su nombre, y llevan
         la marca de prdrive (`{}`). Se lee su `autorun.inf` donde lo pone
-        «Nombre e icono…»: en la raíz física de una unidad en un contenedor, en
-        la carpeta del contenedor de una raíz cifrada del equipo y, si no, en
-        la propia raíz. Como mucho una vez cada `MIRAR_EMBLEMA`.
+        «Nombre e icono…»: en la propia raíz, que en una unidad o una raíz del
+        equipo cifradas es el volumen montado. Como mucho una vez cada
+        `MIRAR_EMBLEMA`.
         """
-        unidad = self.ajustes.unidades.get(con.id)
-        if unidad is None or con.cambiada or con.vieja is not None:
+        if (con.id not in self.ajustes.unidades or con.cambiada
+                or con.vieja is not None):
             return {}
         ahora = self.reloj()
         if con.emblema is None or ahora - con.emblema_leido >= MIRAR_EMBLEMA:
-            if unidad.cifrada:
-                donde = Path(unidad.contenedor).parent
-            else:
-                donde = con.fisica or con.raiz
-            con.emblema = volumen.emblema(donde, APP_SUBDIR)
+            con.emblema = volumen.emblema(con.raiz, APP_SUBDIR)
             con.emblema_leido = ahora
         return con.emblema
 

@@ -97,22 +97,20 @@ nombre nuevo llega a esa lista con la siguiente sincronización, y no hace falta
 red para guardarlo. Si lo dejas vacío, la unidad se queda sin nombre propio pero
 el dispositivo conserva el que tenía.
 
-Se guarda en un `autorun.inf` en la raíz de la unidad que se enchufa. Ese
-fichero **no ejecuta nada**: Windows dejó de arrancar programas desde una unidad
-extraíble en Windows 7, pero el Explorador sigue leyendo de ahí el nombre y el
-icono. Si ya había uno, solo se cambian esas dos líneas; lo demás se queda como
-estaba. El icono va según cómo esté protegida la unidad:
+Se guarda en un `autorun.inf` en la raíz de la unidad donde están tus datos, y
+el icono dentro de `.prdrive/` (`.prdrive\icono-….ico`): en la raíz no queda
+nada más que el `autorun.inf`. Ese fichero **no ejecuta nada**: Windows dejó de
+arrancar programas desde una unidad extraíble en Windows 7, pero el Explorador
+sigue leyendo de ahí el nombre y el icono. Si ya había uno, solo se cambian esas
+dos líneas; lo demás se queda como estaba. Según cómo esté protegida la unidad:
 
-- **Sin cifrar o con BitLocker**, dentro de `.prdrive/` (`.prdrive\icono-….ico`):
-  en la raíz no queda nada más que el `autorun.inf`. Con BitLocker, Windows no
-  puede leerlo mientras la unidad está bloqueada.
-- **Con VeraCrypt**, junto al `autorun.inf` y oculto (`.prdrive-icono-….ico`),
-  como el resto del vestíbulo: la unidad que se enchufa es la de fuera del
-  contenedor, y el `.prdrive/` de dentro el Explorador no lo ve hasta abrirlo.
+- **Con BitLocker**, Windows no puede leerlo mientras la unidad está bloqueada.
+- **Con VeraCrypt**, cambia el volumen que aparece al abrir el contenedor, no el
+  pendrive que se enchufa: ese conserva su nombre y su icono.
 
 Además:
 
-- **Se ve al volver a conectar la unidad**, no al guardar: el Explorador lee el
-  fichero cuando llega el volumen.
+- **Se ve al volver a conectar la unidad** (con VeraCrypt, al volver a abrirla),
+  no al guardar: el Explorador lee el fichero cuando llega el volumen.
 - **La etiqueta del sistema de ficheros no cambia.** En Linux, y en la ruta donde
   se monta, la unidad se sigue llamando como antes.

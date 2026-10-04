@@ -6,24 +6,22 @@ ventana es `ui/tk_volumen.py` y solo dibuja. El fichero que manda es el
 `autorun.inf` de la raíz y leerlo y escribirlo es cosa de `common/autorun.py`:
 aquí se decide qué va dentro, en qué raíz y con qué icono.
 
-**En qué raíz:** la de la unidad que se ENCHUFA, que es la que enseña el
-Explorador al conectarla. Sin cifrar o con BitLocker es `DEVICE_ROOT`: con
-BitLocker el volumen que se ve al desbloquear es el mismo y mientras está
-bloqueado Windows no lee nada de dentro. Con VeraCrypt no: `DEVICE_ROOT` es el
-contenedor montado, un volumen que aparece después; la que se enchufa es la
-raíz física y se encuentra por la marca del vestíbulo
-(`vestibulo.raiz_fisica()`).
+**En qué raíz:** la del volumen donde vive prdrive, `DEVICE_ROOT`, que es el
+que lleva los datos. Sin cifrar es la unidad que se enchufa; con BitLocker, el
+volumen que se ve al desbloquearla (bloqueada, Windows no lee nada de dentro);
+con VeraCrypt, el volumen que aparece al abrir el contenedor, y el Explorador
+lee su `autorun.inf` al montarlo, como el de una unidad que llega. La raíz
+física de fuera del contenedor (la del vestíbulo, `vestibulo.raiz_fisica()`)
+no se toca: es la del pendrive, que conserva el nombre y el icono que tenga.
 
 **Dónde va el icono:** dentro de `.prdrive/`, con `icon=.prdrive\icono-….ico`,
-para no dejar nada más en la raíz. Con VeraCrypt no hay `.prdrive/` en la raíz
-física y el que hay dentro del contenedor el Explorador no lo vería hasta
-abrirlo: ahí va junto al `autorun.inf`, oculto, como el resto del vestíbulo.
+para no dejar nada más en la raíz.
 
 **El icono:** la marca de prdrive pintada aquí (`icons.ico()`) en uno de cinco
 colores (para distinguir un dispositivo de otro a simple vista, que es para lo
 que sirve cambiarlo), un `.ico` de la persona, el de VeraCrypt si la unidad lo
 lleva, o ninguno. Qué hay elegido se lee del propio `icon=`: el nombre del
-fichero lleva la clave (`.prdrive-icono-verde.ico`), así que no hay un estado
+fichero lleva la clave (`icono-verde.ico`), así que no hay un estado
 aparte que pueda contradecir al fichero que manda.
 
 **El nombre del fichero cambia con el dibujo.** El Explorador guarda los iconos
@@ -47,7 +45,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 
-from common import autorun, fleet, model, store, vestibulo
+from common import autorun, fleet, model, vestibulo
 
 from . import icons
 
@@ -97,8 +95,8 @@ _NOMBRE = re.compile(f"(?P<fuera>{re.escape(autorun.PREFIJO_RAIZ)})?"
                      + re.escape(autorun.EXTENSION_ICONO), re.IGNORECASE)
 """El nombre de uno de nuestros iconos.
 
-`fuera` es el prefijo que lleva en la raíz física de un contenedor; dentro de
-`.prdrive/` va sin él.
+`fuera` es el prefijo que lleva uno suelto en una raíz (`autorun.PREFIJO_RAIZ`):
+se reconoce para recogerlo. Dentro de `.prdrive/`, donde se ponen, va sin él.
 """
 
 
@@ -107,8 +105,10 @@ class Estado:
     """Lo que tiene puesto la unidad ahora mismo, y dónde.
 
     Args:
-        raiz: Donde vive (o viviría) el `autorun.inf`.
-        fisica: Si no es `DEVICE_ROOT` sino la de fuera del contenedor.
+        raiz: Donde vive (o viviría) el `autorun.inf`: `DEVICE_ROOT`.
+        fuera: La raíz física del contenedor VeraCrypt en que va la unidad,
+            o `None` si no va en uno (o no se ve desde aquí). No se escribe
+            en ella: está para que la ventana diga qué no cambia.
         nombre: El `label=`, vacío si no hay.
         clave: Qué icono es: una de `MARCAS`, `VERACRYPT`, `PROPIO`…
         icono: El `icon=` tal cual.
@@ -119,7 +119,7 @@ class Estado:
             «Guardar» sustituye.
     """
     raiz: Path
-    fisica: bool
+    fuera: Path | None
     nombre: str
     clave: str
     icono: str
@@ -128,27 +128,24 @@ class Estado:
 
     @property
     def carpeta(self) -> Path:
-        """Devuelve donde van los iconos de prdrive.
+        """Devuelve donde van los iconos de prdrive: `.prdrive/` en esta raíz.
 
-        Es `.prdrive/` si está en esta raíz y, si no (la física de un
-        contenedor), la propia raíz. Se saca de `raiz` y del NOMBRE de
-        `APP_DIR`, no de `APP_DIR` a secas: en un dispositivo es la misma
-        carpeta, y así lo que se escribe cuelga siempre de la raíz que enseña
-        la ventana.
+        Se saca de `raiz` y del NOMBRE de `APP_DIR`, no de `APP_DIR` a secas:
+        en un dispositivo es la misma carpeta, y así lo que se escribe cuelga
+        siempre de la raíz que enseña la ventana.
         """
-        return self.raiz if self.fisica else self.raiz / model.APP_DIR.name
+        return self.raiz / model.APP_DIR.name
 
 
-def raiz_del_volumen() -> tuple[Path, bool]:
-    """Devuelve la raíz de la unidad que se enchufa y si es la física de un contenedor.
+def raiz_del_volumen() -> tuple[Path, Path | None]:
+    """Devuelve la raíz donde se escribe y, si va en un contenedor, la de fuera.
 
-    Sin vestíbulo que encontrar (no hay contenedor, o no se ve desde aquí) es
-    `DEVICE_ROOT`, y la ventana enseña la ruta: nadie escribe a ciegas.
+    Se escribe siempre en `DEVICE_ROOT`, y la ventana enseña la ruta: nadie
+    escribe a ciegas. La de fuera se encuentra por la marca del vestíbulo
+    (`vestibulo.raiz_fisica()`); sin vestíbulo que encontrar es `None`.
     """
-    fisica = vestibulo.raiz_fisica(fleet.device_id())
-    if fisica is not None:
-        return Path(fisica), True
-    return Path(model.DEVICE_ROOT), False
+    fuera = vestibulo.raiz_fisica(fleet.device_id())
+    return Path(model.DEVICE_ROOT), (Path(fuera) if fuera is not None else None)
 
 
 def lleva_veracrypt(raiz: Path) -> bool:
@@ -208,8 +205,8 @@ def clave_de(icono: str, app: str | None = None) -> str:
 def emblema(raiz: Path | str, app: str) -> dict:
     """Devuelve el icono de una raíz tal como lo enseña la bandeja del agente.
 
-    Sale de lo que dice su `autorun.inf` (`raiz` es donde vive: la raíz física
-    si la unidad va en un contenedor) y de nada más:
+    Sale de lo que dice su `autorun.inf` (`raiz` es donde vive: la del volumen
+    con `.prdrive/`, el montado si va en un contenedor) y de nada más:
     - uno de los colores de la marca (`MARCAS`) no se lee: la clave va en el
       nombre del fichero y la bandeja pinta la marca en ese color;
     - un `.ico` propio se da por su ruta, solo si está donde lo dejaría prdrive
@@ -246,9 +243,9 @@ def leer() -> Estado:
 
     No lanza: sin fichero es «sin nombre y sin icono».
     """
-    raiz, fisica = raiz_del_volumen()
+    raiz, fuera = raiz_del_volumen()
     actual = autorun.leer(raiz)
-    return Estado(raiz, fisica, actual.etiqueta, clave_de(actual.icono),
+    return Estado(raiz, fuera, actual.etiqueta, clave_de(actual.icono),
                   actual.icono, lleva_veracrypt(raiz), fleet.nombre())
 
 
@@ -283,13 +280,24 @@ def pista_nombre(estado: Estado) -> str:
             "el que le ponga Windows y el dispositivo, con el suyo.")
 
 
-def mensaje_guardado(nombre: str) -> str:
+def cuando_se_ve(estado: Estado) -> str:
+    """Devuelve cuándo lee el Explorador lo guardado, para acabar una frase.
+
+    Lo lee al llegar el volumen: el de una unidad en un contenedor llega al
+    abrirlo, no al enchufarla.
+    """
+    return ("la próxima vez que abras la unidad" if estado.fuera is not None
+            else "la próxima vez que conectes la unidad")
+
+
+def mensaje_guardado(estado: Estado, nombre: str) -> str:
     """Devuelve lo que se dice al guardar.
 
     Args:
+        estado: Lo que tenía la unidad, de `leer()`.
         nombre: El nombre guardado, ya revisado; vacío si se ha quitado.
     """
-    texto = "Guardado. Se verá la próxima vez que conectes la unidad."
+    texto = f"Guardado. Se verá {cuando_se_ve(estado)}."
     if nombre:
         texto += (" En «Dispositivos…» el nombre nuevo llegará con la próxima "
                   "sincronización.")
@@ -335,9 +343,6 @@ def ubicar(estado: Estado, nombre: str) -> tuple[Path, str]:
     `icon=` va relativo a la raíz de la unidad, con la barra de Windows, como
     el `VeraCrypt\VeraCrypt-x64.exe` del traveler.
     """
-    if estado.fisica:
-        nombre = autorun.PREFIJO_RAIZ + nombre
-        return estado.carpeta / nombre, nombre
     return estado.carpeta / nombre, f"{estado.carpeta.name}\\{nombre}"
 
 
@@ -418,9 +423,6 @@ def guardar(estado: Estado, nombre: str, clave: str,
             raise VolumenError(f"No he podido escribir el icono en "
                                f"{fichero.parent}: {e}") from e
         nuevo = fichero
-        # Dentro de `.prdrive/` ya lo esconde la carpeta; en la raíz, él mismo.
-        if fichero.parent == raiz:
-            store.hide(nuevo)
 
     actual = autorun.leer(raiz)
     try:
