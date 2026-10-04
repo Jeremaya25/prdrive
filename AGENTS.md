@@ -10,7 +10,7 @@ The code knows **no server**: the connection lives in a `profile.Profile` (asked
 
 ## Area docs (`docs/agents/reference/`)
 
-Each opens with the files it covers.
+Each opens with the files it covers. Claude Code also gets a one-line pointer to each doc when it reads or edits those files (path-scoped rules in `.claude/rules/`, one per doc); `tests/test_reglas_claude.py` keeps docs, rules and this table in sync.
 
 | Doc | Read before touching |
 |---|---|

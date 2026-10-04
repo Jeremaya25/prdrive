@@ -1,0 +1,23 @@
+---
+paths:
+  - "prdrive-install.py"
+  - "build_installer.py"
+  - "common/pins.py"
+  - "install/__init__.py"
+  - "install/deploy.py"
+  - "install/device.py"
+  - "install/platforms.py"
+  - "install/profile.py"
+  - "install/rclone_bin.py"
+  - "install/runtime_bin.py"
+  - "install/descarga.py"
+  - "ui/tk_install.py"
+  - "tests/test_install_deploy.py"
+  - "tests/test_install_config.py"
+  - "tests/test_install_profile.py"
+  - "tests/test_install_wizard.py"
+  - "tests/test_install_device.py"
+  - "tests/test_platforms.py"
+  - "tests/test_arch.py"
+---
+Before changing these files, read `docs/agents/reference/provisioning.md` (the install wizard, platforms and runtimes, the PyInstaller build, Windows ARM). If you already read it this session, skip it.
