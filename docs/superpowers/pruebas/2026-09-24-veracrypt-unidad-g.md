@@ -14,8 +14,9 @@ Antes de empezar, lee:
 - `docs/superpowers/specs/2026-09-23-veracrypt-ciclo-de-vida-design.md`: qué se
   cambió, por qué, y la tabla de hechos verificados en el código de VeraCrypt
   (se citan aquí como «hecho #N»).
-- `AGENTS.md`, secciones «VeraCrypt: what not to weaken», «The vestibule» y
-  «Mount watcher».
+- `docs/agents/reference/veracrypt.md`, `vestibule.md` y `penwatch.md` (antes
+  secciones de `AGENTS.md`: «VeraCrypt: what not to weaken», «The vestibule» y
+  «Mount watcher»).
 
 ## 0. Cómo se trabaja
 

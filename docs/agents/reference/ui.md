@@ -1,0 +1,55 @@
+# UI (`ui/`)
+
+Files: `ui/__init__.py`, `ui/tk*.py`, `ui/theme.py`, `ui/icons.py`, `ui/console.py`, `ui/segundo_plano.py`, `ui/cifrado.py`, `ui/prefs.py`, `ui/watch.py`.
+Formerly AGENTS.md «UI», «Theme, icons and window sizing», «Ajustes». «Reparación» is in `repair.md`.
+
+## Frontends
+
+Two frontends implement the same four operations (`ask`, `approve_resync`, `info`, `run_sync`) and both return `Choice(action, pairs, minutes)`. `ui.start(config, msg)` returns the choice **together with the frontend that took it** (a window cannot dump output to a console that does not exist).
+
+- **`import tkinter` always goes inside functions, never at module top.** `ui/` is imported by headless paths (`--auto`, the service) where tkinter may be absent; the failure must surface when the window opens, so `ui.start()` can fall back to the console menu.
+- `ConsoleFrontend.approve_resync` always returns False on purpose: with a real terminal `sync.py` inherits stdin and asks itself, with more context than a dialog fits.
+- `save_prefs` stores `known` (the pair names existing then) so a pair added later reads as new and comes back checked.
+
+## Main window and output
+
+- `output_window` colours each line by content (`tk._tono`) using the vocabulary `sync.py` already prints (`=== pair ===`, `  ejecutando:`, `[pair] OK.`…); change the wording there and a line stops being coloured, nothing breaks. It offers **Guardar el log**, the only copy of a good pass. The progress line is the exception: `_tono` recognises it by `progress.ETIQUETA`, **imported**, not retyped, and `append()` rewrites consecutive progress lines in place.
+- `tk_pairs.confirmar_plan()` is a real window, one line per consequence, each warning in an amber box; not an `askokcancel`. It is the dialog that governs deletions. Tests replace it, like `mostrar()`.
+- **The main window runs syncs itself.** «Sincronizar ahora», and whatever «Reparación» hands back, open a modeless `output_window`; the window disables whatever touches the same state and on close re-reads `state/` and repaints. Only «Iniciar servicio» returns a `Choice` to runsync (absent when the agent is the root's service: «Pausar»/«Reanudar» take its place, see `agent-window.md`).
+  - The checkboxes are shared by both buttons and open with the service's pairs. «Marcar todas»/«Desmarcar todas» (two pairs or more) and the «N de M» follow them through each checkbox's `command`, **not** a variable `trace`: a widget's command dies with it, a trace's Tcl command does not and would hold the whole window and its images until exit.
+  - The interval is **not** in the main window (#65): it is set once in a device's life, so it lives in «Ajustes → Configuración», and «Iniciar servicio» reads the saved one (`prefs.startup_defaults()`) when clicked, not when painted. The console menu still asks it when starting the service.
+  - `ui.manual_args()` (resync question + `--yes`) is shared with the console path. The pairs screen's «Simular», «Examinar…» and «Dispositivos…» write nothing, so none makes `open_dialog` return True.
+- **«Expulsar», only inside a VeraCrypt container** (`ui/cifrado.py`). Closing the window does not close the `.hc`, and with it open the drive cannot be removed. This process runs *from inside* the container (the device's Python is in `.prdrive/runtime/`) and VeraCrypt retries a busy dismount only for 1.5 s, so the button does not dismount: it launches the vestibule's `Expulsar PRDRIVE` script with its cwd on the physical root (`lanzar_expulsion()`, an indirection point) and closes. The script waits, then asks VeraCrypt without `/silent`. Disabled while a pass runs; with the window open there is no service (opening it stopped it).
+- **The watcher line**: what this host does when the device is plugged in. It comes from `watch.resumen()` (files only, no `schtasks`/`systemctl`: it is asked on first paint) and is worded by `watch.linea()`, which the console menu shares. States: `sin_instalar`, `otro_dispositivo` (a host has one watcher; `watch.json`'s `device_id` is another prdrive's), `desfasado` (amber), `instalado` + mode. Its button opens `tk_watch` and the line is re-read on return; it stays enabled during a pass.
+
+## Theme, icons, window sizing
+
+Warm paper, near-black ink, one blue accent, amber for warnings, monospace for paths and flags; no rounded corners, no shadows. Styles cross **role** with **surface**, because a `ttk.Label` does not inherit its parent's background; `theme.apply()` switches to **clam**, once per Tk interpreter.
+
+- **`theme.nitidez()` runs before the first `Tk()`** (all five places that open a root) and declares **system** DPI awareness, not per-monitor (Tk 8.6 ignores `WM_DPICHANGED`). Without it the compositor stretches the bitmap, the blur no font work can fix.
+- **Design distances go through `theme.medida()`, never a bare integer** (Tk reads a plain number as unscaled pixels); `icons.px()` is for what Tk cannot scale at all. An eyebrow's gutter is reserved with `theme.ancho_rotulo()` + `columnconfigure(minsize=…)`, never a `width=` in characters. `tests/test_tk_densidad.py` enforces both.
+- `icons.py` rasterises the glyphs itself (no deps, Tk cannot read SVG, «no emoji»); `icons.get()` returns None on failure and the caller keeps its text. `write_ico()` paints `runsync.ico` headless, **repainted** into `.prdrive/`, never copied, so no second glyph table drifts. A `ttk.Treeview` cannot colour one cell, so status chips are row tags (`theme.marcar_lista`).
+- **Windows are shown already centred, never moved after the fact.** `modal()` returns the dialog **withdrawn** and without a grab; `mostrar(dlg, parent)` centres, deiconifies, grabs and waits. `grab_set()` / `update_idletasks()` must stay on their current side of `deiconify()`. Tests replace `mostrar()`, not `modal()`.
+- **Every screen sits inside a `tk.Visor`** (`encajar()` sizes `interior` to the content or to what fits; scrollbars only when content is left over). The wizard root centres **once**, and `Wizard.reencajar()` hangs off `revisar()`, not `repintar()`, because three things change a step's height without a step change. When even growing does not fit (a long error above the button that retries it), `Visor.ver(widget)` scrolls just enough to show that widget whole.
+- `tests/test_tk_medidas.py` checks every screen against a matrix of resolution **and** `tk scaling` (the scaling column is the half that matters). The main window opens its own interpreter, so `tests/test_tk_servicio.py` measures it on the same matrix in its worst case: twelve pairs, the amber watcher line and «Expulsar» in the footer.
+
+## Waiting helpers
+
+- `tk.working(parent, title, funcion)` runs `funcion()` on a thread behind a bare progress bar, for slow or passphrase-carrying commands. No cancel button.
+  - An optional `progreso()` → `(fracción, texto)` or None turns the bar determinate with the text below while it answers, and back when it stops. It is asked from the Tk thread every 120 ms, so it must only read what another thread measured, and any exception counts as None (the poll is the only thing that closes the window). The text's row is reserved from the start (`tests/test_tk_espera.py`, the matrix in `test_tk_medidas.py`).
+  - On closing it hands the grab back to whoever held it (`_devolver_captura()`): Tk keeps no grab stack, and a modal waiting in it (the remote folder picker, at every folder) would stop being modal.
+- **A screen that waits for the network opens first and reads after (#66)**, instead of `working()` in front of an empty window.
+  - `ui/segundo_plano.py` (no Tk) runs the read on a daemon thread into an `Encargo` (`hecho`, `resultado`, `error`). `tk.Sondeo(dlg)`, one per screen, polls it from the Tk thread every `SONDEO_MS` and calls back there, never from the worker, and **cancels with the window** (`<Destroy>` → `after_cancel`), so closing early leaves nobody painting dead widgets.
+  - The function handed over is a `functools.partial` of data, never a lambda among widgets: a worker holding the last reference to a Tk object frees it off-thread (`Tcl_AsyncDelete`).
+  - `tk.Indicador` is the line under the header: the same indeterminate bar as `working()` (`LARGO_INDICADOR`, `theme.medida`) plus a sentence. Bar only while waiting; the sentence may stay (why the screen kept the local copy); nothing to say → the line goes. Both hang off the dialog (`dlg.indicador`, `dlg.sondeo`) for tests.
+  - `segundo_plano.lanzar()` is an indirection point: `test_tk_screens`/`test_tk_medidas` set it to `en_el_acto()` (the result is in before the screen shows, as they never enter the event loop); `tests/test_tk_segundo_plano.py` runs real threads against a `catalog.run()` that answers late or never.
+  - **One read alive per kind.** A thread cannot be cut and closing the screen does not stop it, so reopening Parejas (or «Releer») with the previous thread still running started a second `catalog.pull()` writing `state/catalog.toml` at the same time. Both screens go through `segundo_plano.lanzar_sin_repetir(clave, firma, funcion)`: same key and same raw config while the thread lives hands back that `Encargo` (the newest screen waits on it); another config launches a new one, and so does a thread older than `VIDA_MAXIMA` (120 s; `catalog.run()` already bounds its subprocess at 90 s), so one that hangs cannot block every later read. It calls `lanzar()` through the module, so the tests' `en_el_acto()` (always `hecho`) never reuses anything; a test that swaps `lanzar()` for an `Encargo` that never ends (`test_tk_medidas`) calls `olvidar_lecturas()` between screens.
+  - Writes to the remote (catalogue push, deleting a fleet note, purging versions, creating or listing a remote folder) stay in `working()`: modal, nothing to cut halfway.
+
+## «Ajustes» (`ui/tk_doctor.py`): where new affordances go
+
+The main window is deliberately lean: **anything done once in a device's life belongs behind the gear, not beside «Sincronizar ahora»**. The screen is «Ajustes» (the module keeps the old name) and is not the `--doctor` command: «Reparación» is its first entry, «Configuración» its second, and `ENTRADAS` is the list to add to.
+
+**«Configuración»** (`ui/tk_configuracion.py`, #65) holds what is *configured* rather than done: the service's interval (`ui/prefs.py` decides what is written, see `service.md`) and, only for the encrypted host root, the agent's `pedir_al_iniciar` checkbox (sent as `PIDE_AJUSTE`). Nothing is written until «Guardar», and what did not change is not written.
+
+«Ajustes» receives `lanzar` and `abrir_reparacion` from the main window instead of importing them: the output window and «Reparación» are the *main* window's children and it disables itself during a pass; this screen knows none of that, and closes itself before handing over so two modals never hold the grab at once.

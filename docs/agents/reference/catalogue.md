@@ -1,0 +1,48 @@
+# The catalogue and editing pairs (`common/catalog.py`, `ui/catalog_editor.py`, `ui/pair_editor.py`, `ui/flags_editor.py`, `ui/remote_picker.py`)
+
+Formerly AGENTS.md «The catalogue», «Editing pairs from the UI», «The remote folder picker», «The flags editor». Writing the TOML itself: `engine.md`. The fleet registry beside the catalogue: `fleet.md`.
+
+## The catalogue
+
+`nas:/prdrive-catalog/pairs.toml`: same schema as `sync_config.toml`, shared by every device, read by the installer when provisioning. **A pair is created or deleted there first**; each device only *chooses* which it uses. Do not collapse that split: the catalogue side (`plan_catalog_save`/`_remove`/`_defaults`) writes the remote and changes nothing local; the device side (`plan_enable`/`_remove`/`_override`/`_revert`) writes `sync_config.toml` and never the remote. `[defaults]` is catalogue-governed too. No pair is sacred.
+
+`sync_config.toml` holds **complete** pair entries, not references (`sync.py` must work with no network). Provenance is **derived**, not stored: `catalog.diff_keys()` compares the local entry against `state/catalog.toml` (the last successful pull) → `catálogo` / `modificada aquí` / `huérfana` / `sin usar`. **Do not add a `from_catalog` key**: `config_file.save()` demands strict round-trip equality and the file is hand-editable.
+
+`catalog.push()` is the riskiest thing in the project: it generates and verifies the text (`config_file.dumps_checked`), **re-reads the remote and refuses if it changed**, copies `pairs.toml` → `pairs.toml.bak`, and only then uploads. Rewriting keeps the header block and **loses interleaved comments**. `catalog.load()` never raises: no network falls back to `state/catalog.toml`, and a cached catalogue is **not editable** (`Catalog.editable`). `catalog.NET_FLAGS` keeps a dead remote from freezing the window.
+
+**The pairs screen opens with the local copy and reads the remote in the background (#66).** `open_dialog()` paints `catalog.cached()` (nothing, on a fresh device: only its own pairs) and `leer_catalogo()` hands `catalog.load()` to `segundo_plano`; on arrival it repaints with the remote, keeping the selected row, or keeps the copy and says why.
+
+- What it says and allows is `catalog_editor.lectura(cat, aviso, leyendo)`, pure: the chip in two words («copia local · <fecha>», «catálogo leído · <fecha>», «sin catálogo»), the line under the header (`tk.Indicador`; the long `catalog.load()` warning lives there, not in the chip) and `editable`: **only what was just read from the remote, and never while reading**. So the catalogue buttons and «Releer» stay off until the real answer, and «Examinar…» follows the same answer.
+- «Releer» reads the same way. A catalogue change goes up through `working()`, then the screen shows what `push()` left in the copy (still not editable) while it re-reads; device-side plans stay synchronous (local disk). `catalog.SIN_FECHA` is the stamp of a copy without metadata.
+
+**The path names the file, never its folder (#48).** `rclone cat` of a folder does not fail: it concatenates every file inside, recursively (`pairs.toml`, the `.bak`, the `devices/` notes; measured with rclone v1.75.1), and `tomllib` answers "Cannot declare ('defaults',) twice".
+
+- Both readers (`catalog.pull()`, `remote.pull_catalog()`) therefore ask `catalog.explicar_carpeta()`, which runs `lsjson --stat` (and, for a folder, `--stat` of its `pairs.toml` to suggest it) **only when something smells**: the content did not parse, or the path does not end in `.toml` (which also catches an empty folder and one holding only `pairs.toml`, both of which `cat` reads with rc 0). Never on the happy path and never after a failed `cat` (offline, the question would time out too). An unanswerable `--stat` diagnoses nothing.
+- What is **typed** is refused without network by `catalog.problema_de_ruta()`: the wizard's Conexión (`profile.from_form`/`from_rclone_conf`; `with_catalog_path` does not raise, it runs per keystroke, and `Profile.problema_catalogo` holds the step shut) and both `[defaults]` forms, only when `catalog_path` **changes** (`validar_ruta_editada()`): an extension-less path already on a device keeps working.
+
+An optional **`[remote]`** table carries the non-secret definition of the rclone remote (type, host, user…): the first device writes it, the rest inherit it via `profile.align_with_catalog()`. **The catalogue decides the remote's name**: every `remote_path` resolves against `[defaults].remote`, so a differently-named remote would fail every sync with "unknown remote". The key never goes there.
+
+## Editing pairs from the UI (`ui/pair_editor.py`): the dangerous part
+
+`bisync.expected_prefix()` derives from `local`, `remote`, `remote_path`, `mode`. Change any and the expected listing name changes; reusing the old baseline under the new name would tell bisync that a listing of the *previous* destination describes the *new* one, so everything missing from the new side reads as deleted and propagates, with `--max-delete 25` as the only brake. Hence the plan shelves, never renames.
+
+- `bisync.shelve_baseline()` renames `state/<pair>/` → `state/<pair>.old-<date>/`, leaving the pair `fresh` and forcing an explicit `--resync`. Shelved dirs are inert (scans only look at the top level).
+- **Renaming a pair is free**: the prefix doesn't depend on the name. `bisync.rename_pair_state()` moves `state/<name>/` and `filters/<name>.*` together (the `.md5` must travel with its file).
+- **The decision compares prefixes, not keys.** `_prefixes(raw)` parses the before and after configs and compares `expected_prefix()` per pair; `ENDPOINT_KEYS` only produces the human-readable message. That is what makes `[defaults]` editable: `remote`/`device_remote` feed *every* pair, so `EditPlan.shelve` is a **list**. A prefix that *disappears* (bisync → another mode) also shelves.
+- `plan_*()` return an `EditPlan` **without touching anything**; its `consequences` are shown before confirming. `EditPlan.execute()` does the disk surgery **before** writing the config and undoes it if the write fails (it can only fail towards "baseline shelved for nothing", which a `--resync` fixes). **Rename runs before shelve**, else `filters/<old name>.txt` is orphaned.
+- `simular_args(raw, name)` is the whole of «Simular»: `[name, "--dry-run"]`. **No `--yes`**: a pair with no baseline must come back "Saltada: requiere --resync", precisely what you want to read before approving anything. The output window is modal and the screen re-`grab_set()`s afterwards.
+- `ruta_local_relativa(path)` turns a directory picked with the system dialog into the pair's `local`, relative to `DEVICE_ROOT`, and **refuses** anything outside the device (a `../..` local syncs whatever machine it is plugged into).
+
+## The remote folder picker (`ui/remote_picker.py` + `tk_pairs.explorador_remoto`)
+
+«Examinar…» beside `remote_path`. `listar()` is `rclone lsd` through `catalog.run()`, and `_LINEA` parses its fixed five-field line as a whole regex, not by splitting on spaces: a folder name with spaces must survive intact, and a line that is not a listing must not become a folder. `crear()` is the only thing that writes and it is a `mkdir`. **Deleting remote folders is deliberately not offered**: the remote belongs to the whole fleet and there is no consequences ceremony behind this dialog.
+
+The button is disabled exactly when the catalogue block is (`catalog_editor.lectura().editable`: just read from the remote, not while reading), the proxy for "there is a connection". Listing and `mkdir` go through `working()`: its window is modal, so the path being looked at and its contents cannot contradict each other mid-navigation; the first listing, before the picker shows, hangs off the form that opened it.
+
+## The flags editor (`ui/flags_editor.py`)
+
+Flags are written in TOML syntax (a text box, not a row-per-flag form) and parsed with **`tomllib`, not by hand**: the destination is a `[pair.flags]` table, and `dump()` renders through `config_file.dumps_table()`, so only what the serializer can write back is accepted.
+
+- `RESERVED` rejects the flags `sync.py` supplies per run and the filter ones (a second `--workdir` or `--filters-file` points bisync at the wrong baseline).
+- `effective()` resolves the four layers into what rclone would actually receive; `warnings()` compares **merged** flag sets, never one layer, so it catches `--max-delete` rising because the pair's own value was deleted or the mode changed. Editing flags never shelves a baseline.
+- `tk_pairs.flags_form()` does **not** close on invalid input; `pair_editor.merge_form()` (shared with `catalog_editor`) makes an emptied box delete the key.

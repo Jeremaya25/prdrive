@@ -70,9 +70,10 @@ def al_cambiar(entrada, funcion) -> None:
     Se hace con `validatecommand` y no con un `trace` de la variable: el
     comando se registra en la propia caja y muere con ella (`Misc.destroy()`
     borra sus `_tclCommands`), mientras que el de un trace sobrevive al widget
-    y retiene la ventana entera (AGENTS.md, la ventana principal). Se llama
-    ANTES de que el texto cambie, por eso recibe el nuevo; y devuelve siempre
-    `True`, porque si no, Tk apagaría la validación de la caja para siempre.
+    y retiene la ventana entera (`docs/agents/reference/ui.md`, la ventana
+    principal). Se llama ANTES de que el texto cambie, por eso recibe el nuevo;
+    y devuelve siempre `True`, porque si no, Tk apagaría la validación de la
+    caja para siempre.
     """
     def validar(nuevo: str) -> bool:
         """Llama a `funcion` con el texto nuevo y deja siempre que cambie."""
@@ -856,7 +857,8 @@ def paso_unidades(cuerpo, wiz) -> None:
         wiz.agente_espera = min(max(valor, equipo.ESPERA_MINIMA), equipo.ESPERA_MAXIMA)
 
     # Por los eventos de la caja y no con un `trace` de la variable: el comando
-    # Tcl de un trace no muere con el widget (ver AGENTS.md, la ventana principal).
+    # Tcl de un trace no muere con el widget (ver `docs/agents/reference/ui.md`,
+    # la ventana principal).
     caja_plazo = ttk.Spinbox(plazo, textvariable=segundos, from_=equipo.ESPERA_MINIMA,
                              to=equipo.ESPERA_MAXIMA, increment=30, width=6,
                              command=cambiar_plazo)

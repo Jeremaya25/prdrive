@@ -124,9 +124,9 @@ capturas de pantalla ni al compartir pantalla.»
 
 - **C0 distinto de lo esperado**: el manejador es lo único que se dedujo del
   código; antes de seguir, corregir `proteger_de_capturas()` y la nota de
-  `AGENTS.md` («Pairing a phone»).
+  `docs/agents/reference/pairing-qr.md` (antes «Pairing a phone» en `AGENTS.md`).
 - **C1–C3 con alguna aplicación que la graba**: apuntar cuál y con qué método de
-  captura, y decirlo en `AGENTS.md`; la línea de la ventana no puede seguir
-  prometiéndolo para esa.
-- **C4**: lo que ve quien se conecta por Escritorio remoto va a `AGENTS.md`
-  tal cual se vea.
+  captura, y decirlo en `docs/agents/reference/pairing-qr.md`; la línea de la
+  ventana no puede seguir prometiéndolo para esa.
+- **C4**: lo que ve quien se conecta por Escritorio remoto va a
+  `docs/agents/reference/pairing-qr.md` tal cual se vea.
