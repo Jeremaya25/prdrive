@@ -442,6 +442,25 @@ def seguir_progreso(logfile: Path | None):
         hilo.join()
 
 
+def crear_carpeta_remota(ctx: RunContext, pair: Pair) -> int:
+    """Crea en el remoto la carpeta de una pareja antes de su `--resync` (`rclone mkdir`).
+
+    Es para el llavero: su carpeta (`keychain/`, junto al catálogo) la pone el
+    código y nadie más la crea, y `bisync --resync` aborta si la del remoto no
+    existe («error reading source root directory: directory not found»). Sin
+    esto, en un remoto recién activado la primera pasada fallaba siempre. Si ya
+    está, `mkdir` no hace nada; con `--dry-run`, tampoco crea nada. Un fallo
+    solo se dice: la pasada lo volverá a decir con su log.
+    """
+    cmd = [ctx.binary, "mkdir", pair.dest, "--config", str(model.RCLONE_CONF)]
+    if ctx.dry_run:
+        cmd.append("--dry-run")
+    rc = execute(ctx, cmd)
+    if rc != 0:
+        print(f"[{pair.name}] No se ha podido crear {pair.dest} (código {rc}).")
+    return rc
+
+
 def execute(ctx: RunContext, cmd: list[str], logfile: Path | None = None) -> int:
     """Ejecuta rclone y devuelve su código de salida."""
     print(f"  ejecutando{ctx.tag}: " + " ".join(cmd))
@@ -580,6 +599,8 @@ def run_pair(ctx: RunContext, pair: Pair) -> int:
             print(f"[{pair.name}] NO SE SUBE: {motivo}")
             record_result(ctx, pair, LLAVERO_ROTO, None, reloj)
             return LLAVERO_ROTO
+        if need_resync:
+            crear_carpeta_remota(ctx, pair)
 
     ffile = bisync.filters_file_for(pair)
     cmd, logfile = build_command(ctx, pair, ffile, need_resync)

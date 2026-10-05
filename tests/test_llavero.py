@@ -178,13 +178,15 @@ with sandbox() as root:
     rc, salida, ordenes = correr(pareja)
     carpeta = root / ".keychain"
     c("la primera pasada crea .keychain/ y corre", (rc, carpeta.is_dir(), len(ordenes)),
-      (0, True, 1))
+      (0, True, 2))
+    c("  y antes crea su carpeta en el remoto, que nadie más crea (bisync --resync la exige)",
+      ordenes[0][:3], ["RCLONE", "mkdir", pareja.dest])
     c("  con su compañero fijo", (carpeta / llavero.LEEME).read_bytes(),
       llavero.LEEME_TEXTO.encode("utf-8"))
     c("  con \\n en todos los sistemas, para que dos dispositivos dejen el mismo",
       b"\r\n" in (carpeta / llavero.LEEME).read_bytes(), False)
-    c("  y su conflicto se queda al lado", "--conflict-loser" in ordenes[0]
-      and ordenes[0][ordenes[0].index("--conflict-loser") + 1], "num")
+    c("  y su conflicto se queda al lado", "--conflict-loser" in ordenes[-1]
+      and ordenes[-1][ordenes[-1].index("--conflict-loser") + 1], "num")
 
     (carpeta / llavero.LEEME).write_text("lo cambió alguien\n", encoding="utf-8")
     correr(pareja)
@@ -194,7 +196,7 @@ with sandbox() as root:
     (carpeta / "personal.kdbx").write_bytes(base_kdbx4())
     esperas.clear()
     rc, salida, ordenes = correr(pareja)
-    c("con la base entera, se sube sin esperar", (rc, len(ordenes), esperas), (0, 1, []))
+    c("con la base entera, se sube sin esperar", (rc, len(ordenes), esperas), (0, 2, []))
 
     (carpeta / "personal.kdbx").write_bytes(base_kdbx4()[:-20])
     rc, salida, ordenes = correr(pareja)
@@ -206,7 +208,7 @@ with sandbox() as root:
     llavero.dormir = lambda s: (esperas.append(s),
                                 (carpeta / "personal.kdbx").write_bytes(base_kdbx4()))
     rc, salida, ordenes = correr(pareja)
-    c("si el guardado acaba mientras se espera, se sube", (rc, len(ordenes)), (0, 1))
+    c("si el guardado acaba mientras se espera, se sube", (rc, len(ordenes)), (0, 2))
     llavero.dormir = esperas.append
 
     (carpeta / "personal.old.kdbx").write_bytes(b"cortada")
@@ -229,8 +231,23 @@ with sandbox():
     cfg = config()
     rc, salida, ordenes = correr(cfg.pareja_llavero, aprobado=False)
     c("sin baseline y sin nadie que lo apruebe, el llavero hace su --resync",
-      (rc, len(ordenes), "--resync" in (ordenes or [[]])[0]), (0, 1, True))
+      (rc, [o[1] for o in ordenes], "--resync" in (ordenes or [[]])[-1]),
+      (0, ["mkdir", "bisync"], True))
     c.contains("  y lo dice", salida, "se resincroniza solo")
+    pedidas: list = []
+    real_execute = sync.execute
+    sync.execute = lambda ctx, cmd, logfile=None: pedidas.append(cmd) or 3
+    try:
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = sync.crear_carpeta_remota(
+                sync.RunContext(binary="RCLONE", env={}, dry_run=True), cfg.pareja_llavero)
+    finally:
+        sync.execute = real_execute
+    c("  con --dry-run, crear la carpeta del remoto también es simulado",
+      (rc, pedidas[0][-1]), (3, "--dry-run"))
+    c.contains("  y un fallo solo se dice (la pasada lo dirá con su log)", buf.getvalue(),
+               "No se ha podido crear")
     notas = cfg.pairs[1]
     rc, salida, ordenes = correr(notas, aprobado=False)
     c("una pareja del usuario, no: se salta", (rc, ordenes), (sync.SKIPPED, []))

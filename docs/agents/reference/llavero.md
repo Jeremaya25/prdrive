@@ -32,6 +32,8 @@ A KeePassXC database (passkeys and passwords) travels in `.keychain/` at the vol
 
 Unlike every other pair, the keychain never waits for a `--resync` approval (`sync._bisync_preflight()`, `engine.md`): with no baseline (first pass, a shelved one after moving the catalogue) or changed filters it resyncs on its next pass, attended or not. `resync-mode = newer` keeps the newer base and the backup dir keeps the other side's in `.prversions/`. It is therefore never a «requiere resync» chip nor a `resync` finding.
 
+Before that resync `sync.crear_carpeta_remota()` runs `rclone mkdir` on the pair's remote folder (`keychain/` beside the catalogue): nothing else creates it, and `bisync --resync` aborts when the remote root is missing ("error reading source root directory: directory not found"), so on a freshly activated remote the first pass always failed. It is a no-op when the folder exists, `--dry-run` creates nothing, and a failure is only said (the pass reports it again with its log). Found provisioning a real device in the cloud (`2026-10-05-llavero-nube-resultados.md`).
+
 ## Who attends it, and when a pass is due
 
 One thing at a time, in this order (the spec's §5b):
