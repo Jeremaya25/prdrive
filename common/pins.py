@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Versiones fijadas de lo que el dispositivo lleva de fuera.
 
-También lista las plataformas donde puede llevarlo. Tres cosas del dispositivo
-no son código de este proyecto: el binario de rclone, el intérprete de Python
-y, en uno cifrado con VeraCrypt, el VeraCrypt que viaja fuera del contenedor.
-Se descargan de su publicador (nunca se compilan aquí) y las tres se fijan a
-una versión CONCRETA en este fichero. Moverlas es un commit, no algo que pase
-solo porque alguien publicó otra cosa por la noche:
+También lista las plataformas donde puede llevarlo. Hay cosas del dispositivo
+que no son código de este proyecto: el binario de rclone, el intérprete de
+Python, en uno cifrado con VeraCrypt el VeraCrypt que viaja fuera del
+contenedor y, con el llavero, KeePassXC. Se descargan de su publicador (nunca
+se compilan aquí) y todas se fijan a una versión CONCRETA en este fichero.
+Moverlas es un commit, no algo que pase solo porque alguien publicó otra cosa
+por la noche:
 - lo que se comprueba es lo que se ha probado, y no «lo último» que haya salido
   entre dos instalaciones;
 - los dispositivos de una misma tanda llevan lo mismo;
@@ -158,6 +159,49 @@ de `Plataforma.clave` (solo las de Linux).
 VERACRYPT_APPIMAGE_URL = ("https://launchpad.net/veracrypt/trunk/"
                           f"{VERACRYPT_VERSION}/+download/{{nombre}}")
 """Plantilla de la URL de un AppImage; `{nombre}` es el de `VERACRYPT_APPIMAGE`."""
+
+KEEPASSXC_VERSION = "2.7.12"
+"""Versión de KeePassXC que viaja con el llavero (`.prdrive/keepassxc/`).
+
+Es la primera con passkeys que pone los indicadores BE/BS que piden los sitios
+(`docs/superpowers/pruebas/2026-10-04-keepassxc-portatil.md`, sección 5): una
+sola versión en todos los equipos evita la mezcla, que es lo que V1 y V2 no
+llegaron a ver rechazado pero que nadie garantiza.
+
+Mismo contrato que VeraCrypt: el SHA-256 se apunta a mano tras comprobar la
+firma PGP con la clave de KeePassXC, huella `BF5A 669F 2272 CF43 24C1  FDA8
+CFB4 C216 6397 D0D2` (`gpg --verify KeePassXC-<versión>-Win64.zip.sig`). En
+ejecución no se lee ningún `.DIGEST`: vienen en tres formatos distintos según
+la versión (H-2) y salen del mismo sitio que el paquete.
+
+2.7.12, comprobada el 05/10/2026: firma buena de esa clave (subclave `C1E4 CBA3
+AD78 D3AF D894  F9E0 B7A6 6F03 B590 76A8`, la misma que vio K0), y el SHA-256
+coincide con su `.DIGEST`.
+"""
+KEEPASSXC: dict[str, tuple[str, str]] = {
+    "windows-x64": ("KeePassXC-2.7.12-Win64.zip",
+                    "958234b0669d757b53eacf42bdd5de0fa1cc1ab7527709ddf4f7e29c06a8305f"),
+}
+"""El paquete oficial de KeePassXC por paquete: `{paquete: (nombre, sha256)}`.
+
+La clave es también la carpeta `.prdrive/keepassxc/<paquete>/`. Es el ZIP tal
+cual: ya trae `.portable` (H-3) y no trae el runtime de Visual C++ (K3), que se
+detecta al lanzarlo.
+"""
+KEEPASSXC_URL = ("https://github.com/keepassxreboot/keepassxc/releases/download/"
+                 "{version}/{nombre}")
+"""Plantilla de la URL versionada de un paquete de KeePassXC."""
+KEEPASSXC_PARA: dict[str, str] = {"windows-x64": "windows-x64",
+                                  "windows-arm64": "windows-x64"}
+"""Qué paquete de `KEEPASSXC` usa cada plataforma.
+
+Windows ARM64 usa el de x64, emulado: en las pruebas, el ZIP x64 funcionó
+entero en Windows ARM (A1), y el único ZIP ARM64 publicado, el de la
+2.8.0-beta1, no conectaba con el navegador (A2, H-7). Linux es la fase 2 del
+llavero.
+"""
+MB_KEEPASSXC = 78
+"""Megabytes que ocupa en la unidad el ZIP de la 2.7.12 descomprimido (78,0 MiB)."""
 
 
 @dataclass(frozen=True)
