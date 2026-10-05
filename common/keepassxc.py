@@ -375,18 +375,30 @@ def _comparable(ruta: str) -> str:
     return ruta.replace("/", "\\").lower()
 
 
-def de_la_unidad(valor: str, raiz: Path) -> bool:
+def de_la_unidad(valor: str, raiz: Path | None, carpeta_app: str | None = None) -> bool:
     """Indica si una clave del navegador apunta a un KeePassXC de prdrive que ya no tiene que estar.
 
     Es así si apunta dentro de este volumen, o a un `…\\.prdrive\\keepassxc\\…`
     que ya no existe (otra unidad, o esta con otra letra, que se quitó sin
-    expulsar). No hace falta recordar nada: se deduce.
+    expulsar). No hace falta recordar nada: se deduce. Lo que se mira es esa
+    carpeta, no el JSON: KeePassXC lo escribe al arrancar, después de que
+    «Abrir llavero» ponga la clave, y entretanto la unidad sigue ahí.
+
+    Args:
+        valor: Lo que dice la clave: la ruta de un JSON.
+        raiz: El volumen que se cierra, o `None` para mirar solo si ya no
+            existe (lo que hace el agente).
+        carpeta_app: El nombre de `.prdrive/`; por defecto, el de este
+            programa (`model.APP_DIR`). El agente, que no vive en una, da el
+            de las raíces.
     """
     v = _comparable(valor)
-    if v.startswith(_comparable(str(raiz)).rstrip("\\") + "\\"):
+    if raiz is not None and v.startswith(_comparable(str(raiz)).rstrip("\\") + "\\"):
         return True
-    marca = f"\\{_comparable(model.APP_DIR.name)}\\{components.KEEPASSXC_SUBDIR}\\"
-    return marca in v and not Path(valor).exists()
+    marca = f"\\{carpeta_app or model.APP_DIR.name}\\{components.KEEPASSXC_SUBDIR}\\"
+    # Cambiar `/` por `\\` no mueve nada: la carpeta sale del valor tal cual.
+    hallada = re.search(re.escape(marca), valor.replace("/", "\\"), re.IGNORECASE)
+    return hallada is not None and not Path(valor[:hallada.end()]).exists()
 
 
 class Cambio(NamedTuple):
@@ -400,20 +412,28 @@ class Cambio(NamedTuple):
     valor: str | None
 
 
-def plan_cerrar_navegador(raiz: Path | None = None) -> list[Cambio]:
+def plan_cerrar_navegador(raiz: Path | None = None, carpeta_app: str | None = None,
+                          muertas: bool = False) -> list[Cambio]:
     """Decide qué claves del navegador se quitan o se devuelven al cerrar el llavero.
 
     Solo las que son de prdrive (`de_la_unidad()`): las de otros programas no
     se tocan. Si hay un KeePassXC instalado con el JSON de ese navegador, la
     clave vuelve a apuntarle; si no, se borra.
+
+    Args:
+        raiz: El volumen que se cierra; por defecto, este.
+        carpeta_app: El nombre de `.prdrive/` (`de_la_unidad()`).
+        muertas: Solo las que apuntan a un KeePassXC de prdrive que ya no
+            existe, sin volumen que se cierre: lo que hace el agente cuando
+            una unidad se va sin expulsar.
     """
-    raiz = model.DEVICE_ROOT if raiz is None else raiz
+    raiz = None if muertas else (model.DEVICE_ROOT if raiz is None else raiz)
     suyo = instalado()
     plan = []
     for base, nombres in NAVEGADORES:
         clave = clave_nativa(base)
         valor = registro.leer(clave)
-        if not valor or not de_la_unidad(valor, raiz):
+        if not valor or not de_la_unidad(valor, raiz, carpeta_app):
             continue
         destino = None
         if suyo is not None:
@@ -423,18 +443,20 @@ def plan_cerrar_navegador(raiz: Path | None = None) -> list[Cambio]:
     return plan
 
 
-def cerrar_navegador(raiz: Path | None = None) -> list[str]:
+def cerrar_navegador(raiz: Path | None = None, carpeta_app: str | None = None,
+                     muertas: bool = False) -> list[str]:
     """Deja las claves del navegador como estaban antes del llavero (§7 de la especificación).
 
-    Además de lo de `plan_cerrar_navegador()`, la `NativeMessagingHosts` de un
-    navegador se borra si se queda vacía. Nunca lanza: se hace al expulsar, y
-    un fallo aquí no puede impedir quitar la unidad.
+    Además de lo de `plan_cerrar_navegador()` (con sus mismos argumentos), la
+    `NativeMessagingHosts` de un navegador se borra si se queda vacía. Nunca
+    lanza: se hace al expulsar, y un fallo aquí no puede impedir quitar la
+    unidad.
 
     Returns:
         Lo que no se ha podido hacer; vacío si todo bien.
     """
     fallos = []
-    for cambio in plan_cerrar_navegador(raiz):
+    for cambio in plan_cerrar_navegador(raiz, carpeta_app, muertas):
         try:
             if cambio.valor is not None:
                 registro.escribir(cambio.clave, cambio.valor)

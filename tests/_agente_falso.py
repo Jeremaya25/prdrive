@@ -78,6 +78,8 @@ def preparar() -> Path:
     # y lo que iría en un hilo corre en el sitio.
     agente.buscar_version = lambda: None
     agente.hilo = lambda funcion: funcion()
+    # Ni el registro de verdad, en un Windows: las claves del navegador.
+    agente.limpiar_navegador = lambda: (0, [])
     # Su rclone: el que pasa a sus hijos y con el que sondea (no hace nada).
     rclone = equipo.DIR / "rclone" / "v0" / agente.model.rclone_name()
     rclone.parent.mkdir(parents=True, exist_ok=True)

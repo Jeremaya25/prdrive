@@ -20,6 +20,8 @@ Lo que se sujeta:
 - Un conflicto del llavero (lo que su `sync.py` apunta en `conflicts.json`):
   un aviso por copia nueva y conexión, y una línea de aviso en la bandeja que
   lleva a combinarlo.
+- Las claves del navegador de una unidad que se fue sin expulsar se quitan al
+  irse y al arrancar el agente (`agente.limpiar_navegador`, de mentira).
 """
 
 import math
@@ -35,6 +37,7 @@ from common import planificador as pl
 from ui import bandeja, icons
 
 c = Checks("agente: el llavero de una raíz")
+REAL_LIMPIAR = agente.limpiar_navegador
 F.preparar()
 
 TICK = agente.TICK
@@ -381,4 +384,53 @@ F.pasar(agente.MIRAR_EMBLEMA)
 F.vueltas(ag, 1)
 c("de una unidad que no está en la lista no se lee nada",
   (fila(ag.resumen(), FUERA)["llavero_conflicto"], len(del_llavero_avisos())), (0, 2))
+
+
+# ---------------------------------------------------------------------------
+# 7. Las claves del navegador de una unidad quitada sin expulsar
+# ---------------------------------------------------------------------------
+real_limpiar = agente.limpiar_navegador
+if not agente.IS_WIN:
+    c("fuera de Windows no hay claves que limpiar", REAL_LIMPIAR(), (0, []))
+LIMPIEZAS: list[float] = []
+QUITADAS = [1]
+
+
+def limpiar():
+    """`limpiar_navegador()` de mentira: apunta cuándo, y dice que quitó `QUITADAS`."""
+    LIMPIEZAS.append(F.reloj())
+    return QUITADAS[0], []
+
+
+agente.limpiar_navegador = limpiar
+try:
+    terminar(ag)
+    ag = F.nuevo()
+    dicho = len(F.DIARIO)
+    F.vueltas(ag, 1)
+    c("al arrancar, el agente quita las que dejó una unidad que se fue mientras no estaba",
+      (len(LIMPIEZAS), any("al arrancar: el navegador ya no busca" in m
+                           for m in F.DIARIO[dicho:])), (1, True))
+    F.vueltas(ag, 3)
+    terminar(ag)
+    c("  una vez: no en cada vuelta", len(LIMPIEZAS), 1)
+    QUITADAS[0] = 0
+    dicho = len(F.DIARIO)
+    F.RAICES[:] = [SIN, extrano]
+    F.vueltas(ag, 2)
+    c("al irse una unidad, otra vez", len(LIMPIEZAS), 2)
+    c("  y sin nada que quitar, no se dice nada",
+      any("el navegador ya no busca" in m for m in F.DIARIO[dicho:]), False)
+
+    def rota():
+        raise OSError("acceso denegado")
+
+    agente.limpiar_navegador = rota
+    F.RAICES[:] = [extrano]
+    F.vueltas(ag, 2)
+    c("un fallo del registro no tumba al agente: lo dice en el diario",
+      any("no he podido dejar como estaban las claves del navegador: acceso denegado" in m
+          for m in F.DIARIO), True)
+finally:
+    agente.limpiar_navegador = real_limpiar
 sys.exit(c.report())

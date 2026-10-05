@@ -145,8 +145,8 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 import penwatch  # noqa: E402
-from common import (APP_NAME, avisos, catalog, components, equipo, llavero,  # noqa: E402
-                    model, moderacion, store, update, vestibulo)
+from common import (APP_NAME, avisos, catalog, components, equipo,  # noqa: E402
+                    keepassxc, llavero, model, moderacion, store, update, vestibulo)
 from common import huella as huellas  # noqa: E402  (`huella()` es la del código de una raíz)
 from common import planificador as pl  # noqa: E402
 from common.store import pid_alive  # noqa: E402
@@ -366,6 +366,26 @@ def keepassxc_abierto(raiz: Path) -> bool:
     está, sin procesos de verdad.
     """
     return llavero.keepassxc_abierto(app(raiz))
+
+
+def limpiar_navegador() -> tuple[int, list[str]]:
+    """Quita las claves del navegador que apuntan a un KeePassXC de prdrive que ya no está.
+
+    Es lo que no pudo hacer «Expulsar» con una unidad que se quitó sin
+    expulsarla: el navegador seguiría buscando KeePassXC en una letra muerta.
+    Si hay uno instalado, la clave vuelve a él
+    (`keepassxc.cerrar_navegador(muertas=True)`); las de otros programas no se
+    tocan. Solo Windows. Punto de indirección: los tests no tocan el registro.
+
+    Returns:
+        Cuántas claves ha tocado y lo que no ha podido hacer.
+    """
+    if not IS_WIN:
+        return 0, []
+    plan = keepassxc.plan_cerrar_navegador(carpeta_app=APP_SUBDIR, muertas=True)
+    if not plan:
+        return 0, []
+    return len(plan), keepassxc.cerrar_navegador(carpeta_app=APP_SUBDIR, muertas=True)
 
 
 def huella_local(ruta: Path, tope: int, ignorar: tuple[str, ...]) -> pl.Huella | None:
@@ -1195,6 +1215,8 @@ class Agente:
         keepassxc: Las raíces atendidas con su KeePassXC abierto en este
             equipo, por id (`_mirar_keepassxc()`).
         keepassxc_mirado: Cuándo se miró.
+        navegador_mirado: Si ya se han mirado, al arrancar, las claves del
+            navegador que dejó una unidad quitada sin expulsar.
     """
     reloj: Any = time.time
     ajustes: equipo.Ajustes = field(default_factory=equipo.leer_ajustes)
@@ -1241,6 +1263,7 @@ class Agente:
     muestreo: Muestreo | None = None
     keepassxc: set[str] = field(default_factory=set)
     keepassxc_mirado: float = -math.inf
+    navegador_mirado: bool = False
 
     def vuelta(self, recorrer: bool = True) -> pl.Decision | None:
         """Hace una vuelta del agente y devuelve lo que decidió lanzar, si algo.
@@ -1258,6 +1281,10 @@ class Agente:
             La decisión del planificador, o `None`.
         """
         ahora = self.reloj()
+        if not self.navegador_mirado:
+            # Las de una unidad que se fue mientras el agente no estaba.
+            self.navegador_mirado = True
+            self._limpiar_navegador("al arrancar")
         self._buzon(ahora)
         if recorrer:
             self._recorrer(ahora)
@@ -1500,6 +1527,28 @@ class Agente:
                                    "ya no está en su carpeta"
                                    if unidad is not None and unidad.es_raiz
                                    else "desconectada"))
+        # Si se quitó sin expulsar, el navegador sigue apuntando a su KeePassXC.
+        self._limpiar_navegador(con.nombre)
+
+    def _limpiar_navegador(self, por: str) -> None:
+        """Hace `limpiar_navegador()` y lo dice en el diario, si ha tocado algo.
+
+        Nunca lanza: es lo de después de que una unidad se vaya, y un fallo
+        del registro no puede tumbar al agente.
+
+        Args:
+            por: Quién se ha ido, o cuándo, para el diario.
+        """
+        try:
+            tocadas, fallos = limpiar_navegador()
+        except OSError as e:
+            tocadas, fallos = 0, [str(e)]
+        if tocadas:
+            diario(f"{por}: el navegador ya no busca un KeePassXC que no está "
+                   f"({tocadas} clave{'s' if tocadas != 1 else ''} del registro)")
+        if fallos:
+            diario(f"{por}: no he podido dejar como estaban las claves del navegador: "
+                   f"{fallos[0]}")
 
     def _vestibulos(self, cerradas: dict[str, Path], ahora: float) -> None:
         """Abre las unidades VeraCrypt de la lista que se ven cerradas.

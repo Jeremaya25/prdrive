@@ -230,6 +230,25 @@ try:
       (None, True))
     c("  y otra vez, nada que hacer: las devueltas ya no son de prdrive",
       keepassxc.plan_cerrar_navegador(raiz), [])
+
+    # el agente, cuando una unidad se va sin expulsar: solo las muertas, y él no
+    # vive en un `.prdrive` (su APP_DIR es su carpeta de versión)
+    model.APP_DIR = raiz / "agente-0.5.5"
+    viva = raiz / ".prdrive" / "keepassxc" / "windows-x64" / "config" / "aun.json"
+    viva.parent.parent.mkdir(parents=True, exist_ok=True)
+    reg.escribir(CHROME, str(viva))
+    reg.escribir(MOZILLA, "Y:\\.PRDRIVE\\keepassxc\\windows-x64\\config\\ida.json")
+    reg.escribir(CHROMIUM, "C:\\Program Files\\KeePassXC\\chromium.json")
+    plan = keepassxc.plan_cerrar_navegador(carpeta_app=".prdrive", muertas=True)
+    c("el agente quita solo las de un KeePassXC de prdrive que ya no está",
+      [p.clave for p in plan], [MOZILLA])
+    c("  aunque su JSON no exista todavía, la de una unidad puesta sigue: lo escribe "
+      "KeePassXC al arrancar", keepassxc.de_la_unidad(str(viva), None, ".prdrive"), False)
+    c("  sin decir su carpeta, buscaría la de su APP_DIR y no vería ninguna",
+      keepassxc.plan_cerrar_navegador(muertas=True), [])
+    c("  y lo hace", (keepassxc.cerrar_navegador(carpeta_app=".prdrive", muertas=True),
+                      reg.leer(MOZILLA)),
+      ([], str(keepassxc.json_nativo(suyo / "KeePassXC", "firefox"))))
 finally:
     registro.leer, registro.escribir, registro.borrar, registro.vacia = reales_registro
     model.APP_DIR = real_app
