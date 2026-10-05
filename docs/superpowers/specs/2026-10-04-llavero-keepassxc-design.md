@@ -1,6 +1,6 @@
 # El llavero (`.keychain`): KeePassXC de viaje y una base que se sincroniza sola
 
-Fecha: 2026-10-04 · Estado: **decidida**; fase 0 hecha, el resto sin implementar · Versión objetivo:
+Fecha: 2026-10-04 · Estado: **decidida**; fases 0 y 1 hechas (sin probar en real: §15), 2 y 3 sin implementar; lo que cambió al hacer la 1, en §16 · Versión objetivo:
 0.6.0 · Sustituye a la primera propuesta del mismo día (`3cdf1d5`) · Pruebas de
 las que sale:
 `docs/superpowers/pruebas/2026-10-04-keepassxc-portatil.md` y sus resultados
@@ -607,7 +607,7 @@ el agente.
 | Fase | Qué | Ficheros |
 |---|---|---|
 | **0. `remote.toml`** (hecha, `1e5bb51`) | Nombre nuevo con la regla de §3 y «Renombrar el catálogo a remote.toml…» en «Ajustes» | `common/catalog.py`, `common/fleet.py`, `install/remote.py`, `ui/catalog_editor.py`, `ui/tk_pairs.py`, `ui/tk_doctor.py`, `common/revision.py` (los dos ficheros a la vez), sus tests, `catalogue.md`, `fleet.md`, `sync_config.example.toml`, `docs/guia/` |
-| **1. Windows** (x64, y ARM con el x64) | Todo lo demás | `common/pins.py`, `common/kdbx.py` (nuevo), `common/llavero.py` (nuevo), `common/registro.py` (nuevo), `common/store.py` (`procesos_desde`), `common/model.py` (`[keychain]` → pareja), `common/bisync.py` (filtros; `- /.keychain/**`), `common/components.py`, `sync.py` (comprobación previa), `runsync.py` (`--llavero`, `--vigilar-llavero`, `--cerrar-llavero`; vigilancia del llavero en el servicio), `install/keepassxc_bin.py` (nuevo), `install/components.py`, `install/deploy.py` (lanzadores, `LEEME.txt`, ocultar), `install/vestibulo.py` (`.bat`), `install/device.py` (`RUIDO`), `agente.py` (`IGNORAR_CAMBIOS`, atender el llavero), `ui/conflict_editor.py`, `ui/tk_conflicts.py`, `ui/tk.py` (botón, línea, «Expulsar» sin VeraCrypt), `ui/tk_llavero.py` (nuevo), `ui/tk_doctor.py` (`ENTRADAS`), `ui/tk_install.py` (paso, «Añadir el llavero…»), `common/revision.py` (compañero que falta) |
+| **1. Windows** (x64, y ARM con el x64; hecha, `d1eb572`…`cd0f7fb`, sin probar en real) | Todo lo demás (lo que cambió, en §16) | `common/pins.py`, `common/kdbx.py` (nuevo), `common/llavero.py` (nuevo), `common/registro.py` (nuevo), `common/store.py` (`procesos_desde`), `common/model.py` (`[keychain]` → pareja), `common/bisync.py` (filtros; `- /.keychain/**`), `common/components.py`, `sync.py` (comprobación previa), `runsync.py` (`--llavero`, `--vigilar-llavero`, `--cerrar-llavero`; vigilancia del llavero en el servicio), `install/keepassxc_bin.py` (nuevo), `install/components.py`, `install/deploy.py` (lanzadores, `LEEME.txt`, ocultar), `install/vestibulo.py` (`.bat`), `install/device.py` (`RUIDO`), `agente.py` (`IGNORAR_CAMBIOS`, atender el llavero), `ui/conflict_editor.py`, `ui/tk_conflicts.py`, `ui/tk.py` (botón, línea, «Expulsar» sin VeraCrypt), `ui/tk_llavero.py` (nuevo), `ui/tk_doctor.py` (`ENTRADAS`), `ui/tk_install.py` (paso, «Añadir el llavero…»), `common/revision.py` (compañero que falta) |
 | **2. Linux** | §11 | `install/keepassxc_bin.py`, `common/llavero.py`, `install/vestibulo.py` (`.sh`) |
 | **3. El agente** | «Llavero» en la bandeja; aviso nativo de un conflicto del llavero; quitar las claves del registro cuando la unidad se va sin expulsar; el llavero en la raíz del equipo | `agente.py`, `ui/bandeja.py`, `common/avisos.py` |
 
@@ -666,3 +666,51 @@ cuadren). `catalogue.md` y `agent-scheduling.md` cuentan lo suyo.
 | R14 | El vigilante: arranca con «Llavero», sube al cerrar KeePassXC y no retiene el volumen al expulsar |
 | R15 | Edge: B1, PK1 y R3 |
 | R16 | Renombrar el catálogo de un remoto con dos dispositivos: el otro lo encuentra, y con uno viejo en la flota el botón no se activa |
+
+## 16. Cómo quedó la fase 1
+
+Hecha en ocho entregas (`d1eb572` el componente, `f4bdbbd` la pareja, `6ffeab1`
+la vigilancia, `eef112e` «Abrir llavero», `0d14fb6` «Combinar», `018bfa0` y
+`413c39d` activarlo, `cd0f7fb` expulsar). El detalle técnico está en
+`docs/agents/reference/llavero.md`; la guía, en `docs/guia/llavero.md`. **Nada se
+ha probado todavía en hardware real**: las pruebas R1–R15 de §15 siguen
+pendientes. Cambió respecto a lo decidido:
+
+- **La flota no se mira antes de escribir `[keychain]`** (§3): la persona es la
+  única que usa el repositorio, y lo pidió así. Un dispositivo de antes de la
+  fase 0 no podría editar el catálogo después.
+- **`LEEME.txt` lo pone `llavero.preparar()` antes de cada pasada**, si falta, en
+  vez de una avería de «Reparación» (§2, §14). Con los mismos bytes en todos los
+  sistemas (`\n`), para que dos dispositivos no se pisen.
+- **El llavero se resincroniza solo** cuando bisync lo pide (sin baseline,
+  filtros cambiados), sin aprobación: es la única excepción a «una pareja que
+  pide `--resync` se salta». `resync-mode = newer` y el backup-dir hacen que no
+  se pierda nada, y saltarlo lo dejaba sin sincronizar sin que nadie se enterase
+  (una pasada saltada sale con 0). Por eso no hay averías de resync del llavero.
+- **El botón se llama «Abrir llavero»**, no «Llavero» (la línea de la ventana ya
+  empieza por la base). `Llavero.bat` es `runsync.bat --llavero`, y lo pone la
+  activación, no `--update-components`.
+- **Antes de abrir** (§6): no hay pasada si el servicio o el agente atienden la
+  raíz (chocaría con su lock de bisync), salvo que falte la base. Una pasada que
+  falla se dice en la línea de la ventana; con un aviso, solo sin ventana
+  (`Llavero.bat`). Los fallos del registro van en una sola línea.
+- **El orden de §6 cambia**: «Combinar» va después de traer lo último (que es lo
+  que trae la copia) y del fichero llave (que hace falta para combinar).
+- **«Combinar»** corre en una consola a la vista (`runsync.py
+  --combinar-llavero`, con el Python de consola), donde `keepassxc-cli merge
+  --same-credentials` pide la contraseña; la copia va a `.prversions/` con el
+  sello de rclone. Probado contra `keepassxc-cli` 2.7.6 de verdad.
+- **El agente** atiende el llavero como una pareja vigilada, pero sin el tirón
+  de 5 min con KeePassXC abierto: queda para la fase 3.
+- **El `[keychain]` local es la tabla entera** (base, `fichero_llave`,
+  `nombre_llave`), no solo `base`: así el dispositivo sabe sin red si la base
+  pide fichero llave.
+- **La base tiene que acabar en `.kdbx` en minúsculas**: el filtro `+ *.kdbx`
+  distingue, y una `.KDBX` no viajaba. Al activar se normaliza.
+- **Arreglo de paso**: el escaneo de conflictos no veía los del llavero, porque
+  una pareja con versiones lleva siempre `--suffix-keep-extension` (lo pone
+  `sync.py`) y `conflicts.esquema()` no lo sabía.
+- **No están**: «Crear una nueva con KeePassXC» en el asistente (se crea en
+  KeePassXC y se da con «Usar esta base…»), y «Añadir el llavero…» en el panel
+  «ya es un prdrive» del instalador (un dispositivo preparado lo activa desde su
+  ventana, sin otra conexión). `llavero.sh` y Linux siguen en la fase 2.

@@ -29,6 +29,7 @@ modo *ligero* (con un `runsync.pyw` en la raíz), entonces sí hace falta **Pyth
 | `.prdrive/` | el programa, rclone, su Python y el fichero de control. Está oculta a propósito; no hace falta tocarla |
 | `VeraCrypt/` | solo si la unidad va cifrada con VeraCrypt: el propio VeraCrypt (para Windows x64 y ARM64), para poder abrirla en equipos que no lo tengan |
 | `autorun.inf` | el nombre y el icono con que la ve Windows. No ejecuta nada |
+| `Llavero.bat` / `.keychain/` | solo si lleva el llavero: abre KeePassXC con tu base de contraseñas y passkeys, que está en `.keychain/` (oculta; no la toques a mano) |
 
 ## La ventana
 
@@ -42,8 +43,11 @@ modo *ligero* (con un `runsync.pyw` en la raíz), entonces sí hace falta **Pyth
   pidas, y que vuelva a hacerlo.
 - **Diagnóstico** — cuando algo no cuadra. Enseña dónde apunta cada carpeta y si
   su sincronización está sana.
-- **Expulsar** — solo si la unidad va cifrada con VeraCrypt. Cierra la ventana y
-  el contenedor; cuando el aviso diga que está cerrado, ya se puede quitar.
+- **Abrir llavero** — solo si la unidad lleva el llavero: KeePassXC con tu base
+  (contraseñas y passkeys). Lo que guardas sube solo.
+- **Expulsar** — si la unidad va cifrada con VeraCrypt, o lleva el llavero.
+  Cierra KeePassXC (si está abierto), sube lo que falte, y cierra la ventana y el
+  contenedor; cuando el aviso diga que está cerrado, ya se puede quitar.
 
 Encima de los botones hay una línea que dice qué hace **este ordenador** al
 conectar la unidad, con un botón para cambiarlo: abrir esta ventana, arrancar el
@@ -75,6 +79,14 @@ Los modos, en corto:
 
 Los dos últimos borran de verdad. Antes de estrenar uno, pruébalo con
 **Simular**.
+
+## El llavero
+
+Tus contraseñas y passkeys en una base de KeePassXC que viaja aquí y se
+sincroniza sola. Se activa en **Ajustes → Llavero…** (con una base tuya, que se
+copia, o la que ya tenga el remoto) y se abre con **Abrir llavero** o
+`Llavero.bat`. En cada navegador, una vez: instala **KeePassXC-Browser**, pulsa
+«Conectar» y activa «Enable Passkeys». De momento solo se abre en Windows.
 
 ## Ponerle nombre e icono
 

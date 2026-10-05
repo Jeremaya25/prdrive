@@ -74,6 +74,29 @@ interval_minutes = 30
 
 
 # ---------------------------------------------------------------------------
+# [keychain] — el llavero: una base de KeePassXC que se sincroniza sola
+# ---------------------------------------------------------------------------
+# Lo escribe «Ajustes → Llavero…» (o el asistente), aquí y en el catálogo: no
+# hace falta tocarlo a mano. Con él prdrive construye su propia pareja,
+# `keychain`: la base vive en `.keychain/` del dispositivo y viaja a la
+# subcarpeta `keychain/` de la carpeta del catálogo, en bisync con versiones.
+# Esa pareja no se cambia desde aquí (ni los [defaults] le llegan), se
+# resincroniza sola cuando hace falta, y su nombre queda reservado: ninguna
+# [[pair]] puede llamarse `keychain` mientras esté esta tabla. Una pareja de la
+# raíz entera (`local = "."`) deja fuera `.keychain/`.
+#
+# El fichero llave NO viaja, ni se guarda su huella: `fichero_llave` solo dice
+# que la base lo pide, y `nombre_llave` es una pista para que otro dispositivo
+# sepa cuál buscar. Dónde está en cada equipo lo apunta prdrive aparte
+# (`.prdrive/state/keychain.json`).
+#
+# [keychain]
+# base = "personal.kdbx"          # un nombre suelto que acabe en .kdbx, en minúsculas
+# fichero_llave = true
+# nombre_llave = "personal.keyx"  # solo una pista: ni ruta ni huella
+
+
+# ---------------------------------------------------------------------------
 # [[pair]] — una carpeta sincronizada
 # ---------------------------------------------------------------------------
 # modo        qué hace                              borra en
