@@ -48,7 +48,7 @@ One thing at a time, in this order (the spec's §5b):
 
 ## Opening it («Abrir llavero»)
 
-The button of the main window's keychain line, `runsync.py --llavero` (what `Llavero.bat` runs; it does **not** stop the service) and nothing else. Three layers:
+The button of the main window's keychain line, `runsync.py --llavero` (what `Llavero.bat` runs; it does **not** stop the service) and the tray's «Abrir llavero» (`PIDE_LLAVERO` → `Agente._lanzar_llavero()`: that same `runsync.py --llavero` with the agent's windowed Python, cwd `equipo.DIR`, with the window's guards except an open window, which it does not mind; only for a listed root with its code accepted, only where `resumen()["abre_llavero"]`, i.e. Windows). Three layers:
 
 - **`common/keepassxc.py`**, KeePassXC on this host: what is needed (`mirar_apertura()` → `Apertura`, touches nothing) and doing it (`abrir()`). Windows only: `paquete_del_equipo()` (an indirection point) is `windows-x64` on x64 and ARM64, `None` elsewhere (`SOLO_WINDOWS`).
 - **`ui/llavero_editor.py`**, no Tk: the window's line (`linea()`: no line without `[keychain]`; amber without KeePassXC or after a failed pass; otherwise open / pending / up to date) and the flow (`abrir(config, avisar, esperar, elegir_llave, decir_sin_traer)`), the spec's §6 steps in order with the three questions passed in as functions.

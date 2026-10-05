@@ -14,6 +14,9 @@ Lo que se sujeta:
   abierto, y al abrirlo y cerrarlo.
 - Se mira cada pocos segundos y solo en las raíces que sirve el agente y
   llevan llavero.
+- La bandeja: «Abrir llavero» en el desplegable de un dispositivo con llavero,
+  solo donde se abre (Windows), y la petición lanza su `runsync.py --llavero`
+  con las guardas de su ventana.
 """
 
 import math
@@ -26,6 +29,7 @@ import _agente_falso as F
 import agente
 from common import equipo, llavero, model
 from common import planificador as pl
+from ui import bandeja
 
 c = Checks("agente: el llavero de una raíz")
 F.preparar()
@@ -86,10 +90,10 @@ def del_llavero(raiz: Path) -> list:
     return [p for p in F.pasadas(raiz) if p.args[-1] == model.LLAVERO]
 
 
-def terminar(ag, raiz: Path) -> None:
-    """Termina bien las pasadas en marcha, y las que salgan detrás."""
+def terminar(ag, raiz: Path | None = None) -> None:
+    """Termina bien las pasadas en marcha, de la raíz que sea, y las que salgan detrás."""
     while ag.pasada is not None:
-        F.acabar(F.pasadas(raiz)[-1], 0, "OK\n")
+        F.acabar(ag.pasada.proc, 0, "OK\n")
         F.vueltas(ag, 1)
 
 
@@ -219,4 +223,96 @@ terminar(ag, SIN)
 MIRADAS.clear()
 F.vueltas(ag, int(60 / TICK))
 c("en una raíz sin llavero no se mira si KeePassXC está abierto", MIRADAS, [])
+
+
+# ---------------------------------------------------------------------------
+# 5. La bandeja: «Abrir llavero»
+# ---------------------------------------------------------------------------
+def dentro(resumen: dict, rotulo: str) -> list:
+    """Las entradas del desplegable de ese dispositivo."""
+    vista = bandeja.vista(resumen)
+    return list(next(e for e in vista.menu if e.texto == rotulo).hijos)
+
+
+def fila(resumen: dict, uid: str) -> dict:
+    """La fila de ese dispositivo en el resumen."""
+    return next(u for u in resumen["unidades"] if u["id"] == uid)
+
+
+F.RAICES[:] = []
+F.vueltas(ag, 3)
+UID_B = "e" * 32
+CON = poner(UID_B)
+F.RAICES[:] = [CON, SIN]
+ag = F.nuevo()
+F.vueltas(ag, 2)
+terminar(ag, CON)
+resumen = ag.resumen()
+c("el resumen dice qué dispositivo lleva llavero",
+  (fila(resumen, UID_B)["llavero"], fila(resumen, UID_N)["llavero"]), (True, False))
+c("  si su KeePassXC está abierto", fila(resumen, UID_B)["llavero_abierto"], False)
+c("  y si este equipo lo abre: de momento, solo Windows",
+  resumen["abre_llavero"], agente.IS_WIN)
+en_windows = {**resumen, "abre_llavero": True}
+nombre = fila(resumen, UID_B)["nombre"]
+c("«Abrir llavero» va en su desplegable, tras el explorador",
+  [e.texto for e in dentro(en_windows, nombre)][:4],
+  ["Configurar", "Abrir en explorador", "Abrir llavero", "Sincronizar ahora"])
+entrada = next(e for e in dentro(en_windows, nombre) if e.texto == "Abrir llavero")
+c("  pide su llavero, con la llave por icono",
+  (entrada.pide, entrada.icono, entrada.activa),
+  (({"pide": equipo.PIDE_LLAVERO, "id": UID_B},), bandeja.I_LLAVERO, True))
+c("  en uno sin llavero, no",
+  "Abrir llavero" in [e.texto for e in dentro(en_windows, fila(resumen, UID_N)["nombre"])],
+  False)
+c("  ni donde no se abre", "Abrir llavero" in [
+    e.texto for e in dentro({**resumen, "abre_llavero": False}, nombre)], False)
+raiz_equipo = {**en_windows, "unidades": [{**fila(resumen, UID_B), "del_equipo": True}],
+               "equipo": [{"id": UID_B, "nombre": "PRDRIVE", "ruta": str(CON),
+                           "cifrada": True, "estado": bandeja.ABIERTA}]}
+c("en una raíz del equipo abierta, también",
+  "Abrir llavero" in [e.texto for e in dentro(raiz_equipo, "PRDRIVE")], True)
+bloqueada = {**raiz_equipo, "equipo": [{**raiz_equipo["equipo"][0],
+                                        "estado": bandeja.BLOQUEADA}]}
+c("  bloqueada no: no se sabe si lo lleva",
+  "Abrir llavero" in [e.texto for e in dentro(bloqueada, "PRDRIVE (bloqueada)")], False)
+
+# La petición
+F.LANZADOS.clear()
+ag.pedir({"pide": equipo.PIDE_LLAVERO, "id": UID_B})
+F.vueltas(ag, 1)
+lanzado = [p for p in F.LANZADOS if p.args[-1] == "--llavero"]
+c("pedirlo lanza su runsync.py --llavero, con el Python de las ventanas",
+  [p.args for p in lanzado],
+  [[agente.python(ventana=True), str(CON / ".prdrive" / "runsync.py"), "--llavero"]])
+c("  desde fuera de la raíz", lanzado and str(lanzado[0].kwargs.get("cwd")), str(equipo.DIR))
+c("  y el diario lo dice", any("abriendo su llavero" in m for m in F.DIARIO), True)
+F.LANZADOS.clear()
+ag.pedir({"pide": equipo.PIDE_LLAVERO, "id": UID_N})
+F.vueltas(ag, 1)
+c("en uno sin llavero no se lanza nada", F.LANZADOS, [])
+F.PANTALLA[0] = False
+ag.pedir({"pide": equipo.PIDE_LLAVERO, "id": UID_B})
+F.vueltas(ag, 1)
+F.PANTALLA[0] = True
+c("sin entorno gráfico, tampoco", F.LANZADOS, [])
+FUERA = "f" * 32
+extrano = F.unidad(FUERA, parejas=("docs",), daemon=DAEMON)
+config = extrano / ".prdrive" / "sync_config.toml"
+config.write_text(config.read_text(encoding="utf-8") + LLAVERO, encoding="utf-8")
+F.RAICES[:] = [CON, SIN, extrano]
+F.vueltas(ag, 3)
+F.LANZADOS.clear()
+ag.pedir({"pide": equipo.PIDE_LLAVERO, "id": FUERA})
+F.vueltas(ag, 1)
+c("de una unidad que no está en la lista no se ejecuta nada",
+  [p for p in F.LANZADOS if "--llavero" in p.args], [])
+c("  ni se lee si lleva llavero", fila(ag.resumen(), FUERA)["llavero"], False)
+
+# Activarlo desde su ventana se ve sin desconectarla.
+config = SIN / ".prdrive" / "sync_config.toml"
+config.write_text(config.read_text(encoding="utf-8") + LLAVERO, encoding="utf-8")
+c("activarlo no se relee en cada vuelta", fila(ag.resumen(), UID_N)["llavero"], False)
+F.pasar(agente.MIRAR_EMBLEMA)
+c("  pasado MIRAR_EMBLEMA, sí", fila(ag.resumen(), UID_N)["llavero"], True)
 sys.exit(c.report())

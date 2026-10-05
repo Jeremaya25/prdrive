@@ -873,6 +873,9 @@ class Conexion:
             solo entonces la huella que deje se apunta como aceptada.
         version_avisada: La versión suya de la que ya se dijo que el agente
             la puede poner al día.
+        llavero: Si lleva llavero (`[keychain]`), o `None` si todavía no se
+            ha mirado.
+        llavero_leido: Cuándo se miró.
     """
     id: str
     raiz: Path
@@ -902,6 +905,8 @@ class Conexion:
     a_medias: bool = False
     confiada: bool | None = None
     version_avisada: str | None = None
+    llavero: bool | None = None
+    llavero_leido: float = -math.inf
 
 
 @dataclass
@@ -1638,6 +1643,33 @@ class Agente:
             diario(f"{con.nombre}: ventana abierta")
         except OSError as e:
             diario(f"{con.nombre}: no he podido abrir la ventana: {e}")
+
+    def _lanzar_llavero(self, con: Conexion) -> None:
+        """Hace el «Abrir llavero» de la bandeja: el `runsync.py --llavero` de esa raíz.
+
+        Con el Python del agente y desde fuera de la raíz, como su ventana, y
+        con sus mismas guardas, salvo una ventana abierta: «Abrir llavero» no
+        para el servicio ni choca con ella (es lo que hace también
+        `Llavero.bat`). Lo que diga (el fichero llave, combinar) lo dice él.
+        """
+        if self._por_actualizar(con) or rclone_propio() is None:
+            diario(f"{con.nombre}: no abro su llavero: "
+                   + (self._motivo_sin_servicio(con) if self._por_actualizar(con)
+                      else SIN_RCLONE))
+            return
+        if not self._llavero_de(con):
+            diario(f"{con.nombre}: no lleva llavero")
+            return
+        if not hay_pantalla():
+            diario(f"{con.nombre}: sin entorno gráfico; no hay dónde abrir su llavero")
+            return
+        try:
+            lanzar([python(ventana=True), str(app(con.raiz) / "runsync.py"), "--llavero"],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                   **_opciones_hijo(equipo.DIR, separado=True))
+            diario(f"{con.nombre}: abriendo su llavero")
+        except OSError as e:
+            diario(f"{con.nombre}: no he podido abrir su llavero: {e}")
 
     def _sirve(self, con: Conexion) -> bool:
         """Indica si el agente tiene que servir esa conexión.
@@ -2919,6 +2951,8 @@ class Agente:
             self._abrir(uid, ahora)
         elif que == equipo.PIDE_EXPLORAR:
             self._abrir(uid, ahora, explorador=True)
+        elif que == equipo.PIDE_LLAVERO:
+            self._abrir(uid, ahora, llavero=True)
         elif que == equipo.PIDE_DESPERTAR:
             # Vuelta de la suspensión: la batería y la red pueden ser otras y
             # un remoto «sin conexión» quizá ya contesta. Se mira todo ya.
@@ -2976,22 +3010,26 @@ class Agente:
             self.terminar = True
             diario("parada pedida: termina en cuanto acabe lo que esté en marcha")
 
-    def _abrir(self, uid: str, ahora: float, explorador: bool = False) -> None:
-        """Hace el «Configurar» de la bandeja (la ventana de una raíz) o su «Abrir en explorador».
+    def _abrir(self, uid: str, ahora: float, explorador: bool = False,
+               llavero: bool = False) -> None:
+        """Hace «Configurar», «Abrir en explorador» o «Abrir llavero» de una raíz, en la bandeja.
 
         Una unidad que no está en la lista no: sería ejecutar su código sin el
         sí, y tampoco se abre su carpeta (la misma regla, sin excepciones). Ni
         una que se está actualizando, hasta que acabe. Una raíz cifrada
         bloqueada se desbloquea antes, y su ventana o su carpeta salen al verla
-        abierta.
+        abierta; su llavero no, porque bloqueada no se sabe si lo lleva.
 
         Args:
             uid: El id de la raíz.
             ahora: La hora del reloj del agente.
             explorador: Abrirla en el explorador de archivos en vez de su
                 ventana.
+            llavero: Abrir su llavero (`runsync.py --llavero`) en vez de su
+                ventana.
         """
-        que = "abrir en el explorador" if explorador else "abrir"
+        que = ("abrir en el explorador" if explorador else
+               "abrir el llavero" if llavero else "abrir")
         unidad = self.ajustes.unidades.get(uid)
         con = self.conexiones.get(uid)
         if unidad is None or (con is not None and (con.cambiada or self._por_actualizar(con))):
@@ -3002,8 +3040,12 @@ class Agente:
         elif con is not None:
             if explorador:
                 self._explorar(con)
+            elif llavero:
+                self._lanzar_llavero(con)
             else:
                 self._lanzar_ventana(con)
+        elif llavero:
+            diario(f"{que} {unidad.nombre or uid[:8]}: no está abierta aquí ahora")
         elif unidad.cifrada and uid not in self.ausentes:
             self._desbloquear(unidad, ahora, "para abrirla en el explorador" if explorador
                               else "para abrirla", abrir=not explorador, explorar=explorador)
@@ -3057,6 +3099,23 @@ class Agente:
             con.version = update.installed_version(app(con.raiz))
             con.version_leida = ahora
         return con.version
+
+    def _llavero_de(self, con: Conexion) -> bool:
+        """Indica si esa raíz lleva llavero (`[keychain]` en su `sync_config.toml`).
+
+        Solo de una raíz de la lista, con su código aceptado y de una versión
+        válida, como su icono: de las demás no se lee nada más. Se lee el TOML
+        sin el modelo (`components.llavero_activo()`), como mucho una vez cada
+        `MIRAR_EMBLEMA`: activarlo desde su ventana lo cambia sin desconectarla.
+        """
+        if (con.id not in self.ajustes.unidades or con.cambiada
+                or self._por_actualizar(con)):
+            return False
+        ahora = self.reloj()
+        if con.llavero is None or ahora - con.llavero_leido >= MIRAR_EMBLEMA:
+            con.llavero = components.llavero_activo(app(con.raiz))
+            con.llavero_leido = ahora
+        return con.llavero
 
     def _estado_raiz(self, uid: str, unidad: equipo.Unidad) -> str:
         """Devuelve en qué está una raíz de este equipo, para la bandeja."""
@@ -3122,7 +3181,9 @@ class Agente:
                              "vigila": vigila,
                              "vigila_abandonada": abandonadas,
                              "emblema": self._emblema(con),
-                             "version": self._version_de(con)})
+                             "version": self._version_de(con),
+                             "llavero": self._llavero_de(con),
+                             "llavero_abierto": con.id in self.keepassxc})
         cerradas = [u.nombre or u.id[:8] for u in self.ajustes.cifradas.values()
                     if u.id not in self.conexiones and u.id not in self.ausentes]
         return {"pid": os.getpid(), "pausado": self.pausado, "retenido": self.retenido,
@@ -3151,6 +3212,8 @@ class Agente:
                             "cifrada": u.cifrada, "estado": self._estado_raiz(uid, u)}
                            for uid, u in self.ajustes.raices.items()],
                 "pedir_al_iniciar": self.ajustes.pedir_al_iniciar,
+                # El llavero solo se abre en Windows (fase 2: Linux).
+                "abre_llavero": IS_WIN,
                 "ultima_pasada": self.ultima_buena,
                 "version": self.version, "nueva": self.nueva,
                 "actualizando": self._actualizandose()}
@@ -3475,6 +3538,10 @@ def cmd_status(_args: argparse.Namespace) -> int:
         if u.get("vigila_abandonada"):
             print(f"  No vigila sus cambios (demasiado grande o fuera de la raíz; "
                   f"sigue por su intervalo): {', '.join(u['vigila_abandonada'])}")
+        if u.get("llavero"):
+            print("  Lleva llavero" + ("; su KeePassXC está abierto: se trae cada "
+                                       f"{llavero.REMOTO_ABIERTO / 60:.0f} min"
+                                       if u.get("llavero_abierto") else ""))
     for ruta in estado.get("ausentes") or []:
         print(f"Falta la raíz del equipo: no está en {ruta}")
     for nombre in estado.get("bloqueadas") or []:
