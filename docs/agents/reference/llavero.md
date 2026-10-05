@@ -1,4 +1,4 @@
-# The keychain (`common/llavero.py`, `common/kdbx.py`, `common/keepassxc.py`, `common/registro.py`, `install/keepassxc_bin.py`, `ui/llavero_editor.py`, `ui/tk_llavero.py`)
+# The keychain (`common/llavero.py`, `common/kdbx.py`, `common/keepassxc.py`, `common/registro.py`, `install/keepassxc_bin.py`, `install/llavero.py`, `ui/llavero_editor.py`, `ui/tk_llavero.py`)
 
 Formerly: none (new with the keychain). Design and its reasons: `docs/superpowers/specs/2026-10-04-llavero-keepassxc-design.md`; real-hardware findings (K/B/PK/S/H-n codes): `docs/superpowers/pruebas/2026-10-04-keepassxc-portatil-resultados.md`.
 
@@ -69,6 +69,11 @@ The button of the main window's keychain line, `runsync.py --llavero` (what `Lla
 - **`plan_desactivar()`** removes `[keychain]` here, asks the watcher to stop and removes `Llavero.bat` (only if it is still ours, byte for byte). `.keychain/` and the remote stay, and other devices keep it. Warnings: KeePassXC open; a root pair would now carry `.keychain/`.
 - **`Llavero.bat`** (`llavero.LANZADOR_BAT`, CRLF, ASCII) is `call "%~dp0runsync.bat" --llavero`: the same Python search as the window. Written on activation, not by the components updater.
 - The «Crear una nueva con KeePassXC» exit of the spec is not there: a new base is made in KeePassXC and then given with «Usar esta base…».
+- **The rule is one** (`llavero.decidir_alta()` → `Alta(tabla, destino, copia, subir, aviso_formato)`): the window's plan and the installer's both call it and only word it.
+
+### In the installer (step «Llavero»)
+
+`ui/tk_install._paso_llavero()` after «Parejas y configuración», optional («Sin llavero» keeps «Siguiente» on; `_ok_llavero`): «Usar una base propia» (with «La base usa un fichero llave» when the remote has none) or «Traer el del remoto» (only if the catalogue has `[keychain]`), and the key file's path on this host when the base asks for one. `install/llavero.pensar()` re-plans on every change and the step shows what will happen; «Poner el llavero» runs `aplicar()` under `working()`, **outside in**: KeePassXC for every Windows platform the device carries (`keepassxc_bin.instalar()`, the 78 MB download), then `[keychain]` into the catalogue (re-read first: if another device added one meanwhile it stops, since the base would be theirs; `catalog.push(ejecutar=…, donde_pedido=…, cachear=False)` runs through the wizard's rclone and leaves no cache in the installer's own `state/`), then the device: `.keychain/` (`preparar_carpeta(raiz)`), the copy, `[keychain]` in its `sync_config.toml`, `Llavero.bat`, and the key file's path in **its** `state/keychain.json` (`apuntar_llave(…, estado=)`). «Inicialización» then adds `keychain` to the names it resyncs. The «already a prdrive» panel has no «Añadir el llavero…»: an existing device does it from its window («Ajustes → Llavero…», plus the amber «Actualizar…» for KeePassXC), which needs no second connection.
 
 ## Merging conflict copies («Combinar»)
 
@@ -79,4 +84,4 @@ The button of the main window's keychain line, `runsync.py --llavero` (what `Lla
 - **Where it is offered**: «Abrir llavero» (above) and «Reparación», whose conflict section gains a «Combinar» row when the device has the keychain, active only for a conflict on its base. «Quedarme con…» stay, with `PIERDE_LLAVERO` as a warning. Its findings never say «keychain» (`revision.nombre_visible()`). The console fallback of `--llavero` never merges.
 - Checked against the real `keepassxc-cli` 2.7.6 when it is installed (`tests/test_llavero_combinar.py`): the built command merges an entry into the base, and a wrong password exits non-zero.
 
-`tests/test_keepassxc.py` (a dict for HKCU, faked processes and launches) the keychain block of `tests/test_tk_servicio.py` (the line, its button, the worst case in the size matrix), `tests/test_llavero_combinar.py`, `tests/test_llavero_activar.py`, `tests/test_tk_llavero.py`, and the «Combinar» blocks of `test_tk_reparacion.py` and `test_tk_medidas.py`.
+`tests/test_keepassxc.py` (a dict for HKCU, faked processes and launches) the keychain block of `tests/test_tk_servicio.py` (the line, its button, the worst case in the size matrix), `tests/test_llavero_combinar.py`, `tests/test_llavero_activar.py`, `tests/test_tk_llavero.py`, `tests/test_install_llavero.py`, and the keychain blocks of `test_install_wizard.py`; the «Combinar» blocks of `test_tk_reparacion.py` and `test_tk_medidas.py`.

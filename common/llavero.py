@@ -547,10 +547,89 @@ def poner_base(origen: Path, destino: Path) -> None:
     os.replace(tmp, destino)
 
 
-def preparar_carpeta() -> Path:
-    """Crea `.keychain/` si falta, oculta y con su compañero fijo; devuelve la carpeta."""
-    donde = carpeta()
+def preparar_carpeta(raiz: Path | None = None) -> Path:
+    """Crea `.keychain/` si falta, oculta y con su compañero fijo; devuelve la carpeta.
+
+    Args:
+        raiz: La raíz del volumen; sin ella, la de este dispositivo. El
+            instalador da la del que está preparando.
+    """
+    donde = carpeta() if raiz is None else Path(raiz) / model.LLAVERO_LOCAL
     donde.mkdir(parents=True, exist_ok=True)
     store.hide(donde)
     asegurar_leeme(donde)
     return donde
+
+
+class Alta(NamedTuple):
+    """Cómo entra el llavero en un dispositivo (`decidir_alta()`).
+
+    Args:
+        tabla: El `[keychain]` que lleva el dispositivo desde ahora.
+        destino: Dónde se copia la base que se ha dado, o `None` si no se copia
+            ninguna (se trae la del remoto, o ya está igual).
+        copia: Si `destino` es una copia de conflicto de la base que vale.
+        subir: Si el catálogo del remoto todavía no tiene llavero y hay que
+            escribirle el `[keychain]`.
+        aviso_formato: Lo que hay que decir del formato de la base, o "".
+    """
+    tabla: dict
+    destino: Path | None
+    copia: bool
+    subir: bool
+    aviso_formato: str = ""
+
+
+def decidir_alta(donde: Path, remota: dict | None, origen: Path | None,
+                 pide: bool = False, nombre_llave: str = "") -> Alta:
+    """Decide cómo entra el llavero: con qué `[keychain]` y dónde va la base.
+
+    Es la regla de «Ajustes → Llavero…» y del asistente:
+    - Si el remoto ya tiene llavero, la base es la suya: el `[keychain]` es el
+      del remoto y una base propia entra como copia de conflicto, para
+      combinarla al abrir.
+    - Si no, la propia es la base y el catálogo se queda con su `[keychain]`.
+      Si en el llavero ya hay otro fichero con ese nombre, la propia entra
+      como copia de conflicto de él; si es el mismo, no se copia.
+
+    Args:
+        donde: La carpeta del llavero (`.keychain/`) del dispositivo.
+        remota: El `[keychain]` del catálogo, o `None`.
+        origen: La base que se da, o `None` para traer la del remoto.
+        pide: Si la base que se da pide fichero llave.
+        nombre_llave: Su nombre, como pista.
+
+    Raises:
+        ValueError: Con lo que hay que decir: no hay nada que traer, o lo que se
+            da no es una base de KeePassXC entera.
+    """
+    if origen is None:
+        if remota is None:
+            raise ValueError("El remoto no tiene llavero que traer: activa el llavero "
+                             "con una base.")
+        return Alta(dict(remota), None, False, False)
+    nombre = nombre_de_base(origen.name)
+    estado = kdbx.comprobar(origen)
+    if estado.entera is False:
+        raise ValueError(f"«{origen.name}» no es una base de KeePassXC entera: "
+                         f"{estado.motivo}.")
+    aviso = ""
+    if estado.version and estado.version.startswith("3"):
+        aviso = (f"Es una base KDBX {estado.version}: KeePassXC la pasa a KDBX 4 la primera "
+                 "vez que se guarda. No se pierde nada, pero un KeePassXC de antes de la 2.5 "
+                 "ya no la abriría.")
+    elif estado.entera is None:
+        aviso = (f"prdrive no conoce este formato de base ({estado.motivo}): no podrá "
+                 "comprobar que está entera antes de subirla.")
+    if remota is not None:
+        return Alta(dict(remota), copia_propia(donde, str(remota.get("base"))), True, False,
+                    aviso)
+    tabla = {"base": nombre, "fichero_llave": bool(pide)}
+    if pide and nombre_llave:
+        tabla["nombre_llave"] = nombre_llave
+    destino = donde / nombre
+    if destino.exists():
+        if destino.read_bytes() == Path(origen).read_bytes():
+            return Alta(tabla, None, False, True, aviso)
+        return Alta(tabla, copia_propia(donde, nombre), True, True, aviso)
+    return Alta(tabla, destino, False, True, aviso)

@@ -30,7 +30,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from common import update
+from common import model, update
 from install import InstallError, InstallState, __version__
 from install import (crypto, deploy, device, platforms, profile, raiz_equipo,
                      rclone_bin, remote, traveler, vestibulo)
@@ -108,6 +108,12 @@ class Wizard:
         equipo_montada: Dónde quedó montado, que es la raíz de verdad.
         equipo_contenedor: El `.hc`.
         equipo_pedir: Si el agente pide la contraseña al iniciar sesión.
+        llavero_eleccion: Qué se hace con el llavero: `no`, `propia` (una base
+            que se da) o `remoto` (traer la del catálogo).
+        llavero_base: La base que se da.
+        llavero_pide: Si esa base pide fichero llave.
+        llavero_llave: Dónde está el fichero llave en este equipo.
+        llavero_hecho: Si el llavero ya se ha puesto en el dispositivo.
     """
 
     def __init__(self, root, visor, cabecera, boton_siguiente, boton_atras) -> None:
@@ -151,6 +157,11 @@ class Wizard:
         self.equipo_montada: Path | None = None
         self.equipo_contenedor = ""
         self.equipo_pedir = True
+        self.llavero_eleccion = "no"
+        self.llavero_base: Path | None = None
+        self.llavero_pide = False
+        self.llavero_llave: Path | None = None
+        self.llavero_hecho = False
 
     def repintar(self) -> None:
         """Pinta el paso en el que se está."""
@@ -1531,11 +1542,169 @@ def _paso_parejas(cuerpo, wiz) -> None:
                command=guardar).grid(row=3, column=0, sticky="w", pady=(12, 0))
 
 
+def _paso_llavero(cuerpo, wiz) -> None:
+    """Pinta el paso del llavero: sin él, con una base propia o con la del remoto.
+
+    Lo que se decide es de `install/llavero.py`; aquí se elige, se enseña qué
+    va a pasar y se pone con un botón, como el config en el paso anterior. Se
+    puede seguir sin llavero: se activa después en «Ajustes → Llavero…».
+    """
+    import tkinter as tk
+    from tkinter import filedialog, ttk
+
+    from install import llavero as llavero_install
+
+    remota = llavero_install.tabla_remota(wiz.catalog)
+    ttk.Label(cuerpo, justify="left", wraplength=theme.medida(780), text=(
+        "El llavero es una base de KeePassXC (contraseñas y passkeys) que viaja en el "
+        "dispositivo y se sincroniza sola con la carpeta del catálogo. Es opcional: se "
+        "puede activar después, en «Ajustes → Llavero…» de la ventana de prdrive.")
+        ).grid(row=0, column=0, sticky="w", pady=(0, 10))
+
+    eleccion = tk.StringVar(value=wiz.llavero_eleccion)
+    pide = tk.BooleanVar(value=wiz.llavero_pide)
+    opciones = ttk.Frame(cuerpo)
+    opciones.grid(row=1, column=0, sticky="w")
+    textos = [("no", "Sin llavero"), ("propia", "Usar una base propia")]
+    if remota is not None:
+        textos.append(("remoto", f"Traer el del remoto ({remota.get('base')})"))
+    radios = []
+    for i, (valor, texto) in enumerate(textos):
+        radio = ttk.Radiobutton(opciones, text=texto, value=valor, variable=eleccion,
+                                command=lambda: cambiar())
+        radio.grid(row=i, column=0, sticky="w", pady=2)
+        radios.append(radio)
+
+    detalle = ttk.Frame(cuerpo)
+    detalle.grid(row=2, column=0, sticky="w", pady=(10, 0))
+    base_lbl = ttk.Label(detalle, style="MonoPista.TLabel")
+    elegir_base = ttk.Button(detalle, text="Elegir la base…", style="Quiet.TButton",
+                             command=lambda: escoger_base())
+    con_llave = ttk.Checkbutton(detalle, text="La base usa un fichero llave", variable=pide,
+                                command=lambda: cambiar())
+    llave_lbl = ttk.Label(detalle, style="MonoPista.TLabel")
+    elegir_llave = ttk.Button(detalle, text="Dónde está en este equipo…",
+                              style="Quiet.TButton", command=lambda: escoger_llave())
+
+    resultado = ttk.Label(cuerpo, wraplength=theme.medida(780), justify="left",
+                          foreground=theme.TINTA3)
+    resultado.grid(row=3, column=0, sticky="w", pady=(12, 0))
+    boton = ttk.Button(cuerpo, text="Poner el llavero", style="Primary.TButton",
+                       command=lambda: poner())
+    boton.grid(row=4, column=0, sticky="w", pady=(12, 0))
+
+    def pide_llave() -> bool:
+        """Indica si la base que va a ir pide fichero llave."""
+        if eleccion.get() == "propia" and remota is None:
+            return pide.get()
+        return eleccion.get() != "no" and bool((remota or {}).get("fichero_llave"))
+
+    def pensar():
+        """Devuelve el plan de lo elegido, o `None` si falta algo o no se pone nada."""
+        que = eleccion.get()
+        if que == "no" or (que == "propia" and wiz.llavero_base is None):
+            return None
+        llave = wiz.llavero_llave if pide_llave() else None
+        return llavero_install.pensar(
+            wiz.device_root, wiz.catalog, wiz.llavero_base if que == "propia" else None,
+            pide.get(), llave.name if llave is not None else "", llave)
+
+    def cambiar() -> None:
+        """Repinta lo que depende de lo elegido, y lo que va a pasar."""
+        wiz.llavero_eleccion, wiz.llavero_pide = eleccion.get(), pide.get()
+        for widget in (base_lbl, elegir_base, con_llave, llave_lbl, elegir_llave):
+            widget.grid_remove()
+        que = eleccion.get()
+        if que == "propia":
+            base_lbl.configure(text=str(wiz.llavero_base or "(sin elegir)"))
+            base_lbl.grid(row=0, column=0, sticky="w")
+            elegir_base.grid(row=0, column=1, sticky="w", padx=(10, 0))
+            if remota is None:
+                con_llave.grid(row=1, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        if pide_llave():
+            llave_lbl.configure(text=str(wiz.llavero_llave or "(sin decir)"))
+            llave_lbl.grid(row=2, column=0, sticky="w", pady=(6, 0))
+            elegir_llave.grid(row=2, column=1, sticky="w", padx=(10, 0), pady=(6, 0))
+        if wiz.llavero_hecho:
+            boton.configure(state="disabled")
+            for radio in radios:
+                radio.configure(state="disabled")
+            wiz.revisar()
+            return
+        try:
+            plan = pensar()
+        except InstallError as e:
+            resultado.configure(text=str(e), foreground=theme.PELIGRO)
+            boton.configure(state="disabled")
+            wiz.revisar()
+            return
+        if plan is None:
+            resultado.configure(text=("Se sigue sin llavero." if que == "no" else
+                                      "Elige la base."), foreground=theme.TINTA3)
+            boton.configure(state="disabled")
+        else:
+            resultado.configure(text="\n".join(plan.lineas + plan.avisos),
+                                foreground=theme.TINTA3)
+            boton.configure(state="normal")
+        wiz.revisar()
+
+    def escoger_base() -> None:
+        """Pregunta qué base de KeePassXC lleva el llavero."""
+        elegida = filedialog.askopenfilename(
+            parent=wiz.root, title="¿Qué base de KeePassXC lleva el llavero?",
+            filetypes=[("Bases de KeePassXC", "*.kdbx"), ("Todos los ficheros", "*.*")])
+        if elegida:
+            wiz.llavero_base = Path(elegida)
+        cambiar()
+
+    def escoger_llave() -> None:
+        """Pregunta dónde está el fichero llave en este equipo: solo la ruta."""
+        elegida = filedialog.askopenfilename(
+            parent=wiz.root, title="¿Dónde está el fichero llave en este equipo?")
+        if elegida:
+            wiz.llavero_llave = Path(elegida)
+        cambiar()
+
+    def poner() -> None:
+        """Pone el llavero en el dispositivo: KeePassXC, el catálogo y lo de dentro."""
+        try:
+            plan = pensar()
+        except InstallError as e:
+            resultado.configure(text=str(e), foreground=theme.PELIGRO)
+            return
+        if plan is None:
+            return
+        pedido = wiz.catalog.endpoint or wiz.perfil.endpoint_catalog
+        ok, res = working(wiz.root, "llavero",
+                          lambda: llavero_install.aplicar(plan, wiz.device_root, wiz.rclone,
+                                                          pedido),
+                          "Descargando KeePassXC y poniendo el llavero en el dispositivo.")
+        if not ok:
+            resultado.configure(text=f"No se ha podido poner el llavero: {res}",
+                                foreground=theme.PELIGRO)
+            wiz.revisar()
+            wiz.visor.ver(boton)
+            return
+        wiz.llavero_hecho = True
+        cambiar()
+        resultado.configure(text="Llavero puesto. La primera pasada, en «Inicialización», "
+                                 "sube la base o trae la del remoto.", foreground=theme.OK)
+
+    cambiar()
+
+
+def _ok_llavero(w) -> bool:
+    """Indica si se puede seguir desde el paso del llavero: sin él, o ya puesto."""
+    return w.llavero_eleccion == "no" or w.llavero_hecho
+
+
 def _paso_inicializar(cuerpo, wiz) -> None:
     """Pinta el paso que hace el `--resync` de las parejas bisync."""
     from tkinter import ttk
 
     bisync = deploy.resync_targets(wiz.catalog, wiz.state.selected)
+    if wiz.llavero_hecho:
+        bisync.append(model.LLAVERO)          # su primera pasada sube o trae la base
     espejos = deploy.mirror_pairs(wiz.catalog, wiz.state.selected)
 
     ttk.Label(cuerpo, justify="left", wraplength=theme.medida(780), text=(
@@ -1781,6 +1950,7 @@ PASOS_INSTALACION = [
     ("Comprobaciones", _paso_comprobaciones, _ok_comprobaciones),
     ("Instalación", _paso_instalar, _ok_instalacion),
     ("Parejas y configuración", _paso_parejas, _ok_parejas),
+    ("Llavero", _paso_llavero, _ok_llavero),
     ("Inicialización", _paso_inicializar, lambda w: True),
     ("Verificación", _paso_final, lambda w: True),
 ]

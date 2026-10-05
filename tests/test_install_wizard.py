@@ -17,6 +17,7 @@ ventanas se crean ocultas y no se entra nunca en el bucle de eventos; ni rclone
 ni VeraCrypt llegan a ejecutarse, porque lo que los lanzaría está sustituido.
 """
 
+import struct
 import sys
 from pathlib import Path
 
@@ -33,6 +34,8 @@ except Exception as e:                                   # sin entorno gráfico
     print(f"  (saltado) no hay entorno gráfico: {e}")
     sys.exit(0)
 
+from common import kdbx                                  # noqa: E402
+from install import llavero as llavero_install           # noqa: E402
 from install import profile, remote                      # noqa: E402
 from ui import tk_install                                # noqa: E402
 
@@ -698,12 +701,45 @@ c("y ya se puede seguir", str(wiz.boton_siguiente.cget("state")), "normal")
 c.contains("la cabecera dice de qué catálogo sale",
            config.read_text(encoding="utf-8"), PERFIL.endpoint_catalog)
 
+# el llavero: opcional, y se pone con su botón
+
+aplicados: list = []
+real_aplicar = llavero_install.aplicar
+llavero_install.aplicar = lambda plan, raiz, rclone, pedido, progreso=None: (
+    aplicados.append((plan.alta.tabla["base"], plan.origen, pedido)), ["hecho"])[1]
+try:
+    en_paso(wiz, PASO["Llavero"])
+    c("el llavero sale después de las parejas, y sin él se puede seguir",
+      (PASO["Llavero"], str(wiz.boton_siguiente.cget("state"))),
+      (PASO["Parejas y configuración"] + 1, "normal"))
+    radios = {r.cget("text"): r for r in widgets(wiz.cuerpo, ttk.Radiobutton)}
+    c("  sin llavero en el remoto, no se ofrece traerlo", sorted(radios),
+      ["Sin llavero", "Usar una base propia"])
+    radios["Usar una base propia"].invoke()
+    c("con «Usar una base propia» y sin base, ni seguir ni ponerlo",
+      (str(wiz.boton_siguiente.cget("state")),
+       str(boton(wiz.cuerpo, "Poner el llavero").cget("state"))), ("disabled", "disabled"))
+    base = tmpdir("prdrive-wizbase-") / "personal.kdbx"
+    base.write_bytes(struct.pack("<IIHH", kdbx.FIRMA_1, kdbx.FIRMA_2, 0, 5) + b"\0" * 50)
+    wiz.llavero_base = base
+    en_paso(wiz, PASO["Llavero"])
+    c.contains("con la base, dice qué va a pasar",
+               " ".join(str(w.cget("text")) for w in widgets(wiz.cuerpo, ttk.Label)),
+               "la original se queda donde está")
+    boton(wiz.cuerpo, "Poner el llavero").invoke()
+    c("«Poner el llavero» lo pone, con lo elegido",
+      aplicados, [("personal.kdbx", base, PERFIL.endpoint_catalog)])
+    c("  y ya se puede seguir", str(wiz.boton_siguiente.cget("state")), "normal")
+finally:
+    llavero_install.aplicar = real_aplicar
+
 # la inicialización no toca los espejos
 lanzadas.clear()
 en_paso(wiz, PASO["Inicialización"])
 boton(wiz.cuerpo, "Inicializar ahora").invoke()
 orden = lanzadas[-1][1]
 c("se inicializa la pareja bisync", "docs" in orden, True)
+c("  y el llavero recién puesto, que sube su base", "keychain" in orden, True)
 # Un espejo borra en el otro lado, y aquí las carpetas locales acaban de crearse
 # vacías: lanzarlo propagaría ese vacío.
 c("y NUNCA un espejo", "respaldo" in orden, False)

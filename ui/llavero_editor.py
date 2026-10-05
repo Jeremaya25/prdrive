@@ -21,7 +21,7 @@ from functools import partial
 from pathlib import Path
 from typing import Any, Callable, Mapping, NamedTuple
 
-from common import catalog, config_file, conflicts, kdbx, keepassxc, llavero, model, results
+from common import catalog, config_file, conflicts, keepassxc, llavero, model, results
 from common.model import ConfigError
 
 from . import conflict_editor, cuando, cuando_sello
@@ -410,62 +410,30 @@ def plan_activar(raw: Mapping[str, Any], cat: catalog.Catalog | None, origen: Pa
     """
     cat = _editable(cat)
     remota = tabla_remota(cat)
-    donde = llavero.carpeta()
+    try:
+        alta = llavero.decidir_alta(llavero.carpeta(), remota, origen, pide, nombre_llave)
+    except ValueError as e:
+        raise ConfigError(str(e)) from e
+    tabla, destino = alta.tabla, alta.destino
     plan = LlaveroPlan(hacer=lambda: [], activa=True)
-    destino = None
-    if origen is None:
-        if remota is None:
-            raise ConfigError("El remoto no tiene llavero que traer: activa el llavero "
-                              "con una base.")
-        tabla = remota
+    if alta.aviso_formato:
+        plan.warnings.append(alta.aviso_formato)
+    if remota is not None:
+        plan.consequences.append(f"El remoto ya tiene un llavero, {remota.get('base')}: "
+                                 "la primera pasada lo trae al dispositivo.")
+    if origen is not None and alta.copia:
         plan.consequences.append(
-            f"La primera pasada trae la base del remoto, {remota.get('base')}, a la carpeta "
-            "del llavero del dispositivo.")
-    else:
-        try:
-            nombre = llavero.nombre_de_base(origen.name)
-        except ValueError as e:
-            raise ConfigError(str(e)) from e
-        estado = kdbx.comprobar(origen)
-        if estado.entera is False:
-            raise ConfigError(f"«{origen.name}» no es una base de KeePassXC entera: "
-                              f"{estado.motivo}.")
-        if estado.version and estado.version.startswith("3"):
-            plan.warnings.append(
-                f"Es una base KDBX {estado.version}: KeePassXC la pasa a KDBX 4 la primera "
-                "vez que se guarda. No se pierde nada, pero un KeePassXC de antes de la "
-                "2.5 ya no la abriría.")
-        elif estado.entera is None:
-            plan.warnings.append(
-                f"prdrive no conoce este formato de base ({estado.motivo}): no podrá "
-                "comprobar que está entera antes de subirla.")
-        if remota is None:
-            tabla = {"base": nombre, "fichero_llave": bool(pide)}
-            if pide and nombre_llave:
-                tabla["nombre_llave"] = nombre_llave
-            destino = donde / nombre
-        else:
-            tabla = remota
-            destino = donde / str(remota.get("base"))
-        if remota is not None or (destino.exists() and destino.read_bytes() != origen.read_bytes()):
-            destino = llavero.copia_propia(donde, str(tabla["base"]))
-            plan.consequences.append(
-                f"Se copia «{origen.name}» a la carpeta del llavero como copia de conflicto "
-                f"de {tabla['base']}, que es la base que vale: «Abrir llavero» ofrecerá "
-                "combinarlas, sin perder lo de ninguna.")
-        elif destino.exists():
-            destino = None                                # ya está, igual
-        else:
-            plan.consequences.append(
-                f"Se copia «{origen.name}» a la carpeta del llavero del dispositivo "
-                "(.keychain). La original se queda donde está, sin tocar: desde ahora la "
-                "buena es la del dispositivo.")
-        if remota is not None:
-            plan.consequences.insert(0, f"El remoto ya tiene un llavero, {remota.get('base')}: "
-                                        "la primera pasada lo trae.")
+            f"Se copia «{origen.name}» a la carpeta del llavero como copia de conflicto "
+            f"de {tabla['base']}, que es la base que vale: «Abrir llavero» ofrecerá "
+            "combinarlas, sin perder lo de ninguna.")
+    elif destino is not None:
+        plan.consequences.append(
+            f"Se copia «{origen.name}» a la carpeta del llavero del dispositivo "
+            "(.keychain). La original se queda donde está, sin tocar: desde ahora la "
+            "buena es la del dispositivo.")
     nuevo_local = _con_llavero(raw, tabla)
     model.parse_config(nuevo_local)                       # un [keychain] que no vale, ahora
-    if remota is None:
+    if alta.subir:
         plan.consequences.append(
             f"El catálogo del remoto apunta el llavero ([keychain] en "
             f"{Path(cat.endpoint).name or catalog.FICHERO}), para que los demás "
@@ -492,7 +460,7 @@ def plan_activar(raw: Mapping[str, Any], cat: catalog.Catalog | None, origen: Pa
     def hacer() -> list[str]:
         """Escribe el catálogo (si hace falta) y después lo del dispositivo."""
         hechos: list[str] = []
-        if remota is None:
+        if alta.subir:
             hechos += catalog.push(_con_llavero(cat.raw, tabla), cat.text, raw)
         carpeta = llavero.preparar_carpeta()
         if destino is not None:

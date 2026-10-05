@@ -447,12 +447,16 @@ def cerrar_navegador(raiz: Path | None = None) -> list[str]:
 
 # --- el fichero llave de cada equipo
 
-def registro_llaves() -> Path:
+def registro_llaves(estado: Path | None = None) -> Path:
     """Devuelve dónde se apunta la ruta del fichero llave en cada equipo (`state/keychain.json`).
 
     Es función porque los tests mueven `STATE_DIR`.
+
+    Args:
+        estado: La carpeta `state/` del dispositivo; sin ella, la de este. El
+            instalador da la del que está preparando.
     """
-    return model.STATE_DIR / "keychain.json"
+    return (model.STATE_DIR if estado is None else Path(estado)) / "keychain.json"
 
 
 def llave_apuntada() -> Path | None:
@@ -466,22 +470,28 @@ def llave_apuntada() -> Path | None:
     return Path(ruta) if isinstance(ruta, str) and ruta else None
 
 
-def apuntar_llave(ruta: Path | None) -> bool:
+def apuntar_llave(ruta: Path | None, estado: Path | None = None) -> bool:
     """Apunta la ruta del fichero llave en este equipo, o la olvida con `None`.
 
     Solo la ruta: el fichero ni se abre, y de los otros equipos no se toca nada.
 
+    Args:
+        ruta: Dónde está el fichero llave en este equipo.
+        estado: La carpeta `state/` del dispositivo (`registro_llaves()`).
+
     Returns:
         False si no se ha podido escribir.
     """
-    datos = store.read_json(registro_llaves())
+    datos = store.read_json(registro_llaves(estado))
     equipos = datos.get("equipos") if isinstance(datos.get("equipos"), dict) else {}
     if ruta is None:
         equipos.pop(llavero.equipo(), None)
     else:
         equipos[llavero.equipo()] = {"fichero_llave": str(ruta)}
     datos["equipos"] = equipos
-    return store.write_json(registro_llaves(), datos)
+    destino = registro_llaves(estado)
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    return store.write_json(destino, datos)
 
 
 # --- lanzarlo

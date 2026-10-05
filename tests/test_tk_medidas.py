@@ -25,6 +25,7 @@ intérprete de Tk: es reversible y la cogen los widgets que se creen después.
 Las ventanas se crean ocultas y no se entra nunca en el bucle de eventos.
 """
 
+import struct
 import sys
 import threading
 import time
@@ -35,7 +36,7 @@ from _harness import Checks, sandbox, tmpdir
 import tomllib
 
 from common import (catalog, components, config_file, conflicts, fleet, historial,
-                    keepassxc, model, pairing, pins, results, revision, update)
+                    kdbx, keepassxc, model, pairing, pins, results, revision, update)
 from install import device
 
 c = Checks("medidas de las pantallas")
@@ -330,6 +331,8 @@ try:
                                   ("fotos", "sync-data/fotos del móvil", "bisync"),
                                   ("musica", "sync-data/música", "down-mirror"),
                                   ("docs", "Documentos/trabajo", "bisync"))))
+    BASE_MEDIDAS = (tmpdir("prdrive-medidas-base-") / ("bases de la familia " * 3).strip()
+                    / "contraseñas de toda la familia.kdbx")
     DISPOSITIVO_FALSO = tmpdir("prdrive-medidas-")
     (DISPOSITIVO_FALSO / ".prdrive").mkdir()
     (DISPOSITIVO_FALSO / ".prdrive" / "VERSION").write_text("0.0.1", encoding="utf-8")
@@ -352,6 +355,28 @@ try:
         c(f"{nombre}: «Conexión» con su estado y su aviso cabe", cabe(top), True)
         c(f"{nombre}: «Conexión» con su estado y su aviso no queda recortado",
           recortado(wiz.visor), False)
+        # «Llavero» en su estado más lleno: un remoto con llavero que pide
+        # fichero llave (las tres opciones), una base propia de ruta larga y
+        # todo lo que va a pasar, con el aviso de un formato que no se conoce.
+        previos_llavero = (wiz.catalog, wiz.state.device_root)
+        wiz.catalog = iremote.Catalog(
+            raw={**CATALOGO_MEDIDAS.raw, "keychain": {
+                "base": "contraseñas-de-toda-la-familia.kdbx", "fichero_llave": True,
+                "nombre_llave": "contraseñas-de-toda-la-familia.keyx"}},
+            head="", endpoint="nas:/prdrive-catalog/remote.toml")
+        wiz.state.device_root = RAIZ_MEDIDAS
+        BASE_MEDIDAS.parent.mkdir(parents=True, exist_ok=True)
+        BASE_MEDIDAS.write_bytes(struct.pack("<IIHH", kdbx.FIRMA_1, kdbx.FIRMA_2, 0, 5)
+                                 + b"\0" * 50)
+        wiz.llavero_eleccion, wiz.llavero_base = "propia", BASE_MEDIDAS
+        wiz.llavero_llave = (Path("C:/Users/alguien-con-nombre-largo/Documents")
+                             / "llaves de la familia" / "contraseñas-de-toda-la-familia.keyx")
+        wiz.indice = PASO["Llavero"]
+        wiz.repintar()
+        c(f"{nombre}: «Llavero», lleno, cabe", cabe(top), True)
+        c(f"{nombre}: «Llavero», lleno, no queda recortado", recortado(wiz.visor), False)
+        wiz.catalog, wiz.state.device_root = previos_llavero
+        wiz.llavero_eleccion, wiz.llavero_base, wiz.llavero_llave = "no", None, None
         # El paso de cifrado con VeraCrypt, en su peor caso (ver EN_CLARO).
         wiz.state.device, wiz.state.device_root = EN_CLARO, None
         wiz.state.encryption = "veracrypt"

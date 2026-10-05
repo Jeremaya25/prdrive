@@ -602,7 +602,8 @@ def load(raw_local: Mapping[str, Any] | None = None) -> tuple[Catalog | None, st
 
 
 def push(new_raw: Mapping[str, Any], base_text: str,
-         raw_local: Mapping[str, Any] | None = None) -> list[str]:
+         raw_local: Mapping[str, Any] | None = None, ejecutar: Ejecutar | None = None,
+         donde_pedido: str | None = None, cachear: bool = True) -> list[str]:
     """Sube el catálogo al remoto y devuelve qué se ha hecho.
 
     El orden importa: primero se genera y verifica el texto, después se
@@ -621,16 +622,24 @@ def push(new_raw: Mapping[str, Any], base_text: str,
         base_text: El texto leído del remoto sobre el que se parte.
         raw_local: El config en bruto del dispositivo, para saber dónde está el
             catálogo.
+        ejecutar: Quien ejecuta rclone; sin él, el del dispositivo (`run()`). El
+            instalador pasa el suyo, con su config efímero.
+        donde_pedido: Dónde está el catálogo (`remote:ruta`); sin él, lo que
+            dice `raw_local`.
+        cachear: Si se deja la copia local del dispositivo (`state/`); el
+            instalador no la deja, porque su `state/` no es el de ningún
+            dispositivo.
 
     Raises:
         ConfigError: Si el texto generado no se relee igual, si el remoto
             cambió desde que se leyó, si falla algún paso de rclone o si la
             subida se cruzó con un renombrado.
     """
-    where = endpoint(raw_local)
+    rclone = ejecutar or run
+    where = donde_pedido or endpoint(raw_local)
     text = config_file.dumps_checked(new_raw, config_file.header_of(base_text))
 
-    actual, donde = leer(run, where)
+    actual, donde = leer(rclone, where)
     if actual.returncode != 0:
         raise ConfigError(f"No pude releer el catálogo antes de escribir. "
                           f"{motivo_lectura(where, donde, actual)}. "
@@ -643,7 +652,7 @@ def push(new_raw: Mapping[str, Any], base_text: str,
             "repite el cambio.")
 
     hechos: list[str] = []
-    copia = run(["copyto", donde, donde + BAK_SUFFIX])
+    copia = rclone(["copyto", donde, donde + BAK_SUFFIX])
     if copia.returncode != 0:
         raise ConfigError(f"No pude dejar la copia {donde}{BAK_SUFFIX}: "
                           f"{(copia.stderr or '').strip()}. No se ha escrito nada.")
@@ -653,7 +662,7 @@ def push(new_raw: Mapping[str, Any], base_text: str,
     try:
         tmp = tmpdir / "catalogo.toml"
         tmp.write_text(text, encoding="utf-8", newline="\n")
-        subida = run(["copyto", str(tmp), donde])
+        subida = rclone(["copyto", str(tmp), donde])
         if subida.returncode != 0:
             raise ConfigError(f"No pude escribir el catálogo {donde}: "
                               f"{(subida.stderr or '').strip()}. "
@@ -663,16 +672,18 @@ def push(new_raw: Mapping[str, Any], base_text: str,
     hechos.append(f"Catálogo actualizado en {donde}")
 
     sitios = candidatos(where)
-    if len(sitios) > 1 and donde == sitios[1] and _existe(run, sitios[0]) is True:
-        apuntar_duplicado(donde)
+    if len(sitios) > 1 and donde == sitios[1] and _existe(rclone, sitios[0]) is True:
+        if cachear:
+            apuntar_duplicado(donde)
         raise ConfigError(
             f"El cambio se ha subido a {donde}, pero mientras tanto otro "
             f"dispositivo ha renombrado el catálogo a {sitios[0]}, que es el que "
             f"vale: el cambio no cuenta. Vuelve a abrir la pantalla y repítelo. "
             f"«Reparación» explica qué hacer con el {FICHERO_ANTERIOR} que sobra.")
 
-    _write_cache(Catalog(raw=dict(new_raw), text=text, source="remote",
-                         stamp=store.stamp(), endpoint=donde))
+    if cachear:
+        _write_cache(Catalog(raw=dict(new_raw), text=text, source="remote",
+                             stamp=store.stamp(), endpoint=donde))
     return hechos
 
 

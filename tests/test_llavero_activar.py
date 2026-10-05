@@ -160,7 +160,7 @@ try:
         llave = root / "personal.keyx"
         plan = llavero_editor.plan_activar(LOCAL, leido(pide), None, llave=llave)
         c.contains("traerlo: lo baja la primera pasada", " ".join(plan.consequences),
-                   "La primera pasada trae la base del remoto")
+                   "la primera pasada lo trae al dispositivo")
         c.contains("  y dice el fichero llave que pide, por su nombre",
                    " ".join(plan.consequences), "«personal.keyx»")
         subidas.clear()
