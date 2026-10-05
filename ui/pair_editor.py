@@ -125,9 +125,12 @@ def mirror_warning(mode: str) -> str | None:
 
 
 def rows(config: Config) -> list[PairRow]:
-    """Devuelve lo que se pinta en la lista, con el estado ya resuelto."""
+    """Devuelve lo que se pinta en la lista, con el estado ya resuelto.
+
+    La pareja del llavero no sale: no se elige ni se edita.
+    """
     salida = []
-    for pair in config.pairs:
+    for pair in config.del_usuario:
         estado = "—"
         aviso = mirror_warning(pair.mode.name)
         if pair.is_bisync:

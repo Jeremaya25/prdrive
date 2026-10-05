@@ -1,0 +1,28 @@
+# The keychain (`common/llavero.py`, `common/kdbx.py`, `install/keepassxc_bin.py`)
+
+Formerly: none (new with the keychain). Design and its reasons: `docs/superpowers/specs/2026-10-04-llavero-keepassxc-design.md`; real-hardware findings (K/B/PK/S/H-n codes): `docs/superpowers/pruebas/2026-10-04-keepassxc-portatil-resultados.md`.
+
+A KeePassXC database (passkeys and passwords) travels in `.keychain/` at the volume root, with KeePassXC itself in `.prdrive/keepassxc/`, and syncs by itself against `keychain/` in the remote's catalogue folder. Windows only (x64, and ARM64 running the x64 build emulated); Linux is phase 2 of the spec.
+
+## KeePassXC as a component
+
+- **Pinned** in `pins.py` (`KEEPASSXC_VERSION`, `KEEPASSXC` = `{paquete: (zip, sha256)}`, `KEEPASSXC_PARA` maps each platform to a package: Windows ARM64 uses `windows-x64`, because the only ARM64 ZIP, 2.8.0-beta1, could not talk to the browser, H-7). The sum is written by hand after checking the PGP signature with KeePassXC's key (fingerprint in the docstring); no `.DIGEST` is read at run time (three formats, H-2).
+- **`install/keepassxc_bin.py`** follows `veracrypt_bin`: the official ZIP in a per-version cache (`ensure_zip()`, a hand-placed ZIP is verified the same way and a bad one is reported, never downloaded over), every member path validated before the first write (`components.ruta_relativa_segura()`), the single top folder stripped, each written file re-read and re-hashed, the stamp (`PRDRIVE-KEEPASSXC`, version + package + per-file sha256 with relative `/` paths) written **last**, and the folder swapped like `traveler.sustituir()` after a free-space check.
+- **Pending** (`components.keepassxc_pendiente()`): unlike rclone, a **missing** KeePassXC counts too, but only when the device has the keychain (`llavero_activo()`: `[keychain]` in its `sync_config.toml`) and only for the packages of the Windows platforms it carries (`paquetes_keepassxc()`). That is how enabling the keychain from «Ajustes» gets KeePassXC: the usual amber «Actualizar…».
+- **The applier postpones it** while anything runs from its folder (`store.procesos_desde()`, moved from `install/components.py`, which re-exports it so its tests still patch it there): KeePassXC itself or `keepassxc-proxy.exe`, which lives as long as the browser is connected (K6, H-16).
+
+## The pair, built in code
+
+`[keychain]` in `sync_config.toml` (and the catalogue) makes `model.parse_config()` append `Pair(name="keychain", local=".keychain", remote=<catalog remote>, remote_path=<catalog folder>/keychain)`, bisync with `versions = true` and `LLAVERO_FLAGS` (`conflict-loser = num`, H-14: the loser stays beside it to be merged; `resync-mode = newer`, H-13). The TOML cannot change it: neither `[defaults.flags]` nor `[defaults]` filters reach it.
+
+- **`Config.names` and `Config.del_usuario` leave it out**: the window, the console menu, the service's pair list and «Parejas» (`pair_editor.rows()`) never show it. `Config.pairs` keeps it, last, so `sync.py` with no names runs it, `sync.py keychain` runs it alone, `--list` marks it, and «Reparación», conflicts, versions and `pen_environment()` see it.
+- **Its name is reserved** only while `[keychain]` is there (a user pair called `keychain` is a `ConfigError`). The base name must be a bare `*.kdbx`.
+- **Filters, generated** (`Pair.reglas`, emitted right after `- .prversions/**` by `filters_content()`): `LLAVERO_REGLAS`, only the bases (`*.kdbx`, conflict copies included thanks to `suffix-keep-extension`) and `LEEME.txt`; never `QSaveFile` temporaries (H-11), `*.old.kdbx`, `.passkey` or plain-text exports (S6).
+- **Root pairs** (`local = "."`) get `model.REGLA_SIN_LLAVERO` (`- /.keychain/**`) as their first rule while the keychain is on, so the base never travels by another road. In a bisync pair it precedes the pair's own `+` rules; in copy/sync it is an ordinary `--exclude`, which rclone always adds after the `--include`s (`fs/filter/filter.go`, `NewFilter`), so a root mirror with a broad `include` could still carry it. The agent's `IGNORAR_CAMBIOS` and `install/device.RUIDO` include `.keychain`.
+- **Moving the catalogue** (`catalog_path`, `catalog_remote`) changes its `expected_prefix()`, so the defaults plan shelves its baseline like any other (`catalogue.md`); `resync-mode = newer` loses nothing.
+
+## Before every pass (`llavero.preparar()`, from `sync.run_pair()`)
+
+- **The fixed companion**, `LEEME.txt` (H-12: with a single file, a save would read as "every file changed" and bisync would stop). Created if missing with `store.crear_exclusivo()` and the exact bytes of `LEEME_TEXTO` (`\n` on every OS, or two devices would write different files and fight over it); never rewritten if someone changed it. The text never changes.
+- **Every base must be whole** (`common/kdbx.py`, no key needed): signatures, the TLV header up to `EndOfHeader`, and for KDBX 4 the header SHA-256 plus the HMAC block chain ending exactly at EOF with a zero-size block. KDBX 3 cannot say where its encrypted body ends; with AES or Twofish (CBC) it must be a multiple of 16 bytes, which catches 15 of 16 random cuts. An unknown format is `None`, not broken. A broken base is looked at again after `ESPERA_ENTERA` (2 s; `llavero.dormir()` is the indirection point); if it is still broken the pass does not run and the pair records `sync.LLAVERO_ROTO` (2), retried on the next pass. Checked by hand against real bases (a KDBX 4.0 and 3.x from KeePassXC's test data, 3.1 from `keepassxc-cli` 2.7.6): no cut of the 4.0 passes, 1 in 16 of the 3.x.
+- `.keychain/` is hidden (`store.hide()`) when `sync.py` creates it.

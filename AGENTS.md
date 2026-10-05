@@ -33,6 +33,7 @@ Each opens with the files it covers. Claude Code also gets a one-line pointer to
 | `agent-window.md` | window ↔ agent: «Pausar/Reanudar», mailboxes, `ui/watch.py`, agent self-update |
 | `host-root.md` | `raiz_equipo.py`, `tk_equipo.py`, encrypted host root, «En este equipo» wizard |
 | `tray.md` | `ui/bandeja*.py` |
+| `llavero.md` | `llavero.py`, `kdbx.py`, `keepassxc_bin.py`, `[keychain]`: KeePassXC on the device, its code-built pair |
 | `commands-testing.md` | full CLI list, test harness, registry of test-replaceable indirection points |
 
 Specs and real-hardware test plans/results: `docs/superpowers/{specs,pruebas}/` (the area docs cite them). Those cite sections of the former monolithic AGENTS.md by title: each area doc quotes its former titles on its «Formerly» line.

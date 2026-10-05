@@ -51,14 +51,20 @@ from datetime import datetime
 from pathlib import Path
 from typing import Mapping
 
-from common import (bisync, conflicts, fleet, historial, model, moderacion, progress,
-                    results, revision)
+from common import (bisync, conflicts, fleet, historial, llavero, model, moderacion,
+                    progress, results, revision, store)
 from common.model import Config, Pair
 
 LOG_TAIL_LINES = 15
 """Líneas de log que se vuelcan a consola cuando algo falla."""
 SKIPPED = -1
 """Código interno: pareja no ejecutada (ni OK ni fallo)."""
+LLAVERO_ROTO = 2
+"""Código del llavero cuando una base no está entera y la pasada no corre.
+
+Es el «error sin clasificar» de rclone: cuenta como fallo, y la próxima pasada
+lo vuelve a intentar.
+"""
 CONFLICTS_SHOWN = 5
 """Ficheros en conflicto que se nombran en la salida."""
 PROGRESS_POLL_S = 0.5
@@ -306,6 +312,12 @@ def filter_args(pair: Pair, ffile: Path | None) -> list[str]:
     if ffile is not None:
         return ["--filters-file", str(ffile)]
     args: list[str] = []
+    # Las reglas del código (`Pair.reglas`) salen como `--include`/`--exclude`.
+    # Aquí no pueden ir delante de las de la pareja: rclone añade siempre los
+    # `--include` antes que los `--exclude` (`fs/filter/filter.go`, `NewFilter`).
+    for regla in pair.reglas:
+        signo, _, patron = regla.partition(" ")
+        args += ["--include" if signo == "+" else "--exclude", patron]
     for pattern in pair.includes:
         args += ["--include", pattern]
     for pattern in pair.excludes:
@@ -550,6 +562,15 @@ def run_pair(ctx: RunContext, pair: Pair) -> int:
     if not pair.local_abs.exists():
         print(f"[{pair.name}] La ruta local '{pair.local_abs}' no existe. Creándola...")
         pair.local_abs.mkdir(parents=True, exist_ok=True)
+        if pair.llavero:
+            store.hide(pair.local_abs)
+
+    if pair.llavero:
+        motivo = llavero.preparar(pair)
+        if motivo is not None:
+            print(f"[{pair.name}] NO SE SUBE: {motivo}")
+            record_result(ctx, pair, LLAVERO_ROTO, None, reloj)
+            return LLAVERO_ROTO
 
     ffile = bisync.filters_file_for(pair)
     cmd, logfile = build_command(ctx, pair, ffile, need_resync)
@@ -635,8 +656,9 @@ def list_pairs(config: Config) -> int:
     """Imprime las parejas configuradas."""
     print("Parejas configuradas:")
     for pair in config.pairs:
+        marca = "  (el llavero, lo pone prdrive)" if pair.llavero else ""
         print(f"  - {pair.name:<15} {pair.mode.name:<12} "
-              f"{pair.local_endpoint}  <->  {pair.remote_endpoint}")
+              f"{pair.local_endpoint}  <->  {pair.remote_endpoint}{marca}")
     return 0
 
 

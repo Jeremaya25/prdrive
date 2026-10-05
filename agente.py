@@ -196,13 +196,15 @@ Se lee al conectarla y luego como mucho una vez por minuto: así se ve un icono
 cambiado desde su ventana sin leer la unidad en cada vuelta.
 """
 
-IGNORAR_CAMBIOS = huellas.IGNORAR + (APP_SUBDIR,)
+IGNORAR_CAMBIOS = huellas.IGNORAR + (APP_SUBDIR, model.LLAVERO_LOCAL)
 """Carpetas de la raíz de una pareja vigilada que no se miran.
 
 Además de `.prversions/`, el propio `.prdrive/`: una pareja con `local = "."`
 lo tendría dentro, y lo que escribe cada pasada en su `state/` la dispararía
-otra vez. Si esa carpeta es la raíz del dispositivo se añade lo que el sistema
-deja en un volumen (`model.RUIDO_DEL_SISTEMA`, vía `ruido_en()`).
+otra vez. Y `.keychain/`, que esa pareja no sincroniza (`model.REGLA_SIN_LLAVERO`)
+y que tiene su propia vigilancia. Si esa carpeta es la raíz del dispositivo se
+añade lo que el sistema deja en un volumen (`model.RUIDO_DEL_SISTEMA`, vía
+`ruido_en()`).
 """
 
 

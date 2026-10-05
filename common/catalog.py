@@ -48,13 +48,12 @@ from typing import Any, Callable, Mapping, NamedTuple
 from . import config_file, model, store
 from .model import ConfigError
 
-DEFAULT_CATALOG_PATH = "/prdrive-catalog/remote.toml"
-"""Ruta del catálogo de fábrica; cada usuario pone la suya.
+DEFAULT_CATALOG_PATH = model.DEFAULT_CATALOG_PATH
+"""Ruta del catálogo de fábrica (`model.DEFAULT_CATALOG_PATH`), reexportada.
 
-Se cambia por dispositivo con `[defaults].catalog_path` y el instalador la
-pregunta en su paso de conexión. `install/profile.py` la importa de aquí para
-que instalador y dispositivo no puedan discrepar. Con ella se sigue
-encontrando el `pairs.toml` de un remoto de antes (`candidatos()`).
+`install/profile.py` la importa de aquí para que instalador y dispositivo no
+puedan discrepar. Con ella se sigue encontrando el `pairs.toml` de un remoto de
+antes (`candidatos()`).
 """
 BAK_SUFFIX = ".bak"
 FICHERO = PurePosixPath(DEFAULT_CATALOG_PATH).name

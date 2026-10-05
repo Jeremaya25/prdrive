@@ -645,14 +645,18 @@ c("  una carpeta que no existe no tiene nada",
 c("  y lo que no se entiende no se sabe",
   catalog.nombres_en(lambda a: subprocess.CompletedProcess(a, 0, "{", ""), CARPETA), None)
 
-# Una tabla que esta versión no conoce, como la [keychain] del llavero: el
-# modelo la ignora al leer y el serializador la conserva al reescribir, así que
-# un catálogo que la lleva se sigue pudiendo editar.
+# Una tabla que esta versión no conoce (la de una versión más nueva, como fue
+# [keychain] para las de antes del llavero): el modelo la ignora al leer y el
+# serializador la conserva al reescribir, así que un catálogo que la lleva se
+# sigue pudiendo editar. [keychain] es la que lleva el catálogo con llavero.
+FUTURA = {**CAT, "futura": {"algo": "nuevo", "cuantos": 3}}
+c("una tabla desconocida no impide leer", [p.name for p in model.parse_config(FUTURA).pairs],
+  ["prdrive", "notas"])
+c("  y sobrevive a la escritura", tomllib.loads(config_file.dumps_checked(FUTURA))["futura"],
+  FUTURA["futura"])
 CON_LLAVERO = {**CAT, "keychain": {"base": "personal.kdbx", "fichero_llave": True,
                                    "nombre_llave": "personal.keyx"}}
-c("una tabla desconocida no impide leer", [p.name for p in model.parse_config(CON_LLAVERO).pairs],
-  ["prdrive", "notas"])
-c("  y sobrevive a la escritura", tomllib.loads(config_file.dumps_checked(CON_LLAVERO))["keychain"],
+c("[keychain] también", tomllib.loads(config_file.dumps_checked(CON_LLAVERO))["keychain"],
   CON_LLAVERO["keychain"])
 with sandbox():
     rem = remoto({NUEVO: config_file.dumps(CON_LLAVERO)})

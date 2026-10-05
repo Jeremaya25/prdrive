@@ -62,7 +62,7 @@ id={device_id}
 
 RUIDO = {
     *(nombre for nombre in model.RUIDO_DEL_SISTEMA if "*" not in nombre),
-    "prdrive.hc", ".prdrive", "veracrypt",
+    "prdrive.hc", ".prdrive", "veracrypt", model.LLAVERO_LOCAL,
     "runsync.pyw", "runsync.bat", "runsync.sh", "runsync.ico",
     *(nombre.lower() for nombre in vestibulo.TODOS),
 }
