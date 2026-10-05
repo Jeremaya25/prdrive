@@ -590,7 +590,8 @@ def leer_servicio(raiz: Path) -> Servicio:
     """Devuelve las parejas y el intervalo del servicio de esa raíz.
 
     Los elige como su propio runsync: `ui_prefs.json` > `[daemon]` > todas
-    (`prefs.elegir()`). Se lee el TOML a pelo y no con `model.parse_config()`
+    (`prefs.elegir()`). Con `[keychain]`, además la del llavero, siempre y
+    vigilada (`common/llavero.py`). Se lee el TOML a pelo y no con `model.parse_config()`
     porque la raíz puede ir en otra versión que el agente: lo que valida es su
     `sync.py`, y un modo que este agente no conozca no puede dejarla sin
     servicio.
@@ -631,8 +632,16 @@ def leer_servicio(raiz: Path) -> Servicio:
     daemon = crudo.get("daemon") if isinstance(crudo.get("daemon"), dict) else {}
     elegidas, minutos, _ = prefs.elegir(list(remotos), daemon,
                                         store.read_json(estado_de(raiz) / "ui_prefs.json"))
-    return Servicio(tuple(pl.Pareja(n, remotos[n], vigila=n in locales) for n in elegidas),
-                    minutos, {n: locales[n] for n in elegidas if n in locales})
+    parejas = [pl.Pareja(n, remotos[n], vigila=n in locales) for n in elegidas]
+    vigiladas = {n: locales[n] for n in elegidas if n in locales}
+    # El llavero no se elige: con `[keychain]` se atiende siempre, como una
+    # pareja con `watch = true` en `.keychain/`. Una pareja del usuario con su
+    # nombre la invalidaría su `sync.py`; aquí no se lanza la del llavero.
+    if isinstance(crudo.get("keychain"), dict) and model.LLAVERO not in remotos:
+        remoto, _ = model.carpeta_del_catalogo(defaults)
+        parejas.append(pl.Pareja(model.LLAVERO, remoto, vigila=True))
+        vigiladas[model.LLAVERO] = model.LLAVERO_LOCAL
+    return Servicio(tuple(parejas), minutos, vigiladas)
 
 
 def orden_sonda(raiz: Path, remoto: str) -> list[str] | None:

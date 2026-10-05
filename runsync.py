@@ -51,6 +51,15 @@ funcionando), salvo dos flags propios:
         dispositivo (modos daemon y sync).
     --daemon
         Punto de entrada interno del servicio.
+    --vigilar-llavero
+        El vigilante del llavero: atiende la base mientras viva el KeePassXC
+        de la unidad, si no lo hace ya el servicio o el agente. Lo arranca
+        «Llavero».
+
+Con llavero (`[keychain]`), el servicio también lo atiende: una pasada en cada
+ciclo y, entre ciclos, la vigilancia de la base (`common/llavero.py`): lo que
+se guarda sube a los 20 s, y lo de otro dispositivo llega cada 5 min mientras
+KeePassXC está abierto.
 """
 
 from __future__ import annotations
@@ -66,7 +75,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 import ui  # noqa: E402
-from common import APP_NAME, model, store, update  # noqa: E402
+from common import APP_NAME, llavero, model, store, update  # noqa: E402
 from common.store import pid_alive  # noqa: E402
 from ui import prefs  # noqa: E402
 
@@ -552,6 +561,152 @@ def daemon_cycle(pairs: list[str], lock_data: dict) -> None:
         dlog(f"no he podido mirar si hay versión nueva: {e}")
 
 
+def pareja_llavero() -> model.Pair | None:
+    """Devuelve la pareja del llavero de este dispositivo, o `None` si no lo lleva.
+
+    Un config que no se lee es «sin llavero»: el servicio sigue con las suyas.
+    """
+    try:
+        return model.load_config().pareja_llavero
+    except model.ConfigError:
+        return None
+
+
+def pasada_llavero(v: llavero.Vigilancia, pareja: model.Pair, por: str) -> int:
+    """Hace una pasada del llavero y apunta en `v` cómo ha quedado.
+
+    Args:
+        v: Lo que se sabe de la base.
+        pareja: La pareja del llavero.
+        por: Por qué, para el diario.
+
+    Returns:
+        El código de `sync.py`.
+    """
+    v.empieza_pasada(time.monotonic())
+    t0 = time.monotonic()
+    rc, salida = run_pair_quiet(model.LLAVERO)
+    if rc == 0:
+        dlog(f"[llavero] OK ({por}, {time.monotonic() - t0:.0f}s)")
+    else:
+        dlog(f"[llavero] FALLÓ (rc={rc}, {por}); salida:")
+        for linea in salida.splitlines()[-8:]:
+            dlog(f"[llavero]   {linea}")
+    v.acaba_pasada(llavero.huella(pareja.local_abs), time.monotonic(),
+                   llavero.pendiente(pareja), rc == 0)
+    return rc
+
+
+def atender_llavero(v: llavero.Vigilancia, pareja: model.Pair) -> None:
+    """Hace un paso de la vigilancia del llavero: una foto si toca y la pasada si toca.
+
+    Lo usan la espera del servicio entre ciclos y el vigilante del llavero.
+    """
+    ahora = time.monotonic()
+    if v.toca_mirar(ahora):
+        primera = v.foto is None
+        v.abierto = llavero.keepassxc_abierto()
+        v.observar(llavero.huella(pareja.local_abs), ahora,
+                   primera and llavero.pendiente(pareja))
+    motivo = v.motivo(ahora, v.abierto)
+    if motivo == "cambios":
+        pasada_llavero(v, pareja, "cambios en la base")
+    elif motivo == "remoto":
+        pasada_llavero(v, pareja, "lo de otro dispositivo, con KeePassXC abierto")
+
+
+ARRANQUE_KEEPASSXC = 30.0  # segundos
+"""Lo que el vigilante espera a ver el KeePassXC de la unidad antes de darlo por cerrado."""
+
+
+def parada_vigilante() -> Path:
+    """Devuelve el fichero que pide al vigilante del llavero que pare (`state/llavero.stop`)."""
+    return model.STATE_DIR / "llavero.stop"
+
+
+def vigilar_llavero() -> int:
+    """Hace `--vigilar-llavero`: atiende el llavero mientras viva el KeePassXC de la unidad.
+
+    Lo arranca «Llavero» cuando no hay servicio que lo atienda. Uno a la vez
+    (`llavero.registro_vigilante()`, tomado con `O_EXCL`). Para cuando el
+    servicio o el agente se quedan la raíz, cuando se pide
+    (`parada_vigilante()`, «Expulsar»), cuando desaparece el dispositivo y
+    cuando KeePassXC se cierra; en este último caso hace antes la pasada que
+    quede pendiente. Corre fuera del dispositivo (cwd en el temporal), así que
+    no retiene el volumen.
+    """
+    os.chdir(tempfile.gettempdir())
+    pareja = pareja_llavero()
+    if pareja is None:
+        return 0
+    registro = llavero.registro_vigilante()
+    datos = {"pid": os.getpid(), "host": HOST, "started": store.stamp()}
+    tomado, otro = store.tomar_registro(registro, datos, _viva_aqui)
+    if tomado is False:
+        return 0                        # ya hay un vigilante
+    parada_vigilante().unlink(missing_ok=True)
+    dlog("[llavero] vigilante iniciado")
+    v = llavero.Vigilancia()
+    limite = time.monotonic() + ARRANQUE_KEEPASSXC
+    visto = False
+    fin = "desconocido"
+    try:
+        while True:
+            if not pen_present():
+                fin = "dispositivo no conectado"
+                break
+            if parada_vigilante().exists():
+                fin = "parada pedida"
+                break
+            if llavero.atiende_el_servicio():
+                fin = "lo atiende el servicio de la raíz"
+                break
+            atender_llavero(v, pareja)
+            visto = visto or v.abierto
+            if not v.abierto and (visto or time.monotonic() > limite):
+                if llavero.pendiente(pareja):
+                    pasada_llavero(v, pareja, "al cerrar KeePassXC")
+                fin = "KeePassXC cerrado"
+                break
+            time.sleep(POLL_SECONDS)
+    finally:
+        dlog(f"[llavero] vigilante detenido: {fin}")
+        info = store.read_json(registro)
+        if info.get("pid") == os.getpid() and info.get("host") == HOST:
+            registro.unlink(missing_ok=True)
+        parada_vigilante().unlink(missing_ok=True)
+    return 0
+
+
+def vigilante_vivo() -> bool:
+    """Indica si hay un vigilante del llavero vivo en este equipo."""
+    return _viva_aqui(store.read_json(llavero.registro_vigilante()) or None)
+
+
+def lanzar_vigilante() -> int | None:
+    """Arranca el vigilante del llavero, suelto y sin ventana, si hace falta.
+
+    No hace falta si el servicio o el agente atienden la raíz, o si ya hay uno.
+    Es función de módulo para que los tests la sustituyan.
+
+    Returns:
+        El pid del vigilante lanzado, o `None` si no se ha lanzado.
+    """
+    if llavero.atiende_el_servicio() or vigilante_vivo():
+        return None
+    kwargs: dict = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL,
+                    "stderr": subprocess.DEVNULL, "close_fds": True,
+                    "cwd": tempfile.gettempdir()}
+    if os.name == "nt":
+        pythonw = Path(sys.executable).with_name("pythonw.exe")
+        exe = str(pythonw) if pythonw.exists() else sys.executable
+        kwargs["creationflags"] = CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
+    else:
+        exe = sys.executable
+        kwargs["start_new_session"] = True
+    return subprocess.Popen([exe, str(SELF), "--vigilar-llavero"], **kwargs).pid
+
+
 ESPERA_AGENTE = 30 * 60
 """Segundos que el servicio espera a que el agente suelte la unidad."""
 
@@ -616,8 +771,11 @@ def daemon_main(pairs: list[str], interval_min: float) -> int:
         quien = "el agente de este equipo" if otro.get("agente") else "otro servicio"
         dlog(f"servicio no iniciado: ya atiende {quien} (pid {otro.get('pid')})")
         return 0
+    llave = pareja_llavero()
+    v = llavero.Vigilancia()
     dlog(f"servicio iniciado: pid={os.getpid()} host={HOST} "
-         f"parejas={','.join(pairs)} intervalo={interval_min:g}m")
+         f"parejas={','.join(pairs)} intervalo={interval_min:g}m"
+         + (" y el llavero" if llave is not None else ""))
 
     reason = "desconocido"
     try:
@@ -629,6 +787,8 @@ def daemon_main(pairs: list[str], interval_min: float) -> int:
                 reason = "parada solicitada por el lanzador"
                 break
             daemon_cycle(pairs, lock_data)
+            if llave is not None and not stop_requested() and pen_present():
+                pasada_llavero(v, llave, "ciclo del servicio")
             wake = time.monotonic() + interval_min * 60
             stop = False
             while time.monotonic() < wake:
@@ -646,6 +806,8 @@ def daemon_main(pairs: list[str], interval_min: float) -> int:
                     # no puede ser.
                     reason, stop = f"otro servicio (pid {otro.get('pid')}) tiene el registro", True
                     break
+                if llave is not None:
+                    atender_llavero(v, llave)
                 time.sleep(POLL_SECONDS)
             if stop:
                 break
@@ -856,6 +1018,8 @@ def una_pasada(pairs: list[str]) -> int:
         print(msg)
         dlog(f"--auto --once: {msg}")
         return 0
+    if pareja_llavero() is not None:
+        pairs = [*pairs, model.LLAVERO]
     dlog(f"--auto --once: una pasada de {', '.join(pairs)}")
     return run_interactive(pairs)
 
@@ -870,6 +1034,9 @@ def main() -> int:
 
     if args and args[0] == "--auto":
         return auto_start(args[1:])
+
+    if args == ["--vigilar-llavero"]:
+        return vigilar_llavero()
 
     if args and args[0] == "--daemon":
         rest = args[1:]
