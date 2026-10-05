@@ -4,20 +4,28 @@
 Es lo que hay detrás de «Abrir llavero» (`ui/tk_llavero.py`; `runsync.py
 --llavero`) y, al expulsar (`cerrar_llavero()`; `runsync.py --cerrar-llavero`),
 de cerrarlo, subir lo pendiente y dejar el registro como estaba. La base y su
-sincronización son de `common/llavero.py`; esto es el programa. Solo Windows
-(x64, y ARM64 con el x64 emulado); Linux es la fase 2 de la especificación.
+sincronización son de `common/llavero.py`; esto es el programa. Windows (x64,
+y ARM64 con el x64 emulado) y Linux (x64 con el AppImage; ARM64 con el
+KeePassXC del equipo, §11 de la especificación).
 
 Dónde está cada cosa:
-- El programa, en `.prdrive/keepassxc/<paquete>/`, tal cual viene en el ZIP
-  (con `.portable`). Lo pone y lo cambia `install/keepassxc_bin.py`, que
+- El programa, en `.prdrive/keepassxc/<paquete>/`. En Windows, tal cual viene
+  en el ZIP (con `.portable`). En Linux, el AppImage entero, que no se ejecuta
+  desde la unidad: se extrae una vez por equipo y versión en
+  `~/.cache/prdrive/keepassxc/<versión>/` (`preparar_appimage()`). Así no hace
+  falta FUSE 2, da igual que el volumen sea `noexec` (o exFAT, que no guarda
+  el bit de ejecución ni los enlaces del AppImage), y ni KeePassXC ni su proxy
+  retienen el volumen. Lo pone y lo cambia `install/keepassxc_bin.py`, que
   sustituye esa carpeta entera.
-- Su configuración, aparte, en `.prdrive/keepassxc/config/windows/`
-  (`keepassxc.ini`, `keepassxc_local.ini` y `raiz.txt`), y se le pasa con
-  `--config` y `--localconfig` (`src/main.cpp`). Así cambiar de versión no la
-  toca.
-- Los JSON del navegador, en `<exe>/config/`: con `.portable` van ahí
-  (`NativeMessageInstaller::getNativeMessagePath()`), y KeePassXC los rehace en
-  cada arranque (`updateBinaryPaths()`), así que perderlos no importa.
+- Su configuración, aparte, en `.prdrive/keepassxc/config/windows/` o
+  `config/linux/` (`keepassxc.ini`, `keepassxc_local.ini` y `raiz.txt`), y se
+  le pasa con `--config` y `--localconfig` (`src/main.cpp`). Así cambiar de
+  versión no la toca.
+- Los JSON del navegador: en Windows, en `<exe>/config/`, donde los pone
+  `.portable` (`NativeMessageInstaller::getNativeMessagePath()`), y KeePassXC
+  los rehace en cada arranque (`updateBinaryPaths()`), así que perderlos no
+  importa. En Linux, en las carpetas de cada navegador del equipo, y los
+  escribe prdrive (`abrir_navegador_linux()`).
 - La ruta del fichero llave, en `state/keychain.json`, una por equipo. El
   fichero ni se abre: solo se le pasa a KeePassXC con `--keyfile`.
 
@@ -28,8 +36,10 @@ o toca solo ficheros del dispositivo.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -37,10 +47,12 @@ import time
 from pathlib import Path
 from typing import Callable, Mapping, NamedTuple
 
-from . import components, conflicts, llavero, model, pins, registro, results, store
+from . import APP_NAME, components, conflicts, llavero, model, pins, registro, results, store
 
 CONFIG_SUBDIR = Path("config") / "windows"
-"""Dónde va la configuración de KeePassXC, dentro de `.prdrive/keepassxc/`."""
+"""Dónde va la configuración del KeePassXC de Windows, dentro de `.prdrive/keepassxc/`."""
+CONFIG_LINUX = Path("config") / "linux"
+"""Y la del de Linux: otra, porque las rutas de un sistema no le sirven al otro."""
 INI = "keepassxc.ini"
 """La configuración que viaja (`Roaming` en `src/core/Config.cpp`)."""
 INI_LOCAL = "keepassxc_local.ini"
@@ -48,7 +60,7 @@ INI_LOCAL = "keepassxc_local.ini"
 RAIZ = "raiz.txt"
 """La raíz del volumen con la que se abrió la última vez, para mover las rutas recientes."""
 FIN_DE_LINEA = "\r\n"
-"""Con el que escribe QSettings en Windows, para un fichero que se crea aquí."""
+"""Con el que escribe QSettings en Windows, para un fichero que se crea aquí (en Linux, `\\n`)."""
 
 SIEMPRE = {
     "UseAtomicSaves": "true",           # deshace un «Deshabilitar almacenajes seguros» (H-11)
@@ -56,6 +68,17 @@ SIEMPRE = {
     "GUI/CheckForUpdates": "false",     # la versión la pone prdrive
 }
 """Lo que se pone en `keepassxc.ini` en cada arranque, diga lo que diga."""
+SIEMPRE_LINUX = {
+    "UseAtomicSaves": "true",
+    # Los manifiestos del navegador los escribe prdrive (`abrir_navegador_linux()`):
+    # rehacerlos al arrancar pisaría los de un KeePassXC instalado.
+    "Browser/UpdateBinaryPath": "false",
+    "GUI/CheckForUpdates": "false",
+    # Extraído, el AppImage no tiene `$APPIMAGE`, que es lo que pondría en un
+    # manifiesto (`getInstalledProxyPath()`): se le da el proxy de verdad.
+    "Browser/UseCustomProxy": "true",
+}
+"""Lo de `SIEMPRE` en Linux; `Browser/CustomProxyLocation` se añade al lanzar (`ajustar_config()`)."""
 AL_CREAR = {
     "Browser/Enabled": "true",
     # La ruta del fichero llave la recuerda prdrive por equipo; KeePassXC
@@ -90,6 +113,22 @@ que puede haber dejado un KeePassXC instalado (`getBrowserName()`).
 
 CLI = "keepassxc-cli.exe"
 """La línea de órdenes de KeePassXC, que viene en el mismo ZIP que el programa."""
+EXTRAIDO = "squashfs-root"
+"""La carpeta que deja `--appimage-extract` donde se le ejecuta."""
+SELLO_EXTRAIDO = "PRDRIVE-EXTRAIDO"
+"""Al lado de `EXTRAIDO`: el SHA-256 del AppImage del que salió. Se escribe el último."""
+APPRUN = "AppRun"
+"""El arranque del AppImage extraído: elige `keepassxc`, `cli` o `proxy`."""
+CLI_LINUX = Path("usr") / "bin" / "keepassxc-cli"
+"""La línea de órdenes, dentro de lo extraído (encuentra sus bibliotecas sola: `RUNPATH`)."""
+PROXY_LINUX = Path("usr") / "bin" / "keepassxc-proxy"
+"""El proxy del navegador, dentro de lo extraído."""
+ESPERA_EXTRAER = 180.0  # segundos
+"""Lo más que se espera a `--appimage-extract` (son ~125 MB)."""
+FLATPAK_ID = "org.keepassxc.KeePassXC"
+"""El KeePassXC de Flathub."""
+PASSKEYS_DESDE = (2, 7, 7)
+"""La primera versión de KeePassXC con passkeys (§11: Debian 12 y Ubuntu 24.04 no la tienen)."""
 PROXY = "keepassxc-proxy.exe"
 """El proxy del navegador: lo lanza el navegador, y retiene el volumen (K6, H-16)."""
 CREATE_NEW_CONSOLE = 0x00000010
@@ -108,30 +147,281 @@ DESDE_LA_ULTIMA = 120.0  # segundos
 def paquete_del_equipo() -> str | None:
     """Devuelve el paquete de KeePassXC que sirve en este equipo, o `None` si ninguno.
 
-    Windows ARM64 usa el x64 emulado (`pins.KEEPASSXC_PARA`). Es de módulo para
-    que los tests elijan el equipo.
+    Windows ARM64 usa el x64 emulado; Linux ARM64 no tiene, y usa el del equipo
+    (`del_equipo()`); otro sistema, ninguno (`pins.KEEPASSXC_PARA`). Es de
+    módulo para que los tests elijan el equipo.
     """
-    if os.name != "nt":
-        return None
-    return pins.KEEPASSXC_PARA.get("windows-arm64" if model.arch_dir() == "arm"
-                                   else "windows-x64")
+    arm = model.arch_dir() == "arm"
+    if os.name == "nt":
+        return pins.KEEPASSXC_PARA.get("windows-arm64" if arm else "windows-x64")
+    if sys.platform.startswith("linux"):
+        return pins.KEEPASSXC_PARA.get("linux-arm64" if arm else "linux-x64")
+    return None
+
+
+def es_appimage(paquete: str | None) -> bool:
+    """Indica si ese paquete es el AppImage de Linux (y no el ZIP de Windows)."""
+    return bool(paquete) and components.keepassxc_programa(paquete) == components.KEEPASSXC_APPIMAGE
 
 
 def ejecutable() -> Path | None:
-    """Devuelve el `KeePassXC.exe` de la unidad para este equipo, o `None` si no hay paquete."""
+    """Devuelve el programa de KeePassXC de la unidad para este equipo, o `None` si no hay paquete.
+
+    `KeePassXC.exe` en Windows; en Linux, el AppImage, que no se lanza tal
+    cual (`preparar_appimage()`).
+    """
     paquete = paquete_del_equipo()
     return None if paquete is None else components.keepassxc_exe(model.APP_DIR, paquete)
 
 
 def cli() -> Path | None:
-    """Devuelve el `keepassxc-cli.exe` de la unidad para este equipo, o `None` si no hay paquete."""
-    exe = ejecutable()
-    return None if exe is None else exe.with_name(CLI)
+    """Devuelve con qué combinar desde este equipo (`keepassxc-cli`), o `None` si no hay.
+
+    En Windows, el `keepassxc-cli.exe` del ZIP. En Linux, el AppImage de la
+    unidad, que lo lleva dentro (`cli_lanzable()` lo extrae), o el
+    `keepassxc-cli` del equipo en Linux ARM64.
+    """
+    paquete = paquete_del_equipo()
+    if paquete is None:
+        hallado = shutil.which("keepassxc-cli") if sys.platform.startswith("linux") else None
+        return Path(hallado) if hallado else None
+    exe = components.keepassxc_exe(model.APP_DIR, paquete)
+    return exe if es_appimage(paquete) else exe.with_name(CLI)
 
 
-def carpeta_config() -> Path:
-    """Devuelve la carpeta de la configuración de KeePassXC (`keepassxc/config/windows/`)."""
-    return model.APP_DIR / components.KEEPASSXC_SUBDIR / CONFIG_SUBDIR
+def cli_lanzable(programa: Path) -> Path:
+    """Devuelve el `keepassxc-cli` que se ejecuta a partir de lo que dio `cli()`.
+
+    Del AppImage, el de dentro de lo extraído en este equipo (lo extrae si
+    hace falta); si no, el mismo.
+
+    Raises:
+        OSError: Si no se ha podido extraer.
+    """
+    paquete = paquete_del_equipo()
+    if es_appimage(paquete) and programa == components.keepassxc_exe(model.APP_DIR, paquete):
+        return preparar_appimage(paquete) / CLI_LINUX
+    return programa
+
+
+def carpeta_config(paquete: str | None = None) -> Path:
+    """Devuelve la carpeta de la configuración de KeePassXC (`keepassxc/config/<sistema>/`).
+
+    Args:
+        paquete: El de KeePassXC que se va a lanzar; por defecto, el de este
+            equipo.
+    """
+    paquete = paquete_del_equipo() if paquete is None else paquete
+    sub = CONFIG_LINUX if es_appimage(paquete) else CONFIG_SUBDIR
+    return model.APP_DIR / components.KEEPASSXC_SUBDIR / sub
+
+
+# --- Linux: el AppImage, extraído en el equipo
+
+def cache_equipo() -> Path:
+    """Devuelve dónde se extrae el AppImage en este equipo (`~/.cache/prdrive/keepassxc/`).
+
+    Es la caché del usuario (`XDG_CACHE_HOME`), no el temporal: sobrevive a un
+    reinicio y no hay que extraerlo cada vez. Es de módulo para que los tests
+    la lleven a un temporal.
+    """
+    base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
+    return Path(base) / APP_NAME / components.KEEPASSXC_SUBDIR
+
+
+def extraer_appimage(appimage: Path, donde: Path) -> int:
+    """Corre `<appimage> --appimage-extract` en `donde`, que deja ahí `squashfs-root/`.
+
+    Lo hace el propio AppImage (su runtime), sin FUSE. Es de módulo para que
+    los tests no ejecuten nada.
+
+    Returns:
+        Su código: 0 si ha ido bien.
+    """
+    entorno_ = {k: v for k, v in os.environ.items() if k not in ("APPIMAGE", "APPDIR")}
+    try:
+        return subprocess.run([str(appimage), "--appimage-extract"], cwd=donde,
+                              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL, env=entorno_,
+                              timeout=ESPERA_EXTRAER).returncode
+    except subprocess.TimeoutExpired:
+        return -1
+
+
+def _resumen(ruta: Path) -> str:
+    """Devuelve el SHA-256 de un fichero, leyéndolo a trozos."""
+    h = hashlib.sha256()
+    with open(ruta, "rb") as f:
+        for trozo in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(trozo)
+    return h.hexdigest()
+
+
+_VERSION_SEGURA = re.compile(r"[0-9A-Za-z][0-9A-Za-z.\-]*")
+
+
+def preparar_appimage(paquete: str, app_dir: Path | None = None) -> Path:
+    """Devuelve la carpeta extraída del AppImage de la unidad en este equipo.
+
+    Se extrae una vez por versión, en `cache_equipo()/<versión>/`, y la
+    siguiente vez se usa si su `SELLO_EXTRAIDO` es el SHA-256 del AppImage que
+    dice el sello de la unidad. Para extraer, el AppImage se copia antes a la
+    caché y se comprueba contra ese mismo SHA-256: así da igual que el volumen
+    sea `noexec` o exFAT. Lo extraído se coloca de un renombrado, con el sello
+    escrito el último, y las versiones viejas se borran si no corre nada desde
+    ellas.
+
+    Args:
+        paquete: El paquete de Linux (`linux-x64`).
+        app_dir: La carpeta del código de la unidad; por defecto, esta.
+
+    Returns:
+        La carpeta `squashfs-root/`, con `AppRun` dentro.
+
+    Raises:
+        OSError: Si falta el sello, la copia no cuadra o no se ha podido
+            extraer.
+    """
+    app = model.APP_DIR if app_dir is None else app_dir
+    appimage = components.keepassxc_exe(app, paquete)
+    sello = components.keepassxc_sello(app, paquete)
+    version = sello.get(components.KEEPASSXC, "")
+    try:
+        texto = (components.keepassxc_dir(app, paquete) / components.KEEPASSXC_STAMP).read_text(
+            encoding="utf-8")
+    except (OSError, ValueError):
+        texto = ""
+    esperado = components.keepassxc_ficheros(texto).get(components.KEEPASSXC_APPIMAGE)
+    if not esperado or not _VERSION_SEGURA.fullmatch(version):
+        raise OSError("el KeePassXC de la unidad no tiene sello: «Actualizar…» lo vuelve "
+                      "a poner")
+    destino = cache_equipo() / version
+    hecho = destino / EXTRAIDO
+    try:
+        if ((destino / SELLO_EXTRAIDO).read_text(encoding="utf-8").strip() == esperado
+                and (hecho / APPRUN).is_file()):
+            return hecho
+    except OSError:
+        pass
+    nuevo = cache_equipo() / f".{version}.nuevo-{os.getpid()}"
+    shutil.rmtree(nuevo, ignore_errors=True)
+    nuevo.mkdir(parents=True)
+    try:
+        copia = nuevo / components.KEEPASSXC_APPIMAGE
+        shutil.copyfile(appimage, copia)
+        if _resumen(copia) != esperado:
+            raise OSError("la copia del AppImage no es la de la unidad: ¿falla la unidad?")
+        copia.chmod(0o700)
+        codigo = extraer_appimage(copia, nuevo)
+        if codigo != 0 or not (nuevo / EXTRAIDO / APPRUN).is_file():
+            raise OSError(f"no se ha podido extraer el AppImage (código {codigo})")
+        copia.unlink()
+        (nuevo / SELLO_EXTRAIDO).write_text(esperado + "\n", encoding="utf-8")
+        viejo = cache_equipo() / f".{version}.viejo-{os.getpid()}"
+        apartado = destino.exists()
+        if apartado:
+            os.replace(destino, viejo)
+        try:
+            os.replace(nuevo, destino)
+        except OSError:
+            if apartado:
+                os.replace(viejo, destino)
+            raise
+        shutil.rmtree(viejo, ignore_errors=True)
+    except BaseException:
+        shutil.rmtree(nuevo, ignore_errors=True)
+        raise
+    _barrer_versiones(version)
+    return hecho
+
+
+_RESTO = re.compile(r"\..+\.(?:nuevo|viejo)-(\d+)")
+
+
+def _barrer_versiones(actual: str) -> None:
+    """Borra lo extraído de otras versiones, si no corre nada desde ellas, y los restos.
+
+    Un resto (`.<versión>.nuevo-<pid>`) solo si su proceso ya no vive: otra
+    ventana puede estar extrayendo a la vez.
+    """
+    try:
+        otras = [p for p in cache_equipo().iterdir() if p.is_dir() and p.name != actual]
+    except OSError:
+        return
+    for otra in otras:
+        resto = _RESTO.fullmatch(otra.name)
+        if resto is not None:
+            if not store.pid_alive(int(resto.group(1))):
+                shutil.rmtree(otra, ignore_errors=True)
+        elif not otra.name.startswith(".") and not store.procesos_desde(otra):
+            shutil.rmtree(otra, ignore_errors=True)
+
+
+class Externo(NamedTuple):
+    """El KeePassXC instalado en este equipo Linux, para cuando la unidad no trae uno.
+
+    Args:
+        orden: Cómo se lanza (`keepassxc`, o `flatpak run org.keepassxc.KeePassXC`).
+        flatpak: Si es el de Flathub, que necesita permisos para ver la unidad.
+    """
+    orden: tuple[str, ...]
+    flatpak: bool = False
+
+
+def del_equipo() -> Externo | None:
+    """Devuelve el KeePassXC instalado en este equipo Linux, o `None`.
+
+    Es Linux ARM64, que no tiene AppImage (§11): el del sistema, o el de
+    Flathub. Solo mira si están, sin ejecutar nada: lo pregunta la ventana al
+    pintarse. Es de módulo para que los tests elijan el equipo.
+    """
+    if not sys.platform.startswith("linux"):
+        return None
+    propio = shutil.which(llavero.KEEPASSXC_LINUX)
+    if propio:
+        return Externo((propio,))
+    flatpak = shutil.which("flatpak")
+    instalado = [Path.home() / ".local/share/flatpak/app" / FLATPAK_ID,
+                 Path("/var/lib/flatpak/app") / FLATPAK_ID]
+    if flatpak and any(p.is_dir() for p in instalado):
+        return Externo((flatpak, "run", FLATPAK_ID), flatpak=True)
+    return None
+
+
+def version_del_equipo(externo: Externo) -> str | None:
+    """Devuelve la versión del KeePassXC del equipo, o `None` si no se sabe.
+
+    `keepassxc-cli --version` (la GUI la diría solo con pantalla), o `flatpak
+    info`. Es de módulo para que los tests no ejecuten nada.
+    """
+    if externo.flatpak:
+        orden_ = [externo.orden[0], "info", FLATPAK_ID]
+    else:
+        cli_ = shutil.which("keepassxc-cli")
+        if not cli_:
+            return None
+        orden_ = [cli_, "--version"]
+    try:
+        salida = subprocess.run(orden_, capture_output=True, text=True, timeout=15,
+                                stdin=subprocess.DEVNULL).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    hallada = re.search(r"(\d+\.\d+\.\d+)", salida)
+    return hallada.group(1) if hallada else None
+
+
+def sin_passkeys(version: str | None) -> str | None:
+    """Devuelve el aviso de un KeePassXC del equipo sin passkeys, o `None`."""
+    if version is None:
+        return None
+    try:
+        partes = tuple(int(x) for x in version.split(".")[:3])
+    except ValueError:
+        return None
+    if partes >= PASSKEYS_DESDE:
+        return None
+    return (f"Este equipo tiene KeePassXC {version}: abre la base, pero no tiene passkeys "
+            f"(llegan en la {'.'.join(map(str, PASSKEYS_DESDE))}). Las contraseñas sí.")
 
 
 # --- la configuración, línea a línea
@@ -278,12 +568,14 @@ def _escribir(ruta: Path, datos: bytes) -> None:
     os.replace(tmp, ruta)
 
 
-def ajustar_config(raiz: Path | None = None) -> list[str]:
+def ajustar_config(raiz: Path | None = None, paquete: str | None = None,
+                   proxy: Path | None = None) -> list[str]:
     """Deja la configuración de KeePassXC como la quiere prdrive, con KeePassXC cerrado.
 
-    Cada arranque, `SIEMPRE` y las rutas recientes movidas a la raíz de ahora
-    (la de la vez anterior está en `raiz.txt`: la letra cambia de un equipo a
-    otro). Al crear un fichero, además `AL_CREAR` / `AL_CREAR_LOCAL`. Los dos
+    Cada arranque, `SIEMPRE` (en Linux, `SIEMPRE_LINUX` y el proxy) y las
+    rutas recientes movidas a la raíz de ahora (la de la vez anterior está en
+    `raiz.txt`: la letra o el punto de montaje cambian de un equipo a otro).
+    Al crear un fichero, además `AL_CREAR` / `AL_CREAR_LOCAL`. Los dos
     ficheros a la vez: KeePassXC trata un `keepassxc_local.ini` sin su
     `keepassxc.ini` como una configuración vieja y lo mueve (`Config::init()`).
     Los bytes se leen y se escriben tal cual (`surrogateescape`): QSettings
@@ -291,6 +583,11 @@ def ajustar_config(raiz: Path | None = None) -> list[str]:
 
     Args:
         raiz: La raíz del volumen; sin ella, la de este dispositivo.
+        paquete: El KeePassXC que se va a lanzar; por defecto, el de este
+            equipo. Dice qué carpeta y qué fin de línea.
+        proxy: En Linux, el `keepassxc-proxy` de lo extraído en este equipo,
+            para `Browser/CustomProxyLocation`. Una ruta que QSettings
+            escaparía (`forma_ini()`) no se pone.
 
     Returns:
         Los ficheros que ha escrito.
@@ -299,7 +596,13 @@ def ajustar_config(raiz: Path | None = None) -> list[str]:
         OSError: Si no se ha podido leer o escribir.
     """
     raiz = model.DEVICE_ROOT if raiz is None else raiz
-    donde = carpeta_config()
+    paquete = paquete_del_equipo() if paquete is None else paquete
+    linux = es_appimage(paquete)
+    donde = carpeta_config(paquete)
+    siempre = dict(SIEMPRE_LINUX if linux else SIEMPRE)
+    if linux and proxy is not None and forma_ini(proxy) is not None:
+        siempre["Browser/CustomProxyLocation"] = str(proxy)
+    fin = "\n" if linux else FIN_DE_LINEA
     donde.mkdir(parents=True, exist_ok=True)
     ahora = forma_ini(raiz)
     try:
@@ -314,14 +617,14 @@ def ajustar_config(raiz: Path | None = None) -> list[str]:
 
     movida = bool(antes and ahora and antes.lower() != ahora.lower())
     escritos = []
-    for nombre, siempre, al_crear in ((INI, SIEMPRE, AL_CREAR), (INI_LOCAL, {}, AL_CREAR_LOCAL)):
+    for nombre, fijas, al_crear in ((INI, siempre, AL_CREAR), (INI_LOCAL, {}, AL_CREAR_LOCAL)):
         ruta = donde / nombre
         try:
             texto, nuevo = ruta.read_bytes().decode("utf-8", "surrogateescape"), False
         except FileNotFoundError:
             texto, nuevo = "", True
-        editado = editar_ini(texto, {**al_crear, **siempre} if nuevo else siempre,
-                             cambiar if movida else None)
+        editado = editar_ini(texto, {**al_crear, **fijas} if nuevo else fijas,
+                             cambiar if movida else None, fin)
         if nuevo or editado != texto:
             _escribir(ruta, editado.encode("utf-8", "surrogateescape"))
             escritos.append(nombre)
@@ -524,25 +827,48 @@ def apuntar_llave(ruta: Path | None, estado: Path | None = None) -> bool:
 def otro_abierto() -> bool:
     """Indica si este equipo tiene abierto un KeePassXC que no es el de la unidad.
 
-    Con `SingleInstance`, el nuestro le pasaría la base a ése, que tiene otra
+    Con `SingleInstance` (uno por usuario, sea cual sea su configuración:
+    `Application.cpp`), el nuestro le pasaría la base a ése, que tiene otra
     configuración y otro proxy para el navegador.
     """
-    nuestros: set[int] = set()
-    for paquete in components.paquetes_keepassxc(model.APP_DIR):
-        nuestros.update(store.procesos_desde(components.keepassxc_dir(model.APP_DIR, paquete)))
-    nombre = components.KEEPASSXC_EXE.lower()
-    return any(Path(exe).name.lower() == nombre and pid not in nuestros
+    nuestros = set(llavero.pids_keepassxc(model.APP_DIR))
+    nombres = {components.KEEPASSXC_EXE.lower(), llavero.KEEPASSXC_LINUX}
+    return any(Path(exe).name.lower() in nombres and pid not in nuestros
                for pid, exe in store.procesos().items())
 
 
-def orden(exe: Path, base: Path, llave: Path | None = None) -> list[str]:
+def orden(exe: Path, base: Path, llave: Path | None = None,
+          paquete: str | None = None) -> list[str]:
     """Devuelve la orden que abre KeePassXC con su configuración y la base.
 
     `--keyfile` solo rellena el campo del diálogo de desbloqueo
-    (`mainWindow.openDatabase(filename, password, keyfile)`).
+    (`mainWindow.openDatabase(filename, password, keyfile)`). En Linux, `exe`
+    es el `AppRun` de lo extraído, y la configuración es la de `config/linux/`:
+    `--config` es también lo que dice de qué unidad es (`llavero.pids_keepassxc()`).
     """
-    donde = carpeta_config()
+    donde = carpeta_config(paquete)
     salida = [str(exe), "--config", str(donde / INI), "--localconfig", str(donde / INI_LOCAL)]
+    if llave is not None:
+        salida += ["--keyfile", str(llave)]
+    return salida + [str(base)]
+
+
+def orden_externo(externo: Externo, base: Path, llave: Path | None = None,
+                  raiz: Path | None = None) -> list[str]:
+    """Devuelve la orden que abre la base con el KeePassXC del equipo (Linux ARM64).
+
+    Con su propia configuración: es el de la persona. El de Flathub recibe
+    permiso para la unidad y la carpeta del fichero llave solo para esta vez
+    (`flatpak run --filesystem=`), y `KPXC_INITIAL_DIR` por `--env`, porque
+    el entorno no entra en su caja.
+    """
+    raiz = model.DEVICE_ROOT if raiz is None else raiz
+    salida = list(externo.orden)
+    if externo.flatpak:
+        extra = [f"--filesystem={raiz}", f"--env=KPXC_INITIAL_DIR={raiz}"]
+        if llave is not None:
+            extra.append(f"--filesystem={llave.parent}:ro")
+        salida[2:2] = extra                     # entre «run» y el id de la aplicación
     if llave is not None:
         salida += ["--keyfile", str(llave)]
     return salida + [str(base)]
@@ -552,9 +878,11 @@ def entorno(raiz: Path | None = None) -> dict[str, str]:
     """Devuelve el entorno de KeePassXC: el de ahora con `KPXC_INITIAL_DIR` en la raíz.
 
     Así lo que se exporte cae en la raíz del volumen, a la vista: ni en
-    `.keychain/`, oculta, ni en la carpeta personal del equipo (PK5).
+    `.keychain/`, oculta, ni en la carpeta personal del equipo (PK5). Sin
+    `APPIMAGE` ni `APPDIR`, por si vienen de otro AppImage: el nuestro corre
+    extraído.
     """
-    salida = dict(os.environ)
+    salida = {k: v for k, v in os.environ.items() if k not in ("APPIMAGE", "APPDIR")}
     salida["KPXC_INITIAL_DIR"] = str(model.DEVICE_ROOT if raiz is None else raiz)
     return salida
 
@@ -672,7 +1000,7 @@ class Apertura(NamedTuple):
 
     Args:
         motivo: Por qué no se puede abrir, para decirlo; `None` si se puede.
-        exe: El `KeePassXC.exe` de la unidad.
+        exe: El programa de la unidad: `KeePassXC.exe`, o el AppImage.
         base: La base (puede no estar aún: la trae la pasada).
         abierto: El KeePassXC de la unidad ya está abierto: se trae delante y
             no se toca su configuración.
@@ -681,6 +1009,9 @@ class Apertura(NamedTuple):
         pide_llave: La base pide fichero llave (`[keychain] fichero_llave`).
         nombre_llave: Su nombre, solo como pista para la persona.
         llave: Su ruta en este equipo, si está apuntada y sigue ahí.
+        paquete: El paquete de KeePassXC de la unidad que se lanza.
+        externo: Sin paquete para este equipo (Linux ARM64), el KeePassXC
+            instalado en él.
     """
     motivo: str | None
     exe: Path | None = None
@@ -691,12 +1022,23 @@ class Apertura(NamedTuple):
     pide_llave: bool = False
     nombre_llave: str = ""
     llave: Path | None = None
+    paquete: str | None = None
+    externo: Externo | None = None
 
 
 SIN_LLAVERO = "Este dispositivo no lleva llavero."
-SOLO_WINDOWS = "De momento, el llavero solo se abre en Windows."
+SIN_KEEPASSXC_AQUI = (
+    "Para este equipo no hay KeePassXC en el dispositivo (no lo hay para Linux ARM64) ni "
+    "instalado. Instala KeePassXC, de Flathub o de tu distribución (para las passkeys, la "
+    "2.7.7 o posterior), y vuelve a abrir el llavero. Mientras, se sincroniza igual.")
+OTRO_SISTEMA = "El llavero se abre en Windows y en Linux; en este sistema solo se sincroniza."
 FALTA_KEEPASSXC = ("Falta KeePassXC en el dispositivo. Abre la ventana de prdrive y pulsa "
                    "«Actualizar…» en el recuadro de lo que lleva el dispositivo.")
+
+
+def sin_programa() -> str:
+    """Devuelve por qué este equipo no tiene con qué abrir el llavero (sin paquete ni instalado)."""
+    return SIN_KEEPASSXC_AQUI if sys.platform.startswith("linux") else OTRO_SISTEMA
 
 
 def mirar_apertura(config: model.Config, ahora: float | None = None) -> Apertura:
@@ -708,11 +1050,13 @@ def mirar_apertura(config: model.Config, ahora: float | None = None) -> Apertura
     """
     if config.llavero is None or config.pareja_llavero is None:
         return Apertura(SIN_LLAVERO)
-    exe = ejecutable()
-    if exe is None:
-        return Apertura(SOLO_WINDOWS)
-    if not exe.is_file():
-        return Apertura(FALTA_KEEPASSXC, exe=exe)
+    paquete = paquete_del_equipo()
+    externo = del_equipo() if paquete is None else None
+    if paquete is None and externo is None:
+        return Apertura(sin_programa())
+    exe = None if paquete is None else components.keepassxc_exe(model.APP_DIR, paquete)
+    if exe is not None and not exe.is_file():
+        return Apertura(FALTA_KEEPASSXC, exe=exe, paquete=paquete)
     base = llavero.carpeta() / config.llavero["base"]
     abierto = llavero.keepassxc_abierto()
     pasada = False
@@ -725,9 +1069,13 @@ def mirar_apertura(config: model.Config, ahora: float | None = None) -> Apertura
     llave = llave_apuntada() if pide else None
     if llave is not None and not llave.is_file():
         llave = None
-    return Apertura(None, exe=exe, base=base, abierto=abierto,
-                    otro=not abierto and otro_abierto(), pasada=pasada, pide_llave=pide,
-                    nombre_llave=str(config.llavero.get("nombre_llave") or ""), llave=llave)
+    # Con el del equipo no hay «otro»: es el de la persona, y que reciba la base
+    # en el que ya tiene abierto es justo lo que se quiere.
+    otro = not abierto and externo is None and otro_abierto()
+    return Apertura(None, exe=exe, base=base, abierto=abierto, otro=otro, pasada=pasada,
+                    pide_llave=pide,
+                    nombre_llave=str(config.llavero.get("nombre_llave") or ""), llave=llave,
+                    paquete=paquete, externo=externo)
 
 
 class Abierto(NamedTuple):
@@ -737,9 +1085,11 @@ class Abierto(NamedTuple):
         codigo: Su código si salió enseguida (`esperar_arranque()`), o `None`
             si sigue abierto.
         avisos: Lo que no se ha podido preparar, aunque se haya abierto.
+        programa: Lo que se ha lanzado, para decir dónde mirar si se cae.
     """
     codigo: int | None
     avisos: tuple[str, ...] = ()
+    programa: Path | None = None
 
 
 def abrir(ap: Apertura, llave: Path | None = None) -> Abierto:
@@ -749,26 +1099,51 @@ def abrir(ap: Apertura, llave: Path | None = None) -> Abierto:
     pasa la base al abierto y lo trae delante; su configuración no se toca con
     él corriendo, porque la reescribiría al salir.
 
+    - Windows: la configuración y las claves del registro del navegador, y
+      `KeePassXC.exe` de la unidad.
+    - Linux x64: el AppImage, extraído en este equipo si hace falta
+      (`preparar_appimage()`, unos segundos la primera vez), su configuración
+      con el proxy de lo extraído, y su `AppRun`.
+    - Linux ARM64: el KeePassXC del equipo, con su configuración y sus
+      manifiestos, que son de la persona; si no tiene passkeys, se dice.
+
     Args:
         ap: Lo que dijo `mirar_apertura()`, sin `motivo`.
         llave: La ruta del fichero llave en este equipo, o `None`.
 
     Raises:
-        OSError: Si no se ha podido lanzar.
+        OSError: Si no se ha podido extraer o lanzar.
     """
     avisos: list[str] = []
-    if not ap.abierto:
-        try:
-            ajustar_config()
-        except OSError as e:
-            avisos.append(f"No se ha podido preparar la configuración de KeePassXC: {e}")
-        fallos = abrir_navegador(ap.exe)
-        if fallos:
-            avisos.append(f"El navegador no encontrará este KeePassXC: no se han podido "
-                          f"escribir {len(fallos)} de sus {len(NAVEGADORES)} claves del "
-                          f"registro ({fallos[0]}).")
-    proc = lanzar(orden(ap.exe, ap.base, llave), entorno())
-    return Abierto(esperar_arranque(proc), tuple(avisos))
+    if ap.externo is not None:
+        aviso = sin_passkeys(version_del_equipo(ap.externo))
+        if aviso:
+            avisos.append(aviso)
+        orden_ = orden_externo(ap.externo, ap.base, llave)
+        proc = lanzar(orden_, entorno())
+        return Abierto(esperar_arranque(proc), tuple(avisos), Path(orden_[0]))
+    if es_appimage(ap.paquete):
+        carpeta = preparar_appimage(ap.paquete)
+        programa = carpeta / APPRUN
+        if not ap.abierto:
+            try:
+                ajustar_config(paquete=ap.paquete, proxy=carpeta / PROXY_LINUX)
+            except OSError as e:
+                avisos.append(f"No se ha podido preparar la configuración de KeePassXC: {e}")
+    else:
+        programa = ap.exe
+        if not ap.abierto:
+            try:
+                ajustar_config(paquete=ap.paquete)
+            except OSError as e:
+                avisos.append(f"No se ha podido preparar la configuración de KeePassXC: {e}")
+            fallos = abrir_navegador(ap.exe)
+            if fallos:
+                avisos.append(f"El navegador no encontrará este KeePassXC: no se han podido "
+                              f"escribir {len(fallos)} de sus {len(NAVEGADORES)} claves del "
+                              f"registro ({fallos[0]}).")
+    proc = lanzar(orden(programa, ap.base, llave, ap.paquete), entorno())
+    return Abierto(esperar_arranque(proc), tuple(avisos), programa)
 
 
 # --- cerrarlo al expulsar (§10)
@@ -782,18 +1157,21 @@ ESPERA_VIGILANTE = 90.0  # segundos
 
 
 def procesos_de_la_unidad() -> tuple[list[int], list[int]]:
-    """Devuelve los pids de KeePassXC y de su proxy que corren desde la unidad."""
-    programas: list[int] = []
+    """Devuelve los pids del KeePassXC de la unidad y de su proxy (`llavero.pids_keepassxc()`).
+
+    El proxy solo en Windows, donde corre desde la unidad y la retiene (K6,
+    H-16). En Linux corre desde lo extraído en el equipo, que no retiene nada:
+    se deja, y el navegador sigue conectado para la próxima vez.
+    """
     proxies: list[int] = []
     for paquete in components.paquetes_keepassxc(model.APP_DIR):
+        if es_appimage(paquete):
+            continue
         carpeta = components.keepassxc_dir(model.APP_DIR, paquete)
         for pid, exe in store.procesos_desde(carpeta).items():
-            nombre = Path(exe).name.lower()
-            if nombre == components.KEEPASSXC_EXE.lower():
-                programas.append(pid)
-            elif nombre == PROXY:
+            if Path(exe).name.lower() == PROXY:
                 proxies.append(pid)
-    return programas, proxies
+    return llavero.pids_keepassxc(model.APP_DIR), proxies
 
 
 def pedir_cierre(pid: int) -> None:

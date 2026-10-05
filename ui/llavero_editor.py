@@ -61,10 +61,21 @@ def pregunta_llave(nombre: str) -> str:
         "¿Dónde está el fichero llave en este equipo?"
 
 
-def se_cayo(codigo: int) -> str:
-    """Devuelve lo que se dice si KeePassXC sale nada más lanzarlo, con un código que no es 0."""
+def se_cayo(codigo: int, programa: Path | None = None) -> str:
+    """Devuelve lo que se dice si KeePassXC sale nada más lanzarlo, con un código que no es 0.
+
+    Args:
+        codigo: El suyo.
+        programa: Lo que se lanzó (`keepassxc.Abierto.programa`). Si no es un
+            `.exe` (Linux), se dice que se abra desde una terminal, que es
+            donde KeePassXC cuenta qué le falta.
+    """
     if codigo in keepassxc.VC_FALTA:
         return FALTA_RUNTIME
+    if programa is not None and programa.suffix.lower() != ".exe":
+        return (f"KeePassXC se ha cerrado nada más abrirse (código {codigo}).\n\n"
+                f"Prueba a abrirlo otra vez; si vuelve a pasar, lánzalo desde una terminal "
+                f"para ver qué dice:\n{programa}")
     return (f"KeePassXC se ha cerrado nada más abrirse (código {codigo:#x}).\n\n"
             "Prueba a abrirlo otra vez; si vuelve a pasar, ábrelo desde "
             ".prdrive\\keepassxc para ver qué dice.")
@@ -108,9 +119,9 @@ def linea(config: model.Config) -> Linea | None:
     if config.llavero is None or pareja is None:
         return None
     exe = keepassxc.ejecutable()
-    if exe is None:
-        return Linea(keepassxc.SOLO_WINDOWS, False, False)
-    if not exe.is_file():
+    if exe is None and keepassxc.del_equipo() is None:
+        return Linea(keepassxc.sin_programa(), False, False)
+    if exe is not None and not exe.is_file():
         return Linea("Falta KeePassXC en el dispositivo: lo pone «Actualizar…».", True, False)
     base = config.llavero["base"]
     fallo = next(iter(results.fallos_de([model.LLAVERO])), None)
@@ -235,7 +246,7 @@ def abrir(config: model.Config, avisar: Callable[[str], None],
         avisar(f"No se ha podido abrir KeePassXC: {valor}")
         return False
     if valor.codigo not in (None, 0):
-        avisar(se_cayo(valor.codigo))
+        avisar(se_cayo(valor.codigo, valor.programa))
         return False
     avisos = list(valor.avisos)
     try:
@@ -373,8 +384,9 @@ def _sin_keepassxc() -> str | None:
     """Devuelve el aviso de que este equipo no puede abrirlo todavía, o `None`."""
     exe = keepassxc.ejecutable()
     if exe is None:
-        return ("Este equipo no es Windows: el llavero se sincroniza igual, pero de momento "
-                "solo se abre en Windows.")
+        if keepassxc.del_equipo() is not None:
+            return None
+        return keepassxc.sin_programa()
     if not exe.is_file():
         return ("KeePassXC todavía no está en el dispositivo: lo pone «Actualizar…», en el "
                 "recuadro de lo que lleva el dispositivo de la ventana de prdrive.")

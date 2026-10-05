@@ -323,11 +323,27 @@ def pid_alive(pid: int) -> bool:
         return bool(ok) and code.value == STILL_ACTIVE
     try:
         os.kill(pid, 0)
-        return True
     except ProcessLookupError:
         return False
     except PermissionError:
         return True     # existe, pero es de otro usuario
+    return not _zombi(pid)
+
+
+def _zombi(pid: int) -> bool:
+    """Indica si ese proceso ya ha salido y solo espera a que su padre lo recoja.
+
+    `os.kill(pid, 0)` lo da por vivo, y no lo está: el KeePassXC que lanza la
+    ventana es hijo suyo, y al cerrarlo se queda así hasta que ella lo recoge,
+    así que «Expulsar» lo esperaba hasta el tope. Es el estado `Z` de
+    `/proc/<pid>/stat` (el tercer campo, detrás del nombre entre paréntesis);
+    sin `/proc`, no se sabe y no lo es.
+    """
+    try:
+        datos = (Path("/proc") / str(pid) / "stat").read_bytes()
+    except OSError:
+        return False
+    return datos[datos.rfind(b")") + 2:][:1] == b"Z"
 
 
 def procesos_llamados(nombre: str) -> set[int]:
@@ -423,6 +439,24 @@ def procesos() -> dict[int, str]:
     función de módulo para que los tests la sustituyan.
     """
     return dict(_ejecutables())
+
+
+def orden_de(pid: int) -> list[str]:
+    """Devuelve la línea de órdenes de un proceso, o `[]` si no se deja mirar.
+
+    En Linux es `/proc/<pid>/cmdline`. En Windows no hace falta: lo que se
+    pregunta allí se sabe por el ejecutable (`procesos_desde()`). El llavero
+    la mira en Linux para saber de qué unidad es un KeePassXC, que corre
+    extraído fuera de ella (`llavero.pids_keepassxc()`). Es función de módulo
+    para que los tests la sustituyan.
+    """
+    if os.name == "nt":
+        return []
+    try:
+        datos = (Path("/proc") / str(pid) / "cmdline").read_bytes()
+    except OSError:
+        return []
+    return [p.decode("utf-8", "surrogateescape") for p in datos.split(b"\0") if p]
 
 
 def _ejecutables() -> list[tuple[int, str]]:

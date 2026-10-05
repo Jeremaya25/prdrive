@@ -401,19 +401,65 @@ def atiende_el_servicio() -> bool:
     return not info.get("agente") or (isinstance(parejas, list) and model.LLAVERO in parejas)
 
 
-def keepassxc_abierto(app_dir: Path | str | None = None) -> bool:
-    """Indica si el KeePassXC de la unidad está abierto.
+KEEPASSXC_LINUX = "keepassxc"
+"""El nombre del programa de KeePassXC en Linux: extraído, de Flathub o de la distribución."""
+MIRAR_ORDENES = os.name != "nt"
+"""Si se mira la línea de órdenes de los procesos para saber de qué unidad son.
 
-    Solo cuenta `KeePassXC.exe`: el proxy (`keepassxc-proxy.exe`) vive lo que
-    el navegador, no lo que KeePassXC. `store.procesos_desde()` es el punto de
-    sustitución de los tests.
+Es lo de Linux (`store.orden_de()`); en Windows basta con el ejecutable, y
+recorrer los procesos dos veces cuesta. Los tests lo encienden en cualquier
+sistema.
+"""
+
+
+def _nombra_la_unidad(orden: list[str], app_dir: Path) -> bool:
+    """Indica si una línea de órdenes nombra algo de esa unidad: su KeePassXC o su llavero.
+
+    Es como se sabe de qué unidad es un KeePassXC de Linux, que no corre desde
+    ella: «Abrir llavero» le pasa `--config` dentro de
+    `.prdrive/keepassxc/config/linux/` y la base de `.keychain/`
+    (`keepassxc.orden()`). Las rutas se comparan resueltas.
     """
-    for paquete in components.paquetes_keepassxc(app_dir):
-        carpeta = components.keepassxc_dir(app_dir, paquete)
-        for exe in store.procesos_desde(carpeta).values():
-            if Path(exe).name.lower() == components.KEEPASSXC_EXE.lower():
-                return True
+    dentro = [os.path.realpath(app_dir / components.KEEPASSXC_SUBDIR),
+              os.path.realpath(app_dir.parent / model.LLAVERO_LOCAL)]
+    for arg in orden[1:]:
+        ruta = os.path.realpath(arg) if os.path.isabs(arg) else None
+        if ruta and any(ruta.startswith(d + os.sep) for d in dentro):
+            return True
     return False
+
+
+def pids_keepassxc(app_dir: Path | str | None = None) -> list[int]:
+    """Devuelve los pids del KeePassXC de esa unidad (sin su proxy).
+
+    En Windows, un `KeePassXC.exe` que corre desde la carpeta de un paquete de
+    la unidad. En Linux corre fuera de ella (extraído en el equipo, o el del
+    equipo en Linux ARM64), así que cuenta un `keepassxc` cuya línea de órdenes
+    nombra algo de la unidad (`_nombra_la_unidad()`). El proxy no cuenta: vive
+    lo que el navegador, no lo que KeePassXC. `store.procesos_desde()`,
+    `store.procesos()` y `store.orden_de()` son los puntos de sustitución de
+    los tests.
+    """
+    app = Path(app_dir) if app_dir is not None else model.APP_DIR
+    salida: list[int] = []
+    for paquete in components.paquetes_keepassxc(app):
+        if components.keepassxc_programa(paquete) != components.KEEPASSXC_EXE:
+            continue
+        carpeta = components.keepassxc_dir(app, paquete)
+        for pid, exe in store.procesos_desde(carpeta).items():
+            if Path(exe).name.lower() == components.KEEPASSXC_EXE.lower():
+                salida.append(pid)
+    if MIRAR_ORDENES:
+        for pid, exe in store.procesos().items():
+            if (pid not in salida and Path(exe).name == KEEPASSXC_LINUX
+                    and _nombra_la_unidad(store.orden_de(pid), app)):
+                salida.append(pid)
+    return salida
+
+
+def keepassxc_abierto(app_dir: Path | str | None = None) -> bool:
+    """Indica si el KeePassXC de la unidad está abierto (`pids_keepassxc()`)."""
+    return bool(pids_keepassxc(app_dir))
 
 
 def parada_vigilante() -> Path:

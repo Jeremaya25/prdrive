@@ -86,8 +86,11 @@ def fin_de_linea(ruta: Path) -> bool:
     return datos.count(b"\n") == datos.count(b"\r\n") > 0
 
 
-real_app = model.APP_DIR
+real_app, real_paquete = model.APP_DIR, keepassxc.paquete_del_equipo
 try:
+    # La de Windows, en cualquier sistema, en todo el fichero: la de Linux está
+    # en test_keepassxc_linux.py.
+    keepassxc.paquete_del_equipo = lambda: "windows-x64"
     with sandbox() as root:
         model.APP_DIR = root / ".prdrive"
         donde = keepassxc.carpeta_config()
@@ -377,6 +380,7 @@ class Equipo:
 def preparar(eq: Equipo) -> None:
     """Engancha `eq` en los puntos de sustitución."""
     keepassxc.paquete_del_equipo = lambda: eq.paquete
+    keepassxc.del_equipo = lambda: None
     llavero.keepassxc_abierto = lambda app_dir=None: eq.nuestro
     keepassxc.otro_abierto = lambda: eq.otro
     llavero.atiende_el_servicio = lambda: eq.servicio
@@ -409,7 +413,7 @@ def abrir(cfg, llave=None, suelto=False):
 
 reales = (keepassxc.paquete_del_equipo, llavero.keepassxc_abierto, keepassxc.otro_abierto,
           llavero.atiende_el_servicio, llavero.pasada, keepassxc.lanzar,
-          keepassxc.ESPERA_ARRANQUE, llavero.lanzar_vigilante)
+          keepassxc.ESPERA_ARRANQUE, llavero.lanzar_vigilante, keepassxc.del_equipo)
 try:
     with sandbox() as root:
         model.APP_DIR = root / ".prdrive"
@@ -420,7 +424,8 @@ try:
         c("sin llavero, se dice", abrir(config(base=None))[:2],
           (False, [keepassxc.SIN_LLAVERO]))
         eq.paquete = None
-        c("fuera de Windows, se dice", abrir(config())[:2], (False, [keepassxc.SOLO_WINDOWS]))
+        c("sin paquete para este equipo ni uno instalado, se dice", abrir(config())[:2],
+          (False, [keepassxc.sin_programa()]))
         eq.paquete = "windows-x64"
         c("sin KeePassXC en la unidad, se dice cómo ponerlo", abrir(config())[:2],
           (False, [keepassxc.FALTA_KEEPASSXC]))
@@ -533,8 +538,8 @@ try:
         linea = llavero_editor.linea
         c("sin llavero, no hay línea", linea(config(base=None)), None)
         eq.paquete = None
-        c("fuera de Windows, una línea sin botón", linea(config()),
-          llavero_editor.Linea(keepassxc.SOLO_WINDOWS, False, False))
+        c("sin con qué abrirlo, una línea sin botón", linea(config()),
+          llavero_editor.Linea(keepassxc.sin_programa(), False, False))
         eq.paquete = "windows-x64"
         exe.rename(exe.with_name("apartado"))
         c("sin KeePassXC, en ámbar y sin botón: lo pone «Actualizar…»",
@@ -574,8 +579,9 @@ try:
 finally:
     (keepassxc.paquete_del_equipo, llavero.keepassxc_abierto, keepassxc.otro_abierto,
      llavero.atiende_el_servicio, llavero.pasada, keepassxc.lanzar,
-     keepassxc.ESPERA_ARRANQUE, llavero.lanzar_vigilante) = reales
+     keepassxc.ESPERA_ARRANQUE, llavero.lanzar_vigilante, keepassxc.del_equipo) = reales
     registro.leer, registro.escribir, registro.borrar, registro.vacia = reales_registro
     model.APP_DIR = real_app
+    keepassxc.paquete_del_equipo = real_paquete
 
 sys.exit(c.report())

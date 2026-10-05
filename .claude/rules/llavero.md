@@ -13,6 +13,7 @@ paths:
   - "tests/test_keepassxc_bin.py"
   - "tests/test_llavero_vigilancia.py"
   - "tests/test_keepassxc.py"
+  - "tests/test_keepassxc_linux.py"
   - "tests/test_llavero_combinar.py"
   - "tests/test_llavero_activar.py"
   - "tests/test_tk_llavero.py"
