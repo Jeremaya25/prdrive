@@ -77,6 +77,39 @@ def abrir(parent, config: Config, suelto: bool = False) -> bool:
                                 decir_sin_traer=suelto)
 
 
+CERRAR = ("KeePassXC está abierto. ¿Cerrarlo?\n\nSe cierra como si lo cerraras tú: si "
+          "tiene algo sin guardar, te lo pregunta.")
+"""Lo que se pregunta al expulsar con el KeePassXC de la unidad abierto."""
+
+
+def cerrar(parent, config: Config) -> bool:
+    """Cierra el llavero antes de expulsar (§10): KeePassXC, lo pendiente, el navegador.
+
+    Pregunta antes de cerrar KeePassXC; lo demás espera en `working()` y solo
+    se dice si algo no ha ido bien.
+
+    Returns:
+        True si se puede seguir expulsando; False si KeePassXC sigue abierto
+        (no se ha querido cerrar, o no ha salido).
+    """
+    if config.pareja_llavero is None:
+        return True
+    programas, _ = keepassxc.procesos_de_la_unidad()
+    if programas and not preguntar(parent, CERRAR):
+        return False
+    ok, cierre = working(parent, llavero_editor.TITULO,
+                         partial(keepassxc.cerrar_llavero, config),
+                         "Cerrando el llavero: KeePassXC, lo que quede por subir y el "
+                         "navegador…")
+    if not ok:
+        avisar(parent, f"No se ha podido cerrar el llavero del todo ({cierre}). Se sigue "
+                       "expulsando.")
+        return True
+    if cierre.lineas:
+        avisar(parent, "\n\n".join(cierre.lineas))
+    return cierre.listo
+
+
 def preguntar(parent, texto: str) -> bool:
     """Pregunta sí o no. Es de módulo para que los tests lo sustituyan."""
     from tkinter import messagebox

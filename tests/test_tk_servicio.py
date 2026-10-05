@@ -420,7 +420,7 @@ CON_LLAVERO = model.parse_config({
     "pair": [{"name": "notas", "local": "sync-data/notas", "remote_path": "/R/notas"}],
     "keychain": {"base": "personal.kdbx"}})
 REAL_LINEA, REAL_ABRIR = llavero_editor.linea, tk_llavero.abrir
-REAL_AJUSTES = tk_llavero.ajustes
+REAL_AJUSTES, REAL_CERRAR = tk_llavero.ajustes, tk_llavero.cerrar
 with sandbox():
     estado = {"abierto": False, "boton": True}
     abiertos: list = []
@@ -460,6 +460,32 @@ with sandbox():
         c("  sin KeePassXC, el botón apagado", visto["estado"], "disabled")
         ventana(UNA, lambda root: visto.update(sin="Abrir llavero" in botones(root)))
         c("sin llavero, ni línea ni botón", visto["sin"], False)
+
+        # «Expulsar» sin VeraCrypt: sale con llavero, lo cierra antes y dice que
+        # ya se puede quitar. Si KeePassXC sigue abierto, no se cierra nada.
+        from tkinter import messagebox
+        reales_mb = (messagebox.askokcancel, messagebox.showinfo)
+        dichos: list = []
+        cerrados: list = []
+        messagebox.askokcancel = lambda *a, **k: True
+        messagebox.showinfo = lambda titulo, texto=None, **k: dichos.append(texto)
+        estado["boton"] = True
+        try:
+            for listo in (False, True):
+                tk_llavero.cerrar = lambda root, cfg, listo=listo: (
+                    cerrados.append(cfg.llavero["base"]), listo)[1]
+                ventana(CON_LLAVERO, lambda root: (
+                    visto.update(expulsar="Expulsar" in botones(root)),
+                    botones(root)["Expulsar"].invoke()))
+                c(f"con llavero y sin VeraCrypt hay «Expulsar» (KeePassXC "
+                  f"{'cerrado' if listo else 'abierto'})", visto["expulsar"], True)
+            c("  cierra el llavero antes, las dos veces", cerrados,
+              ["personal.kdbx", "personal.kdbx"])
+            c("  y solo si quedó libre dice que ya se puede quitar", dichos,
+              ["Ya puedes quitarla (Quitar hardware de forma segura)."])
+        finally:
+            messagebox.askokcancel, messagebox.showinfo = reales_mb
+            tk_llavero.cerrar = REAL_CERRAR
 
         # «Ajustes → Llavero…»: al activarlo, la principal relee el config y
         # lanza la primera pasada del llavero.

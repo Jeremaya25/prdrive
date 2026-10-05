@@ -1193,7 +1193,11 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
             lanzar("Llavero: la primera pasada", [model.LLAVERO])
 
     def expulsar() -> None:
-        """Cierra la ventana y el contenedor, para poder quitar la unidad.
+        """Cierra el llavero, la ventana y el contenedor, para poder quitar la unidad.
+
+        Con llavero, antes que nada se cierra (`tk_llavero.cerrar()`), también en
+        un dispositivo sin cifrar: entonces termina diciendo que ya se puede
+        quitar con «Quitar hardware de forma segura».
 
         No desmonta este proceso: corre desde DENTRO del contenedor y mientras
         viva no se puede desmontar sin forzar. Lanza el script del vestíbulo,
@@ -1202,11 +1206,28 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         nada nuestro con ficheros abiertos dentro.
         """
         script = vista.get("expulsion")
-        if script is None or not messagebox.askokcancel(TITLE, (
-                "Se cierra esta ventana y, unos segundos después, el contenedor "
-                "cifrado. Cuando VeraCrypt termine, ya puedes quitar la unidad.\n\n"
-                "Si algún otro programa tiene abierto algo de dentro, VeraCrypt "
-                "te preguntará si forzar el cierre."), parent=root):
+        con_llavero = vista["config"].pareja_llavero is not None
+        if script is None and not con_llavero:
+            return
+        if script is not None:
+            pregunta = ("Se cierra esta ventana y, unos segundos después, el contenedor "
+                        "cifrado. Cuando VeraCrypt termine, ya puedes quitar la unidad.\n\n"
+                        "Si algún otro programa tiene abierto algo de dentro, VeraCrypt "
+                        "te preguntará si forzar el cierre.")
+        else:
+            pregunta = ("Se cierra el llavero (KeePassXC, si está abierto) y esta ventana. "
+                        "Después, quita la unidad con «Quitar hardware de forma segura».")
+        if not messagebox.askokcancel(TITLE, pregunta, parent=root):
+            return
+        # El llavero antes que nada: KeePassXC y su proxy retienen la unidad,
+        # y lo que quede sin subir se sube ahora (`keepassxc.cerrar_llavero()`).
+        if con_llavero and not tk_llavero.cerrar(root, vista["config"]):
+            return
+        if script is None:
+            messagebox.showinfo(TITLE, "Ya puedes quitarla (Quitar hardware de forma "
+                                       "segura).", parent=root)
+            result["choice"] = None
+            root.destroy()
             return
         try:
             cifrado.lanzar_expulsion(script)
@@ -1673,7 +1694,9 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
             theme.boton_icono(boton_bloquear, "expulsar", theme.TINTA2,
                               theme.SUPERFICIE)
             boton_bloquear.grid(row=0, column=2, padx=(8, 0))
-        elif vista.get("expulsion") is not None:
+        elif vista.get("expulsion") is not None or vista.get("llavero") is not None:
+            # También sin VeraCrypt si lleva el llavero: hay que cerrar KeePassXC
+            # y subir lo pendiente antes de quitar la unidad.
             boton_expulsar = ttk.Button(pie, text="Expulsar", padding=(12, 8),
                                         command=expulsar, state=apagado)
             theme.boton_icono(boton_expulsar, "expulsar", theme.TINTA2,

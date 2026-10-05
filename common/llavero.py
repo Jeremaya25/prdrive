@@ -33,6 +33,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -442,20 +443,56 @@ def lanzar_vigilante() -> int | None:
     return subprocess.Popen([exe, str(model.RUNSYNC_PY), "--vigilar-llavero"], **kwargs).pid
 
 
-def pasada() -> tuple[int, str]:
-    """Hace una pasada del llavero sin terminal (`sync.py keychain`): «traer lo último».
+SIN_TIEMPO = 124
+"""El código de `pasada()` cuando se acaba su tope, como el de `timeout(1)`."""
 
-    Con stdin cerrado: si la pareja pidiera `--resync`, se salta, como en el
-    servicio. Es función de módulo para que los tests no lancen nada.
+
+def matar_arbol(pid: int) -> None:
+    """Termina un proceso y todos sus hijos; de módulo para que los tests no maten nada.
+
+    Para una pasada que se pasa de su tope: matar solo `sync.py` dejaría su
+    rclone vivo, con ficheros del volumen abiertos.
+    """
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True,
+                       creationflags=model.CREATE_NO_WINDOW)
+        return
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except OSError:
+        pass                                  # ya no estaba
+
+
+def pasada(tope: float | None = None) -> tuple[int, str]:
+    """Hace una pasada del llavero sin terminal (`sync.py keychain`).
+
+    Es «traer lo último» al abrir y «subir lo pendiente» al expulsar. Si hace
+    falta un `--resync`, lo hace sola (`sync._bisync_preflight()`). Es función
+    de módulo para que los tests no lancen nada.
+
+    Args:
+        tope: Segundos como mucho; pasados, se termina con sus hijos y sale
+            `SIN_TIEMPO`.
 
     Returns:
         `(código de sync.py, su salida)`.
     """
-    kwargs: dict = {"creationflags": model.CREATE_NO_WINDOW} if os.name == "nt" else {}
-    proc = subprocess.run([sys.executable, str(model.SYNC_PY), model.LLAVERO],
-                          stdin=subprocess.DEVNULL, capture_output=True, text=True,
-                          encoding="utf-8", errors="replace", **kwargs)
-    return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+    kwargs: dict = {}
+    if os.name == "nt":
+        kwargs["creationflags"] = model.CREATE_NO_WINDOW | model.CREATE_NEW_PROCESS_GROUP
+    else:
+        kwargs["start_new_session"] = True
+    proc = subprocess.Popen([sys.executable, str(model.SYNC_PY), model.LLAVERO],
+                            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, text=True, encoding="utf-8",
+                            errors="replace", **kwargs)
+    try:
+        salida, _ = proc.communicate(timeout=tope)
+    except subprocess.TimeoutExpired:
+        matar_arbol(proc.pid)
+        salida, _ = proc.communicate()
+        return SIN_TIEMPO, salida or ""
+    return proc.returncode, salida or ""
 
 
 # --- activarlo y desactivarlo: lo que se pone en el dispositivo

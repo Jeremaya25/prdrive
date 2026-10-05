@@ -54,6 +54,11 @@ funcionando), salvo estos flags propios:
     --llavero
         «Abrir llavero» sin la ventana: abre KeePassXC con la base del
         dispositivo (`ui.abrir_llavero()`). Es lo que hace `Llavero.bat`.
+    --cerrar-llavero
+        Lo que hace «Expulsar PRDRIVE.bat» antes de desmontar: cierra
+        KeePassXC (si se dice que sí), sube lo pendiente y deja el registro del
+        navegador como estaba (`keepassxc.cerrar_llavero()`). Sale con 1 si
+        KeePassXC sigue abierto.
     --combinar-llavero BASE COPIA [--keyfile LLAVE]
         La consola de «Combinar»: `keepassxc-cli merge` pide en ella la
         contraseña de la base (`keepassxc.combinar_aqui()`).
@@ -692,6 +697,47 @@ def abrir_llavero() -> int:
     return ui.abrir_llavero(config)
 
 
+def cerrar_llavero(preguntar=input) -> int:
+    """Hace `--cerrar-llavero`, en la consola de «Expulsar PRDRIVE.bat».
+
+    Si el KeePassXC de la unidad está abierto, pregunta antes de cerrarlo; sin
+    nadie que conteste (sin consola), lo cierra, y si tiene algo sin guardar
+    pregunta él. Lo demás no dice nada si va bien.
+
+    Args:
+        preguntar: Lo que pregunta (`input`).
+
+    Returns:
+        0 si se puede desmontar; 1 si KeePassXC sigue abierto.
+    """
+    try:
+        config = model.load_config()
+    except model.ConfigError:
+        return 0                            # sin config no hay llavero que cerrar
+    if config.pareja_llavero is None:
+        return 0
+    programas, _ = keepassxc.procesos_de_la_unidad()
+    if programas:
+        try:
+            respuesta = preguntar("KeePassXC está abierto. ¿Cerrarlo? [S/n] ")
+        except EOFError:
+            respuesta = ""
+        if str(respuesta).strip().lower() in ("n", "no"):
+            print("KeePassXC sigue abierto: no se cierra la unidad.")
+            return 1
+        print("Cerrando KeePassXC: si tiene algo sin guardar, te lo pregunta.")
+    try:
+        cierre = keepassxc.cerrar_llavero(config)
+    except Exception as e:                              # noqa: BLE001
+        # Un fallo aquí no puede impedir expulsar: si algo sigue abierto,
+        # VeraCrypt lo dice al desmontar.
+        print(f"No se ha podido cerrar el llavero del todo ({e}); se sigue expulsando.")
+        return 0
+    for linea in cierre.lineas:
+        print(linea)
+    return 0 if cierre.listo else 1
+
+
 def combinar_llavero(rest: list[str]) -> int:
     """Hace `--combinar-llavero BASE COPIA [--keyfile LLAVE]`, en la consola que abre «Combinar».
 
@@ -1039,6 +1085,9 @@ def main() -> int:
 
     if args == ["--llavero"]:
         return abrir_llavero()
+
+    if args == ["--cerrar-llavero"]:
+        return cerrar_llavero()
 
     if args and args[0] == "--combinar-llavero":
         return combinar_llavero(args[1:])

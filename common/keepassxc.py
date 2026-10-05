@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""KeePassXC en este equipo: su configuración, el navegador y lanzarlo con la base.
+"""KeePassXC en este equipo: su configuración, el navegador, lanzarlo y cerrarlo.
 
 Es lo que hay detrás de «Abrir llavero» (`ui/tk_llavero.py`; `runsync.py
---llavero`) y, al expulsar, de dejar el registro como estaba. La base y su
+--llavero`) y, al expulsar (`cerrar_llavero()`; `runsync.py --cerrar-llavero`),
+de cerrarlo, subir lo pendiente y dejar el registro como estaba. La base y su
 sincronización son de `common/llavero.py`; esto es el programa. Solo Windows
 (x64, y ARM64 con el x64 emulado); Linux es la fase 2 de la especificación.
 
@@ -36,7 +37,7 @@ import time
 from pathlib import Path
 from typing import Callable, Mapping, NamedTuple
 
-from . import components, llavero, model, pins, registro, results, store
+from . import components, conflicts, llavero, model, pins, registro, results, store
 
 CONFIG_SUBDIR = Path("config") / "windows"
 """Dónde va la configuración de KeePassXC, dentro de `.prdrive/keepassxc/`."""
@@ -89,6 +90,8 @@ que puede haber dejado un KeePassXC instalado (`getBrowserName()`).
 
 CLI = "keepassxc-cli.exe"
 """La línea de órdenes de KeePassXC, que viene en el mismo ZIP que el programa."""
+PROXY = "keepassxc-proxy.exe"
+"""El proxy del navegador: lo lanza el navegador, y retiene el volumen (K6, H-16)."""
 CREATE_NEW_CONSOLE = 0x00000010
 """Flag de creación de procesos de Windows: el hijo tiene su propia consola, a la vista."""
 
@@ -744,3 +747,142 @@ def abrir(ap: Apertura, llave: Path | None = None) -> Abierto:
                           f"registro ({fallos[0]}).")
     proc = lanzar(orden(ap.exe, ap.base, llave), entorno())
     return Abierto(esperar_arranque(proc), tuple(avisos))
+
+
+# --- cerrarlo al expulsar (§10)
+
+ESPERA_CIERRE = 180.0  # segundos
+"""Lo que se espera a que KeePassXC salga después de pedírselo: puede estar preguntando."""
+TOPE_PASADA = 60.0  # segundos
+"""Lo más que dura la pasada de lo pendiente al expulsar."""
+ESPERA_VIGILANTE = 90.0  # segundos
+"""Lo que se espera a que el vigilante se vaya: si está en una pasada, la acaba."""
+
+
+def procesos_de_la_unidad() -> tuple[list[int], list[int]]:
+    """Devuelve los pids de KeePassXC y de su proxy que corren desde la unidad."""
+    programas: list[int] = []
+    proxies: list[int] = []
+    for paquete in components.paquetes_keepassxc(model.APP_DIR):
+        carpeta = components.keepassxc_dir(model.APP_DIR, paquete)
+        for pid, exe in store.procesos_desde(carpeta).items():
+            nombre = Path(exe).name.lower()
+            if nombre == components.KEEPASSXC_EXE.lower():
+                programas.append(pid)
+            elif nombre == PROXY:
+                proxies.append(pid)
+    return programas, proxies
+
+
+def pedir_cierre(pid: int) -> None:
+    """Le pide a un programa que se cierre, como lo haría la persona (`WM_CLOSE`).
+
+    `taskkill /PID`, nunca `/F`: si KeePassXC tiene algo sin guardar, pregunta.
+    Es de módulo para que los tests no cierren nada.
+    """
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/PID", str(pid)], capture_output=True,
+                       creationflags=model.CREATE_NO_WINDOW)
+    else:
+        try:
+            os.kill(pid, 15)                  # SIGTERM: KeePassXC sale como al cerrarlo
+        except OSError:
+            pass
+
+
+def terminar(pid: int) -> None:
+    """Termina un proceso sin preguntarle; solo para el proxy, que no guarda nada.
+
+    Es de módulo para que los tests no maten nada.
+    """
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True,
+                       creationflags=model.CREATE_NO_WINDOW)
+    else:
+        try:
+            os.kill(pid, 9)
+        except OSError:
+            pass
+
+
+def esperar_salida(pids: list[int], segundos: float) -> bool:
+    """Espera a que salgan esos procesos; indica si han salido todos a tiempo."""
+    limite = time.monotonic() + segundos
+    while any(store.pid_alive(pid) for pid in pids):
+        if time.monotonic() >= limite:
+            return False
+        llavero.dormir(0.5)
+    return True
+
+
+class Cierre(NamedTuple):
+    """Cómo ha ido cerrar el llavero para expulsar.
+
+    Args:
+        listo: Si ya nada del llavero retiene la unidad.
+        lineas: Lo que hay que decir; vacío si todo ha ido bien, que es lo que
+            pasa casi siempre y por eso no se dice nada.
+    """
+    listo: bool
+    lineas: tuple[str, ...] = ()
+
+
+SIGUE_ABIERTO = ("KeePassXC no se ha cerrado: puede que esté preguntando algo, o que esté "
+                 "puesto para minimizarse al cerrar. Ciérralo desde su menú (Base de datos "
+                 "→ Salir) y vuelve a expulsar.")
+SUBIRA = "El llavero se subirá la próxima vez: ahora no ha podido (código {rc})."
+
+
+def cerrar_llavero(config: model.Config) -> Cierre:
+    """Deja el llavero listo para quitar la unidad (los pasos 1–5 de §10).
+
+    1. Cierra el KeePassXC de la unidad como lo haría la persona y espera a
+       que salga (si tiene algo sin guardar, pregunta él). Quien llama ya ha
+       preguntado si se cierra.
+    2. Termina su proxy, que vive lo que el navegador.
+    3. Para el vigilante del llavero y espera a que se vaya.
+    4. Si queda algo sin subir, una pasada con un tope de `TOPE_PASADA`.
+    5. Deja las claves del navegador como estaban (`cerrar_navegador()`).
+
+    Tarda (espera a KeePassXC y a la pasada): la ventana lo llama en
+    `working()`.
+
+    Returns:
+        Si se puede quitar la unidad y lo que hay que decir.
+    """
+    pareja = config.pareja_llavero
+    if pareja is None:
+        return Cierre(True)
+    lineas: list[str] = []
+    programas, proxies = procesos_de_la_unidad()
+    for pid in programas:
+        pedir_cierre(pid)
+    if programas and not esperar_salida(programas, ESPERA_CIERRE):
+        return Cierre(False, (SIGUE_ABIERTO,))
+    for pid in proxies:
+        terminar(pid)
+    if llavero.vigilante_vivo():
+        try:
+            llavero.parada_vigilante().touch()
+        except OSError:
+            pass
+        limite = time.monotonic() + ESPERA_VIGILANTE
+        while llavero.vigilante_vivo() and time.monotonic() < limite:
+            llavero.dormir(0.5)
+    if llavero.pendiente(pareja):
+        rc, _ = llavero.pasada(tope=TOPE_PASADA)
+        if rc != 0:
+            rotas = llavero.rotas(pareja.local_abs)
+            if rotas:
+                lineas.append("La base del llavero no está entera, y no se ha subido: "
+                              f"{rotas[0].motivo}. «Abrir llavero» lo vuelve a intentar.")
+            elif any(x.copias for x in conflicts.escanear(pareja)):
+                lineas.append("El llavero tiene copias de conflicto: «Abrir llavero» "
+                              "ofrecerá combinarlas.")
+            else:
+                lineas.append(SUBIRA.format(rc=rc))
+    fallos = cerrar_navegador()
+    if fallos:
+        lineas.append("No se han podido dejar como estaban algunas claves del navegador "
+                      f"({fallos[0]}). No impiden quitar la unidad.")
+    return Cierre(True, tuple(lineas))

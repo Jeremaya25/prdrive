@@ -155,6 +155,9 @@ c("expulsar: sin /silent, para que VeraCrypt pregunte si forzar",
   False)
 c("expulsar: espera antes a que la ventana que lo llama se cierre",
   expulsar.index("timeout /t 3") < expulsar.index("/dismount"), True)
+c("expulsar: cierra el llavero antes de desmontar, y se para si sigue abierto",
+  (expulsar.index("call :llavero") < expulsar.index("/dismount"),
+   "if errorlevel 1 goto llavero_abierto" in expulsar.splitlines()), (True, True))
 
 
 def bloque(texto, etiqueta):
@@ -166,6 +169,20 @@ def bloque(texto, etiqueta):
     hasta = next((i for i in range(desde, len(lineas)) if lineas[i].startswith(":")),
                  len(lineas))
     return lineas[desde:hasta]
+
+
+llave = [ln for ln in bloque(expulsar, "llavero") if ln]
+c("expulsar: el llavero solo si la unidad lo lleva (su Llavero.bat)",
+  llave[0], 'if not exist "%RAIZ%\\Llavero.bat" exit /b 0')
+c("  con el Python de CONSOLA del dispositivo, ARM64 antes que x64, como runsync.bat",
+  [ln for ln in llave if ln.startswith(("if /i", "if not defined PYL if"))],
+  ['if /i "%PROCESSOR_ARCHITECTURE%"=="ARM64" if exist "%RTL%\\windows-arm64\\python.exe" '
+   'set "PYL=%RTL%\\windows-arm64\\python.exe"',
+   'if not defined PYL if exist "%RTL%\\windows-x64\\python.exe" '
+   'set "PYL=%RTL%\\windows-x64\\python.exe"'])
+c("  esperándolo, y devolviendo su código",
+  (llave[-2], llave[-1]),
+  ('"%PYL%" "%RAIZ%\\.prdrive\\runsync.py" --cerrar-llavero', "exit /b"))
 
 
 def precedida(texto, orden, antes):
