@@ -13,11 +13,13 @@ también lo que se configura. El módulo conserva su nombre porque el subcomando
 `sync.py --doctor` no cambia y porque es a esta pantalla a la que apunta el
 rediseño de la pantalla de reparación.
 
-Solo dibuja, y menos que ninguna otra: no lee estado, no escribe nada y no
-decide nada. Cada entrada es un botón y una frase que dice qué pasa al
-pulsarlo; lo que pasa lo hace el módulo de turno. Lo que se configura (el
-intervalo del servicio y, en la raíz cifrada de un equipo, si se pide la
-contraseña al iniciar sesión) va en «Configuración…» (`ui/tk_configuracion.py`).
+Solo dibuja, y menos que ninguna otra: no escribe nada y no decide nada. Cada
+entrada es un botón y una frase que dice qué pasa al pulsarlo; lo que pasa lo
+hace el módulo de turno. Lo que se configura (el intervalo del servicio y, en
+la raíz cifrada de un equipo, si se pide la contraseña al iniciar sesión) va en
+«Configuración…» (`ui/tk_configuracion.py`). Una entrada sale solo a veces:
+«Renombrar el catálogo…», mientras el remoto conserve su `pairs.toml`, y eso
+lo dice `catalog_editor.ofrecer_renombrado()` sin red (`OCASIONALES`).
 
 `lanzar` llega desde la ventana principal en vez de importarse: la comprobación
 se enseña en su ventana de salida, que es hija de la principal y no de esta, y
@@ -29,7 +31,7 @@ from __future__ import annotations
 
 from common.model import Config
 
-from . import theme
+from . import catalog_editor, theme
 from .tk import cabecera, cuerpo_visible, modal, mostrar, separador_fila
 
 ENTRADAS = (
@@ -50,16 +52,29 @@ ENTRADAS = (
      "Lo guardado en .prversions/ por las parejas que versionan: cuánto ocupa "
      "en cada lado, abrir la carpeta de aquí y purgar lo anterior a una fecha.",
      "versiones"),
+    ("Llavero…", "llave",
+     "Contraseñas y passkeys en una base de KeePassXC que viaja en el dispositivo y "
+     "se sincroniza sola. Activarlo, decir si la base pide fichero llave, "
+     "desactivarlo.",
+     "llavero"),
     ("Nombre e icono de la unidad…", "edit",
      "Cómo la enseña el Explorador de Windows al conectarla. Útil para "
      "distinguir un dispositivo de otro a simple vista.",
      "volumen"),
+    ("Renombrar el catálogo…", "edit",
+     "El catálogo de este remoto conserva su nombre de antes, pairs.toml. "
+     "Pasarlo a remote.toml es opcional, y solo se puede cuando todos los "
+     "dispositivos de la flota saben leer el nombre nuevo.",
+     "renombrar"),
 )
 """Las entradas de la pantalla: rótulo del botón, icono, frase y clave de la acción."""
 
+OCASIONALES = {"renombrar": catalog_editor.ofrecer_renombrado}
+"""Las entradas que solo salen a veces: su clave y quién dice, sin red, si sale."""
+
 
 def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None,
-                abrir_reparacion=None) -> None:
+                abrir_reparacion=None, abrir_llavero=None) -> None:
     """Abre «Ajustes»; no devuelve nada.
 
     De aquí no sale ninguna decisión que quien llama tenga que repintar. Lo que
@@ -75,6 +90,8 @@ def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None,
             ventana de salida es hija de la principal, no de esta. Además esta
             se cierra antes de abrirla, para no tener dos modales disputándose
             la captura del ratón.
+        abrir_llavero: Lo mismo para «Llavero…»: activarlo cambia el config,
+            y quien lo relee y lanza la primera pasada es la principal.
     """
     from tkinter import ttk
 
@@ -98,6 +115,12 @@ def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None,
         if abrir_reparacion is not None:
             abrir_reparacion()
 
+    def llavero() -> None:
+        """Cierra «Ajustes» y abre «Llavero…» desde la principal, como «Reparación»."""
+        dlg.destroy()
+        if abrir_llavero is not None:
+            abrir_llavero()
+
     def configuracion() -> None:
         """Abre «Configuración»: el intervalo del servicio y lo del agente."""
         from . import tk_configuracion
@@ -118,15 +141,24 @@ def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None,
         from . import tk_volumen
         tk_volumen.open_dialog(dlg)
 
+    def renombrar() -> None:
+        """Abre «Renombrar el catálogo»."""
+        from . import tk_renombrar
+        tk_renombrar.open_dialog(dlg, raw)
+
     acciones = {"reparacion": reparacion, "configuracion": configuracion,
-                "qr": emparejar, "versiones": versiones, "volumen": nombre_e_icono}
+                "qr": emparejar, "versiones": versiones, "volumen": nombre_e_icono,
+                "renombrar": renombrar, "llavero": llavero}
+    raw = catalog_editor.raw_del_dispositivo(raw_local)
+    entradas = [e for e in ENTRADAS
+                if e[3] not in OCASIONALES or OCASIONALES[e[3]](raw)]
 
     tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(14, 12, 14, 12))
     tarjeta.grid(row=1, column=0, sticky="ew", pady=(16, 0))
     tarjeta.columnconfigure(0, weight=1)
 
     fila = 0
-    for rotulo, icono, frase, clave in ENTRADAS:
+    for rotulo, icono, frase, clave in entradas:
         if fila:
             separador_fila(tarjeta, fila, 1)
             fila += 1

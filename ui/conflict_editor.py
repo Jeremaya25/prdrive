@@ -17,6 +17,12 @@ esa versión, y por eso no es una regla fija de «borrar la copia»: si perdió
 este dispositivo, su versión ES la copia y hay que devolverle el nombre; si
 ganó, es el original y lo que sobra es la copia. `common/conflicts.py` ya sabe
 cuál es cuál; este módulo solo pregunta.
+
+El llavero tiene una salida más, la primera: «Combinar» (`plan_combinar()`).
+Elegir una versión de una base de KeePassXC es perder lo que se guardó en la
+otra; combinarlas lo junta. Lo hace `keepassxc-cli merge` en una consola, que
+pide la contraseña: prdrive no la ve. La copia combinada va a `.prversions/`,
+recuperable, y la siguiente pasada la quita del remoto.
 """
 
 from __future__ import annotations
@@ -26,7 +32,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from common import conflicts
+from common import conflicts, keepassxc, model
 from common.conflicts import Conflicto, Version
 
 ETIQUETA_LADO = {
@@ -42,6 +48,12 @@ ETIQUETA_COPIA = "otra versión"
 NOTA_LOCAL = ("Solo se tocan ficheros de este dispositivo. La próxima sincronización "
               "lleva el resultado al remoto y borra allí las copias.")
 """Lo que se dice siempre al resolver: solo se toca este dispositivo."""
+PIERDE_LLAVERO = ("Es la base del llavero: lo que se guardó en la versión que se descarta "
+                  "se pierde. «Combinar» junta las dos sin perder nada.")
+"""El aviso de «quedarse con…» en el llavero."""
+ESPERANDO_CONSOLA = ("Combinando en la consola de KeePassXC: escribe allí la contraseña de "
+                     "la base. Esta ventana sigue cuando se cierre la consola.")
+"""Lo que dice la espera mientras la consola de `keepassxc-cli` está abierta."""
 
 
 class ResolucionImposible(Exception):
@@ -263,4 +275,152 @@ def plan_conservar(conflicto: Conflicto, version: Version) -> ResolvePlan:
         plan.warnings.append(
             "La versión que se descarta es más reciente que la que se conserva. "
             "Comprueba que es la que quieres perder.")
+    if es_del_llavero(conflicto):
+        plan.warnings.append(PIERDE_LLAVERO)
+    return plan
+
+
+def nombre_pareja(nombre: str) -> str:
+    """Devuelve cómo se enseña la pareja de un conflicto: la del llavero, sin su nombre interno."""
+    return "(el llavero)" if nombre == model.LLAVERO else nombre
+
+
+def es_del_llavero(conflicto: Conflicto) -> bool:
+    """Indica si el conflicto es de la base del llavero, que se combina en vez de elegir."""
+    return conflicto.pareja == model.LLAVERO and conflicto.original.suffix.lower() == ".kdbx"
+
+
+def puede_combinar(conflicto: Conflicto) -> bool:
+    """Indica si «Combinar» tiene con qué: la base con su nombre, alguna copia y keepassxc-cli."""
+    programa = keepassxc.cli()
+    return (es_del_llavero(conflicto) and huella(conflicto.original) is not None
+            and bool(conflicto.copias) and programa is not None and programa.is_file())
+
+
+def en_versiones(conflicto: Conflicto, copia: Path, sello: str) -> Path:
+    """Devuelve dónde queda una copia combinada: en `.prversions/`, con el sello de rclone.
+
+    El mismo nombre que le pondría `--backup-dir` con `--suffix ~%Y%m%d-%H%M%S
+    --suffix-keep-extension` (`personal.conflicto-remoto1~20261005-073000.kdbx`),
+    así que «Versiones…» la ve y la purga como las demás.
+    """
+    relativa = copia.relative_to(conflicto.raiz)
+    return (conflicto.raiz / model.VERSIONS_DIR / relativa.parent
+            / f"{copia.stem}{sello}{copia.suffix}")
+
+
+def no_combinado(copia: Path, codigo: int) -> str:
+    """Devuelve lo que se dice si `keepassxc-cli` no combina: qué hacer en la ventana de KeePassXC."""
+    return (f"No se ha combinado «{copia.name}» (código {codigo}), y no se ha tocado nada: "
+            "puede que la contraseña o el fichero llave no fueran los de la base, o que se "
+            "cerrara la consola.\n\n"
+            "También se puede combinar desde KeePassXC: con la base abierta, «Base de datos → "
+            f"Combinar desde base de datos…» y elige la copia:\n\n{copia}")
+
+
+@dataclass
+class CombinarPlan:
+    """Combinar en la base del llavero lo de sus copias de conflicto.
+
+    Mismo contrato que `ResolvePlan`: `consequences` y `warnings` se enseñan
+    antes de confirmar y `execute()` solo corre si la persona dice que sí.
+    `execute()` espera a la consola, así que se lanza desde `working()`.
+
+    Args:
+        conflicto: El conflicto de la base.
+        llave: El fichero llave de este equipo, si la base lo pide.
+        huellas: Tamaño y fecha de la base y las copias cuando se pensó el plan.
+        consequences: Una línea por consecuencia.
+        warnings: Lo que conviene saber antes de confirmar.
+    """
+    conflicto: Conflicto
+    llave: Path | None
+    huellas: dict[Path, tuple[int, int] | None]
+    consequences: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+
+    def execute(self) -> list[str]:
+        """Combina cada copia en la base, de una en una, y la aparta a `.prversions/`.
+
+        Una copia que `keepassxc-cli` no combina se queda donde estaba y se
+        para ahí: las de antes ya están combinadas y apartadas, y repetirlo
+        no combina dos veces (lo que ya está, «no modifica» la base).
+
+        Raises:
+            ResolucionImposible: Si algo ha cambiado desde el plan, o una copia
+                no se ha combinado o no se ha podido apartar.
+        """
+        for ruta, antes in self.huellas.items():
+            if huella(ruta) != antes:
+                raise ResolucionImposible(
+                    f"«{ruta.name}» ha cambiado desde que se preparó esto. Vuelve a "
+                    f"abrir el conflicto para ver cómo está ahora.")
+        base = self.conflicto.original
+        sello = datetime.now().strftime("~%Y%m%d-%H%M%S")
+        hechos: list[str] = []
+        for copia in self.conflicto.copias:
+            codigo = keepassxc.combinar(base, copia, self.llave)
+            if codigo != 0:
+                raise ResolucionImposible(no_combinado(copia, codigo))
+            destino = en_versiones(self.conflicto, copia, sello)
+            try:
+                destino.parent.mkdir(parents=True, exist_ok=True)
+                mover(copia, destino)
+            except OSError as e:
+                raise ResolucionImposible(
+                    f"«{copia.name}» ya está combinada en «{base.name}», pero no se ha podido "
+                    f"apartar a {model.VERSIONS_DIR}: sigue saliendo como conflicto, y "
+                    f"combinarla otra vez no cambia nada.\n\n{e}") from e
+            hechos.append(f"«{copia.name}» combinada en «{base.name}»")
+        return hechos
+
+
+def plan_combinar(conflicto: Conflicto, llave: Path | None, abierto: bool = False) -> CombinarPlan:
+    """Devuelve el plan de combinar en la base del llavero lo de sus copias.
+
+    Args:
+        conflicto: El conflicto de la base.
+        llave: El fichero llave de este equipo, si la base lo pide.
+        abierto: Si el KeePassXC de la unidad está abierto: verá la base
+            cambiar y la recargará (S3), o la combinará con lo que tenga sin
+            guardar (S5).
+
+    Raises:
+        ResolucionImposible: Si no hay con qué combinar.
+    """
+    if not es_del_llavero(conflicto):
+        raise ResolucionImposible("Solo se combina la base del llavero.")
+    if huella(conflicto.original) is None:
+        raise ResolucionImposible(
+            f"«{conflicto.original.name}» no está con su nombre: no hay dónde combinar. "
+            "Elige una de las versiones de la lista.")
+    if not conflicto.copias:
+        raise ResolucionImposible(f"«{conflicto.relativa}» ya no tiene copias de conflicto.")
+    programa = keepassxc.cli()
+    if programa is None or not programa.is_file():
+        raise ResolucionImposible(
+            "No hay keepassxc-cli con el que combinar en este equipo (falta en el dispositivo, "
+            "o es el KeePassXC de Flathub): no se puede "
+            "combinar desde prdrive. Se puede desde la ventana de KeePassXC, con «Base de "
+            "datos → Combinar desde base de datos…».")
+    plan = CombinarPlan(conflicto=conflicto, llave=llave,
+                        huellas={v.ruta: huella(v.ruta) for v in conflicto.versiones})
+    base = conflicto.original.name
+    for v, nombre in etiquetas(conflicto):
+        if not v.es_original:
+            plan.consequences.append(
+                f"Lo de la {nombre} ({describir(v.ruta)}) entra en «{base}», que se queda "
+                "con lo de las dos.")
+    plan.consequences.append(
+        "Se abre una consola de KeePassXC que pide la contraseña de la base"
+        + (" (el fichero llave de este equipo ya va puesto)" if llave else "")
+        + ". prdrive no la ve.")
+    plan.consequences.append(
+        f"Cada copia combinada pasa a {model.VERSIONS_DIR}, de donde se puede recuperar. Si "
+        "no se combina, no se toca nada.")
+    plan.consequences.append(NOTA_LOCAL)
+    if abierto:
+        plan.warnings.append(
+            "KeePassXC está abierto: verá que la base ha cambiado y la recargará, o te "
+            "propondrá combinarla con lo que tengas sin guardar.")
     return plan

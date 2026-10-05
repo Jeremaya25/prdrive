@@ -1,0 +1,61 @@
+name: Llavero de verdad
+
+# El llavero de punta a punta con el KeePassXC y el rclone de verdad
+# (`tests/integracion/llavero_real.py`): bajarlos y comprobarlos, abrir
+# KeePassXC, que el navegador llegue a él, subir un guardado, combinar un
+# conflicto y expulsar. Baja cosas y, en Windows, escribe las claves del
+# navegador en HKCU, así que no va en `tests.yml`: corre en estas máquinas de
+# usar y tirar cuando cambia algo del llavero, o a mano.
+on:
+  pull_request:
+    paths:
+      - "common/llavero.py"
+      - "common/keepassxc.py"
+      - "common/kdbx.py"
+      - "common/registro.py"
+      - "common/pins.py"
+      - "common/components.py"
+      - "common/model.py"
+      - "common/store.py"
+      - "install/keepassxc_bin.py"
+      - "ui/llavero_editor.py"
+      - "ui/conflict_editor.py"
+      - "sync.py"
+      - "runsync.py"
+      - "tests/integracion/**"
+      - ".github/workflows/llavero-real.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: llavero-real-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  llavero:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Pantalla virtual (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb
+
+      - name: El llavero de punta a punta (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a python tests/integracion/llavero_real.py
+
+      - name: El llavero de punta a punta (Windows)
+        if: runner.os == 'Windows'
+        run: python tests/integracion/llavero_real.py

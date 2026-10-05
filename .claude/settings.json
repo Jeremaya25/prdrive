@@ -1,0 +1,38 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python tests/run_all.py)",
+      "Bash(python tests/test_*.py)",
+      "Bash(python3 tests/run_all.py)",
+      "Bash(python3 tests/test_*.py)",
+      "Bash(python sync.py --list*)",
+      "Bash(python sync.py --doctor*)",
+      "Bash(python sync.py --dry-run*)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/session_start.sh" }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guard_sync.py" }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/post_edit.py" }
+        ]
+      }
+    ]
+  }
+}

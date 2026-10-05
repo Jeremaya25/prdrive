@@ -25,16 +25,18 @@ intérprete de Tk: es reversible y la cogen los widgets que se creen después.
 Las ventanas se crean ocultas y no se entra nunca en el bucle de eventos.
 """
 
+import struct
 import sys
 import threading
 import time
+from pathlib import Path
 
 from _harness import Checks, sandbox, tmpdir
 
 import tomllib
 
 from common import (catalog, components, config_file, conflicts, fleet, historial,
-                    model, pairing, pins, results, revision, update)
+                    kdbx, keepassxc, model, pairing, pins, results, revision, update)
 from install import device
 
 c = Checks("medidas de las pantallas")
@@ -50,9 +52,9 @@ except Exception as e:                                   # sin entorno gráfico
 
 from ui import tk as uitk
 from ui import remote_picker, segundo_plano
-from ui import (tk_configuracion, tk_doctor, tk_fleet, tk_install, tk_pairs, tk_qr,
-                tk_repair, tk_update, tk_versions, tk_volumen, tk_watch, versions_editor,
-                volumen, watch)
+from ui import (catalog_editor, tk_configuracion, tk_doctor, tk_fleet, tk_install,
+                tk_llavero, tk_pairs, tk_qr, tk_renombrar, tk_repair, tk_update, tk_versions,
+                tk_volumen, tk_watch, versions_editor, volumen, watch)
 
 # Ni una petición a GitHub desde un test.
 update.fetch = lambda url, timeout: c("ningún test toca la red", "fetch", "nada")
@@ -330,6 +332,8 @@ try:
                                   ("fotos", "sync-data/fotos del móvil", "bisync"),
                                   ("musica", "sync-data/música", "down-mirror"),
                                   ("docs", "Documentos/trabajo", "bisync"))))
+    BASE_MEDIDAS = (tmpdir("prdrive-medidas-base-") / ("bases de la familia " * 3).strip()
+                    / "contraseñas de toda la familia.kdbx")
     DISPOSITIVO_FALSO = tmpdir("prdrive-medidas-")
     (DISPOSITIVO_FALSO / ".prdrive").mkdir()
     (DISPOSITIVO_FALSO / ".prdrive" / "VERSION").write_text("0.0.1", encoding="utf-8")
@@ -352,6 +356,28 @@ try:
         c(f"{nombre}: «Conexión» con su estado y su aviso cabe", cabe(top), True)
         c(f"{nombre}: «Conexión» con su estado y su aviso no queda recortado",
           recortado(wiz.visor), False)
+        # «Llavero» en su estado más lleno: un remoto con llavero que pide
+        # fichero llave (las tres opciones), una base propia de ruta larga y
+        # todo lo que va a pasar, con el aviso de un formato que no se conoce.
+        previos_llavero = (wiz.catalog, wiz.state.device_root)
+        wiz.catalog = iremote.Catalog(
+            raw={**CATALOGO_MEDIDAS.raw, "keychain": {
+                "base": "contraseñas-de-toda-la-familia.kdbx", "fichero_llave": True,
+                "nombre_llave": "contraseñas-de-toda-la-familia.keyx"}},
+            head="", endpoint="nas:/prdrive-catalog/remote.toml")
+        wiz.state.device_root = RAIZ_MEDIDAS
+        BASE_MEDIDAS.parent.mkdir(parents=True, exist_ok=True)
+        BASE_MEDIDAS.write_bytes(struct.pack("<IIHH", kdbx.FIRMA_1, kdbx.FIRMA_2, 0, 5)
+                                 + b"\0" * 50)
+        wiz.llavero_eleccion, wiz.llavero_base = "propia", BASE_MEDIDAS
+        wiz.llavero_llave = (Path("C:/Users/alguien-con-nombre-largo/Documents")
+                             / "llaves de la familia" / "contraseñas-de-toda-la-familia.keyx")
+        wiz.indice = PASO["Llavero"]
+        wiz.repintar()
+        c(f"{nombre}: «Llavero», lleno, cabe", cabe(top), True)
+        c(f"{nombre}: «Llavero», lleno, no queda recortado", recortado(wiz.visor), False)
+        wiz.catalog, wiz.state.device_root = previos_llavero
+        wiz.llavero_eleccion, wiz.llavero_base, wiz.llavero_llave = "no", None, None
         # El paso de cifrado con VeraCrypt, en su peor caso (ver EN_CLARO).
         wiz.state.device, wiz.state.device_root = EN_CLARO, None
         wiz.state.encryption = "veracrypt"
@@ -784,8 +810,16 @@ try:
                 c(f"{nombre}: (las doce fallan, con la frase del diario)",
                   sum(f"Falla al menos desde el 01/12/{ano}" in h.detalle
                       for h in revision.revisar(cfg) if h.clave == "fallo"), 12)
+                # Con llavero, además: su base en conflicto, y la fila de
+                # «Combinar» debajo de los botones de la lista.
+                con_llavero = model.parse_config({**BASE, "keychain": {"base": "personal.kdbx"}})
+                base = con_llavero.pareja_llavero.local_abs / "personal.kdbx"
+                base.parent.mkdir(parents=True, exist_ok=True)
+                base.write_bytes(b"base")
+                base.with_name("personal.conflicto-remoto1.kdbx").write_bytes(b"copia")
+                conflicts.actualizar_pareja(con_llavero.pareja_llavero)
                 entra, corta = medir_dialogo(
-                    lambda: tk_repair.open_dialog(raiz, cfg, lambda *a: None),
+                    lambda: tk_repair.open_dialog(raiz, con_llavero, lambda *a: None),
                     ancho, alto, escala, modulo=tk_repair)
                 c(f"{nombre}: la pantalla de reparación cabe", entra, True)
                 c(f"{nombre}: la pantalla de reparación no queda recortada", corta, False)
@@ -819,13 +853,59 @@ try:
                   corta, False)
 
                 # «Ajustes»: una tarjeta con una entrada por acción, que crece
-                # con cada una que se le añada.
-                entra, corta = medir_dialogo(
-                    lambda: tk_doctor.open_dialog(raiz, cfg, lambda *a: None),
-                    ancho, alto, escala, modulo=tk_doctor)
+                # con cada una que se le añada. Se mide con todas, también la
+                # que solo sale a veces (renombrar el catálogo).
+                previas = dict(tk_doctor.OCASIONALES)
+                tk_doctor.OCASIONALES.update({k: (lambda raw: True) for k in previas})
+                try:
+                    entra, corta = medir_dialogo(
+                        lambda: tk_doctor.open_dialog(raiz, cfg, lambda *a: None),
+                        ancho, alto, escala, modulo=tk_doctor)
+                finally:
+                    tk_doctor.OCASIONALES.update(previas)
                 c(f"{nombre}: la pantalla de Ajustes cabe", entra, True)
                 c(f"{nombre}: la pantalla de Ajustes no queda recortada",
                   corta, False)
+
+                # «Renombrar el catálogo»: crece con una fila por dispositivo
+                # que lo impide, y se mide con la flota entera de nombres
+                # largos, todos de una versión de antes.
+                previo_leer = catalog_editor.leer_renombrado
+                catalog_editor.leer_renombrado = lambda raw=None: (
+                    frozenset({catalog.FICHERO_ANTERIOR}), FLOTA, None)
+                try:
+                    entra, corta = medir_dialogo(
+                        lambda: tk_renombrar.open_dialog(raiz, dict(BASE)),
+                        ancho, alto, escala, modulo=tk_renombrar)
+                finally:
+                    catalog_editor.leer_renombrado = previo_leer
+                c(f"{nombre}: «Renombrar el catálogo» cabe", entra, True)
+                c(f"{nombre}: «Renombrar el catálogo» no queda recortada", corta, False)
+
+                # «Ajustes → Llavero…»: sin activar, con el llavero del remoto
+                # (dos botones), y activo con fichero llave y su ruta larga
+                # (la fila más ancha de botones).
+                largo = "contraseñas-de-toda-la-familia"
+                tabla = {"base": f"{largo}.kdbx", "fichero_llave": True,
+                         "nombre_llave": f"{largo}.keyx"}
+                previo_load = catalog.load
+                catalog.load = lambda raw=None: (catalog.Catalog(
+                    raw={**BASE, "keychain": tabla},
+                    text=config_file.dumps({**BASE, "keychain": tabla}), source="remote",
+                    stamp="2026-01-01 00:00:00",
+                    endpoint="nas:/prdrive-catalog/remote.toml"), None)
+                keepassxc.apuntar_llave(Path("C:/Users/alguien-con-nombre-largo/Documents")
+                                        / "llaves de la familia" / f"{largo}.keyx")
+                try:
+                    for que, raw_llavero in (("sin activar", dict(BASE)),
+                                             ("activo", {**BASE, "keychain": tabla})):
+                        entra, corta = medir_dialogo(
+                            lambda r=raw_llavero: tk_llavero.ajustes(raiz, r),
+                            ancho, alto, escala, modulo=tk_llavero)
+                        c(f"{nombre}: «Llavero…» {que} cabe", entra, True)
+                        c(f"{nombre}: «Llavero…» {que} no queda recortada", corta, False)
+                finally:
+                    catalog.load = previo_load
 
                 # «Configuración» (#65): el intervalo, con la frase larga de un
                 # dispositivo que se desenchufa, y su peor caso, la casilla de

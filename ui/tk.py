@@ -37,6 +37,9 @@ TITLE = APP_NAME
 """El nombre de la ventana, que sale de `common/`."""
 
 IS_WIN = sys.platform == "win32"
+QUITAR_UNIDAD = ("con «Quitar hardware de forma segura»" if IS_WIN else
+                 "con «Expulsar» en el gestor de archivos")
+"""Cómo se quita una unidad sin VeraCrypt después de «Expulsar», en cada sistema."""
 """Si esto corre en Windows; los tests lo fuerzan para pasar por la otra rama."""
 
 CAPTURA_NINGUNA = 0
@@ -902,7 +905,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
     import tkinter as tk
     from tkinter import messagebox, ttk
 
-    from . import tk_doctor, tk_pairs, tk_update, tk_watch, watch
+    from . import llavero_editor, tk_doctor, tk_llavero, tk_pairs, tk_update, tk_watch, watch
 
     theme.nitidez()
     root = tk.Tk()  # TclError aquí si no hay display -> fallback consola
@@ -966,12 +969,23 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
             vista["bloqueo"] = cifrado.bloqueo()
         except Exception:                            # noqa: BLE001
             vista["bloqueo"] = None
+        # Una carpeta de este equipo no se quita: con llavero no hay «Expulsar».
+        try:
+            vista["del_equipo"] = model.es_equipo()
+        except Exception:                            # noqa: BLE001
+            vista["del_equipo"] = False
         # Qué hace este equipo al enchufar el dispositivo. Solo lee ficheros del
         # equipo (ver `watch.resumen`), así que también cabe en el primer pintado.
         try:
             vista["vigilante"] = watch.resumen()
         except Exception:                            # noqa: BLE001
             vista["vigilante"] = watch.Resumen("no_disponible")
+        # Cómo está el llavero, si lo lleva: ficheros del dispositivo y una foto
+        # de los procesos del equipo (si su KeePassXC está abierto), sin red.
+        try:
+            vista["llavero"] = llavero_editor.linea(vista["config"])
+        except Exception:                            # noqa: BLE001
+            vista["llavero"] = None
 
     leer_estado()
 
@@ -1163,8 +1177,35 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
             leer_estado()
         reajustar()
 
+    def abrir_llavero() -> None:
+        """«Abrir llavero»: KeePassXC con la base del dispositivo (`tk_llavero`).
+
+        Al volver relee el estado: puede haber hecho una pasada, y la línea del
+        llavero dice si su KeePassXC está abierto.
+        """
+        tk_llavero.abrir(root, vista["config"])
+        leer_estado()
+        reajustar()
+
+    def ajustes_llavero() -> None:
+        """«Ajustes → Llavero…»: al volver relee el config y, si se ha activado, pasa.
+
+        La primera pasada sube la base o trae la del remoto (el llavero se
+        resincroniza solo), en la ventana de salida de siempre.
+        """
+        cambio = tk_llavero.ajustes(root)
+        if cambio is None:
+            return
+        recargar()
+        if cambio == tk_llavero.ACTIVADO:
+            lanzar("Llavero: la primera pasada", [model.LLAVERO])
+
     def expulsar() -> None:
-        """Cierra la ventana y el contenedor, para poder quitar la unidad.
+        """Cierra el llavero, la ventana y el contenedor, para poder quitar la unidad.
+
+        Con llavero, antes que nada se cierra (`tk_llavero.cerrar()`), también en
+        un dispositivo sin cifrar: entonces termina diciendo que ya se puede
+        quitar (`QUITAR_UNIDAD`).
 
         No desmonta este proceso: corre desde DENTRO del contenedor y mientras
         viva no se puede desmontar sin forzar. Lanza el script del vestíbulo,
@@ -1173,11 +1214,27 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         nada nuestro con ficheros abiertos dentro.
         """
         script = vista.get("expulsion")
-        if script is None or not messagebox.askokcancel(TITLE, (
-                "Se cierra esta ventana y, unos segundos después, el contenedor "
-                "cifrado. Cuando VeraCrypt termine, ya puedes quitar la unidad.\n\n"
-                "Si algún otro programa tiene abierto algo de dentro, VeraCrypt "
-                "te preguntará si forzar el cierre."), parent=root):
+        con_llavero = vista["config"].pareja_llavero is not None
+        if script is None and not con_llavero:
+            return
+        if script is not None:
+            pregunta = ("Se cierra esta ventana y, unos segundos después, el contenedor "
+                        "cifrado. Cuando VeraCrypt termine, ya puedes quitar la unidad.\n\n"
+                        "Si algún otro programa tiene abierto algo de dentro, VeraCrypt "
+                        "te preguntará si forzar el cierre.")
+        else:
+            pregunta = ("Se cierra el llavero (KeePassXC, si está abierto) y esta ventana. "
+                        f"Después, quita la unidad {QUITAR_UNIDAD}.")
+        if not messagebox.askokcancel(TITLE, pregunta, parent=root):
+            return
+        # El llavero antes que nada: KeePassXC y su proxy retienen la unidad,
+        # y lo que quede sin subir se sube ahora (`keepassxc.cerrar_llavero()`).
+        if con_llavero and not tk_llavero.cerrar(root, vista["config"]):
+            return
+        if script is None:
+            messagebox.showinfo(TITLE, f"Ya puedes quitarla {QUITAR_UNIDAD}.", parent=root)
+            result["choice"] = None
+            root.destroy()
             return
         try:
             cifrado.lanzar_expulsion(script)
@@ -1191,16 +1248,23 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
     def bloquear() -> None:
         """«Bloquear» la raíz cifrada de este equipo: se lo pide al agente y se cierra.
 
-        El agente espera a que esta ventana se haya ido (y a la pareja en
-        curso) y desmonta sin `/silent`.
+        Con llavero, antes se cierra (`tk_llavero.cerrar()`), como al expulsar:
+        KeePassXC corre desde dentro del contenedor y lo retiene. El agente
+        espera a que esta ventana se haya ido (y a la pareja en curso) y
+        desmonta sin `/silent`.
         """
         uid = vista.get("bloqueo")
+        con_llavero = vista["config"].pareja_llavero is not None
         if uid is None or not messagebox.askokcancel(TITLE, (
-                "Se cierra esta ventana y el agente cierra el contenedor cifrado. "
+                ("Se cierra el llavero (KeePassXC, si está abierto), esta ventana y "
+                 if con_llavero else "Se cierra esta ventana y ")
+                + "el agente cierra el contenedor cifrado. "
                 "Hasta que lo desbloquees, nada de dentro se puede leer ni se "
                 "sincroniza.\n\n"
                 "Si algún otro programa tiene abierto algo de dentro, VeraCrypt "
                 "te preguntará si forzar el cierre."), parent=root):
+            return
+        if con_llavero and not tk_llavero.cerrar(root, vista["config"]):
             return
         if not cifrado.pedir_bloqueo(uid):
             messagebox.showerror(TITLE, (
@@ -1470,6 +1534,32 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
             todas.configure(command=marcar_todas)
         contar()
 
+        # El llavero, si lo lleva: cómo está la base y el botón que la abre. Es
+        # de cada día, así que va aquí y no detrás del engranaje. Apagado
+        # mientras sincroniza, como lo demás que toca `state/`.
+        del_llavero = vista.get("llavero")
+        if del_llavero is not None:
+            llave = ttk.Frame(frame)
+            llave.grid(row=fila, column=0, sticky="ew", pady=(14, 0))
+            llave.columnconfigure(1, weight=1)
+            fila += 1
+            img = icons.get(llave, "warn" if del_llavero.aviso else "llave", 15,
+                            theme.AVISO if del_llavero.aviso else theme.TINTA3, theme.PAPEL)
+            marca = ttk.Label(llave)
+            if img is not None:
+                marca.configure(image=img)
+                marca.image = img
+            marca.grid(row=0, column=0, sticky="nw", padx=(0, 8), pady=(1, 0))
+            ttk.Label(llave, text=del_llavero.texto,
+                      style="Aviso.TLabel" if del_llavero.aviso else "Campo.TLabel",
+                      wraplength=theme.medida(380), justify="left").grid(
+                row=0, column=1, sticky="w")
+            abre = ttk.Button(llave, text=llavero_editor.ABRIR, style="Quiet.TButton",
+                              command=abrir_llavero,
+                              state=apagado if del_llavero.abrir else "disabled")
+            theme.boton_icono(abre, "llave", theme.ACENTO, theme.PAPEL)
+            abre.grid(row=0, column=2, sticky="e", padx=(10, 0))
+
         # Las pantallas de las que se vuelve aquí.
         pantallas = ttk.Frame(frame)
         pantallas.grid(row=fila, column=0, sticky="ew", pady=(18, 0))
@@ -1490,7 +1580,8 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         ajustes = ttk.Button(pantallas, text="Ajustes…", style="Quiet.TButton",
                              command=lambda: tk_doctor.open_dialog(
                                  root, vista["config"], lanzar,
-                                 abrir_reparacion=abrir_reparacion),
+                                 abrir_reparacion=abrir_reparacion,
+                                 abrir_llavero=ajustes_llavero),
                              state=apagado)
         theme.boton_icono(ajustes, "gear", theme.ACENTO, theme.PAPEL)
         ajustes.grid(row=0, column=2, sticky="e")
@@ -1617,7 +1708,11 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
             theme.boton_icono(boton_bloquear, "expulsar", theme.TINTA2,
                               theme.SUPERFICIE)
             boton_bloquear.grid(row=0, column=2, padx=(8, 0))
-        elif vista.get("expulsion") is not None:
+        elif vista.get("expulsion") is not None or (
+                vista.get("llavero") is not None and not vista.get("del_equipo")):
+            # También sin VeraCrypt si lleva el llavero: hay que cerrar KeePassXC
+            # y subir lo pendiente antes de quitar la unidad. Una carpeta de
+            # este equipo no se quita.
             boton_expulsar = ttk.Button(pie, text="Expulsar", padding=(12, 8),
                                         command=expulsar, state=apagado)
             theme.boton_icono(boton_expulsar, "expulsar", theme.TINTA2,

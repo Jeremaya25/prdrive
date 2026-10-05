@@ -22,7 +22,7 @@ puede romperse en un dispositivo que ya está en uso. -->
 
 - [ ] El dispositivo: el código de `.prdrive/`, `state/`, `sync_config.toml`
 - [ ] El equipo anfitrión: el vigilante (`penwatch.py`, `watch.json`, la tarea o la unidad)
-- [ ] El remoto: los datos sincronizados, el catálogo (`pairs.toml`) o las notas de la flota (`devices/`)
+- [ ] El remoto: los datos sincronizados, el catálogo (`remote.toml`, antes `pairs.toml`) o las notas de la flota (`devices/`)
 - [ ] El instalador: `install/`, `prdrive-install.py`, `build_installer.py`
 - [ ] Solo la ventana o el menú de consola
 

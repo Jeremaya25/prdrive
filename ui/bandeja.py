@@ -78,8 +78,10 @@ I_ACTUALIZAR = "down"
 I_CERRAR = "arranque"
 I_AVISO = "warn"
 I_REINTENTAR = "reload"
+I_LLAVERO = "llave"
 ICONOS = (I_CONFIGURAR, I_EXPLORAR, I_SINCRONIZAR, I_PAUSAR, I_REANUDAR, I_BLOQUEAR,
-          I_DESBLOQUEAR, I_ATENDER, I_ACTUALIZAR, I_CERRAR, I_AVISO, I_REINTENTAR)
+          I_DESBLOQUEAR, I_ATENDER, I_ACTUALIZAR, I_CERRAR, I_AVISO, I_REINTENTAR,
+          I_LLAVERO)
 """Todos los iconos que puede llevar una entrada."""
 
 
@@ -222,6 +224,14 @@ def _avisos(resumen: Mapping[str, Any]) -> list[tuple[str, Entrada]]:
         if u.get("error"):
             frase = f"{nombre}: {u['error']}"
             salida.append((frase, Entrada(f"{frase} · Abrir…", abrir, icono=I_AVISO)))
+        if u.get("llavero_conflicto"):
+            # Se arregla combinando: «Abrir llavero» lo ofrece, y donde no se
+            # abre, su ventana lo enseña en «Reparación».
+            frase = f"{nombre}: el llavero tiene dos versiones"
+            salida.append((frase, Entrada(f"{frase} · Combinar…", _pide(
+                equipo.PIDE_LLAVERO, id=u.get("id", "")), icono=I_LLAVERO)
+                if _con_llavero(resumen, u) else
+                Entrada(f"{frase} · Abrir…", abrir, icono=I_AVISO)))
     for linea in resumen.get("sin_conexion") or []:
         frase = f"Sin conexión: {linea}"
         salida.append((frase, Entrada(f"{frase} · Probar ahora",
@@ -423,24 +433,36 @@ def _poner_al_dia(fila: Mapping[str, Any] | None, version: Any) -> list[Entrada]
     return []
 
 
-def _acciones(uid: str, abrir: bool, cerrada: bool, sincronizar: bool) -> list[Entrada]:
-    """Devuelve «Configurar», «Abrir en explorador» y «Sincronizar ahora» de un dispositivo.
+def _acciones(uid: str, abrir: bool, cerrada: bool, sincronizar: bool,
+              llavero: bool = False) -> list[Entrada]:
+    """Devuelve «Configurar», «Abrir en explorador», «Abrir llavero» y «Sincronizar ahora».
 
     Args:
-        uid: Su id.
+        uid: El id del dispositivo.
         abrir: Si se puede abrir su ventana y su carpeta.
         cerrada: Si es una raíz cifrada bloqueada: abrirla la desbloquea antes,
             y los puntos suspensivos dicen que antes sale la contraseña.
         sincronizar: Si el agente la está atendiendo y se le puede pedir una
             pasada.
+        llavero: Si lleva llavero y este equipo lo abre: entonces va «Abrir
+            llavero», que se puede cuando se puede abrir su ventana.
     """
     puntos = "…" if cerrada else ""
-    return [Entrada(f"Configurar{puntos}", _pide(equipo.PIDE_ABRIR, id=uid), activa=abrir,
-                    defecto=abrir, icono=I_CONFIGURAR),
-            Entrada(f"Abrir en explorador{puntos}", _pide(equipo.PIDE_EXPLORAR, id=uid),
-                    activa=abrir, icono=I_EXPLORAR),
-            Entrada("Sincronizar ahora", _pide(equipo.PIDE_PASADA, id=uid, parejas=[]),
-                    activa=sincronizar, icono=I_SINCRONIZAR)]
+    entradas = [Entrada(f"Configurar{puntos}", _pide(equipo.PIDE_ABRIR, id=uid),
+                        activa=abrir, defecto=abrir, icono=I_CONFIGURAR),
+                Entrada(f"Abrir en explorador{puntos}", _pide(equipo.PIDE_EXPLORAR, id=uid),
+                        activa=abrir, icono=I_EXPLORAR)]
+    if llavero:
+        entradas.append(Entrada("Abrir llavero", _pide(equipo.PIDE_LLAVERO, id=uid),
+                                activa=abrir and not cerrada, icono=I_LLAVERO))
+    entradas.append(Entrada("Sincronizar ahora", _pide(equipo.PIDE_PASADA, id=uid, parejas=[]),
+                            activa=sincronizar, icono=I_SINCRONIZAR))
+    return entradas
+
+
+def _con_llavero(resumen: Mapping[str, Any], fila: Mapping[str, Any] | None) -> bool:
+    """Indica si un dispositivo lleva llavero y este equipo lo abre (de momento, Windows)."""
+    return bool(resumen.get("abre_llavero") and fila and fila.get("llavero"))
 
 
 def _pedir_al_iniciar(resumen: Mapping[str, Any], varias: bool) -> Entrada:
@@ -492,7 +514,8 @@ def _raices_del_equipo(resumen: Mapping[str, Any]) -> list[Entrada]:
         quieta = not vieja and not (fila and fila.get("actualizando"))
         hijos = _acciones(uid, abrir=quieta and est in (ABIERTA, BLOQUEADA, DESBLOQUEANDO),
                           cerrada=est in (BLOQUEADA, DESBLOQUEANDO),
-                          sincronizar=not vieja and bool(fila and fila.get("atendida")))
+                          sincronizar=not vieja and bool(fila and fila.get("atendida")),
+                          llavero=_con_llavero(resumen, fila))
         hijos += _poner_al_dia(fila, resumen.get("version"))
         if r.get("cifrada"):
             hijos += [SEPARADOR, _cerrojo(uid, est)]
@@ -530,7 +553,8 @@ def _unidades(resumen: Mapping[str, Any]) -> list[Entrada]:
             entradas.append(Entrada(
                 f"{nombre} ({EN_PAUSA})" if u.get("pausada") else nombre,
                 hijos=(*_acciones(uid, abrir=not u.get("actualizando"), cerrada=False,
-                                  sincronizar=bool(u.get("atendida"))),
+                                  sincronizar=bool(u.get("atendida")),
+                                  llavero=_con_llavero(resumen, u)),
                        *_poner_al_dia(u, version), *_version(u)),
                 emblema=_emblema(u)))
         elif u.get("ahora_no") or u.get("preguntando"):

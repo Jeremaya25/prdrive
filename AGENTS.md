@@ -33,6 +33,7 @@ Each opens with the files it covers. Claude Code also gets a one-line pointer to
 | `agent-window.md` | window ↔ agent: «Pausar/Reanudar», mailboxes, `ui/watch.py`, agent self-update |
 | `host-root.md` | `raiz_equipo.py`, `tk_equipo.py`, encrypted host root, «En este equipo» wizard |
 | `tray.md` | `ui/bandeja*.py` |
+| `llavero.md` | `llavero.py`, `kdbx.py`, `keepassxc.py`, `registro.py`, `keepassxc_bin.py`, `llavero_editor`, `[keychain]`: KeePassXC on the device, its code-built pair, «Abrir llavero» |
 | `commands-testing.md` | full CLI list, test harness, registry of test-replaceable indirection points |
 
 Specs and real-hardware test plans/results: `docs/superpowers/{specs,pruebas}/` (the area docs cite them). Those cite sections of the former monolithic AGENTS.md by title: each area doc quotes its former titles on its «Formerly» line.
@@ -54,9 +55,10 @@ prdrive/            the checkout; on a provisioned device it is `.prdrive/`
 │   revision (the ONE diagnosis) · progress · config_file (reads AND writes TOML) · catalog · fleet · update · components (stamps vs pins, no network)
 │   pins (pinned rclone/Python/VeraCrypt + platforms) · pairing (rclone.conf, QR payload) · vestibulo · autorun · store (JSON state, `pid_alive()`, atomic writes, `hide()`)
 │   agent side: planificador (PURE scheduler) · huella · equipo (host dir, mailbox) · moderacion · red · dbus · avisos
+│   keychain: llavero (its pass and its watch) · kdbx (is a base whole) · keepassxc (KeePassXC on this host) · registro (HKCU)
 ├── ui/             asking the user, showing results
 │   __init__ (`Choice`, `Frontend`, `start()`…) · theme · icons · qr · prefs · segundo_plano · cifrado · console · tk (TkFrontend, `modal()`/`mostrar()`/`working()`) · tk_*.py (draw only)
-│   decision halves, no Tk: pair_editor · repair · catalog_editor · remote_picker · conflict_editor · flags_editor · watch · versions_editor · volumen
+│   decision halves, no Tk: pair_editor · repair · catalog_editor · remote_picker · conflict_editor · flags_editor · watch · versions_editor · volumen · llavero_editor
 │   tray: bandeja (PURE) · bandeja_windows · bandeja_linux · tk_agente («¿Atender esta unidad?», a child of the agent)
 ├── install/        what the installer knows; no Tk, no device needed
 │   profile · rclone_bin · runtime_bin · veracrypt_bin · descarga (retries, SHA256SUMS) · platforms · components · remote (ephemeral rclone.conf, catalogue)
@@ -93,7 +95,7 @@ python tests/run_all.py     # all tests, each in its own process; or run one scr
 
 The full list (`penwatch.py`, `agente.py`, `prdrive-install.py`, `build_installer.py`) is in `commands-testing.md`.
 
-- Verification is `tests/run_all.py`, `--doctor`, `--dry-run`. Nothing to lint; no CI runs the tests. Tk tests skip without a display, so green without Tk has tested no window. The suite passes on Windows **and** Linux: a check about the other system forces `IS_WIN` or prints `(saltado) …`.
+- Verification is `tests/run_all.py`, `--doctor`, `--dry-run`. Nothing to lint; CI (`.github/workflows/tests.yml`) runs `run_all.py` on every PR, on Linux under xvfb and on Windows. Tk tests skip without a display, so green without Tk has tested no window. The suite passes on Windows **and** Linux: a check about the other system forces `IS_WIN` or prints `(saltado) …`.
 - `runsync.py` with no args always **stops a previously started service** first.
 - Windows dev machine: the Bash tool is sandboxed. It redirects writes under `%LOCALAPPDATA%` (a `penwatch install` from there registers a task pointing at nothing) and hangs `tasklist | find`. Use PowerShell for both.
 
@@ -116,14 +118,14 @@ The full list (`penwatch.py`, `agente.py`, `prdrive-install.py`, `build_installe
 
 - **Writing code**: `docs/agents/code-writing-conventions.md`, before changing Python. Comments, docstrings and everything the user sees are in **Spanish**; keep the technical citations (rclone, VeraCrypt, kernel, specs) in code that mirrors them. Docs under `docs/agents/` are English.
 - **Indirection points**: everything that touches the network, a real device or the desktop is a **module-level function tests can replace** (`catalog.run()`, `update.fetch()`, `tk.mostrar()`/`confirmar_plan()`, `equipo.DIR`…). New ones keep that shape; the registry is in `commands-testing.md`.
-- **Windows traps**: `pid_alive()` uses `OpenProcess`, never `os.kill` (which *terminates* on Windows); background processes use `pythonw.exe` + `CREATE_NO_WINDOW`; child runs get `stdin=DEVNULL`, so a pair needing `--resync` is skipped rather than resynced unattended.
+- **Windows traps**: `pid_alive()` uses `OpenProcess`, never `os.kill` (which *terminates* on Windows); background processes use `pythonw.exe` + `CREATE_NO_WINDOW`; child runs get `stdin=DEVNULL`, so a pair needing `--resync` is skipped rather than resynced unattended (the keychain excepted: `engine.md`).
 - `.gitignore` excludes device/user paths (`bin/`, `runtime/`, `keys/`, `filters/`, `logs/`, `state/`, `sync_config.toml`, `rclone.conf`, `prdrive-profile.toml`), build artefacts and `install/secret.py`.
 
 ## Documentation
 
 - **`README.md`**: the user-facing front page. Spanish, short, no internals. Longer user guides: `docs/guia/`.
 - **`device-readme.md`**: the *light* quick guide, **not** for repo readers: the installer copies it to the volume root as `README.md` (`deploy.write_guide()`, best-effort). Short, task-shaped, no internals; it is in `DATOS_FICHEROS`, so a build that forgets it fails at compile time.
-- **`sync_config.example.toml`**: the schema reference for `sync_config.toml` and the remote's `pairs.toml` (which also takes `[remote]`). **`LICENSE`**: Apache 2.0 verbatim.
+- **`sync_config.example.toml`**: the schema reference for `sync_config.toml` and the remote's catalogue `remote.toml` (formerly `pairs.toml`; it also takes `[remote]`). **`LICENSE`**: Apache 2.0 verbatim.
 - **`.github/pull_request_template.md`**: what every PR answers (agents' included): where it touches, which data is at stake, what happens to devices already in use, how it was checked. **A PR title is release text** (`--generate-notes`; `tk_update` shows it on every device): write it in Spanish, for the device's user.
 - A behaviour change updates the matching `docs/agents/reference/` doc (and `docs/guia/` if users see it), not this file: keep this one small, it loads every session.
 

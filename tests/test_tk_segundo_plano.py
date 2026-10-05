@@ -215,7 +215,7 @@ CAT_REMOTO = {"defaults": {"remote": "nas"},
                        {"name": "fotos", "local": "sync-data/fotos",
                         "remote_path": "/R/fotos", "mode": "up"}]}
 CUANDO = "2026-09-30 08:00:00"
-ENDPOINT = "nas:/prdrive-catalog/pairs.toml"
+ENDPOINT = "nas:/prdrive-catalog/remote.toml"
 BOTONES_CATALOGO = ("Nueva…", "Editar…", "Borrar…", "Ajustes del catálogo…")
 
 
@@ -594,7 +594,14 @@ tk_fleet.centrar = tk_pairs.centrar
 
 
 def enseñada(self) -> None:
-    """Deja la pantalla puesta y visible, como la deja `mostrar()` antes de esperar."""
+    """Deja la pantalla puesta y visible, como la deja `mostrar()` antes de esperar.
+
+    Con su padre también a la vista: la pantalla es `transient` y, en Windows,
+    colgada de uno oculto no llega a verse aunque se le haga `deiconify()`
+    (`tk.modal()`). Sin verse no crece (`winfo_ismapped()`), y el test medía
+    eso en vez de lo que dice.
+    """
+    raiz.deiconify()
     self.visor.encajar(self)
     self.deiconify()
     self.update()
@@ -610,6 +617,7 @@ with sandbox():
     def crece_parejas(self, *_a, **_k):
         """Enseña la pantalla, y suelta un remoto caído con una explicación larga."""
         enseñada(self)
+        vista["a_la_vista"] = bool(self.winfo_ismapped())
         vista["alto_antes"] = self.visor._medida()[1]
         remoto.soltar.set()
         dar_vueltas(lambda: not self.sondeo.esperando)
@@ -620,7 +628,7 @@ with sandbox():
     tk_pairs.open_dialog(raiz, cfg)
     catalog.run = nadie
     c("parejas: una explicación larga hace crecer el recuadro",
-      vista["alto_despues"] > vista["alto_antes"], True)
+      (vista["a_la_vista"], vista["alto_despues"] > vista["alto_antes"]), (True, True))
     c("  y la ventana se recoloca, sobre su padre, una sola vez",
       [(w is vista["raiz"], p is raiz) for w, p in colocadas], [(True, True)])
     colocadas.clear()
@@ -643,6 +651,7 @@ with sandbox():
     c("parejas: si no ha crecido, la ventana no se mueve", colocadas, [])
 
 uitk.pantalla_util = PANTALLA_REAL
+raiz.withdraw()
 
 
 # 4. «Dispositivos…»
@@ -801,6 +810,7 @@ with sandbox():
     def crece_flota(self, *_a, **_k):
         """Enseña la flota, y suelta un remoto caído con una explicación larga."""
         enseñada(self)
+        vista["a_la_vista"] = bool(self.winfo_ismapped())
         vista["alto_antes"] = self.visor._medida()[1]
         remoto.soltar.set()
         dar_vueltas(lambda: not self.sondeo.esperando)
@@ -811,7 +821,7 @@ with sandbox():
     tk_fleet.open_dialog(raiz, cfg, dict(BASE))
     catalog.run = nadie
     c("flota: una explicación larga hace crecer el recuadro",
-      vista["alto_despues"] > vista["alto_antes"], True)
+      (vista["a_la_vista"], vista["alto_despues"] > vista["alto_antes"]), (True, True))
     c("  y la ventana se recoloca, sobre su padre, una sola vez",
       [(w is vista["raiz"], p is raiz) for w, p in colocadas], [(True, True)])
     colocadas.clear()
@@ -839,6 +849,7 @@ with sandbox():
       colocadas, [])
 c("  nada ha reventado por el camino", errores, [])
 uitk.pantalla_util = PANTALLA_REAL
+raiz.withdraw()
 
 raiz.destroy()
 sys.exit(c.report())

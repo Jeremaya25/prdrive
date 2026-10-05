@@ -12,6 +12,7 @@ A folder of the host with `.prdrive/` inside is, for the engine, one more device
 - **The agent** keeps the root in the same list as drives: `equipo.Unidad.ruta` (non-empty = host root; `Ajustes.raices`). `_recorrer()` passes those paths as penwatch extra roots, so the walk is still one. A root missing from its path is notified ONCE (`Agente.ausentes`) and nothing runs until it is back: never searched for or recreated. `PIDE_RAIZ` (`añadir_raiz`) is how a wizard re-run with the agent installed adds it; `install.agente.aplicar_unidades(raiz=)` writes it directly only when there is no `agente.json`. `candidatas()` never offers a root as a drive. Uninstalling never deletes the root, and says where it stays.
 - **The «Unidades» step** can add the fleet's drives (`raiz_equipo.de_la_flota()`: one `rclone copy` of `devices/` to a temp dir, never `cat` of the folder, #48), but as `tk_equipo.PREGUNTAR`, not in the list: a drive is never synced without a yes.
 - `ui/watch.py` reports `agente_raiz` for a window opened on the host root.
+- **The keychain** works on a host root (Windows): turned on from its window («Ajustes → Llavero…»; the wizard route has no step for it), opened from its window or the tray's «Abrir llavero», never with a `Llavero.bat` (no launchers here). No «Expulsar» for it; «Bloquear» of an encrypted root closes it first. Details: `llavero.md`.
 
 ## Wizard route
 

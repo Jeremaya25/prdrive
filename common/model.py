@@ -19,7 +19,7 @@ import shutil
 import stat
 import sys
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
@@ -50,6 +50,7 @@ FILTERS_DIR = APP_DIR / "filters"
 LOG_DIR = APP_DIR / "logs"
 
 SYNC_PY = APP_DIR / "sync.py"  # a quien lanzan la UI y el servicio
+RUNSYNC_PY = APP_DIR / "runsync.py"  # el vigilante del llavero lo relanza
 PENWATCH_PY = APP_DIR / "penwatch.py"
 
 TIPO_UNIDAD = "unidad"
@@ -142,6 +143,51 @@ RAIZ_UPSTREAM = "raiz"
 Tiene que ser un nombre y no `.`. Sale en el prefijo de los listados de bisync,
 así que cambiarlo invalida esos baselines. Ver `Pair.top_level_dir`.
 """
+DEFAULT_CATALOG_PATH = "/prdrive-catalog/remote.toml"
+"""Ruta del catálogo de fábrica; cada usuario pone la suya.
+
+Se cambia por dispositivo con `[defaults].catalog_path` y el instalador la
+pregunta en su paso de conexión. Vive aquí y no en `common/catalog.py` (que la
+reexporta) porque la pareja del llavero cuelga de la carpeta del catálogo y
+este módulo no puede importar aquel, que lo importa a él.
+"""
+
+LLAVERO = "keychain"
+"""Nombre de la pareja del llavero, que construye el código cuando hay `[keychain]`.
+
+Es también su carpeta en `state/` y `filters/`, y queda reservado mientras el
+llavero esté activo: una pareja del usuario no puede llamarse así.
+"""
+LLAVERO_LOCAL = ".keychain"
+"""Carpeta del llavero en la raíz del dispositivo, oculta como `.prdrive/`."""
+LLAVERO_REMOTO = "keychain"
+"""Subcarpeta del llavero dentro de la carpeta del catálogo, en el remoto."""
+LLAVERO_REGLAS = ("- *.old.kdbx", "+ *.kdbx", "+ LEEME.txt", "- **")
+"""Los filtros de la pareja del llavero, en su orden: solo viaja lo que tiene que viajar.
+
+Las bases (`*.kdbx`, también las copias de un conflicto, que acaban en `.kdbx`
+por `suffix-keep-extension`) y el compañero fijo `LEEME.txt` (H-12). No viajan
+los temporales del guardado de KeePassXC (`<base>.kdbx.XXXXXX`, H-11), la copia
+de antes de guardar (`<base>.old.kdbx`), los `.passkey` ni nada exportado en
+claro (S6). El orden importa: gana la primera regla que casa.
+"""
+LLAVERO_FLAGS: Mapping[str, Any] = {"conflict-loser": "num", "resync-mode": "newer"}
+"""Los flags propios de la pareja del llavero, encima de los de bisync.
+
+`conflict-loser = num`: el perdedor de un conflicto se queda al lado, numerado,
+para combinarlo (H-14); no sale por `.prversions/` como en el resto de parejas
+versionadas (`sync.py` solo pone `delete` si no hay otro). `resync-mode =
+newer`: un `--resync` se queda con la base más nueva de los dos lados, no con
+la del dispositivo (H-13). Solo va en un `--resync`: rclone lo toma como uno
+(`setResyncDefaults()`), y `sync.build_command()` lo quita de las demás.
+"""
+REGLA_SIN_LLAVERO = f"- /{LLAVERO_LOCAL}/**"
+"""La regla que reciben las parejas del usuario que sincronizan la raíz entera.
+
+Sin ella, una pareja con `local = "."` llevaría la base por otro camino, con
+otras reglas, y sin la comprobación previa del llavero.
+"""
+
 VERSIONS_DIR = ".prversions"
 """Carpeta de versiones de una pareja, dentro de su propia raíz (`Pair.versions_path1`).
 
@@ -174,6 +220,8 @@ CREATE_NO_WINDOW = 0x08000000
 rclone es una app de consola: lanzada desde un proceso sin consola (`pythonw`,
 el servicio), Windows le abriría una ventana nueva por invocación.
 """
+CREATE_NEW_PROCESS_GROUP = 0x00000200
+"""Flag de creación de procesos de Windows: un proceso suelto, que no recibe el Ctrl+C de quien lo lanza."""
 
 
 _MAQUINAS_PE = {
@@ -518,6 +566,10 @@ class Pair:
         watch: Si el agente residente la sincroniza poco después de que cambien
             sus ficheros locales, sin esperar al intervalo (solo en los modos
             donde el local es origen).
+        reglas: Reglas de filtrado (`+ patrón` o `- patrón`) que van antes que
+            `includes` y `excludes`, en su orden. Las pone el código, no el
+            TOML: las del llavero y `REGLA_SIN_LLAVERO`.
+        llavero: Si es la pareja del llavero, la que construye el código.
     """
     name: str
     mode: Mode
@@ -532,6 +584,13 @@ class Pair:
     device_remote: str | None
     versions: bool
     watch: bool = False
+    reglas: tuple[str, ...] = ()
+    llavero: bool = False
+
+    @property
+    def es_raiz(self) -> bool:
+        """Indica si la pareja sincroniza la raíz entera del dispositivo (`local = "."`)."""
+        return not self.tramos_locales
 
     @property
     def local_abs(self) -> Path:
@@ -702,6 +761,56 @@ def _build_pair(raw: Mapping[str, Any], defaults: Mapping[str, Any],
         versions=versions,
         watch=watch,
     )
+
+
+def carpeta_del_catalogo(defaults: Mapping[str, Any]) -> tuple[str, str]:
+    """Devuelve el remote y la carpeta del catálogo de un dispositivo.
+
+    Es la misma cuenta que `catalog.endpoint()`: `catalog_remote` o el
+    `remote` de las parejas, y la carpeta de `catalog_path`.
+
+    Returns:
+        `(remote, carpeta)`, con la carpeta acabada en `/` salvo que sea la
+        raíz del remote, que es `""`.
+    """
+    remote = defaults.get("catalog_remote") or defaults.get("remote") or DEFAULT_REMOTE
+    ruta = str(defaults.get("catalog_path") or DEFAULT_CATALOG_PATH)
+    return str(remote), ruta[:ruta.rfind("/") + 1]
+
+
+def _build_llavero(tabla: Any, defaults: Mapping[str, Any]) -> Pair:
+    """Construye la pareja del llavero a partir de `[keychain]` y los `[defaults]`.
+
+    El TOML no la puede cambiar: es bisync con versiones, en `.keychain/` y en
+    la subcarpeta `keychain/` de la carpeta del catálogo, con sus filtros y sus
+    flags (`LLAVERO_REGLAS`, `LLAVERO_FLAGS`). Ni los flags ni los filtros de
+    `[defaults]` le llegan: un `conflict-resolve` común, por ejemplo, cambiaría
+    qué base gana. Del dispositivo solo toma el remote del catálogo y su
+    `device_remote`.
+
+    Raises:
+        ConfigError: Si `[keychain]` no es una tabla o no dice qué base es.
+    """
+    if not isinstance(tabla, Mapping):
+        raise ConfigError("[keychain] tiene que ser una tabla.")
+    base = tabla.get("base")
+    if not isinstance(base, str) or not base.endswith(".kdbx") or base == ".kdbx" \
+            or any(c in base for c in "/\\:") or base.startswith("."):
+        # `.kdbx` en minúsculas: los filtros de rclone distinguen, y `+ *.kdbx`
+        # no dejaría pasar una `.KDBX`.
+        raise ConfigError("[keychain] tiene que decir qué base lleva, con «base = "
+                          "\"<nombre>.kdbx\"», un nombre suelto que acabe en .kdbx "
+                          "(en minúsculas).")
+    remote, carpeta = carpeta_del_catalogo(defaults)
+    mode = MODES["bisync"]
+    return Pair(
+        name=LLAVERO, mode=mode, local=LLAVERO_LOCAL,
+        remote_path=carpeta + LLAVERO_REMOTO, remote_name=remote,
+        includes=(), excludes=(),
+        flags={**BASE_FLAGS, **mode.flags, **LLAVERO_FLAGS},
+        extra_flags=(), use_filters_file=True,
+        device_remote=_device_remote_name(defaults), versions=True,
+        reglas=LLAVERO_REGLAS, llavero=True)
 
 
 def _leer_watch(name: str, raw: Mapping[str, Any], mode: Mode) -> bool:
@@ -887,16 +996,38 @@ class Config:
         daemon: La tabla `[daemon]` en bruto.
         keep_logs: Si se guardan también los logs de las pasadas buenas.
         device_remote: Nombre del remote `combine` del lado local, o `None`.
+        llavero: La tabla `[keychain]` en bruto, o `None` sin llavero. La
+            pareja que sale de ella va la última de `pairs`.
     """
     pairs: tuple[Pair, ...]
     daemon: Mapping[str, Any]
     keep_logs: bool
     device_remote: str | None
+    llavero: Mapping[str, Any] | None = None
 
     @property
     def names(self) -> list[str]:
-        """Devuelve los nombres de las parejas, en el orden del TOML."""
-        return [p.name for p in self.pairs]
+        """Devuelve los nombres de las parejas del TOML, en su orden.
+
+        Sin la del llavero: son las que se eligen en la ventana, en el menú y
+        en el servicio. `pairs` sí la lleva, y por eso `sync.py` sin nombres la
+        corre con las demás.
+        """
+        return [p.name for p in self.del_usuario]
+
+    @property
+    def del_usuario(self) -> tuple[Pair, ...]:
+        """Devuelve las parejas del TOML, sin la del llavero.
+
+        Son las que se enseñan como parejas: la del llavero tiene su propia
+        línea en la ventana y no se elige ni se edita.
+        """
+        return tuple(p for p in self.pairs if not p.llavero)
+
+    @property
+    def pareja_llavero(self) -> Pair | None:
+        """Devuelve la pareja del llavero, o `None` si el dispositivo no lo lleva."""
+        return next((p for p in self.pairs if p.llavero), None)
 
     def select(self, wanted: Iterable[str]) -> list[Pair]:
         """Devuelve las parejas pedidas, en el orden del TOML.
@@ -965,9 +1096,14 @@ def parse_config(data: Mapping[str, Any], equipo: bool = False) -> Config:
             porque el catálogo pasa por esta misma función y en él una pareja
             de la raíz entera es legítima para las unidades.
 
+    Con `[keychain]`, la pareja del llavero va la última (`_build_llavero()`),
+    su nombre queda reservado y cada pareja que sincroniza la raíz entera
+    recibe `REGLA_SIN_LLAVERO` delante de sus filtros.
+
     Raises:
-        ConfigError: Si no hay ninguna `[[pair]]`, alguna no es válida o
-            `[defaults]` lleva `watch`, que es de cada pareja.
+        ConfigError: Si no hay ninguna `[[pair]]`, alguna no es válida,
+            `[defaults]` lleva `watch`, que es de cada pareja, o `[keychain]`
+            no vale o choca con una pareja que se llama como la suya.
     """
     defaults = data.get("defaults", {})
     raw_pairs = data.get("pair", [])
@@ -979,11 +1115,22 @@ def parse_config(data: Mapping[str, Any], equipo: bool = False) -> Config:
         raise ConfigError(
             "[defaults] no admite 'watch': vigilar los cambios locales se pide "
             "pareja a pareja, con 'watch = true' en cada [[pair]] que lo quiera.")
+    pairs = tuple(_build_pair(p, defaults, equipo) for p in raw_pairs)
+    tabla = data.get("keychain")
+    if tabla is not None:
+        if any(p.name == LLAVERO for p in pairs):
+            raise ConfigError(
+                f"Hay una pareja que se llama '{LLAVERO}', que es el nombre de la "
+                f"del llavero. Renómbrala o quita [keychain].")
+        pairs = tuple(replace(p, reglas=(REGLA_SIN_LLAVERO,) + p.reglas) if p.es_raiz
+                      else p for p in pairs)
+        pairs += (_build_llavero(tabla, defaults),)
     return Config(
-        pairs=tuple(_build_pair(p, defaults, equipo) for p in raw_pairs),
+        pairs=pairs,
         daemon=data.get("daemon", {}),
         keep_logs=bool(defaults.get("keep_logs", False)),
         device_remote=_device_remote_name(defaults),
+        llavero=dict(tabla) if isinstance(tabla, Mapping) else None,
     )
 
 

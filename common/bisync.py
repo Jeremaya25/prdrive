@@ -137,6 +137,9 @@ def filters_content(pair: Pair) -> str:
         # aplica las reglas en orden y detrás de un `+ **/*.md` no excluiría
         # nada.
         lines.append(f"- {model.VERSIONS_DIR}/**")
+    # Las del código van antes que las del TOML: las del llavero son toda su
+    # lista, y `REGLA_SIN_LLAVERO` tiene que ganar a cualquier `+` de la pareja.
+    lines += list(pair.reglas)
     lines += [f"+ {p}" for p in pair.includes]
     lines += [f"- {p}" for p in pair.excludes]
     if pair.includes:

@@ -45,6 +45,10 @@ ventana: cierra la ventana y después el contenedor. No desmonta ella misma
 desmontar sin forzar—: lanza **Expulsar PRDRIVE** de fuera y se cierra. Si algún
 otro programa tiene algo abierto dentro, VeraCrypt pregunta si forzar.
 
+**Con el llavero** (ver [El llavero](llavero.md)), la ventana tiene además
+**Abrir llavero**, y **Expulsar** sale también en una unidad sin cifrar: antes de
+nada cierra KeePassXC (si está abierto) y sube lo que falte.
+
 ## La ventana de parejas
 
 Se abre desde «Parejas…» y es donde se decide qué sincroniza este dispositivo.

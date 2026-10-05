@@ -1008,4 +1008,73 @@ with sandbox():
       leidas, ["notas", "fotos"])
 
 
+# «Renombrar el catálogo…», de punta a punta con un remoto de mentira: el botón
+# solo renombra si la flota lo permite, y lo que hace se ve en el remoto.
+from ui import tk_renombrar  # noqa: E402
+import json  # noqa: E402
+
+tk_renombrar.working = working_en_el_acto
+ocultar(tk_renombrar)
+VIEJO_RAW = {"defaults": {"remote": "nas", "catalog_path": "/prdrive-catalog/pairs.toml"}}
+EN_EL_REMOTO: dict = {}
+
+
+def remoto_de_mentira(args):
+    """Lo justo de rclone para renombrar: listar la carpeta y mover."""
+    if args[:2] == ["lsjson", "--files-only"]:
+        return subprocess.CompletedProcess(args, 0, json.dumps(
+            [{"Name": k.rsplit("/", 1)[1], "IsDir": False} for k in EN_EL_REMOTO]), "")
+    if args[0] == "moveto" and args[1] in EN_EL_REMOTO:
+        EN_EL_REMOTO[args[2]] = EN_EL_REMOTO.pop(args[1])
+        return subprocess.CompletedProcess(args, 0, "", "")
+    return subprocess.CompletedProcess(args, 1, "", "no esperado")
+
+
+def pulsar_y_cerrar(texto, vistos):
+    """Apunta el estado del botón, lo pulsa y cierra la ventana."""
+    def _wait(self, *_a, **_k):
+        pila = [self]
+        while pila:
+            w = pila.pop()
+            pila += list(w.winfo_children())
+            if isinstance(w, ttk.Button) and w.cget("text") == texto:
+                vistos.append(str(w.cget("state")))
+                w.invoke()
+        self.destroy()
+    return _wait
+
+
+real_run = catalog.run
+catalog.run = remoto_de_mentira
+try:
+    with sandbox():
+        EN_EL_REMOTO.clear()
+        EN_EL_REMOTO["nas:/prdrive-catalog/pairs.toml"] = "x = 1\n"
+        fleet.leer = lambda raw=None: ([fleet.Dispositivo(
+            "otro", "el del cajón", "0.5.3", (), "2026-05-01 10:00:00", "ok")], None)
+        estados: list[str] = []
+        tk.Toplevel.wait_window = pulsar_y_cerrar("Renombrar a remote.toml…", estados)
+        tk_renombrar.open_dialog(raiz, dict(VIEJO_RAW))
+        c("con un dispositivo de antes en la flota, el botón está apagado", estados,
+          ["disabled"])
+        c("  y no se ha renombrado nada", sorted(EN_EL_REMOTO),
+          ["nas:/prdrive-catalog/pairs.toml"])
+
+        fleet.leer = lambda raw=None: ([fleet.Dispositivo(
+            "otro", "el azul", "0.5.4", (), "2026-10-01 10:00:00", "ok",
+            entiende=fleet.ENTIENDE)], None)
+        estados.clear()
+        from common import store  # noqa: E402
+        store.write_json(catalog.cache_meta(), {"endpoint": "nas:/prdrive-catalog/pairs.toml"})
+        tk_renombrar.open_dialog(raiz, dict(VIEJO_RAW))
+        c("con la flota al día, el botón se puede pulsar", estados, ["normal"])
+        c("  y renombra en el remoto", sorted(EN_EL_REMOTO),
+          ["nas:/prdrive-catalog/remote.toml"])
+        c("  y la copia local dice ya que el catálogo es remote.toml",
+          catalog.ultimo_leido(), "nas:/prdrive-catalog/remote.toml")
+finally:
+    catalog.run = real_run
+    fleet.leer = lambda raw=None: (list(FLOTA), None)
+
+
 sys.exit(c.report())

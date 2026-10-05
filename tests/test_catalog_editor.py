@@ -189,4 +189,117 @@ c("una copia sin fecha no dice «del fecha desconocida»",
   ("del fecha" in sin_fecha.linea, "no consta de cuándo es" in sin_fecha.linea),
   (False, True))
 
+# «Renombrar el catálogo…»: qué se puede hacer, con lo leído del remoto
+import subprocess  # noqa: E402
+import json  # noqa: E402
+
+from common import fleet, store  # noqa: E402
+
+VIEJO_CFG = {"defaults": {"remote": "nas", "catalog_path": "/prdrive-catalog/pairs.toml"}}
+SITIO = catalog.sin_renombrar(VIEJO_CFG)
+c("los dos nombres del catálogo de este dispositivo", SITIO,
+  catalog.SinRenombrar("nas:/prdrive-catalog/remote.toml",
+                       "nas:/prdrive-catalog/pairs.toml", "nas:/prdrive-catalog/"))
+c("  con un nombre propio no hay nada que renombrar",
+  catalog.sin_renombrar({"defaults": {"catalog_path": "/c/mio.toml"}}), None)
+
+SABE = fleet.ENTIENDE
+YO = fleet.Dispositivo("yo", "este", "0.5.3", (), "2026-10-01 10:00:00", "ok")
+AL_DIA = fleet.Dispositivo("b", "el azul", "0.5.4", (), "2026-10-02 10:00:00", "ok",
+                           entiende=SABE)
+VIEJO = fleet.Dispositivo("v", "el del cajón", "0.5.3", (), "2026-05-02 10:00:00", "ok")
+SIN_VERSION = fleet.Dispositivo("s", "el de casa", "desconocida", (), "", "ok")
+SOLO_VIEJO = frozenset({"pairs.toml", "pairs.toml.bak"})
+renombrado = catalog_editor.renombrado
+
+bien = renombrado(SITIO, SOLO_VIEJO, [YO, AL_DIA], None, "yo")
+c("con toda la flota al día se puede renombrar", (bien.accion, bien.bloquean),
+  (catalog_editor.RENOMBRAR, ()))
+c("  y este dispositivo no cuenta aunque su nota sea de antes de actualizarse",
+  bien.linea, "El otro dispositivo de la flota ya sabe leer el nombre nuevo.")
+solo = renombrado(SITIO, SOLO_VIEJO, [], None, "yo")
+c("sin flota también: no hay nadie a quien dejar atrás", solo.accion,
+  catalog_editor.RENOMBRAR)
+
+parado = renombrado(SITIO, SOLO_VIEJO, [YO, AL_DIA, VIEJO, SIN_VERSION], None, "yo")
+c("con uno de antes no se puede", parado.accion, "")
+c("  y se dice quiénes", [b.nombre for b in parado.bloquean], ["el del cajón", "el de casa"])
+c("  con su versión", parado.bloquean[0].motivo, "lleva la 0.5.3, de antes del nombre nuevo")
+c("  o que no la dice", parado.bloquean[1].motivo, "su nota no dice qué versión lleva")
+c("  y cuándo se le vio", parado.bloquean[0].visto, "2026-05-02 10:00:00")
+c.contains("  y cómo se desbloquea", parado.linea, "«Dispositivos…»")
+c("  en ámbar", parado.tono, "Aviso.")
+
+c("sin poder leer la flota no se decide",
+  renombrado(SITIO, SOLO_VIEJO, [], "sin red", "yo").accion, "")
+c("sin poder mirar la carpeta tampoco", renombrado(SITIO, None, [], None, "yo").accion, "")
+ya = renombrado(SITIO, frozenset({"remote.toml"}), [], None, "yo")
+c("renombrado ya, no hay nada que hacer", (ya.accion, ya.tono), ("", "Pista."))
+dos = renombrado(SITIO, frozenset({"remote.toml", "pairs.toml"}), [VIEJO], None, "yo")
+c("con los dos, se ofrece apartar el que sobra", dos.accion, catalog_editor.APARTAR)
+c("sin ninguno, nada", renombrado(SITIO, frozenset(), [], None, "yo").accion, "")
+c("con un nombre propio, nada", renombrado(None, None, [], None, "yo").accion, "")
+
+plan = catalog_editor.plan_renombrar(bien, VIEJO_CFG)
+c.contains("el plan dice qué pasa a llamarse cómo", plan.consequences[0],
+           "nas:/prdrive-catalog/pairs.toml pasa a llamarse remote.toml")
+c("  que afecta a todos", catalog_editor.ALCANCE in plan.consequences, True)
+c.contains("  y avisa de los instaladores de antes", " ".join(plan.warnings),
+           "instalador de una versión anterior")
+c.contains("apartar tiene su propio plan",
+           catalog_editor.plan_renombrar(dos, VIEJO_CFG).consequences[0], ".apartado-")
+rechaza("sin nada que hacer no hay plan",
+        lambda: catalog_editor.plan_renombrar(parado, VIEJO_CFG), "Todavía no")
+
+
+def lsjson(nombres, flota_rc=0):
+    """`catalog.run` que contesta el listado de la carpeta y la copia de la flota."""
+    vistas: list[list[str]] = []
+
+    def _run(args):
+        vistas.append(list(args))
+        if args[:2] == ["lsjson", "--files-only"]:
+            return subprocess.CompletedProcess(
+                args, 0, json.dumps([{"Name": n, "IsDir": False} for n in nombres]), "")
+        return subprocess.CompletedProcess(args, flota_rc, "", "")
+    catalog.run = _run
+    return vistas
+
+
+with sandbox():
+    vistas = lsjson(["pairs.toml"])
+    nombres, flota, aviso = catalog_editor.leer_renombrado(VIEJO_CFG)
+    c("leer mira la carpeta del catálogo", vistas[0],
+      ["lsjson", "--files-only", "nas:/prdrive-catalog/"])
+    c("  y, si hace falta para decidir, la flota", [v[0] for v in vistas], ["lsjson", "copy"])
+    c("  y lo devuelve", (nombres, flota, aviso), (frozenset({"pairs.toml"}), [], None))
+
+    vistas = lsjson(["remote.toml"])
+    catalog_editor.leer_renombrado(VIEJO_CFG)
+    c("si ya está renombrado no lee la flota", len(vistas), 1)
+
+    vistas = lsjson(["remote.toml", "pairs.toml"])
+    catalog_editor.leer_renombrado(VIEJO_CFG)
+    c("si están los dos, lo apunta para «Reparación»", catalog.duplicado()[0],
+      "nas:/prdrive-catalog/pairs.toml")
+    lsjson(["remote.toml"])
+    catalog_editor.leer_renombrado(VIEJO_CFG)
+    c("  y lo borra cuando ya no", catalog.duplicado(), None)
+
+# «Ajustes» ofrece la entrada solo si lo último leído fue pairs.toml
+ofrece = catalog_editor.ofrecer_renombrado
+with sandbox():
+    c("sin ninguna lectura no se ofrece", ofrece(VIEJO_CFG), False)
+    store.write_json(catalog.cache_meta(), {"endpoint": "nas:/prdrive-catalog/pairs.toml"})
+    c("si lo último leído fue pairs.toml, sí", ofrece(VIEJO_CFG), True)
+    c("  diga lo que diga el dispositivo",
+      ofrece({"defaults": {"remote": "nas", "catalog_path": "/prdrive-catalog/remote.toml"}}),
+      True)
+    store.write_json(catalog.cache_meta(), {"endpoint": "nas:/prdrive-catalog/remote.toml"})
+    c("si fue remote.toml, no", ofrece(VIEJO_CFG), False)
+    catalog.apuntar_duplicado("nas:/prdrive-catalog/pairs.toml")
+    c("  salvo que consten los dos", ofrece(VIEJO_CFG), True)
+    c("con un nombre propio, nunca", ofrece({"defaults": {"catalog_path": "/c/mio.toml"}}),
+      False)
+
 sys.exit(c.report())

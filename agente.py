@@ -54,6 +54,10 @@ Cómo trabaja, vuelta a vuelta (`Agente.vuelta()`):
   la pausa de la ventana de la raíz, su ventana abierta) y, al acabar, se
   vuelve a tomar la foto para que lo que escribió rclone no la dispare otra
   vez. No ve los cambios del remoto: esos esperan al intervalo.
+- **Atiende el llavero** de una raíz con `[keychain]` como una pareja
+  vigilada, se elija lo que se elija. Mientras su KeePassXC está abierto, lo de
+  otro dispositivo se trae cada 5 min (también en modo `sync`), y al abrirlo y
+  al cerrarlo hay una pasada enseguida.
 - **Ejecuta** cada pasada como el `sync.py` de esa raíz, hijo, con el Python
   del agente y el directorio de trabajo fuera de la raíz: cada raíz ejecuta su
   propio código, un rclone colgado no tumba al agente y entre pasadas no queda
@@ -141,8 +145,8 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 import penwatch  # noqa: E402
-from common import (APP_NAME, avisos, catalog, components, equipo, model,  # noqa: E402
-                    moderacion, store, update, vestibulo)
+from common import (APP_NAME, avisos, catalog, components, equipo,  # noqa: E402
+                    keepassxc, llavero, model, moderacion, store, update, vestibulo)
 from common import huella as huellas  # noqa: E402  (`huella()` es la del código de una raíz)
 from common import planificador as pl  # noqa: E402
 from common.store import pid_alive  # noqa: E402
@@ -154,6 +158,8 @@ except ModuleNotFoundError:  # pragma: no cover
     import tomli as tomllib  # type: ignore
 
 IS_WIN = os.name == "nt"
+ABRE_LLAVERO = IS_WIN or sys.platform.startswith("linux")
+"""Si «Abrir llavero» sale en la bandeja y el aviso de conflicto ofrece combinar."""
 HOST = equipo.HOST
 APP_SUBDIR = penwatch.APP_SUBDIR
 
@@ -183,6 +189,13 @@ PARAR_ESPERA = 10.0
 """Segundos que `parar` espera a que el agente se vaya."""
 ESPERA_VENTANA = 60.0
 """Segundos que «Bloquear» espera a que se cierre la ventana de la raíz."""
+ESPERA_LLAVERO = (keepassxc.ESPERA_CIERRE + keepassxc.ESPERA_VIGILANTE
+                  + keepassxc.TOPE_PASADA + 30.0)
+"""Lo más que se espera, antes de bloquear, a que el llavero de la raíz se cierre.
+
+Lo que puede esperar su `--cerrar-llavero` (KeePassXC, el vigilante y la
+pasada de lo pendiente) y un margen para arrancar Python.
+"""
 ESPERA_DESMONTAJE = 300.0
 """Segundos que se espera a que VeraCrypt cierre (puede estar preguntando)."""
 GRACIA_DESMONTAJE = 5.0
@@ -206,13 +219,15 @@ conectarla y luego como mucho una vez por minuto: así se ve un icono cambiado
 o una actualización hecha desde su ventana sin leer la unidad en cada vuelta.
 """
 
-IGNORAR_CAMBIOS = huellas.IGNORAR + (APP_SUBDIR,)
+IGNORAR_CAMBIOS = huellas.IGNORAR + (APP_SUBDIR, model.LLAVERO_LOCAL)
 """Carpetas de la raíz de una pareja vigilada que no se miran.
 
 Además de `.prversions/`, el propio `.prdrive/`: una pareja con `local = "."`
 lo tendría dentro, y lo que escribe cada pasada en su `state/` la dispararía
-otra vez. Si esa carpeta es la raíz del dispositivo se añade lo que el sistema
-deja en un volumen (`model.RUIDO_DEL_SISTEMA`, vía `ruido_en()`).
+otra vez. Y `.keychain/`, que esa pareja no sincroniza (`model.REGLA_SIN_LLAVERO`)
+y que tiene su propia vigilancia. Si esa carpeta es la raíz del dispositivo se
+añade lo que el sistema deja en un volumen (`model.RUIDO_DEL_SISTEMA`, vía
+`ruido_en()`).
 """
 
 
@@ -261,6 +276,14 @@ SIN_RCLONE = ("no encuentro el rclone del agente; sin él no ejecuto nada de las
 TEXTO_RESULTADO = {OK: "bien", FALLO: "FALLÓ", RED: "FALLÓ por la red",
                    SALTADA: "saltada: pide --resync"}
 """Cómo se dice, en el diario, el resultado de una pasada."""
+
+
+LLAVERO_EN_CONFLICTO = ("Se guardó en dos dispositivos sin sincronizar en medio, y las dos "
+                        "versiones están en el dispositivo: no se ha perdido nada. ")
+"""El principio del aviso de un conflicto del llavero; lo acaba cómo combinarlas."""
+COMBINAR_AQUI = "«Abrir llavero» ofrece combinarlas antes de abrir."
+COMBINAR_A_MANO = ("Combínalas en KeePassXC: «Base de datos → Combinar desde base de "
+                   "datos…».")
 
 
 def lanzar(args: list[str], **kwargs) -> Any:
@@ -342,6 +365,64 @@ def hilo(funcion) -> None:
     Punto de indirección: los tests la corren en el sitio.
     """
     threading.Thread(target=funcion, daemon=True).start()
+
+
+def keepassxc_abierto(raiz: Path) -> bool:
+    """Indica si el KeePassXC de esa raíz está abierto en este equipo.
+
+    Es `llavero.keepassxc_abierto()` sobre su `.prdrive/`: en Windows recorre
+    todos los procesos del equipo. Punto de indirección: los tests dicen si lo
+    está, sin procesos de verdad.
+    """
+    return llavero.keepassxc_abierto(app(raiz))
+
+
+def limpiar_navegador() -> tuple[int, list[str]]:
+    """Quita lo del navegador que apunta a un KeePassXC de prdrive que ya no está.
+
+    Es lo que no pudo hacer «Expulsar» con una unidad que se quitó sin
+    expulsarla. En Windows, las claves del registro: el navegador seguiría
+    buscando KeePassXC en una letra muerta; si hay uno instalado, la clave
+    vuelve a él (`keepassxc.cerrar_navegador(muertas=True)`). En Linux, los
+    manifiestos de prdrive, si ya no queda abierto ningún KeePassXC extraído
+    (`keepassxc.cerrar_navegador_linux(muertas=True)`). Lo de otros programas
+    no se toca. Punto de indirección: los tests no tocan el registro ni los
+    navegadores.
+
+    Returns:
+        Cuántas claves o manifiestos ha tocado y lo que no ha podido hacer.
+    """
+    if not IS_WIN:
+        manifiestos = keepassxc.plan_cerrar_navegador_linux(muertas=True)
+        if not manifiestos:
+            return 0, []
+        return len(manifiestos), keepassxc.cerrar_navegador_linux(muertas=True)
+    plan = keepassxc.plan_cerrar_navegador(carpeta_app=APP_SUBDIR, muertas=True)
+    if not plan:
+        return 0, []
+    return len(plan), keepassxc.cerrar_navegador(carpeta_app=APP_SUBDIR, muertas=True)
+
+
+def cerrar_keepassxc_huerfano(raiz: Path) -> int:
+    """Le pide que se cierre al KeePassXC de una raíz que se ha ido; devuelve a cuántos.
+
+    En Linux corre extraído en el equipo, no desde la unidad, así que no muere
+    con ella como en Windows: seguiría con la base abierta en memoria, y sus
+    passkeys, en un equipo del que la unidad ya se ha ido. Se le pide como lo
+    haría la persona (`keepassxc.pedir_cierre()`): con algo sin guardar,
+    pregunta él. Es de módulo para que los tests no cierren nada.
+    """
+    return 0 if IS_WIN else keepassxc.cerrar_huerfano(raiz / APP_SUBDIR)
+
+
+def keepassxc_huerfano_abierto(raiz: Path) -> bool:
+    """Indica si sigue abierto el KeePassXC de una raíz que se ha ido (Linux).
+
+    Tras pedirle que se cierre tarda en salir (medio segundo, o lo que tarde la
+    persona si tiene algo sin guardar), y mientras tanto el navegador no se
+    puede dejar como estaba. Es de módulo para que los tests no miren procesos.
+    """
+    return False if IS_WIN else bool(llavero.pids_keepassxc(raiz / APP_SUBDIR))
 
 
 def huella_local(ruta: Path, tope: int, ignorar: tuple[str, ...]) -> pl.Huella | None:
@@ -605,7 +686,8 @@ def leer_servicio(raiz: Path) -> Servicio:
     """Devuelve las parejas y el intervalo del servicio de esa raíz.
 
     Los elige como su propio runsync: `ui_prefs.json` > `[daemon]` > todas
-    (`prefs.elegir()`). Se lee el TOML a pelo y no con `model.parse_config()`
+    (`prefs.elegir()`). Con `[keychain]`, además la del llavero, siempre y
+    vigilada (`common/llavero.py`). Se lee el TOML a pelo y no con `model.parse_config()`
     porque la raíz puede ir en otra versión que el agente: lo que valida es su
     `sync.py`, y un modo que este agente no conozca no puede dejarla sin
     servicio.
@@ -646,8 +728,16 @@ def leer_servicio(raiz: Path) -> Servicio:
     daemon = crudo.get("daemon") if isinstance(crudo.get("daemon"), dict) else {}
     elegidas, minutos, _ = prefs.elegir(list(remotos), daemon,
                                         store.read_json(estado_de(raiz) / "ui_prefs.json"))
-    return Servicio(tuple(pl.Pareja(n, remotos[n], vigila=n in locales) for n in elegidas),
-                    minutos, {n: locales[n] for n in elegidas if n in locales})
+    parejas = [pl.Pareja(n, remotos[n], vigila=n in locales) for n in elegidas]
+    vigiladas = {n: locales[n] for n in elegidas if n in locales}
+    # El llavero no se elige: con `[keychain]` se atiende siempre, como una
+    # pareja con `watch = true` en `.keychain/`. Una pareja del usuario con su
+    # nombre la invalidaría su `sync.py`; aquí no se lanza la del llavero.
+    if isinstance(crudo.get("keychain"), dict) and model.LLAVERO not in remotos:
+        remoto, _ = model.carpeta_del_catalogo(defaults)
+        parejas.append(pl.Pareja(model.LLAVERO, remoto, vigila=True))
+        vigiladas[model.LLAVERO] = model.LLAVERO_LOCAL
+    return Servicio(tuple(parejas), minutos, vigiladas)
 
 
 def orden_sonda(raiz: Path, remoto: str) -> list[str] | None:
@@ -848,6 +938,13 @@ class Conexion:
             solo entonces la huella que deje se apunta como aceptada.
         version_avisada: La versión suya de la que ya se dijo que el agente
             la puede poner al día.
+        llavero: Si lleva llavero (`[keychain]`), o `None` si todavía no se
+            ha mirado.
+        llavero_leido: Cuándo se miró.
+        copias: Las copias de conflicto de su llavero, rutas relativas a la
+            raíz (`_copias_del_llavero()`).
+        copias_leidas: Cuándo se miraron.
+        copias_avisadas: Las que ya se han avisado en esta conexión.
     """
     id: str
     raiz: Path
@@ -877,6 +974,11 @@ class Conexion:
     a_medias: bool = False
     confiada: bool | None = None
     version_avisada: str | None = None
+    llavero: bool | None = None
+    llavero_leido: float = -math.inf
+    copias: tuple[str, ...] = ()
+    copias_leidas: float = -math.inf
+    copias_avisadas: frozenset[str] = frozenset()
 
 
 @dataclass
@@ -922,11 +1024,18 @@ class Bloqueo:
         proc: El VeraCrypt que desmonta, ya lanzado.
         lanzado: Cuándo se lanzó.
         copia: La copia elevada que puede seguir tras él.
+        llavero: El `runsync.py --cerrar-llavero` de la raíz, si lleva
+            llavero: va antes que VeraCrypt.
+        llavero_desde: Cuándo se lanzó.
+        llavero_cerrado: Si ya acabó bien.
     """
     desde: float
     proc: Any = None
     lanzado: float = 0.0
     copia: Copia | None = None
+    llavero: Any = None
+    llavero_desde: float = 0.0
+    llavero_cerrado: bool = False
 
 
 @dataclass(frozen=True)
@@ -1147,6 +1256,11 @@ class Agente:
         vigiladas: Lo que se recuerda de cada pareja que pide `watch`, por
             `(raíz, pareja)`; se olvida al irse la raíz.
         muestreo: El muestreo de carpetas en marcha, si lo hay.
+        keepassxc: Las raíces atendidas con su KeePassXC abierto en este
+            equipo, por id (`_mirar_keepassxc()`).
+        keepassxc_mirado: Cuándo se miró.
+        navegador_mirado: Si ya se han mirado, al arrancar, las claves del
+            navegador que dejó una unidad quitada sin expulsar.
     """
     reloj: Any = time.time
     ajustes: equipo.Ajustes = field(default_factory=equipo.leer_ajustes)
@@ -1191,6 +1305,10 @@ class Agente:
     cambios: pl.PoliticaCambios = field(default_factory=pl.PoliticaCambios)
     vigiladas: dict[tuple[str, str], pl.Vigilada] = field(default_factory=dict)
     muestreo: Muestreo | None = None
+    keepassxc: set[str] = field(default_factory=set)
+    keepassxc_mirado: float = -math.inf
+    navegador_mirado: bool = False
+    navegador_tras_cierre: dict[str, tuple[str, Path]] = field(default_factory=dict)
 
     def vuelta(self, recorrer: bool = True) -> pl.Decision | None:
         """Hace una vuelta del agente y devuelve lo que decidió lanzar, si algo.
@@ -1208,6 +1326,10 @@ class Agente:
             La decisión del planificador, o `None`.
         """
         ahora = self.reloj()
+        if not self.navegador_mirado:
+            # Las de una unidad que se fue mientras el agente no estaba.
+            self.navegador_mirado = True
+            self._limpiar_navegador("al arrancar")
         self._buzon(ahora)
         if recorrer:
             self._recorrer(ahora)
@@ -1216,6 +1338,7 @@ class Agente:
         for con in list(self.conexiones.values()):
             if not presente(con.raiz):
                 self._desconectar(con.id, ahora, {})
+        self._tras_cierre()
         self._preguntas(ahora)
         self._fin_de_pasada(ahora)
         self._cambios_de_red(ahora)
@@ -1223,9 +1346,11 @@ class Agente:
         self._bloqueos(ahora)
         for con in self.conexiones.values():
             self._contrato(con, ahora)
+            self._copias_del_llavero(con, ahora)
         self._actualizaciones(ahora)
         self._leer_entorno(ahora)
         self._mirar_version(ahora)
+        self._mirar_keepassxc(ahora)
         self._vigilar(ahora)
         decision = None
         if self.pasada is None and not self.terminar and not self._heredada():
@@ -1438,6 +1563,7 @@ class Agente:
         self.sospechas = {k: v for k, v in self.sospechas.items() if k[0] != uid}
         self.sin_red_avisado = {k for k in self.sin_red_avisado if k[0] != uid}
         self._olvidar_vigiladas(uid)
+        self.keepassxc.discard(uid)
         if con.actualizacion is not None and con.actualizacion.proc is not None:
             # El hijo sigue solo y fallará; al volver, la huella dirá si la tocó.
             diario(f"{con.nombre}: se ha ido mientras se actualizaba")
@@ -1447,6 +1573,54 @@ class Agente:
                                    "ya no está en su carpeta"
                                    if unidad is not None and unidad.es_raiz
                                    else "desconectada"))
+        # Si se quitó sin expulsar: en Linux su KeePassXC sigue abierto, y el
+        # navegador sigue apuntando a él.
+        try:
+            huerfanos = cerrar_keepassxc_huerfano(con.raiz)
+        except OSError:
+            huerfanos = 0
+        if huerfanos:
+            diario(f"{con.nombre}: se ha ido con KeePassXC abierto; le pido que se cierre")
+            # Mientras corra un KeePassXC extraído, `limpiar_navegador()` no
+            # toca nada: se hace cuando salga (`_tras_cierre()`).
+            self.navegador_tras_cierre[uid] = (con.nombre, con.raiz)
+            return
+        self._limpiar_navegador(con.nombre)
+
+    def _tras_cierre(self) -> None:
+        """Deja el navegador como estaba cuando sale el KeePassXC de una raíz que se fue.
+
+        Es lo que `_desconectar()` deja pendiente al pedirle que se cierre. Si
+        la raíz ha vuelto, su KeePassXC ya no es un huérfano: lo suyo lo hará
+        «Expulsar», o la próxima vez que se vaya.
+        """
+        for uid, (nombre, raiz) in list(self.navegador_tras_cierre.items()):
+            if uid in self.conexiones:
+                del self.navegador_tras_cierre[uid]
+            elif not keepassxc_huerfano_abierto(raiz):
+                del self.navegador_tras_cierre[uid]
+                self._limpiar_navegador(nombre)
+
+    def _limpiar_navegador(self, por: str) -> None:
+        """Hace `limpiar_navegador()` y lo dice en el diario, si ha tocado algo.
+
+        Nunca lanza: es lo de después de que una unidad se vaya, y un fallo
+        del registro no puede tumbar al agente.
+
+        Args:
+            por: Quién se ha ido, o cuándo, para el diario.
+        """
+        try:
+            tocadas, fallos = limpiar_navegador()
+        except OSError as e:
+            tocadas, fallos = 0, [str(e)]
+        if tocadas:
+            que = ((f"{tocadas} clave{'s' if tocadas != 1 else ''} del registro") if IS_WIN
+                   else f"{tocadas} manifiesto{'s' if tocadas != 1 else ''}")
+            diario(f"{por}: el navegador ya no busca un KeePassXC que no está ({que})")
+        if fallos:
+            diario(f"{por}: no he podido dejar como estaban las claves del navegador: "
+                   f"{fallos[0]}")
 
     def _vestibulos(self, cerradas: dict[str, Path], ahora: float) -> None:
         """Abre las unidades VeraCrypt de la lista que se ven cerradas.
@@ -1606,6 +1780,33 @@ class Agente:
             diario(f"{con.nombre}: ventana abierta")
         except OSError as e:
             diario(f"{con.nombre}: no he podido abrir la ventana: {e}")
+
+    def _lanzar_llavero(self, con: Conexion) -> None:
+        """Hace el «Abrir llavero» de la bandeja: el `runsync.py --llavero` de esa raíz.
+
+        Con el Python del agente y desde fuera de la raíz, como su ventana, y
+        con sus mismas guardas, salvo una ventana abierta: «Abrir llavero» no
+        para el servicio ni choca con ella (es lo que hace también
+        `Llavero.bat`). Lo que diga (el fichero llave, combinar) lo dice él.
+        """
+        if self._por_actualizar(con) or rclone_propio() is None:
+            diario(f"{con.nombre}: no abro su llavero: "
+                   + (self._motivo_sin_servicio(con) if self._por_actualizar(con)
+                      else SIN_RCLONE))
+            return
+        if not self._llavero_de(con):
+            diario(f"{con.nombre}: no lleva llavero")
+            return
+        if not hay_pantalla():
+            diario(f"{con.nombre}: sin entorno gráfico; no hay dónde abrir su llavero")
+            return
+        try:
+            lanzar([python(ventana=True), str(app(con.raiz) / "runsync.py"), "--llavero"],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                   **_opciones_hijo(equipo.DIR, separado=True))
+            diario(f"{con.nombre}: abriendo su llavero")
+        except OSError as e:
+            diario(f"{con.nombre}: no he podido abrir su llavero: {e}")
 
     def _sirve(self, con: Conexion) -> bool:
         """Indica si el agente tiene que servir esa conexión.
@@ -1832,7 +2033,9 @@ class Agente:
 
         Las que tienen nuestro lock y su servicio y no se están bloqueando ni
         actualizando. De la raíz de la pasada cortada se quita su pareja
-        mientras espera.
+        mientras espera. Con su KeePassXC abierto, el llavero trae lo de otro
+        dispositivo cada `llavero.REMOTO_ABIERTO` como mucho, también en modo
+        `sync`.
         """
         raices = []
         cortada = self._cortada()
@@ -1845,8 +2048,58 @@ class Agente:
             parejas = con.servicio.parejas
             if cortada is not None and cortada.get("raiz") == con.id:
                 parejas = tuple(p for p in parejas if p.nombre != cortada.get("pareja"))
+            if con.id in self.keepassxc:
+                parejas = tuple(replace(p, intervalo=min(intervalo, llavero.REMOTO_ABIERTO))
+                                if p.nombre == model.LLAVERO else p for p in parejas)
             raices.append(pl.Raiz(con.id, parejas, intervalo))
         return raices
+
+    def _mirar_keepassxc(self, ahora: float) -> None:
+        """Mira en qué raíces atendidas está abierto su KeePassXC (`keepassxc_abierto()`).
+
+        Se mira cada `PoliticaCambios.sondeo`, no en cada vuelta: en Windows es
+        recorrer todos los procesos del equipo. Solo en las raíces que sirve el
+        agente y llevan llavero; las demás las atiende su vigilante.
+
+        Al abrirse y al cerrarse, toca una pasada del llavero enseguida (su
+        marca vuelve a «nunca intentada»): al abrirse trae lo último antes de
+        que se desbloquee la base, porque «Abrir llavero» no hace pasada si el
+        agente atiende la raíz; al cerrarse sube lo que se guardó justo antes,
+        que en modo `sync` no vigila nadie más. Si ya hay una pasada del
+        llavero en marcha, el cambio se deja para la próxima mirada: esa
+        pasada pudo empezar antes.
+        """
+        if ahora - self.keepassxc_mirado < self.cambios.sondeo:
+            return
+        self.keepassxc_mirado = ahora
+        servidas: set[str] = set()
+        abiertos: set[str] = set()
+        for con in self.conexiones.values():
+            if con.lock is None or con.servicio is None \
+                    or not any(p.nombre == model.LLAVERO for p in con.servicio.parejas):
+                continue
+            servidas.add(con.id)
+            try:
+                if keepassxc_abierto(con.raiz):
+                    abiertos.add(con.id)
+            except OSError as e:
+                diario(f"{con.nombre}: no he podido mirar si KeePassXC está abierto: {e}")
+        en_marcha = (self.pasada.tarea.raiz, self.pasada.tarea.pareja) \
+            if self.pasada is not None else None
+        # Una raíz que el agente deja de servir (su ventana, una pausa) se
+        # olvida sin más: no es que KeePassXC se haya cerrado.
+        for uid in (abiertos ^ self.keepassxc) & servidas:
+            if en_marcha == (uid, model.LLAVERO):
+                # Su cambio se trata en la próxima mirada, con la pasada acabada.
+                abiertos.symmetric_difference_update({uid})
+                continue
+            marca = self.marcas.get((uid, model.LLAVERO), pl.Marca())
+            self.marcas[(uid, model.LLAVERO)] = pl.Marca(None, marca.fallos)
+            nombre = self.conexiones[uid].nombre
+            diario(f"{nombre}: KeePassXC abierto; el llavero se trae ahora y cada "
+                   f"{llavero.REMOTO_ABIERTO / 60:.0f} min" if uid in abiertos
+                   else f"{nombre}: KeePassXC cerrado; se sube lo que quede del llavero")
+        self.keepassxc = abiertos
 
     def _cortada(self) -> dict | None:
         """Devuelve la pasada que cortó el instalador, mientras su pareja espere.
@@ -2154,6 +2407,8 @@ class Agente:
         diario(f"[{con.nombre}] {tarea.pareja}: {TEXTO_RESULTADO[como]} "
                f"(rc={rc}, {segundos:.0f}s)")
         self._apuntar_en_lock(con, tarea.pareja, como, rc, segundos)
+        if tarea.pareja == model.LLAVERO:
+            self._copias_del_llavero(con, ahora, ya=True)
 
         if como == RED:
             # ¿De verdad es la red? La sonda va ya: si el remoto contesta,
@@ -2373,7 +2628,8 @@ class Agente:
 
         Primero se espera a que nada lo impida (la pareja en curso, la foto de
         una de sus carpetas durante `ESPERA_VENTANA` como mucho, su ventana);
-        luego VeraCrypt desmonta y se espera a verlo cerrado.
+        si lleva llavero, se cierra (`_cerrar_llavero()`); luego VeraCrypt
+        desmonta y se espera a verlo cerrado.
         """
         for uid, b in list(self.bloqueos.items()):
             unidad = self.ajustes.unidades.get(uid)
@@ -2399,6 +2655,8 @@ class Agente:
                         avisar(f"{nombre}: no la bloqueo",
                                "Su ventana sigue abierta. Ciérrala y vuelve a pedirlo.",
                                True)
+                    continue
+                if con is not None and not self._cerrar_llavero(con, b, ahora):
                     continue
                 cmd = orden_bloquear(unidad)
                 if cmd is None:
@@ -2435,6 +2693,55 @@ class Agente:
                 avisar(f"{nombre}: sigue abierta",
                        "VeraCrypt no la ha cerrado: si un programa tiene un fichero "
                        "abierto dentro, ciérralo y vuelve a bloquear.", True)
+
+    def _cerrar_llavero(self, con: Conexion, b: Bloqueo, ahora: float) -> bool:
+        """Cierra el llavero de una raíz antes de bloquearla; dice si ya se puede seguir.
+
+        KeePassXC corre desde dentro del contenedor y lo retiene, y lo que
+        quede sin subir se perdería de vista hasta desbloquearla. Es su
+        `runsync.py --cerrar-llavero`, el de «Expulsar PRDRIVE.bat», con el
+        Python del agente y sin consola: sin nadie que conteste, cierra
+        KeePassXC como lo haría la persona (si tiene algo sin guardar, pregunta
+        él), sube lo pendiente y deja el navegador como estaba. Si KeePassXC no
+        se cierra (sale con 1) o tarda más de `ESPERA_LLAVERO`, no se bloquea y
+        se dice. Una raíz sin llavero sigue sin más.
+
+        Returns:
+            True si ya se puede lanzar VeraCrypt.
+        """
+        if b.llavero_cerrado or not self._llavero_de(con):
+            return True
+        nombre = con.nombre
+        if b.llavero is None:
+            try:
+                b.llavero = lanzar([python(), str(app(con.raiz) / "runsync.py"),
+                                    "--cerrar-llavero"],
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                   **_opciones_hijo(equipo.DIR, separado=True))
+            except OSError as e:
+                diario(f"{nombre}: no he podido cerrar su llavero ({e}); se bloquea igual")
+                b.llavero_cerrado = True
+                return True
+            b.llavero_desde = ahora
+            diario(f"{nombre}: cerrando su llavero antes de bloquearla")
+            return False
+        rc = b.llavero.poll()
+        if rc is None:
+            if ahora - b.llavero_desde < ESPERA_LLAVERO:
+                return False
+            try:
+                b.llavero.terminate()
+            except OSError:
+                pass
+            rc = 1
+        if rc == 1:
+            del self.bloqueos[con.id]
+            avisar(f"{nombre}: no la bloqueo",
+                   "KeePassXC sigue abierto: puede que esté preguntando algo. Ciérralo "
+                   "y vuelve a bloquearla.", True)
+            return False
+        b.llavero_cerrado = True
+        return True
 
     def _leer_entorno(self, ahora: float) -> None:
         """Lee la batería y la red, como mucho cada `MIRAR_ENTORNO` segundos."""
@@ -2835,6 +3142,8 @@ class Agente:
             self._abrir(uid, ahora)
         elif que == equipo.PIDE_EXPLORAR:
             self._abrir(uid, ahora, explorador=True)
+        elif que == equipo.PIDE_LLAVERO:
+            self._abrir(uid, ahora, llavero=True)
         elif que == equipo.PIDE_DESPERTAR:
             # Vuelta de la suspensión: la batería y la red pueden ser otras y
             # un remoto «sin conexión» quizá ya contesta. Se mira todo ya.
@@ -2892,22 +3201,26 @@ class Agente:
             self.terminar = True
             diario("parada pedida: termina en cuanto acabe lo que esté en marcha")
 
-    def _abrir(self, uid: str, ahora: float, explorador: bool = False) -> None:
-        """Hace el «Configurar» de la bandeja (la ventana de una raíz) o su «Abrir en explorador».
+    def _abrir(self, uid: str, ahora: float, explorador: bool = False,
+               llavero: bool = False) -> None:
+        """Hace «Configurar», «Abrir en explorador» o «Abrir llavero» de una raíz.
 
         Una unidad que no está en la lista no: sería ejecutar su código sin el
         sí, y tampoco se abre su carpeta (la misma regla, sin excepciones). Ni
         una que se está actualizando, hasta que acabe. Una raíz cifrada
         bloqueada se desbloquea antes, y su ventana o su carpeta salen al verla
-        abierta.
+        abierta; su llavero no, porque bloqueada no se sabe si lo lleva.
 
         Args:
             uid: El id de la raíz.
             ahora: La hora del reloj del agente.
             explorador: Abrirla en el explorador de archivos en vez de su
                 ventana.
+            llavero: Abrir su llavero (`runsync.py --llavero`) en vez de su
+                ventana.
         """
-        que = "abrir en el explorador" if explorador else "abrir"
+        que = ("abrir en el explorador" if explorador else
+               "abrir el llavero" if llavero else "abrir")
         unidad = self.ajustes.unidades.get(uid)
         con = self.conexiones.get(uid)
         if unidad is None or (con is not None and (con.cambiada or self._por_actualizar(con))):
@@ -2918,8 +3231,12 @@ class Agente:
         elif con is not None:
             if explorador:
                 self._explorar(con)
+            elif llavero:
+                self._lanzar_llavero(con)
             else:
                 self._lanzar_ventana(con)
+        elif llavero:
+            diario(f"{que} {unidad.nombre or uid[:8]}: no está abierta aquí ahora")
         elif unidad.cifrada and uid not in self.ausentes:
             self._desbloquear(unidad, ahora, "para abrirla en el explorador" if explorador
                               else "para abrirla", abrir=not explorador, explorar=explorador)
@@ -2973,6 +3290,63 @@ class Agente:
             con.version = update.installed_version(app(con.raiz))
             con.version_leida = ahora
         return con.version
+
+    def _llavero_de(self, con: Conexion) -> bool:
+        """Indica si esa raíz lleva llavero (`[keychain]` en su `sync_config.toml`).
+
+        Solo de una raíz de la lista, con su código aceptado y de una versión
+        válida, como su icono: de las demás no se lee nada más. Se lee el TOML
+        sin el modelo (`components.llavero_activo()`), como mucho una vez cada
+        `MIRAR_EMBLEMA`: activarlo desde su ventana lo cambia sin desconectarla.
+        """
+        if (con.id not in self.ajustes.unidades or con.cambiada
+                or self._por_actualizar(con)):
+            return False
+        ahora = self.reloj()
+        if con.llavero is None or ahora - con.llavero_leido >= MIRAR_EMBLEMA:
+            con.llavero = components.llavero_activo(app(con.raiz))
+            con.llavero_leido = ahora
+        return con.llavero
+
+    def _copias_del_llavero(self, con: Conexion, ahora: float, ya: bool = False) -> None:
+        """Mira si el llavero de esa raíz tiene copias de conflicto, y avisa de las nuevas.
+
+        Es lo que su `sync.py` apunta en `state/conflicts.json` tras cada
+        pasada (`conflicts.actualizar_pareja()`): un JSON que se lee y no se
+        ejecuta, porque el agente no lleva el modelo de la raíz. Se mira tras
+        cada pasada del llavero (`ya`) y si no, como mucho cada
+        `MIRAR_EMBLEMA`: «Combinar» las quita sin pasada del agente.
+
+        Se avisa una vez por conexión de cada copia nueva: no hay que elegir,
+        combinarlas no pierde nada, y el aviso dice cómo. Cuando ya no queda
+        ninguna se olvida lo avisado, para que un conflicto nuevo con el mismo
+        nombre se vuelva a decir.
+
+        Args:
+            con: La conexión.
+            ahora: La hora del reloj del agente.
+            ya: Mirarlas ahora, haya pasado lo que haya pasado.
+        """
+        if not ya and ahora - con.copias_leidas < MIRAR_EMBLEMA:
+            return
+        con.copias_leidas = ahora
+        copias: list = []
+        if self._llavero_de(con):
+            datos = store.read_json(estado_de(con.raiz) / "conflicts.json")
+            parejas = datos.get("parejas")
+            copias = parejas.get(model.LLAVERO) if isinstance(parejas, dict) else []
+        con.copias = tuple(sorted(c for c in copias if isinstance(c, str))) \
+            if isinstance(copias, list) else ()
+        if not con.copias:
+            con.copias_avisadas = frozenset()
+            return
+        nuevas = set(con.copias) - con.copias_avisadas
+        if nuevas:
+            con.copias_avisadas |= nuevas
+            diario(f"{con.nombre}: el llavero tiene copias de conflicto: "
+                   f"{', '.join(sorted(nuevas))}")
+            avisar(f"{con.nombre}: el llavero tiene dos versiones",
+                   LLAVERO_EN_CONFLICTO + (COMBINAR_AQUI if ABRE_LLAVERO else COMBINAR_A_MANO))
 
     def _estado_raiz(self, uid: str, unidad: equipo.Unidad) -> str:
         """Devuelve en qué está una raíz de este equipo, para la bandeja."""
@@ -3038,7 +3412,10 @@ class Agente:
                              "vigila": vigila,
                              "vigila_abandonada": abandonadas,
                              "emblema": self._emblema(con),
-                             "version": self._version_de(con)})
+                             "version": self._version_de(con),
+                             "llavero": self._llavero_de(con),
+                             "llavero_abierto": con.id in self.keepassxc,
+                             "llavero_conflicto": len(con.copias)})
         cerradas = [u.nombre or u.id[:8] for u in self.ajustes.cifradas.values()
                     if u.id not in self.conexiones and u.id not in self.ausentes]
         return {"pid": os.getpid(), "pausado": self.pausado, "retenido": self.retenido,
@@ -3067,6 +3444,8 @@ class Agente:
                             "cifrada": u.cifrada, "estado": self._estado_raiz(uid, u)}
                            for uid, u in self.ajustes.raices.items()],
                 "pedir_al_iniciar": self.ajustes.pedir_al_iniciar,
+                # Dónde se abre el llavero: Windows y Linux (fase 2).
+                "abre_llavero": ABRE_LLAVERO,
                 "ultima_pasada": self.ultima_buena,
                 "version": self.version, "nueva": self.nueva,
                 "actualizando": self._actualizandose()}
@@ -3391,6 +3770,10 @@ def cmd_status(_args: argparse.Namespace) -> int:
         if u.get("vigila_abandonada"):
             print(f"  No vigila sus cambios (demasiado grande o fuera de la raíz; "
                   f"sigue por su intervalo): {', '.join(u['vigila_abandonada'])}")
+        if u.get("llavero"):
+            print("  Lleva llavero" + ("; su KeePassXC está abierto: se trae cada "
+                                       f"{llavero.REMOTO_ABIERTO / 60:.0f} min"
+                                       if u.get("llavero_abierto") else ""))
     for ruta in estado.get("ausentes") or []:
         print(f"Falta la raíz del equipo: no está en {ruta}")
     for nombre in estado.get("bloqueadas") or []:

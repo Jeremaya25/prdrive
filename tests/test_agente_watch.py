@@ -127,7 +127,7 @@ c("  y ninguna es por cambios", [m for m in F.DIARIO if "han cambiado sus ficher
 F.vueltas(ag, 3)
 c("solo se ha mirado la carpeta de docs", {m[0] for m in MIRADAS}, {"docs"})
 c("  con el tope de las reglas y sin mirar .prversions/ ni .prdrive/",
-  {(m[1], m[2]) for m in MIRADAS}, {(CAMBIOS.tope_entradas, (".prversions", ".prdrive"))})
+  {(m[1], m[2]) for m in MIRADAS}, {(CAMBIOS.tope_entradas, (".prversions", ".prdrive", ".keychain"))})
 c("  y tiene la foto de partida", ag.vigiladas[(UID, "docs")].huella, pl.Huella(10, 1))
 c("  de ninguna otra pareja", sorted(nom for (_, nom) in ag.vigiladas), ["docs"])
 

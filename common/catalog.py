@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""El catálogo global de parejas, que vive en el remoto del usuario.
+"""El catálogo del remoto del usuario (`remote.toml`, antes `pairs.toml`).
 
 `sync_config.toml` dice qué sincroniza ESTE dispositivo; el catálogo
 (`<remote>:<catalog_path>`) dice qué parejas existen y es el mismo fichero para
@@ -20,6 +20,14 @@ Tres cosas gobiernan este módulo:
   prefiere reutilizar un serializador probado que se niega a escribir lo que no
   se relee igual.
 
+El fichero tiene dos nombres posibles, porque ya no lleva solo parejas: los
+remotos nuevos nacen con `remote.toml` y los de antes conservan `pairs.toml`
+hasta que alguien los renombra (`renombrar()`, desde «Ajustes»). Da igual cuál
+de los dos diga `catalog_path`: se lee el que haya, primero `remote.toml`
+(`candidatos()`), y se escribe en el que se acaba de leer. Nunca se crea el
+otro: un dispositivo de antes solo sabe leer `pairs.toml`, y dos ficheros
+partirían la flota en dos catálogos.
+
 `run()` es una función de módulo a propósito: los tests la sustituyen entera y
 así ninguno toca la red.
 """
@@ -32,19 +40,21 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 import tomllib
+from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Mapping, NamedTuple
 
 from . import config_file, model, store
 from .model import ConfigError
 
-DEFAULT_CATALOG_PATH = "/prdrive-catalog/pairs.toml"
-"""Ruta del catálogo de fábrica; cada usuario pone la suya.
+DEFAULT_CATALOG_PATH = model.DEFAULT_CATALOG_PATH
+"""Ruta del catálogo de fábrica (`model.DEFAULT_CATALOG_PATH`), reexportada.
 
-Se cambia por dispositivo con `[defaults].catalog_path` y el instalador la
-pregunta en su paso de conexión. `install/profile.py` la importa de aquí para
-que instalador y dispositivo no puedan discrepar.
+`install/profile.py` la importa de aquí para que instalador y dispositivo no
+puedan discrepar. Con ella se sigue encontrando el `pairs.toml` de un remoto de
+antes (`candidatos()`).
 """
 BAK_SUFFIX = ".bak"
 FICHERO = PurePosixPath(DEFAULT_CATALOG_PATH).name
@@ -52,6 +62,21 @@ FICHERO = PurePosixPath(DEFAULT_CATALOG_PATH).name
 
 Sale de la ruta de fábrica para no escribirlo dos veces; es lo que se sugiere
 cuando alguien pone la carpeta.
+"""
+FICHERO_ANTERIOR = "pairs.toml"
+"""El nombre de antes, que conserva un remoto hasta que se renombra."""
+NOMBRES = (FICHERO, FICHERO_ANTERIOR)
+"""Los dos nombres del catálogo, en el orden en que se buscan.
+
+`remote.toml` va primero: si alguna vez están los dos (una subida que se cruzó
+con el renombrado), manda ese.
+"""
+RC_NO_EXISTE = (3, 4)
+"""Códigos con los que rclone dice que una ruta no existe: 3 carpeta, 4 fichero.
+
+`cat` de un fichero que no está sale con 3 («directory not found»): rclone
+busca una carpeta con ese nombre y no la encuentra (medido con v1.75.1 y el
+backend local). En un remoto de cubetas sale con 0 y vacío: ver `leer()`.
 """
 
 NET_FLAGS = ["--contimeout", "10s", "--timeout", "20s",
@@ -93,7 +118,8 @@ class Catalog(NamedTuple):
         text: El fichero tal cual: la base contra la que se escribe.
         source: `remote` o `cache`.
         stamp: Cuándo se leyó.
-        endpoint: `remote:/ruta/al/pairs.toml`.
+        endpoint: `remote:/ruta/al/remote.toml`: el fichero que se leyó de
+            verdad, que con un remoto sin renombrar es su `pairs.toml`.
     """
     raw: dict
     text: str
@@ -122,9 +148,11 @@ class Catalog(NamedTuple):
 
 
 def endpoint(raw_local: Mapping[str, Any] | None = None) -> str:
-    """Devuelve dónde está el catálogo (`remote:ruta`).
+    """Devuelve dónde dice este dispositivo que está el catálogo (`remote:ruta`).
 
-    Sale de los `[defaults]` del dispositivo.
+    Sale de los `[defaults]` del dispositivo. Qué fichero se lee de verdad lo
+    decide `candidatos()`: si nombra uno de los dos nombres del catálogo, puede
+    ser el otro.
 
     Args:
         raw_local: El `sync_config.toml` en bruto; sin él, los valores de
@@ -136,13 +164,99 @@ def endpoint(raw_local: Mapping[str, Any] | None = None) -> str:
     return f"{remote}:{path}"
 
 
+Ejecutar = Callable[[list[str]], subprocess.CompletedProcess]
+"""Quien pregunta a rclone: `run` aquí, `remote.Rclone.run` en el instalador."""
+
+
+def partir(donde: str) -> tuple[str, str]:
+    """Separa una ruta o un endpoint en su carpeta, con la barra, y su nombre.
+
+    `nas:remote.toml` es la raíz del remoto: la carpeta es `nas:`.
+    """
+    corte = max(donde.rfind("/"), donde.rfind(":"))
+    return donde[:corte + 1], donde[corte + 1:]
+
+
+def candidatos(donde: str) -> tuple[str, ...]:
+    """Devuelve dónde buscar el catálogo, por orden.
+
+    Si la ruta nombra uno de los dos nombres del catálogo (`NOMBRES`), son los
+    dos en esa carpeta, `remote.toml` primero, nombre el que nombre. Así un
+    dispositivo que dice `pairs.toml` lo sigue encontrando cuando el remoto se
+    renombra, y uno nuevo que dice `remote.toml` encuentra el `pairs.toml` de un
+    remoto de antes. Una ruta con otro nombre se lee tal cual.
+
+    Args:
+        donde: Endpoint o ruta del catálogo.
+    """
+    carpeta, nombre = partir(donde)
+    if nombre not in NOMBRES:
+        return (donde,)
+    return tuple(carpeta + n for n in NOMBRES)
+
+
+def leer(ejecutar: Ejecutar, donde: str) -> tuple[subprocess.CompletedProcess, str]:
+    """Hace `cat` del catálogo con la regla de los dos nombres.
+
+    Se pasa al candidato siguiente si rclone dice que el anterior no existe
+    (`RC_NO_EXISTE`) o si lo trae vacío. Lo segundo es por los remotos de
+    cubetas (S3, B2, GCS…), donde las carpetas no existen de verdad: ahí `cat`
+    de un fichero que no está sale con 0 y nada, porque listar un prefijo
+    vacío no es un error (`backend/s3/s3.go`, v1.75.1, sin
+    `--s3-directory-markers`). Con cualquier otro fallo, sin red por ejemplo,
+    se para: el siguiente tardaría lo mismo en no llegar. Si ninguno trae
+    nada, vale la primera lectura vacía, que es un catálogo vacío como
+    siempre. Lo usan los dos lectores del catálogo, el del dispositivo y el
+    del instalador.
+
+    Args:
+        ejecutar: Quien ejecuta rclone (`Ejecutar`).
+        donde: El endpoint del catálogo que dice el dispositivo.
+
+    Returns:
+        Lo que contestó el `cat` que cuenta y a qué endpoint se le hizo: el del
+        fichero que trae algo si lo hay.
+    """
+    vacio: tuple[subprocess.CompletedProcess, str] | None = None
+    for cual in candidatos(donde):        # nunca está vacía
+        res = ejecutar(["cat", cual])
+        if res.returncode == 0 and (res.stdout or "").strip():
+            return res, cual
+        if res.returncode == 0:
+            vacio = vacio or (res, cual)
+        elif res.returncode not in RC_NO_EXISTE:
+            return res, cual
+    return vacio or (res, cual)
+
+
+def motivo_lectura(donde: str, cual: str, res: subprocess.CompletedProcess,
+                   separador: str = ": ") -> str:
+    """Dice por qué no se ha podido leer el catálogo.
+
+    Si no está con ninguno de los dos nombres, los nombra a los dos: el que
+    dice el dispositivo no es necesariamente el que falló.
+
+    Args:
+        donde: El endpoint del catálogo que dice el dispositivo.
+        cual: El endpoint del último `cat` de `leer()`.
+        res: Lo que contestó.
+        separador: Lo que va entre la frase y lo que dijo rclone.
+    """
+    detalle = (res.stderr or "").strip()
+    sitios = candidatos(donde)
+    if res.returncode in RC_NO_EXISTE and len(sitios) > 1:
+        return f"No hay catálogo en {' ni en '.join(sitios)}{separador}{detalle}"
+    return f"No pude leer el catálogo {cual}{separador}{detalle}"
+
+
 def problema_de_ruta(ruta: str) -> str | None:
     """Dice qué tiene de malo una ruta de catálogo recién tecleada.
 
     Sin red solo se puede saber si nombra un fichero `.toml`, y basta para el
     error que de verdad se comete: poner la carpeta (`/prdrive-catalog`) en vez
-    del fichero (`/prdrive-catalog/pairs.toml`). Una ruta vacía no es un
-    problema: quien la pide cae a `DEFAULT_CATALOG_PATH`.
+    del fichero (`/prdrive-catalog/remote.toml`). Vale cualquier `.toml`, los
+    dos nombres del catálogo incluidos. Una ruta vacía no es un problema: quien
+    la pide cae a `DEFAULT_CATALOG_PATH`.
 
     Se aplica a lo que se TECLEA (el paso Conexión y los dos formularios de
     `[defaults]`), nunca a lo ya escrito en un dispositivo: un catálogo sin
@@ -178,15 +292,15 @@ def validar_ruta_editada(antes: Mapping[str, Any] | None,
         raise ConfigError(problema)
 
 
-def _dentro(ruta: str) -> str:
-    """Devuelve el `pairs.toml` de esa carpeta.
+def _dentro(ruta: str, nombre: str = FICHERO) -> str:
+    """Devuelve el fichero de ese nombre dentro de esa carpeta.
 
     Vale para una ruta y para un endpoint: `nas:` a secas es la raíz del remoto
     y ahí no se antepone ninguna barra.
     """
     if not ruta or ruta.endswith((":", "/")):
-        return ruta + FICHERO
-    return f"{ruta}/{FICHERO}"
+        return ruta + nombre
+    return f"{ruta}/{nombre}"
 
 
 def _binary() -> str:
@@ -238,11 +352,6 @@ def _parse(text: str, where: str) -> dict:
         raise ConfigError(f"El catálogo {where} no es TOML válido: {e}") from e
 
 
-# Quien pregunta a rclone: `run` aquí, `remote.Rclone.run` en el instalador.
-Ejecutar = Callable[[list[str]], subprocess.CompletedProcess]
-"""Quien pregunta a rclone: `run` aquí, `remote.Rclone.run` en el instalador."""
-
-
 def _es_carpeta(ejecutar: Ejecutar, donde: str) -> bool | None:
     """Pregunta a rclone (`lsjson --stat`) si esa ruta es una carpeta.
 
@@ -253,11 +362,20 @@ def _es_carpeta(ejecutar: Ejecutar, donde: str) -> bool | None:
         True si es una carpeta, False si es un fichero y `None` si no se sabe
         (no existe, no contesta o la respuesta no es la esperada).
     """
+    return _carpeta_en(_stat(ejecutar, donde))
+
+
+def _stat(ejecutar: Ejecutar, donde: str) -> subprocess.CompletedProcess | None:
+    """Devuelve lo que contesta `lsjson --stat` de esa ruta, o `None` si no contesta."""
     try:
-        res = ejecutar(["lsjson", "--stat", donde])
+        return ejecutar(["lsjson", "--stat", donde])
     except (OSError, subprocess.SubprocessError, ConfigError):
         return None
-    if res.returncode != 0:
+
+
+def _carpeta_en(res: subprocess.CompletedProcess | None) -> bool | None:
+    """Lee el `IsDir` de lo que contestó `lsjson --stat`; `None` si no se sabe."""
+    if res is None or res.returncode != 0:
         return None
     try:
         info = json.loads(res.stdout or "")
@@ -266,6 +384,19 @@ def _es_carpeta(ejecutar: Ejecutar, donde: str) -> bool | None:
     if not isinstance(info, dict) or not isinstance(info.get("IsDir"), bool):
         return None
     return info["IsDir"]
+
+
+def _existe(ejecutar: Ejecutar, donde: str) -> bool | None:
+    """Pregunta a rclone (`lsjson --stat`) si en esa ruta hay un fichero.
+
+    Returns:
+        True si hay un fichero, False si rclone dice que no existe y `None` si
+        no se sabe (no contesta, o ahí hay una carpeta).
+    """
+    res = _stat(ejecutar, donde)
+    if res is not None and res.returncode in RC_NO_EXISTE:
+        return False
+    return True if _carpeta_en(res) is False else None
 
 
 def explicar_carpeta(ejecutar: Ejecutar, donde: str,
@@ -281,10 +412,11 @@ def explicar_carpeta(ejecutar: Ejecutar, donde: str,
     Por eso, cuando algo huele mal, se pregunta al remoto qué es esa ruta
     (`lsjson --stat` da `"IsDir": true` para una carpeta). Huele mal si lo
     leído no sirve (`fallo`) o si la ruta no termina en `.toml`, que pilla
-    también la carpeta vacía y la que solo tiene un `pairs.toml`, que `cat` lee
-    sin error. En el camino bueno no cuesta ninguna ida y vuelta más, y no se
-    pregunta cuando falla el propio `cat`: sin red la pregunta tardaría lo
-    mismo en no llegar.
+    también la carpeta vacía y la que solo tiene un fichero del catálogo, que
+    `cat` lee sin error. En el camino bueno no cuesta ninguna ida y vuelta más,
+    y no se pregunta cuando falla el propio `cat`: sin red la pregunta tardaría
+    lo mismo en no llegar. Para sugerir el fichero se mira si dentro hay uno de
+    los dos nombres, `remote.toml` primero.
 
     Args:
         ejecutar: Quien ejecuta rclone (`Ejecutar`).
@@ -301,9 +433,10 @@ def explicar_carpeta(ejecutar: Ejecutar, donde: str,
         return None
     motivo = (f"La ruta del catálogo, {donde}, es una carpeta y no un fichero: "
               f"tiene que apuntar al fichero del catálogo.")
-    if _es_carpeta(ejecutar, _dentro(donde)) is False:
-        return (f"{motivo} Dentro hay un {FICHERO}, así que seguramente es "
-                f"«{_dentro(ruta)}».")
+    for nombre in NOMBRES:
+        if _es_carpeta(ejecutar, _dentro(donde, nombre)) is False:
+            return (f"{motivo} Dentro hay un {nombre}, así que seguramente es "
+                    f"«{_dentro(ruta, nombre)}».")
     return f"{motivo} Por ejemplo «{_dentro(ruta)}», si es ahí donde está."
 
 
@@ -333,48 +466,126 @@ def _write_cache(cat: Catalog) -> None:
             return
         if not store.write_text(cache_toml(), cat.text):
             return
-        store.write_json(cache_meta(), {"pulled_at": cat.stamp, "endpoint": cat.endpoint})
+        meta = {"pulled_at": cat.stamp, "endpoint": cat.endpoint}
+        anterior = store.read_json(cache_meta())
+        sobra = str(anterior.get("duplicado") or "")
+        if sobra and partir(sobra)[0] == partir(cat.endpoint)[0]:
+            meta.update(duplicado=sobra, duplicado_visto=anterior.get("duplicado_visto", ""))
+        store.write_json(cache_meta(), meta)
+
+
+def apuntar_duplicado(sobra: str | None) -> None:
+    """Apunta en la copia local que en la carpeta del catálogo están los dos nombres.
+
+    O lo borra, con `None`. Lo apunta quien lo ve: `push()` cuando su subida a
+    `pairs.toml` se cruza con un renombrado, y quien mira la carpeta antes de
+    renombrar. Leer el catálogo no lo ve (sería una ida y vuelta más en cada
+    lectura), pero sí lo borra cuando lee `pairs.toml` porque `remote.toml` no
+    está. Lo enseña «Reparación» (`duplicado()`). Que falle no es un error.
+
+    Args:
+        sobra: El endpoint del `pairs.toml` que sobra, o `None` si ya no hay
+            dos.
+    """
+    with _ESCRIBIENDO:
+        meta = store.read_json(cache_meta())
+        if sobra:
+            meta.update(duplicado=sobra, duplicado_visto=store.stamp())
+        elif "duplicado" in meta:
+            meta.pop("duplicado", None)
+            meta.pop("duplicado_visto", None)
+        else:
+            return
+        try:
+            cache_meta().parent.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return
+        store.write_json(cache_meta(), meta)
+
+
+def duplicado() -> tuple[str, str] | None:
+    """Devuelve el `pairs.toml` que sobra junto al `remote.toml`, y desde cuándo se sabe.
+
+    Lee la copia local, sin red.
+
+    Returns:
+        `(endpoint del que sobra, sello de cuándo se vio)`, o `None` si no
+        consta que haya dos.
+    """
+    meta = store.read_json(cache_meta())
+    sobra = meta.get("duplicado")
+    if not isinstance(sobra, str) or not sobra:
+        return None
+    return sobra, str(meta.get("duplicado_visto") or "")
+
+
+def ultimo_leido() -> str:
+    """Devuelve de qué fichero salió la copia local, o una cadena vacía si no hay.
+
+    Lee los metadatos, sin red: es lo que dice si este remoto conserva todavía
+    su `pairs.toml`.
+    """
+    leido = store.read_json(cache_meta()).get("endpoint")
+    return leido if isinstance(leido, str) else ""
 
 
 def pull(raw_local: Mapping[str, Any] | None = None) -> Catalog:
     """Lee el catálogo del remoto y lo cachea.
 
     Lo que `cat` trae de una carpeta no se cachea: no es el catálogo (ver
-    `explicar_carpeta`).
+    `explicar_carpeta`). El `Catalog` lleva el endpoint del fichero que se ha
+    leído, que es donde `push()` escribirá.
 
     Raises:
         ConfigError: Si no se puede leer, no es TOML válido o la ruta es una
             carpeta.
     """
     where = endpoint(raw_local)
-    res = run(["cat", where])
+    res, donde = leer(run, where)
     if res.returncode != 0:
-        raise ConfigError(f"No pude leer el catálogo {where}: "
-                          f"{(res.stderr or '').strip()}")
+        raise ConfigError(motivo_lectura(where, donde, res))
     texto = res.stdout or ""
     try:
-        raw = _parse(texto, where)
+        raw = _parse(texto, donde)
     except ConfigError as e:
-        raise ConfigError(explicar_carpeta(run, where, fallo=True)
+        raise ConfigError(explicar_carpeta(run, donde, fallo=True)
                           or str(e)) from e
-    carpeta = explicar_carpeta(run, where)
+    carpeta = explicar_carpeta(run, donde)
     if carpeta:
         raise ConfigError(carpeta)
     cat = Catalog(raw=raw, text=texto, source="remote",
-                  stamp=store.stamp(), endpoint=where)
+                  stamp=store.stamp(), endpoint=donde)
     _write_cache(cat)
+    if donde != candidatos(where)[0]:
+        apuntar_duplicado(None)        # se ha leído pairs.toml porque no hay remote.toml
     return cat
+
+
+_REINTENTOS_COPIA = 5
+"""Veces que `cached()` intenta abrir la copia si Windows se la niega."""
 
 
 def cached() -> Catalog | None:
     """Devuelve la última copia buena, sin tocar la red.
 
     Es `None` si no hay copia o no sirve.
+
+    En Windows, abrir la copia justo mientras otra lectura la sustituye
+    (`os.replace()` en `_write_cache()`) da `PermissionError`: quien renombra
+    la tiene abierta para borrarla, y `open()` no comparte ese permiso. Dura
+    lo que el renombrado, así que se reintenta unas pocas veces antes de
+    contestar que no hay copia, que la ventana enseñaría como «sin catálogo».
     """
-    try:
-        text = cache_toml().read_text(encoding="utf-8")
-    except OSError:
-        return None
+    for intento in range(_REINTENTOS_COPIA):
+        try:
+            text = cache_toml().read_text(encoding="utf-8")
+            break
+        except PermissionError:
+            if intento + 1 == _REINTENTOS_COPIA:
+                return None
+            time.sleep(0.02)
+        except OSError:
+            return None
     try:
         raw = tomllib.loads(text)
     except tomllib.TOMLDecodeError:
@@ -408,7 +619,8 @@ def load(raw_local: Mapping[str, Any] | None = None) -> tuple[Catalog | None, st
 
 
 def push(new_raw: Mapping[str, Any], base_text: str,
-         raw_local: Mapping[str, Any] | None = None) -> list[str]:
+         raw_local: Mapping[str, Any] | None = None, ejecutar: Ejecutar | None = None,
+         donde_pedido: str | None = None, cachear: bool = True) -> list[str]:
     """Sube el catálogo al remoto y devuelve qué se ha hecho.
 
     El orden importa: primero se genera y verifica el texto, después se
@@ -416,23 +628,39 @@ def push(new_raw: Mapping[str, Any], base_text: str,
     escribe, con copia previa. Así ningún fallo intermedio deja el catálogo a
     medias y el peor caso es no haber escrito nada.
 
+    Se escribe en el fichero que existe justo antes de escribir, con la misma
+    regla que al leer (`leer()`): si otro dispositivo ha renombrado el catálogo
+    mientras tanto, el contenido es el mismo y el cambio va al nombre nuevo.
+    Una subida a `pairs.toml` se comprueba después: si en ese rato ha aparecido
+    `remote.toml`, el cambio ha caído en el fichero que ya no vale, y se dice.
+
     Args:
         new_raw: El catálogo nuevo, en bruto.
         base_text: El texto leído del remoto sobre el que se parte.
         raw_local: El config en bruto del dispositivo, para saber dónde está el
             catálogo.
+        ejecutar: Quien ejecuta rclone; sin él, el del dispositivo (`run()`). El
+            instalador pasa el suyo, con su config efímero.
+        donde_pedido: Dónde está el catálogo (`remote:ruta`); sin él, lo que
+            dice `raw_local`.
+        cachear: Si se deja la copia local del dispositivo (`state/`); el
+            instalador no la deja, porque su `state/` no es el de ningún
+            dispositivo.
 
     Raises:
         ConfigError: Si el texto generado no se relee igual, si el remoto
-            cambió desde que se leyó o si falla algún paso de rclone.
+            cambió desde que se leyó, si falla algún paso de rclone o si la
+            subida se cruzó con un renombrado.
     """
-    where = endpoint(raw_local)
+    rclone = ejecutar or run
+    where = donde_pedido or endpoint(raw_local)
     text = config_file.dumps_checked(new_raw, config_file.header_of(base_text))
 
-    actual = run(["cat", where])
+    actual, donde = leer(rclone, where)
     if actual.returncode != 0:
-        raise ConfigError(f"No pude releer el catálogo {where} antes de escribir: "
-                          f"{(actual.stderr or '').strip()}. No se ha escrito nada.")
+        raise ConfigError(f"No pude releer el catálogo antes de escribir. "
+                          f"{motivo_lectura(where, donde, actual)}. "
+                          f"No se ha escrito nada.")
     if actual.stdout != base_text:
         raise ConfigError(
             "El catálogo ha cambiado en el remoto desde que lo leíste, así que no "
@@ -441,28 +669,221 @@ def push(new_raw: Mapping[str, Any], base_text: str,
             "repite el cambio.")
 
     hechos: list[str] = []
-    copia = run(["copyto", where, where + BAK_SUFFIX])
+    copia = rclone(["copyto", donde, donde + BAK_SUFFIX])
     if copia.returncode != 0:
-        raise ConfigError(f"No pude dejar la copia {where}{BAK_SUFFIX}: "
+        raise ConfigError(f"No pude dejar la copia {donde}{BAK_SUFFIX}: "
                           f"{(copia.stderr or '').strip()}. No se ha escrito nada.")
-    hechos.append(f"Copia previa en {where}{BAK_SUFFIX}")
+    hechos.append(f"Copia previa en {donde}{BAK_SUFFIX}")
 
     tmpdir = Path(tempfile.mkdtemp(prefix="prdrive-cat-"))
     try:
-        tmp = tmpdir / "pairs.toml"
+        tmp = tmpdir / "catalogo.toml"
         tmp.write_text(text, encoding="utf-8", newline="\n")
-        subida = run(["copyto", str(tmp), where])
+        subida = rclone(["copyto", str(tmp), donde])
         if subida.returncode != 0:
-            raise ConfigError(f"No pude escribir el catálogo {where}: "
+            raise ConfigError(f"No pude escribir el catálogo {donde}: "
                               f"{(subida.stderr or '').strip()}. "
-                              f"La versión anterior sigue en {where}{BAK_SUFFIX}.")
+                              f"La versión anterior sigue en {donde}{BAK_SUFFIX}.")
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
-    hechos.append(f"Catálogo actualizado en {where}")
+    hechos.append(f"Catálogo actualizado en {donde}")
 
-    _write_cache(Catalog(raw=dict(new_raw), text=text, source="remote",
-                         stamp=store.stamp(), endpoint=where))
+    sitios = candidatos(where)
+    if len(sitios) > 1 and donde == sitios[1] and _existe(rclone, sitios[0]) is True:
+        if cachear:
+            apuntar_duplicado(donde)
+        raise ConfigError(
+            f"El cambio se ha subido a {donde}, pero mientras tanto otro "
+            f"dispositivo ha renombrado el catálogo a {sitios[0]}, que es el que "
+            f"vale: el cambio no cuenta. Vuelve a abrir la pantalla y repítelo. "
+            f"«Reparación» explica qué hacer con el {FICHERO_ANTERIOR} que sobra.")
+
+    if cachear:
+        _write_cache(Catalog(raw=dict(new_raw), text=text, source="remote",
+                             stamp=store.stamp(), endpoint=donde))
     return hechos
+
+
+def nombres_en(ejecutar: Ejecutar, carpeta: str) -> frozenset[str] | None:
+    """Devuelve qué ficheros del catálogo hay en esa carpeta del remoto.
+
+    Es un `lsjson --files-only` de la carpeta, que no baja a `devices/`. Solo
+    cuentan los dos nombres del catálogo y sus `.bak`.
+
+    Args:
+        ejecutar: Quien ejecuta rclone (`Ejecutar`).
+        carpeta: La carpeta del catálogo, `remote:/ruta/`.
+
+    Returns:
+        Los nombres que hay; vacío si la carpeta no existe, y `None` si no se
+        sabe.
+    """
+    try:
+        res = ejecutar(["lsjson", "--files-only", carpeta])
+    except (OSError, subprocess.SubprocessError, ConfigError):
+        return None
+    if res.returncode in RC_NO_EXISTE:
+        return frozenset()
+    if res.returncode != 0:
+        return None
+    try:
+        lista = json.loads(res.stdout or "")
+    except ValueError:
+        return None
+    if not isinstance(lista, list):
+        return None
+    buscados = set(NOMBRES) | {n + BAK_SUFFIX for n in NOMBRES}
+    return frozenset(e["Name"] for e in lista
+                     if isinstance(e, dict) and e.get("Name") in buscados)
+
+
+class SinRenombrar(NamedTuple):
+    """Dónde están los dos nombres del catálogo de este dispositivo.
+
+    Args:
+        nuevo: El endpoint de `remote.toml`.
+        viejo: El endpoint de `pairs.toml`.
+        carpeta: La carpeta de los dos, `remote:/ruta/`.
+    """
+    nuevo: str
+    viejo: str
+    carpeta: str
+
+
+def sin_renombrar(raw_local: Mapping[str, Any] | None = None) -> SinRenombrar | None:
+    """Devuelve los dos nombres del catálogo de este dispositivo.
+
+    Returns:
+        Los dos endpoints y su carpeta, o `None` si `catalog_path` nombra un
+        fichero con otro nombre: ese no se renombra.
+    """
+    sitios = candidatos(endpoint(raw_local))
+    if len(sitios) < 2:
+        return None
+    nuevo, viejo = sitios
+    return SinRenombrar(nuevo, viejo, partir(nuevo)[0])
+
+
+def apuntar_renombrado(viejo: str, nuevo: str) -> None:
+    """Apunta en la copia local que el catálogo que se leía como `viejo` es ya `nuevo`."""
+    with _ESCRIBIENDO:
+        meta = store.read_json(cache_meta())
+        if not meta:
+            return
+        if meta.get("endpoint") == viejo:
+            meta["endpoint"] = nuevo
+        meta.pop("duplicado", None)
+        meta.pop("duplicado_visto", None)
+        store.write_json(cache_meta(), meta)
+
+
+def renombrar(raw_local: Mapping[str, Any] | None = None) -> list[str]:
+    """Renombra el `pairs.toml` del remoto a `remote.toml`, con su `.bak`.
+
+    Es un `moveto` en la misma carpeta: no reescribe el contenido, así que no
+    pierde comentarios ni pasa por `push()`. Antes se mira qué hay, porque
+    `moveto` pisa el destino sin preguntar. El `catalog_path` de los
+    dispositivos no se toca: los que dicen `pairs.toml` encuentran el nombre
+    nuevo con `candidatos()`.
+
+    Returns:
+        Lo que se ha hecho, línea a línea.
+
+    Raises:
+        ConfigError: Si no hay nada que renombrar, si están los dos nombres o
+            si no se ha podido; el catálogo queda como estaba salvo que el
+            mensaje diga otra cosa.
+    """
+    sitio = sin_renombrar(raw_local)
+    if sitio is None:
+        raise ConfigError(
+            f"El catálogo de este dispositivo ({endpoint(raw_local)}) no se llama "
+            f"{FICHERO_ANTERIOR} ni {FICHERO}: no hay nada que renombrar.")
+    hay = nombres_en(run, sitio.carpeta)
+    if hay is None:
+        raise ConfigError(f"No he podido mirar qué hay en {sitio.carpeta}. No se ha "
+                          f"tocado nada.")
+    if FICHERO in hay:
+        if FICHERO_ANTERIOR in hay:
+            apuntar_duplicado(sitio.viejo)
+            raise ConfigError(
+                f"En {sitio.carpeta} ya están {FICHERO} y {FICHERO_ANTERIOR}. Vale "
+                f"{FICHERO}: no se ha tocado nada. «Reparación» explica qué hacer "
+                f"con el que sobra.")
+        apuntar_duplicado(None)
+        raise ConfigError(f"El catálogo ya se llama {FICHERO}: no hay nada que "
+                          f"renombrar.")
+    if FICHERO_ANTERIOR not in hay:
+        raise ConfigError(f"En {sitio.carpeta} no hay ningún {FICHERO_ANTERIOR}: no "
+                          f"hay nada que renombrar.")
+
+    movido = run(["moveto", sitio.viejo, sitio.nuevo])
+    if movido.returncode != 0:
+        detalle = (movido.stderr or "").strip()
+        despues = nombres_en(run, sitio.carpeta) or frozenset()
+        if FICHERO in despues and FICHERO_ANTERIOR in despues:
+            apuntar_duplicado(sitio.viejo)
+            raise ConfigError(
+                f"No he podido renombrar {sitio.viejo}: {detalle}. Se ha quedado "
+                f"a medias, con los dos nombres en la carpeta; vale {FICHERO}. "
+                f"«Reparación» explica qué hacer con el que sobra.")
+        raise ConfigError(f"No he podido renombrar {sitio.viejo}: {detalle}. El "
+                          f"catálogo sigue como estaba.")
+    hechos = [f"{sitio.viejo} se llama ahora {sitio.nuevo}"]
+
+    viejo_bak, nuevo_bak = sitio.viejo + BAK_SUFFIX, sitio.nuevo + BAK_SUFFIX
+    if FICHERO_ANTERIOR + BAK_SUFFIX in hay and FICHERO + BAK_SUFFIX not in hay:
+        copia = run(["moveto", viejo_bak, nuevo_bak])
+        if copia.returncode == 0:
+            hechos.append(f"La copia previa se llama ahora {nuevo_bak}")
+        else:
+            hechos.append(f"La copia previa se queda como {viejo_bak} "
+                          f"({(copia.stderr or '').strip()}). No importa: la "
+                          f"próxima escritura deja {nuevo_bak}.")
+    apuntar_renombrado(sitio.viejo, sitio.nuevo)
+    return hechos
+
+
+APARTADO = ".apartado-"
+"""Lo que se le añade al `pairs.toml` que sobra, delante de la fecha, al apartarlo."""
+
+
+def apartar_sobrante(raw_local: Mapping[str, Any] | None = None) -> list[str]:
+    """Aparta el `pairs.toml` que sobra junto a un `remote.toml`.
+
+    Lo deja al lado como `pairs.toml.apartado-<fecha>`: no se borra, porque
+    puede llevar un cambio que alguien quiera rescatar a mano, y con ese
+    nombre ya no lo lee nadie. Antes se mira que sigan los dos: `moveto` no
+    pregunta.
+
+    Returns:
+        Lo que se ha hecho, línea a línea.
+
+    Raises:
+        ConfigError: Si no están los dos nombres o no se ha podido; entonces no
+            se ha tocado nada.
+    """
+    sitio = sin_renombrar(raw_local)
+    if sitio is None:
+        raise ConfigError(
+            f"El catálogo de este dispositivo ({endpoint(raw_local)}) no se llama "
+            f"{FICHERO_ANTERIOR} ni {FICHERO}: no hay nada que apartar.")
+    hay = nombres_en(run, sitio.carpeta)
+    if hay is None:
+        raise ConfigError(f"No he podido mirar qué hay en {sitio.carpeta}. No se ha "
+                          f"tocado nada.")
+    if not (FICHERO in hay and FICHERO_ANTERIOR in hay):
+        apuntar_duplicado(None)
+        raise ConfigError(f"En {sitio.carpeta} ya no están los dos nombres del "
+                          f"catálogo: no hay nada que apartar.")
+    destino = f"{sitio.viejo}{APARTADO}{datetime.now():%Y%m%d-%H%M%S}"
+    res = run(["moveto", sitio.viejo, destino])
+    if res.returncode != 0:
+        raise ConfigError(f"No he podido apartar {sitio.viejo}: "
+                          f"{(res.stderr or '').strip()}. No se ha tocado nada.")
+    apuntar_duplicado(None)
+    return [f"{sitio.viejo} se ha apartado como {destino}: ya no lo lee nadie, "
+            f"y no se ha borrado."]
 
 
 def pairs_by_name(cat: Catalog | None) -> dict[str, dict]:

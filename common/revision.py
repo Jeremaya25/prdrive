@@ -47,7 +47,7 @@ class Hallazgo:
 
     Args:
         clave: Tipo de avería: `local`, `prefijo`, `resync`, `lock`, `espacio`,
-            `conflicto`, `fallo`, `listados`.
+            `conflicto`, `fallo`, `listados`, `catalogo`.
         titulo: Frase corta.
         detalle: Explicación completa.
         pareja: La pareja afectada, o `None` si es del dispositivo.
@@ -76,7 +76,7 @@ def _local(pair: Pair, estado: bisync.PairState) -> Hallazgo | None:
         return None
     if pair.is_bisync and estado.has_baseline:
         return Hallazgo(
-            "local", f"«{pair.name}»: la carpeta local no está",
+            "local", f"{nombre_visible(pair.name)}: la carpeta local no está",
             f"{pair.local_endpoint} no existe, y esta pareja ya tiene baseline. "
             "La sincronización se parará en vez de crearla: un lado vacío se lee "
             "como «se ha borrado todo». Comprueba que el volumen esté montado "
@@ -84,7 +84,7 @@ def _local(pair: Pair, estado: bisync.PairState) -> Hallazgo | None:
             "creándola vacía.",
             pair.name, GRAVE)
     return Hallazgo(
-        "local", f"«{pair.name}»: la carpeta local aún no está",
+        "local", f"{nombre_visible(pair.name)}: la carpeta local aún no está",
         f"{pair.local_endpoint} no existe. Como esta pareja no tiene baseline "
         "que proteger, la próxima pasada la crea.",
         pair.name, NOTA)
@@ -96,7 +96,7 @@ def _prefijo(pair: Pair, estado: bisync.PairState) -> Hallazgo | None:
     if not estado.prefix or estado.prefix == esperado:
         return None
     return Hallazgo(
-        "prefijo", f"«{pair.name}»: el baseline no es de esta pareja",
+        "prefijo", f"{nombre_visible(pair.name)}: el baseline no es de esta pareja",
         f"Está guardado como «{estado.prefix}» y esta pareja espera "
         f"«{esperado}», así que rclone no lo va a encontrar. Pasa cuando cambia "
         "un extremo (la carpeta local, el remoto o su ruta). Se aparta y se "
@@ -105,12 +105,18 @@ def _prefijo(pair: Pair, estado: bisync.PairState) -> Hallazgo | None:
 
 
 def _resync(pair: Pair, estado: bisync.PairState) -> Hallazgo | None:
-    """Devuelve la avería de una pareja que pide `--resync` y nadie lo ha hecho."""
+    """Devuelve la avería de una pareja que pide `--resync` y nadie lo ha hecho.
+
+    La del llavero no la tiene: se resincroniza sola en su próxima pasada
+    (`sync._bisync_preflight()`).
+    """
+    if pair.llavero:
+        return None
     razones = bisync.resync_reasons(pair, estado)
     if not razones:
         return None
     return Hallazgo(
-        "resync", f"«{pair.name}» necesita un --resync",
+        "resync", f"{nombre_visible(pair.name)} necesita un --resync",
         "; ".join(razones) + ". Hasta que se haga, esta pareja se salta en cada "
         "pasada: el servicio no resincroniza solo, nunca.",
         pair.name, AVISO)
@@ -125,11 +131,20 @@ def _locks(pair: Pair) -> Hallazgo | None:
     if not sueltos:
         return None
     return Hallazgo(
-        "lock", f"«{pair.name}»: hay {len(sueltos)} bloqueo(s) sin dueño",
+        "lock", f"{nombre_visible(pair.name)}: hay {len(sueltos)} bloqueo(s) sin dueño",
         "Los deja una pasada que se cortó a medias, y mientras estén ahí bisync "
         "se niega a empezar. Solo se pueden borrar si no hay ninguna "
         "sincronización en curso.",
         pair.name, AVISO, tuple(sueltos))
+
+
+def nombre_visible(pareja: str) -> str:
+    """Devuelve cómo se nombra una pareja en un título: «notas», o «El llavero».
+
+    La del llavero no se nombra por su pareja (`keychain`): la pone prdrive, no
+    la persona.
+    """
+    return "El llavero" if pareja == model.LLAVERO else f"«{pareja}»"
 
 
 def _conflictos(config: Config) -> list[Hallazgo]:
@@ -143,12 +158,24 @@ def _conflictos(config: Config) -> list[Hallazgo]:
     except Exception:                                   # noqa: BLE001
         return []
     return [Hallazgo(
-        "conflicto",
-        f"«{nombre}»: {n} fichero(s) en conflicto" if n > 1
-        else f"«{nombre}»: 1 fichero en conflicto",
-        "Cambiaron en los dos lados entre dos pasadas, así que hay dos versiones "
-        "y se van separando. Hay que elegir con cuál te quedas.",
-        nombre, AVISO, (n,)) for nombre, n in cuentas.items() if n]
+        "conflicto", *_frases_conflicto(nombre, n), nombre, AVISO, (n,))
+        for nombre, n in cuentas.items() if n]
+
+
+def _frases_conflicto(nombre: str, n: int) -> tuple[str, str]:
+    """Devuelve el título y la explicación de los conflictos de una pareja.
+
+    La del llavero no se nombra por su pareja (`keychain`, que la persona no ha
+    puesto) y no se elige: se combina.
+    """
+    if nombre == model.LLAVERO:
+        return ("El llavero: la base tiene copias de conflicto",
+                "Dos dispositivos la cambiaron sin sincronizar en medio. «Combinar» junta "
+                "lo de las dos sin perder nada; «Abrir llavero» lo ofrece antes de abrir.")
+    return (f"«{nombre}»: {n} fichero(s) en conflicto" if n > 1
+            else f"«{nombre}»: 1 fichero en conflicto",
+            "Cambiaron en los dos lados entre dos pasadas, así que hay dos versiones "
+            "y se van separando. Hay que elegir con cuál te quedas.")
 
 
 def _dia(sello: str) -> str:
@@ -192,7 +219,7 @@ def _fallos(config: Config) -> list[Hallazgo]:
     for f in fallos:
         racha = rachas.get(f.pareja)
         hallazgos.append(Hallazgo(
-            "fallo", f"«{f.pareja}»: la última pasada falló",
+            "fallo", f"{nombre_visible(f.pareja)}: la última pasada falló",
             f"Acabó con código {f.codigo}" + (f" el {f.cuando}" if f.cuando else "") +
             (". El log lo explica." if f.log else ". No queda log de aquella pasada.") +
             (f" {_frase_racha(racha)}" if racha is not None else "") +
@@ -249,6 +276,39 @@ def _espacio() -> Hallazgo | None:
         None, AVISO, (str(fisica), libre))
 
 
+def _catalogo_duplicado() -> Hallazgo | None:
+    """Devuelve la avería de un remoto con los dos nombres del catálogo a la vez.
+
+    Sale de lo que se apuntó la última vez que alguien miró la carpeta del
+    catálogo (`catalog.duplicado()`), sin red. Pasa si una subida a
+    `pairs.toml` se cruza con el renombrado a `remote.toml`: vale
+    `remote.toml`, el que se busca primero, y lo que llevara el otro no cuenta.
+    No tiene botón aquí porque es una operación en el remoto: la hace
+    «Renombrar el catálogo…», en «Ajustes».
+
+    `catalog` se importa dentro, como `fleet` en `_espacio()`.
+    """
+    try:
+        from . import catalog
+        apuntado = catalog.duplicado()
+    except Exception:                                # noqa: BLE001
+        return None
+    if apuntado is None:
+        return None
+    sobra, visto = apuntado
+    carpeta = catalog.partir(sobra)[0]
+    cuando = f" (visto el {visto})" if visto else ""
+    return Hallazgo(
+        "catalogo", "En el remoto hay dos catálogos",
+        f"En {carpeta} están {catalog.FICHERO} y {catalog.FICHERO_ANTERIOR}{cuando}. "
+        f"Vale {catalog.FICHERO}, que es el que buscan primero todos los "
+        f"dispositivos; {catalog.FICHERO_ANTERIOR} lo dejó una subida que se cruzó "
+        f"con el renombrado, y el cambio que llevara no cuenta. Mira en «Parejas» "
+        f"si falta algo y, si falta, repítelo allí. Después, en «Ajustes» → "
+        f"«Renombrar el catálogo…», aparta el {catalog.FICHERO_ANTERIOR} que sobra.",
+        None, AVISO, (sobra,))
+
+
 def revisar(config: Config) -> list[Hallazgo]:
     """Devuelve todo lo que está mal ahora mismo, lo más grave primero.
 
@@ -268,7 +328,7 @@ def revisar(config: Config) -> list[Hallazgo]:
                 hallazgos.append(hallazgo)
     hallazgos += _conflictos(config)
     hallazgos += _fallos(config)
-    for hallazgo in (_listados_sueltos(), _espacio()):
+    for hallazgo in (_listados_sueltos(), _espacio(), _catalogo_duplicado()):
         if hallazgo is not None:
             hallazgos.append(hallazgo)
 

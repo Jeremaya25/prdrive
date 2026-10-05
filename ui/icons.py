@@ -108,6 +108,9 @@ GLIFOS: dict[str, list[tuple]] = {
                 ("l", 5.2, 6.2, 5.2, 8.2), ("l", 10.8, 6.2, 10.8, 8.2)],
     "candado_abierto": [("r", 3.5, 8.2, 9, 5.6), ("a", 8, 5.2, 2.8, 180, 360),
                         ("l", 5.2, 5.2, 5.2, 8.2)],
+    # Una llave: el ojo, la caña y dos dientes. Es el llavero de KeePassXC.
+    "llave": [("c", 4.8, 8, 2.8), ("l", 7.6, 8, 14, 8),
+              ("l", 11.2, 8, 11.2, 10.8), ("l", 13.6, 8, 13.6, 10.2)],
 }
 """Los glifos de la interfaz, por nombre: listas de primitivas sobre una rejilla de 16.
 

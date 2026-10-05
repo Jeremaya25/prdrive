@@ -94,6 +94,7 @@ from __future__ import annotations
 import stat
 from pathlib import Path
 
+from common import components, llavero
 from common import vestibulo as v
 
 from . import IS_WIN, InstallError
@@ -136,6 +137,31 @@ otra forma barata de contar. «Expulsar» no lo usa.
 """
 
 _CONTROL_BAT = str(CONTROL_FILE).replace("/", "\\")
+
+_APP_BAT = str(CONTROL_FILE.parent).replace("/", "\\")
+"""La carpeta del programa dentro del contenedor (`.prdrive`), para el Python del llavero."""
+
+_LLAVERO_BAT = (
+    ":llavero\n"
+    f'if not exist "%RAIZ%\\{llavero.LANZADOR}" exit /b 0\n'
+    'set "PYL="\n'
+    f'set "RTL=%RAIZ%\\{_APP_BAT}\\{components.RUNTIME_SUBDIR}"\n'
+    'if /i "%PROCESSOR_ARCHITECTURE%"=="ARM64" if exist "%RTL%\\windows-arm64\\python.exe" '
+    'set "PYL=%RTL%\\windows-arm64\\python.exe"\n'
+    'if not defined PYL if exist "%RTL%\\windows-x64\\python.exe" '
+    'set "PYL=%RTL%\\windows-x64\\python.exe"\n'
+    "if not defined PYL exit /b 0\n"
+    f'"%PYL%" "%RAIZ%\\{_APP_BAT}\\runsync.py" --cerrar-llavero\n'
+    "exit /b\n"
+)
+"""Subrutina `:llavero`: cierra el llavero antes de desmontar (`runsync.py --cerrar-llavero`).
+
+Solo si la unidad lo lleva (su `Llavero.bat`): cierra KeePassXC y su proxy,
+para el vigilante, sube lo pendiente y deja el registro del navegador como
+estaba. Con el Python de consola del dispositivo, el mismo orden que
+`runsync.bat`, y esperándolo: tiene que haber acabado antes del desmontaje, y
+mientras corre retiene el volumen. Sale con 1 si KeePassXC sigue abierto.
+"""
 
 _BUSCAR_BAT = (
     ":buscar\n"
@@ -422,6 +448,8 @@ def bat_expulsar(device_id: str) -> str:
         + _ELEGIR_BAT +
         f"echo Cerrando {v.ETIQUETA}...\n"
         "timeout /t 3 /nobreak >nul\n"
+        "call :llavero\n"
+        "if errorlevel 1 goto llavero_abierto\n"
         + _VC_ANTES_BAT +
         'start "" /wait "%VC%" /dismount %RAIZ:~0,1% /quit\n'
         'set "INTENTOS=0"\n'
@@ -474,6 +502,15 @@ def bat_expulsar(device_id: str) -> str:
         "pause\n"
         "exit /b 1\n"
         "\n"
+        ":llavero_abierto\n"
+        "chcp 65001 >nul\n"
+        "echo.\n"
+        f"echo   No se ha cerrado {v.ETIQUETA}: KeePassXC sigue abierto. Ciérralo y vuelve\n"
+        f"echo   a abrir «{NOMBRE_EXPULSAR}». No quites la unidad todavía.\n"
+        "echo.\n"
+        "pause\n"
+        "exit /b 1\n"
+        "\n"
         ":retenido\n"
         "chcp 65001 >nul\n"
         "echo.\n"
@@ -487,6 +524,8 @@ def bat_expulsar(device_id: str) -> str:
         "exit /b 1\n"
         "\n"
         + _BUSCAR_BAT +
+        "\n"
+        + _LLAVERO_BAT +
         "\n"
         + _LIBRE_BAT +
         "\n"
@@ -861,6 +900,39 @@ _CERRAR_SH = (
 """
 
 
+_APP_SH = CONTROL_FILE.parent.as_posix()
+"""La carpeta del programa dentro del contenedor (`.prdrive`), para el Python del llavero."""
+
+_LLAVERO_SH = (
+    "llavero() {\n"
+    '    [ -n "$montado" ] || return 0\n'
+    f'    [ -f "$montado/{llavero.LANZADOR_LINUX}" ] || [ -f "$montado/{llavero.LANZADOR}" ] '
+    "|| return 0\n"
+    '    case "$(uname -m)" in\n'
+    f'        x86_64|amd64) py="$montado/{_APP_SH}/{components.RUNTIME_SUBDIR}/linux-x64/bin/python3" ;;\n'
+    f'        aarch64|arm64) py="$montado/{_APP_SH}/{components.RUNTIME_SUBDIR}/linux-arm64/bin/python3" ;;\n'
+    '        *) py="" ;;\n'
+    "    esac\n"
+    '    if [ -z "$py" ] || [ ! -x "$py" ]; then\n'
+    "        command -v python3 >/dev/null 2>&1 || return 0\n"
+    "        py=python3\n"
+    "    fi\n"
+    f'    "$py" "$montado/{_APP_SH}/runsync.py" --cerrar-llavero\n'
+    "}\n"
+)
+"""Función `llavero()` de `expulsar-prdrive.sh`: lo de `:llavero` del `.bat`.
+
+Solo si la unidad lo lleva (`llavero.sh`, o el `Llavero.bat` de una activación
+de antes de Linux) y está montada: cierra KeePassXC, para el vigilante, sube lo
+pendiente y quita los manifiestos del navegador (`runsync.py --cerrar-llavero`).
+Con el Python del dispositivo para esta CPU o, si no se puede ejecutar desde el
+montaje (exFAT, `noexec`), el del equipo; sin ninguno, no hace nada. Sale con 1
+si KeePassXC sigue abierto. En Linux KeePassXC no retiene el volumen (corre
+extraído en el equipo), pero así lo último sube y el navegador queda como
+estaba.
+"""
+
+
 def sh_expulsar() -> str:
     """Devuelve `expulsar-prdrive.sh`.
 
@@ -887,8 +959,15 @@ def sh_expulsar() -> str:
         "\n"
         + _CERRAR_SH +
         "\n"
+        + _LLAVERO_SH +
+        "\n"
         "sleep 3\n"
         "estado\n"
+        "if ! llavero; then\n"
+        f'    echo "prdrive: no he cerrado {v.ETIQUETA}: KeePassXC sigue abierto. Ciérralo y" >&2\n'
+        '    echo "  vuelve a expulsar. No quites la unidad todavía." >&2\n'
+        "    exit 1\n"
+        "fi\n"
         'via=""\n'
         'case "$nombre" in\n'
         "    veracrypt*) via=veracrypt ;;\n"

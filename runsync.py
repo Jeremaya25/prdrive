@@ -41,7 +41,7 @@ guarda esa memoria y se deja un `reanudar`, y el agente vuelve en cuanto se
 sale de ella.
 
 Con argumentos se pasan tal cual a `sync.py` (así `runsync.bat --doctor` sigue
-funcionando), salvo dos flags propios:
+funcionando), salvo estos flags propios:
 
     --auto [--once] [--interval N] [parejas]
         Arranca el servicio sin UI y sin preguntar, con las parejas y el
@@ -51,6 +51,26 @@ funcionando), salvo dos flags propios:
         dispositivo (modos daemon y sync).
     --daemon
         Punto de entrada interno del servicio.
+    --llavero
+        «Abrir llavero» sin la ventana: abre KeePassXC con la base del
+        dispositivo (`ui.abrir_llavero()`). Es lo que hacen `Llavero.bat` y `llavero.sh`.
+    --cerrar-llavero
+        Lo que hacen «Expulsar PRDRIVE.bat» y `expulsar-prdrive.sh` antes de desmontar: cierra
+        KeePassXC (si se dice que sí), sube lo pendiente y deja el registro del
+        navegador como estaba (`keepassxc.cerrar_llavero()`). Sale con 1 si
+        KeePassXC sigue abierto.
+    --combinar-llavero BASE COPIA [--keyfile LLAVE] [--codigo FICHERO]
+        La consola de «Combinar»: `keepassxc-cli merge` pide en ella la
+        contraseña de la base (`keepassxc.combinar_aqui()`).
+    --vigilar-llavero
+        El vigilante del llavero: atiende la base mientras viva el KeePassXC
+        de la unidad, si no lo hace ya el servicio o el agente. Lo arranca
+        «Abrir llavero».
+
+Con llavero (`[keychain]`), el servicio también lo atiende: una pasada en cada
+ciclo y, entre ciclos, la vigilancia de la base (`common/llavero.py`): lo que
+se guarda sube a los 20 s, y lo de otro dispositivo llega cada 5 min mientras
+KeePassXC está abierto.
 """
 
 from __future__ import annotations
@@ -66,7 +86,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 import ui  # noqa: E402
-from common import APP_NAME, model, store, update  # noqa: E402
+from common import APP_NAME, keepassxc, llavero, model, store, update  # noqa: E402
 from common.store import pid_alive  # noqa: E402
 from ui import prefs  # noqa: E402
 
@@ -91,7 +111,7 @@ DLOG_MAX_BYTES = 256 * 1024
 HOST = prefs.HOST
 
 CREATE_NO_WINDOW = model.CREATE_NO_WINDOW
-CREATE_NEW_PROCESS_GROUP = 0x00000200
+CREATE_NEW_PROCESS_GROUP = model.CREATE_NEW_PROCESS_GROUP
 """Flag de creación de procesos de Windows: grupo propio para el servicio."""
 
 
@@ -552,6 +572,205 @@ def daemon_cycle(pairs: list[str], lock_data: dict) -> None:
         dlog(f"no he podido mirar si hay versión nueva: {e}")
 
 
+def pareja_llavero() -> model.Pair | None:
+    """Devuelve la pareja del llavero de este dispositivo, o `None` si no lo lleva.
+
+    Un config que no se lee es «sin llavero»: el servicio sigue con las suyas.
+    """
+    try:
+        return model.load_config().pareja_llavero
+    except model.ConfigError:
+        return None
+
+
+def pasada_llavero(v: llavero.Vigilancia, pareja: model.Pair, por: str) -> int:
+    """Hace una pasada del llavero y apunta en `v` cómo ha quedado.
+
+    Args:
+        v: Lo que se sabe de la base.
+        pareja: La pareja del llavero.
+        por: Por qué, para el diario.
+
+    Returns:
+        El código de `sync.py`.
+    """
+    v.empieza_pasada(time.monotonic())
+    t0 = time.monotonic()
+    rc, salida = run_pair_quiet(model.LLAVERO)
+    if rc == 0:
+        dlog(f"[llavero] OK ({por}, {time.monotonic() - t0:.0f}s)")
+    else:
+        dlog(f"[llavero] FALLÓ (rc={rc}, {por}); salida:")
+        for linea in salida.splitlines()[-8:]:
+            dlog(f"[llavero]   {linea}")
+    v.acaba_pasada(llavero.huella(pareja.local_abs), time.monotonic(),
+                   llavero.pendiente(pareja), rc == 0)
+    return rc
+
+
+def atender_llavero(v: llavero.Vigilancia, pareja: model.Pair) -> None:
+    """Hace un paso de la vigilancia del llavero: una foto si toca y la pasada si toca.
+
+    Lo usan la espera del servicio entre ciclos y el vigilante del llavero.
+    """
+    ahora = time.monotonic()
+    if v.toca_mirar(ahora):
+        primera = v.foto is None
+        v.abierto = llavero.keepassxc_abierto()
+        v.observar(llavero.huella(pareja.local_abs), ahora,
+                   primera and llavero.pendiente(pareja))
+    motivo = v.motivo(ahora, v.abierto)
+    if motivo == "cambios":
+        pasada_llavero(v, pareja, "cambios en la base")
+    elif motivo == "remoto":
+        pasada_llavero(v, pareja, "lo de otro dispositivo, con KeePassXC abierto")
+
+
+ARRANQUE_KEEPASSXC = 30.0  # segundos
+"""Lo que el vigilante espera a ver el KeePassXC de la unidad antes de darlo por cerrado."""
+
+
+def vigilar_llavero() -> int:
+    """Hace `--vigilar-llavero`: atiende el llavero mientras viva el KeePassXC de la unidad.
+
+    Lo arranca «Abrir llavero» cuando no hay servicio que lo atienda. Uno a la
+    vez (`llavero.registro_vigilante()`, tomado con `O_EXCL`). Para cuando el
+    servicio o el agente se quedan la raíz, cuando se pide
+    (`llavero.parada_vigilante()`, «Expulsar»), cuando desaparece el
+    dispositivo y cuando KeePassXC se cierra; en este último caso hace antes
+    la pasada que quede pendiente. Corre fuera del dispositivo (cwd en el
+    temporal), así que no retiene el volumen.
+    """
+    os.chdir(tempfile.gettempdir())
+    pareja = pareja_llavero()
+    if pareja is None:
+        return 0
+    registro = llavero.registro_vigilante()
+    datos = {"pid": os.getpid(), "host": HOST, "started": store.stamp()}
+    tomado, otro = store.tomar_registro(registro, datos, _viva_aqui)
+    if tomado is False:
+        return 0                        # ya hay un vigilante
+    llavero.parada_vigilante().unlink(missing_ok=True)
+    dlog("[llavero] vigilante iniciado")
+    v = llavero.Vigilancia()
+    limite = time.monotonic() + ARRANQUE_KEEPASSXC
+    visto = False
+    fin = "desconocido"
+    try:
+        while True:
+            if not pen_present():
+                fin = "dispositivo no conectado"
+                # En Linux su KeePassXC no muere con la unidad (corre extraído
+                # en el equipo): se le pide que se cierre, como el agente.
+                if os.name != "nt" and keepassxc.cerrar_huerfano():
+                    fin += "; se le pide a KeePassXC que se cierre"
+                break
+            if llavero.parada_vigilante().exists():
+                fin = "parada pedida"
+                break
+            if llavero.atiende_el_servicio():
+                fin = "lo atiende el servicio de la raíz"
+                break
+            atender_llavero(v, pareja)
+            visto = visto or v.abierto
+            if not v.abierto and (visto or time.monotonic() > limite):
+                if llavero.pendiente(pareja):
+                    pasada_llavero(v, pareja, "al cerrar KeePassXC")
+                fin = "KeePassXC cerrado"
+                break
+            time.sleep(POLL_SECONDS)
+    finally:
+        dlog(f"[llavero] vigilante detenido: {fin}")
+        info = store.read_json(registro)
+        if info.get("pid") == os.getpid() and info.get("host") == HOST:
+            registro.unlink(missing_ok=True)
+        llavero.parada_vigilante().unlink(missing_ok=True)
+    return 0
+
+
+def abrir_llavero() -> int:
+    """Hace `--llavero`: «Abrir llavero» sin la ventana de prdrive.
+
+    No para el servicio, a diferencia de abrir la ventana: el llavero no le
+    estorba, y si está en marcha es él quien lo atiende.
+    """
+    try:
+        config = model.load_config()
+    except model.ConfigError as e:
+        return ui.fatal(f"El config no se puede leer:\n\n{e}")
+    return ui.abrir_llavero(config)
+
+
+def cerrar_llavero(preguntar=input) -> int:
+    """Hace `--cerrar-llavero`, en la consola de «Expulsar PRDRIVE.bat» o lanzado por el agente.
+
+    Si el KeePassXC de la unidad está abierto, pregunta antes de cerrarlo; sin
+    nadie que conteste (sin consola, o el agente antes de «Bloquear» una raíz
+    cifrada del equipo), lo cierra, y si tiene algo sin guardar pregunta él. Lo
+    demás no dice nada si va bien.
+
+    Args:
+        preguntar: Lo que pregunta (`input`).
+
+    Returns:
+        0 si se puede desmontar; 1 si KeePassXC sigue abierto.
+    """
+    try:
+        config = model.load_config()
+    except model.ConfigError:
+        return 0                            # sin config no hay llavero que cerrar
+    if config.pareja_llavero is None:
+        return 0
+    programas, _ = keepassxc.procesos_de_la_unidad()
+    if programas:
+        try:
+            respuesta = preguntar("KeePassXC está abierto. ¿Cerrarlo? [S/n] ")
+        except (EOFError, OSError, RuntimeError):
+            # Sin nadie que conteste: sin consola, o lanzado por el agente al
+            # «Bloquear» (con pythonw, `input()` no tiene de dónde leer).
+            respuesta = ""
+        if str(respuesta).strip().lower() in ("n", "no"):
+            print("KeePassXC sigue abierto: no se cierra la unidad.")
+            return 1
+        print("Cerrando KeePassXC: si tiene algo sin guardar, te lo pregunta.")
+    try:
+        cierre = keepassxc.cerrar_llavero(config)
+    except Exception as e:                              # noqa: BLE001
+        # Un fallo aquí no puede impedir expulsar: si algo sigue abierto,
+        # VeraCrypt lo dice al desmontar.
+        print(f"No se ha podido cerrar el llavero del todo ({e}); se sigue expulsando.")
+        return 0
+    for linea in cierre.lineas:
+        print(linea)
+    return 0 if cierre.listo else 1
+
+
+def combinar_llavero(rest: list[str]) -> int:
+    """Hace `--combinar-llavero BASE COPIA [--keyfile LLAVE] [--codigo FICHERO]`.
+
+    Es la consola que abre «Combinar»: `keepassxc.combinar_aqui()`, donde
+    `keepassxc-cli merge` pide la contraseña de la base. Con `--codigo` (la
+    terminal de Linux, que no devuelve el código de lo que corre) apunta su
+    pid al empezar y su código al acabar, para quien espera
+    (`keepassxc.esperar_codigo()`).
+    """
+    opciones: dict[str, Path] = {}
+    while len(rest) >= 4 and rest[-2] in ("--keyfile", "--codigo") and rest[-2] not in opciones:
+        opciones[rest[-2]], rest = Path(rest[-1]), rest[:-2]
+    if len(rest) != 2:
+        return ui.fatal("--combinar-llavero necesita la base y la copia.")
+    codigo = opciones.get("--codigo")
+    if codigo is not None:
+        keepassxc.apuntar_codigo(codigo)
+    rc = 2
+    try:
+        rc = keepassxc.combinar_aqui(Path(rest[0]), Path(rest[1]), opciones.get("--keyfile"))
+    finally:
+        if codigo is not None:
+            keepassxc.apuntar_codigo(codigo, rc)
+    return rc
+
+
 ESPERA_AGENTE = 30 * 60
 """Segundos que el servicio espera a que el agente suelte la unidad."""
 
@@ -616,8 +835,11 @@ def daemon_main(pairs: list[str], interval_min: float) -> int:
         quien = "el agente de este equipo" if otro.get("agente") else "otro servicio"
         dlog(f"servicio no iniciado: ya atiende {quien} (pid {otro.get('pid')})")
         return 0
+    llave = pareja_llavero()
+    v = llavero.Vigilancia()
     dlog(f"servicio iniciado: pid={os.getpid()} host={HOST} "
-         f"parejas={','.join(pairs)} intervalo={interval_min:g}m")
+         f"parejas={','.join(pairs)} intervalo={interval_min:g}m"
+         + (" y el llavero" if llave is not None else ""))
 
     reason = "desconocido"
     try:
@@ -629,6 +851,8 @@ def daemon_main(pairs: list[str], interval_min: float) -> int:
                 reason = "parada solicitada por el lanzador"
                 break
             daemon_cycle(pairs, lock_data)
+            if llave is not None and not stop_requested() and pen_present():
+                pasada_llavero(v, llave, "ciclo del servicio")
             wake = time.monotonic() + interval_min * 60
             stop = False
             while time.monotonic() < wake:
@@ -646,6 +870,8 @@ def daemon_main(pairs: list[str], interval_min: float) -> int:
                     # no puede ser.
                     reason, stop = f"otro servicio (pid {otro.get('pid')}) tiene el registro", True
                     break
+                if llave is not None:
+                    atender_llavero(v, llave)
                 time.sleep(POLL_SECONDS)
             if stop:
                 break
@@ -856,6 +1082,8 @@ def una_pasada(pairs: list[str]) -> int:
         print(msg)
         dlog(f"--auto --once: {msg}")
         return 0
+    if pareja_llavero() is not None:
+        pairs = [*pairs, model.LLAVERO]
     dlog(f"--auto --once: una pasada de {', '.join(pairs)}")
     return run_interactive(pairs)
 
@@ -870,6 +1098,18 @@ def main() -> int:
 
     if args and args[0] == "--auto":
         return auto_start(args[1:])
+
+    if args == ["--vigilar-llavero"]:
+        return vigilar_llavero()
+
+    if args == ["--llavero"]:
+        return abrir_llavero()
+
+    if args == ["--cerrar-llavero"]:
+        return cerrar_llavero()
+
+    if args and args[0] == "--combinar-llavero":
+        return combinar_llavero(args[1:])
 
     if args and args[0] == "--daemon":
         rest = args[1:]

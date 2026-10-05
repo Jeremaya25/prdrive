@@ -37,6 +37,8 @@ Primero lo que la identifica, luego lo que la matiza; el resto va detrás, en
 orden alfabético.
 """
 LIST_KEYS = ["include", "exclude", "extra_flags"]
+TABLAS_CONOCIDAS = ("remote", "defaults", "daemon", "pair")
+"""Las tablas que `dumps()` escribe en su sitio; cualquier otra va al final, tal cual."""
 
 _BARE_KEY = re.compile(r"[A-Za-z0-9_-]+")
 
@@ -211,6 +213,16 @@ def dumps(raw: Mapping[str, Any], head: str = "") -> str:
             out.append("[pair.flags]")
             out += _table_body(pair["flags"])
             out.append("")
+
+    # Una tabla que este código no conoce (la de una versión más nueva) se
+    # escribe tal cual al final: el modelo la ignora al leer, y perderla al
+    # reescribir haría que `dumps_checked()` se negara a escribir el fichero
+    # entero. Lo que no se sepa escribir (una subtabla) lo sigue parando él.
+    for nombre in sorted(k for k, v in raw.items()
+                         if k not in TABLAS_CONOCIDAS and isinstance(v, Mapping)):
+        out.append(f"[{_key(nombre)}]")
+        out += _table_body(raw[nombre])
+        out.append("")
 
     return "\n".join(out).rstrip() + "\n"
 

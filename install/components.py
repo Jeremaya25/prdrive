@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Poner al día el rclone, el Python y el VeraCrypt que lleva un dispositivo.
+"""Poner al día el rclone, el Python, el VeraCrypt y el KeePassXC de un dispositivo.
 
 Es el otro extremo de `common/components.py`: aquel LEE los sellos y dice qué
 está anticuado (desde el propio dispositivo, al instante y sin red); esto lo
@@ -55,6 +55,12 @@ Cuando los dos han salido ningún proceso usa ya el runtime del dispositivo: se
 sustituye con el intercambio de siempre y se reabre la ventana con él. Si algo
 sale mal, lo dice en una ventana con su registro.
 
+KeePassXC, el del llavero, también va por aquí, y es el único componente que se
+pone aunque falte: con el llavero activo, uno que no está sale como pendiente
+(`common.components.keepassxc_pendiente()`). Así es como «Ajustes → Llavero…»
+lo trae, con el «Actualizar…» de siempre. Si corre algo desde su carpeta (él o
+el proxy del navegador) se pospone.
+
 Lo que aquí no pasa nunca: instalar una plataforma que el dispositivo no lleva
 (eso es «Añadir plataformas…», una decisión con espacio en disco de por medio)
 ni tocar el código, los lanzadores, el vestíbulo, la configuración o las
@@ -76,12 +82,12 @@ from typing import Callable
 # que aquel y un `components.pendientes(...)` aquí sería una adivinanza sobre
 # cuál de los dos se lee.
 from common import pins
-from common.components import PYTHON, RCLONE, VERACRYPT, Pendiente, corre_desde
+from common.components import KEEPASSXC, PYTHON, RCLONE, VERACRYPT, Pendiente, corre_desde
 from common.components import pendientes as sellos_pendientes
-from common.store import pid_alive
+from common.store import pid_alive, procesos_desde  # noqa: F401  (los tests lo sustituyen aquí)
 
 from . import IS_WIN, InstallError
-from . import deploy, platforms, rclone_bin, runtime_bin, traveler, veracrypt_bin
+from . import deploy, keepassxc_bin, platforms, rclone_bin, runtime_bin, traveler, veracrypt_bin
 
 Progreso = Callable[[str], None]
 """Función que recibe cada mensaje de avance."""
@@ -354,7 +360,35 @@ def _poner_veracrypt(raiz: Path, p: Pendiente, decir: Progreso) -> str | None:
     return None
 
 
-PONER = {RCLONE: _poner_rclone, PYTHON: _poner_python, VERACRYPT: _poner_veracrypt}
+KEEPASSXC_EN_USO = "Cierra KeePassXC y el navegador para poner al día el llavero"
+"""Lo que se dice al posponer KeePassXC porque algo corre desde su carpeta."""
+
+
+def _poner_keepassxc(raiz: Path, p: Pendiente, decir: Progreso) -> str | None:
+    """Pone, o sustituye, el KeePassXC del llavero.
+
+    Algo que corra desde su carpeta lo pospone: KeePassXC abierto o el proxy
+    que lanza el navegador (`keepassxc-proxy.exe`), que vive mientras el
+    navegador esté conectado (K6, H-16). Apartar la carpeta con ellos dentro
+    fallaría en Windows, o les quitaría el programa de debajo.
+
+    Returns:
+        El motivo si se pospone, o `None` si se hizo.
+    """
+    carpeta = p.ruta
+    if carpeta is None:
+        return "no sé dónde va su carpeta: pasa el instalador por encima."
+    retienen = procesos_desde(carpeta)
+    if retienen:
+        return (f"está en uso: {KEEPASSXC_EN_USO}.\n"
+                + describir_retenedores(retienen))
+    decir(f"{p.titulo}: consiguiendo la versión {p.deberia}")
+    keepassxc_bin.instalar(deploy.app_dir(raiz), carpeta.name, decir)
+    return None
+
+
+PONER = {RCLONE: _poner_rclone, PYTHON: _poner_python, VERACRYPT: _poner_veracrypt,
+         KEEPASSXC: _poner_keepassxc}
 """Qué función pone al día cada tipo de componente."""
 
 
@@ -550,102 +584,6 @@ def lanzar_relevo(orden: list[str], carpeta: Path) -> int:
     except OSError:
         pass        # a lo sumo, otro relevo la barrería antes de tiempo
     return pid
-
-
-def procesos_desde(carpeta: Path) -> dict[int, str]:
-    """Devuelve `{pid: ejecutable}` de los procesos que corren desde `carpeta`.
-
-    Esperar a la ventana y al aplicador no basta: un `runsync` lanzado con la
-    ventana ya abierta llevaba una hora enseñando «Ya hay una ventana de
-    prdrive abierta…» desde ese mismo `pythonw.exe`, y el cambio le borró la
-    biblioteca estándar debajo y dejó la carpeta vieja a medio borrar. Esto es
-    lo que lo ve, para esperarlo y decir cuál es. En Windows va por la
-    instantánea de Toolhelp (como `crypto._procesos()`) y
-    `QueryFullProcessImageNameW`, que con `PROCESS_QUERY_LIMITED_INFORMATION`
-    contesta sin elevación; en Linux por `/proc/<pid>/exe`. Lo que no se deja
-    mirar no cuenta. Es función de módulo para que los tests la sustituyan.
-    """
-    try:
-        base = Path(carpeta).resolve()
-    except OSError:
-        return {}
-    salida: dict[int, str] = {}
-    for pid, exe in _ejecutables():
-        try:
-            Path(exe).resolve().relative_to(base)
-        except (ValueError, OSError):
-            continue
-        salida[pid] = exe
-    return salida
-
-
-def _ejecutables() -> list[tuple[int, str]]:
-    """Devuelve `(pid, ruta del ejecutable)` de los procesos que se dejan mirar."""
-    if not IS_WIN:
-        salida = []
-        for d in Path("/proc").glob("[0-9]*"):
-            try:
-                salida.append((int(d.name), os.readlink(d / "exe")))
-            except (OSError, ValueError):
-                continue
-        return salida
-
-    import ctypes
-    from ctypes import wintypes
-
-    class PROCESSENTRY32W(ctypes.Structure):
-        """Estructura `PROCESSENTRY32W` de Toolhelp."""
-        _fields_ = [("dwSize", wintypes.DWORD),
-                    ("cntUsage", wintypes.DWORD),
-                    ("th32ProcessID", wintypes.DWORD),
-                    ("th32DefaultHeapID", ctypes.c_size_t),
-                    ("th32ModuleID", wintypes.DWORD),
-                    ("cntThreads", wintypes.DWORD),
-                    ("th32ParentProcessID", wintypes.DWORD),
-                    ("pcPriClassBase", ctypes.c_long),
-                    ("dwFlags", wintypes.DWORD),
-                    ("szExeFile", wintypes.WCHAR * 260)]
-
-    TH32CS_SNAPPROCESS = 0x00000002
-    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
-    k32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
-    k32.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
-    k32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
-    k32.OpenProcess.restype = wintypes.HANDLE
-    k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
-    k32.QueryFullProcessImageNameW.argtypes = [
-        wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)]
-    k32.CloseHandle.argtypes = [wintypes.HANDLE]
-
-    foto = k32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
-    if not foto or foto == wintypes.HANDLE(-1).value:
-        return []
-    pids = []
-    try:
-        entrada = PROCESSENTRY32W()
-        entrada.dwSize = ctypes.sizeof(PROCESSENTRY32W)
-        seguir = k32.Process32FirstW(foto, ctypes.byref(entrada))
-        while seguir:
-            pids.append(entrada.th32ProcessID)
-            seguir = k32.Process32NextW(foto, ctypes.byref(entrada))
-    finally:
-        k32.CloseHandle(foto)
-
-    salida = []
-    for pid in pids:
-        h = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-        if not h:
-            continue
-        try:
-            buf = ctypes.create_unicode_buffer(32768)
-            n = wintypes.DWORD(len(buf))
-            if k32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(n)):
-                salida.append((pid, buf.value))
-        finally:
-            k32.CloseHandle(h)
-    return salida
 
 
 def quien_retiene(device_root: Path | str, p: Pendiente,

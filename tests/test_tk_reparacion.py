@@ -2,7 +2,8 @@
 """La pantalla de «Reparación» y la ventana principal, conducidas sin nadie delante.
 
 Como en `test_tk_screens`: no se mira el aspecto sino el cableado. Que un botón
-de la sección de conflictos acabe dejando en disco la versión que dice, que una
+de la sección de conflictos acabe dejando en disco la versión que dice (y,
+con llavero, que «Combinar» solo valga para su base y la combine), que una
 avería se arregle desde su fila, que la ventana principal cuente lo que hay que
 revisar en una línea (y no en tres recuadros ámbar) y que siga viva, y al día,
 después de cerrar la ventana de salida de una sincronización.
@@ -17,7 +18,7 @@ from pathlib import Path
 
 from _harness import Checks, sandbox, tmpdir
 
-from common import bisync, conflicts, historial, model, results, update
+from common import bisync, conflicts, historial, keepassxc, llavero, model, results, update
 
 c = Checks("«Reparación» y la ventana principal (cableado)")
 
@@ -31,7 +32,7 @@ except Exception as e:                                   # sin entorno gráfico
     sys.exit(0)
 
 import ui
-from ui import prefs, tk_conflicts, tk_doctor, tk_pairs, tk_repair
+from ui import llavero_editor, prefs, tk_conflicts, tk_doctor, tk_pairs, tk_repair
 from ui import tk as uitk
 
 prefs.PREFS = tmpdir("prdrive-tkconf-") / "ui_prefs.json"
@@ -242,6 +243,61 @@ with sandbox():
     c("sin nada roto, la pantalla lo dice",
       any("No hay nada que revisar" in x for x in vistos), True)
     c("y la sección de conflictos no se enseña", puesta, [False])
+
+# con llavero, «Combinar»: solo para su base
+reales = (keepassxc.cli, keepassxc.combinar, llavero.keepassxc_abierto, tk_conflicts.working)
+try:
+    with sandbox():
+        cfg = model.parse_config({**RAW, "keychain": {"base": "personal.kdbx"}})
+        notas, llave = cfg.pairs[0], cfg.pareja_llavero
+        escribir(notas.local_abs / "plan.md", "del remoto")
+        escribir(notas.local_abs / "plan.md.conflicto-dispositivo1", "de aquí")
+        escribir(llave.local_abs / "personal.kdbx", "base")
+        copia = escribir(llave.local_abs / "personal.conflicto-remoto1.kdbx", "copia")
+        conflicts.actualizar_pareja(notas)
+        conflicts.actualizar_pareja(llave)
+        cli = tmpdir("prdrive-tkcli-") / "keepassxc-cli.exe"
+        cli.write_bytes(b"MZ")
+        keepassxc.cli = lambda: cli
+        combinadas: list = []
+        keepassxc.combinar = lambda b, cp, ll: (combinadas.append(cp.name), 0)[1]
+        llavero.keepassxc_abierto = lambda app_dir=None: False
+        esperas: list = []
+        tk_conflicts.working = lambda parent, titulo, funcion, mensaje="", **k: (
+            esperas.append(mensaje), (True, funcion()))[1]
+        visto: dict = {}
+
+        def combinar(dlg):
+            """Mira «Combinar» con cada conflicto elegido y lo pulsa con el del llavero."""
+            b = botones(dlg)
+            visto["notas"] = str(b["Combinar"].cget("state"))
+            elegir(dlg, "c1")
+            visto["llavero"] = str(b["Combinar"].cget("state"))
+            visto["pareja"] = next(w for w in recorrer(dlg) if isinstance(w, ttk.Treeview)) \
+                .set("c1", "pareja")
+            b["Combinar"].invoke()
+
+        confirmaciones.clear()
+        reparacion(cfg, combinar)
+        c("con llavero hay «Combinar», apagado con un conflicto de otra pareja",
+          visto["notas"], "disabled")
+        c("  y encendido con el de su base", visto["llavero"], "normal")
+        c("  que en la lista no sale como «keychain»", visto["pareja"], "(el llavero)")
+        c("  pulsarlo confirma, espera a la consola y combina",
+          (confirmaciones, esperas, combinadas),
+          ([llavero_editor.COMBINAR], [tk_conflicts.conflict_editor.ESPERANDO_CONSOLA],
+           ["personal.conflicto-remoto1.kdbx"]))
+        c("  y la copia queda apartada", copia.exists(), False)
+
+    with sandbox():
+        cfg, p = preparar()
+        escribir(p.local_abs / "plan.md", "del remoto")
+        escribir(p.local_abs / "plan.md.conflicto-dispositivo1", "de aquí")
+        conflicts.actualizar_pareja(p)
+        reparacion(cfg, lambda dlg: visto.update(sin="Combinar" in botones(dlg)))
+        c("sin llavero no hay «Combinar»", visto["sin"], False)
+finally:
+    keepassxc.cli, keepassxc.combinar, llavero.keepassxc_abierto, tk_conflicts.working = reales
 
 
 # las reparaciones de la pantalla
@@ -509,10 +565,39 @@ with sandbox():
     # una entrada es la lista completa de lo que esa pantalla ofrece.
     c("el engranaje abre «Ajustes» con sus entradas",
       visto.get("entradas"),
-      ["Cerrar", "Configuración…", "Emparejar un móvil…",
+      ["Cerrar", "Configuración…", "Emparejar un móvil…", "Llavero…",
        "Nombre e icono de la unidad…", "Reparación…", "Versiones…"])
     c("y su primera entrada abre «Reparación», con «Ajustes» ya cerrada",
       len(abiertas), 1)
+
+# «Renombrar el catálogo…» sale solo mientras el remoto conserve su pairs.toml,
+# y eso lo dice la copia local del catálogo: de qué fichero se leyó la última vez.
+with sandbox():
+    from common import catalog, store
+    from ui import catalog_editor, tk_renombrar
+    cfg, _p = preparar()
+    sitio = catalog.sin_renombrar(catalog_editor.raw_del_dispositivo(None))
+    store.write_json(catalog.cache_meta(), {"endpoint": sitio.viejo})
+    visto.clear()
+    abiertas_ren: list = []
+
+    def ver_ajustes(dlg) -> None:
+        """Apunta las entradas de «Ajustes» y entra en «Renombrar el catálogo…»."""
+        botones_ajustes = botones(dlg)
+        visto["entradas"] = sorted(botones_ajustes)
+        botones_ajustes["Renombrar el catálogo…"].invoke()
+        dlg.destroy()
+
+    real_renombrar = tk_renombrar.open_dialog
+    tk_renombrar.open_dialog = lambda parent, raw=None: abiertas_ren.append(raw)
+    tk_doctor.mostrar = lambda dlg, parent=None: ver_ajustes(dlg)
+    try:
+        ventana_principal(cfg, lambda root: botones(root)["Ajustes…"].invoke())
+    finally:
+        tk_renombrar.open_dialog = real_renombrar
+    c("con un remoto sin renombrar, «Ajustes» ofrece renombrarlo",
+      "Renombrar el catálogo…" in (visto.get("entradas") or []), True)
+    c("  y la entrada abre su pantalla", len(abiertas_ren), 1)
 
 with sandbox():
     cfg, _p = preparar()

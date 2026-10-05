@@ -46,19 +46,25 @@ import sys
 import tempfile
 import threading
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Mapping
 
-from common import (bisync, conflicts, fleet, historial, model, moderacion, progress,
-                    results, revision)
+from common import (bisync, conflicts, fleet, historial, llavero, model, moderacion,
+                    progress, results, revision, store)
 from common.model import Config, Pair
 
 LOG_TAIL_LINES = 15
 """Líneas de log que se vuelcan a consola cuando algo falla."""
 SKIPPED = -1
 """Código interno: pareja no ejecutada (ni OK ni fallo)."""
+LLAVERO_ROTO = 2
+"""Código del llavero cuando una base no está entera y la pasada no corre.
+
+Es el «error sin clasificar» de rclone: cuenta como fallo, y la próxima pasada
+lo vuelve a intentar.
+"""
 CONFLICTS_SHOWN = 5
 """Ficheros en conflicto que se nombran en la salida."""
 PROGRESS_POLL_S = 0.5
@@ -306,6 +312,12 @@ def filter_args(pair: Pair, ffile: Path | None) -> list[str]:
     if ffile is not None:
         return ["--filters-file", str(ffile)]
     args: list[str] = []
+    # Las reglas del código (`Pair.reglas`) salen como `--include`/`--exclude`.
+    # Aquí no pueden ir delante de las de la pareja: rclone añade siempre los
+    # `--include` antes que los `--exclude` (`fs/filter/filter.go`, `NewFilter`).
+    for regla in pair.reglas:
+        signo, _, patron = regla.partition(" ")
+        args += ["--include" if signo == "+" else "--exclude", patron]
     for pattern in pair.includes:
         args += ["--include", pattern]
     for pattern in pair.excludes:
@@ -365,6 +377,13 @@ def build_command(ctx: RunContext, pair: Pair, ffile: Path | None,
         flags["workdir"] = str(pair.workdir)
         if need_resync:
             flags["resync"] = True
+        else:
+            # `--resync-mode` implica `--resync` (`setResyncDefaults()`,
+            # `cmd/bisync/resync.go`: «either flag is sufficient without the
+            # other»): dicho en una pasada normal, la convierte en un resync,
+            # que no deja conflictos ni propaga borrados. Solo vale cuando
+            # sync.py decide resincronizar.
+            flags.pop("resync-mode", None)
 
     if pair.versions:
         # El parseo ya garantiza que es bisync. El sello depende de la pasada,
@@ -430,6 +449,25 @@ def seguir_progreso(logfile: Path | None):
         hilo.join()
 
 
+def crear_carpeta_remota(ctx: RunContext, pair: Pair) -> int:
+    """Crea en el remoto la carpeta de una pareja antes de su `--resync` (`rclone mkdir`).
+
+    Es para el llavero: su carpeta (`keychain/`, junto al catálogo) la pone el
+    código y nadie más la crea, y `bisync --resync` aborta si la del remoto no
+    existe («error reading source root directory: directory not found»). Sin
+    esto, en un remoto recién activado la primera pasada fallaba siempre. Si ya
+    está, `mkdir` no hace nada; con `--dry-run`, tampoco crea nada. Un fallo
+    solo se dice: la pasada lo volverá a decir con su log.
+    """
+    cmd = [ctx.binary, "mkdir", pair.dest, "--config", str(model.RCLONE_CONF)]
+    if ctx.dry_run:
+        cmd.append("--dry-run")
+    rc = execute(ctx, cmd)
+    if rc != 0:
+        print(f"[{pair.name}] No se ha podido crear {pair.dest} (código {rc}).")
+    return rc
+
+
 def execute(ctx: RunContext, cmd: list[str], logfile: Path | None = None) -> int:
     """Ejecuta rclone y devuelve su código de salida."""
     print(f"  ejecutando{ctx.tag}: " + " ".join(cmd))
@@ -470,7 +508,16 @@ def _bisync_preflight(ctx: RunContext, pair: Pair) -> tuple[bool, int | None]:
 
     reasons = bisync.resync_reasons(pair, state)
     need_resync = ctx.force_resync or bool(reasons)
-    if need_resync and not ctx.resync_approved:
+    if need_resync and pair.llavero and reasons:
+        # El llavero no espera a que nadie lo apruebe: con `resync-mode =
+        # newer` gana la versión más nueva y la otra queda en `.prversions/`
+        # (el backup-dir también vale en un --resync). Saltarlo lo dejaría sin
+        # sincronizar sin que nadie se enterase: una pasada saltada sale con 0.
+        for reason in reasons:
+            print(f"  requiere --resync -> {reason}")
+        print(f"[{pair.name}] El llavero se resincroniza solo: gana lo más nuevo y lo "
+              f"otro queda en {model.VERSIONS_DIR}.")
+    elif need_resync and not ctx.resync_approved:
         for reason in reasons:
             print(f"  requiere --resync -> {reason}")
         print(f"[{pair.name}] Saltada: requiere --resync y no está aprobado.")
@@ -550,10 +597,23 @@ def run_pair(ctx: RunContext, pair: Pair) -> int:
     if not pair.local_abs.exists():
         print(f"[{pair.name}] La ruta local '{pair.local_abs}' no existe. Creándola...")
         pair.local_abs.mkdir(parents=True, exist_ok=True)
+        if pair.llavero:
+            store.hide(pair.local_abs)
+
+    if pair.llavero:
+        motivo = llavero.preparar(pair)
+        if motivo is not None:
+            print(f"[{pair.name}] NO SE SUBE: {motivo}")
+            record_result(ctx, pair, LLAVERO_ROTO, None, reloj)
+            return LLAVERO_ROTO
+        if need_resync:
+            crear_carpeta_remota(ctx, pair)
 
     ffile = bisync.filters_file_for(pair)
     cmd, logfile = build_command(ctx, pair, ffile, need_resync)
     rc = execute(ctx, cmd, logfile)
+    if rc != 0 and pair.llavero and not need_resync:
+        rc, logfile = repetir_sin_freno(ctx, pair, ffile, logfile, rc)
     # Antes de `dispose_log()`: si la pasada fue bien, el log se tira y con él
     # lo que dice cuánto movió.
     final = progress.final_del_log(logfile)
@@ -567,7 +627,58 @@ def run_pair(ctx: RunContext, pair: Pair) -> int:
         explain_failure(saved)
     record_result(ctx, pair, rc, saved, reloj, final)
     report_conflicts(ctx, pair)
+    if rc == 0 and pair.llavero and not ctx.dry_run:
+        reapuntar_llavero(ctx, pair, ffile)
     return rc
+
+
+def repetir_sin_freno(ctx: RunContext, pair: Pair, ffile: Path | None, logfile: Path,
+                      rc: int) -> tuple[int, Path]:
+    """Repite la pasada del llavero sin el freno de borrados, si solo lo pisan copias de conflicto.
+
+    El freno (`--max-delete`, 25 % del listado anterior) para la pasada cuando
+    un lado parece vaciado. El llavero tiene tan pocos ficheros que quitar una
+    copia de conflicto ya lo pisa, al combinar aquí o al ver en otro
+    dispositivo que se fue del remoto, y abortaría así cada vez. Si todo lo
+    borrado son copias (`llavero.solo_copias_borradas()`), se repite una vez
+    con `llavero.FRENO_SIN_COPIAS`; si hay una base entre lo borrado, no.
+
+    Returns:
+        `(código, log)`: los de la pasada repetida, o los mismos si no se repite.
+    """
+    try:
+        texto = logfile.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return rc, logfile
+    copias = llavero.solo_copias_borradas(texto, pair) if "too many deletes" in texto else None
+    if copias is None:
+        return rc, logfile
+    print(f"[{pair.name}] Lo borrado son copias de conflicto ({', '.join(copias)}), y cada "
+          f"una queda en {model.VERSIONS_DIR}: se repite la pasada sin el freno de borrados.")
+    dispose_log(pair.name, logfile, 0, ctx.keep_logs)
+    sin_freno = replace(pair, flags={**pair.flags, "max-delete": llavero.FRENO_SIN_COPIAS})
+    cmd, logfile = build_command(ctx, sin_freno, ffile, False)
+    return execute(ctx, cmd, logfile), logfile
+
+
+def reapuntar_llavero(ctx: RunContext, pair: Pair, ffile: Path | None) -> None:
+    """Repite en seguida la pasada del llavero si rclone ha dejado una base fuera de su listado.
+
+    Pasa tras un conflicto que gana el remoto, por un fallo de rclone
+    (`llavero.sin_listar()`). Tiene que ser ya, con las dos bases iguales: así
+    bisync solo la vuelve a apuntar. Si falla, solo se dice: lo peor es que un
+    cambio antes de la próxima pasada buena salga como otro conflicto.
+    """
+    faltan = llavero.sin_listar(pair)
+    if not faltan:
+        return
+    print(f"[{pair.name}] rclone no ha apuntado {', '.join(faltan)} tras el conflicto: "
+          "otra pasada, ahora que están iguales, para que lo haga.")
+    cmd, logfile = build_command(ctx, pair, ffile, False)
+    rc = execute(ctx, cmd, logfile)
+    saved = dispose_log(pair.name, logfile, rc, ctx.keep_logs)
+    if rc != 0:
+        print(f"[{pair.name}] Esa pasada ha fallado (código {rc}). Log: {saved}")
 
 
 def resolve_resync_approval(selected: list[Pair], assume_yes: bool) -> bool:
@@ -577,8 +688,8 @@ def resolve_resync_approval(selected: list[Pair], assume_yes: bool) -> bool:
     """
     pending = []
     for pair in selected:
-        if not pair.is_bisync:
-            continue
+        if not pair.is_bisync or pair.llavero:
+            continue            # el llavero se resincroniza solo (`_bisync_preflight()`)
         bisync.migrate_legacy_state(pair)
         reasons = bisync.resync_reasons(pair)
         if reasons:
@@ -635,8 +746,9 @@ def list_pairs(config: Config) -> int:
     """Imprime las parejas configuradas."""
     print("Parejas configuradas:")
     for pair in config.pairs:
+        marca = "  (el llavero, lo pone prdrive)" if pair.llavero else ""
         print(f"  - {pair.name:<15} {pair.mode.name:<12} "
-              f"{pair.local_endpoint}  <->  {pair.remote_endpoint}")
+              f"{pair.local_endpoint}  <->  {pair.remote_endpoint}{marca}")
     return 0
 
 

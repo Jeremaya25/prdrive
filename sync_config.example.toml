@@ -4,8 +4,10 @@
 #
 #   * `.prdrive/sync_config.toml` — el config de UN dispositivo: qué sincroniza
 #     él. Lo genera el instalador y lo mantiene la ventana de parejas.
-#   * `pairs.toml` en tu remoto — el catálogo: qué parejas EXISTEN, para todos
-#     los dispositivos. Admite además la tabla [remote] de abajo.
+#   * `remote.toml` en tu remoto — el catálogo: qué parejas EXISTEN, para todos
+#     los dispositivos. Admite además la tabla [remote] de abajo. En un remoto
+#     de antes se llama `pairs.toml`: prdrive encuentra los dos, y «Ajustes» →
+#     «Renombrar el catálogo…» lo pasa al nombre nuevo.
 #
 # Todo lo que hay aquí es un ejemplo: cambia el remote, las rutas y las parejas
 # por las tuyas.
@@ -38,7 +40,7 @@ shell_type = "none"
 
 [defaults]
 remote = "nas"                # tiene que coincidir con [remote].name
-catalog_path = "/prdrive-catalog/pairs.toml"   # el fichero, no su carpeta
+catalog_path = "/prdrive-catalog/remote.toml"  # el fichero, no su carpeta
 
 # Filtros que se suman a los de cada pareja.
 exclude = [
@@ -69,6 +71,29 @@ transfers = 4
 [daemon]
 pairs = ["docs", "claves"]    # qué sincroniza; si falta, todas
 interval_minutes = 30
+
+
+# ---------------------------------------------------------------------------
+# [keychain] — el llavero: una base de KeePassXC que se sincroniza sola
+# ---------------------------------------------------------------------------
+# Lo escribe «Ajustes → Llavero…» (o el asistente), aquí y en el catálogo: no
+# hace falta tocarlo a mano. Con él prdrive construye su propia pareja,
+# `keychain`: la base vive en `.keychain/` del dispositivo y viaja a la
+# subcarpeta `keychain/` de la carpeta del catálogo, en bisync con versiones.
+# Esa pareja no se cambia desde aquí (ni los [defaults] le llegan), se
+# resincroniza sola cuando hace falta, y su nombre queda reservado: ninguna
+# [[pair]] puede llamarse `keychain` mientras esté esta tabla. Una pareja de la
+# raíz entera (`local = "."`) deja fuera `.keychain/`.
+#
+# El fichero llave NO viaja, ni se guarda su huella: `fichero_llave` solo dice
+# que la base lo pide, y `nombre_llave` es una pista para que otro dispositivo
+# sepa cuál buscar. Dónde está en cada equipo lo apunta prdrive aparte
+# (`.prdrive/state/keychain.json`).
+#
+# [keychain]
+# base = "personal.kdbx"          # un nombre suelto que acabe en .kdbx, en minúsculas
+# fichero_llave = true
+# nombre_llave = "personal.keyx"  # solo una pista: ni ruta ni huella
 
 
 # ---------------------------------------------------------------------------

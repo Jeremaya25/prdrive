@@ -72,9 +72,14 @@ class Frontend(Protocol):
 
 
 def pair_status_notes(config: Config) -> dict[str, str]:
-    """Devuelve `requiere resync` junto a las parejas bisync sin baseline válido."""
+    """Devuelve `requiere resync` junto a las parejas bisync sin baseline válido.
+
+    El llavero no sale: se resincroniza solo.
+    """
     notes = {}
     for pair in config.pairs:
+        if pair.llavero:
+            continue
         try:
             if bisync.resync_reasons(pair):
                 notes[pair.name] = "requiere resync"
@@ -283,6 +288,50 @@ def start(config: Config, startup_msg: str | None) -> tuple[Choice | None, Front
             print(startup_msg)
         frontend = console.ConsoleFrontend()
         return frontend.ask(config, startup_msg=None), frontend
+
+
+def abrir_llavero(config: Config) -> int:
+    """Hace «Abrir llavero» sin la ventana de prdrive (`runsync.py --llavero`, `Llavero.bat`).
+
+    Con entorno gráfico, con los diálogos de `ui/tk_llavero.py`, colgados de
+    una raíz que no se enseña. Sin él, por la consola y sin preguntar nada: si
+    la base pide fichero llave y no se sabe dónde está, KeePassXC lo pedirá, y
+    las copias de conflicto no se combinan (se ofrece la próxima vez).
+    Solo se cae a la consola si no se puede crear la raíz: un fallo a mitad de
+    los pasos no los repite.
+
+    Returns:
+        0 si KeePassXC se ha abierto; 1 si no.
+    """
+    from . import llavero_editor
+    try:
+        from . import tk as tk_
+        root = tk_.root_oculto()
+    except Exception:                                # noqa: BLE001 — sin Tk o sin display
+        root = None
+    if root is None:
+        def esperar(mensaje: str, funcion):
+            """Corre `funcion()` aquí mismo, diciendo antes qué se hace."""
+            print(mensaje)
+            try:
+                return True, funcion()
+            except Exception as e:                   # noqa: BLE001 — se dice
+                return False, e
+        hecho = llavero_editor.abrir(config, print, esperar, lambda nombre: None,
+                                     lambda plan, titulo, nota: False, decir_sin_traer=True)
+        return 0 if hecho else 1
+    from . import tk_llavero
+    try:
+        hecho = tk_llavero.abrir(root, config, suelto=True)
+    except Exception as e:                           # noqa: BLE001 — se dice, no se repite
+        error: Exception | None = e
+    else:
+        error = None
+    finally:
+        root.destroy()
+    if error is not None:
+        return fatal(f"No se ha podido abrir el llavero:\n\n{error}")
+    return 0 if hecho else 1
 
 
 def fatal(msg: str) -> int:

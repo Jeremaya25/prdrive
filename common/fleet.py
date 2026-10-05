@@ -10,9 +10,9 @@ ver un dispositivo olvidado en un cajón, con una versión vieja y sin
 sincronizar desde hace meses.
 
 Lo que se publica sirve para mirar la lista y decidir: quién es (`id`,
-`nombre`), qué lleva (`version`, `plataformas`), cómo está (`last_seen`,
-`last_result` y, si falla, `ultima_buena`) y dónde ha estado (`equipos`). Nada
-de rutas ni de parejas.
+`nombre`), qué lleva (`version`, `plataformas`), qué sabe leer (`entiende`),
+cómo está (`last_seen`, `last_result` y, si falla, `ultima_buena`) y dónde ha
+estado (`equipos`). Nada de rutas ni de parejas.
 
 Lo único de fuera del dispositivo que viaja es el nombre de red de los equipos
 donde se ha enchufado, a propósito: sin él no hay respuesta a «¿dónde estaba el
@@ -81,6 +81,17 @@ Los últimos, que son los que contestan «¿dónde estaba?».
 Con un tope la nota no crece con los años.
 """
 
+ENTIENDE = (catalog.FICHERO,)
+"""Lo que este código sabe leer y una versión anterior no.
+
+Va en la nota (`entiende`) para que otro dispositivo pueda preguntarlo antes de
+hacer algo que dejaría atrás a quien no lo sepa. Hoy es un solo dato: que el
+catálogo puede llamarse `remote.toml` (`catalog.candidatos()`); «Renombrar el
+catálogo…» solo se deja hacer cuando todas las notas lo dicen. Es una lista y
+no un número de versión porque dice justo lo que se pregunta, sin depender de
+en qué release entró cada cosa.
+"""
+
 SIN_BUENA = "ninguna"
 """Valor de `ultima_buena` si de alguna pareja que falla no consta pasada buena.
 
@@ -135,6 +146,8 @@ class Dispositivo(NamedTuple):
             equipo.
         cifrado: `veracrypt` en la raíz de un equipo que vive en un contenedor;
             vacío en todo lo demás.
+        entiende: Lo que su código sabe leer (`ENTIENDE` de su versión);
+            vacío en la nota de una versión de antes de la lista.
     """
     id: str
     nombre: str
@@ -146,6 +159,7 @@ class Dispositivo(NamedTuple):
     ultima_buena: str = ""
     tipo: str = ""
     cifrado: str = ""
+    entiende: tuple[str, ...] = ()
 
     @property
     def es_equipo(self) -> bool:
@@ -218,7 +232,7 @@ def endpoint_catalogo(raw_local: Mapping[str, Any] | None = None) -> str:
 
 
 def carpeta(raw_local: Mapping[str, Any] | None = None) -> str:
-    """Devuelve `remote:/ruta/devices`, junto al `pairs.toml` del catálogo."""
+    """Devuelve `remote:/ruta/devices`, junto al fichero del catálogo."""
     return carpeta_de(endpoint_catalogo(raw_local))
 
 
@@ -267,6 +281,8 @@ def _tabla(disp: Dispositivo) -> dict[str, Any]:
         tabla["tipo"] = disp.tipo
     if disp.cifrado:
         tabla["cifrado"] = disp.cifrado
+    if disp.entiende:
+        tabla["entiende"] = list(disp.entiende)
     return tabla
 
 
@@ -340,6 +356,9 @@ def parse(texto: str, device_id: str = "") -> Dispositivo | None:
     plataformas = datos.get("plataformas")
     if not isinstance(plataformas, (list, tuple)):
         plataformas = []
+    entiende = datos.get("entiende")
+    if not isinstance(entiende, (list, tuple)):
+        entiende = []
     return Dispositivo(
         id=identificador,
         nombre=cadena("nombre") or identificador[:8],
@@ -350,7 +369,8 @@ def parse(texto: str, device_id: str = "") -> Dispositivo | None:
         equipos=_equipos(datos.get("equipos"), datos.get("equipos_visto")),
         ultima_buena=cadena("ultima_buena"),
         tipo=cadena("tipo").strip().lower(),
-        cifrado=cadena("cifrado").strip().lower())
+        cifrado=cadena("cifrado").strip().lower(),
+        entiende=tuple(e for e in entiende if isinstance(e, str) and e))
 
 
 def ruta_estado() -> Path:
@@ -565,7 +585,8 @@ def nota_de(app_dir: Path | str | None, como_se_llama: str,
                                            equipo_actual(), ahora),
                        ultima_buena=ultima_buena,
                        tipo="" if not model.es_equipo(app_dir) else model.TIPO_EQUIPO,
-                       cifrado=_cifrado(app_dir, identificador))
+                       cifrado=_cifrado(app_dir, identificador),
+                       entiende=ENTIENDE)
 
 
 CIFRADO_VERACRYPT = "veracrypt"
@@ -607,7 +628,8 @@ def _sin_fecha(disp: Dispositivo) -> tuple:
     añade notas.
     """
     return (disp.id, disp.nombre, disp.version, disp.plataformas, disp.last_result,
-            disp.ultimo_equipo, disp.ultima_buena, disp.tipo, disp.cifrado)
+            disp.ultimo_equipo, disp.ultima_buena, disp.tipo, disp.cifrado,
+            disp.entiende)
 
 
 def hace_falta_publicar(disp: Dispositivo, ahora: datetime | None = None) -> bool:

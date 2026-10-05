@@ -30,7 +30,7 @@ cumplirla.
 |---|---|---|
 | 1 | **Dispositivo** | qué unidad. Si ya es un prdrive, atajo para actualizarla |
 | 2 | **Cifrado** | VeraCrypt, BitLocker o ninguno |
-| 3 | **Conexión** | formulario de remoto nuevo, o importar uno de tu `rclone.conf`. Más la ruta del catálogo: la del fichero (`…/pairs.toml`), no la de su carpeta |
+| 3 | **Conexión** | formulario de remoto nuevo, o importar uno de tu `rclone.conf`. Más la ruta del catálogo: la del fichero (`…/remote.toml`), no la de su carpeta |
 | 4 | **Comprobaciones** | consigue un rclone (lo busca, y si no lo descarga), conecta y lee el catálogo |
 | 5 | **Instalación** | completa o ligera, y para qué plataformas; copia el programa a `.prdrive/`, rclone y Python de cada plataforma, los lanzadores, el `rclone.conf` y la clave |
 | 6 | **Parejas** | cuáles de las del catálogo usa este dispositivo, y apunta el dispositivo en el registro de la flota |
@@ -118,7 +118,7 @@ cuanto el contenedor está abierto.
 
 El catálogo todavía no existe. Instala un primer dispositivo con la conexión a
 mano y crea las parejas desde su ventana (**Parejas → Catálogo → Añadir**), o
-sube un `pairs.toml` con el formato de
+sube un `remote.toml` con el formato de
 [`sync_config.example.toml`](../../sync_config.example.toml). A partir de ahí, cada
 dispositivo nuevo hereda la conexión y las parejas del catálogo.
 

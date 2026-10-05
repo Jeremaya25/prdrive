@@ -3,7 +3,7 @@
 Formerly AGENTS.md «Provisioning a device» (general part), «The PyInstaller build».
 VeraCrypt → `veracrypt.md`; the vestibule → `vestibule.md`; updating an installed device → `updating.md`; the agent's install → `agent.md`.
 
-## The eight steps
+## The steps
 
 The order is load-bearing: you cannot read the catalogue before knowing the remote, pick pairs before knowing where the device goes, or initialise them before the `sync.py` that does so exists.
 
@@ -16,9 +16,13 @@ The order is load-bearing: you cannot read the catalogue before knowing the remo
                   runtime per platform, launchers, rclone.conf + keys
 6 Parejas         pick from the catalogue, write sync_config.toml, make dirs,
                   publish the device's note in the fleet registry
-7 Inicialización  --resync of the bisync pairs
-8 Verificación
+7 Llavero         optional: none, a base of one's own, or the remote's
+                  (KeePassXC + [keychain] + .keychain/, `llavero.md`)
+8 Inicialización  --resync of the bisync pairs (and the keychain's first pass)
+9 Verificación
 ```
+
+(The list starts with «¿Dónde?», unit or this host, which the step titles count too.)
 
 Each step disables «Siguiente» until its condition is met. **No console fallback** (unlike `runsync.py`): this happens once in a device's life. Step 5 copies a folder of its own and touches nothing else, so it needs no `--dry-run` ceremony and runs straight through `ui.tk.working()`. With VeraCrypt `.prdrive/` lives *inside* the container, so the volume looks empty until mounted: detection re-runs at the end of `_paso_cifrado`.
 

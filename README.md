@@ -71,7 +71,7 @@ Más detalle: [Configuración, modos y filtros](docs/guia/configuracion.md)
 Las [guías](docs/guia/README.md) tienen el detalle:
 
 - **Para empezar:** [Instalación](docs/guia/instalacion.md) · [Cifrar con VeraCrypt](docs/guia/cifrado.md)
-- **Día a día:** [Uso diario](docs/guia/uso.md) · [Configuración, modos y filtros](docs/guia/configuracion.md) · [Conflictos y versiones](docs/guia/conflictos-y-versiones.md) · [Diagnóstico y reparación](docs/guia/diagnostico.md)
+- **Día a día:** [Uso diario](docs/guia/uso.md) · [Configuración, modos y filtros](docs/guia/configuracion.md) · [Conflictos y versiones](docs/guia/conflictos-y-versiones.md) · [Diagnóstico y reparación](docs/guia/diagnostico.md) · [El llavero](docs/guia/llavero.md)
 - **Que se sincronice sola:** [Servicio y vigilante](docs/guia/servicio-y-vigilante.md) · [Agente residente](docs/guia/agente-residente.md)
 - **Por dentro:** [Cómo funciona](docs/guia/como-funciona.md) · [Seguridad](docs/guia/seguridad.md)
 

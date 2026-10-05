@@ -248,7 +248,7 @@ with sandbox():
         c("una carpeta por ruta del catálogo se rechaza", "no lanzó", "ConfigError")
     except ConfigError as e:
         c.contains("una carpeta por ruta del catálogo se rechaza", str(e),
-                   "«/prdrive-catalog/pairs.toml»")
+                   "«/prdrive-catalog/remote.toml»")
     antes = config_file.load_raw()
     c("y no se ha escrito nada", antes["defaults"].get("catalog_path"), None)
 

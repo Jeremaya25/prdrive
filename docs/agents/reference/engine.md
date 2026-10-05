@@ -2,7 +2,7 @@
 
 Files: `sync.py`, `common/model.py`, `common/bisync.py`, `common/config_file.py`.
 Formerly AGENTS.md «Architecture», «bisync», «Logs and live progress», «Writing the TOML».
-The safety invariants (missing local dir, `max-delete`, mirrors) stay in AGENTS.md.
+The safety invariants (missing local dir, `max-delete`, mirrors) stay in AGENTS.md. Their one narrow exception is the keychain's: a pass whose only deletions are conflict copies is repeated once without the `max-delete` brake (`sync.repetir_sin_freno()`, `llavero.md`).
 
 ## Process split
 
@@ -20,7 +20,7 @@ Flags merge last-wins inside `model._build_pair`: `BASE_FLAGS` < `Mode.flags` < 
 
 `model.flags_to_args()`: `key = value` → `--key value` (`true` → bare flag, `false`/`None` → dropped, list → repeated, `_` → `-`). It lives in `model.py` so the UI can show a flag's effect without importing the engine.
 
-**A new rclone flag = edit the TOML, never code.** The script owns `--config`, `--log-file`, `--dry-run`, `--workdir`, `--resync`; `extra_flags` is the raw-string escape hatch. `RunContext` holds what is constant across the pairs of one invocation.
+**A new rclone flag = edit the TOML, never code.** The script owns `--config`, `--log-file`, `--dry-run`, `--workdir`, `--resync`, and with it `--resync-mode`: rclone treats that flag as `--resync` (`setResyncDefaults()`, `cmd/bisync/resync.go`), so `build_command()` drops it from a pass that is not a resync and it only says which side wins when `sync.py` resyncs (the keychain's `newer` was turning every pass into a resync until the cloud run of 2026-10-05); `extra_flags` is the raw-string escape hatch. `RunContext` holds what is constant across the pairs of one invocation.
 
 ## bisync (`common/bisync.py`)
 
@@ -31,10 +31,11 @@ The one place that imitates rclone's behaviour; each section cites the rclone so
 - **Quoting `upstreams`.** rclone parses it as an `fs.SpaceSepList` (`fs/types.go`): space-separated CSV, a field quoted only if it **starts** with a quote. So the quotes wrap the whole `name=path`, never just the path: `.="F:\"` gives `bare " in non-quoted-field` and takes **every** pair of the device down. They exist for a drive root's trailing backslash and for spaces. `model._upstream()` is the only builder.
 - **The device root needs a named upstream.** rclone cleans the path first, so `local = "."` becomes upstream `""` and fails with `combine for remote "": directory not found`. `model.RAIZ_UPSTREAM` (`"raiz"`) names it, hence `top_level_dir` (the name) and `top_level_abs` (the folder). The name is part of the prefix: changing it invalidates those baselines.
 - **No listing rename** (`normalize_prefix`, `rename_prefix`, `heal_listings` were deleted with `device_remote`). Renaming a listing set tells bisync that a listing of the *previous* destination describes the *new* one, and the benign case is indistinguishable from the malignant. Legacy devices are fixed by hand; no migration code. `tests/test_bisync_prefijo.py` asserts the absence and guards both halves of `device_remote`.
-- **Filters.** bisync only (`Pair.wants_filters_file`): `filters_file_for()` writes `filters/<pair>.txt` and passes `--filters-file`; `--include`/`--exclude` are then **not** also emitted (duplicate rules break change detection). bisync rewrites the md5 beside the file only on `--resync`, so `filters_state()` compares the hash itself and reports "needs resync".
+- **Filters.** bisync only (`Pair.wants_filters_file`): `filters_file_for()` writes `filters/<pair>.txt` and passes `--filters-file`; `--include`/`--exclude` are then **not** also emitted (duplicate rules break change detection). Code-owned rules (`Pair.reglas`: the keychain's, and `REGLA_SIN_LLAVERO` on root pairs, `llavero.md`) go right after `- .prversions/**`, before the TOML's; outside bisync they become `--include`/`--exclude`. bisync rewrites the md5 beside the file only on `--resync`, so `filters_state()` compares the hash itself and reports "needs resync".
 - **State.** One workdir per pair, `Pair.workdir` → `state/<pair>/` (`migrate_legacy_state()` moves the old flat layout). `pair_state()` → `PairState(status, detail, prefix)`, `fresh|ok|broken`, read from the real `.lst` files. `resync_reasons(pair)` = why a pair needs `--resync` (`[]` for non-bisync; the mode guard is inside). `last_run(pair)` = mtime of the newest listing = the last good pass (None for non-bisync).
   - A `.lst-err` is the baseline rclone sets aside when a pass aborts (`cmd/bisync/operations.go`, `markFailed()` in `lockfile.go`; with `--recover` the next pass goes back to `.lst-old` and leaves them). The state line says what they are and that they may be deleted by hand; **nothing deletes them**: bisync's workdir is not ours to clean.
 - **Resync approval.** `resolve_resync_approval()` asks **once** for all pairs before anything runs; `ask_yes_no()` returns the default when stdin is not a tty, so non-interactive runs skip those pairs (`SKIPPED = -1`) rather than resync unattended.
+  - **The one exception is the keychain pair** (`pair.llavero`): `_bisync_preflight()` resyncs it whenever `resync_reasons()` says so, unasked, and it is left out of the question, of `ui.pair_status_notes()` and of `revision`'s `resync` finding. Its `resync-mode = newer` keeps the newer base and the backup dir catches the other side's (a `--resync` honours it too), so nothing is lost; skipping it would leave it silently unsynced, since a skipped pass exits 0. The «local path missing with a baseline» abort still runs first.
 
 ## Logs and live progress
 
@@ -54,4 +55,5 @@ Device vanished mid-pass (#36): `keep_log()` leaves the log in the temp dir, say
 
 - `[pair.flags]` binds to the **last** `[[pair]]` written, so it is emitted right after its pair.
 - `dumps_checked()` re-parses its output and refuses to write if the dict does not reproduce. `save()` and `catalog.push()` both go through it.
+- **A table it does not know** (not in `TABLAS_CONOCIDAS`, e.g. a newer version's `[keychain]`) is written as is at the end. `model.parse_config()` ignores it on read, and dropping it on write would make `dumps_checked()` refuse the whole file, so a catalogue carrying it could not be edited. A subtable inside it is still refused by that check.
 - Work on the **raw dict**, never `model.Config` (its `Pair`s have `[defaults]` merged). `save(head=None)` keeps the target's header.

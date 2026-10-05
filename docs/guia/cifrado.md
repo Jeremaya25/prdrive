@@ -108,7 +108,7 @@ lo justo para llegar a él:
 | | |
 |---|---|
 | `Abrir PRDRIVE` | abre el contenedor y la ventana de prdrive. La contraseña la pide VeraCrypt en su propia ventana: no pasa por prdrive |
-| `Expulsar PRDRIVE` | cierra el contenedor para poder quitar la unidad. Si queda algo abierto, VeraCrypt pregunta si forzar |
+| `Expulsar PRDRIVE` | cierra el contenedor para poder quitar la unidad. Si queda algo abierto, VeraCrypt pregunta si forzar. Con el [llavero](llavero.md), antes cierra KeePassXC y sube lo que falte |
 | `abrir-prdrive.sh`, `expulsar-prdrive.sh` | lo mismo en Linux, con VeraCrypt, udisks2 o cryptsetup |
 | `LEEME-PRDRIVE.txt` | cómo se hace, en diez líneas, legible sin abrir nada |
 

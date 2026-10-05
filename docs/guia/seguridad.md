@@ -18,7 +18,8 @@ Léelo entero antes de usar esto con datos que te importen.
 - **Escribir el catálogo es lo más arriesgado del programa**, porque gobierna
   borrados en todos tus dispositivos. Por eso `catalog.push()` genera y verifica
   el TOML antes de tocar la red, **relee el remoto y se niega si ha cambiado**
-  desde que se leyó, copia `pairs.toml` → `pairs.toml.bak` y solo entonces sube.
+  desde que se leyó, deja una copia del catálogo a su lado (`.bak`) y solo
+  entonces sube.
 - **Actualizarse descarga y ejecuta código.** Conviene saber exactamente qué lo
   respalda, que es esto y nada más: HTTPS con validación de certificado contra
   `api.github.com` y `codeload.github.com`, el CRC del zip, que estén todos los

@@ -37,12 +37,30 @@ def raiz_de(ruta: Path) -> Path:
     return ruta
 
 
+def donde_probar(raiz: Path, ruta: Path) -> Path:
+    """Devuelve dónde preguntar por los dispersos del volumen de `ruta`.
+
+    La raíz, si se puede escribir en ella. En POSIX `soporta_dispersos()`
+    prueba escribiendo, y sin ser root no se puede escribir en `/`: la raíz
+    contestaría «no» por eso, no por su sistema de ficheros. Ahí se pregunta a
+    la carpeta más cercana a la raíz, del mismo volumen, donde sí se pueda.
+    """
+    if crypto.IS_WIN or os.access(raiz, os.W_OK):
+        return raiz
+    ruta = Path(os.path.abspath(ruta))
+    debajo = [p for p in (ruta, *ruta.parents) if raiz in p.parents]
+    return next(p for p in reversed(debajo) if os.access(p, os.W_OK))
+
+
 carpeta = tmpdir("prdrive-volumen-") / "PRDRIVE-cifrado"
 carpeta.mkdir()
 raiz = raiz_de(carpeta)
+otra = donde_probar(raiz, carpeta)
+if otra != raiz:
+    print(f"  (en {raiz} no se puede escribir: los dispersos se preguntan en {otra})")
 
 c("soporta_dispersos: una carpeta contesta lo mismo que la raíz de su volumen",
-  crypto.soporta_dispersos(carpeta), crypto.soporta_dispersos(raiz))
+  crypto.soporta_dispersos(carpeta), crypto.soporta_dispersos(otra))
 c("sistema_de_ficheros: una carpeta contesta lo mismo que la raíz de su volumen",
   crypto.sistema_de_ficheros(carpeta), crypto.sistema_de_ficheros(raiz))
 if crypto.IS_WIN:

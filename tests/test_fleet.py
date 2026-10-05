@@ -100,6 +100,18 @@ c("más equipos de la cuenta se cortan al leer", len(larga.equipos), fleet.MAX_E
 c("y se quedan los primeros, que son los más recientes", larga.equipos[0].nombre, "E0")
 
 
+# qué sabe leer: lo pregunta «Renombrar el catálogo…» antes de dejar hacerlo
+SABE = DISP._replace(entiende=fleet.ENTIENDE)
+c("la nota dice qué sabe leer, y se relee igual", fleet.parse(fleet.dumps(SABE)), SABE)
+c.contains("  como una lista", fleet.dumps(SABE), 'entiende = ["remote.toml"]')
+c("hoy, que el catálogo puede llamarse remote.toml", fleet.ENTIENDE, ("remote.toml",))
+c("una nota de antes de la lista no sabe nada", vieja.entiende, ())
+c("una lista rara se lee como nada",
+  fleet.parse('id = "r"\nentiende = "remote.toml"\n').entiende, ())
+c("y de una lista solo valen las cadenas",
+  fleet.parse('id = "r"\nentiende = ["remote.toml", 3, ""]\n').entiende, ("remote.toml",))
+
+
 # obsoleto es una cuenta de días
 c("visto ayer no es obsoleto", DISP.obsoleto(), False)
 c("visto hace un mes sí", DISP._replace(last_seen=HACE_UN_MES).obsoleto(), True)
@@ -149,6 +161,8 @@ try:
         c("el nombre se guarda en el dispositivo", fleet.nombre(), "el pendrive azul")
 
         cfg = model.parse_config(CFG)
+        c("la nota de este dispositivo dice lo que sabe leer",
+          fleet.nota(cfg).entiende, fleet.ENTIENDE)
         c("se publica la nota", fleet.publicar(cfg, CFG), True)
         c("con un copyto a SU fichero", llamadas[-1][0], "copyto")
         c("y al sitio que dice el catálogo de este dispositivo",
@@ -160,6 +174,14 @@ try:
           fleet.publicar(cfg, CFG), False)
         c("ni habla con el remoto", llamadas, [])
         c("salvo que se fuerce", fleet.publicar(cfg, CFG, forzar=True), True)
+        # Una versión de antes de la lista publicó sin ella: al actualizar, la
+        # nota tiene algo nuevo que contar aunque nada más haya cambiado.
+        sin_lista = store.read_json(fleet.ruta_estado())
+        sin_lista["publicado"].pop("entiende")
+        store.write_json(fleet.ruta_estado(), sin_lista)
+        c("una nota publicada sin la lista se vuelve a publicar",
+          fleet.hace_falta_publicar(fleet.nota(cfg)), True)
+        fleet.publicar(cfg, CFG)
 
         # Lo que sí se cuenta enseguida es un cambio de fondo.
         fleet.guardar_nombre("el pendrive rojo")

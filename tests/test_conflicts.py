@@ -88,6 +88,11 @@ c("--suffix-keep-extension: el sufijo va antes de la extensión",
   leer("plan.conflicto-remoto1.md", extension), ("plan.md", "path2", 1))
 c("sin ese flag, un sufijo en medio no es un conflicto",
   leer("plan.conflicto-remoto1.md"), None)
+versionada = model.parse_config({"defaults": {"remote": "nas"}, "pair": [
+    {"name": "v", "local": "sync-data/v", "remote_path": "/R/v", "versions": True}]}).pairs[0]
+c("con versions lo lleva siempre, aunque no esté en sus flags: lo pone sync.py",
+  ("suffix-keep-extension" in versionada.flags, conflicts.esquema(versionada).mantener_extension),
+  (False, True))
 
 p = pareja()
 c("en bisync path1 es el dispositivo",

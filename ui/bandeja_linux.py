@@ -147,6 +147,7 @@ ICONOS_DEL_TEMA = {
     bandeja.I_CERRAR: "application-exit",
     bandeja.I_AVISO: "dialog-warning",
     bandeja.I_REINTENTAR: "view-refresh",
+    bandeja.I_LLAVERO: "dialog-password",
 }
 """Los iconos de las entradas (`bandeja.I_*`) como nombres del tema del escritorio.
 

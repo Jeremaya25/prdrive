@@ -16,6 +16,10 @@ python sync.py --keep-logs     # keep logs of successful runs too
 python runsync.py              # UI (Tk, console fallback) + periodic service
 python runsync.py --auto       # periodic service with the service's config, no UI
 python runsync.py --auto --once  # one pass of the service's pairs, then exit
+python runsync.py --llavero   # «Abrir llavero» without the window (what Llavero.bat runs)
+python runsync.py --vigilar-llavero  # the keychain watcher (started by «Abrir llavero»)
+python runsync.py --combinar-llavero BASE COPIA [--keyfile K]  # the «Combinar» console
+python runsync.py --cerrar-llavero   # what Expulsar PRDRIVE.bat runs before dismounting
 python runsync.py --doctor     # any other args pass straight through to sync.py
 
 python penwatch.py install|status|probe|uninstall   # the watcher, per machine/user
@@ -40,27 +44,31 @@ python build_installer.py          # build the .exe (embeds the profile if any)
 python -m ui.icons                 # repaint APP_DIR/runsync.ico (headless)
 
 python tests/run_all.py            # all tests; or run one script directly
+python tests/integracion/llavero_real.py --de-verdad  # the keychain end to end, for real (CI only)
 ```
 
 `runsync.py` with no args always **stops a previously started service** first.
 
 ## Verification
 
-Verification is `tests/run_all.py` (each script in its own process), `--doctor` and `--dry-run`. Nothing to lint; no CI runs the tests (the PR template asks how it was checked). Tk tests skip themselves without a display, so an all-green run without Tk has tested no window.
+Verification is `tests/run_all.py` (each script in its own process), `--doctor` and `--dry-run`. Nothing to lint. CI (`.github/workflows/tests.yml`) runs `run_all.py` on every PR and push to `main`, on `ubuntu-latest` under `xvfb-run` (with `python3-tk`) and on `windows-latest`, Python 3.11; it runs as an unprivileged user (a check that writes to `/` fails there), and no test may depend on what the real `%LOCALAPPDATA%` caches hold. The PR template still asks how it was checked. Tk tests skip themselves without a display, so an all-green run without Tk has tested no window.
+
+**The keychain for real** (`.github/workflows/llavero-real.yml`: PRs touching the keychain, and by hand) runs `tests/integracion/llavero_real.py` on `ubuntu-latest` (xvfb) and `windows-latest`. It is not a `test_*.py` (`run_all.py` never sees it) and refuses to run without `CI` or `--de-verdad`: it downloads the pinned rclone and KeePassXC, provisions a device in a temp dir with `install/deploy` and a `local` remote, and drives the device's own code one step per process (activate, «Abrir llavero», a save the watcher uploads, a real two-sided conflict merged by `plan_combinar()` with the password on stdin instead of a console, the deletion the delete brake must let through, `--cerrar-llavero`), checking what KeePassXC itself writes: the HKCU keys and the JSON it rewrites at start on Windows, the manifests on Linux, and a `change-public-keys` through the proxy they name. On Linux it points `HOME` and the XDG dirs at the temp dir. The cloud run that found the bugs it now guards: `docs/superpowers/pruebas/2026-10-05-llavero-nube-resultados.md`.
 
 - The suite passes on Windows **and** Linux. A check about the other system's branch forces it (`IS_WIN`, and for a Linux mount point `Unidad.letra`) in any system, or prints `(saltado) …` when it cannot run there (Unix sockets, the Linux tray's `select()` on a pipe).
-- `tests/_harness.py` points `equipo.DIR` at a temp dir for every test, and turns `os.kill(pid, 0)` into a real question on Windows: there 0 is `CTRL_C_EVENT`, a Ctrl+C to the whole console, and forcing `IS_WIN = False` reaches it.
+- `tests/_harness.py` points `equipo.DIR`, `XDG_DATA_HOME`/`XDG_CONFIG_HOME`/`XDG_CACHE_HOME` and `keepassxc.bases_navegador()` (the browsers' manifest folders, Firefox's under the home folder) at temp dirs for every test, so no test sees or deletes the runner's agent, menu entries, extracted KeePassXC or browser manifests, and turns `os.kill(pid, 0)` into a real question on Windows: there 0 is `CTRL_C_EVENT`, a Ctrl+C to the whole console, and forcing `IS_WIN = False` reaches it.
 - Tk 8.6 (system Python) vs Tk 9.0.4 (the Linux runtimes): see «The UI is measured on both» in `provisioning.md`.
 
 ## Indirection points
 
 Everything that touches the network, a real device or the desktop is a **module-level indirection point so every test can replace it**. Keep new ones in that shape. Registry:
 
-- **Network and downloads**: `catalog.run()` (`fleet` and `remote_picker` go through it), `update.fetch()`, `rclone_bin.fetch()`, `runtime_bin.fetch()`, `veracrypt_bin.fetch()`/`ensure_veracrypt()`, `descarga.esperar()`.
+- **Network and downloads**: `catalog.run()` (`fleet` and `remote_picker` go through it), `update.fetch()`, `rclone_bin.fetch()`, `runtime_bin.fetch()`, `veracrypt_bin.fetch()`/`ensure_veracrypt()`, `keepassxc_bin.fetch()`, `descarga.esperar()`.
 - **Window and desktop actions**: `ui.abrir()`, `runsync.notificar_fallo()`, `tk.mostrar()`/`confirmar_plan()`, `tk.proteger_de_capturas()`/`tk._afinidad_de_pantalla()`, `segundo_plano.lanzar()` (tests set it to `en_el_acto()`), `tk_equipo.escritorio()`, `pairing.construir()`, `watch.resumen()`, `watch.pedir_al_agente()`/`pedir_a_la_raiz()`, `cifrado.lanzar_expulsion()`/`pedir_bloqueo()`, `_preguntar_borrado()`.
 - **Files and conflicts**: `conflicts.recorrer()`, `conflict_editor.mover()`/`borrar()`.
 - **Components and VeraCrypt**: `components.rclone_en_uso()`/`runtime_en_uso()`/`veracrypt_en_uso()`/`lanzar_suelto()`/`esperar_a()`/`procesos_desde()`, `common.components.raiz_fisica()`, `traveler.espacio_libre()`, `vestibulo.raiz_fisica()`/`retenido()`, `crypto.sistema_de_ficheros()`/`bytes_escritos()`/`_procesos()`, `penwatch.installed_veracrypt()`.
-- **Host OS**: `_win_volumes()`, `_leer_estado_bitlocker()`.
-- **The agent**: `agente.lanzar()`/`hay_pantalla()`/`avisar()`/`abrir_contenedor()`/`diario()`/`poner_bandeja()`/`explorar()`/`arrancar_agente()`/`poner_red()`/`rclone_propio()`/`veracrypt_propio()`/`procesos()`, `agente.hilo()` (the version check and the `watch` walks), `agente.huella_local()` (the photo of a watched folder, over `huella.de_carpeta()`), `agente.buscar_version()`/`ejecutar()`/`cache_version()`, `avisos.enviar()`, `moderacion.energia()`/`red_medida()`, `runsync.pedir_reanudar()`/`agente_sirve()`, `equipo.DIR`.
+- **Host OS**: `_win_volumes()`, `_leer_estado_bitlocker()`, `store.procesos()` (under `procesos_desde()`), `registro.leer()`/`escribir()`/`borrar()`/`vacia()` (HKCU).
+- **The keychain**: `llavero.dormir()`/`pasada()`/`lanzar_vigilante()`/`keepassxc_abierto()`/`atiende_el_servicio()`, `keepassxc.paquete_del_equipo()`/`lanzar()`/`otro_abierto()`/`cli()`/`combinar()`/`ejecutar_cli()`/`pedir_cierre()`/`terminar()`, on Linux `keepassxc.cache_equipo()`/`extraer_appimage()`/`del_equipo()`/`version_del_equipo()`/`bases_navegador()`/`terminal()` and `store.orden_de()` (with `llavero.MIRAR_ORDENES` to look at command lines on any OS), `llavero.matar_arbol()`, `tk_llavero.avisar()`/`elegir_llave()`/`elegir_base()`/`preguntar()`.
+- **The agent**: `agente.lanzar()`/`hay_pantalla()`/`avisar()`/`abrir_contenedor()`/`diario()`/`poner_bandeja()`/`explorar()`/`arrancar_agente()`/`poner_red()`/`rclone_propio()`/`veracrypt_propio()`/`procesos()`, `agente.hilo()` (the version check and the `watch` walks), `agente.huella_local()` (the photo of a watched folder, over `huella.de_carpeta()`), `agente.keepassxc_abierto()` (whether a root's KeePassXC runs), `agente.limpiar_navegador()` (the dead browser keys or Linux manifests; `_agente_falso` makes it a no-op), `agente.cerrar_keepassxc_huerfano()` (a gone root's KeePassXC on Linux; no-op there too), `agente.keepassxc_huerfano_abierto()` (whether it still runs; `False` there), `agente.buscar_version()`/`ejecutar()`/`cache_version()`, `avisos.enviar()`, `moderacion.energia()`/`red_medida()`, `runsync.pedir_reanudar()`/`agente_sirve()`, `equipo.DIR`.
 - **Installing the agent and the host root**: `install.pintar_iconos`, `install.agente.conseguir_runtime()`/`lanzar()`/`autostart_file()`/`acceso_menu()`/`crear_lnk()`/`matar_arbol()`/`conseguir_rclone()`/`conseguir_veracrypt()`, `raiz_equipo.carpetas_sincronizadas()`/`veracrypt_instalado()`/`abrir_o_crear()`/`veracrypt_portatil()`.
 - **Trays and network notices**: `bandeja_windows.Api`, the Linux tray's `conectar`/`conectar_sistema`, `red.AvisosDeRed`'s `api` (`red.ApiWindows`)/`conectar_sistema`/`conectar_netlink`.

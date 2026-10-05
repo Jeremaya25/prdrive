@@ -1,0 +1,25 @@
+---
+paths:
+  - "common/llavero.py"
+  - "common/kdbx.py"
+  - "common/keepassxc.py"
+  - "common/registro.py"
+  - "install/keepassxc_bin.py"
+  - "install/llavero.py"
+  - "ui/llavero_editor.py"
+  - "ui/tk_llavero.py"
+  - "tests/test_llavero.py"
+  - "tests/test_kdbx.py"
+  - "tests/test_keepassxc_bin.py"
+  - "tests/test_llavero_vigilancia.py"
+  - "tests/test_keepassxc.py"
+  - "tests/test_keepassxc_linux.py"
+  - "tests/test_llavero_combinar.py"
+  - "tests/test_llavero_activar.py"
+  - "tests/test_tk_llavero.py"
+  - "tests/test_install_llavero.py"
+  - "tests/test_llavero_expulsar.py"
+  - "tests/test_agente_llavero.py"
+  - "tests/integracion/llavero_real.py"
+---
+Before changing these files, read `docs/agents/reference/llavero.md` (the keychain: KeePassXC on the device, its code-built pair, watching, opening, merging, ejecting). If you already read it this session, skip it.

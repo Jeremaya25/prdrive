@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 r"""Qué componentes externos lleva el dispositivo y si siguen siendo los fijados.
 
-Tres cosas del dispositivo no son código de este proyecto: el binario de
-rclone, el Python que lo ejecuta y, en uno cifrado con VeraCrypt, el VeraCrypt
-que viaja fuera del contenedor. `common/pins.py` dice cuáles TOCAN; aquí se lee
-cuáles LLEVA y se restan.
+Hay cosas del dispositivo que no son código de este proyecto: el binario de
+rclone, el Python que lo ejecuta, en uno cifrado con VeraCrypt el VeraCrypt que
+viaja fuera del contenedor y, con el llavero, KeePassXC. `common/pins.py` dice
+cuáles TOCAN; aquí se lee cuáles LLEVA y se restan.
 
 Vive en `common/` y no en `install/` porque quien lo pregunta es el
 dispositivo: la ventana pinta ese aviso en su primer pintado, sin red ni
@@ -25,6 +25,9 @@ ni un x64 el de ARM). Cada componente deja escrito de dónde salió:
 - `VeraCrypt/PRDRIVE-VERACRYPT`: en la raíz FÍSICA, no en `.prdrive/` (el
   VeraCrypt que abre el contenedor no puede vivir dentro de él). Lo escribe
   `install/traveler.py` el último, con la versión y el SHA-256 de cada fichero.
+- `keepassxc/<paquete>/PRDRIVE-KEEPASSXC`: lo escribe
+  `install/keepassxc_bin.py` el último, con la versión y el SHA-256 de cada
+  fichero.
 
 Un dispositivo aprovisionado antes de los sellos no tiene el de rclone: se lee
 como «no consta» y eso CUENTA como pendiente, que es la única respuesta
@@ -80,9 +83,29 @@ FICHERO_SELLO = "fichero "
 Cada una es `fichero <nombre> = <sha256>`.
 """
 
+KEEPASSXC_SUBDIR = "keepassxc"
+"""Carpeta de KeePassXC dentro de `.prdrive/`, con una subcarpeta por paquete.
+
+Los paquetes son los de `pins.KEEPASSXC` (`windows-x64`, `linux-x64`). Al lado, en
+`keepassxc/config/`, va su configuración, que no es del paquete: cambiar de
+versión sustituye la carpeta del paquete entera sin tocarla.
+"""
+KEEPASSXC_STAMP = "PRDRIVE-KEEPASSXC"
+"""Nombre del sello de KeePassXC, dentro de la carpeta de su paquete."""
+KEEPASSXC_EXE = "KeePassXC.exe"
+"""El ejecutable de KeePassXC dentro de la carpeta del paquete de Windows."""
+KEEPASSXC_APPIMAGE = "KeePassXC.AppImage"
+"""El AppImage de KeePassXC dentro de la carpeta del paquete de Linux.
+
+Con un nombre fijo y no el de la release (`KeePassXC-2.7.12-x86_64.AppImage`):
+cambiar de versión sustituye la carpeta, y quien lo busca no tiene que saber
+de qué versión es.
+"""
+
 RCLONE = "rclone"
 PYTHON = "python"
 VERACRYPT = "veracrypt"
+KEEPASSXC = "keepassxc"
 
 DESCONOCIDA = "no consta"
 """Lo que se enseña cuando no hay sello.
@@ -130,6 +153,125 @@ def veracrypt_dir(raiz_fisica: Path | str) -> Path:
 def veracrypt_stamp_path(raiz_fisica: Path | str) -> Path:
     """Devuelve la ruta del sello del VeraCrypt de viaje."""
     return veracrypt_dir(raiz_fisica) / VERACRYPT_STAMP
+
+
+def keepassxc_dir(app_dir: Path | str | None, paquete: str) -> Path:
+    """Devuelve la carpeta del KeePassXC de ese paquete (`pins.KEEPASSXC`)."""
+    return _base(app_dir) / KEEPASSXC_SUBDIR / paquete
+
+
+def keepassxc_programa(paquete: str) -> str:
+    """Devuelve el nombre del programa de ese paquete: `KeePassXC.exe` o el AppImage."""
+    return KEEPASSXC_APPIMAGE if paquete.startswith("linux-") else KEEPASSXC_EXE
+
+
+def keepassxc_exe(app_dir: Path | str | None, paquete: str) -> Path:
+    """Devuelve el programa de KeePassXC de ese paquete (`keepassxc_programa()`)."""
+    return keepassxc_dir(app_dir, paquete) / keepassxc_programa(paquete)
+
+
+def paquete_keepassxc(plat: Plataforma) -> str | None:
+    """Devuelve qué paquete de KeePassXC usa esa plataforma, o `None` si ninguno."""
+    return pins.KEEPASSXC_PARA.get(plat.clave)
+
+
+def paquetes_keepassxc(app_dir: Path | str | None = None) -> list[str]:
+    """Devuelve los paquetes de KeePassXC que necesita ese dispositivo.
+
+    Uno por cada plataforma que lleva (la que tiene su rclone, como
+    `fleet.plataformas_instaladas()`) y que tiene paquete, sin repetir: un
+    dispositivo con Windows x64 y ARM64 lleva un solo KeePassXC, el de x64, y
+    Linux ARM64 ninguno (usa el del equipo).
+    """
+    salida: list[str] = []
+    for plat in PLATAFORMAS:
+        paquete = paquete_keepassxc(plat)
+        if paquete and paquete not in salida and _existe(rclone_path(app_dir, plat)):
+            salida.append(paquete)
+    return salida
+
+
+def llavero_activo(app_dir: Path | str | None = None) -> bool:
+    """Indica si ese dispositivo tiene el llavero: `[keychain]` en su `sync_config.toml`.
+
+    Lee el TOML sin el modelo, y nunca lanza: lo pregunta la ventana al
+    pintarse. Sin argumento es el config de este dispositivo
+    (`model.CONFIG_FILE`, que los tests reenganchan).
+    """
+    import tomllib
+    ruta = (Path(app_dir) / "sync_config.toml") if app_dir is not None else model.CONFIG_FILE
+    try:
+        with open(ruta, "rb") as f:
+            raw = tomllib.load(f)
+    except (OSError, ValueError):
+        return False
+    return isinstance(raw.get("keychain"), dict)
+
+
+def keepassxc_stamp_text(version: str, nombre: str, sha256_paquete: str,
+                         ficheros: dict[str, str]) -> str:
+    """Devuelve el sello de KeePassXC: de qué paquete salió y qué hay en él.
+
+    Como el de VeraCrypt, lleva el SHA-256 de cada fichero, aquí con su ruta
+    relativa a la carpeta del paquete (`plugins/…`), siempre con `/`.
+
+    Args:
+        version: La versión de KeePassXC.
+        nombre: El nombre del paquete oficial (el ZIP o el AppImage).
+        sha256_paquete: Su SHA-256.
+        ficheros: `{ruta relativa: sha256}`.
+    """
+    lineas = [f"# {APP_NAME} — el KeePassXC del llavero. Lo escribe el instalador "
+              f"y lo lee la ventana. No lo toques.",
+              f"{KEEPASSXC} = {version}",
+              f"paquete = {nombre}",
+              f"sha256 = {sha256_paquete}"]
+    lineas += [f"{FICHERO_SELLO}{ruta} = {resumen}"
+               for ruta, resumen in sorted(ficheros.items())]
+    return "\n".join(lineas) + "\n"
+
+
+def ruta_relativa_segura(ruta: str) -> bool:
+    """Indica si es una ruta relativa que no sale de su carpeta.
+
+    Con `/` como separador; nada de `\\`, unidad, `..`, `.`, partes vacías ni
+    rutas absolutas. Es lo que se exige a cada fichero del ZIP de KeePassXC y a
+    cada línea de su sello.
+    """
+    if not ruta or ruta.startswith("/") or "\\" in ruta or ":" in ruta or "\0" in ruta:
+        return False
+    return all(parte not in ("", ".", "..") for parte in ruta.split("/"))
+
+
+def keepassxc_ficheros(texto: str) -> dict[str, str]:
+    """Devuelve `{ruta relativa: sha256}` de los ficheros que declara su sello.
+
+    Una ruta que se salga de la carpeta no cuenta (`ruta_relativa_segura()`).
+    """
+    salida: dict[str, str] = {}
+    for clave, valor in leer_sello(texto).items():
+        if not clave.startswith(FICHERO_SELLO):
+            continue
+        ruta = clave[len(FICHERO_SELLO):].strip()
+        if ruta_relativa_segura(ruta):
+            salida[ruta] = valor.lower()
+    return salida
+
+
+def keepassxc_sello(app_dir: Path | str | None, paquete: str) -> dict[str, str]:
+    """Devuelve el sello de ese KeePassXC como diccionario; vacío si no hay."""
+    return leer_sello(_texto(keepassxc_dir(app_dir, paquete) / KEEPASSXC_STAMP))
+
+
+def keepassxc_version(app_dir: Path | str | None, paquete: str) -> str | None:
+    """Devuelve la versión que dice el sello de ese KeePassXC.
+
+    Returns:
+        La versión, o `None` si no hay ejecutable o el sello no la dice.
+    """
+    if not _existe(keepassxc_exe(app_dir, paquete)):
+        return None
+    return keepassxc_sello(app_dir, paquete).get(KEEPASSXC) or None
 
 
 def leer_sello(texto: str) -> dict[str, str]:
@@ -312,6 +454,8 @@ class Pendiente:
         """Devuelve el nombre del componente para mostrar."""
         if self.que == VERACRYPT:
             return "VeraCrypt de la unidad"
+        if self.que == KEEPASSXC:
+            return "KeePassXC del llavero"
         nombre = "rclone" if self.que == RCLONE else "Python"
         return f"{nombre} de {self.plataforma.nombre}"
 
@@ -387,6 +531,22 @@ def veracrypt_pendiente(raiz_fisica: Path | str) -> Pendiente | None:
                      ruta=carpeta, asistente=not lleva)
 
 
+def keepassxc_pendiente(app_dir: Path | str | None, paquete: str) -> Pendiente | None:
+    """Devuelve el KeePassXC de ese paquete si no es el fijado.
+
+    A diferencia de rclone, uno que no está también cuenta: quien pregunta ya
+    sabe que el dispositivo tiene llavero (`llavero_activo()`), y sin KeePassXC
+    el llavero no se abre. Sale como «no consta», igual que un rclone sin sello,
+    y es lo que hace que activar el llavero desde «Ajustes» lo traiga con el
+    «Actualizar…» de siempre.
+    """
+    lleva = keepassxc_version(app_dir, paquete) or DESCONOCIDA
+    if lleva == pins.KEEPASSXC_VERSION:
+        return None
+    return Pendiente(None, KEEPASSXC, lleva, pins.KEEPASSXC_VERSION,
+                     ruta=keepassxc_dir(app_dir, paquete))
+
+
 def raiz_fisica(app_dir: Path | str | None = None) -> Path | None:
     """Devuelve la raíz física del contenedor VeraCrypt en el que vive ese dispositivo.
 
@@ -416,8 +576,10 @@ def pendientes(app_dir: Path | str | None = None,
     Solo mira lo que el dispositivo LLEVA: una plataforma que no tiene no está
     anticuada sino sin instalar, y eso lo resuelve «Añadir plataformas…», que
     es una decisión con espacio en disco de por medio. Igual el VeraCrypt de
-    viaje: sin carpeta `VeraCrypt\` no hay nada que poner al día. Ni lanza ni
-    toca la red: lo pregunta la ventana al pintarse.
+    viaje: sin carpeta `VeraCrypt\` no hay nada que poner al día. KeePassXC
+    es la excepción: con el llavero activo, uno que falta también cuenta
+    (`keepassxc_pendiente()`). Ni lanza ni toca la red: lo pregunta la ventana
+    al pintarse.
 
     Args:
         app_dir: Carpeta del código; por defecto, la de este dispositivo.
@@ -441,6 +603,14 @@ def pendientes(app_dir: Path | str | None = None,
             hallado = None
         if hallado is not None:
             salida.append(hallado)
+    if llavero_activo(app_dir):
+        for paquete in paquetes_keepassxc(app_dir):
+            try:
+                hallado = keepassxc_pendiente(app_dir, paquete)
+            except (OSError, ValueError):
+                hallado = None
+            if hallado is not None:
+                salida.append(hallado)
     return salida
 
 

@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """El instalador y la ruta del catálogo: el fichero, no su carpeta (#48).
 
-Con `/prdrive-catalog` en vez de `/prdrive-catalog/pairs.toml`, `rclone cat` de
+Con `/prdrive-catalog` en vez de `/prdrive-catalog/remote.toml`, `rclone cat` de
 una carpeta no falla: junta todo lo que hay dentro, y el paso de comprobaciones
 diría «El catálogo del remoto no es TOML válido: Cannot declare ('defaults',)
 twice». Se comprueba:
 - Que el formulario de Conexión rechaza la carpeta sin tocar la red, y que la
   caja del catálogo lo dice según se teclea y no deja seguir con ella.
 - Que `pull_catalog()`, si aun así le llega una carpeta (un perfil incrustado,
-  `--check`), lo dice como carpeta y sugiere el `pairs.toml` de dentro.
+  `--check`), lo dice como carpeta y sugiere el fichero del catálogo de dentro.
+- Que lee con la regla de los dos nombres (`catalog.leer()`): `remote.toml` o,
+  en un remoto sin renombrar, su `pairs.toml`, diga lo que diga la ruta.
 - Que en el camino bueno no se pregunta nada más al remoto, y que un fichero
   que de verdad no es TOML sigue diciendo eso: un diagnóstico falso es peor que
   ninguno.
@@ -97,7 +99,7 @@ for como, hacer in (
         c.contains(f"{como}: una carpeta por ruta del catálogo se rechaza", str(e),
                    "no termina en .toml")
         c.contains(f"{como}: y se dice cuál sería", str(e),
-                   "«/prdrive-catalog/pairs.toml»")
+                   "«/prdrive-catalog/remote.toml»")
     c(f"{como}: vacía es la de fábrica", hacer("").catalog_path,
       profile.DEFAULT_CATALOG_PATH)
     c(f"{como}: y se limpia", hacer("  /otro/pairs.toml ").catalog_path,
@@ -115,25 +117,57 @@ c.contains("pero el perfil sabe lo que le pasa", a_medias.problema_catalogo or "
 c("y sigue siendo una conexión configurada", a_medias.configured, True)
 
 # el lector del instalador
-cat, _ = trae(rclone((0, CATALOGO, "")), "/prdrive-catalog/pairs.toml")
+cat, _ = trae(rclone((0, CATALOGO, "")), "/prdrive-catalog/remote.toml")
 c("un fichero se lee como siempre", cat.names if cat else None, ["docs"])
-c("sin ninguna pregunta más", llamadas, [["cat", "nas:/prdrive-catalog/pairs.toml"]])
+c("sin ninguna pregunta más", llamadas, [["cat", "nas:/prdrive-catalog/remote.toml"]])
+c("y se sabe de dónde salió", cat.endpoint if cat else None,
+  "nas:/prdrive-catalog/remote.toml")
+
+# Los dos nombres: `rclone cat` de un fichero que no existe sale con 3 (medido
+# con v1.75.1), y entonces se mira el otro nombre en la misma carpeta.
+NO_ESTA = (3, "", "ERROR : error listing: directory not found")
+for ruta in ("/prdrive-catalog/pairs.toml", "/prdrive-catalog/remote.toml"):
+    cat, _ = trae(rclone(NO_ESTA, (0, CATALOGO, "")), ruta)
+    c(f"un remoto sin renombrar se lee con «{ruta}»", cat.names if cat else None,
+      ["docs"])
+    c("  remote.toml primero y después pairs.toml", llamadas,
+      [["cat", "nas:/prdrive-catalog/remote.toml"],
+       ["cat", "nas:/prdrive-catalog/pairs.toml"]])
+    c("  y el catálogo dice que salió de pairs.toml", cat.endpoint if cat else None,
+      "nas:/prdrive-catalog/pairs.toml")
+_, motivo = trae(rclone(NO_ESTA, NO_ESTA), "/prdrive-catalog/pairs.toml")
+c.contains("sin ninguno de los dos, se nombran los dos", motivo,
+           "nas:/prdrive-catalog/remote.toml ni en nas:/prdrive-catalog/pairs.toml")
+_, motivo = trae(rclone((1, "", "no route to host")), "/prdrive-catalog/pairs.toml")
+c("sin red no se prueba el otro nombre: tardaría lo mismo en no llegar",
+  len(llamadas), 1)
+# Un remoto de cubetas (S3…): lo que no existe sale con 0 y vacío.
+cat, _ = trae(rclone((0, "", ""), (0, CATALOGO, "")), "/prdrive-catalog/pairs.toml")
+c("en una cubeta, un remote.toml vacío no tapa el pairs.toml",
+  (cat.endpoint if cat else None, cat.names if cat else None),
+  ("nas:/prdrive-catalog/pairs.toml", ["docs"]))
+cat, _ = trae(rclone((0, CATALOGO, "")), "/prdrive-catalog/mio.toml")
+c("un nombre propio se lee tal cual", llamadas, [["cat", "nas:/prdrive-catalog/mio.toml"]])
 
 # Las dos copias seguidas: pairs.toml y el .bak que deja catalog.push().
 cat, motivo = trae(rclone((0, CATALOGO + CATALOGO, ""), (0, STAT_CARPETA, ""),
                           (0, STAT_FICHERO, "")), "/prdrive-catalog")
 c("una carpeta no se lee como catálogo", cat, None)
 c.contains("se dice que es una carpeta", motivo, "es una carpeta")
-c.contains("y cuál es la ruta buena", motivo, "«/prdrive-catalog/pairs.toml»")
+c.contains("y cuál es la ruta buena", motivo, "«/prdrive-catalog/remote.toml»")
 c("sin el error de TOML engañoso", "Cannot declare" in motivo, False)
-c("se pregunta qué es la ruta, y por su pairs.toml", llamadas,
+c("se pregunta qué es la ruta, y por su remote.toml", llamadas,
   [["cat", "nas:/prdrive-catalog"],
    ["lsjson", "--stat", "nas:/prdrive-catalog"],
-   ["lsjson", "--stat", "nas:/prdrive-catalog/pairs.toml"]])
+   ["lsjson", "--stat", "nas:/prdrive-catalog/remote.toml"]])
+_, motivo = trae(rclone((0, CATALOGO + CATALOGO, ""), (0, STAT_CARPETA, ""), NO_EXISTE,
+                        (0, STAT_FICHERO, "")), "/prdrive-catalog")
+c.contains("en un remoto sin renombrar se sugiere su pairs.toml", motivo,
+           "Dentro hay un pairs.toml, así que seguramente es «/prdrive-catalog/pairs.toml»")
 
 # Una carpeta vacía: `cat` sale con 0 y no trae nada; el config sin parejas es
 # lo que falla, y también ahí se pregunta.
-_, motivo = trae(rclone((0, "", ""), (0, STAT_CARPETA, ""), NO_EXISTE),
+_, motivo = trae(rclone((0, "", ""), (0, STAT_CARPETA, ""), NO_EXISTE, NO_EXISTE),
                  "/prdrive-catalog")
 c.contains("una carpeta vacía también se dice", motivo, "es una carpeta")
 c.contains("con un ejemplo, sin afirmar que esté", motivo, "Por ejemplo")
@@ -147,7 +181,7 @@ c.contains("una carpeta que se lee bien por casualidad también", motivo,
 
 # Lo que no es una carpeta sigue diciendo lo de antes.
 _, motivo = trae(rclone((0, "esto ] no [ es toml", ""), (0, STAT_FICHERO, "")),
-                 "/prdrive-catalog/pairs.toml")
+                 "/prdrive-catalog/remote.toml")
 c.contains("un fichero que no es TOML sigue diciendo eso", motivo,
            "no es TOML válido")
 _, motivo = trae(rclone((0, CATALOGO + CATALOGO, ""), ("timeout", "", "")),
@@ -205,7 +239,7 @@ c("con una carpeta por ruta no se sale de Conexión",
   str(wiz.boton_siguiente.cget("state")), "disabled")
 lbl = estado(wiz)
 c.contains("y se dice por qué", str(lbl.cget("text")) if lbl else "",
-           "«/prdrive-catalog/pairs.toml»")
+           "«/prdrive-catalog/remote.toml»")
 
 caja = next((e for e in widgets(wiz.root, ttk.Entry)
              if e.get() == "/prdrive-catalog"), None)
