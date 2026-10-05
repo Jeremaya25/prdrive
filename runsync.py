@@ -698,11 +698,12 @@ def abrir_llavero() -> int:
 
 
 def cerrar_llavero(preguntar=input) -> int:
-    """Hace `--cerrar-llavero`, en la consola de «Expulsar PRDRIVE.bat».
+    """Hace `--cerrar-llavero`, en la consola de «Expulsar PRDRIVE.bat» o lanzado por el agente.
 
     Si el KeePassXC de la unidad está abierto, pregunta antes de cerrarlo; sin
-    nadie que conteste (sin consola), lo cierra, y si tiene algo sin guardar
-    pregunta él. Lo demás no dice nada si va bien.
+    nadie que conteste (sin consola, o el agente antes de «Bloquear» una raíz
+    cifrada del equipo), lo cierra, y si tiene algo sin guardar pregunta él. Lo
+    demás no dice nada si va bien.
 
     Args:
         preguntar: Lo que pregunta (`input`).
@@ -720,7 +721,9 @@ def cerrar_llavero(preguntar=input) -> int:
     if programas:
         try:
             respuesta = preguntar("KeePassXC está abierto. ¿Cerrarlo? [S/n] ")
-        except EOFError:
+        except (EOFError, OSError, RuntimeError):
+            # Sin nadie que conteste: sin consola, o lanzado por el agente al
+            # «Bloquear» (con pythonw, `input()` no tiene de dónde leer).
             respuesta = ""
         if str(respuesta).strip().lower() in ("n", "no"):
             print("KeePassXC sigue abierto: no se cierra la unidad.")

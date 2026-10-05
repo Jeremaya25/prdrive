@@ -162,6 +162,14 @@ try:
         with contextlib.redirect_stdout(io.StringIO()):
             c("  sin nadie que conteste, lo cierra", runsync.cerrar_llavero(sin_terminal), 0)
 
+        def sin_stdin(texto):
+            raise RuntimeError("input(): lost sys.stdin")
+        eq.vivos = {10: str(carpeta / "KeePassXC.exe")}
+        with contextlib.redirect_stdout(io.StringIO()):
+            rc = runsync.cerrar_llavero(sin_stdin)
+        c("  con pythonw (el agente, antes de «Bloquear»), tampoco: lo cierra",
+          (rc, 10 in eq.vivos), (0, False))
+
         real_cerrar = keepassxc.cerrar_llavero
         keepassxc.cerrar_llavero = lambda cfg: (_ for _ in ()).throw(RuntimeError("vaya"))
         salida = io.StringIO()

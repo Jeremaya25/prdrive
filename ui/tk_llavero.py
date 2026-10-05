@@ -83,7 +83,7 @@ CERRAR = ("KeePassXC está abierto. ¿Cerrarlo?\n\nSe cierra como si lo cerraras
 
 
 def cerrar(parent, config: Config) -> bool:
-    """Cierra el llavero antes de expulsar (§10): KeePassXC, lo pendiente, el navegador.
+    """Cierra el llavero antes de expulsar o bloquear (§10): KeePassXC, lo pendiente, el navegador.
 
     Pregunta antes de cerrar KeePassXC; lo demás espera en `working()` y solo
     se dice si algo no ha ido bien.
@@ -103,7 +103,7 @@ def cerrar(parent, config: Config) -> bool:
                          "navegador…")
     if not ok:
         avisar(parent, f"No se ha podido cerrar el llavero del todo ({cierre}). Se sigue "
-                       "expulsando.")
+                       "igualmente: VeraCrypt dirá si algo de dentro sigue abierto.")
         return True
     if cierre.lineas:
         avisar(parent, "\n\n".join(cierre.lineas))

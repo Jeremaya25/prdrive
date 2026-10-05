@@ -446,8 +446,14 @@ def plan_activar(raw: Mapping[str, Any], cat: catalog.Catalog | None, origen: Pa
              else "La base pide un fichero llave")
             + (f"; en este equipo está en {llave}" if llave is not None else "")
             + ". prdrive solo apunta dónde está: el fichero no se copia ni se lee.")
-    plan.consequences.append(f"Se pone {llavero.LANZADOR} en la raíz del dispositivo, "
-                             "para abrirlo sin la ventana de prdrive.")
+    # Una raíz del equipo no lleva lanzadores (ni Python propio): se abre desde
+    # su ventana o desde el menú del agente, que es quien la atiende.
+    equipo = model.es_equipo()
+    plan.consequences.append(
+        "Se abre con «Abrir llavero», en la ventana de prdrive o en el menú del agente "
+        "(el icono junto al reloj)." if equipo else
+        f"Se pone {llavero.LANZADOR} en la raíz del dispositivo, para abrirlo sin la "
+        "ventana de prdrive.")
     raices = _raices(raw)
     if raices:
         plan.warnings.append(
@@ -468,8 +474,9 @@ def plan_activar(raw: Mapping[str, Any], cat: catalog.Catalog | None, origen: Pa
             hechos.append(f"«{origen.name}» copiada a {carpeta.name}/{destino.name}")
         config_file.save(nuevo_local)
         hechos.append("[keychain] escrito en sync_config.toml")
-        llavero.escribir_lanzador()
-        hechos.append(f"{llavero.LANZADOR} en la raíz")
+        if not equipo:
+            llavero.escribir_lanzador()
+            hechos.append(f"{llavero.LANZADOR} en la raíz")
         if llave is not None:
             keepassxc.apuntar_llave(llave)
         return hechos
@@ -547,7 +554,8 @@ def plan_desactivar(raw: Mapping[str, Any]) -> LlaveroPlan:
     plan.consequences.append(
         f"La carpeta del llavero (.keychain, con {sit.base}) se queda donde está, y el "
         "remoto no se toca: los demás dispositivos siguen con él.")
-    plan.consequences.append(f"Se quita {llavero.LANZADOR} de la raíz.")
+    if (model.DEVICE_ROOT / llavero.LANZADOR).is_file():
+        plan.consequences.append(f"Se quita {llavero.LANZADOR} de la raíz.")
     if llavero.keepassxc_abierto():
         plan.warnings.append("KeePassXC está abierto: ciérralo antes, o lo que guardes "
                              "desde ahora ya no subirá.")

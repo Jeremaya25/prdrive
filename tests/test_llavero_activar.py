@@ -240,6 +240,28 @@ try:
         c("un Llavero.bat que no es el nuestro no se quita",
           (llavero.quitar_lanzador(), (root / llavero.LANZADOR).exists()), (False, True))
 
+    # en una raíz de este equipo: no lleva lanzadores, se abre desde su ventana
+    # o desde el menú del agente
+    real_app = model.APP_DIR
+    try:
+        with sandbox() as root:
+            model.APP_DIR = root / ".prdrive"
+            model.APP_DIR.mkdir()
+            (model.APP_DIR / "PRDRIVE").write_text("id=e\ntipo=equipo\n", encoding="utf-8")
+            config_file.save(LOCAL)
+            plan = llavero_editor.plan_activar(LOCAL, leido(), propia)
+            texto = " ".join(plan.consequences)
+            c.contains("en una raíz del equipo se abre desde la ventana o el menú del agente",
+                       texto, "en el menú del agente")
+            c("  y no habla de Llavero.bat", llavero.LANZADOR in texto, False)
+            plan.execute()
+            c("  ni lo pone", ((root / llavero.LANZADOR).exists(),
+                               "keychain" in config_file.load_raw()), (False, True))
+            c("  desactivarlo tampoco habla de él", llavero.LANZADOR in " ".join(
+                llavero_editor.plan_desactivar(config_file.load_raw()).consequences), False)
+    finally:
+        model.APP_DIR = real_app
+
     # lo que enseña la pantalla
     sit = llavero_editor.situacion({**LOCAL, "keychain": {"base": "p.kdbx",
                                                           "fichero_llave": True,

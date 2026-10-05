@@ -22,17 +22,23 @@ Lo que se sujeta:
   lleva a combinarlo.
 - Las claves del navegador de una unidad que se fue sin expulsar se quitan al
   irse y al arrancar el agente (`agente.limpiar_navegador`, de mentira).
+- «Bloquear» una raíz cifrada del equipo con llavero lo cierra antes (su
+  `runsync.py --cerrar-llavero`), y si KeePassXC no se cierra no se bloquea.
+  Es lo último: se hace Linux, con el VeraCrypt de mentira de
+  `test_agente_veracrypt.py`.
 """
 
 import math
+import shutil
 import sys
 from pathlib import Path
 
-from _harness import Checks
+from _harness import Checks, tmpdir
 
 import _agente_falso as F
 import agente
-from common import equipo, llavero, model, store
+import penwatch
+from common import equipo, llavero, model, store, vestibulo
 from common import planificador as pl
 from ui import bandeja, icons
 
@@ -433,4 +439,100 @@ try:
           for m in F.DIARIO), True)
 finally:
     agente.limpiar_navegador = real_limpiar
+
+
+# ---------------------------------------------------------------------------
+# 8. Bloquear una raíz cifrada del equipo con llavero
+# ---------------------------------------------------------------------------
+penwatch.candidate_roots = lambda cfg: ([Path(r) for r in cfg.get("extra_roots", [])]
+                                        + list(F.RAICES))
+VC = "/opt/veracrypt/veracrypt"
+penwatch.installed_veracrypt = lambda: VC
+penwatch._con_escritorio = lambda: True
+vestibulo.retenido = lambda hc: None
+penwatch.IS_WIN = agente.IS_WIN = False             # se monta en una carpeta
+equipo.Unidad.letra = property(lambda self: "")
+UID_C = "9" * 32
+HC = tmpdir("prdrive-cifrado-") / vestibulo.CONTENEDOR
+HC.write_bytes(b"\0" * 512)
+PUNTO = tmpdir("prdrive-punto-")
+
+
+def montar() -> None:
+    """Lo que hace VeraCrypt al abrirla: aparece la raíz, con llavero, en su punto."""
+    app = PUNTO / penwatch.APP_SUBDIR
+    (app / "state").mkdir(parents=True, exist_ok=True)
+    (app / "PRDRIVE").write_text(f"id={UID_C}\ntipo=equipo\n", encoding="utf-8")
+    (app / "VERSION").write_text(F.VERSION + "\n", encoding="utf-8")
+    for py in ("runsync.py", "sync.py"):
+        (app / py).write_text("# de mentira\n", encoding="utf-8")
+    (app / "sync_config.toml").write_text(
+        '[defaults]\nremote = "nas"\n\n[[pair]]\nname = "notas"\nlocal = "notas"\n'
+        'remote_path = "/R/notas"\n' + LLAVERO, encoding="utf-8")
+
+
+def desmontar() -> None:
+    """Vacía el punto de montaje: lo que hace VeraCrypt al cerrarla."""
+    for hijo in PUNTO.iterdir():
+        shutil.rmtree(hijo) if hijo.is_dir() else hijo.unlink()
+
+
+def veracrypts() -> list:
+    """Los VeraCrypt de mentira lanzados."""
+    return [p for p in F.LANZADOS if p.args and p.args[0] == VC]
+
+
+def cierres() -> list:
+    """Los `runsync.py --cerrar-llavero` lanzados."""
+    return [p for p in F.LANZADOS if p.args[-1] == "--cerrar-llavero"]
+
+
+F.RAICES[:] = []
+equipo.guardar_ajustes(equipo.Ajustes().con_unidad(
+    equipo.Unidad(UID_C, equipo.DAEMON, "Mi portátil", str(PUNTO), str(HC))))
+montar()
+ag = F.nuevo()
+F.vueltas(ag, 3)
+terminar(ag)
+c("(la raíz cifrada, abierta y atendida, con su llavero)",
+  (UID_C in ag.conexiones, fila(ag.resumen(), UID_C)["llavero"]), (True, True))
+F.LANZADOS.clear()
+F.AVISOS.clear()
+equipo.pedir({"pide": equipo.PIDE_BLOQUEAR, "id": UID_C})
+F.vueltas(ag, 2)
+c("bloquearla cierra antes su llavero: su runsync.py --cerrar-llavero",
+  [p.args for p in cierres()],
+  [[agente.python(), str(PUNTO / ".prdrive" / "runsync.py"), "--cerrar-llavero"]])
+c("  fuera de la raíz", str(cierres()[0].kwargs.get("cwd")), str(equipo.DIR))
+c("  y VeraCrypt espera a que acabe", veracrypts(), [])
+F.vueltas(ag, 3)
+c("  mientras sigue, una sola vez", (len(cierres()), veracrypts()), (1, []))
+cierres()[0].rc = 1                      # KeePassXC no se ha cerrado
+F.vueltas(ag, 1)
+c("si KeePassXC no se cierra, no se bloquea y se dice",
+  ([t for t, _ in F.AVISOS], veracrypts(), UID_C in ag.bloqueos),
+  (["Mi portátil: no la bloqueo"], [], False))
+F.vueltas(ag, 2)
+c("  y se sigue atendiendo", (UID_C in ag.conexiones, F.lock(PUNTO).get("agente")), (True, True))
+terminar(ag)
+equipo.pedir({"pide": equipo.PIDE_BLOQUEAR, "id": UID_C})
+F.vueltas(ag, 2)
+terminar(ag)
+cierres()[-1].rc = 0
+F.vueltas(ag, 1)
+c("cerrado el llavero, VeraCrypt desmonta",
+  [p.args for p in veracrypts()], [[VC, "-d", str(HC)]])
+desmontar()
+F.vueltas(ag, 2)
+c("  y queda bloqueada", (UID_C in ag.bloqueos, UID_C in ag.conexiones), (False, False))
+F.LANZADOS.clear()
+montar()
+(PUNTO / ".prdrive" / "sync_config.toml").write_text(
+    '[defaults]\nremote = "nas"\n\n[[pair]]\nname = "notas"\nlocal = "notas"\n'
+    'remote_path = "/R/notas"\n', encoding="utf-8")
+F.vueltas(ag, 3)
+terminar(ag)
+equipo.pedir({"pide": equipo.PIDE_BLOQUEAR, "id": UID_C})
+F.vueltas(ag, 2)
+c("una raíz sin llavero se bloquea sin más", (cierres(), len(veracrypts())), ([], 1))
 sys.exit(c.report())

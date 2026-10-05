@@ -487,6 +487,34 @@ with sandbox():
             messagebox.askokcancel, messagebox.showinfo = reales_mb
             tk_llavero.cerrar = REAL_CERRAR
 
+        # En una raíz de este equipo no se quita nada: sin «Expulsar». Y si es
+        # cifrada, «Bloquear» cierra antes el llavero; si KeePassXC sigue
+        # abierto, no se le pide nada al agente.
+        reales_eq = (model.es_equipo, cifrado.bloqueo, cifrado.pedir_bloqueo,
+                     messagebox.askokcancel)
+        pedidos: list = []
+        cerrados.clear()
+        model.es_equipo = lambda app_dir=None: True
+        messagebox.askokcancel = lambda *a, **k: True
+        try:
+            ventana(CON_LLAVERO, lambda root: visto.update(
+                expulsar="Expulsar" in botones(root), bloquear="Bloquear" in botones(root)))
+            c("en una raíz del equipo con llavero no hay «Expulsar»",
+              (visto["expulsar"], visto["bloquear"]), (False, False))
+            cifrado.bloqueo = lambda: "e" * 32
+            cifrado.pedir_bloqueo = lambda uid: pedidos.append(uid) or True
+            for listo in (False, True):
+                tk_llavero.cerrar = lambda root, cfg, listo=listo: (
+                    cerrados.append(cfg.llavero["base"]), listo)[1]
+                ventana(CON_LLAVERO, lambda root: botones(root)["Bloquear"].invoke())
+            c("cifrada, «Bloquear» cierra antes el llavero, las dos veces", cerrados,
+              ["personal.kdbx", "personal.kdbx"])
+            c("  y solo con KeePassXC cerrado se lo pide al agente", pedidos, ["e" * 32])
+        finally:
+            (model.es_equipo, cifrado.bloqueo, cifrado.pedir_bloqueo,
+             messagebox.askokcancel) = reales_eq
+            tk_llavero.cerrar = REAL_CERRAR
+
         # «Ajustes → Llavero…»: al activarlo, la principal relee el config y
         # lanza la primera pasada del llavero.
         model.CONFIG_FILE.write_text(config_file.dumps({

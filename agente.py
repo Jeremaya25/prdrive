@@ -187,6 +187,13 @@ PARAR_ESPERA = 10.0
 """Segundos que `parar` espera a que el agente se vaya."""
 ESPERA_VENTANA = 60.0
 """Segundos que «Bloquear» espera a que se cierre la ventana de la raíz."""
+ESPERA_LLAVERO = (keepassxc.ESPERA_CIERRE + keepassxc.ESPERA_VIGILANTE
+                  + keepassxc.TOPE_PASADA + 30.0)
+"""Lo más que se espera, antes de bloquear, a que el llavero de la raíz se cierre.
+
+Lo que puede esperar su `--cerrar-llavero` (KeePassXC, el vigilante y la
+pasada de lo pendiente) y un margen para arrancar Python.
+"""
 ESPERA_DESMONTAJE = 300.0
 """Segundos que se espera a que VeraCrypt cierre (puede estar preguntando)."""
 GRACIA_DESMONTAJE = 5.0
@@ -987,11 +994,18 @@ class Bloqueo:
         proc: El VeraCrypt que desmonta, ya lanzado.
         lanzado: Cuándo se lanzó.
         copia: La copia elevada que puede seguir tras él.
+        llavero: El `runsync.py --cerrar-llavero` de la raíz, si lleva
+            llavero: va antes que VeraCrypt.
+        llavero_desde: Cuándo se lanzó.
+        llavero_cerrado: Si ya acabó bien.
     """
     desde: float
     proc: Any = None
     lanzado: float = 0.0
     copia: Copia | None = None
+    llavero: Any = None
+    llavero_desde: float = 0.0
+    llavero_cerrado: bool = False
 
 
 @dataclass(frozen=True)
@@ -2556,7 +2570,8 @@ class Agente:
 
         Primero se espera a que nada lo impida (la pareja en curso, la foto de
         una de sus carpetas durante `ESPERA_VENTANA` como mucho, su ventana);
-        luego VeraCrypt desmonta y se espera a verlo cerrado.
+        si lleva llavero, se cierra (`_cerrar_llavero()`); luego VeraCrypt
+        desmonta y se espera a verlo cerrado.
         """
         for uid, b in list(self.bloqueos.items()):
             unidad = self.ajustes.unidades.get(uid)
@@ -2582,6 +2597,8 @@ class Agente:
                         avisar(f"{nombre}: no la bloqueo",
                                "Su ventana sigue abierta. Ciérrala y vuelve a pedirlo.",
                                True)
+                    continue
+                if con is not None and not self._cerrar_llavero(con, b, ahora):
                     continue
                 cmd = orden_bloquear(unidad)
                 if cmd is None:
@@ -2618,6 +2635,55 @@ class Agente:
                 avisar(f"{nombre}: sigue abierta",
                        "VeraCrypt no la ha cerrado: si un programa tiene un fichero "
                        "abierto dentro, ciérralo y vuelve a bloquear.", True)
+
+    def _cerrar_llavero(self, con: Conexion, b: Bloqueo, ahora: float) -> bool:
+        """Cierra el llavero de una raíz antes de bloquearla; dice si ya se puede seguir.
+
+        KeePassXC corre desde dentro del contenedor y lo retiene, y lo que
+        quede sin subir se perdería de vista hasta desbloquearla. Es su
+        `runsync.py --cerrar-llavero`, el de «Expulsar PRDRIVE.bat», con el
+        Python del agente y sin consola: sin nadie que conteste, cierra
+        KeePassXC como lo haría la persona (si tiene algo sin guardar, pregunta
+        él), sube lo pendiente y deja el navegador como estaba. Si KeePassXC no
+        se cierra (sale con 1) o tarda más de `ESPERA_LLAVERO`, no se bloquea y
+        se dice. Una raíz sin llavero sigue sin más.
+
+        Returns:
+            True si ya se puede lanzar VeraCrypt.
+        """
+        if b.llavero_cerrado or not self._llavero_de(con):
+            return True
+        nombre = con.nombre
+        if b.llavero is None:
+            try:
+                b.llavero = lanzar([python(), str(app(con.raiz) / "runsync.py"),
+                                    "--cerrar-llavero"],
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                   **_opciones_hijo(equipo.DIR, separado=True))
+            except OSError as e:
+                diario(f"{nombre}: no he podido cerrar su llavero ({e}); se bloquea igual")
+                b.llavero_cerrado = True
+                return True
+            b.llavero_desde = ahora
+            diario(f"{nombre}: cerrando su llavero antes de bloquearla")
+            return False
+        rc = b.llavero.poll()
+        if rc is None:
+            if ahora - b.llavero_desde < ESPERA_LLAVERO:
+                return False
+            try:
+                b.llavero.terminate()
+            except OSError:
+                pass
+            rc = 1
+        if rc == 1:
+            del self.bloqueos[con.id]
+            avisar(f"{nombre}: no la bloqueo",
+                   "KeePassXC sigue abierto: puede que esté preguntando algo. Ciérralo "
+                   "y vuelve a bloquearla.", True)
+            return False
+        b.llavero_cerrado = True
+        return True
 
     def _leer_entorno(self, ahora: float) -> None:
         """Lee la batería y la red, como mucho cada `MIRAR_ENTORNO` segundos."""
@@ -3079,7 +3145,7 @@ class Agente:
 
     def _abrir(self, uid: str, ahora: float, explorador: bool = False,
                llavero: bool = False) -> None:
-        """Hace «Configurar», «Abrir en explorador» o «Abrir llavero» de una raíz, en la bandeja.
+        """Hace «Configurar», «Abrir en explorador» o «Abrir llavero» de una raíz.
 
         Una unidad que no está en la lista no: sería ejecutar su código sin el
         sí, y tampoco se abre su carpeta (la misma regla, sin excepciones). Ni
