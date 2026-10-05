@@ -176,32 +176,43 @@ la versión (H-2) y salen del mismo sitio que el paquete.
 
 2.7.12, comprobada el 05/10/2026: firma buena de esa clave (subclave `C1E4 CBA3
 AD78 D3AF D894  F9E0 B7A6 6F03 B590 76A8`, la misma que vio K0), y el SHA-256
-coincide con su `.DIGEST`.
+coincide con su `.DIGEST`. El AppImage de Linux, el mismo día y con la misma
+subclave.
 """
 KEEPASSXC: dict[str, tuple[str, str]] = {
     "windows-x64": ("KeePassXC-2.7.12-Win64.zip",
                     "958234b0669d757b53eacf42bdd5de0fa1cc1ab7527709ddf4f7e29c06a8305f"),
+    "linux-x64": ("KeePassXC-2.7.12-x86_64.AppImage",
+                  "564fe8b751b9ef7aa057e4d3d0b2878db24eaa0f6b1c855c82e699ab0913ae49"),
 }
 """El paquete oficial de KeePassXC por paquete: `{paquete: (nombre, sha256)}`.
 
-La clave es también la carpeta `.prdrive/keepassxc/<paquete>/`. Es el ZIP tal
-cual: ya trae `.portable` (H-3) y no trae el runtime de Visual C++ (K3), que se
-detecta al lanzarlo.
+La clave es también la carpeta `.prdrive/keepassxc/<paquete>/`. En Windows es
+el ZIP tal cual: ya trae `.portable` (H-3) y no trae el runtime de Visual C++
+(K3), que se detecta al lanzarlo. En Linux es el AppImage, entero y con un
+nombre fijo (`components.KEEPASSXC_APPIMAGE`); no se ejecuta desde la unidad,
+sino extraído una vez en cada equipo (`common/keepassxc.py`, §11 de la
+especificación).
 """
 KEEPASSXC_URL = ("https://github.com/keepassxreboot/keepassxc/releases/download/"
                  "{version}/{nombre}")
 """Plantilla de la URL versionada de un paquete de KeePassXC."""
 KEEPASSXC_PARA: dict[str, str] = {"windows-x64": "windows-x64",
-                                  "windows-arm64": "windows-x64"}
+                                  "windows-arm64": "windows-x64",
+                                  "linux-x64": "linux-x64"}
 """Qué paquete de `KEEPASSXC` usa cada plataforma.
 
 Windows ARM64 usa el de x64, emulado: en las pruebas, el ZIP x64 funcionó
 entero en Windows ARM (A1), y el único ZIP ARM64 publicado, el de la
-2.8.0-beta1, no conectaba con el navegador (A2, H-7). Linux es la fase 2 del
-llavero.
+2.8.0-beta1, no conectaba con el navegador (A2, H-7). Linux ARM64 no tiene
+ninguno, porque no hay AppImage aarch64: usa el KeePassXC del equipo, si lo
+hay (§11 de la especificación).
 """
-MB_KEEPASSXC = 78
-"""Megabytes que ocupa en la unidad el ZIP de la 2.7.12 descomprimido (78,0 MiB)."""
+MB_KEEPASSXC: dict[str, int] = {"windows-x64": 78, "linux-x64": 47}
+"""Megabytes que ocupa en la unidad cada paquete de la 2.7.12.
+
+El ZIP descomprimido son 78,0 MiB; el AppImage, que viaja entero, 47,0.
+"""
 
 
 @dataclass(frozen=True)

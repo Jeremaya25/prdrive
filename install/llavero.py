@@ -96,9 +96,9 @@ def pensar(device_root: Path | str, cat: Catalog | None, origen: Path | None,
     if alta.aviso_formato:
         plan.avisos.append(alta.aviso_formato)
     if not components.paquetes_keepassxc(deploy.app_dir(device_root)):
-        plan.avisos.append("El dispositivo no lleva ninguna plataforma de Windows: el "
-                           "llavero se sincroniza, pero de momento KeePassXC solo va en "
-                           "Windows.")
+        plan.avisos.append("El dispositivo no lleva ninguna plataforma con KeePassXC propio "
+                           "(Linux ARM64 no tiene): el llavero se sincroniza, y se abre "
+                           "con el KeePassXC del equipo, si lo tiene.")
     return plan
 
 
@@ -133,8 +133,8 @@ def aplicar(plan: Plan, device_root: Path | str, rclone: Rclone, pedido: str,
     """Pone el llavero en el dispositivo.
 
     En este orden, de lo que viene de fuera a lo del dispositivo, para que un
-    fallo en la red no deje nada a medias: KeePassXC (de las plataformas de
-    Windows que lleve), el `[keychain]` del catálogo si el remoto no tenía
+    fallo en la red no deje nada a medias: KeePassXC (un paquete por cada
+    plataforma que lleve y lo tenga), el `[keychain]` del catálogo si el remoto no tenía
     llavero, y después `.keychain/` con la base, el config, `Llavero.bat` y la
     ruta del fichero llave en este equipo.
 

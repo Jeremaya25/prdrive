@@ -86,7 +86,7 @@ Cada una es `fichero <nombre> = <sha256>`.
 KEEPASSXC_SUBDIR = "keepassxc"
 """Carpeta de KeePassXC dentro de `.prdrive/`, con una subcarpeta por paquete.
 
-Los paquetes son los de `pins.KEEPASSXC` (`windows-x64`). Al lado, en
+Los paquetes son los de `pins.KEEPASSXC` (`windows-x64`, `linux-x64`). Al lado, en
 `keepassxc/config/`, va su configuración, que no es del paquete: cambiar de
 versión sustituye la carpeta del paquete entera sin tocarla.
 """
@@ -94,6 +94,13 @@ KEEPASSXC_STAMP = "PRDRIVE-KEEPASSXC"
 """Nombre del sello de KeePassXC, dentro de la carpeta de su paquete."""
 KEEPASSXC_EXE = "KeePassXC.exe"
 """El ejecutable de KeePassXC dentro de la carpeta del paquete de Windows."""
+KEEPASSXC_APPIMAGE = "KeePassXC.AppImage"
+"""El AppImage de KeePassXC dentro de la carpeta del paquete de Linux.
+
+Con un nombre fijo y no el de la release (`KeePassXC-2.7.12-x86_64.AppImage`):
+cambiar de versión sustituye la carpeta, y quien lo busca no tiene que saber
+de qué versión es.
+"""
 
 RCLONE = "rclone"
 PYTHON = "python"
@@ -153,9 +160,14 @@ def keepassxc_dir(app_dir: Path | str | None, paquete: str) -> Path:
     return _base(app_dir) / KEEPASSXC_SUBDIR / paquete
 
 
+def keepassxc_programa(paquete: str) -> str:
+    """Devuelve el nombre del programa de ese paquete: `KeePassXC.exe` o el AppImage."""
+    return KEEPASSXC_APPIMAGE if paquete.startswith("linux-") else KEEPASSXC_EXE
+
+
 def keepassxc_exe(app_dir: Path | str | None, paquete: str) -> Path:
-    """Devuelve el ejecutable de KeePassXC de ese paquete."""
-    return keepassxc_dir(app_dir, paquete) / KEEPASSXC_EXE
+    """Devuelve el programa de KeePassXC de ese paquete (`keepassxc_programa()`)."""
+    return keepassxc_dir(app_dir, paquete) / keepassxc_programa(paquete)
 
 
 def paquete_keepassxc(plat: Plataforma) -> str | None:
@@ -168,7 +180,8 @@ def paquetes_keepassxc(app_dir: Path | str | None = None) -> list[str]:
 
     Uno por cada plataforma que lleva (la que tiene su rclone, como
     `fleet.plataformas_instaladas()`) y que tiene paquete, sin repetir: un
-    dispositivo con Windows x64 y ARM64 lleva un solo KeePassXC, el de x64.
+    dispositivo con Windows x64 y ARM64 lleva un solo KeePassXC, el de x64, y
+    Linux ARM64 ninguno (usa el del equipo).
     """
     salida: list[str] = []
     for plat in PLATAFORMAS:
@@ -204,8 +217,8 @@ def keepassxc_stamp_text(version: str, nombre: str, sha256_paquete: str,
 
     Args:
         version: La versión de KeePassXC.
-        nombre: El nombre del ZIP.
-        sha256_paquete: SHA-256 del ZIP.
+        nombre: El nombre del paquete oficial (el ZIP o el AppImage).
+        sha256_paquete: Su SHA-256.
         ficheros: `{ruta relativa: sha256}`.
     """
     lineas = [f"# {APP_NAME} — el KeePassXC del llavero. Lo escribe el instalador "

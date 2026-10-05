@@ -3,8 +3,8 @@
 
 Se fabrica un ZIP de mentira con la forma del oficial (una sola carpeta
 `KeePassXC-2.7.12-Win64/` con `.portable`, el programa y alguna subcarpeta) y
-se fija su SHA-256 en `pins` para la prueba. Se comprueba lo que puede hacer
-daño:
+un AppImage de mentira para Linux, y se fija su SHA-256 en `pins` para la
+prueba. Se comprueba lo que puede hacer daño:
 - Que un ZIP que no es el fijado no se guarda, ni bajado ni dejado a mano.
 - Que una ruta que se sale de la carpeta tumba el ZIP entero antes de escribir
   el primer fichero.
@@ -187,6 +187,50 @@ c("  lo de antes sigue", components.keepassxc_version(app, "windows-x64"), "2.7.
 c("  sin restos", sorted(p.name for p in carpeta.parent.iterdir()), ["windows-x64"])
 keepassxc_bin.instalar(app)
 
+# Linux: el AppImage, un solo fichero, con su nombre fijo
+APPIMAGE = b"\x7fELF AppImage de mentira"
+NOMBRE_LINUX = pins.KEEPASSXC["linux-x64"][0]
+pins.KEEPASSXC["linux-x64"] = (NOMBRE_LINUX, hashlib.sha256(APPIMAGE).hexdigest())
+c("el de Linux es un AppImage", (keepassxc_bin.es_appimage("linux-x64"),
+                                 keepassxc_bin.es_appimage("windows-x64")), (True, False))
+c.contains("  y sin red se dice cómo ponerlo a mano", keepassxc_bin.a_mano("linux-x64"),
+           "baja a mano el AppImage oficial")
+servir(APPIMAGE)
+pedidas.clear()
+hecho = keepassxc_bin.instalar(app, "linux-x64")
+linux = components.keepassxc_dir(app, "linux-x64")
+c("se pone en keepassxc/linux-x64/, con el nombre fijo",
+  sorted(p.name for p in linux.iterdir()),
+  sorted([components.KEEPASSXC_APPIMAGE, components.KEEPASSXC_STAMP]))
+c("  tal cual", (linux / components.KEEPASSXC_APPIMAGE).read_bytes(), APPIMAGE)
+c("  bajado de su URL versionada", pedidas, [keepassxc_bin.url("linux-x64")])
+c("  y es su programa", components.keepassxc_exe(app, "linux-x64"),
+  linux / components.KEEPASSXC_APPIMAGE)
+if os.name != "nt":
+    c("  ejecutable, donde el sistema de ficheros lo guarda",
+      os.access(linux / components.KEEPASSXC_APPIMAGE, os.X_OK), True)
+sello = (linux / components.KEEPASSXC_STAMP).read_text(encoding="utf-8")
+c("el sello dice la versión y su SHA-256",
+  (components.keepassxc_version(app, "linux-x64"), components.keepassxc_ficheros(sello)),
+  (pins.KEEPASSXC_VERSION,
+   {components.KEEPASSXC_APPIMAGE: hashlib.sha256(APPIMAGE).hexdigest()}))
+c("  y el del paquete", components.keepassxc_sello(app, "linux-x64").get("paquete"),
+  NOMBRE_LINUX)
+c("ya está al día, y el de Windows sigue", (keepassxc_bin.al_dia(app, "linux-x64"),
+                                           keepassxc_bin.al_dia(app), len(hecho)),
+  (True, True, 1))
+(linux / components.KEEPASSXC_STAMP).write_text(
+    components.keepassxc_stamp_text("2.7.10", "viejo.AppImage", "00", {}), encoding="utf-8")
+keepassxc_bin._resumen = (lambda r: "mentira" if r.name == components.KEEPASSXC_APPIMAGE
+                          else real_resumen(r))
+rechaza("una copia del AppImage que no cuadra no se coloca",
+        lambda: keepassxc_bin.instalar(app, "linux-x64"), "no es igual")
+keepassxc_bin._resumen = real_resumen
+c("  lo de antes sigue", components.keepassxc_version(app, "linux-x64"), "2.7.10")
+keepassxc_bin.instalar(app, "linux-x64")
+c("  y a la siguiente se pone", keepassxc_bin.al_dia(app, "linux-x64"), True)
+servir(ZIP)
+
 # lo que ve la ventana: pendiente solo con el llavero activo
 otro = tmpdir("prdrive-kpx-disp-") / ".prdrive"
 (otro / "bin" / "x64").mkdir(parents=True)
@@ -203,13 +247,19 @@ c("con llavero y sin KeePassXC, «no consta»", [(p.lleva, p.deberia) for p in p
 c("  con su título", pends[0].titulo if pends else None, "KeePassXC del llavero")
 (otro / "bin" / "x64" / "rclone.exe").unlink()
 (otro / "bin" / "x64" / "rclone").write_bytes(b"ELF")
-c("un dispositivo solo de Linux no lo pide (es la fase 2)",
+c("un dispositivo solo de Linux x64 pide el AppImage",
+  [p.ruta.name for p in components.pendientes(otro, fisica=None)
+   if p.que == components.KEEPASSXC], ["linux-x64"])
+(otro / "bin" / "x64" / "rclone").unlink()
+(otro / "bin" / "arm").mkdir(parents=True)
+(otro / "bin" / "arm" / "rclone").write_bytes(b"ELF")
+c("  y uno solo de Linux ARM64, ninguno: usa el del equipo",
   [p.que for p in components.pendientes(otro, fisica=None)
    if p.que == components.KEEPASSXC], [])
+(otro / "bin" / "arm" / "rclone").unlink()
 
 # el aplicador: lo pone, y lo pospone si algo corre desde su carpeta
 raiz = otro.parent
-(otro / "bin" / "arm").mkdir(parents=True)
 (otro / "bin" / "arm" / "rclone.exe").write_bytes(b"MZ")
 pend = next(p for p in components.pendientes(otro, fisica=None)
             if p.que == components.KEEPASSXC)

@@ -6,22 +6,27 @@ se COMPRUEBA antes de escribir nada y, si no cuadra, no se guarda nada. Es el
 programa del llavero, y viaja en `.prdrive/keepassxc/<paquete>/`
 (`components.keepassxc_dir()`).
 
-Qué se baja: el ZIP oficial de KeePassXC, de la versión y con el SHA-256
-fijados en `common/pins.py` (`KEEPASSXC`). Ningún `.DIGEST` se lee aquí: el
-número lo escribió quien movió la versión tras comprobar la firma PGP, y la
-comprobación es contra ESE número. Ataja una descarga truncada, un proxy que
-devuelve otra cosa o una caché vieja. Un corte de red se reintenta
-(`descarga.con_reintentos()`) y un ZIP que no cuadra no. El ZIP se guarda tal
-cual en la caché del usuario, una carpeta por versión; el bajado a mano y
-dejado ahí con su nombre se comprueba igual (`ensure_zip()`).
+Qué se baja: el paquete oficial de KeePassXC (el ZIP de Windows, el AppImage
+de Linux), de la versión y con el SHA-256 fijados en `common/pins.py`
+(`KEEPASSXC`). Ningún `.DIGEST` se lee aquí: el número lo escribió quien movió
+la versión tras comprobar la firma PGP, y la comprobación es contra ESE número.
+Ataja una descarga truncada, un proxy que devuelve otra cosa o una caché vieja.
+Un corte de red se reintenta (`descarga.con_reintentos()`) y un paquete que no
+cuadra no. Se guarda tal cual en la caché del usuario, una carpeta por versión;
+el bajado a mano y dejado ahí con su nombre se comprueba igual (`ensure_zip()`).
 
-Qué se escribe en la unidad: el ZIP entero, sin su carpeta de arriba
-(`KeePassXC-2.7.12-Win64/`), que ya trae `.portable` (H-3). Cada ruta se valida
-ANTES de escribir la primera (`components.ruta_relativa_segura()`: nada de
-`..`, `\\`, unidad ni ruta absoluta), con la defensa de `update._ruta_segura()`
-y por la misma razón: `extractall` es la trampa. Cada fichero se vuelve a leer
-de la unidad y a resumir: una unidad que escribe mal no deja un KeePassXC a
-medias con un sello que diga que está bien.
+Qué se escribe en la unidad:
+- El ZIP entero, sin su carpeta de arriba (`KeePassXC-2.7.12-Win64/`), que ya
+  trae `.portable` (H-3). Cada ruta se valida ANTES de escribir la primera
+  (`components.ruta_relativa_segura()`: nada de `..`, `\\`, unidad ni ruta
+  absoluta), con la defensa de `update._ruta_segura()` y por la misma razón:
+  `extractall` es la trampa.
+- El AppImage, un solo fichero, con el nombre fijo
+  `components.KEEPASSXC_APPIMAGE`. No se extrae aquí: se extrae en cada equipo
+  Linux que lo abre (`common/keepassxc.py`).
+
+Cada fichero se vuelve a leer de la unidad y a resumir: una unidad que escribe
+mal no deja un KeePassXC a medias con un sello que diga que está bien.
 
 El cambio es el de `traveler.sustituir()`: se mira antes el sitio libre, se
 extrae en `.<paquete>.nuevo-<pid>`, se escribe el sello el ÚLTIMO, se aparta el
@@ -32,6 +37,7 @@ un KeePassXC abierto, o el proxy que lanza el navegador.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import os
 import shutil
@@ -55,20 +61,20 @@ SELLO = components.KEEPASSXC_STAMP
 HOLGURA = 4 * 1024 ** 2
 """Bytes de más que se piden libres al extraer, por encima de lo que ocupa el ZIP."""
 PAQUETE = "windows-x64"
-"""El paquete que se pone si no se pide otro: el único que hay en la fase 1."""
+"""El paquete que se pone si no se pide otro: el de Windows, el primero que hubo."""
 
 
 class SinRed(InstallError):
-    """No se ha podido BAJAR el ZIP (sin red, un proxy, un tiempo de espera).
+    """No se ha podido BAJAR el paquete (sin red, un proxy, un tiempo de espera).
 
     Es distinto de que lo bajado no cuadre: aquello se puede arreglar dejando
-    el ZIP a mano en la caché; un ZIP que no es el fijado no se esconde detrás
-    de otra cosa.
+    el paquete a mano en la caché; uno que no es el fijado no se esconde
+    detrás de otra cosa.
     """
 
 
 def paquete(clave: str = PAQUETE) -> tuple[str, str]:
-    """Devuelve el nombre y el SHA-256 fijados del ZIP de ese paquete.
+    """Devuelve el nombre y el SHA-256 fijados del paquete oficial de esa clave.
 
     Raises:
         KeyError: Si no hay ese paquete.
@@ -76,8 +82,18 @@ def paquete(clave: str = PAQUETE) -> tuple[str, str]:
     return pins.KEEPASSXC[clave]
 
 
+def es_appimage(clave: str = PAQUETE) -> bool:
+    """Indica si el paquete de esa clave es un AppImage (Linux) y no un ZIP."""
+    return paquete(clave)[0].endswith(".AppImage")
+
+
+def _que(clave: str) -> str:
+    """Devuelve cómo se llama el paquete en lo que se dice: «el AppImage» o «el ZIP»."""
+    return "el AppImage" if es_appimage(clave) else "el ZIP"
+
+
 def url(clave: str = PAQUETE) -> str:
-    """Devuelve la URL versionada del ZIP de ese paquete."""
+    """Devuelve la URL versionada del paquete de esa clave."""
     return pins.KEEPASSXC_URL.format(version=pins.KEEPASSXC_VERSION,
                                      nombre=paquete(clave)[0])
 
@@ -91,7 +107,7 @@ def cache_dir() -> Path:
 
 
 def zip_en_cache(clave: str = PAQUETE) -> Path:
-    """Devuelve dónde está (o estará) el ZIP en la caché, con su nombre exacto.
+    """Devuelve dónde está (o estará) el paquete en la caché, con su nombre exacto.
 
     Es también donde dejarlo a mano si la descarga no sale.
     """
@@ -111,9 +127,9 @@ def fetch(direccion: str, timeout: float = DOWNLOAD_TIMEOUT) -> bytes:
 
 
 def a_mano(clave: str = PAQUETE) -> str:
-    """Devuelve cómo poner el ZIP a mano cuando la descarga no sale."""
+    """Devuelve cómo poner el paquete a mano cuando la descarga no sale."""
     nombre, sha = paquete(clave)
-    return (f"Sin conexión, baja a mano el ZIP oficial de KeePassXC:\n  {url(clave)}\n"
+    return (f"Sin conexión, baja a mano {_que(clave)} oficial de KeePassXC:\n  {url(clave)}\n"
             f"con el SHA-256\n  {sha}\ny déjalo, con ese nombre ({nombre}), en:\n"
             f"  {cache_dir()}\nAl volver a intentarlo se comprueba igual que una "
             f"descarga.")
@@ -129,7 +145,7 @@ def _resumen(ruta: Path) -> str:
 
 
 def _no_es_el_fijado(origen: str, esperado: str, obtenido: str) -> InstallError:
-    """Devuelve el error de un ZIP que no es el fijado."""
+    """Devuelve el error de un paquete que no es el fijado."""
     return InstallError(
         f"{origen} no es el KeePassXC fijado.\n\n  esperado: {esperado}\n"
         f"  obtenido: {obtenido}\n\nNo se ha escrito nada.")
@@ -137,7 +153,7 @@ def _no_es_el_fijado(origen: str, esperado: str, obtenido: str) -> InstallError:
 
 def ensure_zip(clave: str = PAQUETE, progreso: Progreso | None = None,
                allow_download: bool = True) -> Path:
-    """Devuelve el ZIP fijado de ese paquete en la caché, comprobado.
+    """Devuelve el paquete fijado de esa clave en la caché, comprobado (el ZIP o el AppImage).
 
     Lo que hay en la caché (bajado antes, o dejado a mano) se vuelve a resumir
     en cada uso. Uno que no cuadra se dice y NO se descarga encima: alguien lo
@@ -222,7 +238,7 @@ def miembros(zf: zipfile.ZipFile) -> list[tuple[zipfile.ZipInfo, str]]:
 
 
 def al_dia(app_dir: Path | str, clave: str = PAQUETE) -> bool:
-    """Indica si la unidad lleva ya ese KeePassXC: la versión fijada, del ZIP fijado."""
+    """Indica si la unidad lleva ya ese KeePassXC: la versión fijada, del paquete fijado."""
     return (components.keepassxc_version(app_dir, clave) == pins.KEEPASSXC_VERSION
             and components.keepassxc_sello(app_dir, clave).get("sha256")
             == paquete(clave)[1])
@@ -244,7 +260,7 @@ def instalar(app_dir: Path | str, clave: str = PAQUETE,
         Lo hecho, una línea por paso; vacío si ya estaba.
 
     Raises:
-        SinRed: Si no hay ZIP y no se puede descargar.
+        SinRed: Si no hay paquete y no se puede descargar.
         InstallError: Si no cuadra, no cabe o no se puede escribir; lo que
             había queda como estaba.
     """
@@ -260,13 +276,22 @@ def instalar(app_dir: Path | str, clave: str = PAQUETE,
     archivo = ensure_zip(clave, progreso)
     carpeta = components.keepassxc_dir(app_dir, clave)
     base = carpeta.parent
-    try:
-        zf = zipfile.ZipFile(archivo)
-    except (OSError, zipfile.BadZipFile) as e:
-        raise InstallError(f"No he podido abrir {archivo}: {e}") from e
-    with zf:
-        lista = miembros(zf)
-        total = sum(info.file_size for info, _ in lista)
+    zf: zipfile.ZipFile | None = None
+    if es_appimage(clave):
+        lista: list[tuple[zipfile.ZipInfo, str]] = []
+        try:
+            total = archivo.stat().st_size
+        except OSError as e:
+            raise InstallError(f"No he podido leer {archivo}: {e}") from e
+    else:
+        try:
+            zf = zipfile.ZipFile(archivo)
+        except (OSError, zipfile.BadZipFile) as e:
+            raise InstallError(f"No he podido abrir {archivo}: {e}") from e
+    with zf if zf is not None else contextlib.nullcontext():
+        if zf is not None:
+            lista = miembros(zf)
+            total = sum(info.file_size for info, _ in lista)
         try:
             base.mkdir(parents=True, exist_ok=True)
         except OSError as e:
@@ -280,9 +305,11 @@ def instalar(app_dir: Path | str, clave: str = PAQUETE,
         _barrer(base, clave)
         nuevo = base / f".{clave}.nuevo-{os.getpid()}"
         viejo = base / f".{clave}.viejo-{os.getpid()}"
-        decir(f"Extrayendo KeePassXC {pins.KEEPASSXC_VERSION} en {carpeta}")
+        decir(f"{'Extrayendo' if zf is not None else 'Copiando'} KeePassXC "
+              f"{pins.KEEPASSXC_VERSION} en {carpeta}")
         try:
-            resumenes = _extraer(zf, lista, nuevo)
+            resumenes = (_extraer(zf, lista, nuevo) if zf is not None
+                         else _copiar_appimage(archivo, sha_zip, nuevo))
             (nuevo / SELLO).write_text(
                 components.keepassxc_stamp_text(pins.KEEPASSXC_VERSION, nombre, sha_zip,
                                                 resumenes),
@@ -349,6 +376,31 @@ def _extraer(zf: zipfile.ZipFile, lista: list[tuple[zipfile.ZipInfo, str]],
                                f"que había.")
         resumenes[rel] = h.hexdigest()
     return resumenes
+
+
+def _copiar_appimage(archivo: Path, esperado: str, destino: Path) -> dict[str, str]:
+    """Copia el AppImage en `destino` con su nombre fijo y devuelve `{nombre: sha256}`.
+
+    Se vuelve a leer de la unidad y a resumir, como cada fichero del ZIP. El
+    bit de ejecución se pone si el sistema de ficheros lo guarda; en exFAT no
+    hay, y no hace falta: el AppImage no se ejecuta desde la unidad.
+
+    Raises:
+        InstallError: Si lo escrito no es el AppImage fijado.
+    """
+    destino.mkdir(parents=True)
+    final = destino / components.KEEPASSXC_APPIMAGE
+    shutil.copyfile(archivo, final)
+    resumen = _resumen(final)
+    if resumen != esperado:
+        raise InstallError(f"La copia del AppImage en la unidad no es igual que la "
+                           f"descargada. ¿Falla la unidad? No se ha tocado el KeePassXC "
+                           f"que había.")
+    try:
+        final.chmod(0o755)
+    except OSError:
+        pass
+    return {components.KEEPASSXC_APPIMAGE: resumen}
 
 
 def _barrer(base: Path, clave: str) -> None:
