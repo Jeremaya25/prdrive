@@ -187,6 +187,30 @@ with sandbox() as root:
       b"\r\n" in (carpeta / llavero.LEEME).read_bytes(), False)
     c("  y su conflicto se queda al lado", "--conflict-loser" in ordenes[-1]
       and ordenes[-1][ordenes[-1].index("--conflict-loser") + 1], "num")
+    c("  ese primer --resync se queda con la más nueva (H-13)",
+      ("--resync" in ordenes[-1], "--resync-mode" in ordenes[-1]
+       and ordenes[-1][ordenes[-1].index("--resync-mode") + 1]), (True, "newer"))
+
+    # Con baseline, una pasada normal: sin --resync-mode, que rclone toma por
+    # --resync (y entonces no deja copia de conflicto: gana la más nueva y la
+    # otra cae en .prversions/ sin que nadie la combine). Salió con rclone de
+    # verdad.
+    pareja.workdir.mkdir(parents=True, exist_ok=True)
+    for sufijo in (bisync.PATH1_SUFFIX, bisync.PATH2_SUFFIX):
+        (pareja.workdir / f"{bisync.expected_prefix(pareja)}{sufijo}").write_text(
+            "listado\n", encoding="utf-8")
+    ffile = bisync.filters_file_for(pareja)
+    Path(str(ffile) + ".md5").write_text(hashlib.md5(ffile.read_bytes()).hexdigest(),
+                                         encoding="utf-8")
+    rc, salida, ordenes = correr(pareja, aprobado=False)
+    c("con baseline, la pasada es un bisync normal: ni mkdir, ni --resync, ni --resync-mode",
+      (rc, len(ordenes), "--resync" in ordenes[-1], "--resync-mode" in ordenes[-1]),
+      (0, 1, False, False))
+    c("  y su conflicto sigue quedándose al lado",
+      ordenes[-1][ordenes[-1].index("--conflict-loser") + 1], "num")
+
+    for p in pareja.workdir.iterdir():
+        p.unlink()
 
     (carpeta / llavero.LEEME).write_text("lo cambió alguien\n", encoding="utf-8")
     correr(pareja)

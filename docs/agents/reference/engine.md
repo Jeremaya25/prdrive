@@ -20,7 +20,7 @@ Flags merge last-wins inside `model._build_pair`: `BASE_FLAGS` < `Mode.flags` < 
 
 `model.flags_to_args()`: `key = value` → `--key value` (`true` → bare flag, `false`/`None` → dropped, list → repeated, `_` → `-`). It lives in `model.py` so the UI can show a flag's effect without importing the engine.
 
-**A new rclone flag = edit the TOML, never code.** The script owns `--config`, `--log-file`, `--dry-run`, `--workdir`, `--resync`; `extra_flags` is the raw-string escape hatch. `RunContext` holds what is constant across the pairs of one invocation.
+**A new rclone flag = edit the TOML, never code.** The script owns `--config`, `--log-file`, `--dry-run`, `--workdir`, `--resync`, and with it `--resync-mode`: rclone treats that flag as `--resync` (`setResyncDefaults()`, `cmd/bisync/resync.go`), so `build_command()` drops it from a pass that is not a resync and it only says which side wins when `sync.py` resyncs (the keychain's `newer` was turning every pass into a resync until the cloud run of 2026-10-05); `extra_flags` is the raw-string escape hatch. `RunContext` holds what is constant across the pairs of one invocation.
 
 ## bisync (`common/bisync.py`)
 

@@ -14,7 +14,7 @@ A KeePassXC database (passkeys and passwords) travels in `.keychain/` at the vol
 
 ## The pair, built in code
 
-`[keychain]` in `sync_config.toml` (and the catalogue) makes `model.parse_config()` append `Pair(name="keychain", local=".keychain", remote=<catalog remote>, remote_path=<catalog folder>/keychain)`, bisync with `versions = true` and `LLAVERO_FLAGS` (`conflict-loser = num`, H-14: the loser stays beside it to be merged; `resync-mode = newer`, H-13). The TOML cannot change it: neither `[defaults.flags]` nor `[defaults]` filters reach it.
+`[keychain]` in `sync_config.toml` (and the catalogue) makes `model.parse_config()` append `Pair(name="keychain", local=".keychain", remote=<catalog remote>, remote_path=<catalog folder>/keychain)`, bisync with `versions = true` and `LLAVERO_FLAGS` (`conflict-loser = num`, H-14: the loser stays beside it to be merged; `resync-mode = newer`, H-13, which `sync.build_command()` passes only on a resync: rclone reads it as `--resync`, and on every pass it left no conflict copy, the older base going to `.prversions/` instead). The TOML cannot change it: neither `[defaults.flags]` nor `[defaults]` filters reach it.
 
 - **`Config.names` and `Config.del_usuario` leave it out**: the window, the console menu, the service's pair list and «Parejas» (`pair_editor.rows()`) never show it. `Config.pairs` keeps it, last, so `sync.py` with no names runs it, `sync.py keychain` runs it alone, `--list` marks it, and «Reparación», conflicts, versions and `pen_environment()` see it.
 - **Its name is reserved** only while `[keychain]` is there (a user pair called `keychain` is a `ConfigError`). The base name must be a bare `*.kdbx`.

@@ -124,6 +124,16 @@ with sandbox() as root:
     c("y entonces no se cuela también el 'delete'",
       "--conflict-loser delete" in orden, False)
 
+    # 6b. --resync-mode es un --resync para rclone (`setResyncDefaults()`):
+    # solo va cuando sync.py resincroniza, o cada pasada sería un resync.
+    con_modo = pareja({"flags": {"resync-mode": "newer"}})
+    normal = sync.build_command(ctx, con_modo, None, False)[0]
+    c("un resync-mode propio no va en una pasada normal (rclone la haría resync)",
+      ("--resync-mode" in normal, "--resync" in normal), (False, False))
+    resync = " ".join(sync.build_command(ctx, con_modo, None, True)[0])
+    c("  y sí en un --resync, donde dice qué lado gana",
+      ("--resync-mode newer" in resync, "--resync " in resync + " "), (True, True))
+
     # 7. sin versiones no aparece ninguno de los cinco
     cmd, _ = sync.build_command(ctx, pareja(), None, False)
     for flag in ("--backup-dir1", "--backup-dir2", "--suffix",

@@ -263,6 +263,9 @@ nombre_llave = "personal.keyx"   # solo una pista para la persona: ni ruta ni hu
   - `conflict-loser = "num"` (§8) gana al `setdefault("conflict-loser", "delete")`
     de `sync.py`:380.
   - `resync-mode = "newer"` es por H-13.
+    `sync.build_command()` solo lo pasa en un `--resync`: rclone lo toma por uno
+    (`setResyncDefaults()`), y puesto en todas las pasadas las hacía resync, sin
+    copias de conflicto (salió probándolo en la nube, §19).
 
   El nombre `keychain` queda reservado solo si el llavero está activo, y activarlo
   se niega si ya hay una pareja del usuario que se llame así.

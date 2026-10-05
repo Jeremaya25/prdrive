@@ -178,7 +178,8 @@ LLAVERO_FLAGS: Mapping[str, Any] = {"conflict-loser": "num", "resync-mode": "new
 para combinarlo (H-14); no sale por `.prversions/` como en el resto de parejas
 versionadas (`sync.py` solo pone `delete` si no hay otro). `resync-mode =
 newer`: un `--resync` se queda con la base más nueva de los dos lados, no con
-la del dispositivo (H-13).
+la del dispositivo (H-13). Solo va en un `--resync`: rclone lo toma como uno
+(`setResyncDefaults()`), y `sync.build_command()` lo quita de las demás.
 """
 REGLA_SIN_LLAVERO = f"- /{LLAVERO_LOCAL}/**"
 """La regla que reciben las parejas del usuario que sincronizan la raíz entera.

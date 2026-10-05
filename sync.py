@@ -377,6 +377,13 @@ def build_command(ctx: RunContext, pair: Pair, ffile: Path | None,
         flags["workdir"] = str(pair.workdir)
         if need_resync:
             flags["resync"] = True
+        else:
+            # `--resync-mode` implica `--resync` (`setResyncDefaults()`,
+            # `cmd/bisync/resync.go`: «either flag is sufficient without the
+            # other»): dicho en una pasada normal, la convierte en un resync,
+            # que no deja conflictos ni propaga borrados. Solo vale cuando
+            # sync.py decide resincronizar.
+            flags.pop("resync-mode", None)
 
     if pair.versions:
         # El parseo ya garantiza que es bisync. El sello depende de la pasada,
