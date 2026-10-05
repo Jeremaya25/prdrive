@@ -90,13 +90,19 @@ def esquema(pair: Pair) -> Esquema:
     separados por coma son uno para cada uno; a los dos se les pone un punto
     delante. Los comodines de fecha (`{DateOnly}`…) no se pueden deshacer desde
     el nombre, así que una pareja que los use verá sus conflictos sin lado.
+
+    Una pareja con `versions` lleva siempre `--suffix-keep-extension`: no está
+    en sus flags, lo pone `sync.build_command()`. Importa en el llavero, cuyo
+    perdedor se queda al lado (`conflict-loser = num`) como
+    `personal.conflicto-remoto1.kdbx`.
     """
     crudo = str(_flag(pair, "conflict-suffix") or SUFIJO_RCLONE)
     partes = [p for p in crudo.split(",") if p] or [SUFIJO_RCLONE]
     s1, s2 = (partes[0], partes[0]) if len(partes) == 1 else (partes[0], partes[1])
     return Esquema(sufijo1="." + s1, sufijo2="." + s2,
                    perdedor=str(_flag(pair, "conflict-loser") or PERDEDOR_RCLONE),
-                   mantener_extension=bool(_flag(pair, "suffix-keep-extension")))
+                   mantener_extension=bool(_flag(pair, "suffix-keep-extension"))
+                   or pair.versions)
 
 
 def _patron(sufijo: str, mantener_extension: bool) -> re.Pattern:

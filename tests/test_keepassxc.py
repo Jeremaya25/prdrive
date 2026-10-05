@@ -383,7 +383,8 @@ def abrir(cfg, llave=None, suelto=False):
         preguntas.append(nombre)
         return llave
 
-    hecho = llavero_editor.abrir(cfg, dicho.append, esperar, elegir, decir_sin_traer=suelto)
+    hecho = llavero_editor.abrir(cfg, dicho.append, esperar, elegir,
+                                 lambda plan, titulo, nota: False, decir_sin_traer=suelto)
     return hecho, dicho, esperado, preguntas
 
 

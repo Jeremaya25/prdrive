@@ -290,7 +290,8 @@ def abrir_llavero(config: Config) -> int:
 
     Con entorno gráfico, con los diálogos de `ui/tk_llavero.py`, colgados de
     una raíz que no se enseña. Sin él, por la consola y sin preguntar nada: si
-    la base pide fichero llave y no se sabe dónde está, KeePassXC lo pedirá.
+    la base pide fichero llave y no se sabe dónde está, KeePassXC lo pedirá, y
+    las copias de conflicto no se combinan (se ofrece la próxima vez).
     Solo se cae a la consola si no se puede crear la raíz: un fallo a mitad de
     los pasos no los repite.
 
@@ -312,7 +313,7 @@ def abrir_llavero(config: Config) -> int:
             except Exception as e:                   # noqa: BLE001 — se dice
                 return False, e
         hecho = llavero_editor.abrir(config, print, esperar, lambda nombre: None,
-                                     decir_sin_traer=True)
+                                     lambda plan, titulo, nota: False, decir_sin_traer=True)
         return 0 if hecho else 1
     from . import tk_llavero
     try:

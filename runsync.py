@@ -54,6 +54,9 @@ funcionando), salvo estos flags propios:
     --llavero
         «Abrir llavero» sin la ventana: abre KeePassXC con la base del
         dispositivo (`ui.abrir_llavero()`). Es lo que hace `Llavero.bat`.
+    --combinar-llavero BASE COPIA [--keyfile LLAVE]
+        La consola de «Combinar»: `keepassxc-cli merge` pide en ella la
+        contraseña de la base (`keepassxc.combinar_aqui()`).
     --vigilar-llavero
         El vigilante del llavero: atiende la base mientras viva el KeePassXC
         de la unidad, si no lo hace ya el servicio o el agente. Lo arranca
@@ -78,7 +81,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 import ui  # noqa: E402
-from common import APP_NAME, llavero, model, store, update  # noqa: E402
+from common import APP_NAME, keepassxc, llavero, model, store, update  # noqa: E402
 from common.store import pid_alive  # noqa: E402
 from ui import prefs  # noqa: E402
 
@@ -689,6 +692,20 @@ def abrir_llavero() -> int:
     return ui.abrir_llavero(config)
 
 
+def combinar_llavero(rest: list[str]) -> int:
+    """Hace `--combinar-llavero BASE COPIA [--keyfile LLAVE]`, en la consola que abre «Combinar».
+
+    Es `keepassxc.combinar_aqui()`: `keepassxc-cli merge` pide aquí la
+    contraseña de la base.
+    """
+    llave = None
+    if len(rest) == 4 and rest[2] == "--keyfile":
+        llave, rest = Path(rest[3]), rest[:2]
+    if len(rest) != 2:
+        return ui.fatal("--combinar-llavero necesita la base y la copia.")
+    return keepassxc.combinar_aqui(Path(rest[0]), Path(rest[1]), llave)
+
+
 ESPERA_AGENTE = 30 * 60
 """Segundos que el servicio espera a que el agente suelte la unidad."""
 
@@ -1022,6 +1039,9 @@ def main() -> int:
 
     if args == ["--llavero"]:
         return abrir_llavero()
+
+    if args and args[0] == "--combinar-llavero":
+        return combinar_llavero(args[1:])
 
     if args and args[0] == "--daemon":
         rest = args[1:]

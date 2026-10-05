@@ -783,8 +783,16 @@ try:
                 c(f"{nombre}: (las doce fallan, con la frase del diario)",
                   sum(f"Falla al menos desde el 01/12/{ano}" in h.detalle
                       for h in revision.revisar(cfg) if h.clave == "fallo"), 12)
+                # Con llavero, además: su base en conflicto, y la fila de
+                # «Combinar» debajo de los botones de la lista.
+                con_llavero = model.parse_config({**BASE, "keychain": {"base": "personal.kdbx"}})
+                base = con_llavero.pareja_llavero.local_abs / "personal.kdbx"
+                base.parent.mkdir(parents=True, exist_ok=True)
+                base.write_bytes(b"base")
+                base.with_name("personal.conflicto-remoto1.kdbx").write_bytes(b"copia")
+                conflicts.actualizar_pareja(con_llavero.pareja_llavero)
                 entra, corta = medir_dialogo(
-                    lambda: tk_repair.open_dialog(raiz, cfg, lambda *a: None),
+                    lambda: tk_repair.open_dialog(raiz, con_llavero, lambda *a: None),
                     ancho, alto, escala, modulo=tk_repair)
                 c(f"{nombre}: la pantalla de reparación cabe", entra, True)
                 c(f"{nombre}: la pantalla de reparación no queda recortada", corta, False)

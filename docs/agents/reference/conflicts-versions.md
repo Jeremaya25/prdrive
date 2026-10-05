@@ -10,6 +10,8 @@ Formerly AGENTS.md «Conflicts & failures» and «Per-pair versions».
 - **Derived state.** `sync.run_pair()` scans after every non-dry-run bisync pass (good or bad) and prints an `AVISO`; `state/conflicts.json` stores only paths relative to `DEVICE_ROOT` and `cargar()` re-checks each exists, so the chip clears itself.
 - **The original's side is inferred** only when there is exactly one copy with a known side; `Conflicto.version(lado)` is None when a side has 0 or ≥2 versions: never guess. Caveat: a copy made on device A syncs to device B, where it still reads «versión de este dispositivo».
 - **Resolving is local-only.** `plan_conservar()` keeps one version under the real name and deletes the rest; `execute()` refuses if any file changed since the plan (size, mtime_ns), then `mover()` (`os.replace`, atomic: failure changes nothing), then `borrar()`s. Labels never show the raw suffix.
+- **A pair with `versions` always has `--suffix-keep-extension`** (`sync.build_command()` injects it; it is not in `pair.flags`), so `esquema()` sets `mantener_extension` for it too. It matters for the keychain, whose loser stays beside the base (`conflict-loser = num`) as `personal.conflicto-remoto1.kdbx`; without it the scanner looked for `personal.kdbx.conflicto-remoto1` and never found it.
+- **The keychain base is merged, not chosen** (`plan_combinar()`, `CombinarPlan`; `llavero.md`): each copy goes through `keepassxc.combinar()` and, on 0, is moved to `.prversions/` with rclone's stamp (`en_versiones()`, so «Versiones…» lists and purges it). `plan_conservar()` on it warns that the other version's saves are lost (`PIERDE_LLAVERO`).
 
 ## Last run and the pass journal
 

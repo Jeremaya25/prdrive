@@ -14,9 +14,9 @@ from functools import partial
 from pathlib import Path
 from typing import Callable, NamedTuple
 
-from common import keepassxc, llavero, model, results
+from common import conflicts, keepassxc, llavero, model, results
 
-from . import cuando, cuando_sello
+from . import conflict_editor, cuando, cuando_sello
 
 TITULO = "Llavero"
 ABRIR = "Abrir llavero"
@@ -35,6 +35,10 @@ SIN_BASE = (
     "El llavero todavía no tiene base: ni en el dispositivo ni en el remoto.\n\n"
     "Actívalo con una base en «Ajustes → Llavero…».")
 TRAYENDO = "Trayendo lo último del llavero…"
+COMBINAR = "Combinar las copias del llavero"
+"""El título de la confirmación de «Combinar» al abrir."""
+SIN_COMBINAR = "Cancelar abre KeePassXC sin combinar"
+"""La nota de esa confirmación: cancelar no deja de abrir."""
 ABRIENDO = "Abriendo KeePassXC…"
 FALTA_RUNTIME = (
     "KeePassXC no ha podido arrancar: a este equipo le falta el runtime de Visual C++ "
@@ -119,16 +123,55 @@ def linea(config: model.Config) -> Linea | None:
                  False, True)
 
 
+def llave_de_este_equipo(config: model.Config,
+                         elegir_llave: Callable[[str], Path | None]) -> Path | None:
+    """Devuelve el fichero llave de la base en este equipo, preguntándolo si hace falta.
+
+    Si `[keychain]` dice que la base lo pide y en este equipo no está apuntado
+    (o ya no está donde se apuntó: otro pendrive, que no está puesto), se
+    pregunta y se apunta la ruta. El fichero ni se abre.
+
+    Returns:
+        La ruta, o `None` si la base no lo pide o no se ha dicho.
+    """
+    datos = config.llavero or {}
+    if not datos.get("fichero_llave"):
+        return None
+    llave = keepassxc.llave_apuntada()
+    if llave is not None and llave.is_file():
+        return llave
+    llave = elegir_llave(str(datos.get("nombre_llave") or ""))
+    if llave is not None:
+        keepassxc.apuntar_llave(llave)
+    return llave
+
+
+def conflicto_de_la_base(config: model.Config, base: Path) -> conflicts.Conflicto | None:
+    """Devuelve el conflicto de la base del llavero, si tiene copias; recorre `.keychain/`."""
+    pareja = config.pareja_llavero
+    if pareja is None:
+        return None
+    try:
+        encontrados = conflicts.actualizar_pareja(pareja)
+    except OSError:
+        return None
+    return next((x for x in encontrados if x.original == base and x.copias), None)
+
+
 def abrir(config: model.Config, avisar: Callable[[str], None],
           esperar: Callable[[str, Callable], tuple[bool, object]],
-          elegir_llave: Callable[[str], Path | None], decir_sin_traer: bool) -> bool:
+          elegir_llave: Callable[[str], Path | None],
+          confirmar: Callable[[object, str, str], bool], decir_sin_traer: bool) -> bool:
     """Hace «Abrir llavero»: los pasos de §6, preguntando con lo que se le da.
 
     Con el KeePassXC de la unidad ya abierto, solo lo trae delante. Con otro
     KeePassXC abierto en el equipo, lo dice y no abre nada. Si la última pasada
     es vieja, trae lo último (si falla, abre igual). Si la base pide fichero
     llave y en este equipo no se sabe dónde está, lo pregunta y apunta la ruta.
-    Al final, el vigilante del llavero, si nadie lo atiende.
+    Si la base tiene copias de conflicto, ofrece combinarlas antes de abrir:
+    después de la pasada, que es la que las trae, y del fichero llave, que hace
+    falta para combinar. Al final, el vigilante del llavero, si nadie lo
+    atiende.
 
     Args:
         config: El del dispositivo.
@@ -138,6 +181,8 @@ def abrir(config: model.Config, avisar: Callable[[str], None],
             como `tk.working()`.
         elegir_llave: Pregunta dónde está en este equipo el fichero llave de
             ese nombre; `None` si no se dice (KeePassXC lo pedirá).
+        confirmar: `confirmar(plan, titulo, nota)` enseña un plan y dice si
+            se sigue, como `tk_pairs.confirmar_plan()`.
         decir_sin_traer: Si una pasada que falla se dice con un aviso. La
             ventana de prdrive no lo hace: lo dice su línea del llavero.
 
@@ -159,11 +204,19 @@ def abrir(config: model.Config, avisar: Callable[[str], None],
             return False
         if rc != 0 and decir_sin_traer:
             avisar(sin_traer(rc))
-    llave = ap.llave
-    if ap.pide_llave and llave is None and not ap.abierto:
-        llave = elegir_llave(ap.nombre_llave)
-        if llave is not None:
-            keepassxc.apuntar_llave(llave)
+    llave = ap.llave if ap.abierto else llave_de_este_equipo(config, elegir_llave)
+    conflicto = None if ap.abierto else conflicto_de_la_base(config, ap.base)
+    if conflicto is not None:
+        try:
+            plan = conflict_editor.plan_combinar(conflicto, llave)
+        except conflict_editor.ResolucionImposible as e:
+            avisar(str(e))
+        else:
+            if confirmar(plan, COMBINAR, SIN_COMBINAR):
+                hecho, valor = esperar(conflict_editor.ESPERANDO_CONSOLA, plan.execute)
+                if not hecho:
+                    avisar(str(valor))
+                conflicto_de_la_base(config, ap.base)     # al día para «Reparación»
     hecho, valor = esperar(ABRIENDO, partial(keepassxc.abrir, ap, llave))
     if not hecho:
         avisar(f"No se ha podido abrir KeePassXC: {valor}")

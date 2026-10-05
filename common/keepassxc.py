@@ -30,6 +30,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -86,6 +87,11 @@ Chrome, Vivaldi y Brave comparten la de Chrome, y Firefox y Tor la de Mozilla
 que puede haber dejado un KeePassXC instalado (`getBrowserName()`).
 """
 
+CLI = "keepassxc-cli.exe"
+"""La línea de órdenes de KeePassXC, que viene en el mismo ZIP que el programa."""
+CREATE_NEW_CONSOLE = 0x00000010
+"""Flag de creación de procesos de Windows: el hijo tiene su propia consola, a la vista."""
+
 VC_FALTA = (0xC0000135, -1073741515)
 """`STATUS_DLL_NOT_FOUND`, con y sin signo: falta el runtime de Visual C++ (K3)."""
 ESPERA_ARRANQUE = 1.5  # segundos
@@ -112,6 +118,12 @@ def ejecutable() -> Path | None:
     """Devuelve el `KeePassXC.exe` de la unidad para este equipo, o `None` si no hay paquete."""
     paquete = paquete_del_equipo()
     return None if paquete is None else components.keepassxc_exe(model.APP_DIR, paquete)
+
+
+def cli() -> Path | None:
+    """Devuelve el `keepassxc-cli.exe` de la unidad para este equipo, o `None` si no hay paquete."""
+    exe = ejecutable()
+    return None if exe is None else exe.with_name(CLI)
 
 
 def carpeta_config() -> Path:
@@ -541,6 +553,81 @@ def esperar_arranque(proc, segundos: float = ESPERA_ARRANQUE) -> int | None:
         if codigo is not None or time.monotonic() >= limite:
             return codigo
         llavero.dormir(0.1)
+
+
+# --- combinar una copia de conflicto (§8)
+
+def orden_combinar(programa: Path, base: Path, copia: Path,
+                   llave: Path | None = None) -> list[str]:
+    """Devuelve la orden que combina la copia en la base: lo de las dos queda en la base.
+
+    `--same-credentials`: la copia es la misma base guardada en otro
+    dispositivo, así que la contraseña (y el fichero llave) se piden una vez.
+    """
+    salida = [str(programa), "merge", "--same-credentials"]
+    if llave is not None:
+        salida += ["--key-file", str(llave)]
+    return salida + [str(base), str(copia)]
+
+
+def combinar(base: Path, copia: Path, llave: Path | None = None) -> int:
+    """Combina la copia en la base en una consola a la vista, y espera a que se cierre.
+
+    La contraseña la pide `keepassxc-cli` en esa consola; prdrive no la ve
+    nunca. La consola es `runsync.py --combinar-llavero` (`combinar_aqui()`)
+    con el Python de consola, porque la ventana corre con `pythonw`, que no
+    tiene. Es de módulo para que los tests no abran nada.
+
+    Returns:
+        El código de `keepassxc-cli`: 0 si se ha combinado (o no había nada
+        que combinar).
+    """
+    python = Path(sys.executable)
+    consola = python.with_name("python.exe")
+    if os.name == "nt" and consola.exists():
+        python = consola
+    orden_ = [str(python), str(model.RUNSYNC_PY), "--combinar-llavero", str(base), str(copia)]
+    if llave is not None:
+        orden_ += ["--keyfile", str(llave)]
+    kwargs: dict = {"cwd": tempfile.gettempdir()}
+    if os.name == "nt":
+        kwargs["creationflags"] = CREATE_NEW_CONSOLE
+    return subprocess.run(orden_, **kwargs).returncode
+
+
+def ejecutar_cli(orden_: list[str]) -> int:
+    """Corre `keepassxc-cli` en esta consola y devuelve su código; de módulo para los tests."""
+    return subprocess.run(orden_, cwd=tempfile.gettempdir()).returncode
+
+
+def combinar_aqui(base: Path, copia: Path, llave: Path | None = None,
+                  esperar: Callable[[str], object] = input) -> int:
+    """Hace `runsync.py --combinar-llavero`: `keepassxc-cli merge` en esta consola.
+
+    Dice qué va a pasar y deja que `keepassxc-cli` pida la contraseña. Si no
+    sale bien, espera a que se lea por qué antes de cerrar la consola.
+
+    Args:
+        base: La base, donde queda lo de las dos.
+        copia: La copia de conflicto.
+        llave: El fichero llave de este equipo, si la base lo pide.
+        esperar: Lo que espera a la persona antes de cerrar (`input`).
+
+    Returns:
+        El código de `keepassxc-cli`, o 2 si no está.
+    """
+    print(f"prdrive · combinar el llavero\n\nLo de «{copia.name}» entra en «{base.name}». "
+          "Escribe la contraseña de la base: la pide KeePassXC, no prdrive.\n")
+    programa = cli()
+    if programa is None or not programa.is_file():
+        print("Falta keepassxc-cli en el dispositivo: no se ha tocado nada.")
+        esperar("Pulsa Intro para cerrar esta ventana.")
+        return 2
+    codigo = ejecutar_cli(orden_combinar(programa, base, copia, llave))
+    if codigo != 0:
+        print(f"\nNo se ha combinado (código {codigo}). No se ha tocado nada.")
+        esperar("Pulsa Intro para cerrar esta ventana.")
+    return codigo
 
 
 # --- abrir el llavero

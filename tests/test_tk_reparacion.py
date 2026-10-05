@@ -2,7 +2,8 @@
 """La pantalla de «Reparación» y la ventana principal, conducidas sin nadie delante.
 
 Como en `test_tk_screens`: no se mira el aspecto sino el cableado. Que un botón
-de la sección de conflictos acabe dejando en disco la versión que dice, que una
+de la sección de conflictos acabe dejando en disco la versión que dice (y,
+con llavero, que «Combinar» solo valga para su base y la combine), que una
 avería se arregle desde su fila, que la ventana principal cuente lo que hay que
 revisar en una línea (y no en tres recuadros ámbar) y que siga viva, y al día,
 después de cerrar la ventana de salida de una sincronización.
@@ -17,7 +18,7 @@ from pathlib import Path
 
 from _harness import Checks, sandbox, tmpdir
 
-from common import bisync, conflicts, historial, model, results, update
+from common import bisync, conflicts, historial, keepassxc, llavero, model, results, update
 
 c = Checks("«Reparación» y la ventana principal (cableado)")
 
@@ -31,7 +32,7 @@ except Exception as e:                                   # sin entorno gráfico
     sys.exit(0)
 
 import ui
-from ui import prefs, tk_conflicts, tk_doctor, tk_pairs, tk_repair
+from ui import llavero_editor, prefs, tk_conflicts, tk_doctor, tk_pairs, tk_repair
 from ui import tk as uitk
 
 prefs.PREFS = tmpdir("prdrive-tkconf-") / "ui_prefs.json"
@@ -242,6 +243,61 @@ with sandbox():
     c("sin nada roto, la pantalla lo dice",
       any("No hay nada que revisar" in x for x in vistos), True)
     c("y la sección de conflictos no se enseña", puesta, [False])
+
+# con llavero, «Combinar»: solo para su base
+reales = (keepassxc.cli, keepassxc.combinar, llavero.keepassxc_abierto, tk_conflicts.working)
+try:
+    with sandbox():
+        cfg = model.parse_config({**RAW, "keychain": {"base": "personal.kdbx"}})
+        notas, llave = cfg.pairs[0], cfg.pareja_llavero
+        escribir(notas.local_abs / "plan.md", "del remoto")
+        escribir(notas.local_abs / "plan.md.conflicto-dispositivo1", "de aquí")
+        escribir(llave.local_abs / "personal.kdbx", "base")
+        copia = escribir(llave.local_abs / "personal.conflicto-remoto1.kdbx", "copia")
+        conflicts.actualizar_pareja(notas)
+        conflicts.actualizar_pareja(llave)
+        cli = tmpdir("prdrive-tkcli-") / "keepassxc-cli.exe"
+        cli.write_bytes(b"MZ")
+        keepassxc.cli = lambda: cli
+        combinadas: list = []
+        keepassxc.combinar = lambda b, cp, ll: (combinadas.append(cp.name), 0)[1]
+        llavero.keepassxc_abierto = lambda app_dir=None: False
+        esperas: list = []
+        tk_conflicts.working = lambda parent, titulo, funcion, mensaje="", **k: (
+            esperas.append(mensaje), (True, funcion()))[1]
+        visto: dict = {}
+
+        def combinar(dlg):
+            """Mira «Combinar» con cada conflicto elegido y lo pulsa con el del llavero."""
+            b = botones(dlg)
+            visto["notas"] = str(b["Combinar"].cget("state"))
+            elegir(dlg, "c1")
+            visto["llavero"] = str(b["Combinar"].cget("state"))
+            visto["pareja"] = next(w for w in recorrer(dlg) if isinstance(w, ttk.Treeview)) \
+                .set("c1", "pareja")
+            b["Combinar"].invoke()
+
+        confirmaciones.clear()
+        reparacion(cfg, combinar)
+        c("con llavero hay «Combinar», apagado con un conflicto de otra pareja",
+          visto["notas"], "disabled")
+        c("  y encendido con el de su base", visto["llavero"], "normal")
+        c("  que en la lista no sale como «keychain»", visto["pareja"], "(el llavero)")
+        c("  pulsarlo confirma, espera a la consola y combina",
+          (confirmaciones, esperas, combinadas),
+          ([llavero_editor.COMBINAR], [tk_conflicts.conflict_editor.ESPERANDO_CONSOLA],
+           ["personal.conflicto-remoto1.kdbx"]))
+        c("  y la copia queda apartada", copia.exists(), False)
+
+    with sandbox():
+        cfg, p = preparar()
+        escribir(p.local_abs / "plan.md", "del remoto")
+        escribir(p.local_abs / "plan.md.conflicto-dispositivo1", "de aquí")
+        conflicts.actualizar_pareja(p)
+        reparacion(cfg, lambda dlg: visto.update(sin="Combinar" in botones(dlg)))
+        c("sin llavero no hay «Combinar»", visto["sin"], False)
+finally:
+    keepassxc.cli, keepassxc.combinar, llavero.keepassxc_abierto, tk_conflicts.working = reales
 
 
 # las reparaciones de la pantalla

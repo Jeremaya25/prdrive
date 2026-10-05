@@ -18,17 +18,21 @@ una con su tamaño y su fecha, que es lo que hace falta para elegir. El sufijo
 con el que rclone renombró la copia no aparece por ningún lado: la etiqueta
 dice «versión de este dispositivo» o «versión del remoto» y quien quiera ver
 los ficheros tiene «Abrir la carpeta».
+
+Con llavero, debajo de los botones va «Combinar», que para su base es mejor
+que elegir (`conflict_editor.plan_combinar()`). Espera a una consola de
+KeePassXC, así que corre en `working()`.
 """
 
 from __future__ import annotations
 
 from typing import Callable
 
-from common import conflicts
+from common import conflicts, llavero
 from common.model import Config
 
-from . import abrir, conflict_editor, icons, theme
-from .tk import TITLE
+from . import abrir, conflict_editor, icons, llavero_editor, theme
+from .tk import TITLE, working
 
 COLUMNAS = [
     ("pareja", "Pareja", 110),
@@ -39,6 +43,10 @@ COLUMNAS = [
 
 NOTA = "Solo cambian ficheros de este dispositivo"
 """Lo que se dice siempre al confirmar: solo se tocan ficheros de este dispositivo."""
+
+PISTA_COMBINAR = ("Para la base del llavero, mejor que elegir: junta lo de las dos "
+                  "versiones y no se pierde nada.")
+"""Lo que se dice junto a «Combinar»."""
 
 EXPLICACION = ("Cambiaron en los dos lados entre dos pasadas. rclone se quedó con "
                "la más reciente y guardó la otra al lado: elige con cuál te "
@@ -60,7 +68,7 @@ def seccion(padre, ventana, config: Config,
     """
     from tkinter import messagebox, ttk
 
-    from . import tk_pairs
+    from . import tk_llavero, tk_pairs
 
     parejas = {p.name: p for p in config.pairs if p.is_bisync}
     estado: dict = {"conflictos": [], "filas": {}}
@@ -117,6 +125,9 @@ def seccion(padre, ventana, config: Config,
             boton.configure(state="normal" if conflicto is not None
                             and conflict_editor.puede(conflicto, lado) else "disabled")
         conservar_esta.configure(state="normal" if version is not None else "disabled")
+        if combinar is not None:
+            combinar.configure(state="normal" if conflicto is not None
+                               and conflict_editor.puede_combinar(conflicto) else "disabled")
         for boton in (abrir_carpeta, abrir_versiones):
             boton.configure(state="normal" if conflicto is not None else "disabled")
 
@@ -142,7 +153,8 @@ def seccion(padre, ventana, config: Config,
         for i, conflicto in enumerate(estado["conflictos"]):
             padre_fila = f"c{i}"
             tree.insert("", "end", iid=padre_fila, text=conflicto.relativa, open=True,
-                        values=(conflicto.pareja, "", ""), tags=("aviso",))
+                        values=(conflict_editor.nombre_pareja(conflicto.pareja), "", ""),
+                        tags=("aviso",))
             estado["filas"][padre_fila] = (conflicto, None)
             for j, (version, nombre) in enumerate(conflict_editor.etiquetas(conflicto)):
                 hijo = f"{padre_fila}v{j}"
@@ -198,6 +210,29 @@ def seccion(padre, ventana, config: Config,
         resolver(lambda: conflict_editor.plan_conservar(conflicto, version),
                  f"Quedarse con la {conflict_editor.etiqueta(conflicto, version)}")
 
+    def combinar_llavero() -> None:
+        """Combina las copias de la base del llavero en una consola de KeePassXC."""
+        conflicto, _ = elegido()
+        if conflicto is None:
+            return
+        llave = llavero_editor.llave_de_este_equipo(
+            config, lambda nombre: tk_llavero.elegir_llave(ventana, nombre))
+        try:
+            plan = conflict_editor.plan_combinar(conflicto, llave, llavero.keepassxc_abierto())
+        except conflict_editor.ResolucionImposible as e:
+            messagebox.showerror(TITLE, str(e), parent=ventana)
+            return
+        if not tk_pairs.confirmar_plan(ventana, plan, llavero_editor.COMBINAR, NOTA):
+            return
+        hecho, valor = working(ventana, TITLE, plan.execute, conflict_editor.ESPERANDO_CONSOLA)
+        if not hecho:
+            messagebox.showerror(TITLE, str(valor), parent=ventana)
+            refrescar(escanear=True)
+            return
+        refrescar("  ·  ".join(valor), escanear=True)
+        if al_cambiar is not None:
+            al_cambiar()
+
     def abrir_todo(que) -> None:
         """Abre lo que devuelva `que(conflicto)` con el programa del sistema."""
         conflicto, _ = elegido()
@@ -236,6 +271,17 @@ def seccion(padre, ventana, config: Config,
         acciones, text="Abrir las versiones", style="Quiet.TButton",
         command=lambda: abrir_todo(lambda x: [v.ruta for v in x.versiones]))
     abrir_versiones.grid(row=0, column=5, sticky="e", padx=(4, 0))
+
+    combinar = None
+    if config.pareja_llavero is not None:
+        del_llavero = ttk.Frame(acciones)
+        del_llavero.grid(row=1, column=0, columnspan=6, sticky="w", pady=(8, 0))
+        combinar = ttk.Button(del_llavero, text="Combinar", command=combinar_llavero)
+        theme.boton_icono(combinar, "llave", theme.TINTA2, theme.SUPERFICIE)
+        combinar.grid(row=0, column=0, sticky="w")
+        ttk.Label(del_llavero, text=PISTA_COMBINAR, style="Pista.TLabel", justify="left",
+                  wraplength=theme.medida(440)).grid(row=0, column=1, sticky="w",
+                                                    padx=(10, 0))
 
     pie_nota = ttk.Label(marco, text="", style="MonoPista.TLabel",
                          wraplength=theme.medida(600), justify="left")

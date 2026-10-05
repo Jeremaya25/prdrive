@@ -622,7 +622,7 @@ def _resumen_defaults(raw, difiere) -> str:
     return " · ".join(trozos)
 
 
-def confirmar_plan(parent, plan, titulo: str, nota: str) -> bool:
+def confirmar_plan(parent, plan, titulo: str, nota: str, suelto: bool = False) -> bool:
     """Enseña lo que va a pasar y espera un sí; todavía no se ha escrito nada.
 
     Cada consecuencia es una línea con su punto y cada aviso su recuadro ámbar:
@@ -630,12 +630,19 @@ def confirmar_plan(parent, plan, titulo: str, nota: str) -> bool:
     al remoto y en un `askokcancel` todo eso queda en un párrafo que se
     despacha con un clic sin leerlo.
 
+    Args:
+        parent: De quién cuelga.
+        plan: Lo que se confirma (`consequences`, `warnings`).
+        titulo: El título del diálogo.
+        nota: La pista del pie, junto a los botones.
+        suelto: Como en `modal()`: para colgarlo de una raíz que no se enseña.
+
     Returns:
         `True` si la persona sigue adelante.
     """
     from tkinter import ttk
 
-    dlg = modal(parent, titulo)
+    dlg = modal(parent, titulo, suelto=suelto)
     respuesta = {"sigue": False}
     marco = cuerpo_visible(dlg, padding=(22, 20, 22, 18))
     marco.columnconfigure(0, weight=1)

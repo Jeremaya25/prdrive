@@ -2,9 +2,10 @@
 """«Abrir llavero» con diálogos de Tk, desde la ventana de prdrive o suelto.
 
 Solo dibuja: los pasos y lo que dicen son de `ui/llavero_editor.abrir()`, y lo
-que se hace, de `common/keepassxc.py`. Aquí están los tres diálogos que le
-hacen falta: un aviso, la espera (`tk.working()`) y la pregunta por el fichero
-llave, que solo pide la ruta: el fichero ni se abre. Suelto es
+que se hace, de `common/keepassxc.py`. Aquí están los diálogos que le hacen
+falta: un aviso, la espera (`tk.working()`), la pregunta por el fichero llave,
+que solo pide la ruta (el fichero ni se abre), y la confirmación de
+«Combinar» (`tk_pairs.confirmar_plan()`). Suelto es
 `runsync.py --llavero` (`Llavero.bat`), colgado de una raíz que no se enseña.
 """
 
@@ -15,7 +16,7 @@ from pathlib import Path
 
 from common.model import Config
 
-from . import llavero_editor
+from . import llavero_editor, tk_pairs
 from .tk import working
 
 
@@ -52,5 +53,10 @@ def abrir(parent, config: Config, suelto: bool = False) -> bool:
         """Corre `funcion()` con la ventanita de espera."""
         return working(parent, llavero_editor.TITULO, funcion, mensaje, suelto=suelto)
 
+    def confirmar(plan, titulo: str, nota: str) -> bool:
+        """Enseña el plan de «Combinar» y dice si se sigue."""
+        return tk_pairs.confirmar_plan(parent, plan, titulo, nota, suelto=suelto)
+
     return llavero_editor.abrir(config, partial(avisar, parent), esperar,
-                                partial(elegir_llave, parent), decir_sin_traer=suelto)
+                                partial(elegir_llave, parent), confirmar,
+                                decir_sin_traer=suelto)
