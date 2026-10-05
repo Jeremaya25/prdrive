@@ -50,7 +50,7 @@ python tests/run_all.py            # all tests; or run one script directly
 
 ## Verification
 
-Verification is `tests/run_all.py` (each script in its own process), `--doctor` and `--dry-run`. Nothing to lint; no CI runs the tests (the PR template asks how it was checked). Tk tests skip themselves without a display, so an all-green run without Tk has tested no window.
+Verification is `tests/run_all.py` (each script in its own process), `--doctor` and `--dry-run`. Nothing to lint. CI (`.github/workflows/tests.yml`) runs `run_all.py` on every PR and push to `main`, on `ubuntu-latest` under `xvfb-run` (with `python3-tk`) and on `windows-latest`, Python 3.11; it runs as an unprivileged user (a check that writes to `/` fails there), and no test may depend on what the real `%LOCALAPPDATA%` caches hold. The PR template still asks how it was checked. Tk tests skip themselves without a display, so an all-green run without Tk has tested no window.
 
 - The suite passes on Windows **and** Linux. A check about the other system's branch forces it (`IS_WIN`, and for a Linux mount point `Unidad.letra`) in any system, or prints `(saltado) …` when it cannot run there (Unix sockets, the Linux tray's `select()` on a pipe).
 - `tests/_harness.py` points `equipo.DIR` at a temp dir for every test, and turns `os.kill(pid, 0)` into a real question on Windows: there 0 is `CTRL_C_EVENT`, a Ctrl+C to the whole console, and forcing `IS_WIN = False` reaches it.

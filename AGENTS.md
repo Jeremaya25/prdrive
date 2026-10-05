@@ -95,7 +95,7 @@ python tests/run_all.py     # all tests, each in its own process; or run one scr
 
 The full list (`penwatch.py`, `agente.py`, `prdrive-install.py`, `build_installer.py`) is in `commands-testing.md`.
 
-- Verification is `tests/run_all.py`, `--doctor`, `--dry-run`. Nothing to lint; no CI runs the tests. Tk tests skip without a display, so green without Tk has tested no window. The suite passes on Windows **and** Linux: a check about the other system forces `IS_WIN` or prints `(saltado) …`.
+- Verification is `tests/run_all.py`, `--doctor`, `--dry-run`. Nothing to lint; CI (`.github/workflows/tests.yml`) runs `run_all.py` on every PR, on Linux under xvfb and on Windows. Tk tests skip without a display, so green without Tk has tested no window. The suite passes on Windows **and** Linux: a check about the other system forces `IS_WIN` or prints `(saltado) …`.
 - `runsync.py` with no args always **stops a previously started service** first.
 - Windows dev machine: the Bash tool is sandboxed. It redirects writes under `%LOCALAPPDATA%` (a `penwatch install` from there registers a task pointing at nothing) and hangs `tasklist | find`. Use PowerShell for both.
 
