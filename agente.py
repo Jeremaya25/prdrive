@@ -158,6 +158,8 @@ except ModuleNotFoundError:  # pragma: no cover
     import tomli as tomllib  # type: ignore
 
 IS_WIN = os.name == "nt"
+ABRE_LLAVERO = IS_WIN or sys.platform.startswith("linux")
+"""Si «Abrir llavero» sale en la bandeja y el aviso de conflicto ofrece combinar."""
 HOST = equipo.HOST
 APP_SUBDIR = penwatch.APP_SUBDIR
 
@@ -376,23 +378,46 @@ def keepassxc_abierto(raiz: Path) -> bool:
 
 
 def limpiar_navegador() -> tuple[int, list[str]]:
-    """Quita las claves del navegador que apuntan a un KeePassXC de prdrive que ya no está.
+    """Quita lo del navegador que apunta a un KeePassXC de prdrive que ya no está.
 
     Es lo que no pudo hacer «Expulsar» con una unidad que se quitó sin
-    expulsarla: el navegador seguiría buscando KeePassXC en una letra muerta.
-    Si hay uno instalado, la clave vuelve a él
-    (`keepassxc.cerrar_navegador(muertas=True)`); las de otros programas no se
-    tocan. Solo Windows. Punto de indirección: los tests no tocan el registro.
+    expulsarla. En Windows, las claves del registro: el navegador seguiría
+    buscando KeePassXC en una letra muerta; si hay uno instalado, la clave
+    vuelve a él (`keepassxc.cerrar_navegador(muertas=True)`). En Linux, los
+    manifiestos de prdrive, si ya no queda abierto ningún KeePassXC extraído
+    (`keepassxc.cerrar_navegador_linux(muertas=True)`). Lo de otros programas
+    no se toca. Punto de indirección: los tests no tocan el registro ni los
+    navegadores.
 
     Returns:
-        Cuántas claves ha tocado y lo que no ha podido hacer.
+        Cuántas claves o manifiestos ha tocado y lo que no ha podido hacer.
     """
     if not IS_WIN:
-        return 0, []
+        manifiestos = keepassxc.plan_cerrar_navegador_linux(muertas=True)
+        if not manifiestos:
+            return 0, []
+        return len(manifiestos), keepassxc.cerrar_navegador_linux(muertas=True)
     plan = keepassxc.plan_cerrar_navegador(carpeta_app=APP_SUBDIR, muertas=True)
     if not plan:
         return 0, []
     return len(plan), keepassxc.cerrar_navegador(carpeta_app=APP_SUBDIR, muertas=True)
+
+
+def cerrar_keepassxc_huerfano(raiz: Path) -> int:
+    """Le pide que se cierre al KeePassXC de una raíz que se ha ido; devuelve a cuántos.
+
+    En Linux corre extraído en el equipo, no desde la unidad, así que no muere
+    con ella como en Windows: seguiría con la base abierta en memoria, y sus
+    passkeys, en un equipo del que la unidad ya se ha ido. Se le pide como lo
+    haría la persona (`keepassxc.pedir_cierre()`): con algo sin guardar,
+    pregunta él. Es de módulo para que los tests no cierren nada.
+    """
+    if IS_WIN:
+        return 0
+    pids = llavero.pids_keepassxc(raiz / APP_SUBDIR)
+    for pid in pids:
+        keepassxc.pedir_cierre(pid)
+    return len(pids)
 
 
 def huella_local(ruta: Path, tope: int, ignorar: tuple[str, ...]) -> pl.Huella | None:
@@ -1541,7 +1566,14 @@ class Agente:
                                    "ya no está en su carpeta"
                                    if unidad is not None and unidad.es_raiz
                                    else "desconectada"))
-        # Si se quitó sin expulsar, el navegador sigue apuntando a su KeePassXC.
+        # Si se quitó sin expulsar: en Linux su KeePassXC sigue abierto, y el
+        # navegador sigue apuntando a él.
+        try:
+            huerfanos = cerrar_keepassxc_huerfano(con.raiz)
+        except OSError:
+            huerfanos = 0
+        if huerfanos:
+            diario(f"{con.nombre}: se ha ido con KeePassXC abierto; le pido que se cierre")
         self._limpiar_navegador(con.nombre)
 
     def _limpiar_navegador(self, por: str) -> None:
@@ -1558,8 +1590,9 @@ class Agente:
         except OSError as e:
             tocadas, fallos = 0, [str(e)]
         if tocadas:
-            diario(f"{por}: el navegador ya no busca un KeePassXC que no está "
-                   f"({tocadas} clave{'s' if tocadas != 1 else ''} del registro)")
+            que = ((f"{tocadas} clave{'s' if tocadas != 1 else ''} del registro") if IS_WIN
+                   else f"{tocadas} manifiesto{'s' if tocadas != 1 else ''}")
+            diario(f"{por}: el navegador ya no busca un KeePassXC que no está ({que})")
         if fallos:
             diario(f"{por}: no he podido dejar como estaban las claves del navegador: "
                    f"{fallos[0]}")
@@ -3288,7 +3321,7 @@ class Agente:
             diario(f"{con.nombre}: el llavero tiene copias de conflicto: "
                    f"{', '.join(sorted(nuevas))}")
             avisar(f"{con.nombre}: el llavero tiene dos versiones",
-                   LLAVERO_EN_CONFLICTO + (COMBINAR_AQUI if IS_WIN else COMBINAR_A_MANO))
+                   LLAVERO_EN_CONFLICTO + (COMBINAR_AQUI if ABRE_LLAVERO else COMBINAR_A_MANO))
 
     def _estado_raiz(self, uid: str, unidad: equipo.Unidad) -> str:
         """Devuelve en qué está una raíz de este equipo, para la bandeja."""
@@ -3386,8 +3419,8 @@ class Agente:
                             "cifrada": u.cifrada, "estado": self._estado_raiz(uid, u)}
                            for uid, u in self.ajustes.raices.items()],
                 "pedir_al_iniciar": self.ajustes.pedir_al_iniciar,
-                # El llavero solo se abre en Windows (fase 2: Linux).
-                "abre_llavero": IS_WIN,
+                # Dónde se abre el llavero: Windows y Linux (fase 2).
+                "abre_llavero": ABRE_LLAVERO,
                 "ultima_pasada": self.ultima_buena,
                 "version": self.version, "nueva": self.nueva,
                 "actualizando": self._actualizandose()}

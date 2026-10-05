@@ -883,27 +883,32 @@ def abrir_navegador_linux(proxy: Path) -> list[str]:
     return fallos
 
 
-def cerrar_navegador_linux(muertas: bool = False) -> list[str]:
-    """Quita los manifiestos de prdrive (`manifiesto_nuestro()`); los de otros, no.
+def plan_cerrar_navegador_linux(muertas: bool = False) -> list[Path]:
+    """Decide qué manifiestos se quitan al cerrar el llavero en Linux: los de prdrive.
 
     Args:
         muertas: Solo si no queda abierto ningún KeePassXC de lo extraído: lo
             que hace el agente cuando una unidad se va sin expulsar. Uno abierto
             puede ser el de otra unidad, que los sigue usando.
-
-    Returns:
-        Lo que no se ha podido quitar; vacío si todo bien. Nunca lanza.
     """
     if muertas and any(Path(exe).name == llavero.KEEPASSXC_LINUX
                        for exe in store.procesos_desde(cache_equipo()).values()):
         return []
+    return [ruta for _, ruta, _ in manifiestos_linux() if manifiesto_nuestro(ruta)]
+
+
+def cerrar_navegador_linux(muertas: bool = False) -> list[str]:
+    """Quita los manifiestos de prdrive (`plan_cerrar_navegador_linux()`); los de otros, no.
+
+    Returns:
+        Lo que no se ha podido quitar; vacío si todo bien. Nunca lanza.
+    """
     fallos = []
-    for _, ruta, _ in manifiestos_linux():
-        if manifiesto_nuestro(ruta):
-            try:
-                ruta.unlink()
-            except OSError as e:
-                fallos.append(f"{ruta}: {e}")
+    for ruta in plan_cerrar_navegador_linux(muertas):
+        try:
+            ruta.unlink()
+        except OSError as e:
+            fallos.append(f"{ruta}: {e}")
     return fallos
 
 

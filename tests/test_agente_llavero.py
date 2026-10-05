@@ -44,6 +44,7 @@ from ui import bandeja, icons
 
 c = Checks("agente: el llavero de una raíz")
 REAL_LIMPIAR = agente.limpiar_navegador
+REAL_HUERFANO = agente.cerrar_keepassxc_huerfano
 F.preparar()
 
 TICK = agente.TICK
@@ -263,8 +264,8 @@ resumen = ag.resumen()
 c("el resumen dice qué dispositivo lleva llavero",
   (fila(resumen, UID_B)["llavero"], fila(resumen, UID_N)["llavero"]), (True, False))
 c("  si su KeePassXC está abierto", fila(resumen, UID_B)["llavero_abierto"], False)
-c("  y si este equipo lo abre: de momento, solo Windows",
-  resumen["abre_llavero"], agente.IS_WIN)
+c("  y si este equipo lo abre: Windows y Linux",
+  resumen["abre_llavero"], agente.IS_WIN or sys.platform.startswith("linux"))
 en_windows = {**resumen, "abre_llavero": True}
 nombre = fila(resumen, UID_B)["nombre"]
 c("«Abrir llavero» va en su desplegable, tras el explorador",
@@ -361,7 +362,7 @@ c("tras una pasada que deja una copia de la base, un aviso",
   [t for t, _ in del_llavero_avisos()], [f"{nombre}: el llavero tiene dos versiones"])
 c("  que dice que no se ha perdido nada y cómo combinarlas",
   del_llavero_avisos()[0][1],
-  agente.LLAVERO_EN_CONFLICTO + (agente.COMBINAR_AQUI if agente.IS_WIN
+  agente.LLAVERO_EN_CONFLICTO + (agente.COMBINAR_AQUI if agente.ABRE_LLAVERO
                                  else agente.COMBINAR_A_MANO))
 resumen = ag.resumen()
 c("  el resumen lo cuenta", fila(resumen, UID_B)["llavero_conflicto"], 1)
@@ -397,7 +398,7 @@ c("de una unidad que no está en la lista no se lee nada",
 # ---------------------------------------------------------------------------
 real_limpiar = agente.limpiar_navegador
 if not agente.IS_WIN:
-    c("fuera de Windows no hay claves que limpiar", REAL_LIMPIAR(), (0, []))
+    c("en Linux, sin manifiestos de prdrive, no toca nada", REAL_LIMPIAR(), (0, []))
 LIMPIEZAS: list[float] = []
 QUITADAS = [1]
 
@@ -439,6 +440,40 @@ try:
           for m in F.DIARIO), True)
 finally:
     agente.limpiar_navegador = real_limpiar
+
+# En Linux, KeePassXC corre extraído en el equipo y no muere con la unidad:
+# el agente le pide que se cierre cuando su raíz se va.
+real_huerfano = agente.cerrar_keepassxc_huerfano
+HUERFANOS: list[Path] = []
+agente.cerrar_keepassxc_huerfano = lambda raiz: HUERFANOS.append(raiz) or 1
+try:
+    terminar(ag)
+    F.RAICES[:] = [CON, SIN]
+    ag = F.nuevo()
+    F.vueltas(ag, 2)
+    terminar(ag, CON)
+    dicho = len(F.DIARIO)
+    F.RAICES[:] = [SIN]
+    F.vueltas(ag, 2)
+    c("al irse una raíz, se pide que se cierre su KeePassXC", HUERFANOS, [CON])
+    c("  y se dice en el diario",
+      any("se ha ido con KeePassXC abierto; le pido que se cierre" in m
+          for m in F.DIARIO[dicho:]), True)
+finally:
+    agente.cerrar_keepassxc_huerfano = real_huerfano
+reales_huerfano = (agente.IS_WIN, agente.llavero.pids_keepassxc, agente.keepassxc.pedir_cierre)
+cerrados: list[int] = []
+try:
+    agente.llavero.pids_keepassxc = lambda app_dir: [41, 42] if Path(app_dir) == CON / ".prdrive" \
+        else []
+    agente.keepassxc.pedir_cierre = cerrados.append
+    agente.IS_WIN = False
+    c("  en Linux, se les pide a los suyos, como al cerrarlo la persona",
+      (REAL_HUERFANO(CON), cerrados), (2, [41, 42]))
+    agente.IS_WIN = True
+    c("  en Windows no hace falta: muere con la unidad", REAL_HUERFANO(CON), 0)
+finally:
+    agente.IS_WIN, agente.llavero.pids_keepassxc, agente.keepassxc.pedir_cierre = reales_huerfano
 
 
 # ---------------------------------------------------------------------------
