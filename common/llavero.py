@@ -266,6 +266,27 @@ def pendiente(pair: model.Pair) -> bool:
     return False
 
 
+def sin_listar(pair: model.Pair) -> list[str]:
+    """Devuelve las bases de la unidad que no están en el listado de la última pasada buena.
+
+    Es por un fallo de rclone (v1.75.1, y sigue en `master`): tras un conflicto
+    que gana el remoto, `modifyListing()` (`cmd/bisync/listing.go`) apunta el
+    renombrado del perdedor de este lado quitando el nombre de la base de los
+    dos listados, aunque la copia del ganador ya está con ese nombre. La pasada
+    siguiente la ve «nueva en los dos lados»: si son iguales no pasa nada, pero
+    si la base ha cambiado aquí entretanto (es lo que hace «Combinar») sale
+    otro conflicto, con una copia que no trae nada nuevo. Una pasada justo
+    después, con las dos iguales, la vuelve a apuntar («Files are equal!»).
+    Sin listado, nada: no ha habido pasada buena.
+    """
+    listado = listado_local(pair)
+    if listado is None:
+        return []
+    donde = pair.local_abs
+    nombres = [r.relative_to(donde).as_posix() for r in bases(donde)]
+    return [n for n in nombres if n not in listado]
+
+
 FRENO_SIN_COPIAS = 100
 """El `--max-delete` (un %) de la pasada que se repite cuando lo borrado son solo copias."""
 _BORRADO = re.compile(r": - (Path[12]) +File was deleted +- (.*)$")

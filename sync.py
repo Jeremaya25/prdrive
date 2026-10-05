@@ -627,6 +627,8 @@ def run_pair(ctx: RunContext, pair: Pair) -> int:
         explain_failure(saved)
     record_result(ctx, pair, rc, saved, reloj, final)
     report_conflicts(ctx, pair)
+    if rc == 0 and pair.llavero and not ctx.dry_run:
+        reapuntar_llavero(ctx, pair, ffile)
     return rc
 
 
@@ -657,6 +659,26 @@ def repetir_sin_freno(ctx: RunContext, pair: Pair, ffile: Path | None, logfile: 
     sin_freno = replace(pair, flags={**pair.flags, "max-delete": llavero.FRENO_SIN_COPIAS})
     cmd, logfile = build_command(ctx, sin_freno, ffile, False)
     return execute(ctx, cmd, logfile), logfile
+
+
+def reapuntar_llavero(ctx: RunContext, pair: Pair, ffile: Path | None) -> None:
+    """Repite en seguida la pasada del llavero si rclone ha dejado una base fuera de su listado.
+
+    Pasa tras un conflicto que gana el remoto, por un fallo de rclone
+    (`llavero.sin_listar()`). Tiene que ser ya, con las dos bases iguales: así
+    bisync solo la vuelve a apuntar. Si falla, solo se dice: lo peor es que un
+    cambio antes de la próxima pasada buena salga como otro conflicto.
+    """
+    faltan = llavero.sin_listar(pair)
+    if not faltan:
+        return
+    print(f"[{pair.name}] rclone no ha apuntado {', '.join(faltan)} tras el conflicto: "
+          "otra pasada, ahora que están iguales, para que lo haga.")
+    cmd, logfile = build_command(ctx, pair, ffile, False)
+    rc = execute(ctx, cmd, logfile)
+    saved = dispose_log(pair.name, logfile, rc, ctx.keep_logs)
+    if rc != 0:
+        print(f"[{pair.name}] Esa pasada ha fallado (código {rc}). Log: {saved}")
 
 
 def resolve_resync_approval(selected: list[Pair], assume_yes: bool) -> bool:

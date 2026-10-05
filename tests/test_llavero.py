@@ -258,6 +258,40 @@ with sandbox() as root:
     c.contains("  y lo dice", salida, "se repite la pasada sin el freno de borrados")
     rc, salida, ordenes = correr_abortando([borrado("Path1", copia1), borrado("Path1", "personal.kdbx")])
     c("con la base entre lo borrado, el freno manda: no se repite", (rc, len(ordenes)), (7, 1))
+
+    # Tras un conflicto que gana el remoto, rclone (v1.75.1) deja la base fuera
+    # de los dos listados (`modifyListing()`): se vuelve a pasar en seguida,
+    # con las dos iguales, para que la apunte. Líneas como las de rclone.
+    def listar(*nombres):
+        """Deja el listado path1 con esos ficheros, como lo escribe bisync."""
+        lineas = ["# bisync listing v1 from 2026-10-05T17:59:22.695758764+0000"] + [
+            f'-     1790 - - 2026-10-05T17:59:20.865286426+0000 "{n}"' for n in nombres]
+        (pareja.workdir / f"{bisync.expected_prefix(pareja)}{bisync.PATH1_SUFFIX}").write_text(
+            "\n".join(lineas) + "\n", encoding="utf-8")
+    (carpeta / "personal.kdbx").write_bytes(base_kdbx4())
+    (carpeta / copia1).write_bytes(base_kdbx4())
+    listar(llavero.LEEME, copia1)
+    c("una base de la unidad que rclone ha dejado fuera del listado",
+      llavero.sin_listar(pareja), ["personal.kdbx"])
+    rc, salida, ordenes = correr(pareja, aprobado=False)
+    c("  se vuelve a pasar en seguida, sin --resync, para que la apunte",
+      (rc, [o[1] for o in ordenes], "--resync" in ordenes[-1]), (0, ["bisync", "bisync"], False))
+    c.contains("  y lo dice", salida, "otra pasada, ahora que están iguales")
+    listar(llavero.LEEME, copia1, "personal.kdbx")
+    rc, salida, ordenes = correr(pareja, aprobado=False)
+    c("  con todas en el listado, una pasada", (llavero.sin_listar(pareja), len(ordenes)), ([], 1))
+    listar(llavero.LEEME)
+    ordenes.clear()
+    real_execute = sync.execute
+    sync.execute = lambda ctx, cmd, logfile=None: ordenes.append(cmd) or 0
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            sync.run_pair(sync.RunContext(binary="RCLONE", env={}, dry_run=True), pareja)
+    finally:
+        sync.execute = real_execute
+    c("  con --dry-run, no (el listado de verdad no lo toca)", len(ordenes), 1)
+    (carpeta / "personal.kdbx").unlink()
+    (carpeta / copia1).unlink()
     for p in pareja.workdir.iterdir():
         p.unlink()
 
