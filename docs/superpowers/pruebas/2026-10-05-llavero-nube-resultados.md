@@ -32,7 +32,7 @@ cuenta con passkeys.
 
 ## 2. Fallos que salieron, y su arreglo
 
-Cinco, los cinco invisibles para los tests (rclone y KeePassXC simulados):
+Cinco arreglados, invisibles para los tests (rclone y KeePassXC simulados), y un sexto, de Windows, en §4:
 
 | # | Qué pasaba | Por qué | Arreglo |
 |---|---|---|---|
@@ -86,7 +86,32 @@ entrada en vez de en la consola), el borrado de la copia, y expulsar.
 
 - En la nube (Linux): todo bien en `b5d6047`, tras dos vueltas que dieron con
   los fallos 3 y 5.
-- En GitHub Actions: pendiente de la primera ejecución.
+- **En `windows-latest`** (ejecución sobre `4ae5b9c`): KeePassXC 2.7.12 se baja
+  y se comprueba (2 s), activar escribe el catálogo por rclone, «Abrir llavero»
+  abre sin avisos, KeePassXC es de la unidad, su configuración va a
+  `config/windows/`, escribe los JSON al arrancar y **el navegador llega a él
+  por el proxy**. El vigilante sube un guardado a los 120 s, bisync deja la
+  copia del conflicto al lado, «Combinar» la mete en la base y la aparta, el
+  freno de borrados deja pasar su borrado, y «Expulsar» cierra KeePassXC y
+  **quita las cuatro claves de HKCU**. Dos fallos:
+  - Las claves: KeePassXC se queda con ellas al arrancar, con `/` y con el
+    último navegador de cada una (`brave`, `tor-browser`): es B1 de
+    `2026-10-04-keepassxc-portatil-resultados.md`, y lo que esperaba la prueba
+    era demasiado estricto. Corregido en la prueba.
+  - **Fallo 6, sin arreglar: `bisync.expected_prefix()` en Windows con un
+    remoto de tipo `local`.** rclone nombra los listados con el `Root()` del
+    backend local, que en Windows es la ruta absoluta con `\\?\` delante
+    (`cleanRootPath()` y `file.UNCPath()`, `backend/local/local.go`), y prdrive
+    no: espera `…nas_D__a__temp…` y rclone escribe `…nas_____D__a__temp…`.
+    Las pasadas van bien (`pair_state()` busca los listados que haya), pero lo
+    que usa el nombre esperado falla: el llavero no lee su listado
+    (`listado_local()`: «con cambios que aún no han subido» siempre, y no salta
+    la pasada de después de un conflicto, así que sale el conflicto falso del
+    fallo 5), y «Reparación» diría que el baseline «no es de esta pareja».
+    Solo pasa con un remoto `type = local` (un disco o una carpeta de red
+    puestos como remoto) en Windows: con SFTP, Drive y demás, no.
+- **En `ubuntu-latest`**: pendiente (la ejecución de `4ae5b9c` no había
+  acabado al cerrar esto).
 
 ## 5. Lo que queda para el equipo de verdad
 

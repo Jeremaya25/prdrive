@@ -148,6 +148,15 @@ def paso_dispositivo(app: Path, paso: str, args: list[str]) -> int:
         hallados = conflicts.escanear(model.load_config().pareja_llavero)
         hechos = conflict_editor.plan_combinar(hallados[0], None).execute() if hallados else []
         print(json.dumps(hechos, ensure_ascii=False))
+    elif paso == "listado":
+        # Lo que prdrive lee del listado de rclone, frente a lo que hay en la unidad.
+        pareja = model.load_config().pareja_llavero
+        donde = pareja.local_abs
+        print(json.dumps({
+            "listado": llavero.listado_local(pareja),
+            "unidad": {r.name: [r.stat().st_size, r.stat().st_mtime_ns]
+                       for r in llavero.bases(donde)},
+            "sin_listar": llavero.sin_listar(pareja), "pendiente": llavero.pendiente(pareja)}))
     elif paso == "estado":
         paquete = keepassxc.paquete_del_equipo()
         config = model.load_config()
@@ -235,6 +244,20 @@ class Cli:
         return sorted(self("ls", "-q", str(base)).stdout.split())
 
 
+def volcar(app: Path) -> None:
+    """Enseña los logs de las pasadas y los listados de rclone, para ver qué pasó en el CI."""
+    for log in sorted((app / "logs").glob("keychain_*.log")):
+        print(f"\n--- {log.name}")
+        lineas = log.read_text(encoding="utf-8", errors="replace").splitlines()
+        desde = next((i for i, x in enumerate(lineas) if "Synching Path1" in x), 0)
+        for linea in lineas[desde:]:
+            if "lock file renewed" not in linea and " ETA " not in linea:
+                print(f"    {linea}")
+    for lst in sorted((app / "state" / "keychain").glob("*.lst")):
+        print(f"\n--- {lst.name}")
+        print(lst.read_text(encoding="utf-8", errors="replace"))
+
+
 def estado(app: Path) -> dict:
     """Lo que dice el dispositivo de su llavero en este equipo."""
     return json.loads(en_dispositivo(app, "estado"))
@@ -317,10 +340,16 @@ def main() -> int:
         e["config"], ["keepassxc.ini", "keepassxc_local.ini", "raiz.txt"])
     ver("la línea de la ventana lo dice", e["linea"], f"{BASE}, abierto en KeePassXC.")
     if IS_WIN:
+        # Al arrancar, KeePassXC se queda con las cuatro (B1 de
+        # `2026-10-04-keepassxc-portatil-resultados.md`): con `/` y con el
+        # último navegador de cada una (`brave`, `tor-browser`), pero en la
+        # carpeta de la unidad. Eso es lo que importa, y que el JSON esté.
         carpeta = components.keepassxc_exe(app, paquete).parent / "config"
-        ver("las cuatro claves del navegador apuntan a los JSON de la unidad",
-            sorted(e["claves"].values()),
-            sorted(str(kx.json_nativo(carpeta, n[0])) for _, n in kx.NAVEGADORES))
+        valores = [v for v in e["claves"].values() if v]
+        ver("las cuatro claves del navegador apuntan a JSON de la unidad, que están",
+            (len(valores), {kx._comparable(str(Path(v).parent)) for v in valores},
+             all(Path(v).is_file() for v in valores)),
+            (4, {kx._comparable(str(carpeta))}, True))
         manifiesto = kx.json_nativo(carpeta, "chrome")
         ver("y KeePassXC escribe el de Chrome al arrancar (updateBinaryPaths)",
             esperar(manifiesto.is_file, 30) is not None, True)
@@ -352,6 +381,7 @@ def main() -> int:
     time.sleep(1.5)
     ver("  y en el remoto, después", cli("add", "-q", str(remota), "conflicto-alla").returncode, 0)
     rc, _ = pasada(app)
+    en_dispositivo(app, "listado")
     copia = BASE.replace(".kdbx", ".conflicto-dispositivo1.kdbx")
     ver("la pasada deja al lado la copia de este lado (no la manda a .prversions)",
         (rc, sorted(p.name for p in local.parent.glob("*.conflicto-*.kdbx"))), (0, [copia]))
@@ -385,6 +415,7 @@ def main() -> int:
     else:
         ver("los manifiestos, quitados", e["manifiestos"], {})
     if fallos:
+        volcar(app)
         print(f"\nLo de la prueba se queda en {temporal} (logs en {app / 'logs'}).")
     else:
         shutil.rmtree(temporal, ignore_errors=True)
