@@ -161,9 +161,14 @@ def conflicto_de_la_base(config: model.Config, base: Path) -> conflicts.Conflict
         return None
     try:
         encontrados = conflicts.actualizar_pareja(pareja)
+        # Las del escaneo vienen resueltas (`Pair.local_abs`) y la base no: un
+        # enlace por el camino, o en Windows un nombre corto (`RUNNER~1`) que
+        # resolver alarga, las haría distintas siendo el mismo fichero.
+        objetivo = base.resolve()
     except OSError:
         return None
-    return next((x for x in encontrados if x.original == base and x.copias), None)
+    return next((x for x in encontrados if x.original.resolve() == objetivo and x.copias),
+                None)
 
 
 def abrir(config: model.Config, avisar: Callable[[str], None],

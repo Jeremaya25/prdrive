@@ -243,6 +243,25 @@ finally:
     keepassxc.cli, keepassxc.combinar, conflict_editor.mover = reales
 
 
+# --- con la raíz detrás de un enlace (en Windows basta un nombre corto como
+# RUNNER~1, que resolver alarga): la base y la que encuentra el escaneo, que va
+# resuelta, son el mismo fichero escrito de dos maneras
+with sandbox() as root:
+    enlace = tmpdir("prdrive-enlace-") / "raiz"
+    try:
+        enlace.symlink_to(root, target_is_directory=True)
+    except OSError:
+        print("  (saltado) sin permiso para crear enlaces")
+    else:
+        model.DEVICE_ROOT = enlace
+        carpeta = llavero.carpeta()
+        carpeta.mkdir()
+        poner(carpeta, BASE, b"base")
+        poner(carpeta, REMOTA, b"copia")
+        c("con la raíz detrás de un enlace, la copia de la base se ve igual",
+          llavero_editor.conflicto_de_la_base(config(), carpeta / BASE) is not None, True)
+
+
 # --- «Abrir llavero» lo ofrece antes de abrir
 class Proc:
     """Un KeePassXC que sigue abierto."""

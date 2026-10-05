@@ -64,7 +64,8 @@ with sandbox() as root:
     c("con la base como dice el listado, no", llavero.pendiente(par), False)
     c("el listado se lee con los nanosegundos de rclone",
       llavero.listado_local(par)["personal.kdbx"], (10, base.stat().st_mtime_ns))
-    os.utime(base, ns=(base.stat().st_atime_ns, base.stat().st_mtime_ns + 1))
+    # 2 s: NTFS guarda la hora en unidades de 100 ns, y exFAT en 10 ms o 2 s.
+    os.utime(base, ns=(base.stat().st_atime_ns, base.stat().st_mtime_ns + 2_000_000_000))
     c("un guardado que solo mueve la hora, pendiente", llavero.pendiente(par), True)
     escribir_listado(par, {"personal.kdbx": base})
     base.write_bytes(b"y" * 11)
