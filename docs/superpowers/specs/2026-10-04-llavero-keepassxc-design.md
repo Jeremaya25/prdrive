@@ -1,6 +1,6 @@
 # El llavero (`.keychain`): KeePassXC de viaje y una base que se sincroniza sola
 
-Fecha: 2026-10-04 · Estado: **decidida**, sin implementar · Versión objetivo:
+Fecha: 2026-10-04 · Estado: **decidida**; fase 0 hecha, el resto sin implementar · Versión objetivo:
 0.6.0 · Sustituye a la primera propuesta del mismo día (`3cdf1d5`) · Pruebas de
 las que sale:
 `docs/superpowers/pruebas/2026-10-04-keepassxc-portatil.md` y sus resultados
@@ -161,37 +161,63 @@ En el remoto:
 
 ## 3. El catálogo: `remote.toml` y su `[keychain]`
 
-### El nombre nuevo
+### El nombre nuevo (fase 0, hecha)
 
-`pairs.toml` sale en 18 módulos y tests y en 8 documentos, y `catalog_path` en 76
-sitios. Además, cada dispositivo en uso lo lee. El cambio va en **su propio PR,
-antes que el llavero** (fase 0), con esta regla de compatibilidad:
+`pairs.toml` salía en 18 módulos y tests y en 8 documentos, y `catalog_path` en
+76 sitios. Además, cada dispositivo en uso lo lee. El cambio fue en **su propia
+fase, antes que el llavero**, con esta regla de compatibilidad. Al implementarla
+cambiaron tres cosas respecto a lo decidido; van marcadas.
 
-- **Para leer**: el fichero que nombra `catalog_path`; si no existe, el del otro
-  nombre en la misma carpeta. Así da igual que un dispositivo diga `pairs.toml` o
-  `remote.toml`, y da igual en qué punto del cambio esté su remoto.
-- **Para escribir**: en el que exista, mirándolo justo antes de escribir. Nunca
-  se crean los dos: un dispositivo viejo seguiría leyendo el otro y la flota se
-  partiría en dos catálogos. Si alguna vez aparecen los dos (una carrera con el
-  renombrado), manda `remote.toml` y «Reparación» lo dice.
-- **Un remoto nuevo** nace con `remote.toml`. El `catalog_path` por defecto pasa
-  a `/prdrive-catalog/remote.toml`, y con la regla de lectura un dispositivo con
-  el valor por defecto sigue encontrando el `pairs.toml` de siempre. Un
-  `catalog_path` escrito a mano no se toca.
-- **Un remoto que ya existe** se renombra solo cuando la persona lo pide y la flota
-  dice que se puede:
-  - «Ajustes» ofrece «Renombrar el catálogo a remote.toml…» mientras el remoto
-    tenga `pairs.toml`.
-  - El botón solo se activa si **todas** las notas de `devices/` llevan una
-    versión con la regla de lectura de arriba (la de la fase 0 o posterior). La
-    pantalla nombra los que no la tienen y los que no se sabe, porque una nota
-    vieja no trae versión, con su última vez visto. Un dispositivo que nunca
+- **Para leer** (`catalog.leer()`, la usan el dispositivo y el instalador): si
+  `catalog_path` nombra uno de los dos nombres, se busca **primero
+  `remote.toml` y después `pairs.toml`, en la misma carpeta, nombre el que
+  nombre**. Se pasa al segundo solo si rclone dice que el primero no existe
+  (`cat` de un fichero que no está sale con 3, medido con v1.75.1); sin red no,
+  porque tardaría lo mismo en no llegar. Un nombre propio se lee tal cual.
+  - *Cambio:* se decidió «el que nombra `catalog_path` y, si no está, el otro».
+    Con `remote.toml` siempre primero, «si están los dos manda `remote.toml`»
+    sale solo, sin preguntar nada más. Y es lo barato al final: renombrado el
+    remoto, cada lectura es un solo `cat` diga lo que diga cada dispositivo.
+    Hasta entonces, el que dice `pairs.toml` paga un `cat` fallido por lectura.
+- **Para escribir** (`push()`): en el fichero que se acaba de releer con la
+  misma regla, nunca en el otro. Si otro dispositivo renombró entre la lectura y
+  la escritura, el cambio va a `remote.toml`. Una subida a `pairs.toml` mira
+  después si ha aparecido `remote.toml`. Si ha aparecido, la subida se cruzó con
+  el renombrado: se dice que el cambio no cuenta y queda apuntado.
+- **Si aparecen los dos**, manda `remote.toml`. Queda apuntado en la copia local
+  (`state/catalog.json`) cuando lo ve alguien que mira: esa subida, la pantalla
+  de renombrar o el propio renombrado. «Reparación» lo dice, sin botón porque es
+  una operación en el remoto. La pantalla de renombrar ofrece entonces «Apartar
+  pairs.toml…», que lo deja al lado como `pairs.toml.apartado-<fecha>` sin
+  borrarlo.
+- **Un remoto nuevo** nace con `remote.toml`: el `catalog_path` por defecto es
+  `/prdrive-catalog/remote.toml`.
+- **Un remoto que ya existe** se renombra solo cuando la persona lo pide y la
+  flota dice que se puede:
+  - «Ajustes» ofrece «Renombrar el catálogo…» mientras lo último que se leyó
+    fue su `pairs.toml`, o mientras conste que están los dos. Lo decide sin red.
+  - El botón solo se activa si **todas** las demás notas de `devices/` dicen que
+    saben leer el nombre nuevo. *Cambio:* no se mira la versión, sino una lista
+    nueva de la nota, `entiende = ["remote.toml"]` (`fleet.ENTIENDE`). Una
+    versión no dice qué sabe hacer un dispositivo hasta saber en qué release
+    entró cada cosa, y la fase 0 todavía no tiene número; la lista dice
+    justo lo que se pregunta. Este dispositivo no cuenta, porque su nota puede
+    ser de antes de actualizarse. La pantalla nombra a los que lo impiden, con
+    su versión (o «su nota no dice qué versión lleva») y su última vez visto.
+    También explica cómo desbloquearlo: quitar de la lista los que ya no se
+    usan, o actualizarlos y dejar que sincronicen. Un dispositivo que nunca
     publicó nota no se puede ver, y el texto lo dice.
-  - Renombrar es `moveto` de `pairs.toml` (y su `.bak`) a `remote.toml` en el
-    remoto, más el `catalog_path` de este dispositivo si lo nombraba a mano. Los
-    demás lo encuentran con la regla de lectura.
-- `problema_de_ruta()` y `explicar_carpeta()` aceptan los dos nombres. Los
-  textos de la ventana dicen «el catálogo» sin nombrar el fichero.
+  - Renombrar es `moveto` de `pairs.toml`, y de su `.bak` si lo hay, a
+    `remote.toml`, tras mirar la carpeta, porque `moveto` pisa el destino sin
+    preguntar. No reescribe el contenido. *Cambio:* no se toca el
+    `catalog_path` de nadie, tampoco el de este dispositivo. Con
+    `remote.toml` primero no hace falta, y tocarlo habría hecho salir los
+    `[defaults]` como «modificada aquí».
+  - El plan avisa de que un instalador de antes no encontrará el catálogo: hay
+    que usar uno de esta versión o escribir `…/remote.toml` en «Conexión».
+- `problema_de_ruta()` acepta los dos nombres, y `explicar_carpeta()` sugiere el
+  que haya dentro, `remote.toml` primero. Los textos de la ventana dicen «el
+  catálogo» sin nombrar el fichero.
 
 ### `[keychain]`
 
@@ -210,9 +236,17 @@ nombre_llave = "personal.keyx"   # solo una pista para la persona: ni ruta ni hu
   de los de KeePassXC, su clave es justo el SHA-256 del contenido
   (`FileKey::loadHashed()`): guardar esa suma sería guardar la llave. Si se elige
   el fichero equivocado, KeePassXC ya dice que la credencial no vale.
-- **Una versión vieja de prdrive ignora la tabla.** No se ha visto que el modelo
-  rechace tablas desconocidas. Lo deja fijado un test con un catálogo que la
-  lleva.
+- **Una versión vieja de prdrive la lee, pero no puede reescribirla.** El modelo
+  ignora una tabla desconocida, pero hasta la 0.5.3 el serializador
+  (`config_file.dumps()`) la perdía al escribir. Entonces `dumps_checked()` se
+  negaba con «no reproduce lo que se pidió», y en ese dispositivo no se podría
+  editar el catálogo. No pierde nada, porque se niega.
+  - La fase 0 ya escribe tal cual, al final, cualquier tabla que no conoce
+    (`TABLAS_CONOCIDAS`). Lo fijan `test_catalog` y `engine.md`.
+  - Antes de escribir `[keychain]` en el catálogo, la activación mira la flota
+    como el renombrado: que todas las notas digan `remote.toml` en `entiende`,
+    que es decir «fase 0 o posterior». Si no, avisa de quién se quedaría sin
+    poder editar el catálogo.
 - En el `sync_config.toml` del dispositivo basta con `[keychain] base = "…"`. El
   resto lo deduce el código.
 
@@ -572,7 +606,7 @@ el agente.
 
 | Fase | Qué | Ficheros |
 |---|---|---|
-| **0. `remote.toml`** (PR propio) | Nombre nuevo con la regla de §3 y «Renombrar el catálogo a remote.toml…» en «Ajustes» | `common/catalog.py`, `common/fleet.py`, `install/remote.py`, `ui/catalog_editor.py`, `ui/tk_pairs.py`, `ui/tk_doctor.py`, `common/revision.py` (los dos ficheros a la vez), sus tests, `catalogue.md`, `fleet.md`, `sync_config.example.toml`, `docs/guia/` |
+| **0. `remote.toml`** (hecha, `1e5bb51`) | Nombre nuevo con la regla de §3 y «Renombrar el catálogo a remote.toml…» en «Ajustes» | `common/catalog.py`, `common/fleet.py`, `install/remote.py`, `ui/catalog_editor.py`, `ui/tk_pairs.py`, `ui/tk_doctor.py`, `common/revision.py` (los dos ficheros a la vez), sus tests, `catalogue.md`, `fleet.md`, `sync_config.example.toml`, `docs/guia/` |
 | **1. Windows** (x64, y ARM con el x64) | Todo lo demás | `common/pins.py`, `common/kdbx.py` (nuevo), `common/llavero.py` (nuevo), `common/registro.py` (nuevo), `common/store.py` (`procesos_desde`), `common/model.py` (`[keychain]` → pareja), `common/bisync.py` (filtros; `- /.keychain/**`), `common/components.py`, `sync.py` (comprobación previa), `runsync.py` (`--llavero`, `--vigilar-llavero`, `--cerrar-llavero`; vigilancia del llavero en el servicio), `install/keepassxc_bin.py` (nuevo), `install/components.py`, `install/deploy.py` (lanzadores, `LEEME.txt`, ocultar), `install/vestibulo.py` (`.bat`), `install/device.py` (`RUIDO`), `agente.py` (`IGNORAR_CAMBIOS`, atender el llavero), `ui/conflict_editor.py`, `ui/tk_conflicts.py`, `ui/tk.py` (botón, línea, «Expulsar» sin VeraCrypt), `ui/tk_llavero.py` (nuevo), `ui/tk_doctor.py` (`ENTRADAS`), `ui/tk_install.py` (paso, «Añadir el llavero…»), `common/revision.py` (compañero que falta) |
 | **2. Linux** | §11 | `install/keepassxc_bin.py`, `common/llavero.py`, `install/vestibulo.py` (`.sh`) |
 | **3. El agente** | «Llavero» en la bandeja; aviso nativo de un conflicto del llavero; quitar las claves del registro cuando la unidad se va sin expulsar; el llavero en la raíz del equipo | `agente.py`, `ui/bandeja.py`, `common/avisos.py` |
@@ -605,6 +639,9 @@ cuadren). `catalogue.md` y `agent-scheduling.md` cuentan lo suyo.
   - `[keychain]` ignorado por el lector de antes;
   - el botón de renombrar con una flota al día, con un dispositivo viejo y con
     una nota sin versión (`fleet` falso).
+
+  Hechos en la fase 0, con un remoto de mentira que guarda ficheros y contesta
+  como rclone v1.75.1, la carrera entre una subida y el renombrado incluida.
 - `test_keepassxc_bin.py`: `fetch` falso, suma mala, `../`, sello, sustitución y
   espera por procesos; la deriva entre pins y sello (`test_components`).
 - «Combinar» con una CLI falsa (0, fallo, copia que cambió entretanto).
