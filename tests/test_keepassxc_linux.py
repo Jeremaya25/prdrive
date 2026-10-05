@@ -403,9 +403,13 @@ try:
           (hecho, dicho, orden),
           (True, [], [str(apprun), "--config", str(donde / keepassxc.INI),
                       "--localconfig", str(donde / keepassxc.INI_LOCAL), str(base)]))
-        c("  la configuración, con el proxy de lo extraído",
-          f"CustomProxyLocation={apprun.parent / keepassxc.PROXY_LINUX}"
-          in (donde / keepassxc.INI).read_text(encoding="utf-8"), True)
+        proxy = apprun.parent / keepassxc.PROXY_LINUX
+        if keepassxc.forma_ini(proxy) is not None:
+            c("  la configuración, con el proxy de lo extraído",
+              f"CustomProxyLocation={proxy}" in (donde / keepassxc.INI).read_text(
+                  encoding="utf-8"), True)
+        else:                                   # RUNNER~1, en Windows
+            print(f"  (saltado) QSettings escaparía la carpeta temporal de este equipo: {proxy}")
         c("  sin el APPIMAGE de otro, y con la raíz para lo que se exporte",
           ("APPIMAGE" in entorno, entorno["KPXC_INITIAL_DIR"]), (False, str(root)))
         c("  el navegador, con su manifiesto", leer(
