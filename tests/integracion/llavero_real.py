@@ -82,6 +82,17 @@ def esperar(condicion, tope: float, cada: float = 2.0) -> float | None:
     return None
 
 
+def hijo() -> dict[str, str]:
+    """El entorno de un proceso hijo: el de ahora, con la consola en UTF-8.
+
+    Solo la consola (`PYTHONIOENCODING`): en Windows la de un hijo con la
+    salida en una tubería es cp1252, y aquí se lee en UTF-8. `PYTHONUTF8`
+    cambiaría también el `open()` del código que se prueba, y taparía un
+    `encoding=` que falte.
+    """
+    return {**os.environ, "PYTHONIOENCODING": "utf-8"}
+
+
 def contar(salida: str) -> None:
     """Enseña la salida de un paso, sangrada."""
     for linea in salida.strip().splitlines():
@@ -91,11 +102,12 @@ def contar(salida: str) -> None:
 # --- el lado del dispositivo: SU `common/` y SU `ui/`, en otro proceso
 
 def en_dispositivo(app: Path, paso: str, *args: str, entrada: str | None = None) -> str:
-    """Corre un paso con el código del dispositivo y devuelve su última línea (lanza si falla)."""
+    """Corre un paso con el código del dispositivo; devuelve su última línea (lanza si falla)."""
     r = subprocess.run([sys.executable, str(Path(__file__).resolve()), "--en-dispositivo",
                         str(app), paso, *args], input=entrada, capture_output=True, text=True,
-                       encoding="utf-8", cwd=tempfile.gettempdir(), timeout=900)
-    contar(r.stdout + r.stderr)
+                       encoding="utf-8", errors="replace", env=hijo(), cwd=tempfile.gettempdir(),
+                       timeout=900)
+    contar((r.stdout or "") + (r.stderr or ""))
     if r.returncode != 0:
         raise RuntimeError(f"el paso «{paso}» ha salido con {r.returncode}")
     return r.stdout.strip().splitlines()[-1] if r.stdout.strip() else ""
@@ -231,13 +243,15 @@ def estado(app: Path) -> dict:
 def pasada(app: Path) -> tuple[int, str]:
     """Una pasada del llavero con el `sync.py` del dispositivo: (código, salida)."""
     r = subprocess.run([sys.executable, str(app / "sync.py"), "keychain", "-y", "--keep-logs"],
-                       capture_output=True, text=True, encoding="utf-8",
-                       cwd=tempfile.gettempdir(), timeout=600)
+                       capture_output=True, text=True, encoding="utf-8", errors="replace",
+                       env=hijo(), cwd=tempfile.gettempdir(), timeout=600)
     contar(r.stdout + r.stderr)
     return r.returncode, r.stdout
 
 
 def main() -> int:
+    # Lo que se cuenta lleva «», tildes y rutas: que no lo rompa una consola cp1252.
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     if "--en-dispositivo" in sys.argv:
         i = sys.argv.index("--en-dispositivo")
         return paso_dispositivo(Path(sys.argv[i + 1]), sys.argv[i + 2], sys.argv[i + 3:])
@@ -360,7 +374,7 @@ def main() -> int:
     print("== 7. «Expulsar»", flush=True)
     r = subprocess.run([sys.executable, str(app / "runsync.py"), "--cerrar-llavero"],
                        input="s\n", capture_output=True, text=True, encoding="utf-8",
-                       timeout=600, cwd=tempfile.gettempdir())
+                       errors="replace", env=hijo(), timeout=600, cwd=tempfile.gettempdir())
     contar(r.stdout + r.stderr)
     ver("--cerrar-llavero sale con 0", r.returncode, 0)
     e = estado(app)
