@@ -50,6 +50,7 @@ FILTERS_DIR = APP_DIR / "filters"
 LOG_DIR = APP_DIR / "logs"
 
 SYNC_PY = APP_DIR / "sync.py"  # a quien lanzan la UI y el servicio
+RUNSYNC_PY = APP_DIR / "runsync.py"  # el vigilante del llavero lo relanza
 PENWATCH_PY = APP_DIR / "penwatch.py"
 
 TIPO_UNIDAD = "unidad"
@@ -218,6 +219,8 @@ CREATE_NO_WINDOW = 0x08000000
 rclone es una app de consola: lanzada desde un proceso sin consola (`pythonw`,
 el servicio), Windows le abriría una ventana nueva por invocación.
 """
+CREATE_NEW_PROCESS_GROUP = 0x00000200
+"""Flag de creación de procesos de Windows: un proceso suelto, que no recibe el Ctrl+C de quien lo lanza."""
 
 
 _MAQUINAS_PE = {

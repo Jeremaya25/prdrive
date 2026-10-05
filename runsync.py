@@ -41,7 +41,7 @@ guarda esa memoria y se deja un `reanudar`, y el agente vuelve en cuanto se
 sale de ella.
 
 Con argumentos se pasan tal cual a `sync.py` (así `runsync.bat --doctor` sigue
-funcionando), salvo dos flags propios:
+funcionando), salvo estos flags propios:
 
     --auto [--once] [--interval N] [parejas]
         Arranca el servicio sin UI y sin preguntar, con las parejas y el
@@ -51,10 +51,13 @@ funcionando), salvo dos flags propios:
         dispositivo (modos daemon y sync).
     --daemon
         Punto de entrada interno del servicio.
+    --llavero
+        «Abrir llavero» sin la ventana: abre KeePassXC con la base del
+        dispositivo (`ui.abrir_llavero()`). Es lo que hace `Llavero.bat`.
     --vigilar-llavero
         El vigilante del llavero: atiende la base mientras viva el KeePassXC
         de la unidad, si no lo hace ya el servicio o el agente. Lo arranca
-        «Llavero».
+        «Abrir llavero».
 
 Con llavero (`[keychain]`), el servicio también lo atiende: una pasada en cada
 ciclo y, entre ciclos, la vigilancia de la base (`common/llavero.py`): lo que
@@ -100,7 +103,7 @@ DLOG_MAX_BYTES = 256 * 1024
 HOST = prefs.HOST
 
 CREATE_NO_WINDOW = model.CREATE_NO_WINDOW
-CREATE_NEW_PROCESS_GROUP = 0x00000200
+CREATE_NEW_PROCESS_GROUP = model.CREATE_NEW_PROCESS_GROUP
 """Flag de creación de procesos de Windows: grupo propio para el servicio."""
 
 
@@ -619,21 +622,16 @@ ARRANQUE_KEEPASSXC = 30.0  # segundos
 """Lo que el vigilante espera a ver el KeePassXC de la unidad antes de darlo por cerrado."""
 
 
-def parada_vigilante() -> Path:
-    """Devuelve el fichero que pide al vigilante del llavero que pare (`state/llavero.stop`)."""
-    return model.STATE_DIR / "llavero.stop"
-
-
 def vigilar_llavero() -> int:
     """Hace `--vigilar-llavero`: atiende el llavero mientras viva el KeePassXC de la unidad.
 
-    Lo arranca «Llavero» cuando no hay servicio que lo atienda. Uno a la vez
-    (`llavero.registro_vigilante()`, tomado con `O_EXCL`). Para cuando el
+    Lo arranca «Abrir llavero» cuando no hay servicio que lo atienda. Uno a la
+    vez (`llavero.registro_vigilante()`, tomado con `O_EXCL`). Para cuando el
     servicio o el agente se quedan la raíz, cuando se pide
-    (`parada_vigilante()`, «Expulsar»), cuando desaparece el dispositivo y
-    cuando KeePassXC se cierra; en este último caso hace antes la pasada que
-    quede pendiente. Corre fuera del dispositivo (cwd en el temporal), así que
-    no retiene el volumen.
+    (`llavero.parada_vigilante()`, «Expulsar»), cuando desaparece el
+    dispositivo y cuando KeePassXC se cierra; en este último caso hace antes
+    la pasada que quede pendiente. Corre fuera del dispositivo (cwd en el
+    temporal), así que no retiene el volumen.
     """
     os.chdir(tempfile.gettempdir())
     pareja = pareja_llavero()
@@ -644,7 +642,7 @@ def vigilar_llavero() -> int:
     tomado, otro = store.tomar_registro(registro, datos, _viva_aqui)
     if tomado is False:
         return 0                        # ya hay un vigilante
-    parada_vigilante().unlink(missing_ok=True)
+    llavero.parada_vigilante().unlink(missing_ok=True)
     dlog("[llavero] vigilante iniciado")
     v = llavero.Vigilancia()
     limite = time.monotonic() + ARRANQUE_KEEPASSXC
@@ -655,7 +653,7 @@ def vigilar_llavero() -> int:
             if not pen_present():
                 fin = "dispositivo no conectado"
                 break
-            if parada_vigilante().exists():
+            if llavero.parada_vigilante().exists():
                 fin = "parada pedida"
                 break
             if llavero.atiende_el_servicio():
@@ -674,37 +672,21 @@ def vigilar_llavero() -> int:
         info = store.read_json(registro)
         if info.get("pid") == os.getpid() and info.get("host") == HOST:
             registro.unlink(missing_ok=True)
-        parada_vigilante().unlink(missing_ok=True)
+        llavero.parada_vigilante().unlink(missing_ok=True)
     return 0
 
 
-def vigilante_vivo() -> bool:
-    """Indica si hay un vigilante del llavero vivo en este equipo."""
-    return _viva_aqui(store.read_json(llavero.registro_vigilante()) or None)
+def abrir_llavero() -> int:
+    """Hace `--llavero`: «Abrir llavero» sin la ventana de prdrive.
 
-
-def lanzar_vigilante() -> int | None:
-    """Arranca el vigilante del llavero, suelto y sin ventana, si hace falta.
-
-    No hace falta si el servicio o el agente atienden la raíz, o si ya hay uno.
-    Es función de módulo para que los tests la sustituyan.
-
-    Returns:
-        El pid del vigilante lanzado, o `None` si no se ha lanzado.
+    No para el servicio, a diferencia de abrir la ventana: el llavero no le
+    estorba, y si está en marcha es él quien lo atiende.
     """
-    if llavero.atiende_el_servicio() or vigilante_vivo():
-        return None
-    kwargs: dict = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL,
-                    "stderr": subprocess.DEVNULL, "close_fds": True,
-                    "cwd": tempfile.gettempdir()}
-    if os.name == "nt":
-        pythonw = Path(sys.executable).with_name("pythonw.exe")
-        exe = str(pythonw) if pythonw.exists() else sys.executable
-        kwargs["creationflags"] = CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
-    else:
-        exe = sys.executable
-        kwargs["start_new_session"] = True
-    return subprocess.Popen([exe, str(SELF), "--vigilar-llavero"], **kwargs).pid
+    try:
+        config = model.load_config()
+    except model.ConfigError as e:
+        return ui.fatal(f"El config no se puede leer:\n\n{e}")
+    return ui.abrir_llavero(config)
 
 
 ESPERA_AGENTE = 30 * 60
@@ -1037,6 +1019,9 @@ def main() -> int:
 
     if args == ["--vigilar-llavero"]:
         return vigilar_llavero()
+
+    if args == ["--llavero"]:
+        return abrir_llavero()
 
     if args and args[0] == "--daemon":
         rest = args[1:]

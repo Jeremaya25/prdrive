@@ -15,9 +15,12 @@ ventana:
   en el buzón que toca y que la ventana sigue abierta enseñando lo pedido.
 - La línea que dice qué hace este equipo al enchufar, en cada estado, y que su
   botón lleva a la pantalla del vigilante y al volver se repinta.
+- La línea del llavero: solo con llavero, «Abrir llavero» lo abre desde la
+  ventana y al volver se repinta, y sin KeePassXC el botón está apagado.
 - Que con lo más largo que puede salir (doce parejas, el botón de marcar, la
-  línea en ámbar y «Expulsar» en el pie) la ventana cabe o se desplaza, en la
-  matriz de resolución y `tk scaling` de `test_tk_medidas`.
+  línea en ámbar, la del llavero en ámbar y «Expulsar» en el pie) la ventana
+  cabe o se desplaza, en la matriz de resolución y `tk scaling` de
+  `test_tk_medidas`.
 
 Nada se enseña ni se lanza: el bucle de eventos se sustituye por lo que se
 quiere pulsar, y la salida de `sync.py` y la pantalla del vigilante por un
@@ -43,9 +46,9 @@ except Exception as e:                                   # sin entorno gráfico
 import json  # noqa: E402
 
 import ui.tk as uitk  # noqa: E402
-from common import update  # noqa: E402
-from ui import (cifrado, prefs, theme, tk_configuracion, tk_doctor,  # noqa: E402
-                tk_watch, watch)
+from common import model, update  # noqa: E402
+from ui import (cifrado, llavero_editor, prefs, theme, tk_configuracion,  # noqa: E402
+                tk_doctor, tk_llavero, tk_watch, watch)
 
 # Nada de red ni del estado de quien ejecuta el test.
 update.pending = lambda root=None: None
@@ -338,7 +341,7 @@ with sandbox():
 
 # «Pausar» / «Reanudar» con el agente como servicio (#64): la petición va al
 # buzón que toca, la ventana no se cierra y enseña lo pedido.
-from common import equipo, model  # noqa: E402
+from common import equipo  # noqa: E402
 
 with sandbox():
     buzon_raiz = model.STATE_DIR / equipo.BUZON_SERVICIO
@@ -411,6 +414,55 @@ with sandbox():
                                       True))
 
 
+# la línea del llavero, y su botón
+CON_LLAVERO = model.parse_config({
+    "defaults": {"remote": "nas"},
+    "pair": [{"name": "notas", "local": "sync-data/notas", "remote_path": "/R/notas"}],
+    "keychain": {"base": "personal.kdbx"}})
+REAL_LINEA, REAL_ABRIR = llavero_editor.linea, tk_llavero.abrir
+with sandbox():
+    estado = {"abierto": False, "boton": True}
+    abiertos: list = []
+
+    def linea_de_mentira(cfg):
+        """La línea del llavero según `estado`; sin llavero, ninguna."""
+        if cfg.llavero is None:
+            return None
+        texto = ("personal.kdbx, abierto en KeePassXC." if estado["abierto"]
+                 else "personal.kdbx, al día.")
+        return llavero_editor.Linea(texto, False, estado["boton"])
+
+    def abrir_de_mentira(root, cfg, suelto=False):
+        """Apunta que se ha abierto, y lo deja abierto."""
+        abiertos.append((cfg.llavero["base"], suelto))
+        estado["abierto"] = True
+        return True
+
+    llavero_editor.linea, tk_llavero.abrir = linea_de_mentira, abrir_de_mentira
+    try:
+        visto = {}
+
+        def pulsar_llavero(root) -> None:
+            """Mira la línea, pulsa «Abrir llavero» y la vuelve a mirar."""
+            visto["antes"] = "personal.kdbx, al día." in textos(root)
+            botones(root)["Abrir llavero"].invoke()
+            visto["después"] = "personal.kdbx, abierto en KeePassXC." in textos(root)
+
+        ventana(CON_LLAVERO, pulsar_llavero)
+        c("con llavero, su línea", visto["antes"], True)
+        c("  «Abrir llavero» lo abre desde la ventana, no suelto", abiertos,
+          [("personal.kdbx", False)])
+        c("  y al volver se repinta", visto["después"], True)
+        estado["boton"] = False
+        ventana(CON_LLAVERO, lambda root: visto.update(
+            estado=str(botones(root)["Abrir llavero"].cget("state"))))
+        c("  sin KeePassXC, el botón apagado", visto["estado"], "disabled")
+        ventana(UNA, lambda root: visto.update(sin="Abrir llavero" in botones(root)))
+        c("sin llavero, ni línea ni botón", visto["sin"], False)
+    finally:
+        llavero_editor.linea, tk_llavero.abrir = REAL_LINEA, REAL_ABRIR
+
+
 # que quepa
 #
 # La ventana principal abre su propio intérprete de Tk, así que la escala no se
@@ -431,6 +483,10 @@ PANTALLAS = (
     ("1024x600", 1024, 600, 1.3333),
 )
 DOCE = mkcfg([f"pareja-con-nombre-largo-{i}" for i in range(12)])
+LLAVERO_LARGO = llavero_editor.Linea(
+    "contraseñas-de-toda-la-familia.kdbx: la última pasada falló (ayer). Se vuelve a "
+    "intentar al abrirlo y en cada guardado.", True, True)
+"""La línea del llavero más larga que sale, en ámbar."""
 REAL_UTIL, REAL_APPLY = uitk.pantalla_util, theme.apply
 
 
@@ -460,6 +516,7 @@ try:
             REAL_APPLY(widget)
 
         theme.apply = con_escala
+        llavero_editor.linea = lambda cfg: LLAVERO_LARGO
         # Con «Expulsar» en el pie, el tercer botón: el de un dispositivo que
         # vive en un contenedor VeraCrypt. No se pulsa, solo se mide.
         cifrado.expulsion = lambda: Path("E:/Expulsar PRDRIVE.bat")
@@ -480,5 +537,6 @@ try:
 finally:
     uitk.pantalla_util, theme.apply = REAL_UTIL, REAL_APPLY
     cifrado.expulsion = lambda: None
+    llavero_editor.linea = REAL_LINEA
 
 sys.exit(c.report())

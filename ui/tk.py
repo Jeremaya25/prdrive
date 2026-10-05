@@ -902,7 +902,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
     import tkinter as tk
     from tkinter import messagebox, ttk
 
-    from . import tk_doctor, tk_pairs, tk_update, tk_watch, watch
+    from . import llavero_editor, tk_doctor, tk_llavero, tk_pairs, tk_update, tk_watch, watch
 
     theme.nitidez()
     root = tk.Tk()  # TclError aquí si no hay display -> fallback consola
@@ -972,6 +972,12 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
             vista["vigilante"] = watch.resumen()
         except Exception:                            # noqa: BLE001
             vista["vigilante"] = watch.Resumen("no_disponible")
+        # Cómo está el llavero, si lo lleva: ficheros del dispositivo y una foto
+        # de los procesos del equipo (si su KeePassXC está abierto), sin red.
+        try:
+            vista["llavero"] = llavero_editor.linea(vista["config"])
+        except Exception:                            # noqa: BLE001
+            vista["llavero"] = None
 
     leer_estado()
 
@@ -1161,6 +1167,16 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
                     and vista["casillas"][n].get()]
         if tk_repair.open_dialog(root, vista["config"], lanzar, marcadas):
             leer_estado()
+        reajustar()
+
+    def abrir_llavero() -> None:
+        """«Abrir llavero»: KeePassXC con la base del dispositivo (`tk_llavero`).
+
+        Al volver relee el estado: puede haber hecho una pasada, y la línea del
+        llavero dice si su KeePassXC está abierto.
+        """
+        tk_llavero.abrir(root, vista["config"])
+        leer_estado()
         reajustar()
 
     def expulsar() -> None:
@@ -1469,6 +1485,32 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         if todas is not None:
             todas.configure(command=marcar_todas)
         contar()
+
+        # El llavero, si lo lleva: cómo está la base y el botón que la abre. Es
+        # de cada día, así que va aquí y no detrás del engranaje. Apagado
+        # mientras sincroniza, como lo demás que toca `state/`.
+        del_llavero = vista.get("llavero")
+        if del_llavero is not None:
+            llave = ttk.Frame(frame)
+            llave.grid(row=fila, column=0, sticky="ew", pady=(14, 0))
+            llave.columnconfigure(1, weight=1)
+            fila += 1
+            img = icons.get(llave, "warn" if del_llavero.aviso else "llave", 15,
+                            theme.AVISO if del_llavero.aviso else theme.TINTA3, theme.PAPEL)
+            marca = ttk.Label(llave)
+            if img is not None:
+                marca.configure(image=img)
+                marca.image = img
+            marca.grid(row=0, column=0, sticky="nw", padx=(0, 8), pady=(1, 0))
+            ttk.Label(llave, text=del_llavero.texto,
+                      style="Aviso.TLabel" if del_llavero.aviso else "Campo.TLabel",
+                      wraplength=theme.medida(380), justify="left").grid(
+                row=0, column=1, sticky="w")
+            abre = ttk.Button(llave, text=llavero_editor.ABRIR, style="Quiet.TButton",
+                              command=abrir_llavero,
+                              state=apagado if del_llavero.abrir else "disabled")
+            theme.boton_icono(abre, "llave", theme.ACENTO, theme.PAPEL)
+            abre.grid(row=0, column=2, sticky="e", padx=(10, 0))
 
         # Las pantallas de las que se vuelve aquí.
         pantallas = ttk.Frame(frame)

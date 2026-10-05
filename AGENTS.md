@@ -33,7 +33,7 @@ Each opens with the files it covers. Claude Code also gets a one-line pointer to
 | `agent-window.md` | window ↔ agent: «Pausar/Reanudar», mailboxes, `ui/watch.py`, agent self-update |
 | `host-root.md` | `raiz_equipo.py`, `tk_equipo.py`, encrypted host root, «En este equipo» wizard |
 | `tray.md` | `ui/bandeja*.py` |
-| `llavero.md` | `llavero.py`, `kdbx.py`, `keepassxc_bin.py`, `[keychain]`: KeePassXC on the device, its code-built pair |
+| `llavero.md` | `llavero.py`, `kdbx.py`, `keepassxc.py`, `registro.py`, `keepassxc_bin.py`, `llavero_editor`, `[keychain]`: KeePassXC on the device, its code-built pair, «Abrir llavero» |
 | `commands-testing.md` | full CLI list, test harness, registry of test-replaceable indirection points |
 
 Specs and real-hardware test plans/results: `docs/superpowers/{specs,pruebas}/` (the area docs cite them). Those cite sections of the former monolithic AGENTS.md by title: each area doc quotes its former titles on its «Formerly» line.
@@ -55,9 +55,10 @@ prdrive/            the checkout; on a provisioned device it is `.prdrive/`
 │   revision (the ONE diagnosis) · progress · config_file (reads AND writes TOML) · catalog · fleet · update · components (stamps vs pins, no network)
 │   pins (pinned rclone/Python/VeraCrypt + platforms) · pairing (rclone.conf, QR payload) · vestibulo · autorun · store (JSON state, `pid_alive()`, atomic writes, `hide()`)
 │   agent side: planificador (PURE scheduler) · huella · equipo (host dir, mailbox) · moderacion · red · dbus · avisos
+│   keychain: llavero (its pass and its watch) · kdbx (is a base whole) · keepassxc (KeePassXC on this host) · registro (HKCU)
 ├── ui/             asking the user, showing results
 │   __init__ (`Choice`, `Frontend`, `start()`…) · theme · icons · qr · prefs · segundo_plano · cifrado · console · tk (TkFrontend, `modal()`/`mostrar()`/`working()`) · tk_*.py (draw only)
-│   decision halves, no Tk: pair_editor · repair · catalog_editor · remote_picker · conflict_editor · flags_editor · watch · versions_editor · volumen
+│   decision halves, no Tk: pair_editor · repair · catalog_editor · remote_picker · conflict_editor · flags_editor · watch · versions_editor · volumen · llavero_editor
 │   tray: bandeja (PURE) · bandeja_windows · bandeja_linux · tk_agente («¿Atender esta unidad?», a child of the agent)
 ├── install/        what the installer knows; no Tk, no device needed
 │   profile · rclone_bin · runtime_bin · veracrypt_bin · descarga (retries, SHA256SUMS) · platforms · components · remote (ephemeral rclone.conf, catalogue)

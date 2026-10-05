@@ -16,6 +16,8 @@ python sync.py --keep-logs     # keep logs of successful runs too
 python runsync.py              # UI (Tk, console fallback) + periodic service
 python runsync.py --auto       # periodic service with the service's config, no UI
 python runsync.py --auto --once  # one pass of the service's pairs, then exit
+python runsync.py --llavero   # «Abrir llavero» without the window (what Llavero.bat runs)
+python runsync.py --vigilar-llavero  # the keychain watcher (started by «Abrir llavero»)
 python runsync.py --doctor     # any other args pass straight through to sync.py
 
 python penwatch.py install|status|probe|uninstall   # the watcher, per machine/user
@@ -55,11 +57,12 @@ Verification is `tests/run_all.py` (each script in its own process), `--doctor` 
 
 Everything that touches the network, a real device or the desktop is a **module-level indirection point so every test can replace it**. Keep new ones in that shape. Registry:
 
-- **Network and downloads**: `catalog.run()` (`fleet` and `remote_picker` go through it), `update.fetch()`, `rclone_bin.fetch()`, `runtime_bin.fetch()`, `veracrypt_bin.fetch()`/`ensure_veracrypt()`, `descarga.esperar()`.
+- **Network and downloads**: `catalog.run()` (`fleet` and `remote_picker` go through it), `update.fetch()`, `rclone_bin.fetch()`, `runtime_bin.fetch()`, `veracrypt_bin.fetch()`/`ensure_veracrypt()`, `keepassxc_bin.fetch()`, `descarga.esperar()`.
 - **Window and desktop actions**: `ui.abrir()`, `runsync.notificar_fallo()`, `tk.mostrar()`/`confirmar_plan()`, `tk.proteger_de_capturas()`/`tk._afinidad_de_pantalla()`, `segundo_plano.lanzar()` (tests set it to `en_el_acto()`), `tk_equipo.escritorio()`, `pairing.construir()`, `watch.resumen()`, `watch.pedir_al_agente()`/`pedir_a_la_raiz()`, `cifrado.lanzar_expulsion()`/`pedir_bloqueo()`, `_preguntar_borrado()`.
 - **Files and conflicts**: `conflicts.recorrer()`, `conflict_editor.mover()`/`borrar()`.
 - **Components and VeraCrypt**: `components.rclone_en_uso()`/`runtime_en_uso()`/`veracrypt_en_uso()`/`lanzar_suelto()`/`esperar_a()`/`procesos_desde()`, `common.components.raiz_fisica()`, `traveler.espacio_libre()`, `vestibulo.raiz_fisica()`/`retenido()`, `crypto.sistema_de_ficheros()`/`bytes_escritos()`/`_procesos()`, `penwatch.installed_veracrypt()`.
-- **Host OS**: `_win_volumes()`, `_leer_estado_bitlocker()`.
+- **Host OS**: `_win_volumes()`, `_leer_estado_bitlocker()`, `store.procesos()` (under `procesos_desde()`), `registro.leer()`/`escribir()`/`borrar()`/`vacia()` (HKCU).
+- **The keychain**: `llavero.dormir()`/`pasada()`/`lanzar_vigilante()`/`keepassxc_abierto()`/`atiende_el_servicio()`, `keepassxc.paquete_del_equipo()`/`lanzar()`/`otro_abierto()`, `tk_llavero.avisar()`/`elegir_llave()`.
 - **The agent**: `agente.lanzar()`/`hay_pantalla()`/`avisar()`/`abrir_contenedor()`/`diario()`/`poner_bandeja()`/`explorar()`/`arrancar_agente()`/`poner_red()`/`rclone_propio()`/`veracrypt_propio()`/`procesos()`, `agente.hilo()` (the version check and the `watch` walks), `agente.huella_local()` (the photo of a watched folder, over `huella.de_carpeta()`), `agente.buscar_version()`/`ejecutar()`/`cache_version()`, `avisos.enviar()`, `moderacion.energia()`/`red_medida()`, `runsync.pedir_reanudar()`/`agente_sirve()`, `equipo.DIR`.
 - **Installing the agent and the host root**: `install.pintar_iconos`, `install.agente.conseguir_runtime()`/`lanzar()`/`autostart_file()`/`acceso_menu()`/`crear_lnk()`/`matar_arbol()`/`conseguir_rclone()`/`conseguir_veracrypt()`, `raiz_equipo.carpetas_sincronizadas()`/`veracrypt_instalado()`/`abrir_o_crear()`/`veracrypt_portatil()`.
 - **Trays and network notices**: `bandeja_windows.Api`, the Linux tray's `conectar`/`conectar_sistema`, `red.AvisosDeRed`'s `api` (`red.ApiWindows`)/`conectar_sistema`/`conectar_netlink`.

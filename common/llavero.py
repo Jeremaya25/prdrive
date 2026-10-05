@@ -14,8 +14,8 @@ Quién lo atiende, una sola cosa a la vez (`Vigilancia`, sus reglas puras):
   trata como una pareja con `watch = true`; el servicio de runsync, con
   `Vigilancia` en su espera entre ciclos.
 - Si no, el vigilante del llavero (`runsync.py --vigilar-llavero`), que arranca
-  «Llavero» y vive lo mismo que el KeePassXC de la unidad. Un registro propio
-  (`registro_vigilante()`) impide que haya dos.
+  «Abrir llavero» (`lanzar_vigilante()`) y vive lo mismo que el KeePassXC de la
+  unidad. Un registro propio (`registro_vigilante()`) impide que haya dos.
 
 Lo de antes de cada pasada (`preparar()`, lo llama `sync.py`):
 - El compañero fijo, `LEEME.txt`: con una sola base, un guardado sería «han
@@ -30,8 +30,12 @@ from __future__ import annotations
 
 import calendar
 import json
+import os
 import re
 import socket
+import subprocess
+import sys
+import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -47,8 +51,8 @@ LEEME_TEXTO = (
     "dispositivo. prdrive la sincroniza sola con la carpeta keychain/ del\n"
     "catálogo, en el remoto.\n"
     "\n"
-    "No la toques a mano. Para abrir la base usa «Llavero», en la ventana de\n"
-    "prdrive o en Llavero.bat: así KeePassXC se abre con la configuración que\n"
+    "No la toques a mano. Para abrir la base usa «Abrir llavero», en la ventana\n"
+    "de prdrive, o Llavero.bat: así KeePassXC se abre con la configuración que\n"
     "viaja en la unidad y lo que guardes sube solo.\n"
     "\n"
     "Este fichero no cambia nunca. Está aquí para que una base guardada no\n"
@@ -400,3 +404,54 @@ def keepassxc_abierto(app_dir: Path | str | None = None) -> bool:
             if Path(exe).name.lower() == components.KEEPASSXC_EXE.lower():
                 return True
     return False
+
+
+def parada_vigilante() -> Path:
+    """Devuelve el fichero que pide al vigilante del llavero que pare (`state/llavero.stop`)."""
+    return model.STATE_DIR / "llavero.stop"
+
+
+def vigilante_vivo() -> bool:
+    """Indica si hay un vigilante del llavero vivo en este equipo."""
+    return vivo_aqui(store.read_json(registro_vigilante()) or None)
+
+
+def lanzar_vigilante() -> int | None:
+    """Arranca el vigilante del llavero, suelto y sin ventana, si hace falta.
+
+    No hace falta si el servicio o el agente atienden la raíz, o si ya hay uno.
+    Lo llama «Abrir llavero», desde la ventana o desde `runsync.py --llavero`.
+    Es función de módulo para que los tests la sustituyan.
+
+    Returns:
+        El pid del vigilante lanzado, o `None` si no se ha lanzado.
+    """
+    if atiende_el_servicio() or vigilante_vivo():
+        return None
+    kwargs: dict = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL,
+                    "stderr": subprocess.DEVNULL, "close_fds": True,
+                    "cwd": tempfile.gettempdir()}
+    if os.name == "nt":
+        pythonw = Path(sys.executable).with_name("pythonw.exe")
+        exe = str(pythonw) if pythonw.exists() else sys.executable
+        kwargs["creationflags"] = model.CREATE_NO_WINDOW | model.CREATE_NEW_PROCESS_GROUP
+    else:
+        exe = sys.executable
+        kwargs["start_new_session"] = True
+    return subprocess.Popen([exe, str(model.RUNSYNC_PY), "--vigilar-llavero"], **kwargs).pid
+
+
+def pasada() -> tuple[int, str]:
+    """Hace una pasada del llavero sin terminal (`sync.py keychain`): «traer lo último».
+
+    Con stdin cerrado: si la pareja pidiera `--resync`, se salta, como en el
+    servicio. Es función de módulo para que los tests no lancen nada.
+
+    Returns:
+        `(código de sync.py, su salida)`.
+    """
+    kwargs: dict = {"creationflags": model.CREATE_NO_WINDOW} if os.name == "nt" else {}
+    proc = subprocess.run([sys.executable, str(model.SYNC_PY), model.LLAVERO],
+                          stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", **kwargs)
+    return proc.returncode, (proc.stdout or "") + (proc.stderr or "")

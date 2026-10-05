@@ -227,31 +227,31 @@ try:
         runsync.vigilar_llavero()
         c.contains("con el servicio vivo, el vigilante se va", diario[-1], "servicio de la raíz")
         c("  sin hacer pasadas", pasadas, [])
-        c("  y no se lanza otro", runsync.lanzar_vigilante(), None)
+        c("  y no se lanza otro", llavero.lanzar_vigilante(), None)
         model.daemon_lock().unlink()
 
         # Dos a la vez no: el registro lo tiene el primero.
         store.write_json(llavero.registro_vigilante(),
                          {"pid": os.getpid(), "host": runsync.HOST})
         c("con un vigilante vivo no arranca otro", (runsync.vigilar_llavero(),
-                                                   runsync.vigilante_vivo()), (0, True))
-        c("  ni se lanza", runsync.lanzar_vigilante(), None)
+                                                   llavero.vigilante_vivo()), (0, True))
+        c("  ni se lanza", llavero.lanzar_vigilante(), None)
         llavero.registro_vigilante().unlink()
 
         # «Expulsar» le pide que pare; una parada vieja, de antes de arrancar, no.
-        runsync.parada_vigilante().touch()
+        llavero.parada_vigilante().touch()
         diario.clear()
         inicio = reloj.t
 
         def abierto_hasta_expulsar(app_dir=None):
             if reloj.t > inicio + 30:
-                runsync.parada_vigilante().touch()
+                llavero.parada_vigilante().touch()
             return True
         llavero.keepassxc_abierto = abierto_hasta_expulsar
         runsync.vigilar_llavero()
         c("una parada vieja no cuenta, y la de «Expulsar» sí",
           ("parada pedida" in diario[-1], reloj.t - inicio > 30), (True, True))
-        c("  y no se queda detrás", runsync.parada_vigilante().exists(), False)
+        c("  y no se queda detrás", llavero.parada_vigilante().exists(), False)
 finally:
     runsync.time, runsync.run_pair_quiet = real_time, real_correr
     llavero.keepassxc_abierto = real_abierto

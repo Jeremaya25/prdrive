@@ -406,13 +406,23 @@ def procesos_desde(carpeta: Path) -> dict[int, str]:
     except OSError:
         return {}
     salida: dict[int, str] = {}
-    for pid, exe in _ejecutables():
+    for pid, exe in procesos().items():
         try:
             Path(exe).resolve().relative_to(base)
         except (ValueError, OSError):
             continue
         salida[pid] = exe
     return salida
+
+
+def procesos() -> dict[int, str]:
+    """Devuelve `{pid: ejecutable}` de todos los procesos del equipo que se dejan mirar.
+
+    Es lo que recorre `procesos_desde()`; el llavero lo pregunta además para
+    saber si hay otro KeePassXC abierto, que no corre desde la unidad. Es
+    función de módulo para que los tests la sustituyan.
+    """
+    return dict(_ejecutables())
 
 
 def _ejecutables() -> list[tuple[int, str]]:
