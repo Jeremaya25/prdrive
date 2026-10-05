@@ -102,6 +102,7 @@ SM_CXSMICON = 49
 IMAGE_ICON, LR_LOADFROMFILE = 1, 0x10
 DI_MASK, DI_IMAGE, DI_NORMAL = 0x1, 0x2, 0x3
 TPM_RIGHTBUTTON, TPM_NONOTIFY, TPM_RETURNCMD = 0x2, 0x80, 0x100
+TPM_RIGHTALIGN, TPM_BOTTOMALIGN = 0x8, 0x20
 PRIMER_ID = 100
 """El primer id de las entradas del menú: los que devuelve `TrackPopupMenu`."""
 
@@ -774,7 +775,10 @@ class Api:
             punto = self.wt.POINT()
             u.GetCursorPos(self.ct.byref(punto))
             u.SetForegroundWindow(hwnd)
-            elegido = u.TrackPopupMenu(raiz, TPM_RIGHTBUTTON | TPM_NONOTIFY | TPM_RETURNCMD,
+            # La bandeja está en una esquina inferior derecha: el menú crece
+            # hacia arriba y hacia la izquierda del cursor, no hacia fuera.
+            elegido = u.TrackPopupMenu(raiz, TPM_RIGHTBUTTON | TPM_NONOTIFY | TPM_RETURNCMD
+                                       | TPM_RIGHTALIGN | TPM_BOTTOMALIGN,
                                        punto.x, punto.y, 0, hwnd, None)
             u.PostMessageW(hwnd, WM_NULL, 0, 0)
         finally:
