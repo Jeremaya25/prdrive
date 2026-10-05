@@ -54,6 +54,10 @@ Cómo trabaja, vuelta a vuelta (`Agente.vuelta()`):
   la pausa de la ventana de la raíz, su ventana abierta) y, al acabar, se
   vuelve a tomar la foto para que lo que escribió rclone no la dispare otra
   vez. No ve los cambios del remoto: esos esperan al intervalo.
+- **Atiende el llavero** de una raíz con `[keychain]` como una pareja
+  vigilada, se elija lo que se elija. Mientras su KeePassXC está abierto, lo de
+  otro dispositivo se trae cada 5 min (también en modo `sync`), y al abrirlo y
+  al cerrarlo hay una pasada enseguida.
 - **Ejecuta** cada pasada como el `sync.py` de esa raíz, hijo, con el Python
   del agente y el directorio de trabajo fuera de la raíz: cada raíz ejecuta su
   propio código, un rclone colgado no tumba al agente y entre pasadas no queda
@@ -141,8 +145,8 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 import penwatch  # noqa: E402
-from common import (APP_NAME, avisos, catalog, components, equipo, model,  # noqa: E402
-                    moderacion, store, update, vestibulo)
+from common import (APP_NAME, avisos, catalog, components, equipo, llavero,  # noqa: E402
+                    model, moderacion, store, update, vestibulo)
 from common import huella as huellas  # noqa: E402  (`huella()` es la del código de una raíz)
 from common import planificador as pl  # noqa: E402
 from common.store import pid_alive  # noqa: E402
@@ -344,6 +348,16 @@ def hilo(funcion) -> None:
     Punto de indirección: los tests la corren en el sitio.
     """
     threading.Thread(target=funcion, daemon=True).start()
+
+
+def keepassxc_abierto(raiz: Path) -> bool:
+    """Indica si el KeePassXC de esa raíz está abierto en este equipo.
+
+    Es `llavero.keepassxc_abierto()` sobre su `.prdrive/`: en Windows recorre
+    todos los procesos del equipo. Punto de indirección: los tests dicen si lo
+    está, sin procesos de verdad.
+    """
+    return llavero.keepassxc_abierto(app(raiz))
 
 
 def huella_local(ruta: Path, tope: int, ignorar: tuple[str, ...]) -> pl.Huella | None:
@@ -1158,6 +1172,9 @@ class Agente:
         vigiladas: Lo que se recuerda de cada pareja que pide `watch`, por
             `(raíz, pareja)`; se olvida al irse la raíz.
         muestreo: El muestreo de carpetas en marcha, si lo hay.
+        keepassxc: Las raíces atendidas con su KeePassXC abierto en este
+            equipo, por id (`_mirar_keepassxc()`).
+        keepassxc_mirado: Cuándo se miró.
     """
     reloj: Any = time.time
     ajustes: equipo.Ajustes = field(default_factory=equipo.leer_ajustes)
@@ -1202,6 +1219,8 @@ class Agente:
     cambios: pl.PoliticaCambios = field(default_factory=pl.PoliticaCambios)
     vigiladas: dict[tuple[str, str], pl.Vigilada] = field(default_factory=dict)
     muestreo: Muestreo | None = None
+    keepassxc: set[str] = field(default_factory=set)
+    keepassxc_mirado: float = -math.inf
 
     def vuelta(self, recorrer: bool = True) -> pl.Decision | None:
         """Hace una vuelta del agente y devuelve lo que decidió lanzar, si algo.
@@ -1237,6 +1256,7 @@ class Agente:
         self._actualizaciones(ahora)
         self._leer_entorno(ahora)
         self._mirar_version(ahora)
+        self._mirar_keepassxc(ahora)
         self._vigilar(ahora)
         decision = None
         if self.pasada is None and not self.terminar and not self._heredada():
@@ -1449,6 +1469,7 @@ class Agente:
         self.sospechas = {k: v for k, v in self.sospechas.items() if k[0] != uid}
         self.sin_red_avisado = {k for k in self.sin_red_avisado if k[0] != uid}
         self._olvidar_vigiladas(uid)
+        self.keepassxc.discard(uid)
         if con.actualizacion is not None and con.actualizacion.proc is not None:
             # El hijo sigue solo y fallará; al volver, la huella dirá si la tocó.
             diario(f"{con.nombre}: se ha ido mientras se actualizaba")
@@ -1843,7 +1864,9 @@ class Agente:
 
         Las que tienen nuestro lock y su servicio y no se están bloqueando ni
         actualizando. De la raíz de la pasada cortada se quita su pareja
-        mientras espera.
+        mientras espera. Con su KeePassXC abierto, el llavero trae lo de otro
+        dispositivo cada `llavero.REMOTO_ABIERTO` como mucho, también en modo
+        `sync`.
         """
         raices = []
         cortada = self._cortada()
@@ -1856,8 +1879,58 @@ class Agente:
             parejas = con.servicio.parejas
             if cortada is not None and cortada.get("raiz") == con.id:
                 parejas = tuple(p for p in parejas if p.nombre != cortada.get("pareja"))
+            if con.id in self.keepassxc:
+                parejas = tuple(replace(p, intervalo=min(intervalo, llavero.REMOTO_ABIERTO))
+                                if p.nombre == model.LLAVERO else p for p in parejas)
             raices.append(pl.Raiz(con.id, parejas, intervalo))
         return raices
+
+    def _mirar_keepassxc(self, ahora: float) -> None:
+        """Mira en qué raíces atendidas está abierto su KeePassXC (`keepassxc_abierto()`).
+
+        Se mira cada `PoliticaCambios.sondeo`, no en cada vuelta: en Windows es
+        recorrer todos los procesos del equipo. Solo en las raíces que sirve el
+        agente y llevan llavero; las demás las atiende su vigilante.
+
+        Al abrirse y al cerrarse, toca una pasada del llavero enseguida (su
+        marca vuelve a «nunca intentada»): al abrirse trae lo último antes de
+        que se desbloquee la base, porque «Abrir llavero» no hace pasada si el
+        agente atiende la raíz; al cerrarse sube lo que se guardó justo antes,
+        que en modo `sync` no vigila nadie más. Si ya hay una pasada del
+        llavero en marcha, el cambio se deja para la próxima mirada: esa
+        pasada pudo empezar antes.
+        """
+        if ahora - self.keepassxc_mirado < self.cambios.sondeo:
+            return
+        self.keepassxc_mirado = ahora
+        servidas: set[str] = set()
+        abiertos: set[str] = set()
+        for con in self.conexiones.values():
+            if con.lock is None or con.servicio is None \
+                    or not any(p.nombre == model.LLAVERO for p in con.servicio.parejas):
+                continue
+            servidas.add(con.id)
+            try:
+                if keepassxc_abierto(con.raiz):
+                    abiertos.add(con.id)
+            except OSError as e:
+                diario(f"{con.nombre}: no he podido mirar si KeePassXC está abierto: {e}")
+        en_marcha = (self.pasada.tarea.raiz, self.pasada.tarea.pareja) \
+            if self.pasada is not None else None
+        # Una raíz que el agente deja de servir (su ventana, una pausa) se
+        # olvida sin más: no es que KeePassXC se haya cerrado.
+        for uid in (abiertos ^ self.keepassxc) & servidas:
+            if en_marcha == (uid, model.LLAVERO):
+                # Su cambio se trata en la próxima mirada, con la pasada acabada.
+                abiertos.symmetric_difference_update({uid})
+                continue
+            marca = self.marcas.get((uid, model.LLAVERO), pl.Marca())
+            self.marcas[(uid, model.LLAVERO)] = pl.Marca(None, marca.fallos)
+            nombre = self.conexiones[uid].nombre
+            diario(f"{nombre}: KeePassXC abierto; el llavero se trae ahora y cada "
+                   f"{llavero.REMOTO_ABIERTO / 60:.0f} min" if uid in abiertos
+                   else f"{nombre}: KeePassXC cerrado; se sube lo que quede del llavero")
+        self.keepassxc = abiertos
 
     def _cortada(self) -> dict | None:
         """Devuelve la pasada que cortó el instalador, mientras su pareja espere.

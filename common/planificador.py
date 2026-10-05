@@ -111,10 +111,14 @@ class Pareja:
         remoto: El remote de rclone al que va; agrupa el «sin conexión».
         vigila: Si pide sincronizarse al cambiar sus ficheros locales
             (`model.pide_watch()`).
+        intervalo: Sus propios segundos entre pasadas, si no son los de su
+            raíz: el llavero con KeePassXC abierto trae lo de otro dispositivo
+            cada 5 min, también en una raíz en modo `sync`.
     """
     nombre: str
     remoto: str = ""
     vigila: bool = False
+    intervalo: float | None = None
 
 
 @dataclass(frozen=True)
@@ -203,6 +207,11 @@ class Decision:
     tarea: Tarea | None
     mirar_en: float
     retenido: str | None = None
+
+
+def intervalo_de(raiz: Raiz, pareja: Pareja) -> float:
+    """Devuelve los segundos entre pasadas de una pareja: los suyos o los de su raíz."""
+    return raiz.intervalo if pareja.intervalo is None else pareja.intervalo
 
 
 def espera(intervalo: float, fallos: int, tope: float = 4 * HORA) -> float:
@@ -317,13 +326,14 @@ def decidir(raices: Iterable[Raiz], marcas: Mapping[tuple[str, str], Marca],
             if (raiz.clave, pareja.remoto) in entorno.sin_conexion:
                 continue
             marca = marcas.get((raiz.clave, pareja.nombre), Marca())
+            intervalo = intervalo_de(raiz, pareja)
             por_cambios = False
             if marca.ultimo_intento is None:
                 toca = -math.inf        # nunca se ha intentado: ya
             else:
-                toca = marca.ultimo_intento + espera(raiz.intervalo, marca.fallos,
+                toca = marca.ultimo_intento + espera(intervalo, marca.fallos,
                                                      politica.tope_espera)
-                if pareja.vigila and not math.isinf(raiz.intervalo):
+                if pareja.vigila and not math.isinf(intervalo):
                     antes = toca_por_cambios(
                         vigiladas.get((raiz.clave, pareja.nombre)), marca, cambios)
                     if antes < toca:
@@ -665,8 +675,9 @@ def a_recorrer(raices: Iterable[Raiz], vigiladas: Mapping[tuple[str, str], Vigil
     """Devuelve las parejas cuya carpeta toca recorrer ahora.
 
     Solo cuentan las de una raíz atendible, que piden `watch`, no están
-    abandonadas y no son de una raíz en modo `sync` (una pasada por conexión y
-    ya: el intervalo infinito dice que nadie quiere más).
+    abandonadas y no tienen un intervalo infinito (el de una raíz en modo
+    `sync`, salvo que la pareja traiga el suyo: una pasada por conexión y ya,
+    nadie quiere más).
 
     Args:
         raices: Las raíces que atiende el agente.
@@ -688,11 +699,12 @@ def a_recorrer(raices: Iterable[Raiz], vigiladas: Mapping[tuple[str, str], Vigil
     ocupadas = set(ocupadas)
     salida: list[tuple[str, str]] = []
     for raiz in raices:
-        if not raiz.atendible or math.isinf(raiz.intervalo):
+        if not raiz.atendible:
             continue
         for pareja in raiz.parejas:
             clave = (raiz.clave, pareja.nombre)
-            if not pareja.vigila or clave in ocupadas:
+            if not pareja.vigila or clave in ocupadas \
+                    or math.isinf(intervalo_de(raiz, pareja)):
                 continue
             v = vigiladas.get(clave, Vigilada())
             if v.abandonada:
