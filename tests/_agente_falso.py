@@ -17,7 +17,7 @@ from _harness import tmpdir
 
 import agente
 import penwatch
-from common import equipo, moderacion, store
+from common import equipo, expulsar, moderacion, store
 
 
 class Proc:
@@ -52,6 +52,12 @@ ABIERTOS: list[Path] = []
 """Los contenedores que se han pedido abrir."""
 RAICES: list[Path] = []
 """Lo que «encuentra» el recorrido."""
+COMPATIBLES: set[Path] = set()
+"""Las raíces cuyo volumen `expulsar.compatible()` da por expulsable."""
+EXPULSADAS: list[Path] = []
+"""Las raíces que se han mandado expulsar."""
+RESULTADO_EXPULSAR = [expulsar.Resultado(True, "Ya puedes quitarla.")]
+"""Lo que contesta `expulsar.expulsar()`, en una lista para poder cambiarlo."""
 RELOJ = [1_000_000.0]
 """La hora, en una lista de un elemento para poder avanzarla (`pasar()`)."""
 PANTALLA = [True]
@@ -83,6 +89,8 @@ def preparar() -> Path:
     # Ni los procesos de verdad: el KeePassXC de una raíz que se va (Linux).
     agente.cerrar_keepassxc_huerfano = lambda raiz: 0
     agente.keepassxc_huerfano_abierto = lambda raiz: False
+    expulsar.compatible = lambda raiz: Path(raiz) in COMPATIBLES
+    expulsar.expulsar = lambda raiz: EXPULSADAS.append(Path(raiz)) or RESULTADO_EXPULSAR[0]
     # Su rclone: el que pasa a sus hijos y con el que sondea (no hace nada).
     rclone = equipo.DIR / "rclone" / "v0" / agente.model.rclone_name()
     rclone.parent.mkdir(parents=True, exist_ok=True)
