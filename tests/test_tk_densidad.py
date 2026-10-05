@@ -61,10 +61,20 @@ except Exception as e:                                   # sin entorno gráfico
 #
 # 1,3333 es `tk scaling` a 96 ppp, que es la densidad para la que están
 # pensadas las medidas del diseño; 2,6667 es la misma pantalla al 200 %.
+#
+# Tk no se queda con la escala que se le pide: la guarda como el tamaño de la
+# pantalla en milímetros, que son enteros, y aplica la que salga de ahí. Con
+# 2,6667, Xvfb aplica 2,6719 y `medida(760)` mide 1523 px, no 1521; Windows
+# redondea a su manera. Lo que se vigila es que la medida siga a la escala que
+# Tk aplica de verdad (570 puntos por ella, a un píxel de redondeo), y que esa
+# escala sea la pedida, a un 1 %.
 for escala, esperado in ((1.3333, 760), (2.6667, 1521)):
     raiz.tk.call("tk", "scaling", escala)
+    aplicada = float(raiz.tk.call("tk", "scaling"))
+    px = raiz.winfo_pixels(theme.medida(760))
     c(f"medida(760) son {esperado} px con la escala en {escala}",
-      round(raiz.winfo_pixels(theme.medida(760)) / 3), round(esperado / 3))
+      (abs(px - 570 * aplicada) <= 1, abs(aplicada - escala) <= escala / 100),
+      (True, True))
 
 
 # 3. la fila de la tabla cabe la letra que la pinta
