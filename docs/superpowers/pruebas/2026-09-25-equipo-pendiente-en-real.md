@@ -276,3 +276,23 @@ cambiado sus ficheros» y «deja de vigilarse»), el `state/daemon.log` de la ra
 | F6 | W, L | Una pareja cuya carpeta es un recurso de red montado (SMB, NFS, una unidad de rclone): F1 y F2; y cortar la red a mitad de un recorrido. | Un recorrido que se cuelga deja su hilo esperando (`scandir` sobre una carpeta de red caída puede tardar minutos) y, mientras, no se pide otro para ninguna pareja, pero la vuelta, las pasadas y la bandeja siguen y el intervalo manda. Apuntar cuánto tarda en volver y si luego retoma solo. | `Agente.muestreo` (uno a la vez), `huella.de_carpeta()` (un `OSError` es «no sé», no un cambio) |
 | F7 | W, L | Una pareja bisync con `watch = true` y `versions = true`, y otra con `local = "."`: cambiar algo en el remoto para que la pasada BAJE ficheros; borrar un fichero local para que la pasada guarde una versión. | Tras cada pasada, ninguna pasada más: ni lo que bajó, ni lo que cayó en `.prversions/`, ni lo que la pasada escribió en `.prdrive\state\` de la `local = "."`, la dispara. Un cambio hecho a mano MIENTRAS corría la pasada espera al intervalo (es el precio apuntado). | `Agente._rehacer_foto()`, `pl.tras_pasada()`, `huella.IGNORAR`, `agente.IGNORAR_CAMBIOS` |
 | F8 | W, L | Un cambio con el equipo en pausa (bandeja), con batería por debajo del 20 %, en una red de uso medido, con la raíz pausada desde su ventana y con su ventana abierta; luego volver a lo normal. | Sin pasada y sin recorrer la carpeta mientras dura (el estado dice por qué retiene). Al volver, el primer recorrido ve el cambio y la pasada sale a los 20-35 s; si el cambio se hizo desde la ventana, no sale ninguna de más. | `pl.a_recorrer(retenido=)`, `Conexion.motivo`, `Agente._vigilar()` (`vigiladas` se olvida al dejar de servirse) |
+
+## Poner al día una raíz con la versión del agente
+
+Una raíz de la lista con un programa anterior al del agente lleva «Actualizar a
+la vX» en su desplegable (`Agente._actualizable()`), y un aviso lo dice una vez
+por versión suya. Lo pide `PIDE_ACTUALIZAR_UNIDAD`; un hijo suelto (`agente.py
+actualizar-raiz`) baja el tag DEL AGENTE y ejecuta su `prdrive-install.py
+--update` sobre la raíz. Está probado con procesos y descargas de mentira; lo
+que falta es el instalador de verdad sobre un pendrive de verdad. Hace falta un
+agente de una release publicada y unidades con una versión anterior (una
+0.5.x y una 0.4.x de la lista; y una de otra versión que NO esté en la lista).
+
+| Código | Dónde | Qué hacer | Qué se espera | Código a prueba |
+|---|---|---|---|---|
+| A1 | W, L | Enchufar la 0.5.x de la lista. | Un aviso «… tiene la 0.5.x» una vez (ni al volver a enchufarla mientras viva el agente). En su desplegable, «Actualizar a la vX» encima de «Versión 0.5.x»; la que no está en la lista no lo lleva. | `Agente._avisar_actualizable()`, `bandeja._poner_al_dia()` |
+| A2 | W, L | «Actualizar a la vX» con una pasada larga suya en marcha. | «Actualizando a la vX…» apagado y Configurar/Abrir/Sincronizar apagados; no empieza hasta que acaba la pasada (`daemon.lock.json` desaparece y entonces el diario dice «actualizándola»). Al acabar: «… actualizada a la vX», el desplegable dice «Versión vX», **no** pregunta por su código y vuelve a sincronizar. `agente.json` lleva su huella nueva; `sync_config.toml`, `state\`, `keys\`, `bin\` y `runtime\` no se han tocado. | `_actualizaciones()`, `_fin_de_actualizacion()`, `cmd_actualizar_raiz()`, `--update` |
+| A3 | W, L | Con su ventana abierta, «Actualizar a la vX» desde la bandeja. | Un aviso «tiene su ventana abierta» y nada más; cerrada la ventana, pedirlo otra vez funciona. | `Agente._con_ventana()` |
+| A4 | W, L | La 0.4.x de la lista. | El aviso de que no se atiende dice cómo ponerla al día (desde su desplegable, o `agente.py actualizar <id>` sin bandeja). Tras «Actualizar», se atiende sin preguntar. | `_conectar()`, `version_vieja()` |
+| A5 | W, L | Sin red; y desenchufando la unidad a mitad. | Sin red: «no he podido actualizarla» y se sigue sincronizando como estaba. Desenchufada a mitad: al volver a enchufarla, si su código llegó a cambiar pregunta «su código ha cambiado», y si no, sigue como estaba; nunca sincroniza con un código a medias sin preguntar. | `SIN_TOCAR`, `Conexion.a_medias`, `huella()` |
+| A6 | W | Una unidad en un contenedor VeraCrypt de la lista, abierta. | Igual que A2, en la letra del volumen abierto; el vestíbulo (`VeraCrypt\`, `Abrir PRDRIVE.bat`) no se toca. | `--update` sobre `con.raiz` |

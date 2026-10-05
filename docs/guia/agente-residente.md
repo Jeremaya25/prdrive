@@ -76,7 +76,17 @@ agente»**. El diseño completo está en
   ejecuta su instalador (`prdrive-install.py --update-agente`): el agente nuevo
   se pone al lado del viejo, se vuelve a registrar y arranca, y la raíz de este
   equipo, si está abierta, pasa también a la versión nueva. Su lista y sus
-  ajustes no se tocan. Volver a pasar el asistente con el agente de la misma
+  ajustes no se tocan.
+- **Pone al día tus unidades.** Si una unidad de su lista (o la raíz de este
+  equipo) lleva un programa más antiguo que el del agente, lo avisa una vez y su
+  desplegable en la bandeja ofrece **«Actualizar a la vX»** (o `python agente.py
+  actualizar <id>`): baja el código de la versión del agente y lo pone en la
+  unidad, como haría su ventana, conservando su configuración, sus claves y su
+  estado. Espera a que acabe la pareja en curso y no la sincroniza mientras
+  tanto; con su ventana abierta no lo hace (actualízala desde ella). Al acabar
+  no vuelve a preguntar por su código, salvo que ya hubiera cambiado antes.
+  Sirve también para las unidades de antes de la 0.5.0, que así vuelve a
+  atender. Volver a pasar el asistente con el agente de la misma
   versión no lo reinstala: solo le pide lo nuevo.
 - **Se modera solo.** Con batería por debajo del 20 % o en una red de uso medido
   no lanza nada; si un remoto no contesta, deja de lanzar pareja tras pareja
@@ -132,6 +142,7 @@ python agente.py abrir [id]           # la ventana de la raíz (o arranca el age
 python agente.py desbloquear | bloquear          # la raíz cifrada de este equipo
 python agente.py ajuste pedir_al_iniciar no      # no pedir su contraseña al entrar
 python agente.py actualizar           # la versión nueva, como «Actualizar» de la bandeja
+python agente.py actualizar <id>      # esa unidad, a la versión del agente
 ```
 
 Esas órdenes no tocan nada por sí mismas: dejan la petición en el buzón del

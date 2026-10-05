@@ -416,15 +416,22 @@ def download(tag: str, destino: Path | str, progreso: Progreso | None = None) ->
     return raiz
 
 
-def apply_command(staged: Path | str, device_root: Path | str) -> list[str]:
+def apply_command(staged: Path | str, device_root: Path | str,
+                  python: str | None = None) -> list[str]:
     """Devuelve la orden que instala lo descargado, que se ejecuta DESDE lo descargado.
 
     Usa `sys.executable` porque bajo la ventana es `pythonw.exe` y así no
     parpadea ninguna consola. Lleva `-u` porque `output_window` lee línea a
     línea, nadie hace `flush()` en el proyecto y sin esto las líneas llegarían
     todas de golpe al terminar.
+
+    Args:
+        staged: Carpeta con el código descargado.
+        device_root: Raíz que se actualiza.
+        python: El Python del agente, cuando es él quien la actualiza
+            (`agente.py actualizar-raiz`).
     """
-    return [sys.executable, "-u",
+    return [python or sys.executable, "-u",
             str(Path(staged) / "prdrive-install.py"),
             "--update", str(device_root)]
 
