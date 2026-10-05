@@ -1179,6 +1179,19 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         leer_estado()
         reajustar()
 
+    def ajustes_llavero() -> None:
+        """«Ajustes → Llavero…»: al volver relee el config y, si se ha activado, pasa.
+
+        La primera pasada sube la base o trae la del remoto (el llavero se
+        resincroniza solo), en la ventana de salida de siempre.
+        """
+        cambio = tk_llavero.ajustes(root)
+        if cambio is None:
+            return
+        recargar()
+        if cambio == tk_llavero.ACTIVADO:
+            lanzar("Llavero: la primera pasada", [model.LLAVERO])
+
     def expulsar() -> None:
         """Cierra la ventana y el contenedor, para poder quitar la unidad.
 
@@ -1532,7 +1545,8 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         ajustes = ttk.Button(pantallas, text="Ajustes…", style="Quiet.TButton",
                              command=lambda: tk_doctor.open_dialog(
                                  root, vista["config"], lanzar,
-                                 abrir_reparacion=abrir_reparacion),
+                                 abrir_reparacion=abrir_reparacion,
+                                 abrir_llavero=ajustes_llavero),
                              state=apagado)
         theme.boton_icono(ajustes, "gear", theme.ACENTO, theme.PAPEL)
         ajustes.grid(row=0, column=2, sticky="e")

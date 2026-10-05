@@ -9,6 +9,8 @@ el equipo se sustituye. Lo que se sujeta:
 - Sus filtros, en su orden: solo viajan las bases y el compañero fijo.
 - Antes de cada pasada: el compañero fijo se pone si falta, siempre con los
   mismos bytes, y una base que no está entera no se sube.
+- El llavero se resincroniza solo, sin que nadie lo apruebe; las demás
+  parejas, no.
 """
 
 import contextlib
@@ -21,7 +23,8 @@ from pathlib import Path
 from _harness import Checks, sandbox
 
 import sync
-from common import bisync, catalog, config_file, kdbx, llavero, model
+import ui
+from common import bisync, catalog, config_file, kdbx, llavero, model, revision
 from common.model import ConfigError
 
 c = Checks("el llavero")
@@ -120,7 +123,8 @@ with sandbox():
             lambda: config(pares=({**NOTAS, "name": model.LLAVERO},)), "Renómbrala")
     c("  sin llavero sí puede", config(llave=None, pares=({**NOTAS, "name": model.LLAVERO},))
       .names, [model.LLAVERO])
-    for mala in ("", "personal", "../fuera.kdbx", "sub/personal.kdbx", ".oculta.kdbx", 3):
+    for mala in ("", "personal", "../fuera.kdbx", "sub/personal.kdbx", ".oculta.kdbx", 3,
+                 "Personal.KDBX", ".kdbx"):
         rechaza(f"una base que no es un nombre suelto .kdbx no vale ({mala!r})",
                 lambda m=mala: config(llave={"base": m}), "nombre suelto")
     rechaza("[keychain] tiene que ser una tabla", lambda: model.parse_config(
@@ -143,7 +147,7 @@ with sandbox():
 # antes de cada pasada
 
 
-def correr(pareja, rc=0):
+def correr(pareja, rc=0, aprobado=True):
     """Ejecuta run_pair con rclone simulado. Devuelve (rc, salida, órdenes)."""
     ordenes = []
 
@@ -157,7 +161,7 @@ def correr(pareja, rc=0):
 
     original, sync.execute = sync.execute, execute_simulado
     try:
-        ctx = sync.RunContext(binary="RCLONE", env={}, resync_approved=True)
+        ctx = sync.RunContext(binary="RCLONE", env={}, resync_approved=aprobado)
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             salida = sync.run_pair(ctx, pareja)
@@ -219,5 +223,23 @@ with sandbox():
     with contextlib.redirect_stdout(out):
         sync.list_pairs(config())
     c.contains("--list la enseña marcada", out.getvalue(), "el llavero, lo pone prdrive")
+
+# el llavero se resincroniza solo; las demás parejas siguen esperando a que se apruebe
+with sandbox():
+    cfg = config()
+    rc, salida, ordenes = correr(cfg.pareja_llavero, aprobado=False)
+    c("sin baseline y sin nadie que lo apruebe, el llavero hace su --resync",
+      (rc, len(ordenes), "--resync" in (ordenes or [[]])[0]), (0, 1, True))
+    c.contains("  y lo dice", salida, "se resincroniza solo")
+    notas = cfg.pairs[1]
+    rc, salida, ordenes = correr(notas, aprobado=False)
+    c("una pareja del usuario, no: se salta", (rc, ordenes), (sync.SKIPPED, []))
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        pregunta = sync.resolve_resync_approval([cfg.pareja_llavero], assume_yes=False)
+    c("  ni se pregunta por el llavero", (pregunta, out.getvalue()), (False, ""))
+    c("  ni sale como avería ni como «requiere resync»",
+      ([h.pareja for h in revision.revisar(cfg) if h.clave == "resync"],
+       model.LLAVERO in ui.pair_status_notes(cfg)), (["notas"], False))
 
 sys.exit(c.report())

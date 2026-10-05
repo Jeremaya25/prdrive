@@ -105,7 +105,13 @@ def _prefijo(pair: Pair, estado: bisync.PairState) -> Hallazgo | None:
 
 
 def _resync(pair: Pair, estado: bisync.PairState) -> Hallazgo | None:
-    """Devuelve la avería de una pareja que pide `--resync` y nadie lo ha hecho."""
+    """Devuelve la avería de una pareja que pide `--resync` y nadie lo ha hecho.
+
+    La del llavero no la tiene: se resincroniza sola en su próxima pasada
+    (`sync._bisync_preflight()`).
+    """
+    if pair.llavero:
+        return None
     razones = bisync.resync_reasons(pair, estado)
     if not razones:
         return None

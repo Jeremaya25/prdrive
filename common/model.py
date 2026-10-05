@@ -793,10 +793,13 @@ def _build_llavero(tabla: Any, defaults: Mapping[str, Any]) -> Pair:
     if not isinstance(tabla, Mapping):
         raise ConfigError("[keychain] tiene que ser una tabla.")
     base = tabla.get("base")
-    if not isinstance(base, str) or not base.lower().endswith(".kdbx") \
+    if not isinstance(base, str) or not base.endswith(".kdbx") or base == ".kdbx" \
             or any(c in base for c in "/\\:") or base.startswith("."):
+        # `.kdbx` en minúsculas: los filtros de rclone distinguen, y `+ *.kdbx`
+        # no dejaría pasar una `.KDBX`.
         raise ConfigError("[keychain] tiene que decir qué base lleva, con «base = "
-                          "\"<nombre>.kdbx\"», un nombre suelto.")
+                          "\"<nombre>.kdbx\"», un nombre suelto que acabe en .kdbx "
+                          "(en minúsculas).")
     remote, carpeta = carpeta_del_catalogo(defaults)
     mode = MODES["bisync"]
     return Pair(

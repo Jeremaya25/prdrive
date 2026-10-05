@@ -52,6 +52,11 @@ ENTRADAS = (
      "Lo guardado en .prversions/ por las parejas que versionan: cuánto ocupa "
      "en cada lado, abrir la carpeta de aquí y purgar lo anterior a una fecha.",
      "versiones"),
+    ("Llavero…", "llave",
+     "Contraseñas y passkeys en una base de KeePassXC que viaja en el dispositivo y "
+     "se sincroniza sola. Activarlo, decir si la base pide fichero llave, "
+     "desactivarlo.",
+     "llavero"),
     ("Nombre e icono de la unidad…", "edit",
      "Cómo la enseña el Explorador de Windows al conectarla. Útil para "
      "distinguir un dispositivo de otro a simple vista.",
@@ -69,7 +74,7 @@ OCASIONALES = {"renombrar": catalog_editor.ofrecer_renombrado}
 
 
 def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None,
-                abrir_reparacion=None) -> None:
+                abrir_reparacion=None, abrir_llavero=None) -> None:
     """Abre «Ajustes»; no devuelve nada.
 
     De aquí no sale ninguna decisión que quien llama tenga que repintar. Lo que
@@ -85,6 +90,8 @@ def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None,
             ventana de salida es hija de la principal, no de esta. Además esta
             se cierra antes de abrirla, para no tener dos modales disputándose
             la captura del ratón.
+        abrir_llavero: Lo mismo para «Llavero…»: activarlo cambia el config,
+            y quien lo relee y lanza la primera pasada es la principal.
     """
     from tkinter import ttk
 
@@ -107,6 +114,12 @@ def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None,
         dlg.destroy()
         if abrir_reparacion is not None:
             abrir_reparacion()
+
+    def llavero() -> None:
+        """Cierra «Ajustes» y abre «Llavero…» desde la principal, como «Reparación»."""
+        dlg.destroy()
+        if abrir_llavero is not None:
+            abrir_llavero()
 
     def configuracion() -> None:
         """Abre «Configuración»: el intervalo del servicio y lo del agente."""
@@ -135,7 +148,7 @@ def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None,
 
     acciones = {"reparacion": reparacion, "configuracion": configuracion,
                 "qr": emparejar, "versiones": versiones, "volumen": nombre_e_icono,
-                "renombrar": renombrar}
+                "renombrar": renombrar, "llavero": llavero}
     raw = catalog_editor.raw_del_dispositivo(raw_local)
     entradas = [e for e in ENTRADAS
                 if e[3] not in OCASIONALES or OCASIONALES[e[3]](raw)]

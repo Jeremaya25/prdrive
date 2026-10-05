@@ -53,4 +53,6 @@ The main window is deliberately lean: **anything done once in a device's life be
 
 **«Configuración»** (`ui/tk_configuracion.py`, #65) holds what is *configured* rather than done: the service's interval (`ui/prefs.py` decides what is written, see `service.md`) and, only for the encrypted host root, the agent's `pedir_al_iniciar` checkbox (sent as `PIDE_AJUSTE`). Nothing is written until «Guardar», and what did not change is not written.
 
+«Llavero…» (`tk_llavero.ajustes()`, `llavero.md`) is handed over the same way (`abrir_llavero`): activating or deactivating changes the config, so the main window re-reads it on return and, after an activation, launches the keychain's first pass.
+
 «Ajustes» receives `lanzar` and `abrir_reparacion` from the main window instead of importing them: the output window and «Reparación» are the *main* window's children and it disables itself during a pass; this screen knows none of that, and closes itself before handing over so two modals never hold the grab at once.

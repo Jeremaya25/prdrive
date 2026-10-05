@@ -46,7 +46,7 @@ except Exception as e:                                   # sin entorno gráfico
 import json  # noqa: E402
 
 import ui.tk as uitk  # noqa: E402
-from common import model, update  # noqa: E402
+from common import config_file, model, update  # noqa: E402
 from ui import (cifrado, llavero_editor, prefs, theme, tk_configuracion,  # noqa: E402
                 tk_doctor, tk_llavero, tk_watch, watch)
 
@@ -420,6 +420,7 @@ CON_LLAVERO = model.parse_config({
     "pair": [{"name": "notas", "local": "sync-data/notas", "remote_path": "/R/notas"}],
     "keychain": {"base": "personal.kdbx"}})
 REAL_LINEA, REAL_ABRIR = llavero_editor.linea, tk_llavero.abrir
+REAL_AJUSTES = tk_llavero.ajustes
 with sandbox():
     estado = {"abierto": False, "boton": True}
     abiertos: list = []
@@ -459,8 +460,24 @@ with sandbox():
         c("  sin KeePassXC, el botón apagado", visto["estado"], "disabled")
         ventana(UNA, lambda root: visto.update(sin="Abrir llavero" in botones(root)))
         c("sin llavero, ni línea ni botón", visto["sin"], False)
+
+        # «Ajustes → Llavero…»: al activarlo, la principal relee el config y
+        # lanza la primera pasada del llavero.
+        model.CONFIG_FILE.write_text(config_file.dumps({
+            "defaults": {"remote": "nas"},
+            "pair": [{"name": "notas", "local": "sync-data/notas", "remote_path": "/R/notas"}],
+            "keychain": {"base": "personal.kdbx"}}), encoding="utf-8")
+        tk_llavero.ajustes = lambda root, raw=None: tk_llavero.ACTIVADO
+        tk_doctor.mostrar = lambda dlg, parent=None: next(
+            b for b in recorrer(dlg) if isinstance(b, ttk.Button)
+            and b.cget("text") == "Llavero…").invoke()
+        lanzadas.clear()
+        ventana(UNA, lambda root: botones(root)["Ajustes…"].invoke())
+        c("activar el llavero desde «Ajustes» lanza su primera pasada",
+          [cmd[-1] for cmd in lanzadas], [model.LLAVERO])
     finally:
         llavero_editor.linea, tk_llavero.abrir = REAL_LINEA, REAL_ABRIR
+        tk_llavero.ajustes, tk_doctor.mostrar = REAL_AJUSTES, REAL_DOCTOR_MOSTRAR
 
 
 # que quepa

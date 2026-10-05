@@ -118,7 +118,7 @@ The full list (`penwatch.py`, `agente.py`, `prdrive-install.py`, `build_installe
 
 - **Writing code**: `docs/agents/code-writing-conventions.md`, before changing Python. Comments, docstrings and everything the user sees are in **Spanish**; keep the technical citations (rclone, VeraCrypt, kernel, specs) in code that mirrors them. Docs under `docs/agents/` are English.
 - **Indirection points**: everything that touches the network, a real device or the desktop is a **module-level function tests can replace** (`catalog.run()`, `update.fetch()`, `tk.mostrar()`/`confirmar_plan()`, `equipo.DIR`…). New ones keep that shape; the registry is in `commands-testing.md`.
-- **Windows traps**: `pid_alive()` uses `OpenProcess`, never `os.kill` (which *terminates* on Windows); background processes use `pythonw.exe` + `CREATE_NO_WINDOW`; child runs get `stdin=DEVNULL`, so a pair needing `--resync` is skipped rather than resynced unattended.
+- **Windows traps**: `pid_alive()` uses `OpenProcess`, never `os.kill` (which *terminates* on Windows); background processes use `pythonw.exe` + `CREATE_NO_WINDOW`; child runs get `stdin=DEVNULL`, so a pair needing `--resync` is skipped rather than resynced unattended (the keychain excepted: `engine.md`).
 - `.gitignore` excludes device/user paths (`bin/`, `runtime/`, `keys/`, `filters/`, `logs/`, `state/`, `sync_config.toml`, `rclone.conf`, `prdrive-profile.toml`), build artefacts and `install/secret.py`.
 
 ## Documentation

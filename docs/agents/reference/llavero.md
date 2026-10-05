@@ -27,6 +27,10 @@ A KeePassXC database (passkeys and passwords) travels in `.keychain/` at the vol
 - **Every base must be whole** (`common/kdbx.py`, no key needed): signatures, the TLV header up to `EndOfHeader`, and for KDBX 4 the header SHA-256 plus the HMAC block chain ending exactly at EOF with a zero-size block. KDBX 3 cannot say where its encrypted body ends; with AES or Twofish (CBC) it must be a multiple of 16 bytes, which catches 15 of 16 random cuts. An unknown format is `None`, not broken. A broken base is looked at again after `ESPERA_ENTERA` (2 s; `llavero.dormir()` is the indirection point); if it is still broken the pass does not run and the pair records `sync.LLAVERO_ROTO` (2), retried on the next pass. Checked by hand against real bases (a KDBX 4.0 and 3.x from KeePassXC's test data, 3.1 from `keepassxc-cli` 2.7.6): no cut of the 4.0 passes, 1 in 16 of the 3.x.
 - `.keychain/` is hidden (`store.hide()`) when `sync.py` creates it.
 
+## It resyncs itself
+
+Unlike every other pair, the keychain never waits for a `--resync` approval (`sync._bisync_preflight()`, `engine.md`): with no baseline (first pass, a shelved one after moving the catalogue) or changed filters it resyncs on its next pass, attended or not. `resync-mode = newer` keeps the newer base and the backup dir keeps the other side's in `.prversions/`. It is therefore never a «requiere resync» chip nor a `resync` finding.
+
 ## Who attends it, and when a pass is due
 
 One thing at a time, in this order (the spec's §5b):
@@ -56,6 +60,16 @@ The button of the main window's keychain line, `runsync.py --llavero` (what `Lla
 
 **Launch** (`orden()`, `entorno()`, `lanzar()`): `KeePassXC.exe --config … --localconfig … [--keyfile …] <base>`, `KPXC_INITIAL_DIR` = the volume root (exports land in sight, PK5), detached, cwd in the temp dir. `esperar_arranque()` watches it for `ESPERA_ARRANQUE` (1.5 s): `VC_FALTA` (`0xC0000135`, both signs) means no Visual C++ runtime (K3) and the notice gives Microsoft's installer (`REDISTRIBUIBLE`, x64 also on ARM64); another non-zero code is said with its value; 0 is a hand-off to a running instance.
 
+## Turning it on and off («Ajustes → Llavero…»)
+
+`tk_llavero.ajustes()` opens at once and reads the catalogue in the background (`segundo_plano`, the same `"catalogo"` read as «Parejas», `catalog.load()`); what it offers depends on the remote's `[keychain]` (`llavero_editor.tabla_remota()`), and every write needs that fresh read (`Catalog.editable`). The decisions are `LlaveroPlan`s in `ui/llavero_editor.py` (`EditPlan` shape, through `confirmar_plan()` and `working()`); `plan.activa` tells the caller to run the first pass.
+
+- **`plan_activar(raw, cat, origen, pide, nombre_llave, llave)`.** `origen` is «Usar esta base…» (a `.kdbx` chosen by the person) or `None`, «Traer el del remoto». A base is checked with `kdbx.comprobar()` (broken → refused; KDBX 3 → warning that KeePassXC converts it to 4; unknown → warning) and its name normalised (`llavero.nombre_de_base()`: `.kdbx` lowercase, because the `+ *.kdbx` filter is case-sensitive; the model now refuses `.KDBX`). **The original is copied, never touched** (`llavero.poner_base()`: temp + re-read + `os.replace`). **If the remote already has a keychain, its base is the one**: the local `[keychain]` is the remote's, nothing is pushed, and a base of one's own goes in as `<base>.conflicto-dispositivo1.kdbx` (`llavero.copia_propia()`, rclone's own Path1 loser name) for «Abrir llavero» to merge; the same happens if `.keychain/<base>` already holds a different file. Otherwise the catalogue gets `[keychain]` first (`catalog.push()`; if that fails nothing local changes), then `.keychain/` (`preparar_carpeta()`: created, hidden, `LEEME.txt`), the copy, `[keychain]` in `sync_config.toml` (validated with `parse_config()` before confirming), `Llavero.bat` and the key file's path on this host. Warnings: a root bisync pair will ask for a resync (it gains `REGLA_SIN_LLAVERO`), and «this host cannot open it yet» (not Windows, or no `KeePassXC.exe`: the amber «Actualizar…» puts it, `components.pendientes()`).
+- **`plan_pide_llave()`** writes `fichero_llave`/`nombre_llave` to the catalogue and here (prdrive cannot tell from the KDBX header); refused unless the remote's `[keychain]` is this base. «Dónde está el fichero llave…» only records the path on this host, no plan.
+- **`plan_desactivar()`** removes `[keychain]` here, asks the watcher to stop and removes `Llavero.bat` (only if it is still ours, byte for byte). `.keychain/` and the remote stay, and other devices keep it. Warnings: KeePassXC open; a root pair would now carry `.keychain/`.
+- **`Llavero.bat`** (`llavero.LANZADOR_BAT`, CRLF, ASCII) is `call "%~dp0runsync.bat" --llavero`: the same Python search as the window. Written on activation, not by the components updater.
+- The «Crear una nueva con KeePassXC» exit of the spec is not there: a new base is made in KeePassXC and then given with «Usar esta base…».
+
 ## Merging conflict copies («Combinar»)
 
 `conflict-loser = num` leaves the losing save beside the base as `personal.conflicto-remoto1.kdbx` (or `-dispositivo1`; the pair has `versions`, so `--suffix-keep-extension`, which `conflicts.esquema()` now knows). Choosing a version would lose the other's saves; merging keeps both (S4).
@@ -65,4 +79,4 @@ The button of the main window's keychain line, `runsync.py --llavero` (what `Lla
 - **Where it is offered**: «Abrir llavero» (above) and «Reparación», whose conflict section gains a «Combinar» row when the device has the keychain, active only for a conflict on its base. «Quedarme con…» stay, with `PIERDE_LLAVERO` as a warning. Its findings never say «keychain» (`revision.nombre_visible()`). The console fallback of `--llavero` never merges.
 - Checked against the real `keepassxc-cli` 2.7.6 when it is installed (`tests/test_llavero_combinar.py`): the built command merges an entry into the base, and a wrong password exits non-zero.
 
-`tests/test_keepassxc.py` (a dict for HKCU, faked processes and launches) the keychain block of `tests/test_tk_servicio.py` (the line, its button, the worst case in the size matrix), `tests/test_llavero_combinar.py`, and the «Combinar» blocks of `test_tk_reparacion.py` and `test_tk_medidas.py`.
+`tests/test_keepassxc.py` (a dict for HKCU, faked processes and launches) the keychain block of `tests/test_tk_servicio.py` (the line, its button, the worst case in the size matrix), `tests/test_llavero_combinar.py`, `tests/test_llavero_activar.py`, `tests/test_tk_llavero.py`, and the «Combinar» blocks of `test_tk_reparacion.py` and `test_tk_medidas.py`.

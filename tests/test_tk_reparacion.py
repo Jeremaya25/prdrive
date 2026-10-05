@@ -565,7 +565,7 @@ with sandbox():
     # una entrada es la lista completa de lo que esa pantalla ofrece.
     c("el engranaje abre «Ajustes» con sus entradas",
       visto.get("entradas"),
-      ["Cerrar", "Configuración…", "Emparejar un móvil…",
+      ["Cerrar", "Configuración…", "Emparejar un móvil…", "Llavero…",
        "Nombre e icono de la unidad…", "Reparación…", "Versiones…"])
     c("y su primera entrada abre «Reparación», con «Ajustes» ya cerrada",
       len(abiertas), 1)

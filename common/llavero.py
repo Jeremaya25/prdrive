@@ -32,6 +32,7 @@ import calendar
 import json
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -455,3 +456,101 @@ def pasada() -> tuple[int, str]:
                           stdin=subprocess.DEVNULL, capture_output=True, text=True,
                           encoding="utf-8", errors="replace", **kwargs)
     return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+
+
+# --- activarlo y desactivarlo: lo que se pone en el dispositivo
+
+LANZADOR = "Llavero.bat"
+"""El lanzador de «Abrir llavero» en la raíz del volumen, junto a `runsync.bat`."""
+LANZADOR_BAT = (
+    "@echo off\r\n"
+    "rem Llavero.bat - Abre el llavero de prdrive: KeePassXC con la base de este\r\n"
+    "rem dispositivo. Es runsync.bat --llavero: el mismo Python, buscado igual.\r\n"
+    "rem Lo pone prdrive al activar el llavero y lo quita al desactivarlo.\r\n"
+    'call "%~dp0runsync.bat" --llavero\r\n'
+)
+"""Lo que dice `Llavero.bat`: llama a `runsync.bat`, que ya sabe qué Python usar."""
+COPIA_PROPIA = "conflicto-dispositivo"
+"""El sufijo de una base que entra como copia de conflicto de este lado (path1)."""
+
+
+def escribir_lanzador(raiz: Path | None = None) -> Path:
+    """Pone `Llavero.bat` en la raíz del volumen.
+
+    Raises:
+        OSError: Si no se puede escribir.
+    """
+    ruta = (model.DEVICE_ROOT if raiz is None else Path(raiz)) / LANZADOR
+    ruta.write_bytes(LANZADOR_BAT.encode("ascii"))
+    return ruta
+
+
+def quitar_lanzador(raiz: Path | None = None) -> bool:
+    """Quita `Llavero.bat` de la raíz del volumen, si es el nuestro.
+
+    Returns:
+        True si lo ha quitado.
+    """
+    ruta = (model.DEVICE_ROOT if raiz is None else Path(raiz)) / LANZADOR
+    try:
+        if ruta.read_bytes() != LANZADOR_BAT.encode("ascii"):
+            return False                      # lo cambió alguien: no es nuestro
+        ruta.unlink()
+    except OSError:
+        return False
+    return True
+
+
+def nombre_de_base(nombre: str) -> str:
+    """Devuelve el nombre con el que una base entra en el llavero.
+
+    La extensión va en minúsculas, porque el filtro `+ *.kdbx` distingue.
+
+    Raises:
+        ValueError: Si no es una `.kdbx` con nombre (o empieza por punto).
+    """
+    ruta = Path(nombre)
+    if ruta.suffix.lower() != ".kdbx" or not ruta.stem or ruta.name.startswith("."):
+        raise ValueError(f"«{nombre}» no es una base de KeePassXC (.kdbx) con nombre.")
+    return ruta.stem + ".kdbx"
+
+
+def copia_propia(donde: Path, base: str) -> Path:
+    """Devuelve dónde entra una base de este dispositivo como copia de conflicto.
+
+    Es el nombre que le pondría rclone al perdedor de este lado
+    (`personal.conflicto-dispositivo1.kdbx`), con el primer número libre, así
+    que «Abrir llavero» la encuentra y ofrece combinarla.
+    """
+    stem, ext = Path(base).stem, Path(base).suffix
+    n = 1
+    while (donde / f"{stem}.{COPIA_PROPIA}{n}{ext}").exists():
+        n += 1
+    return donde / f"{stem}.{COPIA_PROPIA}{n}{ext}"
+
+
+def poner_base(origen: Path, destino: Path) -> None:
+    """Copia una base al llavero sin tocar la original, y de una vez.
+
+    Se copia a un temporal al lado y se renombra: una copia cortada no queda
+    con el nombre de la base. Se comprueba entera antes del renombrado.
+
+    Raises:
+        OSError: Si no se puede copiar, o la copia no ha quedado entera.
+    """
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    tmp = destino.with_name(destino.name + ".copiando")
+    shutil.copyfile(origen, tmp)
+    if tmp.read_bytes() != Path(origen).read_bytes():
+        tmp.unlink(missing_ok=True)
+        raise OSError(f"la copia de «{Path(origen).name}» no ha quedado igual")
+    os.replace(tmp, destino)
+
+
+def preparar_carpeta() -> Path:
+    """Crea `.keychain/` si falta, oculta y con su compañero fijo; devuelve la carpeta."""
+    donde = carpeta()
+    donde.mkdir(parents=True, exist_ok=True)
+    store.hide(donde)
+    asegurar_leeme(donde)
+    return donde

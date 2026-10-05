@@ -482,7 +482,16 @@ def _bisync_preflight(ctx: RunContext, pair: Pair) -> tuple[bool, int | None]:
 
     reasons = bisync.resync_reasons(pair, state)
     need_resync = ctx.force_resync or bool(reasons)
-    if need_resync and not ctx.resync_approved:
+    if need_resync and pair.llavero and reasons:
+        # El llavero no espera a que nadie lo apruebe: con `resync-mode =
+        # newer` gana la versión más nueva y la otra queda en `.prversions/`
+        # (el backup-dir también vale en un --resync). Saltarlo lo dejaría sin
+        # sincronizar sin que nadie se enterase: una pasada saltada sale con 0.
+        for reason in reasons:
+            print(f"  requiere --resync -> {reason}")
+        print(f"[{pair.name}] El llavero se resincroniza solo: gana lo más nuevo y lo "
+              f"otro queda en {model.VERSIONS_DIR}.")
+    elif need_resync and not ctx.resync_approved:
         for reason in reasons:
             print(f"  requiere --resync -> {reason}")
         print(f"[{pair.name}] Saltada: requiere --resync y no está aprobado.")
@@ -598,8 +607,8 @@ def resolve_resync_approval(selected: list[Pair], assume_yes: bool) -> bool:
     """
     pending = []
     for pair in selected:
-        if not pair.is_bisync:
-            continue
+        if not pair.is_bisync or pair.llavero:
+            continue            # el llavero se resincroniza solo (`_bisync_preflight()`)
         bisync.migrate_legacy_state(pair)
         reasons = bisync.resync_reasons(pair)
         if reasons:

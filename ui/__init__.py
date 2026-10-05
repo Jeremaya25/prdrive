@@ -72,9 +72,14 @@ class Frontend(Protocol):
 
 
 def pair_status_notes(config: Config) -> dict[str, str]:
-    """Devuelve `requiere resync` junto a las parejas bisync sin baseline válido."""
+    """Devuelve `requiere resync` junto a las parejas bisync sin baseline válido.
+
+    El llavero no sale: se resincroniza solo.
+    """
     notes = {}
     for pair in config.pairs:
+        if pair.llavero:
+            continue
         try:
             if bisync.resync_reasons(pair):
                 notes[pair.name] = "requiere resync"

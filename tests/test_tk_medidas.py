@@ -28,13 +28,14 @@ Las ventanas se crean ocultas y no se entra nunca en el bucle de eventos.
 import sys
 import threading
 import time
+from pathlib import Path
 
 from _harness import Checks, sandbox, tmpdir
 
 import tomllib
 
 from common import (catalog, components, config_file, conflicts, fleet, historial,
-                    model, pairing, pins, results, revision, update)
+                    keepassxc, model, pairing, pins, results, revision, update)
 from install import device
 
 c = Checks("medidas de las pantallas")
@@ -51,7 +52,7 @@ except Exception as e:                                   # sin entorno gráfico
 from ui import tk as uitk
 from ui import remote_picker, segundo_plano
 from ui import (catalog_editor, tk_configuracion, tk_doctor, tk_fleet, tk_install,
-                tk_pairs, tk_qr, tk_renombrar, tk_repair, tk_update, tk_versions,
+                tk_llavero, tk_pairs, tk_qr, tk_renombrar, tk_repair, tk_update, tk_versions,
                 tk_volumen, tk_watch, versions_editor, volumen, watch)
 
 # Ni una petición a GitHub desde un test.
@@ -854,6 +855,31 @@ try:
                     catalog_editor.leer_renombrado = previo_leer
                 c(f"{nombre}: «Renombrar el catálogo» cabe", entra, True)
                 c(f"{nombre}: «Renombrar el catálogo» no queda recortada", corta, False)
+
+                # «Ajustes → Llavero…»: sin activar, con el llavero del remoto
+                # (dos botones), y activo con fichero llave y su ruta larga
+                # (la fila más ancha de botones).
+                largo = "contraseñas-de-toda-la-familia"
+                tabla = {"base": f"{largo}.kdbx", "fichero_llave": True,
+                         "nombre_llave": f"{largo}.keyx"}
+                previo_load = catalog.load
+                catalog.load = lambda raw=None: (catalog.Catalog(
+                    raw={**BASE, "keychain": tabla},
+                    text=config_file.dumps({**BASE, "keychain": tabla}), source="remote",
+                    stamp="2026-01-01 00:00:00",
+                    endpoint="nas:/prdrive-catalog/remote.toml"), None)
+                keepassxc.apuntar_llave(Path("C:/Users/alguien-con-nombre-largo/Documents")
+                                        / "llaves de la familia" / f"{largo}.keyx")
+                try:
+                    for que, raw_llavero in (("sin activar", dict(BASE)),
+                                             ("activo", {**BASE, "keychain": tabla})):
+                        entra, corta = medir_dialogo(
+                            lambda r=raw_llavero: tk_llavero.ajustes(raiz, r),
+                            ancho, alto, escala, modulo=tk_llavero)
+                        c(f"{nombre}: «Llavero…» {que} cabe", entra, True)
+                        c(f"{nombre}: «Llavero…» {que} no queda recortada", corta, False)
+                finally:
+                    catalog.load = previo_load
 
                 # «Configuración» (#65): el intervalo, con la frase larga de un
                 # dispositivo que se desenchufa, y su peor caso, la casilla de
