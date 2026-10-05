@@ -288,7 +288,9 @@ with sandbox():
 
     responder(ok(""))
     c("un catálogo vacío de verdad se sigue leyendo", lee(CAT), None)
-    c("sin preguntar nada más", len(llamadas), 1)
+    # Vacío puede ser «no está» en un remoto de cubetas: se mira el otro nombre.
+    c("mirando antes si al lado hay un pairs.toml", llamadas,
+      [["cat", "nas:/prdrive-catalog/remote.toml"], ["cat", "nas:/prdrive-catalog/pairs.toml"]])
 
 with sandbox():
     # Un diagnóstico falso es peor que ninguno.
@@ -356,11 +358,12 @@ class Remoto:
     se mete otro dispositivo en mitad de una escritura.
     """
 
-    def __init__(self, ficheros, falla=()):
+    def __init__(self, ficheros, falla=(), cubeta=False):
         self.f = dict(ficheros)
         self.ordenes: list[list[str]] = []
         self.antes: dict = {}
         self.falla = set(falla)
+        self.cubeta = cubeta
 
     def __call__(self, args):
         self.ordenes.append(list(args))
@@ -373,11 +376,15 @@ class Remoto:
         if op == "cat":
             if args[1] in self.f:
                 return subprocess.CompletedProcess(args, 0, self.f[args[1]], "")
+            if self.cubeta:           # un prefijo vacío no es un error: nada, y 0
+                return subprocess.CompletedProcess(args, 0, "", "")
             return subprocess.CompletedProcess(args, 3, "", "directory not found")
         if op == "lsjson" and args[1] == "--stat":
             if args[2] in self.f:
                 return subprocess.CompletedProcess(
                     args, 0, json.dumps({"Name": args[2].rsplit("/", 1)[1], "IsDir": False}), "")
+            if self.cubeta:           # y lo que no existe se lee como una carpeta
+                return subprocess.CompletedProcess(args, 0, json.dumps({"IsDir": True}), "")
             return subprocess.CompletedProcess(args, 3, "", "directory not found")
         if op == "lsjson" and args[1] == "--files-only":
             dentro = [{"Name": k[len(args[2]):], "IsDir": False} for k in self.f
@@ -400,9 +407,9 @@ class Remoto:
         return subprocess.CompletedProcess(args, 0, "", "")
 
 
-def remoto(ficheros, falla=()):
+def remoto(ficheros, falla=(), cubeta=False):
     """Pone un `Remoto` como `catalog.run` y lo devuelve."""
-    rem = Remoto(ficheros, falla)
+    rem = Remoto(ficheros, falla, cubeta)
     catalog.run = rem
     return rem
 
@@ -448,6 +455,51 @@ with sandbox():
     responder(falla())
     lee(CON_VIEJO)
     c("sin red no se prueba el otro nombre", len(llamadas), 1)
+
+# Un remoto de cubetas (S3, B2, GCS…): `cat` de lo que no existe sale con 0 y
+# nada, y `lsjson --stat` lo da por carpeta (`backend/s3/s3.go`, v1.75.1, sin
+# `--s3-directory-markers`). Sin cuidado, un remoto sin renombrar se leería como
+# un remote.toml vacío, y la primera escritura lo crearía al lado del bueno.
+with sandbox():
+    rem = remoto({VIEJO: TEXTO}, cubeta=True)
+    cat = catalog.pull(CON_VIEJO)
+    c("cubeta: un remote.toml que no está no se lee como un catálogo vacío",
+      (cat.endpoint, cat.names), (VIEJO, ["prdrive", "notas"]))
+    rem.ordenes.clear()
+    catalog.push({**CAT, "pair": CAT["pair"][:1]}, cat.text, CON_VIEJO)
+    c("  y escribir va a pairs.toml, sin crear remote.toml",
+      (sorted(rem.f), tomllib.loads(rem.f[VIEJO])["pair"][0]["name"]),
+      ([VIEJO, VIEJO + ".bak"], "prdrive"))
+    c("  sin confundir la carpeta de mentira con un renombrado", catalog.duplicado(), None)
+
+with sandbox():
+    rem = remoto({VIEJO: TEXTO}, cubeta=True)
+    base = catalog.pull(CON_VIEJO)
+    rem.ordenes.clear()
+    rem.antes[4] = lambda r: r.f.__setitem__(NUEVO, r.f.pop(VIEJO))
+    try:
+        catalog.push({**CAT, "pair": CAT["pair"][:1]}, base.text, CON_VIEJO)
+        c("cubeta: la carrera con el renombrado también se ve", "no lanzó", "ConfigError")
+    except ConfigError as e:
+        c.contains("cubeta: la carrera con el renombrado también se ve", str(e),
+                   "el cambio no cuenta")
+
+with sandbox():
+    remoto({}, cubeta=True)
+    cat = catalog.pull(CON_VIEJO)
+    c("cubeta: sin ninguno, un catálogo vacío en remote.toml, como siempre",
+      (cat.endpoint, cat.raw), (NUEVO, {}))
+
+with sandbox():
+    rem = remoto({VIEJO: TEXTO})
+    rem.antes[1] = lambda r: r.f.__setitem__(NUEVO, "")
+    c("un remote.toml vacío no tapa un pairs.toml con parejas",
+      catalog.pull(CON_VIEJO).endpoint, VIEJO)
+
+with sandbox():
+    rem = remoto({VIEJO: TEXTO}, falla={"cat"})
+    lee(CON_VIEJO)
+    c("un fallo de verdad en el primero no prueba el segundo", len(rem.ordenes), 1)
 
 # escribir: en el que exista justo antes de escribir, y nunca crear el otro
 with sandbox():

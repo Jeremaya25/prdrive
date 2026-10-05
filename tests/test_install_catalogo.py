@@ -141,6 +141,11 @@ c.contains("sin ninguno de los dos, se nombran los dos", motivo,
 _, motivo = trae(rclone((1, "", "no route to host")), "/prdrive-catalog/pairs.toml")
 c("sin red no se prueba el otro nombre: tardaría lo mismo en no llegar",
   len(llamadas), 1)
+# Un remoto de cubetas (S3…): lo que no existe sale con 0 y vacío.
+cat, _ = trae(rclone((0, "", ""), (0, CATALOGO, "")), "/prdrive-catalog/pairs.toml")
+c("en una cubeta, un remote.toml vacío no tapa el pairs.toml",
+  (cat.endpoint if cat else None, cat.names if cat else None),
+  ("nas:/prdrive-catalog/pairs.toml", ["docs"]))
 cat, _ = trae(rclone((0, CATALOGO, "")), "/prdrive-catalog/mio.toml")
 c("un nombre propio se lee tal cual", llamadas, [["cat", "nas:/prdrive-catalog/mio.toml"]])
 

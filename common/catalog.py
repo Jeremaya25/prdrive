@@ -75,7 +75,8 @@ RC_NO_EXISTE = (3, 4)
 """Códigos con los que rclone dice que una ruta no existe: 3 carpeta, 4 fichero.
 
 `cat` de un fichero que no está sale con 3 («directory not found»): rclone
-busca una carpeta con ese nombre y no la encuentra (medido con v1.75.1).
+busca una carpeta con ese nombre y no la encuentra (medido con v1.75.1 y el
+backend local). En un remoto de cubetas sale con 0 y vacío: ver `leer()`.
 """
 
 NET_FLAGS = ["--contimeout", "10s", "--timeout", "20s",
@@ -197,25 +198,35 @@ def candidatos(donde: str) -> tuple[str, ...]:
 def leer(ejecutar: Ejecutar, donde: str) -> tuple[subprocess.CompletedProcess, str]:
     """Hace `cat` del catálogo con la regla de los dos nombres.
 
-    Se pasa al candidato siguiente solo si rclone dice que el anterior no
-    existe (`RC_NO_EXISTE`): con cualquier otro fallo, sin red por ejemplo, el
-    siguiente tardaría lo mismo en no llegar. Lo usan los dos lectores del
-    catálogo, el del dispositivo y el del instalador.
+    Se pasa al candidato siguiente si rclone dice que el anterior no existe
+    (`RC_NO_EXISTE`) o si lo trae vacío. Lo segundo es por los remotos de
+    cubetas (S3, B2, GCS…), donde las carpetas no existen de verdad: ahí `cat`
+    de un fichero que no está sale con 0 y nada, porque listar un prefijo
+    vacío no es un error (`backend/s3/s3.go`, v1.75.1, sin
+    `--s3-directory-markers`). Con cualquier otro fallo, sin red por ejemplo,
+    se para: el siguiente tardaría lo mismo en no llegar. Si ninguno trae
+    nada, vale la primera lectura vacía, que es un catálogo vacío como
+    siempre. Lo usan los dos lectores del catálogo, el del dispositivo y el
+    del instalador.
 
     Args:
         ejecutar: Quien ejecuta rclone (`Ejecutar`).
         donde: El endpoint del catálogo que dice el dispositivo.
 
     Returns:
-        Lo que contestó el último `cat` y a qué endpoint se le hizo: el del
-        fichero que existe si salió bien.
+        Lo que contestó el `cat` que cuenta y a qué endpoint se le hizo: el del
+        fichero que trae algo si lo hay.
     """
-    sitios = candidatos(donde)
-    for cual in sitios[:-1]:
+    vacio: tuple[subprocess.CompletedProcess, str] | None = None
+    for cual in candidatos(donde):        # nunca está vacía
         res = ejecutar(["cat", cual])
-        if res.returncode not in RC_NO_EXISTE:
+        if res.returncode == 0 and (res.stdout or "").strip():
             return res, cual
-    return ejecutar(["cat", sitios[-1]]), sitios[-1]
+        if res.returncode == 0:
+            vacio = vacio or (res, cual)
+        elif res.returncode not in RC_NO_EXISTE:
+            return res, cual
+    return vacio or (res, cual)
 
 
 def motivo_lectura(donde: str, cual: str, res: subprocess.CompletedProcess,
