@@ -1,0 +1,43 @@
+name: Tests
+
+# Los tests son scripts sueltos (sin framework ni dependencias): `run_all.py` lanza
+# cada uno en su proceso. Ninguno toca un dispositivo ni la red. Los de Tk se
+# saltan sin pantalla, así que en Linux se corre bajo xvfb para que se ejecuten.
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Tk y xvfb (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends python3-tk xvfb
+
+      - name: Tests (Linux, con pantalla virtual)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a python tests/run_all.py
+
+      - name: Tests (Windows)
+        if: runner.os == 'Windows'
+        run: python tests/run_all.py

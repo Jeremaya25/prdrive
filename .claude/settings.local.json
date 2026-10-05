@@ -1,7 +1,1 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(curl -sSL https://www.apache.org/licenses/LICENSE-2.0.txt -o \"C:/Users/pcerqueda/Downloads/prdrive/LICENSE\")"
-    ]
-  }
-}
+{}
