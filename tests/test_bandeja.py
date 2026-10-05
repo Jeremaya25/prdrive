@@ -43,6 +43,12 @@ c = Checks("la bandeja del agente: qué enseña y qué pide")
 F.preparar()
 
 
+PIE = ["", f"prdrive {F.VERSION}"]
+"""La última línea del menú, tras su separador: la versión del agente."""
+VERSION = ["", f"Versión {F.VERSION}"]
+"""El pie del desplegable de un dispositivo, tras su separador: su versión."""
+
+
 def textos(vista) -> list[str]:
     """Devuelve los textos del menú de una vista."""
     return [e.texto for e in vista.menu]
@@ -115,10 +121,11 @@ F.vueltas(ag, 1)
 v = falsa.vistas[-1]
 c("sin raíces ni unidades: bien, esperando unidades", (v.icono, v.tip),
   (icons.BIEN, "prdrive · esperando unidades"))
-c("  el menú, sin cabecera gris ni dispositivos: pausar y cerrar",
-  textos(v), ["Pausar", "", "Cerrar el agente"])
+c("  el menú, sin cabecera gris ni dispositivos: pausar, cerrar y la versión del agente",
+  textos(v), ["Pausar", "", "Cerrar el agente", *PIE])
+c("  la versión, apagada: no es algo que se elija", entrada(v, PIE[1]).activa, False)
 c("  cada entrada con su icono, y todos existen como glifo",
-  ([e.icono for e in v.menu if e.texto],
+  ([e.icono for e in v.menu if e.texto and e.activa],
    all(i in icons.GLIFOS for i in bandeja.ICONOS)),
   ([bandeja.I_PAUSAR, bandeja.I_CERRAR], True))
 F.vueltas(ag, 3)
@@ -138,9 +145,11 @@ v = falsa.vistas[-1]
 c("una pasada en marcha: sincronizando, con la unidad y la pareja",
   (v.icono, v.tip), (icons.SINCRONIZANDO, "prdrive · sincronizando PRDRIVE-1 · docs"))
 c("  el menú: su desplegable, y lo del agente fuera (con una sola, sin «todo»)",
-  textos(v), ["PRDRIVE-1", "", "Pausar", "", "Cerrar el agente"])
-c("  dentro, sin repetir su nombre: configurar, explorador, sincronizar",
-  dentro(v, "PRDRIVE-1"), ["Configurar", "Abrir en explorador", "Sincronizar ahora"])
+  textos(v), ["PRDRIVE-1", "", "Pausar", "", "Cerrar el agente", *PIE])
+c("  dentro, sin repetir su nombre: configurar, explorador, sincronizar y su versión",
+  dentro(v, "PRDRIVE-1"),
+  ["Configurar", "Abrir en explorador", "Sincronizar ahora", *VERSION])
+c("  su versión, apagada", entrada(v, VERSION[1]).activa, False)
 c("  «Configurar» es la primera, la de por defecto, con el engranaje, y abre su ventana",
   (en(v, "PRDRIVE-1", "Configurar").defecto, en(v, "PRDRIVE-1", "Configurar").icono,
    en(v, "PRDRIVE-1", "Configurar").pide, v.defecto() is en(v, "PRDRIVE-1", "Configurar")),
@@ -158,11 +167,17 @@ c("  el icono del desplegable es el de su autorun.inf: la marca en verde",
 propio = raiz1 / ".prdrive" / "icono-propio-0123abcd.ico"
 propio.write_bytes(icons.ico((16,)))
 autorun(raiz1, r".prdrive\icono-propio-0123abcd.ico")
-c("  un icono cambiado desde su ventana no se relee en cada vuelta",
-  ag.resumen()["unidades"][0]["emblema"], {"marca": "verde"})
+(raiz1 / ".prdrive" / "VERSION").write_text("9.9.9\n", encoding="utf-8")
+c("  un icono cambiado desde su ventana no se relee en cada vuelta, ni la versión",
+  (ag.resumen()["unidades"][0]["emblema"], ag.resumen()["unidades"][0]["version"]),
+  ({"marca": "verde"}, F.VERSION))
 F.pasar(agente.MIRAR_EMBLEMA)
 c("  pasado MIRAR_EMBLEMA, sí: un .ico propio va por su ruta",
   ag.resumen()["unidades"][0]["emblema"], {"ico": str(propio)})
+c("  y la versión de una unidad actualizada sin desconectarla",
+  dentro(bandeja.vista(ag.resumen()), "PRDRIVE-1")[-1], "Versión 9.9.9")
+(raiz1 / ".prdrive" / "VERSION").write_text(F.VERSION + "\n", encoding="utf-8")
+F.pasar(agente.MIRAR_EMBLEMA)
 F.acabar(F.pasadas()[-1], rc=0)
 F.vueltas(ag, 1)
 # La siguiente pareja ya ha empezado: lo de «sincronizado» se mira sin ella.
@@ -248,7 +263,7 @@ v = falsa.vistas[-1]
 c("una unidad con «Ahora no»: su desplegable lo dice, y dentro solo «Atender…»",
   (dentro(v, "PRDRIVE-2 (sin atender)"),
    en(v, "PRDRIVE-2 (sin atender)", "Atender…").pide),
-  (["Atender…"], ({"pide": equipo.PIDE_ATENDER, "id": DOS},)))
+  (["Atender…", *VERSION], ({"pide": equipo.PIDE_ATENDER, "id": DOS},)))
 c("  ni «Configurar» ni «Abrir en explorador»: sería tocar su código sin el sí",
   [e.texto for e in bandeja._todas(desplegable(v, "PRDRIVE-2 (sin atender)").hijos)
    if e.pide and e.pide[0]["pide"] in (equipo.PIDE_ABRIR, equipo.PIDE_EXPLORAR)], [])
@@ -269,7 +284,7 @@ v = falsa.vistas[-1]
 c("con dos atendidas, cada una su desplegable (bajo el aviso que sigue), y fuera "
   "«Sincronizar todo ahora»",
   textos(v), ["PRDRIVE-1: falla fotos · Abrir…", "", "PRDRIVE-1", "PRDRIVE-2", "",
-              "Sincronizar todo ahora", "Pausar", "", "Cerrar el agente"])
+              "Sincronizar todo ahora", "Pausar", "", "Cerrar el agente", *PIE])
 c("  que pide las dos", [p["id"] for p in entrada(v, "Sincronizar todo ahora").pide],
   [UNO, DOS])
 c("  ya en la lista, su icono propio", desplegable(v, "PRDRIVE-2").emblema,
@@ -337,7 +352,7 @@ c("la raíz cifrada cerrada: icono de bloqueada, sin alarmar",
   (v.icono, v.tip), (icons.BLOQUEADO, "prdrive · Mi portátil bloqueada"))
 c("  su desplegable dice que está bloqueada, y lleva la marca de prdrive por icono",
   (textos(v), desplegable(v, R).emblema),
-  ([R, "", "Pausar", "", "Cerrar el agente"], bandeja.MARCA))
+  ([R, "", "Pausar", "", "Cerrar el agente", *PIE], bandeja.MARCA))
 c("  dentro: configurar y explorador (desbloqueando antes), sincronizar apagado, "
   "desbloquear y la casilla",
   [(e.texto, e.activa) for e in desplegable(v, R).hijos],
@@ -366,8 +381,9 @@ c("  mientras, «Desbloqueando…», sin ofrecer otro desbloqueo",
 ag.pedir({"pide": equipo.PIDE_DESBLOQUEAR, "id": UID})
 F.vueltas(ag, 1)
 c("  pedirlo otra vez no abre una segunda ventana de VeraCrypt", len(veracrypts()), 1)
-autorun(FISICA, ".prdrive-icono-granate.ico")
+autorun(FISICA, ".prdrive-icono-morado.ico")       # junto al contenedor: no es el suyo
 montar()
+autorun(PUNTO, r".prdrive\icono-granate.ico")
 antes = len(F.LANZADOS)
 F.vueltas(ag, 3)
 ventanas = [p for p in F.LANZADOS[antes:] if p.args[-1].endswith("runsync.py")]
@@ -375,7 +391,7 @@ c("  abierta, sale su ventana sola", [p.args[-1] for p in ventanas],
   [str(PUNTO / penwatch.APP_SUBDIR / "runsync.py")])
 c("  y no su carpeta: eso es «Abrir en explorador»", explorados(), [str(raiz1)])
 v = falsa.vistas[-1]
-c("  abierta, sin paréntesis y con el icono del autorun.inf de junto al contenedor",
+c("  abierta, sin paréntesis y con el icono del autorun.inf del volumen montado",
   (textos(v)[0], desplegable(v, "Mi portátil").emblema),
   ("Mi portátil", bandeja.Emblema(campo=icons.CAMPOS["granate"])))
 c("  y se le puede pedir una pasada y bloquearla",
@@ -605,22 +621,22 @@ c("«Abrir en explorador»: explorer.exe con la carpeta en Windows, xdg-open en 
    in ([shutil.which("xdg-open"), "/media/x"], None)), ("explorer.exe", str(Path("E:/")), True))
 agente.IS_WIN = EXPLORADOR_WIN
 
-# una unidad en un contenedor VeraCrypt: su autorun.inf está en la raíz física
+# una unidad en un contenedor VeraCrypt: su autorun.inf está en el volumen montado
 VU = "4" * 32
 FIS = tmpdir("prdrive-fisica-")
 (FIS / vestibulo.MARCA).write_text(f"id={VU}\n", encoding="utf-8")
 (FIS / vestibulo.CONTENEDOR).write_bytes(b"\0" * 512)
-autorun(FIS, ".prdrive-icono-morado.ico")
+autorun(FIS, ".prdrive-icono-morado.ico")            # el del pendrive, no el suyo
 MONTADA = F.unidad(VU, nombre="Cifrada")
-autorun(MONTADA, r".prdrive\icono-verde.ico")       # dentro no lo ve el Explorador
+autorun(MONTADA, r".prdrive\icono-verde.ico")
 equipo.guardar_ajustes(equipo.leer_ajustes().con_unidad(
     equipo.Unidad(VU, equipo.NADA, "Cifrada")))
 ag = F.nuevo()
 F.RAICES[:] = [FIS, MONTADA]
 F.vueltas(ag, 3)
-c("una unidad en un contenedor: el icono sale del autorun.inf de su raíz física",
-  (ag.conexiones[VU].fisica, next(u for u in ag.resumen()["unidades"]
-                                  if u["id"] == VU)["emblema"]), (FIS, {"marca": "morado"}))
+c("una unidad en un contenedor: el icono sale del autorun.inf del volumen montado",
+  next(u for u in ag.resumen()["unidades"] if u["id"] == VU)["emblema"],
+  {"marca": "verde"})
 F.RAICES[:] = []
 
 # los iconos

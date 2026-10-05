@@ -68,23 +68,23 @@ def es_icono_veracrypt(icono: str) -> bool:
 BASE_ICONO = "icono"
 EXTENSION_ICONO = ".ico"
 PREFIJO_RAIZ = f".{APP_NAME}-"
-"""Prefijo de los iconos que `ui/volumen.py` deja en la raíz de un contenedor VeraCrypt.
+"""Prefijo de un icono de prdrive suelto en una raíz, fuera de `.prdrive/`.
 
 Los iconos que pinta o copia `ui/volumen.py` se llaman `icono-….ico` y van
-dentro de `.prdrive/` (sin cifrar o con BitLocker). Con VeraCrypt la raíz que
-se enchufa no tiene `.prdrive/` (está dentro del contenedor y el Explorador
-busca el icono antes de que nadie lo abra), así que ahí van junto al
-`autorun.inf`, ocultos y con este prefijo para saber de quién son.
+dentro de `.prdrive/`. Uno suelto en la raíz lleva este prefijo para saber de
+quién es: así lo dejaban versiones anteriores en la raíz física de un
+contenedor VeraCrypt, y así se reconoce para recogerlo o no tomarlo por
+contenido de nadie.
 """
 PREFIJO_ICONO = PREFIJO_RAIZ + BASE_ICONO
 
 
 def es_icono(nombre: str) -> bool:
-    """Indica si ese nombre es un icono que prdrive deja en una raíz.
+    """Indica si ese nombre es un icono de prdrive suelto en una raíz.
 
-    Solo cuenta el de la raíz de fuera de un contenedor VeraCrypt. Lo usa
-    `install/device.RUIDO` (no son contenido de nadie). Los de dentro de
-    `.prdrive/` no hacen falta: esa carpeta ya es ruido.
+    Solo cuenta el que lleva `PREFIJO_RAIZ`. Lo usa `install/device.RUIDO` (no
+    son contenido de nadie). Los de dentro de `.prdrive/` no hacen falta: esa
+    carpeta ya es ruido.
     """
     bajo = nombre.lower()
     return bajo.startswith(PREFIJO_ICONO) and bajo.endswith(EXTENSION_ICONO)

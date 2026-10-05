@@ -587,9 +587,9 @@ def write_autorun(raiz: Path, label: str = DEVICE_LABEL) -> Path | None:
     """Pone al día el `autorun.inf` a mejor esfuerzo, como `deploy.write_guide()`.
 
     El fichero se EDITA, no se reescribe (`common/autorun.py`): si ya hay uno,
-    su nombre y todo lo que no es de prdrive se quedan (pueden venir de
-    «Ajustes» → «Nombre e icono de la unidad», `ui/volumen.py`, o de otro
-    programa). Cambia lo nuestro: se retiran las órdenes de antes
+    su nombre y todo lo que no es de prdrive se quedan (pueden ser de la
+    persona o de otro programa; «Nombre e icono de la unidad», `ui/volumen.py`,
+    escribe en el volumen montado, no aquí). Cambia lo nuestro: se retiran las órdenes de antes
     (`_orden_de_antes()`) y un icono de VeraCrypt pasa a ser el ejecutable que
     la unidad lleva ahora. Sin fichero, el nombre y el icono de VeraCrypt. Que
     no se pueda escribir no rompe nada (la unidad se seguirá llamando «Disco

@@ -143,20 +143,21 @@ pairing.construir = lambda raw=None, app_dir=None: pairing.dumps(
     private_key=(b"-----BEGIN OPENSSH PRIVATE KEY-----\n" + b"b3BlbnNza" * 40
                  + b"\n-----END OPENSSH PRIVATE KEY-----\n"))
 
-# El nombre y el icono de la unidad, en sus casos más altos: con el icono de
-# VeraCrypt ofrecido (una fila más), un icono que no puso prdrive con una ruta
-# larga, y la raíz en una ruta larga, que es lo que alarga la nota. Las dos notas:
-# la de la raíz física de un contenedor, y la de la unidad sin cifrar o con
-# BitLocker, que lleva la ruta dos veces (el autorun.inf y `.prdrive/`). Y el
+# El nombre y el icono de la unidad, en sus casos más altos: un icono que no
+# puso prdrive con una ruta larga (una fila más), y la raíz en una ruta larga,
+# que es lo que alarga la nota. Las dos notas:
+# la de un contenedor, que lleva la ruta tres veces (el autorun.inf, `.prdrive/`
+# y la raíz física), y la de la unidad sin cifrar o con BitLocker. Y el
 # nombre del dispositivo en la flota, que sale en la pista bajo el campo y puede
 # ser largo (el del equipo, o uno que se le puso antes de que esa ventana lo
 # limitara a lo que cabe en una unidad).
 VOLUMENES = [volumen.Estado(
     __import__("pathlib").Path("/media/usuario-de-nombre-largo/PENDRIVE-DE-LA-OFICINA"),
-    fisica, "Pendrive de la oficina de arriba", volumen.OTRO,
-    "%SystemRoot%\\System32\\imageres.dll,-30", True,
+    fuera, "Pendrive de la oficina de arriba", volumen.OTRO,
+    "%SystemRoot%\\System32\\imageres.dll,-30",
     "el pendrive de la oficina de arriba, el del armario de la sala de reuniones")
-    for fisica in (True, False)]
+    for fuera in (__import__("pathlib").Path(
+        "/media/usuario-de-nombre-largo/PENDRIVE-DE-LA-OFICINA-FUERA"), None)]
 
 # El panel de VeraCrypt sin VeraCrypt: se le da uno de mentira, una unidad
 # FAT32 (la pista del tope) y sin dispersos (la estimación de la espera), que es
@@ -950,7 +951,7 @@ try:
                 # debajo el resto de opciones y dos párrafos de notas.
                 for estado_v in VOLUMENES:
                     volumen.leer = lambda e_=estado_v: e_
-                    que = "con VeraCrypt" if estado_v.fisica else "sin contenedor"
+                    que = "con VeraCrypt" if estado_v.fuera else "sin contenedor"
                     entra, corta = medir_dialogo(
                         lambda: tk_volumen.open_dialog(raiz),
                         ancho, alto, escala, modulo=tk_volumen)

@@ -30,6 +30,7 @@ python agente.py abrir [ID]                         # the window of the host roo
 python agente.py desbloquear [ID] | bloquear [ID]   # open / close the encrypted host root
 python agente.py ajuste pedir_al_iniciar sí|no      # or espera_unidad_nueva SEG
 python agente.py actualizar                         # fetch the new release and put it in place
+python agente.py actualizar ID                      # put that root on the agent's version (the tray's «Actualizar a la vX»)
 
 python prdrive-install.py          # install wizard for a NEW device (Tk only)
 python prdrive-install.py --check  # rclone + connection + catalogue, then exit

@@ -20,6 +20,7 @@ Se usa como `python agente.py ORDEN`:
   cifrada.
 - `ajuste CLAVE VALOR`: `pedir_al_iniciar sí|no` o `espera_unidad_nueva SEG`.
 - `actualizar`: baja la versión nueva y la pone (lo que hace la bandeja).
+- `actualizar ID`: pone en esa raíz el código de la versión del agente.
 
 Las órdenes que no son `run` no hacen nada por sí mismas: dejan la petición en
 el buzón del agente (`equipo.pedir()`), que es quien escribe su configuración.
@@ -104,6 +105,14 @@ agente se reinicie; la pausa de todo (`pausa`, la bandeja) no se guarda.
 Cuando hay una versión nueva lo dice una vez; «Actualizar» (`agente.py
 actualizar`) baja el código de la release y ejecuta SU instalador, que pone el
 agente nuevo al lado de este, lo para y arranca el nuevo.
+
+Una raíz de la lista con un programa anterior al del agente se ofrece a poner
+al día desde su desplegable («Actualizar a la vX», `agente.py actualizar ID`):
+un hijo suelto baja el código de la versión DEL AGENTE y ejecuta su
+`prdrive-install.py --update` sobre esa raíz, como hace su ventana. Mientras,
+no se sirve. La huella que deja se apunta como aceptada solo si la de antes lo
+era: el agente ha puesto ese código, pero no responde de lo que hubiera al
+lado.
 
 Depende de `penwatch.py` para detectar, leer los registros de runsync y abrir
 VeraCrypt: el agente importa de penwatch, nunca al revés, y penwatch sigue sin
@@ -190,10 +199,11 @@ COLA_SALIDA = 64 * 1024
 MIRAR_VERSION = 6 * 3600.0
 """Segundos entre comprobaciones de versión nueva (`update.check` guarda 24 h)."""
 MIRAR_EMBLEMA = 60.0
-"""Segundos entre lecturas del `autorun.inf` de una raíz para el icono de la bandeja.
+"""Segundos entre lecturas de lo que una raíz enseña en la bandeja.
 
-Se lee al conectarla y luego como mucho una vez por minuto: así se ve un icono
-cambiado desde su ventana sin leer la unidad en cada vuelta.
+Son su icono (su `autorun.inf`) y su versión (su `VERSION`). Se leen al
+conectarla y luego como mucho una vez por minuto: así se ve un icono cambiado
+o una actualización hecha desde su ventana sin leer la unidad en cada vuelta.
 """
 
 IGNORAR_CAMBIOS = huellas.IGNORAR + (APP_SUBDIR, model.LLAVERO_LOCAL)
@@ -230,6 +240,13 @@ def ruido_en(raiz: Path, carpeta: Path) -> tuple[str, ...]:
 
 
 OK, FALLO, RED, SALTADA = pl.OK, pl.FALLO, pl.RED, pl.SALTADA
+
+SIN_TOCAR = 4
+"""Código de salida de `actualizar-raiz` cuando no ha llegado a tocar la raíz.
+
+No se pudo saber qué bajar, ni bajarlo, ni comprobarlo: la raíz sigue como
+estaba y se sigue sirviendo.
+"""
 
 VERSION_MINIMA = "0.5.0"
 """Primera versión cuyo `sync.py` usa el rclone del agente (`model.RCLONE_DEL_AGENTE`).
@@ -828,11 +845,20 @@ class Conexion:
             decir que sí.
         vieja: Su versión (o «») si es anterior a `VERSION_MINIMA`: ejecutaría
             el rclone de la unidad, así que no se atiende ni se abre.
-        fisica: Su raíz física, si va en un contenedor VeraCrypt: la del
-            vestíbulo, donde está su `autorun.inf`.
         emblema: Su icono para la bandeja (`volumen.emblema()`), o `None` si
             todavía no se ha leído.
         emblema_leido: Cuándo se leyó.
+        version: La versión de su programa (`""` si no lleva `VERSION`), o
+            `None` si todavía no se ha leído.
+        version_leida: Cuándo se leyó.
+        actualizacion: Su «Actualizar a la vX», pedido o en marcha.
+        a_medias: Una actualización suya no acabó bien y la dejó tocada: no se
+            atiende ni se abre hasta que otra acabe.
+        confiada: Si su código era el aceptado cuando se pidió la primera
+            actualización de esta conexión (`None`, si no se ha pedido ninguna):
+            solo entonces la huella que deje se apunta como aceptada.
+        version_avisada: La versión suya de la que ya se dijo que el agente
+            la puede poner al día.
     """
     id: str
     raiz: Path
@@ -854,9 +880,27 @@ class Conexion:
     huella: str | None = None
     cambiada: bool = False
     vieja: str | None = None
-    fisica: Path | None = None
     emblema: dict | None = None
     emblema_leido: float = -math.inf
+    version: str | None = None
+    version_leida: float = -math.inf
+    actualizacion: Actualizacion | None = None
+    a_medias: bool = False
+    confiada: bool | None = None
+    version_avisada: str | None = None
+
+
+@dataclass
+class Actualizacion:
+    """«Actualizar a la vX» de una raíz: ponerle el código de la versión del agente.
+
+    Args:
+        desde: Cuándo se pidió.
+        proc: El `agente.py actualizar-raiz` en marcha; `None` mientras espera
+            a que acabe la pareja en curso de esa raíz.
+    """
+    desde: float
+    proc: Any = None
 
 
 @dataclass
@@ -1164,7 +1208,7 @@ class Agente:
 
         Lee los buzones, recorre los volúmenes, gestiona las conexiones
         (preguntas, fin de pasada, bloqueos, el contrato con el servicio de
-        cada raíz), lee el entorno, mira si hay versión nueva, mira los cambios
+        cada raíz, sus actualizaciones), lee el entorno, mira si hay versión nueva, mira los cambios
         locales de las parejas con `watch = true` y, si no hay una pasada en
         marcha, decide la siguiente. Termina escribiendo el estado.
 
@@ -1190,6 +1234,7 @@ class Agente:
         self._bloqueos(ahora)
         for con in self.conexiones.values():
             self._contrato(con, ahora)
+        self._actualizaciones(ahora)
         self._leer_entorno(ahora)
         self._mirar_version(ahora)
         self._vigilar(ahora)
@@ -1247,8 +1292,6 @@ class Agente:
         for uid in list(self.conexiones):
             if uid not in abiertas:
                 self._desconectar(uid, ahora, cerradas)
-        for uid, con in self.conexiones.items():
-            con.fisica = cerradas.get(uid)      # su vestíbulo, con el contenedor abierto
         self._vestibulos(cerradas, ahora)
         self._raices_ausentes(abiertas)
         self.recorridos += 1
@@ -1340,10 +1383,12 @@ class Agente:
         if con.vieja is not None:
             # Antes de preguntar y de la huella: no hay nada que decidir hasta
             # que se actualice.
+            como = (self._como_actualizar(con) if unidad is not None
+                    else "con el instalador («Actualizar»)")
             avisar(f"{nombre}: su programa es anterior a la {VERSION_MINIMA}",
                    f"Lleva la {con.vieja or 'versión desconocida'}. El agente no la "
-                   f"atiende hasta que la actualices con el instalador («Actualizar»).",
-                   True)
+                   f"atiende hasta que la actualices {como}.", True)
+            con.version_avisada = con.vieja
             diario(f"{nombre}: versión {con.vieja or 'desconocida'}, anterior a la "
                    f"{VERSION_MINIMA}; no se atiende")
             return
@@ -1404,6 +1449,9 @@ class Agente:
         self.sospechas = {k: v for k, v in self.sospechas.items() if k[0] != uid}
         self.sin_red_avisado = {k for k in self.sin_red_avisado if k[0] != uid}
         self._olvidar_vigiladas(uid)
+        if con.actualizacion is not None and con.actualizacion.proc is not None:
+            # El hijo sigue solo y fallará; al volver, la huella dirá si la tocó.
+            diario(f"{con.nombre}: se ha ido mientras se actualizaba")
         unidad = self.ajustes.unidades.get(uid)
         diario(f"{con.nombre} " + ("bloqueada: su contenedor se ha cerrado"
                                    if unidad is not None and unidad.cifrada else
@@ -1549,9 +1597,9 @@ class Agente:
         servicio no estorba: la ventana lo pausa al abrirse (`daemon.stop`).
         Otra ventana sí, y runsync ya se negaría.
         """
-        if con.vieja is not None or rclone_propio() is None:
+        if self._por_actualizar(con) or rclone_propio() is None:
             diario(f"{con.nombre}: no abro su ventana: "
-                   + (self._motivo_sin_servicio(con) if con.vieja is not None
+                   + (self._motivo_sin_servicio(con) if self._por_actualizar(con)
                       else SIN_RCLONE))
             return
         ventana = penwatch._vivo_aqui(con.raiz, penwatch.UI_LOCK_REL)
@@ -1574,11 +1622,21 @@ class Agente:
         """Indica si el agente tiene que servir esa conexión.
 
         Es una unidad de la lista, con su código aceptado, de una versión
-        válida, en modo `daemon` o `sync` y sin el «Pausar» de su ventana.
+        válida y sin una actualización a medias, en modo `daemon` o `sync` y
+        sin el «Pausar» de su ventana.
         """
         unidad = self.ajustes.unidades.get(con.id)
-        return unidad is not None and not con.cambiada and con.vieja is None \
+        return unidad is not None and not con.cambiada and not self._por_actualizar(con) \
             and unidad.modo in (equipo.DAEMON, equipo.SYNC) and not unidad.pausada
+
+    @staticmethod
+    def _por_actualizar(con: Conexion) -> bool:
+        """Indica si de esa raíz no se ejecuta nada hasta ponerla al día.
+
+        Es anterior a `VERSION_MINIMA`, o una actualización suya la dejó a
+        medias.
+        """
+        return con.vieja is not None or con.a_medias
 
     def _cargar_servicio(self, con: Conexion) -> None:
         """Relee las parejas y el intervalo si cambió el TOML o la memoria del servicio.
@@ -1632,6 +1690,13 @@ class Agente:
             if not ocupada:
                 self._soltar(con)
             con.motivo = "bloqueándose"
+            return
+        if con.actualizacion is not None:
+            # Igual que al bloquearla: se suelta acabada la pareja en curso, y
+            # entonces se lanza la actualización (`_actualizaciones`).
+            if not ocupada:
+                self._soltar(con)
+            con.motivo = "actualizándose"
             return
         if not self._sirve(con):
             if not ocupada:                 # el lock se suelta al acabar la pareja
@@ -1704,6 +1769,8 @@ class Agente:
         if con.vieja is not None:
             return (f"su programa es de la {con.vieja or 'versión desconocida'}: el agente "
                     f"atiende desde la {VERSION_MINIMA}")
+        if con.a_medias:
+            return "su actualización no acabó bien: vuelve a pedir «Actualizar»"
         if con.cambiada:
             return "su código ha cambiado desde que se atendió"
         unidad = self.ajustes.unidades.get(con.id)
@@ -1774,13 +1841,15 @@ class Agente:
     def _raices(self) -> list[pl.Raiz]:
         """Devuelve las raíces que el planificador puede atender.
 
-        Las que tienen nuestro lock y su servicio y no se están bloqueando. De
-        la raíz de la pasada cortada se quita su pareja mientras espera.
+        Las que tienen nuestro lock y su servicio y no se están bloqueando ni
+        actualizando. De la raíz de la pasada cortada se quita su pareja
+        mientras espera.
         """
         raices = []
         cortada = self._cortada()
         for con in self.conexiones.values():
-            if con.lock is None or con.servicio is None or con.id in self.bloqueos:
+            if con.lock is None or con.servicio is None or con.id in self.bloqueos \
+                    or con.actualizacion is not None:
                 continue
             modo = self.ajustes.unidades[con.id].modo
             intervalo = math.inf if modo == equipo.SYNC else con.servicio.minutos * 60
@@ -2447,6 +2516,173 @@ class Agente:
         diario(f"actualizando a la {self.nueva or 'última versión'}; lo que pase, "
                f"aquí mismo")
 
+    def _actualizandose(self) -> bool:
+        """Indica si está en marcha el «Actualizar» del propio agente."""
+        return self.actualizando is not None and self.actualizando.poll() is None
+
+    def _como_actualizar(self, con: Conexion) -> str:
+        """Devuelve dónde se pide poner al día esa raíz, para terminar un aviso."""
+        if self.con_bandeja():
+            return "desde su desplegable en el icono de la bandeja"
+        return f"con «python agente.py actualizar {con.id}»"
+
+    def _actualizable(self, con: Conexion) -> bool:
+        """Indica si a esa raíz se le puede ofrecer «Actualizar a la vX».
+
+        Es una raíz de la lista, con su código aceptado, que no se está
+        bloqueando, con un programa anterior al del agente (o sin `VERSION`), o
+        que una actualización dejó a medias. De una que no está en la lista no
+        se toca nada, y con el código cambiado primero hay que volver a decir
+        que sí. Mientras el propio agente se actualiza, tampoco: él mismo pone
+        al día las raíces del equipo que estén abiertas.
+        """
+        if con.id not in self.ajustes.unidades or con.cambiada or con.pregunta is not None \
+                or con.id in self.bloqueos or not self.version or self._actualizandose():
+            return False
+        return con.a_medias or update.is_newer(self.version, self._version_de(con))
+
+    def _con_ventana(self, con: Conexion) -> bool:
+        """Indica si esa raíz tiene su ventana abierta, y entonces avisa de que no se actualiza.
+
+        La ventana ofrece su propia actualización, y no se le cambia el
+        programa por debajo.
+        """
+        if penwatch._vivo_aqui(con.raiz, penwatch.UI_LOCK_REL) is None:
+            return False
+        avisar(f"{con.nombre}: tiene su ventana abierta",
+               "No la actualizo por debajo de ella: actualízala desde la ventana, o "
+               "ciérrala y vuelve a pedirlo.", True)
+        return True
+
+    def _pedir_actualizacion(self, uid: str, ahora: float) -> None:
+        """Atiende «Actualizar a la vX» de una raíz: lo deja pedido.
+
+        Se lanza en `_actualizaciones()`, acabada la pareja en curso. La
+        primera vez en esta conexión se mira si su código es el aceptado
+        (`confiada`), antes de tocar nada.
+        """
+        con = self.conexiones.get(uid)
+        if con is None:
+            diario(f"actualizar {uid[:8]!r}: no está conectada")
+            return
+        if con.actualizacion is not None:
+            diario(f"{con.nombre}: ya se está actualizando")
+            return
+        if not self._actualizable(con):
+            diario(f"{con.nombre}: no hay nada que ponerle desde aquí (lleva la "
+                   f"{self._version_de(con) or 'versión desconocida'}; el agente, la "
+                   f"{self.version or 'versión desconocida'})")
+            return
+        if self._con_ventana(con):
+            return
+        unidad = self.ajustes.unidades[uid]
+        if con.confiada is None:
+            con.confiada = unidad.es_raiz or not unidad.codigo \
+                or huella(con.raiz) == unidad.codigo
+        con.actualizacion = Actualizacion(ahora)
+        self.urgentes = [u for u in self.urgentes if u[0] != uid]
+        diario(f"{con.nombre}: se pide ponerla a la {self.version}")
+
+    def _actualizaciones(self, ahora: float) -> None:
+        """Lanza las actualizaciones pedidas, recoge las que acaban y ofrece las que hay.
+
+        Una pedida espera a que acabe la pareja en curso de su raíz, la de este
+        agente o la que dejó el anterior, y a que se suelte su lock
+        (`_contrato()`). De una raíz que se puede poner al día se avisa una vez
+        por cada versión suya.
+        """
+        heredada = equipo.pasada_viva() if self.heredada is not None else None
+        for con in list(self.conexiones.values()):
+            act = con.actualizacion
+            if act is None:
+                self._avisar_actualizable(con)
+            elif act.proc is None:
+                ocupada = (self.pasada is not None and self.pasada.tarea.raiz == con.id) \
+                    or (heredada or {}).get("raiz") == con.id
+                if not ocupada and con.lock is None:
+                    self._lanzar_actualizacion(con, act)
+            elif act.proc.poll() is not None:
+                self._fin_de_actualizacion(con, act.proc.poll(), ahora)
+
+    def _avisar_actualizable(self, con: Conexion) -> None:
+        """Dice, una vez por cada versión suya, que esa raíz se puede poner al día."""
+        if con.a_medias or not self._actualizable(con):
+            return
+        version = self._version_de(con)
+        if con.version_avisada == version:
+            return
+        con.version_avisada = version
+        avisar(f"{con.nombre} tiene la {version or 'versión desconocida'}",
+               f"El agente de este equipo es de la {self.version}. Puedes ponerla al día "
+               f"{self._como_actualizar(con)}.")
+
+    def _lanzar_actualizacion(self, con: Conexion, act: Actualizacion) -> None:
+        """Lanza el hijo suelto que pone al día esa raíz (`agente.py actualizar-raiz`).
+
+        Si entretanto se ha abierto su ventana, se deja: se dice y no se lanza.
+        """
+        if self._con_ventana(con):
+            con.actualizacion = None
+            return
+        try:
+            act.proc = lanzar([python(), str(SCRIPT_DIR / "agente.py"), "actualizar-raiz",
+                               str(con.raiz)],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                              **_opciones_hijo(equipo.DIR, separado=True))
+        except OSError as e:
+            con.actualizacion = None
+            avisar(f"{con.nombre}: no he podido actualizarla", str(e), True)
+            return
+        diario(f"{con.nombre}: actualizándola a la {self.version}; lo que pase, aquí mismo")
+
+    def _fin_de_actualizacion(self, con: Conexion, rc: int, ahora: float) -> None:
+        """Recoge una actualización acabada y dice cómo ha ido.
+
+        Ha ido bien si el instalador sale con 0 y la raíz lleva ahora la
+        versión del agente. Entonces, de una unidad, la huella nueva se apunta
+        como aceptada si la de antes lo era (`confiada`); si no, se vuelve a
+        preguntar, como con cualquier código cambiado. Si ha ido mal pero la
+        tocó, queda `a_medias`: no se atiende hasta que otra acabe bien.
+
+        Args:
+            con: La conexión de la raíz.
+            rc: Con qué salió `actualizar-raiz` (`SIN_TOCAR`: no la tocó).
+            ahora: La hora del reloj del agente.
+        """
+        con.actualizacion = None
+        con.version, con.version_leida = None, -math.inf
+        puesta = update.installed_version(app(con.raiz))
+        bien = rc == 0 and puesta == self.version
+        con.a_medias = not bien and rc != SIN_TOCAR
+        con.vieja = version_vieja(con.raiz)
+        unidad = self.ajustes.unidades.get(con.id)
+        if unidad is not None and not unidad.es_raiz:
+            nueva = huella(con.raiz)
+            if nueva == unidad.codigo:
+                con.a_medias = False            # no ha llegado a cambiar nada
+            elif bien and con.confiada and nueva:
+                self._guardar(self.ajustes.con_unidad(replace(unidad, codigo=nueva)))
+                con.huella = nueva
+                diario(f"{con.nombre}: apuntada la huella de su código nuevo")
+            elif bien:
+                con.cambiada = True
+                diario(f"{con.nombre}: actualizada, pero su código no era el que se "
+                       f"aceptó; no se ejecuta nada suyo hasta que se vuelva a decir que sí")
+                self._preguntar(con, ahora)
+        if bien:
+            con.confiada = None
+            diario(f"{con.nombre}: actualizada a la {puesta}")
+            dlog(con.raiz, f"programa actualizado a la {puesta} por el agente del equipo")
+            avisar(f"{con.nombre} actualizada a la {puesta}",
+                   "Se conservan su configuración, sus claves y su estado.")
+            return
+        diario(f"{con.nombre}: la actualización ha salido con {rc}"
+               + ("" if rc else f" pero lleva la {puesta or 'versión desconocida'}"))
+        avisar(f"{con.nombre}: no he podido actualizarla",
+               f"Lo que ha pasado está en {equipo.diario_log()}."
+               + (" No se atiende hasta que vuelvas a pedirlo y acabe bien."
+                  if con.a_medias else ""), True)
+
     def pedir(self, peticion: dict) -> None:
         """Deja una petición de la bandeja (otro hilo) para la próxima vuelta.
 
@@ -2477,7 +2713,8 @@ class Agente:
         está en la lista ni se mira: de ella solo se lee su id y su nombre.
         """
         for con in list(self.conexiones.values()):
-            if con.id not in self.ajustes.unidades or con.cambiada or con.vieja is not None:
+            if con.id not in self.ajustes.unidades or con.cambiada \
+                    or self._por_actualizar(con):
                 continue
             for p in equipo.recoger(estado_de(con.raiz) / equipo.BUZON_SERVICIO):
                 if p.get("pide") not in equipo.PIDE_SERVICIO:
@@ -2496,7 +2733,8 @@ class Agente:
         una raíz, atender o poner modo a una unidad, añadir una raíz,
         desbloquear o bloquear una raíz cifrada, abrir la ventana o la carpeta
         de una raíz, despertar, sondear, un cambio de red, cambiar un ajuste,
-        una pasada urgente, actualizar, pausa, sigue y parar.
+        una pasada urgente, actualizar el agente o una raíz, pausa, sigue y
+        parar.
 
         Args:
             p: La petición.
@@ -2649,6 +2887,8 @@ class Agente:
             self.urgentes += [(uid, n) for n in nombres if (uid, n) not in self.urgentes]
         elif que == equipo.PIDE_ACTUALIZAR:
             self._actualizar()
+        elif que == equipo.PIDE_ACTUALIZAR_UNIDAD:
+            self._pedir_actualizacion(uid, ahora)
         elif que == equipo.PIDE_PAUSA:
             self.pausado = True
         elif que == equipo.PIDE_SIGUE:
@@ -2667,9 +2907,10 @@ class Agente:
         """Hace el «Configurar» de la bandeja (la ventana de una raíz) o su «Abrir en explorador».
 
         Una unidad que no está en la lista no: sería ejecutar su código sin el
-        sí, y tampoco se abre su carpeta (la misma regla, sin excepciones). Una
-        raíz cifrada bloqueada se desbloquea antes, y su ventana o su carpeta
-        salen al verla abierta.
+        sí, y tampoco se abre su carpeta (la misma regla, sin excepciones). Ni
+        una que se está actualizando, hasta que acabe. Una raíz cifrada
+        bloqueada se desbloquea antes, y su ventana o su carpeta salen al verla
+        abierta.
 
         Args:
             uid: El id de la raíz.
@@ -2680,9 +2921,11 @@ class Agente:
         que = "abrir en el explorador" if explorador else "abrir"
         unidad = self.ajustes.unidades.get(uid)
         con = self.conexiones.get(uid)
-        if unidad is None or (con is not None and (con.cambiada or con.vieja is not None)):
+        if unidad is None or (con is not None and (con.cambiada or self._por_actualizar(con))):
             diario(f"{que} {uid[:8]!r}: no está en la lista, o su código ha cambiado; "
                    f"no se ejecuta nada suyo")
+        elif con is not None and con.actualizacion is not None:
+            diario(f"{que} {con.nombre}: se está actualizando; cuando acabe")
         elif con is not None:
             if explorador:
                 self._explorar(con)
@@ -2714,22 +2957,33 @@ class Agente:
         Solo de una raíz de la lista, con su código aceptado y de una versión
         válida: de las demás no se lee nada más que su id y su nombre, y llevan
         la marca de prdrive (`{}`). Se lee su `autorun.inf` donde lo pone
-        «Nombre e icono…»: en la raíz física de una unidad en un contenedor, en
-        la carpeta del contenedor de una raíz cifrada del equipo y, si no, en
-        la propia raíz. Como mucho una vez cada `MIRAR_EMBLEMA`.
+        «Nombre e icono…»: en la propia raíz, que en una unidad o una raíz del
+        equipo cifradas es el volumen montado. Como mucho una vez cada
+        `MIRAR_EMBLEMA`.
         """
-        unidad = self.ajustes.unidades.get(con.id)
-        if unidad is None or con.cambiada or con.vieja is not None:
+        if (con.id not in self.ajustes.unidades or con.cambiada
+                or self._por_actualizar(con)):
             return {}
         ahora = self.reloj()
         if con.emblema is None or ahora - con.emblema_leido >= MIRAR_EMBLEMA:
-            if unidad.cifrada:
-                donde = Path(unidad.contenedor).parent
-            else:
-                donde = con.fisica or con.raiz
-            con.emblema = volumen.emblema(donde, APP_SUBDIR)
+            con.emblema = volumen.emblema(con.raiz, APP_SUBDIR)
             con.emblema_leido = ahora
         return con.emblema
+
+    def _version_de(self, con: Conexion) -> str:
+        """Devuelve la versión del programa de esa raíz, para su desplegable.
+
+        Es su `VERSION`, un fichero de texto que se lee y no se ejecuta, como
+        el de `version_vieja()` al conectarla: también la de una unidad que no
+        está en la lista. Como mucho una vez cada `MIRAR_EMBLEMA`, porque
+        actualizarla desde su ventana la cambia sin desconectarla. `""` si no
+        se sabe.
+        """
+        ahora = self.reloj()
+        if con.version is None or ahora - con.version_leida >= MIRAR_EMBLEMA:
+            con.version = update.installed_version(app(con.raiz))
+            con.version_leida = ahora
+        return con.version
 
     def _estado_raiz(self, uid: str, unidad: equipo.Unidad) -> str:
         """Devuelve en qué está una raíz de este equipo, para la bandeja."""
@@ -2779,9 +3033,13 @@ class Agente:
                              "atendida": con.lock is not None,
                              "motivo": con.motivo,
                              "en_lista": unidad is not None and not con.cambiada
-                             and con.vieja is None,
+                             and not self._por_actualizar(con),
                              "cambiada": con.cambiada,
                              "vieja": con.vieja,
+                             "a_medias": con.a_medias,
+                             "actualizable": con.actualizacion is None
+                             and self._actualizable(con),
+                             "actualizando": con.actualizacion is not None,
                              "ahora_no": con.respuesta == pl.AHORA_NO,
                              "preguntando": con.pregunta is not None,
                              "error": con.error,
@@ -2790,7 +3048,8 @@ class Agente:
                                                 if r == con.id and m.fallos > 0),
                              "vigila": vigila,
                              "vigila_abandonada": abandonadas,
-                             "emblema": self._emblema(con)})
+                             "emblema": self._emblema(con),
+                             "version": self._version_de(con)})
         cerradas = [u.nombre or u.id[:8] for u in self.ajustes.cifradas.values()
                     if u.id not in self.conexiones and u.id not in self.ausentes]
         return {"pid": os.getpid(), "pausado": self.pausado, "retenido": self.retenido,
@@ -2821,8 +3080,7 @@ class Agente:
                 "pedir_al_iniciar": self.ajustes.pedir_al_iniciar,
                 "ultima_pasada": self.ultima_buena,
                 "version": self.version, "nueva": self.nueva,
-                "actualizando": self.actualizando is not None
-                and self.actualizando.poll() is None}
+                "actualizando": self._actualizandose()}
 
     def _escribir_estado(self) -> None:
         """Escribe `estado.json` y le pasa la vista a la bandeja, si cambian."""
@@ -3136,6 +3394,9 @@ def cmd_status(_args: argparse.Namespace) -> int:
         print(f"{'Raíz' if u.get('del_equipo') else 'Conectada'}: {u.get('nombre')} "
               f"en {u.get('raiz')}"
               + (f" — {u['motivo']}" if u.get("motivo") else " — atendida"))
+        if u.get("actualizable"):
+            print(f"  Lleva la {u.get('version') or 'versión desconocida'}; para ponerla a "
+                  f"la {estado.get('version')}: agente.py actualizar {u.get('id')}")
         if u.get("vigila"):
             print(f"  Sincroniza al cambiar sus ficheros: {', '.join(u['vigila'])}")
         if u.get("vigila_abandonada"):
@@ -3341,7 +3602,7 @@ def cmd_ajuste(args: argparse.Namespace) -> int:
     return _pedir({"pide": equipo.PIDE_AJUSTE, "clave": args.clave, "valor": valor})
 
 
-def cmd_actualizar(_args: argparse.Namespace) -> int:
+def cmd_actualizar(args: argparse.Namespace) -> int:
     """Hace el «Actualizar» de la bandeja (o a mano).
 
     Baja el código de la última release, lo comprueba (`update.download()`) y
@@ -3349,7 +3610,12 @@ def cmd_actualizar(_args: argparse.Namespace) -> int:
     lado, para a este, vuelve a registrarlo, pone al día las raíces abiertas y
     arranca el nuevo. Lo que dice va al diario del agente. Nunca se descarga
     dentro de ninguna raíz.
+
+    Con un id es el «Actualizar a la vX» de esa raíz: se le pide al agente,
+    que es quien sabe si se puede y cuándo.
     """
+    if getattr(args, "id", None):
+        return _pedir({"pide": equipo.PIDE_ACTUALIZAR_UNIDAD, "id": args.id})
     _enganchar_penwatch()
 
     def decir(msg: str) -> None:
@@ -3387,6 +3653,53 @@ def cmd_actualizar(_args: argparse.Namespace) -> int:
         avisar(f"{APP_NAME} actualizado a la {rel.tag}",
                "El agente se ha reiniciado con la versión nueva.")
         return 0
+    finally:
+        shutil.rmtree(trabajo, ignore_errors=True)
+
+
+def cmd_actualizar_raiz(args: argparse.Namespace) -> int:
+    """Pone en una raíz el código de la versión de este agente.
+
+    Es el hijo suelto que lanza «Actualizar a la vX» de una raíz
+    (`Agente._lanzar_actualizacion()`). Baja el código del tag de ESTE agente
+    (`update.source_tag()`), no el de la última release: es la versión que el
+    agente sabe atender y la de su rclone. Lo comprueba (`update.download()`),
+    a un temporal y nunca dentro de una raíz, y ejecuta SU instalador con
+    `--update RAIZ` y el Python del agente, como hace la ventana de la raíz:
+    se cambia el programa y se conservan su configuración, sus claves, su
+    estado y sus componentes. Lo que dice va al diario del agente; quien avisa
+    de cómo ha ido es el agente, que mira su código de salida.
+
+    Returns:
+        0 si ha ido bien, `SIN_TOCAR` si no se ha llegado a tocar la raíz, y
+        si no, con lo que salga el instalador.
+    """
+    _enganchar_penwatch()
+    raiz = Path(args.raiz)
+
+    def decir(msg: str) -> None:
+        """Dice un mensaje por pantalla y en el diario."""
+        print(msg)
+        diario(f"actualizar {raiz}: {msg}")
+
+    tag = update.source_tag(SCRIPT_DIR)
+    if not tag:
+        decir("no sé de qué versión es este agente: no hay nada que ponerle")
+        return SIN_TOCAR
+    trabajo = Path(tempfile.mkdtemp(prefix=f"{APP_NAME}-raiz-"))
+    try:
+        try:
+            update.download(tag, trabajo / "codigo", progreso=decir)
+        except update.UpdateError as e:
+            decir(str(e))
+            return SIN_TOCAR
+        proc = ejecutar(update.apply_command(trabajo / "codigo", raiz, sys.executable),
+                        capture_output=True, text=True, encoding="utf-8",
+                        errors="replace", **_opciones_hijo(equipo.DIR))
+        for linea in ((proc.stdout or "") + (proc.stderr or "")).splitlines():
+            if linea.strip():
+                decir(linea.rstrip())
+        return proc.returncode
     finally:
         shutil.rmtree(trabajo, ignore_errors=True)
 
@@ -3437,8 +3750,13 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("bloquear", help="Cerrarlo.")
     p.add_argument("id", nargs="?", default="")
     p.set_defaults(func=lambda a: _pedir({"pide": equipo.PIDE_BLOQUEAR, "id": a.id}))
-    sub.add_parser("actualizar", help="Bajar la versión nueva y ponerla.").set_defaults(
-        func=cmd_actualizar)
+    p = sub.add_parser("actualizar", help="Bajar la versión nueva y ponerla; con un id, "
+                                          "poner esa raíz a la versión del agente.")
+    p.add_argument("id", nargs="?", default="")
+    p.set_defaults(func=cmd_actualizar)
+    p = sub.add_parser("actualizar-raiz", help=argparse.SUPPRESS)
+    p.add_argument("raiz")
+    p.set_defaults(func=cmd_actualizar_raiz)
     p = sub.add_parser("ajuste", help="Cambiar un ajuste del agente.")
     p.add_argument("clave", choices=equipo.AJUSTES_PEDIBLES)
     p.add_argument("valor")
