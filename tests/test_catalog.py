@@ -159,6 +159,34 @@ with sandbox():
     c("dos escrituras a la vez y una lectura en medio: siempre una copia entera",
       (len(vistos) > 0, set(vistos) <= {1, 2}), (True, True))
 
+    # En Windows, abrir la copia mientras otra lectura la renombra encima da
+    # PermissionError: se simula aquí para probarlo en cualquier sistema.
+    real_cache_toml = catalog.cache_toml
+
+    class Negada:
+        """La copia de verdad, que se niega a abrirse las primeras `veces`."""
+
+        def __init__(self, veces):
+            self.veces = veces
+
+        def read_text(self, encoding):
+            if self.veces:
+                self.veces -= 1
+                raise PermissionError(13, "El proceso no tiene acceso al archivo")
+            return real_cache_toml().read_text(encoding=encoding)
+
+    try:
+        negada = Negada(2)
+        catalog.cache_toml = lambda: negada
+        cat = catalog.cached()
+        c("una copia que Windows niega un instante se lee al reintentar",
+          (cat is not None and len(cat.raw.get("pair") or []) in (1, 2), negada.veces),
+          (True, 0))
+        negada = Negada(catalog._REINTENTOS_COPIA)
+        c("  y si la sigue negando, no hay copia (sin reventar)", catalog.cached(), None)
+    finally:
+        catalog.cache_toml = real_cache_toml
+
 # escribir: lo peligroso
 with sandbox():
     nuevo = {**CAT, "pair": CAT["pair"] + [{"name": "fotos", "local": "sync-data/fotos",

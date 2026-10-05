@@ -40,6 +40,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 import tomllib
 from datetime import datetime
 from pathlib import Path, PurePosixPath
@@ -560,15 +561,31 @@ def pull(raw_local: Mapping[str, Any] | None = None) -> Catalog:
     return cat
 
 
+_REINTENTOS_COPIA = 5
+"""Veces que `cached()` intenta abrir la copia si Windows se la niega."""
+
+
 def cached() -> Catalog | None:
     """Devuelve la última copia buena, sin tocar la red.
 
     Es `None` si no hay copia o no sirve.
+
+    En Windows, abrir la copia justo mientras otra lectura la sustituye
+    (`os.replace()` en `_write_cache()`) da `PermissionError`: quien renombra
+    la tiene abierta para borrarla, y `open()` no comparte ese permiso. Dura
+    lo que el renombrado, así que se reintenta unas pocas veces antes de
+    contestar que no hay copia, que la ventana enseñaría como «sin catálogo».
     """
-    try:
-        text = cache_toml().read_text(encoding="utf-8")
-    except OSError:
-        return None
+    for intento in range(_REINTENTOS_COPIA):
+        try:
+            text = cache_toml().read_text(encoding="utf-8")
+            break
+        except PermissionError:
+            if intento + 1 == _REINTENTOS_COPIA:
+                return None
+            time.sleep(0.02)
+        except OSError:
+            return None
     try:
         raw = tomllib.loads(text)
     except tomllib.TOMLDecodeError:
