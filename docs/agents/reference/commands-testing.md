@@ -44,6 +44,7 @@ python build_installer.py          # build the .exe (embeds the profile if any)
 python -m ui.icons                 # repaint APP_DIR/runsync.ico (headless)
 
 python tests/run_all.py            # all tests; or run one script directly
+python tests/integracion/llavero_real.py --de-verdad  # the keychain end to end, for real (CI only)
 ```
 
 `runsync.py` with no args always **stops a previously started service** first.
@@ -51,6 +52,8 @@ python tests/run_all.py            # all tests; or run one script directly
 ## Verification
 
 Verification is `tests/run_all.py` (each script in its own process), `--doctor` and `--dry-run`. Nothing to lint. CI (`.github/workflows/tests.yml`) runs `run_all.py` on every PR and push to `main`, on `ubuntu-latest` under `xvfb-run` (with `python3-tk`) and on `windows-latest`, Python 3.11; it runs as an unprivileged user (a check that writes to `/` fails there), and no test may depend on what the real `%LOCALAPPDATA%` caches hold. The PR template still asks how it was checked. Tk tests skip themselves without a display, so an all-green run without Tk has tested no window.
+
+**The keychain for real** (`.github/workflows/llavero-real.yml`: PRs touching the keychain, and by hand) runs `tests/integracion/llavero_real.py` on `ubuntu-latest` (xvfb) and `windows-latest`. It is not a `test_*.py` (`run_all.py` never sees it) and refuses to run without `CI` or `--de-verdad`: it downloads the pinned rclone and KeePassXC, provisions a device in a temp dir with `install/deploy` and a `local` remote, and drives the device's own code one step per process (activate, «Abrir llavero», a save the watcher uploads, a real two-sided conflict merged by `plan_combinar()` with the password on stdin instead of a console, the deletion the delete brake must let through, `--cerrar-llavero`), checking what KeePassXC itself writes: the HKCU keys and the JSON it rewrites at start on Windows, the manifests on Linux, and a `change-public-keys` through the proxy they name. On Linux it points `HOME` and the XDG dirs at the temp dir. The cloud run that found the bugs it now guards: `docs/superpowers/pruebas/2026-10-05-llavero-nube-resultados.md`.
 
 - The suite passes on Windows **and** Linux. A check about the other system's branch forces it (`IS_WIN`, and for a Linux mount point `Unidad.letra`) in any system, or prints `(saltado) …` when it cannot run there (Unix sockets, the Linux tray's `select()` on a pipe).
 - `tests/_harness.py` points `equipo.DIR`, `XDG_DATA_HOME`/`XDG_CONFIG_HOME`/`XDG_CACHE_HOME` and `keepassxc.bases_navegador()` (the browsers' manifest folders, Firefox's under the home folder) at temp dirs for every test, so no test sees or deletes the runner's agent, menu entries, extracted KeePassXC or browser manifests, and turns `os.kill(pid, 0)` into a real question on Windows: there 0 is `CTRL_C_EVENT`, a Ctrl+C to the whole console, and forcing `IS_WIN = False` reaches it.
