@@ -496,6 +496,7 @@ PIDE_DESPERTAR = "despertar"    # el equipo vuelve de la suspensión: mirarlo to
 PIDE_SONDEAR = "sondear"        # los remotos sin conexión: probarlos ya («Probar ahora»)
 PIDE_CAMBIO_DE_RED = "cambio_de_red"  # el sistema dice que hay red otra vez (`common/red.py`)
 PIDE_ACTUALIZAR = "actualizar"  # bajar la versión nueva y ponerla (agente y raíces del equipo)
+PIDE_ACTUALIZAR_UNIDAD = "actualizar_unidad"  # id: ponerle el código de la versión del agente
 PIDE_REANUDAR = "reanudar"      # (buzón de la raíz) «Reanudar»: sin pausa propia, y volver ya
 PIDE_PAUSAR_RAIZ = "pausar_raiz"    # (buzón de la raíz) «Pausar»: no sincronizarla hasta «Reanudar»
 AJUSTES_PEDIBLES = ("espera_unidad_nueva", "pedir_al_iniciar")
