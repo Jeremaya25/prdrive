@@ -17,6 +17,9 @@ Lo que se sujeta:
 - La bandeja: «Abrir llavero» en el desplegable de un dispositivo con llavero,
   solo donde se abre (Windows), y la petición lanza su `runsync.py --llavero`
   con las guardas de su ventana.
+- Un conflicto del llavero (lo que su `sync.py` apunta en `conflicts.json`):
+  un aviso por copia nueva y conexión, y una línea de aviso en la bandeja que
+  lleva a combinarlo.
 """
 
 import math
@@ -27,9 +30,9 @@ from _harness import Checks
 
 import _agente_falso as F
 import agente
-from common import equipo, llavero, model
+from common import equipo, llavero, model, store
 from common import planificador as pl
-from ui import bandeja
+from ui import bandeja, icons
 
 c = Checks("agente: el llavero de una raíz")
 F.preparar()
@@ -315,4 +318,67 @@ config.write_text(config.read_text(encoding="utf-8") + LLAVERO, encoding="utf-8"
 c("activarlo no se relee en cada vuelta", fila(ag.resumen(), UID_N)["llavero"], False)
 F.pasar(agente.MIRAR_EMBLEMA)
 c("  pasado MIRAR_EMBLEMA, sí", fila(ag.resumen(), UID_N)["llavero"], True)
+
+
+# ---------------------------------------------------------------------------
+# 6. Un conflicto del llavero
+# ---------------------------------------------------------------------------
+COPIA = ".keychain/personal.conflicto-remoto1.kdbx"
+
+
+def conflictos(raiz: Path, copias: list) -> None:
+    """Escribe lo que apuntaría su sync.py tras una pasada (`conflicts.actualizar_pareja()`)."""
+    store.write_json(raiz / ".prdrive" / "state" / "conflicts.json",
+                     {"cuando": "x", "parejas": {"docs": [], model.LLAVERO: copias}})
+
+
+def pasada_del_llavero(ag, raiz: Path) -> None:
+    """Hace una pasada del llavero de esa raíz, entera."""
+    terminar(ag)
+    ag.marcas[(UID_B, model.LLAVERO)] = pl.Marca(None)
+    hasta(ag, raiz, 10)
+    terminar(ag)
+
+
+def del_llavero_avisos() -> list:
+    """Los avisos de un conflicto del llavero."""
+    return [a for a in F.AVISOS if "el llavero tiene dos versiones" in a[0]]
+
+
+F.AVISOS.clear()
+conflictos(CON, [COPIA])
+pasada_del_llavero(ag, CON)
+c("tras una pasada que deja una copia de la base, un aviso",
+  [t for t, _ in del_llavero_avisos()], [f"{nombre}: el llavero tiene dos versiones"])
+c("  que dice que no se ha perdido nada y cómo combinarlas",
+  del_llavero_avisos()[0][1],
+  agente.LLAVERO_EN_CONFLICTO + (agente.COMBINAR_AQUI if agente.IS_WIN
+                                 else agente.COMBINAR_A_MANO))
+resumen = ag.resumen()
+c("  el resumen lo cuenta", fila(resumen, UID_B)["llavero_conflicto"], 1)
+en_windows = {**resumen, "abre_llavero": True}
+linea = next(e for e in bandeja.vista(en_windows).menu if "dos versiones" in e.texto)
+c("  la bandeja lo dice arriba, y lleva a combinarlo",
+  (linea.texto, linea.pide),
+  (f"{nombre}: el llavero tiene dos versiones · Combinar…",
+   ({"pide": equipo.PIDE_LLAVERO, "id": UID_B},)))
+c("  con el icono de aviso", bandeja.vista(en_windows).icono, icons.AVISO)
+lejos = next(e for e in bandeja.vista({**resumen, "abre_llavero": False}).menu
+             if "dos versiones" in e.texto)
+c("  donde no se abre, a su ventana («Reparación»)",
+  (lejos.texto.endswith("· Abrir…"), lejos.pide[0]["pide"]), (True, equipo.PIDE_ABRIR))
+pasada_del_llavero(ag, CON)
+c("la misma copia no se vuelve a avisar", len(del_llavero_avisos()), 1)
+conflictos(CON, [])                      # «Combinar», desde su ventana
+F.pasar(agente.MIRAR_EMBLEMA)
+F.vueltas(ag, 1)
+c("combinadas, se ve sin pasada del agente", fila(ag.resumen(), UID_B)["llavero_conflicto"], 0)
+conflictos(CON, [COPIA])
+pasada_del_llavero(ag, CON)
+c("  y un conflicto nuevo con el mismo nombre se vuelve a avisar", len(del_llavero_avisos()), 2)
+conflictos(extrano, [COPIA])
+F.pasar(agente.MIRAR_EMBLEMA)
+F.vueltas(ag, 1)
+c("de una unidad que no está en la lista no se lee nada",
+  (fila(ag.resumen(), FUERA)["llavero_conflicto"], len(del_llavero_avisos())), (0, 2))
 sys.exit(c.report())

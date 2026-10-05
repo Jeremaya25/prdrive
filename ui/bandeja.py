@@ -224,6 +224,14 @@ def _avisos(resumen: Mapping[str, Any]) -> list[tuple[str, Entrada]]:
         if u.get("error"):
             frase = f"{nombre}: {u['error']}"
             salida.append((frase, Entrada(f"{frase} · Abrir…", abrir, icono=I_AVISO)))
+        if u.get("llavero_conflicto"):
+            # Se arregla combinando: «Abrir llavero» lo ofrece, y donde no se
+            # abre, su ventana lo enseña en «Reparación».
+            frase = f"{nombre}: el llavero tiene dos versiones"
+            salida.append((frase, Entrada(f"{frase} · Combinar…", _pide(
+                equipo.PIDE_LLAVERO, id=u.get("id", "")), icono=I_LLAVERO)
+                if _con_llavero(resumen, u) else
+                Entrada(f"{frase} · Abrir…", abrir, icono=I_AVISO)))
     for linea in resumen.get("sin_conexion") or []:
         frase = f"Sin conexión: {linea}"
         salida.append((frase, Entrada(f"{frase} · Probar ahora",

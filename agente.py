@@ -269,6 +269,14 @@ TEXTO_RESULTADO = {OK: "bien", FALLO: "FALLÓ", RED: "FALLÓ por la red",
 """Cómo se dice, en el diario, el resultado de una pasada."""
 
 
+LLAVERO_EN_CONFLICTO = ("Se guardó en dos dispositivos sin sincronizar en medio, y las dos "
+                        "versiones están en el dispositivo: no se ha perdido nada. ")
+"""El principio del aviso de un conflicto del llavero; lo acaba cómo combinarlas."""
+COMBINAR_AQUI = "«Abrir llavero» ofrece combinarlas antes de abrir."
+COMBINAR_A_MANO = ("Combínalas en KeePassXC: «Base de datos → Combinar desde base de "
+                   "datos…».")
+
+
 def lanzar(args: list[str], **kwargs) -> Any:
     """Lanza un proceso hijo.
 
@@ -876,6 +884,10 @@ class Conexion:
         llavero: Si lleva llavero (`[keychain]`), o `None` si todavía no se
             ha mirado.
         llavero_leido: Cuándo se miró.
+        copias: Las copias de conflicto de su llavero, rutas relativas a la
+            raíz (`_copias_del_llavero()`).
+        copias_leidas: Cuándo se miraron.
+        copias_avisadas: Las que ya se han avisado en esta conexión.
     """
     id: str
     raiz: Path
@@ -907,6 +919,9 @@ class Conexion:
     version_avisada: str | None = None
     llavero: bool | None = None
     llavero_leido: float = -math.inf
+    copias: tuple[str, ...] = ()
+    copias_leidas: float = -math.inf
+    copias_avisadas: frozenset[str] = frozenset()
 
 
 @dataclass
@@ -1258,6 +1273,7 @@ class Agente:
         self._bloqueos(ahora)
         for con in self.conexiones.values():
             self._contrato(con, ahora)
+            self._copias_del_llavero(con, ahora)
         self._actualizaciones(ahora)
         self._leer_entorno(ahora)
         self._mirar_version(ahora)
@@ -2270,6 +2286,8 @@ class Agente:
         diario(f"[{con.nombre}] {tarea.pareja}: {TEXTO_RESULTADO[como]} "
                f"(rc={rc}, {segundos:.0f}s)")
         self._apuntar_en_lock(con, tarea.pareja, como, rc, segundos)
+        if tarea.pareja == model.LLAVERO:
+            self._copias_del_llavero(con, ahora, ya=True)
 
         if como == RED:
             # ¿De verdad es la red? La sonda va ya: si el remoto contesta,
@@ -3117,6 +3135,46 @@ class Agente:
             con.llavero_leido = ahora
         return con.llavero
 
+    def _copias_del_llavero(self, con: Conexion, ahora: float, ya: bool = False) -> None:
+        """Mira si el llavero de esa raíz tiene copias de conflicto, y avisa de las nuevas.
+
+        Es lo que su `sync.py` apunta en `state/conflicts.json` tras cada
+        pasada (`conflicts.actualizar_pareja()`): un JSON que se lee y no se
+        ejecuta, porque el agente no lleva el modelo de la raíz. Se mira tras
+        cada pasada del llavero (`ya`) y si no, como mucho cada
+        `MIRAR_EMBLEMA`: «Combinar» las quita sin pasada del agente.
+
+        Se avisa una vez por conexión de cada copia nueva: no hay que elegir,
+        combinarlas no pierde nada, y el aviso dice cómo. Cuando ya no queda
+        ninguna se olvida lo avisado, para que un conflicto nuevo con el mismo
+        nombre se vuelva a decir.
+
+        Args:
+            con: La conexión.
+            ahora: La hora del reloj del agente.
+            ya: Mirarlas ahora, haya pasado lo que haya pasado.
+        """
+        if not ya and ahora - con.copias_leidas < MIRAR_EMBLEMA:
+            return
+        con.copias_leidas = ahora
+        copias: list = []
+        if self._llavero_de(con):
+            datos = store.read_json(estado_de(con.raiz) / "conflicts.json")
+            parejas = datos.get("parejas")
+            copias = parejas.get(model.LLAVERO) if isinstance(parejas, dict) else []
+        con.copias = tuple(sorted(c for c in copias if isinstance(c, str))) \
+            if isinstance(copias, list) else ()
+        if not con.copias:
+            con.copias_avisadas = frozenset()
+            return
+        nuevas = set(con.copias) - con.copias_avisadas
+        if nuevas:
+            con.copias_avisadas |= nuevas
+            diario(f"{con.nombre}: el llavero tiene copias de conflicto: "
+                   f"{', '.join(sorted(nuevas))}")
+            avisar(f"{con.nombre}: el llavero tiene dos versiones",
+                   LLAVERO_EN_CONFLICTO + (COMBINAR_AQUI if IS_WIN else COMBINAR_A_MANO))
+
     def _estado_raiz(self, uid: str, unidad: equipo.Unidad) -> str:
         """Devuelve en qué está una raíz de este equipo, para la bandeja."""
         if uid in self.ausentes:
@@ -3183,7 +3241,8 @@ class Agente:
                              "emblema": self._emblema(con),
                              "version": self._version_de(con),
                              "llavero": self._llavero_de(con),
-                             "llavero_abierto": con.id in self.keepassxc})
+                             "llavero_abierto": con.id in self.keepassxc,
+                             "llavero_conflicto": len(con.copias)})
         cerradas = [u.nombre or u.id[:8] for u in self.ajustes.cifradas.values()
                     if u.id not in self.conexiones and u.id not in self.ausentes]
         return {"pid": os.getpid(), "pausado": self.pausado, "retenido": self.retenido,
