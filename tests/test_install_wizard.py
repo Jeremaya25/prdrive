@@ -971,6 +971,11 @@ from install import raiz_equipo  # noqa: E402
 
 raiz_equipo.carpetas_sincronizadas = lambda: []
 raiz_equipo.veracrypt_instalado = lambda: None
+# Ni el Portable de la caché: la de verdad está en `%LOCALAPPDATA%`, y en un
+# Windows donde ya se usó el asistente lo tiene, así que «sin VeraCrypt» no lo
+# sería. Las comprobaciones que lo quieren en la caché lo ponen ellas.
+real_portatil = raiz_equipo.veracrypt_portatil
+raiz_equipo.veracrypt_portatil = lambda: None
 
 
 def elegir(wiz, texto: str) -> None:
@@ -1132,7 +1137,6 @@ c("  y ofrece descargarlo sin instalarlo (Portable en Windows, AppImage en Linux
 from install import veracrypt_bin  # noqa: E402
 
 real_win, real_ensure = install.IS_WIN, veracrypt_bin.para_este_equipo
-real_portatil = raiz_equipo.veracrypt_portatil
 PORTATIL = {"mount": "C:/cache/VeraCrypt-x64.exe", "format": "C:/cache/VeraCrypt Format-x64.exe"}
 en_cache: list = []
 descargas = []
