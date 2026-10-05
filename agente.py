@@ -412,12 +412,7 @@ def cerrar_keepassxc_huerfano(raiz: Path) -> int:
     haría la persona (`keepassxc.pedir_cierre()`): con algo sin guardar,
     pregunta él. Es de módulo para que los tests no cierren nada.
     """
-    if IS_WIN:
-        return 0
-    pids = llavero.pids_keepassxc(raiz / APP_SUBDIR)
-    for pid in pids:
-        keepassxc.pedir_cierre(pid)
-    return len(pids)
+    return 0 if IS_WIN else keepassxc.cerrar_huerfano(raiz / APP_SUBDIR)
 
 
 def huella_local(ruta: Path, tope: int, ignorar: tuple[str, ...]) -> pl.Huella | None:

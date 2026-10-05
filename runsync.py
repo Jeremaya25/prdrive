@@ -660,6 +660,10 @@ def vigilar_llavero() -> int:
         while True:
             if not pen_present():
                 fin = "dispositivo no conectado"
+                # En Linux su KeePassXC no muere con la unidad (corre extraído
+                # en el equipo): se le pide que se cierre, como el agente.
+                if os.name != "nt" and keepassxc.cerrar_huerfano():
+                    fin += "; se le pide a KeePassXC que se cierre"
                 break
             if llavero.parada_vigilante().exists():
                 fin = "parada pedida"

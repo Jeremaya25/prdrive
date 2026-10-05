@@ -21,7 +21,7 @@ from pathlib import Path
 from _harness import Checks, sandbox
 
 import runsync
-from common import bisync, llavero, model, store
+from common import bisync, keepassxc, llavero, model, store
 
 c = Checks("vigilancia del llavero")
 
@@ -261,6 +261,25 @@ try:
         c("una parada vieja no cuenta, y la de «Expulsar» sí",
           ("parada pedida" in diario[-1], reloj.t - inicio > 30), (True, True))
         c("  y no se queda detrás", llavero.parada_vigilante().exists(), False)
+
+        # La unidad se va sin expulsar: en Linux su KeePassXC sigue abierto
+        # (corre extraído en el equipo), y el vigilante le pide que se cierre.
+        real_huerfano = keepassxc.cerrar_huerfano
+        huerfanos: list[int] = []
+        keepassxc.cerrar_huerfano = lambda app_dir=None: huerfanos.append(1) or 1
+        runsync.pen_present = lambda: False
+        try:
+            runsync.vigilar_llavero()
+        finally:
+            runsync.pen_present = lambda: True
+            keepassxc.cerrar_huerfano = real_huerfano
+        if os.name != "nt":
+            c("si la unidad se va, en Linux le pide a KeePassXC que se cierre",
+              (huerfanos, diario[-1].endswith("se le pide a KeePassXC que se cierre")),
+              ([1], True))
+        else:
+            c("si la unidad se va, en Windows no hace falta: KeePassXC muere con ella",
+              (huerfanos, "dispositivo no conectado" in diario[-1]), ([], True))
 finally:
     runsync.time, runsync.run_pair_quiet = real_time, real_correr
     llavero.keepassxc_abierto = real_abierto

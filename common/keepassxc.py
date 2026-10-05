@@ -1448,6 +1448,24 @@ def terminar(pid: int) -> None:
             pass
 
 
+def cerrar_huerfano(app_dir: Path | None = None) -> int:
+    """Le pide que se cierre al KeePassXC de una unidad que se ha ido; devuelve a cuántos.
+
+    Es cosa de Linux, y quien llama lo mira: allí corre extraído en el equipo
+    y no muere con la unidad, como en Windows, así que seguiría con la base
+    abierta en memoria, y sus passkeys. Se le pide como lo haría la persona
+    (`pedir_cierre()`): con algo sin guardar, pregunta él. Su orden sigue
+    nombrando la unidad aunque ya no esté (`llavero.pids_keepassxc()`).
+
+    Args:
+        app_dir: El `.prdrive/` de la unidad; por defecto, el de esta.
+    """
+    pids = llavero.pids_keepassxc(model.APP_DIR if app_dir is None else app_dir)
+    for pid in pids:
+        pedir_cierre(pid)
+    return len(pids)
+
+
 def esperar_salida(pids: list[int], segundos: float) -> bool:
     """Espera a que salgan esos procesos; indica si han salido todos a tiempo."""
     limite = time.monotonic() + segundos
