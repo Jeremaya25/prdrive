@@ -1,6 +1,6 @@
 # El llavero (`.keychain`): KeePassXC de viaje y una base que se sincroniza sola
 
-Fecha: 2026-10-04 · Estado: **decidida**; las cuatro fases hechas (sin probar en real: §15); lo que cambió al hacer la 1, en §16, la 3, en §17, y la 2, en §18 · Versión objetivo:
+Fecha: 2026-10-04 · Estado: **decidida**; las cuatro fases hechas (sin probar en real: §15); lo que cambió al hacer la 1, en §16, la 3, en §17, y la 2, en §18; probada en la nube y en GitHub Actions, con cinco arreglos, en §19 · Versión objetivo:
 0.6.0 · Sustituye a la primera propuesta del mismo día (`3cdf1d5`) · Pruebas de
 las que sale:
 `docs/superpowers/pruebas/2026-10-04-keepassxc-portatil.md` y sus resultados
@@ -811,3 +811,31 @@ técnico está en `docs/agents/reference/llavero.md`. Cambió respecto a §11:
   es hijo de la ventana que lo abre: «Expulsar» desde ella esperaba hasta el
   tope. Salió al probar el AppImage de verdad.
 - **No está**: el Firefox snap (LX5) más allá de lo que haga solo.
+
+## 19. Probada en la nube
+
+Sin hardware, con rclone y KeePassXC de verdad: en el contenedor Linux de una
+sesión en la nube (exFAT por FUSE, Xvfb, una terminal y `xdotool`, el
+KeePassXC 2.7.6 de Ubuntu) y en GitHub Actions, Windows y Linux, con
+`tests/integracion/llavero_real.py` (`.github/workflows/llavero-real.yml`).
+Resultados y qué R-n de §15 cubre:
+`docs/superpowers/pruebas/2026-10-05-llavero-nube-resultados.md`.
+
+Dio con cinco fallos que los tests no podían ver, porque simulan rclone y
+KeePassXC:
+
+- **La primera pasada fallaba siempre** en un remoto recién activado: nadie
+  creaba `keychain/`, y `bisync --resync` lo exige (`5f662ad`).
+- **`resync-mode = newer` hacía resync cada pasada** (rclone lo toma por un
+  `--resync`): no había copias de conflicto y la base más vieja iba a
+  `.prversions/` sin combinar. H-14 no se cumplía. Ahora solo va en un resync
+  (`8d1b003`, §4).
+- **El freno de borrados atascaba el llavero tras «Combinar»**: quitar una
+  copia de tres ficheros es un 33 %. Si lo borrado son solo copias, la pasada
+  se repite sin el freno (`d59fa30`).
+- **El agente dejaba los manifiestos** de una unidad quitada: limpiaba antes
+  de que saliera KeePassXC (`23493a3`).
+- **Un fallo de rclone** (v1.75.1 y `master`, `modifyListing()`) dejaba la base
+  fuera de los listados tras un conflicto que gana el remoto, y lo siguiente
+  que cambiara salía como otro conflicto. Se pasa otra vez en seguida
+  (`b5d6047`).
