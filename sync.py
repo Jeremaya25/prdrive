@@ -46,7 +46,7 @@ import sys
 import tempfile
 import threading
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Mapping
@@ -612,6 +612,8 @@ def run_pair(ctx: RunContext, pair: Pair) -> int:
     ffile = bisync.filters_file_for(pair)
     cmd, logfile = build_command(ctx, pair, ffile, need_resync)
     rc = execute(ctx, cmd, logfile)
+    if rc != 0 and pair.llavero and not need_resync:
+        rc, logfile = repetir_sin_freno(ctx, pair, ffile, logfile, rc)
     # Antes de `dispose_log()`: si la pasada fue bien, el log se tira y con él
     # lo que dice cuánto movió.
     final = progress.final_del_log(logfile)
@@ -626,6 +628,35 @@ def run_pair(ctx: RunContext, pair: Pair) -> int:
     record_result(ctx, pair, rc, saved, reloj, final)
     report_conflicts(ctx, pair)
     return rc
+
+
+def repetir_sin_freno(ctx: RunContext, pair: Pair, ffile: Path | None, logfile: Path,
+                      rc: int) -> tuple[int, Path]:
+    """Repite la pasada del llavero sin el freno de borrados, si solo lo pisan copias de conflicto.
+
+    El freno (`--max-delete`, 25 % del listado anterior) para la pasada cuando
+    un lado parece vaciado. El llavero tiene tan pocos ficheros que quitar una
+    copia de conflicto ya lo pisa, al combinar aquí o al ver en otro
+    dispositivo que se fue del remoto, y abortaría así cada vez. Si todo lo
+    borrado son copias (`llavero.solo_copias_borradas()`), se repite una vez
+    con `llavero.FRENO_SIN_COPIAS`; si hay una base entre lo borrado, no.
+
+    Returns:
+        `(código, log)`: los de la pasada repetida, o los mismos si no se repite.
+    """
+    try:
+        texto = logfile.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return rc, logfile
+    copias = llavero.solo_copias_borradas(texto, pair) if "too many deletes" in texto else None
+    if copias is None:
+        return rc, logfile
+    print(f"[{pair.name}] Lo borrado son copias de conflicto ({', '.join(copias)}), y cada "
+          f"una queda en {model.VERSIONS_DIR}: se repite la pasada sin el freno de borrados.")
+    dispose_log(pair.name, logfile, 0, ctx.keep_logs)
+    sin_freno = replace(pair, flags={**pair.flags, "max-delete": llavero.FRENO_SIN_COPIAS})
+    cmd, logfile = build_command(ctx, sin_freno, ffile, False)
+    return execute(ctx, cmd, logfile), logfile
 
 
 def resolve_resync_approval(selected: list[Pair], assume_yes: bool) -> bool:

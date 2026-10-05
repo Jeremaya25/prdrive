@@ -209,6 +209,55 @@ with sandbox() as root:
     c("  y su conflicto sigue quedándose al lado",
       ordenes[-1][ordenes[-1].index("--conflict-loser") + 1], "num")
 
+    # Tras «Combinar», el freno de borrados (25 % del listado anterior) lo
+    # pisa quitar una sola copia: el llavero tiene tres o cuatro ficheros.
+    # Las líneas son las de rclone v1.75.1 (`indent()`, cmd/bisync/log.go).
+    def borrado(lado, nombre):
+        """Una línea de bisync que dice que `nombre` ya no está en ese lado."""
+        return (f"2026/10/05 17:38:16 INFO  : - {lado}             File was deleted"
+                f"                            - {nombre}")
+    ABORTO = ("2026/10/05 17:38:16 ERROR : Safety abort: too many deletes (>25%, 2 of 4) on "
+              "Path1 \"disp{uR5dC}:.keychain/\". Run with --force if desired.")
+    copia1, copia2 = "personal.conflicto-dispositivo1.kdbx", "personal.conflicto-remoto2.kdbx"
+    c("lo borrado, si son solo copias de conflicto de una base (de los dos lados)",
+      llavero.solo_copias_borradas("\n".join([borrado("Path1", copia1),
+                                               borrado("Path2", copia2), ABORTO]), pareja),
+      [copia1, copia2])
+    for que, lineas in (("la base", [borrado("Path1", copia1), borrado("Path2", "personal.kdbx")]),
+                        ("el compañero fijo", [borrado("Path1", llavero.LEEME)]),
+                        ("un nombre entre comillas", [borrado("Path1", '"personal.conflicto-remoto1\\x01.kdbx"')]),
+                        ("nada", [])):
+        c(f"  con {que} entre lo borrado, nada", llavero.solo_copias_borradas(
+            "\n".join([*lineas, ABORTO]), pareja), None)
+
+    def correr_abortando(lineas):
+        """run_pair con una primera pasada que aborta por el freno y una segunda que va bien."""
+        ordenes = []
+
+        def execute_simulado(ctx, cmd, logfile=None):
+            ordenes.append(cmd)
+            texto = "\n".join([*lineas, ABORTO]) if len(ordenes) == 1 else "bien"
+            Path(cmd[cmd.index("--log-file") + 1]).write_text(texto + "\n", encoding="utf-8")
+            return 7 if len(ordenes) == 1 else 0
+
+        original, sync.execute = sync.execute, execute_simulado
+        try:
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = sync.run_pair(sync.RunContext(binary="RCLONE", env={}), pareja)
+            return rc, buf.getvalue(), ordenes
+        finally:
+            sync.execute = original
+
+    def freno(cmd):
+        return cmd[cmd.index("--max-delete") + 1]
+    rc, salida, ordenes = correr_abortando([borrado("Path1", copia1), borrado("Path2", copia2)])
+    c("si solo pisan el freno copias de conflicto, la pasada se repite sin él, una vez",
+      (rc, len(ordenes), freno(ordenes[0]), freno(ordenes[1]), "--resync" in ordenes[1]),
+      (0, 2, "25", str(llavero.FRENO_SIN_COPIAS), False))
+    c.contains("  y lo dice", salida, "se repite la pasada sin el freno de borrados")
+    rc, salida, ordenes = correr_abortando([borrado("Path1", copia1), borrado("Path1", "personal.kdbx")])
+    c("con la base entre lo borrado, el freno manda: no se repite", (rc, len(ordenes)), (7, 1))
     for p in pareja.workdir.iterdir():
         p.unlink()
 

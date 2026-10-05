@@ -44,7 +44,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import NamedTuple
 
-from . import bisync, components, kdbx, model, store
+from . import bisync, components, conflicts, kdbx, model, store
 from .planificador import PoliticaCambios
 
 LEEME = "LEEME.txt"
@@ -264,6 +264,50 @@ def pendiente(pair: model.Pair) -> bool:
         if listado.get(ruta.relative_to(donde).as_posix()) != (st.st_size, st.st_mtime_ns):
             return True
     return False
+
+
+FRENO_SIN_COPIAS = 100
+"""El `--max-delete` (un %) de la pasada que se repite cuando lo borrado son solo copias."""
+_BORRADO = re.compile(r": - (Path[12]) +File was deleted +- (.*)$")
+"""Una línea de bisync que dice que algo del listado anterior ya no está en ese lado.
+
+Es `b.indent(msg, file, "File was deleted")` de `findDeltas()`
+(`cmd/bisync/deltas.go`) con el formato «- %-18s%-43s - %s» de `indent()`
+(`cmd/bisync/log.go`); el nombre va entre comillas si tiene algo no imprimible
+(`escapePath()`). Visto con rclone v1.75.1: `INFO  : - Path1             File was
+deleted                            - Personal.conflicto-dispositivo1.kdbx`.
+"""
+
+
+def solo_copias_borradas(log: str, pair: model.Pair) -> list[str] | None:
+    """Devuelve lo que bisync ve borrado, si son solo copias de conflicto de una base.
+
+    Es para el freno de borrados (`--max-delete`, un % del listado anterior que
+    vale para los dos lados): el llavero tiene tres o cuatro ficheros, así que
+    quitar una copia de conflicto ya pasa del 25 % y la pasada aborta con «too
+    many deletes» una y otra vez. Pasa al combinar: «Combinar» aparta la copia a
+    `.prversions/`, y en los demás dispositivos la ven irse del remoto. Esas
+    copias se pueden borrar, porque el backup-dir guarda la de cada lado. Una
+    base o `LEEME.txt` no: si están entre lo borrado, el freno sigue mandando.
+
+    Args:
+        log: El log de la pasada que ha abortado.
+        pair: La pareja del llavero.
+
+    Returns:
+        Los nombres, si todo lo borrado es copia de conflicto de una base, o
+        `None` si no hay nada borrado o algo no lo es.
+    """
+    nombres = [m.group(2) for m in map(_BORRADO.search, log.splitlines()) if m]
+    if not nombres:
+        return None
+    esq = conflicts.esquema(pair)
+    for nombre in nombres:
+        leido = None if nombre.startswith('"') or "/" in nombre \
+            else conflicts.leer_nombre(nombre, esq)
+        if leido is None or not leido[0].endswith(".kdbx"):
+            return None
+    return nombres
 
 
 @dataclass

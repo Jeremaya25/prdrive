@@ -2,7 +2,7 @@
 
 Files: `sync.py`, `common/model.py`, `common/bisync.py`, `common/config_file.py`.
 Formerly AGENTS.md «Architecture», «bisync», «Logs and live progress», «Writing the TOML».
-The safety invariants (missing local dir, `max-delete`, mirrors) stay in AGENTS.md.
+The safety invariants (missing local dir, `max-delete`, mirrors) stay in AGENTS.md. Their one narrow exception is the keychain's: a pass whose only deletions are conflict copies is repeated once without the `max-delete` brake (`sync.repetir_sin_freno()`, `llavero.md`).
 
 ## Process split
 
