@@ -68,6 +68,15 @@ esté abierto, y siempre al pulsar «Abrir llavero».
 Si KeePassXC ya está abierto, «Abrir llavero» lo trae delante. Si en el equipo hay
 **otro KeePassXC** abierto (uno instalado), te pide que lo cierres antes.
 
+### «¿Desactivar almacenajes seguros?»: Cancelar
+
+Si guardas justo cuando prdrive está subiendo la base, KeePassXC no puede
+escribirla. El cambio se queda pendiente (el `*` del título) y se guarda en el
+siguiente, o con Ctrl+S. Si le pasa tres veces seguidas, KeePassXC pregunta si
+desactivar los almacenajes seguros, con «Deshabilitar» como botón por defecto.
+**Contesta «Cancelar»**: sin ellos, un guardado a medias podría quedarse así. Si
+ya aceptaste, prdrive los vuelve a encender la próxima vez que abre KeePassXC.
+
 ### El navegador
 
 En cada navegador, **una vez por perfil**: instala la extensión
@@ -77,6 +86,19 @@ conexión se guarda en la base, así que viaja con ella.
 En un equipo nuevo no hay que configurar nada más: prdrive apunta el navegador al
 KeePassXC de la unidad al abrirlo, y lo deja como estaba al expulsar (o vuelve a
 apuntarlo al KeePassXC instalado del equipo, si lo hay).
+
+Lo que parece un fallo y no lo es:
+
+- **La passkey no responde y no sale nada.** Si un sitio la pide con la base
+  bloqueada, la petición se queda esperando en silencio, y desbloquear no la
+  despierta. Desbloquea KeePassXC y vuelve a entrar **en otra pestaña**:
+  recargar la misma no basta.
+- **El botón de la passkey no hace nada.** Con la pestaña en segundo plano no
+  responde, ni da error: tenla delante.
+- **La extensión dice «no disponible»** después de cerrar y volver a abrir
+  KeePassXC. No se reconecta sola: recárgala desde su icono.
+- **GitHub marca la passkey como «Synced»**, como si estuviera en la nube. Es
+  normal: es lo que dice KeePassXC de cualquier passkey que guarda.
 
 ### Si KeePassXC no arranca
 
@@ -99,6 +121,19 @@ Combinar abre una consola de KeePassXC que te pide la contraseña de la base
 no se toca nada y se explica cómo hacerlo desde KeePassXC («Base de datos →
 Combinar desde base de datos…»).
 
+## Las versiones viejas
+
+Cada vez que una pasada reemplaza la base, la de antes no se pierde: se aparta en
+`.prversions/`, **en los dos lados**: en la unidad, `.keychain/.prversions/`, y en
+el remoto, `keychain/.prversions/`. El nombre lleva la fecha:
+`personal~20261005-093000.kdbx`. Todas se abren con la contraseña (y el fichero
+llave) que tuviera la base en ese momento.
+
+Para recuperar algo que borraste, abre tu base y combina con ella la versión
+vieja: «Base de datos → Combinar desde base de datos…» y elige el fichero de
+`.prversions/`. Combinar añade lo que falta y no quita nada. Para borrar las
+viejas: **Ajustes → Versiones…**, como en cualquier pareja con versiones.
+
 ## Expulsar
 
 **Expulsar**, en la ventana (también en una unidad sin cifrar, si lleva el
@@ -120,6 +155,10 @@ forma atómica), pero lo último puede no haber subido: sube la próxima vez.
 - **No toques `.keychain/` a mano.** El `LEEME.txt` de dentro está ahí a
   propósito: con una sola base, sin él la sincronización creería que «ha cambiado
   todo».
+- **Los equipos prestados.** Lo que tecleas en un equipo con algo malo instalado
+  se puede leer, también la contraseña de la base. Las passkeys no lo arreglan:
+  con la base abierta, ese equipo puede usarlas. Abre el llavero solo en equipos
+  de los que te fíes.
 - **YubiKey no**: de momento solo contraseña y fichero llave.
 
 ## Desactivarlo
