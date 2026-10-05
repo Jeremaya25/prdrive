@@ -13,11 +13,13 @@ también lo que se configura. El módulo conserva su nombre porque el subcomando
 `sync.py --doctor` no cambia y porque es a esta pantalla a la que apunta el
 rediseño de la pantalla de reparación.
 
-Solo dibuja, y menos que ninguna otra: no lee estado, no escribe nada y no
-decide nada. Cada entrada es un botón y una frase que dice qué pasa al
-pulsarlo; lo que pasa lo hace el módulo de turno. Lo que se configura (el
-intervalo del servicio y, en la raíz cifrada de un equipo, si se pide la
-contraseña al iniciar sesión) va en «Configuración…» (`ui/tk_configuracion.py`).
+Solo dibuja, y menos que ninguna otra: no escribe nada y no decide nada. Cada
+entrada es un botón y una frase que dice qué pasa al pulsarlo; lo que pasa lo
+hace el módulo de turno. Lo que se configura (el intervalo del servicio y, en
+la raíz cifrada de un equipo, si se pide la contraseña al iniciar sesión) va en
+«Configuración…» (`ui/tk_configuracion.py`). Una entrada sale solo a veces:
+«Renombrar el catálogo…», mientras el remoto conserve su `pairs.toml`, y eso
+lo dice `catalog_editor.ofrecer_renombrado()` sin red (`OCASIONALES`).
 
 `lanzar` llega desde la ventana principal en vez de importarse: la comprobación
 se enseña en su ventana de salida, que es hija de la principal y no de esta, y
@@ -29,7 +31,7 @@ from __future__ import annotations
 
 from common.model import Config
 
-from . import theme
+from . import catalog_editor, theme
 from .tk import cabecera, cuerpo_visible, modal, mostrar, separador_fila
 
 ENTRADAS = (
@@ -54,8 +56,16 @@ ENTRADAS = (
      "Cómo la enseña el Explorador de Windows al conectarla. Útil para "
      "distinguir un dispositivo de otro a simple vista.",
      "volumen"),
+    ("Renombrar el catálogo…", "edit",
+     "El catálogo de este remoto conserva su nombre de antes, pairs.toml. "
+     "Pasarlo a remote.toml es opcional, y solo se puede cuando todos los "
+     "dispositivos de la flota saben leer el nombre nuevo.",
+     "renombrar"),
 )
 """Las entradas de la pantalla: rótulo del botón, icono, frase y clave de la acción."""
+
+OCASIONALES = {"renombrar": catalog_editor.ofrecer_renombrado}
+"""Las entradas que solo salen a veces: su clave y quién dice, sin red, si sale."""
 
 
 def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None,
@@ -118,15 +128,24 @@ def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None,
         from . import tk_volumen
         tk_volumen.open_dialog(dlg)
 
+    def renombrar() -> None:
+        """Abre «Renombrar el catálogo»."""
+        from . import tk_renombrar
+        tk_renombrar.open_dialog(dlg, raw)
+
     acciones = {"reparacion": reparacion, "configuracion": configuracion,
-                "qr": emparejar, "versiones": versiones, "volumen": nombre_e_icono}
+                "qr": emparejar, "versiones": versiones, "volumen": nombre_e_icono,
+                "renombrar": renombrar}
+    raw = catalog_editor.raw_del_dispositivo(raw_local)
+    entradas = [e for e in ENTRADAS
+                if e[3] not in OCASIONALES or OCASIONALES[e[3]](raw)]
 
     tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(14, 12, 14, 12))
     tarjeta.grid(row=1, column=0, sticky="ew", pady=(16, 0))
     tarjeta.columnconfigure(0, weight=1)
 
     fila = 0
-    for rotulo, icono, frase, clave in ENTRADAS:
+    for rotulo, icono, frase, clave in entradas:
         if fila:
             separador_fila(tarjeta, fila, 1)
             fila += 1

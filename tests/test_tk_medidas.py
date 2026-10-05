@@ -50,9 +50,9 @@ except Exception as e:                                   # sin entorno gráfico
 
 from ui import tk as uitk
 from ui import remote_picker, segundo_plano
-from ui import (tk_configuracion, tk_doctor, tk_fleet, tk_install, tk_pairs, tk_qr,
-                tk_repair, tk_update, tk_versions, tk_volumen, tk_watch, versions_editor,
-                volumen, watch)
+from ui import (catalog_editor, tk_configuracion, tk_doctor, tk_fleet, tk_install,
+                tk_pairs, tk_qr, tk_renombrar, tk_repair, tk_update, tk_versions,
+                tk_volumen, tk_watch, versions_editor, volumen, watch)
 
 # Ni una petición a GitHub desde un test.
 update.fetch = lambda url, timeout: c("ningún test toca la red", "fetch", "nada")
@@ -818,13 +818,34 @@ try:
                   corta, False)
 
                 # «Ajustes»: una tarjeta con una entrada por acción, que crece
-                # con cada una que se le añada.
-                entra, corta = medir_dialogo(
-                    lambda: tk_doctor.open_dialog(raiz, cfg, lambda *a: None),
-                    ancho, alto, escala, modulo=tk_doctor)
+                # con cada una que se le añada. Se mide con todas, también la
+                # que solo sale a veces (renombrar el catálogo).
+                previas = dict(tk_doctor.OCASIONALES)
+                tk_doctor.OCASIONALES.update({k: (lambda raw: True) for k in previas})
+                try:
+                    entra, corta = medir_dialogo(
+                        lambda: tk_doctor.open_dialog(raiz, cfg, lambda *a: None),
+                        ancho, alto, escala, modulo=tk_doctor)
+                finally:
+                    tk_doctor.OCASIONALES.update(previas)
                 c(f"{nombre}: la pantalla de Ajustes cabe", entra, True)
                 c(f"{nombre}: la pantalla de Ajustes no queda recortada",
                   corta, False)
+
+                # «Renombrar el catálogo»: crece con una fila por dispositivo
+                # que lo impide, y se mide con la flota entera de nombres
+                # largos, todos de una versión de antes.
+                previo_leer = catalog_editor.leer_renombrado
+                catalog_editor.leer_renombrado = lambda raw=None: (
+                    frozenset({catalog.FICHERO_ANTERIOR}), FLOTA, None)
+                try:
+                    entra, corta = medir_dialogo(
+                        lambda: tk_renombrar.open_dialog(raiz, dict(BASE)),
+                        ancho, alto, escala, modulo=tk_renombrar)
+                finally:
+                    catalog_editor.leer_renombrado = previo_leer
+                c(f"{nombre}: «Renombrar el catálogo» cabe", entra, True)
+                c(f"{nombre}: «Renombrar el catálogo» no queda recortada", corta, False)
 
                 # «Configuración» (#65): el intervalo, con la frase larga de un
                 # dispositivo que se desenchufa, y su peor caso, la casilla de

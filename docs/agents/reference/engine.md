@@ -54,4 +54,5 @@ Device vanished mid-pass (#36): `keep_log()` leaves the log in the temp dir, say
 
 - `[pair.flags]` binds to the **last** `[[pair]]` written, so it is emitted right after its pair.
 - `dumps_checked()` re-parses its output and refuses to write if the dict does not reproduce. `save()` and `catalog.push()` both go through it.
+- **A table it does not know** (not in `TABLAS_CONOCIDAS`, e.g. a newer version's `[keychain]`) is written as is at the end. `model.parse_config()` ignores it on read, and dropping it on write would make `dumps_checked()` refuse the whole file, so a catalogue carrying it could not be edited. A subtable inside it is still refused by that check.
 - Work on the **raw dict**, never `model.Config` (its `Pair`s have `[defaults]` merged). `save(head=None)` keeps the target's header.

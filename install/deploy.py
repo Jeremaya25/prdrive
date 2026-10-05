@@ -799,9 +799,11 @@ def device_header(catalog: Catalog, endpoint: str = "") -> str:
 
     El endpoint del catálogo entra por parámetro y no escrito a mano: una
     cabecera con una ruta fija dejaba de ser verdad en cuanto alguien movía el
-    catálogo, y una cabecera que miente es peor que no tener cabecera.
+    catálogo, y una cabecera que miente es peor que no tener cabecera. Manda
+    el fichero del que se leyó de verdad, que en un remoto sin renombrar es su
+    `pairs.toml` aunque el dispositivo diga `remote.toml`.
     """
-    donde = endpoint or "el catálogo del remoto"
+    donde = catalog.endpoint or endpoint or "el catálogo del remoto"
     propia = (
         f"# Generado por {APP_NAME}-install el {datetime.now():%Y-%m-%d %H:%M}.\n"
         "# Es el config de ESTE dispositivo: el catálogo global vive en\n"

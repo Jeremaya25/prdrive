@@ -4,8 +4,10 @@
 #
 #   * `.prdrive/sync_config.toml` — el config de UN dispositivo: qué sincroniza
 #     él. Lo genera el instalador y lo mantiene la ventana de parejas.
-#   * `pairs.toml` en tu remoto — el catálogo: qué parejas EXISTEN, para todos
-#     los dispositivos. Admite además la tabla [remote] de abajo.
+#   * `remote.toml` en tu remoto — el catálogo: qué parejas EXISTEN, para todos
+#     los dispositivos. Admite además la tabla [remote] de abajo. En un remoto
+#     de antes se llama `pairs.toml`: prdrive encuentra los dos, y «Ajustes» →
+#     «Renombrar el catálogo…» lo pasa al nombre nuevo.
 #
 # Todo lo que hay aquí es un ejemplo: cambia el remote, las rutas y las parejas
 # por las tuyas.
@@ -38,7 +40,7 @@ shell_type = "none"
 
 [defaults]
 remote = "nas"                # tiene que coincidir con [remote].name
-catalog_path = "/prdrive-catalog/pairs.toml"   # el fichero, no su carpeta
+catalog_path = "/prdrive-catalog/remote.toml"  # el fichero, no su carpeta
 
 # Filtros que se suman a los de cada pareja.
 exclude = [

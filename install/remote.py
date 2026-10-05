@@ -266,7 +266,7 @@ class Rclone:
 
 @dataclass(frozen=True)
 class Catalog:
-    """El `pairs.toml` del remoto: el dict crudo y su cabecera de comentarios.
+    """El catálogo del remoto: el dict crudo y su cabecera de comentarios.
 
     Es crudo y no `model.Config` porque de aquí sale un TOML que hay que volver
     a escribir, y las `Pair` del modelo llegan con los `[defaults]` ya
@@ -275,9 +275,12 @@ class Catalog:
     Args:
         raw: El dict del TOML.
         head: Su cabecera de comentarios.
+        endpoint: De dónde se leyó: `remote.toml` o, en un remoto sin
+            renombrar, su `pairs.toml`.
     """
     raw: dict
     head: str
+    endpoint: str = ""
 
     @property
     def pairs(self) -> list[dict]:
@@ -297,12 +300,16 @@ class Catalog:
         return None
 
 
-def parse_catalog(text: str) -> Catalog:
+def parse_catalog(text: str, endpoint: str = "") -> Catalog:
     """Convierte el texto del catálogo en un `Catalog`, validado.
 
     Se valida nada más leerlo y no cuando se use: un `mode` mal escrito en el
     catálogo tiene que reventar en el primer paso del asistente y no en el
     sexto, con el dispositivo ya sembrado.
+
+    Args:
+        text: El TOML.
+        endpoint: De dónde se leyó, si se sabe.
 
     Raises:
         InstallError: Si no es TOML válido o no es un config válido.
@@ -315,12 +322,15 @@ def parse_catalog(text: str) -> Catalog:
         model.parse_config(raw)
     except ConfigError as e:
         raise InstallError(f"El catálogo del remoto no es un config válido:\n\n{e}") from e
-    return Catalog(raw, config_file.header_of(text))
+    return Catalog(raw, config_file.header_of(text), endpoint)
 
 
 def pull_catalog(rclone: Rclone, catalog_path: str,
                  timeout: float = 45.0) -> Catalog:
-    """Se trae el catálogo global de parejas del remoto.
+    """Se trae el catálogo del remoto.
+
+    Con la regla de los dos nombres del dispositivo (`catalog.leer()`): da igual
+    que la ruta diga `remote.toml` o `pairs.toml`, se lee el que haya.
 
     Si la ruta es una carpeta, `rclone cat` no falla sino que lo junta todo, y
     el error que saldría (TOML inválido, dos `[defaults]`) no dice la causa. El
@@ -331,23 +341,23 @@ def pull_catalog(rclone: Rclone, catalog_path: str,
         InstallError: Si no contesta, no se puede leer o no es un catálogo
             válido.
     """
-    donde = rclone.endpoint(catalog_path)
-    try:
-        res = rclone.run("cat", donde, capture=True, timeout=timeout)
-    except subprocess.TimeoutExpired as e:
-        raise InstallError(
-            f"El remoto no ha servido el catálogo en {timeout:g}s.") from e
-    if res.returncode != 0:
-        raise InstallError(
-            f"No puedo leer el catálogo {donde}:\n\n{(res.stderr or '').strip()}")
-    texto = res.stdout or ""
+    pedido = rclone.endpoint(catalog_path)
 
     def ejecutar(args: list[str]) -> subprocess.CompletedProcess:
         """Ejecuta una orden de rclone capturando la salida."""
         return rclone.run(*args, capture=True, timeout=timeout)
 
     try:
-        leido = parse_catalog(texto)
+        res, donde = catalog.leer(ejecutar, pedido)
+    except subprocess.TimeoutExpired as e:
+        raise InstallError(
+            f"El remoto no ha servido el catálogo en {timeout:g}s.") from e
+    if res.returncode != 0:
+        raise InstallError(catalog.motivo_lectura(pedido, donde, res, ":\n\n"))
+    texto = res.stdout or ""
+
+    try:
+        leido = parse_catalog(texto, donde)
     except InstallError as e:
         carpeta = catalog.explicar_carpeta(ejecutar, donde, fallo=True)
         if carpeta is None:

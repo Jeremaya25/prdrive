@@ -76,7 +76,7 @@ with sandbox():
     responder(ok())
     cat = catalog.pull(CAT)
     c("leer usa 'cat' contra el endpoint", llamadas[0],
-      ["cat", "nas:/prdrive-catalog/pairs.toml"])
+      ["cat", "nas:/prdrive-catalog/remote.toml"])
     # El diagnóstico de la carpeta (#48) solo pregunta cuando algo huele mal:
     # abrir la ventana de parejas no puede costar una ida y vuelta más.
     c("y en el camino bueno no pregunta nada más", len(llamadas), 1)
@@ -168,10 +168,11 @@ with sandbox():
 
     c("primero se relee el remoto", llamadas[0][0], "cat")
     c("después se copia el .bak, ANTES de escribir", llamadas[1],
-      ["copyto", "nas:/prdrive-catalog/pairs.toml",
-       "nas:/prdrive-catalog/pairs.toml.bak"])
+      ["copyto", "nas:/prdrive-catalog/remote.toml",
+       "nas:/prdrive-catalog/remote.toml.bak"])
     c("y por último se sube el fichero nuevo",
-      llamadas[2][0] == "copyto" and llamadas[2][-1].endswith("pairs.toml"), True)
+      llamadas[2][0] == "copyto" and llamadas[2][-1].endswith("remote.toml"), True)
+    c("y en remote.toml no se pregunta nada más", len(llamadas), 3)
     c("se cuenta lo que se ha hecho", len(hechos), 2)
 
     subido = tomllib.loads(catalog.cache_toml().read_text(encoding="utf-8"))
@@ -226,7 +227,7 @@ except tomllib.TOMLDecodeError as e:
 STAT_CARPETA = ('{\n\t"Path": "",\n\t"Name": "",\n\t"Size": -1,\n'
                 '\t"MimeType": "inode/directory",\n'
                 '\t"ModTime": "2026-09-25T11:38:30.975365128Z",\n\t"IsDir": true\n}\n')
-STAT_FICHERO = ('{\n\t"Path": "pairs.toml",\n\t"Name": "pairs.toml",\n\t"Size": 94,\n'
+STAT_FICHERO = ('{\n\t"Path": "remote.toml",\n\t"Name": "remote.toml",\n\t"Size": 94,\n'
                 '\t"MimeType": "application/toml",\n'
                 '\t"ModTime": "2026-09-25T11:38:30.643855347Z",\n\t"IsDir": false\n}\n')
 NO_EXISTE = (3, "", "NOTICE: Failed to lsjson: directory not found")
@@ -246,13 +247,13 @@ with sandbox():
     responder(ok(DOS_COPIAS), ok(STAT_CARPETA), ok(STAT_FICHERO))
     motivo = lee(EN_CARPETA) or ""
     c.contains("una carpeta se dice como carpeta", motivo, "es una carpeta")
-    c.contains("y se sugiere el pairs.toml que hay dentro", motivo,
-               "«/prdrive-catalog/pairs.toml»")
+    c.contains("y se sugiere el remote.toml que hay dentro", motivo,
+               "«/prdrive-catalog/remote.toml»")
     c("y no se habla de TOML, que no es la causa", "TOML" in motivo, False)
-    c("se pregunta qué es la ruta, y si dentro hay un pairs.toml", llamadas,
+    c("se pregunta qué es la ruta, y si dentro hay un remote.toml", llamadas,
       [["cat", "nas:/prdrive-catalog"],
        ["lsjson", "--stat", "nas:/prdrive-catalog"],
-       ["lsjson", "--stat", "nas:/prdrive-catalog/pairs.toml"]])
+       ["lsjson", "--stat", "nas:/prdrive-catalog/remote.toml"]])
     c("lo que trajo el cat no se cachea", catalog.cache_toml().exists(), False)
 
     responder(ok(DOS_COPIAS), ok(STAT_CARPETA), ok(STAT_FICHERO))
@@ -261,10 +262,16 @@ with sandbox():
     c.contains("y el aviso lleva el diagnóstico", aviso or "", "es una carpeta")
 
 with sandbox():
-    responder(ok(DOS_COPIAS), ok(STAT_CARPETA), NO_EXISTE)
+    # Un remoto sin renombrar: dentro solo está pairs.toml.
+    responder(ok(DOS_COPIAS), ok(STAT_CARPETA), NO_EXISTE, ok(STAT_FICHERO))
+    c.contains("en un remoto sin renombrar se sugiere su pairs.toml", lee(EN_CARPETA) or "",
+               "Dentro hay un pairs.toml, así que seguramente es «/prdrive-catalog/pairs.toml»")
+
+with sandbox():
+    responder(ok(DOS_COPIAS), ok(STAT_CARPETA), NO_EXISTE, NO_EXISTE)
     motivo = lee(EN_CARPETA) or ""
-    c.contains("sin pairs.toml dentro se da un ejemplo", motivo,
-               "Por ejemplo «/prdrive-catalog/pairs.toml»")
+    c.contains("sin ninguno de los dos dentro se da un ejemplo", motivo,
+               "Por ejemplo «/prdrive-catalog/remote.toml»")
     c("sin afirmar que esté", "Dentro hay" in motivo, False)
 
 with sandbox():
@@ -280,7 +287,7 @@ with sandbox():
     c.contains("una carpeta vacía también", lee(EN_CARPETA) or "", "es una carpeta")
 
     responder(ok(""))
-    c("un pairs.toml vacío de verdad se sigue leyendo", lee(CAT), None)
+    c("un catálogo vacío de verdad se sigue leyendo", lee(CAT), None)
     c("sin preguntar nada más", len(llamadas), 1)
 
 with sandbox():
@@ -310,11 +317,12 @@ with sandbox():
 # la ruta tecleada
 c.contains("una carpeta tecleada se rechaza sin red",
            catalog.problema_de_ruta("/prdrive-catalog") or "",
-           "«/prdrive-catalog/pairs.toml»")
+           "«/prdrive-catalog/remote.toml»")
 c.contains("con la barra del final, sin barra doble",
            catalog.problema_de_ruta("/prdrive-catalog/") or "",
-           "«/prdrive-catalog/pairs.toml»")
+           "«/prdrive-catalog/remote.toml»")
 c("un fichero .toml vale", catalog.problema_de_ruta("/x/pairs.toml"), None)
+c("los dos nombres valen", catalog.problema_de_ruta("/x/remote.toml"), None)
 c("en mayúsculas también", catalog.problema_de_ruta("/x/PAIRS.TOML"), None)
 c("vacía vale: se cae a la de fábrica", catalog.problema_de_ruta("  "), None)
 
@@ -326,5 +334,281 @@ try:
     c("cambiarla a una carpeta se rechaza", "no lanzó", "ConfigError")
 except ConfigError as e:
     c.contains("cambiarla a una carpeta se rechaza", str(e), "no termina en .toml")
+
+# los dos nombres: remote.toml, y pairs.toml en un remoto sin renombrar
+#
+# Un remoto de mentira con ficheros de verdad, para que escribir, renombrar y
+# la carrera entre los dos se puedan seguir por lo que queda en él. Contesta
+# como rclone v1.75.1 con el backend local: `cat` y `lsjson --stat` de algo que
+# no existe salen con 3, y `moveto` de un origen que no existe, con 1.
+import json  # noqa: E402
+
+NUEVO, VIEJO = "nas:/prdrive-catalog/remote.toml", "nas:/prdrive-catalog/pairs.toml"
+CARPETA = "nas:/prdrive-catalog/"
+CON_VIEJO = {"defaults": {"remote": "nas", "catalog_path": "/prdrive-catalog/pairs.toml"}}
+CON_NUEVO = {"defaults": {"remote": "nas", "catalog_path": "/prdrive-catalog/remote.toml"}}
+
+
+class Remoto:
+    """Un remoto de mentira: ficheros por endpoint y las órdenes de rclone del catálogo.
+
+    `antes[n]` se ejecuta justo antes de la orden número `n` (desde 1): es como
+    se mete otro dispositivo en mitad de una escritura.
+    """
+
+    def __init__(self, ficheros, falla=()):
+        self.f = dict(ficheros)
+        self.ordenes: list[list[str]] = []
+        self.antes: dict = {}
+        self.falla = set(falla)
+
+    def __call__(self, args):
+        self.ordenes.append(list(args))
+        gancho = self.antes.pop(len(self.ordenes), None)
+        if gancho:
+            gancho(self)
+        op = args[0]
+        if op in self.falla:
+            return subprocess.CompletedProcess(args, 1, "", f"{op}: permiso denegado")
+        if op == "cat":
+            if args[1] in self.f:
+                return subprocess.CompletedProcess(args, 0, self.f[args[1]], "")
+            return subprocess.CompletedProcess(args, 3, "", "directory not found")
+        if op == "lsjson" and args[1] == "--stat":
+            if args[2] in self.f:
+                return subprocess.CompletedProcess(
+                    args, 0, json.dumps({"Name": args[2].rsplit("/", 1)[1], "IsDir": False}), "")
+            return subprocess.CompletedProcess(args, 3, "", "directory not found")
+        if op == "lsjson" and args[1] == "--files-only":
+            dentro = [{"Name": k[len(args[2]):], "IsDir": False} for k in self.f
+                      if k.startswith(args[2]) and "/" not in k[len(args[2]):]]
+            return subprocess.CompletedProcess(args, 0, json.dumps(dentro), "")
+        if op == "copyto":
+            origen = args[1]
+            if origen in self.f:
+                self.f[args[2]] = self.f[origen]
+            elif Path(origen).is_file():
+                self.f[args[2]] = Path(origen).read_text(encoding="utf-8")
+            else:
+                return subprocess.CompletedProcess(args, 3, "", "directory not found")
+            return subprocess.CompletedProcess(args, 0, "", "")
+        if op == "moveto":
+            if args[1] not in self.f:
+                return subprocess.CompletedProcess(args, 1, "", "no such file or directory")
+            self.f[args[2]] = self.f.pop(args[1])
+            return subprocess.CompletedProcess(args, 0, "", "")
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+
+def remoto(ficheros, falla=()):
+    """Pone un `Remoto` como `catalog.run` y lo devuelve."""
+    rem = Remoto(ficheros, falla)
+    catalog.run = rem
+    return rem
+
+
+from pathlib import Path  # noqa: E402
+
+c("candidatos: pairs.toml busca primero remote.toml en la misma carpeta",
+  catalog.candidatos(VIEJO), (NUEVO, VIEJO))
+c("  y remote.toml, después pairs.toml", catalog.candidatos(NUEVO), (NUEVO, VIEJO))
+c("  en la raíz del remoto también", catalog.candidatos("nas:pairs.toml"),
+  ("nas:remote.toml", "nas:pairs.toml"))
+c("  un nombre propio se busca tal cual", catalog.candidatos("nas:/c/mio.toml"),
+  ("nas:/c/mio.toml",))
+c("  y una carpeta también", catalog.candidatos("nas:/prdrive-catalog"),
+  ("nas:/prdrive-catalog",))
+
+with sandbox():
+    rem = remoto({VIEJO: TEXTO})
+    cat = catalog.pull(CON_VIEJO)
+    c("un remoto sin renombrar se lee aunque el dispositivo diga pairs.toml",
+      cat.names, ["prdrive", "notas"])
+    c("  probando antes remote.toml", rem.ordenes, [["cat", NUEVO], ["cat", VIEJO]])
+    c("  y el catálogo dice de qué fichero salió", cat.endpoint, VIEJO)
+    c("  igual que la copia local", catalog.ultimo_leido(), VIEJO)
+    rem = remoto({VIEJO: TEXTO})
+    c("  y diga remote.toml", catalog.pull(CON_NUEVO).endpoint, VIEJO)
+
+with sandbox():
+    rem = remoto({NUEVO: TEXTO})
+    cat = catalog.pull(CON_VIEJO)
+    c("un remoto renombrado se lee aunque el dispositivo diga pairs.toml",
+      (cat.endpoint, len(rem.ordenes)), (NUEVO, 1))
+
+with sandbox():
+    rem = remoto({NUEVO: TEXTO, VIEJO: "otro = 1\n"})
+    c("con los dos, manda remote.toml", catalog.pull(CON_VIEJO).endpoint, NUEVO)
+
+with sandbox():
+    rem = remoto({})
+    motivo = lee(CON_VIEJO) or ""
+    c.contains("sin ninguno de los dos, se nombran los dos", motivo,
+               f"No hay catálogo en {NUEVO} ni en {VIEJO}")
+    responder(falla())
+    lee(CON_VIEJO)
+    c("sin red no se prueba el otro nombre", len(llamadas), 1)
+
+# escribir: en el que exista justo antes de escribir, y nunca crear el otro
+with sandbox():
+    rem = remoto({VIEJO: TEXTO})
+    base = catalog.pull(CON_VIEJO)
+    otro = {**CAT, "pair": CAT["pair"][:1]}
+    rem.ordenes.clear()
+    hechos = catalog.push(otro, base.text, CON_VIEJO)
+    c("en un remoto sin renombrar se escribe pairs.toml",
+      tomllib.loads(rem.f[VIEJO])["pair"][0]["name"], "prdrive")
+    c("  con su .bak", rem.f.get(VIEJO + ".bak"), TEXTO)
+    c("  y sin crear remote.toml", NUEVO in rem.f, False)
+    c("  comprobando después que nadie lo ha renombrado mientras",
+      rem.ordenes[-1], ["lsjson", "--stat", NUEVO])
+    c("  y se cuenta", len(hechos), 2)
+
+with sandbox():
+    rem = remoto({VIEJO: TEXTO})
+    base = catalog.pull(CON_VIEJO)
+    rem.f[NUEVO] = rem.f.pop(VIEJO)     # otro dispositivo renombra entretanto
+    catalog.push({**CAT, "pair": CAT["pair"][:1]}, base.text, CON_VIEJO)
+    c("si lo han renombrado desde que se leyó, se escribe en remote.toml",
+      tomllib.loads(rem.f[NUEVO])["pair"][0]["name"], "prdrive")
+    c("  y pairs.toml no vuelve", VIEJO in rem.f, False)
+
+with sandbox():
+    # La carrera: el renombrado cae entre la copia previa y la subida.
+    rem = remoto({VIEJO: TEXTO})
+    base = catalog.pull(CON_VIEJO)
+    rem.ordenes.clear()
+    rem.antes[4] = lambda r: r.f.__setitem__(NUEVO, r.f.pop(VIEJO))
+    try:
+        catalog.push({**CAT, "pair": CAT["pair"][:1]}, base.text, CON_VIEJO)
+        c("una subida que se cruza con el renombrado se dice", "no lanzó", "ConfigError")
+    except ConfigError as e:
+        c.contains("una subida que se cruza con el renombrado se dice", str(e),
+                   "el cambio no cuenta")
+    c("  y queda apuntado que hay dos", catalog.duplicado()[0], VIEJO)
+    from common import revision  # noqa: E402
+    hallazgo = revision._catalogo_duplicado()
+    c("  que «Reparación» enseña", (hallazgo.clave, hallazgo.gravedad),
+      ("catalogo", revision.AVISO))
+    c.contains("  diciendo cuál vale", hallazgo.detalle, "Vale remote.toml")
+
+with sandbox():
+    rem = remoto({VIEJO: TEXTO})
+    catalog.pull(CON_VIEJO)
+    catalog.apuntar_duplicado(VIEJO)
+    catalog._write_cache(catalog.Catalog(raw=CAT, text=TEXTO, source="remote",
+                                         stamp="x", endpoint=NUEVO))
+    c("la marca de los dos sobrevive a una lectura de la misma carpeta",
+      catalog.duplicado()[0], VIEJO)
+    catalog._write_cache(catalog.Catalog(raw=CAT, text=TEXTO, source="remote",
+                                         stamp="x", endpoint="nas:/otro/remote.toml"))
+    c("  y no a la de otra carpeta", catalog.duplicado(), None)
+    catalog.apuntar_duplicado(VIEJO)
+    catalog.pull(CON_VIEJO)
+    c("  y leer pairs.toml porque no hay remote.toml la borra", catalog.duplicado(), None)
+
+# renombrar
+with sandbox():
+    rem = remoto({VIEJO: TEXTO, VIEJO + ".bak": "antes = 1\n"})
+    catalog.pull(CON_VIEJO)
+    rem.ordenes.clear()
+    hechos = catalog.renombrar(CON_VIEJO)
+    c("renombrar mueve pairs.toml a remote.toml, sin tocar su contenido",
+      (rem.f.get(NUEVO), VIEJO in rem.f), (TEXTO, False))
+    c("  y su .bak", (rem.f.get(NUEVO + ".bak"), VIEJO + ".bak" in rem.f),
+      ("antes = 1\n", False))
+    c("  mirando antes qué hay en la carpeta",
+      rem.ordenes[0], ["lsjson", "--files-only", CARPETA])
+    c("  y la copia local dice ya que sale de remote.toml", catalog.ultimo_leido(), NUEVO)
+    c("  y lo cuenta", len(hechos), 2)
+    try:
+        catalog.renombrar(CON_VIEJO)
+        c("renombrar dos veces se niega", "no lanzó", "ConfigError")
+    except ConfigError as e:
+        c.contains("renombrar dos veces se niega", str(e), "ya se llama remote.toml")
+
+with sandbox():
+    rem = remoto({VIEJO: TEXTO})
+    catalog.renombrar(CON_NUEVO)
+    c("sin .bak, solo el catálogo", sorted(rem.f), [NUEVO])
+
+with sandbox():
+    rem = remoto({VIEJO: TEXTO, NUEVO: "otro = 1\n"})
+    try:
+        catalog.renombrar(CON_VIEJO)
+        c("con los dos no se renombra: moveto pisaría remote.toml", "no lanzó",
+          "ConfigError")
+    except ConfigError as e:
+        c.contains("con los dos no se renombra: moveto pisaría remote.toml", str(e),
+                   "Vale remote.toml")
+    c("  no se ha movido nada", rem.f, {VIEJO: TEXTO, NUEVO: "otro = 1\n"})
+    c("  y queda apuntado", catalog.duplicado()[0], VIEJO)
+    hechos = catalog.apartar_sobrante(CON_VIEJO)
+    apartado = [k for k in rem.f if k.startswith(VIEJO + catalog.APARTADO)]
+    c("apartar deja el que sobra al lado, con otro nombre", (len(apartado), VIEJO in rem.f),
+      (1, False))
+    c("  sin tocar remote.toml", rem.f[NUEVO], "otro = 1\n")
+    c("  ni borrar nada", rem.f[apartado[0]], TEXTO)
+    c("  y la marca se va", catalog.duplicado(), None)
+    try:
+        catalog.apartar_sobrante(CON_VIEJO)
+        c("apartar sin los dos se niega", "no lanzó", "ConfigError")
+    except ConfigError as e:
+        c.contains("apartar sin los dos se niega", str(e), "no hay nada que apartar")
+
+with sandbox():
+    rem = remoto({VIEJO: TEXTO}, falla={"lsjson"})
+    try:
+        catalog.renombrar(CON_VIEJO)
+        c("sin poder mirar la carpeta no se renombra", "no lanzó", "ConfigError")
+    except ConfigError as e:
+        c.contains("sin poder mirar la carpeta no se renombra", str(e),
+                   "No se ha tocado nada")
+    c("  y no se ha movido nada", rem.f, {VIEJO: TEXTO})
+
+with sandbox():
+    rem = remoto({VIEJO: TEXTO}, falla={"moveto"})
+    try:
+        catalog.renombrar(CON_VIEJO)
+        c("si moveto falla se dice", "no lanzó", "ConfigError")
+    except ConfigError as e:
+        c.contains("si moveto falla se dice", str(e), "sigue como estaba")
+
+with sandbox():
+    remoto({"nas:/c/mio.toml": TEXTO})
+    try:
+        catalog.renombrar({"defaults": {"remote": "nas", "catalog_path": "/c/mio.toml"}})
+        c("un catálogo con nombre propio no se renombra", "no lanzó", "ConfigError")
+    except ConfigError as e:
+        c.contains("un catálogo con nombre propio no se renombra", str(e),
+                   "no hay nada que renombrar")
+
+c("nombres_en: solo los del catálogo y sus .bak",
+  catalog.nombres_en(Remoto({VIEJO: "", NUEVO + ".bak": "", CARPETA + "otra.toml": "",
+                             CARPETA + "devices/x.toml": ""}), CARPETA),
+  frozenset({"pairs.toml", "remote.toml.bak"}))
+c("  una carpeta que no existe no tiene nada",
+  catalog.nombres_en(lambda a: subprocess.CompletedProcess(a, 3, "", ""), CARPETA),
+  frozenset())
+c("  y lo que no se entiende no se sabe",
+  catalog.nombres_en(lambda a: subprocess.CompletedProcess(a, 0, "{", ""), CARPETA), None)
+
+# Una tabla que esta versión no conoce, como la [keychain] del llavero: el
+# modelo la ignora al leer y el serializador la conserva al reescribir, así que
+# un catálogo que la lleva se sigue pudiendo editar.
+CON_LLAVERO = {**CAT, "keychain": {"base": "personal.kdbx", "fichero_llave": True,
+                                   "nombre_llave": "personal.keyx"}}
+c("una tabla desconocida no impide leer", [p.name for p in model.parse_config(CON_LLAVERO).pairs],
+  ["prdrive", "notas"])
+c("  y sobrevive a la escritura", tomllib.loads(config_file.dumps_checked(CON_LLAVERO))["keychain"],
+  CON_LLAVERO["keychain"])
+with sandbox():
+    rem = remoto({NUEVO: config_file.dumps(CON_LLAVERO)})
+    base = catalog.pull(CON_NUEVO)
+    nuevo_raw = {**base.raw, "pair": base.raw["pair"][:1]}
+    catalog.push(nuevo_raw, base.text, CON_NUEVO)
+    c("  también al editar el catálogo", tomllib.loads(rem.f[NUEVO]).get("keychain"),
+      CON_LLAVERO["keychain"])
+
 
 sys.exit(c.report())

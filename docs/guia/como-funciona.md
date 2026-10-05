@@ -13,7 +13,7 @@ Hay tres piezas, y entenderlas es entender el programa entero:
    (cualquier backend               (pendrive, SSD, tarjeta…)     (anfitrión)
     de rclone)
 
-   pairs.toml  ─── catálogo ───►    .prdrive/sync_config.toml     penwatch
+   remote.toml ─── catálogo ───►    .prdrive/sync_config.toml     penwatch
    qué parejas EXISTEN              cuáles usa ESTE               lo detecta
    [remote] cómo se conecta         + su rclone.conf y su clave   y lo lanza
 
@@ -24,9 +24,15 @@ Hay tres piezas, y entenderlas es entender el programa entero:
    /datos/claves  ◄── bisync ──►    sync-data/claves
 ```
 
-**El catálogo** (`pairs.toml`, en tu remoto) dice **qué parejas existen** y **cómo
+**El catálogo** (`remote.toml`, en tu remoto) dice **qué parejas existen** y **cómo
 se conecta** un dispositivo. Es el mismo fichero para todos. El alta y la baja de
 una carpeta ocurren ahí primero.
+
+En un remoto de antes el catálogo se llama `pairs.toml`, y sigue funcionando:
+prdrive busca primero `remote.toml` y, si no está, `pairs.toml`, en la misma
+carpeta. Cuando todos tus dispositivos estén al día (lo dicen sus notas en la
+flota), **Ajustes → Renombrar el catálogo…** lo pasa al nombre nuevo. Es
+opcional.
 
 **El dispositivo** tiene su `sync_config.toml`, que dice **cuáles de ellas usa**.
 Un pendrive pequeño puede llevar dos; el de casa, todas. Esa separación es

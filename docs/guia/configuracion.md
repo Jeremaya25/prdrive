@@ -6,13 +6,13 @@ El fichero de configuración de la unidad, los flags de rclone, `device_remote`,
 
 `sync_config.toml` (dentro de `.prdrive/`) es el config de **ese** dispositivo. Se
 edita desde la ventana de parejas o a mano; el mismo esquema sirve para el
-`pairs.toml` del catálogo.
+`remote.toml` del catálogo (`pairs.toml` en un remoto de antes).
 
 ```toml
 [defaults]
 remote = "nas"                       # el remote de rclone que usan las parejas
 device_remote = "disp"               # el lado local, como remote propio
-catalog_path = "/prdrive-catalog/pairs.toml" # el fichero, no su carpeta
+catalog_path = "/prdrive-catalog/remote.toml" # el fichero, no su carpeta
 exclude = ["**/.stfolder/**", "**/.stignore"]
 
 [defaults.flags]                     # flags de rclone para todas las parejas

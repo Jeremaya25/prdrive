@@ -261,4 +261,20 @@ with sandbox():
     historial.ruta().write_text("basura\n", encoding="utf-8")
     c("un diario ilegible tampoco estorba al fallo", "Falla" in detalle_fallo(cfg), False)
 
+with sandbox():
+    # Los dos nombres del catálogo a la vez, apuntados la última vez que alguien
+    # miró la carpeta: se dice sin red, y deja de decirse cuando se borra.
+    from common import catalog
+    cfg = mkcfg(["notas"])
+    cfg.pairs[0].local_abs.mkdir(parents=True, exist_ok=True)
+    listados(cfg.pairs[0])
+    catalog.apuntar_duplicado("nas:/prdrive-catalog/pairs.toml")
+    dos = [h for h in revision.revisar(cfg) if h.clave == "catalogo"]
+    c("dos catálogos en el remoto es un aviso", [h.gravedad for h in dos], [revision.AVISO])
+    c.contains("  que dice cuál vale", dos[0].detalle if dos else "", "Vale remote.toml")
+    c("  y cuenta en la ventana", revision.cuenta(dos), 1)
+    catalog.apuntar_duplicado(None)
+    c("  y se va cuando ya no los hay",
+      [h for h in revision.revisar(cfg) if h.clave == "catalogo"], [])
+
 sys.exit(c.report())

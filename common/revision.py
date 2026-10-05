@@ -47,7 +47,7 @@ class Hallazgo:
 
     Args:
         clave: Tipo de avería: `local`, `prefijo`, `resync`, `lock`, `espacio`,
-            `conflicto`, `fallo`, `listados`.
+            `conflicto`, `fallo`, `listados`, `catalogo`.
         titulo: Frase corta.
         detalle: Explicación completa.
         pareja: La pareja afectada, o `None` si es del dispositivo.
@@ -249,6 +249,39 @@ def _espacio() -> Hallazgo | None:
         None, AVISO, (str(fisica), libre))
 
 
+def _catalogo_duplicado() -> Hallazgo | None:
+    """Devuelve la avería de un remoto con los dos nombres del catálogo a la vez.
+
+    Sale de lo que se apuntó la última vez que alguien miró la carpeta del
+    catálogo (`catalog.duplicado()`), sin red. Pasa si una subida a
+    `pairs.toml` se cruza con el renombrado a `remote.toml`: vale
+    `remote.toml`, el que se busca primero, y lo que llevara el otro no cuenta.
+    No tiene botón aquí porque es una operación en el remoto: la hace
+    «Renombrar el catálogo…», en «Ajustes».
+
+    `catalog` se importa dentro, como `fleet` en `_espacio()`.
+    """
+    try:
+        from . import catalog
+        apuntado = catalog.duplicado()
+    except Exception:                                # noqa: BLE001
+        return None
+    if apuntado is None:
+        return None
+    sobra, visto = apuntado
+    carpeta = catalog.partir(sobra)[0]
+    cuando = f" (visto el {visto})" if visto else ""
+    return Hallazgo(
+        "catalogo", "En el remoto hay dos catálogos",
+        f"En {carpeta} están {catalog.FICHERO} y {catalog.FICHERO_ANTERIOR}{cuando}. "
+        f"Vale {catalog.FICHERO}, que es el que buscan primero todos los "
+        f"dispositivos; {catalog.FICHERO_ANTERIOR} lo dejó una subida que se cruzó "
+        f"con el renombrado, y el cambio que llevara no cuenta. Mira en «Parejas» "
+        f"si falta algo y, si falta, repítelo allí. Después, en «Ajustes» → "
+        f"«Renombrar el catálogo…», aparta el {catalog.FICHERO_ANTERIOR} que sobra.",
+        None, AVISO, (sobra,))
+
+
 def revisar(config: Config) -> list[Hallazgo]:
     """Devuelve todo lo que está mal ahora mismo, lo más grave primero.
 
@@ -268,7 +301,7 @@ def revisar(config: Config) -> list[Hallazgo]:
                 hallazgos.append(hallazgo)
     hallazgos += _conflictos(config)
     hallazgos += _fallos(config)
-    for hallazgo in (_listados_sueltos(), _espacio()):
+    for hallazgo in (_listados_sueltos(), _espacio(), _catalogo_duplicado()):
         if hallazgo is not None:
             hallazgos.append(hallazgo)
 

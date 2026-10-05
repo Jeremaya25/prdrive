@@ -215,7 +215,7 @@ CAT_REMOTO = {"defaults": {"remote": "nas"},
                        {"name": "fotos", "local": "sync-data/fotos",
                         "remote_path": "/R/fotos", "mode": "up"}]}
 CUANDO = "2026-09-30 08:00:00"
-ENDPOINT = "nas:/prdrive-catalog/pairs.toml"
+ENDPOINT = "nas:/prdrive-catalog/remote.toml"
 BOTONES_CATALOGO = ("Nueva…", "Editar…", "Borrar…", "Ajustes del catálogo…")
 
 

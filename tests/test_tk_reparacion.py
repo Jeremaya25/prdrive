@@ -514,6 +514,35 @@ with sandbox():
     c("y su primera entrada abre «Reparación», con «Ajustes» ya cerrada",
       len(abiertas), 1)
 
+# «Renombrar el catálogo…» sale solo mientras el remoto conserve su pairs.toml,
+# y eso lo dice la copia local del catálogo: de qué fichero se leyó la última vez.
+with sandbox():
+    from common import catalog, store
+    from ui import catalog_editor, tk_renombrar
+    cfg, _p = preparar()
+    sitio = catalog.sin_renombrar(catalog_editor.raw_del_dispositivo(None))
+    store.write_json(catalog.cache_meta(), {"endpoint": sitio.viejo})
+    visto.clear()
+    abiertas_ren: list = []
+
+    def ver_ajustes(dlg) -> None:
+        """Apunta las entradas de «Ajustes» y entra en «Renombrar el catálogo…»."""
+        botones_ajustes = botones(dlg)
+        visto["entradas"] = sorted(botones_ajustes)
+        botones_ajustes["Renombrar el catálogo…"].invoke()
+        dlg.destroy()
+
+    real_renombrar = tk_renombrar.open_dialog
+    tk_renombrar.open_dialog = lambda parent, raw=None: abiertas_ren.append(raw)
+    tk_doctor.mostrar = lambda dlg, parent=None: ver_ajustes(dlg)
+    try:
+        ventana_principal(cfg, lambda root: botones(root)["Ajustes…"].invoke())
+    finally:
+        tk_renombrar.open_dialog = real_renombrar
+    c("con un remoto sin renombrar, «Ajustes» ofrece renombrarlo",
+      "Renombrar el catálogo…" in (visto.get("entradas") or []), True)
+    c("  y la entrada abre su pantalla", len(abiertas_ren), 1)
+
 with sandbox():
     cfg, _p = preparar()
     eleccion = ventana_principal(cfg, lambda root: botones(root)["Iniciar servicio"].invoke())

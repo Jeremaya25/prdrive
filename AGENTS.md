@@ -123,7 +123,7 @@ The full list (`penwatch.py`, `agente.py`, `prdrive-install.py`, `build_installe
 
 - **`README.md`**: the user-facing front page. Spanish, short, no internals. Longer user guides: `docs/guia/`.
 - **`device-readme.md`**: the *light* quick guide, **not** for repo readers: the installer copies it to the volume root as `README.md` (`deploy.write_guide()`, best-effort). Short, task-shaped, no internals; it is in `DATOS_FICHEROS`, so a build that forgets it fails at compile time.
-- **`sync_config.example.toml`**: the schema reference for `sync_config.toml` and the remote's `pairs.toml` (which also takes `[remote]`). **`LICENSE`**: Apache 2.0 verbatim.
+- **`sync_config.example.toml`**: the schema reference for `sync_config.toml` and the remote's catalogue `remote.toml` (formerly `pairs.toml`; it also takes `[remote]`). **`LICENSE`**: Apache 2.0 verbatim.
 - **`.github/pull_request_template.md`**: what every PR answers (agents' included): where it touches, which data is at stake, what happens to devices already in use, how it was checked. **A PR title is release text** (`--generate-notes`; `tk_update` shows it on every device): write it in Spanish, for the device's user.
 - A behaviour change updates the matching `docs/agents/reference/` doc (and `docs/guia/` if users see it), not this file: keep this one small, it loads every session.
 

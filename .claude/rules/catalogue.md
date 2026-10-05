@@ -7,6 +7,7 @@ paths:
   - "ui/flags_editor.py"
   - "ui/remote_picker.py"
   - "ui/tk_pairs.py"
+  - "ui/tk_renombrar.py"
   - "tests/test_catalog.py"
   - "tests/test_catalog_editor.py"
   - "tests/test_pair_editor.py"

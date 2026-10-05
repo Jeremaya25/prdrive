@@ -58,7 +58,7 @@ Los flags tienen su propio diálogo y lo que no sale por ningún sitio
 
 NOTA_PEN = "Se guardará copia en sync_config.toml.bak"
 """Lo que se dice al confirmar un cambio de este dispositivo."""
-NOTA_CATALOGO = "Se guardará copia en pairs.toml.bak, en el remoto"
+NOTA_CATALOGO = "Se guardará una copia del catálogo (.bak) en el remoto"
 """Lo que se dice al confirmar un cambio del catálogo."""
 
 ROTULOS_SECCION = ("Este dispositivo", "Catálogo")

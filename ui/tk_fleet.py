@@ -110,7 +110,7 @@ class Fila(NamedTuple):
     reserva: int = 0
 
 
-def _fecha(sello: str) -> str:
+def fecha(sello: str) -> str:
     """Devuelve una fecha de la nota como se enseña en la tabla.
 
     Las recientes llevan el formato de la ventana («ayer», «08:20»); las de
@@ -148,12 +148,12 @@ def ficha(disp: fleet.Dispositivo, equipo_aqui: str) -> list[Fila]:
     if disp.ultima_buena == fleet.SIN_BUENA:
         estado.append(Linea(SIN_BUENA, pista=True))
     elif disp.ultima_buena:
-        estado.append(Linea(f"Última pasada buena: {_fecha(disp.ultima_buena)}",
+        estado.append(Linea(f"Última pasada buena: {fecha(disp.ultima_buena)}",
                             pista=True))
     equipos = []
     for equipo in disp.equipos:
         marca = ESTE_EQUIPO if equipo_aqui and equipo.nombre == equipo_aqui else ""
-        equipos.append(Linea(equipo.nombre + marca, _fecha(equipo.visto)))
+        equipos.append(Linea(equipo.nombre + marca, fecha(equipo.visto)))
     if not equipos:
         equipos.append(Linea(SIN_EQUIPOS, pista=True))
     version, para, est, eqs = ROTULOS_FICHA
@@ -360,7 +360,7 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> None:
             tree.insert("", "end", iid=disp.id, tags=(_tono(disp),),
                         values=("✓" if disp.id == yo else "",
                                 disp.nombre + marca(disp),
-                                _fecha(disp.last_seen),
+                                fecha(disp.last_seen),
                                 ultimo_equipo(disp),
                                 disp.last_result))
         # La lista es más baja porque la ficha se lleva parte de la ventana.
