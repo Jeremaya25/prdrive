@@ -1,6 +1,6 @@
 # El llavero (`.keychain`): KeePassXC de viaje y una base que se sincroniza sola
 
-Fecha: 2026-10-04 · Estado: **decidida**; fases 0, 1 y 3 hechas (sin probar en real: §15), la 2 sin implementar; lo que cambió al hacer la 1, en §16, y la 3, en §17 · Versión objetivo:
+Fecha: 2026-10-04 · Estado: **decidida**; las cuatro fases hechas (sin probar en real: §15); lo que cambió al hacer la 1, en §16, la 3, en §17, y la 2, en §18 · Versión objetivo:
 0.6.0 · Sustituye a la primera propuesta del mismo día (`3cdf1d5`) · Pruebas de
 las que sale:
 `docs/superpowers/pruebas/2026-10-04-keepassxc-portatil.md` y sus resultados
@@ -608,7 +608,7 @@ el agente.
 |---|---|---|
 | **0. `remote.toml`** (hecha, `1e5bb51`) | Nombre nuevo con la regla de §3 y «Renombrar el catálogo a remote.toml…» en «Ajustes» | `common/catalog.py`, `common/fleet.py`, `install/remote.py`, `ui/catalog_editor.py`, `ui/tk_pairs.py`, `ui/tk_doctor.py`, `common/revision.py` (los dos ficheros a la vez), sus tests, `catalogue.md`, `fleet.md`, `sync_config.example.toml`, `docs/guia/` |
 | **1. Windows** (x64, y ARM con el x64; hecha, `d1eb572`…`cd0f7fb`, sin probar en real) | Todo lo demás (lo que cambió, en §16) | `common/pins.py`, `common/kdbx.py` (nuevo), `common/llavero.py` (nuevo), `common/registro.py` (nuevo), `common/store.py` (`procesos_desde`), `common/model.py` (`[keychain]` → pareja), `common/bisync.py` (filtros; `- /.keychain/**`), `common/components.py`, `sync.py` (comprobación previa), `runsync.py` (`--llavero`, `--vigilar-llavero`, `--cerrar-llavero`; vigilancia del llavero en el servicio), `install/keepassxc_bin.py` (nuevo), `install/components.py`, `install/deploy.py` (lanzadores, `LEEME.txt`, ocultar), `install/vestibulo.py` (`.bat`), `install/device.py` (`RUIDO`), `agente.py` (`IGNORAR_CAMBIOS`, atender el llavero), `ui/conflict_editor.py`, `ui/tk_conflicts.py`, `ui/tk.py` (botón, línea, «Expulsar» sin VeraCrypt), `ui/tk_llavero.py` (nuevo), `ui/tk_doctor.py` (`ENTRADAS`), `ui/tk_install.py` (paso, «Añadir el llavero…»), `common/revision.py` (compañero que falta) |
-| **2. Linux** | §11 | `install/keepassxc_bin.py`, `common/llavero.py`, `install/vestibulo.py` (`.sh`) |
+| **2. Linux** (hecha, `486a485`…`af7119c`, sin probar en real) | §11 (lo que cambió, en §18) | `common/pins.py`, `common/components.py`, `install/keepassxc_bin.py`, `common/keepassxc.py`, `common/llavero.py`, `common/store.py` (`orden_de`, zombis), `install/vestibulo.py` (`.sh`), `install/llavero.py`, `ui/llavero_editor.py`, `ui/conflict_editor.py`, `ui/tk.py`, `runsync.py`, `agente.py` |
 | **3. El agente** (hecha, `d1fdbb6`…`8db9aa6`, sin probar en real) | «Llavero» en la bandeja; aviso nativo de un conflicto del llavero; quitar las claves del registro cuando la unidad se va sin expulsar; el llavero en la raíz del equipo | `agente.py`, `ui/bandeja.py`, `common/avisos.py` |
 
 La fase 1 crea `docs/agents/reference/llavero.md`, su regla en `.claude/rules/` y
@@ -673,6 +673,14 @@ cuadren). `catalogue.md` y `agent-scheduling.md` cuentan lo suyo.
 | R21 | La raíz del equipo («Una carpeta propia»): activarlo desde su ventana no pone `Llavero.bat`; se abre desde la ventana y la bandeja; su ventana no ofrece «Expulsar» |
 | R22 | La raíz del equipo cifrada: «Bloquear» desde la bandeja con KeePassXC abierto y un cambio sin guardar: KeePassXC pregunta, sube lo pendiente y VeraCrypt desmonta; con «Cancelar» en KeePassXC, aviso «no la bloqueo» y se sigue atendiendo. Lo mismo desde su ventana |
 | R23 | Un agente anterior al llavero (0.5.5) atendiendo una unidad ya actualizada: «Abrir llavero» arranca el vigilante y la base se sincroniza (`fddf70d`) |
+| R24 | Fase 2, Linux x64 (Ubuntu 24.04 sin `libfuse2`, y Fedora): «Actualizar…» pone el AppImage; «Abrir llavero» lo extrae en `~/.cache/prdrive/keepassxc/2.7.12/` y abre la base, con la unidad en exFAT y en un montaje `noexec` (LX1, LX2) |
+| R25 | La configuración en `.prdrive/keepassxc/config/linux/` y nada en `~/.config/keepassxc` ni `~/.cache/keepassxc` (LX3); las recientes, al punto de montaje del otro equipo |
+| R26 | El navegador en un Linux donde nunca se activó: Chrome (`.deb`) y Firefox conectan sin marcar nada en KeePassXC; con un KeePassXC de la distribución ya conectado, su manifiesto no se toca y la extensión conecta con el nuestro (LX4, LX6) |
+| R27 | El Firefox snap de Ubuntu 24.04 (LX5): qué pasa con la mensajería nativa |
+| R28 | Expulsar en Linux: `expulsar-prdrive.sh` y el botón de la ventana cierran KeePassXC, suben lo pendiente y quitan los manifiestos; el proxy no retiene el volumen (LX7) |
+| R29 | Quitar la unidad sin expulsar con KeePassXC abierto: el agente (o el vigilante, sin agente) le pide que se cierre, y pregunta si hay algo sin guardar |
+| R30 | «Combinar» en Linux: abre una terminal (GNOME, KDE, Xfce), pide la contraseña y aparta la copia; cerrar la terminal a medias no combina ni aparta nada |
+| R31 | Linux ARM64 con el KeePassXC de Flathub 2.7.12 (LA1, LA2) y con el de Debian 12 (LA3): abre la base con su fichero llave; el de Debian avisa de que no tiene passkeys |
 
 ## 16. Cómo quedó la fase 1
 
@@ -761,5 +769,42 @@ respecto a lo decidido:
   encargado, y el vigilante se queda.
 - **No están**: desbloquear una raíz cifrada para abrir su llavero desde la
   bandeja, y la semilla de la cabecera en la foto del agente (§5b: dos
-  guardados del mismo tamaño en el mismo tic de exFAT, de 10 ms). Linux sigue en
-  la fase 2.
+  guardados del mismo tamaño en el mismo tic de exFAT, de 10 ms). Linux, en la
+  fase 2 (§18).
+
+## 18. Cómo quedó la fase 2
+
+Hecha en cinco entregas y un arreglo (`486a485` el componente, `315e331` abrirlo,
+`53ad44b` el navegador, `28382ff` `llavero.sh`, expulsar y combinar, `80109ce` el
+agente, `af7119c` el vigilante), sin las pruebas LX1–LX7 y LA1–LA3 de las que
+§11 la hacía depender: las R24–R31 de §15 las recogen. Algo sí se pudo ver en
+la sandbox, con el AppImage 2.7.12 de verdad bajo Xvfb: que se extrae en 1,4 s,
+que la configuración va donde se le dice y no a `~/.config/keepassxc`, que se
+reconoce como de la unidad por su línea de órdenes, que SIGTERM lo cierra, y que
+los manifiestos de prdrive son byte a byte los que escribe él. El detalle
+técnico está en `docs/agents/reference/llavero.md`. Cambió respecto a §11:
+
+- **El AppImage se extrae siempre**, no solo sin FUSE 2 o con `noexec`: una vez
+  por equipo y versión, en `~/.cache/prdrive/keepassxc/<versión>/`, de una copia
+  comprobada contra el sello. Un solo camino, que tampoco deja la unidad
+  retenida por un montaje FUSE de KeePassXC ni de su proxy (LX7).
+- **No hace falta envoltorio para el proxy**: se le da a KeePassXC el
+  `keepassxc-proxy` de lo extraído (`Browser/CustomProxyLocation`). Hace falta
+  darle uno porque el AppImage escribiría `$APPIMAGE` en el manifiesto, y
+  extraído no existe.
+- **Los manifiestos los escribe prdrive**, con `Browser/UpdateBinaryPath=false`,
+  solo donde no hay ninguno o es nuestro: el de un KeePassXC instalado no se
+  toca. Su proxy llega al nuestro igual, porque el socket está en el mismo
+  sitio, y uno pisado no se podría devolver.
+- **Un KeePassXC de Linux es de la unidad por su línea de órdenes** (su
+  `--config` o su base), porque no corre desde ella.
+- **KeePassXC no muere con la unidad en Linux**: el agente, o el vigilante, le
+  piden que se cierre cuando la unidad se va.
+- **«Combinar» abre una terminal**, y como las terminales no devuelven el código
+  de lo que corren, la consola lo apunta en un temporal.
+- **Linux ARM64 usa el KeePassXC del equipo** (el del sistema o el de Flathub),
+  con su configuración y sus manifiestos, y avisa si no tiene passkeys.
+- **Arreglo de paso**: `store.pid_alive()` daba por vivo a un zombi, y KeePassXC
+  es hijo de la ventana que lo abre: «Expulsar» desde ella esperaba hasta el
+  tope. Salió al probar el AppImage de verdad.
+- **No está**: el Firefox snap (LX5) más allá de lo que haga solo.

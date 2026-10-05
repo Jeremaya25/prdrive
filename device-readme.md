@@ -29,7 +29,7 @@ modo *ligero* (con un `runsync.pyw` en la raíz), entonces sí hace falta **Pyth
 | `.prdrive/` | el programa, rclone, su Python y el fichero de control. Está oculta a propósito; no hace falta tocarla |
 | `VeraCrypt/` | solo si la unidad va cifrada con VeraCrypt: el propio VeraCrypt (para Windows x64 y ARM64), para poder abrirla en equipos que no lo tengan |
 | `autorun.inf` | el nombre y el icono con que la ve Windows. No ejecuta nada |
-| `Llavero.bat` / `.keychain/` | solo si lleva el llavero: abre KeePassXC con tu base de contraseñas y passkeys, que está en `.keychain/` (oculta; no la toques a mano) |
+| `Llavero.bat` / `llavero.sh` / `.keychain/` | solo si lleva el llavero: abren KeePassXC (en Windows y en Linux) con tu base de contraseñas y passkeys, que está en `.keychain/` (oculta; no la toques a mano) |
 
 ## La ventana
 
@@ -84,9 +84,10 @@ Los dos últimos borran de verdad. Antes de estrenar uno, pruébalo con
 
 Tus contraseñas y passkeys en una base de KeePassXC que viaja aquí y se
 sincroniza sola. Se activa en **Ajustes → Llavero…** (con una base tuya, que se
-copia, o la que ya tenga el remoto) y se abre con **Abrir llavero** o
-`Llavero.bat`. En cada navegador, una vez: instala **KeePassXC-Browser**, pulsa
-«Conectar» y activa «Enable Passkeys». De momento solo se abre en Windows.
+copia, o la que ya tenga el remoto) y se abre con **Abrir llavero**,
+`Llavero.bat` o `llavero.sh`. En cada navegador, una vez: instala
+**KeePassXC-Browser**, pulsa «Conectar» y activa «Enable Passkeys». Se abre en
+Windows y en Linux; en un Linux ARM, con el KeePassXC del equipo.
 
 ## Ponerle nombre e icono
 

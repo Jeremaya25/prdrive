@@ -54,9 +54,10 @@ agente»**. El diseño completo está en
   suyo y vuelve a preguntar, diciendo que su código ha cambiado.
 - **Atiende el [llavero](llavero.md)** de una unidad que lo lleve, sea cual sea
   su modo: mientras KeePassXC está abierto, lo de otros dispositivos llega cada
-  5 minutos y lo que guardas sube solo. En Windows, su desplegable lleva **Abrir
-  llavero**; si la base tiene dos versiones, avisa; y si quitas la unidad sin
-  expulsar, deja el navegador como estaba.
+  5 minutos y lo que guardas sube solo. Su desplegable lleva **Abrir llavero**;
+  si la base tiene dos versiones, avisa; y si quitas la unidad sin expulsar,
+  deja el navegador como estaba y, en Linux, cierra KeePassXC, que allí no se
+  va con la unidad.
 - **Hace de servicio de la unidad con sus mismos ficheros** (`daemon.lock.json`,
   `daemon.stop`, `ui.lock.json`). **El único cambio que se nota: abrir la ventana de la unidad ya no apaga el
   servicio para siempre, lo pausa mientras está abierta.** Si el agente la

@@ -10,13 +10,15 @@ nada.
 > **Sin probar todavía en un equipo de verdad.** Está hecho a partir de pruebas
 > con KeePassXC 2.7.12 en un Windows ARM, pero el llavero entero (abrirlo,
 > combinar, expulsar, el navegador en un equipo nuevo) no se ha probado aún en
-> hardware real. De momento **solo se abre en Windows** (x64, y ARM64 con el
-> KeePassXC de x64); en Linux se sincroniza, pero no se abre.
+> hardware real. Se abre en **Windows** (x64, y ARM64 con el KeePassXC de x64) y
+> en **Linux** (x64 con el KeePassXC de la unidad; ARM64 con el del equipo: ver
+> [En Linux](#en-linux)).
 
 ## Qué es, en corto
 
 - **KeePassXC viaja dentro de la unidad**, en `.prdrive/keepassxc/`. prdrive lo
-  descarga, lo comprueba y lo pone al día como rclone.
+  descarga, lo comprueba y lo pone al día como rclone: el de Windows y, si la
+  unidad lleva Linux, el de Linux.
 - **La base vive en `.keychain/`**, en la raíz de la unidad, oculta. Una sola
   base, con el nombre que traiga.
 - **Se sincroniza sola** con la carpeta `keychain/` que hay junto al catálogo, en
@@ -54,8 +56,8 @@ llave en cada equipo, no qué tiene.
 
 ## Cada día
 
-**Abrir llavero**, en la ventana de prdrive, o doble clic en **`Llavero.bat`**,
-en la raíz de la unidad. Con el [agente](agente-residente.md) en el equipo,
+**Abrir llavero**, en la ventana de prdrive, o doble clic en **`Llavero.bat`**
+(en Linux, **`llavero.sh`**), en la raíz de la unidad. Con el [agente](agente-residente.md) en el equipo,
 también desde su icono, junto al reloj: **Abrir llavero**, en el desplegable del
 dispositivo.
 
@@ -106,11 +108,13 @@ Lo que parece un fallo y no lo es:
 
 ### Si KeePassXC no arranca
 
-Si dice que falta el **runtime de Visual C++**, es que el equipo no lo tiene y
-KeePassXC no lo lleva consigo. Instalarlo pide un administrador; el instalador
-oficial de Microsoft es
+En Windows, si dice que falta el **runtime de Visual C++**, es que el equipo no
+lo tiene y KeePassXC no lo lleva consigo. Instalarlo pide un administrador; el
+instalador oficial de Microsoft es
 [vc_redist.x64.exe](https://aka.ms/vs/17/release/vc_redist.x64.exe) (el de x64
 también en Windows ARM).
+
+En Linux, el aviso dice qué lanzar desde una terminal para ver qué le falta.
 
 ## Si dos dispositivos cambiaron la base
 
@@ -120,8 +124,8 @@ nueva y la otra queda al lado como copia de conflicto. **No hay que elegir**:
 **Reparación**. Con el agente, te lo dice un aviso del sistema, y su icono lo
 enseña arriba del menú: «el llavero tiene dos versiones · Combinar…».
 
-Combinar abre una consola de KeePassXC que te pide la contraseña de la base
-(prdrive no la ve) y junta lo de las dos. La copia combinada va a
+Combinar abre una consola de KeePassXC (en Linux, una terminal) que te pide la
+contraseña de la base (prdrive no la ve) y junta lo de las dos. La copia combinada va a
 `.keychain/.prversions/`, por si acaso, y deja de viajar. Si no se puede combinar,
 no se toca nada y se explica cómo hacerlo desde KeePassXC («Base de datos →
 Combinar desde base de datos…»).
@@ -142,7 +146,8 @@ viejas: **Ajustes → Versiones…**, como en cualquier pareja con versiones.
 ## Expulsar
 
 **Expulsar**, en la ventana (también en una unidad sin cifrar, si lleva el
-llavero), o **Expulsar PRDRIVE** en la raíz si va con VeraCrypt.
+llavero), o **Expulsar PRDRIVE** en la raíz si va con VeraCrypt (en Linux,
+`expulsar-prdrive.sh`).
 
 Si KeePassXC está abierto, te pregunta si cerrarlo; se cierra como si lo cerraras
 tú, así que si tienes algo sin guardar, KeePassXC te lo pregunta. Lo que quede por
@@ -154,6 +159,11 @@ forma atómica), pero lo último puede no haber subido: sube la próxima vez. El
 navegador se queda apuntando a un KeePassXC que ya no está: con el agente en el
 equipo se arregla solo, y si no, al abrir el llavero otra vez en ese equipo.
 
+En Linux, además, KeePassXC **no se cierra solo** al quitar la unidad (allí no
+corre desde ella): la base seguiría abierta en ese equipo. El agente, o el
+vigilante del llavero si no hay agente, le pide que se cierre, como si lo
+cerraras tú.
+
 ## En una carpeta de este equipo
 
 Si prdrive vive en una carpeta del ordenador (la opción «En este equipo» del
@@ -161,9 +171,28 @@ asistente), el llavero va igual, con tres diferencias:
 
 - Se activa desde su ventana: **Ajustes → Llavero…**. El asistente no lo
   pregunta.
-- No hay `Llavero.bat`: se abre desde la ventana o desde el icono del agente.
+- No hay `Llavero.bat` ni `llavero.sh`: se abre desde la ventana o desde el
+  icono del agente.
 - No hay «Expulsar»: la carpeta no se quita. Si está cifrada, **Bloquear**
   cierra antes el llavero, igual que «Expulsar» en una unidad.
+
+## En Linux
+
+- **En Linux x64**, KeePassXC viaja en la unidad como su AppImage oficial. La
+  primera vez que abres el llavero en un equipo, prdrive lo prepara en la caché
+  de ese equipo (`~/.cache/prdrive/keepassxc/`, unos 125 MB, unos segundos), y
+  después lo usa desde ahí. No hace falta FUSE ni nada instalado, y da igual
+  cómo esté montada la unidad.
+- **En Linux ARM64** no hay AppImage: se abre con el **KeePassXC del equipo**,
+  el de Flathub o el de tu distribución, con su configuración. Para las
+  passkeys hace falta la 2.7.7 o posterior (Debian 12 y Ubuntu 24.04 traen una
+  anterior: la base se abre, pero las passkeys no; se dice al abrir).
+- **El navegador**: prdrive le deja a cada navegador del equipo el fichero que
+  le dice dónde está KeePassXC, y lo quita al expulsar. Si ya tenías un
+  KeePassXC instalado con el navegador conectado, no se toca y sigue valiendo.
+  Firefox instalado como snap (el de Ubuntu) no está probado.
+- **Combinar** abre una terminal. Si el equipo no tiene ninguna, se dice cómo
+  hacerlo desde KeePassXC.
 
 ## Ten cuidado con
 

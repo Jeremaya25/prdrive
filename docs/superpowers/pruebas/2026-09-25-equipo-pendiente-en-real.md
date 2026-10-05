@@ -302,6 +302,8 @@ agente de una release publicada y unidades con una versión anterior (una
 El agente atiende el llavero de una raíz: lo trae cada 5 min con KeePassXC
 abierto, lo abre desde la bandeja, avisa de un conflicto, limpia las claves del
 navegador de una unidad quitada sin expulsar y cierra el llavero antes de
-bloquear una raíz cifrada. Las pruebas son R17–R23 de
+bloquear una raíz cifrada; en Linux (fase 2), además, cierra el KeePassXC de
+una unidad que se va y quita sus manifiestos del navegador. Las pruebas son
+R17–R23 y, para Linux, R24–R31 de
 `docs/superpowers/specs/2026-10-04-llavero-keepassxc-design.md` (§15), con las
 del resto del llavero: no se repiten aquí.
