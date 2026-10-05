@@ -53,13 +53,13 @@ funcionando), salvo estos flags propios:
         Punto de entrada interno del servicio.
     --llavero
         «Abrir llavero» sin la ventana: abre KeePassXC con la base del
-        dispositivo (`ui.abrir_llavero()`). Es lo que hace `Llavero.bat`.
+        dispositivo (`ui.abrir_llavero()`). Es lo que hacen `Llavero.bat` y `llavero.sh`.
     --cerrar-llavero
-        Lo que hace «Expulsar PRDRIVE.bat» antes de desmontar: cierra
+        Lo que hacen «Expulsar PRDRIVE.bat» y `expulsar-prdrive.sh` antes de desmontar: cierra
         KeePassXC (si se dice que sí), sube lo pendiente y deja el registro del
         navegador como estaba (`keepassxc.cerrar_llavero()`). Sale con 1 si
         KeePassXC sigue abierto.
-    --combinar-llavero BASE COPIA [--keyfile LLAVE]
+    --combinar-llavero BASE COPIA [--keyfile LLAVE] [--codigo FICHERO]
         La consola de «Combinar»: `keepassxc-cli merge` pide en ella la
         contraseña de la base (`keepassxc.combinar_aqui()`).
     --vigilar-llavero
@@ -742,17 +742,29 @@ def cerrar_llavero(preguntar=input) -> int:
 
 
 def combinar_llavero(rest: list[str]) -> int:
-    """Hace `--combinar-llavero BASE COPIA [--keyfile LLAVE]`, en la consola que abre «Combinar».
+    """Hace `--combinar-llavero BASE COPIA [--keyfile LLAVE] [--codigo FICHERO]`.
 
-    Es `keepassxc.combinar_aqui()`: `keepassxc-cli merge` pide aquí la
-    contraseña de la base.
+    Es la consola que abre «Combinar»: `keepassxc.combinar_aqui()`, donde
+    `keepassxc-cli merge` pide la contraseña de la base. Con `--codigo` (la
+    terminal de Linux, que no devuelve el código de lo que corre) apunta su
+    pid al empezar y su código al acabar, para quien espera
+    (`keepassxc.esperar_codigo()`).
     """
-    llave = None
-    if len(rest) == 4 and rest[2] == "--keyfile":
-        llave, rest = Path(rest[3]), rest[:2]
+    opciones: dict[str, Path] = {}
+    while len(rest) >= 4 and rest[-2] in ("--keyfile", "--codigo") and rest[-2] not in opciones:
+        opciones[rest[-2]], rest = Path(rest[-1]), rest[:-2]
     if len(rest) != 2:
         return ui.fatal("--combinar-llavero necesita la base y la copia.")
-    return keepassxc.combinar_aqui(Path(rest[0]), Path(rest[1]), llave)
+    codigo = opciones.get("--codigo")
+    if codigo is not None:
+        keepassxc.apuntar_codigo(codigo)
+    rc = 2
+    try:
+        rc = keepassxc.combinar_aqui(Path(rest[0]), Path(rest[1]), opciones.get("--keyfile"))
+    finally:
+        if codigo is not None:
+            keepassxc.apuntar_codigo(codigo, rc)
+    return rc
 
 
 ESPERA_AGENTE = 30 * 60

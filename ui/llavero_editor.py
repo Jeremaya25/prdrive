@@ -469,8 +469,8 @@ def plan_activar(raw: Mapping[str, Any], cat: catalog.Catalog | None, origen: Pa
     plan.consequences.append(
         "Se abre con «Abrir llavero», en la ventana de prdrive o en el menú del agente "
         "(el icono junto al reloj)." if equipo else
-        f"Se pone {llavero.LANZADOR} en la raíz del dispositivo, para abrirlo sin la "
-        "ventana de prdrive.")
+        f"Se ponen {llavero.LANZADOR} y {llavero.LANZADOR_LINUX} en la raíz del "
+        "dispositivo, para abrirlo sin la ventana de prdrive.")
     raices = _raices(raw)
     if raices:
         plan.warnings.append(
@@ -492,8 +492,8 @@ def plan_activar(raw: Mapping[str, Any], cat: catalog.Catalog | None, origen: Pa
         config_file.save(nuevo_local)
         hechos.append("[keychain] escrito en sync_config.toml")
         if not equipo:
-            llavero.escribir_lanzador()
-            hechos.append(f"{llavero.LANZADOR} en la raíz")
+            puestos = llavero.escribir_lanzador()
+            hechos.append(f"{' y '.join(p.name for p in puestos)} en la raíz")
         if llave is not None:
             keepassxc.apuntar_llave(llave)
         return hechos
@@ -571,8 +571,10 @@ def plan_desactivar(raw: Mapping[str, Any]) -> LlaveroPlan:
     plan.consequences.append(
         f"La carpeta del llavero (.keychain, con {sit.base}) se queda donde está, y el "
         "remoto no se toca: los demás dispositivos siguen con él.")
-    if (model.DEVICE_ROOT / llavero.LANZADOR).is_file():
-        plan.consequences.append(f"Se quita {llavero.LANZADOR} de la raíz.")
+    puestos = llavero.lanzadores_puestos()
+    if puestos:
+        plan.consequences.append(f"Se quita{'n' if len(puestos) > 1 else ''} "
+                                 f"{' y '.join(puestos)} de la raíz.")
     if llavero.keepassxc_abierto():
         plan.warnings.append("KeePassXC está abierto: ciérralo antes, o lo que guardes "
                              "desde ahora ya no subirá.")
@@ -589,9 +591,8 @@ def plan_desactivar(raw: Mapping[str, Any]) -> LlaveroPlan:
             llavero.parada_vigilante().touch()
         except OSError:
             pass                            # sin config de llavero, sale solo
-        quitado = llavero.quitar_lanzador()
-        return ["[keychain] quitado de sync_config.toml"] + (
-            [f"{llavero.LANZADOR} quitado"] if quitado else [])
+        quitados = llavero.quitar_lanzador()
+        return ["[keychain] quitado de sync_config.toml"] + [f"{n} quitado" for n in quitados]
 
     plan.hacer = hacer
     return plan

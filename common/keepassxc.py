@@ -1067,17 +1067,59 @@ def orden_combinar(programa: Path, base: Path, copia: Path,
     return salida + [str(base), str(copia)]
 
 
+TERMINALES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("x-terminal-emulator", ("-e",)),
+    ("gnome-terminal", ("--",)),
+    ("konsole", ("-e",)),
+    ("xfce4-terminal", ("-x",)),
+    ("mate-terminal", ("-x",)),
+    ("kitty", ()),
+    ("alacritty", ("-e",)),
+    ("xterm", ("-e",)),
+)
+"""Los emuladores de terminal de Linux que se prueban para «Combinar», y cómo se les pasa la orden.
+
+`x-terminal-emulator` es el que elige Debian (y Ubuntu); los demás, en el
+orden de los escritorios más comunes. Los que piden la orden en un solo texto
+(`lxterminal`, `tilix`) no están.
+"""
+ESPERA_TERMINAL = 30.0  # segundos
+"""Lo que se espera a que la consola de «Combinar» arranque (apunta su pid)."""
+SIN_TERMINAL = ("No encuentro ninguna terminal en este equipo para pedir la contraseña de "
+                "la base. Combínalas desde KeePassXC: «Base de datos → Combinar desde base "
+                "de datos…».")
+
+
+def terminal() -> list[str] | None:
+    """Devuelve cómo abrir una orden en una terminal a la vista en Linux, o `None`.
+
+    Es de módulo para que los tests no abran ninguna.
+    """
+    for nombre, antes in TERMINALES:
+        ruta = shutil.which(nombre)
+        if ruta:
+            return [ruta, *antes]
+    return None
+
+
 def combinar(base: Path, copia: Path, llave: Path | None = None) -> int:
     """Combina la copia en la base en una consola a la vista, y espera a que se cierre.
 
     La contraseña la pide `keepassxc-cli` en esa consola; prdrive no la ve
-    nunca. La consola es `runsync.py --combinar-llavero` (`combinar_aqui()`)
-    con el Python de consola, porque la ventana corre con `pythonw`, que no
-    tiene. Es de módulo para que los tests no abran nada.
+    nunca. La consola es `runsync.py --combinar-llavero` (`combinar_aqui()`).
+    En Windows, con el Python de consola, porque la ventana corre con
+    `pythonw`, que no tiene. En Linux, en una terminal (`terminal()`): muchas
+    vuelven enseguida y ninguna dice el código de lo que corre, así que la
+    consola apunta su pid al empezar y su código al acabar (`--codigo`), y se
+    espera a eso (`esperar_codigo()`). Es de módulo para que los tests no
+    abran nada.
 
     Returns:
         El código de `keepassxc-cli`: 0 si se ha combinado (o no había nada
-        que combinar).
+        que combinar); -1 si la consola se cerró sin acabar.
+
+    Raises:
+        OSError: En Linux, si no hay ninguna terminal.
     """
     python = Path(sys.executable)
     consola = python.with_name("python.exe")
@@ -1086,10 +1128,55 @@ def combinar(base: Path, copia: Path, llave: Path | None = None) -> int:
     orden_ = [str(python), str(model.RUNSYNC_PY), "--combinar-llavero", str(base), str(copia)]
     if llave is not None:
         orden_ += ["--keyfile", str(llave)]
-    kwargs: dict = {"cwd": tempfile.gettempdir()}
     if os.name == "nt":
-        kwargs["creationflags"] = CREATE_NEW_CONSOLE
-    return subprocess.run(orden_, **kwargs).returncode
+        return subprocess.run(orden_, cwd=tempfile.gettempdir(),
+                              creationflags=CREATE_NEW_CONSOLE).returncode
+    abre = terminal()
+    if abre is None:
+        raise OSError(SIN_TERMINAL)
+    señal = Path(tempfile.mkdtemp(prefix="prdrive-combinar-"))
+    try:
+        codigo = señal / "codigo"
+        subprocess.Popen([*abre, *orden_, "--codigo", str(codigo)], cwd=tempfile.gettempdir(),
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+        return esperar_codigo(codigo)
+    finally:
+        shutil.rmtree(señal, ignore_errors=True)
+
+
+def esperar_codigo(codigo: Path, arranque: float = ESPERA_TERMINAL) -> int:
+    """Espera el código que deja la consola de «Combinar» en Linux (`apuntar_codigo()`).
+
+    Al lado de `codigo` va `pid`, que la consola escribe al empezar: si en
+    `arranque` segundos no aparece, la terminal no ha arrancado; si su proceso
+    se va sin dejar código, alguien cerró la terminal. Las dos son -1.
+    """
+    pid_ = codigo.with_name("pid")
+    limite = time.monotonic() + arranque
+    while True:
+        try:
+            return int(codigo.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            pass
+        try:
+            pid = int(pid_.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            pid = None
+        if pid is None and time.monotonic() >= limite:
+            return -1
+        if pid is not None and not store.pid_alive(pid):
+            try:
+                return int(codigo.read_text(encoding="utf-8").strip())
+            except (OSError, ValueError):
+                return -1
+        llavero.dormir(0.5)
+
+
+def apuntar_codigo(codigo: Path, valor: int | None = None) -> None:
+    """La consola de «Combinar» apunta su pid (sin `valor`) o su código, para quien espera."""
+    destino = codigo.with_name("pid") if valor is None else codigo
+    store.write_text(destino, f"{os.getpid() if valor is None else valor}\n")
 
 
 def ejecutar_cli(orden_: list[str]) -> int:
@@ -1120,6 +1207,19 @@ def combinar_aqui(base: Path, copia: Path, llave: Path | None = None,
         print("Falta keepassxc-cli en el dispositivo: no se ha tocado nada.")
         esperar("Pulsa Intro para cerrar esta ventana.")
         return 2
+    paquete = paquete_del_equipo()
+    try:
+        programa = cli_lanzable(programa)
+    except OSError as e:
+        print(f"No se ha podido preparar keepassxc-cli ({e}): no se ha tocado nada.")
+        esperar("Pulsa Intro para cerrar esta ventana.")
+        return 2
+    if es_appimage(paquete):
+        # Con la configuración de la unidad, como el programa: si no, la CLI
+        # crearía la suya en ~/.config/keepassxc del equipo.
+        donde = carpeta_config(paquete)
+        os.environ["KPXC_CONFIG"] = str(donde / INI)
+        os.environ["KPXC_CONFIG_LOCAL"] = str(donde / INI_LOCAL)
     codigo = ejecutar_cli(orden_combinar(programa, base, copia, llave))
     if codigo != 0:
         print(f"\nNo se ha combinado (código {codigo}). No se ha tocado nada.")

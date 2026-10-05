@@ -487,6 +487,55 @@ c("sin destino todavía, tampoco",
 # «La contraseña» es una línea que se escribe en la terminal (un pty) antes de
 # lanzar el script: los falsos la leen de ahí, como udisksctl y cryptsetup, y
 # el test comprueba que no aparece en ningún argumento de ninguna orden.
+# expulsar-prdrive.sh cierra antes el llavero, como el `:llavero` del .bat:
+# su función `llavero()`, sola, con `sh` de verdad y un Python de mentira que
+# apunta con qué se le llama y sale con `$RC`.
+if not IS_WIN and shutil.which("sh"):
+    montaje = tmpdir("prdrive-llavero-sh-")
+    bin_falso = tmpdir("prdrive-llavero-bin-")
+    apuntes = bin_falso / "apuntes"
+
+    def python_falso(ruta: Path, quien: str) -> None:
+        """Deja en `ruta` un python3 que apunta `quien` y sus argumentos."""
+        ruta.parent.mkdir(parents=True, exist_ok=True)
+        ruta.write_text(f'#!/bin/sh\necho "{quien} $*" >> "{apuntes}"\nexit "${{RC:-0}}"\n',
+                        encoding="utf-8")
+        ruta.chmod(0o755)
+
+    python_falso(bin_falso / "python3", "equipo")
+
+    def llavero_sh(rc: int = 0, montado: Path | None = montaje) -> tuple[str, list[str]]:
+        """Corre `llavero()` y devuelve su código y lo que apuntó el Python."""
+        apuntes.unlink(missing_ok=True)
+        prueba = vestibulo._LLAVERO_SH + 'montado="$1"\nllavero\necho "rc=$?"\n'
+        r = subprocess.run(["sh", "-c", prueba, "sh", str(montado or "")],
+                           capture_output=True, text=True,
+                           env={**os.environ, "PATH": f"{bin_falso}:/usr/bin:/bin",
+                                "RC": str(rc)})
+        lineas = apuntes.read_text(encoding="utf-8").splitlines() if apuntes.exists() else []
+        return r.stdout.strip(), lineas
+
+    cerrar = f"{montaje}/.prdrive/runsync.py --cerrar-llavero"
+    c("expulsar.sh: sin el llavero en la unidad, no llama a nada", llavero_sh(),
+      ("rc=0", []))
+    (montaje / "Llavero.bat").write_text("de antes de Linux", encoding="utf-8")
+    c("  con el Llavero.bat de una activación anterior, sí: con el Python del equipo",
+      llavero_sh(), ("rc=0", [f"equipo {cerrar}"]))
+    (montaje / "Llavero.bat").unlink()
+    (montaje / "llavero.sh").write_text("el de ahora", encoding="utf-8")
+    c("  con llavero.sh, también, y devuelve su código (1: KeePassXC sigue abierto)",
+      llavero_sh(rc=1), ("rc=1", [f"equipo {cerrar}"]))
+    for plataforma in ("linux-x64", "linux-arm64"):
+        python_falso(montaje / ".prdrive" / "runtime" / plataforma / "bin" / "python3",
+                     "dispositivo")
+    c("  con el Python del dispositivo si se puede ejecutar desde el montaje",
+      llavero_sh(), ("rc=0", [f"dispositivo {cerrar}"]))
+    c("  y sin montaje, nada", llavero_sh(montado=None), ("rc=0", []))
+    script = vestibulo.sh_expulsar()
+    c("expulsar.sh: el llavero antes de cerrar nada, y se para si sigue abierto",
+      (script.index("if ! llavero; then") < script.index("cerrar_veracrypt\n        exit"),
+       script.index("if ! llavero; then") > script.index("sleep 3\nestado\n")), (True, True))
+
 sh = shutil.which("sh")
 if IS_WIN or not sh:
     print("  (saltado) sin sh: los .sh solo se leen")

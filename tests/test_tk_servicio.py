@@ -482,7 +482,7 @@ with sandbox():
             c("  cierra el llavero antes, las dos veces", cerrados,
               ["personal.kdbx", "personal.kdbx"])
             c("  y solo si quedó libre dice que ya se puede quitar", dichos,
-              ["Ya puedes quitarla (Quitar hardware de forma segura)."])
+              [f"Ya puedes quitarla {uitk.QUITAR_UNIDAD}."])
         finally:
             messagebox.askokcancel, messagebox.showinfo = reales_mb
             tk_llavero.cerrar = REAL_CERRAR

@@ -115,6 +115,7 @@ try:
           'call "%~dp0runsync.bat" --llavero')
         c("  con \\r\\n, como cualquier .bat",
           (root / llavero.LANZADOR).read_bytes().count(b"\r\n") == 5, True)
+        c("  y llavero.sh a su lado, para Linux", (root / llavero.LANZADOR_LINUX).is_file(), True)
         c("  la ruta del fichero llave, de este equipo", keepassxc.llave_apuntada(), llave)
         c("  y lo cuenta", hechos[0], "catálogo subido")
         c("el config resultante tiene la pareja del llavero",
@@ -238,7 +239,7 @@ try:
                 lambda: llavero_editor.plan_desactivar(config_file.load_raw()), "no lleva")
         (root / llavero.LANZADOR).write_bytes(b"@echo off\r\nrem el mio\r\n")
         c("un Llavero.bat que no es el nuestro no se quita",
-          (llavero.quitar_lanzador(), (root / llavero.LANZADOR).exists()), (False, True))
+          (llavero.quitar_lanzador(), (root / llavero.LANZADOR).exists()), ([], True))
 
     # en una raíz de este equipo: no lleva lanzadores, se abre desde su ventana
     # o desde el menú del agente

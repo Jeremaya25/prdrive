@@ -135,7 +135,7 @@ def aplicar(plan: Plan, device_root: Path | str, rclone: Rclone, pedido: str,
     En este orden, de lo que viene de fuera a lo del dispositivo, para que un
     fallo en la red no deje nada a medias: KeePassXC (un paquete por cada
     plataforma que lleve y lo tenga), el `[keychain]` del catálogo si el remoto no tenía
-    llavero, y después `.keychain/` con la base, el config, `Llavero.bat` y la
+    llavero, y después `.keychain/` con la base, el config, los lanzadores y la
     ruta del fichero llave en este equipo.
 
     Args:
@@ -168,7 +168,7 @@ def aplicar(plan: Plan, device_root: Path | str, rclone: Rclone, pedido: str,
         crudo["keychain"] = dict(plan.alta.tabla)
         config_file.save(crudo, path=ruta)
         hechos.append("[keychain] en sync_config.toml")
-        hechos.append(str(llavero.escribir_lanzador(raiz)))
+        hechos += [str(p) for p in llavero.escribir_lanzador(raiz)]
         if plan.llave is not None:
             keepassxc.apuntar_llave(plan.llave, estado=app / "state")
     except (OSError, ConfigError) as e:

@@ -19,10 +19,15 @@ orden. Corre igual en Windows. Lo que se sujeta:
   no toca el registro.
 - En Linux ARM64, sin paquete, el KeePassXC del equipo: con su configuración,
   avisando si no tiene passkeys, y el de Flathub con permiso para la unidad.
+- «Combinar» abre una terminal y espera el código que deja su consola (las
+  terminales no lo devuelven); sin terminal, se dice cómo hacerlo a mano.
+- `Llavero.bat` y `llavero.sh` se ponen juntos y se quitan solo si son los
+  nuestros.
 """
 
 import hashlib
 import os
+import textwrap
 import subprocess
 import sys
 import time
@@ -30,6 +35,7 @@ from pathlib import Path
 
 from _harness import Checks, sandbox, tmpdir
 
+import runsync
 from common import components, keepassxc, llavero, model, pins, registro, store
 from ui import llavero_editor
 
@@ -460,5 +466,80 @@ finally:
      llavero.lanzar_vigilante, keepassxc.cache_equipo, keepassxc.extraer_appimage,
      registro.escribir, llavero.dormir, keepassxc.bases_navegador) = reales
     model.APP_DIR = real_app
+
+# --- «Combinar» en Linux: una terminal, y el código que deja su consola
+señal = tmpdir("prdrive-kpxc-combinar-")
+codigo = señal / "codigo"
+keepassxc.apuntar_codigo(codigo)
+c("la consola apunta su pid al empezar",
+  (codigo.with_name("pid").read_text(encoding="utf-8"), codigo.exists()),
+  (f"{os.getpid()}\n", False))
+keepassxc.apuntar_codigo(codigo, 3)
+c("  y su código al acabar, que es lo que se espera", keepassxc.esperar_codigo(codigo), 3)
+codigo.unlink()
+real_dormir, real_vivo = llavero.dormir, store.pid_alive
+llavero.dormir = lambda segundos: None
+store.pid_alive = lambda pid: False
+c("si su proceso se va sin código (se cerró la terminal), -1",
+  keepassxc.esperar_codigo(codigo), -1)
+codigo.with_name("pid").unlink()
+c("  y si nunca llega a arrancar, -1", keepassxc.esperar_codigo(codigo, arranque=0.0), -1)
+llavero.dormir, store.pid_alive = real_dormir, real_vivo
+
+real_aqui = keepassxc.combinar_aqui
+vistas: list = []
+keepassxc.combinar_aqui = lambda base, copia, llave=None: vistas.append((base, copia, llave)) or 5
+rc = runsync.combinar_llavero(["b.kdbx", "c.kdbx", "--keyfile", "k.keyx", "--codigo", str(codigo)])
+c("runsync --combinar-llavero: con el fichero llave y --codigo, en cualquier orden",
+  (rc, vistas[-1], codigo.read_text(encoding="utf-8")),
+  (5, (Path("b.kdbx"), Path("c.kdbx"), Path("k.keyx")), "5\n"))
+runsync.combinar_llavero(["b.kdbx", "c.kdbx", "--codigo", str(codigo), "--keyfile", "k.keyx"])
+c("  (al revés también)", vistas[-1], (Path("b.kdbx"), Path("c.kdbx"), Path("k.keyx")))
+c("  sin --codigo, como siempre", (runsync.combinar_llavero(["b.kdbx", "c.kdbx"]), vistas[-1]),
+  (5, (Path("b.kdbx"), Path("c.kdbx"), None)))
+keepassxc.combinar_aqui = real_aqui
+
+if os.name != "nt":
+    real_terminal = keepassxc.terminal
+    keepassxc.terminal = lambda: None
+    try:
+        keepassxc.combinar(Path("b.kdbx"), Path("c.kdbx"))
+        c("sin terminal no se combina, y se dice cómo", "no lanzó", "OSError")
+    except OSError as e:
+        c("sin terminal no se combina, y se dice cómo", str(e), keepassxc.SIN_TERMINAL)
+    # Una «terminal» que corre la orden: apunta su pid y, como la consola,
+    # su código (el de keepassxc-cli) en el --codigo que le llega.
+    falsa = tmpdir("prdrive-kpxc-terminal-") / "terminal.py"
+    falsa.write_text(textwrap.dedent("""\
+        import os, sys, time
+        from pathlib import Path
+        args = sys.argv[1:]
+        codigo = Path(args[args.index("--codigo") + 1])
+        (codigo.parent / "orden").write_text(" ".join(args[2:]))
+        (codigo.parent / "pid").write_text(str(os.getpid()))
+        time.sleep(0.3)
+        codigo.write_text("0")
+        """), encoding="utf-8")
+    keepassxc.terminal = lambda: [sys.executable, str(falsa)]
+    hecho = keepassxc.combinar(Path("/m/.keychain/b.kdbx"), Path("/m/.keychain/c.kdbx"),
+                               Path("/k/llave.keyx"))
+    c("con terminal, se espera a que su consola acabe y se da su código", hecho, 0)
+    keepassxc.terminal = real_terminal
+else:
+    print("  (saltado) en Windows «Combinar» abre su propia consola")
+
+# --- los dos lanzadores de la raíz
+raiz = tmpdir("prdrive-kpxc-lanzadores-")
+puestos = llavero.escribir_lanzador(raiz)
+c("activarlo pone Llavero.bat y llavero.sh", [p.name for p in puestos],
+  [llavero.LANZADOR, llavero.LANZADOR_LINUX])
+c("  llavero.sh llama a runsync.sh --llavero con sh (sin bit de ejecución, en exFAT)",
+  (raiz / llavero.LANZADOR_LINUX).read_text(encoding="ascii").splitlines()[-1],
+  'exec sh "$(dirname "$0")/runsync.sh" --llavero "$@"')
+c("  con \\n", b"\r" in (raiz / llavero.LANZADOR_LINUX).read_bytes(), False)
+(raiz / llavero.LANZADOR).write_text("@echo off\r\nrem cambiado a mano\r\n", encoding="ascii")
+c("desactivarlo quita los nuestros; uno cambiado a mano, no",
+  (llavero.quitar_lanzador(raiz), llavero.lanzadores_puestos(raiz)),
+  ([llavero.LANZADOR_LINUX], [llavero.LANZADOR]))
 
 sys.exit(c.report())

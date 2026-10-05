@@ -37,6 +37,9 @@ TITLE = APP_NAME
 """El nombre de la ventana, que sale de `common/`."""
 
 IS_WIN = sys.platform == "win32"
+QUITAR_UNIDAD = ("con «Quitar hardware de forma segura»" if IS_WIN else
+                 "con «Expulsar» en el gestor de archivos")
+"""Cómo se quita una unidad sin VeraCrypt después de «Expulsar», en cada sistema."""
 """Si esto corre en Windows; los tests lo fuerzan para pasar por la otra rama."""
 
 CAPTURA_NINGUNA = 0
@@ -1202,7 +1205,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
 
         Con llavero, antes que nada se cierra (`tk_llavero.cerrar()`), también en
         un dispositivo sin cifrar: entonces termina diciendo que ya se puede
-        quitar con «Quitar hardware de forma segura».
+        quitar (`QUITAR_UNIDAD`).
 
         No desmonta este proceso: corre desde DENTRO del contenedor y mientras
         viva no se puede desmontar sin forzar. Lanza el script del vestíbulo,
@@ -1221,7 +1224,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
                         "te preguntará si forzar el cierre.")
         else:
             pregunta = ("Se cierra el llavero (KeePassXC, si está abierto) y esta ventana. "
-                        "Después, quita la unidad con «Quitar hardware de forma segura».")
+                        f"Después, quita la unidad {QUITAR_UNIDAD}.")
         if not messagebox.askokcancel(TITLE, pregunta, parent=root):
             return
         # El llavero antes que nada: KeePassXC y su proxy retienen la unidad,
@@ -1229,8 +1232,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         if con_llavero and not tk_llavero.cerrar(root, vista["config"]):
             return
         if script is None:
-            messagebox.showinfo(TITLE, "Ya puedes quitarla (Quitar hardware de forma "
-                                       "segura).", parent=root)
+            messagebox.showinfo(TITLE, f"Ya puedes quitarla {QUITAR_UNIDAD}.", parent=root)
             result["choice"] = None
             root.destroy()
             return

@@ -561,35 +561,73 @@ LANZADOR_BAT = (
     'call "%~dp0runsync.bat" --llavero\r\n'
 )
 """Lo que dice `Llavero.bat`: llama a `runsync.bat`, que ya sabe qué Python usar."""
+LANZADOR_LINUX = "llavero.sh"
+"""El de Linux, junto a `runsync.sh`. Van los dos: la unidad va de un sistema a otro."""
+LANZADOR_SH = (
+    "#!/bin/sh\n"
+    "# llavero.sh - Abre el llavero de prdrive: KeePassXC con la base de este\n"
+    "# dispositivo. Es runsync.sh --llavero: el mismo Python, buscado igual.\n"
+    "# Lo pone prdrive al activar el llavero y lo quita al desactivarlo.\n"
+    'exec sh "$(dirname "$0")/runsync.sh" --llavero "$@"\n'
+)
+"""Lo que dice `llavero.sh`: `sh runsync.sh`, que no necesita el bit de ejecución (exFAT)."""
+LANZADORES = ((LANZADOR, LANZADOR_BAT), (LANZADOR_LINUX, LANZADOR_SH))
+"""Los dos lanzadores de la raíz y lo que dice cada uno."""
 COPIA_PROPIA = "conflicto-dispositivo"
 """El sufijo de una base que entra como copia de conflicto de este lado (path1)."""
 
 
-def escribir_lanzador(raiz: Path | None = None) -> Path:
-    """Pone `Llavero.bat` en la raíz del volumen.
+def escribir_lanzador(raiz: Path | None = None) -> list[Path]:
+    """Pone `Llavero.bat` y `llavero.sh` en la raíz del volumen.
+
+    `llavero.sh` con el bit de ejecución donde el sistema de ficheros lo
+    guarda (en exFAT no hay; `sh llavero.sh` va igual).
+
+    Returns:
+        Los dos.
 
     Raises:
         OSError: Si no se puede escribir.
     """
-    ruta = (model.DEVICE_ROOT if raiz is None else Path(raiz)) / LANZADOR
-    ruta.write_bytes(LANZADOR_BAT.encode("ascii"))
-    return ruta
+    raiz = model.DEVICE_ROOT if raiz is None else Path(raiz)
+    escritos = []
+    for nombre, texto in LANZADORES:
+        ruta = raiz / nombre
+        ruta.write_bytes(texto.encode("ascii"))
+        escritos.append(ruta)
+    try:
+        (raiz / LANZADOR_LINUX).chmod(0o755)
+    except OSError:
+        pass
+    return escritos
 
 
-def quitar_lanzador(raiz: Path | None = None) -> bool:
-    """Quita `Llavero.bat` de la raíz del volumen, si es el nuestro.
+def lanzadores_puestos(raiz: Path | None = None) -> list[str]:
+    """Devuelve cuáles de los dos lanzadores están en la raíz del volumen."""
+    raiz = model.DEVICE_ROOT if raiz is None else Path(raiz)
+    return [nombre for nombre, _ in LANZADORES if (raiz / nombre).is_file()]
+
+
+def quitar_lanzador(raiz: Path | None = None) -> list[str]:
+    """Quita `Llavero.bat` y `llavero.sh` de la raíz del volumen, cada uno si es el nuestro.
+
+    Uno que alguien cambió no es nuestro, y se queda.
 
     Returns:
-        True si lo ha quitado.
+        Los que ha quitado.
     """
-    ruta = (model.DEVICE_ROOT if raiz is None else Path(raiz)) / LANZADOR
-    try:
-        if ruta.read_bytes() != LANZADOR_BAT.encode("ascii"):
-            return False                      # lo cambió alguien: no es nuestro
-        ruta.unlink()
-    except OSError:
-        return False
-    return True
+    raiz = model.DEVICE_ROOT if raiz is None else Path(raiz)
+    quitados = []
+    for nombre, texto in LANZADORES:
+        ruta = raiz / nombre
+        try:
+            if ruta.read_bytes() != texto.encode("ascii"):
+                continue
+            ruta.unlink()
+        except OSError:
+            continue
+        quitados.append(nombre)
+    return quitados
 
 
 def nombre_de_base(nombre: str) -> str:

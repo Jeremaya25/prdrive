@@ -399,7 +399,8 @@ def plan_combinar(conflicto: Conflicto, llave: Path | None, abierto: bool = Fals
     programa = keepassxc.cli()
     if programa is None or not programa.is_file():
         raise ResolucionImposible(
-            "Falta keepassxc-cli en el dispositivo (o este equipo no es Windows): no se puede "
+            "No hay keepassxc-cli con el que combinar en este equipo (falta en el dispositivo, "
+            "o es el KeePassXC de Flathub): no se puede "
             "combinar desde prdrive. Se puede desde la ventana de KeePassXC, con «Base de "
             "datos → Combinar desde base de datos…».")
     plan = CombinarPlan(conflicto=conflicto, llave=llave,

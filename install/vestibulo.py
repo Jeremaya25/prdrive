@@ -900,6 +900,39 @@ _CERRAR_SH = (
 """
 
 
+_APP_SH = CONTROL_FILE.parent.as_posix()
+"""La carpeta del programa dentro del contenedor (`.prdrive`), para el Python del llavero."""
+
+_LLAVERO_SH = (
+    "llavero() {\n"
+    '    [ -n "$montado" ] || return 0\n'
+    f'    [ -f "$montado/{llavero.LANZADOR_LINUX}" ] || [ -f "$montado/{llavero.LANZADOR}" ] '
+    "|| return 0\n"
+    '    case "$(uname -m)" in\n'
+    f'        x86_64|amd64) py="$montado/{_APP_SH}/{components.RUNTIME_SUBDIR}/linux-x64/bin/python3" ;;\n'
+    f'        aarch64|arm64) py="$montado/{_APP_SH}/{components.RUNTIME_SUBDIR}/linux-arm64/bin/python3" ;;\n'
+    '        *) py="" ;;\n'
+    "    esac\n"
+    '    if [ -z "$py" ] || [ ! -x "$py" ]; then\n'
+    "        command -v python3 >/dev/null 2>&1 || return 0\n"
+    "        py=python3\n"
+    "    fi\n"
+    f'    "$py" "$montado/{_APP_SH}/runsync.py" --cerrar-llavero\n'
+    "}\n"
+)
+"""Función `llavero()` de `expulsar-prdrive.sh`: lo de `:llavero` del `.bat`.
+
+Solo si la unidad lo lleva (`llavero.sh`, o el `Llavero.bat` de una activación
+de antes de Linux) y está montada: cierra KeePassXC, para el vigilante, sube lo
+pendiente y quita los manifiestos del navegador (`runsync.py --cerrar-llavero`).
+Con el Python del dispositivo para esta CPU o, si no se puede ejecutar desde el
+montaje (exFAT, `noexec`), el del equipo; sin ninguno, no hace nada. Sale con 1
+si KeePassXC sigue abierto. En Linux KeePassXC no retiene el volumen (corre
+extraído en el equipo), pero así lo último sube y el navegador queda como
+estaba.
+"""
+
+
 def sh_expulsar() -> str:
     """Devuelve `expulsar-prdrive.sh`.
 
@@ -926,8 +959,15 @@ def sh_expulsar() -> str:
         "\n"
         + _CERRAR_SH +
         "\n"
+        + _LLAVERO_SH +
+        "\n"
         "sleep 3\n"
         "estado\n"
+        "if ! llavero; then\n"
+        f'    echo "prdrive: no he cerrado {v.ETIQUETA}: KeePassXC sigue abierto. Ciérralo y" >&2\n'
+        '    echo "  vuelve a expulsar. No quites la unidad todavía." >&2\n'
+        "    exit 1\n"
+        "fi\n"
         'via=""\n'
         'case "$nombre" in\n'
         "    veracrypt*) via=veracrypt ;;\n"
