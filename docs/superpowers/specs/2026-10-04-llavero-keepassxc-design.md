@@ -237,7 +237,7 @@ nombre_llave = "personal.keyx"   # solo una pista para la persona: ni ruta ni hu
   (`FileKey::loadHashed()`): guardar esa suma sería guardar la llave. Si se elige
   el fichero equivocado, KeePassXC ya dice que la credencial no vale.
 - **Una versión vieja de prdrive la lee, pero no puede reescribirla.** El modelo
-  ignora una tabla desconocida, pero hasta la 0.5.3 el serializador
+  ignora una tabla desconocida, pero hasta la fase 0 (incluida la 0.5.5) el serializador
   (`config_file.dumps()`) la perdía al escribir. Entonces `dumps_checked()` se
   negaba con «no reproduce lo que se pidió», y en ese dispositivo no se podría
   editar el catálogo. No pierde nada, porque se niega.
