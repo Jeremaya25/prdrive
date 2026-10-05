@@ -126,6 +126,14 @@ with sandbox():
     c("con el servicio (o el agente) vivo aquí, es suyo", llavero.atiende_el_servicio(), True)
     store.write_json(model.daemon_lock(), {"pid": os.getpid(), "host": "otro-equipo"})
     c("  el de otro equipo no cuenta", llavero.atiende_el_servicio(), False)
+    agente = {"pid": os.getpid(), "host": llavero.equipo(), "agente": True}
+    store.write_json(model.daemon_lock(), {**agente, "pairs": ["docs", model.LLAVERO]})
+    c("  el agente que lo trae entre sus parejas, también", llavero.atiende_el_servicio(), True)
+    store.write_json(model.daemon_lock(), {**agente, "pairs": ["docs"]})
+    c("  uno de antes del llavero, que no lo trae, no lo atiende: se queda el vigilante",
+      llavero.atiende_el_servicio(), False)
+    store.write_json(model.daemon_lock(), {**agente, "pairs": "docs keychain"})
+    c("  unas parejas que no son una lista no cuentan", llavero.atiende_el_servicio(), False)
 
 # KeePassXC abierto: solo cuenta el programa, no el proxy del navegador
 with sandbox() as root:

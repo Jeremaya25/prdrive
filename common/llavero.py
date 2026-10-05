@@ -12,7 +12,8 @@ Quién lo atiende, una sola cosa a la vez (`Vigilancia`, sus reglas puras):
 - El servicio del dispositivo o el agente del equipo, si alguno tiene el
   registro del servicio de esta raíz (`atiende_el_servicio()`). El agente lo
   trata como una pareja con `watch = true`; el servicio de runsync, con
-  `Vigilancia` en su espera entre ciclos.
+  `Vigilancia` en su espera entre ciclos. Un agente de antes del llavero
+  tiene el registro pero no lo atiende: no cuenta.
 - Si no, el vigilante del llavero (`runsync.py --vigilar-llavero`), que arranca
   «Abrir llavero» (`lanzar_vigilante()`) y vive lo mismo que el KeePassXC de la
   unidad. Un registro propio (`registro_vigilante()`) impide que haya dos.
@@ -384,13 +385,20 @@ def vivo_aqui(info: dict | None) -> bool:
 
 
 def atiende_el_servicio() -> bool:
-    """Indica si el servicio de esta raíz está vivo en este equipo.
+    """Indica si el servicio de esta raíz está vivo en este equipo y lleva el llavero.
 
     Es el registro del servicio (`model.daemon_lock()`), que escriben el de
     runsync y el agente del equipo cuando atienden la raíz: entonces el
-    llavero es cosa suya y el vigilante sobra.
+    llavero es cosa suya y el vigilante sobra. Salvo un agente cuyas parejas
+    (`pairs`) no lo traen: es uno de antes del llavero, o uno que leyó el
+    config antes de activarlo, y no lo atiende. El servicio de runsync es el
+    código de esta misma unidad, así que siempre lo lleva.
     """
-    return vivo_aqui(store.read_json(model.daemon_lock()) or None)
+    info = store.read_json(model.daemon_lock()) or None
+    if not vivo_aqui(info):
+        return False
+    parejas = info.get("pairs")
+    return not info.get("agente") or (isinstance(parejas, list) and model.LLAVERO in parejas)
 
 
 def keepassxc_abierto(app_dir: Path | str | None = None) -> bool:
