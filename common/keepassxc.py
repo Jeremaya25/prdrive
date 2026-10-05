@@ -37,6 +37,7 @@ o toca solo ficheros del dispositivo.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -751,14 +752,15 @@ def cerrar_navegador(raiz: Path | None = None, carpeta_app: str | None = None,
     """Deja las claves del navegador como estaban antes del llavero (§7 de la especificación).
 
     Además de lo de `plan_cerrar_navegador()` (con sus mismos argumentos), la
-    `NativeMessagingHosts` de un navegador se borra si se queda vacía. Nunca
+    `NativeMessagingHosts` de un navegador se borra si se queda vacía. En
+    Linux, los manifiestos de prdrive (`cerrar_navegador_linux()`). Nunca
     lanza: se hace al expulsar, y un fallo aquí no puede impedir quitar la
     unidad.
 
     Returns:
         Lo que no se ha podido hacer; vacío si todo bien.
     """
-    fallos = []
+    fallos = cerrar_navegador_linux(muertas) if MANIFIESTOS else []
     for cambio in plan_cerrar_navegador(raiz, carpeta_app, muertas):
         try:
             if cambio.valor is not None:
@@ -770,6 +772,138 @@ def cerrar_navegador(raiz: Path | None = None, carpeta_app: str | None = None,
                 registro.borrar(padre)
         except OSError as e:
             fallos.append(f"{cambio.clave}: {e}")
+    return fallos
+
+
+# --- el navegador en Linux (los manifiestos de mensajería nativa)
+
+MANIFIESTOS = os.name != "nt"
+"""Si se escriben y se quitan los manifiestos de Linux; los tests lo encienden en cualquier sistema."""
+ORIGENES = ("chrome-extension://pdffhmdngciaglkoonimfcmckehcpafo/",
+            "chrome-extension://oboonakemofpalcgghocfoadofidjkkk/")
+"""Las extensiones de los navegadores Chromium que pueden hablar con KeePassXC (`ALLOWED_ORIGINS`)."""
+EXTENSION_MOZILLA = "keepassxc-browser@keepassxc.org"
+"""Y la de Firefox y Tor (`ALLOWED_EXTENSIONS`)."""
+NAVEGADORES_LINUX: tuple[tuple[str, str, str, bool], ...] = (
+    ("chrome", "config", "google-chrome/NativeMessagingHosts", False),
+    ("chromium", "config", "chromium/NativeMessagingHosts", False),
+    ("firefox", "home", ".mozilla/native-messaging-hosts", True),
+    ("vivaldi", "config", "vivaldi/NativeMessagingHosts", False),
+    ("tor-browser", "data", "torbrowser/tbb/x86_64/tor-browser/Browser/TorBrowser/Data/"
+                            "Browser/.mozilla/native-messaging-hosts", True),
+    ("brave", "config", "BraveSoftware/Brave-Browser/NativeMessagingHosts", False),
+    ("edge", "config", "microsoft-edge/NativeMessagingHosts", False),
+)
+"""Dónde busca cada navegador su manifiesto en Linux (`TARGET_DIR_*` y `getNativeMessagePath()`).
+
+`(navegador, base, carpeta, de Mozilla)`; la base es `config`
+(`XDG_CONFIG_HOME`), `data` (`XDG_DATA_HOME`) o `home`.
+"""
+
+
+def bases_navegador() -> dict[str, Path]:
+    """Devuelve las carpetas de las que cuelgan los manifiestos: `config`, `data` y `home`.
+
+    Las de QStandardPaths en Linux. Es de módulo para que los tests las lleven
+    a un temporal.
+    """
+    casa = Path.home()
+    return {"config": Path(os.environ.get("XDG_CONFIG_HOME") or casa / ".config"),
+            "data": Path(os.environ.get("XDG_DATA_HOME") or casa / ".local" / "share"),
+            "home": casa}
+
+
+def manifiestos_linux() -> list[tuple[str, Path, bool]]:
+    """Devuelve `(navegador, manifiesto, de Mozilla)` de cada navegador de `NAVEGADORES_LINUX`."""
+    bases = bases_navegador()
+    return [(nombre, bases[base].joinpath(*carpeta.split("/")) / f"{HOST_NATIVO}.json", moz)
+            for nombre, base, carpeta, moz in NAVEGADORES_LINUX]
+
+
+def manifiesto(proxy: Path, mozilla: bool) -> str:
+    """Devuelve el manifiesto que escribiría KeePassXC con ese proxy (`constructFile()`).
+
+    Con sus claves en orden y sangrado de cuatro, como `QJsonDocument::toJson()`.
+    """
+    datos: dict = {"name": HOST_NATIVO,
+                   "description": "KeePassXC integration with native messaging support",
+                   "path": str(proxy), "type": "stdio"}
+    if mozilla:
+        datos["allowed_extensions"] = [EXTENSION_MOZILLA]
+    else:
+        datos["allowed_origins"] = list(ORIGENES)
+    return json.dumps(datos, indent=4, sort_keys=True) + "\n"
+
+
+def manifiesto_nuestro(ruta: Path) -> bool | None:
+    """Indica si ese manifiesto es de prdrive: su proxy está en lo extraído (`cache_equipo()`).
+
+    Returns:
+        True si es nuestro; False si es de otro (un KeePassXC instalado) o no
+        se entiende; `None` si no hay.
+    """
+    try:
+        datos = json.loads(ruta.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError):
+        return False
+    proxy = datos.get("path") if isinstance(datos, dict) else None
+    if not isinstance(proxy, str) or not os.path.isabs(proxy):
+        return False
+    base = os.path.realpath(cache_equipo())
+    return os.path.realpath(proxy).startswith(base + os.sep)
+
+
+def abrir_navegador_linux(proxy: Path) -> list[str]:
+    """Apunta el navegador al KeePassXC de la unidad: un manifiesto por navegador del equipo.
+
+    Es lo de las claves del registro en Windows (B2): un equipo nuevo conecta
+    sin marcar nada en KeePassXC. Solo en los navegadores que hay (su carpeta
+    existe) y solo donde no haya manifiesto o sea nuestro: el de un KeePassXC
+    instalado no se toca. Su proxy también llega al nuestro, que escucha en el
+    mismo sitio (`BrowserShared::localServerPath()`), y si se le pisara no
+    habría cómo devolvérselo.
+
+    Returns:
+        Lo que no se ha podido escribir, para decirlo; vacío si todo bien.
+    """
+    fallos = []
+    for _, ruta, mozilla in manifiestos_linux():
+        if not ruta.parent.parent.is_dir() or manifiesto_nuestro(ruta) is False:
+            continue
+        texto = manifiesto(proxy, mozilla)
+        try:
+            if ruta.is_file() and ruta.read_text(encoding="utf-8") == texto:
+                continue
+            ruta.parent.mkdir(exist_ok=True)
+            _escribir(ruta, texto.encode("utf-8"))
+        except OSError as e:
+            fallos.append(f"{ruta}: {e}")
+    return fallos
+
+
+def cerrar_navegador_linux(muertas: bool = False) -> list[str]:
+    """Quita los manifiestos de prdrive (`manifiesto_nuestro()`); los de otros, no.
+
+    Args:
+        muertas: Solo si no queda abierto ningún KeePassXC de lo extraído: lo
+            que hace el agente cuando una unidad se va sin expulsar. Uno abierto
+            puede ser el de otra unidad, que los sigue usando.
+
+    Returns:
+        Lo que no se ha podido quitar; vacío si todo bien. Nunca lanza.
+    """
+    if muertas and any(Path(exe).name == llavero.KEEPASSXC_LINUX
+                       for exe in store.procesos_desde(cache_equipo()).values()):
+        return []
+    fallos = []
+    for _, ruta, _ in manifiestos_linux():
+        if manifiesto_nuestro(ruta):
+            try:
+                ruta.unlink()
+            except OSError as e:
+                fallos.append(f"{ruta}: {e}")
     return fallos
 
 
@@ -1130,6 +1264,10 @@ def abrir(ap: Apertura, llave: Path | None = None) -> Abierto:
                 ajustar_config(paquete=ap.paquete, proxy=carpeta / PROXY_LINUX)
             except OSError as e:
                 avisos.append(f"No se ha podido preparar la configuración de KeePassXC: {e}")
+            fallos = abrir_navegador_linux(carpeta / PROXY_LINUX)
+            if fallos:
+                avisos.append(f"El navegador no encontrará este KeePassXC: no se han podido "
+                              f"escribir {len(fallos)} de sus manifiestos ({fallos[0]}).")
     else:
         programa = ap.exe
         if not ap.abierto:

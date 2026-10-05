@@ -12,6 +12,9 @@ orden. Corre igual en Windows. Lo que se sujeta:
 - El AppImage se extrae una vez por versión, se comprueba la copia antes de
   extraerla, un fallo no deja restos ni estropea lo que había, y las versiones
   viejas se van si nada corre desde ellas.
+- El navegador: un manifiesto por navegador del equipo, como el que escribiría
+  KeePassXC, solo donde no lo hay o es nuestro; al cerrar se quitan los
+  nuestros, y el agente solo si no queda un KeePassXC de lo extraído.
 - «Abrir llavero» lanza el `AppRun` extraído con la configuración de Linux, y
   no toca el registro.
 - En Linux ARM64, sin paquete, el KeePassXC del equipo: con su configuración,
@@ -225,6 +228,77 @@ finally:
     keepassxc.cache_equipo, keepassxc.extraer_appimage, store.procesos_desde = reales_extraer
 
 
+# --- el navegador: los manifiestos
+def leer(ruta: Path) -> str | None:
+    """Devuelve el texto de un fichero, o `None` si no está."""
+    try:
+        return ruta.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+
+
+reales_nav = (keepassxc.bases_navegador, keepassxc.cache_equipo, store.procesos_desde,
+              registro.leer, keepassxc.MANIFIESTOS)
+try:
+    casa = tmpdir("prdrive-kpxc-casa-")
+    bases = {"config": casa / ".config", "data": casa / ".local" / "share", "home": casa}
+    keepassxc.bases_navegador = lambda: bases
+    cache = tmpdir("prdrive-kpxc-equipo-")
+    keepassxc.cache_equipo = lambda: cache
+    registro.leer = lambda clave: None
+    keepassxc.MANIFIESTOS = True
+    store.procesos_desde = lambda carpeta: {}
+    proxy = cache / pins.KEEPASSXC_VERSION / keepassxc.EXTRAIDO / keepassxc.PROXY_LINUX
+    (bases["config"] / "google-chrome").mkdir(parents=True)          # Chrome y Firefox
+    (casa / ".mozilla").mkdir()
+    brave = bases["config"] / "BraveSoftware" / "Brave-Browser" / "NativeMessagingHosts"
+    brave.mkdir(parents=True)
+    AJENO = '{"name": "org.keepassxc.keepassxc_browser", "path": "/usr/bin/keepassxc-proxy"}'
+    (brave / f"{keepassxc.HOST_NATIVO}.json").write_text(AJENO, encoding="utf-8")
+    rutas = {nombre: ruta for nombre, ruta, _ in keepassxc.manifiestos_linux()}
+    c("los manifiestos van donde los busca cada navegador",
+      (rutas["chrome"].relative_to(casa).as_posix(), rutas["firefox"].relative_to(casa).as_posix()),
+      (".config/google-chrome/NativeMessagingHosts/org.keepassxc.keepassxc_browser.json",
+       ".mozilla/native-messaging-hosts/org.keepassxc.keepassxc_browser.json"))
+    c("al abrir se escriben", keepassxc.abrir_navegador_linux(proxy), [])
+    c("  en los navegadores que hay, con el proxy de lo extraído",
+      (leer(rutas["chrome"]), leer(rutas["firefox"]), leer(rutas["chromium"])),
+      (keepassxc.manifiesto(proxy, False), keepassxc.manifiesto(proxy, True), None))
+    c.contains("  Chromium, con sus extensiones", leer(rutas["chrome"]), keepassxc.ORIGENES[1])
+    c.contains("  Firefox, con la suya", leer(rutas["firefox"]), keepassxc.EXTENSION_MOZILLA)
+    c("  y el de un KeePassXC instalado no se toca", leer(rutas["brave"]), AJENO)
+    viejo = cache / "2.7.11" / keepassxc.EXTRAIDO / keepassxc.PROXY_LINUX
+    rutas["chrome"].write_text(keepassxc.manifiesto(viejo, False), encoding="utf-8")
+    (rutas["firefox"].parent / "otro.programa.json").write_text("{}", encoding="utf-8")
+    keepassxc.abrir_navegador_linux(proxy)
+    c("uno nuestro de otra versión se rehace", leer(rutas["chrome"]),
+      keepassxc.manifiesto(proxy, False))
+    rutas["edge"].parent.mkdir(parents=True)
+    rutas["edge"].write_text("no es JSON", encoding="utf-8")
+    keepassxc.abrir_navegador_linux(proxy)
+    c("  y uno que no se entiende, tampoco se toca", leer(rutas["edge"]), "no es JSON")
+
+    store.procesos_desde = lambda carpeta: {7: str(proxy.with_name("keepassxc"))}
+    c("el agente no quita nada con un KeePassXC de lo extraído abierto",
+      (keepassxc.cerrar_navegador_linux(muertas=True), leer(rutas["chrome"]) is not None),
+      ([], True))
+    store.procesos_desde = lambda carpeta: {8: str(proxy)}
+    keepassxc.cerrar_navegador(muertas=True)
+    c("  con solo el proxy (lo que vive el navegador), sí",
+      (leer(rutas["chrome"]), leer(rutas["firefox"])), (None, None))
+    store.procesos_desde = lambda carpeta: {}
+    keepassxc.abrir_navegador_linux(proxy)
+    keepassxc.cerrar_navegador()
+    c("al cerrar se quitan los nuestros", (leer(rutas["chrome"]), leer(rutas["firefox"])),
+      (None, None))
+    c("  y los de otros se quedan", (leer(rutas["brave"]), leer(rutas["edge"]),
+                                    leer(rutas["firefox"].parent / "otro.programa.json")),
+      (AJENO, "no es JSON", "{}"))
+finally:
+    (keepassxc.bases_navegador, keepassxc.cache_equipo, store.procesos_desde,
+     registro.leer, keepassxc.MANIFIESTOS) = reales_nav
+
+
 # --- «Abrir llavero» en Linux
 class Proc:
     """Un KeePassXC de mentira que sigue abierto, o sale enseguida con `codigo`."""
@@ -282,7 +356,7 @@ reales = (keepassxc.paquete_del_equipo, keepassxc.del_equipo, keepassxc.version_
           llavero.keepassxc_abierto, keepassxc.otro_abierto, llavero.atiende_el_servicio,
           llavero.pasada, keepassxc.lanzar, keepassxc.ESPERA_ARRANQUE,
           llavero.lanzar_vigilante, keepassxc.cache_equipo, keepassxc.extraer_appimage,
-          registro.escribir, llavero.dormir)
+          registro.escribir, llavero.dormir, keepassxc.bases_navegador)
 escritas: list = []
 try:
     with sandbox() as root:
@@ -303,6 +377,10 @@ try:
         keepassxc.cache_equipo = lambda: cache
         keepassxc.extraer_appimage = extraer_falso
         registro.escribir = lambda clave, valor: escritas.append(clave)
+        casa = tmpdir("prdrive-kpxc-casa-")
+        (casa / ".mozilla").mkdir()
+        keepassxc.bases_navegador = lambda: {"config": casa / ".config", "home": casa,
+                                             "data": casa / ".local" / "share"}
         llavero.carpeta().mkdir()
         base = llavero.carpeta() / "personal.kdbx"
         base.write_bytes(b"base")
@@ -324,6 +402,9 @@ try:
           in (donde / keepassxc.INI).read_text(encoding="utf-8"), True)
         c("  sin el APPIMAGE de otro, y con la raíz para lo que se exporte",
           ("APPIMAGE" in entorno, entorno["KPXC_INITIAL_DIR"]), (False, str(root)))
+        c("  el navegador, con su manifiesto", leer(
+            casa / ".mozilla" / "native-messaging-hosts" / f"{keepassxc.HOST_NATIVO}.json"),
+          keepassxc.manifiesto(apprun.parent / keepassxc.PROXY_LINUX, True))
         c("  y sin tocar el registro", escritas, [])
         os.environ.pop("APPIMAGE")
 
@@ -377,7 +458,7 @@ finally:
      llavero.keepassxc_abierto, keepassxc.otro_abierto, llavero.atiende_el_servicio,
      llavero.pasada, keepassxc.lanzar, keepassxc.ESPERA_ARRANQUE,
      llavero.lanzar_vigilante, keepassxc.cache_equipo, keepassxc.extraer_appimage,
-     registro.escribir, llavero.dormir) = reales
+     registro.escribir, llavero.dormir, keepassxc.bases_navegador) = reales
     model.APP_DIR = real_app
 
 sys.exit(c.report())

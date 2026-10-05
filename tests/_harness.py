@@ -180,6 +180,17 @@ equipo.DIR = tmpdir("prdrive-equipo-harness-")
 # dejarle un «prdrive» en el menú a quien los ejecuta.
 os.environ["XDG_DATA_HOME"] = str(tmpdir("prdrive-xdg-data-"))
 os.environ["XDG_CONFIG_HOME"] = str(tmpdir("prdrive-xdg-config-"))
+# Y lo del llavero en un equipo Linux: dónde se extrae el AppImage
+# (`XDG_CACHE_HOME`) y las carpetas de los navegadores, de las que «Expulsar»
+# quita los manifiestos que son de prdrive. La de Firefox cuelga de la carpeta
+# personal, así que esa también se cambia aquí, y no en el entorno.
+os.environ["XDG_CACHE_HOME"] = str(tmpdir("prdrive-xdg-cache-"))
+from common import keepassxc as _keepassxc  # noqa: E402
+
+_casa = tmpdir("prdrive-casa-")
+_keepassxc.bases_navegador = lambda: {"config": Path(os.environ["XDG_CONFIG_HOME"]),
+                                      "data": Path(os.environ["XDG_DATA_HOME"]),
+                                      "home": _casa}
 
 # Varios tests fuerzan `IS_WIN = False` para pasar por la rama de Linux, y ahí
 # «¿vive este pid?» es `os.kill(pid, 0)`. En Windows eso NO pregunta: 0 es
