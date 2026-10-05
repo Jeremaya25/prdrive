@@ -296,3 +296,12 @@ agente de una release publicada y unidades con una versión anterior (una
 | A4 | W, L | La 0.4.x de la lista. | El aviso de que no se atiende dice cómo ponerla al día (desde su desplegable, o `agente.py actualizar <id>` sin bandeja). Tras «Actualizar», se atiende sin preguntar. | `_conectar()`, `version_vieja()` |
 | A5 | W, L | Sin red; y desenchufando la unidad a mitad. | Sin red: «no he podido actualizarla» y se sigue sincronizando como estaba. Desenchufada a mitad: al volver a enchufarla, si su código llegó a cambiar pregunta «su código ha cambiado», y si no, sigue como estaba; nunca sincroniza con un código a medias sin preguntar. | `SIN_TOCAR`, `Conexion.a_medias`, `huella()` |
 | A6 | W | Una unidad en un contenedor VeraCrypt de la lista, abierta. | Igual que A2, en la letra del volumen abierto; el vestíbulo (`VeraCrypt\`, `Abrir PRDRIVE.bat`) no se toca. | `--update` sobre `con.raiz` |
+
+## El llavero (fase 3 de su especificación)
+
+El agente atiende el llavero de una raíz: lo trae cada 5 min con KeePassXC
+abierto, lo abre desde la bandeja, avisa de un conflicto, limpia las claves del
+navegador de una unidad quitada sin expulsar y cierra el llavero antes de
+bloquear una raíz cifrada. Las pruebas son R17–R23 de
+`docs/superpowers/specs/2026-10-04-llavero-keepassxc-design.md` (§15), con las
+del resto del llavero: no se repiten aquí.

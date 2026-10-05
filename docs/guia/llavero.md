@@ -55,7 +55,9 @@ llave en cada equipo, no qué tiene.
 ## Cada día
 
 **Abrir llavero**, en la ventana de prdrive, o doble clic en **`Llavero.bat`**,
-en la raíz de la unidad.
+en la raíz de la unidad. Con el [agente](agente-residente.md) en el equipo,
+también desde su icono, junto al reloj: **Abrir llavero**, en el desplegable del
+dispositivo.
 
 1. Si hace rato de la última pasada, trae lo último del remoto.
 2. Abre KeePassXC con tu base (y el fichero llave ya puesto, si lo usas).
@@ -63,7 +65,9 @@ en la raíz de la unidad.
 
 Lo que guardas **sube solo**, unos 20 segundos después del último cambio. Lo que
 cambies en otro dispositivo llega en **5 minutos** como mucho mientras KeePassXC
-esté abierto, y siempre al pulsar «Abrir llavero».
+esté abierto, y siempre al abrirlo. Da igual quién atienda la unidad (la
+ventana, el servicio o el agente, también en el modo «sincronizar al
+conectar»).
 
 Si KeePassXC ya está abierto, «Abrir llavero» lo trae delante. Si en el equipo hay
 **otro KeePassXC** abierto (uno instalado), te pide que lo cierres antes.
@@ -113,7 +117,8 @@ también en Windows ARM).
 Si guardaste en dos dispositivos sin que sincronizaran en medio, se queda la más
 nueva y la otra queda al lado como copia de conflicto. **No hay que elegir**:
 «Abrir llavero» te ofrece **Combinar** antes de abrir, y también está en
-**Reparación**.
+**Reparación**. Con el agente, te lo dice un aviso del sistema, y su icono lo
+enseña arriba del menú: «el llavero tiene dos versiones · Combinar…».
 
 Combinar abre una consola de KeePassXC que te pide la contraseña de la base
 (prdrive no la ve) y junta lo de las dos. La copia combinada va a
@@ -145,7 +150,20 @@ subir sube entonces, sin decir nada (si no puede, una línea: «se subirá la
 próxima vez»). Después ya puedes quitar la unidad.
 
 Si tiras del cable sin expulsar, la base no se estropea (KeePassXC guarda de
-forma atómica), pero lo último puede no haber subido: sube la próxima vez.
+forma atómica), pero lo último puede no haber subido: sube la próxima vez. El
+navegador se queda apuntando a un KeePassXC que ya no está: con el agente en el
+equipo se arregla solo, y si no, al abrir el llavero otra vez en ese equipo.
+
+## En una carpeta de este equipo
+
+Si prdrive vive en una carpeta del ordenador (la opción «En este equipo» del
+asistente), el llavero va igual, con tres diferencias:
+
+- Se activa desde su ventana: **Ajustes → Llavero…**. El asistente no lo
+  pregunta.
+- No hay `Llavero.bat`: se abre desde la ventana o desde el icono del agente.
+- No hay «Expulsar»: la carpeta no se quita. Si está cifrada, **Bloquear**
+  cierra antes el llavero, igual que «Expulsar» en una unidad.
 
 ## Ten cuidado con
 

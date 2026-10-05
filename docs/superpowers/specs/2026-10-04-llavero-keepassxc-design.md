@@ -1,6 +1,6 @@
 # El llavero (`.keychain`): KeePassXC de viaje y una base que se sincroniza sola
 
-Fecha: 2026-10-04 · Estado: **decidida**; fases 0 y 1 hechas (sin probar en real: §15), 2 y 3 sin implementar; lo que cambió al hacer la 1, en §16 · Versión objetivo:
+Fecha: 2026-10-04 · Estado: **decidida**; fases 0, 1 y 3 hechas (sin probar en real: §15), la 2 sin implementar; lo que cambió al hacer la 1, en §16, y la 3, en §17 · Versión objetivo:
 0.6.0 · Sustituye a la primera propuesta del mismo día (`3cdf1d5`) · Pruebas de
 las que sale:
 `docs/superpowers/pruebas/2026-10-04-keepassxc-portatil.md` y sus resultados
@@ -609,7 +609,7 @@ el agente.
 | **0. `remote.toml`** (hecha, `1e5bb51`) | Nombre nuevo con la regla de §3 y «Renombrar el catálogo a remote.toml…» en «Ajustes» | `common/catalog.py`, `common/fleet.py`, `install/remote.py`, `ui/catalog_editor.py`, `ui/tk_pairs.py`, `ui/tk_doctor.py`, `common/revision.py` (los dos ficheros a la vez), sus tests, `catalogue.md`, `fleet.md`, `sync_config.example.toml`, `docs/guia/` |
 | **1. Windows** (x64, y ARM con el x64; hecha, `d1eb572`…`cd0f7fb`, sin probar en real) | Todo lo demás (lo que cambió, en §16) | `common/pins.py`, `common/kdbx.py` (nuevo), `common/llavero.py` (nuevo), `common/registro.py` (nuevo), `common/store.py` (`procesos_desde`), `common/model.py` (`[keychain]` → pareja), `common/bisync.py` (filtros; `- /.keychain/**`), `common/components.py`, `sync.py` (comprobación previa), `runsync.py` (`--llavero`, `--vigilar-llavero`, `--cerrar-llavero`; vigilancia del llavero en el servicio), `install/keepassxc_bin.py` (nuevo), `install/components.py`, `install/deploy.py` (lanzadores, `LEEME.txt`, ocultar), `install/vestibulo.py` (`.bat`), `install/device.py` (`RUIDO`), `agente.py` (`IGNORAR_CAMBIOS`, atender el llavero), `ui/conflict_editor.py`, `ui/tk_conflicts.py`, `ui/tk.py` (botón, línea, «Expulsar» sin VeraCrypt), `ui/tk_llavero.py` (nuevo), `ui/tk_doctor.py` (`ENTRADAS`), `ui/tk_install.py` (paso, «Añadir el llavero…»), `common/revision.py` (compañero que falta) |
 | **2. Linux** | §11 | `install/keepassxc_bin.py`, `common/llavero.py`, `install/vestibulo.py` (`.sh`) |
-| **3. El agente** | «Llavero» en la bandeja; aviso nativo de un conflicto del llavero; quitar las claves del registro cuando la unidad se va sin expulsar; el llavero en la raíz del equipo | `agente.py`, `ui/bandeja.py`, `common/avisos.py` |
+| **3. El agente** (hecha, `d1fdbb6`…`8db9aa6`, sin probar en real) | «Llavero» en la bandeja; aviso nativo de un conflicto del llavero; quitar las claves del registro cuando la unidad se va sin expulsar; el llavero en la raíz del equipo | `agente.py`, `ui/bandeja.py`, `common/avisos.py` |
 
 La fase 1 crea `docs/agents/reference/llavero.md`, su regla en `.claude/rules/` y
 una fila en la tabla de `AGENTS.md` (`test_reglas_claude.py` vigila que las tres
@@ -666,6 +666,13 @@ cuadren). `catalogue.md` y `agent-scheduling.md` cuentan lo suyo.
 | R14 | El vigilante: arranca con «Llavero», sube al cerrar KeePassXC y no retiene el volumen al expulsar |
 | R15 | Edge: B1, PK1 y R3 |
 | R16 | Renombrar el catálogo de un remoto con dos dispositivos: el otro lo encuentra, y con uno viejo en la flota el botón no se activa |
+| R17 | Fase 3, con el agente atendiendo la unidad: «Abrir llavero» desde la bandeja abre KeePassXC con la base; el diario dice «KeePassXC abierto» y hay una pasada antes de desbloquear; un cambio en otro dispositivo llega en 5 min; al cerrar, una pasada |
+| R18 | La misma unidad en modo `sync`: con KeePassXC abierto, un guardado sube a los ~20 s y lo de otro dispositivo llega en 5 min; cerrado, nada hasta la próxima conexión |
+| R19 | Un conflicto (guardar en dos dispositivos sin red y reconectar): un aviso del sistema, una vez; la línea «… · Combinar…» de la bandeja abre el llavero ofreciendo combinar; combinadas, la línea se va en un minuto |
+| R20 | Quitar la unidad sin expulsar con KeePassXC y el navegador conectados: el agente quita las cuatro claves de HKCU (o las devuelve al KeePassXC instalado); con el agente parado, las quita al arrancar |
+| R21 | La raíz del equipo («Una carpeta propia»): activarlo desde su ventana no pone `Llavero.bat`; se abre desde la ventana y la bandeja; su ventana no ofrece «Expulsar» |
+| R22 | La raíz del equipo cifrada: «Bloquear» desde la bandeja con KeePassXC abierto y un cambio sin guardar: KeePassXC pregunta, sube lo pendiente y VeraCrypt desmonta; con «Cancelar» en KeePassXC, aviso «no la bloqueo» y se sigue atendiendo. Lo mismo desde su ventana |
+| R23 | Un agente anterior al llavero (0.5.5) atendiendo una unidad ya actualizada: «Abrir llavero» arranca el vigilante y la base se sincroniza (`fddf70d`) |
 
 ## 16. Cómo quedó la fase 1
 
@@ -714,3 +721,45 @@ pendientes. Cambió respecto a lo decidido:
   KeePassXC y se da con «Usar esta base…»), y «Añadir el llavero…» en el panel
   «ya es un prdrive» del instalador (un dispositivo preparado lo activa desde su
   ventana, sin otra conexión). `llavero.sh` y Linux siguen en la fase 2.
+
+## 17. Cómo quedó la fase 3
+
+Hecha en cinco entregas (`d1fdbb6` el ritmo, `1ba7878` la bandeja, `26014cb` el
+aviso de conflicto, `5a6b88a` el navegador, `8db9aa6` la raíz del equipo). El
+detalle técnico está en `docs/agents/reference/llavero.md`, `agent-scheduling.md`,
+`tray.md` y `host-root.md`. **Nada se ha probado en hardware real**: las pruebas
+R17–R23 de §15 siguen pendientes, como el resto del agente
+(`docs/superpowers/pruebas/2026-09-25-equipo-pendiente-en-real.md`). Cambió
+respecto a lo decidido:
+
+- **El tirón de 5 min** (§5b, que la fase 1 dejó para aquí) es un intervalo
+  propio de la pareja del llavero en el planificador (`Pareja.intervalo`)
+  mientras su KeePassXC está abierto, que el agente mira cada 10 s. Vale también
+  en una raíz en modo `sync`, donde antes el llavero ni se vigilaba: el agente
+  tenía la raíz y el vigilante no arrancaba, así que un guardado no subía hasta
+  la siguiente conexión.
+- **Al abrir y al cerrar KeePassXC hay una pasada enseguida.** Al abrir, porque
+  con el agente atendiendo la raíz «Abrir llavero» no hace la suya (chocaría con
+  su lock); al cerrar, para subir el último guardado.
+- **«Llavero» en la bandeja es «Abrir llavero»**, como el botón: lanza el
+  `runsync.py --llavero` de la raíz, que es lo de `Llavero.bat`. Solo en
+  Windows, y no en una raíz cifrada bloqueada: bloqueada no se sabe si lo lleva.
+- **El aviso de conflicto** lee el `state/conflicts.json` que deja el `sync.py` de
+  la raíz, no lo calcula el agente (no lleva el modelo de la raíz). Un aviso por
+  copia nueva y conexión, y una línea en la bandeja que lleva a combinar.
+- **Las claves del registro** se quitan al arrancar el agente y cada vez que se
+  va una raíz. Una clave es «de una unidad que ya no está» cuando no existe la
+  carpeta `.prdrive\keepassxc\` a la que apunta, no su JSON: KeePassXC lo
+  escribe al arrancar, y entretanto la unidad sigue puesta.
+- **El llavero en la raíz del equipo** es el de siempre, sin `Llavero.bat` (una
+  raíz del equipo no lleva lanzadores ni Python) y sin «Expulsar». Se activa
+  desde su ventana: el asistente «En este equipo» no tiene paso «Llavero». Al
+  bloquear una raíz cifrada, la ventana y el agente cierran antes el llavero
+  (§10: «y, en la fase 3, el agente»).
+- **Arreglo de paso** (`fddf70d`): un agente de antes del llavero tiene el
+  registro del servicio de la raíz pero no lo atiende; ya no cuenta como
+  encargado, y el vigilante se queda.
+- **No están**: desbloquear una raíz cifrada para abrir su llavero desde la
+  bandeja, y la semilla de la cabecera en la foto del agente (§5b: dos
+  guardados del mismo tamaño en el mismo tic de exFAT, de 10 ms). Linux sigue en
+  la fase 2.
