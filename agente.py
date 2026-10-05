@@ -415,6 +415,16 @@ def cerrar_keepassxc_huerfano(raiz: Path) -> int:
     return 0 if IS_WIN else keepassxc.cerrar_huerfano(raiz / APP_SUBDIR)
 
 
+def keepassxc_huerfano_abierto(raiz: Path) -> bool:
+    """Indica si sigue abierto el KeePassXC de una raíz que se ha ido (Linux).
+
+    Tras pedirle que se cierre tarda en salir (medio segundo, o lo que tarde la
+    persona si tiene algo sin guardar), y mientras tanto el navegador no se
+    puede dejar como estaba. Es de módulo para que los tests no miren procesos.
+    """
+    return False if IS_WIN else bool(llavero.pids_keepassxc(raiz / APP_SUBDIR))
+
+
 def huella_local(ruta: Path, tope: int, ignorar: tuple[str, ...]) -> pl.Huella | None:
     """Toma la foto de la carpeta local de una pareja vigilada (`watch = true`).
 
@@ -1298,6 +1308,7 @@ class Agente:
     keepassxc: set[str] = field(default_factory=set)
     keepassxc_mirado: float = -math.inf
     navegador_mirado: bool = False
+    navegador_tras_cierre: dict[str, tuple[str, Path]] = field(default_factory=dict)
 
     def vuelta(self, recorrer: bool = True) -> pl.Decision | None:
         """Hace una vuelta del agente y devuelve lo que decidió lanzar, si algo.
@@ -1327,6 +1338,7 @@ class Agente:
         for con in list(self.conexiones.values()):
             if not presente(con.raiz):
                 self._desconectar(con.id, ahora, {})
+        self._tras_cierre()
         self._preguntas(ahora)
         self._fin_de_pasada(ahora)
         self._cambios_de_red(ahora)
@@ -1569,7 +1581,25 @@ class Agente:
             huerfanos = 0
         if huerfanos:
             diario(f"{con.nombre}: se ha ido con KeePassXC abierto; le pido que se cierre")
+            # Mientras corra un KeePassXC extraído, `limpiar_navegador()` no
+            # toca nada: se hace cuando salga (`_tras_cierre()`).
+            self.navegador_tras_cierre[uid] = (con.nombre, con.raiz)
+            return
         self._limpiar_navegador(con.nombre)
+
+    def _tras_cierre(self) -> None:
+        """Deja el navegador como estaba cuando sale el KeePassXC de una raíz que se fue.
+
+        Es lo que `_desconectar()` deja pendiente al pedirle que se cierre. Si
+        la raíz ha vuelto, su KeePassXC ya no es un huérfano: lo suyo lo hará
+        «Expulsar», o la próxima vez que se vaya.
+        """
+        for uid, (nombre, raiz) in list(self.navegador_tras_cierre.items()):
+            if uid in self.conexiones:
+                del self.navegador_tras_cierre[uid]
+            elif not keepassxc_huerfano_abierto(raiz):
+                del self.navegador_tras_cierre[uid]
+                self._limpiar_navegador(nombre)
 
     def _limpiar_navegador(self, por: str) -> None:
         """Hace `limpiar_navegador()` y lo dice en el diario, si ha tocado algo.

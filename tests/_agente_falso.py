@@ -82,6 +82,7 @@ def preparar() -> Path:
     agente.limpiar_navegador = lambda: (0, [])
     # Ni los procesos de verdad: el KeePassXC de una raíz que se va (Linux).
     agente.cerrar_keepassxc_huerfano = lambda raiz: 0
+    agente.keepassxc_huerfano_abierto = lambda raiz: False
     # Su rclone: el que pasa a sus hijos y con el que sondea (no hace nada).
     rclone = equipo.DIR / "rclone" / "v0" / agente.model.rclone_name()
     rclone.parent.mkdir(parents=True, exist_ok=True)

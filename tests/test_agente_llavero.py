@@ -459,8 +459,39 @@ try:
     c("  y se dice en el diario",
       any("se ha ido con KeePassXC abierto; le pido que se cierre" in m
           for m in F.DIARIO[dicho:]), True)
+
+    # Tarda en salir, y mientras corre `limpiar_navegador()` no toca nada: el
+    # navegador se deja como estaba cuando sale (salió con procesos de verdad).
+    agente.limpiar_navegador = limpiar
+    VIVO = [True]
+    agente.keepassxc_huerfano_abierto = lambda raiz: VIVO[0] and raiz == CON
+    LIMPIEZAS.clear()
+    F.RAICES[:] = [CON, SIN]
+    F.vueltas(ag, 2)
+    terminar(ag, CON)
+    F.RAICES[:] = [SIN]
+    F.vueltas(ag, 3)
+    c("  mientras siga abierto, el navegador espera", len(LIMPIEZAS), 0)
+    VIVO[0] = False
+    F.vueltas(ag, 3)
+    c("  y cuando sale, se deja como estaba, una vez", len(LIMPIEZAS), 1)
+    VIVO[0] = True
+    F.RAICES[:] = [CON, SIN]
+    F.vueltas(ag, 2)
+    terminar(ag, CON)
+    F.RAICES[:] = [SIN]
+    F.vueltas(ag, 2)
+    F.RAICES[:] = [CON, SIN]
+    F.vueltas(ag, 2)
+    VIVO[0] = False
+    F.vueltas(ag, 2)
+    c("  si la raíz vuelve antes, lo suyo ya no es un huérfano: no se toca",
+      (len(LIMPIEZAS), ag.navegador_tras_cierre), (1, {}))
+    terminar(ag, CON)
 finally:
     agente.cerrar_keepassxc_huerfano = real_huerfano
+    agente.limpiar_navegador = real_limpiar
+    agente.keepassxc_huerfano_abierto = lambda raiz: False
 reales_huerfano = (agente.IS_WIN, agente.llavero.pids_keepassxc, agente.keepassxc.pedir_cierre)
 cerrados: list[int] = []
 try:
