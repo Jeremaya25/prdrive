@@ -1,0 +1,65 @@
+name: Máquina real
+
+# Lo que hay que ver en una máquina de verdad: las filas de
+# docs/superpowers/pruebas/2026-09-25-equipo-pendiente-en-real.md que tienen
+# prueba en tests/maquina/ (`python tests/maquina/correr.py --lista`), en
+# máquinas de usar y tirar con permisos de administrador: discos virtuales con
+# su sistema de ficheros de verdad, VeraCrypt, carpetas de red. Toca el
+# sistema, así que no va en tests.yml. Lo último del registro de cada trabajo
+# es el resumen, una línea RESULTADO por prueba, y va también al resumen del run.
+#
+# A mano (workflow_dispatch, con el fichero ya en main): las filas que se pidan.
+# Al subir un cambio de tests/maquina/ a una rama que no es main, y en un PR que
+# toca lo que prueban: todas.
+on:
+  workflow_dispatch:
+    inputs:
+      pruebas:
+        description: "Filas a probar (F14 F9 …) o «todas»"
+        required: false
+        default: "todas"
+  push:
+    branches-ignore: [main]
+    paths:
+      - "tests/maquina/**"
+      - ".github/workflows/maquina-real.yml"
+  pull_request:
+    paths:
+      - "common/avisos_carpeta.py"
+      - "common/expulsar.py"
+      - "ui/bandeja_windows.py"
+      - "tests/maquina/**"
+      - ".github/workflows/maquina-real.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: maquina-real-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  maquina:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      PRUEBAS: ${{ inputs.pruebas || 'todas' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Pruebas (Linux, como root)
+        if: runner.os == 'Linux'
+        run: sudo -E env "PATH=$PATH" python tests/maquina/correr.py $PRUEBAS
+
+      - name: Pruebas (Windows, como administrador)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: python tests/maquina/correr.py $PRUEBAS
