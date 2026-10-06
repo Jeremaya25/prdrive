@@ -32,7 +32,7 @@ cuenta con passkeys.
 
 ## 2. Fallos que salieron, y su arreglo
 
-Cinco arreglados, invisibles para los tests (rclone y KeePassXC simulados), y un sexto, de Windows, en §4:
+Seis, todos invisibles para los tests (rclone y KeePassXC simulados). Los cinco primeros salieron en la nube; el sexto, en Windows (§4):
 
 | # | Qué pasaba | Por qué | Arreglo |
 |---|---|---|---|
@@ -41,6 +41,7 @@ Cinco arreglados, invisibles para los tests (rclone y KeePassXC simulados), y un
 | 3 | Tras «Combinar», cada pasada abortaba con «too many deletes», aquí y en los demás dispositivos | El freno es un 25 % del listado anterior, y el llavero tiene tres o cuatro ficheros: quitar una copia ya es un 33 % | `d59fa30`: si lo borrado son solo copias de conflicto, la pasada se repite una vez sin el freno |
 | 4 | Quitada la unidad sin expulsar, el agente dejaba los manifiestos del navegador | Limpiaba justo después de pedirle a KeePassXC que se cerrara, y tarda ~0,5 s en salir | `23493a3`: queda pendiente y se hace cuando sale |
 | 5 | Tras «Combinar» un conflicto que ganó el remoto, salía otro conflicto con una copia que no traía nada | **Fallo de rclone** (v1.75.1, y sigue en `master`): `modifyListing()` quita el nombre de la base de los dos listados al apuntar el renombrado del perdedor de este lado | `b5d6047`: otra pasada en seguida, con las dos iguales, y bisync la vuelve a apuntar |
+| 6 | En Windows, con un remoto `type = local`, el llavero decía siempre «con cambios que aún no han subido» y no saltaba el arreglo del 5 | `bisync.expected_prefix()` no ponía el `Root()` del backend local (con `\\?\` delante en Windows; la ruta limpia en Linux), y no encontraba el listado. Lo mismo habría hecho «Reparación» diciendo que el baseline «no es de esta pareja» | `0909507`: `raiz_local()` replica `cleanRootPath()`, contrastado con rclone v1.75.1 |
 
 El 2 escondía al 3 y al 5: con cada pasada siendo un resync no había ni
 conflictos que combinar ni borrados que propagar. Del 5 convendría abrir una
@@ -98,7 +99,7 @@ entrada en vez de en la consola), el borrado de la copia, y expulsar.
     último navegador de cada una (`brave`, `tor-browser`): es B1 de
     `2026-10-04-keepassxc-portatil-resultados.md`, y lo que esperaba la prueba
     era demasiado estricto. Corregido en la prueba.
-  - **Fallo 6, sin arreglar: `bisync.expected_prefix()` en Windows con un
+  - **Fallo 6 (arreglado en `0909507`): `bisync.expected_prefix()` en Windows con un
     remoto de tipo `local`.** rclone nombra los listados con el `Root()` del
     backend local, que en Windows es la ruta absoluta con `\\?\` delante
     (`cleanRootPath()` y `file.UNCPath()`, `backend/local/local.go`), y prdrive
@@ -110,8 +111,13 @@ entrada en vez de en la consola), el borrado de la copia, y expulsar.
     fallo 5), y «Reparación» diría que el baseline «no es de esta pareja».
     Solo pasa con un remoto `type = local` (un disco o una carpeta de red
     puestos como remoto) en Windows: con SFTP, Drive y demás, no.
-- **En `ubuntu-latest`**: pendiente (la ejecución de `4ae5b9c` no había
-  acabado al cerrar esto).
+- **En `ubuntu-latest`**: KeePassXC **no llega a arrancar**. «Abrir llavero»
+  no dice nada, pero el proceso no aparece y el vigilante se va a los 30 s (sin
+  pantalla del todo no es un escritorio: probablemente le falta alguna biblioteca
+  del sistema que el AppImage no lleva). Y la prueba se colgaba esperando al
+  proxy hasta el tope del CI: ahora espera 15 s y, si KeePassXC no se ve, cuenta
+  por qué (`ldd` de lo extraído y lo que dice al arrancarlo a mano). Pendiente de
+  esa ejecución.
 
 ## 5. Lo que queda para el equipo de verdad
 
