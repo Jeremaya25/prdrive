@@ -219,6 +219,39 @@ Behaviour to implement (each line is pinned by a test below):
 
 ---
 
-### Phase 2 (not started; blocked on open questions 1 and 2)
+### Phase 2: the Windows engine
 
-`common/avisos_carpeta.py` gains a `ReadDirectoryChanges` engine with the same methods: one handle per pair (`CreateFileW(FILE_LIST_DIRECTORY, share read|write|delete, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED)`, `bWatchSubtree`, `FILE_NOTIFY_CHANGE_FILE_NAME | DIR_NAME | SIZE | LAST_WRITE`), one thread on `WaitForMultipleObjects` (≤ 64) that calls `leer`'s equivalent and never wakes the loop, 0 bytes / `ERROR_NOTIFY_ENUM_DIR` → `DESBORDADO`, `GetDriveTypeW == DRIVE_REMOTE` → reason. Each handle registered with `RegisterDeviceNotificationW(DBT_DEVTYP_HANDLE)` on the tray window: `DBT_DEVICEQUERYREMOVE` closes it (`PERDIDA` until `DBT_DEVICEQUERYREMOVEFAILED`); no tray → `poner_avisos_carpeta()` returns `None`. VeraCrypt roots walk until question 2 is checked on real hardware. `agent.md`'s «nothing open between passes» invariant is rewritten for Windows then, not before.
+Decided 06/10/2026: question 1 **accepted** (a directory handle per watched pair stays open between passes, closed when the system asks for the drive and before «Expulsar»/«Bloquear»); question 2 as the spec proposes (VeraCrypt volumes walk until checked on real hardware). Real-hardware tests are marked pending in the checklist.
+
+Decisions on top of the spec:
+- **VeraCrypt is detected per volume, not per root**: `QueryDosDeviceW("X:")` starting with `\Device\VeraCryptVolume` (VeraCrypt's `NT_MOUNT_PREFIX`) or `\Device\TrueCryptVolume`. It covers the host root and a stick's container opened by `Abrir PRDRIVE` (`Unidad.cifrada` only knows the first).
+- **One watcher thread issues every `ReadDirectoryChangesW`**, so no I/O belongs to the short-lived `Muestreo` thread. `vigilar()` asks it through a request queue and a control event and waits for the answer. `dejar()` and the tray's `DBT_DEVICEQUERYREMOVE` close the handle in their own thread (`CancelIoEx` + `CloseHandle`): Windows waits for the handle to be closed before it answers the user. The watcher keeps the event and buffer of a closed handle until its cancelled read completes. Every `wd`-like map is under one lock.
+- **It never wakes the agent's loop**: it re-issues each read at once (the kernel buffer never fills between ticks) and `recoger()` hands over at the tick.
+- **No re-arming on Windows**: `bWatchSubtree` follows moves and new folders. Overflow (0 bytes, `ERROR_NOTIFY_ENUM_DIR`) is `DESBORDADO`, and re-arming an armed pair is a no-op. Any other read error is `PERDIDA`.
+- **No notification registration, no handle**: if `RegisterDeviceNotificationW` fails, the handle is closed and the pair walks. No tray, no engine.
+- **Device events**: `QUERYREMOVE` closes the handle and keeps the pair suspended (it hears nothing and does not walk: the drive is leaving); `QUERYREMOVEFAILED` reopens it; `REMOVEPENDING`/`REMOVECOMPLETE` are `PERDIDA`.
+- **At most 63 pairs** (`WaitForMultipleObjects`' 64 minus the control event); past that the pair walks.
+
+### Task 6: `ReadDirectoryChanges` engine
+
+**Files:** Modify `common/avisos_carpeta.py` (`Win32`, `ReadDirectoryChanges`, `avisos_de_windows()`, `abrir(hwnd=None)`); Test `tests/test_avisos_carpeta.py` (fake `Win32` everywhere; the real one only on Windows).
+
+**Interfaces:** Produces `avisos_de_windows(datos: bytes) -> list[tuple[int, str]]` (`FILE_NOTIFY_INFORMATION`: action, relative name); `ReadDirectoryChanges(api, hwnd, tam_bufer=64 KiB)` with the `Inotify` methods (`fd` is `None`, `leer()` a no-op) plus `dispositivo(evento: int, handle: int) -> None`; `abrir(hwnd: int | None = None)`: Linux → `Inotify`, Windows → `ReadDirectoryChanges` if `hwnd`, else `None`.
+
+- [ ] Tests (fake): parsing of a 2-entry buffer; armed → read issued, `vigilancias() == 1`; a completion with a name → `CAMBIO`, with `.prversions\x` → nothing; 0 bytes / `ERROR_NOTIFY_ENUM_DIR` → `DESBORDADO` and read re-issued; another error → `PERDIDA` and handle closed; `DRIVE_REMOTE` → reason, nothing opened; VeraCrypt device → reason, nothing opened; registration fails → reason, handle closed; `dejar()` closes handle + unregisters and the zombie's event is closed when its read completes; `dejar` during `vigilar` → `DEJADA`; QUERYREMOVE closes the handle, keeps registration, no notice; FAILED reopens (a new read); REMOVECOMPLETE → `PERDIDA`; the 64th pair → reason; `cerrar()` joins the thread with nothing open.
+- [ ] Tests (real, Windows only): a temp folder: a write → `CAMBIO`; `.prversions` → nothing; tiny buffer → `DESBORDADO`; after `dejar()` the folder can be deleted; `dispositivo_de("C:")` is not VeraCrypt; `tipo_de_unidad` of the temp drive is not `DRIVE_REMOTE`.
+- [ ] Implement, run `python tests/test_avisos_carpeta.py`, commit.
+
+### Task 7: the tray routes handle events
+
+**Files:** Modify `ui/bandeja_windows.py` (`Bandeja.dispositivo`, `Api.handle_de(lparam) -> int | None`, constants); Test `tests/test_bandeja_windows.py`.
+
+- [ ] Tests: `WM_DEVICECHANGE` with `DBT_DEVICEQUERYREMOVE` and a handle header → `dispositivo(0x8001, h)` called on the tray thread before the window answers; a volume header (not a handle) → not called; `REMOVECOMPLETE` still wakes `montajes()`; without `dispositivo` set nothing breaks.
+- [ ] Implement, run, commit.
+
+### Task 8: the agent on Windows, docs
+
+**Files:** Modify `agente.py` (`poner_avisos_carpeta()`: on Windows needs the tray's `hwnd`, wires `bandeja.dispositivo`; `Vigia.oir()` only with an `fd`), `tests/test_agente_watch.py`; docs: `agent-scheduling.md`, `agent.md` (the invariant rewritten for Windows), `commands-testing.md`, the checklist (W rows marked pending), the spec status.
+
+- [ ] Tests: with `IS_WIN` forced and a fake tray with `hwnd`, `poner_avisos_carpeta()` returns the engine and sets `bandeja.dispositivo`; without tray it returns `None` and says the pairs walk.
+- [ ] Implement, docs, `python tests/run_all.py`, commit, push.
