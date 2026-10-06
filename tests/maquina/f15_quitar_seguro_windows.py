@@ -18,10 +18,17 @@ def expulsar_explorador(letra: str) -> None:
                     f".ParseName('{letra}:').InvokeVerb('Eject')"], timeout=60)
 
 
+DBT_DEVICEARRIVAL = 0x8000
+
+
 def probar(p: comun.Prueba) -> None:
     """Expulsa con la vigilancia puesta; luego con un fichero abierto por otro."""
     with comun.bandeja_windows() as (bandeja, avisos):
         with comun.volumen_windows("ntfs") as raiz:
+            if not comun.esperar(lambda: any(a[0] == DBT_DEVICEARRIVAL for a in avisos), 10):
+                raise comun.Saltada("esta máquina no entrega avisos de dispositivo a las ventanas "
+                                    "(ni la llegada del disco): sin escritorio interactivo no "
+                                    "se puede probar; queda para un equipo de verdad")
             (raiz / "datos").mkdir()
             motor = ac.abrir(hwnd=bandeja.hwnd)
             bandeja.dispositivo = motor.dispositivo
