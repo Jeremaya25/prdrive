@@ -16,6 +16,7 @@ y notas (`p.nota()`). `correr.py` las lanza y resume.
 from __future__ import annotations
 
 import contextlib
+import itertools
 import os
 import shutil
 import subprocess
@@ -47,6 +48,8 @@ class Prueba:
         bien: Cuántas comprobaciones han salido bien.
         mal: Las que han fallado, por su texto.
         notas: Lo que la prueba ha averiguado y hay que apuntar.
+        saltados: Los casos que no se han podido hacer en esta máquina
+            (`por_cada()`): con alguno, el resultado es parcial.
     """
 
     def __init__(self, codigo: str) -> None:
@@ -55,6 +58,7 @@ class Prueba:
         self.bien = 0
         self.mal: list[str] = []
         self.notas: list[str] = []
+        self.saltados: list[str] = []
 
     def ver(self, que: str, obtenido, esperado) -> bool:
         """Comprueba que `obtenido` sea `esperado`, lo cuenta y lo dice."""
@@ -106,9 +110,16 @@ def esperar(condicion, segundos: float, cada: float = 0.1) -> bool:
     return bool(condicion())
 
 
+_carpetas = itertools.count(1)
+
+
 def carpeta(nombre: str) -> Path:
-    """Una carpeta de trabajo vacía de esta prueba."""
-    ruta = TMP / nombre
+    """Una carpeta de trabajo nueva y vacía; cada llamada, otra.
+
+    Nunca la de una llamada anterior: en Windows el fichero de un disco virtual
+    recién desconectado puede seguir ocupado un rato.
+    """
+    ruta = TMP / f"{nombre}-{os.getpid()}-{next(_carpetas)}"
     shutil.rmtree(ruta, ignore_errors=True)
     ruta.mkdir(parents=True)
     return ruta
@@ -154,6 +165,45 @@ MKFS = {"vfat": ["mkfs.vfat", "-F", "32"], "exfat": ["mkfs.exfat"], "ext4": ["mk
 """Cómo se formatea cada sistema de ficheros de prueba en Linux."""
 
 
+def modulo_linux(tipo: str) -> None:
+    """Carga el módulo del núcleo de un sistema de ficheros; si no está, lo instala.
+
+    El núcleo de las máquinas de GitHub deja algunos (exFAT) en
+    `linux-modules-extra-<versión>`.
+
+    Raises:
+        Saltada: Si no se puede cargar.
+    """
+    def cargado() -> bool:
+        """Si el núcleo ya lo conoce (`/proc/filesystems`)."""
+        lineas = Path("/proc/filesystems").read_text(encoding="ascii").split()
+        return tipo in lineas
+
+    if cargado() or ejecutar(["modprobe", tipo], callado=True).returncode == 0:
+        return
+    apt(f"linux-modules-extra-{os.uname().release}")
+    if ejecutar(["modprobe", tipo], callado=True).returncode != 0:
+        raise Saltada(f"este núcleo no tiene {tipo}")
+
+
+def por_cada(p: Prueba, casos, probar_uno) -> None:
+    """Prueba cada caso (un sistema de ficheros…); el que no se puede hacer se apunta y se sigue.
+
+    Raises:
+        Saltada: Si no se ha podido hacer ninguno.
+    """
+    saltados = []
+    for caso in casos:
+        try:
+            probar_uno(caso)
+        except Saltada as e:
+            saltados.append(f"{caso}: {e}")
+            print(f"  SALTADO {caso}: {e}", flush=True)
+    p.saltados.extend(saltados)
+    if len(saltados) == len(casos):
+        raise Saltada("; ".join(saltados))
+
+
 @contextlib.contextmanager
 def volumen_linux(tipo: str, mb: int = 64):
     """Monta un volumen de ese sistema de ficheros en un dispositivo loop y lo da.
@@ -167,6 +217,7 @@ def volumen_linux(tipo: str, mb: int = 64):
         Saltada: Si no se puede formatear o montar (falta el módulo del núcleo).
     """
     apt("dosfstools", "exfatprogs")
+    modulo_linux(tipo)
     base = carpeta(f"vol-{tipo}")
     imagen, punto = base / "disco.img", base / "punto"
     punto.mkdir()

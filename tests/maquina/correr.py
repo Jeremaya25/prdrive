@@ -14,6 +14,7 @@ Lo último que escribe es el resumen, una línea por prueba, para leer solo la
 cola del registro:
 
     RESULTADO F14 W ok 12/12 · <notas>
+    RESULTADO F9 L parcial 13/13 · sin exfat: <motivo> · <notas>
     RESULTADO F18 W saltada · <motivo>
     RESULTADO F15 W fallo 3/5 · <la primera que falla>
 
@@ -54,12 +55,16 @@ def resumen(m, p: comun.Prueba, saltada: str | None) -> str:
     total = p.bien + len(p.mal)
     if p.mal:
         return f"RESULTADO {m.CODIGO} {m.SISTEMA} fallo {p.bien}/{total} · {p.mal[0]}"
-    return f"RESULTADO {m.CODIGO} {m.SISTEMA} ok {p.bien}/{total}" + (
-        " · " + "; ".join(p.notas) if p.notas else "")
+    estado = "parcial" if p.saltados else "ok"
+    detalle = [f"sin {'; '.join(p.saltados)}"] if p.saltados else []
+    return f"RESULTADO {m.CODIGO} {m.SISTEMA} {estado} {p.bien}/{total}" + "".join(
+        f" · {d}" for d in detalle + p.notas)
 
 
 def main(argv: list[str]) -> int:
     """Corre lo pedido y devuelve 1 si algo falla."""
+    for flujo in (sys.stdout, sys.stderr):
+        flujo.reconfigure(encoding="utf-8", errors="replace")
     todas = pruebas()
     if "--lista" in argv:
         for m in todas:

@@ -48,6 +48,7 @@ jobs:
     timeout-minutes: 30
     env:
       PRUEBAS: ${{ inputs.pruebas || 'todas' }}
+      PYTHONIOENCODING: utf-8
     steps:
       - uses: actions/checkout@v4
 

@@ -55,24 +55,25 @@ def probar(p: comun.Prueba) -> None:
             motor.cerrar()
         (P / "datos").mkdir(exist_ok=True)
         with comun.bandeja_windows() as (bandeja, avisos):
-            sin_comprobar = ac.Win32()
-            sin_comprobar.dispositivo_de = lambda unidad: ""
-            m2 = ac.ReadDirectoryChanges(sin_comprobar, bandeja.hwnd)
-            bandeja.dispositivo = m2.dispositivo
+            import ctypes
+            h = api.abrir_carpeta(str(P / "datos"))
             try:
-                p.ver("(experimento) se vigila igual, saltándose la comprobación",
-                      m2.vigilar(K, P / "datos", ()), None)
+                aviso = api.registrar(bandeja.hwnd, h)
+                error = ctypes.get_last_error()
+                p.nota(f"PREGUNTA 2: registrar el aviso de extracción de un handle de su volumen "
+                       + ("SE PUEDE" if aviso else f"NO se puede (error {error})"))
+                if aviso:
+                    api.desregistrar(aviso)
                 se_fue = desmontar(forzar=False)
-                pide = any(a[0] == ac.DBT_DEVICEQUERYREMOVE for a in avisos)
-                bloqueo = any(a[3] == comun.GUID_IO_VOLUME_LOCK for a in avisos)
-                p.nota(f"PREGUNTA 2: desmontar sin forzar con una carpeta vigilada "
-                       f"{'FUNCIONA' if se_fue else 'NO funciona'}; DBT_DEVICEQUERYREMOVE "
-                       f"{'llega' if pide else 'no llega'}; aviso de bloqueo (GUID_IO_VOLUME_LOCK) "
-                       f"{'llega' if bloqueo else 'no llega'}")
-                p.nota("avisos: " + ", ".join(sorted({f"{hex(a[0])}/{a[3]}" for a in avisos})))
+                p.nota(f"con un handle abierto dentro, desmontar sin forzar "
+                       f"{'FUNCIONA' if se_fue else 'NO funciona'}; avisos a la ventana: "
+                       + (", ".join(sorted({f"{hex(a[0])}/{a[3]}" for a in avisos})) or "ninguno"))
             finally:
-                m2.cerrar()
-                bandeja.dispositivo = None
+                api.cerrar(h)
+            if not P.exists():
+                montar(hc)
+            p.ver("sin nada abierto dentro, desmontar sin forzar funciona",
+                  desmontar(forzar=False), True)
     finally:
         if P.exists():
             desmontar(forzar=True)
