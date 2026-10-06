@@ -21,14 +21,14 @@ def expulsar_explorador(letra: str) -> None:
 def probar(p: comun.Prueba) -> None:
     """Expulsa con la vigilancia puesta; luego con un fichero abierto por otro."""
     with comun.bandeja_windows() as (bandeja, avisos):
-        with comun.volumen_windows("ntfs", "R") as raiz:
+        with comun.volumen_windows("ntfs") as raiz:
             (raiz / "datos").mkdir()
             motor = ac.abrir(hwnd=bandeja.hwnd)
             bandeja.dispositivo = motor.dispositivo
             try:
                 p.ver("se vigila", motor.vigilar(K, raiz / "datos", ()), None)
                 h = next(iter(motor._activas.values())).handle
-                expulsar_explorador("R")
+                expulsar_explorador(str(raiz)[0])
                 se_fue = comun.esperar(lambda: not raiz.exists(), 30)
                 p.nota("avisos a la ventana: " + ", ".join(sorted({hex(a[0]) for a in avisos})))
                 p.ver("Windows pide la unidad al handle (DBT_DEVICEQUERYREMOVE)",
@@ -38,14 +38,14 @@ def probar(p: comun.Prueba) -> None:
             finally:
                 motor.cerrar()
         avisos.clear()
-        with comun.volumen_windows("ntfs", "R") as raiz:
+        with comun.volumen_windows("ntfs") as raiz:
             (raiz / "datos").mkdir()
             motor = ac.abrir(hwnd=bandeja.hwnd)
             bandeja.dispositivo = motor.dispositivo
             abierto = (raiz / "datos" / "abierto.txt").open("w", encoding="utf-8")
             try:
                 motor.vigilar(K, raiz / "datos", ())
-                expulsar_explorador("R")
+                expulsar_explorador(str(raiz)[0])
                 se_fue = comun.esperar(lambda: not raiz.exists(), 15)
                 p.ver("con un fichero abierto por otro programa no se extrae", se_fue, False)
                 p.ver("  el sistema lo dice (DBT_DEVICEQUERYREMOVEFAILED)",

@@ -69,10 +69,11 @@ Windows, con `ReadDirectoryChangesW` (`ReadDirectoryChanges`):
   bandeja no hay motor (`abrir()` es `None`).
 - Ni una carpeta de red (`GetDriveTypeW`, `DRIVE_REMOTE`) ni un volumen de
   VeraCrypt (`QueryDosDeviceW` de su letra, `\\Device\\VeraCryptVolume…`) se
-  vigilan con avisos. El segundo, hasta comprobar en un equipo real que
-  VeraCrypt manda `DBT_DEVICEQUERYREMOVE` antes de desmontar
-  (`FSCTL_LOCK_VOLUME`); si no lo manda, desmontarlo desde fuera del agente
-  preguntaría si forzar.
+  vigilan con avisos. Del segundo, visto con VeraCrypt 1.26.29
+  (`tests/maquina/f18_veracrypt_windows.py`): Windows no deja registrar el
+  aviso de extracción de un handle de su volumen (error 1066), no llega
+  ningún aviso al desmontarlo, y con un handle abierto dentro no se desmonta
+  sin forzar. Se dice antes de intentarlo, con su motivo.
 - Todas las llamadas a Windows están en `Win32`; los tests ponen una de
   mentira. Lo que solo se ve en un Windows de verdad está en la lista de
   pruebas en equipos reales.
@@ -668,8 +669,8 @@ monta en ese modo.
 """
 MOTIVO_RED_WINDOWS = ("es una carpeta de red: no avisa de lo que se cambia desde el otro "
                       "lado")
-MOTIVO_VERACRYPT = ("es un volumen de VeraCrypt: en Windows se recorre hasta comprobar en "
-                    "un equipo real que desmontarlo no pregunta si forzar")
+MOTIVO_VERACRYPT = ("es un volumen de VeraCrypt: Windows no avisa al desmontarlo, y una "
+                    "carpeta abierta impediría desmontarlo sin forzar")
 MOTIVO_SIN_REGISTRO = ("Windows no avisaría al pedir la unidad para expulsarla: no se deja "
                        "su carpeta abierta")
 MOTIVO_SIN_RESPUESTA = "el vigilante de avisos de Windows no contesta"

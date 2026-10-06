@@ -5,8 +5,10 @@ Fecha: 06/10/2026. Continúa `watch = true` (#61); lo que hay hoy está en
 Estado: **fases 1 y 2 hechas en código** (plan `docs/superpowers/plans/2026-10-06-watch-con-avisos.md`):
 el recorrido de B en todas partes, inotify en Linux y `ReadDirectoryChangesW` en
 Windows. Decidido el 06/10/2026: la pregunta 1 se acepta (el handle abierto en
-Windows); la 2, como se proponía (los volúmenes de VeraCrypt se recorren hasta
-comprobarlo, prueba F18); la 3, como se proponía, con un presupuesto (la mitad
+Windows); la 2 queda contestada en la nube (F18, VeraCrypt 1.26.29): Windows no deja
+registrar el aviso de extracción de un handle de su volumen y un handle abierto
+impide desmontarlo sin forzar, así que los volúmenes de VeraCrypt se recorren
+siempre; la 3, como se proponía, con un presupuesto (la mitad
 de `max_user_watches`, que es de todo el usuario). Falta verlo en equipos
 reales: filas F9–F19 de `docs/superpowers/pruebas/2026-09-25-equipo-pendiente-en-real.md`.
 
@@ -232,6 +234,8 @@ cambio visto, y luego cada `sondeo_quieto`. A batería, nunca menos de
    manda, un desmontaje de fuera del agente (la propia ventana de VeraCrypt, su
    desmontaje automático, `Expulsar PRDRIVE.bat`) preguntaría si forzar.
    Propuesta: esas raíces recorren con B hasta comprobarlo en un equipo real.
+   **Contestada** (06/10/2026, F18 en la nube): no lo manda, ni deja registrar
+   el aviso; se recorren siempre.
 3. **El tope.** Con avisos, ¿se quita el de 20 000 entradas (queda el de
    carpetas del sistema en Linux, y ninguno en Windows), o se mantiene uno
    propio? Propuesta: quitarlo con avisos y dejarlo para el recorrido.

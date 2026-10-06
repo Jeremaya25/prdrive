@@ -250,12 +250,29 @@ def soltar_vhd(fichero: Path) -> None:
     diskpart([f'select vdisk file="{fichero}"', "detach vdisk noerr"])
 
 
+_letras_usadas: set[str] = set()
+
+
+def letra_libre() -> str:
+    """Una letra de unidad libre que esta ejecución no ha usado todavía.
+
+    Windows tarda en soltar la letra de un disco virtual recién desconectado:
+    nunca se repite una.
+    """
+    for letra in "RSTUVWXYZQPON":
+        if letra not in _letras_usadas and not Path(f"{letra}:\\").exists():
+            _letras_usadas.add(letra)
+            return letra
+    raise Saltada("no quedan letras de unidad libres")
+
+
 @contextlib.contextmanager
-def volumen_windows(tipo: str, letra: str, mb: int = 128):
-    """Conecta un disco virtual (VHD) con un volumen de ese sistema de ficheros en esa letra.
+def volumen_windows(tipo: str, letra: str | None = None, mb: int = 128):
+    """Conecta un disco virtual (VHD) con un volumen de ese sistema de ficheros.
 
     Es un disco de verdad para Windows: su controlador de NTFS, exFAT o FAT32,
-    sus avisos de extracción. Se desconecta al salir.
+    sus avisos de extracción. Se desconecta al salir. Sin `letra`, una libre
+    (`letra_libre()`).
 
     Yields:
         La raíz del volumen (`R:\\`).
@@ -263,6 +280,8 @@ def volumen_windows(tipo: str, letra: str, mb: int = 128):
     Raises:
         Saltada: Si diskpart no lo crea.
     """
+    letra = letra or letra_libre()
+    _letras_usadas.add(letra)
     fichero = carpeta(f"vhd-{tipo}") / f"{tipo}.vhdx"
     rc = diskpart([f'create vdisk file="{fichero}" maximum={mb} type=expandable',
                    f'select vdisk file="{fichero}"', "attach vdisk",

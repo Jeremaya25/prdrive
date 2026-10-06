@@ -16,18 +16,18 @@ K = (U, "docs")
 def probar(p: comun.Prueba) -> None:
     """Expulsa sin soltar el handle (control) y soltándolo (lo que hace el agente)."""
     with comun.bandeja_windows() as (bandeja, avisos):
-        with comun.volumen_windows("ntfs", "R") as raiz:
+        with comun.volumen_windows("ntfs") as raiz:
             (raiz / "datos").mkdir()
             motor = ac.abrir(hwnd=bandeja.hwnd)
             bandeja.dispositivo = motor.dispositivo
             try:
                 p.ver("se vigila", motor.vigilar(K, raiz / "datos", ()), None)
-                control = expulsar.expulsar(Path("R:\\"))
+                control = expulsar.expulsar(raiz)
                 p.nota(f"sin soltar el handle: ok={control.ok} ({control.texto}); avisos: "
                        + ", ".join(sorted({f"{hex(a[0])}/{a[3]}" for a in avisos})))
                 if not control.ok:
                     motor.dejar_raiz(U)
-                    r = expulsar.expulsar(Path("R:\\"))
+                    r = expulsar.expulsar(raiz)
                     p.ver("tras dejar las vigilancias de la raíz, «Expulsar» sale bien", r.ok, True)
                     p.ver("  y nada vuelve a abrirla", motor.vigilancias(), 0)
                 else:
