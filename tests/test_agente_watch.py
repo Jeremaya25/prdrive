@@ -16,6 +16,8 @@ de la carpeta, las reglas del planificador). Aquí se comprueba el cableado de
 - Pasado el tope de entradas, o con la carpeta fuera de la raíz, se abandona:
   se dice una vez y el intervalo manda.
 - El estado (`estado.json`, `status`) dice qué se vigila.
+- El recorrido se espacia con la carpeta quieta y a batería (las secciones de
+  antes miran el cableado al ritmo de siempre, `CAMBIOS`).
 """
 
 import contextlib
@@ -24,6 +26,7 @@ import math
 import os
 import threading
 import time
+from dataclasses import replace
 from pathlib import Path
 
 from _harness import Checks, tmpdir
@@ -38,7 +41,9 @@ c = Checks("agente: cambios locales de una pareja (watch)")
 F.preparar()
 
 TICK = agente.TICK
-CAMBIOS = pl.PoliticaCambios()
+FABRICA = pl.PoliticaCambios()
+CAMBIOS = replace(FABRICA, sondeo_quieto=FABRICA.sondeo)
+"""Las reglas de fábrica sin espaciar el recorrido: aquí se mira el cableado."""
 
 FIRMAS: dict[str, int] = {}
 """La firma de la carpeta de cada pareja, por nombre; el test la cambia a mano."""
@@ -53,6 +58,13 @@ def foto(ruta, tope, ignorar):
     """La foto de mentira: una firma que decide el test."""
     MIRADAS.append((Path(ruta).name, tope, tuple(ignorar)))
     return pl.Huella(10, FIRMAS[Path(ruta).name])
+
+
+def nuevo() -> "agente.Agente":
+    """Un agente con el reloj de mentira y las reglas de `CAMBIOS`."""
+    ag = F.nuevo()
+    ag.cambios = CAMBIOS
+    return ag
 
 
 def mirada(nombre: str = "docs") -> int:
@@ -118,7 +130,7 @@ c("solo vigila la pareja que pide watch = true",
 c("  un watch = true en 'down' no cuenta: el local no es origen (lo rechazaría su sync.py)",
   dict(servicio.locales), {"docs": "sync-data/docs"})
 
-ag = F.nuevo()
+ag = nuevo()
 F.vueltas(ag, 2)
 terminar(ag, RAIZ)
 c("las primeras pasadas son las de siempre: las tres, por su orden",
@@ -373,7 +385,7 @@ def foto_lenta(ruta, tope, ignorar):
 agente.huella_local = foto_lenta
 agente.hilo = lambda funcion: threading.Thread(target=funcion, daemon=True).start()
 
-ag2 = F.nuevo()
+ag2 = nuevo()
 desde = time.monotonic()
 F.vueltas(ag2, 2)
 entro.wait(5)
@@ -454,7 +466,7 @@ agente.huella_local = foto_enorme
 UID4 = "a" * 32
 RAIZ4 = poner(UID4, parejas=("docs",), nombre="GRANDE", extra={"docs": VIGILA})
 F.RAICES[:] = [RAIZ4]
-ag4 = F.nuevo()
+ag4 = nuevo()
 F.vueltas(ag4, 2)
 terminar(ag4, RAIZ4)
 quieto(ag4, 30)
@@ -495,8 +507,8 @@ for i in range(10):
 for i in range(8):
     (otra5 / f"n{i}.md").write_text("x", encoding="utf-8")
 F.RAICES[:] = [RAIZ5]
-ag5 = F.nuevo()
-ag5.cambios = pl.PoliticaCambios(tope_entradas=5)
+ag5 = nuevo()
+ag5.cambios = replace(CAMBIOS, tope_entradas=5)
 F.vueltas(ag5, 2)
 terminar(ag5, RAIZ5)
 quieto(ag5, 60)
@@ -540,7 +552,7 @@ try:
 except (OSError, NotImplementedError):
     print("  (saltado) no se pueden crear enlaces simbólicos: no se prueba el que sale")
 F.RAICES[:] = [RAIZ6]
-ag6 = F.nuevo()
+ag6 = nuevo()
 F.vueltas(ag6, 2)
 terminar(ag6, RAIZ6)
 quieto(ag6, 60)
@@ -580,7 +592,7 @@ c("el `local` se lee como lo lee el motor: barras normales y sin las de los extr
   {"docs": "sync-data/docs", "raiz": ".", "otra": "sync-data/otra"})
 F.RAICES[:] = [RAIZ8]
 CIEGAS.add(str(RAIZ8 / "sync-data" / "otra"))
-ag8 = F.nuevo()
+ag8 = nuevo()
 F.vueltas(ag8, 2)
 terminar(ag8, RAIZ8)
 quieto(ag8, 20)
@@ -616,6 +628,77 @@ quieto(ag8, 60)
 c("al volver a poder mirarla, se dice una vez",
   sum("otra: su carpeta vuelve a poder mirarse" in m for m in F.DIARIO), 1)
 c("  y la foto es la de partida", ag8.vigiladas[(UID8, "otra")].fallidas, 0)
+
+# ---------------------------------------------------------------------------
+# 11c. Con las reglas de fábrica el recorrido se espacia
+# ---------------------------------------------------------------------------
+# Quieta, cada `sondeo_quieto`; tras ver un cambio, cada `sondeo` durante
+# `sondeo_quieto`; a batería, nunca antes de `sondeo_bateria`.
+F.preparar()
+CUANDO: list[float] = []
+"""La hora de cada foto de la sección."""
+
+
+def foto_con_hora(ruta, tope, ignorar):
+    """La foto de mentira, apuntando cuándo se tomó."""
+    CUANDO.append(F.reloj())
+    return pl.Huella(10, FIRMAS[Path(ruta).name])
+
+
+agente.huella_local = foto_con_hora
+UID9 = "7" * 32
+RAIZ9 = poner(UID9, parejas=("docs",), extra={"docs": VIGILA})
+F.RAICES[:] = [RAIZ9]
+FIRMAS["docs"] = 1
+ag9 = F.nuevo()
+c("el agente usa las reglas de fábrica", ag9.cambios, FABRICA)
+F.vueltas(ag9, 2)
+terminar(ag9, RAIZ9)
+quieto(ag9, 30)
+n0 = len(CUANDO)
+quieto(ag9, 400)
+c("quieta, se recorre cada sondeo_quieto: 3 o 4 veces en 400 s", len(CUANDO) - n0 in (3, 4),
+  True)
+
+
+def pasadas9() -> int:
+    """Cuántas pasadas de la unidad de esta sección se han lanzado."""
+    return len(F.pasadas(RAIZ9))
+
+
+n = pasadas9()
+FIRMAS["docs"] += 1
+cambio = F.reloj()
+for _ in range(int(200 / TICK)):
+    F.vueltas(ag9, 1)
+    if pasadas9() > n:
+        break
+c("un cambio en una carpeta quieta se ve, como mucho, al sondeo_quieto",
+  pasadas9() - n == 1 and F.reloj() - cambio <= FABRICA.sondeo_quieto + FABRICA.calma
+  + 3 * TICK, True)
+terminar(ag9, RAIZ9)
+n0 = len(CUANDO)
+quieto(ag9, 60)
+c("  y tras verlo vuelve al sondeo: 5 o más recorridos en un minuto", len(CUANDO) - n0 >= 5,
+  True)
+
+moderacion.energia = lambda: moderacion.Energia(con_bateria=True, porcentaje=80)
+ag9.entorno_leido = -math.inf
+quieto(ag9, 200)
+n = pasadas9()
+FIRMAS["docs"] += 1
+for _ in range(int(200 / TICK)):
+    F.vueltas(ag9, 1)
+    if pasadas9() > n:
+        break
+terminar(ag9, RAIZ9)                      # y la foto de después, ya
+n0 = len(CUANDO)
+quieto(ag9, 240)
+huecos = [b - a for a, b in zip(CUANDO[n0 - 1:], CUANDO[n0:])]
+c("a batería, aunque se mueva, nunca antes de sondeo_bateria",
+  bool(huecos) and min(huecos) >= FABRICA.sondeo_bateria, True)
+moderacion.energia = lambda: moderacion.Energia()
+agente.huella_local = foto
 
 # ---------------------------------------------------------------------------
 # 12. «Bloquear» espera a la foto en marcha
@@ -654,7 +737,7 @@ entro.clear()
 suelta.clear()
 agente.huella_local = foto_lenta
 agente.hilo = lambda funcion: threading.Thread(target=funcion, daemon=True).start()
-ag7 = F.nuevo()
+ag7 = nuevo()
 F.vueltas(ag7, 3)
 entro.wait(5)
 F.acabar(F.pasadas(PUNTO)[0], 0, "OK\n")

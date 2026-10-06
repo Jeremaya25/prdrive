@@ -2256,7 +2256,8 @@ class Agente:
         ocupadas = [(pasada.tarea.raiz, pasada.tarea.pareja)] \
             if pasada is not None and pasada.tarea.tipo == pl.PASADA else []
         claves = pl.a_recorrer(raices, self.vigiladas, ahora, self.cambios,
-                               ocupadas=ocupadas, motivo=motivo)
+                               ocupadas=ocupadas, motivo=motivo,
+                               con_bateria=self.entorno.con_bateria)
         if not claves:
             return
         trabajo = []
