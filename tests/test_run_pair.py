@@ -400,4 +400,26 @@ c.contains("un DNS que no resuelve se explica como falta de red", explicar(SIN_D
 c("la unidad que no está no es un fallo de red",
   moderacion.EXPLICACION_RED in explicar(NO_LISTO), False)
 
+# el aviso de known_hosts de rutina, no su fallo
+#
+# rclone v1.75.1 apunta este NOTICE en CADA pasada sftp cuyo remoto no tiene
+# known_hosts_file (`NewFs`, backend/sftp/sftp.go), también en las que fallan
+# por otra cosa. Con la aguja "known_hosts_file" a secas, una carpeta remota
+# que no existe salía explicada como un known_hosts que falta.
+SIN_VALIDAR = ("2026/10/06 10:00:00 NOTICE: nas: No host key validation is being "
+               'performed. Set known_hosts_file (to "none" to silence this notice) '
+               "or use --sftp-pin-host-key to enable it. "
+               "See: https://rclone.org/sftp/#host-key-validation\n")
+SIN_CARPETA = SIN_VALIDAR + ("2026/10/06 10:00:01 ERROR : nas:/datos/notas: error "
+                             "reading source root directory: directory not found\n")
+SIN_KNOWN_HOSTS = ('2026/10/06 10:00:00 ERROR : Failed to create file system for '
+                   "\"nas:/datos/notas\": couldn't parse known_hosts_file: open "
+                   "keys/known_hosts: no such file or directory\n")
+c("el aviso de known_hosts de rutina no explica una carpeta que no existe",
+  "known_hosts" in explicar(SIN_CARPETA), False)
+c.contains("el known_hosts que no se puede leer, sí", explicar(SIN_KNOWN_HOSTS),
+           "known_hosts")
+c.contains("con las rutas relativas contra .prdrive/", explicar(SIN_KNOWN_HOSTS),
+           ".prdrive/")
+
 sys.exit(c.report())
