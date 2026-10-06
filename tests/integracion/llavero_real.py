@@ -354,13 +354,18 @@ def main() -> int:
         # La carpeta personal en el temporal: los manifiestos y lo extraído van
         # ahí, y Chrome y Firefox «están» (sus carpetas existen).
         casa = temporal / "casa"
-        for d in (".config/google-chrome", ".mozilla", ".cache", ".local/share", "run"):
+        for d in (".config/google-chrome", ".mozilla", ".cache", ".local/share"):
             (casa / d).mkdir(parents=True)
-        os.chmod(casa / "run", 0o700)
+        # La de ejecución, corta y en /tmp: el servidor del navegador de KeePassXC
+        # es un socket en `$XDG_RUNTIME_DIR/app/org.keepassxc.KeePassXC/…BrowserServer`
+        # (66 caracteres más), y la ruta de un socket no pasa de 108. La del
+        # temporal del CI es larga (120 en total): KeePassXC no podía escuchar.
+        # En un equipo es `/run/user/<uid>` (80).
+        ejecucion = Path(tempfile.mkdtemp(prefix="kpx-", dir="/tmp"))
         os.environ.update(HOME=str(casa), XDG_CONFIG_HOME=str(casa / ".config"),
                           XDG_CACHE_HOME=str(casa / ".cache"),
                           XDG_DATA_HOME=str(casa / ".local/share"),
-                          XDG_RUNTIME_DIR=str(casa / "run"))
+                          XDG_RUNTIME_DIR=str(ejecucion))
 
     print("== 1. Un dispositivo, y KeePassXC bajado y comprobado", flush=True)
     app = preparar(raiz, remoto)
@@ -490,6 +495,8 @@ def main() -> int:
         print(f"\nLo de la prueba se queda en {temporal} (logs en {app / 'logs'}).")
     else:
         shutil.rmtree(temporal, ignore_errors=True)
+        if not IS_WIN:
+            shutil.rmtree(os.environ["XDG_RUNTIME_DIR"], ignore_errors=True)
 
     print("\n" + ("TODO BIEN" if not fallos else f"FALLAN {len(fallos)}: " + "; ".join(fallos)))
     return 1 if fallos else 0
