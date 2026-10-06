@@ -49,7 +49,8 @@ import time
 from pathlib import Path
 from typing import Callable, Mapping, NamedTuple
 
-from . import APP_NAME, components, conflicts, llavero, model, pins, registro, results, store
+from . import (APP_NAME, cifrada, components, conflicts, llavero, model, pins, registro,
+               results, store)
 
 CONFIG_SUBDIR = Path("config") / "windows"
 """Dónde va la configuración del KeePassXC de Windows, dentro de `.prdrive/keepassxc/`."""
@@ -1013,35 +1014,43 @@ def otro_abierto() -> bool:
                for pid, nombre in store.nombres().items())
 
 
-def orden(exe: Path, base: Path, paquete: str | None = None) -> list[str]:
+def orden(exe: Path, base: Path, paquete: str | None = None,
+          llave_interna: Path | None = None) -> list[str]:
     """Devuelve la orden que abre KeePassXC con su configuración y la base.
 
-    Nunca lleva `--keyfile`: KeePassXC no se limita a rellenar el campo, sino
-    que intenta desbloquear al instante con la contraseña vacía
+    Solo lleva `--keyfile` con `llave_interna` (el llavero sin contraseña, que
+    se abre con el fichero llave y nada más). Con una base que pide contraseña
+    **no** puede llevarlo: KeePassXC no se limita a rellenar el campo, sino que
+    intenta desbloquear al instante con la contraseña vacía
     (`DatabaseOpenWidget::enterKey()` llama a `openDatabase()`), y con una base
     de contraseña y fichero llave sale «Desbloquear la base de datos ha fallado
-    y no introdujo una contraseña». El fichero llave se elige en su diálogo.
+    y no introdujo una contraseña». Ahí el fichero llave se elige en su diálogo.
     En Linux, `exe` es el `AppRun` de lo extraído, y la configuración es la de
     `config/linux/`: `--config` es también lo que dice de qué unidad es
     (`llavero.pids_keepassxc()`).
     """
     donde = carpeta_config(paquete)
-    return [str(exe), "--config", str(donde / INI), "--localconfig", str(donde / INI_LOCAL),
-            str(base)]
+    salida = [str(exe), "--config", str(donde / INI), "--localconfig", str(donde / INI_LOCAL)]
+    if llave_interna is not None:
+        salida += ["--keyfile", str(llave_interna)]
+    return salida + [str(base)]
 
 
-def orden_externo(externo: Externo, base: Path, raiz: Path | None = None) -> list[str]:
+def orden_externo(externo: Externo, base: Path, raiz: Path | None = None,
+                  llave_interna: Path | None = None) -> list[str]:
     """Devuelve la orden que abre la base con el KeePassXC del equipo (Linux ARM64).
 
     Con su propia configuración: es el de la persona. El de Flathub recibe
     permiso para la unidad solo para esta vez (`flatpak run --filesystem=`), y
-    `KPXC_INITIAL_DIR` por `--env`, porque el entorno no entra en su caja. Sin
-    `--keyfile`, como `orden()`.
+    `KPXC_INITIAL_DIR` por `--env`, porque el entorno no entra en su caja. Con
+    `--keyfile` solo en el llavero sin contraseña, como `orden()`.
     """
     raiz = model.DEVICE_ROOT if raiz is None else raiz
     salida = list(externo.orden)
     if externo.flatpak:
         salida[2:2] = [f"--filesystem={raiz}", f"--env=KPXC_INITIAL_DIR={raiz}"]  # tras «run» y el id
+    if llave_interna is not None:
+        salida += ["--keyfile", str(llave_interna)]
     return salida + [str(base)]
 
 
@@ -1092,13 +1101,17 @@ def esperar_arranque(proc, segundos: float = ESPERA_ARRANQUE) -> int | None:
 # --- combinar una copia de conflicto (§8)
 
 def orden_combinar(programa: Path, base: Path, copia: Path,
-                   llave: Path | None = None) -> list[str]:
+                   llave: Path | None = None, sin_contrasena: bool = False) -> list[str]:
     """Devuelve la orden que combina la copia en la base: lo de las dos queda en la base.
 
     `--same-credentials`: la copia es la misma base guardada en otro
     dispositivo, así que la contraseña (y el fichero llave) se piden una vez.
+    Con `sin_contrasena` (el llavero que va solo con su fichero llave) no se
+    pide ninguna: `--no-password`, y la llave va con `--key-file`.
     """
     salida = [str(programa), "merge", "--same-credentials"]
+    if sin_contrasena:
+        salida.append("--no-password")
     if llave is not None:
         salida += ["--key-file", str(llave)]
     return salida + [str(base), str(copia)]
@@ -1139,17 +1152,13 @@ def terminal() -> list[str] | None:
     return None
 
 
-def combinar(base: Path, copia: Path, llave: Path | None = None) -> int:
+def combinar(base: Path, copia: Path, llave: Path | None = None,
+             sin_contrasena: bool = False) -> int:
     """Combina la copia en la base en una consola a la vista, y espera a que se cierre.
 
     La contraseña la pide `keepassxc-cli` en esa consola; prdrive no la ve
     nunca. La consola es `runsync.py --combinar-llavero` (`combinar_aqui()`).
-    En Windows, con el Python de consola, porque la ventana corre con
-    `pythonw`, que no tiene. En Linux, en una terminal (`terminal()`): muchas
-    vuelven enseguida y ninguna dice el código de lo que corre, así que la
-    consola apunta su pid al empezar y su código al acabar (`--codigo`), y se
-    espera a eso (`esperar_codigo()`). Es de módulo para que los tests no
-    abran nada.
+    Es de módulo para que los tests no abran nada.
 
     Returns:
         El código de `keepassxc-cli`: 0 si se ha combinado (o no había nada
@@ -1158,13 +1167,34 @@ def combinar(base: Path, copia: Path, llave: Path | None = None) -> int:
     Raises:
         OSError: En Linux, si no hay ninguna terminal.
     """
+    orden_ = ["--combinar-llavero", str(base), str(copia)]
+    if llave is not None:
+        orden_ += ["--keyfile", str(llave)]
+    if sin_contrasena:
+        orden_.append("--sin-contrasena")
+    return en_consola(orden_)
+
+
+def en_consola(argumentos: list[str]) -> int:
+    """Corre `runsync.py <argumentos>` en una consola a la vista y espera a que se cierre.
+
+    En Windows, con el Python de consola, porque la ventana corre con
+    `pythonw`, que no tiene. En Linux, en una terminal (`terminal()`): muchas
+    vuelven enseguida y ninguna dice el código de lo que corre, así que la
+    consola apunta su pid al empezar y su código al acabar (`--codigo`), y se
+    espera a eso (`esperar_codigo()`).
+
+    Returns:
+        El código de la consola; -1 si se cerró sin acabar.
+
+    Raises:
+        OSError: En Linux, si no hay ninguna terminal.
+    """
     python = Path(sys.executable)
     consola = python.with_name("python.exe")
     if os.name == "nt" and consola.exists():
         python = consola
-    orden_ = [str(python), str(model.RUNSYNC_PY), "--combinar-llavero", str(base), str(copia)]
-    if llave is not None:
-        orden_ += ["--keyfile", str(llave)]
+    orden_ = [str(python), str(model.RUNSYNC_PY), *argumentos]
     if os.name == "nt":
         return subprocess.run(orden_, cwd=tempfile.gettempdir(),
                               creationflags=CREATE_NEW_CONSOLE).returncode
@@ -1221,8 +1251,38 @@ def ejecutar_cli(orden_: list[str]) -> int:
     return subprocess.run(orden_, cwd=tempfile.gettempdir()).returncode
 
 
+def _cli_listo(esperar: Callable[[str], object]) -> Path | None:
+    """Deja `keepassxc-cli` listo para correrlo desde esta consola, o dice por qué no.
+
+    En Linux con el AppImage lo extrae si hace falta y apunta la configuración
+    de la unidad en el entorno (`KPXC_CONFIG`): si no, la CLI crearía la suya
+    en `~/.config/keepassxc` del equipo.
+
+    Returns:
+        El programa, o `None` si falta o no se ha podido preparar (ya se ha dicho).
+    """
+    programa = cli()
+    if programa is None or not programa.is_file():
+        print("Falta keepassxc-cli en el dispositivo: no se ha tocado nada.")
+        esperar("Pulsa Intro para cerrar esta ventana.")
+        return None
+    paquete = paquete_del_equipo()
+    try:
+        programa = cli_lanzable(programa)
+    except OSError as e:
+        print(f"No se ha podido preparar keepassxc-cli ({e}): no se ha tocado nada.")
+        esperar("Pulsa Intro para cerrar esta ventana.")
+        return None
+    if es_appimage(paquete):
+        donde = carpeta_config(paquete)
+        os.environ["KPXC_CONFIG"] = str(donde / INI)
+        os.environ["KPXC_CONFIG_LOCAL"] = str(donde / INI_LOCAL)
+    return programa
+
+
 def combinar_aqui(base: Path, copia: Path, llave: Path | None = None,
-                  esperar: Callable[[str], object] = input) -> int:
+                  esperar: Callable[[str], object] = input,
+                  sin_contrasena: bool = False) -> int:
     """Hace `runsync.py --combinar-llavero`: `keepassxc-cli merge` en esta consola.
 
     Dice qué va a pasar y deja que `keepassxc-cli` pida la contraseña. Si no
@@ -1233,35 +1293,147 @@ def combinar_aqui(base: Path, copia: Path, llave: Path | None = None,
         copia: La copia de conflicto.
         llave: El fichero llave de este equipo, si la base lo pide.
         esperar: Lo que espera a la persona antes de cerrar (`input`).
+        sin_contrasena: La base va solo con su fichero llave: no se pide
+            contraseña.
 
     Returns:
         El código de `keepassxc-cli`, o 2 si no está.
     """
-    print(f"prdrive · combinar el llavero\n\nLo de «{copia.name}» entra en «{base.name}». "
-          "Escribe la contraseña de la base: la pide KeePassXC, no prdrive.\n")
-    programa = cli()
-    if programa is None or not programa.is_file():
-        print("Falta keepassxc-cli en el dispositivo: no se ha tocado nada.")
-        esperar("Pulsa Intro para cerrar esta ventana.")
+    pide = ("" if sin_contrasena else
+            " Escribe la contraseña de la base: la pide KeePassXC, no prdrive.")
+    print(f"prdrive · combinar el llavero\n\nLo de «{copia.name}» entra en «{base.name}».{pide}\n")
+    programa = _cli_listo(esperar)
+    if programa is None:
         return 2
-    paquete = paquete_del_equipo()
-    try:
-        programa = cli_lanzable(programa)
-    except OSError as e:
-        print(f"No se ha podido preparar keepassxc-cli ({e}): no se ha tocado nada.")
-        esperar("Pulsa Intro para cerrar esta ventana.")
-        return 2
-    if es_appimage(paquete):
-        # Con la configuración de la unidad, como el programa: si no, la CLI
-        # crearía la suya en ~/.config/keepassxc del equipo.
-        donde = carpeta_config(paquete)
-        os.environ["KPXC_CONFIG"] = str(donde / INI)
-        os.environ["KPXC_CONFIG_LOCAL"] = str(donde / INI_LOCAL)
-    codigo = ejecutar_cli(orden_combinar(programa, base, copia, llave))
+    codigo = ejecutar_cli(orden_combinar(programa, base, copia, llave, sin_contrasena))
     if codigo != 0:
         print(f"\nNo se ha combinado (código {codigo}). No se ha tocado nada.")
         esperar("Pulsa Intro para cerrar esta ventana.")
     return codigo
+
+
+# --- un llavero sin contraseña: dejar una base solo con su fichero llave
+
+def orden_convertir(programa: Path, base: Path, llave: Path,
+                    llave_actual: Path | None = None) -> list[str]:
+    """Devuelve la orden que deja la base sin contraseña y con `llave` como único fichero llave.
+
+    `keepassxc-cli db-edit` pide la contraseña actual (y, si la base ya lleva un
+    fichero llave, hay que dárselo con `llave_actual`); guarda de forma atómica.
+    """
+    salida = [str(programa), "db-edit"]
+    if llave_actual is not None:
+        salida += ["--key-file", str(llave_actual)]
+    return salida + ["--set-key-file", str(llave), "--unset-password", str(base)]
+
+
+def convertir(base: Path, llave: Path, llave_actual: Path | None = None) -> int:
+    """Deja la base solo con su fichero llave, en una consola a la vista (la contraseña la pide la CLI).
+
+    Como `combinar()`: `runsync.py --convertir-llavero`. Es de módulo para que
+    los tests no abran nada.
+
+    Returns:
+        El código de `keepassxc-cli`: 0 si la base ya va solo con la llave; -1 si
+        la consola se cerró sin acabar.
+
+    Raises:
+        OSError: En Linux, si no hay ninguna terminal.
+    """
+    orden_ = ["--convertir-llavero", str(base), str(llave)]
+    if llave_actual is not None:
+        orden_ += ["--actual", str(llave_actual)]
+    return en_consola(orden_)
+
+
+def convertir_aqui(base: Path, llave: Path, llave_actual: Path | None = None,
+                   esperar: Callable[[str], object] = input) -> int:
+    """Hace `runsync.py --convertir-llavero`: `keepassxc-cli db-edit` en esta consola.
+
+    Returns:
+        El código de `keepassxc-cli`, o 2 si no está.
+    """
+    print(f"prdrive · dejar el llavero sin contraseña\n\n«{base.name}» pasará a abrirse "
+          "solo con su fichero llave. Escribe la contraseña actual de la base: la pide "
+          "KeePassXC, no prdrive.\n")
+    programa = _cli_listo(esperar)
+    if programa is None:
+        return 2
+    codigo = ejecutar_cli(orden_convertir(programa, base, llave, llave_actual))
+    if codigo != 0:
+        print(f"\nNo se ha cambiado (código {codigo}). La base sigue como estaba.")
+        esperar("Pulsa Intro para cerrar esta ventana.")
+    return codigo
+
+
+DB_EDIT_DESDE = (2, 7, 6)
+"""La primera versión de `keepassxc-cli` con `db-edit` (la del pin, 2.7.12, lo trae)."""
+SIN_CLI_CONVERTIR = ("Para dejar el llavero sin contraseña hace falta `keepassxc-cli` con "
+                     "`db-edit` (2.7.6 o posterior) y en este equipo no está: hazlo desde un "
+                     "equipo con KeePassXC en el dispositivo.")
+
+
+def sin_conversion() -> str | None:
+    """Devuelve por qué este equipo no puede dejar una base sin contraseña, o `None` si puede."""
+    programa = cli()
+    if programa is None or not programa.is_file():
+        return SIN_CLI_CONVERTIR
+    if paquete_del_equipo() is None:
+        externo = del_equipo()
+        version = version_del_equipo(externo) if externo is not None else None
+        try:
+            partes = tuple(int(x) for x in (version or "").split(".")[:3])
+        except ValueError:
+            partes = ()
+        if partes and partes < DB_EDIT_DESDE:
+            return (f"El keepassxc-cli de este equipo es el {version}: `db-edit` llega en la "
+                    f"{'.'.join(map(str, DB_EDIT_DESDE))}. " + SIN_CLI_CONVERTIR)
+    return None
+
+
+def sonda_cli(orden_: list[str], entorno_: dict[str, str]) -> int:
+    """Corre `keepassxc-cli` sin consola ni teclado y devuelve su código; de módulo para los tests.
+
+    Raises:
+        OSError, subprocess.TimeoutExpired: Si no arranca o no acaba.
+    """
+    banderas = CREATE_NO_WINDOW if os.name == "nt" else 0
+    return subprocess.run(orden_, cwd=tempfile.gettempdir(), env=entorno_,
+                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                          stderr=subprocess.DEVNULL, timeout=SONDA_TOPE,
+                          creationflags=banderas).returncode
+
+
+SONDA_TOPE = 120.0  # segundos
+"""Lo más que se espera a la sonda de la llave (en Linux, la primera vez extrae el AppImage)."""
+
+
+def llave_vale(base: Path, llave: Path) -> bool | None:
+    """Dice si la base se abre solo con ese fichero llave (`keepassxc-cli ls --no-password`).
+
+    Sin contraseña que pedir, no hace falta persona. Sirve para ver que el
+    fichero llave que se ha dado en un dispositivo nuevo es el de la base.
+
+    Returns:
+        True o False; `None` si no se ha podido probar (sin `keepassxc-cli`, o
+        no arranca): quien llama no lo da por malo.
+    """
+    programa = cli()
+    if programa is None or not programa.is_file():
+        return None
+    entorno_ = dict(os.environ)
+    try:
+        programa = cli_lanzable(programa)
+        paquete = paquete_del_equipo()
+        if es_appimage(paquete):
+            donde = carpeta_config(paquete)
+            entorno_["KPXC_CONFIG"] = str(donde / INI)
+            entorno_["KPXC_CONFIG_LOCAL"] = str(donde / INI_LOCAL)
+        codigo = sonda_cli([str(programa), "ls", "-q", "--no-password", "--key-file",
+                            str(llave), str(base)], entorno_)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return codigo == 0
 
 
 # --- abrir el llavero
@@ -1280,6 +1452,9 @@ class Apertura(NamedTuple):
         pide_llave: La base pide fichero llave (`[keychain] fichero_llave`).
         nombre_llave: Su nombre, solo como pista para la persona.
         llave: Su ruta en este equipo, si está apuntada y sigue ahí.
+        llave_interna: El fichero llave del llavero sin contraseña
+            (`[keychain] llave_interna`), que se le pasa a KeePassXC; `None` si
+            la base lleva contraseña.
         paquete: El paquete de KeePassXC de la unidad que se lanza.
         externo: Sin paquete para este equipo (Linux ARM64), el KeePassXC
             instalado en él.
@@ -1293,16 +1468,23 @@ class Apertura(NamedTuple):
     pide_llave: bool = False
     nombre_llave: str = ""
     llave: Path | None = None
+    llave_interna: Path | None = None
     paquete: str | None = None
     externo: Externo | None = None
 
 
 SIN_LLAVERO = "Este dispositivo no lleva llavero."
+SIN_CIFRAR = ("Este llavero va sin contraseña, solo con un fichero llave, y solo se abre en un "
+              "dispositivo cifrado. {motivo}")
 SIN_KEEPASSXC_AQUI = (
     "Para este equipo no hay KeePassXC en el dispositivo (no lo hay para Linux ARM64) ni "
     "instalado. Instala KeePassXC, de Flathub o de tu distribución (para las passkeys, la "
     "2.7.7 o posterior), y vuelve a abrir el llavero. Mientras, se sincroniza igual.")
 OTRO_SISTEMA = "El llavero se abre en Windows y en Linux; en este sistema solo se sincroniza."
+FALTA_LLAVE_INTERNA = (
+    "Este llavero va sin contraseña, solo con un fichero llave, y en este dispositivo no está "
+    "(«{ruta}»). Ábrelo desde «Ajustes → Llavero…»: ahí se da el fichero llave, que se "
+    "guarda en el dispositivo y nunca sube al remoto.")
 FALTA_KEEPASSXC = ("Falta KeePassXC en el dispositivo. Abre la ventana de prdrive y pulsa "
                    "«Actualizar…» en el recuadro de lo que lleva el dispositivo.")
 
@@ -1321,6 +1503,14 @@ def mirar_apertura(config: model.Config, ahora: float | None = None) -> Apertura
     """
     if config.llavero is None or config.pareja_llavero is None:
         return Apertura(SIN_LLAVERO)
+    interna = None
+    if config.pareja_llavero.llave_interna:
+        estado = cifrada.estado()
+        if not estado.cifrada:
+            return Apertura(SIN_CIFRAR.format(motivo=estado.motivo))
+        interna = llavero.carpeta() / model.LLAVERO_LLAVE
+        if not interna.is_file():
+            return Apertura(FALTA_LLAVE_INTERNA.format(ruta=interna))
     paquete = paquete_del_equipo()
     externo = del_equipo() if paquete is None else None
     if paquete is None and externo is None:
@@ -1346,7 +1536,7 @@ def mirar_apertura(config: model.Config, ahora: float | None = None) -> Apertura
     return Apertura(None, exe=exe, base=base, abierto=abierto, otro=otro, pasada=pasada,
                     pide_llave=pide,
                     nombre_llave=str(config.llavero.get("nombre_llave") or ""), llave=llave,
-                    paquete=paquete, externo=externo)
+                    llave_interna=interna, paquete=paquete, externo=externo)
 
 
 class Abierto(NamedTuple):
@@ -1389,7 +1579,7 @@ def abrir(ap: Apertura) -> Abierto:
         aviso = sin_passkeys(version_del_equipo(ap.externo))
         if aviso:
             avisos.append(aviso)
-        orden_ = orden_externo(ap.externo, ap.base)
+        orden_ = orden_externo(ap.externo, ap.base, llave_interna=ap.llave_interna)
         proc = lanzar(orden_, entorno())
         return Abierto(esperar_arranque(proc), tuple(avisos), Path(orden_[0]))
     if es_appimage(ap.paquete):
@@ -1416,7 +1606,7 @@ def abrir(ap: Apertura) -> Abierto:
                 avisos.append(f"El navegador no encontrará este KeePassXC: no se han podido "
                               f"escribir {len(fallos)} de sus {len(NAVEGADORES)} claves del "
                               f"registro ({fallos[0]}).")
-    proc = lanzar(orden(programa, ap.base, ap.paquete), entorno())
+    proc = lanzar(orden(programa, ap.base, ap.paquete, ap.llave_interna), entorno())
     return Abierto(esperar_arranque(proc), tuple(avisos), programa)
 
 

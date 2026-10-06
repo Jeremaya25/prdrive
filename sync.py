@@ -51,7 +51,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Mapping
 
-from common import (bisync, conflicts, fleet, historial, llavero, model, moderacion,
+from common import (bisync, cifrada, conflicts, fleet, historial, llavero, model, moderacion,
                     progress, results, revision, store)
 from common.model import Config, Pair
 
@@ -64,6 +64,12 @@ LLAVERO_ROTO = 2
 
 Es el «error sin clasificar» de rclone: cuenta como fallo, y la próxima pasada
 lo vuelve a intentar.
+"""
+LLAVERO_SIN_CIFRAR = 3
+"""Código del llavero sin contraseña en un dispositivo que no está cifrado: la pasada no corre.
+
+Sin cifrar, la llave estaría junto a la base: no se baja ni se sube nada.
+Cuenta como fallo, y la próxima pasada lo vuelve a comprobar.
 """
 CONFLICTS_SHOWN = 5
 """Ficheros en conflicto que se nombran en la salida."""
@@ -600,6 +606,14 @@ def run_pair(ctx: RunContext, pair: Pair) -> int:
         if pair.llavero:
             store.hide(pair.local_abs)
 
+    if pair.llavero and pair.llave_interna:
+        estado = cifrada.estado()
+        if not estado.cifrada:
+            print(f"[{pair.name}] NO SE SINCRONIZA: el llavero va sin contraseña y "
+                  f"{estado.motivo[:1].lower()}{estado.motivo[1:]} Cifra el dispositivo, "
+                  "o quita el llavero de aquí.")
+            record_result(ctx, pair, LLAVERO_SIN_CIFRAR, None, reloj)
+            return LLAVERO_SIN_CIFRAR
     if pair.llavero:
         motivo = llavero.preparar(pair)
         if motivo is not None:

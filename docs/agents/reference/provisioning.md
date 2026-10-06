@@ -30,7 +30,7 @@ Each step disables «Siguiente» until its condition is met. **No console fallba
 
 To a behavioural AV engine an unsigned `.exe` in `%TEMP%` spawning `powershell.exe` is the shape of a dropper. Windows is asked directly instead:
 
-- BitLocker state through `IShellItem2::GetInt32` with a PROPERTYKEY from `PSGetPropertyKeyFromName` (**never** a remembered one). Only state `On` counts as protected: *Waiting for activation* must fail, or the private key lands on a volume whose key is still in the clear.
+- BitLocker state (now `common/bitlocker.py`, re-exported by `install/crypto.py`, so the device can ask it too: `common/cifrada.py`) through `IShellItem2::GetInt32` with a PROPERTYKEY from `PSGetPropertyKeyFromName` (**never** a remembered one). Only state `On` counts as protected: *Waiting for activation* must fail, or the private key lands on a volume whose key is still in the clear.
 - The volume list through kernel32, needing `SetThreadErrorMode(SEM_FAILCRITICALERRORS)` (an empty card reader otherwise pops a "no disk" modal) and `TIPOS_OCULTOS` (`GetLogicalDrives` returns mapped network drives).
 - There is **no recovery-key feature**: reading one needs elevation.
 

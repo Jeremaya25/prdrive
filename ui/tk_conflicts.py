@@ -218,7 +218,9 @@ def seccion(padre, ventana, config: Config,
         llave = llavero_editor.llave_de_este_equipo(
             config, lambda nombre: tk_llavero.elegir_llave(ventana, nombre))
         try:
-            plan = conflict_editor.plan_combinar(conflicto, llave, llavero.keepassxc_abierto())
+            plan = conflict_editor.plan_combinar(
+                conflicto, llave, llavero.keepassxc_abierto(),
+                sin_contrasena=llavero_editor.sin_contrasena(config))
         except conflict_editor.ResolucionImposible as e:
             messagebox.showerror(TITLE, str(e), parent=ventana)
             return

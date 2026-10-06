@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping
 
-from common import catalog, components, config_file, keepassxc, llavero, model
+from common import catalog, cifrada, components, config_file, keepassxc, llavero, model
 from common.model import ConfigError
 
 from . import InstallError, deploy, keepassxc_bin
@@ -54,8 +54,12 @@ class Plan:
     avisos: list[str] = field(default_factory=list)
 
 
+SIN_COMPROBAR = "No se ha podido comprobar el cifrado del dispositivo."
+
+
 def pensar(device_root: Path | str, cat: Catalog | None, origen: Path | None,
-           pide: bool = False, nombre_llave: str = "", llave: Path | None = None) -> Plan:
+           pide: bool = False, nombre_llave: str = "", llave: Path | None = None,
+           cifrado: cifrada.Cifrado | None = None) -> Plan:
     """Decide cómo entra el llavero en el dispositivo, sin tocar nada.
 
     Args:
@@ -64,18 +68,29 @@ def pensar(device_root: Path | str, cat: Catalog | None, origen: Path | None,
         origen: La base que se da, o `None` para traer la del remoto.
         pide: Si la base que se da pide fichero llave.
         nombre_llave: Su nombre, como pista para los demás dispositivos.
-        llave: Dónde está en este equipo.
+        llave: Dónde está en este equipo. Con el remoto en modo sin contraseña
+            (`llave_interna`) es el fichero llave que se copia al dispositivo.
+        cifrado: Si el dispositivo que se prepara está cifrado (no el equipo
+            del asistente: `cifrada.estado()` miraría el equivocado). Sin él,
+            no se da por cifrado.
 
     Raises:
-        InstallError: Si no hay nada que traer, o lo que se da no es una base
-            de KeePassXC entera.
+        InstallError: Si no hay nada que traer, lo que se da no es una base de
+            KeePassXC entera, o el remoto va sin contraseña y el dispositivo no
+            está cifrado o falta el fichero llave.
     """
     remota = tabla_remota(cat)
+    if cifrado is None:
+        cifrado = cifrada.Cifrado(False, "", SIN_COMPROBAR)
     try:
         alta = llavero.decidir_alta(Path(device_root) / model.LLAVERO_LOCAL, remota,
-                                    origen, pide, nombre_llave)
+                                    origen, pide, nombre_llave, cifrado=cifrado)
     except ValueError as e:
         raise InstallError(str(e)) from e
+    interna = alta.tabla.get("llave_interna") is True
+    if interna and (llave is None or not llave.is_file()):
+        raise InstallError("El llavero del remoto va sin contraseña, solo con un fichero "
+                           "llave: da el fichero llave (el que guardó quien creó el llavero).")
     plan = Plan(alta, origen, llave)
     base = alta.tabla["base"]
     if remota is not None:
@@ -90,7 +105,11 @@ def pensar(device_root: Path | str, cat: Catalog | None, origen: Path | None,
     if alta.subir:
         plan.lineas.append("El catálogo del remoto apunta el llavero, para que los demás "
                            "dispositivos puedan traerlo.")
-    if alta.tabla.get("fichero_llave"):
+    if interna:
+        plan.lineas.append("El llavero va sin contraseña: se abre solo con el fichero llave, "
+                           f"que se copia al dispositivo ({model.LLAVERO_LOCAL}/"
+                           f"{model.LLAVERO_LLAVE}, cifrado) y no sube nunca al remoto.")
+    elif alta.tabla.get("fichero_llave"):
         plan.lineas.append("La base pide fichero llave: se apunta dónde está en este equipo, "
                            "y el fichero no se copia ni se lee.")
     if alta.aviso_formato:
@@ -169,7 +188,10 @@ def aplicar(plan: Plan, device_root: Path | str, rclone: Rclone, pedido: str,
         config_file.save(crudo, path=ruta)
         hechos.append("[keychain] en sync_config.toml")
         hechos += [str(p) for p in llavero.escribir_lanzador(raiz)]
-        if plan.llave is not None:
+        if plan.alta.tabla.get("llave_interna") is True:
+            llavero.poner_llave(plan.llave, raiz)
+            hechos.append(f"fichero llave → {carpeta.name}/{model.LLAVERO_LLAVE}")
+        elif plan.llave is not None:
             keepassxc.apuntar_llave(plan.llave, estado=app / "state")
     except (OSError, ConfigError) as e:
         raise InstallError(f"No se ha podido poner el llavero en el dispositivo: {e}") from e

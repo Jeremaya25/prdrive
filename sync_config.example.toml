@@ -90,10 +90,18 @@ interval_minutes = 30
 # sepa cuál buscar. Dónde está en cada equipo lo apunta prdrive aparte
 # (`.prdrive/state/keychain.json`).
 #
+# `llave_interna = true` es el llavero SIN contraseña: la base se abre solo con
+# un fichero llave que genera prdrive y que se guarda en `.keychain/llave.keyx`
+# de cada dispositivo (nunca sube al remoto; hay que darlo en cada dispositivo
+# nuevo). Exige `fichero_llave = true`, y el llavero solo se sincroniza y se
+# abre en un dispositivo CIFRADO (VeraCrypt o BitLocker). Lo pone «Ajustes →
+# Llavero… → Usar esta base, sin contraseña…».
+#
 # [keychain]
 # base = "personal.kdbx"          # un nombre suelto que acabe en .kdbx, en minúsculas
 # fichero_llave = true
 # nombre_llave = "personal.keyx"  # solo una pista: ni ruta ni huella
+# llave_interna = true            # sin contraseña, solo con el fichero llave
 
 
 # ---------------------------------------------------------------------------

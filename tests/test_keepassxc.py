@@ -26,7 +26,7 @@ from _harness import Checks, sandbox, tmpdir
 
 import ui
 import ui.tk as uitk
-from common import components, keepassxc, llavero, model, pins, registro, results, store
+from common import cifrada, components, keepassxc, llavero, model, pins, registro, results, store
 from ui import llavero_editor
 
 c = Checks("abrir el llavero (common/keepassxc.py)")
@@ -511,6 +511,41 @@ try:
         c("  sin tocar su configuración, que la reescribiría al salir",
           ini.read_text(encoding="utf-8"), "[General]\nUseAtomicSaves=false\n")
         eq.nuestro = False
+
+        # el llavero sin contraseña: la llave se comprueba antes y se pasa al abrir
+        llave_interna = llavero.carpeta() / model.LLAVERO_LLAVE
+        llave_interna.write_text("a" * 64, encoding="ascii")
+        real_estado, real_vale = cifrada.estado, keepassxc.llave_vale
+        cifrada.estado = lambda app_dir=None: cifrada.Cifrado(True, cifrada.VERACRYPT)
+        vale = {"v": True}
+        keepassxc.llave_vale = lambda base, llave: vale["v"]
+        try:
+            interna = config(fichero_llave=True, llave_interna=True)
+            hecho, dicho, esperado, preguntas = abrir(interna)
+            c("sin contraseña: se abre con --keyfile y la llave del dispositivo, sin preguntar",
+              (hecho, preguntas, eq.lanzadas[-1][0][-3:-1]),
+              (True, [], ["--keyfile", str(llave_interna)]))
+            c("  tras comprobar la llave", llavero_editor.COMPROBANDO in esperado, True)
+            n = len(eq.lanzadas)
+            vale["v"] = False
+            hecho, dicho, _, _ = abrir(interna)
+            c("  si la llave no abre la base, se dice y no se lanza nada",
+              (hecho, dicho, len(eq.lanzadas)), (False, [llavero_editor.LLAVE_NO_VALE], n))
+            vale["v"] = None
+            c("  si no se ha podido probar, se abre (KeePassXC dirá si falla)",
+              abrir(interna)[0], True)
+            cifrada.estado = lambda app_dir=None: cifrada.Cifrado(False, "", "Sin cifrar.")
+            n = len(eq.lanzadas)
+            hecho, dicho, _, _ = abrir(interna)
+            c("  sin cifrar, no se abre", (hecho, len(eq.lanzadas)), (False, n))
+            c.contains("    y se dice", dicho[0], "solo se abre en un dispositivo cifrado")
+            cifrada.estado = lambda app_dir=None: cifrada.Cifrado(True, cifrada.VERACRYPT)
+            llave_interna.unlink()
+            c.contains("  sin la llave en el dispositivo, se dice cómo darla", abrir(interna)[1][0],
+                       "Ajustes → Llavero")
+        finally:
+            cifrada.estado, keepassxc.llave_vale = real_estado, real_vale
+            llave_interna.unlink(missing_ok=True)
 
         # KeePassXC que no arranca
         eq.codigo = 0xC0000135

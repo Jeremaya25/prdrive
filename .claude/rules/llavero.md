@@ -1,6 +1,7 @@
 ---
 paths:
   - "common/llavero.py"
+  - "common/cifrada.py"
   - "common/kdbx.py"
   - "common/keepassxc.py"
   - "common/registro.py"
@@ -9,6 +10,8 @@ paths:
   - "ui/llavero_editor.py"
   - "ui/tk_llavero.py"
   - "tests/test_llavero.py"
+  - "tests/test_cifrada.py"
+  - "tests/test_llavero_interna.py"
   - "tests/test_kdbx.py"
   - "tests/test_keepassxc_bin.py"
   - "tests/test_llavero_vigilancia.py"

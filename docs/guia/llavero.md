@@ -57,6 +57,35 @@ vacía y saldría un aviso de error).
 En una unidad sin cifrar, esa ruta se puede leer: dice dónde está tu fichero
 llave en cada equipo, no qué tiene.
 
+### Llavero sin contraseña (solo con fichero llave)
+
+Si tu dispositivo está **cifrado** (VeraCrypt o BitLocker), puedes dejar el
+llavero **sin contraseña**: la base se abre solo con un fichero llave que genera
+prdrive. El cifrado del dispositivo es entonces la otra barrera, y no tienes que
+escribir una contraseña cada día.
+
+Se activa en **Ajustes → Llavero… → Usar esta base, sin contraseña…**:
+
+1. Eliges tu base. prdrive te pide **dónde guardar una copia de la llave, fuera
+   del dispositivo** (un sitio tuyo, otro pendrive o un gestor): **si la pierdes
+   no hay forma de abrir el llavero**.
+2. Se abre una consola de KeePassXC que te pide la contraseña actual de la base
+   (prdrive no la ve) y la deja **sin contraseña**: lo que protegiera la base
+   hasta ahora (contraseña, fichero llave) **se sustituye**. Tu base original
+   no se toca.
+3. Desde entonces el remoto lo apunta, y **solo se puede traer a dispositivos
+   cifrados**.
+
+La llave **no sube al remoto**: en cada dispositivo nuevo, al elegir «Traer el
+del remoto», prdrive te pide el fichero llave (el que guardaste) y lo copia a
+`.keychain/` dentro del dispositivo. En un dispositivo sin cifrar no se puede
+activar, y si un dispositivo deja de estar cifrado el llavero deja de
+sincronizarse y de abrirse (no se borra nada).
+
+Límites de esta versión: los dispositivos que **ya tenían** el llavero no se
+enteran del cambio, no se puede volver a una contraseña ni cambiar la llave, y
+se crea desde la ventana (no desde el asistente de instalación).
+
 ## Cada día
 
 **Abrir llavero**, en la ventana de prdrive, o doble clic en **`Llavero.bat`**

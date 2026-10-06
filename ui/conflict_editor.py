@@ -332,12 +332,15 @@ class CombinarPlan:
         huellas: Tamaño y fecha de la base y las copias cuando se pensó el plan.
         consequences: Una línea por consecuencia.
         warnings: Lo que conviene saber antes de confirmar.
+        sin_contrasena: La base va solo con su fichero llave (`llave_interna`):
+            no se pide contraseña.
     """
     conflicto: Conflicto
     llave: Path | None
     huellas: dict[Path, tuple[int, int] | None]
     consequences: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    sin_contrasena: bool = False
 
     def execute(self) -> list[str]:
         """Combina cada copia en la base, de una en una, y la aparta a `.prversions/`.
@@ -359,7 +362,8 @@ class CombinarPlan:
         sello = datetime.now().strftime("~%Y%m%d-%H%M%S")
         hechos: list[str] = []
         for copia in self.conflicto.copias:
-            codigo = keepassxc.combinar(base, copia, self.llave)
+            extra = {"sin_contrasena": True} if self.sin_contrasena else {}
+            codigo = keepassxc.combinar(base, copia, self.llave, **extra)
             if codigo != 0:
                 raise ResolucionImposible(no_combinado(copia, codigo))
             destino = en_versiones(self.conflicto, copia, sello)
@@ -375,7 +379,8 @@ class CombinarPlan:
         return hechos
 
 
-def plan_combinar(conflicto: Conflicto, llave: Path | None, abierto: bool = False) -> CombinarPlan:
+def plan_combinar(conflicto: Conflicto, llave: Path | None, abierto: bool = False,
+                  sin_contrasena: bool = False) -> CombinarPlan:
     """Devuelve el plan de combinar en la base del llavero lo de sus copias.
 
     Args:
@@ -384,6 +389,8 @@ def plan_combinar(conflicto: Conflicto, llave: Path | None, abierto: bool = Fals
         abierto: Si el KeePassXC de la unidad está abierto: verá la base
             cambiar y la recargará (S3), o la combinará con lo que tenga sin
             guardar (S5).
+        sin_contrasena: La base va solo con su fichero llave: no se pide
+            contraseña, y sin la llave no se puede combinar.
 
     Raises:
         ResolucionImposible: Si no hay con qué combinar.
@@ -403,18 +410,28 @@ def plan_combinar(conflicto: Conflicto, llave: Path | None, abierto: bool = Fals
             "o es el KeePassXC de Flathub): no se puede "
             "combinar desde prdrive. Se puede desde la ventana de KeePassXC, con «Base de "
             "datos → Combinar desde base de datos…».")
+    if sin_contrasena and llave is None:
+        raise ResolucionImposible(
+            "Este llavero va sin contraseña y su fichero llave no está en el dispositivo: "
+            "sin él no se puede combinar. Dalo en «Ajustes → Llavero…».")
     plan = CombinarPlan(conflicto=conflicto, llave=llave,
-                        huellas={v.ruta: huella(v.ruta) for v in conflicto.versiones})
+                        huellas={v.ruta: huella(v.ruta) for v in conflicto.versiones},
+                        sin_contrasena=sin_contrasena)
     base = conflicto.original.name
     for v, nombre in etiquetas(conflicto):
         if not v.es_original:
             plan.consequences.append(
                 f"Lo de la {nombre} ({describir(v.ruta)}) entra en «{base}», que se queda "
                 "con lo de las dos.")
-    plan.consequences.append(
-        "Se abre una consola de KeePassXC que pide la contraseña de la base"
-        + (" (el fichero llave de este equipo ya va puesto)" if llave else "")
-        + ". prdrive no la ve.")
+    if sin_contrasena:
+        plan.consequences.append(
+            "Se abre una consola de KeePassXC que combina con el fichero llave del "
+            "dispositivo: no pide contraseña.")
+    else:
+        plan.consequences.append(
+            "Se abre una consola de KeePassXC que pide la contraseña de la base"
+            + (" (el fichero llave de este equipo ya va puesto)" if llave else "")
+            + ". prdrive no la ve.")
     plan.consequences.append(
         f"Cada copia combinada pasa a {model.VERSIONS_DIR}, de donde se puede recuperar. Si "
         "no se combina, no se toca nada.")
