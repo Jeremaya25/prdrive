@@ -32,7 +32,7 @@ cuenta con passkeys.
 
 ## 2. Fallos que salieron, y su arreglo
 
-Seis, todos invisibles para los tests (rclone y KeePassXC simulados). Los cinco primeros salieron en la nube; el sexto, en Windows (§4):
+Siete, todos invisibles para los tests (rclone y KeePassXC simulados). Los cinco primeros salieron en la nube; el sexto, en Windows, y el séptimo, en Linux sin root (§4):
 
 | # | Qué pasaba | Por qué | Arreglo |
 |---|---|---|---|
@@ -42,6 +42,7 @@ Seis, todos invisibles para los tests (rclone y KeePassXC simulados). Los cinco 
 | 4 | Quitada la unidad sin expulsar, el agente dejaba los manifiestos del navegador | Limpiaba justo después de pedirle a KeePassXC que se cerrara, y tarda ~0,5 s en salir | `23493a3`: queda pendiente y se hace cuando sale |
 | 5 | Tras «Combinar» un conflicto que ganó el remoto, salía otro conflicto con una copia que no traía nada | **Fallo de rclone** (v1.75.1, y sigue en `master`): `modifyListing()` quita el nombre de la base de los dos listados al apuntar el renombrado del perdedor de este lado | `b5d6047`: otra pasada en seguida, con las dos iguales, y bisync la vuelve a apuntar |
 | 6 | En Windows, con un remoto `type = local`, el llavero decía siempre «con cambios que aún no han subido» y no saltaba el arreglo del 5 | `bisync.expected_prefix()` no ponía el `Root()` del backend local (con `\\?\` delante en Windows; la ruta limpia en Linux), y no encontraba el listado. Lo mismo habría hecho «Reparación» diciendo que el baseline «no es de esta pareja» | `0909507`: `raiz_local()` replica `cleanRootPath()`, contrastado con rclone v1.75.1 |
+| 7 | **En Linux, sin root, prdrive no reconocía nunca su KeePassXC**: el vigilante se iba a los 30 s, «Expulsar» no lo cerraba y el agente no cerraba el de una unidad quitada | KeePassXC se hace no volcable al arrancar (`prctl(PR_SET_DUMPABLE, 0)`) y su `/proc/<pid>/exe` pasa a ser de root; prdrive buscaba los `keepassxc` por ahí. En la nube no se vio porque yo era root | `store.sin_exe()` y `store.nombres()`: por su nombre (`comm`), que sí se lee |
 
 El 2 escondía al 3 y al 5: con cada pasada siendo un resync no había ni
 conflictos que combinar ni borrados que propagar. Del 5 convendría abrir una
@@ -111,13 +112,17 @@ entrada en vez de en la consola), el borrado de la copia, y expulsar.
     fallo 5), y «Reparación» diría que el baseline «no es de esta pareja».
     Solo pasa con un remoto `type = local` (un disco o una carpeta de red
     puestos como remoto) en Windows: con SFTP, Drive y demás, no.
-- **En `ubuntu-latest`**: KeePassXC **no llega a arrancar**. «Abrir llavero»
-  no dice nada, pero el proceso no aparece y el vigilante se va a los 30 s (sin
-  pantalla del todo no es un escritorio: probablemente le falta alguna biblioteca
-  del sistema que el AppImage no lleva). Y la prueba se colgaba esperando al
-  proxy hasta el tope del CI: ahora espera 15 s y, si KeePassXC no se ve, cuenta
-  por qué (`ldd` de lo extraído y lo que dice al arrancarlo a mano). Pendiente de
-  esa ejecución.
+- **En `ubuntu-latest`**, sin root: KeePassXC **arrancaba, pero prdrive no lo
+  reconocía** (fallo 7). El diagnóstico de la prueba lo dejó claro: `ldd` no
+  echa nada en falta, y al arrancar otro a mano dice «Another instance of
+  KeePassXC is already running». Con un usuario sin privilegios aquí: su
+  `/proc/<pid>/exe` no se deja leer, su `comm` y su `cmdline` sí. Lo demás
+  (activar, la pasada de conflicto, «Combinar», el freno, la pasada que vuelve a
+  apuntar la base, expulsar) fue bien. La prueba se colgaba además esperando al
+  proxy: ahora espera 15 s.
+- **En `windows-latest`, tras el arreglo 6** (`8b9bf74`): todo bien. El
+  llavero encuentra su listado (`nas_____D__…`), la ventana dice «al día» tras
+  expulsar, y tras el conflicto salta la pasada que vuelve a apuntar la base.
 
 ## 5. Lo que queda para el equipo de verdad
 

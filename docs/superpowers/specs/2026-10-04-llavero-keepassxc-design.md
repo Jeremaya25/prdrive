@@ -1,6 +1,6 @@
 # El llavero (`.keychain`): KeePassXC de viaje y una base que se sincroniza sola
 
-Fecha: 2026-10-04 · Estado: **decidida**; las cuatro fases hechas (sin probar en real: §15); lo que cambió al hacer la 1, en §16, la 3, en §17, y la 2, en §18; probada en la nube y en GitHub Actions, con seis arreglos, en §19 · Versión objetivo:
+Fecha: 2026-10-04 · Estado: **decidida**; las cuatro fases hechas (sin probar en real: §15); lo que cambió al hacer la 1, en §16, la 3, en §17, y la 2, en §18; probada en la nube y en GitHub Actions, con siete arreglos, en §19 · Versión objetivo:
 0.6.0 · Sustituye a la primera propuesta del mismo día (`3cdf1d5`) · Pruebas de
 las que sale:
 `docs/superpowers/pruebas/2026-10-04-keepassxc-portatil.md` y sus resultados
@@ -821,7 +821,7 @@ KeePassXC 2.7.6 de Ubuntu) y en GitHub Actions, Windows y Linux, con
 Resultados y qué R-n de §15 cubre:
 `docs/superpowers/pruebas/2026-10-05-llavero-nube-resultados.md`.
 
-Dio con seis fallos que los tests no podían ver, porque simulan rclone y
+Dio con siete fallos que los tests no podían ver, porque simulan rclone y
 KeePassXC:
 
 - **La primera pasada fallaba siempre** en un remoto recién activado: nadie
@@ -842,3 +842,6 @@ KeePassXC:
 - **En Windows, con un remoto de tipo `local`, prdrive no encontraba el listado
   del llavero**: rclone lo nombra con la ruta absoluta y `\\?\` delante, y
   `bisync.expected_prefix()` no. Ahora replica `cleanRootPath()` (`0909507`).
+- **En Linux, sin root, prdrive no reconocía su KeePassXC**: KeePassXC se hace no
+  volcable al arrancar y su `/proc/<pid>/exe` solo lo lee root. Ahora va por su
+  nombre (`store.sin_exe()`). Salió en `ubuntu-latest`; en la nube yo era root.

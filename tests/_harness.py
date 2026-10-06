@@ -192,6 +192,14 @@ _keepassxc.bases_navegador = lambda: {"config": Path(os.environ["XDG_CONFIG_HOME
                                       "data": Path(os.environ["XDG_DATA_HOME"]),
                                       "home": _casa}
 
+# Ni los procesos de verdad que no se dejan mirar (`store.sin_exe()`): un
+# KeePassXC abierto en el equipo de quien corre los tests se colaría en los
+# suyos. El test que la prueba guarda la de verdad (`REAL_SIN_EXE`).
+from common import store as _store  # noqa: E402
+
+REAL_SIN_EXE = _store.sin_exe
+_store.sin_exe = lambda: {}
+
 # Varios tests fuerzan `IS_WIN = False` para pasar por la rama de Linux, y ahí
 # «¿vive este pid?» es `os.kill(pid, 0)`. En Windows eso NO pregunta: 0 es
 # CTRL_C_EVENT y le manda un Ctrl+C a toda la consola (el test, run_all y el

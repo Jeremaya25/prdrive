@@ -349,13 +349,50 @@ def _barrer_versiones(actual: str) -> None:
         otras = [p for p in cache_equipo().iterdir() if p.is_dir() and p.name != actual]
     except OSError:
         return
+    # Uno abierto de una versión que no se sabe (`abiertos_de_la_cache()`) puede
+    # ser de cualquiera: esta vez no se barre ninguna.
+    sin_version = None in abiertos_de_la_cache().values()
     for otra in otras:
         resto = _RESTO.fullmatch(otra.name)
         if resto is not None:
             if not store.pid_alive(int(resto.group(1))):
                 shutil.rmtree(otra, ignore_errors=True)
-        elif not otra.name.startswith(".") and not store.procesos_desde(otra):
+        elif not otra.name.startswith(".") and not sin_version \
+                and not store.procesos_desde(otra):
             shutil.rmtree(otra, ignore_errors=True)
+
+
+def lanzado_por_prdrive(orden_: list[str]) -> bool:
+    """Indica si esa línea de órdenes es la de un KeePassXC que abrió prdrive en Linux.
+
+    Es la de `orden()`: su `--config` está en `keepassxc/config/linux/` de una
+    unidad, sea cuál sea. Así se lanza siempre de lo extraído en la caché.
+    """
+    final = (components.KEEPASSXC_SUBDIR, *CONFIG_LINUX.parts)
+    return any(Path(arg).parent.parts[-len(final):] == final
+               for arg in orden_[1:] if os.path.isabs(arg))
+
+
+def abiertos_de_la_cache() -> dict[int, str | None]:
+    """Devuelve los KeePassXC que corren de lo extraído: `{pid: su versión, o None si no se sabe}`.
+
+    Se ve por su ejecutable (`store.procesos_desde()`), salvo para quien no es
+    root: KeePassXC se hace no volcable al arrancar y su `exe` no se deja
+    mirar (`store.sin_exe()`). Entonces cuenta uno que abrió prdrive
+    (`lanzado_por_prdrive()`), sin saber de qué versión.
+    """
+    salida: dict[int, str | None] = {}
+    cache = cache_equipo()
+    for pid, exe in store.procesos_desde(cache).items():
+        if Path(exe).name == llavero.KEEPASSXC_LINUX:
+            try:
+                salida[pid] = Path(exe).resolve().relative_to(cache.resolve()).parts[0]
+            except (OSError, ValueError, IndexError):
+                salida[pid] = None
+    for pid, nombre in store.sin_exe().items():
+        if nombre == llavero.KEEPASSXC_LINUX and lanzado_por_prdrive(store.orden_de(pid)):
+            salida.setdefault(pid, None)
+    return salida
 
 
 class Externo(NamedTuple):
@@ -891,8 +928,7 @@ def plan_cerrar_navegador_linux(muertas: bool = False) -> list[Path]:
             que hace el agente cuando una unidad se va sin expulsar. Uno abierto
             puede ser el de otra unidad, que los sigue usando.
     """
-    if muertas and any(Path(exe).name == llavero.KEEPASSXC_LINUX
-                       for exe in store.procesos_desde(cache_equipo()).values()):
+    if muertas and abiertos_de_la_cache():
         return []
     return [ruta for _, ruta, _ in manifiestos_linux() if manifiesto_nuestro(ruta)]
 
@@ -972,8 +1008,8 @@ def otro_abierto() -> bool:
     """
     nuestros = set(llavero.pids_keepassxc(model.APP_DIR))
     nombres = {components.KEEPASSXC_EXE.lower(), llavero.KEEPASSXC_LINUX}
-    return any(Path(exe).name.lower() in nombres and pid not in nuestros
-               for pid, exe in store.procesos().items())
+    return any(nombre.lower() in nombres and pid not in nuestros
+               for pid, nombre in store.nombres().items())
 
 
 def orden(exe: Path, base: Path, llave: Path | None = None,
