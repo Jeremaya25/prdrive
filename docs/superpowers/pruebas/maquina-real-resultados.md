@@ -13,3 +13,7 @@ Una línea por fila y ejecución, la más reciente al final. Resultado: `ok N/N`
 
 | Fila | Sistema | Fecha | Ejecución | Resultado | Notas |
 |---|---|---|---|---|---|
+| F9 | L | 2026-10-06 | [run](https://github.com/Jeremaya25/prdrive/actions/runs/37483534994) | ok 39/39 | inotify en vfat (FAT32), exFAT (con linux-modules-extra) y ext4 sobre loop: crear, guardar, renombrar, carpeta nueva y movida, 5 000 ficheros |
+| F10 | L | 2026-10-06 | [run](https://github.com/Jeremaya25/prdrive/actions/runs/37483534994) | ok 8/8 | umount de vfat y exFAT con vigilancias puestas: rc 0 y la pareja se pierde |
+| F11 | L | 2026-10-06 | [run](https://github.com/Jeremaya25/prdrive/actions/runs/37483534994) | ok 4/4 | NFS de la propia máquina: mountinfo dice nfs4, sin avisos y con motivo, el recorrido la ve |
+| F12 | L | 2026-10-06 | [run](https://github.com/Jeremaya25/prdrive/actions/runs/37483534994) | ok 4/4 | max_user_watches = 20 000: 10 100 carpetas no caben en la mitad, 3 000 sí y otro programa pone 9 000 más |
