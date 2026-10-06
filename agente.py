@@ -21,6 +21,8 @@ Se usa como `python agente.py ORDEN`:
 - `ajuste CLAVE VALOR`: `pedir_al_iniciar sí|no` o `espera_unidad_nueva SEG`.
 - `actualizar`: baja la versión nueva y la pone (lo que hace la bandeja).
 - `actualizar ID`: pone en esa raíz el código de la versión del agente.
+- `expulsar ID`: suelta esa unidad extraíble para poder quitarla (el «Expulsar» de
+  la bandeja).
 
 Las órdenes que no son `run` no hacen nada por sí mismas: dejan la petición en
 el buzón del agente (`equipo.pedir()`), que es quien escribe su configuración.
@@ -145,7 +147,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 import penwatch  # noqa: E402
-from common import (APP_NAME, avisos, catalog, components, equipo,  # noqa: E402
+from common import (APP_NAME, avisos, catalog, components, equipo, expulsar,  # noqa: E402
                     keepassxc, llavero, model, moderacion, store, update, vestibulo)
 from common import huella as huellas  # noqa: E402  (`huella()` es la del código de una raíz)
 from common import planificador as pl  # noqa: E402
@@ -206,6 +208,14 @@ GRACIA_ABRIR = 20.0
 """Segundos tras salir VeraCrypt para ver la raíz abierta.
 
 Si no se ve, se da por cancelada.
+"""
+ESPERA_EXPULSION = 60.0
+"""Segundos que se espera a que acabe una expulsión ya lanzada."""
+GRACIA_EXPULSION = 30.0
+"""Segundos que una expulsión que fue bien sigue contando mientras la unidad se ve.
+
+Pasado ese tiempo con la unidad todavía ahí (el sistema no la ha retirado), se
+vuelve a atender.
 """
 COLA_SALIDA = 64 * 1024
 """Bytes que se leen de la salida de una pasada."""
@@ -945,6 +955,9 @@ class Conexion:
             raíz (`_copias_del_llavero()`).
         copias_leidas: Cuándo se miraron.
         copias_avisadas: Las que ya se han avisado en esta conexión.
+        compatible: Si es un volumen que se puede expulsar
+            (`expulsar.compatible()`), o `None` si todavía no se ha mirado.
+        compatible_leido: Cuándo se miró.
     """
     id: str
     raiz: Path
@@ -979,6 +992,26 @@ class Conexion:
     copias: tuple[str, ...] = ()
     copias_leidas: float = -math.inf
     copias_avisadas: frozenset[str] = frozenset()
+    compatible: bool | None = None
+    compatible_leido: float = -math.inf
+
+
+@dataclass
+class Expulsion:
+    """«Expulsar» de una unidad, pedido y todavía no acabado.
+
+    Args:
+        desde: Cuándo se pidió.
+        lanzada: Cuándo se lanzó la expulsión (en un hilo), o `None` mientras
+            espera a que nada lo impida.
+        resultado: Cómo acabó, o `None` si sigue en marcha. Lo escribe el hilo
+            y lo lee el agente.
+        avisada: Si ya se ha dicho cómo acabó.
+    """
+    desde: float
+    lanzada: float | None = None
+    resultado: expulsar.Resultado | None = None
+    avisada: bool = False
 
 
 @dataclass
@@ -1233,6 +1266,7 @@ class Agente:
         pedidas: Las raíces cifradas cuya contraseña ya se pidió al iniciar
             sesión.
         bloqueos: Los «Bloquear» en marcha.
+        expulsiones: Los «Expulsar» en marcha, por id de la unidad.
         fantasmas: Los volúmenes fantasma ya dichos.
         recorridos: Los recorridos hechos desde que arrancó.
         sin_rclone_avisado: Si ya se dijo que el agente no tiene rclone.
@@ -1289,6 +1323,7 @@ class Agente:
     desbloqueos: dict[str, Desbloqueo] = field(default_factory=dict)
     pedidas: set[str] = field(default_factory=set)
     bloqueos: dict[str, Bloqueo] = field(default_factory=dict)
+    expulsiones: dict[str, Expulsion] = field(default_factory=dict)
     fantasmas: set[str] = field(default_factory=set)
     recorridos: int = 0
     sin_rclone_avisado: bool = False
@@ -1344,6 +1379,7 @@ class Agente:
         self._cambios_de_red(ahora)
         self._buzones_de_raices(ahora)
         self._bloqueos(ahora)
+        self._expulsiones(ahora)
         for con in self.conexiones.values():
             self._contrato(con, ahora)
             self._copias_del_llavero(con, ahora)
@@ -1881,6 +1917,13 @@ class Agente:
                 self._soltar(con)
             con.motivo = "bloqueándose"
             return
+        if con.id in self.expulsiones:
+            # Se está expulsando: igual que al bloquearla, y tampoco se
+            # vuelve a tomar el lock mientras la unidad siga a la vista.
+            if not ocupada:
+                self._soltar(con)
+            con.motivo = "expulsándose"
+            return
         if con.actualizacion is not None:
             # Igual que al bloquearla: se suelta acabada la pareja en curso, y
             # entonces se lanza la actualización (`_actualizaciones`).
@@ -2031,8 +2074,8 @@ class Agente:
     def _raices(self) -> list[pl.Raiz]:
         """Devuelve las raíces que el planificador puede atender.
 
-        Las que tienen nuestro lock y su servicio y no se están bloqueando ni
-        actualizando. De la raíz de la pasada cortada se quita su pareja
+        Las que tienen nuestro lock y su servicio y no se están bloqueando,
+        expulsando ni actualizando. De la raíz de la pasada cortada se quita su pareja
         mientras espera. Con su KeePassXC abierto, el llavero trae lo de otro
         dispositivo cada `llavero.REMOTO_ABIERTO` como mucho, también en modo
         `sync`.
@@ -2041,7 +2084,7 @@ class Agente:
         cortada = self._cortada()
         for con in self.conexiones.values():
             if con.lock is None or con.servicio is None or con.id in self.bloqueos \
-                    or con.actualizacion is not None:
+                    or con.id in self.expulsiones or con.actualizacion is not None:
                 continue
             modo = self.ajustes.unidades[con.id].modo
             intervalo = math.inf if modo == equipo.SYNC else con.servicio.minutos * 60
@@ -2742,6 +2785,115 @@ class Agente:
             return False
         b.llavero_cerrado = True
         return True
+    def _compatible(self, con: Conexion) -> bool:
+        """Indica si el volumen de esa unidad es de los que se pueden expulsar.
+
+        Lo decide `expulsar.compatible()`, que lee del sistema: como mucho una
+        vez cada `MIRAR_EMBLEMA`, y al conectarla.
+        """
+        ahora = self.reloj()
+        if con.compatible is None or ahora - con.compatible_leido >= MIRAR_EMBLEMA:
+            con.compatible = expulsar.compatible(con.raiz)
+            con.compatible_leido = ahora
+        return con.compatible
+
+    def _expulsable(self, con: Conexion) -> bool:
+        """Indica si a esa unidad se le puede ofrecer «Expulsar» ahora.
+
+        Es una unidad de la lista, con su código aceptado, que no es una raíz
+        de este equipo (una carpeta), con un volumen compatible y sin nada en
+        marcha que la tenga ocupada: una expulsión, un «Bloquear» o una
+        actualización. De una que no está en la lista no se hace nada desde
+        aquí, como con «Configurar».
+        """
+        unidad = self.ajustes.unidades.get(con.id)
+        return (unidad is not None and not unidad.es_raiz and not con.cambiada
+                and not self._por_actualizar(con) and con.actualizacion is None
+                and con.id not in self.expulsiones and con.id not in self.bloqueos
+                and self._compatible(con))
+
+    def _pedir_expulsion(self, uid: str, ahora: float) -> None:
+        """Atiende «Expulsar» de una unidad: lo deja pedido.
+
+        Se lleva a cabo en `_expulsiones()`, cuando nada lo impide.
+        """
+        con = self.conexiones.get(uid)
+        if con is None:
+            diario(f"expulsar {uid[:8]!r}: no está conectada")
+        elif uid in self.expulsiones:
+            diario(f"{con.nombre}: ya se está expulsando")
+        elif not self._expulsable(con):
+            diario(f"{con.nombre}: no se puede expulsar desde aquí (no es un volumen "
+                   f"extraíble de la lista, o está ocupada)")
+        else:
+            self.expulsiones[uid] = Expulsion(ahora)
+            self.urgentes = [u for u in self.urgentes if u[0] != uid]
+            diario(f"{con.nombre}: se pide expulsarla")
+
+    def _expulsiones(self, ahora: float) -> None:
+        """Lleva los «Expulsar» pedidos hasta ver la unidad suelta o el motivo de que no.
+
+        Primero se espera a que nada lo impida (la pareja en curso, la foto de
+        una de sus carpetas durante `ESPERA_VENTANA` como mucho, su ventana,
+        que corre desde la propia unidad); luego se suelta el lock y se lanza
+        la expulsión en un hilo, que puede tardar. Con el resultado se avisa:
+        «ya puedes quitarla», o por qué no. Una expulsión que fue bien se
+        recuerda hasta que la unidad desaparece (`GRACIA_EXPULSION`) para no
+        volver a atenderla en lo que el sistema la retira.
+        """
+        for uid, e in list(self.expulsiones.items()):
+            con = self.conexiones.get(uid)
+            unidad = self.ajustes.unidades.get(uid)
+            nombre = con.nombre if con is not None else ((unidad.nombre if unidad else "")
+                                                         or uid[:8])
+            if e.resultado is not None:
+                if not e.avisada:
+                    e.avisada = True
+                    if e.resultado.ok:
+                        diario(f"{nombre}: expulsada")
+                        avisar(f"{nombre}: ya puedes quitarla", e.resultado.texto)
+                    else:
+                        diario(f"{nombre}: no se ha podido expulsar: {e.resultado.texto}")
+                        avisar(f"{nombre}: no la expulso", e.resultado.texto, True)
+                if not e.resultado.ok or con is None \
+                        or ahora - (e.lanzada or ahora) >= GRACIA_EXPULSION:
+                    del self.expulsiones[uid]
+                continue
+            if con is None and e.lanzada is None:
+                del self.expulsiones[uid]
+                continue
+            if e.lanzada is not None:
+                # Lanzada: se espera el resultado aunque la unidad ya se haya
+                # ido, que es lo normal cuando va bien.
+                if ahora - e.lanzada >= ESPERA_EXPULSION:
+                    del self.expulsiones[uid]
+                    avisar(f"{nombre}: no la expulso",
+                           "El sistema no ha contestado a tiempo. Comprueba que se puede "
+                           "quitar antes de tirar del cable.", True)
+                continue
+            if self.pasada is not None and self.pasada.tarea.raiz == uid:
+                continue                    # acaba la pareja en curso
+            if self._mirando(uid) and ahora - e.desde < ESPERA_VENTANA:
+                continue                    # y la foto en curso: tiene la carpeta abierta
+            if penwatch._vivo_aqui(con.raiz, penwatch.UI_LOCK_REL) is not None:
+                # Su ventana corre desde la propia unidad y la tiene ocupada.
+                if ahora - e.desde >= ESPERA_VENTANA:
+                    del self.expulsiones[uid]
+                    avisar(f"{nombre}: no la expulso",
+                           "Su ventana sigue abierta. Ciérrala y vuelve a pedirlo.", True)
+                continue
+            self._soltar(con)
+            e.lanzada = ahora
+            diario(f"{nombre}: expulsándola; si algo la tiene ocupada, no se fuerza")
+            hilo(lambda e=e, raiz=con.raiz: self._expulsar_en_hilo(e, raiz))
+
+    @staticmethod
+    def _expulsar_en_hilo(e: Expulsion, raiz: Path) -> None:
+        """Expulsa `raiz` y deja el resultado en `e`; es lo que corre el hilo."""
+        try:
+            e.resultado = expulsar.expulsar(raiz)
+        except Exception as ex:                     # noqa: BLE001
+            e.resultado = expulsar.Resultado(False, f"No he podido expulsarla: {ex}")
 
     def _leer_entorno(self, ahora: float) -> None:
         """Lee la batería y la red, como mucho cada `MIRAR_ENTORNO` segundos."""
@@ -2833,7 +2985,8 @@ class Agente:
         al día las raíces del equipo que estén abiertas.
         """
         if con.id not in self.ajustes.unidades or con.cambiada or con.pregunta is not None \
-                or con.id in self.bloqueos or not self.version or self._actualizandose():
+                or con.id in self.bloqueos or con.id in self.expulsiones \
+                or not self.version or self._actualizandose():
             return False
         return con.a_medias or update.is_newer(self.version, self._version_de(con))
 
@@ -3028,7 +3181,7 @@ class Agente:
         Cada petición es un `equipo.PIDE_*`: pausar o reanudar el servicio de
         una raíz, atender o poner modo a una unidad, añadir una raíz,
         desbloquear o bloquear una raíz cifrada, abrir la ventana o la carpeta
-        de una raíz, despertar, sondear, un cambio de red, cambiar un ajuste,
+        de una raíz, expulsar una unidad extraíble, despertar, sondear, un cambio de red, cambiar un ajuste,
         una pasada urgente, actualizar el agente o una raíz, pausa, sigue y
         parar.
 
@@ -3144,6 +3297,8 @@ class Agente:
             self._abrir(uid, ahora, explorador=True)
         elif que == equipo.PIDE_LLAVERO:
             self._abrir(uid, ahora, llavero=True)
+        elif que == equipo.PIDE_EXPULSAR:
+            self._pedir_expulsion(uid, ahora)
         elif que == equipo.PIDE_DESPERTAR:
             # Vuelta de la suspensión: la batería y la red pueden ser otras y
             # un remoto «sin conexión» quizá ya contesta. Se mira todo ya.
@@ -3228,6 +3383,8 @@ class Agente:
                    f"no se ejecuta nada suyo")
         elif con is not None and con.actualizacion is not None:
             diario(f"{que} {con.nombre}: se está actualizando; cuando acabe")
+        elif con is not None and con.id in self.expulsiones:
+            diario(f"{que} {con.nombre}: se está expulsando")
         elif con is not None:
             if explorador:
                 self._explorar(con)
@@ -3415,7 +3572,9 @@ class Agente:
                              "version": self._version_de(con),
                              "llavero": self._llavero_de(con),
                              "llavero_abierto": con.id in self.keepassxc,
-                             "llavero_conflicto": len(con.copias)})
+                             "llavero_conflicto": len(con.copias),
+                             "expulsable": self._expulsable(con),
+                             "expulsando": con.id in self.expulsiones})
         cerradas = [u.nombre or u.id[:8] for u in self.ajustes.cifradas.values()
                     if u.id not in self.conexiones and u.id not in self.ausentes]
         return {"pid": os.getpid(), "pausado": self.pausado, "retenido": self.retenido,
@@ -4122,6 +4281,9 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("bloquear", help="Cerrarlo.")
     p.add_argument("id", nargs="?", default="")
     p.set_defaults(func=lambda a: _pedir({"pide": equipo.PIDE_BLOQUEAR, "id": a.id}))
+    p = sub.add_parser("expulsar", help="Soltar una unidad extraíble para quitarla.")
+    p.add_argument("id")
+    p.set_defaults(func=lambda a: _pedir({"pide": equipo.PIDE_EXPULSAR, "id": a.id}))
     p = sub.add_parser("actualizar", help="Bajar la versión nueva y ponerla; con un id, "
                                           "poner esa raíz a la versión del agente.")
     p.add_argument("id", nargs="?", default="")

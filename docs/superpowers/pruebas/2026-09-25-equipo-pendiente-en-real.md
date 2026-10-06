@@ -307,3 +307,22 @@ una unidad que se va y quita sus manifiestos del navegador. Las pruebas son
 R17–R23 y, para Linux, R24–R31 de
 `docs/superpowers/specs/2026-10-04-llavero-keepassxc-design.md` (§15), con las
 del resto del llavero: no se repiten aquí.
+
+## Expulsar una unidad desde la bandeja
+
+El desplegable de una unidad extraíble de la lista lleva «Expulsar»
+(`PIDE_EXPULSAR`, `agente.py expulsar ID`). Lo que decide quién lo lleva y cómo
+se suelta está en `common/expulsar.py` y probado con un sysfs, una tabla de
+montajes, un `udisksctl` y unos `DeviceIoControl` de mentira. Falta el sistema
+de verdad: en Windows, el bloqueo, el desmontaje y la expulsión del volumen
+(`FSCTL_LOCK_VOLUME`, `FSCTL_DISMOUNT_VOLUME`, `IOCTL_STORAGE_EJECT_MEDIA`) y la
+lectura del bus (`IOCTL_STORAGE_QUERY_PROPERTY`), que no se han ejecutado nunca.
+
+| Código | Dónde | Qué hacer | Qué se espera | Código a prueba |
+|---|---|---|---|---|
+| X1 | W, L | Un pendrive USB de la lista (que Windows presente como extraíble, y otro que se presente como fijo), una tarjeta SD, un disco USB externo y un disco interno con prdrive de la lista. | Solo el pendrive, la tarjeta y el disco USB llevan «Expulsar» en su desplegable; el interno y la unidad del sistema, no. Mirar qué bus y qué `RemovableMedia` da cada uno (`expulsar._bus_windows()`) y si los pendrives «fijos» salen. | `expulsar.compatible()`, `bandeja._expulsar()` |
+| X2 | W, L | «Expulsar» con la unidad quieta. | «Expulsando…» apagado unos segundos, un aviso «… ya puedes quitarla», la unidad desaparece del Explorador / del gestor de archivos y del menú, y se puede tirar del cable sin que el sistema proteste. En Linux, el disco se apaga (la luz). En Windows, apuntar si basta el `IOCTL_STORAGE_EJECT_MEDIA` o el pendrive sigue «apareciendo» hasta quitarlo. | `Agente._expulsiones()`, `expulsar._expulsar_windows()` / `_expulsar_linux()` |
+| X3 | W, L | «Expulsar» con una pasada larga en marcha; y con una carpeta abierta en el Explorador / un fichero abierto en un programa. | Con la pasada, espera a que acabe y no lanza otra. Con algo abierto, NO la fuerza: un aviso «no la expulso» con el motivo, y la unidad sigue sincronizándose. En Windows, apuntar si el Explorador con la carpeta abierta basta para que `FSCTL_LOCK_VOLUME` falle, y si los cuatro intentos son suficientes para lo que suelta solo (antivirus, indexador). | `expulsar.INTENTOS_BLOQUEO`, `_motivo_linux()` |
+| X4 | W, L | «Expulsar» con la ventana de esa unidad abierta. | No expulsa; a los 60 s dice que su ventana sigue abierta. Cerrada la ventana, pedirlo otra vez funciona. | `Agente._expulsiones()` |
+| X5 | W, L | Una unidad en un contenedor VeraCrypt de la lista. | No lleva «Expulsar» (su volumen es virtual): se cierra con «Expulsar PRDRIVE». | `expulsar.compatible()` (`/dev/mapper`, bus no extraíble) |
+| X6 | W | Con el agente en una cuenta sin administrador, «Expulsar» un pendrive. | Va igual: abrir el volumen para bloquearlo no pide elevar para un dispositivo extraíble. Si pide, apuntarlo: `_abrir_volumen()` devuelve `None` y el aviso dice «no deja abrir la unidad». | `expulsar._abrir_volumen()` |
