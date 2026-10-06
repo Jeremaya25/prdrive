@@ -2,8 +2,11 @@
 
 Fecha: 06/10/2026. Continúa `watch = true` (#61); lo que hay hoy está en
 `docs/agents/reference/agent-scheduling.md` («A pair with `watch = true`…»).
-Estado: **borrador para revisar**. Las preguntas abiertas del final se deciden
-antes del plan.
+Estado: **fase 1 hecha** (plan `docs/superpowers/plans/2026-10-06-watch-con-avisos.md`):
+el recorrido de B en todas partes, inotify en Linux y Windows recorriendo con B
+(C de momento). La pregunta 3 se decidió como se proponía, con un presupuesto
+(la mitad de `max_user_watches`, que es de todo el usuario); las 1 y 2 siguen
+abiertas y son lo único que falta para la fase 2, el motor de Windows.
 
 ## Qué se quiere
 
@@ -57,6 +60,17 @@ pero eso lo confirma la lista de equipos reales, no esta sonda.
 - **Desmontar con las vigilancias puestas funciona**: `umount` no protesta, y
   llegan 442 `IN_UNMOUNT` y 442 `IN_IGNORED`.
 - Esperar 3 s sin cambios: **0,1 ms de CPU**.
+
+Tras la fase 1 (06/10/2026, el mismo Linux, cachés calientes; un banco más
+pequeño que el de arriba: el motor y el vigía del agente, sin el resto del
+agente ni OpenSSH), con 15 000 ficheros en 463 carpetas:
+- Un recorrido: 58 ms de CPU. Cada 10 s son 5,8 ms/s; cada 2 min (la carpeta
+  quieta, con B), 0,48 ms/s.
+- Poner las 463 vigilancias: 15 ms de CPU, una vez.
+- En reposo, el vigía con el descriptor oído y `recoger()` en cada tic:
+  **0,09 ms/s**, que es lo que ya cuesta el tic. Sumado a los 0,6 ms/s del
+  agente sirviendo una unidad, el criterio (≤ 1 ms/s) se cumple; falta
+  repetirlo con el banco entero.
 
 ## Enfoques
 
