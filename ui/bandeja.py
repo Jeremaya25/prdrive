@@ -23,8 +23,9 @@ Lo que ofrece el menú (sección 5 del diseño, «Una unidad nueva» de la 3 y e
 - **Un desplegable por dispositivo** (las raíces de este equipo y luego las
   unidades conectadas), con SU icono (`Emblema`) y todo lo suyo dentro, sin
   repetir su nombre: «Configurar» (su ventana de runsync), «Abrir en
-  explorador» (su carpeta), «Sincronizar ahora» (solo él) y, en una raíz
-  cifrada, «Bloquear» / «Desbloquear…» y la casilla de `pedir_al_iniciar`. A
+  explorador» (su carpeta), «Sincronizar ahora» (solo él), en una unidad
+  extraíble de la lista «Expulsar» (la suelta para poder quitarla) y, en una
+  raíz cifrada, «Bloquear» / «Desbloquear…» y la casilla de `pedir_al_iniciar`. A
   una unidad que no está en la lista no se le ofrece nada de eso, que sería
   ejecutar su código sin el sí: su desplegable dice «(sin atender)» y lleva
   «Atender…». Lo que no está bien lo dice el rótulo entre paréntesis
@@ -79,9 +80,10 @@ I_CERRAR = "arranque"
 I_AVISO = "warn"
 I_REINTENTAR = "reload"
 I_LLAVERO = "llave"
+I_EXPULSAR = "expulsar"
 ICONOS = (I_CONFIGURAR, I_EXPLORAR, I_SINCRONIZAR, I_PAUSAR, I_REANUDAR, I_BLOQUEAR,
           I_DESBLOQUEAR, I_ATENDER, I_ACTUALIZAR, I_CERRAR, I_AVISO, I_REINTENTAR,
-          I_LLAVERO)
+          I_LLAVERO, I_EXPULSAR)
 """Todos los iconos que puede llevar una entrada."""
 
 
@@ -433,6 +435,27 @@ def _poner_al_dia(fila: Mapping[str, Any] | None, version: Any) -> list[Entrada]
     return []
 
 
+def _expulsar(fila: Mapping[str, Any] | None) -> list[Entrada]:
+    """Devuelve el «Expulsar» de una unidad, con su separador, para su desplegable.
+
+    Solo la ofrece el agente de un volumen compatible (`expulsable`, en
+    `common/expulsar.py`): de las demás unidades y de las raíces de este
+    equipo no hay entrada, ni apagada. Mientras lo hace, «Expulsando…» apagada.
+
+    Args:
+        fila: Su fila del resumen; sin ella, nada.
+    """
+    if not fila:
+        return []
+    if fila.get("expulsando"):
+        return [SEPARADOR, Entrada("Expulsando…", activa=False, icono=I_EXPULSAR)]
+    if fila.get("expulsable"):
+        return [SEPARADOR, Entrada("Expulsar", _pide(equipo.PIDE_EXPULSAR,
+                                                     id=fila.get("id", "")),
+                                   icono=I_EXPULSAR)]
+    return []
+
+
 def _acciones(uid: str, abrir: bool, cerrada: bool, sincronizar: bool,
               llavero: bool = False) -> list[Entrada]:
     """Devuelve «Configurar», «Abrir en explorador», «Abrir llavero» y «Sincronizar ahora».
@@ -552,10 +575,10 @@ def _unidades(resumen: Mapping[str, Any]) -> list[Entrada]:
             # parecería atendido y no lo está.
             entradas.append(Entrada(
                 f"{nombre} ({EN_PAUSA})" if u.get("pausada") else nombre,
-                hijos=(*_acciones(uid, abrir=not u.get("actualizando"), cerrada=False,
-                                  sincronizar=bool(u.get("atendida")),
+                hijos=(*_acciones(uid, abrir=not (u.get("actualizando") or u.get("expulsando")),
+                                  cerrada=False, sincronizar=bool(u.get("atendida")),
                                   llavero=_con_llavero(resumen, u)),
-                       *_poner_al_dia(u, version), *_version(u)),
+                       *_poner_al_dia(u, version), *_expulsar(u), *_version(u)),
                 emblema=_emblema(u)))
         elif u.get("ahora_no") or u.get("preguntando"):
             # Con otro código que el aceptado (`agente.huella()`), se dice: el
