@@ -154,6 +154,38 @@ with sandbox():
     c("sin carpeta local no hay nada que escanear", conflicts.escanear(pareja()), [])
 
 
+# El escaneo va tras cada pasada por TODA la carpeta: un nombre sin ninguno de
+# los sufijos se descarta sin compilar patrones (con 20 000 ficheros eran 0,33 s
+# de CPU por pasada).
+def patrones_pedidos(p) -> tuple[int, list[str]]:
+    """Escanea la pareja contando los patrones pedidos; devuelve la cuenta y los originales."""
+    original = conflicts._patron
+    pedidos = []
+
+    def contado(sufijo, mantener_extension):
+        """Cuenta el patrón y devuelve el de verdad."""
+        pedidos.append(sufijo)
+        return original(sufijo, mantener_extension)
+
+    conflicts._patron = contado
+    try:
+        hallados = conflicts.escanear(p)
+    finally:
+        conflicts._patron = original
+    return len(pedidos), [x.original.name for x in hallados]
+
+
+with sandbox():
+    p = pareja()
+    escribir(p.local_abs / "plan.md.conflicto-remoto1")
+    solo_conflicto, _ = patrones_pedidos(p)
+    for i in range(40):
+        escribir(p.local_abs / f"d{i % 4}" / f"nota{i}.md")
+    con_normales, hallados = patrones_pedidos(p)
+    c("el filtro previo no pierde el conflicto", hallados, ["plan.md"])
+    c("y 40 ficheros normales más no piden ningún patrón", con_normales, solo_conflicto)
+
+
 # el estado persiste y se aclara solo
 with sandbox():
     p = pareja()

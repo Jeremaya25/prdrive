@@ -148,7 +148,8 @@ if str(SCRIPT_DIR) not in sys.path:
 
 import penwatch  # noqa: E402
 from common import (APP_NAME, avisos, catalog, components, equipo, expulsar,  # noqa: E402
-                    keepassxc, llavero, model, moderacion, store, update, vestibulo)
+                    keepassxc, llavero, model, moderacion, prioridad, store, update,
+                    vestibulo)
 from common import huella as huellas  # noqa: E402  (`huella()` es la del código de una raíz)
 from common import planificador as pl  # noqa: E402
 from common.store import pid_alive  # noqa: E402
@@ -302,6 +303,17 @@ def lanzar(args: list[str], **kwargs) -> Any:
     Punto de indirección: los tests lo sustituyen.
     """
     return subprocess.Popen(args, **kwargs)
+
+
+def bajar_prioridad(pid: int) -> None:
+    """Baja la prioridad de una pasada o una sonda recién lanzada (POSIX).
+
+    `Popen` no tiene cómo pedirla al crear el hijo; un `sync.py` tarda más de
+    0,1 s en llegar a lanzar su rclone, que la hereda. En Windows va en los
+    `creationflags` (`_opciones_hijo()`). Punto de indirección: los tests lo
+    sustituyen.
+    """
+    prioridad.bajar(pid)
 
 
 def hay_pantalla() -> bool:
@@ -557,7 +569,7 @@ def procesos(nombre: str) -> set[int]:
     return store.procesos_llamados(nombre)
 
 
-def _opciones_hijo(cwd: Path, separado: bool = False) -> dict:
+def _opciones_hijo(cwd: Path, separado: bool = False, baja: bool = False) -> dict:
     """Devuelve los argumentos de `Popen` para un hijo del agente.
 
     Sus `.pyc` van a la carpeta del agente: los `__pycache__` de una raíz no
@@ -570,6 +582,8 @@ def _opciones_hijo(cwd: Path, separado: bool = False) -> dict:
         cwd: Directorio de trabajo, fuera de la raíz.
         separado: En su propio grupo de procesos (Windows) o sesión (POSIX),
             para poder cortar la pasada entera.
+        baja: Con prioridad baja, que heredan sus hijos (`common/prioridad.py`).
+            En Windows va aquí; en POSIX la baja `bajar_prioridad()` al lanzarlo.
     """
     rclone = rclone_propio() or equipo.dir_rclone() / "falta" / model.rclone_name()
     kwargs: dict = {"stdin": subprocess.DEVNULL, "cwd": str(cwd), "close_fds": True,
@@ -578,7 +592,8 @@ def _opciones_hijo(cwd: Path, separado: bool = False) -> dict:
                             model.RCLONE_DEL_AGENTE: str(rclone)}}
     if IS_WIN:
         kwargs["creationflags"] = penwatch.CREATE_NO_WINDOW | (
-            penwatch.CREATE_NEW_PROCESS_GROUP if separado else 0)
+            penwatch.CREATE_NEW_PROCESS_GROUP if separado else 0) | (
+            prioridad.CLASE_WINDOWS if baja else 0)
     elif separado:
         kwargs["start_new_session"] = True
     return kwargs
@@ -745,7 +760,7 @@ def leer_servicio(raiz: Path) -> Servicio:
     # nombre la invalidaría su `sync.py`; aquí no se lanza la del llavero.
     if isinstance(crudo.get("keychain"), dict) and model.LLAVERO not in remotos:
         remoto, _ = model.carpeta_del_catalogo(defaults)
-        parejas.append(pl.Pareja(model.LLAVERO, remoto, vigila=True))
+        parejas.append(pl.Pareja(model.LLAVERO, remoto, vigila=True, llavero=True))
         vigiladas[model.LLAVERO] = model.LLAVERO_LOCAL
     return Servicio(tuple(parejas), minutos, vigiladas)
 
@@ -2198,7 +2213,8 @@ class Agente:
                               self.ajustes.politica, urgentes=self.urgentes,
                               vigiladas=self.vigiladas, cambios=self.cambios)
         if decision.retenido != self.retenido:
-            diario(f"no se lanza nada: {decision.retenido}" if decision.retenido
+            salvo = " salvo el llavero" if decision.retenido == pl.MOTIVO_RED_MEDIDA else ""
+            diario(f"no se lanza nada{salvo}: {decision.retenido}" if decision.retenido
                    else "se vuelve a sincronizar")
             self.retenido = decision.retenido
         if decision.tarea is not None:
@@ -2234,13 +2250,13 @@ class Agente:
         self._recoger_fotos(ahora, validas)
         if self.muestreo is not None or self.terminar or self.heredada is not None:
             return
-        retenido = pl.moderacion(replace(self.entorno, pausado=self.pausado),
-                                 self.ajustes.politica) is not None
+        motivo = pl.moderacion(replace(self.entorno, pausado=self.pausado),
+                               self.ajustes.politica)
         pasada = self.pasada
         ocupadas = [(pasada.tarea.raiz, pasada.tarea.pareja)] \
             if pasada is not None and pasada.tarea.tipo == pl.PASADA else []
-        claves = pl.a_recorrer(raices, self.vigiladas, ahora, self.cambios, retenido,
-                               ocupadas)
+        claves = pl.a_recorrer(raices, self.vigiladas, ahora, self.cambios,
+                               ocupadas=ocupadas, motivo=motivo)
         if not claves:
             return
         trabajo = []
@@ -2373,9 +2389,12 @@ class Agente:
             with salida.open("wb") as f:
                 # En su propio grupo: si hay que cortarla
                 # (`install/agente.parar_agente()`, pasado su plazo), se corta
-                # con su rclone.
+                # con su rclone. Y con prioridad baja: nadie la está mirando.
                 proc = lanzar(args, stdout=f, stderr=subprocess.STDOUT,
-                              **_opciones_hijo(cwd, separado=tarea.tipo == pl.PASADA))
+                              **_opciones_hijo(cwd, separado=tarea.tipo == pl.PASADA,
+                                               baja=True))
+            if not IS_WIN and getattr(proc, "pid", None):
+                bajar_prioridad(proc.pid)
         except OSError as e:
             diario(f"[{con.nombre}] no he podido lanzar {que}: {e}")
             if tarea.tipo == pl.PASADA:
@@ -2896,13 +2915,14 @@ class Agente:
             e.resultado = expulsar.Resultado(False, f"No he podido expulsarla: {ex}")
 
     def _leer_entorno(self, ahora: float) -> None:
-        """Lee la batería y la red, como mucho cada `MIRAR_ENTORNO` segundos."""
+        """Lee la batería, el modo de ahorro y la red, como mucho cada `MIRAR_ENTORNO` segundos."""
         if ahora - self.entorno_leido < MIRAR_ENTORNO:
             return
         self.entorno_leido = ahora
         energia = moderacion.energia()
         self.entorno = replace(self.entorno, con_bateria=energia.con_bateria,
                                bateria=energia.porcentaje,
+                               ahorro_energia=energia.ahorro,
                                red_medida=moderacion.red_medida())
 
     def _mirar_version(self, ahora: float) -> None:

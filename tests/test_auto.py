@@ -21,6 +21,7 @@ ALL = CFG.names
 
 # Nada de esto debe tocar el servicio real ni el diario del dispositivo.
 runsync.stop_previous_daemon = lambda: None
+runsync.prioridad.bajar = lambda pid=None: True   # ni la del propio test
 runsync.dlog = lambda msg: None
 runsync.model.load_config = lambda: CFG
 lanzado: dict = {}

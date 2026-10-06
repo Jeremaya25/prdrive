@@ -12,6 +12,7 @@ import math
 
 from _harness import Checks
 
+from common import equipo
 from common import planificador as pl
 
 c = Checks("planificador del agente")
@@ -130,12 +131,29 @@ c("la política puede no pausar en red medida",
   pl.moderacion(medida, pl.Politica(pausar_red_medida=False)), None)
 c("en pausa, nada", dec(entorno=pl.Entorno(pausado=True)).retenido, "en pausa")
 
+# El modo de ahorro de energía lo ha encendido el usuario (o el sistema, con
+# poca batería): se respeta también enchufado.
+ahorro = pl.Entorno(ahorro_energia=True)
+c("en modo de ahorro de energía, nada", dec(entorno=ahorro).retenido,
+  "modo de ahorro de energía")
+c("  de fábrica", P.pausar_ahorro_energia, True)
+c("la política puede no pausar en ahorro de energía",
+  pl.moderacion(ahorro, pl.Politica(pausar_ahorro_energia=False)), None)
+c("  y se guarda en agente.json",
+  equipo.desde_dict(equipo.a_dict(equipo.Ajustes(
+      politica=pl.Politica(pausar_ahorro_energia=False)))).politica.pausar_ahorro_energia,
+  False)
+c("un agente.json sin la clave: la de fábrica",
+  equipo.desde_dict({"moderacion": {}}).politica.pausar_ahorro_energia, True)
+
 # «Sincronizar ahora»
 urg = [("unidad", "claves")]
 for nombre, ent in (("pausa", pl.Entorno(pausado=True)), ("batería", bateria_baja),
                     ("red medida", medida)):
     d = dec(entorno=ent, urgentes=urg)
     c(f"«Sincronizar ahora» se salta la {nombre}", que(d), ("pasada", "unidad", "claves"))
+c("«Sincronizar ahora» se salta el modo de ahorro de energía",
+  que(dec(entorno=ahorro, urgentes=urg)), ("pasada", "unidad", "claves"))
 c("  y la tarea va marcada como urgente", dec(urgentes=urg).tarea.urgente, True)
 c("«Sincronizar ahora» se salta la espera tras un fallo",
   que(dec(solo_a, tras_fallo, urgentes=[("equipo", "docs")])),

@@ -308,6 +308,18 @@ R17–R23 y, para Linux, R24–R31 de
 `docs/superpowers/specs/2026-10-04-llavero-keepassxc-design.md` (§15), con las
 del resto del llavero: no se repiten aquí.
 
+## El modo de ahorro de energía
+
+El agente no lanza pasadas ni recorre carpetas vigiladas mientras el sistema
+está en modo de ahorro de energía (`Politica.pausar_ahorro_energia`). Se lee
+con la batería cada minuto (`moderacion.energia()`); los tests ponen un
+power-profiles-daemon de mentira y los campos de `SYSTEM_POWER_STATUS` a mano.
+
+| Código | Dónde | Qué hacer | Qué se espera | Código a prueba |
+|---|---|---|---|---|
+| E1 | W (portátil y sobremesa) | Encender el ahorro de batería / «Ahorro de energía» (Windows 11 24H2) desde la configuración rápida, enchufado y a batería, con una unidad de la lista. | En menos de un minuto la bandeja dice «esperando: modo de ahorro de energía» y no sale ninguna pasada; «Sincronizar ahora» sí la lanza. Al apagarlo, vuelve. Apuntar si el ahorro de energía de un sobremesa (sin batería) pone `SystemStatusFlag` a 1. | `moderacion.energia_de_windows()` |
+| E2 | L (GNOME y KDE) | Elegir el perfil «Ahorro de energía» en el menú del sistema; luego `powerprofilesctl set balanced`. Repetir en una distro con `tuned-ppd` (Fedora 41+). | Lo mismo que E1. Apuntar la versión de power-profiles-daemon y por qué nombre contesta. | `moderacion._ahorro_linux()` |
+
 ## Expulsar una unidad desde la bandeja
 
 El desplegable de una unidad extraíble de la lista lleva «Expulsar»

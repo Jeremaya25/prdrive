@@ -7,6 +7,8 @@ paths:
   - "common/avisos.py"
   - "common/dbus.py"
   - "common/store.py"
+  - "common/prioridad.py"
+  - "tests/test_prioridad.py"
   - "ui/tk_agente.py"
   - "tests/test_agente_contrato.py"
   - "tests/test_agente_endurecido.py"

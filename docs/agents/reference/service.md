@@ -1,6 +1,6 @@
 # Periodic service (`runsync.py`)
 
-Files: `runsync.py`, `ui/prefs.py`, `common/model.py` (`ui_lock()`/`daemon_lock()`), `ui/__init__.py` (`avisar_fallo`).
+Files: `runsync.py`, `ui/prefs.py`, `common/prioridad.py`, `common/model.py` (`ui_lock()`/`daemon_lock()`), `ui/__init__.py` (`avisar_fallo`).
 Formerly AGENTS.md «Daemon (`runsync.py`)».
 
 Coordination lives in `state/` so it travels with the device: `daemon.lock.json` (pid/host/pairs/cycle), `daemon.stop` (presence = stop request), `daemon.log`, `ui.lock.json` (pid/host of the open window), `ui_prefs.json`; plus `last_run.json`, `historial.jsonl`, `conflicts.json` (written by `sync.py`, not the daemon). The service stops when the device disappears (`SENTINEL`) or when runsync is launched again.
@@ -34,6 +34,7 @@ By hand («Iniciar servicio») or on plug-in (watcher → `runsync --auto`): the
 - `pid_alive()` uses `OpenProcess`, never `os.kill` (which *terminates* on Windows).
 - The daemon is spawned with `pythonw.exe` + `CREATE_NO_WINDOW`; rclone with `CREATE_NO_WINDOW` too (else every invocation flashes a console).
 - The daemon `chdir`s to the temp dir so the device can be ejected.
+- The daemon and `--auto --once` lower their own priority (`prioridad.bajar()`, `common/prioridad.py`) before launching anything, so every `sync.py` and rclone under them inherits it: `BELOW_NORMAL_PRIORITY_CLASS` on Windows, `nice` 10 and I/O best-effort 7 on Linux. The window's own passes keep normal priority: someone is waiting for them.
 - Child `sync.py` runs get `stdin=DEVNULL`: a pair needing `--resync` is skipped, not resynced unattended.
 
 ## Failure pop-up
