@@ -27,7 +27,8 @@ Dónde está cada cosa:
   importa. En Linux, en las carpetas de cada navegador del equipo, y los
   escribe prdrive (`abrir_navegador_linux()`).
 - La ruta del fichero llave, en `state/keychain.json`, una por equipo. El
-  fichero ni se abre: solo se le pasa a KeePassXC con `--keyfile`.
+  fichero ni se abre: solo hace falta para combinar (`--key-file` de
+  `keepassxc-cli`); al abrir, KeePassXC lo pide en su diálogo.
 
 Lo que toca el equipo (`registro.*`, `store.procesos()`, `lanzar()`) son
 funciones de módulo que los tests sustituyen; lo demás decide sin tocar nada,
@@ -1012,40 +1013,35 @@ def otro_abierto() -> bool:
                for pid, nombre in store.nombres().items())
 
 
-def orden(exe: Path, base: Path, llave: Path | None = None,
-          paquete: str | None = None) -> list[str]:
+def orden(exe: Path, base: Path, paquete: str | None = None) -> list[str]:
     """Devuelve la orden que abre KeePassXC con su configuración y la base.
 
-    `--keyfile` solo rellena el campo del diálogo de desbloqueo
-    (`mainWindow.openDatabase(filename, password, keyfile)`). En Linux, `exe`
-    es el `AppRun` de lo extraído, y la configuración es la de `config/linux/`:
-    `--config` es también lo que dice de qué unidad es (`llavero.pids_keepassxc()`).
+    Nunca lleva `--keyfile`: KeePassXC no se limita a rellenar el campo, sino
+    que intenta desbloquear al instante con la contraseña vacía
+    (`DatabaseOpenWidget::enterKey()` llama a `openDatabase()`), y con una base
+    de contraseña y fichero llave sale «Desbloquear la base de datos ha fallado
+    y no introdujo una contraseña». El fichero llave se elige en su diálogo.
+    En Linux, `exe` es el `AppRun` de lo extraído, y la configuración es la de
+    `config/linux/`: `--config` es también lo que dice de qué unidad es
+    (`llavero.pids_keepassxc()`).
     """
     donde = carpeta_config(paquete)
-    salida = [str(exe), "--config", str(donde / INI), "--localconfig", str(donde / INI_LOCAL)]
-    if llave is not None:
-        salida += ["--keyfile", str(llave)]
-    return salida + [str(base)]
+    return [str(exe), "--config", str(donde / INI), "--localconfig", str(donde / INI_LOCAL),
+            str(base)]
 
 
-def orden_externo(externo: Externo, base: Path, llave: Path | None = None,
-                  raiz: Path | None = None) -> list[str]:
+def orden_externo(externo: Externo, base: Path, raiz: Path | None = None) -> list[str]:
     """Devuelve la orden que abre la base con el KeePassXC del equipo (Linux ARM64).
 
     Con su propia configuración: es el de la persona. El de Flathub recibe
-    permiso para la unidad y la carpeta del fichero llave solo para esta vez
-    (`flatpak run --filesystem=`), y `KPXC_INITIAL_DIR` por `--env`, porque
-    el entorno no entra en su caja.
+    permiso para la unidad solo para esta vez (`flatpak run --filesystem=`), y
+    `KPXC_INITIAL_DIR` por `--env`, porque el entorno no entra en su caja. Sin
+    `--keyfile`, como `orden()`.
     """
     raiz = model.DEVICE_ROOT if raiz is None else raiz
     salida = list(externo.orden)
     if externo.flatpak:
-        extra = [f"--filesystem={raiz}", f"--env=KPXC_INITIAL_DIR={raiz}"]
-        if llave is not None:
-            extra.append(f"--filesystem={llave.parent}:ro")
-        salida[2:2] = extra                     # entre «run» y el id de la aplicación
-    if llave is not None:
-        salida += ["--keyfile", str(llave)]
+        salida[2:2] = [f"--filesystem={raiz}", f"--env=KPXC_INITIAL_DIR={raiz}"]  # tras «run» y el id
     return salida + [str(base)]
 
 
@@ -1367,7 +1363,7 @@ class Abierto(NamedTuple):
     programa: Path | None = None
 
 
-def abrir(ap: Apertura, llave: Path | None = None) -> Abierto:
+def abrir(ap: Apertura) -> Abierto:
     """Prepara el equipo y lanza KeePassXC con la base (pasos 6–8 de §6).
 
     Con el KeePassXC de la unidad ya abierto, solo se lanza: `SingleInstance` le
@@ -1384,7 +1380,6 @@ def abrir(ap: Apertura, llave: Path | None = None) -> Abierto:
 
     Args:
         ap: Lo que dijo `mirar_apertura()`, sin `motivo`.
-        llave: La ruta del fichero llave en este equipo, o `None`.
 
     Raises:
         OSError: Si no se ha podido extraer o lanzar.
@@ -1394,7 +1389,7 @@ def abrir(ap: Apertura, llave: Path | None = None) -> Abierto:
         aviso = sin_passkeys(version_del_equipo(ap.externo))
         if aviso:
             avisos.append(aviso)
-        orden_ = orden_externo(ap.externo, ap.base, llave)
+        orden_ = orden_externo(ap.externo, ap.base)
         proc = lanzar(orden_, entorno())
         return Abierto(esperar_arranque(proc), tuple(avisos), Path(orden_[0]))
     if es_appimage(ap.paquete):
@@ -1421,7 +1416,7 @@ def abrir(ap: Apertura, llave: Path | None = None) -> Abierto:
                 avisos.append(f"El navegador no encontrará este KeePassXC: no se han podido "
                               f"escribir {len(fallos)} de sus {len(NAVEGADORES)} claves del "
                               f"registro ({fallos[0]}).")
-    proc = lanzar(orden(programa, ap.base, llave, ap.paquete), entorno())
+    proc = lanzar(orden(programa, ap.base, ap.paquete), entorno())
     return Abierto(esperar_arranque(proc), tuple(avisos), programa)
 
 

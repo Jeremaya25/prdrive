@@ -190,12 +190,12 @@ def abrir(config: model.Config, avisar: Callable[[str], None],
 
     Con el KeePassXC de la unidad ya abierto, solo lo trae delante. Con otro
     KeePassXC abierto en el equipo, lo dice y no abre nada. Si la última pasada
-    es vieja, trae lo último (si falla, abre igual). Si la base pide fichero
-    llave y en este equipo no se sabe dónde está, lo pregunta y apunta la ruta.
-    Si la base tiene copias de conflicto, ofrece combinarlas antes de abrir:
-    después de la pasada, que es la que las trae, y del fichero llave, que hace
-    falta para combinar. Al final, el vigilante del llavero, si nadie lo
-    atiende.
+    es vieja, trae lo último (si falla, abre igual). Si la base tiene copias
+    de conflicto, ofrece combinarlas antes de abrir (después de la pasada, que
+    es la que las trae); y si pide fichero llave que en este equipo no se sabe
+    dónde está, lo pregunta y apunta la ruta, porque combinar lo necesita. Al
+    abrir no se le pasa a KeePassXC (`keepassxc.orden()`): lo pide él. Al
+    final, el vigilante del llavero, si nadie lo atiende.
 
     Args:
         config: El del dispositivo.
@@ -204,7 +204,7 @@ def abrir(config: model.Config, avisar: Callable[[str], None],
             `mensaje`, y devuelve `(True, resultado)` o `(False, excepción)`,
             como `tk.working()`.
         elegir_llave: Pregunta dónde está en este equipo el fichero llave de
-            ese nombre; `None` si no se dice (KeePassXC lo pedirá).
+            ese nombre, solo si hay que combinar; `None` si no se dice.
         confirmar: `confirmar(plan, titulo, nota)` enseña un plan y dice si
             se sigue, como `tk_pairs.confirmar_plan()`.
         decir_sin_traer: Si una pasada que falla se dice con un aviso. La
@@ -228,9 +228,9 @@ def abrir(config: model.Config, avisar: Callable[[str], None],
             return False
         if rc != 0 and decir_sin_traer:
             avisar(sin_traer(rc))
-    llave = ap.llave if ap.abierto else llave_de_este_equipo(config, elegir_llave)
     conflicto = None if ap.abierto else conflicto_de_la_base(config, ap.base)
     if conflicto is not None:
+        llave = llave_de_este_equipo(config, elegir_llave)
         try:
             plan = conflict_editor.plan_combinar(conflicto, llave)
         except conflict_editor.ResolucionImposible as e:
@@ -241,7 +241,7 @@ def abrir(config: model.Config, avisar: Callable[[str], None],
                 if not hecho:
                     avisar(str(valor))
                 conflicto_de_la_base(config, ap.base)     # al día para «Reparación»
-    hecho, valor = esperar(ABRIENDO, partial(keepassxc.abrir, ap, llave))
+    hecho, valor = esperar(ABRIENDO, partial(keepassxc.abrir, ap))
     if not hecho:
         avisar(f"No se ha podido abrir KeePassXC: {valor}")
         return False
@@ -317,7 +317,7 @@ def lineas(sit: Situacion, remota: dict | None, leido: bool) -> list[str]:
             nombre = f"«{sit.nombre_llave}»" if sit.nombre_llave else "un fichero llave"
             donde = (f"En este equipo está en {sit.llave}." if sit.llave is not None
                      else "En este equipo no se ha dicho dónde está: «Abrir llavero» lo "
-                          "preguntará.")
+                          "preguntará al combinar copias.")
             salida.append(f"La base pide {nombre}. {donde}")
         return salida
     if not leido:

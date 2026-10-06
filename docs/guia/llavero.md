@@ -48,8 +48,11 @@ de siempre: **Actualizar…** lo pone.
 
 Si tu base se abre con contraseña **y** un fichero llave, dilo al activarlo.
 prdrive **no copia, no lee ni guarda nada del fichero llave**: solo apunta
-**dónde está en cada equipo**, y se lo pasa a KeePassXC para que no tengas que
-buscarlo. En un equipo donde no se ha dicho, te lo pregunta la primera vez.
+**dónde está en cada equipo**, y solo lo usa para combinar copias de conflicto.
+Al abrir el llavero, KeePassXC te pide la contraseña y el fichero llave en su
+propio diálogo: elígelo con «Examinar» (prdrive no se lo pasa, porque
+entonces KeePassXC intentaría abrir la base al instante con la contraseña
+vacía y saldría un aviso de error).
 
 En una unidad sin cifrar, esa ruta se puede leer: dice dónde está tu fichero
 llave en cada equipo, no qué tiene.
@@ -62,8 +65,8 @@ también desde su icono, junto al reloj: **Abrir llavero**, en el desplegable de
 dispositivo.
 
 1. Si hace rato de la última pasada, trae lo último del remoto.
-2. Abre KeePassXC con tu base (y el fichero llave ya puesto, si lo usas).
-3. Escribes la contraseña, y los sitios piden la passkey y KeePassXC firma.
+2. Abre KeePassXC con tu base.
+3. Escribes la contraseña (y eliges el fichero llave, si lo usas), y los sitios piden la passkey y KeePassXC firma.
 
 Lo que guardas **sube solo**, unos 20 segundos después del último cambio. Lo que
 cambies en otro dispositivo llega en **5 minutos** como mucho mientras KeePassXC

@@ -288,9 +288,8 @@ try:
       keepassxc.orden(exe, base),
       [str(exe), "--config", str(donde / "keepassxc.ini"),
        "--localconfig", str(donde / "keepassxc_local.ini"), str(base)])
-    llave = Path("D:/k.keyx")
-    c("  con el fichero llave de este equipo, --keyfile",
-      keepassxc.orden(exe, base, llave)[-3:], ["--keyfile", str(llave), str(base)])
+    c("  nunca con --keyfile: KeePassXC desbloquearía al instante con la contraseña vacía",
+      "--keyfile" in keepassxc.orden(exe, base), False)
     c("lo que se exporte cae en la raíz (PK5)",
       keepassxc.entorno(Path("E:/"))["KPXC_INITIAL_DIR"], str(Path("E:/")))
 finally:
@@ -479,23 +478,27 @@ try:
           (False, [llavero_editor.SIN_BASE]))
         eq.trae_base = True
 
-        # el fichero llave
+        # el fichero llave: al abrir no se pasa (KeePassXC lo pide); solo se pregunta para combinar
         llave = root / "personal.keyx"
-        hecho, _, _, preguntas = abrir(config(fichero_llave=True, nombre_llave="personal.keyx"))
-        c("con fichero llave y sin saber dónde está, se pregunta por su nombre",
-          (hecho, preguntas, "--keyfile" in eq.lanzadas[-1][0]), (True, ["personal.keyx"], False))
         llave.write_bytes(b"secreto")
-        hecho, _, _, preguntas = abrir(config(fichero_llave=True), llave=llave)
-        c("  la ruta elegida se apunta y se pasa con --keyfile",
-          (keepassxc.llave_apuntada(), eq.lanzadas[-1][0][-3:-1]),
-          (llave, ["--keyfile", str(llave)]))
+        hecho, _, _, preguntas = abrir(config(fichero_llave=True, nombre_llave="personal.keyx"),
+                                       llave=llave)
+        c("con fichero llave, al abrir no se pregunta ni se pasa --keyfile",
+          (hecho, preguntas, "--keyfile" in eq.lanzadas[-1][0]), (True, [], False))
+        copia = llavero.carpeta() / "personal.conflicto-remoto1.kdbx"
+        copia.write_bytes(b"copia")
+        hecho, _, _, preguntas = abrir(config(fichero_llave=True, nombre_llave="personal.keyx"),
+                                       llave=llave)
+        c("  con una copia de conflicto, para combinar sí se pregunta por su nombre",
+          (hecho, preguntas, "--keyfile" in eq.lanzadas[-1][0]), (True, ["personal.keyx"], False))
+        c("  y la ruta elegida se apunta", keepassxc.llave_apuntada(), llave)
         c("  el fichero ni se toca", llave.read_bytes(), b"secreto")
         _, _, _, preguntas = abrir(config(fichero_llave=True))
-        c("  la vez siguiente no se pregunta", (preguntas, eq.lanzadas[-1][0][-2]),
-          ([], str(llave)))
+        c("  la vez siguiente no se pregunta", preguntas, [])
         llave.unlink()
         _, _, _, preguntas = abrir(config(fichero_llave=True, nombre_llave="personal.keyx"))
         c("  si ya no está (otro pendrive), se vuelve a preguntar", preguntas, ["personal.keyx"])
+        copia.unlink()
 
         # ya abierto: solo se trae delante
         eq.nuestro = True
