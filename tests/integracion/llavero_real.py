@@ -223,11 +223,16 @@ def hablar_con_keepassxc(proxy: str, tope: float = 15.0) -> dict:
             return base64.b64encode(os.urandom(n)).decode()
         msg = json.dumps({"action": "change-public-keys", "publicKey": b64(32),
                           "nonce": b64(24), "clientID": b64(24)}).encode()
-        p.stdin.write(struct.pack("<I", len(msg)) + msg)
-        p.stdin.flush()
-        largo = struct.unpack("<I", p.stdout.read(4))[0]
+        try:
+            p.stdin.write(struct.pack("<I", len(msg)) + msg)
+            p.stdin.flush()
+            largo = struct.unpack("<I", p.stdout.read(4))[0]
+            leido = json.loads(p.stdout.read(largo))
+        except (OSError, ValueError, struct.error) as e:
+            respuesta["fallo"] = repr(e)
+            return
         respuesta.clear()
-        respuesta.update(json.loads(p.stdout.read(largo)))
+        respuesta.update(leido)
 
     hilo = threading.Thread(target=hablar, daemon=True)
     hilo.start()
@@ -418,11 +423,18 @@ def main() -> int:
         manifiesto = Path(e["manifiestos"].get("chrome", "no-hay"))
         ver("y nada en ~/.config/keepassxc",
             (Path(os.environ["XDG_CONFIG_HOME"]) / "keepassxc").exists(), False)
-    try:
-        proxy = json.loads(manifiesto.read_text(encoding="utf-8"))["path"]
-        respuesta = hablar_con_keepassxc(proxy)
-    except (OSError, ValueError, KeyError, struct.error) as fallo:
-        respuesta = {"fallo": repr(fallo)}
+    # Recién abierto, su servidor del navegador puede no escuchar todavía, y el
+    # proxy no vuelve a intentar la conexión: se le dan unos intentos.
+    respuesta: dict = {}
+    for _ in range(4):
+        try:
+            proxy = json.loads(manifiesto.read_text(encoding="utf-8"))["path"]
+            respuesta = hablar_con_keepassxc(proxy, tope=5)
+        except (OSError, ValueError, KeyError) as fallo:
+            respuesta = {"fallo": repr(fallo)}
+        if respuesta.get("action"):
+            break
+        time.sleep(2)
     ver("el navegador llega a KeePassXC por el proxy de su manifiesto",
         (respuesta.get("action"), respuesta.get("version"), respuesta.get("success")),
         ("change-public-keys", pins.KEEPASSXC_VERSION, "true"))
