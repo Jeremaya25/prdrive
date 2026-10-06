@@ -33,6 +33,7 @@ import threading
 import time
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 from _harness import Checks, tmpdir
 
@@ -983,6 +984,43 @@ else:
     c("  al irse la unidad no queda ninguna vigilancia", motor_real.vigilancias(), 0)
     motor_real.cerrar()
     agente.huella_local = foto
+
+# ---------------------------------------------------------------------------
+# 11f. Poner el motor: en Windows, solo con la ventana de la bandeja
+# ---------------------------------------------------------------------------
+F.preparar()
+real_abrir, real_is_win = ac.abrir, agente.IS_WIN
+VENTANAS: list = []
+
+
+class MotorFalso:
+    """Un motor de avisos de Windows de mentira: sin descriptor, con `dispositivo`."""
+    fd = None
+
+    def dispositivo(self, evento, handle):
+        """Lo que la bandeja le pasaría."""
+
+    def leer(self):
+        """Nada que leer."""
+
+
+motor_w = MotorFalso()
+ac.abrir = lambda hwnd=None: VENTANAS.append(hwnd) or motor_w
+agente.IS_WIN = True
+agw = nuevo()
+agw.bandeja = None
+c("en Windows, sin bandeja no hay motor", (agente.poner_avisos_carpeta(agw, agente.Vigia()),
+                                          VENTANAS), (None, []))
+c("  y se dice: las carpetas se recorren",
+  any("sin bandeja no se dejan carpetas abiertas" in m for m in F.DIARIO), True)
+agw.bandeja = SimpleNamespace(hwnd=0x55, dispositivo=None)
+c("con bandeja, el motor se abre con su ventana",
+  (agente.poner_avisos_carpeta(agw, agente.Vigia()) is motor_w, VENTANAS), (True, [0x55]))
+c("  y la bandeja le pasa los avisos de extracción",
+  agw.bandeja.dispositivo == motor_w.dispositivo, True)
+c("  y se dice", any("(ReadDirectoryChangesW)" in m for m in F.DIARIO), True)
+agente.IS_WIN = real_is_win
+ac.abrir = real_abrir
 
 # ---------------------------------------------------------------------------
 # 12. «Bloquear» espera a la foto en marcha

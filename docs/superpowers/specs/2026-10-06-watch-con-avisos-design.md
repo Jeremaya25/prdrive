@@ -2,11 +2,13 @@
 
 Fecha: 06/10/2026. Continúa `watch = true` (#61); lo que hay hoy está en
 `docs/agents/reference/agent-scheduling.md` («A pair with `watch = true`…»).
-Estado: **fase 1 hecha** (plan `docs/superpowers/plans/2026-10-06-watch-con-avisos.md`):
-el recorrido de B en todas partes, inotify en Linux y Windows recorriendo con B
-(C de momento). La pregunta 3 se decidió como se proponía, con un presupuesto
-(la mitad de `max_user_watches`, que es de todo el usuario); las 1 y 2 siguen
-abiertas y son lo único que falta para la fase 2, el motor de Windows.
+Estado: **fases 1 y 2 hechas en código** (plan `docs/superpowers/plans/2026-10-06-watch-con-avisos.md`):
+el recorrido de B en todas partes, inotify en Linux y `ReadDirectoryChangesW` en
+Windows. Decidido el 06/10/2026: la pregunta 1 se acepta (el handle abierto en
+Windows); la 2, como se proponía (los volúmenes de VeraCrypt se recorren hasta
+comprobarlo, prueba F18); la 3, como se proponía, con un presupuesto (la mitad
+de `max_user_watches`, que es de todo el usuario). Falta verlo en equipos
+reales: filas F9–F19 de `docs/superpowers/pruebas/2026-09-25-equipo-pendiente-en-real.md`.
 
 ## Qué se quiere
 

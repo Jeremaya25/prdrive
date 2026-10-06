@@ -66,7 +66,10 @@ Cómo trabaja, vuelta a vuelta (`Agente.vuelta()`):
 - **Ejecuta** cada pasada como el `sync.py` de esa raíz, hijo, con el Python
   del agente y el directorio de trabajo fuera de la raíz: cada raíz ejecuta su
   propio código, un rclone colgado no tumba al agente y entre pasadas no queda
-  nada abierto dentro de ninguna unidad, así que se puede expulsar.
+  nada abierto dentro de ninguna unidad, así que se puede expulsar. La
+  excepción es Windows con bandeja: la carpeta de cada pareja vigilada queda
+  abierta para oír sus cambios, y se cierra en cuanto el sistema pide la
+  unidad (`common/avisos_carpeta.py`) y antes de «Expulsar» y «Bloquear».
 
 La raíz de ESTE equipo (una carpeta del ordenador con `.prdrive/` dentro, que
 pone el asistente «En este equipo») es una raíz más de la lista, con su `ruta`:
@@ -4084,26 +4087,40 @@ def poner_avisos_carpeta(agente: Agente, vigia: Vigia) -> Any:
 
     Punto de indirección: los tests ponen uno de mentira en `Agente.avisos_carpeta`.
 
-    Es `common/avisos_carpeta.py` (inotify, en Linux); el vigía lee su
-    descriptor (`Vigia.oir()`). Sin motor (Windows, o sin inotify), las
-    carpetas de las parejas con `watch = true` se recorren a su ritmo
-    (`pl.cada_cuanto()`). Se dice en el diario cuál de los dos.
+    Es `common/avisos_carpeta.py`. En Linux, inotify: el vigía lee su
+    descriptor (`Vigia.oir()`). En Windows, `ReadDirectoryChangesW`, que deja
+    abierta la carpeta de cada pareja vigilada y necesita la ventana de la
+    bandeja: por ella llega el aviso de que el sistema pide la unidad, y la
+    bandeja se lo pasa (`Bandeja.dispositivo`) para cerrarla a tiempo. Sin
+    bandeja no hay motor. Sin motor, las carpetas de las parejas con
+    `watch = true` se recorren a su ritmo (`pl.cada_cuanto()`). Se dice en el
+    diario cuál de los dos.
     """
     cambios = agente.cambios
     recorre = (f"las carpetas de las parejas con watch se recorren (cada "
                f"{cambios.sondeo:g} s tras un cambio, cada {cambios.sondeo_quieto / 60:g} min "
                f"si están quietas)")
+    hwnd = None
+    if IS_WIN:
+        hwnd = getattr(agente.bandeja, "hwnd", None)
+        if not hwnd:
+            diario(f"sin bandeja no se dejan carpetas abiertas en las unidades: {recorre}")
+            return None
     try:
-        motor = avisos_carpeta.abrir()
+        motor = avisos_carpeta.abrir(hwnd=hwnd)
     except OSError as e:
         diario(f"no oigo los cambios de las carpetas ({e}): {recorre}")
         return None
     if motor is None:
         diario(f"en este sistema {recorre}")
         return None
-    vigia.oir(motor.fd, motor.leer)
-    diario("oigo los cambios de las carpetas de las parejas con watch (inotify); se "
-           "recorre solo la que no avisa")
+    if getattr(motor, "fd", None) is not None:
+        vigia.oir(motor.fd, motor.leer)
+    if IS_WIN:
+        agente.bandeja.dispositivo = motor.dispositivo
+    diario("oigo los cambios de las carpetas de las parejas con watch ("
+           + ("ReadDirectoryChangesW" if IS_WIN else "inotify")
+           + "); se recorre solo la que no avisa")
     return motor
 
 
