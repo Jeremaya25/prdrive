@@ -6,8 +6,10 @@ Cada sonda es una función de módulo para que los tests pongan la suya, y
 ninguna lanza: no saber algo cuenta como «lo normal» (enchufado, red sin
 medir), porque dejar de sincronizar por una sonda rota sería peor que
 sincronizar en una red cara.
-- `energia()`: ¿va a batería y con cuánta? Windows con `GetSystemPowerStatus`;
-  Linux con `/sys/class/power_supply/*`.
+- `energia()`: ¿va a batería, con cuánta, y está el sistema en modo de ahorro
+  de energía? Windows con `GetSystemPowerStatus`; Linux con
+  `/sys/class/power_supply/*` y el perfil de power-profiles-daemon, leído con
+  `common/dbus.py`. Sin power-profiles-daemon no hay ahorro.
 - `red_medida()`: ¿es la red de uso medido? Windows con
   `INetworkCostManager::GetCost` (COM por vtabla, como `IShellItem2` en
   `install/crypto.py`); Linux con la propiedad `Metered` de NetworkManager,
@@ -20,7 +22,7 @@ sincronizar en una red cara.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 IS_WIN = os.name == "nt"
@@ -74,9 +76,13 @@ class Energia:
         con_bateria: Si está funcionando ahora a batería.
         porcentaje: Carga de la batería, o `None` si no se sabe o no hay
             batería.
+        ahorro: Si el sistema está en modo de ahorro de energía (el «ahorro de
+            batería» o «ahorro de energía» de Windows, el perfil `power-saver`
+            de Linux), enchufado o no.
     """
     con_bateria: bool = False
     porcentaje: int | None = None
+    ahorro: bool = False
 
 
 # Sustituible por los tests: dónde mira Linux.
@@ -89,9 +95,28 @@ def energia() -> Energia:
     Si no puede saberlo, devuelve «enchufado».
     """
     try:
-        return _energia_windows() if IS_WIN else _energia_linux()
+        if IS_WIN:
+            return _energia_windows()
+        return replace(_energia_linux(), ahorro=_ahorro_linux())
     except Exception:                                   # noqa: BLE001
         return Energia()
+
+
+def energia_de_windows(linea_ac: int, bandera: int, porcentaje: int,
+                       ahorro: int) -> Energia:
+    """Traduce los campos de `SYSTEM_POWER_STATUS` a una `Energia`.
+
+    Args:
+        linea_ac: `ACLineStatus`: 0 desenchufado, 1 enchufado, 255 desconocido.
+        bandera: `BatteryFlag`; 128 es «No system battery».
+        porcentaje: `BatteryLifePercent`; 255 es desconocido.
+        ahorro: `SystemStatusFlag`: 1 es el ahorro de batería encendido. Cuenta
+            también sin batería: un sobremesa puede tener el ahorro de energía.
+    """
+    en_ahorro = ahorro == 1
+    if bandera == 128:
+        return Energia(ahorro=en_ahorro)
+    return Energia(linea_ac == 0, None if porcentaje == 255 else int(porcentaje), en_ahorro)
 
 
 def _energia_windows() -> Energia:
@@ -109,12 +134,8 @@ def _energia_windows() -> Energia:
     estado = SYSTEM_POWER_STATUS()
     if not ctypes.windll.kernel32.GetSystemPowerStatus(ctypes.byref(estado)):
         return Energia()
-    # `BatteryFlag` 128: «No system battery». `ACLineStatus` 0: desenchufado;
-    # 255: desconocido. `BatteryLifePercent` 255: desconocido.
-    if estado.BatteryFlag == 128:
-        return Energia()
-    porcentaje = None if estado.BatteryLifePercent == 255 else int(estado.BatteryLifePercent)
-    return Energia(estado.ACLineStatus == 0, porcentaje)
+    return energia_de_windows(estado.ACLineStatus, estado.BatteryFlag,
+                              estado.BatteryLifePercent, estado.SystemStatusFlag)
 
 
 def _leer(ruta: Path) -> str:
@@ -164,6 +185,40 @@ def _energia_linux() -> Energia:
     if enchufado or estados & {"Charging", "Full", "Not charging"}:
         return Energia(False, porcentaje)
     return Energia(True, porcentaje)
+
+
+PPD = "org.freedesktop.UPower.PowerProfiles"
+"""Nombre en el bus del sistema, e interfaz, de power-profiles-daemon (0.20 en adelante).
+
+Es el servicio que manejan GNOME, KDE y `powerprofilesctl`; `tuned-ppd`
+contesta por el mismo nombre. Su propiedad `ActiveProfile` es `power-saver`,
+`balanced` o `performance`.
+"""
+PPD_RUTA = "/org/freedesktop/UPower/PowerProfiles"
+PPD_ANTIGUO = "net.hadess.PowerProfiles"
+"""El nombre de power-profiles-daemon anterior a la 0.20, que aún contesta en muchas distros."""
+PPD_ANTIGUO_RUTA = "/net/hadess/PowerProfiles"
+PERFIL_AHORRO = "power-saver"
+
+
+def _ahorro_linux() -> bool:
+    """Indica si power-profiles-daemon tiene puesto el perfil de ahorro; nunca lanza.
+
+    Pregunta por el nombre actual y, si no contesta, por el antiguo. Sin el
+    servicio (otro gestor de energía, o ninguno) no hay ahorro.
+    """
+    from . import dbus
+    try:
+        with dbus.Conexion.sistema() as bus:
+            for nombre, ruta in ((PPD, PPD_RUTA), (PPD_ANTIGUO, PPD_ANTIGUO_RUTA)):
+                try:
+                    perfil = bus.propiedad(nombre, ruta, nombre, "ActiveProfile", espera=2.0)
+                except Exception:                       # noqa: BLE001
+                    continue
+                return perfil == PERFIL_AHORRO
+    except Exception:                                   # noqa: BLE001
+        return False
+    return False
 
 
 # NetworkManager, `NMMetered` (libnm/nm-dbus-interface.h): 0 desconocido, 1 sí,

@@ -295,7 +295,10 @@ def desde_dict(datos: Mapping[str, Any]) -> Ajustes:
         else fabrica.con_bateria,
         bateria_minima=int(_numero(m.get("bateria_minima"), fabrica.bateria_minima, 0, 100)),
         pausar_red_medida=m["pausar_red_medida"]
-        if isinstance(m.get("pausar_red_medida"), bool) else fabrica.pausar_red_medida)
+        if isinstance(m.get("pausar_red_medida"), bool) else fabrica.pausar_red_medida,
+        pausar_ahorro_energia=m["pausar_ahorro_energia"]
+        if isinstance(m.get("pausar_ahorro_energia"), bool)
+        else fabrica.pausar_ahorro_energia)
     extra = datos.get("extra_roots")
     return Ajustes(
         unidades=unidades,
@@ -320,7 +323,8 @@ def a_dict(aj: Ajustes) -> dict:
         "espera_unidad_nueva": aj.espera_unidad_nueva,
         "moderacion": {"con_bateria": aj.politica.con_bateria,
                        "bateria_minima": aj.politica.bateria_minima,
-                       "pausar_red_medida": aj.politica.pausar_red_medida},
+                       "pausar_red_medida": aj.politica.pausar_red_medida,
+                       "pausar_ahorro_energia": aj.politica.pausar_ahorro_energia},
         "extra_roots": list(aj.extra_roots),
         "pedir_al_iniciar": aj.pedir_al_iniciar,
     }

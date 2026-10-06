@@ -241,6 +241,22 @@ terminar(ag, RAIZ)
 quieto(ag, 140)
 
 n = len(docs())
+moderacion.energia = lambda: moderacion.Energia(ahorro=True)
+ag.entorno_leido = -math.inf
+F.vueltas(ag, 1)
+m1 = mirada()
+FIRMAS["docs"] += 1
+quieto(ag, 120)
+c("en modo de ahorro de energía, enchufado: ni pasada ni recorrido",
+  (len(docs()), mirada(), ag.retenido), (n, m1, "modo de ahorro de energía"))
+moderacion.energia = lambda: moderacion.Energia()
+ag.entorno_leido = -math.inf
+c("  y al quitarlo, la pasada",
+  (hasta_pasada(ag, 90) is not None, len(docs()) - n), (True, 1))
+terminar(ag, RAIZ)
+quieto(ag, 140)
+
+n = len(docs())
 ag.pausado = True
 F.vueltas(ag, 1)
 m1 = mirada()

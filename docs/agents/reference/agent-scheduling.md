@@ -5,9 +5,10 @@ Formerly AGENTS.md «The resident agent» bullets on the planner, #67 and #61. C
 
 ## Planner (`common/planificador.py`)
 
-Pure; it holds every rule: single queue; urgent («Sincronizar ahora») skips all moderation; pause / battery / metered hold everything; `intervalo · 2^k` backoff capped at 4 h (never below the interval); mode `sync` = infinite interval; offline remotes are PROBED (`SONDA`, an `rclone lsd remote:` with `catalog.NET_FLAGS`) instead of retried.
+Pure; it holds every rule: single queue; urgent («Sincronizar ahora») skips all moderation; pause / battery / power saving / metered hold everything; `intervalo · 2^k` backoff capped at 4 h (never below the interval); mode `sync` = infinite interval; offline remotes are PROBED (`SONDA`, an `rclone lsd remote:` with `catalog.NET_FLAGS`) instead of retried.
 
 - A `RED` result doesn't count a failure; the agent probes at once and, if the remote answers, re-records it as `FALLO` (the classification was wrong). The suspicion is **per pair** (`Agente.sospechas`, `(root, pair)` → `Sospecha`): two pairs of one remote failing before its probe both get re-recorded; a non-`RED` result for that pair closes it; a pair whose mark is no longer the one the `RED` left (`Sospecha.tras`) is not touched.
+- **Power saving** (`Politica.pausar_ahorro_energia`, on by default, `agente.json` → `moderacion`) holds passes and `watch` walks even on mains: the user (or the OS, on low battery) asked for it. `moderacion.energia()` reads it with the battery: Windows `SYSTEM_POWER_STATUS.SystemStatusFlag == 1` (battery saver; `energia_de_windows()` is the pure translation, and it counts on a desktop with no battery), Linux power-profiles-daemon's `ActiveProfile == "power-saver"` on the system bus (`org.freedesktop.UPower.PowerProfiles`, then the pre-0.20 `net.hadess.PowerProfiles`; `tuned-ppd` answers the first). No daemon, no saving. Whether Windows 11's «Energy saver» sets that flag is unverified (E1 in the checklist). runsync's service does not moderate at all.
 - Network needles live in `moderacion.ERRORES_DE_RED`; `sync.KNOWN_ERRORS` uses `moderacion.es_de_red` as a **callable needle**: one list, because the agent doesn't carry `sync.py`.
 
 ## An offline remote is probed when the network comes back (#67)

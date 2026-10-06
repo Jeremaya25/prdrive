@@ -2914,13 +2914,14 @@ class Agente:
             e.resultado = expulsar.Resultado(False, f"No he podido expulsarla: {ex}")
 
     def _leer_entorno(self, ahora: float) -> None:
-        """Lee la batería y la red, como mucho cada `MIRAR_ENTORNO` segundos."""
+        """Lee la batería, el modo de ahorro y la red, como mucho cada `MIRAR_ENTORNO` segundos."""
         if ahora - self.entorno_leido < MIRAR_ENTORNO:
             return
         self.entorno_leido = ahora
         energia = moderacion.energia()
         self.entorno = replace(self.entorno, con_bateria=energia.con_bateria,
                                bateria=energia.porcentaje,
+                               ahorro_energia=energia.ahorro,
                                red_medida=moderacion.red_medida())
 
     def _mirar_version(self, ahora: float) -> None:

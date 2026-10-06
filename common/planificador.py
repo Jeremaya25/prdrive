@@ -71,12 +71,15 @@ class Politica:
 
     Sale de `agente.json`; aquí están sus valores de fábrica, que son los del
     diseño: sincroniza con batería, se para por debajo del 20 % y se pausa en
-    una red de uso medido.
+    una red de uso medido y con el modo de ahorro de energía del sistema.
 
     Args:
         con_bateria: Si se sincroniza funcionando a batería.
         bateria_minima: Porcentaje por debajo del cual se para.
         pausar_red_medida: Si se pausa en una red de uso medido.
+        pausar_ahorro_energia: Si se pausa mientras el sistema está en modo de
+            ahorro de energía, también enchufado: es lo que ha pedido el
+            usuario (o el sistema, con poca batería).
         tope_espera: Segundos máximos de espera tras fallos seguidos.
         sondeo_sin_conexion: Segundos entre sondas de un remoto sin conexión
             cuando el sistema no avisa de los cambios de red.
@@ -95,6 +98,7 @@ class Politica:
     con_bateria: bool = True
     bateria_minima: int = 20
     pausar_red_medida: bool = True
+    pausar_ahorro_energia: bool = True
     tope_espera: float = 4 * HORA
     sondeo_sin_conexion: float = 5 * 60.0
     sondeo_de_respaldo: float = 30 * 60.0
@@ -164,6 +168,7 @@ class Entorno:
         bateria: Porcentaje de batería, si se sabe.
         red_medida: Si la red es de uso medido; `None` es «no se sabe» y cuenta
             como normal.
+        ahorro_energia: Si el sistema está en modo de ahorro de energía.
         sin_conexion: `(raíz, remoto)` sin conexión, con cuándo toca sondearlo
             otra vez.
     """
@@ -171,6 +176,7 @@ class Entorno:
     con_bateria: bool = False
     bateria: int | None = None
     red_medida: bool | None = None
+    ahorro_energia: bool = False
     sin_conexion: Mapping[tuple[str, str], float] = field(default_factory=dict)
 
 
@@ -261,6 +267,8 @@ def moderacion(entorno: Entorno, politica: Politica) -> str | None:
             return "funcionando con batería"
         if entorno.bateria is not None and entorno.bateria < politica.bateria_minima:
             return f"batería por debajo del {politica.bateria_minima} %"
+    if entorno.ahorro_energia and politica.pausar_ahorro_energia:
+        return "modo de ahorro de energía"
     if entorno.red_medida and politica.pausar_red_medida:
         return "red de uso medido"
     return None

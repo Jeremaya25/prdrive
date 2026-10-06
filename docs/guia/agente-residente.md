@@ -94,10 +94,13 @@ agente»**. El diseño completo está en
   Sirve también para las unidades de antes de la 0.5.0, que así vuelve a
   atender. Volver a pasar el asistente con el agente de la misma
   versión no lo reinstala: solo le pide lo nuevo.
-- **Se modera solo.** Con batería por debajo del 20 % o en una red de uso medido
-  no lanza nada; si un remoto no contesta, deja de lanzar pareja tras pareja
-  contra él y lo sondea cada 5 minutos; tras un fallo, cada pareja espera el
-  doble de su intervalo (hasta 4 horas), y a cero con la primera pasada buena.
+- **Se modera solo.** Con batería por debajo del 20 %, en una red de uso medido
+  o con el modo de ahorro de energía del sistema puesto (el «ahorro de batería» o
+  «ahorro de energía» de Windows, el perfil «ahorro de energía» de GNOME o KDE),
+  también enchufado, no lanza nada; si un remoto no contesta, deja de lanzar
+  pareja tras pareja contra él y lo sondea cada 5 minutos; tras un fallo, cada
+  pareja espera el doble de su intervalo (hasta 4 horas), y a cero con la
+  primera pasada buena.
   «Sincronizar ahora» (`python agente.py pasada <id>`) se salta todo eso. Nunca
   hace un `--resync` por su cuenta.
 - **Avisa con los avisos del sistema**, sin ventanas propias, y solo cuando una
@@ -133,10 +136,11 @@ agente»**. El diseño completo está en
   10 s la carpeta de la pareja —sin abrir ficheros ni eventos del sistema— y,
   20 s después de que dejen de cambiar, adelanta su pasada al intervalo; nunca
   dos pasadas de la misma pareja con menos de 2 minutos entre ellas. Es una
-  pasada corriente: en pausa, con batería o en una red de uso medido espera como
-  las demás. No ve los cambios del remoto, ni lo que se cambie mientras la pasada
-  corre, y una carpeta de más de 20 000 entradas deja de vigilarse (lo dice el
-  diario) y sigue por su intervalo. Detalles en `sync_config.example.toml`.
+  pasada corriente: en pausa, con batería, en ahorro de energía o en una red
+  de uso medido espera como las demás. No ve los cambios del remoto, ni lo que
+  se cambie mientras la pasada corre, y una carpeta de más de 20 000 entradas
+  deja de vigilarse (lo dice el diario) y sigue por su intervalo. Detalles en
+  `sync_config.example.toml`.
 - **Se registra por usuario, sin administrador**: en Windows con una tarea
   programada; en Linux con un autostart del escritorio (y no con systemd: los
   avisos y la pregunta por una unidad nueva necesitan la sesión gráfica).
@@ -156,7 +160,7 @@ python agente.py expulsar <id>        # soltar esa unidad extraíble, como «Exp
 
 Esas órdenes no tocan nada por sí mismas: dejan la petición en el buzón del
 agente (`agente.pide`), y él escribe su configuración. **Sin probar todavía en un
-Windows real**: la tarea programada, la bandeja y los avisos (`Shell_NotifyIconW`), la batería,
+Windows real**: la tarea programada, la bandeja y los avisos (`Shell_NotifyIconW`), la batería y el ahorro de energía,
 la red de uso medido (`INetworkCostManager`), el acceso del menú Inicio
 (`IShellLinkW`) y «Actualizar»; ni en un escritorio Linux de verdad la
 bandeja (StatusNotifierItem y dbusmenu).

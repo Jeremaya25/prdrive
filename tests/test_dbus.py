@@ -381,6 +381,37 @@ else:
     os.environ["DBUS_SYSTEM_BUS_ADDRESS"] = f"unix:path={DIR / 'no-existe'}"
     c("sin NetworkManager no se sabe", moderacion.red_medida(), None)
 
+    def perfiles(interfaz, valor):
+        """Devuelve el responder de power-profiles-daemon con ese perfil, con ese nombre."""
+        def responde(m):
+            """Contesta `ActiveProfile` por esa interfaz, o error si preguntan otra cosa."""
+            if m.miembro == "Get" and m.cuerpo == [interfaz, "ActiveProfile"]:
+                return ("ok", "v", [dbus.Variante("s", valor)])
+            return ("error", "org.freedesktop.DBus.Error.ServiceUnknown", "no está")
+        return responde
+
+    moderacion.POWER_SUPPLY = DIR / "no-existe"
+    for interfaz, cual in ((moderacion.PPD, "power-profiles-daemon"),
+                           (moderacion.PPD_ANTIGUO, "power-profiles-daemon antiguo")):
+        for perfil, esperado in (("power-saver", True), ("balanced", False),
+                                 ("performance", False)):
+            ruta = DIR / f"perfil-{perfil}-{len(interfaz)}"
+            srv, _ = servir(ruta, perfiles(interfaz, perfil))
+            os.environ["DBUS_SYSTEM_BUS_ADDRESS"] = f"unix:path={ruta}"
+            c(f"{cual}: perfil {perfil}", moderacion.energia().ahorro, esperado)
+            srv.close()
+    os.environ["DBUS_SYSTEM_BUS_ADDRESS"] = f"unix:path={DIR / 'no-existe'}"
+    c("sin power-profiles-daemon no hay ahorro", moderacion.energia().ahorro, False)
+
+c("Windows: ahorro de batería con la batería al 50 %",
+  moderacion.energia_de_windows(0, 0, 50, 1), moderacion.Energia(True, 50, True))
+c("Windows: un sobremesa con el ahorro de energía (sin batería)",
+  moderacion.energia_de_windows(1, 128, 255, 1), moderacion.Energia(ahorro=True))
+c("Windows: sin batería ni ahorro", moderacion.energia_de_windows(1, 128, 255, 0),
+  moderacion.Energia())
+c("Windows: enchufado, carga desconocida",
+  moderacion.energia_de_windows(1, 0, 255, 0), moderacion.Energia(False, None))
+
 c("coste de Windows sin restricciones: no medida",
   moderacion.coste_medido(moderacion.NLM_COST_UNRESTRICTED), False)
 c("tarifa fija: medida", moderacion.coste_medido(moderacion.NLM_COST_FIXED), True)
