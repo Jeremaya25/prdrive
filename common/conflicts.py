@@ -130,6 +130,9 @@ def leer_nombre(nombre: str, esq: Esquema) -> tuple[str, str | None, int] | None
         es un conflicto.
     """
     candidatos = [esq.sufijo1, esq.sufijo2, "." + SUFIJO_RCLONE]
+    # Todo patrón exige su sufijo literal: sin ninguno no hay nada que compilar.
+    if not any(sufijo in nombre for sufijo in candidatos):
+        return None
     for sufijo in dict.fromkeys(candidatos):  # sin repetir, en orden
         m = _patron(sufijo, esq.mantener_extension).match(nombre)
         if m is None:
