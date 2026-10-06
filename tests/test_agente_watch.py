@@ -18,6 +18,11 @@ de la carpeta, las reglas del planificador). Aquí se comprueba el cableado de
 - El estado (`estado.json`, `status`) dice qué se vigila.
 - El recorrido se espacia con la carpeta quieta y a batería (las secciones de
   antes miran el cableado al ritmo de siempre, `CAMBIOS`).
+- Con los avisos del sistema (un motor de mentira, `AvisosFalsos`): la pareja
+  no se recorre; un aviso es una pasada tras la calma; el de su propia pasada
+  no cuenta; uno perdido vuelve a recorrer y se dice; sin avisos para una
+  carpeta, se recorre y se dice por qué; se dejan al dejar de servir la raíz,
+  al irse y antes de «Expulsar» y «Bloquear».
 """
 
 import contextlib
@@ -34,7 +39,8 @@ from _harness import Checks, tmpdir
 import _agente_falso as F
 import agente
 import penwatch
-from common import equipo, huella, model, moderacion, store, vestibulo
+from common import avisos_carpeta as ac
+from common import equipo, expulsar, huella, model, moderacion, store, vestibulo
 from common import planificador as pl
 
 c = Checks("agente: cambios locales de una pareja (watch)")
@@ -701,6 +707,284 @@ moderacion.energia = lambda: moderacion.Energia()
 agente.huella_local = foto
 
 # ---------------------------------------------------------------------------
+# 11d. Con los avisos del sistema
+# ---------------------------------------------------------------------------
+ORDEN: list[tuple] = []
+"""Lo que se ha pedido al motor de avisos de mentira, y otras cosas, en orden."""
+
+
+class AvisosFalsos:
+    """Un motor de avisos de mentira: apunta lo que le piden y entrega lo que pone el test.
+
+    Attributes:
+        pendientes: Lo que entregará el próximo `recoger()`, por pareja.
+        motivos: Lo que contesta `vigilar()` por pareja (`None`, se vigila).
+    """
+
+    def __init__(self) -> None:
+        """Empieza sin nada pendiente y vigilándolo todo."""
+        self.pendientes: dict = {}
+        self.motivos: dict = {}
+
+    def vigilar(self, clave, carpeta, ignorar):
+        """Apunta la petición y contesta lo que diga `motivos`."""
+        ORDEN.append(("vigilar", clave))
+        return self.motivos.get(clave)
+
+    def dejar(self, clave):
+        """Apunta que se deja una pareja."""
+        ORDEN.append(("dejar", clave))
+
+    def dejar_raiz(self, uid):
+        """Apunta que se deja una raíz."""
+        ORDEN.append(("dejar_raiz", uid))
+
+    def recoger(self):
+        """Entrega lo pendiente."""
+        avisos, self.pendientes = self.pendientes, {}
+        return avisos
+
+    def descartar(self, clave):
+        """Tira lo pendiente de una pareja salvo una pérdida, como el de verdad."""
+        ORDEN.append(("descartar", clave))
+        aviso = self.pendientes.get(clave)
+        if aviso is None or aviso.tipo == ac.PERDIDA:
+            return None
+        return self.pendientes.pop(clave)
+
+    def cerrar(self):
+        """Nada que cerrar."""
+
+
+def pedidas(que: str, clave=None) -> int:
+    """Cuántas veces se ha pedido eso al motor (de esa pareja o raíz)."""
+    return sum(1 for o in ORDEN if o[0] == que and (clave is None or o[1] == clave))
+
+
+F.preparar()
+MIRADAS.clear()
+agente.huella_local = foto
+UIDA = "f" * 32
+RAIZA = poner(UIDA, parejas=("docs", "fotos"), nombre="AVISOS", extra={"docs": VIGILA})
+BUZONA = RAIZA / ".prdrive" / "state" / equipo.BUZON_SERVICIO
+F.RAICES[:] = [RAIZA]
+FIRMAS.update({"docs": 1, "fotos": 1})
+DOCSA = (UIDA, "docs")
+motor = AvisosFalsos()
+aga = nuevo()
+aga.avisos_carpeta = motor
+F.vueltas(aga, 2)
+terminar(aga, RAIZA)
+quieto(aga, 300)
+c("con avisos, la pareja se vigila con ellos al conectarse", pedidas("vigilar", DOCSA), 1)
+c("  y su carpeta no se recorre nunca", mirada(), 0)
+c("  lo recordado dice que oye avisos", aga.vigiladas[DOCSA].avisos, True)
+c("  y el estado no dice que recorra", next(u for u in aga.resumen()["unidades"]
+                                            if u["id"] == UIDA)["vigila_recorre"], {})
+
+
+def docsa() -> int:
+    """Cuántas pasadas de docs de esta unidad se han lanzado."""
+    return sum(1 for p in F.pasadas(RAIZA) if p.args[-1] == "docs")
+
+
+def hasta_pasada_a(limite: float) -> float | None:
+    """Da vueltas hasta que sale una pasada de docs; devuelve cuánto tardó."""
+    n, desde = docsa(), F.reloj()
+    for _ in range(int(limite / TICK)):
+        F.vueltas(aga, 1)
+        if docsa() > n:
+            return F.reloj() - TICK - desde
+    return None
+
+
+n, tiradas = docsa(), pedidas("descartar", DOCSA)
+motor.pendientes[DOCSA] = ac.Aviso(ac.CAMBIO)
+espera = hasta_pasada_a(90)
+c("un aviso lanza la pasada tras la calma",
+  (espera is not None and CAMBIOS.calma <= espera <= CAMBIOS.calma + 2 * TICK,
+   docsa() - n, aga.pasada.tarea.por_cambios), (True, 1, True))
+quieto(aga, 8)
+motor.pendientes[DOCSA] = ac.Aviso(ac.CAMBIO)           # rclone escribiendo
+F.vueltas(aga, 1)
+motor.pendientes[DOCSA] = ac.Aviso(ac.CAMBIO)           # y lo último, ya en la cola
+terminar(aga, RAIZA)
+c("al acabar la pasada se tira lo que escribió", pedidas("descartar", DOCSA) - tiradas, 1)
+quieto(aga, 200)
+c("  y nada de lo que escribió la pasada lanza otra", docsa() - n, 1)
+c("  sigue oyendo avisos, sin recorrer", (aga.vigiladas[DOCSA].avisos, mirada()), (True, 0))
+
+n, antes = docsa(), pedidas("vigilar", DOCSA)
+motor.pendientes[DOCSA] = ac.Aviso(ac.DESBORDADO)
+c("un desbordado es un cambio...", hasta_pasada_a(90) is not None, True)
+c("  y la vigilancia se rehace", pedidas("vigilar", DOCSA), antes + 1)
+terminar(aga, RAIZA)
+quieto(aga, 140)
+
+n = docsa()
+moderacion.energia = lambda: moderacion.Energia(con_bateria=True, porcentaje=10)
+aga.entorno_leido = -math.inf
+F.vueltas(aga, 1)
+motor.pendientes[DOCSA] = ac.Aviso(ac.CAMBIO)
+quieto(aga, 120)
+c("con la moderación reteniendo, el aviso no lanza la pasada", docsa(), n)
+c("  pero se apunta", aga.vigiladas[DOCSA].cambio is not None, True)
+moderacion.energia = lambda: moderacion.Energia()
+aga.entorno_leido = -math.inf
+espera = hasta_pasada_a(30)
+c("  y al soltar, la pasada sale ya: su calma ya pasó",
+  espera is not None and espera <= 2 * TICK, True)
+terminar(aga, RAIZA)
+quieto(aga, 140)
+
+n = docsa()
+motor.pendientes[DOCSA] = ac.Aviso(ac.PERDIDA, "su carpeta ya no está donde estaba")
+F.vueltas(aga, 1)
+c("perder la vigilancia vuelve a recorrer", aga.vigiladas[DOCSA].avisos, False)
+quieto(aga, 20)
+c("  la carpeta se recorre", mirada() > 0, True)
+c("  se dice una vez, con el motivo", sum("ya no está donde estaba" in m for m in F.DIARIO), 1)
+c("  también en el diario de la raíz",
+  "ya no está donde estaba" in (RAIZA / ".prdrive" / "state" / "daemon.log").read_text(
+      encoding="utf-8"), True)
+unidad_a = next(u for u in aga.resumen()["unidades"] if u["id"] == UIDA)
+c("  y el estado dice que recorre, y por qué",
+  unidad_a["vigila_recorre"], {"docs": "su carpeta ya no está donde estaba"})
+store.write_json(equipo.estado_json(), aga.resumen())
+store.write_json(equipo.lock_json(), {"pid": os.getpid(), "host": agente.HOST})
+salida = io.StringIO()
+with contextlib.redirect_stdout(salida):
+    agente.cmd_status(None)
+c("  y `status` lo cuenta", "Recorre su carpeta (sin avisos del sistema): docs (su carpeta ya "
+  "no está donde estaba)" in salida.getvalue(), True)
+equipo.lock_json().unlink()
+FIRMAS["docs"] += 1
+c("  y un cambio lo ve el recorrido", hasta_pasada_a(60) is not None, True)
+terminar(aga, RAIZA)
+
+equipo.pedir({"pide": equipo.PIDE_PAUSAR_RAIZ}, BUZONA)
+F.vueltas(aga, 2)
+c("una raíz pausada desde su ventana deja sus vigilancias", pedidas("dejar", DOCSA) >= 1, True)
+c("  y olvida por qué recorría", DOCSA in aga.sin_avisos, False)
+antes = pedidas("vigilar", DOCSA)
+equipo.pedir({"pide": equipo.PIDE_REANUDAR}, BUZONA)
+F.vueltas(aga, 3)
+terminar(aga, RAIZA)
+F.vueltas(aga, 2)
+c("  al reanudar, se vuelve a vigilar con avisos",
+  (pedidas("vigilar", DOCSA) - antes, aga.vigiladas[DOCSA].avisos), (1, True))
+
+F.RAICES[:] = []
+F.vueltas(aga, 1)
+c("al irse la unidad se dejan las vigilancias de su raíz",
+  (pedidas("dejar_raiz", UIDA) >= 1, aga.vigiladas), (True, {}))
+
+# Sin avisos para esa carpeta (de red, o sin sitio): se recorre y se dice.
+F.preparar()
+MIRADAS.clear()
+agente.huella_local = foto
+UIDB = "1" * 32
+RAIZB = poner(UIDB, parejas=("docs",), nombre="RED", extra={"docs": VIGILA})
+F.RAICES[:] = [RAIZB]
+motor = AvisosFalsos()
+motor.motivos[(UIDB, "docs")] = "es una carpeta de red o compartida (nfs4)"
+agb = nuevo()
+agb.avisos_carpeta = motor
+F.vueltas(agb, 2)
+terminar(agb, RAIZB)
+quieto(agb, 30)
+c("sin avisos para su carpeta, se recorre", (mirada() > 0, agb.vigiladas[(UIDB, "docs")].avisos),
+  (True, False))
+c("  se dice una vez por qué", sum("carpeta de red o compartida (nfs4)" in m for m in F.DIARIO), 1)
+c("  y el estado lo cuenta", next(u for u in agb.resumen()["unidades"]
+                                  if u["id"] == UIDB)["vigila_recorre"],
+  {"docs": "es una carpeta de red o compartida (nfs4)"})
+
+# El resultado de ponerla de una conexión anterior no cuenta y no se queda puesto.
+con_vieja = agente.Conexion(UIDB, RAIZB, "vieja", 0.0)
+m_viejo = agente.Muestreo([agente.Mirar((UIDB, "docs"), con_vieja, RAIZB,
+                                        RAIZB / "sync-data" / "docs", armar=True)], 10, ())
+m_viejo.armadas[(UIDB, "docs")] = None
+m_viejo.hecho = True
+agb.muestreo = m_viejo
+dejadas = pedidas("dejar", (UIDB, "docs"))
+F.vueltas(agb, 1)
+c("lo puesto para una conexión anterior se deja y no cuenta",
+  (pedidas("dejar", (UIDB, "docs")) - dejadas, agb.vigiladas[(UIDB, "docs")].avisos), (1, False))
+
+# Sin motor (Windows, o sin inotify): todas recorren, y el estado lo dice.
+agc = nuevo()
+F.vueltas(agc, 2)
+terminar(agc, RAIZB)
+c("sin motor de avisos el estado dice que recorre", next(
+    u for u in agc.resumen()["unidades"] if u["id"] == UIDB)["vigila_recorre"],
+  {"docs": agente.SIN_MOTOR_DE_AVISOS})
+
+# «Expulsar» deja las vigilancias de la raíz antes de soltarla.
+F.preparar()
+UIDE = "2" * 32
+RAIZE = poner(UIDE, parejas=("docs",), nombre="EXPULSABLE", extra={"docs": VIGILA})
+F.RAICES[:] = [RAIZE]
+F.COMPATIBLES.add(RAIZE)
+expulsar_falso = expulsar.expulsar
+expulsar.expulsar = lambda raiz: ORDEN.append(("expulsar", Path(raiz))) or expulsar_falso(raiz)
+age = nuevo()
+age.avisos_carpeta = AvisosFalsos()
+F.vueltas(age, 2)
+terminar(age, RAIZE)
+F.vueltas(age, 2)
+ORDEN.clear()
+equipo.pedir({"pide": equipo.PIDE_EXPULSAR, "id": UIDE})
+F.vueltas(age, 3)
+c("«Expulsar» deja las vigilancias de la raíz antes de expulsarla",
+  [o for o in ORDEN if o[0] in ("dejar_raiz", "expulsar")][:2],
+  [("dejar_raiz", UIDE), ("expulsar", RAIZE)])
+agente.huella_local = foto
+
+# ---------------------------------------------------------------------------
+# 11e. Con el inotify de verdad (Linux)
+# ---------------------------------------------------------------------------
+motor_real = ac.abrir()
+if motor_real is None:
+    print("  (saltado) sin inotify: no se prueba el agente con los avisos de verdad")
+else:
+    F.preparar()
+    RECORRIDAS: list[str] = []
+    agente.huella_local = lambda ruta, tope, ignorar: RECORRIDAS.append(str(ruta)) or None
+    UIDR = "3" * 32
+    RAIZR = poner(UIDR, parejas=("docs",), nombre="INOTIFY", extra={"docs": VIGILA},
+                  locales={"docs": "."})
+    F.RAICES[:] = [RAIZR]
+    agr = nuevo()
+    agr.avisos_carpeta = motor_real
+    F.vueltas(agr, 2)
+    terminar(agr, RAIZR)
+    F.vueltas(agr, 2)
+    c("con inotify de verdad, la pareja se vigila con avisos",
+      (agr.vigiladas[(UIDR, "docs")].avisos, motor_real.vigilancias() > 0), (True, True))
+    n = len(F.pasadas(RAIZR))
+    (RAIZR / ".prdrive" / "state" / "algo.json").write_text("{}", encoding="utf-8")
+    quieto(agr, 60)
+    c("  lo que se escribe en .prdrive/ (local = \".\") no lanza nada",
+      len(F.pasadas(RAIZR)), n)
+    (RAIZR / "nota.md").write_text("hola", encoding="utf-8")
+    for _ in range(int(60 / TICK)):
+        F.vueltas(agr, 1)
+        if len(F.pasadas(RAIZR)) > n:
+            break
+    c("  un fichero nuevo lanza la pasada, sin recorrer la carpeta",
+      (len(F.pasadas(RAIZR)) - n, agr.pasada.tarea.por_cambios, RECORRIDAS), (1, True, []))
+    (RAIZR / "de-rclone.md").write_text("bajado", encoding="utf-8")
+    terminar(agr, RAIZR)
+    quieto(agr, 200)
+    c("  y lo que escribe la pasada no lanza otra", len(F.pasadas(RAIZR)) - n, 1)
+    F.RAICES[:] = []
+    F.vueltas(agr, 1)
+    c("  al irse la unidad no queda ninguna vigilancia", motor_real.vigilancias(), 0)
+    motor_real.cerrar()
+    agente.huella_local = foto
+
+# ---------------------------------------------------------------------------
 # 12. «Bloquear» espera a la foto en marcha
 # ---------------------------------------------------------------------------
 # Con un VeraCrypt de mentira, en Linux (una carpeta como punto de montaje): lo
@@ -757,5 +1041,25 @@ F.vueltas(ag7, 2)
 c("  y desmonta en cuanto acaba", [p.args for p in veracrypts()[antes:]],
   [[VC, "-d", str(HC)]])
 agente.hilo = lambda funcion: funcion()
+
+# Con avisos, «Bloquear» deja las vigilancias de la raíz antes de lanzar VeraCrypt.
+F.RAICES[:] = [PUNTO]
+lanzar_falso = agente.lanzar
+agente.lanzar = lambda args, **kw: ORDEN.append(("lanzar", args[0])) or lanzar_falso(args, **kw)
+ag7b = nuevo()
+ag7b.avisos_carpeta = AvisosFalsos()
+F.vueltas(ag7b, 3)
+for p in F.pasadas(PUNTO):
+    if p.rc is None:
+        F.acabar(p, 0, "OK\n")
+F.vueltas(ag7b, 2)
+c("con avisos, la raíz cifrada se vigila con ellos", pedidas("vigilar", (UID7, "notas")) >= 1,
+  True)
+ORDEN.clear()
+equipo.pedir({"pide": equipo.PIDE_BLOQUEAR, "id": UID7})
+F.vueltas(ag7b, 3)
+c("«Bloquear» deja las vigilancias de la raíz antes de lanzar VeraCrypt",
+  [o for o in ORDEN if o == ("dejar_raiz", UID7) or o == ("lanzar", VC)][:2],
+  [("dejar_raiz", UID7), ("lanzar", VC)])
 
 raise SystemExit(c.report())

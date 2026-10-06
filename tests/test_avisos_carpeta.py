@@ -308,8 +308,17 @@ m10 = motor()
 D = arbol()
 m10.vigilar(K, D, IGN)
 (D / "x.txt").write_text("x", encoding="utf-8")
-m10.descartar(K)
-c("descartar tira lo pendiente de esa pareja", m10.recoger(), {})
+c("descartar tira lo pendiente de esa pareja, y dice qué era",
+  ((m10.descartar(K) or ac.Aviso("")).tipo, m10.recoger()), (ac.CAMBIO, {}))
+os.rename(D / "sub", D / "sub-movida")
+c("  un desbordado tirado se devuelve: hay que rehacer igual",
+  ((m10.descartar(K) or ac.Aviso("")).tipo, m10.recoger()), (ac.DESBORDADO, {}))
+c("  y si no hay nada, nada", m10.descartar(K), None)
+D2 = arbol()
+m10.vigilar((U, "otra"), D2, IGN)
+shutil.rmtree(D2)
+c("una pérdida no se tira: la pareja ya no se vigila y hay que saberlo",
+  (m10.descartar((U, "otra")), tipos(m10.recoger())), (None, {(U, "otra"): ac.PERDIDA}))
 m10.cerrar()
 c("cerrado no lanza: ni leer ni recoger", (m10.leer(), m10.recoger()), (None, {}))
 

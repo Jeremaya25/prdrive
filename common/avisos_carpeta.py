@@ -376,11 +376,23 @@ class Inotify:
             avisos, self._pendientes = self._pendientes, {}
         return avisos
 
-    def descartar(self, clave: tuple[str, str]) -> None:
-        """Tira lo que ha llegado de una pareja: lo escribió su propia pasada."""
+    def descartar(self, clave: tuple[str, str]) -> Aviso | None:
+        """Tira lo que ha llegado de una pareja: lo escribió su propia pasada.
+
+        Una `PERDIDA` no se tira: la pareja ya no se vigila y quien llama tiene
+        que enterarse en `recoger()`.
+
+        Returns:
+            Lo que se ha tirado, o `None`. Si es un `DESBORDADO` la pasada no
+            cuenta como cambio, pero la vigilancia hay que rehacerla igual.
+        """
         self.leer()
         with self._cerrojo:
-            self._pendientes.pop(clave, None)
+            aviso = self._pendientes.get(clave)
+            if aviso is None or aviso.tipo == PERDIDA:
+                return None
+            del self._pendientes[clave]
+            return aviso
 
     def cerrar(self) -> None:
         """Cierra el descriptor; con él se van todas las vigilancias."""
