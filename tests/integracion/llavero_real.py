@@ -37,11 +37,13 @@ import base64
 import hashlib
 import json
 import os
+import re
 import shutil
 import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -207,10 +209,16 @@ def preparar(raiz: Path, remoto: Path) -> Path:
     return deploy.app_dir(raiz)
 
 
-def hablar_con_keepassxc(proxy: str) -> dict:
-    """Hace de KeePassXC-Browser: lanza el proxy y le manda `change-public-keys`."""
+def hablar_con_keepassxc(proxy: str, tope: float = 15.0) -> dict:
+    """Hace de KeePassXC-Browser: lanza el proxy y le manda `change-public-keys`.
+
+    Sin KeePassXC al otro lado el proxy no contesta nunca: se espera `tope`
+    segundos, en un hilo, y se da por fallido.
+    """
     p = subprocess.Popen([proxy, ORIGEN_CHROME], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
-    try:
+    respuesta: dict = {"fallo": f"el proxy no contesta en {tope:.0f} s"}
+
+    def hablar() -> None:
         def b64(n: int) -> str:
             return base64.b64encode(os.urandom(n)).decode()
         msg = json.dumps({"action": "change-public-keys", "publicKey": b64(32),
@@ -218,9 +226,55 @@ def hablar_con_keepassxc(proxy: str) -> dict:
         p.stdin.write(struct.pack("<I", len(msg)) + msg)
         p.stdin.flush()
         largo = struct.unpack("<I", p.stdout.read(4))[0]
-        return json.loads(p.stdout.read(largo))
-    finally:
-        p.kill()
+        respuesta.clear()
+        respuesta.update(json.loads(p.stdout.read(largo)))
+
+    hilo = threading.Thread(target=hablar, daemon=True)
+    hilo.start()
+    hilo.join(tope)
+    p.kill()
+    return respuesta
+
+
+def por_que_no_arranca() -> None:
+    """Cuenta por qué no se ve KeePassXC (Linux): las bibliotecas que no encuentra y lo que dice.
+
+    Es lo extraído en la caché: `ldd` del programa y del plugin de Qt para X11
+    (con las bibliotecas que lleva el AppImage delante, como `AppRun`), y
+    unos segundos de arrancarlo a mano con `QT_DEBUG_PLUGINS`.
+    """
+    from common import keepassxc as kx
+    from common import pins
+    raiz = kx.cache_equipo() / pins.KEEPASSXC_VERSION / "squashfs-root"
+    entorno = {**os.environ, "LD_LIBRARY_PATH": str(raiz / "usr" / "lib"),
+               "QT_DEBUG_PLUGINS": "1"}
+    print(f"    ¿Por qué no se ve KeePassXC? (lo extraído en {raiz})")
+    for binario in (raiz / "usr" / "bin" / "keepassxc",
+                    raiz / "usr" / "plugins" / "platforms" / "libqxcb.so"):
+        r = subprocess.run(["ldd", str(binario)], capture_output=True, text=True, env=entorno)
+        faltan = [x.strip() for x in r.stdout.splitlines() if "not found" in x]
+        print(f"    ldd {binario.name}: " + (", ".join(faltan) if faltan else "no falta nada"))
+    for args in (["--version"], []):            # la versión, y la ventana: 10 s
+        try:
+            r = subprocess.run([str(raiz / "AppRun"), *args], capture_output=True, text=True,
+                               env=entorno, timeout=10)
+            salida = (r.stdout + r.stderr).strip().splitlines()
+            print(f"    AppRun {' '.join(args)}: código {r.returncode}")
+        except subprocess.TimeoutExpired as e:
+            salida = ((e.stdout or b"").decode(errors="replace")
+                      + (e.stderr or b"").decode(errors="replace")).strip().splitlines()
+            print(f"    AppRun {' '.join(args)}: sigue abierto a los 10 s")
+        mostrar(salida)
+
+
+def mostrar(salida: list[str]) -> None:
+    """Enseña lo que dijo KeePassXC con `QT_DEBUG_PLUGINS`."""
+    # La depuración de los plugins es muy larga: solo lo que suena a error, y el final.
+    errores = [x for x in salida if re.search(
+        r"[Ee]rror|[Cc]annot (load|open)|Could not|failed|not found|[Uu]nable|Abort"
+        r"|This application", x)]
+    for linea in (errores[-20:] + ["…"] + salida[-5:]) if errores else salida[-10:]:
+        print(f"    | {linea}")
 
 
 class Cli:
@@ -332,8 +386,10 @@ def main() -> int:
     remota = remoto / "prdrive-catalog" / "keychain" / BASE
     ver("la primera pasada sube la base (y crea keychain/ en el remoto)",
         resumen(remota), resumen(local))
-    ver("KeePassXC se reconoce como de la unidad",
-        esperar(lambda: estado(app)["abierto"], 30) is not None, True)
+    se_ve = esperar(lambda: estado(app)["abierto"], 30) is not None
+    ver("KeePassXC se reconoce como de la unidad", se_ve, True)
+    if not se_ve and not IS_WIN:
+        por_que_no_arranca()
     e = estado(app)
     ver("el vigilante, en marcha", e["vigilante"], True)
     ver("su configuración, en la de la unidad",
