@@ -167,6 +167,47 @@ with sandbox() as root:
 c("la raíz de una unidad acaba en barra y aun así se relee",
   releer(r'".=F:\" "sync-data=F:\sync-data"'), ['.=F:\\', 'sync-data=F:\\sync-data'])
 
+# un remote de tipo `local`: rclone pone su `Root()`, no la ruta tal cual
+#
+# Los nombres de la derecha son los que escribió rclone v1.75.1 de verdad: en
+# Linux, con este remote en un rclone.conf; en Windows, en el CI de
+# `llavero-real.yml` (la ruta del remoto era D:/a/_temp/…), donde prdrive
+# esperaba `nas_D__a__temp…` y no encontraba el listado del llavero.
+with sandbox():
+    model.RCLONE_CONF.write_text("[nas]\ntype = local\n\n[otro]\ntype = local\nnounc = true\n\n"
+                                 "[nube]\ntype = sftp\n", encoding="utf-8")
+
+    def nombre(destino):
+        """El nombre del lado del remoto, como lo calcula prdrive."""
+        return bisync.canonical_path(bisync.fs_path_remote(destino))
+
+    real_win = bisync.IS_WIN
+    try:
+        bisync.IS_WIN = False
+        for destino, de_rclone in (("nas:/tmp/p/w//x", "nas__tmp_p_w_x"),
+                                   ("nas:/tmp/p/w/./x", "nas__tmp_p_w_x"),
+                                   ("nas:/tmp/p/w/x/", "nas__tmp_p_w_x"),
+                                   ("nas:rel/x", "nas_rel_x"), ("nas:a/../b", "nas_b"),
+                                   ("nas:", "nas_\uff0e"), ("nas:/", "nas_")):
+            c(f"en Linux, un remote local va con su ruta limpia: {destino}",
+              nombre(destino), de_rclone)
+        c("  uno de otro tipo, tal cual", nombre("nube:/datos//x"), "nube__datos__x")
+        bisync.IS_WIN = True
+        c("en Windows, con \\\\?\\ delante (el nombre que escribió rclone en el CI)",
+          nombre("nas:D:/a/_temp/prdrive-real-0vhwz033/remoto/prdrive-catalog/keychain"),
+          "nas_____D__a__temp_prdrive-real-0vhwz033_remoto_prdrive-catalog_keychain")
+        c("  una ruta de red, con \\\\?\\UNC\\", nombre(r"nas:\\servidor\datos"),
+          "nas_____UNC_servidor_datos")
+        c("  con nounc = true, sin el prefijo", nombre("otro:D:/datos"), "otro_D__datos")
+        c("  uno de otro tipo, tal cual", nombre("nube:/datos"), "nube__datos")
+        c("  una relativa, desde .prdrive/ (rclone corre ahí)",
+          nombre("nas:datos") == nombre(f"nas:{model.APP_DIR}/datos"), True)
+    finally:
+        bisync.IS_WIN = real_win
+    model.RCLONE_CONF.unlink()
+    c("sin rclone.conf, como cualquier remote", nombre("nas:/tmp/p/w//x"), "nas__tmp_p_w__x")
+
+
 # la venda, retirada
 #
 # No es una comprobación de aspecto: renombrar los listados al prefijo nuevo es

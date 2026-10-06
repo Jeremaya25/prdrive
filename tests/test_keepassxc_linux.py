@@ -116,10 +116,76 @@ try:
           keepassxc.procesos_de_la_unidad(), ([10, 12], []))
         del PROCESOS[11], PROCESOS[13]
         c("  sin los otros, no hay «otro»", keepassxc.otro_abierto(), False)
+
+        # Para quien no es root, el `exe` de un KeePassXC no se deja mirar: se
+        # hace no volcable al arrancar (`store.sin_exe()`). Se ve por su nombre.
+        # Así lo dejó ver el de verdad en ubuntu-latest, sin que prdrive lo
+        # reconociera nunca.
+        no_volcables = {20: "keepassxc", 21: "keepassxc", 22: "bash"}
+        PROCESOS[20] = ("keepassxc", ["--config", str(config_), str(base)])
+        PROCESOS[21] = ("keepassxc", [str(base)])
+        PROCESOS[22] = ("bash", [str(base)])
+        visibles = {pid: exe for pid, (exe, _) in PROCESOS.items() if pid not in no_volcables}
+        store.procesos = lambda: visibles
+        store.sin_exe = lambda: no_volcables
+        c("uno que no se deja mirar es suyo por su nombre y su orden",
+          sorted(llavero.pids_keepassxc(app)), [10, 12, 20, 21])
+        no_volcables[23] = "keepassxc"
+        PROCESOS[23] = ("keepassxc", [])
+        c("  y uno así sin su base es «otro»", keepassxc.otro_abierto(), True)
+        del no_volcables[23], PROCESOS[23]
     finally:
         model.APP_DIR = real_app
 finally:
     store.procesos, store.orden_de, store.procesos_desde, llavero.MIRAR_ORDENES = reales_procesos
+    store.sin_exe = lambda: {}
+
+# Lo que corre de lo extraído, aunque no se deje mirar: el que abrió prdrive
+# cuenta (su `--config` es el de `config/linux/` de una unidad), sin versión.
+reales_cache = (keepassxc.cache_equipo, store.procesos_desde, store.orden_de)
+try:
+    cache_ = tmpdir("prdrive-kpxc-cache-abiertos-")
+    keepassxc.cache_equipo = lambda: cache_
+    vista = cache_ / "2.7.11" / keepassxc.EXTRAIDO / "usr" / "bin" / "keepassxc"
+    store.procesos_desde = lambda carpeta: ({5: str(vista)} if Path(carpeta) == cache_ else {})
+    ordenes = {6: ["keepassxc", "--config", "/media/x/PRDRIVE/.prdrive/keepassxc/config/linux/"
+                   "keepassxc.ini", "/media/x/PRDRIVE/.keychain/p.kdbx"],
+               7: ["keepassxc", "/home/p/mia.kdbx"]}
+    store.orden_de = lambda pid: ordenes.get(pid, [])
+    store.sin_exe = lambda: {6: "keepassxc", 7: "keepassxc"}
+    c("los abiertos de lo extraído: el que se ve, con su versión; el de prdrive que no, sin",
+      keepassxc.abiertos_de_la_cache(), {5: "2.7.11", 6: None})
+    c("  el de la persona (el de la distribución, sin --config de una unidad) no cuenta",
+      keepassxc.lanzado_por_prdrive(ordenes[7]), False)
+    (cache_ / "2.7.10").mkdir()
+    vista.parent.mkdir(parents=True)
+    keepassxc._barrer_versiones("2.7.12")
+    c("  con uno de versión desconocida no se barre ninguna versión vieja",
+      sorted(p.name for p in cache_.iterdir()), ["2.7.10", "2.7.11"])
+    store.sin_exe = lambda: {7: "keepassxc"}
+    store.procesos_desde = lambda carpeta: {}
+    keepassxc._barrer_versiones("2.7.12")
+    c("  sin él, sí", sorted(p.name for p in cache_.iterdir()), [])
+finally:
+    keepassxc.cache_equipo, store.procesos_desde, store.orden_de = reales_cache
+    store.sin_exe = lambda: {}
+
+# Y de verdad: un proceso no volcable, como KeePassXC. Root lo ve igual (lee
+# cualquier `exe`), así que solo dice algo sin root: en el CI, y en un equipo.
+if os.name != "nt" and os.geteuid() != 0:
+    import _harness
+    hijo = subprocess.Popen([sys.executable, "-c",
+                             "import ctypes, time; ctypes.CDLL(None).prctl(4, 0); time.sleep(30)"])
+    try:
+        time.sleep(0.5)
+        c("de verdad: un proceso no volcable sale en sin_exe() con su nombre",
+          _harness.REAL_SIN_EXE().get(hijo.pid, "").startswith("python"), True)
+        c("  y no en procesos()", hijo.pid in store.procesos(), False)
+    finally:
+        hijo.kill()
+        hijo.wait()
+else:
+    print("  (saltado) sin_exe() de verdad: root lee el exe de cualquiera (o es Windows)")
 
 # Un KeePassXC que se cierra y es hijo de quien espera (la ventana lo lanza y
 # «Expulsar» lo espera) se queda zombi hasta que lo recogen: ya no está vivo.

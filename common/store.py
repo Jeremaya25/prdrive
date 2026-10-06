@@ -441,6 +441,50 @@ def procesos() -> dict[int, str]:
     return dict(_ejecutables())
 
 
+def sin_exe() -> dict[int, str]:
+    """Devuelve `{pid: nombre}` de los procesos cuyo ejecutable no se deja mirar (Linux).
+
+    Un proceso que se hace no volcable (`prctl(PR_SET_DUMPABLE, 0)`) deja su
+    `/proc/<pid>/exe` a root: solo root lo lee. Es lo que hace KeePassXC al
+    arrancar (`Bootstrap::disableCoreDumps()`, para que no quede un volcado con
+    las claves), así que para una persona sin root `procesos()` no lo ve. Su
+    `comm` y su `cmdline` sí se leen. Visto con el KeePassXC 2.7.12 de verdad
+    en `ubuntu-latest` y con un usuario sin privilegios. En Windows, vacío. Es
+    función de módulo para que los tests la sustituyan.
+    """
+    if os.name == "nt":
+        return {}
+    salida: dict[int, str] = {}
+    for d in Path("/proc").glob("[0-9]*"):
+        try:
+            pid = int(d.name)
+            os.readlink(d / "exe")
+            continue
+        except ValueError:
+            continue
+        except OSError:
+            pass
+        try:
+            nombre = (d / "comm").read_text(encoding="utf-8", errors="replace").strip()
+        except OSError:
+            continue
+        if nombre:
+            salida[pid] = nombre
+    return salida
+
+
+def nombres() -> dict[int, str]:
+    """Devuelve `{pid: nombre del ejecutable}` de todos los procesos, también los que no se dejan mirar.
+
+    Es `procesos()` con los de `sin_exe()`: para saber qué es un proceso basta
+    el nombre, aunque no se sepa desde dónde corre.
+    """
+    salida = {pid: Path(exe).name for pid, exe in procesos().items()}
+    for pid, nombre in sin_exe().items():
+        salida.setdefault(pid, nombre)
+    return salida
+
+
 def orden_de(pid: int) -> list[str]:
     """Devuelve la línea de órdenes de un proceso, o `[]` si no se deja mirar.
 

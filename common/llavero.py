@@ -502,8 +502,8 @@ def pids_keepassxc(app_dir: Path | str | None = None) -> list[int]:
     equipo en Linux ARM64), así que cuenta un `keepassxc` cuya línea de órdenes
     nombra algo de la unidad (`_nombra_la_unidad()`). El proxy no cuenta: vive
     lo que el navegador, no lo que KeePassXC. `store.procesos_desde()`,
-    `store.procesos()` y `store.orden_de()` son los puntos de sustitución de
-    los tests.
+    `store.procesos()`, `store.sin_exe()` y `store.orden_de()` son los puntos
+    de sustitución de los tests.
     """
     app = Path(app_dir) if app_dir is not None else model.APP_DIR
     salida: list[int] = []
@@ -515,8 +515,10 @@ def pids_keepassxc(app_dir: Path | str | None = None) -> list[int]:
             if Path(exe).name.lower() == components.KEEPASSXC_EXE.lower():
                 salida.append(pid)
     if MIRAR_ORDENES:
-        for pid, exe in store.procesos().items():
-            if (pid not in salida and Path(exe).name == KEEPASSXC_LINUX
+        # Por el nombre y no por el ejecutable: KeePassXC se hace no volcable al
+        # arrancar y su `/proc/<pid>/exe` solo lo lee root (`store.sin_exe()`).
+        for pid, nombre in store.nombres().items():
+            if (pid not in salida and nombre == KEEPASSXC_LINUX
                     and _nombra_la_unidad(store.orden_de(pid), app)):
                 salida.append(pid)
     return salida

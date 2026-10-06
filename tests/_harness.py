@@ -192,6 +192,14 @@ _keepassxc.bases_navegador = lambda: {"config": Path(os.environ["XDG_CONFIG_HOME
                                       "data": Path(os.environ["XDG_DATA_HOME"]),
                                       "home": _casa}
 
+# Ni los procesos de verdad que no se dejan mirar (`store.sin_exe()`): un
+# KeePassXC abierto en el equipo de quien corre los tests se colaría en los
+# suyos. El test que la prueba guarda la de verdad (`REAL_SIN_EXE`).
+from common import store as _store  # noqa: E402
+
+REAL_SIN_EXE = _store.sin_exe
+_store.sin_exe = lambda: {}
+
 # Varios tests fuerzan `IS_WIN = False` para pasar por la rama de Linux, y ahí
 # «¿vive este pid?» es `os.kill(pid, 0)`. En Windows eso NO pregunta: 0 es
 # CTRL_C_EVENT y le manda un Ctrl+C a toda la consola (el test, run_all y el
@@ -227,9 +235,13 @@ def sandbox():
     """Reapunta las rutas del modelo a un directorio temporal.
 
     Todo lo que escriben bisync, los filtros y los logs cuelga de estas cuatro
-    rutas, así que moverlas basta para que ningún test toque el dispositivo de verdad."""
+    rutas, así que moverlas basta para que ningún test toque el dispositivo de verdad.
+    El `rclone.conf` también: el prefijo de los listados mira el tipo de cada
+    remote (`bisync.tipos_de_remote()`), y no puede depender del que haya en
+    la copia de quien corre los tests (en un dispositivo, el de verdad)."""
     original = {name: getattr(model, name)
-                for name in ("DEVICE_ROOT", "STATE_DIR", "FILTERS_DIR", "LOG_DIR", "CONFIG_FILE")}
+                for name in ("DEVICE_ROOT", "STATE_DIR", "FILTERS_DIR", "LOG_DIR", "CONFIG_FILE",
+                             "RCLONE_CONF")}
     root = Path(tempfile.mkdtemp(prefix="prdrive-test-"))
     try:
         model.DEVICE_ROOT = root
@@ -237,6 +249,7 @@ def sandbox():
         model.FILTERS_DIR = root / "filters"
         model.LOG_DIR = root / "logs"
         model.CONFIG_FILE = root / "sync_config.toml"
+        model.RCLONE_CONF = root / "rclone.conf"
         for d in (model.STATE_DIR, model.FILTERS_DIR, model.LOG_DIR):
             d.mkdir(parents=True, exist_ok=True)
         yield root

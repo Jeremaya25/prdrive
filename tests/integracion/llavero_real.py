@@ -37,11 +37,13 @@ import base64
 import hashlib
 import json
 import os
+import re
 import shutil
 import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -207,20 +209,80 @@ def preparar(raiz: Path, remoto: Path) -> Path:
     return deploy.app_dir(raiz)
 
 
-def hablar_con_keepassxc(proxy: str) -> dict:
-    """Hace de KeePassXC-Browser: lanza el proxy y le manda `change-public-keys`."""
+def hablar_con_keepassxc(proxy: str, tope: float = 15.0) -> dict:
+    """Hace de KeePassXC-Browser: lanza el proxy y le manda `change-public-keys`.
+
+    Sin KeePassXC al otro lado el proxy no contesta nunca: se espera `tope`
+    segundos, en un hilo, y se da por fallido.
+    """
     p = subprocess.Popen([proxy, ORIGEN_CHROME], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
-    try:
+    respuesta: dict = {"fallo": f"el proxy no contesta en {tope:.0f} s"}
+
+    def hablar() -> None:
         def b64(n: int) -> str:
             return base64.b64encode(os.urandom(n)).decode()
         msg = json.dumps({"action": "change-public-keys", "publicKey": b64(32),
                           "nonce": b64(24), "clientID": b64(24)}).encode()
-        p.stdin.write(struct.pack("<I", len(msg)) + msg)
-        p.stdin.flush()
-        largo = struct.unpack("<I", p.stdout.read(4))[0]
-        return json.loads(p.stdout.read(largo))
-    finally:
-        p.kill()
+        try:
+            p.stdin.write(struct.pack("<I", len(msg)) + msg)
+            p.stdin.flush()
+            largo = struct.unpack("<I", p.stdout.read(4))[0]
+            leido = json.loads(p.stdout.read(largo))
+        except (OSError, ValueError, struct.error) as e:
+            respuesta["fallo"] = repr(e)
+            return
+        respuesta.clear()
+        respuesta.update(leido)
+
+    hilo = threading.Thread(target=hablar, daemon=True)
+    hilo.start()
+    hilo.join(tope)
+    p.kill()
+    return respuesta
+
+
+def por_que_no_arranca() -> None:
+    """Cuenta por qué no se ve KeePassXC (Linux): las bibliotecas que no encuentra y lo que dice.
+
+    Es lo extraído en la caché: `ldd` del programa y del plugin de Qt para X11
+    (con las bibliotecas que lleva el AppImage delante, como `AppRun`), y
+    unos segundos de arrancarlo a mano con `QT_DEBUG_PLUGINS`.
+    """
+    from common import keepassxc as kx
+    from common import pins
+    raiz = kx.cache_equipo() / pins.KEEPASSXC_VERSION / "squashfs-root"
+    # Con su configuración en un temporal: sin eso dejaría `~/.config/keepassxc`.
+    temporal = Path(tempfile.mkdtemp(prefix="prdrive-diagnostico-"))
+    entorno = {**os.environ, "LD_LIBRARY_PATH": str(raiz / "usr" / "lib"),
+               "QT_DEBUG_PLUGINS": "1", "KPXC_CONFIG": str(temporal / "keepassxc.ini"),
+               "KPXC_CONFIG_LOCAL": str(temporal / "keepassxc_local.ini")}
+    print(f"    ¿Por qué no se ve KeePassXC? (lo extraído en {raiz})")
+    for binario in (raiz / "usr" / "bin" / "keepassxc",
+                    raiz / "usr" / "plugins" / "platforms" / "libqxcb.so"):
+        r = subprocess.run(["ldd", str(binario)], capture_output=True, text=True, env=entorno)
+        faltan = [x.strip() for x in r.stdout.splitlines() if "not found" in x]
+        print(f"    ldd {binario.name}: " + (", ".join(faltan) if faltan else "no falta nada"))
+    for args in (["--version"], []):            # la versión, y la ventana: 10 s
+        try:
+            r = subprocess.run([str(raiz / "AppRun"), *args], capture_output=True, text=True,
+                               env=entorno, timeout=10)
+            salida = (r.stdout + r.stderr).strip().splitlines()
+            print(f"    AppRun {' '.join(args)}: código {r.returncode}")
+        except subprocess.TimeoutExpired as e:
+            salida = ((e.stdout or b"").decode(errors="replace")
+                      + (e.stderr or b"").decode(errors="replace")).strip().splitlines()
+            print(f"    AppRun {' '.join(args)}: sigue abierto a los 10 s")
+        mostrar(salida)
+
+
+def mostrar(salida: list[str]) -> None:
+    """Enseña lo que dijo KeePassXC con `QT_DEBUG_PLUGINS`."""
+    # La depuración de los plugins es muy larga: solo lo que suena a error, y el final.
+    errores = [x for x in salida if re.search(
+        r"[Ee]rror|[Cc]annot (load|open)|Could not|failed|not found|[Uu]nable|Abort"
+        r"|This application", x)]
+    for linea in (errores[-20:] + ["…"] + salida[-5:]) if errores else salida[-10:]:
+        print(f"    | {linea}")
 
 
 class Cli:
@@ -292,13 +354,18 @@ def main() -> int:
         # La carpeta personal en el temporal: los manifiestos y lo extraído van
         # ahí, y Chrome y Firefox «están» (sus carpetas existen).
         casa = temporal / "casa"
-        for d in (".config/google-chrome", ".mozilla", ".cache", ".local/share", "run"):
+        for d in (".config/google-chrome", ".mozilla", ".cache", ".local/share"):
             (casa / d).mkdir(parents=True)
-        os.chmod(casa / "run", 0o700)
+        # La de ejecución, corta y en /tmp: el servidor del navegador de KeePassXC
+        # es un socket en `$XDG_RUNTIME_DIR/app/org.keepassxc.KeePassXC/…BrowserServer`
+        # (66 caracteres más), y la ruta de un socket no pasa de 108. La del
+        # temporal del CI es larga (120 en total): KeePassXC no podía escuchar.
+        # En un equipo es `/run/user/<uid>` (80).
+        ejecucion = Path(tempfile.mkdtemp(prefix="kpx-", dir="/tmp"))
         os.environ.update(HOME=str(casa), XDG_CONFIG_HOME=str(casa / ".config"),
                           XDG_CACHE_HOME=str(casa / ".cache"),
                           XDG_DATA_HOME=str(casa / ".local/share"),
-                          XDG_RUNTIME_DIR=str(casa / "run"))
+                          XDG_RUNTIME_DIR=str(ejecucion))
 
     print("== 1. Un dispositivo, y KeePassXC bajado y comprobado", flush=True)
     app = preparar(raiz, remoto)
@@ -332,8 +399,10 @@ def main() -> int:
     remota = remoto / "prdrive-catalog" / "keychain" / BASE
     ver("la primera pasada sube la base (y crea keychain/ en el remoto)",
         resumen(remota), resumen(local))
-    ver("KeePassXC se reconoce como de la unidad",
-        esperar(lambda: estado(app)["abierto"], 30) is not None, True)
+    se_ve = esperar(lambda: estado(app)["abierto"], 30) is not None
+    ver("KeePassXC se reconoce como de la unidad", se_ve, True)
+    if not se_ve and not IS_WIN:
+        por_que_no_arranca()
     e = estado(app)
     ver("el vigilante, en marcha", e["vigilante"], True)
     ver("su configuración, en la de la unidad",
@@ -359,11 +428,18 @@ def main() -> int:
         manifiesto = Path(e["manifiestos"].get("chrome", "no-hay"))
         ver("y nada en ~/.config/keepassxc",
             (Path(os.environ["XDG_CONFIG_HOME"]) / "keepassxc").exists(), False)
-    try:
-        proxy = json.loads(manifiesto.read_text(encoding="utf-8"))["path"]
-        respuesta = hablar_con_keepassxc(proxy)
-    except (OSError, ValueError, KeyError, struct.error) as fallo:
-        respuesta = {"fallo": repr(fallo)}
+    # Recién abierto, su servidor del navegador puede no escuchar todavía, y el
+    # proxy no vuelve a intentar la conexión: se le dan unos intentos.
+    respuesta: dict = {}
+    for _ in range(4):
+        try:
+            proxy = json.loads(manifiesto.read_text(encoding="utf-8"))["path"]
+            respuesta = hablar_con_keepassxc(proxy, tope=5)
+        except (OSError, ValueError, KeyError) as fallo:
+            respuesta = {"fallo": repr(fallo)}
+        if respuesta.get("action"):
+            break
+        time.sleep(2)
     ver("el navegador llega a KeePassXC por el proxy de su manifiesto",
         (respuesta.get("action"), respuesta.get("version"), respuesta.get("success")),
         ("change-public-keys", pins.KEEPASSXC_VERSION, "true"))
@@ -419,6 +495,8 @@ def main() -> int:
         print(f"\nLo de la prueba se queda en {temporal} (logs en {app / 'logs'}).")
     else:
         shutil.rmtree(temporal, ignore_errors=True)
+        if not IS_WIN:
+            shutil.rmtree(os.environ["XDG_RUNTIME_DIR"], ignore_errors=True)
 
     print("\n" + ("TODO BIEN" if not fallos else f"FALLAN {len(fallos)}: " + "; ".join(fallos)))
     return 1 if fallos else 0
