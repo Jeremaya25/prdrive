@@ -21,7 +21,16 @@ Con carpetas de verdad en un temporal y el inotify de verdad del núcleo:
 - El vigía del agente (`agente.Vigia.oir()`) vacía el descriptor en cuanto
   tiene algo, pero una ráfaga no adelanta la vuelta ni la hace girar más.
 
-Fuera de Linux no hay motor (`abrir()` es `None`) y el resto se salta.
+Windows (`ReadDirectoryChanges`), con un `Win32` de mentira en cualquier
+sistema: un aviso es un cambio, lo ignorado no lo es, el desbordamiento pide
+nada más que contar como cambio, un error pierde la pareja; ni una carpeta de
+red ni un volumen de VeraCrypt se dejan abiertos; sin aviso de extracción
+registrado no se deja el handle; «Expulsar» del sistema (`DBT_DEVICEQUERYREMOVE`)
+cierra el handle y, si la extracción no sigue adelante, se vuelve a abrir. Con
+el Windows de verdad (solo en Windows) lo básico: un cambio, lo ignorado, el
+búfer desbordado y que tras `dejar()` la carpeta se puede borrar.
+
+inotify solo se prueba en Linux; en los demás sistemas esa parte se salta.
 """
 
 import errno
@@ -31,8 +40,10 @@ import subprocess
 import sys
 import tempfile
 import threading
+import struct
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 from _harness import Checks, tmpdir
 
@@ -60,6 +71,350 @@ c("las carpetas de red y compartidas están en la tabla",
   {"nfs", "nfs4", "cifs", "smb3", "fuse.sshfs", "fuse.rclone", "9p"} <= ac.DE_RED, True)
 c("  y las de un pendrive o un disco no",
   {"vfat", "exfat", "ntfs3", "fuseblk", "ext4", "btrfs", "tmpfs"} & ac.DE_RED, set())
+
+# ---------------------------------------------------------------------------
+# Windows: ReadDirectoryChangesW, con un Win32 de mentira (en cualquier sistema)
+# ---------------------------------------------------------------------------
+def paquete(entradas: list[tuple[int, str]]) -> bytes:
+    """Un búfer de `FILE_NOTIFY_INFORMATION` como el que llena Windows."""
+    trozos = []
+    for i, (accion, nombre) in enumerate(entradas):
+        n = nombre.encode("utf-16-le")
+        largo = 12 + len(n)
+        largo += -largo % 4
+        siguiente = 0 if i == len(entradas) - 1 else largo
+        trozos.append((struct.pack("<III", siguiente, accion, len(n)) + n).ljust(largo, b"\0"))
+    return b"".join(trozos)
+
+
+c("el búfer de Windows: acción y nombre relativo de cada entrada",
+  ac.avisos_de_windows(paquete([(1, "a.txt"), (3, "sub\\ñandú.txt")])),
+  [(1, "a.txt"), (3, "sub\\ñandú.txt")])
+c("  vacío, nada", ac.avisos_de_windows(b""), [])
+
+
+def error_windows(codigo: int) -> OSError:
+    """Un `OSError` con su `winerror`, como el de `ctypes.WinError()`."""
+    e = OSError(0, f"error {codigo}")
+    e.winerror = codigo
+    return e
+
+
+class Win32Falsa:
+    """Un Windows de mentira para el motor de avisos: apunta lo que se le pide.
+
+    Los handles son números; los eventos, `threading.Event`; cada lectura
+    pendiente se completa a mano con `completar()`.
+
+    Attributes:
+        abiertos: Los handles de carpeta abiertos, con su ruta.
+        registrados: Los avisos de extracción registrados, con su handle.
+        lecturas: Las lecturas pendientes, por handle: `(overlapped, búfer)`.
+        lanzadas: Cuántas lecturas se han lanzado, por handle.
+        eventos_vivos: Los eventos creados y no cerrados.
+        unidades: El tipo de unidad de cada raíz (`GetDriveTypeW`), si no es fija.
+        dispositivos: El dispositivo de cada letra (`QueryDosDeviceW`).
+        fallar_registro: Si `RegisterDeviceNotificationW` falla.
+        hwnds: Las ventanas a las que se registraron avisos.
+    """
+
+    def __init__(self) -> None:
+        """Un Windows sin nada abierto."""
+        self.abiertos: dict[int, str] = {}
+        self.registrados: dict[int, int] = {}
+        self.lecturas: dict[int, tuple] = {}
+        self.lanzadas: dict[int, int] = {}
+        self.eventos_vivos: set = set()
+        self.unidades: dict[str, int] = {}
+        self.dispositivos: dict[str, str] = {}
+        self.fallar_registro = False
+        self.hwnds: list = []
+        self._n = 100
+        self._cerrojo = threading.Lock()
+
+    def _nuevo(self) -> int:
+        """Un número de handle nuevo."""
+        with self._cerrojo:
+            self._n += 1
+            return self._n
+
+    def tipo_de_unidad(self, raiz: str) -> int:
+        """`GetDriveTypeW`: fija salvo que se diga otra cosa."""
+        return self.unidades.get(raiz.upper(), 3)
+
+    def dispositivo_de(self, unidad: str) -> str:
+        """`QueryDosDeviceW`: un disco salvo que se diga otra cosa."""
+        return self.dispositivos.get(unidad.upper(), "\\Device\\HarddiskVolume3")
+
+    def abrir_carpeta(self, ruta: str) -> int:
+        """`CreateFileW` de una carpeta: un handle nuevo."""
+        h = self._nuevo()
+        self.abiertos[h] = ruta
+        return h
+
+    def cerrar(self, h: int) -> None:
+        """`CloseHandle`: lo que estuviera leyendo se cancela."""
+        self.abiertos.pop(h, None)
+        self.cancelar(h, None)
+
+    def registrar(self, hwnd, h: int) -> int:
+        """`RegisterDeviceNotificationW` de un handle."""
+        if self.fallar_registro:
+            return 0
+        self.hwnds.append(hwnd)
+        a = self._nuevo()
+        self.registrados[a] = h
+        return a
+
+    def desregistrar(self, aviso: int) -> None:
+        """`UnregisterDeviceNotification`."""
+        self.registrados.pop(aviso, None)
+
+    def evento(self):
+        """`CreateEventW`."""
+        ev = threading.Event()
+        self.eventos_vivos.add(ev)
+        return ev
+
+    def cerrar_evento(self, ev) -> None:
+        """`CloseHandle` de un evento."""
+        self.eventos_vivos.discard(ev)
+
+    def poner(self, ev) -> None:
+        """`SetEvent`."""
+        ev.set()
+
+    def quitar(self, ev) -> None:
+        """`ResetEvent`."""
+        ev.clear()
+
+    def overlapped(self, ev):
+        """Un `OVERLAPPED` con su evento."""
+        return SimpleNamespace(evento=ev, n=0, error=0)
+
+    def bufer(self, n: int) -> bytearray:
+        """El búfer de una lectura."""
+        return bytearray(n)
+
+    def bytes_de(self, bufer: bytearray, n: int) -> bytes:
+        """Los primeros `n` bytes del búfer."""
+        return bytes(bufer[:n])
+
+    def leer_cambios(self, h: int, bufer, ov, tam: int) -> None:
+        """`ReadDirectoryChangesW` superpuesta: queda pendiente."""
+        if h not in self.abiertos:
+            raise error_windows(6)
+        ov.n, ov.error = 0, 0
+        self.lecturas[h] = (ov, bufer)
+        self.lanzadas[h] = self.lanzadas.get(h, 0) + 1
+
+    def resultado(self, h: int, ov) -> int:
+        """`GetOverlappedResult` sin esperar."""
+        if ov.error:
+            raise error_windows(ov.error)
+        return ov.n
+
+    def cancelar(self, h: int, ov) -> None:
+        """`CancelIoEx`: la lectura acaba con `ERROR_OPERATION_ABORTED`."""
+        pendiente = self.lecturas.pop(h, None)
+        if pendiente is not None:
+            pendiente[0].error = ac.ERROR_OPERATION_ABORTED
+            pendiente[0].evento.set()
+
+    def esperar(self, eventos: list, ms: int) -> int:
+        """`WaitForMultipleObjects` de cualquiera."""
+        while True:
+            for i, ev in enumerate(eventos):
+                if ev.is_set():
+                    return i
+            time.sleep(0.002)
+
+    def senalado(self, ev) -> bool:
+        """`WaitForSingleObject` sin esperar."""
+        return ev.is_set()
+
+    # Lo que hace «el sistema» en los tests.
+    def completar(self, h: int, entradas=None, error: int = 0) -> None:
+        """Acaba la lectura pendiente de un handle con esos avisos (o ese error)."""
+        ov, bufer = self.lecturas.pop(h)
+        if error:
+            ov.error = error
+        else:
+            datos = paquete(entradas or [])
+            bufer[:len(datos)] = datos
+            ov.n = len(datos)
+        ov.evento.set()
+
+
+def hasta(condicion, segundos: float = 3.0) -> bool:
+    """Espera a que se cumpla algo que hace el hilo del motor."""
+    fin = time.monotonic() + segundos
+    while time.monotonic() < fin:
+        if condicion():
+            return True
+        time.sleep(0.005)
+    return condicion()
+
+
+def tipos_w(motor) -> dict:
+    """Los avisos recogidos del motor de Windows, con su tipo."""
+    return {k: a.tipo for k, a in motor.recoger().items()}
+
+
+UW = "w" * 32
+KW = (UW, "docs")
+IGNW = (".prversions", ".prdrive", ".keychain")
+HWND = 0x1234
+w = Win32Falsa()
+mw = ac.ReadDirectoryChanges(w, HWND)
+c("Windows: se vigila una carpeta local", mw.vigilar(KW, "E:\\datos\\docs", IGNW), None)
+hw = next(iter(w.abiertos))
+c("  con su handle abierto, su aviso de extracción en la ventana de la bandeja y una lectura",
+  (w.abiertos[hw], list(w.registrados.values()), w.hwnds, hw in w.lecturas,
+   mw.vigilancias()), ("E:\\datos\\docs", [hw], [HWND], True, 1))
+c("  el motor no tiene descriptor para el vigía", (mw.fd, mw.leer()), (None, None))
+c("  volver a pedirla no abre otra", (mw.vigilar(KW, "E:\\datos\\docs", IGNW), len(w.abiertos)),
+  (None, 1))
+w.completar(hw, [(ac.FILE_ACTION_ADDED, "nuevo.txt")])
+c("un aviso es un cambio", hasta(lambda: KW in mw._pendientes) and tipos_w(mw), {KW: ac.CAMBIO})
+c("  y la lectura se vuelve a lanzar al momento", hasta(lambda: w.lanzadas.get(hw) == 2), True)
+w.completar(hw, [(ac.FILE_ACTION_ADDED, ".prversions\\v~1.txt"),
+                 (ac.FILE_ACTION_MODIFIED, ".prdrive"),
+                 (ac.FILE_ACTION_MODIFIED, ".PRDRIVE\\state\\daemon.log")])
+hasta(lambda: w.lanzadas.get(hw) == 3)
+c("lo de .prversions/ y .prdrive/ (sin mirar mayúsculas) no es un cambio", tipos_w(mw), {})
+w.completar(hw, [(ac.FILE_ACTION_MODIFIED, "sub\\.prversions\\x")])
+hasta(lambda: w.lanzadas.get(hw) == 4)
+c("  más abajo, un nombre así es de alguien: sí", tipos_w(mw), {KW: ac.CAMBIO})
+w.completar(hw, [])
+hasta(lambda: w.lanzadas.get(hw) == 5)
+c("un búfer desbordado (0 bytes) cuenta como cambio", tipos_w(mw), {KW: ac.DESBORDADO})
+w.completar(hw, error=ac.ERROR_NOTIFY_ENUM_DIR)
+hasta(lambda: w.lanzadas.get(hw) == 6)
+c("  y ERROR_NOTIFY_ENUM_DIR también", tipos_w(mw), {KW: ac.DESBORDADO})
+w.completar(hw, [(ac.FILE_ACTION_ADDED, "x")])
+hasta(lambda: w.lanzadas.get(hw) == 7)
+c("descartar tira lo de la pasada y dice qué era",
+  ((mw.descartar(KW) or ac.Aviso("")).tipo, mw.recoger()), (ac.CAMBIO, {}))
+
+mw.dejar(KW)
+c("dejar cierra el handle y quita el aviso de extracción en el acto",
+  (w.abiertos, w.registrados, mw.vigilancias()), ({}, {}, 0))
+c("  y el evento de la lectura cancelada se cierra cuando acaba",
+  hasta(lambda: len(w.eventos_vivos) == 1), True)
+
+mw.vigilar(KW, "E:\\datos\\docs", IGNW)
+hw = next(iter(w.abiertos))
+w.completar(hw, error=5)                                    # ERROR_ACCESS_DENIED
+c("otro error de la lectura (la carpeta se borró) pierde la pareja, y se dice",
+  hasta(lambda: KW in mw._pendientes) and (tipos_w(mw), w.abiertos, w.registrados),
+  ({KW: ac.PERDIDA}, {}, {}))
+
+w.unidades["\\\\NAS\\COMPARTIDA\\"] = ac.DRIVE_REMOTE
+motivo = mw.vigilar(KW, "\\\\nas\\compartida\\docs", IGNW)
+c("una carpeta de red no se vigila con avisos, y se dice", ("red" in (motivo or ""), w.abiertos),
+  (True, {}))
+w.dispositivos["P:"] = "\\Device\\VeraCryptVolumeP"
+motivo = mw.vigilar(KW, "P:\\notas", IGNW)
+c("un volumen de VeraCrypt tampoco: se recorre hasta probarlo en un equipo real",
+  ("VeraCrypt" in (motivo or ""), w.abiertos), (True, {}))
+w.fallar_registro = True
+motivo = mw.vigilar(KW, "E:\\datos\\docs", IGNW)
+c("sin aviso de extracción registrado no se deja el handle abierto",
+  (bool(motivo), w.abiertos, w.lecturas), (True, {}, {}))
+w.fallar_registro = False
+
+# «Expulsar» del sistema: DBT_DEVICEQUERYREMOVE.
+mw.vigilar(KW, "E:\\datos\\docs", IGNW)
+hw = next(iter(w.abiertos))
+mw.dispositivo(ac.DBT_DEVICEQUERYREMOVE, hw)
+c("el sistema pide la unidad: el handle se cierra en el acto", w.abiertos, {})
+c("  sin avisar de nada (la unidad se va) y sin dejar el registro todavía",
+  (hasta(lambda: not w.lecturas) and tipos_w(mw), len(w.registrados)), ({}, 1))
+mw.dispositivo(ac.DBT_DEVICEQUERYREMOVEFAILED, hw)
+c("si al final no se extrae, se vuelve a abrir y a leer",
+  hasta(lambda: len(w.abiertos) == 1 and bool(w.lecturas)), True)
+c("  con su aviso de extracción nuevo", list(w.registrados.values()), list(w.abiertos))
+hw = next(iter(w.abiertos))
+mw.dispositivo(ac.DBT_DEVICEQUERYREMOVE, hw)
+mw.dispositivo(ac.DBT_DEVICEREMOVECOMPLETE, hw)
+c("si se extrae, la pareja se pierde y no queda nada",
+  (tipos_w(mw), w.abiertos, w.registrados), ({KW: ac.PERDIDA}, {}, {}))
+mw.vigilar(KW, "E:\\datos\\docs", IGNW)
+hw = next(iter(w.abiertos))
+mw.dispositivo(ac.DBT_DEVICEREMOVECOMPLETE, hw)
+c("una unidad arrancada sin preguntar, igual", (tipos_w(mw), w.abiertos, w.registrados),
+  ({KW: ac.PERDIDA}, {}, {}))
+mw.dispositivo(ac.DBT_DEVICEQUERYREMOVE, 999)
+c("un handle que no es nuestro no toca nada", tipos_w(mw), {})
+
+mw.vigilar(KW, "E:\\datos\\docs", IGNW)
+mw.vigilar((UW, "otra"), "E:\\otra", IGNW)
+mw.dejar_raiz(UW)
+c("dejar una raíz cierra todas sus parejas", (w.abiertos, w.registrados, mw.vigilancias()),
+  ({}, {}, 0))
+
+cuantas = [mw.vigilar((UW, f"p{i}"), f"E:\\p{i}", ()) for i in range(ac.MAX_PAREJAS_WINDOWS + 1)]
+c("hasta 63 parejas; la siguiente se recorre, y se dice",
+  (cuantas[:-1] == [None] * ac.MAX_PAREJAS_WINDOWS, bool(cuantas[-1]),
+   len(w.abiertos)), (True, True, ac.MAX_PAREJAS_WINDOWS))
+mw.dejar_raiz(UW)
+
+real_pedir = mw._pedir_armar
+
+
+def pedir_y_dejar(clave, ruta, patrones):
+    """Deja la pareja justo antes de que el hilo la ponga."""
+    mw.dejar(clave)
+    return real_pedir(clave, ruta, patrones)
+
+
+mw._pedir_armar = pedir_y_dejar
+c("dejar una pareja mientras se pone la para", mw.vigilar(KW, "E:\\datos\\docs", IGNW),
+  ac.DEJADA)
+c("  sin dejar nada abierto", w.abiertos, {})
+mw._pedir_armar = real_pedir
+mw.vigilar(KW, "E:\\datos\\docs", IGNW)
+mw.cerrar()
+c("cerrar el motor cierra todo y acaba su hilo",
+  (w.abiertos, w.registrados, mw._hilo.is_alive()), ({}, {}, False))
+c("abrir() sin la ventana de la bandeja no da motor en Windows",
+  ac.abrir(hwnd=None) is None or not sys.platform.startswith("win"), True)
+
+# ---------------------------------------------------------------------------
+# Windows de verdad
+# ---------------------------------------------------------------------------
+if sys.platform.startswith("win"):
+    api = ac.Win32()
+    api.registrar = lambda hwnd, h: 1                      # sin ventana en la prueba
+    api.desregistrar = lambda aviso: None
+    unidad = os.path.splitdrive(tempfile.gettempdir())[0]
+    c("Windows de verdad: el temporal no es de red ni de VeraCrypt",
+      (api.tipo_de_unidad(unidad + "\\") != ac.DRIVE_REMOTE,
+       api.dispositivo_de(unidad).startswith(ac.DISPOSITIVOS_VERACRYPT)), (True, False))
+    mr = ac.ReadDirectoryChanges(api, 1)
+    WR = tmpdir("prdrive-avisos-w-")
+    (WR / ".prversions").mkdir()
+    c("  se vigila una carpeta", mr.vigilar(KW, WR, IGNW), None)
+    (WR / ".prversions" / "v.txt").write_text("v", encoding="utf-8")
+    time.sleep(0.5)
+    c("  lo de .prversions/ no avisa", tipos_w(mr), {})
+    (WR / "a.txt").write_text("a", encoding="utf-8")
+    c("  un fichero nuevo avisa", hasta(lambda: KW in mr._pendientes) and tipos_w(mr),
+      {KW: ac.CAMBIO})
+    mr.dejar(KW)
+    shutil.rmtree(WR)
+    c("  tras dejarla, la carpeta se puede borrar entera", WR.exists(), False)
+    mr.cerrar()
+    mp = ac.ReadDirectoryChanges(api, 1, tam_bufer=16)
+    WP = tmpdir("prdrive-avisos-w-")
+    mp.vigilar(KW, WP, IGNW)
+    (WP / ("un-nombre-largo-que-no-cabe-" * 3 + ".txt")).write_text("x", encoding="utf-8")
+    c("  un búfer que no da para el aviso cuenta como desbordado",
+      hasta(lambda: KW in mp._pendientes) and tipos_w(mp), {KW: ac.DESBORDADO})
+    mp.cerrar()
+else:
+    print("  (saltado) ReadDirectoryChangesW de verdad: solo en Windows")
 
 if not sys.platform.startswith("linux"):
     print("  (saltado) inotify es de Linux: lo demás no se prueba aquí")
