@@ -114,10 +114,14 @@ KNOWN_ERRORS = [
     ("prior lock file found",
      "Hay un lock de otra ejecución. Si no hay ninguna corriendo, borra el .lck "
      "del workdir de la pareja."),
-    ("known_hosts_file",
-     "rclone no encuentra el fichero de known_hosts indicado en rclone.conf. "
-     "Las rutas relativas de rclone.conf se resuelven contra rclone-sync/; "
-     "comprueba que keys/known_hosts existe ahí."),
+    # Lo que dice sftp cuando `knownhosts.New()` no puede abrir o leer el
+    # fichero (`NewFs`, backend/sftp/sftp.go). «known_hosts_file» a secas
+    # casaría también con el NOTICE «No host key validation is being
+    # performed» de cada pasada a un remoto sin ese fichero.
+    ("couldn't parse known_hosts_file",
+     "rclone no puede leer el fichero de known_hosts indicado en rclone.conf "
+     "(no existe o está mal formado). Las rutas relativas de rclone.conf se "
+     "resuelven contra .prdrive/; comprueba que keys/known_hosts existe ahí."),
     # Sin conexión. Es una función y no una aguja porque el agente residente la
     # comparte y no lleva este fichero: la lista vive en
     # `common/moderacion.py`. Va antes de la siguiente, que suele acompañarla y
