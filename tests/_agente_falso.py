@@ -73,7 +73,8 @@ def preparar() -> Path:
     """Apunta el agente a un equipo de mentira. Devuelve su carpeta."""
     equipo.DIR = tmpdir("prdrive-equipo-")
     agente.lanzar = lambda args, **kw: Proc(args, **kw)
-    agente.avisar = lambda t, x, u=False: AVISOS.append((t, x)) or True
+    agente.bajar_prioridad = lambda pid: None
+    agente.avisar =lambda t, x, u=False: AVISOS.append((t, x)) or True
     agente.diario = DIARIO.append
     agente.hay_pantalla = lambda: PANTALLA[0]
     agente.abrir_contenedor = lambda raiz: ABIERTOS.append(Path(raiz)) or True

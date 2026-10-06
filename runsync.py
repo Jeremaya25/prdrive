@@ -87,7 +87,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 import ui  # noqa: E402
-from common import APP_NAME, keepassxc, llavero, model, store, update  # noqa: E402
+from common import APP_NAME, keepassxc, llavero, model, prioridad, store, update  # noqa: E402
 from common.store import pid_alive  # noqa: E402
 from ui import prefs  # noqa: E402
 
@@ -864,6 +864,8 @@ def daemon_main(pairs: list[str], interval_min: float) -> int:
         quien = "el agente de este equipo" if otro.get("agente") else "otro servicio"
         dlog(f"servicio no iniciado: ya atiende {quien} (pid {otro.get('pid')})")
         return 0
+    # Nadie mira sus pasadas: cede el equipo, y sus sync.py y rclone lo heredan.
+    prioridad.bajar()
     llave = pareja_llavero()
     v = llavero.Vigilancia()
     dlog(f"servicio iniciado: pid={os.getpid()} host={HOST} "
@@ -1114,6 +1116,7 @@ def una_pasada(pairs: list[str]) -> int:
     if pareja_llavero() is not None:
         pairs = [*pairs, model.LLAVERO]
     dlog(f"--auto --once: una pasada de {', '.join(pairs)}")
+    prioridad.bajar()               # como el servicio: la lanza el vigilante
     return run_interactive(pairs)
 
 

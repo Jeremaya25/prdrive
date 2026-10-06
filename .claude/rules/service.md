@@ -3,6 +3,8 @@ paths:
   - "runsync.py"
   - "ui/prefs.py"
   - "common/store.py"
+  - "common/prioridad.py"
+  - "tests/test_prioridad.py"
   - "tests/test_prefs.py"
   - "tests/test_auto.py"
   - "tests/test_instancia_unica.py"
