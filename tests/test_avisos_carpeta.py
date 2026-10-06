@@ -18,6 +18,8 @@ Con carpetas de verdad en un temporal y el inotify de verdad del núcleo:
   de `max_user_watches`), `ENOSPC` del sistema, una pareja que se deja
   mientras se pone. Sin dejar nada puesto.
 - Qué sistema de ficheros tiene una carpeta, leyendo mountinfo.
+- El vigía del agente (`agente.Vigia.oir()`) vacía el descriptor en cuanto
+  tiene algo, pero una ráfaga no adelanta la vuelta ni la hace girar más.
 
 Fuera de Linux no hay motor (`abrir()` es `None`) y el resto se salta.
 """
@@ -28,6 +30,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 from pathlib import Path
 
 from _harness import Checks, tmpdir
@@ -331,6 +335,92 @@ if montado:
                        stderr=subprocess.DEVNULL)
 else:
     print("  (saltado) sin permisos para montar: no se prueba desmontar con vigilancias")
+
+# ---------------------------------------------------------------------------
+# 8. El vigía del agente
+# ---------------------------------------------------------------------------
+import agente  # noqa: E402
+
+DIARIO: list[str] = []
+agente.diario = DIARIO.append
+mv = motor()
+VV = arbol()
+mv.vigilar(K, VV, IGN)
+vigia = agente.Vigia()
+leidas = [0]
+
+
+def leer_y_contar() -> None:
+    """Lo que el agente le da al vigía: leer el descriptor; aquí, contando."""
+    leidas[0] += 1
+    mv.leer()
+
+
+def rafaga(segundos: float) -> threading.Thread:
+    """Escribe un fichero cada 10 ms durante esos segundos, en otro hilo."""
+    def escribir() -> None:
+        fin, i = time.monotonic() + segundos, 0
+        while time.monotonic() < fin:
+            (VV / f"r{i}.txt").write_text("r", encoding="utf-8")
+            i += 1
+            time.sleep(0.01)
+    h = threading.Thread(target=escribir, daemon=True)
+    h.start()
+    return h
+
+
+vigia.oir(mv.fd, leer_y_contar)
+h = rafaga(1.0)
+t = time.monotonic()
+montajes = vigia.esperar(1.0)
+dura = time.monotonic() - t
+h.join()
+c("vigía: una ráfaga de avisos no adelanta la vuelta ni la toma por montajes",
+  (montajes, dura >= 0.95), (False, True))
+c("  y el descriptor se lee a ratos, no con cada aviso",
+  1 <= leidas[0] <= 1.0 / agente.CALLAR_AVISOS + 2, True)
+c("  lo leído se guarda para la vuelta", tipos(mv.recoger()), CAMBIO)
+h = rafaga(1.5)
+threading.Timer(0.3, vigia.despertar).start()
+t = time.monotonic()
+vigia.esperar(5.0)
+c("despertar corta la espera aunque lleguen avisos", time.monotonic() - t < 1.0, True)
+h.join()
+mv.recoger()
+t = time.monotonic()
+c("  y sin nada, espera su tiempo", (vigia.esperar(0.3), time.monotonic() - t >= 0.25),
+  (False, True))
+
+rotas = [0]
+
+
+def leer_roto() -> None:
+    """Un `leer` que falla: el vigía deja de oírlo, no gira en vacío."""
+    rotas[0] += 1
+    raise OSError("roto")
+
+
+vigia2 = agente.Vigia()
+vigia2.oir(mv.fd, leer_roto)
+(VV / "despierta.txt").write_text("x", encoding="utf-8")
+t = time.monotonic()
+vigia2.esperar(0.3)
+vigia2.esperar(0.3)
+c("un leer que falla se deja de oír: sin girar en vacío y dicho una vez",
+  (rotas[0], time.monotonic() - t >= 0.55,
+   sum("avisos de las carpetas" in m for m in DIARIO)), (1, True, 1))
+
+if montado:
+    vigia3 = agente.Vigia()
+    vigia3.oir(mv.fd, mv.leer)
+    PUNTO2 = tmpdir("prdrive-montaje-")
+    threading.Timer(0.2, lambda: subprocess.run(
+        ["mount", "-t", "tmpfs", "prdrive-prueba", str(PUNTO2)])).start()
+    t = time.monotonic()
+    c("con los avisos oídos, un montaje nuevo se sigue viendo al momento",
+      (vigia3.esperar(5.0), time.monotonic() - t < 2.0), (True, True))
+    subprocess.run(["umount", "-l", str(PUNTO2)], stdout=subprocess.DEVNULL,
+                   stderr=subprocess.DEVNULL)
 
 for mo in MOTORES:
     mo.cerrar()

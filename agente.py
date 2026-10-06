@@ -3660,6 +3660,12 @@ class Agente:
 
 MOUNTINFO = Path("/proc/self/mountinfo")
 """Tabla de montajes de Linux, que avisa con `POLLPRI` cuando cambia."""
+CALLAR_AVISOS = 0.25
+"""Segundos que el vigía deja de oír los avisos de carpeta tras leerlos.
+
+Una copia grande da miles de avisos por segundo: se leen a ratos (la cola del
+núcleo aguanta miles entre lectura y lectura) y no uno a uno.
+"""
 
 
 class Vigia:
@@ -3670,7 +3676,8 @@ class Vigia:
     En Windows los montajes los dice la bandeja (`WM_DEVICECHANGE`), desde su
     hilo, con `despertar(montajes=True)`; y lo que se elige en su menú, con
     `despertar()`, para no esperar al tic. En Linux ese despertar va por un
-    pipe que se vigila junto a mountinfo.
+    pipe que se vigila junto a mountinfo, y con ellos el descriptor de los
+    avisos de carpeta (`oir()`), que se lee sin acabar la espera.
     """
 
     def __init__(self) -> None:
@@ -3683,6 +3690,7 @@ class Vigia:
         self._evento = threading.Event()
         self._montajes = False
         self._pipe: tuple[int, int] | None = None
+        self._oido: tuple[int, Any] | None = None
         if IS_WIN:
             return
         try:
@@ -3716,6 +3724,49 @@ class Vigia:
             except OSError:
                 pass                # lleno: ya hay un despertar pendiente
 
+    def oir(self, fd: int, leer) -> None:
+        """Espera también en el descriptor de los avisos de carpeta.
+
+        Cuando tiene algo se llama a `leer()`, que lo vacía en el acto (la cola
+        del núcleo no se llena entre dos vueltas), y se le deja de oír
+        `CALLAR_AVISOS` segundos. La espera NO acaba por él: la pasada espera a
+        la calma igualmente, y una copia de miles de ficheros no puede hacer
+        girar la vuelta miles de veces. Como el que lo vacía es el vigía, una
+        vuelta que falla o que se salta los avisos no lo deja con algo dentro
+        haciendo que `poll` vuelva enseguida. Un `leer()` que lanza se deja de
+        oír, y se dice. Sin `poll` (Windows), nada.
+
+        Args:
+            fd: El descriptor (`avisos_carpeta.Inotify.fd`).
+            leer: Lo que lo vacía (`avisos_carpeta.Inotify.leer`).
+        """
+        if self._poll is None:
+            return
+        import select
+        try:
+            self._poll.register(fd, select.POLLIN)
+        except (OSError, ValueError):
+            return
+        self._oido = (fd, leer)
+
+    def _leer_avisos(self) -> None:
+        """Vacía el descriptor oído; si falla, deja de oírlo y lo dice."""
+        fd, leer = self._oido
+        try:
+            leer()
+        except Exception as e:                              # noqa: BLE001
+            self._dejar_de_oir()
+            diario(f"dejo de oír los avisos de las carpetas: {type(e).__name__}: {e}")
+
+    def _dejar_de_oir(self) -> None:
+        """Quita el descriptor oído de la espera."""
+        if self._oido is not None:
+            try:
+                self._poll.unregister(self._oido[0])
+            except (OSError, KeyError, ValueError):
+                pass
+            self._oido = None
+
     def _tomar_montajes(self) -> bool:
         """Devuelve si hubo aviso de montajes, y lo olvida."""
         montajes, self._montajes = self._montajes, False
@@ -3725,23 +3776,57 @@ class Vigia:
     def esperar(self, segundos: float) -> bool:
         """Espera hasta `segundos`, o hasta que lo despierten o cambien los montajes.
 
+        Los avisos de carpeta (`oir()`) se leen por el camino sin acabarla.
+
         Returns:
             `True` si han cambiado los montajes (hay que recorrer en racha).
         """
         if self._poll is None:
             self._evento.wait(segundos)
             return self._tomar_montajes()
+        import select
+        fin = time.monotonic() + segundos
         montajes = False
+        callado: float | None = None        # hasta cuándo no se oyen los avisos
         try:
-            for fd, _ in self._poll.poll(int(segundos * 1000)):
-                if self._pipe is not None and fd == self._pipe[0]:
-                    os.read(fd, 4096)
-                elif self._f is not None:
-                    self._f.seek(0)
-                    self._f.read()
-                    montajes = True
+            while True:
+                ahora = time.monotonic()
+                if callado is not None and ahora >= callado:
+                    callado = None
+                    if self._oido is not None:
+                        self._poll.modify(self._oido[0], select.POLLIN)
+                resto = fin - ahora
+                if resto <= 0:
+                    break
+                if callado is not None:
+                    resto = min(resto, callado - ahora)
+                despierto = False
+                for fd, que in self._poll.poll(math.ceil(resto * 1000)):
+                    if self._pipe is not None and fd == self._pipe[0]:
+                        os.read(fd, 4096)
+                        despierto = True
+                    elif self._oido is not None and fd == self._oido[0]:
+                        if que & (select.POLLERR | select.POLLHUP | select.POLLNVAL):
+                            self._dejar_de_oir()
+                            continue
+                        self._leer_avisos()
+                        if self._oido is not None:
+                            self._poll.modify(fd, 0)
+                            callado = time.monotonic() + CALLAR_AVISOS
+                    elif self._f is not None and fd == self._f.fileno():
+                        self._f.seek(0)
+                        self._f.read()
+                        montajes = despierto = True
+                if despierto:
+                    break
         except OSError:
-            time.sleep(segundos)
+            time.sleep(max(0.0, fin - time.monotonic()))
+        finally:
+            if callado is not None and self._oido is not None:
+                try:
+                    self._poll.modify(self._oido[0], select.POLLIN)
+                except OSError:
+                    pass
         return self._tomar_montajes() or montajes
 
 
