@@ -246,8 +246,11 @@ def por_que_no_arranca() -> None:
     from common import keepassxc as kx
     from common import pins
     raiz = kx.cache_equipo() / pins.KEEPASSXC_VERSION / "squashfs-root"
+    # Con su configuración en un temporal: sin eso dejaría `~/.config/keepassxc`.
+    temporal = Path(tempfile.mkdtemp(prefix="prdrive-diagnostico-"))
     entorno = {**os.environ, "LD_LIBRARY_PATH": str(raiz / "usr" / "lib"),
-               "QT_DEBUG_PLUGINS": "1"}
+               "QT_DEBUG_PLUGINS": "1", "KPXC_CONFIG": str(temporal / "keepassxc.ini"),
+               "KPXC_CONFIG_LOCAL": str(temporal / "keepassxc_local.ini")}
     print(f"    ¿Por qué no se ve KeePassXC? (lo extraído en {raiz})")
     for binario in (raiz / "usr" / "bin" / "keepassxc",
                     raiz / "usr" / "plugins" / "platforms" / "libqxcb.so"):
