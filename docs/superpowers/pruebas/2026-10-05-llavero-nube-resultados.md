@@ -123,6 +123,15 @@ entrada en vez de en la consola), el borrado de la copia, y expulsar.
 - **En `windows-latest`, tras el arreglo 6** (`8b9bf74`): todo bien. El
   llavero encuentra su listado (`nas_____D__…`), la ventana dice «al día» tras
   expulsar, y tras el conflicto salta la pasada que vuelve a apuntar la base.
+- **Tras el arreglo 7** (`d44b21f`), en `ubuntu-latest` prdrive reconoce su
+  KeePassXC, el vigilante sube un guardado (95–110 s) y «Expulsar» lo cierra. Lo
+  último que fallaba era de la propia prueba: el servidor del navegador de
+  KeePassXC es un socket en `$XDG_RUNTIME_DIR/app/org.keepassxc.KeePassXC/…`, la
+  ruta de un socket no pasa de 108 caracteres, y con el `XDG_RUNTIME_DIR` dentro
+  del temporal del CI salían 120. En un equipo es `/run/user/<uid>` (80). La
+  prueba usa ahora uno corto en `/tmp`.
+- **Todo verde en `a31f325`**: «Tests» y «Llavero de verdad», en `ubuntu-latest`
+  y en `windows-latest`.
 
 ## 5. Lo que queda para el equipo de verdad
 
