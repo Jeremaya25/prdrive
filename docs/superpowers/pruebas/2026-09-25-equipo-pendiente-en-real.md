@@ -24,6 +24,11 @@ Cada prueba lleva:
 «Lo esperado» sale del código, y en un equipo real manda lo que se vea: si no
 coincide, se apunta la discrepancia y no se reinterpreta.
 
+Las filas con «· nube: ok» se han visto en una máquina de usar y tirar de GitHub
+Actions (`tests/maquina/`, resultados en `maquina-real-resultados.md`): la
+frontera con el sistema, en discos virtuales. Siguen aquí hasta verlas con un
+dispositivo de verdad, pero lo que queda por mirar es lo físico.
+
 Equipos que hacen falta:
 - **W**: Windows 11 x64;
 - **WA**: Windows 11 ARM64, solo donde se dice;
