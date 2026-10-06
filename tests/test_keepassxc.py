@@ -26,7 +26,7 @@ from _harness import Checks, sandbox, tmpdir
 
 import ui
 import ui.tk as uitk
-from common import components, keepassxc, llavero, model, pins, registro, results, store
+from common import cifrada, components, keepassxc, llavero, model, pins, registro, results, store
 from ui import llavero_editor
 
 c = Checks("abrir el llavero (common/keepassxc.py)")
@@ -288,9 +288,8 @@ try:
       keepassxc.orden(exe, base),
       [str(exe), "--config", str(donde / "keepassxc.ini"),
        "--localconfig", str(donde / "keepassxc_local.ini"), str(base)])
-    llave = Path("D:/k.keyx")
-    c("  con el fichero llave de este equipo, --keyfile",
-      keepassxc.orden(exe, base, llave)[-3:], ["--keyfile", str(llave), str(base)])
+    c("  nunca con --keyfile: KeePassXC desbloquearía al instante con la contraseña vacía",
+      "--keyfile" in keepassxc.orden(exe, base), False)
     c("lo que se exporte cae en la raíz (PK5)",
       keepassxc.entorno(Path("E:/"))["KPXC_INITIAL_DIR"], str(Path("E:/")))
 finally:
@@ -479,23 +478,27 @@ try:
           (False, [llavero_editor.SIN_BASE]))
         eq.trae_base = True
 
-        # el fichero llave
+        # el fichero llave: al abrir no se pasa (KeePassXC lo pide); solo se pregunta para combinar
         llave = root / "personal.keyx"
-        hecho, _, _, preguntas = abrir(config(fichero_llave=True, nombre_llave="personal.keyx"))
-        c("con fichero llave y sin saber dónde está, se pregunta por su nombre",
-          (hecho, preguntas, "--keyfile" in eq.lanzadas[-1][0]), (True, ["personal.keyx"], False))
         llave.write_bytes(b"secreto")
-        hecho, _, _, preguntas = abrir(config(fichero_llave=True), llave=llave)
-        c("  la ruta elegida se apunta y se pasa con --keyfile",
-          (keepassxc.llave_apuntada(), eq.lanzadas[-1][0][-3:-1]),
-          (llave, ["--keyfile", str(llave)]))
+        hecho, _, _, preguntas = abrir(config(fichero_llave=True, nombre_llave="personal.keyx"),
+                                       llave=llave)
+        c("con fichero llave, al abrir no se pregunta ni se pasa --keyfile",
+          (hecho, preguntas, "--keyfile" in eq.lanzadas[-1][0]), (True, [], False))
+        copia = llavero.carpeta() / "personal.conflicto-remoto1.kdbx"
+        copia.write_bytes(b"copia")
+        hecho, _, _, preguntas = abrir(config(fichero_llave=True, nombre_llave="personal.keyx"),
+                                       llave=llave)
+        c("  con una copia de conflicto, para combinar sí se pregunta por su nombre",
+          (hecho, preguntas, "--keyfile" in eq.lanzadas[-1][0]), (True, ["personal.keyx"], False))
+        c("  y la ruta elegida se apunta", keepassxc.llave_apuntada(), llave)
         c("  el fichero ni se toca", llave.read_bytes(), b"secreto")
         _, _, _, preguntas = abrir(config(fichero_llave=True))
-        c("  la vez siguiente no se pregunta", (preguntas, eq.lanzadas[-1][0][-2]),
-          ([], str(llave)))
+        c("  la vez siguiente no se pregunta", preguntas, [])
         llave.unlink()
         _, _, _, preguntas = abrir(config(fichero_llave=True, nombre_llave="personal.keyx"))
         c("  si ya no está (otro pendrive), se vuelve a preguntar", preguntas, ["personal.keyx"])
+        copia.unlink()
 
         # ya abierto: solo se trae delante
         eq.nuestro = True
@@ -508,6 +511,41 @@ try:
         c("  sin tocar su configuración, que la reescribiría al salir",
           ini.read_text(encoding="utf-8"), "[General]\nUseAtomicSaves=false\n")
         eq.nuestro = False
+
+        # el llavero sin contraseña: la llave se comprueba antes y se pasa al abrir
+        llave_interna = llavero.carpeta() / model.LLAVERO_LLAVE
+        llave_interna.write_text("a" * 64, encoding="ascii")
+        real_estado, real_vale = cifrada.estado, keepassxc.llave_vale
+        cifrada.estado = lambda app_dir=None: cifrada.Cifrado(True, cifrada.VERACRYPT)
+        vale = {"v": True}
+        keepassxc.llave_vale = lambda base, llave: vale["v"]
+        try:
+            interna = config(fichero_llave=True, llave_interna=True)
+            hecho, dicho, esperado, preguntas = abrir(interna)
+            c("sin contraseña: se abre con --keyfile y la llave del dispositivo, sin preguntar",
+              (hecho, preguntas, eq.lanzadas[-1][0][-3:-1]),
+              (True, [], ["--keyfile", str(llave_interna)]))
+            c("  tras comprobar la llave", llavero_editor.COMPROBANDO in esperado, True)
+            n = len(eq.lanzadas)
+            vale["v"] = False
+            hecho, dicho, _, _ = abrir(interna)
+            c("  si la llave no abre la base, se dice y no se lanza nada",
+              (hecho, dicho, len(eq.lanzadas)), (False, [llavero_editor.LLAVE_NO_VALE], n))
+            vale["v"] = None
+            c("  si no se ha podido probar, se abre (KeePassXC dirá si falla)",
+              abrir(interna)[0], True)
+            cifrada.estado = lambda app_dir=None: cifrada.Cifrado(False, "", "Sin cifrar.")
+            n = len(eq.lanzadas)
+            hecho, dicho, _, _ = abrir(interna)
+            c("  sin cifrar, no se abre", (hecho, len(eq.lanzadas)), (False, n))
+            c.contains("    y se dice", dicho[0], "solo se abre en un dispositivo cifrado")
+            cifrada.estado = lambda app_dir=None: cifrada.Cifrado(True, cifrada.VERACRYPT)
+            llave_interna.unlink()
+            c.contains("  sin la llave en el dispositivo, se dice cómo darla", abrir(interna)[1][0],
+                       "Ajustes → Llavero")
+        finally:
+            cifrada.estado, keepassxc.llave_vale = real_estado, real_vale
+            llave_interna.unlink(missing_ok=True)
 
         # KeePassXC que no arranca
         eq.codigo = 0xC0000135

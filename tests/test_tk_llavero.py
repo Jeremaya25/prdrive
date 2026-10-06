@@ -92,15 +92,21 @@ with sandbox():
     config_file.save(LOCAL)
     catalog.load = leido(REMOTO)
     resultado, vistos = ajustes(lambda dlg: None)
-    c("sin llavero: «Usar esta base…», y sin «Traer el del remoto»",
-      vistos[0], {"Usar esta base…": "normal", "Cerrar": "normal"})
+    c("sin llavero: «Usar esta base…» (con o sin contraseña), y sin «Traer el del remoto»",
+      vistos[0], {"Usar esta base…": "normal", "Usar esta base, sin contraseña…": "normal",
+                  "Cerrar": "normal"})
     c("  cerrar sin hacer nada no cambia nada", resultado, None)
 
     catalog.load = leido({**REMOTO, "keychain": {"base": "personal.kdbx"}})
     _, vistos = ajustes(lambda dlg: None)
-    c("con llavero en el remoto, también «Traer el del remoto»",
+    c("con llavero en el remoto, también «Traer el del remoto» (y no «sin contraseña»)",
       vistos[0], {"Usar esta base…": "normal", "Traer el del remoto": "normal",
                   "Cerrar": "normal"})
+    catalog.load = leido({**REMOTO, "keychain": {"base": "personal.kdbx", "fichero_llave": True,
+                                                 "llave_interna": True}})
+    _, vistos = ajustes(lambda dlg: None)
+    c("con el remoto sin contraseña, solo traerlo: ninguna base propia",
+      vistos[0], {"Traer el del remoto": "normal", "Cerrar": "normal"})
 
     catalog.load = lambda raw_local=None: (None, "sin red")
     _, vistos = ajustes(lambda dlg: None)
@@ -151,6 +157,82 @@ with sandbox() as root:
     resultado, _ = ajustes(lambda dlg: pulsar(dlg, "La base pide fichero llave…"))
     c("con un remoto que no tiene este llavero, el cambio se niega y se dice",
       (resultado, len(errores)), (None, 1))
+
+# el llavero sin contraseña: crear con una base propia, dar la llave, traer el del remoto
+from common import cifrada  # noqa: E402
+from ui import llavero_editor  # noqa: E402
+
+real_cifrada, real_conv, real_vale, real_sin = (
+    cifrada.estado, keepassxc.convertir, keepassxc.llave_vale, keepassxc.sin_conversion)
+cifrada.estado = lambda app_dir=None: cifrada.Cifrado(True, cifrada.VERACRYPT)
+convertidas: list = []
+keepassxc.convertir = lambda base, llave, actual=None: convertidas.append((base, actual)) or 0
+keepassxc.llave_vale = lambda base, llave: True
+keepassxc.sin_conversion = lambda: None
+try:
+    with sandbox() as root:
+        config_file.save(LOCAL)
+        catalog.load = leido(REMOTO)
+        propia = tmpdir("prdrive-tkinterna-") / "claves.kdbx"
+        propia.write_bytes(struct.pack("<IIHH", kdbx.FIRMA_1, kdbx.FIRMA_2, 0, 5) + b"\0" * 50)
+        aparte = tmpdir("prdrive-tkaparte-") / "copia.keyx"
+        tk_llavero.elegir_base = lambda parent: propia
+        tk_llavero.preguntar = lambda parent, texto: False      # la base no lleva fichero llave
+        tk_llavero.guardar_copia_llave = lambda parent: aparte
+        subidas.clear()
+        errores.clear()
+        resultado, _ = ajustes(lambda dlg: pulsar(dlg, "Usar esta base, sin contraseña…"))
+        tabla = {"base": "claves.kdbx", "fichero_llave": True, "llave_interna": True}
+        c("sin contraseña con una base propia: se activa y cierra con ACTIVADO",
+          (resultado, errores), (tk_llavero.ACTIVADO, []))
+        c("  la CLI deja la copia sin contraseña (sin fichero llave actual)",
+          [(b.name, a) for b, a in convertidas], [("claves.kdbx", None)])
+        c("  el catálogo y el config llevan la bandera",
+          (subidas[-1]["keychain"], config_file.load_raw()["keychain"]), (tabla, tabla))
+        c("  la llave, en el dispositivo y su copia, fuera",
+          ((llavero.carpeta() / "llave.keyx").is_file(), aparte.is_file()), (True, True))
+
+        # ya activo: «Dar el fichero llave…» sustituye la del dispositivo
+        nueva = root / "otra.keyx"
+        nueva.write_text("b" * 64, encoding="ascii")
+        tk_llavero.elegir_llave = lambda parent, nombre: nueva
+        tk_llavero.preguntar = lambda parent, texto: True
+        resultado, vistos = ajustes(lambda dlg: pulsar(dlg, "Dar el fichero llave…"))
+        c("activo sin contraseña: «Dar el fichero llave…» y desactivar, sin lo de pedir llave",
+          vistos[0], {"Dar el fichero llave…": "normal", "Desactivar…": "normal",
+                      "Cerrar": "normal"})
+        c("  dar otra la sustituye en el dispositivo",
+          ((llavero.carpeta() / "llave.keyx").read_text(), resultado), ("b" * 64, None))
+        tk_llavero.preguntar = lambda parent, texto: False
+        tk_llavero.elegir_llave = lambda parent, nombre: root / "no-existe.keyx"
+        ajustes(lambda dlg: pulsar(dlg, "Dar el fichero llave…"))
+        c("  y si no se confirma, no se toca",
+          (llavero.carpeta() / "llave.keyx").read_text(), "b" * 64)
+
+    # traer el del remoto con la bandera, en un dispositivo cifrado
+    with sandbox() as root:
+        config_file.save(LOCAL)
+        catalog.load = leido({**REMOTO, "keychain": {"base": "personal.kdbx",
+                                                     "fichero_llave": True,
+                                                     "llave_interna": True}})
+        suya = root / "suya.keyx"
+        suya.write_text("c" * 64, encoding="ascii")
+        tk_llavero.elegir_llave = lambda parent, nombre: suya
+        errores.clear()
+        resultado, _ = ajustes(lambda dlg: pulsar(dlg, "Traer el del remoto"))
+        c("traerlo: cierra con ACTIVADO y copia la llave al dispositivo",
+          (resultado, errores, (llavero.carpeta() / "llave.keyx").read_text()),
+          (tk_llavero.ACTIVADO, [], "c" * 64))
+        # sin cifrar, se niega y se dice
+        cifrada.estado = lambda app_dir=None: cifrada.Cifrado(False, "", "Sin cifrar.")
+        config_file.save(LOCAL)
+        errores.clear()
+        resultado, _ = ajustes(lambda dlg: pulsar(dlg, "Traer el del remoto"))
+        c("sin cifrar, se niega y se dice", (resultado, len(errores)), (None, 1))
+        c.contains("  con el motivo", errores[0], "cifrado")
+finally:
+    cifrada.estado, keepassxc.convertir, keepassxc.llave_vale, keepassxc.sin_conversion = (
+        real_cifrada, real_conv, real_vale, real_sin)
 
 # la entrada de «Ajustes»
 with sandbox():

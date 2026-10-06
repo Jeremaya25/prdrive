@@ -48,11 +48,43 @@ de siempre: **Actualizar…** lo pone.
 
 Si tu base se abre con contraseña **y** un fichero llave, dilo al activarlo.
 prdrive **no copia, no lee ni guarda nada del fichero llave**: solo apunta
-**dónde está en cada equipo**, y se lo pasa a KeePassXC para que no tengas que
-buscarlo. En un equipo donde no se ha dicho, te lo pregunta la primera vez.
+**dónde está en cada equipo**, y solo lo usa para combinar copias de conflicto.
+Al abrir el llavero, KeePassXC te pide la contraseña y el fichero llave en su
+propio diálogo: elígelo con «Examinar» (prdrive no se lo pasa, porque
+entonces KeePassXC intentaría abrir la base al instante con la contraseña
+vacía y saldría un aviso de error).
 
 En una unidad sin cifrar, esa ruta se puede leer: dice dónde está tu fichero
 llave en cada equipo, no qué tiene.
+
+### Llavero sin contraseña (solo con fichero llave)
+
+Si tu dispositivo está **cifrado** (VeraCrypt o BitLocker), puedes dejar el
+llavero **sin contraseña**: la base se abre solo con un fichero llave que genera
+prdrive. El cifrado del dispositivo es entonces la otra barrera, y no tienes que
+escribir una contraseña cada día.
+
+Se activa en **Ajustes → Llavero… → Usar esta base, sin contraseña…**:
+
+1. Eliges tu base. prdrive te pide **dónde guardar una copia de la llave, fuera
+   del dispositivo** (un sitio tuyo, otro pendrive o un gestor): **si la pierdes
+   no hay forma de abrir el llavero**.
+2. Se abre una consola de KeePassXC que te pide la contraseña actual de la base
+   (prdrive no la ve) y la deja **sin contraseña**: lo que protegiera la base
+   hasta ahora (contraseña, fichero llave) **se sustituye**. Tu base original
+   no se toca.
+3. Desde entonces el remoto lo apunta, y **solo se puede traer a dispositivos
+   cifrados**.
+
+La llave **no sube al remoto**: en cada dispositivo nuevo, al elegir «Traer el
+del remoto», prdrive te pide el fichero llave (el que guardaste) y lo copia a
+`.keychain/` dentro del dispositivo. En un dispositivo sin cifrar no se puede
+activar, y si un dispositivo deja de estar cifrado el llavero deja de
+sincronizarse y de abrirse (no se borra nada).
+
+Límites de esta versión: los dispositivos que **ya tenían** el llavero no se
+enteran del cambio, no se puede volver a una contraseña ni cambiar la llave, y
+se crea desde la ventana (no desde el asistente de instalación).
 
 ## Cada día
 
@@ -62,8 +94,8 @@ también desde su icono, junto al reloj: **Abrir llavero**, en el desplegable de
 dispositivo.
 
 1. Si hace rato de la última pasada, trae lo último del remoto.
-2. Abre KeePassXC con tu base (y el fichero llave ya puesto, si lo usas).
-3. Escribes la contraseña, y los sitios piden la passkey y KeePassXC firma.
+2. Abre KeePassXC con tu base.
+3. Escribes la contraseña (y eliges el fichero llave, si lo usas), y los sitios piden la passkey y KeePassXC firma.
 
 Lo que guardas **sube solo**, unos 20 segundos después del último cambio. Lo que
 cambies en otro dispositivo llega en **5 minutos** como mucho mientras KeePassXC

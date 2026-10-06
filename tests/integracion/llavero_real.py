@@ -27,6 +27,12 @@ DISPOSITIVO y cada paso en su propio proceso, como la ventana:
    borrados.
 7. «Expulsar» (`runsync.py --cerrar-llavero`): KeePassXC se cierra, el
    vigilante se va, lo pendiente sube y el navegador queda como estaba.
+8. Un llavero sin contraseña (`[keychain] llave_interna`), con la CLI de verdad:
+   `db-edit` deja una base con contraseña solo con un fichero llave que genera
+   prdrive, la sonda de `keepassxc.llave_vale()` (`ls --no-password`) distingue
+   la llave buena de otra, y `merge --no-password` combina dos bases con la
+   misma llave. Lo que no se comprueba aquí es que KeePassXC con pantalla abra
+   la base con `--keyfile` y la contraseña vacía: eso, a mano.
 
 Sale con 1 si algo no es lo esperado, y dice qué.
 """
@@ -490,6 +496,39 @@ def main() -> int:
         ver("las claves del navegador, quitadas", [v for v in e["claves"].values() if v], [])
     else:
         ver("los manifiestos, quitados", e["manifiestos"], {})
+    print("== 8. Un llavero sin contraseña", flush=True)
+    sin = temporal / "sin-contrasena"
+    sin.mkdir()
+    sys.path.insert(0, str(REPO))
+    from common import llavero as llavero_comun
+    uno, dos, buena, otra = (sin / "a.kdbx", sin / "b.kdbx", sin / "llave.keyx",
+                             sin / "otra.keyx")
+    llavero_comun.generar_llave(buena)
+    llavero_comun.generar_llave(otra)
+    ver("una base con contraseña", cli("db-create", "-p", str(uno),
+                                       entrada=f"{CLAVE}\n{CLAVE}\n").returncode, 0)
+    ver("db-edit la deja solo con la llave de prdrive", cli(
+        "db-edit", "--set-key-file", str(buena), "--unset-password", str(uno)).returncode, 0)
+
+    def sonda(base: Path, llave: Path) -> int:
+        """Lo que hace `keepassxc.llave_vale()`: abrirla sin contraseña y con esa llave."""
+        return cli("ls", "-q", "--no-password", "--key-file", str(llave), str(base),
+                   entrada="").returncode
+    ver("la sonda: la llave buena la abre, sin contraseña", sonda(uno, buena), 0)
+    ver("  otra llave no", sonda(uno, otra) != 0, True)
+    ver("  y la contraseña de antes tampoco", cli("ls", "-q", str(uno)).returncode != 0, True)
+    shutil.copy2(uno, dos)
+    for base, titulo in ((uno, "uno"), (dos, "dos")):
+        ver(f"se guarda «{titulo}» sin contraseña", cli(
+            "add", "-q", "--no-password", "--key-file", str(buena), str(base), titulo,
+            entrada="").returncode, 0)
+    ver("merge --no-password combina las dos", cli(
+        "merge", "--same-credentials", "--no-password", "--key-file", str(buena), str(uno),
+        str(dos), entrada="").returncode, 0)
+    ver("  y en la base queda lo de las dos", sorted(cli(
+        "ls", "-q", "--no-password", "--key-file", str(buena), str(uno), entrada="").stdout
+        .split()), ["dos", "uno"])
+
     if fallos:
         volcar(app)
         print(f"\nLo de la prueba se queda en {temporal} (logs en {app / 'logs'}).")

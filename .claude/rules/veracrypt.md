@@ -1,6 +1,7 @@
 ---
 paths:
   - "install/crypto.py"
+  - "common/bitlocker.py"
   - "install/veracrypt_bin.py"
   - "install/traveler.py"
   - "ui/tk_crypto.py"

@@ -21,7 +21,8 @@ from functools import partial
 from pathlib import Path
 from typing import Any, Callable, Mapping, NamedTuple
 
-from common import catalog, config_file, conflicts, keepassxc, llavero, model, results
+from common import (catalog, cifrada, config_file, conflicts, keepassxc, llavero, model,
+                    results)
 from common.model import ConfigError
 
 from . import conflict_editor, cuando, cuando_sello
@@ -43,6 +44,11 @@ SIN_BASE = (
     "El llavero todavía no tiene base: ni en el dispositivo ni en el remoto.\n\n"
     "Actívalo con una base en «Ajustes → Llavero…».")
 TRAYENDO = "Trayendo lo último del llavero…"
+COMPROBANDO = "Comprobando el fichero llave…"
+LLAVE_NO_VALE = (
+    "El fichero llave de este dispositivo no abre la base del llavero: no es el de esta base "
+    "(o la base cambió de llave). Da el fichero llave correcto en «Ajustes → Llavero…» "
+    "(«Traer el del remoto» lo vuelve a pedir).")
 COMBINAR = "Combinar las copias del llavero"
 """El título de la confirmación de «Combinar» al abrir."""
 SIN_COMBINAR = "Cancelar abre KeePassXC sin combinar"
@@ -124,6 +130,14 @@ def linea(config: model.Config) -> Linea | None:
     if exe is not None and not exe.is_file():
         return Linea("Falta KeePassXC en el dispositivo: lo pone «Actualizar…».", True, False)
     base = config.llavero["base"]
+    if pareja.llave_interna:
+        estado = cifrada.estado()
+        if not estado.cifrada:
+            return Linea(f"{base}: va sin contraseña y solo se sincroniza en un dispositivo "
+                         f"cifrado. {estado.motivo}", True, False)
+        if not (llavero.carpeta() / model.LLAVERO_LLAVE).is_file():
+            return Linea(f"{base}: va sin contraseña y falta su fichero llave en el "
+                         "dispositivo. Se da en «Ajustes → Llavero…».", True, False)
     fallo = next(iter(results.fallos_de([model.LLAVERO])), None)
     if fallo is not None:
         hace = cuando_sello(fallo.cuando)
@@ -142,9 +156,18 @@ def linea(config: model.Config) -> Linea | None:
                  False, True)
 
 
+def sin_contrasena(config: model.Config) -> bool:
+    """Indica si el llavero va solo con su fichero llave (`[keychain] llave_interna`)."""
+    pareja = config.pareja_llavero
+    return pareja is not None and pareja.llave_interna
+
+
 def llave_de_este_equipo(config: model.Config,
                          elegir_llave: Callable[[str], Path | None]) -> Path | None:
     """Devuelve el fichero llave de la base en este equipo, preguntándolo si hace falta.
+
+    Con el llavero sin contraseña, es el del dispositivo (`.keychain/llave.keyx`):
+    no se pregunta nada.
 
     Si `[keychain]` dice que la base lo pide y en este equipo no está apuntado
     (o ya no está donde se apuntó: otro pendrive, que no está puesto), se
@@ -153,6 +176,9 @@ def llave_de_este_equipo(config: model.Config,
     Returns:
         La ruta, o `None` si la base no lo pide o no se ha dicho.
     """
+    if sin_contrasena(config):
+        interna = llavero.carpeta() / model.LLAVERO_LLAVE
+        return interna if interna.is_file() else None
     datos = config.llavero or {}
     if not datos.get("fichero_llave"):
         return None
@@ -190,12 +216,12 @@ def abrir(config: model.Config, avisar: Callable[[str], None],
 
     Con el KeePassXC de la unidad ya abierto, solo lo trae delante. Con otro
     KeePassXC abierto en el equipo, lo dice y no abre nada. Si la última pasada
-    es vieja, trae lo último (si falla, abre igual). Si la base pide fichero
-    llave y en este equipo no se sabe dónde está, lo pregunta y apunta la ruta.
-    Si la base tiene copias de conflicto, ofrece combinarlas antes de abrir:
-    después de la pasada, que es la que las trae, y del fichero llave, que hace
-    falta para combinar. Al final, el vigilante del llavero, si nadie lo
-    atiende.
+    es vieja, trae lo último (si falla, abre igual). Si la base tiene copias
+    de conflicto, ofrece combinarlas antes de abrir (después de la pasada, que
+    es la que las trae); y si pide fichero llave que en este equipo no se sabe
+    dónde está, lo pregunta y apunta la ruta, porque combinar lo necesita. Al
+    abrir no se le pasa a KeePassXC (`keepassxc.orden()`): lo pide él. Al
+    final, el vigilante del llavero, si nadie lo atiende.
 
     Args:
         config: El del dispositivo.
@@ -204,7 +230,7 @@ def abrir(config: model.Config, avisar: Callable[[str], None],
             `mensaje`, y devuelve `(True, resultado)` o `(False, excepción)`,
             como `tk.working()`.
         elegir_llave: Pregunta dónde está en este equipo el fichero llave de
-            ese nombre; `None` si no se dice (KeePassXC lo pedirá).
+            ese nombre, solo si hay que combinar; `None` si no se dice.
         confirmar: `confirmar(plan, titulo, nota)` enseña un plan y dice si
             se sigue, como `tk_pairs.confirmar_plan()`.
         decir_sin_traer: Si una pasada que falla se dice con un aviso. La
@@ -228,11 +254,18 @@ def abrir(config: model.Config, avisar: Callable[[str], None],
             return False
         if rc != 0 and decir_sin_traer:
             avisar(sin_traer(rc))
-    llave = ap.llave if ap.abierto else llave_de_este_equipo(config, elegir_llave)
+    if ap.llave_interna is not None and not ap.abierto:
+        hecho, valor = esperar(COMPROBANDO, partial(keepassxc.llave_vale, ap.base,
+                                                    ap.llave_interna))
+        if hecho and valor is False:
+            avisar(LLAVE_NO_VALE)
+            return False
     conflicto = None if ap.abierto else conflicto_de_la_base(config, ap.base)
     if conflicto is not None:
+        llave = llave_de_este_equipo(config, elegir_llave)
         try:
-            plan = conflict_editor.plan_combinar(conflicto, llave)
+            plan = conflict_editor.plan_combinar(conflicto, llave,
+                                                 sin_contrasena=sin_contrasena(config))
         except conflict_editor.ResolucionImposible as e:
             avisar(str(e))
         else:
@@ -241,7 +274,7 @@ def abrir(config: model.Config, avisar: Callable[[str], None],
                 if not hecho:
                     avisar(str(valor))
                 conflicto_de_la_base(config, ap.base)     # al día para «Reparación»
-    hecho, valor = esperar(ABRIENDO, partial(keepassxc.abrir, ap, llave))
+    hecho, valor = esperar(ABRIENDO, partial(keepassxc.abrir, ap))
     if not hecho:
         avisar(f"No se ha podido abrir KeePassXC: {valor}")
         return False
@@ -284,12 +317,14 @@ class Situacion(NamedTuple):
         pide_llave: Si la base pide fichero llave.
         nombre_llave: Su nombre, como pista.
         llave: Dónde está en este equipo, si se ha dicho.
+        interna: Si va sin contraseña, solo con su fichero llave del dispositivo.
     """
     activo: bool
     base: str = ""
     pide_llave: bool = False
     nombre_llave: str = ""
     llave: Path | None = None
+    interna: bool = False
 
 
 def situacion(raw: Mapping[str, Any]) -> Situacion:
@@ -298,7 +333,8 @@ def situacion(raw: Mapping[str, Any]) -> Situacion:
     if not isinstance(tabla, Mapping):
         return Situacion(False)
     return Situacion(True, str(tabla.get("base") or ""), bool(tabla.get("fichero_llave")),
-                     str(tabla.get("nombre_llave") or ""), keepassxc.llave_apuntada())
+                     str(tabla.get("nombre_llave") or ""), keepassxc.llave_apuntada(),
+                     tabla.get("llave_interna") is True)
 
 
 def lineas(sit: Situacion, remota: dict | None, leido: bool) -> list[str]:
@@ -311,13 +347,17 @@ def lineas(sit: Situacion, remota: dict | None, leido: bool) -> list[str]:
     """
     if sit.activo:
         salida = [f"Este dispositivo lleva el llavero: {sit.base}."]
-        if not sit.pide_llave:
+        if sit.interna:
+            salida.append("Va sin contraseña, solo con su fichero llave, que está en el "
+                          "dispositivo (.keychain) y no sube al remoto. Solo se sincroniza "
+                          "si el dispositivo está cifrado.")
+        elif not sit.pide_llave:
             salida.append("La base no pide fichero llave.")
         else:
             nombre = f"«{sit.nombre_llave}»" if sit.nombre_llave else "un fichero llave"
             donde = (f"En este equipo está en {sit.llave}." if sit.llave is not None
                      else "En este equipo no se ha dicho dónde está: «Abrir llavero» lo "
-                          "preguntará.")
+                          "preguntará al combinar copias.")
             salida.append(f"La base pide {nombre}. {donde}")
         return salida
     if not leido:
@@ -327,7 +367,11 @@ def lineas(sit: Situacion, remota: dict | None, leido: bool) -> list[str]:
                 "primero que lo active pone la base."]
     salida = [f"Este dispositivo no lleva el llavero. El remoto ya tiene uno: "
               f"{remota.get('base')}."]
-    if remota.get("fichero_llave"):
+    if remota.get("llave_interna"):
+        salida.append("Esa base va sin contraseña, solo con un fichero llave que no está en el "
+                      "remoto: hay que darlo al traerla (el que guardó quien la creó). Solo "
+                      "se puede en un dispositivo cifrado.")
+    elif remota.get("fichero_llave"):
         nombre = remota.get("nombre_llave")
         salida.append(f"Esa base pide el fichero llave «{nombre}»." if nombre
                       else "Esa base pide un fichero llave.")
@@ -407,7 +451,8 @@ def _editable(cat: catalog.Catalog | None) -> catalog.Catalog:
 
 def plan_activar(raw: Mapping[str, Any], cat: catalog.Catalog | None, origen: Path | None,
                  pide: bool = False, nombre_llave: str = "",
-                 llave: Path | None = None) -> LlaveroPlan:
+                 llave: Path | None = None,
+                 cifrado: cifrada.Cifrado | None = None) -> LlaveroPlan:
     """Devuelve el plan de activar el llavero en este dispositivo.
 
     Args:
@@ -419,19 +464,27 @@ def plan_activar(raw: Mapping[str, Any], cat: catalog.Catalog | None, origen: Pa
             llavero, lo dice su `[keychain]`).
         nombre_llave: El nombre del fichero llave, como pista para los demás
             dispositivos.
-        llave: Dónde está el fichero llave en este equipo.
+        llave: Dónde está el fichero llave en este equipo. Con un llavero que va
+            sin contraseña (`llave_interna`) es el que se copia al dispositivo.
+        cifrado: Si el dispositivo está cifrado; sin él, se comprueba aquí.
 
     Raises:
-        ConfigError: Si no se puede: sin catálogo leído, sin base que traer, o
-            una base que no es de KeePassXC o no está entera.
+        ConfigError: Si no se puede: sin catálogo leído, sin base que traer, una
+            base que no es de KeePassXC o no está entera, o un llavero sin
+            contraseña en un dispositivo sin cifrar o sin su fichero llave.
     """
     cat = _editable(cat)
     remota = tabla_remota(cat)
     try:
-        alta = llavero.decidir_alta(llavero.carpeta(), remota, origen, pide, nombre_llave)
+        alta = llavero.decidir_alta(llavero.carpeta(), remota, origen, pide, nombre_llave,
+                                    cifrado=cifrado)
     except ValueError as e:
         raise ConfigError(str(e)) from e
     tabla, destino = alta.tabla, alta.destino
+    interna = tabla.get("llave_interna") is True
+    if interna and (llave is None or not llave.is_file()):
+        raise ConfigError("El llavero del remoto va sin contraseña, solo con un fichero llave: "
+                          "da el fichero llave (el que guardó quien creó el llavero).")
     plan = LlaveroPlan(hacer=lambda: [], activa=True)
     if alta.aviso_formato:
         plan.warnings.append(alta.aviso_formato)
@@ -456,7 +509,13 @@ def plan_activar(raw: Mapping[str, Any], cat: catalog.Catalog | None, origen: Pa
             f"{Path(cat.endpoint).name or catalog.FICHERO}), para que los demás "
             "dispositivos puedan traerlo. La primera pasada sube la base a keychain/, "
             "junto al catálogo.")
-    if tabla.get("fichero_llave"):
+    if interna:
+        plan.consequences.append(
+            f"El llavero va sin contraseña: se abre solo con el fichero llave. Se copia "
+            f"«{llave.name}» a {model.LLAVERO_LOCAL}/{model.LLAVERO_LLAVE}, dentro del "
+            "dispositivo cifrado, y no sube nunca al remoto. Si no es el de esta base, "
+            "KeePassXC no la abrirá: se comprueba al abrir el llavero.")
+    elif tabla.get("fichero_llave"):
         nombre = tabla.get("nombre_llave")
         plan.consequences.append(
             (f"La base pide el fichero llave «{nombre}»" if nombre
@@ -489,17 +548,147 @@ def plan_activar(raw: Mapping[str, Any], cat: catalog.Catalog | None, origen: Pa
         if destino is not None:
             llavero.poner_base(origen, destino)
             hechos.append(f"«{origen.name}» copiada a {carpeta.name}/{destino.name}")
+        if interna:
+            llavero.poner_llave(llave)
+            hechos.append(f"fichero llave copiado a {carpeta.name}/{model.LLAVERO_LLAVE}")
         config_file.save(nuevo_local)
         hechos.append("[keychain] escrito en sync_config.toml")
         if not equipo:
             puestos = llavero.escribir_lanzador()
             hechos.append(f"{' y '.join(p.name for p in puestos)} en la raíz")
-        if llave is not None:
+        if llave is not None and not interna:
             keepassxc.apuntar_llave(llave)
         return hechos
 
     plan.hacer = hacer
     return plan
+
+
+def plan_llave_interna(raw: Mapping[str, Any], cat: catalog.Catalog | None, origen: Path,
+                       copia_llave: Path, llave_actual: Path | None = None,
+                       cifrado: cifrada.Cifrado | None = None) -> LlaveroPlan:
+    """Devuelve el plan de activar el llavero con una base **sin contraseña**, solo con su fichero llave.
+
+    La base que se da se copia al dispositivo (la original no se toca), prdrive
+    genera un fichero llave nuevo en `.keychain/llave.keyx` y `keepassxc-cli
+    db-edit` deja la copia con ese fichero llave como única credencial: **la
+    protección que tuviera se sobrescribe**. La contraseña actual la pide la
+    consola de la CLI; prdrive no la ve. Antes de tocar la base, la llave se
+    copia a `copia_llave`, fuera del dispositivo: perderla es perder las
+    contraseñas. Solo después se escribe el catálogo del remoto (`llave_interna
+    = true`) y el dispositivo; si algo falla antes, se deshace lo hecho aquí.
+
+    Args:
+        raw: El `sync_config.toml` en bruto.
+        cat: El catálogo, recién leído del remoto.
+        origen: La base que se da; se copia, nunca se toca.
+        copia_llave: Dónde guarda la persona su copia de la llave: fuera del
+            dispositivo y sin existir ya.
+        llave_actual: El fichero llave que ya lleva la base, si lo lleva (hace
+            falta para abrirla y cambiarla).
+        cifrado: Si el dispositivo está cifrado; sin él, se comprueba aquí.
+
+    Raises:
+        ConfigError: Sin catálogo leído, con llavero ya en el remoto, en un
+            dispositivo sin cifrar, sin `keepassxc-cli` con `db-edit`, con la
+            copia de la llave dentro del dispositivo o ya existente, o con una
+            base que no vale.
+    """
+    cat = _editable(cat)
+    if tabla_remota(cat) is not None:
+        raise ConfigError("El remoto ya tiene llavero: su base es la que vale. Tráela y da "
+                          "su fichero llave.")
+    try:
+        alta = llavero.decidir_alta(llavero.carpeta(), None, origen, interna=True,
+                                    cifrado=cifrado)
+    except ValueError as e:
+        raise ConfigError(str(e)) from e
+    motivo = keepassxc.sin_conversion()
+    if motivo:
+        raise ConfigError(motivo)
+    if llavero.dentro_de_la_unidad(copia_llave):
+        raise ConfigError("La copia de la llave tiene que estar fuera del dispositivo: dentro "
+                          "no serviría si se pierde o se estropea.")
+    if copia_llave.exists():
+        raise ConfigError(f"«{copia_llave}» ya existe: elige otro nombre para la copia.")
+    tabla, destino = alta.tabla, alta.destino
+    llave = llavero.carpeta() / model.LLAVERO_LLAVE
+    if llave.exists():
+        raise ConfigError(f"En {model.LLAVERO_LOCAL}/ ya hay un {model.LLAVERO_LLAVE}: no se "
+                          "pisa. Revísalo antes de seguir.")
+    nuevo_local = _con_llavero(raw, tabla)
+    model.parse_config(nuevo_local)
+    plan = LlaveroPlan(hacer=lambda: [], activa=True)
+    if alta.aviso_formato:
+        plan.warnings.append(alta.aviso_formato)
+    plan.warnings.append(
+        "La protección que tenga «" + origen.name + "» (contraseña, fichero llave) se sustituye: "
+        "desde ahora se abre solo con el fichero llave nuevo. La original se queda como está.")
+    plan.consequences.append(
+        f"Se copia «{origen.name}» a {model.LLAVERO_LOCAL}/ y prdrive genera "
+        f"{model.LLAVERO_LOCAL}/{model.LLAVERO_LLAVE}. Se abre una consola de KeePassXC que "
+        "pide la contraseña actual de la base (prdrive no la ve) y la deja sin contraseña, "
+        "solo con ese fichero llave.")
+    plan.consequences.append(
+        f"Se guarda una copia de la llave en «{copia_llave}», fuera del dispositivo. "
+        "Guárdala bien: sin ella no hay forma de abrir el llavero. En cada dispositivo "
+        "nuevo la tendrás que dar.")
+    plan.consequences.append(
+        f"El catálogo del remoto apunta el llavero con llave_interna = true "
+        f"({Path(cat.endpoint).name or catalog.FICHERO}): solo se puede traer a dispositivos "
+        "cifrados. La llave no sube; la base sí, ya protegida solo por ella.")
+    raices = _raices(raw)
+    if raices:
+        plan.warnings.append(
+            f"{', '.join(f'«{n}»' for n in raices)} sincroniza la raíz entera: desde ahora "
+            "deja fuera .keychain/, y por eso pedirá un --resync.")
+    aviso = _sin_keepassxc()
+    if aviso:
+        plan.warnings.append(aviso)
+    equipo = model.es_equipo()
+
+    def hacer() -> list[str]:
+        """Convierte la copia, guarda la llave aparte y solo entonces escribe catálogo y config."""
+        carpeta = llavero.preparar_carpeta()
+        creados: list[Path] = []
+        try:
+            llavero.poner_base(origen, destino)
+            creados.append(destino)
+            llavero.generar_llave(llave)
+            creados.append(llave)
+            llavero.guardar_copia_llave(llave, copia_llave)
+            creados.append(copia_llave)
+            codigo = keepassxc.convertir(destino, llave, llave_actual)
+            if codigo != 0:
+                raise ConfigError(no_convertido(codigo))
+            if keepassxc.llave_vale(destino, llave) is False:
+                raise ConfigError("La base no se abre solo con el fichero llave nuevo: no "
+                                  "se ha dejado sin contraseña. No se ha cambiado nada.")
+            hechos = catalog.push(_con_llavero(cat.raw, tabla), cat.text, raw)
+        except BaseException:
+            for ruta in reversed(creados):
+                ruta.unlink(missing_ok=True)
+            raise
+        hechos.append(f"«{origen.name}» copiada a {carpeta.name}/{destino.name}, sin contraseña")
+        hechos.append(f"llave en {carpeta.name}/{model.LLAVERO_LLAVE} y su copia en {copia_llave}")
+        config_file.save(nuevo_local)
+        hechos.append("[keychain] escrito en sync_config.toml")
+        if not equipo:
+            puestos = llavero.escribir_lanzador()
+            hechos.append(f"{' y '.join(p.name for p in puestos)} en la raíz")
+        return hechos
+
+    plan.hacer = hacer
+    return plan
+
+
+def no_convertido(codigo: int) -> str:
+    """Devuelve lo que se dice si `keepassxc-cli db-edit` no ha dejado la base sin contraseña."""
+    if codigo == -1:
+        return ("La consola se cerró sin acabar: la base no se ha cambiado. Vuelve a "
+                "intentarlo.")
+    return (f"KeePassXC no ha podido dejar la base sin contraseña (código {codigo}): ¿la "
+            "contraseña era otra, o falta su fichero llave? No se ha cambiado nada.")
 
 
 def plan_pide_llave(raw: Mapping[str, Any], cat: catalog.Catalog | None, pide: bool,
@@ -525,6 +714,9 @@ def plan_pide_llave(raw: Mapping[str, Any], cat: catalog.Catalog | None, pide: b
     if not sit.activo or remota is None or remota.get("base") != sit.base:
         raise ConfigError("El catálogo del remoto no tiene este llavero: no se puede "
                           "cambiar desde aquí.")
+    if remota.get("llave_interna"):
+        raise ConfigError("Este llavero va sin contraseña, solo con su fichero llave: no se "
+                          "cambia desde aquí.")
     tabla = {**remota, "fichero_llave": bool(pide)}
     if not pide:
         tabla.pop("nombre_llave", None)
@@ -578,11 +770,17 @@ def plan_desactivar(raw: Mapping[str, Any]) -> LlaveroPlan:
     if llavero.keepassxc_abierto():
         plan.warnings.append("KeePassXC está abierto: ciérralo antes, o lo que guardes "
                              "desde ahora ya no subirá.")
+    if sit.interna:
+        plan.warnings.append(
+            f"El fichero llave ({model.LLAVERO_LOCAL}/{model.LLAVERO_LLAVE}) se queda en el "
+            "dispositivo: sin él la base no se abre. Bórralo tú si ya no lo quieres aquí.")
     raices = _raices(raw)
     if raices:
         plan.warnings.append(
             f"{', '.join(f'«{n}»' for n in raices)} sincroniza la raíz entera: sin llavero, "
-            ".keychain/ viajará con ella, y pedirá un --resync.")
+            ".keychain/ viajará con ella, y pedirá un --resync."
+            + (" Con ella subiría también el fichero llave: quítala de ahí antes." if sit.interna
+               else ""))
 
     def hacer() -> list[str]:
         """Quita `[keychain]`, para al vigilante y quita el lanzador."""

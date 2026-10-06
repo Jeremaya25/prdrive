@@ -181,6 +181,12 @@ newer`: un `--resync` se queda con la base más nueva de los dos lados, no con
 la del dispositivo (H-13). Solo va en un `--resync`: rclone lo toma como uno
 (`setResyncDefaults()`), y `sync.build_command()` lo quita de las demás.
 """
+LLAVERO_LLAVE = "llave.keyx"
+"""El fichero llave de un llavero sin contraseña (`[keychain] llave_interna`), en `.keychain/`.
+
+Nombre fijo, así que no hace falta apuntar su ruta por equipo. No lo deja pasar
+ningún filtro de `LLAVERO_REGLAS`: es lo que **no** viaja nunca al remoto.
+"""
 REGLA_SIN_LLAVERO = f"- /{LLAVERO_LOCAL}/**"
 """La regla que reciben las parejas del usuario que sincronizan la raíz entera.
 
@@ -570,6 +576,9 @@ class Pair:
             `includes` y `excludes`, en su orden. Las pone el código, no el
             TOML: las del llavero y `REGLA_SIN_LLAVERO`.
         llavero: Si es la pareja del llavero, la que construye el código.
+        llave_interna: Si el llavero va sin contraseña, solo con su fichero llave
+            (`[keychain] llave_interna`): solo se sincroniza en un dispositivo
+            cifrado (`common/cifrada.py`).
     """
     name: str
     mode: Mode
@@ -586,6 +595,7 @@ class Pair:
     watch: bool = False
     reglas: tuple[str, ...] = ()
     llavero: bool = False
+    llave_interna: bool = False
 
     @property
     def es_raiz(self) -> bool:
@@ -789,7 +799,8 @@ def _build_llavero(tabla: Any, defaults: Mapping[str, Any]) -> Pair:
     `device_remote`.
 
     Raises:
-        ConfigError: Si `[keychain]` no es una tabla o no dice qué base es.
+        ConfigError: Si `[keychain]` no es una tabla o no dice qué base es, o si
+            `llave_interna` no es un booleano o falta `fichero_llave`.
     """
     if not isinstance(tabla, Mapping):
         raise ConfigError("[keychain] tiene que ser una tabla.")
@@ -801,6 +812,12 @@ def _build_llavero(tabla: Any, defaults: Mapping[str, Any]) -> Pair:
         raise ConfigError("[keychain] tiene que decir qué base lleva, con «base = "
                           "\"<nombre>.kdbx\"», un nombre suelto que acabe en .kdbx "
                           "(en minúsculas).")
+    interna = tabla.get("llave_interna", False)
+    if not isinstance(interna, bool):
+        raise ConfigError("[keychain] llave_interna tiene que ser true o false.")
+    if interna and not tabla.get("fichero_llave"):
+        raise ConfigError("[keychain] llave_interna = true necesita fichero_llave = true: "
+                          "la base se abre solo con su fichero llave.")
     remote, carpeta = carpeta_del_catalogo(defaults)
     mode = MODES["bisync"]
     return Pair(
@@ -810,7 +827,7 @@ def _build_llavero(tabla: Any, defaults: Mapping[str, Any]) -> Pair:
         flags={**BASE_FLAGS, **mode.flags, **LLAVERO_FLAGS},
         extra_flags=(), use_filters_file=True,
         device_remote=_device_remote_name(defaults), versions=True,
-        reglas=LLAVERO_REGLAS, llavero=True)
+        reglas=LLAVERO_REGLAS, llavero=True, llave_interna=interna)
 
 
 def _leer_watch(name: str, raw: Mapping[str, Any], mode: Mode) -> bool:

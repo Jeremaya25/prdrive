@@ -162,7 +162,21 @@ try:
         c.contains("  con fichero llave, se dice que ya va puesto",
                    " ".join(conflict_editor.plan_combinar(conflicto, Path("k")).consequences),
                    "ya va puesto")
-
+        rechaza("  con el llavero sin contraseña y sin su llave en el dispositivo, no",
+                lambda: conflict_editor.plan_combinar(conflicto, None, sin_contrasena=True),
+                "su fichero llave no está en el dispositivo")
+        sin = conflict_editor.plan_combinar(conflicto, Path("k"), sin_contrasena=True)
+        c.contains("  con ella, no pide contraseña", " ".join(sin.consequences),
+                   "no pide contraseña")
+        llamadas = []
+        keepassxc.combinar = lambda b, cp, ll, **kw: (llamadas.append((b.name, cp.name, ll, kw)),
+                                                      0)[1]
+        sin.execute()
+        c("  y la consola recibe sin_contrasena", llamadas, [(BASE, REMOTA, Path("k"),
+                                                            {"sin_contrasena": True})])
+        poner(carpeta, REMOTA, b"la de otro dispositivo")
+        conflicto = conflicts.actualizar_pareja(pareja)[0]
+        plan = conflict_editor.plan_combinar(conflicto, None)
         llamadas = []
         keepassxc.combinar = lambda b, cp, ll: (llamadas.append((b.name, cp.name, ll)), 0)[1]
         hechos = plan.execute()

@@ -59,7 +59,8 @@ funcionando), salvo estos flags propios:
         KeePassXC (si se dice que sí), sube lo pendiente y deja el registro del
         navegador como estaba (`keepassxc.cerrar_llavero()`). Sale con 1 si
         KeePassXC sigue abierto.
-    --combinar-llavero BASE COPIA [--keyfile LLAVE] [--codigo FICHERO]
+    --combinar-llavero BASE COPIA [--keyfile LLAVE] [--sin-contrasena] [--codigo FICHERO]
+    --convertir-llavero BASE LLAVE [--actual LLAVE_ACTUAL] [--codigo FICHERO]
         La consola de «Combinar»: `keepassxc-cli merge` pide en ella la
         contraseña de la base (`keepassxc.combinar_aqui()`).
     --vigilar-llavero
@@ -746,7 +747,7 @@ def cerrar_llavero(preguntar=input) -> int:
 
 
 def combinar_llavero(rest: list[str]) -> int:
-    """Hace `--combinar-llavero BASE COPIA [--keyfile LLAVE] [--codigo FICHERO]`.
+    """Hace `--combinar-llavero BASE COPIA [--keyfile LLAVE] [--sin-contrasena] [--codigo FICHERO]`.
 
     Es la consola que abre «Combinar»: `keepassxc.combinar_aqui()`, donde
     `keepassxc-cli merge` pide la contraseña de la base. Con `--codigo` (la
@@ -754,6 +755,8 @@ def combinar_llavero(rest: list[str]) -> int:
     pid al empezar y su código al acabar, para quien espera
     (`keepassxc.esperar_codigo()`).
     """
+    sin_contrasena = "--sin-contrasena" in rest
+    rest = [a for a in rest if a != "--sin-contrasena"]
     opciones: dict[str, Path] = {}
     while len(rest) >= 4 and rest[-2] in ("--keyfile", "--codigo") and rest[-2] not in opciones:
         opciones[rest[-2]], rest = Path(rest[-1]), rest[:-2]
@@ -764,7 +767,33 @@ def combinar_llavero(rest: list[str]) -> int:
         keepassxc.apuntar_codigo(codigo)
     rc = 2
     try:
-        rc = keepassxc.combinar_aqui(Path(rest[0]), Path(rest[1]), opciones.get("--keyfile"))
+        extra = {"sin_contrasena": True} if sin_contrasena else {}
+        rc = keepassxc.combinar_aqui(Path(rest[0]), Path(rest[1]), opciones.get("--keyfile"),
+                                     **extra)
+    finally:
+        if codigo is not None:
+            keepassxc.apuntar_codigo(codigo, rc)
+    return rc
+
+
+def convertir_llavero(rest: list[str]) -> int:
+    """Hace `--convertir-llavero BASE LLAVE [--actual LLAVE_ACTUAL] [--codigo FICHERO]`.
+
+    Es la consola de «dejar el llavero sin contraseña» (`keepassxc.convertir_aqui()`),
+    donde `keepassxc-cli db-edit` pide la contraseña actual de la base. Igual que
+    `combinar_llavero()` con `--codigo`.
+    """
+    opciones: dict[str, Path] = {}
+    while len(rest) >= 4 and rest[-2] in ("--actual", "--codigo") and rest[-2] not in opciones:
+        opciones[rest[-2]], rest = Path(rest[-1]), rest[:-2]
+    if len(rest) != 2:
+        return ui.fatal("--convertir-llavero necesita la base y el fichero llave.")
+    codigo = opciones.get("--codigo")
+    if codigo is not None:
+        keepassxc.apuntar_codigo(codigo)
+    rc = 2
+    try:
+        rc = keepassxc.convertir_aqui(Path(rest[0]), Path(rest[1]), opciones.get("--actual"))
     finally:
         if codigo is not None:
             keepassxc.apuntar_codigo(codigo, rc)
@@ -1110,6 +1139,8 @@ def main() -> int:
 
     if args and args[0] == "--combinar-llavero":
         return combinar_llavero(args[1:])
+    if args and args[0] == "--convertir-llavero":
+        return convertir_llavero(args[1:])
 
     if args and args[0] == "--daemon":
         rest = args[1:]

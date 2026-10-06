@@ -33,6 +33,7 @@ import calendar
 import json
 import os
 import re
+import secrets
 import shutil
 import signal
 import socket
@@ -44,7 +45,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import NamedTuple
 
-from . import bisync, components, conflicts, kdbx, model, store
+from . import bisync, cifrada, components, conflicts, kdbx, model, store
 from .planificador import PoliticaCambios
 
 LEEME = "LEEME.txt"
@@ -743,6 +744,70 @@ def poner_base(origen: Path, destino: Path) -> None:
     os.replace(tmp, destino)
 
 
+def poner_llave(origen: Path, raiz: Path | None = None) -> Path:
+    """Copia el fichero llave de un llavero sin contraseña a `.keychain/llave.keyx`.
+
+    Es la única copia que prdrive guarda de la llave, dentro del dispositivo
+    cifrado, y nunca sube (`LLAVERO_REGLAS` no la deja pasar). Se copia como
+    `poner_base()` y se deja solo legible por quien la usa donde el sistema de
+    ficheros lo permite.
+
+    Args:
+        origen: El fichero llave que da la persona.
+        raiz: La raíz del volumen; sin ella, la de este dispositivo.
+
+    Raises:
+        OSError: Si no se puede copiar, o la copia no ha quedado igual.
+    """
+    destino = preparar_carpeta(raiz) / model.LLAVERO_LLAVE
+    poner_base(origen, destino)
+    try:
+        os.chmod(destino, 0o600)
+    except OSError:
+        pass                                  # exFAT y compañía: no guardan permisos
+    return destino
+
+
+def generar_llave(destino: Path) -> None:
+    """Escribe un fichero llave nuevo: 32 bytes al azar, en hexadecimal (64 caracteres).
+
+    KeePassXC lo lee como clave tal cual (`FileKey`, formato hexadecimal de 64
+    caracteres, sin salto de línea). Se crea solo si no existe.
+
+    Raises:
+        OSError: Si ya existe o no se puede escribir.
+    """
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(destino, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w", encoding="ascii", newline="") as f:
+        f.write(secrets.token_hex(32))
+
+
+def dentro_de_la_unidad(ruta: Path, raiz: Path | None = None) -> bool:
+    """Indica si `ruta` está dentro del dispositivo (donde la copia de la llave no sirve)."""
+    raiz = model.DEVICE_ROOT if raiz is None else raiz
+    try:
+        return Path(ruta).resolve().is_relative_to(Path(raiz).resolve())
+    except OSError:
+        return False
+
+
+def guardar_copia_llave(llave: Path, destino: Path) -> None:
+    """Copia el fichero llave a un sitio de la persona, fuera del dispositivo.
+
+    Perder la llave es perder todas las contraseñas: la copia es obligatoria al
+    dejar un llavero sin contraseña.
+
+    Raises:
+        OSError: Si `destino` está dentro del dispositivo, o no se ha podido
+            copiar igual.
+    """
+    if dentro_de_la_unidad(destino):
+        raise OSError("La copia de la llave tiene que estar fuera del dispositivo: dentro "
+                      "no serviría si se pierde o se estropea.")
+    poner_base(llave, destino)
+
+
 def preparar_carpeta(raiz: Path | None = None) -> Path:
     """Crea `.keychain/` si falta, oculta y con su compañero fijo; devuelve la carpeta.
 
@@ -776,8 +841,16 @@ class Alta(NamedTuple):
     aviso_formato: str = ""
 
 
+SIN_CIFRAR_ALTA = ("Este llavero va sin contraseña, solo con un fichero llave, y solo puede "
+                   "estar en un dispositivo cifrado (VeraCrypt o BitLocker). {motivo}")
+BASE_CON_LLAVE_INTERNA = ("El llavero del remoto va sin contraseña, solo con un fichero llave: "
+                          "una base de otra forma no se podría combinar con la suya. Trae "
+                          "el del remoto y da su fichero llave.")
+
+
 def decidir_alta(donde: Path, remota: dict | None, origen: Path | None,
-                 pide: bool = False, nombre_llave: str = "") -> Alta:
+                 pide: bool = False, nombre_llave: str = "", interna: bool = False,
+                 cifrado: cifrada.Cifrado | None = None) -> Alta:
     """Decide cómo entra el llavero: con qué `[keychain]` y dónde va la base.
 
     Es la regla de «Ajustes → Llavero…» y del asistente:
@@ -794,11 +867,28 @@ def decidir_alta(donde: Path, remota: dict | None, origen: Path | None,
         origen: La base que se da, o `None` para traer la del remoto.
         pide: Si la base que se da pide fichero llave.
         nombre_llave: Su nombre, como pista.
+        interna: Si la base que se da se va a dejar **sin contraseña**, solo con
+            un fichero llave que genera prdrive (`[keychain] llave_interna`).
+            Solo para un llavero nuevo: con el remoto ya con llavero, el modo
+            es el suyo.
+        cifrado: Si el dispositivo está cifrado; sin él, se comprueba
+            (`cifrada.estado()`). El instalador da el del dispositivo que
+            prepara, que no es el que corre.
 
     Raises:
-        ValueError: Con lo que hay que decir: no hay nada que traer, o lo que se
-            da no es una base de KeePassXC entera.
+        ValueError: Con lo que hay que decir: no hay nada que traer, lo que se
+            da no es una base de KeePassXC entera, o el llavero va sin contraseña
+            y el dispositivo no está cifrado.
     """
+    sin_contrasena = interna or bool(remota and remota.get("llave_interna"))
+    if sin_contrasena:
+        cifrado = cifrada.estado() if cifrado is None else cifrado
+        if not cifrado.cifrada:
+            raise ValueError(SIN_CIFRAR_ALTA.format(motivo=cifrado.motivo).strip())
+        if remota is not None and interna:
+            raise ValueError("El remoto ya tiene llavero: su base es la que vale.")
+        if remota is not None and origen is not None:
+            raise ValueError(BASE_CON_LLAVE_INTERNA)
     if origen is None:
         if remota is None:
             raise ValueError("El remoto no tiene llavero que traer: activa el llavero "
@@ -820,10 +910,15 @@ def decidir_alta(donde: Path, remota: dict | None, origen: Path | None,
     if remota is not None:
         return Alta(dict(remota), copia_propia(donde, str(remota.get("base"))), True, False,
                     aviso)
-    tabla = {"base": nombre, "fichero_llave": bool(pide)}
-    if pide and nombre_llave:
+    tabla = {"base": nombre, "fichero_llave": bool(pide) or interna}
+    if interna:
+        tabla["llave_interna"] = True
+    elif pide and nombre_llave:
         tabla["nombre_llave"] = nombre_llave
     destino = donde / nombre
+    if interna and destino.exists():
+        raise ValueError(f"En .keychain/ ya hay una «{nombre}»: no se puede dejar sin "
+                         "contraseña encima de otra base. Cámbiale el nombre a la tuya.")
     if destino.exists():
         if destino.read_bytes() == Path(origen).read_bytes():
             return Alta(tabla, None, False, True, aviso)

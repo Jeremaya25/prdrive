@@ -268,7 +268,7 @@ try:
                                                           "fichero_llave": True,
                                                           "nombre_llave": "p.keyx"}})
     with sandbox():
-        c.contains("activo, con fichero llave sin apuntar: lo preguntará al abrir",
+        c.contains("activo, con fichero llave sin apuntar: lo preguntará al combinar",
                    " ".join(llavero_editor.lineas(sit, None, True)), "lo preguntará")
         c.contains("sin activar y sin llavero en el remoto",
                    " ".join(llavero_editor.lineas(llavero_editor.situacion(LOCAL), None, True)),

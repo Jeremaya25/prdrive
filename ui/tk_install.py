@@ -1583,8 +1583,10 @@ def _paso_llavero(cuerpo, wiz) -> None:
     con_llave = ttk.Checkbutton(detalle, text="La base usa un fichero llave", variable=pide,
                                 command=lambda: cambiar())
     llave_lbl = ttk.Label(detalle, style="MonoPista.TLabel")
-    elegir_llave = ttk.Button(detalle, text="Dónde está en este equipo…",
-                              style="Quiet.TButton", command=lambda: escoger_llave())
+    elegir_llave = ttk.Button(
+        detalle, text=("Elegir el fichero llave…" if (remota or {}).get("llave_interna")
+                       else "Dónde está en este equipo…"),
+        style="Quiet.TButton", command=lambda: escoger_llave())
 
     resultado = ttk.Label(cuerpo, wraplength=theme.medida(780), justify="left",
                           foreground=theme.TINTA3)
@@ -1607,7 +1609,8 @@ def _paso_llavero(cuerpo, wiz) -> None:
         llave = wiz.llavero_llave if pide_llave() else None
         return llavero_install.pensar(
             wiz.device_root, wiz.catalog, wiz.llavero_base if que == "propia" else None,
-            pide.get(), llave.name if llave is not None else "", llave)
+            pide.get(), llave.name if llave is not None else "", llave,
+            cifrado=_cifrado_del_dispositivo(wiz))
 
     def cambiar() -> None:
         """Repinta lo que depende de lo elegido, y lo que va a pasar."""
@@ -1691,6 +1694,18 @@ def _paso_llavero(cuerpo, wiz) -> None:
                                  "sube la base o trae la del remoto.", foreground=theme.OK)
 
     cambiar()
+
+
+def _cifrado_del_dispositivo(wiz):
+    """Devuelve si el dispositivo que se prepara va cifrado, según lo elegido en «Cifrado».
+
+    `cifrada.estado()` miraría el equipo del asistente, no el dispositivo.
+    """
+    from common import cifrada
+    como = wiz.state.encryption
+    if como in (cifrada.VERACRYPT, cifrada.BITLOCKER):
+        return cifrada.Cifrado(True, como)
+    return cifrada.Cifrado(False, "", "El dispositivo no se ha cifrado (paso «Cifrado»).")
 
 
 def _ok_llavero(w) -> bool:

@@ -20,7 +20,7 @@ from __future__ import annotations
 from functools import partial
 from pathlib import Path
 
-from common import catalog, keepassxc
+from common import catalog, keepassxc, llavero, model
 from common.model import Config, ConfigError
 
 from . import catalog_editor, llavero_editor, segundo_plano, theme, tk_pairs
@@ -49,6 +49,18 @@ def elegir_llave(parent, nombre: str) -> Path | None:
     from tkinter import filedialog
     elegido = filedialog.askopenfilename(parent=parent,
                                          title=llavero_editor.pregunta_llave(nombre))
+    return Path(elegido) if elegido else None
+
+
+def guardar_copia_llave(parent) -> Path | None:
+    """Pregunta dónde guardar la copia de la llave, fuera del dispositivo; `None` si se cancela.
+
+    Es de módulo para que los tests lo sustituyan.
+    """
+    from tkinter import filedialog
+    elegido = filedialog.asksaveasfilename(
+        parent=parent, title="Guarda una copia del fichero llave, fuera de este dispositivo",
+        initialfile=model.LLAVERO_LLAVE, defaultextension=".keyx")
     return Path(elegido) if elegido else None
 
 
@@ -128,6 +140,12 @@ def elegir_base(parent) -> Path | None:
 PREGUNTA_LLAVE = ("¿Esta base usa un fichero llave?\n\n"
                   "Si para abrirla solo escribes la contraseña, es que no.")
 """Lo que se pregunta al activar con una base propia."""
+PREGUNTA_LLAVE_ACTUAL = ("¿Esta base ya usa un fichero llave (además de la contraseña)?\n\n"
+                         "Hace falta para poder abrirla y dejarla sin contraseña.")
+"""Lo que se pregunta al dejar una base sin contraseña: su protección actual se sustituye."""
+CAMBIAR_LLAVE = ("Se sustituye el fichero llave que hay en el dispositivo por el que has "
+                 "elegido. Si no es el de esta base, KeePassXC no podrá abrirla. ¿Seguir?")
+"""Lo que se pregunta al dar otra vez el fichero llave de un llavero sin contraseña."""
 
 
 def ajustes(parent, raw: dict | None = None) -> str | None:
@@ -186,18 +204,26 @@ def ajustes(parent, raw: dict | None = None) -> str | None:
         col = 1
         botones: list = []
         if sit.activo:
-            if sit.pide_llave:
-                botones.append(("Dónde está el fichero llave…", donde_esta, "normal"))
-            botones.append(("La base ya no pide fichero llave…" if sit.pide_llave
-                            else "La base pide fichero llave…", cambiar_pide, con_remoto))
+            if sit.interna:
+                botones.append(("Dar el fichero llave…", dar_llave, "normal"))
+            else:
+                if sit.pide_llave:
+                    botones.append(("Dónde está el fichero llave…", donde_esta, "normal"))
+                botones.append(("La base ya no pide fichero llave…" if sit.pide_llave
+                                else "La base pide fichero llave…", cambiar_pide, con_remoto))
             botones.append(("Desactivar…", desactivar, "normal"))
         else:
-            botones.append(("Usar esta base…", usar, con_remoto))
-            if remota() is not None:
+            tabla = remota()
+            if not (tabla or {}).get("llave_interna"):
+                botones.append(("Usar esta base…", usar, con_remoto))
+            if tabla is None:
+                botones.append(("Usar esta base, sin contraseña…", usar_interna, con_remoto))
+            else:
                 botones.append(("Traer el del remoto", traer, con_remoto))
         # Sin activar, lo natural va en azul: traer el del remoto si lo hay, si
         # no, dar una base.
-        principal = botones[-1][0] if not sit.activo else None
+        principal = (("Traer el del remoto" if remota() is not None else "Usar esta base…")
+                     if not sit.activo else None)
         for texto, orden, apagado in botones:
             ttk.Button(acciones, text=texto, command=orden, state=apagado,
                        style="Primary.TButton" if texto == principal else "TButton").grid(
@@ -274,6 +300,36 @@ def ajustes(parent, raw: dict | None = None) -> str | None:
         hacer(lambda: llavero_editor.plan_activar(raw, estado["cat"], origen, pide, nombre,
                                                   llave),
               "Activar el llavero", "Activando el llavero…", cerrar=True)
+
+    def usar_interna() -> None:
+        """«Usar esta base, sin contraseña…»: queda solo con un fichero llave que genera prdrive."""
+        origen = elegir_base(dlg)
+        if origen is None:
+            return
+        actual = None
+        if preguntar(dlg, PREGUNTA_LLAVE_ACTUAL):
+            actual = elegir_llave(dlg, "")
+            if actual is None:
+                return
+        copia = guardar_copia_llave(dlg)
+        if copia is None:
+            return
+        hacer(lambda: llavero_editor.plan_llave_interna(raw, estado["cat"], origen, copia,
+                                                        actual),
+              "Llavero sin contraseña", "Dejando el llavero sin contraseña…", cerrar=True)
+
+    def dar_llave() -> None:
+        """«Dar el fichero llave…»: sustituye el del dispositivo (llavero sin contraseña)."""
+        llave = elegir_llave(dlg, "")
+        if llave is None or not preguntar(dlg, CAMBIAR_LLAVE):
+            return
+        try:
+            llavero.poner_llave(llave)
+        except OSError as e:
+            messagebox.showerror(TITLE, f"No se ha podido copiar el fichero llave: {e}",
+                                 parent=dlg)
+            return
+        pintar("Fichero llave puesto en el dispositivo.")
 
     def traer() -> None:
         """«Traer el del remoto»: la base del catálogo baja con la primera pasada."""

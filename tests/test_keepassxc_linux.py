@@ -513,7 +513,7 @@ try:
         hecho, dicho = abrir(config(fichero_llave=True), llave=llave)
         c("con el del equipo: se abre aunque ya esté abierto (es el de la persona)",
           (hecho, eq.lanzadas[-1][0]),
-          (True, ["/usr/bin/keepassxc", "--keyfile", str(llave), str(base)]))
+          (True, ["/usr/bin/keepassxc", str(base)]))
         c("  avisando de que esa versión no tiene passkeys", dicho,
           [keepassxc.sin_passkeys("2.7.6")])
         c.contains("  (de cuál)", dicho[0] if dicho else "", "2.7.7")
@@ -523,11 +523,10 @@ try:
         eq.externo = keepassxc.Externo(("/usr/bin/flatpak", "run", keepassxc.FLATPAK_ID),
                                        flatpak=True)
         abrir(config(fichero_llave=True), llave=llave)
-        c("el de Flathub, con permiso para la unidad y el fichero llave, y la raíz por --env",
+        c("el de Flathub, con permiso para la unidad y la raíz por --env, sin --keyfile",
           eq.lanzadas[-1][0],
           ["/usr/bin/flatpak", "run", f"--filesystem={root}", f"--env=KPXC_INITIAL_DIR={root}",
-           f"--filesystem={llave.parent}:ro", keepassxc.FLATPAK_ID, "--keyfile", str(llave),
-           str(base)])
+           keepassxc.FLATPAK_ID, str(base)])
         c("sin versión conocida, sin aviso", keepassxc.sin_passkeys(None), None)
 finally:
     (keepassxc.paquete_del_equipo, keepassxc.del_equipo, keepassxc.version_del_equipo,
