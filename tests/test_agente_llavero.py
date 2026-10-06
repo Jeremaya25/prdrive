@@ -29,6 +29,7 @@ Lo que se sujeta:
 """
 
 import math
+from dataclasses import replace
 import shutil
 import sys
 from pathlib import Path
@@ -38,7 +39,7 @@ from _harness import Checks, tmpdir
 import _agente_falso as F
 import agente
 import penwatch
-from common import equipo, llavero, model, store, vestibulo
+from common import equipo, llavero, moderacion, model, store, vestibulo
 from common import planificador as pl
 from ui import bandeja, icons
 
@@ -68,6 +69,38 @@ sync = pl.Raiz("s", (corto, largo), math.inf)
 c("en una raíz sync solo se recorre la que trae su intervalo",
   pl.a_recorrer([sync], {}, 0.0), [("s", "keychain")])
 c("  sin él, ninguna", pl.a_recorrer([pl.Raiz("s", (largo,), math.inf)], {}, 0.0), [])
+
+# En una red de uso medido el llavero sigue: pesa nada y es lo que más importa
+# tener al día. Lo demás espera, como siempre.
+llave = pl.Pareja("keychain", "nas", vigila=True, llavero=True)
+docs = pl.Pareja("docs", "fotos", vigila=True)
+mixta = pl.Raiz("r", (llave, docs), 3600.0)
+medida = pl.Entorno(red_medida=True)
+d = pl.decidir([mixta], {}, medida, 1000.0)
+c("red de uso medido: la pasada del llavero sale", d.tarea and d.tarea.pareja, "keychain")
+c("  sin dejar de decir que lo demás espera (el diario no va y viene)", d.retenido,
+  "red de uso medido")
+hecha = {("r", "keychain"): pl.Marca(1000.0)}
+d = pl.decidir([mixta], hecha, medida, 1001.0)
+c("  la de docs no, y se dice por qué", (d.tarea, d.retenido), (None, "red de uso medido"))
+c("  y se vuelve a mirar cuando toque el llavero, no más tarde",
+  d.mirar_en <= pl.Politica().mirar_maximo, True)
+d = pl.decidir([mixta], {}, pl.Entorno(red_medida=True, con_bateria=True, bateria=5),
+               1000.0)
+c("con la batería baja, ni el llavero", (d.tarea, d.retenido),
+  (None, "batería por debajo del 20 %"))
+d = pl.decidir([mixta], {}, pl.Entorno(red_medida=True, ahorro_energia=True), 1000.0)
+c("con el ahorro de energía, tampoco", d.tarea, None)
+sin_red = pl.Entorno(red_medida=True, sin_conexion={("r", "nas"): 900.0,
+                                                    ("r", "fotos"): 900.0})
+d = pl.decidir([mixta], {}, sin_red, 1000.0)
+c("red medida con su remoto sin conexión: se sondea el del llavero",
+  (d.tarea.tipo, d.tarea.remoto) if d.tarea else None, (pl.SONDA, "nas"))
+d = pl.decidir([mixta], {}, replace(sin_red, sin_conexion={("r", "fotos"): 900.0}), 1000.0)
+c("  y no el de las demás", d.tarea.pareja if d.tarea else None, "keychain")
+c("los recorridos, igual: solo el llavero",
+  pl.a_recorrer([mixta], {}, 0.0, motivo="red de uso medido"), [("r", "keychain")])
+c("  y nada con otro motivo", pl.a_recorrer([mixta], {}, 0.0, motivo="en pausa"), [])
 
 
 # ---------------------------------------------------------------------------
@@ -175,6 +208,27 @@ terminar(ag, RAIZ)
 espera = hasta(ag, RAIZ, 30)
 c("  acabada, se ve abierto y hay otra pasada: la de antes pudo empezar antes",
   (UID in ag.keepassxc, espera is not None), (True, True))
+terminar(ag, RAIZ)
+
+# En una red de uso medido el llavero sigue y lo demás espera.
+moderacion.red_medida = lambda: True
+ag.entorno_leido = -math.inf
+ag.marcas[(UID, "docs")] = pl.Marca(None)
+ag.marcas[(UID, model.LLAVERO)] = pl.Marca(None)
+antes, dicho = len(F.pasadas(RAIZ)), len(F.DIARIO)
+F.vueltas(ag, 3)
+c("red de uso medido: sale la pasada del llavero y no la de docs",
+  [p.args[-1] for p in F.pasadas(RAIZ)][antes:], [model.LLAVERO])
+terminar(ag, RAIZ)
+F.vueltas(ag, int(60 / TICK))
+c("  docs sigue esperando", [p.args[-1] for p in F.pasadas(RAIZ)][antes:], [model.LLAVERO])
+c("  y el diario lo dice una vez, sin ir y venir con cada pasada del llavero",
+  [m for m in F.DIARIO[dicho:] if m.startswith(("no se lanza", "se vuelve"))],
+  ["no se lanza nada salvo el llavero: red de uso medido"])
+moderacion.red_medida = lambda: False
+ag.entorno_leido = -math.inf
+F.vueltas(ag, 3)
+c("al volver la red normal, la de docs", [p.args[-1] for p in F.pasadas(RAIZ)][-1], "docs")
 terminar(ag, RAIZ)
 
 # Una raíz que el agente deja de servir no cuenta como «KeePassXC cerrado».

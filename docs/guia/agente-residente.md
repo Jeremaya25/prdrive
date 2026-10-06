@@ -97,10 +97,11 @@ agente»**. El diseño completo está en
 - **Se modera solo.** Con batería por debajo del 20 %, en una red de uso medido
   o con el modo de ahorro de energía del sistema puesto (el «ahorro de batería» o
   «ahorro de energía» de Windows, el perfil «ahorro de energía» de GNOME o KDE),
-  también enchufado, no lanza nada; si un remoto no contesta, deja de lanzar
-  pareja tras pareja contra él y lo sondea cada 5 minutos; tras un fallo, cada
-  pareja espera el doble de su intervalo (hasta 4 horas), y a cero con la
-  primera pasada buena.
+  también enchufado, no lanza nada (en la red de uso medido, nada salvo el
+  llavero, que pesa poco y es lo que más importa tener al día); si un remoto
+  no contesta, deja de lanzar pareja tras pareja contra él y lo sondea cada 5
+  minutos; tras un fallo, cada pareja espera el doble de su intervalo (hasta 4
+  horas), y a cero con la primera pasada buena.
   «Sincronizar ahora» (`python agente.py pasada <id>`) se salta todo eso. Nunca
   hace un `--resync` por su cuenta.
 - **Avisa con los avisos del sistema**, sin ventanas propias, y solo cuando una

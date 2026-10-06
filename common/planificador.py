@@ -63,6 +63,8 @@ SALTADA = "saltada"     # pedía --resync y nadie lo ha aprobado
 
 HORA = 3600.0
 """Segundos que tiene una hora."""
+MOTIVO_RED_MEDIDA = "red de uso medido"
+"""Lo que dice `moderacion()` en una red de uso medido; el único motivo que deja pasar al llavero."""
 
 
 @dataclass(frozen=True)
@@ -118,11 +120,15 @@ class Pareja:
         intervalo: Sus propios segundos entre pasadas, si no son los de su
             raíz: el llavero con KeePassXC abierto trae lo de otro dispositivo
             cada 5 min, también en una raíz en modo `sync`.
+        llavero: Si es la pareja del llavero: pesa nada y es la que más
+            importa tener al día, así que una red de uso medido no la retiene
+            (`deja_pasar()`).
     """
     nombre: str
     remoto: str = ""
     vigila: bool = False
     intervalo: float | None = None
+    llavero: bool = False
 
 
 @dataclass(frozen=True)
@@ -208,7 +214,10 @@ class Decision:
     Args:
         tarea: La tarea a lanzar, o `None` si no toca nada.
         mirar_en: Segundos hasta la próxima vuelta.
-        retenido: Por qué no se lanza nada, si es global.
+        retenido: Por qué retiene la moderación, si retiene. Va también con
+            la tarea que deja pasar (el llavero en una red de uso medido): lo
+            demás sigue esperando, y el diario no tiene que decir «se vuelve a
+            sincronizar» por cada pasada del llavero.
     """
     tarea: Tarea | None
     mirar_en: float
@@ -270,8 +279,18 @@ def moderacion(entorno: Entorno, politica: Politica) -> str | None:
     if entorno.ahorro_energia and politica.pausar_ahorro_energia:
         return "modo de ahorro de energía"
     if entorno.red_medida and politica.pausar_red_medida:
-        return "red de uso medido"
+        return MOTIVO_RED_MEDIDA
     return None
+
+
+def deja_pasar(motivo: str | None, pareja: Pareja) -> bool:
+    """Indica si la pareja puede ir aunque la moderación retenga por ese motivo.
+
+    Sin motivo, todas. En una red de uso medido, solo el llavero. La pausa, la
+    batería y el ahorro de energía retienen también al llavero: se comprueban
+    antes que la red (`moderacion()`), así que su motivo es otro.
+    """
+    return motivo is None or (motivo == MOTIVO_RED_MEDIDA and pareja.llavero)
 
 
 def decidir(raices: Iterable[Raiz], marcas: Mapping[tuple[str, str], Marca],
@@ -311,10 +330,16 @@ def decidir(raices: Iterable[Raiz], marcas: Mapping[tuple[str, str], Marca],
             return Decision(Tarea(PASADA, clave, nombre, pareja.remoto, urgente=True),
                             politica.mirar_ocupado)
 
-    # 2. Moderarse.
+    # 2. Moderarse: con un motivo solo sigue lo que `deja_pasar()` (el llavero
+    # en una red de uso medido), con sus sondas.
     motivo = moderacion(entorno, politica)
     if motivo is not None:
-        return Decision(None, politica.mirar_maximo, motivo)
+        raices = [replace(r, parejas=tuple(p for p in r.parejas if deja_pasar(motivo, p)))
+                  for r in raices]
+        raices = [r for r in raices if r.parejas]
+        if not raices:
+            return Decision(None, politica.mirar_maximo, motivo)
+        por_clave = {r.clave: r for r in raices}
 
     proxima = ahora + politica.mirar_maximo
 
@@ -323,8 +348,10 @@ def decidir(raices: Iterable[Raiz], marcas: Mapping[tuple[str, str], Marca],
                                           key=lambda kv: kv[1]):
         if clave not in por_clave:
             continue
+        if motivo is not None and all(p.remoto != remoto for p in por_clave[clave].parejas):
+            continue
         if cuando <= ahora:
-            return Decision(Tarea(SONDA, clave, None, remoto), politica.mirar_ocupado)
+            return Decision(Tarea(SONDA, clave, None, remoto), politica.mirar_ocupado, motivo)
         proxima = min(proxima, cuando)
 
     # 4. La pareja que más tiempo lleva esperando su turno.
@@ -353,8 +380,8 @@ def decidir(raices: Iterable[Raiz], marcas: Mapping[tuple[str, str], Marca],
             else:
                 proxima = min(proxima, toca)
     if elegida is not None:
-        return Decision(elegida[1], politica.mirar_ocupado)
-    return Decision(None, max(1.0, proxima - ahora))
+        return Decision(elegida[1], politica.mirar_ocupado, motivo)
+    return Decision(None, max(1.0, proxima - ahora), motivo)
 
 
 def sin_conexion(entorno: Entorno, raiz: str, remoto: str,
@@ -679,7 +706,8 @@ def toca_por_cambios(vigilada: Vigilada | None, marca: Marca,
 def a_recorrer(raices: Iterable[Raiz], vigiladas: Mapping[tuple[str, str], Vigilada],
                ahora: float, politica: PoliticaCambios = PoliticaCambios(),
                retenido: bool = False,
-               ocupadas: Iterable[tuple[str, str]] = ()) -> list[tuple[str, str]]:
+               ocupadas: Iterable[tuple[str, str]] = (),
+               motivo: str | None = None) -> list[tuple[str, str]]:
     """Devuelve las parejas cuya carpeta toca recorrer ahora.
 
     Solo cuentan las de una raíz atendible, que piden `watch`, no están
@@ -698,6 +726,8 @@ def a_recorrer(raices: Iterable[Raiz], vigiladas: Mapping[tuple[str, str], Vigil
             recorrido de después.
         ocupadas: Parejas con una pasada en marcha: las escribe rclone, no la
             persona.
+        motivo: Por qué retiene la moderación, si retiene: se recorre solo lo
+            que `deja_pasar()` (el llavero en una red de uso medido).
 
     Returns:
         `(raíz, pareja)` en el orden de las raíces.
@@ -712,7 +742,8 @@ def a_recorrer(raices: Iterable[Raiz], vigiladas: Mapping[tuple[str, str], Vigil
         for pareja in raiz.parejas:
             clave = (raiz.clave, pareja.nombre)
             if not pareja.vigila or clave in ocupadas \
-                    or math.isinf(intervalo_de(raiz, pareja)):
+                    or math.isinf(intervalo_de(raiz, pareja)) \
+                    or not deja_pasar(motivo, pareja):
                 continue
             v = vigiladas.get(clave, Vigilada())
             if v.abandonada:

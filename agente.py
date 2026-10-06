@@ -760,7 +760,7 @@ def leer_servicio(raiz: Path) -> Servicio:
     # nombre la invalidaría su `sync.py`; aquí no se lanza la del llavero.
     if isinstance(crudo.get("keychain"), dict) and model.LLAVERO not in remotos:
         remoto, _ = model.carpeta_del_catalogo(defaults)
-        parejas.append(pl.Pareja(model.LLAVERO, remoto, vigila=True))
+        parejas.append(pl.Pareja(model.LLAVERO, remoto, vigila=True, llavero=True))
         vigiladas[model.LLAVERO] = model.LLAVERO_LOCAL
     return Servicio(tuple(parejas), minutos, vigiladas)
 
@@ -2213,7 +2213,8 @@ class Agente:
                               self.ajustes.politica, urgentes=self.urgentes,
                               vigiladas=self.vigiladas, cambios=self.cambios)
         if decision.retenido != self.retenido:
-            diario(f"no se lanza nada: {decision.retenido}" if decision.retenido
+            salvo = " salvo el llavero" if decision.retenido == pl.MOTIVO_RED_MEDIDA else ""
+            diario(f"no se lanza nada{salvo}: {decision.retenido}" if decision.retenido
                    else "se vuelve a sincronizar")
             self.retenido = decision.retenido
         if decision.tarea is not None:
@@ -2249,13 +2250,13 @@ class Agente:
         self._recoger_fotos(ahora, validas)
         if self.muestreo is not None or self.terminar or self.heredada is not None:
             return
-        retenido = pl.moderacion(replace(self.entorno, pausado=self.pausado),
-                                 self.ajustes.politica) is not None
+        motivo = pl.moderacion(replace(self.entorno, pausado=self.pausado),
+                               self.ajustes.politica)
         pasada = self.pasada
         ocupadas = [(pasada.tarea.raiz, pasada.tarea.pareja)] \
             if pasada is not None and pasada.tarea.tipo == pl.PASADA else []
-        claves = pl.a_recorrer(raices, self.vigiladas, ahora, self.cambios, retenido,
-                               ocupadas)
+        claves = pl.a_recorrer(raices, self.vigiladas, ahora, self.cambios,
+                               ocupadas=ocupadas, motivo=motivo)
         if not claves:
             return
         trabajo = []
