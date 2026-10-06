@@ -227,9 +227,13 @@ def sandbox():
     """Reapunta las rutas del modelo a un directorio temporal.
 
     Todo lo que escriben bisync, los filtros y los logs cuelga de estas cuatro
-    rutas, así que moverlas basta para que ningún test toque el dispositivo de verdad."""
+    rutas, así que moverlas basta para que ningún test toque el dispositivo de verdad.
+    El `rclone.conf` también: el prefijo de los listados mira el tipo de cada
+    remote (`bisync.tipos_de_remote()`), y no puede depender del que haya en
+    la copia de quien corre los tests (en un dispositivo, el de verdad)."""
     original = {name: getattr(model, name)
-                for name in ("DEVICE_ROOT", "STATE_DIR", "FILTERS_DIR", "LOG_DIR", "CONFIG_FILE")}
+                for name in ("DEVICE_ROOT", "STATE_DIR", "FILTERS_DIR", "LOG_DIR", "CONFIG_FILE",
+                             "RCLONE_CONF")}
     root = Path(tempfile.mkdtemp(prefix="prdrive-test-"))
     try:
         model.DEVICE_ROOT = root
@@ -237,6 +241,7 @@ def sandbox():
         model.FILTERS_DIR = root / "filters"
         model.LOG_DIR = root / "logs"
         model.CONFIG_FILE = root / "sync_config.toml"
+        model.RCLONE_CONF = root / "rclone.conf"
         for d in (model.STATE_DIR, model.FILTERS_DIR, model.LOG_DIR):
             d.mkdir(parents=True, exist_ok=True)
         yield root

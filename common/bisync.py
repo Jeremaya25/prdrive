@@ -19,7 +19,9 @@ esas fuentes contra lo que hay que contrastar cualquier cambio.
 from __future__ import annotations
 
 import hashlib
+import ntpath
 import os
+import posixpath
 import re
 import shutil
 from datetime import datetime
@@ -75,8 +77,65 @@ def fs_path_local(p: str) -> str:
 
 
 def fs_path_remote(s: str) -> str:
-    """Réplica de `FsPath` de canonical.go para el resto de backends: `remote:ruta/`."""
+    """Réplica de `FsPath` de canonical.go para un remote con nombre: `remote:ruta/`.
+
+    `FsPath` pone `nombre + ":" + f.Root()`, y casi siempre `Root()` es la ruta
+    tal cual. Un remote de tipo `local` (`tipos_de_remote()`) es la excepción:
+    su `Root()` es la ruta limpia (`raiz_local()`).
+    """
+    nombre, dos_puntos, ruta = s.partition(":")
+    if dos_puntos:
+        tipo, nounc = tipos_de_remote().get(nombre, (None, False))
+        if tipo == "local":
+            s = f"{nombre}:{raiz_local(ruta, nounc)}"
     return s if s.endswith("/") else s + "/"
+
+
+IS_WIN = os.name == "nt"
+"""Si `raiz_local()` hace lo de Windows; de módulo para que los tests prueben las dos."""
+_UNIDAD = re.compile(r"^[a-zA-Z]:\\")
+
+
+def tipos_de_remote() -> dict[str, tuple[str | None, bool]]:
+    """Devuelve `{remote: (tipo, nounc)}` del `rclone.conf` del dispositivo.
+
+    Lo lee `pairing.parse_rclone_conf()`, el único lector del proyecto. Sin
+    fichero, o sin leerse, vacío: el nombre se calcula como el de cualquier
+    remote.
+    """
+    from .pairing import parse_rclone_conf
+    try:
+        texto = model.RCLONE_CONF.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {}
+    return {nombre: (opciones.get("type"), opciones.get("nounc", "").lower() == "true")
+            for nombre, opciones in parse_rclone_conf(texto).items()}
+
+
+def raiz_local(ruta: str, nounc: bool = False) -> str:
+    r"""Réplica del `Root()` del backend local de rclone (backend/local/local.go).
+
+    Es `cleanRootPath()` con `/`, contrastado con rclone v1.75.1: en Linux la
+    ruta limpia (`filepath.Clean`: `a//b` y `a/./b` son `a/b`), y un segmento
+    `.` o `..` sale como `．`/`．．` por el codificador de nombres
+    (`ToStandardPath`). En Windows, absoluta (`filepath.Abs`, y rclone corre
+    con cwd en `model.APP_DIR`) y con `\\?\` delante (`file.UNCPath()`,
+    lib/file/unc_windows.go) salvo con `nounc = true`: `D:\datos` es
+    `//?/D:/datos`, y `\\nas\datos`, `//?/UNC/nas/datos`.
+    """
+    if IS_WIN:
+        limpia = ntpath.normpath(ntpath.join(str(model.APP_DIR), ruta.replace("/", "\\")))
+        if not nounc and not limpia.startswith("\\\\?\\"):
+            if limpia.startswith("\\\\"):
+                limpia = "\\\\?\\UNC\\" + limpia[2:]
+            elif _UNIDAD.match(limpia):
+                limpia = "\\\\?\\" + limpia
+        return limpia.replace("\\", "/")
+    limpia = posixpath.normpath(ruta or ".")
+    if limpia.startswith("//"):
+        limpia = limpia[1:]          # `filepath.Clean` no guarda las dos barras de POSIX
+    return "/".join("\uff0e" * len(trozo) if trozo in (".", "..") else trozo
+                    for trozo in limpia.split("/"))
 
 
 def session_name(path1: str, path2: str) -> str:
