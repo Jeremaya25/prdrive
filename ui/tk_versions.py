@@ -28,7 +28,7 @@ from common import model
 from common.model import Config
 
 from . import abrir, theme, versions_editor
-from .tk import TITLE, cabecera, cuerpo_visible, modal, mostrar, separador_fila, working
+from .tk import TITLE, Panel, cabecera, dialogo, mostrar, pie, separador_fila, working
 
 ANTIGUEDADES = (
     ("Más de 30 días", 30),
@@ -37,7 +37,7 @@ ANTIGUEDADES = (
 )
 """Lo que se ofrece purgar: tres antigüedades y no fechas.
 
-Un desplegable con tres antigüedades se entiende sin pensar; «anterior al
+Tres botones con su antigüedad se entienden sin pensar; «anterior al
 14/07/2026» hay que calcularlo mentalmente.
 """
 
@@ -54,15 +54,17 @@ def open_dialog(parent, config: Config) -> None:
 
     Purgar no cambia nada que la ventana principal enseñe.
     """
+    dialogo(parent, "Versiones", lambda p: construir(p, config), ensenar=mostrar)
+
+
+def construir(panel: Panel, config: Config) -> None:
+    """Dibuja «Versiones guardadas» en `panel` (su diálogo o «Ajustes»)."""
     from tkinter import StringVar, messagebox, ttk
 
     from . import tk_pairs
 
     parejas = [p for p in config.pairs if p.versions]
-
-    dlg = modal(parent, "Versiones")
-    marco = cuerpo_visible(dlg, padding=(22, 20, 22, 18))
-    marco.columnconfigure(0, weight=1)
+    dlg, marco = panel.ventana, panel.marco
 
     cabecera(marco, "Versiones guardadas",
              "Cada lado guarda en .prversions/, dentro de la propia pareja, lo que "
@@ -76,27 +78,24 @@ def open_dialog(parent, config: Config) -> None:
         ttk.Label(marco, text=SIN_VERSIONES, style="Pista.TLabel", justify="left",
                   wraplength=theme.medida(560)).grid(row=1, column=0, sticky="w",
                                                      pady=(16, 0))
-        _pie(marco, dlg, fila=2)
-        mostrar(dlg, parent)
+        if not panel.incrustado:
+            ttk.Button(pie(marco, 2), text="Cerrar", command=panel.cerrar).grid(
+                row=0, column=0, sticky="e")
         return
 
     estado: dict = {"pareja": parejas[0], "local": None, "remoto": None}
 
-    # Elegir pareja.
+    # Elegir pareja: un botón por pareja, como en el diseño.
     fila = 1
+    elegida = StringVar(marco, value=parejas[0].name)
     if len(parejas) > 1:
-        barra = ttk.Frame(marco)
-        barra.grid(row=fila, column=0, sticky="w", pady=(16, 0))
-        ttk.Label(barra, text="Pareja", style="Campo.TLabel").grid(row=0, column=0,
-                                                                   padx=(0, 10))
-        elegida = StringVar(value=parejas[0].name)
-        selector = ttk.Combobox(barra, textvariable=elegida, state="readonly",
-                                width=24, values=[p.name for p in parejas])
-        selector.grid(row=0, column=1)
+        ttk.Label(marco, text="Pareja", style="Campo.TLabel").grid(
+            row=fila, column=0, sticky="w", pady=(16, 6))
         fila += 1
-    else:
-        elegida = StringVar(value=parejas[0].name)
-        selector = None
+        theme.grupo_botones(marco, [(p.name, p.name) for p in parejas], elegida,
+                            orden=lambda: refrescar()).grid(row=fila, column=0,
+                                                            sticky="w")
+        fila += 1
 
     # Lo que hay en cada lado.
     tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(14, 12))
@@ -118,15 +117,16 @@ def open_dialog(parent, config: Config) -> None:
         ruta.grid(row=i * 3 + 1, column=0, columnspan=2, sticky="w", pady=(2, 8))
         lineas[clave] = (cifra, ruta)
 
-    # Purgar.
-    caja = ttk.Frame(marco)
-    caja.grid(row=fila, column=0, sticky="ew", pady=(16, 0))
-    caja.columnconfigure(2, weight=1)
-    ttk.Label(caja, text="Purgar", style="Campo.TLabel").grid(row=0, column=0,
-                                                              padx=(0, 10))
-    antiguedad = StringVar(value=ANTIGUEDADES[0][0])
-    ttk.Combobox(caja, textvariable=antiguedad, state="readonly", width=18,
-                 values=[t for t, _ in ANTIGUEDADES]).grid(row=0, column=1)
+    # Purgar: la antigüedad, también en botones, y que se borra en los dos lados.
+    ttk.Label(marco, text="Purgar", style="Campo.TLabel").grid(
+        row=fila, column=0, sticky="w", pady=(16, 6))
+    fila += 1
+    antiguedad = StringVar(marco, value=ANTIGUEDADES[0][0])
+    theme.grupo_botones(marco, [(t, t) for t, _ in ANTIGUEDADES], antiguedad).grid(
+        row=fila, column=0, sticky="w")
+    fila += 1
+    ttk.Label(marco, text="Se borran en los dos lados.", style="Pista.TLabel").grid(
+        row=fila, column=0, sticky="w", pady=(6, 0))
     fila += 1
 
     def corte() -> date:
@@ -173,9 +173,6 @@ def open_dialog(parent, config: Config) -> None:
             or (estado["remoto"].disponible and estado["remoto"].total) else "disabled")
         abrir_btn.configure(state="normal" if estado["local"].total else "disabled")
 
-    if selector is not None:
-        selector.bind("<<ComboboxSelected>>", refrescar)
-
     # Acciones.
 
     def abrir_carpeta() -> None:
@@ -206,28 +203,18 @@ def open_dialog(parent, config: Config) -> None:
         messagebox.showinfo(TITLE, "\n".join(hechos) or "No se ha borrado nada.",
                             parent=dlg)
 
-    ttk.Separator(marco, orient="horizontal").grid(row=fila, column=0, sticky="ew",
-                                                   pady=(16, 0))
-    pie = ttk.Frame(marco)
-    pie.grid(row=fila + 1, column=0, sticky="ew", pady=(14, 0))
-    pie.columnconfigure(0, weight=1)
-    abrir_btn = ttk.Button(pie, text="Abrir la carpeta", style="Quiet.TButton",
+    botones = pie(marco, fila)
+    botones.columnconfigure(0, weight=1)
+    abrir_btn = ttk.Button(botones, text="Abrir la carpeta", style="Quiet.TButton",
                            command=abrir_carpeta)
     theme.boton_icono(abrir_btn, "file", theme.ACENTO, theme.PAPEL)
     abrir_btn.grid(row=0, column=0, sticky="w")
-    purgar_btn = ttk.Button(pie, text="Purgar…", command=purgar)
-    purgar_btn.grid(row=0, column=1, padx=(10, 6))
-    ttk.Button(pie, text="Cerrar", command=dlg.destroy).grid(row=0, column=2)
+    purgar_btn = ttk.Button(botones, text="Purgar…", style="Danger.TButton",
+                            command=purgar)
+    theme.boton_icono(purgar_btn, "trash", theme.PELIGRO, theme.SUPERFICIE)
+    purgar_btn.grid(row=0, column=1, padx=(10, 0))
+    if not panel.incrustado:
+        ttk.Button(botones, text="Cerrar", command=panel.cerrar).grid(
+            row=0, column=2, padx=(6, 0))
 
     refrescar()
-    mostrar(dlg, parent)
-
-
-def _pie(marco, dlg, fila: int) -> None:
-    """Pone el pie de la ventana, con el botón «Cerrar»."""
-    from tkinter import ttk
-    ttk.Separator(marco, orient="horizontal").grid(row=fila, column=0, sticky="ew",
-                                                   pady=(16, 0))
-    pie = ttk.Frame(marco)
-    pie.grid(row=fila + 1, column=0, sticky="e", pady=(14, 0))
-    ttk.Button(pie, text="Cerrar", command=dlg.destroy).grid(row=0, column=0)

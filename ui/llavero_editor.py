@@ -6,7 +6,7 @@
   con lo que pregunta dado como funciones. `ui/tk_llavero.py` le da diálogos de
   Tk; sin entorno gráfico, `ui.abrir_llavero()` le da la consola y no pregunta.
   Qué hace falta y cómo se lanza es de `common/keepassxc.py`.
-- «Ajustes → Llavero…» (§9): activarlo con una base propia o la del remoto,
+- «Ajustes → Llavero» (§9): activarlo con una base propia o la del remoto,
   decir si la base pide fichero llave y desactivarlo. Cada cosa es un plan
   (`LlaveroPlan`) que se confirma antes de hacerse. Si el remoto ya tiene
   llavero, la base es la suya: una propia entra como copia de conflicto y se
@@ -42,12 +42,12 @@ OTRO_ABIERTO = (
     "pasaría la base a ése, que tiene otra configuración.")
 SIN_BASE = (
     "El llavero todavía no tiene base: ni en el dispositivo ni en el remoto.\n\n"
-    "Actívalo con una base en «Ajustes → Llavero…».")
+    "Actívalo con una base en «Ajustes → Llavero».")
 TRAYENDO = "Trayendo lo último del llavero…"
 COMPROBANDO = "Comprobando el fichero llave…"
 LLAVE_NO_VALE = (
     "El fichero llave de este dispositivo no abre la base del llavero: no es el de esta base "
-    "(o la base cambió de llave). Da el fichero llave correcto en «Ajustes → Llavero…» "
+    "(o la base cambió de llave). Da el fichero llave correcto en «Ajustes → Llavero» "
     "(«Traer el del remoto» lo vuelve a pedir).")
 COMBINAR = "Combinar las copias del llavero"
 """El título de la confirmación de «Combinar» al abrir."""
@@ -137,7 +137,7 @@ def linea(config: model.Config) -> Linea | None:
                          f"cifrado. {estado.motivo}", True, False)
         if not (llavero.carpeta() / model.LLAVERO_LLAVE).is_file():
             return Linea(f"{base}: va sin contraseña y falta su fichero llave en el "
-                         "dispositivo. Se da en «Ajustes → Llavero…».", True, False)
+                         "dispositivo. Se da en «Ajustes → Llavero».", True, False)
     fallo = next(iter(results.fallos_de([model.LLAVERO])), None)
     if fallo is not None:
         hace = cuando_sello(fallo.cuando)
@@ -292,7 +292,7 @@ def abrir(config: model.Config, avisar: Callable[[str], None],
     return True
 
 
-# --- «Ajustes → Llavero…»
+# --- «Ajustes → Llavero»
 
 LEYENDO = "Leyendo el catálogo del remoto, para ver si ya tiene llavero…"
 EXPLICACION = (

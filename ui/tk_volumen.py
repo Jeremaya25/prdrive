@@ -22,7 +22,7 @@ from __future__ import annotations
 from common import autorun
 
 from . import icons, theme, volumen
-from .tk import TITLE, cabecera, corto, cuerpo_visible, modal, mostrar, working
+from .tk import TITLE, Panel, cabecera, corto, dialogo, mostrar, pie, working
 
 MUESTRA = 32
 """El lado de las muestras de color, en medidas del diseño."""
@@ -35,12 +35,17 @@ def open_dialog(parent) -> None:
     dispositivo en `state/fleet.json`; nada de lo que enseña la ventana
     principal depende de ellos.
     """
+    dialogo(parent, "Nombre e icono de la unidad", construir, ensenar=mostrar)
+
+
+def construir(panel: Panel) -> None:
+    """Dibuja «Nombre e icono de la unidad» en `panel` (su diálogo o «Ajustes»)."""
     import tkinter as tk
     from tkinter import filedialog, messagebox, ttk
 
     estado = volumen.leer()
-    dlg = modal(parent, "Nombre e icono de la unidad")
-    marco = cuerpo_visible(dlg, padding=(22, 20, 22, 18))
+    dlg, marco = panel.ventana, panel.marco
+    marco.columnconfigure(0, weight=0)
     marco.columnconfigure(1, weight=1)
 
     cabecera(marco, "Nombre e icono de la unidad",
@@ -58,7 +63,7 @@ def open_dialog(parent) -> None:
 
     # El nombre.
     etiqueta("Nombre", 1)
-    nombre = tk.StringVar(value=estado.nombre)
+    nombre = tk.StringVar(marco, value=estado.nombre)
     ttk.Entry(marco, textvariable=nombre, width=autorun.MAX_NOMBRE + 2).grid(
         row=1, column=1, sticky="w", pady=(18, 0))
     ttk.Label(marco, style="Pista.TLabel", text=volumen.pista_nombre(estado),
@@ -67,7 +72,7 @@ def open_dialog(parent) -> None:
 
     # El icono.
     etiqueta("Icono", 3, arriba=True)
-    eleccion = tk.StringVar(value=estado.clave)
+    eleccion = tk.StringVar(marco, value=estado.clave)
     iconos = ttk.Frame(marco)
     iconos.grid(row=3, column=1, sticky="w", pady=(18, 0))
 
@@ -162,15 +167,11 @@ def open_dialog(parent) -> None:
             messagebox.showerror(TITLE, str(valor), parent=dlg)
             return
         messagebox.showinfo(TITLE, volumen.mensaje_guardado(estado, texto), parent=dlg)
-        dlg.destroy()
+        panel.terminar("Guardado.")
 
-    ttk.Separator(marco, orient="horizontal").grid(row=5, column=0, columnspan=2,
-                                                   sticky="ew", pady=(16, 0))
-    pie = ttk.Frame(marco)
-    pie.grid(row=6, column=0, columnspan=2, sticky="e", pady=(14, 0))
-    ttk.Button(pie, text="Cancelar", command=dlg.destroy).grid(row=0, column=0,
-                                                               padx=(0, 6))
-    ttk.Button(pie, text="Guardar", style="Primary.TButton",
-               command=guardar).grid(row=0, column=1)
-
-    mostrar(dlg, parent)
+    botones = pie(marco, 5, columnas=2)
+    botones.columnconfigure(0, weight=1)
+    ttk.Button(botones, text="Cancelar", command=panel.terminar).grid(
+        row=0, column=1, padx=(0, 6))
+    ttk.Button(botones, text="Guardar", style="Primary.TButton",
+               command=guardar).grid(row=0, column=2)

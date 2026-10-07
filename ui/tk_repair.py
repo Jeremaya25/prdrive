@@ -33,7 +33,7 @@ from common import revision
 from common.model import Config
 
 from . import abrir, icons, repair, theme
-from .tk import TITLE, cabecera, cuerpo_visible, modal, mostrar, separador_fila
+from .tk import TITLE, Panel, cabecera, dialogo, mostrar, pie, separador_fila
 
 SEMAFORO = {
     revision.GRAVE: ("warn", "Peligro.", "grave"),
@@ -70,15 +70,24 @@ def open_dialog(parent, config: Config, lanzar, marcadas=None) -> bool:
         marcadas: Las parejas elegidas en la ventana principal; es lo que se
             simula si se pide una pasada de prueba. Sin ellas, todas.
     """
+    return dialogo(parent, "Reparación",
+                   lambda p: construir(p, config, lanzar, marcadas),
+                   defecto=False, ensenar=mostrar)
+
+
+def construir(panel: Panel, config: Config, lanzar, marcadas=None) -> None:
+    """Dibuja «Reparación» en `panel` (su diálogo o «Ajustes»).
+
+    Devuelve `True` por el panel si cambia algo del dispositivo. Lo que lanza
+    una pasada cierra antes la ventana entera (`panel.cerrar`): la de salida es
+    hija de la principal.
+    """
     from tkinter import messagebox, ttk
 
     from . import tk_conflicts, tk_pairs
 
-    dlg = modal(parent, "Reparación")
-    estado: dict = {"cambiado": False, "hallazgos": []}
-
-    marco = cuerpo_visible(dlg, padding=(22, 20, 22, 18))
-    marco.columnconfigure(0, weight=1)
+    dlg, marco = panel.ventana, panel.marco
+    estado: dict = {"hallazgos": []}
 
     cabecera(marco, "Reparación",
              "Lo que está mal en este dispositivo, y lo que se puede hacer con "
@@ -107,7 +116,7 @@ def open_dialog(parent, config: Config, lanzar, marcadas=None) -> bool:
             messagebox.showerror(TITLE, str(e), parent=dlg)
             repintar()
             return
-        estado["cambiado"] = True
+        panel.devolver(True)
         repintar()
         messagebox.showinfo(TITLE, "\n".join(hechos) or "Hecho.", parent=dlg)
 
@@ -121,9 +130,9 @@ def open_dialog(parent, config: Config, lanzar, marcadas=None) -> bool:
         if not tk_pairs.confirmar_plan(dlg, repair.aviso_resync(hallazgo),
                                        f"Resincronizar «{hallazgo.pareja}»", ""):
             return
-        estado["cambiado"] = True
-        dlg.destroy()
-        lanzar(f"Resincronizar «{hallazgo.pareja}»", repair.args_resync(hallazgo))
+        panel.devolver(True)
+        panel.cerrar(lambda: lanzar(f"Resincronizar «{hallazgo.pareja}»",
+                                    repair.args_resync(hallazgo)))
 
     def ver_log(hallazgo) -> None:
         """Abre el log de la pasada que falló, si quedó."""
@@ -210,13 +219,16 @@ def open_dialog(parent, config: Config, lanzar, marcadas=None) -> bool:
         conflictos.grid_remove()
         if any(h.clave == "conflicto" for h in estado["hallazgos"]):
             conflictos.grid()
+        if panel.incrustado:
+            panel.ajustar()
+            return
         visor = getattr(dlg, "visor", None)
         if visor is not None:
             visor.encajar(dlg)
 
     def al_resolver() -> None:
         """Anota el cambio y repinta tras resolver un conflicto."""
-        estado["cambiado"] = True
+        panel.devolver(True)
         repintar()
 
     conflictos = tk_conflicts.seccion(marco, dlg, config, al_resolver)
@@ -229,32 +241,26 @@ def open_dialog(parent, config: Config, lanzar, marcadas=None) -> bool:
         nombres = list(marcadas or [p.name for p in config.pairs])
         if not nombres:
             return
-        dlg.destroy()
-        lanzar("Simulación", repair.args_simular(nombres))
+        panel.cerrar(lambda: lanzar("Simulación", repair.args_simular(nombres)))
 
     def informe() -> None:
         """Cierra y lanza el informe completo del estado (`--doctor`)."""
-        dlg.destroy()
-        lanzar("Informe del estado", ["--doctor"])
+        panel.cerrar(lambda: lanzar("Informe del estado", ["--doctor"]))
 
-    ttk.Separator(marco, orient="horizontal").grid(row=3, column=0, sticky="ew",
-                                                   pady=(18, 0))
-    pie = ttk.Frame(marco)
-    pie.grid(row=4, column=0, sticky="ew", pady=(14, 0))
-    pie.columnconfigure(2, weight=1)
+    botones = pie(marco, 3)
+    botones.columnconfigure(2, weight=1)
     # «Simular» vive aquí y no en la ventana principal: es lo que se hace ANTES
     # de sincronizar cuando algo no cuadra, y esta es la pantalla de «a ver qué
     # hay». No escribe nada, así que no necesita ceremonia.
-    simula = ttk.Button(pie, text="Simular una pasada…", style="Quiet.TButton",
+    simula = ttk.Button(botones, text="Simular una pasada…", style="Quiet.TButton",
                         command=simular)
     theme.boton_icono(simula, "eye", theme.ACENTO, theme.PAPEL)
     simula.grid(row=0, column=0, sticky="w")
-    ver = ttk.Button(pie, text="Ver el informe completo", style="Quiet.TButton",
+    ver = ttk.Button(botones, text="Ver el informe completo", style="Quiet.TButton",
                      command=informe)
     theme.boton_icono(ver, "doctor", theme.ACENTO, theme.PAPEL)
     ver.grid(row=0, column=1, sticky="w", padx=(6, 0))
-    ttk.Button(pie, text="Cerrar", command=dlg.destroy).grid(row=0, column=3, sticky="e")
+    ttk.Button(botones, text="Cerrar", command=panel.cerrar).grid(row=0, column=3,
+                                                                  sticky="e")
 
     repintar()
-    mostrar(dlg, parent)
-    return estado["cambiado"]

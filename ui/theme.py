@@ -722,6 +722,32 @@ def apply(widget) -> None:
               darkcolor=[("active", AVISO_BORDE)],
               foreground=[("disabled", APAGADO)])
 
+    # La barra lateral de «Ajustes»: filas planas del ancho de la barra; la
+    # elegida, sobre el azul suave con su filete y en seminegrita.
+    style.configure("Nav.TButton", background=PAPEL, foreground=TINTA,
+                    relief="flat", borderwidth=1, padding=(10, 6), anchor="w",
+                    font=fuente(), bordercolor=PAPEL, lightcolor=PAPEL,
+                    darkcolor=PAPEL)
+    style.map("Nav.TButton",
+              background=[("pressed", LINEA), ("active", GRIS_FONDO)],
+              **bordes(pressed=LINEA, active=GRIS_FONDO))
+    style.configure("NavSel.TButton", background=ACENTO_SUAVE, foreground=TINTA,
+                    relief="solid", borderwidth=1, padding=(10, 6), anchor="w",
+                    font=fuente("fuerte"), bordercolor=ACENTO_BORDE,
+                    lightcolor=ACENTO_BORDE, darkcolor=ACENTO_BORDE)
+    style.map("NavSel.TButton", background=[("active", ACENTO_SUAVE)])
+
+    # El grupo de botones (`grupo_botones`): radios con forma de botón; el
+    # pulsado, en azul suave con el borde del acento.
+    style.configure("Segmento.Toolbutton", background=SUPERFICIE, foreground=TINTA,
+                    relief="solid", borderwidth=1, padding=(12, 5),
+                    font=fuente("fuerte"), anchor="center", **borde)
+    style.map("Segmento.Toolbutton",
+              background=[("selected", ACENTO_SUAVE), ("pressed", LINEA),
+                          ("active", GRIS_FONDO), ("disabled", APAGADO_FONDO)],
+              foreground=[("disabled", APAGADO), ("selected", ACENTO_OSCURO)],
+              **bordes(selected=ACENTO, disabled=LINEA, active=TINTA2))
+
     # Los del bloque del catálogo: fondo ámbar, para que se vea que van juntos.
     for nombre, color in (("Ambar.TButton", TINTA),
                           ("AmbarDanger.TButton", PELIGRO)):
@@ -953,6 +979,36 @@ def linea_estado(parent, icono: str, texto: str, accion: str | None = None,
                                  style="AmbarQuiet.TButton" if ambar
                                  else "Quiet.TButton")
         marco.boton.grid(row=1, column=2, sticky="e", padx=(8, 4))
+    return marco
+
+
+def grupo_botones(parent, opciones, variable, orden=None, superficie: str = ""):
+    """Devuelve un grupo de botones pegados donde solo uno está pulsado.
+
+    Es el `ButtonGroup` del diseño: hace lo que un desplegable de pocas
+    opciones, pero las enseña todas. Son radios de ttk con la forma de botón
+    (`Segmento.Toolbutton`), así que la elegida es el valor de `variable`.
+
+    Args:
+        opciones: `(rotulo, valor)` por botón, en orden.
+        variable: La `StringVar` que guarda el valor elegido.
+        orden: Lo que se llama al cambiar de botón, o `None`.
+        superficie: El prefijo de la superficie donde cae (`'Card.'`…), para
+            que el marco tenga su fondo.
+
+    Returns:
+        El marco, con los botones en `marco.botones`.
+    """
+    from tkinter import ttk
+    marco = ttk.Frame(parent, style=f"Plano.{superficie}TFrame" if superficie
+                      else "TFrame")
+    marco.botones = []
+    for i, (rotulo, valor) in enumerate(opciones):
+        boton = ttk.Radiobutton(marco, text=rotulo, value=valor, variable=variable,
+                                command=orden, style="Segmento.Toolbutton",
+                                takefocus=True)
+        boton.grid(row=0, column=i, sticky="ns")
+        marco.botones.append(boton)
     return marco
 
 

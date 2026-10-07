@@ -89,10 +89,11 @@ los lanzadores se quedan donde estaban. rclone y Python son componentes, no
 código: el zip de la release no los lleva.
 
 Si no quieres esperar a que la ventana mire por su cuenta (lo hace al abrirse y
-como mucho una vez cada 24 horas), **«Ajustes… → Buscar actualizaciones»**
-pregunta a GitHub en ese momento y te dice debajo del botón si hay una versión
-nueva, si ya tienes la última o por qué no ha podido mirar. Si hay una, el
-recuadro ámbar aparece al cerrar «Ajustes».
+como mucho una vez cada 24 horas), **«Ajustes… → Actualizaciones → Buscar
+actualizaciones»** pregunta a GitHub en ese momento y te dice debajo del botón
+si ya tienes la última o por qué no ha podido mirar. Si hay una versión nueva,
+el mismo apartado pasa a enseñarla con su «Actualizar ahora», y el recuadro de
+la ventana principal aparece al cerrar «Ajustes».
 
 La versión instalada es el fichero `VERSION` de `.prdrive/`, y se compara con el
 tag de la última release. Un dispositivo instalado antes de que esto existiera

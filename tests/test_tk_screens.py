@@ -634,7 +634,7 @@ with sandbox():
     c("con la flota vacía la ficha no se enseña, solo el aviso",
       vacia["fila"], [vacia["aviso"]])
 
-# El nombre de este dispositivo se cambia en «Nombre e icono de la unidad…»: aquí
+# El nombre de este dispositivo se cambia en «Ajustes» → «Nombre e icono»: aquí
 # solo se lee. La ventana no ofrece cambiarlo, no guarda ni publica ninguno, y
 # dice dónde se hace.
 with sandbox():
@@ -662,7 +662,7 @@ with sandbox():
       False)
     c("abrirla no guarda ni publica ningún nombre", (guardados, publicadas), ([], []))
     c("dice dónde se cambia",
-      any("Nombre e icono de la unidad" in t for t in lo_que_hay["textos"]), True)
+      any("«Nombre e icono»" in t for t in lo_que_hay["textos"]), True)
 
 with sandbox():
     cfg = preparar()
@@ -982,16 +982,15 @@ ocultar(tk_versions)
 
 
 def _elegir_pareja(nombre):
-    """Devuelve un `wait_window` que elige esa pareja en el desplegable."""
+    """Devuelve un `wait_window` que pulsa el botón de esa pareja."""
     def _wait(self, *_a, **_k):
-        """Cambia el desplegable y avisa, como lo hace quien lo usa."""
+        """Pulsa el botón de la pareja, como lo hace quien lo usa."""
         pila = [self]
         while pila:
             w = pila.pop()
             pila += list(w.winfo_children())
-            if isinstance(w, ttk.Combobox) and nombre in w.cget("values"):
-                w.set(nombre)
-                w.event_generate("<<ComboboxSelected>>")
+            if isinstance(w, ttk.Radiobutton) and str(w.cget("text")) == nombre:
+                w.invoke()
                 return
     return _wait
 

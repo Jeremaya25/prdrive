@@ -29,7 +29,7 @@ nada.
 
 **Al preparar la unidad**, el asistente tiene un paso «Llavero», después de las
 parejas. Es opcional. **En una unidad que ya funciona**, en la ventana de
-prdrive: **Ajustes → Llavero…**.
+prdrive: **Ajustes → Llavero**.
 
 - **Usar una base propia** (en «Ajustes», **Usar esta base…**): eliges tu
   `.kdbx` y se **copia** a la unidad. La original se queda donde estaba, sin
@@ -64,7 +64,7 @@ llavero **sin contraseña**: la base se abre solo con un fichero llave que gener
 prdrive. El cifrado del dispositivo es entonces la otra barrera, y no tienes que
 escribir una contraseña cada día.
 
-Se activa en **Ajustes → Llavero… → Usar esta base, sin contraseña…**:
+Se activa en **Ajustes → Llavero → Usar esta base, sin contraseña…**:
 
 1. Eliges tu base. prdrive te pide **dónde guardar una copia de la llave, fuera
    del dispositivo** (un sitio tuyo, otro pendrive o un gestor): **si la pierdes
@@ -173,7 +173,7 @@ llave) que tuviera la base en ese momento.
 Para recuperar algo que borraste, abre tu base y combina con ella la versión
 vieja: «Base de datos → Combinar desde base de datos…» y elige el fichero de
 `.prversions/`. Combinar añade lo que falta y no quita nada. Para borrar las
-viejas: **Ajustes → Versiones…**, como en cualquier pareja con versiones.
+viejas: **Ajustes → Versiones**, como en cualquier pareja con versiones.
 
 ## Expulsar
 
@@ -201,7 +201,7 @@ cerraras tú.
 Si prdrive vive en una carpeta del ordenador (la opción «En este equipo» del
 asistente), el llavero va igual, con tres diferencias:
 
-- Se activa desde su ventana: **Ajustes → Llavero…**. El asistente no lo
+- Se activa desde su ventana: **Ajustes → Llavero**. El asistente no lo
   pregunta.
 - No hay `Llavero.bat` ni `llavero.sh`: se abre desde la ventana o desde el
   icono del agente.
@@ -242,6 +242,6 @@ asistente), el llavero va igual, con tres diferencias:
 
 ## Desactivarlo
 
-**Ajustes → Llavero… → Desactivar…** Deja de sincronizarse en esta unidad. La
+**Ajustes → Llavero → Desactivar…** Deja de sincronizarse en esta unidad. La
 carpeta `.keychain/` (con tu base) y el remoto **no se tocan**: tus otros
 dispositivos siguen con él.

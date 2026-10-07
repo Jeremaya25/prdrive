@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""«Ajustes → Renombrar el catálogo…»: pasar `pairs.toml` a `remote.toml`.
+"""«Ajustes → Catálogo del remoto»: pasar `pairs.toml` a `remote.toml`.
 
 Solo dibuja. Qué hay en la carpeta del catálogo, quién de la flota impide
 renombrarla y qué hace el botón lo decide `catalog_editor.renombrado()`; lo
@@ -21,8 +21,8 @@ from common import catalog, fleet
 from common.model import ConfigError
 
 from . import catalog_editor, segundo_plano, theme
-from .tk import (TITLE, Indicador, Sondeo, cabecera, centrar, cuerpo_visible, modal,
-                 mostrar, separador_fila, working)
+from .tk import (TITLE, Indicador, Panel, Sondeo, cabecera, dialogo, mostrar, pie,
+                 separador_fila, working)
 from .tk_fleet import fecha
 
 TITULO = "Renombrar el catálogo"
@@ -45,17 +45,23 @@ def open_dialog(parent, raw: dict | None = None) -> None:
         raw: El `sync_config.toml` en crudo, para saber dónde está el catálogo;
             sin él se lee del disco.
     """
+    dialogo(parent, TITULO, lambda p: construir(p, raw), ensenar=mostrar)
+
+
+def construir(panel: Panel, raw: dict | None = None) -> None:
+    """Dibuja «Renombrar el catálogo» en `panel` (su diálogo o «Ajustes»).
+
+    La espera de la red cuelga del marco y no de la ventana: dentro de
+    «Ajustes», pasar a otro apartado destruye el marco y con él la espera.
+    """
     from tkinter import messagebox, ttk
 
     raw = catalog_editor.raw_del_dispositivo(raw)
-    dlg = modal(parent, TITULO)
-    sondeo = Sondeo(dlg)
+    dlg, marco = panel.ventana, panel.marco
+    sondeo = Sondeo(marco)
     yo = fleet.device_id()
     sitio = catalog.sin_renombrar(raw)
     estado: dict = {"renombrado": None}
-
-    marco = cuerpo_visible(dlg, padding=(22, 20, 22, 18))
-    marco.columnconfigure(0, weight=1)
 
     cabecera(marco, TITULO, catalog_editor.EXPLICACION, ancho=600,
              estilo="Dialogo.TLabel").grid(row=0, column=0, sticky="w")
@@ -137,8 +143,7 @@ def open_dialog(parent, raw: dict | None = None) -> None:
             pie_nota.grid()
         else:
             pie_nota.grid_remove()
-        if dlg.winfo_ismapped() and dlg.visor.crecer(dlg):
-            centrar(dlg, parent)
+        panel.ajustar()
 
     def hacer() -> None:
         """Confirma el plan del botón y lo hace en el remoto."""
@@ -160,18 +165,18 @@ def open_dialog(parent, raw: dict | None = None) -> None:
             return
         refrescar("\n".join(resultado))
 
-    pie = ttk.Frame(marco)
-    pie.grid(row=6, column=0, sticky="ew", pady=(14, 0))
-    pie.columnconfigure(1, weight=1)
-    releer = ttk.Button(pie, text="Releer", style="Quiet.TButton",
+    botones = pie(marco, 6)
+    botones.columnconfigure(1, weight=1)
+    releer = ttk.Button(botones, text="Releer", style="Quiet.TButton",
                         command=lambda: refrescar())
     theme.boton_icono(releer, "reload", theme.ACENTO, theme.PAPEL)
     releer.grid(row=0, column=0, sticky="w")
-    accion = ttk.Button(pie, text=BOTON[catalog_editor.RENOMBRAR], style="Primary.TButton",
-                        command=hacer, state="disabled")
+    accion = ttk.Button(botones, text=BOTON[catalog_editor.RENOMBRAR],
+                        style="Primary.TButton", command=hacer, state="disabled")
     accion.grid(row=0, column=2, sticky="e")
-    ttk.Button(pie, text="Cerrar", command=dlg.destroy).grid(
-        row=0, column=3, sticky="e", padx=(8, 0))
+    if not panel.incrustado:
+        ttk.Button(botones, text="Cerrar", command=panel.cerrar).grid(
+            row=0, column=3, sticky="e", padx=(8, 0))
 
     if sitio is None:
         indicador.poner("", False)
@@ -179,5 +184,3 @@ def open_dialog(parent, raw: dict | None = None) -> None:
     else:
         pintar_tarjeta(None)
         refrescar()
-    mostrar(dlg, parent)
-

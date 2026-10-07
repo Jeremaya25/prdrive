@@ -1547,7 +1547,7 @@ def _paso_llavero(cuerpo, wiz) -> None:
 
     Lo que se decide es de `install/llavero.py`; aquí se elige, se enseña qué
     va a pasar y se pone con un botón, como el config en el paso anterior. Se
-    puede seguir sin llavero: se activa después en «Ajustes → Llavero…».
+    puede seguir sin llavero: se activa después en «Ajustes → Llavero».
     """
     import tkinter as tk
     from tkinter import filedialog, ttk
@@ -1558,7 +1558,7 @@ def _paso_llavero(cuerpo, wiz) -> None:
     ttk.Label(cuerpo, justify="left", wraplength=theme.medida(780), text=(
         "El llavero es una base de KeePassXC (contraseñas y passkeys) que viaja en el "
         "dispositivo y se sincroniza sola con la carpeta del catálogo. Es opcional: se "
-        "puede activar después, en «Ajustes → Llavero…» de la ventana de prdrive.")
+        "puede activar después, en «Ajustes → Llavero» de la ventana de prdrive.")
         ).grid(row=0, column=0, sticky="w", pady=(0, 10))
 
     eleccion = tk.StringVar(value=wiz.llavero_eleccion)

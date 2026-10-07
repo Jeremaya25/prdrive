@@ -220,7 +220,7 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> None:
              "equipos se ha enchufado, por su nombre de red—, y nadie escribe la "
              "de otro. Los que llevan más de una semana sin aparecer salen "
              "apagados. El nombre de este dispositivo se cambia en «Ajustes» → "
-             "«Nombre e icono de la unidad…».",
+             "«Nombre e icono».",
              ancho=620, estilo="Dialogo.TLabel").grid(row=0, column=0, sticky="w")
 
     donde = ttk.Frame(arriba)

@@ -538,9 +538,16 @@ with sandbox():
     c("una pasada manual no toca la configuración del servicio",
       prefs.read_prefs(), servicio_antes)
 
-# El engranaje abre «Ajustes», y «Reparación» es su primera entrada. Se prueban
-# las dos mitades —que el botón abre la pantalla, y que la entrada lleva a
-# «Reparación»— porque el cableado entre ellas es lo único que ha cambiado.
+def barra(dlg) -> dict:
+    """Devuelve los botones de la barra lateral de «Ajustes» por su rótulo."""
+    return {b.cget("text"): b for b in recorrer(dlg) if isinstance(b, ttk.Button)
+            and str(b.cget("style")) in ("Nav.TButton", "NavSel.TButton")}
+
+
+# El engranaje abre «Ajustes», con su barra lateral, y «Reparación» es uno de sus
+# apartados. Se prueban las dos mitades —que el botón abre la pantalla, y que el
+# apartado dibuja «Reparación» en el sitio— porque el cableado entre ellas es lo
+# que cambia.
 with sandbox():
     cfg, _p = preparar()
     lanzadas.clear()
@@ -548,32 +555,86 @@ with sandbox():
     abiertas = []
 
     def dentro_de_ajustes(dlg) -> None:
-        """Apunta las entradas de «Ajustes» y entra en «Reparación…»."""
-        botones_ajustes = botones(dlg)
-        visto["entradas"] = sorted(botones_ajustes)
-        botones_ajustes["Reparación…"].invoke()
+        """Apunta los apartados de «Ajustes» y entra en «Reparación»."""
+        visto["entradas"] = sorted(barra(dlg))
+        visto["elegido"] = [t for t, b in barra(dlg).items()
+                            if str(b.cget("style")) == "NavSel.TButton"]
+        barra(dlg)["Reparación"].invoke()
+        visto["reparacion"] = sorted(botones(dlg))
+        dlg.destroy()
 
-    real_reparacion = tk_repair.open_dialog
-    tk_repair.open_dialog = (lambda parent, config, lanzar, marcadas=None:
-                             abiertas.append(config) or False)
+    real_reparacion = tk_repair.construir
+
+    def construir_falso(panel, config, lanzar, marcadas=None):
+        """Apunta que se ha dibujado «Reparación», y dentro de «Ajustes»."""
+        abiertas.append(panel.incrustado)
+        real_reparacion(panel, config, lanzar, marcadas)
+
+    tk_repair.construir = construir_falso
     tk_doctor.mostrar = lambda dlg, parent=None: dentro_de_ajustes(dlg)
     try:
         ventana_principal(cfg, lambda root: botones(root)["Ajustes…"].invoke())
     finally:
-        tk_repair.open_dialog = real_reparacion
+        tk_repair.construir = real_reparacion
     # La lista va entera y no «contiene»: «Ajustes» es donde aterriza todo lo que
     # no cabe en la principal, así que lo que hay que ver de un vistazo al añadir
-    # una entrada es la lista completa de lo que esa pantalla ofrece.
-    c("el engranaje abre «Ajustes» con sus entradas",
+    # un apartado es la lista completa de lo que esa pantalla ofrece.
+    c("el engranaje abre «Ajustes» con sus apartados en la barra",
       visto.get("entradas"),
-      ["Buscar actualizaciones", "Cerrar", "Configuración…", "Emparejar un móvil…",
-       "Llavero…",
-       "Nombre e icono de la unidad…", "Reparación…", "Versiones…"])
-    c("y su primera entrada abre «Reparación», con «Ajustes» ya cerrada",
-      len(abiertas), 1)
+      ["Actualizaciones", "Arranque automático", "Configuración", "Emparejar un móvil",
+       "Llavero", "Nombre e icono", "Reparación", "Versiones"])
+    c("  y abre por «Configuración»", visto.get("elegido"), ["Configuración"])
+    c("«Reparación» se dibuja dentro de «Ajustes»", abiertas, [True])
+    c("  con sus acciones y su «Cerrar»",
+      all(t in (visto.get("reparacion") or []) for t in
+          ("Simular una pasada…", "Ver el informe completo", "Cerrar")), True)
 
-# «Renombrar el catálogo…» sale solo mientras el remoto conserve su pairs.toml,
-# y eso lo dice la copia local del catálogo: de qué fichero se leyó la última vez.
+# «Simular una pasada…» desde «Reparación» dentro de «Ajustes» cierra «Ajustes»
+# antes de lanzar: la ventana de salida es hija de la principal.
+with sandbox():
+    cfg, _p = preparar()
+    lanzadas.clear()
+    visto.clear()
+
+    def simular_desde_ajustes(dlg) -> None:
+        """Entra en «Reparación» y pulsa «Simular una pasada…»."""
+        barra(dlg)["Reparación"].invoke()
+        botones(dlg)["Simular una pasada…"].invoke()
+        visto["viva"] = bool(dlg.winfo_exists())
+
+    tk_doctor.mostrar = lambda dlg, parent=None: simular_desde_ajustes(dlg)
+    ventana_principal(cfg, lambda root: botones(root)["Ajustes…"].invoke())
+    c("«Simular» cierra «Ajustes»", visto.get("viva"), False)
+    c("  y lanza la pasada de mentira en la principal",
+      ["Simulación" in l["titulo"] and "--dry-run" in l["cmd"] for l in lanzadas],
+      [True])
+
+# Buscar en la barra deja solo lo que coincide, sin tildes ni mayúsculas.
+with sandbox():
+    cfg, _p = preparar()
+    visto.clear()
+
+    def buscar_en_la_barra(dlg) -> None:
+        """Escribe en el buscador y apunta lo que queda a la vista."""
+        buscador = next(w for w in recorrer(dlg) if isinstance(w, ttk.Entry))
+        buscador.insert(0, "INTERVALO")
+        visto["intervalo"] = sorted(t for t, b in barra(dlg).items() if b.grid_info())
+        buscador.delete(0, "end")
+        buscador.insert(0, "codigo")
+        visto["codigo"] = sorted(t for t, b in barra(dlg).items() if b.grid_info())
+        buscador.delete(0, "end")
+        visto["todo"] = len([b for b in barra(dlg).values() if b.grid_info()])
+        dlg.destroy()
+
+    tk_doctor.mostrar = lambda dlg, parent=None: buscar_en_la_barra(dlg)
+    ventana_principal(cfg, lambda root: botones(root)["Ajustes…"].invoke())
+    c("«Buscar un ajuste» encuentra el intervalo en «Configuración»",
+      visto.get("intervalo"), ["Configuración"])
+    c("  y el QR sin tilde", visto.get("codigo"), ["Emparejar un móvil"])
+    c("  y al borrar vuelven todos", visto.get("todo"), 8)
+
+# «Catálogo del remoto» sale solo mientras el remoto conserve su pairs.toml, y
+# eso lo dice la copia local del catálogo: de qué fichero se leyó la última vez.
 with sandbox():
     from common import catalog, store
     from ui import catalog_editor, tk_renombrar
@@ -584,26 +645,26 @@ with sandbox():
     abiertas_ren: list = []
 
     def ver_ajustes(dlg) -> None:
-        """Apunta las entradas de «Ajustes» y entra en «Renombrar el catálogo…»."""
-        botones_ajustes = botones(dlg)
-        visto["entradas"] = sorted(botones_ajustes)
-        botones_ajustes["Renombrar el catálogo…"].invoke()
+        """Apunta los apartados de «Ajustes» y entra en «Catálogo del remoto»."""
+        visto["entradas"] = sorted(barra(dlg))
+        barra(dlg)["Catálogo del remoto"].invoke()
         dlg.destroy()
 
-    real_renombrar = tk_renombrar.open_dialog
-    tk_renombrar.open_dialog = lambda parent, raw=None: abiertas_ren.append(raw)
+    real_renombrar = tk_renombrar.construir
+    tk_renombrar.construir = lambda panel, raw=None: abiertas_ren.append(raw)
     tk_doctor.mostrar = lambda dlg, parent=None: ver_ajustes(dlg)
     try:
         ventana_principal(cfg, lambda root: botones(root)["Ajustes…"].invoke())
     finally:
-        tk_renombrar.open_dialog = real_renombrar
-    c("con un remoto sin renombrar, «Ajustes» ofrece renombrarlo",
-      "Renombrar el catálogo…" in (visto.get("entradas") or []), True)
-    c("  y la entrada abre su pantalla", len(abiertas_ren), 1)
+        tk_renombrar.construir = real_renombrar
+    c("con un remoto sin renombrar, «Ajustes» ofrece «Catálogo del remoto»",
+      "Catálogo del remoto" in (visto.get("entradas") or []), True)
+    c("  y el apartado dibuja su pantalla", len(abiertas_ren), 1)
 
-# «Ajustes → Buscar actualizaciones» pregunta a la red sin mirar la caché y dice
-# la respuesta bajo el botón. El hilo corre en el sitio: con el bucle de eventos
-# sustituido, `root.after()` desde otro hilo no llegaría a ninguna parte.
+# «Ajustes → Actualizaciones → Buscar actualizaciones» pregunta a la red sin
+# mirar la caché y dice la respuesta bajo el botón. El hilo corre en el sitio:
+# con el bucle de eventos sustituido, `root.after()` desde otro hilo no llegaría
+# a ninguna parte.
 with sandbox():
     cfg, _p = preparar()
     visto.clear()
@@ -622,6 +683,7 @@ with sandbox():
 
     def buscar_desde_ajustes(dlg) -> None:
         """Pulsa «Buscar actualizaciones» y espera a que cambie su frase."""
+        barra(dlg)["Actualizaciones"].invoke()
         boton = botones(dlg)["Buscar actualizaciones"]
         boton.invoke()
         limite = time.monotonic() + 5

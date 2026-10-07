@@ -21,7 +21,8 @@ uno, se arranque a mano o al enchufar.
 from __future__ import annotations
 
 from . import theme, watch
-from .tk import TITLE, cabecera, cuerpo_visible, modal, mostrar, output_window
+from .tk import (TITLE, Panel, cabecera, cuerpo_visible, dialogo, modal, mostrar,
+                 output_window, pie)
 
 CHIPS = {
     "Registro en el sistema": ("activo", "sin registrar", "NO registrada"),
@@ -55,11 +56,15 @@ def _chip_de(etiqueta: str, valor: str):
 
 def open_dialog(parent) -> None:
     """Abre la pantalla del vigilante."""
+    dialogo(parent, "Arranque automático", construir, padding=(20, 18, 20, 16),
+            ensenar=mostrar)
+
+
+def construir(panel: Panel) -> None:
+    """Dibuja la pantalla del vigilante en `panel` (su diálogo o «Ajustes»)."""
     from tkinter import messagebox, ttk
 
-    dlg = modal(parent, "Arranque automático")
-    marco = cuerpo_visible(dlg, padding=(20, 18, 20, 16))
-    marco.columnconfigure(0, weight=1)
+    dlg, marco = panel.ventana, panel.marco
 
     arriba = ttk.Frame(marco)
     arriba.grid(row=0, column=0, sticky="ew")
@@ -159,8 +164,7 @@ def open_dialog(parent) -> None:
             return
         lanzar(watch.uninstall_command(), "desinstalar el vigilante")
 
-    botones = ttk.Frame(marco)
-    botones.grid(row=4, column=0, sticky="ew", pady=(14, 0))
+    botones = pie(marco, 4)
     botones.columnconfigure(2, weight=1)
     for i, (texto, icono, accion) in enumerate((
             ("Actualizar", "reload", ver_estado),
@@ -176,10 +180,10 @@ def open_dialog(parent) -> None:
                               command=instalar)
     theme.boton_icono(instalar_btn, "arranque", theme.SOBRE_ACENTO, theme.ACENTO)
     instalar_btn.grid(row=0, column=4, padx=(0, 6))
-    ttk.Button(botones, text="Cerrar", command=dlg.destroy).grid(row=0, column=5)
+    if not panel.incrustado:
+        ttk.Button(botones, text="Cerrar", command=panel.cerrar).grid(row=0, column=5)
 
     ver_estado()
-    mostrar(dlg, parent)
 
 
 def formulario_instalacion(parent) -> dict | None:
@@ -286,15 +290,19 @@ def open_agente(parent, res: watch.Resumen) -> str | None:
     (`watch.pedir_modo`), que lo aplica en unos segundos. Con la unidad fuera
     de su lista, elegir un modo es decirle que sí desde aquí.
     """
+    return dialogo(parent, "El agente de este equipo",
+                   lambda p: construir_agente(p, res), padding=(20, 18, 20, 16),
+                   ensenar=mostrar)
+
+
+def construir_agente(panel: Panel, res: watch.Resumen) -> None:
+    """Dibuja «Qué hace el agente» en `panel`; devuelve por él el modo pedido."""
     import tkinter as tk
     from tkinter import messagebox, ttk
 
     raiz = res.estado == "agente_raiz"
     nueva = res.estado == "agente_nueva"
-    dlg = modal(parent, "El agente de este equipo")
-    marco = cuerpo_visible(dlg, padding=(20, 18, 20, 16))
-    marco.columnconfigure(0, weight=1)
-    elegido: dict = {"modo": None}
+    dlg, marco = panel.ventana, panel.marco
 
     cabecera(marco, "Qué hace el agente con " + ("esta carpeta" if raiz
                                                   else "este dispositivo"),
@@ -304,7 +312,7 @@ def open_agente(parent, res: watch.Resumen) -> str | None:
              ancho=520, estilo="Dialogo.TLabel").grid(row=0, column=0, sticky="w")
 
     modos = watch.modos_agente(res)
-    modo = tk.StringVar(value=res.modo if res.modo in modos else modos[0])
+    modo = tk.StringVar(marco, value=res.modo if res.modo in modos else modos[0])
     tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(14, 10))
     tarjeta.grid(row=1, column=0, sticky="ew", pady=(16, 0))
     for i, clave in enumerate(modos):
@@ -335,19 +343,14 @@ def open_agente(parent, res: watch.Resumen) -> str | None:
             messagebox.showerror(TITLE, "No he podido dejarle la petición al agente.",
                                  parent=dlg)
             return
-        elegido["modo"] = modo.get()
-        dlg.destroy()
+        panel.devolver(modo.get())
+        panel.terminar("Pedido al agente: lo aplica en unos segundos.")
 
-    ttk.Separator(marco, orient="horizontal").grid(row=fila, column=0, sticky="ew",
-                                                   pady=(16, 0))
-    pie = ttk.Frame(marco)
-    pie.grid(row=fila + 1, column=0, sticky="e", pady=(14, 0))
-    ttk.Button(pie, text="Cancelar", command=dlg.destroy).grid(row=0, column=0,
-                                                               padx=(0, 6))
-    boton = ttk.Button(pie, text="Atender" if nueva else "Aplicar",
+    botones = pie(marco, fila)
+    botones.columnconfigure(0, weight=1)
+    ttk.Button(botones, text="Cancelar", command=panel.terminar).grid(
+        row=0, column=1, padx=(0, 6))
+    boton = ttk.Button(botones, text="Atender" if nueva else "Aplicar",
                        style="Primary.TButton", command=aceptar)
     theme.boton_icono(boton, "arranque", theme.SOBRE_ACENTO, theme.ACENTO)
-    boton.grid(row=0, column=1)
-
-    mostrar(dlg, parent)
-    return elegido["modo"]
+    boton.grid(row=0, column=2)

@@ -389,7 +389,7 @@ try:
       any("captura" in t.lower() or "compartir" in t.lower()
           for t in textos(dlg)), False)
     c("  pero el aviso ámbar sigue diciendo que una foto basta",
-      tk_qr.AVISO in textos(dlg), True)
+      tk_qr.AVISO.partition("\n")[2] in textos(dlg), True)
     dlg.destroy()
 
     uitk.IS_WIN = True
@@ -415,7 +415,7 @@ try:
        < int(buscar(dlg, "Card.TFrame")[0].grid_info()["row"])),
       (1, True, True))
     c("  y el aviso ámbar sigue diciendo que una foto basta",
-      tk_qr.AVISO in dicho, True)
+      tk_qr.AVISO.partition("\n")[2] in dicho, True)
     dlg.destroy()
 
     uitk.IS_WIN = True

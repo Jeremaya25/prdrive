@@ -596,6 +596,153 @@ def separador_fila(parent, fila: int, columnas: int, superficie: str = "Card."):
         row=fila, column=0, columnspan=columnas, sticky="ew")
 
 
+class Panel:
+    """Dónde se dibuja una pantalla: su propio diálogo o un apartado de «Ajustes».
+
+    Las pantallas que cuelgan de «Ajustes» (la configuración, el llavero, las
+    versiones…) se abren de dos maneras: sueltas, en su diálogo, desde la
+    ventana principal; y dentro de «Ajustes», a la derecha de su barra
+    lateral. Cada una se dibuja una sola vez, en `construir(panel, …)`, y el
+    panel es lo que cambia entre las dos: dónde se dibuja, de qué ventana
+    cuelgan sus mensajes y qué pasa al terminar.
+
+    Hay tres maneras de terminar y no son la misma:
+    - `terminar()`: lo de esta pantalla está hecho («Guardar», «Cancelar»).
+      Suelta, se cierra; dentro de «Ajustes», se vuelve a dibujar con lo que
+      hay ahora y la ventana sigue abierta.
+    - `cerrar(despues)`: se cierra la ventana entera, sea el diálogo o
+      «Ajustes», y luego se llama a `despues()`. Es lo que hace falta para
+      ceder el paso a la ventana principal (lanzar una pasada, que abre su
+      ventana de salida), porque dos modales no pueden tener la captura a la
+      vez.
+    - `devolver(valor)`: no cierra nada; apunta lo que la pantalla le dice a
+      quien la abrió. Suelta lo devuelve `dialogo()`; en «Ajustes» se guarda
+      por apartado y se le da a la ventana principal al cerrarla.
+
+    Attributes:
+        ventana: La ventana de nivel superior: padre de los mensajes, de
+            `working()` y de los modales que se abran desde aquí.
+        marco: Donde se dibuja, ya con su relleno.
+        incrustado: Si es un apartado de «Ajustes».
+    """
+
+    def __init__(self, ventana, marco, incrustado: bool = False, al_terminar=None,
+                 al_cerrar=None, resultados: dict | None = None,
+                 clave: str = "") -> None:
+        """Lo prepara; `al_terminar` y `al_cerrar` los pone quien lo crea."""
+        self.ventana = ventana
+        self.marco = marco
+        self.incrustado = incrustado
+        self._al_terminar = al_terminar
+        self._al_cerrar = al_cerrar
+        self._resultados = {} if resultados is None else resultados
+        self._clave = clave
+
+    def devolver(self, valor) -> None:
+        """Apunta lo que la pantalla devuelve; lo último que se apunta manda."""
+        self._resultados[self._clave] = valor
+
+    def resultado(self, defecto=None):
+        """Devuelve lo apuntado con `devolver()`, o `defecto` si no hay nada."""
+        return self._resultados.get(self._clave, defecto)
+
+    def terminar(self, nota: str = "") -> None:
+        """Da por hecha esta pantalla: suelta se cierra; en «Ajustes», se rehace.
+
+        Args:
+            nota: Lo que se ha hecho («Guardado.»), para decirlo en el
+                apartado rehecho; suelta, la ventana se cierra y no hace falta.
+        """
+        if self._al_terminar is not None:
+            self._al_terminar(nota)
+
+    def cerrar(self, despues=None) -> None:
+        """Cierra la ventana entera y luego llama a `despues()`, si se da."""
+        if self._al_cerrar is not None:
+            self._al_cerrar()
+        if despues is not None:
+            despues()
+
+    def ajustar(self) -> None:
+        """Hace sitio a lo que ha crecido después de enseñarse.
+
+        Es para lo que se repinta con la pantalla ya a la vista (lo que llega
+        de la red, una lista que se relee): el recuadro crece hasta donde
+        quepa y la ventana se vuelve a centrar, que es lo que hacía cada
+        diálogo a mano.
+        """
+        visor = getattr(self.ventana, "visor", None)
+        if visor is None or not self.ventana.winfo_ismapped():
+            return
+        if visor.crecer(self.ventana):
+            centrar(self.ventana, self.ventana.master)
+
+
+def dialogo(parent, titulo: str, construir, defecto=None, padding=(22, 20, 22, 18),
+            ensenar=None):
+    """Abre una pantalla en su propio diálogo y devuelve lo que haya devuelto.
+
+    Args:
+        parent: La ventana de la que cuelga.
+        titulo: El de la barra de la ventana.
+        construir: `construir(panel)`, que la dibuja (`Panel`).
+        defecto: Lo que se devuelve si la pantalla no ha devuelto nada.
+        padding: El relleno del marco.
+        ensenar: El `mostrar()` con que se enseña. Cada módulo pasa el suyo,
+            el nombre que importó, porque es ése el que los tests sustituyen.
+    """
+    dlg = modal(parent, titulo)
+    marco = cuerpo_visible(dlg, padding=padding)
+    marco.columnconfigure(0, weight=1)
+    panel = Panel(dlg, marco, al_terminar=lambda _nota="": dlg.destroy(),
+                  al_cerrar=dlg.destroy)
+    construir(panel)
+    try:
+        vivo = bool(dlg.winfo_exists())
+    except Exception:                                # noqa: BLE001
+        vivo = False
+    if vivo:
+        (ensenar or mostrar)(dlg, parent)
+    return panel.resultado(defecto)
+
+
+def pie(marco, fila: int, columnas: int = 1):
+    """Pone el pie de una pantalla y devuelve el marco donde van sus botones.
+
+    Encima del pie va una fila vacía que se estira: dentro de «Ajustes» el
+    apartado ocupa todo el alto y el pie tiene que quedar abajo, como en el
+    diseño; en un diálogo, que mide lo que su contenido, no se nota. Luego el
+    filete y el marco de los botones, a todo el ancho.
+
+    Args:
+        fila: La primera fila libre; el pie ocupa esa y las dos siguientes.
+        columnas: Cuántas columnas abarca.
+    """
+    from tkinter import ttk
+    marco.rowconfigure(fila, weight=1)
+    ttk.Separator(marco, orient="horizontal").grid(
+        row=fila + 1, column=0, columnspan=columnas, sticky="ew", pady=(16, 0))
+    botones = ttk.Frame(marco)
+    botones.grid(row=fila + 2, column=0, columnspan=columnas, sticky="ew",
+                 pady=(14, 0))
+    return botones
+
+
+def soltar_capturas(ventana) -> None:
+    """Le quita a una ventana la protección de `proteger_de_capturas()`.
+
+    Es para «Ajustes»: el código QR se protege mientras está a la vista, pero
+    la ventana sigue abierta con otros apartados que sí pueden salir en una
+    captura. Nunca lanza.
+    """
+    if not IS_WIN:
+        return
+    try:
+        _afinidad_de_pantalla(int(ventana.wm_frame(), 16), CAPTURA_NINGUNA)
+    except Exception:                                # noqa: BLE001 — ya no está
+        pass
+
+
 PASO_BARRA_MS = 12
 """Milisegundos que tarda en avanzar la barra sin cifra."""
 
@@ -1197,18 +1344,45 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         leer_estado()
         reajustar()
 
-    def ajustes_llavero() -> None:
-        """«Ajustes → Llavero…»: al volver relee el config y, si se ha activado, pasa.
+    def abrir_ajustes() -> None:
+        """Abre «Ajustes» y hace lo que digan sus apartados al cerrarlo.
 
-        La primera pasada sube la base o trae la del remoto (el llavero se
-        resincroniza solo), en la ventana de salida de siempre.
+        Lo que pasa dentro de cada apartado lo hace él; aquí queda lo que es de
+        esta ventana: cerrarse tras actualizar el programa (sus módulos ya no
+        son los de disco), releer el config tras tocar el llavero y, si se ha
+        activado, lanzar su primera pasada, que sube la base o trae la del
+        remoto en la ventana de salida de siempre; y releer el estado o el
+        vigilante si se han tocado.
         """
-        cambio = tk_llavero.ajustes(root)
-        if cambio is None:
+        marcadas = [n for n in vista["config"].names
+                    if n in vista.get("casillas", {}) and vista["casillas"][n].get()]
+        hecho = tk_doctor.open_dialog(
+            root, vista["config"], lanzar, buscar_version=mirar_version,
+            nueva=vista["nueva"], componentes=vista["componentes"],
+            vigilante=vista["vigilante"], hallazgos=vista["hallazgos"],
+            marcadas=marcadas)
+        if (hecho.get("actualizaciones") is True
+                or hecho.get("componentes") == tk_update.CERRAR):
+            result["choice"] = None
+            root.destroy()
             return
-        recargar()
-        if cambio == tk_llavero.ACTIVADO:
-            lanzar("Llavero: la primera pasada", [model.LLAVERO])
+        llavero = hecho.get("llavero")
+        if llavero is not None:
+            recargar()
+            if llavero == tk_llavero.ACTIVADO:
+                lanzar("Llavero: la primera pasada", [model.LLAVERO])
+        elif hecho.get("reparacion") or hecho.get("componentes"):
+            leer_estado()
+        modo = hecho.get("arranque")
+        if isinstance(modo, str):
+            vista["vigilante"] = watch.pedido(vista["vigilante"], modo)
+        elif modo:
+            try:
+                vista["vigilante"] = watch.resumen()
+            except Exception:                        # noqa: BLE001
+                vista["vigilante"] = watch.Resumen("no_disponible")
+        vista["nueva"] = update.pending()
+        reajustar()
 
     def expulsar() -> None:
         """Cierra el llavero, la ventana y el contenedor, para poder quitar la unidad.
@@ -1585,11 +1759,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         # servicio, emparejar un móvil, las versiones—, para que esta ventana
         # no crezca con cada cosa nueva.
         ajustes = ttk.Button(pantallas, text="Ajustes…", style="Quiet.TButton",
-                             command=lambda: tk_doctor.open_dialog(
-                                 root, vista["config"], lanzar,
-                                 abrir_reparacion=abrir_reparacion,
-                                 abrir_llavero=ajustes_llavero,
-                                 buscar_version=mirar_version),
+                             command=abrir_ajustes,
                              state=apagado)
         theme.boton_icono(ajustes, "gear", theme.ACENTO, theme.PAPEL)
         ajustes.grid(row=0, column=2, sticky="e")
