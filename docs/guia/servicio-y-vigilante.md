@@ -45,10 +45,10 @@ de 100, para dejarla en 50.
 servicio; «Marcar todas» y «Desmarcar todas» están en el rótulo de la lista. El
 intervalo, «El servicio repite cada N minutos», está en **«Ajustes…» →
 «Configuración…»**: solo lo usa el servicio y se toca pocas veces. **Las parejas
-solo las guarda «Iniciar servicio»**, y «Configuración» guarda solo el
-intervalo, sin fijar las parejas: una pasada manual con dos parejas marcadas no
-decide qué sincroniza el servicio la próxima vez que enchufes el dispositivo. Lo
-guardado manda sobre `[daemon]` del TOML, que manda sobre «todas las parejas /
+se guardan en cuanto marcas o desmarcas una casilla**, sin pulsar nada más
+(con ninguna marcada se queda lo último guardado), y «Configuración» guarda solo
+el intervalo, sin fijar las parejas. «Sincronizar ahora» lanza lo marcado pero
+no guarda nada por sí mismo. Lo guardado manda sobre `[daemon]` del TOML, que manda sobre «todas las parejas /
 30 minutos», y vale igual para la ventana, para `--auto` y para el vigilante.
 `--auto` lo lee pero no lo pisa.
 

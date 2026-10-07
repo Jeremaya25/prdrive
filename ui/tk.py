@@ -1503,12 +1503,24 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
                 todas.configure(text="Desmarcar todas" if marcadas == len(names)
                                 else "Marcar todas")
 
+        def al_marcar() -> None:
+            """Actualiza el «N de M» y recuerda las parejas marcadas.
+
+            Es lo que hace una casilla al tocarla. Se guarda en el momento, no al
+            sincronizar: el servicio y el agente leen esa elección. Sin ninguna
+            marcada no se guarda nada (`prefs.guardar_parejas`) y queda la
+            anterior; si el dispositivo no se deja escribir, recordar no es vital.
+            """
+            contar()
+            prefs.guardar_parejas(vista["config"],
+                                  [n for n, v in vars_by_name.items() if v.get()])
+
         def marcar_todas() -> None:
             """Marca todas las casillas, o las desmarca si ya lo están."""
             valor = not all(v.get() for v in vars_by_name.values())
             for v in vars_by_name.values():
                 v.set(valor)
-            contar()
+            al_marcar()
 
         linea = 0
         for name in names:
@@ -1517,7 +1529,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
                 linea += 1
             var = tk.BooleanVar(value=(name in d_pairs))
             vars_by_name[name] = var
-            ttk.Checkbutton(tarjeta, text=name, variable=var, command=contar,
+            ttk.Checkbutton(tarjeta, text=name, variable=var, command=al_marcar,
                             style="Card.Fuerte.TCheckbutton").grid(
                 row=linea, column=0, sticky="w", pady=6)
             pareja = next(p for p in config.pairs if p.name == name)
@@ -1644,9 +1656,8 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         def sincronizar() -> None:
             """Lanza la pasada manual, aquí mismo.
 
-            No se recuerda nada: lo que se guarda es la configuración del
-            servicio, y una pasada suelta con unas pocas parejas no puede
-            decidir qué sincroniza el servicio.
+            No escribe nada por su cuenta: las parejas ya quedaron guardadas al
+            marcarlas (`al_marcar`).
             """
             sel = selected()
             if not sel:

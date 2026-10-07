@@ -11,11 +11,12 @@ By hand («Iniciar servicio») or on plug-in (watcher → `runsync --auto`): the
 
 `startup_defaults()` layers that record > `[daemon]` in the TOML > all pairs / 30 min, for the window, `--auto` and the watcher alike. Explicit `--auto` arguments still win (shortcuts, cron, watchers not yet reinstalled).
 
-**Two writers, each with its own part** (#65):
+**Three writers, each with its own part** (#65):
 
+- Ticking or unticking a pair in the window (`tk.al_marcar()` → `prefs.guardar_parejas()`) writes the ticked pairs at once, keeping the saved interval and pinning none if there is none. An empty selection is not saved (`elegir()` would read it as no record), so the last one stays. This is how the service, `--auto` and the agent see the selection without «Iniciar servicio».
 - Starting the service (`_atender()`, action `daemon`) writes the ticked pairs with the interval already saved.
 - «Ajustes → Configuración» (`prefs.guardar_intervalo()`) writes **only the interval**. It keeps a record's `pairs`/`known`/`action` untouched when `elegir()` honours them; otherwise it leaves a record **without `pairs`**, which `elegir()` reads as «saved interval, the TOML's pairs»: saving the interval never pins the pair selection, and a later hand edit of `[daemon] pairs` still counts. (An agent older than this reads such a record as no record and falls back to `[daemon]`'s interval: degraded, never wrong pairs.)
-- A manual pass writes nothing: a few ticked pairs must not decide what the service syncs at the next plug-in.
+- «Sincronizar ahora» itself writes nothing: what persists is the tick, not the pass.
 - A record with `action == "manual"` predates this and is ignored (by `== "manual"`, so a hand-written record without `action` still counts); saving the interval over one replaces it. The file keeps its old name: renaming needs a migration to change a word.
 
 `--auto --once` (`una_pasada()`) is one pass of those pairs with no service behind it. With a live service on this host it does nothing and does **not** stop it: swapping a service for a single pass would leave the device without one.
