@@ -492,6 +492,19 @@ def buscar_version() -> "update.Release | None":
     return update.pending(SCRIPT_DIR, cache=cache_version())
 
 
+def buscar_version_ya() -> "tuple[update.Release | None, str | None]":
+    """Pregunta a GitHub por la última release, sin mirar la caché.
+
+    Es el «Buscar actualizaciones» de la bandeja. Punto de indirección: los
+    tests la sustituyen.
+
+    Returns:
+        Lo que devuelve `update.check()`: la release que se sabe y, si algo
+        fue mal, qué decir.
+    """
+    return update.check(force=True, cache=cache_version())
+
+
 def ejecutar(args: list[str], **kwargs) -> Any:
     """Corre un proceso hasta que acaba.
 
@@ -1324,6 +1337,7 @@ class Agente:
         version_mirada: Cuándo se miró.
         nueva_avisada: La que ya se avisó.
         actualizando: El `agente.py actualizar` en marcha.
+        buscando: Si hay un «Buscar actualizaciones» preguntando a GitHub.
         avisos_de_red: Lo que oye los cambios de red (`red.AvisosDeRed`), si
             lo hay: con él, un remoto sin conexión se sondea cuando vuelve la
             red y el temporizador es solo el respaldo largo.
@@ -1386,6 +1400,7 @@ class Agente:
     version_mirada: float = -math.inf
     nueva_avisada: str | None = None
     actualizando: Any = None
+    buscando: bool = False
     avisos_de_red: Any = None
     cambio_de_red: pl.CambioDeRed | None = None
     cambios: pl.PoliticaCambios = field(default_factory=pl.PoliticaCambios)
@@ -3128,6 +3143,43 @@ class Agente:
 
         hilo(trabajo)
 
+    def _buscar_ahora(self, ahora: float) -> None:
+        """Hace el «Buscar actualizaciones»: pregunta a GitHub ya, en un hilo.
+
+        Con una versión nueva apunta su tag y deja que `_mirar_version()` la
+        diga, como la dice siempre; sin ella, o si falla, lo cuenta con un
+        aviso, porque quien lo pide espera una respuesta. Un fallo no borra lo
+        que ya se sabía. Mientras corre no se acepta otro.
+
+        Args:
+            ahora: La hora de esta vuelta; retrasa la próxima mirada de fondo.
+        """
+        if self.buscando:
+            diario("ya se está buscando una versión nueva")
+            return
+        self.buscando = True
+        self.version_mirada = ahora
+
+        def trabajo() -> None:
+            """Pregunta, apunta la respuesta y avisa si no hay nada nuevo que ofrecer."""
+            try:
+                try:
+                    rel, motivo = buscar_version_ya()
+                except Exception as e:                  # noqa: BLE001
+                    rel, motivo = None, f"No he podido mirar si hay versión nueva: {e}"
+                if motivo is None and rel is not None:
+                    hay = update.is_newer(rel.version, self.version)
+                    self.nueva = rel.tag if hay else None
+                    if hay:
+                        self.nueva_avisada = None
+                        return
+                avisar(f"{APP_NAME}: buscar actualizaciones",
+                       update.veredicto(rel, motivo, self.version))
+            finally:
+                self.buscando = False
+
+        hilo(trabajo)
+
     def con_bandeja(self) -> bool:
         """Indica si hay un icono en la bandeja que ofrezca lo que dice un aviso."""
         return self.bandeja is not None and bool(getattr(self.bandeja, "puesta", True))
@@ -3531,6 +3583,8 @@ class Agente:
             self._actualizar()
         elif que == equipo.PIDE_ACTUALIZAR_UNIDAD:
             self._pedir_actualizacion(uid, ahora)
+        elif que == equipo.PIDE_BUSCAR_VERSION:
+            self._buscar_ahora(ahora)
         elif que == equipo.PIDE_PAUSA:
             self.pausado = True
         elif que == equipo.PIDE_SIGUE:
@@ -3804,7 +3858,8 @@ class Agente:
                 "abre_llavero": ABRE_LLAVERO,
                 "ultima_pasada": self.ultima_buena,
                 "version": self.version, "nueva": self.nueva,
-                "actualizando": self._actualizandose()}
+                "actualizando": self._actualizandose(),
+                "buscando": self.buscando}
 
     def _escribir_estado(self) -> None:
         """Escribe `estado.json` y le pasa la vista a la bandeja, si cambian."""

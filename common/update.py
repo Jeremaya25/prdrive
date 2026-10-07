@@ -294,6 +294,30 @@ def pending(root: Path | str | None = None,
     return copia if is_newer(copia.version, installed_version(root)) else None
 
 
+def veredicto(rel: Release | None, motivo: str | None, actual: str) -> str:
+    """Devuelve en una línea lo que contesta un «buscar actualizaciones».
+
+    Es lo que dicen igual la ventana y la bandeja tras `check(force=True)`.
+
+    Args:
+        rel: La última release que se sabe, o `None`.
+        motivo: Lo que devolvió `check()` si algo fue mal.
+        actual: La versión que lleva puesta quien pregunta.
+
+    Returns:
+        Una frase: hay versión nueva, ya se tiene la última, o por qué no se
+        ha podido mirar. Un fallo manda aunque haya una release en la caché:
+        quien pulsa «buscar» quiere saber si acaba de mirar de verdad.
+    """
+    if motivo:
+        return motivo.splitlines()[0]
+    if rel is None:
+        return "No sé qué versión es la última."
+    if is_newer(rel.version, actual):
+        return f"Hay una versión nueva: {rel.tag}"
+    return f"Ya tienes la última versión ({actual or rel.version})"
+
+
 def _ruta_segura(nombre: str) -> str | None:
     """Devuelve la ruta relativa de un miembro del zip, o `None` si pretende escaparse.
 

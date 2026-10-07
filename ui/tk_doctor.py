@@ -61,6 +61,10 @@ ENTRADAS = (
      "Cómo la enseña el Explorador de Windows al conectarla. Útil para "
      "distinguir un dispositivo de otro a simple vista.",
      "volumen"),
+    ("Buscar actualizaciones", "reload",
+     "Le pregunta a GitHub ahora si hay una versión nueva de prdrive, sin esperar "
+     "a la comprobación de cada 24 horas.",
+     "actualizaciones"),
     ("Renombrar el catálogo…", "edit",
      "El catálogo de este remoto conserva su nombre de antes, pairs.toml. "
      "Pasarlo a remote.toml es opcional, y solo se puede cuando todos los "
@@ -74,7 +78,7 @@ OCASIONALES = {"renombrar": catalog_editor.ofrecer_renombrado}
 
 
 def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None,
-                abrir_reparacion=None, abrir_llavero=None) -> None:
+                abrir_reparacion=None, abrir_llavero=None, buscar_version=None) -> None:
     """Abre «Ajustes»; no devuelve nada.
 
     De aquí no sale ninguna decisión que quien llama tenga que repintar. Lo que
@@ -92,6 +96,10 @@ def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None,
             la captura del ratón.
         abrir_llavero: Lo mismo para «Llavero…»: activarlo cambia el config,
             y quien lo relee y lanza la primera pasada es la principal.
+        buscar_version: `buscar_version(responder)` de la ventana principal:
+            pregunta a la red en un hilo y llama a `responder(texto)` desde el
+            hilo de Tk con lo que hay que decir. Sin él no sale la entrada
+            «Buscar actualizaciones».
     """
     from tkinter import ttk
 
@@ -146,12 +154,33 @@ def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None,
         from . import tk_renombrar
         tk_renombrar.open_dialog(dlg, raw)
 
+    botones: dict = {}
+    frases: dict = {}
+
+    def actualizaciones() -> None:
+        """Pregunta por una versión nueva y escribe la respuesta bajo el botón."""
+        boton, frase = botones["actualizaciones"], frases["actualizaciones"]
+        boton.state(["disabled"])
+        frase.configure(text="Buscando…")
+
+        def responder(texto: str) -> None:
+            """Pone la respuesta, si «Ajustes» sigue abierto."""
+            try:
+                frase.configure(text=texto)
+                boton.state(["!disabled"])
+            except Exception:                        # noqa: BLE001
+                pass         # «Ajustes» se cerró mientras se esperaba a la red
+
+        buscar_version(responder)
+
     acciones = {"reparacion": reparacion, "configuracion": configuracion,
                 "qr": emparejar, "versiones": versiones, "volumen": nombre_e_icono,
-                "renombrar": renombrar, "llavero": llavero}
+                "renombrar": renombrar, "llavero": llavero,
+                "actualizaciones": actualizaciones}
     raw = catalog_editor.raw_del_dispositivo(raw_local)
     entradas = [e for e in ENTRADAS
-                if e[3] not in OCASIONALES or OCASIONALES[e[3]](raw)]
+                if (e[3] != "actualizaciones" or buscar_version is not None)
+                and (e[3] not in OCASIONALES or OCASIONALES[e[3]](raw))]
 
     tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(14, 12, 14, 12))
     tarjeta.grid(row=1, column=0, sticky="ew", pady=(16, 0))
@@ -167,9 +196,10 @@ def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None,
         theme.boton_icono(boton, icono, theme.ACENTO, theme.SUPERFICIE)
         boton.grid(row=fila, column=0, sticky="w", pady=(8, 0))
         fila += 1
-        ttk.Label(tarjeta, text=frase, style="Card.Pista.TLabel", justify="left",
-                  wraplength=theme.medida(540)).grid(row=fila, column=0,
-                                                     sticky="w", pady=(3, 10))
+        etiqueta = ttk.Label(tarjeta, text=frase, style="Card.Pista.TLabel",
+                             justify="left", wraplength=theme.medida(540))
+        etiqueta.grid(row=fila, column=0, sticky="w", pady=(3, 10))
+        botones[clave], frases[clave] = boton, etiqueta
         fila += 1
 
     ttk.Separator(marco, orient="horizontal").grid(row=2, column=0, sticky="ew",

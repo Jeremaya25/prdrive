@@ -49,7 +49,7 @@ Warm paper, near-black ink, one blue accent, amber for warnings, monospace for p
 
 ## «Ajustes» (`ui/tk_doctor.py`): where new affordances go
 
-The main window is deliberately lean: **anything done once in a device's life belongs behind the gear, not beside «Sincronizar ahora»**. The screen is «Ajustes» (the module keeps the old name) and is not the `--doctor` command: «Reparación» is its first entry, «Configuración» its second, and `ENTRADAS` is the list to add to. An entry that only shows sometimes goes in `OCASIONALES` too, with a function that decides **without network** (today «Renombrar el catálogo…», `catalog_editor.ofrecer_renombrado()`).
+The main window is deliberately lean: **anything done once in a device's life belongs behind the gear, not beside «Sincronizar ahora»**. The screen is «Ajustes» (the module keeps the old name) and is not the `--doctor` command: «Reparación» is its first entry, «Configuración» its second, and `ENTRADAS` is the list to add to. An entry that only shows sometimes goes in `OCASIONALES` too, with a function that decides **without network** (today «Renombrar el catálogo…», `catalog_editor.ofrecer_renombrado()`). «Buscar actualizaciones» is one too, but by a different rule: it appears only when the main window passes `buscar_version`, because the network read is the main window's (`mirar_version(respuesta)`; `updating.md`).
 
 **«Configuración»** (`ui/tk_configuracion.py`, #65) holds what is *configured* rather than done: the service's interval (`ui/prefs.py` decides what is written, see `service.md`) and, only for the encrypted host root, the agent's `pedir_al_iniciar` checkbox (sent as `PIDE_AJUSTE`). Nothing is written until «Guardar», and what did not change is not written.
 

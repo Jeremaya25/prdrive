@@ -434,8 +434,8 @@ c("  cada dispositivo es un submenú (MF_POPUP) con su nombre, & doblado",
 c("  en cada submenú, «Configurar» es la entrada por defecto: el doble clic la elige",
   sorted(u.defecto), sorted(zip([s for _f, s, _t in populares], configurar)))
 iconos_raiz = {pos: h for m, pos, h in u.bitmaps if m == raiz}
-c("  los dos desplegables llevan su icono (y «Pausar» y «Cerrar el agente», su glifo)",
-  sorted(iconos_raiz), [0, 1, 3, 5])
+c("  los dos desplegables llevan su icono (y «Pausar», «Buscar actualizaciones» y «Cerrar el agente», su glifo)",
+  sorted(iconos_raiz), [0, 1, 3, 5, 6])
 c("  el primero, la marca en verde",
   bytes(g.dibs[iconos_raiz[0]]), icons.pixeles_marca(16, icons.CAMPOS["verde"]))
 c("  el segundo, su .ico, que Windows no ha sabido cargar: la marca de prdrive",

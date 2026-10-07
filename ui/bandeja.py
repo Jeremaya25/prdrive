@@ -33,8 +33,9 @@ Lo que ofrece el menú (sección 5 del diseño, «Una unidad nueva» de la 3 y e
   agente, «Actualizar a la vX» lo pone al día con la versión del agente.
   Abajo del todo, apagada, la versión de su programa, si se sabe.
 - Fuera, lo del agente entero: **Sincronizar todo ahora** (solo con dos o más
-  dispositivos que sincronizar), **Pausar** / **Reanudar**, **Actualizar** y
-  **Cerrar el agente**; y la última línea, apagada, la versión del agente.
+  dispositivos que sincronizar), **Pausar** / **Reanudar**, **Actualizar**
+  (o **Buscar actualizaciones**, si no se sabe de ninguna) y **Cerrar el
+  agente**; y la última línea, apagada, la versión del agente.
 
 «Configurar» es la entrada por defecto de cada desplegable: en Windows sale en
 negrita y es lo que hace el doble clic sobre el propio desplegable
@@ -617,13 +618,17 @@ def _del_agente(resumen: Mapping[str, Any]) -> list[Entrada]:
 
 
 def _actualizar(resumen: Mapping[str, Any]) -> list[Entrada]:
-    """Devuelve la entrada «Actualizar» cuando el agente sabe de una versión más nueva.
+    """Devuelve la entrada «Actualizar», o «Buscar actualizaciones» si no se sabe de ninguna.
 
-    Es la sección 8 del diseño. Mientras se actualiza, se dice y queda apagada.
+    Es la sección 8 del diseño. Mientras se actualiza o se busca, se dice y
+    queda apagada.
     """
     nueva = resumen.get("nueva")
     if not nueva:
-        return []
+        if resumen.get("buscando"):
+            return [Entrada("Buscando actualizaciones…", activa=False)]
+        return [Entrada("Buscar actualizaciones", _pide(equipo.PIDE_BUSCAR_VERSION),
+                        icono=I_REINTENTAR)]
     if resumen.get("actualizando"):
         return [Entrada(f"Actualizando a la {nueva}…", activa=False)]
     return [Entrada(f"Actualizar a la {nueva}", _pide(equipo.PIDE_ACTUALIZAR),
