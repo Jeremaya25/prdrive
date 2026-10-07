@@ -13,6 +13,7 @@ Las ventanas se crean ocultas y no se entra nunca en el bucle de eventos.
 
 import hashlib
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -565,7 +566,8 @@ with sandbox():
     # una entrada es la lista completa de lo que esa pantalla ofrece.
     c("el engranaje abre «Ajustes» con sus entradas",
       visto.get("entradas"),
-      ["Cerrar", "Configuración…", "Emparejar un móvil…", "Llavero…",
+      ["Buscar actualizaciones", "Cerrar", "Configuración…", "Emparejar un móvil…",
+       "Llavero…",
        "Nombre e icono de la unidad…", "Reparación…", "Versiones…"])
     c("y su primera entrada abre «Reparación», con «Ajustes» ya cerrada",
       len(abiertas), 1)
@@ -598,6 +600,50 @@ with sandbox():
     c("con un remoto sin renombrar, «Ajustes» ofrece renombrarlo",
       "Renombrar el catálogo…" in (visto.get("entradas") or []), True)
     c("  y la entrada abre su pantalla", len(abiertas_ren), 1)
+
+# «Ajustes → Buscar actualizaciones» pregunta a la red sin mirar la caché y dice
+# la respuesta bajo el botón. El hilo corre en el sitio: con el bucle de eventos
+# sustituido, `root.after()` desde otro hilo no llegaría a ninguna parte.
+with sandbox():
+    cfg, _p = preparar()
+    visto.clear()
+    preguntas: list = []
+    MOTIVO = "No he podido preguntarle a GitHub si hay versión nueva: sin red"
+
+    class HiloEnElSitio:
+        """Un `threading.Thread` que hace su trabajo al arrancar, sin otro hilo."""
+
+        def __init__(self, target=None, daemon=None, **_k):
+            self.target = target
+
+        def start(self) -> None:
+            """Corre el trabajo aquí mismo."""
+            self.target()
+
+    def buscar_desde_ajustes(dlg) -> None:
+        """Pulsa «Buscar actualizaciones» y espera a que cambie su frase."""
+        boton = botones(dlg)["Buscar actualizaciones"]
+        boton.invoke()
+        limite = time.monotonic() + 5
+        while time.monotonic() < limite and MOTIVO not in textos(dlg):
+            dlg.update()
+            time.sleep(0.02)
+        visto["textos"] = textos(dlg)
+        visto["apagado"] = boton.instate(["disabled"])
+        dlg.destroy()
+
+    real_check, real_hilo = update.check, threading.Thread
+    update.check = lambda force=False: preguntas.append(force) or (None, MOTIVO)
+    threading.Thread = HiloEnElSitio
+    tk_doctor.mostrar = lambda dlg, parent=None: buscar_desde_ajustes(dlg)
+    try:
+        ventana_principal(cfg, lambda root: botones(root)["Ajustes…"].invoke())
+    finally:
+        update.check, threading.Thread = real_check, real_hilo
+    c("«Buscar actualizaciones» pregunta a la red sin mirar la caché",
+      preguntas, [True])
+    c("  y dice debajo del botón lo que ha pasado", MOTIVO in visto.get("textos", []), True)
+    c("  y el botón vuelve a poder pulsarse", visto.get("apagado"), False)
 
 with sandbox():
     cfg, _p = preparar()
