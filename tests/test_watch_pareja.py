@@ -539,7 +539,8 @@ otra = pl.Raiz("unidad", (pl.Pareja("claves", "otro", vigila=True),), 10 * MIN)
 todas = (RAIZ, otra)
 c("sin nada recordado, se recorren las que piden watch y solo esas",
   pl.a_recorrer(todas, {}, T0), [DOCS, ("unidad", "claves")])
-rec = {DOCS: pl.Vigilada(H1, None, T0 - 5)}
+# Recién movida (se vio un cambio): va al `sondeo`; quieta, ver más abajo.
+rec = {DOCS: pl.Vigilada(H1, None, T0 - 5, movida=T0 - 5)}
 c("recorrida hace 5 s, todavía no", pl.a_recorrer([RAIZ], rec, T0), [])
 c("  a los 10 s, sí", pl.a_recorrer([RAIZ], rec, T0 + 5), [DOCS])
 c("con la moderación reteniendo, no se recorre nada",
@@ -553,5 +554,45 @@ c("una abandonada no se vuelve a recorrer",
   pl.a_recorrer([RAIZ], {DOCS: pl.Vigilada(abandonada=True)}, T0 + 3600), [])
 c("una política con otro sondeo manda",
   pl.a_recorrer([RAIZ], rec, T0 + 5, pl.PoliticaCambios(sondeo=30.0)), [])
+
+# El recorrido de respaldo se espacia: cada `sondeo` mientras la carpeta se
+# mueve, cada `sondeo_quieto` cuando lleva quieta, y a batería nunca antes de
+# `sondeo_bateria`. El llavero, siempre al `sondeo`.
+c("de fábrica, sondeo_quieto 120 s y sondeo_bateria 60 s",
+  (V.sondeo_quieto, V.sondeo_bateria), (120.0, 60.0))
+quieta = {DOCS: pl.Vigilada(H1, None, T0)}
+c("quieta (sin cambio visto): no a los 10 s", pl.a_recorrer([RAIZ], quieta, T0 + 10), [])
+c("  sí a los sondeo_quieto", pl.a_recorrer([RAIZ], quieta, T0 + 120), [DOCS])
+movida = {DOCS: pl.Vigilada(H2, None, T0, movida=T0)}
+c("tras un cambio visto, cada sondeo", pl.a_recorrer([RAIZ], movida, T0 + 10), [DOCS])
+c("  hasta sondeo_quieto después del cambio",
+  pl.a_recorrer([RAIZ], {DOCS: pl.Vigilada(H2, None, T0 + 115, movida=T0)}, T0 + 125), [])
+c("a batería, nunca antes de sondeo_bateria",
+  (pl.a_recorrer([RAIZ], movida, T0 + 10, con_bateria=True),
+   pl.a_recorrer([RAIZ], movida, T0 + 60, con_bateria=True)), ([], [DOCS]))
+c("  y quieta a batería, a su sondeo_quieto (que es más largo)",
+  (pl.a_recorrer([RAIZ], quieta, T0 + 60, con_bateria=True),
+   pl.a_recorrer([RAIZ], quieta, T0 + 120, con_bateria=True)), ([], [DOCS]))
+c("observar un cambio apunta movida",
+  pl.observar(pl.Vigilada(H1, None, T0), H2, T0 + 10).movida, T0 + 10)
+c("  la foto de partida no", pl.observar(pl.Vigilada(), H1, T0).movida, None)
+c("  y una foto igual tampoco la mueve",
+  pl.observar(pl.Vigilada(H1, None, T0, movida=T0 - 50), H1, T0 + 10).movida, T0 - 50)
+t = pl.tras_pasada(pl.Vigilada(None, T0, T0, avisos=True, movida=T0), None, T0 + 5)
+c("tras_pasada conserva avisos y movida y quita el cambio pendiente",
+  (t.avisos, t.movida, t.cambio, t.revisada), (True, T0, None, T0 + 5))
+c("una pareja con avisos no se recorre",
+  pl.a_recorrer([RAIZ], {DOCS: pl.Vigilada(avisos=True)}, T0 + 3600), [])
+a = pl.avisado(pl.Vigilada(avisos=True), T0)
+c("avisado pone el cambio y movida a ahora", (a.cambio, a.movida, a.avisos), (T0, T0, True))
+c("  otro aviso mueve la calma", pl.avisado(a, T0 + 7).cambio, T0 + 7)
+c("  una abandonada no cambia", pl.avisado(pl.Vigilada(abandonada=True), T0),
+  pl.Vigilada(abandonada=True))
+c("  y la pasada se adelanta como con una foto",
+  pl.toca_por_cambios(a, pl.Marca(T0 - 500)), T0 + V.calma)
+llave = pl.Raiz("u", (pl.Pareja("keychain", "nas", vigila=True, llavero=True),), 3600.0)
+c("el llavero va siempre al sondeo, también quieto y a batería",
+  pl.a_recorrer([llave], {("u", "keychain"): pl.Vigilada(H1, None, T0)}, T0 + 10,
+                con_bateria=True), [("u", "keychain")])
 
 sys.exit(c.report())

@@ -29,12 +29,14 @@ Las reglas, en el orden en que se aplican:
   un fallo, no hace esperar más y no avisa de nada.
 - Cambios locales (`watch = true`): una pareja que lo pide se sincroniza poco
   después de que cambien sus ficheros, sin esperar al intervalo. Es una pasada
-  corriente ADELANTADA, no una urgente: la modera todo lo anterior. Se la mira
-  con una foto barata de su carpeta (`Huella`), una ráfaga de cambios es una
-  sola pasada (`PoliticaCambios.calma`) y no hay dos pasadas de la misma pareja
-  más cerca que `separacion`. Al terminar una pasada se vuelve a tomar la foto,
-  para que lo que la propia pasada escribió no la dispare otra vez. Los
-  cambios del remoto no se ven: esperan al intervalo.
+  corriente ADELANTADA, no una urgente: la modera todo lo anterior. Se entera
+  por los avisos del sistema (`avisado()`) o, donde no los hay, con una foto
+  barata de su carpeta (`Huella`) que se toma cada `sondeo` mientras la carpeta
+  se mueve y cada `sondeo_quieto` cuando lleva quieta. Una ráfaga de cambios es
+  una sola pasada (`PoliticaCambios.calma`) y no hay dos pasadas de la misma
+  pareja más cerca que `separacion`. Al terminar una pasada se vuelve a tomar
+  la foto, para que lo que la propia pasada escribió no la dispare otra vez.
+  Los cambios del remoto no se ven: esperan al intervalo.
 
 Nada de esto hace un `--resync`: una pareja que lo pide la salta su propio
 `sync.py` (sin terminal la pregunta toma el «no») y aquí cuenta como `SALTADA`,
@@ -568,7 +570,16 @@ class PoliticaCambios:
     """Las reglas de los cambios locales; sus valores de fábrica son los del diseño.
 
     Args:
-        sondeo: Segundos entre dos recorridos de la carpeta de una pareja.
+        sondeo: Segundos entre dos recorridos de la carpeta de una pareja
+            mientras se mueve: durante `sondeo_quieto` tras el último cambio
+            visto. El llavero va siempre a este ritmo: son unos pocos ficheros
+            y es lo que más importa tener al día.
+        sondeo_quieto: Segundos entre dos recorridos de una carpeta que lleva
+            quieta (o en la que todavía no se ha visto ningún cambio): recorrer
+            cuesta lo mismo haya cambiado algo o no, y una carpeta quieta suele
+            seguir quieta.
+        sondeo_bateria: Funcionando a batería, segundos mínimos entre dos
+            recorridos de una carpeta, aunque se esté moviendo.
         calma: Segundos sin más cambios antes de lanzar la pasada: una ráfaga
             de ficheros es una sola pasada, no una por fichero.
         separacion: Segundos mínimos entre el final de la última pasada de una
@@ -583,6 +594,8 @@ class PoliticaCambios:
             es indistinguible de una carpeta quieta.
     """
     sondeo: float = 10.0
+    sondeo_quieto: float = 120.0
+    sondeo_bateria: float = 60.0
     calma: float = 20.0
     separacion: float = 120.0
     tope_entradas: int = 20_000
@@ -605,12 +618,19 @@ class Vigilada:
         fallidas: Cuántos recorridos seguidos acabaron sin foto. Una foto, buena
             o la de partida, lo pone a cero; una pasada no lo toca: no prueba
             que el agente pueda leer la carpeta.
+        avisos: Si el sistema avisa de sus cambios (`avisado()`): no se
+            recorre nunca, y ni `huella` ni `fallidas` cuentan.
+        movida: Cuándo se vio su último cambio, por una foto o por un aviso, o
+            `None` si no se ha visto ninguno. Una pasada no lo toca: lo que
+            escribe rclone no dice que la persona esté trabajando ahí.
     """
     huella: Huella | None = None
     cambio: float | None = None
     revisada: float | None = None
     abandonada: bool = False
     fallidas: int = 0
+    avisos: bool = False
+    movida: float | None = None
 
 
 def observar(vigilada: Vigilada, huella: Huella | None, ahora: float,
@@ -635,8 +655,20 @@ def observar(vigilada: Vigilada, huella: Huella | None, ahora: float,
     if vigilada.huella is None:
         return replace(vista, huella=huella)
     if huella != vigilada.huella:
-        return replace(vista, huella=huella, cambio=ahora)
+        return replace(vista, huella=huella, cambio=ahora, movida=ahora)
     return vista
+
+
+def avisado(vigilada: Vigilada, ahora: float) -> Vigilada:
+    """Devuelve lo recordado de una pareja cuando el sistema avisa de que su carpeta cambió.
+
+    Es lo mismo que una foto distinta de la anterior: el cambio pendiente (y con
+    él la calma) pasa a ahora. Un aviso de que se perdieron avisos también
+    llega aquí: algo ha cambiado.
+    """
+    if vigilada.abandonada:
+        return vigilada
+    return replace(vigilada, cambio=ahora, movida=ahora)
 
 
 def tras_pasada(vigilada: Vigilada, huella: Huella | None, ahora: float) -> Vigilada:
@@ -648,7 +680,8 @@ def tras_pasada(vigilada: Vigilada, huella: Huella | None, ahora: float) -> Vigi
     y espera al intervalo; es el precio de no distinguir sus ficheros de los de
     rclone. Sin foto (`None`), la próxima recorrida vuelve a partir de cero y
     las fotos fallidas seguidas se conservan: la pasada no prueba que la
-    carpeta se pueda mirar.
+    carpeta se pueda mirar. Si oye los avisos del sistema (`Vigilada.avisos`)
+    los sigue oyendo, y lo que la pasada escribió ya se ha tirado.
 
     Args:
         vigilada: Lo recordado hasta ahora.
@@ -657,8 +690,8 @@ def tras_pasada(vigilada: Vigilada, huella: Huella | None, ahora: float) -> Vigi
     """
     if vigilada.abandonada:
         return vigilada
-    return Vigilada(huella, None, ahora,
-                    fallidas=vigilada.fallidas if huella is None else 0)
+    return replace(vigilada, huella=huella, cambio=None, revisada=ahora,
+                   fallidas=vigilada.fallidas if huella is None else 0)
 
 
 def se_abandona(antes: Vigilada, despues: Vigilada) -> bool:
@@ -703,17 +736,35 @@ def toca_por_cambios(vigilada: Vigilada | None, marca: Marca,
                marca.ultimo_intento + politica.separacion)
 
 
+def cada_cuanto(pareja: Pareja, vigilada: Vigilada, ahora: float,
+                politica: PoliticaCambios = PoliticaCambios(),
+                con_bateria: bool = False) -> float:
+    """Devuelve cada cuántos segundos toca recorrer la carpeta de una pareja.
+
+    `sondeo` mientras se mueve (durante `sondeo_quieto` tras el último cambio
+    visto) y `sondeo_quieto` si lleva quieta; a batería, nunca menos de
+    `sondeo_bateria`. El llavero, siempre `sondeo`: recorrerlo no cuesta nada.
+    """
+    if pareja.llavero:
+        return politica.sondeo
+    se_mueve = vigilada.movida is not None and ahora - vigilada.movida < politica.sondeo_quieto
+    cada = politica.sondeo if se_mueve else politica.sondeo_quieto
+    return max(cada, politica.sondeo_bateria) if con_bateria else cada
+
+
 def a_recorrer(raices: Iterable[Raiz], vigiladas: Mapping[tuple[str, str], Vigilada],
                ahora: float, politica: PoliticaCambios = PoliticaCambios(),
                retenido: bool = False,
                ocupadas: Iterable[tuple[str, str]] = (),
-               motivo: str | None = None) -> list[tuple[str, str]]:
+               motivo: str | None = None,
+               con_bateria: bool = False) -> list[tuple[str, str]]:
     """Devuelve las parejas cuya carpeta toca recorrer ahora.
 
     Solo cuentan las de una raíz atendible, que piden `watch`, no están
-    abandonadas y no tienen un intervalo infinito (el de una raíz en modo
-    `sync`, salvo que la pareja traiga el suyo: una pasada por conexión y ya,
-    nadie quiere más).
+    abandonadas, no oyen los avisos del sistema y no tienen un intervalo
+    infinito (el de una raíz en modo `sync`, salvo que la pareja traiga el
+    suyo: una pasada por conexión y ya, nadie quiere más). La que nunca se ha
+    recorrido, ya; las demás, a su ritmo (`cada_cuanto()`).
 
     Args:
         raices: Las raíces que atiende el agente.
@@ -728,6 +779,7 @@ def a_recorrer(raices: Iterable[Raiz], vigiladas: Mapping[tuple[str, str], Vigil
             persona.
         motivo: Por qué retiene la moderación, si retiene: se recorre solo lo
             que `deja_pasar()` (el llavero en una red de uso medido).
+        con_bateria: Si el equipo funciona ahora a batería.
 
     Returns:
         `(raíz, pareja)` en el orden de las raíces.
@@ -746,8 +798,9 @@ def a_recorrer(raices: Iterable[Raiz], vigiladas: Mapping[tuple[str, str], Vigil
                     or not deja_pasar(motivo, pareja):
                 continue
             v = vigiladas.get(clave, Vigilada())
-            if v.abandonada:
+            if v.abandonada or v.avisos:
                 continue
-            if v.revisada is None or ahora - v.revisada >= politica.sondeo:
+            if v.revisada is None or ahora - v.revisada >= cada_cuanto(
+                    pareja, v, ahora, politica, con_bateria):
                 salida.append(clave)
     return salida

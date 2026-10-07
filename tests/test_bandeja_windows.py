@@ -11,7 +11,8 @@ la bandeja (una cola). Así se comprueba, sin Windows:
   Explorador se reinicia.
 - El menú: lo elegido son peticiones al agente; lo apagado no pide nada.
 - `WM_DEVICECHANGE` despierta el recorrido; la vuelta de la suspensión pide
-  `despertar`.
+  `despertar`. Los avisos de extracción de un handle (el de la carpeta de una
+  pareja vigilada) van a `dispositivo()` antes de que la ventana conteste.
 - Los avisos cuelgan del icono (`NIF_INFO`) y `avisos` los manda por ahí.
 - Al cerrar se quita el icono, se sueltan los iconos y acaba el hilo.
 
@@ -92,6 +93,10 @@ class ApiFalsa:
     def enviar(self, msg, w=0, l=0):
         """Lo que manda Windows (una difusión, un clic en el icono)."""
         self.cola.put((msg, w, l))
+
+    def handle_de(self, lparam):
+        """El handle de un aviso `DBT_DEVTYP_HANDLE`: aquí, el `lParam` si es un número."""
+        return lparam if isinstance(lparam, int) and lparam >= 1000 else None
 
     def icono(self, ruta):
         """Devuelve un manejador de icono de mentira."""
@@ -185,6 +190,31 @@ c("WM_DEVICECHANGE (llega un volumen) despierta el recorrido",
 api.enviar(bw.WM_DEVICECHANGE, 0x0018, 0)      # DBT_CONFIGCHANGED: nada que ver
 time.sleep(0.05)
 c("  otros WM_DEVICECHANGE no", MONTAJES, [1])
+DISPOSITIVO: list = []
+api.enviar(bw.WM_DEVICECHANGE, bw.DBT_DEVICEQUERYREMOVE, 4242)
+time.sleep(0.05)
+c("sin quien atienda los avisos de extracción no pasa nada", (DISPOSITIVO, MONTAJES), ([], [1]))
+b.dispositivo = lambda evento, h: DISPOSITIVO.append((evento, h))
+api.enviar(bw.WM_DEVICECHANGE, bw.DBT_DEVICEQUERYREMOVE, 4242)
+c("el sistema pide la unidad de un handle nuestro: se le pasa al motor de avisos",
+  esperar(lambda: DISPOSITIVO == [(bw.DBT_DEVICEQUERYREMOVE, 4242)]), True)
+c("  y no es un cambio de montajes", MONTAJES, [1])
+for evento in (bw.DBT_DEVICEQUERYREMOVEFAILED, bw.DBT_DEVICEREMOVEPENDING):
+    api.enviar(bw.WM_DEVICECHANGE, evento, 4242)
+api.enviar(bw.WM_DEVICECHANGE, bw.DBT_DEVICEREMOVECOMPLETE, 4242)
+c("  y los demás de ese handle también", esperar(lambda: len(DISPOSITIVO) == 4) and [
+    e for e, _ in DISPOSITIVO], [bw.DBT_DEVICEQUERYREMOVE, bw.DBT_DEVICEQUERYREMOVEFAILED,
+                                bw.DBT_DEVICEREMOVEPENDING, bw.DBT_DEVICEREMOVECOMPLETE])
+c("  la extracción acabada sigue despertando el recorrido", esperar(lambda: MONTAJES == [1, 1]),
+  True)
+api.enviar(bw.WM_DEVICECHANGE, bw.DBT_DEVICEQUERYREMOVE, 7)       # un volumen, no un handle
+time.sleep(0.05)
+c("  un aviso que no es de un handle no se le pasa", len(DISPOSITIVO), 4)
+b.dispositivo = lambda evento, h: 1 / 0
+api.enviar(bw.WM_DEVICECHANGE, bw.DBT_DEVICEQUERYREMOVE, 4242)
+api.enviar(bw.WM_DEVICECHANGE, bw.DBT_DEVICEARRIVAL, 0)
+c("  y si el motor falla, la bandeja sigue", esperar(lambda: MONTAJES == [1, 1, 1]), True)
+b.dispositivo = None
 api.enviar(bw.WM_POWERBROADCAST, bw.PBT_APMRESUMEAUTOMATIC, 0)
 c("la vuelta de la suspensión pide «despertar»",
   esperar(lambda: PEDIDAS[-1] == {"pide": equipo.PIDE_DESPERTAR}), True)

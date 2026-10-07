@@ -40,7 +40,7 @@ de la carpeta o del fichero (`model.RUIDO_DEL_SISTEMA` es una lista así).
 """
 
 
-def _se_ignora(nombre: str, patrones: tuple[str, ...]) -> bool:
+def se_ignora(nombre: str, patrones: tuple[str, ...]) -> bool:
     """Indica si una entrada de la raíz casa con alguno de los patrones (en minúsculas)."""
     minusculas = nombre.lower()
     return any(fnmatch.fnmatchcase(minusculas, p) for p in patrones)
@@ -90,7 +90,7 @@ def de_carpeta(ruta: Path | str, tope: int | None = None,
             try:
                 with os.scandir(carpeta) as it:
                     for e in it:
-                        if not prefijo and _se_ignora(e.name, patrones):
+                        if not prefijo and se_ignora(e.name, patrones):
                             continue
                         relativa = prefijo + e.name
                         try:

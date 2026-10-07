@@ -19,7 +19,12 @@ dependencias, y **sin probar en un Windows real** (ver
   `TaskbarCreated`, que llega cuando el Explorador se reinicia y hay que volver
   a poner el icono. Nunca se enseña.
 - **`WM_DEVICECHANGE`** despierta al agente para que recorra las unidades en
-  racha (`montajes()`), en vez de recorrerlas cada 5 s como penwatch.
+  racha (`montajes()`), en vez de recorrerlas cada 5 s como penwatch. Los
+  avisos de extracción de un handle (`DBT_DEVTYP_HANDLE`: el de la carpeta de
+  una pareja vigilada, que `common/avisos_carpeta.py` registra en esta
+  ventana) van a `dispositivo()` ANTES de contestar: con
+  `DBT_DEVICEQUERYREMOVE` Windows espera a esa respuesta para seguir con la
+  extracción, y el handle tiene que estar cerrado para entonces.
 - **`WM_POWERBROADCAST`** con `PBT_APMRESUMEAUTOMATIC` (vuelta de la
   suspensión) pide `despertar`: la batería, la red y los remotos sin conexión
   se miran enseguida (sección 6 del diseño).
@@ -86,7 +91,14 @@ PBT_APMRESUMESUSPEND = 0x0007   # vuelta de la suspensión, con alguien delante
 PBT_APMRESUMEAUTOMATIC = 0x0012  # vuelta de la suspensión, siempre
 DBT_DEVNODES_CHANGED = 0x0007
 DBT_DEVICEARRIVAL = 0x8000
+DBT_DEVICEQUERYREMOVE = 0x8001
+DBT_DEVICEQUERYREMOVEFAILED = 0x8002
+DBT_DEVICEREMOVEPENDING = 0x8003
 DBT_DEVICEREMOVECOMPLETE = 0x8004
+DBT_DEVTYP_HANDLE = 6
+AVISOS_DE_HANDLE = (DBT_DEVICEQUERYREMOVE, DBT_DEVICEQUERYREMOVEFAILED,
+                    DBT_DEVICEREMOVEPENDING, DBT_DEVICEREMOVECOMPLETE)
+"""Los avisos de extracción que llegan por cada handle registrado (dbt.h)."""
 
 # Shell_NotifyIconW (shellapi.h).
 NIM_ADD, NIM_MODIFY, NIM_DELETE = 0, 1, 2
@@ -242,6 +254,12 @@ class Bandeja:
         montajes: Avisa de que ha cambiado algún volumen.
         api: Las llamadas a Windows; por defecto, `Api`. Los tests le ponen una
             de mentira.
+
+    Attributes:
+        dispositivo: Quien atiende los avisos de extracción de un handle
+            (`avisos_carpeta.ReadDirectoryChanges.dispositivo`), si hay alguien:
+            se le llama con el aviso y el handle, desde el hilo de la bandeja y
+            antes de contestar a Windows.
     """
 
     def __init__(self, carpeta_iconos: Path, pedir: Callable[[dict], None],
@@ -251,6 +269,7 @@ class Bandeja:
         self.pedir = pedir
         self.montajes = montajes
         self.api = api
+        self.dispositivo: Callable[[int, int], None] | None = None
         self.hwnd = None
         self.vista = bandeja.Vista(icons.BIEN, bandeja.tip("arrancando"), ())
         self._pendiente: bandeja.Vista | None = None
@@ -351,6 +370,14 @@ class Bandeja:
             self._colgar_globos()
             return 0
         if msg == WM_DEVICECHANGE:
+            atender = self.dispositivo
+            if wparam in AVISOS_DE_HANDLE and lparam and atender is not None:
+                h = self.api.handle_de(lparam)
+                if h is not None:
+                    try:
+                        atender(wparam, h)
+                    except Exception:                   # noqa: BLE001
+                        pass                # un fallo del motor no impide la extracción
             if wparam in (DBT_DEVICEARRIVAL, DBT_DEVICEREMOVECOMPLETE, DBT_DEVNODES_CHANGED):
                 self.montajes()
             return None                     # y que Windows conteste lo suyo (TRUE)
@@ -510,6 +537,30 @@ class Api:
         self.shell32.Shell_NotifyIconW.argtypes = [wintypes.DWORD,
                                                    ctypes.POINTER(self.NOTIFYICONDATAW)]
         self._proc = None                   # la referencia que ctypes necesita viva
+
+    def handle_de(self, lparam: int) -> int | None:
+        """Devuelve el handle de un aviso de `WM_DEVICECHANGE` que es de un handle, o `None`.
+
+        `lParam` apunta a un `DEV_BROADCAST_HDR` (dbt.h); si su tipo es
+        `DBT_DEVTYP_HANDLE`, es un `DEV_BROADCAST_HANDLE` y se lee su
+        `dbch_handle`.
+        """
+        ct, wt = self.ct, self.wt
+
+        class DEV_BROADCAST_HDR(ct.Structure):
+            """`DEV_BROADCAST_HDR` de dbt.h."""
+            _fields_ = [("dbch_size", wt.DWORD), ("dbch_devicetype", wt.DWORD),
+                        ("dbch_reserved", wt.DWORD)]
+
+        class DEV_BROADCAST_HANDLE(ct.Structure):
+            """El principio de `DEV_BROADCAST_HANDLE` de dbt.h, hasta su handle."""
+            _fields_ = [("dbch_size", wt.DWORD), ("dbch_devicetype", wt.DWORD),
+                        ("dbch_reserved", wt.DWORD), ("dbch_handle", wt.HANDLE)]
+
+        cabecera = ct.cast(lparam, ct.POINTER(DEV_BROADCAST_HDR)).contents
+        if cabecera.dbch_devicetype != DBT_DEVTYP_HANDLE:
+            return None
+        return ct.cast(lparam, ct.POINTER(DEV_BROADCAST_HANDLE)).contents.dbch_handle
 
     def mensaje_registrado(self, nombre: str) -> int:
         """Devuelve el número de un mensaje registrado con `RegisterWindowMessageW`."""

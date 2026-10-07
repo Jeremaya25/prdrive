@@ -49,13 +49,16 @@ Cómo trabaja, vuelta a vuelta (`Agente.vuelta()`):
   medido, remotos sin conexión, «Sincronizar ahora». Un remoto sin conexión se
   sondea cuando el sistema dice que vuelve a haber red (`common/red.py`), una
   vez por ráfaga de avisos, y si no, cada 5 min (cada 30 si hay avisos).
-- **Mira los cambios locales** de las parejas con `watch = true`: una foto
-  barata de su carpeta cada 10 s (`common/huella.py`, en un hilo: un pendrive
-  tarda segundos), y si cambia y se calma, la pasada de esa pareja se adelanta
-  a su intervalo. La modera todo lo demás (pausa, batería, red de uso medido,
-  la pausa de la ventana de la raíz, su ventana abierta) y, al acabar, se
-  vuelve a tomar la foto para que lo que escribió rclone no la dispare otra
-  vez. No ve los cambios del remoto: esos esperan al intervalo.
+- **Mira los cambios locales** de las parejas con `watch = true`: en Linux
+  con los avisos del sistema (`common/avisos_carpeta.py`, inotify), que en
+  reposo no cuestan nada; donde no los hay (Windows, una carpeta de red) con
+  una foto barata de su carpeta (`common/huella.py`, en un hilo: un pendrive
+  tarda segundos) cada 10 s mientras se mueve y cada 2 min si está quieta. Si
+  cambia y se calma, la pasada de esa pareja se adelanta a su intervalo. La
+  modera todo lo demás (pausa, batería, red de uso medido, la pausa de la
+  ventana de la raíz, su ventana abierta) y lo que escribe la propia pasada no
+  la dispara otra vez. No ve los cambios del remoto: esos esperan al
+  intervalo.
 - **Atiende el llavero** de una raíz con `[keychain]` como una pareja
   vigilada, se elija lo que se elija. Mientras su KeePassXC está abierto, lo de
   otro dispositivo se trae cada 5 min (también en modo `sync`), y al abrirlo y
@@ -63,7 +66,10 @@ Cómo trabaja, vuelta a vuelta (`Agente.vuelta()`):
 - **Ejecuta** cada pasada como el `sync.py` de esa raíz, hijo, con el Python
   del agente y el directorio de trabajo fuera de la raíz: cada raíz ejecuta su
   propio código, un rclone colgado no tumba al agente y entre pasadas no queda
-  nada abierto dentro de ninguna unidad, así que se puede expulsar.
+  nada abierto dentro de ninguna unidad, así que se puede expulsar. La
+  excepción es Windows con bandeja: la carpeta de cada pareja vigilada queda
+  abierta para oír sus cambios, y se cierra en cuanto el sistema pide la
+  unidad (`common/avisos_carpeta.py`) y antes de «Expulsar» y «Bloquear».
 
 La raíz de ESTE equipo (una carpeta del ordenador con `.prdrive/` dentro, que
 pone el asistente «En este equipo») es una raíz más de la lista, con su `ruta`:
@@ -147,9 +153,9 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 import penwatch  # noqa: E402
-from common import (APP_NAME, avisos, catalog, components, equipo, expulsar,  # noqa: E402
-                    keepassxc, llavero, model, moderacion, prioridad, store, update,
-                    vestibulo)
+from common import (APP_NAME, avisos, avisos_carpeta, catalog, components,  # noqa: E402
+                    equipo, expulsar, keepassxc, llavero, model, moderacion, prioridad,
+                    store, update, vestibulo)
 from common import huella as huellas  # noqa: E402  (`huella()` es la del código de una raíz)
 from common import planificador as pl  # noqa: E402
 from common.store import pid_alive  # noqa: E402
@@ -284,6 +290,8 @@ SIN_VERACRYPT = ("No hay VeraCrypt en este equipo: ni instalado ni el del agente
 SIN_RCLONE = ("no encuentro el rclone del agente; sin él no ejecuto nada de las "
               "unidades. Reinstala el agente o actualízalo.")
 """Lo que se dice cuando el agente no tiene rclone propio."""
+SIN_MOTOR_DE_AVISOS = "este sistema no avisa de los cambios de las carpetas"
+"""Por qué se recorre una carpeta vigilada cuando el agente no tiene motor de avisos."""
 TEXTO_RESULTADO = {OK: "bien", FALLO: "FALLÓ", RED: "FALLÓ por la red",
                    SALTADA: "saltada: pide --resync"}
 """Cómo se dice, en el diario, el resultado de una pasada."""
@@ -1172,11 +1180,14 @@ class Mirar(NamedTuple):
             no es esa, la unidad se fue (o se fue y volvió) y la foto no vale.
         raiz: Dónde estaba montada la raíz.
         carpeta: La carpeta local de la pareja, sin resolver.
+        armar: Si en vez de tomar su foto hay que ponerle (o rehacerle) la
+            vigilancia de los avisos del sistema.
     """
     clave: tuple[str, str]
     con: Conexion
     raiz: Path
     carpeta: Path
+    armar: bool = False
 
 
 class Muestreo:
@@ -1184,18 +1195,23 @@ class Muestreo:
 
     Recorrer una carpeta de un pendrive o de la red puede llevar segundos, y la
     vuelta del agente (la cola, la bandeja, los buzones) no puede esperar a
-    ella: el hilo toma las fotos y las deja aquí, y la vuelta siguiente las
-    recoge. Solo hay un muestreo a la vez. El hilo escribe y el del agente lee;
-    `hecho` se pone el último, así que quien lo ve a `True` ya tiene el resto.
+    ella: el hilo toma las fotos, o pone las vigilancias de los avisos del
+    sistema (que también recorre las carpetas), y lo deja aquí; la vuelta
+    siguiente lo recoge. Solo hay un muestreo a la vez. El hilo escribe y el
+    del agente lee; `hecho` se pone el último, así que quien lo ve a `True` ya
+    tiene el resto.
 
     Args:
         trabajo: Las carpetas que hay que mirar.
         tope: Cuántas entradas se cuentan como mucho en cada una.
         ignorar: Patrones de las entradas de la raíz de cada carpeta que no se
             miran; en la raíz de la unidad se suma `ruido_en()`.
+        avisos: El motor de avisos del agente, para las carpetas con `armar`.
 
     Attributes:
         fotos: La foto de cada pareja, o `None` si no se pudo tomar.
+        armadas: Lo que dijo el motor al ponerle la vigilancia a cada pareja:
+            `None` si se vigila, o por qué no.
         fuera: Las parejas cuya carpeta, con los enlaces resueltos, queda fuera
             de su raíz: no se mira.
         descartar: Las parejas cuya pasada ha empezado o acabado mientras se
@@ -1203,26 +1219,38 @@ class Muestreo:
         hecho: Si ya ha terminado.
     """
 
-    def __init__(self, trabajo: list[Mirar], tope: int, ignorar: tuple[str, ...]) -> None:
+    def __init__(self, trabajo: list[Mirar], tope: int, ignorar: tuple[str, ...],
+                 avisos: Any = None) -> None:
         """Prepara el muestreo sin correrlo."""
         self.trabajo = trabajo
         self.tope = tope
         self.ignorar = ignorar
+        self.avisos = avisos
         self.fotos: dict[tuple[str, str], pl.Huella | None] = {}
+        self.armadas: dict[tuple[str, str], str | None] = {}
         self.fuera: set[tuple[str, str]] = set()
         self.descartar: set[tuple[str, str]] = set()
         self.hecho = False
 
     def correr(self) -> None:
-        """Toma la foto de cada carpeta; es lo que corre el hilo.
+        """Toma la foto de cada carpeta, o le pone la vigilancia; es lo que corre el hilo.
 
         Una carpeta que no se deja mirar (cualquier error) queda sin foto: es
-        «no sé», no un cambio, y el hilo no se cae.
+        «no sé», no un cambio, y el hilo no se cae. Una vigilancia que falla
+        de cualquier modo es una carpeta que se recorrerá.
         """
         try:
             for mirar in self.trabajo:
                 if en_la_raiz(mirar.raiz, mirar.carpeta) is None:
                     self.fuera.add(mirar.clave)
+                    continue
+                if mirar.armar:
+                    try:
+                        self.armadas[mirar.clave] = self.avisos.vigilar(
+                            mirar.clave, mirar.carpeta,
+                            self.ignorar + ruido_en(mirar.raiz, mirar.carpeta))
+                    except Exception as e:          # noqa: BLE001
+                        self.armadas[mirar.clave] = f"no se ha podido vigilar: {e}"
                     continue
                 try:
                     self.fotos[mirar.clave] = huella_local(
@@ -1305,6 +1333,14 @@ class Agente:
         vigiladas: Lo que se recuerda de cada pareja que pide `watch`, por
             `(raíz, pareja)`; se olvida al irse la raíz.
         muestreo: El muestreo de carpetas en marcha, si lo hay.
+        avisos_carpeta: El motor de los avisos del sistema de las carpetas
+            vigiladas (`avisos_carpeta.Inotify`), si lo hay: con él una pareja
+            vigilada no se recorre.
+        sin_avisos: Las parejas vigiladas que se recorren aunque haya motor, y
+            por qué (de red, sin sitio, se perdió la vigilancia); se olvida al
+            dejar de servirlas.
+        rearmar: Las parejas cuya vigilancia hay que rehacer (se movió una
+            carpeta o se perdieron avisos).
         keepassxc: Las raíces atendidas con su KeePassXC abierto en este
             equipo, por id (`_mirar_keepassxc()`).
         keepassxc_mirado: Cuándo se miró.
@@ -1355,6 +1391,9 @@ class Agente:
     cambios: pl.PoliticaCambios = field(default_factory=pl.PoliticaCambios)
     vigiladas: dict[tuple[str, str], pl.Vigilada] = field(default_factory=dict)
     muestreo: Muestreo | None = None
+    avisos_carpeta: Any = None
+    sin_avisos: dict[tuple[str, str], str] = field(default_factory=dict)
+    rearmar: set[tuple[str, str]] = field(default_factory=set)
     keepassxc: set[str] = field(default_factory=set)
     keepassxc_mirado: float = -math.inf
     navegador_mirado: bool = False
@@ -2222,50 +2261,143 @@ class Agente:
         return decision
 
     def _olvidar_vigiladas(self, uid: str) -> None:
-        """Olvida lo recordado de las parejas vigiladas de una raíz."""
+        """Olvida lo recordado de las parejas vigiladas de una raíz, y deja sus avisos."""
         self.vigiladas = {k: v for k, v in self.vigiladas.items() if k[0] != uid}
+        self.sin_avisos = {k: v for k, v in self.sin_avisos.items() if k[0] != uid}
+        self.rearmar = {k for k in self.rearmar if k[0] != uid}
+        if self.avisos_carpeta is not None:
+            self.avisos_carpeta.dejar_raiz(uid)
+
+    def _dejar_avisos(self, clave: tuple[str, str]) -> None:
+        """Deja la vigilancia de una pareja que ya no se sirve, y olvida por qué se recorría."""
+        self.sin_avisos.pop(clave, None)
+        self.rearmar.discard(clave)
+        if self.avisos_carpeta is not None:
+            self.avisos_carpeta.dejar(clave)
+
+    def _soltar_avisos(self, uid: str) -> None:
+        """Deja las vigilancias de una raíz antes de soltarla («Expulsar», «Bloquear»).
+
+        En Linux no haría falta (desmontar con vigilancias puestas funciona),
+        pero así nada queda abierto en ella, y si se vuelve a servir se ponen
+        de nuevo.
+        """
+        if self.avisos_carpeta is not None:
+            self.avisos_carpeta.dejar_raiz(uid)
+        for clave in [k for k, v in self.vigiladas.items() if k[0] == uid and v.avisos]:
+            del self.vigiladas[clave]
 
     def _vigilar(self, ahora: float) -> None:
         """Mira los ficheros locales de las parejas con `watch = true`.
 
-        Cada vuelta recoge el muestreo que haya terminado y, si no hay otro en
-        marcha, pide el de las parejas a las que les toca (`pl.a_recorrer()`:
-        cada `sondeo` segundos, y no mientras la moderación retenga las
-        pasadas). Solo se mira donde el servicio de la raíz está en marcha: sin
-        pausa de su ventana (`Unidad.pausada`), sin ventana de runsync abierta,
-        sin otro servicio y sin estar bloqueándose. Lo recordado de una pareja
-        que deja de estarlo se olvida: al volver, la primera foto es la de
-        partida y los cambios de entretanto (hechos, por ejemplo, desde la
+        Con motor de avisos (`avisos_carpeta`), a cada pareja que empieza a
+        servirse se le pone su vigilancia y ya no se recorre: cada vuelta se
+        recogen sus avisos (`_recoger_avisos()`). Sin motor, o si su carpeta no
+        admite avisos, se recorre: cada vuelta recoge el muestreo que haya
+        terminado y, si no hay otro en marcha, pide el de las parejas a las que
+        les toca (`pl.a_recorrer()`: a su ritmo, y no mientras la moderación
+        retenga las pasadas). Ponerle la vigilancia a una pareja no espera a la
+        moderación: es lo que deja apuntar los avisos mientras retiene.
+
+        Solo se mira donde el servicio de la raíz está en marcha: sin pausa de
+        su ventana (`Unidad.pausada`), sin ventana de runsync abierta, sin otro
+        servicio y sin estar bloqueándose. Lo recordado de una pareja que deja
+        de estarlo se olvida, y su vigilancia se deja: al volver, se parte de
+        cero y los cambios de entretanto (hechos, por ejemplo, desde la
         ventana, que sincroniza por su cuenta) no disparan nada. Una pareja
         abandonada por grande no se vuelve a mirar en esta conexión.
 
-        El recorrido va en un hilo (`hilo()`): en un pendrive tarda segundos y
-        esta vuelta no espera.
+        Recorrer y poner vigilancias va en un hilo (`hilo()`): en un pendrive
+        tarda segundos y esta vuelta no espera.
         """
         raices = [r for r in self._raices() if not self.conexiones[r.clave].motivo]
         validas = {(r.clave, p.nombre) for r in raices for p in r.parejas if p.vigila}
         for clave in [k for k, v in self.vigiladas.items()
                       if k not in validas and not v.abandonada]:
             del self.vigiladas[clave]
+            self._dejar_avisos(clave)
+        self._recoger_avisos(ahora, validas)
         self._recoger_fotos(ahora, validas)
         if self.muestreo is not None or self.terminar or self.heredada is not None:
             return
+        armar: list[tuple[str, str]] = []
+        if self.avisos_carpeta is not None:
+            for raiz in raices:
+                for pareja in raiz.parejas:
+                    clave = (raiz.clave, pareja.nombre)
+                    if not pareja.vigila or math.isinf(pl.intervalo_de(raiz, pareja)):
+                        continue
+                    v = self.vigiladas.get(clave)
+                    if v is None:
+                        self.vigiladas[clave] = pl.Vigilada(avisos=True)
+                        armar.append(clave)
+                    elif v.avisos and clave in self.rearmar:
+                        armar.append(clave)
+            self.rearmar -= set(armar)
         motivo = pl.moderacion(replace(self.entorno, pausado=self.pausado),
                                self.ajustes.politica)
         pasada = self.pasada
         ocupadas = [(pasada.tarea.raiz, pasada.tarea.pareja)] \
             if pasada is not None and pasada.tarea.tipo == pl.PASADA else []
         claves = pl.a_recorrer(raices, self.vigiladas, ahora, self.cambios,
-                               ocupadas=ocupadas, motivo=motivo)
-        if not claves:
+                               ocupadas=ocupadas, motivo=motivo,
+                               con_bateria=self.entorno.con_bateria)
+        if not claves and not armar:
             return
         trabajo = []
-        for raiz, pareja in claves:
+        for (raiz, pareja), poner in [(k, True) for k in armar] + [(k, False) for k in claves]:
             con = self.conexiones[raiz]
             trabajo.append(Mirar((raiz, pareja), con, con.raiz,
-                                 con.raiz / con.servicio.locales[pareja]))
-        self.muestreo = Muestreo(trabajo, self.cambios.tope_entradas, IGNORAR_CAMBIOS)
+                                 con.raiz / con.servicio.locales[pareja], armar=poner))
+        self.muestreo = Muestreo(trabajo, self.cambios.tope_entradas, IGNORAR_CAMBIOS,
+                                 self.avisos_carpeta)
         hilo(self.muestreo.correr)
+
+    def _recoger_avisos(self, ahora: float, validas: set[tuple[str, str]]) -> None:
+        """Pone en lo recordado de cada pareja los avisos del sistema que han llegado.
+
+        Un cambio (o un desbordado, que además pide rehacer la vigilancia) es
+        lo mismo que una foto distinta (`pl.avisado()`). No cuenta el de una
+        pareja que ya no se vigila con avisos. El de una con su pasada en
+        marcha lo escribe rclone: se apunta, pero `pl.tras_pasada()` lo borra
+        al acabar ella, y lo que quede en la cola lo tira `_rehacer_foto()`.
+        Una pérdida (su carpeta se fue, o no caben más vigilancias) la deja
+        recorriéndose, y se dice.
+
+        Args:
+            ahora: La hora del reloj del agente.
+            validas: Las parejas que se vigilan ahora.
+        """
+        if self.avisos_carpeta is None:
+            return
+        for clave, aviso in self.avisos_carpeta.recoger().items():
+            v = self.vigiladas.get(clave)
+            con = self.conexiones.get(clave[0])
+            if clave not in validas or v is None or not v.avisos or con is None:
+                continue
+            if aviso.tipo == avisos_carpeta.PERDIDA:
+                self._sin_avisos(con, clave, aviso.motivo)
+                continue
+            if aviso.tipo == avisos_carpeta.DESBORDADO:
+                self.rearmar.add(clave)
+            self.vigiladas[clave] = pl.avisado(v, ahora)
+
+    def _sin_avisos(self, con: Conexion, clave: tuple[str, str], motivo: str) -> None:
+        """Deja una pareja vigilada recorriéndose, sin avisos del sistema, y dice por qué.
+
+        La primera foto es la de partida, enseguida: lo que cambió mientras se
+        perdía la vigilancia no lo ve nadie, como lo de una pareja recién
+        conectada.
+        """
+        if self.avisos_carpeta is not None:
+            self.avisos_carpeta.dejar(clave)
+        self.vigiladas[clave] = pl.Vigilada()
+        self.sin_avisos[clave] = motivo
+        self.rearmar.discard(clave)
+        diario(f"[{con.nombre}] {clave[1]}: sin avisos del sistema, se recorre su carpeta: "
+               f"{motivo}")
+        dlog(con.raiz, f"[{clave[1]}] watch: sin avisos del sistema, se recorre su carpeta: "
+                       f"{motivo}")
 
     def _mirando(self, uid: str) -> bool:
         """Indica si hay una foto en marcha de alguna carpeta de esa raíz.
@@ -2302,16 +2434,15 @@ class Agente:
         for mirar in m.trabajo:
             clave = mirar.clave
             con = self.conexiones.get(clave[0])
+            if mirar.armar:
+                self._recoger_armado(m, mirar, con, ahora, validas)
+                continue
             if con is not mirar.con or clave not in validas or clave in m.descartar \
                     or clave == en_curso:
                 continue
             antes = self.vigiladas.get(clave, pl.Vigilada())
             if clave in m.fuera:
-                self.vigiladas[clave] = pl.Vigilada(None, None, ahora, abandonada=True)
-                diario(f"[{con.nombre}] {clave[1]}: su carpeta cae fuera de la raíz; "
-                       f"no se vigilan sus cambios")
-                dlog(con.raiz, f"[{clave[1]}] watch: su carpeta cae fuera de la raíz; no se "
-                               f"vigila")
+                self._fuera_de_la_raiz(con, clave, ahora)
                 continue
             despues = pl.observar(antes, m.fotos.get(clave), ahora, self.cambios)
             self.vigiladas[clave] = despues
@@ -2333,6 +2464,35 @@ class Agente:
                 diario(f"[{con.nombre}] {clave[1]}: su carpeta vuelve a poder mirarse")
                 dlog(con.raiz, f"[{clave[1]}] watch: su carpeta vuelve a poder mirarse")
 
+    def _fuera_de_la_raiz(self, con: Conexion, clave: tuple[str, str], ahora: float) -> None:
+        """Abandona una pareja cuya carpeta, con los enlaces resueltos, cae fuera de su raíz."""
+        self.vigiladas[clave] = pl.Vigilada(None, None, ahora, abandonada=True)
+        diario(f"[{con.nombre}] {clave[1]}: su carpeta cae fuera de la raíz; "
+               f"no se vigilan sus cambios")
+        dlog(con.raiz, f"[{clave[1]}] watch: su carpeta cae fuera de la raíz; no se vigila")
+
+    def _recoger_armado(self, m: Muestreo, mirar: Mirar, con: Conexion | None, ahora: float,
+                        validas: set[tuple[str, str]]) -> None:
+        """Recoge lo que dijo el motor al ponerle la vigilancia a una pareja.
+
+        Lo puesto para una pareja que ya no se sirve, o de una conexión
+        anterior de su raíz, se deja y no cuenta. Si no se pudo poner, la
+        pareja se recorre y se dice por qué.
+        """
+        clave = mirar.clave
+        v = self.vigiladas.get(clave)
+        motivo = m.armadas.get(clave, "no se llegó a poner su vigilancia")
+        if con is not mirar.con or clave not in validas or v is None or not v.avisos:
+            if motivo is None and self.avisos_carpeta is not None:
+                self.avisos_carpeta.dejar(clave)
+            return
+        if clave in m.fuera:
+            self._fuera_de_la_raiz(con, clave, ahora)
+        elif motivo == avisos_carpeta.DEJADA:
+            del self.vigiladas[clave]       # se dejó a medias: se vuelve a poner
+        elif motivo is not None:
+            self._sin_avisos(con, clave, motivo)
+
     def _rehacer_foto(self, clave: tuple[str, str], ahora: float) -> None:
         """Deja una pareja lista para tomar su foto de después de una pasada.
 
@@ -2348,7 +2508,14 @@ class Agente:
         if self.muestreo is not None:
             self.muestreo.descartar.add(clave)
         antes = self.vigiladas.get(clave)
-        if antes is not None:
+        if antes is not None and antes.avisos:
+            # Lo que escribió la pasada se tira; si hizo desbordar, se rehace.
+            tirado = None if self.avisos_carpeta is None \
+                else self.avisos_carpeta.descartar(clave)
+            if tirado is not None and tirado.tipo == avisos_carpeta.DESBORDADO:
+                self.rearmar.add(clave)
+            self.vigiladas[clave] = pl.tras_pasada(antes, None, ahora)
+        elif antes is not None:
             self.vigiladas[clave] = replace(pl.tras_pasada(antes, None, ahora),
                                             revisada=None)
 
@@ -2725,6 +2892,7 @@ class Agente:
                     del self.bloqueos[uid]
                     avisar(f"{nombre}: no la puedo bloquear", SIN_VERACRYPT, True)
                     continue
+                self._soltar_avisos(uid)
                 if con is not None:
                     self._soltar(con)
                 b.copia = Copia.antes_de(cmd)
@@ -2901,6 +3069,7 @@ class Agente:
                     avisar(f"{nombre}: no la expulso",
                            "Su ventana sigue abierta. Ciérrala y vuelve a pedirlo.", True)
                 continue
+            self._soltar_avisos(uid)
             self._soltar(con)
             e.lanzada = ahora
             diario(f"{nombre}: expulsándola; si algo la tiene ocupada, no se fuerza")
@@ -3539,22 +3708,29 @@ class Agente:
             return bandeja.DESBLOQUEANDO
         return bandeja.BLOQUEADA if unidad.cifrada else bandeja.BUSCANDO
 
-    def _vigilancia(self, con: Conexion) -> tuple[list[str], list[str]]:
-        """Devuelve las parejas de una raíz que se vigilan y las que se abandonaron.
+    def _vigilancia(self, con: Conexion) -> tuple[list[str], list[str], dict[str, str]]:
+        """Devuelve las parejas de una raíz que se vigilan, las abandonadas y las que se recorren.
 
         Solo cuentan las del servicio del agente en modo `daemon` (en `sync` no
         hay intervalo que adelantar). Las abandonadas son las que pasaron del
         tope de entradas o cuya carpeta cae fuera de la raíz: siguen por su
-        intervalo.
+        intervalo. De las vigiladas, las que se recorren en vez de oír los
+        avisos del sistema van con el porqué.
         """
         unidad = self.ajustes.unidades.get(con.id)
         if con.lock is None or con.servicio is None or unidad is None \
                 or unidad.modo != equipo.DAEMON:
-            return [], []
+            return [], [], {}
         pedidas = [p.nombre for p in con.servicio.parejas if p.vigila]
         dejadas = [n for n in pedidas
                    if self.vigiladas.get((con.id, n), pl.Vigilada()).abandonada]
-        return sorted(set(pedidas) - set(dejadas)), sorted(dejadas)
+        vigila = sorted(set(pedidas) - set(dejadas))
+        if self.avisos_carpeta is None:
+            recorre = {n: SIN_MOTOR_DE_AVISOS for n in vigila}
+        else:
+            recorre = {n: self.sin_avisos[(con.id, n)] for n in vigila
+                       if (con.id, n) in self.sin_avisos}
+        return vigila, sorted(dejadas), recorre
 
     def resumen(self) -> dict:
         """Devuelve lo que el agente cuenta de sí mismo.
@@ -3565,7 +3741,7 @@ class Agente:
         unidades = []
         for con in self.conexiones.values():
             unidad = self.ajustes.unidades.get(con.id)
-            vigila, abandonadas = self._vigilancia(con)
+            vigila, abandonadas, recorre = self._vigilancia(con)
             unidades.append({"id": con.id, "nombre": con.nombre, "raiz": str(con.raiz),
                              "del_equipo": bool(unidad and unidad.es_raiz),
                              "cifrada": bool(unidad and unidad.cifrada),
@@ -3588,6 +3764,7 @@ class Agente:
                                                 if r == con.id and m.fallos > 0),
                              "vigila": vigila,
                              "vigila_abandonada": abandonadas,
+                             "vigila_recorre": recorre,
                              "emblema": self._emblema(con),
                              "version": self._version_de(con),
                              "llavero": self._llavero_de(con),
@@ -3659,6 +3836,12 @@ class Agente:
 
 MOUNTINFO = Path("/proc/self/mountinfo")
 """Tabla de montajes de Linux, que avisa con `POLLPRI` cuando cambia."""
+CALLAR_AVISOS = 0.25
+"""Segundos que el vigía deja de oír los avisos de carpeta tras leerlos.
+
+Una copia grande da miles de avisos por segundo: se leen a ratos (la cola del
+núcleo aguanta miles entre lectura y lectura) y no uno a uno.
+"""
 
 
 class Vigia:
@@ -3669,7 +3852,8 @@ class Vigia:
     En Windows los montajes los dice la bandeja (`WM_DEVICECHANGE`), desde su
     hilo, con `despertar(montajes=True)`; y lo que se elige en su menú, con
     `despertar()`, para no esperar al tic. En Linux ese despertar va por un
-    pipe que se vigila junto a mountinfo.
+    pipe que se vigila junto a mountinfo, y con ellos el descriptor de los
+    avisos de carpeta (`oir()`), que se lee sin acabar la espera.
     """
 
     def __init__(self) -> None:
@@ -3682,6 +3866,7 @@ class Vigia:
         self._evento = threading.Event()
         self._montajes = False
         self._pipe: tuple[int, int] | None = None
+        self._oido: tuple[int, Any] | None = None
         if IS_WIN:
             return
         try:
@@ -3715,6 +3900,49 @@ class Vigia:
             except OSError:
                 pass                # lleno: ya hay un despertar pendiente
 
+    def oir(self, fd: int, leer) -> None:
+        """Espera también en el descriptor de los avisos de carpeta.
+
+        Cuando tiene algo se llama a `leer()`, que lo vacía en el acto (la cola
+        del núcleo no se llena entre dos vueltas), y se le deja de oír
+        `CALLAR_AVISOS` segundos. La espera NO acaba por él: la pasada espera a
+        la calma igualmente, y una copia de miles de ficheros no puede hacer
+        girar la vuelta miles de veces. Como el que lo vacía es el vigía, una
+        vuelta que falla o que se salta los avisos no lo deja con algo dentro
+        haciendo que `poll` vuelva enseguida. Un `leer()` que lanza se deja de
+        oír, y se dice. Sin `poll` (Windows), nada.
+
+        Args:
+            fd: El descriptor (`avisos_carpeta.Inotify.fd`).
+            leer: Lo que lo vacía (`avisos_carpeta.Inotify.leer`).
+        """
+        if self._poll is None:
+            return
+        import select
+        try:
+            self._poll.register(fd, select.POLLIN)
+        except (OSError, ValueError):
+            return
+        self._oido = (fd, leer)
+
+    def _leer_avisos(self) -> None:
+        """Vacía el descriptor oído; si falla, deja de oírlo y lo dice."""
+        fd, leer = self._oido
+        try:
+            leer()
+        except Exception as e:                              # noqa: BLE001
+            self._dejar_de_oir()
+            diario(f"dejo de oír los avisos de las carpetas: {type(e).__name__}: {e}")
+
+    def _dejar_de_oir(self) -> None:
+        """Quita el descriptor oído de la espera."""
+        if self._oido is not None:
+            try:
+                self._poll.unregister(self._oido[0])
+            except (OSError, KeyError, ValueError):
+                pass
+            self._oido = None
+
     def _tomar_montajes(self) -> bool:
         """Devuelve si hubo aviso de montajes, y lo olvida."""
         montajes, self._montajes = self._montajes, False
@@ -3724,23 +3952,57 @@ class Vigia:
     def esperar(self, segundos: float) -> bool:
         """Espera hasta `segundos`, o hasta que lo despierten o cambien los montajes.
 
+        Los avisos de carpeta (`oir()`) se leen por el camino sin acabarla.
+
         Returns:
             `True` si han cambiado los montajes (hay que recorrer en racha).
         """
         if self._poll is None:
             self._evento.wait(segundos)
             return self._tomar_montajes()
+        import select
+        fin = time.monotonic() + segundos
         montajes = False
+        callado: float | None = None        # hasta cuándo no se oyen los avisos
         try:
-            for fd, _ in self._poll.poll(int(segundos * 1000)):
-                if self._pipe is not None and fd == self._pipe[0]:
-                    os.read(fd, 4096)
-                elif self._f is not None:
-                    self._f.seek(0)
-                    self._f.read()
-                    montajes = True
+            while True:
+                ahora = time.monotonic()
+                if callado is not None and ahora >= callado:
+                    callado = None
+                    if self._oido is not None:
+                        self._poll.modify(self._oido[0], select.POLLIN)
+                resto = fin - ahora
+                if resto <= 0:
+                    break
+                if callado is not None:
+                    resto = min(resto, callado - ahora)
+                despierto = False
+                for fd, que in self._poll.poll(math.ceil(resto * 1000)):
+                    if self._pipe is not None and fd == self._pipe[0]:
+                        os.read(fd, 4096)
+                        despierto = True
+                    elif self._oido is not None and fd == self._oido[0]:
+                        if que & (select.POLLERR | select.POLLHUP | select.POLLNVAL):
+                            self._dejar_de_oir()
+                            continue
+                        self._leer_avisos()
+                        if self._oido is not None:
+                            self._poll.modify(fd, 0)
+                            callado = time.monotonic() + CALLAR_AVISOS
+                    elif self._f is not None and fd == self._f.fileno():
+                        self._f.seek(0)
+                        self._f.read()
+                        montajes = despierto = True
+                if despierto:
+                    break
         except OSError:
-            time.sleep(segundos)
+            time.sleep(max(0.0, fin - time.monotonic()))
+        finally:
+            if callado is not None and self._oido is not None:
+                try:
+                    self._poll.modify(self._oido[0], select.POLLIN)
+                except OSError:
+                    pass
         return self._tomar_montajes() or montajes
 
 
@@ -3820,6 +4082,48 @@ def poner_red(agente: Agente, vigia: Vigia) -> Any:
     return avisos_de_red
 
 
+def poner_avisos_carpeta(agente: Agente, vigia: Vigia) -> Any:
+    """Devuelve el motor de los avisos de cambios de las carpetas vigiladas, o `None`.
+
+    Punto de indirección: los tests ponen uno de mentira en `Agente.avisos_carpeta`.
+
+    Es `common/avisos_carpeta.py`. En Linux, inotify: el vigía lee su
+    descriptor (`Vigia.oir()`). En Windows, `ReadDirectoryChangesW`, que deja
+    abierta la carpeta de cada pareja vigilada y necesita la ventana de la
+    bandeja: por ella llega el aviso de que el sistema pide la unidad, y la
+    bandeja se lo pasa (`Bandeja.dispositivo`) para cerrarla a tiempo. Sin
+    bandeja no hay motor. Sin motor, las carpetas de las parejas con
+    `watch = true` se recorren a su ritmo (`pl.cada_cuanto()`). Se dice en el
+    diario cuál de los dos.
+    """
+    cambios = agente.cambios
+    recorre = (f"las carpetas de las parejas con watch se recorren (cada "
+               f"{cambios.sondeo:g} s tras un cambio, cada {cambios.sondeo_quieto / 60:g} min "
+               f"si están quietas)")
+    hwnd = None
+    if IS_WIN:
+        hwnd = getattr(agente.bandeja, "hwnd", None)
+        if not hwnd:
+            diario(f"sin bandeja no se dejan carpetas abiertas en las unidades: {recorre}")
+            return None
+    try:
+        motor = avisos_carpeta.abrir(hwnd=hwnd)
+    except OSError as e:
+        diario(f"no oigo los cambios de las carpetas ({e}): {recorre}")
+        return None
+    if motor is None:
+        diario(f"en este sistema {recorre}")
+        return None
+    if getattr(motor, "fd", None) is not None:
+        vigia.oir(motor.fd, motor.leer)
+    if IS_WIN:
+        agente.bandeja.dispositivo = motor.dispositivo
+    diario("oigo los cambios de las carpetas de las parejas con watch ("
+           + ("ReadDirectoryChangesW" if IS_WIN else "inotify")
+           + "); se recorre solo la que no avisa")
+    return motor
+
+
 def _enganchar_penwatch() -> None:
     """Lleva a penwatch al diario del agente.
 
@@ -3873,6 +4177,7 @@ def cmd_run(_args: argparse.Namespace) -> int:
     vigia = Vigia()
     agente.bandeja = poner_bandeja(agente, vigia)
     agente.avisos_de_red = poner_red(agente, vigia)
+    agente.avisos_carpeta = poner_avisos_carpeta(agente, vigia)
     # Sin quien avise de los montajes (Windows sin bandeja) se recorre como
     # penwatch; con él, el recorrido de respaldo y las rachas tras cada aviso.
     cada = RECORRIDO_WINDOWS if IS_WIN and agente.bandeja is None else RECORRIDO_RESPALDO
@@ -3897,6 +4202,8 @@ def cmd_run(_args: argparse.Namespace) -> int:
         agente.cerrar()
         if agente.avisos_de_red is not None:
             agente.avisos_de_red.cerrar()
+        if agente.avisos_carpeta is not None:
+            agente.avisos_carpeta.cerrar()
         if agente.bandeja is not None:
             agente.bandeja.cerrar()
         info = store.read_json(equipo.lock_json())
@@ -3946,6 +4253,9 @@ def cmd_status(_args: argparse.Namespace) -> int:
                   f"la {estado.get('version')}: agente.py actualizar {u.get('id')}")
         if u.get("vigila"):
             print(f"  Sincroniza al cambiar sus ficheros: {', '.join(u['vigila'])}")
+        if u.get("vigila_recorre"):
+            print("  Recorre su carpeta (sin avisos del sistema): "
+                  + "; ".join(f"{n} ({m})" for n, m in sorted(u["vigila_recorre"].items())))
         if u.get("vigila_abandonada"):
             print(f"  No vigila sus cambios (demasiado grande o fuera de la raíz; "
                   f"sigue por su intervalo): {', '.join(u['vigila_abandonada'])}")

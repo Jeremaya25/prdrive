@@ -172,9 +172,19 @@ resilient = true              # un error menor no obliga a --resync la próxima 
 #
 # Cómo funciona, y lo que conviene saber antes de encenderlo:
 #
-#   * Mira la carpeta cada 10 s con `os.scandir`, sin abrir ficheros ni usar
-#     eventos del sistema (valen una exFAT, un contenedor de VeraCrypt o una
-#     carpeta de red). Compara rutas, tamaños y mtimes con la vuelta anterior.
+#   * Donde el sistema avisa de los cambios, los escucha y no recorre nada: en
+#     Linux con inotify, en Windows con ReadDirectoryChangesW (solo con la
+#     bandeja abierta). Mientras la carpeta está quieta no cuesta nada.
+#   * Donde no avisa (una carpeta de red, un volumen de VeraCrypt en Windows, o
+#     en Linux sin hueco para más avisos) recorre la carpeta con `os.scandir`,
+#     sin abrir ficheros, y compara rutas, tamaños y mtimes con la vuelta
+#     anterior: cada 10 s mientras cambia y cada 2 min cuando lleva 2 min
+#     quieta (con batería, no menos de 1 min). Un cambio tras un rato quieta se
+#     ve hasta 2 min después. `agente.py status` dice qué parejas se recorren y
+#     por qué.
+#   * En Windows el agente tiene abierta la carpeta que escucha: «Quitar
+#     hardware de forma segura» y «Expulsar» la sueltan antes de quitar la
+#     unidad.
 #   * Espera 20 s sin más cambios antes de lanzar la pasada: una ráfaga de
 #     ficheros es UNA pasada. Y no lanza dos pasadas de la misma pareja con
 #     menos de 2 minutos entre ellas.
@@ -186,10 +196,11 @@ resilient = true              # un error menor no obliga a --resync la próxima 
 #     acabar se vuelve a mirar la carpeta, para que lo que rclone escribió no
 #     dispare otra pasada, y eso se lleva por delante lo que la persona tocara
 #     entre medias; también espera al intervalo.
-#   * Con más de 20 000 ficheros y carpetas la pareja deja de vigilarse (el
-#     agente lo apunta una vez en su diario) y sigue por su intervalo: recorrer
-#     una carpeta así cada pocos segundos cuesta más de lo que da, sobre todo en
-#     un pendrive. `.prversions/` y `.prdrive/` no cuentan, y con `local = "."`
+#   * Si se recorre y pasa de 20 000 ficheros y carpetas, la pareja deja de
+#     vigilarse (el agente lo apunta una vez en su diario) y sigue por su
+#     intervalo: recorrer una carpeta así cada pocos segundos cuesta más de lo
+#     que da, sobre todo en un pendrive. Con avisos no hay tope. Ni los avisos
+#     ni el recorrido miran `.prversions/` y `.prdrive/`, y con `local = "."`
 #     (la raíz de la unidad) tampoco lo que el sistema deja en ella: `System
 #     Volume Information`, `$RECYCLE.BIN`, `.Trash-<uid>`…
 #   * Si el agente no puede mirar la carpeta (tres recorridos seguidos sin

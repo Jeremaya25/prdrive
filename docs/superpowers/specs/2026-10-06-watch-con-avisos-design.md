@@ -2,8 +2,15 @@
 
 Fecha: 06/10/2026. Continúa `watch = true` (#61); lo que hay hoy está en
 `docs/agents/reference/agent-scheduling.md` («A pair with `watch = true`…»).
-Estado: **borrador para revisar**. Las preguntas abiertas del final se deciden
-antes del plan.
+Estado: **fases 1 y 2 hechas en código** (plan `docs/superpowers/plans/2026-10-06-watch-con-avisos.md`):
+el recorrido de B en todas partes, inotify en Linux y `ReadDirectoryChangesW` en
+Windows. Decidido el 06/10/2026: la pregunta 1 se acepta (el handle abierto en
+Windows); la 2 queda contestada en la nube (F18, VeraCrypt 1.26.29): Windows no deja
+registrar el aviso de extracción de un handle de su volumen y un handle abierto
+impide desmontarlo sin forzar, así que los volúmenes de VeraCrypt se recorren
+siempre; la 3, como se proponía, con un presupuesto (la mitad
+de `max_user_watches`, que es de todo el usuario). Falta verlo en equipos
+reales: filas F9–F19 de `docs/superpowers/pruebas/2026-09-25-equipo-pendiente-en-real.md`.
 
 ## Qué se quiere
 
@@ -57,6 +64,17 @@ pero eso lo confirma la lista de equipos reales, no esta sonda.
 - **Desmontar con las vigilancias puestas funciona**: `umount` no protesta, y
   llegan 442 `IN_UNMOUNT` y 442 `IN_IGNORED`.
 - Esperar 3 s sin cambios: **0,1 ms de CPU**.
+
+Tras la fase 1 (06/10/2026, el mismo Linux, cachés calientes; un banco más
+pequeño que el de arriba: el motor y el vigía del agente, sin el resto del
+agente ni OpenSSH), con 15 000 ficheros en 463 carpetas:
+- Un recorrido: 58 ms de CPU. Cada 10 s son 5,8 ms/s; cada 2 min (la carpeta
+  quieta, con B), 0,48 ms/s.
+- Poner las 463 vigilancias: 15 ms de CPU, una vez.
+- En reposo, el vigía con el descriptor oído y `recoger()` en cada tic:
+  **0,09 ms/s**, que es lo que ya cuesta el tic. Sumado a los 0,6 ms/s del
+  agente sirviendo una unidad, el criterio (≤ 1 ms/s) se cumple; falta
+  repetirlo con el banco entero.
 
 ## Enfoques
 
@@ -216,6 +234,8 @@ cambio visto, y luego cada `sondeo_quieto`. A batería, nunca menos de
    manda, un desmontaje de fuera del agente (la propia ventana de VeraCrypt, su
    desmontaje automático, `Expulsar PRDRIVE.bat`) preguntaría si forzar.
    Propuesta: esas raíces recorren con B hasta comprobarlo en un equipo real.
+   **Contestada** (06/10/2026, F18 en la nube): no lo manda, ni deja registrar
+   el aviso; se recorren siempre.
 3. **El tope.** Con avisos, ¿se quita el de 20 000 entradas (queda el de
    carpetas del sistema en Linux, y ninguno en Windows), o se mantiene uno
    propio? Propuesta: quitarlo con avisos y dejarlo para el recorrido.
