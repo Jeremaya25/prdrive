@@ -133,15 +133,22 @@ agente»**. El diseño completo está en
   unidades VeraCrypt de su lista se abren como con penwatch: VeraCrypt pide la
   contraseña en su ventana, una vez por conexión.
 - **Sincroniza al cambiar los ficheros, si una pareja lo pide.** Con `watch = true`
-  (solo donde el local es origen: bisync, up y up-mirror) el agente mira cada
-  10 s la carpeta de la pareja —sin abrir ficheros ni eventos del sistema— y,
-  20 s después de que dejen de cambiar, adelanta su pasada al intervalo; nunca
-  dos pasadas de la misma pareja con menos de 2 minutos entre ellas. Es una
-  pasada corriente: en pausa, con batería, en ahorro de energía o en una red
-  de uso medido espera como las demás. No ve los cambios del remoto, ni lo que
-  se cambie mientras la pasada corre, y una carpeta de más de 20 000 entradas
-  deja de vigilarse (lo dice el diario) y sigue por su intervalo. Detalles en
-  `sync_config.example.toml`.
+  (solo donde el local es origen: bisync, up y up-mirror) el agente escucha los
+  avisos del sistema sobre la carpeta de la pareja (inotify en Linux; en
+  Windows, con la bandeja abierta) y, 20 s después de que dejen de cambiar,
+  adelanta su pasada al intervalo; nunca dos pasadas de la misma pareja con
+  menos de 2 minutos entre ellas. Donde el sistema no avisa (una carpeta de
+  red, un volumen de VeraCrypt en Windows) recorre la carpeta sin abrir
+  ficheros: cada 10 s mientras cambia y cada 2 minutos cuando está quieta, así
+  que un cambio tras un rato quieta se ve hasta 2 minutos después;
+  `agente.py status` dice qué parejas se recorren y por qué. En Windows el
+  agente tiene abierta la carpeta que escucha: «Quitar hardware de forma
+  segura» y «Expulsar» la sueltan antes de quitar la unidad. Es una pasada
+  corriente: en pausa, con batería, en ahorro de energía o en una red de uso
+  medido espera como las demás. No ve los cambios del remoto, ni lo que se
+  cambie mientras la pasada corre, y una carpeta que se recorre con más de
+  20 000 entradas deja de vigilarse (lo dice el diario) y sigue por su
+  intervalo. Detalles en `sync_config.example.toml`.
 - **Se registra por usuario, sin administrador**: en Windows con una tarea
   programada; en Linux con un autostart del escritorio (y no con systemd: los
   avisos y la pregunta por una unidad nueva necesitan la sesión gráfica).
