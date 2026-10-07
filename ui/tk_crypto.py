@@ -476,7 +476,7 @@ def _panel_bitlocker(panel, wiz, hecho) -> None:
 
     def pintar_estado(st) -> None:
         """Dice el estado de BitLocker, en verde solo si está protegido."""
-        color = "#116611" if (st.known and st.protected) else "#775500"
+        color = theme.OK if (st.known and st.protected) else theme.AVISO
         marca.configure(text=f"Estado de {letra}: {st.resumen}", foreground=color)
 
     pintar_estado(crypto.BitLockerStatus(False, detail="sin comprobar todavía"))

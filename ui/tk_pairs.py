@@ -555,7 +555,7 @@ def open_dialog(parent, config) -> bool:
             ("Volver al catálogo", "back", "TButton", volver_al_catalogo),
             ("Quitar…", "trash", "Danger.TButton", quitar)), start=1):
         boton = ttk.Button(dispositivo, text=texto, style=estilo, command=accion)
-        color = {"Primary.TButton": theme.SUPERFICIE,
+        color = {"Primary.TButton": theme.SOBRE_ACENTO,
                  "Danger.TButton": theme.PELIGRO}.get(estilo, theme.TINTA2)
         fondo = theme.ACENTO if estilo == "Primary.TButton" else theme.SUPERFICIE
         theme.boton_icono(boton, icono, color, fondo)

@@ -174,7 +174,7 @@ def open_dialog(parent) -> None:
     quitar.grid(row=0, column=3, padx=(0, 6))
     instalar_btn = ttk.Button(botones, text="Instalar…", style="Primary.TButton",
                               command=instalar)
-    theme.boton_icono(instalar_btn, "arranque", theme.SUPERFICIE, theme.ACENTO)
+    theme.boton_icono(instalar_btn, "arranque", theme.SOBRE_ACENTO, theme.ACENTO)
     instalar_btn.grid(row=0, column=4, padx=(0, 6))
     ttk.Button(botones, text="Cerrar", command=dlg.destroy).grid(row=0, column=5)
 
@@ -271,7 +271,7 @@ def formulario_instalacion(parent) -> dict | None:
                                                                padx=(0, 6))
     instalar = ttk.Button(pie, text="Instalar", style="Primary.TButton",
                           command=aceptar)
-    theme.boton_icono(instalar, "arranque", theme.SUPERFICIE, theme.ACENTO)
+    theme.boton_icono(instalar, "arranque", theme.SOBRE_ACENTO, theme.ACENTO)
     instalar.grid(row=0, column=1)
 
     mostrar(dlg, parent)
@@ -346,7 +346,7 @@ def open_agente(parent, res: watch.Resumen) -> str | None:
                                                                padx=(0, 6))
     boton = ttk.Button(pie, text="Atender" if nueva else "Aplicar",
                        style="Primary.TButton", command=aceptar)
-    theme.boton_icono(boton, "arranque", theme.SUPERFICIE, theme.ACENTO)
+    theme.boton_icono(boton, "arranque", theme.SOBRE_ACENTO, theme.ACENTO)
     boton.grid(row=0, column=1)
 
     mostrar(dlg, parent)

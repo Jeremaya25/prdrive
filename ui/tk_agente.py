@@ -71,22 +71,32 @@ def construir(root, nombre: str, segundos: int, responder,
 
     from . import tk as tkui
 
-    marco = tkui.cuerpo_visible(root, padding=(22, 20, 22, 18))
+    marco = tkui.cuerpo_visible(root, padding=(24, 24, 24, 16))
     marco.columnconfigure(0, weight=1)
     titulo, explicacion = texto(cambiada)
-    tkui.cabecera(marco, titulo.format(nombre=nombre), explicacion,
-                  ancho=420, estilo="Dialogo.TLabel").grid(row=0, column=0, sticky="w")
+    # La marca de la unidad delante del título: es de una unidad de lo que se
+    # pregunta, no de un programa cualquiera.
+    arriba = ttk.Frame(marco)
+    arriba.grid(row=0, column=0, sticky="ew")
+    arriba.columnconfigure(1, weight=1)
+    img = icons.marca_estado(arriba, 40, fondo=theme.PAPEL)
+    if img is not None:
+        marca = ttk.Label(arriba, image=img)
+        marca.image = img
+        marca.grid(row=0, column=0, sticky="nw", padx=(0, 12))
+    tkui.cabecera(arriba, titulo.format(nombre=nombre), explicacion,
+                  ancho=400, estilo="Dialogo.TLabel").grid(row=0, column=1, sticky="w")
 
     nota = ttk.Label(marco, text=cuenta(segundos), style="Pista.TLabel",
                      wraplength=theme.medida(420), justify="left")
-    nota.grid(row=1, column=0, sticky="w", pady=(12, 0))
+    nota.grid(row=1, column=0, sticky="w", pady=(16, 0))
     ttk.Label(marco, text="«Ahora no» vale para esta conexión: la próxima vez que la "
                           "enchufes se volverá a preguntar.",
               style="Pista.TLabel", wraplength=theme.medida(420),
               justify="left").grid(row=2, column=0, sticky="w", pady=(6, 0))
 
     pie = ttk.Frame(marco)
-    pie.grid(row=3, column=0, sticky="ew", pady=(16, 0))
+    pie.grid(row=3, column=0, sticky="ew", pady=(24, 0))
     pie.columnconfigure(0, weight=1)
     ahora_no = ttk.Button(pie, text="Ahora no", style="Quiet.TButton",
                           command=lambda: responder(AHORA_NO))

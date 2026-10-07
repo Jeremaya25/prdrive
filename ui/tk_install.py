@@ -967,7 +967,7 @@ def _panel_ya_instalado(cuerpo, wiz, raiz, fila: int) -> None:
     actualizar = ttk.Button(botones, text="Actualizar el programa",
                             style="Primary.TButton", padding=(12, 7),
                             command=lambda: _ir_a_actualizar(wiz))
-    theme.boton_icono(actualizar, "down", theme.SUPERFICIE, theme.ACENTO)
+    theme.boton_icono(actualizar, "down", theme.SOBRE_ACENTO, theme.ACENTO)
     actualizar.grid(row=0, column=0)
     ttk.Button(botones, text="Añadir plataformas…", style="CardQuiet.TButton",
                command=lambda: _ir_a_plataformas(wiz)).grid(row=0, column=1,
@@ -1082,7 +1082,7 @@ def _paso_actualizar(cuerpo, wiz) -> None:
 
     boton = ttk.Button(cuerpo, text="Actualizar ahora", style="Primary.TButton",
                        padding=(14, 8), command=actualizar)
-    theme.boton_icono(boton, "down", theme.SUPERFICIE, theme.ACENTO)
+    theme.boton_icono(boton, "down", theme.SOBRE_ACENTO, theme.ACENTO)
     boton.grid(row=fila, column=0, sticky="w", pady=(16, 0))
 
 

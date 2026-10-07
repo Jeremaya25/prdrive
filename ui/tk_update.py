@@ -188,7 +188,7 @@ def open_dialog(parent, nueva) -> bool:
     ver.grid(row=0, column=0, sticky="w")
     instalar = ttk.Button(botones, text="Actualizar ahora", style="Primary.TButton",
                           padding=(12, 7), command=actualizar)
-    theme.boton_icono(instalar, "down", theme.SUPERFICIE, theme.ACENTO)
+    theme.boton_icono(instalar, "down", theme.SOBRE_ACENTO, theme.ACENTO)
     instalar.grid(row=0, column=2, padx=(0, 6))
     ttk.Button(botones, text="Cerrar", command=dlg.destroy).grid(row=0, column=3)
 
@@ -327,7 +327,7 @@ def open_components_dialog(parent, pends) -> bool | str:
     botones.columnconfigure(0, weight=1)
     instalar = ttk.Button(botones, text="Actualizar ahora", style="Primary.TButton",
                           padding=(12, 7), command=actualizar)
-    theme.boton_icono(instalar, "down", theme.SUPERFICIE, theme.ACENTO)
+    theme.boton_icono(instalar, "down", theme.SOBRE_ACENTO, theme.ACENTO)
     if not tag:
         instalar.configure(state="disabled")
     instalar.grid(row=0, column=1, padx=(0, 6))

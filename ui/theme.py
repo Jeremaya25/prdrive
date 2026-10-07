@@ -113,41 +113,201 @@ def medida(px_diseno: int) -> str:
     return f"{round(px_diseno * 72 / 96)}p"
 
 
-PAPEL = "#FAF9F7"           # fondo de toda ventana
-SUPERFICIE = "#FFFFFF"      # listas, cajas, tablas
-TINTA = "#1C1A17"           # texto principal
-TINTA2 = "#5C564C"          # etiquetas de campo
-TINTA3 = "#8A8477"          # pistas y rótulos
-LINEA = "#E4E0D8"           # separadores y bordes
-LINEA_SUAVE = "#EFEBE4"     # la línea entre filas de una lista
-BORDE = "#CFC9BE"           # borde de los controles que se pulsan o se escriben
+CLARO = {
+    "PAPEL": "#FAF9F7",            # fondo de toda ventana
+    "SUPERFICIE": "#FFFFFF",       # tarjetas, listas, campos y tablas
+    "GRIS_FONDO": "#F4F2EE",       # la franja hundida: [defaults], el valle de una barra
+    "APAGADO_FONDO": "#F6F4F0",    # relleno de un control desactivado
+    "TINTA": "#1C1A17",            # texto principal
+    "TINTA2": "#5C564C",           # etiquetas de campo y rutas
+    "TINTA3": "#6B655A",           # pistas, rótulos y cabeceras (5,2:1 como mínimo)
+    "APAGADO": "#A9A398",          # lo que está ahí pero no se usa
+    "LINEA": "#E4E0D8",            # separador y borde de tarjeta: decorativo
+    "LINEA_SUAVE": "#EFEBE4",      # la línea entre filas de una lista
+    "BORDE": "#8C8678",            # borde de lo que se pulsa o se escribe (3:1)
+    "ACENTO": "#3D5A80",           # acción principal, enlaces, foco y selección
+    "ACENTO_OSCURO": "#33506F",    # pulsado; texto de chip y franja azul
+    "ACENTO_SUAVE": "#EDF1F6",     # fila elegida, chip y franja azul
+    "ACENTO_BORDE": "#C6D3E2",
+    "SOBRE_ACENTO": "#FFFFFF",     # letra e icono sobre un relleno de acento
+    "OK": "#2D6A5A",               # al día, terminado bien
+    "OK_FONDO": "#E7F0EE",
+    "OK_BORDE": "#C3DAD4",
+    "SOBRE_OK": "#FFFFFF",
+    "AVISO": "#8A5A00",            # resync, espejo, max-delete
+    "AVISO_TEXTO": "#7A4F00",
+    "AVISO_FONDO": "#FBF2E2",
+    "AVISO_BORDE": "#E8D6AE",
+    "AVISO_BORDE_BOTON": "#DCCBA6",
+    "SOBRE_AVISO": "#FFFFFF",
+    "PELIGRO": "#A0392E",          # fallo, borrar
+    "PELIGRO_FONDO": "#F9EBE8",
+    "PELIGRO_BORDE": "#E4C6C0",
+    "SOBRE_PELIGRO": "#FFFFFF",
+}
+"""El tema claro: los tokens del sistema de diseño «prdrive» con nombre de aquí.
 
-ACENTO = "#3D5A80"          # acción principal, enlaces
-ACENTO_OSCURO = "#33506F"
-ACENTO_SUAVE = "#EDF1F6"    # fila elegida, chip
-ACENTO_BORDE = "#C6D3E2"
+Respecto de la primera versión del diseño se oscurecen `TINTA3` (era #8A8477,
+3,3:1) y `BORDE` (era #CFC9BE, 1,6:1) hasta el contraste que pide WCAG, y el
+verde de `OK` se desplaza hacia el verde azulado para que no se distinga del
+rojo solo por el matiz.
+"""
 
-OK = "#3F6B4A"              # al día, terminado bien
-OK_FONDO = "#EAF0EA"
-OK_BORDE = "#CBDCCE"
+OSCURO = {
+    "PAPEL": "#171512",
+    "SUPERFICIE": "#201D19",
+    "GRIS_FONDO": "#121110",
+    "APAGADO_FONDO": "#1B1915",
+    "TINTA": "#F2EEE7",
+    "TINTA2": "#CBC4B7",
+    "TINTA3": "#A59E90",
+    "APAGADO": "#6A645A",
+    "LINEA": "#34302A",
+    "LINEA_SUAVE": "#292621",
+    "BORDE": "#7D776B",
+    "ACENTO": "#8DB0DE",
+    "ACENTO_OSCURO": "#A9C5EA",
+    "ACENTO_SUAVE": "#222D3C",
+    "ACENTO_BORDE": "#3C4D66",
+    "SOBRE_ACENTO": "#0F1826",
+    "OK": "#7CC5AE",
+    "OK_FONDO": "#17302A",
+    "OK_BORDE": "#2C5246",
+    "SOBRE_OK": "#0B1F1A",
+    "AVISO": "#E6B45E",
+    "AVISO_TEXTO": "#EDC27A",
+    "AVISO_FONDO": "#2A2214",
+    "AVISO_BORDE": "#5A4524",
+    "AVISO_BORDE_BOTON": "#6B5530",
+    "SOBRE_AVISO": "#261A06",
+    "PELIGRO": "#F0897D",
+    "PELIGRO_FONDO": "#301D1A",
+    "PELIGRO_BORDE": "#5E322C",
+    "SOBRE_PELIGRO": "#2B0F0C",
+}
+"""El tema oscuro, con las mismas claves que `CLARO`.
 
-AVISO = "#8A5A00"           # resync, espejo, max-delete
-AVISO_TEXTO = "#7A4F00"
-AVISO_FONDO = "#FBF2E2"
-AVISO_BORDE = "#E8D6AE"
-AVISO_BORDE_BOTON = "#DCCBA6"
+`ACENTO_OSCURO` conserva el nombre aunque aquí sea más CLARO que el acento: es
+el «acento fuerte» del diseño, el que se usa para pulsar y para escribir sobre
+`ACENTO_SUAVE`, y en oscuro fuerte quiere decir más luz. Por lo mismo las
+letras `SOBRE_*` se oscurecen: el relleno de color se aclara.
+"""
 
-PELIGRO = "#A0392E"         # fallo, borrar
-PELIGRO_FONDO = "#F9EBE8"
-PELIGRO_BORDE = "#E4C6C0"
+# Los nombres de la paleta como globales del módulo, para que se escriban
+# `theme.PAPEL` en todas partes. Valen los del tema claro hasta que `usar()`
+# ponga otro; se declaran a mano (y no solo con `globals().update`) para que
+# quien lea el código los encuentre.
+PAPEL = SUPERFICIE = GRIS_FONDO = APAGADO_FONDO = ""
+TINTA = TINTA2 = TINTA3 = APAGADO = LINEA = LINEA_SUAVE = BORDE = ""
+ACENTO = ACENTO_OSCURO = ACENTO_SUAVE = ACENTO_BORDE = SOBRE_ACENTO = ""
+OK = OK_FONDO = OK_BORDE = SOBRE_OK = ""
+AVISO = AVISO_TEXTO = AVISO_FONDO = AVISO_BORDE = AVISO_BORDE_BOTON = SOBRE_AVISO = ""
+PELIGRO = PELIGRO_FONDO = PELIGRO_BORDE = SOBRE_PELIGRO = ""
 
-# El ámbar #E0A34A del diseño no está aquí: solo sale en el icono de la
+# El ámbar #E0A34A de la marca no está aquí: solo sale en el icono de la
 # aplicación y lo define `icons.AMBAR`, que es donde se usa.
 
-GRIS_FONDO = "#F4F2EE"      # la franja de [defaults]
-APAGADO = "#A9A398"         # lo que está ahí pero no cuenta
-APAGADO_FONDO = "#F6F4F0"
+TEMA = "claro"
+"""El tema que está puesto: `'claro'` u `'oscuro'`."""
+_tema_elegido = False
+"""Si ya se decidió el tema en este proceso."""
 
+
+def usar(tema: str) -> None:
+    """Pone la paleta de un tema en los nombres del módulo.
+
+    Es de proceso, como `nitidez()`: los intérpretes que ya tengan el tema
+    pintado lo conservan (`apply()` se hace una vez por intérprete), así que se
+    decide antes de abrir la primera ventana y no se cambia después. Las
+    pruebas sí lo cambian, olvidando antes los intérpretes (`_puestos`).
+
+    Raises:
+        ValueError: Si no es `'claro'` ni `'oscuro'`.
+    """
+    global TEMA, _tema_elegido
+    if tema not in ("claro", "oscuro"):
+        raise ValueError(f"tema desconocido: {tema}")
+    globals().update(OSCURO if tema == "oscuro" else CLARO)
+    TEMA, _tema_elegido = tema, True
+
+
+usar("claro")
+_tema_elegido = False
+
+
+def sistema_oscuro() -> bool:
+    """Dice si el sistema pide a las aplicaciones el tema oscuro.
+
+    En Windows es el valor `AppsUseLightTheme` de la personalización (0 es
+    oscuro); en Linux, la preferencia de GNOME (`color-scheme`, que también
+    siguen KDE y el portal de escritorio) o, sin ella, un tema GTK cuyo nombre
+    acabe en «dark». Cualquier cosa que falle lee como claro: el oscuro es una
+    preferencia, y equivocarse hacia el claro deja la ventana como estaba.
+
+    Es un punto de sustitución para las pruebas.
+    """
+    import os
+    try:
+        if sys.platform == "win32":
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                                r"Software\Microsoft\Windows\CurrentVersion"
+                                r"\Themes\Personalize") as clave:
+                return winreg.QueryValueEx(clave, "AppsUseLightTheme")[0] == 0
+        if sys.platform.startswith("linux"):
+            import subprocess
+            try:
+                salida = subprocess.run(
+                    ["gsettings", "get", "org.gnome.desktop.interface",
+                     "color-scheme"], capture_output=True, text=True,
+                    timeout=2, stdin=subprocess.DEVNULL).stdout
+                if "dark" in salida:
+                    return True
+                if "default" in salida or "light" in salida:
+                    return False
+            except (OSError, subprocess.SubprocessError):
+                pass
+            return os.environ.get("GTK_THEME", "").lower().endswith("dark")
+    except Exception:                               # noqa: BLE001
+        pass
+    return False
+
+
+def barra_titulo(ventana) -> None:
+    """Pone oscura la barra de título de una ventana en Windows, con el tema oscuro.
+
+    La barra la pinta el sistema y no Tk: sin esto una ventana oscura lleva
+    encima una franja blanca. Es el atributo 20 de DWM
+    (`DWMWA_USE_IMMERSIVE_DARK_MODE`, Windows 10 20H1 en adelante); en uno
+    más viejo la llamada falla sin ruido y la barra se queda clara. No hace
+    nada con el tema claro ni fuera de Windows.
+    """
+    if TEMA != "oscuro" or sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        ventana.update_idletasks()
+        hwnd = int(ventana.wm_frame(), 16)
+        valor = ctypes.c_int(1)
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(
+            ctypes.c_void_p(hwnd), 20, ctypes.byref(valor), ctypes.sizeof(valor))
+    except Exception:                               # noqa: BLE001
+        pass
+
+
+def elegir_tema() -> str:
+    """Decide el tema de este proceso, si no estaba decidido, y lo devuelve.
+
+    Manda la variable `PRDRIVE_TEMA` (`claro` u `oscuro`) si está puesta; si
+    no, el sistema (`sistema_oscuro()`).
+    """
+    import os
+    if not _tema_elegido:
+        pedido = os.environ.get("PRDRIVE_TEMA", "").strip().lower()
+        if pedido not in ("claro", "oscuro"):
+            pedido = "oscuro" if sistema_oscuro() else "claro"
+        usar(pedido)
+    return TEMA
 
 _FAMILIAS = {
     "texto": ("Segoe UI", "Noto Sans", "DejaVu Sans", "TkDefaultFont"),
@@ -248,45 +408,82 @@ def ancho_rotulo(widget, *textos: str) -> int:
         return 0
 
 
-_ROLES = {
-    "": (TINTA, "texto"),
-    "Fuerte.": (TINTA, "fuerte"),
-    "Pista.": (TINTA3, "pista"),
-    "Rotulo.": (TINTA3, "rotulo"),
-    "Mono.": (TINTA2, "mono"),
-    "MonoPista.": (APAGADO, "mono_pequena"),
-    "Campo.": (TINTA2, "texto"),
-    "Apagado.": (APAGADO, "pista"),
-    "Titulo.": (TINTA, "titulo"),
-    "Dialogo.": (TINTA, "dialogo"),
-    "Ok.": (OK, "texto"),
-    "Aviso.": (AVISO, "texto"),
-    "Peligro.": (PELIGRO, "texto"),
-}
-"""Cada rol de texto: color de letra y fuente.
+def _roles() -> dict[str, tuple[str, str]]:
+    """Devuelve cada rol de texto: color de letra y fuente.
 
-El fondo lo pone la superficie.
-"""
+    El fondo lo pone la superficie. Es una función, y no una tabla, porque los
+    colores son los del tema puesto (`usar()`).
+    """
+    return {
+        "": (TINTA, "texto"),
+        "Fuerte.": (TINTA, "fuerte"),
+        "Pista.": (TINTA3, "pista"),
+        "Rotulo.": (TINTA3, "rotulo"),
+        "Mono.": (TINTA2, "mono"),
+        "MonoPista.": (TINTA3, "mono_pequena"),
+        "Campo.": (TINTA2, "texto"),
+        "Apagado.": (APAGADO, "pista"),
+        "Titulo.": (TINTA, "titulo"),
+        "Dialogo.": (TINTA, "dialogo"),
+        "Seccion.": (TINTA, "seccion"),
+        "Ok.": (OK, "texto"),
+        "Aviso.": (AVISO, "texto"),
+        "Peligro.": (PELIGRO, "texto"),
+        "Acento.": (ACENTO, "texto"),
+    }
 
-_SUPERFICIES = {
-    "": (PAPEL, None),
-    "Card.": (SUPERFICIE, None),
-    "Gris.": (GRIS_FONDO, None),
-    "Ambar.": (AVISO_FONDO, AVISO_TEXTO),
-    "Rojo.": (PELIGRO_FONDO, PELIGRO),
-    "Azul.": (ACENTO_SUAVE, ACENTO_OSCURO),
-}
-"""Cada superficie: fondo y color de letra que manda sobre el del rol, o `None`."""
 
-_CHIPS = {
-    "": (SUPERFICIE, LINEA, TINTA2),
-    "Ok.": (OK_FONDO, OK_BORDE, OK),
-    "Aviso.": (AVISO_FONDO, AVISO_BORDE, AVISO),
-    "Peligro.": (PELIGRO_FONDO, PELIGRO_BORDE, PELIGRO),
-    "Acento.": (ACENTO_SUAVE, ACENTO_BORDE, ACENTO_OSCURO),
-    "Apagado.": (GRIS_FONDO, LINEA, TINTA3),
-}
-"""Los chips: fondo, borde y letra de cada estado."""
+def _superficies() -> dict[str, tuple[str, str | None]]:
+    """Devuelve cada superficie: fondo y color de letra que manda sobre el del rol, o `None`.
+
+    Las `Nota*` son el fondo de un aviso con baldosa (`aviso()`): ahí la letra
+    es la de siempre, tinta para el título y tinta suave para el cuerpo, porque
+    el color ya lo lleva la baldosa.
+    """
+    return {
+        "": (PAPEL, None),
+        "Card.": (SUPERFICIE, None),
+        "Gris.": (GRIS_FONDO, None),
+        "Ambar.": (AVISO_FONDO, AVISO_TEXTO),
+        "Rojo.": (PELIGRO_FONDO, PELIGRO),
+        "Azul.": (ACENTO_SUAVE, ACENTO_OSCURO),
+        "NotaAmbar.": (AVISO_FONDO, None),
+        "NotaRojo.": (PELIGRO_FONDO, None),
+        "NotaAzul.": (ACENTO_SUAVE, None),
+        "NotaVerde.": (OK_FONDO, None),
+    }
+
+
+def _chips() -> dict[str, tuple[str, str, str, str | None]]:
+    """Devuelve los chips: fondo, borde, letra y color del disco de cada estado.
+
+    El color de un estado va SOLO en el disco que el chip lleva delante (el de
+    la pastilla de la bandeja); la palabra va en tinta sobre el gris hundido.
+    El apagado es la excepción: sin relleno, con el disco hueco.
+    """
+    return {
+        "": (GRIS_FONDO, LINEA, TINTA, None),
+        "Ok.": (GRIS_FONDO, LINEA, TINTA, OK),
+        "Aviso.": (GRIS_FONDO, LINEA, TINTA, AVISO),
+        "Peligro.": (GRIS_FONDO, LINEA, TINTA, PELIGRO),
+        "Acento.": (GRIS_FONDO, LINEA, TINTA, ACENTO),
+        "Apagado.": (PAPEL, BORDE, TINTA3, TINTA3),
+    }
+
+
+def _chips_solidos() -> dict[str, tuple[str, str]]:
+    """Devuelve los chips enfáticos: todo el chip del color, letra encima.
+
+    Son para la excepción que hay que ver desde lejos (falló, borra), no para
+    la norma.
+    """
+    return {"Ok.": (OK, SOBRE_OK), "Aviso.": (AVISO, SOBRE_AVISO),
+            "Peligro.": (PELIGRO, SOBRE_PELIGRO), "Acento.": (ACENTO, SOBRE_ACENTO)}
+
+
+_GLIFO_CHIP = {"Ok.": "ok", "Aviso.": "alert", "Peligro.": "close",
+               "Acento.": "sync", "Apagado.": "clock"}
+"""El glifo del disco de un chip de estado al que no se le da icono."""
 
 _puestos: dict[int, object] = {}
 """Los intérpretes de Tk que ya tienen el tema, por `id`."""
@@ -301,6 +498,7 @@ def olvidar(interp) -> None:
     """
     if _puestos.get(id(interp)) is interp:
         del _puestos[id(interp)]
+        _imagenes.pop(id(interp), None)
 
 
 def _casilla_propia(widget, style) -> None:
@@ -331,6 +529,32 @@ def _casilla_propia(widget, style) -> None:
         pass
 
 
+_imagenes: dict[int, list] = {}
+"""Las imágenes de los elementos del tema, por intérprete: Tk no las retiene."""
+
+
+def _filetes(widget, style) -> None:
+    """Cambia el separador de ttk por un filete plano de 1 px del color de la línea.
+
+    El elemento de serie pinta un surco en relieve con dos tonos sacados de su
+    fondo, uno más oscuro que el otro, y el diseño pide una línea plana y
+    decorativa. Se pinta con un elemento de imagen de 1×1 que se estira.
+    """
+    import tkinter as tk
+    try:
+        guardadas = _imagenes.setdefault(id(widget.tk), [])
+        for estilo, color in (("TSeparator", LINEA), ("Card.TSeparator", LINEA_SUAVE)):
+            img = tk.PhotoImage(master=widget, width=1, height=1)
+            img.put(color, to=(0, 0))
+            guardadas.append(img)
+            elemento = f"Prdrive.{estilo}.filete"
+            style.element_create(elemento, "image", img, border=0, sticky="nswe")
+            style.layout(estilo, [(elemento, {"sticky": "nswe"})])
+    except Exception:                               # noqa: BLE001
+        style.configure("TSeparator", background=LINEA)
+        style.configure("Card.TSeparator", background=LINEA_SUAVE)
+
+
 def apply(widget) -> None:
     """Pinta el tema en el intérprete de Tk al que pertenece `widget`.
 
@@ -341,6 +565,7 @@ def apply(widget) -> None:
     interp = widget.tk
     if _puestos.get(id(interp)) is interp:
         return
+    elegir_tema()
 
     from tkinter import ttk
 
@@ -358,9 +583,9 @@ def apply(widget) -> None:
                     focuscolor=ACENTO, troughcolor=GRIS_FONDO, **linea)
 
     # Superficies y textos.
-    for sup, (fondo, manda) in _SUPERFICIES.items():
+    for sup, (fondo, manda) in _superficies().items():
         style.configure(f"{sup}TFrame", background=fondo)
-        for rol, (color, tipo) in _ROLES.items():
+        for rol, (color, tipo) in _roles().items():
             style.configure(f"{sup}{rol}TLabel", background=fondo,
                             foreground=manda or color, font=fuente(tipo))
         style.configure(f"{sup}TCheckbutton", background=fondo,
@@ -380,56 +605,94 @@ def apply(widget) -> None:
                                    ("Gris.TFrame", (GRIS_FONDO, LINEA)),
                                    ("Ambar.TFrame", (AVISO_FONDO, AVISO_BORDE)),
                                    ("Rojo.TFrame", (PELIGRO_FONDO, PELIGRO_BORDE)),
-                                   ("Azul.TFrame", (ACENTO_SUAVE, ACENTO_BORDE))):
+                                   ("Azul.TFrame", (ACENTO_SUAVE, ACENTO_BORDE)),
+                                   ("NotaAmbar.TFrame", (AVISO_FONDO, AVISO_BORDE)),
+                                   ("NotaRojo.TFrame", (PELIGRO_FONDO, PELIGRO_BORDE)),
+                                   ("NotaAzul.TFrame", (ACENTO_SUAVE, ACENTO_BORDE)),
+                                   ("NotaVerde.TFrame", (OK_FONDO, OK_BORDE))):
         style.configure(nombre, background=fondo, relief="solid", borderwidth=1,
                         bordercolor=color, lightcolor=color, darkcolor=color)
     # …y la misma tarjeta sin borde, para lo que ya va dentro de otra.
-    style.configure("Plano.Card.TFrame", relief="flat", borderwidth=0)
+    for sup in ("Card.", "NotaAmbar.", "NotaRojo.", "NotaAzul.", "NotaVerde."):
+        style.configure(f"Plano.{sup}TFrame", relief="flat", borderwidth=0)
 
-    style.configure("TSeparator", background=LINEA)
-    style.configure("Card.TSeparator", background=LINEA_SUAVE)
+    _filetes(widget, style)
 
     # Chips.
     style.configure("Chip.TLabel", padding=(8, 2), relief="solid", borderwidth=1,
                     font=fuente("pista"))
-    for tipo, (fondo, color, letra) in _CHIPS.items():
+    for tipo, (fondo, color, letra, _disco) in _chips().items():
         style.configure(f"{tipo}Chip.TLabel", background=fondo, foreground=letra,
                         bordercolor=color, lightcolor=color, darkcolor=color)
+    for tipo, (fondo, letra) in _chips_solidos().items():
+        style.configure(f"Solido{tipo}Chip.TLabel", background=fondo,
+                        foreground=letra, bordercolor=fondo, lightcolor=fondo,
+                        darkcolor=fondo)
     # La etiqueta de capa del editor de flags: un chip aún más discreto.
     style.configure("Capa.TLabel", padding=(7, 1), relief="solid", borderwidth=1,
                     font=fuente("etiqueta"), background=GRIS_FONDO,
                     foreground=TINTA3, bordercolor=LINEA, lightcolor=LINEA,
                     darkcolor=LINEA)
 
-    # Botones.
+    # Botones. Jerarquía: sólido (Primary) > tonal > contorno > silencioso;
+    # todos en seminegrita menos el silencioso. Al pasar por encima el de
+    # contorno se hunde y su borde se oscurece; el color queda para el sólido.
+    def bordes(**estados):
+        """El mismo mapa de estados para los tres colores del borde de clam."""
+        return {k: list(estados.items())
+                for k in ("bordercolor", "lightcolor", "darkcolor")}
+
     style.configure("TButton", background=SUPERFICIE, foreground=TINTA,
                     padding=(12, 5), relief="solid", borderwidth=1,
-                    font=fuente(), **borde)
+                    font=fuente("fuerte"), **borde)
     style.map("TButton",
-              background=[("pressed", GRIS_FONDO), ("active", ACENTO_SUAVE),
+              background=[("pressed", LINEA), ("active", GRIS_FONDO),
                           ("disabled", APAGADO_FONDO)],
               foreground=[("disabled", APAGADO)],
-              bordercolor=[("active", ACENTO_BORDE), ("disabled", LINEA)],
-              lightcolor=[("active", ACENTO_BORDE), ("disabled", LINEA)],
-              darkcolor=[("active", ACENTO_BORDE), ("disabled", LINEA)])
+              **bordes(disabled=LINEA, active=TINTA2))
 
-    style.configure("Primary.TButton", background=ACENTO, foreground=SUPERFICIE,
-                    font=fuente("fuerte"), bordercolor=ACENTO_OSCURO,
-                    lightcolor=ACENTO_OSCURO, darkcolor=ACENTO_OSCURO)
+    style.configure("Primary.TButton", background=ACENTO, foreground=SOBRE_ACENTO,
+                    font=fuente("fuerte"), bordercolor=ACENTO,
+                    lightcolor=ACENTO, darkcolor=ACENTO)
     style.map("Primary.TButton",
-              background=[("pressed", ACENTO_OSCURO), ("active", ACENTO_OSCURO),
-                          ("disabled", APAGADO_FONDO)],
+              background=[("disabled", APAGADO_FONDO), ("pressed", ACENTO_OSCURO),
+                          ("active", ACENTO_OSCURO)],
               foreground=[("disabled", APAGADO)],
-              bordercolor=[("disabled", LINEA)], lightcolor=[("disabled", LINEA)],
-              darkcolor=[("disabled", LINEA)])
+              **bordes(disabled=LINEA, pressed=ACENTO_OSCURO,
+                       active=ACENTO_OSCURO))
 
-    style.configure("Danger.TButton", foreground=PELIGRO,
-                    bordercolor=PELIGRO_BORDE, lightcolor=PELIGRO_BORDE,
-                    darkcolor=PELIGRO_BORDE)
+    style.configure("Tonal.TButton", background=ACENTO_SUAVE,
+                    foreground=ACENTO_OSCURO, bordercolor=ACENTO_SUAVE,
+                    lightcolor=ACENTO_SUAVE, darkcolor=ACENTO_SUAVE)
+    style.map("Tonal.TButton",
+              background=[("disabled", APAGADO_FONDO), ("pressed", ACENTO_BORDE),
+                          ("active", ACENTO_BORDE)],
+              foreground=[("disabled", APAGADO)],
+              **bordes(disabled=APAGADO_FONDO, pressed=ACENTO_BORDE,
+                       active=ACENTO_BORDE))
+
+    style.configure("Danger.TButton", foreground=PELIGRO, bordercolor=PELIGRO,
+                    lightcolor=PELIGRO, darkcolor=PELIGRO)
     style.map("Danger.TButton",
-              background=[("pressed", PELIGRO_FONDO), ("active", PELIGRO_FONDO),
-                          ("disabled", APAGADO_FONDO)],
-              foreground=[("disabled", APAGADO)])
+              background=[("disabled", APAGADO_FONDO), ("pressed", PELIGRO_FONDO),
+                          ("active", PELIGRO_FONDO)],
+              foreground=[("disabled", APAGADO)],
+              **bordes(disabled=LINEA, active=PELIGRO, pressed=PELIGRO))
+
+    style.configure("DangerSolid.TButton", background=PELIGRO,
+                    foreground=SOBRE_PELIGRO, bordercolor=PELIGRO,
+                    lightcolor=PELIGRO, darkcolor=PELIGRO)
+    style.map("DangerSolid.TButton",
+              background=[("disabled", APAGADO_FONDO)],
+              foreground=[("disabled", APAGADO)],
+              **bordes(disabled=LINEA, active=TINTA, pressed=TINTA))
+
+    # Tamaños: el grande es la acción principal de una pantalla («Sincronizar
+    # ahora»), 42 px; el pequeño, el que va dentro de una franja o una fila.
+    for base in ("TButton", "Primary.TButton", "Tonal.TButton",
+                 "Danger.TButton", "DangerSolid.TButton"):
+        style.configure(f"Grande.{base}", padding=(24, 10))
+        style.configure(f"Pequeno.{base}", padding=(10, 2))
 
     # El botón de texto: sin caja, solo el acento. Su fondo tiene que ser el de
     # la superficie donde cae, porque un botón sin borde que no la iguale se ve
@@ -438,7 +701,8 @@ def apply(widget) -> None:
                        ("GrisQuiet.", GRIS_FONDO)):
         style.configure(f"{sup}TButton", background=fondo, foreground=ACENTO,
                         relief="flat", borderwidth=1, padding=(8, 4),
-                        bordercolor=fondo, lightcolor=fondo, darkcolor=fondo)
+                        font=fuente(), bordercolor=fondo, lightcolor=fondo,
+                        darkcolor=fondo)
         style.map(f"{sup}TButton",
                   background=[("pressed", ACENTO_SUAVE), ("active", ACENTO_SUAVE),
                               ("disabled", fondo)],
@@ -447,7 +711,8 @@ def apply(widget) -> None:
                   darkcolor=[("active", ACENTO_SUAVE)],
                   foreground=[("disabled", APAGADO)])
     style.configure("AmbarQuiet.TButton", background=AVISO_FONDO,
-                    foreground=AVISO, relief="flat", borderwidth=1, padding=(8, 4),
+                    foreground=AVISO_TEXTO, relief="flat", borderwidth=1,
+                    padding=(8, 4), font=fuente(),
                     bordercolor=AVISO_FONDO, lightcolor=AVISO_FONDO,
                     darkcolor=AVISO_FONDO)
     style.map("AmbarQuiet.TButton",
@@ -536,31 +801,163 @@ def apply(widget) -> None:
     _puestos[id(interp)] = interp
 
 
-def chip(parent, texto: str, tipo: str = "", icono: str | None = None):
+def chip(parent, texto: str, tipo: str = "", icono: str | None = None,
+         solido: bool = False):
     """Devuelve una etiqueta de estado.
+
+    Un chip de estado lleva delante un disco del color de su tono con un glifo
+    dentro, el mismo disco que la pastilla de la bandeja; la palabra va en
+    tinta. Un chip neutro (un modo, un dato) no lleva disco.
 
     Args:
         tipo: `''`, `'Ok.'`, `'Aviso.'`, `'Peligro.'`, `'Acento.'` o
             `'Apagado.'`.
-        icono: Si se pide, va del color del chip.
+        icono: El glifo del disco; sin él, el de su tono. En un chip neutro es
+            un icono pequeño en tinta suave. «warn» se dibuja como «alert»: el
+            triángulo no cabe en el disco.
+        solido: Todo el chip del color del tono, para la excepción que hay que
+            ver desde lejos (falló, borra). No vale para `''` ni `'Apagado.'`.
     """
     from tkinter import ttk
 
     from . import icons
 
-    estilo = f"{tipo}Chip.TLabel"
+    solido = solido and tipo in _chips_solidos()
+    estilo = f"{'Solido' if solido else ''}{tipo}Chip.TLabel"
     etiqueta = ttk.Label(parent, text=texto, style=estilo)
-    if icono:
-        fondo, _borde, color = _CHIPS.get(tipo, _CHIPS[""])
-        img = icons.get(parent, icono, 12, color, fondo)
-        if img is not None:
-            etiqueta.configure(image=img, compound="left", padding=(6, 2))
-            etiqueta.image = img            # Tk no se queda con la referencia
+    fondo, _borde, letra, disco = _chips().get(tipo, _chips()[""])
+    glifo = "alert" if icono == "warn" else icono or _GLIFO_CHIP.get(tipo)
+    img = None
+    if solido:
+        fondo, letra = _chips_solidos()[tipo]
+        img = icons.get(parent, glifo, 12, letra, fondo) if glifo else None
+    elif disco is not None and glifo:
+        img = icons.disco(parent, glifo, disco, _sobre(disco), fondo,
+                          hueco=tipo == "Apagado.")
+    elif icono:
+        img = icons.get(parent, icono, 12, TINTA2, fondo)
+    if img is not None:
+        etiqueta.configure(image=img, compound="left",
+                           padding=(2 if disco is not None and not solido else 6,
+                                    1, 8, 1))
+        etiqueta.image = img            # Tk no se queda con la referencia
     return etiqueta
 
 
-def boton_icono(boton, nombre: str, color: str = TINTA, fondo: str = PAPEL,
-                size: int = 15):
+def _sobre(color: str) -> str:
+    """Devuelve la letra que va sobre un relleno de ese color del tema."""
+    return {OK: SOBRE_OK, AVISO: SOBRE_AVISO, PELIGRO: SOBRE_PELIGRO,
+            ACENTO: SOBRE_ACENTO}.get(color, SUPERFICIE)
+
+
+_NOTAS = {"Ambar.": ("NotaAmbar.", "alert", "AVISO", "SOBRE_AVISO"),
+          "Rojo.": ("NotaRojo.", "close", "PELIGRO", "SOBRE_PELIGRO"),
+          "Azul.": ("NotaAzul.", "doctor", "ACENTO", "SOBRE_ACENTO"),
+          "Verde.": ("NotaVerde.", "ok", "OK", "SOBRE_OK")}
+"""Cada tono de aviso: su superficie, su glifo y los nombres de sus colores.
+
+Van por nombre y no por valor porque los valores son los del tema puesto.
+"""
+
+
+def aviso(parent, titulo: str, cuerpo: str = "", tono: str = "Ambar.",
+          icono: str | None = None, ancho: int = 480):
+    """Devuelve un aviso: una baldosa de color con su glifo, título y cuerpo.
+
+    La baldosa es la de la marca, sólida y del color del tono; el título va en
+    tinta y en seminegrita, y el cuerpo en tinta suave, todo sobre el fondo
+    suave del tono. Es la franja que pide atención (un espejo que borra, una
+    actualización que hay); la que solo informa sigue siendo una pista.
+
+    Args:
+        tono: `'Ambar.'`, `'Rojo.'`, `'Azul.'` o `'Verde.'`.
+        icono: El glifo de la baldosa; sin él, el de su tono.
+        ancho: Dónde se corta el texto, en píxeles del diseño.
+
+    Returns:
+        El marco del aviso. Su columna 1 se estira, y quien quiera añadirle
+        botones los pone en la fila 2 de esa columna (`marco.acciones`, un
+        marco ya colocado, vacío hasta entonces).
+    """
+    from tkinter import ttk
+
+    from . import icons
+
+    sup, glifo, color, sobre = _NOTAS[tono]
+    fondo = _superficies()[sup][0]
+    marco = ttk.Frame(parent, style=f"{sup}TFrame", padding=(12, 10, 16, 10))
+    marco.columnconfigure(1, weight=1)
+    icono = "alert" if icono == "warn" else icono
+    img = icons.baldosa(marco, icono or glifo, globals()[color],
+                        globals()[sobre], fondo)
+    if img is not None:
+        baldosa = ttk.Label(marco, image=img, style=f"{sup}TLabel")
+        baldosa.image = img
+        baldosa.grid(row=0, column=0, rowspan=3, sticky="nw", padx=(0, 12))
+    # Sin título, el cuerpo hace de texto principal: en tinta, y centrado con
+    # la baldosa si cabe en una línea (el alto mínimo de la fila es el suyo).
+    marco.rowconfigure(0, minsize=icons.px(marco, 32) if not titulo else 0)
+    if titulo:
+        ttk.Label(marco, text=titulo, style=f"{sup}Fuerte.TLabel",
+                  wraplength=medida(ancho), justify="left").grid(
+            row=0, column=1, sticky="w", pady=(6 if not cuerpo else 0, 0))
+    if cuerpo:
+        ttk.Label(marco, text=cuerpo,
+                  style=f"{sup}{'Campo.' if titulo else ''}TLabel",
+                  wraplength=medida(ancho), justify="left").grid(
+            row=1 if titulo else 0, column=1, sticky="w",
+            pady=(4, 0) if titulo else 0)
+    marco.acciones = ttk.Frame(marco, style=f"Plano.{sup}TFrame")
+    marco.acciones.grid(row=2, column=1, sticky="w")
+    marco.superficie = sup
+    return marco
+
+
+def linea_estado(parent, icono: str, texto: str, accion: str | None = None,
+                 orden=None, tono: str = "", ancho: int = 380):
+    """Devuelve una línea de estado: icono, frase y, a la derecha, una acción.
+
+    Es la del llavero y la del arranque de la ventana principal: un filete
+    arriba, el icono en gris y la frase en tinta suave. Con `tono='Ambar.'` la
+    línea entera se pone sobre el fondo ámbar y el icono pasa a ir en un disco,
+    para lo que hay que atender.
+
+    Returns:
+        El marco. La acción, si la hay, queda en `marco.boton`.
+    """
+    from tkinter import ttk
+
+    from . import icons
+
+    ambar = tono == "Ambar."
+    fondo = AVISO_FONDO if ambar else PAPEL
+    sup = "NotaAmbar." if ambar else ""
+    marco = ttk.Frame(parent, style=f"Plano.{sup}TFrame" if ambar else "TFrame")
+    marco.columnconfigure(1, weight=1)
+    ttk.Separator(marco).grid(row=0, column=0, columnspan=3, sticky="ew")
+    if ambar:
+        img = icons.disco(marco, "alert" if icono == "warn" else icono, AVISO,
+                          SOBRE_AVISO, fondo)
+    else:
+        img = icons.get(marco, icono, 16, TINTA3, fondo)
+    if img is not None:
+        dibujo = ttk.Label(marco, image=img, style=f"{sup}TLabel")
+        dibujo.image = img
+        dibujo.grid(row=1, column=0, sticky="w", padx=(12, 12), pady=8)
+    ttk.Label(marco, text=texto, style=f"{sup}{'' if ambar else 'Campo.'}TLabel",
+              wraplength=medida(ancho), justify="left").grid(
+        row=1, column=1, sticky="w", pady=8)
+    marco.boton = None
+    if accion:
+        marco.boton = ttk.Button(marco, text=accion, command=orden,
+                                 style="AmbarQuiet.TButton" if ambar
+                                 else "Quiet.TButton")
+        marco.boton.grid(row=1, column=2, sticky="e", padx=(8, 4))
+    return marco
+
+
+def boton_icono(boton, nombre: str, color: str | None = None,
+                fondo: str | None = None, size: int = 15):
     """Le pone un icono a la izquierda del texto a un botón ya creado y lo devuelve.
 
     El icono va bajado un poco dentro de su propia imagen. ttk la centra en la
@@ -580,6 +977,7 @@ def boton_icono(boton, nombre: str, color: str = TINTA, fondo: str = PAPEL,
     """
     from tkinter import font as tkfont
     from . import icons
+    color, fondo = color or TINTA, fondo or PAPEL
     real, alto, bajar = icons.px(boton, size), None, 0
     try:
         m = tkfont.Font(root=boton, font=fuente("normal")).metrics()
@@ -623,4 +1021,5 @@ def marcar_lista(tree) -> None:
     tree.tag_configure("ok", background=SUPERFICIE, foreground=TINTA)
     tree.tag_configure("aviso", background=AVISO_FONDO, foreground=TINTA)
     tree.tag_configure("peligro", background=PELIGRO_FONDO, foreground=PELIGRO)
-    tree.tag_configure("apagado", background=SUPERFICIE, foreground=APAGADO)
+    tree.tag_configure("apagado", background=SUPERFICIE, foreground=TINTA3,
+                       font=(familia("texto"), 10, "italic"))
