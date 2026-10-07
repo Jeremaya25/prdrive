@@ -134,6 +134,44 @@ c("solo intervalo, pero ilegible: el del TOML", prefs.startup_defaults(CFG),
 prefs.PREFS.write_text('{"interval_min": Infinity}', encoding="utf-8")
 c("  infinito tampoco vale", prefs.startup_defaults(CFG)[1], 15.0)
 
+# Marcar o desmarcar una casilla de la ventana guarda SOLO las parejas.
+#
+# Sin recuerdo no se fija el intervalo: sigue saliendo de `[daemon]`.
+prefs.PREFS.unlink()
+c("guardar parejas sin recuerdo", prefs.guardar_parejas(CFG, ["prdrive", "upload"]), True)
+guardado = json.loads(prefs.PREFS.read_text(encoding="utf-8"))
+c("  escribe las parejas en el orden del TOML y las conocidas, sin intervalo",
+  (guardado["action"], guardado["pairs"], guardado["known"], "interval_min" in guardado),
+  ("daemon", ["upload", "prdrive"], ALL, False))
+c("  el servicio sale con ellas y el intervalo del TOML",
+  prefs.startup_defaults(CFG)[:2], (["upload", "prdrive"], 15.0))
+mtime = prefs.PREFS.stat().st_mtime_ns
+time.sleep(0.05)
+c("  la misma selección otra vez no reescribe",
+  (prefs.guardar_parejas(CFG, ["upload", "prdrive"]), prefs.PREFS.stat().st_mtime_ns),
+  (True, mtime))
+
+# Con un intervalo guardado («Configuración»), se conserva.
+prefs.guardar_intervalo(CFG, 45.0)
+prefs.guardar_parejas(CFG, ["docs"])
+c("con un intervalo guardado, guardar las parejas lo conserva",
+  prefs.startup_defaults(CFG)[:2], (["docs"], 45.0))
+
+# Una selección vacía no se guarda: `elegir` la leería como si no hubiera
+# recuerdo. Tampoco entra lo que no es una pareja de la configuración.
+mtime = prefs.PREFS.stat().st_mtime_ns
+c("una selección vacía no se guarda", prefs.guardar_parejas(CFG, []), False)
+c("  ni nombres que no existen", prefs.guardar_parejas(CFG, ["fantasma"]), False)
+c("  y lo anterior sigue como estaba",
+  (prefs.PREFS.stat().st_mtime_ns, prefs.startup_defaults(CFG)[0]), (mtime, ["docs"]))
+
+# Sobre un registro `manual` de antes, lo reemplaza.
+prefs.PREFS.write_text(json.dumps({"action": "manual", "pairs": ["upload"], "known": ALL,
+                                   "interval_min": 5}), encoding="utf-8")
+prefs.guardar_parejas(CFG, ["claves"])
+c("sobre un registro 'manual': vale la selección nueva",
+  prefs.startup_defaults(CFG)[:2], (["claves"], 5.0))
+
 # Lo que se escribe en la pantalla.
 for texto, minutos in (("12", 12.0), (" 2,5 ", 2.5), ("1", 1.0), ("1440", 1440.0)):
     c(f"revisar_intervalo({texto!r})", prefs.revisar_intervalo(texto), minutos)

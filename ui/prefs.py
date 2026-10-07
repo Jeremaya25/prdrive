@@ -8,16 +8,18 @@ dispositivo y acompaña a la persona de una máquina a otra. Es también con lo
 que sale precargada la ventana. Ese recuerdo manda sobre `[daemon]` del TOML,
 que a su vez manda sobre los valores de fábrica.
 
-Lo escriben dos sitios, cada uno con lo suyo:
+Lo escriben tres sitios, cada uno con lo suyo:
+- Las casillas de la ventana (`guardar_parejas`): las parejas marcadas, en
+  cuanto se marcan o desmarcan. Conserva el intervalo guardado y no fija uno
+  si no lo hay.
 - «Iniciar servicio» (`save_prefs`, desde `runsync`): las parejas marcadas y
   el intervalo con el que arranca, que es el que ya estaba guardado.
 - «Ajustes → Configuración» (`guardar_intervalo`): SOLO el intervalo. Si ya
   había parejas elegidas se conservan tal cual; si no, el registro queda sin
   parejas y estas siguen saliendo de `[daemon]` del TOML.
 
-Una pasada manual no lo toca: marcar una sola pareja para sincronizarla ahora
-no puede decidir qué sincroniza el servicio la próxima vez que se enchufe el
-dispositivo. `--auto` y el servicio únicamente leen, para que un arranque
+«Sincronizar ahora» no escribe nada por sí mismo: lo que guarda es la casilla,
+no la pasada. `--auto` y el servicio únicamente leen, para que un arranque
 automático nunca reescriba lo que se decidió a mano.
 
 El fichero conserva el nombre de cuando era «lo último que se eligió en la UI»:
@@ -115,6 +117,36 @@ def guardar_intervalo(config: Config, minutos: float) -> bool:
     else:
         data = {"interval_min": max(1.0, float(minutos))}
     if data == sin_sello:
+        return True  # ya estaba así: no se gasta escritura en el dispositivo
+    return store.write_json(PREFS, {**data, "host": HOST, "saved": store.stamp()})
+
+
+def guardar_parejas(config: Config, pairs: list[str]) -> bool:
+    """Guarda las parejas marcadas en la ventana, sin fijar el intervalo.
+
+    Es lo que escribe cada casilla al marcarse o desmarcarse. Conserva el
+    intervalo ya guardado («Configuración») y, si no lo hay, no escribe uno: el
+    del TOML sigue mandando. No guarda una selección vacía, que `elegir` leería
+    como si no hubiera recuerdo.
+
+    Args:
+        config: La configuración del dispositivo, para saber qué parejas hay.
+        pairs: Las parejas marcadas. Se guardan en el orden del TOML y sin las
+            que ya no existen.
+
+    Returns:
+        True si se ha escrito o ya estaba así; False si no se ha podido
+        escribir o la selección no tiene ninguna pareja.
+    """
+    elegidas = [n for n in config.names if n in set(pairs)]
+    if not elegidas:
+        return False
+    old = read_prefs()
+    data = {"action": "daemon", "pairs": elegidas, "known": list(config.names)}
+    minutos = _minutos(old, None)
+    if minutos is not None:
+        data["interval_min"] = minutos
+    if data == {k: v for k, v in old.items() if k not in ("host", "saved")}:
         return True  # ya estaba así: no se gasta escritura en el dispositivo
     return store.write_json(PREFS, {**data, "host": HOST, "saved": store.stamp()})
 

@@ -160,20 +160,45 @@ with sandbox():
       ("Marcar todas" in nombres, "Desmarcar todas" in nombres), (False, False))
 
 
-# una pasada manual no toca el servicio; arrancarlo sí lleva lo elegido
+# las casillas se guardan al marcarlas; la pasada manual no escribe por su cuenta
 with sandbox():
     prefs.PREFS.unlink(missing_ok=True)
     lanzadas.clear()
+    visto = {}
 
     def a_mano(root) -> None:
-        """Desmarca una pareja y pulsa «Sincronizar ahora»."""
+        """Marca una pareja, mira qué hay guardado y pulsa «Sincronizar ahora»."""
         casillas(root)["claves"].invoke()
+        visto["al marcar"] = prefs.startup_defaults(CUATRO)[0]
+        botones(root)["Marcar todas"].invoke()
+        visto["al marcar todas"] = prefs.startup_defaults(CUATRO)[0]
+        botones(root)["Desmarcar todas"].invoke()
+        visto["al desmarcar todas"] = prefs.startup_defaults(CUATRO)[0]
+        casillas(root)["upload"].invoke()
+        casillas(root)["docs"].invoke()
+        prefs.PREFS.unlink()
         botones(root)["Sincronizar ahora"].invoke()
+        visto["tras sincronizar"] = prefs.PREFS.exists()
 
     ventana(CUATRO, a_mano)
+    c("al marcar una casilla queda guardada, sin pulsar nada más", visto["al marcar"],
+      ["claves", "docs"])
+    c("«Marcar todas» las guarda todas", visto["al marcar todas"],
+      ["upload", "claves", "docs", "prdrive"])
+    c("sin ninguna marcada se queda lo último guardado", visto["al desmarcar todas"],
+      ["upload", "claves", "docs", "prdrive"])
     c("«Sincronizar ahora» lanza lo marcado", [cmd[2:] for cmd in lanzadas],
-      [["claves", "docs"]])
-    c("y no escribe la configuración del servicio", prefs.PREFS.exists(), False)
+      [["upload", "docs"]])
+    c("y por sí sola no escribe la configuración del servicio",
+      visto["tras sincronizar"], False)
+
+    # Se cierra la ventana con una casilla más marcada y se abre otra.
+    prefs.save_prefs("daemon", ["upload", "prdrive"], 15.0, CUATRO.names)
+    ventana(CUATRO, lambda root: casillas(root)["docs"].invoke())
+    visto.clear()
+    ventana(CUATRO, lambda root: visto.update(marcadas=marcadas(root)))
+    c("la ventana siguiente sale con las casillas que se dejaron",
+      visto["marcadas"], ["docs", "prdrive", "upload"])
 
     def servicio(root) -> None:
         """Cambia las parejas y pulsa «Iniciar servicio»."""
