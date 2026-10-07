@@ -200,6 +200,8 @@ with sandbox():
     c("la ventana siguiente sale con las casillas que se dejaron",
       visto["marcadas"], ["docs", "prdrive", "upload"])
 
+    prefs.PREFS.unlink(missing_ok=True)      # sin lo que dejó la ventana de antes
+
     def servicio(root) -> None:
         """Cambia las parejas y pulsa «Iniciar servicio»."""
         visto["spinbox"] = any(isinstance(w, ttk.Spinbox) for w in recorrer(root))
