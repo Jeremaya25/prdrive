@@ -81,6 +81,78 @@ c("sin red no pasa nada: se apunta y se sigue",
   (ag.nueva, any("no he podido mirar si hay versión nueva" in d for d in F.DIARIO)),
   ("v9.9.9", True))
 
+# «Buscar actualizaciones»: preguntar ya, sin esperar a la caché ni a MIRAR_VERSION
+agente.buscar_version = lambda: None
+bs = F.nuevo()
+bs.version = "0.4.0"
+F.vueltas(bs, 1)
+preguntadas: list = []
+respuesta: list = [(REL, None)]
+agente.buscar_version_ya = lambda: preguntadas.append(1) or respuesta[0]
+c("sin versión nueva conocida, la bandeja ofrece «Buscar actualizaciones»",
+  [e.pide for e in bandeja._todas(bandeja.vista(bs.resumen()).menu)
+   if e.texto == "Buscar actualizaciones"],
+  [({"pide": equipo.PIDE_BUSCAR_VERSION},)])
+F.AVISOS.clear()
+bs.pedir({"pide": equipo.PIDE_BUSCAR_VERSION})
+F.vueltas(bs, 1)
+c("pedirlo pregunta a GitHub una vez, y apunta la versión nueva",
+  (len(preguntadas), bs.nueva, bs.buscando), (1, "v9.9.9", False))
+c("  y la dice como siempre, sin aviso de más",
+  [t for t, _ in F.AVISOS], ["Hay una versión nueva de prdrive: v9.9.9"])
+c("  ya conocida, la bandeja ofrece «Actualizar» y no «Buscar»",
+  [e.texto for e in bandeja._todas(bandeja.vista(bs.resumen()).menu)
+   if e.texto.startswith(("Actualiz", "Buscar"))], ["Actualizar a la v9.9.9"])
+
+al_dia = update.Release("v0.4.0", "0.4.0", "prdrive 0.4.0", update.PAGINA, "")
+respuesta[0] = (al_dia, None)
+bs.nueva, bs.nueva_avisada = None, None
+F.AVISOS.clear()
+bs.pedir({"pide": equipo.PIDE_BUSCAR_VERSION})
+F.vueltas(bs, 1)
+c("ya en la última: lo dice y no hay nada que actualizar",
+  (bs.nueva, [x for _, x in F.AVISOS]), (None, ["Ya tienes la última versión (0.4.0)"]))
+
+respuesta[0] = (None, "No he podido preguntarle a GitHub si hay versión nueva: sin red")
+bs.nueva = bs.nueva_avisada = "v9.9.9"
+F.AVISOS.clear()
+bs.pedir({"pide": equipo.PIDE_BUSCAR_VERSION})
+F.vueltas(bs, 1)
+c("sin red lo dice y no olvida lo que ya sabía",
+  (bs.nueva, len(F.AVISOS), "sin red" in F.AVISOS[0][1]), ("v9.9.9", 1, True))
+agente.buscar_version_ya = lambda: (_ for _ in ()).throw(OSError("roto"))
+F.AVISOS.clear()
+bs.pedir({"pide": equipo.PIDE_BUSCAR_VERSION})
+F.vueltas(bs, 1)
+c("una excepción tampoco tumba al agente: se dice y se libera",
+  (bs.buscando, len(F.AVISOS)), (False, 1))
+
+# mientras busca no se acepta otra, y la bandeja lo dice apagado
+agente.hilo = lambda funcion: None            # el hilo no llega a correr
+bs.nueva = None
+bs.pedir({"pide": equipo.PIDE_BUSCAR_VERSION})
+F.vueltas(bs, 1)
+c("mientras busca, la bandeja dice «Buscando…», apagado",
+  [(e.texto, e.activa) for e in bandeja._todas(bandeja.vista(bs.resumen()).menu)
+   if e.texto.startswith(("Buscand", "Buscar"))], [("Buscando actualizaciones…", False)])
+antes = len(F.DIARIO)
+bs.pedir({"pide": equipo.PIDE_BUSCAR_VERSION})
+F.vueltas(bs, 1)
+c("  pedirlo otra vez no lanza otra",
+  any("ya se está buscando" in d for d in F.DIARIO[antes:]), True)
+agente.hilo = lambda funcion: funcion()
+
+# el veredicto, el mismo en la ventana y en la bandeja
+c("veredicto: hay una nueva", update.veredicto(REL, None, "0.4.0"),
+  "Hay una versión nueva: v9.9.9")
+c("  ya está al día", update.veredicto(REL, None, "9.9.9"),
+  "Ya tienes la última versión (9.9.9)")
+c("  un fallo manda aunque haya caché, y solo dice la primera línea",
+  update.veredicto(REL, "No he podido mirar.\nSe enseña lo último.", "0.4.0"),
+  "No he podido mirar.")
+c("  sin release ni motivo", update.veredicto(None, None, "0.4.0"),
+  "No sé qué versión es la última.")
+
 # «Actualizar»: un hijo suelto
 ag.pedir({"pide": equipo.PIDE_ACTUALIZAR})
 F.vueltas(ag, 1)

@@ -1072,32 +1072,44 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
             leer_estado()
         repintar()
 
-    def mirar_version() -> None:
-        """Le pregunta a GitHub si hay algo nuevo, sin que se note.
+    def mirar_version(respuesta=None) -> None:
+        """Le pregunta a GitHub si hay algo nuevo.
 
         Va en un hilo porque la ventana ya está abierta y no puede quedarse
         quieta esperando a la red, y devuelve por `after` porque a Tk solo se
         le habla desde su propio hilo. Todo va bajo `except`: `ui.start()`
         envuelve la llamada entera a `ask()`, así que una excepción suelta aquí
         no daría un error sino un menú de consola sin explicación.
+
+        Args:
+            respuesta: Con él es un «Buscar actualizaciones» pedido a mano: se
+                salta la caché de 24 h y `respuesta(texto)` recibe, desde el
+                hilo de Tk, lo que hay que decirle al usuario (`update.veredicto()`),
+                también si falla. Sin él es la mirada de fondo del arranque,
+                que callada se queda.
         """
-        def responder(nueva) -> None:
-            """Repinta si la versión pendiente ha cambiado."""
+        def responder(nueva, texto) -> None:
+            """Repinta si la versión pendiente ha cambiado y dice la respuesta."""
             # También cuando pasa a None: si la caché estaba adelantada, el
             # aviso tiene que irse, no quedarse puesto hasta la próxima vez.
             if nueva != vista["nueva"]:
                 vista["nueva"] = nueva
                 repintar()
+            if respuesta is not None:
+                respuesta(texto)
 
         def trabajo() -> None:
             """Pregunta a la red, en el hilo, y le pasa la respuesta a la ventana."""
             try:
-                update.check()
+                rel, motivo = update.check(force=respuesta is not None)
                 nueva = update.pending()
+                texto = update.veredicto(rel, motivo, update.installed_version())
             except Exception:                        # noqa: BLE001
-                return       # sin red no hay aviso, y no pasa nada
+                if respuesta is None:
+                    return   # sin red no hay aviso, y no pasa nada
+                nueva, texto = vista["nueva"], "No he podido mirar si hay versión nueva."
             try:
-                root.after(0, responder, nueva)
+                root.after(0, responder, nueva, texto)
             except Exception:                        # noqa: BLE001
                 pass         # la ventana ya se ha cerrado
 
@@ -1581,7 +1593,8 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
                              command=lambda: tk_doctor.open_dialog(
                                  root, vista["config"], lanzar,
                                  abrir_reparacion=abrir_reparacion,
-                                 abrir_llavero=ajustes_llavero),
+                                 abrir_llavero=ajustes_llavero,
+                                 buscar_version=mirar_version),
                              state=apagado)
         theme.boton_icono(ajustes, "gear", theme.ACENTO, theme.PAPEL)
         ajustes.grid(row=0, column=2, sticky="e")

@@ -77,7 +77,10 @@ agente»**. El diseño completo está en
   una unidad («pausar», «reanudar», «bloquear») por el de la unidad,
   `.prdrive/state/servicio.pide`.
 - **Se actualiza solo, cuando se lo pides.** Mira de vez en cuando si hay una
-  versión nueva y avisa una vez; **«Actualizar a la vX»** en la bandeja (o
+  versión nueva y avisa una vez (cada 6 horas, y a GitHub como mucho una vez al
+  día); **«Buscar actualizaciones»** en la bandeja pregunta ya, sin esperar, y
+  dice con una notificación si hay una versión nueva, si ya estás al día o por
+  qué no ha podido mirar; **«Actualizar a la vX»** en la bandeja (o
   `python agente.py actualizar`) baja el código de la release, lo comprueba y
   ejecuta su instalador (`prdrive-install.py --update-agente`): el agente nuevo
   se pone al lado del viejo, se vuelve a registrar y arranca, y la raíz de este

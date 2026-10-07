@@ -22,6 +22,8 @@ No ports: two mailboxes of JSON lines, appended by whoever asks and consumed by 
 
 The agent checks every `MIRAR_VERSION` (6 h) in a thread (`agente.hilo()`, `buscar_version()`, both indirection points; `_agente_falso` runs it inline and never finds one) with `update.check(cache=)`'s 24 h cache in `equipo.DIR/update.json`, says it ONCE, and `resumen()` carries `version`/`nueva`/`actualizando` so the tray offers «Actualizar a la vX».
 
+`PIDE_BUSCAR_VERSION` («Buscar actualizaciones», tray, shown only while no newer version is known; greyed «Buscando actualizaciones…» while `Agente.buscando`) runs `agente.buscar_version_ya()` (indirection point: `update.check(force=True, cache=)`) in a thread via `Agente._buscar_ahora()`, one at a time, and pushes `version_mirada` back so the 6 h look does not repeat it. A newer one sets `nueva` and clears `nueva_avisada`, so `_mirar_version()` says it as always; «already latest» and failures (which keep what was known) go out as one `avisar()` carrying `update.veredicto()`.
+
 `PIDE_ACTUALIZAR` launches ONE detached `agente.py actualizar`, which downloads the tag with `update.download()` to a temp dir (never a root), runs THAT tree's `prdrive-install.py --update-agente` with the agent's Python (`update.agent_command()`, `agente.ejecutar()`), copies its output to `agente.log` and removes the temp dir.
 
 `install/agente.actualizar()` = `preparar()` beside, `parar_agente()`, `registrar()`, menu, `instalacion.json`, `actualizar_raices()` (`deploy.deploy_code()` on each OPEN host root; a locked one is left for its window), `podar()`, `arrancar()`. **`podar()` never deletes the runtime of `sys.executable`**: «Actualizar» runs on the old Python, and deleting half a live interpreter's stdlib kills it on its next import.
