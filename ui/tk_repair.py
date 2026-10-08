@@ -32,8 +32,8 @@ from __future__ import annotations
 from common import revision
 from common.model import Config
 
-from . import abrir, icons, repair, theme
-from .tk import TITLE, cabecera, cuerpo_visible, modal, mostrar, separador_fila
+from . import abrir, repair, theme
+from .tk import TITLE, Panel, cabecera, dialogo, mostrar, pie, separador_fila
 
 SEMAFORO = {
     revision.GRAVE: ("warn", "Peligro.", "grave"),
@@ -70,23 +70,32 @@ def open_dialog(parent, config: Config, lanzar, marcadas=None) -> bool:
         marcadas: Las parejas elegidas en la ventana principal; es lo que se
             simula si se pide una pasada de prueba. Sin ellas, todas.
     """
+    return dialogo(parent, "Reparación",
+                   lambda p: construir(p, config, lanzar, marcadas),
+                   defecto=False, ensenar=mostrar)
+
+
+def construir(panel: Panel, config: Config, lanzar, marcadas=None) -> None:
+    """Dibuja «Reparación» en `panel` (su diálogo o «Ajustes»).
+
+    Devuelve `True` por el panel si cambia algo del dispositivo. Lo que lanza
+    una pasada cierra antes la ventana entera (`panel.cerrar`): la de salida es
+    hija de la principal.
+    """
     from tkinter import messagebox, ttk
 
     from . import tk_conflicts, tk_pairs
 
-    dlg = modal(parent, "Reparación")
-    estado: dict = {"cambiado": False, "hallazgos": []}
-
-    marco = cuerpo_visible(dlg, padding=(22, 20, 22, 18))
-    marco.columnconfigure(0, weight=1)
+    dlg, marco = panel.ventana, panel.marco
+    estado: dict = {"hallazgos": []}
 
     cabecera(marco, "Reparación",
              "Lo que está mal en este dispositivo, y lo que se puede hacer con "
              "ello. Nada se toca sin que lo confirmes antes.",
              ancho=600, estilo="Dialogo.TLabel").grid(row=0, column=0, sticky="w")
 
-    tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(14, 10, 14, 12))
-    tarjeta.grid(row=1, column=0, sticky="ew", pady=(16, 0))
+    tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(theme.E4, theme.E3, theme.E4, theme.E3))
+    tarjeta.grid(row=1, column=0, sticky="ew", pady=(theme.E4, 0))
     tarjeta.columnconfigure(0, weight=1)
 
     # Las acciones.
@@ -107,7 +116,7 @@ def open_dialog(parent, config: Config, lanzar, marcadas=None) -> bool:
             messagebox.showerror(TITLE, str(e), parent=dlg)
             repintar()
             return
-        estado["cambiado"] = True
+        panel.devolver(True)
         repintar()
         messagebox.showinfo(TITLE, "\n".join(hechos) or "Hecho.", parent=dlg)
 
@@ -121,9 +130,9 @@ def open_dialog(parent, config: Config, lanzar, marcadas=None) -> bool:
         if not tk_pairs.confirmar_plan(dlg, repair.aviso_resync(hallazgo),
                                        f"Resincronizar «{hallazgo.pareja}»", ""):
             return
-        estado["cambiado"] = True
-        dlg.destroy()
-        lanzar(f"Resincronizar «{hallazgo.pareja}»", repair.args_resync(hallazgo))
+        panel.devolver(True)
+        panel.cerrar(lambda: lanzar(f"Resincronizar «{hallazgo.pareja}»",
+                                    repair.args_resync(hallazgo)))
 
     def ver_log(hallazgo) -> None:
         """Abre el log de la pasada que falló, si quedó."""
@@ -148,31 +157,28 @@ def open_dialog(parent, config: Config, lanzar, marcadas=None) -> bool:
         """Pinta una avería con su detalle y devuelve la siguiente fila libre."""
         icono, chip, rotulo = SEMAFORO.get(hallazgo.gravedad, SEMAFORO[revision.AVISO])
         cabeza = ttk.Frame(padre, style="Plano.Card.TFrame")
-        cabeza.grid(row=linea, column=0, sticky="ew", pady=(8, 0))
+        cabeza.grid(row=linea, column=0, sticky="ew", pady=(theme.E2, 0))
         cabeza.columnconfigure(1, weight=1)
         linea += 1
 
-        img = icons.get(cabeza, icono, 14, theme.AVISO if hallazgo.gravedad
-                        != revision.NOTA else theme.TINTA3, theme.SUPERFICIE)
-        marca = ttk.Label(cabeza, style="Card.TLabel")
-        if img is not None:
-            marca.configure(image=img)
-            marca.image = img
-        marca.grid(row=0, column=0, sticky="w", padx=(0, 8))
+        marca = theme.etiqueta_icono(
+            cabeza, icono, theme.AVISO if hallazgo.gravedad != revision.NOTA
+            else theme.TINTA3, "fuerte", 16, superficie="Card.")
+        marca.grid(row=0, column=0, sticky="w", padx=(0, theme.E2))
         ttk.Label(cabeza, text=hallazgo.titulo, style="Card.Fuerte.TLabel",
                   wraplength=theme.medida(420), justify="left").grid(
             row=0, column=1, sticky="w")
-        theme.chip(cabeza, rotulo, chip).grid(row=0, column=2, sticky="e", padx=(10, 0))
+        theme.chip(cabeza, rotulo, chip).grid(row=0, column=2, sticky="e", padx=(theme.E3, 0))
 
         texto = BOTONES.get(hallazgo.clave)
         if texto is not None:
             boton = ttk.Button(cabeza, text=texto, style="CardQuiet.TButton",
                                command=lambda h=hallazgo: ACCIONES[h.clave](h))
-            boton.grid(row=0, column=3, sticky="e", padx=(10, 0))
+            boton.grid(row=0, column=3, sticky="e", padx=(theme.E3, 0))
 
         ttk.Label(padre, text=hallazgo.detalle, style="Card.Pista.TLabel",
                   justify="left", wraplength=theme.medida(560)).grid(
-            row=linea, column=0, sticky="w", pady=(3, 8))
+            row=linea, column=0, sticky="w", pady=(theme.E1, theme.E2))
         return linea + 1
 
     def repintar() -> None:
@@ -199,7 +205,7 @@ def open_dialog(parent, config: Config, lanzar, marcadas=None) -> bool:
         if not lista:
             ttk.Label(tarjeta, text=TODO_BIEN, style="Card.Pista.TLabel",
                       justify="left", wraplength=theme.medida(560)).grid(
-                row=0, column=0, sticky="w", pady=(4, 4))
+                row=0, column=0, sticky="w", pady=(theme.E1, theme.E1))
         linea = 0
         for i, hallazgo in enumerate(lista):
             if i:
@@ -210,17 +216,20 @@ def open_dialog(parent, config: Config, lanzar, marcadas=None) -> bool:
         conflictos.grid_remove()
         if any(h.clave == "conflicto" for h in estado["hallazgos"]):
             conflictos.grid()
+        if panel.incrustado:
+            panel.ajustar()
+            return
         visor = getattr(dlg, "visor", None)
         if visor is not None:
             visor.encajar(dlg)
 
     def al_resolver() -> None:
         """Anota el cambio y repinta tras resolver un conflicto."""
-        estado["cambiado"] = True
+        panel.devolver(True)
         repintar()
 
     conflictos = tk_conflicts.seccion(marco, dlg, config, al_resolver)
-    conflictos.grid(row=2, column=0, sticky="ew", pady=(18, 0))
+    conflictos.grid(row=2, column=0, sticky="ew", pady=(theme.E4, 0))
 
     # El pie.
 
@@ -229,32 +238,26 @@ def open_dialog(parent, config: Config, lanzar, marcadas=None) -> bool:
         nombres = list(marcadas or [p.name for p in config.pairs])
         if not nombres:
             return
-        dlg.destroy()
-        lanzar("Simulación", repair.args_simular(nombres))
+        panel.cerrar(lambda: lanzar("Simulación", repair.args_simular(nombres)))
 
     def informe() -> None:
         """Cierra y lanza el informe completo del estado (`--doctor`)."""
-        dlg.destroy()
-        lanzar("Informe del estado", ["--doctor"])
+        panel.cerrar(lambda: lanzar("Informe del estado", ["--doctor"]))
 
-    ttk.Separator(marco, orient="horizontal").grid(row=3, column=0, sticky="ew",
-                                                   pady=(18, 0))
-    pie = ttk.Frame(marco)
-    pie.grid(row=4, column=0, sticky="ew", pady=(14, 0))
-    pie.columnconfigure(2, weight=1)
+    botones = pie(marco, 3)
+    botones.columnconfigure(2, weight=1)
     # «Simular» vive aquí y no en la ventana principal: es lo que se hace ANTES
     # de sincronizar cuando algo no cuadra, y esta es la pantalla de «a ver qué
     # hay». No escribe nada, así que no necesita ceremonia.
-    simula = ttk.Button(pie, text="Simular una pasada…", style="Quiet.TButton",
+    simula = ttk.Button(botones, text="Simular una pasada…", style="Quiet.TButton",
                         command=simular)
     theme.boton_icono(simula, "eye", theme.ACENTO, theme.PAPEL)
     simula.grid(row=0, column=0, sticky="w")
-    ver = ttk.Button(pie, text="Ver el informe completo", style="Quiet.TButton",
+    ver = ttk.Button(botones, text="Ver el informe completo", style="Quiet.TButton",
                      command=informe)
     theme.boton_icono(ver, "doctor", theme.ACENTO, theme.PAPEL)
-    ver.grid(row=0, column=1, sticky="w", padx=(6, 0))
-    ttk.Button(pie, text="Cerrar", command=dlg.destroy).grid(row=0, column=3, sticky="e")
+    ver.grid(row=0, column=1, sticky="w", padx=(theme.E2, 0))
+    ttk.Button(botones, text="Cerrar", command=panel.cerrar).grid(row=0, column=3,
+                                                                  sticky="e")
 
     repintar()
-    mostrar(dlg, parent)
-    return estado["cambiado"]

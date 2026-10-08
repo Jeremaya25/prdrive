@@ -8,15 +8,17 @@ dependencias (nada de Pillow, nada de cairosvg), la única salida es pintarlos,
 y como Tk 8.6 no sabe leer SVG, se pintan a mano.
 
 Cada icono es una lista de primitivas (segmentos, arcos, círculos, rectángulos)
-en el sistema de coordenadas del artboard, y `_rasterizar()` las convierte en
+en el sistema de coordenadas del artboard, y `_capas_rgba()` las convierte en
 píxeles midiendo, para cada píxel, la distancia a la tinta más cercana. Esa
 distancia da el suavizado gratis y a cualquier tamaño: no hay que redibujar el
 icono para 20 px, se pide con `size=20`.
 
-**El fondo se pasa y no se elige**: `PhotoImage.put()` no admite transparencia,
-así que el icono se compone contra el color sobre el que va a caer. No es una
-limitación cara porque toda la paleta es plana (papel, superficie, acento) y
-ese color se sabe siempre en el sitio donde se pone el icono.
+**Todo lleva su alfa**: la imagen se le da a Tk como PNG (`_foto()`), que es
+la única forma de pasarle transparencia con matices, y Tk la compone contra lo
+que haya debajo. Así el mismo icono vale sobre el papel, sobre una tarjeta y
+sobre el gris de un botón al pasar por encima. Es también lo que hace posibles
+los controles redondeados del tema: sus piezas (`caja()`) son transparentes
+por fuera de la forma.
 
 Nada de aquí puede tumbar la interfaz: `get()` devuelve `None` si algo falla y
 quien lo llama pinta el texto sin icono. Un adorno no puede impedir que se abra
@@ -31,48 +33,33 @@ TRAZO = 1.6
 """Anchura de trazo del diseño, en unidades de la rejilla de 16."""
 
 
-def _engranaje(dientes: int = 8, radio: float = 4.2, pie: float = 4.8,
-               punta: float = 6.3, medio: float = 0.5) -> list[tuple]:
-    """Devuelve las primitivas de un engranaje: un anillo con dientes macizos.
-
-    Cada diente son dos segmentos paralelos, de `pie` a `punta` y a `medio` a
-    cada lado del radio, que con el trazo se funden en uno más ancho que el
-    trazo. Rayos sueltos de un trazo alrededor de un círculo se leen como un
-    sol; y un contorno dentado de una polilínea tiene tantas esquinas que a
-    16 px no se distingue de un círculo.
-    """
-    prims: list[tuple] = [("c", 8, 8, radio)]
-    for i in range(dientes):
-        angulo = math.radians(180 / dientes + i * 360 / dientes)
-        ux, uy = math.cos(angulo), math.sin(angulo)
-        for lado in (-medio, medio):
-            prims.append(("l", round(8 + pie * ux - lado * uy, 2),
-                          round(8 + pie * uy + lado * ux, 2),
-                          round(8 + punta * ux - lado * uy, 2),
-                          round(8 + punta * uy + lado * ux, 2)))
-    return prims
-
-
 GLIFOS: dict[str, list[tuple]] = {
     # Los dos sentidos de bisync, que es también la marca de la aplicación.
     "sync": [("a", 8, 8, 5, 180, 315), ("l", 11.5, 4.5, 13, 6),
              ("p", [(13, 2.5), (13, 6), (9.5, 6)]),
              ("a", 8, 8, 5, 0, 135), ("l", 4.5, 11.5, 3, 10),
              ("p", [(3, 13.5), (3, 10), (6.5, 10)])],
-    "dispositivo": [("r", 5.5, 2.5, 5, 8), ("p", [(6.5, 10.5), (6.5, 13.5), (9.5, 13.5),
-                                          (9.5, 10.5)]),
-            ("l", 7, 2.5, 7, 1.9), ("l", 9, 2.5, 9, 1.9)],
-    "nas": [("r", 2, 3, 12, 4), ("r", 2, 9, 12, 4), ("d", 4.5, 5), ("d", 4.5, 11)],
+    # Una unidad USB: el conector y el cuerpo.
+    "dispositivo": [("p", [(6.25, 5.5), (6.25, 2.5), (9.75, 2.5), (9.75, 5.5)]),
+                    ("r", 4.5, 5.5, 7, 8)],
+    "nas": [("r", 2.5, 3, 11, 4), ("r", 2.5, 9, 11, 4), ("d", 5, 5), ("d", 5, 11)],
     # Los tres modos: los dos sentidos, y cada uno por su cuenta.
     "both": [("l", 5, 13.5, 5, 3), ("p", [(2.5, 5.5), (5, 3), (7.5, 5.5)]),
              ("l", 11, 2.5, 11, 13), ("p", [(8.5, 10.5), (11, 13), (13.5, 10.5)])],
     "up": [("l", 8, 13, 8, 3), ("p", [(4, 7), (8, 3), (12, 7)])],
     "down": [("l", 8, 3, 8, 13), ("p", [(4, 9), (8, 13), (12, 9)])],
     "ok": [("p", [(3, 8.5), (6.5, 12), (13, 4.5)])],
+    # La admiración sola: el glifo de aviso dentro de un disco o una baldosa,
+    # donde el triángulo de «warn» no cabe.
+    "alert": [("l", 8, 3.25, 8, 9.5), ("d", 8, 12.5)],
+    "close": [("l", 4, 4, 12, 12), ("l", 12, 4, 4, 12)],
     "warn": [("p", [(8, 3.9), (13.2, 12.8), (2.8, 12.8), (8, 3.9)]),
              ("l", 8, 7, 8, 9.8), ("d", 8, 11.6)],
     "clock": [("c", 8, 8, 6), ("p", [(8, 4.5), (8, 8), (10.5, 9.5)])],
-    "gear": _engranaje(),
+    # Los ajustes: dos deslizadores, cada uno con su tirador relleno.
+    "gear": [("l", 2.5, 4.5, 13.5, 4.5), ("l", 2.5, 11.5, 13.5, 11.5),
+             ("c", 10.5, 4.5, 1.7), ("c", 10.5, 4.5, 0.45),
+             ("c", 5.5, 11.5, 1.7), ("c", 5.5, 11.5, 0.45)],
     # Una pareja es un ida y vuelta entre dos sitios: dos flechas opuestas.
     "parejas": [("l", 2.6, 5.4, 12.9, 5.4), ("p", [(10.4, 2.9), (12.9, 5.4), (10.4, 7.9)]),
                 ("l", 13.4, 10.6, 3.1, 10.6), ("p", [(5.6, 8.1), (3.1, 10.6), (5.6, 13.1)])],
@@ -91,6 +78,9 @@ GLIFOS: dict[str, list[tuple]] = {
               ("p", [(6.5, 4.5), (6.5, 2.5), (9.5, 2.5), (9.5, 4.5)]),
               ("p", [(5, 4.5), (5.7, 13.5), (10.3, 13.5), (11, 4.5)])],
     "plus": [("l", 8, 3, 8, 13), ("l", 3, 8, 13, 8)],
+    # Los galones de un desplegable y de las flechas de un campo numérico.
+    "abajo": [("p", [(4, 6.5), (8, 10.5), (12, 6.5)])],
+    "arriba": [("p", [(4, 9.5), (8, 5.5), (12, 9.5)])],
     "back": [("l", 13, 8, 3, 8), ("p", [(7, 4), (3, 8), (7, 12)])],
     "file": [("p", [(4, 2), (9, 2), (12, 5), (12, 14), (4, 14), (4, 2)]),
              ("p", [(9, 2), (9, 5.4), (12, 5.4)])],
@@ -158,28 +148,19 @@ vista. El primero es el de la aplicación. Todos son oscuros y apagados, como
 def _capas_marca(size: int, campo: str = CAMPO) -> list[tuple[str, float, list[tuple]]]:
     """Devuelve las capas del icono de la marca.
 
-    A 16 px se simplifica, como manda el diseño: trazo más grueso, sin puntas
-    de flecha y con el cuerpo entero. Lo que queda es un anillo partido, que
-    sigue leyéndose como «sincroniza».
-
-    El ORDEN es el del diseño y no es decorativo: las dos puntas van después de
-    los dos arcos. Agrupadas por color (arco blanco y punta blanca juntos) el
-    arco ámbar, que se pinta después, se come media punta blanca.
+    Es la marca mínima del sistema de diseño: dos arcos gruesos de extremos
+    redondos, blanco a la derecha y ámbar a la izquierda, alrededor de una
+    unidad de una sola pieza (el conector y el cuerpo). Sin puntas de flecha
+    ni detalles finos: a 16 px no se leían y a 64 sobraban. A 20 px o menos la
+    unidad es un rectángulo liso.
     """
-    campo = [(campo, 0.0, [("rr", 0, 0, 64, 64, 13)])]
+    capas = [(campo, 0.0, [("rr", 0, 0, 64, 64, 14)]),
+             (MARCA, 7.0, [("a", 32, 32, 21, -78, 78)]),
+             (AMBAR, 7.0, [("a", 32, 32, 21, 102, 258)])]
     if size <= 20:
-        return campo + [
-            (MARCA, 7.0, [("a", 32, 32, 21, -90, 90)]),
-            (AMBAR, 7.0, [("a", 32, 32, 21, 90, 270)]),
-            (MARCA, 0.0, [("fr", 27, 22, 10, 20)]),
-        ]
-    return campo + [
-        (MARCA, 5.5, [("a", 32, 32, 21, -90, 90)]),
-        (AMBAR, 5.5, [("a", 32, 32, 21, 90, 270)]),
-        (MARCA, 5.5, [("p", [(27, 6.5), (32, 11), (27, 15.5)])]),
-        (AMBAR, 5.5, [("p", [(37, 57.5), (32, 53), (37, 48.5)])]),
-        (MARCA, 0.0, [("fr", 27, 22, 10, 15), ("fr", 29.5, 37, 5, 5.5)]),
-    ]
+        return capas + [(MARCA, 0.0, [("rr", 27, 21, 10, 22, 2)])]
+    return capas + [(MARCA, 0.0, [("fr", 29, 20, 6, 6.5),
+                                  ("rr", 25, 26, 14, 18, 1.75)])]
 
 
 def _dist_segmento(x: float, y: float, x1: float, y1: float, x2: float, y2: float,
@@ -373,8 +354,13 @@ def _expandir(prims, semi: float) -> list[tuple]:
     return salida
 
 
-def _capas_rgba(capas, caja: float, size: int) -> list[list[tuple]]:
+def _capas_rgba(capas, caja: float, size: int,
+                alto: int | None = None) -> list[list[tuple]]:
     """Devuelve las capas compuestas entre sí sobre transparente.
+
+    `caja` es lo que mide el lado ANCHO del dibujo en su rejilla y `size` los
+    píxeles que le tocan; `alto` son las filas, si no es cuadrado (las piezas
+    de `caja()`).
 
     Son filas de `(r, g, b, a)`. Se recorre píxel a píxel midiendo la distancia
     a la tinta: dentro del trazo la cobertura es 1, fuera 0 y en el borde el
@@ -385,23 +371,31 @@ def _capas_rgba(capas, caja: float, size: int) -> list[list[tuple]]:
     necesidades distintas: `PhotoImage` no sabe de transparencia y quiere el
     dibujo ya compuesto contra un color, y un `.ico` la necesita (si no, las
     esquinas redondeadas del icono saldrían recortadas sobre un cuadrado).
+
+    Una capa de color `None` no pinta: recorta lo que haya debajo (la
+    pastilla de la bandeja se recorta del campo, sin halo).
     """
     unidad = caja / size                   # cuánto mide un píxel en la rejilla
-    colores = [(_rgb(color), ancho / 2, _expandir(prims, ancho / 2))
+    colores = [(None if color is None else _rgb(color), ancho / 2,
+                _expandir(prims, ancho / 2))
                for color, ancho, prims in capas]
     filas = []
-    for py in range(size):
+    for py in range(size if alto is None else alto):
         y = (py + 0.5) * unidad
         fila = []
         for px in range(size):
             x = (px + 0.5) * unidad
             r = g = b = 0
             acumulado = 0.0
-            for (cr, cg, cb), semi, prims in colores:
+            for rgb, semi, prims in colores:
                 sd = min(_sdf(p, x, y, semi) for p in prims)
                 alfa = min(1.0, max(0.0, 0.5 - sd / unidad))
                 if alfa <= 0:
                     continue
+                if rgb is None:            # una capa que recorta lo de debajo
+                    acumulado *= 1 - alfa
+                    continue
+                cr, cg, cb = rgb
                 # 'source over' con alfa sin premultiplicar.
                 nuevo = alfa + acumulado * (1 - alfa)
                 mezcla = acumulado * (1 - alfa) / nuevo
@@ -414,15 +408,18 @@ def _capas_rgba(capas, caja: float, size: int) -> list[list[tuple]]:
     return filas
 
 
-def _rasterizar(capas, caja: float, size: int, fondo: str,
-                bajar: int = 0, alto: int | None = None) -> str:
-    """Devuelve las capas aplanadas contra `fondo`, listas para `put()`.
+_VACIO = (0, 0, 0, 0.0)
+"""Un píxel transparente, en el formato de `_capas_rgba`."""
 
-    Es el texto que entiende `PhotoImage.put()`. La imagen mide `alto` de alta
-    y el dibujo empieza en la fila `bajar`; el resto son filas de fondo,
-    invisibles porque el icono ya viene aplanado contra el fondo del botón. Es
-    la única forma de mover un icono dentro de un botón: ttk lo centra en la
-    caja de la línea y no hay ningún hueco que tocar.
+
+def _con_hueco(filas, ancho: int, bajar: int = 0, alto: int | None = None,
+               derecha: int = 0) -> list[list[tuple]]:
+    """Devuelve las filas metidas en una imagen mayor, con lo de alrededor transparente.
+
+    El dibujo empieza en la fila `bajar` de una imagen de `alto` filas y lleva
+    `derecha` columnas vacías a su derecha. Es la única forma de mover un
+    icono dentro de un botón: ttk lo centra en la caja de la línea y no hay
+    ningún hueco que tocar.
 
     Se da la altura ENTERA y no solo cuántas filas poner encima porque ttk
     centra la imagen: añadir filas arriba y dejar que crezca la mueve solo
@@ -430,20 +427,21 @@ def _rasterizar(capas, caja: float, size: int, fondo: str,
     texto. Con la altura fija el sitio del dibujo se decide aquí y no se mueve
     nada más.
     """
-    fr, fg, fb = _rgb(fondo)
-    alto = size + bajar if alto is None else alto
-    vacia = "{" + " ".join(["#%02x%02x%02x" % (fr, fg, fb)] * size) + "}"
-    salida = [vacia] * bajar
-    for fila in _capas_rgba(capas, caja, size):
-        celdas = []
-        for r, g, b, a in fila:
-            celdas.append(f"#{round(r * a + fr * (1 - a)):02x}"
-                          f"{round(g * a + fg * (1 - a)):02x}"
-                          f"{round(b * a + fb * (1 - a)):02x}")
-        salida.append("{" + " ".join(celdas) + "}")
+    total = ancho + derecha
+    vacia = [_VACIO] * total
+    salida = [vacia] * bajar + [fila + [_VACIO] * derecha for fila in filas]
+    alto = len(salida) if alto is None else alto
     salida += [vacia] * max(0, alto - len(salida))
-    return " ".join(salida[:alto])
+    return salida[:alto]
 
+
+_PNGS: dict[tuple, str] = {}
+"""Lo ya pintado, como PNG en base64 y sin Tk: vale para todos los intérpretes.
+
+El asistente abre su intérprete después de que la ventana principal cierre el
+suyo, y las piezas de los controles (`caja()`) son casi un centenar: así se
+rasterizan una vez por proceso, no una por ventana.
+"""
 
 _CACHE: dict[tuple, tuple] = {}
 """Las imágenes ya pintadas.
@@ -484,82 +482,317 @@ def px(widget, medida: int) -> int:
     return max(1, round(medida * escala / 1.3333))
 
 
-def _dibujar(widget, clave: tuple, capas, caja: float, size: int, fondo: str,
-             bajar: int = 0, alto: int | None = None):
-    """Devuelve la imagen de esas capas, pintándola solo si no está en la caché."""
+def _foto(widget, clave: tuple, filas):
+    """Devuelve la imagen de clave `clave`, haciéndola con `filas()` solo si hace falta.
+
+    `filas` es una función que devuelve las filas `(r, g, b, a)`: solo se llama
+    si la imagen no está pintada ya en este proceso. La imagen se le da a Tk
+    como PNG porque es la única manera de pasarle un alfa con matices:
+    `PhotoImage.put()` escribe colores opacos y nada más.
+    """
     interp = widget.tk
     ficha = (id(interp), *clave)
     guardado = _CACHE.get(ficha)
     if guardado is not None and guardado[0] is interp:
         return guardado[1]
+    datos = _PNGS.get(clave)
+    if datos is None:
+        import base64
+        datos = base64.b64encode(_png(filas())).decode("ascii")
+        _PNGS[clave] = datos
     import tkinter as tk
-    img = tk.PhotoImage(master=widget, width=size,
-                        height=size + bajar if alto is None else alto)
-    img.put(_rasterizar(capas, caja, size, fondo, bajar, alto))
+    img = tk.PhotoImage(master=widget, data=datos)
     _CACHE[ficha] = (interp, img)
     return img
 
 
+def _dibujar(widget, clave: tuple, capas, caja: float, size: int, fondo: str = "",
+             bajar: int = 0, alto: int | None = None):
+    """Devuelve la imagen de esas capas sobre transparente, pintándola solo si hace falta.
+
+    `fondo` ya no se usa: se acepta por las llamadas de antes, cuando el icono
+    se aplanaba contra el color del sitio donde caía. Ahora lleva su alfa y Tk
+    lo compone contra lo que haya debajo, sea papel, tarjeta o el gris de un
+    botón al pasar por encima.
+    """
+    return _foto(widget, (*clave, "@alfa"),
+                 lambda: _con_hueco(_capas_rgba(capas, caja, size), size,
+                                    bajar, alto))
+
+
 def get(widget, nombre: str, size: int = 16, color: str = "#3B362F",
-        fondo: str = "#FAF9F7", bajar: int = 0, alto: int | None = None):
-    """Devuelve el icono `nombre` al tamaño del diseño, ya compuesto contra `fondo`.
+        fondo: str = "#FAF9F7", bajar: float = 0, alto: int | None = None):
+    """Devuelve el icono `nombre` al tamaño del diseño, sobre transparente.
+
+    `fondo` no cambia el dibujo (lleva su alfa); se sigue aceptando porque lo
+    dan todas las llamadas.
 
     Devuelve `None` si no se puede pintar (un nombre que no existe, un Tk que
     se está cerrando) y quien llama se queda sin icono pero con su texto.
 
     Args:
         bajar: Lo mueve hacia abajo esos píxeles dentro de su propia imagen; lo
-            usa `theme.boton_icono` para alinearlo con el texto de al lado.
+            usa `theme.icono_linea` para alinearlo con el texto de al lado.
+            Puede llevar decimales: la parte entera son filas vacías encima y
+            la fraccionaria se dibuja (el rasterizador mide distancias, así
+            que medio píxel más abajo es otro suavizado, no un redondeo).
     """
     try:
         real = px(widget, size)
-        capas = [(color, TRAZO, GLIFOS[nombre])]
-        return _dibujar(widget, (nombre, real, color, fondo, bajar, alto), capas,
-                        16.0, real, fondo, bajar, alto)
+        entero = int(bajar)
+        fraccion = round(bajar - entero, 2)
+        prims = GLIFOS[nombre]
+        filas = real
+        if fraccion:
+            prims = _mover(prims, 0, fraccion * 16.0 / real)
+            filas = real + 1
+        capas = [(color, TRAZO, prims)]
+        return _foto(widget, (nombre, real, color, entero, fraccion, alto, "@alfa"),
+                     lambda: _con_hueco(_capas_rgba(capas, 16.0, real, filas), real,
+                                        entero, alto))
     except Exception:
         return None
 
 
-_CASILLAS = {
-    "marcada": ("#3D5A80", "#3D5A80", "#FFFFFF"),
-    "vacia": ("#FFFFFF", "#B9B2A6", None),
-    "apagada": ("#F6F4F0", "#E4E0D8", None),
-    "apagada-marcada": ("#C9C3B8", "#C9C3B8", "#F6F4F0"),
-}
-"""Las casillas de marcar por estado: relleno, borde y color del visto.
+def _casillas() -> dict[str, tuple[str, str, str | None]]:
+    """Devuelve las casillas de marcar por estado: relleno, borde y color del visto.
 
-Son un cuadrado de 15, azul con el visto en blanco cuando está marcada. Se
-pintan aquí porque el indicador de clam dibuja una especie de aspa y el diseño
-pide un visto.
-"""
+    Son un cuadrado de 15, del acento con el visto encima cuando está marcada.
+    Se pintan aquí porque el indicador de clam dibuja una especie de aspa y el
+    diseño pide un visto. Los colores son los del tema puesto.
+    """
+    from . import theme
+    return {
+        "marcada": (theme.ACENTO, theme.ACENTO, theme.SOBRE_ACENTO),
+        "vacia": (theme.SUPERFICIE, theme.BORDE, None),
+        "apagada": (theme.APAGADO_FONDO, theme.LINEA, None),
+        "apagada-marcada": (theme.APAGADO, theme.APAGADO, theme.APAGADO_FONDO),
+    }
 _VISTO = [("p", [(3.5, 8.5), (6.5, 11.5), (12.5, 4.5)])]
 """El trazo del visto de la casilla marcada."""
 
 
 def casilla(widget, estado: str, size: int = 15, margen: int = 7):
-    """Devuelve la casilla de marcar, con `margen` píxeles en blanco a su derecha.
+    """Devuelve la casilla de marcar, con `margen` píxeles transparentes a su derecha.
 
     Ese margen es lo que separa el cuadrado de su texto: el elemento de imagen
-    de ttk no entiende de `indicatormargin`, así que el hueco se pinta (mejor
-    dicho, NO se pinta) dentro de la propia imagen: una `PhotoImage` recién
-    creada es transparente y solo se escribe el cuadrado, así que por el resto
-    se ve el fondo que haya detrás, sea papel o tarjeta.
+    de ttk no entiende de `indicatormargin`, así que el hueco va dentro de la
+    propia imagen, transparente, y por él se ve el fondo que haya detrás, sea
+    papel o tarjeta. Las esquinas van apenas redondeadas (2 px, `radius-sm`).
     """
-    import tkinter as tk
-    relleno, borde, visto = _CASILLAS[estado]
+    relleno, borde, visto = _casillas()[estado]
     lado, hueco = px(widget, size), px(widget, margen)
-    ficha = (id(widget.tk), "@casilla", estado, lado, hueco)
-    guardado = _CACHE.get(ficha)
-    if guardado is not None and guardado[0] is widget.tk:
-        return guardado[1]
+    uno = 16 / lado                     # un píxel en la rejilla de 16
 
-    capas = [(borde, 1.0, [("r", 0.5, 0.5, 15, 15)])]
-    if visto:
-        capas.append((visto, 2.4, _VISTO))
-    img = tk.PhotoImage(master=widget, width=lado + hueco, height=lado)
-    img.put(_rasterizar(capas, 16.0, lado, relleno), to=(0, 0))
-    _CACHE[ficha] = (widget.tk, img)
-    return img
+    def filas():
+        """El cuadrado con su borde y, si va marcada, el visto."""
+        fino, radio = uno * px(widget, 1), uno * px(widget, 2)
+        capas = [(borde, 0.0, [("rr", 0, 0, 16, 16, radio)]),
+                 (relleno, 0.0, [("rr", fino, fino, 16 - 2 * fino, 16 - 2 * fino,
+                                  max(0.0, radio - fino))])]
+        if visto:
+            capas.append((visto, 2.4, _VISTO))
+        return _con_hueco(_capas_rgba(capas, 16.0, lado), lado, derecha=hueco)
+
+    return _foto(widget, ("@casilla", estado, lado, hueco, relleno, borde, visto),
+                 filas)
+
+
+def _radios() -> dict[str, tuple[str, str, str | None]]:
+    """Devuelve los botones de opción por estado: relleno, aro y color del punto."""
+    from . import theme
+    return {
+        "marcada": (theme.SUPERFICIE, theme.ACENTO, theme.ACENTO),
+        "vacia": (theme.SUPERFICIE, theme.BORDE, None),
+        "apagada": (theme.APAGADO_FONDO, theme.LINEA, None),
+        "apagada-marcada": (theme.APAGADO_FONDO, theme.APAGADO, theme.APAGADO),
+    }
+
+
+def opcion(widget, estado: str, size: int = 16, margen: int = 7):
+    """Devuelve el botón de opción: un aro con el punto del acento si está elegido.
+
+    Es el `dotbtn` del diseño (16 de lado, punto de 8) y se pinta por lo mismo
+    que la casilla: el de clam es otro dibujo. Lleva el mismo margen a la
+    derecha.
+    """
+    relleno, aro, punto = _radios()[estado]
+    lado, hueco = px(widget, size), px(widget, margen)
+    fino = 16 / lado * px(widget, 1)
+
+    def filas():
+        """El aro, su relleno y el punto."""
+        capas = [(aro, 0.0, [("rr", 0, 0, 16, 16, 8)]),
+                 (relleno, 0.0, [("rr", fino, fino, 16 - 2 * fino, 16 - 2 * fino,
+                                  8 - fino)])]
+        if punto:
+            capas.append((punto, 0.0, [("rr", 4, 4, 8, 8, 4)]))
+        return _con_hueco(_capas_rgba(capas, 16.0, lado), lado, derecha=hueco)
+
+    return _foto(widget, ("@opcion", estado, lado, hueco, relleno, aro, punto),
+                 filas)
+
+
+def _forma(x: float, y: float, w: float, h: float, radio: float,
+           esquinas: str) -> list[tuple]:
+    """Devuelve un rectángulo con solo las esquinas de `esquinas` redondeadas.
+
+    `esquinas` son cuatro «1» o «0»: arriba a la izquierda, arriba a la
+    derecha, abajo a la derecha y abajo a la izquierda, como en CSS. Una
+    esquina recta es un cuarto relleno encima del redondeado: la unión de
+    primitivas de una capa ya es la distancia mínima.
+    """
+    prims = [("rr", x, y, w, h, radio)]
+    cuartos = ((x, y), (x + w / 2, y), (x + w / 2, y + h / 2), (x, y + h / 2))
+    for marca, (cx, cy) in zip(esquinas, cuartos):
+        if marca == "0":
+            prims.append(("fr", cx, cy, w / 2, h / 2))
+    return prims
+
+
+CENTRO_ANCHO, CENTRO_ALTO = 256, 64
+"""Lo que mide el centro estirable de una pieza de `caja()`, en píxeles.
+
+ttk no ESTIRA el centro de una pieza de nueve trozos: lo repite como un
+azulejo hasta llenar el control, una llamada de dibujo por copia. Con un
+centro de 2×2 eso eran cientos de copias por botón, y en X11 cada copia de una
+imagen con transparencia le pide los píxeles de debajo al servidor para
+mezclarlos: 300 controles tardaban 36 s en pintarse. Con un centro de este
+tamaño un control normal es una sola copia (o unas pocas, si es muy grande).
+Se hace repitiendo la fila y la columna del medio (`_ensanchar`), sin
+rasterizar más: el centro es de un color.
+"""
+
+
+def _ensanchar(filas, borde: int, ancho: int, alto: int) -> list[list[tuple]]:
+    """Devuelve la pieza con su centro (fila y columna del medio) repetido hasta ese tamaño."""
+    medio_x = len(filas[0]) // 2
+    anchas = [fila[:borde] + [fila[medio_x]] * ancho + fila[-borde:] for fila in filas]
+    medio_y = len(anchas) // 2
+    return anchas[:borde] + [anchas[medio_y]] * alto + anchas[-borde:]
+
+
+def caja(widget, tonos, radio: float = 4, esquinas: str = "1111"):
+    """Devuelve la pieza de un control y cuánto mide su borde: `(imagen, borde)`.
+
+    Es lo que dibuja los controles con esquinas redondeadas (`theme`): una
+    imagen pequeña que ttk parte en nueve trozos (`-border`), deja las cuatro
+    esquinas como están y estira el resto hasta el tamaño del control. Por eso
+    vale para un botón de cualquier ancho con una sola imagen.
+
+    Fuera de la forma es transparente, y Tk compone ahí lo que haya debajo: el
+    `background` del estilo, que es el color de la superficie donde cae el
+    control (`theme`, «asiento»).
+
+    Args:
+        tonos: `(color, margen)` de fuera adentro: cada uno es la forma rellena
+            de ese color, metida `margen` píxeles del diseño (un número, o
+            cuatro: izquierda, arriba, derecha, abajo). El borde de un botón
+            es `[(BORDE, 0), (SUPERFICIE, 1)]`. Un color `None` recorta lo de
+            debajo: `[(ACENTO, 0), (None, 2)]` es un aro sin relleno.
+        radio: El radio de las esquinas, en píxeles del diseño.
+        esquinas: Cuáles van redondeadas (ver `_forma`).
+
+    Returns:
+        La imagen y el borde de nueve trozos en píxeles de la pantalla, o
+        `(None, 0)` si no se puede pintar.
+    """
+    try:
+        r = px(widget, radio) if radio else 0
+        reales = []
+        for color, margen in tonos:
+            m = (margen,) * 4 if isinstance(margen, (int, float)) else tuple(margen)
+            reales.append((color, tuple(px(widget, v) if v else 0 for v in m)))
+        hondo = max((max(m) for _c, m in reales), default=0)
+        borde = r + hondo + 1
+        lado = 2 * borde + 2
+
+        def filas():
+            """Las formas, una capa por tono."""
+            capas = []
+            for color, (iz, ar, de, ab) in reales:
+                capas.append((color, 0.0, _forma(iz, ar, lado - iz - de,
+                                                 lado - ar - ab,
+                                                 max(0, r - max(iz, ar, de, ab)),
+                                                 esquinas)))
+            return _ensanchar(_capas_rgba(capas, float(lado), lado), borde,
+                              CENTRO_ANCHO, CENTRO_ALTO)
+
+        return _foto(widget, ("@caja", tuple(reales), r, esquinas, lado,
+                              CENTRO_ANCHO, CENTRO_ALTO), filas), borde
+    except Exception:
+        return None, 0
+
+
+def _mover(prims: list[tuple], dx: float, dy: float) -> list[tuple]:
+    """Devuelve las mismas primitivas desplazadas (dx, dy) en la rejilla."""
+    movidas = []
+    for prim in prims:
+        clase = prim[0]
+        if clase == "p":
+            movidas.append(("p", [(x + dx, y + dy) for x, y in prim[1]]))
+        elif clase == "l":
+            _, x1, y1, x2, y2 = prim
+            movidas.append(("l", x1 + dx, y1 + dy, x2 + dx, y2 + dy))
+        else:                       # a, c, d, r, fr, rr: lo primero es el sitio
+            movidas.append((clase, prim[1] + dx, prim[2] + dy, *prim[3:]))
+    return movidas
+
+
+def disco(widget, nombre: str, color: str, tinta: str, fondo: str,
+          hueco: bool = False, size: int = 18):
+    """Devuelve el disco de un chip: un círculo del color del estado con su glifo.
+
+    Es el mismo disco que la pastilla de la bandeja: el color del estado va
+    ahí, sólido, y no en la letra. El glifo mide dos tercios del disco (12 de
+    18) con el trazo más grueso, 2, porque a ese tamaño el de 1,6 se pierde.
+
+    Args:
+        tinta: El color del glifo, el `SOBRE_*` del color del disco.
+        fondo: Contra qué se componen los bordes (el fondo del chip).
+        hueco: Solo el aro, con el glifo del color del aro: el chip apagado.
+
+    Returns:
+        La imagen, o `None` si no se puede pintar.
+    """
+    try:
+        real = px(widget, size)
+        caja = 16 * size / 12           # la rejilla del glifo, ampliada
+        c = caja / 2
+        if hueco:
+            capas = [(color, caja / size, [("c", c, c, c - caja / size / 2)]),
+                     (color, 2.0, _mover(GLIFOS[nombre], (caja - 16) / 2,
+                                         (caja - 16) / 2))]
+        else:
+            capas = [(color, c, [("c", c, c, c / 2)]),
+                     (tinta, 2.0, _mover(GLIFOS[nombre], (caja - 16) / 2,
+                                         (caja - 16) / 2))]
+        return _dibujar(widget, ("@disco", nombre, real, color, tinta, fondo, hueco),
+                        capas, caja, real, fondo)
+    except Exception:
+        return None
+
+
+def baldosa(widget, nombre: str, color: str, tinta: str, fondo: str,
+            size: int = 32):
+    """Devuelve la baldosa de un aviso: un cuadrado redondeado de color con su glifo.
+
+    Es la baldosa de la marca (el mismo campo redondeado), del color del tono
+    del aviso, con el glifo a 18 de 32 y trazo 1,8.
+
+    Returns:
+        La imagen, o `None` si no se puede pintar.
+    """
+    try:
+        real = px(widget, size)
+        caja = 16 * size / 18
+        capas = [(color, 0.0, [("rr", 0, 0, caja, caja, 4 * caja / size)]),
+                 (tinta, 1.8, _mover(GLIFOS[nombre], (caja - 16) / 2,
+                                     (caja - 16) / 2))]
+        return _dibujar(widget, ("@baldosa", nombre, real, color, tinta, fondo),
+                        capas, caja, real, fondo)
+    except Exception:
+        return None
 
 
 QR_TINTA = "#000000"
@@ -631,12 +864,15 @@ def app_icon(widget, size: int = 64, campo: str = CAMPO, fondo: str | None = Non
 
 
 def poner_icono(ventana) -> None:
-    """Le pone la marca a una ventana.
+    """Le pone la marca a una ventana, y la barra de título del tema.
 
     Con `default=True` la heredan también los diálogos que cuelguen de ella,
     así que basta llamarlo en las raíces.
     """
     import tkinter as tk
+
+    from . import theme
+    theme.barra_titulo(ventana)
     imgs = [i for i in (app_icon(ventana, 64), app_icon(ventana, 32),
                         app_icon(ventana, 16)) if i is not None]
     if not imgs:
@@ -692,8 +928,11 @@ def _dib(rgba, size: int) -> bytes:
     return cabecera + bytes(pixeles) + bytes(mascara)
 
 
-def _png(rgba, size: int) -> bytes:
+def _png(rgba, size: int | None = None) -> bytes:
     """Devuelve la misma imagen como PNG de 8 bits con alfa, sin filtrar.
+
+    Las medidas salen de las propias filas: `size` sobra y se acepta por las
+    llamadas de antes, que daban el lado de un cuadrado.
 
     Un PNG son cuatro trozos con su longitud, su nombre y su CRC, y los píxeles
     comprimidos con zlib, que está en la biblioteca estándar. Cada línea lleva
@@ -715,7 +954,8 @@ def _png(rgba, size: int) -> bytes:
                 + struct.pack(">I", zlib.crc32(nombre + datos) & 0xFFFFFFFF))
 
     return (b"\x89PNG\r\n\x1a\n"
-            + trozo(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 6, 0, 0, 0))
+            + trozo(b"IHDR", struct.pack(">IIBBBBB", len(rgba[0]), len(rgba),
+                                         8, 6, 0, 0, 0))
             + trozo(b"IDAT", zlib.compress(bytes(crudo), 9))
             + trozo(b"IEND", b""))
 
@@ -793,12 +1033,14 @@ TINTA_PASTILLA = "#1C1A17"
 _PASTILLA = {SINCRONIZANDO: "#6F9BD1", AVISO: AMBAR, PAUSA: MARCA,
              BLOQUEADO: TINTA_PASTILLA}
 """El color de la pastilla de cada estado; `BIEN` no lleva."""
-_PASTILLA_CENTRO, _PASTILLA_RADIO = 49.0, 14.0
+_PASTILLA_CENTRO, _PASTILLA_RADIO = 47.0, 16.0
 """El centro y el radio de la pastilla, en la rejilla de 64."""
+_PASTILLA_RECORTE = 4.0
+"""Lo que se recorta del campo alrededor de la pastilla."""
 
 
-def _disco(color: str, radio: float) -> tuple:
-    """Devuelve la capa de un círculo relleno.
+def _disco(color: str | None, radio: float) -> tuple:
+    """Devuelve la capa de un círculo relleno (o recortado, con `None`).
 
     Un anillo de radio r/2 y trazo r cubre de 0 a r.
     """
@@ -808,6 +1050,9 @@ def _disco(color: str, radio: float) -> tuple:
 def capas_bandeja(size: int, estado: str) -> list[tuple[str, float, list[tuple]]]:
     """Devuelve las capas del icono de la bandeja en ese estado.
 
+    La pastilla se RECORTA del campo, sin aro alrededor, así que se separa de
+    la marca sobre cualquier fondo de barra de tareas.
+
     Raises:
         ValueError: Si no es uno de `BANDEJA_ESTADOS`.
     """
@@ -816,22 +1061,50 @@ def capas_bandeja(size: int, estado: str) -> list[tuple[str, float, list[tuple]]
     capas = _capas_marca(size, CAMPOS["grafito"] if estado == PAUSA else CAMPO)
     if estado == BIEN:
         return capas
-    # Un aro claro alrededor la separa de la marca, que también es oscura.
-    capas = capas + [_disco(MARCA, _PASTILLA_RADIO + 3.5),
+    capas = capas + [_disco(None, _PASTILLA_RADIO + _PASTILLA_RECORTE),
                      _disco(_PASTILLA[estado], _PASTILLA_RADIO)]
     if size < 24:
         return capas
-    c = _PASTILLA_CENTRO
+    tinta = TINTA_PASTILLA
     if estado == AVISO:
-        capas.append((TINTA_PASTILLA, 0.0, [("fr", c - 1.75, c - 9, 3.5, 11),
-                                            ("fr", c - 1.75, c + 4.5, 3.5, 3.5)]))
+        capas.append((tinta, 0.0, [("rr", 45, 38, 4, 11.5, 2), ("rr", 45, 52, 4, 4, 2)]))
     elif estado == PAUSA:
-        capas.append((TINTA_PASTILLA, 0.0, [("fr", c - 5.5, c - 6, 3.5, 12),
-                                            ("fr", c + 2, c - 6, 3.5, 12)]))
+        capas.append((tinta, 0.0, [("rr", 41.8, 40, 4.2, 14, 1.5),
+                                   ("rr", 49, 40, 4.2, 14, 1.5)]))
     elif estado == BLOQUEADO:
-        capas += [(MARCA, 2.5, [("a", c, c - 1.5, 4, 180, 360)]),
-                  (MARCA, 0.0, [("fr", c - 6, c - 1.5, 12, 8.5)])]
+        capas += [(MARCA, 2.6, [("l", 43.5, 46, 43.5, 43.7),
+                                ("a", 47, 43.7, 3.5, 180, 360),
+                                ("l", 50.5, 43.7, 50.5, 46)]),
+                  (MARCA, 0.0, [("rr", 40.5, 46, 13, 9.5, 2.5)])]
+    elif estado == SINCRONIZANDO:
+        capas.append((tinta, 2.6, [("l", 44.5, 53, 44.5, 41.5),
+                                   ("p", [(41, 45), (44.5, 41.5), (48, 45)]),
+                                   ("l", 49.5, 41, 49.5, 52.5),
+                                   ("p", [(46, 49), (49.5, 52.5), (53, 49)])]))
     return capas
+
+
+def marca_estado(widget, size: int, estado: str = BIEN, campo: str = CAMPO,
+                 fondo: str | None = None):
+    """Devuelve la marca a `size` px con la pastilla de un estado, o `None`.
+
+    Es la marca que encabeza un aviso (la ventanita del fallo del servicio, la
+    de «se ha conectado una unidad»): la misma del icono de la bandeja, con su
+    pastilla, compuesta contra el `fondo` de la ventana.
+
+    Args:
+        campo: El color del campo (`CAMPOS`), el de la unidad de la que se habla.
+    """
+    try:
+        capas = capas_bandeja(size, estado) if estado != BIEN else _capas_marca(size, campo)
+        if estado != BIEN and campo != CAMPO and estado != PAUSA:
+            capas = [(campo if i == 0 else color, ancho, prims)
+                     for i, (color, ancho, prims) in enumerate(capas)]
+        real = px(widget, size)
+        return _dibujar(widget, ("@marca-estado", real, estado, campo, fondo),
+                        capas, 64.0, real, fondo or campo)
+    except Exception:
+        return None
 
 
 def ico_bandeja(estado: str, tamanos=BANDEJA_TAMANOS) -> bytes:

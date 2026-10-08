@@ -507,10 +507,19 @@ def python_pendiente(app_dir: Path | str | None,
     sello = leer_sello(texto)
     version = sello.get("python") or DESCONOCIDA
     release = sello.get("release") or DESCONOCIDA
-    if version == pins.PYTHON_VERSION and release == pins.PYTHON_RELEASE:
+    # En Linux cuenta también el Tk con Xft (`pins.TK_XFT_TAG`): uno sin él
+    # funciona, pero con la letra sin suavizar. Solo si hay uno fijado para su
+    # arquitectura; si no, no hay nada que ofrecerle.
+    quiere_tk = (not plat.es_windows
+                 and bool(pins.TK_XFT_SHA256.get(plat.triple.split("-")[0])))
+    tk = sello.get("tk") or ""
+    if (version == pins.PYTHON_VERSION and release == pins.PYTHON_RELEASE
+            and (not quiere_tk or tk == pins.TK_XFT_TAG)):
         return None
-    return Pendiente(plat, PYTHON, f"{version} ({release})",
-                     f"{pins.PYTHON_VERSION} ({pins.PYTHON_RELEASE})")
+    con = " + Tk con Xft"
+    return Pendiente(plat, PYTHON, f"{version} ({release})" + (con if tk else ""),
+                     f"{pins.PYTHON_VERSION} ({pins.PYTHON_RELEASE})"
+                     + (con if quiere_tk else ""))
 
 
 def veracrypt_pendiente(raiz_fisica: Path | str) -> Pendiente | None:

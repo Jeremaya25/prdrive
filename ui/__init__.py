@@ -30,6 +30,46 @@ from typing import Callable, NamedTuple, Protocol
 from common import bisync, results, store
 from common.model import Config
 
+
+TK_CON_XFT = Path("lib") / "tk-xft" / "libtcl9tk9.0.so"
+"""El Tk con Xft dentro de un runtime de Linux (`install.runtime_bin.TK_DIR`)."""
+
+
+def tk_con_xft(prefijo: str | os.PathLike | None = None) -> bool:
+    """Carga el Tk con Xft del runtime antes que el de serie, si se puede, y dice si lo hizo.
+
+    El Tk que trae el Python del dispositivo en Linux está compilado sin Xft:
+    solo ve las fuentes de mapa de bits de X11 y la letra sale sin suavizar. El
+    instalador deja al lado uno compilado con Xft (`pins.TK_XFT_VERSION`), con
+    el mismo nombre y SONAME, y cargarlo aquí con `RTLD_GLOBAL` hace que
+    `_tkinter`, al pedir `libtcl9tk9.0.so`, se quede con este y no cargue el
+    otro.
+
+    Tiene que correr antes del primer `import tkinter`, y por eso va al cargar
+    este paquete, que es por donde entra toda ventana. No hace nada si tkinter
+    ya está cargado, fuera de Linux o si no hay tal biblioteca (el Python de un
+    equipo, una instalación sin ella). Si no carga (el equipo no tiene
+    `libXft`, un servidor sin escritorio), se calla: queda el de serie, que es
+    el que había.
+
+    Args:
+        prefijo: La raíz del runtime; por defecto, la del Python que corre.
+    """
+    if "_tkinter" in sys.modules or not sys.platform.startswith("linux"):
+        return False
+    ruta = Path(prefijo or sys.prefix) / TK_CON_XFT
+    if not ruta.is_file():
+        return False
+    try:
+        import ctypes
+        ctypes.CDLL(str(ruta), mode=ctypes.RTLD_GLOBAL)
+    except OSError:
+        return False
+    return True
+
+
+tk_con_xft()
+
 HAS_TTY = bool(sys.stdout) and sys.stdout.isatty()
 """Si hay una consola de verdad detrás.
 

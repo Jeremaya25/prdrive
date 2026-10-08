@@ -234,12 +234,23 @@ finally:
     cifrada.estado, keepassxc.convertir, keepassxc.llave_vale, keepassxc.sin_conversion = (
         real_cifrada, real_conv, real_vale, real_sin)
 
-# la entrada de «Ajustes»
+# el apartado de «Ajustes»: el mismo llavero, dibujado dentro, y lo que devuelve
+# llega a la principal al cerrar
 with sandbox():
-    abiertos: list = []
-    tk_doctor.mostrar = lambda dlg, parent=None: pulsar(dlg, "Llavero…")
-    tk_doctor.open_dialog(raiz, mkcfg(["notas"]), lambda *a: None,
-                          abrir_llavero=lambda: abiertos.append("llavero"))
-    c("«Ajustes» tiene «Llavero…», que lo abre la principal", abiertos, ["llavero"])
+    config_file.save(LOCAL)
+    catalog.load = leido(REMOTO)
+    visto: dict = {}
+
+    def en_ajustes(dlg, parent=None) -> None:
+        """Entra en «Llavero» y apunta sus botones."""
+        pulsar(dlg, "Llavero")
+        visto["botones"] = botones(dlg)
+        dlg.destroy()
+
+    tk_doctor.mostrar = en_ajustes
+    hecho = tk_doctor.open_dialog(raiz, mkcfg(["notas"]), lambda *a: None)
+    c("«Ajustes» tiene «Llavero», que se dibuja dentro",
+      "Usar esta base…" in visto["botones"], True)
+    c("  cerrar sin hacer nada no le dice nada a la principal", hecho.get("llavero"), None)
 
 sys.exit(c.report())
