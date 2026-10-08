@@ -412,16 +412,11 @@ for nombre in ("Mi NAS", "almacén", "nas@home", "nas+b", "nas.1-b_2"):
 c("lo tecleado en el asistente sigue siendo más estricto",
   [n for n in ("Mi NAS", "nas@home", "nas") if profile.NOMBRE_VALIDO.fullmatch(n)],
   ["nas"])
-# Una sola regla de rclone para el nombre: la de `model` cuando exista.
+# Una sola regla de rclone para el nombre: la de `model`.
 from common import model  # noqa: E402
 
-if hasattr(model, "NOMBRE_REMOTE"):
-    c("NOMBRE_RCLONE es igual a model.NOMBRE_REMOTE",
-      (profile.NOMBRE_RCLONE.pattern, profile.NOMBRE_RCLONE.flags),
-      (model.NOMBRE_REMOTE.pattern, model.NOMBRE_REMOTE.flags))
-else:
-    print("  (saltado) model.NOMBRE_REMOTE todavía no existe: no se compara con "
-          "NOMBRE_RCLONE")
+c("NOMBRE_RCLONE es la regla del config, no una copia",
+  profile.NOMBRE_RCLONE is model.NOMBRE_REMOTE, True)
 rechaza("render_conf rechaza el nombre de una opción con símbolos",
         lambda: profile.render_conf(dataclasses.replace(
             perfil, options={**perfil.options, "a b\n[x": "1"})), "'a b\\n[x'")

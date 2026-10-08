@@ -41,6 +41,7 @@ from typing import Iterable, Mapping
 
 from common import pairing
 from common.catalog import DEFAULT_CATALOG_PATH, problema_de_ruta
+from common.model import NOMBRE_REMOTE
 
 from . import InstallError, bundle_dir
 
@@ -71,16 +72,15 @@ nombres que se teclean en el asistente; la de los que ya existen es
 `NOMBRE_RCLONE`.
 """
 
-NOMBRE_RCLONE = re.compile(r"(?!-)[\w.+@-]+(?: [\w.+@-]+)*")
-"""Regla de rclone para el nombre de un remote (`fullmatch`).
+NOMBRE_RCLONE = NOMBRE_REMOTE
+"""Regla de rclone para el nombre de un remote (`fullmatch`): `model.NOMBRE_REMOTE`.
 
 Sin `,` `:` `=` ni comillas, sin `[` `]` ni saltos de línea, sin empezar por `-`
 ni acabar en espacio. Es la que se exige para ESCRIBIR un `rclone.conf`
 (`render_conf`): un remote que ya existe (en un `rclone.conf` importado o en el
 `[defaults].remote` de un catálogo) puede llamarse `Mi NAS` o `nas@home`, y
-renombrarlo apartaría la base de cada pareja bisync. Tiene que seguir igual a
-`model.NOMBRE_REMOTE` (lo comprueba `tests/test_install_profile.py` en cuanto
-exista).
+renombrarlo apartaría la base de cada pareja bisync. Es la misma que aplica el
+cargador del config, y no una copia, para que no puedan separarse.
 """
 
 CLAVE_VALIDA = re.compile(r"[A-Za-z0-9_]+")
