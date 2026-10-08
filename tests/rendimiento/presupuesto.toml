@@ -1,0 +1,67 @@
+# Lo que la comprobación de tiempos (`correr.py`, `rendimiento.yml`) exige y lo que se propone.
+#
+# [techo]    Cuentas deterministas: un PR que supera uno FALLA. Es un trinquete: se baja en
+#            el PR que consigue la rebaja (el resumen del trabajo avisa cuando se puede) y se
+#            sube solo diciéndolo en la descripción del PR. Las claves:
+#              widgets.<pantalla>[.p5|.p50]   widgets de la pantalla recién abierta, con 5 o 50 parejas
+#              modulos.<pantalla>             len(sys.modules) al llamar a mainloop() la primera vez
+#              tema.arranque.<pantalla>       pasadas de <<ThemeChanged>> hasta el primer pintado
+#              tema.abrir.<pantalla>          ... al abrir «Parejas» / «Ajustes» con el programa abierto
+#              tema.apartado                  ... al cambiar de apartado en «Ajustes»
+#              estilos.<pantalla>             estilos de ttk creados después del primer widget
+#            `[techo.windows]` y `[techo.linux]` sustituyen a `[techo]` en esa plataforma (los
+#            módulos importados son los de cada sistema).
+# [meta]     Las mismas cuentas, a donde quiere llegar el diseño: solo se informan.
+# [meta_ms]  Medianas en Windows x64 al 100 % con 5 parejas (spec «Qué se quiere»): solo se informan.
+#
+# Medidos el 08/10/2026 en el árbol de la 0.7.1, con el Python fijado (3.14.8, Tk 9.0.4).
+
+[techo]
+"widgets.main.p5" = 51
+"widgets.main.p50" = 231
+"widgets.parejas.p5" = 152
+"widgets.parejas.p50" = 467
+"widgets.ajustes.p5" = 39
+"widgets.ajustes.p50" = 39
+"widgets.agente" = 16
+"tema.arranque.main" = 1
+"tema.abrir.parejas" = 0
+"tema.abrir.ajustes" = 0
+"tema.apartado" = 0
+"estilos.main" = 2
+"estilos.parejas" = 3
+"estilos.ajustes" = 2
+"estilos.apartado" = 7
+
+[techo.linux]
+"modulos.main" = 254
+"modulos.agente" = 242
+"modulos.wizard" = 237
+
+# [techo.windows]: pendiente de la primera ejecución en Windows (pegar lo que enseñe el resumen).
+
+[meta]
+"widgets.main.p5" = 26
+"widgets.parejas.p5" = 70
+"widgets.agente" = 11
+"tema.abrir.parejas" = 0
+"tema.abrir.ajustes" = 0
+"tema.apartado" = 0
+"estilos.main" = 0
+"estilos.parejas" = 0
+"estilos.ajustes" = 0
+"estilos.apartado" = 0
+
+[meta_ms]
+"start-main" = 350
+"open-parejas" = 150
+"cold-parejas" = 500
+"open-ajustes" = 150
+"pane-reparacion" = 60
+"pane-volumen" = 60
+"pane-actualizaciones" = 60
+"pane-configuracion" = 60
+"start-agente" = 300
+"start-wizard" = 300
+"catalogo-llega" = 30
+"log-10k" = 200

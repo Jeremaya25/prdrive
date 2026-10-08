@@ -3,10 +3,23 @@ name: Tests
 # Los tests son scripts sueltos (sin framework ni dependencias): `run_all.py` lanza
 # cada uno en su proceso. Ninguno toca un dispositivo ni la red. Los de Tk se
 # saltan sin pantalla, así que en Linux se corre bajo xvfb para que se ejecuten.
+#
+# La suite entera corre dos veces, en Linux y en Windows:
+# - `tests`: con el Python 3.11 de `setup-python` y su Tk 8.6, que es lo mínimo que
+#   admite la instalación ligera (el Python del equipo) y donde se prueba el
+#   pintor de respaldo;
+# - `tests-tk9`: con el Python fijado del dispositivo (`common/pins.py`: 3.14.8 con
+#   Tk 9.0.4), el único sitio donde se prueba el camino SVG. Ese Python se baja
+#   en un paso previo y no dentro de un test, porque la suite no toca la red:
+#   `tests/_runtime_ci.py` lo trae con el propio instalador, comprobado contra el
+#   SHA256SUMS de su release, y Actions guarda el archivo entre ejecuciones.
 on:
   push:
     branches:
       - main
+      # TEMPORAL: quitar antes del PR (da la primera medida en Windows con el Tk 9 del
+      # dispositivo antes de que el dueño abra el PR; el trabajo `tests` corre también).
+      - claude/adoring-pascal-5j258r
   pull_request:
 
 permissions:
@@ -41,3 +54,47 @@ jobs:
       - name: Tests (Windows)
         if: runner.os == 'Windows'
         run: python tests/run_all.py
+
+  tests-tk9:
+    name: tests Tk 9 (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, plat: linux-x64 }
+          - { os: windows-latest, plat: windows-x64 }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      # Solo lanza el paso que baja el runtime: la suite corre con el del dispositivo.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Antes del runtime: su comprobación de Tk carga las bibliotecas de X11.
+      - name: xvfb y letras (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb libxft2 fontconfig
+
+      - name: Clave de la caché del runtime
+        id: pins
+        run: python tests/_runtime_ci.py clave
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/prdrive-cache
+          key: runtime-${{ matrix.plat }}-${{ steps.pins.outputs.clave }}
+
+      - name: Python fijado del dispositivo (Tk 9)
+        run: python tests/_runtime_ci.py runtime ${{ matrix.plat }} "${{ runner.temp }}/runtime" "${{ runner.temp }}/prdrive-cache"
+
+      - name: Tests con Tk 9 (Linux, con pantalla virtual)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a "$PRDRIVE_PYTHON" tests/run_all.py
+
+      - name: Tests con Tk 9 (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          & "$env:PRDRIVE_PYTHON" tests/run_all.py

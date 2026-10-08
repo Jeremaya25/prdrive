@@ -63,7 +63,7 @@ prdrive/            the checkout; on a provisioned device it is `.prdrive/`
 ├── install/        what the installer knows; no Tk, no device needed
 │   profile · rclone_bin · runtime_bin · veracrypt_bin · descarga (retries, SHA256SUMS) · platforms · components · remote (ephemeral rclone.conf, catalogue)
 │   device (volumes) · crypto (VeraCrypt, BitLocker) · traveler · vestibulo · agente · raiz_equipo · deploy (copy code, runtimes, launchers, config)
-└── tests/          plain scripts; `run_all.py` runs each in its own process
+└── tests/          plain scripts; `run_all.py` runs each in its own process · `rendimiento/` is the CI timing check (not collected by `run_all.py`)
 ```
 
 On a provisioned device the code lives in `.prdrive/` at the volume root (hidden by the dot on POSIX, by `deploy.hide()` on Windows). `model.APP_DIR` = `Path(__file__).parent.parent` and `DEVICE_ROOT` its parent: **nothing depends on the folder name or drive letter**. The control file is **inside** `.prdrive/` (`.prdrive/PRDRIVE`), so identifying the drive needs only a root-relative path and it cannot be deleted without deleting the program.
@@ -95,7 +95,7 @@ python tests/run_all.py     # all tests, each in its own process; or run one scr
 
 The full list (`penwatch.py`, `agente.py`, `prdrive-install.py`, `build_installer.py`) is in `commands-testing.md`.
 
-- Verification is `tests/run_all.py`, `--doctor`, `--dry-run`. Nothing to lint; CI (`.github/workflows/tests.yml`) runs `run_all.py` on every PR, on Linux under xvfb and on Windows. Tk tests skip without a display, so green without Tk has tested no window. The suite passes on Windows **and** Linux: a check about the other system forces `IS_WIN` or prints `(saltado) …`.
+- Verification is `tests/run_all.py`, `--doctor`, `--dry-run`. Nothing to lint; CI (`.github/workflows/tests.yml`) runs `run_all.py` on every PR, on Linux under xvfb and on Windows, twice: with `setup-python` 3.11 (Tk 8.6) and with the device's pinned runtime (Tk 9); `rendimiento.yml` times the windows against `main` (`commands-testing.md`). Tk tests skip without a display, so green without Tk has tested no window. The suite passes on Windows **and** Linux: a check about the other system forces `IS_WIN` or prints `(saltado) …`.
 - `runsync.py` with no args always **stops a previously started service** first.
 - Windows dev machine: the Bash tool is sandboxed. It redirects writes under `%LOCALAPPDATA%` (a `penwatch install` from there registers a task pointing at nothing) and hangs `tasklist | find`. Use PowerShell for both.
 
