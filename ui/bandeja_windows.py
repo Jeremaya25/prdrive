@@ -32,8 +32,15 @@ dependencias, y **sin probar en un Windows real** (ver
   en vez de mandar `WM_COMMAND`. Antes, `SetForegroundWindow` a la ventana
   propia y después un `WM_NULL`: sin eso el menú no se cierra al pinchar fuera
   (es la receta de la documentación de `TrackPopupMenu`). Se abre con el botón
-  derecho y con el izquierdo. Las entradas con `icono` llevan su glifo de
-  `ui/icons.py` (`icons.pixeles_menu()`) como `hbmpItem`: un DIB de 32 bits con
+  derecho y con el izquierdo.
+- **El menú es propio** (`MFT_OWNERDRAW`), con el aspecto del tablero «Bandeja
+  del sistema» del rediseño: cada fila la mide `Api.medir()` y la pinta
+  `Api.pintar()` (fondo, glifo o icono, texto y galón) con los colores del tema
+  que tenga el sistema al abrirlo y la letra del programa; Windows sigue
+  llevando el ratón, el teclado, los desplegables y el marco. Cómo es cada fila
+  lo deciden `aspecto()` y `pintura()`, sin nada de Windows. Si no se puede
+  preparar, es el menú de Windows: las entradas con `icono` llevan su glifo de
+  `ui/icons.py` (`icons.pixeles_menu()`) como `hbmpItem`, un DIB de 32 bits con
   alfa premultiplicado, del color del texto del menú (`GetSysColor`), al tamaño
   del icono pequeño. Se crean al abrir el menú y se borran al cerrarlo.
 - **El desplegable de cada dispositivo** lleva su icono a color
@@ -68,7 +75,7 @@ import os
 import stat
 import threading
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, NamedTuple
 
 from common import APP_NAME, avisos, equipo
 from ui import bandeja, icons
@@ -108,8 +115,21 @@ ID_ICONO = 1
 
 # Menús.
 MF_STRING, MF_GRAYED, MF_CHECKED, MF_POPUP, MF_SEPARATOR = 0x0, 0x1, 0x8, 0x10, 0x800
-MIIM_BITMAP = 0x80
+MIIM_BITMAP, MIIM_DATA, MIIM_FTYPE = 0x80, 0x20, 0x100
+MFT_OWNERDRAW, MFT_SEPARATOR = 0x100, 0x800
+MIM_BACKGROUND, MIM_APPLYTOSUBMENUS = 0x2, 0x80000000
+WM_DRAWITEM, WM_MEASUREITEM = 0x002B, 0x002C
+ODT_MENU = 1
+ODS_SELECTED, ODS_GRAYED, ODS_DISABLED = 0x1, 0x2, 0x4
 COLOR_MENUTEXT = 7
+
+# Lo que pinta las filas del menú (wingdi.h, winuser.h).
+LOGPIXELSY = 90
+FW_NORMAL, FW_BOLD = 400, 700
+DEFAULT_CHARSET, CLEARTYPE_QUALITY, TRANSPARENT = 1, 5, 1
+DT_VCENTER, DT_SINGLELINE, DT_CALCRECT, DT_NOPREFIX = 0x4, 0x20, 0x400, 0x800
+DT_END_ELLIPSIS = 0x8000
+AC_SRC_OVER, AC_SRC_ALPHA = 0x0, 0x1
 SM_CXSMICON = 49
 IMAGE_ICON, LR_LOADFROMFILE = 1, 0x10
 DI_MASK, DI_IMAGE, DI_NORMAL = 0x1, 0x2, 0x3
@@ -212,6 +232,130 @@ def pixeles_emblema(emblema: bandeja.Emblema, lado: int,
         return icons.pixeles_marca(lado)
 
 
+class Aspecto(NamedTuple):
+    """Cómo se pinta el menú: el tablero «Bandeja del sistema» del rediseño.
+
+    Los colores son `#RRGGBB` del tema que tenga el sistema al abrir el menú;
+    las medidas, las del diseño en píxeles a la densidad de la pantalla.
+
+    Args:
+        fondo: El del menú y de cada fila (`surface`).
+        elegida: El de la fila bajo el ratón o con su desplegable abierto
+            (`accent-soft`).
+        tinta: El texto y los glifos (`ink`).
+        apagada: Lo que no se puede elegir (`disabled`).
+        tenue: El galón de un desplegable (`ink-3`).
+        linea: El separador (`line-soft`).
+        alto: El de una fila (`size-control`, 34).
+        alto_separador: El del separador con su aire (1 + 4 + 4).
+        grosor: El de la línea del separador.
+        margen: El relleno de cada lado (`space-4`, 16).
+        hueco: Entre el icono y el texto (`space-3`, 12).
+        icono: Un glifo (`size-icon`, 16).
+        emblema: El icono de un dispositivo (la marca pequeña, 20); es también
+            el ancho de la columna de iconos, para que los textos se alineen.
+        galon: El galón de un desplegable (12).
+        letra: El alto de la letra (`text-body`, 13,5).
+    """
+
+    fondo: str
+    elegida: str
+    tinta: str
+    apagada: str
+    tenue: str
+    linea: str
+    alto: int
+    alto_separador: int
+    grosor: int
+    margen: int
+    hueco: int
+    icono: int
+    emblema: int
+    galon: int
+    letra: int
+
+
+def aspecto(oscuro: bool, ppp: int = 96) -> Aspecto:
+    """Devuelve el aspecto del menú con el tema del sistema y a la densidad `ppp`."""
+    from ui import theme
+    paleta = theme.OSCURO if oscuro else theme.CLARO
+
+    def px(diseno: float) -> int:
+        """Una medida del diseño (a 96 ppp) en píxeles de esta pantalla."""
+        return max(1, round(diseno * (ppp or 96) / 96))
+
+    return Aspecto(fondo=paleta["SUPERFICIE"], elegida=paleta["ACENTO_SUAVE"],
+                   tinta=paleta["TINTA"], apagada=paleta["APAGADO"],
+                   tenue=paleta["TINTA3"], linea=paleta["LINEA_SUAVE"],
+                   alto=px(34), alto_separador=px(1) + 2 * px(4), grosor=px(1),
+                   margen=px(16), hueco=px(12), icono=px(16), emblema=px(20),
+                   galon=px(12), letra=px(13.5))
+
+
+class Pintura(NamedTuple):
+    """Lo que lleva una fila del menú al pintarla, sin nada de Windows.
+
+    Args:
+        fondo: El color de la fila.
+        tinta: El del texto y del glifo.
+        negrita: Si el texto va en negrita: la entrada por defecto.
+        glifo: El de `icons.GLIFOS` que lleva delante, o `None`.
+        emblema: El icono de un dispositivo, o `None`.
+        lado: El tamaño del icono, en píxeles.
+        x_icono: Dónde empieza el icono, desde el borde izquierdo de la fila.
+        x_texto: Dónde empieza el texto.
+        galon: Si lleva el galón de un desplegable a la derecha.
+        apagada: Si no se puede elegir.
+    """
+
+    fondo: str
+    tinta: str
+    negrita: bool
+    glifo: str | None
+    emblema: bandeja.Emblema | None
+    lado: int
+    x_icono: int
+    x_texto: int
+    galon: bool
+    apagada: bool
+
+
+def pintura(entrada: bandeja.Entrada, estado: int, a: Aspecto) -> Pintura:
+    """Decide cómo se pinta una fila según su entrada y su estado (`ODS_*`).
+
+    La elegida va sobre `elegida` (en el tablero, la del desplegable
+    abierto); una que no se puede elegir, en `apagada` y sin resaltar. Una
+    entrada marcada lleva el visto como icono, como «Pedir la contraseña al
+    iniciar» en el tablero. Sin icono, el texto empieza en el margen.
+    """
+    apagada = not entrada.activa or bool(estado & (ODS_GRAYED | ODS_DISABLED))
+    elegida = bool(estado & ODS_SELECTED) and not apagada
+    glifo = "ok" if entrada.marcada else (
+        entrada.icono if entrada.icono in icons.GLIFOS else None)
+    emblema = entrada.emblema
+    lado = a.emblema if emblema is not None else a.icono
+    con_icono = emblema is not None or glifo is not None
+    return Pintura(fondo=a.elegida if elegida else a.fondo,
+                   tinta=a.apagada if apagada else a.tinta,
+                   negrita=entrada.defecto,
+                   glifo=None if emblema is not None else glifo,
+                   emblema=emblema, lado=lado,
+                   x_icono=a.margen + (a.emblema - lado) // 2,
+                   x_texto=a.margen + (a.emblema + a.hueco if con_icono else 0),
+                   galon=bool(entrada.hijos), apagada=apagada)
+
+
+def ancho_fila(p: Pintura, ancho_texto: int, a: Aspecto) -> int:
+    """Devuelve lo que mide de ancho una fila con un texto de `ancho_texto` píxeles."""
+    return p.x_texto + ancho_texto + (a.hueco + a.galon if p.galon else 0) + a.margen
+
+
+def colorref(color: str) -> int:
+    """Devuelve un `#RRGGBB` como `COLORREF` de Windows (`0x00BBGGRR`)."""
+    r, g, b = int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
+    return r | (g << 8) | (b << 16)
+
+
 def estructuras(ct: Any, wt: Any) -> tuple[Any, Any]:
     """Devuelve las estructuras `MENUITEMINFOW` y `BITMAPINFOHEADER`.
 
@@ -239,6 +383,61 @@ def estructuras(ct: Any, wt: Any) -> tuple[Any, Any]:
                     ("biClrImportant", wt.DWORD)]
 
     return MENUITEMINFOW, BITMAPINFOHEADER
+
+
+def estructuras_dibujo(ct: Any, wt: Any) -> dict[str, Any]:
+    """Devuelve las estructuras con las que se pinta un menú propio (winuser.h, wingdi.h).
+
+    `MEASUREITEMSTRUCT` y `DRAWITEMSTRUCT` (lo que llega con `WM_MEASUREITEM`
+    y `WM_DRAWITEM`), `MENUINFO` y `BLENDFUNCTION`, por nombre.
+    """
+
+    class MEASUREITEMSTRUCT(ct.Structure):
+        """Estructura `MEASUREITEMSTRUCT` de winuser.h."""
+        _fields_ = [("CtlType", wt.UINT), ("CtlID", wt.UINT), ("itemID", wt.UINT),
+                    ("itemWidth", wt.UINT), ("itemHeight", wt.UINT),
+                    ("itemData", ct.c_size_t)]
+
+    class DRAWITEMSTRUCT(ct.Structure):
+        """Estructura `DRAWITEMSTRUCT` de winuser.h."""
+        _fields_ = [("CtlType", wt.UINT), ("CtlID", wt.UINT), ("itemID", wt.UINT),
+                    ("itemAction", wt.UINT), ("itemState", wt.UINT),
+                    ("hwndItem", wt.HWND), ("hDC", wt.HDC), ("rcItem", wt.RECT),
+                    ("itemData", ct.c_size_t)]
+
+    class MENUINFO(ct.Structure):
+        """Estructura `MENUINFO` de winuser.h."""
+        _fields_ = [("cbSize", wt.DWORD), ("fMask", wt.DWORD), ("dwStyle", wt.DWORD),
+                    ("cyMax", wt.UINT), ("hbrBack", wt.HBRUSH),
+                    ("dwContextHelpID", wt.DWORD), ("dwMenuData", ct.c_size_t)]
+
+    class BLENDFUNCTION(ct.Structure):
+        """Estructura `BLENDFUNCTION` de wingdi.h."""
+        _fields_ = [("BlendOp", ct.c_ubyte), ("BlendFlags", ct.c_ubyte),
+                    ("SourceConstantAlpha", ct.c_ubyte), ("AlphaFormat", ct.c_ubyte)]
+
+    return {"MEASUREITEMSTRUCT": MEASUREITEMSTRUCT, "DRAWITEMSTRUCT": DRAWITEMSTRUCT,
+            "MENUINFO": MENUINFO, "BLENDFUNCTION": BLENDFUNCTION}
+
+
+class Dibujo:
+    """Lo que hace falta mientras un menú propio está abierto.
+
+    Args:
+        aspecto: Colores y medidas (`aspecto()`).
+        letras: La letra de las filas, normal (`False`) y en negrita (`True`).
+        pincel: El del fondo del menú.
+
+    Attributes:
+        filas: Las entradas del menú: su posición es el `itemData` de cada fila.
+    """
+
+    def __init__(self, aspecto: Aspecto, letras: dict[bool, Any], pincel: Any) -> None:
+        """Guarda lo preparado; las filas se añaden al construir el menú."""
+        self.aspecto = aspecto
+        self.letras = letras
+        self.pincel = pincel
+        self.filas: list[bandeja.Entrada] = []
 
 
 class Bandeja:
@@ -363,6 +562,11 @@ class Bandeja:
             if lparam in (WM_RBUTTONUP, WM_LBUTTONUP, WM_CONTEXTMENU):
                 self._menu()
             return 0
+        if msg in (WM_MEASUREITEM, WM_DRAWITEM):
+            # Las filas del menú abierto (`Api.menu`): las mide y las pinta la Api.
+            hecho = (self.api.medir(lparam) if msg == WM_MEASUREITEM
+                     else self.api.pintar(lparam))
+            return 1 if hecho else None
         if msg == WM_PONER:
             self._poner_icono()
             return 0
@@ -524,7 +728,9 @@ class Api:
         self.gdi32.SelectObject.restype = wintypes.HGDIOBJ
         self.gdi32.SelectObject.argtypes = [wintypes.HDC, wintypes.HGDIOBJ]
         self.gdi32.DeleteDC.argtypes = [wintypes.HDC]
+        self._firmas_de_dibujo()
         self._pixeles: dict[tuple, bytes] = bandeja.CacheAcotada()   # iconos ya pintados
+        self._dibujo: Dibujo | None = None  # el menú propio abierto, si lo hay
         u.SetForegroundWindow.argtypes = [wintypes.HWND]
         u.GetCursorPos.argtypes = [ctypes.POINTER(wintypes.POINT)]
         u.GetMessageW.argtypes = [ctypes.POINTER(wintypes.MSG), wintypes.HWND,
@@ -537,6 +743,30 @@ class Api:
         self.shell32.Shell_NotifyIconW.argtypes = [wintypes.DWORD,
                                                    ctypes.POINTER(self.NOTIFYICONDATAW)]
         self._proc = None                   # la referencia que ctypes necesita viva
+
+    def _firmas_de_dibujo(self) -> None:
+        """Declara las llamadas de user32 y gdi32 con las que se pinta el menú propio."""
+        ct, wt, u, g = self.ct, self.wt, self.user32, self.gdi32
+        self.DIBUJO = estructuras_dibujo(ct, wt)
+        u.GetDC.restype = wt.HDC
+        u.GetDC.argtypes = [wt.HWND]
+        u.ReleaseDC.argtypes = [wt.HWND, wt.HDC]
+        u.SetMenuInfo.argtypes = [wt.HMENU, ct.POINTER(self.DIBUJO["MENUINFO"])]
+        u.FillRect.argtypes = [wt.HDC, ct.POINTER(wt.RECT), wt.HBRUSH]
+        u.DrawTextW.argtypes = [wt.HDC, wt.LPCWSTR, ct.c_int, ct.POINTER(wt.RECT), wt.UINT]
+        g.GetDeviceCaps.argtypes = [wt.HDC, ct.c_int]
+        g.CreateFontW.restype = wt.HFONT
+        g.CreateFontW.argtypes = [ct.c_int, ct.c_int, ct.c_int, ct.c_int, ct.c_int,
+                                  wt.DWORD, wt.DWORD, wt.DWORD, wt.DWORD, wt.DWORD,
+                                  wt.DWORD, wt.DWORD, wt.DWORD, wt.LPCWSTR]
+        g.CreateSolidBrush.restype = wt.HBRUSH
+        g.CreateSolidBrush.argtypes = [wt.COLORREF]
+        g.SetTextColor.argtypes = [wt.HDC, wt.COLORREF]
+        g.SetBkMode.argtypes = [wt.HDC, ct.c_int]
+        g.ExcludeClipRect.argtypes = [wt.HDC, ct.c_int, ct.c_int, ct.c_int, ct.c_int]
+        g.GdiAlphaBlend.argtypes = [wt.HDC, ct.c_int, ct.c_int, ct.c_int, ct.c_int,
+                                    wt.HDC, ct.c_int, ct.c_int, ct.c_int, ct.c_int,
+                                    self.DIBUJO["BLENDFUNCTION"]]
 
     def handle_de(self, lparam: int) -> int | None:
         """Devuelve el handle de un aviso de `WM_DEVICECHANGE` que es de un handle, o `None`.
@@ -690,15 +920,19 @@ class Api:
         entrada.
         """
         try:
-            clave = (nombre, lado, color)
-            if clave not in self._pixeles:
-                self._pixeles[clave] = icons.pixeles_menu(nombre, lado, color)
-            return self._dib(self._pixeles[clave], lado)
+            return self._dib(self._glifo(nombre, lado, color), lado)
         except Exception:                               # noqa: BLE001
             return None
 
-    def _bitmap_emblema(self, emblema: bandeja.Emblema, lado: int):
-        """Devuelve el icono de un dispositivo como mapa de bits de menú, o `None`.
+    def _glifo(self, nombre: str, lado: int, color: str) -> bytes:
+        """Devuelve los píxeles del glifo `nombre` a ese tamaño y color, ya pintados una vez."""
+        clave = (nombre, lado, color)
+        if clave not in self._pixeles:
+            self._pixeles[clave] = icons.pixeles_menu(nombre, lado, color)
+        return self._pixeles[clave]
+
+    def _emblema(self, emblema: bandeja.Emblema, lado: int) -> bytes:
+        """Devuelve los píxeles del icono de un dispositivo, ya pintados una vez.
 
         Lo pintado se guarda por tamaño y, para un `.ico`, por su ruta, su
         tamaño y su fecha: el nombre ya cambia con el dibujo
@@ -713,10 +947,14 @@ class Api:
         except OSError:
             clave = ("emblema", emblema.campo, lado)
             emblema = bandeja.Emblema(campo=emblema.campo)
+        if clave not in self._pixeles:
+            self._pixeles[clave] = pixeles_emblema(emblema, lado, self._pixeles_ico)
+        return self._pixeles[clave]
+
+    def _bitmap_emblema(self, emblema: bandeja.Emblema, lado: int):
+        """Devuelve el icono de un dispositivo como mapa de bits de menú, o `None`."""
         try:
-            if clave not in self._pixeles:
-                self._pixeles[clave] = pixeles_emblema(emblema, lado, self._pixeles_ico)
-            return self._dib(self._pixeles[clave], lado)
+            return self._dib(self._emblema(emblema, lado), lado)
         except Exception:                               # noqa: BLE001
             return None
 
@@ -773,6 +1011,13 @@ class Api:
              ids: dict[int, bandeja.Entrada]) -> int:
         """Construye el menú, lo enseña donde está el ratón y devuelve el id elegido.
 
+        Es un menú propio (`MFT_OWNERDRAW`): cada fila la mide `medir()` y la
+        pinta `pintar()` con el aspecto del rediseño (`aspecto()`), y Windows
+        sigue llevando el ratón, el teclado, los desplegables y el cierre. El
+        texto de cada entrada se le da igual, para el lector de pantalla. Si
+        no se puede preparar (la letra, el pincel), es el menú de Windows con
+        los glifos como `hbmpItem`.
+
         Devuelve 0 si no se elige ninguno.
         """
         u = self.user32
@@ -781,6 +1026,21 @@ class Api:
         c = int(u.GetSysColor(COLOR_MENUTEXT))          # 0x00BBGGRR
         tinta = f"#{c & 0xFF:02x}{(c >> 8) & 0xFF:02x}{(c >> 16) & 0xFF:02x}"
         bitmaps: list = []
+        try:
+            self._dibujo = self._preparar(hwnd)
+        except Exception:                               # noqa: BLE001
+            self._dibujo = None
+        dibujo = self._dibujo
+
+        def propia(h, e) -> None:
+            """Hace propia la última entrada de `h`: la pintará `pintar()`."""
+            info = self.MENUITEMINFOW()
+            info.cbSize = self.ct.sizeof(self.MENUITEMINFOW)
+            info.fMask = MIIM_FTYPE | MIIM_DATA
+            info.fType = MFT_OWNERDRAW | (MFT_SEPARATOR if e.separador else 0)
+            info.dwItemData = len(dibujo.filas)
+            dibujo.filas.append(e)
+            u.SetMenuItemInfoW(h, u.GetMenuItemCount(h) - 1, True, self.ct.byref(info))
 
         def poner_icono(h, e) -> None:
             """Le pone a la última entrada de `h` el icono de `e`, si lo tiene.
@@ -802,26 +1062,41 @@ class Api:
             info.hbmpItem = b
             u.SetMenuItemInfoW(h, u.GetMenuItemCount(h) - 1, True, self.ct.byref(info))
 
+        def adornar(h, e) -> None:
+            """La deja propia o, en el menú de Windows, le pone su icono."""
+            if dibujo is not None:
+                propia(h, e)
+            elif not e.separador:
+                poner_icono(h, e)
+
         def construir(lista) -> Any:
             """Construye el menú de una lista de entradas, con sus submenús."""
             h = u.CreatePopupMenu()
             for e in lista:
                 if e.separador:
                     u.AppendMenuW(h, MF_SEPARATOR, 0, None)
+                    adornar(h, e)
                 elif e.hijos:
                     u.AppendMenuW(h, MF_POPUP | (0 if e.activa else MF_GRAYED),
                                   construir(e.hijos), texto_menu(e.texto))
-                    poner_icono(h, e)
+                    adornar(h, e)
                 else:
                     n = por_entrada[id(e)]
                     u.AppendMenuW(h, MF_STRING | (0 if e.activa else MF_GRAYED)
                                   | (MF_CHECKED if e.marcada else 0), n, texto_menu(e.texto))
-                    poner_icono(h, e)
+                    adornar(h, e)
                     if e.defecto:
                         u.SetMenuDefaultItem(h, n, 0)
             return h
 
         raiz = construir(entradas)
+        if dibujo is not None:
+            # El fondo de todo el menú, también lo que no son filas (su margen).
+            MENUINFO = self.DIBUJO["MENUINFO"]
+            info = MENUINFO(cbSize=self.ct.sizeof(MENUINFO),
+                            fMask=MIM_BACKGROUND | MIM_APPLYTOSUBMENUS,
+                            hbrBack=dibujo.pincel)
+            u.SetMenuInfo(raiz, self.ct.byref(info))
         try:
             punto = self.wt.POINT()
             u.GetCursorPos(self.ct.byref(punto))
@@ -836,4 +1111,169 @@ class Api:
             u.DestroyMenu(raiz)             # destruye también los submenús
             for b in bitmaps:               # pero no sus mapas de bits: son nuestros
                 self.gdi32.DeleteObject(b)
+            self._soltar_dibujo()
         return int(elegido or 0)
+
+    def _preparar(self, hwnd) -> Dibujo:
+        """Prepara un menú propio: el aspecto del tema de ahora, sus dos letras y su fondo.
+
+        El tema se mira cada vez (el agente vive días y el sistema puede pasar
+        a oscuro); la letra es la del programa si este proceso la cargó
+        (`theme.cargar_fuentes()`, que ya llamó `theme.nitidez()`) o la del
+        sistema.
+
+        Raises:
+            OSError: Si Windows no da la letra o el pincel; entonces el menú es
+                el de Windows.
+        """
+        from ui import theme
+        u, g = self.user32, self.gdi32
+        hdc = u.GetDC(hwnd)
+        try:
+            ppp = g.GetDeviceCaps(hdc, LOGPIXELSY) or 96
+        finally:
+            u.ReleaseDC(hwnd, hdc)
+        a = aspecto(theme.sistema_oscuro(), ppp)
+        familia = "Noto Sans" if theme.cargar_fuentes() else "Segoe UI"
+        dibujo = Dibujo(a, {}, None)
+        try:
+            for negrita in (False, True):
+                letra = g.CreateFontW(-a.letra, 0, 0, 0, FW_BOLD if negrita else FW_NORMAL,
+                                      0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0,
+                                      familia)
+                if not letra:
+                    raise OSError("CreateFontW")
+                dibujo.letras[negrita] = letra
+            dibujo.pincel = g.CreateSolidBrush(colorref(a.fondo))
+            if not dibujo.pincel:
+                raise OSError("CreateSolidBrush")
+        except Exception:
+            self._dibujo = dibujo
+            self._soltar_dibujo()
+            raise
+        return dibujo
+
+    def _soltar_dibujo(self) -> None:
+        """Libera las letras y el pincel del menú propio, si lo había."""
+        dibujo, self._dibujo = self._dibujo, None
+        if dibujo is None:
+            return
+        for h in [*dibujo.letras.values(), dibujo.pincel]:
+            if h:
+                self.gdi32.DeleteObject(h)
+
+    def medir(self, lparam: int) -> bool:
+        """Contesta a `WM_MEASUREITEM`: el alto y el ancho de una fila del menú propio.
+
+        Devuelve si era una de sus filas; si no, que conteste Windows.
+        """
+        d = self._dibujo
+        if d is None or not lparam:
+            return False
+        m = self.ct.cast(lparam, self.ct.POINTER(self.DIBUJO["MEASUREITEMSTRUCT"])).contents
+        if m.CtlType != ODT_MENU or m.itemData >= len(d.filas):
+            return False
+        e, a = d.filas[m.itemData], d.aspecto
+        if e.separador:
+            m.itemWidth, m.itemHeight = 0, a.alto_separador
+            return True
+        p = pintura(e, 0, a)
+        m.itemWidth = ancho_fila(p, self._ancho_texto(e.texto, p.negrita), a)
+        m.itemHeight = a.alto
+        return True
+
+    def _ancho_texto(self, texto: str, negrita: bool) -> int:
+        """Devuelve lo que mide `texto` de ancho con la letra del menú, en píxeles.
+
+        Lo mide `DrawTextW` con `DT_CALCRECT`, la misma llamada que lo pinta:
+        otra medida difiere en algún píxel y el texto salía cortado con «…».
+        """
+        u, g = self.user32, self.gdi32
+        hdc = u.GetDC(None)
+        try:
+            antes = g.SelectObject(hdc, self._dibujo.letras[negrita])
+            caja = self.wt.RECT(0, 0, 0, 0)
+            u.DrawTextW(hdc, texto, -1, self.ct.byref(caja),
+                        DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX)
+            g.SelectObject(hdc, antes)
+            return int(caja.right - caja.left)
+        finally:
+            u.ReleaseDC(None, hdc)
+
+    def pintar(self, lparam: int) -> bool:
+        """Contesta a `WM_DRAWITEM`: pinta una fila del menú propio en su estado.
+
+        La fila entera es nuestra: el fondo, el icono, el texto y el galón del
+        desplegable. Al acabar se recorta del DC, porque detrás Windows pinta
+        su flecha de desplegable y saldría encima del galón. Devuelve si era
+        una de sus filas.
+        """
+        d = self._dibujo
+        if d is None or not lparam:
+            return False
+        s = self.ct.cast(lparam, self.ct.POINTER(self.DIBUJO["DRAWITEMSTRUCT"])).contents
+        if s.CtlType != ODT_MENU or s.itemData >= len(d.filas):
+            return False
+        e, a, hdc, g = d.filas[s.itemData], d.aspecto, s.hDC, self.gdi32
+        r = self.wt.RECT(s.rcItem.left, s.rcItem.top, s.rcItem.right, s.rcItem.bottom)
+        alto = r.bottom - r.top
+        if e.separador:
+            self._rellenar(hdc, r, a.fondo)
+            medio = r.top + (alto - a.grosor) // 2
+            self._rellenar(hdc, self.wt.RECT(r.left, medio, r.right, medio + a.grosor), a.linea)
+        else:
+            p = pintura(e, s.itemState, a)
+            self._rellenar(hdc, r, p.fondo)
+            if p.emblema is not None:
+                # Un icono a color no se tiñe: apagado, se aclara.
+                self._componer(hdc, self._emblema(p.emblema, p.lado), p.lado,
+                               r.left + p.x_icono, r.top + (alto - p.lado) // 2,
+                               110 if p.apagada else 255)
+            elif p.glifo is not None:
+                self._componer(hdc, self._glifo(p.glifo, p.lado, p.tinta), p.lado,
+                               r.left + p.x_icono, r.top + (alto - p.lado) // 2)
+            fin = r.right - a.margen - (a.hueco + a.galon if p.galon else 0)
+            caja = self.wt.RECT(r.left + p.x_texto, r.top, fin, r.bottom)
+            g.SetBkMode(hdc, TRANSPARENT)
+            g.SetTextColor(hdc, colorref(p.tinta))
+            antes = g.SelectObject(hdc, d.letras[p.negrita])
+            self.user32.DrawTextW(hdc, e.texto, -1, self.ct.byref(caja),
+                                  DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX | DT_END_ELLIPSIS)
+            g.SelectObject(hdc, antes)
+            if p.galon:
+                self._componer(hdc, self._glifo("derecha", a.galon,
+                                                p.tinta if p.apagada else a.tenue),
+                               a.galon, r.right - a.margen - a.galon,
+                               r.top + (alto - a.galon) // 2)
+        g.ExcludeClipRect(hdc, r.left, r.top, r.right, r.bottom)
+        return True
+
+    def _rellenar(self, hdc, rect, color: str) -> None:
+        """Rellena un rectángulo del DC con un color `#RRGGBB`."""
+        pincel = self.gdi32.CreateSolidBrush(colorref(color))
+        try:
+            self.user32.FillRect(hdc, self.ct.byref(rect), pincel)
+        finally:
+            self.gdi32.DeleteObject(pincel)
+
+    def _componer(self, hdc, datos: bytes, lado: int, x: int, y: int,
+                  opacidad: int = 255) -> None:
+        """Pone un icono (BGRA premultiplicado) sobre el DC, con su alfa (`GdiAlphaBlend`)."""
+        g = self.gdi32
+        memoria = g.CreateCompatibleDC(hdc)
+        if not memoria:
+            return
+        try:
+            h, bits = self._seccion(lado, memoria)
+            if h is None:
+                return
+            try:
+                self.ct.memmove(bits, datos, min(len(datos), lado * lado * 4))
+                antes = g.SelectObject(memoria, h)
+                mezcla = self.DIBUJO["BLENDFUNCTION"](AC_SRC_OVER, 0, opacidad, AC_SRC_ALPHA)
+                g.GdiAlphaBlend(hdc, x, y, lado, lado, memoria, 0, 0, lado, lado, mezcla)
+                g.SelectObject(memoria, antes)
+            finally:
+                g.DeleteObject(h)
+        finally:
+            g.DeleteDC(memoria)
