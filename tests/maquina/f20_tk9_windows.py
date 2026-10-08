@@ -6,7 +6,8 @@ Desde que `common/pins.py` fija Python 3.14, el runtime de Windows trae Tk 9.0.4
 propio instalador (`install/runtime_bin.py`, comprobado contra su SHA256SUMS),
 se extrae ya podado, y con SU intérprete se mira lo que depende de Windows:
 
-- que Tk sea el 9.0.4 y la ventana abra con el tema y los controles dibujados;
+- que Tk sea el 9.0.4 y la ventana abra con el tema y los controles dibujados, y
+  con SVG (la prueba de capacidad de `ui/icons.py` y ninguna imagen de Python);
 - que la letra de `ui/fuentes/` se cargue privada (`AddFontResourceExW`);
 - que la protección de capturas del QR (#59) quede puesta y se suelte, leída
   con `GetWindowDisplayAffinity` sobre el marco (`wm frame`) de Tk 9;
@@ -41,9 +42,10 @@ boton = ttk.Button(raiz, text="Guardar", style="Primary.TButton")
 boton.pack(padx=20, pady=20)
 raiz.update()
 fuera["pieza"] = "Prdrive." in str(ttk.Style(raiz).layout("Primary.TButton"))
-fuera["alto_boton"] = boton.winfo_reqheight()
 from ui import icons
 from tkinter import font as tkfont
+fuera["svg"] = [icons.svg_disponible(raiz), icons.PINTADAS["python"]]
+fuera["alto_boton"] = boton.winfo_reqheight()
 fuera["alto_esperado"] = icons.px(raiz, 34)
 fuera["letra_real"] = tkfont.Font(root=raiz, font=theme.fuente()).actual("family")
 ventana = tk.Toplevel(raiz)
@@ -62,7 +64,7 @@ raiz.destroy()
 print("SONDA " + json.dumps(fuera))
 '''
 
-TESTS = ("test_controles", "test_iconos", "test_tema", "test_tk_densidad",
+TESTS = ("test_controles", "test_iconos", "test_iconos_svg", "test_tema", "test_tk_densidad",
          "test_captura_pantalla", "test_tk_medidas")
 
 
@@ -94,6 +96,8 @@ def probar(p: comun.Prueba) -> None:
           ["Noto Sans", "Noto Sans SemiBold", "Noto Sans Mono"])
     p.ver("  y es la que dibuja Windows", d["letra_real"], "Noto Sans")
     p.ver("los controles son los dibujados", d["pieza"], True)
+    p.ver("Tk 9 lee SVG (nanosvg) y el tema se pinta entero con él, sin rasterizar en Python",
+          d["svg"], [True, 0])
     p.ver("un botón mide el alto del diseño, a un píxel",
           abs(d["alto_boton"] - d["alto_esperado"]) <= 1, True)
     p.ver("la protección de capturas queda puesta (lo que dice = lo que hay)",
