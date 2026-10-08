@@ -33,26 +33,19 @@
 "tema.abrir.parejas" = 0
 "tema.abrir.ajustes" = 0
 "tema.apartado" = 0
-"estilos.main" = 2
-"estilos.parejas" = 3
-"estilos.ajustes" = 2
-"estilos.apartado" = 7
-
-[techo.linux]
-"modulos.main" = 224
-"modulos.agente" = 159
-"modulos.wizard" = 234
-# Los estilos tardíos que quedaban eran los que ttk crea por su cuenta con el primer separador,
-# el marco «Plano.TFrame» o la lista (`theme._IMPLICITOS`), que `apply()` ya pregunta. En
-# Windows se bajan con su primera medida.
 "estilos.main" = 0
 "estilos.parejas" = 0
 "estilos.ajustes" = 0
 "estilos.apartado" = 0
 
+[techo.linux]
+"modulos.main" = 224
+"modulos.agente" = 157
+"modulos.wizard" = 234
+
 [techo.windows]
 "modulos.main" = 223
-"modulos.agente" = 160
+"modulos.agente" = 158
 "modulos.wizard" = 235
 
 [meta]
