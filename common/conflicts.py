@@ -28,7 +28,7 @@ import re
 from pathlib import Path
 from typing import Iterator, NamedTuple
 
-from . import model, store
+from . import huella, model, store
 from .model import Config, Pair
 
 DISPOSITIVO = "dispositivo"
@@ -264,31 +264,58 @@ def _existe(ruta: Path) -> bool:
         return False
 
 
-def recorrer(raiz: Path) -> Iterator[Path]:
-    """Recorre todos los ficheros bajo `raiz`.
+def recorrer(raiz: Path, ignorar: tuple[str, ...] = ()) -> Iterator[Path]:
+    """Recorre los ficheros bajo `raiz`, sin entrar en lo que se ignora de su primer nivel.
 
     Es de módulo para que un test la sustituya. Usa `os.walk` y no `Path.rglob`
     porque se salta sin ruido lo que no puede leer (una carpeta sin permiso, el
     dispositivo que desaparece a medias), que es lo que se quiere de un
     recorrido que solo busca avisos.
 
+    Args:
+        raiz: Carpeta que se recorre.
+        ignorar: Patrones de `fnmatch` en minúsculas (`huella.se_ignora`). Solo
+            se miran las entradas que cuelgan directamente de `raiz`, carpetas y
+            ficheros: una carpeta ignorada no se abre, y lo que se llame igual
+            más adentro es contenido de quien lo puso.
+
     Yields:
         La ruta de cada fichero.
     """
-    for carpeta, _subcarpetas, ficheros in os.walk(raiz):
+    en_la_raiz = True
+    for carpeta, subcarpetas, ficheros in os.walk(raiz):
+        if en_la_raiz and ignorar:
+            subcarpetas[:] = [d for d in subcarpetas if not huella.se_ignora(d, ignorar)]
+            ficheros = [f for f in ficheros if not huella.se_ignora(f, ignorar)]
+        en_la_raiz = False
         for nombre in ficheros:
             yield Path(carpeta) / nombre
+
+
+def _ignorados(pair: Pair) -> tuple[str, ...]:
+    """Devuelve lo que cuelga de la carpeta de la pareja y no es suyo, en minúsculas.
+
+    `.prversions/` guarda versiones, no conflictos. Si la pareja sincroniza la
+    raíz entera del dispositivo, tampoco son suyos el programa (`.prdrive/`), el
+    llavero (`.keychain/`, que tiene su propia pareja) ni el ruido que el sistema
+    deja en un volumen (`model.RUIDO_DEL_SISTEMA`).
+    """
+    patrones = (model.VERSIONS_DIR,)
+    if pair.es_raiz:
+        patrones += (model.APP_DIR.name, model.LLAVERO_LOCAL) + model.RUIDO_DEL_SISTEMA
+    return tuple(p.lower() for p in patrones)
 
 
 def escanear(pair: Pair) -> list[Conflicto]:
     """Devuelve los conflictos de una pareja, recorriendo su carpeta local.
 
-    Solo bisync deja conflictos: los demás modos copian en un sentido.
+    Solo bisync deja conflictos: los demás modos copian en un sentido. No se
+    entra en lo que la pareja no sincroniza (`_ignorados()`).
     """
     if not pair.is_bisync or not pair.local_abs.is_dir():
         return []
     esq = esquema(pair)
-    copias = [ruta for ruta in recorrer(pair.local_abs)
+    copias = [ruta for ruta in recorrer(pair.local_abs, _ignorados(pair))
               if leer_nombre(ruta.name, esq) is not None]
     return _agrupar(pair, copias)
 
@@ -308,15 +335,25 @@ def _relativa(ruta: Path) -> str:
 def _guardar(parejas: dict[str, list[Conflicto]], data: dict | None = None) -> None:
     """Escribe en `state/conflicts.json` las copias encontradas de esas parejas.
 
+    Si lo que quedaría escrito es lo que ya hay en disco no escribe nada: cada
+    pasada vuelve a apuntar su recorrido y casi siempre es el mismo.
+
     Args:
         parejas: Conflictos por pareja.
         data: Estado previo con el que mezclar; por defecto, el que hay en
-            disco.
+            disco. Pasar `{}` descarta las parejas que no estén en `parejas`.
     """
-    data = data if data is not None else store.read_json(ruta_estado())
-    guardadas = data.get("parejas") if isinstance(data.get("parejas"), dict) else {}
+    en_disco = store.read_json(ruta_estado()).get("parejas")
+    en_disco = en_disco if isinstance(en_disco, dict) else {}
+    if data is None:
+        previas = en_disco
+    else:
+        previas = data.get("parejas") if isinstance(data.get("parejas"), dict) else {}
+    guardadas = dict(previas)
     for nombre, encontrados in parejas.items():
         guardadas[nombre] = [_relativa(copia) for x in encontrados for copia in x.copias]
+    if guardadas == en_disco:
+        return
     store.write_json(ruta_estado(), {"cuando": store.stamp(), "parejas": guardadas})
 
 

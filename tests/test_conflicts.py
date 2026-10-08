@@ -10,7 +10,9 @@ Esa traducción depende de los flags de la pareja igual que en rclone
 (`cmd/bisync/resolve.go`), y por eso se prueba con varios juegos de flags.
 """
 
+import json
 import sys
+import time
 from pathlib import Path
 
 from _harness import Checks, sandbox
@@ -186,6 +188,82 @@ with sandbox():
     c("y 40 ficheros normales más no piden ningún patrón", con_normales, solo_conflicto)
 
 
+# Lo que no es de la pareja no se recorre: `.prversions/` guarda versiones, no
+# conflictos, y en una pareja de la raíz entera el programa, el llavero y el
+# ruido del sistema tampoco son contenido de nadie.
+def pareja_raiz():
+    """Devuelve una pareja bisync que sincroniza la raíz entera (`local = "."`)."""
+    raw = {"name": "todo", "local": ".", "remote_path": "/R/todo", "mode": "bisync"}
+    return model.parse_config({"defaults": {"remote": "nas"}, "pair": [raw]}).pairs[0]
+
+
+def relativas(raiz: Path, rutas) -> list[str]:
+    """Devuelve las rutas relativas a `raiz`, ordenadas y con `/`."""
+    return sorted(r.relative_to(raiz).as_posix() for r in rutas)
+
+
+with sandbox() as raiz_prueba:
+    suelta = raiz_prueba / "arbol"
+    escribir(suelta / "a.txt")
+    escribir(suelta / ".prversions" / "b.txt")
+    escribir(suelta / ".prversions" / "hondo" / "c.txt")
+    escribir(suelta / "sub" / ".prversions" / "d.txt")
+    escribir(suelta / "tmp.tmp")
+    escribir(suelta / "sub" / "e.tmp")
+    c("recorrer sin patrones devuelve todo lo que hay",
+      relativas(suelta, conflicts.recorrer(suelta)),
+      [".prversions/b.txt", ".prversions/hondo/c.txt", "a.txt", "sub/.prversions/d.txt",
+       "sub/e.tmp", "tmp.tmp"])
+    c("con patrones se saltan las carpetas y los ficheros de la raíz que casan",
+      relativas(suelta, conflicts.recorrer(suelta, (".prversions", "*.tmp"))),
+      ["a.txt", "sub/.prversions/d.txt", "sub/e.tmp"])
+
+with sandbox():
+    p = pareja()
+    raiz = p.local_abs
+    escribir(raiz / "plan.md")
+    escribir(raiz / "plan.md.conflicto-remoto1")
+    escribir(raiz / ".prversions" / "nota.md.conflicto-remoto1")
+    escribir(raiz / ".prversions" / "hondo" / "otra.md.conflicto-dispositivo2")
+    c("lo de .prversions no es un conflicto",
+      [x.original.name for x in conflicts.escanear(p)], ["plan.md"])
+
+    # Solo se poda la raíz de la pareja: más adentro, el nombre es de quien lo puso.
+    escribir(raiz / "sub" / ".prversions" / "mia.md.conflicto-remoto1")
+    c("y una carpeta con ese nombre más adentro sí es contenido",
+      sorted(x.relativa for x in conflicts.escanear(p)),
+      ["plan.md", "sub/.prversions/mia.md"])
+
+    # El programa no es de una pareja que no sincroniza la raíz.
+    escribir(raiz / model.APP_DIR.name / "tuya.md.conflicto-remoto1")
+    c("en una pareja de una subcarpeta, una carpeta como la del programa es suya",
+      sorted(x.relativa for x in conflicts.escanear(p)),
+      [f"{model.APP_DIR.name}/tuya.md", "plan.md", "sub/.prversions/mia.md"])
+
+with sandbox() as dispositivo:
+    todo = pareja_raiz()
+    c("la pareja de la raíz es la del dispositivo", todo.local_abs,
+      dispositivo.resolve())
+    escribir(dispositivo / "plan.md.conflicto-remoto1")
+    escribir(dispositivo / "docs" / "acta.md.conflicto-dispositivo1")
+    escribir(dispositivo / ".prversions" / "viejo.md.conflicto-remoto1")
+    escribir(dispositivo / model.APP_DIR.name / "state" / "x.md.conflicto-remoto1")
+    escribir(dispositivo / model.LLAVERO_LOCAL / "personal.conflicto-remoto1.kdbx")
+    escribir(dispositivo / "System Volume Information" / "z.md.conflicto-remoto1")
+    escribir(dispositivo / "$RECYCLE.BIN" / "w.md.conflicto-remoto1")
+    c("en la raíz tampoco lo de .prdrive, el llavero ni el ruido del sistema",
+      sorted(x.relativa for x in conflicts.escanear(todo)),
+      ["docs/acta.md", "plan.md"])
+
+    # Solo se poda lo que cuelga de la raíz.
+    escribir(dispositivo / "docs" / model.LLAVERO_LOCAL / "mio.md.conflicto-remoto1")
+    escribir(dispositivo / "docs" / "$RECYCLE.BIN" / "tuyo.md.conflicto-remoto1")
+    c("más adentro, esos nombres son contenido",
+      sorted(x.relativa for x in conflicts.escanear(todo)),
+      ["docs/$RECYCLE.BIN/tuyo.md", f"docs/{model.LLAVERO_LOCAL}/mio.md", "docs/acta.md",
+       "plan.md"])
+
+
 # el estado persiste y se aclara solo
 with sandbox():
     p = pareja()
@@ -215,5 +293,66 @@ with sandbox():
 
     conflicts.ruta_estado().write_text("{basura", encoding="utf-8")
     c("un estado ilegible es un estado vacío", conflicts.cargar(cfg), {"notas": []})
+
+
+# Cada pasada vuelve a apuntar lo que encontró: si no ha cambiado nada, el
+# fichero no se reescribe (en un pendrive, cada escritura gasta vida).
+def mtime_estado() -> int:
+    """Devuelve la fecha de modificación de `state/conflicts.json`, en ns."""
+    return conflicts.ruta_estado().stat().st_mtime_ns
+
+
+with sandbox():
+    p = pareja()
+    cfg = model.parse_config({"defaults": {"remote": "nas"},
+                              "pair": [{"name": "notas", "local": "sync-data/notas",
+                                        "remote_path": "/R/notas"}]})
+    escribir(p.local_abs / "x.md")
+    copia = escribir(p.local_abs / "x.md.conflicto-remoto1")
+    conflicts.actualizar_pareja(p)
+    antes = mtime_estado()
+    contenido = conflicts.ruta_estado().read_text(encoding="utf-8")
+    time.sleep(0.05)
+
+    conflicts.actualizar_pareja(p)
+    c("sin cambios no se reescribe conflicts.json", mtime_estado(), antes)
+    conflicts.refrescar(cfg)
+    c("refrescar con lo mismo tampoco lo reescribe", mtime_estado(), antes)
+    c("y el contenido sigue siendo el mismo",
+      conflicts.ruta_estado().read_text(encoding="utf-8"), contenido)
+
+    nueva = escribir(p.local_abs / "y.md.conflicto-dispositivo1")
+    conflicts.actualizar_pareja(p)
+    c("si aparece un conflicto nuevo, se reescribe", mtime_estado() > antes, True)
+    c("y lo apunta", sorted(x.relativa for x in conflicts.cargar(cfg)["notas"]),
+      ["x.md", "y.md"])
+
+    ahora = mtime_estado()
+    time.sleep(0.05)
+    nueva.unlink()
+    copia.unlink()
+    conflicts.actualizar_pareja(p)
+    c("si desaparecen, también", mtime_estado() > ahora, True)
+    c("y se queda sin conflictos", conflicts.contar(conflicts.cargar(cfg)), {})
+
+    # Las parejas que ya no están en el config se caen al refrescar, y eso es
+    # un cambio aunque la pareja que queda no haya cambiado.
+    guardado = conflicts.ruta_estado()
+    guardado.write_text(json.dumps({"cuando": "ayer", "parejas": {"vieja": ["sync-data/v/a.md.conflicto-remoto1"],
+                                                                  "notas": []}}),
+                        encoding="utf-8")
+    conflicts.refrescar(cfg)
+    c("una pareja que ya no está se cae del estado",
+      sorted(json.loads(guardado.read_text(encoding="utf-8"))["parejas"]), ["notas"])
+
+with sandbox():
+    p = pareja()
+    escribir(p.local_abs / "normal.md")
+    conflicts.actualizar_pareja(p)
+    primera = mtime_estado()
+    time.sleep(0.05)
+    conflicts.actualizar_pareja(p)
+    c("sin ningún conflicto la primera pasada lo apunta y las demás no escriben",
+      mtime_estado(), primera)
 
 sys.exit(c.report())
