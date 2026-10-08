@@ -289,7 +289,7 @@ def _listados_sueltos() -> Hallazgo | None:
         None, NOTA, tuple(sueltos))
 
 
-def _espacio() -> Hallazgo | None:
+def _espacio(fisica: Path | None | object = vestibulo.BUSCAR) -> Hallazgo | None:
     """Devuelve la avería de un contenedor dinámico al que se acaba el sitio fuera.
 
     Un contenedor dinámico (disperso) crece a medida que se escribe dentro, así
@@ -300,11 +300,20 @@ def _espacio() -> Hallazgo | None:
     contenedor.
 
     `fleet` se importa dentro: es el que sabe leer el id del fichero de control
-    y arrastra el catálogo, que el resto de este módulo no necesita.
+    y arrastra el catálogo, que el resto de este módulo no necesita. Solo se
+    importa y se pregunta si hay que buscar la raíz física.
+
+    Args:
+        fisica: La raíz física si quien llama ya la tiene (`None` es «no vive en
+            un contenedor»); con `vestibulo.BUSCAR` se busca por el id del
+            dispositivo.
     """
     try:
-        from . import fleet
-        falta = vestibulo.sin_sitio_fuera(fleet.device_id())
+        if fisica is vestibulo.BUSCAR:
+            from . import fleet
+            falta = vestibulo.sin_sitio_fuera(fleet.device_id())
+        else:
+            falta = vestibulo.sin_sitio_fuera("", fisica)
     except Exception:                                # noqa: BLE001
         return None
     if falta is None:
@@ -352,7 +361,8 @@ def _catalogo_duplicado() -> Hallazgo | None:
         None, AVISO, (sobra,))
 
 
-def revisar(config: Config) -> list[Hallazgo]:
+def revisar(config: Config, *,
+            fisica: Path | None | object = vestibulo.BUSCAR) -> list[Hallazgo]:
     """Devuelve todo lo que está mal ahora mismo, lo más grave primero.
 
     No habla con el remoto ni lanza rclone: lee el dispositivo, lo que permite
@@ -360,6 +370,12 @@ def revisar(config: Config) -> list[Hallazgo]:
     `filters/<pareja>.txt`, y no es cosa suya: lo regenera
     `bisync.resync_reasons()` cuando el contenido ha cambiado, que es justo lo
     que hace falta saber para decir si la pareja pide un resync.
+
+    Args:
+        config: La configuración a revisar.
+        fisica: La raíz física del contenedor, si quien llama ya la ha buscado
+            (`ui/instantanea.py` la busca una vez para todas sus lecturas);
+            `None` es «no vive en un contenedor». Por defecto se busca.
     """
     hallazgos: list[Hallazgo] = []
     for pair in config.pairs:
@@ -371,7 +387,7 @@ def revisar(config: Config) -> list[Hallazgo]:
                 hallazgos.append(hallazgo)
     hallazgos += _conflictos(config)
     hallazgos += _fallos(config)
-    for hallazgo in (_listados_sueltos(), _espacio(), _catalogo_duplicado()):
+    for hallazgo in (_listados_sueltos(), _espacio(fisica), _catalogo_duplicado()):
         if hallazgo is not None:
             hallazgos.append(hallazgo)
 

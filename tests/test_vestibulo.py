@@ -955,4 +955,43 @@ desmontar "$1" >/dev/null
       {"udisksctl leyó la contraseña de la terminal",
        "cryptsetup leyó la contraseña de la terminal"})
 
+# 9. la raíz física ya buscada: quien la tiene se la pasa a quien la necesita
+#
+# La lectura de la ventana busca la raíz UNA vez (recorre las unidades) y se la
+# da a `sin_sitio_fuera()` y a `expulsion()`; un valor dado, también `None` («no
+# vive en un contenedor»), se usa tal cual y no se busca otra.
+from ui import cifrado  # noqa: E402
+
+busquedas = []
+real_raiz, real_disperso, real_umbral = v.raiz_fisica, v.disperso, v.UMBRAL_LIBRE
+v.raiz_fisica = lambda device_id: busquedas.append(device_id) or None
+try:
+    fisica = tmpdir("prdrive-fisica-")
+    script = fisica / (v.EXPULSAR_BAT if os.name == "nt" else v.EXPULSAR_SH)
+    script.write_text("", encoding="utf-8")
+    c("un solo valor de «búscala tú», el del vestíbulo", v.BUSCAR is not None, True)
+    c("expulsion con la raíz dada: su script, sin buscar nada",
+      (cifrado.expulsion(fisica=fisica), busquedas), (script, []))
+    c("  con `None`: ninguno, y tampoco se busca",
+      (cifrado.expulsion(fisica=None), busquedas), (None, []))
+    script.unlink()
+    c("  una raíz sin el script: ninguno", cifrado.expulsion(fisica=fisica), None)
+
+    v.disperso = lambda contenedor: True
+    v.UMBRAL_LIBRE = 1 << 62                    # lo que queda fuera siempre es menos
+    falta = v.sin_sitio_fuera(ID, fisica)
+    c("sin_sitio_fuera con la raíz dada: avisa sin buscar",
+      (falta is not None and falta[0], busquedas), (fisica, []))
+    c("  con `None`: nada que avisar y tampoco se busca",
+      (v.sin_sitio_fuera(ID, None), busquedas), (None, []))
+    c("  el id no se mira cuando la raíz viene dada",
+      (v.sin_sitio_fuera("", fisica) is not None, busquedas), (True, []))
+    v.sin_sitio_fuera(ID)
+    c("sin la raíz se busca por el id, como siempre", busquedas, [ID])
+    del busquedas[:]
+    c("  y el centinela explícito es lo mismo que no darla",
+      (v.sin_sitio_fuera(ID, v.BUSCAR), busquedas), (None, [ID]))
+finally:
+    v.raiz_fisica, v.disperso, v.UMBRAL_LIBRE = real_raiz, real_disperso, real_umbral
+
 raise SystemExit(c.report())
