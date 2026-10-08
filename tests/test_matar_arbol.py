@@ -245,7 +245,10 @@ else:
 #
 # Es el caso que motiva todo esto: la pasada de `output_window` lanza un rclone, y
 # cerrar la ventana con la X tiene que cortarlo también a él. Con la ventana de
-# verdad, oculta y colgada de una raíz que tampoco se enseña.
+# verdad, oculta y colgada de una raíz que tampoco se enseña. La ventana lanza su
+# pasada en el turno siguiente al de enseñarse (`ventana.proceso` es `None` hasta
+# entonces, y cerrarla antes no lanza nada: `test_tk_pasada.py`), así que antes de
+# cerrarla se espera a que haya arrancado.
 try:
     import tkinter as tk
     raiz = tk.Tk()
@@ -256,6 +259,12 @@ except Exception as e:                                       # sin entorno gráf
 
 from ui import tk as uitk  # noqa: E402
 
+
+def esperar_viva(condicion, espera: float = ESPERA) -> bool:
+    """Como `esperar_a`, pero dejando que la ventana siga viva mientras tanto."""
+    return esperar_a(lambda: raiz.update() is None and condicion(), espera)
+
+
 fichero = tmpdir() / "nieto-ventana.pid"
 deiconify = tk.Toplevel.deiconify
 tk.Toplevel.deiconify = lambda self: None                    # nada se enseña en un test
@@ -265,11 +274,8 @@ try:
     uitk.output_window("Prueba", [sys.executable, "-c", HIJO, str(fichero)],
                        parent=raiz, modal=False)
     ventana = next(w for w in raiz.winfo_children() if w not in antes)
-
-    def esperar_viva(condicion, espera: float = ESPERA) -> bool:
-        """Como `esperar_a`, pero dejando que la ventana siga viva mientras tanto."""
-        return esperar_a(lambda: raiz.update() is None and condicion(), espera)
-
+    c("la pasada arranca en el turno siguiente al de enseñar la ventana",
+      esperar_viva(lambda: ventana.proceso is not None), True)
     esperar_viva(lambda: leer_pid(fichero) is not None, 15.0)
     nieto = leer_pid(fichero)
     c("con la ventana abierta, el nieto está vivo",
@@ -305,6 +311,7 @@ try:
     uitk.output_window("Prueba", [sys.executable, "-c", "import time; time.sleep(60)"],
                        parent=raiz, modal=False)
     ventana = next(w for w in raiz.winfo_children() if w not in antes)
+    esperar_viva(lambda: ventana.proceso is not None)
     ventana.tk.eval(ventana.protocol("WM_DELETE_WINDOW"))
     raiz.update()
     c("cerrar la ventana corta el árbol una sola vez", len(cortes), 1)

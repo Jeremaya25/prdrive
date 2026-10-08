@@ -2863,6 +2863,14 @@ def output_window(title: str, cmd: list[str], parent=None,
     `None` y la ventana principal sigue viva debajo, que es lo que necesita
     para no desaparecer al sincronizar.
 
+    La ventana se construye y se enseña antes de que exista el proceso: la
+    orden se lanza en el turno siguiente (`after(1)`), cuando ya se ve. Hasta
+    entonces `ventana.proceso` es `None`; después, el `Popen`. Cerrar la
+    ventana antes de ese turno no lanza nada. Si la orden no se puede lanzar
+    (`OSError`, o `ValueError` por argumentos no válidos), la ventana lo dice
+    en su texto y acaba con el código 127, el de «orden no encontrada»: sigue
+    abierta, con «Guardar el log», hasta que se cierra.
+
     Args:
         title: Qué se está haciendo.
         cmd: La orden entera.
@@ -2883,38 +2891,15 @@ def output_window(title: str, cmd: list[str], parent=None,
     import tkinter as tk
     from tkinter import filedialog, font as tkfont, messagebox, ttk
 
-    # Jefe de su sesión (POSIX) o de su grupo de procesos (Windows): cerrar la
-    # ventana corta el árbol entero con `store.matar_arbol()`, que en POSIX
-    # señala al grupo y por eso necesita que `proc` sea su jefe. Se mira el
-    # sistema de verdad y no `IS_WIN`, que los tests fuerzan.
-    if sys.platform == "win32":
-        aparte: dict = {"creationflags": model.CREATE_NEW_PROCESS_GROUP}
-    else:
-        aparte = {"start_new_session": True}
-    proc = subprocess.Popen(
-        cmd,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        # Lo que se lee aquí es castellano (sync.py) o UTF-8 de rclone; con la
-        # codificación del sistema las tildes se rompían en la propia ventana.
-        encoding="utf-8",
-        errors="replace",
-        bufsize=1,
-        **aparte,
-    )
     q: queue.Queue = queue.Queue()
     DONE = object()
 
-    def reader() -> None:
+    def reader(proc) -> None:
         """Pasa a la cola, en el hilo, cada línea de la salida y marca el final."""
         assert proc.stdout is not None
         for line in proc.stdout:
             q.put(line)
         q.put(DONE)
-
-    threading.Thread(target=reader, daemon=True).start()
 
     if parent is None:
         theme.nitidez()
@@ -2931,7 +2916,7 @@ def output_window(title: str, cmd: list[str], parent=None,
     root.configure(background=theme.PAPEL)
     root.columnconfigure(0, weight=1)
     root.rowconfigure(1, weight=1)
-    arranque = time.monotonic()
+    root.proceso = None      # el `Popen`, cuando `arrancar` lo lance
 
     # La barra de arriba: qué se está haciendo y cómo va.
     barra = ttk.Frame(root, style="Card.TFrame", padding=(theme.E4, theme.E3))
@@ -2988,7 +2973,7 @@ def output_window(title: str, cmd: list[str], parent=None,
             ("progreso", dict(foreground=theme.ACENTO))):
         text.tag_configure(nombre, **opciones)
 
-    state = {"rc": None}
+    state = {"rc": None, "arranque": time.monotonic()}
     salida = _Salida()
 
     def guardar() -> None:
@@ -3023,14 +3008,20 @@ def output_window(title: str, cmd: list[str], parent=None,
     ttk.Button(pie, text="Cerrar", style="Primary.TButton",
                command=lambda: root.destroy()).grid(row=0, column=2)
 
-    def terminado() -> None:
-        """Apunta el código de salida y enseña el veredicto."""
-        state["rc"] = proc.wait()
-        segundos = int(time.monotonic() - arranque)
-        especial = (veredictos or {}).get(state["rc"])
-        bien = state["rc"] == 0 or especial is not None
-        verdict = ("OK" if state["rc"] == 0 else especial if bien
-                   else f"ERROR (código {state['rc']})")
+    def terminado(rc: int, sin_lanzar: bool = False) -> None:
+        """Apunta el código de salida y enseña el veredicto.
+
+        Args:
+            rc: El código de salida de la orden.
+            sin_lanzar: Si la orden no llegó a lanzarse. Es un error siempre:
+                `veredictos` habla de lo que la orden devuelve, no de eso.
+        """
+        state["rc"] = rc
+        segundos = int(time.monotonic() - state["arranque"])
+        especial = None if sin_lanzar else (veredictos or {}).get(rc)
+        bien = rc == 0 or especial is not None
+        verdict = ("OK" if rc == 0 else especial if bien
+                   else f"ERROR (código {rc})")
         _volcar(text, salida, [f"\n=== Terminado: {verdict} ===\n"])
         root.title(f"{TITLE} — {title} — {verdict}")
         nuevo = theme.chip(barra, f"{'terminado' if bien else verdict} · {segundos} s",
@@ -3057,8 +3048,50 @@ def output_window(title: str, cmd: list[str], parent=None,
             pass
         _volcar(text, salida, lineas)
         if acabo:
-            terminado()
+            terminado(root.proceso.wait())
             return
+        root.after(120, poll)
+
+    # Jefe de su sesión (POSIX) o de su grupo de procesos (Windows): cerrar la
+    # ventana corta el árbol entero con `store.matar_arbol()`, que en POSIX
+    # señala al grupo y por eso necesita que `proc` sea su jefe. Se mira el
+    # sistema de verdad y no `IS_WIN`, que los tests fuerzan.
+    if sys.platform == "win32":
+        aparte: dict = {"creationflags": model.CREATE_NEW_PROCESS_GROUP}
+    else:
+        aparte = {"start_new_session": True}
+    pendiente = {"id": None}
+
+    def arrancar() -> None:
+        """Lanza la orden, con la ventana ya enseñada, y empieza a leer su salida.
+
+        Corre en el turno siguiente al de enseñarla (`ensenar()` no ha vuelto
+        hasta que la ventana está pintada): lo primero que se ve es la ventana
+        y no lo que tarda en lanzarse el proceso. Si no se puede lanzar, la
+        ventana lo cuenta y da la pasada por acabada con el 127.
+        """
+        pendiente["id"] = None
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                # Lo que se lee aquí es castellano (sync.py) o UTF-8 de rclone; con la
+                # codificación del sistema las tildes se rompían en la propia ventana.
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+                **aparte,
+            )
+        except (OSError, ValueError) as e:
+            _volcar(text, salida, [f"No se ha podido lanzar: {e}\n"])
+            terminado(127, sin_lanzar=True)
+            return
+        root.proceso = proc
+        state["arranque"] = time.monotonic()
+        threading.Thread(target=reader, args=(proc,), daemon=True).start()
         root.after(120, poll)
 
     cortado = {"ya": False}
@@ -3066,11 +3099,21 @@ def output_window(title: str, cmd: list[str], parent=None,
     def cortar() -> None:
         """Corta el proceso, con su rclone, si sigue; una sola vez por ventana.
 
+        Si aún no se ha lanzado no hay nada que cortar, y se cancela el
+        arranque: un `after` que sobrevive a su ventana da un error de Tcl.
+
         En Windows `taskkill` vuelve antes de que el proceso haya salido: en el
         siguiente punto de corte `proc.poll()` aún lo vería vivo y se lanzaría
         otro `taskkill` (hasta tres por ventana).
         """
-        if cortado["ya"] or proc.poll() is not None:
+        if pendiente["id"] is not None:
+            try:
+                root.after_cancel(pendiente["id"])
+            except tk.TclError:
+                pass              # la ventana ya no existe
+            pendiente["id"] = None
+        proc = root.proceso
+        if cortado["ya"] or proc is None or proc.poll() is not None:
             return
         cortado["ya"] = True
         store.matar_arbol(proc.pid)
@@ -3108,14 +3151,15 @@ def output_window(title: str, cmd: list[str], parent=None,
     sin_espera = parent is not None and not modal
     if sin_espera:
         root.bind("<Destroy>", al_destruir, add="+")
-        root.after(120, poll)
-        return None
-    if parent is not None:
+    elif parent is not None:
         try:
             root.grab_set()  # después de enseñarla: Tk no captura lo que no se ve
         except tk.TclError:
             pass
-    root.after(120, poll)
+    # La orden se lanza cuando la ventana ya se ve, no antes de construirla.
+    pendiente["id"] = root.after(1, arrancar)
+    if sin_espera:
+        return None
     esperar()
     cortar()
     return state["rc"] if state["rc"] is not None else 1
