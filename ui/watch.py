@@ -23,7 +23,7 @@ import subprocess
 import sys
 from typing import NamedTuple
 
-from common import fleet, model
+from common import fleet, model, store
 
 MODES = ("ui", "daemon", "sync")
 """Los modos del vigilante, de lo que menos hace solo a lo que más.
@@ -142,6 +142,10 @@ def consulta(cmd: list[str], timeout: float = CONSULTA_S) -> subprocess.Complete
     aquí y no en `penwatch.py` porque cambiar los bytes de ese fichero deja
     «desfasado» a cada vigilante ya instalado (`penwatch.copia_al_dia()`).
 
+    Mientras corre, la pregunta está apuntada en `store`: `store.matar_hijos()`
+    la corta cuando se cierra la ventana, y quien esperaba recibe un código de
+    fallo.
+
     Args:
         cmd: La pregunta entera.
         timeout: Segundos que se le dan.
@@ -150,14 +154,13 @@ def consulta(cmd: list[str], timeout: float = CONSULTA_S) -> subprocess.Complete
         El resultado. Si pasa el tiempo, la orden se mata y el código es
         `CODIGO_TIEMPO`; si no se puede lanzar, 127.
     """
-    kwargs: dict = {"capture_output": True, "text": True, "errors": "replace",
-                    "timeout": timeout}
+    kwargs: dict = {"text": True, "errors": "replace"}
     # El sistema de verdad y no `IS_WIN`, que los tests fuerzan: `creationflags`
     # en un POSIX es un error.
     if sys.platform == "win32":
         kwargs["creationflags"] = model.CREATE_NO_WINDOW
     try:
-        return subprocess.run(cmd, **kwargs)
+        return store.correr_apuntado(cmd, timeout=timeout, **kwargs)
     except subprocess.TimeoutExpired:
         return subprocess.CompletedProcess(cmd, CODIGO_TIEMPO, "",
                                            f"sin respuesta en {timeout:g} s")
