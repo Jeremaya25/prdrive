@@ -1,0 +1,80 @@
+name: Banco de la interfaz
+
+# TEMPORAL (ver banco/LEEME.md): mide cuánto tardan en abrir las ventanas de
+# prdrive con el Python fijado del dispositivo, en Windows x64, Windows ARM64 y
+# Linux, para elegir el nuevo frontend: la 0.7.1 tal cual, un Tk sin pintar en
+# Python (enfoque A) y Qt (enfoque B). Se borra con banco/ cuando sus resultados
+# estén apuntados. Solo corre al subir un cambio de banco/ a una rama que no es main.
+on:
+  push:
+    branches-ignore: [main]
+    paths:
+      - "banco/**"
+      - ".github/workflows/banco-ui.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: banco-ui-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  banco:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, plat: windows-x64 }
+          - { os: windows-11-arm, plat: windows-arm64 }
+          - { os: ubuntu-latest, plat: linux-x64 }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 75
+    env:
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Pantalla de 1920x1080 (Windows)
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          Set-DisplayResolution -Width 1920 -Height 1080 -Force
+          Get-CimInstance Win32_VideoController | Select-Object CurrentHorizontalResolution, CurrentVerticalResolution, VideoProcessor | Format-List
+
+      - name: Paquetes (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q xvfb libxft2 fontconfig imagemagick libegl1 \
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+            libxcb-render-util0 libxcb-util1 libxkbcommon-x11-0
+
+      - name: Preparar (runtime fijado, 0.6.5, Qt)
+        shell: bash
+        run: python banco/preparar.py --plataforma ${{ matrix.plat }} --trabajo "$RUNNER_TEMP/banco"
+
+      - name: Medir (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: python banco/correr.py --salida "$RUNNER_TEMP/banco/salida"
+
+      - name: Medir (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a -s "-screen 0 1920x1080x24" python banco/correr.py --salida "$RUNNER_TEMP/banco/salida"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: banco-${{ matrix.plat }}
+          path: ${{ runner.temp }}/banco/salida
+          if-no-files-found: warn
