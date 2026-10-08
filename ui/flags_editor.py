@@ -18,9 +18,11 @@ Hay dos decisiones que conviene no deshacer:
   `--workdir` o `--filters-file`, eso es apuntar a bisync a un baseline que no
   es el suyo. Por eso `RESERVED` (`model.FLAGS_RESERVADOS`) se rechaza al
   parsear y no al ejecutar. Tampoco se admite un flag que haga que rclone
-  lance un programa de este equipo (`--sftp-ssh`, `--password-command`…): el
-  config viaja con el dispositivo. Ambas reglas son de `model.problema_flag()`,
-  la puerta del parser del config; aquí solo se avisa al escribir.
+  lance un programa de este equipo (`--sftp-ssh`, `--password-command`…) ni
+  uno que escriba un fichero cualquiera de él (`--cpuprofile`, `--memprofile`):
+  el config viaja con el dispositivo. Todas son reglas de
+  `model.problema_flag()`, la puerta del parser del config; aquí solo se avisa
+  al escribir.
 
 Lo demás se admite sin lista blanca: quién sabe qué flags existen es rclone, y
 la regla del proyecto es que un flag nuevo se añade escribiéndolo, no tocando
@@ -38,10 +40,11 @@ from common.model import ConfigError
 
 
 class FlagReservado(ConfigError):
-    """Un flag que no se admite aquí: lo pone el programa o lanza un programa.
+    """Un flag que no se admite aquí: lo pone el programa o toca este equipo.
 
-    Es lo que rechaza `model.problema_flag()`: los de `RESERVED` y los que hacen
-    que rclone ejecute una orden de este equipo. Lo es tanto el del cuadro de
+    Es lo que rechaza `model.problema_flag()`: los de `RESERVED`, los que hacen
+    que rclone ejecute una orden de este equipo y los que le hacen escribir un
+    fichero cualquiera (`model.FLAGS_ESCRIBEN`). Lo es tanto el del cuadro de
     flags como el del de argumentos extra, para que el aviso lleve el mismo
     título (`titulo_error()`) escriba donde escriba la persona.
     """

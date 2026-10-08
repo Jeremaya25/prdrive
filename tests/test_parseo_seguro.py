@@ -51,7 +51,8 @@ def rechaza(data, equipo=False) -> str:
 # --- flags de [pair.flags] y [defaults.flags] --------------------------------
 for flags in ({"resync": True}, {"workdir": "/tmp/w"}, {"filters-file": "x"},
               {"password-command": "x"}, {"metadata-mapper": "x"},
-              {"rc": True}, {"rc-addr": ":5572"}, {"sftp-ssh": "sh"}):
+              {"rc": True}, {"rc-addr": ":5572"}, {"sftp-ssh": "sh"},
+              {"cpuprofile": "/tmp/x"}, {"memprofile": "/etc/passwd"}, {"CpuProfile": "x"}):
     clave = next(iter(flags))
     c.contains(f"[pair.flags] {clave} no se admite", rechaza(una(flags=flags)), clave)
     c.contains(f"  y dice de qué pareja", rechaza(una(flags=flags)), "[p]")
@@ -62,7 +63,8 @@ c.contains("[defaults.flags] config no se admite",
 
 # --- extra_flags -------------------------------------------------------------
 for extra in (["--sftp-ssh", "sh -c id"], ["--sftp-ssh=sh -c id"], ["--config", "/tmp/x"],
-              ["--webdav-bearer-token-command", "x"], ["--log-file=/tmp/l"], ["--Resync"]):
+              ["--webdav-bearer-token-command", "x"], ["--log-file=/tmp/l"], ["--Resync"],
+              ["--cpuprofile=/tmp/x"], ["--memprofile", "/etc/passwd"]):
     nombre = extra[0][2:].split("=", 1)[0]
     c.contains(f"extra_flags {extra[0]} no se admite", rechaza(una(extra_flags=extra)), nombre)
 
@@ -81,6 +83,18 @@ c.contains("[defaults.flags] un valor con --sftp-ssh tampoco",
 c("los valores de siempre pasan (8M, -1, newer, un patrón)",
   rechaza(una(flags={"bwlimit": "8M", "max-delete": -1, "conflict-resolve": "newer",
                      "exclude-if-present": [".nosync", "-x"]})), "")
+
+# `--cpuprofile` y `--memprofile` abren con `os.Create` la ruta que se les da
+# (`cmd/cmd.go`): escribirían o truncarían un fichero cualquiera de este equipo.
+texto = rechaza(una(flags={"cpuprofile": "/tmp/x"}))
+c.contains("un flag que escribe un fichero del equipo dice por qué", texto, "escribe")
+c.contains("  y qué quitar", texto, "Quítalo del config.")
+# Lo que NO se rechaza, a propósito (agent.md, «Not covered»): son rutas o destinos
+# que la persona puede querer, y su valor no deja a rclone escribir un fichero suyo.
+c("--temp-dir, --cache-dir, los *-from y las opciones de un backend siguen valiendo",
+  rechaza(una(flags={"temp-dir": "/tmp/t", "cache-dir": "/tmp/c", "include-from": "i.txt",
+                     "exclude-from": "e.txt", "files-from": "f.txt", "sftp-host": "otro",
+                     "webdav-url": "https://x", "s3-endpoint": "https://y"})), "")
 
 # `extra_flags` llega a rclone como `_as_tuple()` lo emita: una tabla en línea
 # da sus claves, y algo que no es una lista de textos no se puede ni leer.
@@ -199,6 +213,10 @@ c("un flag que lanza un programa, en el cuadro de flags: título de flag no admi
   _titulo(lambda: flags_editor.parse('password-command = "x"')), flags_editor.TITULO_RESERVADO)
 c("  en el de argumentos extra, igual",
   _titulo(lambda: flags_editor.parse_extra("--sftp-ssh\nx")), flags_editor.TITULO_RESERVADO)
+c("un flag que escribe un fichero del equipo, en el cuadro de flags: el mismo título",
+  _titulo(lambda: flags_editor.parse('memprofile = "x"')), flags_editor.TITULO_RESERVADO)
+c("  y en el de argumentos extra",
+  _titulo(lambda: flags_editor.parse_extra("--cpuprofile=/tmp/x")), flags_editor.TITULO_RESERVADO)
 c("  y un reservado del programa en el de extra también",
   _titulo(lambda: flags_editor.parse_extra("--config\n/tmp/x")), flags_editor.TITULO_RESERVADO)
 c("un valor con un flag dentro no es un flag reservado: título genérico",

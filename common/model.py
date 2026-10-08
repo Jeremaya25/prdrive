@@ -486,6 +486,21 @@ el suyo.
 
 _MOTIVO_PROGRAMA = "lanza un programa en este equipo, y el config viaja con el dispositivo"
 
+FLAGS_ESCRIBEN: Mapping[str, str] = {
+    "cpuprofile": "escribe (o trunca) en este equipo el fichero que se le diga, y el "
+                  "config viaja con el dispositivo",
+    "memprofile": "escribe (o trunca) en este equipo el fichero que se le diga, y el "
+                  "config viaja con el dispositivo",
+}
+"""Flags de rclone que escriben o truncan un fichero cualquiera de este equipo.
+
+`--cpuprofile` y `--memprofile` crean con `os.Create` la ruta que reciben
+(`cmd/cmd.go`), sin límite alguno. `problema_flag()` los rechaza como los que
+lanzan un programa. No están `--temp-dir`, `--cache-dir`, los `--*-from` ni las
+opciones de un backend (`--sftp-host`, `--*-url`, `--*-endpoint`): quedan
+fuera de esta puerta (`docs/agents/reference/agent.md`, «Not covered»).
+"""
+
 QUITALO = "Quítalo del config."
 """Con lo que acaba el rechazo de un flag: el config se arregla a mano.
 
@@ -505,8 +520,9 @@ def normalizar_flag(nombre: str) -> str:
 def problema_flag(nombre: str) -> str | None:
     """Dice por qué un flag de rclone no puede ir en el config.
 
-    No vale ni lo que pone `sync.py` por su cuenta (`FLAGS_RESERVADOS`) ni un
-    flag que hace que rclone ejecute un programa de este equipo: el config
+    No vale ni lo que pone `sync.py` por su cuenta (`FLAGS_RESERVADOS`), ni un
+    flag que escribe un fichero cualquiera de este equipo (`FLAGS_ESCRIBEN`),
+    ni uno que hace que rclone ejecute un programa de este equipo: el config
     viaja con el dispositivo y se edita a mano, y esa orden correría en el
     equipo donde se enchufe. Son los que acaban en `-command` o `-ssh`, más
     `metadata-mapper`, `rc` y los `rc-*`. Se citan del código de rclone:
@@ -527,7 +543,7 @@ def problema_flag(nombre: str) -> str | None:
         El motivo, o `None` si el flag vale.
     """
     clave = normalizar_flag(nombre).split("=", 1)[0].strip()
-    motivo = FLAGS_RESERVADOS.get(clave)
+    motivo = FLAGS_RESERVADOS.get(clave) or FLAGS_ESCRIBEN.get(clave)
     if motivo:
         return motivo
     if clave.endswith(("-command", "-ssh")) or clave in ("metadata-mapper", "rc") \

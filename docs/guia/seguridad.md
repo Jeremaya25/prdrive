@@ -24,6 +24,17 @@ Léelo entero antes de usar esto con datos que te importen.
   `--resync` tras actualizar, y la confirmación (en la ventana, en «Reparación» y
   en la consola) te dice dónde está esa copia. Como lleva tu clave, conviene
   además cambiarla por otra.
+- **El config de una unidad que no es tuya manda en tu equipo.** El
+  `sync_config.toml` viaja con el dispositivo, y el programa (y el agente del
+  equipo, antes de atender una unidad) se niega a leerlo si trae un flag
+  reservado del programa, uno que lanza un programa o que escribe un fichero
+  cualquiera del equipo (`cpuprofile`, `memprofile`), un nombre de remote que es
+  una cadena de conexión, o un `local` que sale del dispositivo
+  ([lo que no admite](configuracion.md#lo-que-el-config-no-admite)). **No
+  cubre** las opciones de un backend que redirigen la conexión (`--sftp-host`,
+  `--…-url`, `--…-endpoint`), que podrían mandar tus credenciales a otro sitio,
+  ni `--temp-dir`, `--cache-dir` o los ficheros de filtros (`--*-from`). Con una
+  unidad ajena, léelo antes de enchufarla.
 - **Los modos `*-mirror` borran.** `--max-delete` es el único freno automático.
   Prueba siempre con `--dry-run` primero.
 - **Escribir el catálogo es lo más arriesgado del programa**, porque gobierna
