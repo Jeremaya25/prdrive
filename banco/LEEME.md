@@ -18,7 +18,10 @@ rama que no es `main`. Al final del registro de cada trabajo van las líneas
 pinta de verdad, van en el artefacto `banco-<plataforma>`.
 
 En local: `python banco/preparar.py --plataforma linux-x64 --trabajo DIR` y luego
-`BANCO_CONF=DIR/banco.json xvfb-run -a python banco/correr.py --salida DIR/salida`.
+`BANCO_CONF=DIR/banco.json xvfb-run -a -s "-screen 0 1920x1080x24" python banco/correr.py --salida DIR/salida`
+(sin `-s`, Xvfb da una pantalla de 640x480 a 8 bits). Probado así de punta a punta
+en Linux con `--rondas 1`: 40 líneas `RESULTADO`, 20 capturas pintadas y ningún
+proceso suelto, en 1 min 38 s.
 
 **Es temporal.** Se borra, junto con el workflow, en cuanto los resultados estén
 apuntados en la especificación del nuevo frontend
