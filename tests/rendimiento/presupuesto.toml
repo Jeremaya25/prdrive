@@ -9,10 +9,14 @@
 #              tema.abrir.<pantalla>          ... al abrir «Parejas» / «Ajustes» con el programa abierto
 #              tema.apartado                  ... al cambiar de apartado en «Ajustes»
 #              estilos.<pantalla>             estilos de ttk creados después del primer widget
+#              escrituras.marcar              escrituras a state/ (store.write_json) dentro del clic en
+#                                             una casilla de la ventana principal: 1 en la 0.7.1
 #            `[techo.windows]` y `[techo.linux]` sustituyen a `[techo]` en esa plataforma (los
 #            módulos importados son los de cada sistema).
 # [meta]     Las mismas cuentas, a donde quiere llegar el diseño: solo se informan.
 # [meta_ms]  Medianas en Windows x64 al 100 % con 5 parejas (spec «Qué se quiere»): solo se informan.
+#            Los de la ventana ya abierta (marcar, elegir, volver, sincronizar, reabrir) son los de la
+#            tabla «Acción con la ventana abierta»; «llega-instantanea» se informa sin meta.
 #
 # Medidos el 08/10/2026 en el árbol de la 0.7.1, con el Python fijado (3.14.8, Tk 9.0.4); los
 # módulos, en la primera ejecución en CI de la etapa 1a (Rendimiento 37843538665), que es
@@ -33,6 +37,7 @@
 "tema.abrir.parejas" = 0
 "tema.abrir.ajustes" = 0
 "tema.apartado" = 0
+"escrituras.marcar" = 1
 "estilos.main" = 0
 "estilos.parejas" = 0
 "estilos.ajustes" = 0
@@ -59,6 +64,7 @@
 "estilos.parejas" = 0
 "estilos.ajustes" = 0
 "estilos.apartado" = 0
+"escrituras.marcar" = 0
 
 [meta_ms]
 "start-main" = 350
@@ -73,3 +79,11 @@
 "start-wizard" = 300
 "catalogo-llega" = 30
 "log-10k" = 200
+"marcar" = 16
+"elegir-fila" = 16
+"elegir-pareja" = 40
+"volver-ajustes" = 30
+"volver-pasada" = 30
+"sincronizar-ventana" = 100
+"reabrir-parejas" = 150
+"pane-otra-vez" = 60

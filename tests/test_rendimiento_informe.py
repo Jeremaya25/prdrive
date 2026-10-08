@@ -5,7 +5,10 @@
 encima de su techo, o un momento más de un 25 % Y más de 30 ms más lento que en la
 base medida en el mismo trabajo. Este test fija esas dos reglas con medidas
 inventadas, sin Tk ni procesos: es la parte que no puede equivocarse sin que nadie
-lo note, porque un PR que no falla no avisa.
+lo note, porque un PR que no falla no avisa. Fija también lo que añade la ventana
+abierta: que cada momento nuevo tenga etiqueta (sin ella la comparación lo descarta
+sin decirlo), que uno que solo existe en el PR se lea «nuevo» y no falle, y que las
+escrituras al marcar una pareja sean una cuenta con su techo.
 """
 
 import sys
@@ -13,6 +16,7 @@ import sys
 from _harness import REPO, Checks
 
 sys.path.insert(0, str(REPO / "tests" / "rendimiento"))
+import correr  # noqa: E402
 import informe  # noqa: E402
 
 c = Checks("comprobación de tiempos: el veredicto")
@@ -116,6 +120,89 @@ c("las cuentas llevan las parejas en la clave",
 
 # --- al 150 % las cuentas no cuentan (una barra de desplazamiento cambia el número)
 c("las cuentas se toman al 100 %", informe.cuentas([dict(a5, escala="2.0")], "pr"), {})
+
+# --- la ventana abierta: los momentos que se miden una vez abierta
+MOMENTOS_NUEVOS = ("llega-instantanea", "marcar", "sincronizar-ventana", "volver-pasada",
+                   "elegir-fila", "elegir-pareja", "reabrir-parejas", "pane-otra-vez",
+                   "volver-ajustes")
+c("todos los momentos nuevos tienen etiqueta (sin ella `comparar` los descarta)",
+  [e for e in MOMENTOS_NUEVOS if e not in informe.ETIQUETAS], [])
+
+solo_pr = {e: veredicto(siete("pr", e, 40)) for e in MOMENTOS_NUEVOS}
+c("un momento que solo mide el PR se lee «nuevo» y no falla",
+  {e: (v["fallos"], [f["estado"] for f in v["filas"]]) for e, v in solo_pr.items()},
+  {e: ([], ["nuevo"]) for e in MOMENTOS_NUEVOS})
+c("  y se compara con la base cuando los dos lo miden",
+  [f["estado"] for f in veredicto(siete("base", "marcar", 5) + siete("pr", "marcar", 5))["filas"]],
+  ["ok"])
+
+sin_llegar = veredicto(siete("base", "volver-pasada", 20))
+c("el PR no llega a «volver-pasada» y la base sí: falla y dice qué actualizar",
+  (len(sin_llegar["fallos"]), any("driver.py" in f for f in sin_llegar["fallos"])), (1, True))
+
+revueltos = []
+for e in reversed(MOMENTOS_NUEVOS + ("start-main", "open-parejas", "open-ajustes")):
+    revueltos += siete("base", e, 30) + siete("pr", e, 30)
+c("la tabla sigue el orden de ETIQUETAS, también con los momentos nuevos",
+  [f["escenario"] for f in veredicto(revueltos)["filas"]],
+  [e for e in informe.ETIQUETAS if e in MOMENTOS_NUEVOS + ("start-main", "open-parejas", "open-ajustes")])
+
+lento = veredicto(siete("base", "elegir-fila", 20) + siete("pr", "elegir-fila", 20, extra=60))
+c("un momento nuevo que empeora frente a la base falla como los demás",
+  (len(lento["fallos"]), [f["estado"] for f in lento["filas"]]), (1, ["peor"]))
+
+# --- las escrituras al marcar una pareja
+def marcar(arbol, escrituras, ronda=0, pares=5):
+    return {"arbol": arbol, "scenario": "marcar", "ms": 10, "ronda": ronda, "pares": pares,
+            "escala": "1.0", "detail": {"cuentas": {"escrituras": escrituras}}}
+
+
+pres_marcar = {"techo": {"escrituras.marcar": 1}, "meta": {"escrituras.marcar": 0}}
+c("una escritura al marcar, en su techo: no falla",
+  veredicto([marcar("base", 1), marcar("pr", 1)], pres_marcar)["fallos"], [])
+dos = veredicto([marcar("base", 1), marcar("pr", 2)], pres_marcar)
+c("dos escrituras al marcar, sobre su techo: falla", len(dos["fallos"]), 1)
+c("  y nombra la cuenta", any("escrituras.marcar" in f for f in dos["fallos"]), True)
+cero = veredicto([marcar("base", 1), marcar("pr", 0)], pres_marcar)
+c("ninguna escritura al marcar: no falla y avisa de que se baja el techo",
+  (cero["fallos"], any("bájalo" in a for a in cero["avisos"])), ([], True))
+c("  y la meta de la cuenta sale en la tabla",
+  [(f["clave"], f["meta"]) for f in cero["cuentas"]], [("escrituras.marcar", 0)])
+c("5 y 50 parejas comparten la cuenta",
+  informe.cuentas([marcar("pr", 1, pares=5), marcar("pr", 1, pares=50)], "pr")["escrituras.marcar"]["valores"],
+  [1])
+c("  y una que cambia de una vuelta a otra se avisa como no determinista",
+  any("no es determinista" in a for a in veredicto(
+      [marcar("base", 1), marcar("pr", 1, ronda=0), marcar("pr", 0, ronda=1)], pres_marcar)["avisos"]), True)
+c("el PR que ya no cuenta las escrituras al marcar, y la base sí: falla",
+  any("escrituras.marcar" in f for f in veredicto([marcar("base", 1)], pres_marcar)["fallos"]), True)
+
+# --- lo que dice el presupuesto de verdad y lo que pide el orquestador
+real = informe.cargar_presupuesto(REPO / "tests" / "rendimiento" / "presupuesto.toml")
+c("el techo de las escrituras al marcar es 1 (la 0.7.1 escribe en el clic) y su meta 0",
+  (informe.techos(real, "linux-x64").get("escrituras.marcar"), real["meta"].get("escrituras.marcar")), (1, 0))
+c("las metas de tiempo de la ventana abierta, en milisegundos",
+  {k: real["meta_ms"].get(k) for k in ("marcar", "elegir-fila", "elegir-pareja", "volver-ajustes",
+                                        "volver-pasada", "sincronizar-ventana", "reabrir-parejas",
+                                        "pane-otra-vez")},
+  {"marcar": 16, "elegir-fila": 16, "elegir-pareja": 40, "volver-ajustes": 30, "volver-pasada": 30,
+   "sincronizar-ventana": 100, "reabrir-parejas": 150, "pane-otra-vez": 60})
+c("  y la lectura compartida se informa sin meta", "llega-instantanea" in real["meta_ms"], False)
+c("  y toda meta de tiempo es de un momento con etiqueta",
+  [k for k in real["meta_ms"] if k not in informe.ETIQUETAS], [])
+en_windows = veredicto(siete("base", "marcar", 5) + siete("pr", "marcar", 5), real, "windows-x64")
+c("la meta de «marcar» sale solo en Windows x64",
+  (en_windows["filas"][0]["meta"], veredicto(siete("pr", "marcar", 5), real, "linux-x64")["filas"][0]["meta"]),
+  (16, None))
+
+c("el orquestador mide el flujo «principal» con 5 y con 50 parejas, al 100 %",
+  [x for x in correr.PLAN if x[0] == "principal"], [("principal", 5, "1.0"), ("principal", 50, "1.0")])
+c("  y le exige «marcar» y «sincronizar-ventana»",
+  {"marcar", "sincronizar-ventana"} <= set(correr.ESPERADOS["principal"]), True)
+c("cada flujo del plan tiene sus momentos esperados",
+  sorted({f for f, _, _ in correr.PLAN} - set(correr.ESPERADOS)), [])
+c("  y todo momento esperado se compara (tiene etiqueta)",
+  sorted({e for es in correr.ESPERADOS.values() for e in es} - set(informe.ETIQUETAS)), [])
 
 # --- el resumen
 texto = informe.markdown(peor, {"plataforma": "linux-x64", "pr": "abc", "base": "def", "rondas": 7,

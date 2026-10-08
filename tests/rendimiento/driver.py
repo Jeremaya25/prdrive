@@ -5,7 +5,7 @@ Variables:
 
   BENCH_T0       `time.time()` justo antes de lanzar este proceso
   BENCH_DEVICE   una copia nueva del dispositivo de muestra (su `.prdrive/` lleva el código)
-  BENCH_FLOW     parejas | ajustes | wizard | agente | log
+  BENCH_FLOW     parejas | ajustes | principal | wizard | agente | log
   BENCH_APP      árbol de código que importar en vez de DEVICE/.prdrive (wizard, agente, log)
   BENCH_SCALE    `tk scaling` forzado en cada nuevo `Tk()` (2.0 = Windows al 150 %)
   BENCH_OUT      fichero donde van los resultados (un JSON por línea)
@@ -24,6 +24,10 @@ Nada de los árboles de código se modifica. Solo se sustituye:
     no ha contestado), así «Parejas» pinta primero con la copia local, como en un
     dispositivo de verdad; luego se suelta y se mide el repintado.
   - `common.update.check`: sin red.
+  - `ui.tk.orden_sync` y `ui.tk.preguntar_resync`: ninguna pasada de verdad corre ni
+    pregunta nada (la comprobación mide la ventana, no a `sync.py`): la pasada es
+    `python -c pass` y el `--resync` se rechaza.
+  - `common.store.write_json`: cuenta las escrituras bajo `BENCH_DEVICE` (`escrituras.marcar`).
 
 Esas sustituciones y los contadores se ponen con un buscador de importaciones
 (`_Interceptor`), que actúa cuando la aplicación importa el módulo y no antes: así
@@ -39,7 +43,13 @@ lleva lo determinista de cada momento (no depende de la máquina):
   - `estilos_tardios`: estilos de ttk que existen ahora y no existían al crearse el
     primer widget ttk;
   - `modulos`: `len(sys.modules)` al llamar a `mainloop()` por primera vez, es
-    decir, antes del primer pintado (solo en `start-*`).
+    decir, antes del primer pintado (solo en `start-*`);
+  - `escrituras`: las escrituras de `store.write_json` bajo el dispositivo que caben
+    dentro del clic de `marcar`.
+
+Cada momento nuevo funciona igual en el árbol del PR y en el de la base (la 0.7.1): lo que
+solo el PR ofrece (`root.instantanea`, la lectura compartida de la principal) se usa si
+está y se salta si no, y un momento que solo mide el PR se lee «nuevo», nunca falla.
 """
 import os
 import sys
@@ -61,7 +71,7 @@ LINEAS = 10000
 
 NOTES: dict = {"t_driver_ms": round((T_DRIVER - T0) * 1000, 1)}
 ESTADO: dict = {"modulos": None, "modulos_lista": None, "tema": 0, "estilos_primero": None,
-                "apply": [], "catalogo": None}
+                "apply": [], "catalogo": None, "escrituras": 0, "cierre": None}
 LOG: dict = {"t0": None, "t1": None, "n": 0, "listo": False}
 HOOK: dict = {}
 
@@ -172,8 +182,35 @@ def _parche_catalog(m):
     m.load = load
 
 
+def _parche_store(m):
+    """Cuenta las llamadas a `write_json` cuyo destino está bajo el dispositivo."""
+    orig = m.write_json
+    raiz = os.path.normcase(DEVICE) + os.sep
+
+    def write_json(path, data):
+        try:
+            if os.path.normcase(os.path.abspath(os.fspath(path))).startswith(raiz):
+                ESTADO["escrituras"] += 1
+        except Exception:                                # noqa: BLE001
+            pass
+        return orig(path, data)
+    m.write_json = write_json
+
+
+def _parche_ui_tk(m):
+    """Que ninguna pasada de verdad corra ni pregunte desde la ventana principal.
+
+    La orden de la pasada es `python -c pass`; la pregunta del `--resync` (que
+    bloquearía al driver) se contesta que no. Las dos las busca la ventana por su nombre
+    en `ui.tk` en cada llamada, así que valen en el árbol de la base y en el del PR.
+    """
+    m.orden_sync = lambda args: [sys.executable, "-c", "pass"]
+    m.preguntar_resync = lambda parent, pending, carpetas=None: False
+
+
 PARCHES = {"tkinter": _parche_tkinter, "tkinter.ttk": _parche_ttk, "ui.theme": _parche_theme,
-           "common.update": _parche_update, "common.catalog": _parche_catalog}
+           "common.update": _parche_update, "common.catalog": _parche_catalog,
+           "common.store": _parche_store, "ui.tk": _parche_ui_tk}
 
 
 class _Interceptor:
@@ -289,6 +326,34 @@ def cancel_afters(root):
         pass
 
 
+def a_la_vista(w):
+    """Si el widget y todos sus ascendientes hasta su ventana tienen gestor de geometría.
+
+    Uno escondido con `grid_remove()`, o dentro de uno escondido, no cuenta: la
+    ventana principal del PR guarda los bloques que no enseña.
+    """
+    try:
+        while str(w) != str(w.winfo_toplevel()):
+            if not w.winfo_manager():
+                return False
+            w = w.master
+    except Exception:                                    # noqa: BLE001
+        return False
+    return True
+
+
+def casillas_visibles(root):
+    """Las casillas (`ttk.Checkbutton`) de la ventana que se ven, de arriba abajo."""
+    from tkinter import ttk
+    casillas = [x for x in walk(root) if isinstance(x, ttk.Checkbutton) and a_la_vista(x)]
+    return sorted(casillas, key=lambda x: (x.winfo_rooty(), x.winfo_rootx()))
+
+
+def ventanas_hijas(root):
+    """Las ventanas de nivel superior que cuelgan directamente de `root`."""
+    return [x for x in root.winfo_children() if x.winfo_class() == "Toplevel"]
+
+
 def fontsystem(root):
     try:
         return str(root.tk.call("::tk::pkgconfig", "get", "fontsystem"))
@@ -308,6 +373,7 @@ def _wait_window(self, window=None):
     handler = HOOK.pop("on_shown", None)
     if handler is not None:
         handler(w, t)
+    ESTADO["cierre"] = time.perf_counter()               # desde aquí se vuelve a la principal
     try:
         if w.winfo_exists():
             w.destroy()
@@ -350,6 +416,61 @@ def on_parejas(dlg, t, t_req):
             record("catalogo-llega", round((t2 - t1) * 1000, 1), **medir(dlg))
         except Exception as e:                           # noqa: BLE001
             NOTES["arrival_error"] = repr(e)
+    if not CAPTURA:
+        elegir_filas(dlg)
+
+
+def elegir_filas(dlg):
+    """Elige otra fila de la lista (solo el resaltado) y luego otra pareja (con su editor).
+
+    `elegir-fila` es `lista.elegir(otra, avisar=False)`: lo que cuesta resaltar. `elegir-pareja`
+    es `elegir(otra, avisar=True)`: además comprueba que no se pierda nada escrito y carga la
+    pareja en el editor. Las dos acaban con el `update()` que las pinta.
+    """
+    lista = getattr(dlg, "lista", None)
+    orden = list(getattr(lista, "orden", ()))
+    if len(orden) < 3:
+        NOTES["error"] = f"la lista de «Parejas» tiene {len(orden)} filas: no se puede elegir otra"
+        return
+    primera = orden[1] if getattr(lista, "elegida", None) != orden[1] else orden[0]
+    try:
+        dlg.update()
+        t0 = time.perf_counter()
+        lista.elegir(primera, avisar=False)
+        dlg.update()
+        t1 = time.perf_counter()
+        record("elegir-fila", ms(t0, t1))
+        dlg.update()
+        t0 = time.perf_counter()
+        hecho = lista.elegir(orden[2], avisar=True)
+        dlg.update()
+        t1 = time.perf_counter()
+        record("elegir-pareja", ms(t0, t1), elegida=bool(hecho))
+    except Exception:                                    # noqa: BLE001
+        import traceback
+        NOTES["error"] = traceback.format_exc()
+
+
+def reabrir_parejas(root, btn):
+    """Pulsa «Parejas…» otra vez, con el remoto sin contestar, y apunta cuánto tarda en verse.
+
+    La espera del catálogo se vuelve a cerrar antes y se suelta tras apuntar: si el remoto
+    contestara al abrir, el repintado de su llegada (que puede pasar de un segundo) caería
+    dentro de lo medido a veces sí y a veces no. Este momento tiene su propio manejador: no
+    apunta `open-parejas`, `cold-parejas` ni `catalogo-llega`.
+    """
+    if ESTADO["catalogo"] is not None:
+        ESTADO["catalogo"].clear()
+    root.update()
+    tema_nuevo(root)
+    t_req = time.time()
+
+    def reabierta(dlg, t):
+        record("reabrir-parejas", ms(t_req, t), **medir(dlg))
+        if ESTADO["catalogo"] is not None:
+            ESTADO["catalogo"].set()
+    HOOK["on_shown"] = reabierta
+    btn.invoke()
 
 
 def drive_parejas(root):
@@ -367,6 +488,8 @@ def drive_parejas(root):
     if ESTADO["catalogo"] is not None:
         ESTADO["catalogo"].set()
     root.update()
+    if not CAPTURA:
+        reabrir_parejas(root, btn)
 
 
 def drive_ajustes(root):
@@ -398,9 +521,127 @@ def drive_ajustes(root):
             dlg.update()
             t1 = time.time()
             record("pane-" + clave, ms(t0, t1), **medir(dlg))
+        # Un apartado que ya se vio: lo que cuesta volver a él (se rehace o se enseña el guardado).
+        b = find_button(dlg, "Reparación")
+        if b is not None:
+            dlg.update()
+            tema_nuevo(dlg)
+            t0 = time.time()
+            b.invoke()
+            dlg.update()
+            t1 = time.time()
+            record("pane-otra-vez", ms(t0, t1), **medir(dlg))
 
     HOOK["on_shown"] = shown
+    ESTADO["cierre"] = None
     btn.invoke()
+    if ESTADO["cierre"] is not None and not CAPTURA:
+        # Desde que se destruye «Ajustes» hasta que la principal queda quieta de nuevo.
+        root.update()
+        record("volver-ajustes", ms(ESTADO["cierre"], time.perf_counter()))
+
+
+def llega_instantanea(root):
+    """Recoge la lectura compartida de la principal, si el árbol la tiene, y la cronometra.
+
+    Es el patrón de `catalogo-llega`. La espera es con `time.sleep`, sin `update()`: bombear
+    el bucle de eventos antes de medir «Parejas» o «Ajustes» correría la precarga de módulos
+    (`precargar_a_ratos`) solo en el PR y sesgaría todas las comparaciones. `cancel_afters`
+    ya mató el sondeo de la ventana, así que se llama a `_mirar()` a mano: aplica la lectura
+    en el hilo de Tk, que es lo que `llega-instantanea` mide (la lectura en sí corre en su
+    hilo). Recogerla antes de abrir una pantalla deja la principal como la deja la base desde
+    su primer pintado, con todo su contenido. Solo el flujo `principal` apunta el momento.
+
+    El árbol de la 0.7.1 no tiene `instantanea` ni `sondeo_instantanea`: no se hace nada.
+    """
+    encargo = getattr(root, "instantanea", None)
+    sondeo = getattr(root, "sondeo_instantanea", None)
+    if encargo is None or sondeo is None:
+        return
+    limite = time.time() + 5
+    while not encargo.hecho and time.time() < limite:
+        time.sleep(0.001)
+    t0 = time.perf_counter()
+    sondeo._mirar()
+    root.update()
+    t1 = time.perf_counter()
+    if FLOW == "principal" and not CAPTURA:
+        record("llega-instantanea", ms(t0, t1), **medir(root))
+
+
+def con_veredicto(ventana):
+    """Si el título de la ventana de la pasada ya dice cómo acabó (`— OK`, `— ERROR (código N)`)."""
+    titulo = str(ventana.title())
+    return titulo.endswith("— OK") or "— ERROR" in titulo
+
+
+def drive_principal(root):
+    """Marca una pareja, lanza una pasada que no hace nada y vuelve de su ventana.
+
+    `marcar`: el clic en una casilla y el `update()` que lo pinta; la cuenta
+    `escrituras.marcar` son las escrituras de `write_json` dentro de ese tramo. La casilla
+    se marca (si estaba marcada, antes se desmarca sin cronometrar), así que la selección
+    nunca queda vacía: con ninguna pareja «Sincronizar ahora» no hace nada y la 0.7.1 no
+    escribe la selección vacía. `sincronizar-ventana`: del clic hasta ver la ventana de la
+    pasada. `volver-pasada`: de destruir esa ventana, ya terminada, hasta que la principal
+    queda quieta.
+    """
+    casillas = casillas_visibles(root)
+    if not casillas:
+        NOTES["error"] = "la ventana principal no tiene ninguna casilla de pareja a la vista"
+        return
+    casilla = casillas[0]
+    if casilla.instate(["selected"]):
+        casilla.invoke()
+        root.update()
+    antes = ESTADO["escrituras"]
+    t0 = time.perf_counter()
+    casilla.invoke()
+    root.update()
+    t1 = time.perf_counter()
+    record("marcar", ms(t0, t1), cuentas={"escrituras": ESTADO["escrituras"] - antes})
+
+    ahora = find_button(root, "Sincronizar ahora")
+    if ahora is None:
+        NOTES["error"] = "no hay botón «Sincronizar ahora»"
+        return
+    limite = time.time() + 5
+    while ahora.instate(["disabled"]) and time.time() < limite:
+        root.update()
+        time.sleep(0.005)
+    if ahora.instate(["disabled"]):
+        NOTES["error"] = "«Sincronizar ahora» sigue apagado 5 s después de marcar"
+        return
+    conocidas = {str(x) for x in ventanas_hijas(root)}
+    t0 = time.perf_counter()
+    ahora.invoke()
+    nueva = None
+    limite = t0 + 10
+    while True:
+        nueva = next((x for x in ventanas_hijas(root)
+                      if str(x) not in conocidas and x.winfo_viewable()), None)
+        if nueva is not None or time.perf_counter() > limite:
+            break
+        root.update()
+    t1 = time.perf_counter()
+    if nueva is None:
+        NOTES["error"] = "«Sincronizar ahora» no abrió la ventana de la pasada en 10 s"
+        return
+    record("sincronizar-ventana", ms(t0, t1))
+
+    limite = time.time() + 10
+    while not con_veredicto(nueva) and time.time() < limite:
+        root.update()
+        time.sleep(0.005)
+    titulo = str(nueva.title())
+    if not titulo.endswith("— OK"):
+        NOTES["error"] = f"la pasada de prueba no acabó bien en 10 s: «{titulo}»"
+        return
+    t0 = time.perf_counter()
+    nueva.destroy()
+    root.update()
+    t1 = time.perf_counter()
+    record("volver-pasada", ms(t0, t1))
 
 
 def drive_log(root):
@@ -444,10 +685,14 @@ def probe(self, n=0):
             record("apply-" + FLOW, apply_ms())
         shot(FLOW, root)
     try:
+        if FLOW in ("parejas", "ajustes", "principal"):
+            llega_instantanea(root)
         if FLOW == "parejas":
             drive_parejas(root)
         elif FLOW == "ajustes":
             drive_ajustes(root)
+        elif FLOW == "principal":
+            drive_principal(root)
         elif FLOW == "log":
             drive_log(root)
     except Exception:                                    # noqa: BLE001

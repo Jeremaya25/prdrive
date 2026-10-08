@@ -50,16 +50,20 @@ PLAN = (
     # (flujo, parejas, escala de Tk). La escala 2.0 es Windows al 150 %.
     ("parejas", 5, "1.0"), ("parejas", 50, "1.0"), ("parejas", 5, "2.0"),
     ("ajustes", 5, "1.0"), ("ajustes", 50, "1.0"), ("ajustes", 5, "2.0"),
+    ("principal", 5, "1.0"), ("principal", 50, "1.0"),
     ("wizard", None, "1.0"), ("agente", None, "1.0"), ("log", None, "1.0"),
 )
-"""Lo que hace una pasada. «Parejas» y «Ajustes» con 5 y 50 parejas y al 150 %."""
+"""Lo que hace una pasada. «Parejas» y «Ajustes» con 5 y 50 parejas y al 150 %; la
+ventana principal (marcar, sincronizar, volver de la pasada) con 5 y 50 al 100 %."""
 PLAN_CAPTURAS = (("parejas", 5, "1.0"), ("ajustes", 5, "1.0"), ("wizard", None, "1.0"),
                  ("agente", None, "1.0"), ("log", None, "1.0"), ("parejas", 5, "2.0"),
                  ("ajustes", 5, "2.0"))
 ESPERADOS = {
-    "parejas": ("start-main", "apply-main", "open-parejas", "cold-parejas"),
+    "parejas": ("start-main", "apply-main", "open-parejas", "cold-parejas", "elegir-fila",
+                "elegir-pareja", "reabrir-parejas"),
     "ajustes": ("open-ajustes", "pane-reparacion", "pane-volumen", "pane-actualizaciones",
-                "pane-configuracion"),
+                "pane-configuracion", "pane-otra-vez", "volver-ajustes"),
+    "principal": ("marcar", "sincronizar-ventana", "volver-pasada"),
     "wizard": ("start-wizard", "apply-wizard"),
     "agente": ("start-agente", "apply-agente"),
     "log": ("log-10k",),

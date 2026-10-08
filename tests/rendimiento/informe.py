@@ -34,14 +34,23 @@ MS = 30.0
 ETIQUETAS = {
     "start-main": "Ventana principal, desde que se lanza",
     "apply-main": "  theme.apply() de la principal",
+    "llega-instantanea": "Llega a la principal la lectura del estado",
+    "marcar": "Marcar una pareja en la principal",
+    "sincronizar-ventana": "«Sincronizar ahora», hasta ver la ventana de la pasada",
+    "volver-pasada": "Cerrar la ventana de la pasada y volver a la principal",
     "open-parejas": "Abrir «Parejas»",
     "cold-parejas": "«Parejas», desde que se lanza",
     "catalogo-llega": "Llega el catálogo a «Parejas»",
+    "elegir-fila": "Elegir otra fila de «Parejas»",
+    "elegir-pareja": "Elegir otra pareja de «Parejas» (carga el editor)",
+    "reabrir-parejas": "Volver a abrir «Parejas»",
     "open-ajustes": "Abrir «Ajustes»",
     "pane-reparacion": "Apartado «Reparación»",
     "pane-volumen": "Apartado «Nombre e icono»",
     "pane-actualizaciones": "Apartado «Actualizaciones»",
     "pane-configuracion": "Apartado «Configuración»",
+    "pane-otra-vez": "Volver a un apartado ya visto de «Ajustes»",
+    "volver-ajustes": "Cerrar «Ajustes» y volver a la principal",
     "start-agente": "Pregunta del agente, desde que se lanza",
     "apply-agente": "  theme.apply() de la pregunta",
     "start-wizard": "Asistente, desde que se lanza",
@@ -108,7 +117,9 @@ def cuentas(lineas: list[dict], arbol: str) -> dict[str, dict]:
     """Las cuentas deterministas de un árbol, con la clave que usa `presupuesto.toml`.
 
     Solo al 100 %: a otra escala una pantalla puede necesitar barras de desplazamiento y
-    el número cambia sin que el código haya cambiado.
+    el número cambia sin que el código haya cambiado. `escrituras.marcar` son las
+    escrituras a `state/` (`store.write_json`) que caben dentro del clic en una casilla de
+    la ventana principal, con la `root.update()` que le sigue; no dependen del tamaño.
 
     Returns:
         `{clave: {"valor": el mayor visto, "valores": todos los distintos, "por_clase": …}}`.
@@ -147,6 +158,8 @@ def cuentas(lineas: list[dict], arbol: str) -> dict[str, dict]:
         elif esc.startswith("pane-"):
             apuntar("tema.apartado", c.get("tema"), d)
             apuntar("estilos.apartado", c.get("estilos_tardios"), d)
+        elif esc == "marcar":
+            apuntar("escrituras.marcar", c.get("escrituras"), d)
     for v in vistos.values():
         v["valor"] = max(v["valores"])
         v["valores"] = sorted(v["valores"])
