@@ -1,0 +1,134 @@
+name: Tk con Xft (Linux)
+
+# El Tk que traen los Python de python-build-standalone para Linux está
+# compilado sin Xft («…no-xft.x11» en su versión): solo ve las fuentes de mapa de
+# bits de X11, sin suavizar, y no puede usar la letra de ui/fuentes/. Aquí se
+# compila el MISMO Tk (la versión que trae el runtime fijado en common/pins.py)
+# con Xft, y se publica como prerelease: el instalador lo baja, lo comprueba
+# contra el SHA-256 que fija common/pins.py y lo deja en el runtime, en
+# lib/tk-xft/, al lado del de serie. ui/ lo precarga antes de tkinter y, si el
+# equipo no tiene libXft (un servidor sin escritorio), sigue con el de serie.
+#
+# Se compila en manylinux_2_28 (glibc 2.28): la biblioteca pide esa glibc o una
+# más nueva, y las de Xft, fontconfig, FreeType y X11 del propio equipo.
+#
+# Se dispara al cambiar este fichero (o a mano) y publica la release
+# `tk-xft-<versión>-<revisión>` si no existe: una release publicada NO se pisa,
+# porque su SHA-256 ya está fijado en common/pins.py. Para otra compilación,
+# súbase REVISION. Va como prerelease y sin `latest` para que no la vea
+# common/update.py, que busca la última release de prdrive en /releases/latest.
+on:
+  push:
+    paths:
+      - .github/workflows/tk-xft.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tk-xft
+  cancel-in-progress: false
+
+env:
+  VERSION: "9.0.4"
+  REVISION: "1"
+  # Las fuentes oficiales (SourceForge, proyecto «tcl»), comprobadas el
+  # 08/10/2026.
+  TCL_SHA256: d0aed49230bc02a65c1e0229e65f34590a4b037ec40d546f32573b467f7551ea
+  TK_SHA256: d7a146d2917eb8b5cc95276dbf0e3d03c7464d2b19c1675357857c989301dbb4
+
+jobs:
+  compilar:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    container: quay.io/pypa/manylinux_2_28_${{ matrix.arch }}
+    steps:
+      - name: Cabeceras de X11, Xft, fontconfig y FreeType
+        run: dnf install -y libX11-devel libXft-devel fontconfig-devel freetype-devel
+
+      - name: Fuentes de Tcl y Tk, comprobadas
+        run: |
+          for p in tcl tk; do
+            curl -fsSL --retry 4 -o "$p.tgz" \
+              "https://downloads.sourceforge.net/project/tcl/Tcl/${VERSION}/${p}${VERSION}-src.tar.gz"
+          done
+          echo "${TCL_SHA256}  tcl.tgz" | sha256sum -c -
+          echo "${TK_SHA256}  tk.tgz" | sha256sum -c -
+          tar xzf tcl.tgz
+          tar xzf tk.tgz
+
+      - name: Compilar Tcl (solo para compilar Tk contra él)
+        run: |
+          cd "tcl${VERSION}/unix"
+          ./configure --enable-shared --disable-zipfs --disable-rpath
+          make -j"$(nproc)" binaries
+
+      - name: Compilar Tk con Xft
+        # El SONAME es el nombre que pide _tkinter: así, precargada, el
+        # cargador la reconoce y no carga además la de serie.
+        run: |
+          cd "tk${VERSION}/unix"
+          ./configure --enable-shared --enable-xft --disable-zipfs --disable-rpath \
+            --with-tcl="$GITHUB_WORKSPACE/tcl${VERSION}/unix"
+          make -j"$(nproc)" binaries LDFLAGS_OPTIMIZE="-Wl,-soname,libtcl9tk9.0.so"
+
+      - name: Comprobar y empaquetar
+        run: |
+          set -e
+          lib="tk${VERSION}/unix/libtcl9tk9.0.so"
+          strip --strip-unneeded "$lib"
+          readelf -d "$lib" | grep -q "SONAME.*\[libtcl9tk9.0.so\]"
+          readelf -d "$lib" | grep -q "NEEDED.*\[libXft.so.2\]"
+          if readelf -d "$lib" | grep -qE "RPATH|RUNPATH"; then
+            echo "lleva una ruta de búsqueda y no debería"; exit 1
+          fi
+          mkdir paquete
+          cp "$lib" paquete/
+          cp "tk${VERSION}/license.terms" paquete/LICENSE-tk.txt
+          nombre="tk-xft-${VERSION}-${REVISION}-${{ matrix.arch }}-linux.tar.gz"
+          tar --sort=name --owner=0 --group=0 --numeric-owner --mtime=@0 \
+            -C paquete -czf "$nombre" .
+          sha256sum "$nombre"
+          ls -l "$nombre"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tk-xft-${{ matrix.arch }}
+          path: tk-xft-*.tar.gz
+          if-no-files-found: error
+
+  publicar:
+    needs: compilar
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: tk-xft-*
+          merge-multiple: true
+
+      - name: Publicar la prerelease, si no existe
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          tag="tk-xft-${VERSION}-${REVISION}"
+          sha256sum tk-xft-*.tar.gz | tee SHA256SUMS
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "La release $tag ya existe: no se pisa (su SHA-256 está fijado)."
+            exit 0
+          fi
+          gh release create "$tag" tk-xft-*.tar.gz SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --prerelease --latest=false \
+            --title "Tk ${VERSION} con Xft para Linux (${REVISION})" \
+            --notes "Tk ${VERSION} compilado con Xft para el runtime de Linux de prdrive (x86_64 y aarch64, glibc 2.28 o más nueva). No es una versión de prdrive: el instalador lo baja y lo comprueba contra el SHA-256 fijado en common/pins.py."
