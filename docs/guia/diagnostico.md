@@ -44,9 +44,11 @@ guardadas y el nombre e icono de la unidad.
 
 Los logs de rclone **solo se guardan si la pasada falla** (o con `--keep-logs`),
 para no gastar ciclos de escritura de la unidad. Quedan en `.prdrive/logs/`, y
-de cada pareja solo se guardan los 20 últimos. Al fallar se imprime la cola del log —sin las líneas de estadísticas, que ya contó
-el progreso— y se traduce el error de rclone a una explicación, si es uno de
-los conocidos.
+cada vez que se guarda uno nuevo se quedan los 20 últimos de esa pareja (con
+`--keep-logs`, los de las pasadas buenas van desplazando a los de las que
+fallaron). Al fallar se imprime la cola del log —sin las líneas de estadísticas,
+que ya contó el progreso— y se traduce el error de rclone a una explicación, si
+es uno de los conocidos.
 
 Casos habituales:
 

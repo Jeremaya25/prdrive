@@ -171,7 +171,7 @@ def temp_log(name: str) -> Path:
     return Path(path)
 
 
-def podar_logs(nombre: str) -> None:
+def podar_logs(nombre: str, conservar: Path | None = None) -> None:
     """Deja en `logs/` solo los `LOGS_POR_PAREJA` logs más nuevos de una pareja.
 
     Los más nuevos son los del sello más alto del nombre
@@ -180,18 +180,26 @@ def podar_logs(nombre: str) -> None:
     se mira lo que casa con ese nombre exacto, así que los logs de `a_b` no
     cuentan para `a`. Lo más viejo se borra; no lanza nunca, porque una poda
     que falla no puede estropear el guardado de un log (ni la pasada).
+
+    Args:
+        nombre: La pareja cuyos logs se podan.
+        conservar: Un log que no se borra nunca y queda fuera del ranking (el
+            que `keep_log()` acaba de guardar: con el reloj atrasado su sello
+            sería más viejo que los de antes y se podaría a sí mismo). Cuenta
+            en el tope: de los demás se quedan `LOGS_POR_PAREJA - 1`.
     """
     patron = re.compile(rf"^{re.escape(nombre)}_(\d{{8}})_(\d{{6}})(?:_(\d+))?\.log$")
     sellados = []
     try:
         for ruta in model.LOG_DIR.iterdir():
             m = patron.match(ruta.name)
-            if m:
+            if m and ruta != conservar:
                 sellados.append(((m[1], m[2], int(m[3] or 0)), ruta))
     except OSError:
         return
     sellados.sort(key=lambda s: s[0], reverse=True)
-    for _, ruta in sellados[LOGS_POR_PAREJA:]:
+    quedan = LOGS_POR_PAREJA - (1 if conservar is not None else 0)
+    for _, ruta in sellados[quedan:]:
         try:
             ruta.unlink(missing_ok=True)
         except OSError:
@@ -211,7 +219,8 @@ def keep_log(name: str, tmp: Path) -> Path:
     movimiento va dentro del `try` porque entre dos unidades `shutil.move`
     copia y borra al final: puede fallar con la copia a medias, y esa copia se
     quita. Una vez guardado el log, se podan los más viejos de la pareja
-    (`podar_logs()`).
+    (`podar_logs()`), sin tocar el que acaba de guardarse aunque su sello
+    (hora local) sea más viejo que los de antes.
     """
     destino = None
     try:
@@ -224,7 +233,7 @@ def keep_log(name: str, tmp: Path) -> Path:
             n += 1
         destino = final
         shutil.move(str(tmp), str(final))
-        podar_logs(name)
+        podar_logs(name, final)
         return final
     except OSError as e:
         motivo = e.strerror or str(e)

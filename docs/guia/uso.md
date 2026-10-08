@@ -23,6 +23,7 @@ python sync.py --dry-run       # simula; OBLIGATORIO antes de cualquier *-mirror
 python sync.py --resync        # rehace la referencia de bisync
 python sync.py -y              # aprueba el resync sin preguntar (cron)
 python sync.py --keep-logs     # guarda también los logs de las pasadas buenas
+                               # (se quedan 20 por pareja: los buenos desplazan a los de fallo)
 
 python runsync.py              # la ventana (menú de consola si no hay Tkinter)
 python runsync.py --auto       # arranca el servicio periódico sin ventana

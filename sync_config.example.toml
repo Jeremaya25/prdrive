@@ -50,6 +50,7 @@ exclude = [
 ]
 
 # keep_logs = true            # guarda también los logs de las pasadas buenas
+#                             # (se quedan 20 por pareja: los buenos desplazan a los de fallo)
 
 # El lado local va como un remote 'combine' propio en vez de como ruta absoluta,
 # y así el nombre de los listados de bisync no depende de dónde esté montado el

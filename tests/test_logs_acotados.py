@@ -144,6 +144,34 @@ with sandbox():
     c("  y no ha podado nada", sellos("a"), antes)
     tmp2.unlink(missing_ok=True)
 
+with sandbox():
+    # un reloj atrasado (o un dispositivo que viaja a otra zona horaria) hace
+    # que el log recién guardado tenga un sello MÁS VIEJO que los que ya había:
+    # la poda no puede borrar justo el log del fallo que se está mirando
+    for i in range(sync.LOGS_POR_PAREJA):
+        hacer_log("a", f"20990101_0000{i:02d}")
+    tmp = sync.temp_log("a")
+    tmp.write_text("fallo\n", encoding="utf-8")
+    final = sync.keep_log("a", tmp)
+    c("con un reloj atrasado, el log recién guardado existe", final.exists(), True)
+    c("  y la pareja se queda en LOGS_POR_PAREJA ficheros",
+      len(list(model.LOG_DIR.glob("a_*.log"))), sync.LOGS_POR_PAREJA)
+    c("  sin el más viejo de los anteriores", (model.LOG_DIR / "a_20990101000000.log").exists(),
+      False)
+
+with sandbox():
+    # `conservar` no se borra nunca y no cuenta en el ranking: del resto quedan
+    # LOGS_POR_PAREJA - 1
+    for i in range(sync.LOGS_POR_PAREJA + 4):
+        hacer_log("a", f"20260101_0000{i:02d}")
+    guardado = hacer_log("a", "20250101_000000")
+    sync.podar_logs("a", guardado)
+    c("podar con `conservar` deja ese log", guardado.exists(), True)
+    c("  y en total LOGS_POR_PAREJA", len(list(model.LOG_DIR.glob("a_*.log"))),
+      sync.LOGS_POR_PAREJA)
+    c("  y de los demás, los más nuevos",
+      sellos("a"), [f"a_20260101_0000{i:02d}.log" for i in range(5, sync.LOGS_POR_PAREJA + 4)])
+
 # --- el diario del servicio y el del agente
 
 c("el tope del diario son 256 KB", store.DIARIO_TOPE, 256 * 1024)
