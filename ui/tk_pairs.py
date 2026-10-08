@@ -607,11 +607,17 @@ class EditorPareja:
         self._resumir()
 
 
-def open_dialog(parent, config) -> bool:
+def open_dialog(parent, config, compartida=None) -> bool:
     """Abre la pantalla y devuelve si se ha cambiado el config de este dispositivo.
 
     Se pinta con la copia local del catálogo (`catalog.cached()`) y el remoto
     se lee en segundo plano; al llegar, la pantalla se repinta con él.
+
+    Args:
+        parent: La ventana de la que cuelga.
+        config: La configuración del dispositivo.
+        compartida: La lectura compartida de la ventana principal
+            (`ui.instantanea.Compartida`), o `None`. Todavía no se usa.
     """
     import tkinter as tk
     from tkinter import messagebox, ttk

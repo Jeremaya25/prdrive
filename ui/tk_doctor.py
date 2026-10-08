@@ -130,7 +130,7 @@ def coincide(apartado: Apartado, busqueda: str) -> bool:
 def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None,
                 buscar_version=None, inicial: str | None = None, nueva=None,
                 componentes=None, vigilante=None, hallazgos=None,
-                marcadas=None) -> dict:
+                marcadas=None, compartida=None) -> dict:
     """Abre «Ajustes» y devuelve lo que han dicho sus apartados.
 
     Args:
@@ -150,6 +150,8 @@ def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None,
             junto a «Reparación».
         marcadas: Las parejas marcadas en la ventana principal, que es lo que
             «Reparación» simula.
+        compartida: La lectura compartida de la ventana principal
+            (`ui.instantanea.Compartida`), o `None`. Todavía no se usa.
 
     Returns:
         Por clave de apartado, lo último que devolvió: `'llavero'` (`ACTIVADO`

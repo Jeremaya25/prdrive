@@ -1069,6 +1069,14 @@ class Panel:
       quien la abrió. Suelta lo devuelve `dialogo()`; en «Ajustes» se guarda
       por apartado y se le da a la ventana principal al cerrarla.
 
+    Un apartado de «Ajustes» que se deja no se destruye: se esconde y se
+    conserva. Lo que espera o se anima no puede seguir gastando mientras tanto,
+    así que una pantalla que lo hace lo pide al panel (`sondeo()`,
+    `indicador()`) en vez de crearlo ella, y quien esconde o enseña el apartado
+    avisa con `ocultado()` y `mostrado()`: el panel pausa y reanuda lo que
+    pidió, y llama a lo que la pantalla registró con `al_ocultar()` y
+    `al_mostrar()`. Un diálogo suelto no se esconde nunca y no los llama.
+
     Attributes:
         ventana: La ventana de nivel superior: padre de los mensajes, de
             `working()` y de los modales que se abran desde aquí.
@@ -1087,6 +1095,10 @@ class Panel:
         self._al_cerrar = al_cerrar
         self._resultados = {} if resultados is None else resultados
         self._clave = clave
+        self._sondeos: list[Sondeo] = []
+        self._indicadores: list[Indicador] = []
+        self._al_mostrar: list = []
+        self._al_ocultar: list = []
 
     def devolver(self, valor) -> None:
         """Apunta lo que la pantalla devuelve; lo último que se apunta manda."""
@@ -1112,6 +1124,61 @@ class Panel:
             self._al_cerrar()
         if despues is not None:
             despues()
+
+    def al_mostrar(self, funcion) -> None:
+        """Registra `funcion()` para cuando se vuelva a enseñar el panel (`mostrado()`)."""
+        self._al_mostrar.append(funcion)
+
+    def al_ocultar(self, funcion) -> None:
+        """Registra `funcion()` para cuando se esconda el panel (`ocultado()`)."""
+        self._al_ocultar.append(funcion)
+
+    def sondeo(self) -> Sondeo:
+        """Crea un `Sondeo` colgado del marco, que el panel pausa al esconderse.
+
+        Se cancela con el marco, como cualquier `Sondeo`, y además lo pausa
+        `ocultado()` y lo reanuda `mostrado()`.
+        """
+        sondeo = Sondeo(self.marco)
+        self._sondeos.append(sondeo)
+        return sondeo
+
+    def indicador(self, padre, ancho: int = 560) -> Indicador:
+        """Crea un `Indicador` en `padre`, que el panel para al esconderse.
+
+        Args:
+            padre: Donde va la línea; quien lo pide la coloca.
+            ancho: El corte de la frase, en medidas del diseño.
+        """
+        indicador = Indicador(padre, ancho=ancho)
+        self._indicadores.append(indicador)
+        return indicador
+
+    def mostrado(self) -> None:
+        """Reanuda lo que `ocultado()` paró y llama a los `al_mostrar`.
+
+        Lo llama quien vuelve a enseñar el apartado, nunca al dibujarlo por
+        primera vez.
+        """
+        for sondeo in self._sondeos:
+            sondeo.seguir()
+        for indicador in self._indicadores:
+            indicador.seguir()
+        for funcion in list(self._al_mostrar):
+            funcion()
+
+    def ocultado(self) -> None:
+        """Pausa los sondeos e indicadores del panel y llama a los `al_ocultar`.
+
+        Lo llama quien esconde el apartado sin destruirlo. Un sondeo pausado
+        conserva su encargo y lo recoge al `mostrado()`.
+        """
+        for sondeo in self._sondeos:
+            sondeo.pausar()
+        for indicador in self._indicadores:
+            indicador.pausar()
+        for funcion in list(self._al_ocultar):
+            funcion()
 
     def ajustar(self) -> None:
         """Hace sitio a lo que ha crecido después de enseñarse.
@@ -1376,54 +1443,92 @@ SONDEO_MS = 120
 class Sondeo:
     """Recoge en el hilo de Tk lo que una pantalla encargó a `ui.segundo_plano`.
 
-    Es la mitad de Tk de un `Encargo`: mira cada `SONDEO_MS` si ha terminado
-    y, cuando termina, llama a quien lo esperaba desde este hilo, nunca desde
-    el del trabajo. Hay uno por pantalla y espera un encargo cada vez: uno
-    nuevo deja sin respuesta al anterior.
+    Es la mitad de Tk de un `Encargo`: mira cada `cada` milisegundos si ha
+    terminado y, cuando termina, llama a quien lo esperaba desde este hilo,
+    nunca desde el del trabajo. Hay uno por pantalla y espera un encargo cada
+    vez: uno nuevo deja sin respuesta al anterior.
 
     Si la pantalla se cierra antes, la espera se cancela con ella
     (`after_cancel`) y nadie pinta en widgets que ya no existen. Sin eso, el
     `after` pendiente llamaría a una orden que Tk ya ha borrado con la ventana.
 
+    Una pantalla que se esconde sin cerrarse (un apartado de «Ajustes» que se
+    conserva) lo pausa con `pausar()`: no deja ningún `after` pendiente, pero
+    guarda el encargo y a quien lo esperaba, y `seguir()` los retoma. Mientras
+    está pausado no programa ninguna mirada: un encargo nuevo sin terminar
+    espera a `seguir()`.
+
     Args:
         ventana: La pantalla de la que cuelga la espera.
+        cada: Milisegundos entre dos miradas al encargo.
+
+    Attributes:
+        cada: Lo mismo que el argumento.
     """
 
-    def __init__(self, ventana) -> None:
+    def __init__(self, ventana, cada: int = SONDEO_MS) -> None:
         """Engancha la espera al cierre de la ventana."""
         self.ventana = ventana
+        self.cada = cada
         self._id = None
         self._encargo = None
         self._al_llegar = None
+        self._pausado = False
         ventana.bind("<Destroy>", self._al_destruir, add="+")
 
     @property
     def esperando(self) -> bool:
-        """Indica si hay un encargo pendiente de recoger."""
-        return self._id is not None
+        """Indica si hay un encargo pendiente de recoger, esté pausado el sondeo o no."""
+        return self._encargo is not None
 
     def esperar(self, encargo, al_llegar) -> None:
         """Llama a `al_llegar(encargo)` cuando el encargo termine.
 
         Si ya ha terminado, en el acto: es lo que hace que una pantalla cuyos
         tests corren el encargo en el sitio (`segundo_plano.en_el_acto`) se
-        pinte entera antes de enseñarse.
+        pinte entera antes de enseñarse. Con el sondeo pausado, un encargo sin
+        terminar queda guardado hasta `seguir()`.
         """
         self.cancelar()
         if encargo.hecho:
             al_llegar(encargo)
             return
         self._encargo, self._al_llegar = encargo, al_llegar
-        self._id = self.ventana.after(SONDEO_MS, self._mirar)
+        if not self._pausado:
+            self._id = self.ventana.after(self.cada, self._mirar)
 
     def cancelar(self) -> None:
         """Deja de esperar; lo que llegue después no se recoge."""
+        self._quitar_after()
+        self._encargo = self._al_llegar = None
+
+    def pausar(self) -> None:
+        """Deja de mirar sin olvidar lo que espera.
+
+        Cancela el `after` pendiente y conserva el encargo y a quien lo
+        esperaba. Pausar dos veces es lo mismo que una.
+        """
+        self._pausado = True
+        self._quitar_after()
+
+    def seguir(self) -> None:
+        """Retoma la espera: llama en el acto si el encargo ya terminó, y si no vuelve a mirar.
+
+        Sin nada que esperar, o si ya estaba mirando, no hace nada.
+        """
+        self._pausado = False
+        if self._encargo is None or self._id is not None:
+            return
+        self._mirar()
+
+    def _quitar_after(self) -> None:
+        """Cancela el `after` pendiente, si lo hay."""
         if self._id is not None:
             try:
                 self.ventana.after_cancel(self._id)
             except Exception:                        # noqa: BLE001 — ya no está
                 pass
-        self._id = self._encargo = self._al_llegar = None
+            self._id = None
 
     def _mirar(self) -> None:
         """Mira si el encargo ha terminado y, si no, vuelve a mirar luego."""
@@ -1436,7 +1541,8 @@ class Sondeo:
             self.cancelar()
             return
         if not self._encargo.hecho:
-            self._id = self.ventana.after(SONDEO_MS, self._mirar)
+            if not self._pausado:
+                self._id = self.ventana.after(self.cada, self._mirar)
             return
         encargo, al_llegar = self._encargo, self._al_llegar
         self._encargo = self._al_llegar = None
@@ -1461,6 +1567,10 @@ class Indicador:
     decir, la línea desaparece entera. Quien la crea la coloca con
     `indicador.marco.grid(...)` y luego solo la `poner()`.
 
+    Una pantalla que se esconde sin cerrarse la pausa con `pausar()`: la barra
+    se para, porque Tk la anima aunque nadie la vea, y la frase queda como
+    está. `seguir()` la reanuda si sigue esperando.
+
     Args:
         padre: Donde va la línea.
         ancho: El corte de la frase, en medidas del diseño.
@@ -1482,23 +1592,45 @@ class Indicador:
         self.texto = ttk.Label(self.marco, style="Pista.TLabel", justify="left",
                                wraplength=theme.medida(ancho))
         self.texto.grid(row=0, column=1, sticky="w")
+        self._pausado = False
 
     @property
     def esperando(self) -> bool:
         """Indica si la barra está puesta."""
         return bool(self.barra.grid_info())
 
+    def _viva(self) -> bool:
+        """Indica si la barra existe todavía (su pantalla no se ha destruido)."""
+        try:
+            return bool(self.barra.winfo_exists())
+        except Exception:                            # noqa: BLE001 — intérprete cerrado
+            return False
+
+    def pausar(self) -> None:
+        """Para la barra sin tocar la frase; mientras dure, `poner()` no la arranca."""
+        self._pausado = True
+        if self._viva():
+            self.barra.stop()
+
+    def seguir(self) -> None:
+        """Reanuda la barra si la línea sigue esperando."""
+        self._pausado = False
+        if self._viva() and self.esperando:
+            _arrancar_barra(self.barra)
+
     def poner(self, texto: str, esperando: bool, tono: str = "Pista.") -> None:
         """Pone la frase y la barra; sin ninguna de las dos, quita la línea.
 
         Args:
             texto: Lo que dice la línea.
-            esperando: Si la barra va y viene.
+            esperando: Si la barra va y viene; con la línea pausada queda
+                puesta pero parada, hasta `seguir()`.
             tono: El rol de la frase (`Pista.`, `Aviso.`, `Peligro.`).
         """
         if esperando:
             self.barra.grid()
-            _arrancar_barra(self.barra)
+            if not self._pausado:
+                _arrancar_barra(self.barra)
         else:
             self.barra.stop()
             self.barra.grid_remove()

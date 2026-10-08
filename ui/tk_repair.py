@@ -59,7 +59,7 @@ local que falta no se arregla creándola.
 """
 
 
-def open_dialog(parent, config: Config, lanzar, marcadas=None) -> bool:
+def open_dialog(parent, config: Config, lanzar, marcadas=None, compartida=None) -> bool:
     """Abre «Reparación» y devuelve si se ha cambiado algo del dispositivo.
 
     Es `True` para que quien llama vuelva a leer `state/` y repinte.
@@ -69,18 +69,29 @@ def open_dialog(parent, config: Config, lanzar, marcadas=None) -> bool:
         lanzar: `lanzar(titulo, args)`, el de la ventana principal.
         marcadas: Las parejas elegidas en la ventana principal; es lo que se
             simula si se pide una pasada de prueba. Sin ellas, todas.
+        compartida: La lectura compartida de la ventana principal
+            (`ui.instantanea.Compartida`), o `None`. Todavía no se usa.
     """
     return dialogo(parent, "Reparación",
                    lambda p: construir(p, config, lanzar, marcadas),
                    defecto=False, ensenar=mostrar)
 
 
-def construir(panel: Panel, config: Config, lanzar, marcadas=None) -> None:
+def construir(panel: Panel, config: Config, lanzar, marcadas=None, compartida=None) -> None:
     """Dibuja «Reparación» en `panel` (su diálogo o «Ajustes»).
 
     Devuelve `True` por el panel si cambia algo del dispositivo. Lo que lanza
     una pasada cierra antes la ventana entera (`panel.cerrar`): la de salida es
     hija de la principal.
+
+    Args:
+        panel: Dónde se dibuja.
+        config: La configuración del dispositivo.
+        lanzar: `lanzar(titulo, args)`, el de la ventana principal.
+        marcadas: Las parejas elegidas en la ventana principal, para la
+            pasada de prueba.
+        compartida: La lectura compartida de la ventana principal
+            (`ui.instantanea.Compartida`), o `None`. Todavía no se usa.
     """
     from tkinter import messagebox, ttk
 
