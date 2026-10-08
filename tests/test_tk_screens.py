@@ -81,24 +81,49 @@ def pulsar(texto):
     return _wait
 
 
-def elegir_y_pulsar(texto, pareja=None):
-    """Como pulsar(), pero seleccionando antes una fila de la lista."""
+def ver_catalogo(ventana) -> None:
+    """Pasa la pantalla de parejas a editar el catálogo, con su botón."""
+    pila = [ventana]
+    while pila:
+        w = pila.pop()
+        pila += list(w.winfo_children())
+        if isinstance(w, ttk.Radiobutton) and str(w.cget("text")) == "Catálogo":
+            w.invoke()
+            return
+
+
+def elegir_y_pulsar(texto, pareja=None, catalogo=False, cambiar=None):
+    """Como pulsar(), pero eligiendo antes una fila de la lista.
+
+    Args:
+        catalogo: Pasar antes a editar el catálogo.
+        cambiar: Lo que se escribe en el editor de la pareja antes de pulsar:
+            `{campo: valor}`.
+    """
     def _wait(self, *_a, **_k):
-        """Elige la fila del árbol, pulsa el botón y vuelve."""
-        pila, arbol, boton = [self], None, None
-        while pila:
-            w = pila.pop()
-            pila += list(w.winfo_children())
-            if isinstance(w, ttk.Treeview):
-                arbol = w
-            elif isinstance(w, ttk.Button) and w.cget("text") == texto:
-                boton = w
-        if arbol is not None and arbol.get_children():
-            hijos = arbol.get_children()
-            arbol.selection_set(pareja if pareja in hijos else hijos[0])
-        if boton is not None:
-            boton.invoke()
+        """Elige la fila de la lista, pulsa el botón y vuelve."""
+        if catalogo:
+            ver_catalogo(self)
+        if pareja is not None:
+            self.lista.elegir(pareja)
+        for campo, valor in (cambiar or {}).items():
+            self.editor.campos[campo].set(valor)
+        for boton in botones_de_todos(self):
+            if boton.cget("text") == texto:
+                boton.invoke()
+                return
     return _wait
+
+
+def botones_de_todos(ventana) -> list:
+    """Todos los botones de una ventana, en orden."""
+    pila, salida = [ventana], []
+    while pila:
+        w = pila.pop(0)
+        pila += list(w.winfo_children())
+        if isinstance(w, ttk.Button):
+            salida.append(w)
+    return salida
 
 
 ocultar(tk_pairs)
@@ -170,23 +195,18 @@ with sandbox():
     filas = {}
 
     def mirar(self, *_a, **_k):
-        """Recorre la ventana y apunta lo que ve."""
-        pila = [self]
-        while pila:
-            w = pila.pop()
-            pila += list(w.winfo_children())
-            if isinstance(w, ttk.Treeview):
-                for iid in w.get_children():
-                    filas[iid] = w.item(iid)["values"]
-                return
+        """Apunta las filas de la lista."""
+        filas.update({n: f["fila"] for n, f in self.lista.filas.items()})
 
     tk.Toplevel.wait_window = mirar
     tk_pairs.open_dialog(raiz, cfg)
     c("la lista trae las tres del catálogo", sorted(filas), ["fotos", "notas", "subida"])
-    c("'fotos' sale como no usada aquí", filas["fotos"][0], "")
-    c("y con origen 'sin usar'", filas["fotos"][5], "sin usar")
-    c("'notas' sale marcada y viniendo del catálogo",
-      (filas["notas"][0], filas["notas"][5]), ("✓", "catálogo"))
+    c("'fotos' sale como no usada aquí", filas["fotos"].en_pen, False)
+    c("y con origen 'sin usar'", filas["fotos"].origen, "sin usar")
+    c("'notas' sale usada y viniendo del catálogo",
+      (filas["notas"].en_pen, filas["notas"].origen), (True, "catálogo"))
+    c("la ruta local sale como se escribe, no adonde cae",
+      filas["notas"].local, "sync-data/notas")
 
 # 'Usar aquí' trae una pareja del catálogo a este dispositivo
 with sandbox():
@@ -198,18 +218,32 @@ with sandbox():
       ["notas", "subida", "fotos"])
     c("y no se ha tocado el catálogo", subidos, [])
 
-# 'Modificar aquí' aparta el baseline, como manda el editor
+# Lo que se puede hacer depende de la pareja elegida
+with sandbox():
+    cfg = preparar()
+    estados = {}
+
+    def mirar_fotos(self, *_a, **_k):
+        """Elige una pareja que aquí no se usa y apunta qué queda encendido."""
+        self.lista.elegir("fotos")
+        estados.update({b.cget("text"): str(b.cget("state"))
+                        for b in botones_de_todos(self)})
+        estados["campo"] = str(self.editor.entradas["remote_path"].cget("state"))
+
+    tk.Toplevel.wait_window = mirar_fotos
+    tk_pairs.open_dialog(raiz, cfg)
+    c("una pareja que no se usa aquí se puede usar", estados["Usar aquí"], "normal")
+    c("pero no guardar ni simular", (estados["Guardar aquí…"], estados["Simular"]),
+      ("disabled", "disabled"))
+    c("y el editor la enseña sin dejarla cambiar", estados["campo"], "readonly")
+
+# «Guardar aquí…» guarda lo del editor y aparta el baseline, como manda el editor
 with sandbox():
     cfg = preparar()
     dar_baseline(cfg, "notas")
-    tk_pairs.formulario = lambda parent, raw, original, actual, **k: {
-        **actual, "remote_path": "/R/otro", "include": [], "exclude": []}
-
-    tk.Toplevel.wait_window = pulsar("Modificar aquí…")
-    c("modificar sin seleccionar no cambia nada", tk_pairs.open_dialog(raiz, cfg), False)
-
-    tk.Toplevel.wait_window = elegir_y_pulsar("Modificar aquí…", "notas")
-    c("modificar el extremo informa del cambio", tk_pairs.open_dialog(raiz, cfg), True)
+    tk.Toplevel.wait_window = elegir_y_pulsar("Guardar aquí…", "notas",
+                                              cambiar={"remote_path": "/R/otro"})
+    c("guardar aquí informa del cambio", tk_pairs.open_dialog(raiz, cfg), True)
     c("el config apunta al destino nuevo",
       next(p.remote_path for p in model.load_config().pairs if p.name == "notas"),
       "/R/otro")
@@ -217,14 +251,42 @@ with sandbox():
       any(p.name.startswith("notas.old-") for p in model.STATE_DIR.iterdir()), True)
     c("el catálogo sigue sin tocarse", subidos, [])
 
+# Cambiar de pareja con algo sin guardar lo pregunta, y «no» se queda donde estaba
+with sandbox():
+    cfg = preparar()
+    visto = {}
+
+    def cambiar_y_dejar(self, *_a, **_k):
+        """Cambia un campo, intenta pasar a otra pareja diciendo que no, y luego que sí."""
+        self.lista.elegir("notas")
+        self.editor.campos["remote_path"].set("/R/a-medias")
+        messagebox.askokcancel = lambda *a, **k: False
+        visto["no"] = (self.lista.elegir("subida"), self.lista.elegida,
+                       self.editor.campos["remote_path"].get())
+        messagebox.askokcancel = lambda *a, **k: True
+        visto["si"] = (self.lista.elegir("subida"), self.lista.elegida,
+                       self.editor.campos["remote_path"].get())
+
+    tk.Toplevel.wait_window = cambiar_y_dejar
+    c("con cambios sin guardar, «no» no cambia de pareja",
+      tk_pairs.open_dialog(raiz, cfg) or visto["no"], (False, "notas", "/R/a-medias"))
+    c("y «sí» pasa a la otra, con lo suyo", visto["si"], (True, "subida", "/R/subida"))
+
 # 'Volver al catálogo' deshace la modificación local
 with sandbox():
     cfg = preparar()
-    tk.Toplevel.wait_window = elegir_y_pulsar("Volver al catálogo", "notas")
-    tk_pairs.open_dialog(raiz, cfg)   # ya coincide: no hay nada que deshacer
-    c("volver cuando ya coincide no cambia nada",
-      next(p.remote_path for p in model.load_config().pairs if p.name == "notas"),
-      "/R/notas")
+    estados = {}
+
+    def mirar_volver(self, *_a, **_k):
+        """Apunta si «Volver al catálogo» está encendido para 'notas'."""
+        self.lista.elegir("notas")
+        estados.update({b.cget("text"): str(b.cget("state"))
+                        for b in botones_de_todos(self)})
+
+    tk.Toplevel.wait_window = mirar_volver
+    tk_pairs.open_dialog(raiz, cfg)
+    c("si ya coincide con el catálogo, no hay a qué volver",
+      estados["Volver al catálogo"], "disabled")
 
 with sandbox():
     distinto = {**BASE, "pair": [{**BASE["pair"][0], "remote_path": "/R/mio"},
@@ -237,14 +299,14 @@ with sandbox():
       next(p.remote_path for p in model.load_config().pairs if p.name == "notas"),
       "/R/notas")
 
-# el bloque del catálogo escribe en el catálogo, no en el dispositivo
+# lo del catálogo escribe en el catálogo, no en el dispositivo
 with sandbox():
     subidos.clear()
     cfg = preparar()
     tk_pairs.formulario = lambda parent, raw, original, actual, **k: {
         "name": "musica", "local": "sync-data/musica", "remote_path": "/R/musica",
         "mode": "down", "include": [], "exclude": []}
-    tk.Toplevel.wait_window = pulsar("Nueva…")
+    tk.Toplevel.wait_window = elegir_y_pulsar("Nueva pareja…", catalogo=True)
 
     cambiado = tk_pairs.open_dialog(raiz, cfg)
     c("crear en el catálogo NO cambia el config de este dispositivo", cambiado, False)
@@ -256,13 +318,27 @@ with sandbox():
 with sandbox():
     subidos.clear()
     cfg = preparar()
-    tk.Toplevel.wait_window = elegir_y_pulsar("Borrar…", "fotos")
+    tk.Toplevel.wait_window = elegir_y_pulsar("Guardar en el catálogo…", "fotos",
+                                              catalogo=True,
+                                              cambiar={"remote_path": "/R/fotos-2026"})
+    c("guardar en el catálogo NO cambia este dispositivo", tk_pairs.open_dialog(raiz, cfg),
+      False)
+    c("y sube lo del editor",
+      next(p["remote_path"] for p in subidos[-1]["pair"] if p["name"] == "fotos"),
+      "/R/fotos-2026")
+    c("y nada más que eso", [p["name"] for p in subidos[-1]["pair"]],
+      ["notas", "subida", "fotos"])
+
+with sandbox():
+    subidos.clear()
+    cfg = preparar()
+    tk.Toplevel.wait_window = elegir_y_pulsar("Borrar del catálogo…", "fotos", catalogo=True)
     tk_pairs.open_dialog(raiz, cfg)
     c("borrar del catálogo quita solo del catálogo",
       [p["name"] for p in subidos[-1]["pair"]], ["notas", "subida"])
     c("este dispositivo no se entera", model.load_config().names, ["notas", "subida"])
 
-# sin red: el bloque del catálogo se deshabilita
+# sin red: lo del catálogo se apaga
 with sandbox():
     cfg = preparar()
     texto = config_file.dumps(CAT)
@@ -274,20 +350,20 @@ with sandbox():
     estados = {}
 
     def mirar_botones(self, *_a, **_k):
-        """Recorre la ventana y apunta los botones."""
-        pila = [self]
-        while pila:
-            w = pila.pop()
-            pila += list(w.winfo_children())
-            if isinstance(w, ttk.Button):
-                estados[w.cget("text")] = str(w.cget("state"))
+        """Pasa al catálogo y apunta los botones y si el editor se deja tocar."""
+        ver_catalogo(self)
+        estados.update({b.cget("text"): str(b.cget("state"))
+                        for b in botones_de_todos(self)})
+        estados["campo"] = str(self.editor.entradas["remote_path"].cget("state"))
 
     tk.Toplevel.wait_window = mirar_botones
     tk_pairs.open_dialog(raiz, cfg)
     c("desde la copia, el catálogo no se puede tocar",
-      sorted(t for t, e in estados.items() if e == "disabled"),
-      ["Ajustes del catálogo…", "Borrar…", "Editar…", "Nueva…"])
-    c("pero lo de este dispositivo sigue disponible", estados["Usar aquí"], "normal")
+      [estados[t] for t in ("Ajustes del catálogo…", "Nueva pareja…",
+                            "Borrar del catálogo…", "Guardar en el catálogo…")],
+      ["disabled"] * 4)
+    c("  ni su editor", estados["campo"], "readonly")
+    c("pero sí se puede releer", estados["Releer"], "normal")
 
     catalog.load = falso_catalogo
 
@@ -407,13 +483,12 @@ with sandbox():
         c("y nada más: un simulacro no escribe en el config",
           model.load_config().names, ["notas", "subida"])
 
-        # Una pareja que este dispositivo no usa no se puede simular aquí.
+        # Una pareja que este dispositivo no usa no se puede simular aquí: el
+        # botón está apagado.
         lanzadas.clear()
-        errores.clear()
         tk.Toplevel.wait_window = elegir_y_pulsar("Simular", "fotos")
         tk_pairs.open_dialog(raiz, cfg)
         c("simular una que no se usa aquí no lanza nada", lanzadas, [])
-        c("y lo dice", any("no se usa en este dispositivo" in e for e in errores), True)
     finally:
         tk_pairs.output_window = real_salida
 
@@ -926,21 +1001,20 @@ def _form_vigilar(modo_elegido):
     visto: dict = {}
 
     def _wait(self, *_a, **_k):
-        """Elige el modo en el desplegable, anota la casilla y pulsa «Guardar…»."""
-        pila, botones, desplegable, casilla = [self], {}, None, None
+        """Pulsa el botón del modo, anota la casilla y pulsa «Guardar…»."""
+        pila, botones, modos, casilla = [self], {}, {}, None
         while pila:
             w = pila.pop()
             pila += list(w.winfo_children())
             if isinstance(w, ttk.Button):
                 botones[w.cget("text")] = w
-            elif isinstance(w, ttk.Combobox) and w.get() in model.MODES:
-                desplegable = w
+            elif isinstance(w, ttk.Radiobutton) and str(w.cget("text")) in model.MODES:
+                modos[str(w.cget("text"))] = w
             elif isinstance(w, ttk.Checkbutton) and "ficheros locales" in w.cget("text"):
                 casilla = w
         visto["antes"] = (str(casilla.cget("state")), casilla.instate(["selected"]))
         if modo_elegido:
-            desplegable.set(modo_elegido)
-            desplegable.event_generate("<<ComboboxSelected>>")
+            modos[modo_elegido].invoke()
         visto["despues"] = (str(casilla.cget("state")), casilla.instate(["selected"]))
         botones["Guardar…"].invoke()
     return _wait, visto

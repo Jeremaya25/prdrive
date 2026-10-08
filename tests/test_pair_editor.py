@@ -440,4 +440,46 @@ with sandbox():
       "watch" in pair_editor.clean_form({"name": "x", "mode": "up", "watch": False}),
       False)
 
+# la lista de la pantalla: qué dice cada fila
+R = pair_editor.CatalogRow
+fila = lambda **k: R(**{"name": "x", "mode": "bisync", "local": "l", "remote": "r",
+                        "estado": "ok", "aviso": None, "en_pen": True,
+                        "origen": pair_editor.ORIGEN_CATALOGO, "difiere": (), **k})
+c("una que no se usa aquí sale apagada", pair_editor.row_status(fila(en_pen=False)),
+  ("apagado", "no se usa aquí"))
+c("un espejo, en rojo", pair_editor.row_status(
+    fila(mode="down-mirror", aviso=pair_editor.mirror_warning("down-mirror"))),
+  ("peligro", "espejo"))
+c("lo que pide un resync, en ámbar",
+  pair_editor.row_status(fila(aviso="requiere resync")), ("aviso", "requiere resync"))
+c("la modificada aquí también",
+  pair_editor.row_status(fila(origen=pair_editor.ORIGEN_LOCAL, difiere=("mode",))),
+  ("aviso", "modificada aquí"))
+c("una que no es bisync no tiene estado que contar",
+  pair_editor.row_status(fila(mode="up", estado="—")), ("ok", "en uso"))
+c("en la vista del catálogo, está en él; el espejo sigue en rojo",
+  [pair_editor.row_status(f, del_catalogo=True) for f in
+   (fila(en_pen=False), fila(aviso=pair_editor.mirror_warning("up-mirror")))],
+  [("ok", "en el catálogo"), ("peligro", "en el catálogo")])
+c("el aviso del espejo, partido para su recuadro",
+  pair_editor.aviso_espejo("up-mirror"),
+  ("Modo 'up-mirror': es un espejo",
+   "BORRA en el remoto lo que no esté en el origen. Pruébalo antes con --dry-run."))
+c("  y entero en una línea", pair_editor.mirror_warning("up-mirror"),
+  "Modo 'up-mirror': es un espejo, BORRA en el remoto lo que no esté en el origen. "
+  "Pruébalo antes con --dry-run.")
+c("  y nada para lo que no es espejo", pair_editor.aviso_espejo("bisync"), None)
+
+texto_cat = config_file.dumps({"defaults": {"remote": "nas"}, "pair": [
+    {"name": "a", "local": "A", "remote_path": "/a", "mode": "up"},
+    {"name": "b", "local": "B", "remote_path": "/b", "mode": "bisync"}]})
+cat_ab = catalog.Catalog(raw=tomllib.loads(texto_cat), text=texto_cat, source="remote",
+                         stamp="2026-01-01 00:00:00", endpoint="nas:/c/remote.toml")
+solo = pair_editor.catalog_only_rows(
+    {"pair": [{"name": "b", "local": "OTRA", "remote_path": "/b"},
+              {"name": "solo-aqui", "local": "S", "remote_path": "/s"}]}, cat_ab)
+c("la vista del catálogo: sus parejas, en su orden y como las dice él",
+  [(f.name, f.mode, f.local, f.en_pen) for f in solo],
+  [("a", "up", "A", False), ("b", "bisync", "B", True)])
+
 sys.exit(c.report())

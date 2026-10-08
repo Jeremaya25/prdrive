@@ -52,16 +52,21 @@ nada cierra KeePassXC (si está abierto) y sube lo que falte.
 ## La ventana de parejas
 
 Se abre desde «Parejas…» y es donde se decide qué sincroniza este dispositivo.
-Los botones van en dos bloques separados y esa separación es el asunto de la
-pantalla: el bloque ámbar cambia **el catálogo**, o sea todos los dispositivos;
-el otro cambia **solo este**. Cuatro cosas que se hacen desde ahí:
+Arriba se elige **qué se edita**: «Este dispositivo» (lo que cambies se queda
+aquí) o «Catálogo» (lo verán todos los dispositivos; la pantalla lo recuerda con
+un aviso ámbar). Debajo, la lista con el modo y el estado de cada pareja, y la
+**pareja elegida**, que se cambia ahí mismo: «Guardar aquí…» o «Guardar en el
+catálogo…» enseñan antes lo que va a pasar. Una pareja que este dispositivo no
+usa se ve pero no se cambia: primero **Usar aquí**. Si pasas a otra pareja con
+cambios sin guardar, se pregunta antes de perderlos. Cuatro cosas más que se
+hacen desde ahí:
 
 - **Simular.** Lanza un `--dry-run` de la pareja elegida en la ventana de salida:
   rclone enumera lo que copiaría y lo que borraría, y no toca nada. Es la forma
   de ver los borrados de un espejo *antes* de aprobarlos.
 - **Examinar…** junto a la ruta remota abre un explorador del remoto (`rclone
   lsd`): entrar, subir y, si hace falta, **crear la carpeta** que falta. Se apaga
-  cuando no hay conexión, igual que el bloque del catálogo. La ruta local usa el
+  cuando no hay conexión, igual que lo que toca el catálogo. La ruta local usa el
   diálogo de carpetas del sistema y se guarda relativa a la raíz del dispositivo.
 - **Dispositivos…** enseña [la flota](como-funciona.md#el-modelo): todos los que comparten este
   catálogo, cuándo se les vio por última vez, **desde qué equipo** (el último
@@ -72,8 +77,8 @@ el otro cambia **solo este**. Cuatro cosas que se hacen desde ahí:
   desde el que miras. Es solo de lectura para los nombres: el de **este**
   dispositivo se cambia en [«Nombre e icono de la unidad»](diagnostico.md#nombre-e-icono-de-la-unidad)
   y ningún dispositivo escribe la nota de otro.
-- **Editar flags…** enseña las cuatro capas resueltas y avisa si un cambio sube
-  el `--max-delete` efectivo.
+- **Editar flags…** (en «Avanzado», junto a incluir y excluir) enseña las cuatro
+  capas resueltas y avisa si un cambio sube el `--max-delete` efectivo.
 
 Todo lo que escribe algo pasa antes por la misma ceremonia: un plan que todavía
 no ha tocado nada, con una línea por consecuencia, y una confirmación.

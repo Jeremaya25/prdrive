@@ -216,7 +216,8 @@ CAT_REMOTO = {"defaults": {"remote": "nas"},
                         "remote_path": "/R/fotos", "mode": "up"}]}
 CUANDO = "2026-09-30 08:00:00"
 ENDPOINT = "nas:/prdrive-catalog/remote.toml"
-BOTONES_CATALOGO = ("Nueva…", "Editar…", "Borrar…", "Ajustes del catálogo…")
+BOTONES_CATALOGO = ("Nueva pareja…", "Borrar del catálogo…", "Guardar en el catálogo…",
+                    "Ajustes del catálogo…")
 
 
 class RemotoLento:
@@ -287,6 +288,9 @@ def foto(dlg) -> dict:
             botones[str(w.cget("text"))] = str(w.cget("state"))
         elif isinstance(w, ttk.Label) and w.winfo_manager():
             textos.append(str(w.cget("text")))
+    lista = getattr(dlg, "lista", None)
+    if lista is not None:                       # la de parejas no es una Treeview
+        filas, seleccion = list(lista.filas), (lista.elegida,)
     ind = dlg.indicador
     return {"filas": sorted(filas), "seleccion": seleccion, "botones": botones,
             "textos": textos, "esperando": ind.esperando,
@@ -295,14 +299,12 @@ def foto(dlg) -> dict:
 
 
 explorables: list = []
-tk_pairs.formulario = (lambda parent, raw, original, actual, **k:
-                       explorables.append(k.get("explorable")) or None)
 
 
 def modificar(dlg, pareja: str) -> None:
-    """Elige una pareja y pulsa «Modificar aquí…» (el formulario apunta `explorable`)."""
-    buscar(dlg, ttk.Treeview).selection_set(pareja)
-    buscar(dlg, ttk.Button, "Modificar aquí…").invoke()
+    """Elige una pareja y apunta si su editor deja recorrer el remoto."""
+    dlg.lista.elegir(pareja)
+    explorables.append(dlg.editor.explorable)
 
 
 # Remoto lento con copia local: se pinta la copia antes de que conteste.
@@ -336,7 +338,7 @@ with sandbox():
     c("  el bloque del catálogo, apagado mientras",
       [antes["botones"][b] for b in BOTONES_CATALOGO], ["disabled"] * 4)
     c("  y «Releer», también", antes["botones"]["Releer"], "disabled")
-    c("  lo de este dispositivo sigue disponible", antes["botones"]["Usar aquí"],
+    c("  lo de este dispositivo sigue disponible", antes["botones"]["Guardar aquí…"],
       "normal")
     c("  «Examinar…» del remoto no se ofrece mientras", explorables[0], False)
 
@@ -458,7 +460,7 @@ with sandbox():
         tk_pairs.formulario = lambda parent, raw, original, actual, **k: {
             "name": "musica", "local": "sync-data/musica", "remote_path": "/R/musica",
             "mode": "down", "include": [], "exclude": []}
-        buscar(self, ttk.Button, "Nueva…").invoke()
+        buscar(self, ttk.Button, "Nueva pareja…").invoke()
         vista["subiendo"] = foto(self)
         remoto.soltar.set()
         dar_vueltas(lambda: not self.sondeo.esperando)
@@ -636,7 +638,9 @@ with sandbox():
 with sandbox():
     cfg = preparar()
     dejar_copia(CAT_LOCAL)
-    remoto = RemotoLento(config_file.dumps(CAT_REMOTO))
+    # El mismo catálogo que la copia: la lista crece una línea por pareja, y
+    # una pareja más sí haría crecer la ventana.
+    remoto = RemotoLento(config_file.dumps(CAT_LOCAL))
     catalog.run = remoto
 
     def no_crece_parejas(self, *_a, **_k):

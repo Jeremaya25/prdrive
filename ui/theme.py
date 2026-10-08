@@ -1597,7 +1597,8 @@ def grupo_botones(parent, opciones, variable, orden=None, superficie: str = ""):
     (`Segmento.Toolbutton`), así que la elegida es el valor de `variable`.
 
     Args:
-        opciones: `(rotulo, valor)` por botón, en orden.
+        opciones: `(rotulo, valor)` por botón, en orden, o `(rotulo, valor,
+            icono)` para llevar un icono delante del rótulo.
         variable: La `StringVar` que guarda el valor elegido.
         orden: Lo que se llama al cambiar de botón, o `None`.
         superficie: El prefijo de la superficie donde cae (`'Card.'`…), para
@@ -1611,13 +1612,15 @@ def grupo_botones(parent, opciones, variable, orden=None, superficie: str = ""):
                       else "TFrame")
     marco.botones = []
     opciones = list(opciones)
-    for i, (rotulo, valor) in enumerate(opciones):
+    for i, (rotulo, valor, *icono) in enumerate(opciones):
         # Solo el primero y el último llevan las esquinas redondeadas.
         sitio = ("" if len(opciones) == 1 else "Primero." if i == 0
                  else "Ultimo." if i == len(opciones) - 1 else "Medio.")
         boton = ttk.Radiobutton(marco, text=rotulo, value=valor, variable=variable,
                                 command=orden, style=f"{sitio}Segmento.Toolbutton",
                                 takefocus=True)
+        if icono:
+            boton_icono(boton, icono[0], TINTA2)
         boton.grid(row=0, column=i, sticky="ns")
         marco.botones.append(boton)
     return marco
