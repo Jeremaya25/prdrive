@@ -790,7 +790,7 @@ def olvidar(interp) -> None:
     if _puestos.get(id(interp)) is interp:
         del _puestos[id(interp)]
         _imagenes.pop(id(interp), None)
-        _sobres.pop(id(interp), None)
+        _asientos.pop(id(interp), None)
     ficha = _LETRA.get(id(interp))
     if ficha is not None and ficha.interp is interp:
         del _LETRA[id(interp)]
@@ -863,11 +863,18 @@ def _filetes(widget, style) -> None:
 #
 # Las piezas son transparentes por fuera de la forma y ttk rellena el control
 # con su `background` antes de pintarlas, así que lo que asoma por las esquinas
-# es el `background` del estilo. Tiene que ser el color de la superficie donde
-# cae el control, y eso solo se sabe al ponerlo: lo hace `_asentar()`, que
-# mira el fondo del padre cuando el control aparece y, si no es el papel, le
-# pone una variante del estilo con ese fondo («Sobre<color>.<estilo>»). Nadie
-# tiene que acordarse de pedir el botón «de tarjeta».
+# es el `background` del control. Tiene que ser el color de la superficie donde
+# cae, y eso solo se sabe al ponerlo. Lo decide el ESTADO del control y no su
+# estilo: cada estilo redondeado lleva un `style.map(background=…)` con los tres
+# bits de estado que ttk deja libres (`user1`…`user3`), una combinación por
+# superficie, y `_asentar()` enciende la de la superficie del padre cuando el
+# control aparece. Nadie tiene que acordarse de pedir el botón «de tarjeta».
+#
+# Cambiar el estado de un widget no crea estilos ni repinta a los demás; crear
+# un estilo, configurarlo, mapearlo o cambiarle la disposición manda un
+# `<<ThemeChanged>>` a TODOS los widgets del intérprete, que se miden y se
+# pintan otra vez. Por eso `apply()` hace todo eso de una vez y, desde que hay
+# un widget, no se toca ningún estilo.
 # ---------------------------------------------------------------------------
 
 RADIO = 4
@@ -882,6 +889,10 @@ _REDONDOS: dict[str, bool] = {}
 
 Un `False` corta la búsqueda por sufijos de `_redondo()`: «Plano.Card.TFrame»
 termina como la tarjeta, pero es plano y no se asienta.
+
+El `background` de cada estilo redondeado es el papel: lo que se ve por las
+esquinas lo pone el mapa de bits de `_superficies_por_estado()`, y sin ningún
+bit encendido (el control aún no ha aparecido) manda el papel.
 """
 _CARA: dict[str, str] = {}
 """Los marcos con cara de imagen: el color que enseñan a sus hijos.
@@ -890,11 +901,45 @@ Su `background` es el de DEBAJO (asoma por las esquinas), así que no sirve
 para saber sobre qué color caen los controles de dentro.
 """
 
-_sobres: dict[int, set[str]] = {}
-"""Las variantes «Sobre…» ya creadas, por intérprete (ver `_asentar`)."""
+_BITS = (("user1",), ("user2",), ("user3",), ("user1", "user2"),
+         ("user1", "user3"), ("user2", "user3"), ("user1", "user2", "user3"))
+"""Las siete combinaciones de bits de estado libres de ttk que no son «ninguno»."""
+
+_SIN_BITS = ("!user1", "!user2", "!user3")
+"""Lo que `_asentar()` apaga antes de encender los bits de la superficie."""
 
 _SOBRE = re.compile(r"^Sobre[0-9A-F]{6}\.")
-"""El prefijo que pone `_asentar()`."""
+"""El prefijo de las variantes de `_variantes_sobre()`."""
+
+
+class _Asiento:
+    """Lo que `_asentar()` sabe de un intérprete, fijado por `apply()`.
+
+    Solo lleva cadenas: no retiene el intérprete, así que `olvidar()` no
+    tiene que soltar nada más que el diccionario.
+
+    Args:
+        papel: El color del papel, «#RRGGBB» en mayúsculas.
+        bits: Los bits de estado de cada superficie que no es el papel.
+
+    Attributes:
+        variantes: Los estilos «Sobre<color>.<estilo>» creados en `apply()`.
+        cercanas: Para cada color sin bits ni variante que ha caído bajo un
+            control, la superficie conocida que se le ha dado.
+    """
+
+    def __init__(self, papel: str, bits: dict[str, tuple[str, ...]]) -> None:
+        self.papel = papel
+        self.bits = bits
+        self.variantes: set[str] = set()
+        self.cercanas: dict[str, str] = {}
+
+
+_asientos: dict[int, _Asiento] = {}
+"""El asiento de cada intérprete de Tk con el tema, por `id`."""
+
+_avisadas: set[str] = set()
+"""Los colores sin superficie conocida de los que ya se ha avisado en este proceso."""
 
 
 def _redondo(estilo: str) -> bool:
@@ -932,39 +977,127 @@ def _fondo_de(padre) -> str | None:
     return _hex(padre, ttk.Style(padre).lookup(estilo, "background"))
 
 
+def _bits_de_superficies(widget) -> dict[str, tuple[str, ...]]:
+    """Reparte los bits de estado entre las superficies del tema puesto.
+
+    Args:
+        widget: Cualquiera del intérprete (para normalizar los colores).
+
+    Returns:
+        Para cada superficie de `_superficies()` que no es el papel, y sin
+        repetir colores, sus bits. Si hubiera más de siete, las que sobran
+        quedan fuera y `_asentar()` las trata como desconocidas.
+    """
+    papel = _hex(widget, PAPEL)
+    bits: dict[str, tuple[str, ...]] = {}
+    for fondo, _letra in _superficies().values():
+        color = _hex(widget, fondo)
+        if color and color != papel and color not in bits and len(bits) < len(_BITS):
+            bits[color] = _BITS[len(bits)]
+    return bits
+
+
+def _superficies_por_estado(widget, style, asiento: _Asiento) -> None:
+    """Pone en cada estilo redondeado el mapa del `background` por bits de estado.
+
+    Un `style.map` por estilo base, y no un estilo nuevo por superficie. Los
+    estilos derivados por el nombre («Grande.Primary.TButton», «Mono.TEntry»)
+    no llevan mapa propio y heredan el del base: ttk busca el mapa de una
+    opción en el estilo más cercano que lo tenga, y solo después, y si ningún
+    estado encaja, el valor por defecto. Por eso un estilo con su propio
+    `background` (los `Sobre…`) solo manda mientras no haya bits encendidos.
+
+    La combinación con más bits va primero: ttk toma la primera de la lista
+    cuyos bits están todos encendidos.
+    """
+    mapa = [(*bits, color) for color, bits
+            in sorted(asiento.bits.items(), key=lambda kv: -len(kv[1]))]
+    for base, redondo in list(_REDONDOS.items()):
+        if redondo:
+            style.map(base, background=mapa)
+
+
+def _superficie_cercana(asiento: _Asiento, fondo: str) -> str:
+    """Devuelve la superficie conocida más parecida a un color que no lo es.
+
+    Los candidatos son el papel y las que tienen bits. La elección se apunta
+    en el asiento, así que se avisa una vez por color e intérprete.
+    """
+    cercana = asiento.cercanas.get(fondo)
+    if cercana is None:
+        def rgb(color: str) -> tuple[int, int, int]:
+            return int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
+
+        buscado = rgb(fondo)
+        cercana = min((asiento.papel, *asiento.bits),
+                      key=lambda c: sum((a - b) ** 2 for a, b in zip(rgb(c), buscado)))
+        asiento.cercanas[fondo] = cercana
+        _avisar_superficie(fondo, cercana)
+    return cercana
+
+
+def _avisar_superficie(fondo: str, cercana: str) -> None:
+    """Avisa, una vez por color y proceso, de un control sobre una superficie sin bits.
+
+    Es el punto de sustitución de las pruebas. No crea una variante del estilo
+    para ese color: sería un estilo nuevo con la ventana ya abierta, y cada
+    uno repinta todos los widgets. El control se asienta sobre `cercana`, así
+    que sus esquinas salen de otro tono. La salida es la de error, si hay.
+
+    Args:
+        fondo: El color del padre, «#RRGGBB».
+        cercana: El de la superficie que se le ha dado.
+    """
+    if fondo in _avisadas:
+        return
+    _avisadas.add(fondo)
+    if sys.stderr:
+        try:
+            print(f"tema: ningún control redondeado tiene la superficie {fondo}; "
+                  f"se asienta sobre {cercana}", file=sys.stderr)
+        except OSError:
+            pass
+
+
 def _asentar(evento) -> None:
-    """Le da a un control redondeado el fondo de la superficie donde ha caído.
+    """Le da a un control redondeado la superficie donde ha caído.
 
     Corre al aparecer cada control (`<Map>` de su clase) y solo toca los que
-    llevan piezas redondeadas. Si el fondo del padre es el del estilo, no hace
-    nada; si no, le pone «Sobre<color>.<estilo>», que hereda todo del estilo
-    por el nombre y solo cambia el `background`. Nada de aquí puede romper una
-    ventana: si algo falla, las esquinas se quedan del color del papel.
+    llevan piezas redondeadas: lee el color del padre y enciende en el control
+    los bits de estado de esa superficie (apagando antes los que tuviera, por
+    si cambia de padre). No crea, configura ni mapea ningún estilo ni cambia
+    ninguna disposición: no manda ningún `<<ThemeChanged>>`.
+
+    Dos casos no pasan por los bits. Una cara de botón fuera de la paleta
+    (`_CARA`: el acento, el peligro) tiene su variante «Sobre<color>.<estilo>»,
+    creada en `apply()`, y el control pasa a ella. Un color sin bits ni
+    variante cae sobre la superficie más parecida (`_superficie_cercana()`).
+    Nada de aquí puede romper una ventana: si algo falla, las esquinas se
+    quedan del color del papel.
     """
     w = evento.widget
     if isinstance(w, str):                          # un widget que tkinter no creó
         return
     try:
-        from tkinter import ttk
         estilo = str(w.cget("style")) or w.winfo_class()
         base = _SOBRE.sub("", estilo)
         if not _redondo(base):
             return
         fondo = _fondo_de(w.master)
-        if fondo is None:
+        asiento = _asientos.get(id(w.tk))
+        if fondo is None or asiento is None:
             return
-        style = ttk.Style(w)
         nuevo = base
-        if _hex(w, style.lookup(base, "background")) != fondo:
-            nuevo = f"Sobre{fondo[1:]}.{base}"
-            # Una sola vez por intérprete: cada `style.configure` le dice a
-            # TODOS los widgets que el tema ha cambiado y se vuelven a medir.
-            # Hecho en cada `<Map>`, una ventana de cientos de controles
-            # tardaba más de un minuto en aparecer.
-            hechos = _sobres.setdefault(id(w.tk), set())
-            if nuevo not in hechos:
-                style.configure(nuevo, background=fondo)
-                hechos.add(nuevo)
+        bits = asiento.bits.get(fondo)
+        if bits is None:
+            variante = f"Sobre{fondo[1:]}.{base}"
+            if fondo == asiento.papel:
+                bits = ()
+            elif variante in asiento.variantes:
+                nuevo, bits = variante, ()
+            else:
+                bits = asiento.bits.get(_superficie_cercana(asiento, fondo), ())
+        w.state([*_SIN_BITS, *bits])
         if nuevo != estilo:
             w.configure(style=nuevo)
     except Exception:                               # noqa: BLE001
@@ -980,34 +1113,31 @@ entero, así que su variante es otra que la de «Primary.TButton».
 """
 
 
-def _variantes_sobre(widget, style) -> None:
-    """Crea ya todas las variantes «Sobre<color>.» que `_asentar()` puede pedir.
+def _variantes_sobre(widget, style, asiento: _Asiento) -> None:
+    """Crea las variantes «Sobre<color>.» de las caras que no caben en los bits.
 
-    Una por estilo redondeado y por superficie conocida (las de
-    `_superficies()` y las caras de `_CARA`). Crear un estilo le dice a TODOS
-    los widgets del intérprete que el tema ha cambiado y todos se vuelven a
-    medir y a pintar: hecho al aparecer el primer control sobre cada color,
-    abrir una pantalla costaba varias vueltas enteras de repintado. Aquí, al
-    poner el tema, todavía no hay widgets que repintar. Lo que no esté aquí lo
-    sigue creando `_asentar()` la primera vez que haga falta.
+    Los bits de estado alcanzan para las superficies de `_superficies()`. Las
+    caras de botón de `_CARA` que no son una de ellas (el acento de «Primary»,
+    el peligro de «DangerSolid») se quedan con la variante de siempre: una por
+    estilo redondeado, con los prefijos de `_PREFIJOS_SOBRE`, que hereda todo
+    del estilo por el nombre y solo cambia el `background`. Se crean aquí, al
+    poner el tema, cuando aún no hay widgets que repintar; `_asentar()` no crea
+    ninguna.
+
+    Las variantes creadas quedan en `asiento.variantes`.
     """
-    hechos = _sobres.setdefault(id(widget.tk), set())
-    fondos = {_hex(widget, c) for c in
-              [f for f, _ in _superficies().values()] + list(_CARA.values())}
-    fondos.discard(None)
+    fondos = {_hex(widget, c) for c in _CARA.values()}
+    fondos -= {None, asiento.papel, *asiento.bits}
     for base, redondo in list(_REDONDOS.items()):
         if not redondo:
             continue
         prefijos = [""] + [p for fin, ps in _PREFIJOS_SOBRE.items()
                            if base.endswith(fin) for p in ps]
         for prefijo in prefijos:
-            estilo = prefijo + base
-            propio = _hex(widget, style.lookup(estilo, "background"))
-            for fondo in fondos:
-                nuevo = f"Sobre{fondo[1:]}.{estilo}"
-                if fondo != propio and nuevo not in hechos:
-                    style.configure(nuevo, background=fondo)
-                    hechos.add(nuevo)
+            for fondo in sorted(fondos):
+                nuevo = f"Sobre{fondo[1:]}.{prefijo}{base}"
+                style.configure(nuevo, background=fondo)
+                asiento.variantes.add(nuevo)
 
 
 def _pieza(widget, style, nombre: str, estados, radio: float = RADIO,
@@ -1116,9 +1246,10 @@ def _botones_propios(widget, style) -> None:
                 ("Button.padding", {"sticky": "nswe", "children": [
                     ("Button.label", {"sticky": "nswe"})]})]})])
             # El fondo ya no es la cara del botón: es lo que asoma por las
-            # esquinas. La cara la ponen las piezas, por estado.
-            if not estilo.endswith("Quiet.TButton"):
-                style.configure(estilo, background=PAPEL)
+            # esquinas. La cara la ponen las piezas, por estado. En los
+            # silenciosos, que no llevan pieza en reposo, el fondo sí se ve,
+            # y es el de la superficie donde caen (`_asentar`).
+            style.configure(estilo, background=PAPEL)
             if normal[0] is not None:
                 # Lo que se pone ENCIMA de un botón (el chip de una fila de
                 # la barra lateral) cae sobre su cara, no sobre su fondo.
@@ -1328,6 +1459,17 @@ def _barra_propia(widget, style) -> None:
     except Exception:                               # noqa: BLE001
         pass
 
+
+_IMPLICITOS = ("Plano.TFrame", "Horizontal.TSeparator", "Horizontal.Card.TSeparator",
+               "Treeview.Item", "Treeview.Cell", "Treeview.Row", "Treeview.Heading")
+"""Los estilos que ttk crea por su cuenta al aparecer el primer widget que los usa.
+
+Ningún estilo se crea con una ventana abierta. Estos no los configura nadie:
+ttk los hace al crear un separador, una lista o un marco «Plano.TFrame», sin
+mandar ningún `<<ThemeChanged>>`, pero el recuento de estilos tardíos de la
+comprobación de tiempos los vería. Preguntarles algo en `apply()` basta para que
+existan ya.
+"""
 
 _CLASES_ASENTADAS = ("TButton", "TRadiobutton", "TLabel", "TEntry", "TCombobox",
                      "TSpinbox", "TFrame", "TProgressbar")
@@ -1659,11 +1801,16 @@ def apply(widget) -> None:
                     font=fuente("rotulo"))
 
     _controles(widget, style)
-    _sobres[id(interp)] = set()         # un `id` puede ser de un intérprete ya muerto
-    try:
-        _variantes_sobre(widget, style)
-    except Exception:                               # noqa: BLE001
-        pass                            # las creará `_asentar()` cuando hagan falta
+    for implicito in _IMPLICITOS:
+        style.lookup(implicito, "background")
+    # Un `id` puede ser de un intérprete ya muerto: el asiento se hace de nuevo.
+    asiento = _asientos[id(interp)] = _Asiento(
+        _hex(widget, PAPEL) or "", _bits_de_superficies(widget))
+    for paso in (_superficies_por_estado, _variantes_sobre):
+        try:
+            paso(widget, style, asiento)
+        except Exception:                           # noqa: BLE001
+            pass                # los controles se quedan con las esquinas del papel
     _puestos[id(interp)] = interp
 
 

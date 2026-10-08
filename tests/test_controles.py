@@ -8,7 +8,9 @@ comprueba lo que, si falla, no se ve en una prueba de pantallas:
 - que la pieza es de verdad transparente por fuera de la forma (si no, las
   esquinas saldrían cuadradas de otro color);
 - que un control que cae sobre una tarjeta toma el fondo de la tarjeta
-  (`_asentar`), y uno sobre el papel se queda con su estilo;
+  (`_asentar`: enciende los bits de estado de esa superficie, sin cambiar de
+  estilo), y uno sobre el papel no enciende ninguno (todas las superficies,
+  en los dos temas, con sus esquinas: `test_superficie.py`);
 - que la letra propia se carga y es la que eligen los roles;
 - que un botón mide el alto del diseño;
 - y que en `ui/tk*.py` no queda ningún espaciado fuera de la escala `E1…E7`.
@@ -16,6 +18,7 @@ comprueba lo que, si falla, no se ve en una prueba de pantallas:
 
 from __future__ import annotations
 
+import gc
 import re
 import sys
 
@@ -72,7 +75,8 @@ for estilo in ("TButton", "Primary.TButton", "Quiet.TButton", "TEntry",
 c("las flechas se llaman como las de clam: los bindings deciden por el nombre",
   "downarrow" in str(style.layout("TCombobox")), True)
 
-# 4. el asiento: sobre la tarjeta toma su fondo, sobre el papel se queda
+# 4. el asiento: sobre la tarjeta enciende los bits de su fondo, sobre el papel
+# ninguno, y en los dos casos el control conserva su estilo
 raiz.geometry("+0+0")
 tarjeta = ttk.Frame(raiz, style="Card.TFrame", padding=theme.E4)
 tarjeta.pack()
@@ -87,32 +91,44 @@ grupo = theme.grupo_botones(raiz, [("Uno", "1"), ("Dos", "2"), ("Tres", "3")],
 grupo.pack()
 raiz.update()
 
+asiento = theme._asientos[id(raiz.tk)]
 blanco = theme._hex(raiz, theme.SUPERFICIE)
-estilo = str(en_tarjeta.cget("style"))
-c("el botón de la tarjeta pasa a su variante de ese fondo", estilo,
-  f"Sobre{blanco[1:]}.Primary.TButton")
-c("que tiene el fondo de la tarjeta",
-  theme._hex(raiz, style.lookup(estilo, "background")), blanco)
-c("y la misma pieza que el original", style.layout(estilo),
-  style.layout("Primary.TButton"))
-c("el del papel se queda con su estilo", str(en_papel.cget("style")), "")
-c("un marco plano no se asienta", str(plano.cget("style")), "Plano.Card.TFrame")
+c("el botón de la tarjeta enciende los bits de ese fondo",
+  tuple(sorted(en_tarjeta.state())), tuple(sorted(asiento.bits[blanco])))
+c("  sin cambiar de estilo", str(en_tarjeta.cget("style")), "Primary.TButton")
+c("  y ve por fondo el de la tarjeta",
+  theme._hex(raiz, style.lookup("Primary.TButton", "background", en_tarjeta.state())),
+  blanco)
+c("  con la misma pieza", "Prdrive." in str(style.layout("Primary.TButton")), True)
+c("el del papel no enciende ninguno", en_papel.state(), ())
+c("  y ve el papel por fondo",
+  theme._hex(raiz, style.lookup("TButton", "background", en_papel.state())),
+  theme._hex(raiz, theme.PAPEL))
+c("  con su estilo", str(en_papel.cget("style")), "")
+c("un marco plano no se asienta", (str(plano.cget("style")), plano.state()),
+  ("Plano.Card.TFrame", ()))
 c("el grupo redondea solo por fuera",
   [str(b.cget("style")) for b in grupo.botones],
   ["Primero.Segmento.Toolbutton", "Medio.Segmento.Toolbutton",
    "Ultimo.Segmento.Toolbutton"])
+c("  y los tres ven el papel por fondo",
+  {theme._hex(raiz, style.lookup(str(b.cget("style")), "background", b.state()))
+   for b in grupo.botones}, {theme._hex(raiz, theme.PAPEL)})
 
-# 4b. asentar no crea estilos: las variantes de cada superficie ya están. Crear
-# uno le dice a todos los widgets que el tema ha cambiado, y abrir una
-# pantalla costaba varias vueltas enteras de repintado.
+# 4b. asentar no crea estilos: los bits ya están en el mapa de cada estilo.
+# Crear uno (o configurarlo, mapearlo, cambiarle la disposición) le dice a todos
+# los widgets que el tema ha cambiado, y abrir una pantalla costaba varias
+# vueltas enteras de repintado.
 cambios = []
 raiz.bind_all("<<ThemeChanged>>", lambda e: cambios.append(e.widget), add="+")
 gris = ttk.Frame(raiz, style="Gris.TFrame", padding=theme.E3)
 gris.pack()
-nuevos = [ttk.Button(gris, text="Grande", style="Grande.Primary.TButton"),
-          ttk.Button(gris, text="Pequeño", style="Pequeno.TButton"),
-          ttk.Entry(gris, style="Mono.TEntry"),
-          ttk.Label(gris, text="ok", style="Ok.Chip.TLabel")]
+estilos_gris = ("Grande.Primary.TButton", "Pequeno.TButton", "Mono.TEntry",
+                "Ok.Chip.TLabel")
+nuevos = [ttk.Button(gris, text="Grande", style=estilos_gris[0]),
+          ttk.Button(gris, text="Pequeño", style=estilos_gris[1]),
+          ttk.Entry(gris, style=estilos_gris[2]),
+          ttk.Label(gris, text="ok", style=estilos_gris[3])]
 for w in nuevos:
     w.pack()
 aviso = ttk.Frame(raiz, style="NotaAmbar.TFrame")
@@ -120,11 +136,77 @@ aviso.pack()
 ttk.Button(aviso, text="Abrir", style="Quiet.TButton").pack()
 raiz.update()
 gris_hex = theme._hex(raiz, theme.GRIS_FONDO)
-c("sobre el gris, cada control pasa a la variante de ese fondo",
-  [str(w.cget("style")) for w in nuevos],
-  [f"Sobre{gris_hex[1:]}.{s}" for s in ("Grande.Primary.TButton", "Pequeno.TButton",
-                                         "Mono.TEntry", "Ok.Chip.TLabel")])
+c("sobre el gris, cada control conserva su estilo (los derivados heredan el mapa)",
+  [str(w.cget("style")) for w in nuevos], list(estilos_gris))
+c("  y enciende los bits del gris",
+  [tuple(sorted(w.state())) for w in nuevos],
+  [tuple(sorted(asiento.bits[gris_hex]))] * 4)
+c("  con el gris por fondo",
+  [theme._hex(raiz, style.lookup(e, "background", w.state()))
+   for e, w in zip(estilos_gris, nuevos)], [gris_hex] * 4)
 c("  sin crear ningún estilo: ningún <<ThemeChanged>>", len(cambios), 0)
+
+# 4d. las pantallas de verdad, con el programa ya abierto: abrir «Parejas» o
+# «Ajustes» tampoco manda ningún <<ThemeChanged>> (es el techo `tema.abrir.*` de
+# la comprobación de tiempos) ni deja un control sobre una superficie sin bits.
+import tomllib  # noqa: E402
+
+from _harness import mkcfg, sandbox  # noqa: E402
+from common import catalog, config_file  # noqa: E402
+from ui import segundo_plano, tk_doctor, tk_pairs  # noqa: E402
+
+raiz.tk.eval('set ::prdrive_tema 0; bind . <<ThemeChanged>> '
+             '{+ if {"%W" eq "."} {incr ::prdrive_tema}}')
+ttk.Style(raiz).configure("Control.TLabel", background="#FF00FF")
+raiz.update()
+c("el contador de <<ThemeChanged>> cuenta: configurar un estilo manda uno",
+  int(raiz.tk.eval("set ::prdrive_tema")), 1)
+
+reales = (segundo_plano.lanzar, catalog.load, catalog.run, tk_pairs.mostrar,
+          tk_pairs.working, tk_doctor.mostrar, theme._avisar_superficie)
+cuentas, sin_superficie = {}, []
+
+
+def enseñar(nombre):
+    """Sustituye a `mostrar()`: enseña la pantalla, la deja pintar y la cierra."""
+    def mostrar(dlg, parent=None) -> None:
+        raiz.tk.eval("set ::prdrive_tema 0")
+        dlg.deiconify()
+        dlg.update()
+        dlg.update()
+        cuentas[nombre] = int(raiz.tk.eval("set ::prdrive_tema"))
+        dlg.destroy()
+    return mostrar
+
+
+parejas = [{"name": n, "local": f"sync-data/{n}", "remote_path": f"/R/{n}"}
+           for n in ("notas", "fotos")]
+catalogo = config_file.dumps({"defaults": {"remote": "nas"}, "pair": parejas})
+try:
+    segundo_plano.lanzar = segundo_plano.en_el_acto
+    catalog.load = lambda raw=None: (catalog.Catalog(
+        raw=tomllib.loads(catalogo), text=catalogo, source="remote",
+        stamp="2026-01-01 00:00:00", endpoint="nas:/prdrive-catalog/pairs.toml"), None)
+    catalog.run = lambda args: (_ for _ in ()).throw(
+        AssertionError("ningún test puede hablar con el remoto"))
+    tk_pairs.working = lambda parent, titulo, funcion, mensaje="", **k: (True, funcion())
+    tk_pairs.mostrar = enseñar("parejas")
+    tk_doctor.mostrar = enseñar("ajustes")
+    theme._avisar_superficie = lambda fondo, cercana: sin_superficie.append(fondo)
+    with sandbox():
+        cfg = mkcfg(["notas", "fotos"])
+        config_file.save({"defaults": {"remote": "nas"}, "pair": parejas})
+        tk_pairs.open_dialog(raiz, cfg)
+        tk_doctor.open_dialog(raiz, cfg, lambda *a: None)
+finally:
+    (segundo_plano.lanzar, catalog.load, catalog.run, tk_pairs.mostrar,
+     tk_pairs.working, tk_doctor.mostrar, theme._avisar_superficie) = reales
+c("«Parejas» y «Ajustes» se abren y se pintan", sorted(cuentas), ["ajustes", "parejas"])
+c("abrir «Parejas» con el programa abierto: ningún <<ThemeChanged>>",
+  cuentas.get("parejas"), 0)
+c("abrir «Ajustes»: ninguno", cuentas.get("ajustes"), 0)
+c("ningún control de esas pantallas cae sobre una superficie sin bits",
+  sin_superficie, [])
 
 # 4c. el pulgar de la barra de desplazamiento es liso en todos sus estados:
 # sin agarre (Tk 9 lo llama gripsize e ignora gripcount) y con el borde del
@@ -194,5 +276,10 @@ else:
     print("  (saltado) la letra propia solo se carga en Windows y Linux")
 c("la licencia viaja con la letra", (theme.FUENTES / "OFL.txt").is_file(), True)
 
+# Las imágenes se sueltan con su intérprete: si siguieran vivas al salir, Python
+# las borraría con tkinter ya medio descargado.
+theme.olvidar(raiz.tk)
+icons.olvidar(raiz.tk)
 raiz.destroy()
+gc.collect()
 sys.exit(c.report())

@@ -42,6 +42,13 @@
 "modulos.main" = 224
 "modulos.agente" = 159
 "modulos.wizard" = 234
+# Los estilos tardíos que quedaban eran los que ttk crea por su cuenta con el primer separador,
+# el marco «Plano.TFrame» o la lista (`theme._IMPLICITOS`), que `apply()` ya pregunta. En
+# Windows se bajan con su primera medida.
+"estilos.main" = 0
+"estilos.parejas" = 0
+"estilos.ajustes" = 0
+"estilos.apartado" = 0
 
 [techo.windows]
 "modulos.main" = 223

@@ -45,7 +45,7 @@ jobs:
 
       - name: Tk y xvfb (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends python3-tk xvfb
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends python3-tk xvfb imagemagick
 
       - name: Tests (Linux, con pantalla virtual)
         if: runner.os == 'Linux'
@@ -76,7 +76,7 @@ jobs:
       # Antes del runtime: su comprobación de Tk carga las bibliotecas de X11.
       - name: xvfb y letras (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb libxft2 fontconfig
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb libxft2 fontconfig imagemagick
 
       - name: Clave de la caché del runtime
         id: pins
