@@ -144,9 +144,16 @@ def cargar_fuentes() -> bool:
             hechos = [gdi.AddFontResourceExW(str(f), 0x10, None)  # FR_PRIVATE
                       for f in ficheros]
         elif sys.platform.startswith("linux"):
-            import ctypes.util
-            fc = ctypes.CDLL(ctypes.util.find_library("fontconfig")
-                             or "libfontconfig.so.1")
+            # Por su SONAME, que el cargador resuelve al instante (y es la
+            # biblioteca que ya tiene cargada el Tk con Xft). `find_library`
+            # lanza `ldconfig -p` (~5 ms antes de la primera ventana) y queda
+            # de respaldo.
+            try:
+                fc = ctypes.CDLL("libfontconfig.so.1")
+            except OSError:                         # otro nombre en este sistema
+                import ctypes.util
+                fc = ctypes.CDLL(ctypes.util.find_library("fontconfig")
+                                 or "libfontconfig.so.1")
             fc.FcConfigAppFontAddFile.argtypes = (ctypes.c_void_p, ctypes.c_char_p)
             hechos = [fc.FcConfigAppFontAddFile(None, bytes(f))
                       for f in ficheros]
@@ -424,6 +431,30 @@ en píxeles saldría todo diminuto en un portátil moderno.
 _elegidas: dict[str, str] = {}
 """La familia que se eligió para cada papel."""
 
+_instaladas: frozenset[str] | None = None
+"""Las familias que ve Tk, enumeradas una sola vez por proceso; `None` si aún no.
+
+Enumerarlas cuesta (en Windows, GDI entero) y son las mismas para todos los
+intérpretes del proceso, así que las tres familias de `_FAMILIAS` se eligen con
+una enumeración y no con tres.
+"""
+
+
+def _familias_instaladas() -> frozenset[str]:
+    """Devuelve las familias que ve Tk, preguntándoselo una sola vez.
+
+    Sin ningún `Tk()` todavía no se puede preguntar: entonces devuelve vacío y
+    NO lo apunta, para que la siguiente llamada, ya con Tk, lo vuelva a intentar.
+    """
+    global _instaladas
+    if _instaladas is None:
+        from tkinter import font
+        try:
+            _instaladas = frozenset(font.families())
+        except Exception:                       # sin Tk montado todavía
+            return frozenset()
+    return _instaladas
+
 
 def familia(cual: str) -> str:
     """Devuelve la primera familia instalada de las que valen para ese papel.
@@ -433,11 +464,7 @@ def familia(cual: str) -> str:
     («Noto Sans»), y sin embargo fontconfig la encuentra por el segundo.
     """
     if cual not in _elegidas:
-        from tkinter import font
-        try:
-            hay = set(font.families())
-        except Exception:                       # sin Tk montado todavía
-            hay = set()
+        hay = set(_familias_instaladas())
         if cargar_fuentes():
             hay.update(_FAMILIAS_PROPIAS)
         _elegidas[cual] = next((f for f in _FAMILIAS[cual] if f in hay),
@@ -483,6 +510,158 @@ def fuente_tcl(rol: str = "texto") -> str:
     return " ".join([familia_] + [str(x) for x in resto])
 
 
+class _Letra:
+    """Lo que `theme` recuerda de la letra de UN intérprete de Tk (ver `_letra()`).
+
+    Attributes:
+        interp: El intérprete. Guardarlo aquí impide que su `id` se reutilice
+            mientras la ficha siga viva (mismo criterio que `icons._CACHE`).
+        fuentes: `(escala, letra)` → la `tkfont.Font` de esa letra, hecha una
+            sola vez y sujeta por la ancla.
+        metricas: `(escala, letra)` → `(linespace, ascent, tamaño)`.
+        ancla: La ruta Tcl del lienzo oculto que sujeta las fuentes; `None` si
+            aún no se hizo y `""` si no se pudo (entonces se mide igual, pero
+            reabriendo la cara en cada medida).
+    """
+
+    __slots__ = ("interp", "fuentes", "metricas", "ancla")
+
+    def __init__(self, interp) -> None:
+        """Empieza una ficha vacía para este intérprete."""
+        self.interp = interp
+        self.fuentes: dict[tuple, object] = {}
+        self.metricas: dict[tuple, tuple[int, int, int]] = {}
+        self.ancla: str | None = None
+
+    def soltar(self) -> None:
+        """Destruye la ancla y olvida las fuentes y las medidas.
+
+        Tiene que correr en el hilo del intérprete: al soltarse las `Font`, su
+        `__del__` le habla a Tk. Si Tk ya se destruyó, esas llamadas fallan sin
+        ruido (las `Font` se tragan el error).
+        """
+        if self.ancla:
+            try:
+                self.interp.call("destroy", self.ancla)
+            except Exception:                       # noqa: BLE001
+                pass
+        self.ancla = None
+        self.fuentes.clear()
+        self.metricas.clear()
+
+
+_LETRA: dict[int, _Letra] = {}
+"""La letra de cada intérprete de Tk, por `id`: sus fuentes sujetas y su tabla de métricas.
+
+Con Xft, medir una fuente que ningún widget tiene puesta obliga a Tk a reabrir
+la cara: 0,55 ms por `metrics()`, `measure()` o `actual()` contra 2 µs si algo
+la sujeta. Por eso una letra se mide una vez por intérprete y escala
+(`_metricas()`), con una `tkfont.Font` que se queda sujeta (`_fuente_fija()`):
+`relleno_control()`, `icono_linea()` y, a través de ellas, `chip()`, `aviso()` y
+`boton_icono()` no crean una fuente por control. Es por intérprete y se suelta
+en `olvidar()`, desde el hilo que lo creó, por lo mismo que `_puestos` y
+`icons._CACHE`: el aviso de fallo del servicio abre intérpretes sucesivos en el
+mismo hilo y cada uno tiene la suya.
+"""
+
+ANCLA = ".prdrive-letra"
+"""El lienzo oculto que sujeta las fuentes, colgado de la raíz del intérprete.
+
+Se crea con Tcl a pelo y no con `tk.Canvas`: así no entra en `children` de la
+raíz, y `winfo_children()` (que recorren las pruebas y varias pantallas) no lo
+ve. Nunca se coloca: no se mapea ni se pinta.
+"""
+
+
+def _letra(widget) -> _Letra:
+    """Devuelve la ficha de letra del intérprete de `widget`, creándola si hace falta."""
+    interp = widget.tk
+    ficha = _LETRA.get(id(interp))
+    if ficha is None or ficha.interp is not interp:
+        ficha = _LETRA[id(interp)] = _Letra(interp)
+    return ficha
+
+
+def _clave_letra(widget, letra) -> tuple:
+    """Devuelve la clave de la tabla para esa letra a la escala actual de `widget`.
+
+    Es `(escala, partes)`. `tk scaling` forma parte de la clave porque los
+    puntos de una fuente se convierten a píxeles con ella y porque una fuente
+    sujeta se queda con los píxeles de la escala a la que se abrió: si la escala
+    cambia (las pruebas de densidad lo hacen) hay que abrir otra, no reusar la
+    vieja. Las partes son las de la lista de Tcl de la letra, en cadenas, así la
+    tupla de `fuente()` y la cadena que da un estilo (`Style.lookup`:
+    «{Noto Sans SemiBold} 10») son la misma letra y no se miden dos veces.
+    """
+    if not isinstance(letra, tuple):
+        letra = widget.tk.splitlist(str(letra))
+    escala = float(widget.tk.call("tk", "scaling"))
+    return (escala, tuple(str(parte) for parte in letra))
+
+
+def _fuente_fija(widget, letra, clave: tuple | None = None):
+    """Devuelve la `tkfont.Font` de esa letra en este intérprete, hecha y sujeta una sola vez.
+
+    Es la que mide la tabla y la que se da a quien mida texto (`fuente_tk()`).
+    Es una `tkfont.Font(root=widget, font=letra)` corriente, de modo que sus
+    medidas son las de Tk en cualquier sistema. La sujeta un elemento de texto
+    oculto del lienzo `ANCLA` (el truco que recomienda la documentación de
+    `Font.metrics`: «create a dummy widget using this font before calling this
+    method»); si no se puede hacer, queda suelta y funciona más despacio.
+    """
+    from tkinter import font as tkfont
+    ficha = _letra(widget)
+    clave = clave or _clave_letra(widget, letra)
+    fuente_ = ficha.fuentes.get(clave)
+    if fuente_ is None:
+        fuente_ = tkfont.Font(root=widget, font=letra)
+        if ficha.ancla is None:
+            try:
+                ficha.interp.call("canvas", ANCLA)
+                ficha.ancla = ANCLA
+            except Exception:                       # noqa: BLE001
+                ficha.ancla = ""
+        if ficha.ancla:
+            try:
+                ficha.interp.call(ficha.ancla, "create", "text", -50, -50,
+                                  "-text", "", "-font", fuente_.name,
+                                  "-state", "hidden")
+            except Exception:                       # noqa: BLE001
+                pass
+        ficha.fuentes[clave] = fuente_
+    return fuente_
+
+
+def fuente_tk(widget, rol: str = "texto"):
+    """Devuelve la `tkfont.Font` de un rol en el intérprete de `widget`, hecha una sola vez.
+
+    Para medir texto (`.measure()`) sin crear una fuente por medida ni pagar la
+    reapertura de la cara. Es compartida: no se cambia ni se borra.
+    """
+    return _fuente_fija(widget, fuente(rol))
+
+
+def _metricas(widget, letra) -> tuple[int, int, int]:
+    """Devuelve `(linespace, ascent, tamaño)` de esa letra, midiéndola solo la primera vez.
+
+    `tamaño` es `Font.actual("size")`: puntos si es positivo, píxeles si es
+    negativo. Lo mide la `Font` de `_fuente_fija()`, así que los números son los
+    de crear una `tkfont.Font` y preguntarle: solo se preguntan una vez.
+
+    Raises:
+        tkinter.TclError: Si Tk no puede abrir esa letra.
+    """
+    clave = _clave_letra(widget, letra)
+    ficha = _letra(widget)
+    medidas = ficha.metricas.get(clave)
+    if medidas is None:
+        fuente_ = _fuente_fija(widget, letra, clave)
+        m = fuente_.metrics()
+        medidas = ficha.metricas[clave] = (m["linespace"], m["ascent"],
+                                           fuente_.actual("size"))
+    return medidas
+
+
 def rotulo(texto: str) -> str:
     """Devuelve un rótulo de sección: mayúsculas y letras separadas.
 
@@ -508,9 +687,8 @@ def ancho_rotulo(widget, *textos: str) -> int:
     y entonces el canalón se queda en lo que pida la rejilla: un rótulo pegado
     a su fila de botones se lee, uno cortado no.
     """
-    from tkinter import font as tkfont
     try:
-        letra = tkfont.Font(root=widget, font=fuente("rotulo"))
+        letra = fuente_tk(widget, "rotulo")
         return max(letra.measure(rotulo(t)) for t in textos)
     except Exception:                                # noqa: BLE001
         return 0
@@ -613,6 +791,10 @@ def olvidar(interp) -> None:
         del _puestos[id(interp)]
         _imagenes.pop(id(interp), None)
         _sobres.pop(id(interp), None)
+    ficha = _LETRA.get(id(interp))
+    if ficha is not None and ficha.interp is interp:
+        del _LETRA[id(interp)]
+        ficha.soltar()
 
 
 def _casilla_propia(widget, style) -> None:
@@ -1177,11 +1359,9 @@ def relleno_control(widget, alto: int, rol: str = "texto", lados: int = 16):
     1 px de cada lado; el de los lados es un escalón de la escala. Si no hay
     métricas, el de una línea de 18 px.
     """
-    from tkinter import font as tkfont
-
     from . import icons
     try:
-        linea = tkfont.Font(root=widget, font=fuente(rol)).metrics("linespace")
+        linea = _metricas(widget, fuente(rol))[0]
     except Exception:                               # noqa: BLE001
         linea = icons.px(widget, 18)
     vertical = max(0, (icons.px(widget, alto) - linea - 2 * icons.px(widget, 1)) // 2)
@@ -1716,17 +1896,13 @@ def icono_linea(widget, nombre: str, color: str | None = None,
     alineado sin más, y dentro de un botón (`compound="left"`) no lo hace
     crecer. Devuelve `None` si no se puede pintar.
     """
-    from tkinter import font as tkfont
-
     from . import icons
     real, alto, bajar = icons.px(widget, size), None, 0.0
     try:
-        fuente_tk = tkfont.Font(root=widget, font=letra or fuente(rol))
-        m = fuente_tk.metrics()
-        tam = fuente_tk.actual("size")
+        linea, ascenso, tam = _metricas(widget, letra or fuente(rol))
         em = -tam if tam < 0 else tam * float(widget.tk.call("tk", "scaling"))
-        alto = max(m["linespace"], real + 1)
-        centro = m["ascent"] - ALTURA_MAYUSCULAS * em / 2
+        alto = max(linea, real + 1)
+        centro = ascenso - ALTURA_MAYUSCULAS * em / 2
         bajar = max(0.0, min(centro - real / 2, alto - real - 1))
     except Exception:                           # noqa: BLE001
         alto, bajar = None, 0.0                 # sin métricas: el icono suelto

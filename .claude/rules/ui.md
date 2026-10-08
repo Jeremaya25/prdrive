@@ -16,6 +16,7 @@ paths:
   - "tests/test_ui.py"
   - "tests/test_start.py"
   - "tests/test_iconos.py"
+  - "tests/test_iconos_bytes.py"
   - "tests/test_theme_combobox.py"
   - "tests/test_ultima_pasada.py"
   - "tests/test_watch.py"

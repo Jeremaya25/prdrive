@@ -938,15 +938,33 @@ def _png(rgba, size: int | None = None) -> bytes:
     comprimidos con zlib, que está en la biblioteca estándar. Cada línea lleva
     delante un byte de filtro: 0, «ninguno». Filtrar mejoraría la compresión de
     una foto; de dos colores planos no tiene nada que sacar.
+
+    Las piezas de `caja()` tienen unos 8 colores distintos y repiten filas
+    enteras (el centro ensanchado de `_ensanchar()` es la MISMA lista una y otra
+    vez, y los huecos de `_con_hueco()` también), así que cada píxel se
+    convierte a bytes una sola vez por llamada y cada fila, por identidad, otra
+    sola vez. Lo que se comprime es el flujo de siempre, píxel a píxel; las filas
+    se reconocen por `id()`, que vale porque `rgba` las mantiene vivas hasta el
+    final.
     """
     import struct
     import zlib
 
+    pixeles: dict[tuple, bytes] = {}              # (r, g, b, a) -> sus 4 bytes
+    cuerpos: dict[int, bytes] = {}                # id(fila) -> el filtro y sus píxeles
     crudo = bytearray()
     for fila in rgba:                             # PNG sí va de arriba abajo
-        crudo.append(0)
-        for r, g, b, a in fila:
-            crudo += bytes((r, g, b, round(a * 255)))
+        cuerpo = cuerpos.get(id(fila))
+        if cuerpo is None:
+            partes = [b"\0"]                      # filtro 0: «ninguno»
+            for pixel in fila:
+                cuatro = pixeles.get(pixel)
+                if cuatro is None:
+                    r, g, b, a = pixel
+                    cuatro = pixeles[pixel] = bytes((r, g, b, round(a * 255)))
+                partes.append(cuatro)
+            cuerpo = cuerpos[id(fila)] = b"".join(partes)
+        crudo += cuerpo
 
     def trozo(nombre: bytes, datos: bytes) -> bytes:
         """Devuelve un trozo del PNG con su longitud, su nombre y su CRC."""
