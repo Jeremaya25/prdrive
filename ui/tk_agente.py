@@ -152,7 +152,7 @@ def preguntar(nombre: str, segundos: int, cambiada: bool = False) -> int:
 
         root.visor.encajar(root)
         tkui.centrar(root)
-        root.deiconify()
+        tkui.ensenar(root)
         # Lanzada por un proceso sin ventana, Windows la dejaría debajo de todo.
         try:
             root.attributes("-topmost", True)

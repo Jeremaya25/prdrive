@@ -36,8 +36,8 @@ from install import (crypto, deploy, device, platforms, profile, raiz_equipo,
                      rclone_bin, remote, traveler, vestibulo)
 
 from . import icons, theme
-from .tk import (TITLE, Resultado, Visor, centrar, output_window, separador_fila,
-                 tabla_estado, working)
+from .tk import (TITLE, Resultado, Visor, centrar, ensenar, output_window,
+                 separador_fila, tabla_estado, working)
 
 VENTANA = f"{TITLE} — Instalador"
 """El título de la ventana del asistente."""
@@ -361,7 +361,7 @@ def run_wizard() -> int:
     root.withdraw()          # se enseña ya centrada, igual que la ventana principal
     wiz = build(root)
     centrar(root)
-    root.deiconify()
+    ensenar(root)
     root.mainloop()
 
     # La clave temporal se borra al cerrar la ventana, no al morir el proceso:

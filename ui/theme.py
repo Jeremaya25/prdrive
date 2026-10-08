@@ -782,6 +782,45 @@ def _asentar(evento) -> None:
         pass
 
 
+_PREFIJOS_SOBRE = {"TButton": ("Grande.", "Pequeno."), "TEntry": ("Mono.",),
+                   "TCombobox": ("Mono.",)}
+"""Los prefijos con los que se usan los estilos redondeados, por cómo acaban.
+
+Para `_variantes_sobre()`: «Grande.Primary.TButton» se asienta con su nombre
+entero, así que su variante es otra que la de «Primary.TButton».
+"""
+
+
+def _variantes_sobre(widget, style) -> None:
+    """Crea ya todas las variantes «Sobre<color>.» que `_asentar()` puede pedir.
+
+    Una por estilo redondeado y por superficie conocida (las de
+    `_superficies()` y las caras de `_CARA`). Crear un estilo le dice a TODOS
+    los widgets del intérprete que el tema ha cambiado y todos se vuelven a
+    medir y a pintar: hecho al aparecer el primer control sobre cada color,
+    abrir una pantalla costaba varias vueltas enteras de repintado. Aquí, al
+    poner el tema, todavía no hay widgets que repintar. Lo que no esté aquí lo
+    sigue creando `_asentar()` la primera vez que haga falta.
+    """
+    hechos = _sobres.setdefault(id(widget.tk), set())
+    fondos = {_hex(widget, c) for c in
+              [f for f, _ in _superficies().values()] + list(_CARA.values())}
+    fondos.discard(None)
+    for base, redondo in list(_REDONDOS.items()):
+        if not redondo:
+            continue
+        prefijos = [""] + [p for fin, ps in _PREFIJOS_SOBRE.items()
+                           if base.endswith(fin) for p in ps]
+        for prefijo in prefijos:
+            estilo = prefijo + base
+            propio = _hex(widget, style.lookup(estilo, "background"))
+            for fondo in fondos:
+                nuevo = f"Sobre{fondo[1:]}.{estilo}"
+                if fondo != propio and nuevo not in hechos:
+                    style.configure(nuevo, background=fondo)
+                    hechos.add(nuevo)
+
+
 def _pieza(widget, style, nombre: str, estados, radio: float = RADIO,
            esquinas: str = "1111", **opciones) -> None:
     """Crea el elemento de imagen `nombre`, con una pieza por estado.
@@ -1412,12 +1451,16 @@ def apply(widget) -> None:
               relief=[("active", "flat")])
     style.layout("Treeview", [("Treeview.treearea", {"sticky": "nswe"})])
 
+    # El pulgar, liso: sin agarre (`gripcount` en Tk 8.6, `gripsize` en Tk 9,
+    # que ignora el otro) y con el borde del color del relleno en cada estado;
+    # si no, al pulsarlo asoman el filete y el agarre claros sobre el oscuro.
+    pulgar = [("pressed", TINTA3), ("active", BORDE)]
     for orientacion in ("Vertical", "Horizontal"):
         style.configure(f"{orientacion}.TScrollbar", background=LINEA,
                         troughcolor=PAPEL, arrowcolor=TINTA3, gripcount=0,
-                        borderwidth=0, relief="flat", **linea)
-        style.map(f"{orientacion}.TScrollbar",
-                  background=[("pressed", TINTA3), ("active", BORDE)])
+                        gripsize=0, borderwidth=0, relief="flat", **linea)
+        style.map(f"{orientacion}.TScrollbar", background=pulgar,
+                  bordercolor=pulgar, lightcolor=pulgar, darkcolor=pulgar)
 
     style.configure("Horizontal.TProgressbar", background=ACENTO,
                     troughcolor=GRIS_FONDO, borderwidth=0,
@@ -1430,6 +1473,10 @@ def apply(widget) -> None:
 
     _controles(widget, style)
     _sobres[id(interp)] = set()         # un `id` puede ser de un intérprete ya muerto
+    try:
+        _variantes_sobre(widget, style)
+    except Exception:                               # noqa: BLE001
+        pass                            # las creará `_asentar()` cuando hagan falta
     _puestos[id(interp)] = interp
 
 
