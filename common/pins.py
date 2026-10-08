@@ -23,34 +23,44 @@ de python.org no trae tkinter, y sin tkinter no hay ventana. Los de astral-sh
 sí, son reubicables (se descomprimen donde sea y funcionan) y publican un
 `SHA256SUMS` por release con la misma forma que el de rclone.
 
-Por qué 3.13 y no 3.14: los 3.14 de python-build-standalone ya traen Tcl/Tk 9.0
-en todas las plataformas, y la interfaz se hizo con Tk 8.6 (el tema de ttk, los
-iconos rasterizados a mano, `tk scaling`). Subir a 3.14 pondría también Windows
-en Tk 9, y eso no está probado: lo de Linux (abajo) no vale por Windows, donde
-además la protección de capturas de #59 depende de cómo envuelve Tk 8.6.15 sus
-ventanas (`wm frame`).
+Por qué 3.14 (desde el 08/10/2026; antes era 3.13): los 3.14 de
+python-build-standalone traen Tcl/Tk 9.0.4 en TODAS las plataformas, y los 3.13
+traían Tk 8.6.15 en Windows y Tk 9.0.4 en Linux. Con 3.14 la ventana corre con
+el mismo Tk en los dos sistemas y lo que se mide en uno vale para el otro.
 
-Qué Tk trae cada plataforma de 3.13, medido el 02/10/2026 en la release fijada
-(la 20260924 trae lo mismo): Windows x64 y ARM64, Tk 8.6.15 (`DLLs/tcl86t.dll` y
-`tk86t.dll`); Linux x64 y ARM64, Tcl/Tk 9.0.4 (`lib/tcl9.0/`, `lib/tk9.0/`,
-`libtcl9tk9.0.so`; `tkinter.TkVersion` da 9.0 en Linux x64). La ventana que abre
-un runtime de Linux, la del agente incluida, corre ya con Tk 9.
+Qué trae cada plataforma de la 20261001 con 3.14.8, comprobado el 08/10/2026
+sobre los cuatro archivos (SHA-256 iguales a los de su `SHA256SUMS`):
 
-Cómo se mide cada una: la suite normal corre con el Python del sistema (Tk 8.6),
-así que las pantallas de Linux se miden aparte, con el intérprete del propio
-runtime: `xvfb-run -a <runtime>/bin/python3 tests/test_tk_medidas.py` (y
-`test_tk_servicio.py`, `test_tk_densidad.py`, `test_daemon_aviso.py`). Resultado
-del 03/10/2026 con la 20261001 (Python 3.13.16, Tcl/Tk 9.0.4): `test_tk_medidas`
-(1074 comprobaciones, la matriz de resoluciones por `tk scaling`) y
-`test_tk_servicio` (178) pasan enteros; `test_tk_densidad` falla una de once por
-un píxel de redondeo (508 donde esperaba 507 a escala 2,6667), igual que con Tk
-8.6 en Xvfb; y `test_daemon_aviso` abortaba el proceso con `Tcl_Panic: epoll_ctl:
-Invalid argument` al abrir la segunda ventanita de fallo, porque Tk 9.0.4 no
-admite crear un intérprete en un hilo nuevo después de que otro hilo hubiera
-creado el suyo y acabado (se reproduce sin código de prdrive): `ui.avisar_fallo()`
-usa ahora un único hilo que no acaba, y pasa. Así que la interfaz está medida con
-Tk 8.6 (Windows) y con Tk 9.0.4 (Linux). Medida es que cabe, sin recortes y sin
-barras de más: el aspecto no se ha revisado a ojo con Tk 9.
+- Windows x64 y ARM64: `DLLs/tcl90.dll` y `DLLs/tcl9tk90.dll` (Tk 9.0.4).
+  `tcl90.dll` importa `zlib1.dll` y `libtommath.dll`, y `_tkinter.pyd` también
+  `libtommath.dll`: las tres están en `DLLs/`, que `podar()` no toca (el fallo
+  de las 3.13 de ARM64 de antes de la 20260924, abajo, era justo una
+  `zlib1.dll` que faltaba). `icu.dll` aparece entre sus cadenas, pero no es una
+  importación: se carga si está.
+- Linux x64 y ARM64: el mismo Tcl/Tk 9.0.4 que traían los 3.13
+  (`lib/libtcl9tk9.0.so`), **compilado sin Xft** (su versión lo dice:
+  `…no-xft.x11`). Sin Xft, Tk solo ve las fuentes de mapa de bits de X11: la
+  letra sale sin suavizar y no puede usar la de `ui/fuentes/`. No depende de
+  la versión de Python; está pendiente de llevar un Tk propio con Xft.
+
+Qué NO trae Tk 9.0.4, aunque se espere: el redibujado al pasar a una pantalla
+con otro zoom. Su DLL no usa ninguna función de densidad por monitor
+(`GetDpiForWindow`…) y su manifiesto declara la del sistema, la misma que pide
+`theme.nitidez()`. Sí trae `-placeholder` en `ttk::entry` y lectura de SVG.
+
+Cómo se mide: la suite normal corre con el Python del sistema (Tk 8.6), así que
+las pantallas se miden también con el intérprete del propio runtime:
+`xvfb-run -a <runtime>/bin/python3 tests/test_tk_medidas.py` (y
+`test_tk_servicio.py`, `test_tk_densidad.py`, `test_daemon_aviso.py`). Con Tk
+9.0.4 en Linux, el 03/10/2026: medidas y servicio pasan enteros; densidad falla
+un píxel de redondeo en Xvfb igual que con Tk 8.6; y la ventanita de fallo
+abortaba el proceso (`Tcl_Panic: epoll_ctl`) al abrir la segunda, porque Tk
+9.0.4 no admite crear un intérprete en un hilo nuevo después de que otro
+hilo hubiera creado el suyo y acabado: `ui.avisar_fallo()` usa ahora un único
+hilo que no acaba. **Windows con Tk 9 no está probado en una máquina de verdad**
+(entre otras cosas, la protección de capturas de #59, que dependía de cómo
+envuelve Tk 8.6.15 sus ventanas con `wm frame`): es lo primero que hay que
+mirar en Windows antes de publicar.
 """
 
 from __future__ import annotations
@@ -73,11 +83,11 @@ trae. `import _tkinter` falla con «DLL load failed» y, como el lanzador usa
 La de x64 no depende de `zlib1.dll`. La 20260924 la lleva en `DLLs/`, que
 `podar()` no toca.
 
-La 20261001 lleva Python 3.13.16 (corrige CVE de `tarfile`, `ssl` y `urllib`) para
-las cuatro plataformas de `PLATAFORMAS` y conserva `DLLs/zlib1.dll` en Windows
-ARM64 (comprobado el 02/10/2026).
+La 20261001 lleva Python 3.14.8 (y 3.13.16, que es el que se usó hasta el
+08/10/2026) para las cuatro plataformas de `PLATAFORMAS`, con `DLLs/zlib1.dll` y
+`DLLs/libtommath.dll` en los dos Windows (comprobado el 08/10/2026).
 """
-PYTHON_VERSION = "3.13.16"
+PYTHON_VERSION = "3.14.8"
 PBS_BASE_URL = ("https://github.com/astral-sh/python-build-standalone/"
                 "releases/download")
 """URL base de las releases de python-build-standalone."""
@@ -278,21 +288,21 @@ class Plataforma:
 
 PLATAFORMAS: tuple[Plataforma, ...] = (
     Plataforma("windows-x64", "Windows x64", "windows", "x64", "amd64",
-               "x86_64-pc-windows-msvc", 82, 45),
+               "x86_64-pc-windows-msvc", 82, 43),
     Plataforma("windows-arm64", "Windows ARM64", "windows", "arm", "arm64",
-               "aarch64-pc-windows-msvc", 77, 46),
+               "aarch64-pc-windows-msvc", 77, 44),
     Plataforma("linux-x64", "Linux x64", "linux", "x64", "amd64",
-               "x86_64-unknown-linux-gnu", 82, 52),
+               "x86_64-unknown-linux-gnu", 82, 53),
     Plataforma("linux-arm64", "Linux ARM64", "linux", "arm", "arm64",
-               "aarch64-unknown-linux-gnu", 77, 42),
+               "aarch64-unknown-linux-gnu", 77, 44),
 )
 """Las plataformas que el dispositivo puede llevar.
 
 Los tamaños están medidos con las versiones de arriba: el `rclone.exe` 1.75.1
 de amd64 son 81 MB descomprimido y los runtimes son lo que deja
 `runtime_bin.extract()` ya podado, en MiB redondeados hacia arriba. Con la
-20261001, el 02/10/2026: Windows x64 44,30 MiB, Windows ARM64 45,16, Linux x64
-51,22 y Linux ARM64 41,88.
+20261001 y Python 3.14.8, el 08/10/2026: Windows x64 42,47 MiB, Windows ARM64
+43,27, Linux x64 52,51 y Linux ARM64 43,15.
 """
 
 
