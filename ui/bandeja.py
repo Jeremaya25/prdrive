@@ -224,6 +224,9 @@ def _avisos(resumen: Mapping[str, Any]) -> list[tuple[str, Entrada]]:
         for pareja in u.get("fallando") or []:
             frase = f"{nombre}: falla {pareja}"
             salida.append((frase, Entrada(f"{frase} · Abrir…", abrir, icono=I_AVISO)))
+        for pareja in u.get("saltadas") or []:
+            frase = f"{nombre}: {pareja} necesita --resync"
+            salida.append((frase, Entrada(f"{frase} · Abrir…", abrir, icono=I_AVISO)))
         if u.get("error"):
             frase = f"{nombre}: {u['error']}"
             salida.append((frase, Entrada(f"{frase} · Abrir…", abrir, icono=I_AVISO)))
@@ -636,7 +639,7 @@ def _actualizar(resumen: Mapping[str, Any]) -> list[Entrada]:
 
 
 def _version_del_agente(resumen: Mapping[str, Any]) -> list[Entrada]:
-    """Devuelve la última línea del menú: la versión del agente, apagada.
+    """Devuelve la última línea del menú: «Agente X», la versión del agente, apagada.
 
     Es la del programa que lleva este equipo, la que «Actualizar» sustituye.
     Sin `VERSION` que leer, nada.
@@ -644,7 +647,9 @@ def _version_del_agente(resumen: Mapping[str, Any]) -> list[Entrada]:
     version = resumen.get("version")
     if not isinstance(version, str) or not version:
         return []
-    return [Entrada(f"{APP_NAME} {version}", activa=False)]
+    # «Agente», y no el nombre del programa: en este menú, el programa ES el
+    # agente, y la versión de cada unidad va dentro de la suya.
+    return [Entrada(f"Agente {version}", activa=False)]
 
 
 def _bloques(*bloques: list[Entrada]) -> tuple[Entrada, ...]:

@@ -31,7 +31,7 @@ una carpeta ocurren ahí primero.
 En un remoto de antes el catálogo se llama `pairs.toml`, y sigue funcionando:
 prdrive busca primero `remote.toml` y, si no está, `pairs.toml`, en la misma
 carpeta. Cuando todos tus dispositivos estén al día (lo dicen sus notas en la
-flota), **Ajustes → Renombrar el catálogo…** lo pasa al nombre nuevo. Es
+flota), **Ajustes → Catálogo del remoto** lo pasa al nombre nuevo. Es
 opcional.
 
 **El dispositivo** tiene su `sync_config.toml`, que dice **cuáles de ellas usa**.

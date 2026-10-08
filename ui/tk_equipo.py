@@ -31,7 +31,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from . import theme
-from .tk import working
+from .tk import Resultado, bloque_aviso, tabla_estado, working
 
 ANCHO = 780
 """El ancho del texto de los pasos, en medidas del diseño."""
@@ -50,17 +50,15 @@ TEXTO_PREGUNTAR = "preguntar al enchufarla"
 def _texto(cuerpo, texto: str, fila: int, **kw) -> None:
     """Pone un párrafo de texto en la fila de un paso."""
     from tkinter import ttk
+    kw.setdefault("style", "Campo.TLabel")
     ttk.Label(cuerpo, justify="left", wraplength=theme.medida(ANCHO), text=texto,
-              **kw).grid(row=fila, column=0, sticky="w", pady=(0, 10))
+              **kw).grid(row=fila, column=0, sticky="w", pady=(0, theme.E3))
 
 
 def _ambar(cuerpo, texto: str, fila: int):
     """Pone un recuadro ámbar en la fila de un paso y lo devuelve."""
-    from tkinter import ttk
-    caja = ttk.Frame(cuerpo, style="Ambar.TFrame", padding=(11, 9))
-    caja.grid(row=fila, column=0, sticky="ew", pady=(0, 10))
-    ttk.Label(caja, style="Ambar.TLabel", justify="left", text=texto,
-              wraplength=theme.medida(ANCHO - 40)).grid(row=0, column=0, sticky="w")
+    caja = bloque_aviso(cuerpo, texto, ancho=ANCHO - 80)
+    caja.grid(row=fila, column=0, sticky="ew", pady=(0, theme.E3))
     return caja
 
 
@@ -77,10 +75,13 @@ def al_cambiar(entrada, funcion) -> None:
     """
     def validar(nuevo: str) -> bool:
         """Llama a `funcion` con el texto nuevo y deja siempre que cambie."""
+        # Sin `return` en un `finally`, que Python 3.14 avisa como
+        # SyntaxWarning (PEP 765): el fallo se traga igual y se devuelve True.
         try:
             funcion(nuevo)
-        finally:
-            return True                                 # noqa: B012
+        except Exception:                               # noqa: BLE001
+            pass
+        return True
     entrada.configure(validate="key",
                       validatecommand=(entrada.register(validar), "%P"))
 
@@ -141,15 +142,15 @@ def paso_raiz(cuerpo, wiz) -> None:
          "prdrive que enchufes, y cada una trae las suyas."),
     )
     for i, (valor, titulo, texto) in enumerate(opciones):
-        tarjeta = ttk.Frame(cuerpo, style="Card.TFrame", padding=(14, 8))
-        tarjeta.grid(row=1 + i, column=0, sticky="ew", pady=(0, 8))
+        tarjeta = ttk.Frame(cuerpo, style="Card.TFrame", padding=(theme.E4, theme.E2))
+        tarjeta.grid(row=1 + i, column=0, sticky="ew", pady=(0, theme.E2))
         tarjeta.columnconfigure(0, weight=1)
         ttk.Radiobutton(tarjeta, text=titulo, value=valor, variable=eleccion,
                         style="Card.Fuerte.TRadiobutton", command=elegir).grid(
             row=0, column=0, sticky="w")
         ttk.Label(tarjeta, text=texto, style="Card.Pista.TLabel", justify="left",
                   wraplength=theme.medida(720)).grid(row=1, column=0, sticky="w",
-                                                     pady=(3, 0))
+                                                     pady=(theme.E1, 0))
     if not con_raiz(wiz):
         wiz.state.device_root = None
 
@@ -205,8 +206,8 @@ def paso_cifrado(cuerpo, wiz) -> None:
          "En el paso siguiente eliges dónde va el fichero, su tamaño y la "
          "contraseña, y se crea."))
     for i, (valor, titulo, texto) in enumerate(opciones):
-        tarjeta = ttk.Frame(cuerpo, style="Card.TFrame", padding=(14, 8))
-        tarjeta.grid(row=1 + i, column=0, sticky="ew", pady=(0, 8))
+        tarjeta = ttk.Frame(cuerpo, style="Card.TFrame", padding=(theme.E4, theme.E2))
+        tarjeta.grid(row=1 + i, column=0, sticky="ew", pady=(0, theme.E2))
         tarjeta.columnconfigure(0, weight=1)
         radio = ttk.Radiobutton(tarjeta, text=titulo, value=valor, variable=eleccion,
                                 style="Card.Fuerte.TRadiobutton", command=elegir)
@@ -215,7 +216,7 @@ def paso_cifrado(cuerpo, wiz) -> None:
             radio.configure(state="disabled")
         ttk.Label(tarjeta, text=texto, style="Card.Pista.TLabel", justify="left",
                   wraplength=theme.medida(720)).grid(row=1, column=0, sticky="w",
-                                                     pady=(3, 0))
+                                                     pady=(theme.E1, 0))
     if not puede:
         caja = _ambar(cuerpo, re_.examinar_contenedor("x", wiz.equipo_ruta,
                                                       wiz.equipo_forma).texto
@@ -245,7 +246,7 @@ def paso_cifrado(cuerpo, wiz) -> None:
             ttk.Button(caja, text=("Descargar VeraCrypt Portable" if IS_WIN else
                                    "Descargar VeraCrypt (AppImage)"),
                        style="Primary.TButton", command=descargar).grid(
-                row=1, column=0, sticky="w", pady=(8, 0))
+                row=1, column=0, sticky="w", pady=(theme.E2, 0))
     elif re_.portatil(vc):
         _ambar(cuerpo, re_.AVISO_PORTATIL, 3)
 
@@ -282,14 +283,14 @@ def paso_carpeta(cuerpo, wiz) -> None:
         "¿En qué carpeta? Es la raíz: las parejas son carpetas de dentro, y el "
         "programa va en .prdrive/."), 0)
     fila = ttk.Frame(cuerpo)
-    fila.grid(row=1, column=0, sticky="ew", pady=(4, 0))
+    fila.grid(row=1, column=0, sticky="ew", pady=(theme.E1, 0))
     fila.columnconfigure(1, weight=1)
     ttk.Label(fila, text="Carpeta:").grid(row=0, column=0, sticky="w")
     ruta = tk.StringVar(value=wiz.equipo_ruta)
     entrada = ttk.Entry(fila, textvariable=ruta, style="Mono.TEntry")
-    entrada.grid(row=0, column=1, sticky="ew", padx=6)
+    entrada.grid(row=0, column=1, sticky="ew", padx=theme.E2)
     examen = ttk.Label(cuerpo, justify="left", wraplength=theme.medida(ANCHO))
-    examen.grid(row=2, column=0, sticky="w", pady=(8, 0))
+    examen.grid(row=2, column=0, sticky="w", pady=(theme.E2, 0))
     _texto(cuerpo, "Se elige ahora y no se cambia después: mover la raíz deja cada "
                    "pareja sin su carpeta, y cambiarla es volver a instalar.", 3,
            style="Pista.TLabel")
@@ -381,9 +382,9 @@ def _carpeta_cifrada(cuerpo, wiz) -> None:
     ttk.Label(formulario, text="Contenedor en:").grid(row=0, column=0, sticky="w")
     fisica = tk.StringVar(value=wiz.equipo_fisica)
     caja = ttk.Entry(formulario, textvariable=fisica, style="Mono.TEntry")
-    caja.grid(row=0, column=1, columnspan=2, sticky="ew", padx=6)
+    caja.grid(row=0, column=1, columnspan=2, sticky="ew", padx=theme.E2)
     examen = ttk.Label(formulario, justify="left", wraplength=theme.medida(ANCHO - 60))
-    examen.grid(row=1, column=0, columnspan=3, sticky="w", pady=(4, 6))
+    examen.grid(row=1, column=0, columnspan=3, sticky="w", pady=(theme.E1, theme.E2))
 
     fila = 2
     letra = tk.StringVar(value=wiz.equipo_letra or re_.LETRA_PREFERIDA)
@@ -394,7 +395,7 @@ def _carpeta_cifrada(cuerpo, wiz) -> None:
             letra.set(libres[0])
         ttk.Label(formulario, text="Letra:").grid(row=fila, column=0, sticky="w")
         ttk.Combobox(formulario, textvariable=letra, state="readonly", width=4,
-                     values=libres).grid(row=fila, column=1, sticky="w", padx=6)
+                     values=libres).grid(row=fila, column=1, sticky="w", padx=theme.E2)
         ttk.Label(formulario, style="Pista.TLabel", text=(
             "siempre la misma: los programas apuntarán a ella")).grid(
             row=fila, column=2, sticky="w")
@@ -406,7 +407,7 @@ def _carpeta_cifrada(cuerpo, wiz) -> None:
         # retenga al salir de aquí, Python la recoge y la caja se queda vacía.
         punto = ttk.Entry(formulario, style="Mono.TEntry")
         punto.insert(0, wiz.equipo_ruta)
-        punto.grid(row=fila, column=1, columnspan=2, sticky="ew", padx=6)
+        punto.grid(row=fila, column=1, columnspan=2, sticky="ew", padx=theme.E2)
     fila += 1
 
     base = _existente(Path(wiz.equipo_fisica).expanduser())
@@ -419,7 +420,7 @@ def _carpeta_cifrada(cuerpo, wiz) -> None:
     tam = tk.StringVar(value=wiz.equipo_tamano or crypto.suggested_size(libre, dinamico))
     tam_fila = ttk.Frame(formulario)
     ttk.Label(formulario, text="Tamaño:").grid(row=fila, column=0, sticky="w")
-    tam_fila.grid(row=fila, column=1, columnspan=2, sticky="w", padx=6)
+    tam_fila.grid(row=fila, column=1, columnspan=2, sticky="w", padx=theme.E2)
     ttk.Entry(tam_fila, textvariable=tam, width=8).grid(row=0, column=0)
     ttk.Label(tam_fila, style="Pista.TLabel", text=(
         f"libre: {libre / 1024 ** 3:.1f} GiB — "
@@ -427,44 +428,44 @@ def _carpeta_cifrada(cuerpo, wiz) -> None:
            "con VeraCrypt 1.26.29 o posterior solo ocupa lo que guardes; con uno "
            "anterior se escribe entero al crearlo" if disperso is None else
            "se escribe entero al crearlo: elige con cabeza"))).grid(
-        row=0, column=1, padx=(8, 0))
+        row=0, column=1, padx=(theme.E2, 0))
     fila += 1
     pw1, pw2 = tk.StringVar(), tk.StringVar()
     ttk.Label(formulario, text="Contraseña:").grid(row=fila, column=0, sticky="w")
     ttk.Entry(formulario, textvariable=pw1, show="•", width=32).grid(
-        row=fila, column=1, columnspan=2, sticky="w", padx=6)
+        row=fila, column=1, columnspan=2, sticky="w", padx=theme.E2)
     fila += 1
     repite = ttk.Label(formulario, text="Repítela:")
     repite_caja = ttk.Entry(formulario, textvariable=pw2, show="•", width=32)
     repite.grid(row=fila, column=0, sticky="w")
-    repite_caja.grid(row=fila, column=1, columnspan=2, sticky="w", padx=6)
+    repite_caja.grid(row=fila, column=1, columnspan=2, sticky="w", padx=theme.E2)
     fila += 1
     pedir = tk.BooleanVar(value=wiz.equipo_pedir)
     ttk.Checkbutton(formulario, variable=pedir,
                     command=lambda: setattr(wiz, "equipo_pedir", bool(pedir.get())),
                     text="Pedir la contraseña al iniciar sesión").grid(
-        row=fila, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        row=fila, column=0, columnspan=3, sticky="w", pady=(theme.E2, 0))
     fila += 1
-    ttk.Label(formulario, foreground=theme.PELIGRO, justify="left",
+    ttk.Label(formulario, style="Peligro.TLabel", justify="left",
               wraplength=theme.medida(ANCHO - 60), text=(
         "La contraseña no se guarda en ningún sitio. Si la pierdes, el contenedor "
         "no se recupera: apúntala en tu gestor de contraseñas antes de seguir."
         + ("" if IS_WIN else " En Linux, VeraCrypt pide además la de "
            "administrador para montar."))).grid(
-        row=fila, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        row=fila, column=0, columnspan=3, sticky="w", pady=(theme.E2, 0))
 
     restos = re_.restos(wiz.equipo_ruta) if IS_WIN else []
     if restos:
         from .tk import bloque_aviso
         bloque_aviso(cuerpo, re_.aviso_restos(restos, wiz.equipo_ruta), ancho=ANCHO - 40,
-                     tipo="Rojo").grid(row=2, column=0, sticky="ew", pady=(8, 0))
+                     tipo="Rojo").grid(row=2, column=0, sticky="ew", pady=(theme.E2, 0))
 
     botones = ttk.Frame(cuerpo)
-    botones.grid(row=3, column=0, sticky="w", pady=(10, 0))
+    botones.grid(row=3, column=0, sticky="w", pady=(theme.E3, 0))
     boton = ttk.Button(botones, style="Primary.TButton")
     boton.grid(row=0, column=0)
-    hecho = ttk.Label(botones, foreground=theme.OK)
-    hecho.grid(row=0, column=1, padx=(12, 0))
+    hecho = ttk.Frame(botones)
+    hecho.grid(row=0, column=1, padx=(theme.E3, 0))
     estado = {"examen": None}
 
     def revisar(texto: str | None = None) -> None:
@@ -478,8 +479,8 @@ def _carpeta_cifrada(cuerpo, wiz) -> None:
             if not raiz_ex.vale:
                 ex = raiz_ex
         estado["examen"] = ex
-        examen.configure(text=ex.texto, foreground=theme.PELIGRO if not ex.vale
-                         else theme.TINTA3)
+        examen.configure(text=ex.texto, style="Peligro.TLabel" if not ex.vale
+                         else "Pista.TLabel")
         existe = ex.estado == re_.YA_EQUIPO
         for w in (repite, repite_caja):
             w.grid() if not existe else w.grid_remove()
@@ -537,7 +538,8 @@ def _carpeta_cifrada(cuerpo, wiz) -> None:
 
     boton.configure(command=crear)
     if wiz.equipo_montada is not None:
-        hecho.configure(text=f"✔ abierto en {wiz.equipo_montada}")
+        theme.chip(hecho, f"abierto en {wiz.equipo_montada}", "Ok.").grid(
+            row=0, column=0)
     al_cambiar(caja, revisar)
     if punto is not None:
         al_cambiar(punto, revisar_punto)
@@ -565,7 +567,7 @@ def paso_instalar(cuerpo, wiz) -> None:
             _texto(cuerpo, (
                 f"Todo eso va DENTRO del contenedor ({wiz.equipo_contenedor}); fuera "
                 f"solo queda su marca, con el mismo id, para reconocerlo cerrado."),
-                fila, foreground=theme.TINTA3)
+                fila, style="Pista.TLabel")
         else:
             avisos = [raiz_equipo.AVISO_CLAVE]
             disco = raiz_equipo.cifrado_del_disco(donde)
@@ -582,33 +584,33 @@ def paso_instalar(cuerpo, wiz) -> None:
     if reusar:
         _texto(cuerpo, (f"El agente de esta versión ({ya.get('version', '?')}) ya está "
                         "instalado y no se reinstala: lo que elijas a continuación se le "
-                        "pide por su buzón, sin pararlo."), fila, foreground=theme.TINTA3)
+                        "pide por su buzón, sin pararlo."), fila, style="Pista.TLabel")
         fila += 1
     elif ya:
         _texto(cuerpo, (f"Ya hay un agente instalado (versión {ya.get('version', '?')}). "
                         "Instalar pone esta versión al lado y la deja en su sitio; su "
-                        "lista de unidades se conserva."), fila, foreground=theme.TINTA3)
+                        "lista de unidades se conserva."), fila, style="Pista.TLabel")
         fila += 1
 
     boton = ttk.Button(cuerpo, text="Instalar", style="Primary.TButton")
     boton.grid(row=fila, column=0, sticky="w")
-    resultado = ttk.Label(cuerpo, wraplength=theme.medida(ANCHO), justify="left")
-    resultado.grid(row=fila + 1, column=0, sticky="w", pady=(12, 0))
+    resultado = Resultado(cuerpo, ancho=ANCHO).grid(row=fila + 1, column=0, sticky="ew",
+                                                    pady=(theme.E3, 0))
 
     def pintar() -> None:
         """Enseña lo que ya se ha instalado y revisa los botones del asistente."""
         lineas = []
         if donde is not None and wiz.state.deployed and wiz.equipo_id:
-            lineas.append(f"✔ Programa en {deploy.app_dir(donde)} "
+            lineas.append(f"Programa en {deploy.app_dir(donde)} "
                           f"(id {wiz.equipo_id[:8]}…)")
         prep = wiz.agente_prep
         if prep is not None and wiz.agente_reusado:
-            lineas.append(f"✔ El agente ya estaba: {prep.codigo}")
+            lineas.append(f"El agente ya estaba: {prep.codigo}")
         elif prep is not None:
-            lineas += [f"✔ Agente en {prep.codigo}", f"✔ Su Python: {prep.python}"]
+            lineas += [f"Agente en {prep.codigo}", f"Su Python: {prep.python}"]
         if prep is not None and prep.veracrypt is not None:
-            lineas.append(f"✔ Su VeraCrypt (Portable): {prep.veracrypt}")
-        resultado.configure(text="\n".join(lineas), foreground=theme.OK)
+            lineas.append(f"Su VeraCrypt (Portable): {prep.veracrypt}")
+        resultado.poner("\n".join(["Instalado"] + lineas) if lineas else "", "ok")
         wiz.revisar()
 
     def instalar() -> None:
@@ -632,9 +634,9 @@ def paso_instalar(cuerpo, wiz) -> None:
                           "Copiando el programa, rclone y el Python del agente. La "
                           "primera vez hay que descargarlos.")
         if not ok:
-            resultado.configure(text=str(res), foreground=theme.PELIGRO)
+            resultado.poner(f"No se ha podido instalar\n{res}", "peligro")
             wiz.revisar()
-            wiz.visor.ver(resultado)
+            wiz.visor.ver(resultado.marco)
             return
         ident, wiz.agente_prep = res
         wiz.agente_reusado = reusar
@@ -688,9 +690,9 @@ def paso_parejas(cuerpo, wiz) -> None:
         ruta_lbl, nota_lbl = notas[nombre]
         ruta_lbl.configure(text=str(info.ruta) if info.ruta else "")
         if info.error:
-            nota_lbl.configure(text=info.error, foreground=theme.PELIGRO)
+            nota_lbl.configure(text=info.error, style="Peligro.TLabel")
         else:
-            nota_lbl.configure(text="; ".join(info.avisos), foreground=theme.AVISO)
+            nota_lbl.configure(text="; ".join(info.avisos), style="Aviso.TLabel")
         wiz.revisar()
 
     fila = 0
@@ -700,7 +702,7 @@ def paso_parejas(cuerpo, wiz) -> None:
         var = tk.BooleanVar(value=nombre in wiz.state.selected or not wiz.state.selected)
         elegidas[nombre] = var
         ttk.Checkbutton(tabla, variable=var, text=f"{nombre}   [{modo}]").grid(
-            row=fila, column=0, sticky="w", padx=(0, 12))
+            row=fila, column=0, sticky="w", padx=(0, theme.E3))
         cajas[nombre] = tk.StringVar(
             value=wiz.equipo_locales.get(nombre, str(pareja.get("local", ""))))
         caja = ttk.Entry(tabla, textvariable=cajas[nombre], style="Mono.TEntry",
@@ -709,9 +711,9 @@ def paso_parejas(cuerpo, wiz) -> None:
         al_cambiar(caja, lambda texto, n=nombre: revisar_fila(n, texto))
         ttk.Label(tabla, style="Pista.TLabel",
                   text=f"↔  {pareja.get('remote_path', '?')}").grid(
-            row=fila, column=2, sticky="w", padx=(12, 0))
+            row=fila, column=2, sticky="w", padx=(theme.E3, 0))
         debajo = ttk.Frame(tabla)
-        debajo.grid(row=fila + 1, column=1, columnspan=2, sticky="w", pady=(1, 6))
+        debajo.grid(row=fila + 1, column=1, columnspan=2, sticky="w", pady=(0, theme.E2))
         notas[nombre] = (
             ttk.Label(debajo, style="MonoPista.TLabel"),
             ttk.Label(debajo, style="Pista.TLabel", justify="left",
@@ -720,15 +722,14 @@ def paso_parejas(cuerpo, wiz) -> None:
         notas[nombre][1].grid(row=1, column=0, sticky="w")
         if modo in ("up-mirror", "down-mirror"):
             destino = "el remoto" if modo == "up-mirror" else "este equipo"
-            ttk.Label(tabla, foreground=theme.PELIGRO, style="Pista.TLabel",
+            ttk.Label(tabla, style="Peligro.TLabel",
                       text=f"espejo: borra en {destino}").grid(
                 row=fila + 1, column=0, sticky="nw")
         revisar_fila(nombre)
         fila += 2
 
-    resultado = ttk.Label(cuerpo, wraplength=theme.medida(ANCHO), justify="left",
-                          foreground=theme.TINTA3)
-    resultado.grid(row=3, column=0, sticky="w", pady=(12, 0))
+    resultado = Resultado(cuerpo, ancho=ANCHO).grid(row=3, column=0, sticky="ew",
+                                                    pady=(theme.E3, 0))
 
     def guardar() -> None:
         """Escribe el config con las parejas elegidas y crea sus carpetas."""
@@ -736,8 +737,7 @@ def paso_parejas(cuerpo, wiz) -> None:
         malas = [n for n in seleccion
                  if raiz_equipo.revisar_local(donde, cajas[n].get()).error]
         if malas:
-            resultado.configure(text="Arregla antes la ruta de: " + ", ".join(malas),
-                                foreground=theme.PELIGRO)
+            resultado.poner("Arregla antes la ruta de: " + ", ".join(malas), "peligro")
             return
         locales = {n: raiz_equipo.revisar_local(donde, cajas[n].get()).local
                    for n in seleccion}
@@ -755,16 +755,17 @@ def paso_parejas(cuerpo, wiz) -> None:
         wiz.state.selected = seleccion
         wiz.state.config_written = True
         nota = deploy.publish_fleet_note(wiz.rclone, donde, wiz.perfil.endpoint_catalog)
-        detalle = f"Escrito {destino} con {len(seleccion)} pareja(s)."
+        detalle = f"Escrito {destino} con {len(seleccion)} pareja(s)\n"
         if creadas:
-            detalle += "\nCarpetas creadas: " + ", ".join(str(p) for p in creadas)
-        detalle += ("\nApuntado en la flota: " + nota if nota else
-                    "\n(no se ha podido apuntar en la flota; se hará al sincronizar)")
-        resultado.configure(text=detalle, foreground=theme.OK)
+            detalle += "Carpetas creadas: " + ", ".join(str(p) for p in creadas) + ". "
+        detalle += ("Apuntado en la flota: " + nota + "." if nota else
+                    "No se ha podido apuntar en la flota; se hará al sincronizar.")
+        resultado.poner(detalle, "ok")
         wiz.revisar()
 
     ttk.Button(cuerpo, text="Guardar el config y crear las carpetas",
-               command=guardar).grid(row=2, column=0, sticky="w", pady=(12, 0))
+               style="Primary.TButton", command=guardar).grid(
+        row=2, column=0, sticky="w", pady=(theme.E3, 0))
 
 
 def ok_parejas(wiz) -> bool:
@@ -801,14 +802,14 @@ def paso_unidades(cuerpo, wiz) -> None:
     else:
         for col, rotulo in enumerate(("Unidad", "Qué hacer al enchufarla", "")):
             ttk.Label(tabla, text=theme.rotulo(rotulo), style="Rotulo.TLabel").grid(
-                row=0, column=col, sticky="w", padx=(0, 18))
+                row=0, column=col, sticky="w", padx=(0, theme.E4))
     etiquetas = {m: equipo.TEXTO_MODO[m] for m in equipo.MODOS}
     etiquetas[PREGUNTAR] = TEXTO_PREGUNTAR
     por_texto = {v: k for k, v in etiquetas.items()}
     for i, (uid, (modo, nombre)) in enumerate(sorted(wiz.agente_unidades.items()),
                                               start=1):
         ttk.Label(tabla, text=nombre or f"{uid[:8]}…").grid(
-            row=i, column=0, sticky="w", padx=(0, 18), pady=2)
+            row=i, column=0, sticky="w", padx=(0, theme.E4), pady=theme.E1)
         var = tk.StringVar(value=etiquetas[modo])
 
         def cambiar(_evento=None, u=uid, v=var, n=nombre) -> None:
@@ -819,9 +820,9 @@ def paso_unidades(cuerpo, wiz) -> None:
                             values=[etiquetas[m] for m in (*equipo.MODOS, PREGUNTAR)],
                             width=30)
         caja.bind("<<ComboboxSelected>>", cambiar)
-        caja.grid(row=i, column=1, sticky="w", padx=(0, 18), pady=2)
+        caja.grid(row=i, column=1, sticky="w", padx=(0, theme.E4), pady=theme.E1)
         ttk.Label(tabla, text=wiz.agente_origen.get(uid, ""), style="Pista.TLabel").grid(
-            row=i, column=2, sticky="w", pady=2)
+            row=i, column=2, sticky="w", pady=theme.E1)
 
     if wiz.rclone is not None and con_raiz(wiz):
         def de_la_flota() -> None:
@@ -840,10 +841,10 @@ def paso_unidades(cuerpo, wiz) -> None:
             wiz.repintar()
 
         ttk.Button(cuerpo, text="Añadir las de la flota", command=de_la_flota).grid(
-            row=2, column=0, sticky="w", pady=(10, 0))
+            row=2, column=0, sticky="w", pady=(theme.E3, 0))
 
     plazo = ttk.Frame(cuerpo)
-    plazo.grid(row=3, column=0, sticky="w", pady=(16, 0))
+    plazo.grid(row=3, column=0, sticky="w", pady=(theme.E4, 0))
     ttk.Label(plazo, text="Para contestar a una unidad nueva:").grid(row=0, column=0,
                                                                      sticky="w")
     segundos = tk.StringVar(value=f"{wiz.agente_espera:g}")
@@ -862,7 +863,7 @@ def paso_unidades(cuerpo, wiz) -> None:
     caja_plazo = ttk.Spinbox(plazo, textvariable=segundos, from_=equipo.ESPERA_MINIMA,
                              to=equipo.ESPERA_MAXIMA, increment=30, width=6,
                              command=cambiar_plazo)
-    caja_plazo.grid(row=0, column=1, padx=6)
+    caja_plazo.grid(row=0, column=1, padx=theme.E2)
     caja_plazo.bind("<KeyRelease>", cambiar_plazo)
     caja_plazo.bind("<FocusOut>", cambiar_plazo)
     ttk.Label(plazo, text="segundos. Sin respuesta, cuenta como «Ahora no» hasta "
@@ -925,15 +926,15 @@ def paso_arranque(cuerpo, wiz) -> None:
         _texto(cuerpo, (
             "penwatch está instalado en este equipo. El agente lo sustituye: lo que "
             "vigilaba ya está en su lista, y penwatch se desinstala al registrar el "
-            "agente. Dos vigilantes a la vez se pisarían."), 2, foreground=theme.AVISO)
+            "agente. Dos vigilantes a la vez se pisarían."), 2, style="Aviso.TLabel")
     _texto(cuerpo, (
         "Un cambio respecto a penwatch: con el agente, abrir la ventana de una "
         "unidad ya no apaga su servicio para siempre, lo pausa mientras está "
         "abierta. Para pararlo: «python agente.py pausa», o el modo «nada» de esa "
-        "unidad."), 3, foreground=theme.TINTA3)
+        "unidad."), 3, style="Pista.TLabel")
 
-    resultado = ttk.Label(cuerpo, wraplength=theme.medida(ANCHO), justify="left")
-    resultado.grid(row=5, column=0, sticky="w", pady=(12, 0))
+    resultado = Resultado(cuerpo, ancho=ANCHO).grid(row=5, column=0, sticky="ew",
+                                                    pady=(theme.E3, 0))
 
     def activar() -> None:
         """Registra el agente o se lo pide por su buzón, y cuenta qué ha hecho."""
@@ -956,20 +957,19 @@ def paso_arranque(cuerpo, wiz) -> None:
                                "Registrando el agente y arrancándolo.",
                                progreso=lambda: avance[-1] if avance else None)
         if not ok:
-            resultado.configure(text=str(msgs), foreground=theme.PELIGRO)
+            resultado.poner(f"No se ha podido\n{msgs}", "peligro")
             wiz.revisar()
-            wiz.visor.ver(resultado)
+            wiz.visor.ver(resultado.marco)
             return
         wiz.agente_hecho = list(msgs)
-        resultado.configure(text="\n".join(f"✔ {m}" for m in msgs), foreground=theme.OK)
+        resultado.poner("\n".join(["Hecho"] + list(msgs)), "ok")
         wiz.revisar()
 
     ttk.Button(cuerpo, text="Pedírselo al agente" if wiz.agente_reusado
                else "Registrar y arrancar", style="Primary.TButton",
                command=activar).grid(row=4, column=0, sticky="w")
     if wiz.agente_hecho:
-        resultado.configure(text="\n".join(f"✔ {m}" for m in wiz.agente_hecho),
-                            foreground=theme.OK)
+        resultado.poner("\n".join(["Hecho"] + list(wiz.agente_hecho)), "ok")
 
 
 def ok_arranque(wiz) -> bool:
@@ -1090,7 +1090,8 @@ def paso_final(cuerpo, wiz) -> None:
 
     _texto(cuerpo, "Lo que ha quedado puesto en este equipo.", 0)
     tabla = ttk.Frame(cuerpo)
-    tabla.grid(row=1, column=0, sticky="w")
+    tabla.grid(row=1, column=0, sticky="ew")
+    tabla.columnconfigure(0, weight=1)
 
     def revisar() -> None:
         """Repinta las comprobaciones."""
@@ -1098,18 +1099,14 @@ def paso_final(cuerpo, wiz) -> None:
             hijo.destroy()
         perfil = wiz.perfil_final
         clave = perfil.key_name if con_raiz(wiz) and perfil.needs_key else None
-        for i, (etiqueta, ok, detalle) in enumerate(
-                comprobaciones(raiz(wiz), wiz.state.selected, clave,
+        filas = comprobaciones(raiz(wiz), wiz.state.selected, clave,
                                wiz.equipo_contenedor if cifrada(wiz) else None,
-                               wiz.equipo_ruta if cifrada(wiz) else None)):
-            color = theme.OK if ok else theme.PELIGRO
-            ttk.Label(tabla, text="✔" if ok else "✘", foreground=color,
-                      width=3).grid(row=i, column=0, sticky="w")
-            ttk.Label(tabla, text=etiqueta + ":").grid(row=i, column=1, sticky="w")
-            ttk.Label(tabla, text=detalle, foreground=color, wraplength=theme.medida(520),
-                      justify="left").grid(row=i, column=2, sticky="w", padx=(10, 0))
+                               wiz.equipo_ruta if cifrada(wiz) else None)
+        tabla_estado(tabla, list(filas), ("está", "falta", "sin mirar", "aviso"),
+                     ancho_nombre=200).grid(row=0, column=0, sticky="ew")
         wiz.revisar()
 
-    ttk.Button(cuerpo, text="Volver a comprobar", command=revisar).grid(
-        row=2, column=0, sticky="w", pady=(14, 0))
+    otra_vez = ttk.Button(cuerpo, text="Volver a comprobar", command=revisar)
+    theme.boton_icono(otra_vez, "reload", theme.TINTA2)
+    otra_vez.grid(row=2, column=0, sticky="w", pady=(theme.E4, 0))
     revisar()

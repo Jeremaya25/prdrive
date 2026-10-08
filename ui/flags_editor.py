@@ -36,6 +36,21 @@ from typing import Any, Mapping, NamedTuple
 from common import config_file, model
 from common.model import ConfigError
 
+class FlagReservado(ConfigError):
+    """Un flag que no se pone a mano porque lo pone el programa (`RESERVED`)."""
+
+
+TITULO_RESERVADO = "Este flag no se puede poner aquí"
+"""El título del aviso de un flag reservado."""
+TITULO_NO_VALE = "Esto no se puede guardar así"
+"""El título del aviso de cualquier otro texto que no vale."""
+
+
+def titulo_error(error: ConfigError) -> str:
+    """Devuelve el título del aviso rojo que explica por qué no vale lo escrito."""
+    return TITULO_RESERVADO if isinstance(error, FlagReservado) else TITULO_NO_VALE
+
+
 RESERVED = model.FLAGS_RESERVADOS
 """Flags que `sync.py` pone por su cuenta, con el motivo de cada uno."""
 
@@ -108,7 +123,7 @@ def _validar(key: str, value: Any) -> None:
                           f"detrás de '--', o sea letras, números, '-' y '_'.")
     motivo = model.problema_flag(key)
     if motivo:
-        raise ConfigError(f"'{key}' no se configura aquí: {motivo}.")
+        raise FlagReservado(f"'{key}' no se configura aquí: {motivo}.")
     if isinstance(value, dict):
         raise ConfigError(f"'{key}': aquí no caben tablas, solo 'clave = valor'.")
     if isinstance(value, (list, tuple)):

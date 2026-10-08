@@ -218,12 +218,19 @@ def widgets(w, tipo):
     return salida
 
 
-def estado(wiz) -> ttk.Label | None:
-    """Devuelve la etiqueta con el estado de la conexión, o `None`."""
+def estado(wiz) -> tuple[str, str]:
+    """Devuelve el aviso con el estado de la conexión: su texto y su tono.
+
+    El tono es la superficie del aviso (`NotaRojo.` un error, `NotaAzul.` una
+    conexión preparada sin probar); sin aviso, `('', '')`.
+    """
+    textos, tono = [], ""
     for lbl in widgets(wiz.root, ttk.Label):
-        if str(lbl.cget("text")).startswith(("✘", "Conexión preparada")):
-            return lbl
-    return None
+        estilo = str(lbl.cget("style"))
+        if estilo.startswith(("NotaRojo.", "NotaAzul.")) and lbl.winfo_manager():
+            textos.append(str(lbl.cget("text")))
+            tono = estilo.split(".")[0] + "."
+    return " ".join(t for t in textos if t), tono
 
 
 PASO = {t: i for i, (t, _, _) in enumerate(tk_install.PASOS_INSTALACION)}
@@ -237,9 +244,9 @@ wiz.indice = PASO["Conexión"]
 wiz.repintar()
 c("con una carpeta por ruta no se sale de Conexión",
   str(wiz.boton_siguiente.cget("state")), "disabled")
-lbl = estado(wiz)
-c.contains("y se dice por qué", str(lbl.cget("text")) if lbl else "",
-           "«/prdrive-catalog/remote.toml»")
+texto, tono = estado(wiz)
+c.contains("y se dice por qué", texto, "«/prdrive-catalog/remote.toml»")
+c("en rojo", tono, "NotaRojo.")
 
 caja = next((e for e in widgets(wiz.root, ttk.Entry)
              if e.get() == "/prdrive-catalog"), None)
@@ -249,12 +256,12 @@ if caja is not None:
     c("al escribir el fichero, la ruta llega al perfil", wiz.perfil.catalog_path,
       "/prdrive-catalog/pairs.toml")
     c("y ya se puede seguir", str(wiz.boton_siguiente.cget("state")), "normal")
-    lbl = estado(wiz)
-    # Sin ✔: la ruta está bien escrita, pero nadie ha hablado aún con el remoto
-    # (#47). Lo que se ve es el estado neutro de una conexión preparada.
-    c.contains("con el estado neutro, no el error", str(lbl.cget("text")) if lbl else "",
-               "sin probar todavía")
-    c("y sin el estilo de error", str(lbl.cget("style")) if lbl else "", "TLabel")
+    texto, tono = estado(wiz)
+    # Sin verde: la ruta está bien escrita, pero nadie ha hablado aún con el
+    # remoto (#47). Lo que se ve es el aviso azul de una conexión preparada.
+    c.contains("con el estado neutro, no el error", texto, "sin probar todavía")
+    c("en azul, que informa: ni el rojo del error ni el verde de comprobada", tono,
+      "NotaAzul.")
 
     caja.delete(len("/prdrive-catalog"), "end")
     c("borrarlo vuelve a cerrar el paso", str(wiz.boton_siguiente.cget("state")),

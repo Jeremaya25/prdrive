@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""El llavero con diálogos de Tk: «Abrir llavero» y «Ajustes → Llavero…».
+"""El llavero con diálogos de Tk: «Abrir llavero» y «Ajustes → Llavero».
 
 Solo dibuja: los pasos, los planes y lo que dicen son de `ui/llavero_editor`, y
 lo que se hace, de `common/keepassxc.py` y `common/llavero.py`.
@@ -9,7 +9,7 @@ lo que se hace, de `common/keepassxc.py` y `common/llavero.py`.
   abre), y la confirmación de «Combinar» (`tk_pairs.confirmar_plan()`). Suelto
   es `runsync.py --llavero` (`Llavero.bat`), colgado de una raíz que no se
   enseña.
-- «Ajustes → Llavero…» (`ajustes()`): se abre en el acto y lee el catálogo en
+- «Ajustes → Llavero» (`ajustes()`): se abre en el acto y lee el catálogo en
   segundo plano (el mismo encargo que «Parejas»): lo que se puede hacer depende
   de si el remoto ya tiene llavero. Cada cambio pasa por `confirmar_plan()` y,
   si escribe en el remoto, por `working()`.
@@ -24,8 +24,8 @@ from common import catalog, keepassxc, llavero, model
 from common.model import Config, ConfigError
 
 from . import catalog_editor, llavero_editor, segundo_plano, theme, tk_pairs
-from .tk import (TITLE, Indicador, Sondeo, cabecera, centrar, cuerpo_visible, modal,
-                 mostrar, working)
+from .tk import (TITLE, Indicador, Panel, Sondeo, cabecera, dialogo, mostrar, pie,
+                 working)
 
 ACTIVADO = "activado"
 """Lo que devuelve `ajustes()` si ha activado el llavero: toca la primera pasada."""
@@ -149,7 +149,7 @@ CAMBIAR_LLAVE = ("Se sustituye el fichero llave que hay en el dispositivo por el
 
 
 def ajustes(parent, raw: dict | None = None) -> str | None:
-    """Abre «Ajustes → Llavero…».
+    """Abre «Ajustes → Llavero».
 
     Args:
         parent: La ventana de la que cuelga (la principal).
@@ -158,30 +158,41 @@ def ajustes(parent, raw: dict | None = None) -> str | None:
     Returns:
         `ACTIVADO`, `CAMBIADO` o `None` si no ha cambiado nada.
     """
+    return dialogo(parent, llavero_editor.TITULO, lambda p: construir_ajustes(p, raw),
+                   ensenar=mostrar)
+
+
+def construir_ajustes(panel: Panel, raw: dict | None = None) -> None:
+    """Dibuja «Llavero» en `panel` (su diálogo o «Ajustes»).
+
+    Devuelve por el panel `ACTIVADO` o `CAMBIADO`. Activar y desactivar
+    cierran la ventana entera, sea el diálogo o «Ajustes»: la principal relee
+    el config, se repinta entera y, tras activar, lanza la primera pasada.
+    """
     from tkinter import messagebox, ttk
 
     raw = catalog_editor.raw_del_dispositivo(raw) or {}
-    dlg = modal(parent, llavero_editor.TITULO)
-    sondeo = Sondeo(dlg)
-    estado: dict = {"cat": None, "leido": False, "resultado": None}
-
-    marco = cuerpo_visible(dlg, padding=(22, 20, 22, 18))
-    marco.columnconfigure(0, weight=1)
+    dlg, marco = panel.ventana, panel.marco
+    sondeo = Sondeo(marco)
+    estado: dict = {"cat": None, "leido": False}
     cabecera(marco, llavero_editor.TITULO, llavero_editor.EXPLICACION, ancho=560,
              estilo="Dialogo.TLabel").grid(row=0, column=0, sticky="w")
     indicador = Indicador(marco, ancho=560)
-    indicador.marco.grid(row=1, column=0, sticky="ew", pady=(12, 0))
+    indicador.marco.grid(row=1, column=0, sticky="ew", pady=(theme.E3, 0))
     dlg.indicador, dlg.sondeo = indicador, sondeo   # como `visor`: los tests los miran
 
-    tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(14, 10, 14, 12))
-    tarjeta.grid(row=2, column=0, sticky="ew", pady=(14, 0))
+    tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(theme.E4, theme.E3, theme.E4, theme.E3))
+    tarjeta.grid(row=2, column=0, sticky="ew", pady=(theme.E4, 0))
     tarjeta.columnconfigure(0, weight=1)
-    pie_nota = ttk.Label(marco, text="", style="MonoPista.TLabel",
-                         wraplength=theme.medida(560), justify="left")
-    pie_nota.grid(row=3, column=0, sticky="w", pady=(8, 0))
     acciones = ttk.Frame(marco)
-    acciones.grid(row=4, column=0, sticky="ew", pady=(14, 0))
-    acciones.columnconfigure(0, weight=1)
+    acciones.grid(row=3, column=0, sticky="w", pady=(theme.E4, 0))
+    botones = pie(marco, 4)
+    botones.columnconfigure(0, weight=1)
+    pie_nota = ttk.Label(botones, text="", style="MonoPista.TLabel",
+                         wraplength=theme.medida(440), justify="left")
+    pie_nota.grid(row=0, column=0, sticky="w")
+    ttk.Button(botones, text="Cerrar", command=panel.cerrar).grid(
+        row=0, column=1, sticky="e", padx=(theme.E3, 0))
 
     def remota() -> dict | None:
         """Devuelve el `[keychain]` del catálogo leído."""
@@ -196,12 +207,11 @@ def ajustes(parent, raw: dict | None = None) -> str | None:
         for i, linea in enumerate(llavero_editor.lineas(sit, remota(), leido)):
             ttk.Label(tarjeta, text=linea, style="Card.TLabel" if i == 0 else "Card.Pista.TLabel",
                       wraplength=theme.medida(540), justify="left").grid(
-                row=i, column=0, sticky="w", pady=(0 if i == 0 else 4, 0))
+                row=i, column=0, sticky="w", pady=(0 if i == 0 else theme.E1, 0))
         pie_nota.configure(text=nota)
         for hijo in acciones.winfo_children():
             hijo.destroy()
         con_remoto = "normal" if leido else "disabled"
-        col = 1
         botones: list = []
         if sit.activo:
             if sit.interna:
@@ -224,14 +234,15 @@ def ajustes(parent, raw: dict | None = None) -> str | None:
         # no, dar una base.
         principal = (("Traer el del remoto" if remota() is not None else "Usar esta base…")
                      if not sit.activo else None)
-        for texto, orden, apagado in botones:
-            ttk.Button(acciones, text=texto, command=orden, state=apagado,
-                       style="Primary.TButton" if texto == principal else "TButton").grid(
-                row=0, column=col, padx=(0, 6))
-            col += 1
-        ttk.Button(acciones, text="Cerrar", command=dlg.destroy).grid(row=0, column=col)
-        if dlg.winfo_ismapped() and dlg.visor.crecer(dlg):
-            centrar(dlg, parent)
+        for col, (texto, orden, apagado) in enumerate(botones):
+            peligro = orden is desactivar
+            boton = ttk.Button(acciones, text=texto, command=orden, state=apagado,
+                               style="Primary.TButton" if texto == principal
+                               else "Danger.TButton" if peligro else "TButton")
+            if peligro:
+                theme.boton_icono(boton, "trash", theme.PELIGRO, theme.SUPERFICIE)
+            boton.grid(row=0, column=col, padx=(0, theme.E2))
+        panel.ajustar()
 
     def leer(nota: str = "") -> None:
         """Lee el catálogo en segundo plano y repinta al llegar."""
@@ -278,9 +289,9 @@ def ajustes(parent, raw: dict | None = None) -> str | None:
             messagebox.showerror(TITLE, str(valor), parent=dlg)
             leer()
             return
-        estado["resultado"] = ACTIVADO if plan.activa else CAMBIADO
+        panel.devolver(ACTIVADO if plan.activa else CAMBIADO)
         if cerrar:
-            dlg.destroy()
+            panel.cerrar()
             return
         leer("  ·  ".join(valor))
 
@@ -365,5 +376,3 @@ def ajustes(parent, raw: dict | None = None) -> str | None:
 
     pintar()
     leer()
-    mostrar(dlg, parent)
-    return estado["resultado"]

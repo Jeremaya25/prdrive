@@ -115,13 +115,39 @@ def admite_watch(mode: str) -> bool:
     return modo is not None and modo.origen_local
 
 
-def mirror_warning(mode: str) -> str | None:
-    """Devuelve el aviso de un modo espejo, o `None` si el modo no lo es."""
+def aviso_espejo(mode: str) -> tuple[str, str] | None:
+    """Devuelve el aviso de un modo espejo partido en título y cuerpo, o `None`.
+
+    Es el que la pantalla de parejas pone en su recuadro ámbar; en una línea
+    suelta va entero (`mirror_warning`).
+    """
     if mode not in MIRROR_MODES:
         return None
     destino = "el remoto" if model.MODES[mode].dest == "remote" else "el dispositivo"
-    return (f"Modo '{mode}': es un espejo, BORRA en {destino} lo que no esté en el "
-            f"origen. Pruébalo antes con --dry-run.")
+    return (f"Modo '{mode}': es un espejo",
+            f"BORRA en {destino} lo que no esté en el origen. Pruébalo antes con "
+            f"--dry-run.")
+
+
+def mirror_warning(mode: str) -> str | None:
+    """Devuelve el aviso de un modo espejo, o `None` si el modo no lo es."""
+    partes = aviso_espejo(mode)
+    if partes is None:
+        return None
+    titulo, cuerpo = partes
+    return f"{titulo}, {cuerpo}"
+
+
+def partir_aviso(texto: str) -> tuple[str, str]:
+    """Devuelve un aviso de un plan como título y cuerpo para su recuadro.
+
+    El del espejo se parte como en la pantalla de parejas (`aviso_espejo`); el
+    resto va entero como cuerpo, sin título.
+    """
+    for mode in MIRROR_MODES:
+        if texto == mirror_warning(mode):
+            return aviso_espejo(mode)
+    return "", texto
 
 
 def rows(config: Config) -> list[PairRow]:
@@ -837,6 +863,54 @@ def catalog_rows(config: Config, raw: Mapping[str, Any],
             salida.append(CatalogRow(*fila, en_pen=True, origen=origen, difiere=()))
     return salida
 
+
+
+def catalog_only_rows(raw: Mapping[str, Any],
+                      cat: catalog.Catalog | None) -> list[CatalogRow]:
+    """Devuelve las filas de la vista del catálogo: lo que dice él, y si se usa aquí.
+
+    Es la lista que se edita cuando se edita el catálogo: sus parejas tal como
+    las tiene él (no como las haya dejado este dispositivo) y nada de lo que
+    solo hay aquí, que el catálogo no conoce.
+    """
+    usadas = {p.get("name") for p in raw.get("pair") or []}
+    defaults_cat = cat.defaults if cat is not None else {}
+    salida: list[CatalogRow] = []
+    for name, entrada in catalog.pairs_by_name(cat).items():
+        mode, local, remote = _display(entrada, defaults_cat)
+        salida.append(CatalogRow(name, mode, local, remote, "—", mirror_warning(mode),
+                                 name in usadas, ORIGEN_CATALOGO, ()))
+    return salida
+
+
+EN_EL_CATALOGO = "en el catálogo"
+NO_SE_USA = "no se usa aquí"
+
+
+def row_status(fila: CatalogRow, del_catalogo: bool = False) -> tuple[str, str]:
+    """Devuelve el tono de una fila y lo que dice su chip de estado.
+
+    El tono es lo que hay que mirar de ella: `'apagado'` (este dispositivo no
+    la usa), `'peligro'` (un espejo, que borra), `'aviso'` (pide un resync, se
+    ha cambiado aquí o el catálogo ya no la tiene) u `'ok'`.
+
+    Args:
+        del_catalogo: Si es la vista del catálogo, donde lo que se dice de cada
+            pareja es que está en él; el espejo se sigue marcando.
+    """
+    espejo = bool(fila.aviso and "espejo" in fila.aviso)
+    if del_catalogo:
+        return ("peligro" if espejo else "ok"), EN_EL_CATALOGO
+    if not fila.en_pen:
+        return "apagado", NO_SE_USA
+    if espejo:
+        return "peligro", "espejo"
+    if fila.aviso:
+        return "aviso", fila.aviso
+    if fila.origen in (ORIGEN_LOCAL, ORIGEN_HUERFANA):
+        return "aviso", fila.origen
+    # Solo bisync tiene un estado que contar; el resto, que se usa y ya está.
+    return "ok", fila.estado if fila.estado != "—" else "en uso"
 
 def defaults_origin(raw: Mapping[str, Any],
                     cat: catalog.Catalog | None) -> tuple[str, tuple[str, ...]]:

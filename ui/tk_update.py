@@ -39,8 +39,8 @@ from pathlib import Path
 from common import components, model, store, update
 
 from . import prefs, theme
-from .tk import (TITLE, bloque_aviso, cabecera, cuerpo_visible, modal, mostrar,
-                 output_window, working)
+from .tk import (TITLE, Panel, bloque_aviso, cabecera, dialogo, mostrar, output_window,
+                 pie, working)
 
 CERRAR = "cerrar"
 """Lo que devuelve `open_components_dialog()` cuando la ventana tiene que cerrarse."""
@@ -65,17 +65,22 @@ def servicio_vivo() -> bool:
 
 def open_dialog(parent, nueva) -> bool:
     """Abre la pantalla y devuelve si se ha actualizado y hay que cerrar todo."""
-    from tkinter import messagebox, ttk
-
     if nueva is None:
         return False
+    return dialogo(parent, "Actualizar", lambda p: construir(p, nueva), defecto=False,
+                   padding=(theme.E5, theme.E4, theme.E5, theme.E4), ensenar=mostrar)
+
+
+def construir(panel: Panel, nueva) -> None:
+    """Dibuja «Hay una versión nueva» en `panel` (su diálogo o «Ajustes»).
+
+    Si se actualiza, devuelve `True` por el panel y cierra la ventana entera:
+    quien la abrió tiene que cerrar también la principal.
+    """
+    from tkinter import messagebox, ttk
 
     actual = update.installed_version() or "desconocida"
-    hecho = {"ok": False}
-
-    dlg = modal(parent, "Actualizar")
-    marco = cuerpo_visible(dlg, padding=(20, 18, 20, 16))
-    marco.columnconfigure(0, weight=1)
+    dlg, marco = panel.ventana, panel.marco
 
     arriba = ttk.Frame(marco)
     arriba.grid(row=0, column=0, sticky="ew")
@@ -84,11 +89,11 @@ def open_dialog(parent, nueva) -> bool:
              f"Este dispositivo lleva la {actual}.", ancho=520,
              estilo="Dialogo.TLabel").grid(row=0, column=0, sticky="w")
     theme.chip(arriba, nueva.version, "Acento.").grid(row=0, column=1,
-                                                      sticky="ne", pady=(4, 0))
+                                                      sticky="ne", pady=(theme.E1, 0))
 
     # Qué se sustituye y qué se conserva.
-    tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(14, 12))
-    tarjeta.grid(row=1, column=0, sticky="ew", pady=(16, 0))
+    tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(theme.E4, theme.E3))
+    tarjeta.grid(row=1, column=0, sticky="ew", pady=(theme.E4, 0))
     tarjeta.columnconfigure(1, weight=1)
 
     filas = [("Se sustituye", "el programa: sync.py, runsync.py, penwatch.py, "
@@ -98,17 +103,17 @@ def open_dialog(parent, nueva) -> bool:
              ("Publicada", nueva.published[:10] or "—")]
     for i, (etiqueta, valor) in enumerate(filas):
         ttk.Label(tarjeta, text=etiqueta, style="Card.Campo.TLabel").grid(
-            row=i, column=0, sticky="nw", pady=(0, 6), padx=(0, 12))
+            row=i, column=0, sticky="nw", pady=(0, theme.E2), padx=(0, theme.E3))
         ttk.Label(tarjeta, text=valor, style="Card.TLabel", wraplength=theme.medida(380),
-                  justify="left").grid(row=i, column=1, sticky="w", pady=(0, 6))
+                  justify="left").grid(row=i, column=1, sticky="w", pady=(0, theme.E2))
 
     fila = 2
     if nueva.notes:
         ttk.Label(marco, text=theme.rotulo("Novedades"),
                   style="Rotulo.TLabel").grid(row=fila, column=0, sticky="w",
-                                              pady=(16, 7))
+                                              pady=(theme.E4, theme.E2))
         fila += 1
-        notas = ttk.Frame(marco, style="Gris.TFrame", padding=(12, 10))
+        notas = ttk.Frame(marco, style="Gris.TFrame", padding=(theme.E3, theme.E3))
         notas.grid(row=fila, column=0, sticky="ew")
         notas.columnconfigure(0, weight=1)
         ttk.Label(notas, text=nueva.notes.strip()[:1200], style="Gris.Pista.TLabel",
@@ -120,7 +125,7 @@ def open_dialog(parent, nueva) -> bool:
         bloque_aviso(marco, "El servicio periódico sigue en marcha en este "
                             "equipo. Puede estar sincronizando ahora mismo: "
                             "espera a que termine antes de actualizar.",
-                     ancho=520).grid(row=fila, column=0, sticky="ew", pady=(14, 0))
+                     ancho=520).grid(row=fila, column=0, sticky="ew", pady=(theme.E4, 0))
         fila += 1
 
     # Lo que hace el botón.
@@ -176,24 +181,22 @@ def open_dialog(parent, nueva) -> bool:
             messagebox.showinfo(TITLE, (
                 f"Actualizado a la {nueva.tag}.\n\n"
                 f"Cierra esta ventana y vuelve a abrir el programa."), parent=dlg)
-        hecho["ok"] = True
-        dlg.destroy()
+        panel.devolver(True)
+        panel.cerrar()
 
-    botones = ttk.Frame(marco)
-    botones.grid(row=fila, column=0, sticky="ew", pady=(16, 0))
+    botones = pie(marco, fila)
     botones.columnconfigure(1, weight=1)
     ver = ttk.Button(botones, text="Ver la página",
                      command=lambda: webbrowser.open(nueva.url))
     theme.boton_icono(ver, "eye", theme.TINTA2, theme.PAPEL)
     ver.grid(row=0, column=0, sticky="w")
     instalar = ttk.Button(botones, text="Actualizar ahora", style="Primary.TButton",
-                          padding=(12, 7), command=actualizar)
-    theme.boton_icono(instalar, "down", theme.SUPERFICIE, theme.ACENTO)
-    instalar.grid(row=0, column=2, padx=(0, 6))
-    ttk.Button(botones, text="Cerrar", command=dlg.destroy).grid(row=0, column=3)
-
-    mostrar(dlg, parent)
-    return hecho["ok"]
+                          padding=(theme.E3, theme.E2), command=actualizar)
+    theme.boton_icono(instalar, "down", theme.SOBRE_ACENTO, theme.ACENTO)
+    instalar.grid(row=0, column=2)
+    if not panel.incrustado:
+        ttk.Button(botones, text="Cerrar", command=panel.cerrar).grid(
+            row=0, column=3, padx=(theme.E2, 0))
 
 
 def open_components_dialog(parent, pends) -> bool | str:
@@ -206,17 +209,23 @@ def open_components_dialog(parent, pends) -> bool | str:
     entonces devuelve `CERRAR` y quien llama cierra la ventana para que el
     relevo lo cambie y la reabra.
     """
-    from tkinter import messagebox, ttk
-
     if not pends:
         return False
+    return dialogo(parent, "Actualizar componentes",
+                   lambda p: construir_componentes(p, pends), defecto=False,
+                   padding=(theme.E5, theme.E4, theme.E5, theme.E4), ensenar=mostrar)
 
-    tocado = {"ok": False}
+
+def construir_componentes(panel: Panel, pends) -> None:
+    """Dibuja «Los componentes están anticuados» en `panel`.
+
+    Devuelve por el panel `True` si se ha tocado algo, o `CERRAR` si hay que
+    cerrar la ventana principal para que el relevo cambie el Python.
+    """
+    from tkinter import messagebox, ttk
+
     tag = update.source_tag()
-
-    dlg = modal(parent, "Actualizar componentes")
-    marco = cuerpo_visible(dlg, padding=(20, 18, 20, 16))
-    marco.columnconfigure(0, weight=1)
+    dlg, marco = panel.ventana, panel.marco
 
     cabecera(marco, "Los componentes del dispositivo están anticuados",
              "El rclone, el Python o el VeraCrypt que lleva no son los que fija "
@@ -224,21 +233,21 @@ def open_components_dialog(parent, pends) -> bool | str:
              estilo="Dialogo.TLabel").grid(row=0, column=0, sticky="w")
 
     # Qué lleva y qué toca.
-    tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(14, 12))
-    tarjeta.grid(row=1, column=0, sticky="ew", pady=(16, 0))
+    tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(theme.E4, theme.E3))
+    tarjeta.grid(row=1, column=0, sticky="ew", pady=(theme.E4, 0))
     tarjeta.columnconfigure(1, weight=1)
     for i, p in enumerate(pends):
         ttk.Label(tarjeta, text=p.titulo, style="Card.Campo.TLabel").grid(
-            row=i, column=0, sticky="nw", pady=(0, 6), padx=(0, 12))
+            row=i, column=0, sticky="nw", pady=(0, theme.E2), padx=(0, theme.E3))
         ttk.Label(tarjeta, text=(f"{p.lleva}  →  {p.deberia}" if not p.asistente
                                  else "con «Añadir plataformas…» del instalador"),
                   style="Card.MonoPista.TLabel",
                   wraplength=theme.medida(340), justify="left").grid(
-            row=i, column=1, sticky="w", pady=(0, 6))
+            row=i, column=1, sticky="w", pady=(0, theme.E2))
 
     # Qué respalda la descarga, sin adornos.
-    notas = ttk.Frame(marco, style="Gris.TFrame", padding=(12, 10))
-    notas.grid(row=2, column=0, sticky="ew", pady=(14, 0))
+    notas = ttk.Frame(marco, style="Gris.TFrame", padding=(theme.E3, theme.E3))
+    notas.grid(row=2, column=0, sticky="ew", pady=(theme.E4, 0))
     notas.columnconfigure(0, weight=1)
     ttk.Label(notas, text=(
         "Se descargan de su publicador —rclone.org, python-build-standalone e "
@@ -256,14 +265,14 @@ def open_components_dialog(parent, pends) -> bool | str:
         bloque_aviso(marco, "El servicio periódico sigue en marcha en este "
                             "equipo. Si está sincronizando, su rclone no se "
                             "podrá sustituir y se dejará para otra vez.",
-                     ancho=520).grid(row=fila, column=0, sticky="ew", pady=(14, 0))
+                     ancho=520).grid(row=fila, column=0, sticky="ew", pady=(theme.E4, 0))
         fila += 1
 
     if not tag:
         bloque_aviso(marco, "Este dispositivo no dice qué versión lleva, así "
                             "que no sé qué código descargar para ponerlo al "
                             "día. Pasa el instalador por encima.",
-                     ancho=520).grid(row=fila, column=0, sticky="ew", pady=(14, 0))
+                     ancho=520).grid(row=fila, column=0, sticky="ew", pady=(theme.E4, 0))
         fila += 1
 
     # El Python con el que está abierta esta ventana no se puede cambiar con
@@ -306,12 +315,12 @@ def open_components_dialog(parent, pends) -> bool | str:
             if rc == update.CODIGO_RELEVO:
                 # El relevo está esperando a que este proceso salga: no se
                 # vuelve a la ventana, se cierra, y la reabre él.
-                tocado["ok"] = CERRAR
-                dlg.destroy()
+                panel.devolver(CERRAR)
+                panel.cerrar()
                 return
             # Se haya podido con todo o no, los sellos ya dicen la verdad: la
             # ventana relee y el aviso se apaga solo si ya no hay motivo.
-            tocado["ok"] = True
+            panel.devolver(True)
             if rc != 0:
                 messagebox.showerror(TITLE, (
                     f"No se ha podido con todo (código {rc}).\n\n"
@@ -320,18 +329,16 @@ def open_components_dialog(parent, pends) -> bool | str:
                 return
         finally:
             shutil.rmtree(staged, ignore_errors=True)
-        dlg.destroy()
+        panel.terminar("Componentes al día.")
 
-    botones = ttk.Frame(marco)
-    botones.grid(row=fila, column=0, sticky="ew", pady=(16, 0))
+    botones = pie(marco, fila)
     botones.columnconfigure(0, weight=1)
     instalar = ttk.Button(botones, text="Actualizar ahora", style="Primary.TButton",
-                          padding=(12, 7), command=actualizar)
-    theme.boton_icono(instalar, "down", theme.SUPERFICIE, theme.ACENTO)
+                          padding=(theme.E3, theme.E2), command=actualizar)
+    theme.boton_icono(instalar, "down", theme.SOBRE_ACENTO, theme.ACENTO)
     if not tag:
         instalar.configure(state="disabled")
-    instalar.grid(row=0, column=1, padx=(0, 6))
-    ttk.Button(botones, text="Cerrar", command=dlg.destroy).grid(row=0, column=2)
-
-    mostrar(dlg, parent)
-    return tocado["ok"]
+    instalar.grid(row=0, column=1)
+    if not panel.incrustado:
+        ttk.Button(botones, text="Cerrar", command=panel.cerrar).grid(
+            row=0, column=2, padx=(theme.E2, 0))
