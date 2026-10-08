@@ -255,6 +255,7 @@ class EditorPareja:
         self.editable = True
         self.explorable = False
         self.ayuda_modo = ""
+        self.ayudas: dict | None = None
         self.avanzado = {"flags": {}, "extra_flags": []}
         self.marco = ttk.Frame(parent, style=f"Plano.{sup}TFrame" if sup else "TFrame")
         self.marco.columnconfigure(0, weight=1)
@@ -419,17 +420,11 @@ class EditorPareja:
         """
         self.raw, self.actual, self.original = raw, dict(actual), original
         self.catalogo, self.editable, self.explorable = catalogo, editable, explorable
-        self.ayuda_modo = ayuda_modo
-        por_defecto = (raw.get("defaults") or {}).get("remote", model.DEFAULT_REMOTE)
-        ayuda = {"name": "Nombra también su carpeta en state/.",
-                 "local": "Relativa a la raíz del dispositivo.",
-                 "remote_path": "En el remoto, p. ej. /datos/notas.",
-                 "remote": f"Vacío = el de [defaults] ({por_defecto})."}
-        ayuda.update(ayudas or {})
+        self.ayuda_modo, self.ayudas = ayuda_modo, ayudas
         for clave, var in self.campos.items():
             var.set(str(actual.get(clave, "") or ""))
-            self.pistas[clave].configure(text=self._pista(clave, ayuda[clave]))
             self.entradas[clave].configure(state="normal" if editable else "readonly")
+        self._poner_pistas()
         self.examinar["local"].configure(state="normal" if editable else "disabled")
         self.poner_explorable(explorable)
         self.modo.set(actual.get("mode", model.DEFAULT_MODE))
@@ -452,13 +447,41 @@ class EditorPareja:
     def poner_explorable(self, explorable: bool) -> None:
         """Enciende o apaga «Examinar…» del remoto sin tocar lo escrito.
 
-        El remoto solo se recorre con conexión; el disco de aquí, siempre. Es lo
-        que cambia cuando llega el catálogo y el editor tiene cambios sin
-        guardar, que no se recarga.
+        El remoto solo se recorre con conexión; el disco de aquí, siempre.
         """
         self.explorable = explorable
         self.examinar["remote_path"].configure(
             state="normal" if self.editable and explorable else "disabled")
+
+    def poner_alrededor(self, raw: dict, catalogo: dict | None, explorable: bool) -> None:
+        """Pone al día lo que rodea a los campos sin tocar lo escrito en ellos.
+
+        Es lo que cambia cuando llega el catálogo y el editor tiene cambios sin
+        guardar sobre una pareja que sigue igual: el remoto por defecto, la
+        pareja del catálogo con la que se compara (las pistas de debajo de cada
+        campo y del modo) y si se puede recorrer el remoto.
+        """
+        self.raw, self.catalogo = raw, catalogo
+        self._poner_pistas()
+        self._poner_pista_modo()
+        self.poner_explorable(explorable)
+
+    def _poner_pistas(self) -> None:
+        """Pone debajo de cada campo para qué es y lo que dice el catálogo."""
+        por_defecto = (self.raw.get("defaults") or {}).get("remote", model.DEFAULT_REMOTE)
+        ayuda = {"name": "Nombra también su carpeta en state/.",
+                 "local": "Relativa a la raíz del dispositivo.",
+                 "remote_path": "En el remoto, p. ej. /datos/notas.",
+                 "remote": f"Vacío = el de [defaults] ({por_defecto})."}
+        ayuda.update(self.ayudas or {})
+        for clave in self.campos:
+            self.pistas[clave].configure(text=self._pista(clave, ayuda[clave]))
+
+    def _poner_pista_modo(self) -> None:
+        """Pone lo que se dice debajo del modo, si se dice algo."""
+        pista = self.ayuda_modo or self._pista("mode", "")
+        self.pista_modo.configure(text=pista)
+        self.pista_modo.grid() if pista else self.pista_modo.grid_remove()
 
     def _pista(self, clave: str, ayuda: str) -> str:
         """Lo que va debajo de un campo: para qué es y lo que dice el catálogo."""
@@ -523,9 +546,7 @@ class EditorPareja:
         if aviso is not None:
             self.espejo = theme.aviso(self.hueco_espejo, *aviso, tono="Ambar.", ancho=380)
             self.espejo.grid(row=0, column=0, sticky="ew", pady=(theme.E3, 0))
-        pista = self.ayuda_modo or self._pista("mode", "")
-        self.pista_modo.configure(text=pista)
-        self.pista_modo.grid() if pista else self.pista_modo.grid_remove()
+        self._poner_pista_modo()
         es_bisync = modo == "bisync"
         self.casilla_versiones.configure(
             state="normal" if es_bisync and self.editable else "disabled")
@@ -598,7 +619,7 @@ def open_dialog(parent, config) -> bool:
     dlg = modal(parent, "Parejas")
     raw = config_file.load_raw()
     estado = {"raw": raw, "config": config, "cat": catalog.cached(), "aviso": None,
-              "leyendo": False, "cambiado": False, "cargado": None}
+              "leyendo": False, "cambiado": False, "cargado": None, "base": None}
     sondeo = Sondeo(dlg)
     vista = tk.StringVar(dlg, value="dispositivo")
 
@@ -732,8 +753,8 @@ def open_dialog(parent, config) -> bool:
             return dict(del_cat or {}), None
         return dict(local), del_cat
 
-    def cargar_editor() -> None:
-        """Pone en el editor la pareja elegida, con lo que se puede hacer con ella."""
+    def que_cargar() -> dict:
+        """Lo que `editor.cargar()` pone para la pareja elegida, como argumentos."""
         fila = lista.fila()
         actual, comparar = entrada_de(fila.name if fila else None)
         lect = lectura()
@@ -747,11 +768,38 @@ def open_dialog(parent, config) -> bool:
         else:
             editable = fila is not None and fila.en_pen
             ayuda_modo, raw_de, ayudas = "", estado["raw"], None
-        editor.cargar(raw_de, actual, fila.name if fila else None, catalogo=comparar,
-                      editable=editable, explorable=lect.editable,
-                      ayuda_modo=ayuda_modo, ayudas=ayudas)
+        return {"raw": raw_de, "actual": actual, "original": fila.name if fila else None,
+                "catalogo": comparar, "editable": editable, "explorable": lect.editable,
+                "ayuda_modo": ayuda_modo, "ayudas": ayudas}
+
+    def cargar_editor() -> None:
+        """Pone en el editor la pareja elegida, con lo que se puede hacer con ella."""
+        estado["base"] = que_cargar()
+        editor.cargar(**estado["base"])
         estado["cargado"] = editor.datos()
         pintar_eleccion()
+
+    def conservar_lo_escrito() -> bool:
+        """Deja lo escrito en el editor si la pareja sobre la que se escribe sigue igual.
+
+        Lo escrito se guarda luego entero, campo a campo: si mientras tanto la
+        pareja ha cambiado (en el catálogo, otro dispositivo; aquí, el config),
+        conservarlo desharía ese cambio sin decirlo. Entonces el editor se
+        recarga y se devuelve `False`. Si sigue igual, solo se pone al día lo de
+        alrededor (con qué se compara, si se puede recorrer el remoto). Los
+        campos siguen editables aunque el catálogo no se pueda guardar ahora
+        (se está leyendo, o no hay conexión): lo escrito no se pierde y se
+        guarda cuando «Releer» lo vuelva a dejar; mientras, «Guardar en el
+        catálogo…» está apagado y la línea del catálogo dice por qué.
+        """
+        nueva, antes = que_cargar(), estado.get("base") or {}
+        if any(nueva[k] != antes.get(k) for k in ("original", "actual")):
+            cargar_editor()
+            return False
+        estado["base"] = nueva
+        editor.poner_alrededor(nueva["raw"], nueva["catalogo"], nueva["explorable"])
+        pintar_eleccion()
+        return True
 
     def pintar_eleccion() -> None:
         """Pone el rótulo y el chip de la pareja elegida y enciende lo que vale para ella.
@@ -874,11 +922,11 @@ def open_dialog(parent, config) -> bool:
                      (lista.orden[0] if lista.orden else None), avisar=False)
         # Y lo escrito en el editor, también: el catálogo llega mientras se
         # teclea, y recargar el editor lo borraba y daba lo borrado por guardado.
-        if escrito and lista.elegida == elegida:
-            editor.poner_explorable(lect.editable)
-            pintar_eleccion()
-        else:
+        if not (escrito and lista.elegida == elegida):
             cargar_editor()
+        elif not conservar_lo_escrito():
+            nota = (f"'{elegida}' ha cambiado mientras se editaba: se ha cargado "
+                    f"como está ahora y lo escrito se ha descartado.")
         if nota is not None:
             pie_nota.configure(text=nota)
         # Lo que llega del remoto puede traer una explicación más larga que la

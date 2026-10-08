@@ -466,6 +466,75 @@ c("  y cambiar de pareja no pregunta", (limpio["cambia"], limpio["preguntas"]), 
 descartado = al_llegar_el_catalogo(False, pasar_al_catalogo)
 c("pasar al catálogo diciendo que sí a descartar recarga el editor con la del catálogo",
   descartado["en_catalogo"]["remote_path"], "/R/notas-v2")
+c("escrito en este dispositivo: la pista del catálogo se pone al día sin recargar",
+  "/R/notas-v2" in escrito["pista"], True)
+
+
+def releer_escribiendo(otra: dict | None = None, rc: int = 0) -> dict:
+    """En la vista del catálogo, escribe en `notas` y pulsa «Releer».
+
+    Args:
+        otra: El catálogo que contesta el remoto la segunda vez; `None`, el mismo.
+        rc: El código de salida de la segunda lectura (distinto de 0: caído).
+
+    Returns:
+        El editor antes y después, si se deja editar, los textos a la vista, la
+        línea del catálogo y el estado de «Guardar en el catálogo…».
+    """
+    vista: dict = {}
+    with sandbox():
+        cfg = preparar()
+        dejar_copia(CAT_LOCAL)
+        remoto = RemotoLento(config_file.dumps(CAT_REMOTO))
+        catalog.run = remoto
+
+        def conducir(self, *_a, **_k):
+            """Llega el catálogo, se escribe en él y se relee con otro remoto."""
+            remoto.soltar.set()
+            dar_vueltas(lambda: not self.sondeo.esperando)
+            buscar(self, ttk.Radiobutton, "Catálogo").invoke()
+            self.lista.elegir("notas")
+            self.editor.textos["exclude"].insert("1.0", "*.tmp")
+            vista["antes"] = self.editor.datos()
+            remoto.texto = config_file.dumps(otra if otra is not None else CAT_REMOTO)
+            remoto.rc = rc
+            pulsar_boton(self, "Releer")
+            vista["llego"] = dar_vueltas(lambda: not self.sondeo.esperando)
+            vista["despues"] = self.editor.datos()
+            vista["editable"] = self.editor.editable
+            pantalla = foto(self)
+            vista["textos"], vista["linea"] = pantalla["textos"], pantalla["linea"]
+            vista["guardar"] = pantalla["botones"]["Guardar en el catálogo…"]
+
+        tk.Toplevel.wait_window = conducir
+        tk_pairs.open_dialog(raiz, cfg)
+        catalog.run = nadie
+    vista["errores"] = list(errores)
+    return vista
+
+
+def dice_que_cambio(vista: dict) -> bool:
+    """Si el pie dice que la pareja cambió mientras se editaba."""
+    return any("ha cambiado mientras se editaba" in t for t in vista["textos"])
+
+
+igual = releer_escribiendo()
+c("releer en el catálogo, la pareja igual: lo escrito sigue ahí",
+  (igual["llego"], igual["despues"], igual["editable"]), (True, igual["antes"], True))
+c("  y no se dice que haya cambiado", dice_que_cambio(igual), False)
+cambiada = releer_escribiendo(CAT_REMOTO_OTRA)
+c("releer en el catálogo, la pareja cambiada por otro: el editor trae la de ahora",
+  (cambiada["llego"], cambiada["despues"]["remote_path"], cambiada["despues"]["exclude"]),
+  (True, "/R/notas-v2", [""]))
+c("  y lo dice, en vez de guardar luego lo escrito encima de lo del otro",
+  dice_que_cambio(cambiada), True)
+caido = releer_escribiendo(rc=1)
+c("releer en el catálogo con el remoto caído: lo escrito no se pierde",
+  (caido["llego"], caido["despues"], dice_que_cambio(caido)), (True, caido["antes"], False))
+c("  pero no se puede guardar, y la línea dice por qué",
+  (caido["guardar"], "Sin conexión con el catálogo" in caido["linea"]), ("disabled", True))
+c("  nada ha reventado por el camino",
+  igual["errores"] + cambiada["errores"] + caido["errores"], [])
 
 # Remoto caído: la pantalla se queda con la copia y lo dice.
 with sandbox():
