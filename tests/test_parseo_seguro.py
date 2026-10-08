@@ -221,9 +221,43 @@ for local in ("/../x", "./../x", "sync-data\\..\\..\\x", f"/{model.LLAVERO_LOCAL
               f"./{app}", f"{model.LLAVERO_LOCAL}\\x", app.upper()):
     c.contains(f"local {local!r} tampoco", rechaza(una(local=local)), "[p]")
 for local in ("a..b", "..x", "x..", f"sync-data/{app}", f"sync-data/{model.LLAVERO_LOCAL}",
-              f"{model.LLAVERO_LOCAL}2", f"{app}-docs", "sync-data/d:x"):
+              f"{model.LLAVERO_LOCAL}2", f"{app}-docs", "sync-data/notas.v2", "a. b", ".a"):
     c(f"local {local!r} vale: ni es un '..' ni empieza por esa carpeta",
       rechaza(una(local=local)), "")
+
+# Windows recorta los puntos y los espacios del final de cada tramo y entiende
+# `nombre:flujo` como un flujo de datos de `nombre`: `.prdrive.`, `.prdrive ` y
+# `.prdrive::$INDEX_ALLOCATION` son la carpeta del programa, y `...` o `. .`
+# acaban en otra carpeta. Se rechazan en el texto, y `sync.py` mira además
+# dónde cae de verdad (`problema_contencion()`).
+for local in (f"{app}.", f"{app} ", f"{app.upper()} /x", f"{app}. .", f"{app}::$INDEX_ALLOCATION",
+              f"{model.LLAVERO_LOCAL}.", f"{model.LLAVERO_LOCAL} /x", f"./{model.LLAVERO_LOCAL}..",
+              f"{model.LLAVERO_LOCAL.upper()}. /x"):
+    c.contains(f"local {local!r} es la carpeta del programa o la del llavero con otro nombre",
+               rechaza(una(local=local)), "[p]")
+for local, parte in ((f"{app}.", "carpeta del programa"), (f"{app} /x", "carpeta del programa"),
+                     (f"{model.LLAVERO_LOCAL}.", "la del llavero")):
+    c.contains(f"  y {local!r} dice quién es", rechaza(una(local=local)), parte)
+for local in ("...", ".. ", ". .", "a/.. /b", "a/.../b", "a/ /b", "a\\...\\b", "x/. ."):
+    texto = rechaza(una(local=local))
+    c.contains(f"local {local!r}: un tramo de solo puntos y espacios no vale", texto,
+               "solo puntos y espacios")
+    c.contains("  y qué poner", texto, "Pon una carpeta de dentro")
+for local in ("docs:stream", "a/b:c", f"{app}::$INDEX_ALLOCATION", "sync-data/d:x", "x/C:/y",
+              "docs:$DATA"):
+    texto = rechaza(una(local=local))
+    c.contains(f"local {local!r}: un ':' en un tramo no vale", texto, "lleva ':'")
+    c.contains("  y qué hacer", texto, "Quita el ':'")
+c("  la letra de unidad del principio sigue con su motivo",
+  "sale del dispositivo" in rechaza(una(local="d:x")), True)
+for local in ("sync-data/notas.v2", "a..b", f"{model.LLAVERO_LOCAL}2", "x/. y/z", "Mis fotos.2024"):
+    c(f"local {local!r} sigue valiendo", rechaza(una(local=local)), "")
+c("en una raíz de equipo, un tramo con puntos o espacios de más también cuenta",
+  all(rechaza(una(local=local), equipo=True) != ""
+      for local in (f"{app}.", "docs/...", "docs:stream")), True)
+c("  y lo de siempre sigue valiendo", rechaza(una(local="Documentos/Obsidian"), equipo=True), "")
+c("  con las palabras de problema_local_equipo si es la raíz",
+  rechaza(una(local=".. "), equipo=True) != "", True)
 
 # cada motivo, con la clave y qué hacer
 fuera = rechaza(una(local="../../fuera"))
@@ -263,6 +297,11 @@ c.contains("  con otra, es esa la que no vale",
            "es la carpeta del programa, con su clave")
 c("  y sin distinguir mayúsculas",
   model.problema_local(".PRDRIVE", carpeta_programa=".prdrive") is not None, True)
+c("  recortados como Windows: '.prdrive.' y '.PRDRIVE /x' tampoco",
+  (model.problema_local(".prdrive.", carpeta_programa=".prdrive") is not None,
+   model.problema_local(".PRDRIVE /x", carpeta_programa=".prdrive") is not None,
+   model.problema_local(".prdrive::$INDEX_ALLOCATION", carpeta_programa=".prdrive") is not None,
+   model.problema_local(".prdrive2", carpeta_programa=".prdrive")), (True, True, True, None))
 c("  y la del programa que corre deja de contar",
   model.problema_local(app, carpeta_programa=".prdrive"), None)
 c.contains("  comprobar_seguridad() se la pasa",

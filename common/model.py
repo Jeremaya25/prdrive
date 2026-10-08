@@ -1239,6 +1239,11 @@ def problema_nombre(name: Any) -> str | None:
     return None
 
 
+def _tramos_de(texto: str) -> list[str]:
+    """Parte un `local` en tramos: `\\` cuenta como `/` y no hay tramos vacíos ni `.`."""
+    return [t for t in texto.replace("\\", "/").split("/") if t not in ("", ".")]
+
+
 def problema_local_equipo(local: str) -> str | None:
     """Dice por qué un `local` no vale en una raíz del equipo.
 
@@ -1252,7 +1257,7 @@ def problema_local_equipo(local: str) -> str | None:
         El motivo, o `None` si el `local` vale.
     """
     texto = str(local)
-    tramos = [t for t in texto.replace("\\", "/").split("/") if t not in ("", ".")]
+    tramos = _tramos_de(texto)
     if not tramos:
         return (f"local = \"{texto}\" es la raíz entera, y en una raíz del equipo "
                 f"eso no se puede sincronizar: arrastraría la carpeta del programa "
@@ -1276,6 +1281,13 @@ def problema_local(local: Any, equipo: bool = False, *,
     tal cual (`\\` cuenta como `/`): una barra al principio se tolera porque
     `normalizar_local()` la quita y hay dispositivos en uso que la llevan.
 
+    También se rechaza lo que Windows normaliza hacia otra carpeta al resolver
+    la ruta: un tramo de solo puntos y espacios (`...`, `. .`), un `:` en
+    cualquier tramo (`nombre:flujo`, `.prdrive::$INDEX_ALLOCATION`), y se compara
+    sin los puntos y espacios del final del primer tramo (`.prdrive.` es
+    `.prdrive`). Lo que ningún texto delata (nombres cortos 8.3, uniones,
+    enlaces) lo para `problema_contencion()` al ejecutar.
+
     Args:
         local: El valor de `local` tal como está en el TOML.
         equipo: Si la raíz es de equipo; entonces se aplica antes
@@ -1294,12 +1306,23 @@ def problema_local(local: Any, equipo: bool = False, *,
         motivo = problema_local_equipo(texto)
         if motivo:
             return motivo
-    tramos = [t for t in texto.replace("\\", "/").split("/") if t not in ("", ".")]
+    tramos = _tramos_de(texto)
     if ".." in tramos or (tramos and re.match(r"[A-Za-z]:", tramos[0])):
         return (f"local = \"{texto}\" sale del dispositivo (lleva un '..' o una letra "
                 f"de unidad): la pareja sincronizaría carpetas del ordenador. Pon una "
                 f"carpeta de dentro del dispositivo, con la ruta relativa a su raíz.")
-    primero = tramos[0].lower() if tramos else ""
+    for tramo in tramos:
+        if not tramo.strip(". "):
+            return (f"local = \"{texto}\" lleva un tramo de solo puntos y espacios "
+                    f"({tramo!r}): Windows lo recorta y la pareja acabaría en otra carpeta "
+                    f"del ordenador. Pon una carpeta de dentro del dispositivo, con nombre.")
+        if ":" in tramo:
+            return (f"local = \"{texto}\" lleva ':' en un tramo ({tramo!r}): en Windows "
+                    f"es un flujo de datos (nombre:flujo) de otra carpeta, que puede ser "
+                    f"la del programa. Quita el ':' del nombre.")
+    # Windows recorta los puntos y los espacios del final de cada tramo: `.prdrive.`
+    # y `.prdrive ` son `.prdrive`.
+    primero = tramos[0].rstrip(". ").lower() if tramos else ""
     if primero == (carpeta_programa or APP_DIR.name).lower():
         return (f"local = \"{texto}\" cae en «{tramos[0]}»: es la carpeta del "
                 f"programa, con su clave. Pon otra carpeta de dentro del dispositivo.")
