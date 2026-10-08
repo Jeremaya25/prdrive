@@ -22,7 +22,10 @@
 # rclone.conf, así que vale cualquier backend de rclone.
 #
 # La clave privada NO va aquí y nunca sube al remoto: viaja dentro de cada
-# dispositivo, en `.prdrive/keys/`.
+# dispositivo, en `.prdrive/keys/`. Tampoco van las contraseñas ni los tokens, ni
+# las opciones que ejecutan una orden (`ssh`, `bearer_token_command`): el
+# catálogo no las hereda, y si las lleva se ignoran. Cada dispositivo usa las de
+# la conexión con la que se instaló.
 
 [remote]
 name = "nas"                  # el nombre del remote; el que usan los remote_path

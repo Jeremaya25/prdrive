@@ -455,34 +455,47 @@ c("lo tecleado aquí sí admite ssh", propio.options.get("ssh"), "ssh -J x")
 c.contains("y llega al conf del dispositivo", profile.render_conf(propio),
            "ssh = ssh -J x")
 
-# Al heredar el `[remote]` del catálogo, lo secreto y las órdenes de la conexión
-# con la que se acaba de entrar no se pierden: el catálogo ya no las guarda.
+# Si la conexión con la que se acaba de entrar lleva algo propio que es secreto o
+# una orden, el dispositivo se queda con ella tal cual: sus contraseñas no se
+# entregan a una conexión que el catálogo describa distinta y nadie ha comprobado.
 con_clave = profile.from_form(
     "nas", {"type": "sftp", "host": "h", "user": "u", "pass": "oculta"})
 ajustado, notas = profile.align_with_catalog(con_clave, {
     "defaults": {"remote": "nas"},
     "remote": {"type": "sftp", "host": "h2", "user": "u2"}})
-c("el [remote] del catálogo no se lleva el pass de la conexión",
-  dict(ajustado.options),
-  {"type": "sftp", "host": "h2", "user": "u2", "pass": "oculta"})
-c.contains("y se dice que las opciones salen del catálogo", " ".join(notas),
-           "salen del [remote] del catálogo")
+c("un [remote] de otra conexión no recibe el pass del perfil",
+  dict(ajustado.options), dict(con_clave.options))
+otra = [n for n in notas if "describe otra conexión" in n]
+c("y se dice, una vez", len(otra), 1)
+c.contains("con su porqué", otra[0] if otra else "",
+           "no se dan a una conexión que no se ha comprobado")
+c("sin decir que las opciones salen del catálogo",
+  [n for n in notas if "salen del [remote]" in n], [])
 ajustado, notas = profile.align_with_catalog(con_clave, {
     "defaults": {"remote": "nas"},
     "remote": {"type": "sftp", "host": "h", "user": "u", "pass": "otra"}})
-c("el pass del catálogo no pisa al de la conexión",
-  ajustado.options["pass"], "oculta")
-c("y si queda igual que la conexión no se dice que cambie nada",
-  [n for n in notas if "salen del [remote]" in n], [])
+c("el pass del catálogo no pisa al del perfil", ajustado.options["pass"], "oculta")
+c("si lo no secreto coincide, el perfil se queda como está",
+  dict(ajustado.options), dict(con_clave.options))
+c("y no se dice que sea otra conexión ni que cambie nada",
+  [n for n in notas if "otra conexión" in n or "salen del [remote]" in n], [])
 con_ssh = profile.from_form(
     "nas", {"type": "sftp", "host": "h", "ssh": "ssh -J x"})
-ajustado, _ = profile.align_with_catalog(con_ssh, {
+ajustado, notas = profile.align_with_catalog(con_ssh, {
     "defaults": {"remote": "nas"}, "remote": {"type": "sftp", "host": "h2"}})
-c("el ssh que se tecleó aquí tampoco se pierde", ajustado.options.get("ssh"),
-  "ssh -J x")
-c("with_catalog_remote también lo conserva",
-  profile.with_catalog_remote(con_clave, {"type": "sftp", "host": "h2"}).options,
-  {"type": "sftp", "host": "h2", "pass": "oculta"})
+c("el ssh que se tecleó aquí tampoco se entrega a otro host",
+  dict(ajustado.options), dict(con_ssh.options))
+c("y también se dice", any("describe otra conexión" in n for n in notas), True)
+c("with_catalog_remote deja igual un perfil con secretos",
+  profile.with_catalog_remote(con_clave, {"type": "sftp", "host": "h2"}), con_clave)
+# Sin nada propio que sea secreto ni orden, se adopta el [remote] ya filtrado.
+ajustado, notas = profile.align_with_catalog(base_nas, {
+    "defaults": {"remote": "nas"},
+    "remote": {"type": "sftp", "host": "h2", "user": "u2", "ssh": "sh -c id"}})
+c("sin nada propio secreto se adopta el [remote] filtrado", dict(ajustado.options),
+  {"type": "sftp", "host": "h2", "user": "u2"})
+c.contains("y se dice que las opciones salen del catálogo", " ".join(notas),
+           "salen del [remote] del catálogo")
 
 # Un `[remote]` al que, sin lo que no se hereda, le falta algo que rclone exige
 # no se usa: el dispositivo se quedaría con un sftp que marca `:22`, este equipo.
@@ -493,13 +506,27 @@ c("un [remote] que sin ssh no tiene host no se usa", dict(ajustado.options),
   dict(base_nas.options))
 rechazo = [n for n in notas if "No se usa el [remote] del catálogo" in n]
 c("y se dice una vez", len(rechazo), 1)
-c.contains("por qué: lo que no se hereda", rechazo[0] if rechazo else "", "`ssh`")
+c.contains("por qué: lo que no se hereda", rechazo[0] if rechazo else "", "sin `ssh`")
 c.contains("y qué le falta", rechazo[0] if rechazo else "", "«host = …»")
 c("with_catalog_remote tampoco lo usa",
   dict(profile.with_catalog_remote(base_nas, sin_host["remote"]).options),
   dict(base_nas.options))
 ajustado, notas = profile.align_with_catalog(con_ssh, sin_host)
-c("pero con el ssh tecleado aquí sí vale", ajustado.options.get("ssh"), "ssh -J x")
+c("con el ssh tecleado aquí el perfil se queda como está",
+  dict(ajustado.options), dict(con_ssh.options))
+# La nota no puede decir que se quitó algo cuando no se quitó, ni cuando lo
+# quitado no es lo que hacía falta.
+for incompleto, cual in (({"type": "sftp", "user": "u"}, "sin nada quitado"),
+                         ({"type": "sftp", "pass": "x"}, "quitando solo un secreto")):
+    ajustado, notas = profile.align_with_catalog(
+        base_nas, {"defaults": {"remote": "nas"}, "remote": incompleto})
+    rechazo = [n for n in notas if "No se usa el [remote] del catálogo" in n]
+    c(f"un [remote] sin host no se usa ({cual})",
+      (dict(ajustado.options), len(rechazo)), (dict(base_nas.options), 1))
+    c.contains(f"y dice qué le falta ({cual})", rechazo[0] if rechazo else "",
+               "le falta «host = …»")
+    c(f"sin atribuirlo a lo no heredado ({cual})",
+      "sin `" in (rechazo[0] if rechazo else ""), False)
 
 # Lo que se enseña para guardar en el catálogo no lleva nada secreto.
 con_secretos = profile.Profile(

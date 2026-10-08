@@ -553,22 +553,24 @@ def _opciones_del_catalogo(
     El catálogo lo escribe cualquiera con acceso al remoto y lo leen todos los
     dispositivos, así que de él no se hereda lo que ejecuta algo en este equipo
     (`OPCIONES_QUE_EJECUTAN`) ni lo secreto (`es_secreta`): ni lo trae el
-    catálogo ni lo guarda `to_catalog_remote()`. Eso, en cambio, no se pierde
-    de la conexión con la que se acaba de entrar: `propias` conserva sus
-    opciones de esas dos clases por encima de las del catálogo, que si no
-    dejaría sin contraseña a todo dispositivo cuyo backend la necesita.
+    catálogo ni lo guarda `to_catalog_remote()`. Y como el catálogo ya no
+    guarda las contraseñas, un perfil que lleva alguna (o una orden) se queda
+    como está: es la conexión que el asistente acaba de comprobar, y sus
+    secretos no se mezclan con el destino que describa el catálogo, que nadie
+    ha comprobado.
 
     Args:
         propias: Las opciones del perfil con el que se entró.
         tabla: El `[remote]` del catálogo.
 
     Returns:
-        Las opciones que valen, o `None` si el `[remote]` no sirve: no trae
-        `type`, o sin lo que no se hereda le falta algo que rclone exige
-        (`faltan()`) y por eso se deja la conexión como está. Y las notas de lo
+        Las opciones que valen, o `None` si no hay nada que adoptar: el
+        `[remote]` no trae `type`; el perfil lleva algo secreto o una orden; o
+        sin lo que no se hereda le falta algo que rclone exige (`faltan()`).
+        En todos esos casos la conexión se deja como está. Y las notas de lo
         que no se ha heredado o de por qué no se usa.
     """
-    ejecutan: list[str] = []
+    ejecutan: dict[str, str] = {}
     secretas: list[str] = []
     heredadas: dict[str, str] = {}
     for clave, valor in tabla.items():
@@ -576,7 +578,7 @@ def _opciones_del_catalogo(
         if clave == "name" or clave in RUTAS_DERIVADAS:
             continue
         if clave in OPCIONES_QUE_EJECUTAN:
-            ejecutan.append(clave)
+            ejecutan[clave] = str(valor)
         elif es_secreta(clave):
             secretas.append(clave)
         else:
@@ -601,20 +603,33 @@ def _opciones_del_catalogo(
             + ("Se puede quitar" if uno else "Se pueden quitar")
             + " de su [remote].")
 
-    opciones = {**heredadas,
-                **{k: str(v) for k, v in propias.items()
-                   if k in OPCIONES_QUE_EJECUTAN or es_secreta(k)}}
-    falta = faltan(opciones)
+    propias_sensibles = {k for k in propias
+                         if k in OPCIONES_QUE_EJECUTAN or es_secreta(k)}
+    if propias_sensibles:
+        del_perfil = {k: str(v) for k, v in propias.items()
+                      if k not in propias_sensibles}
+        if heredadas != del_perfil:
+            notas.append(
+                "El [remote] del catálogo describe otra conexión: este "
+                "dispositivo se queda con la que se acaba de comprobar, porque "
+                "sus contraseñas, claves y órdenes no se dan a una conexión que "
+                "no se ha comprobado.")
+        return None, notas
+
+    falta = faltan(heredadas)
     if falta:
-        quitadas = ejecutan + secretas
-        sin = (f"sin {_enumerar(quitadas)}, "
-               + ("que no se hereda" if len(quitadas) == 1 else "que no se heredan")
-               + ", " if quitadas else "")
+        # Solo se atribuye a lo quitado si con ello el [remote] sí valdría.
+        sin = ""
+        if ejecutan and not faltan({**heredadas, **ejecutan}):
+            sin = (f"sin {_enumerar(ejecutan)}, "
+                   + ("que no se hereda" if len(ejecutan) == 1
+                      else "que no se heredan")
+                   + ", ")
         notas.append(
             "No se usa el [remote] del catálogo: " + sin + "le falta "
             + " y ".join(f"«{clave} = …»" for clave, _ in falta) + ".")
         return None, notas
-    return opciones, notas
+    return heredadas, notas
 
 
 def with_catalog_remote(profile: Profile, tabla: Mapping[str, object]) -> Profile:
@@ -623,9 +638,9 @@ def with_catalog_remote(profile: Profile, tabla: Mapping[str, object]) -> Profil
     Es lo que hace que la conexión se teclee UNA vez: el primer dispositivo la
     escribe en el catálogo y todos los demás la heredan. Solo toca las opciones
     del backend (la clave nunca viaja por ahí) y respeta el nombre de remote de
-    la tabla, porque es el que usarán los `remote_path` de las parejas. Hereda
-    lo mismo que `align_with_catalog()` (ver `_opciones_del_catalogo()`), pero
-    sin notas.
+    la tabla, porque es el que usarán los `remote_path` de las parejas. Adopta
+    lo mismo que `align_with_catalog()` (ver `_opciones_del_catalogo()`: un
+    perfil con secretos u órdenes propios se queda como está), pero sin notas.
     """
     if not tabla:
         return profile
@@ -649,9 +664,12 @@ def align_with_catalog(perfil: Profile,
     con un «unknown remote» que no se parece a la causa. Las opciones del
     backend sí son del usuario, salvo que el catálogo traiga un `[remote]`
     completo (el que dejó el primer dispositivo), que entonces es la definición
-    buena, menos lo que ejecuta algo o es secreto, que no se hereda y se
-    conserva de la conexión del usuario (`_opciones_del_catalogo()`). La clave
-    privada NUNCA sale de aquí ni entra por aquí: viaja con el dispositivo.
+    buena, menos lo que ejecuta algo o es secreto, que no se hereda. Y si la
+    conexión del usuario lleva algo secreto o una orden de las suyas, se queda
+    tal cual, sin tocar: es la que se acaba de comprobar, y sus contraseñas no
+    se mezclan con el destino de un `[remote]` que nadie ha comprobado
+    (`_opciones_del_catalogo()`). La clave privada NUNCA sale de aquí ni entra
+    por aquí: viaja con el dispositivo.
 
     Returns:
         El perfil ajustado y las notas de lo que se ha cambiado o dejado de
@@ -699,8 +717,8 @@ def to_catalog_remote(profile: Profile) -> dict[str, str]:
     """Devuelve el `[remote]` que se guarda en el catálogo, sin nada secreto dentro.
 
     Quedan fuera las rutas de la clave, lo que `es_secreta()` marca y las
-    `OPCIONES_QUE_EJECUTAN`: cada dispositivo conserva eso de su propia
-    conexión (`align_with_catalog()`).
+    `OPCIONES_QUE_EJECUTAN`: cada dispositivo lleva las suyas, las de la
+    conexión con la que se instaló (`align_with_catalog()`).
     """
     tabla = {"name": profile.remote_name}
     tabla.update({k: v for k, v in profile.options.items()
