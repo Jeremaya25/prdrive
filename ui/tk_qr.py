@@ -19,7 +19,9 @@ En Windows la ventana se excluye además de las capturas de pantalla y de
 compartir pantalla (`tk.proteger_de_capturas`), y lo dice con una línea bajo el
 aviso según lo que haya conseguido; si no ha conseguido nada, también lo dice.
 Es un descuido lo que evita, no un atacante: una foto con otro móvil no la
-para, y por eso el recuadro ámbar sigue siendo la barrera principal.
+para, y por eso el recuadro ámbar sigue siendo la barrera principal. Dentro de
+«Ajustes» se protege la ventana entera mientras el código está a la vista, y se
+le quita la protección al pasar a otro apartado.
 """
 
 from __future__ import annotations
@@ -29,11 +31,11 @@ from common.model import ConfigError
 
 from . import icons, qr, theme
 from . import tk as uitk
-from .tk import (CAPTURA_EN_NEGRO, CAPTURA_EXCLUIDA, cabecera, cuerpo_visible,
-                 bloque_aviso, modal, mostrar, proteger_de_capturas)
+from .tk import (CAPTURA_EN_NEGRO, CAPTURA_EXCLUIDA, Panel, bloque_aviso, cabecera,
+                 dialogo, mostrar, pie, proteger_de_capturas, soltar_capturas)
 
-AVISO = ("El código lleva dentro la clave privada de la conexión. Cualquiera "
-         "que le haga una foto a esta pantalla tendrá el mismo acceso al "
+AVISO = ("Ojo: el código lleva la clave privada\n"
+         "Quien le haga una foto a esta pantalla tendrá el mismo acceso al "
          "remoto que este dispositivo. Enséñalo solo al móvil que vayas a "
          "emparejar y ciérralo al terminar.")
 """Lo que se dice en el recuadro ámbar sobre la clave privada."""
@@ -133,11 +135,15 @@ def open_dialog(parent, raw_local: dict | None = None) -> None:
             leído para no volver a tocar el disco, y `pairing.construir()` lo
             lee él mismo si no se da.
     """
+    dialogo(parent, "Emparejar un móvil", lambda p: construir(p, raw_local),
+            ensenar=mostrar)
+
+
+def construir(panel: Panel, raw_local: dict | None = None) -> None:
+    """Dibuja «Emparejar un móvil» en `panel` (su diálogo o «Ajustes»)."""
     from tkinter import ttk
 
-    dlg = modal(parent, "Emparejar un móvil")
-    marco = cuerpo_visible(dlg, padding=(22, 20, 22, 18))
-    marco.columnconfigure(0, weight=1)
+    dlg, marco = panel.ventana, panel.marco
 
     cabecera(marco, "Emparejar un móvil",
              "Este código lleva la conexión con el remoto: el backend, sus "
@@ -145,14 +151,14 @@ def open_dialog(parent, raw_local: dict | None = None) -> None:
              ancho=560, estilo="Dialogo.TLabel").grid(row=0, column=0, sticky="w")
 
     bloque_aviso(marco, AVISO, ancho=560).grid(row=1, column=0, sticky="ew",
-                                               pady=(14, 0))
+                                               pady=(theme.E4, 0))
 
     # La tarjeta blanca donde cae el código. El QR se compone contra blanco
     # puro (lo dice `icons.matriz`), así que el papel cálido de la ventana no
     # puede llegar hasta el borde del dibujo: la zona de silencio tiene que ser
     # blanca o el lector se come una fila de módulos.
-    tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(16, 16, 16, 16))
-    tarjeta.grid(row=3, column=0, pady=(16, 0))
+    tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(theme.E4, theme.E4, theme.E4, theme.E4))
+    tarjeta.grid(row=3, column=0, pady=(theme.E4, 0))
 
     en_pantalla = False
     try:
@@ -186,30 +192,32 @@ def open_dialog(parent, raw_local: dict | None = None) -> None:
 
     ttk.Label(marco, text=PISTA, style="Pista.TLabel", justify="left",
               wraplength=theme.medida(560)).grid(row=4, column=0, sticky="w",
-                                                 pady=(14, 0))
+                                                 pady=(theme.E4, 0))
 
     if codigo is not None:
         ttk.Label(marco, style="MonoPista.TLabel",
                   text=f"versión {codigo.version} · corrección {codigo.nivel} "
                        f"· {codigo.tamano}×{codigo.tamano} módulos").grid(
-            row=5, column=0, sticky="w", pady=(6, 0))
+            row=5, column=0, sticky="w", pady=(theme.E2, 0))
 
-    ttk.Separator(marco, orient="horizontal").grid(row=6, column=0, sticky="ew",
-                                                   pady=(16, 0))
-    pie = ttk.Frame(marco)
-    pie.grid(row=7, column=0, sticky="e", pady=(14, 0))
-    ttk.Button(pie, text="Cerrar", style="Primary.TButton",
-               command=dlg.destroy).grid(row=0, column=0)
+    botones = pie(marco, 6)
+    botones.columnconfigure(0, weight=1)
+    ttk.Button(botones, text="Cerrar", style="Primary.TButton",
+               command=panel.cerrar).grid(row=0, column=1)
 
     # Solo con un código a la vista hay algo que proteger (y una línea que
     # decir). Va justo antes de `mostrar()` y con la ventana aún retirada: ni un
-    # fotograma sin proteger. La línea se pone después porque depende de lo que
-    # Windows haya aceptado; ocupa la fila 2, que sin ella queda vacía.
+    # fotograma sin proteger. En «Ajustes» la ventana ya está a la vista, pero
+    # el código no se pinta hasta que Tk descansa, y eso es después de esto; al
+    # irse del apartado se le quita, que los demás sí pueden salir en una
+    # captura. La línea se pone después porque depende de lo que Windows haya
+    # aceptado; ocupa la fila 2, que sin ella queda vacía.
     if en_pantalla:
+        if panel.incrustado:
+            marco.bind("<Destroy>", lambda e: soltar_capturas(dlg)
+                       if e.widget is marco else None, add="+")
         linea = linea_de_captura(proteger_de_capturas(dlg))
         if linea is not None:
             ttk.Label(marco, text=linea, style="Pista.TLabel", justify="left",
                       wraplength=theme.medida(560)).grid(row=2, column=0,
-                                                         sticky="w", pady=(8, 0))
-
-    mostrar(dlg, parent)
+                                                         sticky="w", pady=(theme.E2, 0))

@@ -74,5 +74,5 @@ Tres cosas que conviene saber:
   empieza a sincronizarse como contenido normal. La ventana lo avisa antes de
   guardar.
 - **Nadie la limpia sola.** Lo que ocupa cada lado, abrir la carpeta y purgar lo
-  anterior a una fecha están en **«Ajustes…» → «Versiones…»**, con la misma
+  anterior a una fecha están en **«Ajustes…» → «Versiones»**, con la misma
   confirmación que los demás borrados.

@@ -108,7 +108,9 @@ agente»**. El diseño completo está en
   «Sincronizar ahora» (`python agente.py pasada <id>`) se salta todo eso. Nunca
   hace un `--resync` por su cuenta.
 - **Avisa con los avisos del sistema**, sin ventanas propias, y solo cuando una
-  pareja **empieza** a fallar o un remoto se queda sin conexión. En Linux por
+  pareja **empieza** a fallar, **empieza** a pedir un `--resync` (no se
+  sincroniza sola hasta que lo apruebes en «Reparación»; también sale arriba en
+  el menú del icono) o un remoto se queda sin conexión. En Linux por
   D-Bus (un cliente propio, sin dependencias: `common/dbus.py`); en Windows con
   el globo del área de notificación. Sin avisos, queda en su diario,
   `agente.log`.

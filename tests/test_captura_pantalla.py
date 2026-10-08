@@ -357,7 +357,7 @@ try:
     c("excluida: la ventana dice que no aparece", dicho.count(linea), 1)
     c("  y no dice la otra frase",
       tk_qr.LINEA_CAPTURA[uitk.CAPTURA_EN_NEGRO] in dicho, False)
-    aviso = buscar(dlg, "Ambar.TFrame")
+    aviso = buscar(dlg, "NotaAmbar.TFrame")
     etiquetas = [w for w in buscar(dlg, "Pista.TLabel")
                  if str(w.cget("text")) == linea]
     c("  hay una sola etiqueta con la línea", len(etiquetas), 1)
@@ -389,7 +389,7 @@ try:
       any("captura" in t.lower() or "compartir" in t.lower()
           for t in textos(dlg)), False)
     c("  pero el aviso ámbar sigue diciendo que una foto basta",
-      tk_qr.AVISO in textos(dlg), True)
+      tk_qr.AVISO.partition("\n")[2] in textos(dlg), True)
     dlg.destroy()
 
     uitk.IS_WIN = True
@@ -410,12 +410,12 @@ try:
     c("  la línea va justo debajo del aviso ámbar y encima de la tarjeta",
       (len(etiquetas),
        int(etiquetas[0].grid_info()["row"]) - 1
-       == int(buscar(dlg, "Ambar.TFrame")[0].grid_info()["row"]),
+       == int(buscar(dlg, "NotaAmbar.TFrame")[0].grid_info()["row"]),
        int(etiquetas[0].grid_info()["row"])
        < int(buscar(dlg, "Card.TFrame")[0].grid_info()["row"])),
       (1, True, True))
     c("  y el aviso ámbar sigue diciendo que una foto basta",
-      tk_qr.AVISO in dicho, True)
+      tk_qr.AVISO.partition("\n")[2] in dicho, True)
     dlg.destroy()
 
     uitk.IS_WIN = True

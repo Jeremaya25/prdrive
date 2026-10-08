@@ -80,10 +80,10 @@ def seccion(padre, ventana, config: Config,
               style="Rotulo.TLabel").grid(row=0, column=0, sticky="w")
     ttk.Label(marco, text=EXPLICACION, style="Pista.TLabel", justify="left",
               wraplength=theme.medida(600)).grid(row=1, column=0, sticky="w",
-                                                 pady=(4, 0))
+                                                 pady=(theme.E1, 0))
 
-    tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(8, 8, 2, 4))
-    tarjeta.grid(row=2, column=0, sticky="nsew", pady=(10, 0))
+    tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(theme.E2, theme.E2, theme.E1, theme.E1))
+    tarjeta.grid(row=2, column=0, sticky="nsew", pady=(theme.E3, 0))
     tarjeta.columnconfigure(0, weight=1)
     tarjeta.rowconfigure(0, weight=1)
     marco.rowconfigure(2, weight=1)
@@ -169,7 +169,7 @@ def seccion(padre, ventana, config: Config,
             vacio.grid_remove()
             tree.selection_set("c0")
         else:
-            vacio.grid(row=4, column=0, sticky="w", pady=(10, 0))
+            vacio.grid(row=4, column=0, sticky="w", pady=(theme.E3, 0))
         pie_nota.configure(text=nota)
         repasar_botones()
 
@@ -251,19 +251,19 @@ def seccion(padre, ventana, config: Config,
     tree.bind("<<TreeviewSelect>>", repasar_botones)
 
     acciones = ttk.Frame(marco)
-    acciones.grid(row=3, column=0, sticky="ew", pady=(10, 0))
+    acciones.grid(row=3, column=0, sticky="ew", pady=(theme.E3, 0))
     acciones.columnconfigure(3, weight=1)
     conservar_aqui = ttk.Button(acciones, text="Quedarme con la de este dispositivo",
                                 command=lambda: por_lado(conflicts.DISPOSITIVO))
     theme.boton_icono(conservar_aqui, "dispositivo", theme.TINTA2, theme.SUPERFICIE)
-    conservar_aqui.grid(row=0, column=0, padx=(0, 6))
+    conservar_aqui.grid(row=0, column=0, padx=(0, theme.E2))
     conservar_remoto = ttk.Button(acciones, text="Quedarme con la del remoto",
                                   command=lambda: por_lado(conflicts.REMOTO))
     theme.boton_icono(conservar_remoto, "nas", theme.TINTA2, theme.SUPERFICIE)
-    conservar_remoto.grid(row=0, column=1, padx=(0, 6))
+    conservar_remoto.grid(row=0, column=1, padx=(0, theme.E2))
     conservar_esta = ttk.Button(acciones, text="Quedarme con la elegida",
                                 command=la_elegida)
-    conservar_esta.grid(row=0, column=2, padx=(0, 6))
+    conservar_esta.grid(row=0, column=2, padx=(0, theme.E2))
 
     abrir_carpeta = ttk.Button(acciones, text="Abrir la carpeta", style="Quiet.TButton",
                                command=lambda: abrir_todo(lambda x: [x.original.parent]))
@@ -272,22 +272,22 @@ def seccion(padre, ventana, config: Config,
     abrir_versiones = ttk.Button(
         acciones, text="Abrir las versiones", style="Quiet.TButton",
         command=lambda: abrir_todo(lambda x: [v.ruta for v in x.versiones]))
-    abrir_versiones.grid(row=0, column=5, sticky="e", padx=(4, 0))
+    abrir_versiones.grid(row=0, column=5, sticky="e", padx=(theme.E1, 0))
 
     combinar = None
     if config.pareja_llavero is not None:
         del_llavero = ttk.Frame(acciones)
-        del_llavero.grid(row=1, column=0, columnspan=6, sticky="w", pady=(8, 0))
+        del_llavero.grid(row=1, column=0, columnspan=6, sticky="w", pady=(theme.E2, 0))
         combinar = ttk.Button(del_llavero, text="Combinar", command=combinar_llavero)
         theme.boton_icono(combinar, "llave", theme.TINTA2, theme.SUPERFICIE)
         combinar.grid(row=0, column=0, sticky="w")
         ttk.Label(del_llavero, text=PISTA_COMBINAR, style="Pista.TLabel", justify="left",
                   wraplength=theme.medida(440)).grid(row=0, column=1, sticky="w",
-                                                    padx=(10, 0))
+                                                    padx=(theme.E3, 0))
 
     pie_nota = ttk.Label(marco, text="", style="MonoPista.TLabel",
                          wraplength=theme.medida(600), justify="left")
-    pie_nota.grid(row=5, column=0, sticky="w", pady=(8, 0))
+    pie_nota.grid(row=5, column=0, sticky="w", pady=(theme.E2, 0))
 
     refrescar()
     return marco

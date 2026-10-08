@@ -40,7 +40,10 @@ el mismo diagnóstico, escrito en vez de dibujado.
 
 El engranaje de **«Ajustes…»** es la otra puerta a esa pantalla, y donde vive lo
 que se hace de tarde en tarde: el emparejamiento de un móvil, las versiones
-guardadas y el nombre e icono de la unidad.
+guardadas, el nombre e icono de la unidad… Es una sola ventana: a la izquierda
+los apartados, agrupados, y a la derecha el elegido. Arriba, **«Buscar un
+ajuste»** deja en la barra solo los que tienen que ver con lo que escribes
+(«intervalo» encuentra «Configuración»).
 
 Los logs de rclone **solo se guardan si la pasada falla** (o con `--keep-logs`),
 para no gastar ciclos de escritura de la unidad. Quedan en `.prdrive/logs/`. Al
@@ -61,7 +64,7 @@ Casos habituales:
 
 ## Emparejar un móvil
 
-**«Ajustes…» → «Emparejar un móvil…»** enseña la conexión con el remoto como un
+**«Ajustes…» → «Emparejar un móvil»** enseña la conexión con el remoto como un
 código QR: el backend, sus opciones, dónde está el catálogo y la clave privada.
 Es la forma de llevar la conexión a un aparato que no se puede enchufar al
 dispositivo.
@@ -85,7 +88,7 @@ grande no cabe en un código QR y la ventana lo dice.
 
 ## Nombre e icono de la unidad
 
-**«Ajustes…» → «Nombre e icono de la unidad…»** cambia cómo enseña el Explorador
+**«Ajustes…» → «Nombre e icono»** cambia cómo enseña el Explorador
 de Windows la unidad al conectarla: un nombre como «Pendrive de Pere» en vez de
 «Disco extraíble», y de icono la marca de prdrive en uno de cinco colores, un
 `.ico` tuyo o ninguno. Los colores están

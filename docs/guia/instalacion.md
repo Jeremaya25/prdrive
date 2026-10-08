@@ -65,12 +65,16 @@ runtime a medias no cuenta como instalado. rclone sigue en `.prdrive/bin/<arch>/
 
 Las versiones de los dos están **fijadas** en `common/pins.py` y se mueven con un
 commit, no porque alguien publicara algo anoche: se instala lo que se ha probado.
-Python va en 3.13 y no en 3.14 porque los 3.14 de python-build-standalone ya traen
-Tk 9 en todas las plataformas, y en Windows la interfaz está hecha con Tk 8.6. El
-3.13 solo es Tk 8.6 en Windows: el de Linux ya trae Tk 9.0.4 (comprobado el
-02/10/2026), así que desde un runtime de Linux la ventana corre con Tk 9. Las
-medidas de las pantallas (que quepan, sin recortes) se han pasado con las dos
-versiones de Tk (03/10/2026); el aspecto no se ha revisado a ojo con Tk 9.
+Python va en 3.14 porque así la ventana usa el mismo Tk (9.0.4) en Windows y en
+Linux: con el 3.13 de antes, Windows llevaba Tk 8.6 y Linux ya Tk 9. Un
+dispositivo instalado con el 3.13 lo verá como componente pendiente en «Ajustes →
+Actualizaciones» y se pone al día desde ahí.
+
+En Linux, el Tk de ese runtime no trae suavizado de letra (está compilado sin
+Xft), así que el dispositivo lleva al lado uno compilado con él (1,6 MB) y
+prdrive lo usa si el equipo tiene las bibliotecas de letras de cualquier
+escritorio. En un equipo sin ellas (un servidor sin escritorio) se queda con el
+de serie.
 
 **Desmarcar una plataforma que el dispositivo ya lleva pregunta si se borra.** Si
 dices que no, sus binarios se quedan donde están y simplemente no se reinstalan.

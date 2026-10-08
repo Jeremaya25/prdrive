@@ -527,7 +527,7 @@ except Exception as e:                                   # sin entorno gráfico
 from ui import tk_doctor, tk_volumen  # noqa: E402
 
 c("«Ajustes» la ofrece",
-  [clave for *_, clave in tk_doctor.ENTRADAS].count("volumen"), 1)
+  [a.clave for _g, aps in tk_doctor.GRUPOS for a in aps].count("volumen"), 1)
 
 llamadas: list[tuple] = []
 avisos: list[str] = []

@@ -43,7 +43,7 @@ c = Checks("la bandeja del agente: qué enseña y qué pide")
 F.preparar()
 
 
-PIE = ["", f"prdrive {F.VERSION}"]
+PIE = ["", f"Agente {F.VERSION}"]
 """La última línea del menú, tras su separador: la versión del agente."""
 VERSION = ["", f"Versión {F.VERSION}"]
 """El pie del desplegable de un dispositivo, tras su separador: su versión."""
@@ -677,5 +677,16 @@ c("  con montajes, lo dice (hay que recorrer en racha)", vigia.esperar(5.0), Tru
 t = time.monotonic()
 vigia.esperar(0.2)
 c("  y sin nadie, espera su tiempo", time.monotonic() - t >= 0.15, True)
+
+# Una pareja que pide --resync: un aviso con el icono de aviso y su arreglo
+saltada = {"unidades": [{"id": "u", "nombre": "PRDRIVE", "atendida": True,
+                         "en_lista": True, "saltadas": ["Proyectos"]}]}
+c("una pareja que pide --resync es un aviso", bandeja.avisos(saltada),
+  ["PRDRIVE: Proyectos necesita --resync"])
+c("  pone el icono de aviso", bandeja.estado(saltada)[0], icons.AVISO)
+primera = bandeja.vista(saltada).menu[0]
+c("  y encabeza el menú, llevando a su ventana",
+  (primera.texto, primera.pide[0]["pide"]),
+  ("PRDRIVE: Proyectos necesita --resync · Abrir…", equipo.PIDE_ABRIR))
 
 sys.exit(c.report())

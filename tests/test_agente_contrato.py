@@ -213,6 +213,7 @@ c("  y el resultado en el lock, como el servicio de runsync",
   F.lock(RB).get("last_results"), {"docs": "ERROR rc=1"})
 F.vueltas(ag, 1)
 c("tras un fallo, espera más que su intervalo", len(F.pasadas(RB)), 1)
+
 F.pasar(2 * 30 * 60)
 F.vueltas(ag, 1)
 c("pasado el doble del intervalo, lo vuelve a intentar", len(F.pasadas(RB)), 2)
@@ -548,5 +549,31 @@ try:
     c("  sin lanzar nada mientras", len(F.pasadas(RL)), antes)
 finally:
     pathlib.Path.unlink = unlink_real
+
+# Una pareja que pide --resync se salta: no es un fallo para el planificador,
+# pero deja de sincronizarse. Se avisa cuando EMPIEZA, una vez, y sale en la
+# bandeja con lo que hay que hacer.
+D = "d" * 32
+ag_s, RD = fresco(D, parejas=("docs",))
+F.AVISOS.clear()
+F.acabar(F.pasadas(RD)[-1], 0, "docs: Saltada: requiere --resync\n")
+F.vueltas(ag_s, 1)
+c("una pareja que empieza a pedir --resync avisa", [a[0] for a in F.AVISOS],
+  ["docs necesita --resync"])
+c("  diciendo de qué unidad y dónde se aprueba",
+  "U: no se sincroniza sola" in F.AVISOS[0][1] and "Reparación" in F.AVISOS[0][1], True)
+fila = next(u for u in ag_s.resumen()["unidades"] if u["id"] == D)
+c("  y el resumen lo lleva, para la bandeja", fila["saltadas"], ["docs"])
+F.pasar(3600)
+F.vueltas(ag_s, 1)
+F.acabar(F.pasadas(RD)[-1], 0, "docs: Saltada: requiere --resync\n")
+F.vueltas(ag_s, 1)
+c("  la siguiente que se salta no vuelve a avisar", len(F.AVISOS), 1)
+F.pasar(3600)
+F.vueltas(ag_s, 1)
+F.acabar(F.pasadas(RD)[-1], 0, "docs: OK\n")
+F.vueltas(ag_s, 1)
+fila = next(u for u in ag_s.resumen()["unidades"] if u["id"] == D)
+c("  una buena la quita de la bandeja", fila["saltadas"], [])
 
 raise SystemExit(c.report())

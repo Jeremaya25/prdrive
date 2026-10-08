@@ -1329,6 +1329,8 @@ class Agente:
             entrada.
         marcas: El estado de cada pareja para el planificador, por `(raíz,
             pareja)`.
+        saltadas: Las parejas cuya última pasada se saltó por pedir un
+            `--resync`, por `(raíz, pareja)`: se avisa al entrar, una vez.
         entorno: Batería, red de uso medido, remotos sin conexión y pausa, para
             el planificador.
         entorno_leido: Cuándo se leyó el entorno por última vez.
@@ -1405,6 +1407,7 @@ class Agente:
     cerradas: dict[str, int] = field(default_factory=dict)
     vestibulos: dict[str, str] = field(default_factory=dict)
     marcas: dict[tuple[str, str], pl.Marca] = field(default_factory=dict)
+    saltadas: set[tuple[str, str]] = field(default_factory=set)
     entorno: pl.Entorno = field(default_factory=pl.Entorno)
     entorno_leido: float = -math.inf
     pasada: Pasada | None = None
@@ -1634,6 +1637,7 @@ class Agente:
         # enchufar: se sincroniza enseguida y el modo `sync` vuelve a tocar.
         for clave in [k for k in self.marcas if k[0] == uid]:
             del self.marcas[clave]
+        self.saltadas = {k for k in self.saltadas if k[0] != uid}
         self._olvidar_vigiladas(uid)
         con.vieja = version_vieja(raiz)
         if con.vieja is not None:
@@ -2699,6 +2703,17 @@ class Agente:
             self.sospechas.pop(clave, None)
             if pl.empieza_a_fallar(antes, despues):
                 avisar(f"{con.nombre}: falla {tarea.pareja}", self._donde_mirar(con), True)
+        # Saltada no es un fallo para el planificador (vuelve a su intervalo),
+        # pero la pareja deja de sincronizarse sin que nadie lo vea: se avisa
+        # cuando EMPIEZA a pedir el --resync, como con un fallo, y no otra vez
+        # hasta que deje de pedirlo.
+        if como == SALTADA and clave not in self.saltadas:
+            self.saltadas.add(clave)
+            avisar(f"{tarea.pareja} necesita --resync",
+                   f"{con.nombre}: no se sincroniza sola. El resync se aprueba en "
+                   f"«Reparación». {self._donde_mirar(con)}", True)
+        elif como in (OK, FALLO):           # una de red no dice cómo está la pareja
+            self.saltadas.discard(clave)
 
     def _fin_de_sonda(self, con: Conexion, remoto: str, rc: int, texto: str,
                       ahora: float) -> None:
@@ -3849,6 +3864,8 @@ class Agente:
                              "pausada": bool(unidad and unidad.pausada),
                              "fallando": sorted(p for (r, p), m in self.marcas.items()
                                                 if r == con.id and m.fallos > 0),
+                             "saltadas": sorted(p for r, p in self.saltadas
+                                                if r == con.id),
                              "vigila": vigila,
                              "vigila_abandonada": abandonadas,
                              "vigila_recorre": recorre,
