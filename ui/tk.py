@@ -1193,10 +1193,12 @@ def soltar_capturas(ventana) -> None:
         pass
 
 
-PASO_BARRA_MS = 48
+PASO_BARRA_MS = 32
 """Milisegundos entre dos pasos de la barra sin cifra.
 
-Con 12 la barra gastaba el 10,6 % de un núcleo, y con 48 el 2,6 %.
+Con 12 la barra gastaba el 10,6 % de un núcleo, y con 48 el 2,6 %, pero a 48
+(21 pasos por segundo) se la veía ir a saltos. 32 son unos 31 por segundo:
+fluida a la vista y con la tercera parte de los pasos de antes.
 """
 SALTO_BARRA = PASO_BARRA_MS / 12
 """Cuánto avanza la barra sin cifra en cada paso, de un máximo de 100.

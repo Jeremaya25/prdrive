@@ -169,8 +169,8 @@ c("y devuelve lo de la función", (ok, valor), (True, "hecho"))
 
 # el ritmo de la barra sin cifra
 RITMO = (uitk.PASO_BARRA_MS, uitk.SALTO_BARRA)
-c("sin cifra, la barra da un paso cada 40-50 ms (era cada 12)",
-  40 <= uitk.PASO_BARRA_MS <= 50, True)
+c("sin cifra, la barra da un paso cada 30-35 ms (era cada 12; a 48 iba a saltos)",
+  30 <= uitk.PASO_BARRA_MS <= 35, True)
 c("  y su salto es proporcional: la misma velocidad que de 1 en 1 cada 12 ms",
   abs(uitk.SALTO_BARRA / uitk.PASO_BARRA_MS - 1 / 12) < 1e-9, True)
 c("al abrir, `working()` la pone a ese ritmo", visto["ritmo_al_abrir"], RITMO)
