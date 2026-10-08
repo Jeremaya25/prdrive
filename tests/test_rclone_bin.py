@@ -164,7 +164,8 @@ try:
     # Un macOS no es «Linux» por no ser Windows: su rclone es de otro sistema,
     # y copiarlo como el de Linux dejaría un binario que no arranca en ninguno.
     # Se usa el Linux de la MISMA CPU que este equipo: es el único que podría
-    # confundirse con él.
+    # confundirse con él. Con una caché vacía: en un equipo ARM ese Linux es el
+    # linux-arm64 de arriba, que ya está en la suya y saldría de ahí sin descargar.
     linux_aqui = pins.plataforma_para("linux", rclone_bin.bin_subdir())
     zip_aqui = zip_de_mentira(b"rclone de linux", "linux", linux_aqui.rclone_arch,
                               "rclone")
@@ -173,6 +174,8 @@ try:
     es_win_real = rclone_bin.IS_WIN
     rclone_bin.find_rclone = lambda: destino / EXE
     rclone_bin.sys.platform, rclone_bin.IS_WIN = "darwin", False
+    mac = tmpdir("prdrive-rclone-mac-")
+    rclone_bin.cache_dir = lambda plat=None: mac
     try:
         red({URL_SUMS: f"{hashlib.sha256(zip_aqui).hexdigest()}  {nombre_aqui}\n".encode(),
              rclone_bin.download_url(VERSION, linux_aqui): zip_aqui})
@@ -181,14 +184,20 @@ try:
     finally:
         rclone_bin.sys.platform, rclone_bin.IS_WIN = plataforma_real, es_win_real
         rclone_bin.find_rclone = buscado
+        rclone_bin.cache_dir = cache_por_arch
 
+    # Sin nada en este equipo, tampoco: en uno Windows ARM64 esa plataforma es
+    # la suya y se buscaría antes en el checkout y en el PATH de verdad.
     red({})
+    rclone_bin.find_rclone = lambda: None
     try:
         rclone_bin.rclone_for(pins.plataforma("windows-arm64"), allow_download=False)
         c("sin caché y sin permiso para descargar se dice", "siguió", "InstallError")
     except InstallError as e:
         c("sin caché y sin permiso para descargar se dice", "InstallError", "InstallError")
         c.contains("nombrando la plataforma", str(e), "Windows ARM64")
+    finally:
+        rclone_bin.find_rclone = buscado
     rclone_bin.cache_dir = lambda plat=None: destino
 
     # y cuando NO cuadra

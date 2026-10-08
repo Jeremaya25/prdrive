@@ -359,26 +359,33 @@ def sistema_oscuro() -> bool:
     return False
 
 
-def barra_titulo(ventana) -> None:
-    """Pone oscura la barra de título de una ventana en Windows, con el tema oscuro.
+DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+"""El atributo de DWM que pone oscura la barra de título (Windows 10 20H1 en adelante)."""
+DWMWA_CAPTION_COLOR = 35
+"""El atributo de DWM que le da un color cualquiera a la barra (Windows 11)."""
+
+
+def barra_titulo() -> tuple[tuple[int, int], ...]:
+    """Dice cómo pedirle a DWM la barra de título del tema, en Windows.
 
     La barra la pinta el sistema y no Tk: sin esto una ventana oscura lleva
-    encima una franja blanca. Es el atributo 20 de DWM
-    (`DWMWA_USE_IMMERSIVE_DARK_MODE`, Windows 10 20H1 en adelante); en uno
-    más viejo la llamada falla sin ruido y la barra se queda clara. No hace
-    nada con el tema claro ni fuera de Windows.
+    encima una franja blanca. Con el tema oscuro son dos atributos, en orden:
+    la barra oscura (`DWMWA_USE_IMMERSIVE_DARK_MODE`, en Windows 10 es negra) y,
+    en Windows 11, del color del papel (`DWMWA_CAPTION_COLOR`, un COLORREF
+    `0x00BBGGRR`), para que no se vea el corte con la ventana. El sistema que
+    no conoce uno lo rechaza y la barra se queda como estaba. Con el claro no
+    se pide nada: la barra clara del sistema es la de siempre.
+
+    Solo dice qué; lo pide `tk.ensenar()`, con el envoltorio que se enseña.
+
+    Returns:
+        Los pares `(atributo, valor)`, vacío con el tema claro.
     """
-    if TEMA != "oscuro" or sys.platform != "win32":
-        return
-    try:
-        import ctypes
-        ventana.update_idletasks()
-        hwnd = int(ventana.wm_frame(), 16)
-        valor = ctypes.c_int(1)
-        ctypes.windll.dwmapi.DwmSetWindowAttribute(
-            ctypes.c_void_p(hwnd), 20, ctypes.byref(valor), ctypes.sizeof(valor))
-    except Exception:                               # noqa: BLE001
-        pass
+    if TEMA != "oscuro":
+        return ()
+    rojo, verde, azul = (int(PAPEL[i:i + 2], 16) for i in (1, 3, 5))
+    return ((DWMWA_USE_IMMERSIVE_DARK_MODE, 1),
+            (DWMWA_CAPTION_COLOR, azul << 16 | verde << 8 | rojo))
 
 
 def elegir_tema() -> str:

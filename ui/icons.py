@@ -865,15 +865,14 @@ def app_icon(widget, size: int = 64, campo: str = CAMPO, fondo: str | None = Non
 
 
 def poner_icono(ventana) -> None:
-    """Le pone la marca a una ventana, y la barra de título del tema.
+    """Le pone la marca a una ventana.
 
     Con `default=True` la heredan también los diálogos que cuelguen de ella,
-    así que basta llamarlo en las raíces.
+    así que basta llamarlo en las raíces. La barra de título del tema la pone
+    `tk.ensenar()`.
     """
     import tkinter as tk
 
-    from . import theme
-    theme.barra_titulo(ventana)
     imgs = [i for i in (app_icon(ventana, 64), app_icon(ventana, 32),
                         app_icon(ventana, 16)) if i is not None]
     if not imgs:

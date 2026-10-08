@@ -40,13 +40,14 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import posixpath
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Callable, Mapping, NamedTuple
 
 from . import (APP_NAME, cifrada, components, conflicts, llavero, model, pins, registro,
@@ -369,10 +370,13 @@ def lanzado_por_prdrive(orden_: list[str]) -> bool:
 
     Es la de `orden()`: su `--config` está en `keepassxc/config/linux/` de una
     unidad, sea cuál sea. Así se lanza siempre de lo extraído en la caché.
+
+    Es una orden de Linux y se lee como tal (`posixpath`) en cualquier sistema:
+    desde Python 3.13, en Windows `os.path.isabs("/media/…")` es falso.
     """
     final = (components.KEEPASSXC_SUBDIR, *CONFIG_LINUX.parts)
-    return any(Path(arg).parent.parts[-len(final):] == final
-               for arg in orden_[1:] if os.path.isabs(arg))
+    return any(PurePosixPath(arg).parent.parts[-len(final):] == final
+               for arg in orden_[1:] if posixpath.isabs(arg))
 
 
 def abiertos_de_la_cache() -> dict[int, str | None]:
