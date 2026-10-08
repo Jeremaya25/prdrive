@@ -173,6 +173,31 @@ c("  sin dejar un temporal", sorted(p.name for p in ruta.parent.iterdir()), ["da
 store.recortar_diario(ruta.parent)
 c("recortar algo que no es un fichero no lanza", True, True)
 
+# un daemon.log que es un enlace a un fichero de fuera no se lee: sus últimas
+# líneas acabarían copiadas en el diario del dispositivo
+fuera = tmpdir("prdrive-fuera-")
+ajeno = fuera / "secreto.log"
+ajeno.write_text("".join(f"secreto {i:06d} " + "x" * 80 + "\n" for i in range(3000)),
+                 encoding="utf-8")
+original = ajeno.read_bytes()
+unidad = tmpdir("prdrive-unidad-")
+enlazado = unidad / "daemon.log"
+if os.name == "nt":
+    print("  (saltado) enlaces: Windows pide un permiso para crearlos y no tiene O_NOFOLLOW")
+else:
+    try:
+        os.symlink(ajeno, enlazado)
+    except (OSError, NotImplementedError):
+        print("  (saltado) sin permiso para crear enlaces")
+    else:
+        c("  (el fichero de fuera pasa del tope)", ajeno.stat().st_size > store.DIARIO_TOPE, True)
+        store.recortar_diario(enlazado)
+        c("un diario que es un enlace no se recorta: el destino queda como estaba",
+          ajeno.read_bytes(), original)
+        c("  el enlace sigue siendo un enlace, no una copia de lo de fuera",
+          enlazado.is_symlink(), True)
+        c("  y no deja un temporal", sorted(p.name for p in unidad.iterdir()), ["daemon.log"])
+
 # el diario de runsync
 with sandbox():
     runsync.DLOG = model.STATE_DIR / "daemon.log"

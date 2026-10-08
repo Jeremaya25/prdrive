@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 from datetime import datetime
 from pathlib import Path
 
@@ -115,13 +116,28 @@ def recortar_diario(ruta: Path) -> None:
     tope reescribe el fichero con las últimas `DIARIO_QUEDAN` líneas, de forma
     atómica (`write_text`). No protege una línea que otro proceso añada entre la
     lectura y la reescritura: es un diario, y la escribe un solo servicio por
-    unidad. Por debajo del tope, o si el fichero no existe, no hace nada; no
-    lanza nunca, porque el diario no es vital.
+    unidad.
+
+    El fichero se abre sin seguir enlaces (`O_NOFOLLOW`, POSIX) y se mira el
+    descriptor ya abierto: un `daemon.log` que fuera un enlace a un fichero de
+    fuera de la unidad no se lee, o sus últimas líneas acabarían copiadas en el
+    diario del dispositivo. Solo se recorta un fichero normal.
+
+    Si el fichero no existe, no es normal o está por debajo del tope, no hace
+    nada; no lanza nunca, porque el diario no es vital.
     """
     try:
-        if ruta.stat().st_size <= DIARIO_TOPE:
-            return
-        lineas = ruta.read_text(encoding="utf-8", errors="replace").splitlines()
+        fd = os.open(ruta, os.O_RDONLY | getattr(os, "O_BINARY", 0)
+                     | getattr(os, "O_NOFOLLOW", 0))
+    except OSError:
+        return
+    try:
+        with os.fdopen(fd, "rb") as f:
+            info = os.fstat(f.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_size <= DIARIO_TOPE:
+                return
+            texto = f.read().decode("utf-8", errors="replace")
+        lineas = texto.splitlines()
         write_text(ruta, "\n".join(lineas[-DIARIO_QUEDAN:]) + "\n")
     except OSError:
         pass
