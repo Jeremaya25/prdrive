@@ -17,7 +17,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: banco-ui-${{ github.ref }}
+  group: banco-ui-linux-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -25,9 +25,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Repetición solo de Linux (le faltaban bibliotecas de Qt); las de
+        # Windows ya corren en la anterior: añadirlas aquí si hace falta otra.
         include:
-          - { os: windows-latest, plat: windows-x64 }
-          - { os: windows-11-arm, plat: windows-arm64 }
           - { os: ubuntu-latest, plat: linux-x64 }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 75
@@ -55,9 +55,11 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q xvfb libxft2 fontconfig imagemagick libegl1 \
+          sudo apt-get install -y -q xvfb libxft2 fontconfig imagemagick libegl1 libgl1 \
             libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
-            libxcb-render-util0 libxcb-util1 libxkbcommon-x11-0
+            libxcb-render-util0 libxcb-util1 libxkbcommon-x11-0 libx11-xcb1 \
+            libxcb-randr0 libxcb-render0 libxcb-shape0 libxcb-shm0 libxcb-sync1 \
+            libxcb-xfixes0 libxcb-xkb1
 
       - name: Preparar (runtime fijado, 0.6.5, Qt)
         shell: bash
