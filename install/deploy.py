@@ -316,8 +316,8 @@ def copy_rclone(device_root: Path | str, rclone_binary: Path | str,
     repetir la tabla de arquitecturas: es el mismo `bin/` que usará `sync.py`,
     y si dejaran de coincidir el instalador verificaría un binario y el
     dispositivo usaría otro. Va SIN el bit de ejecución en exFAT, que no lo
-    tiene, y por eso `model.rclone_binary()` se copia a un temporal cuando hace
-    falta.
+    tiene, y por eso `model.ejecutable()` lo copia a la caché del usuario
+    cuando hace falta.
 
     Args:
         plat: La plataforma del binario; por defecto, la de este equipo.

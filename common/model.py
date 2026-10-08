@@ -379,6 +379,9 @@ def rclone_binary() -> str:
     Raises:
         SystemExit: Si no hay rclone utilizable, con el mensaje que dice cómo
             arreglarlo.
+        OSError: Si hace falta una copia ejecutable (`ejecutable()`) y no se
+            puede hacer: la carpeta de la caché no es de este usuario o no se
+            puede copiar el binario.
     """
     binary = rclone_path()
     if binary is None and rclone_del_agente() is not None:

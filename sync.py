@@ -842,7 +842,10 @@ def main() -> int:
         sys.exit(f"No existe {model.RCLONE_CONF}. Crea la config de rclone con el "
                  f"remote SFTP.")
 
-    binary = model.rclone_binary()
+    try:
+        binary = model.rclone_binary()
+    except OSError as e:
+        sys.exit(f"No puedo preparar el rclone de este equipo para ejecutarlo: {e}")
     approved = args.resync or resolve_resync_approval(selected, args.yes)
     ctx = RunContext(
         binary=binary,
