@@ -147,6 +147,23 @@ c.contains("[defaults] remote se mira aunque las parejas lleven el suyo",
 c("catalog_remote normal vale",
   rechaza({**una(), "defaults": {"remote": "nas", "catalog_remote": "cat"}}), "")
 
+# rclone lee `C:ruta` como la unidad C: de Windows, no como el remote «C»
+for remoto in ("C", "n", "Z"):
+    texto = rechaza(una(remote=remoto))
+    c.contains(f"remote {remoto!r}, una sola letra, no se admite", texto, "'remote' no vale")
+    c.contains("  y dice que rclone lo lee como una unidad de Windows", texto, "unidad de Windows")
+    c.contains("  y qué hacer", texto, "Renombra el remote")
+    c.contains("  y de qué pareja", texto, "[p]")
+c.contains("[defaults] remote de una letra tampoco",
+           rechaza({**una(), "defaults": {"remote": "n"}}), "[defaults]")
+c.contains("  ni el catalog_remote",
+           rechaza({**una(), "defaults": {"remote": "nas", "catalog_remote": "x"}}),
+           "catalog_remote")
+for remoto in ("nas", "b2", "c1", "ab", "_", "ñ", "1"):
+    c(f"remote {remoto!r} vale (no es una letra de unidad)", rechaza(una(remote=remoto)), "")
+c("problema_remote: None si vale, y el motivo si es una letra",
+  (model.problema_remote("nas"), model.problema_remote("C") is not None), (None, True))
+
 # lo de siempre sigue valiendo
 cfg = model.parse_config(una(flags={"transfers": 4, "checksum": True, "max-delete": 25,
                                     "conflict-resolve": "newer"},

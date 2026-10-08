@@ -592,7 +592,8 @@ def problema_remote(nombre: Any, clave: str = "remote") -> str | None:
     """Dice por qué un `remote` no vale como nombre de remote de rclone.
 
     Se junta con la ruta (`nombre:ruta`) y va tal cual a rclone, que lo lee
-    como cadena de conexión si lleva opciones.
+    como cadena de conexión si lleva opciones y, si es una sola letra, como la
+    unidad de Windows que lleva esa letra.
 
     Args:
         nombre: El valor a comprobar.
@@ -605,6 +606,11 @@ def problema_remote(nombre: Any, clave: str = "remote") -> str | None:
     """
     if not isinstance(nombre, str):
         return f"'{clave}' no vale: tiene que ser un texto."
+    if len(nombre) == 1 and nombre.isascii() and nombre.isalpha():
+        # fs/fspath/path.go: en Windows, `C:ruta` es la unidad C y no un remote.
+        return (f"'{clave}' no vale ({nombre!r}): rclone lee un nombre de una sola letra "
+                f"como una unidad de Windows ({nombre}:), no como un remote. Renombra el "
+                f"remote, con dos caracteres o más, en el rclone.conf y aquí.")
     if not NOMBRE_REMOTE.fullmatch(nombre):
         return (f"'{clave}' no vale ({nombre!r}): es el nombre de un remote del "
                 f"rclone.conf, con letras, números, espacios entre palabras y "
