@@ -412,7 +412,18 @@ El agente atiende varias raíces y cada una puede traer un rclone distinto, con
 su propia copia en la misma carpeta. Barrer todas las demás en cada copiado
 haría que dos raíces se las quitaran la una a la otra, y podría borrar una que
 otro proceso va a ejecutar ahora mismo. Solo se va lo que lleva más de un día
-sin tocarse, y con ello los restos de un copiado interrumpido.
+sin tocarse (`RENOVAR_COPIA_RCLONE` hace que lo que se sigue usando no lo
+parezca), y con ello los restos de un copiado interrumpido.
+"""
+
+RENOVAR_COPIA_RCLONE = 12 * 3600  # segundos
+"""Desde cuándo `ejecutable()` renueva la fecha de la copia que reutiliza.
+
+La fecha de una copia es la de cuando se hizo, y sin esto «más de un día sin
+tocarse» sería «hecha hace más de un día»: otra raíz que copiase su rclone
+barrería la copia de la que un `sync.py` largo sigue sacando su rclone para
+todas sus parejas. Es bastante menos que `COPIAS_RCLONE_VIEJAS` para que el
+camino normal (reutilizarla) no escriba en cada llamada.
 """
 
 
@@ -430,7 +441,9 @@ def ejecutable(binary: Path) -> str:
     coloca con `os.replace`: un enlace plantado en su sitio se sustituye y
     nunca se sigue. Tras copiar se barren las copias de otros builds y los
     temporales de un copiado interrumpido que lleven más de un día sin tocarse
-    (`COPIAS_RCLONE_VIEJAS`), sin fallar si no se puede.
+    (`COPIAS_RCLONE_VIEJAS`), sin fallar si no se puede. Para que lo que se
+    sigue usando no parezca abandonado, la copia que se reutiliza renueva su
+    fecha cuando pasa de `RENOVAR_COPIA_RCLONE`.
 
     Args:
         binary: Ruta del binario de rclone.
@@ -447,7 +460,9 @@ def ejecutable(binary: Path) -> str:
     origen = binary.stat()
     carpeta = _carpeta_privada_de_rclone()
     copia = carpeta / f"{COPIA_RCLONE}{origen.st_size}-{origen.st_mtime_ns}"
-    if not _es_fichero_de(copia, origen.st_size):
+    if _es_fichero_de(copia, origen.st_size):
+        _renovar_fecha(copia)
+    else:
         _copiar_ejecutable(binary, copia)
         _barrer_copias_de_rclone(carpeta, copia)
     return str(copia)
@@ -489,6 +504,19 @@ def _es_fichero_de(ruta: Path, tamano: int) -> bool:
     except OSError:
         return False
     return stat.S_ISREG(info.st_mode) and info.st_size == tamano
+
+
+def _renovar_fecha(copia: Path) -> None:
+    """Pone la fecha de la copia a ahora si lleva más de `RENOVAR_COPIA_RCLONE` sin renovarse.
+
+    Es mejor esfuerzo: si no se puede mirar o cambiar, se queda como está.
+    No sigue un enlace.
+    """
+    try:
+        if time.time() - os.lstat(copia).st_mtime > RENOVAR_COPIA_RCLONE:
+            os.utime(copia, follow_symlinks=False)
+    except OSError:
+        pass
 
 
 def _copiar_ejecutable(binary: Path, copia: Path) -> None:

@@ -12,7 +12,9 @@ copia a un sitio donde sí se puede poner. Ese sitio es la caché del usuario
 - Se escribe en un temporal de esa carpeta y se coloca con `os.replace`: lo que
   alguien haya plantado en su sitio (un enlace) se sustituye, nunca se sigue.
 - Las copias de otras versiones y los temporales de un copiado interrumpido se
-  barren solo si llevan más de un día sin tocarse.
+  barren solo si llevan más de un día sin tocarse; la copia que se reutiliza
+  renueva su fecha, para que otra raíz no barra la que un sync.py largo sigue
+  usando.
 
 Todo va a temporales (la caché con `XDG_CACHE_HOME`, el rclone de mentira en
 otra carpeta). Es de POSIX: en Windows se ejecuta donde está.
@@ -253,5 +255,57 @@ c("un enlace viejo se quita sin seguirlo", (os.path.lexists(enlace), victima.rea
 c("lo que no es una copia no se toca", nota.exists(), True)
 c("una carpeta con nombre de copia no estorba ni se toca", carpeta_vieja.is_dir(), True)
 c("la copia nueva sigue ahí tras el barrido", copia.is_file(), True)
+
+# --- Lo que se sigue usando no parece abandonado
+# La fecha de una copia es la de cuando se hizo: sin renovarla, la copia de la
+# que un sync.py largo saca su rclone parecería vieja y otra raíz la barrería.
+cache = cache_nueva()
+binario_a = falso_rclone(FUENTE)
+copia_a = Path(model.ejecutable(binario_a))
+
+envejecer(copia_a, 6 / 24)  # dentro de las 12 horas
+antes = copia_a.stat().st_mtime_ns
+Path(model.ejecutable(binario_a))
+c("una copia que se reutiliza dentro de las 12 horas no se toca",
+  copia_a.stat().st_mtime_ns, antes)
+
+envejecer(copia_a, 3)  # hecha hace tres días y todavía en uso
+c("una copia vieja que se reutiliza es la misma", Path(model.ejecutable(binario_a)), copia_a)
+c("  y renueva su fecha", time.time() - copia_a.stat().st_mtime < 60, True)
+
+# Otra raíz con otro build copia el suyo y barre: la que se usa se queda.
+binario_b = falso_rclone(FUENTE + b"# otro build\n")
+copia_b = Path(model.ejecutable(binario_b))
+c("la copia que se sigue usando sobrevive a la que hace otra raíz",
+  (copia_a.is_file(), copia_b.is_file()), (True, True))
+
+# La misma edad sin que nadie la use sí se barre.
+binario_c = falso_rclone(FUENTE + b"# un tercero\n")
+copia_c = Path(model.ejecutable(binario_c))
+envejecer(copia_c, 3)
+Path(model.ejecutable(falso_rclone(FUENTE + b"# un cuarto\n")))
+c("  en cambio la que nadie reutiliza, igual de vieja, sí se barre",
+  (copia_a.is_file(), copia_c.exists()), (True, False))
+
+# Si no se puede renovar la fecha, se devuelve la copia igualmente.
+envejecer(copia_a, 3)
+utime_real = os.utime
+
+
+def utime_sin_permiso(*args, **kwargs):
+    """Sustituye a `os.utime`: no deja cambiar la fecha."""
+    raise PermissionError(1, "Operation not permitted")
+
+
+os.utime = utime_sin_permiso
+try:
+    try:
+        devuelta = Path(model.ejecutable(binario_a))
+        error = None
+    except OSError as e:
+        devuelta, error = None, e
+finally:
+    os.utime = utime_real
+c("si no puede renovar la fecha, no falla y devuelve la copia", (devuelta, error), (copia_a, None))
 
 raise SystemExit(c.report())
