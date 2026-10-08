@@ -38,17 +38,17 @@ from common import fleet
 from common.model import Config
 
 from . import cuando_sello, icons, segundo_plano, theme
-from .tk import (TITLE, Indicador, Sondeo, cabecera, centrar, cuerpo_visible, modal,
-                 mostrar, working)
+from .tk import (TITLE, CeldaChip, CeldaIcono, CeldaTexto, FilaTabla, Indicador, Sondeo,
+                 Tabla, cabecera, centrar, cuerpo_visible, modal, mostrar, working)
 
 COLUMNAS = [
-    ("aqui", "Este", 46),
-    ("nombre", "Dispositivo", 250),
-    ("visto", "Visto", 100),
-    ("equipo", "Último equipo", 150),
-    ("estado", "Última pasada", 250),
+    ("aqui", "Este", 44),
+    ("nombre", "Dispositivo", 200),
+    ("visto", "Visto", 110),
+    ("equipo", "Último equipo", 130),
+    ("estado", "Última pasada", 180),
 ]
-"""Las columnas de la tabla: clave, título y ancho en medidas del diseño.
+"""Las columnas de la tabla: clave, título y ancho mínimo en medidas del diseño.
 
 La versión y las plataformas se fueron a la ficha: en la tabla queda lo que se
 compara de un vistazo entre dispositivos. «Último equipo» es solo el más
@@ -144,7 +144,7 @@ def ficha(disp: fleet.Dispositivo, equipo_aqui: str) -> list[Fila]:
             se marca, y eso contesta sin más si el otro pendrive ha estado en
             este ordenador.
     """
-    estado = [Linea(disp.last_result)]
+    estado = [Linea(BIEN if disp.bien else disp.last_result)]
     if disp.ultima_buena == fleet.SIN_BUENA:
         estado.append(Linea(SIN_BUENA, pista=True))
     elif disp.ultima_buena:
@@ -186,6 +186,40 @@ def _tono(disp: fleet.Dispositivo) -> str:
     return "ok" if disp.bien else "aviso"
 
 
+BIEN = "bien"
+"""Lo que dice el chip de un dispositivo cuya última pasada fue bien."""
+
+ESTE = "✓"
+"""Lo que dice la columna «Este» en la fila de este dispositivo (va con su icono)."""
+
+
+def ultima_pasada(disp: fleet.Dispositivo) -> tuple[str, str]:
+    """Devuelve lo que dice la columna «Última pasada» y su tono.
+
+    El tono es el de la fila (`_tono`): `ok`, `aviso` o `apagado`. Un `ok` de
+    la nota se dice «bien», como en el resto de la ventana.
+    """
+    texto = BIEN if disp.bien else disp.last_result
+    return texto, _tono(disp)
+
+
+def fila(disp: fleet.Dispositivo, yo: str) -> FilaTabla:
+    """Devuelve la fila de la tabla de un dispositivo."""
+    texto, tono = ultima_pasada(disp)
+    if tono == "ok":
+        estado = CeldaChip(texto, "Ok.", "ok")
+    elif tono == "aviso":
+        estado = CeldaChip(texto, "Aviso.", "warn")
+    else:
+        estado = CeldaTexto(texto, "Pista.")
+    return FilaTabla(disp.id, (
+        CeldaIcono("ok", ESTE) if disp.id == yo else "",
+        CeldaTexto(disp.nombre + marca(disp), "Fuerte."),
+        CeldaTexto(fecha(disp.last_seen), "Mono."),
+        CeldaTexto(ultimo_equipo(disp), "Mono."),
+        estado), "" if tono == "ok" else tono)
+
+
 def open_dialog(parent, config: Config, raw: dict | None = None) -> None:
     """Abre la ventana; no devuelve nada.
 
@@ -215,13 +249,10 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> None:
     # Lo de los equipos se dice aquí, a la vista, y no en una ayuda: es el nombre
     # de red de los ordenadores de cada uno, y se publica siempre.
     cabecera(arriba, "Dispositivos",
-             "Todos los que comparten este catálogo. Cada uno deja una nota al "
-             "sincronizar —quién es, qué versión lleva, cómo le fue y en qué "
-             "equipos se ha enchufado, por su nombre de red—, y nadie escribe la "
-             "de otro. Los que llevan más de una semana sin aparecer salen "
-             "apagados. El nombre de este dispositivo se cambia en «Ajustes» → "
+             "Cada uno deja una nota al sincronizar, con el nombre de red de los "
+             "equipos donde se enchufa. El de este se cambia en «Ajustes» → "
              "«Nombre e icono».",
-             ancho=620, estilo="Dialogo.TLabel").grid(row=0, column=0, sticky="w")
+             ancho=470, estilo="Dialogo.TLabel").grid(row=0, column=0, sticky="w")
 
     donde = ttk.Frame(arriba)
     donde.grid(row=0, column=1, sticky="ne")
@@ -233,23 +264,11 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> None:
     indicador.marco.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(theme.E3, 0))
     dlg.indicador, dlg.sondeo = indicador, sondeo   # como `visor`: los tests los miran
 
-    tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(theme.E2, theme.E2, theme.E1, theme.E1))
-    tarjeta.grid(row=1, column=0, sticky="nsew", pady=(theme.E4, 0))
-    tarjeta.columnconfigure(0, weight=1)
-    tarjeta.rowconfigure(0, weight=1)
-    marco.rowconfigure(1, weight=1)
-
-    tree = ttk.Treeview(tarjeta, columns=[c[0] for c in COLUMNAS],
-                        show="headings", height=6, selectmode="browse")
-    for clave, titulo, ancho in COLUMNAS:
-        sitio = "center" if clave == "aqui" else "w"
-        tree.heading(clave, text=titulo, anchor=sitio)
-        tree.column(clave, width=icons.px(tree, ancho), anchor=sitio)
-    tree.grid(row=0, column=0, sticky="nsew")
-    theme.marcar_lista(tree)
-    scroll = ttk.Scrollbar(tarjeta, orient="vertical", command=tree.yview)
-    tree.configure(yscrollcommand=scroll.set)
-    scroll.grid(row=0, column=1, sticky="ns")
+    tabla = Tabla(marco, [(titulo, ancho, clave in ("nombre", "estado"))
+                          for clave, titulo, ancho in COLUMNAS],
+                  al_elegir=lambda: repasar())
+    tabla.grid(row=1, column=0, sticky="ew", pady=(theme.E4, 0))
+    dlg.tabla = tabla                                  # los tests la miran
 
     vacio = ttk.Label(marco, text=SIN_NOTA, style="Pista.TLabel",
                       wraplength=theme.medida(620), justify="left")
@@ -261,10 +280,13 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> None:
     # crecer el contenido y sacaba una barra de desplazamiento que al abrir no
     # estaba.
     hueco = ttk.Frame(marco)
-    hueco.grid(row=2, column=0, sticky="ew", pady=(theme.E3, 0))
+    hueco.grid(row=2, column=0, sticky="ew", pady=(theme.E4, 0))
     hueco.columnconfigure(0, weight=1)
+    hueco.rowconfigure(1, weight=1)
+    ttk.Label(hueco, text=theme.rotulo("Ficha"), style="Rotulo.TLabel").grid(
+        row=0, column=0, sticky="w", pady=(0, theme.E2))
     hoja = ttk.Frame(hueco, style="Card.TFrame", padding=(theme.E4, theme.E3, theme.E4, theme.E3))
-    hoja.grid(row=0, column=0, sticky="nsew")
+    hoja.grid(row=1, column=0, sticky="nsew")
     canalon = theme.ancho_rotulo(marco, *ROTULOS_FICHA) + icons.px(marco, 14)
     hoja.columnconfigure(0, minsize=canalon)
     hoja.columnconfigure(1, weight=1)
@@ -314,7 +336,7 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> None:
             ancho = max(ancho, hoja.winfo_reqwidth())
             alto = max(alto, hoja.winfo_reqheight())
         hueco.columnconfigure(0, minsize=ancho)
-        hueco.rowconfigure(0, minsize=alto)
+        hueco.rowconfigure(1, minsize=alto)
 
     def pintar_chip(texto: str, tipo: str, icono: str) -> None:
         """Cambia el chip de arriba a la derecha."""
@@ -355,20 +377,11 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> None:
         else:
             pintar_chip(f"{len(flota)} dispositivo(s)", "Acento.", "ok")
 
-        tree.delete(*tree.get_children())
-        for disp in flota:
-            tree.insert("", "end", iid=disp.id, tags=(_tono(disp),),
-                        values=("✓" if disp.id == yo else "",
-                                disp.nombre + marca(disp),
-                                fecha(disp.last_seen),
-                                ultimo_equipo(disp),
-                                disp.last_result))
-        # La lista es más baja porque la ficha se lleva parte de la ventana.
-        tree.configure(height=min(8, max(3, len(flota))))
+        tabla.poner([fila(disp, yo) for disp in flota])
         reservar()
         if flota:
             vacio.grid_remove()
-            tree.selection_set(flota[0].id)
+            tabla.elegir(tabla.elegida or flota[0].id, avisar=False)
         else:
             vacio.grid(row=2, column=0, sticky="w", pady=(theme.E3, 0))
         repasar()
@@ -382,10 +395,7 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> None:
 
     def elegido() -> fleet.Dispositivo | None:
         """Devuelve el dispositivo de la fila elegida, o `None`."""
-        seleccion = tree.selection()
-        if not seleccion:
-            return None
-        return next((d for d in estado["flota"] if d.id == seleccion[0]), None)
+        return next((d for d in estado["flota"] if d.id == tabla.elegida), None)
 
     def repasar(_evento=None) -> None:
         """Repinta lo que cuelga de la fila elegida: su ficha y el botón de quitar.
@@ -437,7 +447,6 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> None:
                         command=quitar_de_la_lista, state="disabled")
     theme.boton_icono(quitar, "trash", theme.PELIGRO, theme.SUPERFICIE)
     quitar.grid(row=0, column=0, sticky="w")
-    tree.bind("<<TreeviewSelect>>", repasar)
     releer = ttk.Button(acciones, text="Releer", style="Quiet.TButton",
                         command=lambda: refrescar("Flota releída."))
     theme.boton_icono(releer, "reload", theme.ACENTO, theme.PAPEL)

@@ -34,7 +34,7 @@ except Exception as e:                                   # sin entorno gráfico
     print(f"  (saltado) no hay entorno gráfico: {e}")
     sys.exit(0)
 
-from ui import segundo_plano, tk_fleet, tk_pairs, tk_versions, tk_watch, versions_editor, watch
+from ui import flags_editor, segundo_plano, tk_fleet, tk_pairs, tk_versions, tk_watch, versions_editor, watch
 
 # El de verdad: más abajo hay tramos que lo sustituyen por un formulario de
 # mentira, y el último los necesita a los dos.
@@ -521,15 +521,9 @@ with sandbox():
     titulos = []
 
     def mirar_flota(self, *_a, **_k):
-        """Recorre la ventana de la flota y apunta lo que ve."""
-        pila = [self]
-        while pila:
-            w = pila.pop()
-            pila += list(w.winfo_children())
-            if isinstance(w, ttk.Treeview):
-                titulos.extend(str(w.heading(col)["text"]) for col in w["columns"])
-                for iid in w.get_children():
-                    filas[iid] = w.item(iid)["values"]
+        """Apunta lo que dice la tabla de la flota."""
+        titulos.extend(self.tabla.cabeceras)
+        filas.update(self.tabla.filas)
 
     tk.Toplevel.wait_window = mirar_flota
     c("«Dispositivos…» no devuelve nada: ya no cambia nada de este dispositivo",
@@ -542,7 +536,8 @@ with sandbox():
     c("«Último equipo» es el desde el que publicó por última vez",
       filas["otro"][3], "OFICINA-07")
     c("y de una nota que no lo apunta, una raya", filas["yo"][3], tk_fleet.SIN_DATO)
-    c("la última pasada sigue al final", (filas["otro"][4], filas["yo"][4]), ("ok", "ok"))
+    c("la última pasada sigue al final, y un «ok» se dice «bien»",
+      (filas["otro"][4], filas["yo"][4]), (tk_fleet.BIEN, tk_fleet.BIEN))
 
 # la columna «Último equipo»: solo el más reciente, la lista entera es de la ficha
 Recientes = fleet.Dispositivo(
@@ -596,7 +591,8 @@ vieja = {f.rotulo: f for f in tk_fleet.ficha(fleet.Dispositivo(
     last_seen=AYER, last_result="ok"), "PORTATIL")}
 c("una nota vieja: sin equipos, y se dice por qué", vieja["Equipos"].lineas,
   (Linea(tk_fleet.SIN_EQUIPOS, pista=True),))
-c("un estado bueno no habla de pasadas buenas", vieja["Estado"].lineas, (Linea("ok"),))
+c("un estado bueno no habla de pasadas buenas", vieja["Estado"].lineas,
+  (Linea(tk_fleet.BIEN),))
 c("y sin plataformas, una raya", vieja["Para"].lineas, (Linea("—"),))
 
 # Quitar de la lista la nota de OTRO: lo que se comprueba aquí es que la ventana
@@ -616,13 +612,9 @@ def buscar(raiz_widget, clase, texto=None):
     return None
 
 
-def elegir(ventana, arbol, iid):
-    """Selecciona una fila y deja que Tk reparta el <<TreeviewSelect>>.
-
-    `update_idletasks()` no vale: el evento virtual va a la cola normal, no a la
-    de tareas ociosas, así que sin esto el botón que cuelga de la selección se
-    mira antes de que nadie lo haya repasado."""
-    arbol.selection_set(iid)
+def elegir(ventana, iid):
+    """Elige una fila de la tabla de la flota, como un clic."""
+    ventana.tabla.elegir(iid)
     ventana.update()
 
 
@@ -631,7 +623,7 @@ with sandbox():
 
     def quitar_otro(self, *_a, **_k):
         """Elige la nota de otro dispositivo y pulsa «Quitar de la lista…»."""
-        elegir(self, buscar(self, ttk.Treeview), "otro")
+        elegir(self, "otro")
         buscar(self, ttk.Button, "Quitar de la lista…").invoke()
 
     tk.Toplevel.wait_window = quitar_otro
@@ -644,10 +636,9 @@ with sandbox():
 
     def mirar_boton(self, *_a, **_k):
         """Elige cada fila y anota si el botón de quitar se enciende."""
-        arbol = buscar(self, ttk.Treeview)
         boton = buscar(self, ttk.Button, "Quitar de la lista…")
         for iid in ("yo", "otro"):
-            elegir(self, arbol, iid)
+            elegir(self, iid)
             apagados[iid] = str(boton.cget("state"))
 
     tk.Toplevel.wait_window = mirar_boton
@@ -656,6 +647,17 @@ with sandbox():
       "disabled")
     c("y sobre otro, encendido", apagados["otro"], "normal")
     c("elegir una fila no quita nada por su cuenta", olvidados, ["otro"])
+
+
+def etiquetas(ventana):
+    """Cada etiqueta que hay ahora en la ventana, con su texto."""
+    salida, pila = [], [ventana]
+    while pila:
+        w = pila.pop()
+        pila += list(w.winfo_children())
+        if isinstance(w, ttk.Label):
+            salida.append((w, str(w.cget("text"))))
+    return salida
 
 
 def textos(ventana):
@@ -675,10 +677,10 @@ with sandbox():
 
     def mirar_fichas(self, *_a, **_k):
         """Elige cada fila y apunta lo que dice la ficha."""
-        arbol = buscar(self, ttk.Treeview)
+        tabla = set(self.tabla.marco.winfo_children())
         for iid in ("otro", "yo"):
-            elegir(self, arbol, iid)
-            fichas[iid] = textos(self)
+            elegir(self, iid)
+            fichas[iid] = [t for w, t in etiquetas(self) if w not in tabla]
 
     tk.Toplevel.wait_window = mirar_fichas
     tk_fleet.open_dialog(raiz, cfg, dict(BASE))
@@ -912,7 +914,7 @@ def flags_escritos(texto, extra="", boton="Aceptar"):
 
     def _wait(self, *_a, **_k):
         """Escribe en los cuadros, pulsa el botón y vuelve."""
-        cajas, botones, tabla = {}, {}, None
+        cajas, botones = {}, {}
         pila = [self]
         while pila:
             w = pila.pop()
@@ -921,16 +923,13 @@ def flags_escritos(texto, extra="", boton="Aceptar"):
                 cajas[int(w.grid_info()["row"])] = w
             elif isinstance(w, ttk.Button):
                 botones[w.cget("text")] = w
-            elif isinstance(w, ttk.Treeview):
-                tabla = w
         caja, caja_extra = [cajas[k] for k in sorted(cajas)]
         caja.delete("1.0", "end")
         caja.insert("1.0", texto)
         caja_extra.delete("1.0", "end")
         caja_extra.insert("1.0", extra)
         botones["Ver el efecto"].invoke()
-        if tabla is not None:
-            filas[:] = [tabla.item(i)["values"] for i in tabla.get_children()]
+        filas[:] = [self.tabla.filas[i] for i in self.tabla.orden]
         pila = [self]
         while pila:
             w = pila.pop()
@@ -961,6 +960,7 @@ c("y se explica por qué, dentro del propio diálogo",
 datos, _, quejas = flags_escritos('workdir = "otro"')
 c("un flag que pone sync.py tampoco sale", datos, None)
 c("con su motivo", any("no se configura aquí" in q for q in quejas), True)
+c("  bajo su título", flags_editor.TITULO_RESERVADO in quejas, True)
 
 datos, _, _ = flags_escritos("transfers = 8", boton="Cancelar")
 c("cancelar no devuelve nada", datos, None)

@@ -534,6 +534,11 @@ def _roles() -> dict[str, tuple[str, str]]:
     }
 
 
+def fondo_de(superficie: str) -> str:
+    """Devuelve el color de fondo de una superficie (`'Card.'`, `'NotaAzul.'`…)."""
+    return _superficies().get(superficie, _superficies()[""])[0]
+
+
 def _superficies() -> dict[str, tuple[str, str | None]]:
     """Devuelve cada superficie: fondo y color de letra que manda sobre el del rol, o `None`.
 

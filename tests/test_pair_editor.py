@@ -469,6 +469,11 @@ c("  y entero en una línea", pair_editor.mirror_warning("up-mirror"),
   "Modo 'up-mirror': es un espejo, BORRA en el remoto lo que no esté en el origen. "
   "Pruébalo antes con --dry-run.")
 c("  y nada para lo que no es espejo", pair_editor.aviso_espejo("bisync"), None)
+c("el aviso del espejo de un plan se parte en título y cuerpo",
+  pair_editor.partir_aviso(pair_editor.mirror_warning("down-mirror")),
+  pair_editor.aviso_espejo("down-mirror"))
+c("  y cualquier otro va entero, sin título",
+  pair_editor.partir_aviso("Otra cosa."), ("", "Otra cosa."))
 
 texto_cat = config_file.dumps({"defaults": {"remote": "nas"}, "pair": [
     {"name": "a", "local": "A", "remote_path": "/a", "mode": "up"},

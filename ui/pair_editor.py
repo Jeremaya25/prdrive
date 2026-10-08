@@ -138,6 +138,18 @@ def mirror_warning(mode: str) -> str | None:
     return f"{titulo}, {cuerpo}"
 
 
+def partir_aviso(texto: str) -> tuple[str, str]:
+    """Devuelve un aviso de un plan como título y cuerpo para su recuadro.
+
+    El del espejo se parte como en la pantalla de parejas (`aviso_espejo`); el
+    resto va entero como cuerpo, sin título.
+    """
+    for mode in MIRROR_MODES:
+        if texto == mirror_warning(mode):
+            return aviso_espejo(mode)
+    return "", texto
+
+
 def rows(config: Config) -> list[PairRow]:
     """Devuelve lo que se pinta en la lista, con el estado ya resuelto.
 

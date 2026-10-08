@@ -288,9 +288,10 @@ def foto(dlg) -> dict:
             botones[str(w.cget("text"))] = str(w.cget("state"))
         elif isinstance(w, ttk.Label) and w.winfo_manager():
             textos.append(str(w.cget("text")))
-    lista = getattr(dlg, "lista", None)
-    if lista is not None:                       # la de parejas no es una Treeview
-        filas, seleccion = list(lista.filas), (lista.elegida,)
+    lista = getattr(dlg, "lista", None) or getattr(dlg, "tabla", None)
+    if lista is not None:                       # parejas y flota no son una Treeview
+        filas = list(lista.filas)
+        seleccion = (lista.elegida,) if lista.elegida is not None else ()
     ind = dlg.indicador
     return {"filas": sorted(filas), "seleccion": seleccion, "botones": botones,
             "textos": textos, "esperando": ind.esperando,
@@ -694,13 +695,13 @@ with sandbox():
         vista["despues"] = foto(self)
         remoto.soltar = threading.Event()
         buscar(self, ttk.Button, "Releer").invoke()
-        buscar(self, ttk.Treeview).selection_set("bbb")
+        self.tabla.elegir("bbb")
         self.update()
         vista["quitar_releyendo"] = str(buscar(self, ttk.Button,
                                                "Quitar de la lista…").cget("state"))
         remoto.soltar.set()
         dar_vueltas(lambda: not self.sondeo.esperando)
-        buscar(self, ttk.Treeview).selection_set("bbb")
+        self.tabla.elegir("bbb")
         self.update()
         vista["quitar_leida"] = str(buscar(self, ttk.Button,
                                            "Quitar de la lista…").cget("state"))

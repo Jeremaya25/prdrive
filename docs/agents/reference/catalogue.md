@@ -53,7 +53,9 @@ An optional **`[remote]`** table carries the non-secret definition of the rclone
 
 «Examinar…» beside `remote_path`. `listar()` is `rclone lsd` through `catalog.run()`, and `_LINEA` parses its fixed five-field line as a whole regex, not by splitting on spaces: a folder name with spaces must survive intact, and a line that is not a listing must not become a folder. `crear()` is the only thing that writes and it is a `mkdir`. **Deleting remote folders is deliberately not offered**: the remote belongs to the whole fleet and there is no consequences ceremony behind this dialog.
 
-The button is disabled exactly when the catalogue block is (`catalog_editor.lectura().editable`: just read from the remote, not while reading), the proxy for "there is a connection". Listing and `mkdir` go through `working()`: its window is modal, so the path being looked at and its contents cannot contradict each other mid-navigation; the first listing, before the picker shows, hangs off the form that opened it.
+The button is disabled exactly when the catalogue block is (`catalog_editor.lectura().editable`: just read from the remote, not while reading), the proxy for "there is a connection". Listing and `mkdir` go through `working()`: its window is modal, so the path being looked at and its contents cannot contradict each other mid-navigation; the first listing, before the picker shows, hangs off the form that opened it. Each folder is the `Treeview`'s tree column (`#0`) so it can carry the folder icon; nothing expands in place, you enter.
+
+`confirmar_plan()` draws each warning with `pair_editor.partir_aviso()`: the mirror warning is split into title and body like the pairs screen's (`aviso_espejo()`), any other goes whole. The `[defaults]` form (`defaults_form()`) is one column, label above each field and its hint (with «Catálogo: …», ✎ when it differs) below; the include/exclude boxes sit side by side.
 
 ## The flags editor (`ui/flags_editor.py`)
 
@@ -61,4 +63,4 @@ Flags are written in TOML syntax (a text box, not a row-per-flag form) and parse
 
 - `RESERVED` rejects the flags `sync.py` supplies per run and the filter ones (a second `--workdir` or `--filters-file` points bisync at the wrong baseline).
 - `effective()` resolves the four layers into what rclone would actually receive; `warnings()` compares **merged** flag sets, never one layer, so it catches `--max-delete` rising because the pair's own value was deleted or the mode changed. Editing flags never shelves a baseline.
-- `tk_pairs.flags_form()` does **not** close on invalid input; `pair_editor.merge_form()` (shared with `catalog_editor`) makes an emptied box delete the key.
+- `tk_pairs.flags_form()` does **not** close on invalid input: the reason shows in a red `theme.aviso` under the TOML box, titled by `flags_editor.titulo_error()` (`FlagReservado`, a `ConfigError` subclass, → «Este flag no se puede poner aquí»; anything else → «Esto no se puede guardar así»). Its «what rclone would receive» table is a `tk.Tabla` with a chip per layer; the pair's own flags are tinted with the accent; `pair_editor.merge_form()` (shared with `catalog_editor`) makes an emptied box delete the key.

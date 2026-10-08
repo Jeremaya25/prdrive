@@ -39,8 +39,9 @@ from common.model import ConfigError
 
 from . import (catalog_editor, flags_editor, icons, pair_editor,
                remote_picker, segundo_plano, theme)
-from .tk import (TITLE, Indicador, Sondeo, bloque_aviso, cabecera, centrar, separador_fila,
-                 cuerpo_visible, modal, mostrar, orden_sync, output_window, working)
+from .tk import (TITLE, CeldaChip, CeldaTexto, FilaTabla, Indicador, Sondeo, Tabla,
+                 bloque_aviso, cabecera, centrar, cuerpo_visible, modal, mostrar, orden_sync,
+                 output_window, separador_fila, working)
 
 VISTAS = (("Este dispositivo", "dispositivo", "dispositivo"),
           ("Catálogo", "catalogo", "nas"))
@@ -564,8 +565,7 @@ class EditorPareja:
         """Abre el editor de flags y se queda con lo que devuelva."""
         nombre = self.campos["name"].get().strip() or self.original or "la pareja nueva"
         datos = flags_form(self.dlg, f"Flags de rclone de '{nombre}'",
-                           "Se guardan en [pair.flags]; los que no pongas salen del "
-                           "modo y de [defaults].",
+                           "Se guardan en [pair.flags].",
                            self.avanzado["flags"], self.avanzado["extra_flags"],
                            mode_name=self.modo.get(),
                            defaults_flags=(self.raw.get("defaults") or {}).get("flags"),
@@ -1178,8 +1178,8 @@ def confirmar_plan(parent, plan, titulo: str, nota: str, suelto: bool = False) -
 
     fila = 3
     for texto in plan.warnings:
-        bloque_aviso(marco, texto, ancho=470).grid(row=fila, column=0, sticky="ew",
-                                                   pady=(theme.E3, 0))
+        theme.aviso(marco, *pair_editor.partir_aviso(texto), ancho=470).grid(
+            row=fila, column=0, sticky="ew", pady=(theme.E3, 0))
         fila += 1
 
     ttk.Separator(marco, orient="horizontal").grid(row=fila, column=0, sticky="ew",
@@ -1216,9 +1216,7 @@ def preguntar_limpieza(parent, name: str) -> bool | None:
     ttk.Label(marco, text=f"Quitar '{name}' de este dispositivo",
               style="Dialogo.TLabel").grid(row=0, column=0, sticky="w")
     ttk.Label(marco, justify="left", wraplength=theme.medida(440), style="Pista.TLabel",
-              text=("Los datos NO se tocan, ni en el dispositivo ni en el remoto, y la pareja "
-                    "sigue en el catálogo: se puede volver a usar cuando "
-                    "quieras.")).grid(row=1, column=0, sticky="w", pady=(theme.E1, 0))
+              text="Los datos NO se tocan y la pareja sigue en el catálogo.").grid(row=1, column=0, sticky="w", pady=(theme.E1, 0))
 
     limpiar = tk.BooleanVar(value=False)
     caja = ttk.Frame(marco, style="Card.TFrame", padding=(theme.E4, theme.E3))
@@ -1227,8 +1225,7 @@ def preguntar_limpieza(parent, name: str) -> bool | None:
         "Apartar también su baseline y borrar sus filtros generados")).grid(
         row=0, column=0, sticky="w")
     ttk.Label(caja, style="Card.Pista.TLabel", wraplength=theme.medida(430), justify="left",
-              text=("El baseline se renombra a state/<pareja>.old-<fecha>/, no se "
-                    "borra. Si no marcas nada, se queda todo donde está.")).grid(
+              text="El baseline se aparta en state/<pareja>.old-<fecha>/; no se borra.").grid(
         row=1, column=0, sticky="w", padx=(theme.E5, 0), pady=(theme.E1, 0))
 
     def aceptar():
@@ -1352,8 +1349,7 @@ def explorador_remoto(parent, remote: str, inicial: str = "") -> str | None:
     estado = {"ruta": remote_picker.carpeta_de(inicial), "elegida": None}
 
     cabecera(marco, "Elegir una carpeta del remoto",
-             "Doble clic para entrar. Se elige la carpeta que estés mirando, así "
-             "que para usar una de la lista, entra primero en ella.",
+             "Doble clic para entrar. Se elige la carpeta que estás mirando.",
              ancho=520, estilo="Dialogo.TLabel").grid(row=0, column=0, sticky="w")
 
     barra = ttk.Frame(marco, style="Gris.TFrame", padding=(theme.E3, theme.E2))
@@ -1371,10 +1367,13 @@ def explorador_remoto(parent, remote: str, inicial: str = "") -> str | None:
     tarjeta.columnconfigure(0, weight=1)
     tarjeta.rowconfigure(0, weight=1)
     marco.rowconfigure(2, weight=1)
-    lista = ttk.Treeview(tarjeta, columns=("nombre",), show="headings", height=9,
+    # La carpeta va en la columna del árbol (#0) porque es la única de una
+    # `Treeview` que lleva icono; el árbol no se despliega: se entra.
+    lista = ttk.Treeview(tarjeta, columns=(), show=("tree", "headings"), height=8,
                          selectmode="browse")
-    lista.heading("nombre", text="Carpetas", anchor="w")
-    lista.column("nombre", width=icons.px(lista, 420), anchor="w")
+    lista.heading("#0", text=theme.rotulo("Carpetas"), anchor="w")
+    lista.column("#0", width=icons.px(lista, 420), anchor="w")
+    carpeta = icons.get(lista, "carpeta", 16, theme.TINTA3, theme.SUPERFICIE)
     lista.grid(row=0, column=0, sticky="nsew")
     theme.marcar_lista(lista)
     scroll = ttk.Scrollbar(tarjeta, orient="vertical", command=lista.yview)
@@ -1405,7 +1404,8 @@ def explorador_remoto(parent, remote: str, inicial: str = "") -> str | None:
         ruta_lbl.configure(text=f"{remote}:{estado['ruta']}")
         lista.delete(*lista.get_children())
         for nombre in nombres:
-            lista.insert("", "end", iid=nombre, values=(nombre,), tags=("ok",))
+            lista.insert("", "end", iid=nombre, text=f" {nombre}", tags=("ok",),
+                         **({"image": carpeta} if carpeta is not None else {}))
         subir_btn.configure(state="disabled" if estado["ruta"] == remote_picker.RAIZ
                             else "normal")
         nota.configure(text=("Aquí no hay ninguna carpeta." if not nombres else
@@ -1442,13 +1442,12 @@ def explorador_remoto(parent, remote: str, inicial: str = "") -> str | None:
 
     acciones = ttk.Frame(marco)
     acciones.grid(row=4, column=0, sticky="ew", pady=(theme.E3, 0))
-    acciones.columnconfigure(1, weight=1)
     entrar_btn = ttk.Button(acciones, text="Entrar", command=entrar)
     entrar_btn.grid(row=0, column=0, sticky="w")
     nueva_btn = ttk.Button(acciones, text="Nueva carpeta…", style="Quiet.TButton",
                            command=nueva)
     theme.boton_icono(nueva_btn, "plus", theme.ACENTO, theme.PAPEL)
-    nueva_btn.grid(row=0, column=2, sticky="e")
+    nueva_btn.grid(row=0, column=1, sticky="w", padx=(theme.E2, 0))
 
     ttk.Separator(marco, orient="horizontal").grid(row=5, column=0, sticky="ew",
                                                    pady=(theme.E4, 0))
@@ -1522,67 +1521,76 @@ def defaults_form(parent, actual: dict, catalogo: dict | None,
     from tkinter import ttk
 
     dlg = modal(parent, titulo)
-    marco = cuerpo_visible(dlg, padding=(theme.E5, theme.E4, theme.E5, theme.E4))
-    marco.columnconfigure(2, weight=1)
+    marco = cuerpo_visible(dlg, padding=(theme.E5, theme.E5, theme.E5, theme.E4))
+    marco.columnconfigure(0, weight=1)
     resultado: dict = {"datos": None}
 
     fila = _cabecera_form(marco, titulo, marca, subtitulo, 0)
 
-    def pista(clave: str, ayuda: str) -> str:
-        """Devuelve lo que dice el catálogo de ese campo, marcado si difiere."""
+    def pista(clave: str, ayuda: str, separador: str = " ") -> str:
+        """Lo que va debajo de un campo: para qué es y lo que dice el catálogo."""
         if catalogo is None:
             return ayuda
         suyo = catalogo.get(clave)
-        dif = "✎ " if str(actual.get(clave, "") or "") != str(suyo or "") else ""
-        return f"{dif}catálogo: {suyo if suyo not in (None, '') else '—'}"
-
-    def etiqueta(texto: str, en: int, arriba: bool = False) -> None:
-        """Pone la etiqueta de un campo en la columna de la izquierda."""
-        ttk.Label(marco, text=texto, style="Campo.TLabel", anchor="e",
-                  width=16).grid(row=en, column=0, sticky="ne" if arriba else "e",
-                                 padx=(0, theme.E3), pady=(theme.E1, 0) if arriba else 0)
+        if isinstance(suyo, list):
+            suyo = ", ".join(suyo)
+        mio = actual.get(clave)
+        mio = ", ".join(mio) if isinstance(mio, list) else mio
+        dif = "✎ " if str(mio or "") != str(suyo or "") else ""
+        return f"{ayuda}{separador}{dif}Catálogo: {suyo if suyo not in (None, '') else '—'}"
 
     campos: dict[str, tk.StringVar] = {}
     for clave, titulo_campo, ayuda in (
-            ("remote", "Remoto", "el nombre del remote en rclone.conf"),
+            ("remote", "Remoto", "El nombre del remote en rclone.conf."),
             ("device_remote", "Remote del dispositivo",
-             "vacío = desactivado; cambiarlo invalida los baselines"),
+             "Vacío = desactivado; cambiarlo invalida los baselines."),
             ("catalog_path", "Ruta del catálogo",
-             f"vacío = {catalog.DEFAULT_CATALOG_PATH}")):
-        etiqueta(titulo_campo, fila)
+             f"Vacío = {catalog.DEFAULT_CATALOG_PATH}.")):
+        celda = ttk.Frame(marco)
+        celda.grid(row=fila, column=0, sticky="ew", pady=(theme.E3, 0))
+        celda.columnconfigure(0, weight=1)
+        ttk.Label(celda, text=titulo_campo, style="Fuerte.TLabel").grid(
+            row=0, column=0, sticky="w", pady=(0, theme.E1))
         var = tk.StringVar(value=str(actual.get(clave, "") or ""))
         campos[clave] = var
-        ttk.Entry(marco, textvariable=var, width=38, style="Mono.TEntry").grid(
-            row=fila, column=1, sticky="w", pady=theme.E1)
-        ttk.Label(marco, text=pista(clave, ayuda), style="Pista.TLabel",
-                  wraplength=theme.medida(260), justify="left").grid(row=fila, column=2,
-                                                       sticky="w", padx=(theme.E3, 0))
+        ttk.Entry(celda, textvariable=var, width=48, style="Mono.TEntry").grid(
+            row=1, column=0, sticky="ew")
+        ttk.Label(celda, text=pista(clave, ayuda), style="Pista.TLabel",
+                  wraplength=theme.medida(620), justify="left").grid(
+            row=2, column=0, sticky="w", pady=(theme.E1, 0))
         fila += 1
 
     guardar_logs = tk.BooleanVar(value=bool(actual.get("keep_logs", False)))
     ttk.Checkbutton(marco, variable=guardar_logs,
                     text="Guardar también los logs de las pasadas que van bien").grid(
-        row=fila, column=1, columnspan=2, sticky="w", pady=(theme.E3, theme.E1))
+        row=fila, column=0, sticky="w", pady=(theme.E4, 0))
     fila += 1
 
+    patrones = ttk.Frame(marco)
+    patrones.grid(row=fila, column=0, sticky="ew", pady=(theme.E4, 0))
+    patrones.columnconfigure((0, 1), weight=1, uniform="patrones")
     textos: dict[str, tk.Text] = {}
-    for clave, titulo_campo in (("include", "Incluir en todas"),
-                                ("exclude", "Excluir en todas")):
-        etiqueta(titulo_campo, fila, arriba=True)
-        caja = theme.caja_texto(marco, width=38, height=4)
+    for col, (clave, titulo_campo) in enumerate((("include", "Incluir en todas"),
+                                                 ("exclude", "Excluir en todas"))):
+        ttk.Label(patrones, text=titulo_campo, style="Fuerte.TLabel").grid(
+            row=0, column=col, sticky="w", pady=(0, theme.E1),
+            padx=(0, theme.E4) if col == 0 else 0)
+        caja = theme.caja_texto(patrones, width=28, height=4)
         caja.insert("1.0", "\n".join(actual.get(clave, []) or []))
-        caja.grid(row=fila, column=1, sticky="w", pady=(theme.E2, theme.E1))
+        caja.grid(row=1, column=col, sticky="ew", padx=(0, theme.E4) if col == 0 else 0)
         textos[clave] = caja
-        ttk.Label(marco, style="Pista.TLabel", wraplength=theme.medida(260), justify="left",
-                  text="Un patrón por línea. Vale para todas las parejas.").grid(
-            row=fila, column=2, sticky="nw", padx=(theme.E3, 0), pady=(theme.E2, 0))
-        fila += 1
+        ttk.Label(patrones, style="Pista.TLabel", wraplength=theme.medida(290),
+                  justify="left",
+                  text=pista(clave, "Un patrón por línea. Vale para todas las parejas.",
+                             "\n")).grid(row=2, column=col, sticky="nw",
+                                         pady=(theme.E1, 0))
+    fila += 1
 
     avanzado = {"flags": dict(actual.get("flags") or {}),
                 "extra_flags": list(model._as_tuple(actual.get("extra_flags")))}
 
-    caja_flags = ttk.Frame(marco, style="Card.TFrame", padding=(theme.E3, theme.E3))
-    caja_flags.grid(row=fila, column=0, columnspan=3, sticky="ew", pady=(theme.E4, 0))
+    caja_flags = ttk.Frame(marco, style="Card.TFrame", padding=(theme.E4, theme.E3))
+    caja_flags.grid(row=fila, column=0, sticky="ew", pady=(theme.E4, 0))
     caja_flags.columnconfigure(1, weight=1)
     img = icons.get(caja_flags, "flag", 18, theme.TINTA2, theme.SUPERFICIE)
     marca_flags = ttk.Label(caja_flags, style="Card.TLabel")
@@ -1617,10 +1625,10 @@ def defaults_form(parent, actual: dict, catalogo: dict | None,
         row=0, column=2, rowspan=2, sticky="e")
     fila += 1
 
-    bloque_aviso(marco, "Ojo con 'Remote del dispositivo' y 'Remoto': alimentan los "
-                        "extremos de todas las parejas, así que cambiarlos aparta "
-                        "sus baselines.", ancho=620).grid(
-        row=fila, column=0, columnspan=3, sticky="ew", pady=(theme.E3, 0))
+    theme.aviso(marco, "Ojo con «Remote del dispositivo» y «Remoto»",
+                "Alimentan los extremos de todas las parejas: cambiarlos aparta "
+                "sus baselines.", ancho=560).grid(
+        row=fila, column=0, sticky="ew", pady=(theme.E4, 0))
     fila += 1
 
     def aceptar():
@@ -1645,10 +1653,10 @@ def defaults_form(parent, actual: dict, catalogo: dict | None,
         resultado["datos"] = datos
         dlg.destroy()
 
-    ttk.Separator(marco, orient="horizontal").grid(row=fila, column=0, columnspan=3,
-                                                   sticky="ew", pady=(theme.E4, 0))
+    ttk.Separator(marco, orient="horizontal").grid(row=fila, column=0, sticky="ew",
+                                                   pady=(theme.E4, 0))
     pie = ttk.Frame(marco)
-    pie.grid(row=fila + 1, column=0, columnspan=3, sticky="ew", pady=(theme.E4, 0))
+    pie.grid(row=fila + 1, column=0, sticky="ew", pady=(theme.E4, 0))
     pie.columnconfigure(0, weight=1)
     ttk.Label(pie, text="Antes de guardar se enseña qué va a pasar.",
               style="Pista.TLabel").grid(row=0, column=0, sticky="w")
@@ -1738,32 +1746,22 @@ def flags_form(parent, titulo: str, subtitulo: str, flags: dict, extra: list,
     ttk.Label(titulo_tabla, text=theme.rotulo("Lo que acabaría recibiendo rclone"),
               style="Rotulo.TLabel").grid(row=0, column=0, sticky="w")
 
-    tarjeta = ttk.Frame(derecha, style="Card.TFrame", padding=(theme.E2, theme.E2, theme.E1, theme.E1))
-    tarjeta.grid(row=1, column=0, sticky="nsew")
-    tarjeta.columnconfigure(0, weight=1)
-    tarjeta.rowconfigure(0, weight=1)
-    tabla = ttk.Treeview(tarjeta, columns=("flag", "origen"), show="headings",
-                         height=12, selectmode="none")
-    tabla.heading("flag", text="Flag")
-    tabla.heading("origen", text="Sale de")
-    tabla.column("flag", width=icons.px(tabla, 290))
-    tabla.column("origen", width=icons.px(tabla, 110))
-    tabla.grid(row=0, column=0, sticky="nsew")
-    tabla.tag_configure("propio", foreground=theme.OK)
-    tabla.tag_configure("heredado", foreground=theme.TINTA2)
-    tabla.tag_configure("base", foreground=theme.TINTA3)
+    tabla = Tabla(derecha, [("Flag", 260, True), ("Sale de", 120, False)], alto_fila=30,
+                  vacio="Cuando lo escrito valga, aquí se verá el efecto.")
+    tabla.grid(row=1, column=0, sticky="new")
+    dlg.tabla = tabla                                  # los tests la miran
 
     ttk.Label(derecha, style="Pista.TLabel", wraplength=theme.medida(380), justify="left",
               text="Se funden en este orden: siempre → modo → [defaults] → esta "
                    "pareja.").grid(row=2, column=0, sticky="w", pady=(theme.E2, 0))
 
-    def avisar(texto: str | None) -> None:
+    def avisar(error: ConfigError | None) -> None:
         """Enseña el motivo en el recuadro rojo, o lo vacía si no hay."""
         for hijo in problema.winfo_children():
             hijo.destroy()
-        if texto:
-            bloque_aviso(problema, texto, ancho=300, tipo="Rojo").grid(
-                row=0, column=0, sticky="ew")
+        if error is not None:
+            theme.aviso(problema, flags_editor.titulo_error(error), str(error),
+                        tono="Rojo.", ancho=300).grid(row=0, column=0, sticky="ew")
 
     def leer() -> dict | None:
         """Devuelve lo escrito, ya validado; `None` si no vale (y ya se ha avisado)."""
@@ -1771,7 +1769,7 @@ def flags_form(parent, titulo: str, subtitulo: str, flags: dict, extra: list,
             datos = {"flags": flags_editor.parse(caja.get("1.0", "end")),
                      "extra_flags": flags_editor.parse_extra(caja_extra.get("1.0", "end"))}
         except ConfigError as e:
-            avisar(str(e))
+            avisar(e)
             return None
         avisar(None)
         return datos
@@ -1780,16 +1778,21 @@ def flags_form(parent, titulo: str, subtitulo: str, flags: dict, extra: list,
         """Repinta la tabla con lo que acabaría recibiendo rclone."""
         datos = leer()
         if datos is None:
+            if not tabla.orden:
+                tabla.poner([])               # al abrir: que no quede una tabla muda
             return
-        tabla.delete(*tabla.get_children())
+        filas = []
         for i, fila in enumerate(flags_editor.effective(mode_name, defaults_flags,
                                                         datos["flags"])):
-            etiqueta = ("propio" if fila.origen == "esta pareja"
-                        else "base" if fila.origen == "siempre" else "heredado")
-            tabla.insert("", "end", iid=str(i), tags=(etiqueta,),
-                         values=(fila.flag, fila.origen))
-        for arg in datos["extra_flags"]:
-            tabla.insert("", "end", tags=("propio",), values=(arg, "extra"))
+            propio = fila.origen == "esta pareja"
+            filas.append(FilaTabla(str(i), (
+                CeldaTexto(fila.flag, "Mono."),
+                CeldaChip(fila.origen, "Acento." if propio else "",
+                          "edit" if propio else None)), "propio" if propio else ""))
+        for j, arg in enumerate(datos["extra_flags"]):
+            filas.append(FilaTabla(f"extra{j}", (CeldaTexto(arg, "Mono."),
+                                                 CeldaChip("extra"))))
+        tabla.poner(filas)
 
     def aceptar():
         """Valida lo escrito y cierra; si no vale, el diálogo se queda abierto."""
