@@ -55,7 +55,8 @@ esquema está `extra_flags`, una lista de cadenas que se pasan crudas.
 
 El config viaja con el dispositivo y se puede editar a mano. Para que un config
 ajeno no pueda hacer que rclone ejecute una orden en el equipo donde enchufes la
-unidad, el programa se niega a leerlo si trae:
+unidad, ni que sincronice carpetas de fuera de ella, el programa se niega a
+leerlo si trae:
 
 - **Un flag que lanza un programa**: los que acaban en `-command` o en `-ssh`
   (`password-command`, `sftp-ssh`…), `metadata-mapper`, `rc` y los `rc-…`. Vale
@@ -69,6 +70,11 @@ unidad, el programa se niega a leerlo si trae:
   o comillas, rclone lo leería como una conexión con sus propias opciones
   (`nas,ssh='…'`), y si empieza por `-`, como una opción. Vale para el `remote`
   de una pareja y para el `remote` y el `catalog_remote` de `[defaults]`.
+- **Un `local` que no es una carpeta de dentro del dispositivo**: con un `..` o
+  una letra de unidad (`C:/…`) sincronizaría (y en un espejo, borraría) carpetas
+  de tu ordenador; y la del programa (`.prdrive`, que lleva la clave) y la del
+  llavero (`.keychain`, que tiene su propia pareja) tampoco valen. Una barra al
+  principio (`/sync-data/docs`) se sigue admitiendo.
 
 El aviso dice de qué pareja es (o de `[defaults]`) y qué clave sobra; hasta que
 la quites a mano, la ventana no abre. El agente del equipo hace la misma

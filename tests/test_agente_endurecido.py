@@ -127,6 +127,19 @@ c("una raíz normal se sirve igual",
    razon(con_defaults(F.unidad("m" * 32, parejas=("docs",)), 'catalog_remote = "cat"'))),
   ("", ""))
 
+# el `local` también: una pareja que sale de la raíz o cae en la carpeta del llavero
+# la lanzaría el `sync.py` de una raíz de antes, que no mira el `local` de una unidad
+fuera = razon(F.unidad("o" * 32, parejas=("docs",), locales={"docs": "../../fuera"}))
+c.contains("el agente no sirve una raíz con un local que sale de ella", fuera, "local")
+c.contains("  y dice de qué pareja", fuera, "[docs]")
+c.contains("tampoco con uno que es la carpeta del llavero",
+           razon(F.unidad("l" * 32, parejas=("docs",),
+                          locales={"docs": model.LLAVERO_LOCAL})), "llavero")
+raiz_todo = F.unidad("q" * 32, parejas=("docs",), locales={"docs": "."})
+c("en una unidad, la raíz entera como local se sirve", razon(raiz_todo), "")
+(raiz_todo / ".prdrive" / "PRDRIVE").write_text(f"id={'q' * 32}\ntipo=equipo\n", encoding="utf-8")
+c.contains("en la raíz de un equipo, no", razon(raiz_todo), "raíz entera")
+
 # un solo agente
 equipo.lock_json().unlink(missing_ok=True)
 yo = {"pid": os.getpid(), "host": equipo.HOST, "started": "x"}

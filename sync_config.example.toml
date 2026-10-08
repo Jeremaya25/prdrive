@@ -123,7 +123,8 @@ interval_minutes = 30
 
 [[pair]]
 name = "docs"
-local = "sync-data/docs"      # relativa a la raíz del dispositivo
+local = "sync-data/docs"      # relativa a la raíz del dispositivo: sin '..' ni 'C:',
+                              # y ni .prdrive (el programa) ni .keychain (el llavero)
 remote_path = "/datos/docs"   # ruta dentro del remote
 mode = "bisync"
 versions = true               # ver más abajo

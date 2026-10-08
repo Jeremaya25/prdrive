@@ -6,7 +6,8 @@ es la única puerta por la que entra lo que acaba en la línea de órdenes de
 rclone. Aquí se sujeta que no entre un flag que lance un programa en este
 equipo, ni un `resync = true` que fuerce `--resync` en cada pasada, ni un
 `extra_flags` que pise `--config`, ni un nombre de remote que sea una cadena de
-conexión de rclone (`nas,ssh='sh -c id'`).
+conexión de rclone (`nas,ssh='sh -c id'`), ni un `local` que salga del
+dispositivo o sea la carpeta del programa o la del llavero.
 """
 
 import sys
@@ -161,5 +162,67 @@ for etiqueta, texto in (
         ("un remote", rechaza(una(remote="nas,ssh='x'"))),
         ("un remote de [defaults]", rechaza({**una(), "defaults": {"remote": "nas,x=y"}}))):
     c(f"{etiqueta}: acaba diciendo qué hacer", texto.endswith("o quita la clave del config."), True)
+
+# --- local: dentro de la raíz, y ni el programa ni el llavero -----------------
+app = model.APP_DIR.name            # «.prdrive» en un dispositivo, el nombre del checkout aquí
+for local in ("../../fuera", "a/../../b", "C:/Users/x", "C:\\Users\\x", "d:x",
+              app, f"{app}/keys", model.LLAVERO_LOCAL, f"{model.LLAVERO_LOCAL.upper()}/x"):
+    c.contains(f"local {local!r} no vale en una unidad", rechaza(una(local=local)), "[p]")
+for local, queda in ((".", "."), ("sync-data/docs", "sync-data/docs"),
+                     ("/sync-data/docs", "sync-data/docs")):   # la barra de antes se tolera
+    c(f"local {local!r} vale", model.parse_config(una(local=local)).pairs[0].local, queda)
+
+# lo que cuenta es el primer tramo, tal cual y con `\` por `/`, y un tramo entero
+for local in ("/../x", "./../x", "sync-data\\..\\..\\x", f"/{model.LLAVERO_LOCAL}",
+              f"./{app}", f"{model.LLAVERO_LOCAL}\\x", app.upper()):
+    c.contains(f"local {local!r} tampoco", rechaza(una(local=local)), "[p]")
+for local in ("a..b", "..x", "x..", f"sync-data/{app}", f"sync-data/{model.LLAVERO_LOCAL}",
+              f"{model.LLAVERO_LOCAL}2", f"{app}-docs", "sync-data/d:x"):
+    c(f"local {local!r} vale: ni es un '..' ni empieza por esa carpeta",
+      rechaza(una(local=local)), "")
+
+# cada motivo, con la clave y qué hacer
+fuera = rechaza(una(local="../../fuera"))
+c.contains("el motivo de salir dice la clave y el valor", fuera, "local = \"../../fuera\"")
+c.contains("  y que sale del dispositivo", fuera, "sale del dispositivo")
+c.contains("  y qué poner", fuera, "Pon una carpeta de dentro")
+unidad_c = rechaza(una(local="C:/Users/x"))
+c.contains("una letra de unidad dice lo mismo", unidad_c, "sale del dispositivo")
+c.contains("la carpeta del programa dice quién es",
+           rechaza(una(local=f"{app}/keys")), "es la carpeta del programa, con su clave")
+c.contains("  y qué poner", rechaza(una(local=app)), "Pon otra carpeta")
+c.contains("la del llavero dice quién es",
+           rechaza(una(local=model.LLAVERO_LOCAL)),
+           "es la del llavero, que tiene su propia pareja")
+c.contains("  y qué poner", rechaza(una(local=model.LLAVERO_LOCAL)), "Pon otra carpeta")
+
+# en una raíz del equipo vale lo mismo, y encima lo suyo con sus propias palabras
+for local in (".", "", "../fuera", "/etc", "C:\\Users", "\\\\srv\\x"):
+    c(f"en un equipo, local = {local!r}: el motivo es el de problema_local_equipo",
+      model.problema_local(local, equipo=True), model.problema_local_equipo(local))
+    c(f"  y el parser lo dice igual, con su pareja",
+      rechaza(una(local=local), equipo=True),
+      "[p] " + model.problema_local_equipo(local))
+for local in (app, f"{app}/keys", model.LLAVERO_LOCAL):
+    c.contains(f"en un equipo, local = {local!r} tampoco",
+               rechaza(una(local=local), equipo=True), "[p]")
+c("en un equipo, una carpeta de dentro vale",
+  rechaza(una(local="Documentos/Obsidian"), equipo=True), "")
+c("en una unidad, '.' no pasa por lo del equipo", model.problema_local("."), None)
+c("problema_local: None si vale", model.problema_local("sync-data/docs"), None)
+
+# la puerta es comprobar_seguridad(), la del agente también, y no decide más
+c.contains("comprobar_seguridad() mira el local de cada pareja con nombre",
+           _texto(lambda: model.comprobar_seguridad(una(local="../x"))), "[p] local")
+c.contains("  y con equipo, el de la raíz del equipo",
+           _texto(lambda: model.comprobar_seguridad(una(local="."), equipo=True)), "raíz entera")
+c("  pero '.' en una unidad lo deja", _texto(lambda: model.comprobar_seguridad(una(local="."))), "")
+c("un local que no es un texto no es asunto suyo",
+  (_texto(lambda: model.comprobar_seguridad(una(local=5))),
+   _texto(lambda: model.comprobar_seguridad(una(local=["../x"]))),
+   _texto(lambda: model.comprobar_seguridad({"pair": [{"name": "p"}, {"local": "../x"}, 7]}))),
+  ("", "", ""))
+sin_local = {"defaults": {"remote": "nas"}, "pair": [{"name": "p", "remote_path": "R/p"}]}
+c.contains("sin local, lo dice _build_pair como siempre", rechaza(sin_local), "falta 'local'")
 
 sys.exit(c.report())

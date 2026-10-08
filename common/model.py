@@ -649,7 +649,7 @@ def _comprobar_remote(donde: str, valor: Any, clave: str) -> None:
             f"{donde} {motivo} Deja solo el nombre del remote o quita la clave del config.")
 
 
-def comprobar_seguridad(crudo: Mapping[str, Any]) -> None:
+def comprobar_seguridad(crudo: Mapping[str, Any], equipo: bool = False) -> None:
     """Rechaza del config en bruto lo que no puede llegar a la línea de órdenes de rclone.
 
     Es el único sitio de estas comprobaciones, y mira el TOML tal como sale de
@@ -665,10 +665,13 @@ def comprobar_seguridad(crudo: Mapping[str, Any]) -> None:
     catálogo, ver `carpeta_del_catalogo()`, y un `remote` vacío dejaría a la
     pareja en `:ruta`, donde un `remote_path` hecho a propósito sería una
     cadena de conexión), los flags y el `extra_flags`; y en cada pareja con
-    nombre, su `remote`, sus flags y su `extra_flags`.
+    nombre, su `remote`, sus flags, su `extra_flags` y su `local` si es un
+    texto (`problema_local()`: uno que falta lo dice `_build_pair()`).
 
     Args:
         crudo: El config tal como salió del TOML.
+        equipo: Si la raíz es de equipo (`es_equipo()`), donde además cada
+            `local` tiene que ser una carpeta de dentro (`problema_local_equipo()`).
 
     Raises:
         ConfigError: Con la capa (`[defaults]` o `[<pareja>]`), la clave o el
@@ -694,6 +697,11 @@ def comprobar_seguridad(crudo: Mapping[str, Any]) -> None:
             _comprobar_remote(donde, pareja["remote"], "remote")
         _comprobar_capas(donde, "[pair.flags]", pareja.get("flags"),
                          pareja.get("extra_flags"))
+        local = pareja.get("local")
+        if isinstance(local, str):
+            motivo = problema_local(local, equipo)
+            if motivo:
+                raise ConfigError(f"{donde} {motivo}")
 
 
 BASE_FLAGS: Mapping[str, Any] = {
@@ -957,8 +965,7 @@ class Pair:
         return f"{self.dest.rstrip('/')}/{VERSIONS_DIR}"
 
 
-def _build_pair(raw: Mapping[str, Any], defaults: Mapping[str, Any],
-                equipo: bool = False) -> Pair:
+def _build_pair(raw: Mapping[str, Any], defaults: Mapping[str, Any]) -> Pair:
     """Construye una `Pair` fundiendo las capas de configuración.
 
     Los flags van de menos a más prioridad: `BASE_FLAGS` < modo <
@@ -967,14 +974,13 @@ def _build_pair(raw: Mapping[str, Any], defaults: Mapping[str, Any],
     Args:
         raw: La `[[pair]]` tal como sale del TOML.
         defaults: La tabla `[defaults]`.
-        equipo: Si la raíz es de equipo; entonces `local` tiene que ser una
-            carpeta de dentro.
 
     Raises:
         ConfigError: Si falta una clave obligatoria, el nombre o el modo no
             valen, `versions` se pide en un modo que no es bisync, o el
-            `remote` que acaba usando no es un nombre de remote. Los flags y
-            el `extra_flags` ya los ha comprobado `comprobar_seguridad()`.
+            `remote` que acaba usando no es un nombre de remote. Los flags, el
+            `extra_flags` y el `local` ya los ha comprobado
+            `comprobar_seguridad()`.
     """
     name = raw.get("name")
     if not name:
@@ -985,8 +991,6 @@ def _build_pair(raw: Mapping[str, Any], defaults: Mapping[str, Any],
     for required in ("local", "remote_path"):
         if required not in raw:
             raise ConfigError(f"[{name}] falta '{required}' en el config.")
-    if equipo:
-        _local_de_equipo(name, str(raw["local"]))
 
     mode_name = raw.get("mode", DEFAULT_MODE)
     mode = MODES.get(mode_name)
@@ -1207,18 +1211,43 @@ def problema_local_equipo(local: str) -> str | None:
     return None
 
 
-def _local_de_equipo(name: str, local: str) -> None:
-    """Rechaza al parsear un `local` que `problema_local_equipo` no admite.
+def problema_local(local: Any, equipo: bool = False) -> str | None:
+    """Dice por qué el `local` de una pareja no vale.
 
-    Se rechaza aquí y no en la ventana para que un TOML editado a mano tampoco
-    se lo salte.
+    El `local` es una carpeta de DENTRO del dispositivo, relativa a su raíz. Con
+    un `..` o una letra de unidad (`C:`) la pareja sincronizaría, y en un espejo
+    borraría, carpetas del ordenador; la del programa lleva la clave, y la del
+    llavero tiene su propia pareja (`[keychain]`). Se mira el texto del config
+    tal cual (`\\` cuenta como `/`): una barra al principio se tolera porque
+    `normalizar_local()` la quita y hay dispositivos en uso que la llevan.
 
-    Raises:
-        ConfigError: Si el `local` no vale en una raíz del equipo.
+    Args:
+        local: El valor de `local` tal como está en el TOML.
+        equipo: Si la raíz es de equipo; entonces se aplica antes
+            `problema_local_equipo()`, con sus mismas palabras.
+
+    Returns:
+        El motivo, que empieza por `local = "<valor>"`, o `None` si vale.
     """
-    problema = problema_local_equipo(local)
-    if problema:
-        raise ConfigError(f"[{name}] {problema}")
+    texto = str(local)
+    if equipo:
+        motivo = problema_local_equipo(texto)
+        if motivo:
+            return motivo
+    tramos = [t for t in texto.replace("\\", "/").split("/") if t not in ("", ".")]
+    if ".." in tramos or (tramos and re.match(r"[A-Za-z]:", tramos[0])):
+        return (f"local = \"{texto}\" sale del dispositivo (lleva un '..' o una letra "
+                f"de unidad): la pareja sincronizaría carpetas del ordenador. Pon una "
+                f"carpeta de dentro del dispositivo, con la ruta relativa a su raíz.")
+    primero = tramos[0].lower() if tramos else ""
+    if primero == APP_DIR.name.lower():
+        return (f"local = \"{texto}\" cae en «{tramos[0]}»: es la carpeta del "
+                f"programa, con su clave. Pon otra carpeta de dentro del dispositivo.")
+    if primero == LLAVERO_LOCAL.lower():
+        return (f"local = \"{texto}\" cae en «{tramos[0]}»: es la del llavero, que "
+                f"tiene su propia pareja ([keychain]). Pon otra carpeta de dentro del "
+                f"dispositivo.")
+    return None
 
 
 def _device_remote_name(defaults: Mapping[str, Any]) -> str | None:
@@ -1379,7 +1408,7 @@ def parse_config(data: Mapping[str, Any], equipo: bool = False) -> Config:
             `[keychain]` no vale o choca con una pareja que se llama como la
             suya.
     """
-    comprobar_seguridad(data)
+    comprobar_seguridad(data, equipo)
     defaults = data.get("defaults", {})
     raw_pairs = data.get("pair", [])
     if not raw_pairs:
@@ -1390,7 +1419,7 @@ def parse_config(data: Mapping[str, Any], equipo: bool = False) -> Config:
         raise ConfigError(
             "[defaults] no admite 'watch': vigilar los cambios locales se pide "
             "pareja a pareja, con 'watch = true' en cada [[pair]] que lo quiera.")
-    pairs = tuple(_build_pair(p, defaults, equipo) for p in raw_pairs)
+    pairs = tuple(_build_pair(p, defaults) for p in raw_pairs)
     tabla = data.get("keychain")
     if tabla is not None:
         if any(p.name == LLAVERO for p in pairs):
