@@ -444,6 +444,31 @@ def probar_tema(tema: str) -> None:
       theme._hex(raiz, theme.SUPERFICIE))
     tarjeta.destroy()
 
+    # 7b. un chip encima de un botón asentado (el de la barra lateral de «Ajustes»)
+    # cae sobre lo que enseña el botón, que es su superficie: el botón la lleva en
+    # sus bits y no en su estilo, y `_fondo_de()` la pregunta con ellos
+    distintos = []
+    for sup in ("Gris.", "Card.", "NotaAmbar."):
+        marco = ttk.Frame(raiz, style=f"{sup}TFrame", padding=theme.E3)
+        marco.pack()
+        for estilo in ("Nav.TButton", "Quiet.TButton", "CardQuiet.TButton",
+                       "Segmento.Toolbutton"):
+            if estilo.endswith("Toolbutton"):
+                b = ttk.Radiobutton(marco, text="Apartado", style=estilo, value=1)
+            else:
+                b = ttk.Button(marco, text="Apartado", style=estilo)
+            b.pack(fill="x")
+            chip = theme.chip(b, "3", "Aviso.")
+            chip.place(relx=1.0, rely=0.5, x=-4, anchor="e")
+            raiz.update()
+            del_boton = theme._hex(raiz, style.lookup(estilo, "background", b.state()))
+            del_chip = theme._hex(raiz, style.lookup(str(chip.cget("style")), "background",
+                                                     chip.state()))
+            if del_chip != del_boton:
+                distintos.append((sup, estilo, del_boton, del_chip))
+        marco.destroy()
+    c(p + "un chip sobre un botón asentado ve la superficie del botón", distintos, [])
+
     # 8. nada de lo anterior mandó un <<ThemeChanged>>
     c(p + "ningún <<ThemeChanged>> en todo lo anterior",
       int(raiz.tk.eval("set ::prdrive_tema")), 0)

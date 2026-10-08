@@ -962,7 +962,13 @@ def _hex(widget, color: str) -> str | None:
 
 
 def _fondo_de(padre) -> str | None:
-    """Devuelve el color sobre el que caen los hijos de `padre`."""
+    """Devuelve el color sobre el que caen los hijos de `padre`.
+
+    Un padre redondeado ya asentado lleva su superficie en sus bits de estado y
+    no en su estilo (un botón silencioso sobre una tarjeta sigue siendo
+    «Quiet.TButton»): se pregunta con sus bits. Su `<Map>` llega antes de que
+    se mapeen sus hijos, así que ya los tiene cuando estos se asientan.
+    """
     from tkinter import TclError, ttk
     try:
         estilo = str(padre.cget("style")) or padre.winfo_class()
@@ -974,7 +980,11 @@ def _fondo_de(padre) -> str | None:
     base = _SOBRE.sub("", estilo)
     if base in _CARA:
         return _CARA[base]
-    return _hex(padre, ttk.Style(padre).lookup(estilo, "background"))
+    try:
+        bits = [b for b in padre.state() if str(b).startswith("user")]
+    except TclError:
+        bits = []
+    return _hex(padre, ttk.Style(padre).lookup(estilo, "background", bits))
 
 
 def _bits_de_superficies(widget) -> dict[str, tuple[str, ...]]:

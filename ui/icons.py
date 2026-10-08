@@ -719,8 +719,11 @@ def _foto(widget, clave: tuple, filas, svg=None):
     que es la única manera de pasarle un alfa con matices: `PhotoImage.put()`
     escribe colores opacos y nada más.
 
-    Es el único camino de las imágenes con alfa: la caché lleva el pintor en la
-    clave, así que cambiar `USAR_SVG` no devuelve una imagen del otro.
+    Es el único camino de las imágenes con alfa: la caché lleva en la clave el
+    pintor que se PIDIÓ, así que cambiar `USAR_SVG` no devuelve una imagen del
+    otro. Una imagen que se pidió en SVG y se cayó al rasterizador se guarda
+    también bajo «svg»: así no se vuelve a intentar cada vez, pero una consulta
+    que ya estaba en la caché no dice si fue SVG (`img.cget("format")` sí).
     """
     interp = widget.tk
     con_svg = svg is not None and svg_disponible(widget)

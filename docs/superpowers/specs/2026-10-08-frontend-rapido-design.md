@@ -127,7 +127,7 @@ Con el código de la 0.7.1 y el runtime fijado en Windows x64, Windows ARM64 y L
 - **Detalles comprobados:**
   - nanosvg no hace `<mask>`, `<clipPath>` ni `<text>`, así que los anillos van con `fill-rule="evenodd"`;
   - un punto (`d`) va como un `<rect>`;
-  - los iconos van con `-scaletoheight icons.px(...)`, y `bajar` fraccionario es un `translate`;
+  - los iconos se escriben a su tamaño exacto en píxeles (`width`/`height` de la imagen y `viewBox` de la rejilla), sin `-scale` ni `-scaletoheight`, que redondean; `bajar` fraccionario es un `translate`;
   - las cajas se escriben en píxeles físicos.
 - **Sin SVG** (Tk 8.6: la pata 3.11 de la CI, o un equipo con su propio Python), el pintor de Python de hoy.
   - Su `_png` se memoiza: sale **byte a byte igual**, comprobado en las 86 piezas, y pasa de 5,4 a 0,65 ms por pieza.

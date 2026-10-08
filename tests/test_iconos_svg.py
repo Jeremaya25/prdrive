@@ -131,10 +131,32 @@ def comparar(a, b, fondo: str = theme.PAPEL, zona=None) -> dict:
     return {"alfa": (sa / n, ma), "color": (sc / n, mc), "opaco": opaco}
 
 
+CAIDAS: list = []
+"""Las imágenes del lado SVG de `con_los_dos()` que no han salido del SVG.
+
+Sin mirarlo, una imagen que se cae en silencio al pintor de Python (lo correcto
+en producción) se compararía consigo misma y la comparación saldría siempre bien.
+"""
+
+
+def formato(img) -> str:
+    """Devuelve con qué formato hizo Tk la imagen: «svg», o "" para el PNG de Python."""
+    valor = img.cget("format")
+    if isinstance(valor, tuple):
+        valor = valor[0] if valor else ""
+    return str(valor)
+
+
 def con_los_dos(hacer):
-    """Devuelve lo que `hacer()` da con SVG y lo que da con el pintor de Python."""
+    """Devuelve lo que `hacer()` da con SVG y lo que da con el pintor de Python.
+
+    Con un Tk que lee SVG, apunta en `CAIDAS` lo que del lado SVG no salió de él.
+    """
     icons.USAR_SVG = True
     con_svg = hacer()
+    img = con_svg[0] if isinstance(con_svg, tuple) else con_svg
+    if img is not None and icons.svg_disponible(raiz) and formato(img) != "svg":
+        CAIDAS.append((img.width(), img.height()))
     icons.USAR_SVG = False
     try:
         con_python = hacer()
@@ -254,6 +276,25 @@ try:
         c("sin SVG `poner_icono()` hace sus tres marcas en Python",
           (hechas["svg"], hechas["python"]), (0, 3))
     ventana.destroy()
+
+    # lo que se pinta en cada pantalla: chips con y sin icono, avisos de cada tono e
+    # iconos de botón (con su `bajar` fraccionario, `theme.icono_linea`)
+    from tkinter import ttk
+    antes, llamadas[:] = dict(icons.PINTADAS), []
+    muestra = ttk.Frame(raiz)
+    for tipo in ("", "Ok.", "Aviso.", "Peligro.", "Acento.", "Apagado."):
+        theme.chip(muestra, "x", tipo, "sync")
+        theme.chip(muestra, "x", tipo)
+    for tono in ("Ambar.", "Rojo.", "Azul.", "Verde."):
+        theme.aviso(muestra, "t", "c", tono)
+    boton = ttk.Button(muestra, text="hola")
+    for glifo in ("sync", "gear", "parejas", "edit", "file", "trash"):
+        theme.boton_icono(boton, glifo, theme.TINTA2, theme.PAPEL)
+    hechas = {k: icons.PINTADAS[k] - antes[k] for k in antes}
+    if icons.svg_disponible(raiz):
+        c("chips, avisos e iconos de botón también salen del SVG",
+          (hechas["python"], hechas["svg"] > 0, llamadas), (0, True, []))
+    muestra.destroy()
 
     # una imagen que no se sabe describir (la pastilla de la marca se recorta del
     # campo y sin el color de lo de detrás no hay con qué) sale del rasterizador
@@ -463,5 +504,6 @@ for etiqueta, escala in ESCALAS:
     c("  esquinas y centro transparentes o no como en el pintor de Python (con radio 2 o 3, a 0,2)",
       all(transparencias), True)
 
+c("en el lado SVG de cada comparación, todas las imágenes salieron del SVG", CAIDAS, [])
 raiz.destroy()
 sys.exit(c.report())
