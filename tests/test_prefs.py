@@ -184,4 +184,105 @@ for texto in ("", "abc", "0", "0,5", "-3", "nan", "inf"):
     c(f"revisar_intervalo({texto!r}) no vale, y dice por qué",
       malo, "El intervalo tiene que ser un número de minutos: 1 o más.")
 
+# El clic en una casilla no escribe: la selección se recuerda y se vuelca después.
+#
+# `poner()` solo apunta; `volcar()` escribe una vez, con la última, antes de una
+# pasada, del servicio o de cerrar. Es el fichero de coordinación con el
+# servicio y el agente: lo que escribe sigue siendo lo mismo que `guardar_parejas`.
+from common import store  # noqa: E402
+
+c("ESPERA_MS: lo que se espera a más clics antes de escribir", prefs.ESPERA_MS, 250)
+
+prefs.PREFS.unlink()
+sel = prefs.SeleccionPendiente()
+c("sin nada apuntado: no hay pendiente y volcar no hace nada",
+  (sel.pendiente, sel.volcar(), prefs.PREFS.exists()), (False, None, False))
+
+escrituras = []
+escribir_real = store.write_json
+
+
+def contar_escrituras(ruta, datos):
+    """Escribe de verdad y apunta que lo ha hecho."""
+    escrituras.append(datos)
+    return escribir_real(ruta, datos)
+
+
+store.write_json = contar_escrituras
+try:
+    sel.poner(CFG, ["upload"])
+    sel.poner(CFG, ["upload", "docs"])
+    sel.poner(CFG, ["claves"])
+    c("poner() no escribe, solo apunta",
+      (sel.pendiente, escrituras, prefs.PREFS.exists()), (True, [], False))
+    c("volcar() escribe la última selección, una sola vez",
+      (sel.volcar(), len(escrituras), prefs.startup_defaults(CFG)[0]), (True, 1, ["claves"]))
+    c("  y se olvida de ella", (sel.pendiente, sel.volcar(), len(escrituras)), (False, None, 1))
+
+    # Volcar sin que haya nada pendiente no toca el fichero.
+    mtime = prefs.PREFS.stat().st_mtime_ns
+    time.sleep(0.05)
+    c("volcar() sin nada pendiente deja el fichero como está",
+      (sel.volcar(), prefs.PREFS.stat().st_mtime_ns), (None, mtime))
+
+    # La misma selección que ya está guardada es True y no gasta escritura.
+    sel.poner(CFG, ["claves"])
+    c("volcar() de lo que ya estaba guardado dice que sí y no escribe",
+      (sel.volcar(), len(escrituras)), (True, 1))
+
+    # Una selección vacía no se escribe (como `guardar_parejas`), y tampoco queda pendiente.
+    sel.poner(CFG, [])
+    c("una selección vacía no se escribe",
+      (sel.pendiente, sel.volcar(), sel.pendiente, len(escrituras),
+       prefs.startup_defaults(CFG)[0]), (True, False, False, 1, ["claves"]))
+
+    # Lo apuntado lleva su config: manda el de la última vez.
+    sel.poner(mkcfg(["a", "b"]), ["a"])
+    sel.poner(CFG, ["docs"])
+    c("manda el config de la última selección",
+      (sel.volcar(), prefs.startup_defaults(CFG)[0]), (True, ["docs"]))
+
+    # Un dispositivo de solo lectura (o ya extraído) devuelve False y se olvida igual.
+    store.write_json = lambda ruta, datos: False
+    sel.poner(CFG, ["upload"])
+    c("un dispositivo que no se deja escribir: False, y no queda pendiente",
+      (sel.volcar(), sel.pendiente), (False, False))
+    c("  y lo guardado no ha cambiado", prefs.startup_defaults(CFG)[0], ["docs"])
+finally:
+    store.write_json = escribir_real
+
+# Volcar nunca lanza, pase lo que pase al escribir.
+guardar_real = prefs.guardar_parejas
+
+
+def guardar_roto(config, pairs):
+    """Falla como no debería fallar `guardar_parejas`."""
+    raise RuntimeError("no debería pasar")
+
+
+prefs.guardar_parejas = guardar_roto
+try:
+    sel.poner(CFG, ["upload"])
+    c("volcar() no lanza aunque guardar falle: False, y se olvida",
+      (sel.volcar(), sel.pendiente), (False, False))
+finally:
+    prefs.guardar_parejas = guardar_real
+
+# Se busca `guardar_parejas` al volcar, no al crear: lo que lo sustituya lo ve.
+llamadas = []
+prefs.guardar_parejas = lambda config, pairs: llamadas.append((config, list(pairs))) or True
+try:
+    sel.poner(CFG, ["upload", "docs"])
+    c("volcar() llama a guardar_parejas con el config y la selección",
+      (sel.volcar(), llamadas), (True, [(CFG, ["upload", "docs"])]))
+finally:
+    prefs.guardar_parejas = guardar_real
+
+# Lo apuntado es una copia: cambiar la lista después no cambia lo que se vuelca.
+lista = ["upload"]
+sel.poner(CFG, lista)
+lista.append("docs")
+sel.volcar()
+c("la selección apuntada es una copia", prefs.startup_defaults(CFG)[0], ["upload"])
+
 sys.exit(c.report())

@@ -11,6 +11,7 @@ paths:
   - "ui/tk_doctor.py"
   - "ui/tk_configuracion.py"
   - "ui/tk_pairs.py"
+  - "ui/principal.py"
   - "ui/watch.py"
   - "ui/tk_watch.py"
   - "tests/test_tk_*.py"
@@ -26,6 +27,7 @@ paths:
   - "tests/test_tema.py"
   - "tests/test_theme_combobox.py"
   - "tests/test_ultima_pasada.py"
+  - "tests/test_principal.py"
   - "tests/test_watch.py"
 ---
 Before changing these files, read `docs/agents/reference/ui.md` (frontends, theme and window sizing, `working()` and background reads, «Ajustes»). If you already read it this session, skip it.

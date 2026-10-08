@@ -9,9 +9,11 @@ que sale precargada la ventana. Ese recuerdo manda sobre `[daemon]` del TOML,
 que a su vez manda sobre los valores de fábrica.
 
 Lo escriben tres sitios, cada uno con lo suyo:
-- Las casillas de la ventana (`guardar_parejas`): las parejas marcadas, en
-  cuanto se marcan o desmarcan. Conserva el intervalo guardado y no fija uno
-  si no lo hay.
+- Las casillas de la ventana (`guardar_parejas`): las parejas marcadas.
+  Conserva el intervalo guardado y no fija uno si no lo hay. Los clics no la
+  llaman uno a uno: `SeleccionPendiente` apunta la última selección y la
+  vuelca pasados `ESPERA_MS` sin más clics y siempre antes de lanzar una
+  pasada, de iniciar el servicio o de cerrar la ventana.
 - «Iniciar servicio» (`save_prefs`, desde `runsync`): las parejas marcadas y
   el intervalo con el que arranca, que es el que ya estaba guardado.
 - «Ajustes → Configuración» (`guardar_intervalo`): SOLO el intervalo. Si ya
@@ -39,6 +41,12 @@ PREFS = model.STATE_DIR / "ui_prefs.json"
 """El fichero con la elección del servicio, en `state/` del dispositivo."""
 HOST = socket.gethostname()
 """El nombre de este equipo, para anotar quién guardó la elección."""
+ESPERA_MS = 250
+"""Milisegundos que la ventana espera tras la última casilla antes de volcar la selección.
+
+Marcar varias seguidas escribe `ui_prefs.json` una vez (`SeleccionPendiente`),
+no una por clic.
+"""
 
 
 def read_prefs() -> dict:
@@ -124,10 +132,10 @@ def guardar_intervalo(config: Config, minutos: float) -> bool:
 def guardar_parejas(config: Config, pairs: list[str]) -> bool:
     """Guarda las parejas marcadas en la ventana, sin fijar el intervalo.
 
-    Es lo que escribe cada casilla al marcarse o desmarcarse. Conserva el
-    intervalo ya guardado («Configuración») y, si no lo hay, no escribe uno: el
-    del TOML sigue mandando. No guarda una selección vacía, que `elegir` leería
-    como si no hubiera recuerdo.
+    Es lo que guardan las casillas de la ventana (`SeleccionPendiente`).
+    Conserva el intervalo ya guardado («Configuración») y, si no lo hay, no
+    escribe uno: el del TOML sigue mandando. No guarda una selección vacía, que
+    `elegir` leería como si no hubiera recuerdo.
 
     Args:
         config: La configuración del dispositivo, para saber qué parejas hay.
@@ -149,6 +157,53 @@ def guardar_parejas(config: Config, pairs: list[str]) -> bool:
     if data == {k: v for k, v in old.items() if k not in ("host", "saved")}:
         return True  # ya estaba así: no se gasta escritura en el dispositivo
     return store.write_json(PREFS, {**data, "host": HOST, "saved": store.stamp()})
+
+
+class SeleccionPendiente:
+    """La última selección de casillas que aún no se ha escrito en `ui_prefs.json`.
+
+    Un clic en una casilla solo la apunta (`poner`); la ventana la escribe
+    (`volcar`) pasados `ESPERA_MS` sin más clics, y siempre antes de lanzar una
+    pasada, de iniciar el servicio o de cerrarse, que es cuando el servicio y
+    el agente pueden leerla. Se usa solo desde el hilo de Tk.
+    """
+
+    def __init__(self) -> None:
+        self._pendiente: tuple[Config, list[str]] | None = None
+
+    @property
+    def pendiente(self) -> bool:
+        """Indica si hay una selección apuntada sin escribir."""
+        return self._pendiente is not None
+
+    def poner(self, config: Config, pares: list[str]) -> None:
+        """Apunta la selección, sustituyendo a la anterior. No escribe nada.
+
+        Args:
+            config: La configuración del dispositivo, para saber qué parejas hay.
+            pares: Las parejas marcadas.
+        """
+        self._pendiente = (config, list(pares))
+
+    def volcar(self) -> bool | None:
+        """Escribe la última selección apuntada y se olvida de ella.
+
+        Nunca lanza: que el dispositivo no se deje escribir no es motivo para
+        que una pasada o el cierre de la ventana no sigan adelante.
+
+        Returns:
+            `None` si no había nada apuntado (y no se toca el fichero); si lo
+            había, lo que devuelve `guardar_parejas`: `False` si no se ha
+            podido escribir o la selección no tenía ninguna pareja.
+        """
+        if self._pendiente is None:
+            return None
+        config, pares = self._pendiente
+        self._pendiente = None
+        try:
+            return guardar_parejas(config, pares)
+        except Exception:                                # noqa: BLE001
+            return False
 
 
 def daemon_defaults(config: Config) -> tuple[list[str], float]:
