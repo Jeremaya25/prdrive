@@ -174,6 +174,10 @@ try:
         sin.execute()
         c("  y la consola recibe sin_contrasena", llamadas, [(BASE, REMOTA, Path("k"),
                                                             {"sin_contrasena": True})])
+        # Lo que apartó la combinación de arriba no es lo que se mira abajo. El nombre
+        # lleva el segundo (`~AAAAMMDD-HHMMSS`): en el mismo segundo la copia nueva
+        # pisaba a la anterior y quedaba una, y en un equipo lento quedaban dos.
+        shutil.rmtree(carpeta / model.VERSIONS_DIR, ignore_errors=True)
         poner(carpeta, REMOTA, b"la de otro dispositivo")
         conflicto = conflicts.actualizar_pareja(pareja)[0]
         plan = conflict_editor.plan_combinar(conflicto, None)
