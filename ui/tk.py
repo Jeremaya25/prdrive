@@ -513,10 +513,12 @@ def _encubrir(hwnd: int, encubierta: bool) -> bool:
     import ctypes
     from ctypes import wintypes
     poner = ctypes.WinDLL("dwmapi", use_last_error=True).DwmSetWindowAttribute
-    poner.argtypes = [wintypes.HWND, wintypes.DWORD, ctypes.POINTER(wintypes.BOOL),
+    # El BOOL de Win32 es un int de 4 bytes; el de wintypes es un c_long, que
+    # solo mide 4 en Windows.
+    poner.argtypes = [wintypes.HWND, wintypes.DWORD, ctypes.POINTER(ctypes.c_int),
                       wintypes.DWORD]
     poner.restype = ctypes.c_long                   # HRESULT
-    valor = wintypes.BOOL(1 if encubierta else 0)
+    valor = ctypes.c_int(1 if encubierta else 0)
     return poner(hwnd, DWMWA_CLOAK, ctypes.byref(valor), ctypes.sizeof(valor)) == 0
 
 

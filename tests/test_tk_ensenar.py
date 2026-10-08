@@ -168,9 +168,9 @@ try:
       DllFalsa.funcion.recibido, [(0xABCDEF, 13, 1, 4)])
     uitk._encubrir(0xABCDEF, False)
     c("  y FALSE para descubrir", DllFalsa.funcion.recibido[-1], (0xABCDEF, 13, 0, 4))
-    c("declara HWND, DWORD, BOOL*, DWORD -> HRESULT: sin eso un manejador de 64 "
-      "bits se trunca", (DllFalsa.funcion.argtypes, DllFalsa.funcion.restype),
-      ([wintypes.HWND, wintypes.DWORD, ctypes.POINTER(wintypes.BOOL), wintypes.DWORD],
+    c("declara HWND, DWORD, BOOL* (int*), DWORD -> HRESULT: sin eso un manejador "
+      "de 64 bits se trunca", (DllFalsa.funcion.argtypes, DllFalsa.funcion.restype),
+      ([wintypes.HWND, wintypes.DWORD, ctypes.POINTER(ctypes.c_int), wintypes.DWORD],
        ctypes.c_long))
 finally:
     if windll_real is None:
