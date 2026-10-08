@@ -674,8 +674,9 @@ def comprobar_seguridad(crudo: Mapping[str, Any], equipo: bool = False, *,
     catálogo, ver `carpeta_del_catalogo()`, y un `remote` vacío dejaría a la
     pareja en `:ruta`, donde un `remote_path` hecho a propósito sería una
     cadena de conexión), los flags y el `extra_flags`; y en cada pareja con
-    nombre, su `remote`, sus flags, su `extra_flags` y su `local` si es un
-    texto (`problema_local()`: uno que falta lo dice `_build_pair()`).
+    nombre, su `remote`, sus flags, su `extra_flags` y su `local` si está
+    (`problema_local()`; uno que no es un texto se rechaza, y uno que falta lo
+    dice `_build_pair()`).
 
     Args:
         crudo: El config tal como salió del TOML.
@@ -709,8 +710,15 @@ def comprobar_seguridad(crudo: Mapping[str, Any], equipo: bool = False, *,
             _comprobar_remote(donde, pareja["remote"], "remote")
         _comprobar_capas(donde, "[pair.flags]", pareja.get("flags"),
                          pareja.get("extra_flags"))
-        local = pareja.get("local")
-        if isinstance(local, str):
+        if "local" in pareja:
+            local = pareja["local"]
+            if not isinstance(local, str):
+                # `_build_pair()` lo lee con `str()`: una lista con un `..`
+                # dentro llegaría a `local_abs` sin que nadie la mirase.
+                raise ConfigError(
+                    f"{donde} 'local' tiene que ser un texto, no {local!r}: es la "
+                    f"carpeta de dentro del dispositivo. Pon la ruta entre comillas, "
+                    f"relativa a su raíz.")
             motivo = problema_local(local, equipo, carpeta_programa=carpeta_programa)
             if motivo:
                 raise ConfigError(f"{donde} {motivo}")

@@ -260,11 +260,16 @@ c.contains("comprobar_seguridad() mira el local de cada pareja con nombre",
 c.contains("  y con equipo, el de la raíz del equipo",
            _texto(lambda: model.comprobar_seguridad(una(local="."), equipo=True)), "raíz entera")
 c("  pero '.' en una unidad lo deja", _texto(lambda: model.comprobar_seguridad(una(local="."))), "")
-c("un local que no es un texto no es asunto suyo",
-  (_texto(lambda: model.comprobar_seguridad(una(local=5))),
-   _texto(lambda: model.comprobar_seguridad(una(local=["../x"]))),
-   _texto(lambda: model.comprobar_seguridad({"pair": [{"name": "p"}, {"local": "../x"}, 7]}))),
-  ("", "", ""))
+# `_build_pair()` lee el `local` con `str()`: uno que no es un texto (una lista
+# con un `..` dentro) llegaría a `local_abs` sin que nadie lo mirase.
+for local in (5, True, ["a/../../../etc"], {"a/../../x": 1}):
+    texto = _texto(lambda: model.comprobar_seguridad(una(local=local)))
+    c.contains(f"un local {local!r} que no es un texto se rechaza", texto, "'local' tiene que ser un texto")
+    c.contains("  con su pareja", texto, "[p]")
+    c.contains("  y qué hacer", texto, "entre comillas")
+    c.contains(f"  y el parser lo rechaza igual", rechaza(una(local=local)), "'local' tiene que ser un texto")
+c("lo que no es una pareja con nombre sigue sin ser asunto suyo",
+  _texto(lambda: model.comprobar_seguridad({"pair": [{"name": "p"}, {"local": ["../x"]}, 7]})), "")
 sin_local = {"defaults": {"remote": "nas"}, "pair": [{"name": "p", "remote_path": "R/p"}]}
 c.contains("sin local, lo dice _build_pair como siempre", rechaza(sin_local), "falta 'local'")
 
