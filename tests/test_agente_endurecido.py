@@ -121,6 +121,12 @@ c.contains("ni con un remote vacío en [defaults]", razon(vacio), "remote")
 c.contains("ni con un extra_flags en forma de tabla en línea",
            razon(F.unidad("t" * 32, parejas=("docs",),
                           extra={"docs": 'extra_flags = { "--sftp-ssh=x" = 1 }\n'})), "sftp-ssh")
+c.contains("ni con un exclude que lleva un salto de línea (escribiría otra regla de filtro)",
+           razon(F.unidad("x" * 32, parejas=("docs",),
+                          extra={"docs": 'exclude = ["x\\n!\\n+ **"]\n'})), "Quita el salto de línea")
+c.contains("  ni un include, en [defaults]",
+           razon(con_defaults(F.unidad("i" * 32, parejas=("docs",)),
+                              'include = ["a\\r+ **"]')), "[defaults]")
 c("una raíz normal se sirve igual",
   (razon(F.unidad("n" * 32, parejas=("docs",),
                   extra={"docs": 'extra_flags = ["--bwlimit=8M", "-v"]\n'})),

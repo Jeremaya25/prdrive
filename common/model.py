@@ -657,6 +657,36 @@ def _comprobar_remote(donde: str, valor: Any, clave: str) -> None:
             f"{donde} {motivo} Deja solo el nombre del remote o quita la clave del config.")
 
 
+def _comprobar_patrones(donde: str, capa: Mapping[str, Any]) -> None:
+    """Rechaza un `include` o un `exclude` que lleva un salto de línea.
+
+    `bisync.filters_content()` escribe una regla por línea (`+ patrón`,
+    `- patrón`) y rclone lee el fichero línea a línea: `exclude = ["x\\n!\\n+ **"]`
+    añadiría un `!`, que borra las reglas de antes (la de la carpeta del
+    programa, la del llavero, `.prversions/`), y un `+ **`. Se mira lo que
+    leerá `_as_tuple()`, y lo que no se puede leer como lista no es asunto suyo.
+
+    Args:
+        donde: Cómo se llama la capa en el mensaje (`[defaults]` o `[<pareja>]`).
+        capa: La tabla de `[defaults]` o la de la pareja, tal como salió del TOML.
+
+    Raises:
+        ConfigError: Si algún patrón lleva `\\n` o `\\r`.
+    """
+    for clave in ("include", "exclude"):
+        try:
+            patrones = _as_tuple(capa.get(clave))
+        except TypeError:
+            continue
+        for patron in patrones:
+            if "\n" in patron or "\r" in patron:
+                raise ConfigError(
+                    f"{donde} {clave} {patron!r} lleva un salto de línea: en el fichero "
+                    f"de filtros de rclone cada línea es una regla, y con un '!' se "
+                    f"borrarían las de antes. Quita el salto de línea del patrón (un "
+                    f"patrón por entrada de la lista).")
+
+
 def comprobar_seguridad(crudo: Mapping[str, Any], equipo: bool = False, *,
                         carpeta_programa: str | None = None) -> None:
     """Rechaza del config en bruto lo que no puede llegar a la línea de órdenes de rclone.
@@ -673,8 +703,9 @@ def comprobar_seguridad(crudo: Mapping[str, Any], equipo: bool = False, *,
     están, aunque vacíos (acaban como `remote:ruta` para el llavero y el
     catálogo, ver `carpeta_del_catalogo()`, y un `remote` vacío dejaría a la
     pareja en `:ruta`, donde un `remote_path` hecho a propósito sería una
-    cadena de conexión), los flags y el `extra_flags`; y en cada pareja con
-    nombre, su `remote`, sus flags, su `extra_flags` y su `local` si está
+    cadena de conexión), los flags, el `extra_flags` y los `include`/`exclude`
+    (`_comprobar_patrones()`); y en cada pareja con nombre, su `remote`, sus
+    flags, su `extra_flags`, sus `include`/`exclude` y su `local` si está
     (`problema_local()`; uno que no es un texto se rechaza, y uno que falta lo
     dice `_build_pair()`).
 
@@ -699,6 +730,7 @@ def comprobar_seguridad(crudo: Mapping[str, Any], equipo: bool = False, *,
                 _comprobar_remote("[defaults]", defaults[clave], clave)
         _comprobar_capas("[defaults]", "[defaults.flags]", defaults.get("flags"),
                          defaults.get("extra_flags"))
+        _comprobar_patrones("[defaults]", defaults)
     parejas = crudo.get("pair")
     if not isinstance(parejas, (list, tuple)):
         return
@@ -710,6 +742,7 @@ def comprobar_seguridad(crudo: Mapping[str, Any], equipo: bool = False, *,
             _comprobar_remote(donde, pareja["remote"], "remote")
         _comprobar_capas(donde, "[pair.flags]", pareja.get("flags"),
                          pareja.get("extra_flags"))
+        _comprobar_patrones(donde, pareja)
         if "local" in pareja:
             local = pareja["local"]
             if not isinstance(local, str):

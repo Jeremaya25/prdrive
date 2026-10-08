@@ -99,6 +99,23 @@ c.contains("extra_flags = 5 en [defaults] tampoco",
 c("un extra_flags que es un solo texto sigue valiendo",
   rechaza(una(extra_flags="--bwlimit=8M")), "")
 
+# --- include/exclude: una línea es una regla del fichero de filtros -----------
+# Con `exclude = ["x\n!\n+ **"]` el fichero llevaría `- x`, `!` y `+ **`, y un `!`
+# suelto borra las reglas de antes (la de la carpeta del programa, la del llavero).
+for clave in ("include", "exclude"):
+    for valor in (["x\n!\n+ **"], ["bien", "a\rb"], "x\ny", {"x\n!": 1}):
+        texto = rechaza(una(**{clave: valor}))
+        c.contains(f"{clave} = {valor!r} no se admite", texto, f"{clave} ")
+        c.contains("  y dice de qué pareja", texto, "[p]")
+        c.contains("  y qué hacer", texto, "Quita el salto de línea")
+    c.contains(f"{clave} de [defaults] tampoco",
+               rechaza({**una(), "defaults": {"remote": "nas", clave: ["x\n!"]}}), "[defaults]")
+    c(f"{clave} de siempre vale",
+      rechaza(una(**{clave: ["*.tmp", "Docs/**", "con espacios/*.md"]})), "")
+raiz_normal = model.parse_config(una(local=".", mode="bisync", exclude=["*.tmp"])).pairs[0]
+c("un patrón sin saltos de línea escribe una línea por regla",
+  bisync.filters_content(raiz_normal).splitlines()[2:4], [model.REGLA_SIN_PROGRAMA, "- *.tmp"])
+
 # --- nombre del remote -------------------------------------------------------
 for remoto in ("nas,ssh='sh -c id'", ":sftp,host=x", "nas:", "-nas", "a b "):
     c.contains(f"remote {remoto!r} no se admite", rechaza(una(remote=remoto)), "remote")
