@@ -289,7 +289,13 @@ c("  y como el agente no está en marcha, se arranca",
 #
 # Una raíz del equipo abierta y una cifrada bloqueada; un Python viejo que es
 # el que corre este proceso (el de «Actualizar»), y uno viejo que no.
+#
+# La bloqueada es una carpeta temporal que no existe, NUNCA una letra: con
+# «P:\» (la que propone el asistente) en un equipo con una unidad prdrive de
+# verdad montada en P:, `actualizar()` la veía abierta y le desplegaba encima
+# el código del checkout.
 ABIERTA = tmpdir("prdrive-abierta-")
+SIN_MONTAR = tmpdir("prdrive-cifrada-") / "sin-montar"
 (ABIERTA / ".prdrive").mkdir()
 (ABIERTA / ".prdrive" / "PRDRIVE").write_text("id=" + "o" * 32 + "\ntipo=equipo\n",
                                               encoding="utf-8")
@@ -298,7 +304,8 @@ equipo.guardar_ajustes(equipo.leer_ajustes()
                        .con_unidad(equipo.Unidad("o" * 32, equipo.DAEMON, "Abierta",
                                                  str(ABIERTA)))
                        .con_unidad(equipo.Unidad("k" * 32, equipo.DAEMON, "Cifrada",
-                                                 "P:\\", "C:\\c\\PRDRIVE.hc")))
+                                                 str(SIN_MONTAR),
+                                                 str(SIN_MONTAR.parent / "PRDRIVE.hc"))))
 (equipo.dir_codigo() / "0.0.1").mkdir()
 corriendo = equipo.dir_runtimes() / "corriendo"
 (corriendo / "bin").mkdir(parents=True)
@@ -379,9 +386,10 @@ c("  y dice que las unidades no se han tocado",
   "Las unidades no se han tocado." in msgs, True)
 c("  ni las raíces del equipo, y dónde siguen",
   (any("Cifrada" not in m and str(ABIERTA) in m for m in msgs),
-   any("C:\\c\\PRDRIVE.hc" in m for m in msgs)), (True, True))
+   any(str(SIN_MONTAR.parent / "PRDRIVE.hc") in m for m in msgs)), (True, True))
 c("  y sin VeraCrypt instalado, que para abrir la cifrada hará falta uno",
-  any("C:\\c\\PRDRIVE.hc" in m and "hace falta VeraCrypt" in m for m in msgs), True)
+  any(str(SIN_MONTAR.parent / "PRDRIVE.hc") in m and "hace falta VeraCrypt" in m
+      for m in msgs), True)
 c("la unidad enchufada sigue como estaba",
   (ENCH / ".prdrive" / "PRDRIVE").read_text(encoding="utf-8"), "id=" + "e" * 32 + "\n")
 c("ya no cuenta como instalado", equipo.instalado(), False)
