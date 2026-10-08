@@ -54,6 +54,7 @@ import sys
 import time
 import traceback
 from pathlib import Path
+from typing import Callable
 
 # Como .py, la raíz del proyecto va al path para importar `install`, `ui` y
 # `common`; compilado, PyInstaller ya los trae.
@@ -61,7 +62,7 @@ if not getattr(sys, "frozen", False):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from install import APP_NAME, InstallError, __version__  # noqa: E402
-from install import components, deploy, device, profile, rclone_bin, remote  # noqa: E402
+from install import components, deploy, device, platforms, profile, rclone_bin, remote  # noqa: E402
 from common.update import CODIGO_RELEVO  # noqa: E402
 
 DESCRIPCION = ("Aprovisiona un dispositivo prdrive nuevo a partir del catálogo "
@@ -196,7 +197,7 @@ def cmd_update(raiz: str) -> int:
             f"argumentos.")
 
     print(f"Actualizando {destino} a la versión {__version__}")
-    escrito = deploy.deploy_code(root)          # sin rclone: ya está puesto
+    escrito = deploy.deploy_code(root, progreso=print)   # sin rclone: ya está puesto
     guia = deploy.write_guide(root)
     if guia is not None:
         escrito.append(guia)
@@ -212,7 +213,8 @@ def cmd_update(raiz: str) -> int:
     return 0
 
 
-def cmd_update_components(raiz: str, relevo: int | None = None) -> int:
+def cmd_update_components(raiz: str, relevo: int | None = None,
+                          fase: Callable[[], None] | None = None) -> int:
     """Pone al día el rclone y el Python que lleva un dispositivo. Nada más.
 
     Es el hermano de `--update`: aquel cambia el CÓDIGO y deja los componentes;
@@ -229,9 +231,15 @@ def cmd_update_components(raiz: str, relevo: int | None = None) -> int:
     cuando la ventana se cierre (`components.preparar_relevo()`) y se sale con
     `update.CODIGO_RELEVO`, que le dice a la ventana que se cierre.
 
+    Si cambia el Python que usará este equipo, deja precompilado el programa con
+    el nuevo (`deploy.precompilar_dispositivo()`) antes de volver: el cambio
+    borra sus `.pyc`, y la ventana que se reabre no debe pagarlos.
+
     Args:
         raiz: La raíz del volumen.
         relevo: Pid de la ventana que lo ha lanzado, si la hay.
+        fase: Se llama justo antes de precompilar, para que quien enseña un
+            avance (la ventanita del relevo) lo diga.
 
     Returns:
         0 si ha ido bien, 1 si algo no se ha podido, `CODIGO_RELEVO` si el
@@ -259,6 +267,7 @@ def cmd_update_components(raiz: str, relevo: int | None = None) -> int:
     print(f"Componentes por poner al día en {destino}:")
     for p in pendientes:
         print(f"  {p.describe()}")
+    sello_antes = platforms.sello_del_equipo(root)
     res = components.aplicar(root, progreso=print,
                              pends=[p for p in pendientes if p != propio])
     for linea in res.hechos:
@@ -267,6 +276,10 @@ def cmd_update_components(raiz: str, relevo: int | None = None) -> int:
         print(f"  POSPUESTO  {linea}")
     for linea in res.fallidos:
         print(f"  FALLO      {linea}")
+    if platforms.sello_del_equipo(root) != sello_antes:
+        if fase is not None:
+            fase()
+        deploy.precompilar_dispositivo(root, progreso=print)
 
     if propio is not None:
         # Antes de cerrar nada: si algo más corre desde ese Python, cambiarlo
@@ -395,7 +408,7 @@ def cmd_relevo(raiz: str, esperar: list[int], reabrir: str | None) -> int:
                     return
                 estado["reabrir"] = True
                 avance.medir()
-                estado["rc"] = cmd_update_components(str(root))
+                estado["rc"] = cmd_update_components(str(root), fase=avance.precompilando)
             except InstallError as e:
                 print(e)
             except Exception:                        # noqa: BLE001

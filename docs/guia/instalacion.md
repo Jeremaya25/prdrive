@@ -44,6 +44,12 @@ filtrar por ahí es la forma más rápida de que el tuyo no aparezca.
 El paso 5 no borra nada fuera de `.prdrive/`. Si esa carpeta ya existe, se
 sobrescribe el código y se conserva el resto.
 
+Al terminar de copiar (y tras cada actualización) el dispositivo deja
+preparado el programa para que la primera vez que se abra no tenga que
+compilarlo: unos 6 MB más en `.prdrive/`. Si no se puede (unidad llena o de solo
+lectura, sin Python propio para este equipo), no pasa nada: se instala igual y
+solo el primer arranque es más lento.
+
 ## Plataformas: completa o ligera
 
 En el paso 5 se elige **para qué equipos** va a funcionar el dispositivo: Windows

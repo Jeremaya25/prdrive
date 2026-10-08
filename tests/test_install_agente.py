@@ -94,7 +94,14 @@ VC_INSTALADO: list = [None]
 penwatch.installed_veracrypt = lambda: VC_INSTALADO[0]
 
 # preparar: código y Python
+from install import deploy  # noqa: E402
+
+calentados: list[tuple] = []
+deploy.precompilar = lambda destino, python, **k: (
+    calentados.append((Path(destino), python, k.get("prefijo"))) or True)
 prep = ia.preparar()
+c("calienta la caché de los hijos del agente con su Python, ya en la carpeta definitiva",
+  calentados, [(prep.codigo, prep.python, equipo.DIR / "pycache")])
 c("el código va a agente/<versión>/", prep.codigo, equipo.dir_codigo() / version())
 for nombre in ("pregunta.py", "agente.py", "penwatch.py", "VERSION", "common/planificador.py",
                "common/equipo.py", "ui/tk_agente.py", "ui/prefs.py"):

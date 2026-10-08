@@ -34,10 +34,12 @@ más rápida de vaciar el destino; esas se ejecutan a mano y con `--dry-run`.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
 import stat
+import subprocess
 import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -51,8 +53,8 @@ from common.pins import PLATAFORMAS, Plataforma
 from common.store import hide, unhide  # noqa: F401
 from common.store import pid_alive
 
-from . import (APP_NAME, IS_WIN, InstallError, bundle_dir, platforms,
-               python_command, version)
+from . import (APP_NAME, CREATE_NO_WINDOW, IS_WIN, InstallError, bundle_dir,
+               platforms, python_command, version)
 from . import rclone_bin, runtime_bin
 from .profile import Profile, render_conf
 from .rclone_bin import bin_subdir, exe_name
@@ -220,8 +222,193 @@ def deploy_source() -> Path:
     return bundle_dir()
 
 
+PRECOMPILAR_TOPE = 60.0  # segundos
+"""Lo más que espera `precompilar()` al intérprete del dispositivo.
+
+Pasado el plazo se le mata y se sigue sin `.pyc`: cada uno se escribe entero o
+no se escribe, así que lo que ya estaba hecho vale. Un USB lento tarda segundos
+(unos 7 MB), no minutos.
+"""
+PRECOMPILAR_SUELTOS = ("penwatch.py",)
+"""Módulos sueltos de `.prdrive/` que el programa IMPORTA y que `precompilar()` compila.
+
+`sync.py` y `runsync.py` no están: se ejecutan como script y Python no guarda
+el `.pyc` de lo que ejecuta.
+"""
+BIBLIOTECA = (
+    "argparse", "base64", "calendar", "collections", "contextlib", "copy", "csv", "ctypes",
+    "ctypes.util", "ctypes.wintypes", "dataclasses", "datetime", "fnmatch",
+    "functools", "getpass", "hashlib", "importlib", "json", "pathlib", "platform", "queue",
+    "re", "secrets", "shutil", "signal", "socket", "struct", "subprocess",
+    "tempfile", "threading", "tkinter", "tkinter.filedialog", "tkinter.font",
+    "tkinter.messagebox", "tkinter.ttk", "tomllib", "typing", "urllib.request",
+    "uuid", "webbrowser", "winreg", "xml.sax.saxutils", "zipfile",
+)
+"""Módulos de la biblioteca estándar que importa prdrive y calienta `precompilar()`.
+
+Se importan en el intérprete del dispositivo y se compilan todos los que
+arrastran. Uno que no exista en este sistema (`winreg` en Linux) se salta.
+`tests/test_precompilar.py` vigila que no falte ninguno de los que importa el
+código.
+"""
+
+_PRECOMPILADOR = r"""
+import importlib, importlib.util, json, os, py_compile, sys
+from pathlib import Path
+
+raiz, cfg = Path(sys.argv[1]), json.loads(sys.argv[2])
+HASH = py_compile.PycInvalidationMode.CHECKED_HASH
+
+
+def al_dia(fuente):
+    # Un .pyc de hash comprobado (banderas 0b11) con el hash de esta fuente.
+    try:
+        with open(importlib.util.cache_from_source(str(fuente)), "rb") as f:
+            cab = f.read(16)
+        return (cab[:4] == importlib.util.MAGIC_NUMBER
+                and int.from_bytes(cab[4:8], "little") == 3
+                and cab[8:16] == importlib.util.source_hash(Path(fuente).read_bytes()))
+    except (OSError, ValueError):
+        return False
+
+
+def compilar(fuente):
+    if al_dia(fuente):
+        return 0
+    try:
+        py_compile.compile(str(fuente), doraise=True, invalidation_mode=HASH)
+    except py_compile.PyCompileError:
+        return 0                        # un .py roto no impide los demás
+    return 1
+
+
+hechos = {"codigo": 0, "biblioteca": 0}
+try:
+    for nombre in cfg["arboles"]:
+        for fuente in sorted((raiz / nombre).rglob("*.py")):
+            hechos["codigo"] += compilar(fuente)
+    for nombre in cfg["sueltos"]:
+        if (raiz / nombre).is_file():
+            hechos["codigo"] += compilar(raiz / nombre)
+    if cfg["biblioteca"]:
+        sys.dont_write_bytecode = True      # importar solo carga; compilar es lo de abajo
+        for nombre in cfg["biblioteca"]:
+            try:
+                importlib.import_module(nombre)
+            except Exception:
+                pass
+        sys.dont_write_bytecode = False
+        lib = Path(os.__file__).resolve().parent
+        for mod in list(sys.modules.values()):
+            spec, ruta = getattr(mod, "__spec__", None), getattr(mod, "__file__", None)
+            if not ruta or not str(ruta).endswith(".py") or getattr(spec, "origin", "") == "frozen":
+                continue
+            try:
+                Path(ruta).resolve().relative_to(lib)
+            except (ValueError, OSError):
+                continue
+            hechos["biblioteca"] += compilar(Path(ruta))
+except OSError as e:                        # unidad llena o de solo lectura: el resto fallaría igual
+    print(json.dumps({"error": str(e), **hechos}))
+    sys.exit(3)
+print(json.dumps(hechos))
+"""
+"""Lo que corre el intérprete del dispositivo en `precompilar()`: `python -I -c`.
+
+Es un texto y no un módulo para no añadir un fichero a las listas del
+instalador. Escribe un JSON con lo compilado. Sale con 3 si no puede escribir.
+"""
+
+
+def precompilar(destino: Path | str, python: Path | str | None, *,
+                prefijo: Path | str | None = None, biblioteca: bool = True,
+                tope: float = PRECOMPILAR_TOPE,
+                progreso: Callable[[str], None] | None = None) -> bool:
+    """Deja escritos los `.pyc` del programa y de la biblioteca que usa, a mejor esfuerzo.
+
+    Sin ellos, el primer arranque tras instalar o actualizar compila ~250
+    módulos (1,0 s más en Linux). Los hace el MISMO intérprete que luego
+    arrancará el programa (el `python` que se pasa), así que llevan su etiqueta
+    (`cpython-314`) y nunca valen para otro: un Python del equipo de otra
+    versión no se usa, por eso `python` es un runtime del dispositivo y no
+    `device_python()`. Van en modo `checked-hash`: en FAT32/exFAT la hora de un
+    fichero cambia entre Windows y Linux y con `.pyc` de hora se rehacerían al
+    cambiar de equipo. Un `.pyc` que ya vale no se reescribe.
+
+    Compila `common/` y `ui/` de `destino`, `PRECOMPILAR_SUELTOS` y, con
+    `biblioteca`, los módulos de `BIBLIOTECA` y lo que arrastran (solo los que
+    cuelgan de la biblioteca estándar del intérprete). Nunca lanza: una unidad
+    llena, de solo lectura, un intérprete que no arranca o que tarda más de
+    `tope` dejan el programa como estaba, sin `.pyc`, y es un arranque más
+    lento y no un fallo. Punto de indirección: los tests la sustituyen.
+
+    Args:
+        destino: La carpeta del código (`.prdrive/`).
+        python: El intérprete del runtime del dispositivo para este equipo, o
+            `None` (no hay runtime: instalación ligera o raíz del equipo).
+            Un `pythonw.exe` se cambia por el `python.exe` de al lado.
+        prefijo: Si se da, los `.pyc` van ahí en vez de junto a cada fuente
+            (`-X pycache_prefix`): es la caché de los hijos del agente.
+        biblioteca: Si se calienta también la biblioteca estándar.
+        tope: Segundos máximos que se espera al intérprete.
+        progreso: Recibe las frases para quien mira.
+
+    Returns:
+        `True` si el intérprete acabó bien.
+    """
+    if python is None:
+        return False
+    # Absolutas: el intérprete corre con otro cwd (el temporal) y una ruta
+    # relativa dejaría de apuntar a nada.
+    exe = Path(os.path.abspath(python))
+    if exe.name.lower() == "pythonw.exe":
+        exe = exe.with_name("python.exe")
+    destino = Path(os.path.abspath(destino))
+    if not exe.is_file() or not destino.is_dir():
+        return False
+    orden = [str(exe), "-I"]
+    if prefijo is not None:
+        orden += ["-X", f"pycache_prefix={prefijo}"]
+    orden += ["-c", _PRECOMPILADOR, str(destino), json.dumps({
+        "arboles": list(DEPLOY_TREES), "sueltos": list(PRECOMPILAR_SUELTOS),
+        "biblioteca": list(BIBLIOTECA) if biblioteca else []})]
+    if progreso:
+        progreso("Preparando el arranque rápido (precompilando)…")
+    extra = {"creationflags": CREATE_NO_WINDOW} if IS_WIN else {}
+    try:
+        res = subprocess.run(orden, cwd=tempfile.gettempdir(), stdin=subprocess.DEVNULL,
+                             capture_output=True, text=True, encoding="utf-8",
+                             errors="replace", timeout=tope, **extra)
+    except subprocess.TimeoutExpired:
+        if progreso:
+            progreso(f"El arranque rápido tarda más de {tope:g} s: sigo sin él.")
+        return False
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if res.returncode != 0 and progreso:
+        progreso("No he podido dejar el arranque rápido listo: sigo sin él.")
+    return res.returncode == 0
+
+
+def precompilar_dispositivo(device_root: Path | str,
+                            progreso: Callable[[str], None] | None = None) -> bool:
+    """Precompila el programa de `.prdrive/` con el Python del dispositivo para este equipo.
+
+    Es lo que llaman `deploy_code()`, `apply_platforms()` y el cambio de
+    componentes. Sin runtime para este equipo (instalación ligera, raíz del
+    equipo, un macOS) no hace nada: sin un Python del que fiarse no se sabe qué
+    etiqueta tendrían los `.pyc`.
+
+    Returns:
+        Lo que dice `precompilar()`; `False` si no hay runtime.
+    """
+    python = platforms.device_interpreter(device_root, platforms.host(), consola=True)
+    return precompilar(app_dir(device_root), python, progreso=progreso)
+
+
 def deploy_code(device_root: Path | str, rclone_binary: Path | str | None = None,
-                origen: Path | str | None = None) -> list[Path]:
+                origen: Path | str | None = None,
+                progreso: Callable[[str], None] | None = None) -> list[Path]:
     """Copia el programa al dispositivo y devuelve lo que ha escrito.
 
     Es una copia y no un espejo: lo que hubiera en `.prdrive/` de una versión
@@ -239,6 +426,7 @@ def deploy_code(device_root: Path | str, rclone_binary: Path | str | None = None
             que es el caso de actualizar: el binario ya está puesto y pasarle
             el que hay en el propio dispositivo daría `SameFileError`.
         origen: De dónde copiar; por defecto, `deploy_source()`.
+        progreso: Recibe lo que se dice mientras se precompila.
 
     Raises:
         InstallError: Si falta algo en el origen o no se puede copiar.
@@ -281,6 +469,9 @@ def deploy_code(device_root: Path | str, rclone_binary: Path | str | None = None
 
     if rclone_binary is not None:
         escrito.append(copy_rclone(device_root, rclone_binary))
+    # Al final y a mejor esfuerzo: sin runtime para este equipo (la primera
+    # instalación aún no lo ha puesto: lo hace `apply_platforms()`) no hace nada.
+    precompilar_dispositivo(device_root, progreso)
     return escrito
 
 
@@ -582,10 +773,16 @@ def apply_platforms(device_root: Path | str, plan: platforms.Plan,
         binario = conseguido.rclone[plat.clave]
         escrito.append(copy_rclone(device_root, binario, plat,
                                    rclone_bin.pinned_version(binario, plat)))
+    nuevo_runtime = False
     for plat in plan.runtime:
         puesto = install_runtime(device_root, plat, conseguido.runtime[plat.clave])
         if puesto is not None:
             escrito.append(puesto)
+            nuevo_runtime = nuevo_runtime or plat in platforms.candidates(platforms.host())
+    if nuevo_runtime:
+        # El código ya está (`deploy_code()` va antes) y el Python que lo
+        # arrancará acaba de llegar.
+        precompilar_dispositivo(device_root, progreso)
     return escrito, borrado
 
 
