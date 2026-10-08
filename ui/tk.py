@@ -475,7 +475,6 @@ def modal(parent, title: str, suelto: bool = False):
     import tkinter as tk
     dlg = tk.Toplevel(parent)
     theme.apply(dlg)
-    theme.barra_titulo(dlg)
     dlg.title(f"{TITLE} — {title}")
     dlg.configure(background=theme.PAPEL)
     if not suelto:
@@ -514,14 +513,20 @@ DWMWA_CLOAK = 13
 """El atributo de DWM que encubre una ventana: existe, se mapea y se pinta, pero no se compone."""
 
 
-def _encubrir(hwnd: int, encubierta: bool) -> bool:
-    """Encubre o descubre una ventana de nivel superior de Windows (`DWMWA_CLOAK`).
+def _atributo_dwm(hwnd: int, atributo: int, valor: int) -> bool:
+    """Le pone a una ventana de nivel superior un atributo de DWM de 4 bytes.
 
-    Es la única llamada a dwmapi de `ensenar()` y un punto de indirección: los
-    tests la sustituyen, porque `ctypes.WinDLL` solo existe en Windows.
+    Es la única llamada a dwmapi y un punto de indirección: los tests la
+    sustituyen, porque `ctypes.WinDLL` solo existe en Windows.
+
+    Args:
+        hwnd: El envoltorio de la ventana (`wm frame`).
+        atributo: Un `DWMWA_*`.
+        valor: Un BOOL o un COLORREF; los dos caben en un int.
 
     Returns:
-        Si DWM lo aceptó (`S_OK`; Windows 8 en adelante).
+        Si DWM lo aceptó (`S_OK`). Un atributo que su versión no conoce lo
+        rechaza (`E_INVALIDARG`).
     """
     import ctypes
     from ctypes import wintypes
@@ -531,8 +536,28 @@ def _encubrir(hwnd: int, encubierta: bool) -> bool:
     poner.argtypes = [wintypes.HWND, wintypes.DWORD, ctypes.POINTER(ctypes.c_int),
                       wintypes.DWORD]
     poner.restype = ctypes.c_long                   # HRESULT
-    valor = ctypes.c_int(1 if encubierta else 0)
-    return poner(hwnd, DWMWA_CLOAK, ctypes.byref(valor), ctypes.sizeof(valor)) == 0
+    dato = ctypes.c_int(valor)
+    return poner(hwnd, atributo, ctypes.byref(dato), ctypes.sizeof(dato)) == 0
+
+
+def _encubrir(hwnd: int, encubierta: bool) -> bool:
+    """Encubre o descubre una ventana de nivel superior de Windows (`DWMWA_CLOAK`).
+
+    Es un punto de indirección: los tests de `ensenar()` la sustituyen.
+
+    Returns:
+        Si DWM lo aceptó (`S_OK`; Windows 8 en adelante).
+    """
+    return _atributo_dwm(hwnd, DWMWA_CLOAK, 1 if encubierta else 0)
+
+
+def _poner_barra(hwnd: int) -> None:
+    """Pide a DWM la barra de título del tema; lo que rechace se queda como estaba."""
+    for atributo, valor in theme.barra_titulo():
+        try:
+            _atributo_dwm(hwnd, atributo, valor)
+        except Exception:                               # noqa: BLE001
+            pass
 
 
 def ensenar(ventana) -> None:
@@ -549,14 +574,23 @@ def ensenar(ventana) -> None:
     El manejador es el de `wm frame`, como en `proteger_de_capturas()`; si Tk
     aún no ha creado su envoltorio, o DWM no acepta el atributo, se enseña
     sin más. Fuera de Windows es un `deiconify()`.
+
+    **Aquí se pone también la barra de título del tema** (`theme.barra_titulo()`),
+    antes de enseñarla, y no al crear la ventana: los atributos de DWM son del
+    envoltorio, y `transient()` y `resizable()`, que llevan todas las ventanas,
+    lo destruyen y crean otro (`UpdateWrapper`), con la barra clara. Por la
+    misma razón no se toca el estilo de una ventana después de enseñarla. Que
+    falle la barra no impide enseñar la ventana.
     """
     hwnd = None
     if IS_WIN:
         try:
             ventana.update_idletasks()
             marco = int(ventana.wm_frame(), 16)
-            if marco != int(ventana.winfo_id()) and _encubrir(marco, True):
-                hwnd = marco
+            if marco != int(ventana.winfo_id()):
+                _poner_barra(marco)
+                if _encubrir(marco, True):
+                    hwnd = marco
         except Exception:                               # noqa: BLE001
             hwnd = None
     ventana.deiconify()

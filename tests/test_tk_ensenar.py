@@ -20,6 +20,7 @@ import sys
 
 from _harness import Checks
 
+from ui import theme
 from ui import tk as uitk
 
 c = Checks("las ventanas aparecen ya pintadas")
@@ -66,8 +67,13 @@ class VentanaFalsa:
             raise RuntimeError("cerrada mientras se pintaba")
 
 
-def ensenar(ventana, acepta: bool = True, es_win: bool = True, lanza: bool = False):
-    """Llama a `ensenar()` con un DWM de mentira y devuelve lo que se le pidió."""
+def ensenar(ventana, acepta: bool = True, es_win: bool = True, lanza: bool = False,
+            tema: str = "claro", barra_lanza: bool = False):
+    """Llama a `ensenar()` con un DWM de mentira y devuelve lo que se le pidió encubrir.
+
+    Lo que se pide para la barra de título va solo a `ventana.llamadas`, como
+    `("barra", hwnd, atributo, valor)`.
+    """
     pedidas: list = []
 
     def encubrir(hwnd, encubierta):
@@ -78,12 +84,23 @@ def ensenar(ventana, acepta: bool = True, es_win: bool = True, lanza: bool = Fal
             raise OSError("dwmapi no responde")
         return acepta
 
-    previo = (uitk.IS_WIN, uitk._encubrir)
-    uitk.IS_WIN, uitk._encubrir = es_win, encubrir
+    def atributo(hwnd, cual, valor):
+        """Apunta un atributo de la barra y contesta."""
+        ventana.llamadas.append(("barra", hwnd, cual, valor))
+        if barra_lanza:
+            raise OSError("dwmapi no responde")
+        return True
+
+    previo = (uitk.IS_WIN, uitk._encubrir, uitk._atributo_dwm,
+              theme.TEMA, theme._tema_elegido)
+    uitk.IS_WIN, uitk._encubrir, uitk._atributo_dwm = es_win, encubrir, atributo
+    theme.usar(tema)
     try:
         uitk.ensenar(ventana)
     finally:
-        uitk.IS_WIN, uitk._encubrir = previo
+        uitk.IS_WIN, uitk._encubrir, uitk._atributo_dwm = previo[:3]
+        theme.usar(previo[3])
+        theme._tema_elegido = previo[4]
     return pedidas
 
 
@@ -120,8 +137,40 @@ v = VentanaFalsa()
 c("fuera de Windows no se pide nada a DWM", ensenar(v, es_win=False), [])
 c("  y es un deiconify", v.llamadas, ["deiconify"])
 
+# 6. con el tema oscuro, la barra de título oscura, puesta en el envoltorio
+#    que se va a enseñar y antes de enseñarlo
+c("el tema claro no toca la barra", theme.barra_titulo(), ())
+theme.usar("oscuro")
+PAPEL_OSCURO = int(theme.PAPEL[5:7] + theme.PAPEL[3:5] + theme.PAPEL[1:3], 16)
+c("el oscuro la pide oscura (atributo 20) y del color del papel (35, COLORREF "
+  "0x00BBGGRR)", theme.barra_titulo(), ((20, 1), (35, PAPEL_OSCURO)))
+theme.usar("claro")
+theme._tema_elegido = False
 
-# 6. la llamada de verdad a dwmapi, contra un ctypes.WinDLL de mentira
+v = VentanaFalsa()
+ensenar(v, tema="oscuro")
+c("con el tema oscuro, la barra se pide en el envoltorio antes de enseñarlo",
+  [x for x in v.llamadas if x != "update_idletasks"][:3],
+  [("barra", ENVOLTORIO, 20, 1), ("barra", ENVOLTORIO, 35, PAPEL_OSCURO),
+   ("encubrir", ENVOLTORIO, True)])
+v = VentanaFalsa()
+ensenar(v, tema="claro")
+c("  con el claro no se pide nada para la barra",
+  [x for x in v.llamadas if x[0] == "barra"], [])
+v = VentanaFalsa(envoltorio=False)
+ensenar(v, tema="oscuro")
+c("  sin envoltorio tampoco: se perdería al crearlo",
+  [x for x in v.llamadas if x[0] == "barra"], [])
+v = VentanaFalsa()
+ensenar(v, tema="oscuro", es_win=False)
+c("  ni fuera de Windows", v.llamadas, ["deiconify"])
+v = VentanaFalsa()
+pedidas = ensenar(v, tema="oscuro", barra_lanza=True)
+c("si DWM falla con la barra, la ventana se encubre, se enseña y se descubre igual",
+  pedidas, [(ENVOLTORIO, True), (ENVOLTORIO, False)])
+
+
+# 7. la llamada de verdad a dwmapi, contra un ctypes.WinDLL de mentira
 class FuncionFalsa:
     """`DwmSetWindowAttribute` de mentira: apunta lo recibido y devuelve un HRESULT."""
 
@@ -179,7 +228,6 @@ finally:
         ctypes.WinDLL = windll_real
 
 
-# 7. el Visor: de su tamaño, pero sin mapear, mientras la ventana está retirada
 try:
     import tkinter as tk
     from tkinter import ttk
@@ -189,9 +237,42 @@ except Exception as e:                                   # sin entorno gráfico
     print(f"  (saltado) no hay entorno gráfico: {e}")
     sys.exit(c.report())
 
-from ui import theme  # noqa: E402
-
 theme.apply(raiz)
+
+# 8. con un Tk de verdad: `transient()` y `resizable()` rehacen el envoltorio
+#    (`UpdateWrapper`, otro manejador), así que la barra puesta al crear el
+#    diálogo se perdía. Tiene que acabar en el envoltorio que se enseña.
+if uitk.IS_WIN:
+    pedidos: list = []
+    previo = (uitk._atributo_dwm, theme.TEMA, theme._tema_elegido)
+    uitk._atributo_dwm = lambda hwnd, cual, valor: pedidos.append(hwnd) or True
+    theme.usar("oscuro")
+    try:
+        # Como una raíz de verdad: `resizable()` y después enseñarla. Visible,
+        # además, porque el `transient` de una oculta no llega a mapearse.
+        padre = tk.Toplevel(raiz)
+        padre.withdraw()
+        padre.resizable(False, False)
+        ttk.Label(padre, text="padre").grid()
+        uitk.ensenar(padre)
+        c("Tk de verdad: la barra se pide en el envoltorio con el que se enseña "
+          "la ventana", sorted(set(pedidos)), [int(padre.wm_frame(), 16)])
+        pedidos.clear()
+        dlg = uitk.modal(padre, "barra")
+        ttk.Label(dlg, text="barra").grid()
+        uitk.ensenar(dlg)
+        c("  y la de un diálogo (`transient` y `resizable` rehacen el envoltorio)",
+          sorted(set(pedidos)), [int(dlg.wm_frame(), 16)])
+        dlg.destroy()
+        padre.destroy()
+    finally:
+        uitk._atributo_dwm = previo[0]
+        theme.usar(previo[1])
+        theme._tema_elegido = previo[2]
+else:
+    print("  (saltado) el envoltorio de Tk solo existe en Windows")
+
+# 9. el Visor: de su tamaño, pero sin mapear, mientras la ventana está retirada
 top = tk.Toplevel(raiz)
 top.withdraw()
 visor = uitk.Visor(top, ancho=300, alto=200)

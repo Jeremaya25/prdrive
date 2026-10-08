@@ -43,6 +43,8 @@ documentación de Windows; si no coincide, se apunta tal cual.
 | P3 | W | En «Parejas», bajar con la rueda, arrastrar el pulgar de la barra y pulsar sus flechas; abrir «Ajustes» en una pantalla pequeña (1366×768) para que aparezca la barra. | Se desplaza como antes, sin dejar restos pintados abajo ni encima de la barra horizontal. | `Visor._desplazar()`, `place` |
 | P4 | W | Arrastrar el pulgar de la barra de desplazamiento (claro y oscuro). | El pulgar, al pulsarlo, es un bloque liso más oscuro: **sin la raya clara en medio** ni filetes claros alrededor. | `theme.apply()`, `gripsize` |
 | P5 | W | Con un error largo en el asistente que obligue a desplazar (`Visor.ver()`), pulsar el botón de reintentar. | El botón queda a la vista entero, como antes. | `Visor.ver()` |
+| P6 | W | Con Windows en oscuro, abrir la ventana principal, «Ajustes», un diálogo («Parejas»), el asistente y «¿Atender esta unidad?» (el agente). | La barra de título de todas, del color del papel oscuro (#171512), con el título en claro: **ni blanca ni gris**. En el equipo de desarrollo (Windows 11 26200, 100 %) se midió en pantalla la de la raíz y la de un diálogo: #171512; antes, #F2F2F2. | `tk.ensenar()` → `theme.barra_titulo()` |
+| P7 | W10 | P6. | La barra, **negra** (Windows 10 no admite un color propio: `DWMWA_CAPTION_COLOR` lo rechaza), y ya oscura al aparecer, sin un fotograma claro. | `DWMWA_USE_IMMERSIVE_DARK_MODE` |
 
 ## 2. El menú de la bandeja
 
@@ -63,6 +65,11 @@ documentación de Windows; si no coincide, se apunta tal cual.
 - **P1 con la ventana que se rellena**: comprobar si DWM aceptó el
   `DWMWA_CLOAK` (Windows 8 en adelante); si no, `ensenar()` cae a un
   `deiconify()` normal y hay que buscar otra forma.
+- **P6/P7 con una barra clara**: es una ventana a la que se le cambia el estilo
+  (`resizable`, `transient`…) después de `ensenar()`, que rehace el envoltorio;
+  apuntar cuál. En W10, si sale clara y se oscurece al pasarle por encima, la
+  barra no se repinta sola: hay que forzarlo (`SetWindowPos` con
+  `SWP_FRAMECHANGED`).
 - **P2 aún lenta**: perfilar `mostrar()` con la ventana encubierta; lo que
   queda es Tk pintando cada widget (el diseño tiene el triple que la 0.6.5).
 - **B2 con la flecha de Windows**: el recorte de `pintar()` no basta en esa
