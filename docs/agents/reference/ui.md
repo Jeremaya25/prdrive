@@ -8,7 +8,8 @@ Formerly AGENTS.md «UI», «Theme, icons and window sizing», «Ajustes». «Re
 Two frontends implement the same four operations (`ask`, `approve_resync`, `info`, `run_sync`) and both return `Choice(action, pairs, minutes)`. `ui.start(config, msg)` returns the choice **together with the frontend that took it** (a window cannot dump output to a console that does not exist).
 
 - **`import tkinter` always goes inside functions, never at module top.** `ui/` is imported by headless paths (`--auto`, the service) where tkinter may be absent; the failure must surface when the window opens, so `ui.start()` can fall back to the console menu.
-- `ConsoleFrontend.approve_resync` always returns False on purpose: with a real terminal `sync.py` inherits stdin and asks itself, with more context than a dialog fits.
+- `ConsoleFrontend.approve_resync` always returns False on purpose: with a real terminal `sync.py` inherits stdin and asks itself, with more context than a dialog fits (including the warning about a program folder already on the remote).
+- **`approve_resync(pending, carpetas=None)`**: `carpetas` maps a pair to the remote folder where it once uploaded the program (`ui.carpetas_del_programa()`, computed where the pending list is built in `ui.manual_args()`; the decision is `revision.carpeta_programa_en_remoto()`). `tk.preguntar_resync()` only draws the sentences `ui.avisos_de_resync()` gives it.
 - `save_prefs` stores `known` (the pair names existing then) so a pair added later reads as new and comes back checked.
 
 ## Main window and output

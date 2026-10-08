@@ -16,7 +16,13 @@ Hay dos decisiones que conviene no deshacer:
   filtrado salen de los patrones incluir/excluir (`filter_args`). Repetirlos
   aquí no los sustituye: rclone recibiría el flag dos veces y, en el caso de
   `--workdir` o `--filters-file`, eso es apuntar a bisync a un baseline que no
-  es el suyo. Por eso `RESERVED` se rechaza al parsear y no al ejecutar.
+  es el suyo. Por eso `RESERVED` (`model.FLAGS_RESERVADOS`) se rechaza al
+  parsear y no al ejecutar. Tampoco se admite un flag que haga que rclone
+  lance un programa de este equipo (`--sftp-ssh`, `--password-command`…) ni
+  uno que escriba un fichero cualquiera de él (`--cpuprofile`, `--memprofile`):
+  el config viaja con el dispositivo. Todas son reglas de
+  `model.problema_flag()`, la puerta del parser del config; aquí solo se avisa
+  al escribir.
 
 Lo demás se admite sin lista blanca: quién sabe qué flags existen es rclone, y
 la regla del proyecto es que un flag nuevo se añade escribiéndolo, no tocando
@@ -32,8 +38,16 @@ from typing import Any, Mapping, NamedTuple
 from common import config_file, model
 from common.model import ConfigError
 
+
 class FlagReservado(ConfigError):
-    """Un flag que no se pone a mano porque lo pone el programa (`RESERVED`)."""
+    """Un flag que no se admite aquí: lo pone el programa o toca este equipo.
+
+    Es lo que rechaza `model.problema_flag()`: los de `RESERVED`, los que hacen
+    que rclone ejecute una orden de este equipo y los que le hacen escribir un
+    fichero cualquiera (`model.FLAGS_ESCRIBEN`). Lo es tanto el del cuadro de
+    flags como el del de argumentos extra, para que el aviso lleve el mismo
+    título (`titulo_error()`) escriba donde escriba la persona.
+    """
 
 
 TITULO_RESERVADO = "Este flag no se puede poner aquí"
@@ -47,30 +61,8 @@ def titulo_error(error: ConfigError) -> str:
     return TITULO_RESERVADO if isinstance(error, FlagReservado) else TITULO_NO_VALE
 
 
-RESERVED = {
-    "config": "lo pone sync.py: es el rclone.conf del dispositivo",
-    "log-file": "lo pone sync.py: cada pasada escribe en su propio log",
-    "dry-run": "es --dry-run de sync.py, para que valga en todas las parejas",
-    "workdir": "lo pone sync.py: state/<pareja>/, y cambiarlo mueve el baseline",
-    "resync": "es --resync de sync.py, que además pregunta antes",
-    "filters-file": "sale de los patrones incluir/excluir de la pareja",
-    "filter": "usa los patrones incluir/excluir; mezclarlos rompe el filtrado",
-    "filter-from": "usa los patrones incluir/excluir; mezclarlos rompe el filtrado",
-    "include": "usa el cuadro «Incluir»",
-    "exclude": "usa el cuadro «Excluir»",
-    # Los cuatro del versionado salen de la casilla «Guardar versiones», y el
-    # sufijo además depende de la pasada (lleva su fecha y su hora): no hay
-    # forma de escribirlo aquí que signifique algo.
-    "backup-dir": "el versionado de bisync usa --backup-dir1/2, no este",
-    "backup-dir1": "sale de la casilla «Guardar versiones»: es <pareja>/.prversions",
-    "backup-dir2": "sale de la casilla «Guardar versiones»: es <pareja>/.prversions",
-    "suffix": "lo pone sync.py: la marca de tiempo de ESTA pasada",
-    "suffix-keep-extension": "lo pone sync.py junto con --suffix",
-}
-"""Flags que `sync.py` pone por su cuenta, con el motivo de cada uno.
-
-Salen de `build_command()` y `filter_args()`.
-"""
+RESERVED = model.FLAGS_RESERVADOS
+"""Flags que `sync.py` pone por su cuenta, con el motivo de cada uno."""
 
 _NOMBRE = re.compile(r"[A-Za-z][A-Za-z0-9_-]*")
 """Un nombre de flag válido: lo que va detrás de `--`.
@@ -96,12 +88,7 @@ class Row(NamedTuple):
     origen: str
 
 
-def normalize(key: str) -> str:
-    """Devuelve el nombre con el que rclone verá el flag.
-
-    En él `_` es `-` y no se distingue entre mayúsculas y minúsculas.
-    """
-    return str(key).strip().replace("_", "-").lower()
+normalize = model.normalizar_flag
 
 
 def dump(flags: Mapping[str, Any] | None) -> str:
@@ -144,7 +131,7 @@ def _validar(key: str, value: Any) -> None:
     if not _NOMBRE.fullmatch(key):
         raise ConfigError(f"'{key}' no puede ser el nombre de un flag: es lo que va "
                           f"detrás de '--', o sea letras, números, '-' y '_'.")
-    motivo = RESERVED.get(normalize(key))
+    motivo = model.problema_flag(key)
     if motivo:
         raise FlagReservado(f"'{key}' no se configura aquí: {motivo}.")
     if isinstance(value, dict):
@@ -154,10 +141,12 @@ def _validar(key: str, value: Any) -> None:
             if not isinstance(item, ESCALARES):
                 raise ConfigError(f"'{key}': una lista solo admite textos, números "
                                   f"o true/false.")
-        return
-    if not isinstance(value, ESCALARES):
+    elif not isinstance(value, ESCALARES):
         raise ConfigError(f"'{key}': valor no admitido ({type(value).__name__}). "
                           f"Textos entre comillas, números, o true/false.")
+    motivo = model.problema_valor_flag(value)
+    if motivo:
+        raise ConfigError(f"'{key}': en su valor, {motivo}")
 
 
 def dump_extra(extra: Any) -> str:
@@ -170,9 +159,19 @@ def parse_extra(text: str) -> list[str]:
 
     Es la salida de emergencia para lo que `clave = valor` no sabe expresar y
     va sin tocar a la línea de comandos: por eso el valor de un flag ocupa su
-    propia línea (`--bwlimit` y `8M` son dos argumentos, no uno).
+    propia línea (`--bwlimit` y `8M` son dos argumentos, no uno). Lo que el
+    config no admite (`model.problema_extra()`) se rechaza aquí, para que el
+    diálogo lo diga al escribirlo y no más tarde, al guardar el plan.
+
+    Raises:
+        FlagReservado: Si algún argumento lanza un programa o es de los que pone
+            `sync.py` (es un `ConfigError`).
     """
-    return [l.strip() for l in text.splitlines() if l.strip()]
+    args = [l.strip() for l in text.splitlines() if l.strip()]
+    motivo = model.problema_extra(args)
+    if motivo:
+        raise FlagReservado(motivo)
+    return args
 
 
 def merge(mode_name: str | None, defaults_flags: Mapping[str, Any] | None,

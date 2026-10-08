@@ -104,22 +104,65 @@ def _prefijo(pair: Pair, estado: bisync.PairState) -> Hallazgo | None:
         pair.name, GRAVE, (estado.prefix, esperado))
 
 
+def carpeta_programa_en_remoto(pair: Pair) -> str | None:
+    """Devuelve dónde quedó en el remoto el programa que subió una pareja de la raíz.
+
+    Es la decisión de «hay que avisar de que se borre a mano» y la comparten el
+    hallazgo `resync`, la pregunta de la ventana y la de `sync.py`: tiene que
+    dar la misma respuesta en los tres, y tiene que darse ANTES del `--resync`,
+    porque después el listado nuevo ya no enseña la carpeta. La ruta se arma con
+    `remote_name` y `remote_path` tal como están: `remote_path = ""` es
+    relativa al origen del remote (`nas:.prdrive/`) y `"/"` absoluta
+    (`nas:/.prdrive/`), y no son lo mismo en SFTP.
+
+    Returns:
+        La carpeta (`nas:R/p/.prdrive/`), o `None` si la pareja no es de la raíz
+        entera o su listado no la trae.
+    """
+    if not (pair.es_raiz and bisync.programa_en_listado(pair)):
+        return None
+    base = pair.remote_path.rstrip("/") or pair.remote_path[:1]
+    if base and not base.endswith("/"):
+        base += "/"
+    return f"{pair.remote_name}:{base}{model.APP_DIR.name}/"
+
+
+def aviso_carpeta_programa(carpeta: str) -> str:
+    """Devuelve la frase que dice dónde borrar a mano la copia del programa.
+
+    El `--resync` deja de subir la carpeta del programa pero no la borra del
+    remoto: el código no borra nada ahí, y esa copia lleva la clave.
+    """
+    return ("El resync deja de subir la carpeta del programa, pero no la borra del "
+            f"remoto: bórrala tú de {carpeta}, que lleva la clave.")
+
+
 def _resync(pair: Pair, estado: bisync.PairState) -> Hallazgo | None:
     """Devuelve la avería de una pareja que pide `--resync` y nadie lo ha hecho.
 
     La del llavero no la tiene: se resincroniza sola en su próxima pasada
     (`sync._bisync_preflight()`).
+
+    Si es una pareja de la raíz entera que subió la carpeta del programa, el
+    `dato` es dónde está esa copia en el remoto, para que la confirmación del
+    resync (`ui/repair.aviso_resync()`) lo diga; si no, va vacío.
     """
     if pair.llavero:
         return None
     razones = bisync.resync_reasons(pair, estado)
     if not razones:
         return None
+    detalle = ("; ".join(razones) + ". Hasta que se haga, esta pareja se salta en "
+               "cada pasada: el servicio no resincroniza solo, nunca.")
+    dato: tuple = ()
+    carpeta = carpeta_programa_en_remoto(pair)
+    if carpeta is not None:
+        detalle += (" Hasta ahora subía la carpeta del programa (con su clave y "
+                    "rclone.conf) al remoto.")
+        dato = (carpeta,)
     return Hallazgo(
-        "resync", f"{nombre_visible(pair.name)} necesita un --resync",
-        "; ".join(razones) + ". Hasta que se haga, esta pareja se salta en cada "
-        "pasada: el servicio no resincroniza solo, nunca.",
-        pair.name, AVISO)
+        "resync", f"{nombre_visible(pair.name)} necesita un --resync", detalle,
+        pair.name, AVISO, dato)
 
 
 def _locks(pair: Pair) -> Hallazgo | None:
