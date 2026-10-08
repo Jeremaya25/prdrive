@@ -1,0 +1,39 @@
+# Dispositivo de muestra: 5 parejas (como el de las capturas de 0.7.1).
+[defaults]
+remote = "nas"
+device_remote = "disp"
+catalog_path = "/prdrive-catalog/remote.toml"
+
+[daemon]
+pairs = ["documentos", "claves"]
+interval_minutes = 30
+
+[[pair]]
+name = "documentos"
+local = "sync-data/documentos"
+remote_path = "/Datos/Documentos"
+mode = "bisync"
+
+[[pair]]
+name = "fotos"
+local = "sync-data/fotos"
+remote_path = "/Fotos"
+mode = "down"
+
+[[pair]]
+name = "claves"
+local = "sync-data/claves"
+remote_path = "/Seguridad/Claves"
+mode = "bisync"
+
+[[pair]]
+name = "musica"
+local = "sync-data/musica"
+remote_path = "/Musica"
+mode = "up-mirror"
+
+[[pair]]
+name = "prdrive"
+local = "sync-data/prdrive"
+remote_path = "/prdrive"
+mode = "bisync"

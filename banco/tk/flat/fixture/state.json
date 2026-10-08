@@ -1,0 +1,4 @@
+{"estado": {"documentos": "requiere resync", "fotos": "en uso", "claves": "requiere resync",
+            "musica": "espejo", "prdrive": "requiere resync"},
+ "revisar": 3, "catalogo": "catálogo leído · 2026-01-01 00:00:00",
+ "endpoint": "nas:/prdrive-catalog/remote.toml", "carpeta": "/tmp/prdrive-ref-q4s4cbfn"}
