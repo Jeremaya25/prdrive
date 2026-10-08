@@ -12,7 +12,8 @@ media frase y puede estar leyéndolo otra máquina.
 Los comparten el registro del servicio (`daemon.lock.json`) y la memoria de la
 UI (`ui_prefs.json`). Con ellos viaja `pid_alive`, que da sentido a un registro
 con un pid dentro: un fichero de bloqueo solo vale si se puede saber si quien
-lo escribió sigue vivo.
+lo escribió sigue vivo. Y `matar_arbol`, que corta a un proceso con todo lo que
+cuelga de él.
 
 Al final están `hide()` y `unhide()`, el atributo de oculto de Windows: el
 dispositivo también esconde algo suyo (el icono de la unidad, `ui/volumen.py`)
@@ -23,6 +24,8 @@ from __future__ import annotations
 
 import json
 import os
+import signal
+import subprocess
 from datetime import datetime
 from pathlib import Path
 
@@ -344,6 +347,31 @@ def _zombi(pid: int) -> bool:
     except OSError:
         return False
     return datos[datos.rfind(b")") + 2:][:1] == b"Z"
+
+
+def matar_arbol(pid: int) -> None:
+    """Termina un proceso y todos los que cuelgan de él; no lanza nunca.
+
+    Matar solo a `sync.py` dejaría vivo a su rclone, con ficheros del volumen
+    abiertos: es lo que hay que evitar al cerrar la ventana de una pasada o al
+    pasarse de su tope. Es función de módulo para que los tests no maten nada.
+
+    En Windows va por `taskkill /F /T`, que recorre el árbol por padres. En
+    POSIX manda `SIGKILL` al grupo de procesos de `pid`, así que quien lo
+    lanzó tiene que haberlo hecho jefe de su sesión (`start_new_session=True`):
+    de no ser así no existe un grupo con ese número y no se corta nada.
+
+    Args:
+        pid: El proceso en la raíz del árbol. Si ya no existe, no pasa nada.
+    """
+    try:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        else:
+            os.killpg(pid, signal.SIGKILL)
+    except (OSError, subprocess.SubprocessError):
+        pass                    # ya no estaba, o el sistema no tiene `taskkill`
 
 
 def procesos_llamados(nombre: str) -> set[int]:

@@ -27,7 +27,7 @@ import threading
 import time
 
 from common import (APP_NAME, components, conflicts, model, progress, revision,
-                    update)
+                    store, update)
 from common.model import Config
 
 from . import (Choice, abrir, cifrado, cuando, cuando_sello, icons, manual_args,
@@ -1890,8 +1890,9 @@ def output_window(title: str, cmd: list[str], parent=None,
 
     Sustituye a la consola cuando no la hay, así que la usan tanto `sync.py`
     como `penwatch.py`: recibe la orden entera y no supone a quién llama.
-    Cerrar la ventana a mitad de faena corta el proceso (bisync se recupera con
-    `--recover` en la siguiente pasada).
+    Cerrar la ventana a mitad de faena corta el proceso y todo lo que cuelga de
+    él (su rclone también: `store.matar_arbol()`); bisync se recupera con
+    `--recover` en la siguiente pasada.
 
     Con `parent` se cuelga de una ventana existente en vez de crear un Tk
     nuevo: tkinter no lleva bien dos intérpretes a la vez y desde un diálogo ya
@@ -1921,6 +1922,14 @@ def output_window(title: str, cmd: list[str], parent=None,
     import tkinter as tk
     from tkinter import filedialog, font as tkfont, messagebox, ttk
 
+    # Jefe de su sesión (POSIX) o de su grupo de procesos (Windows): cerrar la
+    # ventana corta el árbol entero con `store.matar_arbol()`, que en POSIX
+    # señala al grupo y por eso necesita que `proc` sea su jefe. Se mira el
+    # sistema de verdad y no `IS_WIN`, que los tests fuerzan.
+    if sys.platform == "win32":
+        aparte: dict = {"creationflags": model.CREATE_NEW_PROCESS_GROUP}
+    else:
+        aparte = {"start_new_session": True}
     proc = subprocess.Popen(
         cmd,
         stdin=subprocess.DEVNULL,
@@ -1932,6 +1941,7 @@ def output_window(title: str, cmd: list[str], parent=None,
         encoding="utf-8",
         errors="replace",
         bufsize=1,
+        **aparte,
     )
     q: queue.Queue = queue.Queue()
     DONE = object()
@@ -2102,9 +2112,9 @@ def output_window(title: str, cmd: list[str], parent=None,
         root.after(120, poll)
 
     def on_close() -> None:
-        """Corta el proceso si sigue y cierra la ventana."""
+        """Corta el proceso, con su rclone, si sigue y cierra la ventana."""
         if state["rc"] is None and proc.poll() is None:
-            proc.terminate()
+            store.matar_arbol(proc.pid)
         root.destroy()
 
     avisado = {"ya": False}
@@ -2120,7 +2130,7 @@ def output_window(title: str, cmd: list[str], parent=None,
             return
         avisado["ya"] = True
         if proc.poll() is None:
-            proc.terminate()
+            store.matar_arbol(proc.pid)
         if al_cerrar is not None:
             rc = state["rc"] if state["rc"] is not None else 1
             try:
@@ -2145,5 +2155,5 @@ def output_window(title: str, cmd: list[str], parent=None,
     root.after(120, poll)
     esperar()
     if proc.poll() is None:
-        proc.terminate()
+        store.matar_arbol(proc.pid)
     return state["rc"] if state["rc"] is not None else 1
