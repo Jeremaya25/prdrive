@@ -124,7 +124,9 @@ El catálogo todavía no existe. Instala un primer dispositivo con la conexión 
 mano y crea las parejas desde su ventana (**Parejas → Catálogo → Añadir**), o
 sube un `remote.toml` con el formato de
 [`sync_config.example.toml`](../../sync_config.example.toml). A partir de ahí, cada
-dispositivo nuevo hereda la conexión y las parejas del catálogo.
+dispositivo nuevo hereda la conexión y las parejas del catálogo. Las
+contraseñas y las órdenes (`ssh`) no se heredan del catálogo, y un dispositivo
+que trae su propia contraseña conserva su conexión.
 
 ## Un ejecutable, para no repetir todo esto
 
