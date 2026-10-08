@@ -588,6 +588,102 @@ def bloque_aviso(parent, texto: str, ancho: int = 560, tipo: str = "Ambar",
     return caja
 
 
+
+TONOS_RESULTADO = {"ok": "Verde.", "peligro": "Rojo.", "aviso": "Ambar.", "info": "Azul."}
+"""El tono del aviso de cada clase de resultado (`Resultado.poner`)."""
+
+
+class Resultado:
+    """El hueco donde se dice cómo ha ido algo: nada, una pista o un aviso.
+
+    Es el `Notice` del diseño debajo de un botón de acción («Instalado: …»,
+    «No se ha podido…»). Con `tono` vacío es una pista gris de una línea, para
+    lo que solo informa («Se sigue sin llavero»); con tono es el aviso con
+    baldosa: la primera línea es el título y el resto el cuerpo. Se rehace en
+    cada `poner()`, así que el marco se coloca una vez y ya está.
+
+    Args:
+        parent: Dónde va.
+        ancho: Dónde se corta el texto, en medidas del diseño.
+
+    Attributes:
+        marco: El marco, para colocarlo.
+        tono: El de lo último que se ha puesto (`''` sin nada).
+        texto: Lo último que se ha puesto.
+    """
+
+    def __init__(self, parent, ancho: int = 720) -> None:
+        from tkinter import ttk
+        self.marco = ttk.Frame(parent)
+        self.marco.columnconfigure(0, weight=1)
+        self.ancho = ancho
+        self.tono = ""
+        self.texto = ""
+
+    def grid(self, **opciones):
+        """Coloca el marco, como un widget."""
+        self.marco.grid(**opciones)
+        return self
+
+    def poner(self, texto: str, tono: str = "", icono: str | None = None) -> None:
+        """Pone ese texto, con el aviso de ese tono (`ok`, `peligro`, `aviso`, `info`).
+
+        `icono` cambia el glifo de la baldosa, que si no es el del tono.
+        """
+        from tkinter import ttk
+        for hijo in self.marco.winfo_children():
+            hijo.destroy()
+        self.texto, self.tono = texto, tono
+        if not texto:
+            return
+        if not tono:
+            ttk.Label(self.marco, text=texto, style="Pista.TLabel", justify="left",
+                      wraplength=theme.medida(self.ancho)).grid(row=0, column=0,
+                                                                sticky="w")
+            return
+        bloque_aviso(self.marco, texto, ancho=self.ancho - 80, icono=icono,
+                     tono=TONOS_RESULTADO[tono]).grid(row=0, column=0, sticky="ew")
+
+    def quitar(self) -> None:
+        """Deja el hueco vacío."""
+        self.poner("")
+
+
+ESTADO_CHIP = {True: "Ok.", False: "Peligro.", None: "Apagado.", "aviso": "Aviso."}
+"""El tipo de chip de cada estado de una fila de `tabla_estado`."""
+
+
+def tabla_estado(parent, filas, palabras=("bien", "falla", "sin comprobar", "aviso"),
+                 ancho_nombre: int = 170):
+    """Devuelve una tarjeta con una fila por comprobación: nombre, chip y detalle.
+
+    Es la tabla de «Comprobaciones» y de «Verificación» del diseño: lo que se
+    lee de un vistazo es el chip (verde, rojo, gris sin comprobar o ámbar); el
+    detalle va al lado, en tinta suave.
+
+    Args:
+        filas: `(nombre, estado, detalle)`; el estado es `True`, `False`,
+            `None` (sin comprobar) o `'aviso'`.
+        palabras: Lo que dice el chip en cada estado, en ese orden.
+    """
+    from tkinter import ttk
+
+    from . import icons
+    tarjeta = ttk.Frame(parent, style="Card.TFrame", padding=(theme.E4, theme.E1))
+    tarjeta.columnconfigure(2, weight=1)
+    tarjeta.columnconfigure(0, minsize=icons.px(parent, ancho_nombre))
+    dicho = dict(zip((True, False, None, "aviso"), palabras))
+    for i, (nombre, estado, detalle) in enumerate(filas):
+        if i:
+            separador_fila(tarjeta, 2 * i - 1, 3)
+        ttk.Label(tarjeta, text=nombre, style="Card.Fuerte.TLabel").grid(
+            row=2 * i, column=0, sticky="w", pady=theme.E3)
+        theme.chip(tarjeta, dicho[estado], ESTADO_CHIP[estado]).grid(
+            row=2 * i, column=1, sticky="w", padx=(theme.E3, theme.E3))
+        ttk.Label(tarjeta, text=detalle, style="Card.Pista.TLabel", justify="left",
+                  wraplength=theme.medida(480)).grid(row=2 * i, column=2, sticky="w")
+    return tarjeta
+
 def separador_fila(parent, fila: int, columnas: int, superficie: str = "Card."):
     """Pone la línea fina entre dos filas de una lista dibujada a mano."""
     from tkinter import ttk

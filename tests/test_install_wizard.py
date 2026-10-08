@@ -223,10 +223,20 @@ c("con conexión configurada sí", str(sin_conexion.boton_siguiente.cget("state"
 # comprobada», también con la plantilla sin rellenar.
 
 
+# Lo que va en rojo, en ámbar o en verde: o la letra de ese color, o un aviso
+# de ese tono (`tk.Resultado`), que es como lo dice ahora el asistente.
+TONO = {"Peligro.TLabel": "NotaRojo.", "Aviso.TLabel": "NotaAmbar.",
+        "Ok.TLabel": "NotaVerde."}
+
+
 def etiquetas(wiz, estilo=None):
-    """Los textos de las etiquetas VISIBLES del paso, o solo las de ese estilo."""
+    """Los textos de las etiquetas VISIBLES del paso, o solo las de ese color."""
+    def vale(l) -> bool:
+        """Si la etiqueta es de ese color, en letra o en aviso."""
+        actual = str(l.cget("style"))
+        return estilo is None or actual == estilo or actual.startswith(TONO[estilo])
     return [str(l.cget("text")) for l in widgets(wiz.cuerpo, ttk.Label)
-            if l.winfo_manager() and (estilo is None or str(l.cget("style")) == estilo)]
+            if l.winfo_manager() and vale(l)]
 
 
 def promete(wiz) -> bool:
@@ -261,7 +271,8 @@ opciones_del_formulario(usa, "host = nas.example\nuser = quien\n")
 boton(usa.cuerpo, "Usar esta conexión").invoke()
 c("con el formulario bien, se puede seguir", siguiente(usa), "normal")
 c("el estado dice que está preparada y sin probar",
-  any("sin probar" in t and "paso siguiente" in t for t in etiquetas(usa)), True)
+  "sin probar" in " ".join(etiquetas(usa)) and "paso siguiente" in " ".join(etiquetas(usa)),
+  True)
 c("con el dato de a dónde apunta", any("nas.example" in t for t in etiquetas(usa)), True)
 c("pero sin ✔ ni verde: no se ha hablado con el remoto", promete(usa), False)
 c("y sin rojo de antes", etiquetas(usa, "Peligro.TLabel"), [])

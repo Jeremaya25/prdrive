@@ -49,7 +49,8 @@ def dibujar(cuerpo, wiz) -> None:
     from tkinter import ttk
 
     estado = wiz.state
-    ttk.Label(cuerpo, justify="left", wraplength=theme.medida(760), text=(
+    ttk.Label(cuerpo, justify="left", wraplength=theme.medida(760), style="Campo.TLabel",
+              text=(
         f"Destino elegido: {estado.device}\n"
         "El cifrado se elige ahora porque decide DÓNDE va a vivir la estructura "
         "del dispositivo: sin cifrar o con BitLocker, en el propio volumen; con "
@@ -69,22 +70,22 @@ def dibujar(cuerpo, wiz) -> None:
     panel = ttk.Frame(cuerpo)
     panel.grid(row=2, column=0, sticky="w", pady=(theme.E3, 0))
 
-    resumen = ttk.Label(cuerpo, foreground=theme.AVISO, justify="left",
-                        wraplength=theme.medida(760))
-    resumen.grid(row=3, column=0, sticky="w", pady=(theme.E3, 0))
+    resumen = ttk.Frame(cuerpo)
+    resumen.grid(row=3, column=0, sticky="w", pady=(theme.E4, 0))
 
     def refrescar_resumen() -> None:
-        """Dice a dónde irán el programa y los datos.
+        """Dice a dónde irán el programa y los datos, en un chip.
 
         Revisa también los botones del asistente.
         """
+        for hijo in resumen.winfo_children():
+            hijo.destroy()
         if estado.device_root:
-            resumen.configure(
-                text=f"✔ El programa y los datos irán a: {estado.device_root}",
-                foreground=theme.OK)
+            theme.chip(resumen, f"El programa y los datos irán a: {estado.device_root}",
+                       "Ok.").grid(row=0, column=0, sticky="w")
         else:
-            resumen.configure(text="Todavía no hay un destino listo para sembrar.",
-                              foreground=theme.AVISO)
+            theme.chip(resumen, "Todavía no hay un destino listo para sembrar",
+                       "Aviso.").grid(row=0, column=0, sticky="w")
         wiz.revisar()
 
     def repintar(*_) -> None:
@@ -106,12 +107,11 @@ def _panel_ninguno(panel, wiz, hecho) -> None:
     from tkinter import ttk
 
     estado = wiz.state
-    ttk.Label(panel, justify="left", wraplength=theme.medida(760),
-              foreground=theme.PELIGRO, text=(
-        "El dispositivo quedará SIN CIFRAR. Ten en cuenta que dentro va a vivir la clave "
-        "privada de tu remoto (.prdrive/keys/): quien encuentre el dispositivo "
-        "tiene acceso a tus datos hasta que revoques esa clave.")).grid(
-        row=0, column=0, sticky="w")
+    bloque_aviso(panel, (
+        "El dispositivo quedará SIN CIFRAR\nDentro va a vivir la clave privada de tu "
+        "remoto (.prdrive/keys/): quien encuentre el dispositivo tiene acceso a tus "
+        "datos hasta que revoques esa clave."), tipo="Rojo", ancho=640).grid(
+        row=0, column=0, sticky="ew")
 
     def usar() -> None:
         """Da por bueno el dispositivo tal cual."""
@@ -142,8 +142,7 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
         # el AppImage oficial en Linux, bajados y comprobados
         # (`install/veracrypt_bin.py`). En Linux montar sigue pidiendo la
         # contraseña de administrador, como con el instalado.
-        ttk.Label(panel, foreground=theme.AVISO,
-                  justify="left", wraplength=theme.medida(760), text=(
+        bloque_aviso(panel, ancho=640, texto=(
             f"No hay VeraCrypt instalado en este equipo. Puedo usar el VeraCrypt "
             f"Portable oficial {pins.VERACRYPT_VERSION}, sin instalarlo: se "
             f"descarga (≈39 MB) y se comprueba contra el SHA-256 que fija este "
@@ -154,7 +153,7 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
             f"descarga (≈13 MB) y se comprueba contra el SHA-256 que fija este "
             f"programa antes de usarlo. Para montar pedirá la contraseña de "
             f"administrador, igual que el instalado. O dime dónde está:")).grid(
-            row=0, column=0, sticky="w")
+            row=0, column=0, sticky="ew")
         ruta = tk.StringVar()
         fila = ttk.Frame(panel)
         fila.grid(row=1, column=0, sticky="w", pady=(theme.E2, 0))
@@ -244,13 +243,13 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
     # crea aquí arriba porque `max` depende de él: con VeraCrypt de viaje deja
     # más sitio fuera del contenedor (`crypto.RESERVA_VIAJERO`).
     traveler = tk.BooleanVar(value=estado.traveler and IS_WIN)
-    espera = ttk.Label(formulario, foreground=theme.TINTA3, justify="left",
+    espera = ttk.Label(formulario, style="Pista.TLabel", justify="left",
                        wraplength=theme.medida(560))
 
     if not existe:
         ttk.Label(formulario, text="Tamaño:").grid(row=fila, column=0, sticky="w")
         ttk.Entry(formulario, textvariable=tam, width=10).grid(row=fila, column=1, sticky="w")
-        ttk.Label(formulario, foreground=theme.AVISO if tope else theme.TINTA3,
+        ttk.Label(formulario, style="Aviso.TLabel" if tope else "Pista.TLabel",
                   text=(f"libre en la unidad: {libre / 1024**3:.1f} GiB "
                         + (f"— es {fs}: como mucho {tope // 1024**2}M"
                            if tope else "— admite 20G, 500M o 'max'"))).grid(
@@ -259,7 +258,7 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
         ttk.Label(formulario, text="Sistema de ficheros:").grid(row=fila, column=0, sticky="w")
         ttk.Combobox(formulario, textvariable=sistema, state="readonly", width=8,
                      values=list(crypto.FILESYSTEMS)).grid(row=fila, column=1, sticky="w")
-        ttk.Label(formulario, foreground=theme.TINTA3,
+        ttk.Label(formulario, style="Pista.TLabel",
                   text="exFAT es lo más portable entre Windows, Linux y macOS").grid(
             row=fila, column=2, sticky="w", padx=(theme.E3, 0))
         fila += 1
@@ -269,7 +268,7 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
             state="normal" if dispersos and IS_WIN else "disabled",
             text="Contenedor dinámico: solo ocupa lo que guardes").grid(
             row=fila, column=0, columnspan=2, sticky="w", pady=(theme.E2, 0))
-        ttk.Label(formulario, foreground=theme.TINTA3, justify="left",
+        ttk.Label(formulario, style="Pista.TLabel", justify="left",
                   wraplength=theme.medida(360), text=(
             "sin negación plausible, y si la unidad se llena el volumen da "
             "errores de E/S" if dispersos else
@@ -296,7 +295,7 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
             row=fila, column=1, columnspan=2, sticky="w")
         fila += 1
 
-    ttk.Label(formulario, foreground=theme.PELIGRO, justify="left",
+    ttk.Label(formulario, style="Peligro.TLabel", justify="left",
               wraplength=theme.medida(560), text=(
         "Esta contraseña no se guarda en ningún sitio. Si la pierdes, el "
         "contenedor no se recupera: apúntala en tu gestor de contraseñas ANTES "
@@ -345,8 +344,8 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
                  "ARM64), para montarlo en equipos que no lo tengan").grid(
             row=3, column=0, sticky="w", pady=(theme.E3, 0))
 
-    ttk.Label(panel, foreground=theme.AVISO, wraplength=theme.medida(760), justify="left",
-              text=AVISO_AUTOARRANQUE).grid(row=4, column=0, sticky="w", pady=(theme.E2, 0))
+    bloque_aviso(panel, AVISO_AUTOARRANQUE, tono="Azul.", ancho=640).grid(
+        row=4, column=0, sticky="ew", pady=(theme.E3, 0))
 
     def crear_y_montar() -> None:
         """Comprueba la contraseña, crea el contenedor si hace falta y lo monta."""
@@ -411,11 +410,13 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
 
     botones = ttk.Frame(panel)
     botones.grid(row=5, column=0, sticky="w", pady=(theme.E3, 0))
-    ttk.Button(botones, text="Montar" if existe else "Crear y montar",
-               command=crear_y_montar).grid(row=0, column=0)
+    montar = ttk.Button(botones, text="Montar" if existe else "Crear y montar",
+                        style="Primary.TButton", command=crear_y_montar)
+    theme.boton_icono(montar, "candado", theme.SOBRE_ACENTO)
+    montar.grid(row=0, column=0)
     if estado.device_root and estado.mounted_by_us:
-        ttk.Label(botones, foreground=theme.OK,
-                  text=f"montado en {estado.device_root}").grid(row=0, column=1, padx=(theme.E3, 0))
+        theme.chip(botones, f"montado en {estado.device_root}", "Ok.").grid(
+            row=0, column=1, padx=(theme.E3, 0))
 
 
 def _llevar_veracrypt(wiz) -> None:
