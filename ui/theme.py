@@ -1085,7 +1085,32 @@ def _asentar(evento) -> None:
     Nada de aquí puede romper una ventana: si algo falla, las esquinas se
     quedan del color del papel.
     """
-    w = evento.widget
+    _asentar_en(evento.widget)
+
+
+def reasentar(widget) -> None:
+    """Vuelve a asentar `widget` y todo lo que lleva dentro, de fuera adentro.
+
+    `_asentar()` corre al aparecer cada control. Si después cambia la
+    superficie de su padre (la fila de una lista que se elige y pasa a azul, el
+    botón de la barra lateral que pasa a ser el elegido), sus hijos se quedan
+    con las esquinas de antes. Quien cambia el estilo del padre llama a esto
+    después: solo cambia bits de estado (o pasa a una variante ya creada), así
+    que no crea ningún estilo ni manda ningún `<<ThemeChanged>>`. Primero el
+    padre y luego los hijos, porque cada uno lee la superficie del suyo.
+    """
+    pila = [widget]
+    while pila:
+        w = pila.pop()
+        _asentar_en(w)
+        try:
+            pila.extend(reversed(w.winfo_children()))
+        except Exception:                           # noqa: BLE001 — ya no existe
+            pass
+
+
+def _asentar_en(w) -> None:
+    """Lo de `_asentar()` para un widget dado, sin evento."""
     if isinstance(w, str):                          # un widget que tkinter no creó
         return
     try:

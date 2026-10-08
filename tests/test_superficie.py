@@ -469,6 +469,26 @@ def probar_tema(tema: str) -> None:
         marco.destroy()
     c(p + "un chip sobre un botón asentado ve la superficie del botón", distintos, [])
 
+    # 7c. el padre cambia de superficie después (la fila que se elige): sus hijos
+    # se quedan con la de antes hasta que quien lo cambió llama a `reasentar()`
+    fila = ttk.Frame(raiz, style="Card.TFrame", padding=theme.E3)
+    fila.pack()
+    chip = theme.chip(fila, "bisync", "Ok.")
+    chip.pack()
+    raiz.update()
+    def fondo_chip():
+        return theme._hex(raiz, style.lookup(str(chip.cget("style")), "background",
+                                             chip.state()))
+    fila.configure(style="Gris.TFrame")
+    raiz.update()
+    antes = fondo_chip()
+    theme.reasentar(fila)
+    c(p + "un padre que cambia de superficie deja a sus hijos con la de antes",
+      antes, theme._hex(raiz, theme.SUPERFICIE))
+    c(p + "  hasta que se reasienta: entonces ven la nueva",
+      fondo_chip(), theme._hex(raiz, theme.GRIS_FONDO))
+    fila.destroy()
+
     # 8. nada de lo anterior mandó un <<ThemeChanged>>
     c(p + "ningún <<ThemeChanged>> en todo lo anterior",
       int(raiz.tk.eval("set ::prdrive_tema")), 0)
