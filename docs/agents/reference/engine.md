@@ -22,6 +22,14 @@ Flags merge last-wins inside `model._build_pair`: `BASE_FLAGS` < `Mode.flags` < 
 
 **A new rclone flag = edit the TOML, never code.** The script owns `--config`, `--log-file`, `--dry-run`, `--workdir`, `--resync`, and with it `--resync-mode`: rclone treats that flag as `--resync` (`setResyncDefaults()`, `cmd/bisync/resync.go`), so `build_command()` drops it from a pass that is not a resync and it only says which side wins when `sync.py` resyncs (the keychain's `newer` was turning every pass into a resync until the cloud run of 2026-10-05); `extra_flags` is the raw-string escape hatch. `RunContext` holds what is constant across the pairs of one invocation.
 
+**The parser is the gate for what reaches rclone's argv.** The config travels with the device and is hand-edited, so `parse_config()` refuses, with a `ConfigError`:
+
+- `model.problema_flag()`: the script's own flags (`FLAGS_RESERVADOS`, so `resync = true` can no longer force `--resync` on every pass) and any flag that makes rclone run a program on this computer: a normalised name ending in `-command` or `-ssh`, `metadata-mapper`, `rc` and `rc-*` (`--password-command`, `--sftp-ssh`, `--webdav-bearer-token-command`, the `rc` server). A key with `=` (`"sftp-ssh=sh -c id" = true`) reaches rclone as one `--key` argument, so it is judged by what precedes the `=`. The suffix rule also blocks `--sftp-*-command` as flags; as remote options they still work in `rclone.conf`. Nothing is added to `FLAGS_RESERVADOS` for convenience: a refusal at load is a `ui.fatal` that keeps the window closed until the TOML is edited by hand, so only what is a security problem is refused.
+- `model.problema_extra()`: every `--name[=value]` token of `extra_flags`, by its name and with the same rules (`--config /tmp/x` would override the script's; `--Resync` is `resync`). A single-dash short flag passes, and so does a bare value.
+- `model.problema_remote()` (`NOMBRE_REMOTE`): a `remote` with `,` `:` `=` or quotes, or a leading `-`, is an rclone connection string (`nas,ssh='sh -c id'` is an `sftp` remote with its own command), not the name of a remote of `rclone.conf`.
+
+`_build_pair` checks the pair's own `flags`, `extra_flags` and `remote` (errors prefixed `[<pair>]`; `[defaults].remote` is covered through the fallback) and `parse_config` those of `[defaults]` (prefixed `[defaults]`). The keychain pair is built by code and not checked: it keeps `resync-mode`. `ui/flags_editor` re-exports `RESERVED` and `normalize` and calls the same functions, so the dialog says it while typing; `tests/test_parseo_seguro.py`.
+
 ## bisync (`common/bisync.py`)
 
 The one place that imitates rclone's behaviour; each section cites the rclone source it mirrors. **Preserve the citations.**

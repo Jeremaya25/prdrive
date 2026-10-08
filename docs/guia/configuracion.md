@@ -51,6 +51,27 @@ El script se reserva `--config`, `--log-file`, `--dry-run`, `--workdir` y
 `--resync`, porque dependen de *esta* ejecución. Para lo que no quepa en el
 esquema está `extra_flags`, una lista de cadenas que se pasan crudas.
 
+### Lo que el config no admite
+
+El config viaja con el dispositivo y se puede editar a mano. Para que un config
+ajeno no pueda hacer que rclone ejecute una orden en el equipo donde enchufes la
+unidad, el programa se niega a leerlo si trae:
+
+- **Un flag que lanza un programa**: los que acaban en `-command` o en `-ssh`
+  (`password-command`, `sftp-ssh`…), `metadata-mapper`, `rc` y los `rc-…`. Vale
+  igual en `[defaults.flags]`, en `[pair.flags]` y en `extra_flags`.
+- **Un flag que ya pone el script**, también en `extra_flags`: `resync = true`
+  forzaría un `--resync` en cada pasada, y un `--config` o un `--workdir` propios
+  pisarían los del dispositivo.
+- **Un `remote` que no sea un nombre**: el de un remote de tu `rclone.conf`, con
+  letras, números, espacios entre palabras y `. _ + @ -`. Si lleva `,`, `:`, `=`
+  o comillas, rclone lo leería como una conexión con sus propias opciones
+  (`nas,ssh='…'`), y si empieza por `-`, como una opción.
+
+El aviso dice de qué pareja es (o de `[defaults]`) y qué clave sobra; hasta que
+la quites a mano, la ventana no abre. Lo que sí sigue valiendo es ponerlo en el
+`rclone.conf`: allí es una opción del remote, no del config que viaja.
+
 La capa base lleva `--verbose`, `--create-empty-src-dirs` y las estadísticas del
 **progreso en vivo**: `--stats 2s --stats-one-line`. Con ellas rclone escribe en
 su log, cada dos segundos, cuánto lleva; `sync.py` lo va leyendo mientras corre

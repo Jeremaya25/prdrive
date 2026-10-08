@@ -57,6 +57,6 @@ The button is disabled exactly when the catalogue block is (`catalog_editor.lect
 
 Flags are written in TOML syntax (a text box, not a row-per-flag form) and parsed with **`tomllib`, not by hand**: the destination is a `[pair.flags]` table, and `dump()` renders through `config_file.dumps_table()`, so only what the serializer can write back is accepted.
 
-- `RESERVED` rejects the flags `sync.py` supplies per run and the filter ones (a second `--workdir` or `--filters-file` points bisync at the wrong baseline).
+- `RESERVED` (`model.FLAGS_RESERVADOS`) rejects the flags `sync.py` supplies per run and the filter ones (a second `--workdir` or `--filters-file` points bisync at the wrong baseline). `_validar()` and `parse_extra()` also go through `model.problema_flag()`/`problema_extra()`, the same rules `parse_config()` applies (flags that run a program, `engine.md`), so the dialog refuses while typing what the loader would refuse later.
 - `effective()` resolves the four layers into what rclone would actually receive; `warnings()` compares **merged** flag sets, never one layer, so it catches `--max-delete` rising because the pair's own value was deleted or the mode changed. Editing flags never shelves a baseline.
 - `tk_pairs.flags_form()` does **not** close on invalid input; `pair_editor.merge_form()` (shared with `catalog_editor`) makes an emptied box delete the key.

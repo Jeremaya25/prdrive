@@ -448,6 +448,154 @@ def flags_to_args(flags: Mapping[str, Any]) -> list[str]:
     return args
 
 
+FLAGS_RESERVADOS = {
+    "config": "lo pone sync.py: es el rclone.conf del dispositivo",
+    "log-file": "lo pone sync.py: cada pasada escribe en su propio log",
+    "dry-run": "es --dry-run de sync.py, para que valga en todas las parejas",
+    "workdir": "lo pone sync.py: state/<pareja>/, y cambiarlo mueve el baseline",
+    "resync": "es --resync de sync.py, que además pregunta antes",
+    "filters-file": "sale de los patrones incluir/excluir de la pareja",
+    "filter": "usa los patrones incluir/excluir; mezclarlos rompe el filtrado",
+    "filter-from": "usa los patrones incluir/excluir; mezclarlos rompe el filtrado",
+    "include": "usa el cuadro «Incluir»",
+    "exclude": "usa el cuadro «Excluir»",
+    # Los cuatro del versionado salen de la casilla «Guardar versiones», y el
+    # sufijo además depende de la pasada (lleva su fecha y su hora): no hay
+    # forma de escribirlo aquí que signifique algo.
+    "backup-dir": "el versionado de bisync usa --backup-dir1/2, no este",
+    "backup-dir1": "sale de la casilla «Guardar versiones»: es <pareja>/.prversions",
+    "backup-dir2": "sale de la casilla «Guardar versiones»: es <pareja>/.prversions",
+    "suffix": "lo pone sync.py: la marca de tiempo de ESTA pasada",
+    "suffix-keep-extension": "lo pone sync.py junto con --suffix",
+}
+"""Flags que `sync.py` pone por su cuenta, con el motivo de cada uno.
+
+Salen de `build_command()` y `filter_args()`. `problema_flag()` los rechaza al
+parsear, no al ejecutar: rclone recibiría el flag dos veces y, en el caso de
+`--workdir` o `--filters-file`, eso es apuntar a bisync a un baseline que no es
+el suyo.
+"""
+
+_MOTIVO_PROGRAMA = ("lanza un programa en este equipo, y el config viaja con el "
+                    "dispositivo: no se admite")
+
+
+def normalizar_flag(nombre: str) -> str:
+    """Devuelve el nombre con el que rclone verá el flag.
+
+    En él `_` es `-` y no se distingue entre mayúsculas y minúsculas.
+    """
+    return str(nombre).strip().replace("_", "-").lower()
+
+
+def problema_flag(nombre: str) -> str | None:
+    """Dice por qué un flag de rclone no puede ir en el config.
+
+    No vale ni lo que pone `sync.py` por su cuenta (`FLAGS_RESERVADOS`) ni un
+    flag que hace que rclone ejecute un programa de este equipo: el config
+    viaja con el dispositivo y se edita a mano, y esa orden correría en el
+    equipo donde se enchufe. Son los que acaban en `-command` o `-ssh`, más
+    `metadata-mapper`, `rc` y los `rc-*`. Se citan del código de rclone:
+    `--password-command` (fs/config), `--metadata-mapper`
+    (fs/config/configflags), `ssh` de backend/sftp, `bearer_token_command` de
+    backend/webdav y el servidor `rc` (fs/rc/rcflags). La regla del sufijo
+    también deja fuera como flag los `--sftp-*-command` del remote, que siguen
+    valiendo en el `rclone.conf`.
+
+    `flags_to_args()` pega la clave tal cual detrás de `--`, así que una clave
+    con `=` (`"sftp-ssh=sh -c id" = true`) llegaría a rclone como
+    `--sftp-ssh=sh -c id`: se mira lo que hay antes del `=`.
+
+    Args:
+        nombre: El flag sin los guiones; vale con `_` o con mayúsculas.
+
+    Returns:
+        El motivo, o `None` si el flag vale.
+    """
+    clave = normalizar_flag(nombre).split("=", 1)[0].strip()
+    motivo = FLAGS_RESERVADOS.get(clave)
+    if motivo:
+        return motivo
+    if clave.endswith(("-command", "-ssh")) or clave in ("metadata-mapper", "rc") \
+            or clave.startswith("rc-"):
+        return _MOTIVO_PROGRAMA
+    return None
+
+
+def problema_extra(args: Iterable[str]) -> str | None:
+    """Dice por qué una lista de `extra_flags` no puede ir en el config.
+
+    Se mira cada argumento que empieza por `--` por su nombre (lo que va entre
+    los guiones y el `=`, si lo hay), con las mismas reglas que `problema_flag()`.
+    Los cortos de un guion pasan: ninguno lanza un programa. Un valor suelto
+    (`8M`, `sh -c id`) tampoco se mira: no es un flag.
+
+    Returns:
+        El motivo del primer argumento rechazado, que lo nombra, o `None`.
+    """
+    for arg in args:
+        arg = str(arg)
+        if not arg.startswith("--"):
+            continue
+        nombre = arg[2:].split("=", 1)[0]
+        motivo = problema_flag(nombre)
+        if motivo:
+            return f"'--{nombre}' no se admite: {motivo}"
+    return None
+
+
+NOMBRE_REMOTE = re.compile(r"(?!-)[\w.+@-]+(?: [\w.+@-]+)*")
+"""Un nombre de remote de rclone que no es una cadena de conexión.
+
+Es la regla que rclone documenta para el nombre de un remote: letras, números,
+`_ . + @ -` y espacios entre palabras; sin `,` `:` `=` ni comillas, sin empezar
+por `-` y sin espacios al final. Sin ella, `nas,ssh='sh -c id'` sería un
+remote de `sftp` con su propia orden `ssh`, y `:sftp,host=x` uno creado al vuelo.
+"""
+
+
+def problema_remote(nombre: Any) -> str | None:
+    """Dice por qué un `remote` no vale como nombre de remote de rclone.
+
+    Se junta con la ruta (`nombre:ruta`) y va tal cual a rclone, que lo lee
+    como cadena de conexión si lleva opciones.
+
+    Returns:
+        El motivo, que empieza por «'remote' no vale», o `None` si vale.
+    """
+    if not isinstance(nombre, str):
+        return "'remote' no vale: tiene que ser un texto"
+    if not NOMBRE_REMOTE.fullmatch(nombre):
+        return (f"'remote' no vale ({nombre!r}): es el nombre de un remote del "
+                f"rclone.conf, con letras, números, espacios entre palabras y "
+                f". _ + @ -, sin empezar por '-' ni llevar ',' ':' '=' o comillas "
+                f"(rclone lo leería como opciones de la conexión).")
+    return None
+
+
+def _comprobar_capas(donde: str, tabla: str, flags: Any, extra: Any) -> None:
+    """Comprueba los flags y el `extra_flags` de una capa del config.
+
+    Args:
+        donde: Cómo se llama la capa en el mensaje (`[defaults]` o `[<pareja>]`).
+        tabla: Cómo se llama su tabla de flags (`[defaults.flags]` o `[pair.flags]`).
+        flags: Su tabla `flags`, tal como sale del TOML.
+        extra: Su `extra_flags`, tal como sale del TOML.
+
+    Raises:
+        ConfigError: Si algún flag o argumento no vale (`problema_flag()`,
+            `problema_extra()`).
+    """
+    if isinstance(flags, Mapping):
+        for clave in flags:
+            motivo = problema_flag(clave)
+            if motivo:
+                raise ConfigError(f"{donde} {tabla} '{clave}' no se admite: {motivo}.")
+    motivo = problema_extra(_as_tuple(extra))
+    if motivo:
+        raise ConfigError(f"{donde} extra_flags: {motivo}.")
+
+
 BASE_FLAGS: Mapping[str, Any] = {
     "verbose": True,
     "create-empty-src-dirs": True,
@@ -724,7 +872,9 @@ def _build_pair(raw: Mapping[str, Any], defaults: Mapping[str, Any],
 
     Raises:
         ConfigError: Si falta una clave obligatoria, el nombre o el modo no
-            valen, o `versions` se pide en un modo que no es bisync.
+            valen, `versions` se pide en un modo que no es bisync, o el
+            `remote`, un flag o un `extra_flags` de la pareja no valen
+            (`problema_remote()`, `problema_flag()`, `problema_extra()`).
     """
     name = raw.get("name")
     if not name:
@@ -754,12 +904,20 @@ def _build_pair(raw: Mapping[str, Any], defaults: Mapping[str, Any],
 
     watch = _leer_watch(name, raw, mode)
 
+    # `remote` y los flags acaban en la línea de órdenes de rclone, que ejecuta
+    # lo que le diga una cadena de conexión o un flag como `--sftp-ssh`.
+    remote = raw.get("remote", defaults.get("remote", DEFAULT_REMOTE))
+    problema = problema_remote(remote)
+    if problema:
+        raise ConfigError(f"[{name}] {problema}")
+    _comprobar_capas(f"[{name}]", "[pair.flags]", raw.get("flags"), raw.get("extra_flags"))
+
     return Pair(
         name=name,
         mode=mode,
         local=normalizar_local(raw["local"]),
         remote_path=raw["remote_path"],
-        remote_name=raw.get("remote", defaults.get("remote", DEFAULT_REMOTE)),
+        remote_name=remote,
         includes=_as_tuple(defaults.get("include")) + _as_tuple(raw.get("include")),
         excludes=_as_tuple(defaults.get("exclude")) + _as_tuple(raw.get("exclude")),
         flags={**BASE_FLAGS, **mode.flags,
@@ -1119,19 +1277,24 @@ def parse_config(data: Mapping[str, Any], equipo: bool = False) -> Config:
 
     Raises:
         ConfigError: Si no hay ninguna `[[pair]]`, alguna no es válida,
-            `[defaults]` lleva `watch`, que es de cada pareja, o `[keychain]`
-            no vale o choca con una pareja que se llama como la suya.
+            `[defaults]` lleva `watch`, que es de cada pareja, o unos flags o
+            un `extra_flags` que no valen (`problema_flag()`,
+            `problema_extra()`), o `[keychain]` no vale o choca con una pareja
+            que se llama como la suya.
     """
     defaults = data.get("defaults", {})
     raw_pairs = data.get("pair", [])
     if not raw_pairs:
         raise ConfigError("El config no tiene ninguna [[pair]] definida.")
-    if isinstance(defaults, Mapping) and "watch" in defaults:
-        # Solo se lee de `[[pair]]` (`_leer_watch()`): en `[defaults]` no haría
-        # nada y parecería que vigila todas las parejas.
-        raise ConfigError(
-            "[defaults] no admite 'watch': vigilar los cambios locales se pide "
-            "pareja a pareja, con 'watch = true' en cada [[pair]] que lo quiera.")
+    if isinstance(defaults, Mapping):
+        if "watch" in defaults:
+            # Solo se lee de `[[pair]]` (`_leer_watch()`): en `[defaults]` no haría
+            # nada y parecería que vigila todas las parejas.
+            raise ConfigError(
+                "[defaults] no admite 'watch': vigilar los cambios locales se pide "
+                "pareja a pareja, con 'watch = true' en cada [[pair]] que lo quiera.")
+        _comprobar_capas("[defaults]", "[defaults.flags]", defaults.get("flags"),
+                         defaults.get("extra_flags"))
     pairs = tuple(_build_pair(p, defaults, equipo) for p in raw_pairs)
     tabla = data.get("keychain")
     if tabla is not None:
