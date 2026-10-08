@@ -81,6 +81,44 @@ conf.write_text(conf.read_text(encoding="utf-8")
 c("el agente no lanza una pareja con un nombre así, aunque su sync.py sea de antes",
   [p.nombre for p in agente.leer_servicio(raiz).parejas], ["docs"])
 
+
+
+# el config en bruto pasa por las mismas comprobaciones de seguridad que el parser:
+# el agente lo lee a pelo y el `sync.py` de una raíz de antes no comprueba nada
+def razon(raiz_) -> str:
+    """Por qué el agente no sirve esa raíz; '' si la sirve."""
+    try:
+        agente.leer_servicio(raiz_)
+        return ""
+    except ValueError as e:
+        return str(e)
+
+
+def con_defaults(raiz_: Path, linea: str) -> Path:
+    """Añade una línea a la tabla `[defaults]` del config de esa raíz."""
+    conf_ = raiz_ / ".prdrive" / "sync_config.toml"
+    conf_.write_text(conf_.read_text(encoding="utf-8").replace(
+        'remote = "nas"\n', f'remote = "nas"\n{linea}\n', 1), encoding="utf-8")
+    return raiz_
+
+
+remoto_malo = razon(F.unidad("r" * 32, parejas=("docs",),
+                             extra={"docs": 'remote = "nas,ssh=\'x\'"\n'}))
+c.contains("el agente no sirve una raíz con un remote que es una cadena de conexión",
+           remoto_malo, "remote")
+c.contains("  y dice de qué pareja", remoto_malo, "[docs]")
+c.contains("tampoco con un extra_flags que lanza un programa",
+           razon(F.unidad("e" * 32, parejas=("docs",),
+                          extra={"docs": 'extra_flags = ["--sftp-ssh", "x"]\n'})), "sftp-ssh")
+c.contains("ni con un catalog_remote que lo es",
+           razon(con_defaults(F.unidad("k" * 32, parejas=("docs",)),
+                              'catalog_remote = "cat,x=y"')), "catalog_remote")
+c("una raíz normal se sirve igual",
+  (razon(F.unidad("n" * 32, parejas=("docs",),
+                  extra={"docs": 'extra_flags = ["--bwlimit=8M", "-v"]\n'})),
+   razon(con_defaults(F.unidad("m" * 32, parejas=("docs",)), 'catalog_remote = "cat"'))),
+  ("", ""))
+
 # un solo agente
 equipo.lock_json().unlink(missing_ok=True)
 yo = {"pid": os.getpid(), "host": equipo.HOST, "started": "x"}

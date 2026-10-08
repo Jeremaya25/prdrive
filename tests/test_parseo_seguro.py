@@ -56,7 +56,24 @@ c.contains("[defaults.flags] config no se admite",
 # --- extra_flags -------------------------------------------------------------
 for extra in (["--sftp-ssh", "sh -c id"], ["--sftp-ssh=sh -c id"], ["--config", "/tmp/x"],
               ["--webdav-bearer-token-command", "x"], ["--log-file=/tmp/l"], ["--Resync"]):
-    c(f"extra_flags {extra[0]} no se admite", bool(rechaza(una(extra_flags=extra))), True)
+    nombre = extra[0][2:].split("=", 1)[0]
+    c.contains(f"extra_flags {extra[0]} no se admite", rechaza(una(extra_flags=extra)), nombre)
+
+# --- el valor de un flag no puede llevar otro flag ---------------------------
+# `flags_to_args` emite `--checksum --sftp-ssh=sh -c id`: un flag booleano no
+# se come el argumento siguiente.
+CONTRABANDO = "--sftp-ssh=sh -c id"
+for flags in ({"checksum": CONTRABANDO}, {"checksum": [CONTRABANDO]}):
+    forma = "lista" if isinstance(flags["checksum"], list) else "texto"
+    texto = rechaza(una(flags=flags))
+    c.contains(f"[pair.flags] un valor ({forma}) con --sftp-ssh no se admite", texto, "sftp-ssh")
+    c.contains("  y dice de qué clave y de qué pareja", texto, "[p] [pair.flags] 'checksum'")
+c.contains("[defaults.flags] un valor con --sftp-ssh tampoco",
+           rechaza({**una(), "defaults": {"remote": "nas", "flags": {"checksum": CONTRABANDO}}}),
+           "[defaults] [defaults.flags] 'checksum'")
+c("los valores de siempre pasan (8M, -1, newer, un patrón)",
+  rechaza(una(flags={"bwlimit": "8M", "max-delete": -1, "conflict-resolve": "newer",
+                     "exclude-if-present": [".nosync", "-x"]})), "")
 
 # --- nombre del remote -------------------------------------------------------
 for remoto in ("nas,ssh='sh -c id'", ":sftp,host=x", "nas:", "-nas", "a b "):
@@ -86,5 +103,30 @@ c.contains("el cuadro de flags dice lo mismo", _texto(lambda: flags_editor.parse
     'password-command = "x"')), "password-command")
 c.contains("y el de argumentos extra también", _texto(lambda: flags_editor.parse_extra(
     "--sftp-ssh\nsh -c id")), "sftp-ssh")
+
+c.contains("el cuadro de flags también rechaza el valor con un flag dentro",
+           _texto(lambda: flags_editor.parse(f'checksum = "{CONTRABANDO}"')), "sftp-ssh")
+c.contains("  en forma de lista",
+           _texto(lambda: flags_editor.parse(f'checksum = ["{CONTRABANDO}"]')), "sftp-ssh")
+c("  y los valores de siempre los deja",
+  _texto(lambda: flags_editor.parse('bwlimit = "8M"\nmax-delete = -1')), "")
+
+# --- cada rechazo dice qué quitar y no lo repite ------------------------------
+QUITALO = "Quítalo del config."
+for etiqueta, texto in (
+        ("un flag reservado", rechaza(una(flags={"resync": True}))),
+        ("un flag que lanza un programa", rechaza(una(flags={"password-command": "x"}))),
+        ("un valor con un flag", rechaza(una(flags={"checksum": CONTRABANDO}))),
+        ("un extra_flags", rechaza(una(extra_flags=["--sftp-ssh", "x"]))),
+        ("un extra_flags de [defaults]",
+         rechaza({**una(), "defaults": {"remote": "nas", "extra_flags": ["--config"]}})),
+        ("el cuadro de argumentos extra",
+         _texto(lambda: flags_editor.parse_extra("--sftp-ssh\nx")))):
+    c(f"{etiqueta}: acaba diciendo que se quite", texto.endswith(QUITALO), True)
+    c(f"  y no repite 'no se admite'", texto.count("no se admite"), 1)
+for etiqueta, texto in (
+        ("un remote", rechaza(una(remote="nas,ssh='x'"))),
+        ("un remote de [defaults]", rechaza({**una(), "defaults": {"remote": "nas,x=y"}}))):
+    c(f"{etiqueta}: acaba diciendo qué hacer", texto.endswith("o quita la clave del config."), True)
 
 sys.exit(c.report())

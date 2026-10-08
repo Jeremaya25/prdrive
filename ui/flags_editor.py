@@ -116,10 +116,12 @@ def _validar(key: str, value: Any) -> None:
             if not isinstance(item, ESCALARES):
                 raise ConfigError(f"'{key}': una lista solo admite textos, números "
                                   f"o true/false.")
-        return
-    if not isinstance(value, ESCALARES):
+    elif not isinstance(value, ESCALARES):
         raise ConfigError(f"'{key}': valor no admitido ({type(value).__name__}). "
                           f"Textos entre comillas, números, o true/false.")
+    motivo = model.problema_valor_flag(value)
+    if motivo:
+        raise ConfigError(f"'{key}': en su valor, {motivo}")
 
 
 def dump_extra(extra: Any) -> str:

@@ -59,7 +59,8 @@ unidad, el programa se niega a leerlo si trae:
 
 - **Un flag que lanza un programa**: los que acaban en `-command` o en `-ssh`
   (`password-command`, `sftp-ssh`…), `metadata-mapper`, `rc` y los `rc-…`. Vale
-  igual en `[defaults.flags]`, en `[pair.flags]` y en `extra_flags`.
+  igual en `[defaults.flags]`, en `[pair.flags]` y en `extra_flags`, y también
+  si va escondido en el valor de otro (`checksum = "--sftp-ssh=…"`).
 - **Un flag que ya pone el script**, también en `extra_flags`: `resync = true`
   forzaría un `--resync` en cada pasada, y un `--config` o un `--workdir` propios
   pisarían los del dispositivo.
@@ -70,7 +71,9 @@ unidad, el programa se niega a leerlo si trae:
   de una pareja y para el `remote` y el `catalog_remote` de `[defaults]`.
 
 El aviso dice de qué pareja es (o de `[defaults]`) y qué clave sobra; hasta que
-la quites a mano, la ventana no abre. Lo que sí sigue valiendo es ponerlo en el
+la quites a mano, la ventana no abre. El agente del equipo hace la misma
+comprobación antes de atender una unidad, aunque su código sea más antiguo, y si
+no pasa no la atiende y dice por qué. Lo que sí sigue valiendo es ponerlo en el
 `rclone.conf`: allí es una opción del remote, no del config que viaja.
 
 La capa base lleva `--verbose`, `--create-empty-src-dirs` y las estadísticas del
