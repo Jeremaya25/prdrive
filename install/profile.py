@@ -91,10 +91,14 @@ puede imponerlas, porque lo escribe cualquiera con acceso al remoto y lo leen
 todos los dispositivos.
 """
 
-_SECRETAS_EXACTAS = frozenset({"key", "pass", "password"})
+_SECRETAS_EXACTAS = frozenset({"key", "pass", "password", "2fa"})
 _SECRETAS_CONTIENEN = ("pass", "token", "secret", "credential", "_pem",
-                       "sas_url", "account_key")
-"""Criterio de `es_secreta()`: nombres exactos, y trozos que delatan un secreto."""
+                       "sas_url", "account_key", "access_grant",
+                       "connection_string")
+_CLAVE_DE_BACKEND = re.compile(r"_key(_|$)")
+"""Criterio de `es_secreta()`: nombres exactos, trozos que delatan un secreto y
+`..._key` como palabra suelta (`api_key`, `sse_customer_key`,
+`sse_customer_key_base64`)."""
 
 
 @dataclass(frozen=True)
@@ -165,12 +169,21 @@ def es_secreta(clave: str) -> bool:
     """Indica si una opción de rclone lleva un secreto (contraseña, token, clave…).
 
     Es un criterio por el nombre, no una lista de backends: el proyecto no
-    interpreta ninguno. Peca de más a propósito, porque lo que marca se queda
-    fuera del catálogo.
+    interpreta ninguno (ni mira los valores: unas credenciales dentro de una
+    `url` no se detectan). Peca de más a propósito, porque lo que marca se
+    queda fuera del catálogo. Es secreto un nombre que:
+    - sea exactamente `key`, `pass`, `password` o `2fa`;
+    - contenga `pass`, `token`, `secret`, `credential`, `_pem`, `sas_url`,
+      `account_key`, `access_grant` (Storj) o `connection_string` (Azure);
+    - acabe en `_key` o lleve `_key_` en medio (`api_key`, `sse_customer_key`,
+      `sse_customer_key_base64`), salvo si acaba en `_key_id`: eso es un
+      identificador y no el secreto (`access_key_id`, `sse_kms_key_id`).
     """
     nombre = clave.strip().lower()
-    return nombre in _SECRETAS_EXACTAS or any(
-        trozo in nombre for trozo in _SECRETAS_CONTIENEN)
+    return (nombre in _SECRETAS_EXACTAS
+            or any(trozo in nombre for trozo in _SECRETAS_CONTIENEN)
+            or (bool(_CLAVE_DE_BACKEND.search(nombre))
+                and not nombre.endswith("_key_id")))
 
 
 def _linea(clave: str, valor: object) -> str:

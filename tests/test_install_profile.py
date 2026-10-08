@@ -405,16 +405,35 @@ rechaza("render_conf rechaza el nombre de una opción con símbolos",
 rechaza("y un salto de línea en una ruta de la clave",
         lambda: profile.render_conf(perfil, key_file="keys/a\nb"), "key_file")
 
+# Un conf que se rechaza no deja la clave suelta en el temporal: `EphemeralConf`
+# genera el conf antes de escribir nada y, si algo falla, se lleva su directorio.
+sucia = tmpdir()
+for etiqueta, malo, porque in (
+        ("un nombre de remote inválido",
+         dataclasses.replace(perfil, remote_name="nas@home"), "no vale"),
+        ("un valor con salto de línea",
+         dataclasses.replace(perfil, options={**perfil.options, "user": "a\nb"}),
+         "'user'")):
+    rechaza(f"EphemeralConf rechaza {etiqueta}",
+            lambda malo=malo: remote.EphemeralConf(malo, base=sucia), porque)
+    c(f"y con {etiqueta} no queda ningún prdrive-key-* con la clave",
+      list(sucia.glob(remote.TMP_PREFIX + "*")), [])
+    c(f"ni queda apuntado para cerrarlo ({etiqueta})",
+      [e for e in remote._ABIERTAS if e.dir.parent == sucia], [])
+
 # Qué es una orden y qué es un secreto: el criterio de no heredar ni exportar.
 c("las opciones que ejecutan algo en este equipo",
   sorted(profile.OPCIONES_QUE_EJECUTAN), ["bearer_token_command", "ssh"])
 for clave in ("key", "pass", "password", "token", "secret_access_key", "client_secret",
               "key_pem", "sas_url", "account_key", "key_file_pass",
-              "bearer_token_command", "credentials_file", "PASS"):
+              "bearer_token_command", "credentials_file", "PASS",
+              "api_key", "sse_customer_key", "sse_customer_key_base64",
+              "access_grant", "connection_string", "2fa"):
     c(f"{clave} es secreta", profile.es_secreta(clave), True)
 for clave in ("type", "host", "user", "port", "url", "vendor", "provider",
               "access_key_id", "key_file", "known_hosts_file", "shell_type",
-              "disable_hashcheck", "region", "endpoint"):
+              "disable_hashcheck", "region", "endpoint", "sse_kms_key_id",
+              "key_exchange"):
     c(f"{clave} no es secreta", profile.es_secreta(clave), False)
 
 base_nas = profile.from_form("nas", {"type": "sftp", "host": "h"})
