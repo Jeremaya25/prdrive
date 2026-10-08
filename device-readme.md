@@ -36,7 +36,7 @@ modo *ligero* (con un `runsync.pyw` en la raíz), entonces sí hace falta **Pyth
 - **Sincronizar ahora** — una pasada de lo marcado, en una ventana aparte; al
   cerrarla vuelves aquí con todo al día.
 - **Iniciar servicio** — sincroniza lo marcado cada N minutos (se cambia en
-  «Ajustes…» → «Configuración…») mientras la unidad siga conectada. Se para solo
+  «Ajustes…» → «Configuración») mientras la unidad siga conectada. Se para solo
   al extraerla, o al volver a abrir la ventana. Lo marcado se recuerda para la
   próxima vez. Si en este ordenador la sincroniza el agente de prdrive, en su
   lugar salen **Pausar** / **Reanudar**: que no la sincronice hasta que lo
@@ -83,7 +83,7 @@ Los dos últimos borran de verdad. Antes de estrenar uno, pruébalo con
 ## El llavero
 
 Tus contraseñas y passkeys en una base de KeePassXC que viaja aquí y se
-sincroniza sola. Se activa en **Ajustes → Llavero…** (con una base tuya, que se
+sincroniza sola. Se activa en **Ajustes → Llavero** (con una base tuya, que se
 copia, o la que ya tenga el remoto) y se abre con **Abrir llavero**,
 `Llavero.bat` o `llavero.sh`. En cada navegador, una vez: instala
 **KeePassXC-Browser**, pulsa «Conectar» y activa «Enable Passkeys». Se abre en
@@ -91,7 +91,7 @@ Windows y en Linux; en un Linux ARM, con el KeePassXC del equipo.
 
 ## Ponerle nombre e icono
 
-**Ajustes (el engranaje) → Nombre e icono de la unidad…** Así la verás en el
+**Ajustes (el engranaje) → Nombre e icono** Así la verás en el
 Explorador de Windows con tu nombre y tu icono en vez de «Disco extraíble». Se
 nota la próxima vez que la conectes. Ese nombre es también el del dispositivo en
 la lista de **Dispositivos…** (en Parejas).

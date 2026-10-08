@@ -1024,15 +1024,10 @@ try:
                 recorrido: dict = {"cortes": [], "pide": set(), "barras": set()}
 
                 def recorrer(dlg, parent=None):
-                    """Encaja el diálogo y recorre sus widgets en busca de un árbol."""
+                    """Encaja el diálogo y elige, una a una, cada fila de la flota."""
                     dlg.visor.encajar(dlg)
-                    pila, arbol = [dlg], None
-                    while pila and arbol is None:
-                        w = pila.pop()
-                        pila += list(w.winfo_children())
-                        arbol = w if isinstance(w, ttk.Treeview) else None
-                    for iid in arbol.get_children():
-                        arbol.selection_set(iid)
+                    for iid in list(dlg.tabla.orden):
+                        dlg.tabla.elegir(iid)
                         dlg.update()
                         visor = dlg.visor
                         recorrido["cortes"].append(recortado(visor))

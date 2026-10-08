@@ -367,27 +367,177 @@ def ensure_runtime(plat: Plataforma, progreso: Progreso | None = None,
         InstallError: Si no hay archivo y no se permite descargar.
     """
     encontrado = cached(plat) or adoptar(plat, progreso)
-    if encontrado:
-        return encontrado
-    if not allow_download:
+    if not encontrado and not allow_download:
         raise InstallError(
             f"No hay Python para {plat.nombre} en la caché y no se ha "
             f"permitido descargarlo.")
-    return download_runtime(plat, progreso)
+    archivo = encontrado or download_runtime(plat, progreso)
+    ensure_tk(plat, progreso, allow_download)
+    return archivo
 
 
-def stamp_text(plat: Plataforma, sha256: str) -> str:
+TK_DIR = "lib/tk-xft"
+"""Dónde va el Tk con Xft dentro de un runtime de Linux, al lado del de serie.
+
+No lo sustituye: el de serie es el que sirve en un equipo sin `libXft` (un
+servidor sin escritorio), y es `ui` quien elige al arrancar (`ui.tk_con_xft`).
+"""
+TK_LIB = "libtcl9tk9.0.so"
+"""La biblioteca, con el mismo nombre (y SONAME) que la de serie."""
+TK_MIEMBROS = (TK_LIB, "LICENSE-tk.txt")
+"""Lo que trae su paquete, y lo único que se acepta de él."""
+
+
+def lleva_tk(plat: Plataforma) -> bool:
+    """Indica si el runtime de esa plataforma lleva el Tk con Xft: los de Linux."""
+    return not plat.es_windows
+
+
+def tk_archive_name(plat: Plataforma) -> str:
+    """Devuelve el nombre del paquete del Tk con Xft para esa plataforma."""
+    return f"{pins.TK_XFT_TAG}-{plat.triple.split('-')[0]}-linux.tar.gz"
+
+
+def tk_url(plat: Plataforma) -> str:
+    """Devuelve la URL del paquete en su release (`pins.TK_XFT_TAG`)."""
+    return f"{pins.TK_XFT_BASE_URL}/{pins.TK_XFT_TAG}/{tk_archive_name(plat)}"
+
+
+def tk_esperado(plat: Plataforma) -> str:
+    """Devuelve el SHA-256 fijado del paquete, o `''` si no hay ninguno fijado."""
+    return pins.TK_XFT_SHA256.get(plat.triple.split("-")[0], "")
+
+
+def tk_xft(plat: Plataforma) -> Path | None:
+    """Devuelve el paquete del Tk con Xft de la caché, si está y es el fijado.
+
+    Se resume cada vez, como `cached()`: son unos 700 KB.
+
+    Returns:
+        El paquete, o `None` si esa plataforma no lo lleva o no está comprobado.
+    """
+    esperado = tk_esperado(plat)
+    if not lleva_tk(plat) or not esperado:
+        return None
+    archivo = cache_dir() / tk_archive_name(plat)
+    try:
+        if archivo.is_file() and file_sha256(archivo) == esperado:
+            return archivo
+    except OSError:
+        pass
+    return None
+
+
+def ensure_tk(plat: Plataforma, progreso: Progreso | None = None,
+              allow_download: bool = True) -> Path | None:
+    """Deja en la caché el Tk con Xft de esa plataforma y lo devuelve; NUNCA falla.
+
+    Sin él el runtime funciona igual, con el Tk de serie y la letra sin
+    suavizar, así que un fallo de red o una suma que no cuadra se dicen y no
+    paran una instalación: el sello del runtime no lo anotará y
+    `components.python_pendiente()` lo seguirá ofreciendo. Lo que no cuadra no
+    se guarda.
+
+    Returns:
+        El paquete comprobado, o `None` si no lo lleva o no se ha podido.
+    """
+    def decir(msg: str) -> None:
+        """Pasa un mensaje a `progreso`, si lo hay."""
+        if progreso:
+            progreso(msg)
+
+    esperado = tk_esperado(plat)
+    if not lleva_tk(plat) or not esperado:
+        return None
+    encontrado = tk_xft(plat)
+    if encontrado or not allow_download:
+        return encontrado
+    url = tk_url(plat)
+    sin = (f"El Python de {plat.nombre} va con el Tk de serie: la ventana se verá "
+           f"con la letra sin suavizar hasta que se actualice desde «Ajustes → "
+           f"Actualizaciones».")
+    decir(f"Tk con Xft para {plat.nombre}: descargando {url}")
+    try:
+        datos = descarga.con_reintentos(lambda: fetch(url), f"Descargar "
+                                        f"{tk_archive_name(plat)}", progreso)
+    except descarga.FALLOS_DE_RED as e:
+        decir(f"No he podido descargar {url}: {descarga.describir(e)}. {sin}")
+        return None
+    obtenido = hashlib.sha256(datos).hexdigest()
+    if obtenido != esperado:
+        decir(f"Lo descargado de {url} no es lo fijado en common/pins.py "
+              f"(esperado {esperado}, obtenido {obtenido}); no lo he guardado. {sin}")
+        return None
+    destino = cache_dir() / tk_archive_name(plat)
+    parcial = destino.with_name(destino.name + ".part")
+    try:
+        parcial.write_bytes(datos)
+        os.replace(parcial, destino)
+    except OSError as e:
+        parcial.unlink(missing_ok=True)
+        decir(f"No he podido guardar {destino}: {e}. {sin}")
+        return None
+    return destino
+
+
+def _extraer_tk(paquete: Path, destino: Path) -> None:
+    """Escribe el Tk con Xft de `paquete` en `destino/lib/tk-xft/`.
+
+    Del paquete solo se acepta lo de `TK_MIEMBROS`, como ficheros normales y en
+    su raíz; cualquier otra cosa lo invalida entero antes de escribir nada.
+
+    Raises:
+        InstallError: Si el paquete no es lo esperado o no se puede escribir.
+    """
+    carpeta = destino.joinpath(*TK_DIR.split("/"))
+    try:
+        with tarfile.open(paquete, "r:gz") as tf:
+            miembros = {}
+            for m in tf.getmembers():
+                nombre = m.name[2:] if m.name.startswith("./") else m.name
+                if nombre in ("", "."):
+                    continue
+                if nombre not in TK_MIEMBROS or not m.isfile():
+                    raise InstallError(f"{paquete} trae {m.name!r}, que no es del "
+                                       f"Tk con Xft. No se ha escrito nada.")
+                miembros[nombre] = m
+            if TK_LIB not in miembros:
+                raise InstallError(f"{paquete} no trae {TK_LIB}.")
+            carpeta.mkdir(parents=True, exist_ok=True)
+            for nombre, m in miembros.items():
+                origen = tf.extractfile(m)
+                if origen is None:
+                    continue
+                with origen, open(carpeta / nombre, "wb") as dst:
+                    shutil.copyfileobj(origen, dst)
+    except (tarfile.TarError, EOFError) as e:
+        raise InstallError(f"{paquete} no es un paquete válido: {e}") from e
+    except OSError as e:
+        raise InstallError(f"No he podido escribir el Tk con Xft en {carpeta}: "
+                           f"{e}") from e
+
+
+def stamp_text(plat: Plataforma, sha256: str, con_tk: bool | None = None) -> str:
     """Devuelve el sello de un runtime: de qué archivo exacto salió.
 
     penwatch compara el texto entero con el de su copia en el equipo; cualquier
     diferencia (otra versión, otra release, otro archivo) es «refrescar».
+
+    Args:
+        con_tk: Si lleva el Tk con Xft (`tk = <tag>`). Sin decirlo, lo
+            llevará si su paquete está comprobado en la caché, que es lo que
+            hará `extract()`: así el sello que se espera y el que se escribe
+            son el mismo.
     """
+    if con_tk is None:
+        con_tk = tk_xft(plat) is not None
     return (f"# {APP_NAME} — el Python de este dispositivo. Lo escribe el "
             f"instalador y lo compara penwatch. No lo toques.\n"
             f"python = {pins.PYTHON_VERSION}\n"
             f"release = {pins.PYTHON_RELEASE}\n"
             f"triple = {plat.triple}\n"
-            f"sha256 = {sha256}\n")
+            f"sha256 = {sha256}\n"
+            + (f"tk = {pins.TK_XFT_TAG}\n" if con_tk else ""))
 
 
 def _relativo(nombre: str) -> str | None:
@@ -430,6 +580,7 @@ def extract(archivo: Path, destino: Path, plat: Plataforma, sha256: str) -> int:
     """
     prefijos = podar(plat)
     estables = {plat.interprete, plat.interprete_consola}
+    tk = tk_xft(plat)
     try:
         with tarfile.open(archivo, "r:gz") as tf:
             miembros = tf.getmembers()
@@ -494,11 +645,16 @@ def extract(archivo: Path, destino: Path, plat: Plataforma, sha256: str) -> int:
     except OSError as e:
         raise InstallError(f"No he podido extraer Python en {destino}: {e}") from e
 
+    # El Tk con Xft, si está en la caché (`ensure_tk()`). Si no, el runtime va
+    # con el de serie y su sello no lo anota.
+    if tk is not None:
+        _extraer_tk(tk, destino)
+
     # Va el ÚLTIMO: sin sello, lo de arriba no cuenta como un runtime
     # instalado.
     try:
-        (destino / STAMP).write_text(stamp_text(plat, sha256), encoding="utf-8",
-                                     newline="\n")
+        (destino / STAMP).write_text(stamp_text(plat, sha256, tk is not None),
+                                     encoding="utf-8", newline="\n")
     except OSError as e:
         raise InstallError(f"No he podido escribir el sello en {destino}: {e}") from e
     return len(escribir) + 1

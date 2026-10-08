@@ -230,22 +230,23 @@ with sandbox():
     visto = {}
 
     def en_ajustes(dlg, parent=None) -> None:
-        """Hace de «Ajustes»: apunta sus entradas y abre «Configuración…»."""
-        visto["entradas"] = [b for b in botones(dlg) if b.endswith("…")]
-        visto["casilla en ajustes"] = any("contraseña" in t for t in casillas(dlg))
-        pulsar_en(dlg, "Configuración…")
-        if dlg.winfo_exists():
-            pulsar_en(dlg, "Cerrar")
-
-    def en_configuracion(dlg, parent=None) -> None:
-        """Hace de «Configuración»: escribe 20 minutos y guarda."""
+        """Hace de «Ajustes»: apunta sus apartados y guarda 20 minutos en «Configuración»."""
+        visto["entradas"] = [b.cget("text") for b in recorrer(dlg)
+                             if isinstance(b, ttk.Button)
+                             and str(b.cget("style")) in ("Nav.TButton", "NavSel.TButton")]
+        visto["elegido"] = [b.cget("text") for b in recorrer(dlg)
+                            if isinstance(b, ttk.Button)
+                            and str(b.cget("style")) == "NavSel.TButton"]
         spin = next(w for w in recorrer(dlg) if isinstance(w, ttk.Spinbox))
         visto["al abrir"] = spin.get()
         visto["sin casilla"] = not casillas(dlg)
         spin.set("20")
         pulsar_en(dlg, "Guardar")
+        visto["sigue abierta"] = bool(dlg.winfo_exists())
+        visto["guardado dicho"] = "Guardado." in textos(dlg)
+        dlg.destroy()
 
-    tk_doctor.mostrar, tk_configuracion.mostrar = en_ajustes, en_configuracion
+    tk_doctor.mostrar = en_ajustes
     try:
         def configurar_y_arrancar(root) -> None:
             """Abre Ajustes → Configuración y luego pulsa «Iniciar servicio»."""
@@ -257,14 +258,13 @@ with sandbox():
         eleccion = ventana(CUATRO, configurar_y_arrancar)
     finally:
         tk_doctor.mostrar, tk_configuracion.mostrar = REAL_DOCTOR_MOSTRAR, REAL_CONF_MOSTRAR
-    c("«Ajustes» tiene «Configuración…»", "Configuración…" in visto["entradas"], True)
-    c("  como segunda entrada, tras «Reparación…»",
-      [rotulo for rotulo, *_ in tk_doctor.ENTRADAS][:2], ["Reparación…", "Configuración…"])
-    c("  la casilla de la contraseña ya no está en «Ajustes»",
-      visto["casilla en ajustes"], False)
+    c("«Ajustes» tiene «Configuración»", "Configuración" in visto["entradas"], True)
+    c("  y abre por ella, dibujada en el sitio", visto["elegido"], ["Configuración"])
     c("  abre con el intervalo del servicio ([daemon] del TOML)", visto["al abrir"], "15")
     c("  y sin la casilla, que es de la raíz cifrada de un equipo", visto["sin casilla"],
       True)
+    c("  «Guardar» deja «Ajustes» abierta y dice que se ha guardado",
+      (visto["sigue abierta"], visto["guardado dicho"]), (True, True))
     c("«Guardar» escribe el intervalo y no las parejas",
       ("pairs" in visto["guardado"], visto["guardado"]["interval_min"]), (False, 20.0))
     c("  las casillas siguen con las del servicio", visto["marcadas"], ["docs"])
@@ -447,7 +447,7 @@ CON_LLAVERO = model.parse_config({
     "pair": [{"name": "notas", "local": "sync-data/notas", "remote_path": "/R/notas"}],
     "keychain": {"base": "personal.kdbx"}})
 REAL_LINEA, REAL_ABRIR = llavero_editor.linea, tk_llavero.abrir
-REAL_AJUSTES, REAL_CERRAR = tk_llavero.ajustes, tk_llavero.cerrar
+REAL_AJUSTES, REAL_CERRAR = tk_llavero.construir_ajustes, tk_llavero.cerrar
 with sandbox():
     estado = {"abierto": False, "boton": True}
     abiertos: list = []
@@ -548,17 +548,18 @@ with sandbox():
             "defaults": {"remote": "nas"},
             "pair": [{"name": "notas", "local": "sync-data/notas", "remote_path": "/R/notas"}],
             "keychain": {"base": "personal.kdbx"}}), encoding="utf-8")
-        tk_llavero.ajustes = lambda root, raw=None: tk_llavero.ACTIVADO
+        tk_llavero.construir_ajustes = lambda panel, raw=None: (
+            panel.devolver(tk_llavero.ACTIVADO), panel.cerrar())
         tk_doctor.mostrar = lambda dlg, parent=None: next(
             b for b in recorrer(dlg) if isinstance(b, ttk.Button)
-            and b.cget("text") == "Llavero…").invoke()
+            and b.cget("text") == "Llavero").invoke()
         lanzadas.clear()
         ventana(UNA, lambda root: botones(root)["Ajustes…"].invoke())
         c("activar el llavero desde «Ajustes» lanza su primera pasada",
           [cmd[-1] for cmd in lanzadas], [model.LLAVERO])
     finally:
         llavero_editor.linea, tk_llavero.abrir = REAL_LINEA, REAL_ABRIR
-        tk_llavero.ajustes, tk_doctor.mostrar = REAL_AJUSTES, REAL_DOCTOR_MOSTRAR
+        tk_llavero.construir_ajustes, tk_doctor.mostrar = REAL_AJUSTES, REAL_DOCTOR_MOSTRAR
 
 
 # que quepa

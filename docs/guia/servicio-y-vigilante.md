@@ -44,7 +44,7 @@ de 100, para dejarla en 50.
 «Sincronizar ahora» y para «Iniciar servicio», y salen marcadas con las del
 servicio; «Marcar todas» y «Desmarcar todas» están en el rótulo de la lista. El
 intervalo, «El servicio repite cada N minutos», está en **«Ajustes…» →
-«Configuración…»**: solo lo usa el servicio y se toca pocas veces. **Las parejas
+«Configuración»**: solo lo usa el servicio y se toca pocas veces. **Las parejas
 se guardan en cuanto marcas o desmarcas una casilla**, sin pulsar nada más
 (con ninguna marcada se queda lo último guardado), y «Configuración» guarda solo
 el intervalo, sin fijar las parejas. «Sincronizar ahora» lanza lo marcado pero

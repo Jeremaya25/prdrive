@@ -2,7 +2,7 @@
 
 Formerly AGENTS.md «Pairing a phone».
 
-«Ajustes» → «Emparejar un móvil…» shows the device's connection as a QR so a phone can read it. Three pieces, none knowing the others' medium:
+«Ajustes» → «Emparejar un móvil» (a pane; inside «Ajustes» the protection below covers the whole window while the code is shown) shows the device's connection as a QR so a phone can read it. Three pieces, none knowing the others' medium:
 
 - **`ui/qr.py` is a full QR encoder**, written here for the same reason `ui/icons.py` draws its own icons: no dependencies. Byte mode only (the payload is UTF-8 with base64 inside; the other modes save nothing); everything else is complete: 40 versions, four ECC levels, block-interleaved Reed-Solomon, all eight masks and the penalty score that picks one. Constants cite **ISO/IEC 18004** the way `common/bisync.py` cites rclone: **preserve those citations.** Only two tables can't be derived (`_CORRECCION_POR_BLOQUE`, `_BLOQUES`); the rest is computed, and `tests/test_qr.py` pins the derivations against the published byte-mode capacities, which would catch a mistyped digit in either table.
 - **`common/pairing.py` builds the payload and lives in `common/` on purpose**: `install/` does not travel to a provisioned device and this runs *on* one, with no network. Same reason `parse_rclone_conf()` moved here and `install/profile.py` re-exports it: **one reader of rclone.conf, not two**; `RUTAS_DERIVADAS` is shared likewise.

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 r"""El nombre y el icono con que se ve la unidad, sin Tkinter.
 
-Es la mitad que decide de «Ajustes» → «Nombre e icono de la unidad…»; la
+Es la mitad que decide de «Ajustes» → «Nombre e icono»; la
 ventana es `ui/tk_volumen.py` y solo dibuja. El fichero que manda es el
 `autorun.inf` de la raíz y leerlo y escribirlo es cosa de `common/autorun.py`:
 aquí se decide qué va dentro, en qué raíz y con qué icono.
