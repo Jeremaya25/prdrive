@@ -343,6 +343,38 @@ def last_run(pair: Pair) -> float | None:
     return max(marcas) if marcas else None
 
 
+def programa_en_listado(pair: Pair) -> bool:
+    """Indica si el último listado del remoto trae la carpeta del programa.
+
+    Lo mira en el `path2.lst` del baseline, que describe el lado remoto tal
+    como quedó en la última pasada buena. Es la señal de que una pareja de la
+    raíz entera subió `.prdrive/` (con su clave y su `rclone.conf`) antes de
+    que `model.REGLA_SIN_PROGRAMA` la dejara fuera: la regla no la borra del
+    remoto, y tras el `--resync` el listado nuevo ya no la enseña. Solo tiene
+    sentido para una pareja de la raíz entera (`Pair.es_raiz`): en otra, una
+    carpeta con ese nombre sería del usuario.
+
+    Es información de cortesía y no decide nada, así que un listado que falta
+    o que no se puede leer cuenta como que no.
+
+    Returns:
+        `True` si alguna ruta del listado cuelga de la carpeta del programa.
+    """
+    lst = pair.workdir / (expected_prefix(pair) + PATH2_SUFFIX)
+    # Cada línea es `flags tamaño hash id fecha "ruta"` (cmd/bisync/listing.go):
+    # la ruta empieza en la primera comilla, y la cabecera `# …` no lleva ruta.
+    carpeta = model.APP_DIR.name + "/"
+    try:
+        with lst.open(encoding="utf-8", errors="replace") as f:
+            for linea in f:
+                _, comilla, ruta = linea.partition('"')
+                if comilla and not linea.startswith("#") and ruta.startswith(carpeta):
+                    return True
+    except OSError:
+        pass
+    return False
+
+
 def resync_reasons(pair: Pair, state: PairState | None = None) -> list[str]:
     """Devuelve por qué esta pareja necesita `--resync`.
 

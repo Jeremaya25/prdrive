@@ -548,9 +548,18 @@ def foto_cualquiera(ruta, tope, ignorar):
 agente.huella_local = foto_cualquiera
 UID6 = "c" * 32
 FUERA = F.unidad("0" * 32, parejas=("secreto",))           # otra carpeta, fuera de la raíz
-RAIZ6 = poner(UID6, parejas=("arriba", "enlace"), nombre="ENLACES",
-              extra={"arriba": VIGILA, "enlace": VIGILA},
-              locales={"arriba": "../carpeta-de-al-lado"})
+# Un `..` en el `local` ni llega a vigilarse: `leer_servicio()` no sirve esa raíz
+# (`model.comprobar_seguridad()`). Queda la que sale por un enlace, que solo se
+# ve al resolver la ruta.
+ARRIBA = F.unidad("3" * 32, parejas=("arriba",), extra={"arriba": VIGILA},
+                  locales={"arriba": "../carpeta-de-al-lado"})
+try:
+    agente.leer_servicio(ARRIBA)
+    sirve_arriba = True
+except ValueError:
+    sirve_arriba = False
+c("una `local` que sube fuera de la raíz no se sirve: no llega a vigilarse", sirve_arriba, False)
+RAIZ6 = poner(UID6, parejas=("enlace",), nombre="ENLACES", extra={"enlace": VIGILA})
 enlace = False
 try:
     (RAIZ6 / "sync-data").mkdir()
@@ -563,13 +572,11 @@ ag6 = nuevo()
 F.vueltas(ag6, 2)
 terminar(ag6, RAIZ6)
 quieto(ag6, 60)
-c("una `local` que sube fuera de la raíz no se mira: se abandona",
-  (ag6.vigiladas[(UID6, "arriba")].abandonada, MIRADAS), (True, []))
-c("  y se dice, una vez",
-  sum("arriba: su carpeta cae fuera de la raíz" in m for m in F.DIARIO), 1)
 if enlace:
-    c("un enlace que saca la carpeta de la raíz tampoco se sigue",
+    c("un enlace que saca la carpeta de la raíz no se sigue: se abandona",
       (ag6.vigiladas[(UID6, "enlace")].abandonada, MIRADAS), (True, []))
+    c("  y se dice, una vez",
+      sum("enlace: su carpeta cae fuera de la raíz" in m for m in F.DIARIO), 1)
 
 # ---------------------------------------------------------------------------
 # 11b. Qué carpeta se mira, y una que no se deja mirar

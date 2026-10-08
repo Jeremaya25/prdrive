@@ -52,7 +52,6 @@ from typing import Any, Mapping
 
 from . import APP_NAME, store
 from .planificador import Politica
-from .store import pid_alive
 
 IS_WIN = os.name == "nt"
 HOST = socket.gethostname()             # el mismo que apunta `ui/prefs.py`
@@ -369,19 +368,17 @@ def instalado() -> bool:
 
 
 def agente_vivo() -> dict | None:
-    """Devuelve el registro del agente si es de un proceso vivo de ESTE equipo.
+    """Devuelve el registro del agente si es de un proceso vivo de ESTE equipo y arranque.
+
+    Un registro de antes de reiniciar, con su pid ahora en otro proceso, no es
+    el agente (`vivo_aqui()`): darlo por vivo haría que el instalador matara a
+    ese proceso al parar el agente y que no arrancara el nuevo.
 
     Returns:
         El registro, o `None`.
     """
     info = store.read_json(lock_json())
-    if info.get("host") != HOST:
-        return None
-    try:
-        pid = int(info.get("pid", -1))
-    except (TypeError, ValueError):
-        return None
-    return info if pid_alive(pid) else None
+    return info if vivo_aqui(info) else None
 
 
 def apuntar_pasada(datos: dict) -> bool:
@@ -434,33 +431,20 @@ def pasada_cortada() -> dict | None:
 def pasada_viva() -> dict | None:
     """Devuelve el registro de `pasada.json` si esa pasada sigue viva EN ESTE EQUIPO.
 
-    Un pid de otro arranque del sistema no dice nada (tras reiniciar se
-    reutilizan), así que se compara también cuándo arrancó el sistema.
-
     Returns:
         El registro, o `None`.
     """
     info = store.read_json(pasada_json())
-    if not vivo_aqui(info):
-        return None
-    antes, ahora = info.get("arranque"), store.arranque_del_sistema()
-    if isinstance(antes, (int, float)) and ahora is not None \
-            and abs(antes - ahora) > store.HOLGURA_ARRANQUE:
-        return None
-    return info
+    return info if vivo_aqui(info) else None
 
 
 def vivo_aqui(info: dict | None) -> bool:
-    """Indica si es el registro de un proceso vivo DE ESTE EQUIPO.
+    """Indica si es el registro de un proceso vivo DE ESTE EQUIPO y de este arranque.
 
-    Un pid muerto, de otro equipo o ilegible es un resto.
+    Un pid muerto, de otro equipo, de otro arranque del sistema o ilegible es
+    un resto (`store.vivo_en_este_arranque()`).
     """
-    if not info or info.get("host") != HOST:
-        return False
-    try:
-        return pid_alive(int(info.get("pid", -1)))
-    except (TypeError, ValueError):
-        return False
+    return store.vivo_en_este_arranque(info, HOST)
 
 
 def tomar_lock(datos: dict) -> dict | None:

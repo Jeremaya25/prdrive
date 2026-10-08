@@ -411,4 +411,35 @@ with sandbox():
     c("sync.py escribe su salida línea a línea aunque sea a una tubería",
       linea_a_linea, True)
 
+
+# Si `model.ejecutable()` se niega a copiar rclone (la caché no es del usuario, o no
+# se puede escribir), sync.py sale con una línea que dice por qué y no con un traceback.
+with sandbox():
+    model.CONFIG_FILE.write_text(
+        '[defaults]\nremote = "nas"\n\n[[pair]]\nname = "x"\nlocal = "sync-data/x"\n'
+        'remote_path = "/R/x"\n', encoding="utf-8")
+    model.RCLONE_CONF.write_text("[nas]\ntype = local\n", encoding="utf-8")
+    argv, sys.argv = sys.argv, ["sync.py"]
+    binario_real = model.rclone_binary
+
+    def sin_copia() -> str:
+        """Hace como si la caché del usuario no fuera suya."""
+        raise OSError("/home/ana/.cache/prdrive no es una carpeta de este usuario: "
+                      "no copio rclone ahí.")
+
+    model.rclone_binary = sin_copia
+    try:
+        try:
+            sync.main()
+            dijo = "no salió"
+        except SystemExit as e:
+            dijo = str(e.code)
+        except OSError:
+            dijo = "traceback"
+    finally:
+        model.rclone_binary, sys.argv = binario_real, argv
+    c("sync.py sale con un mensaje, no con un traceback, si no puede preparar rclone",
+      ("traceback" in dijo, "no es una carpeta de este usuario" in dijo, "rclone" in dijo),
+      (False, True, True))
+
 sys.exit(c.report())

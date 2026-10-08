@@ -37,10 +37,11 @@ import re
 import tomllib
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Mapping
+from typing import Iterable, Mapping
 
 from common import pairing
 from common.catalog import DEFAULT_CATALOG_PATH, problema_de_ruta
+from common.model import NOMBRE_REMOTE
 
 from . import InstallError, bundle_dir
 
@@ -66,7 +67,58 @@ NOMBRE_VALIDO = re.compile(r"[A-Za-z0-9_.-]+")
 
 rclone acepta bastante más, pero el proyecto lo mete en
 `RCLONE_CONFIG_<NOMBRE>_*` cuando hay `device_remote` y ahí no cabe cualquier
-cosa. Se valida al entrar, no al fallar tres pasos después.
+cosa. Se valida al entrar, no al fallar tres pasos después. Es la regla de los
+nombres que se teclean en el asistente; la de los que ya existen es
+`NOMBRE_RCLONE`.
+"""
+
+NOMBRE_RCLONE = NOMBRE_REMOTE
+"""Regla de rclone para el nombre de un remote (`fullmatch`): `model.NOMBRE_REMOTE`.
+
+Sin `,` `:` `=` ni comillas, sin `[` `]` ni saltos de línea, sin empezar por `-`
+ni acabar en espacio. Es la que se exige para ESCRIBIR un `rclone.conf`
+(`render_conf`): un remote que ya existe (en un `rclone.conf` importado o en el
+`[defaults].remote` de un catálogo) puede llamarse `Mi NAS` o `nas@home`, y
+renombrarlo apartaría la base de cada pareja bisync. Es la misma que aplica el
+cargador del config, y no una copia, para que no puedan separarse.
+"""
+
+CLAVE_VALIDA = re.compile(r"[A-Za-z0-9_]+")
+"""Patrón de los nombres de opción que se escriben en un `rclone.conf`."""
+
+SALTO_DE_LINEA = re.compile(r"[\r\n\x0b\x0c\x1c-\x1e\x85\u2028\u2029]")
+"""Caracteres que parten una línea al leer un `rclone.conf`.
+
+Son los de `str.splitlines()`, que es como lo lee `parse_rclone_conf`. El
+formato no tiene escape para ninguno: un valor que lo lleve escribiría una
+opción (u otro remote) que nadie tecleó.
+"""
+
+OPCIONES_QUE_EJECUTAN = frozenset({"ssh", "bearer_token_command"})
+"""Opciones de rclone cuyo valor es una orden que se ejecuta en este equipo.
+
+- `ssh` (backend sftp): rclone lanza esa orden como su ssh externo.
+- `bearer_token_command` (backend webdav): rclone la lanza para pedir el token.
+
+El usuario puede teclearlas en el asistente, que es su equipo; el catálogo no
+puede imponerlas, porque lo escribe cualquiera con acceso al remoto y lo leen
+todos los dispositivos.
+"""
+
+_SECRETAS_EXACTAS = frozenset({"key", "pass", "password", "2fa"})
+"""Nombres de opción que son un secreto tal cual (`es_secreta()`)."""
+
+_SECRETAS_CONTIENEN = ("pass", "token", "secret", "credential", "_pem",
+                       "sas_url", "account_key", "access_grant",
+                       "connection_string", "cookie", "authorization",
+                       "headers")
+"""Trozos que delatan un secreto en cualquier parte del nombre (`es_secreta()`)."""
+
+_CLAVE_DE_BACKEND = re.compile(r"_key(_|$)")
+"""`..._key` como palabra suelta, al final o en medio (`es_secreta()`).
+
+Son `api_key`, `sse_customer_key` o `sse_customer_key_base64`; `es_secreta()`
+exceptúa los `..._key_id`.
 """
 
 
@@ -134,6 +186,47 @@ class Profile:
         return f"{self.remote_name} ({tipo}){cola}".rstrip()
 
 
+def es_secreta(clave: str) -> bool:
+    """Indica si una opción de rclone lleva un secreto (contraseña, token, clave…).
+
+    Es un criterio por el nombre, no una lista de backends: el proyecto no
+    interpreta ninguno (ni mira los valores: unas credenciales dentro de una
+    `url` no se detectan). Peca de más a propósito, porque lo que marca se
+    queda fuera del catálogo. Es secreto un nombre que:
+    - sea exactamente `key`, `pass`, `password` o `2fa`;
+    - contenga `pass`, `token`, `secret`, `credential`, `_pem`, `sas_url`,
+      `account_key`, `access_grant` (Storj), `connection_string` (Azure),
+      `cookie` (iCloud), `authorization` (SugarSync) o `headers` (http y
+      webdav, que pueden llevar `Authorization`);
+    - acabe en `_key` o lleve `_key_` en medio (`api_key`, `sse_customer_key`,
+      `sse_customer_key_base64`), salvo si acaba en `_key_id`: eso es un
+      identificador y no el secreto (`access_key_id`, `sse_kms_key_id`).
+    """
+    nombre = clave.strip().lower()
+    return (nombre in _SECRETAS_EXACTAS
+            or any(trozo in nombre for trozo in _SECRETAS_CONTIENEN)
+            or (bool(_CLAVE_DE_BACKEND.search(nombre))
+                and not nombre.endswith("_key_id")))
+
+
+def _linea(clave: str, valor: object) -> str:
+    """Devuelve la línea `clave = valor` del `rclone.conf`.
+
+    Raises:
+        InstallError: Si el nombre de la opción no vale o el valor lleva un
+            salto de línea.
+    """
+    if not CLAVE_VALIDA.fullmatch(clave):
+        raise InstallError(
+            f"La opción {clave!r} no vale en un rclone.conf: solo letras, "
+            f"números y guión bajo.")
+    if SALTO_DE_LINEA.search(str(valor)):
+        raise InstallError(
+            f"El valor de '{clave}' lleva un salto de línea y un rclone.conf no "
+            f"tiene cómo escribirlo.")
+    return f"{clave} = {valor}"
+
+
 def render_conf(profile: Profile, key_file: Path | str | None = None,
                 known_file: Path | str | None = None) -> str:
     """Devuelve el texto del `rclone.conf` de este perfil.
@@ -149,22 +242,30 @@ def render_conf(profile: Profile, key_file: Path | str | None = None,
         known_file: Ruta de los known_hosts en este conf, o `None`.
 
     Raises:
-        InstallError: Si el perfil no dice cómo se llama el remote.
+        InstallError: Si el perfil no dice cómo se llama el remote, el nombre no
+            vale (`NOMBRE_RCLONE`), el de una opción no vale o un valor lleva
+            un salto de línea. Un `rclone.conf` no tiene escape para ellos y
+            las opciones pueden venir del catálogo.
     """
     if not profile.remote_name:
         raise InstallError("El perfil no dice cómo se llama el remote.")
+    if not NOMBRE_RCLONE.fullmatch(profile.remote_name):
+        raise InstallError(
+            f"El nombre de remote {profile.remote_name!r} no vale en un "
+            f"rclone.conf: no admite , : = [ ] ni comillas ni saltos de línea, "
+            f"ni empezar por «-» ni acabar en espacio.")
     lineas = [f"[{profile.remote_name}]"]
     for clave, valor in profile.options.items():
         if clave in RUTAS_DERIVADAS:
             continue                    # se ponen abajo, con la ruta de ahora
-        lineas.append(f"{clave} = {valor}")
+        lineas.append(_linea(clave, valor))
     if key_file is not None:
-        lineas.append(f"key_file = {key_file}")
+        lineas.append(_linea("key_file", key_file))
     # Sin known_hosts se acepta la clave de host a la primera (TOFU). Es peor,
     # pero escribir la opción apuntando a un fichero vacío lo es más: rclone
     # falla en vez de avisar.
     if known_file is not None and profile.known_hosts.strip():
-        lineas.append(f"known_hosts_file = {known_file}")
+        lineas.append(_linea("known_hosts_file", known_file))
     return "\n".join(lineas) + "\n"
 
 
@@ -473,23 +574,131 @@ def _ruta_catalogo(ruta: str | None) -> str:
     return limpia
 
 
+def _texto_rclone(valor: object) -> str:
+    """Devuelve un valor del catálogo tal como lo escribe rclone en su conf.
+
+    TOML trae booleanos de verdad y `str(True)` da «True», no «true»: el mismo
+    valor parecería otra conexión y el conf llevaría una mayúscula que rclone
+    no lee como booleano.
+    """
+    if isinstance(valor, bool):
+        return "true" if valor else "false"
+    return str(valor)
+
+
+def _enumerar(claves: Iterable[str]) -> str:
+    """Devuelve las claves entre comillas inversas, «`a`, `b` y `c`», ordenadas."""
+    nombres = [f"`{k}`" for k in sorted(claves)]
+    if len(nombres) == 1:
+        return nombres[0]
+    return ", ".join(nombres[:-1]) + " y " + nombres[-1]
+
+
+def _opciones_del_catalogo(
+        propias: Mapping[str, str],
+        tabla: Mapping[str, object]) -> tuple[dict[str, str] | None, list[str]]:
+    """Devuelve las opciones del backend que se heredan del `[remote]` del catálogo.
+
+    El catálogo lo escribe cualquiera con acceso al remoto y lo leen todos los
+    dispositivos, así que de él no se hereda lo que ejecuta algo en este equipo
+    (`OPCIONES_QUE_EJECUTAN`) ni lo secreto (`es_secreta`): ni lo trae el
+    catálogo ni lo guarda `to_catalog_remote()`. Y como el catálogo ya no
+    guarda las contraseñas, un perfil que lleva alguna (o una orden) se queda
+    como está: es la conexión que el asistente acaba de comprobar, y sus
+    secretos no se mezclan con el destino que describa el catálogo, que nadie
+    ha comprobado.
+
+    Args:
+        propias: Las opciones del perfil con el que se entró.
+        tabla: El `[remote]` del catálogo.
+
+    Returns:
+        Las opciones que valen, o `None` si no hay nada que adoptar: el
+        `[remote]` no trae `type`; el perfil lleva algo secreto o una orden; o
+        sin lo que no se hereda le falta algo que rclone exige (`faltan()`).
+        En todos esos casos la conexión se deja como está. Y las notas de lo
+        que no se ha heredado o de por qué no se usa.
+    """
+    ejecutan: dict[str, str] = {}
+    secretas: list[str] = []
+    heredadas: dict[str, str] = {}
+    for clave, valor in tabla.items():
+        clave = str(clave)
+        if clave == "name" or clave in RUTAS_DERIVADAS:
+            continue
+        if clave in OPCIONES_QUE_EJECUTAN:
+            ejecutan[clave] = _texto_rclone(valor)
+        elif es_secreta(clave):
+            secretas.append(clave)
+        else:
+            heredadas[clave] = _texto_rclone(valor)
+    if not heredadas.get("type"):
+        return None, []         # tabla incompleta: no se pisa lo que ya funciona
+
+    notas: list[str] = []
+    if ejecutan:
+        uno = len(ejecutan) == 1
+        notas.append(
+            f"El catálogo traía {_enumerar(ejecutan)}: "
+            + ("no se hereda, porque es una orden" if uno
+               else "no se heredan, porque son órdenes")
+            + " de este equipo.")
+    if secretas:
+        uno = len(secretas) == 1
+        notas.append(
+            f"El catálogo traía {_enumerar(secretas)}: "
+            + ("no se hereda" if uno else "no se heredan")
+            + ", porque el catálogo no guarda secretos. "
+            + ("Se puede quitar" if uno else "Se pueden quitar")
+            + " de su [remote].")
+
+    propias_sensibles = {k for k in propias
+                         if k in OPCIONES_QUE_EJECUTAN or es_secreta(k)}
+    if propias_sensibles:
+        del_perfil = {k: str(v) for k, v in propias.items()
+                      if k not in propias_sensibles}
+        if heredadas != del_perfil:
+            notas.append(
+                "El [remote] del catálogo describe otra conexión: este "
+                "dispositivo se queda con la que se acaba de comprobar, porque "
+                "sus contraseñas, claves y órdenes no se dan a una conexión que "
+                "no se ha comprobado.")
+        return None, notas
+
+    falta = faltan(heredadas)
+    if falta:
+        # Solo se atribuye a lo quitado si con ello el [remote] sí valdría.
+        sin = ""
+        if ejecutan and not faltan({**heredadas, **ejecutan}):
+            sin = (f"sin {_enumerar(ejecutan)}, "
+                   + ("que no se hereda" if len(ejecutan) == 1
+                      else "que no se heredan")
+                   + ", ")
+        notas.append(
+            "No se usa el [remote] del catálogo: " + sin + "le falta "
+            + " y ".join(f"«{clave} = …»" for clave, _ in falta) + ".")
+        return None, notas
+    return heredadas, notas
+
+
 def with_catalog_remote(profile: Profile, tabla: Mapping[str, object]) -> Profile:
     """Devuelve el perfil con el `[remote]` del catálogo aplicado.
 
     Es lo que hace que la conexión se teclee UNA vez: el primer dispositivo la
     escribe en el catálogo y todos los demás la heredan. Solo toca las opciones
     del backend (la clave nunca viaja por ahí) y respeta el nombre de remote de
-    la tabla, porque es el que usarán los `remote_path` de las parejas.
+    la tabla, porque es el que usarán los `remote_path` de las parejas. Adopta
+    lo mismo que `align_with_catalog()` (ver `_opciones_del_catalogo()`: un
+    perfil con secretos u órdenes propios se queda como está), pero sin notas.
     """
     if not tabla:
         return profile
-    datos = {str(k): v for k, v in tabla.items()}
-    nombre = str(datos.pop("name", "") or profile.remote_name).strip()
-    options = {k: str(v) for k, v in datos.items() if k not in RUTAS_DERIVADAS}
-    if not options.get("type"):
-        return profile          # tabla incompleta: no se pisa lo que ya funciona
+    opciones, _ = _opciones_del_catalogo(profile.options, tabla)
+    if opciones is None:
+        return profile
+    nombre = str(tabla.get("name", "") or profile.remote_name).strip()
     return replace(profile, remote_name=nombre or profile.remote_name,
-                   options=options)
+                   options=opciones)
 
 
 def align_with_catalog(perfil: Profile,
@@ -504,12 +713,16 @@ def align_with_catalog(perfil: Profile,
     con un «unknown remote» que no se parece a la causa. Las opciones del
     backend sí son del usuario, salvo que el catálogo traiga un `[remote]`
     completo (el que dejó el primer dispositivo), que entonces es la definición
-    buena. La clave privada NUNCA sale de aquí ni entra por aquí: viaja con el
-    dispositivo.
+    buena, menos lo que ejecuta algo o es secreto, que no se hereda. Y si la
+    conexión del usuario lleva algo secreto o una orden de las suyas, se queda
+    tal cual, sin tocar: es la que se acaba de comprobar, y sus contraseñas no
+    se mezclan con el destino de un `[remote]` que nadie ha comprobado
+    (`_opciones_del_catalogo()`). La clave privada NUNCA sale de aquí ni entra
+    por aquí: viaja con el dispositivo.
 
     Returns:
-        El perfil ajustado y las notas de lo que se ha cambiado, para poder
-        decirlo.
+        El perfil ajustado y las notas de lo que se ha cambiado o dejado de
+        heredar, para poder decirlo.
     """
     notas: list[str] = []
     tabla = dict(catalog_raw.get("remote") or {})          # type: ignore[union-attr]
@@ -524,13 +737,13 @@ def align_with_catalog(perfil: Profile,
             f"'{perfil.remote_name}': es el nombre que usan los remote_path del "
             f"catálogo.")
 
-    opciones = {k: str(v) for k, v in tabla.items()
-                if k != "name" and k not in RUTAS_DERIVADAS}
-    if opciones.get("type"):
+    opciones, de_opciones = _opciones_del_catalogo(perfil.options, tabla)
+    if opciones is not None:
         if dict(ajustado.options) != opciones:
             notas.append("Las opciones del backend salen del [remote] del "
                          "catálogo, que es el que comparten todos los dispositivos.")
         ajustado = replace(ajustado, options=opciones)
+    notas.extend(de_opciones)
 
     return ajustado, notas
 
@@ -550,10 +763,16 @@ def with_catalog_path(perfil: Profile, ruta: str) -> Profile:
 
 
 def to_catalog_remote(profile: Profile) -> dict[str, str]:
-    """Devuelve el `[remote]` que se guarda en el catálogo, sin nada secreto dentro."""
+    """Devuelve el `[remote]` que se guarda en el catálogo, sin nada secreto dentro.
+
+    Quedan fuera las rutas de la clave, lo que `es_secreta()` marca y las
+    `OPCIONES_QUE_EJECUTAN`: cada dispositivo lleva las suyas, las de la
+    conexión con la que se instaló (`align_with_catalog()`).
+    """
     tabla = {"name": profile.remote_name}
     tabla.update({k: v for k, v in profile.options.items()
-                  if k not in RUTAS_DERIVADAS})
+                  if k not in RUTAS_DERIVADAS and k not in OPCIONES_QUE_EJECUTAN
+                  and not es_secreta(k)})
     return tabla
 
 

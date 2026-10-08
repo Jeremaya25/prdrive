@@ -54,7 +54,7 @@ from ui import (cifrado, llavero_editor, prefs, theme, tk_configuracion,  # noqa
 update.pending = lambda root=None: None
 update.check = lambda force=False: (None, None)
 uitk.pair_status_notes = lambda cfg: {}
-uitk.preguntar_resync = lambda root, pendientes: False
+uitk.preguntar_resync = lambda root, pendientes, carpetas=None: False
 lanzadas: list = []
 uitk.output_window = lambda titulo, cmd, **k: lanzadas.append(cmd)
 # Ni contenedor VeraCrypt ni recorrido de unidades: «Expulsar» solo sale donde

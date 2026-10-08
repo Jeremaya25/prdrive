@@ -316,8 +316,8 @@ def copy_rclone(device_root: Path | str, rclone_binary: Path | str,
     repetir la tabla de arquitecturas: es el mismo `bin/` que usará `sync.py`,
     y si dejaran de coincidir el instalador verificaría un binario y el
     dispositivo usaría otro. Va SIN el bit de ejecución en exFAT, que no lo
-    tiene, y por eso `model.rclone_binary()` se copia a un temporal cuando hace
-    falta.
+    tiene, y por eso `model.ejecutable()` lo copia a la caché del usuario
+    cuando hace falta.
 
     Args:
         plat: La plataforma del binario; por defecto, la de este equipo.
@@ -667,7 +667,9 @@ def write_device_remote(device_root: Path | str, profile: Profile) -> list[Path]
         Lo escrito.
 
     Raises:
-        InstallError: Si no hay conexión configurada o no se puede escribir.
+        InstallError: Si no hay conexión configurada, el conf no es válido
+            (`render_conf`) o no se puede escribir. El conf se genera antes de
+            escribir nada, para que uno rechazado no deje la clave a medias.
     """
     if not profile.configured:
         raise InstallError("No hay conexión configurada que escribir.")
@@ -677,6 +679,12 @@ def write_device_remote(device_root: Path | str, profile: Profile) -> list[Path]
     escrito: list[Path] = []
 
     key_rel = known_rel = None
+    if profile.private_key is not None:
+        key_rel = f"keys/{profile.key_name}"
+        if profile.known_hosts.strip():
+            known_rel = "keys/known_hosts"
+    texto = render_conf(profile, key_file=key_rel, known_file=known_rel)
+
     if profile.private_key is not None:
         try:
             keys.mkdir(parents=True, exist_ok=True)
@@ -688,7 +696,6 @@ def write_device_remote(device_root: Path | str, profile: Profile) -> list[Path]
                 pass    # exFAT/Windows: no hay permisos POSIX que poner
         except OSError as e:
             raise InstallError(f"No he podido escribir la clave en {keys}: {e}") from e
-        key_rel = f"keys/{profile.key_name}"
         escrito.append(destino)
 
         if profile.known_hosts.strip():
@@ -697,14 +704,12 @@ def write_device_remote(device_root: Path | str, profile: Profile) -> list[Path]
                 kh.write_text(profile.known_hosts, encoding="utf-8", newline="\n")
             except OSError as e:
                 raise InstallError(f"No he podido escribir {kh}: {e}") from e
-            known_rel = "keys/known_hosts"
             escrito.append(kh)
 
     conf = app / "rclone.conf"
     try:
         app.mkdir(parents=True, exist_ok=True)
-        conf.write_text(render_conf(profile, key_file=key_rel, known_file=known_rel),
-                        encoding="utf-8", newline="\n")
+        conf.write_text(texto, encoding="utf-8", newline="\n")
     except OSError as e:
         raise InstallError(f"No he podido escribir {conf}: {e}") from e
     escrito.append(conf)

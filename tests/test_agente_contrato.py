@@ -369,6 +369,52 @@ ventanas = [x for x in F.LANZADOS if x.args[-1] == str(RG / ".prdrive" / "runsyn
 c("  una vez por conexión", len(ventanas), 1)
 c("  y sin servicio del agente", F.lock(RG), {})
 
+# Una ventana de antes de reiniciar: su pid lo tiene hoy otro proceso, y no puede
+# dejar la raíz en pausa (ni sin su ventana) para siempre.
+FIJO = 1_800_000_000.0
+real_arranque = store.arranque_del_sistema
+store.arranque_del_sistema = lambda: FIJO
+try:
+    ventana = {"pid": os.getppid(), "host": penwatch.HOST, "started": "x"}
+    P6 = "6" * 32
+    ag, RP = fresco(P6, parejas=("docs",))
+    # El arranque que apuntó al tomar el lock se desvía en los días que vive: al apuntar
+    # cada pareja lo vuelve a calcular.
+    ag.conexiones[P6].lock["arranque"] = FIJO - 10_000
+    F.acabar(F.pasadas(RP)[-1])
+    F.vueltas(ag, 1)
+    c("el agente refresca el arranque de su lock cada vez que lo reescribe",
+      F.lock(RP).get("arranque"), FIJO)
+    store.write_json(RP / penwatch.UI_LOCK_REL, {**ventana, "arranque": FIJO - 10_000})
+    F.vueltas(ag, 5)
+    c("una ventana de otro arranque, aunque su pid viva, no pone la raíz en pausa",
+      (ag.conexiones[P6].motivo, F.lock(RP).get("pid")), ("", os.getpid()))
+    store.write_json(RP / penwatch.UI_LOCK_REL, {**ventana, "arranque": FIJO})
+    F.vueltas(ag, 5)
+    c("una de este arranque, sí",
+      (ag.conexiones[P6].motivo, F.lock(RP)),
+      ("en pausa: hay una ventana de runsync abierta", {}))
+
+    def abrir_con_ventana(uid: str, arranque: float | None):
+        """Conecta una unidad en modo `ui` que ya trae su `ui.lock.json`."""
+        raiz = F.unidad(uid, parejas=("docs",))
+        store.write_json(raiz / penwatch.UI_LOCK_REL, {**ventana, "arranque": arranque})
+        equipo.guardar_ajustes(equipo.leer_ajustes().con_unidad(
+            equipo.Unidad(uid, equipo.UI, "U")))
+        F.RAICES[:] = [raiz]
+        F.vueltas(F.nuevo(), 2)
+        return [x for x in F.LANZADOS if x.args[-1] == str(raiz / ".prdrive" / "runsync.py")]
+
+    c("modo ui: una ventana de otro arranque no impide abrir la de la unidad",
+      len(abrir_con_ventana("5" * 32, FIJO - 10_000)), 1)
+    F.DIARIO.clear()
+    c("  y una de este arranque, sí: no se abre otra",
+      (len(abrir_con_ventana("4" * 32, FIJO)),
+       any("no abro la ventana: la ventana de runsync ya está abierta" in x for x in F.DIARIO)),
+      (0, True))
+finally:
+    store.arranque_del_sistema = real_arranque
+
 # el buzón
 H = "f" * 32
 ag, RH = fresco(H, parejas=("docs", "fotos"))

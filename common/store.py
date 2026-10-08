@@ -12,7 +12,9 @@ media frase y puede estar leyéndolo otra máquina.
 Los comparten el registro del servicio (`daemon.lock.json`) y la memoria de la
 UI (`ui_prefs.json`). Con ellos viaja `pid_alive`, que da sentido a un registro
 con un pid dentro: un fichero de bloqueo solo vale si se puede saber si quien
-lo escribió sigue vivo.
+lo escribió sigue vivo, y `vivo_en_este_arranque`, que además pide que el
+registro sea de este arranque del sistema. Y `matar_arbol`, que corta a un
+proceso con todo lo que cuelga de él.
 
 Al final están `hide()` y `unhide()`, el atributo de oculto de Windows: el
 dispositivo también esconde algo suyo (el icono de la unidad, `ui/volumen.py`)
@@ -23,7 +25,10 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import stat
+import subprocess
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 
@@ -330,10 +335,15 @@ def tomar_registro(ruta: Path, datos: dict, vivo) -> tuple[bool | None, dict | N
     return False, otro or {}
 
 
-HOLGURA_ARRANQUE = 120.0
+HOLGURA_ARRANQUE = 600.0
 """Segundos de tolerancia al comparar arranques del sistema.
 
-El arranque calculado en Windows baila un poco.
+El arranque calculado en Windows (la hora menos lo que lleva encendido) se
+desvía con cada corrección del reloj, y un registro de servicio o de agente
+vive días: 600 s cubren esa deriva entre dos reescrituras. A cambio, un
+reinicio cuya sesión anterior duró menos de 10 minutos no se distingue y el
+registro cae al pid solo, que es lo que se hacía antes. Quien reescribe su
+propio registro lo vuelve a calcular, y la deriva no se acumula.
 """
 
 
@@ -363,6 +373,49 @@ def arranque_del_sistema() -> float | None:
     except (OSError, ValueError, AttributeError):
         pass
     return None
+
+
+PID_MAXIMO = 2**31 - 1
+"""El mayor pid que se da por posible: uno mayor es un registro ilegible."""
+
+
+def vivo_en_este_arranque(info: Mapping | None, host: str) -> bool:
+    """Indica si un registro de cerrojo es de un proceso vivo de este equipo y arranque.
+
+    Es la pregunta de los registros de ventana, servicio, vigilante del llavero
+    y agente. El pid de un registro solo vale en el arranque en que se apuntó
+    (`arranque_del_sistema()`): tras reiniciar los números se reutilizan, y el
+    de la ventana o el servicio que había antes de apagar puede ser ahora
+    cualquier otro proceso vivo, que haría pasar por viva a una ventana que
+    ya no existe.
+
+    Es un resto lo que no puede ser de este arranque: el de otro equipo, el de
+    un pid ilegible, fuera de `1..PID_MAXIMO` o muerto y el de un arranque que
+    difiere en más de `HOLGURA_ARRANQUE`. Un registro sin `arranque` (de una
+    versión que no lo apuntaba) o con uno que no se puede comparar (no se sabe
+    cuándo arrancó este sistema) va por el pid solo.
+
+    Args:
+        info: El registro (`pid`, `host` y, si lo trae, `arranque`), o `None`.
+        host: El nombre de este equipo, tal como lo apunta quien escribe.
+
+    Returns:
+        `True` si es de un proceso vivo de este equipo y de este arranque.
+    """
+    if not isinstance(info, Mapping) or info.get("host") != host:
+        return False
+    try:
+        pid = int(info.get("pid", -1))
+    except (TypeError, ValueError):
+        return False
+    # 0 y los negativos son grupos, no procesos; un pid enorme hace fallar a `pid_alive`
+    if not 1 <= pid <= PID_MAXIMO or not pid_alive(pid):
+        return False
+    antes, ahora = info.get("arranque"), arranque_del_sistema()
+    if isinstance(antes, (int, float)) and ahora is not None \
+            and abs(antes - ahora) > HOLGURA_ARRANQUE:
+        return False
+    return True
 
 
 def pid_alive(pid: int) -> bool:
@@ -407,6 +460,35 @@ def _zombi(pid: int) -> bool:
     except OSError:
         return False
     return datos[datos.rfind(b")") + 2:][:1] == b"Z"
+
+
+def matar_arbol(pid: int) -> None:
+    """Termina un proceso y todos los que cuelgan de él; no lanza nunca.
+
+    Matar solo a `sync.py` dejaría vivo a su rclone, con ficheros del volumen
+    abiertos: es lo que hay que evitar al cerrar la ventana de una pasada o al
+    pasarse de su tope. Es función de módulo para que los tests no maten nada.
+
+    En Windows va por `taskkill /F /T`, que recorre el árbol por padres. En
+    POSIX manda `SIGKILL` al grupo de procesos de `pid`, así que quien lo
+    lanzó tiene que haberlo hecho jefe de su sesión (`start_new_session=True`):
+    de no ser así no existe un grupo con ese número y no se corta nada.
+
+    Args:
+        pid: El proceso en la raíz del árbol. Si ya no existe, no pasa nada; con
+            0 o un número negativo no hace nada (en POSIX `killpg(0, ...)`
+            cortaría el grupo de quien llama).
+    """
+    if pid <= 0:
+        return
+    try:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        else:
+            os.killpg(pid, signal.SIGKILL)
+    except (OSError, subprocess.SubprocessError):
+        pass                    # ya no estaba, o el sistema no tiene `taskkill`
 
 
 def procesos_llamados(nombre: str) -> set[int]:

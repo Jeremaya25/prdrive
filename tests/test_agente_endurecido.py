@@ -32,6 +32,14 @@ Y lo que pedía cambiar el diseño, en una segunda vuelta:
   anterior.
 - **El id no es una credencial**: al decir que sí se apunta la huella del
   código de la unidad (`agente.huella()`), y con otra se vuelve a preguntar.
+
+Y de la revisión final de la rama:
+- **El config se relee al ir a lanzar**: el agente solo lo relee si cambia su
+  mtime, y uno editado conservándolo se colaría; antes de cada pasada pasa otra
+  vez por `comprobar_seguridad()` (`agente.leer_config()`), y si ya no vale no se
+  lanza y la raíz queda sin servicio.
+- **El aviso dice la causa**: un config rechazado es «config rechazado», no
+  «nada que sincronizar».
 """
 
 import ast
@@ -81,6 +89,77 @@ conf.write_text(conf.read_text(encoding="utf-8")
 c("el agente no lanza una pareja con un nombre así, aunque su sync.py sea de antes",
   [p.nombre for p in agente.leer_servicio(raiz).parejas], ["docs"])
 
+
+
+# el config en bruto pasa por las mismas comprobaciones de seguridad que el parser:
+# el agente lo lee a pelo y el `sync.py` de una raíz de antes no comprueba nada
+def razon(raiz_) -> str:
+    """Por qué el agente no sirve esa raíz; '' si la sirve."""
+    try:
+        agente.leer_servicio(raiz_)
+        return ""
+    except ValueError as e:
+        return str(e)
+
+
+def con_defaults(raiz_: Path, linea: str) -> Path:
+    """Añade una línea a la tabla `[defaults]` del config de esa raíz."""
+    conf_ = raiz_ / ".prdrive" / "sync_config.toml"
+    conf_.write_text(conf_.read_text(encoding="utf-8").replace(
+        'remote = "nas"\n', f'remote = "nas"\n{linea}\n', 1), encoding="utf-8")
+    return raiz_
+
+
+remoto_malo = razon(F.unidad("r" * 32, parejas=("docs",),
+                             extra={"docs": 'remote = "nas,ssh=\'x\'"\n'}))
+c.contains("el agente no sirve una raíz con un remote que es una cadena de conexión",
+           remoto_malo, "remote")
+c.contains("  y dice de qué pareja", remoto_malo, "[docs]")
+c.contains("tampoco con un extra_flags que lanza un programa",
+           razon(F.unidad("e" * 32, parejas=("docs",),
+                          extra={"docs": 'extra_flags = ["--sftp-ssh", "x"]\n'})), "sftp-ssh")
+c.contains("ni con un catalog_remote que lo es",
+           razon(con_defaults(F.unidad("k" * 32, parejas=("docs",)),
+                              'catalog_remote = "cat,x=y"')), "catalog_remote")
+vacio = F.unidad("v" * 32, parejas=("docs",))
+conf_vacio = vacio / ".prdrive" / "sync_config.toml"
+conf_vacio.write_text(conf_vacio.read_text(encoding="utf-8").replace(
+    'remote = "nas"', 'remote = ""', 1), encoding="utf-8")
+c.contains("ni con un remote vacío en [defaults]", razon(vacio), "remote")
+c.contains("ni con un extra_flags en forma de tabla en línea",
+           razon(F.unidad("t" * 32, parejas=("docs",),
+                          extra={"docs": 'extra_flags = { "--sftp-ssh=x" = 1 }\n'})), "sftp-ssh")
+c.contains("ni con un exclude que lleva un salto de línea (escribiría otra regla de filtro)",
+           razon(F.unidad("x" * 32, parejas=("docs",),
+                          extra={"docs": 'exclude = ["x\\n!\\n+ **"]\n'})), "Quita el salto de línea")
+c.contains("  ni un include, en [defaults]",
+           razon(con_defaults(F.unidad("i" * 32, parejas=("docs",)),
+                              'include = ["a\\r+ **"]')), "[defaults]")
+c("una raíz normal se sirve igual",
+  (razon(F.unidad("n" * 32, parejas=("docs",),
+                  extra={"docs": 'extra_flags = ["--bwlimit=8M", "-v"]\n'})),
+   razon(con_defaults(F.unidad("m" * 32, parejas=("docs",)), 'catalog_remote = "cat"'))),
+  ("", ""))
+
+# el `local` también: una pareja que sale de la raíz o cae en la carpeta del llavero
+# la lanzaría el `sync.py` de una raíz de antes, que no mira el `local` de una unidad
+fuera = razon(F.unidad("o" * 32, parejas=("docs",), locales={"docs": "../../fuera"}))
+c.contains("el agente no sirve una raíz con un local que sale de ella", fuera, "local")
+c.contains("  y dice de qué pareja", fuera, "[docs]")
+c.contains("tampoco con uno que es la carpeta del llavero",
+           razon(F.unidad("l" * 32, parejas=("docs",),
+                          locales={"docs": model.LLAVERO_LOCAL})), "llavero")
+# En el agente `model.APP_DIR` es la carpeta del propio agente, no la `.prdrive` de la
+# unidad: la carpeta del programa de la unidad se la dice `leer_servicio()`.
+programa = razon(F.unidad("p" * 32, parejas=("docs",), locales={"docs": ".prdrive/keys"}))
+c.contains("tampoco con uno que cae en la carpeta del programa de la unidad", programa,
+           "es la carpeta del programa, con su clave")
+c.contains("  y dice de qué pareja", programa, "[docs]")
+raiz_todo = F.unidad("q" * 32, parejas=("docs",), locales={"docs": "."})
+c("en una unidad, la raíz entera como local se sirve", razon(raiz_todo), "")
+(raiz_todo / ".prdrive" / "PRDRIVE").write_text(f"id={'q' * 32}\ntipo=equipo\n", encoding="utf-8")
+c.contains("en la raíz de un equipo, no", razon(raiz_todo), "raíz entera")
+
 # un solo agente
 equipo.lock_json().unlink(missing_ok=True)
 yo = {"pid": os.getpid(), "host": equipo.HOST, "started": "x"}
@@ -100,6 +179,39 @@ c("cmd_run se va sin tocar nada si otro agente está vivo",
   (store.write_json(equipo.lock_json(), {"pid": os.getppid(), "host": equipo.HOST}),
    agente.main(["run"]), store.read_json(equipo.lock_json())["pid"]),
   (True, 0, os.getppid()))
+equipo.lock_json().unlink()
+
+# El lock de un agente de antes de reiniciar: su pid lo tiene hoy otro proceso. Ni es
+# el agente (el instalador mataría a ese proceso al pararlo y no arrancaría el nuevo)
+# ni impide tomar el lock.
+FIJO_A = 1_800_000_000.0
+real_arranque_a = store.arranque_del_sistema
+store.arranque_del_sistema = lambda: FIJO_A
+try:
+    de_antes = {"pid": os.getpid(), "host": equipo.HOST, "started": "x"}
+    store.write_json(equipo.lock_json(), {**de_antes, "arranque": FIJO_A - 10_000})
+    c("agente_vivo: un registro de otro arranque no es el agente, aunque su pid viva",
+      equipo.agente_vivo(), None)
+    store.write_json(equipo.lock_json(), {**de_antes, "arranque": FIJO_A})
+    c("  uno de este arranque, sí", (equipo.agente_vivo() or {}).get("pid"), os.getpid())
+    store.write_json(equipo.lock_json(), de_antes)
+    c("  uno de antes, sin arranque, va por el pid",
+      (equipo.agente_vivo() or {}).get("pid"), os.getpid())
+    store.write_json(equipo.lock_json(), {**de_antes, "pid": "x"})
+    c("  y uno con un pid ilegible no lo es", equipo.agente_vivo(), None)
+
+    nuevo = {**yo, "arranque": FIJO_A}
+    store.write_json(equipo.lock_json(), {**de_antes, "arranque": FIJO_A - 10_000})
+    c("tomar_lock: el de un agente de otro arranque, aunque su pid viva, se retira y se toma",
+      (equipo.tomar_lock(nuevo), store.read_json(equipo.lock_json()).get("arranque")),
+      (None, FIJO_A))
+    store.write_json(equipo.lock_json(),
+                     {**de_antes, "pid": os.getppid(), "arranque": FIJO_A})
+    c("  el de este arranque no: manda el que está",
+      ((equipo.tomar_lock(nuevo) or {}).get("pid"),
+       store.read_json(equipo.lock_json()).get("pid")), (os.getppid(), os.getppid()))
+finally:
+    store.arranque_del_sistema = real_arranque_a
 equipo.lock_json().unlink()
 
 # escribir en una raíz sin seguir enlaces
@@ -198,9 +310,16 @@ from common import planificador as pl  # noqa: E402
 F.RAICES[:] = []
 
 
-def servida(uid: str, **kw):
-    """Un agente nuevo con una unidad de la lista ya conectada y atendida."""
+def servida(uid: str, config: str | None = None, **kw):
+    """Un agente nuevo con una unidad de la lista ya conectada y atendida.
+
+    Args:
+        uid: El id de la unidad.
+        config: El `sync_config.toml` que lleva en vez del de `F.unidad()`.
+    """
     r = F.unidad(uid, **kw)
+    if config is not None:
+        (r / ".prdrive" / "sync_config.toml").write_text(config, encoding="utf-8")
     equipo.guardar_ajustes(equipo.leer_ajustes().con_unidad(
         equipo.Unidad(uid, equipo.DAEMON, "U", codigo=agente.huella(r) or "")))
     F.RAICES[:] = [r]
@@ -229,6 +348,9 @@ del ag._otro_servicio
 (RS / penwatch.DAEMON_LOCK_REL).unlink()
 F.vueltas(ag, 1)
 c("  sin nadie, lo toma", F.lock(RS).get("pid"), os.getpid())
+arr = store.arranque_del_sistema()      # la hora del arranque baila unos ms entre llamadas
+c("  y apunta en qué arranque del sistema está",
+  abs((F.lock(RS).get("arranque") or 0) - (arr or 0)) < 5, True)
 F.acabar(F.pasadas(RS)[-1])
 F.vueltas(ag, 1)
 F.otro_servicio(RS)                     # un runsync de antes, escribiendo sin mirar
@@ -242,6 +364,93 @@ c("el stop de OTRO servicio no se lo come el agente: es para ese",
   F.stop(RS).exists(), True)
 F.stop(RS).unlink()
 (RS / penwatch.DAEMON_LOCK_REL).unlink()
+
+# El lock de un servicio de antes de reiniciar no frena al agente: su pid ya es
+# el de cualquier otro proceso.
+FIJO = 1_800_000_000.0
+real_arranque = store.arranque_del_sistema
+store.arranque_del_sistema = lambda: FIJO
+try:
+    for texto, extra, pid in (("de otro arranque no cuenta", {"arranque": FIJO - 10_000}, None),
+                              ("de este arranque sí", {"arranque": FIJO}, os.getppid()),
+                              ("sin arranque, de antes, va por el pid", {}, os.getppid())):
+        store.write_json(RS / penwatch.DAEMON_LOCK_REL,
+                         {"pid": os.getppid(), "host": penwatch.HOST, "started": "x", **extra})
+        c(f"un servicio vivo {texto}",
+          (ag._otro_servicio(ag.conexiones[S]) or {}).get("pid"), pid)
+finally:
+    store.arranque_del_sistema = real_arranque
+(RS / penwatch.DAEMON_LOCK_REL).unlink()
+
+# El agente solo relee el config de una raíz cuando cambia su mtime: uno editado
+# CON el mtime intacto (en una unidad de código viejo, cuyo `sync.py` no comprueba
+# nada) se colaría. Por eso, justo antes de lanzar una pasada, lo lee de nuevo.
+W = "w" * 32
+ag6, RW = servida(W, parejas=("docs",))
+con_w = ag6.conexiones[W]
+conf_w = RW / ".prdrive" / "sync_config.toml"
+c("la raíz está servida y con el lock del agente", (con_w.servicio is not None, con_w.lock is not None),
+  (True, True))
+ag6.pasada = None
+antes = len(F.pasadas(RW))
+ag6._lanzar(pl.Tarea(pl.PASADA, W, "docs"), F.reloj())
+c("con el config de siempre, la pasada se lanza", len(F.pasadas(RW)) - antes, 1)
+lecturas: list = []
+leer_de_verdad = getattr(agente, "leer_config", None)
+if leer_de_verdad is not None:
+    agente.leer_config = lambda raiz: lecturas.append(raiz) or leer_de_verdad(raiz)
+F.vueltas(ag6, 4)
+if leer_de_verdad is not None:
+    agente.leer_config = leer_de_verdad
+c("  y no lo relee en cada vuelta: solo al ir a lanzar", lecturas, [])
+F.acabar(F.pasadas(RW)[-1])
+F.vueltas(ag6, 1)
+ag6.pasada = None
+sello = conf_w.stat()
+conf_w.write_text(conf_w.read_text(encoding="utf-8").replace(
+    'remote = "nas"\n', 'remote = "nas"\nextra_flags = ["--sftp-ssh", "sh -c id"]\n', 1),
+    encoding="utf-8")
+os.utime(conf_w, ns=(sello.st_atime_ns, sello.st_mtime_ns))
+c("el config cambió y conserva su mtime", conf_w.stat().st_mtime_ns, sello.st_mtime_ns)
+antes = len(F.pasadas(RW))
+ag6._lanzar(pl.Tarea(pl.PASADA, W, "docs"), F.reloj())
+c("  la pasada no se lanza", (len(F.pasadas(RW)), ag6.pasada), (antes, None))
+c.contains("  su motivo dice que no sirve y por qué", con_w.motivo, "sin servicio: ")
+c.contains("  con el flag que sobra", con_w.motivo, "sftp-ssh")
+c("  y en el diario consta que no se lanzó, con el motivo",
+  any("no lanzo docs" in d and "sftp-ssh" in d for d in F.DIARIO[-4:]), True)
+c("  la raíz deja de servirse", con_w.servicio, None)
+F.vueltas(ag6, 3)
+c("  y en las vueltas siguientes tampoco se lanza", len(F.pasadas(RW)), antes)
+c.contains("  sigue sin servicio, con su motivo", con_w.motivo, "sftp-ssh")
+c("  y se avisa una vez, de que se rechaza el config",
+  [t_ for t_, _ in F.AVISOS if t_ == "U: config rechazado"], ["U: config rechazado"])
+
+W2 = "u" * 32
+ag6b, RW2 = servida(W2, parejas=("docs",))
+ag6b.pasada = None
+(RW2 / ".prdrive" / "sync_config.toml").unlink()
+antes = len(F.pasadas(RW2))
+ag6b._lanzar(pl.Tarea(pl.PASADA, W2, "docs"), F.reloj())
+c("un config que ya no se puede leer tampoco deja lanzar",
+  (len(F.pasadas(RW2)), "no se puede leer" in ag6b.conexiones[W2].motivo), (antes, True))
+
+# El aviso de una raíz que no se sirve dice la causa: un config rechazado no es
+# «nada que sincronizar».
+F.AVISOS.clear()
+servida("y" * 32, parejas=("docs",), extra={"docs": 'remote = "nas,ssh=\'x\'"\n'})
+mios = [(t_, x) for t_, x in F.AVISOS if t_.startswith("U:")]
+c("un config que la puerta de seguridad rechaza: «config rechazado»", [t_ for t_, _ in mios],
+  ["U: config rechazado"])
+c.contains("  y el texto dice qué sobra", mios[0][1] if mios else "", "[docs] 'remote' no vale")
+F.AVISOS.clear()
+servida("z" * 32, config="esto no es toml\n")
+c("uno que no es TOML sigue siendo «nada que sincronizar»",
+  [t_ for t_, _ in F.AVISOS if t_.startswith("U:")], ["U: nada que sincronizar"])
+F.AVISOS.clear()
+servida("s" * 32, config='[defaults]\nremote = "nas"\n')
+c("  y uno sin ninguna pareja, también",
+  [t_ for t_, _ in F.AVISOS if t_.startswith("U:")], ["U: nada que sincronizar"])
 
 # un solo servicio: el lado de runsync
 estado_rs = tmpdir("prdrive-runsync-")

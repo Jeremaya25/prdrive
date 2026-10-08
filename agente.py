@@ -158,7 +158,6 @@ from common import (APP_NAME, avisos, avisos_carpeta, catalog, components,  # no
                     store, update, vestibulo)
 from common import huella as huellas  # noqa: E402  (`huella()` es la del código de una raíz)
 from common import planificador as pl  # noqa: E402
-from common.store import pid_alive  # noqa: E402
 from ui import bandeja, prefs, volumen  # noqa: E402
 
 try:
@@ -728,6 +727,47 @@ class Servicio:
     locales: Mapping[str, str] = field(default_factory=dict)
 
 
+class ConfigRechazada(ValueError):
+    """El config de una raíz trae algo que no puede llegar a la línea de órdenes de rclone.
+
+    Es el `ConfigError` de `model.comprobar_seguridad()` como `ValueError`, que
+    es lo que dice por qué no se sirve una raíz. Se distingue de los demás para
+    avisar de lo que es: un config rechazado no es «nada que sincronizar».
+    """
+
+
+def leer_config(raiz: Path) -> dict:
+    """Lee el `sync_config.toml` de una raíz, a pelo, y lo pasa por la puerta de seguridad.
+
+    Es lo que el agente comprueba de un config ajeno antes de servir una raíz
+    (`leer_servicio()`) y de lanzar una pasada (`Agente._lanzar()`): el `sync.py`
+    de una raíz de antes de esa puerta no comprueba nada, y el agente solo
+    relee el config si cambia su fecha, que quien lo edite puede conservar.
+
+    Args:
+        raiz: La raíz de la unidad.
+
+    Returns:
+        El config tal como salió del TOML.
+
+    Raises:
+        ConfigRechazada: Si `model.comprobar_seguridad()` lo rechaza.
+        ValueError: Si no se puede leer o no es TOML válido.
+    """
+    try:
+        crudo = tomllib.loads((app(raiz) / "sync_config.toml").read_text(encoding="utf-8"))
+    except OSError as e:
+        raise ValueError(f"no se puede leer sync_config.toml ({e})") from e
+    except tomllib.TOMLDecodeError as e:
+        raise ValueError(f"sync_config.toml no es TOML válido ({e})") from e
+    try:
+        model.comprobar_seguridad(crudo, model.es_equipo(app(raiz)),
+                                  carpeta_programa=APP_SUBDIR)
+    except model.ConfigError as e:
+        raise ConfigRechazada(str(e)) from e
+    return crudo
+
+
 def leer_servicio(raiz: Path) -> Servicio:
     """Devuelve las parejas y el intervalo del servicio de esa raíz.
 
@@ -736,17 +776,20 @@ def leer_servicio(raiz: Path) -> Servicio:
     vigilada (`common/llavero.py`). Se lee el TOML a pelo y no con `model.parse_config()`
     porque la raíz puede ir en otra versión que el agente: lo que valida es su
     `sync.py`, y un modo que este agente no conozca no puede dejarla sin
-    servicio.
+    servicio. Lo único que sí comprueba el agente es lo que acabaría en la
+    línea de órdenes de rclone en ESTE equipo (`model.comprobar_seguridad()`,
+    que también mira que el `local` de cada pareja no salga de la raíz, con la
+    regla de la raíz del equipo si lo es, ni sea la carpeta del programa de ESA
+    raíz: el agente corre en su propia carpeta, no en la `.prdrive` de la
+    unidad): el `sync.py` de una raíz de antes de esa regla no comprueba nada, y
+    `orden_sonda()` pasa el `remote` de cada pareja a un `rclone lsd`.
 
     Raises:
-        ValueError: Con la frase que decir si no hay nada que atender.
+        ValueError: Con la frase que decir si no hay nada que atender, o
+            `ConfigRechazada` si el config trae algo que no puede llegar a
+            rclone (`leer_config()`).
     """
-    try:
-        crudo = tomllib.loads((app(raiz) / "sync_config.toml").read_text(encoding="utf-8"))
-    except OSError as e:
-        raise ValueError(f"no se puede leer sync_config.toml ({e})") from e
-    except tomllib.TOMLDecodeError as e:
-        raise ValueError(f"sync_config.toml no es TOML válido ({e})") from e
+    crudo = leer_config(raiz)
     defaults = crudo.get("defaults") if isinstance(crudo.get("defaults"), dict) else {}
     remotos: dict[str, str] = {}
     locales: dict[str, str] = {}
@@ -851,6 +894,44 @@ def presente(raiz: Path) -> bool:
         return (raiz / penwatch.CONTROL_FILE).is_file()
     except OSError:
         return False
+
+
+def _registro_vivo(raiz: Path, rel: Path) -> dict | None:
+    """Devuelve ese registro de la raíz si es de un proceso vivo de este equipo y arranque.
+
+    Es el `penwatch._vivo_aqui()` del agente, con el arranque del sistema
+    (`store.vivo_en_este_arranque()`). Penwatch se queda con el pid solo porque
+    únicamente decide si lanzar o no; el agente pausa una raíz por lo que
+    diga, y el registro de una ventana de antes de reiniciar, con su pid
+    reutilizado, la dejaría en pausa para siempre. Solo lee: no limpia lo
+    rancio ni escribe en el dispositivo, que bloquearía su extracción.
+
+    Args:
+        raiz: La raíz de la unidad.
+        rel: El registro, relativo a la raíz (`penwatch.UI_LOCK_REL`,
+            `penwatch.DAEMON_LOCK_REL`).
+
+    Returns:
+        El registro, o `None`.
+    """
+    info = store.read_json(raiz / rel)
+    return info if store.vivo_en_este_arranque(info, HOST) else None
+
+
+def _aplicacion_en_marcha(raiz: Path) -> str | None:
+    """Devuelve qué hay ya en marcha para esa raíz en este equipo, o `None`.
+
+    Es `penwatch.aplicacion_en_marcha()` con `_registro_vivo()`, y dice lo
+    mismo: la ventana de runsync o el servicio periódico (el de runsync o
+    el del propio agente). Solo mira.
+    """
+    ventana = _registro_vivo(raiz, penwatch.UI_LOCK_REL)
+    if ventana is not None:
+        return f"la ventana de runsync ya está abierta (pid {ventana.get('pid')})"
+    servicio = _registro_vivo(raiz, penwatch.DAEMON_LOCK_REL)
+    if servicio is not None:
+        return f"el servicio periódico ya está en marcha (pid {servicio.get('pid')})"
+    return None
 
 
 def punto_ocupado(unidad: equipo.Unidad) -> str | None:
@@ -1858,7 +1939,7 @@ class Agente:
         No la abre si ya hay una ventana o un servicio en marcha.
         """
         con.lanzada = True
-        ocupado = penwatch.aplicacion_en_marcha(con.raiz)
+        ocupado = _aplicacion_en_marcha(con.raiz)
         if ocupado:
             diario(f"{con.nombre}: no abro la ventana: {ocupado}")
             return
@@ -1876,7 +1957,7 @@ class Agente:
                    + (self._motivo_sin_servicio(con) if self._por_actualizar(con)
                       else SIN_RCLONE))
             return
-        ventana = penwatch._vivo_aqui(con.raiz, penwatch.UI_LOCK_REL)
+        ventana = _registro_vivo(con.raiz, penwatch.UI_LOCK_REL)
         if ventana is not None:
             diario(f"{con.nombre}: su ventana ya está abierta (pid {ventana.get('pid')})")
             return
@@ -1957,24 +2038,34 @@ class Agente:
         try:
             con.servicio, con.error = leer_servicio(con.raiz), None
         except ValueError as e:
-            con.servicio, con.error = None, str(e)
-            if not con.avisado_error:
-                con.avisado_error = True
-                avisar(f"{con.nombre}: nada que sincronizar", con.error)
+            self._sin_servicio(con, e)
+
+    def _sin_servicio(self, con: Conexion, error: ValueError) -> None:
+        """Deja esa conexión sin servicio por su config, y lo avisa una vez.
+
+        El aviso dice lo que pasa: un config que la puerta de seguridad rechaza
+        (`ConfigRechazada`) es «config rechazado», y lo demás (no se puede leer,
+        no es TOML, no tiene ninguna pareja) es «nada que sincronizar».
+
+        Args:
+            con: La conexión.
+            error: Por qué no hay servicio (`leer_servicio()`, `leer_config()`).
+        """
+        con.servicio, con.error = None, str(error)
+        con.motivo = f"sin servicio: {con.error}"
+        if not con.avisado_error:
+            con.avisado_error = True
+            que = "config rechazado" if isinstance(error, ConfigRechazada) \
+                else "nada que sincronizar"
+            avisar(f"{con.nombre}: {que}", con.error)
 
     def _otro_servicio(self, con: Conexion) -> dict | None:
         """Devuelve el registro de otro servicio vivo de este equipo en esa raíz.
 
-        Es `None` si no hay otro.
+        Es `None` si no hay otro, o si el registro es de antes de reiniciar.
         """
         info = store.read_json(con.raiz / penwatch.DAEMON_LOCK_REL)
-        if info.get("host") != HOST:
-            return None
-        try:
-            pid = int(info.get("pid", -1))
-        except (TypeError, ValueError):
-            return None
-        if pid == os.getpid() or not pid_alive(pid):
+        if not store.vivo_en_este_arranque(info, HOST) or info.get("pid") == os.getpid():
             return None
         return info
 
@@ -2036,7 +2127,7 @@ class Agente:
             con.pausa = ahora
             diario(f"{con.nombre}: runsync ha pedido parar el servicio; en pausa")
             dlog(con.raiz, "servicio (agente del equipo) en pausa: lo ha pedido runsync")
-        ventana = penwatch._vivo_aqui(con.raiz, penwatch.UI_LOCK_REL) is not None
+        ventana = _registro_vivo(con.raiz, penwatch.UI_LOCK_REL) is not None
         if ventana:
             con.pausa = ahora
         if otro is not None and con.lock is not None:
@@ -2106,6 +2197,7 @@ class Agente:
         """
         unidad = self.ajustes.unidades[con.id]
         datos = {"pid": os.getpid(), "host": HOST, "started": store.stamp(),
+                 "arranque": store.arranque_del_sistema(),
                  "pairs": [p.nombre for p in con.servicio.parejas],
                  "interval_min": con.servicio.minutos, "agente": True,
                  "modo": unidad.modo}
@@ -2544,7 +2636,10 @@ class Agente:
         """Lanza una tarea: una pasada (el `sync.py` de la raíz) o una sonda del remoto.
 
         Antes de una pasada se comprueba otra vez que el lock sigue siendo
-        nuestro.
+        nuestro y se lee de nuevo el config de la raíz (`leer_config()`): el
+        agente solo lo relee si cambia su fecha, y un config editado conservándola
+        (en una unidad cuyo `sync.py` no comprueba nada) correría sin mirar. Si
+        ya no vale, no se lanza, y la raíz queda sin servicio con su motivo.
         """
         con = self.conexiones[tarea.raiz]
         if tarea.tipo == pl.PASADA and not self._lock_es_nuestro(con):
@@ -2553,6 +2648,14 @@ class Agente:
             con.lock = None
             diario(f"[{con.nombre}] el lock ya no es mío; no lanzo {tarea.pareja}")
             return
+        if tarea.tipo == pl.PASADA:
+            try:
+                leer_config(con.raiz)
+            except ValueError as e:
+                self._sin_servicio(con, e)
+                con.firma = ()              # la vuelta que viene lo lee entero otra vez
+                diario(f"[{con.nombre}] no lanzo {tarea.pareja}: {e}")
+                return
         if tarea.urgente:
             self.urgentes = [u for u in self.urgentes if u != (tarea.raiz, tarea.pareja)]
         if tarea.tipo == pl.SONDA:
@@ -2764,6 +2867,7 @@ class Agente:
                  }.get(como, f"ERROR rc={rc}")
         con.lock.setdefault("last_results", {})[pareja] = texto
         con.lock["last_cycle"] = store.stamp()
+        con.lock["arranque"] = store.arranque_del_sistema()     # cancela la deriva del reloj
         destino = en_la_raiz(con.raiz, con.raiz / penwatch.DAEMON_LOCK_REL)
         if destino is not None:
             store.write_json(destino, con.lock)
@@ -2908,7 +3012,7 @@ class Agente:
                     continue                # acaba la pareja en curso
                 if self._mirando(uid) and ahora - b.desde < ESPERA_VENTANA:
                     continue                # y la foto en curso: tiene la carpeta abierta
-                if con is not None and penwatch._vivo_aqui(
+                if con is not None and _registro_vivo(
                         con.raiz, penwatch.UI_LOCK_REL) is not None:
                     # Su ventana pide bloquear y se cierra; se le da un rato.
                     if ahora - b.desde >= ESPERA_VENTANA:
@@ -3094,7 +3198,7 @@ class Agente:
                 continue                    # acaba la pareja en curso
             if self._mirando(uid) and ahora - e.desde < ESPERA_VENTANA:
                 continue                    # y la foto en curso: tiene la carpeta abierta
-            if penwatch._vivo_aqui(con.raiz, penwatch.UI_LOCK_REL) is not None:
+            if _registro_vivo(con.raiz, penwatch.UI_LOCK_REL) is not None:
                 # Su ventana corre desde la propia unidad y la tiene ocupada.
                 if ahora - e.desde >= ESPERA_VENTANA:
                     del self.expulsiones[uid]
@@ -3254,7 +3358,7 @@ class Agente:
         La ventana ofrece su propia actualización, y no se le cambia el
         programa por debajo.
         """
-        if penwatch._vivo_aqui(con.raiz, penwatch.UI_LOCK_REL) is None:
+        if _registro_vivo(con.raiz, penwatch.UI_LOCK_REL) is None:
             return False
         avisar(f"{con.nombre}: tiene su ventana abierta",
                "No la actualizo por debajo de ella: actualízala desde la ventana, o "
@@ -4238,6 +4342,7 @@ def cmd_run(_args: argparse.Namespace) -> int:
     # Tomar el lock es mirar y escribir en un paso (`equipo.tomar_lock()`): dos
     # arranques a la vez no pueden ver los dos que no hay nadie.
     otro = equipo.tomar_lock({"pid": os.getpid(), "host": HOST, "started": store.stamp(),
+                              "arranque": store.arranque_del_sistema(),
                               "codigo": str(SCRIPT_DIR)})
     if otro is not None:
         print(f"Ya hay un agente en marcha (pid {otro.get('pid', '?')}).")
@@ -4491,7 +4596,7 @@ def cmd_abrir(args: argparse.Namespace) -> int:
             time.sleep(1.0)
     # El servicio no estorba (lo pausa la propia ventana al abrirse); otra
     # ventana sí, y runsync ya se negaría: se dice aquí, sin lanzar nada.
-    ventana = penwatch._vivo_aqui(raiz, penwatch.UI_LOCK_REL)
+    ventana = _registro_vivo(raiz, penwatch.UI_LOCK_REL)
     if ventana is not None:
         print(f"La ventana de {raiz} ya está abierta (pid {ventana.get('pid')}).")
         return 0

@@ -1888,7 +1888,7 @@ def _paso_final(cuerpo, wiz) -> None:
 
         Es lo que hace que esto se teclee una sola vez: el siguiente
         dispositivo la hereda de ahí en vez de volver a preguntarla. La clave
-        NO viaja: solo las opciones del backend.
+        NO viaja: solo las opciones del backend, sin contraseñas ni órdenes.
         """
         wiz.aviso(
             "La conexión se guarda en el catálogo desde la ventana de parejas del "
@@ -1897,7 +1897,9 @@ def _paso_final(cuerpo, wiz) -> None:
             f"Lo que hay que guardar es:\n\n"
             f"[remote]\n" + "\n".join(
                 f"{k} = {v}" for k, v in
-                profile.to_catalog_remote(wiz.perfil_final).items()))
+                profile.to_catalog_remote(wiz.perfil_final).items())
+            + "\n\nNo se incluyen contraseñas, claves ni órdenes (ssh): cada "
+              "dispositivo lleva las suyas.")
 
     def llevar_veracrypt() -> None:
         """Deja, o pone al día, el VeraCrypt que viaja en el dispositivo.

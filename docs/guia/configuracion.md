@@ -51,6 +51,51 @@ El script se reserva `--config`, `--log-file`, `--dry-run`, `--workdir` y
 `--resync`, porque dependen de *esta* ejecución. Para lo que no quepa en el
 esquema está `extra_flags`, una lista de cadenas que se pasan crudas.
 
+### Lo que el config no admite
+
+El config viaja con el dispositivo y se puede editar a mano. Para que un config
+ajeno no pueda hacer que rclone ejecute una orden en el equipo donde enchufes la
+unidad, ni que sincronice carpetas de fuera de ella, el programa se niega a
+leerlo si trae:
+
+- **Un flag que lanza un programa**: los que acaban en `-command` o en `-ssh`
+  (`password-command`, `sftp-ssh`…), `metadata-mapper`, `rc` y los `rc-…`. Vale
+  igual en `[defaults.flags]`, en `[pair.flags]` y en `extra_flags`, y también
+  si va escondido en el valor de otro (`checksum = "--sftp-ssh=…"`).
+- **Un flag que escribe un fichero cualquiera del equipo**: `cpuprofile` y
+  `memprofile` guardarían (o vaciarían) la ruta que les pongas.
+- **Un flag que ya pone el script**, también en `extra_flags`: `resync = true`
+  forzaría un `--resync` en cada pasada, y un `--config` o un `--workdir` propios
+  pisarían los del dispositivo.
+- **Un `remote` que no sea un nombre**: el de un remote de tu `rclone.conf`, con
+  letras, números, espacios entre palabras y `. _ + @ -`. Si lleva `,`, `:`, `=`
+  o comillas, rclone lo leería como una conexión con sus propias opciones
+  (`nas,ssh='…'`), y si empieza por `-`, como una opción. Tampoco vale una sola
+  letra (`C`): en Windows rclone la leería como la unidad `C:`; ponle al remote
+  un nombre de dos caracteres o más. Vale para el `remote` de una pareja y para
+  el `remote` y el `catalog_remote` de `[defaults]`.
+- **Un `include` o un `exclude` con un salto de línea**: en el fichero de filtros
+  cada línea es una regla, y una `!` suelta borraría las de antes.
+- **Un `local` que no es una carpeta de dentro del dispositivo**: con un `..` o
+  una letra de unidad (`C:/…`) sincronizaría (y en un espejo, borraría) carpetas
+  de tu ordenador; y la del programa (`.prdrive`, que lleva la clave) y la del
+  llavero (`.keychain`, que tiene su propia pareja) tampoco valen, ni con
+  puntos o espacios al final (`.prdrive.`), ni un tramo de solo puntos o espacios
+  (`...`), ni un `:` en el nombre (`docs:flujo`). Una barra al principio
+  (`/sync-data/docs`) se sigue admitiendo.
+
+El aviso dice de qué pareja es (o de `[defaults]`) y qué clave sobra; hasta que
+la quites a mano, la ventana no abre. El agente del equipo hace la misma
+comprobación antes de atender una unidad, aunque su código sea más antiguo, y si
+no pasa no la atiende y dice por qué. Lo que sí sigue valiendo es ponerlo en el
+`rclone.conf`: allí es una opción del remote, no del config que viaja.
+
+Es un límite, no una garantía de que no haya otra forma: no se miran las opciones
+de un backend que redirigen la conexión (`--sftp-host`, `--…-url`,
+`--…-endpoint`), ni `--temp-dir` o `--cache-dir`, ni los ficheros de filtros
+(`--include-from`, `--exclude-from`, `--files-from`). Revisa el config de una
+unidad que no sea tuya antes de enchufarla.
+
 La capa base lleva `--verbose`, `--create-empty-src-dirs` y las estadísticas del
 **progreso en vivo**: `--stats 2s --stats-one-line`. Con ellas rclone escribe en
 su log, cada dos segundos, cuánto lleva; `sync.py` lo va leyendo mientras corre
@@ -113,3 +158,15 @@ detección de cambios. rclone guarda el md5 de ese fichero junto a la referencia
 solo lo reescribe al hacer `--resync`, así que **cambiar los patrones de una
 pareja bisync exige un `--resync`**. El programa compara el hash él mismo y lo
 dice, en vez de dejar que rclone aborte con un mensaje suyo.
+
+Una pareja que sincroniza la **raíz entera** de la unidad (`local = "."`) lleva
+además, delante de las tuyas, una regla que deja fuera la carpeta del programa
+(`.prdrive/`, con tu clave y el `rclone.conf`). Está en el programa y no se puede
+quitar desde el config. En `copy` y `sync` es un `exclude`, y rclone aplica todos
+los `include` antes que los `exclude`: un `include` tuyo que case con esa carpeta
+la dejaría pasar. Al actualizar, una pareja `bisync` de la raíz que ya
+existía pide **un `--resync`** desde la ventana (su fichero de filtros ha
+cambiado), y hasta entonces el servicio y el agente la saltan; las parejas de la
+raíz que no son `bisync` no necesitan nada. Si esa pareja llegó a subir
+`.prdrive/` al remoto, el programa **no la borra**: al pedir el resync (en la
+ventana, en «Reparación» o en la consola) te avisa de dónde está, y la borras tú.

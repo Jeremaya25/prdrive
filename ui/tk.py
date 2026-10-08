@@ -25,14 +25,14 @@ import subprocess
 import sys
 import threading
 import time
-from typing import NamedTuple
+from typing import Mapping, NamedTuple
 
 from common import (APP_NAME, components, conflicts, model, progress, revision,
-                    update)
+                    store, update)
 from common.model import Config
 
-from . import (Choice, abrir, cifrado, cuando, cuando_sello, icons, manual_args,
-               pair_status_notes, pair_times, prefs, theme)
+from . import (Choice, abrir, avisos_de_resync, cifrado, cuando, cuando_sello, icons,
+               manual_args, pair_status_notes, pair_times, prefs, theme)
 
 TITLE = APP_NAME
 """El nombre de la ventana, que sale de `common/`."""
@@ -69,11 +69,12 @@ class TkFrontend:
         """Enseña la ventana principal y devuelve la elección."""
         return main_window(config, startup_msg)
 
-    def approve_resync(self, pending: list[str]) -> bool:
+    def approve_resync(self, pending: list[str],
+                       carpetas: Mapping[str, str] | None = None) -> bool:
         """Pregunta en una ventana si se aprueba el `--resync` de esas parejas."""
         root = root_oculto()
         try:
-            return preguntar_resync(root, pending)
+            return preguntar_resync(root, pending, carpetas)
         finally:
             root.destroy()
 
@@ -104,15 +105,27 @@ def subtitulo_sync(args: list[str]) -> str:
     return ", ".join(a for a in args if not a.startswith("-"))
 
 
-def preguntar_resync(parent, pending: list[str]) -> bool:
-    """Devuelve el sí/no del `--resync`, colgado de la ventana que pregunta."""
+def preguntar_resync(parent, pending: list[str],
+                     carpetas: Mapping[str, str] | None = None) -> bool:
+    """Devuelve el sí/no del `--resync`, colgado de la ventana que pregunta.
+
+    Args:
+        parent: La ventana de la que cuelga.
+        pending: Las parejas que lo piden.
+        carpetas: Por pareja, dónde está en el remoto la copia del programa que
+            subió (`ui.carpetas_del_programa()`); sale en el cuadro, que es
+            cuando se puede decir.
+    """
     from tkinter import messagebox
+    avisos = avisos_de_resync(carpetas or {})
+    aparte = "\n\n" + "\n".join(avisos) if avisos else ""
     return bool(messagebox.askyesno(
         TITLE,
         "Estas parejas requieren --resync (primera vez, baseline perdido o "
         "filtros cambiados):\n\n  " + "\n  ".join(pending) +
         "\n\nEl resync compara ambos lados y fija la referencia; no borra por "
-        "diferencias.\n¿Ejecutarlo ahora? (si no, esas parejas se saltarán)",
+        "diferencias." + aparte +
+        "\n¿Ejecutarlo ahora? (si no, esas parejas se saltarán)",
         parent=parent))
 
 
@@ -2091,7 +2104,8 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
             if not sel:
                 return  # nada marcado, nada que hacer
             args = manual_args(vista["config"], sel,
-                               lambda pendientes: preguntar_resync(root, pendientes))
+                               lambda pendientes, carpetas: preguntar_resync(
+                                   root, pendientes, carpetas))
             lanzar("Sincronización manual", args)
 
         def servicio() -> None:
@@ -2341,8 +2355,9 @@ def output_window(title: str, cmd: list[str], parent=None,
 
     Sustituye a la consola cuando no la hay, así que la usan tanto `sync.py`
     como `penwatch.py`: recibe la orden entera y no supone a quién llama.
-    Cerrar la ventana a mitad de faena corta el proceso (bisync se recupera con
-    `--recover` en la siguiente pasada).
+    Cerrar la ventana a mitad de faena corta el proceso y todo lo que cuelga de
+    él (su rclone también: `store.matar_arbol()`); bisync se recupera con
+    `--recover` en la siguiente pasada.
 
     Con `parent` se cuelga de una ventana existente en vez de crear un Tk
     nuevo: tkinter no lleva bien dos intérpretes a la vez y desde un diálogo ya
@@ -2372,6 +2387,14 @@ def output_window(title: str, cmd: list[str], parent=None,
     import tkinter as tk
     from tkinter import filedialog, font as tkfont, messagebox, ttk
 
+    # Jefe de su sesión (POSIX) o de su grupo de procesos (Windows): cerrar la
+    # ventana corta el árbol entero con `store.matar_arbol()`, que en POSIX
+    # señala al grupo y por eso necesita que `proc` sea su jefe. Se mira el
+    # sistema de verdad y no `IS_WIN`, que los tests fuerzan.
+    if sys.platform == "win32":
+        aparte: dict = {"creationflags": model.CREATE_NEW_PROCESS_GROUP}
+    else:
+        aparte = {"start_new_session": True}
     proc = subprocess.Popen(
         cmd,
         stdin=subprocess.DEVNULL,
@@ -2383,6 +2406,7 @@ def output_window(title: str, cmd: list[str], parent=None,
         encoding="utf-8",
         errors="replace",
         bufsize=1,
+        **aparte,
     )
     q: queue.Queue = queue.Queue()
     DONE = object()
@@ -2555,10 +2579,24 @@ def output_window(title: str, cmd: list[str], parent=None,
             pass
         root.after(120, poll)
 
+    cortado = {"ya": False}
+
+    def cortar() -> None:
+        """Corta el proceso, con su rclone, si sigue; una sola vez por ventana.
+
+        En Windows `taskkill` vuelve antes de que el proceso haya salido: en el
+        siguiente punto de corte `proc.poll()` aún lo vería vivo y se lanzaría
+        otro `taskkill` (hasta tres por ventana).
+        """
+        if cortado["ya"] or proc.poll() is not None:
+            return
+        cortado["ya"] = True
+        store.matar_arbol(proc.pid)
+
     def on_close() -> None:
-        """Corta el proceso si sigue y cierra la ventana."""
-        if state["rc"] is None and proc.poll() is None:
-            proc.terminate()
+        """Corta el proceso, con su rclone, si sigue y cierra la ventana."""
+        if state["rc"] is None:
+            cortar()
         root.destroy()
 
     avisado = {"ya": False}
@@ -2573,8 +2611,7 @@ def output_window(title: str, cmd: list[str], parent=None,
         if evento.widget is not root or avisado["ya"]:
             return
         avisado["ya"] = True
-        if proc.poll() is None:
-            proc.terminate()
+        cortar()
         if al_cerrar is not None:
             rc = state["rc"] if state["rc"] is not None else 1
             try:
@@ -2598,6 +2635,5 @@ def output_window(title: str, cmd: list[str], parent=None,
             pass
     root.after(120, poll)
     esperar()
-    if proc.poll() is None:
-        proc.terminate()
+    cortar()
     return state["rc"] if state["rc"] is not None else 1

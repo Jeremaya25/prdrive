@@ -13,6 +13,7 @@ Esa traducción depende de los flags de la pareja igual que en rclone
 import json
 import sys
 import time
+from dataclasses import replace
 from pathlib import Path
 
 from _harness import Checks, sandbox
@@ -85,7 +86,10 @@ c("pathname: .conflict2 es la de path2",
 c("pathname: un .conflict3 no puede ser suyo, queda sin lado",
   leer("plan.md.conflict3", por_ruta), ("plan.md", None, 3))
 
-extension = conflicts.esquema(pareja({"suffix-keep-extension": True}))
+# El parser ya no admite `suffix-keep-extension` en `[pair.flags]` (lo pone
+# sync.py), pero `esquema()` lo sigue leyendo de los flags: la pareja se monta a mano.
+extension = conflicts.esquema(replace(pareja(), flags={**pareja().flags,
+                                                       "suffix-keep-extension": True}))
 c("--suffix-keep-extension: el sufijo va antes de la extensión",
   leer("plan.conflicto-remoto1.md", extension), ("plan.md", "path2", 1))
 c("sin ese flag, un sufijo en medio no es un conflicto",

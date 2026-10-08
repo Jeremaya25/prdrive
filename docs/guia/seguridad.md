@@ -10,9 +10,31 @@ Léelo entero antes de usar esto con datos que te importen.
   Quien lo encuentre entra en tus datos hasta que revoques esa clave. **Cífralo**
   (el asistente ayuda con VeraCrypt y BitLocker) y usa en el servidor un usuario
   dedicado y limitado, no el administrador.
-- **La clave nunca sube al remoto.** Ninguna pareja sincroniza `.prdrive/`. Las
-  rutas del `rclone.conf` del dispositivo son relativas (`key_file = keys/…`), que
-  es además lo que lo hace funcionar con cualquier letra de unidad.
+- **La clave nunca sube al remoto.** Ninguna pareja sincroniza `.prdrive/`: las
+  que sincronizan la raíz entera (`local = "."`) llevan una regla del programa que
+  la deja fuera, y el config no puede quitarla. En `bisync` la regla gana siempre;
+  en `copy` y `sync` rclone aplica todos los `include` antes que los `exclude`, así
+  que una pareja de la raíz cuyo propio `include` case con ficheros de esa
+  carpeta (`**/*.md` casa con los `.md` de dentro) se los llevaría: no pongas ahí
+  un `include` que la alcance. Las rutas del `rclone.conf` del dispositivo son
+  relativas (`key_file = keys/…`), que es además lo que lo hace funcionar con
+  cualquier letra de unidad.
+- **Si una versión anterior ya subió `.prdrive/`, bórrala del remoto.** El programa
+  no borra nada por su cuenta: una pareja `bisync` de la raíz entera pide un
+  `--resync` tras actualizar, y la confirmación (en la ventana, en «Reparación» y
+  en la consola) te dice dónde está esa copia. Como lleva tu clave, conviene
+  además cambiarla por otra.
+- **El config de una unidad que no es tuya manda en tu equipo.** El
+  `sync_config.toml` viaja con el dispositivo, y el programa (y el agente del
+  equipo, antes de atender una unidad) se niega a leerlo si trae un flag
+  reservado del programa, uno que lanza un programa o que escribe un fichero
+  cualquiera del equipo (`cpuprofile`, `memprofile`), un nombre de remote que es
+  una cadena de conexión, o un `local` que sale del dispositivo
+  ([lo que no admite](configuracion.md#lo-que-el-config-no-admite)). **No
+  cubre** las opciones de un backend que redirigen la conexión (`--sftp-host`,
+  `--…-url`, `--…-endpoint`), que podrían mandar tus credenciales a otro sitio,
+  ni `--temp-dir`, `--cache-dir` o los ficheros de filtros (`--*-from`). Con una
+  unidad ajena, léelo antes de enchufarla.
 - **Los modos `*-mirror` borran.** `--max-delete` es el único freno automático.
   Prueba siempre con `--dry-run` primero.
 - **Escribir el catálogo es lo más arriesgado del programa**, porque gobierna

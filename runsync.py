@@ -21,10 +21,10 @@ vigilante de `penwatch.py` tampoco lanza nada al enchufar el dispositivo.
 Coordinación servicio <-> lanzador (todo en `state/`, viaja con el
 dispositivo):
 
-    daemon.lock.json  <- quién es el servicio (pid, host, arranque, último ciclo)
+    daemon.lock.json  <- quién es el servicio (pid, host, arranque del sistema, último ciclo)
     daemon.stop       <- su presencia le pide al servicio que pare
     daemon.log        <- diario del servicio (recortado automáticamente)
-    ui.lock.json      <- quién tiene la ventana abierta (pid, host, arranque)
+    ui.lock.json      <- quién tiene la ventana abierta (pid, host, arranque del sistema)
     ui_prefs.json     <- parejas e intervalo del servicio (lo gestiona `ui.prefs`)
 
 El servicio es uno, se arranque a mano o al enchufar: `ui_prefs.json` es su
@@ -88,7 +88,6 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 import ui  # noqa: E402
 from common import APP_NAME, keepassxc, llavero, model, prioridad, store, update  # noqa: E402
-from common.store import pid_alive  # noqa: E402
 from ui import prefs  # noqa: E402
 
 SELF = Path(__file__).resolve()
@@ -193,20 +192,15 @@ def _leer_ui() -> dict | None:
 
 
 def _viva_aqui(info: dict | None) -> bool:
-    """Indica si el registro es de una ventana viva EN ESTE EQUIPO.
+    """Indica si el registro es de una ventana o un servicio vivos EN ESTE EQUIPO y arranque.
 
-    Mismo criterio que el registro del servicio: un pid muerto o de otro
-    anfitrión es rastro de un dispositivo extraído sin cerrar nada. El fichero
-    viaja con el dispositivo, así que el pid de otra máquina aquí no significa
-    nada.
+    Mismo criterio para los dos registros: un pid muerto, de otro anfitrión o
+    de antes de reiniciar es rastro de un dispositivo extraído sin cerrar nada
+    (`store.vivo_en_este_arranque()`). El fichero viaja con el dispositivo, así
+    que el pid de otra máquina, o el de otro arranque de esta, aquí no
+    significa nada.
     """
-    if not info:
-        return False
-    try:
-        pid = int(info.get("pid", -1))
-    except (TypeError, ValueError):
-        pid = -1
-    return info.get("host") == HOST and pid_alive(pid)
+    return store.vivo_en_este_arranque(info, HOST)
 
 
 def _crear_exclusivo(ruta: Path, datos: bytes) -> bool | None:
@@ -341,7 +335,8 @@ def tomar_ui() -> dict | None:
     Returns:
         `None` si la ha tomado; si no, el registro de la ventana que la tiene.
     """
-    datos = json.dumps({"pid": os.getpid(), "host": HOST, "started": store.stamp()},
+    datos = json.dumps({"pid": os.getpid(), "host": HOST, "started": store.stamp(),
+                        "arranque": store.arranque_del_sistema()},
                        ensure_ascii=False, indent=1).encode("utf-8")
     for intento in range(2):
         creado = _crear_exclusivo(UI_LOCK, datos)
@@ -425,9 +420,10 @@ def stop_previous_daemon() -> str | None:
     if info is None:
         return None
 
-    pid = int(info.get("pid", -1))
-    if info.get("host") != HOST or not pid_alive(pid):
-        # Rastro de otro equipo (dispositivo extraído sin más) o proceso ya muerto.
+    pid = info.get("pid", -1)           # tal cual: puede ser basura, que `_viva_aqui` descarta
+    if not _viva_aqui(info):
+        # Rastro de otro equipo (dispositivo extraído sin más), de antes de
+        # reiniciar, de un proceso ya muerto o de un pid ilegible.
         LOCK.unlink(missing_ok=True)
         STOP.unlink(missing_ok=True)
         return (f"Había un registro de un servicio ya inexistente "
@@ -463,13 +459,7 @@ def servicio_en_marcha() -> dict | None:
     que es quien lo va a sustituir.
     """
     info = read_lock()
-    if info is None or info.get("host") != HOST:
-        return None
-    try:
-        pid = int(info.get("pid", -1))
-    except (TypeError, ValueError):
-        return None
-    return info if pid_alive(pid) else None
+    return info if _viva_aqui(info) else None
 
 
 def stop_requested() -> bool:
@@ -550,6 +540,7 @@ def daemon_cycle(pairs: list[str], lock_data: dict) -> None:
             dlog(f"[{name}] OK ({secs:.0f}s)")
     lock_data["last_cycle"] = store.stamp()
     lock_data["last_results"] = results
+    lock_data["arranque"] = store.arranque_del_sistema()    # cancela la deriva del reloj
     if _lock_mio(read_lock()):
         # Solo si sigue siendo nuestro: si el lanzador lo borró o lo tiene ya
         # otro servicio, reescribirlo sería quitárselo.
@@ -649,7 +640,8 @@ def vigilar_llavero() -> int:
     if pareja is None:
         return 0
     registro = llavero.registro_vigilante()
-    datos = {"pid": os.getpid(), "host": HOST, "started": store.stamp()}
+    datos = {"pid": os.getpid(), "host": HOST, "started": store.stamp(),
+             "arranque": store.arranque_del_sistema()}
     tomado, otro = store.tomar_registro(registro, datos, _viva_aqui)
     if tomado is False:
         return 0                        # ya hay un vigilante
@@ -864,6 +856,7 @@ def daemon_main(pairs: list[str], interval_min: float) -> int:
         "pid": os.getpid(),
         "host": HOST,
         "started": store.stamp(),
+        "arranque": store.arranque_del_sistema(),
         "pairs": pairs,
         "interval_min": interval_min,
     }
