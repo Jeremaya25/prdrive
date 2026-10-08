@@ -120,6 +120,21 @@ c("al borrarlo, vuelve", pista.winfo_ismapped(), True)
 # 5. un botón mide el alto del diseño
 c("un botón mide 34 px, a uno", abs(en_papel.winfo_reqheight() - 34) <= 1, True)
 
+# 5b. pintar muchos controles no puede tardar: ttk repite el centro de cada
+# pieza como un azulejo, y con un centro pequeño 300 controles tardaban 36 s
+# en X11 (cada copia con transparencia relee el servidor). Con el centro de
+# `icons.CENTRO_ANCHO` son décimas.
+import time  # noqa: E402
+muchos = ttk.Frame(raiz, style="Card.TFrame")
+muchos.pack()
+for i in range(150):
+    ttk.Button(muchos, text=f"B{i}").grid(row=i // 15, column=i % 15)
+    ttk.Entry(muchos, width=4).grid(row=10 + i // 15, column=i % 15)
+inicio = time.monotonic()
+raiz.update()
+c("300 controles se pintan en menos de 5 s", time.monotonic() - inicio < 5, True)
+muchos.destroy()
+
 # 6. la letra propia
 if sys.platform == "win32" or sys.platform.startswith("linux"):
     c("la letra de ui/fuentes/ se carga", theme.cargar_fuentes(), True)

@@ -650,6 +650,28 @@ def _forma(x: float, y: float, w: float, h: float, radio: float,
     return prims
 
 
+CENTRO_ANCHO, CENTRO_ALTO = 256, 64
+"""Lo que mide el centro estirable de una pieza de `caja()`, en píxeles.
+
+ttk no ESTIRA el centro de una pieza de nueve trozos: lo repite como un
+azulejo hasta llenar el control, una llamada de dibujo por copia. Con un
+centro de 2×2 eso eran cientos de copias por botón, y en X11 cada copia de una
+imagen con transparencia le pide los píxeles de debajo al servidor para
+mezclarlos: 300 controles tardaban 36 s en pintarse. Con un centro de este
+tamaño un control normal es una sola copia (o unas pocas, si es muy grande).
+Se hace repitiendo la fila y la columna del medio (`_ensanchar`), sin
+rasterizar más: el centro es de un color.
+"""
+
+
+def _ensanchar(filas, borde: int, ancho: int, alto: int) -> list[list[tuple]]:
+    """Devuelve la pieza con su centro (fila y columna del medio) repetido hasta ese tamaño."""
+    medio_x = len(filas[0]) // 2
+    anchas = [fila[:borde] + [fila[medio_x]] * ancho + fila[-borde:] for fila in filas]
+    medio_y = len(anchas) // 2
+    return anchas[:borde] + [anchas[medio_y]] * alto + anchas[-borde:]
+
+
 def caja(widget, tonos, radio: float = 4, esquinas: str = "1111"):
     """Devuelve la pieza de un control y cuánto mide su borde: `(imagen, borde)`.
 
@@ -693,9 +715,11 @@ def caja(widget, tonos, radio: float = 4, esquinas: str = "1111"):
                                                  lado - ar - ab,
                                                  max(0, r - max(iz, ar, de, ab)),
                                                  esquinas)))
-            return _capas_rgba(capas, float(lado), lado)
+            return _ensanchar(_capas_rgba(capas, float(lado), lado), borde,
+                              CENTRO_ANCHO, CENTRO_ALTO)
 
-        return _foto(widget, ("@caja", tuple(reales), r, esquinas, lado), filas), borde
+        return _foto(widget, ("@caja", tuple(reales), r, esquinas, lado,
+                              CENTRO_ANCHO, CENTRO_ALTO), filas), borde
     except Exception:
         return None, 0
 

@@ -600,6 +600,7 @@ def olvidar(interp) -> None:
     if _puestos.get(id(interp)) is interp:
         del _puestos[id(interp)]
         _imagenes.pop(id(interp), None)
+        _sobres.pop(id(interp), None)
 
 
 def _casilla_propia(widget, style) -> None:
@@ -695,6 +696,9 @@ Su `background` es el de DEBAJO (asoma por las esquinas), así que no sirve
 para saber sobre qué color caen los controles de dentro.
 """
 
+_sobres: dict[int, set[str]] = {}
+"""Las variantes «Sobre…» ya creadas, por intérprete (ver `_asentar`)."""
+
 _SOBRE = re.compile(r"^Sobre[0-9A-F]{6}\.")
 """El prefijo que pone `_asentar()`."""
 
@@ -759,7 +763,14 @@ def _asentar(evento) -> None:
         nuevo = base
         if _hex(w, style.lookup(base, "background")) != fondo:
             nuevo = f"Sobre{fondo[1:]}.{base}"
-            style.configure(nuevo, background=fondo)
+            # Una sola vez por intérprete: cada `style.configure` le dice a
+            # TODOS los widgets que el tema ha cambiado y se vuelven a medir.
+            # Hecho en cada `<Map>`, una ventana de cientos de controles
+            # tardaba más de un minuto en aparecer.
+            hechos = _sobres.setdefault(id(w.tk), set())
+            if nuevo not in hechos:
+                style.configure(nuevo, background=fondo)
+                hechos.add(nuevo)
         if nuevo != estilo:
             w.configure(style=nuevo)
     except Exception:                               # noqa: BLE001
@@ -793,6 +804,11 @@ def _pieza(widget, style, nombre: str, estados, radio: float = RADIO,
     *especiales, (_, defecto) = piezas
     opciones.setdefault("padding", icons.px(widget, 1))
     opciones.setdefault("sticky", "nswe")
+    # El mínimo del control son sus bordes, no lo que mide la pieza: su centro
+    # es grande a propósito (`icons.CENTRO_ANCHO`), y sin esto cada botón
+    # mediría eso como poco.
+    opciones.setdefault("width", 2 * borde)
+    opciones.setdefault("height", 2 * borde)
     style.element_create(nombre, "image", defecto,
                          *[(*estado, img) for estado, img in especiales],
                          border=borde, **opciones)
@@ -1408,6 +1424,7 @@ def apply(widget) -> None:
                     font=fuente("rotulo"))
 
     _controles(widget, style)
+    _sobres[id(interp)] = set()         # un `id` puede ser de un intérprete ya muerto
     _puestos[id(interp)] = interp
 
 
