@@ -870,6 +870,10 @@ def _botones_propios(widget, style) -> None:
             # esquinas. La cara la ponen las piezas, por estado.
             if not estilo.endswith("Quiet.TButton"):
                 style.configure(estilo, background=PAPEL)
+            if normal[0] is not None:
+                # Lo que se pone ENCIMA de un botón (el chip de una fila de
+                # la barra lateral) cae sobre su cara, no sobre su fondo.
+                _CARA[estilo] = normal[0]
             style.map(estilo, background=[], bordercolor=[], lightcolor=[],
                       darkcolor=[])
             _REDONDOS[estilo] = True
@@ -1162,6 +1166,12 @@ def apply(widget) -> None:
         style.configure(f"{sup}Fuerte.TRadiobutton", background=fondo,
                         foreground=manda or TINTA, font=fuente("fuerte"))
         style.map(f"{sup}Fuerte.TRadiobutton", background=[("active", fondo)])
+        # Al pasar por encima, clam pinta un recuadro gris detrás de la opción:
+        # el diseño no lo tiene (lo que cambia es la casilla, no su fondo).
+        style.configure(f"{sup}TRadiobutton", background=fondo,
+                        foreground=manda or TINTA)
+        for clase in ("TCheckbutton", "TRadiobutton"):
+            style.map(f"{sup}{clase}", background=[("active", fondo)])
 
     # La tarjeta y las franjas de color: un borde de 1 px y nada más.
     for nombre, (fondo, color) in (("Card.TFrame", (SUPERFICIE, LINEA)),
