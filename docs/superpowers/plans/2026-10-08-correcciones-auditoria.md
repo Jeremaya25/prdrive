@@ -43,6 +43,8 @@ Baseline: `python tests/run_all.py` → 100/102 green. `test_iconos.py` and `tes
 
 ## Decisions for the user
 
+**Decided (2026-10-08): D1 (a) retire penwatch; D2 (a) hold after the brake; D3 and D4 as proposed.**
+
 - **D1 (S4, penwatch).** (a) **Retire it** (recommended): the wizard and the window offer only the agent; `penwatch install` refuses new installs and names the agent; installed copies keep working and `status` adds a warning row. The agent is already its successor, with the consent model (`huella`). Hardening reaches only reinstalled hosts either way. (b) Harden it: refuse to launch without `device_id`; move `agente.huella()` into `penwatch.py` (the agent already imports penwatch) and check it before each launch; adopt a device runtime only at install. (c) Accept and document.
 - **D2 (S6, unattended mirrors).** (a) **Hold after the brake** (recommended): a `*-mirror` pass that stops on `--max-delete` is not retried by the service or the agent until a person runs it from the window, and «Reparación» says so. This stops the erosion and changes nothing for healthy pairs. (b) An approval gate: mirrors run unattended only after one supervised run; pairs that already have a good run are grandfathered. (c) Both. (d) Leave as is.
 - **D3 (S8): no code.** Default unless you want a progress-based watchdog.
