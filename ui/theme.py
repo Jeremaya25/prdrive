@@ -1372,7 +1372,7 @@ def apply(widget) -> None:
                         foreground=TINTA, insertcolor=TINTA, arrowcolor=TINTA3,
                         padding=relleno_control(widget, 34, "texto", 12),
                         selectbackground=ACENTO_SUAVE,
-                        selectforeground=TINTA, **borde)
+                        selectforeground=TINTA, placeholderforeground=TINTA3, **borde)
         style.map(nombre,
                   bordercolor=[("focus", ACENTO), ("disabled", LINEA)],
                   lightcolor=[("focus", ACENTO), ("disabled", LINEA)],
@@ -1741,13 +1741,31 @@ def caja_texto(parent, **kw):
 
 
 def pista_campo(entrada, texto: str):
-    """Pone en un campo vacío una pista en gris («Buscar un ajuste…») y la devuelve.
+    """Pone en un campo vacío una pista en gris («Buscar un ajuste…»).
 
-    Tk 8.6 no tiene `placeholder` (llega en Tk 9), así que la pista es una
-    etiqueta colocada DENTRO del campo, donde empieza el texto: no se escribe
-    en el campo, así que su variable sigue vacía y nadie tiene que saber que
-    está ahí. Se va en cuanto el campo tiene el foco o algo escrito y vuelve
-    al salir de él vacío; un clic en ella pone el cursor en el campo.
+    Con Tk 9 es la del propio campo (`-placeholder`; su gris es el
+    `placeholderforeground` del estilo, que pone `apply()`): Tk la pinta
+    mientras el campo esté vacío y no la escribe en él, así que su variable
+    sigue vacía. Tk 8.6 no la tiene (`pista_etiqueta`).
+
+    Returns:
+        `None` con la pista de Tk 9; con Tk 8.6, la etiqueta que hace de pista.
+    """
+    import tkinter as tk
+    try:
+        entrada.configure(placeholder=texto)
+        return None
+    except tk.TclError:                          # Tk 8.6: no hay -placeholder
+        return pista_etiqueta(entrada, texto)
+
+
+def pista_etiqueta(entrada, texto: str):
+    """La pista de un campo para Tk 8.6, que no tiene `-placeholder`; la devuelve.
+
+    Es una etiqueta colocada DENTRO del campo, donde empieza el texto: no se
+    escribe en el campo, así que su variable sigue vacía y nadie tiene que
+    saber que está ahí. Se va en cuanto el campo tiene el foco o algo escrito y
+    vuelve al salir de él vacío; un clic en ella pone el cursor en el campo.
     """
     from tkinter import ttk
 

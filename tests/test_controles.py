@@ -106,10 +106,22 @@ c("el grupo redondea solo por fuera",
 texto = tk.StringVar(raiz)
 campo = ttk.Entry(raiz, textvariable=texto)
 campo.pack()
+TK9 = raiz.tk.call("info", "patchlevel").startswith("9")
 pista = theme.pista_campo(campo, "Buscar un ajuste…")
 raiz.update()
-c("con el campo vacío se ve la pista", pista.winfo_ismapped(), True)
 c("y su variable sigue vacía: la pista no se escribe en el campo", texto.get(), "")
+if TK9:
+    # Con Tk 9 la pinta el propio campo; que se vaya al escribir es cosa de Tk.
+    c("con Tk 9 es la pista del propio campo",
+      (pista, str(campo.cget("placeholder"))), (None, "Buscar un ajuste…"))
+    c("  en el gris de las pistas",
+      theme._hex(raiz, style.lookup("TEntry", "placeholderforeground")),
+      theme._hex(raiz, theme.TINTA3))
+    pista = theme.pista_etiqueta(campo, "Buscar un ajuste…")   # y la de Tk 8.6
+    raiz.update()
+else:
+    print("  (saltado) la pista nativa es de Tk 9; este es", raiz.tk.call("info", "patchlevel"))
+c("con el campo vacío se ve la pista de Tk 8.6", pista.winfo_ismapped(), True)
 texto.set("llav")
 raiz.update()
 c("al escribir, se va", pista.winfo_ismapped(), False)
