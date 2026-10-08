@@ -57,7 +57,7 @@ Baseline: `python tests/run_all.py` → 100/102 green. `test_iconos.py` and `tes
 - AGENTS.md safety invariants untouched. Nothing here deletes user data on either side; nothing resyncs unattended.
 - `penwatch.py` is untouched (only D1 changes it). `install/` imports `common/`, never `ui/`.
 - New test-replaceable indirection points are module-level and registered in `docs/agents/reference/commands-testing.md`.
-- One PR per group below. Each bumps `VERSION` (the merge publishes) and has a Spanish title written for the device's user, following `.github/pull_request_template.md`.
+- One PR per group below, with a Spanish title written for the device's user, following `.github/pull_request_template.md`. These PRs do **not** touch `VERSION`: the user decides when a release goes out.
 - Verify with `python tests/run_all.py`, plus the task's own script.
 
 ## Review Focus

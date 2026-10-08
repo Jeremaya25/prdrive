@@ -25,14 +25,14 @@ import subprocess
 import sys
 import threading
 import time
-from typing import NamedTuple
+from typing import Mapping, NamedTuple
 
 from common import (APP_NAME, components, conflicts, model, progress, revision,
                     store, update)
 from common.model import Config
 
-from . import (Choice, abrir, cifrado, cuando, cuando_sello, icons, manual_args,
-               pair_status_notes, pair_times, prefs, theme)
+from . import (Choice, abrir, avisos_de_resync, cifrado, cuando, cuando_sello, icons,
+               manual_args, pair_status_notes, pair_times, prefs, theme)
 
 TITLE = APP_NAME
 """El nombre de la ventana, que sale de `common/`."""
@@ -69,11 +69,12 @@ class TkFrontend:
         """Enseña la ventana principal y devuelve la elección."""
         return main_window(config, startup_msg)
 
-    def approve_resync(self, pending: list[str]) -> bool:
+    def approve_resync(self, pending: list[str],
+                       carpetas: Mapping[str, str] | None = None) -> bool:
         """Pregunta en una ventana si se aprueba el `--resync` de esas parejas."""
         root = root_oculto()
         try:
-            return preguntar_resync(root, pending)
+            return preguntar_resync(root, pending, carpetas)
         finally:
             root.destroy()
 
@@ -104,15 +105,27 @@ def subtitulo_sync(args: list[str]) -> str:
     return ", ".join(a for a in args if not a.startswith("-"))
 
 
-def preguntar_resync(parent, pending: list[str]) -> bool:
-    """Devuelve el sí/no del `--resync`, colgado de la ventana que pregunta."""
+def preguntar_resync(parent, pending: list[str],
+                     carpetas: Mapping[str, str] | None = None) -> bool:
+    """Devuelve el sí/no del `--resync`, colgado de la ventana que pregunta.
+
+    Args:
+        parent: La ventana de la que cuelga.
+        pending: Las parejas que lo piden.
+        carpetas: Por pareja, dónde está en el remoto la copia del programa que
+            subió (`ui.carpetas_del_programa()`); sale en el cuadro, que es
+            cuando se puede decir.
+    """
     from tkinter import messagebox
+    avisos = avisos_de_resync(carpetas or {})
+    aparte = "\n\n" + "\n".join(avisos) if avisos else ""
     return bool(messagebox.askyesno(
         TITLE,
         "Estas parejas requieren --resync (primera vez, baseline perdido o "
         "filtros cambiados):\n\n  " + "\n  ".join(pending) +
         "\n\nEl resync compara ambos lados y fija la referencia; no borra por "
-        "diferencias.\n¿Ejecutarlo ahora? (si no, esas parejas se saltarán)",
+        "diferencias." + aparte +
+        "\n¿Ejecutarlo ahora? (si no, esas parejas se saltarán)",
         parent=parent))
 
 
@@ -2091,7 +2104,8 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
             if not sel:
                 return  # nada marcado, nada que hacer
             args = manual_args(vista["config"], sel,
-                               lambda pendientes: preguntar_resync(root, pendientes))
+                               lambda pendientes, carpetas: preguntar_resync(
+                                   root, pendientes, carpetas))
             lanzar("Sincronización manual", args)
 
         def servicio() -> None:

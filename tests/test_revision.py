@@ -7,7 +7,9 @@ dos sitios a la vez. Por eso lo que se comprueba es qué se detecta y con qué
 gravedad, no cómo queda escrito.
 """
 
+import contextlib
 import hashlib
+import io
 import shutil
 import sys
 from datetime import datetime
@@ -15,6 +17,9 @@ from pathlib import Path
 
 from _harness import Checks, mkcfg, sandbox
 
+import sync
+import ui
+import ui.console
 from common import bisync, conflicts, historial, model, results, revision
 
 c = Checks("el diagnóstico compartido")
@@ -276,5 +281,126 @@ with sandbox():
     catalog.apuntar_duplicado(None)
     c("  y se va cuando ya no los hay",
       [h for h in revision.revisar(cfg) if h.clave == "catalogo"], [])
+
+with sandbox():
+    # Una pareja de la raíz entera de antes de `REGLA_SIN_PROGRAMA`: su fichero
+    # de filtros ha cambiado y pide un --resync. Si el remoto trae la carpeta
+    # del programa, el hallazgo dice dónde está, para borrarla a mano.
+    cfg = mkcfg([], pairs=[{"name": "todo", "local": ".", "remote_path": "R/todo"},
+                           {"name": "notas", "local": "sync-data/notas", "remote_path": "R/notas"}])
+    todo, notas = cfg.pairs
+    programa = f'- 10 - - 2026-01-01T00:00:00.000000000+0000 "{model.APP_DIR.name}/rclone.conf"\n'
+    for pareja in cfg.pairs:
+        pareja.local_abs.mkdir(parents=True, exist_ok=True)
+        listados(pareja)
+        viejo = model.FILTERS_DIR / f"{pareja.name}.txt"
+        # la de una carpeta no ha cambiado de contenido: la fuerza un md5 de otro
+        viejo.write_text(bisync.FILTERS_HEADER + "\n" + ("" if pareja.es_raiz else "- x\n"),
+                         encoding="utf-8", newline="\n")
+        Path(str(viejo) + ".md5").write_text(hashlib.md5(viejo.read_bytes()).hexdigest())
+    resync = {h.pareja: h for h in revision.revisar(cfg) if h.clave == "resync"}
+    c("las dos piden su resync", sorted(resync), ["notas", "todo"])
+    c("  sin la carpeta del programa en el remoto, no lleva dato", resync["todo"].dato, ())
+    c("  ni lo dice en el detalle", "carpeta del programa" in resync["todo"].detalle, False)
+    for pareja in (todo, notas):
+        (pareja.workdir / (bisync.expected_prefix(pareja) + bisync.PATH2_SUFFIX)
+         ).write_text(programa, encoding="utf-8")
+    resync = {h.pareja: h for h in revision.revisar(cfg) if h.clave == "resync"}
+    c("  con ella, el dato es dónde borrarla",
+      resync["todo"].dato, (f"nas:R/todo/{model.APP_DIR.name}/",))
+    c.contains("  y el detalle dice que la subía", resync["todo"].detalle, "subía la carpeta del programa")
+    c("una pareja de una carpeta no la mira (sería del usuario)", resync["notas"].dato, ())
+
+# Dónde está en el remoto la copia del programa que subió una pareja de la raíz,
+# y que el hallazgo, la ventana y la consola digan lo mismo antes del resync.
+PROGRAMA = model.APP_DIR.name
+
+
+def con_programa(pareja) -> None:
+    """Deja en el listado path2 de esa pareja la carpeta del programa."""
+    lst = pareja.workdir / (bisync.expected_prefix(pareja) + bisync.PATH2_SUFFIX)
+    lst.parent.mkdir(parents=True, exist_ok=True)
+    lst.write_text(f'- 10 - - 2026-01-01T00:00:00.000000000+0000 "{PROGRAMA}/rclone.conf"\n',
+                   encoding="utf-8")
+
+
+with sandbox():
+    # `remote_path` se usa tal como está: sin cortarlo antes, "" y "/" serían lo
+    # mismo, y en SFTP uno es relativo al origen del remote y el otro absoluto.
+    for n, (ruta, esperado) in enumerate((
+            ("", f"nas:{PROGRAMA}/"), ("/", f"nas:/{PROGRAMA}/"),
+            ("R/p", f"nas:R/p/{PROGRAMA}/"), ("R/p/", f"nas:R/p/{PROGRAMA}/"),
+            ("/copia", f"nas:/copia/{PROGRAMA}/"))):
+        # una pareja por caso: "" y "/", o "R/p" y "R/p/", dan el mismo listado
+        pareja = mkcfg([], pairs=[{"name": f"todo{n}", "local": ".", "remote_path": ruta}]).pairs[0]
+        c(f"remote_path {ruta!r} sin listado: no hay carpeta que decir",
+          revision.carpeta_programa_en_remoto(pareja), None)
+        con_programa(pareja)
+        c(f"remote_path {ruta!r} con ella: {esperado}",
+          revision.carpeta_programa_en_remoto(pareja), esperado)
+    notas = mkcfg(["notas"]).pairs[0]
+    con_programa(notas)
+    c("una pareja de una carpeta no la mira, aunque el listado la tenga",
+      revision.carpeta_programa_en_remoto(notas), None)
+    c.contains("la frase dice dónde borrarla y que no la borra el programa",
+               revision.aviso_carpeta_programa("nas:R/p/.prdrive/"),
+               "no la borra del remoto: bórrala tú de nas:R/p/.prdrive/, que lleva la clave.")
+
+with sandbox():
+    cfg = mkcfg([], pairs=[{"name": "todo", "local": ".", "remote_path": "R/todo"},
+                           {"name": "otra", "local": ".", "remote_path": "R/otra"},
+                           {"name": "notas", "local": "sync-data/notas", "remote_path": "R/notas"}])
+    todo, otra, notas = cfg.pairs
+    for pareja in cfg.pairs:            # filtros de antes: las tres piden resync
+        viejo = model.FILTERS_DIR / f"{pareja.name}.txt"
+        viejo.write_text("# de antes\n", encoding="utf-8", newline="\n")
+        Path(str(viejo) + ".md5").write_text(hashlib.md5(viejo.read_bytes()).hexdigest())
+    con_programa(todo)
+    carpeta = f"nas:R/todo/{PROGRAMA}/"
+
+    # la consola (`sync.py`): lo dice ANTES de preguntar, que después no se ve
+    vistos = []
+    pregunta_real = sync.ask_yes_no
+    sync.ask_yes_no = lambda q, default=False: (vistos.append(salida.getvalue()), False)[1]
+    salida = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(salida):
+            aprobado = sync.resolve_resync_approval([todo, otra, notas], assume_yes=False)
+    finally:
+        sync.ask_yes_no = pregunta_real
+    c("consola: sin aprobar, el resync no se hace", aprobado, False)
+    c.contains("  dice dónde está la copia de la pareja que subió el programa",
+               salida.getvalue(), f"todo            {revision.aviso_carpeta_programa(carpeta)}")
+    c("  una sola vez: ni la otra raíz ni la de una carpeta lo llevan",
+      salida.getvalue().count("bórrala tú"), 1)
+    c("  y ya estaba dicho cuando se preguntó", "bórrala tú de " + carpeta in vistos[0], True)
+    salida = io.StringIO()
+    with contextlib.redirect_stdout(salida):
+        aprobado = sync.resolve_resync_approval([todo], assume_yes=True)
+    c("consola con --yes: se aprueba y también se dice",
+      (aprobado, "bórrala tú de " + carpeta in salida.getvalue()), (True, True))
+
+    # la ventana: la decisión es de `ui`, el cuadro solo la dibuja
+    c("ui: las carpetas de las parejas que preguntan, solo las que subieron el programa",
+      ui.carpetas_del_programa(cfg, ["todo", "otra", "notas"]), {"todo": carpeta})
+    c("  y solo de las que se piden", ui.carpetas_del_programa(cfg, ["otra", "notas"]), {})
+    c("  cada una con su frase",
+      ui.avisos_de_resync({"todo": carpeta}), [f"todo: {revision.aviso_carpeta_programa(carpeta)}"])
+    preguntas = []
+
+    def aprueba(pendientes, carpetas):
+        """Anota lo que se le pregunta a quien elige, y dice que sí."""
+        preguntas.append((list(pendientes), dict(carpetas)))
+        return True
+
+    c("ui: la pasada manual añade --yes si se aprueba",
+      ui.manual_args(cfg, ["todo", "notas"], aprueba), ["todo", "notas", "--yes"])
+    c("  y le pasa a quien pregunta las parejas y la carpeta",
+      preguntas, [(["todo", "notas"], {"todo": carpeta})])
+    c("  sin la raíz que subió el programa, no pasa carpetas",
+      (ui.manual_args(cfg, ["otra"], lambda p, f: (preguntas.append((p, f)), False)[1]),
+       preguntas[-1]), (["otra"], (["otra"], {})))
+    c("la consola de menú no pregunta (sync.py lo hará): sigue siendo un no",
+      ui.console.ConsoleFrontend().approve_resync(["todo"], {"todo": carpeta}), False)
 
 sys.exit(c.report())

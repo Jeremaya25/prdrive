@@ -572,7 +572,7 @@ def ruta_local_relativa(elegida: Path | str) -> str:
     local = relativa.as_posix().strip("/") or "."
     if local == "." and model.es_equipo():
         # En una raíz del equipo la raíz entera no es una pareja (ver
-        # `model._local_de_equipo`): se dice al elegirla y no al guardar.
+        # `model.problema_local`): se dice al elegirla y no al guardar.
         raise ConfigError(
             f"Esa es la raíz entera ({raiz}), y en un equipo no se sincroniza: "
             f"llevaría la carpeta del programa, con su clave. Elige una carpeta de "

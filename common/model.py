@@ -196,6 +196,14 @@ REGLA_SIN_LLAVERO = f"- /{LLAVERO_LOCAL}/**"
 Sin ella, una pareja con `local = "."` llevaría la base por otro camino, con
 otras reglas, y sin la comprobación previa del llavero.
 """
+REGLA_SIN_PROGRAMA = f"- /{APP_DIR.name}/**"
+"""La regla que reciben las parejas del usuario que sincronizan la raíz entera.
+
+Deja fuera la carpeta del programa (`.prdrive/` en un dispositivo): lleva su
+clave privada (`keys/`) y su `rclone.conf`, y no hay pareja que deba subirla al
+remoto ni, en un espejo hacia abajo, borrarla. Va antes que `REGLA_SIN_LLAVERO`
+y que cualquier `+` de la pareja, y no la quita ningún TOML.
+"""
 
 VERSIONS_DIR = ".prversions"
 """Carpeta de versiones de una pareja, dentro de su propia raíz (`Pair.versions_path1`).
@@ -601,6 +609,329 @@ def flags_to_args(flags: Mapping[str, Any]) -> list[str]:
     return args
 
 
+FLAGS_RESERVADOS: Mapping[str, str] = {
+    "config": "lo pone sync.py: es el rclone.conf del dispositivo",
+    "log-file": "lo pone sync.py: cada pasada escribe en su propio log",
+    "dry-run": "es --dry-run de sync.py, para que valga en todas las parejas",
+    "workdir": "lo pone sync.py: state/<pareja>/, y cambiarlo mueve el baseline",
+    "resync": "es --resync de sync.py, que además pregunta antes",
+    "filters-file": "sale de los patrones incluir/excluir de la pareja",
+    "filter": "usa los patrones incluir/excluir; mezclarlos rompe el filtrado",
+    "filter-from": "usa los patrones incluir/excluir; mezclarlos rompe el filtrado",
+    "include": "usa el cuadro «Incluir»",
+    "exclude": "usa el cuadro «Excluir»",
+    # Los cuatro del versionado salen de la casilla «Guardar versiones», y el
+    # sufijo además depende de la pasada (lleva su fecha y su hora): no hay
+    # forma de escribirlo aquí que signifique algo.
+    "backup-dir": "el versionado de bisync usa --backup-dir1/2, no este",
+    "backup-dir1": "sale de la casilla «Guardar versiones»: es <pareja>/.prversions",
+    "backup-dir2": "sale de la casilla «Guardar versiones»: es <pareja>/.prversions",
+    "suffix": "lo pone sync.py: la marca de tiempo de ESTA pasada",
+    "suffix-keep-extension": "lo pone sync.py junto con --suffix",
+}
+"""Flags que `sync.py` pone por su cuenta, con el motivo de cada uno.
+
+Salen de `build_command()` y `filter_args()`. `problema_flag()` los rechaza al
+parsear, no al ejecutar: rclone recibiría el flag dos veces y, en el caso de
+`--workdir` o `--filters-file`, eso es apuntar a bisync a un baseline que no es
+el suyo.
+"""
+
+_MOTIVO_PROGRAMA = "lanza un programa en este equipo, y el config viaja con el dispositivo"
+
+FLAGS_ESCRIBEN: Mapping[str, str] = {
+    "cpuprofile": "escribe (o trunca) en este equipo el fichero que se le diga, y el "
+                  "config viaja con el dispositivo",
+    "memprofile": "escribe (o trunca) en este equipo el fichero que se le diga, y el "
+                  "config viaja con el dispositivo",
+}
+"""Flags de rclone que escriben o truncan un fichero cualquiera de este equipo.
+
+`--cpuprofile` y `--memprofile` crean con `os.Create` la ruta que reciben
+(`cmd/cmd.go`), sin límite alguno. `problema_flag()` los rechaza como los que
+lanzan un programa. No están `--temp-dir`, `--cache-dir`, los `--*-from` ni las
+opciones de un backend (`--sftp-host`, `--*-url`, `--*-endpoint`): quedan
+fuera de esta puerta (`docs/agents/reference/agent.md`, «Not covered»).
+"""
+
+QUITALO = "Quítalo del config."
+"""Con lo que acaba el rechazo de un flag: el config se arregla a mano.
+
+Un config rechazado deja la ventana cerrada (`ui.fatal`), así que cada mensaje
+dice qué hay que quitar.
+"""
+
+
+def normalizar_flag(nombre: str) -> str:
+    """Devuelve el nombre con el que rclone verá el flag.
+
+    En él `_` es `-` y no se distingue entre mayúsculas y minúsculas.
+    """
+    return str(nombre).strip().replace("_", "-").lower()
+
+
+def problema_flag(nombre: str) -> str | None:
+    """Dice por qué un flag de rclone no puede ir en el config.
+
+    No vale ni lo que pone `sync.py` por su cuenta (`FLAGS_RESERVADOS`), ni un
+    flag que escribe un fichero cualquiera de este equipo (`FLAGS_ESCRIBEN`),
+    ni uno que hace que rclone ejecute un programa de este equipo: el config
+    viaja con el dispositivo y se edita a mano, y esa orden correría en el
+    equipo donde se enchufe. Son los que acaban en `-command` o `-ssh`, más
+    `metadata-mapper`, `rc` y los `rc-*`. Se citan del código de rclone:
+    `--password-command` (fs/config), `--metadata-mapper`
+    (fs/config/configflags), `ssh` de backend/sftp, `bearer_token_command` de
+    backend/webdav y el servidor `rc` (fs/rc/rcflags). La regla del sufijo
+    también deja fuera como flag los `--sftp-*-command` del remote, que siguen
+    valiendo en el `rclone.conf`.
+
+    `flags_to_args()` pega la clave tal cual detrás de `--`, así que una clave
+    con `=` (`"sftp-ssh=sh -c id" = true`) llegaría a rclone como
+    `--sftp-ssh=sh -c id`: se mira lo que hay antes del `=`.
+
+    Args:
+        nombre: El flag sin los guiones; vale con `_` o con mayúsculas.
+
+    Returns:
+        El motivo, o `None` si el flag vale.
+    """
+    clave = normalizar_flag(nombre).split("=", 1)[0].strip()
+    motivo = FLAGS_RESERVADOS.get(clave) or FLAGS_ESCRIBEN.get(clave)
+    if motivo:
+        return motivo
+    if clave.endswith(("-command", "-ssh")) or clave in ("metadata-mapper", "rc") \
+            or clave.startswith("rc-"):
+        return _MOTIVO_PROGRAMA
+    return None
+
+
+def problema_extra(args: Iterable[str]) -> str | None:
+    """Dice por qué una lista de argumentos de rclone no puede ir en el config.
+
+    Se mira cada argumento que empieza por `--` por su nombre (lo que va entre
+    los guiones y el `=`, si lo hay), con las mismas reglas que `problema_flag()`.
+    Los cortos de un guion pasan: ninguno lanza un programa. Un valor suelto
+    (`8M`, `sh -c id`) tampoco se mira: no es un flag.
+
+    Returns:
+        La frase entera, que nombra el primer argumento rechazado y acaba
+        diciendo que se quite, o `None` si todos valen.
+    """
+    for arg in args:
+        arg = str(arg)
+        if not arg.startswith("--"):
+            continue
+        nombre = arg[2:].split("=", 1)[0]
+        motivo = problema_flag(nombre)
+        if motivo:
+            return f"'--{nombre}' no se admite: {motivo}. {QUITALO}"
+    return None
+
+
+def problema_valor_flag(valor: Any) -> str | None:
+    """Dice por qué el valor de un flag no puede ir en el config.
+
+    `flags_to_args()` emite `--clave valor`, y un flag booleano no consume el
+    argumento siguiente: `checksum = "--sftp-ssh=sh -c id"` llegaría a rclone
+    como `--checksum --sftp-ssh=sh -c id`. Cada texto del valor (el propio, o
+    los de su lista) pasa por `problema_extra()`; lo que no empieza por `--`
+    (`8M`, `25`, `newer`, `-1`) no se toca.
+
+    Returns:
+        La misma frase que `problema_extra()`, o `None` si el valor vale.
+    """
+    if isinstance(valor, str):
+        return problema_extra((valor,))
+    if isinstance(valor, (list, tuple)):
+        return problema_extra(v for v in valor if isinstance(v, str))
+    return None
+
+
+NOMBRE_REMOTE = re.compile(r"(?!-)[\w.+@-]+(?: [\w.+@-]+)*")
+"""Un nombre de remote de rclone que no es una cadena de conexión.
+
+Es la regla que rclone documenta para el nombre de un remote: letras, números,
+`_ . + @ -` y espacios entre palabras; sin `,` `:` `=` ni comillas, sin empezar
+por `-` y sin espacios al final. Sin ella, `nas,ssh='sh -c id'` sería un
+remote de `sftp` con su propia orden `ssh`, y `:sftp,host=x` uno creado al vuelo.
+"""
+
+
+def problema_remote(nombre: Any, clave: str = "remote") -> str | None:
+    """Dice por qué un `remote` no vale como nombre de remote de rclone.
+
+    Se junta con la ruta (`nombre:ruta`) y va tal cual a rclone, que lo lee
+    como cadena de conexión si lleva opciones y, si es una sola letra, como la
+    unidad de Windows que lleva esa letra.
+
+    Args:
+        nombre: El valor a comprobar.
+        clave: Cómo se llama la clave en el mensaje: `remote` en una pareja y
+            en `[defaults]`, `catalog_remote` en este último.
+
+    Returns:
+        El motivo, que empieza por «'remote' no vale» (o por el nombre de la
+        otra clave), o `None` si vale.
+    """
+    if not isinstance(nombre, str):
+        return f"'{clave}' no vale: tiene que ser un texto."
+    if len(nombre) == 1 and nombre.isascii() and nombre.isalpha():
+        # fs/fspath/path.go: en Windows, `C:ruta` es la unidad C y no un remote.
+        return (f"'{clave}' no vale ({nombre!r}): rclone lee un nombre de una sola letra "
+                f"como una unidad de Windows ({nombre}:), no como un remote. Renombra el "
+                f"remote, con dos caracteres o más, en el rclone.conf y aquí.")
+    if not NOMBRE_REMOTE.fullmatch(nombre):
+        return (f"'{clave}' no vale ({nombre!r}): es el nombre de un remote del "
+                f"rclone.conf, con letras, números, espacios entre palabras y "
+                f". _ + @ -, sin empezar por '-' ni llevar ',' ':' '=' o comillas "
+                f"(rclone lo leería como opciones de la conexión).")
+    return None
+
+
+def _comprobar_capas(donde: str, tabla: str, flags: Any, extra: Any) -> None:
+    """Comprueba los flags y el `extra_flags` de una capa del config.
+
+    Una `flags` que no es una tabla no es de su incumbencia. El `extra_flags`
+    se mira tal como lo leerá `_as_tuple()`, que es lo que llega a rclone.
+
+    Args:
+        donde: Cómo se llama la capa en el mensaje (`[defaults]` o `[<pareja>]`).
+        tabla: Cómo se llama su tabla de flags (`[defaults.flags]` o `[pair.flags]`).
+        flags: Su tabla `flags`, tal como sale del TOML.
+        extra: Su `extra_flags`, tal como sale del TOML.
+
+    Raises:
+        ConfigError: Si algún flag, su valor o algún argumento no vale
+            (`problema_flag()`, `problema_valor_flag()`, `problema_extra()`), o
+            `extra_flags` no se puede leer como lista de textos.
+    """
+    if isinstance(flags, Mapping):
+        for clave, valor in flags.items():
+            motivo = problema_flag(clave)
+            if motivo:
+                raise ConfigError(
+                    f"{donde} {tabla} '{clave}' no se admite: {motivo}. {QUITALO}")
+            motivo = problema_valor_flag(valor)
+            if motivo:
+                raise ConfigError(f"{donde} {tabla} '{clave}': en su valor, {motivo}")
+    # Lo que emite `_as_tuple()` y nada menos: una tabla en línea da sus claves.
+    try:
+        argumentos = _as_tuple(extra)
+    except TypeError:
+        raise ConfigError(f"{donde} extra_flags tiene que ser una lista de textos.") from None
+    motivo = problema_extra(argumentos)
+    if motivo:
+        raise ConfigError(f"{donde} extra_flags: {motivo}")
+
+
+def _comprobar_remote(donde: str, valor: Any, clave: str) -> None:
+    """Lanza `ConfigError` si `valor` no vale como nombre de remote (`problema_remote()`)."""
+    motivo = problema_remote(valor, clave)
+    if motivo:
+        raise ConfigError(
+            f"{donde} {motivo} Deja solo el nombre del remote o quita la clave del config.")
+
+
+def _comprobar_patrones(donde: str, capa: Mapping[str, Any]) -> None:
+    """Rechaza un `include` o un `exclude` que lleva un salto de línea.
+
+    `bisync.filters_content()` escribe una regla por línea (`+ patrón`,
+    `- patrón`) y rclone lee el fichero línea a línea: `exclude = ["x\\n!\\n+ **"]`
+    añadiría un `!`, que borra las reglas de antes (la de la carpeta del
+    programa, la del llavero, `.prversions/`), y un `+ **`. Se mira lo que
+    leerá `_as_tuple()`, y lo que no se puede leer como lista no es asunto suyo.
+
+    Args:
+        donde: Cómo se llama la capa en el mensaje (`[defaults]` o `[<pareja>]`).
+        capa: La tabla de `[defaults]` o la de la pareja, tal como salió del TOML.
+
+    Raises:
+        ConfigError: Si algún patrón lleva `\\n` o `\\r`.
+    """
+    for clave in ("include", "exclude"):
+        try:
+            patrones = _as_tuple(capa.get(clave))
+        except TypeError:
+            continue
+        for patron in patrones:
+            if "\n" in patron or "\r" in patron:
+                raise ConfigError(
+                    f"{donde} {clave} {patron!r} lleva un salto de línea: en el fichero "
+                    f"de filtros de rclone cada línea es una regla, y con un '!' se "
+                    f"borrarían las de antes. Quita el salto de línea del patrón (un "
+                    f"patrón por entrada de la lista).")
+
+
+def comprobar_seguridad(crudo: Mapping[str, Any], equipo: bool = False, *,
+                        carpeta_programa: str | None = None) -> None:
+    """Rechaza del config en bruto lo que no puede llegar a la línea de órdenes de rclone.
+
+    Es el único sitio de estas comprobaciones, y mira el TOML tal como sale de
+    `tomllib`: `parse_config()` la llama la primera, y quien lee el config a
+    pelo (el agente, `agente.leer_servicio()`, porque la raíz puede ser de otra
+    versión, y el `sync.py` de una de antes no comprueba nada) la llama
+    también. Por eso tolera cualquier forma (tablas que no lo son, nombres que
+    no son texto, ninguna `[[pair]]`) y no decide nada más: un modo o una clave
+    desconocidos no son asunto suyo.
+
+    Comprueba, en `[defaults]`, el `remote` y el `catalog_remote` en cuanto
+    están, aunque vacíos (acaban como `remote:ruta` para el llavero y el
+    catálogo, ver `carpeta_del_catalogo()`, y un `remote` vacío dejaría a la
+    pareja en `:ruta`, donde un `remote_path` hecho a propósito sería una
+    cadena de conexión), los flags, el `extra_flags` y los `include`/`exclude`
+    (`_comprobar_patrones()`); y en cada pareja con nombre, su `remote`, sus
+    flags, su `extra_flags`, sus `include`/`exclude` y su `local` si está
+    (`problema_local()`; uno que no es un texto se rechaza, y uno que falta lo
+    dice `_build_pair()`).
+
+    Args:
+        crudo: El config tal como salió del TOML.
+        equipo: Si la raíz es de equipo (`es_equipo()`), donde además cada
+            `local` tiene que ser una carpeta de dentro (`problema_local_equipo()`).
+        carpeta_programa: El nombre de la carpeta del programa de la raíz que
+            se lee, para `problema_local()`; por defecto, la del programa que
+            corre.
+
+    Raises:
+        ConfigError: Con la capa (`[defaults]` o `[<pareja>]`), la clave o el
+            argumento y qué hacer con él.
+    """
+    if not isinstance(crudo, Mapping):
+        return
+    defaults = crudo.get("defaults")
+    if isinstance(defaults, Mapping):
+        for clave in ("remote", "catalog_remote"):
+            if clave in defaults:
+                _comprobar_remote("[defaults]", defaults[clave], clave)
+        _comprobar_capas("[defaults]", "[defaults.flags]", defaults.get("flags"),
+                         defaults.get("extra_flags"))
+        _comprobar_patrones("[defaults]", defaults)
+    parejas = crudo.get("pair")
+    if not isinstance(parejas, (list, tuple)):
+        return
+    for pareja in parejas:
+        if not isinstance(pareja, Mapping) or not isinstance(pareja.get("name"), str):
+            continue
+        donde = f"[{pareja['name']}]"
+        if "remote" in pareja:
+            _comprobar_remote(donde, pareja["remote"], "remote")
+        _comprobar_capas(donde, "[pair.flags]", pareja.get("flags"),
+                         pareja.get("extra_flags"))
+        _comprobar_patrones(donde, pareja)
+        if "local" in pareja:
+            local = pareja["local"]
+            if not isinstance(local, str):
+                # `_build_pair()` lo lee con `str()`: una lista con un `..`
+                # dentro llegaría a `local_abs` sin que nadie la mirase.
+                raise ConfigError(
+                    f"{donde} 'local' tiene que ser un texto, no {local!r}: es la "
+                    f"carpeta de dentro del dispositivo. Pon la ruta entre comillas, "
+                    f"relativa a su raíz.")
+            motivo = problema_local(local, equipo, carpeta_programa=carpeta_programa)
+            if motivo:
+                raise ConfigError(f"{donde} {motivo}")
+
+
 BASE_FLAGS: Mapping[str, Any] = {
     "verbose": True,
     "create-empty-src-dirs": True,
@@ -727,7 +1058,8 @@ class Pair:
             donde el local es origen).
         reglas: Reglas de filtrado (`+ patrón` o `- patrón`) que van antes que
             `includes` y `excludes`, en su orden. Las pone el código, no el
-            TOML: las del llavero y `REGLA_SIN_LLAVERO`.
+            TOML: las del llavero, y en una pareja de la raíz entera
+            `REGLA_SIN_PROGRAMA` y, con `[keychain]`, `REGLA_SIN_LLAVERO`.
         llavero: Si es la pareja del llavero, la que construye el código.
         llave_interna: Si el llavero va sin contraseña, solo con su fichero llave
             (`[keychain] llave_interna`): solo se sincroniza en un dispositivo
@@ -862,8 +1194,7 @@ class Pair:
         return f"{self.dest.rstrip('/')}/{VERSIONS_DIR}"
 
 
-def _build_pair(raw: Mapping[str, Any], defaults: Mapping[str, Any],
-                equipo: bool = False) -> Pair:
+def _build_pair(raw: Mapping[str, Any], defaults: Mapping[str, Any]) -> Pair:
     """Construye una `Pair` fundiendo las capas de configuración.
 
     Los flags van de menos a más prioridad: `BASE_FLAGS` < modo <
@@ -872,12 +1203,13 @@ def _build_pair(raw: Mapping[str, Any], defaults: Mapping[str, Any],
     Args:
         raw: La `[[pair]]` tal como sale del TOML.
         defaults: La tabla `[defaults]`.
-        equipo: Si la raíz es de equipo; entonces `local` tiene que ser una
-            carpeta de dentro.
 
     Raises:
         ConfigError: Si falta una clave obligatoria, el nombre o el modo no
-            valen, o `versions` se pide en un modo que no es bisync.
+            valen, `versions` se pide en un modo que no es bisync, o el
+            `remote` que acaba usando no es un nombre de remote. Los flags, el
+            `extra_flags` y el `local` ya los ha comprobado
+            `comprobar_seguridad()`.
     """
     name = raw.get("name")
     if not name:
@@ -888,8 +1220,6 @@ def _build_pair(raw: Mapping[str, Any], defaults: Mapping[str, Any],
     for required in ("local", "remote_path"):
         if required not in raw:
             raise ConfigError(f"[{name}] falta '{required}' en el config.")
-    if equipo:
-        _local_de_equipo(name, str(raw["local"]))
 
     mode_name = raw.get("mode", DEFAULT_MODE)
     mode = MODES.get(mode_name)
@@ -907,12 +1237,17 @@ def _build_pair(raw: Mapping[str, Any], defaults: Mapping[str, Any],
 
     watch = _leer_watch(name, raw, mode)
 
+    # El que sale de la cadena de fallbacks, el que va a rclone: ninguna rama
+    # se salta la comprobación aunque `comprobar_seguridad()` no la haya visto.
+    remote = raw.get("remote", defaults.get("remote", DEFAULT_REMOTE))
+    _comprobar_remote(f"[{name}]", remote, "remote")
+
     return Pair(
         name=name,
         mode=mode,
         local=normalizar_local(raw["local"]),
         remote_path=raw["remote_path"],
-        remote_name=raw.get("remote", defaults.get("remote", DEFAULT_REMOTE)),
+        remote_name=remote,
         includes=_as_tuple(defaults.get("include")) + _as_tuple(raw.get("include")),
         excludes=_as_tuple(defaults.get("exclude")) + _as_tuple(raw.get("exclude")),
         flags={**BASE_FLAGS, **mode.flags,
@@ -1079,6 +1414,11 @@ def problema_nombre(name: Any) -> str | None:
     return None
 
 
+def _tramos_de(texto: str) -> list[str]:
+    """Parte un `local` en tramos: `\\` cuenta como `/` y no hay tramos vacíos ni `.`."""
+    return [t for t in texto.replace("\\", "/").split("/") if t not in ("", ".")]
+
+
 def problema_local_equipo(local: str) -> str | None:
     """Dice por qué un `local` no vale en una raíz del equipo.
 
@@ -1092,7 +1432,7 @@ def problema_local_equipo(local: str) -> str | None:
         El motivo, o `None` si el `local` vale.
     """
     texto = str(local)
-    tramos = [t for t in texto.replace("\\", "/").split("/") if t not in ("", ".")]
+    tramos = _tramos_de(texto)
     if not tramos:
         return (f"local = \"{texto}\" es la raíz entera, y en una raíz del equipo "
                 f"eso no se puede sincronizar: arrastraría la carpeta del programa "
@@ -1105,18 +1445,96 @@ def problema_local_equipo(local: str) -> str | None:
     return None
 
 
-def _local_de_equipo(name: str, local: str) -> None:
-    """Rechaza al parsear un `local` que `problema_local_equipo` no admite.
+def problema_local(local: Any, equipo: bool = False, *,
+                   carpeta_programa: str | None = None) -> str | None:
+    """Dice por qué el `local` de una pareja no vale.
 
-    Se rechaza aquí y no en la ventana para que un TOML editado a mano tampoco
-    se lo salte.
+    El `local` es una carpeta de DENTRO del dispositivo, relativa a su raíz. Con
+    un `..` o una letra de unidad (`C:`) la pareja sincronizaría, y en un espejo
+    borraría, carpetas del ordenador; la del programa lleva la clave, y la del
+    llavero tiene su propia pareja (`[keychain]`). Se mira el texto del config
+    tal cual (`\\` cuenta como `/`): una barra al principio se tolera porque
+    `normalizar_local()` la quita y hay dispositivos en uso que la llevan.
 
-    Raises:
-        ConfigError: Si el `local` no vale en una raíz del equipo.
+    También se rechaza lo que Windows normaliza hacia otra carpeta al resolver
+    la ruta: un tramo de solo puntos y espacios (`...`, `. .`), un `:` en
+    cualquier tramo (`nombre:flujo`, `.prdrive::$INDEX_ALLOCATION`), y se compara
+    sin los puntos y espacios del final del primer tramo (`.prdrive.` es
+    `.prdrive`). Lo que ningún texto delata (nombres cortos 8.3, uniones,
+    enlaces) lo para `problema_contencion()` al ejecutar.
+
+    Args:
+        local: El valor de `local` tal como está en el TOML.
+        equipo: Si la raíz es de equipo; entonces se aplica antes
+            `problema_local_equipo()`, con sus mismas palabras.
+        carpeta_programa: El nombre de la carpeta del programa de la raíz a la
+            que pertenece el `local`. Por defecto es el de la que corre
+            (`APP_DIR.name`), que es la de la raíz cuando el config se lee desde
+            su propio programa; quien lee el de otra raíz (el agente, que corre
+            en su carpeta y no en la `.prdrive` de la unidad) tiene que decirlo.
+
+    Returns:
+        El motivo, que empieza por `local = "<valor>"`, o `None` si vale.
     """
-    problema = problema_local_equipo(local)
-    if problema:
-        raise ConfigError(f"[{name}] {problema}")
+    texto = str(local)
+    if equipo:
+        motivo = problema_local_equipo(texto)
+        if motivo:
+            return motivo
+    tramos = _tramos_de(texto)
+    if ".." in tramos or (tramos and re.match(r"[A-Za-z]:", tramos[0])):
+        return (f"local = \"{texto}\" sale del dispositivo (lleva un '..' o una letra "
+                f"de unidad): la pareja sincronizaría carpetas del ordenador. Pon una "
+                f"carpeta de dentro del dispositivo, con la ruta relativa a su raíz.")
+    for tramo in tramos:
+        if not tramo.strip(". "):
+            return (f"local = \"{texto}\" lleva un tramo de solo puntos y espacios "
+                    f"({tramo!r}): Windows lo recorta y la pareja acabaría en otra carpeta "
+                    f"del ordenador. Pon una carpeta de dentro del dispositivo, con nombre.")
+        if ":" in tramo:
+            return (f"local = \"{texto}\" lleva ':' en un tramo ({tramo!r}): en Windows "
+                    f"es un flujo de datos (nombre:flujo) de otra carpeta, que puede ser "
+                    f"la del programa. Quita el ':' del nombre.")
+    # Windows recorta los puntos y los espacios del final de cada tramo: `.prdrive.`
+    # y `.prdrive ` son `.prdrive`.
+    primero = tramos[0].rstrip(". ").lower() if tramos else ""
+    if primero == (carpeta_programa or APP_DIR.name).lower():
+        return (f"local = \"{texto}\" cae en «{tramos[0]}»: es la carpeta del "
+                f"programa, con su clave. Pon otra carpeta de dentro del dispositivo.")
+    if primero == LLAVERO_LOCAL.lower():
+        return (f"local = \"{texto}\" cae en «{tramos[0]}»: es la del llavero, que "
+                f"tiene su propia pareja ([keychain]). Pon otra carpeta de dentro del "
+                f"dispositivo.")
+    return None
+
+
+def problema_contencion(pareja: Pair) -> str | None:
+    """Dice si la carpeta local de la pareja, ya resuelta, es la del programa o cae dentro.
+
+    Es la comprobación de verdad de lo que `problema_local()` solo ve en el
+    texto: un nombre corto 8.3 de Windows, una unión o un enlace pueden llevar
+    un `local` inocente a `.prdrive/`, donde está la clave del dispositivo, y
+    un espejo hacia abajo la borraría. Se miran `local_abs` y `top_level_abs`
+    (el upstream de `combine`). La pareja de la raíz entera contiene la carpeta
+    del programa pero no está dentro de ella: no se rechaza (lleva
+    `REGLA_SIN_PROGRAMA`). Tampoco se mira si cae fuera del dispositivo: una
+    raíz del equipo puede tener enlaces a propósito.
+
+    Args:
+        pareja: La pareja que `sync.py` va a ejecutar.
+
+    Returns:
+        El motivo, con la ruta resuelta y qué hacer, o `None` si no cae en la
+        carpeta del programa.
+    """
+    programa = APP_DIR.resolve()
+    for ruta in (pareja.local_abs, pareja.top_level_abs):
+        if ruta == programa or programa in ruta.parents:
+            return (f"la carpeta local de la pareja resuelve a '{ruta}', que es la carpeta "
+                    f"del programa ('{programa}') o cae dentro de ella: lleva la clave del "
+                    f"dispositivo y no se sincroniza. Puede ser un enlace o un nombre corto "
+                    f"de Windows. Pon en 'local' otra carpeta de dentro del dispositivo.")
+    return None
 
 
 def _device_remote_name(defaults: Mapping[str, Any]) -> str | None:
@@ -1266,15 +1684,19 @@ def parse_config(data: Mapping[str, Any], equipo: bool = False) -> Config:
             porque el catálogo pasa por esta misma función y en él una pareja
             de la raíz entera es legítima para las unidades.
 
-    Con `[keychain]`, la pareja del llavero va la última (`_build_llavero()`),
-    su nombre queda reservado y cada pareja que sincroniza la raíz entera
-    recibe `REGLA_SIN_LLAVERO` delante de sus filtros.
+    Cada pareja que sincroniza la raíz entera recibe `REGLA_SIN_PROGRAMA`
+    delante de sus filtros. Con `[keychain]`, la pareja del llavero va la última
+    (`_build_llavero()`), su nombre queda reservado y esas parejas reciben
+    además `REGLA_SIN_LLAVERO`, detrás de la del programa.
 
     Raises:
-        ConfigError: Si no hay ninguna `[[pair]]`, alguna no es válida,
-            `[defaults]` lleva `watch`, que es de cada pareja, o `[keychain]`
-            no vale o choca con una pareja que se llama como la suya.
+        ConfigError: Si el config trae algo que no puede llegar a rclone
+            (`comprobar_seguridad()`), no hay ninguna `[[pair]]`, alguna no es
+            válida, `[defaults]` lleva `watch`, que es de cada pareja, o
+            `[keychain]` no vale o choca con una pareja que se llama como la
+            suya.
     """
+    comprobar_seguridad(data, equipo)
     defaults = data.get("defaults", {})
     raw_pairs = data.get("pair", [])
     if not raw_pairs:
@@ -1285,15 +1707,16 @@ def parse_config(data: Mapping[str, Any], equipo: bool = False) -> Config:
         raise ConfigError(
             "[defaults] no admite 'watch': vigilar los cambios locales se pide "
             "pareja a pareja, con 'watch = true' en cada [[pair]] que lo quiera.")
-    pairs = tuple(_build_pair(p, defaults, equipo) for p in raw_pairs)
+    pairs = tuple(_build_pair(p, defaults) for p in raw_pairs)
     tabla = data.get("keychain")
+    if tabla is not None and any(p.name == LLAVERO for p in pairs):
+        raise ConfigError(
+            f"Hay una pareja que se llama '{LLAVERO}', que es el nombre de la "
+            f"del llavero. Renómbrala o quita [keychain].")
+    reglas_raiz = (REGLA_SIN_PROGRAMA,) + ((REGLA_SIN_LLAVERO,) if tabla is not None else ())
+    pairs = tuple(replace(p, reglas=reglas_raiz + p.reglas) if p.es_raiz else p
+                  for p in pairs)
     if tabla is not None:
-        if any(p.name == LLAVERO for p in pairs):
-            raise ConfigError(
-                f"Hay una pareja que se llama '{LLAVERO}', que es el nombre de la "
-                f"del llavero. Renómbrala o quita [keychain].")
-        pairs = tuple(replace(p, reglas=(REGLA_SIN_LLAVERO,) + p.reglas) if p.es_raiz
-                      else p for p in pairs)
         pairs += (_build_llavero(tabla, defaults),)
     return Config(
         pairs=pairs,

@@ -59,6 +59,12 @@ device_remote = "disp"
 
 # Flags de rclone para todas las parejas. La clave es el flag sin '--', y '_' se
 # convierte en '-'. Añadir un flag es editar esto, nunca el código.
+# No se admiten (ni aquí, ni en [pair.flags], ni en extra_flags) los que pone
+# sync.py (config, log-file, dry-run, workdir, resync...) ni los que lanzan un
+# programa en este equipo (los que acaban en -command o -ssh, metadata-mapper,
+# rc y rc-*): el config viaja con el dispositivo. Tampoco un 'remote' con ',' ':'
+# '=' o comillas (en 'remote' ni en 'catalog_remote'): es el nombre de un
+# remote, no una cadena de conexión.
 [defaults.flags]
 checkers = 8
 transfers = 4
@@ -117,7 +123,8 @@ interval_minutes = 30
 
 [[pair]]
 name = "docs"
-local = "sync-data/docs"      # relativa a la raíz del dispositivo
+local = "sync-data/docs"      # relativa a la raíz del dispositivo: sin '..' ni 'C:',
+                              # y ni .prdrive (el programa) ni .keychain (el llavero)
 remote_path = "/datos/docs"   # ruta dentro del remote
 mode = "bisync"
 versions = true               # ver más abajo

@@ -104,13 +104,14 @@ with sandbox():
 
     sin = config(llave=None)
     c("sin [keychain] no hay pareja del llavero", (sin.pareja_llavero, sin.llavero), (None, None))
-    c("  ni regla en la de la raíz", sin.pairs[0].reglas, ())
+    c("  ni la regla del llavero en la de la raíz (solo la del programa)",
+      sin.pairs[0].reglas, (model.REGLA_SIN_PROGRAMA,))
 
     # las parejas de la raíz entera no se llevan el llavero
-    c("la pareja de la raíz recibe la regla, la primera",
-      cfg.pairs[0].reglas, (model.REGLA_SIN_LLAVERO,))
-    c("  como --exclude en un espejo", sync.filter_args(cfg.pairs[0], None)[:2],
-      ["--exclude", "/.keychain/**"])
+    c("la pareja de la raíz recibe la regla, detrás de la del programa",
+      cfg.pairs[0].reglas, (model.REGLA_SIN_PROGRAMA, model.REGLA_SIN_LLAVERO))
+    c("  como --exclude en un espejo", sync.filter_args(cfg.pairs[0], None)[:4],
+      ["--exclude", f"/{model.APP_DIR.name}/**", "--exclude", "/.keychain/**"])
     c("  y una pareja de una carpeta no", cfg.pairs[1].reglas, ())
     raiz_bi = config(pares=({"name": "raiz", "local": ".", "remote_path": "/r",
                              "include": ["**/*.md"]},)).pairs[0]

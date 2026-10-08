@@ -23,7 +23,7 @@ from typing import Callable
 
 from common import bisync, model, store
 from common.model import Config, Pair
-from common.revision import Hallazgo
+from common.revision import Hallazgo, aviso_carpeta_programa
 
 from . import prefs
 
@@ -244,15 +244,22 @@ def aviso_resync(hallazgo: Hallazgo) -> RepairPlan:
 
     No es un plan de disco (lo hace rclone), pero se confirma igual: es la
     operación que vuelve a comparar los dos lados enteros.
+
+    Si el hallazgo trae la copia de la carpeta del programa que subió una pareja
+    de la raíz entera (`dato`), lo avisa aquí y no después: el resync deja de
+    subirla pero no la borra, y el listado nuevo ya no la enseñaría.
     """
+    avisos = ["Puede tardar, según lo que haya que listar.",
+              "Si la pareja guarda versiones, lo que el resync sobrescriba se guarda "
+              "en .prversions/."]
+    if hallazgo.dato:
+        avisos.append(aviso_carpeta_programa(hallazgo.dato[0]))
     return RepairPlan(
         f"Resincronizar «{hallazgo.pareja}»",
         ["Se rehace el baseline de la pareja: rclone compara los dos lados "
          "enteros y se queda con lo que hay ahora en cada uno",
          "No se borra nada por estar en un solo lado: un resync junta, no iguala"],
-        ["Puede tardar, según lo que haya que listar.",
-         "Si la pareja guarda versiones, lo que el resync sobrescriba se guarda "
-         "en .prversions/."])
+        avisos)
 
 
 def hallazgos_reparables(hallazgos: list[Hallazgo]) -> list[Hallazgo]:
