@@ -75,10 +75,43 @@ c("los valores de siempre pasan (8M, -1, newer, un patrón)",
   rechaza(una(flags={"bwlimit": "8M", "max-delete": -1, "conflict-resolve": "newer",
                      "exclude-if-present": [".nosync", "-x"]})), "")
 
+# `extra_flags` llega a rclone como `_as_tuple()` lo emita: una tabla en línea
+# da sus claves, y algo que no es una lista de textos no se puede ni leer.
+TABLA = {"--sftp-ssh=sh -c id": 1}
+c.contains("extra_flags como tabla en línea de una pareja: se miran sus claves",
+           rechaza(una(extra_flags=TABLA)), "sftp-ssh")
+c.contains("  y en [defaults]",
+           rechaza({**una(), "defaults": {"remote": "nas", "extra_flags": TABLA}}), "sftp-ssh")
+c.contains("  y dice de qué pareja", rechaza(una(extra_flags=TABLA)), "[p]")
+for malo in (5, True, 1.5):
+    texto = rechaza(una(extra_flags=malo))
+    c.contains(f"extra_flags = {malo!r} no es una lista de textos", texto, "extra_flags")
+    c.contains("  y dice de qué pareja", texto, "[p]")
+c.contains("extra_flags = 5 en [defaults] tampoco",
+           rechaza({**una(), "defaults": {"remote": "nas", "extra_flags": 5}}), "[defaults]")
+c("un extra_flags que es un solo texto sigue valiendo",
+  rechaza(una(extra_flags="--bwlimit=8M")), "")
+
 # --- nombre del remote -------------------------------------------------------
 for remoto in ("nas,ssh='sh -c id'", ":sftp,host=x", "nas:", "-nas", "a b "):
     c.contains(f"remote {remoto!r} no se admite", rechaza(una(remote=remoto)), "remote")
 c.contains("[defaults] remote tampoco", rechaza({**una(), "defaults": {"remote": "nas,x=y"}}), "remote")
+c.contains("[defaults] remote vacío tampoco: sin él la pareja caería en ':ruta'",
+           rechaza({**una(), "defaults": {"remote": ""}}), "[defaults]")
+c.contains("  y dice que es remote", rechaza({**una(), "defaults": {"remote": ""}}), "'remote'")
+c.contains("  ni aunque la pareja lleve el suyo",
+           rechaza({**una(remote="nas"), "defaults": {"remote": ""}}), "[defaults]")
+c.contains("[defaults] catalog_remote vacío tampoco",
+           rechaza({**una(), "defaults": {"remote": "nas", "catalog_remote": ""}}),
+           "catalog_remote")
+c.contains("el remote que sale de la cadena de fallbacks también se mira, pareja a pareja",
+           _texto(lambda: model._build_pair(
+               {"name": "p", "local": "sync-data/p", "remote_path": "sftp,ssh='sh -c id':/x"},
+               {"remote": ""})), "[p]")
+sin_remote = {"pair": [{"name": "p", "local": "sync-data/p", "remote_path": "R/p"}]}
+c("sin remote en la pareja ni en [defaults], vale el de fábrica",
+  (rechaza(sin_remote), model.parse_config(sin_remote).pairs[0].remote_name),
+  ("", model.DEFAULT_REMOTE))
 c.contains("[defaults] catalog_remote no admite opciones",
            rechaza({**una(), "defaults": {"remote": "nas", "catalog_remote": "nas,ssh='x'"}}),
            "[defaults]")

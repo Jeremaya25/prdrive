@@ -608,8 +608,8 @@ def problema_remote(nombre: Any, clave: str = "remote") -> str | None:
 def _comprobar_capas(donde: str, tabla: str, flags: Any, extra: Any) -> None:
     """Comprueba los flags y el `extra_flags` de una capa del config.
 
-    Tolera cualquier forma: lo que no es una tabla o una lista de textos no es
-    de su incumbencia.
+    Una `flags` que no es una tabla no es de su incumbencia. El `extra_flags`
+    se mira tal como lo leerá `_as_tuple()`, que es lo que llega a rclone.
 
     Args:
         donde: Cómo se llama la capa en el mensaje (`[defaults]` o `[<pareja>]`).
@@ -619,7 +619,8 @@ def _comprobar_capas(donde: str, tabla: str, flags: Any, extra: Any) -> None:
 
     Raises:
         ConfigError: Si algún flag, su valor o algún argumento no vale
-            (`problema_flag()`, `problema_valor_flag()`, `problema_extra()`).
+            (`problema_flag()`, `problema_valor_flag()`, `problema_extra()`), o
+            `extra_flags` no se puede leer como lista de textos.
     """
     if isinstance(flags, Mapping):
         for clave, valor in flags.items():
@@ -630,12 +631,14 @@ def _comprobar_capas(donde: str, tabla: str, flags: Any, extra: Any) -> None:
             motivo = problema_valor_flag(valor)
             if motivo:
                 raise ConfigError(f"{donde} {tabla} '{clave}': en su valor, {motivo}")
-    if isinstance(extra, str):
-        extra = (extra,)
-    if isinstance(extra, (list, tuple)):
-        motivo = problema_extra(extra)
-        if motivo:
-            raise ConfigError(f"{donde} extra_flags: {motivo}")
+    # Lo que emite `_as_tuple()` y nada menos: una tabla en línea da sus claves.
+    try:
+        argumentos = _as_tuple(extra)
+    except TypeError:
+        raise ConfigError(f"{donde} extra_flags tiene que ser una lista de textos.") from None
+    motivo = problema_extra(argumentos)
+    if motivo:
+        raise ConfigError(f"{donde} extra_flags: {motivo}")
 
 
 def _comprobar_remote(donde: str, valor: Any, clave: str) -> None:
@@ -657,10 +660,12 @@ def comprobar_seguridad(crudo: Mapping[str, Any]) -> None:
     no son texto, ninguna `[[pair]]`) y no decide nada más: un modo o una clave
     desconocidos no son asunto suyo.
 
-    Comprueba, en `[defaults]`, el `remote`, el `catalog_remote` (si están y no
-    vacíos: acaban como `remote:ruta` para el llavero y el catálogo, ver
-    `carpeta_del_catalogo()`), los flags y el `extra_flags`; y en cada pareja
-    con nombre, su `remote`, sus flags y su `extra_flags`.
+    Comprueba, en `[defaults]`, el `remote` y el `catalog_remote` en cuanto
+    están, aunque vacíos (acaban como `remote:ruta` para el llavero y el
+    catálogo, ver `carpeta_del_catalogo()`, y un `remote` vacío dejaría a la
+    pareja en `:ruta`, donde un `remote_path` hecho a propósito sería una
+    cadena de conexión), los flags y el `extra_flags`; y en cada pareja con
+    nombre, su `remote`, sus flags y su `extra_flags`.
 
     Args:
         crudo: El config tal como salió del TOML.
@@ -674,7 +679,7 @@ def comprobar_seguridad(crudo: Mapping[str, Any]) -> None:
     defaults = crudo.get("defaults")
     if isinstance(defaults, Mapping):
         for clave in ("remote", "catalog_remote"):
-            if defaults.get(clave):
+            if clave in defaults:
                 _comprobar_remote("[defaults]", defaults[clave], clave)
         _comprobar_capas("[defaults]", "[defaults.flags]", defaults.get("flags"),
                          defaults.get("extra_flags"))
@@ -967,9 +972,9 @@ def _build_pair(raw: Mapping[str, Any], defaults: Mapping[str, Any],
 
     Raises:
         ConfigError: Si falta una clave obligatoria, el nombre o el modo no
-            valen, o `versions` se pide en un modo que no es bisync. Lo que
-            acaba en la línea de órdenes de rclone (`remote`, flags,
-            `extra_flags`) ya lo ha comprobado `comprobar_seguridad()`.
+            valen, `versions` se pide en un modo que no es bisync, o el
+            `remote` que acaba usando no es un nombre de remote. Los flags y
+            el `extra_flags` ya los ha comprobado `comprobar_seguridad()`.
     """
     name = raw.get("name")
     if not name:
@@ -999,12 +1004,17 @@ def _build_pair(raw: Mapping[str, Any], defaults: Mapping[str, Any],
 
     watch = _leer_watch(name, raw, mode)
 
+    # El que sale de la cadena de fallbacks, el que va a rclone: ninguna rama
+    # se salta la comprobación aunque `comprobar_seguridad()` no la haya visto.
+    remote = raw.get("remote", defaults.get("remote", DEFAULT_REMOTE))
+    _comprobar_remote(f"[{name}]", remote, "remote")
+
     return Pair(
         name=name,
         mode=mode,
         local=normalizar_local(raw["local"]),
         remote_path=raw["remote_path"],
-        remote_name=raw.get("remote", defaults.get("remote", DEFAULT_REMOTE)),
+        remote_name=remote,
         includes=_as_tuple(defaults.get("include")) + _as_tuple(raw.get("include")),
         excludes=_as_tuple(defaults.get("exclude")) + _as_tuple(raw.get("exclude")),
         flags={**BASE_FLAGS, **mode.flags,

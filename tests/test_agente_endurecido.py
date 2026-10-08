@@ -113,6 +113,14 @@ c.contains("tampoco con un extra_flags que lanza un programa",
 c.contains("ni con un catalog_remote que lo es",
            razon(con_defaults(F.unidad("k" * 32, parejas=("docs",)),
                               'catalog_remote = "cat,x=y"')), "catalog_remote")
+vacio = F.unidad("v" * 32, parejas=("docs",))
+conf_vacio = vacio / ".prdrive" / "sync_config.toml"
+conf_vacio.write_text(conf_vacio.read_text(encoding="utf-8").replace(
+    'remote = "nas"', 'remote = ""', 1), encoding="utf-8")
+c.contains("ni con un remote vacío en [defaults]", razon(vacio), "remote")
+c.contains("ni con un extra_flags en forma de tabla en línea",
+           razon(F.unidad("t" * 32, parejas=("docs",),
+                          extra={"docs": 'extra_flags = { "--sftp-ssh=x" = 1 }\n'})), "sftp-ssh")
 c("una raíz normal se sirve igual",
   (razon(F.unidad("n" * 32, parejas=("docs",),
                   extra={"docs": 'extra_flags = ["--bwlimit=8M", "-v"]\n'})),
