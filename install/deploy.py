@@ -408,7 +408,8 @@ def precompilar_dispositivo(device_root: Path | str,
 
 def deploy_code(device_root: Path | str, rclone_binary: Path | str | None = None,
                 origen: Path | str | None = None,
-                progreso: Callable[[str], None] | None = None) -> list[Path]:
+                progreso: Callable[[str], None] | None = None,
+                precompilar: bool = True) -> list[Path]:
     """Copia el programa al dispositivo y devuelve lo que ha escrito.
 
     Es una copia y no un espejo: lo que hubiera en `.prdrive/` de una versión
@@ -427,6 +428,10 @@ def deploy_code(device_root: Path | str, rclone_binary: Path | str | None = None
             el que hay en el propio dispositivo daría `SameFileError`.
         origen: De dónde copiar; por defecto, `deploy_source()`.
         progreso: Recibe lo que se dice mientras se precompila.
+        precompilar: Si se precompila al acabar. El asistente pasa `False` y
+            llama a `precompilar_dispositivo()` al final de todo lo que escribe:
+            los `.pyc` (unos 6 MB) no le quitan sitio a los lanzadores ni al
+            fichero de control en una unidad casi llena.
 
     Raises:
         InstallError: Si falta algo en el origen o no se puede copiar.
@@ -471,7 +476,8 @@ def deploy_code(device_root: Path | str, rclone_binary: Path | str | None = None
         escrito.append(copy_rclone(device_root, rclone_binary))
     # Al final y a mejor esfuerzo: sin runtime para este equipo (la primera
     # instalación aún no lo ha puesto: lo hace `apply_platforms()`) no hace nada.
-    precompilar_dispositivo(device_root, progreso)
+    if precompilar:
+        precompilar_dispositivo(device_root, progreso)
     return escrito
 
 
@@ -753,7 +759,8 @@ def conseguir_plataformas(plan: platforms.Plan,
 
 def apply_platforms(device_root: Path | str, plan: platforms.Plan,
                     progreso: Callable[[str], None] | None = None,
-                    conseguido: Conseguido | None = None
+                    conseguido: Conseguido | None = None,
+                    precompilar: bool = True
                     ) -> tuple[list[Path], list[Path]]:
     """Ejecuta el plan de la lista de plataformas y devuelve `(escrito, borrado)`.
 
@@ -761,7 +768,7 @@ def apply_platforms(device_root: Path | str, plan: platforms.Plan,
     (`conseguir_plataformas()`, o lo que ya traiga `conseguido`): si falta
     algo, el dispositivo no se ha tocado, ni siquiera para borrar lo que se
     desmarcó. Luego se borra (libera el sitio que lo demás va a ocupar), luego
-    rclone y luego Python.
+    rclone y luego Python. `precompilar`, como en `deploy_code()`.
     """
     if conseguido is None:
         conseguido = conseguir_plataformas(plan, progreso)
@@ -779,7 +786,7 @@ def apply_platforms(device_root: Path | str, plan: platforms.Plan,
         if puesto is not None:
             escrito.append(puesto)
             nuevo_runtime = nuevo_runtime or plat in platforms.candidates(platforms.host())
-    if nuevo_runtime:
+    if nuevo_runtime and precompilar:
         # El código ya está (`deploy_code()` va antes) y el Python que lo
         # arrancará acaba de llegar.
         precompilar_dispositivo(device_root, progreso)

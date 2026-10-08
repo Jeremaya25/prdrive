@@ -520,9 +520,22 @@ c.contains("con el total de lo que ocupará",
            " ".join(str(w.cget("text")) for w in widgets(wiz.cuerpo, ttk.Label)),
            f"≈{ANFITRION.mb_rclone + ANFITRION.mb_python} MB")
 
+# Los .pyc son lo último que se escribe: en una unidad casi llena no le quitan
+# sitio a los lanzadores ni al fichero de control. Se apunta qué había ya escrito
+# cada vez que se precompila.
+from install import deploy, device                        # noqa: E402
+
+al_precompilar: list = []
+real_precompilar_dispositivo = deploy.precompilar_dispositivo
+deploy.precompilar_dispositivo = lambda raiz, progreso=None: al_precompilar.append(
+    ((Path(raiz) / "runsync.bat").is_file(), device.control_id(raiz) is not None))
 pedido.clear()
-boton(wiz.cuerpo, "Instalar el programa").invoke()
-from install import deploy                                # noqa: E402
+try:
+    boton(wiz.cuerpo, "Instalar el programa").invoke()
+finally:
+    deploy.precompilar_dispositivo = real_precompilar_dispositivo
+c("se precompila una vez, al final: con los lanzadores y el fichero de control ya puestos",
+  al_precompilar, [(True, True)])
 
 app = deploy.app_dir(limpio)
 c("el programa aterriza en la carpeta oculta", (app / "runsync.py").is_file(), True)

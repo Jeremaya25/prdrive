@@ -1091,7 +1091,7 @@ def _paso_actualizar(cuerpo, wiz) -> None:
             """Copia el código y la guía, pinta el icono y conserva el id."""
             # Sin rclone ni Python: ya están puestos. Y sin lanzadores: se
             # escriben al aprovisionar, y actualizar el programa no los toca.
-            escrito = deploy.deploy_code(raiz)
+            escrito = deploy.deploy_code(raiz, precompilar=False)
             guia = deploy.write_guide(raiz)
             if guia is not None:
                 escrito.append(guia)
@@ -1100,6 +1100,7 @@ def _paso_actualizar(cuerpo, wiz) -> None:
             # que hace la instalación— dejaría colgado a cualquier vigilante que
             # ya estuviera atado a él.
             ident = device.ensure_control_file(raiz, renew=False)
+            deploy.precompilar_dispositivo(raiz)      # lo último, como al instalar
             return escrito, ident
 
         ok, res = working(wiz.root, "actualizando", trabajo,
@@ -1201,9 +1202,9 @@ def _paso_instalar(cuerpo, wiz) -> None:
             # llega), el dispositivo sigue sin tocar y el reintento solo baja
             # lo que faltaba (#49).
             conseguido = deploy.conseguir_plataformas(plan)
-            escrito_ = deploy.deploy_code(raiz)
-            nuevos, borrados = deploy.apply_platforms(raiz, plan,
-                                                      conseguido=conseguido)
+            escrito_ = deploy.deploy_code(raiz, precompilar=False)
+            nuevos, borrados = deploy.apply_platforms(raiz, plan, conseguido=conseguido,
+                                                      precompilar=False)
             escrito_ += nuevos
             escrito_ += deploy.write_launchers(raiz, plan.completa)
             guia = deploy.write_guide(raiz)
@@ -1220,6 +1221,8 @@ def _paso_instalar(cuerpo, wiz) -> None:
             fisica = vestibulo.destino(wiz.state)
             if fisica is not None:
                 escrito_ += vestibulo.escribir(fisica, ident)
+            # Lo último: es lo único que puede faltar sin que falte nada.
+            deploy.precompilar_dispositivo(raiz)
             return escrito_, borrados, ident
 
         ok, res = working(wiz.root, "instalando", trabajo,
@@ -1447,7 +1450,7 @@ def _paso_plataformas(cuerpo, wiz) -> None:
 
         def trabajo():
             """Pone y quita plataformas y rehace la entrada de fuera y VeraCrypt."""
-            nuevos, borrados = deploy.apply_platforms(raiz, plan)
+            nuevos, borrados = deploy.apply_platforms(raiz, plan, precompilar=False)
             lanzadores = deploy.write_launchers(raiz, plan.completa)
             # La entrada de fuera, por lo mismo que los lanzadores: un
             # dispositivo VeraCrypt de antes no la tiene, y este es el camino
@@ -1470,6 +1473,7 @@ def _paso_plataformas(cuerpo, wiz) -> None:
                     nota = puesto.aviso
                 except InstallError as e:
                     nota = f"El VeraCrypt de la unidad se queda como estaba: {e}"
+            deploy.precompilar_dispositivo(raiz)      # lo último, como al instalar
             hecho = platforms.Hecho(puestos=len(nuevos), borrados=len(borrados),
                                     lanzadores=len(lanzadores), entrada=len(entrada),
                                     veracrypt=len(viajero))
