@@ -11,7 +11,7 @@ The main window shows an amber block when GitHub has a newer release. «Ajustes 
 
 ## VERSION
 
-`VERSION` at the repo root is the whole versioning story. `install.version()` reads it from `bundle_dir()`, `update.installed_version()` from `APP_DIR`. The release workflow (`.github/workflows/build-installer-release.yml`) is **triggered by a push to `main` that touches `VERSION`** and tags `v<VERSION>`, so the tag cannot disagree with the file; if the tag exists there is no new version. A device with no `VERSION` reads as unknown, older than anything. `check()` never raises and honours a 24 h cache in `state/update.json`; `pending()` reads that cache and **never** goes to the network (it is what the first paint asks).
+`VERSION` at the repo root is the whole versioning story. `install.version()` reads it from `bundle_dir()`, `update.installed_version()` from `APP_DIR`. The release workflow (`.github/workflows/build-installer-release.yml`) is **triggered by a push to `main` that touches `VERSION`** and tags `v<VERSION>`, so the tag cannot disagree with the file; if the tag exists there is no new version. A device with no `VERSION` reads as unknown, older than anything. `check()` never raises and honours a 24 h cache in `state/update.json`; `pending()` reads that cache and **never** goes to the network (it is what the first paint asks). The release page URL is used only if it starts with `https://github.com/<REPO>/` (`update.pagina_segura`); otherwise «Ver la página» opens `PAGINA`.
 
 ## Components
 

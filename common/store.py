@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import os
 import signal
+import stat
 import subprocess
 from collections.abc import Mapping
 from datetime import datetime
@@ -105,6 +106,68 @@ def write_text(path: Path, text: str) -> bool:
         return True
     except OSError:
         return False
+
+
+DIARIO_TOPE = 256 * 1024
+"""Tamaño de un diario de texto a partir del cual `recortar_diario()` lo recorta."""
+DIARIO_QUEDAN = 300
+"""Líneas con las que se queda un diario recortado."""
+
+
+def recortar_diario(ruta: Path) -> None:
+    """Recorta un diario de texto que ha pasado de `DIARIO_TOPE`.
+
+    Lo usan `runsync.dlog` y `agente.dlog` antes de añadir su línea. Pasado el
+    tope reescribe el fichero con las últimas `DIARIO_QUEDAN` líneas, de forma
+    atómica (`write_text`). No protege una línea que otro proceso añada entre la
+    lectura y la reescritura: es un diario, y la escribe un solo servicio por
+    unidad.
+
+    Solo lee los últimos `DIARIO_TOPE` bytes, nunca el fichero entero: el agente
+    del equipo lee el `daemon.log` de un dispositivo que puede traer uno enorme.
+    La línea que corta la ventana se descarta por incompleta, y así el diario
+    recortado tampoco pasa de `DIARIO_TOPE`, por largas que sean las líneas. Una
+    sola línea más larga que el tope no deja nada que valga y el diario queda
+    vacío.
+
+    El fichero se abre sin seguir enlaces (`O_NOFOLLOW`, POSIX) y sin bloquear
+    (`O_NONBLOCK`: un FIFO llamado `daemon.log` no cuelga la apertura), y se mira
+    el descriptor ya abierto: un `daemon.log` que fuera un enlace a un fichero de
+    fuera de la unidad no se lee, o sus últimas líneas acabarían copiadas en el
+    diario del dispositivo. Solo se recorta un fichero normal.
+
+    Si el fichero no existe, no es normal o está por debajo del tope, no hace
+    nada; no lanza nunca, porque el diario no es vital.
+    """
+    try:
+        fd = os.open(ruta, os.O_RDONLY | getattr(os, "O_BINARY", 0)
+                     | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+    except OSError:
+        return
+    try:
+        # Se mira el descriptor antes de dárselo a `fdopen`: con una carpeta
+        # (en POSIX `os.open` la abre) `fdopen` lanza sin cerrarlo, y el agente
+        # perdería un descriptor por cada línea del diario de esa unidad.
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_size <= DIARIO_TOPE:
+            return
+        with os.fdopen(fd, "rb") as f:
+            fd = -1                     # ya es de `f`, que lo cierra
+            f.seek(info.st_size - DIARIO_TOPE)
+            cola = f.read(DIARIO_TOPE)
+        # la ventana empieza a mitad de línea: esa primera se descarta. «ignore»
+        # y no «replace»: un byte que no es UTF-8 no puede crecer al reescribirse
+        resto = cola.partition(b"\n")[2]
+        lineas = resto.decode("utf-8", errors="ignore").splitlines()
+        write_text(ruta, "".join(f"{linea}\n" for linea in lineas[-DIARIO_QUEDAN:]))
+    except OSError:
+        pass
+    finally:
+        if fd >= 0:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
 
 
 def crear_exclusivo(ruta: Path, datos: bytes) -> bool | None:

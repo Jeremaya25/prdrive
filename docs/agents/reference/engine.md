@@ -56,7 +56,7 @@ The one place that imitates rclone's behaviour; each section cites the rclone so
 
 ## Logs and live progress
 
-rclone writes to a temp file; `dispose_log()` keeps it in `logs/` only if the run failed (or `--keep-logs` / `keep_logs = true`), to spare device write cycles. On failure the tail is printed and `KNOWN_ERRORS` maps rclone messages to an explanation: add new cases there.
+rclone writes to a temp file; `dispose_log()` keeps it in `logs/` only if the run failed (or `--keep-logs` / `keep_logs = true`), to spare device write cycles. Only the newest `LOGS_POR_PAREJA` (20) logs per pair are kept: `keep_log()` calls `podar_logs(name, final)` once the move into `logs/` has succeeded, ordering by the stamp in the file name (date, time, then the `_N` retry suffix as an integer), not by mtime, and it never raises. The log just saved is exempt from the ranking and counts toward the 20 (stamps are local time: a clock set back would rank it oldest and the pass would lose the very log `last_run.json` points at); with `keep_logs = true`, logs of good passes share the 20 with the failed ones. On failure the tail is printed and `KNOWN_ERRORS` maps rclone messages to an explanation: add new cases there.
 
 Device vanished mid-pass (#36): `keep_log()` leaves the log in the temp dir, says so in one `AVISO` line (any half-copy in `logs/` removed) and returns that path, so tail and explanation still come out. `run_all()` turns an `OSError` from the pairs after it into a `FALLÓ` line, never a traceback.
 

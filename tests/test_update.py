@@ -142,6 +142,52 @@ with sandbox():
     c("un update.json corrupto no impide abrir", update.pending(), None)
 
 
+# «Ver la página» abre la URL de la caché o la de la API. Ninguna se da por
+# buena sin mirarla: una que no sea de este repositorio se cambia por la página
+# de releases.
+RELEASE = f"https://github.com/{update.REPO}/releases/tag/v9.9.9"
+CALC = "C:\\Windows\\System32\\calc.exe"
+
+
+def cache_con_url(url: str) -> None:
+    """Escribe un update.json fresco con esa URL, como lo deja `check()`."""
+    update.state_file().write_text(
+        json.dumps({"checked": store.stamp(), "tag": "v9.9.9", "version": "9.9.9",
+                    "url": url}), encoding="utf-8")
+
+
+with sandbox():
+    cache_con_url(CALC)
+    nueva = update.pending(root=tmpdir("prdrive-viejo-"))
+    c("una página que no es de GitHub no se abre",
+      nueva.url if nueva else None, update.PAGINA)
+    cache_con_url(RELEASE)
+    nueva = update.pending(root=tmpdir("prdrive-viejo-"))
+    c("la de la release sí", nueva.url if nueva else None, RELEASE)
+
+with sandbox():
+    responder(api({**CRUDO, "html_url": CALC}))
+    rel, _ = update.check(force=True)
+    c("y la que contesta la API tampoco", rel.url, update.PAGINA)
+    responder(api({**CRUDO, "html_url": RELEASE}))
+    rel, _ = update.check(force=True)
+    c("la de la API sí", rel.url, RELEASE)
+
+c("pagina_segura deja la página del proyecto como está",
+  update.pagina_segura(update.PAGINA), update.PAGINA)
+c("ni http, ni otro repositorio, ni una ruta, ni nada",
+  [update.pagina_segura(u) for u in
+   (f"http://github.com/{update.REPO}/releases",
+    "https://github.com/otro/prdrive/releases/tag/v1",
+    CALC, "")],
+  [update.PAGINA] * 4)
+c("ni un nombre que solo se le parece",
+  [update.pagina_segura(u) for u in
+   (f"https://github.com/{update.REPO}.evil.com/x",
+    f"https://github.com/{update.REPO}-evil/x")],
+  [update.PAGINA] * 2)
+
+
 # traerse el código: lo que NO se acepta
 with sandbox():
     responder(zip_codigo())

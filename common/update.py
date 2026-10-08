@@ -174,6 +174,25 @@ def state_file() -> Path:
     return model.STATE_DIR / "update.json"
 
 
+def pagina_segura(url: str) -> str:
+    """Devuelve `url` si es una página de este proyecto en GitHub, y si no `PAGINA`.
+
+    «Ver la página» acaba en `webbrowser.open()`, y en Windows eso termina en
+    `os.startfile()`: con algo que no sea una URL no se abre una página, se
+    ejecuta lo que haya detrás. La URL llega de `state/update.json`, que viaja
+    con el dispositivo y queda fuera de la huella del código del agente, o de la
+    API; por eso ninguna se da por buena y solo se acepta la de este repositorio.
+
+    Args:
+        url: La página que trae la release o la caché. Puede estar vacía.
+
+    Returns:
+        `url` si empieza por `https://github.com/<REPO>/`; en otro caso,
+        `PAGINA`.
+    """
+    return url if url.startswith(f"https://github.com/{REPO}/") else PAGINA
+
+
 def _leer_cache(cache: Path | None = None) -> tuple[Release | None, float | None]:
     """Devuelve la release guardada y cuántos segundos hace que se miró.
 
@@ -190,7 +209,7 @@ def _leer_cache(cache: Path | None = None) -> tuple[Release | None, float | None
     rel = Release(tag=tag,
                   version=str(data.get("version") or "").strip(),
                   name=str(data.get("name") or tag),
-                  url=str(data.get("url") or PAGINA),
+                  url=pagina_segura(str(data.get("url") or "")),
                   published=str(data.get("published") or ""),
                   notes=str(data.get("notes") or ""))
     try:
@@ -247,7 +266,7 @@ def _parse_release(crudo: dict) -> Release:
     return Release(tag=tag,
                    version=tag.lstrip("vV"),
                    name=str(crudo.get("name") or tag).strip() or tag,
-                   url=str(crudo.get("html_url") or PAGINA),
+                   url=pagina_segura(str(crudo.get("html_url") or "")),
                    published=str(crudo.get("published_at") or ""),
                    notes=notas[:NOTAS_MAX])
 

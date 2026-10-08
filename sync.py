@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -75,6 +76,12 @@ CONFLICTS_SHOWN = 5
 """Ficheros en conflicto que se nombran en la salida."""
 PROGRESS_POLL_S = 0.5
 """Cada cuántos segundos se mira si rclone ha escrito más en su log."""
+LOGS_POR_PAREJA = 20
+"""Logs de pasadas fallidas que se conservan en `logs/` por pareja.
+
+Una pareja que falla cada media hora deja 48 al día: sin tope, `logs/` crecería
+sin fin en el dispositivo. Los veinte más nuevos bastan para ver cómo falla.
+"""
 
 DIRECT_OUTPUT_HEADER = "--- salida directa de rclone (no pasó por --log-file) ---"
 """Cabecera que marca, en el log, lo que rclone sacó por consola.
@@ -164,6 +171,41 @@ def temp_log(name: str) -> Path:
     return Path(path)
 
 
+def podar_logs(nombre: str, conservar: Path | None = None) -> None:
+    """Deja en `logs/` solo los `LOGS_POR_PAREJA` logs más nuevos de una pareja.
+
+    Los más nuevos son los del sello más alto del nombre
+    (`<pareja>_AAAAMMDD_HHMMSS[_N].log`, con `N` como número), no los de mtime
+    más reciente: copiar o tocar el dispositivo cambia la mtime de todos. Solo
+    se mira lo que casa con ese nombre exacto, así que los logs de `a_b` no
+    cuentan para `a`. Lo más viejo se borra; no lanza nunca, porque una poda
+    que falla no puede estropear el guardado de un log (ni la pasada).
+
+    Args:
+        nombre: La pareja cuyos logs se podan.
+        conservar: Un log que no se borra nunca y queda fuera del ranking (el
+            que `keep_log()` acaba de guardar: con el reloj atrasado su sello
+            sería más viejo que los de antes y se podaría a sí mismo). Cuenta
+            en el tope: de los demás se quedan `LOGS_POR_PAREJA - 1`.
+    """
+    patron = re.compile(rf"^{re.escape(nombre)}_(\d{{8}})_(\d{{6}})(?:_(\d+))?\.log$")
+    sellados = []
+    try:
+        for ruta in model.LOG_DIR.iterdir():
+            m = patron.match(ruta.name)
+            if m and ruta != conservar:
+                sellados.append(((m[1], m[2], int(m[3] or 0)), ruta))
+    except OSError:
+        return
+    sellados.sort(key=lambda s: s[0], reverse=True)
+    quedan = LOGS_POR_PAREJA - (1 if conservar is not None else 0)
+    for _, ruta in sellados[quedan:]:
+        try:
+            ruta.unlink(missing_ok=True)
+        except OSError:
+            pass            # con el dispositivo fuera tampoco se puede borrar
+
+
 def keep_log(name: str, tmp: Path) -> Path:
     """Mueve un log temporal a `logs/` y devuelve dónde ha quedado.
 
@@ -176,7 +218,9 @@ def keep_log(name: str, tmp: Path) -> Path:
     otro sistema, o con el dispositivo lleno o de solo lectura, llega otro. El
     movimiento va dentro del `try` porque entre dos unidades `shutil.move`
     copia y borra al final: puede fallar con la copia a medias, y esa copia se
-    quita.
+    quita. Una vez guardado el log, se podan los más viejos de la pareja
+    (`podar_logs()`), sin tocar el que acaba de guardarse aunque su sello
+    (hora local) sea más viejo que los de antes.
     """
     destino = None
     try:
@@ -189,6 +233,7 @@ def keep_log(name: str, tmp: Path) -> Path:
             n += 1
         destino = final
         shutil.move(str(tmp), str(final))
+        podar_logs(name, final)
         return final
     except OSError as e:
         motivo = e.strerror or str(e)
