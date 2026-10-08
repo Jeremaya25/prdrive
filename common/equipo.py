@@ -52,7 +52,6 @@ from typing import Any, Mapping
 
 from . import APP_NAME, store
 from .planificador import Politica
-from .store import pid_alive
 
 IS_WIN = os.name == "nt"
 HOST = socket.gethostname()             # el mismo que apunta `ui/prefs.py`
@@ -369,19 +368,17 @@ def instalado() -> bool:
 
 
 def agente_vivo() -> dict | None:
-    """Devuelve el registro del agente si es de un proceso vivo de ESTE equipo.
+    """Devuelve el registro del agente si es de un proceso vivo de ESTE equipo y arranque.
+
+    Un registro de antes de reiniciar, con su pid ahora en otro proceso, no es
+    el agente (`vivo_aqui()`): darlo por vivo haría que el instalador matara a
+    ese proceso al parar el agente y que no arrancara el nuevo.
 
     Returns:
         El registro, o `None`.
     """
     info = store.read_json(lock_json())
-    if info.get("host") != HOST:
-        return None
-    try:
-        pid = int(info.get("pid", -1))
-    except (TypeError, ValueError):
-        return None
-    return info if pid_alive(pid) else None
+    return info if vivo_aqui(info) else None
 
 
 def apuntar_pasada(datos: dict) -> bool:

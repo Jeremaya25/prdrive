@@ -2779,6 +2779,7 @@ class Agente:
                  }.get(como, f"ERROR rc={rc}")
         con.lock.setdefault("last_results", {})[pareja] = texto
         con.lock["last_cycle"] = store.stamp()
+        con.lock["arranque"] = store.arranque_del_sistema()     # cancela la deriva del reloj
         destino = en_la_raiz(con.raiz, con.raiz / penwatch.DAEMON_LOCK_REL)
         if destino is not None:
             store.write_json(destino, con.lock)

@@ -2111,10 +2111,24 @@ def output_window(title: str, cmd: list[str], parent=None,
             pass
         root.after(120, poll)
 
+    cortado = {"ya": False}
+
+    def cortar() -> None:
+        """Corta el proceso, con su rclone, si sigue; una sola vez por ventana.
+
+        En Windows `taskkill` vuelve antes de que el proceso haya salido: en el
+        siguiente punto de corte `proc.poll()` aún lo vería vivo y se lanzaría
+        otro `taskkill` (hasta tres por ventana).
+        """
+        if cortado["ya"] or proc.poll() is not None:
+            return
+        cortado["ya"] = True
+        store.matar_arbol(proc.pid)
+
     def on_close() -> None:
         """Corta el proceso, con su rclone, si sigue y cierra la ventana."""
-        if state["rc"] is None and proc.poll() is None:
-            store.matar_arbol(proc.pid)
+        if state["rc"] is None:
+            cortar()
         root.destroy()
 
     avisado = {"ya": False}
@@ -2129,8 +2143,7 @@ def output_window(title: str, cmd: list[str], parent=None,
         if evento.widget is not root or avisado["ya"]:
             return
         avisado["ya"] = True
-        if proc.poll() is None:
-            store.matar_arbol(proc.pid)
+        cortar()
         if al_cerrar is not None:
             rc = state["rc"] if state["rc"] is not None else 1
             try:
@@ -2154,6 +2167,5 @@ def output_window(title: str, cmd: list[str], parent=None,
             pass
     root.after(120, poll)
     esperar()
-    if proc.poll() is None:
-        store.matar_arbol(proc.pid)
+    cortar()
     return state["rc"] if state["rc"] is not None else 1

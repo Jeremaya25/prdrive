@@ -355,3 +355,20 @@ lectura del bus (`IOCTL_STORAGE_QUERY_PROPERTY`), que no se han ejecutado nunca.
 | X4 | W, L | «Expulsar» con la ventana de esa unidad abierta. | No expulsa; a los 60 s dice que su ventana sigue abierta. Cerrada la ventana, pedirlo otra vez funciona. | `Agente._expulsiones()` |
 | X5 | W, L | Una unidad en un contenedor VeraCrypt de la lista. | No lleva «Expulsar» (su volumen es virtual): se cierra con «Expulsar PRDRIVE». | `expulsar.compatible()` (`/dev/mapper`, bus no extraíble) |
 | X6 | W | Con el agente en una cuenta sin administrador, «Expulsar» un pendrive. | Va igual: abrir el volumen para bloquearlo no pide elevar para un dispositivo extraíble. Si pide, apuntarlo: `_abrir_volumen()` devuelve `None` y el aviso dice «no deja abrir la unidad». | `expulsar._abrir_volumen()` |
+
+## El arranque en los registros de bloqueo
+
+Los registros de la ventana, el servicio, el vigilante del llavero y el agente
+(`ui.lock.json`, `daemon.lock.json`, `llavero.lock.json`, `agente.lock.json`)
+apuntan cuándo arrancó el sistema (`store.arranque_del_sistema()`), y un pid
+vivo de otro arranque no cuenta como vivo (`store.vivo_en_este_arranque()`). En
+Windows ese arranque sale de la hora menos `GetTickCount64()`; con el inicio
+rápido, «Apagar» hiberna el núcleo y al encender sigue contando desde el mismo
+arranque, así que ahí la comprobación cae al pid solo. Los tests fijan el
+arranque a mano: lo que falta es verlo en un equipo de verdad.
+
+| Código | Dónde | Qué hacer | Qué se espera | Código a prueba |
+|---|---|---|---|---|
+| H1 | W (con el inicio rápido activado) | Con la ventana de runsync abierta sobre una unidad (y el agente en marcha en esa raíz), «Apagar» el equipo (no «Reiniciar»), encenderlo y mirar `ui.lock.json` y `agente.lock.json`. Buscar un proceso cualquiera que haya heredado el pid que apuntan (`tasklist /FI "PID eq <pid>"`); si no lo hay, repetir hasta que lo haya o dar la prueba por no concluyente. | Apuntar si el `arranque` de los registros de antes coincide con el de ahora (se espera que sí: el núcleo se reanuda). Entonces un pid reutilizado SÍ bloquea la ventana nueva («ya hay una ventana abierta») y el agente SÍ se queda en pausa por ella: es el límite conocido (cae al pid solo, como antes). Si NO coincide, la ventana nueva se abre y el registro viejo se limpia. | `store.arranque_del_sistema()`, `store.vivo_en_este_arranque()`, `runsync._viva_aqui()`, `agente._registro_vivo()` |
+| H2 | W, L | «Reiniciar» (no «Apagar») con la ventana abierta y el agente en marcha; tras volver, abrir la ventana otra vez. | La ventana nueva se abre sin decir que ya hay otra, `ui.lock.json` pasa a ser el suyo y el agente no se queda en pausa por el registro de antes. | `runsync.tomar_ui()`, `agente._registro_vivo()` |
+| H3 | W, L | Dejar el equipo encendido más de 7 días con el servicio de runsync y el agente atendiendo la misma raíz (sin apagar ni hibernar) y la sincronización de la hora activada. Pasados los días, mirar la ventana (¿«Servicio en marcha»?), abrir `runsync.py` (que debe parar el servicio, no decir que no hay nada que parar) y `python agente.py status`. | El servicio sigue contando como vivo: su `daemon.lock.json` lleva un `arranque` reciente (lo reescribe en cada ciclo) y la diferencia con el de ahora cabe en `HOLGURA_ARRANQUE` (600 s). `agente.lock.json` solo se escribe al arrancar: apuntar cuánto se ha desviado su `arranque` del de ahora y si el agente sigue contando como vivo para `agente.py status` y el instalador. | `store.HOLGURA_ARRANQUE`, `runsync.daemon_cycle()`, `Agente._apuntar_en_lock()`, `equipo.agente_vivo()` |

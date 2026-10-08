@@ -143,6 +143,28 @@ else:
         os.killpg = corriente
 
 
+# un pid que no es de ningún proceso no señala a nadie
+#
+# En POSIX `killpg(0, ...)` es el grupo de quien llama: cortaría al propio test (y
+# al agente o a la ventana que lo llamara con un pid ilegible).
+llamadas: list = []
+if os.name == "nt":
+    corriente = subprocess.run
+    subprocess.run = lambda *args, **kwargs: llamadas.append(args)
+else:
+    corriente = os.killpg
+    os.killpg = lambda *args: llamadas.append(args)
+try:
+    store.matar_arbol(0)
+    store.matar_arbol(-5)
+finally:
+    if os.name == "nt":
+        subprocess.run = corriente
+    else:
+        os.killpg = corriente
+c("un pid cero o negativo no corta nada", llamadas, [])
+
+
 # el llavero sigue teniendo su punto de sustitución
 #
 # `llavero.matar_arbol` es de módulo para que los tests de la pasada no maten
@@ -201,6 +223,34 @@ finally:
     tk.Toplevel.deiconify = deiconify
     if nieto is not None and store.pid_alive(nieto):
         liberar(nieto)
+    raiz.destroy()
+
+
+# la ventana corta el árbol una sola vez
+#
+# En Windows `taskkill` vuelve antes de que el proceso haya salido: en los tres
+# puntos de corte de la ventana (la X, su destrucción y la salida de `esperar`)
+# el hijo sigue vivo para `poll()` y se lanzaba un `taskkill` en cada uno. Aquí
+# el corte no mata, que es justo ese caso, y se cuentan.
+raiz = tk.Tk()
+raiz.withdraw()
+cortes: list[int] = []
+verdadera = store.matar_arbol
+store.matar_arbol = cortes.append
+tk.Toplevel.deiconify = lambda self: None
+try:
+    antes = set(raiz.winfo_children())
+    uitk.output_window("Prueba", [sys.executable, "-c", "import time; time.sleep(60)"],
+                       parent=raiz, modal=False)
+    ventana = next(w for w in raiz.winfo_children() if w not in antes)
+    ventana.tk.eval(ventana.protocol("WM_DELETE_WINDOW"))
+    raiz.update()
+    c("cerrar la ventana corta el árbol una sola vez", len(cortes), 1)
+finally:
+    store.matar_arbol = verdadera
+    tk.Toplevel.deiconify = deiconify
+    for pid in cortes:
+        verdadera(pid)                       # el hijo sigue vivo: se corta de verdad
     raiz.destroy()
 
 sys.exit(c.report())

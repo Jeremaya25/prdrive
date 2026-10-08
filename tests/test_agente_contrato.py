@@ -377,8 +377,13 @@ try:
     ventana = {"pid": os.getppid(), "host": penwatch.HOST, "started": "x"}
     P6 = "6" * 32
     ag, RP = fresco(P6, parejas=("docs",))
+    # El arranque que apuntó al tomar el lock se desvía en los días que vive: al apuntar
+    # cada pareja lo vuelve a calcular.
+    ag.conexiones[P6].lock["arranque"] = FIJO - 10_000
     F.acabar(F.pasadas(RP)[-1])
     F.vueltas(ag, 1)
+    c("el agente refresca el arranque de su lock cada vez que lo reescribe",
+      F.lock(RP).get("arranque"), FIJO)
     store.write_json(RP / penwatch.UI_LOCK_REL, {**ventana, "arranque": FIJO - 10_000})
     F.vueltas(ag, 5)
     c("una ventana de otro arranque, aunque su pid viva, no pone la raíz en pausa",

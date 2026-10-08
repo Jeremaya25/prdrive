@@ -16,7 +16,7 @@ from _harness import Checks, mkcfg, sandbox
 
 import penwatch
 import runsync
-from common import llavero, model, store
+from common import llavero, model, store, update
 from ui import prefs, repair, tk_update
 
 c = Checks("una sola instancia de runsync")
@@ -189,6 +189,17 @@ try:
       store.vivo_en_este_arranque({**yo, "pid": "nada"}, runsync.HOST), False)
     c("con un pid que no es de nadie (cero), tampoco",
       store.vivo_en_este_arranque({**yo, "pid": 0}, runsync.HOST), False)
+
+    def sin_lanzar(info: dict):
+        """Pregunta por el registro y devuelve la respuesta, o qué se lanzó."""
+        try:
+            return store.vivo_en_este_arranque(info, runsync.HOST)
+        except Exception as e:                                       # noqa: BLE001
+            return f"lanzó {type(e).__name__}"
+
+    c("con un pid fuera de lo posible (enorme), tampoco, y sin lanzar",
+      (sin_lanzar({**yo, "pid": 2 ** 40}), sin_lanzar({**yo, "pid": 2 ** 31}),
+       sin_lanzar({**yo, "pid": -(2 ** 40)})), (False, False, False))
     c("de este arranque, dentro de la holgura, sí (el calculado en Windows baila)",
       store.vivo_en_este_arranque({**yo, "arranque": ARRANQUE + store.HOLGURA_ARRANQUE - 1},
                                   runsync.HOST), True)
@@ -233,11 +244,39 @@ try:
         c("  el lanzador lo limpia sin pedirle que pare ni esperarlo",
           ("ya inexistente" in (dicho or ""), runsync.LOCK.exists(), runsync.STOP.exists()),
           (True, False, False))
+        store.write_json(runsync.LOCK, {"pid": "x", "host": runsync.HOST, "started": "x"})
+        try:
+            dicho = runsync.stop_previous_daemon()
+        except Exception as e:                                       # noqa: BLE001
+            dicho = f"lanzó {type(e).__name__}"
+        c("un registro con un pid ilegible se limpia como un resto, y no impide abrir la ventana",
+          ("ya inexistente" in (dicho or ""), runsync.LOCK.exists(), runsync.STOP.exists()),
+          (True, False, False))
         registro(runsync.LOCK, os.getpid(), runsync.HOST, ARRANQUE)
         c("el de este arranque sí", (runsync.servicio_en_marcha() or {}).get("pid"), os.getpid())
         registro(runsync.LOCK, os.getpid(), runsync.HOST)
         c("el de antes, sin arranque, va por el pid",
           (runsync.servicio_en_marcha() or {}).get("pid"), os.getpid())
+
+        # el servicio vuelve a calcular su arranque cada vez que reescribe su registro: el
+        # que apuntó al empezar se desvía con las correcciones del reloj, y vive días
+        registro(runsync.LOCK, os.getpid(), runsync.HOST, OTRO_ARRANQUE)
+        propio = store.read_json(runsync.LOCK)
+        reales_ciclo = (runsync.pen_present, runsync.run_pair_quiet, runsync.dlog,
+                        update.check, update.pending)
+        runsync.pen_present = lambda: True
+        runsync.run_pair_quiet = lambda nombre: (0, "")
+        runsync.dlog = lambda msg: None
+        update.check = lambda force=False: (None, None)
+        update.pending = lambda root=None: None
+        try:
+            runsync.daemon_cycle(["notas"], propio)
+        finally:
+            (runsync.pen_present, runsync.run_pair_quiet, runsync.dlog,
+             update.check, update.pending) = reales_ciclo
+        c("el ciclo del servicio reescribe su registro con el arranque de ahora",
+          (store.read_json(runsync.LOCK).get("arranque"), list(propio.get("last_results", {}))),
+          (ARRANQUE, ["notas"]))
 
         # quien escribe el registro del servicio, qué arranque apunta
         runsync.LOCK.unlink()

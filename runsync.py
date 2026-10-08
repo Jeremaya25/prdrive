@@ -418,10 +418,10 @@ def stop_previous_daemon() -> str | None:
     if info is None:
         return None
 
-    pid = int(info.get("pid", -1))
+    pid = info.get("pid", -1)           # tal cual: puede ser basura, que `_viva_aqui` descarta
     if not _viva_aqui(info):
         # Rastro de otro equipo (dispositivo extraído sin más), de antes de
-        # reiniciar o de un proceso ya muerto.
+        # reiniciar, de un proceso ya muerto o de un pid ilegible.
         LOCK.unlink(missing_ok=True)
         STOP.unlink(missing_ok=True)
         return (f"Había un registro de un servicio ya inexistente "
@@ -538,6 +538,7 @@ def daemon_cycle(pairs: list[str], lock_data: dict) -> None:
             dlog(f"[{name}] OK ({secs:.0f}s)")
     lock_data["last_cycle"] = store.stamp()
     lock_data["last_results"] = results
+    lock_data["arranque"] = store.arranque_del_sistema()    # cancela la deriva del reloj
     if _lock_mio(read_lock()):
         # Solo si sigue siendo nuestro: si el lanzador lo borró o lo tiene ya
         # otro servicio, reescribirlo sería quitárselo.

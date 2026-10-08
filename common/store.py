@@ -272,10 +272,15 @@ def tomar_registro(ruta: Path, datos: dict, vivo) -> tuple[bool | None, dict | N
     return False, otro or {}
 
 
-HOLGURA_ARRANQUE = 120.0
+HOLGURA_ARRANQUE = 600.0
 """Segundos de tolerancia al comparar arranques del sistema.
 
-El arranque calculado en Windows baila un poco.
+El arranque calculado en Windows (la hora menos lo que lleva encendido) se
+desvía con cada corrección del reloj, y un registro de servicio o de agente
+vive días: 600 s cubren esa deriva entre dos reescrituras. A cambio, un
+reinicio cuya sesión anterior duró menos de 10 minutos no se distingue y el
+registro cae al pid solo, que es lo que se hacía antes. Quien reescribe su
+propio registro lo vuelve a calcular, y la deriva no se acumula.
 """
 
 
@@ -307,6 +312,10 @@ def arranque_del_sistema() -> float | None:
     return None
 
 
+PID_MAXIMO = 2**31 - 1
+"""El mayor pid que se da por posible: uno mayor es un registro ilegible."""
+
+
 def vivo_en_este_arranque(info: Mapping | None, host: str) -> bool:
     """Indica si un registro de cerrojo es de un proceso vivo de este equipo y arranque.
 
@@ -318,10 +327,10 @@ def vivo_en_este_arranque(info: Mapping | None, host: str) -> bool:
     ya no existe.
 
     Es un resto lo que no puede ser de este arranque: el de otro equipo, el de
-    un pid ilegible o muerto y el de un arranque que difiere en más de
-    `HOLGURA_ARRANQUE`. Un registro sin `arranque` (de una versión que no lo
-    apuntaba) o con uno que no se puede comparar (no se sabe cuándo arrancó
-    este sistema) va por el pid solo.
+    un pid ilegible, fuera de `1..PID_MAXIMO` o muerto y el de un arranque que
+    difiere en más de `HOLGURA_ARRANQUE`. Un registro sin `arranque` (de una
+    versión que no lo apuntaba) o con uno que no se puede comparar (no se sabe
+    cuándo arrancó este sistema) va por el pid solo.
 
     Args:
         info: El registro (`pid`, `host` y, si lo trae, `arranque`), o `None`.
@@ -336,7 +345,8 @@ def vivo_en_este_arranque(info: Mapping | None, host: str) -> bool:
         pid = int(info.get("pid", -1))
     except (TypeError, ValueError):
         return False
-    if pid <= 0 or not pid_alive(pid):          # 0 y los negativos son grupos, no procesos
+    # 0 y los negativos son grupos, no procesos; un pid enorme hace fallar a `pid_alive`
+    if not 1 <= pid <= PID_MAXIMO or not pid_alive(pid):
         return False
     antes, ahora = info.get("arranque"), arranque_del_sistema()
     if isinstance(antes, (int, float)) and ahora is not None \
@@ -402,8 +412,12 @@ def matar_arbol(pid: int) -> None:
     de no ser así no existe un grupo con ese número y no se corta nada.
 
     Args:
-        pid: El proceso en la raíz del árbol. Si ya no existe, no pasa nada.
+        pid: El proceso en la raíz del árbol. Si ya no existe, no pasa nada; con
+            0 o un número negativo no hace nada (en POSIX `killpg(0, ...)`
+            cortaría el grupo de quien llama).
     """
+    if pid <= 0:
+        return
     try:
         if os.name == "nt":
             subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True,

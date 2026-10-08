@@ -102,6 +102,39 @@ c("cmd_run se va sin tocar nada si otro agente está vivo",
   (True, 0, os.getppid()))
 equipo.lock_json().unlink()
 
+# El lock de un agente de antes de reiniciar: su pid lo tiene hoy otro proceso. Ni es
+# el agente (el instalador mataría a ese proceso al pararlo y no arrancaría el nuevo)
+# ni impide tomar el lock.
+FIJO_A = 1_800_000_000.0
+real_arranque_a = store.arranque_del_sistema
+store.arranque_del_sistema = lambda: FIJO_A
+try:
+    de_antes = {"pid": os.getpid(), "host": equipo.HOST, "started": "x"}
+    store.write_json(equipo.lock_json(), {**de_antes, "arranque": FIJO_A - 10_000})
+    c("agente_vivo: un registro de otro arranque no es el agente, aunque su pid viva",
+      equipo.agente_vivo(), None)
+    store.write_json(equipo.lock_json(), {**de_antes, "arranque": FIJO_A})
+    c("  uno de este arranque, sí", (equipo.agente_vivo() or {}).get("pid"), os.getpid())
+    store.write_json(equipo.lock_json(), de_antes)
+    c("  uno de antes, sin arranque, va por el pid",
+      (equipo.agente_vivo() or {}).get("pid"), os.getpid())
+    store.write_json(equipo.lock_json(), {**de_antes, "pid": "x"})
+    c("  y uno con un pid ilegible no lo es", equipo.agente_vivo(), None)
+
+    nuevo = {**yo, "arranque": FIJO_A}
+    store.write_json(equipo.lock_json(), {**de_antes, "arranque": FIJO_A - 10_000})
+    c("tomar_lock: el de un agente de otro arranque, aunque su pid viva, se retira y se toma",
+      (equipo.tomar_lock(nuevo), store.read_json(equipo.lock_json()).get("arranque")),
+      (None, FIJO_A))
+    store.write_json(equipo.lock_json(),
+                     {**de_antes, "pid": os.getppid(), "arranque": FIJO_A})
+    c("  el de este arranque no: manda el que está",
+      ((equipo.tomar_lock(nuevo) or {}).get("pid"),
+       store.read_json(equipo.lock_json()).get("pid")), (os.getppid(), os.getppid()))
+finally:
+    store.arranque_del_sistema = real_arranque_a
+equipo.lock_json().unlink()
+
 # escribir en una raíz sin seguir enlaces
 fuera = tmpdir("prdrive-fuera-")
 victima = fuera / "bashrc"
