@@ -118,8 +118,16 @@ def recortar_diario(ruta: Path) -> None:
     lectura y la reescritura: es un diario, y la escribe un solo servicio por
     unidad.
 
-    El fichero se abre sin seguir enlaces (`O_NOFOLLOW`, POSIX) y se mira el
-    descriptor ya abierto: un `daemon.log` que fuera un enlace a un fichero de
+    Solo lee los últimos `DIARIO_TOPE` bytes, nunca el fichero entero: el agente
+    del equipo lee el `daemon.log` de un dispositivo que puede traer uno enorme.
+    La línea que corta la ventana se descarta por incompleta, y así el diario
+    recortado tampoco pasa de `DIARIO_TOPE`, por largas que sean las líneas. Una
+    sola línea más larga que el tope no deja nada que valga y el diario queda
+    vacío.
+
+    El fichero se abre sin seguir enlaces (`O_NOFOLLOW`, POSIX) y sin bloquear
+    (`O_NONBLOCK`: un FIFO llamado `daemon.log` no cuelga la apertura), y se mira
+    el descriptor ya abierto: un `daemon.log` que fuera un enlace a un fichero de
     fuera de la unidad no se lee, o sus últimas líneas acabarían copiadas en el
     diario del dispositivo. Solo se recorta un fichero normal.
 
@@ -128,7 +136,7 @@ def recortar_diario(ruta: Path) -> None:
     """
     try:
         fd = os.open(ruta, os.O_RDONLY | getattr(os, "O_BINARY", 0)
-                     | getattr(os, "O_NOFOLLOW", 0))
+                     | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
     except OSError:
         return
     try:
@@ -136,9 +144,13 @@ def recortar_diario(ruta: Path) -> None:
             info = os.fstat(f.fileno())
             if not stat.S_ISREG(info.st_mode) or info.st_size <= DIARIO_TOPE:
                 return
-            texto = f.read().decode("utf-8", errors="replace")
-        lineas = texto.splitlines()
-        write_text(ruta, "\n".join(lineas[-DIARIO_QUEDAN:]) + "\n")
+            f.seek(info.st_size - DIARIO_TOPE)
+            cola = f.read(DIARIO_TOPE)
+        # la ventana empieza a mitad de línea: esa primera se descarta. «ignore»
+        # y no «replace»: un byte que no es UTF-8 no puede crecer al reescribirse
+        resto = cola.partition(b"\n")[2]
+        lineas = resto.decode("utf-8", errors="ignore").splitlines()
+        write_text(ruta, "".join(f"{linea}\n" for linea in lineas[-DIARIO_QUEDAN:]))
     except OSError:
         pass
 

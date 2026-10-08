@@ -201,6 +201,47 @@ c("  sin dejar un temporal", sorted(p.name for p in ruta.parent.iterdir()), ["da
 store.recortar_diario(ruta.parent)
 c("recortar algo que no es un fichero no lanza", True, True)
 
+# un diario enorme: solo se mira su cola (DIARIO_TOPE bytes), no el fichero entero
+grande = tmpdir("prdrive-grande-") / "daemon.log"
+cola = [f"cola {i:06d} " + "x" * 80 for i in range(store.DIARIO_QUEDAN)]
+grande.write_bytes(b"basura sin saltos de linea " * (4 * 1024 * 1024 // 27)
+                   + "\n".join(["linea partida"] + cola).encode("utf-8") + b"\n")
+c("  (el diario enorme de la prueba pasa del tope)",
+  grande.stat().st_size > 8 * store.DIARIO_TOPE, True)
+store.recortar_diario(grande)
+lineas = grande.read_text(encoding="utf-8").splitlines()
+c("un diario enorme acaba con sus últimas 300 líneas", lineas[-store.DIARIO_QUEDAN:], cola)
+c("  y no pasa de DIARIO_TOPE", grande.stat().st_size <= store.DIARIO_TOPE, True)
+
+# 400 líneas de 2 KB: las últimas 300 pesarían más que el tope
+largas = [f"larga {i:04d} " + "y" * 2040 for i in range(400)]
+grande.write_text("\n".join(largas) + "\n", encoding="utf-8")
+c("  (400 líneas de 2 KB pasan del tope)", grande.stat().st_size > store.DIARIO_TOPE, True)
+store.recortar_diario(grande)
+lineas = grande.read_text(encoding="utf-8").splitlines()
+c("con líneas muy largas el diario recortado tampoco pasa de DIARIO_TOPE",
+  grande.stat().st_size <= store.DIARIO_TOPE, True)
+c("  se queda con las últimas líneas, enteras (la que cortaba la ventana se descarta)",
+  (len(lineas) > 0, lineas == largas[-len(lineas):]), (True, True))
+
+# una sola línea más larga que el tope no deja nada que valga: queda vacío, sin lanzar
+grande.write_bytes(b"z" * (2 * store.DIARIO_TOPE))
+store.recortar_diario(grande)
+c("una línea más larga que el tope deja el diario vacío", grande.stat().st_size, 0)
+
+# un FIFO llamado daemon.log no cuelga la apertura (O_NONBLOCK): fstat lo rechaza
+if not hasattr(os, "mkfifo"):
+    print("  (saltado) FIFO: este sistema no tiene os.mkfifo")
+else:
+    import threading
+
+    tuberia = tmpdir("prdrive-fifo-") / "daemon.log"
+    os.mkfifo(tuberia)
+    hilo = threading.Thread(target=store.recortar_diario, args=(tuberia,), daemon=True)
+    hilo.start()
+    hilo.join(5)
+    c("un FIFO llamado daemon.log no deja colgado el recorte", hilo.is_alive(), False)
+
 # un daemon.log que es un enlace a un fichero de fuera no se lee: sus últimas
 # líneas acabarían copiadas en el diario del dispositivo
 fuera = tmpdir("prdrive-fuera-")
