@@ -15,7 +15,9 @@ ARM64 y Linux, para elegir el frontend que sustituye al de la 0.7.x:
 Lo corre `.github/workflows/banco-ui.yml` al subir un cambio de `banco/` a una
 rama que no es `main`. Al final del registro de cada trabajo van las líneas
 `RESULTADO banco …` y `CAPTURA …`. Las capturas, que prueban que la máquina
-pinta de verdad, van en el artefacto `banco-<plataforma>`.
+pinta de verdad, van en el artefacto `banco-<plataforma>`, con `resumen.md`,
+`resumen.json`, `crudo.jsonl` (todas las líneas) y `registro.log`. Un commit cuyo
+mensaje lleve la marca de saltar la CI, aunque sea dentro del texto, no lo lanza.
 
 En local: `python banco/preparar.py --plataforma linux-x64 --trabajo DIR` y luego
 `BANCO_CONF=DIR/banco.json xvfb-run -a -s "-screen 0 1920x1080x24" python banco/correr.py --salida DIR/salida`
