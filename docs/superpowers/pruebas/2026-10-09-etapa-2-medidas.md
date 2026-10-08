@@ -98,10 +98,45 @@ marcadas).
 
 ## Primera lectura (B1)
 
-Pendiente: se rellena con la primera ejecución en Windows x64 (tarea 1, paso 4), sobre la
-rama con las etapas 1a y 1b (`b410738`). Aquí van las medianas por variante y tamaño, las
-ganancias de reabrir y las primeras líneas del perfil de «Parejas» al abrir y al llegar el
-catálogo (a dónde se van los 1,2 s).
+[Medida etapa 2, run 37857276077](https://github.com/Jeremaya25/prdrive/actions/runs/37857276077), árbol
+`af36fe1` (etapa 1b y la tanda 1 de la etapa 2), Python 3.14.8 y Tk 9.0.4, 7 vueltas y una de
+calentamiento. Milisegundos, mediana.
+
+**La lista de «Parejas» (R3)**, Windows x64:
+
+| Filas | Variante | construir | elegir | refrescar | reemplazar | widgets |
+|---|---|---|---|---|---|---|
+| 5 | ref | 388.5 | 3.3 | 347.3 | 346.5 | 41 |
+| 5 | ligera | 67.5 | 1.3 | 9.9 | 31.9 | 31 |
+| 5 | lienzo | 47.1 | 1.1 | 4.2 | 4.3 | 1 |
+| 20 | ref | 1403.4 | 13.7 | 1450.4 | 1376.2 | 146 |
+| 20 | ligera | 162.2 | 1.2 | 50.3 | 127.9 | 106 |
+| 20 | lienzo | 78.9 | 1.3 | 13.4 | 12.9 | 1 |
+| 50 | ref | 1951.4 | 31.8 | 3527.6 | 3981.3 | 356 |
+| 50 | ligera | 403.0 | 1.2 | 103.2 | 309.4 | 256 |
+| 50 | lienzo | 143.4 | 1.3 | 32.7 | 31.5 | 1 |
+
+En Linux (xvfb), con 20 filas: ref 294.3, ligera 89.8, lienzo 46.6.
+
+- Windows: ligera − lienzo = 83.3 ms (regla: 20 ms) y ref − ligera = 1241.2 ms (regla: 10 ms):
+  **el lienzo**. Linux, lo mismo (43.2 y 204.5 ms). La ganadora no es peor en `elegir` ni en
+  `refrescar`.
+- La lista de hoy es lo que pesa en Windows: cada fila son siete ventanas del sistema, y
+  rehacerlas o repintarlas cuesta del orden de 70 ms por fila. El perfil lo confirma: el 93 % de
+  abrir «Parejas» y el 98 % de la llegada del catálogo son llamadas a Tk.
+
+**Esconder en vez de destruir (R7)**, Windows x64:
+
+| Ventana | abrir-1 | abrir-2 | reabrir-oculta | ganancia |
+|---|---|---|---|---|
+| parejas | 588.6 | 554.8 | 493.1 | 0.11 |
+| ajustes | 152.4 | 102.3 | 84.7 | 0.17 |
+| pasada | 146.9 | 137.1 | 73.5 | 0.46 |
+
+Linux: 0.15, 0.27 y 0.27. **Ninguna llega a 0.50: no se adopta.** Volver a enseñar «Parejas»
+escondida cuesta casi lo mismo que rehacerla, porque Windows repinta sus 152 ventanas igual: lo que
+pesa es cuántos widgets hay, no rehacerlos, y eso es lo que arregla el lienzo. La reapertura no
+llamó a `dlg.aplicar()` (aún no existe en este árbol).
 
 ## Decisión
 
