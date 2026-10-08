@@ -963,7 +963,8 @@ c("y se enciende al haber instalado de verdad",
 import penwatch  # noqa: E402
 from common import equipo  # noqa: E402
 from install import agente as ia  # noqa: E402
-from ui import tk_equipo  # noqa: E402
+from ui import tk_equipo, watch  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
 
 equipo.DIR = tmpdir("prdrive-asis-equipo-")
 penwatch.CONFIG_FILE = tmpdir("prdrive-asis-pw-") / "watch.json"
@@ -1061,6 +1062,20 @@ filas = {e: ok for e, ok, _ in tk_equipo.comprobaciones()}
 c("  y dice lo que falta (aquí nada se instaló de verdad)",
   (filas["Agente instalado"], filas["penwatch"]), (False, True))
 c("  sin raíz, no hay filas de raíz", "Fichero de control" in filas, False)
+# En Windows «Arranca al iniciar sesión» pregunta a `schtasks`, con tope de tiempo
+real_win, real_consulta = ia.IS_WIN, watch.consulta
+ia.IS_WIN = True
+try:
+    for rc, esperado in ((0, (True, "registrado")),
+                         (1, (False, "no está registrado")),
+                         (watch.CODIGO_TIEMPO, (False, "el sistema no contesta"))):
+        watch.consulta = lambda cmd, timeout=watch.CONSULTA_S, rc=rc: SimpleNamespace(
+            returncode=rc)
+        fila = {e: (ok, d) for e, ok, d in tk_equipo.comprobaciones()}
+        c(f"  schtasks con código {rc}: {esperado[1]}",
+          fila["Arranca al iniciar sesión"], esperado)
+finally:
+    ia.IS_WIN, watch.consulta = real_win, real_consulta
 escritorio_real = tk_equipo.escritorio
 tk_equipo.escritorio = lambda: (True, False)
 filas = {e: (ok, d) for e, ok, d in tk_equipo.comprobaciones()}

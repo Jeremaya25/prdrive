@@ -19,6 +19,7 @@ servicio es uno, se arranque a mano o al enchufar.
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from typing import NamedTuple
 
@@ -121,6 +122,47 @@ class Linea(NamedTuple):
     texto: str
     aviso: bool
     boton: str
+
+
+CONSULTA_S = 8.0
+"""Segundos que se espera a `schtasks` o `systemctl` cuando solo se les pregunta."""
+CODIGO_TIEMPO = 124
+"""El código con que `consulta()` devuelve una orden que no contestó a tiempo.
+
+Es el de `timeout(1)`.
+"""
+
+
+def consulta(cmd: list[str], timeout: float = CONSULTA_S) -> subprocess.CompletedProcess:
+    """Hace una pregunta al sistema (`schtasks /Query`…) sin esperarla para siempre.
+
+    Es `penwatch.run_quiet()` con un tope de tiempo, y es solo para preguntar:
+    una orden que cambia el sistema (`schtasks /Create`, `systemctl enable`…) no
+    se corta a medias, que lo dejaría peor, y esas siguen por `run_quiet()`. Está
+    aquí y no en `penwatch.py` porque cambiar los bytes de ese fichero deja
+    «desfasado» a cada vigilante ya instalado (`penwatch.copia_al_dia()`).
+
+    Args:
+        cmd: La pregunta entera.
+        timeout: Segundos que se le dan.
+
+    Returns:
+        El resultado. Si pasa el tiempo, la orden se mata y el código es
+        `CODIGO_TIEMPO`; si no se puede lanzar, 127.
+    """
+    kwargs: dict = {"capture_output": True, "text": True, "errors": "replace",
+                    "timeout": timeout}
+    # El sistema de verdad y no `IS_WIN`, que los tests fuerzan: `creationflags`
+    # en un POSIX es un error.
+    if sys.platform == "win32":
+        kwargs["creationflags"] = model.CREATE_NO_WINDOW
+    try:
+        return subprocess.run(cmd, **kwargs)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(cmd, CODIGO_TIEMPO, "",
+                                           f"sin respuesta en {timeout:g} s")
+    except OSError as e:
+        return subprocess.CompletedProcess(cmd, 127, "", str(e))
 
 
 def _penwatch():

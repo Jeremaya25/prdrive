@@ -30,7 +30,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from . import theme
+from . import theme, watch
 from .tk import Resultado, bloque_aviso, tabla_estado, working
 
 ANCHO = 780
@@ -1020,11 +1020,15 @@ def comprobaciones(donde: Path | None = None, esperadas: list[str] | None = None
                   else "no hay instalacion.json con código"))
     if inst:
         filas.append(("Su Python", _existe(inst.get("python")), str(inst.get("python"))))
-    registro = (agente.autostart_file().is_file() if not agente.IS_WIN
-                else penwatch.run_quiet(["schtasks", "/Query", "/TN",
-                                         agente.TAREA]).returncode == 0)
+    if agente.IS_WIN:
+        res = watch.consulta(["schtasks", "/Query", "/TN", agente.TAREA])
+        registro = res.returncode == 0
+        sin_decir = ("el sistema no contesta" if res.returncode == watch.CODIGO_TIEMPO
+                     else "no está registrado")
+    else:
+        registro, sin_decir = agente.autostart_file().is_file(), "no está registrado"
     filas.append(("Arranca al iniciar sesión", registro,
-                  "registrado" if registro else "no está registrado"))
+                  "registrado" if registro else sin_decir))
     vivo = equipo.agente_vivo()
     filas.append(("En marcha", vivo is not None,
                   f"pid {vivo.get('pid')}" if vivo else

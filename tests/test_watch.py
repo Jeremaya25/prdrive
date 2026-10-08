@@ -2,6 +2,7 @@
 """El adaptador de penwatch: filas de estado y construcción de las órdenes."""
 
 import sys
+import time
 
 from _harness import Checks, sandbox
 
@@ -38,6 +39,21 @@ else:
 
 c("log_tail devuelve una lista", isinstance(watch.log_tail(), list), True)
 c("is_installed responde un booleano", isinstance(watch.is_installed(), bool), True)
+
+
+# consulta: una pregunta al sistema con tope de tiempo (sin tocar penwatch.py)
+mudo = [sys.executable, "-c", "import time; time.sleep(30)"]
+t0 = time.monotonic()
+res = watch.consulta(mudo, timeout=0.5)
+c("una pregunta que no contesta vuelve con el código 124, sin lanzar",
+  (res.returncode, watch.CODIGO_TIEMPO), (124, 124))
+c("  sin esperar a que acabe", time.monotonic() - t0 < 10, True)
+res = watch.consulta([sys.executable, "-c", "print('hola')"], timeout=20)
+c("a tiempo, su resultado tal cual", (res.returncode, res.stdout.strip()), (0, "hola"))
+c("una orden que no existe devuelve 127, sin lanzar",
+  watch.consulta(["/no/existe/de/ninguna/manera"]).returncode, 127)
+c("el tope por defecto es el de la constante",
+  watch.consulta.__defaults__, (watch.CONSULTA_S,))
 
 
 # construcción de órdenes
