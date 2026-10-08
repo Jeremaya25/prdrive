@@ -194,6 +194,14 @@ class Visor:
     Las barras tienen su hueco reservado siempre, aparezcan o no: si lo ganaran
     y lo perdieran, la ventana cambiaría de ancho al pasar de un paso a otro.
 
+    `lienzo` es un marco que hace de mirilla e `interior` va dentro colocado con
+    `place`; desplazar es moverlo. No es un `Canvas` a propósito: un `Canvas`
+    mapea la ventana que lleva dentro en cuanto esta pide sitio, aunque la
+    ventana de arriba siga oculta, y entonces todo se coloca y se pinta una vez
+    a escondidas y otra al enseñarse. Con `place` el interior tiene su tamaño
+    desde el principio (lo que miden los tests y `ver()`), pero solo se mapea
+    cuando la mirilla se ve, como cualquier hijo de `grid` o `pack`.
+
     Args:
         padre: Donde se pone el recuadro.
         ancho: El ancho de partida y el mínimo, no un tope.
@@ -203,21 +211,19 @@ class Visor:
     """
 
     def __init__(self, padre, ancho: int | None = None, alto: int | None = None):
-        """Crea el recuadro, su lienzo y sus barras, y engancha los eventos."""
+        """Crea el recuadro, su mirilla y sus barras, y engancha los eventos."""
         import tkinter as tk
         from tkinter import ttk
 
         self.base = (ancho, alto)
         self.marco = ttk.Frame(padre)
-        self.lienzo = tk.Canvas(self.marco, background=theme.PAPEL,
-                                highlightthickness=0, borderwidth=0,
-                                width=ancho or 200, height=alto or 150)
+        self.lienzo = tk.Frame(self.marco, background=theme.PAPEL,
+                               highlightthickness=0, borderwidth=0,
+                               width=ancho or 200, height=alto or 150)
         self.vertical = ttk.Scrollbar(self.marco, orient="vertical",
-                                      command=self.lienzo.yview)
+                                      command=lambda *a: self._desplazar(1, *a))
         self.horizontal = ttk.Scrollbar(self.marco, orient="horizontal",
-                                        command=self.lienzo.xview)
-        self.lienzo.configure(yscrollcommand=self.vertical.set,
-                              xscrollcommand=self.horizontal.set)
+                                        command=lambda *a: self._desplazar(0, *a))
         self.lienzo.grid(row=0, column=0, sticky="nsew")
         self.marco.columnconfigure(0, weight=1)
         self.marco.rowconfigure(0, weight=1)
@@ -225,9 +231,9 @@ class Visor:
         self.marco.rowconfigure(1, minsize=self.horizontal.winfo_reqheight())
 
         self.interior = ttk.Frame(self.lienzo)
-        self._dentro = self.lienzo.create_window((0, 0), window=self.interior,
-                                                 anchor="nw")
-        self._puesto = (0, 0)          # lo último que se le dijo al item
+        self.interior.place(x=0, y=0)
+        self._puesto = (0, 0)          # lo último que se le dijo a `place`
+        self._desde = [0, 0]           # cuánto está desplazado, en x y en y
         self.interior.bind("<Configure>", lambda _e: self._revisar())
         self.lienzo.bind("<Configure>", lambda _e: self._revisar())
         self.lienzo.bind("<Enter>", lambda _e: self._rueda(True))
@@ -318,14 +324,54 @@ class Visor:
             return                          # no está dentro de este visor
         abajo = arriba + widget.winfo_reqheight()
         alto = self._medida()[1]
-        desde = self.lienzo.canvasy(0)
+        desde = self._desde[1]
         if abajo > desde + alto:
             desde = abajo - alto
         elif arriba < desde:
             desde = arriba
         else:
             return
-        self.lienzo.yview_moveto(max(0.0, desde) / max(1, self._puesto[1]))
+        self._mover(1, desde)
+
+    def desplazado(self) -> tuple[int, int]:
+        """Devuelve cuánto está desplazado el contenido, en píxeles: `(x, y)`."""
+        return (self._desde[0], self._desde[1])
+
+    def _hueco(self) -> tuple[int, int]:
+        """Devuelve lo que se ve del contenido: el tamaño pedido o el real, el mayor."""
+        ancho, alto = self._medida()
+        return (max(ancho, self.lienzo.winfo_width()),
+                max(alto, self.lienzo.winfo_height()))
+
+    def _mover(self, eje: int, desde: float) -> None:
+        """Desplaza el contenido a `desde` píxeles en ese eje y avisa a su barra.
+
+        Args:
+            eje: 0 para el horizontal, 1 para el vertical.
+            desde: Dónde empieza lo que se ve; se recorta a lo que hay.
+        """
+        total, hueco = self._puesto[eje], self._hueco()[eje]
+        desde = int(round(max(0.0, min(desde, total - hueco))))
+        if desde != self._desde[eje]:
+            self._desde[eje] = desde
+            self.interior.place_configure(x=-self._desde[0], y=-self._desde[1])
+        barra = self.vertical if eje else self.horizontal
+        if total > 0:
+            barra.set(desde / total, min(1.0, (desde + hueco) / total))
+
+    def _desplazar(self, eje: int, *orden) -> None:
+        """Hace lo que pide una barra: `moveto <fracción>` o `scroll <n> units|pages`.
+
+        Como en un `Canvas`: una unidad es la décima parte de lo que se ve y
+        una página, nueve décimas.
+        """
+        if not orden:
+            return
+        if orden[0] == "moveto":
+            self._mover(eje, float(orden[1]) * self._puesto[eje])
+        elif orden[0] == "scroll":
+            paso = self._hueco()[eje] * (0.9 if orden[2].startswith("page") else 0.1)
+            self._mover(eje, self._desde[eje] + int(orden[1]) * max(1, int(paso)))
 
     def _revisar(self) -> None:
         """Enseña cada barra solo si por ese lado sobra contenido.
@@ -335,16 +381,15 @@ class Visor:
         solo se le habla cuando la medida cambia, porque redimensionarlo
         dispara otro `<Configure>` y con él se volvería aquí sin parar.
         """
-        ancho, alto = self._medida()
-        ancho = max(ancho, self.lienzo.winfo_width())
-        alto = max(alto, self.lienzo.winfo_height())
+        ancho, alto = self._hueco()
         pide_x = self.interior.winfo_reqwidth()
         pide_y = self.interior.winfo_reqheight()
         medida = (max(ancho, pide_x), max(alto, pide_y))
         if medida != self._puesto:
             self._puesto = medida
-            self.lienzo.itemconfigure(self._dentro, width=medida[0], height=medida[1])
-            self.lienzo.configure(scrollregion=(0, 0, medida[0], medida[1]))
+            self.interior.place_configure(width=medida[0], height=medida[1])
+        for eje in (0, 1):                  # lo que sobraba puede haber menguado
+            self._mover(eje, self._desde[eje])
         # Puesta o no en la rejilla, no `winfo_ismapped()`: una ventana todavía
         # oculta —y todas nacen ocultas, ver `modal()`— no tiene nada mapeado, y
         # con eso la barra se pondría cada vez y no se quitaría nunca.
@@ -376,7 +421,7 @@ class Visor:
         if evento.widget is not self.lienzo and hasattr(evento.widget, "yview_scroll"):
             return None
         arriba = getattr(evento, "num", 0) == 4 or getattr(evento, "delta", 0) > 0
-        self.lienzo.yview_scroll(-1 if arriba else 1, "units")
+        self._desplazar(1, "scroll", -1 if arriba else 1, "units")
         return "break"
 
 
@@ -431,7 +476,7 @@ def mostrar(dlg, parent=None) -> None:
     """Centra el diálogo sobre su padre, lo enseña y espera a que se cierre.
 
     El `grab_set()` va aquí y no en `modal()` porque Tk no deja capturar una
-    ventana que no está visible, y por eso `deiconify()` lleva detrás un
+    ventana que no está visible, y por eso `ensenar()` lleva detrás un
     `update_idletasks()`: sin él el mapeo puede seguir pendiente. Si aun así
     fallara, se sigue: un diálogo sin captura es un incordio, pero uno que no
     se abre es un cuelgue.
@@ -443,13 +488,74 @@ def mostrar(dlg, parent=None) -> None:
     if visor is not None:
         visor.encajar(dlg)
     centrar(dlg, parent)
-    dlg.deiconify()
+    ensenar(dlg)
     dlg.update_idletasks()
     try:
         dlg.grab_set()
     except tk.TclError:
         pass
     dlg.wait_window()
+
+
+DWMWA_CLOAK = 13
+"""El atributo de DWM que encubre una ventana: existe, se mapea y se pinta, pero no se compone."""
+
+
+def _encubrir(hwnd: int, encubierta: bool) -> bool:
+    """Encubre o descubre una ventana de nivel superior de Windows (`DWMWA_CLOAK`).
+
+    Es la única llamada a dwmapi de `ensenar()` y un punto de indirección: los
+    tests la sustituyen, porque `ctypes.WinDLL` solo existe en Windows.
+
+    Returns:
+        Si DWM lo aceptó (`S_OK`; Windows 8 en adelante).
+    """
+    import ctypes
+    from ctypes import wintypes
+    poner = ctypes.WinDLL("dwmapi", use_last_error=True).DwmSetWindowAttribute
+    poner.argtypes = [wintypes.HWND, wintypes.DWORD, ctypes.POINTER(wintypes.BOOL),
+                      wintypes.DWORD]
+    poner.restype = ctypes.c_long                   # HRESULT
+    valor = wintypes.BOOL(1 if encubierta else 0)
+    return poner(hwnd, DWMWA_CLOAK, ctypes.byref(valor), ctypes.sizeof(valor)) == 0
+
+
+def ensenar(ventana) -> None:
+    """Enseña una ventana retirada (`deiconify`) cuando ya está pintada entera.
+
+    En Windows cada widget de Tk es una ventana del sistema y se pinta cuando
+    le llega su `WM_PAINT`, uno detrás de otro: con los controles dibujados
+    (piezas de imagen) eso se veía como una pantalla que se iba rellenando
+    widget a widget. Así que la ventana se enseña **encubierta** por DWM
+    (`DWMWA_CLOAK`: el sistema la da por visible, la mapea y le manda pintar,
+    pero no la compone en pantalla), se procesa todo lo pendiente
+    (`update()`) y solo entonces se descubre, ya entera.
+
+    El manejador es el de `wm frame`, como en `proteger_de_capturas()`; si Tk
+    aún no ha creado su envoltorio, o DWM no acepta el atributo, se enseña
+    sin más. Fuera de Windows es un `deiconify()`.
+    """
+    hwnd = None
+    if IS_WIN:
+        try:
+            ventana.update_idletasks()
+            marco = int(ventana.wm_frame(), 16)
+            if marco != int(ventana.winfo_id()) and _encubrir(marco, True):
+                hwnd = marco
+        except Exception:                               # noqa: BLE001
+            hwnd = None
+    ventana.deiconify()
+    if hwnd is None:
+        return
+    try:
+        ventana.update()
+    except Exception:                                   # noqa: BLE001
+        pass                            # cerrada mientras se pintaba: nada que enseñar
+    finally:
+        try:
+            _encubrir(hwnd, False)
+        except Exception:                               # noqa: BLE001
+            pass
 
 
 def _afinidad_de_pantalla(hwnd: int, afinidad: int) -> bool:
@@ -2172,7 +2278,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
     render()
     root.visor.encajar(root)
     centrar(root)
-    root.deiconify()
+    ensenar(root)
     # Después de enseñarla, no antes: la comprobación de versión y el recorrido
     # de las carpetas no pueden retrasar la apertura ni un parpadeo.
     root.after(300, mirar_version)
@@ -2283,7 +2389,7 @@ def _aviso_fallo(fallos, al_abrir) -> None:
 
     root.visor.encajar(root)
     centrar(root)
-    root.deiconify()
+    ensenar(root)
     # Un proceso sin ventana no puede quitarle el foco a nadie, así que Windows
     # la dejaría debajo de todo: encima un momento, lo justo para verla.
     try:
@@ -2584,7 +2690,7 @@ def output_window(title: str, cmd: list[str], parent=None,
 
     root.protocol("WM_DELETE_WINDOW", on_close)
     centrar(root, parent)
-    root.deiconify()
+    ensenar(root)
     root.update_idletasks()
     sin_espera = parent is not None and not modal
     if sin_espera:

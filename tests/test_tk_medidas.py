@@ -461,8 +461,8 @@ try:
     # sale por debajo del borde y sin barra que lo avise. Lo que fallaba era el
     # momento: `repintar()` ajustaba el hueco al terminar de dibujar, pero este
     # panel lo monta el `<<TreeviewSelect>>`, o sea después. Y no basta con que
-    # el visor se entere solo, porque su interior es un item del lienzo con la
-    # altura fijada: al añadirle widgets cambia lo que PIDE y no lo que MIDE,
+    # el visor se entere solo, porque su interior va colocado en la mirilla con
+    # la altura fijada: al añadirle widgets cambia lo que PIDE y no lo que MIDE,
     # así que el <Configure> del que cuelga la barra tampoco llega a
     # dispararse.
     #
@@ -604,7 +604,7 @@ try:
                 while w is not wiz.visor.interior:
                     arriba += w.winfo_y()
                     w = w.master
-                desde = wiz.visor.lienzo.canvasy(0)
+                desde = wiz.visor.desplazado()[1]
                 c(f"{nombre}: «{texto}» queda a la vista tras el error",
                   desde <= arriba and arriba + boton_err.winfo_reqheight()
                   <= desde + wiz.visor._medida()[1], True)

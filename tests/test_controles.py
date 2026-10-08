@@ -102,6 +102,42 @@ c("el grupo redondea solo por fuera",
   ["Primero.Segmento.Toolbutton", "Medio.Segmento.Toolbutton",
    "Ultimo.Segmento.Toolbutton"])
 
+# 4b. asentar no crea estilos: las variantes de cada superficie ya están. Crear
+# uno le dice a todos los widgets que el tema ha cambiado, y abrir una
+# pantalla costaba varias vueltas enteras de repintado.
+cambios = []
+raiz.bind_all("<<ThemeChanged>>", lambda e: cambios.append(e.widget), add="+")
+gris = ttk.Frame(raiz, style="Gris.TFrame", padding=theme.E3)
+gris.pack()
+nuevos = [ttk.Button(gris, text="Grande", style="Grande.Primary.TButton"),
+          ttk.Button(gris, text="Pequeño", style="Pequeno.TButton"),
+          ttk.Entry(gris, style="Mono.TEntry"),
+          ttk.Label(gris, text="ok", style="Ok.Chip.TLabel")]
+for w in nuevos:
+    w.pack()
+aviso = ttk.Frame(raiz, style="NotaAmbar.TFrame")
+aviso.pack()
+ttk.Button(aviso, text="Abrir", style="Quiet.TButton").pack()
+raiz.update()
+gris_hex = theme._hex(raiz, theme.GRIS_FONDO)
+c("sobre el gris, cada control pasa a la variante de ese fondo",
+  [str(w.cget("style")) for w in nuevos],
+  [f"Sobre{gris_hex[1:]}.{s}" for s in ("Grande.Primary.TButton", "Pequeno.TButton",
+                                         "Mono.TEntry", "Ok.Chip.TLabel")])
+c("  sin crear ningún estilo: ningún <<ThemeChanged>>", len(cambios), 0)
+
+# 4c. el pulgar de la barra de desplazamiento es liso en todos sus estados:
+# sin agarre (Tk 9 lo llama gripsize e ignora gripcount) y con el borde del
+# color del relleno, o al pulsarlo asomaban los filetes claros.
+for orientacion in ("Vertical", "Horizontal"):
+    barra = f"{orientacion}.TScrollbar"
+    c(f"{barra}: sin agarre", (str(style.lookup(barra, "gripcount")),
+                               str(style.lookup(barra, "gripsize"))), ("0", "0"))
+    relleno = style.map(barra, "background")
+    c(f"{barra}: el borde sigue al relleno al pulsar y al pasar",
+      [style.map(barra, o) for o in ("bordercolor", "lightcolor", "darkcolor")],
+      [relleno] * 3)
+
 # 4b. la pista de un campo: dentro del campo vacío, fuera en cuanto se escribe
 texto = tk.StringVar(raiz)
 campo = ttk.Entry(raiz, textvariable=texto)
