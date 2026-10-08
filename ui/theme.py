@@ -1607,14 +1607,20 @@ propia no se pudo cargar, es 0,70: el mismo píxel.
 
 
 def icono_linea(widget, nombre: str, color: str | None = None,
-                rol: str = "texto", size: int = 16):
-    """Devuelve un icono tan alto como una línea de texto del rol `rol` y centrado en ella.
+                rol: str = "texto", size: int = 16, letra=None):
+    """Devuelve un icono tan alto como una línea de texto y centrado en ella.
 
     El centro no es el de la caja de la línea (ascenso + descenso): el ascenso
     reserva sitio para las tildes y el descenso para las colas, y la masa del
     texto queda entre la línea base y la altura de las mayúsculas. El icono se
     centra ahí: su centro cae `ALTURA_MAYUSCULAS / 2` por encima de la línea
-    base.
+    base, con decimales (`icons.get` dibuja la fracción de píxel en lugar de
+    redondearla).
+
+    Las medidas son las de `letra` (una fuente de Tk, la que de verdad lleva
+    el texto de al lado) o, sin ella, las del rol `rol`. Importa: si la letra
+    real fuera otra (la del sistema, porque la propia no se cargó) y se
+    midiera la del rol, el icono caería donde no está el texto.
 
     Como la imagen mide lo mismo que la línea, al lado de su texto en una fila
     de la rejilla (los dos con `sticky="nw"`, o los dos centrados) queda
@@ -1624,17 +1630,17 @@ def icono_linea(widget, nombre: str, color: str | None = None,
     from tkinter import font as tkfont
 
     from . import icons
-    real, alto, bajar = icons.px(widget, size), None, 0
+    real, alto, bajar = icons.px(widget, size), None, 0.0
     try:
-        letra = tkfont.Font(root=widget, font=fuente(rol))
-        m = letra.metrics()
-        tam = letra.actual("size")
+        fuente_tk = tkfont.Font(root=widget, font=letra or fuente(rol))
+        m = fuente_tk.metrics()
+        tam = fuente_tk.actual("size")
         em = -tam if tam < 0 else tam * float(widget.tk.call("tk", "scaling"))
-        alto = max(m["linespace"], real)
+        alto = max(m["linespace"], real + 1)
         centro = m["ascent"] - ALTURA_MAYUSCULAS * em / 2
-        bajar = max(0, min(round(centro - real / 2), alto - real))
+        bajar = max(0.0, min(centro - real / 2, alto - real - 1))
     except Exception:                           # noqa: BLE001
-        alto, bajar = None, 0                   # sin métricas: el icono suelto
+        alto, bajar = None, 0.0                 # sin métricas: el icono suelto
     return icons.get(widget, nombre, size, color or TINTA, bajar=bajar, alto=alto)
 
 
@@ -1659,15 +1665,24 @@ def boton_icono(boton, nombre: str, color: str | None = None,
                 fondo: str | None = None, size: int = 15):
     """Le pone un icono a la izquierda del texto a un botón ya creado y lo devuelve.
 
-    El icono es el de `icono_linea`: tan alto como la línea del texto y
-    centrado en sus mayúsculas, así que el botón no crece y el icono no flota.
+    El icono es el de `icono_linea`, medido con la letra que el estilo del
+    botón le da de verdad (la seminegrita de un botón no es la del texto
+    corriente): tan alto como la línea y centrado en sus mayúsculas, así que
+    el botón no crece y el icono no flota.
     `fondo` ya no hace falta (el icono lleva su alfa) y se acepta por las
     llamadas de antes.
 
     Si el icono no se puede pintar el botón se queda con su texto y ya está: un
     adorno no puede dejar sin usar una acción.
     """
-    img = icono_linea(boton, nombre, color, "texto", size)
+    letra = None
+    try:
+        from tkinter import ttk
+        estilo = str(boton.cget("style")) or boton.winfo_class()
+        letra = ttk.Style(boton).lookup(estilo, "font") or None
+    except Exception:                           # noqa: BLE001
+        pass                                    # se mide la del rol
+    img = icono_linea(boton, nombre, color, "texto", size, letra=letra)
     if img is not None:
         boton.configure(image=img, compound="left")
         boton.image = img

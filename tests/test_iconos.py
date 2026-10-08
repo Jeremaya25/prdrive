@@ -80,6 +80,15 @@ filas = filas_con_tinta(img)
 c("el icono se centra en las mayúsculas, a medio píxel",
   abs((filas[0] + filas[-1] + 1) / 2 - centro) <= 1.5, True)
 
+# …medido con la letra que el botón lleva de verdad, no con la del texto
+# corriente: si la seminegrita no se cargara y el sistema pusiera otra, el
+# icono caería donde no está el texto.
+ttk.Style(raiz).configure("Otra.TButton", font=(theme.familia("mono"), 14))
+otro = theme.boton_icono(ttk.Button(raiz, text="PAREJAS", style="Otra.TButton"),
+                         "parejas", theme.ACENTO)
+c("el icono de un botón mide la línea de SU letra", otro.image.height(),
+  tkfont.Font(root=raiz, font=(theme.familia("mono"), 14)).metrics("linespace"))
+
 # El botón tiene que medir lo mismo que medía sin tocar nada: si el ajuste lo
 # hiciera crecer, movería el texto con él y no habría alineación que valga.
 crudo = ttk.Button(raiz, text="PAREJAS", style="Quiet.TButton")

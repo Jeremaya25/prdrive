@@ -521,7 +521,7 @@ def _dibujar(widget, clave: tuple, capas, caja: float, size: int, fondo: str = "
 
 
 def get(widget, nombre: str, size: int = 16, color: str = "#3B362F",
-        fondo: str = "#FAF9F7", bajar: int = 0, alto: int | None = None):
+        fondo: str = "#FAF9F7", bajar: float = 0, alto: int | None = None):
     """Devuelve el icono `nombre` al tamaño del diseño, sobre transparente.
 
     `fondo` no cambia el dibujo (lleva su alfa); se sigue aceptando porque lo
@@ -532,13 +532,24 @@ def get(widget, nombre: str, size: int = 16, color: str = "#3B362F",
 
     Args:
         bajar: Lo mueve hacia abajo esos píxeles dentro de su propia imagen; lo
-            usa `theme.boton_icono` para alinearlo con el texto de al lado.
+            usa `theme.icono_linea` para alinearlo con el texto de al lado.
+            Puede llevar decimales: la parte entera son filas vacías encima y
+            la fraccionaria se dibuja (el rasterizador mide distancias, así
+            que medio píxel más abajo es otro suavizado, no un redondeo).
     """
     try:
         real = px(widget, size)
-        capas = [(color, TRAZO, GLIFOS[nombre])]
-        return _dibujar(widget, (nombre, real, color, bajar, alto), capas,
-                        16.0, real, fondo, bajar, alto)
+        entero = int(bajar)
+        fraccion = round(bajar - entero, 2)
+        prims = GLIFOS[nombre]
+        filas = real
+        if fraccion:
+            prims = _mover(prims, 0, fraccion * 16.0 / real)
+            filas = real + 1
+        capas = [(color, TRAZO, prims)]
+        return _foto(widget, (nombre, real, color, entero, fraccion, alto, "@alfa"),
+                     lambda: _con_hueco(_capas_rgba(capas, 16.0, real, filas), real,
+                                        entero, alto))
     except Exception:
         return None
 
