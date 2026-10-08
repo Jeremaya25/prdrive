@@ -12,13 +12,18 @@ Léelo entero antes de usar esto con datos que te importen.
   dedicado y limitado, no el administrador.
 - **La clave nunca sube al remoto.** Ninguna pareja sincroniza `.prdrive/`: las
   que sincronizan la raíz entera (`local = "."`) llevan una regla del programa que
-  la deja fuera, y el config no puede quitarla. Las rutas del `rclone.conf` del
-  dispositivo son relativas (`key_file = keys/…`), que es además lo que lo hace
-  funcionar con cualquier letra de unidad.
+  la deja fuera, y el config no puede quitarla. En `bisync` la regla gana siempre;
+  en `copy` y `sync` rclone aplica todos los `include` antes que los `exclude`, así
+  que una pareja de la raíz cuyo propio `include` case con ficheros de esa
+  carpeta (`**/*.md` casa con los `.md` de dentro) se los llevaría: no pongas ahí
+  un `include` que la alcance. Las rutas del `rclone.conf` del dispositivo son
+  relativas (`key_file = keys/…`), que es además lo que lo hace funcionar con
+  cualquier letra de unidad.
 - **Si una versión anterior ya subió `.prdrive/`, bórrala del remoto.** El programa
   no borra nada por su cuenta: una pareja `bisync` de la raíz entera pide un
-  `--resync` tras actualizar, y la confirmación te dice dónde está esa copia. Como
-  lleva tu clave, conviene además cambiarla por otra.
+  `--resync` tras actualizar, y la confirmación (en la ventana, en «Reparación» y
+  en la consola) te dice dónde está esa copia. Como lleva tu clave, conviene
+  además cambiarla por otra.
 - **Los modos `*-mirror` borran.** `--max-delete` es el único freno automático.
   Prueba siempre con `--dry-run` primero.
 - **Escribir el catálogo es lo más arriesgado del programa**, porque gobierna

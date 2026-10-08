@@ -148,9 +148,11 @@ dice, en vez de dejar que rclone aborte con un mensaje suyo.
 Una pareja que sincroniza la **raíz entera** de la unidad (`local = "."`) lleva
 además, delante de las tuyas, una regla que deja fuera la carpeta del programa
 (`.prdrive/`, con tu clave y el `rclone.conf`). Está en el programa y no se puede
-quitar desde el config. Al actualizar, una pareja `bisync` de la raíz que ya
+quitar desde el config. En `copy` y `sync` es un `exclude`, y rclone aplica todos
+los `include` antes que los `exclude`: un `include` tuyo que case con esa carpeta
+la dejaría pasar. Al actualizar, una pareja `bisync` de la raíz que ya
 existía pide **un `--resync`** desde la ventana (su fichero de filtros ha
 cambiado), y hasta entonces el servicio y el agente la saltan; las parejas de la
 raíz que no son `bisync` no necesitan nada. Si esa pareja llegó a subir
-`.prdrive/` al remoto, el programa **no la borra**: al pedir el resync te avisa de
-dónde está, y la borras tú.
+`.prdrive/` al remoto, el programa **no la borra**: al pedir el resync (en la
+ventana, en «Reparación» o en la consola) te avisa de dónde está, y la borras tú.

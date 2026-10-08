@@ -702,9 +702,13 @@ def reapuntar_llavero(ctx: RunContext, pair: Pair, ffile: Path | None) -> None:
 def resolve_resync_approval(selected: list[Pair], assume_yes: bool) -> bool:
     """Decide UNA vez si se aprueban los `--resync` autodetectados.
 
-    Es en lugar de ir preguntando pareja por pareja a mitad de faena.
+    Es en lugar de ir preguntando pareja por pareja a mitad de faena. Antes de
+    preguntar dice, de cada pareja de la raíz que subió la carpeta del programa,
+    dónde está esa copia en el remoto (`revision.carpeta_programa_en_remoto()`):
+    el resync no la borra, y después el listado ya no la enseña.
     """
     pending = []
+    programas = []
     for pair in selected:
         if not pair.is_bisync or pair.llavero:
             continue            # el llavero se resincroniza solo (`_bisync_preflight()`)
@@ -712,6 +716,10 @@ def resolve_resync_approval(selected: list[Pair], assume_yes: bool) -> bool:
         reasons = bisync.resync_reasons(pair)
         if reasons:
             pending.append((pair.name, reasons))
+            # Se dice ahora y no después: tras el resync el listado ya no lo enseña.
+            carpeta = revision.carpeta_programa_en_remoto(pair)
+            if carpeta is not None:
+                programas.append((pair.name, carpeta))
     if not pending:
         return False
 
@@ -719,6 +727,8 @@ def resolve_resync_approval(selected: list[Pair], assume_yes: bool) -> bool:
     for name, reasons in pending:
         for reason in reasons:
             print(f"  - {name:<15} {reason}")
+    for name, carpeta in programas:
+        print(f"  - {name:<15} {revision.aviso_carpeta_programa(carpeta)}")
     print("El --resync compara ambos lados y fija la referencia; no borra por diferencias.")
 
     if assume_yes:

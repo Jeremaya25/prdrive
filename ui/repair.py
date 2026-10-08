@@ -23,7 +23,7 @@ from typing import Callable
 
 from common import bisync, model, store
 from common.model import Config, Pair
-from common.revision import Hallazgo
+from common.revision import Hallazgo, aviso_carpeta_programa
 
 from . import prefs
 
@@ -251,9 +251,7 @@ def aviso_resync(hallazgo: Hallazgo) -> RepairPlan:
               "Si la pareja guarda versiones, lo que el resync sobrescriba se guarda "
               "en .prversions/."]
     if hallazgo.dato:
-        avisos.append(
-            "El resync deja de subir la carpeta del programa, pero no la borra "
-            f"del remoto: bórrala tú de {hallazgo.dato[0]}, que lleva la clave.")
+        avisos.append(aviso_carpeta_programa(hallazgo.dato[0]))
     return RepairPlan(
         f"Resincronizar «{hallazgo.pareja}»",
         ["Se rehace el baseline de la pareja: rclone compara los dos lados "
