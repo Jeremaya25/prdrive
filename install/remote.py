@@ -93,7 +93,13 @@ class EphemeralConf:
     """
 
     def __init__(self, profile: Profile, base: Path | None = None) -> None:
-        """Crea el temporal y escribe la clave, los known_hosts y el conf."""
+        """Crea el temporal y escribe la clave, los known_hosts y el conf.
+
+        Raises:
+            InstallError: Si el perfil no da un `rclone.conf` válido
+                (`render_conf`). No queda nada escrito: el conf se genera antes
+                que la clave, y ante cualquier fallo se borra el directorio.
+        """
         base = base or Path(tempfile.gettempdir())
         base.mkdir(parents=True, exist_ok=True)
         self.dir = Path(tempfile.mkdtemp(prefix=TMP_PREFIX, dir=base))
@@ -102,16 +108,22 @@ class EphemeralConf:
         self.known_file = self.dir / "known_hosts"
         self.conf_file = self.dir / "rclone.conf"
 
-        (self.dir / OWNER_FILE).write_text(str(os.getpid()), encoding="utf-8")
-        if profile.private_key is not None:
-            self.key_file.write_bytes(profile.private_key)
-            try:
-                self.key_file.chmod(0o600)
-            except OSError:
-                pass    # Windows: los permisos POSIX no aplican; el temp ya es del usuario
-        if profile.known_hosts:
-            self.known_file.write_text(profile.known_hosts, encoding="utf-8")
-        self.conf_file.write_text(self._conf_text(), encoding="utf-8")
+        try:
+            # El conf va primero: si se rechaza, la clave ni llega a escribirse.
+            texto = self._conf_text()
+            (self.dir / OWNER_FILE).write_text(str(os.getpid()), encoding="utf-8")
+            if profile.private_key is not None:
+                self.key_file.write_bytes(profile.private_key)
+                try:
+                    self.key_file.chmod(0o600)
+                except OSError:
+                    pass    # Windows: los permisos POSIX no aplican; el temp ya es del usuario
+            if profile.known_hosts:
+                self.known_file.write_text(profile.known_hosts, encoding="utf-8")
+            self.conf_file.write_text(texto, encoding="utf-8")
+        except BaseException:
+            self.close()        # sin esto la clave quedaría sin dueño que la barra
+            raise
         _ABIERTAS.append(self)
 
     def _conf_text(self) -> str:

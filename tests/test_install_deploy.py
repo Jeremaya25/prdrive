@@ -540,6 +540,19 @@ conf2 = (otro / deploy.APP_SUBDIR / "rclone.conf").read_text(encoding="utf-8")
 c("sin clave privada no se escribe key_file", "key_file" in conf2, False)
 c("ni carpeta de claves", (otro / deploy.APP_SUBDIR / "keys").exists(), False)
 
+# Un conf que se rechaza (un valor con salto de línea, venga de donde venga) no
+# deja nada a medias en el dispositivo: ni la clave, ni los known_hosts, ni el conf.
+con_conf_roto = tmpdir() / "conf-roto"
+con_conf_roto.mkdir()
+malo = profile.Profile(**{**perfil.__dict__,
+                          "options": {**perfil.options, "user": "quien\ntype = alias"}})
+try:
+    deploy.write_device_remote(con_conf_roto, malo)
+    c("un conf rechazado se dice", "no lanzó", "InstallError")
+except InstallError as e:
+    c.contains("un conf rechazado se dice", str(e), "'user'")
+c("y no deja nada escrito en el dispositivo", list(con_conf_roto.rglob("*")), [])
+
 # un origen incompleto se dice, no se instala a medias
 roto = tmpdir() / "roto"
 roto.mkdir()
