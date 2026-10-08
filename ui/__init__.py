@@ -25,9 +25,9 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, NamedTuple, Protocol
+from typing import Callable, Mapping, NamedTuple, Protocol
 
-from common import bisync, results, store
+from common import bisync, results, revision, store
 from common.model import Config
 
 
@@ -101,8 +101,16 @@ class Frontend(Protocol):
             startup_msg: Aviso de arranque que se enseña con el menú.
         """
 
-    def approve_resync(self, pending: list[str]) -> bool:
-        """Pregunta si se aprueba el `--resync` de esas parejas."""
+    def approve_resync(self, pending: list[str],
+                       carpetas: Mapping[str, str] | None = None) -> bool:
+        """Pregunta si se aprueba el `--resync` de esas parejas.
+
+        Args:
+            pending: Las parejas que lo piden.
+            carpetas: Por pareja, dónde está en el remoto la copia del programa
+                que subió (`carpetas_del_programa()`), para decirlo antes de que
+                el resync borre el rastro. Vacío si no hay ninguna.
+        """
 
     def info(self, msg: str) -> None:
         """Enseña un mensaje."""
@@ -128,17 +136,45 @@ def pair_status_notes(config: Config) -> dict[str, str]:
     return notes
 
 
-def manual_args(config: Config, pairs, approve: Callable[[list[str]], bool]) -> list[str]:
+def carpetas_del_programa(config: Config, nombres) -> dict[str, str]:
+    """Devuelve, de esas parejas, dónde está en el remoto el programa que subieron.
+
+    Es lo que `revision.carpeta_programa_en_remoto()` dice de cada una: solo
+    salen las que subieron la carpeta del programa. Un listado ilegible no
+    impide preguntar por el resync, igual que en `pair_status_notes()`.
+    """
+    carpetas = {}
+    for pair in config.pairs:
+        if pair.name not in nombres:
+            continue
+        try:
+            carpeta = revision.carpeta_programa_en_remoto(pair)
+        except Exception:
+            continue
+        if carpeta is not None:
+            carpetas[pair.name] = carpeta
+    return carpetas
+
+
+def avisos_de_resync(carpetas: Mapping[str, str]) -> list[str]:
+    """Devuelve, por pareja, la frase que dice dónde borrar a mano la copia del programa."""
+    return [f"{nombre}: {revision.aviso_carpeta_programa(carpeta)}"
+            for nombre, carpeta in carpetas.items()]
+
+
+def manual_args(config: Config, pairs,
+                approve: Callable[[list[str], Mapping[str, str]], bool]) -> list[str]:
     """Devuelve los argumentos de `sync.py` para una pasada manual de esas parejas.
 
     Las que piden un `--resync` se le preguntan a quien ha elegido (`approve`),
-    UNA vez para todas: si dice que sí va `--yes` y, si no, `sync.py` las
-    salta. Lo comparten la ventana, que lanza la pasada sin cerrarse, y
+    UNA vez para todas y con las carpetas del programa que alguna subió
+    (`carpetas_del_programa()`): si dice que sí va `--yes` y, si no, `sync.py`
+    las salta. Lo comparten la ventana, que lanza la pasada sin cerrarse, y
     `runsync` para el menú de consola.
     """
     args = list(pairs)
     pending = [n for n in pair_status_notes(config) if n in args]
-    if pending and approve(pending):
+    if pending and approve(pending, carpetas_del_programa(config, pending)):
         args.append("--yes")
     return args
 

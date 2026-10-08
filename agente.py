@@ -728,6 +728,47 @@ class Servicio:
     locales: Mapping[str, str] = field(default_factory=dict)
 
 
+class ConfigRechazada(ValueError):
+    """El config de una raíz trae algo que no puede llegar a la línea de órdenes de rclone.
+
+    Es el `ConfigError` de `model.comprobar_seguridad()` como `ValueError`, que
+    es lo que dice por qué no se sirve una raíz. Se distingue de los demás para
+    avisar de lo que es: un config rechazado no es «nada que sincronizar».
+    """
+
+
+def leer_config(raiz: Path) -> dict:
+    """Lee el `sync_config.toml` de una raíz, a pelo, y lo pasa por la puerta de seguridad.
+
+    Es lo que el agente comprueba de un config ajeno antes de servir una raíz
+    (`leer_servicio()`) y de lanzar una pasada (`Agente._lanzar()`): el `sync.py`
+    de una raíz de antes de esa puerta no comprueba nada, y el agente solo
+    relee el config si cambia su fecha, que quien lo edite puede conservar.
+
+    Args:
+        raiz: La raíz de la unidad.
+
+    Returns:
+        El config tal como salió del TOML.
+
+    Raises:
+        ConfigRechazada: Si `model.comprobar_seguridad()` lo rechaza.
+        ValueError: Si no se puede leer o no es TOML válido.
+    """
+    try:
+        crudo = tomllib.loads((app(raiz) / "sync_config.toml").read_text(encoding="utf-8"))
+    except OSError as e:
+        raise ValueError(f"no se puede leer sync_config.toml ({e})") from e
+    except tomllib.TOMLDecodeError as e:
+        raise ValueError(f"sync_config.toml no es TOML válido ({e})") from e
+    try:
+        model.comprobar_seguridad(crudo, model.es_equipo(app(raiz)),
+                                  carpeta_programa=APP_SUBDIR)
+    except model.ConfigError as e:
+        raise ConfigRechazada(str(e)) from e
+    return crudo
+
+
 def leer_servicio(raiz: Path) -> Servicio:
     """Devuelve las parejas y el intervalo del servicio de esa raíz.
 
@@ -736,17 +777,20 @@ def leer_servicio(raiz: Path) -> Servicio:
     vigilada (`common/llavero.py`). Se lee el TOML a pelo y no con `model.parse_config()`
     porque la raíz puede ir en otra versión que el agente: lo que valida es su
     `sync.py`, y un modo que este agente no conozca no puede dejarla sin
-    servicio.
+    servicio. Lo único que sí comprueba el agente es lo que acabaría en la
+    línea de órdenes de rclone en ESTE equipo (`model.comprobar_seguridad()`,
+    que también mira que el `local` de cada pareja no salga de la raíz, con la
+    regla de la raíz del equipo si lo es, ni sea la carpeta del programa de ESA
+    raíz: el agente corre en su propia carpeta, no en la `.prdrive` de la
+    unidad): el `sync.py` de una raíz de antes de esa regla no comprueba nada, y
+    `orden_sonda()` pasa el `remote` de cada pareja a un `rclone lsd`.
 
     Raises:
-        ValueError: Con la frase que decir si no hay nada que atender.
+        ValueError: Con la frase que decir si no hay nada que atender, o
+            `ConfigRechazada` si el config trae algo que no puede llegar a
+            rclone (`leer_config()`).
     """
-    try:
-        crudo = tomllib.loads((app(raiz) / "sync_config.toml").read_text(encoding="utf-8"))
-    except OSError as e:
-        raise ValueError(f"no se puede leer sync_config.toml ({e})") from e
-    except tomllib.TOMLDecodeError as e:
-        raise ValueError(f"sync_config.toml no es TOML válido ({e})") from e
+    crudo = leer_config(raiz)
     defaults = crudo.get("defaults") if isinstance(crudo.get("defaults"), dict) else {}
     remotos: dict[str, str] = {}
     locales: dict[str, str] = {}
@@ -1955,10 +1999,26 @@ class Agente:
         try:
             con.servicio, con.error = leer_servicio(con.raiz), None
         except ValueError as e:
-            con.servicio, con.error = None, str(e)
-            if not con.avisado_error:
-                con.avisado_error = True
-                avisar(f"{con.nombre}: nada que sincronizar", con.error)
+            self._sin_servicio(con, e)
+
+    def _sin_servicio(self, con: Conexion, error: ValueError) -> None:
+        """Deja esa conexión sin servicio por su config, y lo avisa una vez.
+
+        El aviso dice lo que pasa: un config que la puerta de seguridad rechaza
+        (`ConfigRechazada`) es «config rechazado», y lo demás (no se puede leer,
+        no es TOML, no tiene ninguna pareja) es «nada que sincronizar».
+
+        Args:
+            con: La conexión.
+            error: Por qué no hay servicio (`leer_servicio()`, `leer_config()`).
+        """
+        con.servicio, con.error = None, str(error)
+        con.motivo = f"sin servicio: {con.error}"
+        if not con.avisado_error:
+            con.avisado_error = True
+            que = "config rechazado" if isinstance(error, ConfigRechazada) \
+                else "nada que sincronizar"
+            avisar(f"{con.nombre}: {que}", con.error)
 
     def _otro_servicio(self, con: Conexion) -> dict | None:
         """Devuelve el registro de otro servicio vivo de este equipo en esa raíz.
@@ -2542,7 +2602,10 @@ class Agente:
         """Lanza una tarea: una pasada (el `sync.py` de la raíz) o una sonda del remoto.
 
         Antes de una pasada se comprueba otra vez que el lock sigue siendo
-        nuestro.
+        nuestro y se lee de nuevo el config de la raíz (`leer_config()`): el
+        agente solo lo relee si cambia su fecha, y un config editado conservándola
+        (en una unidad cuyo `sync.py` no comprueba nada) correría sin mirar. Si
+        ya no vale, no se lanza, y la raíz queda sin servicio con su motivo.
         """
         con = self.conexiones[tarea.raiz]
         if tarea.tipo == pl.PASADA and not self._lock_es_nuestro(con):
@@ -2551,6 +2614,14 @@ class Agente:
             con.lock = None
             diario(f"[{con.nombre}] el lock ya no es mío; no lanzo {tarea.pareja}")
             return
+        if tarea.tipo == pl.PASADA:
+            try:
+                leer_config(con.raiz)
+            except ValueError as e:
+                self._sin_servicio(con, e)
+                con.firma = ()              # la vuelta que viene lo lee entero otra vez
+                diario(f"[{con.nombre}] no lanzo {tarea.pareja}: {e}")
+                return
         if tarea.urgente:
             self.urgentes = [u for u in self.urgentes if u != (tarea.raiz, tarea.pareja)]
         if tarea.tipo == pl.SONDA:

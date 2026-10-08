@@ -168,6 +168,17 @@ with sandbox():
         c.contains("y se dice en vez de ofrecer un botón que no existe",
                    str(e), "no se arregla desde aquí")
 
+    # un resync de una pareja raíz que subió el programa: se dice ANTES, porque
+    # después el listado nuevo ya no lo enseña
+    subio = revision.Hallazgo("resync", "t", "d", "p", revision.AVISO, ("nas:R/p/.prdrive/",))
+    avisos = " ".join(repair.aviso_resync(subio).warnings)
+    c.contains("el aviso del resync nombra .prdrive", avisos, "nas:R/p/.prdrive/")
+    c.contains("  y dice que la borre la persona", avisos, "bórrala")
+    c.contains("  y que el resync no la borra", avisos, "no la borra")
+    sin_dato = " ".join(repair.aviso_resync(
+        revision.Hallazgo("resync", "t", "d", "p", revision.AVISO, ())).warnings)
+    c("sin dato no hay tal aviso", "bórrala" in sin_dato or ".prdrive" in sin_dato, False)
+
     c("una pareja que ya no está en el config se dice",
       repair.tiene_plan(revision.Hallazgo("prefijo", "x", "y", "fantasma")), True)
     try:

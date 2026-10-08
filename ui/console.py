@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from typing import Mapping
 
 from common import APP_NAME, components, model, update
 from common.model import Config
@@ -25,13 +26,16 @@ class ConsoleFrontend:
         """Enseña el menú de consola y devuelve la elección."""
         return main_menu(config, startup_msg)
 
-    def approve_resync(self, pending: list[str]) -> bool:
+    def approve_resync(self, pending: list[str],
+                       carpetas: Mapping[str, str] | None = None) -> bool:
         """Devuelve siempre `False`: aquí no hace falta preguntar.
 
         No es un «no» sino un «aquí no hace falta». Con consola, `sync.py`
         hereda stdin y plantea él mismo la pregunta, con más contexto del que
-        cabe en un cuadro de diálogo. Devolver `True` añadiría `--yes` y le
-        quitaría a la persona esa conversación.
+        cabe en un cuadro de diálogo (también el aviso de la carpeta del
+        programa que alguna pareja subió, de ahí que `carpetas` no se use).
+        Devolver `True` añadiría `--yes` y le quitaría a la persona esa
+        conversación.
         """
         return False
 
