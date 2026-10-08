@@ -62,6 +62,16 @@ for extra in (["--sftp-ssh", "sh -c id"], ["--sftp-ssh=sh -c id"], ["--config", 
 for remoto in ("nas,ssh='sh -c id'", ":sftp,host=x", "nas:", "-nas", "a b "):
     c.contains(f"remote {remoto!r} no se admite", rechaza(una(remote=remoto)), "remote")
 c.contains("[defaults] remote tampoco", rechaza({**una(), "defaults": {"remote": "nas,x=y"}}), "remote")
+c.contains("[defaults] catalog_remote no admite opciones",
+           rechaza({**una(), "defaults": {"remote": "nas", "catalog_remote": "nas,ssh='x'"}}),
+           "[defaults]")
+c.contains("  y dice que es catalog_remote",
+           rechaza({**una(), "defaults": {"remote": "nas", "catalog_remote": "nas,ssh='x'"}}),
+           "catalog_remote")
+c.contains("[defaults] remote se mira aunque las parejas lleven el suyo",
+           rechaza({**una(remote="nas"), "defaults": {"remote": "nas,x=y"}}), "[defaults]")
+c("catalog_remote normal vale",
+  rechaza({**una(), "defaults": {"remote": "nas", "catalog_remote": "cat"}}), "")
 
 # lo de siempre sigue valiendo
 cfg = model.parse_config(una(flags={"transfers": 4, "checksum": True, "max-delete": 25,

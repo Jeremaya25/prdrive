@@ -66,7 +66,8 @@ unidad, el programa se niega a leerlo si trae:
 - **Un `remote` que no sea un nombre**: el de un remote de tu `rclone.conf`, con
   letras, números, espacios entre palabras y `. _ + @ -`. Si lleva `,`, `:`, `=`
   o comillas, rclone lo leería como una conexión con sus propias opciones
-  (`nas,ssh='…'`), y si empieza por `-`, como una opción.
+  (`nas,ssh='…'`), y si empieza por `-`, como una opción. Vale para el `remote`
+  de una pareja y para el `remote` y el `catalog_remote` de `[defaults]`.
 
 El aviso dice de qué pareja es (o de `[defaults]`) y qué clave sobra; hasta que
 la quites a mano, la ventana no abre. Lo que sí sigue valiendo es ponerlo en el

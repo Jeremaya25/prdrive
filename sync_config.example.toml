@@ -63,7 +63,8 @@ device_remote = "disp"
 # sync.py (config, log-file, dry-run, workdir, resync...) ni los que lanzan un
 # programa en este equipo (los que acaban en -command o -ssh, metadata-mapper,
 # rc y rc-*): el config viaja con el dispositivo. Tampoco un 'remote' con ',' ':'
-# '=' o comillas: es el nombre de un remote, no una cadena de conexión.
+# '=' o comillas (en 'remote' ni en 'catalog_remote'): es el nombre de un
+# remote, no una cadena de conexión.
 [defaults.flags]
 checkers = 8
 transfers = 4

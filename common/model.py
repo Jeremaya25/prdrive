@@ -554,19 +554,25 @@ remote de `sftp` con su propia orden `ssh`, y `:sftp,host=x` uno creado al vuelo
 """
 
 
-def problema_remote(nombre: Any) -> str | None:
+def problema_remote(nombre: Any, clave: str = "remote") -> str | None:
     """Dice por qué un `remote` no vale como nombre de remote de rclone.
 
     Se junta con la ruta (`nombre:ruta`) y va tal cual a rclone, que lo lee
     como cadena de conexión si lleva opciones.
 
+    Args:
+        nombre: El valor a comprobar.
+        clave: Cómo se llama la clave en el mensaje: `remote` en una pareja y
+            en `[defaults]`, `catalog_remote` en este último.
+
     Returns:
-        El motivo, que empieza por «'remote' no vale», o `None` si vale.
+        El motivo, que empieza por «'remote' no vale» (o por el nombre de la
+        otra clave), o `None` si vale.
     """
     if not isinstance(nombre, str):
-        return "'remote' no vale: tiene que ser un texto"
+        return f"'{clave}' no vale: tiene que ser un texto"
     if not NOMBRE_REMOTE.fullmatch(nombre):
-        return (f"'remote' no vale ({nombre!r}): es el nombre de un remote del "
+        return (f"'{clave}' no vale ({nombre!r}): es el nombre de un remote del "
                 f"rclone.conf, con letras, números, espacios entre palabras y "
                 f". _ + @ -, sin empezar por '-' ni llevar ',' ':' '=' o comillas "
                 f"(rclone lo leería como opciones de la conexión).")
@@ -1277,8 +1283,9 @@ def parse_config(data: Mapping[str, Any], equipo: bool = False) -> Config:
 
     Raises:
         ConfigError: Si no hay ninguna `[[pair]]`, alguna no es válida,
-            `[defaults]` lleva `watch`, que es de cada pareja, o unos flags o
-            un `extra_flags` que no valen (`problema_flag()`,
+            `[defaults]` lleva `watch`, que es de cada pareja, un `remote` o
+            `catalog_remote` que no es un nombre de remote (`problema_remote()`)
+            o unos flags o un `extra_flags` que no valen (`problema_flag()`,
             `problema_extra()`), o `[keychain]` no vale o choca con una pareja
             que se llama como la suya.
     """
@@ -1293,6 +1300,14 @@ def parse_config(data: Mapping[str, Any], equipo: bool = False) -> Config:
             raise ConfigError(
                 "[defaults] no admite 'watch': vigilar los cambios locales se pide "
                 "pareja a pareja, con 'watch = true' en cada [[pair]] que lo quiera.")
+        # Los dos acaban como `remote:ruta` en rclone: `remote` en cada pareja
+        # (que puede tener el suyo) y `carpeta_del_catalogo()` los toma tal cual
+        # para el llavero y para leer el catálogo.
+        for clave in ("remote", "catalog_remote"):
+            if defaults.get(clave):
+                problema = problema_remote(defaults[clave], clave)
+                if problema:
+                    raise ConfigError(f"[defaults] {problema}")
         _comprobar_capas("[defaults]", "[defaults.flags]", defaults.get("flags"),
                          defaults.get("extra_flags"))
     pairs = tuple(_build_pair(p, defaults, equipo) for p in raw_pairs)
