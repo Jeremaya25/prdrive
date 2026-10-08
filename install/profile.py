@@ -66,7 +66,21 @@ NOMBRE_VALIDO = re.compile(r"[A-Za-z0-9_.-]+")
 
 rclone acepta bastante más, pero el proyecto lo mete en
 `RCLONE_CONFIG_<NOMBRE>_*` cuando hay `device_remote` y ahí no cabe cualquier
-cosa. Se valida al entrar, no al fallar tres pasos después.
+cosa. Se valida al entrar, no al fallar tres pasos después. Es la regla de los
+nombres que se teclean en el asistente; la de los que ya existen es
+`NOMBRE_RCLONE`.
+"""
+
+NOMBRE_RCLONE = re.compile(r"(?!-)[\w.+@-]+(?: [\w.+@-]+)*")
+"""Regla de rclone para el nombre de un remote (`fullmatch`).
+
+Sin `,` `:` `=` ni comillas, sin `[` `]` ni saltos de línea, sin empezar por `-`
+ni acabar en espacio. Es la que se exige para ESCRIBIR un `rclone.conf`
+(`render_conf`): un remote que ya existe (en un `rclone.conf` importado o en el
+`[defaults].remote` de un catálogo) puede llamarse `Mi NAS` o `nas@home`, y
+renombrarlo apartaría la base de cada pareja bisync. Tiene que seguir igual a
+`model.NOMBRE_REMOTE` (lo comprueba `tests/test_install_profile.py` en cuanto
+exista).
 """
 
 CLAVE_VALIDA = re.compile(r"[A-Za-z0-9_]+")
@@ -92,13 +106,20 @@ todos los dispositivos.
 """
 
 _SECRETAS_EXACTAS = frozenset({"key", "pass", "password", "2fa"})
+"""Nombres de opción que son un secreto tal cual (`es_secreta()`)."""
+
 _SECRETAS_CONTIENEN = ("pass", "token", "secret", "credential", "_pem",
                        "sas_url", "account_key", "access_grant",
-                       "connection_string")
+                       "connection_string", "cookie", "authorization",
+                       "headers")
+"""Trozos que delatan un secreto en cualquier parte del nombre (`es_secreta()`)."""
+
 _CLAVE_DE_BACKEND = re.compile(r"_key(_|$)")
-"""Criterio de `es_secreta()`: nombres exactos, trozos que delatan un secreto y
-`..._key` como palabra suelta (`api_key`, `sse_customer_key`,
-`sse_customer_key_base64`)."""
+"""`..._key` como palabra suelta, al final o en medio (`es_secreta()`).
+
+Son `api_key`, `sse_customer_key` o `sse_customer_key_base64`; `es_secreta()`
+exceptúa los `..._key_id`.
+"""
 
 
 @dataclass(frozen=True)
@@ -174,7 +195,9 @@ def es_secreta(clave: str) -> bool:
     queda fuera del catálogo. Es secreto un nombre que:
     - sea exactamente `key`, `pass`, `password` o `2fa`;
     - contenga `pass`, `token`, `secret`, `credential`, `_pem`, `sas_url`,
-      `account_key`, `access_grant` (Storj) o `connection_string` (Azure);
+      `account_key`, `access_grant` (Storj), `connection_string` (Azure),
+      `cookie` (iCloud), `authorization` (SugarSync) o `headers` (http y
+      webdav, que pueden llevar `Authorization`);
     - acabe en `_key` o lleve `_key_` en medio (`api_key`, `sse_customer_key`,
       `sse_customer_key_base64`), salvo si acaba en `_key_id`: eso es un
       identificador y no el secreto (`access_key_id`, `sse_kms_key_id`).
@@ -220,16 +243,17 @@ def render_conf(profile: Profile, key_file: Path | str | None = None,
 
     Raises:
         InstallError: Si el perfil no dice cómo se llama el remote, el nombre no
-            vale (`NOMBRE_VALIDO`), el de una opción no vale o un valor lleva
+            vale (`NOMBRE_RCLONE`), el de una opción no vale o un valor lleva
             un salto de línea. Un `rclone.conf` no tiene escape para ellos y
             las opciones pueden venir del catálogo.
     """
     if not profile.remote_name:
         raise InstallError("El perfil no dice cómo se llama el remote.")
-    if not NOMBRE_VALIDO.fullmatch(profile.remote_name):
+    if not NOMBRE_RCLONE.fullmatch(profile.remote_name):
         raise InstallError(
-            f"El nombre de remote {profile.remote_name!r} no vale: solo letras, "
-            f"números, punto, guión y guión bajo.")
+            f"El nombre de remote {profile.remote_name!r} no vale en un "
+            f"rclone.conf: no admite , : = [ ] ni comillas ni saltos de línea, "
+            f"ni empezar por «-» ni acabar en espacio.")
     lineas = [f"[{profile.remote_name}]"]
     for clave, valor in profile.options.items():
         if clave in RUTAS_DERIVADAS:
@@ -550,6 +574,18 @@ def _ruta_catalogo(ruta: str | None) -> str:
     return limpia
 
 
+def _texto_rclone(valor: object) -> str:
+    """Devuelve un valor del catálogo tal como lo escribe rclone en su conf.
+
+    TOML trae booleanos de verdad y `str(True)` da «True», no «true»: el mismo
+    valor parecería otra conexión y el conf llevaría una mayúscula que rclone
+    no lee como booleano.
+    """
+    if isinstance(valor, bool):
+        return "true" if valor else "false"
+    return str(valor)
+
+
 def _enumerar(claves: Iterable[str]) -> str:
     """Devuelve las claves entre comillas inversas, «`a`, `b` y `c`», ordenadas."""
     nombres = [f"`{k}`" for k in sorted(claves)]
@@ -591,11 +627,11 @@ def _opciones_del_catalogo(
         if clave == "name" or clave in RUTAS_DERIVADAS:
             continue
         if clave in OPCIONES_QUE_EJECUTAN:
-            ejecutan[clave] = str(valor)
+            ejecutan[clave] = _texto_rclone(valor)
         elif es_secreta(clave):
             secretas.append(clave)
         else:
-            heredadas[clave] = str(valor)
+            heredadas[clave] = _texto_rclone(valor)
     if not heredadas.get("type"):
         return None, []         # tabla incompleta: no se pisa lo que ya funciona
 

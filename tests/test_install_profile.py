@@ -396,9 +396,32 @@ for salto in ("\n", "\r", "\r\n", chr(0x85), chr(0x2028)):
     rechaza("render_conf rechaza un valor con salto de línea" if salto == "\n"
             else f"render_conf rechaza un valor con {salto!r}",
             lambda roto=roto: profile.render_conf(roto), "'user'")
-rechaza("render_conf rechaza un nombre de remote que no es NOMBRE_VALIDO",
-        lambda: profile.render_conf(dataclasses.replace(perfil, remote_name="nas]\n[x")),
-        "no vale")
+# El nombre se valida con la regla de rclone, no con la de `from_form`: un remote
+# que ya existe (en un rclone.conf importado o en `[defaults].remote`) no puede
+# quedarse sin dispositivos nuevos porque lleve un espacio o una arroba.
+for nombre in ("nas]x", "nas\n[x", "a,b", "a:b", "a=b", "a'b", "-nas", "nas "):
+    rechaza("render_conf rechaza un nombre de remote que rclone no admite"
+            if nombre == "nas]x" else
+            f"render_conf rechaza el nombre {nombre!r}",
+            lambda nombre=nombre: profile.render_conf(
+                dataclasses.replace(perfil, remote_name=nombre)), "no vale")
+for nombre in ("Mi NAS", "almacén", "nas@home", "nas+b", "nas.1-b_2"):
+    c(f"render_conf escribe el remote {nombre!r}",
+      profile.render_conf(dataclasses.replace(perfil, remote_name=nombre)
+                          ).splitlines()[0], f"[{nombre}]")
+c("lo tecleado en el asistente sigue siendo más estricto",
+  [n for n in ("Mi NAS", "nas@home", "nas") if profile.NOMBRE_VALIDO.fullmatch(n)],
+  ["nas"])
+# Una sola regla de rclone para el nombre: la de `model` cuando exista.
+from common import model  # noqa: E402
+
+if hasattr(model, "NOMBRE_REMOTE"):
+    c("NOMBRE_RCLONE es igual a model.NOMBRE_REMOTE",
+      (profile.NOMBRE_RCLONE.pattern, profile.NOMBRE_RCLONE.flags),
+      (model.NOMBRE_REMOTE.pattern, model.NOMBRE_REMOTE.flags))
+else:
+    print("  (saltado) model.NOMBRE_REMOTE todavía no existe: no se compara con "
+          "NOMBRE_RCLONE")
 rechaza("render_conf rechaza el nombre de una opción con símbolos",
         lambda: profile.render_conf(dataclasses.replace(
             perfil, options={**perfil.options, "a b\n[x": "1"})), "'a b\\n[x'")
@@ -410,7 +433,7 @@ rechaza("y un salto de línea en una ruta de la clave",
 sucia = tmpdir()
 for etiqueta, malo, porque in (
         ("un nombre de remote inválido",
-         dataclasses.replace(perfil, remote_name="nas@home"), "no vale"),
+         dataclasses.replace(perfil, remote_name="nas]x"), "no vale"),
         ("un valor con salto de línea",
          dataclasses.replace(perfil, options={**perfil.options, "user": "a\nb"}),
          "'user'")):
@@ -428,12 +451,13 @@ for clave in ("key", "pass", "password", "token", "secret_access_key", "client_s
               "key_pem", "sas_url", "account_key", "key_file_pass",
               "bearer_token_command", "credentials_file", "PASS",
               "api_key", "sse_customer_key", "sse_customer_key_base64",
-              "access_grant", "connection_string", "2fa"):
+              "access_grant", "connection_string", "2fa",
+              "cookies", "authorization", "authorization_expiry", "headers"):
     c(f"{clave} es secreta", profile.es_secreta(clave), True)
 for clave in ("type", "host", "user", "port", "url", "vendor", "provider",
               "access_key_id", "key_file", "known_hosts_file", "shell_type",
               "disable_hashcheck", "region", "endpoint", "sse_kms_key_id",
-              "key_exchange"):
+              "key_exchange", "user_agent"):
     c(f"{clave} no es secreta", profile.es_secreta(clave), False)
 
 base_nas = profile.from_form("nas", {"type": "sftp", "host": "h"})
@@ -515,6 +539,33 @@ c("sin nada propio secreto se adopta el [remote] filtrado", dict(ajustado.option
   {"type": "sftp", "host": "h2", "user": "u2"})
 c.contains("y se dice que las opciones salen del catálogo", " ".join(notas),
            "salen del [remote] del catálogo")
+
+# TOML trae números y booleanos de verdad; rclone los escribe como texto
+# («22», «true»). El mismo valor no puede parecer otra conexión por cómo se escriba.
+con_opciones = profile.from_form("nas", {
+    "type": "sftp", "host": "h", "user": "u", "pass": "oculta", "port": "22",
+    "disable_hashcheck": "true"})
+cat_tipos = {"defaults": {"remote": "nas"},
+             "remote": {"type": "sftp", "host": "h", "user": "u", "port": 22,
+                        "disable_hashcheck": True}}
+ajustado, notas = profile.align_with_catalog(con_opciones, cat_tipos)
+c("un entero y un booleano del catálogo no son otra conexión",
+  [n for n in notas if "otra conexión" in n or "salen del [remote]" in n], [])
+c("y el perfil se queda como está", dict(ajustado.options), dict(con_opciones.options))
+ajustado, _ = profile.align_with_catalog(base_nas, cat_tipos)
+c("sin nada propio secreto se adopta el booleano como lo escribe rclone",
+  dict(ajustado.options),
+  {"type": "sftp", "host": "h", "user": "u", "port": "22",
+   "disable_hashcheck": "true"})
+ajustado, _ = profile.align_with_catalog(base_nas, {
+    "defaults": {"remote": "nas"},
+    "remote": {"type": "sftp", "host": "h", "disable_hashcheck": False}})
+c("y un false también", ajustado.options["disable_hashcheck"], "false")
+c.contains("el conf lleva «true», no «True»", profile.render_conf(
+    profile.align_with_catalog(base_nas, cat_tipos)[0]), "disable_hashcheck = true")
+c("with_catalog_remote también los escribe como rclone",
+  profile.with_catalog_remote(base_nas, cat_tipos["remote"]).options["disable_hashcheck"],
+  "true")
 
 # Un `[remote]` al que, sin lo que no se hereda, le falta algo que rclone exige
 # no se usa: el dispositivo se quedaría con un sftp que marca `:22`, este equipo.
