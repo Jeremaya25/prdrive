@@ -238,7 +238,7 @@ with sandbox():
     escribir(raiz / model.APP_DIR.name / "tuya.md.conflicto-remoto1")
     c("en una pareja de una subcarpeta, una carpeta como la del programa es suya",
       sorted(x.relativa for x in conflicts.escanear(p)),
-      [f"{model.APP_DIR.name}/tuya.md", "plan.md", "sub/.prversions/mia.md"])
+      sorted([f"{model.APP_DIR.name}/tuya.md", "plan.md", "sub/.prversions/mia.md"]))
 
 with sandbox() as dispositivo:
     todo = pareja_raiz()
