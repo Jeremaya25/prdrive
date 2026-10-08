@@ -40,8 +40,8 @@ sobre los cuatro archivos (SHA-256 iguales a los de su `SHA256SUMS`):
 - Linux x64 y ARM64: el mismo Tcl/Tk 9.0.4 que traían los 3.13
   (`lib/libtcl9tk9.0.so`), **compilado sin Xft** (su versión lo dice:
   `…no-xft.x11`). Sin Xft, Tk solo ve las fuentes de mapa de bits de X11: la
-  letra sale sin suavizar y no puede usar la de `ui/fuentes/`. No depende de
-  la versión de Python; está pendiente de llevar un Tk propio con Xft.
+  letra sale sin suavizar y no puede usar la de `ui/fuentes/`. Por eso viaja
+  al lado uno compilado con Xft (`TK_XFT_VERSION`, abajo).
 
 Qué NO trae Tk 9.0.4, aunque se espere: el redibujado al pasar a una pantalla
 con otro zoom. Su DLL no usa ninguna función de densidad por monitor
@@ -91,6 +91,42 @@ PYTHON_VERSION = "3.14.8"
 PBS_BASE_URL = ("https://github.com/astral-sh/python-build-standalone/"
                 "releases/download")
 """URL base de las releases de python-build-standalone."""
+
+TK_XFT_VERSION = "9.0.4"
+"""El Tk con Xft que acompaña al runtime de Linux: el MISMO que trae su Python.
+
+Tiene que ser la versión del `lib/libtcl9tk9.0.so` del runtime fijado (la de
+sus scripts, `lib/tk9.0/`, que usa también este): quien mueva `PYTHON_VERSION`
+o `PYTHON_RELEASE` comprueba que sigue siéndolo, o recompila
+(`.github/workflows/tk-xft.yml`).
+
+Por qué hace falta: el de python-build-standalone para Linux está compilado sin
+Xft y solo ve las fuentes de mapa de bits de X11. Este se compila igual pero
+con Xft, lo publica ese workflow como prerelease de este repositorio, y
+`install/runtime_bin.py` lo deja en `lib/tk-xft/` del runtime, al lado del de
+serie; `ui` lo precarga antes de tkinter si el equipo tiene `libXft`.
+"""
+TK_XFT_REVISION = "1"
+"""La compilación de esa versión: sube si se recompila (otra opción, otra base)."""
+TK_XFT_TAG = f"tk-xft-{TK_XFT_VERSION}-{TK_XFT_REVISION}"
+"""El tag de su release en este repositorio, que es también lo que anota el sello."""
+TK_XFT_BASE_URL = "https://github.com/Jeremaya25/prdrive/releases/download"
+"""URL base de las releases de este repositorio."""
+TK_XFT_SHA256 = {
+    "x86_64": "6a9db4afc3e87757c719f984d78a421e2c3701a1cd166df9d468bafc6211bb3c",
+    "aarch64": "0f92f19cc9d4c9757af7d9310db8a52e8d88a06b014e3eb4821281f0685fc8dc",
+}
+"""El SHA-256 de cada paquete, por arquitectura (la primera parte del triple).
+
+Se fija aquí, como el de VeraCrypt, y no se lee de un SHA256SUMS de la misma
+release: así lo publicado no se puede cambiar sin un commit que se vea. Salen
+de la release `tk-xft-9.0.4-1` (compilada en manylinux_2_28 el 08/10/2026),
+comprobados ese día: coinciden con su `SHA256SUMS`; cada biblioteca es de su
+arquitectura, lleva el SONAME `libtcl9tk9.0.so`, pide `libXft.so.2` y ninguna
+ruta de búsqueda, y la glibc 2.14 (x86_64) o 2.17 (aarch64) o más nueva. La de
+x86_64 se ha probado en el runtime 3.14.8: carga ella sola, ve las fuentes del
+sistema y las de `ui/fuentes/`, y sin `libXft` queda la de serie.
+"""
 
 VERACRYPT_VERSION = "1.26.29"
 r"""Versión del paquete «VeraCrypt Portable» oficial (IDRIX) que se usa y se lleva.
@@ -292,9 +328,9 @@ PLATAFORMAS: tuple[Plataforma, ...] = (
     Plataforma("windows-arm64", "Windows ARM64", "windows", "arm", "arm64",
                "aarch64-pc-windows-msvc", 77, 44),
     Plataforma("linux-x64", "Linux x64", "linux", "x64", "amd64",
-               "x86_64-unknown-linux-gnu", 82, 53),
+               "x86_64-unknown-linux-gnu", 82, 55),
     Plataforma("linux-arm64", "Linux ARM64", "linux", "arm", "arm64",
-               "aarch64-unknown-linux-gnu", 77, 44),
+               "aarch64-unknown-linux-gnu", 77, 45),
 )
 """Las plataformas que el dispositivo puede llevar.
 
@@ -302,7 +338,8 @@ Los tamaños están medidos con las versiones de arriba: el `rclone.exe` 1.75.1
 de amd64 son 81 MB descomprimido y los runtimes son lo que deja
 `runtime_bin.extract()` ya podado, en MiB redondeados hacia arriba. Con la
 20261001 y Python 3.14.8, el 08/10/2026: Windows x64 42,47 MiB, Windows ARM64
-43,27, Linux x64 52,51 y Linux ARM64 43,15.
+43,27, Linux x64 54,08 y Linux ARM64 44,73 (los de Linux, con el Tk con Xft de
+`TK_XFT_TAG`, que son 1,6 MiB).
 """
 
 

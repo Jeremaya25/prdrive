@@ -26,6 +26,11 @@ from _harness import Checks, tmpdir
 
 from common import components as comp
 from common import pins
+
+# Sin el Tk con Xft fijado: estos runtimes de mentira no lo llevan (sus
+# `ensure_runtime` no lo bajan) y entonces uno de Linux saldría pendiente para
+# siempre. Ese camino lo cubre `test_tk_xft.py`; aquí se mira el del runtime.
+pins.TK_XFT_SHA256.clear()
 from install import InstallError, components, deploy, platforms, rclone_bin
 from install import runtime_bin
 
@@ -876,9 +881,13 @@ try:
                         python_release=pins.PYTHON_RELEASE)
     for plat in (WIN, LIN):
         d = platforms.runtime_dir(aldia, plat)
+        # El de Linux, con el Tk con Xft: el subproceso de abajo usa el
+        # `pins` de verdad, que sí lo tiene fijado.
         (d / comp.RUNTIME_STAMP).write_text(
             f"python = {pins.PYTHON_VERSION}\nrelease = {pins.PYTHON_RELEASE}\n"
-            f"triple = {plat.triple}\nsha256 = x\n", encoding="utf-8")
+            f"triple = {plat.triple}\nsha256 = x\n"
+            + ("" if plat.es_windows else f"tk = {pins.TK_XFT_TAG}\n"),
+            encoding="utf-8")
     c("un dispositivo al día no tiene nada pendiente",
       components.pendientes(aldia), [])
     # `c()` solo apunta el fallo y sigue: si esta invariante se rompiera, el

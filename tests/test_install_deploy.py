@@ -237,6 +237,11 @@ c("ni se inventa un .pyw", (inmutable / "runsync.pyw").exists(), False)
 
 # rclone y Python por plataforma
 from common import components, pins  # noqa: E402
+
+# Sin el Tk con Xft fijado: estos runtimes de mentira no lo llevan (sus
+# `ensure_runtime` no lo bajan) y entonces uno de Linux saldría pendiente para
+# siempre. Ese camino lo cubre `test_tk_xft.py`; aquí se mira el del runtime.
+pins.TK_XFT_SHA256.clear()
 from install import platforms, rclone_bin, runtime_bin  # noqa: E402
 
 WIN, LIN = pins.plataforma("windows-x64"), pins.plataforma("linux-x64")

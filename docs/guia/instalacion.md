@@ -71,8 +71,10 @@ dispositivo instalado con el 3.13 lo verá como componente pendiente en «Ajuste
 Actualizaciones» y se pone al día desde ahí.
 
 En Linux, el Tk de ese runtime no trae suavizado de letra (está compilado sin
-Xft): la ventana se ve con una letra de mapa de bits. Está pendiente de
-arreglarse llevando un Tk propio.
+Xft), así que el dispositivo lleva al lado uno compilado con él (1,6 MB) y
+prdrive lo usa si el equipo tiene las bibliotecas de letras de cualquier
+escritorio. En un equipo sin ellas (un servidor sin escritorio) se queda con el
+de serie.
 
 **Desmarcar una plataforma que el dispositivo ya lleva pregunta si se borra.** Si
 dices que no, sus binarios se quedan donde están y simplemente no se reinstalan.
