@@ -257,7 +257,7 @@ de 216.
   - Hacer un plan, y repintar tras ejecutarlo, **siempre** vuelve a llamar a `revisar()`.
   - `plan.execute()` vuelve a comprobar sus condiciones, porque el plan puede añadir `--yes`.
 - **Sale del hilo de Tk, con su límite de tiempo:**
-  - `schtasks`/`systemctl` de «Arranque automático»: `run_quiet` gana un `timeout=` opcional, solo para consultas, que devuelve un resultado 124 en vez de lanzar. Las operaciones que cambian el sistema siguen sin límite.
+  - `schtasks`/`systemctl`: las consultas de la interfaz van por una función nueva, `watch.consulta(cmd, timeout)` en `ui/watch.py`, que devuelve un resultado 124 en vez de lanzar. Así **`penwatch.py` no cambia**: tocar sus bytes deja «desfasado» cada vigilante instalado. `penwatch.registered_state()` («Arranque automático») pasa a un hilo en la etapa 2. Las operaciones que cambian el sistema siguen sin límite.
   - «Versiones guardadas»: el apartado se pinta primero y lee el remoto después, con un `Indicador`, no con el `working()` modal.
   - «Nombre e icono»: la lectura del volumen y los 5 iconos de color.
   - El QR: se codifica en un hilo, y la imagen se crea en el de Tk después de proteger.
@@ -311,8 +311,9 @@ Y cuatro cosas pequeñas:
 
 - **`.pyc` al instalar y al actualizar [decidido sin el dueño].**
   - `deploy_code()` acaba con `deploy.precompilar(destino, python)`, que también usa `--update` porque llama a `deploy_code`. Es una función de módulo que las pruebas sustituyen.
+  - **Una instalación nueva** pone el código antes que el runtime (paso 5: `deploy_code()` y luego `apply_platforms()`), así que también precompila `apply_platforms()` cuando llega el runtime de este equipo. Lo mismo vale para «Añadir plataformas…» y para `--update-components` cuando cambia el runtime.
   - Hace `compileall` de `common/` y `ui/` y un calentamiento de los módulos de la biblioteca que usa prdrive, en modo **`checked-hash`**: en FAT32/exFAT la hora de un fichero cambia entre Windows y Linux, y con hora los `.pyc` se rehacerían en cada cambio de equipo.
-  - **El intérprete:** solo el runtime del dispositivo para este equipo (`cpython-314`), nunca un Python del equipo de otra versión.
+  - **El intérprete:** solo el runtime del dispositivo para este equipo (`platforms.device_interpreter(..., consola=True)`), nunca un Python del equipo de otra versión. Sin runtime (instalación ligera, raíz del equipo) no se hace nada.
   - **Los demás runtimes** se calientan en su primer uso.
   - **Si no se puede** (unidad llena, de solo lectura, sin runtime para este equipo), se sigue sin él. Tiene tope de tiempo.
   - **El relevo que cambia el runtime** precompila antes de reabrir, con su fase en la barra.
@@ -378,7 +379,8 @@ El banco temporal (`banco/`, `banco-ui.yml`) se convierte en `rendimiento.yml`.
   - **un empeoramiento claro frente a `main` medido en el mismo trabajo**: más de un 25 % y más de 30 ms en un momento de las tablas.
 - **Los objetivos** salen en el resumen del trabajo, frente a lo medido, pero no hacen fallar. La máquina de GitHub varía de una ejecución a otra.
 - **Lo que se quita:** la mitad de Qt, la 0.6.5 y las variantes de prueba.
-- **Para el equipo del dueño:** `PRDRIVE_PERF=1` escribe en el registro lo que tarda cada momento.
+- **Para el equipo del dueño:** `PRDRIVE_PERF=1`, que escribiría en el registro lo que tarda cada momento, va en la etapa 4, junto a las filas de máquina real. Los momentos que mediría los reescribe la etapa 2.
+- **Dónde vive:** `tests/rendimiento/` (como `tests/maquina/`; `run_all.py` no lo recoge), con los techos de las cuentas en `tests/rendimiento/presupuesto.toml`. Un techo baja en el PR que lo consigue.
 
 ### 6. Pruebas
 
@@ -413,13 +415,13 @@ Cada etapa tiene su propio plan en `docs/superpowers/plans/`. El de la siguiente
 escribe cuando la anterior está medida.
 
 1. **1a. Sin riesgo visual** (lo primero, para que todo lo demás se mida):
-   - `rendimiento.yml` y la pata de Tk 9 en la CI;
+   - `rendimiento.yml` y la pata de Tk 9 en la CI: `banco/` pasa a `tests/rendimiento/` y `banco-ui.yml` se borra;
    - el `_png` memoizado y la letra (1d);
    - los imports perezosos y `pregunta.py`;
    - `.pyc` y el relanzado;
    - el ritmo del servicio;
    - el log en bloque con la salida entera aparte, y la barra de espera;
-   - el `timeout=` de las consultas de `run_quiet`;
+   - `watch.consulta()` con límite para las consultas del asistente;
    - el editor de «Parejas» que no se borra.
 
    **1b. El motor:**
@@ -440,7 +442,7 @@ escribe cuando la anterior está medida.
    - la pregunta del agente a ≤ 11 widgets;
    - el instalador con 3.14.
 4. **4. Limpieza:**
-   - quitar `banco/`;
+   - `PRDRIVE_PERF=1`;
    - filas nuevas de máquina real: primer arranque en frío desde una memoria USB, `.pyc` en FAT32 y exFAT entre sistemas, y el aspecto en una pantalla de Windows de verdad.
 
 ## Decisiones para revisar
