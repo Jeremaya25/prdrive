@@ -156,7 +156,7 @@ with sandbox():
     c("con un reloj atrasado, el log recién guardado existe", final.exists(), True)
     c("  y la pareja se queda en LOGS_POR_PAREJA ficheros",
       len(list(model.LOG_DIR.glob("a_*.log"))), sync.LOGS_POR_PAREJA)
-    c("  sin el más viejo de los anteriores", (model.LOG_DIR / "a_20990101000000.log").exists(),
+    c("  sin el más viejo de los anteriores", (model.LOG_DIR / "a_20990101_000000.log").exists(),
       False)
 
 with sandbox():
@@ -241,6 +241,19 @@ else:
     hilo.start()
     hilo.join(5)
     c("un FIFO llamado daemon.log no deja colgado el recorte", hilo.is_alive(), False)
+
+# un daemon.log que es una carpeta no deja descriptores abiertos: en POSIX
+# `os.open` abre la carpeta, y el agente recorta en cada línea de su diario
+if not Path("/proc/self/fd").is_dir():
+    print("  (saltado) descriptores: este sistema no tiene /proc/self/fd")
+else:
+    carpeta = tmpdir("prdrive-carpeta-") / "daemon.log"
+    carpeta.mkdir()
+    antes = len(os.listdir("/proc/self/fd"))
+    for _ in range(50):
+        store.recortar_diario(carpeta)
+    c("un daemon.log que es una carpeta no deja descriptores abiertos",
+      len(os.listdir("/proc/self/fd")), antes)
 
 # un daemon.log que es un enlace a un fichero de fuera no se lee: sus últimas
 # líneas acabarían copiadas en el diario del dispositivo

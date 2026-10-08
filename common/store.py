@@ -140,10 +140,14 @@ def recortar_diario(ruta: Path) -> None:
     except OSError:
         return
     try:
+        # Se mira el descriptor antes de dárselo a `fdopen`: con una carpeta
+        # (en POSIX `os.open` la abre) `fdopen` lanza sin cerrarlo, y el agente
+        # perdería un descriptor por cada línea del diario de esa unidad.
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_size <= DIARIO_TOPE:
+            return
         with os.fdopen(fd, "rb") as f:
-            info = os.fstat(f.fileno())
-            if not stat.S_ISREG(info.st_mode) or info.st_size <= DIARIO_TOPE:
-                return
+            fd = -1                     # ya es de `f`, que lo cierra
             f.seek(info.st_size - DIARIO_TOPE)
             cola = f.read(DIARIO_TOPE)
         # la ventana empieza a mitad de línea: esa primera se descarta. «ignore»
@@ -153,6 +157,12 @@ def recortar_diario(ruta: Path) -> None:
         write_text(ruta, "".join(f"{linea}\n" for linea in lineas[-DIARIO_QUEDAN:]))
     except OSError:
         pass
+    finally:
+        if fd >= 0:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
 
 
 def crear_exclusivo(ruta: Path, datos: bytes) -> bool | None:
