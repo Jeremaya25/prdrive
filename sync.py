@@ -593,9 +593,21 @@ def report_conflicts(ctx: RunContext, pair: Pair) -> None:
 
 
 def run_pair(ctx: RunContext, pair: Pair) -> int:
-    """Ejecuta una pareja y devuelve su código de salida."""
+    """Ejecuta una pareja y devuelve su código de salida.
+
+    Antes de nada aborta con 2 si su carpeta local, ya resuelta, es la del
+    programa o cae dentro (`model.problema_contencion()`).
+    """
     print(f"\n=== {pair.name} ({pair.mode.name}){ctx.tag} ===")
     reloj = historial.Reloj()
+
+    # Dónde cae de verdad su carpeta, resuelta: lo que el texto del config no
+    # delata (un enlace, un nombre corto de Windows) a `.prdrive/`, con la clave.
+    contencion = model.problema_contencion(pair)
+    if contencion is not None:
+        print(f"[{pair.name}] ERROR: {contencion} Se aborta.")
+        record_result(ctx, pair, 2, None, reloj)
+        return 2
 
     need_resync = ctx.force_resync
     if pair.is_bisync:

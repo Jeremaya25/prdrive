@@ -12,7 +12,10 @@ la raíz entera deje fuera la carpeta del programa (`REGLA_SIN_PROGRAMA`), con s
 clave, y avise si alguna vez la subió.
 """
 
+import contextlib
 import hashlib
+import io
+import os
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -407,5 +410,73 @@ with sandbox():          # el fichero de filtros de antes, con su md5 de antes
       bisync.programa_en_listado(raiz), False)
     lst.write_bytes(b"\xff\xfe\x00 no es un listado")
     c("  un listado ilegible no rompe nada", bisync.programa_en_listado(raiz), False)
+
+# --- en tiempo de ejecución: ninguna pareja cae en la carpeta del programa -----
+# Un nombre corto 8.3, una unión o un enlace pueden llevar un `local` que el texto
+# no delata a `.prdrive/`: `sync.py` mira dónde cae de verdad (`problema_contencion`).
+def enlace_a(destino: Path, nombre: Path) -> bool:
+    """Crea un enlace simbólico a una carpeta, si el sistema deja (Windows pide un permiso)."""
+    try:
+        os.symlink(destino, nombre, target_is_directory=True)
+        return True
+    except (OSError, NotImplementedError):
+        print(f"  (saltado) sin permiso para crear enlaces: {nombre.name}")
+        return False
+
+
+def correr(pareja) -> tuple[int, str, list]:
+    """Corre `sync.run_pair()` sin rclone: devuelve su código, su salida y las órdenes."""
+    ordenes: list = []
+    original, sync.execute = sync.execute, lambda ctx, cmd, logfile=None: ordenes.append(cmd) or 0
+    try:
+        salida = io.StringIO()
+        with contextlib.redirect_stdout(salida):
+            rc = sync.run_pair(sync.RunContext(binary="RCLONE", env={}), pareja)
+        return rc, salida.getvalue(), ordenes
+    finally:
+        sync.execute = original
+
+
+with sandbox() as dispositivo:
+    programa = dispositivo / ".prdrive"
+    (programa / "keys").mkdir(parents=True)
+    ajeno = dispositivo / "ajeno"
+    ajeno.mkdir()
+    app_de_verdad, model.APP_DIR = model.APP_DIR, programa     # la del dispositivo de mentira
+    try:
+        def pareja_de(local, **kw):
+            return model.parse_config(una(local=local, **kw)).pairs[0]
+
+        c("una pareja de carpeta no cae en el programa",
+          model.problema_contencion(pareja_de("sync-data/p")), None)
+        c("  la de la raíz entera tampoco: lo contiene, pero no está dentro",
+          model.problema_contencion(pareja_de(".")), None)
+        con_texto = replace(pareja_de("sync-data/p"), local=f"{programa.name}/keys")
+        c.contains("  un local que sí es el programa (un Pair a pelo) se rechaza",
+                   model.problema_contencion(con_texto) or "", "carpeta del programa")
+        if enlace_a(programa, dispositivo / "atajo") and enlace_a(ajeno, dispositivo / "otro"):
+            for local in ("atajo", "atajo/keys"):
+                pareja = pareja_de(local)
+                motivo = model.problema_contencion(pareja)
+                c.contains(f"local {local!r} (un enlace al programa) se rechaza", motivo or "",
+                           "carpeta del programa")
+                c.contains("  con la ruta de verdad y qué hacer", motivo or "", "carpeta de dentro")
+                for modo in ("bisync", "up", "down-mirror"):
+                    rc, salida, ordenes = correr(pareja_de(local, mode=modo))
+                    c(f"  run_pair ({modo}) aborta con 2 y no lanza rclone", (rc, ordenes), (2, []))
+                    c.contains("  y lo dice", salida, "ERROR")
+            c("  nada se creó dentro del programa", sorted(x.name for x in programa.iterdir()),
+              ["keys"])
+            # un enlace a otro sitio es cosa del usuario (una raíz del equipo puede tenerlos)
+            c("un enlace a una carpeta fuera del programa no se toca",
+              model.problema_contencion(pareja_de("otro")), None)
+            rc, salida, ordenes = correr(pareja_de("otro", mode="up"))
+            c("  y su pasada sigue adelante", (rc, len(ordenes)), (0, 1))
+        rc, salida, ordenes = correr(pareja_de("sync-data/p", mode="up"))
+        c("una pareja normal sigue adelante", (rc, len(ordenes)), (0, 1))
+        rc, salida, ordenes = correr(pareja_de(".", mode="up"))
+        c("  y la de la raíz entera también", (rc, len(ordenes)), (0, 1))
+    finally:
+        model.APP_DIR = app_de_verdad
 
 sys.exit(c.report())

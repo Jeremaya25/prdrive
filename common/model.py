@@ -1355,6 +1355,35 @@ def problema_local(local: Any, equipo: bool = False, *,
     return None
 
 
+def problema_contencion(pareja: Pair) -> str | None:
+    """Dice si la carpeta local de la pareja, ya resuelta, es la del programa o cae dentro.
+
+    Es la comprobación de verdad de lo que `problema_local()` solo ve en el
+    texto: un nombre corto 8.3 de Windows, una unión o un enlace pueden llevar
+    un `local` inocente a `.prdrive/`, donde está la clave del dispositivo, y
+    un espejo hacia abajo la borraría. Se miran `local_abs` y `top_level_abs`
+    (el upstream de `combine`). La pareja de la raíz entera contiene la carpeta
+    del programa pero no está dentro de ella: no se rechaza (lleva
+    `REGLA_SIN_PROGRAMA`). Tampoco se mira si cae fuera del dispositivo: una
+    raíz del equipo puede tener enlaces a propósito.
+
+    Args:
+        pareja: La pareja que `sync.py` va a ejecutar.
+
+    Returns:
+        El motivo, con la ruta resuelta y qué hacer, o `None` si no cae en la
+        carpeta del programa.
+    """
+    programa = APP_DIR.resolve()
+    for ruta in (pareja.local_abs, pareja.top_level_abs):
+        if ruta == programa or programa in ruta.parents:
+            return (f"la carpeta local de la pareja resuelve a '{ruta}', que es la carpeta "
+                    f"del programa ('{programa}') o cae dentro de ella: lleva la clave del "
+                    f"dispositivo y no se sincroniza. Puede ser un enlace o un nombre corto "
+                    f"de Windows. Pon en 'local' otra carpeta de dentro del dispositivo.")
+    return None
+
+
 def _device_remote_name(defaults: Mapping[str, Any]) -> str | None:
     """Devuelve el nombre del remote `combine` del dispositivo, validado.
 
