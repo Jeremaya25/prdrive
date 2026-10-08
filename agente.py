@@ -158,7 +158,6 @@ from common import (APP_NAME, avisos, avisos_carpeta, catalog, components,  # no
                     store, update, vestibulo)
 from common import huella as huellas  # noqa: E402  (`huella()` es la del código de una raíz)
 from common import planificador as pl  # noqa: E402
-from common.store import pid_alive  # noqa: E402
 from ui import bandeja, prefs, volumen  # noqa: E402
 
 try:
@@ -1959,16 +1958,10 @@ class Agente:
     def _otro_servicio(self, con: Conexion) -> dict | None:
         """Devuelve el registro de otro servicio vivo de este equipo en esa raíz.
 
-        Es `None` si no hay otro.
+        Es `None` si no hay otro, o si el registro es de antes de reiniciar.
         """
         info = store.read_json(con.raiz / penwatch.DAEMON_LOCK_REL)
-        if info.get("host") != HOST:
-            return None
-        try:
-            pid = int(info.get("pid", -1))
-        except (TypeError, ValueError):
-            return None
-        if pid == os.getpid() or not pid_alive(pid):
+        if not store.vivo_en_este_arranque(info, HOST) or info.get("pid") == os.getpid():
             return None
         return info
 
@@ -2100,6 +2093,7 @@ class Agente:
         """
         unidad = self.ajustes.unidades[con.id]
         datos = {"pid": os.getpid(), "host": HOST, "started": store.stamp(),
+                 "arranque": store.arranque_del_sistema(),
                  "pairs": [p.nombre for p in con.servicio.parejas],
                  "interval_min": con.servicio.minutos, "agente": True,
                  "modo": unidad.modo}
@@ -4219,6 +4213,7 @@ def cmd_run(_args: argparse.Namespace) -> int:
     # Tomar el lock es mirar y escribir en un paso (`equipo.tomar_lock()`): dos
     # arranques a la vez no pueden ver los dos que no hay nadie.
     otro = equipo.tomar_lock({"pid": os.getpid(), "host": HOST, "started": store.stamp(),
+                              "arranque": store.arranque_del_sistema(),
                               "codigo": str(SCRIPT_DIR)})
     if otro is not None:
         print(f"Ya hay un agente en marcha (pid {otro.get('pid', '?')}).")

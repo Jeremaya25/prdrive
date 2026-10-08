@@ -12,8 +12,9 @@ media frase y puede estar leyéndolo otra máquina.
 Los comparten el registro del servicio (`daemon.lock.json`) y la memoria de la
 UI (`ui_prefs.json`). Con ellos viaja `pid_alive`, que da sentido a un registro
 con un pid dentro: un fichero de bloqueo solo vale si se puede saber si quien
-lo escribió sigue vivo. Y `matar_arbol`, que corta a un proceso con todo lo que
-cuelga de él.
+lo escribió sigue vivo, y `vivo_en_este_arranque`, que además pide que el
+registro sea de este arranque del sistema. Y `matar_arbol`, que corta a un
+proceso con todo lo que cuelga de él.
 
 Al final están `hide()` y `unhide()`, el atributo de oculto de Windows: el
 dispositivo también esconde algo suyo (el icono de la unidad, `ui/volumen.py`)
@@ -26,6 +27,7 @@ import json
 import os
 import signal
 import subprocess
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 
@@ -303,6 +305,44 @@ def arranque_del_sistema() -> float | None:
     except (OSError, ValueError, AttributeError):
         pass
     return None
+
+
+def vivo_en_este_arranque(info: Mapping | None, host: str) -> bool:
+    """Indica si un registro de cerrojo es de un proceso vivo de este equipo y arranque.
+
+    Es la pregunta de los registros de ventana, servicio, vigilante del llavero
+    y agente. El pid de un registro solo vale en el arranque en que se apuntó
+    (`arranque_del_sistema()`): tras reiniciar los números se reutilizan, y el
+    de la ventana o el servicio que había antes de apagar puede ser ahora
+    cualquier otro proceso vivo, que haría pasar por viva a una ventana que
+    ya no existe.
+
+    Es un resto lo que no puede ser de este arranque: el de otro equipo, el de
+    un pid ilegible o muerto y el de un arranque que difiere en más de
+    `HOLGURA_ARRANQUE`. Un registro sin `arranque` (de una versión que no lo
+    apuntaba) o con uno que no se puede comparar (no se sabe cuándo arrancó
+    este sistema) va por el pid solo.
+
+    Args:
+        info: El registro (`pid`, `host` y, si lo trae, `arranque`), o `None`.
+        host: El nombre de este equipo, tal como lo apunta quien escribe.
+
+    Returns:
+        `True` si es de un proceso vivo de este equipo y de este arranque.
+    """
+    if not isinstance(info, Mapping) or info.get("host") != host:
+        return False
+    try:
+        pid = int(info.get("pid", -1))
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0 or not pid_alive(pid):          # 0 y los negativos son grupos, no procesos
+        return False
+    antes, ahora = info.get("arranque"), arranque_del_sistema()
+    if isinstance(antes, (int, float)) and ahora is not None \
+            and abs(antes - ahora) > HOLGURA_ARRANQUE:
+        return False
+    return True
 
 
 def pid_alive(pid: int) -> bool:

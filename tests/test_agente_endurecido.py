@@ -229,6 +229,9 @@ del ag._otro_servicio
 (RS / penwatch.DAEMON_LOCK_REL).unlink()
 F.vueltas(ag, 1)
 c("  sin nadie, lo toma", F.lock(RS).get("pid"), os.getpid())
+arr = store.arranque_del_sistema()      # la hora del arranque baila unos ms entre llamadas
+c("  y apunta en qué arranque del sistema está",
+  abs((F.lock(RS).get("arranque") or 0) - (arr or 0)) < 5, True)
 F.acabar(F.pasadas(RS)[-1])
 F.vueltas(ag, 1)
 F.otro_servicio(RS)                     # un runsync de antes, escribiendo sin mirar
@@ -241,6 +244,23 @@ F.vueltas(ag, 2)
 c("el stop de OTRO servicio no se lo come el agente: es para ese",
   F.stop(RS).exists(), True)
 F.stop(RS).unlink()
+(RS / penwatch.DAEMON_LOCK_REL).unlink()
+
+# El lock de un servicio de antes de reiniciar no frena al agente: su pid ya es
+# el de cualquier otro proceso.
+FIJO = 1_800_000_000.0
+real_arranque = store.arranque_del_sistema
+store.arranque_del_sistema = lambda: FIJO
+try:
+    for texto, extra, pid in (("de otro arranque no cuenta", {"arranque": FIJO - 10_000}, None),
+                              ("de este arranque sí", {"arranque": FIJO}, os.getppid()),
+                              ("sin arranque, de antes, va por el pid", {}, os.getppid())):
+        store.write_json(RS / penwatch.DAEMON_LOCK_REL,
+                         {"pid": os.getppid(), "host": penwatch.HOST, "started": "x", **extra})
+        c(f"un servicio vivo {texto}",
+          (ag._otro_servicio(ag.conexiones[S]) or {}).get("pid"), pid)
+finally:
+    store.arranque_del_sistema = real_arranque
 (RS / penwatch.DAEMON_LOCK_REL).unlink()
 
 # un solo servicio: el lado de runsync

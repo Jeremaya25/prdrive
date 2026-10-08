@@ -193,8 +193,10 @@ try:
         cierre = reloj.t + 600
 
         guardados: list[float] = []
+        registros: list[dict] = []
 
         def abierto(app_dir=None):
+            registros.append(store.read_json(llavero.registro_vigilante()))
             if 1120 <= reloj.t <= 1135:
                 base.write_bytes(b"y" * int(reloj.t))   # guardados seguidos
                 guardados.append(reloj.t)
@@ -211,6 +213,9 @@ try:
           any(abs(t - (cambios[0] + llavero.REMOTO_ABIERTO)) <= P.sondeo for t in pasadas), True)
         c.contains("se detiene al cerrarse KeePassXC", diario[-1], "KeePassXC cerrado")
         c("y no deja su registro", llavero.registro_vigilante().exists(), False)
+        arranque = store.arranque_del_sistema()     # baila unos ms entre llamadas
+        c("mientras corre, su registro apunta en qué arranque del sistema está",
+          abs((registros[0].get("arranque") or 0) - (arranque or 0)) < 5, True)
 
         # Al cerrar KeePassXC con algo sin subir, lo sube antes de irse.
         pasadas.clear()

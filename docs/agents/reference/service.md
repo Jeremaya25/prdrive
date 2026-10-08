@@ -3,7 +3,7 @@
 Files: `runsync.py`, `ui/prefs.py`, `common/prioridad.py`, `common/model.py` (`ui_lock()`/`daemon_lock()`), `ui/__init__.py` (`avisar_fallo`).
 Formerly AGENTS.md «Daemon (`runsync.py`)».
 
-Coordination lives in `state/` so it travels with the device: `daemon.lock.json` (pid/host/pairs/cycle), `daemon.stop` (presence = stop request), `daemon.log`, `ui.lock.json` (pid/host of the open window), `ui_prefs.json`; plus `last_run.json`, `historial.jsonl`, `conflicts.json` (written by `sync.py`, not the daemon). The service stops when the device disappears (`SENTINEL`) or when runsync is launched again.
+Coordination lives in `state/` so it travels with the device: `daemon.lock.json` (pid/host/boot/pairs/cycle), `daemon.stop` (presence = stop request), `daemon.log`, `ui.lock.json` (pid/host/boot of the open window), `ui_prefs.json`; plus `last_run.json`, `historial.jsonl`, `conflicts.json` (written by `sync.py`, not the daemon). The service stops when the device disappears (`SENTINEL`) or when runsync is launched again.
 
 ## One service, two ways to start it (#14)
 
@@ -21,12 +21,21 @@ By hand («Iniciar servicio») or on plug-in (watcher → `runsync --auto`): the
 
 `--auto --once` (`una_pasada()`) is one pass of those pairs with no service behind it. With a live service on this host it does nothing and does **not** stop it: swapping a service for a single pass would leave the device without one.
 
+## A lock record names its boot
+
+`ui.lock.json`, `daemon.lock.json` (runsync's service and the agent), `llavero.lock.json` and the agent's `agente.lock.json` carry `"arranque": store.arranque_del_sistema()` next to `pid`/`host`. The file travels with the device, so after a reboot it can hold a pid that the new boot handed to an unrelated process; without the boot time that pid reads as alive and a window that no longer exists blocks the new one.
+
+Liveness is `store.vivo_en_este_arranque(info, host)`: same host, a positive int pid that is alive, and, when the record has a numeric `arranque` and this system's boot time is known, a difference within `HOLGURA_ARRANQUE`. A record with no `arranque` (written by an older version) or one whose boot cannot be compared falls back to the pid alone. Every reader goes through it, each keeping its own `HOST` source: `runsync._viva_aqui()` (so `ui_en_marcha()`, `tomar_ui()` and `tomar_lock()`), `servicio_en_marcha()`, `stop_previous_daemon()`, `Agente._otro_servicio()`, `equipo.vivo_aqui()`/`pasada_viva()`, `llavero.vivo_aqui()`, `repair.sincronizacion_en_curso()` and `tk_update.servicio_vivo()`.
+
+- `repair.sincronizacion_en_curso()` keeps «ante la duda, sí» for a record of ANOTHER host (its boot cannot be compared); only a same-host record from another boot or with a dead pid counts as nobody.
+- **`penwatch._vivo_aqui()` stays pid-only on purpose.** It only decides whether to skip a launch, and `penwatch` imports nothing from the project (`store` included). The worst a stale record does there is skip one plug-in's launch (the trigger is spent, as the next section says); everything that takes or checks the lock afterwards uses the boot time. `equipo.agente_vivo()` (the host-side agent record, read by the installer and the window) is pid-only too.
+
 ## One window at a time; the watcher waits for it
 
 `ui_flow()` takes `ui.lock.json` **before** `stop_previous_daemon()` and refuses a second window (opening runsync stops the previous service, so two windows would take it from each other).
 
 - **Check and take are one step** (`tomar_ui()`): created with `O_EXCL`, never via `store.write_json` (its rename overwrites). Check-then-write let two runsync launched 6 s apart by two relays both open a window on a real device (28/09/2026).
-- A record whose pid is dead or from another host is the trace of a device pulled without closing. `_retirar_ui()` removes it only while holding a second exclusive file, `ui.lock.json.romper`, and only if it re-reads the same record (a plain delete could take a window that just replaced it); then the exclusive create is retried once. Windows refuses to delete a file another process is reading (WinError 32), so `_borrar()` retries.
+- A record whose pid is dead, from another host or from another boot is the trace of a device pulled without closing. `_retirar_ui()` removes it only while holding a second exclusive file, `ui.lock.json.romper`, and only if it re-reads the same record (a plain delete could take a window that just replaced it); then the exclusive create is retried once. Windows refuses to delete a file another process is reading (WinError 32), so `_borrar()` retries.
 - Everything after the take, up to `_atender()`, runs inside the `finally` that releases it.
 - `penwatch` reads both locks (never writes) and launches nothing while either is alive: the pass is logged and the trigger spent, so it does not retry every minute behind an open window. Both facts are said out loud (the pause in the watcher line of the main window and console menu; the other in the message confirming the service), but only when this host's watcher attends this device (`watch.resumen().vigila_este`): otherwise they would describe something that does not exist here.
 

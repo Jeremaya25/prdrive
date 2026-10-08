@@ -434,33 +434,20 @@ def pasada_cortada() -> dict | None:
 def pasada_viva() -> dict | None:
     """Devuelve el registro de `pasada.json` si esa pasada sigue viva EN ESTE EQUIPO.
 
-    Un pid de otro arranque del sistema no dice nada (tras reiniciar se
-    reutilizan), así que se compara también cuándo arrancó el sistema.
-
     Returns:
         El registro, o `None`.
     """
     info = store.read_json(pasada_json())
-    if not vivo_aqui(info):
-        return None
-    antes, ahora = info.get("arranque"), store.arranque_del_sistema()
-    if isinstance(antes, (int, float)) and ahora is not None \
-            and abs(antes - ahora) > store.HOLGURA_ARRANQUE:
-        return None
-    return info
+    return info if vivo_aqui(info) else None
 
 
 def vivo_aqui(info: dict | None) -> bool:
-    """Indica si es el registro de un proceso vivo DE ESTE EQUIPO.
+    """Indica si es el registro de un proceso vivo DE ESTE EQUIPO y de este arranque.
 
-    Un pid muerto, de otro equipo o ilegible es un resto.
+    Un pid muerto, de otro equipo, de otro arranque del sistema o ilegible es
+    un resto (`store.vivo_en_este_arranque()`).
     """
-    if not info or info.get("host") != HOST:
-        return False
-    try:
-        return pid_alive(int(info.get("pid", -1)))
-    except (TypeError, ValueError):
-        return False
+    return store.vivo_en_este_arranque(info, HOST)
 
 
 def tomar_lock(datos: dict) -> dict | None:

@@ -440,13 +440,8 @@ def equipo() -> str:
 
 
 def vivo_aqui(info: dict | None) -> bool:
-    """Indica si un registro (`pid`, `host`) es de un proceso vivo de este equipo."""
-    if not isinstance(info, dict) or info.get("host") != equipo():
-        return False
-    try:
-        return store.pid_alive(int(info.get("pid", -1)))
-    except (TypeError, ValueError):
-        return False
+    """Indica si un registro (`pid`, `host`) es de un proceso vivo de este equipo y arranque."""
+    return store.vivo_en_este_arranque(info, equipo())
 
 
 def atiende_el_servicio() -> bool:
