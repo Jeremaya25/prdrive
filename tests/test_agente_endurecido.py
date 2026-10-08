@@ -135,6 +135,12 @@ c.contains("  y dice de qué pareja", fuera, "[docs]")
 c.contains("tampoco con uno que es la carpeta del llavero",
            razon(F.unidad("l" * 32, parejas=("docs",),
                           locales={"docs": model.LLAVERO_LOCAL})), "llavero")
+# En el agente `model.APP_DIR` es la carpeta del propio agente, no la `.prdrive` de la
+# unidad: la carpeta del programa de la unidad se la dice `leer_servicio()`.
+programa = razon(F.unidad("p" * 32, parejas=("docs",), locales={"docs": ".prdrive/keys"}))
+c.contains("tampoco con uno que cae en la carpeta del programa de la unidad", programa,
+           "es la carpeta del programa, con su clave")
+c.contains("  y dice de qué pareja", programa, "[docs]")
 raiz_todo = F.unidad("q" * 32, parejas=("docs",), locales={"docs": "."})
 c("en una unidad, la raíz entera como local se sirve", razon(raiz_todo), "")
 (raiz_todo / ".prdrive" / "PRDRIVE").write_text(f"id={'q' * 32}\ntipo=equipo\n", encoding="utf-8")

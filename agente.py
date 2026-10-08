@@ -739,9 +739,10 @@ def leer_servicio(raiz: Path) -> Servicio:
     servicio. Lo único que sí comprueba el agente es lo que acabaría en la
     línea de órdenes de rclone en ESTE equipo (`model.comprobar_seguridad()`,
     que también mira que el `local` de cada pareja no salga de la raíz, con la
-    regla de la raíz del equipo si lo es): el `sync.py` de una raíz de antes de
-    esa regla no comprueba nada, y `orden_sonda()` pasa el `remote` de cada
-    pareja a un `rclone lsd`.
+    regla de la raíz del equipo si lo es, ni sea la carpeta del programa de ESA
+    raíz: el agente corre en su propia carpeta, no en la `.prdrive` de la
+    unidad): el `sync.py` de una raíz de antes de esa regla no comprueba nada, y
+    `orden_sonda()` pasa el `remote` de cada pareja a un `rclone lsd`.
 
     Raises:
         ValueError: Con la frase que decir si no hay nada que atender, o si el
@@ -754,7 +755,8 @@ def leer_servicio(raiz: Path) -> Servicio:
     except tomllib.TOMLDecodeError as e:
         raise ValueError(f"sync_config.toml no es TOML válido ({e})") from e
     try:
-        model.comprobar_seguridad(crudo, model.es_equipo(app(raiz)))
+        model.comprobar_seguridad(crudo, model.es_equipo(app(raiz)),
+                                  carpeta_programa=APP_SUBDIR)
     except model.ConfigError as e:
         raise ValueError(str(e)) from e
     defaults = crudo.get("defaults") if isinstance(crudo.get("defaults"), dict) else {}

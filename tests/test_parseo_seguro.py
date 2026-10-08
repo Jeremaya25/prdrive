@@ -211,6 +211,22 @@ c("en un equipo, una carpeta de dentro vale",
 c("en una unidad, '.' no pasa por lo del equipo", model.problema_local("."), None)
 c("problema_local: None si vale", model.problema_local("sync-data/docs"), None)
 
+# la carpeta del programa puede venir de fuera: el agente corre en la suya, no en la de la unidad
+c("carpeta_programa: por defecto, la del programa que corre",
+  model.problema_local(app) is not None, True)
+c.contains("  con otra, es esa la que no vale",
+           model.problema_local(".prdrive/keys", carpeta_programa=".prdrive") or "",
+           "es la carpeta del programa, con su clave")
+c("  y sin distinguir mayúsculas",
+  model.problema_local(".PRDRIVE", carpeta_programa=".prdrive") is not None, True)
+c("  y la del programa que corre deja de contar",
+  model.problema_local(app, carpeta_programa=".prdrive"), None)
+c.contains("  comprobar_seguridad() se la pasa",
+           _texto(lambda: model.comprobar_seguridad(
+               una(local=".prdrive/keys"), carpeta_programa=".prdrive")), "[p] local")
+c("  y la del llavero vale igual con cualquiera",
+  model.problema_local(model.LLAVERO_LOCAL, carpeta_programa="otra") is not None, True)
+
 # la puerta es comprobar_seguridad(), la del agente también, y no decide más
 c.contains("comprobar_seguridad() mira el local de cada pareja con nombre",
            _texto(lambda: model.comprobar_seguridad(una(local="../x"))), "[p] local")

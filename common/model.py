@@ -649,7 +649,8 @@ def _comprobar_remote(donde: str, valor: Any, clave: str) -> None:
             f"{donde} {motivo} Deja solo el nombre del remote o quita la clave del config.")
 
 
-def comprobar_seguridad(crudo: Mapping[str, Any], equipo: bool = False) -> None:
+def comprobar_seguridad(crudo: Mapping[str, Any], equipo: bool = False, *,
+                        carpeta_programa: str | None = None) -> None:
     """Rechaza del config en bruto lo que no puede llegar a la línea de órdenes de rclone.
 
     Es el único sitio de estas comprobaciones, y mira el TOML tal como sale de
@@ -672,6 +673,9 @@ def comprobar_seguridad(crudo: Mapping[str, Any], equipo: bool = False) -> None:
         crudo: El config tal como salió del TOML.
         equipo: Si la raíz es de equipo (`es_equipo()`), donde además cada
             `local` tiene que ser una carpeta de dentro (`problema_local_equipo()`).
+        carpeta_programa: El nombre de la carpeta del programa de la raíz que
+            se lee, para `problema_local()`; por defecto, la del programa que
+            corre.
 
     Raises:
         ConfigError: Con la capa (`[defaults]` o `[<pareja>]`), la clave o el
@@ -699,7 +703,7 @@ def comprobar_seguridad(crudo: Mapping[str, Any], equipo: bool = False) -> None:
                          pareja.get("extra_flags"))
         local = pareja.get("local")
         if isinstance(local, str):
-            motivo = problema_local(local, equipo)
+            motivo = problema_local(local, equipo, carpeta_programa=carpeta_programa)
             if motivo:
                 raise ConfigError(f"{donde} {motivo}")
 
@@ -1211,7 +1215,8 @@ def problema_local_equipo(local: str) -> str | None:
     return None
 
 
-def problema_local(local: Any, equipo: bool = False) -> str | None:
+def problema_local(local: Any, equipo: bool = False, *,
+                   carpeta_programa: str | None = None) -> str | None:
     """Dice por qué el `local` de una pareja no vale.
 
     El `local` es una carpeta de DENTRO del dispositivo, relativa a su raíz. Con
@@ -1225,6 +1230,11 @@ def problema_local(local: Any, equipo: bool = False) -> str | None:
         local: El valor de `local` tal como está en el TOML.
         equipo: Si la raíz es de equipo; entonces se aplica antes
             `problema_local_equipo()`, con sus mismas palabras.
+        carpeta_programa: El nombre de la carpeta del programa de la raíz a la
+            que pertenece el `local`. Por defecto es el de la que corre
+            (`APP_DIR.name`), que es la de la raíz cuando el config se lee desde
+            su propio programa; quien lee el de otra raíz (el agente, que corre
+            en su carpeta y no en la `.prdrive` de la unidad) tiene que decirlo.
 
     Returns:
         El motivo, que empieza por `local = "<valor>"`, o `None` si vale.
@@ -1240,7 +1250,7 @@ def problema_local(local: Any, equipo: bool = False) -> str | None:
                 f"de unidad): la pareja sincronizaría carpetas del ordenador. Pon una "
                 f"carpeta de dentro del dispositivo, con la ruta relativa a su raíz.")
     primero = tramos[0].lower() if tramos else ""
-    if primero == APP_DIR.name.lower():
+    if primero == (carpeta_programa or APP_DIR.name).lower():
         return (f"local = \"{texto}\" cae en «{tramos[0]}»: es la carpeta del "
                 f"programa, con su clave. Pon otra carpeta de dentro del dispositivo.")
     if primero == LLAVERO_LOCAL.lower():
