@@ -14,7 +14,9 @@
 # [meta]     Las mismas cuentas, a donde quiere llegar el diseño: solo se informan.
 # [meta_ms]  Medianas en Windows x64 al 100 % con 5 parejas (spec «Qué se quiere»): solo se informan.
 #
-# Medidos el 08/10/2026 en el árbol de la 0.7.1, con el Python fijado (3.14.8, Tk 9.0.4).
+# Medidos el 08/10/2026 en el árbol de la 0.7.1, con el Python fijado (3.14.8, Tk 9.0.4); los
+# módulos, en la primera ejecución en CI de la etapa 1a (Rendimiento 37843538665), que es
+# donde se miden: fuera de CI salen distintos.
 
 [techo]
 "widgets.main.p5" = 51
@@ -24,7 +26,10 @@
 "widgets.ajustes.p5" = 39
 "widgets.ajustes.p50" = 39
 "widgets.agente" = 16
+"widgets.wizard" = 20
 "tema.arranque.main" = 1
+"tema.arranque.agente" = 1
+"tema.arranque.wizard" = 1
 "tema.abrir.parejas" = 0
 "tema.abrir.ajustes" = 0
 "tema.apartado" = 0
@@ -34,11 +39,14 @@
 "estilos.apartado" = 7
 
 [techo.linux]
-"modulos.main" = 225
-"modulos.agente" = 161
-"modulos.wizard" = 237
+"modulos.main" = 224
+"modulos.agente" = 159
+"modulos.wizard" = 234
 
-# [techo.windows]: pendiente de la primera ejecución en Windows (pegar lo que enseñe el resumen).
+[techo.windows]
+"modulos.main" = 223
+"modulos.agente" = 160
+"modulos.wizard" = 235
 
 [meta]
 "widgets.main.p5" = 26

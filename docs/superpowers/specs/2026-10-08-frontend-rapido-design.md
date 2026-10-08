@@ -1,6 +1,7 @@
 # Frontend rápido: el mismo Tk, dibujado y refrescado de otra manera — diseño
 
 Fecha: 08/10/2026. Estado: **diseño revisado (versión 2), pendiente de que lo revise el dueño**.
+Etapa 1a hecha, revisada y medida: `docs/superpowers/pruebas/2026-10-08-etapa-1a-resultados.md`.
 Sustituye la forma de dibujar y de refrescar del rediseño de la 0.7.0. El aspecto se
 queda: es el del sistema «prdrive» de la 0.7.1. Las medidas que lo deciden están en
 `docs/superpowers/pruebas/2026-10-08-banco-interfaz-resultados.md`.
@@ -456,6 +457,8 @@ Tomadas sin el dueño el 08/10/2026:
 5. **`.pyc` precompilados en la unidad** al instalar y actualizar, en modo `checked-hash` (§3): unos MB más en la unidad.
 6. **El instalador con Python 3.14 y PyInstaller fijado**: el `.exe` deja Windows 8.1 (§4).
 7. **La comprobación de tiempos falla un PR** por cuentas deterministas y por empeorar claramente frente a `main` en el mismo trabajo, no por los objetivos (§5).
+8. **La barra de espera da un paso cada 32 ms** y no cada 12 (etapa 1a): un tercio de los pasos a la misma velocidad. Se probó con 48, que gasta menos, pero a 21 pasos por segundo se veía a saltos.
+9. **«Parejas» conserva lo escrito al llegar el catálogo solo si esa pareja no ha cambiado** (etapa 1a). Si otro dispositivo la ha cambiado mientras tanto, el editor se recarga con la de ahora y el pie dice que lo escrito se ha descartado: guardarlo habría deshecho el cambio del otro sin decirlo. La otra opción era preguntar.
 
 Descartado tras la revisión: abrir la ventana antes de parar el servicio. Rompía que con la ventana abierta no hay servicio, del que dependen guardar «Parejas», «Reparación», «Expulsar» y el cerrojo del servicio. El ritmo de 1 s / 0,1 s deja la espera en ~0,6 s de media.
 

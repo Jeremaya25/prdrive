@@ -72,6 +72,8 @@ jobs:
       RENDIMIENTO_PLATAFORMA: ${{ matrix.plat }}
       RENDIMIENTO_PR: ${{ github.event.pull_request.head.sha || github.sha }}
       RENDIMIENTO_BASE: ${{ github.event.pull_request.base.sha || inputs.base || 'main' }}
+      # Por el entorno y no pegado en la orden: lo escrito al lanzarlo a mano no es código.
+      RENDIMIENTO_RONDAS: ${{ inputs.rondas || 7 }}
     steps:
       # El PR (su fusión con la base) en pr/ y la base en base/: dos carpetas, dos árboles.
       - uses: actions/checkout@v4
@@ -111,11 +113,11 @@ jobs:
 
       - name: Medir (Linux)
         if: runner.os == 'Linux'
-        run: xvfb-run -a -s "-screen 0 1920x1080x24" python pr/tests/rendimiento/correr.py --pr pr --base base --trabajo "${{ runner.temp }}/rendimiento" --rondas ${{ inputs.rondas || 7 }} --capturas
+        run: xvfb-run -a -s "-screen 0 1920x1080x24" python pr/tests/rendimiento/correr.py --pr pr --base base --trabajo "${{ runner.temp }}/rendimiento" --rondas "$RENDIMIENTO_RONDAS" --capturas
 
       - name: Medir (Windows)
         if: runner.os == 'Windows'
-        run: python pr/tests/rendimiento/correr.py --pr pr --base base --trabajo "${{ runner.temp }}/rendimiento" --rondas ${{ inputs.rondas || 7 }} --capturas
+        run: python pr/tests/rendimiento/correr.py --pr pr --base base --trabajo "${{ runner.temp }}/rendimiento" --rondas "$env:RENDIMIENTO_RONDAS" --capturas
 
       - uses: actions/upload-artifact@v4
         if: always()

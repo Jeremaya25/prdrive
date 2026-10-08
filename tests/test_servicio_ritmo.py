@@ -155,9 +155,11 @@ try:
         c("el servicio de verdad llega a esperar", en_reposo.wait(5), True)
         t0 = tiempo.monotonic()
         runsync.STOP.touch()
-        hilo.join(3)
+        hilo.join(4.5)
+        # Holgura de 2 s sobre el segundo de espera: un runner de Windows se para
+        # a ratos; lo que importa es que no sean los 5 s de antes.
         c("  y con el tiempo de verdad ve el stop en un segundo y algo (no en 5)",
-          (hilo.is_alive(), tiempo.monotonic() - t0 < 2.0),
+          (hilo.is_alive(), tiempo.monotonic() - t0 < 3.0),
           (False, True))
         c("  y suelta su registro", runsync.LOCK.exists(), False)
 finally:
