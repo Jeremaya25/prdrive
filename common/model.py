@@ -19,9 +19,12 @@ import shutil
 import stat
 import sys
 import tempfile
+import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Iterable, Mapping
+
+from . import APP_NAME
 
 # tomllib es stdlib desde Python 3.11; en versiones anteriores se recurre a
 # `tomli`.
@@ -396,25 +399,144 @@ def rclone_binary() -> str:
     return ejecutable(binary)
 
 
+COPIA_RCLONE = "rclone-"
+"""Prefijo de la copia ejecutable de rclone: el nombre sigue con `<tamaño>-<mtime_ns>`."""
+
+TEMPORAL_RCLONE = ".rclone-"
+"""Prefijo del temporal en el que se escribe la copia antes de ponerla en su sitio."""
+
+COPIAS_RCLONE_VIEJAS = 24 * 3600  # segundos
+"""Desde cuándo se barre una copia de rclone que no es la vigente.
+
+El agente atiende varias raíces y cada una puede traer un rclone distinto, con
+su propia copia en la misma carpeta. Barrer todas las demás en cada copiado
+haría que dos raíces se las quitaran la una a la otra, y podría borrar una que
+otro proceso va a ejecutar ahora mismo. Solo se va lo que lleva más de un día
+sin tocarse, y con ello los restos de un copiado interrumpido.
+"""
+
+
 def ejecutable(binary: Path) -> str:
     """Devuelve una ruta desde la que se pueda ejecutar ese rclone.
 
-    En exFAT no hay bit de ejecución: en POSIX se copia al temporal y se le
-    pone. Está aparte de `rclone_binary()` para que el agente lo use con el
-    rclone de otra raíz.
+    En exFAT no hay bit de ejecución: en POSIX se copia a la caché del usuario
+    y se le pone. Está aparte de `rclone_binary()` para que el agente lo use
+    con el rclone de otra raíz.
+
+    La copia es `<XDG_CACHE_HOME o ~/.cache>/prdrive/rclone-<tamaño>-<mtime_ns>`,
+    en una carpeta de modo 0o700 que es del usuario. El nombre sale del rclone
+    original, así que raíces con builds distintos no se pisan y, si la copia ya
+    está, no se copia otra vez. Se escribe en un temporal de esa carpeta y se
+    coloca con `os.replace`: un enlace plantado en su sitio se sustituye y
+    nunca se sigue. Tras copiar se barren las copias de otros builds y los
+    temporales de un copiado interrumpido que lleven más de un día sin tocarse
+    (`COPIAS_RCLONE_VIEJAS`), sin fallar si no se puede.
 
     Args:
         binary: Ruta del binario de rclone.
 
     Returns:
-        La misma ruta, o la de la copia ejecutable en el directorio temporal.
+        La misma ruta, o la de la copia ejecutable en la caché del usuario.
+
+    Raises:
+        OSError: Si la carpeta de la caché no es una carpeta de este usuario o
+            no se puede copiar el binario.
     """
     if os.name == "nt" or os.access(binary, os.X_OK):
         return str(binary)
-    tmp = Path(tempfile.gettempdir()) / "rclone_portable"
-    shutil.copy2(binary, tmp)
-    tmp.chmod(tmp.stat().st_mode | stat.S_IXUSR | stat.S_IRUSR)
-    return str(tmp)
+    origen = binary.stat()
+    carpeta = _carpeta_privada_de_rclone()
+    copia = carpeta / f"{COPIA_RCLONE}{origen.st_size}-{origen.st_mtime_ns}"
+    if not _es_fichero_de(copia, origen.st_size):
+        _copiar_ejecutable(binary, copia)
+        _barrer_copias_de_rclone(carpeta, copia)
+    return str(copia)
+
+
+def _carpeta_privada_de_rclone() -> Path:
+    """Devuelve la carpeta de la caché del usuario en la que viven las copias, ya a su medida.
+
+    La crea con modo 0o700 si falta; si existe, comprueba que sea una carpeta
+    (no un enlace ni un fichero) de este usuario y le quita lo que tenga de más.
+
+    Raises:
+        OSError: Si existe y no es una carpeta de este usuario.
+    """
+    base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
+    carpeta = Path(base) / APP_NAME
+    try:
+        carpeta.mkdir(mode=0o700, parents=True)
+    except FileExistsError:
+        pass
+    info = carpeta.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
+        raise OSError(
+            f"{carpeta} no es una carpeta de este usuario: no copio rclone ahí."
+        )
+    if stat.S_IMODE(info.st_mode) != 0o700:
+        carpeta.chmod(0o700)
+    return carpeta
+
+
+def _es_fichero_de(ruta: Path, tamano: int) -> bool:
+    """Indica si en esa ruta hay un fichero regular de ese tamaño.
+
+    Mira la ruta misma (`lstat`): un enlace no es un fichero regular, aunque
+    apunte a uno del tamaño justo.
+    """
+    try:
+        info = ruta.lstat()
+    except OSError:
+        return False
+    return stat.S_ISREG(info.st_mode) and info.st_size == tamano
+
+
+def _copiar_ejecutable(binary: Path, copia: Path) -> None:
+    """Copia `binary` en `copia` con modo 0o700, sin que se vea a medias.
+
+    Se escribe en un temporal de la misma carpeta y se coloca con
+    `os.replace`, que cambia lo que hubiera en su sitio (aunque sea un enlace)
+    sin seguirlo y no corta un rclone que ya esté corriendo desde esa copia.
+
+    Raises:
+        OSError: Si no se puede leer el original o escribir la copia. No queda
+            el temporal.
+    """
+    descriptor, temporal = tempfile.mkstemp(prefix=TEMPORAL_RCLONE, dir=copia.parent)
+    try:
+        with os.fdopen(descriptor, "wb") as salida, open(binary, "rb") as entrada:
+            shutil.copyfileobj(entrada, salida)
+            os.fchmod(salida.fileno(), 0o700)
+        os.replace(temporal, copia)
+    except BaseException:
+        try:
+            os.unlink(temporal)
+        except OSError:
+            pass
+        raise
+
+
+def _barrer_copias_de_rclone(carpeta: Path, vigente: Path) -> None:
+    """Quita de la carpeta las copias de otros builds y los temporales que llevan más de un día.
+
+    Nunca toca la vigente, ni lo que no tenga el nombre de una copia o de su
+    temporal, ni sigue un enlace (quita el enlace). Es mejor esfuerzo: lo que no
+    pueda leer o quitar se queda.
+    """
+    limite = time.time() - COPIAS_RCLONE_VIEJAS
+    try:
+        nombres = os.listdir(carpeta)
+    except OSError:
+        return
+    for nombre in nombres:
+        if nombre == vigente.name or not nombre.startswith((COPIA_RCLONE, TEMPORAL_RCLONE)):
+            continue
+        ruta = carpeta / nombre
+        try:
+            if os.lstat(ruta).st_mtime < limite:
+                os.unlink(ruta)
+        except OSError:
+            continue
 
 
 def flags_to_args(flags: Mapping[str, Any]) -> list[str]:
