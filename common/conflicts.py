@@ -365,9 +365,10 @@ def actualizar_pareja(pair: Pair) -> list[Conflicto]:
 
 
 def refrescar(config: Config) -> dict[str, list[Conflicto]]:
-    """Escanea todas las parejas y reescribe el estado entero.
+    """Escanea todas las parejas y rehace el estado entero.
 
-    Las que ya no están en el config se caen de él.
+    Lo reescribe solo si ha cambiado. Las que ya no están en el config se caen
+    de él.
     """
     todos = {pair.name: escanear(pair) for pair in config.pairs if pair.is_bisync}
     _guardar(todos, data={})

@@ -181,6 +181,11 @@ c("ni http, ni otro repositorio, ni una ruta, ni nada",
     "https://github.com/otro/prdrive/releases/tag/v1",
     CALC, "")],
   [update.PAGINA] * 4)
+c("ni un nombre que solo se le parece",
+  [update.pagina_segura(u) for u in
+   (f"https://github.com/{update.REPO}.evil.com/x",
+    f"https://github.com/{update.REPO}-evil/x")],
+  [update.PAGINA] * 2)
 
 
 # traerse el código: lo que NO se acepta

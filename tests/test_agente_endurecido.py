@@ -275,6 +275,7 @@ def agente_que_suelta():
     runsync.STOP.unlink()
 
 
+runsync.ESPERA_LOCK = 0.05              # en vez de los 2 s de verdad: la prueba no se duerme
 hilo = threading.Thread(target=agente_que_suelta)
 hilo.start()
 tomado = runsync.tomar_lock(dict(datos))
