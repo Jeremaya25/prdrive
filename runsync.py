@@ -9,7 +9,7 @@ pregunta a `ui` qué se quiere hacer y lo hace; lo suyo es el servicio y la
 coordinación con él.
 
 El servicio solo se detiene en dos casos:
-- El dispositivo deja de estar conectado (se comprueba cada pocos segundos).
+- El dispositivo deja de estar conectado (se comprueba cada segundo).
 - Se vuelve a ejecutar runsync: el lanzador detecta el servicio anterior, le
   pide parar, espera y muestra la UI de nuevo.
 
@@ -103,14 +103,23 @@ UI_LOCK = model.ui_lock()
 """Registro de la ventana abierta: quién la tiene."""
 
 POLL_SECONDS = 5.0
-"""Cada cuántos segundos mira el servicio si debe parar o si se fue el dispositivo.
+"""Cada cuántos segundos mira el servicio entre ciclos el registro y el llavero.
 
-También marca el ritmo del vigilante del llavero. Dos sondeos deben caber en
-`STOP_WAIT_SECONDS`, el plazo de 15 s que `stop_previous_daemon()` espera a que
-pare el servicio anterior.
+Es también el ritmo del vigilante del llavero (`vigilar_llavero()`). Lo que
+cuesta es la foto de procesos del llavero (`llavero.keepassxc_abierto()`), así
+que no baja de aquí.
+"""
+STOP_POLL_SECONDS = 1.0
+"""Cada cuántos segundos mira el servicio entre ciclos si debe parar.
+
+Mira `stop_requested()` y `pen_present()`: dos `stat`. Una ventana que se abre
+espera a que el servicio vea el `daemon.stop`, así que este es el ritmo que
+decide cuánto tarda en salir. Dos sondeos deben caber en `STOP_WAIT_SECONDS`.
 """
 STOP_WAIT_SECONDS = 15.0
 """Segundos que espera el lanzador a que pare el servicio anterior."""
+STOP_WAIT_STEP = 0.1
+"""Cada cuántos segundos mira el lanzador si el servicio anterior ya soltó su registro."""
 HOST = prefs.HOST
 
 CREATE_NO_WINDOW = model.CREATE_NO_WINDOW
@@ -160,6 +169,24 @@ def dlog(msg: str) -> None:
 
 ESPERA_REGISTRO = 1.0
 """Segundos que se dan a quien acaba de crear el registro para llenarlo."""
+ESPERA_PADRE = 3.0
+"""Segundos que espera `tomar_ui()` si el registro es del proceso que lanzó esta ventana.
+
+Al actualizar, la ventana vieja lanza la nueva (`ui/tk_update.py`) y se cierra
+después: la nueva puede llegar al registro antes de que la vieja lo suelte.
+"""
+PASO_PADRE = 0.05
+"""Cada cuántos segundos mira `tomar_ui()` si el padre ya soltó el registro."""
+
+
+def padre_pid() -> int:
+    """Devuelve el pid del proceso que lanzó este (`os.getppid()`, también en Windows).
+
+    En POSIX, si el padre murió, es el de `init` o del que adopte a los
+    huérfanos, que nunca tiene el registro de una ventana. Punto de
+    indirección: los tests la sustituyen.
+    """
+    return os.getppid()
 
 
 def _leer_ui() -> dict | None:
@@ -317,6 +344,22 @@ def ui_en_marcha() -> dict | None:
     return info
 
 
+def _soltado_por_el_padre(visto: dict) -> bool:
+    """Espera hasta `ESPERA_PADRE` a que el registro `visto` deje de estar vivo y ser ese.
+
+    Returns:
+        `True` si lo soltó (ya no está, es otro o su dueño murió); `False` si
+        sigue igual pasado el plazo.
+    """
+    limite = time.monotonic() + ESPERA_PADRE
+    while time.monotonic() < limite:
+        time.sleep(PASO_PADRE)
+        actual = _leer_ui()
+        if actual != visto or not _viva_aqui(actual):
+            return True
+    return False
+
+
 def tomar_ui() -> dict | None:
     """Apunta que esta ventana es la de este dispositivo, si nadie la tiene.
 
@@ -324,6 +367,10 @@ def tomar_ui() -> dict | None:
     (`_crear_exclusivo`). Como dos pasos, el 28/09/2026 dos ventanas lanzadas
     con 6 s de diferencia miraron las dos antes de que ninguna escribiera y se
     abrieron a la vez.
+
+    Si el registro vivo es del proceso que lanzó este (`padre_pid()`: la ventana
+    vieja que se cierra tras actualizar) se espera hasta `ESPERA_PADRE` a que lo
+    suelte, en vez de decir «Ya hay una ventana abierta».
 
     Si hay un resto (pid muerto, otro equipo, ilegible) se retira y se
     reintenta una sola vez: si otra ventana se ha adelantado, manda esa.
@@ -346,6 +393,8 @@ def tomar_ui() -> dict | None:
         if otra is None:
             continue                    # se soltó entre medias: otra vez
         if _viva_aqui(otra):
+            if not intento and otra.get("pid") == padre_pid() and _soltado_por_el_padre(otra):
+                continue                # lo soltó: otra vez a tomarlo
             return otra
         if not intento:
             _retirar_ui(otra)
@@ -437,7 +486,7 @@ def stop_previous_daemon() -> str | None:
             if info.get("agente"):
                 return None
             return f"Servicio anterior (pid {pid}) detenido."
-        time.sleep(0.3)
+        time.sleep(STOP_WAIT_STEP)
 
     # No ha contestado a tiempo: probablemente está en mitad de una pareja. Se
     # le deja el `daemon.stop` (parará al terminarla). El lock del agente se
@@ -908,6 +957,7 @@ def daemon_main(pairs: list[str], interval_min: float) -> int:
                 pasada_llavero(v, llave, "ciclo del servicio")
             wake = time.monotonic() + interval_min * 60
             stop = False
+            lento = time.monotonic()    # la primera mirada lenta, ya
             while time.monotonic() < wake:
                 if not pen_present():
                     reason, stop = "dispositivo no conectado", True
@@ -915,17 +965,21 @@ def daemon_main(pairs: list[str], interval_min: float) -> int:
                 if stop_requested():
                     reason, stop = "parada solicitada por el lanzador", True
                     break
-                otro = read_lock()
-                if otro is not None and not _lock_mio(otro) and _viva_aqui(otro):
-                    # El lanzador se cansó de esperar, borró nuestro registro y
-                    # arrancó otro servicio (que borra el stop que iba para
-                    # nosotros): el que está ahí es el servicio, y dos a la vez
-                    # no puede ser.
-                    reason, stop = f"otro servicio (pid {otro.get('pid')}) tiene el registro", True
-                    break
-                if llave is not None:
-                    atender_llavero(v, llave)
-                time.sleep(POLL_SECONDS)
+                if time.monotonic() >= lento:
+                    # Lo lento, cada `POLL_SECONDS`: el registro y la foto de
+                    # procesos del llavero.
+                    lento = time.monotonic() + POLL_SECONDS
+                    otro = read_lock()
+                    if otro is not None and not _lock_mio(otro) and _viva_aqui(otro):
+                        # El lanzador se cansó de esperar, borró nuestro registro y
+                        # arrancó otro servicio (que borra el stop que iba para
+                        # nosotros): el que está ahí es el servicio, y dos a la vez
+                        # no puede ser.
+                        reason, stop = f"otro servicio (pid {otro.get('pid')}) tiene el registro", True
+                        break
+                    if llave is not None:
+                        atender_llavero(v, llave)
+                time.sleep(max(0.0, min(STOP_POLL_SECONDS, wake - time.monotonic())))
             if stop:
                 break
     finally:

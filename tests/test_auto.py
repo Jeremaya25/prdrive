@@ -86,10 +86,11 @@ finally:
     builtins.print = real_print
 
 # El servicio tiene que ver el `daemon.stop` antes de que el lanzador se rinda
-# (`STOP_WAIT_SECONDS`): dos sondeos caben en ese presupuesto, y el sondeo no
-# baja de 5 s para no leer el dispositivo con tanta frecuencia en reposo.
+# (`STOP_WAIT_SECONDS`): dos sondeos caben en ese presupuesto. Lo caro (el
+# registro y la foto de procesos del llavero) no baja de 5 s; el ritmo de la
+# parada lo prueba `test_servicio_ritmo.py`.
 c("el servicio ve el stop a tiempo",
-  (runsync.POLL_SECONDS * 2 < runsync.STOP_WAIT_SECONDS, runsync.POLL_SECONDS >= 5),
+  (runsync.STOP_POLL_SECONDS * 2 < runsync.STOP_WAIT_SECONDS, runsync.POLL_SECONDS >= 5),
   (True, True))
 
 sys.exit(c.report())

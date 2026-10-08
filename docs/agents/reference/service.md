@@ -25,6 +25,15 @@ By hand («Iniciar servicio») or on plug-in (watcher → `runsync --auto`): the
 
 `--auto --once` (`una_pasada()`) is one pass of those pairs with no service behind it. With a live service on this host it does nothing and does **not** stop it: swapping a service for a single pass would leave the device without one.
 
+## Rhythm: the service must not delay the window
+
+Opening the window stops the service first (`stop_previous_daemon()`), so how fast the service notices `daemon.stop` is how late the window appears (it used to be 0–5 s, up to 15 s mid-pass).
+
+- **`STOP_POLL_SECONDS = 1.0`:** the idle loop between cycles looks at `stop_requested()` and `pen_present()` (two `stat`s) every second. It sleeps `min(STOP_POLL_SECONDS, time to the next cycle)`.
+- **`POLL_SECONDS = 5.0` is kept for the slow looks:** `read_lock()` («another service has the record») and `atender_llavero()` (the keychain's photo of the processes) are gated by `time.monotonic()` to that period, and `vigilar_llavero()` keeps sleeping it. The first slow look is at the start of the wait.
+- **`STOP_WAIT_STEP = 0.1`:** the launcher looks every 0.1 s (it was 0.3) whether the old service released its record; `STOP_WAIT_SECONDS = 15.0` is unchanged. The window still opens **after** the service stopped: with a window open there is no service.
+- With the resident agent as the root's service the wait is also its tick (`TICK`, 2 s), so the window waits about a second more on average. `tests/test_servicio_ritmo.py` pins a stop at t = 1007.3 seen within 1 s, the slow looks at 1000.0 and 1005.0 only, the launcher's six 0.1 s sleeps, and a real thread ended by `daemon.stop` within 2 s.
+
 ## A lock record names its boot
 
 `ui.lock.json`, `daemon.lock.json` (runsync's service and the agent), `llavero.lock.json` and the agent's `agente.lock.json` carry `"arranque": store.arranque_del_sistema()` next to `pid`/`host`. The file travels with the device, so after a reboot it can hold a pid that the new boot handed to an unrelated process; without the boot time that pid reads as alive and a window that no longer exists blocks the new one.
@@ -54,6 +63,7 @@ Follow-up idea: record the pid together with the process creation time (`GetProc
 
 - **Check and take are one step** (`tomar_ui()`): created with `O_EXCL`, never via `store.write_json` (its rename overwrites). Check-then-write let two runsync launched 6 s apart by two relays both open a window on a real device (28/09/2026).
 - A record whose pid is dead, from another host or from another boot is the trace of a device pulled without closing. `_retirar_ui()` removes it only while holding a second exclusive file, `ui.lock.json.romper`, and only if it re-reads the same record (a plain delete could take a window that just replaced it); then the exclusive create is retried once. Windows refuses to delete a file another process is reading (WinError 32), so `_borrar()` retries.
+- **A relaunched window waits for its parent** (`tomar_ui()`): after an update the old window starts the new one (`ui/tk_update.py`) and closes afterwards, so the new one could find the old one's record and say «Ya hay una ventana abierta». On its first attempt, if the live record's pid is `padre_pid()` (`os.getppid()`; an indirection point), `_soltado_por_el_padre()` waits up to `ESPERA_PADRE = 3.0` s, looking every `PASO_PADRE = 0.05` s, for the record to change or disappear, and then takes it. A holder that is **not** the parent is refused at once, with no wait, and a parent that never lets go is refused after the 3 s. `tests/test_instancia_unica.py`.
 - Everything after the take, up to `_atender()`, runs inside the `finally` that releases it.
 - `penwatch` reads both locks (never writes) and launches nothing while either is alive: the pass is logged and the trigger spent, so it does not retry every minute behind an open window. Both facts are said out loud (the pause in the watcher line of the main window and console menu; the other in the message confirming the service), but only when this host's watcher attends this device (`watch.resumen().vigila_este`): otherwise they would describe something that does not exist here.
 
