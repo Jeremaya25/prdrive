@@ -1715,6 +1715,51 @@ def caja_texto(parent, **kw):
     return tk.Text(parent, **opciones)
 
 
+def pista_campo(entrada, texto: str):
+    """Pone en un campo vacío una pista en gris («Buscar un ajuste…») y la devuelve.
+
+    Tk 8.6 no tiene `placeholder` (llega en Tk 9), así que la pista es una
+    etiqueta colocada DENTRO del campo, donde empieza el texto: no se escribe
+    en el campo, así que su variable sigue vacía y nadie tiene que saber que
+    está ahí. Se va en cuanto el campo tiene el foco o algo escrito y vuelve
+    al salir de él vacío; un clic en ella pone el cursor en el campo.
+    """
+    from tkinter import ttk
+
+    from . import icons
+    pista = ttk.Label(entrada, text=texto, style="Card.Pista.TLabel",
+                      cursor="xterm", font=fuente())
+    # Donde empieza el texto: el relleno del campo más su borde.
+    x = icons.px(entrada, 12) + icons.px(entrada, 1)
+
+    variable = str(entrada.cget("textvariable"))
+
+    def mirar(_evento=None) -> None:
+        """Enseña la pista solo si el campo está vacío y sin el foco.
+
+        Se lee la variable y no el campo: su `trace` salta antes de que el
+        campo se entere del cambio, y `get()` daría el texto de antes.
+        """
+        try:
+            vacio = not (entrada.getvar(variable) if variable else entrada.get())
+            enfocado = entrada.focus_get() is entrada
+        except Exception:                       # noqa: BLE001
+            return
+        if vacio and not enfocado:
+            pista.place(x=x, rely=0.5, anchor="w")
+        else:
+            pista.place_forget()
+
+    pista.bind("<Button-1>", lambda _e: (entrada.focus_set(), mirar()))
+    for evento in ("<FocusIn>", "<FocusOut>", "<KeyRelease>"):
+        entrada.bind(evento, mirar, add="+")
+    if variable:
+        entrada.tk.call("trace", "add", "variable", variable, "write",
+                        entrada.register(lambda *_a: mirar()))
+    mirar()
+    return pista
+
+
 def marcar_lista(tree) -> None:
     """Configura los colores de fila de una lista de parejas, por estado.
 

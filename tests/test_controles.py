@@ -102,6 +102,21 @@ c("el grupo redondea solo por fuera",
   ["Primero.Segmento.Toolbutton", "Medio.Segmento.Toolbutton",
    "Ultimo.Segmento.Toolbutton"])
 
+# 4b. la pista de un campo: dentro del campo vacío, fuera en cuanto se escribe
+texto = tk.StringVar(raiz)
+campo = ttk.Entry(raiz, textvariable=texto)
+campo.pack()
+pista = theme.pista_campo(campo, "Buscar un ajuste…")
+raiz.update()
+c("con el campo vacío se ve la pista", pista.winfo_ismapped(), True)
+c("y su variable sigue vacía: la pista no se escribe en el campo", texto.get(), "")
+texto.set("llav")
+raiz.update()
+c("al escribir, se va", pista.winfo_ismapped(), False)
+texto.set("")
+raiz.update()
+c("al borrarlo, vuelve", pista.winfo_ismapped(), True)
+
 # 5. un botón mide el alto del diseño
 c("un botón mide 34 px, a uno", abs(en_papel.winfo_reqheight() - 34) <= 1, True)
 

@@ -702,8 +702,11 @@ with sandbox():
         ventana_principal(cfg, lambda root: botones(root)["Ajustes…"].invoke())
     finally:
         update.check, threading.Thread = real_check, real_hilo
+    # Solo cuentan las forzadas: la mirada de fondo del arranque (`after(300)`,
+    # sin forzar) puede caer o no mientras dura la prueba, según lo que tarde
+    # en dibujarse la ventana, y no es la que se comprueba aquí.
     c("«Buscar actualizaciones» pregunta a la red sin mirar la caché",
-      preguntas, [True])
+      [p for p in preguntas if p], [True])
     c("  y dice debajo del botón lo que ha pasado", MOTIVO in visto.get("textos", []), True)
     c("  y el botón vuelve a poder pulsarse", visto.get("apagado"), False)
 

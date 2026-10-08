@@ -181,15 +181,14 @@ def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None,
     arriba = ttk.Frame(raiz)
     arriba.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, theme.E4))
     arriba.columnconfigure(0, weight=1)
-    # Todo en una línea y centrado con el título: el rótulo del buscador a su
-    # izquierda, no encima, que lo dejaba más alto que el título.
+    # Todo en una línea y centrado con el título; el rótulo del buscador va
+    # dentro del campo, como pista, y se va al escribir o al entrar en él.
     ttk.Label(arriba, text="Ajustes", style="Titulo.TLabel").grid(
         row=0, column=0, sticky="w")
-    ttk.Label(arriba, text="Buscar un ajuste", style="Campo.TLabel").grid(
-        row=0, column=1, sticky="e", padx=(0, theme.E2))
     busqueda = tk.StringVar(dlg)
-    buscador = ttk.Entry(arriba, textvariable=busqueda, width=30)
-    buscador.grid(row=0, column=2, sticky="e")
+    buscador = ttk.Entry(arriba, textvariable=busqueda, width=34)
+    buscador.grid(row=0, column=1, sticky="e")
+    buscador.pista = theme.pista_campo(buscador, "Buscar un ajuste…")
 
     # La barra lateral.
     barra = ttk.Frame(raiz)
