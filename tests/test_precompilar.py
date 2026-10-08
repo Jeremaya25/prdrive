@@ -27,6 +27,7 @@ import os
 import subprocess
 import sys
 import time
+import types
 from pathlib import Path
 
 from _harness import REPO, Checks, tmpdir
@@ -146,8 +147,26 @@ c("sin intérprete (instalación ligera, raíz del equipo), no hace nada",
   (deploy.precompilar(app, None), list(app.rglob("__pycache__"))), (False, []))
 c("con un intérprete que no existe, tampoco",
   deploy.precompilar(app, app / "bin" / "python3"), False)
-c("un pythonw.exe se cambia por el python.exe de al lado, que aquí no está",
-  deploy.precompilar(app, app / "pythonw.exe"), False)
+# pythonw.exe no tiene consola ni salida que leer: se usa el python.exe de al lado.
+# Se mira la orden que se lanzaría, con un `subprocess` de mentira solo en deploy.
+ordenes: list[list[str]] = []
+real_subprocess = deploy.subprocess
+deploy.subprocess = types.SimpleNamespace(
+    run=lambda orden, **k: ordenes.append(orden) or subprocess.CompletedProcess(orden, 0),
+    DEVNULL=subprocess.DEVNULL, TimeoutExpired=subprocess.TimeoutExpired,
+    SubprocessError=subprocess.SubprocessError)
+try:
+    (app / "pythonw.exe").write_bytes(b"py")
+    c("un pythonw.exe sin python.exe al lado: no hay con qué, y no se lanza nada",
+      (deploy.precompilar(app, app / "pythonw.exe"), ordenes), (False, []))
+    (app / "python.exe").write_bytes(b"py")
+    c("con python.exe al lado, se lanza ese y no el pythonw.exe",
+      (deploy.precompilar(app, app / "pythonw.exe"), [Path(o[0]).name for o in ordenes]),
+      (True, ["python.exe"]))
+finally:
+    deploy.subprocess = real_subprocess
+    for nombre in ("pythonw.exe", "python.exe"):
+        (app / nombre).unlink(missing_ok=True)
 c("sin carpeta de código, no hay nada que hacer",
   deploy.precompilar(app / "no-existe", sys.executable), False)
 (app / "common" / "__pycache__").write_text("no soy una carpeta", encoding="utf-8")

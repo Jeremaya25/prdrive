@@ -636,6 +636,8 @@ class AvanceRelevo:
 
     def __init__(self, device_root: Path | str, referencia: Path | None = None):
         """Prepara el seguimiento, todavía sin medir."""
+        import threading
+        self._cerrojo = threading.Lock()
         self._base = platforms.runtime_dir(device_root, pins.PLATAFORMAS[0]).parent
         self._referencia = referencia
         self._total = 0
@@ -674,23 +676,32 @@ class AvanceRelevo:
                 copiado = sum(_tamanno(d) for d in nuevos)
             except OSError:
                 nuevos, copiado = [], 0
-            if self._precompilando:
-                break
             if nuevos and self._total:
                 visto = True
-                self.fraccion = min(0.99, copiado / self._total)
-                self.texto = f"Copiando al dispositivo: {int(self.fraccion * 100)} %"
+                fraccion = min(0.99, copiado / self._total)
+                self._medido(fraccion, f"Copiando al dispositivo: {int(fraccion * 100)} %")
             elif visto:
-                self.fraccion, self.texto = 0.99, "Colocándolo en su sitio…"
+                self._medido(0.99, "Colocándolo en su sitio…")
             time.sleep(1)
+
+    def _medido(self, fraccion: float, texto: str) -> None:
+        """Pone lo que ha medido el hilo, salvo si ya se está precompilando.
+
+        Mirar y escribir van bajo el cerrojo: sin él, `precompilando()` podía
+        caer entre los dos y su texto quedar pisado por «Colocándolo…».
+        """
+        with self._cerrojo:
+            if not self._precompilando:
+                self.fraccion, self.texto = fraccion, texto
 
     def precompilando(self) -> None:
         """Marca la fase de después de colocar el Python: dejar listos los `.pyc`.
 
         Para el medidor, que no vuelve a escribir el texto.
         """
-        self._precompilando = True
-        self.fraccion, self.texto = 0.99, "Dejando listo el arranque rápido…"
+        with self._cerrojo:
+            self._precompilando = True
+            self.fraccion, self.texto = 0.99, "Dejando listo el arranque rápido…"
 
     def fin(self) -> None:
         """Marca el final: el relevo ya ha terminado y vuelve a abrir prdrive."""

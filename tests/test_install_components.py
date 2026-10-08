@@ -879,14 +879,15 @@ try:
     while time.monotonic() < limite and avance.progreso() != esperado:
         time.sleep(0.1)
     c("mide lo copiado frente al runtime ya extraído", avance.progreso(), esperado)
-    avance.fin()
+    # Colocado ya el Python (la copia desaparece), empieza a precompilar con el
+    # medidor vivo: sin el corte, su vuelta siguiente diría «Colocándolo…».
+    shutil.rmtree(nuevo)
     avance.precompilando()
-    time.sleep(1.2)                 # el medidor no pisa la fase con «Colocándolo…»
+    time.sleep(2.2)                 # dos vueltas del medidor
     c("la fase de precompilar la dice y el medidor no la pisa", avance.progreso(),
       (0.99, "Dejando listo el arranque rápido…"))
     avance.fin()
     c("y al final lo dice", avance.progreso(), (1.0, "Volviendo a abrir prdrive…"))
-    shutil.rmtree(nuevo)
 
     # la orden de consola
     #
