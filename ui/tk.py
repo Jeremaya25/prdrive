@@ -1193,8 +1193,32 @@ def soltar_capturas(ventana) -> None:
         pass
 
 
-PASO_BARRA_MS = 12
-"""Milisegundos que tarda en avanzar la barra sin cifra."""
+PASO_BARRA_MS = 48
+"""Milisegundos entre dos pasos de la barra sin cifra.
+
+Con 12 la barra gastaba el 10,6 % de un núcleo, y con 48 el 2,6 %.
+"""
+SALTO_BARRA = PASO_BARRA_MS / 12
+"""Cuánto avanza la barra sin cifra en cada paso, de un máximo de 100.
+
+Es proporcional al intervalo, así que barre a la velocidad de siempre (un
+vaivén cada 1,2 s, el de saltos de 1 cada 12 ms), con menos pasos y más grandes.
+"""
+
+
+def _arrancar_barra(barra) -> None:
+    """Pone a ir y venir una barra sin cifra, a `PASO_BARRA_MS` y `SALTO_BARRA`.
+
+    `ttk::progressbar start` acepta el salto como segundo argumento
+    (`start ?intervalo? ?salto?`) y tkinter solo deja darle el intervalo, así que
+    se llama a Tcl directamente. Un Tk que solo admitiera el intervalo la
+    arranca igual, a saltos de 1: más despacio, pero va.
+    """
+    import tkinter as tk
+    try:
+        barra.tk.call(str(barra), "start", PASO_BARRA_MS, SALTO_BARRA)
+    except tk.TclError:
+        barra.start(PASO_BARRA_MS)
 
 
 def _medir_avance(progreso) -> tuple[float, str] | None:
@@ -1225,7 +1249,7 @@ def _pintar_avance(barra, etiqueta, medida: tuple[float, str] | None) -> None:
     if medida is None:
         if determinada:
             barra.configure(mode="indeterminate", value=0)
-            barra.start(PASO_BARRA_MS)
+            _arrancar_barra(barra)
         if str(etiqueta.cget("text")):
             etiqueta.configure(text="")
         return
@@ -1285,7 +1309,7 @@ def working(parent, title: str, funcion, mensaje: str = "",
     barra = ttk.Progressbar(marco, mode="indeterminate",
                             length=theme.medida(380))
     barra.grid(row=1, column=0, pady=(theme.E4, 0), sticky="ew")
-    barra.start(PASO_BARRA_MS)
+    _arrancar_barra(barra)
     cifra = None
     if progreso is not None:
         cifra = ttk.Label(marco, text="", wraplength=theme.medida(380),
@@ -1472,7 +1496,7 @@ class Indicador:
         """
         if esperando:
             self.barra.grid()
-            self.barra.start(PASO_BARRA_MS)
+            _arrancar_barra(self.barra)
         else:
             self.barra.stop()
             self.barra.grid_remove()
@@ -2593,6 +2617,99 @@ def _tono(linea: str) -> str:
     return "normal"
 
 
+LINEAS_VENTANA = 20_000
+"""Líneas que conserva el texto de la ventana de la pasada.
+
+La salida entera no se pierde: está en `_Salida.completa`, que es lo que lleva
+«Guardar el log».
+"""
+
+
+class _Salida:
+    """La salida de la ventana de la pasada: entera, y aparte del texto que se ve.
+
+    Decide qué se inserta en el texto con cada tanda de líneas, sin Tk, para
+    probarlo sin pantalla. La línea de progreso se reescribe en su sitio: varias
+    seguidas son una sola, la última, también dentro de una tanda, y así lo
+    mismo en el texto que en la copia entera.
+
+    Attributes:
+        completa: Las líneas tal como las guarda «Guardar el log»; las de
+            progreso seguidas ya están reducidas a la última.
+        viva: Si la última línea es de progreso, o sea si la siguiente de
+            progreso la sustituye.
+    """
+
+    def __init__(self) -> None:
+        """Empieza sin ninguna línea."""
+        self.completa: list[str] = []
+        self.viva = False
+
+    def anadir(self, lineas: list[str]) -> tuple[bool, list[tuple[str, str]]]:
+        """Apunta una tanda de líneas y dice qué hay que hacerle al texto.
+
+        Returns:
+            `(sustituye, trozos)`. Con `sustituye`, el texto borra antes la
+            línea viva que ya tenía (de la marca `progreso-vivo` al final).
+            `trozos` son `(texto, tono)` para un solo `insert`: las líneas
+            contiguas del mismo tono van juntas y la de progreso va siempre
+            sola.
+        """
+        sustituye = False
+        trozos: list[tuple[str, list[str]]] = []
+        for linea in lineas:
+            tono = _tono(linea)
+            if tono == "progreso" and self.viva:
+                self.completa[-1] = linea
+                if trozos:              # la viva es de esta tanda: su trozo es el último
+                    trozos.pop()
+                else:                   # la viva ya está en el texto
+                    sustituye = True
+            else:
+                self.completa.append(linea)
+            self.viva = tono == "progreso"
+            if trozos and trozos[-1][0] == tono and tono != "progreso":
+                trozos[-1][1].append(linea)
+            else:
+                trozos.append((tono, [linea]))
+        return sustituye, [("".join(juntas), tono) for tono, juntas in trozos]
+
+
+def _volcar(texto, salida: _Salida, lineas: list[str]) -> None:
+    """Pasa a un `tk.Text` una tanda de líneas: un `insert` y un `see`.
+
+    Es lo que hace `poll()` en cada vuelta con lo que haya llegado. Un `insert`
+    por línea costaba 0,42 ms cada una y uno por tanda 0,01 ms. El texto se
+    queda con las últimas `LINEAS_VENTANA`; `salida` guarda todas.
+
+    Args:
+        texto: El `tk.Text` de la ventana, con los tonos ya configurados.
+        salida: La salida de esa ventana.
+        lineas: Lo que ha llegado desde la vuelta anterior.
+    """
+    if not lineas:
+        return
+    sustituye, trozos = salida.anadir(lineas)
+    texto.configure(state="normal")
+    try:
+        if sustituye:
+            texto.delete("progreso-vivo", "end-1c")
+        texto.insert("end", *(parte for trozo in trozos for parte in trozo))
+        if salida.viva:
+            # Al principio de esa línea, con gravedad a la izquierda: aunque se
+            # escriba en ella, la marca no se mueve. Acaba en salto de línea,
+            # así que "end-1c" ya está en la siguiente; sin él, no.
+            texto.mark_set("progreso-vivo", "end-2c linestart"
+                           if trozos[-1][0].endswith("\n") else "end-1c linestart")
+            texto.mark_gravity("progreso-vivo", "left")
+        sobran = int(texto.index("end-1c").split(".")[0]) - 1 - LINEAS_VENTANA
+        if sobran > 0:
+            texto.delete("1.0", f"{sobran + 1}.0")
+        texto.see("end")
+    finally:
+        texto.configure(state="disabled")
+
+
 def output_window(title: str, cmd: list[str], parent=None,
                   subtitulo: str = "", modal: bool = True,
                   al_cerrar=None, veredictos: dict[int, str] | None = None) -> int | None:
@@ -2737,28 +2854,8 @@ def output_window(title: str, cmd: list[str], parent=None,
             ("progreso", dict(foreground=theme.ACENTO))):
         text.tag_configure(nombre, **opciones)
 
-    state = {"rc": None, "progreso": False}
-
-    def append(line: str) -> None:
-        """Añade una línea al texto, con su color.
-
-        El progreso llega cada pocos segundos mientras dura la pareja: se
-        reescribe en su sitio y no se apila. Es una línea viva por pareja, que
-        al terminar se queda con la última lectura. La marca, con gravedad a la
-        izquierda, se queda al principio de esa línea aunque se escriba en
-        ella.
-        """
-        tono = _tono(line)
-        text.configure(state="normal")
-        if tono == "progreso" and state["progreso"]:
-            text.delete("progreso-vivo", "end-1c")
-        elif tono == "progreso":
-            text.mark_set("progreso-vivo", "end-1c")
-            text.mark_gravity("progreso-vivo", "left")
-        state["progreso"] = tono == "progreso"
-        text.insert("end", line, tono)
-        text.see("end")
-        text.configure(state="disabled")
+    state = {"rc": None}
+    salida = _Salida()
 
     def guardar() -> None:
         """Se lleva la salida tal cual a un fichero.
@@ -2774,7 +2871,7 @@ def output_window(title: str, cmd: list[str], parent=None,
             return
         try:
             with open(destino, "w", encoding="utf-8") as f:
-                f.write(text.get("1.0", "end"))
+                f.write("".join(salida.completa))
         except OSError as e:
             messagebox.showerror(TITLE, f"No se ha podido guardar:\n\n{e}",
                                  parent=root)
@@ -2800,7 +2897,7 @@ def output_window(title: str, cmd: list[str], parent=None,
         bien = state["rc"] == 0 or especial is not None
         verdict = ("OK" if state["rc"] == 0 else especial if bien
                    else f"ERROR (código {state['rc']})")
-        append(f"\n=== Terminado: {verdict} ===\n")
+        _volcar(text, salida, [f"\n=== Terminado: {verdict} ===\n"])
         root.title(f"{TITLE} — {title} — {verdict}")
         nuevo = theme.chip(barra, f"{'terminado' if bien else verdict} · {segundos} s",
                            "Ok." if bien else "Peligro.", "ok" if bien else "warn")
@@ -2808,20 +2905,26 @@ def output_window(title: str, cmd: list[str], parent=None,
         nuevo.grid(row=0, column=2, rowspan=2, sticky="e")
 
     def poll() -> None:
-        """Pasa a la ventana lo que haya en la cola, cada 120 ms."""
+        """Pasa a la ventana, de una vez, lo que haya en la cola, cada 120 ms."""
         # Sin ventana no hay a quién contárselo. Con la principal viva debajo el
         # bucle de eventos sigue, y sin esto el sondeo seguiría para siempre.
         if not root.winfo_exists():
             return
+        lineas: list[str] = []
+        acabo = False
         try:
             while True:
                 item = q.get_nowait()
                 if item is DONE:
-                    terminado()
-                    return
-                append(item)
+                    acabo = True
+                    break
+                lineas.append(item)
         except queue.Empty:
             pass
+        _volcar(text, salida, lineas)
+        if acabo:
+            terminado()
+            return
         root.after(120, poll)
 
     cortado = {"ya": False}

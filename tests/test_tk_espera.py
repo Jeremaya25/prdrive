@@ -9,6 +9,9 @@ que falla deje la ventanita abierta (no se puede cerrar a mano).
 
 No se entra en el bucle de eventos de verdad: se sustituye `mostrar()` por uno
 que va dando vueltas a `update()` mientras cambia lo que dice el avance.
+
+También el ritmo de la barra sin cifra (`PASO_BARRA_MS`, `SALTO_BARRA`): pocos
+pasos y grandes, que cuestan poco CPU, a la velocidad de siempre.
 """
 
 import sys
@@ -25,7 +28,7 @@ try:
     raiz.withdraw()
 except Exception as e:                                   # sin entorno gráfico
     print(f"  (saltado) no hay entorno gráfico: {e}")
-    sys.exit(0)
+    sys.exit(c.report())
 
 from ui import tk as uitk  # noqa: E402
 
@@ -77,6 +80,20 @@ def modo(dlg) -> str:
     return str(dlg.barra.cget("mode"))
 
 
+def ritmo(barra) -> tuple[float, float] | None:
+    """Devuelve `(intervalo, salto)` con que Tcl tiene en marcha la barra, o `None`.
+
+    Lo lee del `after` que `ttk::progressbar::start` deja pendiente: así se ve
+    lo que se pidió sin esperar a que la barra se mueva.
+    """
+    try:
+        pendiente = barra.tk.eval(f"set ::ttk::progressbar::Timers({barra})")
+    except tk.TclError:                                  # parada: no hay temporizador
+        return None
+    guion = barra.tk.splitlist(barra.tk.call("after", "info", pendiente)[0])
+    return float(str(guion[-2])), float(str(guion[-1]))
+
+
 # 1. sin progreso, la de siempre
 ok, valor, visto = conducir(lambda dlg: esperar_a(lambda: False, 0.3))
 c("sin progreso no hay hueco para la cifra", visto["dlg"].cifra, None)
@@ -107,15 +124,18 @@ def pasos(dlg) -> None:
     """Conduce la ventanita por los casos de avance, apuntando lo que ve."""
     ronda()
     visto["al_abrir"] = (modo(dlg), str(dlg.cifra.cget("text")))
+    visto["ritmo_al_abrir"] = ritmo(dlg.barra)
 
     dice["medida"] = (0.43, "43 % · quedan unos 25 min")
     ronda()
     visto["con_cifra"] = (modo(dlg), round(float(dlg.barra.cget("value"))),
                           str(dlg.cifra.cget("text")))
+    visto["ritmo_con_cifra"] = ritmo(dlg.barra)
 
     dice["medida"] = None
     ronda()
     visto["sin_cifra"] = (modo(dlg), str(dlg.cifra.cget("text")))
+    visto["ritmo_sin_cifra"] = ritmo(dlg.barra)
 
     dice["medida"] = (0.5, "50 % · calculando cuánto queda")
     ronda()
@@ -146,6 +166,53 @@ c("y uno que devuelve cualquier cosa, también", visto["basura"], "indeterminate
 c("una fracción de más no pasa de la barra llena", visto["de_mas"], 100)
 c("con todo eso, la ventanita se cierra sola al terminar", ventana["cerrada"], True)
 c("y devuelve lo de la función", (ok, valor), (True, "hecho"))
+
+# el ritmo de la barra sin cifra
+RITMO = (uitk.PASO_BARRA_MS, uitk.SALTO_BARRA)
+c("sin cifra, la barra da un paso cada 40-50 ms (era cada 12)",
+  40 <= uitk.PASO_BARRA_MS <= 50, True)
+c("  y su salto es proporcional: la misma velocidad que de 1 en 1 cada 12 ms",
+  abs(uitk.SALTO_BARRA / uitk.PASO_BARRA_MS - 1 / 12) < 1e-9, True)
+c("al abrir, `working()` la pone a ese ritmo", visto["ritmo_al_abrir"], RITMO)
+c("con cifra no hay temporizador: la barra se llena sola", visto["ritmo_con_cifra"], None)
+c("cuando vuelve a ir y venir, al mismo ritmo", visto["ritmo_sin_cifra"], RITMO)
+
+indicador = uitk.Indicador(raiz)
+indicador.poner("leyendo…", True)
+c("el `Indicador` que espera, también", ritmo(indicador.barra), RITMO)
+indicador.poner("", False)
+c("  y sin esperar, parado", ritmo(indicador.barra), None)
+indicador.marco.destroy()
+
+
+class BarraSinSalto:
+    """Una barra de un Tk que solo acepta el intervalo en `start`."""
+
+    class tk:
+        """Su intérprete: rechaza el segundo argumento."""
+
+        @staticmethod
+        def call(*_args):
+            """Falla como un `start` con un argumento de más."""
+            raise tk.TclError('wrong # args: should be ".b start ?interval?"')
+
+    def __init__(self) -> None:
+        """Empieza sin pedidos."""
+        self.pedidos: list = []
+
+    def __str__(self) -> str:
+        """Su ruta de widget."""
+        return ".b"
+
+    def start(self, intervalo=None) -> None:
+        """Apunta el intervalo que se le pide."""
+        self.pedidos.append(intervalo)
+
+
+antigua = BarraSinSalto()
+uitk._arrancar_barra(antigua)
+c("con un Tk que no admite el salto, arranca igual, a saltos de 1", antigua.pedidos,
+  [uitk.PASO_BARRA_MS])
 
 
 # 3. un progreso que falla desde el principio no cuelga nada
