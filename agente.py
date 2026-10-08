@@ -830,11 +830,13 @@ def dlog(raiz: Path, msg: str) -> None:
     """Añade una línea al diario del servicio de la raíz (`state/daemon.log`).
 
     Como el de runsync. Se abre y se cierra en cada línea: nada se queda
-    abierto en la unidad.
+    abierto en la unidad. Pasado `store.DIARIO_TOPE` se recorta antes de
+    añadir (`store.recortar_diario()`), igual que el de runsync.
     """
     ruta = en_la_raiz(raiz, estado_de(raiz) / "daemon.log")
     if ruta is None:
         return
+    store.recortar_diario(ruta)
     try:
         fd = os.open(ruta, os.O_WRONLY | os.O_APPEND | os.O_CREAT | _SIN_ENLACE, 0o666)
         with os.fdopen(fd, "a", encoding="utf-8") as f:

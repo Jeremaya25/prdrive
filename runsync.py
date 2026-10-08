@@ -107,8 +107,6 @@ POLL_SECONDS = 2.0
 """Cada cuántos segundos mira el servicio si debe parar o si se fue el dispositivo."""
 STOP_WAIT_SECONDS = 15.0
 """Segundos que espera el lanzador a que pare el servicio anterior."""
-DLOG_MAX_BYTES = 256 * 1024
-"""Tamaño del diario a partir del cual `dlog` lo recorta."""
 HOST = prefs.HOST
 
 CREATE_NO_WINDOW = model.CREATE_NO_WINDOW
@@ -143,14 +141,13 @@ def dlog(msg: str) -> None:
     """Añade una línea con la hora al diario del servicio.
 
     Abre y cierra el fichero en cada línea para no mantener ningún descriptor
-    abierto sobre el dispositivo: bloquearía su extracción segura. Pasado
-    `DLOG_MAX_BYTES`, se queda con las últimas 300 líneas.
+    abierto sobre el dispositivo: bloquearía su extracción segura. Antes de
+    añadir, `store.recortar_diario()` lo deja en sus últimas líneas si ha
+    pasado de `store.DIARIO_TOPE`.
     """
     line = f"{store.stamp()} {msg}\n"
     try:
-        if DLOG.exists() and DLOG.stat().st_size > DLOG_MAX_BYTES:
-            tail = DLOG.read_text(encoding="utf-8", errors="replace").splitlines()[-300:]
-            DLOG.write_text("\n".join(tail) + "\n", encoding="utf-8")
+        store.recortar_diario(DLOG)
         with DLOG.open("a", encoding="utf-8") as f:
             f.write(line)
     except OSError:

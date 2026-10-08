@@ -116,8 +116,9 @@ la lista de **Dispositivos…** (en Parejas).
   **Ver el log** enseña qué dijo rclone. Si el servicio periódico está en marcha,
   él mismo abre una ventanita en cuanto algo empieza a fallar.
 
-Cuando una pasada falla se guarda su registro en `.prdrive/logs/`. Cuando va
-bien no se guarda nada, para no gastar la memoria de la unidad.
+Cuando una pasada falla se guarda su registro en `.prdrive/logs/` (de cada
+pareja solo se conservan los 20 últimos). Cuando va bien no se guarda nada, para
+no gastar la memoria de la unidad.
 
 ## Cuidado con esto
 

@@ -102,6 +102,31 @@ def write_text(path: Path, text: str) -> bool:
         return False
 
 
+DIARIO_TOPE = 256 * 1024
+"""Tamaño de un diario de texto a partir del cual `recortar_diario()` lo recorta."""
+DIARIO_QUEDAN = 300
+"""Líneas con las que se queda un diario recortado."""
+
+
+def recortar_diario(ruta: Path) -> None:
+    """Recorta un diario de texto que ha pasado de `DIARIO_TOPE`.
+
+    Lo usan `runsync.dlog` y `agente.dlog` antes de añadir su línea. Pasado el
+    tope reescribe el fichero con las últimas `DIARIO_QUEDAN` líneas, de forma
+    atómica (`write_text`). No protege una línea que otro proceso añada entre la
+    lectura y la reescritura: es un diario, y la escribe un solo servicio por
+    unidad. Por debajo del tope, o si el fichero no existe, no hace nada; no
+    lanza nunca, porque el diario no es vital.
+    """
+    try:
+        if ruta.stat().st_size <= DIARIO_TOPE:
+            return
+        lineas = ruta.read_text(encoding="utf-8", errors="replace").splitlines()
+        write_text(ruta, "\n".join(lineas[-DIARIO_QUEDAN:]) + "\n")
+    except OSError:
+        pass
+
+
 def crear_exclusivo(ruta: Path, datos: bytes) -> bool | None:
     """Crea `ruta` con `datos` solo si no existe.
 

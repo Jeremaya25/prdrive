@@ -43,8 +43,8 @@ que se hace de tarde en tarde: el emparejamiento de un móvil, las versiones
 guardadas y el nombre e icono de la unidad.
 
 Los logs de rclone **solo se guardan si la pasada falla** (o con `--keep-logs`),
-para no gastar ciclos de escritura de la unidad. Quedan en `.prdrive/logs/`. Al
-fallar se imprime la cola del log —sin las líneas de estadísticas, que ya contó
+para no gastar ciclos de escritura de la unidad. Quedan en `.prdrive/logs/`, y
+de cada pareja solo se guardan los 20 últimos. Al fallar se imprime la cola del log —sin las líneas de estadísticas, que ya contó
 el progreso— y se traduce el error de rclone a una explicación, si es uno de
 los conocidos.
 
