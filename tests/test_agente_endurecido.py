@@ -181,6 +181,39 @@ c("cmd_run se va sin tocar nada si otro agente está vivo",
   (True, 0, os.getppid()))
 equipo.lock_json().unlink()
 
+# El lock de un agente de antes de reiniciar: su pid lo tiene hoy otro proceso. Ni es
+# el agente (el instalador mataría a ese proceso al pararlo y no arrancaría el nuevo)
+# ni impide tomar el lock.
+FIJO_A = 1_800_000_000.0
+real_arranque_a = store.arranque_del_sistema
+store.arranque_del_sistema = lambda: FIJO_A
+try:
+    de_antes = {"pid": os.getpid(), "host": equipo.HOST, "started": "x"}
+    store.write_json(equipo.lock_json(), {**de_antes, "arranque": FIJO_A - 10_000})
+    c("agente_vivo: un registro de otro arranque no es el agente, aunque su pid viva",
+      equipo.agente_vivo(), None)
+    store.write_json(equipo.lock_json(), {**de_antes, "arranque": FIJO_A})
+    c("  uno de este arranque, sí", (equipo.agente_vivo() or {}).get("pid"), os.getpid())
+    store.write_json(equipo.lock_json(), de_antes)
+    c("  uno de antes, sin arranque, va por el pid",
+      (equipo.agente_vivo() or {}).get("pid"), os.getpid())
+    store.write_json(equipo.lock_json(), {**de_antes, "pid": "x"})
+    c("  y uno con un pid ilegible no lo es", equipo.agente_vivo(), None)
+
+    nuevo = {**yo, "arranque": FIJO_A}
+    store.write_json(equipo.lock_json(), {**de_antes, "arranque": FIJO_A - 10_000})
+    c("tomar_lock: el de un agente de otro arranque, aunque su pid viva, se retira y se toma",
+      (equipo.tomar_lock(nuevo), store.read_json(equipo.lock_json()).get("arranque")),
+      (None, FIJO_A))
+    store.write_json(equipo.lock_json(),
+                     {**de_antes, "pid": os.getppid(), "arranque": FIJO_A})
+    c("  el de este arranque no: manda el que está",
+      ((equipo.tomar_lock(nuevo) or {}).get("pid"),
+       store.read_json(equipo.lock_json()).get("pid")), (os.getppid(), os.getppid()))
+finally:
+    store.arranque_del_sistema = real_arranque_a
+equipo.lock_json().unlink()
+
 # escribir en una raíz sin seguir enlaces
 fuera = tmpdir("prdrive-fuera-")
 victima = fuera / "bashrc"
@@ -315,6 +348,9 @@ del ag._otro_servicio
 (RS / penwatch.DAEMON_LOCK_REL).unlink()
 F.vueltas(ag, 1)
 c("  sin nadie, lo toma", F.lock(RS).get("pid"), os.getpid())
+arr = store.arranque_del_sistema()      # la hora del arranque baila unos ms entre llamadas
+c("  y apunta en qué arranque del sistema está",
+  abs((F.lock(RS).get("arranque") or 0) - (arr or 0)) < 5, True)
 F.acabar(F.pasadas(RS)[-1])
 F.vueltas(ag, 1)
 F.otro_servicio(RS)                     # un runsync de antes, escribiendo sin mirar
@@ -327,6 +363,23 @@ F.vueltas(ag, 2)
 c("el stop de OTRO servicio no se lo come el agente: es para ese",
   F.stop(RS).exists(), True)
 F.stop(RS).unlink()
+(RS / penwatch.DAEMON_LOCK_REL).unlink()
+
+# El lock de un servicio de antes de reiniciar no frena al agente: su pid ya es
+# el de cualquier otro proceso.
+FIJO = 1_800_000_000.0
+real_arranque = store.arranque_del_sistema
+store.arranque_del_sistema = lambda: FIJO
+try:
+    for texto, extra, pid in (("de otro arranque no cuenta", {"arranque": FIJO - 10_000}, None),
+                              ("de este arranque sí", {"arranque": FIJO}, os.getppid()),
+                              ("sin arranque, de antes, va por el pid", {}, os.getppid())):
+        store.write_json(RS / penwatch.DAEMON_LOCK_REL,
+                         {"pid": os.getppid(), "host": penwatch.HOST, "started": "x", **extra})
+        c(f"un servicio vivo {texto}",
+          (ag._otro_servicio(ag.conexiones[S]) or {}).get("pid"), pid)
+finally:
+    store.arranque_del_sistema = real_arranque
 (RS / penwatch.DAEMON_LOCK_REL).unlink()
 
 # El agente solo relee el config de una raíz cuando cambia su mtime: uno editado

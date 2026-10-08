@@ -158,7 +158,6 @@ from common import (APP_NAME, avisos, avisos_carpeta, catalog, components,  # no
                     store, update, vestibulo)
 from common import huella as huellas  # noqa: E402  (`huella()` es la del código de una raíz)
 from common import planificador as pl  # noqa: E402
-from common.store import pid_alive  # noqa: E402
 from ui import bandeja, prefs, volumen  # noqa: E402
 
 try:
@@ -893,6 +892,44 @@ def presente(raiz: Path) -> bool:
         return (raiz / penwatch.CONTROL_FILE).is_file()
     except OSError:
         return False
+
+
+def _registro_vivo(raiz: Path, rel: Path) -> dict | None:
+    """Devuelve ese registro de la raíz si es de un proceso vivo de este equipo y arranque.
+
+    Es el `penwatch._vivo_aqui()` del agente, con el arranque del sistema
+    (`store.vivo_en_este_arranque()`). Penwatch se queda con el pid solo porque
+    únicamente decide si lanzar o no; el agente pausa una raíz por lo que
+    diga, y el registro de una ventana de antes de reiniciar, con su pid
+    reutilizado, la dejaría en pausa para siempre. Solo lee: no limpia lo
+    rancio ni escribe en el dispositivo, que bloquearía su extracción.
+
+    Args:
+        raiz: La raíz de la unidad.
+        rel: El registro, relativo a la raíz (`penwatch.UI_LOCK_REL`,
+            `penwatch.DAEMON_LOCK_REL`).
+
+    Returns:
+        El registro, o `None`.
+    """
+    info = store.read_json(raiz / rel)
+    return info if store.vivo_en_este_arranque(info, HOST) else None
+
+
+def _aplicacion_en_marcha(raiz: Path) -> str | None:
+    """Devuelve qué hay ya en marcha para esa raíz en este equipo, o `None`.
+
+    Es `penwatch.aplicacion_en_marcha()` con `_registro_vivo()`, y dice lo
+    mismo: la ventana de runsync o el servicio periódico (el de runsync o
+    el del propio agente). Solo mira.
+    """
+    ventana = _registro_vivo(raiz, penwatch.UI_LOCK_REL)
+    if ventana is not None:
+        return f"la ventana de runsync ya está abierta (pid {ventana.get('pid')})"
+    servicio = _registro_vivo(raiz, penwatch.DAEMON_LOCK_REL)
+    if servicio is not None:
+        return f"el servicio periódico ya está en marcha (pid {servicio.get('pid')})"
+    return None
 
 
 def punto_ocupado(unidad: equipo.Unidad) -> str | None:
@@ -1900,7 +1937,7 @@ class Agente:
         No la abre si ya hay una ventana o un servicio en marcha.
         """
         con.lanzada = True
-        ocupado = penwatch.aplicacion_en_marcha(con.raiz)
+        ocupado = _aplicacion_en_marcha(con.raiz)
         if ocupado:
             diario(f"{con.nombre}: no abro la ventana: {ocupado}")
             return
@@ -1918,7 +1955,7 @@ class Agente:
                    + (self._motivo_sin_servicio(con) if self._por_actualizar(con)
                       else SIN_RCLONE))
             return
-        ventana = penwatch._vivo_aqui(con.raiz, penwatch.UI_LOCK_REL)
+        ventana = _registro_vivo(con.raiz, penwatch.UI_LOCK_REL)
         if ventana is not None:
             diario(f"{con.nombre}: su ventana ya está abierta (pid {ventana.get('pid')})")
             return
@@ -2023,16 +2060,10 @@ class Agente:
     def _otro_servicio(self, con: Conexion) -> dict | None:
         """Devuelve el registro de otro servicio vivo de este equipo en esa raíz.
 
-        Es `None` si no hay otro.
+        Es `None` si no hay otro, o si el registro es de antes de reiniciar.
         """
         info = store.read_json(con.raiz / penwatch.DAEMON_LOCK_REL)
-        if info.get("host") != HOST:
-            return None
-        try:
-            pid = int(info.get("pid", -1))
-        except (TypeError, ValueError):
-            return None
-        if pid == os.getpid() or not pid_alive(pid):
+        if not store.vivo_en_este_arranque(info, HOST) or info.get("pid") == os.getpid():
             return None
         return info
 
@@ -2094,7 +2125,7 @@ class Agente:
             con.pausa = ahora
             diario(f"{con.nombre}: runsync ha pedido parar el servicio; en pausa")
             dlog(con.raiz, "servicio (agente del equipo) en pausa: lo ha pedido runsync")
-        ventana = penwatch._vivo_aqui(con.raiz, penwatch.UI_LOCK_REL) is not None
+        ventana = _registro_vivo(con.raiz, penwatch.UI_LOCK_REL) is not None
         if ventana:
             con.pausa = ahora
         if otro is not None and con.lock is not None:
@@ -2164,6 +2195,7 @@ class Agente:
         """
         unidad = self.ajustes.unidades[con.id]
         datos = {"pid": os.getpid(), "host": HOST, "started": store.stamp(),
+                 "arranque": store.arranque_del_sistema(),
                  "pairs": [p.nombre for p in con.servicio.parejas],
                  "interval_min": con.servicio.minutos, "agente": True,
                  "modo": unidad.modo}
@@ -2833,6 +2865,7 @@ class Agente:
                  }.get(como, f"ERROR rc={rc}")
         con.lock.setdefault("last_results", {})[pareja] = texto
         con.lock["last_cycle"] = store.stamp()
+        con.lock["arranque"] = store.arranque_del_sistema()     # cancela la deriva del reloj
         destino = en_la_raiz(con.raiz, con.raiz / penwatch.DAEMON_LOCK_REL)
         if destino is not None:
             store.write_json(destino, con.lock)
@@ -2977,7 +3010,7 @@ class Agente:
                     continue                # acaba la pareja en curso
                 if self._mirando(uid) and ahora - b.desde < ESPERA_VENTANA:
                     continue                # y la foto en curso: tiene la carpeta abierta
-                if con is not None and penwatch._vivo_aqui(
+                if con is not None and _registro_vivo(
                         con.raiz, penwatch.UI_LOCK_REL) is not None:
                     # Su ventana pide bloquear y se cierra; se le da un rato.
                     if ahora - b.desde >= ESPERA_VENTANA:
@@ -3163,7 +3196,7 @@ class Agente:
                 continue                    # acaba la pareja en curso
             if self._mirando(uid) and ahora - e.desde < ESPERA_VENTANA:
                 continue                    # y la foto en curso: tiene la carpeta abierta
-            if penwatch._vivo_aqui(con.raiz, penwatch.UI_LOCK_REL) is not None:
+            if _registro_vivo(con.raiz, penwatch.UI_LOCK_REL) is not None:
                 # Su ventana corre desde la propia unidad y la tiene ocupada.
                 if ahora - e.desde >= ESPERA_VENTANA:
                     del self.expulsiones[uid]
@@ -3323,7 +3356,7 @@ class Agente:
         La ventana ofrece su propia actualización, y no se le cambia el
         programa por debajo.
         """
-        if penwatch._vivo_aqui(con.raiz, penwatch.UI_LOCK_REL) is None:
+        if _registro_vivo(con.raiz, penwatch.UI_LOCK_REL) is None:
             return False
         avisar(f"{con.nombre}: tiene su ventana abierta",
                "No la actualizo por debajo de ella: actualízala desde la ventana, o "
@@ -4307,6 +4340,7 @@ def cmd_run(_args: argparse.Namespace) -> int:
     # Tomar el lock es mirar y escribir en un paso (`equipo.tomar_lock()`): dos
     # arranques a la vez no pueden ver los dos que no hay nadie.
     otro = equipo.tomar_lock({"pid": os.getpid(), "host": HOST, "started": store.stamp(),
+                              "arranque": store.arranque_del_sistema(),
                               "codigo": str(SCRIPT_DIR)})
     if otro is not None:
         print(f"Ya hay un agente en marcha (pid {otro.get('pid', '?')}).")
@@ -4560,7 +4594,7 @@ def cmd_abrir(args: argparse.Namespace) -> int:
             time.sleep(1.0)
     # El servicio no estorba (lo pausa la propia ventana al abrirse); otra
     # ventana sí, y runsync ya se negaría: se dice aquí, sin lanzar nada.
-    ventana = penwatch._vivo_aqui(raiz, penwatch.UI_LOCK_REL)
+    ventana = _registro_vivo(raiz, penwatch.UI_LOCK_REL)
     if ventana is not None:
         print(f"La ventana de {raiz} ya está abierta (pid {ventana.get('pid')}).")
         return 0

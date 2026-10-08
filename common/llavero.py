@@ -35,7 +35,6 @@ import os
 import re
 import secrets
 import shutil
-import signal
 import socket
 import subprocess
 import sys
@@ -441,13 +440,8 @@ def equipo() -> str:
 
 
 def vivo_aqui(info: dict | None) -> bool:
-    """Indica si un registro (`pid`, `host`) es de un proceso vivo de este equipo."""
-    if not isinstance(info, dict) or info.get("host") != equipo():
-        return False
-    try:
-        return store.pid_alive(int(info.get("pid", -1)))
-    except (TypeError, ValueError):
-        return False
+    """Indica si un registro (`pid`, `host`) es de un proceso vivo de este equipo y arranque."""
+    return store.vivo_en_este_arranque(info, equipo())
 
 
 def atiende_el_servicio() -> bool:
@@ -573,16 +567,10 @@ def matar_arbol(pid: int) -> None:
     """Termina un proceso y todos sus hijos; de módulo para que los tests no maten nada.
 
     Para una pasada que se pasa de su tope: matar solo `sync.py` dejaría su
-    rclone vivo, con ficheros del volumen abiertos.
+    rclone vivo, con ficheros del volumen abiertos. Corta con
+    `store.matar_arbol()`.
     """
-    if os.name == "nt":
-        subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True,
-                       creationflags=model.CREATE_NO_WINDOW)
-        return
-    try:
-        os.killpg(pid, signal.SIGKILL)
-    except OSError:
-        pass                                  # ya no estaba
+    store.matar_arbol(pid)
 
 
 def pasada(tope: float | None = None) -> tuple[int, str]:

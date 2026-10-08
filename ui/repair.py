@@ -56,7 +56,9 @@ def sincronizacion_en_curso() -> str | None:
     otra sobre los mismos ficheros. Ante la duda se dice que sí lo hay: un
     registro de OTRO equipo no se puede comprobar (`pid_alive` solo sabe de los
     procesos de esta máquina) y equivocarse hacia «no se puede borrar» no rompe
-    nada, mientras que equivocarse hacia el otro lado sí.
+    nada, mientras que equivocarse hacia el otro lado sí. Uno de este equipo
+    pero de antes de reiniciar sí se sabe que es un resto: su pid ya es de otro
+    proceso.
     """
     info = store.read_json(model.daemon_lock())
     if not info:
@@ -66,7 +68,7 @@ def sincronizacion_en_curso() -> str | None:
         pid = int(info.get("pid", -1))
     except (TypeError, ValueError):
         pid = -1
-    if host == prefs.HOST and not store.pid_alive(pid):
+    if host == prefs.HOST and not store.vivo_en_este_arranque(info, prefs.HOST):
         return None                     # rastro de un servicio que ya no está
     quien = "el servicio periódico" if host == prefs.HOST else f"el servicio de {host}"
     return f"{quien} (pid {pid})"

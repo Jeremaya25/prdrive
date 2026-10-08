@@ -55,12 +55,8 @@ def servicio_vivo() -> bool:
     actualizar pilla a otro proceso usando el código, así que se avisa. Se
     avisa y no se impide: es raro y quien decide es quien mira.
     """
-    info = store.read_json(model.STATE_DIR / "daemon.lock.json")
-    try:
-        return (info.get("host") == prefs.HOST
-                and store.pid_alive(int(info.get("pid", -1))))
-    except (TypeError, ValueError):
-        return False
+    return store.vivo_en_este_arranque(
+        store.read_json(model.STATE_DIR / "daemon.lock.json"), prefs.HOST)
 
 
 def open_dialog(parent, nueva) -> bool:
