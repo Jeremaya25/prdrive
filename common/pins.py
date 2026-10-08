@@ -57,10 +57,12 @@ un píxel de redondeo en Xvfb igual que con Tk 8.6; y la ventanita de fallo
 abortaba el proceso (`Tcl_Panic: epoll_ctl`) al abrir la segunda, porque Tk
 9.0.4 no admite crear un intérprete en un hilo nuevo después de que otro
 hilo hubiera creado el suyo y acabado: `ui.avisar_fallo()` usa ahora un único
-hilo que no acaba. **Windows con Tk 9 no está probado en una máquina de verdad**
-(entre otras cosas, la protección de capturas de #59, que dependía de cómo
-envuelve Tk 8.6.15 sus ventanas con `wm frame`): es lo primero que hay que
-mirar en Windows antes de publicar.
+hilo que no acaba. En Windows lo mide la fila F20 de `tests/maquina/` (una
+máquina de GitHub Actions con este runtime, bajado por el propio instalador):
+el 08/10/2026, ok 16/16, con la letra propia, la protección de capturas de #59
+(0x11 sobre el `wm frame` de Tk 9, y suelta a 0) y los tests de la interfaz,
+`test_tk_medidas` incluido. Es una máquina sin escritorio interactivo: el
+aspecto a ojo en un Windows de verdad sigue pendiente.
 """
 
 from __future__ import annotations

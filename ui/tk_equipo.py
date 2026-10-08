@@ -77,10 +77,13 @@ def al_cambiar(entrada, funcion) -> None:
     """
     def validar(nuevo: str) -> bool:
         """Llama a `funcion` con el texto nuevo y deja siempre que cambie."""
+        # Sin `return` en un `finally`, que Python 3.14 avisa como
+        # SyntaxWarning (PEP 765): el fallo se traga igual y se devuelve True.
         try:
             funcion(nuevo)
-        finally:
-            return True                                 # noqa: B012
+        except Exception:                               # noqa: BLE001
+            pass
+        return True
     entrada.configure(validate="key",
                       validatecommand=(entrada.register(validar), "%P"))
 
