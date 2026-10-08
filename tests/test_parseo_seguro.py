@@ -151,6 +151,27 @@ c.contains("  en forma de lista",
 c("  y los valores de siempre los deja",
   _texto(lambda: flags_editor.parse('bwlimit = "8M"\nmax-delete = -1')), "")
 
+# --- y el aviso de la ventana lleva el mismo título en las dos cajas ---------
+def _titulo(f) -> str:
+    """El título del aviso (`titulo_error`) del `ConfigError` que lanza `f()`."""
+    try:
+        f()
+    except ConfigError as e:
+        return flags_editor.titulo_error(e)
+    return ""
+
+
+c("un flag que lanza un programa, en el cuadro de flags: título de flag no admitido",
+  _titulo(lambda: flags_editor.parse('password-command = "x"')), flags_editor.TITULO_RESERVADO)
+c("  en el de argumentos extra, igual",
+  _titulo(lambda: flags_editor.parse_extra("--sftp-ssh\nx")), flags_editor.TITULO_RESERVADO)
+c("  y un reservado del programa en el de extra también",
+  _titulo(lambda: flags_editor.parse_extra("--config\n/tmp/x")), flags_editor.TITULO_RESERVADO)
+c("un valor con un flag dentro no es un flag reservado: título genérico",
+  _titulo(lambda: flags_editor.parse(f'checksum = "{CONTRABANDO}"')), flags_editor.TITULO_NO_VALE)
+c("  ni lo es un texto que no es TOML",
+  _titulo(lambda: flags_editor.parse("esto no es toml")), flags_editor.TITULO_NO_VALE)
+
 # --- cada rechazo dice qué quitar y no lo repite ------------------------------
 QUITALO = "Quítalo del config."
 for etiqueta, texto in (

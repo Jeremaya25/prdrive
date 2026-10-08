@@ -36,8 +36,15 @@ from typing import Any, Mapping, NamedTuple
 from common import config_file, model
 from common.model import ConfigError
 
+
 class FlagReservado(ConfigError):
-    """Un flag que no se pone a mano porque lo pone el programa (`RESERVED`)."""
+    """Un flag que no se admite aquí: lo pone el programa o lanza un programa.
+
+    Es lo que rechaza `model.problema_flag()`: los de `RESERVED` y los que hacen
+    que rclone ejecute una orden de este equipo. Lo es tanto el del cuadro de
+    flags como el del de argumentos extra, para que el aviso lleve el mismo
+    título (`titulo_error()`) escriba donde escriba la persona.
+    """
 
 
 TITULO_RESERVADO = "Este flag no se puede poner aquí"
@@ -154,13 +161,13 @@ def parse_extra(text: str) -> list[str]:
     diálogo lo diga al escribirlo y no más tarde, al guardar el plan.
 
     Raises:
-        ConfigError: Si algún argumento lanza un programa o es de los que pone
-            `sync.py`.
+        FlagReservado: Si algún argumento lanza un programa o es de los que pone
+            `sync.py` (es un `ConfigError`).
     """
     args = [l.strip() for l in text.splitlines() if l.strip()]
     motivo = model.problema_extra(args)
     if motivo:
-        raise ConfigError(motivo)
+        raise FlagReservado(motivo)
     return args
 
 
