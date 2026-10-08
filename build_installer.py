@@ -60,13 +60,13 @@ ENTRADA = RAIZ / "prdrive-install.py"
 NOMBRE = "prdrive-install"
 
 DATOS_FICHEROS = ("sync.py", "runsync.py", "penwatch.py", "VERSION",
-                  "device-readme.md", "agente.py")
+                  "device-readme.md", "agente.py", "pregunta.py")
 """Ficheros de la raíz que el instalador despliega.
 
 Tiene que coincidir con `install/deploy.py`: si aquí falta algo, el fallo
-aparece a mitad de una instalación de verdad y no al compilar. `agente.py` no
-va al dispositivo: lo copia `install/agente.py` al EQUIPO en la instalación «En
-este equipo».
+aparece a mitad de una instalación de verdad y no al compilar. `agente.py` y
+`pregunta.py` no van al dispositivo: los copia `install/agente.py` al EQUIPO en
+la instalación «En este equipo».
 """
 DATOS_ARBOLES = ("common", "ui")
 """Paquetes que se llevan enteros."""

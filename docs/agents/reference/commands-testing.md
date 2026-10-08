@@ -33,6 +33,8 @@ python agente.py ajuste pedir_al_iniciar sí|no      # or espera_unidad_nueva SE
 python agente.py actualizar                         # fetch the new release and put it in place
 python agente.py actualizar ID                      # put that root on the agent's version (the tray's «Actualizar a la vX»)
 python agente.py expulsar ID                         # release that removable drive (the tray's «Expulsar»)
+python pregunta.py --nombre N --segundos S [--cambiada]  # the «¿Atender esta unidad?» window, what the agent
+                                                    # launches (`agente.py pregunta` is the fallback if it is missing)
 
 python prdrive-install.py          # install wizard for a NEW device (Tk only)
 python prdrive-install.py --check  # rclone + connection + catalogue, then exit
@@ -80,10 +82,10 @@ Verification is `tests/run_all.py` (each script in its own process), `--doctor` 
 
 ## Indirection points
 
-Everything that touches the network, a real device or the desktop is a **module-level indirection point so every test can replace it**. Keep new ones in that shape. Registry:
+Everything that touches the network, a real device or the desktop is a **module-level indirection point so every test can replace it**. Keep new ones in that shape. A module imported inside a function (`ui/__init__.py`, `ui/tk.py`, `common/update.py`, `runsync.py`: `ui.md`) is patched on the module itself (`update.fetch = …`, `llavero.pasada = …`), never through the importer's namespace; the names tests do replace through another module's namespace (`runsync.ui`, `runsync.prioridad`, `runsync.model`, `ui.tk.pair_status_notes`, `ui.tk.abrir`, `uitk.mostrar`…) stay imported at module level. Registry:
 
 - **Network and downloads**: `catalog.run()` (`fleet` and `remote_picker` go through it), `update.fetch()`, `rclone_bin.fetch()`, `runtime_bin.fetch()` (also the Tk-with-Xft package; `runtime_bin.cache_dir()` too), `veracrypt_bin.fetch()`/`ensure_veracrypt()`, `keepassxc_bin.fetch()`, `descarga.esperar()`.
-- **Window and desktop actions**: `ui.abrir()`, `runsync.notificar_fallo()`, `tk.mostrar()`/`confirmar_plan()`, `tk.proteger_de_capturas()`/`tk._afinidad_de_pantalla()`, `tk._encubrir()`/`tk._atributo_dwm()` (`ensenar()`'s cloak and title bar; the second is the one dwmapi call), `segundo_plano.lanzar()` (tests set it to `en_el_acto()`), `tk_equipo.escritorio()`, `pairing.construir()`, `watch.resumen()`, `watch.pedir_al_agente()`/`pedir_a_la_raiz()`, `cifrado.lanzar_expulsion()`/`pedir_bloqueo()`, `_preguntar_borrado()`.
+- **Window and desktop actions**: `ui.abrir()`, `runsync.notificar_fallo()`, `tk.mostrar()`/`confirmar_plan()`, `tk.proteger_de_capturas()`/`tk._afinidad_de_pantalla()`, `tk.precargar()` (the background import of the screens; `tk_update` calls it right before applying an update), `tk._encubrir()`/`tk._atributo_dwm()` (`ensenar()`'s cloak and title bar; the second is the one dwmapi call), `segundo_plano.lanzar()` (tests set it to `en_el_acto()`), `tk_equipo.escritorio()`, `pairing.construir()`, `watch.resumen()`, `watch.pedir_al_agente()`/`pedir_a_la_raiz()`, `cifrado.lanzar_expulsion()`/`pedir_bloqueo()`, `_preguntar_borrado()`.
 - **Files and conflicts**: `conflicts.recorrer()`, `conflict_editor.mover()`/`borrar()`.
 - **Components and VeraCrypt**: `components.rclone_en_uso()`/`runtime_en_uso()`/`veracrypt_en_uso()`/`lanzar_suelto()`/`esperar_a()`/`procesos_desde()`, `common.components.raiz_fisica()`, `traveler.espacio_libre()`, `vestibulo.raiz_fisica()`/`retenido()`, `crypto.sistema_de_ficheros()`/`bytes_escritos()`/`_procesos()`, `penwatch.installed_veracrypt()`.
 - **Host OS**: `_win_volumes()`, `_leer_estado_bitlocker()`, `store.procesos()` (under `procesos_desde()`), `store.matar_arbol()` (kills a process and its whole tree: `taskkill /F /T` on Windows, `SIGKILL` to the process group on POSIX, never raises; the caller starts the child with `start_new_session=True`, or `CREATE_NEW_PROCESS_GROUP` on Windows; `ui/tk.output_window()` cuts its pass through it and `llavero.matar_arbol()` delegates to it), `registro.leer()`/`escribir()`/`borrar()`/`vacia()` (HKCU).

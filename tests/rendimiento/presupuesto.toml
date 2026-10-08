@@ -34,8 +34,8 @@
 "estilos.apartado" = 7
 
 [techo.linux]
-"modulos.main" = 254
-"modulos.agente" = 242
+"modulos.main" = 225
+"modulos.agente" = 161
 "modulos.wizard" = 237
 
 # [techo.windows]: pendiente de la primera ejecución en Windows (pegar lo que enseñe el resumen).

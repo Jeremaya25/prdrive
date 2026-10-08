@@ -40,7 +40,7 @@ Specs and real-hardware test plans/results: `docs/superpowers/{specs,pruebas}/` 
 
 ## Layout
 
-`sync.py`, `runsync.py` and `penwatch.py` are located by fixed path by the volume-root launchers and the watcher: do not move them. `agente.py` is copied to the HOST, never to a device.
+`sync.py`, `runsync.py` and `penwatch.py` are located by fixed path by the volume-root launchers and the watcher: do not move them. `agente.py` and `pregunta.py` are copied to the HOST, never to a device.
 
 ```
 prdrive/            the checkout; on a provisioned device it is `.prdrive/`
@@ -48,6 +48,7 @@ prdrive/            the checkout; on a provisioned device it is `.prdrive/`
 ├── runsync.py      window + periodic service; shells out to sync.py
 ├── penwatch.py     mount watcher (self-contained)
 ├── agente.py       resident agent: penwatch's successor on a host
+├── pregunta.py     the agent's «¿Atender esta unidad?» window as a tiny entry (agente.py is recompiled on every use)
 ├── prdrive-install.py  wizard launcher (what gets compiled) · build_installer.py (PyInstaller)
 ├── VERSION         the version, in ONE place; ships to the device
 ├── common/         config and rclone; no Tk
@@ -70,6 +71,7 @@ On a provisioned device the code lives in `.prdrive/` at the volume root (hidden
 
 ## Dependency rules: do not cross them
 
+- **Heavy `common` modules are imported inside the function that uses them** in `ui/__init__.py`, `ui/tk.py`, `common/update.py` and `runsync.py`, and a new lazy import in the main window goes in `ui.tk.PRECARGA` (`ui.md`, `tests/test_imports_perezosos.py`).
 - `tk_*` modules only draw. Every decision and disk touch lives in `pair_editor`/`catalog_editor`/`flags_editor`/`watch`/`install/`, which import no Tk and are tested headlessly.
 - **`import tkinter` goes inside functions, never at module top**: `ui/` is imported by headless paths (`--auto`, the service), and the failure must surface when a window opens so `ui.start()` can fall back to the console menu.
 - `theme.py`/`icons.py` own every colour, font and glyph (a `tk_*` module never writes a hex value); distances go through `theme.medida()`, never a bare integer.

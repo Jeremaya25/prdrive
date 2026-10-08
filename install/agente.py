@@ -56,10 +56,12 @@ from . import (InstallError, bundle_dir, pintar, platforms, rclone_bin, runtime_
 
 IS_WIN = os.name == "nt"
 
-CODIGO_FICHEROS = ("agente.py", "penwatch.py", "VERSION")
-"""Ficheros sueltos que se copian al equipo.
+CODIGO_FICHEROS = ("pregunta.py", "agente.py", "penwatch.py", "VERSION")
+"""Ficheros sueltos que se copian al equipo, en este orden.
 
-El agente, penwatch (del que importa la detección) y la versión.
+La entrada de la ventanita de la pregunta (`pregunta.py`), que va antes que el
+agente que la lanza; el agente, penwatch (del que importa la detección) y la
+versión.
 
 `install/` no se copia: el agente no instala nada.
 """

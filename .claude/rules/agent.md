@@ -1,6 +1,7 @@
 ---
 paths:
   - "agente.py"
+  - "pregunta.py"
   - "install/agente.py"
   - "common/equipo.py"
   - "common/expulsar.py"

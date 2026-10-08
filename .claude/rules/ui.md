@@ -14,6 +14,7 @@ paths:
   - "ui/tk_watch.py"
   - "tests/test_tk_*.py"
   - "tests/test_ui.py"
+  - "tests/test_imports_perezosos.py"
   - "tests/test_start.py"
   - "tests/test_iconos.py"
   - "tests/test_iconos_bytes.py"

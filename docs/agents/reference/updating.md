@@ -8,6 +8,7 @@ The main window shows an amber block when GitHub has a newer release. «Ajustes 
 - **The payload is the source zip of the tag (~270 KB), not the release `.exe`**: the CI exe is generic and would re-ask for the connection.
 - **`.prdrive/` is never renamed.** `deploy_code()` copies file by file because stage-and-swap breaks three ways: `rclone.exe` may be running from `.prdrive/bin/`; if `runsync.py` vanishes for an instant penwatch loses its `STRUCT_MARKER` and relaunches the UI; if `sync_config.toml` vanishes a running service shuts itself down.
 - It does not touch `bin/`, `runtime/` or the launchers: runtimes are a component, not app code.
+- **Before the applier runs, the window imports everything it may still need.** `deploy_code()` replaces files one by one under a live process, and a module imported for the first time mid-way would be read new next to the old ones already in memory. `tk_update.actualizar()` calls `tk.precargar(PRECARGA + PRECARGA_LLAVERO)` right before `output_window(update.apply_command(…))`; `PRECARGA` is the list of what `main_window()` imports late (`tests/test_imports_perezosos.py` fails if a new lazy import is not in it). The service does the same with `common.update` at start (`service.md`). The stdlib is not in the list: a code update does not replace it.
 
 ## VERSION
 

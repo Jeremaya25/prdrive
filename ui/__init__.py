@@ -25,10 +25,12 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Mapping, NamedTuple, Protocol
+from typing import TYPE_CHECKING, Callable, Mapping, NamedTuple, Protocol
 
-from common import bisync, results, revision, store
-from common.model import Config
+from common import store
+
+if TYPE_CHECKING:
+    from common.model import Config
 
 
 TK_CON_XFT = Path("lib") / "tk-xft" / "libtcl9tk9.0.so"
@@ -124,6 +126,8 @@ def pair_status_notes(config: Config) -> dict[str, str]:
 
     El llavero no sale: se resincroniza solo.
     """
+    from common import bisync
+
     notes = {}
     for pair in config.pairs:
         if pair.llavero:
@@ -143,6 +147,8 @@ def carpetas_del_programa(config: Config, nombres) -> dict[str, str]:
     salen las que subieron la carpeta del programa. Un listado ilegible no
     impide preguntar por el resync, igual que en `pair_status_notes()`.
     """
+    from common import revision
+
     carpetas = {}
     for pair in config.pairs:
         if pair.name not in nombres:
@@ -158,6 +164,8 @@ def carpetas_del_programa(config: Config, nombres) -> dict[str, str]:
 
 def avisos_de_resync(carpetas: Mapping[str, str]) -> list[str]:
     """Devuelve, por pareja, la frase que dice dónde borrar a mano la copia del programa."""
+    from common import revision
+
     return [f"{nombre}: {revision.aviso_carpeta_programa(carpeta)}"
             for nombre, carpeta in carpetas.items()]
 
@@ -331,6 +339,8 @@ def pair_times(config: Config) -> dict[str, float | None]:
     servicio periódico o el vigilante. La más reciente de las dos es la
     respuesta.
     """
+    from common import bisync, results
+
     try:
         apuntadas = results.ultimas_buenas(config.names)
     except Exception:

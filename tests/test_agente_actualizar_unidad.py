@@ -176,7 +176,7 @@ c("al acabar bien, apunta la huella nueva y lo dice",
   (True, [f"U actualizada a la {NUEVA}"], None))
 c("  y la vuelve a servir, sin preguntar nada",
   (F.lock(RU).get("pid") is not None,
-   [p for p in F.LANZADOS if "pregunta" in p.args and "U" in p.args]), (True, []))
+   [p for p in F.preguntas() if "U" in p.args]), (True, []))
 c("  ya no se ofrece", [e.texto for e in desplegable(ag, "U").hijos
                         if e.texto.startswith("Actualiz")], [])
 c("  y su desplegable dice la versión nueva",
@@ -205,7 +205,7 @@ ag.pedir({"pide": equipo.PIDE_ACTUALIZAR_UNIDAD, "id": "c" * 32})
 F.vueltas(ag, 1)
 instalar(RC)
 F.vueltas(ag, 2)
-preguntas = [p for p in F.LANZADOS if "pregunta" in p.args]
+preguntas = F.preguntas()
 c("si su código no era el aceptado al pedirlo, no se apunta: se vuelve a preguntar",
   (equipo.leer_ajustes().unidades["c" * 32].codigo == agente.huella(RC),
    ag.conexiones["c" * 32].cambiada, "--cambiada" in preguntas[-1].args, F.lock(RC)),

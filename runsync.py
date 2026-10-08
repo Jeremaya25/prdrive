@@ -87,7 +87,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 import ui  # noqa: E402
-from common import APP_NAME, keepassxc, llavero, model, prioridad, store, update  # noqa: E402
+from common import APP_NAME, model, prioridad, store  # noqa: E402
 from ui import prefs  # noqa: E402
 
 SELF = Path(__file__).resolve()
@@ -519,6 +519,8 @@ def daemon_cycle(pairs: list[str], lock_data: dict) -> None:
         pairs: Las parejas a sincronizar.
         lock_data: El registro propio, que se reescribe con el resultado.
     """
+    from common import update
+
     previos = lock_data.get("last_results") or {}
     results = {}
     for name in pairs:
@@ -588,6 +590,8 @@ def pasada_llavero(v: llavero.Vigilancia, pareja: model.Pair, por: str) -> int:
     Returns:
         El código de `sync.py`.
     """
+    from common import llavero
+
     v.empieza_pasada(time.monotonic())
     t0 = time.monotonic()
     rc, salida = run_pair_quiet(model.LLAVERO)
@@ -607,6 +611,8 @@ def atender_llavero(v: llavero.Vigilancia, pareja: model.Pair) -> None:
 
     Lo usan la espera del servicio entre ciclos y el vigilante del llavero.
     """
+    from common import llavero
+
     ahora = time.monotonic()
     if v.toca_mirar(ahora):
         primera = v.foto is None
@@ -635,6 +641,8 @@ def vigilar_llavero() -> int:
     la pasada que quede pendiente. Corre fuera del dispositivo (cwd en el
     temporal), así que no retiene el volumen.
     """
+    from common import keepassxc, llavero
+
     os.chdir(tempfile.gettempdir())
     pareja = pareja_llavero()
     if pareja is None:
@@ -716,6 +724,8 @@ def cerrar_llavero(preguntar=input) -> int:
         return 0                            # sin config no hay llavero que cerrar
     if config.pareja_llavero is None:
         return 0
+    from common import keepassxc
+
     programas, _ = keepassxc.procesos_de_la_unidad()
     if programas:
         try:
@@ -749,6 +759,8 @@ def combinar_llavero(rest: list[str]) -> int:
     pid al empezar y su código al acabar, para quien espera
     (`keepassxc.esperar_codigo()`).
     """
+    from common import keepassxc
+
     sin_contrasena = "--sin-contrasena" in rest
     rest = [a for a in rest if a != "--sin-contrasena"]
     opciones: dict[str, Path] = {}
@@ -777,6 +789,8 @@ def convertir_llavero(rest: list[str]) -> int:
     donde `keepassxc-cli db-edit` pide la contraseña actual de la base. Igual que
     `combinar_llavero()` con `--codigo`.
     """
+    from common import keepassxc
+
     opciones: dict[str, Path] = {}
     while len(rest) >= 4 and rest[-2] in ("--actual", "--codigo") and rest[-2] not in opciones:
         opciones[rest[-2]], rest = Path(rest[-1]), rest[:-2]
@@ -867,8 +881,15 @@ def daemon_main(pairs: list[str], interval_min: float) -> int:
         return 0
     # Nadie mira sus pasadas: cede el equipo, y sus sync.py y rclone lo heredan.
     prioridad.bajar()
+    # El servicio dura días: si el programa se actualiza debajo de él, un import
+    # tardío leería ficheros nuevos junto a módulos viejos. Éste es el único que
+    # usa siempre (`daemon_cycle()`); `llavero`, solo con `[keychain]`, abajo.
+    from common import update  # noqa: F401
     llave = pareja_llavero()
-    v = llavero.Vigilancia()
+    v = None
+    if llave is not None:
+        from common import llavero
+        v = llavero.Vigilancia()
     dlog(f"servicio iniciado: pid={os.getpid()} host={HOST} "
          f"parejas={','.join(pairs)} intervalo={interval_min:g}m"
          + (" y el llavero" if llave is not None else ""))

@@ -5,6 +5,10 @@ Formerly AGENTS.md «Daemon (`runsync.py`)».
 
 Coordination lives in `state/` so it travels with the device: `daemon.lock.json` (pid/host/boot/pairs/cycle), `daemon.stop` (presence = stop request), `daemon.log`, `ui.lock.json` (pid/host/boot of the open window), `ui_prefs.json`; plus `last_run.json`, `historial.jsonl`, `conflicts.json` (written by `sync.py`, not the daemon). The service stops when the device disappears (`SENTINEL`) or when runsync is launched again.
 
+## What `runsync.py` imports
+
+`keepassxc`, `llavero` and `update` are imported inside the functions that use them: the window path never needs them and the service loads `llavero` only with `[keychain]` (`import runsync` went from 114 to 45 ms). `ui`, `model`, `store` and `prioridad` stay bound at module level: tests replace `runsync.ui.start`, `runsync.model.load_config` and `runsync.prioridad.bajar`. `daemon_main()` imports `common.update` at start: the service lives for days, and a late import after a program update would read new files next to old modules (`updating.md`).
+
 ## One service, two ways to start it (#14)
 
 By hand («Iniciar servicio») or on plug-in (watcher → `runsync --auto`): the same service with the same config, pairs + interval in `ui_prefs.json` on the device. With the resident agent as the root's service the window offers «Pausar»/«Reanudar» instead (`agent-window.md`).

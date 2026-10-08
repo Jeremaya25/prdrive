@@ -27,8 +27,7 @@ import threading
 import time
 from typing import Mapping, NamedTuple
 
-from common import (APP_NAME, components, conflicts, model, progress, revision,
-                    store, update)
+from common import APP_NAME, model, progress, store
 from common.model import Config
 
 from . import (Choice, abrir, avisos_de_resync, cifrado, cuando, cuando_sello, icons,
@@ -1484,6 +1483,81 @@ class Indicador:
             self.marco.grid_remove()
 
 
+PRECARGA = ("ui.tk_pairs", "ui.tk_doctor", "ui.tk_watch", "ui.tk_repair", "ui.tk_update")
+"""Las pantallas que la principal importa al abrirlas, en orden de uso probable.
+
+Sale de los `import` de dentro de `main_window()`; con `[keychain]` se añade
+`PRECARGA_LLAVERO`. `tests/test_imports_perezosos.py` comprueba que no falta
+ninguna.
+"""
+PRECARGA_LLAVERO = ("common.cifrada", "common.keepassxc", "ui.llavero_editor", "ui.tk_llavero")
+"""Lo mismo, del llavero: en trozos de menos de 10 ms, porque `tk_llavero` arrastra a todos."""
+PAUSA_PRECARGA_MS = 1
+"""Milisegundos entre un import y el siguiente de `precargar_a_ratos()`."""
+
+
+def precarga_de(config: Config) -> tuple[str, ...]:
+    """Devuelve los módulos que la principal de ese dispositivo puede tener que importar después."""
+    return PRECARGA + (PRECARGA_LLAVERO if config.llavero is not None else ())
+
+
+def precargar(nombres: tuple[str, ...] = PRECARGA) -> None:
+    """Importa ahora esos módulos, los que falten.
+
+    Es lo que se hace antes de aplicar una actualización: `deploy_code()`
+    sustituye los ficheros de uno en uno, y un módulo importado a mitad se
+    leería ya nuevo junto a los viejos que están en memoria. Un fallo no se
+    cuenta: si importarlo falla, fallará igual al abrir la pantalla.
+    """
+    from importlib import import_module
+
+    for nombre in nombres:
+        try:
+            import_module(nombre)
+        except Exception:                                # noqa: BLE001
+            pass
+
+
+def precargar_a_ratos(root, nombres: tuple[str, ...]) -> None:
+    """Importa esos módulos de uno en uno, ya con la ventana enseñada.
+
+    Un import por turno del bucle de Tk (`after`, no `after_idle`: una cadena
+    de `after_idle` deja sin turno a los temporizadores mientras dura), así que
+    un clic espera como mucho a un import. El primer clic en «Parejas…» ya no
+    paga los 8–12 ms de los módulos de esa pantalla.
+
+    Args:
+        root: La ventana.
+        nombres: Qué importar, en orden.
+    """
+    pendientes = list(nombres)
+
+    def uno() -> None:
+        """Importa el siguiente y deja el turno al bucle."""
+        precargar((pendientes.pop(0),))
+        if pendientes:
+            try:
+                root.after(PAUSA_PRECARGA_MS, uno)
+            except Exception:                            # noqa: BLE001
+                pass                                     # la ventana ya se ha cerrado
+
+    if pendientes:
+        root.after(PAUSA_PRECARGA_MS, uno)
+
+
+def linea_llavero(config: Config):
+    """Devuelve la línea del llavero de la principal, o `None` si el dispositivo no lo lleva.
+
+    Solo importa `llavero_editor` (y con él KeePassXC y el llavero) cuando hay
+    `[keychain]` con su pareja: la misma condición con la que `linea()` ya
+    devolvía `None`.
+    """
+    if config.llavero is None or config.pareja_llavero is None:
+        return None
+    from . import llavero_editor
+    return llavero_editor.linea(config)
+
+
 def main_window(config: Config, startup_msg: str | None) -> Choice | None:
     """Abre la ventana principal: qué parejas y qué hacer con ellas.
 
@@ -1501,7 +1575,9 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
     import tkinter as tk
     from tkinter import messagebox, ttk
 
-    from . import llavero_editor, tk_doctor, tk_llavero, tk_pairs, tk_update, tk_watch, watch
+    from common import components, conflicts, revision, update
+
+    from . import watch
 
     theme.nitidez()
     root = tk.Tk()  # TclError aquí si no hay display -> fallback consola
@@ -1579,7 +1655,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         # Cómo está el llavero, si lo lleva: ficheros del dispositivo y una foto
         # de los procesos del equipo (si su KeePassXC está abierto), sin red.
         try:
-            vista["llavero"] = llavero_editor.linea(vista["config"])
+            vista["llavero"] = linea_llavero(vista["config"])
         except Exception:                            # noqa: BLE001
             vista["llavero"] = None
 
@@ -1643,6 +1719,8 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         programa y cierra esta ventana, porque este proceso tiene cargados en
         memoria los módulos que se acaban de sustituir.
         """
+        from . import tk_update
+
         if tk_update.open_dialog(root, vista["nueva"]):
             result["choice"] = None
             root.destroy()
@@ -1659,6 +1737,8 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         corre esta ventana: ése lo cambia el relevo cuando se cierra y la
         reabre él.
         """
+        from . import tk_update
+
         tocado = tk_update.open_components_dialog(root, vista["componentes"])
         if tocado == tk_update.CERRAR:
             result["choice"] = None
@@ -1749,6 +1829,13 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
 
         threading.Thread(target=trabajo, daemon=True).start()
 
+    def abrir_parejas() -> None:
+        """Abre «Parejas…» y, si se ha guardado algo, relee el config y repinta."""
+        from . import tk_pairs
+
+        if tk_pairs.open_dialog(root, vista["config"]):
+            recargar()
+
     def abrir_arranque() -> None:
         """Abre la pantalla del vigilante.
 
@@ -1757,6 +1844,8 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         «Qué hace el agente», que se lo pide por su buzón: la línea enseña lo
         pedido, que el agente aplica en unos segundos.
         """
+        from . import tk_watch
+
         actual = vista["vigilante"]
         if actual.es_agente:
             modo = tk_watch.open_agente(root, actual)
@@ -1791,6 +1880,8 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         Al volver relee el estado: puede haber hecho una pasada, y la línea del
         llavero dice si su KeePassXC está abierto.
         """
+        from . import tk_llavero
+
         tk_llavero.abrir(root, vista["config"])
         leer_estado()
         reajustar()
@@ -1805,6 +1896,8 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         remoto en la ventana de salida de siempre; y releer el estado o el
         vigilante si se han tocado.
         """
+        from . import tk_doctor, tk_update
+
         marcadas = [n for n in vista["config"].names
                     if n in vista.get("casillas", {}) and vista["casillas"][n].get()]
         hecho = tk_doctor.open_dialog(
@@ -1819,6 +1912,8 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
             return
         llavero = hecho.get("llavero")
         if llavero is not None:
+            from . import tk_llavero
+
             recargar()
             if llavero == tk_llavero.ACTIVADO:
                 lanzar("Llavero: la primera pasada", [model.LLAVERO])
@@ -1864,8 +1959,11 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
             return
         # El llavero antes que nada: KeePassXC y su proxy retienen la unidad,
         # y lo que quede sin subir se sube ahora (`keepassxc.cerrar_llavero()`).
-        if con_llavero and not tk_llavero.cerrar(root, vista["config"]):
-            return
+        if con_llavero:
+            from . import tk_llavero
+
+            if not tk_llavero.cerrar(root, vista["config"]):
+                return
         if script is None:
             messagebox.showinfo(TITLE, f"Ya puedes quitarla {QUITAR_UNIDAD}.", parent=root)
             result["choice"] = None
@@ -1899,8 +1997,11 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
                 "Si algún otro programa tiene abierto algo de dentro, VeraCrypt "
                 "te preguntará si forzar el cierre."), parent=root):
             return
-        if con_llavero and not tk_llavero.cerrar(root, vista["config"]):
-            return
+        if con_llavero:
+            from . import tk_llavero
+
+            if not tk_llavero.cerrar(root, vista["config"]):
+                return
         if not cifrado.pedir_bloqueo(uid):
             messagebox.showerror(TITLE, (
                 "El agente de este equipo no está en marcha, y es quien cierra el "
@@ -2177,6 +2278,8 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         # mientras sincroniza, como lo demás que toca `state/`.
         del_llavero = vista.get("llavero")
         if del_llavero is not None:
+            from . import llavero_editor
+
             llave = theme.linea_estado(
                 frame, "llave", del_llavero.texto, llavero_editor.ABRIR,
                 abrir_llavero, tono="Ambar." if del_llavero.aviso else "",
@@ -2193,8 +2296,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         # Mientras sincroniza se apaga lo que toca el mismo estado: la pantalla
         # de parejas puede apartar un baseline que rclone está usando.
         boton = ttk.Button(pantallas, text="Parejas…", style="Quiet.TButton",
-                           command=lambda: (tk_pairs.open_dialog(root, vista["config"])
-                                            and recargar()),
+                           command=abrir_parejas,
                            state=apagado)
         theme.boton_icono(boton, "parejas", theme.ACENTO, theme.PAPEL)
         boton.grid(row=0, column=0, sticky="w")
@@ -2333,6 +2435,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
     # de las carpetas no pueden retrasar la apertura ni un parpadeo.
     root.after(300, mirar_version)
     root.after(300, mirar_conflictos)
+    precargar_a_ratos(root, precarga_de(vista["config"]))
     root.mainloop()
     return result["choice"]
 
