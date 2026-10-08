@@ -143,6 +143,34 @@ with sandbox():
         c("un registro del padre que ya no vive es un resto: se toma sin esperar",
           (runsync.tomar_ui(), reloj.t), (None, 1000.0))
         runsync.soltar_ui()
+
+        # El padre muere mientras se le espera, sin soltar el registro: lo que
+        # deja es un resto y la espera no gasta el reintento que lo retira.
+        padre = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        try:
+            runsync.padre_pid = lambda: padre.pid
+            registro(runsync.UI_LOCK, padre.pid, runsync.HOST)
+
+            class Muere(Reloj):
+                """A los 0,2 s el padre muere con el registro puesto."""
+
+                def sleep(self, segundos):
+                    self.t += segundos
+                    if padre.poll() is None and self.t >= 1000.2:
+                        padre.kill()
+                        padre.wait()
+
+            reloj = runsync.time = Muere()
+            c("el padre muere sin soltarlo: la nueva retira el resto y lo toma",
+              runsync.tomar_ui(), None)
+            c("  y el registro pasa a ser el suyo",
+              store.read_json(runsync.UI_LOCK).get("pid"), os.getpid())
+            runsync.soltar_ui()
+            c("  que suelta al cerrarse", runsync.UI_LOCK.exists(), False)
+        finally:
+            if padre.poll() is None:
+                padre.kill()
+                padre.wait()
     finally:
         runsync.time, runsync.padre_pid = real_time, real_padre
         runsync.ESPERA_PADRE = 3.0

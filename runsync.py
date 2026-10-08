@@ -370,7 +370,8 @@ def tomar_ui() -> dict | None:
 
     Si el registro vivo es del proceso que lanzó este (`padre_pid()`: la ventana
     vieja que se cierra tras actualizar) se espera hasta `ESPERA_PADRE` a que lo
-    suelte, en vez de decir «Ya hay una ventana abierta».
+    suelte, en vez de decir «Ya hay una ventana abierta». Esa espera no gasta
+    el reintento de abajo: si el padre murió sin soltarlo, lo suyo es un resto.
 
     Si hay un resto (pid muerto, otro equipo, ilegible) se retira y se
     reintenta una sola vez: si otra ventana se ha adelantado, manda esa.
@@ -385,19 +386,22 @@ def tomar_ui() -> dict | None:
     datos = json.dumps({"pid": os.getpid(), "host": HOST, "started": store.stamp(),
                         "arranque": store.arranque_del_sistema()},
                        ensure_ascii=False, indent=1).encode("utf-8")
-    for intento in range(2):
+    intento, esperado = 0, False
+    while intento < 2:
         creado = _crear_exclusivo(UI_LOCK, datos)
         if creado is not False:
             return None                 # tomado, o no se puede escribir
         otra = _leer_ui()
-        if otra is None:
-            continue                    # se soltó entre medias: otra vez
-        if _viva_aqui(otra):
-            if not intento and otra.get("pid") == padre_pid() and _soltado_por_el_padre(otra):
-                continue                # lo soltó: otra vez a tomarlo
+        if otra is not None and _viva_aqui(otra):
+            if esperado or otra.get("pid") != padre_pid():
+                return otra
+            esperado = True
+            if _soltado_por_el_padre(otra):
+                continue                # lo soltó o murió: otra vez, sin gastar el reintento
             return otra
-        if not intento:
+        if otra is not None and not intento:
             _retirar_ui(otra)
+        intento += 1                    # `None`: se soltó entre medias, otra vez
     return None
 
 
@@ -409,7 +413,7 @@ def soltar_ui() -> None:
     """
     info = store.read_json(UI_LOCK)
     if info.get("pid") == os.getpid() and info.get("host") == HOST:
-        UI_LOCK.unlink(missing_ok=True)
+        _borrar(UI_LOCK)                # la ventana nueva lo lee cada `PASO_PADRE`
 
 
 def vigilante_instalado() -> bool:
@@ -473,7 +477,7 @@ def stop_previous_daemon() -> str | None:
     if not _viva_aqui(info):
         # Rastro de otro equipo (dispositivo extraído sin más), de antes de
         # reiniciar, de un proceso ya muerto o de un pid ilegible.
-        LOCK.unlink(missing_ok=True)
+        _borrar(LOCK)
         STOP.unlink(missing_ok=True)
         return (f"Había un registro de un servicio ya inexistente "
                 f"(pid {pid}, host {info.get('host')}); limpiado.")
@@ -496,7 +500,7 @@ def stop_previous_daemon() -> str | None:
     if info.get("agente"):
         return (f"El agente de este equipo está a mitad de una pareja; deja de "
                 f"sincronizar {que} en cuanto la acabe.")
-    LOCK.unlink(missing_ok=True)
+    _borrar(LOCK)
     return (f"El servicio (pid {pid}) está ocupado (¿sincronización en curso?); "
             f"parará al terminar la pareja actual.")
 
@@ -931,9 +935,11 @@ def daemon_main(pairs: list[str], interval_min: float) -> int:
     # Nadie mira sus pasadas: cede el equipo, y sus sync.py y rclone lo heredan.
     prioridad.bajar()
     # El servicio dura días: si el programa se actualiza debajo de él, un import
-    # tardío leería ficheros nuevos junto a módulos viejos. Éste es el único que
-    # usa siempre (`daemon_cycle()`); `llavero`, solo con `[keychain]`, abajo.
-    from common import update  # noqa: F401
+    # tardío leería ficheros nuevos junto a módulos viejos. Éstos son los que usa
+    # siempre: `update` en cada ciclo (`daemon_cycle()`) y `results` el aviso de
+    # fallo (`ui.avisar_fallo`, que lo importa fuera de su `try`); `llavero`,
+    # solo con `[keychain]`, abajo.
+    from common import results, update  # noqa: F401
     llave = pareja_llavero()
     v = None
     if llave is not None:
@@ -988,7 +994,7 @@ def daemon_main(pairs: list[str], interval_min: float) -> int:
         # nuevo, su registro no se toca.
         info = read_lock()
         if info and info.get("pid") == os.getpid() and info.get("host") == HOST:
-            LOCK.unlink(missing_ok=True)
+            _borrar(LOCK)               # la ventana lo lee cada `STOP_WAIT_STEP`
         STOP.unlink(missing_ok=True)
     return 0
 
