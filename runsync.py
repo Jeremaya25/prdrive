@@ -103,8 +103,13 @@ DLOG = model.STATE_DIR / "daemon.log"
 UI_LOCK = model.ui_lock()
 """Registro de la ventana abierta: quién la tiene."""
 
-POLL_SECONDS = 2.0
-"""Cada cuántos segundos mira el servicio si debe parar o si se fue el dispositivo."""
+POLL_SECONDS = 5.0
+"""Cada cuántos segundos mira el servicio si debe parar o si se fue el dispositivo.
+
+También marca el ritmo del vigilante del llavero. Dos sondeos deben caber en
+`STOP_WAIT_SECONDS`, el plazo de 15 s que `stop_previous_daemon()` espera a que
+pare el servicio anterior.
+"""
 STOP_WAIT_SECONDS = 15.0
 """Segundos que espera el lanzador a que pare el servicio anterior."""
 HOST = prefs.HOST
@@ -799,6 +804,12 @@ def convertir_llavero(rest: list[str]) -> int:
 
 ESPERA_AGENTE = 30 * 60
 """Segundos que el servicio espera a que el agente suelte la unidad."""
+ESPERA_LOCK = 2.0
+"""Cada cuántos segundos `tomar_lock()` vuelve a mirar el registro mientras espera.
+
+La espera total está acotada por `ESPERA_AGENTE` (30 min); a 2 s son unas 900
+miradas en ese tiempo.
+"""
 
 
 def tomar_lock(lock_data: dict) -> dict | None:
@@ -832,7 +843,7 @@ def tomar_lock(lock_data: dict) -> dict | None:
                 pedido = True
             except OSError:
                 return otro
-        time.sleep(0.3)
+        time.sleep(ESPERA_LOCK)
 
 
 def daemon_main(pairs: list[str], interval_min: float) -> int:
