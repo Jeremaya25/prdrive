@@ -166,6 +166,10 @@ de 216.
   - piezas por superficie;
   - en tema oscuro, 2–3 píxeles de esquina fuera de tono sobre avisos de color.
 - **Por eso** se empieza con SVG suavizado (el aspecto exacto de la 0.7.1), y en la etapa 1b se mide en Windows SVG suavizado contra alfa binario en la misma pantalla. Solo se adopta si gana más de 20 ms en «Parejas» o en la principal.
+- **Medido el 08/10/2026** ([run 37848307713](https://github.com/Jeremaya25/prdrive/actions/runs/37848307713), Windows x64, 9 vueltas, el mismo commit con las piezas de `caja()` suavizadas y con su alfa cortado a 0 o 1): pintar sale más barato donde se pinta mucho de golpe, y casi igual en lo demás.
+  - Abrir «Parejas»: −48 ms con 5 parejas, −128 con 50; llega el catálogo: −57 y −172.
+  - La principal, sin lo que cuesta hacer las piezas: unos −17 ms; abrir «Ajustes» −6; un apartado −5 a −10.
+  - **Pendiente, no adoptado [decidido sin el dueño]:** lo que gana está casi todo en los repintados enteros que la etapa 2 quita (R1), y lo que cuesta no se ha medido: piezas por superficie, unas seis veces las de ahora en `theme.apply()`. Se vuelve a medir tras la etapa 2, ya con ese coste.
 
 **1d. La letra.**
 - **Una tabla de métricas por intérprete:** `(tk scaling, fuente)` → `(linespace, ascent, tamaño)`. La usan `relleno_control()`, `icono_linea()`, `aviso()` y `chip()`, que hoy crean un `tkfont.Font` por llamada: 51 → 13 ms en la principal.
@@ -451,7 +455,7 @@ escribe cuando la anterior está medida.
 Tomadas sin el dueño el 08/10/2026:
 
 1. **La superficie por bits de estado** en vez de las 552 variantes (§1b). Mismo aspecto.
-2. **Piezas con alfa binario solo si en Windows ganan más de 20 ms** (§1c). Si se adoptan, en tema oscuro hay unos píxeles de esquina fuera de tono sobre avisos de color.
+2. **Piezas con alfa binario solo si en Windows ganan más de 20 ms** (§1c). Si se adoptan, en tema oscuro hay unos píxeles de esquina fuera de tono sobre avisos de color. Medido: −48 ms al abrir «Parejas», casi nada en lo demás; aplazado hasta después de la etapa 2, que quita los repintados donde gana, y hasta medir lo que cuestan las piezas por superficie.
 3. **Una tabla sobre Canvas** para «Dispositivos», el editor de flags y la lista de «Parejas», si en Windows gana a filas ttk ligeras (§2 R3). El dueño descartó la interfaz entera sobre un Canvas; esto es un componente que se adopta por medida.
 4. **Ventanas que se esconden en vez de destruirse** (§2 R7), si en Windows gana.
 5. **`.pyc` precompilados en la unidad** al instalar y actualizar, en modo `checked-hash` (§3): unos MB más en la unidad.
