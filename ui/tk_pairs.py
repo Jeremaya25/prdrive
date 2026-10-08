@@ -431,9 +431,7 @@ class EditorPareja:
             self.pistas[clave].configure(text=self._pista(clave, ayuda[clave]))
             self.entradas[clave].configure(state="normal" if editable else "readonly")
         self.examinar["local"].configure(state="normal" if editable else "disabled")
-        # El remoto solo se recorre con conexión; el disco de aquí, siempre.
-        self.examinar["remote_path"].configure(
-            state="normal" if editable and explorable else "disabled")
+        self.poner_explorable(explorable)
         self.modo.set(actual.get("mode", model.DEFAULT_MODE))
         for boton in self.grupo_modo.botones:
             boton.configure(state="normal" if editable else "disabled")
@@ -450,6 +448,17 @@ class EditorPareja:
         self.boton_flags.configure(state="normal" if editable else "disabled")
         self._resumir()
         self.modo_cambiado()
+
+    def poner_explorable(self, explorable: bool) -> None:
+        """Enciende o apaga «Examinar…» del remoto sin tocar lo escrito.
+
+        El remoto solo se recorre con conexión; el disco de aquí, siempre. Es lo
+        que cambia cuando llega el catálogo y el editor tiene cambios sin
+        guardar, que no se recarga.
+        """
+        self.explorable = explorable
+        self.examinar["remote_path"].configure(
+            state="normal" if self.editable and explorable else "disabled")
 
     def _pista(self, clave: str, ayuda: str) -> str:
         """Lo que va debajo de un campo: para qué es y lo que dice el catálogo."""
@@ -742,6 +751,15 @@ def open_dialog(parent, config) -> bool:
                       editable=editable, explorable=lect.editable,
                       ayuda_modo=ayuda_modo, ayudas=ayudas)
         estado["cargado"] = editor.datos()
+        pintar_eleccion()
+
+    def pintar_eleccion() -> None:
+        """Pone el rótulo y el chip de la pareja elegida y enciende lo que vale para ella.
+
+        Es lo de `cargar_editor()` que no son los campos: se repinta también
+        cuando el editor conserva lo que se ha escrito en él.
+        """
+        fila = lista.fila()
         rotulo_eleg.configure(text=theme.rotulo(
             f"Pareja elegida · {fila.name}" if fila else "Ninguna pareja elegida"))
         if chip_eleg["widget"] is not None:
@@ -796,6 +814,7 @@ def open_dialog(parent, config) -> bool:
         if not seguir_sin_guardar():
             vista.set("catalogo" if vista.get() == "dispositivo" else "dispositivo")
             return
+        estado["cargado"] = None              # lo escrito se ha descartado
         pie_nota.configure(text=nota_inicial())
         refrescar()
 
@@ -849,10 +868,17 @@ def open_dialog(parent, config) -> bool:
         # Lo elegido sobrevive al repintado: el catálogo del remoto puede llegar
         # con una fila ya elegida, y perderla sería editar luego otra.
         elegida = lista.elegida
+        escrito = hay_cambios() and editor.original == elegida
         lista.poner(filas(), del_catalogo=catalogo)
         lista.elegir(elegida if elegida in lista.filas else
                      (lista.orden[0] if lista.orden else None), avisar=False)
-        cargar_editor()
+        # Y lo escrito en el editor, también: el catálogo llega mientras se
+        # teclea, y recargar el editor lo borraba y daba lo borrado por guardado.
+        if escrito and lista.elegida == elegida:
+            editor.poner_explorable(lect.editable)
+            pintar_eleccion()
+        else:
+            cargar_editor()
         if nota is not None:
             pie_nota.configure(text=nota)
         # Lo que llega del remoto puede traer una explicación más larga que la

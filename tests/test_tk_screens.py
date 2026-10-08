@@ -272,6 +272,32 @@ with sandbox():
       tk_pairs.open_dialog(raiz, cfg) or visto["no"], (False, "notas", "/R/a-medias"))
     c("y «sí» pasa a la otra, con lo suyo", visto["si"], (True, "subida", "/R/subida"))
 
+# El catálogo que llega (aquí, el de «Releer», que contesta en el acto) no borra lo
+# escrito en el editor: se queda con ello y con su marca de «sin guardar»
+with sandbox():
+    cfg = preparar()
+    visto = {}
+
+    def escribir_y_releer(self, *_a, **_k):
+        """Escribe en el editor, pide el catálogo otra vez y mira lo que queda."""
+        self.lista.elegir("notas")
+        self.editor.campos["remote_path"].set("/R/a-medias")
+        next(b for b in botones_de_todos(self) if b.cget("text") == "Releer").invoke()
+        visto["campo"] = self.editor.campos["remote_path"].get()
+        messagebox.askokcancel = lambda *a, **k: False
+        visto["sigue_sucio"] = (self.lista.elegir("subida"), self.lista.elegida)
+        messagebox.askokcancel = lambda *a, **k: True
+        next(b for b in botones_de_todos(self) if b.cget("text") == "Descartar").invoke()
+        visto["descartado"] = self.editor.campos["remote_path"].get()
+
+    tk.Toplevel.wait_window = escribir_y_releer
+    tk_pairs.open_dialog(raiz, cfg)
+    c("al llegar el catálogo, lo escrito en el editor sigue ahí",
+      visto["campo"], "/R/a-medias")
+    c("y sigue contando como sin guardar: cambiar de pareja pregunta",
+      visto["sigue_sucio"], (False, "notas"))
+    c("«Descartar» lo devuelve a lo guardado", visto["descartado"], "/R/notas")
+
 # 'Volver al catálogo' deshace la modificación local
 with sandbox():
     cfg = preparar()
