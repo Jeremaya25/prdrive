@@ -10,9 +10,15 @@ Léelo entero antes de usar esto con datos que te importen.
   Quien lo encuentre entra en tus datos hasta que revoques esa clave. **Cífralo**
   (el asistente ayuda con VeraCrypt y BitLocker) y usa en el servidor un usuario
   dedicado y limitado, no el administrador.
-- **La clave nunca sube al remoto.** Ninguna pareja sincroniza `.prdrive/`. Las
-  rutas del `rclone.conf` del dispositivo son relativas (`key_file = keys/…`), que
-  es además lo que lo hace funcionar con cualquier letra de unidad.
+- **La clave nunca sube al remoto.** Ninguna pareja sincroniza `.prdrive/`: las
+  que sincronizan la raíz entera (`local = "."`) llevan una regla del programa que
+  la deja fuera, y el config no puede quitarla. Las rutas del `rclone.conf` del
+  dispositivo son relativas (`key_file = keys/…`), que es además lo que lo hace
+  funcionar con cualquier letra de unidad.
+- **Si una versión anterior ya subió `.prdrive/`, bórrala del remoto.** El programa
+  no borra nada por su cuenta: una pareja `bisync` de la raíz entera pide un
+  `--resync` tras actualizar, y la confirmación te dice dónde está esa copia. Como
+  lleva tu clave, conviene además cambiarla por otra.
 - **Los modos `*-mirror` borran.** `--max-delete` es el único freno automático.
   Prueba siempre con `--dry-run` primero.
 - **Escribir el catálogo es lo más arriesgado del programa**, porque gobierna

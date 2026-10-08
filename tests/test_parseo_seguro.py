@@ -7,14 +7,20 @@ rclone. Aquí se sujeta que no entre un flag que lance un programa en este
 equipo, ni un `resync = true` que fuerce `--resync` en cada pasada, ni un
 `extra_flags` que pise `--config`, ni un nombre de remote que sea una cadena de
 conexión de rclone (`nas,ssh='sh -c id'`), ni un `local` que salga del
-dispositivo o sea la carpeta del programa o la del llavero.
+dispositivo o sea la carpeta del programa o la del llavero. Y que una pareja de
+la raíz entera deje fuera la carpeta del programa (`REGLA_SIN_PROGRAMA`), con su
+clave, y avise si alguna vez la subió.
 """
 
+import hashlib
 import sys
+from dataclasses import replace
+from pathlib import Path
 
-from _harness import Checks
+from _harness import Checks, sandbox
 
-from common import model
+import sync
+from common import bisync, model
 from common.model import ConfigError
 from ui import flags_editor
 
@@ -240,5 +246,49 @@ c("un local que no es un texto no es asunto suyo",
   ("", "", ""))
 sin_local = {"defaults": {"remote": "nas"}, "pair": [{"name": "p", "remote_path": "R/p"}]}
 c.contains("sin local, lo dice _build_pair como siempre", rechaza(sin_local), "falta 'local'")
+
+# --- la raíz entera no lleva la carpeta del programa -------------------------
+# Sin esta regla una pareja con `local = "."` subiría `.prdrive/` (su clave y
+# su rclone.conf) al remoto, y un `down-mirror` de la raíz la borraría.
+raiz = model.parse_config(una(local=".", mode="bisync")).pairs[0]
+c("la raíz deja fuera el programa", raiz.reglas, (model.REGLA_SIN_PROGRAMA,))
+c("  y es la carpeta de este programa", model.REGLA_SIN_PROGRAMA, f"- /{model.APP_DIR.name}/**")
+c("  primera regla del fichero de filtros",
+  bisync.filters_content(raiz).splitlines()[2], model.REGLA_SIN_PROGRAMA)
+c("  y con versiones, detrás de .prversions",
+  bisync.filters_content(replace(raiz, versions=True)).splitlines()[2:4],
+  [f"- {model.VERSIONS_DIR}/**", model.REGLA_SIN_PROGRAMA])
+espejo = model.parse_config(una(local=".", mode="up-mirror")).pairs[0]
+c("fuera de bisync va como --exclude", sync.filter_args(espejo, None)[:2],
+  ["--exclude", f"/{model.APP_DIR.name}/**"])
+c("una pareja de carpeta no lleva reglas", model.parse_config(una()).pairs[0].reglas, ())
+con_llavero = model.parse_config(
+    {**una(local="."), "keychain": {"base": "personal.kdbx"}}).pairs
+c("con [keychain], el programa va antes que el llavero",
+  con_llavero[0].reglas, (model.REGLA_SIN_PROGRAMA, model.REGLA_SIN_LLAVERO))
+c("  y la pareja del llavero no recibe la del programa",
+  con_llavero[1].reglas, model.LLAVERO_REGLAS)
+c("la regla de la raíz no la toca el TOML: un include no la adelanta",
+  bisync.filters_content(model.parse_config(
+      una(local=".", mode="bisync", include=["**/*.md"])).pairs[0]).splitlines()[2:4],
+  [model.REGLA_SIN_PROGRAMA, "+ **/*.md"])
+with sandbox():          # el fichero de filtros de antes, con su md5 de antes
+    viejo = model.FILTERS_DIR / "p.txt"
+    viejo.write_text(bisync.FILTERS_HEADER + "\n")
+    Path(str(viejo) + ".md5").write_text(hashlib.md5(viejo.read_bytes()).hexdigest())
+    c("una pareja raíz de antes pide un --resync",
+      bisync.filters_state(bisync.filters_file_for(raiz)).status, "changed")
+    c("sin listado, no se sabe que subiera el programa", bisync.programa_en_listado(raiz), False)
+    # un listado path2 con la carpeta del programa dentro
+    lst = raiz.workdir / (bisync.expected_prefix(raiz) + bisync.PATH2_SUFFIX)
+    lst.parent.mkdir(parents=True)
+    lst.write_text(f'- 10 - - 2026-01-01T00:00:00.000000000+0000 "{model.APP_DIR.name}/rclone.conf"\n')
+    c("se ve que subió el programa", bisync.programa_en_listado(raiz), True)
+    lst.write_text('- 10 - - 2026-01-01T00:00:00.000000000+0000 "notas/uno.md"\n'
+                   f'- 10 - - 2026-01-01T00:00:00.000000000+0000 "x{model.APP_DIR.name}/a"\n')
+    c("  y que no, si solo hay otras carpetas (ni una que acabe igual)",
+      bisync.programa_en_listado(raiz), False)
+    lst.write_bytes(b"\xff\xfe\x00 no es un listado")
+    c("  un listado ilegible no rompe nada", bisync.programa_en_listado(raiz), False)
 
 sys.exit(c.report())

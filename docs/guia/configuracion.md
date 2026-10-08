@@ -144,3 +144,13 @@ detección de cambios. rclone guarda el md5 de ese fichero junto a la referencia
 solo lo reescribe al hacer `--resync`, así que **cambiar los patrones de una
 pareja bisync exige un `--resync`**. El programa compara el hash él mismo y lo
 dice, en vez de dejar que rclone aborte con un mensaje suyo.
+
+Una pareja que sincroniza la **raíz entera** de la unidad (`local = "."`) lleva
+además, delante de las tuyas, una regla que deja fuera la carpeta del programa
+(`.prdrive/`, con tu clave y el `rclone.conf`). Está en el programa y no se puede
+quitar desde el config. Al actualizar, una pareja `bisync` de la raíz que ya
+existía pide **un `--resync`** desde la ventana (su fichero de filtros ha
+cambiado), y hasta entonces el servicio y el agente la saltan; las parejas de la
+raíz que no son `bisync` no necesitan nada. Si esa pareja llegó a subir
+`.prdrive/` al remoto, el programa **no la borra**: al pedir el resync te avisa de
+dónde está, y la borras tú.

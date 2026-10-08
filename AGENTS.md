@@ -104,7 +104,7 @@ The full list (`penwatch.py`, `agente.py`, `prdrive-install.py`, `build_installe
 - **Parse once, at the boundary**: `model.parse_config()` → frozen `Mode`/`Pair`/`Config`; nothing downstream re-reads TOML keys. Validation raises `model.ConfigError`, never `sys.exit` (the UI shares the model); `install.InstallError` likewise.
 - **A new rclone flag = edit the TOML, never code.** Flags merge `BASE_FLAGS` < `Mode.flags` < `[defaults.flags]` < `[pair.flags]`; the script owns `--config`, `--log-file`, `--dry-run`, `--workdir`, `--resync`.
 - rclone always runs with `cwd = model.APP_DIR`: `rclone.conf` uses paths relative to it (`key_file`, `known_hosts_file`).
-- `sync_config.toml` is per-device: generated from the catalogue at provisioning, then maintained by the pairs screen; still hand-editable (a pair that differs from the catalogue is *reported* «modificada aquí», not corrected). Nothing on the device travels to the remote: no pair mirrors `.prdrive/`.
+- `sync_config.toml` is per-device: generated from the catalogue at provisioning, then maintained by the pairs screen; still hand-editable (a pair that differs from the catalogue is *reported* «modificada aquí», not corrected). Nothing on the device travels to the remote: no pair mirrors `.prdrive/` (enforced: `REGLA_SIN_PROGRAMA`).
 
 ## Safety invariants: do not weaken
 

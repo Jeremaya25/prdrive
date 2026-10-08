@@ -193,6 +193,14 @@ REGLA_SIN_LLAVERO = f"- /{LLAVERO_LOCAL}/**"
 Sin ella, una pareja con `local = "."` llevaría la base por otro camino, con
 otras reglas, y sin la comprobación previa del llavero.
 """
+REGLA_SIN_PROGRAMA = f"- /{APP_DIR.name}/**"
+"""La regla que reciben las parejas del usuario que sincronizan la raíz entera.
+
+Deja fuera la carpeta del programa (`.prdrive/` en un dispositivo): lleva su
+clave privada (`keys/`) y su `rclone.conf`, y no hay pareja que deba subirla al
+remoto ni, en un espejo hacia abajo, borrarla. Va antes que `REGLA_SIN_LLAVERO`
+y que cualquier `+` de la pareja, y no la quita ningún TOML.
+"""
 
 VERSIONS_DIR = ".prversions"
 """Carpeta de versiones de una pareja, dentro de su propia raíz (`Pair.versions_path1`).
@@ -834,7 +842,8 @@ class Pair:
             donde el local es origen).
         reglas: Reglas de filtrado (`+ patrón` o `- patrón`) que van antes que
             `includes` y `excludes`, en su orden. Las pone el código, no el
-            TOML: las del llavero y `REGLA_SIN_LLAVERO`.
+            TOML: las del llavero, y en una pareja de la raíz entera
+            `REGLA_SIN_PROGRAMA` y, con `[keychain]`, `REGLA_SIN_LLAVERO`.
         llavero: Si es la pareja del llavero, la que construye el código.
         llave_interna: Si el llavero va sin contraseña, solo con su fichero llave
             (`[keychain] llave_interna`): solo se sincroniza en un dispositivo
@@ -1407,9 +1416,10 @@ def parse_config(data: Mapping[str, Any], equipo: bool = False) -> Config:
             porque el catálogo pasa por esta misma función y en él una pareja
             de la raíz entera es legítima para las unidades.
 
-    Con `[keychain]`, la pareja del llavero va la última (`_build_llavero()`),
-    su nombre queda reservado y cada pareja que sincroniza la raíz entera
-    recibe `REGLA_SIN_LLAVERO` delante de sus filtros.
+    Cada pareja que sincroniza la raíz entera recibe `REGLA_SIN_PROGRAMA`
+    delante de sus filtros. Con `[keychain]`, la pareja del llavero va la última
+    (`_build_llavero()`), su nombre queda reservado y esas parejas reciben
+    además `REGLA_SIN_LLAVERO`, detrás de la del programa.
 
     Raises:
         ConfigError: Si el config trae algo que no puede llegar a rclone
@@ -1431,13 +1441,14 @@ def parse_config(data: Mapping[str, Any], equipo: bool = False) -> Config:
             "pareja a pareja, con 'watch = true' en cada [[pair]] que lo quiera.")
     pairs = tuple(_build_pair(p, defaults) for p in raw_pairs)
     tabla = data.get("keychain")
+    if tabla is not None and any(p.name == LLAVERO for p in pairs):
+        raise ConfigError(
+            f"Hay una pareja que se llama '{LLAVERO}', que es el nombre de la "
+            f"del llavero. Renómbrala o quita [keychain].")
+    reglas_raiz = (REGLA_SIN_PROGRAMA,) + ((REGLA_SIN_LLAVERO,) if tabla is not None else ())
+    pairs = tuple(replace(p, reglas=reglas_raiz + p.reglas) if p.es_raiz else p
+                  for p in pairs)
     if tabla is not None:
-        if any(p.name == LLAVERO for p in pairs):
-            raise ConfigError(
-                f"Hay una pareja que se llama '{LLAVERO}', que es el nombre de la "
-                f"del llavero. Renómbrala o quita [keychain].")
-        pairs = tuple(replace(p, reglas=(REGLA_SIN_LLAVERO,) + p.reglas) if p.es_raiz
-                      else p for p in pairs)
         pairs += (_build_llavero(tabla, defaults),)
     return Config(
         pairs=pairs,

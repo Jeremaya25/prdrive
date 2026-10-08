@@ -277,4 +277,32 @@ with sandbox():
     c("  y se va cuando ya no los hay",
       [h for h in revision.revisar(cfg) if h.clave == "catalogo"], [])
 
+with sandbox():
+    # Una pareja de la raíz entera de antes de `REGLA_SIN_PROGRAMA`: su fichero
+    # de filtros ha cambiado y pide un --resync. Si el remoto trae la carpeta
+    # del programa, el hallazgo dice dónde está, para borrarla a mano.
+    cfg = mkcfg([], pairs=[{"name": "todo", "local": ".", "remote_path": "R/todo"},
+                           {"name": "notas", "local": "sync-data/notas", "remote_path": "R/notas"}])
+    todo, notas = cfg.pairs
+    programa = f'- 10 - - 2026-01-01T00:00:00.000000000+0000 "{model.APP_DIR.name}/rclone.conf"\n'
+    for pareja in cfg.pairs:
+        pareja.local_abs.mkdir(parents=True, exist_ok=True)
+        listados(pareja)
+        viejo = model.FILTERS_DIR / f"{pareja.name}.txt"
+        # la de una carpeta no ha cambiado de contenido: la fuerza un md5 de otro
+        viejo.write_text(bisync.FILTERS_HEADER + "\n" + ("" if pareja.es_raiz else "- x\n"))
+        Path(str(viejo) + ".md5").write_text(hashlib.md5(viejo.read_bytes()).hexdigest())
+    resync = {h.pareja: h for h in revision.revisar(cfg) if h.clave == "resync"}
+    c("las dos piden su resync", sorted(resync), ["notas", "todo"])
+    c("  sin la carpeta del programa en el remoto, no lleva dato", resync["todo"].dato, ())
+    c("  ni lo dice en el detalle", "carpeta del programa" in resync["todo"].detalle, False)
+    for pareja in (todo, notas):
+        (pareja.workdir / (bisync.expected_prefix(pareja) + bisync.PATH2_SUFFIX)
+         ).write_text(programa, encoding="utf-8")
+    resync = {h.pareja: h for h in revision.revisar(cfg) if h.clave == "resync"}
+    c("  con ella, el dato es dónde borrarla",
+      resync["todo"].dato, (f"nas:R/todo/{model.APP_DIR.name}/",))
+    c.contains("  y el detalle dice que la subía", resync["todo"].detalle, "subía la carpeta del programa")
+    c("una pareja de una carpeta no la mira (sería del usuario)", resync["notas"].dato, ())
+
 sys.exit(c.report())

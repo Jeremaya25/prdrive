@@ -109,17 +109,28 @@ def _resync(pair: Pair, estado: bisync.PairState) -> Hallazgo | None:
 
     La del llavero no la tiene: se resincroniza sola en su próxima pasada
     (`sync._bisync_preflight()`).
+
+    Si es una pareja de la raíz entera que subió la carpeta del programa, el
+    `dato` es dónde está esa copia en el remoto, para que la confirmación del
+    resync (`ui/repair.aviso_resync()`) lo diga; si no, va vacío.
     """
     if pair.llavero:
         return None
     razones = bisync.resync_reasons(pair, estado)
     if not razones:
         return None
+    detalle = ("; ".join(razones) + ". Hasta que se haga, esta pareja se salta en "
+               "cada pasada: el servicio no resincroniza solo, nunca.")
+    dato: tuple = ()
+    if pair.es_raiz and bisync.programa_en_listado(pair):
+        # El resync deja de subirla pero no la borra del remoto, y después el
+        # listado nuevo ya no la enseña: este es el momento de decirlo.
+        detalle += (" Hasta ahora subía la carpeta del programa (con su clave y "
+                    "rclone.conf) al remoto.")
+        dato = (f"{pair.remote_endpoint.rstrip('/')}/{model.APP_DIR.name}/",)
     return Hallazgo(
-        "resync", f"{nombre_visible(pair.name)} necesita un --resync",
-        "; ".join(razones) + ". Hasta que se haga, esta pareja se salta en cada "
-        "pasada: el servicio no resincroniza solo, nunca.",
-        pair.name, AVISO)
+        "resync", f"{nombre_visible(pair.name)} necesita un --resync", detalle,
+        pair.name, AVISO, dato)
 
 
 def _locks(pair: Pair) -> Hallazgo | None:
