@@ -173,25 +173,27 @@ def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None,
     dlg.resultados = resultados                    # los tests lo miran
     # Toda la ventana va en su visor, como cualquier diálogo: en una pantalla
     # baja la barra lateral sola ya no cabe, y entonces se desplaza todo junto.
-    raiz = cuerpo_visible(dlg, padding=(24, 20, 24, 20))
+    raiz = cuerpo_visible(dlg, padding=(theme.E5, theme.E5, theme.E5, theme.E5))
     raiz.columnconfigure(1, weight=1, minsize=icons.px(dlg, ANCHO_APARTADO))
     raiz.rowconfigure(1, weight=1, minsize=icons.px(dlg, ALTO_APARTADO))
 
     # Arriba: el título y el buscador.
     arriba = ttk.Frame(raiz)
-    arriba.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 16))
+    arriba.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, theme.E4))
     arriba.columnconfigure(0, weight=1)
+    # Todo en una línea y centrado con el título: el rótulo del buscador a su
+    # izquierda, no encima, que lo dejaba más alto que el título.
     ttk.Label(arriba, text="Ajustes", style="Titulo.TLabel").grid(
-        row=0, column=0, rowspan=2, sticky="sw")
+        row=0, column=0, sticky="w")
     ttk.Label(arriba, text="Buscar un ajuste", style="Campo.TLabel").grid(
-        row=0, column=1, sticky="w", pady=(0, 4))
+        row=0, column=1, sticky="e", padx=(0, theme.E2))
     busqueda = tk.StringVar(dlg)
-    buscador = ttk.Entry(arriba, textvariable=busqueda, width=34)
-    buscador.grid(row=1, column=1, sticky="e")
+    buscador = ttk.Entry(arriba, textvariable=busqueda, width=30)
+    buscador.grid(row=0, column=2, sticky="e")
 
     # La barra lateral.
     barra = ttk.Frame(raiz)
-    barra.grid(row=1, column=0, sticky="nsw", padx=(0, 24))
+    barra.grid(row=1, column=0, sticky="nsw", padx=(0, theme.E5))
     barra.columnconfigure(0, weight=1, minsize=theme.medida(ANCHO_BARRA))
 
     # El apartado, que ocupa al menos lo que piden los más altos: cambiar de
@@ -238,15 +240,15 @@ def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None,
             if grupo == "Esta unidad" and del_equipo:
                 grupo = "Esta carpeta"
             rotulo = ttk.Label(barra, text=theme.rotulo(grupo), style="Rotulo.TLabel")
-            rotulo.grid(row=fila, column=0, sticky="w", padx=(12, 0),
-                        pady=(12 if fila else 0, 4))
+            rotulo.grid(row=fila, column=0, sticky="w", padx=(theme.E3, 0),
+                        pady=(theme.E3 if fila else 0, theme.E1))
             fila += 1
             miembros = []
             for apartado in visibles:
                 boton = ttk.Button(barra, text=apartado.rotulo, style="Nav.TButton",
                                    command=lambda c=apartado.clave: elegir(c))
                 theme.boton_icono(boton, apartado.icono, theme.TINTA2, theme.PAPEL)
-                boton.grid(row=fila, column=0, sticky="ew", pady=(0, 2))
+                boton.grid(row=fila, column=0, sticky="ew", pady=(0, theme.E1))
                 chip = chip_de(apartado.clave)
                 if chip is not None:
                     texto, tipo, icono = chip
@@ -266,7 +268,7 @@ def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None,
         ttk.Label(barra, text=f"prdrive {version}" + (f" · {nombre}" if nombre else ""),
                   style="Pista.TLabel", wraplength=theme.medida(ANCHO_BARRA - 12),
                   justify="left").grid(row=fila + 1, column=0, sticky="sw",
-                                       padx=(12, 0), pady=(16, 0))
+                                       padx=(theme.E3, 0), pady=(theme.E4, 0))
         marcar()
 
     def marcar() -> None:
@@ -319,12 +321,12 @@ def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None,
         ttk.Label(marco, text=f"Lleva la {actual}. Se comprueba sola cada 24 horas; "
                               "aquí se puede preguntar ahora.",
                   style="Pista.TLabel", wraplength=theme.medida(600),
-                  justify="left").grid(row=1, column=0, sticky="w", pady=(5, 0))
+                  justify="left").grid(row=1, column=0, sticky="w", pady=(theme.E1, 0))
         if buscar_version is None:
             return
         respuesta = ttk.Label(marco, text="", style="Pista.TLabel",
                               wraplength=theme.medida(600), justify="left")
-        respuesta.grid(row=3, column=0, sticky="w", pady=(10, 0))
+        respuesta.grid(row=3, column=0, sticky="w", pady=(theme.E3, 0))
 
         def buscar() -> None:
             """Pregunta por una versión nueva y dice la respuesta debajo."""
@@ -353,7 +355,7 @@ def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None,
 
         boton = ttk.Button(marco, text="Buscar actualizaciones", command=buscar)
         theme.boton_icono(boton, "reload", theme.TINTA2, theme.SUPERFICIE)
-        boton.grid(row=2, column=0, sticky="w", pady=(16, 0))
+        boton.grid(row=2, column=0, sticky="w", pady=(theme.E4, 0))
         dlg.boton_buscar = boton                   # los tests lo pulsan
 
     def construir_arranque(panel: Panel) -> None:
@@ -426,7 +428,7 @@ def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None,
         if estado["nota"]:
             theme.aviso(hueco, "", estado["nota"], tono="Verde.", icono="ok",
                         ancho=ANCHO_APARTADO - 80).grid(row=0, column=0, sticky="ew",
-                                                        pady=(0, 14))
+                                                        pady=(0, theme.E4))
         marco = ttk.Frame(hueco)
         marco.grid(row=1, column=0, sticky="nsew")
         marco.columnconfigure(0, weight=1)

@@ -56,7 +56,7 @@ def _chip_de(etiqueta: str, valor: str):
 
 def open_dialog(parent) -> None:
     """Abre la pantalla del vigilante."""
-    dialogo(parent, "Arranque automático", construir, padding=(20, 18, 20, 16),
+    dialogo(parent, "Arranque automático", construir, padding=(theme.E5, theme.E4, theme.E5, theme.E4),
             ensenar=mostrar)
 
 
@@ -73,12 +73,12 @@ def construir(panel: Panel) -> None:
              ancho=560, estilo="Dialogo.TLabel").grid(row=0, column=0, sticky="w")
     chip_estado = {"widget": None}
 
-    tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(14, 4))
-    tarjeta.grid(row=1, column=0, sticky="ew", pady=(16, 0))
+    tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(theme.E4, theme.E1))
+    tarjeta.grid(row=1, column=0, sticky="ew", pady=(theme.E4, 0))
     tarjeta.columnconfigure(1, weight=1)
 
     rotulo_diario = ttk.Frame(marco)
-    rotulo_diario.grid(row=2, column=0, sticky="ew", pady=(16, 7))
+    rotulo_diario.grid(row=2, column=0, sticky="ew", pady=(theme.E4, theme.E2))
     rotulo_diario.columnconfigure(0, weight=1)
     titulo_diario = ttk.Label(rotulo_diario, style="Rotulo.TLabel")
     titulo_diario.grid(row=0, column=0, sticky="w")
@@ -104,20 +104,20 @@ def construir(panel: Panel) -> None:
                 # Una fila sin etiqueta es un aviso de penwatch, no un dato.
                 ttk.Label(tarjeta, text=valor, style="Card.Aviso.TLabel",
                           wraplength=theme.medida(740), justify="left").grid(
-                    row=linea, column=0, columnspan=3, sticky="w", pady=7)
+                    row=linea, column=0, columnspan=3, sticky="w", pady=theme.E2)
                 continue
             ttk.Label(tarjeta, text=etiqueta, style="Card.Pista.TLabel",
-                      width=24).grid(row=linea, column=0, sticky="w", pady=7)
+                      width=24).grid(row=linea, column=0, sticky="w", pady=theme.E2)
             chip = _chip_de(etiqueta, valor)
             if chip is None:
                 ttk.Label(tarjeta, text=valor, style="Card.TLabel",
                           wraplength=theme.medida(520),
                           justify="left").grid(row=linea, column=1, sticky="w",
-                                               padx=(12, 0), pady=7)
+                                               padx=(theme.E3, 0), pady=theme.E2)
             else:
                 texto, tipo, icono = chip
                 theme.chip(tarjeta, texto, tipo, icono).grid(
-                    row=linea, column=2, sticky="e", pady=7)
+                    row=linea, column=2, sticky="e", pady=theme.E2)
         titulo_diario.configure(text=theme.rotulo(titulo))
         diario.configure(state="normal")
         diario.delete("1.0", "end")
@@ -133,7 +133,7 @@ def construir(panel: Panel) -> None:
         chip_estado["widget"] = theme.chip(
             arriba, "instalado" if puesto else "sin instalar",
             "Ok." if puesto else "Apagado.", "ok" if puesto else None)
-        chip_estado["widget"].grid(row=0, column=1, sticky="ne", pady=(4, 0))
+        chip_estado["widget"].grid(row=0, column=1, sticky="ne", pady=(theme.E1, 0))
         instalar_btn.configure(text="Reinstalar…" if puesto else "Instalar…")
 
     def ver_deteccion() -> None:
@@ -171,15 +171,15 @@ def construir(panel: Panel) -> None:
             ("Detectar el dispositivo", "eye", ver_deteccion))):
         boton = ttk.Button(botones, text=texto, command=accion)
         theme.boton_icono(boton, icono, theme.TINTA2, theme.SUPERFICIE)
-        boton.grid(row=0, column=i, sticky="w", padx=(0, 6))
+        boton.grid(row=0, column=i, sticky="w", padx=(0, theme.E2))
     quitar = ttk.Button(botones, text="Desinstalar…", style="Danger.TButton",
                         command=desinstalar)
     theme.boton_icono(quitar, "trash", theme.PELIGRO, theme.SUPERFICIE)
-    quitar.grid(row=0, column=3, padx=(0, 6))
+    quitar.grid(row=0, column=3, padx=(0, theme.E2))
     instalar_btn = ttk.Button(botones, text="Instalar…", style="Primary.TButton",
                               command=instalar)
     theme.boton_icono(instalar_btn, "arranque", theme.SOBRE_ACENTO, theme.ACENTO)
-    instalar_btn.grid(row=0, column=4, padx=(0, 6))
+    instalar_btn.grid(row=0, column=4, padx=(0, theme.E2))
     if not panel.incrustado:
         ttk.Button(botones, text="Cerrar", command=panel.cerrar).grid(row=0, column=5)
 
@@ -192,7 +192,7 @@ def formulario_instalacion(parent) -> dict | None:
     from tkinter import ttk
 
     dlg = modal(parent, "Instalar el vigilante")
-    marco = cuerpo_visible(dlg, padding=(20, 18, 20, 16))
+    marco = cuerpo_visible(dlg, padding=(theme.E5, theme.E4, theme.E5, theme.E4))
     marco.columnconfigure(2, weight=1)
     resultado: dict = {"opciones": None}
     previas = watch.installed_options()
@@ -202,13 +202,13 @@ def formulario_instalacion(parent) -> dict | None:
     ttk.Label(marco, style="Pista.TLabel", wraplength=theme.medida(620), justify="left",
               text="Se registra una tarea del usuario que arranca al iniciar "
                    "sesión.").grid(
-        row=1, column=0, columnspan=3, sticky="w", pady=(5, 14))
+        row=1, column=0, columnspan=3, sticky="w", pady=(theme.E1, theme.E4))
 
     def etiqueta(texto: str, en: int, arriba: bool = False) -> None:
         """Pone la etiqueta de un campo en la columna de la izquierda."""
         ttk.Label(marco, text=texto, style="Campo.TLabel", anchor="e",
                   width=22).grid(row=en, column=0, sticky="ne" if arriba else "e",
-                                 padx=(0, 12), pady=(5, 0) if arriba else 3)
+                                 padx=(0, theme.E3), pady=(theme.E1, 0) if arriba else 3)
 
     # El modo, en palabras y a la vista: con un desplegable de `ui` / `sync` /
     # `daemon` había que abrirlo para saber que existían los otros dos.
@@ -217,38 +217,38 @@ def formulario_instalacion(parent) -> dict | None:
     if modo.get() not in watch.MODES:
         modo.set("ui")
     modos = ttk.Frame(marco)
-    modos.grid(row=2, column=1, columnspan=2, sticky="w", pady=(5, 2))
+    modos.grid(row=2, column=1, columnspan=2, sticky="w", pady=(theme.E1, theme.E1))
     for i, clave in enumerate(watch.MODES):
         ttk.Radiobutton(modos, text=watch.MODE_LABELS[clave], value=clave,
-                        variable=modo).grid(row=i, column=0, sticky="w", pady=1)
+                        variable=modo).grid(row=i, column=0, sticky="w", pady=0)
         ttk.Label(modos, text=watch.MODE_HELP[clave], style="Pista.TLabel").grid(
-            row=i, column=1, sticky="w", padx=(12, 0))
+            row=i, column=1, sticky="w", padx=(theme.E3, 0))
     ttk.Label(marco, style="Pista.TLabel", wraplength=theme.medida(480), justify="left",
               text="Las parejas y el intervalo son los del servicio: las parejas se "
                    "marcan en la ventana principal, el intervalo está en «Ajustes → "
                    "Configuración», y viajan con el dispositivo.").grid(
-        row=3, column=1, columnspan=2, sticky="w", pady=(6, 4))
+        row=3, column=1, columnspan=2, sticky="w", pady=(theme.E2, theme.E1))
 
     fila = 4
     etiqueta("Sondeo del dispositivo", fila)
     sondeo = tk.StringVar(value=str(previas.get("poll") or 5))
     ttk.Entry(marco, textvariable=sondeo, width=8).grid(row=fila, column=1,
-                                                        sticky="w", pady=3)
+                                                        sticky="w", pady=theme.E1)
     ttk.Label(marco, style="Pista.TLabel", wraplength=theme.medida(340), justify="left",
               text=("segundos")).grid(row=fila, column=2, sticky="w",
-                                                    padx=(12, 0))
+                                                    padx=(theme.E3, 0))
     fila += 1
 
     etiqueta("Raíces extra", fila, arriba=True)
     raices = theme.caja_texto(marco, width=30, height=3)
     raices.insert("1.0", "\n".join(previas.get("extra_roots") or []))
-    raices.grid(row=fila, column=1, columnspan=2, sticky="w", pady=(8, 2))
+    raices.grid(row=fila, column=1, columnspan=2, sticky="w", pady=(theme.E2, theme.E1))
     fila += 1
 
     arrancar = tk.BooleanVar(value=True)
     ttk.Checkbutton(marco, variable=arrancar,
                     text="Arrancar el vigilante ahora mismo").grid(
-        row=fila, column=1, columnspan=2, sticky="w", pady=(10, 0))
+        row=fila, column=1, columnspan=2, sticky="w", pady=(theme.E3, 0))
     fila += 1
 
     def aceptar():
@@ -268,11 +268,11 @@ def formulario_instalacion(parent) -> dict | None:
         dlg.destroy()
 
     ttk.Separator(marco, orient="horizontal").grid(row=fila, column=0, columnspan=3,
-                                                   sticky="ew", pady=(16, 0))
+                                                   sticky="ew", pady=(theme.E4, 0))
     pie = ttk.Frame(marco)
-    pie.grid(row=fila + 1, column=0, columnspan=3, sticky="e", pady=(14, 0))
+    pie.grid(row=fila + 1, column=0, columnspan=3, sticky="e", pady=(theme.E4, 0))
     ttk.Button(pie, text="Cancelar", command=dlg.destroy).grid(row=0, column=0,
-                                                               padx=(0, 6))
+                                                               padx=(0, theme.E2))
     instalar = ttk.Button(pie, text="Instalar", style="Primary.TButton",
                           command=aceptar)
     theme.boton_icono(instalar, "arranque", theme.SOBRE_ACENTO, theme.ACENTO)
@@ -291,7 +291,7 @@ def open_agente(parent, res: watch.Resumen) -> str | None:
     de su lista, elegir un modo es decirle que sí desde aquí.
     """
     return dialogo(parent, "El agente de este equipo",
-                   lambda p: construir_agente(p, res), padding=(20, 18, 20, 16),
+                   lambda p: construir_agente(p, res), padding=(theme.E5, theme.E4, theme.E5, theme.E4),
                    ensenar=mostrar)
 
 
@@ -313,28 +313,28 @@ def construir_agente(panel: Panel, res: watch.Resumen) -> None:
 
     modos = watch.modos_agente(res)
     modo = tk.StringVar(marco, value=res.modo if res.modo in modos else modos[0])
-    tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(14, 10))
-    tarjeta.grid(row=1, column=0, sticky="ew", pady=(16, 0))
+    tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(theme.E4, theme.E3))
+    tarjeta.grid(row=1, column=0, sticky="ew", pady=(theme.E4, 0))
     for i, clave in enumerate(modos):
         ttk.Radiobutton(tarjeta, text=watch.ETIQUETA_AGENTE[clave], value=clave,
                         variable=modo, style="Card.Fuerte.TRadiobutton").grid(
-            row=i, column=0, sticky="w", pady=2)
+            row=i, column=0, sticky="w", pady=theme.E1)
         ttk.Label(tarjeta, text=watch.ayuda_agente(res, clave),
                   style="Card.Pista.TLabel").grid(row=i, column=1, sticky="w",
-                                                  padx=(12, 0))
+                                                  padx=(theme.E3, 0))
     fila = 2
     ttk.Label(marco, style="Pista.TLabel", wraplength=theme.medida(520), justify="left",
               text="Las parejas y el intervalo son los del servicio: las parejas se "
                    "marcan en la ventana principal, el intervalo está en «Ajustes → "
                    "Configuración», y viajan con " + ("la carpeta." if raiz
                                                      else "el dispositivo.")).grid(
-        row=fila, column=0, sticky="w", pady=(10, 0))
+        row=fila, column=0, sticky="w", pady=(theme.E3, 0))
     fila += 1
     if not res.vivo:
         ttk.Label(marco, style="Aviso.TLabel", wraplength=theme.medida(520),
                   justify="left",
                   text="El agente no está en marcha: lo aplicará al arrancar.").grid(
-            row=fila, column=0, sticky="w", pady=(8, 0))
+            row=fila, column=0, sticky="w", pady=(theme.E2, 0))
         fila += 1
 
     def aceptar() -> None:
@@ -349,7 +349,7 @@ def construir_agente(panel: Panel, res: watch.Resumen) -> None:
     botones = pie(marco, fila)
     botones.columnconfigure(0, weight=1)
     ttk.Button(botones, text="Cancelar", command=panel.terminar).grid(
-        row=0, column=1, padx=(0, 6))
+        row=0, column=1, padx=(0, theme.E2))
     boton = ttk.Button(botones, text="Atender" if nueva else "Aplicar",
                        style="Primary.TButton", command=aceptar)
     theme.boton_icono(boton, "arranque", theme.SOBRE_ACENTO, theme.ACENTO)

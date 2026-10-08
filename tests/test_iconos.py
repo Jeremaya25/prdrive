@@ -41,15 +41,11 @@ raiz.tk.call("tk", "scaling", 1.3333)
 FONDO = theme.PAPEL
 
 
-def filas_con_tinta(img, fondo=FONDO):
-    """Las filas de la imagen donde hay algo que no es el fondo."""
+def filas_con_tinta(img):
+    """Las filas de la imagen donde hay algo pintado: lo que no es transparente."""
     ancho, alto = img.width(), img.height()
-    # Del hexadecimal y no de `winfo_rgb`, que devuelve 16 bits y al bajarlos a
-    # 8 redondea distinto que el rasterizador: #FAF9F7 volvía como (251, 250, 248)
-    # y entonces TODA fila parecía tener tinta.
-    fondo_rgb = tuple(int(fondo[i:i + 2], 16) for i in (1, 3, 5))
     return [y for y in range(alto)
-            if any(tuple(img.get(x, y)[:3]) != fondo_rgb for x in range(ancho))]
+            if any(not img.transparency_get(x, y) for x in range(ancho))]
 
 
 # el dibujo cae donde se le dice
@@ -60,7 +56,7 @@ arriba = filas_con_tinta(suelto)[0]
 bajado = icons.get(raiz, "parejas", 15, theme.ACENTO, FONDO, bajar=2, alto=17)
 c("con altura dada, la imagen la respeta", (bajado.width(), bajado.height()), (15, 17))
 c("y el dibujo baja justo lo pedido", filas_con_tinta(bajado)[0], arriba + 2)
-c("las filas de encima son fondo", filas_con_tinta(bajado)[0] >= 2, True)
+c("las filas de encima son transparentes", filas_con_tinta(bajado)[0] >= 2, True)
 
 # lo que monta `boton_icono` sobre un botón de verdad
 m = tkfont.Font(root=raiz, font=theme.fuente("normal")).metrics()
@@ -74,6 +70,15 @@ c("la imagen es tan alta como la línea del texto", img.height(), max(m["linespa
 c("y nunca más alta: el botón no crece", img.height() <= max(m["linespace"], real), True)
 c("el dibujo se baja, pero sin salirse", 0 <= filas_con_tinta(img)[0], True)
 c("y cabe entero", filas_con_tinta(img)[-1] < img.height(), True)
+
+# …y su centro cae en el de las mayúsculas, no en el de la caja de la línea:
+# esa caja reserva arriba sitio para las tildes y abajo para las colas.
+letra = tkfont.Font(root=raiz, font=theme.fuente("texto"))
+em = letra.actual("size") * 1.3333
+centro = letra.metrics("ascent") - theme.ALTURA_MAYUSCULAS * em / 2
+filas = filas_con_tinta(img)
+c("el icono se centra en las mayúsculas, a medio píxel",
+  abs((filas[0] + filas[-1] + 1) / 2 - centro) <= 1.5, True)
 
 # El botón tiene que medir lo mismo que medía sin tocar nada: si el ajuste lo
 # hiciera crecer, movería el texto con él y no habría alineación que valga.

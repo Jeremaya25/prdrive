@@ -68,7 +68,7 @@ Sus filas de botones tienen que arrancar a la misma altura, así que el hueco se
 calcula midiendo el más ancho de los dos (`theme.ancho_rotulo`). Si se añade un
 tercer bloque con rótulo en esa columna, va aquí.
 """
-PAD_AMBAR = 10
+PAD_AMBAR = 12
 """El padding horizontal del bloque ámbar.
 
 Tiene nombre porque el canalón se lo descuenta: si cambia ahí y no aquí, las
@@ -119,7 +119,7 @@ def open_dialog(parent, config) -> bool:
               "leyendo": False, "cambiado": False}
     sondeo = Sondeo(dlg)
 
-    marco = cuerpo_visible(dlg, padding=(20, 18, 20, 16))
+    marco = cuerpo_visible(dlg, padding=(theme.E5, theme.E4, theme.E5, theme.E4))
     marco.columnconfigure(0, weight=1)
 
     # De qué va esta pantalla, y de dónde sale el catálogo.
@@ -136,28 +136,28 @@ def open_dialog(parent, config) -> bool:
     donde.columnconfigure(0, weight=1)
     chip_cat = {"widget": None}
     endpoint = ttk.Label(donde, style="MonoPista.TLabel")
-    endpoint.grid(row=1, column=0, sticky="e", pady=(6, 0))
+    endpoint.grid(row=1, column=0, sticky="e", pady=(theme.E2, 0))
     # Lo que se enseña mientras se lee el remoto, o por qué se quedó sin él.
     indicador = Indicador(arriba, ancho=700)
-    indicador.marco.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+    indicador.marco.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(theme.E3, 0))
     dlg.indicador, dlg.sondeo = indicador, sondeo   # como `visor`: los tests los miran
 
     # La franja de `[defaults]`: tiene su propia línea y sus propios botones.
     # No es una pareja más y sus botones dicen casi lo mismo que los de abajo,
     # así que juntos se confunden.
-    fila_defaults = ttk.Frame(marco, style="Gris.TFrame", padding=(12, 8))
-    fila_defaults.grid(row=1, column=0, sticky="ew", pady=(16, 0))
+    fila_defaults = ttk.Frame(marco, style="Gris.TFrame", padding=(theme.E3, theme.E2))
+    fila_defaults.grid(row=1, column=0, sticky="ew", pady=(theme.E4, 0))
     fila_defaults.columnconfigure(3, weight=1)
     ttk.Label(fila_defaults, text=theme.rotulo("[defaults]"),
               style="Gris.Rotulo.TLabel").grid(row=0, column=0, sticky="w")
     origen_defaults = {"widget": None}
     linea_defaults = ttk.Label(fila_defaults, style="Gris.Pista.TLabel",
                                wraplength=theme.medida(420), justify="left")
-    linea_defaults.grid(row=0, column=2, sticky="w", padx=(10, 0))
+    linea_defaults.grid(row=0, column=2, sticky="w", padx=(theme.E3, 0))
 
     # La lista.
-    tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(8, 8, 2, 4))
-    tarjeta.grid(row=2, column=0, sticky="nsew", pady=(14, 0))
+    tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(theme.E2, theme.E2, theme.E1, theme.E1))
+    tarjeta.grid(row=2, column=0, sticky="nsew", pady=(theme.E4, 0))
     tarjeta.columnconfigure(0, weight=1)
     tarjeta.rowconfigure(0, weight=1)
     marco.rowconfigure(2, weight=1)
@@ -205,7 +205,7 @@ def open_dialog(parent, config) -> bool:
         origen_defaults["widget"] = theme.chip(
             fila_defaults, origen,
             "Aviso." if difiere else ("Apagado." if origen == "—" else ""))
-        origen_defaults["widget"].grid(row=0, column=1, sticky="w", padx=(10, 0))
+        origen_defaults["widget"].grid(row=0, column=1, sticky="w", padx=(theme.E3, 0))
         linea_defaults.configure(text=_resumen_defaults(estado["raw"], difiere))
 
         # Lo elegido sobrevive al repintado: el catálogo del remoto puede llegar
@@ -531,10 +531,10 @@ def open_dialog(parent, config) -> bool:
             ("Ajustes de este dispositivo…", defaults_del_pen),
             ("Volver a los del catálogo", volver_defaults)), start=4):
         ttk.Button(fila_defaults, text=texto, style="GrisQuiet.TButton",
-                   command=accion).grid(row=0, column=i, padx=(4, 0))
+                   command=accion).grid(row=0, column=i, padx=(theme.E1, 0))
     boton = ttk.Button(fila_defaults, text="Ajustes del catálogo…",
                        style="GrisQuiet.TButton", command=catalogo_defaults)
-    boton.grid(row=0, column=6, padx=(4, 0))
+    boton.grid(row=0, column=6, padx=(theme.E1, 0))
     botones_catalogo.append(boton)
 
     # El canalón de los dos rótulos de sección, medido con su fuente:
@@ -544,7 +544,7 @@ def open_dialog(parent, config) -> bool:
     canalon = theme.ancho_rotulo(marco, *ROTULOS_SECCION) + icons.px(marco, 14)
 
     dispositivo = ttk.Frame(marco)
-    dispositivo.grid(row=3, column=0, sticky="ew", pady=(14, 0))
+    dispositivo.grid(row=3, column=0, sticky="ew", pady=(theme.E4, 0))
     dispositivo.columnconfigure(0, minsize=canalon)
     ttk.Label(dispositivo, text=theme.rotulo("Este dispositivo"),
               style="Rotulo.TLabel").grid(row=0, column=0, sticky="w")
@@ -559,11 +559,12 @@ def open_dialog(parent, config) -> bool:
                  "Danger.TButton": theme.PELIGRO}.get(estilo, theme.TINTA2)
         fondo = theme.ACENTO if estilo == "Primary.TButton" else theme.SUPERFICIE
         theme.boton_icono(boton, icono, color, fondo)
-        boton.grid(row=0, column=i, padx=(0, 6))
+        boton.grid(row=0, column=i, padx=(0, theme.E2))
 
     # El bloque del catálogo va sobre ámbar: es lo que toca a todos los equipos.
-    cat_frame = ttk.Frame(marco, style="Ambar.TFrame", padding=(PAD_AMBAR, 7))
-    cat_frame.grid(row=4, column=0, sticky="ew", pady=(8, 0))
+    cat_frame = ttk.Frame(marco, style="Ambar.TFrame",
+                          padding=(theme.medida(PAD_AMBAR), theme.E2))
+    cat_frame.grid(row=4, column=0, sticky="ew", pady=(theme.E2, 0))
     cat_frame.columnconfigure(5, weight=1)
     # El mismo canalón menos lo que este bloque ya mete por su padding, para
     # que las dos filas de botones arranquen a la misma altura pese a estar en
@@ -579,17 +580,17 @@ def open_dialog(parent, config) -> bool:
         theme.boton_icono(boton, icono,
                           theme.PELIGRO if "Danger" in estilo else theme.TINTA2,
                           theme.SUPERFICIE)
-        boton.grid(row=0, column=i, padx=(0, 6))
+        boton.grid(row=0, column=i, padx=(0, theme.E2))
         botones_catalogo.append(boton)
     ttk.Label(cat_frame, text="Afecta a TODOS los dispositivos",
-              style="Ambar.Pista.TLabel").grid(row=0, column=4, sticky="w", padx=(4, 0))
+              style="Ambar.Pista.TLabel").grid(row=0, column=4, sticky="w", padx=(theme.E1, 0))
     releer = ttk.Button(cat_frame, text="Releer", style="AmbarQuiet.TButton",
                         command=recargar_catalogo)
     theme.boton_icono(releer, "reload", theme.AVISO, theme.AVISO_FONDO)
     releer.grid(row=0, column=6, sticky="e")
 
     cierre = ttk.Frame(marco)
-    cierre.grid(row=5, column=0, sticky="ew", pady=(12, 0))
+    cierre.grid(row=5, column=0, sticky="ew", pady=(theme.E3, 0))
     cierre.columnconfigure(0, weight=1)
     pie_nota = ttk.Label(cierre, text="", style="MonoPista.TLabel",
                          wraplength=theme.medida(700), justify="left")
@@ -601,7 +602,7 @@ def open_dialog(parent, config) -> bool:
     flota_btn = ttk.Button(cierre, text="Dispositivos…", style="Quiet.TButton",
                            command=lambda: ver_flota())
     theme.boton_icono(flota_btn, "dispositivo", theme.ACENTO, theme.PAPEL)
-    flota_btn.grid(row=0, column=1, padx=(10, 6))
+    flota_btn.grid(row=0, column=1, padx=(theme.E3, theme.E2))
     ttk.Button(cierre, text="Cerrar", command=dlg.destroy).grid(row=0, column=2)
 
     leer_catalogo()
@@ -644,37 +645,37 @@ def confirmar_plan(parent, plan, titulo: str, nota: str, suelto: bool = False) -
 
     dlg = modal(parent, titulo, suelto=suelto)
     respuesta = {"sigue": False}
-    marco = cuerpo_visible(dlg, padding=(22, 20, 22, 18))
+    marco = cuerpo_visible(dlg, padding=(theme.E5, theme.E5, theme.E5, theme.E4))
     marco.columnconfigure(0, weight=1)
 
     ttk.Label(marco, text=titulo, style="Dialogo.TLabel").grid(
         row=0, column=0, sticky="w")
     ttk.Label(marco, text="Esto es lo que va a pasar. Nada se ha escrito todavía.",
-              style="Pista.TLabel").grid(row=1, column=0, sticky="w", pady=(5, 0))
+              style="Pista.TLabel").grid(row=1, column=0, sticky="w", pady=(theme.E1, 0))
 
-    tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(14, 4))
-    tarjeta.grid(row=2, column=0, sticky="ew", pady=(14, 0))
+    tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(theme.E4, theme.E1))
+    tarjeta.grid(row=2, column=0, sticky="ew", pady=(theme.E4, 0))
     tarjeta.columnconfigure(1, weight=1)
     for i, texto in enumerate(plan.consequences or ["(sin cambios)"]):
         if i:
             ttk.Separator(tarjeta, orient="horizontal", style="Card.TSeparator").grid(
                 row=i * 2 - 1, column=0, columnspan=2, sticky="ew")
         ttk.Label(tarjeta, text="•", style="Card.Apagado.TLabel").grid(
-            row=i * 2, column=0, sticky="nw", pady=7)
+            row=i * 2, column=0, sticky="nw", pady=theme.E2)
         ttk.Label(tarjeta, text=texto, style="Card.TLabel", wraplength=theme.medida(470),
                   justify="left").grid(row=i * 2, column=1, sticky="w",
-                                       padx=(9, 0), pady=7)
+                                       padx=(theme.E2, 0), pady=theme.E2)
 
     fila = 3
     for texto in plan.warnings:
         bloque_aviso(marco, texto, ancho=470).grid(row=fila, column=0, sticky="ew",
-                                                   pady=(12, 0))
+                                                   pady=(theme.E3, 0))
         fila += 1
 
     ttk.Separator(marco, orient="horizontal").grid(row=fila, column=0, sticky="ew",
-                                                   pady=(16, 0))
+                                                   pady=(theme.E4, 0))
     pie = ttk.Frame(marco)
-    pie.grid(row=fila + 1, column=0, sticky="ew", pady=(14, 0))
+    pie.grid(row=fila + 1, column=0, sticky="ew", pady=(theme.E4, 0))
     pie.columnconfigure(0, weight=1)
     ttk.Label(pie, text=nota, style="Pista.TLabel").grid(row=0, column=0, sticky="w")
 
@@ -684,7 +685,7 @@ def confirmar_plan(parent, plan, titulo: str, nota: str, suelto: bool = False) -
         dlg.destroy()
 
     ttk.Button(pie, text="Cancelar", command=dlg.destroy).grid(row=0, column=1,
-                                                               padx=(10, 6))
+                                                               padx=(theme.E3, theme.E2))
     ttk.Button(pie, text="Seguir adelante", style="Primary.TButton",
                command=seguir).grid(row=0, column=2)
 
@@ -698,7 +699,7 @@ def preguntar_limpieza(parent, name: str) -> bool | None:
     from tkinter import ttk
 
     dlg = modal(parent, f"Quitar '{name}'")
-    marco = cuerpo_visible(dlg, padding=(22, 20, 22, 18))
+    marco = cuerpo_visible(dlg, padding=(theme.E5, theme.E5, theme.E5, theme.E4))
     marco.columnconfigure(0, weight=1)
     respuesta = {"valor": None}
 
@@ -707,18 +708,18 @@ def preguntar_limpieza(parent, name: str) -> bool | None:
     ttk.Label(marco, justify="left", wraplength=theme.medida(440), style="Pista.TLabel",
               text=("Los datos NO se tocan, ni en el dispositivo ni en el remoto, y la pareja "
                     "sigue en el catálogo: se puede volver a usar cuando "
-                    "quieras.")).grid(row=1, column=0, sticky="w", pady=(5, 0))
+                    "quieras.")).grid(row=1, column=0, sticky="w", pady=(theme.E1, 0))
 
     limpiar = tk.BooleanVar(value=False)
-    caja = ttk.Frame(marco, style="Card.TFrame", padding=(14, 12))
-    caja.grid(row=2, column=0, sticky="ew", pady=(14, 0))
+    caja = ttk.Frame(marco, style="Card.TFrame", padding=(theme.E4, theme.E3))
+    caja.grid(row=2, column=0, sticky="ew", pady=(theme.E4, 0))
     ttk.Checkbutton(caja, variable=limpiar, style="Card.TCheckbutton", text=(
         "Apartar también su baseline y borrar sus filtros generados")).grid(
         row=0, column=0, sticky="w")
     ttk.Label(caja, style="Card.Pista.TLabel", wraplength=theme.medida(430), justify="left",
               text=("El baseline se renombra a state/<pareja>.old-<fecha>/, no se "
                     "borra. Si no marcas nada, se queda todo donde está.")).grid(
-        row=1, column=0, sticky="w", padx=(24, 0), pady=(4, 0))
+        row=1, column=0, sticky="w", padx=(theme.E5, 0), pady=(theme.E1, 0))
 
     def aceptar():
         """Guarda lo marcado y cierra."""
@@ -726,11 +727,11 @@ def preguntar_limpieza(parent, name: str) -> bool | None:
         dlg.destroy()
 
     ttk.Separator(marco, orient="horizontal").grid(row=3, column=0, sticky="ew",
-                                                   pady=(16, 0))
+                                                   pady=(theme.E4, 0))
     pie = ttk.Frame(marco)
-    pie.grid(row=4, column=0, sticky="e", pady=(14, 0))
+    pie.grid(row=4, column=0, sticky="e", pady=(theme.E4, 0))
     ttk.Button(pie, text="Cancelar", command=dlg.destroy).grid(row=0, column=0,
-                                                               padx=(0, 6))
+                                                               padx=(0, theme.E2))
     quitar = ttk.Button(pie, text="Quitar", style="Danger.TButton", command=aceptar)
     theme.boton_icono(quitar, "trash", theme.PELIGRO, theme.SUPERFICIE)
     quitar.grid(row=0, column=1)
@@ -753,7 +754,7 @@ def _cabecera_form(marco, titulo: str, marca: str | None, subtitulo: str | None,
     fila += 1
     if marca or subtitulo:
         linea = ttk.Frame(marco)
-        linea.grid(row=fila, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        linea.grid(row=fila, column=0, columnspan=3, sticky="w", pady=(theme.E2, 0))
         col = 0
         if marca:
             theme.chip(linea, marca, "Aviso.", "warn").grid(row=0, column=0,
@@ -762,7 +763,7 @@ def _cabecera_form(marco, titulo: str, marca: str | None, subtitulo: str | None,
         if subtitulo:
             ttk.Label(linea, text=subtitulo, style="Pista.TLabel", wraplength=theme.medida(520),
                       justify="left").grid(row=0, column=col, sticky="w",
-                                           padx=(8, 0) if col else 0)
+                                           padx=(theme.E2, 0) if col else 0)
         fila += 1
     return fila
 
@@ -789,7 +790,7 @@ def formulario(parent, raw: dict, original_name: str | None, actual: dict,
 
     dlg = modal(parent, titulo or (f"Editar '{original_name}'" if original_name
                                    else "Nueva pareja"))
-    marco = cuerpo_visible(dlg, padding=(20, 18, 20, 16))
+    marco = cuerpo_visible(dlg, padding=(theme.E5, theme.E4, theme.E5, theme.E4))
     marco.columnconfigure(2, weight=1)
     resultado: dict = {"datos": None}
     por_defecto = raw.get("defaults", {}).get("remote", model.DEFAULT_REMOTE)
@@ -808,7 +809,7 @@ def formulario(parent, raw: dict, original_name: str | None, actual: dict,
         """Pone la etiqueta de un campo en la columna de la izquierda."""
         ttk.Label(marco, text=texto, style="Campo.TLabel", anchor="e",
                   width=13).grid(row=en, column=0, sticky="ne" if arriba else "e",
-                                 padx=(0, 12), pady=(5, 0) if arriba else 0)
+                                 padx=(0, theme.E3), pady=(theme.E1, 0) if arriba else 0)
 
     campos: dict[str, tk.StringVar] = {}
 
@@ -849,7 +850,7 @@ def formulario(parent, raw: dict, original_name: str | None, actual: dict,
         var = tk.StringVar(value=str(actual.get(clave, "")))
         campos[clave] = var
         celda = ttk.Frame(marco)
-        celda.grid(row=fila, column=1, sticky="w", pady=3)
+        celda.grid(row=fila, column=1, sticky="w", pady=theme.E1)
         ttk.Entry(celda, textvariable=var, width=30 if explorar else 38,
                   style="Mono.TEntry" if mono else "TEntry").grid(row=0, column=0)
         if explorar is not None:
@@ -859,20 +860,20 @@ def formulario(parent, raw: dict, original_name: str | None, actual: dict,
             # siempre.
             if explorar is examinar_remoto and not explorable:
                 boton.configure(state="disabled")
-            boton.grid(row=0, column=1, padx=(6, 0))
+            boton.grid(row=0, column=1, padx=(theme.E2, 0))
         ttk.Label(marco, text=pista(clave, ayuda), style="Pista.TLabel",
                   wraplength=theme.medida(250), justify="left").grid(row=fila, column=2,
-                                                       sticky="w", padx=(12, 0))
+                                                       sticky="w", padx=(theme.E3, 0))
         fila += 1
 
     etiqueta("Modo", fila)
     modo = tk.StringVar(value=actual.get("mode", model.DEFAULT_MODE))
     selector_modo = ttk.Combobox(marco, textvariable=modo, state="readonly", width=36,
                                  values=sorted(model.MODES))
-    selector_modo.grid(row=fila, column=1, sticky="w", pady=3)
+    selector_modo.grid(row=fila, column=1, sticky="w", pady=theme.E1)
     aviso_modo = ttk.Label(marco, style="Aviso.TLabel", wraplength=theme.medida(250),
                            justify="left")
-    aviso_modo.grid(row=fila, column=2, sticky="w", padx=(12, 0))
+    aviso_modo.grid(row=fila, column=2, sticky="w", padx=(theme.E3, 0))
 
     fila += 1
 
@@ -884,10 +885,10 @@ def formulario(parent, raw: dict, original_name: str | None, actual: dict,
     casilla = ttk.Checkbutton(
         marco, variable=versiones,
         text=f"Guardar en {model.VERSIONS_DIR}/ lo que se sobrescriba o se borre")
-    casilla.grid(row=fila, column=1, sticky="w", pady=3)
+    casilla.grid(row=fila, column=1, sticky="w", pady=theme.E1)
     pista_versiones = ttk.Label(marco, style="Pista.TLabel",
                                 wraplength=theme.medida(250), justify="left")
-    pista_versiones.grid(row=fila, column=2, sticky="w", padx=(12, 0))
+    pista_versiones.grid(row=fila, column=2, sticky="w", padx=(theme.E3, 0))
     fila += 1
 
     # Vigilar. Solo vale donde el local es origen (`pair_editor.admite_watch`):
@@ -898,10 +899,10 @@ def formulario(parent, raw: dict, original_name: str | None, actual: dict,
     casilla_vigilar = ttk.Checkbutton(
         marco, variable=vigilar,
         text="Sincronizar cuando cambien los ficheros locales")
-    casilla_vigilar.grid(row=fila, column=1, sticky="w", pady=3)
+    casilla_vigilar.grid(row=fila, column=1, sticky="w", pady=theme.E1)
     pista_vigilar = ttk.Label(marco, style="Pista.TLabel",
                               wraplength=theme.medida(250), justify="left")
-    pista_vigilar.grid(row=fila, column=2, sticky="w", padx=(12, 0))
+    pista_vigilar.grid(row=fila, column=2, sticky="w", padx=(theme.E3, 0))
     fila += 1
 
     def modo_cambiado(*_):
@@ -933,11 +934,11 @@ def formulario(parent, raw: dict, original_name: str | None, actual: dict,
         etiqueta(titulo_campo, fila, arriba=True)
         caja = theme.caja_texto(marco, width=38, height=4)
         caja.insert("1.0", "\n".join(actual.get(clave, []) or []))
-        caja.grid(row=fila, column=1, sticky="w", pady=(8, 2))
+        caja.grid(row=fila, column=1, sticky="w", pady=(theme.E2, theme.E1))
         textos[clave] = caja
         ttk.Label(marco, style="Pista.TLabel", wraplength=theme.medida(250), justify="left",
                   text=pista(clave, "Un patrón por línea. Vacío = todo.")).grid(
-            row=fila, column=2, sticky="nw", padx=(12, 0), pady=(8, 0))
+            row=fila, column=2, sticky="nw", padx=(theme.E3, 0), pady=(theme.E2, 0))
         fila += 1
 
     # Los flags viven en su propio diálogo: son muchos, casi siempre no se tocan,
@@ -946,15 +947,15 @@ def formulario(parent, raw: dict, original_name: str | None, actual: dict,
     avanzado = {"flags": dict(actual.get("flags") or {}),
                 "extra_flags": list(model._as_tuple(actual.get("extra_flags")))}
 
-    caja_flags = ttk.Frame(marco, style="Card.TFrame", padding=(12, 10))
-    caja_flags.grid(row=fila, column=0, columnspan=3, sticky="ew", pady=(14, 0))
+    caja_flags = ttk.Frame(marco, style="Card.TFrame", padding=(theme.E3, theme.E3))
+    caja_flags.grid(row=fila, column=0, columnspan=3, sticky="ew", pady=(theme.E4, 0))
     caja_flags.columnconfigure(1, weight=1)
     img = icons.get(caja_flags, "flag", 18, theme.TINTA2, theme.SUPERFICIE)
     marca_flags = ttk.Label(caja_flags, style="Card.TLabel")
     if img is not None:
         marca_flags.configure(image=img)
         marca_flags.image = img
-    marca_flags.grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, 10))
+    marca_flags.grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, theme.E3))
     ttk.Label(caja_flags, text="Flags de rclone",
               style="Card.Fuerte.TLabel").grid(row=0, column=1, sticky="w")
     resumen = ttk.Label(caja_flags, style="Card.Pista.TLabel", wraplength=theme.medida(420),
@@ -997,14 +998,14 @@ def formulario(parent, raw: dict, original_name: str | None, actual: dict,
         dlg.destroy()
 
     ttk.Separator(marco, orient="horizontal").grid(row=fila, column=0, columnspan=3,
-                                                   sticky="ew", pady=(16, 0))
+                                                   sticky="ew", pady=(theme.E4, 0))
     pie = ttk.Frame(marco)
-    pie.grid(row=fila + 1, column=0, columnspan=3, sticky="ew", pady=(14, 0))
+    pie.grid(row=fila + 1, column=0, columnspan=3, sticky="ew", pady=(theme.E4, 0))
     pie.columnconfigure(0, weight=1)
     ttk.Label(pie, text="Antes de guardar se enseña qué va a pasar.",
               style="Pista.TLabel").grid(row=0, column=0, sticky="w")
     ttk.Button(pie, text="Cancelar", command=dlg.destroy).grid(row=0, column=1,
-                                                               padx=(10, 6))
+                                                               padx=(theme.E3, theme.E2))
     ttk.Button(pie, text="Guardar…", style="Primary.TButton",
                command=aceptar).grid(row=0, column=2)
 
@@ -1030,7 +1031,7 @@ def explorador_remoto(parent, remote: str, inicial: str = "") -> str | None:
     from tkinter import messagebox, ttk
 
     dlg = modal(parent, "Carpetas del remoto")
-    marco = cuerpo_visible(dlg, padding=(20, 18, 20, 16))
+    marco = cuerpo_visible(dlg, padding=(theme.E5, theme.E4, theme.E5, theme.E4))
     marco.columnconfigure(0, weight=1)
     estado = {"ruta": remote_picker.carpeta_de(inicial), "elegida": None}
 
@@ -1039,18 +1040,18 @@ def explorador_remoto(parent, remote: str, inicial: str = "") -> str | None:
              "que para usar una de la lista, entra primero en ella.",
              ancho=520, estilo="Dialogo.TLabel").grid(row=0, column=0, sticky="w")
 
-    barra = ttk.Frame(marco, style="Gris.TFrame", padding=(12, 8))
-    barra.grid(row=1, column=0, sticky="ew", pady=(14, 0))
+    barra = ttk.Frame(marco, style="Gris.TFrame", padding=(theme.E3, theme.E2))
+    barra.grid(row=1, column=0, sticky="ew", pady=(theme.E4, 0))
     barra.columnconfigure(1, weight=1)
     subir_btn = ttk.Button(barra, text="Subir", style="GrisQuiet.TButton",
                            command=lambda: ir(remote_picker.subir(estado["ruta"])))
     theme.boton_icono(subir_btn, "up", theme.TINTA2, theme.GRIS_FONDO)
-    subir_btn.grid(row=0, column=0, padx=(0, 10))
+    subir_btn.grid(row=0, column=0, padx=(0, theme.E3))
     ruta_lbl = ttk.Label(barra, style="Gris.Mono.TLabel", anchor="w")
     ruta_lbl.grid(row=0, column=1, sticky="ew")
 
-    tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(8, 8, 2, 4))
-    tarjeta.grid(row=2, column=0, sticky="nsew", pady=(12, 0))
+    tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(theme.E2, theme.E2, theme.E1, theme.E1))
+    tarjeta.grid(row=2, column=0, sticky="nsew", pady=(theme.E3, 0))
     tarjeta.columnconfigure(0, weight=1)
     tarjeta.rowconfigure(0, weight=1)
     marco.rowconfigure(2, weight=1)
@@ -1066,7 +1067,7 @@ def explorador_remoto(parent, remote: str, inicial: str = "") -> str | None:
 
     nota = ttk.Label(marco, style="Pista.TLabel", wraplength=theme.medida(520),
                      justify="left")
-    nota.grid(row=3, column=0, sticky="w", pady=(8, 0))
+    nota.grid(row=3, column=0, sticky="w", pady=(theme.E2, 0))
 
     def ir(ruta: str, sobre=None) -> bool:
         """Enseña esa carpeta; si no se puede leer, se queda donde estaba.
@@ -1124,7 +1125,7 @@ def explorador_remoto(parent, remote: str, inicial: str = "") -> str | None:
     lista.bind("<Return>", entrar)
 
     acciones = ttk.Frame(marco)
-    acciones.grid(row=4, column=0, sticky="ew", pady=(12, 0))
+    acciones.grid(row=4, column=0, sticky="ew", pady=(theme.E3, 0))
     acciones.columnconfigure(1, weight=1)
     entrar_btn = ttk.Button(acciones, text="Entrar", command=entrar)
     entrar_btn.grid(row=0, column=0, sticky="w")
@@ -1134,14 +1135,14 @@ def explorador_remoto(parent, remote: str, inicial: str = "") -> str | None:
     nueva_btn.grid(row=0, column=2, sticky="e")
 
     ttk.Separator(marco, orient="horizontal").grid(row=5, column=0, sticky="ew",
-                                                   pady=(14, 0))
+                                                   pady=(theme.E4, 0))
     pie = ttk.Frame(marco)
-    pie.grid(row=6, column=0, sticky="ew", pady=(12, 0))
+    pie.grid(row=6, column=0, sticky="ew", pady=(theme.E3, 0))
     pie.columnconfigure(0, weight=1)
     ttk.Label(pie, text="Se escribe en «Ruta remota»; nada se sincroniza todavía.",
               style="Pista.TLabel").grid(row=0, column=0, sticky="w")
     ttk.Button(pie, text="Cancelar", command=dlg.destroy).grid(row=0, column=1,
-                                                               padx=(10, 6))
+                                                               padx=(theme.E3, theme.E2))
     ttk.Button(pie, text="Elegir esta carpeta", style="Primary.TButton",
                command=elegir).grid(row=0, column=2)
 
@@ -1160,7 +1161,7 @@ def pedir_texto(parent, titulo: str, explicacion: str) -> str | None:
     from tkinter import ttk
 
     dlg = modal(parent, titulo)
-    marco = cuerpo_visible(dlg, padding=(22, 20, 22, 18))
+    marco = cuerpo_visible(dlg, padding=(theme.E5, theme.E5, theme.E5, theme.E4))
     marco.columnconfigure(0, weight=1)
     resultado: dict = {"texto": None}
 
@@ -1168,10 +1169,10 @@ def pedir_texto(parent, titulo: str, explicacion: str) -> str | None:
                                                                sticky="w")
     ttk.Label(marco, text=explicacion, style="Pista.TLabel", justify="left",
               wraplength=theme.medida(400)).grid(row=1, column=0, sticky="w",
-                                                 pady=(5, 0))
+                                                 pady=(theme.E1, 0))
     var = tk.StringVar()
     entrada = ttk.Entry(marco, textvariable=var, width=34, style="Mono.TEntry")
-    entrada.grid(row=2, column=0, sticky="w", pady=(14, 0))
+    entrada.grid(row=2, column=0, sticky="w", pady=(theme.E4, 0))
 
     def aceptar() -> None:
         """Guarda el texto escrito y cierra; en blanco no hace nada."""
@@ -1182,11 +1183,11 @@ def pedir_texto(parent, titulo: str, explicacion: str) -> str | None:
 
     entrada.bind("<Return>", lambda _e: aceptar())
     ttk.Separator(marco, orient="horizontal").grid(row=3, column=0, sticky="ew",
-                                                   pady=(16, 0))
+                                                   pady=(theme.E4, 0))
     pie = ttk.Frame(marco)
-    pie.grid(row=4, column=0, sticky="e", pady=(14, 0))
+    pie.grid(row=4, column=0, sticky="e", pady=(theme.E4, 0))
     ttk.Button(pie, text="Cancelar", command=dlg.destroy).grid(row=0, column=0,
-                                                               padx=(0, 6))
+                                                               padx=(0, theme.E2))
     ttk.Button(pie, text="Crear", style="Primary.TButton",
                command=aceptar).grid(row=0, column=1)
 
@@ -1205,7 +1206,7 @@ def defaults_form(parent, actual: dict, catalogo: dict | None,
     from tkinter import ttk
 
     dlg = modal(parent, titulo)
-    marco = cuerpo_visible(dlg, padding=(20, 18, 20, 16))
+    marco = cuerpo_visible(dlg, padding=(theme.E5, theme.E4, theme.E5, theme.E4))
     marco.columnconfigure(2, weight=1)
     resultado: dict = {"datos": None}
 
@@ -1223,7 +1224,7 @@ def defaults_form(parent, actual: dict, catalogo: dict | None,
         """Pone la etiqueta de un campo en la columna de la izquierda."""
         ttk.Label(marco, text=texto, style="Campo.TLabel", anchor="e",
                   width=16).grid(row=en, column=0, sticky="ne" if arriba else "e",
-                                 padx=(0, 12), pady=(5, 0) if arriba else 0)
+                                 padx=(0, theme.E3), pady=(theme.E1, 0) if arriba else 0)
 
     campos: dict[str, tk.StringVar] = {}
     for clave, titulo_campo, ayuda in (
@@ -1236,16 +1237,16 @@ def defaults_form(parent, actual: dict, catalogo: dict | None,
         var = tk.StringVar(value=str(actual.get(clave, "") or ""))
         campos[clave] = var
         ttk.Entry(marco, textvariable=var, width=38, style="Mono.TEntry").grid(
-            row=fila, column=1, sticky="w", pady=3)
+            row=fila, column=1, sticky="w", pady=theme.E1)
         ttk.Label(marco, text=pista(clave, ayuda), style="Pista.TLabel",
                   wraplength=theme.medida(260), justify="left").grid(row=fila, column=2,
-                                                       sticky="w", padx=(12, 0))
+                                                       sticky="w", padx=(theme.E3, 0))
         fila += 1
 
     guardar_logs = tk.BooleanVar(value=bool(actual.get("keep_logs", False)))
     ttk.Checkbutton(marco, variable=guardar_logs,
                     text="Guardar también los logs de las pasadas que van bien").grid(
-        row=fila, column=1, columnspan=2, sticky="w", pady=(10, 2))
+        row=fila, column=1, columnspan=2, sticky="w", pady=(theme.E3, theme.E1))
     fila += 1
 
     textos: dict[str, tk.Text] = {}
@@ -1254,25 +1255,25 @@ def defaults_form(parent, actual: dict, catalogo: dict | None,
         etiqueta(titulo_campo, fila, arriba=True)
         caja = theme.caja_texto(marco, width=38, height=4)
         caja.insert("1.0", "\n".join(actual.get(clave, []) or []))
-        caja.grid(row=fila, column=1, sticky="w", pady=(8, 2))
+        caja.grid(row=fila, column=1, sticky="w", pady=(theme.E2, theme.E1))
         textos[clave] = caja
         ttk.Label(marco, style="Pista.TLabel", wraplength=theme.medida(260), justify="left",
                   text="Un patrón por línea. Vale para todas las parejas.").grid(
-            row=fila, column=2, sticky="nw", padx=(12, 0), pady=(8, 0))
+            row=fila, column=2, sticky="nw", padx=(theme.E3, 0), pady=(theme.E2, 0))
         fila += 1
 
     avanzado = {"flags": dict(actual.get("flags") or {}),
                 "extra_flags": list(model._as_tuple(actual.get("extra_flags")))}
 
-    caja_flags = ttk.Frame(marco, style="Card.TFrame", padding=(12, 10))
-    caja_flags.grid(row=fila, column=0, columnspan=3, sticky="ew", pady=(14, 0))
+    caja_flags = ttk.Frame(marco, style="Card.TFrame", padding=(theme.E3, theme.E3))
+    caja_flags.grid(row=fila, column=0, columnspan=3, sticky="ew", pady=(theme.E4, 0))
     caja_flags.columnconfigure(1, weight=1)
     img = icons.get(caja_flags, "flag", 18, theme.TINTA2, theme.SUPERFICIE)
     marca_flags = ttk.Label(caja_flags, style="Card.TLabel")
     if img is not None:
         marca_flags.configure(image=img)
         marca_flags.image = img
-    marca_flags.grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, 10))
+    marca_flags.grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, theme.E3))
     ttk.Label(caja_flags, text="Flags de rclone comunes",
               style="Card.Fuerte.TLabel").grid(row=0, column=1, sticky="w")
     resumen = ttk.Label(caja_flags, style="Card.Pista.TLabel", wraplength=theme.medida(420),
@@ -1303,7 +1304,7 @@ def defaults_form(parent, actual: dict, catalogo: dict | None,
     bloque_aviso(marco, "Ojo con 'Remote del dispositivo' y 'Remoto': alimentan los "
                         "extremos de todas las parejas, así que cambiarlos aparta "
                         "sus baselines.", ancho=620).grid(
-        row=fila, column=0, columnspan=3, sticky="ew", pady=(12, 0))
+        row=fila, column=0, columnspan=3, sticky="ew", pady=(theme.E3, 0))
     fila += 1
 
     def aceptar():
@@ -1329,14 +1330,14 @@ def defaults_form(parent, actual: dict, catalogo: dict | None,
         dlg.destroy()
 
     ttk.Separator(marco, orient="horizontal").grid(row=fila, column=0, columnspan=3,
-                                                   sticky="ew", pady=(16, 0))
+                                                   sticky="ew", pady=(theme.E4, 0))
     pie = ttk.Frame(marco)
-    pie.grid(row=fila + 1, column=0, columnspan=3, sticky="ew", pady=(14, 0))
+    pie.grid(row=fila + 1, column=0, columnspan=3, sticky="ew", pady=(theme.E4, 0))
     pie.columnconfigure(0, weight=1)
     ttk.Label(pie, text="Antes de guardar se enseña qué va a pasar.",
               style="Pista.TLabel").grid(row=0, column=0, sticky="w")
     ttk.Button(pie, text="Cancelar", command=dlg.destroy).grid(row=0, column=1,
-                                                               padx=(10, 6))
+                                                               padx=(theme.E3, theme.E2))
     ttk.Button(pie, text="Guardar…", style="Primary.TButton",
                command=aceptar).grid(row=0, column=2)
 
@@ -1365,7 +1366,7 @@ def flags_form(parent, titulo: str, subtitulo: str, flags: dict, extra: list,
     from tkinter import ttk
 
     dlg = modal(parent, titulo)
-    marco = cuerpo_visible(dlg, padding=(20, 18, 20, 16))
+    marco = cuerpo_visible(dlg, padding=(theme.E5, theme.E4, theme.E5, theme.E4))
     marco.columnconfigure(1, weight=1)
     resultado: dict = {"datos": None}
 
@@ -1373,55 +1374,55 @@ def flags_form(parent, titulo: str, subtitulo: str, flags: dict, extra: list,
         row=0, column=0, columnspan=2, sticky="w")
     ttk.Label(marco, text=subtitulo, style="Pista.TLabel", wraplength=theme.medida(600),
               justify="left").grid(row=1, column=0, columnspan=2, sticky="w",
-                                   pady=(5, 0))
+                                   pady=(theme.E1, 0))
 
     # Lo que se escribe.
     izquierda = ttk.Frame(marco)
-    izquierda.grid(row=2, column=0, sticky="nsew", pady=(16, 0))
+    izquierda.grid(row=2, column=0, sticky="nsew", pady=(theme.E4, 0))
 
     ttk.Label(izquierda, text=theme.rotulo("Lo que escribes"),
-              style="Rotulo.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 7))
+              style="Rotulo.TLabel").grid(row=0, column=0, sticky="w", pady=(0, theme.E2))
     caja = theme.caja_texto(izquierda, width=40, height=8)
     caja.insert("1.0", flags_editor.dump(flags))
     caja.grid(row=1, column=0, sticky="ew")
     ttk.Label(izquierda, style="Pista.TLabel", wraplength=theme.medida(330), justify="left",
               text=("Tal cual se escriben en el TOML: transfers = 4, "
                     'conflict-resolve = "newer", checksum = true. Sin los guiones '
-                    "de delante.")).grid(row=2, column=0, sticky="w", pady=(7, 0))
+                    "de delante.")).grid(row=2, column=0, sticky="w", pady=(theme.E2, 0))
 
     problema = ttk.Frame(izquierda)      # el recuadro rojo, vacío mientras todo vale
-    problema.grid(row=3, column=0, sticky="ew", pady=(8, 0))
+    problema.grid(row=3, column=0, sticky="ew", pady=(theme.E2, 0))
     problema.columnconfigure(0, weight=1)
 
     ttk.Label(izquierda, text=theme.rotulo("Argumentos extra"),
-              style="Rotulo.TLabel").grid(row=4, column=0, sticky="w", pady=(16, 7))
+              style="Rotulo.TLabel").grid(row=4, column=0, sticky="w", pady=(theme.E4, theme.E2))
     caja_extra = theme.caja_texto(izquierda, width=40, height=3)
     caja_extra.insert("1.0", flags_editor.dump_extra(extra))
     caja_extra.grid(row=5, column=0, sticky="ew")
     ttk.Label(izquierda, style="Pista.TLabel", wraplength=theme.medida(330), justify="left",
               text=("Van a la línea de comandos sin tocar: --bwlimit y 8M son DOS "
-                    "líneas.")).grid(row=6, column=0, sticky="w", pady=(7, 0))
+                    "líneas.")).grid(row=6, column=0, sticky="w", pady=(theme.E2, 0))
 
     if catalogo_flags is not None:
         ttk.Label(izquierda, style="MonoPista.TLabel", wraplength=theme.medida(330),
                   justify="left",
                   text="Catálogo: " + (flags_editor.dump(catalogo_flags).replace(
                       "\n", "  ·  ") or "ninguno")).grid(row=7, column=0,
-                                                         sticky="w", pady=(8, 0))
+                                                         sticky="w", pady=(theme.E2, 0))
 
     # Lo que acabaría recibiendo rclone.
     derecha = ttk.Frame(marco)
-    derecha.grid(row=2, column=1, sticky="nsew", pady=(16, 0), padx=(18, 0))
+    derecha.grid(row=2, column=1, sticky="nsew", pady=(theme.E4, 0), padx=(theme.E4, 0))
     derecha.columnconfigure(0, weight=1)
     derecha.rowconfigure(1, weight=1)
 
     titulo_tabla = ttk.Frame(derecha)
-    titulo_tabla.grid(row=0, column=0, sticky="ew", pady=(0, 7))
+    titulo_tabla.grid(row=0, column=0, sticky="ew", pady=(0, theme.E2))
     titulo_tabla.columnconfigure(0, weight=1)
     ttk.Label(titulo_tabla, text=theme.rotulo("Lo que acabaría recibiendo rclone"),
               style="Rotulo.TLabel").grid(row=0, column=0, sticky="w")
 
-    tarjeta = ttk.Frame(derecha, style="Card.TFrame", padding=(6, 6, 2, 4))
+    tarjeta = ttk.Frame(derecha, style="Card.TFrame", padding=(theme.E2, theme.E2, theme.E1, theme.E1))
     tarjeta.grid(row=1, column=0, sticky="nsew")
     tarjeta.columnconfigure(0, weight=1)
     tarjeta.rowconfigure(0, weight=1)
@@ -1438,7 +1439,7 @@ def flags_form(parent, titulo: str, subtitulo: str, flags: dict, extra: list,
 
     ttk.Label(derecha, style="Pista.TLabel", wraplength=theme.medida(380), justify="left",
               text="Se funden en este orden: siempre → modo → [defaults] → esta "
-                   "pareja.").grid(row=2, column=0, sticky="w", pady=(8, 0))
+                   "pareja.").grid(row=2, column=0, sticky="w", pady=(theme.E2, 0))
 
     def avisar(texto: str | None) -> None:
         """Enseña el motivo en el recuadro rojo, o lo vacía si no hay."""
@@ -1488,15 +1489,15 @@ def flags_form(parent, titulo: str, subtitulo: str, flags: dict, extra: list,
     ver.grid(row=0, column=1, sticky="e")
 
     ttk.Separator(marco, orient="horizontal").grid(row=3, column=0, columnspan=2,
-                                                   sticky="ew", pady=(16, 0))
+                                                   sticky="ew", pady=(theme.E4, 0))
     pie = ttk.Frame(marco)
-    pie.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(14, 0))
+    pie.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(theme.E4, 0))
     pie.columnconfigure(0, weight=1)
     ttk.Label(pie, text="Si algo no vale, el diálogo no se cierra: lo escrito se "
                         "queda.", style="Pista.TLabel").grid(row=0, column=0,
                                                              sticky="w")
     ttk.Button(pie, text="Cancelar", command=dlg.destroy).grid(row=0, column=1,
-                                                               padx=(10, 6))
+                                                               padx=(theme.E3, theme.E2))
     ttk.Button(pie, text="Aceptar", style="Primary.TButton",
                command=aceptar).grid(row=0, column=2)
 

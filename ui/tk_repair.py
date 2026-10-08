@@ -32,7 +32,7 @@ from __future__ import annotations
 from common import revision
 from common.model import Config
 
-from . import abrir, icons, repair, theme
+from . import abrir, repair, theme
 from .tk import TITLE, Panel, cabecera, dialogo, mostrar, pie, separador_fila
 
 SEMAFORO = {
@@ -94,8 +94,8 @@ def construir(panel: Panel, config: Config, lanzar, marcadas=None) -> None:
              "ello. Nada se toca sin que lo confirmes antes.",
              ancho=600, estilo="Dialogo.TLabel").grid(row=0, column=0, sticky="w")
 
-    tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(14, 10, 14, 12))
-    tarjeta.grid(row=1, column=0, sticky="ew", pady=(16, 0))
+    tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(theme.E4, theme.E3, theme.E4, theme.E3))
+    tarjeta.grid(row=1, column=0, sticky="ew", pady=(theme.E4, 0))
     tarjeta.columnconfigure(0, weight=1)
 
     # Las acciones.
@@ -157,31 +157,28 @@ def construir(panel: Panel, config: Config, lanzar, marcadas=None) -> None:
         """Pinta una avería con su detalle y devuelve la siguiente fila libre."""
         icono, chip, rotulo = SEMAFORO.get(hallazgo.gravedad, SEMAFORO[revision.AVISO])
         cabeza = ttk.Frame(padre, style="Plano.Card.TFrame")
-        cabeza.grid(row=linea, column=0, sticky="ew", pady=(8, 0))
+        cabeza.grid(row=linea, column=0, sticky="ew", pady=(theme.E2, 0))
         cabeza.columnconfigure(1, weight=1)
         linea += 1
 
-        img = icons.get(cabeza, icono, 14, theme.AVISO if hallazgo.gravedad
-                        != revision.NOTA else theme.TINTA3, theme.SUPERFICIE)
-        marca = ttk.Label(cabeza, style="Card.TLabel")
-        if img is not None:
-            marca.configure(image=img)
-            marca.image = img
-        marca.grid(row=0, column=0, sticky="w", padx=(0, 8))
+        marca = theme.etiqueta_icono(
+            cabeza, icono, theme.AVISO if hallazgo.gravedad != revision.NOTA
+            else theme.TINTA3, "fuerte", 16, superficie="Card.")
+        marca.grid(row=0, column=0, sticky="w", padx=(0, theme.E2))
         ttk.Label(cabeza, text=hallazgo.titulo, style="Card.Fuerte.TLabel",
                   wraplength=theme.medida(420), justify="left").grid(
             row=0, column=1, sticky="w")
-        theme.chip(cabeza, rotulo, chip).grid(row=0, column=2, sticky="e", padx=(10, 0))
+        theme.chip(cabeza, rotulo, chip).grid(row=0, column=2, sticky="e", padx=(theme.E3, 0))
 
         texto = BOTONES.get(hallazgo.clave)
         if texto is not None:
             boton = ttk.Button(cabeza, text=texto, style="CardQuiet.TButton",
                                command=lambda h=hallazgo: ACCIONES[h.clave](h))
-            boton.grid(row=0, column=3, sticky="e", padx=(10, 0))
+            boton.grid(row=0, column=3, sticky="e", padx=(theme.E3, 0))
 
         ttk.Label(padre, text=hallazgo.detalle, style="Card.Pista.TLabel",
                   justify="left", wraplength=theme.medida(560)).grid(
-            row=linea, column=0, sticky="w", pady=(3, 8))
+            row=linea, column=0, sticky="w", pady=(theme.E1, theme.E2))
         return linea + 1
 
     def repintar() -> None:
@@ -208,7 +205,7 @@ def construir(panel: Panel, config: Config, lanzar, marcadas=None) -> None:
         if not lista:
             ttk.Label(tarjeta, text=TODO_BIEN, style="Card.Pista.TLabel",
                       justify="left", wraplength=theme.medida(560)).grid(
-                row=0, column=0, sticky="w", pady=(4, 4))
+                row=0, column=0, sticky="w", pady=(theme.E1, theme.E1))
         linea = 0
         for i, hallazgo in enumerate(lista):
             if i:
@@ -232,7 +229,7 @@ def construir(panel: Panel, config: Config, lanzar, marcadas=None) -> None:
         repintar()
 
     conflictos = tk_conflicts.seccion(marco, dlg, config, al_resolver)
-    conflictos.grid(row=2, column=0, sticky="ew", pady=(18, 0))
+    conflictos.grid(row=2, column=0, sticky="ew", pady=(theme.E4, 0))
 
     # El pie.
 
@@ -259,7 +256,7 @@ def construir(panel: Panel, config: Config, lanzar, marcadas=None) -> None:
     ver = ttk.Button(botones, text="Ver el informe completo", style="Quiet.TButton",
                      command=informe)
     theme.boton_icono(ver, "doctor", theme.ACENTO, theme.PAPEL)
-    ver.grid(row=0, column=1, sticky="w", padx=(6, 0))
+    ver.grid(row=0, column=1, sticky="w", padx=(theme.E2, 0))
     ttk.Button(botones, text="Cerrar", command=panel.cerrar).grid(row=0, column=3,
                                                                   sticky="e")
 

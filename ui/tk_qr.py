@@ -151,14 +151,14 @@ def construir(panel: Panel, raw_local: dict | None = None) -> None:
              ancho=560, estilo="Dialogo.TLabel").grid(row=0, column=0, sticky="w")
 
     bloque_aviso(marco, AVISO, ancho=560).grid(row=1, column=0, sticky="ew",
-                                               pady=(14, 0))
+                                               pady=(theme.E4, 0))
 
     # La tarjeta blanca donde cae el código. El QR se compone contra blanco
     # puro (lo dice `icons.matriz`), así que el papel cálido de la ventana no
     # puede llegar hasta el borde del dibujo: la zona de silencio tiene que ser
     # blanca o el lector se come una fila de módulos.
-    tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(16, 16, 16, 16))
-    tarjeta.grid(row=3, column=0, pady=(16, 0))
+    tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(theme.E4, theme.E4, theme.E4, theme.E4))
+    tarjeta.grid(row=3, column=0, pady=(theme.E4, 0))
 
     en_pantalla = False
     try:
@@ -192,13 +192,13 @@ def construir(panel: Panel, raw_local: dict | None = None) -> None:
 
     ttk.Label(marco, text=PISTA, style="Pista.TLabel", justify="left",
               wraplength=theme.medida(560)).grid(row=4, column=0, sticky="w",
-                                                 pady=(14, 0))
+                                                 pady=(theme.E4, 0))
 
     if codigo is not None:
         ttk.Label(marco, style="MonoPista.TLabel",
                   text=f"versión {codigo.version} · corrección {codigo.nivel} "
                        f"· {codigo.tamano}×{codigo.tamano} módulos").grid(
-            row=5, column=0, sticky="w", pady=(6, 0))
+            row=5, column=0, sticky="w", pady=(theme.E2, 0))
 
     botones = pie(marco, 6)
     botones.columnconfigure(0, weight=1)
@@ -220,4 +220,4 @@ def construir(panel: Panel, raw_local: dict | None = None) -> None:
         if linea is not None:
             ttk.Label(marco, text=linea, style="Pista.TLabel", justify="left",
                       wraplength=theme.medida(560)).grid(row=2, column=0,
-                                                         sticky="w", pady=(8, 0))
+                                                         sticky="w", pady=(theme.E2, 0))

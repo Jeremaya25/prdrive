@@ -68,7 +68,7 @@ def open_dialog(parent, nueva) -> bool:
     if nueva is None:
         return False
     return dialogo(parent, "Actualizar", lambda p: construir(p, nueva), defecto=False,
-                   padding=(20, 18, 20, 16), ensenar=mostrar)
+                   padding=(theme.E5, theme.E4, theme.E5, theme.E4), ensenar=mostrar)
 
 
 def construir(panel: Panel, nueva) -> None:
@@ -89,11 +89,11 @@ def construir(panel: Panel, nueva) -> None:
              f"Este dispositivo lleva la {actual}.", ancho=520,
              estilo="Dialogo.TLabel").grid(row=0, column=0, sticky="w")
     theme.chip(arriba, nueva.version, "Acento.").grid(row=0, column=1,
-                                                      sticky="ne", pady=(4, 0))
+                                                      sticky="ne", pady=(theme.E1, 0))
 
     # Qué se sustituye y qué se conserva.
-    tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(14, 12))
-    tarjeta.grid(row=1, column=0, sticky="ew", pady=(16, 0))
+    tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(theme.E4, theme.E3))
+    tarjeta.grid(row=1, column=0, sticky="ew", pady=(theme.E4, 0))
     tarjeta.columnconfigure(1, weight=1)
 
     filas = [("Se sustituye", "el programa: sync.py, runsync.py, penwatch.py, "
@@ -103,17 +103,17 @@ def construir(panel: Panel, nueva) -> None:
              ("Publicada", nueva.published[:10] or "—")]
     for i, (etiqueta, valor) in enumerate(filas):
         ttk.Label(tarjeta, text=etiqueta, style="Card.Campo.TLabel").grid(
-            row=i, column=0, sticky="nw", pady=(0, 6), padx=(0, 12))
+            row=i, column=0, sticky="nw", pady=(0, theme.E2), padx=(0, theme.E3))
         ttk.Label(tarjeta, text=valor, style="Card.TLabel", wraplength=theme.medida(380),
-                  justify="left").grid(row=i, column=1, sticky="w", pady=(0, 6))
+                  justify="left").grid(row=i, column=1, sticky="w", pady=(0, theme.E2))
 
     fila = 2
     if nueva.notes:
         ttk.Label(marco, text=theme.rotulo("Novedades"),
                   style="Rotulo.TLabel").grid(row=fila, column=0, sticky="w",
-                                              pady=(16, 7))
+                                              pady=(theme.E4, theme.E2))
         fila += 1
-        notas = ttk.Frame(marco, style="Gris.TFrame", padding=(12, 10))
+        notas = ttk.Frame(marco, style="Gris.TFrame", padding=(theme.E3, theme.E3))
         notas.grid(row=fila, column=0, sticky="ew")
         notas.columnconfigure(0, weight=1)
         ttk.Label(notas, text=nueva.notes.strip()[:1200], style="Gris.Pista.TLabel",
@@ -125,7 +125,7 @@ def construir(panel: Panel, nueva) -> None:
         bloque_aviso(marco, "El servicio periódico sigue en marcha en este "
                             "equipo. Puede estar sincronizando ahora mismo: "
                             "espera a que termine antes de actualizar.",
-                     ancho=520).grid(row=fila, column=0, sticky="ew", pady=(14, 0))
+                     ancho=520).grid(row=fila, column=0, sticky="ew", pady=(theme.E4, 0))
         fila += 1
 
     # Lo que hace el botón.
@@ -191,12 +191,12 @@ def construir(panel: Panel, nueva) -> None:
     theme.boton_icono(ver, "eye", theme.TINTA2, theme.PAPEL)
     ver.grid(row=0, column=0, sticky="w")
     instalar = ttk.Button(botones, text="Actualizar ahora", style="Primary.TButton",
-                          padding=(12, 7), command=actualizar)
+                          padding=(theme.E3, theme.E2), command=actualizar)
     theme.boton_icono(instalar, "down", theme.SOBRE_ACENTO, theme.ACENTO)
     instalar.grid(row=0, column=2)
     if not panel.incrustado:
         ttk.Button(botones, text="Cerrar", command=panel.cerrar).grid(
-            row=0, column=3, padx=(6, 0))
+            row=0, column=3, padx=(theme.E2, 0))
 
 
 def open_components_dialog(parent, pends) -> bool | str:
@@ -213,7 +213,7 @@ def open_components_dialog(parent, pends) -> bool | str:
         return False
     return dialogo(parent, "Actualizar componentes",
                    lambda p: construir_componentes(p, pends), defecto=False,
-                   padding=(20, 18, 20, 16), ensenar=mostrar)
+                   padding=(theme.E5, theme.E4, theme.E5, theme.E4), ensenar=mostrar)
 
 
 def construir_componentes(panel: Panel, pends) -> None:
@@ -233,21 +233,21 @@ def construir_componentes(panel: Panel, pends) -> None:
              estilo="Dialogo.TLabel").grid(row=0, column=0, sticky="w")
 
     # Qué lleva y qué toca.
-    tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(14, 12))
-    tarjeta.grid(row=1, column=0, sticky="ew", pady=(16, 0))
+    tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(theme.E4, theme.E3))
+    tarjeta.grid(row=1, column=0, sticky="ew", pady=(theme.E4, 0))
     tarjeta.columnconfigure(1, weight=1)
     for i, p in enumerate(pends):
         ttk.Label(tarjeta, text=p.titulo, style="Card.Campo.TLabel").grid(
-            row=i, column=0, sticky="nw", pady=(0, 6), padx=(0, 12))
+            row=i, column=0, sticky="nw", pady=(0, theme.E2), padx=(0, theme.E3))
         ttk.Label(tarjeta, text=(f"{p.lleva}  →  {p.deberia}" if not p.asistente
                                  else "con «Añadir plataformas…» del instalador"),
                   style="Card.MonoPista.TLabel",
                   wraplength=theme.medida(340), justify="left").grid(
-            row=i, column=1, sticky="w", pady=(0, 6))
+            row=i, column=1, sticky="w", pady=(0, theme.E2))
 
     # Qué respalda la descarga, sin adornos.
-    notas = ttk.Frame(marco, style="Gris.TFrame", padding=(12, 10))
-    notas.grid(row=2, column=0, sticky="ew", pady=(14, 0))
+    notas = ttk.Frame(marco, style="Gris.TFrame", padding=(theme.E3, theme.E3))
+    notas.grid(row=2, column=0, sticky="ew", pady=(theme.E4, 0))
     notas.columnconfigure(0, weight=1)
     ttk.Label(notas, text=(
         "Se descargan de su publicador —rclone.org, python-build-standalone e "
@@ -265,14 +265,14 @@ def construir_componentes(panel: Panel, pends) -> None:
         bloque_aviso(marco, "El servicio periódico sigue en marcha en este "
                             "equipo. Si está sincronizando, su rclone no se "
                             "podrá sustituir y se dejará para otra vez.",
-                     ancho=520).grid(row=fila, column=0, sticky="ew", pady=(14, 0))
+                     ancho=520).grid(row=fila, column=0, sticky="ew", pady=(theme.E4, 0))
         fila += 1
 
     if not tag:
         bloque_aviso(marco, "Este dispositivo no dice qué versión lleva, así "
                             "que no sé qué código descargar para ponerlo al "
                             "día. Pasa el instalador por encima.",
-                     ancho=520).grid(row=fila, column=0, sticky="ew", pady=(14, 0))
+                     ancho=520).grid(row=fila, column=0, sticky="ew", pady=(theme.E4, 0))
         fila += 1
 
     # El Python con el que está abierta esta ventana no se puede cambiar con
@@ -334,11 +334,11 @@ def construir_componentes(panel: Panel, pends) -> None:
     botones = pie(marco, fila)
     botones.columnconfigure(0, weight=1)
     instalar = ttk.Button(botones, text="Actualizar ahora", style="Primary.TButton",
-                          padding=(12, 7), command=actualizar)
+                          padding=(theme.E3, theme.E2), command=actualizar)
     theme.boton_icono(instalar, "down", theme.SOBRE_ACENTO, theme.ACENTO)
     if not tag:
         instalar.configure(state="disabled")
     instalar.grid(row=0, column=1)
     if not panel.incrustado:
         ttk.Button(botones, text="Cerrar", command=panel.cerrar).grid(
-            row=0, column=2, padx=(6, 0))
+            row=0, column=2, padx=(theme.E2, 0))

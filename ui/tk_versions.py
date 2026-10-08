@@ -77,7 +77,7 @@ def construir(panel: Panel, config: Config) -> None:
     if not parejas:
         ttk.Label(marco, text=SIN_VERSIONES, style="Pista.TLabel", justify="left",
                   wraplength=theme.medida(560)).grid(row=1, column=0, sticky="w",
-                                                     pady=(16, 0))
+                                                     pady=(theme.E4, 0))
         if not panel.incrustado:
             ttk.Button(pie(marco, 2), text="Cerrar", command=panel.cerrar).grid(
                 row=0, column=0, sticky="e")
@@ -90,7 +90,7 @@ def construir(panel: Panel, config: Config) -> None:
     elegida = StringVar(marco, value=parejas[0].name)
     if len(parejas) > 1:
         ttk.Label(marco, text="Pareja", style="Campo.TLabel").grid(
-            row=fila, column=0, sticky="w", pady=(16, 6))
+            row=fila, column=0, sticky="w", pady=(theme.E4, theme.E2))
         fila += 1
         theme.grupo_botones(marco, [(p.name, p.name) for p in parejas], elegida,
                             orden=lambda: refrescar()).grid(row=fila, column=0,
@@ -98,8 +98,8 @@ def construir(panel: Panel, config: Config) -> None:
         fila += 1
 
     # Lo que hay en cada lado.
-    tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(14, 12))
-    tarjeta.grid(row=fila, column=0, sticky="ew", pady=(14, 0))
+    tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(theme.E4, theme.E3))
+    tarjeta.grid(row=fila, column=0, sticky="ew", pady=(theme.E4, 0))
     tarjeta.columnconfigure(1, weight=1)
     fila += 1
 
@@ -109,24 +109,24 @@ def construir(panel: Panel, config: Config) -> None:
             separador_fila(tarjeta, i * 3 - 1, 2)
         titulo = ttk.Label(tarjeta, text=versions_editor.TITULO_LADO[clave],
                            style="Card.Fuerte.TLabel")
-        titulo.grid(row=i * 3, column=0, sticky="w", pady=(8 if i else 0, 0))
+        titulo.grid(row=i * 3, column=0, sticky="w", pady=(theme.E2 if i else 0, 0))
         cifra = ttk.Label(tarjeta, style="Card.TLabel", anchor="e")
-        cifra.grid(row=i * 3, column=1, sticky="e", pady=(8 if i else 0, 0))
+        cifra.grid(row=i * 3, column=1, sticky="e", pady=(theme.E2 if i else 0, 0))
         ruta = ttk.Label(tarjeta, style="Card.Pista.TLabel", justify="left",
                          wraplength=theme.medida(520))
-        ruta.grid(row=i * 3 + 1, column=0, columnspan=2, sticky="w", pady=(2, 8))
+        ruta.grid(row=i * 3 + 1, column=0, columnspan=2, sticky="w", pady=(theme.E1, theme.E2))
         lineas[clave] = (cifra, ruta)
 
     # Purgar: la antigüedad, también en botones, y que se borra en los dos lados.
     ttk.Label(marco, text="Purgar", style="Campo.TLabel").grid(
-        row=fila, column=0, sticky="w", pady=(16, 6))
+        row=fila, column=0, sticky="w", pady=(theme.E4, theme.E2))
     fila += 1
     antiguedad = StringVar(marco, value=ANTIGUEDADES[0][0])
     theme.grupo_botones(marco, [(t, t) for t, _ in ANTIGUEDADES], antiguedad).grid(
         row=fila, column=0, sticky="w")
     fila += 1
     ttk.Label(marco, text="Se borran en los dos lados.", style="Pista.TLabel").grid(
-        row=fila, column=0, sticky="w", pady=(6, 0))
+        row=fila, column=0, sticky="w", pady=(theme.E2, 0))
     fila += 1
 
     def corte() -> date:
@@ -212,9 +212,9 @@ def construir(panel: Panel, config: Config) -> None:
     purgar_btn = ttk.Button(botones, text="Purgar…", style="Danger.TButton",
                             command=purgar)
     theme.boton_icono(purgar_btn, "trash", theme.PELIGRO, theme.SUPERFICIE)
-    purgar_btn.grid(row=0, column=1, padx=(10, 0))
+    purgar_btn.grid(row=0, column=1, padx=(theme.E3, 0))
     if not panel.incrustado:
         ttk.Button(botones, text="Cerrar", command=panel.cerrar).grid(
-            row=0, column=2, padx=(6, 0))
+            row=0, column=2, padx=(theme.E2, 0))
 
     refrescar()

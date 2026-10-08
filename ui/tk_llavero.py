@@ -178,21 +178,21 @@ def construir_ajustes(panel: Panel, raw: dict | None = None) -> None:
     cabecera(marco, llavero_editor.TITULO, llavero_editor.EXPLICACION, ancho=560,
              estilo="Dialogo.TLabel").grid(row=0, column=0, sticky="w")
     indicador = Indicador(marco, ancho=560)
-    indicador.marco.grid(row=1, column=0, sticky="ew", pady=(12, 0))
+    indicador.marco.grid(row=1, column=0, sticky="ew", pady=(theme.E3, 0))
     dlg.indicador, dlg.sondeo = indicador, sondeo   # como `visor`: los tests los miran
 
-    tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(14, 10, 14, 12))
-    tarjeta.grid(row=2, column=0, sticky="ew", pady=(14, 0))
+    tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(theme.E4, theme.E3, theme.E4, theme.E3))
+    tarjeta.grid(row=2, column=0, sticky="ew", pady=(theme.E4, 0))
     tarjeta.columnconfigure(0, weight=1)
     acciones = ttk.Frame(marco)
-    acciones.grid(row=3, column=0, sticky="w", pady=(14, 0))
+    acciones.grid(row=3, column=0, sticky="w", pady=(theme.E4, 0))
     botones = pie(marco, 4)
     botones.columnconfigure(0, weight=1)
     pie_nota = ttk.Label(botones, text="", style="MonoPista.TLabel",
                          wraplength=theme.medida(440), justify="left")
     pie_nota.grid(row=0, column=0, sticky="w")
     ttk.Button(botones, text="Cerrar", command=panel.cerrar).grid(
-        row=0, column=1, sticky="e", padx=(10, 0))
+        row=0, column=1, sticky="e", padx=(theme.E3, 0))
 
     def remota() -> dict | None:
         """Devuelve el `[keychain]` del catálogo leído."""
@@ -207,7 +207,7 @@ def construir_ajustes(panel: Panel, raw: dict | None = None) -> None:
         for i, linea in enumerate(llavero_editor.lineas(sit, remota(), leido)):
             ttk.Label(tarjeta, text=linea, style="Card.TLabel" if i == 0 else "Card.Pista.TLabel",
                       wraplength=theme.medida(540), justify="left").grid(
-                row=i, column=0, sticky="w", pady=(0 if i == 0 else 4, 0))
+                row=i, column=0, sticky="w", pady=(0 if i == 0 else theme.E1, 0))
         pie_nota.configure(text=nota)
         for hijo in acciones.winfo_children():
             hijo.destroy()
@@ -241,7 +241,7 @@ def construir_ajustes(panel: Panel, raw: dict | None = None) -> None:
                                else "Danger.TButton" if peligro else "TButton")
             if peligro:
                 theme.boton_icono(boton, "trash", theme.PELIGRO, theme.SUPERFICIE)
-            boton.grid(row=0, column=col, padx=(0, 6))
+            boton.grid(row=0, column=col, padx=(0, theme.E2))
         panel.ajustar()
 
     def leer(nota: str = "") -> None:

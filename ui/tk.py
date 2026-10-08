@@ -552,7 +552,7 @@ def cabecera(parent, titulo: str, pista: str = "", ancho: int = 620,
     ttk.Label(marco, text=titulo, style=estilo).grid(row=0, column=0, sticky="w")
     if pista:
         ttk.Label(marco, text=pista, style="Pista.TLabel", wraplength=theme.medida(ancho),
-                  justify="left").grid(row=1, column=0, sticky="w", pady=(5, 0))
+                  justify="left").grid(row=1, column=0, sticky="w", pady=(theme.E1, 0))
     return marco
 
 
@@ -584,7 +584,7 @@ def bloque_aviso(parent, texto: str, ancho: int = 560, tipo: str = "Ambar",
         rotulo, accion = boton
         ttk.Button(caja.acciones, text=rotulo, command=accion,
                    style="Ambar.TButton" if tono == "Ambar." else "TButton").grid(
-            row=0, column=0, sticky="w", pady=(10, 0))
+            row=0, column=0, sticky="w", pady=(theme.E3, 0))
     return caja
 
 
@@ -678,7 +678,7 @@ class Panel:
             centrar(self.ventana, self.ventana.master)
 
 
-def dialogo(parent, titulo: str, construir, defecto=None, padding=(22, 20, 22, 18),
+def dialogo(parent, titulo: str, construir, defecto=None, padding=(theme.E5, theme.E5, theme.E5, theme.E4),
             ensenar=None):
     """Abre una pantalla en su propio diálogo y devuelve lo que haya devuelto.
 
@@ -721,10 +721,10 @@ def pie(marco, fila: int, columnas: int = 1):
     from tkinter import ttk
     marco.rowconfigure(fila, weight=1)
     ttk.Separator(marco, orient="horizontal").grid(
-        row=fila + 1, column=0, columnspan=columnas, sticky="ew", pady=(16, 0))
+        row=fila + 1, column=0, columnspan=columnas, sticky="ew", pady=(theme.E4, 0))
     botones = ttk.Frame(marco)
     botones.grid(row=fila + 2, column=0, columnspan=columnas, sticky="ew",
-                 pady=(14, 0))
+                 pady=(theme.E4, 0))
     return botones
 
 
@@ -828,19 +828,19 @@ def working(parent, title: str, funcion, mensaje: str = "",
     dlg = modal(parent, title, suelto=suelto)
     dlg.protocol("WM_DELETE_WINDOW", lambda: None)   # no se cierra a medias
 
-    marco = ttk.Frame(dlg, padding=(20, 18))
+    marco = ttk.Frame(dlg, padding=(theme.E5, theme.E4))
     marco.grid(sticky="nsew")
     ttk.Label(marco, text=mensaje or f"{title}…", wraplength=theme.medida(380),
               justify="left").grid(row=0, column=0, sticky="w")
     barra = ttk.Progressbar(marco, mode="indeterminate",
                             length=theme.medida(380))
-    barra.grid(row=1, column=0, pady=(14, 0), sticky="ew")
+    barra.grid(row=1, column=0, pady=(theme.E4, 0), sticky="ew")
     barra.start(PASO_BARRA_MS)
     cifra = None
     if progreso is not None:
         cifra = ttk.Label(marco, text="", wraplength=theme.medida(380),
                           justify="left")
-        cifra.grid(row=2, column=0, sticky="w", pady=(theme.medida(8), 0))
+        cifra.grid(row=2, column=0, sticky="w", pady=(theme.E2, 0))
     dlg.barra, dlg.cifra = barra, cifra     # colgadas como `visor`: los tests las miran
 
     resultado: dict = {"ok": False, "valor": None, "hecho": False}
@@ -1002,7 +1002,7 @@ class Indicador:
         self.marco.columnconfigure(1, weight=1)
         self.barra = ttk.Progressbar(self.marco, mode="indeterminate",
                                      length=theme.medida(LARGO_INDICADOR))
-        self.barra.grid(row=0, column=0, sticky="w", padx=(0, 10))
+        self.barra.grid(row=0, column=0, sticky="w", padx=(0, theme.E3))
         self.texto = ttk.Label(self.marco, style="Pista.TLabel", justify="left",
                                wraplength=theme.medida(ancho))
         self.texto.grid(row=0, column=1, sticky="w")
@@ -1075,7 +1075,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
 
     # Dentro de un visor: la lista de parejas crece con cada pareja y la ventana
     # no puede pasar del alto de la pantalla. Con pocas parejas no se nota nada.
-    frame = cuerpo_visible(root, padding=(22, 20, 22, 18))
+    frame = cuerpo_visible(root, padding=(theme.E5, theme.E5, theme.E5, theme.E4))
     frame.columnconfigure(0, weight=1)
 
     def leer_estado() -> None:
@@ -1525,21 +1525,18 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         ttk.Label(titulo, text="Sincronizar", style="Titulo.TLabel").grid(
             row=0, column=0, sticky="w")
         extremos = ttk.Frame(titulo)
-        extremos.grid(row=1, column=0, sticky="w", pady=(6, 0))
+        extremos.grid(row=1, column=0, sticky="w", pady=(theme.E2, 0))
         remotos = sorted({p.remote_name for p in config.pairs}) or [model.DEFAULT_REMOTE]
         for col, (icono, texto) in enumerate((("dispositivo", corto(str(model.DEVICE_ROOT))),
                                               ("nas", corto(", ".join(remotos))))):
             if col:
                 ttk.Label(extremos, text="·", style="Apagado.TLabel").grid(
-                    row=0, column=2, padx=6)
-            img = icons.get(extremos, icono, 14, theme.TINTA3, theme.PAPEL)
-            marca = ttk.Label(extremos, style="Pista.TLabel")
-            if img is not None:
-                marca.configure(image=img)
-                marca.image = img
+                    row=0, column=2, padx=theme.E2)
+            marca = theme.etiqueta_icono(extremos, icono, theme.TINTA3,
+                                         "mono_pequena", 14)
             marca.grid(row=0, column=col * 3, sticky="w")
             ttk.Label(extremos, text=texto, style="MonoPista.TLabel").grid(
-                row=0, column=col * 3 + 1, sticky="w", padx=(5, 0))
+                row=0, column=col * 3 + 1, sticky="w", padx=(theme.E1, 0))
 
         # El chip dice lo que se sabe sin hablar con nadie: lo que hay apuntado
         # en state/. La conexión con el remoto NO se comprueba aquí — se
@@ -1555,7 +1552,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
                               "Aviso.", "warn")
         else:
             chip = theme.chip(arriba, "al día", "Ok.", "ok")
-        chip.grid(row=0, column=1, sticky="ne", pady=(4, 0))
+        chip.grid(row=0, column=1, sticky="ne", pady=(theme.E1, 0))
 
         if vista["aviso"]:
             # Con botón para descartarlo: es el único aviso que no describe un
@@ -1563,7 +1560,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
             # botón ya lo tiene `bloque_aviso`, que lo estrenó la actualización.
             bloque_aviso(frame, vista["aviso"], ancho=400,
                          boton=("Descartar", descartar_aviso)).grid(
-                row=fila, column=0, sticky="ew", pady=(14, 0))
+                row=fila, column=0, sticky="ew", pady=(theme.E4, 0))
             fila += 1
 
         # Una línea y no un recuadro por cada cosa: apilados, del mismo ámbar y
@@ -1574,15 +1571,11 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         pendientes = revision.cuenta(vista["hallazgos"])
         if pendientes and not en_curso:
             aviso_linea = ttk.Frame(frame)
-            aviso_linea.grid(row=fila, column=0, sticky="ew", pady=(14, 0))
+            aviso_linea.grid(row=fila, column=0, sticky="ew", pady=(theme.E4, 0))
             aviso_linea.columnconfigure(1, weight=1)
             fila += 1
-            img = icons.get(aviso_linea, "warn", 16, theme.AVISO, theme.PAPEL)
-            marca = ttk.Label(aviso_linea)
-            if img is not None:
-                marca.configure(image=img)
-                marca.image = img
-            marca.grid(row=0, column=0, sticky="w", padx=(0, 8))
+            marca = theme.etiqueta_icono(aviso_linea, "warn", theme.AVISO)
+            marca.grid(row=0, column=0, sticky="w", padx=(0, theme.E2))
             ttk.Label(aviso_linea,
                       text=("Hay 1 cosa que revisar." if pendientes == 1
                             else f"Hay {pendientes} cosas que revisar."),
@@ -1604,7 +1597,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
                 "«Actualizar…» baja la versión nueva y reabre la ventana.",
                 ancho=420, icono="down", tono="Azul.",
                 boton=("Actualizar…", abrir_actualizacion),
-            ).grid(row=fila, column=0, sticky="ew", pady=(16, 0))
+            ).grid(row=fila, column=0, sticky="ew", pady=(theme.E4, 0))
             fila += 1
         # Los componentes están anticuados. Es un `elif` y no un bloque suyo:
         # los pines viajan CON el programa, así que actualizarlo primero puede
@@ -1622,7 +1615,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
                 ancho=420, icono="down", tono="Azul.",
                 boton=(("Actualizar…", abrir_componentes)
                        if components.actualizables(vista["componentes"]) else None))
-            caja.grid(row=fila, column=0, sticky="ew", pady=(14, 0))
+            caja.grid(row=fila, column=0, sticky="ew", pady=(theme.E4, 0))
             # Sustituir el rclone mientras sincroniza sería cambiárselo bajo los
             # pies; el módulo lo pospondría, pero es mejor no ofrecerlo siquiera.
             for hijo in caja.acciones.winfo_children():
@@ -1635,7 +1628,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         # (`prefs`): lo que se ve marcado al abrir es lo que sincroniza el
         # servicio.
         rotulo = ttk.Frame(frame)
-        rotulo.grid(row=fila, column=0, sticky="ew", pady=(20, 8))
+        rotulo.grid(row=fila, column=0, sticky="ew", pady=(theme.E5, theme.E2))
         rotulo.columnconfigure(2, weight=1)
         fila += 1
         ttk.Label(rotulo, text=theme.rotulo("Parejas"),
@@ -1648,11 +1641,11 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
             # El texto dice lo que hará, y cambia: se mide el más largo y se le
             # reserva el sitio, o el resumen de la derecha bailaría con cada clic.
             todas = ttk.Button(rotulo, text="Desmarcar todas", style="Quiet.TButton")
-            todas.grid(row=0, column=1, sticky="w", padx=(10, 0))
+            todas.grid(row=0, column=1, sticky="w", padx=(theme.E3, 0))
             todas.update_idletasks()
             rotulo.columnconfigure(1, minsize=todas.winfo_reqwidth() + 10)
 
-        tarjeta = ttk.Frame(frame, style="Card.TFrame", padding=(12, 2))
+        tarjeta = ttk.Frame(frame, style="Card.TFrame", padding=(theme.E3, theme.E1))
         tarjeta.grid(row=fila, column=0, sticky="ew")
         tarjeta.columnconfigure(2, weight=1)
         fila += 1
@@ -1704,13 +1697,13 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
             vars_by_name[name] = var
             ttk.Checkbutton(tarjeta, text=name, variable=var, command=al_marcar,
                             style="Card.Fuerte.TCheckbutton").grid(
-                row=linea, column=0, sticky="w", pady=6)
+                row=linea, column=0, sticky="w", pady=theme.E2)
             pareja = next(p for p in config.pairs if p.name == name)
             ttk.Label(tarjeta, text=pareja.mode.name, style="Card.Pista.TLabel").grid(
-                row=linea, column=1, sticky="w", padx=(10, 0))
+                row=linea, column=1, sticky="w", padx=(theme.E3, 0))
             ttk.Label(tarjeta, text=cuando(marcas.get(name)) or "—",
                       style="Card.MonoPista.TLabel").grid(row=linea, column=3,
-                                                          sticky="e", padx=(10, 8))
+                                                          sticky="e", padx=(theme.E3, theme.E2))
             if name in notes:
                 theme.chip(tarjeta, notes[name], "Aviso.").grid(
                     row=linea, column=4, sticky="e")
@@ -1722,7 +1715,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
             linea += 1
         if not names:
             ttk.Label(tarjeta, text="No hay ninguna pareja configurada.",
-                      style="Card.Pista.TLabel").grid(row=0, column=0, pady=10)
+                      style="Card.Pista.TLabel").grid(row=0, column=0, pady=theme.E3)
 
         if todas is not None:
             todas.configure(command=marcar_todas)
@@ -1738,12 +1731,12 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
                 abrir_llavero, tono="Ambar." if del_llavero.aviso else "",
                 ancho=420)
             llave.boton.configure(state=apagado if del_llavero.abrir else "disabled")
-            llave.grid(row=fila, column=0, sticky="ew", pady=(16, 0))
+            llave.grid(row=fila, column=0, sticky="ew", pady=(theme.E4, 0))
             fila += 1
 
         # Las pantallas de las que se vuelve aquí.
         pantallas = ttk.Frame(frame)
-        pantallas.grid(row=fila, column=0, sticky="ew", pady=(12, 0))
+        pantallas.grid(row=fila, column=0, sticky="ew", pady=(theme.E3, 0))
         pantallas.columnconfigure(1, weight=1)
         fila += 1
         # Mientras sincroniza se apaga lo que toca el mismo estado: la pantalla
@@ -1775,7 +1768,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
             arranque = theme.linea_estado(
                 frame, "arranque", dicho.texto, dicho.boton, abrir_arranque,
                 tono="Ambar." if dicho.aviso else "", ancho=420)
-            arranque.grid(row=fila, column=0, sticky="ew", pady=(16, 0))
+            arranque.grid(row=fila, column=0, sticky="ew", pady=(theme.E4, 0))
             fila += 1
             pausa = watch.pausa(vigilante)
             if pausa is not None:
@@ -1785,7 +1778,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
                 # dice además qué cambia «Pausar».
                 ttk.Label(frame, text=pausa, style="Pista.TLabel",
                           wraplength=theme.medida(560), justify="left").grid(
-                    row=fila, column=0, sticky="w", pady=(4, 0))
+                    row=fila, column=0, sticky="w", pady=(theme.E1, 0))
                 fila += 1
 
         def selected() -> list[str]:
@@ -1837,13 +1830,13 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
 
         # La acción principal, en grande; sin filete encima: la separa el aire.
         pie = ttk.Frame(frame)
-        pie.grid(row=fila, column=0, sticky="ew", pady=(24, 0))
+        pie.grid(row=fila, column=0, sticky="ew", pady=(theme.E5, 0))
         pie.columnconfigure(0, weight=1)
         ahora = ttk.Button(pie, text="Sincronizar ahora",
                            style="Grande.Primary.TButton", command=sincronizar,
                            state=apagado)
         theme.boton_icono(ahora, "sync", theme.SOBRE_ACENTO, theme.ACENTO, 16)
-        ahora.grid(row=0, column=0, sticky="ew", padx=(0, 8))
+        ahora.grid(row=0, column=0, sticky="ew", padx=(0, theme.E2))
         # «Iniciar servicio», o, si el agente de este equipo es el servicio de
         # esta raíz, «Pausar» / «Reanudar» (`watch.boton_servicio`). Estos no
         # cierran la ventana ni tocan nada de la raíz, así que no se apagan
@@ -1868,7 +1861,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
                                         command=bloquear, state=apagado)
             theme.boton_icono(boton_bloquear, "expulsar", theme.TINTA,
                               theme.SUPERFICIE)
-            boton_bloquear.grid(row=0, column=2, padx=(8, 0))
+            boton_bloquear.grid(row=0, column=2, padx=(theme.E2, 0))
         elif vista.get("expulsion") is not None or (
                 vista.get("llavero") is not None and not vista.get("del_equipo")):
             # También sin VeraCrypt si lleva el llavero: hay que cerrar KeePassXC
@@ -1878,7 +1871,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
                                         command=expulsar, state=apagado)
             theme.boton_icono(boton_expulsar, "expulsar", theme.TINTA,
                               theme.SUPERFICIE)
-            boton_expulsar.grid(row=0, column=2, padx=(8, 0))
+            boton_expulsar.grid(row=0, column=2, padx=(theme.E2, 0))
 
     render()
     root.visor.encajar(root)
@@ -1930,7 +1923,7 @@ def _aviso_fallo(fallos, al_abrir) -> None:
     root.resizable(False, False)
     root.withdraw()
 
-    marco = cuerpo_visible(root, padding=(24, 24, 24, 16))
+    marco = cuerpo_visible(root, padding=(theme.E5, theme.E5, theme.E5, theme.E4))
     marco.columnconfigure(0, weight=1)
 
     # La marca con la pastilla de aviso, la misma de la bandeja: dice de quién
@@ -1942,13 +1935,13 @@ def _aviso_fallo(fallos, al_abrir) -> None:
     if img is not None:
         marca = ttk.Label(arriba, image=img)
         marca.image = img
-        marca.grid(row=0, column=0, sticky="nw", padx=(0, 12))
+        marca.grid(row=0, column=0, sticky="nw", padx=(0, theme.E3))
     cabecera(arriba, "El servicio no ha podido sincronizar",
              "Sigue en marcha y lo reintentará en el próximo ciclo.",
              ancho=400, estilo="Dialogo.TLabel").grid(row=0, column=1, sticky="w")
 
     rotulo = ttk.Frame(marco)
-    rotulo.grid(row=1, column=0, sticky="ew", pady=(16, 8))
+    rotulo.grid(row=1, column=0, sticky="ew", pady=(theme.E4, theme.E2))
     rotulo.columnconfigure(0, weight=1)
     ttk.Label(rotulo, text=theme.rotulo("Ha fallado" if len(fallos) == 1
                                         else "Han fallado"),
@@ -1956,17 +1949,17 @@ def _aviso_fallo(fallos, al_abrir) -> None:
     ttk.Label(rotulo, text="1 pareja" if len(fallos) == 1 else f"{len(fallos)} parejas",
               style="Pista.TLabel").grid(row=0, column=1, sticky="e")
 
-    tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(16, 4))
+    tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(theme.E4, theme.E1))
     tarjeta.grid(row=2, column=0, sticky="ew")
     tarjeta.columnconfigure(0, weight=1)
     for i, fallo in enumerate(fallos):
         if i:
             separador_fila(tarjeta, i * 2 - 1, 3)
         ttk.Label(tarjeta, text=fallo.pareja, style="Card.Fuerte.TLabel").grid(
-            row=i * 2, column=0, sticky="w", pady=7)
+            row=i * 2, column=0, sticky="w", pady=theme.E2)
         ttk.Label(tarjeta, text=cuando_sello(fallo.cuando) or "—",
                   style="Card.MonoPista.TLabel").grid(row=i * 2, column=1, sticky="e",
-                                                      padx=(12, 12))
+                                                      padx=(theme.E3, theme.E3))
         theme.chip(tarjeta, "falló", "Peligro.", "alert", solido=True).grid(
             row=i * 2, column=2, sticky="e")
 
@@ -1977,9 +1970,9 @@ def _aviso_fallo(fallos, al_abrir) -> None:
         except OSError:
             pass         # sin visor no hay log que enseñar; la principal lo tiene
 
-    ttk.Separator(marco).grid(row=3, column=0, sticky="ew", pady=(24, 0))
+    ttk.Separator(marco).grid(row=3, column=0, sticky="ew", pady=(theme.E5, 0))
     pie = ttk.Frame(marco)
-    pie.grid(row=4, column=0, sticky="ew", pady=(16, 0))
+    pie.grid(row=4, column=0, sticky="ew", pady=(theme.E4, 0))
     pie.columnconfigure(1, weight=1)
     logs = [f.log for f in fallos if f.log is not None]
     if logs:
@@ -2125,7 +2118,7 @@ def output_window(title: str, cmd: list[str], parent=None,
     arranque = time.monotonic()
 
     # La barra de arriba: qué se está haciendo y cómo va.
-    barra = ttk.Frame(root, style="Card.TFrame", padding=(16, 12))
+    barra = ttk.Frame(root, style="Card.TFrame", padding=(theme.E4, theme.E3))
     barra.grid(row=0, column=0, columnspan=2, sticky="ew")
     barra.columnconfigure(1, weight=1)
     img = icons.get(barra, "sync", 20, theme.ACENTO, theme.SUPERFICIE)
@@ -2133,7 +2126,7 @@ def output_window(title: str, cmd: list[str], parent=None,
     if img is not None:
         marca.configure(image=img)
         marca.image = img
-    marca.grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, 12))
+    marca.grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, theme.E3))
     ttk.Label(barra, text=title.capitalize(), style="Card.Fuerte.TLabel").grid(
         row=0, column=1, sticky="w")
     ttk.Label(barra, text=subtitulo or " ", style="Card.MonoPista.TLabel").grid(
@@ -2147,11 +2140,11 @@ def output_window(title: str, cmd: list[str], parent=None,
     # Va en una caja con su borde, apartada del filo de la ventana: es lo que
     # se lee, y se lee como un documento, no como el fondo de la ventana.
     text = theme.caja_texto(root, width=104, height=28, state="disabled",
-                            padx=12, pady=8, wrap="char")
-    text.grid(row=1, column=0, sticky="nsew", padx=(16, 0), pady=(16, 16))
+                            padx=theme.E3, pady=theme.E2, wrap="char")
+    text.grid(row=1, column=0, sticky="nsew", padx=(theme.E4, 0), pady=(theme.E4, theme.E4))
     scroll = ttk.Scrollbar(root, command=text.yview)
     text.configure(yscrollcommand=scroll.set)
-    scroll.grid(row=1, column=1, sticky="ns", padx=(0, 16), pady=(16, 16))
+    scroll.grid(row=1, column=1, sticky="ns", padx=(0, theme.E4), pady=(theme.E4, theme.E4))
 
     # 104x28 son filas y columnas de texto, no píxeles: con el zoom del sistema
     # al 150 % esas 28 líneas miden más que la pantalla y la ventana nace con
@@ -2224,7 +2217,7 @@ def output_window(title: str, cmd: list[str], parent=None,
     # El pie.
     ttk.Separator(root, orient="horizontal").grid(row=2, column=0, columnspan=2,
                                                   sticky="ew")
-    pie = ttk.Frame(root, padding=(16, 12))
+    pie = ttk.Frame(root, padding=(theme.E4, theme.E3))
     pie.grid(row=3, column=0, columnspan=2, sticky="ew")
     pie.columnconfigure(1, weight=1)
     guardar_btn = ttk.Button(pie, text="Guardar el log", style="Quiet.TButton",

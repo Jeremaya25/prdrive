@@ -289,13 +289,13 @@ def build(root) -> Wizard:
     root.configure(background=theme.PAPEL)
     root.resizable(False, False)
 
-    marco = ttk.Frame(root, padding=(20, 18, 20, 16))
+    marco = ttk.Frame(root, padding=(theme.E5, theme.E4, theme.E5, theme.E4))
     marco.grid(sticky="nsew")
 
     cabecera = ttk.Label(marco, style="Dialogo.TLabel")
     cabecera.grid(row=0, column=0, sticky="w")
     ttk.Separator(marco, orient="horizontal").grid(
-        row=1, column=0, sticky="ew", pady=(6, 12))
+        row=1, column=0, sticky="ew", pady=(theme.E2, theme.E3))
 
     # El hueco de los pasos es un `Visor`: parte del tamaño del diseño, CRECE
     # hasta lo que pida el paso más grande (nunca encoge, para que la ventana
@@ -308,15 +308,15 @@ def build(root) -> Wizard:
     marco.rowconfigure(2, weight=1)
 
     ttk.Separator(marco, orient="horizontal").grid(
-        row=3, column=0, sticky="ew", pady=(12, 8))
+        row=3, column=0, sticky="ew", pady=(theme.E3, theme.E2))
     pie = ttk.Frame(marco)
     pie.grid(row=4, column=0, sticky="ew")
 
     atras = ttk.Button(pie, text="< Atrás")
     siguiente = ttk.Button(pie, text="Siguiente >", style="Primary.TButton")
     atras.grid(row=0, column=0)
-    siguiente.grid(row=0, column=1, padx=6)
-    ttk.Button(pie, text="Salir", command=root.destroy).grid(row=0, column=3, padx=(20, 0))
+    siguiente.grid(row=0, column=1, padx=theme.E2)
+    ttk.Button(pie, text="Salir", command=root.destroy).grid(row=0, column=3, padx=(theme.E5, 0))
     pie.columnconfigure(2, weight=1)
 
     wiz = Wizard(root, visor, cabecera, siguiente, atras)
@@ -361,7 +361,7 @@ def _paso_conexion(cuerpo, wiz) -> None:
     ttk.Label(cuerpo, justify="left", wraplength=theme.medida(780), text=(
         "Dónde guardas tu configuración y tus datos. prdrive no sabe de ningún "
         "servidor concreto: vale cualquier remote de rclone.")).grid(
-        row=0, column=0, sticky="w", pady=(0, 10))
+        row=0, column=0, sticky="w", pady=(0, theme.E3))
 
     modo = tk.StringVar(value="nuevo")
     nombre = tk.StringVar(value=wiz.perfil.remote_name or profile.DEFAULT_REMOTE_NAME)
@@ -378,25 +378,25 @@ def _paso_conexion(cuerpo, wiz) -> None:
                     variable=modo).grid(row=0, column=0, sticky="w")
     ttk.Radiobutton(elector, text="Importar de un rclone.conf que ya tengo",
                     value="importar", variable=modo).grid(row=0, column=1,
-                                                          sticky="w", padx=(24, 0))
+                                                          sticky="w", padx=(theme.E5, 0))
 
     caja = ttk.Frame(cuerpo)
-    caja.grid(row=2, column=0, sticky="w", pady=(10, 0))
+    caja.grid(row=2, column=0, sticky="w", pady=(theme.E3, 0))
 
     # El formulario de remoto nuevo.
     nuevo = ttk.Frame(caja)
     ttk.Label(nuevo, text="Nombre del remote:", style="Campo.TLabel").grid(
         row=0, column=0, sticky="w")
     ttk.Entry(nuevo, textvariable=nombre, width=18).grid(row=0, column=1, sticky="w",
-                                                         padx=(6, 16))
+                                                         padx=(theme.E2, theme.E4))
     ttk.Label(nuevo, text="Tipo:", style="Campo.TLabel").grid(row=0, column=2, sticky="w")
     combo_tipo = ttk.Combobox(nuevo, textvariable=tipo, width=12,
                               values=sorted(profile.PLANTILLAS))
-    combo_tipo.grid(row=0, column=3, sticky="w", padx=(6, 6))
+    combo_tipo.grid(row=0, column=3, sticky="w", padx=(theme.E2, theme.E2))
 
     ttk.Label(nuevo, text="Opciones (una por línea, como en rclone.conf):",
               style="Campo.TLabel").grid(row=1, column=0, columnspan=4,
-                                         sticky="w", pady=(10, 2))
+                                         sticky="w", pady=(theme.E3, theme.E1))
     opciones = tk.Text(nuevo, width=62, height=6, font=theme.fuente("mono"),
                        background=theme.SUPERFICIE, foreground=theme.TINTA,
                        relief="solid", borderwidth=1, highlightthickness=0)
@@ -418,7 +418,7 @@ def _paso_conexion(cuerpo, wiz) -> None:
         opciones.insert("1.0", profile.PLANTILLAS.get(tipo.get(), ""))
 
     ttk.Button(nuevo, text="Rellenar con la plantilla", command=plantilla).grid(
-        row=3, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        row=3, column=0, columnspan=2, sticky="w", pady=(theme.E2, 0))
 
     def _fichero(destino: tk.StringVar, titulo: str) -> None:
         """Deja elegir un fichero y lo pone en la variable."""
@@ -427,32 +427,32 @@ def _paso_conexion(cuerpo, wiz) -> None:
             destino.set(elegido)
 
     ttk.Label(nuevo, text="Clave privada:", style="Campo.TLabel").grid(
-        row=4, column=0, sticky="w", pady=(10, 0))
+        row=4, column=0, sticky="w", pady=(theme.E3, 0))
     ttk.Entry(nuevo, textvariable=clave, width=44).grid(row=4, column=1, columnspan=2,
-                                                        sticky="w", padx=(6, 6),
-                                                        pady=(10, 0))
+                                                        sticky="w", padx=(theme.E2, theme.E2),
+                                                        pady=(theme.E3, 0))
     ttk.Button(nuevo, text="Examinar…",
                command=lambda: _fichero(clave, "La clave privada")).grid(
-        row=4, column=3, sticky="w", pady=(10, 0))
+        row=4, column=3, sticky="w", pady=(theme.E3, 0))
 
     ttk.Label(nuevo, text="known_hosts:", style="Campo.TLabel").grid(
-        row=5, column=0, sticky="w", pady=(4, 0))
+        row=5, column=0, sticky="w", pady=(theme.E1, 0))
     ttk.Entry(nuevo, textvariable=conocidos, width=44).grid(
-        row=5, column=1, columnspan=2, sticky="w", padx=(6, 6), pady=(4, 0))
+        row=5, column=1, columnspan=2, sticky="w", padx=(theme.E2, theme.E2), pady=(theme.E1, 0))
     ttk.Button(nuevo, text="Examinar…",
                command=lambda: _fichero(conocidos, "El known_hosts")).grid(
-        row=5, column=3, sticky="w", pady=(4, 0))
+        row=5, column=3, sticky="w", pady=(theme.E1, 0))
     ttk.Label(nuevo, style="Pista.TLabel", wraplength=theme.medida(520), justify="left", text=(
         "Los dos son opcionales: un backend con contraseña o con token no los "
         "usa. Sin known_hosts se acepta la clave del servidor a la primera.")
-        ).grid(row=6, column=0, columnspan=4, sticky="w", pady=(4, 0))
+        ).grid(row=6, column=0, columnspan=4, sticky="w", pady=(theme.E1, 0))
 
     # Importar de un `rclone.conf`.
     importar = ttk.Frame(caja)
     ttk.Label(importar, text="Fichero rclone.conf:", style="Campo.TLabel").grid(
         row=0, column=0, sticky="w")
     ttk.Entry(importar, textvariable=conf_ajeno, width=52).grid(
-        row=0, column=1, sticky="w", padx=(6, 6))
+        row=0, column=1, sticky="w", padx=(theme.E2, theme.E2))
 
     combo_remoto = ttk.Combobox(importar, textvariable=remoto_ajeno, width=24,
                                 state="readonly")
@@ -483,14 +483,14 @@ def _paso_conexion(cuerpo, wiz) -> None:
     ttk.Button(importar, text="Examinar…", command=elegir_conf).grid(
         row=0, column=2, sticky="w")
     ttk.Label(importar, text="Remote:", style="Campo.TLabel").grid(
-        row=1, column=0, sticky="w", pady=(10, 0))
-    combo_remoto.grid(row=1, column=1, sticky="w", padx=(6, 6), pady=(10, 0))
+        row=1, column=0, sticky="w", pady=(theme.E3, 0))
+    combo_remoto.grid(row=1, column=1, sticky="w", padx=(theme.E2, theme.E2), pady=(theme.E3, 0))
     ttk.Label(importar, style="Pista.TLabel", wraplength=theme.medida(560),
               justify="left", text=(
         "Se copia la definición del remote y, si usa fichero de clave, también la "
         "clave: el dispositivo tiene que llevar la suya para funcionar en "
         "cualquier equipo.")).grid(row=2, column=0, columnspan=3, sticky="w",
-                                   pady=(6, 0))
+                                   pady=(theme.E2, 0))
 
     def cambiar_modo(*_) -> None:
         """Enseña el formulario del modo elegido."""
@@ -502,11 +502,11 @@ def _paso_conexion(cuerpo, wiz) -> None:
 
     # Lo común.
     comun = ttk.Frame(cuerpo)
-    comun.grid(row=3, column=0, sticky="w", pady=(12, 0))
+    comun.grid(row=3, column=0, sticky="w", pady=(theme.E3, 0))
     ttk.Label(comun, text="Ruta del catálogo en el remoto:",
               style="Campo.TLabel").grid(row=0, column=0, sticky="w")
     ttk.Entry(comun, textvariable=catalogo, width=46).grid(row=0, column=1,
-                                                           sticky="w", padx=(6, 0))
+                                                           sticky="w", padx=(theme.E2, 0))
 
     def cambiar_catalogo(*_) -> None:
         """Aplica sola la ruta del catálogo.
@@ -538,7 +538,7 @@ def _paso_conexion(cuerpo, wiz) -> None:
     # paso sin conexión: un error al lado de un «Siguiente» encendido invita a
     # seguir con la de antes creyendo que es la que se acaba de escribir.
     estado = ttk.Label(cuerpo, wraplength=theme.medida(780), justify="left")
-    estado.grid(row=5, column=0, sticky="w", pady=(12, 0))
+    estado.grid(row=5, column=0, sticky="w", pady=(theme.E3, 0))
     # Lo que no impide seguir pero conviene saber (`profile.avisos`). Solo ocupa
     # sitio cuando dice algo.
     notas = ttk.Label(cuerpo, wraplength=theme.medida(780), justify="left",
@@ -561,7 +561,7 @@ def _paso_conexion(cuerpo, wiz) -> None:
         avisos = profile.avisos(perfil)
         notas.configure(text="\n".join(avisos))
         if avisos:
-            notas.grid(row=6, column=0, sticky="w", pady=(8, 0))
+            notas.grid(row=6, column=0, sticky="w", pady=(theme.E2, 0))
         else:
             notas.grid_remove()
 
@@ -602,7 +602,7 @@ def _paso_conexion(cuerpo, wiz) -> None:
         wiz.revisar()
 
     ttk.Button(cuerpo, text="Usar esta conexión", command=usar).grid(
-        row=4, column=0, sticky="w", pady=(12, 0))
+        row=4, column=0, sticky="w", pady=(theme.E3, 0))
 
     if wiz.perfil.configured:
         preparada(wiz.perfil)
@@ -615,7 +615,7 @@ def _paso_comprobaciones(cuerpo, wiz) -> None:
     ttk.Label(cuerpo, justify="left", wraplength=theme.medida(780), text=(
         "Antes de tocar nada: que haya un rclone con el que trabajar, que el "
         "remoto conteste y que su catálogo de parejas se entienda.")).grid(
-        row=0, column=0, sticky="w", pady=(0, 10))
+        row=0, column=0, sticky="w", pady=(0, theme.E3))
 
     tabla = ttk.Frame(cuerpo)
     tabla.grid(row=1, column=0, sticky="w")
@@ -631,7 +631,7 @@ def _paso_comprobaciones(cuerpo, wiz) -> None:
                 row=i, column=0, sticky="w")
             ttk.Label(tabla, text=etiqueta + ":").grid(row=i, column=1, sticky="w")
             ttk.Label(tabla, text=detalle, foreground=color, wraplength=theme.medida(560),
-                      justify="left").grid(row=i, column=2, sticky="w", padx=(10, 0))
+                      justify="left").grid(row=i, column=2, sticky="w", padx=(theme.E3, 0))
 
     def comprobar(descargar: bool = False) -> None:
         """Comprueba rclone, la conexión y el catálogo, en un hilo."""
@@ -683,11 +683,11 @@ def _paso_comprobaciones(cuerpo, wiz) -> None:
         wiz.revisar()
 
     botones = ttk.Frame(cuerpo)
-    botones.grid(row=2, column=0, sticky="w", pady=(14, 0))
+    botones.grid(row=2, column=0, sticky="w", pady=(theme.E4, 0))
     ttk.Button(botones, text="Comprobar", command=lambda: comprobar(False)).grid(
         row=0, column=0)
     ttk.Button(botones, text="Comprobar y descargar rclone si falta",
-               command=lambda: comprobar(True)).grid(row=0, column=1, padx=6)
+               command=lambda: comprobar(True)).grid(row=0, column=1, padx=theme.E2)
 
     if wiz.catalog is not None:
         pintar([
@@ -730,7 +730,7 @@ def _paso_donde(cuerpo, wiz) -> None:
 
     ttk.Label(cuerpo, justify="left", wraplength=theme.medida(780),
               text="¿Dónde quieres instalar prdrive?").grid(
-        row=0, column=0, sticky="w", pady=(0, 12))
+        row=0, column=0, sticky="w", pady=(0, theme.E3))
     eleccion = tk.StringVar(value=wiz.donde)
 
     def elegir() -> None:
@@ -752,15 +752,15 @@ def _paso_donde(cuerpo, wiz) -> None:
          + (f"\nYa está instalado (versión {instalado}): puedes ponerlo al día, "
             f"añadirle una carpeta o cambiar sus unidades." if instalado else "")))
     for i, (valor, titulo, texto) in enumerate(opciones):
-        tarjeta = ttk.Frame(cuerpo, style="Card.TFrame", padding=(14, 10))
-        tarjeta.grid(row=1 + i, column=0, sticky="ew", pady=(0, 10))
+        tarjeta = ttk.Frame(cuerpo, style="Card.TFrame", padding=(theme.E4, theme.E3))
+        tarjeta.grid(row=1 + i, column=0, sticky="ew", pady=(0, theme.E3))
         tarjeta.columnconfigure(0, weight=1)
         ttk.Radiobutton(tarjeta, text=titulo, value=valor, variable=eleccion,
                         style="Card.Fuerte.TRadiobutton", command=elegir).grid(
             row=0, column=0, sticky="w")
         ttk.Label(tarjeta, text=texto, style="Card.Pista.TLabel", justify="left",
                   wraplength=theme.medida(720)).grid(row=1, column=0, sticky="w",
-                                                     pady=(4, 0))
+                                                     pady=(theme.E1, 0))
 
 
 def _ok_donde(w) -> bool:
@@ -784,7 +784,7 @@ def _paso_destino(cuerpo, wiz) -> None:
         "Se listan TODAS las unidades, no solo las que Windows declara "
         "extraíbles: muchos pendrives (y casi todos los SSD por USB) se declaran "
         "fijos, y filtrarlos es la forma más rápida de que el tuyo no aparezca.")
-        ).grid(row=0, column=0, sticky="w", pady=(0, 10))
+        ).grid(row=0, column=0, sticky="w", pady=(0, theme.E3))
 
     tree = ttk.Treeview(cuerpo, columns=[c[0] for c in COLUMNAS],
                         show="headings", height=8, selectmode="browse")
@@ -794,7 +794,7 @@ def _paso_destino(cuerpo, wiz) -> None:
     tree.grid(row=1, column=0, sticky="w")
 
     aviso = ttk.Label(cuerpo, wraplength=theme.medida(780), justify="left")
-    aviso.grid(row=2, column=0, sticky="w", pady=(8, 0))
+    aviso.grid(row=2, column=0, sticky="w", pady=(theme.E2, 0))
 
     volumenes: dict[str, device.Volume] = {}
 
@@ -854,10 +854,10 @@ def _paso_destino(cuerpo, wiz) -> None:
     tree.bind("<<TreeviewSelect>>", mostrar)
 
     manual = ttk.Frame(cuerpo)
-    manual.grid(row=3, column=0, sticky="w", pady=(12, 0))
+    manual.grid(row=3, column=0, sticky="w", pady=(theme.E3, 0))
     ttk.Label(manual, text="…o una ruta a mano:").grid(row=0, column=0, sticky="w")
     ruta = tk.StringVar()
-    ttk.Entry(manual, textvariable=ruta, width=46).grid(row=0, column=1, padx=6)
+    ttk.Entry(manual, textvariable=ruta, width=46).grid(row=0, column=1, padx=theme.E2)
 
     def usar_ruta() -> None:
         """Usa como destino la ruta escrita a mano."""
@@ -879,7 +879,7 @@ def _paso_destino(cuerpo, wiz) -> None:
 
     ttk.Button(manual, text="Usar esta ruta", command=usar_ruta).grid(row=0, column=2)
     ttk.Button(manual, text="Actualizar lista", command=refrescar).grid(
-        row=0, column=3, padx=(16, 0))
+        row=0, column=3, padx=(theme.E4, 0))
 
     # El hueco del desvío a actualizar. Va debajo de la ruta a mano porque solo
     # aparece a veces, y lo que no puede es empujar la lista hacia abajo cada vez
@@ -947,8 +947,8 @@ def _panel_ya_instalado(cuerpo, wiz, raiz, fila: int) -> None:
     """
     from tkinter import ttk
 
-    caja = ttk.Frame(cuerpo, style="Card.TFrame", padding=(14, 12))
-    caja.grid(row=fila, column=0, sticky="ew", pady=(14, 0))
+    caja = ttk.Frame(cuerpo, style="Card.TFrame", padding=(theme.E4, theme.E3))
+    caja.grid(row=fila, column=0, sticky="ew", pady=(theme.E4, 0))
     caja.columnconfigure(0, weight=1)
 
     puesta = update.installed_version(deploy.app_dir(raiz)) or "desconocida"
@@ -960,21 +960,21 @@ def _panel_ya_instalado(cuerpo, wiz, raiz, fila: int) -> None:
                     f"nuevo sin tocar nada más, añadirle o quitarle plataformas "
                     f"(otro sistema, otra CPU), o repetir la instalación entera "
                     f"si lo que quieres es cambiar de remoto, de cifrado o de "
-                    f"parejas.")).grid(row=1, column=0, sticky="w", pady=(5, 11))
+                    f"parejas.")).grid(row=1, column=0, sticky="w", pady=(theme.E1, theme.E3))
 
     botones = ttk.Frame(caja, style="Card.TFrame")
     botones.grid(row=2, column=0, sticky="w")
     actualizar = ttk.Button(botones, text="Actualizar el programa",
-                            style="Primary.TButton", padding=(12, 7),
+                            style="Primary.TButton", padding=(theme.E3, theme.E2),
                             command=lambda: _ir_a_actualizar(wiz))
     theme.boton_icono(actualizar, "down", theme.SOBRE_ACENTO, theme.ACENTO)
     actualizar.grid(row=0, column=0)
     ttk.Button(botones, text="Añadir plataformas…", style="CardQuiet.TButton",
                command=lambda: _ir_a_plataformas(wiz)).grid(row=0, column=1,
-                                                            padx=(8, 0))
+                                                            padx=(theme.E2, 0))
     ttk.Button(botones, text="Reinstalar desde cero", style="CardQuiet.TButton",
                command=lambda: _seguir_instalando(wiz)).grid(row=0, column=2,
-                                                             padx=(8, 0))
+                                                             padx=(theme.E2, 0))
 
 
 def _paso_cifrado(cuerpo, wiz) -> None:
@@ -1014,23 +1014,23 @@ def _paso_actualizar(cuerpo, wiz) -> None:
         "filtros, los diarios y el rclone que ya tiene. Tampoco se toca nada de "
         "lo que haya fuera de esa carpeta.")).grid(row=0, column=0, sticky="w")
 
-    tabla = ttk.Frame(cuerpo, style="Card.TFrame", padding=(14, 12))
-    tabla.grid(row=1, column=0, sticky="w", pady=(14, 0))
+    tabla = ttk.Frame(cuerpo, style="Card.TFrame", padding=(theme.E4, theme.E3))
+    tabla.grid(row=1, column=0, sticky="w", pady=(theme.E4, 0))
     for i, (etiqueta, valor) in enumerate((
             ("Tiene puesta", puesta or "una versión anterior a los avisos"),
             ("Se le pondrá", mia or "la que trae este instalador"))):
         ttk.Label(tabla, text=etiqueta, style="Card.Campo.TLabel").grid(
-            row=i, column=0, sticky="w", padx=(0, 14), pady=(0, 3))
+            row=i, column=0, sticky="w", padx=(0, theme.E4), pady=(0, theme.E1))
         ttk.Label(tabla, text=valor, style="Card.Mono.TLabel").grid(
-            row=i, column=1, sticky="w", pady=(0, 3))
+            row=i, column=1, sticky="w", pady=(0, theme.E1))
 
     fila = 2
     # Instalar hacia atrás no se prohíbe —puede ser justo lo que se quiere para
     # salir de una versión que va mal— pero no puede pasar por descuido.
     retroceso = bool(puesta and mia and update.is_newer(puesta, mia))
     if retroceso:
-        aviso = ttk.Frame(cuerpo, style="Ambar.TFrame", padding=(11, 9))
-        aviso.grid(row=fila, column=0, sticky="ew", pady=(14, 0))
+        aviso = ttk.Frame(cuerpo, style="Ambar.TFrame", padding=(theme.E3, theme.E2))
+        aviso.grid(row=fila, column=0, sticky="ew", pady=(theme.E4, 0))
         aviso.columnconfigure(0, weight=1)
         ttk.Label(aviso, style="Ambar.TLabel", wraplength=theme.medida(740), justify="left",
                   text=(f"Este instalador es MÁS VIEJO que el dispositivo: trae "
@@ -1040,7 +1040,7 @@ def _paso_actualizar(cuerpo, wiz) -> None:
 
     estado_lbl = ttk.Label(cuerpo, wraplength=theme.medida(780), justify="left",
                            foreground=theme.TINTA3)
-    estado_lbl.grid(row=fila + 1, column=0, sticky="w", pady=(12, 0))
+    estado_lbl.grid(row=fila + 1, column=0, sticky="w", pady=(theme.E3, 0))
 
     def actualizar() -> None:
         """Sustituye el programa del dispositivo, en un hilo."""
@@ -1081,9 +1081,9 @@ def _paso_actualizar(cuerpo, wiz) -> None:
         wiz.revisar()
 
     boton = ttk.Button(cuerpo, text="Actualizar ahora", style="Primary.TButton",
-                       padding=(14, 8), command=actualizar)
+                       padding=(theme.E4, theme.E2), command=actualizar)
     theme.boton_icono(boton, "down", theme.SOBRE_ACENTO, theme.ACENTO)
-    boton.grid(row=fila, column=0, sticky="w", pady=(16, 0))
+    boton.grid(row=fila, column=0, sticky="w", pady=(theme.E4, 0))
 
 
 def _confirmar_retroceso(wiz, mia: str, puesta: str) -> bool:
@@ -1123,23 +1123,23 @@ def _paso_instalar(cuerpo, wiz) -> None:
     except InstallError as e:
         ttk.Label(cuerpo, foreground=theme.PELIGRO, justify="left",
                   wraplength=theme.medida(780), text=str(e)).grid(
-                      row=1, column=0, sticky="w", pady=(10, 0))
+                      row=1, column=0, sticky="w", pady=(theme.E3, 0))
         return
 
     colores = {device.VACIO: theme.OK, device.YA_INSTALADO: theme.OK,
                device.AJENO: theme.AVISO}
     ttk.Label(cuerpo, foreground=colores[situacion], justify="left",
               wraplength=theme.medida(780),
-              text=explicacion).grid(row=1, column=0, sticky="w", pady=(10, 0))
+              text=explicacion).grid(row=1, column=0, sticky="w", pady=(theme.E3, 0))
 
     confirmado = {"vale": situacion != device.AJENO}
     if situacion == device.AJENO:
         marco = ttk.Frame(cuerpo)
-        marco.grid(row=2, column=0, sticky="w", pady=(10, 0))
+        marco.grid(row=2, column=0, sticky="w", pady=(theme.E3, 0))
         ttk.Label(marco, text=f"Para seguir, escribe la ruta «{raiz}»:").grid(
             row=0, column=0, sticky="w")
         escrito = tk.StringVar()
-        ttk.Entry(marco, textvariable=escrito, width=44).grid(row=0, column=1, padx=6)
+        ttk.Entry(marco, textvariable=escrito, width=44).grid(row=0, column=1, padx=theme.E2)
 
         def revisar_texto(*_):
             """Comprueba que la ruta escrita es la del dispositivo."""
@@ -1150,11 +1150,11 @@ def _paso_instalar(cuerpo, wiz) -> None:
 
     lista, refrescar_lista = _lista_plataformas(cuerpo, wiz, raiz,
                                                 al_cambiar=lambda: boton_estado())
-    lista.grid(row=3, column=0, sticky="ew", pady=(14, 0))
+    lista.grid(row=3, column=0, sticky="ew", pady=(theme.E4, 0))
 
     estado_lbl = ttk.Label(cuerpo, wraplength=theme.medida(780), justify="left",
                            foreground=theme.TINTA3)
-    estado_lbl.grid(row=4, column=0, sticky="w", pady=(12, 0))
+    estado_lbl.grid(row=4, column=0, sticky="w", pady=(theme.E3, 0))
 
     def instalar() -> None:
         """Instala el programa en el dispositivo, en un hilo."""
@@ -1218,7 +1218,7 @@ def _paso_instalar(cuerpo, wiz) -> None:
 
     boton = ttk.Button(cuerpo, text="Instalar el programa", command=instalar,
                        style="Primary.TButton")
-    boton.grid(row=5, column=0, sticky="w", pady=(14, 0))
+    boton.grid(row=5, column=0, sticky="w", pady=(theme.E4, 0))
 
     def boton_estado() -> None:
         """Habilita «Instalar el programa» si está confirmado y hay algo que hacer."""
@@ -1282,10 +1282,10 @@ def _lista_plataformas(padre, wiz, raiz, al_cambiar):
                         command=cambiar_modo).grid(row=i, column=0, sticky="w")
 
     tabla = ttk.Frame(marco)
-    tabla.grid(row=1, column=0, sticky="w", pady=(10, 0))
+    tabla.grid(row=1, column=0, sticky="w", pady=(theme.E3, 0))
     for col, rotulo in enumerate(("Plataforma", "rclone", "Python", "")):
         ttk.Label(tabla, text=rotulo, style="Rotulo.TLabel").grid(
-            row=0, column=col, sticky="w", padx=(0, 18))
+            row=0, column=col, sticky="w", padx=(0, theme.E4))
 
     filas: dict[str, tuple] = {}
 
@@ -1303,21 +1303,21 @@ def _lista_plataformas(padre, wiz, raiz, al_cambiar):
         texto = plat.nombre + ("  ·  este equipo" if fila.anfitrion else "")
         ttk.Checkbutton(tabla, text=texto, variable=var,
                         command=lambda p=plat, v=var: cambiar(p, v)).grid(
-            row=i, column=0, sticky="w", padx=(0, 18))
+            row=i, column=0, sticky="w", padx=(0, theme.E4))
         rclone_lbl = ttk.Label(tabla, style="Mono.TLabel")
-        rclone_lbl.grid(row=i, column=1, sticky="w", padx=(0, 18))
+        rclone_lbl.grid(row=i, column=1, sticky="w", padx=(0, theme.E4))
         python_lbl = ttk.Label(tabla, style="Mono.TLabel")
-        python_lbl.grid(row=i, column=2, sticky="w", padx=(0, 18))
+        python_lbl.grid(row=i, column=2, sticky="w", padx=(0, theme.E4))
         nota = ttk.Label(tabla, style="Pista.TLabel")
         nota.grid(row=i, column=3, sticky="w")
         filas[plat.clave] = (var, rclone_lbl, python_lbl, nota)
 
     total = ttk.Label(marco, style="Fuerte.TLabel")
-    total.grid(row=2, column=0, sticky="w", pady=(10, 0))
+    total.grid(row=2, column=0, sticky="w", pady=(theme.E3, 0))
     plan_lbl = ttk.Label(marco, style="Pista.TLabel", justify="left",
                          wraplength=theme.medida(760))
-    plan_lbl.grid(row=3, column=0, sticky="w", pady=(4, 0))
-    avisos = ttk.Frame(marco, style="Ambar.TFrame", padding=(11, 9))
+    plan_lbl.grid(row=3, column=0, sticky="w", pady=(theme.E1, 0))
+    avisos = ttk.Frame(marco, style="Ambar.TFrame", padding=(theme.E3, theme.E2))
     avisos.columnconfigure(0, weight=1)
     avisos_lbl = ttk.Label(avisos, style="Ambar.TLabel", justify="left",
                            wraplength=theme.medida(740))
@@ -1350,7 +1350,7 @@ def _lista_plataformas(padre, wiz, raiz, al_cambiar):
         dichos = m.avisos(libre)
         if dichos:
             avisos_lbl.configure(text="\n".join(dichos))
-            avisos.grid(row=4, column=0, sticky="ew", pady=(10, 0))
+            avisos.grid(row=4, column=0, sticky="ew", pady=(theme.E3, 0))
         else:
             avisos.grid_remove()
 
@@ -1403,11 +1403,11 @@ def _paso_plataformas(cuerpo, wiz) -> None:
 
     lista, refrescar_lista = _lista_plataformas(cuerpo, wiz, raiz,
                                                 al_cambiar=lambda: boton_estado())
-    lista.grid(row=1, column=0, sticky="ew", pady=(14, 0))
+    lista.grid(row=1, column=0, sticky="ew", pady=(theme.E4, 0))
 
     estado_lbl = ttk.Label(cuerpo, wraplength=theme.medida(780), justify="left",
                            foreground=theme.TINTA3)
-    estado_lbl.grid(row=2, column=0, sticky="w", pady=(12, 0))
+    estado_lbl.grid(row=2, column=0, sticky="w", pady=(theme.E3, 0))
 
     def aplicar() -> None:
         """Aplica la lista de plataformas, en un hilo."""
@@ -1462,8 +1462,8 @@ def _paso_plataformas(cuerpo, wiz) -> None:
         wiz.revisar()
 
     boton = ttk.Button(cuerpo, text="Aplicar", style="Primary.TButton",
-                       padding=(14, 8), command=aplicar)
-    boton.grid(row=3, column=0, sticky="w", pady=(14, 0))
+                       padding=(theme.E4, theme.E2), command=aplicar)
+    boton.grid(row=3, column=0, sticky="w", pady=(theme.E4, 0))
 
     def boton_estado() -> None:
         """Habilita «Aplicar» si la lista está lista."""
@@ -1481,7 +1481,7 @@ def _paso_parejas(cuerpo, wiz) -> None:
     ttk.Label(cuerpo, justify="left", wraplength=theme.medida(780), text=(
         "Qué carpetas va a sincronizar ESTE dispositivo. El catálogo es global; "
         "el sync_config.toml que se escribe aquí es solo de este dispositivo.")
-        ).grid(row=0, column=0, sticky="w", pady=(0, 10))
+        ).grid(row=0, column=0, sticky="w", pady=(0, theme.E3))
 
     marco = ttk.Frame(cuerpo)
     marco.grid(row=1, column=0, sticky="w")
@@ -1495,17 +1495,17 @@ def _paso_parejas(cuerpo, wiz) -> None:
             row=i, column=0, sticky="w")
         ttk.Label(marco, foreground=theme.TINTA3,
                   text=f"{pareja.get('local', '?')}  ↔  {pareja.get('remote_path', '?')}"
-                  ).grid(row=i, column=1, sticky="w", padx=(16, 0))
+                  ).grid(row=i, column=1, sticky="w", padx=(theme.E4, 0))
         if modo in ("up-mirror", "down-mirror"):
             destino = "el remoto" if modo == "up-mirror" else "el dispositivo"
             ttk.Label(marco, foreground=theme.PELIGRO, justify="left",
                       wraplength=theme.medida(260),
                       text=f"espejo: borra en {destino} lo que no esté en el origen"
-                      ).grid(row=i, column=2, sticky="w", padx=(12, 0))
+                      ).grid(row=i, column=2, sticky="w", padx=(theme.E3, 0))
 
     resultado = ttk.Label(cuerpo, wraplength=theme.medida(780), justify="left",
                           foreground=theme.TINTA3)
-    resultado.grid(row=2, column=0, sticky="w", pady=(14, 0))
+    resultado.grid(row=2, column=0, sticky="w", pady=(theme.E4, 0))
 
     def guardar() -> None:
         """Escribe el config con las parejas elegidas y crea sus carpetas."""
@@ -1539,7 +1539,7 @@ def _paso_parejas(cuerpo, wiz) -> None:
         wiz.revisar()
 
     ttk.Button(cuerpo, text="Guardar el config y crear las carpetas",
-               command=guardar).grid(row=3, column=0, sticky="w", pady=(12, 0))
+               command=guardar).grid(row=3, column=0, sticky="w", pady=(theme.E3, 0))
 
 
 def _paso_llavero(cuerpo, wiz) -> None:
@@ -1559,7 +1559,7 @@ def _paso_llavero(cuerpo, wiz) -> None:
         "El llavero es una base de KeePassXC (contraseñas y passkeys) que viaja en el "
         "dispositivo y se sincroniza sola con la carpeta del catálogo. Es opcional: se "
         "puede activar después, en «Ajustes → Llavero» de la ventana de prdrive.")
-        ).grid(row=0, column=0, sticky="w", pady=(0, 10))
+        ).grid(row=0, column=0, sticky="w", pady=(0, theme.E3))
 
     eleccion = tk.StringVar(value=wiz.llavero_eleccion)
     pide = tk.BooleanVar(value=wiz.llavero_pide)
@@ -1572,11 +1572,11 @@ def _paso_llavero(cuerpo, wiz) -> None:
     for i, (valor, texto) in enumerate(textos):
         radio = ttk.Radiobutton(opciones, text=texto, value=valor, variable=eleccion,
                                 command=lambda: cambiar())
-        radio.grid(row=i, column=0, sticky="w", pady=2)
+        radio.grid(row=i, column=0, sticky="w", pady=theme.E1)
         radios.append(radio)
 
     detalle = ttk.Frame(cuerpo)
-    detalle.grid(row=2, column=0, sticky="w", pady=(10, 0))
+    detalle.grid(row=2, column=0, sticky="w", pady=(theme.E3, 0))
     base_lbl = ttk.Label(detalle, style="MonoPista.TLabel")
     elegir_base = ttk.Button(detalle, text="Elegir la base…", style="Quiet.TButton",
                              command=lambda: escoger_base())
@@ -1590,10 +1590,10 @@ def _paso_llavero(cuerpo, wiz) -> None:
 
     resultado = ttk.Label(cuerpo, wraplength=theme.medida(780), justify="left",
                           foreground=theme.TINTA3)
-    resultado.grid(row=3, column=0, sticky="w", pady=(12, 0))
+    resultado.grid(row=3, column=0, sticky="w", pady=(theme.E3, 0))
     boton = ttk.Button(cuerpo, text="Poner el llavero", style="Primary.TButton",
                        command=lambda: poner())
-    boton.grid(row=4, column=0, sticky="w", pady=(12, 0))
+    boton.grid(row=4, column=0, sticky="w", pady=(theme.E3, 0))
 
     def pide_llave() -> bool:
         """Indica si la base que va a ir pide fichero llave."""
@@ -1621,13 +1621,13 @@ def _paso_llavero(cuerpo, wiz) -> None:
         if que == "propia":
             base_lbl.configure(text=str(wiz.llavero_base or "(sin elegir)"))
             base_lbl.grid(row=0, column=0, sticky="w")
-            elegir_base.grid(row=0, column=1, sticky="w", padx=(10, 0))
+            elegir_base.grid(row=0, column=1, sticky="w", padx=(theme.E3, 0))
             if remota is None:
-                con_llave.grid(row=1, column=0, columnspan=2, sticky="w", pady=(6, 0))
+                con_llave.grid(row=1, column=0, columnspan=2, sticky="w", pady=(theme.E2, 0))
         if pide_llave():
             llave_lbl.configure(text=str(wiz.llavero_llave or "(sin decir)"))
-            llave_lbl.grid(row=2, column=0, sticky="w", pady=(6, 0))
-            elegir_llave.grid(row=2, column=1, sticky="w", padx=(10, 0), pady=(6, 0))
+            llave_lbl.grid(row=2, column=0, sticky="w", pady=(theme.E2, 0))
+            elegir_llave.grid(row=2, column=1, sticky="w", padx=(theme.E3, 0), pady=(theme.E2, 0))
         if wiz.llavero_hecho:
             boton.configure(state="disabled")
             for radio in radios:
@@ -1725,14 +1725,14 @@ def _paso_inicializar(cuerpo, wiz) -> None:
     ttk.Label(cuerpo, justify="left", wraplength=theme.medida(780), text=(
         "Una pareja bisync necesita un --resync la primera vez: es lo que compara "
         "los dos lados y fija la referencia. No borra por diferencias.")).grid(
-        row=0, column=0, sticky="w", pady=(0, 10))
+        row=0, column=0, sticky="w", pady=(0, theme.E3))
 
     tabla = ttk.Frame(cuerpo)
     tabla.grid(row=1, column=0, sticky="w")
     for i, (izq, der) in enumerate(deploy.summary(wiz.catalog, wiz.state.selected)):
         ttk.Label(tabla, text=izq).grid(row=i, column=0, sticky="w")
         ttk.Label(tabla, text=der, foreground=theme.TINTA3).grid(
-            row=i, column=1, sticky="w", padx=(14, 0))
+            row=i, column=1, sticky="w", padx=(theme.E4, 0))
 
     if espejos:
         ttk.Label(cuerpo, foreground=theme.PELIGRO, justify="left",
@@ -1741,11 +1741,11 @@ def _paso_inicializar(cuerpo, wiz) -> None:
             "Son espejos: borran en el otro lado lo que no esté en el origen, y "
             "lanzarlos con las carpetas locales recién creadas propagaría ese "
             "vacío. Cuando el dispositivo esté como quieres, pruébalos a mano con "
-            "--dry-run.")).grid(row=2, column=0, sticky="w", pady=(12, 0))
+            "--dry-run.")).grid(row=2, column=0, sticky="w", pady=(theme.E3, 0))
 
     resultado = ttk.Label(cuerpo, wraplength=theme.medida(780), justify="left",
                           foreground=theme.TINTA3)
-    resultado.grid(row=3, column=0, sticky="w", pady=(12, 0))
+    resultado.grid(row=3, column=0, sticky="w", pady=(theme.E3, 0))
 
     def inicializar() -> None:
         """Lanza el resync en la ventana de salida."""
@@ -1767,7 +1767,7 @@ def _paso_inicializar(cuerpo, wiz) -> None:
             foreground=theme.OK if rc == 0 else theme.PELIGRO)
 
     boton = ttk.Button(cuerpo, text="Inicializar ahora", command=inicializar)
-    boton.grid(row=4, column=0, sticky="w", pady=(12, 0))
+    boton.grid(row=4, column=0, sticky="w", pady=(theme.E3, 0))
     if not bisync:
         boton.configure(state="disabled")
         resultado.configure(text="Ninguna de las parejas elegidas necesita "
@@ -1781,7 +1781,7 @@ def _paso_final(cuerpo, wiz) -> None:
     ttk.Label(cuerpo, justify="left", wraplength=theme.medida(780), text=(
         "Lo que de verdad hace falta para que este dispositivo arranque en "
         "cualquier equipo. Lo que falte aquí es lo que fallaría luego sin que se "
-        "entienda por qué.")).grid(row=0, column=0, sticky="w", pady=(0, 10))
+        "entienda por qué.")).grid(row=0, column=0, sticky="w", pady=(0, theme.E3))
 
     tabla = ttk.Frame(cuerpo)
     tabla.grid(row=1, column=0, sticky="w")
@@ -1808,12 +1808,12 @@ def _paso_final(cuerpo, wiz) -> None:
                       width=3).grid(row=i, column=0, sticky="w")
             ttk.Label(tabla, text=chk.etiqueta + ":").grid(row=i, column=1, sticky="w")
             ttk.Label(tabla, text=chk.detalle, foreground=color, wraplength=theme.medida(520),
-                      justify="left").grid(row=i, column=2, sticky="w", padx=(10, 0))
+                      justify="left").grid(row=i, column=2, sticky="w", padx=(theme.E3, 0))
 
     revisar_dispositivo()
 
-    extras = ttk.LabelFrame(cuerpo, text="Y ya que estamos", padding=10)
-    extras.grid(row=2, column=0, sticky="w", pady=(14, 0))
+    extras = ttk.LabelFrame(cuerpo, text="Y ya que estamos", padding=theme.E3)
+    extras.grid(row=2, column=0, sticky="w", pady=(theme.E4, 0))
 
     from common import equipo
     agente = equipo.instalado()
@@ -1905,7 +1905,7 @@ def _paso_final(cuerpo, wiz) -> None:
             ("Desmontar el contenedor", desmontar),
             ("Volver a comprobar", revisar_dispositivo))):
         ttk.Button(extras, text=texto, command=accion).grid(
-            row=i // 2, column=i % 2, sticky="w", padx=(0, 8), pady=2)
+            row=i // 2, column=i % 2, sticky="w", padx=(0, theme.E2), pady=theme.E1)
 
 
 def _ok_conexion(w) -> bool:

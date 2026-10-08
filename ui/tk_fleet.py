@@ -206,7 +206,7 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> None:
     yo = fleet.device_id()
     sondeo = Sondeo(dlg)
 
-    marco = cuerpo_visible(dlg, padding=(20, 18, 20, 16))
+    marco = cuerpo_visible(dlg, padding=(theme.E5, theme.E4, theme.E5, theme.E4))
     marco.columnconfigure(0, weight=1)
 
     arriba = ttk.Frame(marco)
@@ -228,13 +228,13 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> None:
     donde.columnconfigure(0, weight=1)
     chip = {"widget": None}
     endpoint = ttk.Label(donde, style="MonoPista.TLabel", text=fleet.carpeta(raw))
-    endpoint.grid(row=1, column=0, sticky="e", pady=(6, 0))
+    endpoint.grid(row=1, column=0, sticky="e", pady=(theme.E2, 0))
     indicador = Indicador(arriba, ancho=520)
-    indicador.marco.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+    indicador.marco.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(theme.E3, 0))
     dlg.indicador, dlg.sondeo = indicador, sondeo   # como `visor`: los tests los miran
 
-    tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(8, 8, 2, 4))
-    tarjeta.grid(row=1, column=0, sticky="nsew", pady=(14, 0))
+    tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(theme.E2, theme.E2, theme.E1, theme.E1))
+    tarjeta.grid(row=1, column=0, sticky="nsew", pady=(theme.E4, 0))
     tarjeta.columnconfigure(0, weight=1)
     tarjeta.rowconfigure(0, weight=1)
     marco.rowconfigure(1, weight=1)
@@ -261,9 +261,9 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> None:
     # crecer el contenido y sacaba una barra de desplazamiento que al abrir no
     # estaba.
     hueco = ttk.Frame(marco)
-    hueco.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+    hueco.grid(row=2, column=0, sticky="ew", pady=(theme.E3, 0))
     hueco.columnconfigure(0, weight=1)
-    hoja = ttk.Frame(hueco, style="Card.TFrame", padding=(14, 10, 14, 12))
+    hoja = ttk.Frame(hueco, style="Card.TFrame", padding=(theme.E4, theme.E3, theme.E4, theme.E3))
     hoja.grid(row=0, column=0, sticky="nsew")
     canalon = theme.ancho_rotulo(marco, *ROTULOS_FICHA) + icons.px(marco, 14)
     hoja.columnconfigure(0, minsize=canalon)
@@ -281,12 +281,12 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> None:
         # empiezan con el mismo nombre, y el id es lo único que los distingue
         # (y el nombre de su fichero en `devices/`).
         ttk.Label(hoja, text=f"id {disp.id[:8]}", style="Card.MonoPista.TLabel").grid(
-            row=0, column=2, sticky="ne", padx=(12, 0))
+            row=0, column=2, sticky="ne", padx=(theme.E3, 0))
         fila = 1
         for apartado in ficha(disp, aqui):
             ttk.Label(hoja, text=theme.rotulo(apartado.rotulo),
                       style="Card.Rotulo.TLabel").grid(row=fila, column=0,
-                                                       sticky="nw", pady=(9, 0))
+                                                       sticky="nw", pady=(theme.E2, 0))
             lineas = list(apartado.lineas)
             lineas += [Linea(" ")] * (apartado.reserva - len(lineas))
             for i, linea in enumerate(lineas):
@@ -297,7 +297,7 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> None:
                     row=fila, column=1, sticky="w", pady=aire)
                 if linea.fecha:
                     ttk.Label(hoja, text=linea.fecha, style="Card.MonoPista.TLabel").grid(
-                        row=fila, column=2, sticky="e", padx=(12, 0), pady=aire)
+                        row=fila, column=2, sticky="e", padx=(theme.E3, 0), pady=aire)
                 fila += 1
 
     def reservar() -> None:
@@ -370,7 +370,7 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> None:
             vacio.grid_remove()
             tree.selection_set(flota[0].id)
         else:
-            vacio.grid(row=2, column=0, sticky="w", pady=(10, 0))
+            vacio.grid(row=2, column=0, sticky="w", pady=(theme.E3, 0))
         repasar()
         pie_nota.configure(text=nota or (aviso or ""))
         # Releer puede traer una ficha más grande que las que había al abrir:
@@ -431,7 +431,7 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> None:
         refrescar(f"«{disp.nombre}» ya no está en la lista.")
 
     acciones = ttk.Frame(marco)
-    acciones.grid(row=3, column=0, sticky="ew", pady=(14, 0))
+    acciones.grid(row=3, column=0, sticky="ew", pady=(theme.E4, 0))
     acciones.columnconfigure(1, weight=1)
     quitar = ttk.Button(acciones, text="Quitar de la lista…", style="Danger.TButton",
                         command=quitar_de_la_lista, state="disabled")
@@ -444,7 +444,7 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> None:
     releer.grid(row=0, column=2, sticky="e")
 
     cierre = ttk.Frame(marco)
-    cierre.grid(row=4, column=0, sticky="ew", pady=(12, 0))
+    cierre.grid(row=4, column=0, sticky="ew", pady=(theme.E3, 0))
     cierre.columnconfigure(0, weight=1)
     pie_nota = ttk.Label(cierre, text="", style="MonoPista.TLabel",
                          wraplength=theme.medida(620), justify="left")

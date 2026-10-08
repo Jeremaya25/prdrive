@@ -3,9 +3,13 @@
 
 Papel cálido, tinta casi negra y un solo acento azul; el vocabulario que la
 aplicación ya tenía (gris para las pistas, ámbar para los avisos, monoespaciada
-para rutas y flags) con forma. Sin esquinas redondeadas y sin sombras, porque
-son las dos cosas que ttk no sabe pintar y fingirlas con imágenes sería cambiar
-de tecnología para adornar.
+para rutas y flags) con forma, y la letra del diseño, que viaja con el programa
+(`cargar_fuentes()`).
+
+Los controles que el diseño redondea (botones, campos, tarjetas, avisos,
+chips) no los pinta clam: son elementos de imagen con piezas que dibuja
+`icons.caja()` con los colores de aquí («Los controles dibujados», más abajo).
+Sin sombras: no hacen falta en una ventana plana.
 
 El tema es **clam** y no el nativo: es el único de los que trae Tk que deja
 elegir el color de cada borde (`bordercolor`, `lightcolor`, `darkcolor`) y sin
@@ -25,7 +29,9 @@ puede importar quien no tenga entorno gráfico.
 
 from __future__ import annotations
 
+import re
 import sys
+from pathlib import Path
 
 _densidad_declarada = False
 """Si ya se declaró la densidad de pantalla en este proceso."""
@@ -63,6 +69,7 @@ def nitidez() -> None:
     entrado.
     """
     global _densidad_declarada
+    cargar_fuentes()                # también antes del primer Tk(): ver allí
     if _densidad_declarada or sys.platform != "win32":
         return
     _densidad_declarada = True
@@ -90,6 +97,67 @@ def nitidez() -> None:
         pass
 
 
+FUENTES = Path(__file__).resolve().parent / "fuentes"
+"""La letra que viaja con el programa: Noto Sans y Noto Sans Mono.
+
+Son de la licencia SIL Open Font License (`fuentes/OFL.txt`), que deja
+llevarlas dentro de un programa y recortarlas. Van recortadas a los alfabetos
+latinos, la puntuación, las flechas y los dibujos de caja: lo que escribe la
+interfaz. Un carácter que no esté lo pinta el sistema con la letra que tenga,
+como antes.
+"""
+
+_FAMILIAS_PROPIAS = ("Noto Sans", "Noto Sans SemiBold", "Noto Sans Mono")
+"""Las familias que ponen los ficheros de `FUENTES`, una vez cargados."""
+
+_fuentes_cargadas: bool | None = None
+"""`None` si aún no se intentó; si no, si la letra propia está disponible."""
+
+
+def cargar_fuentes() -> bool:
+    """Hace que la letra de `FUENTES` la vea este proceso, sin instalarla, y dice si lo logró.
+
+    Es **privada del proceso**: no se instala nada en el equipo, no pide
+    permisos y desaparece al cerrar. En Windows es `AddFontResourceExW` con
+    `FR_PRIVATE`; en Linux, `FcConfigAppFontAddFile` de fontconfig, que es de
+    donde saca la letra el Tk de X11 (Xft). En otro sistema, o si algo falla,
+    no se carga nada y `familia()` se queda con la del sistema: la letra es un
+    adorno y no puede impedir que se abra la ventana.
+
+    Tiene que correr antes del primer `Tk()` por lo mismo que `nitidez()`, que
+    la llama; `apply()` la vuelve a llamar por si se entró por otro sitio. Es de
+    proceso, así que basta una vez.
+    """
+    global _fuentes_cargadas
+    if _fuentes_cargadas is not None:
+        return _fuentes_cargadas
+    _fuentes_cargadas = False
+    try:
+        ficheros = sorted(FUENTES.glob("*.ttf"))
+        if not ficheros:
+            return False
+        import ctypes
+        if sys.platform == "win32":
+            gdi = ctypes.windll.gdi32
+            gdi.AddFontResourceExW.argtypes = (ctypes.c_wchar_p, ctypes.c_uint,
+                                               ctypes.c_void_p)
+            hechos = [gdi.AddFontResourceExW(str(f), 0x10, None)  # FR_PRIVATE
+                      for f in ficheros]
+        elif sys.platform.startswith("linux"):
+            import ctypes.util
+            fc = ctypes.CDLL(ctypes.util.find_library("fontconfig")
+                             or "libfontconfig.so.1")
+            fc.FcConfigAppFontAddFile.argtypes = (ctypes.c_void_p, ctypes.c_char_p)
+            hechos = [fc.FcConfigAppFontAddFile(None, bytes(f))
+                      for f in ficheros]
+        else:
+            return False
+        _fuentes_cargadas = all(hechos)
+    except Exception:                               # noqa: BLE001
+        _fuentes_cargadas = False
+    return _fuentes_cargadas
+
+
 def medida(px_diseno: int) -> str:
     """Devuelve una distancia del diseño en la unidad que Tk sí escala: puntos.
 
@@ -112,6 +180,24 @@ def medida(px_diseno: int) -> str:
     """
     return f"{round(px_diseno * 72 / 96)}p"
 
+
+E1, E2, E3, E4, E5, E6, E7 = (medida(n) for n in (4, 8, 12, 16, 24, 32, 48))
+"""La escala de espacios del diseño (`space-1` … `space-7`), en puntos.
+
+Todo hueco entre cosas sale de aquí y de ningún otro número: `padx=(E2, 0)`,
+`padding=(E4, E3)`. Para qué es cada uno, según el sistema de diseño:
+
+- `E1` (4): entre un rótulo y su campo; dentro de un chip.
+- `E2` (8): entre botones de una fila; entre un icono y su texto.
+- `E3` (12): entre filas de un formulario; el relleno de un aviso.
+- `E4` (16): el relleno de una tarjeta; el margen de una ventana.
+- `E5` (24): entre bloques de una pantalla.
+- `E6` (32): entre secciones; arriba de un diálogo.
+- `E7` (48): el aire de un estado vacío.
+
+Van en puntos (`medida`) y no en píxeles para que crezcan con la letra en una
+pantalla densa, como el resto.
+"""
 
 CLARO = {
     "PAPEL": "#FAF9F7",            # fondo de toda ventana
@@ -310,11 +396,19 @@ def elegir_tema() -> str:
     return TEMA
 
 _FAMILIAS = {
-    "texto": ("Segoe UI", "Noto Sans", "DejaVu Sans", "TkDefaultFont"),
-    "fuerte": ("Segoe UI Semibold", "Segoe UI", "Noto Sans", "TkDefaultFont"),
-    "mono": ("Consolas", "DejaVu Sans Mono", "Menlo", "TkFixedFont"),
+    "texto": ("Noto Sans", "Segoe UI", "DejaVu Sans", "TkDefaultFont"),
+    "fuerte": ("Noto Sans SemiBold", "Segoe UI Semibold", "Segoe UI",
+               "Noto Sans", "TkDefaultFont"),
+    "mono": ("Noto Sans Mono", "Consolas", "DejaVu Sans Mono", "Menlo",
+             "TkFixedFont"),
 }
 """Las familias de letra que valen para cada papel, por orden de preferencia.
+
+La primera es la que viaja con el programa (`FUENTES`), así que se ve igual en
+todos los equipos; las siguientes son las de la hoja de estilo, por si no se
+pudo cargar. La seminegrita va como familia aparte («Noto Sans SemiBold»)
+porque Tk solo sabe pedir normal o negrita, y el diseño quiere el peso de en
+medio.
 
 Los tamaños de `fuente()` son los de la hoja de estilo y van en PUNTOS, no en
 píxeles: en puntos es Tk quien los escala si la pantalla tiene más densidad, y
@@ -325,13 +419,20 @@ _elegidas: dict[str, str] = {}
 
 
 def familia(cual: str) -> str:
-    """Devuelve la primera familia instalada de las que valen para ese papel."""
+    """Devuelve la primera familia instalada de las que valen para ese papel.
+
+    Las propias cuentan como instaladas si se cargaron: la seminegrita no sale
+    en la lista de Tk en Linux, que da solo el primer nombre de cada fichero
+    («Noto Sans»), y sin embargo fontconfig la encuentra por el segundo.
+    """
     if cual not in _elegidas:
         from tkinter import font
         try:
             hay = set(font.families())
         except Exception:                       # sin Tk montado todavía
             hay = set()
+        if cargar_fuentes():
+            hay.update(_FAMILIAS_PROPIAS)
         _elegidas[cual] = next((f for f in _FAMILIAS[cual] if f in hay),
                                _FAMILIAS[cual][-1])
     return _elegidas[cual]
@@ -555,6 +656,467 @@ def _filetes(widget, style) -> None:
         style.configure("Card.TSeparator", background=LINEA_SUAVE)
 
 
+# ---------------------------------------------------------------------------
+# Los controles dibujados: piezas de imagen con esquinas redondeadas.
+#
+# clam pinta cajas de bordes rectos, y ese era el límite del tema. Aquí cada
+# control que el diseño redondea (botones, campos, tarjetas, avisos, chips)
+# deja de pintarse con los elementos de clam y pasa a ser un ELEMENTO DE
+# IMAGEN: una pieza pequeña que `icons.caja()` dibuja con los colores del tema
+# y que ttk parte en nueve trozos para estirarla al tamaño del control. Una
+# pieza por estado (normal, encima, pulsado, foco, desactivado).
+#
+# Las piezas son transparentes por fuera de la forma y ttk rellena el control
+# con su `background` antes de pintarlas, así que lo que asoma por las esquinas
+# es el `background` del estilo. Tiene que ser el color de la superficie donde
+# cae el control, y eso solo se sabe al ponerlo: lo hace `_asentar()`, que
+# mira el fondo del padre cuando el control aparece y, si no es el papel, le
+# pone una variante del estilo con ese fondo («Sobre<color>.<estilo>»). Nadie
+# tiene que acordarse de pedir el botón «de tarjeta».
+# ---------------------------------------------------------------------------
+
+RADIO = 4
+"""El radio de botones, campos, tarjetas y avisos (`radius-md`)."""
+RADIO_PILDORA = 10
+"""El de los chips de estado, que acaban redondos (`radius-pill`) a su alto."""
+RADIO_FINO = 2
+"""El de la etiqueta de capa y la barra de progreso (`radius-sm`)."""
+
+_REDONDOS: dict[str, bool] = {}
+"""Por estilo, si lleva piezas con esquinas transparentes y hay que asentarlo.
+
+Un `False` corta la búsqueda por sufijos de `_redondo()`: «Plano.Card.TFrame»
+termina como la tarjeta, pero es plano y no se asienta.
+"""
+_CARA: dict[str, str] = {}
+"""Los marcos con cara de imagen: el color que enseñan a sus hijos.
+
+Su `background` es el de DEBAJO (asoma por las esquinas), así que no sirve
+para saber sobre qué color caen los controles de dentro.
+"""
+
+_SOBRE = re.compile(r"^Sobre[0-9A-F]{6}\.")
+"""El prefijo que pone `_asentar()`."""
+
+
+def _redondo(estilo: str) -> bool:
+    """Dice si un estilo, o el del que hereda por su nombre, lleva piezas redondeadas."""
+    partes = estilo.split(".")
+    for i in range(len(partes)):
+        valor = _REDONDOS.get(".".join(partes[i:]))
+        if valor is not None:
+            return valor
+    return False
+
+
+def _hex(widget, color: str) -> str | None:
+    """Devuelve un color de Tk como «#RRGGBB» en mayúsculas, o `None`."""
+    try:
+        r, g, b = widget.winfo_rgb(color)
+    except Exception:                               # noqa: BLE001
+        return None
+    return "#%02X%02X%02X" % (r // 257, g // 257, b // 257)
+
+
+def _fondo_de(padre) -> str | None:
+    """Devuelve el color sobre el que caen los hijos de `padre`."""
+    from tkinter import TclError, ttk
+    try:
+        estilo = str(padre.cget("style")) or padre.winfo_class()
+    except TclError:                                # un widget de tk, sin estilo
+        try:
+            return _hex(padre, padre.cget("background"))
+        except TclError:
+            return None
+    base = _SOBRE.sub("", estilo)
+    if base in _CARA:
+        return _CARA[base]
+    return _hex(padre, ttk.Style(padre).lookup(estilo, "background"))
+
+
+def _asentar(evento) -> None:
+    """Le da a un control redondeado el fondo de la superficie donde ha caído.
+
+    Corre al aparecer cada control (`<Map>` de su clase) y solo toca los que
+    llevan piezas redondeadas. Si el fondo del padre es el del estilo, no hace
+    nada; si no, le pone «Sobre<color>.<estilo>», que hereda todo del estilo
+    por el nombre y solo cambia el `background`. Nada de aquí puede romper una
+    ventana: si algo falla, las esquinas se quedan del color del papel.
+    """
+    w = evento.widget
+    if isinstance(w, str):                          # un widget que tkinter no creó
+        return
+    try:
+        from tkinter import ttk
+        estilo = str(w.cget("style")) or w.winfo_class()
+        base = _SOBRE.sub("", estilo)
+        if not _redondo(base):
+            return
+        fondo = _fondo_de(w.master)
+        if fondo is None:
+            return
+        style = ttk.Style(w)
+        nuevo = base
+        if _hex(w, style.lookup(base, "background")) != fondo:
+            nuevo = f"Sobre{fondo[1:]}.{base}"
+            style.configure(nuevo, background=fondo)
+        if nuevo != estilo:
+            w.configure(style=nuevo)
+    except Exception:                               # noqa: BLE001
+        pass
+
+
+def _pieza(widget, style, nombre: str, estados, radio: float = RADIO,
+           esquinas: str = "1111", **opciones) -> None:
+    """Crea el elemento de imagen `nombre`, con una pieza por estado.
+
+    Args:
+        estados: `(estado, tonos)` por pieza, en el orden en que ttk las
+            prueba (la primera que encaje gana); `estado` es una tupla de
+            nombres de estado. La última es la de por defecto y su estado se
+            ignora. `tonos` es lo que recibe `icons.caja()`.
+        opciones: Las de `element create` (`padding`, `sticky`…).
+
+    Raises:
+        RuntimeError: Si una pieza no se puede pintar; quien llama deja ese
+            control como lo pinta clam.
+    """
+    from . import icons
+    guardadas = _imagenes.setdefault(id(widget.tk), [])
+    piezas, borde = [], 0
+    for estado, tonos in estados:
+        img, borde = icons.caja(widget, tonos, radio, esquinas)
+        if img is None:
+            raise RuntimeError(f"no se pudo pintar {nombre}")
+        guardadas.append(img)
+        piezas.append((estado, img))
+    *especiales, (_, defecto) = piezas
+    opciones.setdefault("padding", icons.px(widget, 1))
+    opciones.setdefault("sticky", "nswe")
+    style.element_create(nombre, "image", defecto,
+                         *[(*estado, img) for estado, img in especiales],
+                         border=borde, **opciones)
+
+
+def _tonos(relleno: str | None, borde: str | None = None) -> list:
+    """Los tonos de una caja: el borde de 1 px por fuera y el relleno dentro."""
+    if borde is None or borde == relleno:
+        return [(relleno, 0)]
+    return [(borde, 0), (relleno, 1)]
+
+
+def _foco(relleno: str | None, borde: str | None, anillo: str | None) -> list:
+    """Los tonos de la misma caja con el foco del teclado.
+
+    El anillo va por DENTRO, 2 px del acento en lugar del borde: por fuera
+    haría falta reservar sitio alrededor de cada control. En un control
+    relleno del propio acento el anillo no se vería, y ahí va un filete de la
+    letra (`anillo`) a 1 px del canto.
+    """
+    if anillo:
+        return [(relleno, 0), (anillo, 1), (relleno, 2)]
+    return [(ACENTO, 0), (relleno, 2)]
+
+
+def _botones_propios(widget, style) -> None:
+    """Los botones: una pieza por estado, del diseño (`.pd-btn`)."""
+    # normal, encima, pulsado y desactivado, cada uno (relleno, borde); el
+    # último, el color del anillo de foco si el botón va relleno del acento.
+    apagado = (APAGADO_FONDO, LINEA)
+    nada = (None, None)
+    botones = {
+        "TButton": ((SUPERFICIE, BORDE), (GRIS_FONDO, TINTA2), (LINEA, TINTA2),
+                    apagado, None),
+        "Primary.TButton": ((ACENTO, None), (ACENTO_OSCURO, None),
+                            (ACENTO_OSCURO, None), apagado, SOBRE_ACENTO),
+        "Tonal.TButton": ((ACENTO_SUAVE, None), (ACENTO_BORDE, None),
+                          (ACENTO_BORDE, None), (APAGADO_FONDO, None), None),
+        "Danger.TButton": ((SUPERFICIE, PELIGRO), (PELIGRO_FONDO, PELIGRO),
+                           (PELIGRO_FONDO, PELIGRO), apagado, None),
+        "DangerSolid.TButton": ((PELIGRO, None), (PELIGRO, TINTA),
+                                (PELIGRO, TINTA), apagado, SOBRE_PELIGRO),
+        "Ambar.TButton": ((SUPERFICIE, AVISO_BORDE_BOTON), (AVISO_FONDO, AVISO),
+                          (AVISO_FONDO, AVISO), apagado, None),
+        "AmbarDanger.TButton": ((SUPERFICIE, AVISO_BORDE_BOTON),
+                                (AVISO_FONDO, PELIGRO), (AVISO_FONDO, PELIGRO),
+                                apagado, None),
+        "Quiet.TButton": (nada, (ACENTO_SUAVE, None), (ACENTO_SUAVE, None),
+                          nada, None),
+        "CardQuiet.TButton": (nada, (ACENTO_SUAVE, None), (ACENTO_SUAVE, None),
+                              nada, None),
+        "GrisQuiet.TButton": (nada, (ACENTO_SUAVE, None), (ACENTO_SUAVE, None),
+                              nada, None),
+        "AmbarQuiet.TButton": (nada, (AVISO_BORDE, None), (AVISO_BORDE, None),
+                               nada, None),
+        "Nav.TButton": (nada, (GRIS_FONDO, None), (LINEA, None), nada, None),
+        "NavSel.TButton": ((ACENTO_SUAVE, ACENTO_BORDE), (ACENTO_SUAVE, ACENTO_BORDE),
+                           (ACENTO_SUAVE, ACENTO_BORDE), apagado, None),
+    }
+    for estilo, (normal, encima, pulsado, quieto, anillo) in botones.items():
+        try:
+            elemento = f"Prdrive.{estilo}.cara"
+            _pieza(widget, style, elemento, [
+                (("disabled",), _tonos(*quieto)),
+                (("pressed", "focus"), _foco(pulsado[0], pulsado[1], anillo)),
+                (("pressed",), _tonos(*pulsado)),
+                (("active", "focus"), _foco(encima[0], encima[1], anillo)),
+                (("active",), _tonos(*encima)),
+                (("focus",), _foco(normal[0], normal[1], anillo)),
+                ((), _tonos(*normal))])
+            style.layout(estilo, [(elemento, {"sticky": "nswe", "children": [
+                ("Button.padding", {"sticky": "nswe", "children": [
+                    ("Button.label", {"sticky": "nswe"})]})]})])
+            # El fondo ya no es la cara del botón: es lo que asoma por las
+            # esquinas. La cara la ponen las piezas, por estado.
+            if not estilo.endswith("Quiet.TButton"):
+                style.configure(estilo, background=PAPEL)
+            style.map(estilo, background=[], bordercolor=[], lightcolor=[],
+                      darkcolor=[])
+            _REDONDOS[estilo] = True
+        except Exception:                           # noqa: BLE001
+            pass                                    # se queda el de clam
+
+
+def _segmentos_propios(widget, style) -> None:
+    """El grupo de botones: el primero y el último redondeados por fuera.
+
+    Los de en medio no llevan borde a la izquierda: el borde derecho del de
+    antes hace de separador, como el `margin-left: -1px` del diseño.
+    """
+    formas = {"Segmento.Toolbutton": ("1111", 1),
+              "Primero.Segmento.Toolbutton": ("1001", 1),
+              "Medio.Segmento.Toolbutton": ("0000", (0, 1, 1, 1)),
+              "Ultimo.Segmento.Toolbutton": ("0110", (0, 1, 1, 1))}
+    for estilo, (esquinas, dentro) in formas.items():
+        try:
+            def caja(relleno, borde, ancho=dentro):
+                """Borde por fuera y relleno metido `ancho`."""
+                return [(borde, 0), (relleno, ancho)]
+            elemento = f"Prdrive.{estilo}.cara"
+            _pieza(widget, style, elemento, [
+                (("disabled",), caja(APAGADO_FONDO, LINEA)),
+                (("selected", "focus"), caja(ACENTO_SUAVE, ACENTO, 2)),
+                (("selected",), caja(ACENTO_SUAVE, ACENTO, 1)),
+                (("pressed",), caja(LINEA, TINTA2)),
+                (("active", "focus"), caja(GRIS_FONDO, ACENTO, 2)),
+                (("active",), caja(GRIS_FONDO, TINTA2)),
+                (("focus",), caja(SUPERFICIE, ACENTO, 2)),
+                ((), caja(SUPERFICIE, BORDE))], esquinas=esquinas)
+            style.layout(estilo, [(elemento, {"sticky": "nswe", "children": [
+                ("Toolbutton.padding", {"sticky": "nswe", "children": [
+                    ("Toolbutton.label", {"sticky": "nswe"})]})]})])
+            style.configure(estilo, background=PAPEL)
+            style.map(estilo, background=[], bordercolor=[], lightcolor=[],
+                      darkcolor=[])
+            _REDONDOS[estilo] = True
+        except Exception:                           # noqa: BLE001
+            pass
+
+
+def _campos_propios(widget, style) -> None:
+    """Los campos (entrada, desplegable, numérico) y sus flechas.
+
+    Las flechas de clam son cajas con borde y relleno propios; las del diseño
+    son un galón suelto dentro del campo. Se llaman como las de clam
+    («…downarrow», «…uparrow») porque los bindings de ttk deciden por ese
+    nombre si el clic cae en la flecha.
+    """
+    from . import icons
+    campo = [(("disabled",), _tonos(APAGADO_FONDO, LINEA)),
+             (("invalid", "focus"), [(PELIGRO, 0), (SUPERFICIE, 2)]),
+             (("invalid",), _tonos(SUPERFICIE, PELIGRO)),
+             (("focus",), [(ACENTO, 0), (SUPERFICIE, 2)]),
+             ((), _tonos(SUPERFICIE, BORDE))]
+    guardadas = _imagenes.setdefault(id(widget.tk), [])
+
+    def flecha(nombre, glifo, size, **opciones):
+        """Un galón como elemento, gris y apagado al desactivar."""
+        normal = icons.get(widget, glifo, size, TINTA3)
+        quieto = icons.get(widget, glifo, size, APAGADO)
+        if normal is None or quieto is None:
+            raise RuntimeError(f"no se pudo pintar {nombre}")
+        guardadas.extend((normal, quieto))
+        style.element_create(nombre, "image", normal, ("disabled", quieto),
+                             sticky="", **opciones)
+
+    try:
+        _pieza(widget, style, "Prdrive.Entry.field", campo)
+        style.layout("TEntry", [("Prdrive.Entry.field", {"sticky": "nswe", "children": [
+            ("Entry.padding", {"sticky": "nswe", "children": [
+                ("Entry.textarea", {"sticky": "nswe"})]})]})])
+        _REDONDOS["TEntry"] = True
+    except Exception:                               # noqa: BLE001
+        pass
+    try:
+        _pieza(widget, style, "Prdrive.Combobox.field", campo)
+        flecha("Prdrive.Combobox.downarrow", "abajo", 12,
+               width=icons.px(widget, 26))
+        style.layout("TCombobox", [("Prdrive.Combobox.field", {
+            "sticky": "nswe", "children": [
+                ("Prdrive.Combobox.downarrow", {"side": "right", "sticky": "ns"}),
+                ("Combobox.padding", {"expand": "1", "sticky": "nswe", "children": [
+                    ("Combobox.textarea", {"sticky": "nswe"})]})]})])
+        _REDONDOS["TCombobox"] = True
+    except Exception:                               # noqa: BLE001
+        pass
+    try:
+        _pieza(widget, style, "Prdrive.Spinbox.field", campo)
+        flecha("Prdrive.Spinbox.uparrow", "arriba", 10, width=icons.px(widget, 20))
+        flecha("Prdrive.Spinbox.downarrow", "abajo", 10, width=icons.px(widget, 20))
+        style.layout("TSpinbox", [("Prdrive.Spinbox.field", {
+            "side": "top", "sticky": "we", "children": [
+                ("null", {"side": "right", "sticky": "", "children": [
+                    ("Prdrive.Spinbox.uparrow", {"side": "top", "sticky": "e"}),
+                    ("Prdrive.Spinbox.downarrow", {"side": "bottom", "sticky": "e"})]}),
+                ("Spinbox.padding", {"sticky": "nswe", "children": [
+                    ("Spinbox.textarea", {"sticky": "nswe"})]})]})])
+        _REDONDOS["TSpinbox"] = True
+    except Exception:                               # noqa: BLE001
+        pass
+    for nombre in ("TEntry", "TCombobox", "TSpinbox"):
+        if _REDONDOS.get(nombre):
+            style.configure(nombre, background=PAPEL)
+            style.map(nombre, fieldbackground=[], bordercolor=[], lightcolor=[],
+                      darkcolor=[])
+
+
+def _marcos_propios(widget, style) -> None:
+    """Las tarjetas y los avisos: borde de 1 px y esquinas de 4.
+
+    Su `background` pasa a ser el de debajo y el color que enseñan se apunta
+    en `_CARA`. La variante «Plano.» sigue siendo un rectángulo del color de
+    la tarjeta, sin borde: va dentro de otra.
+    """
+    marcos = {"Card.TFrame": (SUPERFICIE, LINEA), "Gris.TFrame": (GRIS_FONDO, LINEA),
+              "Ambar.TFrame": (AVISO_FONDO, AVISO_BORDE),
+              "Rojo.TFrame": (PELIGRO_FONDO, PELIGRO_BORDE),
+              "Azul.TFrame": (ACENTO_SUAVE, ACENTO_BORDE),
+              "NotaAmbar.TFrame": (AVISO_FONDO, AVISO_BORDE),
+              "NotaRojo.TFrame": (PELIGRO_FONDO, PELIGRO_BORDE),
+              "NotaAzul.TFrame": (ACENTO_SUAVE, ACENTO_BORDE),
+              "NotaVerde.TFrame": (OK_FONDO, OK_BORDE)}
+    for estilo, (fondo, borde) in marcos.items():
+        try:
+            elemento = f"Prdrive.{estilo}.cara"
+            _pieza(widget, style, elemento, [((), _tonos(fondo, borde))])
+            style.layout(estilo, [(elemento, {"sticky": "nswe"})])
+            style.configure(estilo, background=PAPEL)
+            _CARA[estilo] = fondo
+            _REDONDOS[estilo] = True
+            plano = f"Plano.{estilo}"
+            style.layout(plano, [("Frame.border", {"sticky": "nswe"})])
+            style.configure(plano, background=fondo, relief="flat", borderwidth=0)
+            _REDONDOS[plano] = False
+        except Exception:                           # noqa: BLE001
+            pass
+
+
+def _chips_propios(widget, style) -> None:
+    """Los chips: píldoras con su borde; la etiqueta de capa, apenas redondeada."""
+    piezas = {f"{tipo}Chip.TLabel": (_tonos(fondo, borde) if fondo != PAPEL
+                                     else [(borde, 0), (None, 1)], RADIO_PILDORA)
+              for tipo, (fondo, borde, _letra, _disco) in _chips().items()}
+    piezas.update({f"Solido{tipo}Chip.TLabel": ([(fondo, 0)], RADIO_PILDORA)
+                   for tipo, (fondo, _letra) in _chips_solidos().items()})
+    piezas["Capa.TLabel"] = (_tonos(GRIS_FONDO, LINEA), RADIO_FINO)
+    for estilo, (tonos, radio) in piezas.items():
+        try:
+            elemento = f"Prdrive.{estilo}.cara"
+            _pieza(widget, style, elemento, [((), tonos)], radio=radio)
+            style.layout(estilo, [(elemento, {"sticky": "nswe", "children": [
+                ("Label.padding", {"sticky": "nswe", "children": [
+                    ("Label.label", {"sticky": "nswe"})]})]})])
+            style.configure(estilo, background=PAPEL)
+            _REDONDOS[estilo] = True
+        except Exception:                           # noqa: BLE001
+            pass
+
+
+def _opcion_propia(widget, style) -> None:
+    """El botón de opción del diseño: un aro con el punto del acento.
+
+    Como la casilla (`_casilla_propia`): cambia el indicador por una imagen y
+    deja el resto de la disposición.
+    """
+    from . import icons
+    try:
+        estados = {e: icons.opcion(widget, e)
+                   for e in ("marcada", "vacia", "apagada", "apagada-marcada")}
+        if None in estados.values():
+            return
+        _imagenes.setdefault(id(widget.tk), []).extend(estados.values())
+        style.element_create(
+            "Prdrive.Radiobutton.indicator", "image", estados["vacia"],
+            ("disabled", "selected", estados["apagada-marcada"]),
+            ("disabled", estados["apagada"]),
+            ("selected", estados["marcada"]),
+            border=0, sticky="")
+        style.layout("TRadiobutton", [
+            ("Radiobutton.padding", {"sticky": "nswe", "children": [
+                ("Prdrive.Radiobutton.indicator", {"side": "left", "sticky": ""}),
+                ("Radiobutton.focus", {"side": "left", "sticky": "w", "children": [
+                    ("Radiobutton.label", {"sticky": "nswe"})]})]})])
+    except Exception:                               # noqa: BLE001
+        pass
+
+
+def _barra_propia(widget, style) -> None:
+    """La barra de progreso: valle hundido con su filete y relleno del acento."""
+    try:
+        _pieza(widget, style, "Prdrive.Progressbar.trough",
+               [((), _tonos(GRIS_FONDO, LINEA))], radio=RADIO_FINO)
+        _pieza(widget, style, "Prdrive.Progressbar.pbar",
+               [((), [(ACENTO, 0)])], radio=RADIO_FINO, padding=0)
+        style.layout("Horizontal.TProgressbar", [
+            ("Prdrive.Progressbar.trough", {"sticky": "nswe", "children": [
+                ("Prdrive.Progressbar.pbar", {"side": "left", "sticky": "ns"})]})])
+        style.configure("Horizontal.TProgressbar", background=PAPEL)
+        _REDONDOS["Horizontal.TProgressbar"] = True
+    except Exception:                               # noqa: BLE001
+        pass
+
+
+_CLASES_ASENTADAS = ("TButton", "TRadiobutton", "TLabel", "TEntry", "TCombobox",
+                     "TSpinbox", "TFrame", "TProgressbar")
+"""Las clases de widget cuyos controles redondeados se asientan al aparecer."""
+
+
+def _controles(widget, style) -> None:
+    """Cambia los controles de clam por los dibujados, y asienta los que vengan."""
+    _botones_propios(widget, style)
+    _segmentos_propios(widget, style)
+    _campos_propios(widget, style)
+    _marcos_propios(widget, style)
+    _chips_propios(widget, style)
+    _opcion_propia(widget, style)
+    _barra_propia(widget, style)
+    for clase in _CLASES_ASENTADAS:
+        try:
+            widget.bind_class(clase, "<Map>", _asentar, add="+")
+        except Exception:                           # noqa: BLE001
+            pass
+
+
+def relleno_control(widget, alto: int, rol: str = "texto", lados: int = 16):
+    """Devuelve el `padding` que da a un control el alto del diseño: `(lados, arriba_y_abajo)`.
+
+    El diseño da los controles por su ALTO (34 un botón o un campo, 28 el
+    pequeño, 42 el grande, 24 un chip) y ttk por su relleno. El relleno de
+    arriba y abajo sale de restar al alto la línea de su letra y el borde de
+    1 px de cada lado; el de los lados es un escalón de la escala. Si no hay
+    métricas, el de una línea de 18 px.
+    """
+    from tkinter import font as tkfont
+
+    from . import icons
+    try:
+        linea = tkfont.Font(root=widget, font=fuente(rol)).metrics("linespace")
+    except Exception:                               # noqa: BLE001
+        linea = icons.px(widget, 18)
+    vertical = max(0, (icons.px(widget, alto) - linea - 2 * icons.px(widget, 1)) // 2)
+    return (medida(lados), vertical)
+
+
 def apply(widget) -> None:
     """Pinta el tema en el intérprete de Tk al que pertenece `widget`.
 
@@ -566,6 +1128,7 @@ def apply(widget) -> None:
     if _puestos.get(id(interp)) is interp:
         return
     elegir_tema()
+    cargar_fuentes()
 
     from tkinter import ttk
 
@@ -619,7 +1182,8 @@ def apply(widget) -> None:
     _filetes(widget, style)
 
     # Chips.
-    style.configure("Chip.TLabel", padding=(8, 2), relief="solid", borderwidth=1,
+    style.configure("Chip.TLabel", padding=relleno_control(widget, 24, "pista", 8),
+                    relief="solid", borderwidth=1,
                     font=fuente("pista"))
     for tipo, (fondo, color, letra, _disco) in _chips().items():
         style.configure(f"{tipo}Chip.TLabel", background=fondo, foreground=letra,
@@ -629,7 +1193,8 @@ def apply(widget) -> None:
                         foreground=letra, bordercolor=fondo, lightcolor=fondo,
                         darkcolor=fondo)
     # La etiqueta de capa del editor de flags: un chip aún más discreto.
-    style.configure("Capa.TLabel", padding=(7, 1), relief="solid", borderwidth=1,
+    style.configure("Capa.TLabel", padding=relleno_control(widget, 20, "etiqueta", 8),
+                    relief="solid", borderwidth=1,
                     font=fuente("etiqueta"), background=GRIS_FONDO,
                     foreground=TINTA3, bordercolor=LINEA, lightcolor=LINEA,
                     darkcolor=LINEA)
@@ -643,8 +1208,8 @@ def apply(widget) -> None:
                 for k in ("bordercolor", "lightcolor", "darkcolor")}
 
     style.configure("TButton", background=SUPERFICIE, foreground=TINTA,
-                    padding=(12, 5), relief="solid", borderwidth=1,
-                    font=fuente("fuerte"), **borde)
+                    padding=relleno_control(widget, 34, "fuerte", 16),
+                    relief="solid", borderwidth=1, font=fuente("fuerte"), **borde)
     style.map("TButton",
               background=[("pressed", LINEA), ("active", GRIS_FONDO),
                           ("disabled", APAGADO_FONDO)],
@@ -691,8 +1256,10 @@ def apply(widget) -> None:
     # ahora»), 42 px; el pequeño, el que va dentro de una franja o una fila.
     for base in ("TButton", "Primary.TButton", "Tonal.TButton",
                  "Danger.TButton", "DangerSolid.TButton"):
-        style.configure(f"Grande.{base}", padding=(24, 10))
-        style.configure(f"Pequeno.{base}", padding=(10, 2))
+        style.configure(f"Grande.{base}",
+                        padding=relleno_control(widget, 42, "fuerte", 24))
+        style.configure(f"Pequeno.{base}",
+                        padding=relleno_control(widget, 28, "fuerte", 12))
 
     # El botón de texto: sin caja, solo el acento. Su fondo tiene que ser el de
     # la superficie donde cae, porque un botón sin borde que no la iguale se ve
@@ -700,7 +1267,8 @@ def apply(widget) -> None:
     for sup, fondo in (("Quiet.", PAPEL), ("CardQuiet.", SUPERFICIE),
                        ("GrisQuiet.", GRIS_FONDO)):
         style.configure(f"{sup}TButton", background=fondo, foreground=ACENTO,
-                        relief="flat", borderwidth=1, padding=(8, 4),
+                        relief="flat", borderwidth=1,
+                        padding=relleno_control(widget, 34, "texto", 12),
                         font=fuente(), bordercolor=fondo, lightcolor=fondo,
                         darkcolor=fondo)
         style.map(f"{sup}TButton",
@@ -712,7 +1280,7 @@ def apply(widget) -> None:
                   foreground=[("disabled", APAGADO)])
     style.configure("AmbarQuiet.TButton", background=AVISO_FONDO,
                     foreground=AVISO_TEXTO, relief="flat", borderwidth=1,
-                    padding=(8, 4), font=fuente(),
+                    padding=relleno_control(widget, 34, "texto", 12), font=fuente(),
                     bordercolor=AVISO_FONDO, lightcolor=AVISO_FONDO,
                     darkcolor=AVISO_FONDO)
     style.map("AmbarQuiet.TButton",
@@ -725,14 +1293,16 @@ def apply(widget) -> None:
     # La barra lateral de «Ajustes»: filas planas del ancho de la barra; la
     # elegida, sobre el azul suave con su filete y en seminegrita.
     style.configure("Nav.TButton", background=PAPEL, foreground=TINTA,
-                    relief="flat", borderwidth=1, padding=(10, 6), anchor="w",
+                    relief="flat", borderwidth=1,
+                    padding=relleno_control(widget, 32, "texto", 12), anchor="w",
                     font=fuente(), bordercolor=PAPEL, lightcolor=PAPEL,
                     darkcolor=PAPEL)
     style.map("Nav.TButton",
               background=[("pressed", LINEA), ("active", GRIS_FONDO)],
               **bordes(pressed=LINEA, active=GRIS_FONDO))
     style.configure("NavSel.TButton", background=ACENTO_SUAVE, foreground=TINTA,
-                    relief="solid", borderwidth=1, padding=(10, 6), anchor="w",
+                    relief="solid", borderwidth=1,
+                    padding=relleno_control(widget, 32, "fuerte", 12), anchor="w",
                     font=fuente("fuerte"), bordercolor=ACENTO_BORDE,
                     lightcolor=ACENTO_BORDE, darkcolor=ACENTO_BORDE)
     style.map("NavSel.TButton", background=[("active", ACENTO_SUAVE)])
@@ -740,7 +1310,8 @@ def apply(widget) -> None:
     # El grupo de botones (`grupo_botones`): radios con forma de botón; el
     # pulsado, en azul suave con el borde del acento.
     style.configure("Segmento.Toolbutton", background=SUPERFICIE, foreground=TINTA,
-                    relief="solid", borderwidth=1, padding=(12, 5),
+                    relief="solid", borderwidth=1,
+                    padding=relleno_control(widget, 34, "fuerte", 16),
                     font=fuente("fuerte"), anchor="center", **borde)
     style.map("Segmento.Toolbutton",
               background=[("selected", ACENTO_SUAVE), ("pressed", LINEA),
@@ -768,7 +1339,8 @@ def apply(widget) -> None:
     for nombre in ("TEntry", "TCombobox", "TSpinbox"):
         style.configure(nombre, fieldbackground=SUPERFICIE, background=SUPERFICIE,
                         foreground=TINTA, insertcolor=TINTA, arrowcolor=TINTA3,
-                        padding=(6, 4), selectbackground=ACENTO_SUAVE,
+                        padding=relleno_control(widget, 34, "texto", 12),
+                        selectbackground=ACENTO_SUAVE,
                         selectforeground=TINTA, **borde)
         style.map(nombre,
                   bordercolor=[("focus", ACENTO), ("disabled", LINEA)],
@@ -777,8 +1349,9 @@ def apply(widget) -> None:
                   fieldbackground=[("disabled", APAGADO_FONDO),
                                    ("readonly", SUPERFICIE)],
                   foreground=[("disabled", APAGADO)])
-    style.configure("Mono.TEntry", font=fuente("mono"))
-    style.configure("Mono.TCombobox", font=fuente("mono"))
+    for nombre in ("Mono.TEntry", "Mono.TCombobox"):
+        style.configure(nombre, font=fuente("mono"),
+                        padding=relleno_control(widget, 34, "mono", 12))
 
     # El desplegable de un Combobox es una listbox de tk, no un widget de ttk:
     # no le llega nada de lo de arriba y hay que vestirlo por la vía de options.
@@ -802,7 +1375,7 @@ def apply(widget) -> None:
               background=[("selected", ACENTO_SUAVE)],
               foreground=[("selected", TINTA)])
     style.configure("Treeview.Heading", background=PAPEL, foreground=TINTA3,
-                    font=fuente("rotulo"), relief="flat", padding=(8, 4, 8, 7),
+                    font=fuente("rotulo"), relief="flat", padding=(E2, E1, E2, E2),
                     borderwidth=0)
     style.map("Treeview.Heading", background=[("active", PAPEL)],
               relief=[("active", "flat")])
@@ -824,6 +1397,7 @@ def apply(widget) -> None:
     style.configure("TLabelframe.Label", background=PAPEL, foreground=TINTA3,
                     font=fuente("rotulo"))
 
+    _controles(widget, style)
     _puestos[id(interp)] = interp
 
 
@@ -864,8 +1438,10 @@ def chip(parent, texto: str, tipo: str = "", icono: str | None = None,
         img = icons.get(parent, icono, 12, TINTA2, fondo)
     if img is not None:
         etiqueta.configure(image=img, compound="left",
-                           padding=(2 if disco is not None and not solido else 6,
-                                    1, 8, 1))
+                           padding=(icons.px(parent, 2), icons.px(parent, 2),
+                                    E2, icons.px(parent, 2))
+                           if disco is not None and not solido else
+                           (E2, relleno_control(parent, 24, "pista")[1]))
         etiqueta.image = img            # Tk no se queda con la referencia
     return etiqueta
 
@@ -911,7 +1487,7 @@ def aviso(parent, titulo: str, cuerpo: str = "", tono: str = "Ambar.",
 
     sup, glifo, color, sobre = _NOTAS[tono]
     fondo = _superficies()[sup][0]
-    marco = ttk.Frame(parent, style=f"{sup}TFrame", padding=(12, 10, 16, 10))
+    marco = ttk.Frame(parent, style=f"{sup}TFrame", padding=(E4, E3))
     marco.columnconfigure(1, weight=1)
     icono = "alert" if icono == "warn" else icono
     img = icons.baldosa(marco, icono or glifo, globals()[color],
@@ -919,20 +1495,23 @@ def aviso(parent, titulo: str, cuerpo: str = "", tono: str = "Ambar.",
     if img is not None:
         baldosa = ttk.Label(marco, image=img, style=f"{sup}TLabel")
         baldosa.image = img
-        baldosa.grid(row=0, column=0, rowspan=3, sticky="nw", padx=(0, 12))
+        baldosa.grid(row=0, column=0, rowspan=3, sticky="nw", padx=(0, E3))
     # Sin título, el cuerpo hace de texto principal: en tinta, y centrado con
     # la baldosa si cabe en una línea (el alto mínimo de la fila es el suyo).
     marco.rowconfigure(0, minsize=icons.px(marco, 32) if not titulo else 0)
+    # Un título solo se centra con la baldosa: lo que le sobra a su línea
+    # hasta los 32 de la baldosa, la mitad arriba.
+    centrado = relleno_control(marco, 32, "fuerte")[1]
     if titulo:
         ttk.Label(marco, text=titulo, style=f"{sup}Fuerte.TLabel",
                   wraplength=medida(ancho), justify="left").grid(
-            row=0, column=1, sticky="w", pady=(6 if not cuerpo else 0, 0))
+            row=0, column=1, sticky="w", pady=(centrado if not cuerpo else 0, 0))
     if cuerpo:
         ttk.Label(marco, text=cuerpo,
                   style=f"{sup}{'Campo.' if titulo else ''}TLabel",
                   wraplength=medida(ancho), justify="left").grid(
             row=1 if titulo else 0, column=1, sticky="w",
-            pady=(4, 0) if titulo else 0)
+            pady=(E1, 0) if titulo else 0)
     marco.acciones = ttk.Frame(marco, style=f"Plano.{sup}TFrame")
     marco.acciones.grid(row=2, column=1, sticky="w")
     marco.superficie = sup
@@ -965,20 +1544,21 @@ def linea_estado(parent, icono: str, texto: str, accion: str | None = None,
         img = icons.disco(marco, "alert" if icono == "warn" else icono, AVISO,
                           SOBRE_AVISO, fondo)
     else:
-        img = icons.get(marco, icono, 16, TINTA3, fondo)
+        img = icono_linea(marco, icono, TINTA3, "texto", 16)
     if img is not None:
         dibujo = ttk.Label(marco, image=img, style=f"{sup}TLabel")
         dibujo.image = img
-        dibujo.grid(row=1, column=0, sticky="w", padx=(12, 12), pady=8)
+        dibujo.grid(row=1, column=0, sticky="w" if ambar else "nw",
+                    padx=(E3, E3), pady=E2)
     ttk.Label(marco, text=texto, style=f"{sup}{'' if ambar else 'Campo.'}TLabel",
               wraplength=medida(ancho), justify="left").grid(
-        row=1, column=1, sticky="w", pady=8)
+        row=1, column=1, sticky="w" if ambar else "nw", pady=E2)
     marco.boton = None
     if accion:
         marco.boton = ttk.Button(marco, text=accion, command=orden,
                                  style="AmbarQuiet.TButton" if ambar
                                  else "Quiet.TButton")
-        marco.boton.grid(row=1, column=2, sticky="e", padx=(8, 4))
+        marco.boton.grid(row=1, column=2, sticky="e", padx=(E2, E1))
     return marco
 
 
@@ -1003,45 +1583,91 @@ def grupo_botones(parent, opciones, variable, orden=None, superficie: str = ""):
     marco = ttk.Frame(parent, style=f"Plano.{superficie}TFrame" if superficie
                       else "TFrame")
     marco.botones = []
+    opciones = list(opciones)
     for i, (rotulo, valor) in enumerate(opciones):
+        # Solo el primero y el último llevan las esquinas redondeadas.
+        sitio = ("" if len(opciones) == 1 else "Primero." if i == 0
+                 else "Ultimo." if i == len(opciones) - 1 else "Medio.")
         boton = ttk.Radiobutton(marco, text=rotulo, value=valor, variable=variable,
-                                command=orden, style="Segmento.Toolbutton",
+                                command=orden, style=f"{sitio}Segmento.Toolbutton",
                                 takefocus=True)
         boton.grid(row=0, column=i, sticky="ns")
         marco.botones.append(boton)
     return marco
 
 
+ALTURA_MAYUSCULAS = 0.714
+"""La altura de las mayúsculas de Noto Sans, en «em» (714 de 1000).
+
+Es la medida a la que se alinean los iconos (`icono_linea`): Tk da el ascenso
+y el descenso de la letra, pero no dónde acaban sus mayúsculas, y es ahí donde
+el ojo pone el centro de una línea de texto. La de Segoe UI, si la letra
+propia no se pudo cargar, es 0,70: el mismo píxel.
+"""
+
+
+def icono_linea(widget, nombre: str, color: str | None = None,
+                rol: str = "texto", size: int = 16):
+    """Devuelve un icono tan alto como una línea de texto del rol `rol` y centrado en ella.
+
+    El centro no es el de la caja de la línea (ascenso + descenso): el ascenso
+    reserva sitio para las tildes y el descenso para las colas, y la masa del
+    texto queda entre la línea base y la altura de las mayúsculas. El icono se
+    centra ahí: su centro cae `ALTURA_MAYUSCULAS / 2` por encima de la línea
+    base.
+
+    Como la imagen mide lo mismo que la línea, al lado de su texto en una fila
+    de la rejilla (los dos con `sticky="nw"`, o los dos centrados) queda
+    alineado sin más, y dentro de un botón (`compound="left"`) no lo hace
+    crecer. Devuelve `None` si no se puede pintar.
+    """
+    from tkinter import font as tkfont
+
+    from . import icons
+    real, alto, bajar = icons.px(widget, size), None, 0
+    try:
+        letra = tkfont.Font(root=widget, font=fuente(rol))
+        m = letra.metrics()
+        tam = letra.actual("size")
+        em = -tam if tam < 0 else tam * float(widget.tk.call("tk", "scaling"))
+        alto = max(m["linespace"], real)
+        centro = m["ascent"] - ALTURA_MAYUSCULAS * em / 2
+        bajar = max(0, min(round(centro - real / 2), alto - real))
+    except Exception:                           # noqa: BLE001
+        alto, bajar = None, 0                   # sin métricas: el icono suelto
+    return icons.get(widget, nombre, size, color or TINTA, bajar=bajar, alto=alto)
+
+
+def etiqueta_icono(parent, nombre: str, color: str | None = None,
+                   rol: str = "texto", size: int = 16, superficie: str = ""):
+    """Devuelve una etiqueta con solo el icono, para ponerla delante de un texto.
+
+    Va con `icono_linea`, así que en la misma fila que una etiqueta de ese
+    rol queda alineada con ella; si el texto ocupa varias líneas, las dos con
+    `sticky="nw"` y el icono acompaña a la primera.
+    """
+    from tkinter import ttk
+    marca = ttk.Label(parent, style=f"{superficie}TLabel")
+    img = icono_linea(parent, nombre, color, rol, size)
+    if img is not None:
+        marca.configure(image=img)
+        marca.image = img
+    return marca
+
+
 def boton_icono(boton, nombre: str, color: str | None = None,
                 fondo: str | None = None, size: int = 15):
     """Le pone un icono a la izquierda del texto a un botón ya creado y lo devuelve.
 
-    El icono va bajado un poco dentro de su propia imagen. ttk la centra en la
-    caja de la línea (ascenso + descenso), pero el texto no ocupa esa caja: sus
-    mayúsculas empiezan bastante por debajo del ascenso, que reserva sitio para
-    las tildes (y en castellano se usan). Ese hueco de arriba deja la masa del
-    texto más baja que el centro de la caja y el icono se veía flotando por
-    encima: medido sobre la ventana de verdad, 1 px a 96 ppp.
-
-    La imagen se hace tan alta como la línea y el dibujo se baja el descenso,
-    sin pasarse de lo que quepa. Dando la altura entera el botón no crece (si
-    creciera volvería a mover el texto y no se llegaría nunca) y el descenso es
-    la medida que Tk sí da y que acompaña al tamaño de la fuente.
+    El icono es el de `icono_linea`: tan alto como la línea del texto y
+    centrado en sus mayúsculas, así que el botón no crece y el icono no flota.
+    `fondo` ya no hace falta (el icono lleva su alfa) y se acepta por las
+    llamadas de antes.
 
     Si el icono no se puede pintar el botón se queda con su texto y ya está: un
     adorno no puede dejar sin usar una acción.
     """
-    from tkinter import font as tkfont
-    from . import icons
-    color, fondo = color or TINTA, fondo or PAPEL
-    real, alto, bajar = icons.px(boton, size), None, 0
-    try:
-        m = tkfont.Font(root=boton, font=fuente("normal")).metrics()
-        alto = max(m["linespace"], real)
-        bajar = max(0, min(m["descent"], alto - real))
-    except Exception:                           # noqa: BLE001
-        alto = None                             # sin métricas, como estaba
-    img = icons.get(boton, nombre, size, color, fondo, bajar=bajar, alto=alto)
+    img = icono_linea(boton, nombre, color, "texto", size)
     if img is not None:
         boton.configure(image=img, compound="left")
         boton.image = img
@@ -1059,7 +1685,7 @@ def caja_texto(parent, **kw):
                     relief="flat", borderwidth=0, highlightthickness=1,
                     highlightbackground=BORDE, highlightcolor=ACENTO,
                     insertbackground=TINTA, selectbackground=ACENTO_SUAVE,
-                    selectforeground=TINTA, padx=8, pady=6, wrap="none")
+                    selectforeground=TINTA, padx=E3, pady=E2, wrap="none")
     opciones.update(kw)
     return tk.Text(parent, **opciones)
 

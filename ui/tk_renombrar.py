@@ -67,22 +67,22 @@ def construir(panel: Panel, raw: dict | None = None) -> None:
              estilo="Dialogo.TLabel").grid(row=0, column=0, sticky="w")
     if sitio is not None:
         ttk.Label(marco, text=sitio.carpeta, style="MonoPista.TLabel").grid(
-            row=1, column=0, sticky="w", pady=(8, 0))
+            row=1, column=0, sticky="w", pady=(theme.E2, 0))
     indicador = Indicador(marco, ancho=560)
-    indicador.marco.grid(row=2, column=0, sticky="ew", pady=(12, 0))
+    indicador.marco.grid(row=2, column=0, sticky="ew", pady=(theme.E3, 0))
     dlg.indicador, dlg.sondeo = indicador, sondeo   # como `visor`: los tests los miran
 
-    tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(14, 10, 14, 12))
-    tarjeta.grid(row=3, column=0, sticky="ew", pady=(14, 0))
+    tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(theme.E4, theme.E3, theme.E4, theme.E3))
+    tarjeta.grid(row=3, column=0, sticky="ew", pady=(theme.E4, 0))
     tarjeta.columnconfigure(0, weight=1)
     tarjeta.columnconfigure(1, weight=1)
 
     ttk.Label(marco, text=catalog_editor.SIN_NOTA, style="Pista.TLabel",
               wraplength=theme.medida(600), justify="left").grid(
-        row=4, column=0, sticky="w", pady=(10, 0))
+        row=4, column=0, sticky="w", pady=(theme.E3, 0))
     pie_nota = ttk.Label(marco, text="", style="MonoPista.TLabel",
                          wraplength=theme.medida(600), justify="left")
-    pie_nota.grid(row=5, column=0, sticky="w", pady=(8, 0))
+    pie_nota.grid(row=5, column=0, sticky="w", pady=(theme.E2, 0))
 
     def pintar_tarjeta(ren: catalog_editor.Renombrado | None) -> None:
         """Pinta lo que hay: la frase y, si los hay, quién impide renombrar."""
@@ -100,12 +100,12 @@ def construir(panel: Panel, raw: dict | None = None) -> None:
             separador_fila(tarjeta, fila, 3)
             ttk.Label(tarjeta, text=bloqueo.nombre, style="Card.Fuerte.TLabel",
                       wraplength=theme.medida(220), justify="left").grid(
-                row=fila + 1, column=0, sticky="w", pady=6)
+                row=fila + 1, column=0, sticky="w", pady=theme.E2)
             ttk.Label(tarjeta, text=bloqueo.motivo, style="Card.Pista.TLabel",
                       wraplength=theme.medida(260), justify="left").grid(
-                row=fila + 1, column=1, sticky="w", padx=(12, 0), pady=6)
+                row=fila + 1, column=1, sticky="w", padx=(theme.E3, 0), pady=theme.E2)
             ttk.Label(tarjeta, text=fecha(bloqueo.visto), style="Card.MonoPista.TLabel").grid(
-                row=fila + 1, column=2, sticky="e", padx=(12, 0), pady=6)
+                row=fila + 1, column=2, sticky="e", padx=(theme.E3, 0), pady=theme.E2)
             fila += 2
 
     def refrescar(nota: str = "") -> None:
@@ -176,7 +176,7 @@ def construir(panel: Panel, raw: dict | None = None) -> None:
     accion.grid(row=0, column=2, sticky="e")
     if not panel.incrustado:
         ttk.Button(botones, text="Cerrar", command=panel.cerrar).grid(
-            row=0, column=3, sticky="e", padx=(8, 0))
+            row=0, column=3, sticky="e", padx=(theme.E2, 0))
 
     if sitio is None:
         indicador.poner("", False)
