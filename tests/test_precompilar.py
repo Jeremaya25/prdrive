@@ -109,7 +109,9 @@ c("  y no reescribe lo que ya estaba al día",
   (dos.stat().st_mtime_ns, pen.stat().st_mtime_ns), (dos_antes, pen_antes))
 fuente.write_text("VALOR = 10\n", encoding="utf-8")
 deploy.precompilar(app, sys.executable, biblioteca=False)
-c("  pero sí lo que ha cambiado", cabecera(uno)[1], importlib.util.source_hash(b"VALOR = 10\n"))
+# El hash es el de los bytes del fichero: en Windows write_text escribe \r\n.
+c("  pero sí lo que ha cambiado", cabecera(uno)[1],
+  importlib.util.source_hash(fuente.read_bytes()))
 
 # un .py roto no impide los demás
 (app / "common" / "roto.py").write_text("def (:\n", encoding="utf-8")
