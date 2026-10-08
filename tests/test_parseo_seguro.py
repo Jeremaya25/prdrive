@@ -394,7 +394,7 @@ c("la regla de la raíz no la toca el TOML: un include no la adelanta",
   [model.REGLA_SIN_PROGRAMA, "+ **/*.md"])
 with sandbox():          # el fichero de filtros de antes, con su md5 de antes
     viejo = model.FILTERS_DIR / "p.txt"
-    viejo.write_text(bisync.FILTERS_HEADER + "\n")
+    viejo.write_text(bisync.FILTERS_HEADER + "\n", encoding="utf-8", newline="\n")
     Path(str(viejo) + ".md5").write_text(hashlib.md5(viejo.read_bytes()).hexdigest())
     c("una pareja raíz de antes pide un --resync",
       bisync.filters_state(bisync.filters_file_for(raiz)).status, "changed")
@@ -402,10 +402,12 @@ with sandbox():          # el fichero de filtros de antes, con su md5 de antes
     # un listado path2 con la carpeta del programa dentro
     lst = raiz.workdir / (bisync.expected_prefix(raiz) + bisync.PATH2_SUFFIX)
     lst.parent.mkdir(parents=True)
-    lst.write_text(f'- 10 - - 2026-01-01T00:00:00.000000000+0000 "{model.APP_DIR.name}/rclone.conf"\n')
+    lst.write_text(f'- 10 - - 2026-01-01T00:00:00.000000000+0000 "{model.APP_DIR.name}/rclone.conf"\n',
+                   encoding="utf-8")
     c("se ve que subió el programa", bisync.programa_en_listado(raiz), True)
     lst.write_text('- 10 - - 2026-01-01T00:00:00.000000000+0000 "notas/uno.md"\n'
-                   f'- 10 - - 2026-01-01T00:00:00.000000000+0000 "x{model.APP_DIR.name}/a"\n')
+                   f'- 10 - - 2026-01-01T00:00:00.000000000+0000 "x{model.APP_DIR.name}/a"\n',
+                   encoding="utf-8")
     c("  y que no, si solo hay otras carpetas (ni una que acabe igual)",
       bisync.programa_en_listado(raiz), False)
     lst.write_bytes(b"\xff\xfe\x00 no es un listado")

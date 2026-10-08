@@ -295,7 +295,8 @@ with sandbox():
         listados(pareja)
         viejo = model.FILTERS_DIR / f"{pareja.name}.txt"
         # la de una carpeta no ha cambiado de contenido: la fuerza un md5 de otro
-        viejo.write_text(bisync.FILTERS_HEADER + "\n" + ("" if pareja.es_raiz else "- x\n"))
+        viejo.write_text(bisync.FILTERS_HEADER + "\n" + ("" if pareja.es_raiz else "- x\n"),
+                         encoding="utf-8", newline="\n")
         Path(str(viejo) + ".md5").write_text(hashlib.md5(viejo.read_bytes()).hexdigest())
     resync = {h.pareja: h for h in revision.revisar(cfg) if h.clave == "resync"}
     c("las dos piden su resync", sorted(resync), ["notas", "todo"])
@@ -352,7 +353,7 @@ with sandbox():
     todo, otra, notas = cfg.pairs
     for pareja in cfg.pairs:            # filtros de antes: las tres piden resync
         viejo = model.FILTERS_DIR / f"{pareja.name}.txt"
-        viejo.write_text("# de antes\n")
+        viejo.write_text("# de antes\n", encoding="utf-8", newline="\n")
         Path(str(viejo) + ".md5").write_text(hashlib.md5(viejo.read_bytes()).hexdigest())
     con_programa(todo)
     carpeta = f"nas:R/todo/{PROGRAMA}/"
