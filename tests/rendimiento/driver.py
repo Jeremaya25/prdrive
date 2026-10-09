@@ -11,6 +11,10 @@ Variables:
   BENCH_OUT      fichero donde van los resultados (un JSON por línea)
   BENCH_CAPTURA  directorio donde capturar cada pantalla (entonces los tiempos no valen)
   BENCH_NOMBRE   prefijo de los ficheros de captura
+  BENCH_PERFIL   si está, cada momento de una acción en la ventana lleva `detail.perfil`
+                 (cProfile de su tramo cronometrado: `perfilado()`), salvo los de arranque
+                 (`start-*`, `apply-*`, `cold-parejas`). `correr.py` lo pone solo en el
+                 calentamiento
 
 El punto de entrada es el `runsync.py` del propio dispositivo (`ui_flow()`: registro
 de la ventana, para el servicio anterior, carga el config, `ui.start` ->
@@ -90,7 +94,155 @@ def ms(a, b):
 
 
 def record(scenario, value_ms, **detail):
+    """Anota un momento medido; si su tramo se perfiló, lo lleva en `detail["perfil"]`."""
+    perfil = PERFILES.pop(scenario, None)
+    if perfil is not None:
+        detail["perfil"] = perfil
     utiles.escribir(scenario, value_ms, detail)
+
+
+# ----------------------------------------------------------------------------
+# Perfil de cada tramo cronometrado (solo con BENCH_PERFIL).
+# ----------------------------------------------------------------------------
+PERFIL_ACTIVO = bool(os.environ.get("BENCH_PERFIL"))
+PERFIL_TOP = 25
+"""Cuántas funciones se guardan de cada tramo perfilado."""
+PERFILES: dict = {}
+"""Lo perfilado de cada momento, `{escenario: filas}`, hasta que `record()` lo recoge."""
+EN_CURSO: dict = {}
+"""Los perfiles que están corriendo, por momento: `perfil_cerrar()` los para desde un manejador."""
+
+
+class _Nada:
+    """Lo que devuelve `perfilado()` sin `BENCH_PERFIL`: un `with` que no hace nada."""
+
+    __slots__ = ()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        return False
+
+
+_NADA = _Nada()
+
+
+def perfilado(escenario):
+    """Un `with` que perfila con cProfile el tramo cronometrado, si `BENCH_PERFIL` está puesto.
+
+    Va alrededor del tramo medido, de su primera línea a la última (la misma que toma los
+    `perf_counter()` de inicio y de fin), y `record()` del momento lo recoge después. Si el
+    tramo acaba dentro de un manejador de ventana (que lo llama al enseñarse), ese manejador
+    llama antes a `perfil_cerrar()`, para que el perfil no cuente lo que hace después.
+
+    Sin `BENCH_PERFIL` el camino de las vueltas medidas no cuesta cero del todo: un `with`
+    vacío por tramo, y unas décimas de microsegundo en `_wait_window()` (mira `al_cerrar`) y
+    en el `insert` del log. Frente a los milisegundos que se miden, es despreciable.
+
+    Args:
+        escenario: El nombre del momento, el mismo de `record()`.
+
+    Returns:
+        El perfilador del tramo, o un contexto que no hace nada (sin `BENCH_PERFIL`).
+    """
+    return _Perfil(escenario) if PERFIL_ACTIVO else _NADA
+
+
+class _Perfil:
+    """El perfil de cProfile de un momento. Se para una sola vez, desde donde sea."""
+
+    def __init__(self, escenario):
+        self.escenario = escenario
+        self.prof = None
+
+    def iniciar(self):
+        import cProfile       # solo con BENCH_PERFIL: sin él, no se importa
+        self.prof = cProfile.Profile()
+        EN_CURSO[self.escenario] = self
+        self.prof.enable()
+        return self
+
+    def parar(self):
+        prof, self.prof = self.prof, None
+        if prof is None:
+            return
+        prof.disable()
+        if EN_CURSO.get(self.escenario) is self:
+            del EN_CURSO[self.escenario]
+        PERFILES[self.escenario] = _tabla(prof)
+
+    def __enter__(self):
+        return self.iniciar()
+
+    def __exit__(self, *_):
+        self.parar()
+        return False
+
+
+def perfil_abrir(escenario):
+    """Empieza a perfilar un momento cuyo tramo arranca dentro de un manejador (sin `with`)."""
+    if PERFIL_ACTIVO:
+        _Perfil(escenario).iniciar()
+
+
+def perfil_cerrar(escenario):
+    """Para el perfil del momento si está corriendo; si no, no hace nada."""
+    perfil = EN_CURSO.get(escenario)
+    if perfil is not None:
+        perfil.parar()
+
+
+def _tabla(prof):
+    """Las `PERFIL_TOP` funciones de mayor tiempo acumulado mientras corrió el tramo, como filas.
+
+    Cada fila es `[funcion, "fichero:linea", llamadas, ms_acumulados, ms_propios]`. Los
+    ficheros se acortan: relativos al árbol de la aplicación, o a la biblioteca estándar
+    (`stdlib/…`); las funciones de C salen como `<C>`. Se dejan fuera las del propio arnés
+    (este directorio) y del perfilador: lo que queda es la aplicación.
+
+    Desde Python 3.12 cProfile perfila el proceso entero, hilos de fondo incluidos (en 3.11
+    solo el hilo que lo activa). Con un hilo de fondo corriendo, el acumulado de una función
+    es aproximado: puede pasar del tramo o quedarse corto de lo que de verdad tardó. La tabla
+    sirve para localizar el coste, no para sumarlo.
+    """
+    import pstats
+    arnes = os.path.dirname(os.path.abspath(__file__))
+    stdlib = os.path.dirname(os.path.realpath(os.__file__))
+    ordenadas = sorted(pstats.Stats(prof).stats.items(), key=lambda kv: kv[1][3], reverse=True)
+    filas = []
+    for (fichero, linea, funcion), (_cc, nc, tt, ct, _quien) in ordenadas:
+        if "_lsprof" in funcion or (fichero != "~" and _dentro(fichero, arnes) is not None):
+            continue
+        filas.append([funcion, f"{_corta(fichero, stdlib)}:{linea}", nc,
+                      round(ct * 1000, 1), round(tt * 1000, 1)])
+        if len(filas) == PERFIL_TOP:
+            break
+    return filas
+
+
+def _dentro(fichero, raiz):
+    """`fichero` relativo a `raiz` (con `/`), o None si no está dentro de ella."""
+    real = os.path.realpath(fichero)
+    base = os.path.realpath(raiz) + os.sep
+    if os.path.normcase(real).startswith(os.path.normcase(base)):
+        return real[len(base):].replace(os.sep, "/")
+    return None
+
+
+def _corta(fichero, stdlib):
+    """El nombre corto de un fichero del perfil (ver `_tabla()`)."""
+    if fichero == "~":
+        return "<C>"
+    if fichero.startswith("<"):                       # p. ej. `<frozen importlib._bootstrap>`
+        return fichero
+    rel = _dentro(fichero, APP)
+    if rel is not None:
+        return rel
+    rel = _dentro(fichero, stdlib)
+    if rel is not None:
+        return "stdlib/" + rel
+    return os.path.basename(fichero)
 
 
 def shot(pantalla, ventana):
@@ -128,6 +280,8 @@ def _parche_tkinter(m):
         insert = m.Text.insert
 
         def insert_(self, index, chars, *args):
+            if LOG["t0"] is None:
+                perfil_abrir("log-10k")      # antes de la primera hora: el perfil cubre desde el primer insert
             t = time.perf_counter()
             r = insert(self, index, chars, *args)
             fin = time.perf_counter()
@@ -137,6 +291,7 @@ def _parche_tkinter(m):
             LOG["n"] += 1
             if "=== Terminado" in str(chars):
                 LOG["listo"] = True
+                perfil_cerrar("log-10k")     # el último insert de la salida cierra el tramo
             return r
         m.Text.insert = insert_
 
@@ -481,6 +636,9 @@ def _wait_window(self, window=None):
     if handler is not None:
         handler(w, t)
     ESTADO["cierre"] = time.perf_counter()               # desde aquí se vuelve a la principal
+    arrancar = HOOK.pop("al_cerrar", None)               # un perfil que empieza al cerrar (volver-*)
+    if arrancar is not None:
+        arrancar()
     try:
         if w.winfo_exists():
             w.destroy()
@@ -501,6 +659,7 @@ def _encargo_de(dlg):
 
 
 def on_parejas(dlg, t, t_req):
+    perfil_cerrar("open-parejas")
     d = medir(dlg)
     record("open-parejas", ms(t_req, t), **d)
     record("cold-parejas", ms(T0, t), start_main_ms=NOTES.get("start_main_ms"),
@@ -516,10 +675,11 @@ def on_parejas(dlg, t, t_req):
         while not enc.hecho and time.time() < limite:
             time.sleep(0.001)
         try:
-            t1 = time.perf_counter()
-            s._mirar()
-            dlg.update()
-            t2 = time.perf_counter()
+            with perfilado("catalogo-llega"):
+                t1 = time.perf_counter()
+                s._mirar()
+                dlg.update()
+                t2 = time.perf_counter()
             record("catalogo-llega", round((t2 - t1) * 1000, 1), **medir(dlg))
         except Exception as e:                           # noqa: BLE001
             NOTES["arrival_error"] = repr(e)
@@ -542,16 +702,18 @@ def elegir_filas(dlg):
     primera = orden[1] if getattr(lista, "elegida", None) != orden[1] else orden[0]
     try:
         dlg.update()
-        t0 = time.perf_counter()
-        lista.elegir(primera, avisar=False)
-        dlg.update()
-        t1 = time.perf_counter()
+        with perfilado("elegir-fila"):
+            t0 = time.perf_counter()
+            lista.elegir(primera, avisar=False)
+            dlg.update()
+            t1 = time.perf_counter()
         record("elegir-fila", ms(t0, t1))
         dlg.update()
-        t0 = time.perf_counter()
-        hecho = lista.elegir(orden[2], avisar=True)
-        dlg.update()
-        t1 = time.perf_counter()
+        with perfilado("elegir-pareja"):
+            t0 = time.perf_counter()
+            hecho = lista.elegir(orden[2], avisar=True)
+            dlg.update()
+            t1 = time.perf_counter()
         record("elegir-pareja", ms(t0, t1), elegida=bool(hecho))
     except Exception:                                    # noqa: BLE001
         import traceback
@@ -573,11 +735,13 @@ def reabrir_parejas(root, btn):
     t_req = time.time()
 
     def reabierta(dlg, t):
+        perfil_cerrar("reabrir-parejas")
         record("reabrir-parejas", ms(t_req, t), **medir(dlg))
         if ESTADO["catalogo"] is not None:
             ESTADO["catalogo"].set()
     HOOK["on_shown"] = reabierta
-    btn.invoke()
+    with perfilado("reabrir-parejas"):
+        btn.invoke()
 
 
 def drive_parejas(root):
@@ -591,7 +755,8 @@ def drive_parejas(root):
     tema_nuevo(root)
     t_req = time.time()
     HOOK["on_shown"] = lambda dlg, t: on_parejas(dlg, t, t_req)
-    btn.invoke()
+    with perfilado("open-parejas"):
+        btn.invoke()
     if ESTADO["catalogo"] is not None:
         ESTADO["catalogo"].set()
     root.update()
@@ -609,6 +774,7 @@ def drive_ajustes(root):
     t_req = time.time()
 
     def shown(dlg, t):
+        perfil_cerrar("open-ajustes")
         record("open-ajustes", ms(t_req, t), **medir(dlg))
         shot("ajustes", dlg)
         if CAPTURA:
@@ -624,11 +790,12 @@ def drive_ajustes(root):
             dlg.update()
             tema_nuevo(dlg)
             traza = _trazar(dlg)
-            t0 = time.time()
-            b.invoke()
-            t_clic = time.time()
-            dlg.update()
-            t1 = time.time()
+            with perfilado("pane-" + clave):
+                t0 = time.time()
+                b.invoke()
+                t_clic = time.time()
+                dlg.update()
+                t1 = time.time()
             detalle = medir(dlg)
             detalle.update(traza({"clic": ms(t0, t_clic), "update": ms(t_clic, t1)}))
             record("pane-" + clave, ms(t0, t1), **detalle)
@@ -638,22 +805,27 @@ def drive_ajustes(root):
             dlg.update()
             tema_nuevo(dlg)
             traza = _trazar(dlg)
-            t0 = time.time()
-            b.invoke()
-            t_clic = time.time()
-            dlg.update()
-            t1 = time.time()
+            with perfilado("pane-otra-vez"):
+                t0 = time.time()
+                b.invoke()
+                t_clic = time.time()
+                dlg.update()
+                t1 = time.time()
             detalle = medir(dlg)
             detalle.update(traza({"clic": ms(t0, t_clic), "update": ms(t_clic, t1)}))
             record("pane-otra-vez", ms(t0, t1), **detalle)
 
     HOOK["on_shown"] = shown
+    HOOK["al_cerrar"] = lambda: perfil_abrir("volver-ajustes")   # el tramo de volver arranca al cerrar
     ESTADO["cierre"] = None
-    btn.invoke()
+    with perfilado("open-ajustes"):
+        btn.invoke()
     if ESTADO["cierre"] is not None and not CAPTURA:
         # Desde que se destruye «Ajustes» hasta que la principal queda quieta de nuevo.
         root.update()
-        record("volver-ajustes", ms(ESTADO["cierre"], time.perf_counter()))
+        t_fin = time.perf_counter()
+        perfil_cerrar("volver-ajustes")
+        record("volver-ajustes", ms(ESTADO["cierre"], t_fin))
 
 
 def llega_instantanea(root):
@@ -687,11 +859,12 @@ def llega_instantanea(root):
     mide = FLOW == "principal" and not CAPTURA
     vista = getattr(sys.modules.get("ui.tk_principal"), "VistaPrincipal", None)
     traza = _trazar(root, [("aplicar", vista, "aplicar")]) if mide else None
-    t0 = time.perf_counter()
-    sondeo._mirar()
-    t_mirar = time.perf_counter()
-    root.update()
-    t1 = time.perf_counter()
+    with perfilado("llega-instantanea"):
+        t0 = time.perf_counter()
+        sondeo._mirar()
+        t_mirar = time.perf_counter()
+        root.update()
+        t1 = time.perf_counter()
     sondeo.seguir()                # `probe()` lo pausó; las lecturas de después, solas
     if mide:
         detalle = medir(root)
@@ -811,10 +984,11 @@ def drive_principal(root):
         casilla.invoke()
         root.update()
     antes = ESTADO["escrituras"]
-    t0 = time.perf_counter()
-    casilla.invoke()
-    root.update()
-    t1 = time.perf_counter()
+    with perfilado("marcar"):
+        t0 = time.perf_counter()
+        casilla.invoke()
+        root.update()
+        t1 = time.perf_counter()
     record("marcar", ms(t0, t1), cuentas={"escrituras": ESTADO["escrituras"] - antes})
 
     ahora = find_button(root, "Sincronizar ahora")
@@ -829,17 +1003,18 @@ def drive_principal(root):
         NOTES["error"] = "«Sincronizar ahora» sigue apagado 5 s después de marcar"
         return
     conocidas = {str(x) for x in ventanas_hijas(root)}
-    t0 = time.perf_counter()
-    ahora.invoke()
     nueva = None
-    limite = t0 + 10
-    while True:
-        nueva = next((x for x in ventanas_hijas(root)
-                      if str(x) not in conocidas and x.winfo_viewable()), None)
-        if nueva is not None or time.perf_counter() > limite:
-            break
-        root.update()
-    t1 = time.perf_counter()
+    with perfilado("sincronizar-ventana"):
+        t0 = time.perf_counter()
+        ahora.invoke()
+        limite = t0 + 10
+        while True:
+            nueva = next((x for x in ventanas_hijas(root)
+                          if str(x) not in conocidas and x.winfo_viewable()), None)
+            if nueva is not None or time.perf_counter() > limite:
+                break
+            root.update()
+        t1 = time.perf_counter()
     if nueva is None:
         NOTES["error"] = "«Sincronizar ahora» no abrió la ventana de la pasada en 10 s"
         return
@@ -853,10 +1028,11 @@ def drive_principal(root):
     if not titulo.endswith("— OK"):
         NOTES["error"] = f"la pasada de prueba no acabó bien en 10 s: «{titulo}»"
         return
-    t0 = time.perf_counter()
-    nueva.destroy()
-    root.update()
-    t1 = time.perf_counter()
+    with perfilado("volver-pasada"):
+        t0 = time.perf_counter()
+        nueva.destroy()
+        root.update()
+        t1 = time.perf_counter()
     record("volver-pasada", ms(t0, t1))
 
 
@@ -912,7 +1088,8 @@ def en_parejas_de_la_flota(dlg, t):
     tema_nuevo(dlg)
     t_req = time.time()
     HOOK["on_shown"] = lambda fdlg, t_visto: en_dispositivos(fdlg, t_visto, t_req)
-    boton.invoke()
+    with perfilado("open-dispositivos"):
+        boton.invoke()
     abrir_flags(dlg)
 
 
@@ -925,6 +1102,7 @@ def en_dispositivos(fdlg, t, t_req):
     `time.sleep`, sin `update()` (como en `catalogo-llega`): si no, el sondeo de la ventana podría
     recogerlas fuera de lo medido. `elegir-dispositivo` es `tabla.elegir(otra)` y su `update()`.
     """
+    perfil_cerrar("open-dispositivos")
     record("open-dispositivos", ms(t_req, t), **medir(fdlg))
     shot("dispositivos", fdlg)
     if ESTADO["flota"] is not None:
@@ -940,11 +1118,12 @@ def en_dispositivos(fdlg, t, t_req):
         NOTES["error"] = "las notas de la flota no llegaron en 5 s"
         return
     traza = _trazar(fdlg)
-    t1 = time.perf_counter()
-    sondeo._mirar()
-    t_mirar = time.perf_counter()
-    fdlg.update()
-    t2 = time.perf_counter()
+    with perfilado("llega-flota"):
+        t1 = time.perf_counter()
+        sondeo._mirar()
+        t_mirar = time.perf_counter()
+        fdlg.update()
+        t2 = time.perf_counter()
     detalle = medir(fdlg)
     detalle.update(traza({"mirar": ms(t1, t_mirar), "update": ms(t_mirar, t2)}))
     record("llega-flota", ms(t1, t2), **detalle)
@@ -962,10 +1141,11 @@ def elegir_dispositivo(fdlg):
         return
     otra = orden[1] if getattr(tabla, "elegida", None) != orden[1] else orden[0]
     fdlg.update()
-    t0 = time.perf_counter()
-    tabla.elegir(otra)
-    fdlg.update()
-    t1 = time.perf_counter()
+    with perfilado("elegir-dispositivo"):
+        t0 = time.perf_counter()
+        tabla.elegir(otra)
+        fdlg.update()
+        t1 = time.perf_counter()
     record("elegir-dispositivo", ms(t0, t1), elegida=getattr(tabla, "elegida", None) == otra)
 
 
@@ -991,12 +1171,14 @@ def abrir_flags(dlg):
     tema_nuevo(dlg)
     t_req = time.time()
     HOOK["on_shown"] = lambda fdlg, t: en_flags(fdlg, t, t_req)
-    boton.invoke()
+    with perfilado("open-flags"):
+        boton.invoke()
 
 
 @anotando
 def en_flags(fdlg, t, t_req):
     """El editor de flags recién abierto."""
+    perfil_cerrar("open-flags")
     record("open-flags", ms(t_req, t), **medir(fdlg))
     shot("flags", fdlg)
 
@@ -1007,7 +1189,11 @@ def drive_wizard(root):
     «¿Dónde?» deja seguir con su respuesta de siempre, «En una unidad». El paso lista las
     unidades del equipo con la lectura de verdad (`device.list_volumes()`): en el clic mismo en
     la 0.7.1, y en un hilo cuando el paso las lee después de pintarse; lo medido es hasta el
-    primer pintado del paso, no hasta que llega la lista.
+    primer pintado del paso, no hasta que llega la lista. Lleva el desglose de `_trazar()`
+    (`fases` clic y update, `expose`, `configure` y `geometria`), como los demás momentos.
+    Ese desglose tiene su coste dentro de lo medido: cada `<Expose>` y `<Configure>` del tramo
+    ejecuta el contador de `_trazar()` (un callback de Python por evento, en la etiqueta `all`).
+    Pesa igual en las dos ramas y ningún presupuesto fija este momento.
     """
     btn = find_button(root, "Siguiente")
     if btn is None:
@@ -1018,11 +1204,16 @@ def drive_wizard(root):
         NOTES["error"] = "«Siguiente» está apagado en «¿Dónde?»"
         return
     tema_nuevo(root)
-    t0 = time.perf_counter()
-    btn.invoke()
-    root.update()
-    t1 = time.perf_counter()
-    record("paso-dispositivo", ms(t0, t1), **medir(root))
+    traza = _trazar(root)
+    with perfilado("paso-dispositivo"):
+        t0 = time.perf_counter()
+        btn.invoke()
+        t_clic = time.perf_counter()
+        root.update()
+        t1 = time.perf_counter()
+    detalle = medir(root)
+    detalle.update(traza({"clic": ms(t0, t_clic), "update": ms(t_clic, t1)}))
+    record("paso-dispositivo", ms(t0, t1), **detalle)
     shot("dispositivo", root)
 
 

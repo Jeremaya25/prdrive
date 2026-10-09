@@ -11,6 +11,10 @@ driver, el de `--pr`: el driver sabe llegar a cada pantalla, el árbol solo pone
 código. Una vuelta es una pasada de cada árbol, y el orden se alterna de una
 vuelta a otra (base-PR, PR-base…), así una deriva de la máquina toca a los dos
 igual. Antes de la primera hay una pasada de calentamiento por árbol que se tira.
+Esa pasada lleva `BENCH_PERFIL=1`: cada momento de una acción en la ventana (no los de
+arranque: `start-*`, `apply-*`, `cold-parejas`) sale con `detail.perfil` (cProfile de su
+tramo) en `crudo.jsonl`. Las vueltas medidas van sin perfilar, así que no cambian, y las
+medianas no leen el calentamiento.
 
 Una pasada = un proceso nuevo, en frío, por flujo (`PLAN`): cada uno con su
 dispositivo de muestra recién copiado (salvo lo que recuerda de haberse abierto
@@ -178,7 +182,7 @@ class Medidor:
             d.mkdir(parents=True, exist_ok=True)
         return env, base
 
-    def entorno(self, extra: dict | None = None) -> tuple[dict, Path]:
+    def entorno(self, extra: dict | None = None, perfil: bool = False) -> tuple[dict, Path]:
         env = {k: v for k, v in os.environ.items()
                if not k.upper().startswith(("PYTHON", "BENCH_", "PRDRIVE_"))
                and k.upper() not in ("GTK_THEME", "TCL_LIBRARY", "TK_LIBRARY", "TCLLIBPATH")}
@@ -187,6 +191,8 @@ class Medidor:
         env["PYTHONIOENCODING"] = "utf-8:replace"
         env["PRDRIVE_TEMA"] = "claro"                  # el mismo tema en todas las máquinas
         env.update(extra or {})
+        if perfil:                                     # solo el calentamiento: las vueltas medidas van sin perfilar
+            env["BENCH_PERFIL"] = "1"
         return env, base
 
     # -- procesos --------------------------------------------------------------------
@@ -278,7 +284,7 @@ class Medidor:
 
     # -- un flujo ----------------------------------------------------------------------
     def flujo(self, arbol: str, flujo: str, pares: int | None, escala: str,
-              captura: Path | None = None, nombre: str = "") -> list[dict]:
+              captura: Path | None = None, nombre: str = "", perfil: bool = False) -> list[dict]:
         """Un proceso en frío de un flujo; devuelve sus líneas listas para `crudo.jsonl`."""
         solo_codigo = flujo in ("wizard", "agente", "log")     # no usan el dispositivo, sino el árbol compilado
         if solo_codigo:
@@ -294,7 +300,7 @@ class Medidor:
         if captura:
             extra["BENCH_CAPTURA"] = str(captura)
             extra["BENCH_NOMBRE"] = nombre
-        env, base = self.entorno(extra)
+        env, base = self.entorno(extra, perfil=perfil)
         try:
             r = self.hijo([self.py, str(self.staging / "entrada.py"), "driver"], env, cwd)
         finally:
@@ -337,11 +343,12 @@ class Medidor:
         return [dict(x, arbol="suelo", flujo="suelo") for x in r["lineas"]
                 if x["scenario"] == "start-bare"]
 
-    def pasada(self, arbol: str) -> list[dict]:
+    def pasada(self, arbol: str, perfil: bool = False) -> list[dict]:
+        """Una pasada de `PLAN` en un árbol; `perfil` la hace con `BENCH_PERFIL` (el calentamiento)."""
         lineas = []
         for flujo, pares, escala in PLAN:
             try:
-                lineas += self.flujo(arbol, flujo, pares, escala)
+                lineas += self.flujo(arbol, flujo, pares, escala, perfil=perfil)
             except Exception as e:                       # noqa: BLE001
                 lineas.append({"arbol": arbol, "flujo": flujo, "pares": pares, "escala": escala,
                                "scenario": ESPERADOS[flujo][0], "error": f"{type(e).__name__}: {e}"})
@@ -388,10 +395,10 @@ def main() -> int:
         print("No se pudo montar el dispositivo de muestra de ningún árbol.", file=sys.stderr)
         return 2
 
-    for arbol in ("base", "pr"):                          # calentamiento: se tira (ronda -1)
+    for arbol in ("base", "pr"):                          # calentamiento: se tira (ronda -1), con perfil
         if arbol not in m.malos:
             log(f"calentamiento {arbol}")
-            anotar(m.pasada(arbol), -1)
+            anotar(m.pasada(arbol, perfil=True), -1)
     for i in range(a.rondas):
         orden = ("base", "pr") if i % 2 == 0 else ("pr", "base")
         for arbol in orden:
