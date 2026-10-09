@@ -980,8 +980,8 @@ class FilaTabla(NamedTuple):
     Args:
         iid: Cómo se la llama al elegirla.
         celdas: Una por columna: un texto, `CeldaTexto`, `CeldaChip` o `CeldaIcono`.
-        tono: `''`, `'aviso'` (fondo ámbar), `'propio'` (fondo del acento) o
-            `'apagado'` (todo el texto en gris).
+        tono: `''`, `'aviso'` (fondo ámbar), `'peligro'` (fondo rojo), `'propio'`
+            (fondo del acento) o `'apagado'` (todo el texto en gris).
     """
     iid: str
     celdas: tuple
@@ -994,21 +994,19 @@ class Tabla:
     Es la `Table` del diseño. No es una `ttk.Treeview` porque las celdas llevan
     chips e iconos y una lista de Tk no sabe pintar nada dentro de una celda:
     se dibuja en un solo lienzo (`tk_tabla.TablaLienzo`), con una tarjeta, los
-    rótulos de la cabecera y, por fila, rectángulos, textos e imágenes. En
-    Windows cada widget es una ventana del sistema que se crea, se coloca y se
-    pinta por su cuenta: con etiquetas y chips de ttk en una rejilla (de seis a
-    ocho por fila) las tablas de «Dispositivos» y del editor de flags crecían
-    con sus datos; así son un widget, lleve las filas que lleve.
+    rótulos de la cabecera y, por fila, rectángulos, textos e imágenes. Las
+    celdas no son widgets: en Windows cada widget es una ventana del sistema
+    que se crea, se coloca y se pinta por su cuenta, y así la tabla es un solo
+    widget, lleve las filas que lleve.
 
-    Se ve igual que la rejilla de etiquetas que sustituye (mismas medidas,
-    huecos y colores; lo que lo asegura es `tests/test_tk_tabla.py`), con dos
-    diferencias respecto a la lista de «Parejas», que es la misma pieza: aquí
-    nada se corta con «…» (cada columna mide lo que su contenido más ancho; la
-    que estira se queda con lo que sobra) y la fila que tiene el ratón encima
-    no se tiñe. Si se le da `al_elegir`, las filas se eligen con un clic o con
-    las flechas, y la elegida va en el azul suave del acento; sin él no hay
-    nada que elegir ni toma el foco. La rueda no es suya: la recoge la
-    pantalla (el `Visor`).
+    Se ve como una rejilla de etiquetas de ttk (mismas medidas, huecos y
+    colores; lo que lo asegura es `tests/test_tk_tabla.py`). Frente a la lista
+    de «Parejas», que es la misma pieza, tiene dos diferencias: nada se corta
+    con «…» (cada columna mide lo que su contenido más ancho; la que estira se
+    queda con lo que sobra) y la fila que tiene el ratón encima no se tiñe. Si
+    se le da `al_elegir`, las filas se eligen con un clic o con las flechas, y
+    la elegida va en el azul suave del acento; sin él no hay nada que elegir ni
+    toma el foco. La rueda no es suya: la recoge la pantalla (el `Visor`).
 
     Args:
         parent: Dónde va.

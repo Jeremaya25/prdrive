@@ -3,23 +3,24 @@
 
 Solo dibuja. Lo que enseña cada fila lo decide quien la llama, con las filas de
 `tk.Tabla` (`FilaTabla` con celdas de texto, chip o icono, más `CeldaCasilla`).
-Antes `tk.Tabla` ponía etiquetas y chips de ttk en una rejilla, siete u ocho
-widgets por fila, y en Windows cada widget es una ventana del sistema que se
-crea, se coloca y se pinta por su cuenta; aquí todo son elementos de un
-`tk.Canvas` (rectángulos, textos e imágenes). Cincuenta parejas son un widget y
-no más de cuatrocientos. «Parejas» la usa tal cual y `tk.Tabla` («Dispositivos»,
-el editor de flags) la envuelve con las reglas de aquella rejilla (`rejilla`,
-`alto_fila`, `encima`).
+Todo son elementos de un `tk.Canvas` (rectángulos, textos e imágenes) y no un
+widget por celda: en Windows cada widget es una ventana del sistema que se
+crea, se coloca y se pinta por su cuenta. Cincuenta parejas son un widget y no
+más de cuatrocientos. «Parejas» la usa tal cual y `tk.Tabla` («Dispositivos», el
+editor de flags) la envuelve con las reglas de una rejilla de etiquetas
+(`rejilla=True`, `alto_fila`, `encima=False`).
 
-Se ve como la rejilla de etiquetas que sustituye:
+Se ve como una rejilla de etiquetas de ttk:
 
 - la tarjeta es la pieza de `Card.TFrame` (sus cuatro esquinas se recortan de la
   misma imagen de `icons.caja()`), con la cabecera en el papel, sus rótulos en
   la letra del tema y una línea de 1 px (`LINEA_SUAVE`) entre fila y fila;
 - cada columna mide lo que su contenido más ancho, como en `grid`, con los
   mismos huecos (`theme.E2`, `theme.E3`) y el margen que una `ttk.Label` deja
-  alrededor de su texto (`HOLGURA`). La que estira se queda con lo que sobre y su
-  texto, si no cabe, se corta con «…»: no ensancha la ventana;
+  alrededor de su texto (`HOLGURA`). La que estira se queda con lo que sobre.
+  En una rejilla (`rejilla=True`) ninguna celda se corta; en una lista de
+  «Parejas» (`rejilla=False`) la que estira mide solo su mínimo o su rótulo, y
+  su texto, si no cabe, se corta con «…» y no ensancha la ventana;
 - un chip es su píldora (la pieza del estilo de chip del tema, estirada a su
   ancho como la estira ttk), su disco o su icono (`icons.disco()`,
   `icons.get()`) y su palabra, con las medidas del chip de ttk. Va pintado sobre
@@ -31,12 +32,13 @@ Se ve como la rejilla de etiquetas que sustituye:
   seminegrita, y los nombres saldrían más gruesos y las columnas mal medidas.
 
 Cambia solo lo que cambia. `poner()` compara por `iid`: una fila igual no se
-toca, una que cambia se dibuja de nuevo (solo ella), una que se va se borra y
-una que llega se dibuja; si la anchura de una columna cambia, sus elementos se
-desplazan de una vez (`move` por la etiqueta de la columna). Elegir otra fila
-repinta dos; pasar el ratón, una. Una anchura nueva del lienzo (`<Configure>`)
-solo desplaza las columnas de la derecha y vuelve a cortar los textos de la
-que estira.
+toca, una que cambia se dibuja de nuevo (solo ella en una rejilla, donde si cambia
+de alto las de debajo se desplazan; en una lista todas miden lo de la más alta, así
+que si cambia ese alto se dibujan todas), una que se va se borra y una que llega se dibuja; si la
+anchura de una columna cambia, sus elementos se desplazan de una vez (`move` por
+la etiqueta de la columna). Elegir otra fila repinta dos; pasar el ratón, una.
+Una anchura nueva del lienzo (`<Configure>`) solo desplaza las columnas de la
+derecha y, en una lista, vuelve a cortar los textos de la que estira.
 
 Se usa sin ratón: Tab le da el foco (un anillo de 2 px del acento dentro de la
 fila elegida), ↑/↓, Inicio/Fin y RePág/AvPág cambian de fila e Intro llama a
@@ -55,8 +57,8 @@ HOLGURA = 2
 """Lo que una `ttk.Label` de clam pide alrededor de su texto o su imagen, en píxeles.
 
 Es lo mismo a cualquier escala (no es una medida del diseño, es de ttk), y con
-ello cada columna empieza y mide lo que medía la columna de etiquetas que la
-tabla sustituye. `tests/test_tk_tabla.py` lo compara con una etiqueta de verdad.
+ello cada columna empieza y mide lo que mediría con etiquetas de ttk.
+`tests/test_tk_tabla.py` lo compara con una etiqueta de verdad.
 """
 ESPACIO_CHIP = 4
 """El hueco entre la imagen y la palabra de un chip: el de una `ttk.Label` con imagen, en píxeles."""
@@ -220,7 +222,8 @@ class TablaLienzo:
         parent: Dónde va.
         columnas: `(titulo, ancho, estira)` por columna, como en `tk.Tabla`: el
             ancho es el mínimo, en medidas del diseño, y la que estira se queda
-            con lo que sobre (su texto se corta con «…» si no cabe).
+            con lo que sobre (en una lista su texto se corta con «…» si no cabe;
+            en una rejilla no se corta nada).
         al_elegir: Lo que se llama después de elegir otra fila con el ratón o
             el teclado, y con Intro; sin él, las filas no se eligen a mano.
         puede_dejar: Se pregunta antes de cambiar de fila (y antes de Intro); si
@@ -258,7 +261,7 @@ class TablaLienzo:
                  rejilla: bool = False, encima: bool = True) -> None:
         import tkinter as tk
         self.al_elegir, self.puede_dejar, self._vacio = al_elegir, puede_dejar, vacio
-        self._rejilla, self._con_encima = rejilla, encima
+        self._rejilla = rejilla
         self._columnas = [(titulo, ancho, bool(estira)) for titulo, ancho, estira in columnas]
         self.cabeceras = [titulo for titulo, _ancho, _estira in self._columnas]
         self._elegible = al_elegir is not None
@@ -489,8 +492,8 @@ class TablaLienzo:
         """Lleva lo dibujado a esa maqueta y a ese ancho de lienzo.
 
         Desplaza las columnas que cambian de sitio, vuelve a cortar los textos
-        de las que cambian de ancho, pone el fondo de cada fila a lo ancho y
-        rehace la tarjeta si cambió de tamaño.
+        de las que cambian de ancho (solo en una lista), pone el fondo de cada
+        fila a lo ancho y rehace la tarjeta si cambió de tamaño.
         """
         cv = self.marco
         anchos, _alturas, pedido, alto = maqueta
@@ -680,7 +683,7 @@ class TablaLienzo:
         Las que siguen igual no se tocan; una que cambia se borra y se dibuja de
         nuevo; una que se va se borra; una que llega se dibuja; las que cambian
         de sitio se desplazan. Si una columna cambia de ancho, sus elementos se
-        desplazan y los textos de la que estira se vuelven a cortar.
+        desplazan y, en una lista, los textos de la que estira se vuelven a cortar.
 
         Args:
             filas: Las filas, de arriba abajo; cada `iid` una vez.

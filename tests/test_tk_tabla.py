@@ -21,7 +21,9 @@ sola:
   la rejilla de etiquetas de ttk que era (que el test reconstruye), guarda y
   dice lo mismo que ella (`filas`, `orden`, `leer()`), se elige con el teclado y
   el clic llamando a `al_elegir()` sin argumentos, dibuja de una vez (nada se
-  recoloca ni queda un `after` tras enseñarla), deja la rueda al `Visor` y abrirla
+  recoloca ni queda un `after` tras enseñarla), tras cambios al azar de sus filas
+  en la rejilla (de alto distinto, entran, salen o cambian de sitio) deja lo de
+  una tabla nueva, deja la rueda al `Visor` y abrirla
   no manda un `<<ThemeChanged>>` ni crea un estilo.
 
 Los ayudantes nuevos de `theme` (`mezcla`, `colores_chip`, `rol_texto`) se prueban
@@ -902,6 +904,111 @@ c("  y la otra fila sigue con los mismos elementos",
 c("  y esa fila se ha dibujado de nuevo, con otros elementos",
   set(t8._lienzo.elementos("a")).isdisjoint(elementos_a), True)
 t8.poner(HECHAS)
+
+# Una tabla en rejilla que cambia en su sitio: tras cada cambio se ve y pide lo de una tabla nueva
+def en_texto(fila_: FilaTabla) -> FilaTabla:
+    """Devuelve la misma fila con cada chip cambiado por su texto de pista."""
+    return fila_._replace(celdas=tuple(CeldaTexto(celda.texto, "Pista.")
+                                       if isinstance(celda, CeldaChip) else celda
+                                       for celda in fila_.celdas))
+
+
+FORMAS_FLOTA = {d.id: [tk_fleet.fila(d._replace(last_seen="2099-01-02 10:00:00"), "yo"),
+                       tk_fleet.fila(d._replace(last_seen="2020-01-01 08:00:00"), "yo")]
+                for d in FLOTA_T}
+"""Por dispositivo, su fila con una pasada reciente (chip) y con la de hace años (texto)."""
+FORMAS_FLAGS = {f.iid: [f, en_texto(f)] for f in FILAS_FLAGS}
+"""Por flag, su fila con el chip de su origen y con ese origen en texto."""
+
+
+def pide(tabla_: TablaLienzo) -> tuple[int, int]:
+    """Lo que pide el lienzo de la tabla: su ancho y su alto, en píxeles."""
+    return tabla_.marco.winfo_reqwidth(), tabla_.marco.winfo_reqheight()
+
+
+def cambios_en_rejilla(marco_t, columnas, formas: dict[str, list[FilaTabla]], alto: int,
+                       pasos: int) -> tuple[list[int], int, int]:
+    """Aplica `pasos` cambios al azar a una tabla en rejilla; tras cada uno la compara con una nueva.
+
+    Un cambio pone una fila en otra de sus formas (de chip a texto o al revés),
+    mete una que no estaba, quita una o la pasa a otro sitio. Tras cada `poner()`
+    se compara con una `TablaLienzo` nueva puesta con las mismas filas, en el
+    mismo ancho: cada elemento del lienzo con sus coordenadas y colores, lo que
+    pide, el orden y lo que lee `leer()`.
+
+    Args:
+        marco_t: Dónde va la tabla que cambia; las tablas nuevas van debajo, en su mismo ancho.
+        columnas: Las columnas de la tabla.
+        formas: Por `iid`, las formas que puede tener su fila; la primera es la de salida.
+        alto: El `alto_fila` de la tabla.
+        pasos: Cuántos cambios se hacen, con la semilla 7.
+
+    Returns:
+        `(distintas, altos, movidas)`: los pasos tras los que no se ve lo de una
+        tabla nueva; cuántas veces cambió de alto una fila que sigue, y cuántas
+        se desplazó una que sigue sin cambiar de alto.
+    """
+    rng = random.Random(7)
+    sitio = ttk.Frame(marco_t)
+    sitio.grid(row=2, column=0, sticky="ew")
+    sitio.columnconfigure(0, weight=1)
+    t = TablaLienzo(marco_t, columnas, rejilla=True, encima=False, alto_fila=alto)
+    t.marco.grid(row=1, column=0, sticky="ew")
+    orden: list[str] = []          # los iid de arriba abajo
+    forma: dict[str, int] = {}     # la forma en que está cada fila
+    distintas, altos, movidas = [], 0, 0
+    for paso in range(pasos):
+        previas = {i: t.caja(i) for i in orden}
+        libres = [i for i in formas if i not in forma]
+        accion = rng.choices(("forma", "entra", "sale", "mueve"), weights=(4, 3, 2, 3))[0]
+        if accion == "forma" and orden:
+            iid = rng.choice(orden)
+            forma[iid] = (forma[iid] + 1) % len(formas[iid])
+        elif accion == "entra" and libres:
+            iid = rng.choice(libres)
+            forma[iid] = rng.randrange(len(formas[iid]))
+            orden.insert(rng.randint(0, len(orden)), iid)
+        elif accion == "sale" and orden:
+            iid = rng.choice(orden)
+            orden.remove(iid)
+            del forma[iid]
+        elif accion == "mueve" and len(orden) > 1:
+            iid = rng.choice(orden)
+            orden.remove(iid)
+            orden.insert(rng.randint(0, len(orden)), iid)
+        filas = [formas[i][forma[i]] for i in orden]
+        t.poner(filas)
+        marco_t.update()
+        nueva = TablaLienzo(sitio, columnas, rejilla=True, encima=False, alto_fila=alto)
+        nueva.marco.grid(row=0, column=0, sticky="ew")
+        nueva.poner(filas)
+        marco_t.update()
+        ahora = {i: t.caja(i) for i in orden}
+        for i in previas.keys() & ahora.keys():
+            if previas[i][3] - previas[i][1] != ahora[i][3] - ahora[i][1]:
+                altos += 1
+            elif previas[i][1] != ahora[i][1]:
+                movidas += 1
+        if ((dibujo(t), t.leer(), t.orden, pide(t))
+                != (dibujo(nueva), nueva.leer(), nueva.orden, pide(nueva))
+                or not apilado_bien(t)):
+            distintas.append(paso)
+        nueva.marco.destroy()
+    sitio.destroy()
+    return distintas, altos, movidas
+
+
+for nombre_caso, columnas_, formas_, alto_ in (
+        ("«Dispositivos»", COLUMNAS_FLOTA, FORMAS_FLOTA, 36),
+        ("el editor de flags", COLUMNAS_FLAGS, FORMAS_FLAGS, 30)):
+    dlg3, marco3 = ventana(raiz, 700)
+    enseñar(raiz, dlg3)
+    distintas, altos, movidas = cambios_en_rejilla(marco3, columnas_, formas_, alto_, 40)
+    c(nombre_caso + ": 40 cambios al azar, y tras cada uno se ve y pide lo de una tabla nueva",
+      distintas, [])
+    c("  con filas que cambian de alto (y mueven las de debajo) y filas que solo se desplazan",
+      (altos > 0, movidas > 0), (True, True))
+    dlg3.destroy()
 
 # Elegir con el teclado y con el clic: al_elegir() se llama sin argumentos
 cv8 = t8.marco
