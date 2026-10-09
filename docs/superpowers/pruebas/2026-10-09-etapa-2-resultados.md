@@ -132,6 +132,28 @@ de tamaño ninguno; quedan los 6 que crea la lectura. De paso, «Sincronizar aho
 pasa de 1040 a 165 ms hasta ver la ventana de la pasada: la principal ya no se repinta entera al
 ponerse ocupada.
 
+## Lo que cuesta un widget en Windows (para la etapa 4)
+
+Los apartados de «Ajustes» y la llegada de la flota a «Dispositivos», repartidos igual
+(`b6a4674`, [Rendimiento 37941184302](https://github.com/Jeremaya25/prdrive/actions/runs/37941184302),
+suelo 141 ms, mediana de 7 vueltas, 5 parejas):
+
+| Momento (rama) | Clic | `update()` | Repintados | Nuevos |
+|---|---|---|---|---|
+| Apartado «Reparación» | 98 ms | 71 ms | 13 | 26 |
+| Apartado «Nombre e icono» | 129 ms | 104 ms | 49 | 29 |
+| Volver a un apartado ya visto (nada nuevo) | 71 ms | 68 ms | 13 | 0 |
+| Llegan las notas de la flota (12 dispositivos) | 1881 ms | 1108 ms | 124 | 90 |
+
+Aquí no hay un repintado de la ventana entera (ninguna cambia de tamaño): lo que cuesta es cada
+widget nativo, unos 4 ms en crearlo, unos 3 en enseñarlo (volver a un apartado ya hecho son 71 ms
+de clic sin crear nada; en Linux, 9) y unos 5 en pintarlo. Con 13-49 widgets por apartado, la
+meta de 60 ms no se alcanza recortando llamadas: pide menos widgets nativos por apartado (un
+lienzo, como la lista de «Parejas»), o pintar más barato (las piezas con alfa binario de §1c, que
+ganaban sobre todo en los repintados enteros y conviene volver a medir ahora que no los hay). La
+llegada de la flota es casi toda trabajo al aplicar las notas (1,9 s): la rehace la tarea 7 de la
+etapa 3 (la tabla sobre un lienzo).
+
 ## R3 y R7
 
 Decididos con su medida en Windows (`2026-10-09-etapa-2-medidas.md`, «Decisión»): **la lista de
