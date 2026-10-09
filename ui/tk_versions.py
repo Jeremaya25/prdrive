@@ -14,20 +14,25 @@ y renombrar, y hacerlo desde aquí (escribiendo encima del fichero vivo, y
 también en el remoto) sería otro mecanismo entero con sus propias formas de
 salir mal.
 
-Leer el lado remoto es una llamada a rclone, así que va por `tk.working()`: con
-el remoto caído tarda lo que tarden los tiempos de espera de
-`catalog.NET_FLAGS` y mientras tanto la ventana no puede quedarse en blanco.
-Purgar también: borra en el remoto.
+Leer los dos lados (el del remoto es una llamada a rclone y el del dispositivo
+recorre `.prversions/`) va en un hilo (`segundo_plano`): la pantalla se pinta
+entera con una línea de espera y las cifras en «—», y con el remoto caído tarda
+lo que tarden los tiempos de espera de `catalog.NET_FLAGS` sin dejar la ventana
+en blanco. **Una lectura trae la pareja con sus dos lados juntos** y «Purgar» usa
+ese trío, no la pareja que esté elegida en ese momento. Purgar sí va por
+`tk.working()`, detrás de su plan y de su confirmación: borra en el remoto y no
+se corta a medias.
 """
 
 from __future__ import annotations
 
 from datetime import date, timedelta
+from functools import partial
 
 from common import model
-from common.model import Config
+from common.model import Config, Pair
 
-from . import abrir, theme, versions_editor
+from . import abrir, segundo_plano, theme, versions_editor
 from .tk import TITLE, Panel, cabecera, dialogo, mostrar, pie, separador_fila, working
 
 ANTIGUEDADES = (
@@ -47,6 +52,20 @@ SIN_VERSIONES = (
     "lo que se sobrescriba o se borre»."
 )
 """Lo que se dice si ninguna pareja guarda versiones."""
+
+LEYENDO = "Mirando lo que hay guardado en los dos lados…"
+"""Lo que dice la línea de espera mientras se leen los dos lados."""
+
+
+def leer_pareja(pair: Pair) -> tuple[Pair, versions_editor.Lado, versions_editor.Lado]:
+    """Lee los dos lados de la pareja y los devuelve juntos con ella.
+
+    Corre en un hilo (`segundo_plano`). Devolver la pareja con sus lados es lo
+    que deja a quien recoge la lectura saber de cuál es: purgar usa este trío y
+    no la pareja que esté elegida cuando llegue.
+    """
+    local, remoto = versions_editor.lados(pair)
+    return pair, local, remoto
 
 
 def open_dialog(parent, config: Config) -> None:
@@ -83,10 +102,16 @@ def construir(panel: Panel, config: Config) -> None:
                 row=0, column=0, sticky="e")
         return
 
-    estado: dict = {"pareja": parejas[0], "local": None, "remoto": None}
+    sondeo = panel.sondeo()
+    indicador = panel.indicador(marco, ancho=560)
+    dlg.indicador, dlg.sondeo = indicador, sondeo   # como `visor`: los tests los miran
+    indicador.marco.grid(row=1, column=0, sticky="w", pady=(theme.E3, 0))
+    # `lectura` es el trío `(pareja, lado del dispositivo, lado del remoto)` de la
+    # última lectura que ha llegado de la pareja elegida; `None` mientras se lee.
+    estado: dict = {"pareja": parejas[0], "lectura": None}
 
     # Elegir pareja: un botón por pareja, como en el diseño.
-    fila = 1
+    fila = 2
     elegida = StringVar(marco, value=parejas[0].name)
     if len(parejas) > 1:
         ttk.Label(marco, text="Pareja", style="Campo.TLabel").grid(
@@ -140,22 +165,10 @@ def construir(panel: Panel, config: Config) -> None:
         """Devuelve la pareja elegida en el desplegable."""
         return next(p for p in parejas if p.name == elegida.get())
 
-    def refrescar(*_) -> None:
-        """Relee los dos lados y repinta la ventana.
-
-        El remoto va por `working()`: es red.
-        """
-        pair = pareja_actual()
-        estado["pareja"] = pair
-        estado["local"] = versions_editor.leer_local(pair)
-        ok, resultado = working(dlg, "Versiones",
-                                lambda: versions_editor.leer_remoto(pair),
-                                "Preguntando al remoto…")
-        estado["remoto"] = resultado if ok else versions_editor.Lado(
-            versions_editor.REMOTO, pair.versions_path2, False,
-            "no se ha podido preguntar")
-        for clave, lado in ((versions_editor.DISPOSITIVO, estado["local"]),
-                            (versions_editor.REMOTO, estado["remoto"])):
+    def pintar_lados(local, remoto) -> None:
+        """Pone en la tarjeta lo que dice cada lado."""
+        for clave, lado in ((versions_editor.DISPOSITIVO, local),
+                            (versions_editor.REMOTO, remoto)):
             cifra, ruta = lineas[clave]
             if not lado.disponible:
                 cifra.configure(text="—", style="Card.TLabel")
@@ -168,10 +181,55 @@ def construir(panel: Panel, config: Config) -> None:
             ruta.configure(text=lado.detalle or lado.endpoint,
                            style="Card.Aviso.TLabel" if not lado.disponible
                            else "Card.Pista.TLabel")
+
+    def pintar_espera(pair) -> None:
+        """Pone las cifras en «—» y, bajo ellas, dónde se va a mirar."""
+        for clave, endpoint in ((versions_editor.DISPOSITIVO, pair.versions_path1),
+                                (versions_editor.REMOTO, pair.versions_path2)):
+            cifra, ruta = lineas[clave]
+            cifra.configure(text="—", style="Card.TLabel")
+            ruta.configure(text=endpoint, style="Card.Pista.TLabel")
+
+    def llegada(pair, encargo) -> None:
+        """Pinta los dos lados de la pareja que se pidió, si sigue siendo la elegida.
+
+        Args:
+            pair: La pareja que se pidió al lanzar esta lectura.
+            encargo: Su lectura, ya terminada.
+        """
+        if pair.name != elegida.get():
+            return                      # se eligió otra mientras tanto: viene la suya
+        indicador.poner("", False)
+        if encargo.error is not None:
+            motivo = f"no se ha podido leer: {encargo.error}"
+            local = versions_editor.Lado(versions_editor.DISPOSITIVO,
+                                         pair.versions_path1, False, motivo)
+            remoto = versions_editor.Lado(versions_editor.REMOTO,
+                                          pair.versions_path2, False, motivo)
+        else:
+            pair, local, remoto = encargo.resultado
+        estado["lectura"] = (pair, local, remoto)
+        pintar_lados(local, remoto)
         purgar_btn.configure(
-            state="normal" if (estado["local"].disponible and estado["local"].total)
-            or (estado["remoto"].disponible and estado["remoto"].total) else "disabled")
-        abrir_btn.configure(state="normal" if estado["local"].total else "disabled")
+            state="normal" if (local.disponible and local.total)
+            or (remoto.disponible and remoto.total) else "disabled")
+        abrir_btn.configure(state="normal" if local.total else "disabled")
+
+    def refrescar(*_) -> None:
+        """Relee los dos lados de la pareja elegida; la pantalla ya está pintada.
+
+        Mientras llega, las cifras dicen «—» y no se puede purgar ni abrir la
+        carpeta: lo que se haría saldría de una lectura de otra pareja o de antes.
+        """
+        pair = pareja_actual()
+        estado["pareja"], estado["lectura"] = pair, None
+        pintar_espera(pair)
+        purgar_btn.configure(state="disabled")
+        abrir_btn.configure(state="disabled")
+        indicador.poner(LEYENDO, True)
+        sondeo.esperar(segundo_plano.lanzar_sin_repetir(
+            ("versiones", pair.name), None, partial(leer_pareja, pair)),
+            lambda encargo, p=pair: llegada(p, encargo))
 
     # Acciones.
 
@@ -185,9 +243,16 @@ def construir(panel: Panel, config: Config) -> None:
                                  parent=dlg)
 
     def purgar() -> None:
-        """Pide confirmación del plan de purga y lo ejecuta."""
-        plan = versions_editor.plan_purgar(estado["pareja"], estado["local"],
-                                           estado["remoto"], corte())
+        """Pide confirmación del plan de purga y lo ejecuta.
+
+        El plan sale de la pareja y los lados de una misma lectura
+        (`estado["lectura"]`), nunca de la pareja elegida ahora con lados de
+        otra.
+        """
+        if estado["lectura"] is None:
+            return
+        pair, local, remoto = estado["lectura"]
+        plan = versions_editor.plan_purgar(pair, local, remoto, corte())
         if plan.vacio:
             messagebox.showinfo(TITLE, plan.consequences[0], parent=dlg)
             return

@@ -1069,6 +1069,9 @@ c("y apagada por defecto", datos["watch"], False)
 
 # «Versiones»: elegir otra pareja en el desplegable relee esa
 #
+# Los dos lados se leen aparte (`segundo_plano`, aquí `en_el_acto`) y no por
+# `working()`, que solo queda para purgar: este test no purga, así que si
+# leer volviera a pasar por ahí, falla en vez de abrir una ventanita.
 # El desplegable avisa por `<<ComboboxSelected>>` (un trace sobre la variable
 # sobreviviría al widget); lo que se mira es qué pareja lee el diálogo.
 leidas: list = []
@@ -1077,7 +1080,14 @@ versions_editor.leer_local = lambda pair: (
         versions_editor.DISPOSITIVO, str(pair.local_abs), True, "", ()))
 versions_editor.leer_remoto = lambda pair: versions_editor.Lado(
     versions_editor.REMOTO, pair.versions_path2, True, "", ())
-tk_versions.working = working_en_el_acto
+
+
+def working_prohibido(*_a, **_k):
+    """Un `working()` que no debe llamarse: leer las versiones ya no pasa por él."""
+    raise AssertionError("«Versiones» no lee por working()")
+
+
+tk_versions.working = working_prohibido
 ocultar(tk_versions)
 
 

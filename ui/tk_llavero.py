@@ -24,8 +24,7 @@ from common import catalog, keepassxc, llavero, model
 from common.model import Config, ConfigError
 
 from . import catalog_editor, llavero_editor, segundo_plano, theme, tk_pairs
-from .tk import (TITLE, Indicador, Panel, Sondeo, cabecera, dialogo, mostrar, pie,
-                 working)
+from .tk import TITLE, Panel, cabecera, dialogo, mostrar, pie, working
 
 ACTIVADO = "activado"
 """Lo que devuelve `ajustes()` si ha activado el llavero: toca la primera pasada."""
@@ -173,11 +172,11 @@ def construir_ajustes(panel: Panel, raw: dict | None = None) -> None:
 
     raw = catalog_editor.raw_del_dispositivo(raw) or {}
     dlg, marco = panel.ventana, panel.marco
-    sondeo = Sondeo(marco)
+    sondeo = panel.sondeo()
     estado: dict = {"cat": None, "leido": False}
     cabecera(marco, llavero_editor.TITULO, llavero_editor.EXPLICACION, ancho=560,
              estilo="Dialogo.TLabel").grid(row=0, column=0, sticky="w")
-    indicador = Indicador(marco, ancho=560)
+    indicador = panel.indicador(marco, ancho=560)
     indicador.marco.grid(row=1, column=0, sticky="ew", pady=(theme.E3, 0))
     dlg.indicador, dlg.sondeo = indicador, sondeo   # como `visor`: los tests los miran
 

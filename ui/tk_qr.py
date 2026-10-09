@@ -22,14 +22,27 @@ Es un descuido lo que evita, no un atacante: una foto con otro móvil no la
 para, y por eso el recuadro ámbar sigue siendo la barrera principal. Dentro de
 «Ajustes» se protege la ventana entera mientras el código está a la vista, y se
 le quita la protección al pasar a otro apartado.
+
+**La ventana se pinta antes de que exista el código.** Montar la carga (que lee
+el `rclone.conf` y la clave del dispositivo) y codificarla es trabajo de un hilo
+(`preparar_codigo`); mientras tanto la tarjeta dice «Preparando el código…». Al
+llegar, y por este orden: se protege la ventana, se dibuja el código y se ponen
+las líneas que dependen de él. Así no hay un solo instante con el código a la
+vista y la ventana sin proteger, aunque la ventana ya estuviera abierta. Si el
+apartado se deja antes de que llegue, la espera muere con su marco: no se crea
+ninguna imagen ni se protege nada. La lectura no pasa por
+`segundo_plano.lanzar_sin_repetir`: su tabla de lecturas vivas guardaría el
+resultado después de irse el apartado.
 """
 
 from __future__ import annotations
 
+from functools import partial
+
 from common import pairing
 from common.model import ConfigError
 
-from . import icons, qr, theme
+from . import icons, qr, segundo_plano, theme
 from . import tk as uitk
 from .tk import (CAPTURA_EN_NEGRO, CAPTURA_EXCLUIDA, Panel, bloque_aviso, cabecera,
                  dialogo, mostrar, pie, proteger_de_capturas, soltar_capturas)
@@ -66,6 +79,9 @@ PISTA = ("Abre prdrive en el móvil, elige «Escanear código» y apunta la cám
          "aquí. El móvil se queda con la conexión y con el catálogo; las "
          "parejas las elige después, él solo.")
 """Cómo se usa el código en el móvil."""
+
+PREPARANDO = "Preparando el código…"
+"""Lo que dice la tarjeta mientras se monta y se codifica la carga."""
 
 LADO = 380
 """El lado del dibujo al que se apunta, en medidas del diseño.
@@ -127,6 +143,38 @@ def _escala(widget, codigo: qr.Codigo) -> int:
                total // (codigo.tamano + icons.QR_SILENCIO * 2))
 
 
+def preparar_codigo(raw_local: dict | None = None) -> qr.Codigo:
+    """Monta la carga de emparejamiento y la codifica como código QR.
+
+    Es el trabajo que corre en un hilo (`segundo_plano.lanzar`) mientras la
+    ventana ya está pintada, y un punto de indirección: los tests la sustituyen.
+    La carga lleva la clave privada del dispositivo: su texto no sale de esta
+    función, ni se devuelve ni se guarda; solo salen los módulos del código. Ni
+    siquiera en un fallo: si no cabe, el error que sale es uno nuevo, sin los
+    marcos de `qr.codificar()` (que llevan la carga en sus variables) colgando
+    de su traza.
+
+    Args:
+        raw_local: El `sync_config.toml` en crudo, o `None` para que
+            `pairing.construir()` lo lea.
+
+    Returns:
+        El código, en corrección `CORRECCION`.
+
+    Raises:
+        ConfigError: Si el dispositivo no tiene conexión que enseñar.
+        qr.QRError: Si la carga no cabe en ninguna versión de código QR.
+    """
+    texto = pairing.construir(raw_local)
+    try:
+        return qr.codificar(texto, CORRECCION)
+    except qr.QRError as e:
+        no_cabe = str(e)
+    finally:
+        del texto
+    raise qr.QRError(no_cabe)
+
+
 def open_dialog(parent, raw_local: dict | None = None) -> None:
     """Abre la ventana; no devuelve nada: aquí no se decide nada, se enseña.
 
@@ -140,7 +188,11 @@ def open_dialog(parent, raw_local: dict | None = None) -> None:
 
 
 def construir(panel: Panel, raw_local: dict | None = None) -> None:
-    """Dibuja «Emparejar un móvil» en `panel` (su diálogo o «Ajustes»)."""
+    """Dibuja «Emparejar un móvil» en `panel` (su diálogo o «Ajustes»).
+
+    Pinta el aviso y la tarjeta vacía («Preparando el código…») y pide el
+    código a un hilo; lo que depende de él se pone al llegar (`llegada()`).
+    """
     from tkinter import ttk
 
     dlg, marco = panel.ventana, panel.marco
@@ -159,23 +211,57 @@ def construir(panel: Panel, raw_local: dict | None = None) -> None:
     # blanca o el lector se come una fila de módulos.
     tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(theme.E4, theme.E4, theme.E4, theme.E4))
     tarjeta.grid(row=3, column=0, pady=(theme.E4, 0))
+    espera = ttk.Label(tarjeta, text=PREPARANDO, style="Card.Pista.TLabel")
+    espera.grid(row=0, column=0)
 
-    en_pantalla = False
-    try:
-        texto = pairing.construir(raw_local)
-        codigo = qr.codificar(texto, CORRECCION)
-    except (ConfigError, qr.QRError) as e:
-        # Sin conexión que enseñar no hay ventana a medias: se dice por qué y
-        # se deja cerrar. Es el caso de un checkout sin provisionar, que es
-        # normal. Que no quepa es distinto y merece su propia frase: la persona
-        # no tiene por qué saber qué es una versión de código QR.
-        fallo = DEMASIADO.format(e=e) if isinstance(e, qr.QRError) else str(e)
-        ttk.Label(tarjeta, text=fallo, style="Card.Pista.TLabel", justify="left",
-                  wraplength=theme.medida(500)).grid(row=0, column=0)
-        codigo = None
-    else:
+    ttk.Label(marco, text=PISTA, style="Pista.TLabel", justify="left",
+              wraplength=theme.medida(560)).grid(row=4, column=0, sticky="w",
+                                                 pady=(theme.E4, 0))
+
+    botones = pie(marco, 6)
+    botones.columnconfigure(0, weight=1)
+    ttk.Button(botones, text="Cerrar", style="Primary.TButton",
+               command=panel.cerrar).grid(row=0, column=1)
+
+    def llegada(encargo) -> None:
+        """Pone el código en la tarjeta, o dice por qué no hay.
+
+        Con código, por este orden: la protección de la ventana, la imagen y
+        las líneas que dependen de ellas. La protección va la primera para que
+        no haya un instante con la imagen a la vista y la ventana sin proteger;
+        en «Ajustes», donde la ventana ya está a la vista, el código no se
+        pinta hasta que Tk descansa, y eso es después de esto. Al irse del
+        apartado se le quita, que los demás sí pueden salir en una captura.
+        """
+        espera.destroy()
+        if encargo.error is not None:
+            # Sin conexión que enseñar no hay ventana a medias: se dice por qué y
+            # se deja cerrar. Es el caso de un checkout sin provisionar, que es
+            # normal. Que no quepa es distinto y merece su propia frase: la persona
+            # no tiene por qué saber qué es una versión de código QR.
+            e = encargo.error
+            if isinstance(e, qr.QRError):
+                fallo = DEMASIADO.format(e=e)
+            elif isinstance(e, ConfigError):
+                fallo = str(e)
+            else:
+                fallo = f"No se ha podido preparar el código: {e}"
+            ttk.Label(tarjeta, text=fallo, style="Card.Pista.TLabel", justify="left",
+                      wraplength=theme.medida(500)).grid(row=0, column=0)
+            panel.ajustar()
+            return
+        codigo = encargo.resultado
+        if panel.incrustado:
+            marco.bind("<Destroy>", lambda e: soltar_capturas(dlg)
+                       if e.widget is marco else None, add="+")
+        # La línea se decide con lo que Windows haya aceptado y ocupa la fila 2,
+        # que sin ella queda vacía.
+        linea = linea_de_captura(proteger_de_capturas(dlg))
         imagen = icons.matriz(tarjeta, codigo.modulos, _escala(tarjeta, codigo))
         if imagen is None:
+            # Sin código a la vista no hay nada que proteger, y una ventana que
+            # no sale en las capturas tampoco deja fotografiar el error.
+            soltar_capturas(dlg)
             ttk.Label(tarjeta, text="No se ha podido dibujar el código.",
                       style="Card.Pista.TLabel").grid(row=0, column=0)
         else:
@@ -188,36 +274,19 @@ def construir(panel: Panel, raw_local: dict | None = None) -> None:
             # el recolector en cuanto vuelve esta función.
             etiqueta.imagen = imagen        # type: ignore[attr-defined]
             etiqueta.grid(row=0, column=0)
-            en_pantalla = True
-
-    ttk.Label(marco, text=PISTA, style="Pista.TLabel", justify="left",
-              wraplength=theme.medida(560)).grid(row=4, column=0, sticky="w",
-                                                 pady=(theme.E4, 0))
-
-    if codigo is not None:
+            if linea is not None:
+                ttk.Label(marco, text=linea, style="Pista.TLabel", justify="left",
+                          wraplength=theme.medida(560)).grid(row=2, column=0,
+                                                             sticky="w", pady=(theme.E2, 0))
         ttk.Label(marco, style="MonoPista.TLabel",
                   text=f"versión {codigo.version} · corrección {codigo.nivel} "
                        f"· {codigo.tamano}×{codigo.tamano} módulos").grid(
             row=5, column=0, sticky="w", pady=(theme.E2, 0))
+        panel.ajustar()
 
-    botones = pie(marco, 6)
-    botones.columnconfigure(0, weight=1)
-    ttk.Button(botones, text="Cerrar", style="Primary.TButton",
-               command=panel.cerrar).grid(row=0, column=1)
-
-    # Solo con un código a la vista hay algo que proteger (y una línea que
-    # decir). Va justo antes de `mostrar()` y con la ventana aún retirada: ni un
-    # fotograma sin proteger. En «Ajustes» la ventana ya está a la vista, pero
-    # el código no se pinta hasta que Tk descansa, y eso es después de esto; al
-    # irse del apartado se le quita, que los demás sí pueden salir en una
-    # captura. La línea se pone después porque depende de lo que Windows haya
-    # aceptado; ocupa la fila 2, que sin ella queda vacía.
-    if en_pantalla:
-        if panel.incrustado:
-            marco.bind("<Destroy>", lambda e: soltar_capturas(dlg)
-                       if e.widget is marco else None, add="+")
-        linea = linea_de_captura(proteger_de_capturas(dlg))
-        if linea is not None:
-            ttk.Label(marco, text=linea, style="Pista.TLabel", justify="left",
-                      wraplength=theme.medida(560)).grid(row=2, column=0,
-                                                         sticky="w", pady=(theme.E2, 0))
+    # Un `lanzar` simple y no `lanzar_sin_repetir`: su tabla de lecturas vivas
+    # guardaría el código después de irse el apartado. La espera cuelga del
+    # marco, así que dejarlo antes de que llegue la cancela: no se protege nada
+    # ni se crea ninguna imagen.
+    panel.sondeo().esperar(segundo_plano.lanzar(partial(preparar_codigo, raw_local)),
+                           llegada)

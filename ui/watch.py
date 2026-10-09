@@ -237,6 +237,60 @@ def installed_options() -> dict:
     }
 
 
+TOPE_VIGILANTE_S = CONSULTA_S
+"""Segundos que la pantalla del vigilante espera a que el sistema conteste.
+
+`penwatch.status_rows()` le pregunta a `schtasks`/`systemctl` por
+`penwatch.run_quiet()`, que no tiene tope de tiempo y no puede tenerlo aquí
+(`penwatch.py` no cambia). La pantalla no espera más que esto: pasado el tiempo
+dice que el sistema no ha contestado. El hilo puede seguir vivo, y si contesta
+después, lo suyo sustituye a la frase.
+"""
+
+
+class EstadoVigilante(NamedTuple):
+    """Lo que la pantalla del vigilante enseña de penwatch, leído de una vez.
+
+    Args:
+        filas: Las filas de estado de penwatch, `(etiqueta, valor)`; una
+            etiqueta vacía es un aviso suelto.
+        instalado: Si penwatch está instalado en este equipo (`is_installed()`),
+            leído junto a las filas para que el chip y las filas cuenten lo
+            mismo.
+    """
+    filas: list[tuple[str, str]]
+    instalado: bool
+
+
+def estado_vigilante() -> EstadoVigilante:
+    """Lee el estado del vigilante: lo que tarda, `schtasks` o `systemctl`, va aquí.
+
+    Está hecha para correr en un hilo (`ui.segundo_plano`): la pantalla del
+    arranque automático se pinta antes y espera a esto. Nunca lanza: si penwatch
+    no se puede importar o falla, las filas son un único aviso que lo dice y
+    `instalado` es falso. Es un punto de indirección: los tests la sustituyen.
+    """
+    try:
+        filas = status_rows()
+    except Exception as e:                              # noqa: BLE001
+        filas = [("", f"No se ha podido leer el estado del vigilante: {e}")]
+    try:
+        instalado = is_installed()
+    except Exception:                                   # noqa: BLE001
+        instalado = False
+    return EstadoVigilante(filas, instalado)
+
+
+def deteccion() -> list[tuple[str, str]]:
+    """Devuelve dónde busca penwatch el dispositivo y qué encuentra en cada sitio.
+
+    Es `probe_rows()` como lectura aparte para la pantalla del arranque
+    automático: recorre las raíces candidatas (en Windows, las letras de
+    unidad), y eso no se hace en el hilo de Tk. Los tests la sustituyen.
+    """
+    return probe_rows()
+
+
 def resumen() -> Resumen:
     """Devuelve qué hace el arranque automático de este equipo con este dispositivo.
 
