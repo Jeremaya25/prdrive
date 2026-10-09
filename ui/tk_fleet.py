@@ -412,10 +412,12 @@ class Ficha:
             if columnas == 1:
                 ancho[columna] = max(ancho.get(columna, 0),
                                      etiqueta.winfo_reqwidth() + hueco_x)
-        for etiqueta, _fila, columna, columnas, hueco_x, _hueco_y in colocadas:
+        # El nombre es la única etiqueta que ocupa dos columnas, y `_colocar()` la
+        # pone sin hueco: por eso no se suma ninguno aquí.
+        for etiqueta, _fila, columna, columnas, _hueco_x, _hueco_y in colocadas:
             if columnas > 1:
                 ultima = columna + columnas - 1
-                falta = (etiqueta.winfo_reqwidth() + hueco_x
+                falta = (etiqueta.winfo_reqwidth()
                          - sum(ancho.get(c, 0) for c in range(columna, ultima + 1)))
                 if falta > 0:
                     ancho[ultima] = ancho.get(ultima, 0) + falta

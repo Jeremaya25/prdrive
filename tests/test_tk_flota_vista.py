@@ -622,12 +622,13 @@ with sandbox():
     vacia = abrir([])
     c("con la flota vacía no se ha hecho la ficha: ni su tarjeta ni su rótulo",
       (vacia.ficha.marco, vacia.ficha.rotulo), (None, None))
-    c("  y la ventana tiene 24 widgets en este recuento (con el aviso de «no hay nadie»)",
-      len(todos(vacia)), 24)
+    con_tres = abrir(flota(3))
+    c("  y la diferencia con una con notas es lo que pesa la tarjeta, porque su rótulo y el "
+      "aviso de «no hay nadie» pesan lo mismo",
+      len(todos(con_tres)) - len(todos(vacia)), len(todos(con_tres.ficha.marco)))
     LEIDA[:] = flota(3)
     buscar(vacia, ttk.Button, "Releer").invoke()
     vacia.update()
-    con_tres = abrir(flota(3))
     c("«Releer» con notas hace la ficha: la ventana tiene los de abrirla con ellas, más el aviso",
       len(todos(vacia)) - len(todos(con_tres)), 1)
     cerrar(con_tres)
