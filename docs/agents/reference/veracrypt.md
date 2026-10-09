@@ -1,4 +1,4 @@
-# VeraCrypt: what not to weaken (`install/crypto.py`, `common/bitlocker.py`, `install/veracrypt_bin.py`, `install/traveler.py`)
+# VeraCrypt: what not to weaken (`install/crypto.py`, `common/bitlocker.py`, `install/veracrypt_bin.py`, `install/traveler.py`, and the write probe in `ui/lecturas_asistente.py`)
 
 Formerly AGENTS.md «Provisioning a device» → «VeraCrypt: what not to weaken». The vestibule (scripts outside the container) is in `vestibule.md`.
 

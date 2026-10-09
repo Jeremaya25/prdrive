@@ -1,4 +1,4 @@
-# The host root (`install/raiz_equipo.py` + `ui/tk_equipo.py`)
+# The host root (`install/raiz_equipo.py` + `ui/tk_equipo.py` + `ui/lecturas_asistente.py`)
 
 Formerly AGENTS.md «The host root» and «The encrypted host root (phase 3)», plus the wizard-route bullets of «The resident agent». Core of the agent: `agent.md`.
 

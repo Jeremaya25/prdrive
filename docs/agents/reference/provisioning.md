@@ -1,4 +1,4 @@
-# Provisioning a device and the build (`prdrive-install.py` + `install/` + `ui/tk_install.py`)
+# Provisioning a device and the build (`prdrive-install.py` + `install/` + `ui/tk_install.py` + `ui/lecturas_asistente.py`)
 
 Formerly AGENTS.md «Provisioning a device» (general part), «The PyInstaller build».
 VeraCrypt → `veracrypt.md`; the vestibule → `vestibule.md`; updating an installed device → `updating.md`; the agent's install → `agent.md`.

@@ -199,7 +199,7 @@ class InstallState:
         velocidad_escritura: Bytes por segundo medidos en `device` (ver
             `crypto`); 0.0 es «medido y no se ha podido».
         sondas: La medida de escritura de cada volumen físico, lanzada una
-            sola vez por volumen (`ui.tk_crypto.Sonda`: dónde, el `Encargo`
+            sola vez por volumen (`ui.lecturas_asistente.Sonda`: dónde, el `Encargo`
             que la corre y cuándo empezó). Escribe 8 MiB en el dispositivo:
             ni repintar el panel, ni un hilo que acaba sin que nadie lo mire,
             ni volver a ese volumen la lanzan otra vez.

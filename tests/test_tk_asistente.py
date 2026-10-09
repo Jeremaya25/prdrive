@@ -13,9 +13,16 @@ falta, hilos de verdad, se comprueba:
 - que solo cuenta la última elección: la lista que llega tarde no pisa una ruta
   a mano, una ruta a mano que llega tarde no pisa la fila elegida después, y
   «Siguiente» no deja seguir con la unidad de antes mientras se mira la ruta;
+- que una ruta a mano que no vale vuelve a la elección de ANTES de la primera
+  pulsación de su tanda, también en una segunda tanda, y tras elegir una fila o
+  tras «Actualizar lista»;
 - que cambiar de paso con una lectura en vuelo no deja espera ni llegada;
+- que cerrar el asistente desde su propio bucle (`run_wizard()`) espera a la
+  medida de escritura que va en vuelo, y no deja su temporal en la unidad;
 - y que cada paso de los tres recorridos de una unidad cabe en 40 widgets,
-  salvo «Verificación», que crece 4 por comprobación sobre una parte fija.
+  salvo tres estados que se miden y se fijan («Conexión» con «Importar», 41;
+  «Instalación» con el programa, 42, y con una unidad ajena, 45), y
+  «Verificación», que crece 4 por comprobación sobre una parte fija.
 
 Las ventanas se crean ocultas; el bucle de eventos se mueve a mano
 (`dar_vueltas`), que es lo que hace llegar el resultado.
@@ -380,6 +387,89 @@ c("la ruta que no vale se dice, y vuelve la unidad de ANTES de la primera pulsac
 c("  sin ningún callback de Tk fallido", errores, [])
 wiz.root.destroy()
 con_lanzar(lanzar_previo)
+
+# Una segunda tanda de «Usar esta ruta». Vuelve la elección de ANTES de la
+# primera pulsación de la tanda: ni la ruta buena de la tanda anterior, ni la fila
+# que se eligió en medio, ni lo que dejó «Actualizar lista».
+real_antes = segundo_plano.lanzar
+
+amano = AMano()
+con_lanzar(amano)
+wiz = nuevo_asistente(UNIDAD_A)
+en_paso(wiz, PASO["Dispositivo"])
+amano.ultimo().correr()
+dar_vueltas(lambda: bool(arbol(wiz).get_children()))
+escribir_ruta(wiz, A_MANO)
+boton(wiz, "Usar esta ruta").invoke()
+amano.ultimo().correr()
+dar_vueltas(lambda: wiz.state.device == A_MANO)
+c("primera tanda: una ruta que vale queda como destino", wiz.state.device, A_MANO)
+dichos.clear()
+escribir_ruta(wiz, A_MANO / "no-existe")
+boton(wiz, "Usar esta ruta").invoke()
+amano.ultimo().correr()
+dar_vueltas(lambda: bool(dichos))
+raiz.update()
+c("segunda tanda: una ruta que no vale lo dice",
+  any("No existe la carpeta" in d for d in dichos), True)
+c("  y vuelve la ruta buena de la primera tanda, no la unidad de antes",
+  (wiz.state.device, siguiente(wiz)), (A_MANO, "normal"))
+wiz.root.destroy()
+
+amano = AMano()
+con_lanzar(amano)
+wiz = nuevo_asistente(UNIDAD_A)
+en_paso(wiz, PASO["Dispositivo"])
+amano.ultimo().correr()
+dar_vueltas(lambda: bool(arbol(wiz).get_children()))
+dichos.clear()
+escribir_ruta(wiz, A_MANO / "pendiente")
+boton(wiz, "Usar esta ruta").invoke()
+pendiente = amano.ultimo()
+elegir_fila(wiz, str(UNIDAD_B))
+c("pulsar y elegir una fila deja la fila como destino",
+  (wiz.state.device, siguiente(wiz)), (UNIDAD_B, "normal"))
+pendiente.correr()
+dar_vueltas(lambda: False, 0.2)
+c("  y la ruta que llega después no se dice ni pisa la fila",
+  (wiz.state.device, dichos, arbol(wiz).selection()), (UNIDAD_B, [], (str(UNIDAD_B),)))
+escribir_ruta(wiz, A_MANO / "no-existe-b")
+boton(wiz, "Usar esta ruta").invoke()
+amano.ultimo().correr()
+dar_vueltas(lambda: bool(dichos))
+raiz.update()
+c("volver a pulsar con una ruta que no vale vuelve a esa fila",
+  (wiz.state.device, arbol(wiz).selection(), siguiente(wiz)),
+  (UNIDAD_B, (str(UNIDAD_B),), "normal"))
+wiz.root.destroy()
+
+amano = AMano()
+con_lanzar(amano)
+wiz = nuevo_asistente(UNIDAD_A)
+en_paso(wiz, PASO["Dispositivo"])
+amano.ultimo().correr()
+dar_vueltas(lambda: bool(arbol(wiz).get_children()))
+escribir_ruta(wiz, A_MANO / "pendiente-c")
+boton(wiz, "Usar esta ruta").invoke()
+pendiente = amano.ultimo()
+boton(wiz, "Actualizar lista").invoke()
+amano.ultimo().correr()
+dar_vueltas(lambda: bool(arbol(wiz).get_children()))
+pendiente.correr()
+dar_vueltas(lambda: False, 0.2)
+c("«Actualizar lista» deja la lista sin destino, y la ruta pendiente no vuelve",
+  (wiz.state.device, arbol(wiz).selection(), siguiente(wiz)), (None, (), "disabled"))
+dichos.clear()
+escribir_ruta(wiz, A_MANO / "no-existe-c")
+boton(wiz, "Usar esta ruta").invoke()
+amano.ultimo().correr()
+dar_vueltas(lambda: bool(dichos))
+raiz.update()
+c("después, una ruta que no vale vuelve a lo que dejó la lista: sin destino",
+  (wiz.state.device, arbol(wiz).selection(), siguiente(wiz)), (None, (), "disabled"))
+c("  sin ningún callback de Tk fallido", errores, [])
+wiz.root.destroy()
+con_lanzar(real_antes)
 
 # «Comprobaciones»: el Python del equipo va en el trabajo de «Comprobar».
 hilos.clear()
@@ -763,6 +853,58 @@ try:
 finally:
     crypto.medir_escritura = medir_real
     con_lanzar(lanzar_previo)
+
+
+# El asistente cerrado desde su propio bucle (`run_wizard()`, que es lo que pasa
+# al cerrar la ventana): la medida en vuelo se espera, y su temporal no se queda
+# en la unidad. El bucle de Tk se sustituye por uno que deja la medida corriendo
+# y destruye la raíz, como si la persona cerrase la ventana en ese momento.
+ventanas: list = []                     # los asistentes que construye `run_wizard()`
+cierres: list = []                      # (sonda, si el temporal existía al cerrar)
+build_real, tk_raiz_real = tk_install.build, tk.Tk
+
+
+def build_que_guarda(root):
+    """Construye el asistente de verdad y se queda con él para el test."""
+    wiz_ = build_real(root)
+    ventanas.append(wiz_)
+    return wiz_
+
+
+class RaizQueSeCierra(tk_raiz_real):
+    """Una raíz cuyo bucle se acaba al momento."""
+
+    def mainloop(self, n=0):
+        """Deja una medida en vuelo sobre la unidad y destruye la ventana."""
+        estado = ventanas[-1].state
+        estado.device = str(UNIDAD_A)
+        temporal_ = UNIDAD_A / crypto.SONDA_NOMBRE
+        temporal_.unlink(missing_ok=True)
+        sonda_ = lecturas_asistente.sonda_de(estado)
+        fin = time.monotonic() + 2.0
+        while not temporal_.exists() and time.monotonic() < fin:
+            time.sleep(0.01)
+        cierres.append((sonda_, temporal_.exists()))
+        self.destroy()
+
+
+lanzar_previo = segundo_plano.lanzar
+tk.Tk = RaizQueSeCierra
+tk_install.build = build_que_guarda
+crypto.medir_escritura = medir_lenta
+try:
+    con_lanzar(LANZAR_REAL)
+    rc_bucle = tk_install.run_wizard()
+finally:
+    tk.Tk = tk_raiz_real
+    tk_install.build = build_real
+    crypto.medir_escritura = medir_real
+    con_lanzar(lanzar_previo)
+sonda_bucle, existia_al_cerrar = cierres[0]
+c("el asistente cerrado desde su bucle devuelve 0", rc_bucle, 0)
+c("  con la medida todavía escribiendo al cerrar la ventana", existia_al_cerrar, True)
+c("  y al volver, la medida ya acabó", sonda_bucle.encargo.hecho, True)
+c("  y su temporal no queda en la unidad", (UNIDAD_A / crypto.SONDA_NOMBRE).exists(), False)
 
 
 # 4. Lo que cabe en cada paso

@@ -161,6 +161,9 @@ try:
       (("C",), "examen de C", 1))
     c("  y vigente() lo da mientras no se vuelva a teclear",
       diferido.vigente(), "examen de C")
+    texto["caja"] = "D"                       # se cambia sin pasar por tecla()
+    c("  pero si lo escrito cambia sin una tecla, ya no vale: vigente() es None",
+      (diferido.vigente(), diferido.examinada), (None, ("C",)))
     diferido.tecla()
     c("  y una tecla lo caduca en el acto", diferido.vigente(), None)
 finally:
@@ -372,6 +375,14 @@ try:
       (mirado, [f[0] for f in con]),
       (["vestibulo", "viajero", "restos"], ["Dispositivo", "Entrada", "VeraCrypt", "Restos"]))
     c("y las filas son (nombre, estado, detalle)", con[1], ("Entrada", True, ""))
+    # Sin unidad de fuera no hay entrada, viajero ni restos que mirar, aunque sea
+    # con VeraCrypt: no se pregunta por una unidad que no se conoce.
+    for sin_unidad in (None, ""):
+        mirado.clear()
+        sin_fuera = la.comprobaciones_dispositivo("/r", ["p0"], None, "veracrypt",
+                                                  sin_unidad)
+        c(f"con VeraCrypt y unidad {sin_unidad!r}, solo se mira el dispositivo",
+          (sin_fuera, mirado), ([("Dispositivo", True, "ok")], []))
 finally:
     device.verify_device = verify_real
     vestibulo.comprobar, traveler.comprobar, crypto.comprobar_restos = (
