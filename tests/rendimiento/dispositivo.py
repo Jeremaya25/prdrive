@@ -46,6 +46,10 @@ def parejas(n: int) -> list[dict]:
 
 
 def main() -> None:
+    """Monta el dispositivo de muestra en `<raíz>` con el código de `<árbol-de-código>`.
+
+    Borra `<raíz>` si ya existe y lo vuelve a montar como describe el docstring del módulo.
+    """
     src = Path(sys.argv[1]).resolve()
     raiz = Path(sys.argv[2]).resolve()
     PAREJAS = parejas(int(sys.argv[3]) if len(sys.argv) > 3 else 5)

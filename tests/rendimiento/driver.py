@@ -262,6 +262,16 @@ def n_estilos(w):
 
 
 def _parche_tkinter(m):
+    """Cambia la espera de Tk por las sondas del driver y mide la ventana.
+
+    `Tk.mainloop` y `Misc.mainloop` pasan a ser `probe`, y `Misc.wait_window`, a
+    `_wait_window`. Cada `Tk()` nuevo aplica `BENCH_SCALE` y cuenta en Tcl los
+    `<<ThemeChanged>>` de «.». Con `BENCH_FLOW=log`, cronometra cada `Text.insert`
+    y abre el perfil del log en el primero y lo cierra en el que trae «=== Terminado».
+
+    Args:
+        m: El módulo ya cargado que se parchea (ver `PARCHES`).
+    """
     m.Misc.wait_window = _wait_window
     m.Tk.mainloop = probe
     m.Misc.mainloop = probe
@@ -297,6 +307,14 @@ def _parche_tkinter(m):
 
 
 def _parche_ttk(m):
+    """Anota cuántos estilos de ttk había al crear el primer widget.
+
+    Envuelve `Widget.__init__` de `tkinter.ttk`. El número va a
+    `ESTADO["estilos_primero"]`, y es -1 si no se pudo contar.
+
+    Args:
+        m: El módulo ya cargado que se parchea (ver `PARCHES`).
+    """
     orig_init = m.Widget.__init__
 
     def __init__(self, *a, **k):
@@ -310,6 +328,13 @@ def _parche_ttk(m):
 
 
 def _parche_theme(m):
+    """Cronometra cada `apply()` del tema y guarda sus milisegundos.
+
+    Cada llamada añade su tiempo a `ESTADO["apply"]`; `apply_ms()` da el primero.
+
+    Args:
+        m: El módulo ya cargado que se parchea (ver `PARCHES`).
+    """
     orig = getattr(m, "apply", None)
     if orig is None:
         return
@@ -324,10 +349,23 @@ def _parche_theme(m):
 
 
 def _parche_update(m):
+    """Sustituye `common.update.check` por una que no contesta: sin red y sin aviso de versión.
+
+    Args:
+        m: El módulo ya cargado que se parchea (ver `PARCHES`).
+    """
     m.check = lambda force=False: (None, None)
 
 
 def _parche_catalog(m):
+    """Hace que el catálogo remoto llegue cuando el driver lo suelte.
+
+    `load()` espera `ESTADO["catalogo"]` (hasta 60 s) y devuelve la copia local
+    marcada como remota, o «sin copia» si no hay ninguna.
+
+    Args:
+        m: El módulo ya cargado que se parchea (ver `PARCHES`).
+    """
     import threading
     evento = threading.Event()
     ESTADO["catalogo"] = evento
@@ -427,6 +465,9 @@ def _parche_fleet(m):
     (`ESTADO["flota"].clear()`) antes de abrir «Dispositivos», para medir la ventana sin las
     notas y luego su llegada por separado. Sin ese cierre nada espera: ningún otro flujo lee
     la flota, y uno que lo hiciera no debe quedarse parado.
+
+    Args:
+        m: El módulo ya cargado que se parchea (ver `PARCHES`).
     """
     import threading
     evento = threading.Event()
@@ -445,7 +486,11 @@ def _parche_fleet(m):
 
 
 def _parche_store(m):
-    """Cuenta las llamadas a `write_json` cuyo destino está bajo el dispositivo."""
+    """Cuenta las llamadas a `write_json` cuyo destino está bajo el dispositivo.
+
+    Args:
+        m: El módulo ya cargado que se parchea (ver `PARCHES`).
+    """
     orig = m.write_json
     raiz = os.path.normcase(DEVICE) + os.sep
 
@@ -465,6 +510,9 @@ def _parche_ui_tk(m):
     La orden de la pasada es `python -c pass`; la pregunta del `--resync` (que
     bloquearía al driver) se contesta que no. Las dos las busca la ventana por su nombre
     en `ui.tk` en cada llamada, así que valen en el árbol de la base y en el del PR.
+
+    Args:
+        m: El módulo ya cargado que se parchea (ver `PARCHES`).
     """
     m.orden_sync = lambda args: [sys.executable, "-c", "pass"]
     m.preguntar_resync = lambda parent, pending, carpetas=None: False

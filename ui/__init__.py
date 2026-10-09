@@ -669,7 +669,6 @@ def perf_desde_inicio() -> float | None:
 def _edad_windows() -> float:
     """Milisegundos desde la creación del proceso, con `GetProcessTimes` de kernel32.
 
-    Pendiente en real (Windows): en Linux no hay manera de probar la llamada.
     Los tipos siguen a `common/model.py`: el HANDLE va como `c_void_p`, así que el
     pseudo-handle `-1` de `GetCurrentProcess` no pasa por un `c_int`.
     """

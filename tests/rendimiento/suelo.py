@@ -16,6 +16,7 @@ import utiles  # noqa: E402
 
 
 def main():
+    """Mide `start-bare` (del arranque a la ventana pintada), lo escribe en `BENCH_OUT` y la destruye."""
     t = {}
     a = time.time()
     t["xft_precargado"] = utiles.tk_con_xft()

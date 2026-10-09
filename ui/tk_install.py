@@ -1385,7 +1385,7 @@ def _paso_actualizar(cuerpo, wiz) -> None:
             """Copia el código y la guía, pinta el icono y conserva el id."""
             # Sin rclone ni Python: ya están puestos. Y sin lanzadores: se
             # escriben al aprovisionar, y actualizar el programa no los toca.
-            escrito = deploy.deploy_code(raiz, precompilar=False)
+            escrito = deploy.deploy_code(raiz, con_pyc=False)
             guia = deploy.write_guide(raiz)
             if guia is not None:
                 escrito.append(guia)
@@ -1502,9 +1502,9 @@ def _paso_instalar(cuerpo, wiz) -> None:
             # llega), el dispositivo sigue sin tocar y el reintento solo baja
             # lo que faltaba (#49).
             conseguido = deploy.conseguir_plataformas(plan)
-            escrito_ = deploy.deploy_code(raiz, precompilar=False)
+            escrito_ = deploy.deploy_code(raiz, con_pyc=False)
             nuevos, borrados = deploy.apply_platforms(raiz, plan, conseguido=conseguido,
-                                                      precompilar=False)
+                                                      con_pyc=False)
             escrito_ += nuevos
             escrito_ += deploy.write_launchers(raiz, plan.completa)
             guia = deploy.write_guide(raiz)
@@ -1752,7 +1752,7 @@ def _paso_plataformas(cuerpo, wiz) -> None:
 
         def trabajo():
             """Pone y quita plataformas y rehace la entrada de fuera y VeraCrypt."""
-            nuevos, borrados = deploy.apply_platforms(raiz, plan, precompilar=False)
+            nuevos, borrados = deploy.apply_platforms(raiz, plan, con_pyc=False)
             lanzadores = deploy.write_launchers(raiz, plan.completa)
             # La entrada de fuera, por lo mismo que los lanzadores: un
             # dispositivo VeraCrypt de antes no la tiene, y este es el camino

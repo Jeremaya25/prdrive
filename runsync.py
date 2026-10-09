@@ -83,12 +83,17 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 import ui  # noqa: E402
 from common import APP_NAME, model, prioridad, store  # noqa: E402
 from ui import prefs  # noqa: E402
+
+if TYPE_CHECKING:
+    # Solo para las anotaciones: `llavero` se importa dentro de cada función.
+    from common import llavero
 
 SELF = Path(__file__).resolve()
 SENTINEL = model.CONFIG_FILE
