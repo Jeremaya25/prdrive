@@ -2,8 +2,8 @@
 """La configuración del servicio (`ui/prefs.py`).
 
 Qué recuerda, qué olvida y qué no llega a escribir. Y, aparte, el ancho y lo
-que ocupa lo que va encima de la lista que recuerda la ventana principal
-(`state/ventana.json`).
+que ocupan lo que va encima y lo que va debajo de la lista que recuerda la
+ventana principal (`state/ventana.json`).
 """
 
 import json
@@ -437,6 +437,80 @@ with sandbox():
     finally:
         store.write_json = escribir_real
 
+# Lo mismo con lo que va DEBAJO de la lista ("abajo"): su propio campo del mismo fichero, con la
+# misma clave y la misma regla; ninguno de los tres pisa a los otros.
+with sandbox():
+    ruta = model.STATE_DIR / "ventana.json"
+    clave = prefs.clave_ancho("9.0", 4 / 3)
+    otra = prefs.clave_ancho("9.0", 2.0)
+    c("sin fichero no hay alto de abajo recordado", prefs.abajo_recordado(clave), None)
+    anotadas = []
+
+    def anotar_escritura_abajo(destino, datos):
+        """Escribe de verdad y apunta qué fichero."""
+        anotadas.append(Path(destino).name)
+        return escribir_real(destino, datos)
+
+    store.write_json = anotar_escritura_abajo
+    try:
+        c("recordar el alto de abajo lo escribe", (prefs.recordar_abajo(clave, 112), anotadas),
+          (True, ["ventana.json"]))
+        c("  y se lee con su clave, no con otra",
+          (prefs.abajo_recordado(clave), prefs.abajo_recordado(otra)), (112, None))
+        c("  en la forma {\"abajo\": {clave: px}}",
+          json.loads(ruta.read_text(encoding="utf-8")), {"abajo": {clave: 112}})
+        c("el mismo alto otra vez no escribe nada",
+          (prefs.recordar_abajo(clave, 112), len(anotadas)), (True, 1))
+        c("0 es un valor: se escribe, se lee y no es 'nada recordado'",
+          (prefs.recordar_abajo(clave, 0), prefs.abajo_recordado(clave), len(anotadas)),
+          (True, 0, 2))
+
+        # Comparte fichero con el ancho y con "arriba": cada campo conserva los de los demás.
+        prefs.recordar_ancho(clave, 587)
+        prefs.recordar_arriba(clave, 51)
+        prefs.recordar_abajo(otra, 90)
+        prefs.recordar_abajo(clave, 112)
+        c("el alto de abajo conserva el ancho, el de arriba y las otras claves",
+          json.loads(ruta.read_text(encoding="utf-8")),
+          {"abajo": {clave: 112, otra: 90}, "ancho": {clave: 587}, "arriba": {clave: 51}})
+        c("  cada uno se lee con lo suyo",
+          (prefs.ancho_recordado(clave), prefs.arriba_recordado(clave),
+           prefs.abajo_recordado(clave)), (587, 51, 112))
+        prefs.recordar_arriba(clave, 60)
+        prefs.recordar_ancho(clave, 600)
+        c("  y cambiar el ancho o el de arriba no toca el de abajo",
+          json.loads(ruta.read_text(encoding="utf-8"))["abajo"], {clave: 112, otra: 90})
+
+        # Un fichero de antes (sin "abajo") sigue valiendo: no hay alto de abajo recordado.
+        ruta.write_text(json.dumps({"ancho": {clave: 587}, "arriba": {clave: 51}}),
+                        encoding="utf-8")
+        c("un fichero de antes, sin \"abajo\": los otros dos sí, ese no",
+          (prefs.ancho_recordado(clave), prefs.arriba_recordado(clave),
+           prefs.abajo_recordado(clave)), (587, 51, None))
+        n = len(anotadas)
+        c("  y apuntar el de abajo conserva los otros dos",
+          (prefs.recordar_abajo(clave, 112), json.loads(ruta.read_text(encoding="utf-8")),
+           len(anotadas) - n),
+          (True, {"ancho": {clave: 587}, "arriba": {clave: 51}, "abajo": {clave: 112}}, 1))
+
+        # Lo que no es un alto no se reserva (un negativo, un texto, un booleano, un
+        # decimal, un fichero a medias o de otra versión).
+        for contenido in ('{"abajo": {"%s": true}}' % clave, '{"abajo": {"%s": "112"}}' % clave,
+                          '{"abajo": {"%s": -5}}' % clave, '{"abajo": {"%s": 5.5}}' % clave,
+                          '{"abajo": [112]}', '[112]', '{"abajo": ', ''):
+            ruta.write_text(contenido, encoding="utf-8")
+            c(f"  {contenido!r} no es un alto", prefs.abajo_recordado(clave), None)
+        c("  y recordar sobre uno así lo rehace entero",
+          (prefs.recordar_abajo(clave, 112), json.loads(ruta.read_text(encoding="utf-8"))),
+          (True, {"abajo": {clave: 112}}))
+
+        # Un dispositivo de solo lectura (o ya extraído) no recuerda, y no pasa nada.
+        store.write_json = lambda destino, datos: False
+        c("si no se puede escribir: False, sin lanzar", prefs.recordar_abajo(clave, 77), False)
+        c("  y queda lo que había", prefs.abajo_recordado(clave), 112)
+    finally:
+        store.write_json = escribir_real
+
 # Sin poder ni crear la carpeta de state/ (ocupada por un fichero) tampoco lanza.
 with sandbox():
     model.STATE_DIR.rmdir()
@@ -444,6 +518,7 @@ with sandbox():
     clave = prefs.clave_ancho("9.0", 4 / 3)
     c("con state/ imposible: leer es None y recordar False, sin lanzar",
       (prefs.arriba_recordado(clave), prefs.recordar_arriba(clave, 51),
-       prefs.recordar_ancho(clave, 587)), (None, False, False))
+       prefs.recordar_ancho(clave, 587), prefs.abajo_recordado(clave),
+       prefs.recordar_abajo(clave, 112)), (None, False, False, None, False))
 
 sys.exit(c.report())

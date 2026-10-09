@@ -31,6 +31,17 @@ Un bloque escondido deja su fila vacía, y una fila sin nada no ocupa sitio: la
 ventana queda igual que si las filas se numeraran seguidas.
 """
 
+BANDAS = {"arriba": (FILAS["aviso"], FILAS["componentes"], FILAS["reparacion"]),
+          "abajo": (FILAS["llavero"], FILAS["pausa"], FILAS["arranque"])}
+"""Las franjas de la rejilla cuyo alto recuerda la ventana y reserva desde el primer pintado.
+
+Cada una es `(primera fila, última fila, fila de la reserva)`: las filas que se miden
+juntas y, de ellas, la que está vacía hasta que llega la lectura del dispositivo, donde se
+guarda el sitio de lo que llega (una fila más alta que su bloque lo centraría). «arriba» es
+lo de encima de la lista de parejas; «abajo», lo que hay entre ella y el pie, con
+«Parejas…» y «Ajustes…», que siempre están.
+"""
+
 CHIP_RESERVADO = ("al día", "Ok.", "ok")
 """El chip de la cabecera que mide el hueco que se le reserva.
 
@@ -285,7 +296,7 @@ class VistaPrincipal:
                         else (False, False))
                 for clave, b in botones.items()}
 
-    # --- el sitio de lo que va encima de la lista -----------------------------
+    # --- el sitio de lo que va encima y debajo de la lista --------------------
 
     def alto_arriba(self) -> int:
         """Devuelve lo que ocupan, apiladas, las filas de encima del rótulo de la lista.
@@ -297,8 +308,7 @@ class VistaPrincipal:
         (`update_idletasks`): se llama con la ventana recién encajada, donde ya
         está al día, o antes de enseñarla.
         """
-        self.marco.update_idletasks()
-        return self.marco.grid_bbox(0, FILAS["aviso"], 0, FILAS["componentes"])[3]
+        return self._alto_banda("arriba")
 
     def reservar_arriba(self, alto: int) -> int:
         """Deja encima de la lista `alto` píxeles aunque aún no haya con qué llenarlos.
@@ -322,11 +332,64 @@ class VistaPrincipal:
             Los píxeles que se han reservado: 0 si ya hay `alto` o más encima, o
             si la fila de «Reparación…» no está vacía.
         """
-        fila = FILAS["reparacion"]
+        return self._reservar_banda("arriba", alto)
+
+    def alto_abajo(self) -> int:
+        """Devuelve lo que ocupan, apiladas, las filas entre la lista y el pie.
+
+        Son las del llavero, «Parejas…» y «Ajustes…» (que siempre están), la del
+        arranque automático y la frase de la pausa, con el margen de arriba de
+        cada bloque y con la reserva de `reservar_abajo()` si la hay. Una fila
+        sin nada mide 0. Pide antes la colocación pendiente, como `alto_arriba()`.
+        """
+        return self._alto_banda("abajo")
+
+    def reservar_abajo(self, alto: int) -> int:
+        """Deja entre la lista y el pie `alto` píxeles aunque aún no haya con qué llenarlos.
+
+        Lo que lee el dispositivo trae líneas debajo de la lista (el llavero, el
+        arranque automático y su pausa), y empujar el pie al llegar hace crecer
+        la ventana: en Windows, repintar cada widget. Con el alto que ocuparon la
+        última vez reservado desde el primer pintado, el pie ya está donde
+        quedará. Como en `reservar_arriba()`, se reserva solo lo que falta hasta
+        `alto` sobre lo que ya hay («Parejas…» y «Ajustes…»), como alto mínimo de
+        una fila vacía hasta que llega la lectura: la de la línea del arranque,
+        que está debajo de «Parejas…». Quien llama la suelta
+        (`reservar_abajo(0)`) en la misma colocación que grida los bloques que
+        llegan. La línea del llavero, que va encima de «Parejas…», sí las
+        empuja hacia abajo cuando llega: la reserva solo guarda el sitio de lo
+        que queda por debajo, el pie.
+
+        Args:
+            alto: El alto total que debe tener lo de entre la lista y el pie, en
+                píxeles; 0 o menos suelta la reserva que hubiera.
+
+        Returns:
+            Los píxeles que se han reservado: 0 si ya hay `alto` o más, o si la
+            fila del arranque automático no está vacía.
+        """
+        return self._reservar_banda("abajo", alto)
+
+    def _alto_banda(self, banda: str) -> int:
+        """Devuelve lo que ocupan las filas de la franja `banda` de `BANDAS`, con su margen."""
+        primera, ultima, _ = BANDAS[banda]
+        self.marco.update_idletasks()
+        return self.marco.grid_bbox(0, primera, 0, ultima)[3]
+
+    def _reservar_banda(self, banda: str, alto: int) -> int:
+        """Reserva en la fila de la franja `banda` lo que le falta para medir `alto`.
+
+        Suelta antes la reserva que hubiera. No reserva nada si `alto` no pasa de
+        lo que la franja ya mide, ni si la fila de la reserva está ocupada.
+
+        Returns:
+            Los píxeles reservados.
+        """
+        fila = BANDAS[banda][2]
         self.marco.rowconfigure(fila, minsize=0)
         if alto <= 0 or self.marco.grid_slaves(row=fila):
             return 0
-        falta = alto - self.alto_arriba()
+        falta = alto - self._alto_banda(banda)
         if falta <= 0:
             return 0
         self.marco.rowconfigure(fila, minsize=falta)

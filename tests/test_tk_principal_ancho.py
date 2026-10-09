@@ -61,8 +61,8 @@ except Exception as e:                                   # sin entorno gráfico
     sys.exit(c.report())
 
 from common import store, update  # noqa: E402
-from ui import (cifrado, instantanea, prefs, segundo_plano, tk_principal,  # noqa: E402
-                tk_watch, watch)
+from ui import (cifrado, instantanea, llavero_editor, prefs, segundo_plano,  # noqa: E402
+                tk_principal, tk_watch, watch)
 from ui import tk as uitk  # noqa: E402
 
 REAL_MAINLOOP, REAL_LANZAR = tk.Tk.mainloop, segundo_plano.lanzar
@@ -86,24 +86,31 @@ for _m in (ui, uitk):
     _m.pair_status_notes = lambda cfg: {}
 # Lo que trae la lectura y no el primer pintado: «Expulsar» en el pie (lo más
 # ancho) y la línea del arranque automático.
-LEIDO = {"script": Path("E:/Expulsar PRDRIVE.bat"), "cuenta": 0}
-"""Lo que trae la lectura: el script de «Expulsar» y cuántas cosas hay que revisar."""
+VIGILANTE = watch.Resumen("sin_instalar")
+"""Lo que hace el arranque automático del equipo por defecto: nada, y la línea lo dice."""
+LEIDO = {"script": Path("E:/Expulsar PRDRIVE.bat"), "cuenta": 0, "vigilante": VIGILANTE,
+         "llavero": None}
+"""Lo que trae la lectura: el script de «Expulsar», cuántas cosas hay que revisar, qué hace el
+arranque automático (su línea, y con un vigilante que atiende este dispositivo, la frase de la
+pausa) y la línea del llavero."""
 cifrado.expulsion = lambda **_k: LEIDO["script"]
 LEER_REAL = instantanea.leer
 
 
 def leer_con_cuenta(config, **kw):
-    """Lee de verdad y le pone las cosas por revisar de `LEIDO["cuenta"]`.
+    """Lee de verdad y le pone lo que dice `LEIDO`: las cosas por revisar y la línea del llavero.
 
     La revisión de verdad de este dispositivo de muestra (cinco parejas sin sincronizar)
     encuentra cosas, y con alguna la lectura trae la línea de «Reparación…» encima de la
-    lista: aquí lo decide cada caso, y por defecto no hay ninguna.
+    lista: aquí lo decide cada caso, y por defecto no hay ninguna. El llavero, igual: este
+    dispositivo no lo lleva.
     """
-    return dataclasses.replace(LEER_REAL(config, **kw), cuenta=LEIDO["cuenta"])
+    return dataclasses.replace(LEER_REAL(config, **kw), cuenta=LEIDO["cuenta"],
+                               llavero=LEIDO["llavero"])
 
 
 instantanea.leer = leer_con_cuenta
-watch.resumen = lambda: watch.Resumen("sin_instalar")
+watch.resumen = lambda: LEIDO["vigilante"]
 tk_watch.open_dialog = lambda root: None
 prefs.PREFS = tmpdir("prdrive-principal-ancho-") / "ui_prefs.json"
 uitk.output_window = lambda titulo, cmd, **k: None
@@ -181,6 +188,32 @@ def banda(root) -> int:
                            tk_principal.FILAS["componentes"])[3]
 
 
+def debajo(root) -> dict:
+    """Dónde empieza todo lo que va debajo de la lista: «Parejas…», «Ajustes…» y el pie.
+
+    Las dos filas y cada widget que cuelga de ellas (los botones de «Parejas…» y «Ajustes…»,
+    «Sincronizar ahora», el del servicio, «Expulsar»). Es lo que se mueve si la franja de
+    debajo crece o mengua.
+    """
+    sitios = {}
+    for nombre in ("pantallas", "pie"):
+        fila = fila_de(root, nombre)[0]
+        sitios[nombre] = sitio(root, fila)
+        sitios.update({str(w): sitio(root, w) for w in todos(fila) if w.winfo_ismapped()})
+    return sitios
+
+
+def banda_abajo(root) -> int:
+    """Lo que ocupan, con su margen, las filas de debajo de la lista hasta el pie: píxeles.
+
+    La línea del llavero, «Parejas…» y «Ajustes…» (que siempre están), la del arranque
+    automático y la frase de la pausa.
+    """
+    marco = contenido(root)
+    return marco.grid_bbox(0, tk_principal.FILAS["llavero"], 0,
+                           tk_principal.FILAS["pausa"])[3]
+
+
 def quieta(root) -> None:
     """Mueve el bucle hasta que la ventana mide lo que pide (como mucho 2 s).
 
@@ -210,6 +243,13 @@ def ancho_guardado() -> dict:
         return {}
 
 
+def guardado(clave, ancho=None, arriba=None, abajo=None) -> dict:
+    """Lo que debe haber en `state/ventana.json` con ese ancho y esos altos (los que se den)."""
+    return {**({"ancho": {clave: ancho}} if ancho is not None else {}),
+            **({"arriba": {clave: arriba}} if arriba is not None else {}),
+            **({"abajo": {clave: abajo}} if abajo is not None else {})}
+
+
 def abrir(cfg=CFG, aviso=None) -> dict:
     """Abre la principal, mira el primer pintado, deja llegar la lectura y la vuelve a mirar.
 
@@ -222,9 +262,12 @@ def abrir(cfg=CFG, aviso=None) -> dict:
         ventana), `filas_antes`/`filas_despues`, `abajo_antes`/`abajo_despues` (dónde
         está lo que va debajo de la franja de arriba), `arriba_antes`/`arriba_despues`
         (lo que ocupa esa franja), `avisos_antes`/`avisos_despues`, `linea` (si la
-        lectura puso la línea de «Reparación…»), `geometria` (al final), `natural` (lo
-        que pide el contenido al final), `clave`, `escrituras` (de `ventana.json`) y
-        `lista`.
+        lectura puso la línea de «Reparación…»), `debajo_antes`/`debajo_despues` (dónde
+        está lo que va debajo de la lista: «Parejas…» y el pie),
+        `banda_abajo_antes`/`banda_abajo_despues` (lo que ocupa esa franja), `arranque`/
+        `llavero` (si la lectura puso la línea del arranque automático o la del llavero),
+        `geometria` (al final), `natural` (lo que pide el contenido al final), `clave`,
+        `escrituras` (de `ventana.json`) y `lista`.
     """
     visto: dict = {}
     escritas = ESCRITAS["n"]
@@ -244,6 +287,8 @@ def abrir(cfg=CFG, aviso=None) -> dict:
             visto["abajo_antes"] = abajo(root)
             visto["arriba_antes"] = banda(root)
             visto["avisos_antes"] = [sitio(root, w) for w in fila_de(root, "aviso")]
+            visto["debajo_antes"] = debajo(root)
+            visto["banda_abajo_antes"] = banda_abajo(root)
             leida(root)
             visto["lista"] = root.instantanea_lista
             visto["ancho_despues"] = root.winfo_width()
@@ -253,6 +298,10 @@ def abrir(cfg=CFG, aviso=None) -> dict:
             visto["arriba_despues"] = banda(root)
             visto["avisos_despues"] = [sitio(root, w) for w in fila_de(root, "aviso")]
             visto["linea"] = bool(fila_de(root, "reparacion"))
+            visto["debajo_despues"] = debajo(root)
+            visto["banda_abajo_despues"] = banda_abajo(root)
+            visto["arranque"] = bool(fila_de(root, "arranque"))
+            visto["llavero"] = bool(fila_de(root, "llavero"))
             visto["geometria"] = geometria(root)
             visto["natural"] = contenido(root).winfo_reqwidth()
             visto["expulsar"] = any(str(w.cget("text")) == "Expulsar" for w in todos(root)
@@ -290,9 +339,11 @@ with sandbox():
     c("  con «Expulsar» en el pie, que es lo que la ensancha", primera["expulsar"], True)
     c("  y se ensancha al llegar, como siempre (sin nada recordado)",
       primera["ancho_despues"] > primera["ancho_antes"], True)
-    c("  apunta el ancho que pide su contenido, una sola vez",
+    ABAJO = primera["banda_abajo_despues"]           # lo de debajo de la lista, ya con la línea
+    c("  apunta el ancho que pide su contenido y lo que ocupa lo de debajo de la lista, una "
+      "vez cada uno",
       (ancho_guardado(), primera["escrituras"]),
-      ({"ancho": {primera["clave"]: primera["natural"]}}, 1))
+      (guardado(primera["clave"], primera["natural"], abajo=ABAJO), 2))
 
     # 2. la segunda vez ya se pinta con ese ancho, y la lectura no lo cambia
     c("la segunda vez se pinta ya con el ancho de la primera, antes de leer",
@@ -305,8 +356,9 @@ with sandbox():
     c("  (las filas están: cinco casillas, sus etiquetas y cuatro filetes)",
       len(segunda["filas_antes"]), 5 * 3 + 4)
     c("  y queda igual que la primera vez", segunda["geometria"], primera["geometria"])
-    c("  y no escribe nada: el ancho no ha cambiado",
-      (segunda["escrituras"], ancho_guardado()), (0, {"ancho": {primera["clave"]: primera["natural"]}}))
+    c("  y no escribe nada: ni el ancho ni lo de debajo han cambiado",
+      (segunda["escrituras"], ancho_guardado()),
+      (0, guardado(primera["clave"], primera["natural"], abajo=ABAJO)))
 
 # 3. un ancho recordado mayor que el de ahora: acaba en el de ahora, y se reescribe
 with sandbox():
@@ -317,9 +369,9 @@ with sandbox():
     c("  al llegar la lectura la ventana queda a su ancho, como sin nada recordado",
       ancha["ancho_despues"], primera["ancho_despues"])
     c("  con todo en el mismo sitio que entonces", ancha["geometria"], primera["geometria"])
-    c("  y el ancho se reescribe, una vez",
+    c("  y el ancho se reescribe, una vez (y lo de debajo, que no estaba, se apunta)",
       (ancho_guardado(), ancha["escrituras"]),
-      ({"ancho": {primera["clave"]: primera["natural"]}}, 1))
+      (guardado(primera["clave"], primera["natural"], abajo=ABAJO), 2))
 
 # 3b. y uno menor: crece una vez hasta el suyo
 with sandbox():
@@ -330,8 +382,9 @@ with sandbox():
       (True, primera["ancho_despues"]))
     c("  con todo en el mismo sitio que sin nada recordado",
       estrecha["geometria"], primera["geometria"])
-    c("  y se reescribe", (ancho_guardado(), estrecha["escrituras"]),
-      ({"ancho": {primera["clave"]: primera["natural"]}}, 1))
+    c("  y se reescribe (y lo de debajo, que no estaba, se apunta)",
+      (ancho_guardado(), estrecha["escrituras"]),
+      (guardado(primera["clave"], primera["natural"], abajo=ABAJO), 2))
 
 # 4. el de otra clave (otra escala, otro sistema) no se usa ni se pierde
 with sandbox():
@@ -340,7 +393,8 @@ with sandbox():
     c("el ancho de otra clave no se reserva", otra["ancho_antes"], primera["ancho_antes"])
     c("  y al apuntar el suyo se conserva",
       ancho_guardado(), {"ancho": {"otro:9.9:2.000": primera["natural"] + 300,
-                                   primera["clave"]: primera["natural"]}})
+                                   primera["clave"]: primera["natural"]},
+                         "abajo": {primera["clave"]: ABAJO}})
 
 # 5. si el dispositivo no se deja escribir, no pasa nada
 with sandbox():
@@ -409,6 +463,7 @@ with sandbox():
         visto["geometria"] = geometria(root)
 
     prefs.recordar_ancho(primera["clave"], primera["natural"])
+    prefs.recordar_abajo(primera["clave"], ABAJO)    # (que este caso trate solo del ancho)
     ABRIR["despues"] = releer_sin_expulsar
     tras = abrir()
     c("con el ancho recordado, la primera lectura no lo cambia ni lo escribe",
@@ -423,7 +478,7 @@ with sandbox():
       sin_expulsar["geometria"])
     c("  y ese ancho se recuerda, una vez",
       (visto["guardado"], visto["escrituras"]),
-      ({"ancho": {primera["clave"]: sin_expulsar["natural"]}}, 1))
+      (guardado(primera["clave"], sin_expulsar["natural"], abajo=ABAJO), 1))
 
 # 7. quitar el aviso de arranque la achica, y entonces se vuelve a centrar
 with sandbox():
@@ -469,12 +524,6 @@ def revisando(cuantas: int):
         LEIDO["cuenta"] = 0
 
 
-def guardado(clave, ancho=None, arriba=None) -> dict:
-    """Lo que debe haber en `state/ventana.json` con ese ancho y ese alto (los que se den)."""
-    return {**({"ancho": {clave: ancho}} if ancho is not None else {}),
-            **({"arriba": {clave: arriba}} if arriba is not None else {})}
-
-
 with sandbox():
     with revisando(3):
         nueva = abrir()
@@ -485,8 +534,8 @@ with sandbox():
       (nueva["linea"], nueva["arriba_antes"], alto > 0), (True, 0, True))
     c("  y la lista baja justo lo que ocupa, como siempre (nada recordado)",
       nueva["abajo_despues"]["rotulo"] - nueva["abajo_antes"]["rotulo"], alto)
-    c("  y apunta lo que ocupa esa franja, junto al ancho",
-      ancho_guardado(), guardado(clave, nueva["natural"], alto))
+    c("  y apunta lo que ocupa esa franja, junto al ancho y a lo de debajo de la lista",
+      ancho_guardado(), guardado(clave, nueva["natural"], alto, ABAJO))
     c("la segunda vez, con el dispositivo como estaba, se pinta ya con esa franja reservada",
       (nueva_otra["arriba_antes"], nueva_otra["linea"]), (alto, True))
     c("  y la lista está desde el primer pintado donde estará con la línea",
@@ -494,13 +543,15 @@ with sandbox():
     c("  al llegar la lectura no se mueve nada de lo que hay debajo: ni el rótulo, ni la "
       "tarjeta, ni una fila", movidos(nueva_otra["abajo_antes"], nueva_otra["abajo_despues"]),
       [])
-    c("  ni crece la ventana por ese lado: su alto del primer pintado ya incluye la franja",
-      (nueva_otra["alto_antes"], nueva_otra["alto_despues"]),
-      (nueva["alto_antes"] + alto, nueva["alto_despues"]))
+    c("  el alto del primer pintado ya incluye esa franja (y la de debajo de la lista)",
+      nueva_otra["alto_antes"] - nueva["alto_antes"],
+      alto + ABAJO - primera["banda_abajo_antes"])
+    c("  y la ventana no cambia de alto al llegar la lectura",
+      (nueva_otra["alto_antes"], nueva_otra["alto_despues"]), (nueva["alto_despues"],) * 2)
     c("  y queda igual que la primera vez", nueva_otra["geometria"], nueva["geometria"])
-    c("  y no escribe nada: ni el ancho ni el alto han cambiado",
+    c("  y no escribe nada: ni el ancho ni los altos han cambiado",
       (nueva_otra["escrituras"], ancho_guardado()),
-      (0, guardado(clave, nueva["natural"], alto)))
+      (0, guardado(clave, nueva["natural"], alto, ABAJO)))
 
 # La franja recordada y la lectura no trae nada encima: se suelta, y se recuerda 0
 with sandbox():
@@ -603,6 +654,7 @@ with sandbox():
 
     prefs.recordar_ancho(clave, nueva["natural"])
     prefs.recordar_arriba(clave, alto)
+    prefs.recordar_abajo(clave, ABAJO)               # (que este caso trate solo de lo de arriba)
     ABRIR["despues"] = releer_sin_revisar
     with revisando(3):
         despues = abrir()
@@ -614,7 +666,8 @@ with sandbox():
     c("  y la lista queda donde estaría sin nada: no queda ninguna reserva",
       movidos(visto["abajo"], primera["abajo_despues"]), [])
     c("  y lo recordado pasa a 0, una vez",
-      (visto["guardado"], visto["escrituras"]), (guardado(clave, nueva["natural"], 0), 1))
+      (visto["guardado"], visto["escrituras"]),
+      (guardado(clave, nueva["natural"], 0, ABAJO), 1))
 
 with sandbox():
     visto = {}
@@ -623,10 +676,13 @@ with sandbox():
         """Pone cosas por revisar, vuelve a leer (botón del arranque) y mira."""
         visto["antes"] = ancho_guardado()
         LEIDO["cuenta"] = 3
-        boton = next(w for w in todos(root) if w.winfo_class() == "TButton"
-                     and str(w.cget("text")) == "Configurar…")
-        boton.invoke()
-        leida(root)
+        try:
+            boton = next(w for w in todos(root) if w.winfo_class() == "TButton"
+                         and str(w.cget("text")) == "Configurar…")
+            boton.invoke()
+            leida(root)
+        finally:
+            LEIDO["cuenta"] = 0                      # que no quede puesto para los demás casos
         visto.update(linea=bool(fila_de(root, "reparacion")), arriba=banda(root),
                      abajo=abajo(root), guardado=ancho_guardado())
 
@@ -639,6 +695,175 @@ with sandbox():
     c("  y queda donde la primera vez con la línea",
       movidos(visto["abajo"], nueva["abajo_despues"]), [])
     c("  y lo recordado es lo que ocupa", visto["guardado"].get("arriba"), {clave: alto})
+
+# 7c. lo que la lectura pone DEBAJO de la lista (la línea del arranque automático, la del
+# llavero, la frase de la pausa) también se recuerda y se reserva desde el primer pintado: el
+# pie no baja ni la ventana crece al llegar la lectura, que en Windows repinta todo
+@contextmanager
+def leyendo(**cambios):
+    """Cambia lo que trae la lectura (las claves de `LEIDO`) mientras dure."""
+    antes = {k: LEIDO[k] for k in cambios}
+    LEIDO.update(cambios)
+    try:
+        yield
+    finally:
+        LEIDO.update(antes)
+
+
+with sandbox():
+    inicial = abrir()                                # nada recordado
+    repetida = abrir()                               # con lo que apuntó la primera
+    clave, bajo = inicial["clave"], inicial["banda_abajo_despues"]
+    solo_pantallas = inicial["banda_abajo_antes"]    # lo que hay debajo sin la lectura
+    crece = bajo - solo_pantallas
+    c("la primera vez la lectura trae la línea del arranque automático debajo de la lista",
+      (inicial["arranque"], inicial["llavero"], crece > 0), (True, False, True))
+    c("  y el pie baja justo lo que ocupa y la ventana crece lo mismo (nada recordado)",
+      (inicial["debajo_despues"]["pie"] - inicial["debajo_antes"]["pie"],
+       inicial["alto_despues"] - inicial["alto_antes"]), (crece, crece))
+    c("  y apunta lo que ocupa esa franja, junto al ancho",
+      (ancho_guardado(), inicial["escrituras"]),
+      (guardado(clave, inicial["natural"], abajo=bajo), 2))
+    c("la segunda vez, con el dispositivo como estaba, se pinta ya con esa franja reservada",
+      (repetida["banda_abajo_antes"], repetida["arranque"]), (bajo, True))
+    c("  y el pie está desde el primer pintado donde estará con la línea",
+      (movidos(repetida["debajo_antes"], inicial["debajo_despues"]),
+       repetida["debajo_antes"]["pie"] - inicial["debajo_antes"]["pie"]), ([], crece))
+    c("  al llegar la lectura no se mueve nada de lo que hay debajo de la lista",
+      movidos(repetida["debajo_antes"], repetida["debajo_despues"]), [])
+    c("  ni la ventana cambia de tamaño: el del primer pintado ya es el de después",
+      ((repetida["ancho_antes"], repetida["alto_antes"]),
+       (repetida["ancho_despues"], repetida["alto_despues"])),
+      ((inicial["ancho_despues"], inicial["alto_despues"]),) * 2)
+    c("  y queda igual que la primera vez", repetida["geometria"], inicial["geometria"])
+    c("  y no escribe nada: ni el ancho ni el alto de abajo han cambiado",
+      (repetida["escrituras"], ancho_guardado()),
+      (0, guardado(clave, inicial["natural"], abajo=bajo)))
+
+# Un alto recordado menor que el de ahora: el pie baja la diferencia, una vez, y se reescribe
+with sandbox():
+    prefs.recordar_abajo(clave, bajo - 20)
+    corta = abrir()
+    c("un alto de abajo recordado menor: se reserva lo que había", corta["banda_abajo_antes"],
+      bajo - 20)
+    c("  al llegar el pie baja la diferencia y queda donde estaría sin nada recordado",
+      (corta["debajo_despues"]["pie"] - corta["debajo_antes"]["pie"],
+       corta["alto_despues"] - corta["alto_antes"],
+       movidos(corta["debajo_despues"], inicial["debajo_despues"])), (20, 20, []))
+    c("  y se reescribe", prefs.abajo_recordado(clave), bajo)
+
+# Uno mayor: el pie sube la diferencia
+with sandbox():
+    prefs.recordar_abajo(clave, bajo + 30)
+    larga = abrir()
+    c("un alto de abajo recordado mayor: se reserva lo que había", larga["banda_abajo_antes"],
+      bajo + 30)
+    c("  al llegar el pie sube la diferencia y queda donde estaría sin nada recordado",
+      (larga["debajo_antes"]["pie"] - larga["debajo_despues"]["pie"],
+       larga["alto_antes"] - larga["alto_despues"],
+       movidos(larga["debajo_despues"], inicial["debajo_despues"])), (30, 30, []))
+    c("  y se reescribe", prefs.abajo_recordado(clave), bajo)
+
+# El de otra clave no se usa ni se pierde
+with sandbox():
+    prefs.recordar_abajo("otro:9.9:2.000", bajo + 300)
+    otra_clave_abajo = abrir()
+    c("el alto de abajo de otra clave no se reserva",
+      otra_clave_abajo["banda_abajo_antes"], solo_pantallas)
+    c("  y al apuntar el suyo se conserva",
+      ancho_guardado()["abajo"], {"otro:9.9:2.000": bajo + 300, clave: bajo})
+
+# Un alto recordado y una lectura sin línea del arranque automático (el equipo ya no lo
+# tiene): se suelta la reserva, se coloca una vez y se recuerda lo que hay, que sigue siendo
+# «Parejas…» y «Ajustes…»
+with sandbox():
+    prefs.recordar_ancho(clave, inicial["natural"])
+    prefs.recordar_abajo(clave, bajo)
+    with leyendo(vigilante=watch.Resumen("no_disponible")):
+        sin_linea = abrir()
+    c("un alto de abajo recordado y una lectura sin línea del arranque: se reserva en el "
+      "primer pintado", (sin_linea["banda_abajo_antes"], sin_linea["arranque"]), (bajo, False))
+    c("  al llegar se suelta: el pie queda donde estaría sin nada recordado",
+      (sin_linea["banda_abajo_despues"],
+       movidos(sin_linea["debajo_despues"], inicial["debajo_antes"])), (solo_pantallas, []))
+    c("  con un solo movimiento: sube lo que se había reservado, y la ventana mengua lo mismo",
+      (sin_linea["debajo_antes"]["pie"] - sin_linea["debajo_despues"]["pie"],
+       sin_linea["alto_antes"] - sin_linea["alto_despues"]), (crece, crece))
+    c("  y lo recordado pasa a lo que hay ahora, una vez",
+      (ancho_guardado(), sin_linea["escrituras"]),
+      (guardado(clave, inicial["natural"], abajo=solo_pantallas), 1))
+
+# Una lectura que falla entera suelta la reserva, pero no se recuerda: sin nada leído no hay
+# línea, y la vez siguiente el pie bajaría al llegar
+with sandbox():
+    prefs.recordar_ancho(clave, inicial["natural"])
+    prefs.recordar_abajo(clave, bajo)
+    real_leer = instantanea.leer
+    instantanea.leer = leer_roto
+    try:
+        rota_abajo = abrir()
+    finally:
+        instantanea.leer = real_leer
+    c("una lectura que falla se aplica vacía y suelta la reserva de abajo",
+      (rota_abajo["lista"], rota_abajo["banda_abajo_antes"], rota_abajo["banda_abajo_despues"]),
+      (True, bajo, solo_pantallas))
+    c("  y ese alto no se recuerda: queda el de antes, sin escribir nada",
+      (ancho_guardado(), rota_abajo["escrituras"]),
+      (guardado(clave, inicial["natural"], abajo=bajo), 0))
+with sandbox():
+    real_leer = instantanea.leer
+    instantanea.leer = leer_roto
+    try:
+        rota_sola = abrir()
+    finally:
+        instantanea.leer = real_leer
+    c("  y sin nada recordado, una lectura que falla no apunta ningún alto",
+      (rota_sola["lista"], ancho_guardado(), rota_sola["escrituras"]), (True, {}, 0))
+
+# Las dos franjas a la vez: lo de encima (la línea de «Reparación…») y lo de debajo (la del
+# arranque) se recuerdan y se sueltan en la misma llegada, y no se mueve nada
+with sandbox():
+    with revisando(3):
+        ambas = abrir()
+        ambas_otra = abrir()
+    c("la primera vez trae las dos franjas y las apunta, junto al ancho",
+      (ambas["linea"], ambas["arranque"], ancho_guardado()),
+      (True, True, guardado(clave, ambas["natural"], ambas["arriba_despues"],
+                            ambas["banda_abajo_despues"])))
+    c("la segunda vez se pinta ya con las dos reservadas",
+      (ambas_otra["arriba_antes"], ambas_otra["banda_abajo_antes"]),
+      (ambas["arriba_despues"], ambas["banda_abajo_despues"]))
+    c("  al llegar la lectura no se mueve nada, ni encima de la lista ni debajo",
+      (movidos(ambas_otra["abajo_antes"], ambas_otra["abajo_despues"]),
+       movidos(ambas_otra["debajo_antes"], ambas_otra["debajo_despues"])), ([], []))
+    c("  ni la ventana cambia de tamaño, y queda como la primera vez",
+      ((ambas_otra["ancho_antes"], ambas_otra["alto_antes"]),
+       (ambas_otra["ancho_despues"], ambas_otra["alto_despues"]),
+       ambas_otra["geometria"] == ambas["geometria"]),
+      ((ambas["ancho_despues"], ambas["alto_despues"]),) * 2 + (True,))
+    c("  y no escribe nada", (ambas_otra["escrituras"], ancho_guardado()),
+      (0, guardado(clave, ambas["natural"], ambas["arriba_despues"],
+                   ambas["banda_abajo_despues"])))
+
+# Con la línea del llavero (encima de «Parejas…») y la frase de la pausa (debajo de la del
+# arranque): el pie y la ventana tampoco se mueven. Lo único que la reserva no puede guardar
+# es «Parejas…», que tiene la línea del llavero encima y baja lo que esta mide.
+LLAVERO = llavero_editor.Linea("personal.kdbx, al día.", False, True)
+CON_TODO = dict(vigilante=watch.Resumen("instalado", modo="sync"), llavero=LLAVERO)
+with sandbox():
+    with leyendo(**CON_TODO):
+        todo = abrir()
+        todo_otra = abrir()
+    c("la primera vez la lectura trae el llavero, el arranque y la pausa",
+      (todo["llavero"], todo["arranque"], todo["banda_abajo_despues"] > bajo), (True, True, True))
+    c("la segunda, con eso recordado, el pie y la ventana no se mueven al llegar",
+      (todo_otra["banda_abajo_antes"], todo_otra["debajo_antes"]["pie"]
+       - todo_otra["debajo_despues"]["pie"], todo_otra["alto_antes"], todo_otra["geometria"]),
+      (todo["banda_abajo_despues"], 0, todo["alto_despues"], todo["geometria"]))
+    c("  «Parejas…» baja lo que la primera vez, por la línea del llavero que va encima",
+      (todo_otra["debajo_despues"]["pantallas"] - todo_otra["debajo_antes"]["pantallas"] > 0,
+       todo_otra["debajo_despues"]["pantallas"] - todo_otra["debajo_antes"]["pantallas"]),
+      (True, todo["debajo_despues"]["pantallas"] - todo["debajo_antes"]["pantallas"]))
 
 # 8. `Visor.encajar()` dice si el recuadro ha cambiado de tamaño, quepa o no
 raiz = tk.Tk()

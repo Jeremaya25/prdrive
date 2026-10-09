@@ -28,9 +28,9 @@ El fichero conserva el nombre de cuando era «lo último que se eligió en la UI
 renombrarlo pediría una migración para cambiar una palabra.
 
 Aparte, en `state/ventana.json`, la ventana principal recuerda su ancho y lo
-que ocupa lo que va encima de la lista (`ancho_recordado`, `recordar_ancho`,
-`arriba_recordado`, `recordar_arriba`): no es cosa del servicio y no va en
-`ui_prefs.json`.
+que ocupan lo que va encima y lo que va debajo de la lista (`ancho_recordado`,
+`recordar_ancho`, `arriba_recordado`, `recordar_arriba`, `abajo_recordado`,
+`recordar_abajo`): no es cosa del servicio y no va en `ui_prefs.json`.
 """
 
 from __future__ import annotations
@@ -57,9 +57,9 @@ no una por clic.
 VENTANA = "ventana.json"
 """El fichero de `state/` donde la ventana principal recuerda su tamaño.
 
-Es `{"ancho": {clave: px}, "arriba": {clave: px}}`: el ancho de su contenido y lo
-que ocupa lo que va encima de la lista de parejas, cada uno por clave
-(`clave_ancho()`).
+Es `{"ancho": {clave: px}, "arriba": {clave: px}, "abajo": {clave: px}}`: el ancho de
+su contenido y lo que ocupan lo que va encima y lo que va debajo de la lista de
+parejas, cada uno por clave (`clave_ancho()`).
 
 No es `ui_prefs.json` a propósito: el agente del equipo vigila la fecha de ese
 fichero y recarga su servicio con cualquier cambio (`agente.py`,
@@ -328,7 +328,7 @@ def elegir(all_names: list[str], daemon: Mapping[str, Any],
 
 
 def ruta_ventana() -> Path:
-    """Devuelve el fichero donde la principal recuerda su ancho.
+    """Devuelve el fichero donde la principal recuerda su ancho y sus altos.
 
     Se calcula al llamar, no al importar: los tests mueven `model.STATE_DIR`.
     """
@@ -365,8 +365,9 @@ def ancho_recordado(clave: str) -> int | None:
 def recordar_ancho(clave: str, ancho: int) -> bool:
     """Guarda el ancho de la principal para esa clave, solo si ha cambiado.
 
-    Conserva los de otras claves y el alto de `recordar_arriba()`. Nunca lanza:
-    un dispositivo de solo lectura, o ya extraído, simplemente no lo recuerda.
+    Conserva los de otras claves y los altos de `recordar_arriba()` y
+    `recordar_abajo()`. Nunca lanza: un dispositivo de solo lectura, o ya
+    extraído, simplemente no lo recuerda.
 
     Args:
         clave: La de `clave_ancho()`.
@@ -398,8 +399,9 @@ def arriba_recordado(clave: str) -> int | None:
 def recordar_arriba(clave: str, alto: int) -> bool:
     """Guarda lo que ocupa lo que va encima de la lista, solo si ha cambiado.
 
-    Conserva los de otras claves y el ancho de `recordar_ancho()`. Nunca lanza:
-    un dispositivo de solo lectura, o ya extraído, simplemente no lo recuerda.
+    Conserva los de otras claves, el ancho de `recordar_ancho()` y el alto de
+    `recordar_abajo()`. Nunca lanza: un dispositivo de solo lectura, o ya
+    extraído, simplemente no lo recuerda.
 
     Args:
         clave: La de `clave_ancho()`.
@@ -412,11 +414,46 @@ def recordar_arriba(clave: str, alto: int) -> bool:
     return _recordar("arriba", clave, alto)
 
 
+def abajo_recordado(clave: str) -> int | None:
+    """Devuelve lo que ocupó la última vez lo que va debajo de la lista, o `None`.
+
+    Es lo que ocupan, apiladas, las filas de entre la lista y el pie: la línea
+    del llavero, «Parejas…» y «Ajustes…», la del arranque automático y la frase
+    de la pausa, con su margen, en píxeles. Las del llavero, el arranque y la
+    pausa solo las conoce la lectura del dispositivo. La ventana lo reserva desde
+    el primer pintado para que el pie no baje, ni la ventana crezca, al llegar
+    la lectura. `0` es un valor, igual que en `arriba_recordado()`. Nunca lanza:
+    un fichero que falta, está a medias o no dice un alto para esa clave es
+    `None`.
+
+    Args:
+        clave: La de `clave_ancho()`.
+    """
+    return _recordado("abajo", clave, 0)
+
+
+def recordar_abajo(clave: str, alto: int) -> bool:
+    """Guarda lo que ocupa lo que va debajo de la lista, solo si ha cambiado.
+
+    Conserva los de otras claves, el ancho de `recordar_ancho()` y el alto de
+    `recordar_arriba()`. Nunca lanza: un dispositivo de solo lectura, o ya
+    extraído, simplemente no lo recuerda.
+
+    Args:
+        clave: La de `clave_ancho()`.
+        alto: Lo que ocupan esas filas con la lectura aplicada, en píxeles.
+
+    Returns:
+        True si se ha escrito o ya estaba así; False si no se ha podido escribir.
+    """
+    return _recordar("abajo", clave, alto)
+
+
 def _recordado(campo: str, clave: str, minimo: int) -> int | None:
     """Lee de `ventana.json` el píxel recordado en `campo` para `clave`, o `None`.
 
     Args:
-        campo: `"ancho"` o `"arriba"`.
+        campo: `"ancho"`, `"arriba"` o `"abajo"`.
         clave: La de `clave_ancho()`.
         minimo: El menor valor que vale; lo que no es un entero o es menor es
             como si no hubiera nada.

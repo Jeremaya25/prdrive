@@ -459,6 +459,89 @@ top_aviso.destroy()
 top.destroy()
 
 
+# 5d. lo que va debajo de la lista también se mide y se reserva de antemano, al píxel: la
+# línea del arranque automático, la del llavero y la frase de la pausa empujan el pie
+ARRANQUE = Linea("En este equipo no se arranca nada al enchufarlo.", False, "Configurar…", True)
+LLAVERO = Linea("personal.kdbx, al día.", False, "Abrir llavero", True)
+CON_ARRANQUE = lista(["a", "b"], ["a"], arranque=ARRANQUE)
+CON_TODO = lista(["a", "b"], ["a"], llavero=LLAVERO, arranque=ARRANQUE, pausa=watch.PAUSA)
+
+
+def y_pantallas(v) -> int:
+    """Devuelve dónde empiezan «Parejas…» y «Ajustes…» (su fila), dentro del marco."""
+    return y_de(v, v._fijos["pantallas"])
+
+
+top, v = vista_nueva(SOLO)
+alto_solo, pie_solo, pantallas_solo = v.alto_abajo(), y_de(v, v._pie), y_pantallas(v)
+c("sin ninguna línea debajo, debajo están «Parejas…» y «Ajustes…», que siempre están",
+  alto_solo, v._fijos["pantallas"].winfo_reqheight() + top.winfo_pixels(theme.E3))
+top_arranque, con = vista_nueva(CON_ARRANQUE)
+margen = top_arranque.winfo_pixels(theme.E4)
+c("la línea del arranque ocupa lo que pide más su margen de arriba (el pady cuenta)",
+  con.alto_abajo() - alto_solo, con._bloques["arranque"].winfo_reqheight() + margen)
+c("  y empuja el pie exactamente eso, y a «Parejas…» no la mueve",
+  (y_de(con, con._pie) - pie_solo, y_pantallas(con)),
+  (con.alto_abajo() - alto_solo, pantallas_solo))
+alto_con = con.alto_abajo()
+
+c("reservar ese alto a una vista sin la línea deja debajo justo eso",
+  (v.reservar_abajo(alto_con), v.alto_abajo()), (alto_con - alto_solo, alto_con))
+c("  y el pie queda donde estará con la línea, y «Parejas…» donde estaba",
+  (y_de(v, v._pie), y_pantallas(v)), (y_de(con, con._pie), pantallas_solo))
+c("  sin tocar lo de encima de la lista", v.alto_arriba(), 0)
+v.aplicar(CON_ARRANQUE)
+v.reservar_abajo(0)
+c("  llegada la línea y soltada la reserva, el pie y «Parejas…» ni se mueven",
+  (v.alto_abajo(), y_de(v, v._pie), y_pantallas(v)),
+  (alto_con, y_de(con, con._pie), pantallas_solo))
+v.aplicar(SOLO)
+c("  y la línea que se va no deja ninguna reserva detrás",
+  (v.alto_abajo(), y_de(v, v._pie)), (alto_solo, pie_solo))
+
+# La reserva está en la fila del arranque (vacía hasta la lectura): una fila mide lo mayor de
+# su reserva y de su bloque, no la suma. Pero lo que llega a otras filas (el llavero encima de
+# «Parejas…», la pausa debajo de la línea) se suma a ella, y por eso se suelta en la misma
+# colocación en que llegan los bloques. «Parejas…» sí baja lo que mide la línea del llavero,
+# que es lo único que la reserva no puede guardarle.
+top_todo, todo = vista_nueva(CON_TODO)
+alto_todo = todo.alto_abajo()
+c("  con llavero, arranque y pausa debajo hay más que con el arranque solo",
+  alto_todo > alto_con, True)
+c("  la reserva de ese alto es lo que falta sobre «Parejas…»",
+  v.reservar_abajo(alto_todo), alto_todo - alto_solo)
+v.aplicar(CON_TODO)
+c("  si llegan con la reserva puesta, debajo hay más de lo que se reservó",
+  v.alto_abajo() > alto_todo, True)
+v.reservar_abajo(0)
+c("  soltada, queda justo lo reservado y el pie ni se mueve",
+  (v.alto_abajo(), y_de(v, v._pie)), (alto_todo, y_de(todo, todo._pie)))
+c("  «Parejas…» baja lo que mide la línea del llavero, que va encima de ella",
+  (y_pantallas(v) - pantallas_solo, y_pantallas(v)),
+  (todo._bloques["llavero"].winfo_reqheight() + margen, y_pantallas(todo)))
+top_todo.destroy()
+v.aplicar(SOLO)
+
+# Reservar menos de lo que ya hay, o nada, no cambia nada.
+c("reservar menos de lo que ya hay no reserva nada",
+  (v.reservar_abajo(0), v.reservar_abajo(-5), v.reservar_abajo(alto_solo - 1),
+   y_de(v, v._pie)), (0, 0, 0, pie_solo))
+v.aplicar(CON_ARRANQUE)
+c("  ni reservar donde ya está la línea del arranque",
+  (v.reservar_abajo(alto_con + 40), v.alto_abajo()), (0, alto_con))
+top_arranque.destroy()
+top.destroy()
+
+# Las dos reservas viven en filas distintas y ninguna cuenta en la medida de la otra.
+top, dos = vista_nueva(SOLO)
+c("la reserva de arriba y la de abajo no se cuentan una en la otra",
+  (dos.reservar_arriba(alto_linea), dos.reservar_abajo(alto_con), dos.alto_arriba(),
+   dos.alto_abajo()), (alto_linea, alto_con - alto_solo, alto_linea, alto_con))
+c("  y se sueltan por separado",
+  (dos.reservar_abajo(0), dos.alto_arriba(), dos.alto_abajo()), (0, alto_linea, alto_solo))
+top.destroy()
+
+
 # 6. la ventana de verdad
 REAL_MAINLOOP, REAL_LANZAR = tk.Tk.mainloop, segundo_plano.lanzar
 update.pending = lambda root=None: None
