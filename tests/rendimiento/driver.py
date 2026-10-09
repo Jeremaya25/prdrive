@@ -5,7 +5,7 @@ Variables:
 
   BENCH_T0       `time.time()` justo antes de lanzar este proceso
   BENCH_DEVICE   una copia nueva del dispositivo de muestra (su `.prdrive/` lleva el código)
-  BENCH_FLOW     parejas | ajustes | principal | wizard | agente | log
+  BENCH_FLOW     parejas | ajustes | principal | flota | wizard | agente | log
   BENCH_APP      árbol de código que importar en vez de DEVICE/.prdrive (wizard, agente, log)
   BENCH_SCALE    `tk scaling` forzado en cada nuevo `Tk()` (2.0 = Windows al 150 %)
   BENCH_OUT      fichero donde van los resultados (un JSON por línea)
@@ -23,6 +23,9 @@ Nada de los árboles de código se modifica. Solo se sustituye:
   - `common.catalog.load`: bloquea hasta que el driver lo suelta (un remoto que aún
     no ha contestado), así «Parejas» pinta primero con la copia local, como en un
     dispositivo de verdad; luego se suelta y se mide el repintado.
+  - `common.fleet.leer`: la flota de muestra (doce dispositivos, `flota_de_muestra()`),
+    que llega cuando el driver la suelta, como el catálogo: «Dispositivos» pinta primero
+    sin ella y luego se mide lo que cuesta pintarla.
   - `common.update.check`: sin red.
   - `ui.tk.orden_sync` y `ui.tk.preguntar_resync`: ninguna pasada de verdad corre ni
     pregunta nada (la comprobación mide la ventana, no a `sync.py`): la pasada es
@@ -50,6 +53,12 @@ lleva lo determinista de cada momento (no depende de la máquina):
 Cada momento nuevo funciona igual en el árbol del PR y en el de la base (la 0.7.1): lo que
 solo el PR ofrece (`root.instantanea`, la lectura compartida de la principal) se usa si
 está y se salta si no, y un momento que solo mide el PR se lee «nuevo», nunca falla.
+
+El flujo `flota` abre «Parejas» con el catálogo sin contestar y, desde ella, «Dispositivos» (con
+la flota sin llegar: `open-dispositivos`; luego llegando: `llega-flota` y `elegir-dispositivo`) y el
+editor de flags de la pareja elegida (`open-flags`). El flujo `wizard` pulsa además «Siguiente» en
+«¿Dónde?» y apunta lo que tarda en verse «Dispositivo» (`paso-dispositivo`, con la lectura real de
+las unidades del equipo).
 """
 import os
 import sys
@@ -71,7 +80,7 @@ LINEAS = 10000
 
 NOTES: dict = {"t_driver_ms": round((T_DRIVER - T0) * 1000, 1)}
 ESTADO: dict = {"modulos": None, "modulos_lista": None, "tema": 0, "estilos_primero": None,
-                "apply": [], "catalogo": None, "escrituras": 0, "cierre": None}
+                "apply": [], "catalogo": None, "flota": None, "escrituras": 0, "cierre": None}
 LOG: dict = {"t0": None, "t1": None, "n": 0, "listo": False}
 HOOK: dict = {}
 
@@ -182,6 +191,104 @@ def _parche_catalog(m):
     m.load = load
 
 
+FLOTA_DE_MUESTRA = (
+    ("Disco del taller", "0.7.1", ("windows-x64", "linux-x64"), 0.1, "largo-a", 3, 5),
+    ("pendrive azul", "0.7.1", ("windows-x64", "linux-x64", "linux-arm64"), 0.5, "ok", 0, 4),
+    ("Llave de la oficina", "0.7.1", ("windows-x64",), 2, "ok", 0, 2),
+    ("SSD de viaje", "0.7.0", ("windows-x64", "linux-x64"), 5, "ok", 0, 5),
+    ("Pen de fotos", "0.7.1", ("linux-x64",), 8, "largo-b", 1, 1),
+    ("Pendrive rojo", "0.7.1", ("windows-x64",), 20, "ok", 0, 0),
+    ("Disco de copias", "0.6.5", ("windows-x64", "windows-arm64"), 30, "ok", 0, 3),
+    ("Pen de Marta", "0.7.1", ("windows-x64", "linux-x64"), 50, "largo-c", -1, 2),
+    ("Unidad del portátil", "0.7.1", ("linux-x64", "linux-arm64"), 70, "ok", 0, 1),
+    ("Pen de pruebas", "0.7.1", ("linux-x64",), 100, "ok", 0, 2),
+    ("Disco del trastero", "0.7.0", ("windows-x64",), 140, "ok", 0, 0),
+    ("Pen viejo", "0.5.2", ("windows-x64",), 24 * 10, "ok", 0, 3),
+)
+"""Los doce dispositivos de la flota de muestra, del visto hace menos al visto hace más.
+
+Cada uno: nombre, versión, plataformas, horas desde que se le vio, resultado, días desde su
+última pasada buena (0 si no falla, -1 si no consta ninguna) y cuántos equipos ha apuntado (de
+0 a `MAX_EQUIPOS`). Tres fallan con un resultado largo, de los que parten en dos líneas en la
+ficha; el segundo es ESTE dispositivo (`device_id()` del dispositivo de muestra); y el último
+lleva más de una semana sin aparecer (sale apagado). El primero, el que la ventana elige al
+llegar, falla y lleva los cinco equipos: es la ficha más alta.
+"""
+
+RESULTADOS_LARGOS = {
+    "largo-a": "fallo en documentos, fotos, musica, trabajo, notas, videos, escaneos, facturas",
+    "largo-b": "fallo en fotos, musica, trabajo, notas, videos, copias-del-taller, escaneos",
+    "largo-c": "fallo en documentos, escaneos, facturas, proyectos, presupuestos, contratos",
+}
+"""El `last_result` de los dispositivos que fallan: lo bastante largo para partir a 440 px."""
+
+EQUIPOS_DE_MUESTRA = ("PORTATIL-ANA", "SOBREMESA-OFICINA", "PC-TALLER", "MACBOOK-LUIS", "NUC-SALON")
+"""Los nombres de red que se reparten los dispositivos de la flota de muestra."""
+
+
+def flota_de_muestra(m, yo: str):
+    """Los doce dispositivos de `FLOTA_DE_MUESTRA`, con los tipos del módulo `common.fleet` del árbol.
+
+    Solo usa los campos que tienen todas las versiones (`id`, `nombre`, `version`, `plataformas`,
+    `last_seen`, `last_result`, `equipos` y `ultima_buena`). Las fechas se cuentan hacia atrás desde
+    ahora, así que lo que sale apagado, lo que falla y lo que se enseña no cambia de una pasada a
+    otra, y los widgets de la ficha tampoco.
+
+    Args:
+        m: El módulo `common.fleet` del árbol que se mide.
+        yo: El `id` de este dispositivo: el de la segunda fila.
+
+    Returns:
+        La lista que devolvería `fleet.leer()`, ya ordenada.
+    """
+    import hashlib
+    from datetime import datetime, timedelta
+    ahora = datetime.now().replace(microsecond=0)
+
+    def sello(horas: float) -> str:
+        return (ahora - timedelta(hours=horas)).strftime("%Y-%m-%d %H:%M:%S")
+
+    flota = []
+    for i, (nombre, version, plataformas, hace, resultado, buena, n_equipos) in enumerate(FLOTA_DE_MUESTRA):
+        equipos = tuple(m.Equipo(EQUIPOS_DE_MUESTRA[(i + k) % len(EQUIPOS_DE_MUESTRA)],
+                                 sello(hace + 7 * k)) for k in range(n_equipos))
+        if buena == 0:
+            ultima_buena = ""
+        else:
+            ultima_buena = getattr(m, "SIN_BUENA", "ninguna") if buena < 0 else sello(24 * buena)
+        flota.append(m.Dispositivo(
+            id=yo if i == 1 else hashlib.sha1(f"bench-flota-{i}".encode()).hexdigest()[:32],
+            nombre=nombre, version=version,
+            plataformas=plataformas, last_seen=sello(hace),
+            last_result=RESULTADOS_LARGOS.get(resultado, resultado), equipos=equipos,
+            ultima_buena=ultima_buena))
+    return m.ordenar(flota)
+
+
+def _parche_fleet(m):
+    """Que la flota de «Dispositivos» sea la de muestra, y llegue cuando el driver lo diga.
+
+    Como `_parche_catalog`, pero abierta de entrada: solo el flujo `flota` cierra la espera
+    (`ESTADO["flota"].clear()`) antes de abrir «Dispositivos», para medir la ventana sin las
+    notas y luego su llegada por separado. Sin ese cierre nada espera: ningún otro flujo lee
+    la flota, y uno que lo hiciera no debe quedarse parado.
+    """
+    import threading
+    evento = threading.Event()
+    evento.set()
+    ESTADO["flota"] = evento
+
+    def leer(raw_local=None):
+        """La flota de muestra y ningún aviso, tras esperar al driver."""
+        evento.wait(60)
+        try:
+            yo = m.device_id() or "bench-0000-0000-0001"
+        except Exception:                                # noqa: BLE001
+            yo = "bench-0000-0000-0001"
+        return flota_de_muestra(m, yo), None
+    m.leer = leer
+
+
 def _parche_store(m):
     """Cuenta las llamadas a `write_json` cuyo destino está bajo el dispositivo."""
     orig = m.write_json
@@ -210,7 +317,7 @@ def _parche_ui_tk(m):
 
 PARCHES = {"tkinter": _parche_tkinter, "tkinter.ttk": _parche_ttk, "ui.theme": _parche_theme,
            "common.update": _parche_update, "common.catalog": _parche_catalog,
-           "common.store": _parche_store, "ui.tk": _parche_ui_tk}
+           "common.fleet": _parche_fleet, "common.store": _parche_store, "ui.tk": _parche_ui_tk}
 
 
 class _Interceptor:
@@ -645,6 +752,168 @@ def drive_principal(root):
     record("volver-pasada", ms(t0, t1))
 
 
+def anotando(funcion):
+    """Que un fallo del manejador de una ventana quede en `NOTES["error"]`.
+
+    Los manejadores de `HOOK["on_shown"]` corren dentro del `invoke()` de un botón, y Tk se
+    traga lo que lanza un botón (lo escribe en la salida y sigue): sin esto el momento que
+    falta no diría por qué.
+    """
+    def envuelta(*args, **opciones):
+        try:
+            return funcion(*args, **opciones)
+        except Exception:                                # noqa: BLE001
+            import traceback
+            NOTES["error"] = traceback.format_exc()
+    envuelta.__name__ = funcion.__name__
+    return envuelta
+
+
+def drive_flota(root):
+    """Abre «Dispositivos» y el editor de flags desde «Parejas» y apunta lo que cuesta cada cosa.
+
+    «Parejas» se abre con el catálogo sin contestar (la espera se cierra en todo el flujo y se
+    suelta al volver): se pinta con la copia local, como en un dispositivo, y lo que llegue
+    después no cae dentro de lo medido. De ahí en adelante todo lo hace `en_parejas_de_la_flota`.
+    """
+    btn = find_button(root, "Parejas…", "Parejas")
+    if btn is None:
+        NOTES["error"] = "no hay botón «Parejas…»"
+        return
+    if ESTADO["catalogo"] is not None:
+        ESTADO["catalogo"].clear()
+    root.update()
+    tema_nuevo(root)
+    HOOK["on_shown"] = en_parejas_de_la_flota
+    btn.invoke()
+    if ESTADO["catalogo"] is not None:
+        ESTADO["catalogo"].set()
+    root.update()
+
+
+@anotando
+def en_parejas_de_la_flota(dlg, t):
+    """«Parejas» ya está pintada: de aquí se abre «Dispositivos» y, al volver, el editor de flags."""
+    boton = find_button(dlg, "Dispositivos…")
+    if boton is None:
+        NOTES["error"] = "«Parejas» no tiene el botón «Dispositivos…»"
+        return
+    if ESTADO["flota"] is not None:
+        ESTADO["flota"].clear()                          # las notas llegan cuando el driver lo dice
+    dlg.update()
+    tema_nuevo(dlg)
+    t_req = time.time()
+    HOOK["on_shown"] = lambda fdlg, t_visto: en_dispositivos(fdlg, t_visto, t_req)
+    boton.invoke()
+    abrir_flags(dlg)
+
+
+@anotando
+def en_dispositivos(fdlg, t, t_req):
+    """«Dispositivos» recién abierta, sin las notas: se apunta, y luego su llegada y elegir otro.
+
+    `open-dispositivos` es del clic a verla pintada. `llega-flota` es `_mirar()` más el `update()`
+    que repinta la tabla y la ficha cuando las notas llegan; la espera a que acabe su hilo es con
+    `time.sleep`, sin `update()` (como en `catalogo-llega`): si no, el sondeo de la ventana podría
+    recogerlas fuera de lo medido. `elegir-dispositivo` es `tabla.elegir(otra)` y su `update()`.
+    """
+    record("open-dispositivos", ms(t_req, t), **medir(fdlg))
+    shot("dispositivos", fdlg)
+    if ESTADO["flota"] is not None:
+        ESTADO["flota"].set()
+    sondeo, encargo = _encargo_de(fdlg)
+    if encargo is None:
+        NOTES["error"] = "«Dispositivos» no ha encargado la lectura de la flota (¿ya no tiene `sondeo`?)"
+        return
+    limite = time.time() + 5
+    while not encargo.hecho and time.time() < limite:
+        time.sleep(0.001)
+    if not encargo.hecho:
+        NOTES["error"] = "las notas de la flota no llegaron en 5 s"
+        return
+    t1 = time.perf_counter()
+    sondeo._mirar()
+    fdlg.update()
+    t2 = time.perf_counter()
+    record("llega-flota", ms(t1, t2), **medir(fdlg))
+    shot("dispositivos-llena", fdlg)
+    if not CAPTURA:
+        elegir_dispositivo(fdlg)
+
+
+def elegir_dispositivo(fdlg):
+    """Elige otro dispositivo de la tabla (con su ficha) y apunta lo que tarda en verse."""
+    tabla = getattr(fdlg, "tabla", None)
+    orden = list(getattr(tabla, "orden", ()))
+    if len(orden) < 3:
+        NOTES["error"] = f"la tabla de «Dispositivos» tiene {len(orden)} filas: no se puede elegir otra"
+        return
+    otra = orden[1] if getattr(tabla, "elegida", None) != orden[1] else orden[0]
+    fdlg.update()
+    t0 = time.perf_counter()
+    tabla.elegir(otra)
+    fdlg.update()
+    t1 = time.perf_counter()
+    record("elegir-dispositivo", ms(t0, t1), elegida=getattr(tabla, "elegida", None) == otra)
+
+
+def abrir_flags(dlg):
+    """Despliega «Avanzado» en el editor de «Parejas» y abre el de flags de su pareja.
+
+    El editor es el de la primera pareja, que es de este dispositivo y se puede editar: si
+    «Editar flags…» está apagado (un editor de solo lectura) el flujo no mide nada y lo dice.
+    """
+    mostrar_avanzado = find_button(dlg, "Mostrar")
+    if mostrar_avanzado is None:
+        NOTES["error"] = "el editor de «Parejas» no tiene el botón «Mostrar» de «Avanzado»"
+        return
+    mostrar_avanzado.invoke()
+    dlg.update()
+    boton = find_button(dlg, "Editar flags…")
+    if boton is None:
+        NOTES["error"] = "«Avanzado» no tiene el botón «Editar flags…»"
+        return
+    if boton.instate(["disabled"]):
+        NOTES["error"] = "«Editar flags…» está apagado: el editor de la pareja es de solo lectura"
+        return
+    tema_nuevo(dlg)
+    t_req = time.time()
+    HOOK["on_shown"] = lambda fdlg, t: en_flags(fdlg, t, t_req)
+    boton.invoke()
+
+
+@anotando
+def en_flags(fdlg, t, t_req):
+    """El editor de flags recién abierto."""
+    record("open-flags", ms(t_req, t), **medir(fdlg))
+    shot("flags", fdlg)
+
+
+def drive_wizard(root):
+    """Pulsa «Siguiente» en «¿Dónde?» y apunta lo que tarda en verse el paso «Dispositivo».
+
+    «¿Dónde?» deja seguir con su respuesta de siempre, «En una unidad». El paso lista las
+    unidades del equipo con la lectura de verdad (`device.list_volumes()`): en el clic mismo en
+    la 0.7.1, y en un hilo cuando el paso las lee después de pintarse; lo medido es hasta el
+    primer pintado del paso, no hasta que llega la lista.
+    """
+    btn = find_button(root, "Siguiente")
+    if btn is None:
+        NOTES["error"] = "el asistente no tiene el botón «Siguiente»"
+        return
+    root.update()
+    if btn.instate(["disabled"]):
+        NOTES["error"] = "«Siguiente» está apagado en «¿Dónde?»"
+        return
+    tema_nuevo(root)
+    t0 = time.perf_counter()
+    btn.invoke()
+    root.update()
+    t1 = time.perf_counter()
+    record("paso-dispositivo", ms(t0, t1), **medir(root))
+    shot("dispositivo", root)
+
+
 def drive_log(root):
     """Espera a que la salida de 10 000 líneas esté en el Text y apunta lo que tardó en meterla."""
     limite = time.time() + 60
@@ -692,7 +961,7 @@ def probe(self, n=0):
             record("apply-" + FLOW, apply_ms())
         shot(FLOW, root)
     try:
-        if FLOW in ("parejas", "ajustes", "principal"):
+        if FLOW in ("parejas", "ajustes", "principal", "flota"):
             llega_instantanea(root)
         if FLOW == "parejas":
             drive_parejas(root)
@@ -700,6 +969,10 @@ def probe(self, n=0):
             drive_ajustes(root)
         elif FLOW == "principal":
             drive_principal(root)
+        elif FLOW == "flota":
+            drive_flota(root)
+        elif FLOW == "wizard":
+            drive_wizard(root)
         elif FLOW == "log":
             drive_log(root)
     except Exception:                                    # noqa: BLE001
@@ -752,8 +1025,9 @@ except Exception:                                        # noqa: BLE001
     import traceback
     NOTES["error"] = traceback.format_exc()
 
-if ESTADO["catalogo"] is not None:
-    ESTADO["catalogo"].set()
+for _espera in (ESTADO["catalogo"], ESTADO["flota"]):
+    if _espera is not None:
+        _espera.set()
 utiles.escribir("_notes", 0, NOTES)
 sys.stdout.flush()
 sys.stderr.flush()

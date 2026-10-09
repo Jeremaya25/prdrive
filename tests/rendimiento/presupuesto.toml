@@ -11,6 +11,11 @@
 #              estilos.<pantalla>             estilos de ttk creados después del primer widget
 #              escrituras.marcar              escrituras a state/ (store.write_json) dentro del clic en
 #                                             una casilla de la ventana principal: 1 en la 0.7.1
+#              widgets.dispositivos           widgets de «Dispositivos» con la flota de muestra (12 dispositivos)
+#                                             ya llegada, la ficha del primero a la vista
+#              widgets.flags                  widgets del editor de flags de la primera pareja del dispositivo
+#                                             de muestra (sin flags propios)
+#              tema.abrir.dispositivos|flags, estilos.dispositivos|flags   lo mismo que para «Parejas» y «Ajustes»
 #            `[techo.windows]` y `[techo.linux]` sustituyen a `[techo]` en esa plataforma (los
 #            módulos importados son los de cada sistema).
 # [meta]     Las mismas cuentas, a donde quiere llegar el diseño: solo se informan.
@@ -45,6 +50,16 @@
 "estilos.parejas" = 0
 "estilos.ajustes" = 0
 "estilos.apartado" = 0
+# «Dispositivos» y el editor de flags (etapa 3, tarea 1): lo que da el árbol al empezar la etapa 3
+# (09/10/2026, Python 3.14.8 con Tk 9.0.4) con la flota y el dispositivo de muestra de `driver.py`.
+# Medidos en Linux (no dependen de la máquina); si Windows da otro número, va en `[techo.windows]`.
+# Solo bajan, con las tareas que las rebajan.
+"widgets.dispositivos" = 137
+"widgets.flags" = 70
+"tema.abrir.dispositivos" = 0
+"tema.abrir.flags" = 0
+"estilos.dispositivos" = 0
+"estilos.flags" = 0
 
 [techo.linux]
 "modulos.main" = 224
@@ -68,6 +83,12 @@
 "estilos.ajustes" = 0
 "estilos.apartado" = 0
 "escrituras.marcar" = 0
+"widgets.dispositivos" = 35
+"widgets.flags" = 34
+"tema.abrir.dispositivos" = 0
+"tema.abrir.flags" = 0
+"estilos.dispositivos" = 0
+"estilos.flags" = 0
 
 [meta_ms]
 "start-main" = 350
@@ -90,3 +111,4 @@
 "sincronizar-ventana" = 100
 "reabrir-parejas" = 150
 "pane-otra-vez" = 60
+"elegir-dispositivo" = 16

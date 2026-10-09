@@ -44,6 +44,10 @@ ETIQUETAS = {
     "elegir-fila": "Elegir otra fila de «Parejas»",
     "elegir-pareja": "Elegir otra pareja de «Parejas» (carga el editor)",
     "reabrir-parejas": "Volver a abrir «Parejas»",
+    "open-dispositivos": "Abrir «Dispositivos»",
+    "llega-flota": "Llegan las notas de la flota a «Dispositivos»",
+    "elegir-dispositivo": "Elegir otro dispositivo de «Dispositivos»",
+    "open-flags": "Abrir el editor de flags",
     "open-ajustes": "Abrir «Ajustes»",
     "pane-reparacion": "Apartado «Reparación»",
     "pane-volumen": "Apartado «Nombre e icono»",
@@ -55,6 +59,7 @@ ETIQUETAS = {
     "apply-agente": "  theme.apply() de la pregunta",
     "start-wizard": "Asistente, desde que se lanza",
     "apply-wizard": "  theme.apply() del asistente",
+    "paso-dispositivo": "Asistente: pasar al paso «Dispositivo»",
     "log-10k": "10 000 líneas en la ventana de la pasada",
 }
 """Los momentos que se comparan, en el orden de la tabla del resumen."""
@@ -155,6 +160,17 @@ def cuentas(lineas: list[dict], arbol: str) -> dict[str, dict]:
             apuntar(f"widgets.{pantalla}{_pares(d)}", c.get("widgets"), d)
             apuntar(f"tema.abrir.{pantalla}", c.get("tema"), d)
             apuntar(f"estilos.{pantalla}", c.get("estilos_tardios"), d)
+        elif esc == "open-dispositivos":
+            apuntar("tema.abrir.dispositivos", c.get("tema"), d)
+            apuntar("estilos.dispositivos", c.get("estilos_tardios"), d)
+        elif esc == "llega-flota":
+            # Los widgets de «Dispositivos» son los de después de llegar las notas: son los
+            # que crecen con los dispositivos. Sin `.p5`: la flota de muestra es la misma.
+            apuntar("widgets.dispositivos", c.get("widgets"), d)
+        elif esc == "open-flags":
+            apuntar("widgets.flags", c.get("widgets"), d)
+            apuntar("tema.abrir.flags", c.get("tema"), d)
+            apuntar("estilos.flags", c.get("estilos_tardios"), d)
         elif esc.startswith("pane-"):
             apuntar("tema.apartado", c.get("tema"), d)
             apuntar("estilos.apartado", c.get("estilos_tardios"), d)

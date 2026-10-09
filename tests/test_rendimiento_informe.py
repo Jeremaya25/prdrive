@@ -8,9 +8,12 @@ inventadas, sin Tk ni procesos: es la parte que no puede equivocarse sin que nad
 lo note, porque un PR que no falla no avisa. Fija también lo que añade la ventana
 abierta: que cada momento nuevo tenga etiqueta (sin ella la comparación lo descarta
 sin decirlo), que uno que solo existe en el PR se lea «nuevo» y no falle, y que las
-escrituras al marcar una pareja sean una cuenta con su techo.
+escrituras al marcar una pareja sean una cuenta con su techo. Fija también lo que añade
+la etapa 3: «Dispositivos», el editor de flags y el paso del asistente a «Dispositivo»
+(sus momentos, sus cuentas, sus techos y que el orquestador los exija).
 """
 
+import ast
 import sys
 
 from _harness import REPO, Checks
@@ -18,6 +21,7 @@ from _harness import REPO, Checks
 sys.path.insert(0, str(REPO / "tests" / "rendimiento"))
 import correr  # noqa: E402
 import informe  # noqa: E402
+from common import fleet  # noqa: E402
 
 c = Checks("comprobación de tiempos: el veredicto")
 
@@ -124,7 +128,8 @@ c("las cuentas se toman al 100 %", informe.cuentas([dict(a5, escala="2.0")], "pr
 # --- la ventana abierta: los momentos que se miden una vez abierta
 MOMENTOS_NUEVOS = ("llega-instantanea", "marcar", "sincronizar-ventana", "volver-pasada",
                    "elegir-fila", "elegir-pareja", "reabrir-parejas", "pane-otra-vez",
-                   "volver-ajustes")
+                   "volver-ajustes", "open-dispositivos", "llega-flota", "elegir-dispositivo",
+                   "open-flags", "paso-dispositivo")
 c("todos los momentos nuevos tienen etiqueta (sin ella `comparar` los descarta)",
   [e for e in MOMENTOS_NUEVOS if e not in informe.ETIQUETAS], [])
 
@@ -203,6 +208,125 @@ c("cada flujo del plan tiene sus momentos esperados",
   sorted({f for f, _, _ in correr.PLAN} - set(correr.ESPERADOS)), [])
 c("  y todo momento esperado se compara (tiene etiqueta)",
   sorted({e for es in correr.ESPERADOS.values() for e in es} - set(informe.ETIQUETAS)), [])
+
+# --- «Dispositivos», el editor de flags y el paso del asistente a «Dispositivo»
+orden_etiquetas = list(informe.ETIQUETAS)
+c("«Dispositivos» y el editor de flags van tras «reabrir-parejas» y antes de «Ajustes», en este orden",
+  orden_etiquetas[orden_etiquetas.index("reabrir-parejas") + 1:orden_etiquetas.index("open-ajustes")],
+  ["open-dispositivos", "llega-flota", "elegir-dispositivo", "open-flags"])
+c("el paso del asistente a «Dispositivo» va justo tras `apply-wizard`",
+  orden_etiquetas[orden_etiquetas.index("apply-wizard") + 1], "paso-dispositivo")
+
+
+flota = informe.cuentas([
+    cuenta("pr", "open-dispositivos", widgets=33, tema=0, estilos_tardios=0),
+    cuenta("pr", "llega-flota", widgets=131),
+    cuenta("pr", "elegir-dispositivo", widgets=131, tema=0, estilos_tardios=0),
+    cuenta("pr", "open-flags", widgets=82, tema=0, estilos_tardios=0)], "pr")
+c("las cuentas de «Dispositivos» y del editor de flags, con su clave y sin `.p5`",
+  sorted(flota), ["estilos.dispositivos", "estilos.flags", "tema.abrir.dispositivos",
+                  "tema.abrir.flags", "widgets.dispositivos", "widgets.flags"])
+c("  los widgets de «Dispositivos» son los de después de llegar las notas, no los de abrir",
+  flota["widgets.dispositivos"]["valores"], [131])
+c("  y los del editor de flags, los de abrirlo", flota["widgets.flags"]["valores"], [82])
+c("  elegir otro dispositivo se mide en tiempo, no cuenta nada",
+  informe.cuentas([cuenta("pr", "elegir-dispositivo", widgets=131, tema=0, estilos_tardios=0)], "pr"), {})
+c("  y el paso del asistente tampoco (los widgets del asistente son los de `start-wizard`)",
+  informe.cuentas([cuenta("pr", "paso-dispositivo", widgets=40, tema=0, estilos_tardios=0)], "pr"), {})
+c("  al 150 % no cuentan, como las demás",
+  informe.cuentas([dict(cuenta("pr", "llega-flota", widgets=131), escala="2.0")], "pr"), {})
+
+pres_flota = {"techo": {"widgets.dispositivos": 131, "widgets.flags": 82,
+                        "tema.abrir.dispositivos": 0, "estilos.flags": 0}}
+base_flota = [cuenta("base", "llega-flota", widgets=131), cuenta("base", "open-flags", widgets=82)]
+en_techo = veredicto(base_flota + [cuenta("pr", "llega-flota", widgets=131),
+                                   cuenta("pr", "open-flags", widgets=82)], pres_flota)
+c("«Dispositivos» y el editor de flags en su techo: no fallan", en_techo["fallos"], [])
+sobre = veredicto(base_flota + [cuenta("pr", "llega-flota", widgets=131),
+                                cuenta("pr", "open-flags", widgets=96)], pres_flota)
+c("el editor de flags por encima de su techo falla y nombra la cuenta",
+  (len(sobre["fallos"]), "widgets.flags" in sobre["fallos"][0]), (1, True))
+c("  y dice qué clase de widget sobra", "+14 TLabel" in sobre["fallos"][0], True)
+sin_flags = veredicto(base_flota + [cuenta("pr", "llega-flota", widgets=131)], pres_flota)
+c("el PR que ya no abre el editor de flags, y la base sí: falla",
+  any("widgets.flags" in f for f in sin_flags["fallos"]), True)
+tarde = veredicto([cuenta("pr", "open-dispositivos", widgets=33, tema=2, estilos_tardios=0)], pres_flota)
+c("abrir «Dispositivos» con una pasada de `<<ThemeChanged>>` sobre su techo (0) falla",
+  any("tema.abrir.dispositivos" in f for f in tarde["fallos"]), True)
+
+# --- lo que dice el presupuesto de verdad sobre esas pantallas
+CUENTAS_FLOTA = ("widgets.dispositivos", "widgets.flags", "tema.abrir.dispositivos",
+                 "tema.abrir.flags", "estilos.dispositivos", "estilos.flags")
+techo_linux = informe.techos(real, "linux-x64")
+c("las seis cuentas nuevas tienen techo, y el mismo en Windows y en Linux (no dependen del sistema)",
+  ([k for k in CUENTAS_FLOTA if k not in techo_linux],
+   [k for k in CUENTAS_FLOTA if techo_linux.get(k) != informe.techos(real, "windows-x64").get(k)]),
+  ([], []))
+c("  el de los temas y los estilos tardíos, 0 (su meta)",
+  {k: (techo_linux[k], real["meta"][k]) for k in CUENTAS_FLOTA if k.startswith(("tema", "estilos"))},
+  {k: (0, 0) for k in CUENTAS_FLOTA if k.startswith(("tema", "estilos"))})
+c("  y la meta de los widgets, la del diseño (35 «Dispositivos», 34 el editor de flags)",
+  (real["meta"]["widgets.dispositivos"], real["meta"]["widgets.flags"]), (35, 34))
+c("  con el techo por encima de la meta (se baja con la tarea que lo consigue)",
+  [k for k in ("widgets.dispositivos", "widgets.flags") if techo_linux[k] < real["meta"][k]], [])
+c("elegir otro dispositivo tiene la meta de elegir otra fila (16 ms)",
+  real["meta_ms"].get("elegir-dispositivo"), 16)
+c("  y los demás momentos de la etapa 3 se informan sin meta de tiempo (el diseño no la tiene)",
+  [k for k in ("open-dispositivos", "llega-flota", "open-flags", "paso-dispositivo")
+   if k in real["meta_ms"]], [])
+
+c("el orquestador mide la flota con 5 parejas, al 100 %, y la captura",
+  ([x for x in correr.PLAN if x[0] == "flota"], [x for x in correr.PLAN_CAPTURAS if x[0] == "flota"]),
+  ([("flota", 5, "1.0")], [("flota", 5, "1.0")]))
+c("  y le exige sus cuatro momentos, en el orden en que se miden",
+  correr.ESPERADOS["flota"], ("open-dispositivos", "llega-flota", "elegir-dispositivo", "open-flags"))
+c("el flujo del asistente le exige también el paso a «Dispositivo»",
+  correr.ESPERADOS["wizard"], ("start-wizard", "apply-wizard", "paso-dispositivo"))
+
+# --- la flota de muestra del driver (lo que hace que «Dispositivos» pese lo mismo en cada pasada)
+def cargar_muestra() -> dict:
+    """Saca de `driver.py` la flota de muestra sin importarlo (al importarse ya corre un flujo)."""
+    nombres = {"FLOTA_DE_MUESTRA", "RESULTADOS_LARGOS", "EQUIPOS_DE_MUESTRA", "flota_de_muestra"}
+    fuente = (REPO / "tests" / "rendimiento" / "driver.py").read_text(encoding="utf-8")
+    nodos = []
+    for nodo in ast.parse(fuente).body:
+        if isinstance(nodo, ast.Assign):
+            propios = {t.id for t in nodo.targets if isinstance(t, ast.Name)}
+        elif isinstance(nodo, ast.FunctionDef):
+            propios = {nodo.name}
+        else:
+            continue
+        if propios & nombres:
+            nodos.append(nodo)
+    espacio: dict = {}
+    exec(compile(ast.Module(nodos, []), "driver.py", "exec"), espacio)
+    return espacio
+
+
+muestra = cargar_muestra()
+yo = "0123456789abcdef0123456789abcdef"
+flota_a = muestra["flota_de_muestra"](fleet, yo)
+flota_b = muestra["flota_de_muestra"](fleet, yo)
+c("la flota de muestra son doce dispositivos, con ids distintos y uno es este",
+  (len(flota_a), len({d.id for d in flota_a}), [d.id for d in flota_a].count(yo)), (12, 12, 1))
+c("  ya ordenada como la entrega `fleet.leer()`", flota_a, fleet.ordenar(flota_a))
+c("  y cada nota se escribe y se relee tal cual (`fleet.dumps` lo exige)",
+  [d.nombre for d in flota_a if fleet.parse(fleet.dumps(d)) != d], [])
+c("  con equipos de 0 a `MAX_EQUIPOS`, y de todos los tamaños",
+  sorted({len(d.equipos) for d in flota_a}), list(range(fleet.MAX_EQUIPOS + 1)))
+c("  tres fallan, con un resultado largo (parte en dos líneas a 440 px)",
+  sorted(len(d.last_result) >= 70 for d in flota_a if not d.bien), [True] * 3)
+c("  uno lleva más de una semana sin aparecer, y es el último",
+  [d.nombre for d in flota_a if d.obsoleto()], [flota_a[-1].nombre])
+c("  el primero, que es el que la ventana elige al llegar, falla y lleva los cinco equipos y su última buena",
+  (flota_a[0].bien, len(flota_a[0].equipos), bool(flota_a[0].ultima_buena)), (False, fleet.MAX_EQUIPOS, True))
+c("  y uno de los que fallan no tiene ninguna pasada buena apuntada",
+  [d.ultima_buena for d in flota_a if not d.bien].count(fleet.SIN_BUENA), 1)
+c("  solo con los campos que tienen todas las versiones (nada de `tipo`, `cifrado` ni `entiende`)",
+  [d.nombre for d in flota_a if d.tipo or d.cifrado or d.entiende], [])
+c("  y la misma forma de una vez a otra (las fechas se cuentan hacia atrás desde ahora)",
+  [(d.nombre, d.bien, d.obsoleto(), len(d.equipos), d.ultima_buena == fleet.SIN_BUENA) for d in flota_a],
+  [(d.nombre, d.bien, d.obsoleto(), len(d.equipos), d.ultima_buena == fleet.SIN_BUENA) for d in flota_b])
 
 # --- el resumen
 texto = informe.markdown(peor, {"plataforma": "linux-x64", "pr": "abc", "base": "def", "rondas": 7,
