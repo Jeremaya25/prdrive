@@ -25,8 +25,11 @@
 [techo]
 "widgets.main.p5" = 51
 "widgets.main.p50" = 231
-"widgets.parejas.p5" = 152
-"widgets.parejas.p50" = 467
+"widgets.parejas.p5" = 143
+# Subido de 467: cada chip va en una celda con el color de su fila (dos widgets más por
+# fila) para que no salga con el recuadro de la tarjeta. TEMPORAL: la lista sobre un
+# lienzo de la tarea 14 de la etapa 2 quita esas filas y se baja con ella.
+"widgets.parejas.p50" = 548
 "widgets.ajustes.p5" = 39
 "widgets.ajustes.p50" = 39
 "widgets.agente" = 16

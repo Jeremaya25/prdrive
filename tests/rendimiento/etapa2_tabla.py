@@ -4,7 +4,8 @@ TEMPORAL, como todo `etapa2_*`: lo borra la tarea 15 de la etapa 2.
 
     python etapa2_tabla.py VARIANTE N        (por `entrada.py etapa2_tabla VARIANTE N`)
 
-`VARIANTE` es `ref` (la `ListaParejas` del árbol, con sus siete widgets por fila),
+`VARIANTE` es `ref` (la `ListaParejas` del árbol: siete widgets por fila, nueve desde
+que cada chip va en una celda con el color de su fila),
 `ligera` (`etapa2_ligera.ListaLigera`, cinco) o `lienzo` (`etapa2_lienzo.ListaLienzo`,
 ninguno: un solo `tk.Canvas`); `N`, el número de filas: 5, 10, 20 o 50.
 
@@ -115,10 +116,14 @@ def leer_ref(lista) -> list[tuple[str, str, str, str]]:
     por_fila: dict[int, dict[int, str]] = {}
     for w in lista.marco.winfo_children():
         info = w.grid_info()
-        if not info or w.winfo_class() != "TLabel":
+        if not info:
             continue
         fila, col = int(info["row"]), int(info["column"])
-        if fila >= 2 and col >= 1:
+        if fila < 2 or col < 1:
+            continue
+        if w.winfo_class() == "TFrame" and w.winfo_children():
+            w = w.winfo_children()[0]               # un chip va en la celda de su fila
+        if w.winfo_class() == "TLabel":
             por_fila.setdefault(fila, {})[col] = str(w.cget("text"))
     return [(d[1], d[2], d[3], d[4]) for _, d in sorted(por_fila.items())]
 
