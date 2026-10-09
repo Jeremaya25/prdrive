@@ -40,7 +40,10 @@ se puede. A cambio pierdes la negación plausible (se ve cuánto ocupa de verdad
 si llenas la unidad, el volumen de dentro empieza a dar errores de escritura.
 
 Cuando no hay dispersos, el asistente **mide** la velocidad de tu unidad y te
-dice cuánto va a tardar **como poco** antes de empezar. Es un mínimo porque lo
+dice cuánto va a tardar **como poco** antes de empezar. La medida escribe 8 MiB
+en la unidad y tarda unos segundos: la ventana sigue respondiendo, el paso dice
+«Midiendo lo que escribe la unidad…» y **Crear y montar** espera a que acabe.
+Es un mínimo porque lo
 que se mide en unos segundos es la velocidad de arranque: muchas memorias USB
 escriben rápido solo hasta que se llena su caché, y después bajan a la mitad o
 menos. Mientras se crea, la barra enseña el **avance real** —lo que la propia

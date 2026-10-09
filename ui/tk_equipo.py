@@ -24,17 +24,31 @@ unidad trae los suyos. Es la instalación «solo agente».
 
 Lo que el asistente va sabiendo vive en el propio `Wizard` (`agente_*`,
 `equipo_*`) y no en los widgets: `repintar()` los destruye al cambiar de paso.
+
+Lo que mira el disco o el sistema no corre en el hilo de Tk: las carpetas que
+se escriben se examinan al dejar de teclear (`ExamenDiferido`) y «Verificación»
+comprueba en otro hilo, con `ui.segundo_plano` y un `Sondeo` del paso.
 """
 
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 
-from . import theme, watch
-from .tk import Resultado, bloque_aviso, tabla_estado, working
+from . import segundo_plano, theme, watch
+from .tk import Indicador, Resultado, Sondeo, bloque_aviso, tabla_estado, working
 
 ANCHO = 780
 """El ancho del texto de los pasos, en medidas del diseño."""
+
+ESPERA_TECLA_MS = 250
+"""Milisegundos sin teclear antes de examinar lo escrito en una caja.
+
+Se lee en cada tecla, no al importar: los tests lo ponen a 0 y mueven el bucle
+de eventos después de escribir.
+"""
+MIRANDO = "Mirando la carpeta…"
+"""Lo que dice la línea de debajo de una caja mientras se examina lo escrito."""
 
 PREGUNTAR = "preguntar"
 """Una opción de la lista de «Unidades» además de los modos del agente.
@@ -84,6 +98,135 @@ def al_cambiar(entrada, funcion) -> None:
         return True
     entrada.configure(validate="key",
                       validatecommand=(entrada.register(validar), "%P"))
+
+
+class ExamenDiferido:
+    """Examina lo escrito en una o varias cajas fuera del hilo de Tk, al dejar de teclear.
+
+    Cada tecla (`tecla()`) deja en el acto lo que depende del examen como
+    pendiente (`al_teclear`) y rearma una única espera de `ESPERA_TECLA_MS`
+    colgada de `ancla`, nunca de la ventana: cambiar de paso destruye la caja
+    y la espera muere con ella sin examinar nada. Al vencer, o con `ya()`, se
+    lee la clave (lo escrito AHORA, no el texto que vio `validatecommand`) y
+    el examen va a `segundo_plano.lanzar()` como `partial(funcion, *clave)`; lo
+    recoge un `Sondeo` también colgado de `ancla`. Lo que llega solo cuenta si
+    la clave sigue siendo la misma: el examen de un texto viejo no cuenta.
+
+    Args:
+        ancla: La caja de la que cuelgan la espera y el sondeo.
+        clave: Devuelve lo que se examina, leído de las cajas en el hilo de Tk.
+        funcion: El examen. Recibe la clave desplegada, no toca Tk y es una
+            función de módulo (o un `partial` de datos).
+        al_teclear: Deja en el acto lo que depende del examen como pendiente.
+        al_llegar: Recibe el `Encargo` del examen de lo que sigue escrito.
+
+    Attributes:
+        examinada: La clave del último examen que contó, o `None` desde la
+            última tecla.
+        resultado: Lo que devolvió ese examen (`None` si falló).
+        sondeo: El `Sondeo` del examen en curso.
+    """
+
+    def __init__(self, ancla, clave, funcion, al_teclear, al_llegar) -> None:
+        """Engancha la espera a la caja; no examina nada todavía."""
+        self.ancla = ancla
+        self.clave = clave
+        self.funcion = funcion
+        self.al_teclear = al_teclear
+        self.al_llegar = al_llegar
+        self.examinada = None
+        self.resultado = None
+        self.sondeo = Sondeo(ancla)
+        self._id = None
+        ancla.bind("<Destroy>", self._al_destruir, add="+")
+
+    def tecla(self, *_) -> None:
+        """Deja el examen pendiente y rearma la espera; es lo que hace cada tecla."""
+        self._olvidar()
+        self.al_teclear()
+        self._quitar_espera()
+        self._id = self.ancla.after(ESPERA_TECLA_MS, self._vencer)
+
+    def ya(self) -> None:
+        """Examina lo escrito ahora mismo, sin esperar a que se deje de teclear."""
+        self._quitar_espera()
+        self._olvidar()
+        self._lanzar()
+
+    def vigente(self):
+        """Devuelve el último examen si es de lo que hay escrito ahora, o `None`."""
+        if self.examinada is not None and self.examinada == self.clave():
+            return self.resultado
+        return None
+
+    def _olvidar(self) -> None:
+        """Da por caducado el último examen."""
+        self.examinada = self.resultado = None
+
+    def _lanzar(self) -> None:
+        """Encarga el examen de lo escrito ahora."""
+        clave = self.clave()
+        encargo = segundo_plano.lanzar(partial(self.funcion, *clave))
+        self.sondeo.esperar(encargo, partial(self._llega, clave))
+
+    def _llega(self, clave, encargo) -> None:
+        """Aplica el examen si lo escrito sigue siendo lo examinado."""
+        if clave != self.clave():
+            return               # se escribió otra cosa: su examen está en camino
+        self.examinada = clave
+        self.resultado = encargo.resultado if encargo.error is None else None
+        self.al_llegar(encargo)
+
+    def _vencer(self) -> None:
+        """Se ha dejado de teclear: examina."""
+        self._id = None
+        self._lanzar()
+
+    def _quitar_espera(self) -> None:
+        """Cancela la espera de la última tecla, si la hay."""
+        if self._id is not None:
+            try:
+                self.ancla.after_cancel(self._id)
+            except Exception:                            # noqa: BLE001 — ya no está
+                pass
+            self._id = None
+
+    def _al_destruir(self, evento) -> None:
+        """Cancela la espera si lo que se destruye es la caja, no un hijo suyo."""
+        if str(evento.widget) == str(self.ancla):
+            self._quitar_espera()
+
+
+def examen_contenedor(fisica: str, carpeta: str, forma: str, con_punto: bool):
+    """Examina dónde irá el contenedor y, si se monta en una carpeta, esa carpeta.
+
+    No toca Tk: es lo que corre en el hilo del paso del contenedor. En Linux la
+    carpeta donde se abre es la raíz, así que también tiene que poder serlo.
+
+    Args:
+        fisica: Dónde va el `.hc`.
+        carpeta: Dónde se monta (Linux) o la carpeta de la raíz (Windows).
+        forma: La forma de la raíz (`raiz_equipo.PROPIA`, …).
+        con_punto: Si se monta en `carpeta` (Linux).
+
+    Returns:
+        El `raiz_equipo.Examen` que manda: el de la carpeta si no vale, si no
+        el del contenedor.
+    """
+    from install import raiz_equipo
+    examen = raiz_equipo.examinar_contenedor(fisica, carpeta, forma)
+    if con_punto:
+        raiz_examen = raiz_equipo.examinar(carpeta, forma)
+        if not raiz_examen.vale:
+            examen = raiz_examen
+    return examen
+
+
+def _fallido(encargo):
+    """Devuelve el examen que se enseña cuando el examen mismo ha fallado."""
+    from install import raiz_equipo
+    return raiz_equipo.Examen(raiz_equipo.NO_VALE,
+                              f"No se ha podido examinar la carpeta: {encargo.error}")
 
 
 def con_raiz(wiz) -> bool:
@@ -265,7 +408,10 @@ def ok_cifrado(wiz) -> bool:
 def paso_carpeta(cuerpo, wiz) -> None:
     """Pinta el paso de la carpeta exacta, según lo elegido en «Cifrado».
 
-    Sin cifrar es la raíz; cifrada, el contenedor (`_carpeta_cifrada`).
+    Sin cifrar es la raíz; cifrada, el contenedor (`_carpeta_cifrada`). La
+    carpeta escrita se examina fuera del hilo de Tk (`ExamenDiferido`): al
+    pintar, en el acto; al teclear, al dejar de hacerlo. Mientras, la raíz no
+    está fijada y «Siguiente» está apagado.
     """
     if cifrada(wiz):
         _carpeta_cifrada(cuerpo, wiz)
@@ -289,39 +435,59 @@ def paso_carpeta(cuerpo, wiz) -> None:
     ruta = tk.StringVar(value=wiz.equipo_ruta)
     entrada = ttk.Entry(fila, textvariable=ruta, style="Mono.TEntry")
     entrada.grid(row=0, column=1, sticky="ew", padx=theme.E2)
-    examen = ttk.Label(cuerpo, justify="left", wraplength=theme.medida(ANCHO))
+    examen = ttk.Label(cuerpo, justify="left", wraplength=theme.medida(ANCHO),
+                       text=MIRANDO, foreground=theme.TINTA3)
     examen.grid(row=2, column=0, sticky="w", pady=(theme.E2, 0))
     _texto(cuerpo, "Se elige ahora y no se cambia después: mover la raíz deja cada "
                    "pareja sin su carpeta, y cambiarla es volver a instalar.", 3,
            style="Pista.TLabel")
 
-    def revisar(texto: str | None = None) -> None:
-        """Examina la carpeta escrita y dice si vale como raíz."""
-        wiz.equipo_ruta = ruta.get() if texto is None else texto
-        ex = re_.examinar(wiz.equipo_ruta, wiz.equipo_forma)
+    def pendiente() -> None:
+        """Deja la raíz sin fijar mientras se examina lo escrito."""
+        wiz.equipo_examen = None
+        wiz.state.device_root = None
+        examen.configure(text=MIRANDO, foreground=theme.TINTA3)
+        wiz.revisar()
+
+    def llega(encargo) -> None:
+        """Dice si la carpeta examinada vale como raíz, y la fija si vale."""
+        texto = diferido.examinada[0]
+        ex = encargo.resultado if encargo.error is None else _fallido(encargo)
+        wiz.equipo_ruta = texto
         wiz.equipo_examen = ex
-        wiz.state.device_root = (Path(wiz.equipo_ruta.strip()).expanduser()
-                                 if ex.vale else None)
+        wiz.state.device_root = Path(texto.strip()).expanduser() if ex.vale else None
         color = (theme.PELIGRO if not ex.vale else
                  theme.AVISO if ex.aviso else theme.TINTA3)
         examen.configure(text=ex.texto, foreground=color)
         wiz.revisar()
 
+    diferido = ExamenDiferido(entrada, lambda: (ruta.get(), wiz.equipo_forma),
+                              re_.examinar, pendiente, llega)
+
+    def tecla(texto: str) -> None:
+        """Apunta la carpeta tecleada y deja su examen para cuando se pare."""
+        wiz.equipo_ruta = texto
+        diferido.tecla()
+
     def examinar_carpeta() -> None:
-        """Deja elegir la carpeta con el diálogo del sistema."""
+        """Deja elegir la carpeta con el diálogo del sistema y la examina ya."""
         elegida = filedialog.askdirectory(parent=wiz.root, mustexist=False,
                                           initialdir=str(Path.home()))
         if elegida:
-            ruta.set(elegida)               # `set` no valida: se revisa a mano
-            revisar(elegida)
+            ruta.set(elegida)               # `set` no valida: se examina a mano
+            wiz.equipo_ruta = elegida
+            pendiente()
+            diferido.ya()
 
     boton = ttk.Button(fila, text="Examinar…", command=examinar_carpeta)
     boton.grid(row=0, column=2, sticky="e")
     if personal:
         entrada.configure(state="readonly")     # la personal es la personal
         boton.configure(state="disabled")
-    al_cambiar(entrada, revisar)
-    revisar()
+    al_cambiar(entrada, tecla)
+    entrada.diferido = diferido              # colgado como `visor`: los tests lo miran
+    wiz.equipo_examen = wiz.state.device_root = None
+    diferido.ya()
 
 
 def ok_carpeta(wiz) -> bool:
@@ -355,6 +521,12 @@ def _carpeta_cifrada(cuerpo, wiz) -> None:
     raíz. La contraseña se pide aquí para crear y montar, una vez; a partir de
     ahí abrir y cerrar es del agente, con la ventana de VeraCrypt, y nada la
     guarda.
+
+    Las dos cajas son UN examen (`examen_contenedor`), hecho fuera del hilo de
+    Tk con todo lo escrito: dónde va el contenedor, dónde se abre y la forma.
+    Cualquiera de las dos lo rearma y apaga el botón en el acto, y solo crea
+    un examen de lo que sigue escrito: `abrir_o_crear` no vuelve a mirar si
+    la carpeta donde se monta está vacía, y lo que hubiera quedaría tapado.
     """
     import shutil
     import tkinter as tk
@@ -383,7 +555,8 @@ def _carpeta_cifrada(cuerpo, wiz) -> None:
     fisica = tk.StringVar(value=wiz.equipo_fisica)
     caja = ttk.Entry(formulario, textvariable=fisica, style="Mono.TEntry")
     caja.grid(row=0, column=1, columnspan=2, sticky="ew", padx=theme.E2)
-    examen = ttk.Label(formulario, justify="left", wraplength=theme.medida(ANCHO - 60))
+    examen = ttk.Label(formulario, justify="left", wraplength=theme.medida(ANCHO - 60),
+                       text=MIRANDO, style="Pista.TLabel")
     examen.grid(row=1, column=0, columnspan=3, sticky="w", pady=(theme.E1, theme.E2))
 
     fila = 2
@@ -462,23 +635,27 @@ def _carpeta_cifrada(cuerpo, wiz) -> None:
 
     botones = ttk.Frame(cuerpo)
     botones.grid(row=3, column=0, sticky="w", pady=(theme.E3, 0))
-    boton = ttk.Button(botones, style="Primary.TButton")
+    boton = ttk.Button(botones, style="Primary.TButton", text="Crear y montar",
+                       state="disabled")
     boton.grid(row=0, column=0)
     hecho = ttk.Frame(botones)
     hecho.grid(row=0, column=1, padx=(theme.E3, 0))
-    estado = {"examen": None}
 
-    def revisar(texto: str | None = None) -> None:
-        """Examina dónde irá el contenedor y dónde se abrirá."""
-        wiz.equipo_fisica = fisica.get() if texto is None else texto
-        ex = re_.examinar_contenedor(wiz.equipo_fisica, wiz.equipo_ruta,
-                                     wiz.equipo_forma)
-        if punto is not None:
-            # La carpeta donde se abre también tiene que poder ser una raíz.
-            raiz_ex = re_.examinar(wiz.equipo_ruta, wiz.equipo_forma)
-            if not raiz_ex.vale:
-                ex = raiz_ex
-        estado["examen"] = ex
+    def clave() -> tuple[str, str, str]:
+        """Lo que se examina: dónde va el contenedor, dónde se abre y la forma."""
+        return (caja.get(), punto.get() if punto is not None else wiz.equipo_ruta,
+                wiz.equipo_forma)
+
+    def pendiente() -> None:
+        """Apaga el botón mientras se examina lo escrito."""
+        examen.configure(text=MIRANDO, style="Pista.TLabel")
+        boton.configure(state="disabled")
+        wiz.revisar()
+
+    def llega(encargo) -> None:
+        """Dice si el contenedor puede ir donde se ha escrito, y enciende el botón si vale."""
+        ex = encargo.resultado if encargo.error is None else _fallido(encargo)
+        wiz.equipo_fisica, wiz.equipo_ruta, _ = diferido.examinada
         examen.configure(text=ex.texto, style="Peligro.TLabel" if not ex.vale
                          else "Pista.TLabel")
         existe = ex.estado == re_.YA_EQUIPO
@@ -488,19 +665,33 @@ def _carpeta_cifrada(cuerpo, wiz) -> None:
                         state="normal" if ex.vale else "disabled")
         wiz.revisar()
 
-    def revisar_punto(texto: str) -> None:
-        """Mueve el contenedor con la carpeta mientras sea el de salida."""
-        # El contenedor sigue a la carpeta mientras sea el de salida.
+    diferido = ExamenDiferido(caja, clave,
+                              partial(examen_contenedor, con_punto=punto is not None),
+                              pendiente, llega)
+
+    def tecla_caja(texto: str) -> None:
+        """Apunta dónde va el contenedor y deja su examen para cuando se pare."""
+        wiz.equipo_fisica = texto
+        diferido.tecla()
+
+    def tecla_punto(texto: str) -> None:
+        """Mueve el contenedor con la carpeta mientras sea el de salida, y rearma el examen."""
         if fisica.get() == str(re_.fisica_por_defecto(wiz.equipo_ruta)):
-            fisica.set(str(re_.fisica_por_defecto(texto)))
+            fisica.set(str(re_.fisica_por_defecto(texto)))   # `set` no valida
+        wiz.equipo_fisica = fisica.get()
         wiz.equipo_ruta = texto
-        revisar(fisica.get())
+        diferido.tecla()
 
     def crear() -> None:
-        """Comprueba la contraseña y crea o abre el contenedor, dejándolo montado."""
-        ex = estado["examen"]
+        """Comprueba la contraseña y crea o abre el contenedor, dejándolo montado.
+
+        Solo con el examen de lo que hay escrito ahora, y si dice que vale: es
+        el único que mira que la carpeta donde se monta esté vacía.
+        """
+        ex = diferido.vigente()
         if ex is None or not ex.vale:
             return
+        examinada = diferido.examinada
         existe = ex.estado == re_.YA_EQUIPO
         password = pw1.get()
         error, aviso = (crypto.revisar_contrasena(password) if not existe
@@ -515,12 +706,14 @@ def _carpeta_cifrada(cuerpo, wiz) -> None:
         if aviso and not messagebox.askyesno(TITLE, aviso, default="no",
                                              icon="warning", parent=wiz.root):
             return
+        if diferido.vigente() is not ex:
+            return                   # las cajas cambiaron mientras se preguntaba
+        wiz.equipo_fisica, wiz.equipo_ruta, _ = examinada
         wiz.equipo_letra = letra.get()
         wiz.equipo_tamano = tam.get()
         ok, res = working(wiz.root, "el contenedor",
-                          lambda: re_.abrir_o_crear(vc, wiz.equipo_fisica, wiz.equipo_ruta,
-                                                    wiz.equipo_letra, password,
-                                                    wiz.equipo_tamano),
+                          partial(re_.abrir_o_crear, vc, wiz.equipo_fisica, wiz.equipo_ruta,
+                                  wiz.equipo_letra, password, wiz.equipo_tamano),
                           ("Abriendo" if existe else "Creando y montando")
                           + " el contenedor. VeraCrypt puede pedir permisos de "
                             "administrador: acepta el aviso.")
@@ -540,10 +733,11 @@ def _carpeta_cifrada(cuerpo, wiz) -> None:
     if wiz.equipo_montada is not None:
         theme.chip(hecho, f"abierto en {wiz.equipo_montada}", "Ok.").grid(
             row=0, column=0)
-    al_cambiar(caja, revisar)
+    al_cambiar(caja, tecla_caja)
     if punto is not None:
-        al_cambiar(punto, revisar_punto)
-    revisar()
+        al_cambiar(punto, tecla_punto)
+    caja.diferido = diferido                 # colgado como `visor`: los tests lo miran
+    diferido.ya()
 
 
 def paso_instalar(cuerpo, wiz) -> None:
@@ -663,6 +857,10 @@ def paso_parejas(cuerpo, wiz) -> None:
     cada pareja, que se puede cambiar solo en este equipo. Con la carpeta
     personal, una ruta pensada para una unidad (`sync-data/…`) caería suelta en
     `~`; y una carpeta que ya sincroniza otro programa se dice en ámbar.
+
+    Cada ruta se examina fuera del hilo de Tk (`ExamenDiferido`), y teclear
+    solo cambia la línea de debajo: «Siguiente» depende de haber guardado, y
+    guardar vuelve a revisar las elegidas en el acto, antes de escribir.
     """
     import tkinter as tk
     from tkinter import ttk
@@ -682,18 +880,42 @@ def paso_parejas(cuerpo, wiz) -> None:
     cajas: dict[str, tk.StringVar] = {}
     notas: dict[str, object] = {}
 
-    def revisar_fila(nombre: str, local: str | None = None) -> None:
-        """Examina la ruta de una pareja y dice dónde cae y qué avisos tiene."""
-        local = cajas[nombre].get() if local is None else local
-        wiz.equipo_locales[nombre] = local
-        info = raiz_equipo.revisar_local(donde, local)
+    def examinada(nombre: str, caja) -> ExamenDiferido:
+        """Devuelve el examen diferido de la ruta de una pareja."""
         ruta_lbl, nota_lbl = notas[nombre]
-        ruta_lbl.configure(text=str(info.ruta) if info.ruta else "")
-        if info.error:
-            nota_lbl.configure(text=info.error, style="Peligro.TLabel")
-        else:
-            nota_lbl.configure(text="; ".join(info.avisos), style="Aviso.TLabel")
-        wiz.revisar()
+
+        def pendiente() -> None:
+            """Dice que se mira la ruta escrita."""
+            ruta_lbl.configure(text="")
+            nota_lbl.configure(text=MIRANDO, style="Pista.TLabel")
+            wiz.revisar()
+
+        def llega(encargo) -> None:
+            """Dice dónde cae la ruta examinada y qué avisos tiene."""
+            info = encargo.resultado
+            ruta_lbl.configure(text=str(info.ruta) if info is not None and info.ruta
+                               else "")
+            if info is None:
+                nota_lbl.configure(text=f"No se ha podido examinar: {encargo.error}",
+                                   style="Peligro.TLabel")
+            elif info.error:
+                nota_lbl.configure(text=info.error, style="Peligro.TLabel")
+            else:
+                nota_lbl.configure(text="; ".join(info.avisos), style="Aviso.TLabel")
+            wiz.revisar()
+
+        diferido = ExamenDiferido(caja, lambda: (caja.get(),),
+                                  partial(raiz_equipo.revisar_local, donde),
+                                  pendiente, llega)
+
+        def tecla(texto: str) -> None:
+            """Apunta la ruta tecleada y deja su examen para cuando se pare."""
+            wiz.equipo_locales[nombre] = texto
+            diferido.tecla()
+
+        al_cambiar(caja, tecla)
+        caja.diferido = diferido             # colgado como `visor`: los tests lo miran
+        return diferido
 
     fila = 0
     for pareja in wiz.catalog.pairs:
@@ -708,7 +930,6 @@ def paso_parejas(cuerpo, wiz) -> None:
         caja = ttk.Entry(tabla, textvariable=cajas[nombre], style="Mono.TEntry",
                          width=30)
         caja.grid(row=fila, column=1, sticky="ew")
-        al_cambiar(caja, lambda texto, n=nombre: revisar_fila(n, texto))
         ttk.Label(tabla, style="Pista.TLabel",
                   text=f"↔  {pareja.get('remote_path', '?')}").grid(
             row=fila, column=2, sticky="w", padx=(theme.E3, 0))
@@ -716,7 +937,7 @@ def paso_parejas(cuerpo, wiz) -> None:
         debajo.grid(row=fila + 1, column=1, columnspan=2, sticky="w", pady=(0, theme.E2))
         notas[nombre] = (
             ttk.Label(debajo, style="MonoPista.TLabel"),
-            ttk.Label(debajo, style="Pista.TLabel", justify="left",
+            ttk.Label(debajo, style="Pista.TLabel", justify="left", text=MIRANDO,
                       wraplength=theme.medida(560)))
         notas[nombre][0].grid(row=0, column=0, sticky="w")
         notas[nombre][1].grid(row=1, column=0, sticky="w")
@@ -725,7 +946,8 @@ def paso_parejas(cuerpo, wiz) -> None:
             ttk.Label(tabla, style="Peligro.TLabel",
                       text=f"espejo: borra en {destino}").grid(
                 row=fila + 1, column=0, sticky="nw")
-        revisar_fila(nombre)
+        wiz.equipo_locales[nombre] = cajas[nombre].get()
+        examinada(nombre, caja).ya()
         fila += 2
 
     resultado = Resultado(cuerpo, ancho=ANCHO).grid(row=3, column=0, sticky="ew",
@@ -754,7 +976,13 @@ def paso_parejas(cuerpo, wiz) -> None:
             return
         wiz.state.selected = seleccion
         wiz.state.config_written = True
-        nota = deploy.publish_fleet_note(wiz.rclone, donde, wiz.perfil.endpoint_catalog)
+        # Un `rclone` de hasta 45 s contra el remoto: con su barra, y de mejor
+        # esfuerzo (lo que no llegue se apunta al sincronizar).
+        ok, nota = working(wiz.root, "flota",
+                           partial(deploy.publish_fleet_note, wiz.rclone, donde,
+                                   wiz.perfil.endpoint_catalog),
+                           "Apuntando este equipo en la flota del remoto.")
+        nota = nota if ok else None
         detalle = f"Escrito {destino} con {len(seleccion)} pareja(s)\n"
         if creadas:
             detalle += "Carpetas creadas: " + ", ".join(str(p) for p in creadas) + ". "
@@ -1089,26 +1317,53 @@ def escritorio() -> tuple[bool | None, bool | None]:
 
 
 def paso_final(cuerpo, wiz) -> None:
-    """Pinta el paso de verificación: lo que ha quedado puesto en este equipo."""
+    """Pinta el paso de verificación: lo que ha quedado puesto en este equipo.
+
+    Se pinta primero y comprueba después: `comprobaciones()` pregunta al
+    sistema (`schtasks`, el bus de sesión) y lee la raíz, así que va en otro
+    hilo, con un indicador mientras y «Volver a comprobar» apagado. La tabla
+    aparece cuando llega.
+    """
     from tkinter import ttk
 
     _texto(cuerpo, "Lo que ha quedado puesto en este equipo.", 0)
     tabla = ttk.Frame(cuerpo)
     tabla.grid(row=1, column=0, sticky="ew")
     tabla.columnconfigure(0, weight=1)
+    # El indicador va debajo de donde irá la tabla: mientras comprueba no hay
+    # tabla, y cuando la hay la línea ya no está.
+    indicador = Indicador(tabla, ancho=ANCHO)
+    indicador.marco.grid(row=1, column=0, sticky="w")
+    sondeo = Sondeo(tabla)
+    hecha: list = []
+
+    def llega(encargo) -> None:
+        """Pinta la tabla de lo comprobado, o dice por qué no se ha podido."""
+        otra_vez.configure(state="normal")
+        if encargo.error is not None:
+            indicador.poner(f"No se ha podido comprobar: {encargo.error}", False,
+                            "Aviso.")
+        else:
+            indicador.poner("", False)
+            hecha.append(tabla_estado(tabla, list(encargo.resultado),
+                                      ("está", "falta", "sin mirar", "aviso"),
+                                      ancho_nombre=200))
+            hecha[-1].grid(row=0, column=0, sticky="ew")
+        wiz.revisar()
 
     def revisar() -> None:
-        """Repinta las comprobaciones."""
-        for hijo in tabla.winfo_children():
-            hijo.destroy()
+        """Vuelve a comprobar, en otro hilo."""
+        while hecha:
+            hecha.pop().destroy()
+        otra_vez.configure(state="disabled")
+        indicador.poner("Comprobando lo instalado…", True)
         perfil = wiz.perfil_final
         clave = perfil.key_name if con_raiz(wiz) and perfil.needs_key else None
-        filas = comprobaciones(raiz(wiz), wiz.state.selected, clave,
-                               wiz.equipo_contenedor if cifrada(wiz) else None,
-                               wiz.equipo_ruta if cifrada(wiz) else None)
-        tabla_estado(tabla, list(filas), ("está", "falta", "sin mirar", "aviso"),
-                     ancho_nombre=200).grid(row=0, column=0, sticky="ew")
-        wiz.revisar()
+        encargo = segundo_plano.lanzar(partial(
+            comprobaciones, raiz(wiz), list(wiz.state.selected), clave,
+            wiz.equipo_contenedor if cifrada(wiz) else None,
+            wiz.equipo_ruta if cifrada(wiz) else None))
+        sondeo.esperar(encargo, llega)
 
     otra_vez = ttk.Button(cuerpo, text="Volver a comprobar", command=revisar)
     theme.boton_icono(otra_vez, "reload", theme.TINTA2)

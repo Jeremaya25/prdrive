@@ -16,17 +16,23 @@ Reglas de esta pantalla:
 - Nada se da por bueno sin comprobarlo. Un contenedor se da por montado cuando
   se puede leer y de BitLocker se dice «no lo he podido comprobar» tal cual
   cuando no hay permisos, en vez de suponer que todo fue bien.
+- La sonda que mide lo que escribe la unidad (8 MiB con `fsync`) corre en otro
+  hilo, una sola vez por volumen, y mientras escribe no se crea el contenedor:
+  iría al lado de lo que está escribiendo.
 """
 
 from __future__ import annotations
 
+import time
+from functools import partial
 from pathlib import Path
+from typing import NamedTuple
 
 from common import pins
 from install import CONTAINER_NAME, IS_WIN, InstallError, crypto, veracrypt_bin
 
-from . import theme
-from .tk import TITLE, bloque_aviso, working
+from . import segundo_plano, theme
+from .tk import TITLE, Sondeo, bloque_aviso, working
 
 AVISO_AUTOARRANQUE = (
     "Con contenedor, el programa vive dentro: hasta abrirlo, un equipo solo ve "
@@ -36,6 +42,83 @@ AVISO_AUTOARRANQUE = (
     "contraseña de VeraCrypt."
 )
 """Lo que se dice sobre dónde vive el programa cuando hay contenedor."""
+
+MIDIENDO = "Midiendo lo que escribe la unidad…"
+"""Lo que dice la línea de la espera mientras corre la sonda de escritura."""
+
+TOPE_SONDA_S = 60.0  # segundos
+"""Cuánto se espera a la sonda antes de dejar crear el contenedor sin su medida.
+
+Un hilo no se puede cortar: pasado esto se dice que no se ha podido medir y
+«Crear y montar» vuelve, y si la sonda contesta después se usa lo que diga. Se
+lee al usarlo: los tests lo acortan.
+"""
+
+
+class Sonda(NamedTuple):
+    """La medida de lo que escribe un volumen, lanzada una sola vez.
+
+    Args:
+        unidad: La raíz del volumen físico donde se escribe.
+        encargo: El `segundo_plano.Encargo` que corre `crypto.medir_escritura`.
+        lanzada: `time.monotonic()` al lanzarla: el tope cuenta desde ahí.
+    """
+
+    unidad: Path
+    encargo: segundo_plano.Encargo
+    lanzada: float
+
+
+def sonda_de(estado) -> Sonda:
+    """Devuelve la sonda del volumen de `estado.device`, lanzándola si no la hay.
+
+    Escribe 8 MiB en el dispositivo, así que se lanza una vez por volumen y
+    asistente: la guarda `estado.sondas`, que sobrevive a repintar el panel, y
+    una que ya acabó (aunque nadie la haya mirado todavía) no se repite. Va por
+    `segundo_plano.lanzar()` con la función de módulo leída al lanzarla.
+
+    Args:
+        estado: El `InstallState` del asistente.
+    """
+    unidad = Path(estado.device)
+    sonda = estado.sondas.get(unidad)
+    if sonda is None:
+        encargo = segundo_plano.lanzar(partial(crypto.medir_escritura, unidad))
+        sonda = estado.sondas[unidad] = Sonda(unidad, encargo, time.monotonic())
+    return sonda
+
+
+def midiendo(estado) -> bool:
+    """Indica si la sonda del volumen de `estado.device` escribe todavía, sin pasar su tope."""
+    if estado.device is None:
+        return False
+    sonda = estado.sondas.get(Path(estado.device))
+    return (sonda is not None and not sonda.encargo.hecho
+            and time.monotonic() - sonda.lanzada < TOPE_SONDA_S)
+
+
+def texto_espera(estado, bytes_: int) -> str:
+    """Devuelve lo que tardará crear un contenedor fijo de `bytes_`, según la sonda.
+
+    Lanza la sonda si este volumen no la tiene. Mientras escribe, dice que
+    mide; pasado su tope sin respuesta, que no se ha podido; con su resultado
+    lo guarda en `estado.velocidad_escritura` (0.0 si falló) y divide.
+
+    Args:
+        estado: El `InstallState` del asistente.
+        bytes_: Lo que ocupará el contenedor.
+    """
+    encargo = sonda_de(estado).encargo
+    if not encargo.hecho:
+        if midiendo(estado):
+            return MIDIENDO
+        velocidad = None
+    else:
+        # 0.0 es «medido y no se ha podido»: lo que dijo la sonda, no otra sonda.
+        velocidad = estado.velocidad_escritura = (
+            (encargo.resultado if encargo.error is None else None) or 0.0)
+    segundos = bytes_ / velocidad if velocidad else None
+    return f"Hay que escribir el contenedor entero: {crypto.describir_espera(segundos)}."
 
 
 def dibujar(cuerpo, wiz) -> None:
@@ -222,7 +305,7 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
     # cada repintado a propósito: es una consulta al sistema de ficheros que ni
     # escribe ni tarda, y cachearla daría la respuesta de la unidad anterior si
     # se cambia de destino. Lo que sí se recuerda en el estado es la MEDIDA de
-    # velocidad, que sí escribe en la unidad (`refrescar_espera`). En Linux no
+    # velocidad, que sí escribe en la unidad (`sonda_de`). En Linux no
     # hay casilla que valga: `--quick` va siempre y que el contenedor salga
     # disperso lo decide la versión de VeraCrypt y el disco
     # (`crypto.creacion_dispersa()`, `None` si no se sabe). Se enseña marcada o
@@ -302,39 +385,79 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
         "de seguir.")).grid(row=fila, column=0, columnspan=3, sticky="w", pady=(theme.E2, 0))
     fila += 1
 
+    # La sonda corre en otro hilo y la recoge este sondeo, que cuelga del
+    # formulario y no del panel: cambiar de forma de cifrar destruye lo de
+    # dentro del panel, y con ello esta espera, pero no el panel.
+    sondeo = Sondeo(formulario)
+    tope_sonda = {"id": None}
+
+    def poner_boton() -> None:
+        """Apaga «Crear y montar» mientras la sonda escribe al lado del contenedor."""
+        montar.configure(state="disabled" if midiendo(estado) else "normal")
+
+    def soltar_tope() -> None:
+        """Quita la espera del tope: la sonda ya ha contestado."""
+        if tope_sonda["id"] is not None:
+            try:
+                formulario.after_cancel(tope_sonda["id"])
+            except Exception:                        # noqa: BLE001 — ya no está
+                pass
+            tope_sonda["id"] = None
+
+    def vigilar_sonda() -> None:
+        """Espera a la sonda de este volumen si sigue escribiendo, y a su tope."""
+        sonda = estado.sondas.get(Path(estado.device))
+        if sonda is None or sonda.encargo.hecho:
+            soltar_tope()
+            return
+        if not sondeo.esperando:
+            sondeo.esperar(sonda.encargo, actualizar)
+        if tope_sonda["id"] is None and midiendo(estado):
+            resto = TOPE_SONDA_S - (time.monotonic() - sonda.lanzada)
+            tope_sonda["id"] = formulario.after(max(1, int(resto * 1000) + 1),
+                                                vencer_tope)
+
+    def vencer_tope() -> None:
+        """Pasado el tope de la sonda, deja crear sin su medida.
+
+        Si el reloj de Tk se adelanta al de `midiendo()`, `vigilar_sonda` lo
+        vuelve a armar por lo que falte; pasado el tope ya no se arma.
+        """
+        tope_sonda["id"] = None
+        actualizar()
+
+    def actualizar(*_) -> None:
+        """Rehace la espera y el botón cuando la sonda contesta o pasa su tope."""
+        if existe:
+            vigilar_sonda()
+            poner_boton()
+        else:
+            refrescar_espera()
+
     def refrescar_espera(*_) -> None:
         """Dice cuánto va a tardar la creación, medido y no adivinado.
 
-        La medida escribe en la unidad, así que se hace UNA vez y se guarda en
-        el estado; lo que se recalcula al cambiar el tamaño es la división.
+        La medida escribe en la unidad, así que se hace UNA vez por volumen, en
+        otro hilo, y se guarda en el estado (`texto_espera`); lo que se
+        recalcula al cambiar el tamaño es la división.
         """
         estado.dinamico = bool(dinamico.get())
         if estado.dinamico:
             espera.configure(text="Creación prácticamente inmediata.")
-            return
-        try:
-            bytes_ = crypto.size_to_bytes(tam.get(), libre, tope,
-                                          viajero=bool(traveler.get()))
-        except InstallError as e:
-            espera.configure(text=str(e))
-            return
-        if estado.velocidad_escritura is None:
-            # 0.0 es «medido y no se ha podido»: sin eso, cada tecla del tamaño
-            # volvería a escribir la sonda en la unidad.
-            estado.velocidad_escritura = crypto.medir_escritura(estado.device) or 0.0
-        segundos = (bytes_ / estado.velocidad_escritura
-                    if estado.velocidad_escritura else None)
-        espera.configure(text=(
-            f"Hay que escribir el contenedor entero: {crypto.describir_espera(segundos)}."))
+        else:
+            try:
+                bytes_ = crypto.size_to_bytes(tam.get(), libre, tope,
+                                              viajero=bool(traveler.get()))
+            except InstallError as e:
+                espera.configure(text=str(e))
+            else:
+                espera.configure(text=texto_espera(estado, bytes_))
+        vigilar_sonda()
+        poner_boton()
 
     def al_cambiar_dinamico(*_) -> None:
         """Propone el tamaño que toca al marcar o desmarcar el contenedor dinámico."""
         tam.set(crypto.suggested_size(libre, bool(dinamico.get()), tope))
-        refrescar_espera()
-
-    if not existe:
-        dinamico.trace_add("write", al_cambiar_dinamico)
-        tam.trace_add("write", refrescar_espera)
         refrescar_espera()
 
     if IS_WIN:
@@ -349,6 +472,8 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
 
     def crear_y_montar() -> None:
         """Comprueba la contraseña, crea el contenedor si hace falta y lo monta."""
+        if midiendo(estado):
+            return                  # la sonda escribe donde iría el contenedor
         password = pw1.get()
         # Al crear, lo que diría VeraCrypt sin `/silent`; al montar uno que ya
         # existe, basta con que haya algo: la contraseña ya es la que es.
@@ -417,6 +542,11 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
     if estado.device_root and estado.mounted_by_us:
         theme.chip(botones, f"montado en {estado.device_root}", "Ok.").grid(
             row=0, column=1, padx=(theme.E3, 0))
+
+    if not existe:
+        dinamico.trace_add("write", al_cambiar_dinamico)
+        tam.trace_add("write", refrescar_espera)
+    actualizar()
 
 
 def _llevar_veracrypt(wiz) -> None:

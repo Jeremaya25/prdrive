@@ -196,7 +196,13 @@ class InstallState:
             de la casilla depende de si la unidad admite dispersos, que no se
             sabe hasta pintar el paso.
         traveler: Si se deja VeraCrypt en el volumen.
-        velocidad_escritura: Bytes por segundo medidos (ver `crypto`).
+        velocidad_escritura: Bytes por segundo medidos en `device` (ver
+            `crypto`); 0.0 es «medido y no se ha podido».
+        sondas: La medida de escritura de cada volumen físico, lanzada una
+            sola vez por volumen (`ui.tk_crypto.Sonda`: dónde, el `Encargo`
+            que la corre y cuándo empezó). Escribe 8 MiB en el dispositivo:
+            ni repintar el panel, ni un hilo que acaba sin que nadie lo mire,
+            ni volver a ese volumen la lanzan otra vez.
         selected: Parejas elegidas.
         deployed: Si el código ya está copiado.
         config_written: Si el config del dispositivo ya está escrito.
@@ -213,6 +219,7 @@ class InstallState:
     dinamico: bool | None = None
     traveler: bool = True
     velocidad_escritura: float | None = None
+    sondas: dict[Path, object] = field(default_factory=dict)
 
     selected: list[str] = field(default_factory=list)
     deployed: bool = False

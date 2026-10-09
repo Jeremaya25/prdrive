@@ -358,10 +358,13 @@ c("y ya se puede seguir", str(vacio.boton_siguiente.cget("state")), "normal")
 # más corta de lo que VeraCrypt recomienda. Ni VeraCrypt ni una unidad de
 # verdad: las sondas de `crypto` se sustituyen.
 from install import crypto, deploy  # noqa: E402
-from ui import tk_crypto  # noqa: E402
+from ui import segundo_plano, tk_crypto  # noqa: E402
 
-# El panel importa su propio `working`: el mismo cambio que arriba.
+# El panel importa su propio `working`: el mismo cambio que arriba. Y la sonda
+# de escritura va en otro hilo: aquí, en el sitio, para que su medida ya esté
+# cuando se mira el panel (sus esperas las prueba test_tk_equipo_lecturas).
 tk_crypto.working = tk_install.working
+segundo_plano.lanzar = segundo_plano.en_el_acto
 sondas_crypto = {n: getattr(crypto, n) for n in (
     "find_veracrypt", "soporta_dispersos", "sistema_de_ficheros",
     "medir_escritura", "create_container", "mount_container")}
@@ -983,12 +986,18 @@ c("y se enciende al haber instalado de verdad",
 import penwatch  # noqa: E402
 from common import equipo  # noqa: E402
 from install import agente as ia  # noqa: E402
-from ui import tk_equipo, watch  # noqa: E402
+from ui import segundo_plano, tk_equipo, watch  # noqa: E402
 from types import SimpleNamespace  # noqa: E402
 
 equipo.DIR = tmpdir("prdrive-asis-equipo-")
 penwatch.CONFIG_FILE = tmpdir("prdrive-asis-pw-") / "watch.json"
 tk_equipo.working = working_directo
+# Las carpetas se examinan al dejar de teclear y en otro hilo, y «Verificación»
+# comprueba en otro hilo: aquí todo en el sitio y sin esperar a la última tecla
+# (`escribir()` mueve el bucle de eventos). Las esperas de verdad las prueba
+# test_tk_equipo_lecturas.
+segundo_plano.lanzar = segundo_plano.en_el_acto
+tk_equipo.ESPERA_TECLA_MS = 0
 preparados, activados = [], []
 PREP = ia.Preparado(equipo.DIR / "agente" / "0.4.0", equipo.DIR / "runtime" / "x" / "py",
                     "sello")
@@ -1023,9 +1032,14 @@ def radios(wiz) -> dict[str, str]:
 
 
 def escribir(entrada, texto: str) -> None:
-    """Como teclearlo: borrar e insertar pasan por la validación de la caja."""
+    """Como teclearlo: borrar e insertar pasan por la validación de la caja.
+
+    Después se mueve el bucle de eventos: con `ESPERA_TECLA_MS = 0`, eso dispara
+    el examen de lo escrito, que con `en_el_acto` ya ha llegado al volver.
+    """
     entrada.delete(0, "end")
     entrada.insert(0, texto)
+    entrada.update()
 
 
 casa = nuevo_asistente(None)
@@ -1277,7 +1291,13 @@ c("  con la de la raíz elegida no se guarda",
 por_valor = {w.get(): w for w in cajas}
 escribir(por_valor["."], "copia")
 escribir(por_valor["sync-data/docs"], "Documentos/docs")
+c("  la línea de debajo dice dónde cae la ruta escrita",
+  str(RAIZ_EQUIPO / "Documentos" / "docs")
+  in [w.cget("text") for w in widgets(propia.cuerpo, ttk.Label)], True)
+esperas.clear()
 boton(propia.cuerpo, "Guardar el config y crear las carpetas").invoke()
+c("  la nota de la flota se apunta con la barra de working() («flota»)",
+  [t for t, _ in esperas], ["flota"])
 import tomllib  # noqa: E402
 escrito = tomllib.loads((RAIZ_EQUIPO / ".prdrive" / "sync_config.toml").read_text(
     encoding="utf-8"))
