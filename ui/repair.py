@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from common import bisync, model, store
+from common import bisync, model, revision, store
 from common.model import Config, Pair
 from common.revision import Hallazgo, aviso_carpeta_programa
 
@@ -98,6 +98,40 @@ class RepairPlan:
         return list(self._hacer()) if self._hacer is not None else []
 
 
+def vigente(config: Config, hallazgo: Hallazgo) -> Hallazgo | None:
+    """Vuelve a mirar el dispositivo y devuelve esa avería tal como está ahora.
+
+    La pantalla puede haber pintado la lista desde una lectura anterior (la que
+    hizo la ventana principal al abrirse), y entre aquella lectura y el clic
+    puede haberse soltado un bloqueo, haberse apartado un baseline o haber
+    empezado una pasada. Antes de pensar un plan se mira otra vez, y el plan se
+    hace con lo que se encuentra ahora y no con lo que se vio. Es la misma
+    avería si coinciden la clave y la pareja.
+
+    Args:
+        config: La configuración del dispositivo.
+        hallazgo: La avería que la persona ha elegido en pantalla.
+
+    Returns:
+        La avería recién leída, o `None` si ya no está.
+
+    Raises:
+        Exception: Lo que lance `revision.revisar()`; quien llama decide qué
+            decir, pero no debe hacer un plan sin haber podido mirar.
+    """
+    for fresco in revision.revisar(config):
+        if (fresco.clave, fresco.pareja) == (hallazgo.clave, hallazgo.pareja):
+            return fresco
+    return None
+
+
+def _ocupado(quien: str) -> ReparacionImposible:
+    """Devuelve el error de «hay una pasada en marcha» para quien esté sincronizando."""
+    return ReparacionImposible(
+        f"Ahora mismo está sincronizando {quien}. Un bloqueo solo se borra "
+        "cuando no hay ninguna pasada en marcha: espera a que termine.")
+
+
 def _pareja(config: Config, nombre: str | None) -> Pair:
     """Devuelve la pareja de ese nombre.
 
@@ -132,7 +166,16 @@ def plan_apartar(config: Config, hallazgo: Hallazgo) -> RepairPlan:
             "pantalla para ver cómo está ahora.")
 
     def hacer() -> list[str]:
-        """Aparta el baseline y dice dónde ha quedado."""
+        """Aparta el baseline y dice dónde ha quedado.
+
+        Vuelve a mirar que el baseline siga ahí: entre el plan y el «sí» ha
+        podido apartarlo otra pantalla, y apartar lo que ya no está no es lo
+        que se confirmó.
+        """
+        if not bisync.pair_state(pair).has_baseline:
+            raise ReparacionImposible(
+                f"«{pair.name}» ya no tiene baseline que apartar. Vuelve a abrir la "
+                "pantalla para ver cómo está ahora.")
         destino = apartar(pair.name)
         if destino is None:
             raise ReparacionImposible(
@@ -164,9 +207,7 @@ def plan_locks(config: Config, hallazgo: Hallazgo) -> RepairPlan:
     pair = _pareja(config, hallazgo.pareja)
     ocupado = sincronizacion_en_curso()
     if ocupado:
-        raise ReparacionImposible(
-            f"Ahora mismo está sincronizando {ocupado}. Un bloqueo solo se borra "
-            "cuando no hay ninguna pasada en marcha: espera a que termine.")
+        raise _ocupado(ocupado)
 
     sueltos = [Path(r) for r in hallazgo.dato if Path(r).exists()]
     if not sueltos:
@@ -175,7 +216,14 @@ def plan_locks(config: Config, hallazgo: Hallazgo) -> RepairPlan:
             "soltado la pasada que los dejó.")
 
     def hacer() -> list[str]:
-        """Borra los bloqueos sueltos y dice cuáles."""
+        """Borra los bloqueos sueltos y dice cuáles.
+
+        Vuelve a mirar si alguien sincroniza: entre el plan y el «sí» ha podido
+        empezar una pasada, y un bloqueo solo se borra si no hay ninguna.
+        """
+        ocupado = sincronizacion_en_curso()
+        if ocupado:
+            raise _ocupado(ocupado)
         hechos = []
         for ruta in sueltos:
             try:

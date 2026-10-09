@@ -11,7 +11,7 @@ fallos, los conflictos y el aviso de resync), que apilados dejaban de ser
 jerarquía para ser ruido. Allí queda una línea que dice cuántas cosas hay y
 trae aquí.
 
-Hay dos cosas que no puede hacer, a propósito:
+Hay tres cosas que no puede hacer, a propósito:
 - **No repara sola.** Ni al abrirse ni al pulsar: todo plan enseña sus
   consecuencias y espera un sí. Apartar un baseline es la operación que puede
   acabar en un borrado masivo, y por eso se quitó el renombrado automático de
@@ -20,6 +20,11 @@ Hay dos cosas que no puede hacer, a propósito:
   bajo los pies de rclone es exactamente lo que no puede pasar, así que la
   ventana principal no deja abrir esto durante una pasada y `repair` vuelve a
   mirarlo antes de borrar un bloqueo.
+- **No actúa sobre lo que enseña sin volver a mirarlo.** La primera lista puede
+  salir de la lectura que hizo la ventana principal al abrirse
+  (`ui.instantanea.Compartida`), y entre aquella lectura y el clic puede haber
+  cambiado el dispositivo. Antes de cada plan se vuelve a leer la avería
+  (`repair.vigente()`): si ya no está se dice y no se toca nada.
 
 `lanzar` llega de la ventana principal, como en «Ajustes»: la salida de una
 pasada se enseña en la ventana de salida, que es hija de la principal y se
@@ -70,10 +75,11 @@ def open_dialog(parent, config: Config, lanzar, marcadas=None, compartida=None) 
         marcadas: Las parejas elegidas en la ventana principal; es lo que se
             simula si se pide una pasada de prueba. Sin ellas, todas.
         compartida: La lectura compartida de la ventana principal
-            (`ui.instantanea.Compartida`), o `None`. Todavía no se usa.
+            (`ui.instantanea.Compartida`), o `None`. De ella sale el primer
+            pintado de la lista (ver `construir()`).
     """
     return dialogo(parent, "Reparación",
-                   lambda p: construir(p, config, lanzar, marcadas),
+                   lambda p: construir(p, config, lanzar, marcadas, compartida),
                    defecto=False, ensenar=mostrar)
 
 
@@ -84,6 +90,13 @@ def construir(panel: Panel, config: Config, lanzar, marcadas=None, compartida=No
     una pasada cierra antes la ventana entera (`panel.cerrar`): la de salida es
     hija de la principal.
 
+    El primer pintado sale de la lectura compartida si hay una que vale para
+    esta config (`compartida.para(config)`) y no falló en `hallazgos`; si no,
+    se lee el dispositivo como siempre. Lo pintado así puede ser de antes del
+    clic, por eso ninguna acción actúa sobre una avería sin volver a mirarla
+    (`repair.vigente()`), y todo repintado posterior lee el dispositivo
+    (`revision.revisar()`), nunca la lectura compartida.
+
     Args:
         panel: Dónde se dibuja.
         config: La configuración del dispositivo.
@@ -91,7 +104,7 @@ def construir(panel: Panel, config: Config, lanzar, marcadas=None, compartida=No
         marcadas: Las parejas elegidas en la ventana principal, para la
             pasada de prueba.
         compartida: La lectura compartida de la ventana principal
-            (`ui.instantanea.Compartida`), o `None`. Todavía no se usa.
+            (`ui.instantanea.Compartida`), o `None`.
     """
     from tkinter import messagebox, ttk
 
@@ -111,8 +124,32 @@ def construir(panel: Panel, config: Config, lanzar, marcadas=None, compartida=No
 
     # Las acciones.
 
+    def fresco(hallazgo):
+        """Devuelve la avería tal como está ahora, o `None` si no se puede hacer nada.
+
+        Lo que la lista enseña puede venir de una lectura anterior al clic.
+        Si la avería ya no está, se dice y se repinta; si no se puede ni
+        mirar, se dice y no se hace nada: sin saber cómo está, no hay plan.
+        """
+        try:
+            ahora = repair.vigente(config, hallazgo)
+        except Exception as e:                                  # noqa: BLE001
+            messagebox.showerror(TITLE, f"No he podido volver a mirar el estado, así "
+                                        f"que no toco nada:\n\n{e}", parent=dlg)
+            return None
+        if ahora is None:
+            messagebox.showinfo(
+                TITLE, f"Esto ya no está: {hallazgo.titulo}\n\nSe acaba de volver a "
+                       "mirar el dispositivo y no hay nada que hacer con ello. La lista "
+                       "se ha puesto al día.", parent=dlg)
+            repintar()
+        return ahora
+
     def aplicar(hallazgo) -> None:
         """Hace un plan de disco: se piensa, se enseña y solo entonces se ejecuta."""
+        hallazgo = fresco(hallazgo)
+        if hallazgo is None:
+            return
         try:
             plan = repair.plan_para(config, hallazgo)
         except repair.ReparacionImposible as e:
@@ -138,6 +175,9 @@ def construir(panel: Panel, config: Config, lanzar, marcadas=None, compartida=No
         registro, así que se lanza como cualquier otra. La confirmación se hace
         igual, que un resync compara los dos lados enteros.
         """
+        hallazgo = fresco(hallazgo)
+        if hallazgo is None:
+            return
         if not tk_pairs.confirmar_plan(dlg, repair.aviso_resync(hallazgo),
                                        f"Resincronizar «{hallazgo.pareja}»", ""):
             return
@@ -197,17 +237,26 @@ def construir(panel: Panel, config: Config, lanzar, marcadas=None, compartida=No
 
         Se relee entero en vez de tachar la fila que se acaba de arreglar: una
         reparación cambia el estado y lo que había antes en la pantalla es de
-        antes. Que la lista encoja es la señal de que ha funcionado.
+        antes. Que la lista encoja es la señal de que ha funcionado. Siempre
+        lee el dispositivo: la lectura compartida solo vale para el primer
+        pintado.
         """
-        for hijo in tarjeta.winfo_children():
-            hijo.destroy()
         try:
-            estado["hallazgos"] = revision.revisar(config)
+            hallazgos = revision.revisar(config)
         except Exception as e:                                  # noqa: BLE001
+            for hijo in tarjeta.winfo_children():
+                hijo.destroy()
             estado["hallazgos"] = []
             ttk.Label(tarjeta, text=f"No he podido mirar el estado: {e}",
                       style="Card.Aviso.TLabel").grid(row=0, column=0, sticky="w")
             return
+        pintar(hallazgos)
+
+    def pintar(hallazgos) -> None:
+        """Redibuja la lista con esos hallazgos."""
+        for hijo in tarjeta.winfo_children():
+            hijo.destroy()
+        estado["hallazgos"] = list(hallazgos)
 
         # Los conflictos no salen aquí: tienen su propio bloque debajo, con la
         # lista de ficheros y sus versiones, que es lo que hace falta para
@@ -271,4 +320,8 @@ def construir(panel: Panel, config: Config, lanzar, marcadas=None, compartida=No
     ttk.Button(botones, text="Cerrar", command=panel.cerrar).grid(row=0, column=3,
                                                                   sticky="e")
 
-    repintar()
+    compartido = compartida.para(config) if compartida is not None else None
+    if compartido is not None and "hallazgos" not in compartido.fallos:
+        pintar(compartido.hallazgos)      # lo que ya leyó la principal: sin tocar el disco
+    else:
+        repintar()
