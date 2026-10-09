@@ -628,10 +628,13 @@ for escala in (1.3333, 1.6667, 2.0, 2.6667):
       (2 * tk_tabla.HOLGURA,) * 3)
     t3.poner(FILAS)
     caja = t3.caja("documentos")
+    # Todas las celdas y no solo los chips: en Windows al 125 % el nombre en seminegrita
+    # es 1 px más alto que ellos. Que cada celda mida lo de su widget de ttk ya lo dicen
+    # las comprobaciones de arriba.
     c(p + "la fila mide lo que la más alta de sus celdas más el hueco de la rejilla",
       caja[3] - caja[1],
       max(icons.px(r3, tk_tabla.ALTO_FILA),
-          max(t3._chip(cel).alto for f in FILAS for cel in f.celdas if isinstance(cel, CeldaChip))
+          max(t3._celda(cel, f.tono)[1] for f in FILAS for cel in f.celdas)
           + 2 * r3.winfo_pixels(theme.E2)))
     theme.olvidar(r3.tk)
     icons.olvidar(r3.tk)
