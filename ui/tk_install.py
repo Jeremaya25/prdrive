@@ -36,7 +36,7 @@ from install import InstallError, InstallState, __version__
 from install import (crypto, deploy, device, platforms, profile, raiz_equipo,
                      rclone_bin, remote, traveler, vestibulo)
 
-from . import icons, segundo_plano, theme
+from . import icons, lecturas_asistente, segundo_plano, theme
 from .tk import (TITLE, Indicador, Resultado, Sondeo, Visor, centrar, ensenar,
                  output_window, separador_fila, tabla_estado, working)
 
@@ -138,8 +138,9 @@ class Wizard:
         llavero_hecho: Si el llavero ya se ha puesto en el dispositivo.
         python_equipo: Con qué Python arrancaría lo instalado en este equipo,
             tal como lo dijo el último «Comprobar» (`device.check_python()`,
-            preguntado en su hilo). `None` mientras no se haya comprobado o si
-            la pregunta falló: el paso lo pinta «sin comprobar».
+            preguntado en su hilo). `None` mientras no se haya comprobado, si
+            la pregunta falló, o desde que se soltó la conexión o se cambió de
+            recorrido: el paso lo pinta «sin comprobar».
     """
 
     def __init__(self, root, visor, cabecera, boton_siguiente, boton_atras) -> None:
@@ -263,12 +264,14 @@ class Wizard:
 
         Se llama al cambiar el perfil: el `rclone.conf` temporal lleva dentro
         la conexión anterior, y quedarse con él significaría comprobar una cosa
-        y conectarse a otra.
+        y conectarse a otra. Lo del Python del equipo sale de la misma
+        comprobación, así que también se olvida.
         """
         if self.conf is not None:
             self.conf.close()
         self.conf = self.rclone = self.catalog = None
         self.perfil_device, self.notas_perfil = None, []
+        self.python_equipo = None
 
     def matriz_para(self, raiz: Path) -> platforms.Matriz:
         """Devuelve la lista de plataformas de ese dispositivo.
@@ -369,12 +372,27 @@ def run_wizard() -> int:
     centrar(root)
     ensenar(root)
     root.mainloop()
+    cerrar(wiz)
+    return 0
 
-    # La clave temporal se borra al cerrar la ventana, no al morir el proceso:
-    # el asistente puede estar abierto mucho rato y no hace falta que siga ahí.
+
+def cerrar(wiz: Wizard) -> None:
+    """Lo que queda al cerrar el asistente, ya sin ventana.
+
+    Borra la clave temporal de la conexión: se hace al cerrar la ventana, no al
+    morir el proceso, porque el asistente puede estar abierto mucho rato. Y
+    espera, como mucho hasta su tope, a la medida de escritura que aún corre
+    (`lecturas_asistente.esperar_sondas`): un hilo no se puede cortar, y si el
+    proceso acaba a mitad de la medida deja su `.prdrive-sonda.tmp` en la
+    unidad de la persona. Mientras espera no hay ventana: la de la medida ya
+    no se ve.
+
+    Args:
+        wiz: El asistente, con su ventana ya destruida.
+    """
     if wiz.conf is not None:
         wiz.conf.close()
-    return 0
+    lecturas_asistente.esperar_sondas(wiz.state)
 
 
 def _paso_conexion(cuerpo, wiz) -> None:
@@ -693,7 +711,7 @@ def _paso_comprobaciones(cuerpo, wiz) -> None:
                                remote_name=perfil.remote_name)
             rc.check_connection()
             catalogo = remote.pull_catalog(rc, perfil.catalog_path)
-            return binario, conf, rc, catalogo, _python_del_equipo(donde)
+            return binario, conf, rc, catalogo, lecturas_asistente.python_del_equipo(donde)
 
         ok, res = working(wiz.root, "comprobando", trabajo,
                           ("Descargando rclone y comprobando el remoto."
@@ -752,30 +770,6 @@ def _paso_comprobaciones(cuerpo, wiz) -> None:
                 ("Catálogo", None, "")])
 
 
-def _python_del_equipo(donde: str) -> device.Check | None:
-    """Pregunta con qué Python arrancaría lo instalado en este equipo.
-
-    Va dentro del trabajo de «Comprobar», en su hilo: preguntarle a un Python
-    puede tardar, y el paso no se queda parado mientras. Que la pregunta falle
-    no tumba la comprobación del remoto, que es lo que decide si se sigue: la
-    fila sale «sin comprobar».
-
-    Args:
-        donde: El recorrido (`Wizard.donde`). En este equipo no se pregunta: la
-            raíz la sincroniza el agente con el suyo, que se instala en
-            «Instalación».
-
-    Returns:
-        Lo que dice `device.check_python()`, o `None` si no toca o falló.
-    """
-    if donde == "equipo":
-        return None
-    try:
-        return device.check_python()
-    except Exception:                                    # noqa: BLE001 — «sin comprobar»
-        return None
-
-
 def _filas_python(wiz) -> list[tuple[str, bool | None, str]]:
     """Devuelve la fila de con qué Python arrancará lo instalado, sin preguntar nada.
 
@@ -810,7 +804,12 @@ def _paso_donde(cuerpo, wiz) -> None:
     eleccion = tk.StringVar(value=wiz.donde)
 
     def elegir() -> None:
-        """Apunta dónde se instala y rehace la lista de pasos."""
+        """Apunta dónde se instala y rehace la lista de pasos.
+
+        Cambiar de recorrido olvida el Python comprobado: era del otro.
+        """
+        if eleccion.get() != wiz.donde:
+            wiz.python_equipo = None
         wiz.donde = eleccion.get()
         wiz.pasos = pasos_equipo(wiz) if wiz.donde == "equipo" else PASOS_INSTALACION
         wiz.repintar()
@@ -851,29 +850,12 @@ COLUMNAS = [("unidad", "Unidad", 110), ("etiqueta", "Etiqueta", 110),
 """Las columnas de la lista de unidades: clave, título y ancho en medidas del diseño."""
 
 
-def _examinar_ruta(destino: Path) -> str:
-    """Mira si una ruta escrita a mano vale de destino.
-
-    Corre en un hilo (`segundo_plano`): `is_dir()` de una carpeta de red que no
-    contesta espera lo que tarde el sistema en rendirse, y `volume_for()`
-    recorre las unidades.
-
-    Returns:
-        Por qué no vale, o `''` si vale.
-    """
-    if not destino.is_dir():
-        return f"No existe la carpeta {destino}."
-    if device.volume_for(destino).is_system:
-        return "Esa es la unidad del sistema."
-    return ""
-
-
 def _paso_destino(cuerpo, wiz) -> None:
     """Pinta el paso del dispositivo: la lista de unidades o una ruta a mano.
 
     Se pinta sin leer nada. La lista llega de un hilo (`device.list_volumes()`
     pregunta por cada volumen, y un lector de tarjetas o una unidad de red
-    tardan) y la ruta a mano se mira igual (`_examinar_ruta`). Mientras tanto no
+    tardan) y la ruta a mano se mira igual (`lecturas_asistente.examinar_ruta`). Mientras tanto no
     hay destino y «Siguiente» está apagado; la unidad que hubiera elegida antes
     se vuelve a elegir cuando llega la lista.
 
@@ -930,7 +912,10 @@ def _paso_destino(cuerpo, wiz) -> None:
     # `aplicada` es la selección de la lista que el paso ya ha atendido: la que
     # pone él mismo (al llegar la lista, al usar una ruta a mano) también
     # dispara `<<TreeviewSelect>>`, y esa no es una elección de nadie.
-    eleccion: dict = {"turno": 0, "aplicada": ()}
+    eleccion: dict = {"turno": 0, "aplicada": (), "antes_ruta": None}
+    # `antes_ruta`: la elección de antes de la PRIMERA pulsación de «Usar esta
+    # ruta» que aún no ha tenido respuesta. Las pulsaciones siguientes no la
+    # toman: ven lo que dejó la primera (sin unidad) y no lo que había.
 
     def elegido() -> device.Volume | None:
         """Devuelve la unidad elegida en la lista, o `None`."""
@@ -973,6 +958,7 @@ def _paso_destino(cuerpo, wiz) -> None:
         if tree.selection() == eleccion["aplicada"]:
             return
         eleccion["turno"] += 1
+        eleccion["antes_ruta"] = None
         mostrar()
 
     tree.bind("<<TreeviewSelect>>", al_elegir)
@@ -998,7 +984,9 @@ def _paso_destino(cuerpo, wiz) -> None:
         if not texto:
             return
         eleccion["turno"] += 1
-        antes = (tree.selection(), wiz.state.device)
+        if eleccion["antes_ruta"] is None:
+            eleccion["antes_ruta"] = (tree.selection(), wiz.state.device)
+        antes = eleccion["antes_ruta"]
         eleccion["aplicada"] = ()
         tree.selection_remove(*tree.selection())
         wiz.state.device = None
@@ -1008,14 +996,19 @@ def _paso_destino(cuerpo, wiz) -> None:
         # Sin repetir: volver a pulsar con una ruta de red colgada espera al
         # mismo hilo en vez de juntar otro.
         encargo = segundo_plano.lanzar_sin_repetir(
-            ("ruta", texto), None, partial(_examinar_ruta, destino))
+            ("ruta", texto), None, partial(lecturas_asistente.examinar_ruta, destino))
         sondeo_ruta.esperar(encargo, partial(llega_ruta, eleccion["turno"], destino,
                                              antes))
 
     def llega_ruta(turno: int, destino: Path, antes: tuple, encargo) -> None:
-        """Aplica la ruta mirada, si sigue siendo la última elección."""
+        """Aplica la ruta mirada, si sigue siendo la última elección.
+
+        Si no vale, vuelve `antes`: la elección de antes de la primera pulsación
+        de la tanda, que es la que se restaura aunque se haya pulsado más veces.
+        """
         if turno != eleccion["turno"]:
             return
+        eleccion["antes_ruta"] = None
         motivo = (f"No se ha podido mirar {destino}: {encargo.error}"
                   if encargo.error is not None else encargo.resultado)
         if motivo:
@@ -1077,6 +1070,7 @@ def _paso_destino(cuerpo, wiz) -> None:
     def actualizar() -> None:
         """Relee las unidades: es una elección, y deja atrás lo que se esperaba."""
         eleccion["turno"] += 1
+        eleccion["antes_ruta"] = None
         leer_unidades(wiz.state.device)
 
     ttk.Button(manual, text="Usar esta ruta", command=usar_ruta).grid(row=1, column=1)
@@ -1338,8 +1332,14 @@ def _paso_instalar(cuerpo, wiz) -> None:
                                                 al_cambiar=lambda: boton_estado())
     lista.grid(row=3, column=0, sticky="ew", pady=(theme.E4, 0))
 
-    accion = ttk.Frame(cuerpo)
-    accion.grid(row=4, column=0, sticky="w", pady=(theme.E4, 0))
+    # El botón va con la marca «ya lleva el programa» si la hay, y entonces en
+    # un marco que los agrupa. Sin marca, el botón va directo en el cuerpo: un
+    # marco que solo agrupa el botón no cambia nada en pantalla y gasta un widget.
+    ya_lleva = deploy.sync_py(raiz).is_file()
+    posicion_boton = dict(row=4, column=0, sticky="w", pady=(theme.E4, 0))
+    accion = ttk.Frame(cuerpo) if ya_lleva else cuerpo
+    if ya_lleva:
+        accion.grid(**posicion_boton)
     estado_lbl = Resultado(cuerpo).grid(row=5, column=0, sticky="ew", pady=(theme.E3, 0))
 
     def instalar() -> None:
@@ -1405,14 +1405,17 @@ def _paso_instalar(cuerpo, wiz) -> None:
     boton = ttk.Button(accion, text="Instalar el programa", command=instalar,
                        style="Primary.TButton")
     theme.boton_icono(boton, "down", theme.SOBRE_ACENTO)
-    boton.grid(row=0, column=0, sticky="w")
+    if ya_lleva:
+        boton.grid(row=0, column=0, sticky="w")
+    else:
+        boton.grid(**posicion_boton)
 
     def boton_estado() -> None:
         """Habilita «Instalar el programa» si está confirmado y hay algo que hacer."""
         listo = confirmado["vale"] and wiz.matriz is not None and wiz.matriz.listo
         boton.configure(state="normal" if listo else "disabled")
 
-    if deploy.sync_py(raiz).is_file():
+    if ya_lleva:
         theme.chip(accion, "Este dispositivo ya lleva el programa", "Ok.").grid(
             row=0, column=1, sticky="w", padx=(theme.E3, 0))
         estado_lbl.poner("Puedes reinstalarlo para actualizarlo, o seguir al paso "
@@ -1980,46 +1983,10 @@ def _paso_inicializar(cuerpo, wiz) -> None:
         resultado.poner("Ninguna de las parejas elegidas necesita inicialización.")
 
 
-def comprobaciones_dispositivo(
-        raiz, elegidas: list[str], clave: str | None, cifrado: str,
-        unidad) -> list[tuple[str, bool | str | None, str]]:
-    """Devuelve las filas de la verificación de un dispositivo, sin pintar nada.
-
-    Mira el dispositivo, y con VeraCrypt la unidad de fuera: es lo que hace
-    `_paso_final` en un hilo (`segundo_plano`), así que devuelve datos y no
-    toca Tk. Vive aquí y no en `install/` por lo mismo que
-    `tk_equipo.comprobaciones()`: junta lo que dicen varios módulos de
-    `install/` solo para la tabla de este paso.
-
-    Args:
-        raiz: La raíz del dispositivo (con VeraCrypt, lo montado).
-        elegidas: Las parejas que tienen que estar en el config.
-        clave: El nombre del fichero de clave del remoto, o `None` si la
-            conexión no usa ninguno.
-        cifrado: Cómo va cifrado (`InstallState.encryption`).
-        unidad: La unidad física (`InstallState.device`): con VeraCrypt, donde
-            van la entrada de fuera, el VeraCrypt que viaja y los restos.
-
-    Returns:
-        `(nombre, estado, detalle)` por comprobación, como las pinta
-        `tabla_estado`.
-    """
-    checks = device.verify_device(raiz, elegidas, clave)
-    # Solo con contenedor: sin él no hay nada que montar en el otro equipo, y
-    # una fila roja diciendo que falta VeraCrypt sería mentira. Lo mismo con la
-    # instalación en claro que quedó fuera: solo es un resto cuando la de verdad
-    # está dentro de un contenedor.
-    if cifrado == "veracrypt" and unidad:
-        checks += vestibulo.comprobar(unidad, device.control_id(raiz))
-        checks += traveler.comprobar(unidad)
-        checks += crypto.comprobar_restos(unidad)
-    return [(c.etiqueta, c.ok, c.detalle) for c in checks]
-
-
 def _paso_final(cuerpo, wiz) -> None:
     """Pinta el paso de verificación y cierre.
 
-    La tabla llega de un hilo (`comprobaciones_dispositivo`): mira el
+    La tabla llega de un hilo (`lecturas_asistente.comprobaciones_dispositivo`): mira el
     dispositivo entero y, con VeraCrypt, la unidad de fuera. Mientras tanto la
     línea de espera lo dice, y «Volver a comprobar» y «Desmontar el contenedor»
     están apagados (desmontar a la vez que se lee lo montado fallaría). La
@@ -2051,7 +2018,8 @@ def _paso_final(cuerpo, wiz) -> None:
         for texto in quietos:
             botones[texto].configure(state="disabled")
         encargo = segundo_plano.lanzar(partial(
-            comprobaciones_dispositivo, wiz.device_root, list(wiz.state.selected), clave,
+            lecturas_asistente.comprobaciones_dispositivo, wiz.device_root,
+            list(wiz.state.selected), clave,
             wiz.state.encryption, wiz.state.device))
         sondeo.esperar(encargo, llega)
 

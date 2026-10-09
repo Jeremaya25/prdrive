@@ -23,15 +23,12 @@ Reglas de esta pantalla:
 
 from __future__ import annotations
 
-import time
-from functools import partial
 from pathlib import Path
-from typing import NamedTuple
 
 from common import pins
 from install import CONTAINER_NAME, IS_WIN, InstallError, crypto, veracrypt_bin
 
-from . import segundo_plano, theme
+from . import lecturas_asistente, theme
 from .tk import TITLE, Sondeo, bloque_aviso, working
 
 AVISO_AUTOARRANQUE = (
@@ -42,84 +39,6 @@ AVISO_AUTOARRANQUE = (
     "contraseña de VeraCrypt."
 )
 """Lo que se dice sobre dónde vive el programa cuando hay contenedor."""
-
-MIDIENDO = "Midiendo lo que escribe la unidad…"
-"""Lo que dice la línea de la espera mientras corre la sonda de escritura."""
-
-TOPE_SONDA_S = 60.0  # segundos
-"""Cuánto se espera a la sonda antes de dejar crear el contenedor sin su medida.
-
-Un hilo no se puede cortar: pasado esto se dice que no se ha podido medir y
-«Crear y montar» vuelve, y si la sonda contesta después se usa lo que diga. Se
-lee al usarlo: los tests lo acortan.
-"""
-
-
-class Sonda(NamedTuple):
-    """La medida de lo que escribe un volumen, lanzada una sola vez.
-
-    Args:
-        unidad: La raíz del volumen físico donde se escribe.
-        encargo: El `segundo_plano.Encargo` que corre `crypto.medir_escritura`.
-        lanzada: `time.monotonic()` al lanzarla: el tope cuenta desde ahí.
-    """
-
-    unidad: Path
-    encargo: segundo_plano.Encargo
-    lanzada: float
-
-
-def sonda_de(estado) -> Sonda:
-    """Devuelve la sonda del volumen de `estado.device`, lanzándola si no la hay.
-
-    Escribe 8 MiB en el dispositivo, así que se lanza una vez por volumen y
-    asistente: la guarda `estado.sondas`, que sobrevive a repintar el panel, y
-    una que ya acabó (aunque nadie la haya mirado todavía) no se repite. Va por
-    `segundo_plano.lanzar()` con la función de módulo leída al lanzarla.
-
-    Args:
-        estado: El `InstallState` del asistente.
-    """
-    unidad = Path(estado.device)
-    sonda = estado.sondas.get(unidad)
-    if sonda is None:
-        encargo = segundo_plano.lanzar(partial(crypto.medir_escritura, unidad))
-        sonda = estado.sondas[unidad] = Sonda(unidad, encargo, time.monotonic())
-    return sonda
-
-
-def midiendo(estado) -> bool:
-    """Indica si la sonda del volumen de `estado.device` escribe todavía, sin pasar su tope."""
-    if estado.device is None:
-        return False
-    sonda = estado.sondas.get(Path(estado.device))
-    return (sonda is not None and not sonda.encargo.hecho
-            and time.monotonic() - sonda.lanzada < TOPE_SONDA_S)
-
-
-def texto_espera(estado, bytes_: int) -> str:
-    """Devuelve lo que tardará crear un contenedor fijo de `bytes_`, según la sonda.
-
-    Lanza la sonda si este volumen no la tiene. Mientras escribe, dice que
-    mide; pasado su tope sin respuesta, que no se ha podido; con su resultado
-    lo guarda en `estado.velocidad_escritura` (0.0 si falló) y divide.
-
-    Args:
-        estado: El `InstallState` del asistente.
-        bytes_: Lo que ocupará el contenedor.
-    """
-    encargo = sonda_de(estado).encargo
-    if not encargo.hecho:
-        if midiendo(estado):
-            return MIDIENDO
-        velocidad = None
-    else:
-        # 0.0 es «medido y no se ha podido»: lo que dijo la sonda, no otra sonda.
-        velocidad = estado.velocidad_escritura = (
-            (encargo.resultado if encargo.error is None else None) or 0.0)
-    segundos = bytes_ / velocidad if velocidad else None
-    return f"Hay que escribir el contenedor entero: {crypto.describir_espera(segundos)}."
-
 
 def dibujar(cuerpo, wiz) -> None:
     """Pinta el paso de cifrado dentro de `cuerpo`.
@@ -280,7 +199,7 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
         return
 
     existe = contenedor.is_file()
-    libre = _libre(estado.device)
+    libre = lecturas_asistente.libre(estado.device)
     ttk.Label(panel, justify="left", wraplength=theme.medida(760), text=(
         f"Contenedor: {contenedor}\n"
         + ("Ya existe: se puede montar con su contraseña."
@@ -305,7 +224,7 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
     # cada repintado a propósito: es una consulta al sistema de ficheros que ni
     # escribe ni tarda, y cachearla daría la respuesta de la unidad anterior si
     # se cambia de destino. Lo que sí se recuerda en el estado es la MEDIDA de
-    # velocidad, que sí escribe en la unidad (`sonda_de`). En Linux no
+    # velocidad, que sí escribe en la unidad (`lecturas_asistente.sonda_de`). En Linux no
     # hay casilla que valga: `--quick` va siempre y que el contenedor salga
     # disperso lo decide la versión de VeraCrypt y el disco
     # (`crypto.creacion_dispersa()`, `None` si no se sabe). Se enseña marcada o
@@ -393,7 +312,8 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
 
     def poner_boton() -> None:
         """Apaga «Crear y montar» mientras la sonda escribe al lado del contenedor."""
-        montar.configure(state="disabled" if midiendo(estado) else "normal")
+        montar.configure(
+            state="disabled" if lecturas_asistente.midiendo(estado) else "normal")
 
     def soltar_tope() -> None:
         """Quita la espera del tope: la sonda ya ha contestado."""
@@ -412,8 +332,8 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
             return
         if not sondeo.esperando:
             sondeo.esperar(sonda.encargo, actualizar)
-        if tope_sonda["id"] is None and midiendo(estado):
-            resto = TOPE_SONDA_S - (time.monotonic() - sonda.lanzada)
+        if tope_sonda["id"] is None and lecturas_asistente.midiendo(estado):
+            resto = lecturas_asistente.quedan_s(sonda)
             tope_sonda["id"] = formulario.after(max(1, int(resto * 1000) + 1),
                                                 vencer_tope)
 
@@ -451,7 +371,7 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
             except InstallError as e:
                 espera.configure(text=str(e))
             else:
-                espera.configure(text=texto_espera(estado, bytes_))
+                espera.configure(text=lecturas_asistente.texto_espera(estado, bytes_))
         vigilar_sonda()
         poner_boton()
 
@@ -472,7 +392,7 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
 
     def crear_y_montar() -> None:
         """Comprueba la contraseña, crea el contenedor si hace falta y lo monta."""
-        if midiendo(estado):
+        if lecturas_asistente.midiendo(estado):
             return                  # la sonda escribe donde iría el contenedor
         password = pw1.get()
         # Al crear, lo que diría VeraCrypt sin `/silent`; al montar uno que ya
@@ -571,15 +491,6 @@ def _llevar_veracrypt(wiz) -> None:
                   "último paso.")
     elif res.aviso:
         wiz.aviso(res.aviso)
-
-
-def _libre(root) -> int:
-    """Devuelve los bytes libres de ese volumen, o 0 si no se pueden saber."""
-    import shutil
-    try:
-        return shutil.disk_usage(str(root)).free
-    except OSError:
-        return 0
 
 
 def _panel_bitlocker(panel, wiz, hecho) -> None:

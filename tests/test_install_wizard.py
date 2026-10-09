@@ -986,7 +986,7 @@ c("y se enciende al haber instalado de verdad",
 import penwatch  # noqa: E402
 from common import equipo  # noqa: E402
 from install import agente as ia  # noqa: E402
-from ui import segundo_plano, tk_equipo, watch  # noqa: E402
+from ui import lecturas_asistente, segundo_plano, tk_equipo, watch  # noqa: E402
 from types import SimpleNamespace  # noqa: E402
 
 equipo.DIR = tmpdir("prdrive-asis-equipo-")
@@ -997,7 +997,7 @@ tk_equipo.working = working_directo
 # (`escribir()` mueve el bucle de eventos). Las esperas de verdad las prueba
 # test_tk_equipo_lecturas.
 segundo_plano.lanzar = segundo_plano.en_el_acto
-tk_equipo.ESPERA_TECLA_MS = 0
+lecturas_asistente.ESPERA_TECLA_MS = 0
 preparados, activados = [], []
 PREP = ia.Preparado(equipo.DIR / "agente" / "0.4.0", equipo.DIR / "runtime" / "x" / "py",
                     "sello")

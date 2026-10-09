@@ -59,7 +59,7 @@ prdrive/            the checkout; on a provisioned device it is `.prdrive/`
 │   keychain: llavero (its pass and its watch) · kdbx (is a base whole) · keepassxc (KeePassXC on this host) · registro (HKCU)
 ├── ui/             asking the user, showing results
 │   __init__ (`Choice`, `Frontend`, `start()`…) · theme · icons · qr · prefs · segundo_plano · cifrado · console · tk (TkFrontend, `modal()`/`mostrar()`/`working()`) · tk_*.py (draw only; `tk_principal` the main window, `tk_tabla` the one-canvas table)
-│   decision halves, no Tk: principal (main window) · instantanea (the shared device read) · pair_editor · repair · catalog_editor · remote_picker · conflict_editor · flags_editor · watch · versions_editor · volumen · llavero_editor
+│   decision halves, no Tk: principal (main window) · instantanea (the shared device read) · pair_editor · repair · catalog_editor · remote_picker · conflict_editor · flags_editor · watch · versions_editor · volumen · llavero_editor · lecturas_asistente (the wizard's reads: the examinations, the probe, the python and verification checks)
 │   tray: bandeja (PURE) · bandeja_windows · bandeja_linux · tk_agente («¿Atender esta unidad?», a child of the agent)
 ├── install/        what the installer knows; no Tk, no device needed
 │   profile · rclone_bin · runtime_bin · veracrypt_bin · descarga (retries, SHA256SUMS) · platforms · components · remote (ephemeral rclone.conf, catalogue)

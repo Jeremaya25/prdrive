@@ -26,8 +26,9 @@ Lo que el asistente va sabiendo vive en el propio `Wizard` (`agente_*`,
 `equipo_*`) y no en los widgets: `repintar()` los destruye al cambiar de paso.
 
 Lo que mira el disco o el sistema no corre en el hilo de Tk: las carpetas que
-se escriben se examinan al dejar de teclear (`ExamenDiferido`) y «Verificación»
-comprueba en otro hilo, con `ui.segundo_plano` y un `Sondeo` del paso.
+se escriben se examinan al dejar de teclear (`lecturas_asistente.ExamenDiferido`, que
+no importa Tk) y «Verificación» comprueba en otro hilo, con `ui.segundo_plano` y un
+`Sondeo` del paso.
 """
 
 from __future__ import annotations
@@ -35,18 +36,12 @@ from __future__ import annotations
 from functools import partial
 from pathlib import Path
 
-from . import segundo_plano, theme, watch
+from . import lecturas_asistente, segundo_plano, theme, watch
 from .tk import Indicador, Resultado, Sondeo, bloque_aviso, tabla_estado, working
 
 ANCHO = 780
 """El ancho del texto de los pasos, en medidas del diseño."""
 
-ESPERA_TECLA_MS = 250
-"""Milisegundos sin teclear antes de examinar lo escrito en una caja.
-
-Se lee en cada tecla, no al importar: los tests lo ponen a 0 y mueven el bucle
-de eventos después de escribir.
-"""
 MIRANDO = "Mirando la carpeta…"
 """Lo que dice la línea de debajo de una caja mientras se examina lo escrito."""
 
@@ -98,135 +93,6 @@ def al_cambiar(entrada, funcion) -> None:
         return True
     entrada.configure(validate="key",
                       validatecommand=(entrada.register(validar), "%P"))
-
-
-class ExamenDiferido:
-    """Examina lo escrito en una o varias cajas fuera del hilo de Tk, al dejar de teclear.
-
-    Cada tecla (`tecla()`) deja en el acto lo que depende del examen como
-    pendiente (`al_teclear`) y rearma una única espera de `ESPERA_TECLA_MS`
-    colgada de `ancla`, nunca de la ventana: cambiar de paso destruye la caja
-    y la espera muere con ella sin examinar nada. Al vencer, o con `ya()`, se
-    lee la clave (lo escrito AHORA, no el texto que vio `validatecommand`) y
-    el examen va a `segundo_plano.lanzar()` como `partial(funcion, *clave)`; lo
-    recoge un `Sondeo` también colgado de `ancla`. Lo que llega solo cuenta si
-    la clave sigue siendo la misma: el examen de un texto viejo no cuenta.
-
-    Args:
-        ancla: La caja de la que cuelgan la espera y el sondeo.
-        clave: Devuelve lo que se examina, leído de las cajas en el hilo de Tk.
-        funcion: El examen. Recibe la clave desplegada, no toca Tk y es una
-            función de módulo (o un `partial` de datos).
-        al_teclear: Deja en el acto lo que depende del examen como pendiente.
-        al_llegar: Recibe el `Encargo` del examen de lo que sigue escrito.
-
-    Attributes:
-        examinada: La clave del último examen que contó, o `None` desde la
-            última tecla.
-        resultado: Lo que devolvió ese examen (`None` si falló).
-        sondeo: El `Sondeo` del examen en curso.
-    """
-
-    def __init__(self, ancla, clave, funcion, al_teclear, al_llegar) -> None:
-        """Engancha la espera a la caja; no examina nada todavía."""
-        self.ancla = ancla
-        self.clave = clave
-        self.funcion = funcion
-        self.al_teclear = al_teclear
-        self.al_llegar = al_llegar
-        self.examinada = None
-        self.resultado = None
-        self.sondeo = Sondeo(ancla)
-        self._id = None
-        ancla.bind("<Destroy>", self._al_destruir, add="+")
-
-    def tecla(self, *_) -> None:
-        """Deja el examen pendiente y rearma la espera; es lo que hace cada tecla."""
-        self._olvidar()
-        self.al_teclear()
-        self._quitar_espera()
-        self._id = self.ancla.after(ESPERA_TECLA_MS, self._vencer)
-
-    def ya(self) -> None:
-        """Examina lo escrito ahora mismo, sin esperar a que se deje de teclear."""
-        self._quitar_espera()
-        self._olvidar()
-        self._lanzar()
-
-    def vigente(self):
-        """Devuelve el último examen si es de lo que hay escrito ahora, o `None`."""
-        if self.examinada is not None and self.examinada == self.clave():
-            return self.resultado
-        return None
-
-    def _olvidar(self) -> None:
-        """Da por caducado el último examen."""
-        self.examinada = self.resultado = None
-
-    def _lanzar(self) -> None:
-        """Encarga el examen de lo escrito ahora."""
-        clave = self.clave()
-        encargo = segundo_plano.lanzar(partial(self.funcion, *clave))
-        self.sondeo.esperar(encargo, partial(self._llega, clave))
-
-    def _llega(self, clave, encargo) -> None:
-        """Aplica el examen si lo escrito sigue siendo lo examinado."""
-        if clave != self.clave():
-            return               # se escribió otra cosa: su examen está en camino
-        self.examinada = clave
-        self.resultado = encargo.resultado if encargo.error is None else None
-        self.al_llegar(encargo)
-
-    def _vencer(self) -> None:
-        """Se ha dejado de teclear: examina."""
-        self._id = None
-        self._lanzar()
-
-    def _quitar_espera(self) -> None:
-        """Cancela la espera de la última tecla, si la hay."""
-        if self._id is not None:
-            try:
-                self.ancla.after_cancel(self._id)
-            except Exception:                            # noqa: BLE001 — ya no está
-                pass
-            self._id = None
-
-    def _al_destruir(self, evento) -> None:
-        """Cancela la espera si lo que se destruye es la caja, no un hijo suyo."""
-        if str(evento.widget) == str(self.ancla):
-            self._quitar_espera()
-
-
-def examen_contenedor(fisica: str, carpeta: str, forma: str, con_punto: bool):
-    """Examina dónde irá el contenedor y, si se monta en una carpeta, esa carpeta.
-
-    No toca Tk: es lo que corre en el hilo del paso del contenedor. En Linux la
-    carpeta donde se abre es la raíz, así que también tiene que poder serlo.
-
-    Args:
-        fisica: Dónde va el `.hc`.
-        carpeta: Dónde se monta (Linux) o la carpeta de la raíz (Windows).
-        forma: La forma de la raíz (`raiz_equipo.PROPIA`, …).
-        con_punto: Si se monta en `carpeta` (Linux).
-
-    Returns:
-        El `raiz_equipo.Examen` que manda: el de la carpeta si no vale, si no
-        el del contenedor.
-    """
-    from install import raiz_equipo
-    examen = raiz_equipo.examinar_contenedor(fisica, carpeta, forma)
-    if con_punto:
-        raiz_examen = raiz_equipo.examinar(carpeta, forma)
-        if not raiz_examen.vale:
-            examen = raiz_examen
-    return examen
-
-
-def _fallido(encargo):
-    """Devuelve el examen que se enseña cuando el examen mismo ha fallado."""
-    from install import raiz_equipo
-    return raiz_equipo.Examen(raiz_equipo.NO_VALE,
-                              f"No se ha podido examinar la carpeta: {encargo.error}")
 
 
 def con_raiz(wiz) -> bool:
@@ -409,7 +275,7 @@ def paso_carpeta(cuerpo, wiz) -> None:
     """Pinta el paso de la carpeta exacta, según lo elegido en «Cifrado».
 
     Sin cifrar es la raíz; cifrada, el contenedor (`_carpeta_cifrada`). La
-    carpeta escrita se examina fuera del hilo de Tk (`ExamenDiferido`): al
+    carpeta escrita se examina fuera del hilo de Tk (`lecturas_asistente.ExamenDiferido`): al
     pintar, en el acto; al teclear, al dejar de hacerlo. Mientras, la raíz no
     está fijada y «Siguiente» está apagado.
     """
@@ -452,7 +318,8 @@ def paso_carpeta(cuerpo, wiz) -> None:
     def llega(encargo) -> None:
         """Dice si la carpeta examinada vale como raíz, y la fija si vale."""
         texto = diferido.examinada[0]
-        ex = encargo.resultado if encargo.error is None else _fallido(encargo)
+        ex = (encargo.resultado if encargo.error is None
+              else lecturas_asistente.examen_fallido(encargo))
         wiz.equipo_ruta = texto
         wiz.equipo_examen = ex
         wiz.state.device_root = Path(texto.strip()).expanduser() if ex.vale else None
@@ -461,8 +328,9 @@ def paso_carpeta(cuerpo, wiz) -> None:
         examen.configure(text=ex.texto, foreground=color)
         wiz.revisar()
 
-    diferido = ExamenDiferido(entrada, lambda: (ruta.get(), wiz.equipo_forma),
-                              re_.examinar, pendiente, llega)
+    diferido = lecturas_asistente.ExamenDiferido(
+        entrada, lambda: (ruta.get(), wiz.equipo_forma), re_.examinar, pendiente, llega,
+        Sondeo(entrada))
 
     def tecla(texto: str) -> None:
         """Apunta la carpeta tecleada y deja su examen para cuando se pare."""
@@ -522,7 +390,7 @@ def _carpeta_cifrada(cuerpo, wiz) -> None:
     ahí abrir y cerrar es del agente, con la ventana de VeraCrypt, y nada la
     guarda.
 
-    Las dos cajas son UN examen (`examen_contenedor`), hecho fuera del hilo de
+    Las dos cajas son UN examen (`lecturas_asistente.examen_contenedor`), hecho fuera del hilo de
     Tk con todo lo escrito: dónde va el contenedor, dónde se abre y la forma.
     Cualquiera de las dos lo rearma y apaga el botón en el acto, y solo crea
     un examen de lo que sigue escrito: `abrir_o_crear` no vuelve a mirar si
@@ -654,7 +522,8 @@ def _carpeta_cifrada(cuerpo, wiz) -> None:
 
     def llega(encargo) -> None:
         """Dice si el contenedor puede ir donde se ha escrito, y enciende el botón si vale."""
-        ex = encargo.resultado if encargo.error is None else _fallido(encargo)
+        ex = (encargo.resultado if encargo.error is None
+              else lecturas_asistente.examen_fallido(encargo))
         wiz.equipo_fisica, wiz.equipo_ruta, _ = diferido.examinada
         examen.configure(text=ex.texto, style="Peligro.TLabel" if not ex.vale
                          else "Pista.TLabel")
@@ -665,9 +534,10 @@ def _carpeta_cifrada(cuerpo, wiz) -> None:
                         state="normal" if ex.vale else "disabled")
         wiz.revisar()
 
-    diferido = ExamenDiferido(caja, clave,
-                              partial(examen_contenedor, con_punto=punto is not None),
-                              pendiente, llega)
+    diferido = lecturas_asistente.ExamenDiferido(
+        caja, clave,
+        partial(lecturas_asistente.examen_contenedor, con_punto=punto is not None),
+        pendiente, llega, Sondeo(caja))
 
     def tecla_caja(texto: str) -> None:
         """Apunta dónde va el contenedor y deja su examen para cuando se pare."""
@@ -858,7 +728,7 @@ def paso_parejas(cuerpo, wiz) -> None:
     personal, una ruta pensada para una unidad (`sync-data/…`) caería suelta en
     `~`; y una carpeta que ya sincroniza otro programa se dice en ámbar.
 
-    Cada ruta se examina fuera del hilo de Tk (`ExamenDiferido`), y teclear
+    Cada ruta se examina fuera del hilo de Tk (`lecturas_asistente.ExamenDiferido`), y teclear
     solo cambia la línea de debajo: «Siguiente» depende de haber guardado, y
     guardar vuelve a revisar las elegidas en el acto, antes de escribir.
     """
@@ -880,7 +750,7 @@ def paso_parejas(cuerpo, wiz) -> None:
     cajas: dict[str, tk.StringVar] = {}
     notas: dict[str, object] = {}
 
-    def examinada(nombre: str, caja) -> ExamenDiferido:
+    def examinada(nombre: str, caja) -> lecturas_asistente.ExamenDiferido:
         """Devuelve el examen diferido de la ruta de una pareja."""
         ruta_lbl, nota_lbl = notas[nombre]
 
@@ -904,9 +774,9 @@ def paso_parejas(cuerpo, wiz) -> None:
                 nota_lbl.configure(text="; ".join(info.avisos), style="Aviso.TLabel")
             wiz.revisar()
 
-        diferido = ExamenDiferido(caja, lambda: (caja.get(),),
-                                  partial(raiz_equipo.revisar_local, donde),
-                                  pendiente, llega)
+        diferido = lecturas_asistente.ExamenDiferido(
+            caja, lambda: (caja.get(),), partial(raiz_equipo.revisar_local, donde),
+            pendiente, llega, Sondeo(caja))
 
         def tecla(texto: str) -> None:
             """Apunta la ruta tecleada y deja su examen para cuando se pare."""

@@ -45,7 +45,8 @@ import penwatch                                          # noqa: E402
 from common import equipo                                # noqa: E402
 from install import agente as ia                         # noqa: E402
 from install import crypto, deploy, profile, raiz_equipo, remote  # noqa: E402
-from ui import segundo_plano, tk_crypto, tk_equipo, tk_install, watch  # noqa: E402
+from ui import (lecturas_asistente, segundo_plano, tk_crypto, tk_equipo,  # noqa: E402
+                tk_install, watch)
 from ui import tk as uitk                                # noqa: E402
 
 PRINCIPAL = threading.get_ident()
@@ -84,7 +85,7 @@ CATALOGO = "[defaults]\nremote = \"nas\"\n\n" + "".join(
     f"remote_path = \"/datos/p{i}\"\nmode = \"bisync\"\n\n" for i in range(5))
 PERFIL = profile.from_form("nas", {"type": "sftp", "host": "nas.example"})
 LANZAR_REAL = segundo_plano.lanzar
-ESPERA_REAL = getattr(tk_equipo, "ESPERA_TECLA_MS", 250)
+ESPERA_REAL = getattr(lecturas_asistente, "ESPERA_TECLA_MS", 250)
 MIRANDO = "Mirando la carpeta…"
 
 
@@ -323,7 +324,7 @@ def con_tamano(wiz, texto: str) -> str:
 
 def division(wiz, texto: str, velocidad: float) -> str:
     """La frase que debe decir la línea para ese tamaño y esa velocidad."""
-    bytes_ = crypto.size_to_bytes(texto, tk_crypto._libre(wiz.state.device), None)
+    bytes_ = crypto.size_to_bytes(texto, lecturas_asistente.libre(wiz.state.device), None)
     return f"Hay que escribir el contenedor entero: {crypto.describir_espera(bytes_ / velocidad)}."
 
 
@@ -336,7 +337,7 @@ def panel_vc(dispositivo):
     return wiz
 
 
-tope_real = getattr(tk_crypto, "TOPE_SONDA_S", 60.0)
+tope_real = getattr(lecturas_asistente, "TOPE_SONDA_S", 60.0)
 try:
     # Con hilos de verdad: la sonda no corre en el de Tk.
     segundo_plano.lanzar = LANZAR_REAL
@@ -372,6 +373,11 @@ try:
     con_tamano(lenta, "300M")
     c("  ni teclear el tamaño enciende el botón",
       estado(boton(lenta.cuerpo, "Crear y montar")), "disabled")
+    # `invoke()` no ejecuta un botón apagado: se llama a su comando directamente.
+    creados_antes = len(creados)
+    raiz.tk.call(boton(lenta.cuerpo, "Crear y montar").cget("command"))
+    c("con la sonda escribiendo, el comando de «Crear y montar» no crea nada",
+      len(creados), creados_antes)
 
     # El hilo acaba y nadie lo ha mirado todavía (el sondeo no ha pasado).
     encargo = pendientes.ultimo()
@@ -431,7 +437,7 @@ try:
     # El tope: una unidad que no contesta no deja el botón apagado para siempre.
     pendientes = Pendientes()
     segundo_plano.lanzar = pendientes
-    tk_crypto.TOPE_SONDA_S = 0.2
+    lecturas_asistente.TOPE_SONDA_S = 0.2
     colgada = panel_vc(tmpdir())
     c("con la sonda colgada, «Crear y montar» empieza apagado",
       estado(boton(colgada.cuerpo, "Crear y montar")), "disabled")
@@ -446,7 +452,7 @@ try:
     c("  y se usa", linea_espera(colgada),
       division(colgada, caja_tamano(colgada).get(), VELOCIDAD))
     c("  sin lanzar otra", len(pendientes.encargos), 1)
-    tk_crypto.TOPE_SONDA_S = tope_real
+    lecturas_asistente.TOPE_SONDA_S = tope_real
 
     # Un contenedor dinámico no mide nada, como siempre.
     crypto.soporta_dispersos = lambda root: True
@@ -460,7 +466,7 @@ try:
     c("  y «Crear y montar» está encendido",
       estado(boton(dinamico.cuerpo, "Crear y montar")), "normal")
 finally:
-    tk_crypto.TOPE_SONDA_S = tope_real
+    lecturas_asistente.TOPE_SONDA_S = tope_real
     segundo_plano.lanzar = LANZAR_REAL
     for nombre, funcion in sondas_reales.items():
         setattr(crypto, nombre, funcion)
@@ -497,7 +503,7 @@ def linea_carpeta(wiz) -> str:
 
 try:
     segundo_plano.lanzar = LANZAR_REAL
-    tk_equipo.ESPERA_TECLA_MS = ESPERA_REAL
+    lecturas_asistente.ESPERA_TECLA_MS = ESPERA_REAL
     examinadas.clear()
     hilo = asistente_equipo(ruta=RAIZ)
     en_paso(hilo, "Carpeta")
@@ -598,7 +604,7 @@ try:
       (bool(centinela), examinadas, errores), (True, [], []))
 finally:
     segundo_plano.lanzar = LANZAR_REAL
-    tk_equipo.ESPERA_TECLA_MS = ESPERA_REAL
+    lecturas_asistente.ESPERA_TECLA_MS = ESPERA_REAL
     raiz.__dict__.pop("report_callback_exception", None)
 
 
@@ -702,6 +708,30 @@ try:
         crear.configure(state="normal")
         crear.invoke()
         c("  y crear tampoco: ese examen dice que no vale", abiertos, [])
+        teclear(punto, str(PUNTO1))
+        reloj.disparar(ESPERA_REAL)
+        pendientes.ultimo().correr()
+        reloj.disparar(uitk.SONDEO_MS)
+        # Lo escrito cambia mientras la pregunta por el aviso sigue abierta: el
+        # examen de antes ya no es de lo que hay, y no se monta con él.
+        revisar_real = crypto.revisar_contrasena
+        pregunta_real = messagebox.askyesno
+
+        def cambia_mientras_pregunta(*_a, **_k):
+            """Teclea otra carpeta de montaje mientras la pregunta sigue abierta."""
+            teclear(punto, str(PUNTO0))
+            return True
+
+        crypto.revisar_contrasena = lambda password: (None, "Aviso de prueba.")
+        messagebox.askyesno = cambia_mientras_pregunta
+        try:
+            antes_de_preguntar = len(abiertos)
+            crear.invoke()
+        finally:
+            crypto.revisar_contrasena = revisar_real
+            messagebox.askyesno = pregunta_real
+        c("si lo escrito cambia mientras se pregunta por el aviso, no se monta nada",
+          len(abiertos), antes_de_preguntar)
         teclear(punto, str(PUNTO1))
         reloj.disparar(ESPERA_REAL)
         pendientes.ultimo().correr()
@@ -881,7 +911,7 @@ finally:
 PROPIOS = {"Raíz", "Cifrado", "Carpeta", "Instalación", "Parejas y configuración",
            "Unidades", "Arranque"}
 segundo_plano.lanzar = segundo_plano.en_el_acto
-tk_equipo.ESPERA_TECLA_MS = 0
+lecturas_asistente.ESPERA_TECLA_MS = 0
 try:
     for nombre_ruta, forma in (("PASOS_EQUIPO", raiz_equipo.PROPIA),
                                ("PASOS_EQUIPO_SOLO", raiz_equipo.NINGUNA)):
@@ -921,7 +951,7 @@ try:
     c("  y la parte fija, con el indicador, no pasa de 7", fija <= 7, True)
 finally:
     tk_equipo.comprobaciones = comprobaciones_real
-    tk_equipo.ESPERA_TECLA_MS = ESPERA_REAL
+    lecturas_asistente.ESPERA_TECLA_MS = ESPERA_REAL
     segundo_plano.lanzar = LANZAR_REAL
     raiz_equipo.examinar = examinar_real
 

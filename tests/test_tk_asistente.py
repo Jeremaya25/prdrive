@@ -40,8 +40,8 @@ except Exception as e:                                   # sin entorno gráfico
     print(f"  (saltado) no hay entorno gráfico: {e}")
     sys.exit(c.report())
 
-from install import deploy, device, profile, rclone_bin, remote  # noqa: E402
-from ui import segundo_plano, tk_install  # noqa: E402
+from install import crypto, deploy, device, profile, rclone_bin, remote  # noqa: E402
+from ui import lecturas_asistente, segundo_plano, tk_install  # noqa: E402
 from ui import tk as uitk  # noqa: E402
 
 HILO_TK = threading.get_ident()
@@ -354,6 +354,33 @@ c("  y deja la fila de antes, elegida y como destino",
   ((str(UNIDAD_B),), UNIDAD_B, "normal"))
 wiz.root.destroy()
 
+# Dos pulsaciones de «Usar esta ruta» mientras se mira la ruta, y la ruta no vale:
+# vuelve la elección de ANTES de la primera pulsación, no el estado intermedio.
+lanzar_previo = segundo_plano.lanzar
+con_lanzar(LANZAR_REAL)
+wiz = nuevo_asistente(UNIDAD_A)
+en_paso(wiz, PASO["Dispositivo"])
+dar_vueltas(lambda: bool(arbol(wiz).get_children()))
+elegir_fila(wiz, str(UNIDAD_B))
+dichos.clear()
+amano = AMano()
+con_lanzar(amano)
+escribir_ruta(wiz, A_MANO / "no-existe")
+boton(wiz, "Usar esta ruta").invoke()
+boton(wiz, "Usar esta ruta").invoke()        # la segunda, con la primera aún pendiente
+c("con la ruta pendiente, la segunda pulsación no la vuelve a encargar",
+  len(amano.encargos), 1)
+amano.ultimo().correr()                       # llega el resultado: la ruta no vale
+dar_vueltas(lambda: bool(dichos))
+raiz.update()
+c("la ruta que no vale se dice, y vuelve la unidad de ANTES de la primera pulsación",
+  (any("No existe la carpeta" in d for d in dichos), wiz.state.device,
+   arbol(wiz).selection(), siguiente(wiz)),
+  (True, UNIDAD_B, (str(UNIDAD_B),), "normal"))
+c("  sin ningún callback de Tk fallido", errores, [])
+wiz.root.destroy()
+con_lanzar(lanzar_previo)
+
 # «Comprobaciones»: el Python del equipo va en el trabajo de «Comprobar».
 hilos.clear()
 wiz = nuevo_asistente(UNIDAD_A)
@@ -460,7 +487,7 @@ tk_install.traveler.comprobar = lambda unidad: (
     mirado.append(("viajero", unidad)) or [device.Check("VeraCrypt", True, "")])
 tk_install.crypto.comprobar_restos = lambda unidad: (
     mirado.append(("restos", unidad)) or [device.Check("Restos", "aviso", "x")])
-comprobaciones = getattr(tk_install, "comprobaciones_dispositivo",
+comprobaciones = getattr(lecturas_asistente, "comprobaciones_dispositivo",
                          lambda *a: [("no existe comprobaciones_dispositivo", False, "")])
 try:
     filas = comprobaciones(UNIDAD_A, ["p0"], None, "veracrypt", UNIDAD_B)
@@ -676,6 +703,68 @@ finally:
 c("  sin ningún callback de Tk fallido", errores, [])
 
 
+# El Python comprobado es de un recorrido y de una conexión: al soltar una, o al
+# cambiar de recorrido, no se enseña en el otro.
+lanzar_previo = segundo_plano.lanzar
+con_lanzar(LANZAR_REAL)
+wiz = nuevo_asistente(UNIDAD_A)
+wiz.catalog = wiz.rclone = None
+wiz.conf = SimpleNamespace(path="CONF", close=lambda: None)
+en_paso(wiz, PASO["Comprobaciones"])
+boton(wiz, "Comprobar").invoke()
+c("«Comprobar» en una unidad guarda el Python comprobado", wiz.python_equipo is not None, True)
+wiz.soltar_conexion()
+c("soltar la conexión suelta también el Python comprobado", wiz.python_equipo, None)
+wiz.conf = SimpleNamespace(path="CONF", close=lambda: None)
+wiz.rclone = remote.Rclone("RCLONE", "CONF", remote_name="nas")
+wiz.catalog = remote.parse_catalog(CATALOGO)
+boton(wiz, "Comprobar").invoke()
+en_paso(wiz, PASO["¿Dónde?"])
+next(b for b in widgets(wiz.cuerpo, ttk.Radiobutton) if b.cget("text") == "En este equipo").invoke()
+c("cambiar a «En este equipo» olvida el Python comprobado de la unidad",
+  wiz.python_equipo, None)
+next(b for b in widgets(wiz.cuerpo, ttk.Radiobutton) if b.cget("text") == "En una unidad").invoke()
+en_paso(wiz, PASO["Comprobaciones"])
+vistos = textos(wiz)
+c("volver a «En una unidad» no enseña un Python que no se ha comprobado allí",
+  ("el de mentira (con Tkinter)" in vistos, "Python en este equipo" in vistos),
+  (False, True))
+wiz.root.destroy()
+con_lanzar(lanzar_previo)
+
+# Cerrar el asistente con una medida de escritura en vuelo: se espera a que
+# acabe y quite su temporal, antes de que el proceso termine.
+medir_real = crypto.medir_escritura
+
+
+def medir_lenta(root, muestra=0):
+    """Una medida que tarda: deja su temporal mientras escribe y lo quita al acabar."""
+    temporal = Path(root) / crypto.SONDA_NOMBRE
+    try:
+        temporal.write_bytes(b"\0" * 4096)
+        time.sleep(0.4)
+        return 10 * 1024 ** 2
+    finally:
+        temporal.unlink(missing_ok=True)
+
+
+crypto.medir_escritura = medir_lenta
+lanzar_previo = segundo_plano.lanzar
+try:
+    con_lanzar(LANZAR_REAL)
+    wiz = nuevo_asistente(UNIDAD_A)
+    temporal = UNIDAD_A / crypto.SONDA_NOMBRE
+    sonda = lecturas_asistente.sonda_de(wiz.state)
+    dar_vueltas(temporal.exists)
+    wiz.root.destroy()
+    tk_install.cerrar(wiz)
+    c("cerrar el asistente espera a la medida que escribe", sonda.encargo.hecho, True)
+    c("  y su temporal no queda en la unidad", temporal.exists(), False)
+finally:
+    crypto.medir_escritura = medir_real
+    con_lanzar(lanzar_previo)
+
+
 # 4. Lo que cabe en cada paso
 con_lanzar(segundo_plano.en_el_acto)
 tk_install.working = lambda parent, titulo, funcion, mensaje="", progreso=None: (
@@ -768,6 +857,29 @@ c("  elegir otra vez «importar» no lo rehace", contar(wiz), con_importar)
 c("  y lo escrito en él sigue ahí", caja_conf.get(),
   "/home/alguien/.config/rclone/rclone.conf")
 wiz.root.destroy()
+c("«Conexión» sin «Importar» tiene 34 widgets", sin_importar, 34)
+c("  y con «Importar» elegido, 41 (fuera del presupuesto de 40)", con_importar, 41)
+
+
+def instalacion_en(carpeta) -> int:
+    """Cuántos widgets tiene «Instalación» con esa carpeta como destino."""
+    wiz = nuevo_asistente(carpeta)
+    wiz.pasos = tk_install.PASOS_INSTALACION
+    en_paso(wiz, PASO["Instalación"])
+    n = contar(wiz)
+    wiz.root.destroy()
+    return n
+
+
+vacia = tmpdir("prdrive-asis-vacia-")
+con_programa = tmpdir("prdrive-asis-programa-")
+(con_programa / ".prdrive").mkdir()
+(con_programa / ".prdrive" / "sync.py").write_text("# de mentira\n", encoding="utf-8")
+ajena = tmpdir("prdrive-asis-ajena-")
+(ajena / "fotos.txt").write_text("mis cosas", encoding="utf-8")
+c("«Instalación» en una unidad vacía: 39 widgets", instalacion_en(vacia), 39)
+c("  con un prdrive ya puesto (la marca y su botón): 42", instalacion_en(con_programa), 42)
+c("  con una unidad ajena (el aviso ámbar): 45", instalacion_en(ajena), 45)
 
 c("ningún callback de Tk ha fallado", errores, [])
 
