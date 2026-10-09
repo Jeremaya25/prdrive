@@ -31,7 +31,8 @@ from common import APP_NAME, model, progress, store
 from common.model import Config
 
 from . import (Choice, abrir, avisos_de_resync, cifrado, cuando_sello, icons, manual_args,
-               pair_status_notes, pair_times, perf_al_pintar, prefs, theme)
+               pair_status_notes, pair_times, perf_activo, perf_al_pintar, perf_desde_inicio,
+               perf_empezar, prefs, theme)
 
 TITLE = APP_NAME
 """El nombre de la ventana, que sale de `common/`."""
@@ -2047,6 +2048,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         posterior) deja la ventana libre. Un hilo que falló deja una lectura
         vacía, la de una ventana sin nada que enseñar.
         """
+        perf_empezar("llega-instantanea")
         from . import instantanea
 
         inst = encargo.resultado
@@ -2077,6 +2079,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         # Lo último: un suscriptor que falla (una pantalla a medio cerrar) no
         # deja esta ventana a medias.
         la_compartida().poner(inst)
+        perf_al_pintar(root, "llega-instantanea")
 
     def refrescar_instantanea(libera: bool = False) -> None:
         """Lee en un hilo lo que la ventana enseña del dispositivo, y lo aplica al llegar.
@@ -2128,11 +2131,13 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         ninguna marcada no se guarda nada (`prefs.guardar_parejas`) y queda la
         anterior.
         """
+        perf_empezar("marcar")
         v.contar()
         seleccion.poner(vista["config"], selected())
         if vista["volcado"] is not None:
             root.after_cancel(vista["volcado"])
         vista["volcado"] = root.after(prefs.ESPERA_MS, volcar_seleccion)
+        perf_al_pintar(root, "marcar")
 
     def marcar_todas() -> None:
         """Marca todas las casillas, o las desmarca si ya lo están."""
@@ -2304,6 +2309,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
 
     def abrir_parejas() -> None:
         """Abre «Parejas…» y, si se ha guardado algo, relee el config y el estado."""
+        perf_empezar("open-parejas")
         from . import tk_pairs
 
         if tk_pairs.open_dialog(root, vista["config"], compartida=la_compartida()):
@@ -2364,6 +2370,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         remoto en la ventana de salida de siempre; y volver a leer el estado o
         el vigilante si se han tocado. Si no ha cambiado nada no se toca nada.
         """
+        perf_empezar("open-ajustes")
         from . import tk_doctor, tk_update
 
         inst = vista["inst"]
@@ -2374,6 +2381,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
             vigilante=vigilante_actual(),
             hallazgos=list(inst.hallazgos) if inst is not None else None,
             marcadas=selected(), compartida=la_compartida())
+        perf_empezar("volver-ajustes")
         if (hecho.get("actualizaciones") is True
                 or hecho.get("componentes") == tk_update.CERRAR):
             result["choice"] = None
@@ -2401,6 +2409,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         if releer:
             refrescar_instantanea()
         mirar_pendiente()
+        perf_al_pintar(root, "volver-ajustes")
 
     def expulsar() -> None:
         """Cierra el llavero, la ventana y el contenedor, para poder quitar la unidad.
@@ -2532,10 +2541,14 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
                 vista["en_curso"] = False
                 reajustar()
                 raise
+            perf_al_pintar(root, "volver-pasada")
 
         try:
             output_window(titulo, orden_sync(args), parent=root,
                           subtitulo=subtitulo_sync(args), modal=False, al_cerrar=al_cerrar)
+            # La marca va a la principal: `output_window` no devuelve la de salida, y
+            # `perf_al_pintar` solo usa la raíz de Tk, que es la misma para las dos.
+            perf_al_pintar(root, "sincronizar-ventana")
         except BaseException:
             vista["en_curso"] = False
             reajustar()
@@ -2552,7 +2565,10 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         """
         sel = selected()
         if not sel:
-            return  # nada marcado, nada que hacer
+            return  # nada marcado, nada que hacer: el botón responde, y no hay pasada que medir
+        # Después de la guarda: con el botón activo y nada marcado, un inicio aquí
+        # quedaría abierto y la próxima pasada lo cerraría con minutos de retraso.
+        perf_empezar("sincronizar-ventana")
         vista["en_curso"] = True
         reajustar()
         root.after(1, continuar, sel)
@@ -2646,6 +2662,11 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
     root.visor.encajar(root)
     centrar(root)
     ensenar(root)
+    if perf_activo():
+        # Desde que el proceso existe, no desde aquí: el mismo punto que el cronómetro del chequeo.
+        edad = perf_desde_inicio()
+        if edad is not None:
+            perf_al_pintar(root, "start-main", time.perf_counter() - edad / 1000)
     # Después de enseñarla, no antes: la lectura del dispositivo, la
     # comprobación de versión y el recorrido de las carpetas no pueden retrasar
     # la apertura ni un parpadeo. La lectura va la primera, en cuanto Tk tiene
@@ -2883,6 +2904,8 @@ def _volcar(texto, salida: _Salida, lineas: list[str]) -> None:
     """
     if not lineas:
         return
+    if not salida.completa:
+        perf_empezar("log-10k")          # la primera tanda: empieza el volcado de la pasada
     sustituye, trozos = salida.anadir(lineas)
     texto.configure(state="normal")
     try:
@@ -3082,12 +3105,15 @@ def output_window(title: str, cmd: list[str], parent=None,
         bien = rc == 0 or especial is not None
         verdict = ("OK" if rc == 0 else especial if bien
                    else f"ERROR (código {rc})")
+        impresas = len(salida.completa)
         _volcar(text, salida, [f"\n=== Terminado: {verdict} ===\n"])
         root.title(f"{TITLE} — {title} — {verdict}")
         nuevo = theme.chip(barra, f"{'terminado' if bien else verdict} · {segundos} s",
                            "Ok." if bien else "Peligro.", "ok" if bien else "warn")
         estado.destroy()
         nuevo.grid(row=0, column=2, rowspan=2, sticky="e")
+        if impresas >= 1000:             # solo los volcados grandes: es lo que `log-10k` mide
+            perf_al_pintar(root, "log-10k", lineas=impresas)
 
     def poll() -> None:
         """Pasa a la ventana, de una vez, lo que haya en la cola, cada 120 ms."""
@@ -3196,6 +3222,7 @@ def output_window(title: str, cmd: list[str], parent=None,
         if evento.widget is not root or avisado["ya"]:
             return
         avisado["ya"] = True
+        perf_empezar("volver-pasada")
         cortar()
         if al_cerrar is not None:
             rc = state["rc"] if state["rc"] is not None else 1

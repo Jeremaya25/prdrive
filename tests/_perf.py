@@ -9,6 +9,7 @@ toca el `logs/` ni el `%LOCALAPPDATA%` de quien lo corre.
 from __future__ import annotations
 
 import os
+import sys
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -81,3 +82,19 @@ def vaciar() -> None:
     import ui
 
     ui.perf_volcar()
+
+
+def salir(codigo: int) -> None:
+    """Termina el test con `codigo` sin pasar por la limpieza del intérprete.
+
+    Con la medida encendida sigue vivo el hilo que vuelca las marcas, y al cerrarse
+    el intérprete las imágenes de Tk que aún existen se liberan cuando Tkinter ya no
+    tiene sus clases: cada una imprime un «Exception ignored» (cientos de líneas con
+    rc 0). Lo que se tenía que escribir ya está escrito al salir de `con_perf()`.
+
+    Args:
+        codigo: El código de salida del proceso.
+    """
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(codigo)
