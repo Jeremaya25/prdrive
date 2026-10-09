@@ -174,6 +174,10 @@ def cuentas(lineas: list[dict], arbol: str) -> dict[str, dict]:
         elif esc.startswith("pane-"):
             apuntar("tema.apartado", c.get("tema"), d)
             apuntar("estilos.apartado", c.get("estilos_tardios"), d)
+        elif esc == "llega-instantanea":
+            # La principal con la lectura compartida ya aplicada: los widgets que pone la
+            # lectura en la ventana (las parejas de la lista). Solo lo mide el flujo `principal`.
+            apuntar(f"widgets.main_leida{_pares(d)}", c.get("widgets"), d)
         elif esc == "marcar":
             apuntar("escrituras.marcar", c.get("escrituras"), d)
     for v in vistos.values():

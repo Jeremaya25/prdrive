@@ -4,6 +4,8 @@
 #            el PR que consigue la rebaja (el resumen del trabajo avisa cuando se puede) y se
 #            sube solo diciéndolo en la descripción del PR. Las claves:
 #              widgets.<pantalla>[.p5|.p50]   widgets de la pantalla recién abierta, con 5 o 50 parejas
+#              widgets.main_leida[.p5|.p50]   widgets de la principal con la lectura compartida ya aplicada
+#                                             (`llega-instantanea`, flujo `principal`), con 5 o 50 parejas
 #              modulos.<pantalla>             len(sys.modules) al llamar a mainloop() la primera vez
 #              tema.arranque.<pantalla>       pasadas de <<ThemeChanged>> hasta el primer pintado
 #              tema.abrir.<pantalla>          ... al abrir «Parejas» / «Ajustes» con el programa abierto
@@ -32,6 +34,10 @@
 [techo]
 "widgets.main.p5" = 45
 "widgets.main.p50" = 225
+# La principal con la lectura compartida ya aplicada (`llega-instantanea`): sus widgets con las
+# parejas que la lectura pone en la lista.
+"widgets.main_leida.p5" = 50
+"widgets.main_leida.p50" = 230
 "widgets.parejas.p5" = 83
 # La lista sobre un lienzo (etapa 2, tarea 14): las mismas piezas con 5 parejas que con 50.
 "widgets.parejas.p50" = 83

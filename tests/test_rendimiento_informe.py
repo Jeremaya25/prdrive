@@ -125,6 +125,26 @@ c("las cuentas llevan las parejas en la clave",
 # --- al 150 % las cuentas no cuentan (una barra de desplazamiento cambia el número)
 c("las cuentas se toman al 100 %", informe.cuentas([dict(a5, escala="2.0")], "pr"), {})
 
+# --- la principal ya leída: los widgets que añade la lectura compartida, con sus parejas
+def leida(pares, widgets, escala="1.0", arbol="pr"):
+    return {"arbol": arbol, "scenario": "llega-instantanea", "ms": 40, "ronda": 0, "pares": pares,
+            "escala": escala, "detail": {"cuentas": {"widgets": widgets}}}
+
+
+claves_leida = informe.cuentas([leida(5, 240), leida(50, 1190)], "pr")
+c("la principal con la lectura aplicada tiene sus widgets con 5 y con 50 parejas",
+  {k: v["valor"] for k, v in claves_leida.items()},
+  {"widgets.main_leida.p5": 240, "widgets.main_leida.p50": 1190})
+c("  y al 150 % no cuentan, como las demás",
+  informe.cuentas([leida(5, 240, escala="2.0")], "pr"), {})
+pres_leida = {"techo": {"widgets.main_leida.p5": 240}}
+c("una principal leída en su techo no falla",
+  veredicto([leida(5, 240)], pres_leida)["fallos"], [])
+sobre_leida = veredicto([leida(5, 241)], pres_leida)
+c("una principal leída por encima de su techo falla y nombra la cuenta",
+  (len(sobre_leida["fallos"]), any("widgets.main_leida.p5" in f for f in sobre_leida["fallos"])),
+  (1, True))
+
 # --- la ventana abierta: los momentos que se miden una vez abierta
 MOMENTOS_NUEVOS = ("llega-instantanea", "marcar", "sincronizar-ventana", "volver-pasada",
                    "elegir-fila", "elegir-pareja", "reabrir-parejas", "pane-otra-vez",
@@ -265,6 +285,14 @@ c("las seis cuentas nuevas tienen techo, y el mismo en Windows y en Linux (no de
 c("  el de los temas y los estilos tardíos, 0 (su meta)",
   {k: (techo_linux[k], real["meta"][k]) for k in CUENTAS_FLOTA if k.startswith(("tema", "estilos"))},
   {k: (0, 0) for k in CUENTAS_FLOTA if k.startswith(("tema", "estilos"))})
+LEIDA = ("widgets.main_leida.p5", "widgets.main_leida.p50")
+c("la principal con la lectura aplicada tiene techo con 5 y con 50 parejas, el mismo en Windows y en Linux",
+  ([k for k in LEIDA if k not in techo_linux],
+   [k for k in LEIDA if techo_linux.get(k) != informe.techos(real, "windows-x64").get(k)]),
+  ([], []))
+c("  y la lectura compartida se mide sin meta de widgets (su meta es la de `widgets.main`, ninguna)",
+  [k for k in LEIDA if k in real["meta"]], [])
+c("  y la de los widgets de la principal sin leer sigue en su techo", "widgets.main.p5" in techo_linux, True)
 c("  y la meta de los widgets, la del diseño (35 «Dispositivos», 34 el editor de flags)",
   (real["meta"]["widgets.dispositivos"], real["meta"]["widgets.flags"]), (35, 34))
 # El techo solo baja: parte de lo medido al empezar la etapa 3 (134 y 69) y lo rebaja la tarea que

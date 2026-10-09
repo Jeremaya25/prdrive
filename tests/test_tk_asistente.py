@@ -18,7 +18,8 @@ falta, hilos de verdad, se comprueba:
   tras «Actualizar lista»;
 - que cambiar de paso con una lectura en vuelo no deja espera ni llegada;
 - que cerrar el asistente desde su propio bucle (`run_wizard()`) espera a la
-  medida de escritura que va en vuelo, y no deja su temporal en la unidad;
+  medida de escritura que va en vuelo, no deja su temporal en la unidad y cierra
+  su `rclone.conf` efímero;
 - y que cada paso de los tres recorridos de una unidad cabe en 40 widgets,
   salvo tres estados que se miden y se fijan («Conexión» con «Importar», 41;
   «Instalación» con el programa, 42, y con una unidad ajena, 45), y
@@ -861,6 +862,7 @@ finally:
 # y destruye la raíz, como si la persona cerrase la ventana en ese momento.
 ventanas: list = []                     # los asistentes que construye `run_wizard()`
 cierres: list = []                      # (sonda, si el temporal existía al cerrar)
+cierres_conf: list = []                 # cada close() del rclone.conf del asistente
 build_real, tk_raiz_real = tk_install.build, tk.Tk
 
 
@@ -885,6 +887,8 @@ class RaizQueSeCierra(tk_raiz_real):
         while not temporal_.exists() and time.monotonic() < fin:
             time.sleep(0.01)
         cierres.append((sonda_, temporal_.exists()))
+        ventanas[-1].conf = SimpleNamespace(path="CONF",
+                                            close=lambda: cierres_conf.append("close"))
         self.destroy()
 
 
@@ -905,6 +909,7 @@ c("el asistente cerrado desde su bucle devuelve 0", rc_bucle, 0)
 c("  con la medida todavía escribiendo al cerrar la ventana", existia_al_cerrar, True)
 c("  y al volver, la medida ya acabó", sonda_bucle.encargo.hecho, True)
 c("  y su temporal no queda en la unidad", (UNIDAD_A / crypto.SONDA_NOMBRE).exists(), False)
+c("  y cierra el rclone.conf efímero de la conexión, una sola vez", cierres_conf, ["close"])
 
 
 # 4. Lo que cabe en cada paso

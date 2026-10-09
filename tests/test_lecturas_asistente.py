@@ -4,7 +4,9 @@
 Lo que se comprueba es lo que cuida los datos y las decisiones del asistente:
 - `ExamenDiferido`: un examen de un texto que ya no está escrito NO cuenta (ni
   enciende «Siguiente» ni deja crear un contenedor sobre una carpeta sin mirar);
-  una tecla deja el examen pendiente, y `ya()` lo hace en el acto.
+  una tecla deja el examen pendiente, y `ya()` lo hace en el acto (y olvida el
+  anterior hasta que llega el nuevo); un `<Destroy>` de un hijo de la caja no
+  cancela su espera, el de la propia caja sí.
 - La sonda de escritura de una unidad: una sola por unidad, `midiendo()` solo
   mientras escribe y hasta su tope, y lo que dice `texto_espera()` en cada
   estado (midiendo, no se ha podido, con su división).
@@ -63,12 +65,14 @@ class Ancla:
     Attributes:
         pendientes: `id → (ms, función, argumentos)` de cada `after` sin cancelar.
         enlaces: Los `bind` pedidos.
+        funciones: `evento → función` de cada `bind`, para dispararlo a mano.
     """
 
     def __init__(self) -> None:
         """Empieza sin esperas."""
         self.pendientes: dict = {}
         self.enlaces: list = []
+        self.funciones: dict = {}
         self._n = 0
 
     def after(self, ms, funcion, *args):
@@ -83,8 +87,9 @@ class Ancla:
         self.pendientes.pop(ident, None)
 
     def bind(self, evento, funcion, add=None) -> None:
-        """Apunta el enlace."""
+        """Apunta el enlace y su función."""
         self.enlaces.append(evento)
+        self.funciones[evento] = funcion
 
     def __str__(self) -> str:
         """Se nombra como una caja, para el `<Destroy>`."""
@@ -187,6 +192,46 @@ try:
        la.examen_fallido(pendientes.encargos[0]).texto), (False, True))
 finally:
     segundo_plano.lanzar = LANZAR_REAL
+
+# 1b. ya() olvida el examen anterior: hasta que llega el nuevo no hay ninguno que valga
+pendientes = Pendientes()
+segundo_plano.lanzar = pendientes
+try:
+    ancla, sondeo = Ancla(), SondeoFalso()
+    de_ya = la.ExamenDiferido(ancla, lambda: ("C",), lambda t: f"examen de {t}",
+                              lambda: None, lambda e: None, sondeo)
+    de_ya.ya()
+    pendientes.encargos[0].correr()
+    sondeo.recoger()
+    c("un examen vale mientras lo escrito no cambie", de_ya.vigente(), "examen de C")
+    de_ya.ya()
+    c("ya() olvida el examen anterior en el acto: vigente() es None hasta que llegue el nuevo",
+      (de_ya.examinada, de_ya.resultado, de_ya.vigente()), (None, None, None))
+    pendientes.encargos[1].correr()
+    sondeo.recoger()
+    c("  y cuando llega el examen de ahora, vale otra vez", de_ya.vigente(), "examen de C")
+finally:
+    segundo_plano.lanzar = LANZAR_REAL
+
+
+# 1c. El <Destroy> de un hijo de la caja no cancela su espera; el de la caja sí
+class Hijo:
+    """Un widget dentro de la caja: su nombre de Tk empieza por el de la caja."""
+
+    def __str__(self) -> str:
+        """Se nombra como un hijo de la caja."""
+        return "ancla.marco"
+
+
+ancla, sondeo = Ancla(), SondeoFalso()
+de_destruir = la.ExamenDiferido(ancla, lambda: ("x",), lambda t: t,
+                                lambda: None, lambda e: None, sondeo)
+de_destruir.tecla()
+c("con una tecla, la espera del examen está puesta", len(ancla.pendientes), 1)
+ancla.funciones["<Destroy>"](SimpleNamespace(widget=Hijo()))
+c("el <Destroy> de un hijo de la caja no cancela la espera", len(ancla.pendientes), 1)
+ancla.funciones["<Destroy>"](SimpleNamespace(widget=ancla))
+c("el <Destroy> de la propia caja sí la cancela", len(ancla.pendientes), 0)
 
 
 # 2. la sonda de escritura: una por unidad, y sus estados

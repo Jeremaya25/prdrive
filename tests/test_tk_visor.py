@@ -16,6 +16,9 @@ en todas las ventanas. Se comprueba que:
 - `encajar()` llega al tamaño final sin dar nunca al recuadro uno que no se
   queda cuando puede saberlo sin probar (en Windows cada cambio de tamaño de la
   ventana repinta todos sus widgets), y el tamaño final es el de siempre.
+- La barra horizontal no existe mientras el contenido cabe; al aparecer y al
+  quitarse no mueve lo que se ve ni cambia el tamaño de la ventana, y el mismo
+  widget vuelve a ponerse.
 
 Las ventanas se crean sin entrar en el bucle de eventos.
 """
@@ -542,5 +545,59 @@ try:
     top.destroy()
 finally:
     uitk.pantalla_util = PANTALLA_ANTERIOR
+
+# 11. La barra horizontal se crea al desbordar y, al aparecer o quitarse, no mueve lo que se ve
+#     ni cambia el tamaño de la ventana (sin barra, la franja ya está reservada en la ventana).
+def barras_horizontales(ventana) -> list:
+    """Devuelve las barras horizontales que cuelgan de `ventana`, estén puestas o no."""
+    return [w for w in descendientes(ventana)
+            if isinstance(w, ttk.Scrollbar) and str(w.cget("orient")) == "horizontal"]
+
+
+def mapa(ventana, visor, hoja) -> tuple:
+    """Devuelve dónde está lo que se ve y lo que pide la ventana, para ver si algo se movió."""
+    return ((hoja.winfo_rootx(), hoja.winfo_rooty()),
+            (visor.lienzo.winfo_rootx(), visor.lienzo.winfo_rooty()),
+            (ventana.winfo_width(), ventana.winfo_height()),
+            (ventana.winfo_reqwidth(), ventana.winfo_reqheight()))
+
+
+top = tk.Toplevel(raiz)
+top.withdraw()
+visor = con_visor(top, ancho=300, alto=200)
+hoja = ttk.Button(visor.interior, text="Hoja")
+hoja.grid(row=0, column=0, sticky="nw")
+ancho = ttk.Frame(visor.interior, width=20, height=20)
+ancho.grid(row=1, column=0, sticky="w")
+visor.encajar(top)                    # como `mostrar()`: la barra solo nace ya encajado
+top.deiconify()
+top.update()
+c("con el contenido dentro de la mirilla, no existe ningún widget de barra horizontal",
+  barras_horizontales(top), [])
+reposo = mapa(top, visor, hoja)
+ancho.configure(width=700)
+top.update()
+top.update()
+barra = visor.horizontal
+c("al desbordar por la derecha aparece la barra: una sola, y la del Visor",
+  (len(barras_horizontales(top)), barra is not None and barra in barras_horizontales(top)),
+  (1, True))
+c("  puesta, y la barra vertical no", visor.barras(), (False, True))
+c("  lo que se ve no se mueve ni cambia el tamaño de la ventana (ni lo que pide)",
+  mapa(top, visor, hoja), reposo)
+ancho.configure(width=20)
+top.update()
+top.update()
+c("al menguar el contenido, la barra se quita sin moverse nada",
+  (visor.barras(), mapa(top, visor, hoja)), ((False, False), reposo))
+c("  y el widget sigue ahí, como el que se reutiliza al volver a desbordar",
+  barras_horizontales(top) == [barra], True)
+ancho.configure(width=700)
+top.update()
+top.update()
+c("al volver a desbordar, la misma barra se pone otra vez sin moverse nada",
+  (visor.barras(), visor.horizontal is barra, mapa(top, visor, hoja)),
+  ((False, True), True, reposo))
+top.destroy()
 raiz.destroy()
 sys.exit(c.report())
