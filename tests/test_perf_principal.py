@@ -152,14 +152,15 @@ def texto_de(ventana) -> str:
 def abrir(accion) -> None:
     """Abre la principal de verdad, deja llegar su primera lectura y hace `accion(root)`.
 
-    La sonda sustituye al bucle de eventos: el primer `update()` pinta y procesa lo
-    pendiente (`start-main`), se cancelan los sondeos y la lectura se entrega a mano,
-    como la reparte el sondeo. Al final la ventana se destruye aunque la acción falle.
+    La sonda sustituye al bucle de eventos: un rato del bucle pinta y procesa lo
+    pendiente (`start-main`, que vence al instante), se cancelan los sondeos y la lectura
+    se entrega a mano, como la reparte el sondeo. Al final la ventana se destruye
+    aunque la acción falle.
     """
     def conducir(root, n=0) -> None:
         """La sonda que sustituye al bucle de eventos."""
         try:
-            root.update()
+            asentar(root, 0.01)
             cancelar_esperas(root)
             root.instantanea.correr()
             root.sondeo_instantanea._mirar()

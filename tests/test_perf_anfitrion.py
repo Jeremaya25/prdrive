@@ -58,10 +58,13 @@ device.list_volumes = lambda *a, **k: []
 def bombear(self, n: int = 0) -> None:
     """Hace de `mainloop`: despacha lo pendiente y cierra la ventana, sin esperar a nadie.
 
-    Las marcas van en `after_idle` y se despachan aquí. Las cuentas atrás que queden
+    Las marcas de `perf_al_pintar` son temporizadores (`after(0)`): este `update()` las
+    procesa antes de cancelar lo que quede. Las cuentas atrás que queden
     pendientes se cancelan, para que no disparen cuando otro bloque de la prueba
     vuelva a bombear el mismo intérprete.
     """
+    self.update()
+    time.sleep(0.005)
     self.update()
     for pendiente in self.tk.splitlist(self.tk.call("after", "info")):
         self.after_cancel(pendiente)
@@ -222,30 +225,50 @@ c("pregunta.py: start-agente no pasa del tiempo de pared del proceso",
 
 # 5. Los pasos del asistente: cada «Siguiente» o «Atrás» anota el paso al que llega.
 ui.perf_quien = "wizard"
+
+
+def asentar(root, segundos: float = 0.02) -> None:
+    """Deja correr el bucle de Tk un rato, para que se ejecuten los cierres pendientes de `perf_al_pintar`.
+
+    Un `update()` corre los temporizadores vencidos; un cierre que se programa mientras
+    corre el bucle puede quedar para la vuelta siguiente, y el rato lo recoge.
+
+    Args:
+        root: La raíz de Tk de la prueba.
+        segundos: Cuánto tiempo dejar correr el bucle.
+    """
+    fin = time.monotonic() + segundos
+    while True:
+        root.update()
+        if time.monotonic() >= fin:
+            return
+        time.sleep(0.002)
+
+
 try:
     with _perf.con_perf(TMP / "pasos") as t:
         raiz = tk.Tk()
         raiz.withdraw()
         try:
             wiz = tk_install.build(raiz)
-            raiz.update()
+            asentar(raiz)
             _perf.vaciar()
             c("el primer paso no tiene marca propia (lo cuenta start-wizard) y no crea el equipo",
               (len(_perf.lineas(t, "paso-donde", host=True)), (t / "equipo").exists()), (0, False))
             wiz.ir(+1)
-            raiz.update()
+            asentar(raiz)
             _perf.vaciar()
             c("«Siguiente» a «Dispositivo»: paso-dispositivo una vez, en el equipo y no en el dispositivo",
               (len(_perf.lineas(t, "paso-dispositivo", host=True)),
                len(_perf.lineas(t, "paso-dispositivo"))), (1, 0))
             c("  y esa marca crea la carpeta del equipo", (t / "equipo").is_dir(), True)
             wiz.ir(+1)
-            raiz.update()
+            asentar(raiz)
             _perf.vaciar()
             c("«Siguiente» a «Cifrado»: paso-cifrado una vez",
               len(_perf.lineas(t, "paso-cifrado", host=True)), 1)
             wiz.ir(-1)
-            raiz.update()
+            asentar(raiz)
             _perf.vaciar()
             segunda = _perf.lineas(t, "paso-dispositivo", host=True)
             c("«Atrás» vuelve a contar: paso-dispositivo llega a dos, la segunda con vez=2",

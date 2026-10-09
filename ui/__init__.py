@@ -493,11 +493,19 @@ def perf_al_pintar(widget, momento: str, t0: float | None = None, *,
                    host: bool = False, **detalle) -> None:
     """Cierra un momento cuando la ventana acaba de pintarse y anota cuánto ha tardado.
 
-    La callback va en `after_idle` de la raíz de Tk (la que sobrevive a los
-    diálogos). Antes de medir hace `update()`: así el final cae donde acaba la
-    medida del chequeo de tiempos, después de los redibujados que provoca el
-    cambio. Sin ese `update()` un cambio que mueve 400 widgets se medía en 1 ms,
-    y en realidad tarda 47.
+    La callback va en un temporizador (`after(0)`) de la raíz de Tk, la que sobrevive
+    a los diálogos. No es una callback de inactividad: esa también corre dentro de
+    `update_idletasks()`, mientras otro código todavía coloca una ventana que no se
+    ha enseñado, y el `update()` del cierre procesaría ahí eventos y temporizadores
+    a medio colocar. Los temporizadores solo corren en el bucle de eventos
+    (`mainloop`, `wait_window`) o en un `update()` completo. Vence al instante
+    (`after(0)`, no `after(1)`): un plazo de 1 ms espera al tic del reloj, de unos
+    15 ms en Windows, y un temporizador que aún no ha vencido se pierde si se
+    cancelan las esperas pendientes de la raíz.
+
+    Antes de medir hace `update()`: así el final cae donde acaba la medida del chequeo
+    de tiempos, después de los redibujados que provoca el cambio. Sin ese `update()`
+    un cambio que mueve 400 widgets se medía en 1 ms, y en realidad tarda 47.
 
     Args:
         widget: Cualquier widget de la ventana; de él se saca la raíz.
@@ -526,7 +534,7 @@ def perf_al_pintar(widget, momento: str, t0: float | None = None, *,
             except Exception:                        # noqa: BLE001 — la medida no tumba la ventana
                 pass
 
-        raiz.after_idle(al_pintar)
+        raiz.after(0, al_pintar)                 # vence ya: sin esperar un tic del reloj
     except Exception:                                # noqa: BLE001 — la ventana ya no existe
         pass
 

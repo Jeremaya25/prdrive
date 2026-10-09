@@ -16,6 +16,7 @@ Solo la apertura usa la de verdad.
 """
 
 import sys
+import time
 
 from _harness import Checks, sandbox
 
@@ -74,6 +75,24 @@ def recorrer(w):
         yield from recorrer(hijo)
 
 
+def asentar(dlg, segundos: float = 0.02) -> None:
+    """Deja correr el bucle de Tk un rato, para que se ejecuten los cierres pendientes de `perf_al_pintar`.
+
+    Un `update()` corre los temporizadores vencidos; un cierre que se programa mientras
+    corre el bucle puede quedar para la vuelta siguiente, y el rato lo recoge.
+
+    Args:
+        dlg: La ventana de «Ajustes».
+        segundos: Cuánto tiempo dejar correr el bucle.
+    """
+    fin = time.monotonic() + segundos
+    while True:
+        dlg.update()
+        if time.monotonic() >= fin:
+            return
+        time.sleep(0.002)
+
+
 def pulsar(dlg, clave: str) -> None:
     """Pulsa el botón de la barra lateral del apartado, como quien lo usa."""
     for b in recorrer(dlg):
@@ -129,11 +148,11 @@ with sandbox() as tmp, _perf.con_perf(tmp) as t:
         """Pulsa cada apartado, uno tras otro, y apunta cuántas líneas deja cada uno."""
         for clave in ORDEN:
             pulsar(dlg, clave)
-            dlg.update()                              # el pintado, que cierra la medida
+            asentar(dlg)                              # el pintado, que cierra la medida
         _perf.vaciar()
         visto["tras recorrer"] = {k: len(_perf.lineas(t, f"pane-{k}")) for k in ORDEN}
         pulsar(dlg, "actualizaciones")                # ya a la vista: retorno temprano
-        dlg.update()
+        asentar(dlg)
         _perf.vaciar()
         visto["tras repetir"] = len(_perf.lineas(t, "pane-actualizaciones"))
 

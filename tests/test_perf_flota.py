@@ -108,11 +108,10 @@ def abrir(accion=None) -> None:
     def cuando_se_vea() -> None:
         """Corre `dentro` en cuanto `mostrar()` ha enseñado la ventana.
 
-        Un temporizador fijo puede vencer antes: `Visor.encajar()` hace un
-        `update_idletasks()` que ejecuta el `after_idle` que anota el pintado de
-        la medida, y ese hace un `update()`; así el temporizador vence antes de
-        que `mostrar()` enseñe la ventana. Con un límite, para que una ventana
-        que nunca llega no deje la prueba colgada.
+        Un temporizador fijo puede vencer antes de que `mostrar()` enseñe la
+        ventana, si un `update()` previo a la espera corre temporizadores. Con
+        este sondeo, `dentro()` corre solo cuando la ventana ya se ve. Con un
+        límite, para que una ventana que nunca llega no deje la prueba colgada.
         """
         dlgs = [w for w in raiz.winfo_children() if isinstance(w, tk.Toplevel)]
         if (dlgs and dlgs[-1].winfo_viewable()) or time.monotonic() > fin:
@@ -122,8 +121,9 @@ def abrir(accion=None) -> None:
 
     raiz.after(10, cuando_se_vea)
     tk_fleet.open_dialog(raiz, None, dict(RAW))
-    # El pintado de cada momento se anota en un after_idle: se procesa aquí, dentro de
-    # la sección que lo genera, y no en el diario de la siguiente.
+    # El pintado de cada momento se anota en un temporizador (`after(0)`): se procesa aquí, dentro
+    # de la sección que lo genera (con un momento de bucle), y no en el diario de la siguiente.
+    time.sleep(0.005)
     raiz.update()
 
 
