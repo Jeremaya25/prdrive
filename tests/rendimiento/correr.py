@@ -76,9 +76,10 @@ ESPERADOS = {
 RECUERDOS = (".prdrive/state/ventana.json",)
 """Lo que un dispositivo de verdad tiene desde que se abrió una vez y una copia nueva no.
 
-Es el ancho que recuerda la ventana principal. Al acabar cada flujo se devuelve a la
-plantilla, así que desde la vuelta de calentamiento cada pasada mide un dispositivo ya
-abierto antes; un árbol que no lo escribe (la 0.7.1) no cambia.
+Es lo que recuerda la ventana principal, el fichero entero: su ancho y lo que ocupa lo
+que va encima de la lista. Al acabar cada flujo se devuelve a la plantilla, así que desde
+la vuelta de calentamiento cada pasada mide un dispositivo ya abierto antes; un árbol
+que no lo escribe (la 0.7.1) no cambia.
 """
 
 

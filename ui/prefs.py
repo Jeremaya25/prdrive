@@ -27,8 +27,9 @@ automático nunca reescriba lo que se decidió a mano.
 El fichero conserva el nombre de cuando era «lo último que se eligió en la UI»:
 renombrarlo pediría una migración para cambiar una palabra.
 
-Aparte, en `state/ventana.json`, la ventana principal recuerda su ancho
-(`ancho_recordado`, `recordar_ancho`): no es cosa del servicio y no va en
+Aparte, en `state/ventana.json`, la ventana principal recuerda su ancho y lo
+que ocupa lo que va encima de la lista (`ancho_recordado`, `recordar_ancho`,
+`arriba_recordado`, `recordar_arriba`): no es cosa del servicio y no va en
 `ui_prefs.json`.
 """
 
@@ -54,11 +55,15 @@ Marcar varias seguidas escribe `ui_prefs.json` una vez (`SeleccionPendiente`),
 no una por clic.
 """
 VENTANA = "ventana.json"
-"""El fichero de `state/` donde la ventana principal recuerda su ancho.
+"""El fichero de `state/` donde la ventana principal recuerda su tamaño.
+
+Es `{"ancho": {clave: px}, "arriba": {clave: px}}`: el ancho de su contenido y lo
+que ocupa lo que va encima de la lista de parejas, cada uno por clave
+(`clave_ancho()`).
 
 No es `ui_prefs.json` a propósito: el agente del equipo vigila la fecha de ese
 fichero y recarga su servicio con cualquier cambio (`agente.py`,
-`_cargar_servicio`), y el ancho de una ventana no le dice nada al servicio.
+`_cargar_servicio`), y el tamaño de una ventana no le dice nada al servicio.
 """
 
 
@@ -354,17 +359,14 @@ def ancho_recordado(clave: str) -> int | None:
     Args:
         clave: La de `clave_ancho()`.
     """
-    anchos = store.read_json(ruta_ventana()).get("ancho")
-    ancho = anchos.get(clave) if isinstance(anchos, dict) else None
-    # `type` y no `isinstance`: un `True` también es un `int`.
-    return ancho if type(ancho) is int and ancho > 0 else None
+    return _recordado("ancho", clave, 1)
 
 
 def recordar_ancho(clave: str, ancho: int) -> bool:
     """Guarda el ancho de la principal para esa clave, solo si ha cambiado.
 
-    Conserva los de otras claves. Nunca lanza: un dispositivo de solo lectura,
-    o ya extraído, simplemente no lo recuerda.
+    Conserva los de otras claves y el alto de `recordar_arriba()`. Nunca lanza:
+    un dispositivo de solo lectura, o ya extraído, simplemente no lo recuerda.
 
     Args:
         clave: La de `clave_ancho()`.
@@ -373,11 +375,71 @@ def recordar_ancho(clave: str, ancho: int) -> bool:
     Returns:
         True si se ha escrito o ya estaba así; False si no se ha podido escribir.
     """
+    return _recordar("ancho", clave, ancho)
+
+
+def arriba_recordado(clave: str) -> int | None:
+    """Devuelve lo que ocupó la última vez lo que va encima de la lista, o `None`.
+
+    Es lo que ocupan, apiladas, las líneas que solo conoce la lectura del
+    dispositivo («Reparación…», el aviso de componentes) junto a las que ya
+    estaban en el primer pintado, con su margen, en píxeles. La ventana lo
+    reserva desde el primer pintado para que la lista no baje al llegar la
+    lectura. `0` es un valor: la última vez no había nada encima. Nunca lanza:
+    un fichero que falta, está a medias o no dice un alto para esa clave es
+    `None`.
+
+    Args:
+        clave: La de `clave_ancho()`.
+    """
+    return _recordado("arriba", clave, 0)
+
+
+def recordar_arriba(clave: str, alto: int) -> bool:
+    """Guarda lo que ocupa lo que va encima de la lista, solo si ha cambiado.
+
+    Conserva los de otras claves y el ancho de `recordar_ancho()`. Nunca lanza:
+    un dispositivo de solo lectura, o ya extraído, simplemente no lo recuerda.
+
+    Args:
+        clave: La de `clave_ancho()`.
+        alto: Lo que ocupan esas líneas con la lectura aplicada, en píxeles; 0
+            si no hay ninguna.
+
+    Returns:
+        True si se ha escrito o ya estaba así; False si no se ha podido escribir.
+    """
+    return _recordar("arriba", clave, alto)
+
+
+def _recordado(campo: str, clave: str, minimo: int) -> int | None:
+    """Lee de `ventana.json` el píxel recordado en `campo` para `clave`, o `None`.
+
+    Args:
+        campo: `"ancho"` o `"arriba"`.
+        clave: La de `clave_ancho()`.
+        minimo: El menor valor que vale; lo que no es un entero o es menor es
+            como si no hubiera nada.
+    """
+    valores = store.read_json(ruta_ventana()).get(campo)
+    valor = valores.get(clave) if isinstance(valores, dict) else None
+    # `type` y no `isinstance`: un `True` también es un `int`.
+    return valor if type(valor) is int and valor >= minimo else None
+
+
+def _recordar(campo: str, clave: str, valor: int) -> bool:
+    """Escribe en `ventana.json` el píxel de `campo` para `clave`, solo si cambia.
+
+    Conserva las demás claves de `campo` y todo lo que no sea `campo`.
+
+    Returns:
+        True si se ha escrito o ya estaba así; False si no se ha podido escribir.
+    """
     ruta = ruta_ventana()
     datos = store.read_json(ruta)
-    anchos = datos.get("ancho")
-    anchos = dict(anchos) if isinstance(anchos, dict) else {}
-    if type(anchos.get(clave)) is int and anchos[clave] == ancho:
+    valores = datos.get(campo)
+    valores = dict(valores) if isinstance(valores, dict) else {}
+    if type(valores.get(clave)) is int and valores[clave] == valor:
         return True  # ya estaba así: no se gasta escritura en el dispositivo
-    anchos[clave] = ancho
-    return store.write_json(ruta, {**datos, "ancho": anchos})
+    valores[clave] = valor
+    return store.write_json(ruta, {**datos, campo: valores})

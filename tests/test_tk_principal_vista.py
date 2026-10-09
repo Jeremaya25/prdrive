@@ -367,6 +367,98 @@ c("  así que el mismo estado, otra vez, se pinta entero",
 top.destroy()
 
 
+# 5c. lo que va encima de la lista se mide y se puede reservar de antemano, al píxel
+def y_de(v, widget) -> int:
+    """Devuelve dónde empieza `widget`, hijo del marco, dentro de él (con la rejilla al día)."""
+    v.marco.update_idletasks()
+    return widget.winfo_y()
+
+
+SOLO = lista(["a", "b"], ["a"])
+CON_LINEA = lista(["a", "b"], ["a"], reparacion=3, chip=("3 que revisar", "Aviso.", "warn"))
+CON_AVISO = lista(["a", "b"], ["a"], aviso="Servicio anterior (pid 4242) detenido.")
+CON_AMBOS = lista(["a", "b"], ["a"], aviso="Servicio anterior (pid 4242) detenido.",
+                  reparacion=3, chip=("3 que revisar", "Aviso.", "warn"))
+
+top, v = vista_nueva(SOLO)
+c("sin nada encima de la lista, encima no hay nada", v.alto_arriba(), 0)
+rotulo_solo = y_de(v, v._rotulo)
+top_linea, con = vista_nueva(CON_LINEA)
+linea = con._bloques["reparacion"]
+margen = top_linea.winfo_pixels(theme.E4)
+c("la línea de «Reparación…» ocupa lo que pide más su margen de arriba (el pady cuenta)",
+  con.alto_arriba(), linea.winfo_reqheight() + margen)
+c("  y empuja el rótulo de la lista exactamente eso",
+  y_de(con, con._rotulo) - rotulo_solo, con.alto_arriba())
+alto_linea = con.alto_arriba()
+
+c("reservar ese alto a una vista sin la línea deja encima justo eso",
+  (v.reservar_arriba(alto_linea), v.alto_arriba()), (alto_linea, alto_linea))
+c("  y el rótulo y la tarjeta quedan donde estarán con la línea",
+  (y_de(v, v._rotulo), y_de(v, v._tarjeta)),
+  (y_de(con, con._rotulo), y_de(con, con._tarjeta)))
+v.aplicar(CON_LINEA)
+v.reservar_arriba(0)
+c("  llegada la línea y soltada la reserva, el rótulo y la tarjeta ni se mueven",
+  (v.alto_arriba(), y_de(v, v._rotulo), y_de(v, v._tarjeta)),
+  (alto_linea, y_de(con, con._rotulo), y_de(con, con._tarjeta)))
+v.aplicar(SOLO)
+c("  y la línea que se va no deja ninguna reserva detrás",
+  (v.alto_arriba(), y_de(v, v._rotulo)), (0, rotulo_solo))
+
+# La reserva está en la fila de la línea: una fila mide lo mayor de su reserva y de su
+# bloque, no la suma. Pero lo que llega a otra fila (los componentes) se suma a ella, y por
+# eso la reserva se suelta en la misma colocación en que llegan los bloques.
+COMPONENTES_TEXTO = ("Lo que lleva el dispositivo de fuera (rclone, Python, VeraCrypt) no es "
+                     "lo que fija esta versión:\nrclone 1.70.0 (fija 1.71.0)")
+CON_COMPONENTES = lista(["a", "b"], ["a"], reparacion=3, chip=("3 que revisar", "Aviso.", "warn"),
+                        componentes=COMPONENTES_TEXTO, componentes_boton=True)
+top_comp, completa = vista_nueva(CON_COMPONENTES)
+alto_completa = completa.alto_arriba()
+c("  la línea y los componentes ocupan más que la línea sola", alto_completa > alto_linea, True)
+v.reservar_arriba(alto_completa)
+v.aplicar(CON_COMPONENTES)
+c("  si llegan con la reserva puesta, encima hay más de lo que se reservó",
+  v.alto_arriba() > alto_completa, True)
+v.reservar_arriba(0)
+c("  soltada, queda justo lo reservado y el rótulo ni se mueve",
+  (v.alto_arriba(), y_de(v, v._rotulo)), (alto_completa, y_de(completa, completa._rotulo)))
+top_comp.destroy()
+v.aplicar(SOLO)
+
+# Reservar menos de lo que ya hay, o nada, no cambia nada.
+c("reservar menos de lo que ya hay no reserva nada",
+  (v.reservar_arriba(0), v.reservar_arriba(-5), y_de(v, v._rotulo)), (0, 0, rotulo_solo))
+v.aplicar(CON_LINEA)
+c("  ni reservar donde ya está la línea",
+  (v.reservar_arriba(alto_linea + 40), v.alto_arriba()), (0, alto_linea))
+top_linea.destroy()
+top.destroy()
+
+# Con un bloque ya a la vista en el primer pintado (el aviso de arranque, o la versión de la
+# caché), lo reservado es lo que falta hasta el alto recordado, y ese bloque no se mueve: una
+# fila con más alto que su contenido lo centraría, así que la reserva va en una fila vacía.
+top, con = vista_nueva(CON_AMBOS)
+alto_ambos = con.alto_arriba()
+top_aviso, v = vista_nueva(CON_AVISO)
+aviso = v._bloques["aviso"]
+aviso_y, rotulo_aviso = y_de(v, aviso), y_de(v, v._rotulo)
+alto_aviso = v.alto_arriba()
+c("reservar menos de lo que el aviso ya ocupa no reserva nada",
+  (v.reservar_arriba(alto_aviso - 1), v.alto_arriba()), (0, alto_aviso))
+c("con el aviso ya a la vista, reservar el alto de aviso y línea reserva solo lo que falta",
+  (v.reservar_arriba(alto_ambos), v.alto_arriba()), (alto_ambos - alto_aviso, alto_ambos))
+c("  el aviso no se mueve ni se centra en la reserva", y_de(v, aviso), aviso_y)
+c("  y el rótulo queda donde estará con la línea", y_de(v, v._rotulo), y_de(con, con._rotulo))
+v.aplicar(CON_AMBOS)
+v.reservar_arriba(0)
+c("  llegada la línea y soltada la reserva: ni el aviso ni el rótulo se mueven",
+  (y_de(v, aviso), y_de(v, v._rotulo), v.alto_arriba()),
+  (aviso_y, y_de(con, con._rotulo), alto_ambos))
+top_aviso.destroy()
+top.destroy()
+
+
 # 6. la ventana de verdad
 REAL_MAINLOOP, REAL_LANZAR = tk.Tk.mainloop, segundo_plano.lanzar
 update.pending = lambda root=None: None

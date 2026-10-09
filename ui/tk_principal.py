@@ -285,6 +285,53 @@ class VistaPrincipal:
                         else (False, False))
                 for clave, b in botones.items()}
 
+    # --- el sitio de lo que va encima de la lista -----------------------------
+
+    def alto_arriba(self) -> int:
+        """Devuelve lo que ocupan, apiladas, las filas de encima del rótulo de la lista.
+
+        Son las del aviso, «Reparación…», la versión y los componentes, con el
+        margen de arriba de cada bloque (el `pady` cuenta: la fila mide lo que
+        pide su bloque más el margen) y con la reserva de `reservar_arriba()` si
+        la hay. Una fila sin nada mide 0. Pide antes la colocación pendiente
+        (`update_idletasks`): se llama con la ventana recién encajada, donde ya
+        está al día, o antes de enseñarla.
+        """
+        self.marco.update_idletasks()
+        return self.marco.grid_bbox(0, FILAS["aviso"], 0, FILAS["componentes"])[3]
+
+    def reservar_arriba(self, alto: int) -> int:
+        """Deja encima de la lista `alto` píxeles aunque aún no haya con qué llenarlos.
+
+        Lo que lee el dispositivo trae bloques encima de la lista («Reparación…»,
+        los componentes) y empujarla hacia abajo al llegar mueve cada widget de
+        ella. Con el alto que ocuparon la última vez reservado desde el primer
+        pintado, la lista ya está donde quedará. Se reserva solo lo que falta
+        hasta `alto` sobre lo que ya hay (el aviso de arranque, una versión
+        nueva), como alto mínimo de la fila de «Reparación…», que está vacía
+        hasta que llega la lectura: una fila más alta que su bloque lo centraría
+        en vez de dejarlo en su sitio. Quien llama la suelta (`reservar_arriba(0)`)
+        en la misma colocación que grida los bloques que llegan; si no, esos
+        bloques se sumarían a la reserva.
+
+        Args:
+            alto: El alto total que debe tener lo de encima, en píxeles; 0 o
+                menos suelta la reserva que hubiera.
+
+        Returns:
+            Los píxeles que se han reservado: 0 si ya hay `alto` o más encima, o
+            si la fila de «Reparación…» no está vacía.
+        """
+        fila = FILAS["reparacion"]
+        self.marco.rowconfigure(fila, minsize=0)
+        if alto <= 0 or self.marco.grid_slaves(row=fila):
+            return 0
+        falta = alto - self.alto_arriba()
+        if falta <= 0:
+            return 0
+        self.marco.rowconfigure(fila, minsize=falta)
+        return falta
+
     # --- lo que hace la vista con sus propios botones -------------------------
 
     def _pulsar_servicio(self) -> None:

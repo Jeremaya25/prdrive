@@ -1830,13 +1830,15 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
     # (`ui.instantanea`), `None` hasta que llega; `pedido` es lo que se le ha
     # pedido al agente y la lectura aún no ve, con el número de lecturas
     # lanzadas cuando se pidió; `marcadas`, con qué nace la casilla de una
-    # pareja que aparece; `ancho`, el ancho recordado de su contenido
-    # (`state/ventana.json`); `reservado`, el que se le guarda hasta que llega
-    # la lectura, y `libera`, el número de la lectura que deja libre la
+    # pareja que aparece; `ancho` y `arriba`, el ancho recordado de su contenido
+    # y lo que ocupa lo que va encima de la lista (`state/ventana.json`);
+    # `reservado` y `reservado_arriba`, lo que se le guarda de cada uno hasta que
+    # llega la lectura, y `libera`, el número de la lectura que deja libre la
     # ventana tras una pasada.
     vista: dict = {"config": config, "aviso": startup_msg, "en_curso": False,
                    "inst": None, "pedido": None, "lecturas": 0, "compartida": None,
-                   "volcado": None, "ancho": None, "reservado": 0, "libera": None}
+                   "volcado": None, "ancho": None, "reservado": 0, "arriba": None,
+                   "reservado_arriba": 0, "libera": None}
     seleccion = prefs.SeleccionPendiente()
 
     def poner_nueva(nueva) -> None:
@@ -1869,6 +1871,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
     frame.columnconfigure(0, weight=1)
     clave_ancho = prefs.clave_ancho(str(tk.TkVersion), float(root.tk.call("tk", "scaling")))
     vista["ancho"] = prefs.ancho_recordado(clave_ancho)
+    vista["arriba"] = prefs.arriba_recordado(clave_ancho)
     # Uno solo para todas las lecturas: una nueva deja sin recoger la anterior.
     sondeo = Sondeo(root, cada=SONDEO_INSTANTANEA_MS)
     root.sondeo_instantanea = sondeo
@@ -1981,16 +1984,44 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
             vista["ancho"] = ancho
             prefs.recordar_ancho(clave_ancho, ancho)
 
+    def reservar_arriba(alto: int) -> None:
+        """Guarda ese alto a lo que va encima de la lista, aunque aún no esté (0: ninguno).
+
+        Es lo que le falta a lo que ya hay encima (`VistaPrincipal.reservar_arriba`);
+        la reserva se queda apuntada hasta que se suelta.
+        """
+        vista["reservado_arriba"] = v.reservar_arriba(alto)
+
+    def asentar_arriba(recordar: bool) -> None:
+        """Tras aplicar una lectura y encajar: apunta lo que ocupa lo que va encima de la lista.
+
+        Se llama con la reserva ya suelta y la ventana recién encajada, así que
+        mide lo que hay de verdad sin repintar nada. Si es lo reservado, la lista
+        no se ha movido; si no, se movió una sola vez, a donde queda ahora. Se
+        escribe solo si cambia (sin nada recordado, 0 es lo mismo que nada), y
+        un dispositivo que no se deja escribir no lo recuerda y ya está.
+
+        Args:
+            recordar: Si se apunta. No con una lectura que falló entera: la
+                ventana sin nada leído no tiene lo que la lectura pone encima.
+        """
+        alto = v.alto_arriba()
+        if recordar and alto != (vista["arriba"] or 0):
+            vista["arriba"] = alto
+            prefs.recordar_arriba(clave_ancho, alto)
+
     def llegar(numero: int, encargo) -> None:
         """Aplica la lectura que acaba de llegar y la reparte a las pantallas.
 
         La ventana cambia de tamaño sin centrarse otra vez (`recolocar`), y no
         se ensancha si su contenido pide el ancho reservado desde el primer
-        pintado, que es el de la última vez (`asentar_ancho`). Lo que se le
-        había pedido al agente antes de lanzar esta lectura se olvida: ya lo
-        cuenta ella, o lo contará la siguiente. La que se lanzó al cerrar una
-        pasada (o una posterior) deja la ventana libre. Un hilo que falló deja
-        una lectura vacía, la de una ventana sin nada que enseñar.
+        pintado, que es el de la última vez (`asentar_ancho`); la lista
+        tampoco baja si lo que la lectura pone encima ocupa lo reservado
+        (`asentar_arriba`). Lo que se le había pedido al agente antes de
+        lanzar esta lectura se olvida: ya lo cuenta ella, o lo contará la
+        siguiente. La que se lanzó al cerrar una pasada (o una posterior) deja
+        la ventana libre. Un hilo que falló deja una lectura vacía, la de una
+        ventana sin nada que enseñar.
         """
         from . import instantanea
 
@@ -2005,9 +2036,14 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
             vista["en_curso"], vista["libera"] = False, None
         vista["tiempos"] = pair_times(vista["config"])
         ancho_antes, (x, y) = root.winfo_reqwidth(), posicion()
-        if v.aplicar(estado_actual()) or vista["reservado"]:
+        if v.aplicar(estado_actual()) or vista["reservado"] or vista["reservado_arriba"]:
+            # La reserva de arriba se suelta en la misma colocación que grida los
+            # bloques que llegan: con `encajar` se coloca todo de una vez.
+            if vista["reservado_arriba"]:
+                reservar_arriba(0)
             root.visor.encajar(root)
             asentar_ancho(leida)
+            asentar_arriba(leida)
             recolocar(ancho_antes, x, y)
         root.instantanea_lista = True
         # Lo último: un suscriptor que falla (una pantalla a medio cerrar) no
@@ -2573,6 +2609,9 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
     # se pinta ya como quedará y no se ensancha al llegar la lectura (en
     # Windows, cada fila de la lista es una ventana del sistema que se movería).
     reservar(vista["ancho"] or 0)
+    # Y lo que ocupó lo que la lectura pone encima de la lista (la línea de
+    # «Reparación…»): sin esto la lista, que ya está pintada, baja al llegar.
+    reservar_arriba(vista["arriba"] or 0)
     root.visor.encajar(root)
     centrar(root)
     ensenar(root)
