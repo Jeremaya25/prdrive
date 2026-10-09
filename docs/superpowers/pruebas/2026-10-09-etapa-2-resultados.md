@@ -154,6 +154,17 @@ ganaban sobre todo en los repintados enteros y conviene volver a medir ahora que
 llegada de la flota es casi toda trabajo al aplicar las notas (1,9 s): la rehace la tarea 7 de la
 etapa 3 (la tabla sobre un lienzo).
 
+### El alfa binario, medido otra vez (09/10, tarde)
+
+[Alfa binario con el pintor de Python 37965232828](https://github.com/Jeremaya25/prdrive/actions/runs/37965232828),
+Windows x64, 9 vueltas, los dos árboles con el pintor de Python (así la diferencia es solo el alfa
+de las piezas), con el corte de alfa antes de ensanchar la pieza (en la medida de la etapa 1b iba
+después y deshacía el ahorro de las filas repetidas de `_png()`). Los apartados de «Ajustes» ganan
+entre 2 y 7 ms sobre 102-209; volver a abrir «Parejas» 147 → 112 ms, la llegada del catálogo
+90 → 66, elegir pareja 53 → 43; lo demás, casi nada. **No llega a la meta de los apartados**: lo
+que cuesta en ellos son los widgets nativos, no cómo se pintan. Se queda el alfa suavizado (las
+esquinas de la 0.7.1); la decisión sobre los apartados es del dueño.
+
 ## R3 y R7
 
 Decididos con su medida en Windows (`2026-10-09-etapa-2-medidas.md`, «Decisión»): **la lista de
