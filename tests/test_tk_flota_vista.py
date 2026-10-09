@@ -14,7 +14,8 @@ hace la primera vez que hace falta, y se rellena al elegir. Lo que se comprueba:
 - a 100 %, la ficha de cada dispositivo tiene el mismo texto en el mismo sitio y
   con el mismo tamaño que la tarjeta que pintaba la versión anterior;
 - `_pide()` es lo que mide `grid` en cada dispositivo, también con un nombre que
-  ocupa dos columnas, y la reserva es la mayor de esas medidas;
+  ocupa dos columnas y con otro que pasa de ellas por poco (el que se busca en
+  cada escala, no uno fijo), y la reserva es la mayor de esas medidas;
 - las filas fluyen: «Estado» de una línea deja subir a «Equipos», y lo que no
   se usa (la segunda línea de «Estado», una fecha) está fuera de la rejilla y
   sin texto;
@@ -113,7 +114,12 @@ SPAN = fleet.Dispositivo(id="span0000xxxxxxxx", nombre="copias de seguridad del 
                          equipos=(E("PC", "2026-01-01 09:00:00"),))
 """Un nombre de 30 letras con una ficha corta: su nombre ocupa las dos primeras columnas y sobra."""
 SOBRA = SPAN._replace(id="sobra0000xxxxxxx", nombre="copias de seguridad de")
-"""Un nombre que pasa de las dos columnas por unos 20 píxeles: el añadido es pequeño, no el de `SPAN`."""
+"""Un nombre corto, con los datos de `SPAN`. No está pensado para desbordar: que pase de sus
+dos columnas depende de la fuente y de la escala, así que la sección 10 no se fía de él y
+busca el que pasa por poco en cada escala (`pasa_por_poco`)."""
+FRASE = ("copias de seguridad del taller de la oficina de arriba del edificio grande "
+         "de la calle larga del centro")
+"""Lo que se alarga, letra a letra, el nombre que pasa por poco (`pasa_por_poco`)."""
 
 
 def todos(widget) -> list:
@@ -688,10 +694,31 @@ with sandbox():
                        if e.winfo_manager() == "grid")
         return ficha.nombre.winfo_reqwidth() - (columna0 + columna1)
 
+    def pasa_por_poco(ficha, base: fleet.Dispositivo) -> tuple[fleet.Dispositivo, int]:
+        """El nombre de `base` que pasa de sus dos columnas por poco, y cuánto pasa.
+
+        Alarga `FRASE` letra a letra y para en la primera que pasa. Cada letra mueve el
+        nombre lo que mide una letra, unos pocos píxeles, así que lo que pasa es poco con
+        cualquier fuente: no hace falta saber cuál es la de este sistema. Si ninguna pasa,
+        devuelve la más larga y lo que le falta (no es > 0): la comprobación dice con qué
+        nombre ha fallado.
+        """
+        for n in range(1, len(FRASE) + 1):
+            candidato = base._replace(id="poco0000xxxxxxxx", nombre=FRASE[:n].rstrip())
+            pasa = pasa_de_dos_columnas(ficha, candidato)
+            if pasa > 0:
+                break
+        return candidato, pasa
+
     escala_inicial = float(raiz.tk.call("tk", "scaling"))
     for escala in (1.0, 1.3333, 2.0):
         raiz.tk.call("tk", "scaling", escala)
-        lista = flota(12) + [SPAN, SOBRA, PEOR[0]]
+        # El nombre que pasa por poco se mide en esta escala y con la fuente de este
+        # sistema, en una ventana con solo `SPAN`: así no depende de lo que haya en la flota.
+        sonda = abrir([SPAN])
+        justo, _ = pasa_por_poco(sonda.ficha, SPAN)
+        cerrar(sonda)
+        lista = flota(12) + [SPAN, justo, PEOR[0]]
         dlg = abrir(lista)
         ficha = dlg.ficha
         medidas, fallos = [], []
@@ -710,8 +737,9 @@ with sandbox():
           (ficha.reserva, (reservado_col, reservado_fila)), (mayor, mayor))
         c("  el nombre de 30 letras pasa de sus dos columnas, y es lo que hace crecer la última",
           pasa_de_dos_columnas(ficha, SPAN) > 0, True)
-        c("  y el que pasa por poco (menos de 40 píxeles) también se suma",
-          0 < pasa_de_dos_columnas(ficha, SOBRA) <= 40, True)
+        pasa = pasa_de_dos_columnas(ficha, justo)
+        c(f"  y el que pasa por poco («{justo.nombre}», {pasa} px, menos de 40) también se suma",
+          0 < pasa <= 40, True)
         cerrar(dlg)
     raiz.tk.call("tk", "scaling", escala_inicial)
 
