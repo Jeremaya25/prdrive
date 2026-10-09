@@ -20,6 +20,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from _harness import Checks, sandbox, tmpdir
@@ -288,9 +289,27 @@ class Proc:
         return None
 
 
+class Reloj:
+    """Un reloj a mano: `dormir()` lo adelanta, así que un bucle con plazo acaba sin esperar.
+
+    Attributes:
+        ahora: Los segundos que lleva el reloj.
+    """
+
+    def __init__(self) -> None:
+        self.ahora = 0.0
+
+    def __call__(self) -> float:
+        return self.ahora
+
+    def dormir(self, segundos: float) -> None:
+        self.ahora += segundos
+
+
 reales = (keepassxc.paquete_del_equipo, llavero.keepassxc_abierto, keepassxc.otro_abierto,
           llavero.atiende_el_servicio, keepassxc.lanzar, keepassxc.ESPERA_ARRANQUE,
-          llavero.lanzar_vigilante, keepassxc.combinar, registro.escribir, llavero.dormir)
+          llavero.lanzar_vigilante, keepassxc.combinar, registro.escribir, llavero.dormir,
+          keepassxc.reloj)
 real_app = model.APP_DIR
 try:
     with sandbox() as root:
@@ -310,7 +329,15 @@ try:
         llavero.lanzar_vigilante = lambda: None
         keepassxc.combinar = lambda b, cp, ll: (combinadas.append((cp.name, ll)), 0)[1]
         registro.escribir = lambda clave, valor: None
-        llavero.dormir = lambda s: None
+        reloj = Reloj()
+        llavero.dormir = reloj.dormir
+        keepassxc.reloj = reloj
+        # un KeePassXC que sigue abierto pasa el plazo sin esperarlo de verdad
+        antes, inicio = reloj.ahora, time.monotonic()
+        resultado = keepassxc.esperar_arranque(Proc(), 1.5)
+        c("el arranque que sigue: None al pasar el plazo, sin esperarlo de verdad",
+          (resultado, round(reloj.ahora - antes, 6) >= 1.5, time.monotonic() - inicio < 0.2),
+          (None, True, True))
         carpeta = llavero.carpeta()
 
         def abrir(cfg, sigue, llave=None):
@@ -375,7 +402,8 @@ try:
 finally:
     (keepassxc.paquete_del_equipo, llavero.keepassxc_abierto, keepassxc.otro_abierto,
      llavero.atiende_el_servicio, keepassxc.lanzar, keepassxc.ESPERA_ARRANQUE,
-     llavero.lanzar_vigilante, keepassxc.combinar, registro.escribir, llavero.dormir) = reales
+     llavero.lanzar_vigilante, keepassxc.combinar, registro.escribir, llavero.dormir,
+     keepassxc.reloj) = reales
     model.APP_DIR = real_app
 
 sys.exit(c.report())
