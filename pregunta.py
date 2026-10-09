@@ -20,6 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 # `ui` antes que `tkinter`: su `__init__` carga el Tk con Xft del runtime, que ha de ir primero.
+import ui  # noqa: E402
 from ui import tk_agente  # noqa: E402
 
 
@@ -33,5 +34,7 @@ def leer(argv: list[str]) -> tuple[str, int, bool] | None:
 
 
 if __name__ == "__main__":
+    # La medida (`PRDRIVE_PERF`) la anota en el diario del equipo, como `apply-agente`.
+    ui.perf_quien = "agente"
     datos = leer(sys.argv[1:])
     raise SystemExit(tk_agente.SIN_VENTANA if datos is None else tk_agente.main(*datos))

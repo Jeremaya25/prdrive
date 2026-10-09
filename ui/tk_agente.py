@@ -24,7 +24,9 @@ la unidad es lo esperado; con una unidad que no se ha actualizado, no.
 
 from __future__ import annotations
 
-from . import icons, theme
+import time
+
+from . import icons, perf_activo, perf_al_pintar, perf_desde_inicio, theme
 
 ATENDER, AHORA_NO, SIN_VENTANA = 0, 1, 2
 """Los códigos de salida: `ATENDER`, `AHORA_NO` y `SIN_VENTANA`."""
@@ -170,6 +172,10 @@ def preguntar(nombre: str, segundos: int, cambiada: bool = False) -> int:
             pass
         piezas["atender"].focus_set()
         root.after(1000, tic)
+        if perf_activo():
+            edad = perf_desde_inicio()
+            if edad is not None:
+                perf_al_pintar(root, "start-agente", time.perf_counter() - edad / 1000, host=True)
         root.mainloop()
     finally:
         interp = root.tk

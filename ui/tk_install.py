@@ -29,6 +29,8 @@ from __future__ import annotations
 
 import re
 import sys
+import time
+import unicodedata
 from functools import partial
 from pathlib import Path
 
@@ -36,8 +38,10 @@ from common import model, update
 from install import InstallError, InstallState, __version__
 from install import (crypto, deploy, device, platforms, profile, raiz_equipo,
                      rclone_bin, remote, traveler, vestibulo)
+# Para `ui.perf_quien`, que lee `theme.apply()`: el paquete ya está cargado, no cuesta nada.
+import ui
 
-from . import icons, theme
+from . import icons, perf_activo, perf_al_pintar, perf_desde_inicio, perf_empezar, theme
 from . import tk as uitk
 from .tk import (TITLE, Indicador, Resultado, Sondeo, Visor, centrar, ensenar,
                  output_window, separador_fila, tabla_estado, working)
@@ -124,6 +128,20 @@ def _sitio_en_pantalla(x: int, y: int, ancho: int, alto: int,
     if 0 <= y < pantalla_y and y + alto > util_y:
         nueva_y = max(0, util_y - alto)
     return nueva_x, nueva_y
+
+
+def momento_del_paso(titulo: str) -> str:
+    """Devuelve el nombre de la marca de un paso del asistente, tal como sale en `perf.log`.
+
+    Es `paso-` y el título en minúsculas, sin tildes y con un guion donde hay algo
+    que no sea letra o cifra: «Parejas y configuración» da
+    `paso-parejas-y-configuracion`.
+
+    Args:
+        titulo: El título del paso, como lo enseña la cabecera.
+    """
+    sin_tildes = unicodedata.normalize("NFKD", titulo).encode("ascii", "ignore").decode("ascii")
+    return "paso-" + re.sub(r"[^a-z0-9]+", "-", sin_tildes.lower()).strip("-")
 
 
 class Wizard:
@@ -274,6 +292,9 @@ class Wizard:
         finally:
             self._pintando = False
         self.revisar()
+        # Sin un `ir()` que lo empiece no hay nada que cerrar: un repintado del mismo paso no marca.
+        if perf_activo():
+            perf_al_pintar(self.root, momento_del_paso(titulo), host=True)
 
     def revisar(self) -> None:
         """Enciende o apaga «Siguiente» según la condición del paso, y reajusta.
@@ -365,11 +386,18 @@ class Wizard:
             self._sitio_pendiente = None
 
     def ir(self, delta: int) -> None:
-        """Avanza o retrocede `delta` pasos; al avanzar desde el último, cierra."""
+        """Avanza o retrocede `delta` pasos; al avanzar desde el último, cierra.
+
+        Con `PRDRIVE_PERF` empieza a medir el paso de destino (`paso-<slug>`); lo
+        cierra `repintar()`, cuando ese paso ya está en pantalla.
+        """
         if self.indice == len(self.pasos) - 1 and delta > 0:
             self.root.destroy()
             return
-        self.indice = max(0, min(len(self.pasos) - 1, self.indice + delta))
+        destino = max(0, min(len(self.pasos) - 1, self.indice + delta))
+        if perf_activo():
+            perf_empezar(momento_del_paso(self.pasos[destino][0]))
+        self.indice = destino
         self.repintar()
 
     @property
@@ -488,12 +516,18 @@ def run_wizard() -> int:
     """Abre el asistente y devuelve 0 siempre que se haya podido abrir."""
     import tkinter as tk
 
+    # Con `PRDRIVE_PERF`, el asistente anota en el diario del equipo y no en el del dispositivo.
+    ui.perf_quien = "wizard"
     theme.nitidez()
     root = tk.Tk()
     root.withdraw()          # se enseña ya centrada, igual que la ventana principal
     wiz = build(root)
     centrar(root)
     ensenar(root)
+    if perf_activo():
+        edad = perf_desde_inicio()
+        if edad is not None:
+            perf_al_pintar(root, "start-wizard", time.perf_counter() - edad / 1000, host=True)
     root.mainloop()
     cerrar(wiz)
     return 0
