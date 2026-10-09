@@ -18,7 +18,12 @@ los sistemas que se eligieron al prepararla. Si la conectas en uno que no estaba
 previsto, el lanzador te lo dice: vuelve a pasar el instalador (`prdrive-install`)
 sobre esta unidad y pulsa **Añadir plataformas…**. Si la unidad se preparó en
 modo *ligero* (con un `runsync.pyw` en la raíz), entonces sí hace falta **Python
-3.11 o superior** en cada equipo.
+3.11 o superior con Tk 9** en cada equipo. Para saber cuál tiene uno:
+
+    python -c "import tkinter; print(tkinter.TkVersion)"
+
+tiene que escribir 9.0 o más. Los Python de python.org para Windows y los de
+varias distribuciones de Linux traen Tk 8.6 y no sirven.
 
 ## Qué hay en esta unidad
 

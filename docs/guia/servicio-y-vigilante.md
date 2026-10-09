@@ -111,4 +111,6 @@ estado y su registro viven en el equipo.
   sello del dispositivo con el de la copia y, si difieren, copia la versión nueva
   al lado, cambia el puntero y vuelve a registrar la tarea (sustituir la carpeta
   en su sitio no se puede: el vigilante corre desde ella). Si el dispositivo no
-  lleva Python para ese equipo, usa el del sistema y `penwatch status` lo dice.
+  lleva Python para ese equipo, usa el del sistema y `penwatch status` lo dice. Para
+  vigilar y sincronizar basta cualquier Python 3.11+; la ventana que abra solo está
+  soportada si ese Python trae Tk 9.

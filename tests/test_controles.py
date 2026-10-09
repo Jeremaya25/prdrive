@@ -247,6 +247,29 @@ texto.set("")
 raiz.update()
 c("al borrarlo, vuelve", pista.winfo_ismapped(), True)
 
+# La otra rama de `pista_campo`: la que cae a la etiqueta cuando el campo no conoce
+# `-placeholder`. Ya no hay una pata de la CI con un Tk 8.6 de verdad, así que se
+# fuerza aquí quitándole esa opción a un campo de Tk 9: sin esto, la línea del `except`
+# se quedaría sin ejecutar en ninguna parte y un dispositivo con el runtime 3.13
+# podría quedarse sin su buscador.
+campo86 = ttk.Entry(raiz)
+campo86.pack()
+_configurar = campo86.configure
+
+
+def _sin_placeholder(cnf=None, **kw):
+    """Como el `configure` de un Tk 8.6: no conoce `-placeholder`."""
+    if "placeholder" in kw:
+        raise tk.TclError('unknown option "-placeholder"')
+    return _configurar(cnf, **kw)
+
+
+campo86.configure = _sin_placeholder
+pista86 = theme.pista_campo(campo86, "Buscar un ajuste…")
+raiz.update()
+c("sin -placeholder, pista_campo devuelve la etiqueta", pista86 is not None, True)
+c("  y se ve con el campo vacío", pista86 is not None and pista86.winfo_ismapped(), True)
+
 # 5. un botón mide el alto del diseño
 c("un botón mide 34 px, a uno", abs(en_papel.winfo_reqheight() - 34) <= 1, True)
 

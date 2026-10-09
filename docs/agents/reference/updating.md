@@ -23,6 +23,7 @@ Components travel a different road, same shape. `common/components.py` reads the
 - **The rclone cache is keyed by pinned version** (`rclone_bin.cache_dir()`) and re-hashed against the sum recorded beside it on every use. Without the version segment, moving `pins.RCLONE_VERSION` changes nothing because `find_rclone()` finds the cache before it considers downloading.
 - **Only what can be asserted gets stamped** (`rclone_bin.pinned_version()`): nothing is known about an rclone found on the PATH, so it is left **without** a stamp. A stamp that lies is worse than none: the device would stop asking for the update it needs.
 - **The swap is `install_runtime()`'s, for rclone too**: copy beside, move aside, rename; never `copy2` over the binary that is there. Whatever is in use is postponed with its reason (`rclone_en_uso`/`runtime_en_uso`/`veracrypt_en_uso`). Leftover `runtime/.<clave>.nuevo|viejo|borrar-<pid>` of a process no longer alive are swept (`deploy.barrer_restos_runtime()`, from `install_runtime()` and `--update-components`); a live pid is left alone.
+- **A device on the 3.13 runtime is unsupported, not broken.** Tk 9 is the only supported Tk (09/10/2026) and 3.13 carries Tk 8.6.15 on Windows. `components.python_pendiente()` already reports that runtime as pending (version and release are compared), so «Ajustes → Actualizaciones» offers the update through the relay (below); the window still opens, on the Tk 8.6 paths kept for that (`ui.md` «Which Tk»), so it can reach that button.
 
 ### The window's own Python: the relay («relevo»)
 

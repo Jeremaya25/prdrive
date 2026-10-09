@@ -19,8 +19,19 @@ for _m in (ui, ui.console, ui.tk):
 
 CFG = mkcfg(["a", "b"], {"pairs": ["a"], "interval_minutes": 5})
 
+# La ventana se prueba si hay Tk y pantalla; sin una de las dos (el suelo de Python 3.11
+# de la CI no tiene `tkinter` ni pantalla) se salta, y la consola se prueba igual abajo.
 try:
     import tkinter as tk
+    _sonda = tk.Tk()
+    _sonda.withdraw()
+    _sonda.destroy()
+    HAY_TK = True
+except Exception as e:                                   # sin Tk o sin entorno gráfico
+    print(f"  (saltado) sin entorno gráfico: {e}")
+    HAY_TK = False
+
+if HAY_TK:
     from tkinter import ttk
 
     def walk(w):
@@ -69,8 +80,6 @@ try:
     c("fallback: reimprime el aviso", any("AVISO DE ARRANQUE" in s for s in salida), True)
     c("fallback: y no lo duplica",
       sum(s.count("AVISO DE ARRANQUE") for s in salida), 1)
-except tk.TclError as e:
-    print(f"  (saltado) sin entorno gráfico: {e}")
 
 # La consola no aprueba resyncs por su cuenta: sync.py hereda stdin y pregunta él.
 c("consola no añade --yes", ui.console.ConsoleFrontend().approve_resync(["a"]), False)

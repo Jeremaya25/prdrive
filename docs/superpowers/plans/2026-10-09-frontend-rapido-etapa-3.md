@@ -356,7 +356,7 @@ The check today never opens «Dispositivos» or the flags editor, and drives the
 - Modify: `tests/rendimiento/presupuesto.toml` (`[techo]`/`[techo.<system>]` from the measured counts: `widgets.agente`, `widgets.wizard`, `widgets.dispositivos`, `widgets.flags`, `widgets.main.*`, `widgets.parejas.*`, `widgets.ajustes.*`, `estilos.*`/`tema.abrir.*` of the new screens, `modulos.*` if they moved), `docs/agents/reference/ui.md` (one coherence pass over what Tasks 2 and 7 touched), the spec («Estado» line: stage 3 done and measured; «Decisiones para revisar» 6: one sentence with what was verified — runtime, Tk, PyInstaller 6.22.3, the gate; R5: one sentence each for the fleet and «Verificación» budgets and why).
 - Create: `docs/superpowers/pruebas/2026-10-xx-etapa-3-resultados.md`.
 
-- [ ] **Step 1:** Push. Read the `Tests` run (jobs `tests` and `tests-tk9`, Linux and Windows), the `Rendimiento` run (windows-x64, linux-x64) and the `Instalador` run for the pushed sha (GitHub MCP tools; if unavailable, `gh run list/view --log`). A Windows test failure is root-caused as a bug in code or test, never skipped.
+- [ ] **Step 1:** Push. Read the `Tests` run (job `tests`, Linux and Windows, Tk 9 only since 09/10; and `python-minimo`), the `Rendimiento` run (windows-x64, linux-x64) and the `Instalador` run for the pushed sha (GitHub MCP tools; if unavailable, `gh run list/view --log`). A Windows test failure is root-caused as a bug in code or test, never skipped.
 - [ ] **Step 2: Ceilings.** Copy the counts the summary marks «techo bajable» into `presupuesto.toml`, Linux and Windows separately for `modulos.*`.
 - [ ] **Step 3: Results.** Per moment of this stage (agent's question, wizard and `paso-dispositivo`, `open-dispositivos`, `llega-flota`, `open-flags`) on Windows and Linux: 0.7.1 (the base of the run), stage 3; the deterministic counts; which budgets are met and which are not, with the reason (expected: «Dispositivos» ≤ 35 and «Verificación» ≤ 40 not met with the same look; wizard launch above 300 ms); the installer facts from `autoprueba.json` (Python, Tk, font, SVG) and the `.exe` size.
 - [ ] **Step 4:** `python3 tests/test_reglas_claude.py`; both legs. Commit «Etapa 3 medida en Windows y Linux», and push. The temporary `push:` triggers (`tests.yml`, `rendimiento.yml`, `instalador.yml`) stay until the owner opens the PR.
@@ -456,6 +456,11 @@ An adversarial review checked this plan against the code at `992f108` (findings:
 - m6: `--autoprueba` is hidden from `--help` (`argparse.SUPPRESS`); it does not call `theme.apply()` apart from `tk_install.build()` (which applies it); `tests/test_autoprueba.py` greps the function-level imports of `tk_install.py`, `tk_crypto.py`, `tk_equipo.py` and asserts each is in the `modulos` constant.
 - m7: `instalador.yml` keeps `push` (TEMPORAL) and `workflow_dispatch`; its `pull_request` paths are only the build's own (`build_installer.py`, `prdrive-install.py`, `install/**`, `common/pins.py`, `tests/_runtime_ci.py`, the action, the workflow). Broader is an owner question.
 - m14: `PYINSTALLER`'s docstring rests the pin on «≥ 6.22 per the spec, latest patch, verified by `Instalador`», not on the embedded-data feature; `_runtime_ci compilador`'s reason is «the release `.exe` is Windows-only».
+
+### Owner decision of 09/10: Tk 9 is the only supported Tk
+
+- Task 6 gains the light-install gate the spec promises: `check_python()` reports the host Python's Tk version and, for the light install, a Tk below 9 makes `ok` false with a sentence that says why (python.org Windows Pythons ship Tk 8.6). The build is strict everywhere, not only in CI (D4b answered: yes), with a clear error pointing to the pinned-runtime recipe.
+- Every builder verifies with the Tk 9 leg only; CI's `tests` job is Tk 9, plus `python-minimo` (Python 3.11, no display) for the non-UI floor. Tk 8.6 code paths stay until stage 4.
 
 ### Task 7 (`tk.Tabla` on the canvas)
 

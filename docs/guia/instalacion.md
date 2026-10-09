@@ -5,7 +5,7 @@
 Preparar una unidad nueva, para qué sistemas, qué hacer con una unidad que ya existe y el instalador de un solo fichero.
 
 Necesitas un remote de rclone al que puedas escribir y, para ejecutar el
-instalador desde el repositorio, Python 3.11+ con Tkinter en el equipo desde el
+instalador desde el repositorio, Python 3.11+ con Tk 9 en el equipo desde el
 que instalas (el [ejecutable](#un-ejecutable-para-no-repetir-todo-esto) no lo
 necesita). El dispositivo que sale de ahí no necesita nada en ningún equipo.
 
@@ -61,7 +61,14 @@ hueco libre del dispositivo.
 | instalación | lleva | en la raíz | necesita en cada equipo |
 |---|---|---|---|
 | **completa** (por defecto) | rclone + Python por plataforma | `runsync.bat`, `runsync.sh`, `README.md` | nada |
-| **ligera** | solo rclone | lo mismo, más `runsync.pyw` | Python 3.11+ con Tkinter |
+| **ligera** | solo rclone | lo mismo, más `runsync.pyw` | Python 3.11+ con Tk 9 |
+
+La ligera usa el Python del equipo, y solo se admite uno **con Tk 9**
+(`python -c "import tkinter; print(tkinter.TkVersion)"` debe escribir `9.0` o
+más). Los Python de python.org para Windows y los de muchas distribuciones de
+Linux traen Tk 8.6 y no sirven. El de la instalación completa
+(python-build-standalone 3.14) sí: en un equipo sin un Python así, usa la
+completa, que lleva el suyo.
 
 El Python es [python-build-standalone](https://github.com/astral-sh/python-build-standalone)
 (de astral-sh), no el zip «embebible» de python.org, que no trae tkinter. Va en
@@ -72,9 +79,11 @@ runtime a medias no cuenta como instalado. rclone sigue en `.prdrive/bin/<arch>/
 Las versiones de los dos están **fijadas** en `common/pins.py` y se mueven con un
 commit, no porque alguien publicara algo anoche: se instala lo que se ha probado.
 Python va en 3.14 porque así la ventana usa el mismo Tk (9.0.4) en Windows y en
-Linux: con el 3.13 de antes, Windows llevaba Tk 8.6 y Linux ya Tk 9. Un
-dispositivo instalado con el 3.13 lo verá como componente pendiente en «Ajustes →
-Actualizaciones» y se pone al día desde ahí.
+Linux, y Tk 9 es el único Tk que prdrive prueba y admite: con el 3.13 de antes,
+Windows llevaba Tk 8.6 y Linux ya Tk 9. Un dispositivo instalado con el 3.13 lo
+verá como componente pendiente en «Ajustes → Actualizaciones» y se pone al día
+desde ahí; hasta entonces no está soportado (su ventana se sigue abriendo, para
+que llegues a «Actualizar…»).
 
 En Linux, el Tk de ese runtime no trae suavizado de letra (está compilado sin
 Xft), así que el dispositivo lleva al lado uno compilado con él (1,6 MB) y

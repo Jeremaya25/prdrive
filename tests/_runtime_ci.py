@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Deja el Python fijado del dispositivo listo para la CI: la suite y los tiempos.
 
-Lo usan `.github/workflows/tests.yml` (la pata con Tk 9) y
+Lo usan `.github/workflows/tests.yml` (el trabajo `tests`) y
 `.github/workflows/rendimiento.yml`: los dos necesitan el MISMO Python y el MISMO
 Tk que lleva un dispositivo, y no el de `setup-python` (Tk 8.6). Lo baja y lo
 abre el propio instalador (`install/runtime_bin.py`, comprobado contra el

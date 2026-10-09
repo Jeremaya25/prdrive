@@ -13,6 +13,8 @@ Decidido con el dueño el 08/10/2026:
 - que **lo que más importa es lo que responde la ventana ya abierta**;
 - que se **queda una comprobación de tiempos en la CI**.
 
+Decidido con el dueño el 09/10/2026: **Tk 9 es el único Tk soportado.** La CI deja de ejecutar la suite con el Tk 8.6 de `setup-python`: las ventanas se prueban solo con el runtime fijado (Tk 9.0.4) en Linux y Windows, y queda un suelo de Python 3.11 sin ventanas. La instalación ligera pide un Python del equipo con Tk 9 (los de python.org para Windows traen Tk 8.6). Los dispositivos con el runtime 3.13 (Tk 8.6 en Windows) no están soportados hasta que actualicen sus componentes. Sustituye lo que decían §1a, §4 y §6 sobre las dos patas; el código de Tk 8.6 se queda hasta la etapa 4.
+
 Lo demás se decidió después sin él, con los datos delante y tras tres revisiones adversarias (hechos contra el código, lo que se rompe, si llega a los objetivos). Va marcado **[decidido sin el dueño]** y reunido en «Decisiones para revisar».
 
 ## Qué se quiere
@@ -130,7 +132,7 @@ Con el código de la 0.7.1 y el runtime fijado en Windows x64, Windows ARM64 y L
   - un punto (`d`) va como un `<rect>`;
   - los iconos se escriben a su tamaño exacto en píxeles (`width`/`height` de la imagen y `viewBox` de la rejilla), sin `-scale` ni `-scaletoheight`, que redondean; `bajar` fraccionario es un `translate`;
   - las cajas se escriben en píxeles físicos.
-- **Sin SVG** (Tk 8.6: la pata 3.11 de la CI, o un equipo con su propio Python), el pintor de Python de hoy.
+- **Sin SVG** (Tk 8.6: un dispositivo que aún lleva el runtime 3.13, que ya no está soportado; o un Tk 9 cuya prueba de capacidad falle), el pintor de Python de hoy. Ya no hay pata de CI con Tk 8.6 (09/10/2026): el pintor se prueba en Tk 9 apagando `USAR_SVG` (`test_iconos_svg`) y se retira en la etapa 4.
   - Su `_png` se memoiza: sale **byte a byte igual**, comprobado en las 86 piezas, y pasa de 5,4 a 0,65 ms por pieza.
   - Con eso `apply()` baja de ~0,7 a ~0,39 s también en Tk 8.6.
 - `poner_icono()` (el icono de la ventana) pasa por SVG. Hoy pinta la marca a 64, 32 y 16 px en Python en cada arranque (~55 ms).
@@ -163,7 +165,7 @@ de 216.
 
 - **Lo que no se sabe:** en Windows el banco solo ve 0,3–0,6 ms de más por botón dibujado.
 - **Lo que cuesta:**
-  - un rasterizador más (para Tk 8.6);
+  - un rasterizador más (para el respaldo de Tk 8.6, que la etapa 4 retira);
   - piezas por superficie;
   - en tema oscuro, 2–3 píxeles de esquina fuera de tono sobre avisos de color.
 - **Por eso** se empieza con SVG suavizado (el aspecto exacto de la 0.7.1), y en la etapa 1b se mide en Windows SVG suavizado contra alfa binario en la misma pantalla. Solo se adopta si gana más de 20 ms en «Parejas» o en la principal.
@@ -353,11 +355,14 @@ Y cuatro cosas pequeñas:
 
 ### 4. Tk 8.6, el instalador y la CI
 
-- **La CI ejecuta la suite dos veces**:
-  - una con el 3.11 de `setup-python` (Tk 8.6: la versión mínima y el pintor de respaldo);
-  - otra con el runtime fijado (3.14.8, Tk 9.0.4) en Linux y Windows: el único sitio donde se prueba el camino SVG.
-  - El runtime se baja en un paso previo (comprobado su SHA-256, en caché), no en una prueba, porque la suite no toca la red.
-  - Ya pasa entera en local: 110 de 110 ficheros.
+- **Tk 9 es el único Tk soportado** [decidido con el dueño el 09/10/2026, con sus consecuencias aceptadas]:
+  - la suite entera corre **una vez** por sistema, con el runtime fijado (3.14.8, Tk 9.0.4) en Linux y Windows: el único sitio donde se prueban las ventanas y el camino SVG;
+  - **queda una pata de suelo de Python** (`python-minimo`): `setup-python` 3.11 en Linux, sin pantalla y sin `python3-tk`, donde las pruebas de Tk se saltan solas. Los puntos de entrada que corren con un Python del equipo (los lanzadores cuando el dispositivo no lleva runtime para ese equipo, `runsync.pyw`, `penwatch.py`, `sync.py` a mano, el instalador desde un clon) no usan el fijado, y esa pata comprueba que lo que no es ventana sigue funcionando en el Python más bajo que admiten (3.11, por `tomllib`). Solo en Linux: un ejecutor de Windows siempre tiene escritorio y el 3.11 de python.org lleva Tk 8.6, así que volvería a probar las ventanas con el Tk que ya no se admite;
+  - los trabajos de la CI conservan los nombres `tests (ubuntu-latest)` y `tests (windows-latest)`, ahora con el runtime fijado, por si alguna regla de la rama los exige;
+  - el runtime se baja en un paso previo (comprobado su SHA-256, en caché), no en una prueba, porque la suite no toca la red;
+  - ya pasa entera en local: 110 de 110 ficheros;
+  - los dispositivos con el runtime 3.13 (Tk 8.6 en Windows) no están soportados hasta que actualicen sus componentes; su ventana se sigue abriendo, por el pintor de respaldo, para llegar a «Actualizar…»;
+  - el código de Tk 8.6 (el pintor de Python como camino de las ventanas, `PRDRIVE_SIN_SVG`, `pista_etiqueta`, `gripcount`) **no se borra** ahora: es limpieza de la etapa 4.
 - **El instalador se compila con Python 3.14.8** [decidido sin el dueño]. En Windows ya trae Tk 9.0.4.
   - Lleva `pyinstaller` fijado a una versión ≥ 6.22 comprobada, porque hoy va sin fijar.
   - `build_installer.py` comprueba Tk ≥ 9.
@@ -365,10 +370,11 @@ Y cuatro cosas pequeñas:
   - El `.exe` deja de abrir en Windows 8.1, cosa que se dice en `docs/guia/`. Los dispositivos ya piden Windows 10.
   - Va en la etapa 3: el asistente es de una vez.
   - Pasar de `--onefile` a `--onedir` queda como pregunta abierta.
-- **Python del equipo** («instalación ligera», `runsync.pyw`): se queda.
-  - Con Tk 8.6 va por el pintor de respaldo, con el mismo aspecto y más lento.
+- **Python del equipo** («instalación ligera», `runsync.pyw`): se queda, pero **con Tk 9**.
+  - Un Python del equipo con Tk 8.6 deja de estar soportado (los de python.org para Windows lo traen). Si se usa, la ventana va por el pintor de respaldo, con el mismo aspecto y más lento, sin que nadie lo pruebe.
   - **Se cambiará `install/device.py:check_python()`.** Hoy importa `tkinter` en su propio proceso: con el `.exe` mira el Tk del `.exe`, no el del equipo.
   - Preguntará al Python del equipo con un subproceso (`DEVNULL` y `CREATE_NO_WINDOW`, porque el `.exe` no tiene consola).
+  - Pedirá además Tk ≥ 9 al Python del equipo para la ligera (etapa 3, tarea 6).
 
 ### 5. La comprobación de tiempos que se queda (`rendimiento.yml`)
 
@@ -402,11 +408,11 @@ El banco temporal (`banco/`, `banco-ui.yml`) se convierte en `rendimiento.yml`.
   - **Estilos:** ningún `<<ThemeChanged>>` al abrir ninguna pantalla.
   - **Widgets:** el presupuesto de R5 con 5 y 50 parejas.
   - **Vistas y ventanas:** las diferenciales de R1, R2 y R7, y la de «desactivado ⇔ ocupado».
-  - **El aviso de fallo** abierto dos veces en el mismo hilo (`test_daemon_aviso`), en la pata de Tk 9.
+  - **El aviso de fallo** abierto dos veces en el mismo hilo (`test_daemon_aviso`), en la CI, que ya solo tiene Tk 9.
   - **La pasada:** 25 000 líneas con líneas de progreso en medio de un bloque, y «Guardar el log» completo.
   - **El relanzado** con el cerrojo del padre.
   - **`precompilar()`** sustituido, y una vez de verdad sobre un directorio temporal.
-- Todo corre en las dos patas: Tk 8.6 y Tk 9.
+- Todo corre con el Tk 9 del runtime fijado, en Linux y Windows; la parte sin Tk corre además en el suelo de Python 3.11.
 
 ## Etapas
 
@@ -449,6 +455,7 @@ escribe cuando la anterior está medida.
    - el instalador con 3.14.
 4. **4. Limpieza:**
    - `PRDRIVE_PERF=1`;
+   - retirar el código de Tk 8.6 (el pintor de Python como camino de las ventanas, `PRDRIVE_SIN_SVG`, `pista_etiqueta`, `gripcount`; lista en `ui.md` «Which Tk») cuando no quede ningún dispositivo con el runtime 3.13;
    - filas nuevas de máquina real: primer arranque en frío desde una memoria USB, `.pyc` en FAT32 y exFAT entre sistemas, y el aspecto en una pantalla de Windows de verdad.
 
 ## Decisiones para revisar
@@ -464,6 +471,10 @@ Tomadas sin el dueño el 08/10/2026:
 7. **La comprobación de tiempos falla un PR** por cuentas deterministas y por empeorar claramente frente a `main` en el mismo trabajo, no por los objetivos (§5).
 8. **La barra de espera da un paso cada 32 ms** y no cada 12 (etapa 1a): un tercio de los pasos a la misma velocidad. Se probó con 48, que gasta menos, pero a 21 pasos por segundo se veía a saltos.
 9. **«Parejas» conserva lo escrito al llegar el catálogo solo si esa pareja no ha cambiado** (etapa 1a). Si otro dispositivo la ha cambiado mientras tanto, el editor se recarga con la de ahora y el pie dice que lo escrito se ha descartado: guardarlo habría deshecho el cambio del otro sin decirlo. La otra opción era preguntar.
+
+Decidida con el dueño el 09/10/2026:
+
+10. **Tk 9 es el único Tk soportado** (§4): sin pata de CI con Tk 8.6; la instalación ligera pide un Python del equipo con Tk 9; los dispositivos con el runtime 3.13 quedan sin soporte hasta actualizar sus componentes; el `.exe` se compila con Tk 9 (etapa 3, tarea 6).
 
 Descartado tras la revisión: abrir la ventana antes de parar el servicio. Rompía que con la ventana abierta no hay servicio, del que dependen guardar «Parejas», «Reparación», «Expulsar» y el cerrojo del servicio. El ritmo de 1 s / 0,1 s deja la espera en ~0,6 s de media.
 
