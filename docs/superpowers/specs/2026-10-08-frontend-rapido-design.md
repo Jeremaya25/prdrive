@@ -457,8 +457,8 @@ Tomadas sin el dueño el 08/10/2026:
 
 1. **La superficie por bits de estado** en vez de las 552 variantes (§1b). Mismo aspecto.
 2. **Piezas con alfa binario solo si en Windows ganan más de 20 ms** (§1c). Si se adoptan, en tema oscuro hay unos píxeles de esquina fuera de tono sobre avisos de color. Medido: −48 ms al abrir «Parejas», casi nada en lo demás; aplazado hasta después de la etapa 2, que quita los repintados donde gana, y hasta medir lo que cuestan las piezas por superficie.
-3. **Una tabla sobre Canvas** para «Dispositivos», el editor de flags y la lista de «Parejas», si en Windows gana a filas ttk ligeras (§2 R3). El dueño descartó la interfaz entera sobre un Canvas; esto es un componente que se adopta por medida.
-4. **Ventanas que se esconden en vez de destruirse** (§2 R7), si en Windows gana.
+3. **Una tabla sobre Canvas** para «Dispositivos», el editor de flags y la lista de «Parejas», si en Windows gana a filas ttk ligeras (§2 R3). El dueño descartó la interfaz entera sobre un Canvas; esto es un componente que se adopta por medida. Medido: se adopta (en Windows, «Parejas» con 20 filas se construye en 77 ms frente a 158 con filas ligeras y 1230 con las de hoy).
+4. **Ventanas que se esconden en vez de destruirse** (§2 R7), si en Windows gana. Medido: no se adopta en ninguna («Parejas» 0.05, «Ajustes» −0.86, la de la pasada 0.44, frente a 0.50).
 5. **`.pyc` precompilados en la unidad** al instalar y actualizar, en modo `checked-hash` (§3): unos MB más en la unidad.
 6. **El instalador con Python 3.14 y PyInstaller fijado**: el `.exe` deja Windows 8.1 (§4).
 7. **La comprobación de tiempos falla un PR** por cuentas deterministas y por empeorar claramente frente a `main` en el mismo trabajo, no por los objetivos (§5).

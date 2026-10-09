@@ -140,4 +140,30 @@ llamó a `dlg.aplicar()` (aún no existe en este árbol).
 
 ## Decisión
 
-Pendiente: la completa la tarea 12, con la medida de la rama fusionada.
+[Medida etapa 2, run 37888659462](https://github.com/Jeremaya25/prdrive/actions/runs/37888659462),
+árbol `ae93325`: la tanda 2 fusionada con lo que estas dos medidas tocan («Parejas» en su sitio,
+«Ajustes» con sus apartados guardados y su `dlg.aplicar()` al volver a enseñarse; la ventana
+principal en su sitio no cambia ninguna de las dos). Mismo Python y vueltas que la primera lectura.
+
+**R3, la lista de «Parejas»**, `construir` con 20 filas, Windows x64: ref 1229.7, ligera 158.4,
+lienzo 77.3 (Linux: 166.9, 78.4, 38.5). ligera − lienzo = **81.1 ms** (regla: 20 ms) y
+ref − ligera = 1071.3 ms (regla: 10 ms); en Linux 39.9 y 88.5 ms. El lienzo no es peor que las
+otras en `elegir` (lienzo 1.2 ms, ligera 1.2, ref 5.9 en Windows) ni en `refrescar` (11.6 frente a
+46.9 y 59.6). Con 50 filas: ref 1713.1, ligera 321.0, lienzo 140.7. **Se adopta el lienzo**: la
+tarea 14, rama A (`ui/tk_tabla.py`), y la tarea 13 no hace nada. La lista en su sitio de la tarea 10
+ya no rehace filas al llegar el catálogo (`refrescar` con 20 filas: 1450 → 60 ms), pero abrir sigue
+pagando sus siete ventanas por fila.
+
+**R7, esconder en vez de destruir**, Windows x64 (ganancia = 1 − reabrir-oculta / abrir-2):
+
+| Ventana | abrir-2 | reabrir-oculta | ganancia | Linux |
+|---|---|---|---|---|
+| parejas | 511.6 | 483.8 | 0.05 | 0.19 |
+| ajustes | 109.7 | 203.8 | −0.86 | −0.16 |
+| pasada | 135.2 | 75.8 | 0.44 | 0.41 |
+
+**No se adopta en ninguna** (regla: 0.50). «Ajustes» empeora: rehecha ya es barata (sus
+apartados se pintan al momento y leen después) y volver a enseñarla escondida repinta más que
+crearla. La de la pasada se queda cerca (rehacerla son 135 ms frente a 76), y lo que se nota al
+pulsar lo quita la tarea 11 por otro lado: la principal se ocupa en el clic y la pasada sale en
+el turno siguiente (se mide en Windows al cerrar la etapa).
