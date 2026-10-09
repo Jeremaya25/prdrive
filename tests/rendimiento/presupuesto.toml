@@ -25,20 +25,20 @@
 #
 # Medidos el 08/10/2026 en el árbol de la 0.7.1, con el Python fijado (3.14.8, Tk 9.0.4); los
 # módulos, en la primera ejecución en CI de la etapa 1a (Rendimiento 37843538665), que es
-# donde se miden: fuera de CI salen distintos.
+# donde se miden: fuera de CI salen distintos. Bajados al cerrar la etapa 2 (09/10/2026) a lo
+# que da la rama con las tareas 2 y 3 de la etapa 3 (la barra horizontal que no se crea hasta
+# hacer falta quita un widget a cada ventana); los módulos, de Rendimiento 37917304018.
 
 [techo]
-"widgets.main.p5" = 51
-"widgets.main.p50" = 231
-"widgets.parejas.p5" = 143
-# Subido de 467: cada chip va en una celda con el color de su fila (dos widgets más por
-# fila) para que no salga con el recuadro de la tarjeta. TEMPORAL: la lista sobre un
-# lienzo de la tarea 14 de la etapa 2 quita esas filas y se baja con ella.
-"widgets.parejas.p50" = 548
-"widgets.ajustes.p5" = 39
-"widgets.ajustes.p50" = 39
-"widgets.agente" = 16
-"widgets.wizard" = 20
+"widgets.main.p5" = 45
+"widgets.main.p50" = 225
+"widgets.parejas.p5" = 83
+# La lista sobre un lienzo (etapa 2, tarea 14): las mismas piezas con 5 parejas que con 50.
+"widgets.parejas.p50" = 83
+"widgets.ajustes.p5" = 38
+"widgets.ajustes.p50" = 38
+"widgets.agente" = 11
+"widgets.wizard" = 19
 "tema.arranque.main" = 1
 "tema.arranque.agente" = 1
 "tema.arranque.wizard" = 1
@@ -54,20 +54,20 @@
 # (09/10/2026, Python 3.14.8 con Tk 9.0.4) con la flota y el dispositivo de muestra de `driver.py`.
 # Medidos en Linux (no dependen de la máquina); si Windows da otro número, va en `[techo.windows]`.
 # Solo bajan, con las tareas que las rebajan.
-"widgets.dispositivos" = 137
-"widgets.flags" = 70
+"widgets.dispositivos" = 134
+"widgets.flags" = 69
 "tema.abrir.dispositivos" = 0
 "tema.abrir.flags" = 0
 "estilos.dispositivos" = 0
 "estilos.flags" = 0
 
 [techo.linux]
-"modulos.main" = 224
+"modulos.main" = 171
 "modulos.agente" = 157
 "modulos.wizard" = 234
 
 [techo.windows]
-"modulos.main" = 223
+"modulos.main" = 171
 "modulos.agente" = 158
 "modulos.wizard" = 235
 

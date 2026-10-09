@@ -3,6 +3,8 @@
 Fecha: 08/10/2026. Estado: **diseño revisado (versión 2), pendiente de que lo revise el dueño**.
 Etapa 1a hecha, revisada y medida: `docs/superpowers/pruebas/2026-10-08-etapa-1a-resultados.md`.
 Etapa 1b hecha, revisada y medida: `docs/superpowers/pruebas/2026-10-08-etapa-1b-resultados.md`.
+Etapa 2 hecha, revisada y medida: `docs/superpowers/pruebas/2026-10-09-etapa-2-resultados.md`
+(queda abierta la llegada de la lectura a la principal en Windows).
 Sustituye la forma de dibujar y de refrescar del rediseño de la 0.7.0. El aspecto se
 queda: es el del sistema «prdrive» de la 0.7.1. Las medidas que lo deciden están en
 `docs/superpowers/pruebas/2026-10-08-banco-interfaz-resultados.md`.
