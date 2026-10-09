@@ -82,6 +82,13 @@ def working_directo(parent, titulo, funcion, mensaje="", progreso=None):
 
 
 tk_install.working = working_directo
+# Lo que un paso lee después de pintarse (la lista de unidades, la ruta a mano,
+# la verificación) llega en el sitio, como `working()`: sin bucle de eventos,
+# un resultado que llega por sondeo no llegaría nunca. Los hilos de verdad se
+# prueban en test_tk_asistente.
+from ui import segundo_plano  # noqa: E402
+
+segundo_plano.lanzar = segundo_plano.en_el_acto
 
 # Un rclone de mentira: el paso de instalación lo copia, no lo ejecuta.
 RCLONE_FALSO = tmpdir() / "rclone-de-mentira"

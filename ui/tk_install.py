@@ -28,6 +28,7 @@ plataformas…». Lo que decide (qué se marca, qué se borra, cuánto ocupa) es
 from __future__ import annotations
 
 import sys
+from functools import partial
 from pathlib import Path
 
 from common import model, update
@@ -35,9 +36,9 @@ from install import InstallError, InstallState, __version__
 from install import (crypto, deploy, device, platforms, profile, raiz_equipo,
                      rclone_bin, remote, traveler, vestibulo)
 
-from . import icons, theme
-from .tk import (TITLE, Resultado, Visor, centrar, ensenar, output_window,
-                 separador_fila, tabla_estado, working)
+from . import icons, segundo_plano, theme
+from .tk import (TITLE, Indicador, Resultado, Sondeo, Visor, centrar, ensenar,
+                 output_window, separador_fila, tabla_estado, working)
 
 VENTANA = f"{TITLE} — Instalador"
 """El título de la ventana del asistente."""
@@ -135,6 +136,10 @@ class Wizard:
         llavero_pide: Si esa base pide fichero llave.
         llavero_llave: Dónde está el fichero llave en este equipo.
         llavero_hecho: Si el llavero ya se ha puesto en el dispositivo.
+        python_equipo: Con qué Python arrancaría lo instalado en este equipo,
+            tal como lo dijo el último «Comprobar» (`device.check_python()`,
+            preguntado en su hilo). `None` mientras no se haya comprobado o si
+            la pregunta falló: el paso lo pinta «sin comprobar».
     """
 
     def __init__(self, root, visor, cabecera, boton_siguiente, boton_atras) -> None:
@@ -183,6 +188,7 @@ class Wizard:
         self.llavero_pide = False
         self.llavero_llave: Path | None = None
         self.llavero_hecho = False
+        self.python_equipo: device.Check | None = None
 
     def repintar(self) -> None:
         """Pinta el paso en el que se está."""
@@ -486,15 +492,37 @@ def _paso_conexion(cuerpo, wiz) -> None:
         "usa. Sin known_hosts se acepta la clave del servidor a la primera.")
         ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(theme.E1, 0))
 
-    # Importar de un `rclone.conf`.
-    importar = ttk.Frame(caja)
-    importar.columnconfigure(0, weight=1)
-    campo(importar, "Fichero rclone.conf", 0)
-    ttk.Entry(importar, textvariable=conf_ajeno, width=52, style="Mono.TEntry").grid(
-        row=1, column=0, sticky="ew")
+    # Importar de un `rclone.conf`: el formulario se hace la primera vez que se
+    # elige esa tarjeta, y quien configura un remoto nuevo no lo paga. Sus
+    # variables son del paso (`usar()` las lee haya formulario o no), así que ir
+    # y volver no pierde lo escrito.
+    importar: dict = {}
 
-    combo_remoto = ttk.Combobox(importar, textvariable=remoto_ajeno, width=24,
-                                state="readonly")
+    def formulario_importar():
+        """Devuelve el marco del formulario de importar, haciéndolo si aún no está."""
+        if "marco" in importar:
+            return importar["marco"]
+        marco = ttk.Frame(caja)
+        marco.columnconfigure(0, weight=1)
+        campo(marco, "Fichero rclone.conf", 0)
+        ttk.Entry(marco, textvariable=conf_ajeno, width=52, style="Mono.TEntry").grid(
+            row=1, column=0, sticky="ew")
+        importar["combo"] = combo_remoto = ttk.Combobox(
+            marco, textvariable=remoto_ajeno, width=24, state="readonly")
+        examinar_conf = ttk.Button(marco, text="Examinar…", style="Quiet.TButton",
+                                   command=elegir_conf)
+        theme.boton_icono(examinar_conf, "carpeta", theme.ACENTO)
+        examinar_conf.grid(row=1, column=1, padx=(theme.E2, 0))
+        campo(marco, "Remote", 2)
+        combo_remoto.grid(row=3, column=0, sticky="w")
+        ttk.Label(marco, style="Pista.TLabel", wraplength=theme.medida(640),
+                  justify="left", text=(
+            "Se copia la definición del remote y, si usa fichero de clave, también la "
+            "clave: el dispositivo tiene que llevar la suya para funcionar en "
+            "cualquier equipo.")).grid(row=4, column=0, columnspan=2, sticky="w",
+                                       pady=(theme.E1, 0))
+        importar["marco"] = marco
+        return marco
 
     def elegir_conf() -> None:
         """Deja elegir el `rclone.conf` y carga sus remotes."""
@@ -516,28 +544,16 @@ def _paso_conexion(cuerpo, wiz) -> None:
         if not nombres:
             wiz.error("Ese fichero no define ningún remote.")
             return
-        combo_remoto.configure(values=nombres)
+        importar["combo"].configure(values=nombres)
         remoto_ajeno.set(nombres[0])
-
-    examinar_conf = ttk.Button(importar, text="Examinar…", style="Quiet.TButton",
-                               command=elegir_conf)
-    theme.boton_icono(examinar_conf, "carpeta", theme.ACENTO)
-    examinar_conf.grid(row=1, column=1, padx=(theme.E2, 0))
-    campo(importar, "Remote", 2)
-    combo_remoto.grid(row=3, column=0, sticky="w")
-    ttk.Label(importar, style="Pista.TLabel", wraplength=theme.medida(640),
-              justify="left", text=(
-        "Se copia la definición del remote y, si usa fichero de clave, también la "
-        "clave: el dispositivo tiene que llevar la suya para funcionar en "
-        "cualquier equipo.")).grid(row=4, column=0, columnspan=2, sticky="w",
-                                   pady=(theme.E1, 0))
 
     def cambiar_modo(*_) -> None:
         """Enseña el formulario del modo elegido."""
         nuevo.grid_forget()
-        importar.grid_forget()
-        (nuevo if modo.get() == "nuevo" else importar).grid(row=0, column=0,
-                                                             sticky="ew")
+        if "marco" in importar:
+            importar["marco"].grid_forget()
+        (nuevo if modo.get() == "nuevo" else formulario_importar()).grid(
+            row=0, column=0, sticky="ew")
     modo.trace_add("write", cambiar_modo)
     cambiar_modo()
 
@@ -663,12 +679,13 @@ def _paso_comprobaciones(cuerpo, wiz) -> None:
             row=0, column=0, sticky="ew")
 
     def comprobar(descargar: bool = False) -> None:
-        """Comprueba rclone, la conexión y el catálogo, en un hilo."""
+        """Comprueba rclone, la conexión, el catálogo y el Python del equipo, en un hilo."""
         filas: list[tuple[str, bool | None, str]] = []
         perfil = wiz.perfil
+        donde = wiz.donde
 
         def trabajo():
-            """Busca rclone, conecta al remoto y lee el catálogo."""
+            """Busca rclone, conecta al remoto, lee el catálogo y pregunta por Python."""
             binario = rclone_bin.ensure_rclone(allow_download=descargar)
             remote.sweep_stale()
             conf = wiz.conf or remote.EphemeralConf(perfil)
@@ -676,7 +693,7 @@ def _paso_comprobaciones(cuerpo, wiz) -> None:
                                remote_name=perfil.remote_name)
             rc.check_connection()
             catalogo = remote.pull_catalog(rc, perfil.catalog_path)
-            return binario, conf, rc, catalogo
+            return binario, conf, rc, catalogo, _python_del_equipo(donde)
 
         ok, res = working(wiz.root, "comprobando", trabajo,
                           ("Descargando rclone y comprobando el remoto."
@@ -690,9 +707,10 @@ def _paso_comprobaciones(cuerpo, wiz) -> None:
             wiz.revisar()
             return
 
-        binario, conf, rc, catalogo = res
+        binario, conf, rc, catalogo, python = res
         wiz.binario = str(binario)
         wiz.conf, wiz.rclone, wiz.catalog = conf, rc, catalogo
+        wiz.python_equipo = python
         wiz.perfil_device, wiz.notas_perfil = profile.align_with_catalog(
             perfil, catalogo.raw)
 
@@ -734,15 +752,41 @@ def _paso_comprobaciones(cuerpo, wiz) -> None:
                 ("Catálogo", None, "")])
 
 
-def _filas_python(wiz) -> list[tuple[str, bool, str]]:
-    """Devuelve con qué Python arrancará lo instalado.
+def _python_del_equipo(donde: str) -> device.Check | None:
+    """Pregunta con qué Python arrancaría lo instalado en este equipo.
 
-    En este equipo no se pregunta: la raíz la sincroniza el agente con el suyo,
-    que se instala en «Instalación».
+    Va dentro del trabajo de «Comprobar», en su hilo: preguntarle a un Python
+    puede tardar, y el paso no se queda parado mientras. Que la pregunta falle
+    no tumba la comprobación del remoto, que es lo que decide si se sigue: la
+    fila sale «sin comprobar».
+
+    Args:
+        donde: El recorrido (`Wizard.donde`). En este equipo no se pregunta: la
+            raíz la sincroniza el agente con el suyo, que se instala en
+            «Instalación».
+
+    Returns:
+        Lo que dice `device.check_python()`, o `None` si no toca o falló.
+    """
+    if donde == "equipo":
+        return None
+    try:
+        return device.check_python()
+    except Exception:                                    # noqa: BLE001 — «sin comprobar»
+        return None
+
+
+def _filas_python(wiz) -> list[tuple[str, bool | None, str]]:
+    """Devuelve la fila de con qué Python arrancará lo instalado, sin preguntar nada.
+
+    Pinta lo que guardó el último «Comprobar» (`Wizard.python_equipo`), o la
+    fila «sin comprobar» si no hay nada guardado. En este equipo no hay fila.
     """
     if wiz.donde == "equipo":
         return []
-    chk = device.check_python()
+    chk = wiz.python_equipo
+    if chk is None:
+        return [("Python en este equipo", None, "")]
     return [(chk.etiqueta, chk.ok, chk.detalle)]
 
 
@@ -807,8 +851,40 @@ COLUMNAS = [("unidad", "Unidad", 110), ("etiqueta", "Etiqueta", 110),
 """Las columnas de la lista de unidades: clave, título y ancho en medidas del diseño."""
 
 
+def _examinar_ruta(destino: Path) -> str:
+    """Mira si una ruta escrita a mano vale de destino.
+
+    Corre en un hilo (`segundo_plano`): `is_dir()` de una carpeta de red que no
+    contesta espera lo que tarde el sistema en rendirse, y `volume_for()`
+    recorre las unidades.
+
+    Returns:
+        Por qué no vale, o `''` si vale.
+    """
+    if not destino.is_dir():
+        return f"No existe la carpeta {destino}."
+    if device.volume_for(destino).is_system:
+        return "Esa es la unidad del sistema."
+    return ""
+
+
 def _paso_destino(cuerpo, wiz) -> None:
-    """Pinta el paso del dispositivo: la lista de unidades o una ruta a mano."""
+    """Pinta el paso del dispositivo: la lista de unidades o una ruta a mano.
+
+    Se pinta sin leer nada. La lista llega de un hilo (`device.list_volumes()`
+    pregunta por cada volumen, y un lector de tarjetas o una unidad de red
+    tardan) y la ruta a mano se mira igual (`_examinar_ruta`). Mientras tanto no
+    hay destino y «Siguiente» está apagado; la unidad que hubiera elegida antes
+    se vuelve a elegir cuando llega la lista.
+
+    Este paso decide en qué unidad se escribe, así que solo cuenta la última
+    elección: elegir una fila, «Usar esta ruta» y «Actualizar lista» suben el
+    turno, y lo que llega de un hilo pedido en un turno anterior no se aplica.
+    La lista llegada se pinta siempre, pero solo elige por su cuenta si nadie ha
+    elegido mientras se leía. Las dos esperas cuelgan de sus marcos
+    (`tarjeta.sondeo`, la lista; `manual.sondeo`, la ruta), así que cambiar de
+    paso las cancela.
+    """
     import tkinter as tk
     from tkinter import ttk
 
@@ -829,9 +905,13 @@ def _paso_destino(cuerpo, wiz) -> None:
         tree.column(clave, width=icons.px(tree, ancho), anchor="w")
     tree.grid(row=0, column=0, sticky="ew")
 
+    # Mientras se buscan las unidades, debajo de la lista; luego no ocupa sitio.
+    espera = Indicador(cuerpo)
+    espera.marco.grid(row=2, column=0, sticky="w", pady=(theme.E3, 0))
+
     # El destino elegido, en un chip: verde si vale, rojo si es el sistema.
     destino_fila = ttk.Frame(cuerpo)
-    destino_fila.grid(row=2, column=0, sticky="w", pady=(theme.E3, 0))
+    destino_fila.grid(row=3, column=0, sticky="w", pady=(theme.E3, 0))
 
     def poner_destino(texto: str, tipo: str = "", nota: str = "") -> None:
         """Pone el chip del destino (o una pista, sin `tipo`) y su nota."""
@@ -847,28 +927,19 @@ def _paso_destino(cuerpo, wiz) -> None:
                 row=0, column=1, sticky="w", padx=(theme.E3, 0))
 
     volumenes: dict[str, device.Volume] = {}
-
-    def refrescar() -> None:
-        """Relee las unidades y las pinta."""
-        tree.delete(*tree.get_children())
-        volumenes.clear()
-        for vol in device.list_volumes():
-            clave = str(vol.root)
-            volumenes[clave] = vol
-            tree.insert("", "end", iid=clave, values=(
-                clave, vol.label, vol.filesystem, vol.drive_type,
-                f"{vol.size_gb:g} GB", f"{vol.free_gb:g} GB", vol.nota))
-        if wiz.state.device and str(wiz.state.device) in volumenes:
-            tree.selection_set(str(wiz.state.device))
-        mostrar()
+    # `aplicada` es la selección de la lista que el paso ya ha atendido: la que
+    # pone él mismo (al llegar la lista, al usar una ruta a mano) también
+    # dispara `<<TreeviewSelect>>`, y esa no es una elección de nadie.
+    eleccion: dict = {"turno": 0, "aplicada": ()}
 
     def elegido() -> device.Volume | None:
         """Devuelve la unidad elegida en la lista, o `None`."""
         sel = tree.selection()
         return volumenes.get(sel[0]) if sel else None
 
-    def mostrar(*_) -> None:
-        """Dice qué destino hay elegido y revisa el desvío."""
+    def mostrar() -> None:
+        """Toma como destino la fila elegida (o ninguno), lo dice y revisa el desvío."""
+        eleccion["aplicada"] = tree.selection()
         vol = elegido()
         if vol is None:
             poner_destino("Elige una unidad de la lista, o escribe una ruta abajo.")
@@ -897,38 +968,120 @@ def _paso_destino(cuerpo, wiz) -> None:
             _panel_ya_instalado(desvio, wiz, wiz.state.device, 0)
         wiz.revisar()
 
-    tree.bind("<<TreeviewSelect>>", mostrar)
+    def al_elegir(_evento=None) -> None:
+        """Atiende un cambio de fila: es una elección, y deja atrás lo que se esperaba."""
+        if tree.selection() == eleccion["aplicada"]:
+            return
+        eleccion["turno"] += 1
+        mostrar()
+
+    tree.bind("<<TreeviewSelect>>", al_elegir)
 
     manual = ttk.Frame(cuerpo)
-    manual.grid(row=3, column=0, sticky="ew", pady=(theme.E4, 0))
+    manual.grid(row=4, column=0, sticky="ew", pady=(theme.E4, 0))
     manual.columnconfigure(0, weight=1)
     ttk.Label(manual, text="…o una ruta a mano", style="Fuerte.TLabel").grid(
         row=0, column=0, sticky="w", pady=(0, theme.E1))
     ruta = tk.StringVar()
     ttk.Entry(manual, textvariable=ruta, width=46, style="Mono.TEntry").grid(
         row=1, column=0, sticky="ew", padx=(0, theme.E2))
+    tarjeta.sondeo = sondeo_lista = Sondeo(tarjeta)
+    manual.sondeo = sondeo_ruta = Sondeo(manual)
 
     def usar_ruta() -> None:
-        """Usa como destino la ruta escrita a mano."""
+        """Toma como destino la ruta escrita a mano, cuando se haya mirado.
+
+        Mientras se mira no hay destino («Siguiente» apagado) ni fila elegida:
+        elegir una fila, o volver a pulsar, deja atrás esta ruta.
+        """
         texto = ruta.get().strip()
         if not texto:
             return
+        eleccion["turno"] += 1
+        antes = (tree.selection(), wiz.state.device)
+        eleccion["aplicada"] = ()
+        tree.selection_remove(*tree.selection())
+        wiz.state.device = None
+        poner_destino("Comprobando la ruta…", "Apagado.")
+        revisar_desvio()
         destino = Path(texto)
-        if not destino.is_dir():
-            wiz.error(f"No existe la carpeta {destino}.")
+        # Sin repetir: volver a pulsar con una ruta de red colgada espera al
+        # mismo hilo en vez de juntar otro.
+        encargo = segundo_plano.lanzar_sin_repetir(
+            ("ruta", texto), None, partial(_examinar_ruta, destino))
+        sondeo_ruta.esperar(encargo, partial(llega_ruta, eleccion["turno"], destino,
+                                             antes))
+
+    def llega_ruta(turno: int, destino: Path, antes: tuple, encargo) -> None:
+        """Aplica la ruta mirada, si sigue siendo la última elección."""
+        if turno != eleccion["turno"]:
             return
-        vol = device.volume_for(destino)
-        if vol.is_system:
-            wiz.error("Esa es la unidad del sistema.")
+        motivo = (f"No se ha podido mirar {destino}: {encargo.error}"
+                  if encargo.error is not None else encargo.resultado)
+        if motivo:
+            volver_a(*antes)
+            wiz.error(motivo)
             return
         wiz.state.device = destino
         poner_destino(f"Destino: {destino}", "Ok.")
-        tree.selection_remove(*tree.selection())
         revisar_desvio()
+
+    def volver_a(seleccion: tuple, previa: Path | None) -> None:
+        """Deja la elección que había antes de una ruta a mano que no vale."""
+        if seleccion and all(tree.exists(i) for i in seleccion):
+            tree.selection_set(*seleccion)
+            mostrar()
+        elif previa is not None:                 # otra ruta a mano, ya mirada
+            wiz.state.device = previa
+            poner_destino(f"Destino: {previa}", "Ok.")
+            revisar_desvio()
+        else:
+            mostrar()
+
+    def leer_unidades(previa: Path | None) -> None:
+        """Vacía la lista y la pide a un hilo; mientras, no hay destino.
+
+        Args:
+            previa: La unidad que se vuelve a elegir al llegar la lista, si está
+                en ella y nadie ha elegido otra cosa mientras.
+        """
+        tree.delete(*tree.get_children())
+        volumenes.clear()
+        mostrar()
+        espera.poner("Buscando unidades…", True)
+        otra_vez.configure(state="disabled")
+        encargo = segundo_plano.lanzar_sin_repetir("unidades", None, device.list_volumes)
+        sondeo_lista.esperar(encargo, partial(llega_lista, eleccion["turno"], previa))
+
+    def llega_lista(turno: int, previa: Path | None, encargo) -> None:
+        """Pinta la lista llegada y, si nadie ha elegido mientras, vuelve a elegir `previa`."""
+        otra_vez.configure(state="normal")
+        if encargo.error is not None:
+            espera.poner(f"No se han podido leer las unidades: {encargo.error}", False,
+                         "Aviso.")
+        else:
+            espera.poner("", False)
+            for vol in encargo.resultado:
+                clave = str(vol.root)
+                volumenes[clave] = vol
+                tree.insert("", "end", iid=clave, values=(
+                    clave, vol.label, vol.filesystem, vol.drive_type,
+                    f"{vol.size_gb:g} GB", f"{vol.free_gb:g} GB", vol.nota))
+        if turno != eleccion["turno"]:
+            wiz.revisar()              # lo elegido mientras tanto se queda
+            return
+        if previa is not None and str(previa) in volumenes:
+            tree.selection_set(str(previa))
+        mostrar()
+
+    def actualizar() -> None:
+        """Relee las unidades: es una elección, y deja atrás lo que se esperaba."""
+        eleccion["turno"] += 1
+        leer_unidades(wiz.state.device)
 
     ttk.Button(manual, text="Usar esta ruta", command=usar_ruta).grid(row=1, column=1)
     otra_vez = ttk.Button(manual, text="Actualizar lista", style="Quiet.TButton",
-                          command=refrescar)
+                          command=actualizar)
     theme.boton_icono(otra_vez, "reload", theme.ACENTO)
     otra_vez.grid(row=1, column=2, padx=(theme.E2, 0))
 
@@ -936,10 +1089,10 @@ def _paso_destino(cuerpo, wiz) -> None:
     # aparece a veces, y lo que no puede es empujar la lista hacia abajo cada vez
     # que se cambia de selección.
     desvio = ttk.Frame(cuerpo)
-    desvio.grid(row=4, column=0, sticky="ew", pady=(0, 0))
+    desvio.grid(row=5, column=0, sticky="ew", pady=(0, 0))
     desvio.columnconfigure(0, weight=1)
 
-    refrescar()
+    leer_unidades(wiz.state.device)
 
 
 def _ya_es_prdrive(raiz) -> bool:
@@ -1301,30 +1454,29 @@ def _lista_plataformas(padre, wiz, raiz, al_cambiar):
     marco.columnconfigure(0, weight=1)
 
     modo = tk.StringVar(value="completa" if matriz.completa else "ligera")
-    radios = ttk.Frame(marco)
-    radios.grid(row=0, column=0, sticky="w")
 
     def cambiar_modo() -> None:
         """Cambia entre completa y ligera."""
         wiz.matriz.completa = modo.get() == "completa"
         refrescar()
 
+    # Las dos opciones, una debajo de otra en las dos primeras filas del marco.
     for i, (valor, texto) in enumerate((
             ("completa", "Completa: lleva su propio Python y funciona en equipos "
                          "sin nada instalado"),
             ("ligera", "Ligera: usa el Python de cada equipo (3.11+ con Tkinter)"))):
-        ttk.Radiobutton(radios, text=texto, value=valor, variable=modo,
+        ttk.Radiobutton(marco, text=texto, value=valor, variable=modo,
                         command=cambiar_modo).grid(row=i, column=0, sticky="w")
 
     ttk.Label(marco, text=theme.rotulo("Plataformas que irán en la unidad"),
-              style="Rotulo.TLabel").grid(row=1, column=0, sticky="w",
+              style="Rotulo.TLabel").grid(row=2, column=0, sticky="w",
                                           pady=(theme.E4, theme.E2))
     tabla = ttk.Frame(marco, style="Card.TFrame", padding=(theme.E4, theme.E1))
-    tabla.grid(row=2, column=0, sticky="ew")
+    tabla.grid(row=3, column=0, sticky="ew")
     tabla.columnconfigure(3, weight=1)
-    for col, rotulo in enumerate(("Plataforma", "rclone", "Python", "")):
-        ttk.Label(tabla, text=theme.rotulo(rotulo) if rotulo else "",
-                  style="Card.Rotulo.TLabel").grid(
+    # La cuarta columna (la nota de cada fila) no lleva título.
+    for col, rotulo in enumerate(("Plataforma", "rclone", "Python")):
+        ttk.Label(tabla, text=theme.rotulo(rotulo), style="Card.Rotulo.TLabel").grid(
             row=0, column=col, sticky="w", padx=(0, theme.E4), pady=(theme.E2, theme.E1))
 
     filas: dict[str, tuple] = {}
@@ -1354,10 +1506,10 @@ def _lista_plataformas(padre, wiz, raiz, al_cambiar):
         filas[plat.clave] = (var, rclone_lbl, python_lbl, nota)
 
     total = ttk.Label(marco, style="Fuerte.TLabel")
-    total.grid(row=3, column=0, sticky="w", pady=(theme.E3, 0))
+    total.grid(row=4, column=0, sticky="w", pady=(theme.E3, 0))
     plan_lbl = ttk.Label(marco, style="Pista.TLabel", justify="left",
                          wraplength=theme.medida(760))
-    plan_lbl.grid(row=4, column=0, sticky="w", pady=(theme.E1, 0))
+    plan_lbl.grid(row=5, column=0, sticky="w", pady=(theme.E1, 0))
     avisos = Resultado(marco)
 
     def pintar() -> None:
@@ -1387,7 +1539,7 @@ def _lista_plataformas(padre, wiz, raiz, al_cambiar):
         dichos = m.avisos(libre)
         avisos.poner("\n".join(dichos), "aviso")
         if dichos:
-            avisos.grid(row=5, column=0, sticky="ew", pady=(theme.E3, 0))
+            avisos.grid(row=6, column=0, sticky="ew", pady=(theme.E3, 0))
         else:
             avisos.marco.grid_remove()
 
@@ -1565,11 +1717,16 @@ def _paso_parejas(cuerpo, wiz) -> None:
         wiz.state.selected = seleccion
         wiz.state.config_written = True
         # Y queda apuntado en el registro de la flota, que es lo que permite ver
-        # desde cualquier dispositivo cuántos hay y cómo están. Mejor esfuerzo:
-        # si el remoto no acepta la nota, la instalación ya está hecha igual y la
-        # primera sincronización volverá a intentarlo.
-        nota = deploy.publish_fleet_note(wiz.rclone, wiz.device_root,
-                                         wiz.perfil.endpoint_catalog)
+        # desde cualquier dispositivo cuántos hay y cómo están. Es escribir en
+        # el remoto (hasta 45 s si no contesta), así que va por `working()`.
+        # Mejor esfuerzo: si el remoto no acepta la nota, la instalación ya está
+        # hecha igual y la primera sincronización volverá a intentarlo.
+        ok, nota = working(wiz.root, "flota",
+                           partial(deploy.publish_fleet_note, wiz.rclone, wiz.device_root,
+                                   wiz.perfil.endpoint_catalog),
+                           "Apuntando el dispositivo en la flota del remoto.")
+        if not ok:
+            nota = None
         detalle = f"Escrito {destino} con {len(seleccion)} pareja(s)\n"
         if creadas:
             detalle += "Carpetas creadas: " + ", ".join(p.name for p in creadas) + ". "
@@ -1823,8 +1980,52 @@ def _paso_inicializar(cuerpo, wiz) -> None:
         resultado.poner("Ninguna de las parejas elegidas necesita inicialización.")
 
 
+def comprobaciones_dispositivo(
+        raiz, elegidas: list[str], clave: str | None, cifrado: str,
+        unidad) -> list[tuple[str, bool | str | None, str]]:
+    """Devuelve las filas de la verificación de un dispositivo, sin pintar nada.
+
+    Mira el dispositivo, y con VeraCrypt la unidad de fuera: es lo que hace
+    `_paso_final` en un hilo (`segundo_plano`), así que devuelve datos y no
+    toca Tk. Vive aquí y no en `install/` por lo mismo que
+    `tk_equipo.comprobaciones()`: junta lo que dicen varios módulos de
+    `install/` solo para la tabla de este paso.
+
+    Args:
+        raiz: La raíz del dispositivo (con VeraCrypt, lo montado).
+        elegidas: Las parejas que tienen que estar en el config.
+        clave: El nombre del fichero de clave del remoto, o `None` si la
+            conexión no usa ninguno.
+        cifrado: Cómo va cifrado (`InstallState.encryption`).
+        unidad: La unidad física (`InstallState.device`): con VeraCrypt, donde
+            van la entrada de fuera, el VeraCrypt que viaja y los restos.
+
+    Returns:
+        `(nombre, estado, detalle)` por comprobación, como las pinta
+        `tabla_estado`.
+    """
+    checks = device.verify_device(raiz, elegidas, clave)
+    # Solo con contenedor: sin él no hay nada que montar en el otro equipo, y
+    # una fila roja diciendo que falta VeraCrypt sería mentira. Lo mismo con la
+    # instalación en claro que quedó fuera: solo es un resto cuando la de verdad
+    # está dentro de un contenedor.
+    if cifrado == "veracrypt" and unidad:
+        checks += vestibulo.comprobar(unidad, device.control_id(raiz))
+        checks += traveler.comprobar(unidad)
+        checks += crypto.comprobar_restos(unidad)
+    return [(c.etiqueta, c.ok, c.detalle) for c in checks]
+
+
 def _paso_final(cuerpo, wiz) -> None:
-    """Pinta el paso de verificación y cierre."""
+    """Pinta el paso de verificación y cierre.
+
+    La tabla llega de un hilo (`comprobaciones_dispositivo`): mira el
+    dispositivo entero y, con VeraCrypt, la unidad de fuera. Mientras tanto la
+    línea de espera lo dice, y «Volver a comprobar» y «Desmontar el contenedor»
+    están apagados (desmontar a la vez que se lee lo montado fallaría). La
+    espera cuelga del marco de la tabla (`tabla.sondeo`): cambiar de paso la
+    cancela, y volver a comprobar deja atrás la anterior.
+    """
     from tkinter import ttk
 
     cuerpo.columnconfigure(0, weight=1)
@@ -1835,29 +2036,42 @@ def _paso_final(cuerpo, wiz) -> None:
     tabla = ttk.Frame(cuerpo)
     tabla.grid(row=1, column=0, sticky="ew", pady=(theme.E4, 0))
     tabla.columnconfigure(0, weight=1)
+    espera = Indicador(tabla)
+    espera.marco.grid(row=0, column=0, sticky="w")
+    tabla.sondeo = sondeo = Sondeo(tabla)
+    pintada: dict = {"tarjeta": None}
+    botones: dict = {}
+    quietos = ("Desmontar el contenedor", "Volver a comprobar")   # apagados mientras se mira
 
     def revisar_dispositivo() -> None:
-        """Repinta las comprobaciones del dispositivo."""
-        for hijo in tabla.winfo_children():
-            hijo.destroy()
+        """Vuelve a mirar el dispositivo en un hilo; la tabla se pinta al llegar."""
         perfil = wiz.perfil_final
         clave = perfil.key_name if perfil.needs_key else None
-        checks = device.verify_device(wiz.device_root, wiz.state.selected, clave)
-        # Solo con contenedor: sin él no hay nada que montar en el otro equipo, y
-        # una fila roja diciendo que falta VeraCrypt sería mentira. Lo mismo
-        # con la instalación en claro que quedó fuera: solo es un resto cuando
-        # la de verdad está dentro de un contenedor.
-        if wiz.state.encryption == "veracrypt" and wiz.state.device:
-            checks += vestibulo.comprobar(wiz.state.device,
-                                          device.control_id(wiz.device_root))
-            checks += traveler.comprobar(wiz.state.device)
-            checks += crypto.comprobar_restos(wiz.state.device)
-        tabla_estado(tabla, [(c.etiqueta, c.ok, c.detalle) for c in checks],
-                     ("está", "falta", "sin mirar", "aviso"), ancho_nombre=200).grid(
-            row=0, column=0, sticky="ew")
-        wiz.reencajar()
+        espera.poner("Comprobando el dispositivo…", True)
+        for texto in quietos:
+            botones[texto].configure(state="disabled")
+        encargo = segundo_plano.lanzar(partial(
+            comprobaciones_dispositivo, wiz.device_root, list(wiz.state.selected), clave,
+            wiz.state.encryption, wiz.state.device))
+        sondeo.esperar(encargo, llega)
 
-    revisar_dispositivo()
+    def llega(encargo) -> None:
+        """Pinta la tabla llegada en lugar de la anterior."""
+        if pintada["tarjeta"] is not None:
+            pintada["tarjeta"].destroy()
+            pintada["tarjeta"] = None
+        for texto in quietos:
+            botones[texto].configure(state="normal")
+        if encargo.error is not None:
+            espera.poner(f"No se ha podido comprobar el dispositivo: {encargo.error}",
+                         False, "Aviso.")
+        else:
+            espera.poner("", False)
+            pintada["tarjeta"] = tabla_estado(
+                tabla, encargo.resultado, ("está", "falta", "sin mirar", "aviso"),
+                ancho_nombre=200)
+            pintada["tarjeta"].grid(row=1, column=0, sticky="ew")
+        wiz.reencajar()
 
     ttk.Label(cuerpo, text=theme.rotulo("Y ya que estamos"), style="Rotulo.TLabel").grid(
         row=2, column=0, sticky="w", pady=(theme.E4, theme.E2))
@@ -1959,6 +2173,9 @@ def _paso_final(cuerpo, wiz) -> None:
         theme.boton_icono(boton, icono, theme.TINTA2)
         boton.grid(row=i // 2, column=i % 2, sticky="w", padx=(0, theme.E2),
                    pady=theme.E1)
+        botones[texto] = boton
+
+    revisar_dispositivo()
 
 
 def _ok_conexion(w) -> bool:
