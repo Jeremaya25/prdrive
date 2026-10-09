@@ -222,7 +222,7 @@ def fila(disp: fleet.Dispositivo, yo: str) -> FilaTabla:
 
 
 LINEAS_FICHA = (1, 1, 2, fleet.MAX_EQUIPOS)
-"""Cuántas etiquetas de línea tiene la ficha por apartado al abrirse.
+"""Cuántas etiquetas de línea tiene la ficha por apartado al hacerse.
 
 Son las líneas que `ficha()` da en el caso común: una para «Versión» y para
 «Para», dos para «Estado» (el resultado y su pista) y las `MAX_EQUIPOS` que
@@ -233,13 +233,14 @@ Son las líneas que `ficha()` da en el caso común: una para «Versión» y para
 class Ficha:
     """La ficha del elegido: un juego fijo de etiquetas que se rellena en su sitio.
 
-    Las etiquetas se hacen una vez, al abrir la ventana: el nombre y el id, el
-    rótulo de cada apartado, sus líneas (`LINEAS_FICHA`) y las fechas de los
-    equipos. `poner()` solo cambia el texto y el estilo de cada una y la fila
-    de la rejilla donde está, y esconde con `grid_remove()` las que no tienen
-    nada que decir: elegir otro dispositivo no crea ni destruye ningún widget.
-    Las filas fluyen: un «Estado» de una línea deja subir a «Equipos», y uno de
-    dos lo baja.
+    Las etiquetas se hacen la primera vez que la ficha se necesita (`_construir()`,
+    desde `poner()` o `reservar()`): con una flota vacía no se hace ninguna. Son el
+    nombre y el id, el rótulo de cada apartado y sus líneas (`LINEAS_FICHA`). Las
+    fechas de los equipos se hacen cuando una flota las pide, y no se destruyen.
+    `poner()` solo cambia el texto y el estilo de cada una y la fila de la rejilla
+    donde está, y esconde con `grid_remove()` las que no tienen nada que decir:
+    elegir otro dispositivo no crea ni destruye ningún widget. Las filas fluyen:
+    un «Estado» de una línea deja subir a «Equipos», y uno de dos lo baja.
 
     El sitio de la ficha se reserva para el dispositivo que más pida
     (`reservar()`), y se mide con las propias etiquetas: sus tamaños pedidos
@@ -255,20 +256,42 @@ class Ficha:
         columna: La columna de la rejilla de `padre` en que va.
 
     Attributes:
-        marco: La tarjeta, donde están las etiquetas.
-        rotulo: El rótulo «Ficha», encima de la tarjeta.
+        marco: La tarjeta, donde están las etiquetas; `None` hasta que se hace.
+        rotulo: El rótulo «Ficha», encima de la tarjeta; `None` hasta que se hace.
         reserva: El `(ancho, alto)` que reservó `reservar()`, en píxeles.
     """
 
     def __init__(self, padre, fila: int, columna: int = 0) -> None:
-        """Hace las etiquetas, sin colocarlas: la ficha nace escondida."""
-        from tkinter import ttk
+        """Deja la ficha lista para hacerse, sin widgets: nace escondida y sin hacer."""
         self.padre, self.fila, self.columna = padre, fila, columna
+        self.rotulo = self.marco = None
+        self.nombre = self.ident = None
+        self.rotulos: list = []
+        self.lineas: list = []
+        self.fechas: list = []
+        self.reserva = (0, 0)
+        # Las medidas de la rejilla se toman del padre: no hace falta ninguna
+        # etiqueta para tenerlas.
+        self._canalon = theme.ancho_rotulo(padre, *ROTULOS_FICHA) + icons.px(padre, 14)
+        # Los espacios de la rejilla, en píxeles: lo que `_pide()` suma es lo
+        # mismo que `grid` reparte.
+        self._px = {d: int(padre.winfo_pixels(d))
+                    for d in (theme.E2, theme.E3, theme.E4)}
+        self._aire = icons.px(padre, 2)
+
+    def _construir(self) -> None:
+        """Hace las etiquetas fijas de la ficha, sin colocarlas.
+
+        Lo llama `_colocar()` la primera vez, así que la ficha existe desde que
+        hay un dispositivo que enseñar. Las fechas no se hacen aquí: las pide cada
+        flota.
+        """
+        from tkinter import ttk
+        padre = self.padre
         self.rotulo = ttk.Label(padre, text=theme.rotulo("Ficha"), style="Rotulo.TLabel")
         self.marco = ttk.Frame(padre, style="Card.TFrame",
                                padding=(theme.E4, theme.E3, theme.E4, theme.E3))
-        canalon = theme.ancho_rotulo(padre, *ROTULOS_FICHA) + icons.px(padre, 14)
-        self.marco.columnconfigure(0, minsize=canalon)
+        self.marco.columnconfigure(0, minsize=self._canalon)
         self.marco.columnconfigure(1, weight=1)
         self.nombre = ttk.Label(self.marco, style="Card.Fuerte.TLabel",
                                 wraplength=theme.medida(460), justify="left")
@@ -276,14 +299,6 @@ class Ficha:
         self.rotulos = [ttk.Label(self.marco, style="Card.Rotulo.TLabel")
                         for _ in ROTULOS_FICHA]
         self.lineas = [[self._nueva_linea() for _ in range(n)] for n in LINEAS_FICHA]
-        self.fechas: list = []
-        self.reserva = (0, 0)
-        self._canalon = canalon
-        # Los espacios de la rejilla, en píxeles: lo que `_pide()` suma es lo
-        # mismo que `grid` reparte.
-        self._px = {d: int(self.marco.winfo_pixels(d))
-                    for d in (theme.E2, theme.E3, theme.E4)}
-        self._aire = icons.px(self.marco, 2)
 
     def _nueva_linea(self):
         """Hace una etiqueta de línea, sin colocar."""
@@ -303,7 +318,12 @@ class Ficha:
         self.marco.grid(row=self.fila + 1, column=self.columna, sticky="nsew")
 
     def ocultar(self) -> None:
-        """Quita la ficha entera de la rejilla; recuerda el hueco que se le reservó."""
+        """Quita la ficha entera de la rejilla; recuerda el hueco que se le reservó.
+
+        No hace nada mientras la ficha no se ha hecho.
+        """
+        if self.marco is None:
+            return
         self.rotulo.grid_remove()
         self.marco.grid_remove()
 
@@ -320,14 +340,16 @@ class Ficha:
     def _colocar(self, disp: fleet.Dispositivo, equipo_aqui: str) -> list[tuple]:
         """Pone el texto, el estilo y la fila de cada etiqueta para ese dispositivo.
 
-        Lo que `ficha()` no usa se esconde y se deja sin texto. Es lo que
-        comparten `poner()` y `reservar()`: la ficha que se mide es la que se
-        pinta.
+        Si la ficha todavía no se ha hecho, la hace antes (`_construir()`). Lo que
+        `ficha()` no usa se esconde y se deja sin texto. Es lo que comparten
+        `poner()` y `reservar()`: la ficha que se mide es la que se pinta.
 
         Returns:
             Lo colocado, `(etiqueta, fila, columna, columnas, hueco_x, hueco_y)`
             por etiqueta, con los huecos en píxeles: lo que `_pide()` suma.
         """
+        if self.marco is None:
+            self._construir()
         e2, e3 = self._px[theme.E2], self._px[theme.E3]
         self.nombre.configure(text=disp.nombre)
         self.nombre.grid(row=0, column=0, columnspan=2, sticky="w")
@@ -407,8 +429,8 @@ class Ficha:
         texto que sí cambia de alto (un «fallo en a, b, c…» que parte en dos
         líneas, un nombre largo) y medirlo es la única forma de no suponerlo.
         Se rellenan las etiquetas con cada dispositivo y se lee lo que piden:
-        no se crea ningún widget (salvo las fechas que falten la primera vez)
-        ni se espera a un reposo del bucle de eventos. La ficha queda con el
+        no se crea ningún widget (salvo la ficha la primera vez, y las fechas que
+        falten) ni se espera a un reposo del bucle de eventos. La ficha queda con el
         último dispositivo: quien llama la repinta con el elegido.
 
         Args:
@@ -465,7 +487,7 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> None:
     donde = ttk.Frame(arriba)
     donde.grid(row=0, column=1, sticky="ne")
     donde.columnconfigure(0, weight=1)
-    chip = {"widget": None, "clave": None}
+    chip = {"widget": None}
     endpoint = ttk.Label(donde, style="MonoPista.TLabel", text=fleet.carpeta(raw))
     endpoint.grid(row=1, column=0, sticky="e", pady=(theme.E2, 0))
     indicador = Indicador(arriba, ancho=520)
@@ -492,14 +514,11 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> None:
     aqui = fleet.equipo_actual()
 
     def pintar_chip(texto: str, tipo: str, icono: str) -> None:
-        """Cambia el chip de arriba a la derecha, si lo que dice ha cambiado."""
-        if chip["clave"] == (texto, tipo, icono):
-            return
+        """Cambia el chip de arriba a la derecha por otro que dice lo que toca."""
         if chip["widget"] is not None:
             chip["widget"].destroy()
         chip["widget"] = theme.chip(donde, texto, tipo, icono)
         chip["widget"].grid(row=0, column=0, sticky="e")
-        chip["clave"] = (texto, tipo, icono)
 
     def refrescar(nota: str = "") -> None:
         """Relee la flota en segundo plano y repinta la tabla y la ficha al llegar.

@@ -2,12 +2,19 @@
 """«Dispositivos» rellena su ficha en su sitio, y no pinta una por dispositivo para medirla.
 
 La ficha del elegido es un juego fijo de etiquetas (`tk_fleet.Ficha`) que se
-hace al abrir la ventana y se rellena al elegir. Lo que se comprueba:
+hace la primera vez que hace falta, y se rellena al elegir. Lo que se comprueba:
 
 - los widgets de la ventana, la tabla incluida (un lienzo), son los mismos con 3 y
   con 25 dispositivos, y elegir cada fila no crea ni destruye ninguno;
+- con la flota vacía no se hace ninguna etiqueta de la ficha, y la primera flota
+  con notas la hace: lo que se elige después enseña lo mismo que una ventana
+  recién abierta con ese dispositivo;
 - la ficha de cada fila enseña, en las mismas celdas y con los mismos huecos,
   lo que una ventana recién abierta con solo ese dispositivo (`tests/_vista`);
+- a 100 %, la ficha de cada dispositivo tiene el mismo texto en el mismo sitio y
+  con el mismo tamaño que la tarjeta que pintaba la versión anterior;
+- `_pide()` es lo que mide `grid` en cada dispositivo, también con un nombre que
+  ocupa dos columnas, y la reserva es la mayor de esas medidas;
 - las filas fluyen: «Estado» de una línea deja subir a «Equipos», y lo que no
   se usa (la segunda línea de «Estado», una fecha) está fuera de la rejilla y
   sin texto;
@@ -100,6 +107,15 @@ def flota(n: int, fechas: int = fleet.MAX_EQUIPOS) -> list[fleet.Dispositivo]:
     return [dispositivo(i, fechas) for i in range(n)]
 
 
+SPAN = fleet.Dispositivo(id="span0000xxxxxxxx", nombre="copias de seguridad del taller",
+                         version="0.7.1", plataformas=("linux-x64",),
+                         last_seen="2026-01-01 08:00:00", last_result="ok",
+                         equipos=(E("PC", "2026-01-01 09:00:00"),))
+"""Un nombre de 30 letras con una ficha corta: su nombre ocupa las dos primeras columnas y sobra."""
+SOBRA = SPAN._replace(id="sobra0000xxxxxxx", nombre="copias de seguridad de")
+"""Un nombre que pasa de las dos columnas por unos 20 píxeles: el añadido es pequeño, no el de `SPAN`."""
+
+
 def todos(widget) -> list:
     """El widget y todo lo que cuelga de él, a la vista o no."""
     salida = [widget]
@@ -188,6 +204,102 @@ def huecos(widget) -> tuple:
     return tuple((str(w.cget("text")), int(w.grid_info()["row"]), int(w.grid_info()["column"]),
                   str(w.grid_info()["padx"]), str(w.grid_info()["pady"]),
                   str(w.grid_info()["sticky"])) for w in visibles(widget))
+
+
+def hoja_antigua(padre):
+    """La tarjeta vacía que pintaba `ui/tk_fleet.py` antes de rellenar la ficha en su sitio.
+
+    Una `Card.TFrame` con el canalón de los rótulos en la columna 0 y la columna
+    del texto estirable, como la hacía la versión anterior.
+    """
+    hoja = ttk.Frame(padre, style="Card.TFrame",
+                     padding=(theme.E4, theme.E3, theme.E4, theme.E3))
+    canalon = theme.ancho_rotulo(padre, *tk_fleet.ROTULOS_FICHA) + tk_fleet.icons.px(padre, 14)
+    hoja.columnconfigure(0, minsize=canalon)
+    hoja.columnconfigure(1, weight=1)
+    return hoja
+
+
+def pintar_ficha_antigua(hoja, disp: fleet.Dispositivo, aqui: str) -> None:
+    """Pinta en `hoja` la ficha de ese dispositivo como la pintaba la versión anterior.
+
+    Es el `pintar_ficha` de `git show 8678a5b:ui/tk_fleet.py`, copiado aquí como
+    vara: los huecos entre líneas son los literales de 8 y 2 píxeles de entonces,
+    y el código nuevo no se usa para medirse a sí mismo.
+    """
+    for widget in hoja.winfo_children():
+        widget.destroy()
+    ttk.Label(hoja, text=disp.nombre, style="Card.Fuerte.TLabel",
+              wraplength=theme.medida(460), justify="left").grid(
+        row=0, column=0, columnspan=2, sticky="w")
+    ttk.Label(hoja, text=f"id {disp.id[:8]}", style="Card.MonoPista.TLabel").grid(
+        row=0, column=2, sticky="ne", padx=(theme.E3, 0))
+    fila = 1
+    for apartado in tk_fleet.ficha(disp, aqui):
+        ttk.Label(hoja, text=theme.rotulo(apartado.rotulo),
+                  style="Card.Rotulo.TLabel").grid(row=fila, column=0,
+                                                   sticky="nw", pady=(theme.E2, 0))
+        lineas = list(apartado.lineas)
+        lineas += [tk_fleet.Linea(" ")] * (apartado.reserva - len(lineas))
+        for i, linea in enumerate(lineas):
+            aire = (8, 0) if i == 0 else (2, 0)
+            ttk.Label(hoja, text=linea.texto, justify="left",
+                      style="Card.Pista.TLabel" if linea.pista else "Card.TLabel",
+                      wraplength=theme.medida(440)).grid(
+                row=fila, column=1, sticky="w", pady=aire)
+            if linea.fecha:
+                ttk.Label(hoja, text=linea.fecha, style="Card.MonoPista.TLabel").grid(
+                    row=fila, column=2, sticky="e", padx=(theme.E3, 0), pady=aire)
+            fila += 1
+
+
+def geometria(tarjeta) -> tuple:
+    """Lo que enseña una tarjeta: su tamaño pedido y, por etiqueta a la vista, su texto y su sitio.
+
+    Cada etiqueta va con su `x`, `y`, `ancho` y `alto` dentro de la tarjeta, así que
+    dos tarjetas en ventanas distintas se comparan. Lo que `grid_remove` quita no se
+    enseña y no cuenta.
+
+    Returns:
+        `(ancho pedido, alto pedido, [(texto, x, y, ancho, alto), ...])`, con las
+        etiquetas ordenadas.
+    """
+    tarjeta.update_idletasks()
+    etiquetas = sorted(
+        (str(h.cget("text")), h.winfo_x(), h.winfo_y(), h.winfo_width(), h.winfo_height())
+        for h in tarjeta.winfo_children() if h.winfo_manager() == "grid")
+    return tarjeta.winfo_reqwidth(), tarjeta.winfo_reqheight(), etiquetas
+
+
+def comparar_con_antigua(dlg, lista_de: list, aparte) -> tuple[list[str], bool]:
+    """Compara la ficha de cada dispositivo, elegido en `dlg`, con la tarjeta antigua.
+
+    La tarjeta antigua se pinta en `aparte` con el mismo tamaño que la ficha de la
+    ventana (la columna y la fila de la reserva), para que las dos se estiren igual.
+
+    Returns:
+        Los ids de los dispositivos cuya ficha no enseña lo mismo, y si la vara
+        tiene de verdad sus etiquetas, con tamaño (un `winfo_width()` de 1 haría
+        iguales dos cosas distintas).
+    """
+    distintas, sanos = [], True
+    for disp in lista_de:
+        dlg.tabla.elegir(disp.id)
+        dlg.update()
+        tarjeta = dlg.ficha.marco
+        nueva = geometria(tarjeta)
+        aparte.columnconfigure(0, minsize=tarjeta.winfo_width())
+        aparte.rowconfigure(0, minsize=tarjeta.winfo_height())
+        hoja = hoja_antigua(aparte)
+        hoja.grid(row=0, column=0, sticky="nsew")
+        pintar_ficha_antigua(hoja, disp, AQUI)
+        vieja = geometria(hoja)
+        hoja.destroy()
+        sanos = sanos and len(vieja[2]) >= 10 and all(
+            ancho > 1 and alto > 1 for _t, _x, _y, ancho, alto in vieja[2])
+        if nueva != vieja:
+            distintas.append(disp.id)
+    return distintas, sanos
 
 
 c("la ficha tiene etiquetas de línea para cada uno de sus apartados",
@@ -347,7 +459,8 @@ with sandbox():
     APARTE = tk.Toplevel(raiz)             # donde se pinta la tarjeta de la vara
     APARTE.withdraw()
     PEOR = [dispositivo(1)._replace(
-        nombre="un nombre larguísimo " * 12, last_result=f"fallo en {LARGO}, {LARGO}",
+        id="peor0000xxxxxxxx", nombre="un nombre larguísimo " * 12,
+        last_result=f"fallo en {LARGO}, {LARGO}",
         equipos=tuple(E(("sala-de-reuniones-%d-del-edificio-de-la-oficina-de-arriba-" % k) * 2,
                         f"2026-01-0{k + 1} 09:00:00") for k in range(fleet.MAX_EQUIPOS)))]
     escala_real = float(raiz.tk.call("tk", "scaling"))
@@ -502,6 +615,104 @@ with sandbox():
     c("y sin ninguna otra vez, es el mismo aviso: no se hace otro",
       (buscar(dlg, ttk.Label, tk_fleet.SIN_NOTA) is aviso, len(todos(dlg)) == hechos), (True, True))
     cerrar(dlg)
+
+    # -----------------------------------------------------------------------
+    # 8. Con la flota vacía no se hace la ficha; la primera vez que hace falta, sí
+    # -----------------------------------------------------------------------
+    vacia = abrir([])
+    c("con la flota vacía no se ha hecho la ficha: ni su tarjeta ni su rótulo",
+      (vacia.ficha.marco, vacia.ficha.rotulo), (None, None))
+    c("  y la ventana tiene 24 widgets en este recuento (con el aviso de «no hay nadie»)",
+      len(todos(vacia)), 24)
+    LEIDA[:] = flota(3)
+    buscar(vacia, ttk.Button, "Releer").invoke()
+    vacia.update()
+    con_tres = abrir(flota(3))
+    c("«Releer» con notas hace la ficha: la ventana tiene los de abrirla con ellas, más el aviso",
+      len(todos(vacia)) - len(todos(con_tres)), 1)
+    cerrar(con_tres)
+    LEIDA[:] = flota(3)
+    distintas = []
+    for disp in flota(3):
+        vacia.tabla.elegir(disp.id)
+        vacia.update()
+        nueva = (leer_vista(vacia.ficha.marco), huecos(vacia.ficha.marco))
+        recien = abrir([disp])
+        if nueva != (leer_vista(recien.ficha.marco), huecos(recien.ficha.marco)):
+            distintas.append(disp.id)
+        cerrar(recien)
+    c("y elegir después cada uno enseña lo que una ventana recién abierta con él solo",
+      distintas, [])
+    cerrar(vacia)
+
+    # -----------------------------------------------------------------------
+    # 9. A 100 %, cada ficha se ve como la tarjeta que pintaba la versión anterior
+    # -----------------------------------------------------------------------
+    escala_inicial = float(raiz.tk.call("tk", "scaling"))
+    raiz.tk.call("tk", "scaling", 1.3333)              # el 100 %: 96 ppp
+    aparte = tk.Toplevel(raiz)
+    aparte.withdraw()
+    lista = flota(25) + [SPAN, SOBRA, PEOR[0]]
+    dlg = abrir(lista)
+    distintas, sanos = comparar_con_antigua(dlg, lista, aparte)
+    c("a 100 %, la ficha de cada dispositivo tiene los mismos textos, en los mismos sitios "
+      "y con el mismo tamaño que la tarjeta antigua", distintas, [])
+    c("  y la tarjeta antigua tiene de verdad sus etiquetas, con tamaño", sanos, True)
+    cerrar(dlg)
+    dlg = abrir([])
+    LEIDA[:] = lista
+    buscar(dlg, ttk.Button, "Releer").invoke()
+    dlg.update()
+    distintas, sanos = comparar_con_antigua(dlg, lista, aparte)
+    c("  y lo mismo cuando la flota llega a una ventana abierta vacía",
+      (distintas, sanos), ([], True))
+    cerrar(dlg)
+    aparte.destroy()
+    raiz.tk.call("tk", "scaling", escala_inicial)
+
+    # -----------------------------------------------------------------------
+    # 10. `_pide()` es lo que mide `grid` en cada dispositivo, y la reserva es la mayor
+    # -----------------------------------------------------------------------
+    def pasa_de_dos_columnas(ficha, disp: fleet.Dispositivo) -> int:
+        """Cuánto pasa el nombre de `disp` de lo que ocupan sus dos primeras columnas.
+
+        Las columnas se miden sin estirar: el canalón y la línea más ancha. Lo que
+        pasa lo añade `_pide()` a la última columna.
+        """
+        ficha._colocar(disp, AQUI)
+        ficha.marco.update_idletasks()
+        columna0 = max([int(ficha.marco.columnconfigure(0)["minsize"])]
+                       + [r.winfo_reqwidth() for r in ficha.rotulos])
+        columna1 = max(e.winfo_reqwidth() for grupo in ficha.lineas for e in grupo
+                       if e.winfo_manager() == "grid")
+        return ficha.nombre.winfo_reqwidth() - (columna0 + columna1)
+
+    escala_inicial = float(raiz.tk.call("tk", "scaling"))
+    for escala in (1.0, 1.3333, 2.0):
+        raiz.tk.call("tk", "scaling", escala)
+        lista = flota(12) + [SPAN, SOBRA, PEOR[0]]
+        dlg = abrir(lista)
+        ficha = dlg.ficha
+        medidas, fallos = [], []
+        for disp in lista:
+            pide = ficha._pide(ficha._colocar(disp, AQUI))
+            ficha.marco.update_idletasks()
+            real = (ficha.marco.winfo_reqwidth(), ficha.marco.winfo_reqheight())
+            medidas.append(real)
+            if pide != real:
+                fallos.append((disp.id, pide, real))
+        c(f"al {escala}: `_pide()` es lo que mide `grid` en cada dispositivo", fallos, [])
+        mayor = (max(w for w, _ in medidas), max(h for _, h in medidas))
+        reservado_col = int(ficha.padre.columnconfigure(ficha.columna)["minsize"])
+        reservado_fila = int(ficha.padre.rowconfigure(ficha.fila + 1)["minsize"])
+        c("  la reserva es la mayor de esas medidas, y es el minsize de la columna y la fila",
+          (ficha.reserva, (reservado_col, reservado_fila)), (mayor, mayor))
+        c("  el nombre de 30 letras pasa de sus dos columnas, y es lo que hace crecer la última",
+          pasa_de_dos_columnas(ficha, SPAN) > 0, True)
+        c("  y el que pasa por poco (menos de 40 píxeles) también se suma",
+          0 < pasa_de_dos_columnas(ficha, SOBRA) <= 40, True)
+        cerrar(dlg)
+    raiz.tk.call("tk", "scaling", escala_inicial)
 
 c("«Dispositivos» no devuelve nada", DEVUELTO and set(DEVUELTO), {None})
 c("nada ha reventado por el camino", errores, [])
