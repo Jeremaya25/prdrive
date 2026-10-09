@@ -465,6 +465,31 @@ además que `id()` se reutilice mientras la caché siga viva.
 """
 
 
+def guardada(widget, clave: tuple, hacer):
+    """Devuelve la imagen de `clave` en el intérprete de `widget`; `hacer()` la hace una vez.
+
+    Es la misma caché que la de los iconos: la imagen vive hasta que `olvidar()`
+    suelta ese intérprete, y entonces se va con las demás. Quien la usa (el lienzo
+    de las tablas) no guarda la suya.
+
+    Args:
+        widget: El widget cuyo intérprete es el dueño de la imagen.
+        clave: Lo que la distingue, con cosas que se puedan comparar y ser claves.
+        hacer: Sin argumentos; devuelve la `PhotoImage` la primera vez.
+
+    Returns:
+        La imagen guardada (o la recién hecha).
+    """
+    interp = widget.tk
+    ficha = (id(interp), "guardada", *clave)
+    guardado = _CACHE.get(ficha)
+    if guardado is not None and guardado[0] is interp:
+        return guardado[1]
+    img = hacer()
+    _CACHE[ficha] = (interp, img)
+    return img
+
+
 def olvidar(interp) -> None:
     """Suelta las imágenes de un intérprete de Tk que ya se ha cerrado.
 
@@ -472,6 +497,7 @@ def olvidar(interp) -> None:
     en el hilo principal. Sí importa en la ventanita del servicio, que vive en
     un hilo propio (`ui.avisar_fallo`): si sus imágenes siguieran aquí, las
     borraría el hilo principal al salir, y a Tk solo se le habla desde el suyo.
+    Se suelta también lo que se guardó con `guardada()`.
     """
     for ficha in [f for f, (dueno, _img) in _CACHE.items() if dueno is interp]:
         del _CACHE[ficha]

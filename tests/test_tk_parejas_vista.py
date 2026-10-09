@@ -980,4 +980,57 @@ def probar_la_pantalla() -> None:
 probar_la_pantalla()
 
 
+# ---------------------------------------------------------------------------
+# 6. Lo que dice cada fila: la casilla, el chip de modo y el chip de estado
+# ---------------------------------------------------------------------------
+def fila_con(nombre: str, modo: str = "bisync", en_pen: bool = True, estado: str = "ok",
+             aviso: str | None = None, origen: str = pair_editor.ORIGEN_CATALOGO) -> Fila:
+    """Una pareja con lo justo para su fila; su ruta es «docs ↔ nas:/R/<nombre>»."""
+    return Fila(nombre, modo, "docs", f"nas:/R/{nombre}", estado, aviso, en_pen, origen, ())
+
+
+sano = fila_con("sano")
+espejo = fila_con("copia", modo="up-mirror", aviso=pair_editor.mirror_warning("up-mirror"))
+local = fila_con("local", origen=pair_editor.ORIGEN_LOCAL)
+apagada = fila_con("apagada", en_pen=False)
+casos = []
+for fila_, nombre_caso in ((sano, "sana"), (espejo, "espejo"), (local, "modificada aquí"),
+                           (apagada, "no se usa aquí")):
+    tono_, nota_ = pair_editor.row_status(fila_, False)
+    casos.append((nombre_caso, tono_, nota_, tk_pairs.ListaParejas.fila_tabla(fila_, tono_, nota_, False)))
+dibujadas = {nombre_caso: (tono_, fila_tabla) for nombre_caso, tono_, _nota, fila_tabla in casos}
+c("una pareja sana: casilla marcada, modo sin aviso y estado «Ok.»",
+  dibujadas["sana"],
+  ("ok", uitk.FilaTabla("sano", (tk_pairs.CeldaCasilla(True), uitk.CeldaTexto("sano", "Fuerte."),
+                               uitk.CeldaTexto("docs ↔ nas:/R/sano", "Mono."),
+                               uitk.CeldaChip("bisync", "", "both"),
+                               uitk.CeldaChip("ok", "Ok.", None)), "")))
+c("un espejo: tono de peligro, modo en rojo con su icono de subida y estado «espejo» en rojo",
+  dibujadas["espejo"][0], "peligro")
+c("  el modo y el estado", dibujadas["espejo"][1].celdas[3:],
+  (uitk.CeldaChip("up-mirror", "Peligro.", "up"), uitk.CeldaChip("espejo", "Peligro.", None)))
+c("una pareja modificada aquí: tono de aviso y su origen como estado «Aviso.»",
+  (dibujadas["modificada aquí"][0], dibujadas["modificada aquí"][1].celdas[4]),
+  ("aviso", uitk.CeldaChip(pair_editor.ORIGEN_LOCAL, "Aviso.", None)))
+c("una pareja que no se usa aquí: casilla vacía, tono apagado y «Apagado.»",
+  (dibujadas["no se usa aquí"][0], dibujadas["no se usa aquí"][1].celdas[0],
+   dibujadas["no se usa aquí"][1].celdas[4]),
+  ("apagado", tk_pairs.CeldaCasilla(False), uitk.CeldaChip(pair_editor.NO_SE_USA, "Apagado.", None)))
+c("en la vista del catálogo el estado de un espejo sigue en rojo, pero su chip dice «Ok.»",
+  (pair_editor.row_status(espejo, True)[0],
+   tk_pairs.ListaParejas.fila_tabla(espejo, "peligro", pair_editor.EN_EL_CATALOGO, True).celdas[4]),
+  ("peligro", uitk.CeldaChip(pair_editor.EN_EL_CATALOGO, "Ok.", None)))
+
+lista_t = lista_nueva(ttk.Frame(raiz))
+lista_t.poner([sano, espejo, local, apagada])
+leido = lista_t.leer()
+c("leer(): la casilla de una pareja que no se usa aquí es ☐, y la de una que sí es ☑",
+  (leido[0][0], leido[3][0]), ("☑", "☐"))
+c("  y el modo y el estado tal como se ven",
+  [(f[3], f[4]) for f in leido],
+  [("bisync", "ok"), ("up-mirror", "espejo"), ("bisync", pair_editor.ORIGEN_LOCAL),
+   ("bisync", pair_editor.NO_SE_USA)])
+c("nada ha reventado", errores, [])
+
+
 sys.exit(c.report())

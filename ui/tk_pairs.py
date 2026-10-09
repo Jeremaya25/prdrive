@@ -109,7 +109,7 @@ class ListaParejas:
         puede_dejar: Se pregunta antes de cambiar de fila; si dice que no
             (quedan cambios sin guardar y la persona no los quiere perder), la
             elección no se hace.
-        al_elegir: Lo que se llama después de elegir otra (y con Intro).
+        al_elegir: Lo que se llama después de elegir otra.
 
     Attributes:
         marco: El lienzo de la lista: lo que se coloca.

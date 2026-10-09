@@ -32,18 +32,23 @@ Se ve como una rejilla de etiquetas de ttk:
   seminegrita, y los nombres saldrían más gruesos y las columnas mal medidas.
 
 Cambia solo lo que cambia. `poner()` compara por `iid`: una fila igual no se
-toca, una que cambia se dibuja de nuevo (solo ella en una rejilla, donde si cambia
-de alto las de debajo se desplazan; en una lista todas miden lo de la más alta, así
-que si cambia ese alto se dibujan todas), una que se va se borra y una que llega se dibuja; si la
-anchura de una columna cambia, sus elementos se desplazan de una vez (`move` por
-la etiqueta de la columna). Elegir otra fila repinta dos; pasar el ratón, una.
+toca; una que cambia se dibuja de nuevo, y solo ella; una que se va se borra y
+una que llega se dibuja. Si una fila cambia de alto, las de debajo se desplazan;
+si cambia de sitio, se mueve. Si una columna cambia de anchura, sus elementos se
+desplazan de una vez (`move` por la etiqueta de la columna). Elegir otra fila
+repinta dos; pasar el ratón, una.
 Una anchura nueva del lienzo (`<Configure>`) solo desplaza las columnas de la
 derecha y, en una lista, vuelve a cortar los textos de la que estira.
 
-Se usa sin ratón: Tab le da el foco (un anillo de 2 px del acento dentro de la
-fila elegida), ↑/↓, Inicio/Fin y RePág/AvPág cambian de fila e Intro llama a
-`al_elegir`. La rueda no es suya: la pasa al marco de debajo, para que la
-recoja el `Visor` de la pantalla.
+Cada fila mide lo que la más alta de sus celdas, en la lista y en la rejilla: un
+chip más bajo que el de otra fila deja su fila más baja, como en una rejilla de
+etiquetas.
+
+Se usa sin ratón: Tab le da el foco; con ↑/↓, Inicio/Fin o RePág/AvPág se cambia
+de fila y el anillo del foco (2 px del acento dentro de la fila elegida) se
+enseña. Un clic elige la fila y da el foco, pero no enseña el anillo. Intro no
+hace nada: la fila elegida ya lo está. La rueda no es suya: la pasa al marco de
+debajo, para que la recoja el `Visor` de la pantalla.
 """
 
 from __future__ import annotations
@@ -93,17 +98,6 @@ class CeldaCasilla(NamedTuple):
     texto: str = ""
 
 
-_IMAGENES: dict[tuple, tuple] = {}
-"""Las píldoras estiradas y las esquinas de la tarjeta, por intérprete: `clave → (intérprete, imagen)`.
-
-Se hacen una vez por tamaño y se comparten entre tablas (las de un mismo
-intérprete se llaman igual, que es lo que comparan las pruebas). Como
-`icons._CACHE`, guarda el intérprete para que su `id` no se reutilice mientras
-la imagen siga aquí; la tabla solo vive en el intérprete de la ventana
-principal, que no se cierra desde otro hilo.
-"""
-
-
 def _pieza_chip(widget, tipo: str):
     """Devuelve la pieza de nueve trozos del chip de ese tipo, la del estilo del tema: `(imagen, borde)`.
 
@@ -128,19 +122,11 @@ def _tramos(lado: int, borde: int, destino: int) -> list[tuple[int, int, int, in
     return [t for t in tramos if t[3] > t[2]]
 
 
-def _guardada(widget, clave: tuple, hacer):
-    """Devuelve la imagen de `clave` en el intérprete de `widget`, haciéndola con `hacer()` una vez."""
-    ficha = (id(widget.tk), *clave)
-    guardada = _IMAGENES.get(ficha)
-    if guardada is not None and guardada[0] is widget.tk:
-        return guardada[1]
-    img = hacer()
-    _IMAGENES[ficha] = (widget.tk, img)
-    return img
-
-
 def _estirada(widget, pieza, borde: int, ancho: int, alto: int):
-    """Devuelve la pieza estirada a `ancho` x `alto` píxeles, como la estira ttk."""
+    """Devuelve la pieza estirada a `ancho` x `alto` píxeles, como la estira ttk.
+
+    Se guarda en la caché de `icons`, por intérprete: `icons.olvidar()` la suelta.
+    """
     import tkinter as tk
 
     def hacer():
@@ -152,7 +138,7 @@ def _estirada(widget, pieza, borde: int, ancho: int, alto: int):
                                "-to", x0, y0, x1, y1, "-compositingrule", "set")
         return img
 
-    return _guardada(widget, (str(pieza), "estirada", ancho, alto), hacer)
+    return icons.guardada(widget, (str(pieza), "estirada", ancho, alto), hacer)
 
 
 def _recorte(widget, pieza, x0: int, y0: int, lado: int):
@@ -166,7 +152,7 @@ def _recorte(widget, pieza, x0: int, y0: int, lado: int):
                        "-to", 0, 0, "-compositingrule", "set")
         return img
 
-    return _guardada(widget, (str(pieza), "recorte", x0, y0, lado), hacer)
+    return icons.guardada(widget, (str(pieza), "recorte", x0, y0, lado), hacer)
 
 
 class _Chip(NamedTuple):
@@ -225,9 +211,9 @@ class TablaLienzo:
             con lo que sobre (en una lista su texto se corta con «…» si no cabe;
             en una rejilla no se corta nada).
         al_elegir: Lo que se llama después de elegir otra fila con el ratón o
-            el teclado, y con Intro; sin él, las filas no se eligen a mano.
-        puede_dejar: Se pregunta antes de cambiar de fila (y antes de Intro); si
-            dice que no, no se hace. Sin él, siempre se puede.
+            el teclado; sin él, las filas no se eligen a mano.
+        puede_dejar: Se pregunta antes de cambiar de fila; si dice que no, no se
+            hace. Sin él, siempre se puede.
         vacio: Lo que se dice cuando no hay ninguna fila.
         superficie: La superficie sobre la que va la tabla (`''`, el papel):
             es lo que asoma por fuera de sus esquinas redondeadas.
@@ -238,10 +224,10 @@ class TablaLienzo:
             (`tk.Tabla`) y no como una lista de «Parejas». Con `True`: ninguna
             celda se corta (la columna que estira mide lo que su contenido más
             ancho y se queda con lo que sobra), el ancho mínimo de una columna
-            cuenta los huecos de sus lados (el `minsize` de `grid`) y cada fila
-            mide lo que la más alta de sus celdas. Con `False` la columna que
-            estira corta con «…» lo que no le cabe, su mínimo es el del
-            contenido y todas las filas miden lo de la más alta.
+            cuenta los huecos de sus lados (el `minsize` de `grid`). Con `False`
+            la columna que estira corta con «…» lo que no le cabe y su mínimo es
+            el del contenido. En los dos casos cada fila mide lo que la más alta
+            de sus celdas.
         encima: Si la fila que tiene el ratón encima se tiñe hacia la tinta.
             Solo cuenta con `al_elegir`: sin él, la tabla no mira el ratón.
 
@@ -274,7 +260,9 @@ class TablaLienzo:
         self._filas: dict[str, _Fila] = {}
         self._creadas = 0
         self._encima: str | None = None
+        self._raton_y: int | None = None        # dónde está el ratón sobre el lienzo
         self._con_foco = False
+        self._sin_anillo = False                # un clic dio el foco: no se enseña el anillo
         self._chips: dict[CeldaChip, _Chip] = {}
         self._medidas: dict[tuple[str, str], int] = {}
         self._lineas: dict[str, int] = {}
@@ -304,12 +292,12 @@ class TablaLienzo:
             for tecla, paso in (("<Up>", -1), ("<Down>", 1), ("<Prior>", -PAGINA),
                                 ("<Next>", PAGINA), ("<Home>", None), ("<End>", None)):
                 cv.bind(tecla, lambda _e, paso=paso, tecla=tecla: self._tecla(tecla, paso))
-            cv.bind("<Return>", self._activar)
-            cv.bind("<KP_Enter>", self._activar)
+            cv.bind("<Return>", self._intro)
+            cv.bind("<KP_Enter>", self._intro)
             cv.bind("<Button-1>", self._clic)
             if encima:
-                cv.bind("<Motion>", lambda e: self._pasar(self._fila_en(e.y)))
-                cv.bind("<Leave>", lambda _e: self._pasar(None))
+                cv.bind("<Motion>", self._mover)
+                cv.bind("<Leave>", lambda _e: self._salir())
             cv.bind("<FocusIn>", lambda _e: self._foco(True))
             cv.bind("<FocusOut>", lambda _e: self._foco(False))
 
@@ -446,7 +434,7 @@ class TablaLienzo:
             `(anchos, alturas, ancho pedido, alto pedido)`: el ancho de cada
             columna sin repartir lo que sobre (la que estira, solo su mínimo y su
             rótulo; en una rejilla, también lo que pida su contenido), lo que
-            mide cada fila (todas lo de la más alta, salvo en una rejilla) y los
+            mide cada fila (la más alta de sus celdas, con su hueco) y los
             tamaños, en píxeles.
         """
         cv = self.marco
@@ -462,9 +450,8 @@ class TablaLienzo:
                 ancho = max([ancho] + [f.anchos[col] for f in self._filas.values()
                                        if col < len(f.anchos)])
             anchos.append(ancho)
-        propias = [max(self._min_fila, self._filas[iid].alto + 2 * self._relleno)
+        alturas = [max(self._min_fila, self._filas[iid].alto + 2 * self._relleno)
                    for iid in orden]
-        alturas = propias if self._rejilla else [max(propias, default=self._min_fila)] * len(orden)
         ancho = 2 * self._uno + sum(a + sum(self._lados(c)) for c, a in enumerate(anchos))
         if orden:
             cuerpo = sum(alturas) + len(orden) - 1
@@ -663,7 +650,7 @@ class TablaLienzo:
         """El anillo del foco: 2 px del acento dentro de la fila elegida, o de la tabla."""
         cv = self.marco
         cv.delete("anillo")
-        if not self._con_foco:
+        if not self._con_foco or self._sin_anillo:
             return
         if self.elegida in self._filas:
             f = self._filas[self.elegida]
@@ -712,8 +699,6 @@ class TablaLienzo:
         self.filas = nuevas
         if self.elegida not in nuevas:
             self.elegida = None
-        if self._encima not in nuevas:
-            self._encima = None
         orden = [fila.iid for fila in filas]
         maqueta = self._maquetar(orden)
         alturas, tops, y = maqueta[1], [], self._uno + self._alto_cabecera + 1
@@ -733,10 +718,15 @@ class TablaLienzo:
             f.pos = pos
         self.orden, self._alturas, self._tops = orden, alturas, tops
         self._cuerpo = sum(alturas) + len(alturas) - 1 if alturas else 0
+        antes_encima = self._encima     # bajo el ratón puede quedar ahora otra fila
+        self._encima = self._fila_en(self._raton_y) if self._raton_y is not None else None
         self._ajustar(maqueta)
         for iid in por_dibujar:
             self._dibujar(iid)
         self._anillo()
+        for cual in {antes_encima, self._encima}:
+            if cual is not None:
+                self._pintar(cual)
         pedido = (maqueta[2], maqueta[3])
         cambio = pedido != self._pedido
         if cambio:
@@ -803,12 +793,44 @@ class TablaLienzo:
         pos = sum(1 for arriba in self._tops if arriba <= y) - 1      # la última que empieza antes
         return self.orden[pos] if y < self._tops[pos] + self._alturas[pos] + 1 else None
 
+    def _fila_bajo(self, x: int, y: int) -> str | None:
+        """La fila que hay bajo ese punto del lienzo, o `None` si no hay ninguna.
+
+        Cuentan el cuerpo de la fila y no el borde de la tarjeta, la cabecera ni
+        la línea entre dos filas (eso no es de ninguna).
+        """
+        if not self.orden or not self._uno <= x < self._ancho - self._uno:
+            return None
+        for pos, iid in enumerate(self.orden):
+            if self._tops[pos] <= y < self._tops[pos] + self._alturas[pos]:
+                return iid
+        return None
+
     def _clic(self, evento) -> None:
-        """Le da el foco a la tabla y elige la fila pulsada."""
+        """Un clic en una fila la elige y le da el foco, sin enseñar el anillo.
+
+        Un clic fuera de las filas no hace nada: ni toma el foco ni elige.
+        """
+        iid = self._fila_bajo(evento.x, evento.y)
+        if iid is None:
+            return
+        self._sin_anillo = True
         self.marco.focus_set()
-        iid = self._fila_en(evento.y)
-        if iid is not None:
-            self.elegir(iid)
+        self.elegir(iid)
+        self._anillo()
+
+    def _mover(self, evento) -> None:
+        """El ratón se mueve sobre el lienzo: se tiñe la fila que hay bajo él."""
+        self._raton_y = evento.y
+        self._pasar(self._fila_en(evento.y))
+
+    def _salir(self) -> None:
+        """El ratón sale del lienzo, o la rueda cambia lo que hay debajo: ninguna fila se tiñe.
+
+        Hasta el próximo movimiento no se sabe qué fila queda bajo el ratón.
+        """
+        self._raton_y = None
+        self._pasar(None)
 
     def _pasar(self, iid: str | None) -> None:
         """El ratón pasa a estar encima de esa fila (o de ninguna)."""
@@ -820,7 +842,11 @@ class TablaLienzo:
                 self._pintar(cual)
 
     def _tecla(self, tecla: str, paso: int | None) -> str:
-        """Elige la fila de arriba, la de abajo, una página más allá, la primera o la última."""
+        """Elige la fila de arriba, la de abajo, una página más allá, la primera o la última.
+
+        Con el teclado el anillo del foco se enseña, aunque la fila no cambie.
+        """
+        self._sin_anillo = False
         if self.orden:
             if tecla == "<Home>":
                 pos = 0
@@ -831,17 +857,27 @@ class TablaLienzo:
             else:
                 pos = 0
             self.elegir(self.orden[max(0, min(len(self.orden) - 1, pos))])
+        self._anillo()
         return "break"
 
-    def _activar(self, _evento=None) -> str:
-        """Intro: vuelve a llamar a `al_elegir` con la fila elegida, si se puede dejar lo que hay."""
-        if self.elegida is not None and (self.puede_dejar is None or self.puede_dejar()):
-            self.al_elegir()
+    def _intro(self, _evento=None) -> str:
+        """Intro no cambia nada: la fila elegida ya lo está.
+
+        Volver a llamar a `al_elegir` no vale: en «Parejas» recarga el editor y
+        descartaría lo escrito sin preguntar. Por eso tampoco pregunta
+        `puede_dejar`. Solo impide que el evento llegue a la ventana.
+        """
         return "break"
 
     def _foco(self, tiene: bool) -> None:
-        """La tabla gana o pierde el foco del teclado: el anillo aparece o se va."""
+        """La tabla gana o pierde el foco: el anillo aparece o se va.
+
+        Al perderlo, la próxima vez que llega el foco (con Tab) el anillo vuelve a
+        enseñarse, aunque antes lo hubiera escondido un clic.
+        """
         self._con_foco = tiene
+        if not tiene:
+            self._sin_anillo = False
         self._anillo()
 
     def _rueda(self, patron: str, evento) -> str:
@@ -850,8 +886,10 @@ class TablaLienzo:
         El `Visor` de la pantalla deja la rueda a lo que se desplaza solo, y un
         lienzo sabe hacerlo; así que el mismo evento (el mismo patrón, y su
         `delta`) se repite en el padre, que no, y el `Visor` hace lo que haría
-        con el ratón sobre él.
+        con el ratón sobre él. Tras la rueda ninguna fila se tiñe hasta que el
+        ratón se mueva: lo que queda bajo él ha cambiado.
         """
+        self._salir()
         if patron == "<MouseWheel>":
             self.marco.master.event_generate(patron, delta=evento.delta)
         else:

@@ -397,7 +397,7 @@ tecla("Return")
 c("  Intro tampoco", elegidas, [])
 dejar["si"] = True
 tecla("Return")
-c("Intro vuelve a llamar a al_elegir con la misma fila", elegidas, ["documentos"])
+c("Intro en la fila ya elegida no vuelve a llamar a al_elegir", elegidas, [])
 otro_foco = ttk.Button(marco, text="otro")
 otro_foco.grid(row=3, column=0)
 otro_foco.focus_force()
@@ -410,8 +410,8 @@ cv.event_generate("<Button-1>", x=(caja[0] + caja[2]) // 2, y=(caja[1] + caja[3]
 dlg.update()
 c("un clic a la altura de una fila la elige y avisa", (t.elegida, elegidas),
   ("copias", ["copias"]))
-c("  y le da el foco a la tabla (con el anillo)",
-  (str(dlg.focus_get()), len(cv.find_withtag("anillo"))), (str(cv), 4))
+c("  y le da el foco a la tabla, sin anillo (un clic no lo enseña)",
+  (str(dlg.focus_get()), len(cv.find_withtag("anillo"))), (str(cv), 0))
 cv.event_generate("<Button-1>", x=caja[2] // 2, y=2)
 dlg.update()
 c("un clic en la cabecera no elige nada", (t.elegida, elegidas), ("copias", ["copias"]))
@@ -1128,6 +1128,249 @@ c("abrir «Dispositivos» y el editor de flags no manda ningún <<ThemeChanged>>
   cambios_tema, [])
 c("  ni crea ni toca un estilo de ttk",
   sorted(raiz.tk.splitlist(raiz.tk.call("ttk::style", "theme", "styles"))), estilos_antes)
+
+# ---------------------------------------------------------------------------
+# 9. Lo de la revisión de «Parejas»: la lista igual que la rejilla de antes,
+#    sin restos de foco ni de ratón
+# ---------------------------------------------------------------------------
+def punto(t_: TablaLienzo, iid: str) -> dict:
+    """Dónde pulsar para dar en el centro de esa fila."""
+    x0, y0, x1, y1 = t_.caja(iid)
+    return {"x": (x0 + x1) // 2, "y": (y0 + y1) // 2}
+
+
+def color_fondo(t_: TablaLienzo, iid: str) -> str:
+    """El color con el que está pintado el fondo de esa fila."""
+    cv_ = t_.marco
+    return str(cv_.itemcget([i for i in t_.elementos(iid) if "fondo" in cv_.gettags(i)][0],
+                            "fill"))
+
+
+def color_base(t_: TablaLienzo, iid: str) -> str:
+    """El fondo que tiene esa fila sin el ratón encima ni elegida."""
+    return theme.fondo_de(tk_tabla.SUPERFICIE_FILA.get(t_.filas[iid].tono, "Card."))
+
+
+def con_raton_encima(t_: TablaLienzo) -> list[str]:
+    """Las filas que no tienen su fondo de siempre: la que tiene el ratón encima, si hay una."""
+    return [iid for iid in t_.orden if color_fondo(t_, iid) != color_base(t_, iid)]
+
+
+def anillos(cv_) -> int:
+    """Cuántos trozos tiene ahora el anillo del foco."""
+    return len(cv_.find_withtag("anillo"))
+
+
+# 9a. Cada fila mide lo que la más alta de SUS celdas, como la rejilla de etiquetas de antes,
+#     en todas las escalas (100 a 300 %; la de 1,5 y la de 3,0 son las de 112 % y 225 %).
+#     Las filas de chips no bastan para verlo en todas: en X11, con las fuentes del paquete,
+#     a 2,6667 (200 %) y a 4,0 (300 %) todas miden lo mismo, y «todas lo de la más alta» y
+#     «cada una lo suyo» coinciden. Por eso va también una fila sin chips, más baja que las
+#     otras en cada escala: así una lista que estire todas a la más alta falla en todas.
+SOLO_TEXTO = FilaTabla("solo-texto", (CeldaCasilla(True), CeldaTexto("solo texto", "Fuerte."),
+                                      CeldaTexto("sin chips", "Mono."),
+                                      CeldaTexto("sin chips", "Mono."),
+                                      CeldaTexto("sin chips", "Mono.")))
+filas9 = FILAS + [SOLO_TEXTO]
+for escala in (1.3333, 1.5, 1.6667, 2.0, 2.6667, 3.0, 4.0):
+    r9 = tk.Tk()
+    anotar_errores(r9)
+    r9.withdraw()
+    r9.tk.call("tk", "scaling", escala)
+    theme.apply(r9)
+    dlg9, marco9 = ventana(r9, 1400)
+    vieja9 = rejilla_antigua(marco9, COLUMNAS, filas9, 36)
+    vieja9.grid(row=1, column=0, sticky="ew")
+    nueva9 = TablaLienzo(marco9, COLUMNAS, al_elegir=lambda: None)
+    nueva9.marco.grid(row=2, column=0, sticky="ew")
+    nueva9.poner(filas9)
+    enseñar(r9, dlg9)
+    p = f"al {round(escala / 1.3333 * 100)} %: "
+    c(p + "cada fila de la lista mide lo que la rejilla de antes (la de su celda más alta)",
+      [nueva9.caja(f.iid)[3] - nueva9.caja(f.iid)[1] for f in filas9],
+      [vieja9.grid_bbox(0, 2 + 2 * k)[3] for k in range(len(filas9))])
+    c(p + "  y la tabla pide lo mismo de alto", nueva9.marco.winfo_reqheight(),
+      vieja9.winfo_reqheight())
+    dlg9.destroy()
+    theme.olvidar(r9.tk)
+    icons.olvidar(r9.tk)
+    r9.destroy()
+
+# 9b. El anillo del foco solo se enseña con el teclado: un clic en una fila no lo pone
+dlg9, marco9 = ventana(raiz)
+t9 = tabla_en(marco9, al_elegir=lambda: None)
+t9.poner(FILAS)
+enseñar(raiz, dlg9)
+cv9 = t9.marco
+otro9 = ttk.Button(marco9, text="otro")
+otro9.grid(row=3, column=0)
+otro9.focus_force()
+dlg9.update()
+cv9.focus_force()
+dlg9.update()
+c("con el foco por el teclado, el anillo se ve", anillos(cv9) > 0, True)
+cv9.event_generate("<Button-1>", **punto(t9, "copias"))
+dlg9.update()
+c("un clic en una fila la elige y no enseña el anillo, aunque ya tenga el foco",
+  (t9.elegida, anillos(cv9)), ("copias", 0))
+cv9.event_generate("<Down>")
+dlg9.update()
+c("  y una flecha sí lo enseña", anillos(cv9) > 0, True)
+otro9.focus_force()
+dlg9.update()
+c("sin el foco no hay anillo", anillos(cv9), 0)
+cv9.event_generate("<Button-1>", **punto(t9, "larga"))
+dlg9.update()
+c("un clic que le da el foco a la tabla tampoco enseña el anillo",
+  (str(dlg9.focus_get()), t9.elegida, anillos(cv9)), (str(cv9), "larga", 0))
+otro9.focus_force()
+dlg9.update()
+cv9.focus_set()
+dlg9.update()
+c("el foco que llega sin ratón (Tab) sí lo enseña", anillos(cv9) > 0, True)
+dlg9.destroy()
+
+# 9c. Un clic en la cabecera, en el borde de la tarjeta o en la línea entre dos filas no toma
+#     el foco ni elige la fila de al lado; un clic en una fila sí
+elegidas9c: list = []
+dlg9, marco9 = ventana(raiz)
+t9c = tabla_en(marco9, al_elegir=lambda: elegidas9c.append(t9c.elegida))
+t9c.poner(FILAS)
+enseñar(raiz, dlg9)
+cv9c = t9c.marco
+otro9c = ttk.Button(marco9, text="otro")
+otro9c.grid(row=3, column=0)
+otro9c.focus_force()
+dlg9.update()
+x_medio = (t9c.caja("documentos")[0] + t9c.caja("documentos")[2]) // 2
+primera, ultima = t9c.caja("documentos"), t9c.caja("videos")
+sitios = (
+    ("la cabecera", {"x": x_medio, "y": 3}),
+    ("el borde izquierdo de la tarjeta, a la altura de una fila",
+     {"x": 0, "y": punto(t9c, "larga")["y"]}),
+    ("la línea entre dos filas", {"x": x_medio, "y": primera[3]}),
+    ("el borde de debajo de la última fila", {"x": x_medio, "y": ultima[3]}),
+)
+for nombre_sitio, donde in sitios:
+    cv9c.event_generate("<Button-1>", **donde)
+    dlg9.update()
+    c(f"un clic en {nombre_sitio} no toma el foco ni elige nada",
+      (str(dlg9.focus_get()), t9c.elegida, elegidas9c), (str(otro9c), None, []))
+cv9c.event_generate("<Button-1>", **punto(t9c, "larga"))
+dlg9.update()
+c("y un clic en una fila sí la elige y toma el foco",
+  (t9c.elegida, str(dlg9.focus_get()), elegidas9c), ("larga", str(cv9c), ["larga"]))
+dlg9.destroy()
+
+# 9d. Intro sobre la fila que ya está elegida no pregunta si se puede dejar ni la vuelve a elegir
+#     (volver a elegirla recargaría el editor y descartaría lo escrito sin preguntar)
+preguntas9d: list = []
+llamadas9d: list = []
+
+
+def pregunta9d() -> bool:
+    """Lo que contesta la pantalla cuando hay algo sin guardar: aquí, que sí, y se anota."""
+    preguntas9d.append(1)
+    return True
+
+
+dlg9, marco9 = ventana(raiz)
+t9d = tabla_en(marco9, al_elegir=lambda: llamadas9d.append(t9d.elegida), puede_dejar=pregunta9d)
+t9d.poner(FILAS)
+enseñar(raiz, dlg9)
+t9d.elegir("larga", avisar=False)
+t9d.marco.focus_force()
+dlg9.update()
+t9d.marco.event_generate("<Return>")
+dlg9.update()
+c("Intro sobre la fila ya elegida no pregunta ni vuelve a llamar a al_elegir",
+  (preguntas9d, llamadas9d, t9d.elegida), ([], [], "larga"))
+dlg9.destroy()
+
+# 9e. El ratón encima de una fila sigue a la fila que hay bajo él: ni tras poner() ni tras la rueda
+dlg9, marco9 = ventana(raiz)
+t9e = tabla_en(marco9, al_elegir=lambda: None)
+t9e.poner(FILAS)
+enseñar(raiz, dlg9)
+cv9e = t9e.marco
+y_larga = punto(t9e, "larga")["y"]
+cv9e.event_generate("<Motion>", x=10, y=y_larga)
+dlg9.update()
+c("con el ratón encima de una fila, solo esa se tiñe", con_raton_encima(t9e), ["larga"])
+t9e.poner(list(reversed(FILAS)))
+dlg9.update()
+bajo = [iid for iid in t9e.orden if t9e.caja(iid)[1] <= y_larga < t9e.caja(iid)[3]]
+c("tras poner() que reordena, se tiñe la fila que queda bajo el ratón, y no la de antes",
+  (bajo != ["larga"], con_raton_encima(t9e)), (True, bajo))
+cv9e.event_generate("<Motion>", x=10, y=y_larga)
+dlg9.update()
+cv9e.event_generate("<MouseWheel>", delta=-120)
+dlg9.update()
+c("tras una rueda, ninguna fila se tiñe (lo de debajo del ratón ha cambiado)",
+  con_raton_encima(t9e), [])
+cv9e.event_generate("<Motion>", x=10, y=y_larga)
+dlg9.update()
+c("  y al moverse otra vez se tiñe la que hay bajo él", con_raton_encima(t9e), bajo)
+dlg9.destroy()
+
+# 9f. Las píldoras estiradas se sueltan con su intérprete (la caché de imágenes es la de `icons`)
+import gc  # noqa: E402
+import weakref  # noqa: E402
+
+r10 = tk.Tk()
+anotar_errores(r10)
+r10.withdraw()
+theme.apply(r10)
+t10 = TablaLienzo(r10, COLUMNAS, al_elegir=lambda: None)
+t10.poner([FILAS[0]])
+referencia = weakref.ref(t10._chip(CeldaChip("ok", "Ok.")).pildora)
+t10.marco.destroy()
+del t10
+theme.olvidar(r10.tk)
+icons.olvidar(r10.tk)
+r10.destroy()
+gc.collect()
+c("al soltar el intérprete, la píldora de un chip se va con sus imágenes", referencia() is None,
+  True)
+
+# 9g. El anillo va con su fila cuando poner() la mueve
+dlg9, marco9 = ventana(raiz)
+t9g = tabla_en(marco9, al_elegir=lambda: None)
+t9g.poner(FILAS)
+enseñar(raiz, dlg9)
+cv9g = t9g.marco
+t9g.elegir("copias", avisar=False)
+cv9g.focus_force()
+dlg9.update()
+t9g.poner(list(reversed(FILAS)))
+dlg9.update()
+caja9g = t9g.caja("copias")
+trozos = cv9g.find_withtag("anillo")
+c("tras poner() que la mueve, el anillo rodea a su fila",
+  (min(cv9g.coords(i)[1] for i in trozos), max(cv9g.coords(i)[3] for i in trozos)),
+  (caja9g[1], caja9g[3]))
+dlg9.destroy()
+
+# 9h. La cabecera está a la misma altura con la lista vacía que llena. Solo la altura: en x
+#     no es lo mismo, porque con la lista vacía la columna de la casilla mide 0 y las demás se
+#     ajustan a su contenido. Aceptado tal cual; lo dice `ui.md`, en «An empty table's header
+#     keeps its height, not its x».
+dlg9, marco9 = ventana(raiz)
+t9h = tabla_en(marco9, al_elegir=lambda: None, vacio="No hay ninguna pareja.")
+t9h.poner([])
+enseñar(raiz, dlg9)
+
+
+def alturas_cabecera() -> list[float]:
+    """La altura de cada título de la cabecera, en el lienzo."""
+    return sorted({t9h.marco.coords(i)[1] for i in t9h.marco.find_withtag("cabecera")})
+
+
+vacia_h = alturas_cabecera()
+t9h.poner(FILAS)
+dlg9.update()
+c("la cabecera está a la misma altura con la lista vacía que llena", alturas_cabecera(), vacia_h)
+dlg9.destroy()
 
 c("nada ha reventado", errores, [])
 sys.exit(c.report())
