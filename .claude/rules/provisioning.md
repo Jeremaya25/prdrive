@@ -19,5 +19,10 @@ paths:
   - "tests/test_install_device.py"
   - "tests/test_platforms.py"
   - "tests/test_arch.py"
+  - "tests/test_build_installer.py"
+  - "tests/test_autoprueba.py"
+  - ".github/actions/compilar-instalador/action.yml"
+  - ".github/workflows/instalador.yml"
+  - ".github/workflows/build-installer-release.yml"
 ---
 Before changing these files, read `docs/agents/reference/provisioning.md` (the install wizard, platforms and runtimes, the PyInstaller build, Windows ARM). If you already read it this session, skip it.

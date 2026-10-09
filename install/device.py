@@ -25,8 +25,10 @@ lío. Un test comprueba que las dos copias no se separan.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
+import subprocess
 import tomllib
 import uuid
 from dataclasses import dataclass, replace
@@ -34,7 +36,7 @@ from pathlib import Path
 
 from common import autorun, model, vestibulo
 
-from . import DEVICE_LABEL, IS_WIN, InstallError
+from . import CREATE_NO_WINDOW, DEVICE_LABEL, IS_WIN, InstallError
 from .rclone_bin import bin_subdir, exe_name
 
 CONTAINER_SUFFIX = ".hc"
@@ -613,14 +615,141 @@ def _check_config(config: Path, esperadas: list[str], equipo: bool = False) -> C
                  + ", ".join(cfg.names))
 
 
+PYTHON_MINIMO = (3, 11)
+"""La versión más vieja del Python del equipo con la que arranca la instalación ligera.
+
+Es la de `tomllib`, que lee el `sync_config.toml`.
+"""
+TK_MINIMO = 9
+"""El Tk más viejo del Python del equipo con el que se admite la instalación ligera.
+
+Tk 9 es el único Tk soportado (decisión del dueño, 09/10/2026). Los Python de
+python.org para Windows traen Tk 8.6, y los de la mayoría de las distribuciones
+de Linux también: con uno así la ventana saldría por el pintor de respaldo, sin
+que nadie lo pruebe. Un Python sin tkinter sí sirve: sale el menú de consola.
+"""
+TOPE_PYTHON_S = 10.0  # segundos
+"""Lo que se espera al Python del equipo antes de darlo por mudo.
+
+Un `py.exe` o un alias que se queda colgado no puede dejar el asistente
+esperando para siempre.
+"""
+SONDA_PYTHON = (
+    "import json, sys\n"
+    "try:\n"
+    "    import tkinter\n"
+    "    tk = tkinter.TkVersion\n"
+    "except Exception:\n"
+    "    tk = None\n"
+    "print(json.dumps({'version': list(sys.version_info[:3]), 'tk': tk}))\n")
+"""Lo que se le pregunta al Python del equipo: su versión y la de su Tk.
+
+Contesta una línea JSON, `{"version": [3, 12, 1], "tk": 8.6}`, con `tk` nulo si
+no tiene tkinter. Solo se importa el módulo, sin crear ninguna ventana: es lo
+mismo que mira `runsync.pyw` para elegir entre la ventana y el menú de consola.
+"""
+CODIGO_TIEMPO = 124
+"""Código de una pregunta que no contesta a tiempo, el de `timeout(1)`."""
+CODIGO_SIN_LANZAR = 127
+"""Código de una pregunta que no se puede lanzar, el del intérprete de órdenes."""
+CODIGO_ALIAS_STORE = 9009
+"""Código con el que acaba el alias `python` de la Microsoft Store.
+
+Es lo que hay en `WindowsApps` cuando no se ha instalado Python: un atajo que
+ofrece instalarlo desde la tienda y no ejecuta nada.
+"""
+
+
+def preguntar_python(cmd: list[str]) -> subprocess.CompletedProcess:
+    """Le hace al Python del equipo la pregunta de `SONDA_PYTHON`, sin esperarlo para siempre.
+
+    Es una indirección de módulo: los tests la sustituyen por una que contesta
+    lo que haga falta. Va con `-I` (aislado: ni variables `PYTHON*` ni
+    `site-packages` del usuario), sin entrada (compilado no hay consola de la
+    que leer) y, en Windows, sin ventana de consola.
+
+    Args:
+        cmd: La orden del Python del equipo (`python_command()`).
+
+    Returns:
+        El resultado, con la salida como texto. Si pasa `TOPE_PYTHON_S`, el
+        código es `CODIGO_TIEMPO`; si no se puede lanzar, `CODIGO_SIN_LANZAR`.
+        No lanza nunca.
+    """
+    orden = [*cmd, "-I", "-c", SONDA_PYTHON]
+    kwargs: dict = {"stdin": subprocess.DEVNULL, "capture_output": True, "text": True,
+                    "encoding": "utf-8", "errors": "replace", "timeout": TOPE_PYTHON_S}
+    if IS_WIN:
+        kwargs["creationflags"] = CREATE_NO_WINDOW
+    try:
+        return subprocess.run(orden, **kwargs)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(orden, CODIGO_TIEMPO, "",
+                                           f"sin respuesta en {TOPE_PYTHON_S:g} s")
+    except (OSError, ValueError) as e:
+        return subprocess.CompletedProcess(orden, CODIGO_SIN_LANZAR, "", str(e))
+
+
+def _respuesta(res: subprocess.CompletedProcess) -> tuple[tuple[int, ...], float | None] | None:
+    """Lee la respuesta de `SONDA_PYTHON`.
+
+    Returns:
+        `(versión, TkVersion o None)`, o `None` si no ha contestado lo esperado.
+    """
+    if res.returncode != 0:
+        return None
+    lineas = [linea.strip() for linea in (res.stdout or "").splitlines() if linea.strip()]
+    try:
+        datos = json.loads(lineas[-1])
+    except (IndexError, ValueError):
+        return None
+    if not isinstance(datos, dict):
+        return None
+    version, tk = datos.get("version"), datos.get("tk")
+    if (not isinstance(version, list) or len(version) != 3
+            or not all(isinstance(v, int) for v in version)):
+        return None
+    if tk is not None and not isinstance(tk, (int, float)):
+        return None
+    return tuple(version), tk
+
+
+def _sin_respuesta(res: subprocess.CompletedProcess, orden: str) -> str:
+    """Dice por qué el Python del equipo no ha contestado, empezando por un verbo."""
+    if res.returncode == CODIGO_ALIAS_STORE or "windowsapps" in orden.lower():
+        return "es el alias de la Microsoft Store, no un Python instalado"
+    if res.returncode == CODIGO_TIEMPO:
+        return f"no ha contestado en {TOPE_PYTHON_S:g} s"
+    lineas = [linea.strip() for linea in (res.stderr or "").splitlines() if linea.strip()]
+    if res.returncode == 0:
+        motivo = "no ha contestado lo esperado"
+    elif res.returncode == CODIGO_SIN_LANZAR:
+        motivo = lineas[-1] if lineas else "no se puede lanzar"
+    else:
+        motivo = f"acaba con el código {res.returncode}" + (f" ({lineas[-1]})" if lineas else "")
+    if len(motivo) > 160:
+        motivo = motivo[:157] + "…"
+    return f"no se ha podido preguntar: {motivo}"
+
+
 def check_python(root: Path | None = None) -> Check:
     """Devuelve con qué Python arrancará el dispositivo EN ESTE EQUIPO.
 
     Con `root`, lo primero es el del propio dispositivo (el que usará
     `runsync.bat`) y entonces no hace falta ninguno instalado; si no lleva uno
-    que sirva aquí cuenta el del equipo, con Tkinter o sin él. Sin `root` (el
+    que sirva aquí cuenta el del equipo (la instalación ligera). Sin `root` (el
     paso de comprobaciones, antes de que exista el dispositivo) solo se mira el
     del equipo, y que falte no es grave: la instalación completa lleva el suyo.
+
+    El del equipo se pregunta con `preguntar_python()`, en su propio proceso:
+    importar tkinter aquí diría el Tk del intérprete que corre el instalador
+    (el del `.exe`), no el del equipo. Uno que no contesta (a tiempo, o con la
+    línea esperada; el alias de la Microsoft Store tampoco) cuenta como si no
+    hubiera ninguno. Para la instalación ligera, uno con Tk anterior a
+    `TK_MINIMO` no sirve (con `root`, ese dispositivo no arrancaría aquí) y uno
+    anterior a `PYTHON_MINIMO` tampoco, pero este último solo con `root`: sin
+    él se dice y no falla, porque la completa lleva el suyo. Uno sin tkinter
+    sirve: saldrá el menú de consola.
     """
     from . import platforms, python_command
     if root is not None:
@@ -629,25 +758,83 @@ def check_python(root: Path | None = None) -> Check:
         if propio is not None:
             return Check("Python para este equipo", True,
                          f"el del dispositivo: {propio}")
+        nombre = anfitrion.nombre if anfitrion else "este sistema"
+        arreglo = ("vuelve a ejecutar el instalador y pulsa «Añadir plataformas…», "
+                   "o instala un Python 3.11+ con Tk 9")
         cmd = python_command()
         if not cmd:
-            nombre = anfitrion.nombre if anfitrion else "este sistema"
             return Check("Python para este equipo", False,
                          f"el dispositivo no lleva Python para {nombre} y aquí no "
-                         f"hay ninguno instalado: vuelve a ejecutar el instalador y "
-                         f"pulsa «Añadir plataformas…», o instala Python 3.11+")
+                         f"hay ninguno instalado: {arreglo}")
+        orden = " ".join(cmd)
+        res = preguntar_python(cmd)
+        leida = _respuesta(res)
+        if leida is None:
+            return Check("Python para este equipo", False,
+                         f"el dispositivo no lleva Python para {nombre} y {orden} "
+                         f"{_sin_respuesta(res, orden)}; {arreglo}")
+        version, tk = leida
+        faltas = _faltas(version, tk)
+        if faltas:
+            return Check("Python para este equipo", False,
+                         f"el dispositivo no lleva Python para {nombre} y el del "
+                         f"equipo, {_describir(orden, version, tk)}, no sirve: "
+                         f"{'; '.join(faltas)}; {arreglo}")
         return Check("Python para este equipo", True,
-                     f"el del equipo: {' '.join(cmd)} (el dispositivo no lleva "
-                     f"uno propio para aquí)")
+                     f"el del equipo: {_con_tk(orden, version, tk)}; el dispositivo "
+                     f"no lleva uno propio para aquí")
 
     cmd = python_command()
     if not cmd:
         return Check("Python en este equipo", False,
                      "no hay ninguno: hará falta la instalación completa, que "
                      "lleva el suyo")
-    try:
-        import tkinter  # noqa: F401
-        return Check("Python en este equipo", True, f"{' '.join(cmd)} (con Tkinter)")
-    except Exception:
-        return Check("Python en este equipo", True,
-                     f"{' '.join(cmd)}, pero SIN Tkinter: saldrá el menú de consola")
+    orden = " ".join(cmd)
+    res = preguntar_python(cmd)
+    leida = _respuesta(res)
+    if leida is None:
+        return Check("Python en este equipo", False,
+                     f"{orden} {_sin_respuesta(res, orden)}; hará falta la "
+                     f"instalación completa, que lleva el suyo")
+    version, tk = leida
+    faltas = _faltas(version, tk)
+    if faltas:
+        # Un Python viejo solo se dice; con Tk anterior a `TK_MINIMO` no sirve.
+        return Check("Python en este equipo", _tk_vale(tk),
+                     f"{_describir(orden, version, tk)}: {'; '.join(faltas)}; la "
+                     f"instalación completa lleva el suyo")
+    return Check("Python en este equipo", True, _con_tk(orden, version, tk))
+
+
+def _tk_vale(tk: float | None) -> bool:
+    """Indica si ese Tk sirve para la instalación ligera: Tk 9 o posterior, o ninguno."""
+    return tk is None or tk >= TK_MINIMO
+
+
+def _faltas(version: tuple[int, ...], tk: float | None) -> list[str]:
+    """Dice lo que le falta a un Python del equipo para la instalación ligera, si algo."""
+    faltas = []
+    if version[:2] < PYTHON_MINIMO:
+        faltas.append("demasiado viejo para la instalación ligera: pide 3.11 o posterior")
+    if not _tk_vale(tk):
+        faltas.append(f"la instalación ligera pide Tk {TK_MINIMO} y este trae Tk {tk:.1f} "
+                      f"(los Python de python.org para Windows traen Tk 8.6)")
+    return faltas
+
+
+def _python(version: tuple[int, ...]) -> str:
+    """Devuelve `Python 3.12` a partir de `(3, 12, 1)`."""
+    return f"Python {version[0]}.{version[1]}"
+
+
+def _describir(orden: str, version: tuple[int, ...], tk: float | None) -> str:
+    """Describe un Python del equipo: su orden, su versión y su Tk."""
+    return f"{orden} ({_python(version)}, " + (
+        "sin Tkinter)" if tk is None else f"con Tkinter {tk:.1f})")
+
+
+def _con_tk(orden: str, version: tuple[int, ...], tk: float | None) -> str:
+    """Describe un Python del equipo que sirve, avisando si no tiene tkinter."""
+    if tk is None:
+        return f"{orden} ({_python(version)}), pero SIN Tkinter: saldrá el menú de consola"
+    return _describir(orden, version, tk)

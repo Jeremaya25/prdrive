@@ -199,4 +199,193 @@ roto = {chk.etiqueta: chk for chk in device.verify_device(dispositivo)}
 c("un config ilegible se detecta aquí y no al sincronizar",
   roto["El config se lee"].ok, False)
 
+# El Python del equipo se PREGUNTA, en un proceso aparte. Importar tkinter aquí
+# miraría el Tk del intérprete que corre el instalador (el del .exe, compilado),
+# no el del equipo, que es el que arrancará la instalación ligera. Y la ligera
+# pide Tk 9 (decisión del dueño, 09/10/2026): uno con Tk 8.6, como los Python de
+# python.org para Windows, no sirve.
+import json  # noqa: E402
+import subprocess  # noqa: E402
+
+import install  # noqa: E402
+
+SIN_PROPIO = tmpdir()
+"""Una raíz sin Python propio: cuenta el del equipo."""
+
+
+def contesta(version=(3, 12, 1), tk=9.0, rc=0, salida=None, error=""):
+    """Devuelve un `preguntar_python()` de mentira que contesta como un Python dado.
+
+    Args:
+        version: La versión que dice tener.
+        tk: Su `TkVersion`, o `None` si no tiene tkinter.
+        rc: El código con el que acaba.
+        salida: Lo que escribe, si no es la línea JSON de la sonda.
+        error: Lo que escribe por stderr.
+    """
+    texto = salida if salida is not None else json.dumps(
+        {"version": list(version), "tk": tk}) + "\n"
+
+    def falso(cmd):
+        return subprocess.CompletedProcess(list(cmd), rc, texto, error)
+    return falso
+
+
+def preguntar(pregunta, root=None, orden=("/usr/bin/python3",)):
+    """Devuelve `check_python(root)` con el Python del equipo y su respuesta de mentira."""
+    reales = install.python_command, device.preguntar_python
+    install.python_command = lambda windowless=False: list(orden)
+    device.preguntar_python = pregunta
+    try:
+        return device.check_python(root)
+    finally:
+        install.python_command, device.preguntar_python = reales
+
+
+bueno = preguntar(contesta())
+c("un Python 3.12 con Tk 9 sirve", (bueno.etiqueta, bueno.ok),
+  ("Python en este equipo", True))
+c.contains("  y se dice cuál y con qué Tk", bueno.detalle,
+           "/usr/bin/python3 (Python 3.12, con Tkinter 9.0)")
+sin_tk = preguntar(contesta(tk=None))
+c("sin tkinter sirve igual", sin_tk.ok, True)
+c.contains("  y se avisa del menú de consola", sin_tk.detalle,
+           "pero SIN Tkinter: saldrá el menú de consola")
+viejo = preguntar(contesta(version=(3, 10, 12)))
+c.contains("uno anterior a 3.11 se dice", viejo.detalle,
+           "demasiado viejo para la instalación ligera: pide 3.11 o posterior")
+c("  y sin raíz no falla: la completa lleva el suyo", viejo.ok, True)
+viejo_raiz = preguntar(contesta(version=(3, 10, 12)), SIN_PROPIO)
+c("  con raíz sí: ese dispositivo no arrancaría aquí",
+  (viejo_raiz.etiqueta, viejo_raiz.ok), ("Python para este equipo", False))
+c.contains("  y se dice", viejo_raiz.detalle, "demasiado viejo para la instalación ligera")
+c.contains("  y cómo se arregla", viejo_raiz.detalle, "Añadir plataformas")
+con_raiz = preguntar(contesta(), SIN_PROPIO)
+c("con raíz, uno bueno del equipo cuenta", con_raiz.ok, True)
+c.contains("  y se dice que es el del equipo, con su Tk", con_raiz.detalle,
+           "el del equipo: /usr/bin/python3 (Python 3.12, con Tkinter 9.0)")
+
+# Tk 8.6 (los Python de python.org para Windows, y los de la mayoría de las
+# distribuciones de Linux): no sirve para la ligera, y se dice por qué.
+tk86 = preguntar(contesta(tk=8.6))
+c("un Python con Tk 8.6 no sirve para la ligera", (tk86.etiqueta, tk86.ok),
+  ("Python en este equipo", False))
+c.contains("  y se dice cuál y con qué Tk", tk86.detalle,
+           "/usr/bin/python3 (Python 3.12, con Tkinter 8.6)")
+c.contains("  y por qué", tk86.detalle, "la instalación ligera pide Tk 9")
+c.contains("  y de dónde viene", tk86.detalle, "python.org")
+c.contains("  y qué queda: la completa", tk86.detalle, "la instalación completa")
+tk86_raiz = preguntar(contesta(tk=8.6), SIN_PROPIO)
+c("con raíz, ese dispositivo no arrancaría con él", (tk86_raiz.etiqueta, tk86_raiz.ok),
+  ("Python para este equipo", False))
+c.contains("  y se dice por qué", tk86_raiz.detalle, "pide Tk 9")
+c.contains("  con el Tk que tiene", tk86_raiz.detalle, "Tkinter 8.6")
+c.contains("  y cómo se arregla", tk86_raiz.detalle, "Añadir plataformas")
+c.contains("  o con un Python con Tk 9", tk86_raiz.detalle, "Tk 9")
+tk86_viejo = preguntar(contesta(version=(3, 10, 12), tk=8.6))
+c.contains("uno viejo y con Tk 8.6 dice las dos cosas", tk86_viejo.detalle, "pide 3.11")
+c.contains("  la otra", tk86_viejo.detalle, "pide Tk 9")
+c("  y el Tk lo hace no servir, aunque la edad sola no", tk86_viejo.ok, False)
+tk9_justo = preguntar(contesta(tk=9.0), SIN_PROPIO)
+c("Tk 9.0 sirve (es el mínimo)", tk9_justo.ok, True)
+tk10 = preguntar(contesta(tk=10.0))
+c("y un Tk posterior también", tk10.ok, True)
+
+# Sin respuesta es como sin Python (`ok` igual que cuando no hay ninguno).
+for nombre, pregunta, texto in (
+        ("uno que no contesta a tiempo", contesta(rc=124, salida=""), "no ha contestado en 10 s"),
+        ("uno que no se puede lanzar", contesta(rc=127, salida="", error="No such file"),
+         "no se ha podido preguntar"),
+        ("uno que contesta otra cosa", contesta(salida="hola\n"), "no se ha podido preguntar"),
+        ("uno que acaba mal", contesta(rc=1, salida="", error="Fatal Python error"),
+         "no se ha podido preguntar")):
+    sin_raiz = preguntar(pregunta)
+    con = preguntar(pregunta, SIN_PROPIO)
+    c(f"{nombre}: no cuenta, ni sin raíz ni con ella", (sin_raiz.ok, con.ok), (False, False))
+    c.contains(f"  y se dice ({texto})", sin_raiz.detalle, texto)
+    c.contains("  también con raíz", con.detalle, texto)
+    c.contains("  y con raíz, cómo se arregla", con.detalle, "Añadir plataformas")
+
+# El alias de la Microsoft Store: `python` existe, pero solo abre la tienda.
+tienda = preguntar(contesta(rc=9009, salida="", error="Python was not found; run without "
+                            "arguments to install from the Microsoft Store"))
+c("el alias de la Store (código 9009) no cuenta como Python", tienda.ok, False)
+c.contains("  y se dice que es el alias de la Store", tienda.detalle, "Microsoft Store")
+ruta_store = r"C:\Users\ana\AppData\Local\Microsoft\WindowsApps\python.exe"
+tienda_ruta = preguntar(contesta(rc=1, salida=""), SIN_PROPIO, orden=(ruta_store,))
+c("  ni el que vive en WindowsApps y no contesta", tienda_ruta.ok, False)
+c.contains("  y se dice igual", tienda_ruta.detalle, "Microsoft Store")
+de_la_store = preguntar(contesta(), orden=(ruta_store,))
+c("pero un Python de la Store que contesta sí sirve",
+  (de_la_store.ok, "Microsoft Store" in de_la_store.detalle), (True, False))
+
+# Cómo se pregunta: aislado, sin entrada, con tope y sin consola en Windows.
+vistas: list = []
+
+
+def espia(cmd, **kwargs):
+    vistas.append((cmd, kwargs))
+    return subprocess.CompletedProcess(cmd, 0, '{"version": [3, 12, 1], "tk": 9.0}\n', "")
+
+
+run_real, win_real = subprocess.run, device.IS_WIN
+subprocess.run = espia
+try:
+    device.IS_WIN = True
+    windows = device.preguntar_python(["py", "-3"])
+    device.IS_WIN = False
+    posix = device.preguntar_python(["python3"])
+finally:
+    subprocess.run, device.IS_WIN = run_real, win_real
+(cmd_win, kw_win), (cmd_posix, kw_posix) = vistas
+c("la orden es la del Python más -I -c y la sonda",
+  cmd_win, ["py", "-3", "-I", "-c", device.SONDA_PYTHON])
+c("  sin entrada (stdin=DEVNULL)", kw_win.get("stdin"), subprocess.DEVNULL)
+c("  con su tope de 10 s", (kw_win.get("timeout"), device.TOPE_PYTHON_S), (10, 10))
+c("  recogiendo la salida como texto",
+  (kw_win.get("capture_output"), kw_win.get("text")), (True, True))
+c("  y en Windows sin ventana de consola (CREATE_NO_WINDOW)",
+  kw_win.get("creationflags"), install.CREATE_NO_WINDOW)
+c("  que fuera de Windows no se pasa", "creationflags" in kw_posix, False)
+c("  y lo que contesta llega tal cual", windows.stdout, '{"version": [3, 12, 1], "tk": 9.0}\n')
+
+
+def agota(cmd, **kwargs):
+    raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout"))
+
+
+def no_lanza(cmd, **kwargs):
+    raise FileNotFoundError(2, "No such file or directory")
+
+
+for falso, codigo, que in ((agota, 124, "sin respuesta a tiempo"), (no_lanza, 127, "sin lanzarse")):
+    subprocess.run = falso
+    try:
+        res = device.preguntar_python(["python3"])
+    finally:
+        subprocess.run = run_real
+    c(f"preguntar_python no lanza nada {que}: código {codigo}", res.returncode, codigo)
+
+# El de verdad, en los dos Tk de la CI: contesta una línea JSON que se entiende.
+real = device.preguntar_python([sys.executable])
+try:
+    leido = json.loads(real.stdout.strip().splitlines()[-1])
+except (ValueError, IndexError):
+    leido = {}
+c("el Python de este test contesta su versión",
+  (real.returncode, leido.get("version")), (0, list(sys.version_info[:3])))
+c("  y su Tk como número (o nada, sin tkinter)",
+  isinstance(leido.get("tk"), (int, float, type(None))) and "tk" in leido, True)
+
+# Y no se importa tkinter en el proceso del instalador, ni siquiera sin raíz.
+from _harness import REPO  # noqa: E402
+
+limpio = subprocess.run(
+    [sys.executable, "-c",
+     "import sys; sys.path.insert(0, sys.argv[1]); from install import device; "
+     "chk = device.check_python(); print('tkinter' in sys.modules, chk.ok)", str(REPO)],
+    capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=60)
+c("check_python() no importa tkinter en su propio proceso",
+  limpio.stdout.split(), ["False", "True"])
+
 sys.exit(c.report())

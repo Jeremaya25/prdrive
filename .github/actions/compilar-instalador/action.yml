@@ -1,0 +1,87 @@
+name: Compilar el instalador
+description: >-
+  Compila dist/prdrive-install.exe con el Python fijado del dispositivo (python-build-standalone
+  de common/pins.py, entero: Tk 9) y el PyInstaller fijado en build_installer.py, y lo prueba con
+  --autoprueba. build_installer.py es estricto (PyInstaller fijado y Tk 9) en cualquier máquina. Si
+  la prueba falla, el paso falla: un .exe sin Tk 9, SVG o el asistente no sale de aquí. Solo en
+  máquinas Windows, con el repositorio en GITHUB_WORKSPACE.
+
+# Es una acción compuesta: sus pasos no admiten `timeout-minutes`, así que el tope va en el paso
+# que la usa (`instalador.yml`, `build-installer-release.yml`), y la autoprueba lleva el suyo.
+
+outputs:
+  exe:
+    description: Ruta completa del .exe compilado y probado.
+    value: ${{ steps.compilar.outputs.exe }}
+
+runs:
+  using: composite
+  steps:
+    # Solo para lanzar tests/_runtime_ci.py y leer el pin: el .exe se compila con el fijado.
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Clave de la caché del runtime
+      id: pins
+      shell: pwsh
+      run: python tests/_runtime_ci.py clave
+
+    # La misma caché que llena tests.yml (el trabajo `tests`, windows-x64).
+    - uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}/prdrive-cache
+        key: runtime-windows-x64-${{ steps.pins.outputs.clave }}
+
+    - name: Python fijado del dispositivo, entero (Tk 9, con pip)
+      shell: pwsh
+      run: python tests/_runtime_ci.py compilador windows-x64 "${{ runner.temp }}/py-compilar" "${{ runner.temp }}/prdrive-cache"
+
+    - name: PyInstaller fijado
+      shell: pwsh
+      run: |
+        $pin = "$(python -c 'import build_installer as b; print(b.PYINSTALLER)')".Trim()
+        if ($LASTEXITCODE -ne 0 -or -not $pin) { Write-Host "::error::No se ha podido leer PYINSTALLER de build_installer.py."; exit 1 }
+        Write-Host "PyInstaller fijado: $pin"
+        & $env:PRDRIVE_PYTHON_COMPILAR -m pip install --disable-pip-version-check --no-input "pyinstaller==$pin"
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+    - name: Compilar
+      id: compilar
+      shell: pwsh
+      run: |
+        & $env:PRDRIVE_PYTHON_COMPILAR build_installer.py
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        $exe = Join-Path $env:GITHUB_WORKSPACE "dist\prdrive-install.exe"
+        if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { Write-Host "::error::build_installer.py no ha dejado $exe."; exit 1 }
+        Write-Host "Compilado: $exe ($((Get-Item -LiteralPath $exe).Length) bytes)"
+        "exe=$exe" >> $env:GITHUB_OUTPUT
+
+    # La puerta: el .exe, sin ventana a la vista, escribe un JSON con lo que lleva (Python, Tk,
+    # SVG, tema, asistente, módulos, ficheros) y acaba con 0 solo si todo está. Tres minutos
+    # como mucho; si no acaba, se mata con todo lo que haya lanzado (el fichero único arranca
+    # un segundo proceso).
+    - name: Autoprueba del .exe
+      shell: pwsh
+      env:
+        EXE: ${{ steps.compilar.outputs.exe }}
+      run: |
+        $informe = Join-Path $env:RUNNER_TEMP "autoprueba.json"
+        Remove-Item -LiteralPath $informe -ErrorAction SilentlyContinue
+        $p = Start-Process -FilePath $env:EXE -ArgumentList "--autoprueba `"$informe`"" -PassThru
+        $null = $p.Handle   # sin esto, ExitCode llega vacío al acabar
+        if (-not $p.WaitForExit(180000)) {
+          taskkill /PID $p.Id /T /F | Out-Host
+          Write-Host "::error::La autoprueba no ha acabado en 3 minutos."
+          exit 1
+        }
+        if (-not (Test-Path -LiteralPath $informe -PathType Leaf)) {
+          Write-Host "::error::La autoprueba no ha escrito $informe (código $($p.ExitCode))."
+          exit 1
+        }
+        Get-Content -LiteralPath $informe -Raw -Encoding utf8 | Out-Host
+        if ($p.ExitCode -ne 0) {
+          Write-Host "::error::La autoprueba del .exe ha fallado (código $($p.ExitCode)): mira $informe arriba."
+          exit 1
+        }
+        Write-Host "Autoprueba superada."

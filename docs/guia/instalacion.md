@@ -66,8 +66,10 @@ hueco libre del dispositivo.
 La ligera usa el Python del equipo, y solo se admite uno **con Tk 9**
 (`python -c "import tkinter; print(tkinter.TkVersion)"` debe escribir `9.0` o
 más). Los Python de python.org para Windows y los de muchas distribuciones de
-Linux traen Tk 8.6 y no sirven. El de la instalación completa
-(python-build-standalone 3.14) sí: en un equipo sin un Python así, usa la
+Linux traen Tk 8.6 y no sirven; el instalador se lo pregunta al Python del
+equipo y lo marca en rojo («Comprobaciones», y la verificación del dispositivo)
+si trae un Tk anterior a 9. El de la instalación completa
+(python-build-standalone 3.14) sí sirve: en un equipo sin un Python así, usa la
 completa, que lleva el suyo.
 
 El Python es [python-build-standalone](https://github.com/astral-sh/python-build-standalone)
@@ -146,12 +148,14 @@ que trae su propia contraseña conserva su conexión.
 ## Un ejecutable, para no repetir todo esto
 
 ```bash
-pip install pyinstaller          # solo para compilar
-python build_installer.py        # -> dist/prdrive-install.exe
+python -m pip install pyinstaller==6.22.3   # solo para compilar
+python build_installer.py                   # -> dist/prdrive-install.exe
 ```
 
-Sale un instalador de un solo fichero que **lleva el programa dentro**. Dos
-variantes, y la diferencia importa:
+Hace falta un Python 3.11 o posterior **con Tk 9** y ese PyInstaller exacto:
+`build_installer.py` no compila sin ellos y dice qué falta. Sale un instalador de
+un solo fichero que **lleva el programa dentro**. Necesita **Windows 10 o
+posterior**. Dos variantes, y la diferencia importa:
 
 - **Sin perfil** (lo normal al clonar el repo): genérico, sin ningún secreto
   dentro, pregunta la conexión al abrirlo. Se puede repartir sin más.
@@ -162,3 +166,22 @@ variantes, y la diferencia importa:
 
 `install/secret.py` es el vehículo del perfil: se genera al compilar, está en
 `.gitignore` y se borra siempre en un `finally`, también si la compilación falla.
+
+El ejecutable **lleva dentro el Python con el que lo compilas, con su Tk**, y Tk 9
+es el único Tk que prdrive admite: con él el asistente pinta sus iconos con SVG.
+Los Python de python.org para Windows traen Tk 8.6 y no sirven para compilar. La
+CI compila con el Python de los dispositivos y prueba el ejecutable, sin abrir
+ninguna ventana, antes de darlo por bueno.
+
+Para compilar el tuyo igual (también el llave en mano, con tu perfil), en Windows
+y desde el repositorio:
+
+```bash
+python tests/_runtime_ci.py compilador windows-x64 C:\prdrive-py C:\prdrive-cache
+C:\prdrive-py\python.exe -m pip install pyinstaller==6.22.3
+C:\prdrive-py\python.exe build_installer.py
+```
+
+La primera orden baja ese Python (python-build-standalone 3.14.8, Tk 9.0.4,
+comprobado contra el `SHA256SUMS` de su release) y lo deja en `C:\prdrive-py`
+entero, con pip.
