@@ -27,6 +27,7 @@ plataformas…». Lo que decide (qué se marca, qué se borra, cuánto ocupa) es
 
 from __future__ import annotations
 
+import re
 import sys
 from functools import partial
 from pathlib import Path
@@ -37,6 +38,7 @@ from install import (crypto, deploy, device, platforms, profile, raiz_equipo,
                      rclone_bin, remote, traveler, vestibulo)
 
 from . import icons, theme
+from . import tk as uitk
 from .tk import (TITLE, Indicador, Resultado, Sondeo, Visor, centrar, ensenar,
                  output_window, separador_fila, tabla_estado, working)
 
@@ -70,6 +72,59 @@ def _ruta_destino(cuerpo, antes: str, ruta, despues: str, fila: int = 0) -> None
     ttk.Label(marco, text=str(ruta), style="Mono.TLabel").grid(
         row=1, column=0, sticky="w", padx=(theme.E4, 0), pady=(theme.E2, theme.E2))
     _texto(marco, despues, 2)
+
+
+def _posicion(ventana) -> tuple[int, int]:
+    """Dónde está una ventana, en las coordenadas de `geometry("+x+y")`.
+
+    Son las de `wm geometry`, las que se usan para moverla, y no las de
+    `winfo_x()`: con el marco del sistema alrededor pueden no coincidir, y
+    moverla con unas leídas de las otras la desplazaría. Es lo que hace
+    `ui.tk.main_window()` con su propio `posicion()`.
+
+    Args:
+        ventana: La ventana a mirar.
+
+    Returns:
+        La esquina de arriba a la izquierda.
+    """
+    casa = re.fullmatch(r"\d+x\d+\+(-?\d+)\+(-?\d+)", ventana.geometry())
+    if casa is None:                 # colocada desde la derecha o desde abajo
+        return ventana.winfo_x(), ventana.winfo_y()
+    return int(casa.group(1)), int(casa.group(2))
+
+
+def _sitio_en_pantalla(x: int, y: int, ancho: int, alto: int,
+                       util: tuple[int, int],
+                       pantalla: tuple[int, int]) -> tuple[int, int]:
+    """Dónde debe quedar una ventana para que no se salga de la pantalla útil.
+
+    Solo se mueve lo que se sale, y lo justo: lo que cabe se queda donde está,
+    porque crecer no debe pasear la ventana. Un eje solo se corrige si la
+    esquina cae dentro de la pantalla principal: con varios monitores una
+    ventana en otro tiene coordenadas fuera de ella, y «corregirla» la
+    llevaría a la principal.
+
+    Args:
+        x: Borde de la izquierda, en las coordenadas de la pantalla.
+        y: Borde de arriba, en las coordenadas de la pantalla.
+        ancho: Ancho de la ventana.
+        alto: Alto de la ventana.
+        util: Ancho y alto de la pantalla útil (`ui.tk.pantalla_util`).
+        pantalla: Ancho y alto de la pantalla principal.
+
+    Returns:
+        La nueva esquina `(x, y)`, la misma si no hace falta moverla.
+    """
+    util_x, util_y = util
+    pantalla_x, pantalla_y = pantalla
+    nueva_x, nueva_y = x, y
+    if 0 <= x < pantalla_x and x + ancho > util_x:
+        nueva_x = max(0, util_x - ancho)
+    if 0 <= y < pantalla_y and y + alto > util_y:
+        nueva_y = max(0, util_y - alto)
+    return nueva_x, nueva_y
+
 
 class Wizard:
     """La ventana y por qué paso va; los pasos solo pintan dentro de `cuerpo`.
@@ -190,16 +245,34 @@ class Wizard:
         self.llavero_llave: Path | None = None
         self.llavero_hecho = False
         self.python_equipo: device.Check | None = None
+        # Verdadero mientras `repintar()` dibuja el paso: sus `revisar()` no reencajan.
+        self._pintando = False
+        # El último tamaño de la ventana que se ha colocado (`_al_cambiar_tamano`).
+        self._tamano_visto: tuple[int, int] | None = None
+        # El `after_idle` que coloca la ventana tras su cambio de tamaño, si lo hay.
+        self._sitio_pendiente: str | None = None
+        self.root.bind("<Configure>", self._al_cambiar_tamano, add="+")
+        self.root.bind("<Destroy>", self._al_destruir, add="+")
 
     def repintar(self) -> None:
-        """Pinta el paso en el que se está."""
+        """Pinta el paso en el que se está, y lo encaja una sola vez al acabar.
+
+        Mientras el paso se dibuja, cada `revisar()` que hace su propio dibujo
+        (el desvío de «ya es un prdrive» al elegir unidad, la lista que llega
+        en mitad) solo enciende o apaga «Siguiente»: el hueco se ajusta al final,
+        con el paso ya entero. Así un cambio de paso encaja una vez, no tres.
+        """
         for hijo in self.cuerpo.winfo_children():
             hijo.destroy()
         titulo, dibujar, _ = self.pasos[self.indice]
         self.cuerpo.columnconfigure(0, weight=1)     # los avisos, a lo ancho
         self.cabecera.configure(
             text=f"Paso {self.indice + 1} de {len(self.pasos)} · {titulo}")
-        dibujar(self.cuerpo, self)
+        self._pintando = True
+        try:
+            dibujar(self.cuerpo, self)
+        finally:
+            self._pintando = False
         self.revisar()
 
     def revisar(self) -> None:
@@ -211,6 +284,9 @@ class Wizard:
         remoto, la de verificación). Cuando el ajuste vivía solo en
         `repintar()`, lo que cambiaba sin cambiar de paso se quedaba con el
         hueco de antes.
+
+        Mientras `repintar()` dibuja el paso no reencaja: lo hace `repintar()`
+        una vez al acabar. Fuera de él, siempre.
         """
         _, _, condicion = self.pasos[self.indice]
         ultimo = self.indice == len(self.pasos) - 1
@@ -222,10 +298,11 @@ class Wizard:
             text="Terminar" if ultimo else "Siguiente",
             state="normal" if (puede or ultimo) else "disabled")
         self.boton_atras.configure(state="disabled" if self.indice == 0 else "normal")
-        self.reencajar()
+        if not self._pintando:
+            self.reencajar()
 
     def reencajar(self) -> None:
-        """Ajusta el hueco a lo que pide el cuerpo ahora, y recoloca si ha crecido.
+        """Ajusta el hueco a lo que pide el cuerpo ahora, sin mover la ventana.
 
         El visor no se entera por su cuenta: su interior es un item del lienzo
         con la altura fijada por `itemconfigure`, así que añadirle widgets
@@ -234,12 +311,58 @@ class Wizard:
         panel que aparece con la pantalla ya dibujada queda recortado Y sin
         barra, que es el peor de los dos casos: nada indica que falte nada.
 
-        Se recoloca solo si ha cambiado de tamaño. El asistente se centra una
-        vez al abrirse y no debe pasearse por la pantalla, pero uno que crece
-        sin recolocarse acaba con el pie por debajo del borde de abajo.
+        Crecer no recoloca la ventana: en Windows cada movimiento o cambio de
+        tamaño repinta todos sus widgets. Si al crecer su borde de abajo se
+        sale de la pantalla útil, `_al_cambiar_tamano` lo corrige (`_colocar`)
+        cuando Tk aplica el tamaño nuevo. Aquí no se puede saber ese tamaño: el
+        pedido (`winfo_reqheight()`) no se actualiza hasta el siguiente reposo
+        del bucle de eventos, y medirlo ahora obligaría a forzarlo.
         """
-        if self.visor.crecer(self.root):
-            centrar(self.root)
+        self.visor.crecer(self.root)
+
+    def _al_cambiar_tamano(self, evento) -> None:
+        """Pide colocar la ventana cuando Tk le cambia el tamaño.
+
+        Solo cuenta un cambio de tamaño de la ventana misma: un movimiento (de
+        la persona o el nuestro) no vuelve a comprobar nada, así que no pelea
+        con quien la arrastra. La colocación va en el reposo siguiente, no
+        aquí: pedir la posición dentro del `<Configure>` de tamaño se pierde
+        (Tk la descarta al aplicar el tamaño, en X11 sin gestor de ventanas,
+        comprobado), y en el reposo el tamaño ya está aplicado.
+
+        Args:
+            evento: El `<Configure>` de la ventana.
+        """
+        if evento.widget is not self.root:
+            return                  # los `<Configure>` de sus widgets no cuentan
+        tamano = (evento.width, evento.height)
+        if tamano == self._tamano_visto:
+            return
+        self._tamano_visto = tamano
+        if self._sitio_pendiente is None:
+            self._sitio_pendiente = self.root.after_idle(self._colocar)
+
+    def _colocar(self) -> None:
+        """Sube o desplaza la ventana lo justo para que no se salga de la pantalla útil.
+
+        Se mira con el tamaño que Tk ya ha aplicado, así que no depende de
+        `winfo_reqheight()`, que va detrás de lo pedido hasta el siguiente
+        reposo. Si cabe, no toca nada.
+        """
+        self._sitio_pendiente = None
+        x, y = _posicion(self.root)
+        nueva = _sitio_en_pantalla(
+            x, y, self.root.winfo_width(), self.root.winfo_height(),
+            uitk.pantalla_util(self.root),
+            (self.root.winfo_screenwidth(), self.root.winfo_screenheight()))
+        if nueva != (x, y):
+            self.root.geometry(f"+{nueva[0]}+{nueva[1]}")
+
+    def _al_destruir(self, evento) -> None:
+        """Anula la colocación pendiente: la ventana ya no está para colocarla."""
+        if evento.widget is self.root and self._sitio_pendiente is not None:
+            self.root.after_cancel(self._sitio_pendiente)
+            self._sitio_pendiente = None
 
     def ir(self, delta: int) -> None:
         """Avanza o retrocede `delta` pasos; al avanzar desde el último, cierra."""
