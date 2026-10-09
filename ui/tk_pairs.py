@@ -52,13 +52,8 @@ ICONO_MODO = {"bisync": "both", "up": "up", "down": "down",
               "up-mirror": "up", "down-mirror": "down"}
 """El icono del chip de cada modo: hacia dónde van los ficheros."""
 
-TONOS_FILA = {"ok": ("Card.", "Ok."), "aviso": ("NotaAmbar.", "Aviso."),
-              "peligro": ("Rojo.", "Peligro."), "apagado": ("Card.", "Apagado.")}
-"""La superficie de cada tono de fila y el tipo de su chip de estado.
-
-La superficie es la que `tk_tabla.SUPERFICIE_FILA` da al tono de la tabla (el de «ok»
-es `''`): la lista la apunta en `filas[nombre]["sup"]` y dibuja con el tono.
-"""
+TONOS_FILA = {"ok": "Ok.", "aviso": "Aviso.", "peligro": "Peligro.", "apagado": "Apagado."}
+"""El tipo del chip de estado de cada tono de fila."""
 
 ANCHO_RUTA = 240
 """El ancho mínimo de «Local ↔ remoto» en la lista, en medidas del diseño.
@@ -115,8 +110,7 @@ class ListaParejas:
         marco: El lienzo de la lista: lo que se coloca.
         tabla: La `TablaLienzo` que la dibuja.
         filas: Por nombre, lo que se sabe de cada pareja: `fila` (la
-            `CatalogRow`), `tono` (`pair_editor.row_status`), `sup` (la
-            superficie de ese tono) y `apagada`.
+            `CatalogRow`) y `tono` (`pair_editor.row_status`).
     """
 
     COLUMNAS = (("", 0, False), ("Pareja", 0, False), ("Local ↔ remoto", ANCHO_RUTA, True),
@@ -151,7 +145,7 @@ class ListaParejas:
             del_catalogo: Si es la vista del catálogo: el chip de estado no
                 lleva el color de la fila (el espejo lo dicen la fila y el modo).
         """
-        tipo = "Ok." if del_catalogo else TONOS_FILA[tono][1]
+        tipo = "Ok." if del_catalogo else TONOS_FILA[tono]
         espejo = fila.mode in pair_editor.MIRROR_MODES
         return FilaTabla(fila.name, (
             CeldaCasilla(fila.en_pen),
@@ -175,8 +169,7 @@ class ListaParejas:
         self.filas, dibujo = {}, []
         for fila in filas:
             tono, nota = pair_editor.row_status(fila, del_catalogo)
-            self.filas[fila.name] = {"fila": fila, "tono": tono, "sup": TONOS_FILA[tono][0],
-                                     "apagada": tono == "apagado"}
+            self.filas[fila.name] = {"fila": fila, "tono": tono}
             dibujo.append(self.fila_tabla(fila, tono, nota, del_catalogo))
         return self.tabla.poner(dibujo)
 
@@ -668,8 +661,7 @@ def open_dialog(parent, config, compartida=None) -> bool:
     leer y el pie lo dice.
 
     La pantalla trae `dlg.estado` (lo que sabe), `dlg.lista` (siempre la que
-    se ve), `dlg.editor`, `dlg.indicador`, `dlg.sondeo` y `dlg.aplicar()`, que
-    la deja como una recién abierta.
+    se ve), `dlg.editor`, `dlg.indicador` y `dlg.sondeo`.
 
     Args:
         parent: La ventana de la que cuelga.
@@ -1405,26 +1397,6 @@ def open_dialog(parent, config, compartida=None) -> bool:
     flota_btn.grid(row=1, column=1, padx=(theme.E3, theme.E2))
     ttk.Button(cierre, text="Cerrar", command=dlg.destroy).grid(row=1, column=2)
 
-    def reponer() -> None:
-        """Deja la pantalla como una recién abierta, para quien la enseñe otra vez.
-
-        Este dispositivo, la primera pareja, el editor recargado y «Avanzado»
-        plegado, el pie de antes de hacer nada y el catálogo leído de nuevo
-        (la copia local mientras llega). Lo que se ve es lo que se vería con
-        `open_dialog()`, sin construir nada de lo ya construido.
-        """
-        estado.update(cambiado=False, cargado=None, base=None, cat=catalog.cached(),
-                      aviso=None, compartida=compartida, estados_de=None)
-        vista.set("dispositivo")
-        if not editor.plegado.get():
-            editor.plegar()
-        for lista in listas.values():
-            if lista is not None:
-                lista.elegir(None, avisar=False)
-        pie_nota.configure(text=nota_inicial())
-        leer_catalogo()
-
-    dlg.aplicar = reponer
     pie_nota.configure(text=nota_inicial())
     leer_catalogo()
     dlg.perf_momento = "open-parejas"
@@ -2092,10 +2064,8 @@ def flags_form(parent, titulo: str, subtitulo: str, flags: dict, extra: list,
         if "marco" not in recuadro:
             marco_aviso = theme.aviso(problema, titulo_error, cuerpo or " ", tono="Rojo.",
                                       ancho=300)
-            # `theme.aviso` pone el título en su fila 0 y el cuerpo en la 1, ambos en la columna 1.
-            recuadro.update(marco=marco_aviso,
-                            titulo=marco_aviso.grid_slaves(row=0, column=1)[0],
-                            cuerpo=marco_aviso.grid_slaves(row=1, column=1)[0])
+            recuadro.update(marco=marco_aviso, titulo=marco_aviso.titulo,
+                            cuerpo=marco_aviso.cuerpo)
         else:
             recuadro["titulo"].configure(text=titulo_error)
         recuadro["cuerpo"].configure(text=cuerpo)

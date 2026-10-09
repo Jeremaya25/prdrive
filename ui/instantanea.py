@@ -191,8 +191,8 @@ def estados_de(config: Config) -> dict[str, tuple]:
 def linea_del_llavero(config: Config) -> Linea | None:
     """Devuelve la línea del llavero, o `None` si el dispositivo no lo lleva.
 
-    Es la misma regla que `ui.tk.linea_llavero()`: solo importa `llavero_editor`
-    (y con él KeePassXC y el llavero) cuando hay `[keychain]` con su pareja.
+    Solo importa `llavero_editor` (y con él KeePassXC y el llavero) cuando hay
+    `[keychain]` con su pareja.
     """
     if config.llavero is None or config.pareja_llavero is None:
         return None
@@ -264,7 +264,7 @@ def leer(config: Config, *,
             espacio de nombres de `ui.tk`, para que los tests que la sustituyen
             sigan valiendo.
         linea_llavero: Cómo se lee la línea del llavero; por defecto
-            `linea_del_llavero`. Ídem.
+            `linea_del_llavero`.
 
     Returns:
         La instantánea, con `fallos` vacío si todo se leyó.

@@ -90,6 +90,15 @@ class Linea(NamedTuple):
     boton: str
     activo: bool
 
+    @property
+    def dibujo(self) -> tuple[str, bool, str]:
+        """Lo que se dibuja de la línea: `(texto, aviso, boton)`.
+
+        `activo` no va aquí: el botón se enciende o se apaga aparte, en
+        `VistaPrincipal._poner_activos`.
+        """
+        return (self.texto, self.aviso, self.boton)
+
 
 @dataclass(frozen=True)
 class Estado:

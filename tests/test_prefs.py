@@ -321,7 +321,7 @@ with sandbox():
     c("la clave: el sistema, la versión de Tk y la escala de Tk",
       (clave, otra), (f"{sys.platform}:9.0:1.333", f"{sys.platform}:9.0:2.000"))
     c("  y otra versión de Tk es otra clave", prefs.clave_ancho("8.6", 4 / 3) != clave, True)
-    c("sin fichero no hay ancho recordado", prefs.ancho_recordado(clave), None)
+    c("sin fichero no hay ancho recordado", prefs.recordado("ancho", clave), None)
 
     anotadas = []
 
@@ -332,16 +332,16 @@ with sandbox():
 
     store.write_json = anotar_escritura
     try:
-        c("recordar un ancho lo escribe", (prefs.recordar_ancho(clave, 587), anotadas),
+        c("recordar un ancho lo escribe", (prefs.recordar("ancho", clave, 587), anotadas),
           (True, ["ventana.json"]))
-        c("  y se lee con su clave", prefs.ancho_recordado(clave), 587)
-        c("  con otra no", prefs.ancho_recordado(otra), None)
+        c("  y se lee con su clave", prefs.recordado("ancho", clave), 587)
+        c("  con otra no", prefs.recordado("ancho", otra), None)
         c("  en la forma {\"ancho\": {clave: px}}",
           json.loads(ruta.read_text(encoding="utf-8")), {"ancho": {clave: 587}})
         c("el mismo ancho otra vez no escribe nada",
-          (prefs.recordar_ancho(clave, 587), len(anotadas)), (True, 1))
-        prefs.recordar_ancho(otra, 900)
-        prefs.recordar_ancho(clave, 560)
+          (prefs.recordar("ancho", clave, 587), len(anotadas)), (True, 1))
+        prefs.recordar("ancho", otra, 900)
+        prefs.recordar("ancho", clave, 560)
         c("cada clave guarda el suyo, y cambiar uno conserva los otros",
           (json.loads(ruta.read_text(encoding="utf-8")), len(anotadas)),
           ({"ancho": {clave: 560, otra: 900}}, 3))
@@ -354,15 +354,15 @@ with sandbox():
                           '{"ancho": {"%s": 5.5}}' % clave, '{"ancho": [587]}', '[587]',
                           '{"ancho": ', ''):
             ruta.write_text(contenido, encoding="utf-8")
-            c(f"  {contenido!r} no es un ancho", prefs.ancho_recordado(clave), None)
+            c(f"  {contenido!r} no es un ancho", prefs.recordado("ancho", clave), None)
         c("  y recordar sobre uno así lo rehace entero",
-          (prefs.recordar_ancho(clave, 587), json.loads(ruta.read_text(encoding="utf-8"))),
+          (prefs.recordar("ancho", clave, 587), json.loads(ruta.read_text(encoding="utf-8"))),
           (True, {"ancho": {clave: 587}}))
 
         # Un dispositivo de solo lectura (o ya extraído) no recuerda, y no pasa nada.
         store.write_json = lambda destino, datos: False
-        c("si no se puede escribir: False, sin lanzar", prefs.recordar_ancho(clave, 600), False)
-        c("  y queda lo que había", prefs.ancho_recordado(clave), 587)
+        c("si no se puede escribir: False, sin lanzar", prefs.recordar("ancho", clave, 600), False)
+        c("  y queda lo que había", prefs.recordado("ancho", clave), 587)
     finally:
         store.write_json = escribir_real
 
@@ -372,7 +372,7 @@ with sandbox():
     ruta = model.STATE_DIR / "ventana.json"
     clave = prefs.clave_ancho("9.0", 4 / 3)
     otra = prefs.clave_ancho("9.0", 2.0)
-    c("sin fichero no hay alto recordado", prefs.arriba_recordado(clave), None)
+    c("sin fichero no hay alto recordado", prefs.recordado("arriba", clave), None)
     anotadas = []
 
     def anotar_escritura(destino, datos):
@@ -382,40 +382,40 @@ with sandbox():
 
     store.write_json = anotar_escritura
     try:
-        c("recordar un alto lo escribe", (prefs.recordar_arriba(clave, 51), anotadas),
+        c("recordar un alto lo escribe", (prefs.recordar("arriba", clave, 51), anotadas),
           (True, ["ventana.json"]))
         c("  y se lee con su clave, no con otra",
-          (prefs.arriba_recordado(clave), prefs.arriba_recordado(otra)), (51, None))
+          (prefs.recordado("arriba", clave), prefs.recordado("arriba", otra)), (51, None))
         c("  en la forma {\"arriba\": {clave: px}}",
           json.loads(ruta.read_text(encoding="utf-8")), {"arriba": {clave: 51}})
         c("el mismo alto otra vez no escribe nada",
-          (prefs.recordar_arriba(clave, 51), len(anotadas)), (True, 1))
+          (prefs.recordar("arriba", clave, 51), len(anotadas)), (True, 1))
         c("0 es un valor: se escribe, se lee y no es 'nada recordado'",
-          (prefs.recordar_arriba(clave, 0), prefs.arriba_recordado(clave), len(anotadas)),
+          (prefs.recordar("arriba", clave, 0), prefs.recordado("arriba", clave), len(anotadas)),
           (True, 0, 2))
-        c("  y 0 otra vez tampoco escribe", (prefs.recordar_arriba(clave, 0), len(anotadas)),
+        c("  y 0 otra vez tampoco escribe", (prefs.recordar("arriba", clave, 0), len(anotadas)),
           (True, 2))
 
         # Comparte fichero con el ancho: cada uno conserva el del otro y las demás claves.
-        prefs.recordar_ancho(clave, 587)
-        prefs.recordar_arriba(otra, 90)
-        prefs.recordar_arriba(clave, 51)
+        prefs.recordar("ancho", clave, 587)
+        prefs.recordar("arriba", otra, 90)
+        prefs.recordar("arriba", clave, 51)
         c("el alto conserva el ancho y las otras claves, y el ancho el alto",
           json.loads(ruta.read_text(encoding="utf-8")),
           {"arriba": {clave: 51, otra: 90}, "ancho": {clave: 587}})
         c("  cada uno se lee con lo suyo",
-          (prefs.ancho_recordado(clave), prefs.arriba_recordado(clave)), (587, 51))
-        prefs.recordar_ancho(clave, 600)
+          (prefs.recordado("ancho", clave), prefs.recordado("arriba", clave)), (587, 51))
+        prefs.recordar("ancho", clave, 600)
         c("  cambiar el ancho no toca el alto",
           json.loads(ruta.read_text(encoding="utf-8"))["arriba"], {clave: 51, otra: 90})
 
         # Un fichero de antes (solo "ancho") sigue valiendo: no hay alto recordado.
         ruta.write_text(json.dumps({"ancho": {clave: 587}}), encoding="utf-8")
         c("un fichero de antes, sin \"arriba\": ancho sí, alto no",
-          (prefs.ancho_recordado(clave), prefs.arriba_recordado(clave)), (587, None))
+          (prefs.recordado("ancho", clave), prefs.recordado("arriba", clave)), (587, None))
         n = len(anotadas)
         c("  y apuntar el alto conserva el ancho",
-          (prefs.recordar_arriba(clave, 51), json.loads(ruta.read_text(encoding="utf-8")),
+          (prefs.recordar("arriba", clave, 51), json.loads(ruta.read_text(encoding="utf-8")),
            len(anotadas) - n),
           (True, {"ancho": {clave: 587}, "arriba": {clave: 51}}, 1))
 
@@ -425,15 +425,15 @@ with sandbox():
                           '{"arriba": {"%s": -5}}' % clave, '{"arriba": {"%s": 5.5}}' % clave,
                           '{"arriba": [51]}', '[51]', '{"arriba": ', ''):
             ruta.write_text(contenido, encoding="utf-8")
-            c(f"  {contenido!r} no es un alto", prefs.arriba_recordado(clave), None)
+            c(f"  {contenido!r} no es un alto", prefs.recordado("arriba", clave), None)
         c("  y recordar sobre uno así lo rehace entero",
-          (prefs.recordar_arriba(clave, 51), json.loads(ruta.read_text(encoding="utf-8"))),
+          (prefs.recordar("arriba", clave, 51), json.loads(ruta.read_text(encoding="utf-8"))),
           (True, {"arriba": {clave: 51}}))
 
         # Un dispositivo de solo lectura (o ya extraído) no recuerda, y no pasa nada.
         store.write_json = lambda destino, datos: False
-        c("si no se puede escribir: False, sin lanzar", prefs.recordar_arriba(clave, 77), False)
-        c("  y queda lo que había", prefs.arriba_recordado(clave), 51)
+        c("si no se puede escribir: False, sin lanzar", prefs.recordar("arriba", clave, 77), False)
+        c("  y queda lo que había", prefs.recordado("arriba", clave), 51)
     finally:
         store.write_json = escribir_real
 
@@ -443,7 +443,7 @@ with sandbox():
     ruta = model.STATE_DIR / "ventana.json"
     clave = prefs.clave_ancho("9.0", 4 / 3)
     otra = prefs.clave_ancho("9.0", 2.0)
-    c("sin fichero no hay alto de abajo recordado", prefs.abajo_recordado(clave), None)
+    c("sin fichero no hay alto de abajo recordado", prefs.recordado("abajo", clave), None)
     anotadas = []
 
     def anotar_escritura_abajo(destino, datos):
@@ -453,31 +453,31 @@ with sandbox():
 
     store.write_json = anotar_escritura_abajo
     try:
-        c("recordar el alto de abajo lo escribe", (prefs.recordar_abajo(clave, 112), anotadas),
+        c("recordar el alto de abajo lo escribe", (prefs.recordar("abajo", clave, 112), anotadas),
           (True, ["ventana.json"]))
         c("  y se lee con su clave, no con otra",
-          (prefs.abajo_recordado(clave), prefs.abajo_recordado(otra)), (112, None))
+          (prefs.recordado("abajo", clave), prefs.recordado("abajo", otra)), (112, None))
         c("  en la forma {\"abajo\": {clave: px}}",
           json.loads(ruta.read_text(encoding="utf-8")), {"abajo": {clave: 112}})
         c("el mismo alto otra vez no escribe nada",
-          (prefs.recordar_abajo(clave, 112), len(anotadas)), (True, 1))
+          (prefs.recordar("abajo", clave, 112), len(anotadas)), (True, 1))
         c("0 es un valor: se escribe, se lee y no es 'nada recordado'",
-          (prefs.recordar_abajo(clave, 0), prefs.abajo_recordado(clave), len(anotadas)),
+          (prefs.recordar("abajo", clave, 0), prefs.recordado("abajo", clave), len(anotadas)),
           (True, 0, 2))
 
         # Comparte fichero con el ancho y con "arriba": cada campo conserva los de los demás.
-        prefs.recordar_ancho(clave, 587)
-        prefs.recordar_arriba(clave, 51)
-        prefs.recordar_abajo(otra, 90)
-        prefs.recordar_abajo(clave, 112)
+        prefs.recordar("ancho", clave, 587)
+        prefs.recordar("arriba", clave, 51)
+        prefs.recordar("abajo", otra, 90)
+        prefs.recordar("abajo", clave, 112)
         c("el alto de abajo conserva el ancho, el de arriba y las otras claves",
           json.loads(ruta.read_text(encoding="utf-8")),
           {"abajo": {clave: 112, otra: 90}, "ancho": {clave: 587}, "arriba": {clave: 51}})
         c("  cada uno se lee con lo suyo",
-          (prefs.ancho_recordado(clave), prefs.arriba_recordado(clave),
-           prefs.abajo_recordado(clave)), (587, 51, 112))
-        prefs.recordar_arriba(clave, 60)
-        prefs.recordar_ancho(clave, 600)
+          (prefs.recordado("ancho", clave), prefs.recordado("arriba", clave),
+           prefs.recordado("abajo", clave)), (587, 51, 112))
+        prefs.recordar("arriba", clave, 60)
+        prefs.recordar("ancho", clave, 600)
         c("  y cambiar el ancho o el de arriba no toca el de abajo",
           json.loads(ruta.read_text(encoding="utf-8"))["abajo"], {clave: 112, otra: 90})
 
@@ -485,11 +485,11 @@ with sandbox():
         ruta.write_text(json.dumps({"ancho": {clave: 587}, "arriba": {clave: 51}}),
                         encoding="utf-8")
         c("un fichero de antes, sin \"abajo\": los otros dos sí, ese no",
-          (prefs.ancho_recordado(clave), prefs.arriba_recordado(clave),
-           prefs.abajo_recordado(clave)), (587, 51, None))
+          (prefs.recordado("ancho", clave), prefs.recordado("arriba", clave),
+           prefs.recordado("abajo", clave)), (587, 51, None))
         n = len(anotadas)
         c("  y apuntar el de abajo conserva los otros dos",
-          (prefs.recordar_abajo(clave, 112), json.loads(ruta.read_text(encoding="utf-8")),
+          (prefs.recordar("abajo", clave, 112), json.loads(ruta.read_text(encoding="utf-8")),
            len(anotadas) - n),
           (True, {"ancho": {clave: 587}, "arriba": {clave: 51}, "abajo": {clave: 112}}, 1))
 
@@ -499,15 +499,15 @@ with sandbox():
                           '{"abajo": {"%s": -5}}' % clave, '{"abajo": {"%s": 5.5}}' % clave,
                           '{"abajo": [112]}', '[112]', '{"abajo": ', ''):
             ruta.write_text(contenido, encoding="utf-8")
-            c(f"  {contenido!r} no es un alto", prefs.abajo_recordado(clave), None)
+            c(f"  {contenido!r} no es un alto", prefs.recordado("abajo", clave), None)
         c("  y recordar sobre uno así lo rehace entero",
-          (prefs.recordar_abajo(clave, 112), json.loads(ruta.read_text(encoding="utf-8"))),
+          (prefs.recordar("abajo", clave, 112), json.loads(ruta.read_text(encoding="utf-8"))),
           (True, {"abajo": {clave: 112}}))
 
         # Un dispositivo de solo lectura (o ya extraído) no recuerda, y no pasa nada.
         store.write_json = lambda destino, datos: False
-        c("si no se puede escribir: False, sin lanzar", prefs.recordar_abajo(clave, 77), False)
-        c("  y queda lo que había", prefs.abajo_recordado(clave), 112)
+        c("si no se puede escribir: False, sin lanzar", prefs.recordar("abajo", clave, 77), False)
+        c("  y queda lo que había", prefs.recordado("abajo", clave), 112)
     finally:
         store.write_json = escribir_real
 
@@ -517,8 +517,25 @@ with sandbox():
     model.STATE_DIR.write_text("no soy una carpeta", encoding="utf-8")
     clave = prefs.clave_ancho("9.0", 4 / 3)
     c("con state/ imposible: leer es None y recordar False, sin lanzar",
-      (prefs.arriba_recordado(clave), prefs.recordar_arriba(clave, 51),
-       prefs.recordar_ancho(clave, 587), prefs.abajo_recordado(clave),
-       prefs.recordar_abajo(clave, 112)), (None, False, False, None, False))
+      (prefs.recordado("arriba", clave), prefs.recordar("arriba", clave, 51),
+       prefs.recordar("ancho", clave, 587), prefs.recordado("abajo", clave),
+       prefs.recordar("abajo", clave, 112)), (None, False, False, None, False))
+
+# Un campo que no está en CAMPOS_VENTANA es un error de quien llama: no se lee ni se escribe.
+with sandbox():
+    clave = prefs.clave_ancho("9.0", 4 / 3)
+
+    def lanza(llamada) -> bool:
+        """Si la llamada lanza `ValueError`."""
+        try:
+            llamada()
+        except ValueError:
+            return True
+        return False
+
+    c("un campo que no está en CAMPOS_VENTANA lanza ValueError, al leer y al escribir",
+      (lanza(lambda: prefs.recordado("alto", clave)),
+       lanza(lambda: prefs.recordar("alto", clave, 5)),
+       prefs.ruta_ventana().exists()), (True, True, False))
 
 sys.exit(c.report())

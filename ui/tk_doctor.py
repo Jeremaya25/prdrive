@@ -173,11 +173,10 @@ def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None,
                 marcadas=None, compartida=None) -> dict:
     """Abre «Ajustes» y devuelve lo que han dicho sus apartados.
 
-    La ventana lleva, para los tests y para quien la vuelva a enseñar:
-    `resultados`, `panel` (el `Panel` del apartado a la vista), `paneles`
-    (`{clave: (marco, Panel)}` de los apartados dibujados), `chips` (`{clave:
-    (texto, tipo, icono) o None}` de los chips de la barra) y `aplicar()`, que
-    la deja como una apertura nueva.
+    La ventana lleva, para los tests: `resultados`, `panel` (el `Panel` del
+    apartado a la vista), `paneles` (`{clave: (marco, Panel)}` de los
+    apartados dibujados) y `chips` (`{clave: (texto, tipo, icono) o None}` de
+    los chips de la barra).
 
     Args:
         config: La configuración, que se pasa a los apartados que la necesitan.
@@ -656,24 +655,12 @@ def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None,
             dibujar(clave)
         perf_al_pintar(dlg, momento)
 
-    def aplicar() -> None:
-        """Deja la ventana como al abrirla: sin búsqueda, sin apartados guardados y en el inicial."""
-        busqueda.set("")
-        for clave in list(paneles):
-            tirar(clave)
-        estado["componentes"] = lista_de_componentes()
-        poner_chips()
-        antes, estado["clave"] = estado["clave"], None
-        elegir_inicial(antes)
-
-    def elegir_inicial(antes: str | None = None) -> None:
+    def elegir_inicial() -> None:
         """Elige el apartado con que se abre, restilando solo los botones que cambian."""
         clave = inicial if inicial in entradas else INICIAL
-        marcar(antes, clave)
+        marcar(None, clave)
         estado["clave"] = clave
         dibujar(clave)
-
-    dlg.aplicar = aplicar
 
     def al_llegar(inst) -> None:
         """Recoge una lectura nueva de la ventana principal y repinta lo que depende de ella."""

@@ -77,26 +77,6 @@ def _ruta_destino(cuerpo, antes: str, ruta, despues: str, fila: int = 0) -> None
     _texto(marco, despues, 2)
 
 
-def _posicion(ventana) -> tuple[int, int]:
-    """Dónde está una ventana, en las coordenadas de `geometry("+x+y")`.
-
-    Son las de `wm geometry`, las que se usan para moverla, y no las de
-    `winfo_x()`: con el marco del sistema alrededor pueden no coincidir, y
-    moverla con unas leídas de las otras la desplazaría. Es lo que hace
-    `ui.tk.main_window()` con su propio `posicion()`.
-
-    Args:
-        ventana: La ventana a mirar.
-
-    Returns:
-        La esquina de arriba a la izquierda.
-    """
-    casa = re.fullmatch(r"\d+x\d+\+(-?\d+)\+(-?\d+)", ventana.geometry())
-    if casa is None:                 # colocada desde la derecha o desde abajo
-        return ventana.winfo_x(), ventana.winfo_y()
-    return int(casa.group(1)), int(casa.group(2))
-
-
 def _sitio_en_pantalla(x: int, y: int, ancho: int, alto: int,
                        util: tuple[int, int],
                        pantalla: tuple[int, int]) -> tuple[int, int]:
@@ -375,7 +355,7 @@ class Wizard:
         reposo. Si cabe, no toca nada.
         """
         self._sitio_pendiente = None
-        x, y = _posicion(self.root)
+        x, y = uitk.posicion(self.root)
         nueva = _sitio_en_pantalla(
             x, y, self.root.winfo_width(), self.root.winfo_height(),
             uitk.pantalla_util(self.root),

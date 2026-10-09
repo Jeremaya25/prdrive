@@ -338,6 +338,8 @@ c("  sin vigilante, la línea para configurarlo y nada que pausar",
 c("  si no se sabe, ni línea ni frase",
   (estado(inst=lectura(vigilante=watch.Resumen("no_disponible"))).arranque,
    estado(inst=lectura(vigilante=watch.Resumen("no_disponible"))).pausa), (None, None))
+c("Linea.dibujo: texto, aviso y botón; lo activo no se dibuja aquí",
+  principal.Linea("falla", True, "Abrir llavero", False).dibujo, ("falla", True, "Abrir llavero"))
 c("servicio: sin agente, «Iniciar servicio»", lleno.servicio, (watch.INICIAR, "Iniciar servicio"))
 c("  con el agente como servicio, «Pausar»",
   estado(inst=lectura(vigilante=AGENTE)).servicio, (watch.PAUSAR, "Pausar"))

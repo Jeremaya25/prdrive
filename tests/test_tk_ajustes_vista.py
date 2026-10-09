@@ -15,7 +15,6 @@ Lo que se comprueba, con Tk de verdad y sin entrar nunca en el bucle de eventos:
 - el código QR no se conserva nunca (al irse se destruye su marco y con él se
   levanta la protección contra capturas);
 - lo que un apartado da por terminado lo rehace con la nota y tira los demás;
-- `dlg.aplicar()` deja la ventana como una apertura nueva;
 - un apartado que se dibuja antes de que llegue la lectura compartida no cae a
   la pantalla de penwatch por falta de datos, y «Actualizaciones» espera con un
   indicador y se rehace al llegar;
@@ -502,49 +501,6 @@ with sandbox():
       (True, True))
     c("al irse y volver ya no lleva la nota: se dibuja como una apertura nueva",
       visto["nota al volver"], False)
-
-with sandbox():
-    visto = {}
-    comp = instantanea.Compartida()
-
-    def aplicar(dlg):
-        """Ensucia la ventana (visitas, búsqueda, chips) y la deja como al abrir."""
-        elegir(dlg, "versiones")
-        elegir(dlg, "reparacion")
-        elegir(dlg, "qr")
-        buscador = next(w for w in recorrer(dlg) if isinstance(w, ttk.Entry))
-        buscador.insert(0, "intervalo")
-        comp.poner(lectura(cuenta=3))
-        visto["sucia"] = (sorted(dlg.paneles), buscador.get(),
-                          len([b for b in barra(dlg).values() if b.grid_info()]))
-        dlg.aplicar()
-        visto["limpia"] = (sorted(dlg.paneles), buscador.get(),
-                           len([b for b in barra(dlg).values() if b.grid_info()]))
-        visto["elegido"] = [t for t, e in estilos(dlg).items() if e == "NavSel.TButton"]
-        visto["chips"] = {t: [x.cget("text") for x in v] for t, v in chips_de(dlg).items() if v}
-        visto["leida"] = _vista.leer_vista(dlg)
-
-    abrir(aplicar, compartida=comp)
-    c("antes de `aplicar()` hay visitas, búsqueda y barra filtrada",
-      (visto["sucia"][0], visto["sucia"][1], visto["sucia"][2] < 8),
-      (["configuracion", "qr", "reparacion", "versiones"], "intervalo", True))
-    c("`aplicar()` tira los apartados guardados, deja el que se abre y limpia la búsqueda",
-      visto["limpia"], (["configuracion"], "", 8))
-    c("  con «Configuración» elegida", visto["elegido"], ["Configuración"])
-    c("  y los chips recalculados con la lectura que hay", visto["chips"],
-      {"Reparación": ["3"]})
-
-    comparar: dict = {}
-    comp2 = instantanea.Compartida()
-    comp2.poner(lectura(cuenta=3))
-
-    def fresca(dlg):
-        """Lee la ventana recién abierta, con la misma lectura compartida."""
-        comparar["fresca"] = _vista.leer_vista(dlg)
-
-    abrir(fresca, compartida=comp2)
-    c("`aplicar()` deja la ventana leyendo lo mismo que una apertura nueva",
-      visto["leida"], comparar["fresca"])
 
 
 # 5. Un apartado que se dibuja antes de que llegue la lectura compartida.

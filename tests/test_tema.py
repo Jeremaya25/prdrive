@@ -14,6 +14,7 @@ import sys
 from _harness import Checks
 
 from ui import icons, theme
+from ui.tk import bloque_aviso
 
 c = Checks("tema: claro y oscuro")
 
@@ -104,6 +105,16 @@ for tema in ("claro", "oscuro"):
     c(f"{tema}:   con su baldosa",
       any(isinstance(w, ttk.Label) and w.cget("image") for w in aviso.winfo_children()),
       True)
+    c(f"{tema}:   y da sus etiquetas de título y cuerpo",
+      (str(aviso.titulo.cget("text")), str(aviso.cuerpo.cget("text"))), ("Título", "Cuerpo"))
+    sin_titulo = theme.aviso(marco, "", "Solo cuerpo")
+    sin_cuerpo = theme.aviso(marco, "Solo título")
+    c(f"{tema}:   sin título o sin cuerpo, esa etiqueta no se crea",
+      (sin_titulo.titulo, sin_cuerpo.cuerpo), (None, None))
+    sin_boton = bloque_aviso(marco, "Solo texto")
+    con_boton = bloque_aviso(marco, "Título\nCuerpo", boton=("Instalar", lambda: None))
+    c(f"{tema}:   bloque_aviso da su botón, o None sin él",
+      (sin_boton.boton, str(con_boton.boton.cget("text"))), (None, "Instalar"))
     linea = theme.linea_estado(marco, "llave", "Llaves.kdbx, al día.", "Abrir llavero")
     c(f"{tema}: la línea de estado lleva su acción",
       str(linea.boton.cget("text")), "Abrir llavero")

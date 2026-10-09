@@ -178,6 +178,27 @@ def pantalla_util(win) -> tuple[int, int]:
             max(360, win.winfo_screenheight() - icons.px(win, 110)))
 
 
+def posicion(ventana) -> tuple[int, int]:
+    """Dónde está una ventana, en las coordenadas de `geometry("+x+y")`.
+
+    Son las de `wm geometry`, las que se dan para moverla, y no las de
+    `winfo_x`/`winfo_y`: con el marco del sistema alrededor pueden no
+    coincidir, y moverla con unas leídas de las otras la desplazaría.
+
+    Args:
+        ventana: La ventana a mirar.
+
+    Returns:
+        La esquina de arriba a la izquierda.
+    """
+    import re
+
+    casa = re.fullmatch(r"\d+x\d+\+(-?\d+)\+(-?\d+)", ventana.geometry())
+    if casa is None:                 # colocada desde la derecha o desde abajo
+        return ventana.winfo_x(), ventana.winfo_y()
+    return int(casa.group(1)), int(casa.group(2))
+
+
 class Visor:
     """Un recuadro con el contenido dentro, que se desplaza cuando no cabe.
 
@@ -840,6 +861,10 @@ def bloque_aviso(parent, texto: str, ancho: int = 560, tipo: str = "Ambar",
     Args:
         tipo: `'Ambar'` o `'Rojo'`; `tono` (`'Azul.'`, `'Verde.'`…) manda si
             se da.
+
+    Returns:
+        El marco de `theme.aviso`. `caja.boton` es el botón que se ha creado,
+        o `None` si no se pasó `boton`.
     """
     from tkinter import ttk
     tono = tono or f"{tipo}."
@@ -848,11 +873,12 @@ def bloque_aviso(parent, texto: str, ancho: int = 560, tipo: str = "Ambar",
         titulo, cuerpo = "", titulo
     caja = theme.aviso(parent, titulo, cuerpo, tono=tono, icono=icono,
                        ancho=ancho)
+    caja.boton = None
     if boton is not None:
         rotulo, accion = boton
-        ttk.Button(caja.acciones, text=rotulo, command=accion,
-                   style="Ambar.TButton" if tono == "Ambar." else "TButton").grid(
-            row=0, column=0, sticky="w", pady=(theme.E3, 0))
+        caja.boton = ttk.Button(caja.acciones, text=rotulo, command=accion,
+                                style="Ambar.TButton" if tono == "Ambar." else "TButton")
+        caja.boton.grid(row=0, column=0, sticky="w", pady=(theme.E3, 0))
     return caja
 
 
@@ -1767,19 +1793,6 @@ def precargar_a_ratos(root, nombres: tuple[str, ...]) -> None:
         root.after(PAUSA_PRECARGA_MS, uno)
 
 
-def linea_llavero(config: Config):
-    """Devuelve la línea del llavero de la principal, o `None` si el dispositivo no lo lleva.
-
-    Solo importa `llavero_editor` (y con él KeePassXC y el llavero) cuando hay
-    `[keychain]` con su pareja: la misma condición con la que `linea()` ya
-    devolvía `None`.
-    """
-    if config.llavero is None or config.pareja_llavero is None:
-        return None
-    from . import llavero_editor
-    return llavero_editor.linea(config)
-
-
 SONDEO_INSTANTANEA_MS = 20
 """Milisegundos entre dos miradas de la principal a su lectura del dispositivo.
 
@@ -1875,9 +1888,9 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
     frame = cuerpo_visible(root, padding=(theme.E5, theme.E5, theme.E5, theme.E4))
     frame.columnconfigure(0, weight=1)
     clave_ancho = prefs.clave_ancho(str(tk.TkVersion), float(root.tk.call("tk", "scaling")))
-    vista["ancho"] = prefs.ancho_recordado(clave_ancho)
-    vista["arriba"] = prefs.arriba_recordado(clave_ancho)
-    vista["abajo"] = prefs.abajo_recordado(clave_ancho)
+    vista["ancho"] = prefs.recordado("ancho", clave_ancho)
+    vista["arriba"] = prefs.recordado("arriba", clave_ancho)
+    vista["abajo"] = prefs.recordado("abajo", clave_ancho)
     # Uno solo para todas las lecturas: una nueva deja sin recoger la anterior.
     sondeo = Sondeo(root, cada=SONDEO_INSTANTANEA_MS)
     root.sondeo_instantanea = sondeo
@@ -1918,20 +1931,6 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         if v.aplicar(estado_actual()) and root.visor.encajar(root):
             centrar(root)
 
-    def posicion() -> tuple[int, int]:
-        """Dónde está la ventana, en las coordenadas de `geometry("+x+y")`.
-
-        Las de `wm geometry`, que son las que se le dan para moverla, y no las
-        de `winfo_x`/`winfo_y`: con el marco del sistema alrededor pueden no
-        coincidir, y moverla con unas leídas de las otras la desplazaría.
-        """
-        import re
-
-        casa = re.fullmatch(r"\d+x\d+\+(-?\d+)\+(-?\d+)", root.geometry())
-        if casa is None:                 # colocada desde la derecha o desde abajo
-            return root.winfo_x(), root.winfo_y()
-        return int(casa.group(1)), int(casa.group(2))
-
     def recolocar(ancho_antes: int, x: int, y: int) -> None:
         """Tras cambiar de tamaño con una lectura: el mismo centro y el mismo borde de arriba.
 
@@ -1942,7 +1941,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
 
         Args:
             ancho_antes: Lo que pedía de ancho antes de la lectura.
-            x: Dónde estaba (`posicion()`), antes de la lectura.
+            x: Dónde estaba (`posicion(root)`), antes de la lectura.
             y: Lo mismo, en vertical.
         """
         ancho, alto = root.winfo_reqwidth(), root.winfo_reqheight()
@@ -1988,7 +1987,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
                 root.visor.encajar(root)
         if recordar and ancho != vista["ancho"]:
             vista["ancho"] = ancho
-            prefs.recordar_ancho(clave_ancho, ancho)
+            prefs.recordar("ancho", clave_ancho, ancho)
 
     def reservar_arriba(alto: int) -> None:
         """Guarda ese alto a lo que va encima de la lista, aunque aún no esté (0: ninguno).
@@ -2014,7 +2013,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         alto = v.alto_arriba()
         if recordar and alto != (vista["arriba"] or 0):
             vista["arriba"] = alto
-            prefs.recordar_arriba(clave_ancho, alto)
+            prefs.recordar("arriba", clave_ancho, alto)
 
     def reservar_abajo(alto: int) -> None:
         """Guarda ese alto a lo que va debajo de la lista, aunque aún no esté (0: ninguno).
@@ -2040,7 +2039,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         alto = v.alto_abajo()
         if recordar and alto != (vista["abajo"] or 0):
             vista["abajo"] = alto
-            prefs.recordar_abajo(clave_ancho, alto)
+            prefs.recordar("abajo", clave_ancho, alto)
 
     def llegar(numero: int, encargo) -> None:
         """Aplica la lectura que acaba de llegar y la reparte a las pantallas.
@@ -2069,7 +2068,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         if vista["libera"] is not None and numero >= vista["libera"]:
             vista["en_curso"], vista["libera"] = False, None
         vista["tiempos"] = pair_times(vista["config"])
-        ancho_antes, (x, y) = root.winfo_reqwidth(), posicion()
+        ancho_antes, (x, y) = root.winfo_reqwidth(), posicion(root)
         if (v.aplicar(estado_actual()) or vista["reservado"] or vista["reservado_arriba"]
                 or vista["reservado_abajo"]):
             # Las reservas de arriba y de abajo se sueltan en la misma colocación
@@ -2109,8 +2108,7 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         if libera:
             vista["libera"] = numero
         encargo = segundo_plano.lanzar(partial(
-            instantanea.leer, vista["config"], notas=pair_status_notes,
-            linea_llavero=linea_llavero))
+            instantanea.leer, vista["config"], notas=pair_status_notes))
         root.instantanea = encargo
         root.instantanea_lista = False
         sondeo.esperar(encargo, lambda hecho: llegar(numero, hecho))
