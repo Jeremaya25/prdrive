@@ -623,21 +623,29 @@ def drive_ajustes(root):
                 continue
             dlg.update()
             tema_nuevo(dlg)
+            traza = _trazar(dlg)
             t0 = time.time()
             b.invoke()
+            t_clic = time.time()
             dlg.update()
             t1 = time.time()
-            record("pane-" + clave, ms(t0, t1), **medir(dlg))
+            detalle = medir(dlg)
+            detalle.update(traza({"clic": ms(t0, t_clic), "update": ms(t_clic, t1)}))
+            record("pane-" + clave, ms(t0, t1), **detalle)
         # Un apartado que ya se vio: lo que cuesta volver a él (se rehace o se enseña el guardado).
         b = find_button(dlg, "Reparación")
         if b is not None:
             dlg.update()
             tema_nuevo(dlg)
+            traza = _trazar(dlg)
             t0 = time.time()
             b.invoke()
+            t_clic = time.time()
             dlg.update()
             t1 = time.time()
-            record("pane-otra-vez", ms(t0, t1), **medir(dlg))
+            detalle = medir(dlg)
+            detalle.update(traza({"clic": ms(t0, t_clic), "update": ms(t_clic, t1)}))
+            record("pane-otra-vez", ms(t0, t1), **detalle)
 
     HOOK["on_shown"] = shown
     ESTADO["cierre"] = None
@@ -677,7 +685,8 @@ def llega_instantanea(root):
     while not encargo.hecho and time.time() < limite:
         time.sleep(0.001)
     mide = FLOW == "principal" and not CAPTURA
-    traza = _trazar_llegada(root) if mide else None
+    vista = getattr(sys.modules.get("ui.tk_principal"), "VistaPrincipal", None)
+    traza = _trazar(root, [("aplicar", vista, "aplicar")]) if mide else None
     t0 = time.perf_counter()
     sondeo._mirar()
     t_mirar = time.perf_counter()
@@ -686,23 +695,27 @@ def llega_instantanea(root):
     sondeo.seguir()                # `probe()` lo pausó; las lecturas de después, solas
     if mide:
         detalle = medir(root)
-        detalle.update(traza(ms(t0, t_mirar), ms(t_mirar, t1)))
+        detalle.update(traza({"mirar": ms(t0, t_mirar), "update": ms(t_mirar, t1)}))
         record("llega-instantanea", ms(t0, t1), **detalle)
 
 
-def _trazar_llegada(root):
-    """Prepara la traza de `llega-instantanea` y devuelve la función que la cierra.
+def _trazar(ventana, envolver=()):
+    """Prepara la traza de un momento de `ventana` y devuelve la función que la cierra.
 
-    Envuelve `VistaPrincipal.aplicar` y el `encajar` del visor de esta ventana para
-    cronometrarlos, cuenta los `<Expose>` y `<Configure>` por clase con un enlace en la
-    etiqueta `all` (la tienen todos los widgets), y fotografía la geometría de cada
-    widget. La función devuelta deshace todo eso y devuelve lo apuntado.
+    Cronometra cada `(nombre, objeto, atributo)` de `envolver` (se sustituye el atributo
+    por una envoltura y se deja como estaba al cerrar), y siempre el `encajar` del visor
+    de la ventana si lo tiene. Cuenta los `<Expose>` y `<Configure>` por clase con un
+    enlace en la etiqueta `all` (la tienen todos los widgets) y fotografía la geometría
+    de cada widget de la ventana. `cerrar(medidas)` deshace todo eso y devuelve lo
+    apuntado, con `medidas` (más tramos en ms, medidos fuera) junto a los cronometrados.
     """
-    fases = {"aplicar": 0.0, "encajar": 0.0}
+    fases = {}
     sucesos = {"<Expose>": {}, "<Configure>": {}}
     deshacer = []
 
     def cronometrar(nombre, funcion):
+        fases.setdefault(nombre, 0.0)
+
         def envoltura(*a, **k):
             t = time.perf_counter()
             try:
@@ -711,14 +724,17 @@ def _trazar_llegada(root):
                 fases[nombre] += (time.perf_counter() - t) * 1000
         return envoltura
 
-    modulo = sys.modules.get("ui.tk_principal")
-    clase = getattr(modulo, "VistaPrincipal", None)
-    if clase is not None:
-        original = clase.aplicar
-        clase.aplicar = cronometrar("aplicar", original)
-        deshacer.append(lambda: setattr(clase, "aplicar", original))
-    visor = getattr(root, "visor", None)
-    if visor is not None and hasattr(visor, "encajar"):
+    for nombre, objeto, atributo in envolver:
+        if objeto is None or not hasattr(objeto, atributo):
+            continue
+        propio = atributo in vars(objeto)
+        original = getattr(objeto, atributo)
+        crudo = vars(objeto)[atributo] if propio else None
+        setattr(objeto, atributo, cronometrar(nombre, original))
+        deshacer.append((lambda o=objeto, at=atributo, c=crudo: setattr(o, at, c)) if propio
+                        else (lambda o=objeto, at=atributo: delattr(o, at)))
+    visor = getattr(ventana, "visor", None)
+    if visor is not None and hasattr(visor, "encajar") and "encajar" not in vars(visor):
         visor.encajar = cronometrar("encajar", visor.encajar)
         deshacer.append(lambda: delattr(visor, "encajar"))
 
@@ -734,13 +750,13 @@ def _trazar_llegada(root):
         return apuntar
 
     for secuencia in sucesos:
-        previo = root.tk.call("bind", "all", secuencia)
-        root.bind_all(secuencia, contador(secuencia), add="+")
-        deshacer.append(lambda s=secuencia, p=previo: root.tk.call("bind", "all", s, p))
+        previo = ventana.tk.call("bind", "all", secuencia)
+        ventana.bind_all(secuencia, contador(secuencia), add="+")
+        deshacer.append(lambda s=secuencia, p=previo: ventana.tk.call("bind", "all", s, p))
 
     def foto():
         d = {}
-        for w in list(walk(root))[1:]:
+        for w in list(walk(ventana))[1:]:
             try:
                 d[str(w)] = (w.winfo_x(), w.winfo_y(), w.winfo_width(), w.winfo_height())
             except Exception:                            # noqa: BLE001
@@ -749,7 +765,7 @@ def _trazar_llegada(root):
 
     antes = foto()
 
-    def cerrar(ms_mirar, ms_update):
+    def cerrar(medidas):
         for paso in reversed(deshacer):
             try:
                 paso()
@@ -758,8 +774,7 @@ def _trazar_llegada(root):
         despues = foto()
         comunes = [k for k in despues if k in antes]
         return {
-            "fases": {"aplicar": round(fases["aplicar"], 1), "encajar": round(fases["encajar"], 1),
-                      "mirar": ms_mirar, "update": ms_update},
+            "fases": {**{k: round(v, 1) for k, v in fases.items()}, **medidas},
             "expose": dict(sorted(sucesos["<Expose>"].items(), key=lambda kv: -kv[1])),
             "configure": dict(sorted(sucesos["<Configure>"].items(), key=lambda kv: -kv[1])),
             "geometria": {
