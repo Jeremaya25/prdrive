@@ -38,7 +38,7 @@ from typing import NamedTuple
 from common import fleet
 from common.model import Config
 
-from . import cuando_sello, icons, segundo_plano, theme
+from . import cuando_sello, icons, perf_al_pintar, perf_empezar, segundo_plano, theme
 from .tk import (TITLE, CeldaChip, CeldaIcono, CeldaTexto, FilaTabla, Indicador, Sondeo,
                  Tabla, cabecera, centrar, cuerpo_visible, modal, mostrar, working)
 
@@ -501,6 +501,9 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> None:
                   al_elegir=lambda: repasar())
     tabla.grid(row=1, column=0, sticky="ew", pady=(theme.E4, 0))
     dlg.tabla = tabla                                  # los tests la miran
+    # El momento de «elegir» lo marca el lienzo (`TablaLienzo.elegir`); `Tabla` no lo
+    # reenvía, así que se declara en el lienzo.
+    tabla._lienzo.momento_elegir = "elegir-dispositivo"
 
     # El aviso de que aún no hay nadie apuntado se hace la primera vez que hace
     # falta: con notas no se llega a necesitar.
@@ -536,10 +539,12 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> None:
 
         def llegada(encargo) -> None:
             """Pinta lo que ha llegado; `fleet.leer()` no lanza, pero el hilo sí podría."""
+            perf_empezar("llega-flota")
             if encargo.error is not None:
                 pintar([], f"No se ha podido leer la flota: {encargo.error}", nota)
             else:
                 pintar(*encargo.resultado, nota)
+            perf_al_pintar(dlg, "llega-flota")
 
         sondeo.esperar(segundo_plano.lanzar_sin_repetir(
             "flota", raw, partial(fleet.leer, raw)), llegada)
@@ -641,4 +646,6 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> None:
     ttk.Button(cierre, text="Cerrar", command=dlg.destroy).grid(row=0, column=1)
 
     refrescar()
+    # Con PRDRIVE_PERF, `mostrar()` cierra aquí el momento «open-dispositivos» (en su pintado).
+    dlg.perf_momento = "open-dispositivos"
     mostrar(dlg, parent)
