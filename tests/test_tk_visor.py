@@ -13,6 +13,9 @@ en todas las ventanas. Se comprueba que:
 - Crearla con la ventana ya enseñada no manda `<<ThemeChanged>>` ni crea
   estilos: ningún estilo de ttk se toca después del primer widget.
 - `cuerpo_visible(directo=True)` dibuja en el `interior` mismo.
+- `encajar()` llega al tamaño final sin dar nunca al recuadro uno que no se
+  queda cuando puede saberlo sin probar (en Windows cada cambio de tamaño de la
+  ventana repinta todos sus widgets), y el tamaño final es el de siempre.
 
 Las ventanas se crean sin entrar en el bucle de eventos.
 """
@@ -286,5 +289,258 @@ uitk.cuerpo_visible(top)
 top.visor.encajar(top)
 c("una ventana con su `cuerpo_visible` no crea la barra horizontal", top.visor.horizontal, None)
 top.destroy()
+
+# 10. encajar() llega al tamaño final sin dar nunca al recuadro uno que no se queda.
+#     En Windows cada cambio de tamaño de la ventana repinta todos sus widgets
+#     (cada uno es una ventana del sistema): estirar el recuadro hasta lo que
+#     pide el contenido entero —más que la pantalla— para medir lo que sobra y
+#     encogerlo después repintaba la ventana dos veces sin cambiar nada.
+ANCHO_PANTALLA, ALTO_PANTALLA = 800, 600
+ALTO_CABECERA, ALTO_PIE = 24, 36
+PANTALLA_ANTERIOR = uitk.pantalla_util
+uitk.pantalla_util = lambda win: (ANCHO_PANTALLA, ALTO_PANTALLA)
+
+
+def ventana_visor(ancho, alto, pie=10):
+    """Devuelve `(ventana, visor, contenido)`: una ventana como las de la aplicación.
+
+    Cabecera arriba, el `Visor` en medio y el pie debajo, con las medidas
+    puestas a mano para saber cuánto vale "el resto de la ventana". El contenido
+    es un marco del tamaño pedido. `pie` es el ancho que pide el pie: si es
+    mayor que el recuadro, la ventana no se ensancha al ensancharse este.
+    """
+    top = tk.Toplevel(raiz)
+    top.withdraw()
+    ttk.Frame(top, width=10, height=ALTO_CABECERA).grid(row=0, column=0, sticky="ew")
+    visor = uitk.Visor(top)
+    visor.marco.grid(row=1, column=0, sticky="nsew")
+    ttk.Frame(top, width=pie, height=ALTO_PIE).grid(row=2, column=0, sticky="ew")
+    top.columnconfigure(0, weight=1)
+    top.rowconfigure(1, weight=1)
+    contenido = ttk.Frame(visor.interior, width=ancho, height=alto)
+    contenido.grid(row=0, column=0)
+    return top, visor, contenido
+
+
+def seguir(top, visor):
+    """Empieza a anotar lo que le pasa a la ventana y al recuadro.
+
+    Returns:
+        `(visto, dado)`, dos listas que se van llenando: `visto` con el
+        `(ancho, alto)` de la ventana en cada `<Configure>` que recibe, y `dado`
+        con el `(ancho, alto)` de cada vez que se le cambia el tamaño al recuadro.
+    """
+    visto, dado = [], []
+    top.bind("<Configure>",
+             lambda e: visto.append((e.width, e.height)) if e.widget is top else None)
+    original = visor.lienzo.configure
+
+    def configurar(*a, **kw):
+        if "width" in kw and "height" in kw:
+            dado.append((int(kw["width"]), int(kw["height"])))
+        return original(*a, **kw)
+
+    visor.lienzo.configure = configurar
+    return visto, dado
+
+
+def referencia(visor, ventana):
+    """Devuelve el tamaño que dejaba `encajar()` al medir con el recuadro estirado.
+
+    Es el algoritmo de dos pasos —estirar el recuadro hasta lo que pide el
+    contenido, medir lo que sobra de la ventana y recortar—, exacto pero con la
+    ventana más allá de la pantalla durante la medida. Aquí es la referencia del
+    tamaño final y deja el recuadro como lo encontró.
+    """
+    dejado = visor._medida()
+    visor._ajustando += 1
+    try:
+        ancho, alto = visor._natural()
+        visor._fijar(ancho, alto)
+        tope_x, tope_y = visor._tope(ventana)
+    finally:
+        visor._ajustando -= 1
+    visor._fijar(*dejado)
+    return (min(ancho, tope_x), min(alto, tope_y))
+
+
+try:
+    # 10a. Contenido más alto que la pantalla, encajado dos veces sin cambiar nada
+    top, visor, contenido = ventana_visor(300, 2000)
+    franja = minsize_fila(visor)
+    vertical = int(visor.marco.grid_columnconfigure(1)["minsize"])
+    resto_y = ALTO_CABECERA + franja + ALTO_PIE
+    visto, dado = seguir(top, visor)
+    visor.encajar(top)
+    top.deiconify()
+    top.update()
+    final = (top.winfo_width(), top.winfo_height())
+    medida = visor._medida()
+    c("contenido más alto que la pantalla: el recuadro llena lo que queda de ella",
+      medida, (300, ALTO_PANTALLA - resto_y))
+    c("  y la ventana pide justo la pantalla útil de alto", top.winfo_reqheight(), ALTO_PANTALLA)
+    del visto[:], dado[:]
+    cambio = visor.encajar(top)
+    top.update()
+    c("encajar otra vez sin cambiar nada: no dice que haya cambiado", cambio, False)
+    c("  la ventana no toma ningún tamaño que no sea el final (ningún <Configure> de más)",
+      [t for t in visto if t != final], [])
+    c("  el recuadro no toma ningún tamaño que no se quede", [t for t in dado if t != medida], [])
+    c("  y el tamaño del recuadro es el mismo", visor._medida(), medida)
+    c("  y la ventana también", (top.winfo_width(), top.winfo_height()), final)
+
+    # 10b. El contenido sigue sin caber y crece un poco más
+    contenido.configure(height=2058)
+    del visto[:], dado[:]
+    cambio = visor.encajar(top)
+    top.update()
+    c("el contenido crece 58 px y sigue sin caber: la ventana no pasa nunca de su altura",
+      [t for t in visto if t[1] > final[1] or t[0] > final[0]], [])
+    c("  ni la del recuadro, que no toma ningún tamaño que no se quede",
+      [t for t in dado if t != medida], [])
+    c("  el recuadro queda en lo de siempre: lo que deja libre la ventana",
+      visor._medida(), (300, ALTO_PANTALLA - resto_y))
+    c("  sin decir que cambió", cambio, False)
+    c("  y la ventana, en el tamaño de antes", (top.winfo_width(), top.winfo_height()), final)
+    contenido.configure(height=1500)
+    del visto[:], dado[:]
+    visor.encajar(top)
+    top.update()
+    c("  si el contenido mengua y aún no cabe, tampoco se mueve nada",
+      ([t for t in visto if t != final], [t for t in dado if t != medida]), ([], []))
+    top.destroy()
+
+    # 10c. Contenido que cabe y crece: un solo cambio de tamaño, al natural
+    top, visor, contenido = ventana_visor(300, 200)
+    visto, dado = seguir(top, visor)
+    visor.encajar(top)
+    top.deiconify()
+    top.update()
+    antes = (top.winfo_width(), top.winfo_height())
+    c("contenido que cabe: la ventana mide lo que pide (cabecera, recuadro y pie)",
+      antes, (300 + vertical, ALTO_CABECERA + 200 + franja + ALTO_PIE))
+    contenido.configure(height=260)
+    del visto[:], dado[:]
+    cambio = visor.encajar(top)
+    top.update()
+    c("  el contenido crece 60 px y aún cabe: el recuadro cambia y lo dice", cambio, True)
+    c("  una sola vez, a lo que pide el contenido", dado, [(300, 260)])
+    c("  la ventana toma un solo tamaño, el final",
+      set(visto), {(antes[0], antes[1] + 60)})
+    top.destroy()
+
+    # 10d. Primer desbordamiento, con la ventana sin enseñar: lo de siempre
+    top, visor, contenido = ventana_visor(1500, 2000)
+    visto, dado = seguir(top, visor)
+    cambio = visor.encajar(top)
+    top.update_idletasks()                   # el reposo en que la ventana pide ya lo nuevo
+    c("contenido mayor que la pantalla en las dos direcciones, con la ventana oculta: "
+      "el recuadro llena lo que queda de ella",
+      visor._medida(), (ANCHO_PANTALLA - vertical, ALTO_PANTALLA - resto_y))
+    c("  y lo dice", cambio, True)
+    c("  la ventana pide justo la pantalla útil", (top.winfo_reqwidth(), top.winfo_reqheight()),
+      (ANCHO_PANTALLA, ALTO_PANTALLA))
+    c("  con las dos barras", visor.barras(), (True, True))
+    del visto[:], dado[:]
+    visor.encajar(top)
+    c("  y encajar otra vez no toca el recuadro", [t for t in dado if t != visor._medida()], [])
+    top.destroy()
+
+    # 10e. Un recuadro que `crecer()` dejó recortado también se vuelve a encajar sin rebote
+    top, visor, contenido = ventana_visor(300, 2000)
+    visto, dado = seguir(top, visor)
+    visor.crecer(top)
+    top.deiconify()
+    top.update()
+    medida = visor._medida()
+    final = (top.winfo_width(), top.winfo_height())
+    c("crecer() con el contenido más alto que la pantalla da un solo tamaño al recuadro",
+      dado, [medida])
+    c("  que es lo que deja libre la ventana", medida, (300, ALTO_PANTALLA - resto_y))
+    del visto[:], dado[:]
+    visor.encajar(top)
+    top.update()
+    c("  y encajar después no estira el recuadro ni la ventana",
+      ([t for t in visto if t != final], [t for t in dado if t != medida]), ([], []))
+    top.destroy()
+
+    # 10f. Lo que queda de la ventana no es una cifra fija: el algoritmo de siempre da el mismo
+    #      tamaño final, con el pie estrecho (el recuadro manda en el ancho) y con uno más ancho
+    #      que el recuadro (la ventana no crece al ensancharse este hasta alcanzarlo), con la
+    #      ventana sin enseñar y enseñada.
+    #      (qué pasa, ancho, alto, ¿puede rebotar?): rebota solo el primer desbordamiento
+    #      por un lado, porque entonces no se sabe cuánto resta la ventana sin probar.
+    PASOS_ESTRECHO = (
+        ("cabe", 300, 200, False),
+        ("desborda por abajo por primera vez", 300, 2000, True),
+        ("crece un poco más", 300, 2058, False),
+        ("mengua sin caber", 300, 1500, False),
+        ("vuelve a crecer", 300, 2058, False),
+        ("mengua hasta caber", 300, 400, False),
+        ("crece sin dejar de caber", 300, 500, False),
+        ("desborda por la derecha por primera vez", 1500, 500, True),
+        ("desborda por los dos lados (el alto por primera vez)", 1500, 2000, True),
+        ("crece por los dos lados", 1600, 2100, False),
+        ("el ancho vuelve a caber", 400, 2100, False),
+        ("el alto vuelve a caber", 400, 300, False),
+    )
+    PASOS_ANCHO = (
+        ("cabe", 300, 200, False),
+        ("crece, y el pie ancho sigue mandando en la ventana", 450, 200, False),
+        ("crece, ya cerca del pie", 560, 200, False),
+        ("crece pasando del pie", 700, 200, False),
+        ("desborda la pantalla por primera vez", 900, 200, True),
+        ("crece un poco más", 950, 200, False),
+        ("mengua hasta caber, bajo el pie", 500, 200, False),
+    )
+    for nombre, pasos, pie in (("pie estrecho", PASOS_ESTRECHO, 10),
+                               ("pie ancho", PASOS_ANCHO, 600)):
+        for mapeada in (False, True):
+            etiqueta = f"{nombre}, ventana {'enseñada' if mapeada else 'oculta'}"
+            top, visor, contenido = ventana_visor(pasos[0][1], pasos[0][2], pie)
+            visto, dado = seguir(top, visor)
+            for i, (que, ancho, alto, rebota) in enumerate(pasos):
+                contenido.configure(width=ancho, height=alto)
+                antes = (top.winfo_width(), top.winfo_height())
+                del visto[:], dado[:]
+                visor.encajar(top)
+                if mapeada:
+                    if i == 0:
+                        top.deiconify()
+                    top.update()
+                final = visor._medida()
+                despues = (top.winfo_width(), top.winfo_height())
+                # La referencia estira el recuadro: se anota lo de `encajar` antes de llamarla.
+                vistos, dados = list(visto), list(dado)
+                c(f"{etiqueta}, {que}: el mismo tamaño que daba estirar antes de medir",
+                  final, referencia(visor, top))
+                if i and not rebota:
+                    c("  el recuadro solo toma el tamaño que se queda", set(dados) <= {final}, True)
+                    if mapeada:
+                        c("  y la ventana no pasa de ningún lado del mayor de sus dos tamaños",
+                          [t for t in vistos if t[0] > max(antes[0], despues[0])
+                           or t[1] > max(antes[1], despues[1])], [])
+                if mapeada:
+                    top.update()
+            top.destroy()
+
+    # 10g. Si la pantalla útil cambia (otro monitor, otra escala), el tamaño recortado de antes
+    #      no vale: se vuelve a medir
+    top, visor, contenido = ventana_visor(300, 2058)
+    visor.encajar(top)
+    top.deiconify()
+    top.update()
+    for pantalla_util in ((1000, 700), (700, 500), (1000, 700)):
+        uitk.pantalla_util = lambda win, p=pantalla_util: p
+        visor.encajar(top)
+        top.update()
+        c(f"la pantalla útil pasa a {pantalla_util[0]}x{pantalla_util[1]}: "
+          "el recuadro sigue lo que queda",
+          visor._medida(), (300, pantalla_util[1] - resto_y))
+        c("  y es lo que daba estirar antes de medir", visor._medida(), referencia(visor, top))
+        top.update()
+    top.destroy()
+finally:
+    uitk.pantalla_util = PANTALLA_ANTERIOR
 raiz.destroy()
 sys.exit(c.report())

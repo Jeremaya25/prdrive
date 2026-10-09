@@ -251,6 +251,7 @@ class Visor:
         self._puesto = (0, 0)          # lo último que se le dijo a `place`
         self._ajustado = False         # si `encajar`/`crecer` ya le dieron su tamaño
         self._ajustando = 0            # cuántos `encajar`/`crecer` lo están midiendo ahora
+        self._capado = (False, False)  # por qué lados recortó el último ajuste (x, y)
         self._desde = [0, 0]           # cuánto está desplazado, en x y en y
         self.interior.bind("<Configure>", lambda _e: self._revisar())
         self.lienzo.bind("<Configure>", lambda _e: self._revisar())
@@ -301,8 +302,49 @@ class Visor:
         self._revisar()
         return cambia
 
+    def _exacto(self, eje: int, natural: int, actual: int, tope: int) -> int | None:
+        """Devuelve el tamaño final por un lado si se sabe sin probar, o `None`.
+
+        Lo que sobra de la ventana por un lado solo puede menguar cuando el
+        recuadro crece (un widget más ancho que el recuadro deja de mandar en
+        cuanto el recuadro lo alcanza, y desde entonces el resto es constante),
+        así que el tope medido con el recuadro como está nunca es mayor que el
+        medido con el recuadro más grande. De ahí salen los dos casos exactos:
+
+        - El contenido cabe y el recuadro solo crece (o se queda): cabe también
+          con el tope de verdad, y el tamaño final es el natural.
+        - El contenido no cabe, el último ajuste recortó ese lado (`_capado`)
+          y el recuadro sigue pegado al tope: el recuadro llena la pantalla,
+          manda en ese lado y el tope no se mueve al crecer. El tamaño final
+          es ese tope. Pedir que siga pegado hace inofensiva una marca vieja
+          (otra pantalla, un recuadro que cambió `crecer()`).
+
+        Fuera de ahí (el primer desbordamiento por ese lado, o un recuadro que
+        mengua) hay que probar con el recuadro estirado.
+
+        Args:
+            eje: 0 para el horizontal, 1 para el vertical.
+            natural: Lo que pide el contenido por ese lado.
+            actual: Lo que mide ahora el recuadro por ese lado.
+            tope: El tope medido con el recuadro como está.
+        """
+        if actual <= natural <= tope:
+            return natural
+        if natural > tope and actual == tope and self._capado[eje]:
+            return tope
+        return None
+
     def encajar(self, ventana=None) -> bool:
         """Deja el recuadro del tamaño del contenido, o del que quepa si no cabe.
+
+        No da al recuadro ningún tamaño que no se quede siempre que pueda
+        saber el final sin probar (`_exacto()`): en Windows cada cambio de
+        tamaño de la ventana repinta todos sus widgets, y estirar el recuadro
+        hasta lo que pide el contenido entero (más que la pantalla, cuando
+        desborda) para medir lo que sobra de la ventana es un repintado entero
+        que no cambia nada. Solo cuando no se sabe (el primer desbordamiento
+        por un lado, que casi siempre ocurre con la ventana sin enseñar) se
+        estira ese lado, se mide y se recorta.
 
         Devuelve si el recuadro ha cambiado de tamaño, quepa el contenido o no:
         es cuando quien llama tiene que volver a colocar la ventana.
@@ -311,12 +353,20 @@ class Visor:
         ventana = ventana or self.marco.winfo_toplevel()
         self._ajustando += 1
         try:
-            ancho, alto = self._natural()
-            self._fijar(ancho, alto)
-            tope_x, tope_y = self._tope(ventana)
+            natural = self._natural()
+            tope = self._tope(ventana)
+            final = [self._exacto(eje, natural[eje], antes[eje], tope[eje])
+                     for eje in (0, 1)]
+            if None in final:
+                self._fijar(*(natural[eje] if final[eje] is None else final[eje]
+                              for eje in (0, 1)))
+                tope = self._tope(ventana)
+                final = [min(natural[eje], tope[eje]) if final[eje] is None else final[eje]
+                         for eje in (0, 1)]
         finally:
             self._ajustando -= 1
-        self._fijar(min(ancho, tope_x), min(alto, tope_y))
+        self._capado = (natural[0] > final[0], natural[1] > final[1])
+        self._fijar(*final)
         return self._medida() != antes
 
     def crecer(self, ventana=None) -> bool:
@@ -335,8 +385,9 @@ class Visor:
             tope_x, tope_y = self._tope(ventana)
         finally:
             self._ajustando -= 1
-        return self._fijar(min(max(hay_x, pide_x), tope_x),
-                           min(max(hay_y, pide_y), tope_y))
+        quiere = (max(hay_x, pide_x), max(hay_y, pide_y))
+        self._capado = (quiere[0] > tope_x, quiere[1] > tope_y)
+        return self._fijar(min(quiere[0], tope_x), min(quiere[1], tope_y))
 
     def ver(self, widget) -> None:
         """Desplaza lo justo para que `widget` quede entero a la vista.
