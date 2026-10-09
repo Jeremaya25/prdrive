@@ -724,6 +724,55 @@ def fondo_de(superficie: str) -> str:
     return _superficies().get(superficie, _superficies()[""])[0]
 
 
+def rol_texto(rol: str = "", superficie: str = "") -> tuple[str, str]:
+    """Devuelve cómo va un texto de ese rol sobre esa superficie: `(color, rol de fuente)`.
+
+    Es lo que lleva la etiqueta `{superficie}{rol}TLabel`: el color del rol,
+    salvo en una superficie que manda el suyo (sobre `'Rojo.'`, todo en
+    `PELIGRO`), y el rol de `fuente()`/`fuente_tk()`. Lo usa quien pinta texto
+    sin etiqueta (un lienzo) para que se vea como el de una.
+
+    Args:
+        rol: `''`, `'Fuerte.'`, `'Pista.'`, `'Mono.'`, `'MonoPista.'`…; uno que
+            no existe es el texto corriente.
+        superficie: `''` (el papel), `'Card.'`, `'NotaAzul.'`…
+    """
+    color, letra = _roles().get(rol, _roles()[""])
+    manda = _superficies().get(superficie, _superficies()[""])[1]
+    return manda or color, letra
+
+
+def mezcla(a: str, b: str, t: float) -> str:
+    """Devuelve el color `a` llevado una fracción `t` hacia `b`.
+
+    Para un tono que no está en la paleta y sale de dos que sí (una fila bajo
+    el ratón: su fondo un poco hacia la tinta). Se calcula canal a canal y se
+    redondea.
+
+    Args:
+        a: El color de partida, «#RRGGBB».
+        b: Hacia dónde, «#RRGGBB».
+        t: Cuánto: 0 es `a` y 1 es `b`.
+
+    Returns:
+        El color, «#RRGGBB» en mayúsculas.
+
+    Raises:
+        ValueError: Si un color no es «#RRGGBB» o `t` no está entre 0 y 1.
+    """
+    if not 0 <= t <= 1:
+        raise ValueError(f"fracción fuera de [0, 1]: {t}")
+
+    def canales(color: str) -> list[int]:
+        """Los tres canales de un «#RRGGBB»."""
+        if len(color) != 7 or color[0] != "#":
+            raise ValueError(f"color que no es #RRGGBB: {color!r}")
+        return [int(color[i:i + 2], 16) for i in (1, 3, 5)]
+
+    return "#" + "".join(f"{round(x + (y - x) * t):02X}"
+                         for x, y in zip(canales(a), canales(b)))
+
+
 def _superficies() -> dict[str, tuple[str, str | None]]:
     """Devuelve cada superficie: fondo y color de letra que manda sobre el del rol, o `None`.
 
@@ -775,6 +824,32 @@ def _chips_solidos() -> dict[str, tuple[str, str]]:
 _GLIFO_CHIP = {"Ok.": "ok", "Aviso.": "alert", "Peligro.": "close",
                "Acento.": "sync", "Apagado.": "clock"}
 """El glifo del disco de un chip de estado al que no se le da icono."""
+
+
+def colores_chip(tipo: str = "", icono: str | None = None) -> tuple:
+    """Devuelve cómo se pinta un chip (no sólido) de ese tipo, el mismo que dibuja `chip()`.
+
+    Para quien lo pinta sin etiqueta (un lienzo): sale de la misma tabla
+    (`_chips()`) y con la misma regla del glifo que `chip()`, que la usa.
+
+    Args:
+        tipo: `''`, `'Ok.'`, `'Aviso.'`, `'Peligro.'`, `'Acento.'` o
+            `'Apagado.'`; uno que no existe es el neutro.
+        icono: El glifo que se pide; sin él, el de su tipo.
+
+    Returns:
+        `(fondo, borde, letra, disco, tinta, glifo)`: el relleno de la píldora
+        (el papel en el apagado, que es solo un aro), su borde, el color de la
+        palabra, el del disco (`None` en un chip neutro), el del glifo (la
+        letra que va sobre el disco, o la tinta suave del icono de un chip
+        neutro) y el glifo (`None` si un chip neutro no lleva icono).
+    """
+    fondo, borde, letra, disco = _chips().get(tipo, _chips()[""])
+    if disco is None:
+        return fondo, borde, letra, None, TINTA2, icono
+    glifo = "alert" if icono == "warn" else icono or _GLIFO_CHIP.get(tipo)
+    return fondo, borde, letra, disco, _sobre(disco), glifo
+
 
 _puestos: dict[int, object] = {}
 """Los intérpretes de Tk que ya tienen el tema, por `id`."""
@@ -1873,17 +1948,15 @@ def chip(parent, texto: str, tipo: str = "", icono: str | None = None,
     solido = solido and tipo in _chips_solidos()
     estilo = f"{'Solido' if solido else ''}{tipo}Chip.TLabel"
     etiqueta = ttk.Label(parent, text=texto, style=estilo)
-    fondo, _borde, letra, disco = _chips().get(tipo, _chips()[""])
-    glifo = "alert" if icono == "warn" else icono or _GLIFO_CHIP.get(tipo)
+    fondo, _borde, letra, disco, tinta, glifo = colores_chip(tipo, icono)
     img = None
     if solido:
         fondo, letra = _chips_solidos()[tipo]
         img = icons.get(parent, glifo, 12, letra, fondo) if glifo else None
     elif disco is not None and glifo:
-        img = icons.disco(parent, glifo, disco, _sobre(disco), fondo,
-                          hueco=tipo == "Apagado.")
-    elif icono:
-        img = icons.get(parent, icono, 12, TINTA2, fondo)
+        img = icons.disco(parent, glifo, disco, tinta, fondo, hueco=tipo == "Apagado.")
+    elif glifo:
+        img = icons.get(parent, glifo, 12, tinta, fondo)
     if img is not None:
         etiqueta.configure(image=img, compound="left",
                            padding=(icons.px(parent, 2), icons.px(parent, 2),

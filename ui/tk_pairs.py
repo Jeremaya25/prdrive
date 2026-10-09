@@ -42,6 +42,7 @@ from . import (catalog_editor, flags_editor, icons, pair_editor,
 from .tk import (TITLE, CeldaChip, CeldaTexto, FilaTabla, Indicador, Sondeo, Tabla,
                  bloque_aviso, cabecera, centrar, cuerpo_visible, modal, mostrar, orden_sync,
                  output_window, working)
+from .tk_tabla import CeldaCasilla, TablaLienzo
 
 VISTAS = (("Este dispositivo", "dispositivo", "dispositivo"),
           ("Catálogo", "catalogo", "nas"))
@@ -53,7 +54,19 @@ ICONO_MODO = {"bisync": "both", "up": "up", "down": "down",
 
 TONOS_FILA = {"ok": ("Card.", "Ok."), "aviso": ("NotaAmbar.", "Aviso."),
               "peligro": ("Rojo.", "Peligro."), "apagado": ("Card.", "Apagado.")}
-"""La superficie de cada tono de fila y el tipo de su chip de estado."""
+"""La superficie de cada tono de fila y el tipo de su chip de estado.
+
+La superficie es la que `tk_tabla.SUPERFICIE_FILA` da al tono de la tabla (el de «ok»
+es `''`): la lista la apunta en `filas[nombre]["sup"]` y dibuja con el tono.
+"""
+
+ANCHO_RUTA = 240
+"""El ancho mínimo de «Local ↔ remoto» en la lista, en medidas del diseño.
+
+El resto del ancho de la pantalla también es suyo; lo que no quepa se corta con
+«…» (el editor enseña la ruta entera), así que una ruta larga no ensancha la
+pantalla.
+"""
 
 DEFAULTS_KEYS = ("remote", "device_remote", "catalog_path")
 """Los campos de texto del formulario de `[defaults]`.
@@ -76,116 +89,78 @@ CAMPOS_DEL_EDITOR = ("original", "actual", "editable", "ayuda_modo", "ayudas")
 
 
 class ListaParejas:
-    """La lista de parejas del diseño (`PairList`): una fila por pareja.
+    """La lista de parejas del diseño (`PairList`): una fila por pareja, en un solo lienzo.
 
-    No es una `ttk.Treeview` porque cada fila lleva chips (el modo y el estado)
-    y una lista de Tk no sabe pintar nada dentro de una celda. Son etiquetas en
-    una rejilla: la casilla de si se usa aquí, el nombre, «local ↔ remoto»,
-    el modo y el estado. El color de la fila es el de lo que hay que mirar de
-    ella (`pair_editor.row_status`) y la elegida va en el azul suave del
-    acento. Se elige con un clic o con las flechas.
+    Cada fila lleva la casilla de si se usa aquí, el nombre, «local ↔ remoto»,
+    el modo y el estado. La casilla solo dice: la cambian «Usar aquí» y
+    «Quitar…», no elegir la fila. El color de la fila es el de lo que hay que
+    mirar de ella (`pair_editor.row_status`) y la elegida va en el azul suave del
+    acento. Se elige con un clic o con el teclado (`tk_tabla`).
 
-    Se pinta una vez y después cambia solo lo que cambia: `poner()` compara las
-    filas con las que ya tiene (por nombre) y toca lo que difiere, y elegir
-    repinta únicamente la fila que se deja y la que se toma.
-
-    Cada chip va dentro de una celda `Plano.<superficie>.TFrame` de su fila y no
-    suelto en la rejilla: los controles redondeados toman el fondo de sus
-    esquinas de la superficie de su padre (`theme.reasentar()`), y el padre de un
-    chip tiene que ser el del color de su fila, no el de la tarjeta.
+    La dibuja una `tk_tabla.TablaLienzo`: un widget para toda la lista en lugar
+    de nueve por fila, que con 50 parejas eran más de 450 ventanas que Windows
+    crea, coloca y pinta una a una. Por eso abrir la pantalla ya no crece con
+    las parejas. La tabla compara por nombre: una fila que sigue igual no se
+    toca y elegir repinta dos. Una ruta que no cabe se corta con «…»: la lista
+    no ensancha la pantalla, y el editor la enseña entera.
 
     Args:
         parent: Dónde va.
         puede_dejar: Se pregunta antes de cambiar de fila; si dice que no
             (quedan cambios sin guardar y la persona no los quiere perder), la
             elección no se hace.
-        al_elegir: Lo que se llama después de elegir otra.
+        al_elegir: Lo que se llama después de elegir otra (y con Intro).
 
     Attributes:
-        marco: La lista entera.
-        filas: Por nombre, lo que se dibuja de cada pareja: `fila` (la
-            `CatalogRow`), `sup`, `apagada`, y los widgets `fondo`, `casilla`,
-            `nombre`, `ruta`, `modo` y `estado` (los dos chips) con sus celdas
-            `celda_modo` y `celda_estado`.
-        orden: Los nombres, de arriba abajo.
-        elegida: El nombre de la fila elegida, o `None`.
+        marco: El lienzo de la lista: lo que se coloca.
+        tabla: La `TablaLienzo` que la dibuja.
+        filas: Por nombre, lo que se sabe de cada pareja: `fila` (la
+            `CatalogRow`), `tono` (`pair_editor.row_status`), `sup` (la
+            superficie de ese tono) y `apagada`.
     """
 
-    COLUMNAS = 5
+    COLUMNAS = (("", 0, False), ("Pareja", 0, False), ("Local ↔ remoto", ANCHO_RUTA, True),
+                ("Modo", 0, False), ("Estado", 0, False))
+    """Las columnas de la tabla: la casilla, el nombre, la ruta (la que estira), el modo y el estado."""
 
     def __init__(self, parent, puede_dejar, al_elegir):
-        from tkinter import ttk
-        self.puede_dejar, self.al_elegir = puede_dejar, al_elegir
-        self.marco = ttk.Frame(parent, style="Card.TFrame", takefocus=True,
-                               padding=icons.px(parent, 1))   # su borde
-        self.marco.columnconfigure(2, weight=1)
+        self.tabla = TablaLienzo(parent, self.COLUMNAS, al_elegir=al_elegir,
+                                 puede_dejar=puede_dejar, vacio="No hay ninguna pareja.")
+        self.marco = self.tabla.marco
         self.filas: dict[str, dict] = {}
-        self.orden: list[str] = []
-        self.elegida: str | None = None
-        cabeza = ttk.Frame(self.marco, style="Plano.TFrame")
-        cabeza.grid(row=0, column=0, columnspan=self.COLUMNAS, sticky="nsew")
-        cabeza.lower()
-        self.cabecera = [cabeza]
-        for col, texto in ((1, "Pareja"), (2, "Local ↔ remoto"), (3, "Modo"),
-                           (4, "Estado")):
-            rotulo = ttk.Label(self.marco, text=theme.rotulo(texto), style="Rotulo.TLabel")
-            rotulo.grid(row=0, column=col, sticky="w", padx=self._lados(col),
-                        pady=theme.E1)
-            self.cabecera.append(rotulo)
-        self.marco.rowconfigure(0, minsize=icons.px(self.marco, 28))
-        linea = ttk.Separator(self.marco, style="Card.TSeparator")
-        linea.grid(row=1, column=0, columnspan=self.COLUMNAS, sticky="ew")
-        self.cabecera.append(linea)
-        self._separadores: list = []
-        self._vacio = None
-        self._colocada = False
-        self.marco.bind("<Up>", lambda _e: self._mover(-1))
-        self.marco.bind("<Down>", lambda _e: self._mover(1))
+
+    @property
+    def orden(self) -> list[str]:
+        """Los nombres, de arriba abajo."""
+        return self.tabla.orden
+
+    @property
+    def elegida(self) -> str | None:
+        """El nombre de la fila elegida, o `None`."""
+        return self.tabla.elegida
 
     @staticmethod
-    def _lados(col: int):
-        """El hueco a los lados de una celda: el de la rejilla y el borde de la fila."""
-        return (theme.E3 if col == 0 else theme.E2,
-                theme.E3 if col == ListaParejas.COLUMNAS - 1 else 0)
+    def fila_tabla(fila, tono: str, nota: str, del_catalogo: bool) -> FilaTabla:
+        """Dice cómo se dibuja una pareja: su `FilaTabla`.
 
-    @staticmethod
-    def _fila_tk(posicion: int) -> int:
-        """La fila de la rejilla de la que está en esa posición (tras la cabecera y su línea)."""
-        return 2 + 2 * posicion
-
-    @staticmethod
-    def _especificar(fila, del_catalogo: bool) -> dict:
-        """Dice cómo se dibuja una fila: su superficie y el texto de cada cosa.
-
-        Es lo que se compara con lo que ya hay para saber qué tocar. Los chips
-        son `(texto, tipo, icono)`, lo que recibe `theme.chip()`.
+        Args:
+            fila: La `pair_editor.CatalogRow`.
+            tono: Su tono y `nota` lo que dice su chip de estado
+                (`pair_editor.row_status`).
+            del_catalogo: Si es la vista del catálogo: el chip de estado no
+                lleva el color de la fila (el espejo lo dicen la fila y el modo).
         """
-        tono, nota = pair_editor.row_status(fila, del_catalogo)
-        sup, tipo = TONOS_FILA[tono]
-        if del_catalogo:
-            tipo = "Ok."                      # el espejo lo dicen la fila y el modo
+        tipo = "Ok." if del_catalogo else TONOS_FILA[tono][1]
         espejo = fila.mode in pair_editor.MIRROR_MODES
-        return {"casilla": "marcada" if fila.en_pen else "vacia",
-                "ruta": f"{fila.local} ↔ {fila.remote}",
-                "modo": (fila.mode, "Peligro." if espejo else "",
-                         ICONO_MODO.get(fila.mode)),
-                "estado": (nota, tipo, None),
-                "sup": sup, "apagada": tono == "apagado"}
-
-    @staticmethod
-    def _estilos(sup: str, apagada: bool) -> dict:
-        """Los estilos de cada widget de una fila sobre esa superficie."""
-        return {"plano": f"Plano.{sup}TFrame", "casilla": f"{sup}TLabel",
-                "nombre": f"{sup}{'Pista' if apagada else 'Fuerte'}.TLabel",
-                "ruta": f"{sup}{'MonoPista' if apagada else 'Mono'}.TLabel"}
+        return FilaTabla(fila.name, (
+            CeldaCasilla(fila.en_pen),
+            CeldaTexto(fila.name, "Fuerte."),
+            CeldaTexto(f"{fila.local} ↔ {fila.remote}", "Mono."),
+            CeldaChip(fila.mode, "Peligro." if espejo else "", ICONO_MODO.get(fila.mode)),
+            CeldaChip(nota, tipo)), "" if tono == "ok" else tono)
 
     def poner(self, filas, del_catalogo: bool = False) -> bool:
-        """Pone estas filas (`pair_editor.CatalogRow`), tocando solo lo que difiere.
-
-        Las que ya estaban y siguen igual no se tocan; una que cambia
-        reconfigura su casilla, sus textos y su superficie, y sustituye solo el
-        chip cuyo `(texto, tipo, icono)` es otro; una que se va se lleva sus
-        widgets; una que llega se crea; y si el orden es otro, se recolocan.
+        """Pone estas filas (`pair_editor.CatalogRow`); la tabla dibuja solo las que cambian.
 
         Args:
             filas: Las filas, de arriba abajo.
@@ -193,195 +168,36 @@ class ListaParejas:
                 estado de cada fila cambian, `pair_editor.row_status`).
 
         Returns:
-            Si lo que se ve ha podido cambiar de tamaño: llega o se va una
-            fila, o el texto de alguna cambia. Un cambio de color o de orden no.
+            Si lo que pide la lista ha cambiado de tamaño: llega o se va una
+            fila, o un nombre o un chip más ancho cambia una columna.
         """
-        nombres = [f.name for f in filas]
-        cambio = False
-        quedan = set(nombres)
-        for name in [n for n in self.filas if n not in quedan]:
-            self._quitar(name)
-            cambio = True
-        if self.elegida not in self.filas:
-            self.elegida = None
-        repintar = []
+        self.filas, dibujo = {}, []
         for fila in filas:
-            previa = self.filas.get(fila.name)
-            if previa is None:
-                self._crear(fila, del_catalogo)
-                cambio = True
-            elif previa["fila"] != fila or previa["del_catalogo"] != del_catalogo:
-                cambio |= self._cambiar(previa, fila, del_catalogo)
-                repintar.append(fila.name)
-        if not self._colocada or nombres != self.orden:
-            self._colocar(nombres)
-        self._pintar(*repintar)
-        return cambio
-
-    def _crear(self, fila, del_catalogo: bool) -> None:
-        """Crea los widgets de una fila nueva, ya con la superficie que le toca."""
-        from tkinter import ttk
-        spec = self._especificar(fila, del_catalogo)
-        estilos = self._estilos(spec["sup"], spec["apagada"])
-        fondo = ttk.Frame(self.marco, style=estilos["plano"])
-        fondo.lower()
-        casilla = ttk.Label(self.marco, style=estilos["casilla"])
-        self._poner_casilla(casilla, spec["casilla"])
-        nombre = ttk.Label(self.marco, text=fila.name, style=estilos["nombre"])
-        ruta = ttk.Label(self.marco, text=spec["ruta"], style=estilos["ruta"])
-        f = {"fila": fila, "del_catalogo": del_catalogo, "spec": spec,
-             "sup": spec["sup"], "apagada": spec["apagada"],
-             "aplicada": (spec["sup"], spec["apagada"]), "posicion": None,
-             "fondo": fondo, "casilla": casilla, "nombre": nombre, "ruta": ruta}
-        for clave in ("modo", "estado"):
-            celda = ttk.Frame(self.marco, style=estilos["plano"])
-            f[f"celda_{clave}"] = celda
-            f[clave] = self._chip(celda, fila.name, spec[clave])
-        for widget in (fondo, casilla, nombre, ruta, f["celda_modo"], f["celda_estado"]):
-            widget.bind("<Button-1>", partial(self._clic, fila.name))
-        self.filas[fila.name] = f
-
-    def _chip(self, celda, name: str, spec: tuple):
-        """Pone un chip en su celda y lo hace pulsable como el resto de la fila."""
-        chip = theme.chip(celda, *spec)
-        chip.grid(row=0, column=0)
-        chip.bind("<Button-1>", partial(self._clic, name))
-        return chip
-
-    def _poner_casilla(self, casilla, estado: str) -> None:
-        """Le pone a la casilla el dibujo de «se usa aquí» o de «no»."""
-        img = icons.casilla(self.marco, estado, margen=0)
-        if img is not None:
-            casilla.configure(image=img)
-            casilla.image = img
-
-    def _cambiar(self, f: dict, fila, del_catalogo: bool) -> bool:
-        """Pone al día una fila que ya estaba con la nueva; devuelve si cambió algún texto."""
-        nuevo = self._especificar(fila, del_catalogo)
-        viejo = f["spec"]
-        textos = False
-        if nuevo["casilla"] != viejo["casilla"]:
-            self._poner_casilla(f["casilla"], nuevo["casilla"])
-        if nuevo["ruta"] != viejo["ruta"]:
-            f["ruta"].configure(text=nuevo["ruta"])
-            textos = True
-        for clave in ("modo", "estado"):
-            if nuevo[clave] != viejo[clave]:
-                f[clave].destroy()
-                f[clave] = self._chip(f[f"celda_{clave}"], fila.name, nuevo[clave])
-                textos |= nuevo[clave][0] != viejo[clave][0]
-        f.update(fila=fila, del_catalogo=del_catalogo, spec=nuevo, sup=nuevo["sup"],
-                 apagada=nuevo["apagada"])
-        return textos
-
-    def _quitar(self, name: str) -> None:
-        """Destruye los widgets de una fila que ya no está."""
-        f = self.filas.pop(name)
-        for clave in ("fondo", "casilla", "nombre", "ruta", "celda_modo", "celda_estado"):
-            f[clave].destroy()
-
-    def _colocar(self, nombres: list[str]) -> None:
-        """Pone las filas en la rejilla en este orden, y sus líneas y su alto."""
-        from tkinter import ttk
-        antes = len(self.orden)
-        self._colocada = True
-        self.orden = list(nombres)
-        for i, name in enumerate(self.orden):
-            f = self.filas[name]
-            if f["posicion"] == i:
-                continue
-            f["posicion"] = i
-            fila_tk = self._fila_tk(i)
-            f["fondo"].grid(row=fila_tk, column=0, columnspan=self.COLUMNAS, sticky="nsew")
-            for col, clave in enumerate(("casilla", "nombre", "ruta", "celda_modo",
-                                         "celda_estado")):
-                f[clave].grid(row=fila_tk, column=col, sticky="w",
-                              padx=self._lados(col), pady=theme.E2)
-        # Entre una fila y la siguiente, una línea; sobran o faltan según cuántas haya.
-        lineas = max(0, len(self.orden) - 1)
-        while len(self._separadores) > lineas:
-            self._separadores.pop().destroy()
-        while len(self._separadores) < lineas:
-            linea = ttk.Separator(self.marco, orient="horizontal", style="Card.TSeparator")
-            linea.grid(row=self._fila_tk(len(self._separadores)) + 1, column=0,
-                       columnspan=self.COLUMNAS, sticky="ew")
-            self._separadores.append(linea)
-        for i in range(max(antes, len(self.orden))):
-            self.marco.rowconfigure(self._fila_tk(i),
-                                    minsize=icons.px(self.marco, 36) if i < len(self.orden)
-                                    else 0)
-        if self.orden:
-            if self._vacio is not None:
-                self._vacio.grid_remove()
-        else:
-            if self._vacio is None:
-                self._vacio = ttk.Label(self.marco, text="No hay ninguna pareja.",
-                                        style="Card.Pista.TLabel")
-            self._vacio.grid(row=self._fila_tk(0), column=0, columnspan=self.COLUMNAS,
-                             pady=theme.E3)
-
-    def _pintar(self, *nombres: str) -> None:
-        """Pone a esas filas su superficie; la elegida, la del acento.
-
-        Solo toca una fila si su superficie o su tipo de letra no son ya los que
-        tiene. Los chips caen sobre la celda de su fila: al cambiar esta se
-        reasientan para que sus esquinas sean de su color.
-        """
-        for name in nombres:
-            f = self.filas.get(name)
-            if f is None:
-                continue
-            sup = "NotaAzul." if name == self.elegida else f["sup"]
-            if f["aplicada"] == (sup, f["apagada"]):
-                continue
-            nueva = self._estilos(sup, f["apagada"])
-            viejo = self._estilos(*f["aplicada"])
-            cambiada = (sup != f["aplicada"][0])
-            f["aplicada"] = (sup, f["apagada"])
-            for clave, widget in (("plano", f["fondo"]), ("casilla", f["casilla"]),
-                                  ("nombre", f["nombre"]), ("ruta", f["ruta"])):
-                if nueva[clave] != viejo[clave]:
-                    widget.configure(style=nueva[clave])
-            if cambiada:
-                for celda in (f["celda_modo"], f["celda_estado"]):
-                    celda.configure(style=nueva["plano"])
-                    theme.reasentar(celda)
-
-    def _clic(self, name: str, _evento=None) -> None:
-        """Elige la fila pulsada y le da el foco a la lista, para las flechas."""
-        self.marco.focus_set()
-        self.elegir(name)
-
-    def _mover(self, paso: int) -> str:
-        """Elige la fila de arriba o la de abajo."""
-        if self.orden:
-            i = self.orden.index(self.elegida) + paso if self.elegida in self.orden else 0
-            self.elegir(self.orden[max(0, min(len(self.orden) - 1, i))])
-        return "break"
+            tono, nota = pair_editor.row_status(fila, del_catalogo)
+            self.filas[fila.name] = {"fila": fila, "tono": tono, "sup": TONOS_FILA[tono][0],
+                                     "apagada": tono == "apagado"}
+            dibujo.append(self.fila_tabla(fila, tono, nota, del_catalogo))
+        return self.tabla.poner(dibujo)
 
     def elegir(self, name: str | None, avisar: bool = True) -> bool:
-        """Elige esa pareja (o ninguna) y lo cuenta, si `avisar`.
-
-        Solo se repintan la fila que se deja y la que se toma.
+        """Elige esa pareja (o ninguna) y lo cuenta, si `avisar`; se repintan dos filas.
 
         Returns:
-            Si la elección se ha hecho: `al_elegir` puede negarse.
+            Si la elección se ha hecho: `puede_dejar` puede negarse.
         """
-        if name is not None and name not in self.filas:
-            name = None
-        if name == self.elegida:
-            return True
-        if avisar and not self.puede_dejar():
-            return False
-        antes, self.elegida = self.elegida, name
-        self._pintar(*(n for n in (antes, name) if n is not None))
-        if avisar:
-            self.al_elegir()
-        return True
+        return self.tabla.elegir(name, avisar)
 
     def fila(self):
         """Devuelve la `CatalogRow` elegida, o `None`."""
         return self.filas[self.elegida]["fila"] if self.elegida in self.filas else None
+
+    def leer(self) -> list[tuple[str, ...]]:
+        """Devuelve lo que dibuja la lista, fila a fila: casilla, nombre, ruta, modo y estado.
+
+        La casilla es «☑» o «☐» y la ruta sale como se ve, cortada si no cabe
+        (`TablaLienzo.leer`).
+        """
+        return self.tabla.leer()
 
 
 class EditorPareja:
@@ -1161,18 +977,26 @@ def open_dialog(parent, config, compartida=None) -> bool:
 
         Su aviso ámbar, su lista, su barra de acciones y el botón de sus
         `[defaults]`. Nace a la vista: quien lo llama es `poner_vista()`.
+
+        Tk recorre con el Tab los hijos de un marco en su orden de apilado, que
+        es el de creación: hecho tarde, todo esto iría detrás de «Cerrar». Por
+        eso cada pieza se pone junto a la que ocupa su sitio en la otra vista
+        (`lift()`/`lower()`), y el Tab va de arriba abajo como se ve.
         """
         aviso = theme.aviso(
             marco, "Estás editando el catálogo",
             "Afecta a TODOS los dispositivos. Cada uno tiene que volver al catálogo "
             "para recibir el cambio.", tono="Ambar.", ancho=700)
         aviso.grid(row=2, column=0, sticky="ew", pady=(theme.E4, 0))
+        aviso.lower(fila_defaults)
         catalogo_montado["aviso"] = aviso
         lista_c = ListaParejas(marco, lambda: seguir_sin_guardar(), lambda: cargar_editor())
         lista_c.marco.grid(row=4, column=0, sticky="ew", pady=(theme.E4, 0))
+        tk.Misc.lift(lista_c.marco, lista_d.marco)   # el `lift` de un lienzo sube elementos
         listas["catalogo"] = lista_c
         barra = ttk.Frame(marco)
         barra.grid(row=7, column=0, sticky="ew", pady=(theme.E4, 0))
+        barra.lift(barra_d)
         barra.columnconfigure(10, weight=1)
         acciones["catalogo"] = barra
         boton("catalogo", "Nueva pareja…", catalogo_nueva, "Tonal.TButton", "plus", col=0)

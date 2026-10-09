@@ -109,10 +109,13 @@ def esperado(filas, del_catalogo: bool = False) -> list[tuple[str, str, str, str
 def leer_ref(lista) -> list[tuple[str, str, str, str]]:
     """Devuelve lo que dicen las etiquetas de la `ListaParejas`, fila a fila.
 
-    Las filas empiezan en la 2 de su rejilla (la 0 es la cabecera y la 1 la línea
-    de arriba) y llevan en las columnas 1 a 4 el nombre, la ruta, el modo y el
-    estado; la 0 es la casilla.
+    Si la lista sabe leerse (`leer()`, desde que va en un lienzo), es lo que
+    dibuja sin la casilla. Si no, sus filas empiezan en la 2 de su rejilla (la 0
+    es la cabecera y la 1 la línea de arriba) y llevan en las columnas 1 a 4 el
+    nombre, la ruta, el modo y el estado; la 0 es la casilla.
     """
+    if hasattr(lista, "leer"):
+        return [tuple(fila[1:]) for fila in lista.leer()]
     por_fila: dict[int, dict[int, str]] = {}
     for w in lista.marco.winfo_children():
         info = w.grid_info()

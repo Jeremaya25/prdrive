@@ -11,6 +11,7 @@ paths:
   - "ui/tk_doctor.py"
   - "ui/tk_configuracion.py"
   - "ui/tk_pairs.py"
+  - "ui/tk_tabla.py"
   - "ui/principal.py"
   - "ui/tk_principal.py"
   - "ui/watch.py"

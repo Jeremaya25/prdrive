@@ -4,11 +4,12 @@
 Cada pieza se prueba contra lo que se vería si se dibujara de nuevo:
 
 - `ListaParejas.poner()` con filas que van y vienen, se reordenan y cambian de
-  chip enseña lo mismo que una lista recién hecha con las filas finales
-  (`tests/_vista.leer_vista`), y repetir las mismas filas no crea ni destruye
-  ningún widget; elegir cambia dos filas, no todas;
-- los chips de una fila caen sobre la superficie de su fila, también cuando se
-  elige (el fondo con el que se pintan sus esquinas);
+  chip dibuja lo mismo que una lista recién hecha con las filas finales (lo que
+  lee `leer()` y cada elemento de su lienzo), y repetir las mismas filas no toca
+  nada; elegir cambia dos filas, no todas. La lista es un solo widget, un lienzo
+  (`ui/tk_tabla.py`, probada a fondo en `tests/test_tk_tabla.py`);
+- los chips de una fila caen sobre el fondo de su fila, también cuando se elige
+  (lo que asoma por sus esquinas);
 - la pantalla entera: el catálogo que llega sin cambiar nada no rehace nada, el
   bloque del catálogo se crea al verlo por primera vez, «Avanzado» se construye
   al desplegarlo, lo que se edita a mano en `sync_config.toml` mientras la
@@ -80,6 +81,35 @@ def lista_nueva(padre, **k):
                                   k.get("al_elegir", lambda: None))
     lista.marco.grid(row=0, column=0, sticky="ew")
     return lista
+
+
+def a_la_vista(cv) -> list[int]:
+    """Los elementos del lienzo menos los textos ocultos que sujetan las letras."""
+    return [i for i in cv.find_all() if "letra" not in cv.gettags(i)]
+
+
+def elementos(lista) -> dict:
+    """Cada elemento a la vista del lienzo de la lista, con lo que se ve de él.
+
+    Tipo, sitio y aspecto, sin las etiquetas internas de cada fila (`r<n>`), que
+    dependen del orden en que llegaron.
+    """
+    cv = lista.marco
+    salida = {}
+    for i in a_la_vista(cv):
+        tipo = cv.type(i)
+        claves = {"rectangle": ("fill", "outline"), "text": ("text", "fill", "font"),
+                  "image": ("image",)}.get(tipo, ())
+        etiquetas = tuple(sorted(t for t in cv.gettags(i)
+                                 if not (t[:1] == "r" and t[1:].isdigit()) and t != "current"))
+        salida[i] = (tipo, tuple(round(float(x)) for x in cv.coords(i)),
+                     tuple(str(cv.itemcget(i, k)) for k in claves), etiquetas)
+    return salida
+
+
+def dibujo(lista) -> list:
+    """Todo lo que dibuja la lista, ordenado: el orden en que se dibujó no cuenta."""
+    return sorted(elementos(lista).values())
 
 
 # ---------------------------------------------------------------------------
@@ -157,143 +187,141 @@ def probar_la_lista(tema: str) -> None:
             fresca.poner(filas, del_cat)
             fresca.elegir(lista.elegida, avisar=False)
             comparadas += 1
-            if leer_vista(lista.marco) != leer_vista(fresca.marco):
+            if (lista.leer(), dibujo(lista)) != (fresca.leer(), dibujo(fresca)):
                 distintas.append((n_seq, [f.name for f in filas], del_cat))
             if (lista.orden != fresca.orden or lista.elegida != fresca.elegida
                     or sorted(lista.filas) != sorted(fresca.filas)):
                 distintas.append(("orden o elegida", n_seq))
             sitio.destroy()
     c(p + f"50 secuencias de filas que van, vienen y cambian ({comparadas} listas): "
-      "siempre se ve lo de una lista nueva", distintas[:3], [])
+      "siempre se dibuja lo de una lista nueva", distintas[:3], [])
+    c(p + "la lista es un solo widget, sin hijos", (lista.marco.winfo_class(),
+                                                     conjunto(lista.marco)), ("Canvas", set()))
     lista.marco.destroy()
 
-    # 1b. lo mismo otra vez: ni un widget más ni uno menos
+    # 1b. lo mismo otra vez: nada se toca
     lista = lista_nueva(tarjeta)
-    rng = random.Random(3)
-    base = [Fila(f"q{i}", "bisync", f"sync-data/q{i}", f"nas:/R/q{i}", "ok", None, True,
+    base = [Fila(f"q{i}", "bisync", f"sync-data/q{i}", f"nas:/R/q{i}", "ok", None, i < 4,
                  pair_editor.ORIGEN_CATALOGO, ()) for i in range(5)]
-    lista.poner(base, False)
-    antes = conjunto(lista.marco)
+    lista.poner(base, False)      # la de abajo no se usa aquí: su chip es el más ancho
+    antes = elementos(lista)
     cambio = lista.poner(list(base), False)
-    c(p + "poner las mismas filas no crea ni destruye ningún widget",
-      conjunto(lista.marco), antes)
+    c(p + "poner las mismas filas no toca ningún elemento", elementos(lista), antes)
     c(p + "  y dice que el tamaño no ha cambiado", cambio, False)
+    c(p + "leer(): casilla, nombre, ruta, modo y estado de cada fila",
+      lista.leer()[0], ("☑", "q0", "sync-data/q0 ↔ nas:/R/q0", "bisync", "ok"))
 
+    de_q0 = set(lista.tabla.elementos("q0"))
     cambio = lista.poner([base[0]._replace(estado="broken"), *base[1:]], False)
-    despues = conjunto(lista.marco)
-    c(p + "un chip de estado que cambia sustituye a un solo widget",
-      (len(antes - despues), len(despues - antes)), (1, 1))
-    c(p + "  y dice que lo que se ve cambió (su texto)", cambio, True)
+    despues = elementos(lista)
+    tocados = {i for i in set(antes) | set(despues) if antes.get(i) != despues.get(i)}
+    c(p + "un chip de estado que cambia solo toca elementos de su fila",
+      tocados - de_q0 - set(lista.tabla.elementos("q0")), set())
+    c(p + "  y las demás filas siguen con los mismos elementos, iguales",
+      all(antes[i] == despues[i] for n in lista.orden[1:] for i in lista.tabla.elementos(n)),
+      True)
+    c(p + "  ni crea widgets", conjunto(lista.marco), set())
+    c(p + "  y se lee el estado nuevo", lista.leer()[0][4], "broken")
+    c(p + "  un chip que no es el más ancho no cambia el tamaño", cambio, False)
     cambio = lista.poner([base[0]._replace(estado="broken"), *base[1:]], False)
-    c(p + "  repetirlo ya no cambia nada", (cambio, conjunto(lista.marco)), (False, despues))
-    antes = despues
+    c(p + "  repetirlo ya no cambia nada", (cambio, elementos(lista)), (False, despues))
 
-    # Cambiar de color no es cambiar de tamaño: el chip de estado cambia de tipo, no de texto
+    # Una fila que pasa a ámbar cambia de color, no de tamaño
     en_ambar = base[1]._replace(aviso="requiere resync")
     cambio = lista.poner([base[0]._replace(estado="broken"), en_ambar, *base[2:]], False)
-    c(p + "una fila que pasa a ámbar cambia el chip de estado y lo dice",
-      (cambio, lista.filas["q1"]["spec"]["sup"]), (True, "NotaAmbar."))
+    c(p + "una fila que pasa a ámbar lo dice", (lista.filas["q1"]["sup"], lista.leer()[1][4]),
+      ("NotaAmbar.", "requiere resync"))
+    c(p + "  y si su chip es el más ancho de la columna, la lista pide otro ancho", cambio, True)
     lista.poner(base, False)
 
-    # Una fila que se va se lleva sus widgets y su línea; una que llega trae los suyos
-    def de_la_fila(nombre: str) -> set:
-        """Los widgets de esa fila (con lo que lleva dentro), sin su separador."""
-        f = lista.filas[nombre]
-        propios = set()
-        for k in ("fondo", "casilla", "nombre", "ruta", "celda_modo", "celda_estado"):
-            propios |= {str(w) for w in todos(f[k])}
-        return propios
-
-    propios = de_la_fila(base[4].name)
-    lleno = conjunto(lista.marco)
-    lista.poner(base[:4], False)
-    quedan = conjunto(lista.marco)
-    c(p + "una fila que se va se lleva sus widgets, y solo uno más: su línea",
-      (propios <= lleno - quedan, len(lleno - quedan) - len(propios), quedan <= lleno),
-      (True, 1, True))
+    # Una fila que se va se lleva sus elementos; una que llega trae los suyos
+    lleno = len(a_la_vista(lista.marco))
+    propios = len(lista.tabla.elementos(base[4].name))
+    cambio = lista.poner(base[:4], False)
+    c(p + "una fila que se va se lleva sus elementos, y la lista pide menos alto",
+      (lista.tabla.elementos(base[4].name), len(a_la_vista(lista.marco)) + propios, cambio),
+      ((), lleno, True))
     cambio = lista.poner(base, False)
-    c(p + "  y al volver, tantos como se fueron",
-      (len(conjunto(lista.marco)), cambio), (len(lleno), True))
+    c(p + "  y al volver, tantos como se fueron", (len(a_la_vista(lista.marco)), cambio),
+      (lleno, True))
+    antes = elementos(lista)
     cambio = lista.poner(list(reversed(base)), False)
     c(p + "reordenar no cambia el tamaño y recoloca las filas",
       (cambio, lista.orden), (False, [f.name for f in reversed(base)]))
-    c(p + "  sin crear ni destruir nada", len(conjunto(lista.marco)), len(lleno))
+    c(p + "  sin crear ni borrar elementos", sorted(elementos(lista)), sorted(antes))
 
     # 1c. elegir cambia dos filas, no todas
-    def estilos_por_fila() -> dict:
-        """Los estilos de todos los widgets de cada fila."""
-        return {n: tuple(str(w.cget("style"))
-                         for w in (f["fondo"], f["casilla"], f["nombre"], f["ruta"],
-                                   f["celda_modo"], f["celda_estado"]))
-                for n, f in lista.filas.items()}
-
     lista.poner(base, False)
     lista.elegir(base[0].name, avisar=False)
-    antes_estilos = estilos_por_fila()
+    antes = elementos(lista)
     lista.elegir(base[3].name, avisar=False)
-    despues_estilos = estilos_por_fila()
-    c(p + "elegir otra fila cambia los estilos de exactamente dos filas",
-      sorted(n for n in antes_estilos if antes_estilos[n] != despues_estilos[n]),
-      sorted([base[0].name, base[3].name]))
+    despues = elementos(lista)
+    c(p + "elegir otra fila cambia los elementos de exactamente dos filas",
+      sorted({n for n in lista.orden for i in lista.tabla.elementos(n)
+              if antes[i] != despues[i]}), sorted([base[0].name, base[3].name]))
     c(p + "  y vuelve a lo de antes al volver a elegir",
-      (lista.elegir(base[0].name, avisar=False), estilos_por_fila()), (True, antes_estilos))
+      (lista.elegir(base[0].name, avisar=False), elementos(lista)), (True, antes))
     lista.marco.destroy()
 
-    # 1d. los chips caen sobre la superficie de su fila
+    # 1d. los chips caen sobre el fondo de su fila
     lista = lista_nueva(tarjeta)
     ok = Fila("ok", "bisync", "sync-data/ok", "nas:/R/ok", "ok", None, True,
               pair_editor.ORIGEN_CATALOGO, ())
     ambar = Fila("ambar", "up", "sync-data/ambar", "nas:/R/ambar", "—", "requiere resync",
                  True, pair_editor.ORIGEN_CATALOGO, ())
+    roja = Fila("roja", "up-mirror", "sync-data/roja", "nas:/R/roja", "—",
+                pair_editor.mirror_warning("up-mirror"), True, pair_editor.ORIGEN_CATALOGO, ())
     otra = Fila("otra", "down", "sync-data/otra", "nas:/R/otra", "—", None, True,
                 pair_editor.ORIGEN_CATALOGO, ())
-    lista.poner([ok, ambar, otra], False)
+    lista.poner([ok, ambar, roja, otra], False)
     lista.elegir("ok", avisar=False)
     r.deiconify()                  # un diálogo colgado de una raíz oculta no llega a verse
     uitk.ensenar(dlg)
     dlg.update()
-    style = ttk.Style(r)
-    sup = {k: theme._hex(r, v[0]) for k, v in theme._superficies().items()}
+    cv = lista.marco
 
-    def fondo_de(w) -> str:
-        """El color con el que se pinta el control, con su estado."""
-        return theme._hex(r, style.lookup(str(w.cget("style")), "background", w.state()))
+    def bajo_los_chips() -> dict:
+        """Por fila, el color de lo que hay debajo de las esquinas de sus dos chips."""
+        visto = {}
+        for n in lista.orden:
+            colores = set()
+            for chip in [i for i in lista.tabla.elementos(n) if "pildora" in cv.gettags(i)]:
+                todos = list(cv.find_all())
+                debajo = set(todos[:todos.index(chip)])
+                x0, y0, x1, y1 = cv.bbox(chip)
+                for x, y in ((x0, y0), (x1 - 1, y0), (x0, y1 - 1), (x1 - 1, y1 - 1)):
+                    rect = [i for i in cv.find_overlapping(x, y, x, y)
+                            if i in debajo and cv.type(i) == "rectangle"]
+                    colores.add(cv.itemcget(rect[-1], "fill"))
+            visto[n] = colores
+        return visto
 
-    def fondos_de_chips() -> dict:
-        """Por fila, el fondo de sus dos chips."""
-        return {n: tuple(fondo_de(f[k]) for k in ("modo", "estado"))
-                for n, f in lista.filas.items()}
-
-    azul, tarjeta_c, ambar_c = sup["NotaAzul."], sup["Card."], sup["NotaAmbar."]
-    c(p + "los chips de la elegida caen sobre su azul",
-      fondos_de_chips()["ok"], (azul, azul))
-    c(p + "  los de una fila en ámbar sobre el ámbar", fondos_de_chips()["ambar"],
-      (ambar_c, ambar_c))
-    c(p + "  y los de una fila normal sobre la tarjeta", fondos_de_chips()["otra"],
-      (tarjeta_c, tarjeta_c))
+    azul, tarjeta_c = {theme.ACENTO_SUAVE}, {theme.SUPERFICIE}
+    ambar_c, rojo_c = {theme.AVISO_FONDO}, {theme.PELIGRO_FONDO}
+    visto = bajo_los_chips()
+    c(p + "los chips de la elegida caen sobre su azul", visto["ok"], azul)
+    c(p + "  los de una fila en ámbar sobre el ámbar", visto["ambar"], ambar_c)
+    c(p + "  los de una fila roja sobre el rojo", visto["roja"], rojo_c)
+    c(p + "  y los de una fila normal sobre la tarjeta", visto["otra"], tarjeta_c)
     lista.elegir("otra", avisar=False)
     dlg.update()
-    visto = fondos_de_chips()
-    c(p + "al elegir otra, sus chips pasan al azul",
-      visto["otra"], (azul, azul))
-    c(p + "  y los de la que se deja vuelven a su superficie",
-      visto["ok"], (tarjeta_c, tarjeta_c))
-    c(p + "  la ámbar se queda como estaba", visto["ambar"], (ambar_c, ambar_c))
-    lista.elegir("ambar", avisar=False)
-    dlg.update()
-    visto = fondos_de_chips()
-    c(p + "una fila en ámbar que se elige pasa al azul y, al dejarla, vuelve al ámbar",
-      (visto["ambar"], fondos_de_chips()["otra"]), ((azul, azul), (tarjeta_c, tarjeta_c)))
-    lista.elegir("otra", avisar=False)
-    dlg.update()
-    c(p + "  de vuelta al ámbar", fondos_de_chips()["ambar"], (ambar_c, ambar_c))
+    visto = bajo_los_chips()
+    c(p + "al elegir otra, sus chips pasan al azul", visto["otra"], azul)
+    c(p + "  y los de la que se deja vuelven a su fondo", visto["ok"], tarjeta_c)
+    for n, color in (("ambar", ambar_c), ("roja", rojo_c)):
+        lista.elegir(n, avisar=False)
+        dlg.update()
+        elegida = bajo_los_chips()[n]
+        lista.elegir("otra", avisar=False)
+        dlg.update()
+        c(p + f"una fila {n} que se elige pasa al azul y, al dejarla, vuelve a su color",
+          (elegida, bajo_los_chips()[n]), (azul, color))
 
     # Una fila que llega ya elegida, con la lista a la vista
-    lista.poner([ok, ambar, otra, otra._replace(name="nueva")], False)
+    lista.poner([ok, ambar, roja, otra, otra._replace(name="nueva")], False)
     lista.elegir("nueva", avisar=False)
     dlg.update()
-    c(p + "una fila nueva que se elige también",
-      fondos_de_chips()["nueva"], (azul, azul))
+    c(p + "una fila nueva que se elige también", bajo_los_chips()["nueva"], azul)
 
     dlg.destroy()
     theme.olvidar(r.tk)
@@ -475,6 +503,30 @@ def ver_dispositivo(dlg) -> None:
     pulsar(dlg, "Este dispositivo", ttk.Radiobutton)
 
 
+def vista(dlg) -> tuple:
+    """Lo que enseña la pantalla: sus widgets (`leer_vista`) y lo que dibuja su lista."""
+    return leer_vista(dlg), dlg.lista.leer()
+
+
+def cadena_del_tab(dlg) -> list[tuple[str, str]]:
+    """Lo que recorre el Tab desde la primera opción del interruptor hasta volver a ella.
+
+    Returns:
+        Por paso, `(clase, texto)`: el texto del widget, o su clase si no tiene;
+        la lista visible es `("Lista", "")`.
+    """
+    inicio = buscar(dlg, ttk.Radiobutton, "Este dispositivo")
+    cadena, actual = [], inicio
+    for _ in range(200):
+        texto = str(actual.cget("text")) if "text" in actual.keys() else ""
+        clase = "Lista" if actual is dlg.lista.marco else actual.winfo_class()
+        cadena.append((clase, texto or clase))
+        actual = actual.tk_focusNext()
+        if actual is None or actual is inicio:
+            break
+    return cadena
+
+
 def textos_a_la_vista(dlg) -> list[str]:
     """Los textos de las etiquetas que se ven."""
     return [str(w.cget("text")) for w in visibles(dlg, "TLabel")]
@@ -585,7 +637,7 @@ def probar_la_pantalla() -> None:
             lista_d = dlg.lista
             visto["sin_bloque"] = [b for b in BOTONES_CATALOGO if buscar(dlg, ttk.Button, b)]
             visto["aviso"] = buscar(dlg, ttk.Label, "Estás editando el catálogo")
-            visto["vista_d"] = leer_vista(dlg)
+            visto["vista_d"] = vista(dlg)
             antes = conjunto(dlg)
             ver_catalogo(dlg)
             lista_c = dlg.lista
@@ -594,23 +646,25 @@ def probar_la_pantalla() -> None:
             visto["filas_c"] = list(lista_c.filas)
             visto["bloque"] = [b for b in BOTONES_CATALOGO if buscar(dlg, ttk.Button, b)]
             visto["aviso_c"] = buscar(dlg, ttk.Label, "Estás editando el catálogo")
-            visto["creados"] = len(conjunto(dlg) - antes)
+            nuevos = conjunto(dlg) - antes
+            visto["creados"] = ({str(lista_c.marco), *(str(buscar(dlg, ttk.Button, b))
+                                                       for b in BOTONES_CATALOGO)} <= nuevos)
             en_catalogo = sin_chips(dlg)
-            vista_c = leer_vista(dlg)
+            vista_c = vista(dlg)
             ver_dispositivo(dlg)
             visto["vuelve"] = (dlg.lista is lista_d, sin_chips(dlg) - en_catalogo == set(),
-                               leer_vista(dlg) == visto["vista_d"])
+                               vista(dlg) == visto["vista_d"])
             visto["quedan"] = (len(en_catalogo - sin_chips(dlg)) == 0)
             ver_catalogo(dlg)
             visto["otra_vez"] = (dlg.lista is lista_c, sin_chips(dlg) == en_catalogo,
-                                 leer_vista(dlg) == vista_c)
+                                 vista(dlg) == vista_c)
 
         abrir(cfg, alternar)
         c("abrir en este dispositivo no crea el bloque del catálogo",
           (visto["sin_bloque"], visto["aviso"]), ([], None))
         c("  la primera vez que se ve el catálogo se crea (su lista, su barra y su aviso)",
           (visto["listas"], visto["bloque"] == list(BOTONES_CATALOGO), visto["aviso_c"] is not None,
-           visto["creados"] > 20), ((True, True, True), True, True, True))
+           visto["creados"]), ((True, True, True), True, True, True))
         c("  con sus parejas", visto["filas_c"], ["notas", "subida", "fotos"])
         c("  volver y pasar otra vez no crea ni destruye nada (salvo los chips), y se ve lo mismo",
           (visto["vuelve"], visto["quedan"], visto["otra_vez"]),
@@ -862,7 +916,8 @@ def probar_la_pantalla() -> None:
         distintas = [(a, b) for a, b in zip(sin_hora(leer_vista(usada)),
                                             sin_hora(leer_vista(nueva))) if a != b]
         c("  y enseña lo mismo que una recién abierta",
-          (distintas, len(leer_vista(usada)) == len(leer_vista(nueva))), ([], True))
+          (distintas, len(leer_vista(usada)) == len(leer_vista(nueva)),
+           usada.lista.leer() == nueva.lista.leer()), ([], True, True))
         c("  con «Avanzado» plegado y lo escrito fuera",
           (usada.editor.plegado.get(), usada.editor.campos["remote_path"].get()),
           (True, nueva.editor.campos["remote_path"].get()))
@@ -873,6 +928,51 @@ def probar_la_pantalla() -> None:
         tk_pairs.confirmar_plan = lambda *a, **k: True
         c("  nada ha reventado", errores, [])
 
+    # 3j. el Tab recorre cada vista de arriba abajo, también la del catálogo, hecha tarde
+    with sandbox():
+        cfg, remoto = con_remoto(CAT_MAS)
+        remoto.soltar.set()
+        cadenas: dict = {}
+
+        def tabular(dlg):
+            """Apunta la cadena del Tab de cada vista: dispositivo, catálogo y vuelta."""
+            enseñada(dlg)
+            dar_vueltas(lambda: not dlg.sondeo.esperando)
+            cadenas["dispositivo"] = cadena_del_tab(dlg)
+            ver_catalogo(dlg)
+            dlg.update()
+            cadenas["catalogo"] = cadena_del_tab(dlg)
+            ver_dispositivo(dlg)
+            dlg.update()
+            cadenas["vuelta"] = cadena_del_tab(dlg)
+
+        abrir(cfg, tabular)
+        for vista_, franja, barra in (
+                ("dispositivo", "Volver a los del catálogo",
+                 ["Simular", "Quitar…", "Descartar", "Guardar aquí…"]),
+                ("catalogo", "Ajustes del catálogo…",
+                 ["Nueva pareja…", "Borrar del catálogo…", "Releer", "Descartar",
+                  "Guardar en el catálogo…"])):
+            cadena = cadenas[vista_]
+            textos = [t for _clase, t in cadena]
+            pos = {t: i for i, t in enumerate(textos)}
+            lista_en = next((i for i, (clase, _t) in enumerate(cadena) if clase == "Lista"),
+                            None)
+            campos = [i for i, (clase, _t) in enumerate(cadena) if clase in ("TEntry", "Text")]
+            en_barra = [t for t in textos if t in barra]
+            c(f"Tab en la vista «{vista_}»: la lista va tras la franja de [defaults] y antes "
+              "del editor",
+              (lista_en, lista_en == min(campos) - 1 if campos else None),
+              (pos.get(franja, -2) + 1, True))
+            c("  la barra de acciones va tras el editor, en su orden, y antes de "
+              "«Dispositivos…»",
+              (en_barra, min(pos[t] for t in barra) > max(campos),
+               max(pos[t] for t in barra) < pos.get("Dispositivos…", -1)),
+              (barra, True, True))
+            c("  y «Cerrar» es lo último", textos[-1], "Cerrar")
+        c("volver a este dispositivo deja el Tab como estaba",
+          cadenas["vuelta"], cadenas["dispositivo"])
+        c("  nada ha reventado", errores, [])
 
     uitk.pantalla_util = PANTALLA_REAL
 
