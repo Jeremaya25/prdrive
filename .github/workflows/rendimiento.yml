@@ -17,11 +17,6 @@ name: Rendimiento
 # marcar «arm64»). La base de un PR es la de su fusión (base.sha); a mano, la rama o commit de
 # «base» (main por omisión).
 on:
-  # TEMPORAL: quitar antes del PR (primera medida en Windows antes de abrirlo; compara con `main`
-  # o con la «base» que se pida a mano).
-  push:
-    branches:
-      - claude/adoring-pascal-5j258r
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
@@ -74,7 +69,7 @@ jobs:
       RENDIMIENTO_PR: ${{ github.event.pull_request.head.sha || github.sha }}
       RENDIMIENTO_BASE: ${{ github.event.pull_request.base.sha || inputs.base || 'main' }}
       # Por el entorno y no pegado en la orden: lo escrito al lanzarlo a mano no es código.
-      # Un PR en borrador, 3 vueltas (señal rápida); listo, a mano sin «rondas» o el push temporal, 7.
+      # Un PR en borrador, 3 vueltas (señal rápida); listo o a mano sin «rondas», 7.
       RENDIMIENTO_RONDAS: ${{ inputs.rondas || (github.event.pull_request.draft && '3' || '7') }}
     steps:
       # El PR (su fusión con la base) en pr/ y la base en base/: dos carpetas, dos árboles.
