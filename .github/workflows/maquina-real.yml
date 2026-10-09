@@ -11,6 +11,12 @@ name: Máquina real
 # A mano (workflow_dispatch, con el fichero ya en main): las filas que se pidan.
 # Al subir un cambio de tests/maquina/ a una rama que no es main, y en un PR que
 # toca lo que prueban: todas.
+#
+# F21 (`.pyc` entre sistemas) corre en dos trabajos propios, fuera de la matriz
+# (sus pasos no se pueden pasar un árbol entre ellos): `pyc-linux` precompila el
+# programa con el Python fijado y sube el árbol como artefacto `f21-arbol`;
+# `pyc-windows` lo lleva a un FAT32 y a un exFAT y lo mira con el Python fijado de
+# Windows. En la matriz, F21 sale como «saltada».
 on:
   workflow_dispatch:
     inputs:
@@ -28,6 +34,11 @@ on:
       - "common/avisos_carpeta.py"
       - "common/expulsar.py"
       - "ui/bandeja_windows.py"
+      - "install/deploy.py"
+      - "install/runtime_bin.py"
+      - "install/platforms.py"
+      - "common/pins.py"
+      - "tests/_runtime_ci.py"
       - "tests/maquina/**"
       - ".github/workflows/maquina-real.yml"
 
@@ -64,3 +75,83 @@ jobs:
         if: runner.os == 'Windows'
         shell: bash
         run: python tests/maquina/correr.py $PRUEBAS
+
+  pyc-linux:
+    name: F21 · .pyc (Linux, con el Python fijado)
+    if: success() && (contains(inputs.pruebas || 'todas', 'F21') || contains(inputs.pruebas || 'todas', 'todas'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Antes del runtime: su comprobación de Tk carga las bibliotecas de X11 (como en tests.yml).
+      - name: Bibliotecas de X11 (Linux)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libxft2 fontconfig
+
+      - name: Clave de la caché del runtime
+        id: pins
+        run: python tests/_runtime_ci.py clave
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/prdrive-cache
+          key: runtime-linux-x64-${{ steps.pins.outputs.clave }}
+
+      - name: Python fijado del dispositivo (Linux)
+        run: python tests/_runtime_ci.py runtime linux-x64 "$RUNNER_TEMP/runtime" "$RUNNER_TEMP/prdrive-cache"
+
+      - name: F21 · precompilar el programa y dejar el árbol
+        env:
+          F21_ARBOL: ${{ runner.temp }}/f21-arbol
+        run: python tests/maquina/correr.py F21 --de-verdad
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: f21-arbol
+          path: ${{ runner.temp }}/f21-arbol
+          include-hidden-files: true
+
+  pyc-windows:
+    name: F21 · .pyc (Windows, FAT32 y exFAT)
+    needs: pyc-linux
+    if: success() && (contains(inputs.pruebas || 'todas', 'F21') || contains(inputs.pruebas || 'todas', 'todas'))
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Clave de la caché del runtime
+        id: pins
+        run: python tests/_runtime_ci.py clave
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/prdrive-cache
+          key: runtime-windows-x64-${{ steps.pins.outputs.clave }}
+
+      - name: Python fijado del dispositivo (Windows)
+        shell: bash
+        run: python tests/_runtime_ci.py runtime windows-x64 "$RUNNER_TEMP/runtime" "$RUNNER_TEMP/prdrive-cache"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: f21-arbol
+          path: ${{ runner.temp }}/f21-arbol
+
+      - name: F21 · FAT32 y exFAT con el Python fijado (como administrador)
+        shell: bash
+        env:
+          F21_ARBOL: ${{ runner.temp }}/f21-arbol
+        run: python tests/maquina/correr.py F21 --de-verdad
