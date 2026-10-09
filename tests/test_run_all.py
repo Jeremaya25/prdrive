@@ -989,10 +989,17 @@ c("GUI, GUI_NO, SERIE y PESO solo nombran ficheros que existen",
   sorted(set(run_all.GUI) - existen) + sorted(set(run_all.GUI_NO) - existen)
   + sorted(set(run_all.SERIE) - existen) + sorted(set(run_all.PESO) - existen), [])
 
-c("SERIE sin escritorio compartido: solo test_avisos_carpeta.py",
-  sorted(run_all.serie_para(False)), ["test_avisos_carpeta.py"])
-c("SERIE con escritorio compartido: también píxeles y foco",
-  sorted(run_all.serie_para(True)), ["test_avisos_carpeta.py", "test_superficie.py", "test_tk_tabla.py"])
+previo = run_all.IS_WIN
+run_all.IS_WIN = False
+try:
+    sin_compartido = sorted(run_all.serie_para(False))
+    con_compartido = sorted(run_all.serie_para(True))
+finally:
+    run_all.IS_WIN = previo
+c("SERIE fuera de Windows, sin escritorio compartido: solo test_avisos_carpeta.py",
+  sin_compartido, ["test_avisos_carpeta.py"])
+c("SERIE fuera de Windows, con escritorio compartido: también píxeles y foco",
+  con_compartido, ["test_avisos_carpeta.py", "test_superficie.py", "test_tk_tabla.py"])
 previo = run_all.IS_WIN
 run_all.IS_WIN = True
 try:
