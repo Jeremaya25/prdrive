@@ -98,11 +98,18 @@ def buscar(ventana, clase, texto: str):
     return None
 
 
-def pulsar_fila(dlg, nombre: str) -> None:
-    """Hace un clic en la fila de esa pareja, sobre el lienzo de «Parejas» (como el ratón)."""
+def pulsar_fila(dlg, nombre: str) -> int:
+    """Hace un clic en la fila de esa pareja, sobre el lienzo de «Parejas» (como el ratón).
+
+    Returns:
+        Si la ventana estaba a la vista justo antes del clic (`winfo_viewable()`).
+    """
     dlg.update()
+    _perf.a_la_vista(dlg)
     x0, y0, x1, y1 = dlg.lista.tabla.caja(nombre)
+    vista = dlg.winfo_viewable()
     dlg.lista.marco.event_generate("<Button-1>", x=(x0 + x1) // 2, y=(y0 + y1) // 2)
+    return vista
 
 
 @contextmanager
@@ -191,19 +198,23 @@ def probar_con_perf() -> None:
         with _perf.con_perf(tmp / "elegir") as t:
             ui.perf_empezar("open-parejas")
             elegida: list[str | None] = []
+            vistas: list[int] = []
 
             def clicar(dlg):
                 """Espera el catálogo, pulsa «subida» dos veces y mira qué queda elegido."""
                 esperar_linea(dlg, t, "catalogo-llega")
-                pulsar_fila(dlg, "subida")
+                vistas.append(pulsar_fila(dlg, "subida"))
                 dlg.update()
                 _perf.vaciar()
                 elegida.append(dlg.lista.elegida)
-                pulsar_fila(dlg, "subida")
+                vistas.append(pulsar_fila(dlg, "subida"))
                 dlg.update()
                 _perf.vaciar()
 
             abrir_parejas(clicar)
+            # La raíz vuelve a estar retirada, como al empezar el test.
+            raiz.withdraw()
+            c("la ventana está a la vista para el clic", vistas, [1, 1])
             c("elegir-pareja: el clic elige la fila",
               elegida, ["subida"])
             c("elegir-pareja: una línea por elección; elegir la misma fila no anota nada",

@@ -84,6 +84,29 @@ def vaciar() -> None:
     ui.perf_volcar()
 
 
+def a_la_vista(ventana) -> None:
+    """Deja la ventana de prueba realmente a la vista, para que un clic generado la alcance.
+
+    Un `transient` de una raíz retirada puede quedarse retirado aunque se le haga
+    `deiconify()`. Y un clic generado sobre un widget que no está a la vista puede
+    perderse (en Windows y en Tk 8.6); Tk 9 en X11 todavía lo entrega. Por eso se
+    enseñan las ventanas de la cadena `transient`, de la raíz hacia dentro, y se
+    procesa lo pendiente antes de generar el clic.
+
+    Args:
+        ventana: La ventana, o un widget suyo, que va a recibir el clic.
+    """
+    cadena = []
+    actual = ventana.winfo_toplevel()
+    while actual is not None:
+        cadena.append(actual)
+        maestro = actual.wm_transient()
+        actual = actual.nametowidget(maestro) if maestro else None
+    for toplevel in reversed(cadena):
+        toplevel.deiconify()
+    ventana.update()
+
+
 def salir(codigo: int) -> None:
     """Termina el test con `codigo` sin pasar por la limpieza del intérprete.
 

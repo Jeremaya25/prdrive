@@ -103,8 +103,28 @@ def abrir(accion=None) -> None:
         else:
             dlg.destroy()
 
-    raiz.after(300, dentro)
+    fin = time.monotonic() + 5.0
+
+    def cuando_se_vea() -> None:
+        """Corre `dentro` en cuanto `mostrar()` ha enseñado la ventana.
+
+        Un temporizador fijo puede vencer antes: `Visor.encajar()` hace un
+        `update_idletasks()` que ejecuta el `after_idle` que anota el pintado de
+        la medida, y ese hace un `update()`; así el temporizador vence antes de
+        que `mostrar()` enseñe la ventana. Con un límite, para que una ventana
+        que nunca llega no deje la prueba colgada.
+        """
+        dlgs = [w for w in raiz.winfo_children() if isinstance(w, tk.Toplevel)]
+        if (dlgs and dlgs[-1].winfo_viewable()) or time.monotonic() > fin:
+            dentro()
+        else:
+            raiz.after(10, cuando_se_vea)
+
+    raiz.after(10, cuando_se_vea)
     tk_fleet.open_dialog(raiz, None, dict(RAW))
+    # El pintado de cada momento se anota en un after_idle: se procesa aquí, dentro de
+    # la sección que lo genera, y no en el diario de la siguiente.
+    raiz.update()
 
 
 with sandbox() as raiz_tk:
@@ -114,6 +134,7 @@ with sandbox() as raiz_tk:
     #    no elige nada; un clic en otra fila sí, y se anota una vez.
     LEIDA[:] = [dispositivo(i) for i in range(3)]
     antes_del_clic: list[int] = []
+    vista_al_clic: list[int] = []
     elegida_tras_clic: list = []
 
     def pulsar_otra(dlg) -> None:
@@ -121,18 +142,23 @@ with sandbox() as raiz_tk:
         _perf.vaciar()
         antes_del_clic.append(len(_perf.lineas(t, "elegir-dispositivo")))
         dlg.update()
+        _perf.a_la_vista(dlg)
         x0, y0, x1, y1 = dlg.tabla._lienzo.caja("disp0001xxxxxxxx")
+        vista_al_clic.append(dlg.winfo_viewable())
         dlg.tabla.marco.event_generate("<Button-1>", x=(x0 + x1) // 2, y=(y0 + y1) // 2)
         dlg.update()
         elegida_tras_clic.append(dlg.tabla.elegida)
 
     with _perf.con_perf(tmp / "abrir") as t:
         abrir(accion=pulsar_otra)
+        # La raíz vuelve a estar retirada, como al empezar el test.
+        raiz.withdraw()
         _perf.vaciar()
         c("al abrir: open-dispositivos y llega-flota, una línea cada uno",
           (len(_perf.lineas(t, "open-dispositivos")), len(_perf.lineas(t, "llega-flota"))),
           (1, 1))
         c("al abrir no se anota «elegir-dispositivo»", antes_del_clic, [0])
+        c("la ventana está a la vista para el clic", vista_al_clic, [1])
         c("el clic elige la otra fila", elegida_tras_clic, ["disp0001xxxxxxxx"])
         c("un clic en otra fila anota «elegir-dispositivo» una vez",
           len(_perf.lineas(t, "elegir-dispositivo")), 1)
