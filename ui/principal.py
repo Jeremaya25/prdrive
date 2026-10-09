@@ -279,10 +279,12 @@ def controles(e: Estado) -> dict[str, Control]:
 
     Es la tabla de «desactivado ⇔ ocupado»: lo que toca `state/` (una pasada,
     el servicio, las parejas, el llavero, el contenedor, los componentes) se
-    apaga mientras se sincroniza, y lo que necesita la lectura del dispositivo
-    (el estado de resync de «Sincronizar ahora», la foto de procesos del
-    llavero, «Expulsar») no está hasta que llega. Por eso, antes de que llegue,
-    de lo que toca `state/` solo se pueden pulsar «Parejas…» y «Ajustes…».
+    apaga mientras se sincroniza, y también «Actualizar…» del programa, que
+    sustituye `sync.py` y `common/` debajo de la pasada y reabre la ventana,
+    cortándola. Lo que necesita la lectura del dispositivo (el estado de
+    resync de «Sincronizar ahora», la foto de procesos del llavero,
+    «Expulsar») no está hasta que llega. Por eso, antes de que llegue, de lo
+    que toca `state/` solo se pueden pulsar «Parejas…» y «Ajustes…».
 
     Args:
         e: Lo que enseña la ventana.
@@ -308,7 +310,7 @@ def controles(e: Estado) -> dict[str, Control]:
                            e.llavero is not None and e.llavero.activo and libre),
         "pie": Control(e.pie is not None, libre),
         "componentes": Control(e.componentes is not None and e.componentes_boton, libre),
-        "version": Control(e.version is not None, True),
+        "version": Control(e.version is not None, libre),
         "descartar": Control(e.aviso is not None, True),
         "arranque": Control(e.arranque is not None, True),
         "marcar_todas": Control(len(e.filas) > 1, True),

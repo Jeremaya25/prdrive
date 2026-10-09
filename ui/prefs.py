@@ -26,12 +26,18 @@ automático nunca reescriba lo que se decidió a mano.
 
 El fichero conserva el nombre de cuando era «lo último que se eligió en la UI»:
 renombrarlo pediría una migración para cambiar una palabra.
+
+Aparte, en `state/ventana.json`, la ventana principal recuerda su ancho
+(`ancho_recordado`, `recordar_ancho`): no es cosa del servicio y no va en
+`ui_prefs.json`.
 """
 
 from __future__ import annotations
 
 import math
 import socket
+import sys
+from pathlib import Path
 from typing import Any, Mapping
 
 from common import model, store
@@ -46,6 +52,13 @@ ESPERA_MS = 250
 
 Marcar varias seguidas escribe `ui_prefs.json` una vez (`SeleccionPendiente`),
 no una por clic.
+"""
+VENTANA = "ventana.json"
+"""El fichero de `state/` donde la ventana principal recuerda su ancho.
+
+No es `ui_prefs.json` a propósito: el agente del equipo vigila la fecha de ese
+fichero y recarga su servicio con cualquier cambio (`agente.py`,
+`_cargar_servicio`), y el ancho de una ventana no le dice nada al servicio.
 """
 
 
@@ -179,10 +192,16 @@ class SeleccionPendiente:
     def poner(self, config: Config, pares: list[str]) -> None:
         """Apunta la selección, sustituyendo a la anterior. No escribe nada.
 
+        Una selección vacía no sustituye a una pendiente con alguna pareja:
+        desmarcarlas todas seguidas deja escrita la última que tenía alguna,
+        como cuando cada clic escribía y la vacía no se guardaba.
+
         Args:
             config: La configuración del dispositivo, para saber qué parejas hay.
             pares: Las parejas marcadas.
         """
+        if not pares and self._pendiente is not None and self._pendiente[1]:
+            return
         self._pendiente = (config, list(pares))
 
     def volcar(self) -> bool | None:
@@ -301,3 +320,64 @@ def elegir(all_names: list[str], daemon: Mapping[str, Any],
         return d_pairs, d_interval, None
     return pairs, _minutos(prefs, d_interval), ("Parejas e intervalo del servicio"
                                                 + (f", elegidos el {when}" if when else ""))
+
+
+def ruta_ventana() -> Path:
+    """Devuelve el fichero donde la principal recuerda su ancho.
+
+    Se calcula al llamar, no al importar: los tests mueven `model.STATE_DIR`.
+    """
+    return model.STATE_DIR / VENTANA
+
+
+def clave_ancho(version_tk: str, escala: float) -> str:
+    """Devuelve con qué clave se recuerda el ancho: lo que cambia cuánto mide el texto.
+
+    El sistema, la versión de Tk y su `tk scaling` (píxeles por punto). El
+    dispositivo viaja de un equipo a otro: un ancho medido al 150 % no vale al
+    100 %, ni uno de Windows en Linux.
+
+    Args:
+        version_tk: `tkinter.TkVersion`, en texto («9.0», «8.6»).
+        escala: `tk scaling` de la ventana.
+    """
+    return f"{sys.platform}:{version_tk}:{escala:.3f}"
+
+
+def ancho_recordado(clave: str) -> int | None:
+    """Devuelve el ancho que pidió el contenido de la principal la última vez, o `None`.
+
+    Es el de después de llegar su lectura del dispositivo, el que la ventana
+    reserva desde el primer pintado. Nunca lanza: un fichero que falta, está a
+    medias o no dice un ancho para esa clave es `None`.
+
+    Args:
+        clave: La de `clave_ancho()`.
+    """
+    anchos = store.read_json(ruta_ventana()).get("ancho")
+    ancho = anchos.get(clave) if isinstance(anchos, dict) else None
+    # `type` y no `isinstance`: un `True` también es un `int`.
+    return ancho if type(ancho) is int and ancho > 0 else None
+
+
+def recordar_ancho(clave: str, ancho: int) -> bool:
+    """Guarda el ancho de la principal para esa clave, solo si ha cambiado.
+
+    Conserva los de otras claves. Nunca lanza: un dispositivo de solo lectura,
+    o ya extraído, simplemente no lo recuerda.
+
+    Args:
+        clave: La de `clave_ancho()`.
+        ancho: Lo que pide el contenido de la ventana, en píxeles.
+
+    Returns:
+        True si se ha escrito o ya estaba así; False si no se ha podido escribir.
+    """
+    ruta = ruta_ventana()
+    datos = store.read_json(ruta)
+    anchos = datos.get("ancho")
+    anchos = dict(anchos) if isinstance(anchos, dict) else {}
+    if type(anchos.get(clave)) is int and anchos[clave] == ancho:
+        return True  # ya estaba así: no se gasta escritura en el dispositivo
+    anchos[clave] = ancho
+    return store.write_json(ruta, {**datos, "ancho": anchos})

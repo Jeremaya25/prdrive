@@ -13,7 +13,8 @@ vuelta a otra (base-PR, PR-base…), así una deriva de la máquina toca a los d
 igual. Antes de la primera hay una pasada de calentamiento por árbol que se tira.
 
 Una pasada = un proceso nuevo, en frío, por flujo (`PLAN`): cada uno con su
-dispositivo de muestra recién copiado, su `HOME` falso y un plazo; si se pasa se
+dispositivo de muestra recién copiado (salvo lo que recuerda de haberse abierto
+antes, `RECUERDOS`), su `HOME` falso y un plazo; si se pasa se
 mata el árbol de procesos entero (`taskkill /T /F` en Windows, el grupo en
 POSIX). Nada toca el perfil de quien lo corre. Portátil: Windows y Linux, sin bash.
 
@@ -72,6 +73,13 @@ ESPERADOS = {
     "log": ("log-10k",),
 }
 """Los momentos que tiene que dejar cada flujo; si falta uno, es un error y no un hueco."""
+RECUERDOS = (".prdrive/state/ventana.json",)
+"""Lo que un dispositivo de verdad tiene desde que se abrió una vez y una copia nueva no.
+
+Es el ancho que recuerda la ventana principal. Al acabar cada flujo se devuelve a la
+plantilla, así que desde la vuelta de calentamiento cada pasada mide un dispositivo ya
+abierto antes; un árbol que no lo escribe (la 0.7.1) no cambia.
+"""
 
 
 def plataforma_local() -> str:
@@ -114,6 +122,13 @@ def copiar(origen: Path, destino: Path) -> None:
     """Copia un árbol entero, sin enlaces simbólicos (portátil), conservando fechas."""
     borrar(destino)
     shutil.copytree(origen, destino, symlinks=False)
+
+
+def recordar(dev: Path, plantilla: Path) -> None:
+    """Devuelve a la plantilla los `RECUERDOS` que un flujo dejó en su copia del dispositivo."""
+    for rel in RECUERDOS:
+        if (dev / rel).is_file():
+            shutil.copy2(dev / rel, plantilla / rel)
 
 
 # ------------------------------------------------------------------------ entorno
@@ -283,6 +298,8 @@ class Medidor:
             r = self.hijo([self.py, str(self.staging / "entrada.py"), "driver"], env, cwd)
         finally:
             borrar(base)
+        if not solo_codigo:
+            recordar(dev, self.trabajo / f"tpl-{arbol}-{pares}")
         notas = next((x["detail"] for x in r["lineas"] if x["scenario"] == "_notes"), {})
         etiqueta = {"arbol": arbol, "flujo": flujo, "pares": pares, "escala": escala}
         if captura:

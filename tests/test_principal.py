@@ -485,7 +485,9 @@ for (en_curso, cargando, llave, pie, (comp, comp_boton), accion, parejas, repara
                      llave is not None and llave.activo and not en_curso),
         "pie": C(pie is not None, not en_curso),
         "componentes": C(comp is not None and comp_boton, not en_curso),
-        "version": C(version is not None, True),
+        # «Actualizar…» sustituye el programa (también `sync.py`) y reabre la
+        # ventana: no con una pasada suya en marcha
+        "version": C(version is not None, not en_curso),
         "descartar": C(aviso is not None, True),
         "arranque": C(arranque is not None, True),
         "marcar_todas": C(parejas > 1, True),
@@ -497,7 +499,7 @@ for (en_curso, cargando, llave, pie, (comp, comp_boton), accion, parejas, repara
     if en_curso:
         # nada de lo que toca `state/` se pulsa durante la pasada
         ocupado_y_pulsable += [k for k in ("sincronizar", "parejas", "ajustes", "llavero", "pie",
-                                           "componentes") if obtenido[k].activo]
+                                           "componentes", "version") if obtenido[k].activo]
         if accion[0] == principal.INICIAR and obtenido["servicio"].activo:
             ocupado_y_pulsable.append("servicio")
 c(f"controles(): las {total} combinaciones dan la tabla", malas[:1], [])
@@ -508,6 +510,9 @@ c("reparacion: se ve con algo que revisar y sin pasada",
   [principal.controles(base(reparacion=n, en_curso=o))["reparacion"]
    for n, o in ((0, False), (2, False), (2, True), (0, True))],
   [C(False, True), C(True, True), C(False, True), C(False, True)])
+c("version: «Actualizar…» se apaga mientras sincroniza",
+  [principal.controles(base(version="v", en_curso=o))["version"] for o in (False, True)],
+  [C(True, True), C(True, False)])
 c("componentes: sin botón no hay nada que pulsar",
   principal.controles(base(componentes="t", componentes_boton=False))["componentes"],
   C(False, True))

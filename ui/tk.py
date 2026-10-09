@@ -284,12 +284,18 @@ class Visor:
         return cambia
 
     def encajar(self, ventana=None) -> bool:
-        """Deja el recuadro del tamaño del contenido, o del que quepa si no cabe."""
+        """Deja el recuadro del tamaño del contenido, o del que quepa si no cabe.
+
+        Devuelve si el recuadro ha cambiado de tamaño, quepa el contenido o no:
+        es cuando quien llama tiene que volver a colocar la ventana.
+        """
+        antes = self._medida()
         ventana = ventana or self.marco.winfo_toplevel()
         ancho, alto = self._natural()
         self._fijar(ancho, alto)
         tope_x, tope_y = self._tope(ventana)
-        return self._fijar(min(ancho, tope_x), min(alto, tope_y))
+        self._fijar(min(ancho, tope_x), min(alto, tope_y))
+        return self._medida() != antes
 
     def crecer(self, ventana=None) -> bool:
         """Agranda el recuadro si lo de ahora pide más, y no lo encoge nunca.
@@ -1762,10 +1768,13 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
     # (`ui.instantanea`), `None` hasta que llega; `pedido` es lo que se le ha
     # pedido al agente y la lectura aún no ve, con el número de lecturas
     # lanzadas cuando se pidió; `marcadas`, con qué nace la casilla de una
-    # pareja que aparece.
+    # pareja que aparece; `ancho`, el ancho recordado de su contenido
+    # (`state/ventana.json`); `reservado`, el que se le guarda hasta que llega
+    # la lectura, y `libera`, el número de la lectura que deja libre la
+    # ventana tras una pasada.
     vista: dict = {"config": config, "aviso": startup_msg, "en_curso": False,
                    "inst": None, "pedido": None, "lecturas": 0, "compartida": None,
-                   "volcado": None}
+                   "volcado": None, "ancho": None, "reservado": 0, "libera": None}
     seleccion = prefs.SeleccionPendiente()
 
     def poner_nueva(nueva) -> None:
@@ -1796,6 +1805,8 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
     # no puede pasar del alto de la pantalla. Con pocas parejas no se nota nada.
     frame = cuerpo_visible(root, padding=(theme.E5, theme.E5, theme.E5, theme.E4))
     frame.columnconfigure(0, weight=1)
+    clave_ancho = prefs.clave_ancho(str(tk.TkVersion), float(root.tk.call("tk", "scaling")))
+    vista["ancho"] = prefs.ancho_recordado(clave_ancho)
     # Uno solo para todas las lecturas: una nueva deja sin recoger la anterior.
     sondeo = Sondeo(root, cada=SONDEO_INSTANTANEA_MS)
     root.sondeo_instantanea = sondeo
@@ -1836,40 +1847,112 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         if v.aplicar(estado_actual()) and root.visor.encajar(root):
             centrar(root)
 
-    def subir_si_se_sale() -> None:
-        """Sube la ventana lo justo para que su borde de abajo no se salga de la pantalla."""
-        _ancho, alto_util = pantalla_util(root)
-        alto = root.winfo_reqheight()
-        if root.winfo_y() + alto > alto_util:
-            root.geometry(f"+{root.winfo_x()}+{max(0, alto_util - alto)}")
+    def posicion() -> tuple[int, int]:
+        """Dónde está la ventana, en las coordenadas de `geometry("+x+y")`.
+
+        Las de `wm geometry`, que son las que se le dan para moverla, y no las
+        de `winfo_x`/`winfo_y`: con el marco del sistema alrededor pueden no
+        coincidir, y moverla con unas leídas de las otras la desplazaría.
+        """
+        import re
+
+        casa = re.fullmatch(r"\d+x\d+\+(-?\d+)\+(-?\d+)", root.geometry())
+        if casa is None:                 # colocada desde la derecha o desde abajo
+            return root.winfo_x(), root.winfo_y()
+        return int(casa.group(1)), int(casa.group(2))
+
+    def recolocar(ancho_antes: int, x: int, y: int) -> None:
+        """Tras cambiar de tamaño con una lectura: el mismo centro y el mismo borde de arriba.
+
+        No se vuelve a centrar entera (se acaba de ver dónde está, y la persona
+        la ha podido mover): crece hacia abajo y a los dos lados por igual, y
+        solo sube lo justo si su borde de abajo se saldría de la pantalla. Como
+        `centrar`, el lado solo se corrige si está en la pantalla principal.
+
+        Args:
+            ancho_antes: Lo que pedía de ancho antes de la lectura.
+            x: Dónde estaba (`posicion()`), antes de la lectura.
+            y: Lo mismo, en vertical.
+        """
+        ancho, alto = root.winfo_reqwidth(), root.winfo_reqheight()
+        nueva_x = x
+        if ancho != ancho_antes:
+            nueva_x = x - (ancho - ancho_antes) // 2
+            pantalla = root.winfo_screenwidth()
+            if 0 <= x < pantalla:
+                nueva_x = max(0, min(nueva_x, pantalla - ancho))
+        _ancho_util, alto_util = pantalla_util(root)
+        nueva_y = max(0, alto_util - alto) if y + alto > alto_util else y
+        if (nueva_x, nueva_y) != (x, y):
+            root.geometry(f"+{nueva_x}+{nueva_y}")
+
+    def reservar(ancho: int) -> None:
+        """Guarda ese ancho al contenido, aunque pida menos (0: ninguno).
+
+        Va en la columna del `Visor` donde `cuerpo_visible` pone el marco: lo
+        que pide el marco sigue siendo lo suyo, que es lo que se recuerda.
+        """
+        root.visor.interior.columnconfigure(0, minsize=ancho)
+        vista["reservado"] = ancho
+
+    def asentar_ancho(recordar: bool) -> None:
+        """Tras aplicar una lectura: la ventana a su ancho, y ese ancho recordado.
+
+        Se llama recién encajada, así que lo que pide el contenido está al día.
+        Si es lo reservado no se mueve nada. Si pide menos, se quita la reserva
+        y se encaja otra vez: se coloca una sola vez a su ancho, como si no
+        hubiera habido reserva (si pedía más, `encajar` ya lo ha hecho). Se
+        escribe solo si cambia, y un dispositivo que no se deja escribir no lo
+        recuerda y ya está.
+
+        Args:
+            recordar: Si se apunta. No con una lectura que falló entera: la
+                ventana sin nada leído es más estrecha que la de siempre.
+        """
+        ancho = frame.winfo_reqwidth()
+        if vista["reservado"]:
+            sobra = vista["reservado"] > ancho
+            reservar(0)
+            if sobra:
+                root.visor.encajar(root)
+        if recordar and ancho != vista["ancho"]:
+            vista["ancho"] = ancho
+            prefs.recordar_ancho(clave_ancho, ancho)
 
     def llegar(numero: int, encargo) -> None:
         """Aplica la lectura que acaba de llegar y la reparte a las pantallas.
 
-        Crece la ventana sin centrarla otra vez (se acaba de ver dónde está) y
-        solo la sube si su borde de abajo se saldría. Lo que se le había pedido
-        al agente antes de lanzar esta lectura se olvida: ya lo cuenta ella, o
-        lo contará la siguiente. Un hilo que falló deja una lectura vacía, la
-        de una ventana sin nada que enseñar.
+        La ventana cambia de tamaño sin centrarse otra vez (`recolocar`), y no
+        se ensancha si su contenido pide el ancho reservado desde el primer
+        pintado, que es el de la última vez (`asentar_ancho`). Lo que se le
+        había pedido al agente antes de lanzar esta lectura se olvida: ya lo
+        cuenta ella, o lo contará la siguiente. La que se lanzó al cerrar una
+        pasada (o una posterior) deja la ventana libre. Un hilo que falló deja
+        una lectura vacía, la de una ventana sin nada que enseñar.
         """
         from . import instantanea
 
         inst = encargo.resultado
-        if encargo.error is not None or inst is None:
+        leida = encargo.error is None and inst is not None
+        if not leida:
             inst = instantanea.vacia(vista["config"])
         vista["inst"] = inst
         if vista["pedido"] is not None and vista["pedido"][0] < numero:
             vista["pedido"] = None
+        if vista["libera"] is not None and numero >= vista["libera"]:
+            vista["en_curso"], vista["libera"] = False, None
         vista["tiempos"] = pair_times(vista["config"])
-        if v.aplicar(estado_actual()):
+        ancho_antes, (x, y) = root.winfo_reqwidth(), posicion()
+        if v.aplicar(estado_actual()) or vista["reservado"]:
             root.visor.encajar(root)
-            subir_si_se_sale()
+            asentar_ancho(leida)
+            recolocar(ancho_antes, x, y)
         root.instantanea_lista = True
         # Lo último: un suscriptor que falla (una pantalla a medio cerrar) no
         # deja esta ventana a medias.
         la_compartida().poner(inst)
 
-    def refrescar_instantanea() -> None:
+    def refrescar_instantanea(libera: bool = False) -> None:
         """Lee en un hilo lo que la ventana enseña del dispositivo, y lo aplica al llegar.
 
         Es la única lectura de averías, conflictos, componentes, contenedor,
@@ -1877,11 +1960,17 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         la primera, tras enseñarse, y otra cada vez que algo puede haberlo
         cambiado (una pasada, «Reparación», el llavero, la config…). Una nueva
         sustituye a la que estuviera en camino, cuyo resultado se tira.
+
+        Args:
+            libera: La ventana está ocupada y deja de estarlo cuando llegue
+                esta lectura, o una lanzada después (al cerrar una pasada).
         """
         from . import instantanea
 
         vista["lecturas"] += 1
         numero = vista["lecturas"]
+        if libera:
+            vista["libera"] = numero
         encargo = segundo_plano.lanzar(partial(
             instantanea.leer, vista["config"], notas=pair_status_notes,
             linea_llavero=linea_llavero))
@@ -2285,9 +2374,10 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
 
         La ventana de salida es hija de esta y no la bloquea; mientras corre,
         lo que tocaría el mismo estado (otra pasada, el servicio, las parejas)
-        queda apagado, y se enciende al cerrarla, que vuelve a leer lo que
-        `sync.py` acaba de escribir en `state/`. Si la ventana de salida no
-        llega a abrirse, esta vuelve a quedar libre y el error sigue su camino.
+        queda apagado, y se enciende cuando llega la lectura que se lanza al
+        cerrarla, la de lo que `sync.py` acaba de escribir en `state/`. Si la
+        ventana de salida no llega a abrirse, esta vuelve a quedar libre y el
+        error sigue su camino.
         Con la ventana ya enseñada (la pasada arranca en el turno siguiente) se
         escribe la última selección de casillas, si quedaba alguna sin escribir.
         """
@@ -2296,19 +2386,26 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
             reajustar()
 
         def al_cerrar(_rc) -> None:
-            """Vuelve a dejar libre la ventana y lee otra vez al cerrarse la de salida.
+            """Lee otra vez al cerrarse la de salida, y la ventana queda libre al llegar.
 
-            Si es la principal entera la que se cierra (la de salida cae con
-            ella), no hay nada que repintar ni que leer.
+            Hasta entonces sigue ocupada, como durante la pasada: lo que se leyó
+            antes (cosas que revisar, una pareja que pedía resync) puede no ser
+            verdad ya, y enseñarlo otra vez para cambiarlo al llegar la lectura
+            sería un parpadeo con texto viejo. Si la lectura no se puede lanzar,
+            queda libre ya. Si es la principal entera la que se cierra (la de
+            salida cae con ella), no hay nada que leer.
             """
-            vista["en_curso"] = False
             if not frame.winfo_exists():
+                vista["en_curso"] = False
                 return
             try:
-                reajustar()
-                refrescar_instantanea()
+                refrescar_instantanea(libera=True)
             except tk.TclError:
                 pass         # se está cerrando la ventana principal entera
+            except BaseException:
+                vista["en_curso"] = False
+                reajustar()
+                raise
 
         try:
             output_window(titulo, orden_sync(args), parent=root,
@@ -2410,6 +2507,10 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
     root.bind("<Destroy>", al_destruir, add="+")
     root.instantanea = None
     root.instantanea_lista = False
+    # El ancho de la última vez, ya con la lectura: con él reservado, la ventana
+    # se pinta ya como quedará y no se ensancha al llegar la lectura (en
+    # Windows, cada fila de la lista es una ventana del sistema que se movería).
+    reservar(vista["ancho"] or 0)
     root.visor.encajar(root)
     centrar(root)
     ensenar(root)

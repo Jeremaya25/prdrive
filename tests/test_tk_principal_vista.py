@@ -17,16 +17,21 @@ Y lo que hace con ella la ventana de verdad (`ui.tk.main_window`, con el bucle
 de eventos sustituido por una sonda):
 
 - se pinta sin leer el dispositivo y lee después; al llegar la lectura crece
-  sin moverse (y sube solo si se saldría por abajo); una lectura nueva deja sin
-  aplicar la que estaba en camino;
+  hacia abajo sin moverse de su centro (y sube solo si se saldría por abajo);
+  una lectura nueva deja sin aplicar la que estaba en camino;
 - «Sincronizar ahora» se ocupa en el clic y abre la salida en el turno
   siguiente; si algo falla antes, no se queda ocupada;
 - volver de «Ajustes» sin cambios no toca nada, y a «Ajustes» y «Parejas» se
   les pasa la lectura compartida;
 - marcar no escribe en el clic, y lo marcado se escribe antes de cerrar, de
-  sincronizar, de iniciar el servicio o de expulsar.
+  sincronizar, de iniciar el servicio, de expulsar o de bloquear;
+- al cerrar la pasada sigue ocupada hasta que llega la lectura nueva, y no
+  vuelve a enseñar entretanto lo que se leyó antes de la pasada.
+
+Y que un bloque que falla a medio pintar no deja la vista creyendo que pintó.
 """
 
+import dataclasses
 import random
 import sys
 import time
@@ -334,6 +339,33 @@ c("  así que la cabecera no cambia de ancho al pasar de «…» a «al día»",
   v._arriba.winfo_reqwidth(), ancho_cargando)
 top.destroy()
 
+# 5b. un bloque que falla a medio pintar no deja apuntado un estado que no se ve
+top, v = vista_nueva(lista(["a", "b"], ["a"]))
+con_llavero = lista(["a", "b"], ["a"], llavero=LLAVEROS[1])
+real_llavero = tk_principal.VistaPrincipal._pintar_llavero
+
+
+def llavero_roto(self, antes, e, ctl):
+    """Hace de un bloque que falla a medio pintar (la ventana cerrándose)."""
+    raise tk.TclError("a medio cerrar")
+
+
+tk_principal.VistaPrincipal._pintar_llavero = llavero_roto
+try:
+    try:
+        v.aplicar(con_llavero)
+        fallo = None
+    except tk.TclError as error:
+        fallo = str(error)
+finally:
+    tk_principal.VistaPrincipal._pintar_llavero = real_llavero
+c("un bloque que falla a medio pintar: el error sigue su camino", fallo, "a medio cerrar")
+c("  y la vista no da por aplicado ningún estado", v.estado, None)
+c("  así que el mismo estado, otra vez, se pinta entero",
+  (v.aplicar(con_llavero), v.estado is con_llavero,
+   len(visibles(v.marco, "TButton", "Abrir llavero"))), (True, True, 1))
+top.destroy()
+
 
 # 6. la ventana de verdad
 REAL_MAINLOOP, REAL_LANZAR = tk.Tk.mainloop, segundo_plano.lanzar
@@ -429,8 +461,11 @@ with sandbox():
         root.update_idletasks()
         visto["leyendo"] = (root.instantanea is not None, root.instantanea_lista)
         x, y, alto = root.winfo_x(), root.winfo_y(), root.winfo_reqheight()
+        ancho = root.winfo_width()
         root.instantanea.correr()
         visto["llega"] = hasta(root, lambda: root.instantanea_lista)
+        hasta(root, lambda: root.winfo_width() == root.winfo_reqwidth())
+        root.update()                            # y la posición, que llega aparte
         visto["fallos"] = root.instantanea.resultado.fallos
         visto["después"] = {
             "expulsar": boton(root, "Expulsar") is not None,
@@ -438,7 +473,11 @@ with sandbox():
             "sincronizar": activo(root, "Sincronizar ahora"),
             "servicio": activo(root, "Iniciar servicio")}
         visto["crece"] = root.winfo_reqheight() > alto
-        visto["quieta"] = (root.winfo_x(), root.winfo_y()) == (x, y)
+        visto["ancha"] = root.winfo_width() > ancho
+        visto["y"] = (root.winfo_y(), y)
+        # El doble del centro, para no partir píxeles: crecer un número impar
+        # de píxeles lo deja medio píxel a un lado.
+        visto["centro"] = abs((2 * root.winfo_x() + root.winfo_width()) - (2 * x + ancho))
         visto["compartida"] = root.sondeo_instantanea is not None
 
     abrir(TRES, cargando, lanzar=sin_terminar)
@@ -458,7 +497,9 @@ with sandbox():
       visto["después"], {"expulsar": True, "arranque": True, "sincronizar": True,
                          "servicio": True})
     c("  la ventana crece", visto["crece"], True)
-    c("  y no se mueve", visto["quieta"], True)
+    c("  y se ensancha (no tenía ancho recordado)", visto["ancha"], True)
+    c("  sin bajar", visto["y"][0], visto["y"][1])
+    c("  ni moverse de su centro horizontal", visto["centro"] <= 1, True)
 
 # 6b. si al crecer se saldría por abajo, sube lo justo
 REAL_UTIL = uitk.pantalla_util
@@ -707,9 +748,16 @@ try:
 
     with sandbox():
         prefs.PREFS.unlink(missing_ok=True)
-        abrir(TRES, tras_marcar(lambda root: root.destroy()))
+        cortados: list = []
+        real_matar = uitk.store.matar_hijos
+        uitk.store.matar_hijos = lambda: cortados.append(1) or 0
+        try:
+            abrir(TRES, tras_marcar(lambda root: root.destroy()))
+        finally:
+            uitk.store.matar_hijos = real_matar
         c("lo marcado se escribe al cerrar la ventana", prefs.read_prefs().get("pairs"),
           ["a", "b"])
+        c("  y al cerrarse corta sus lecturas, una vez", len(cortados), 1)
 
     with sandbox():
         prefs.PREFS.unlink(missing_ok=True)
@@ -775,6 +823,33 @@ try:
         c("  y antes se cortan las lecturas que queden", visto["cortados"], 1)
         c("  con el script que hay al pulsar, no el de la lectura", visto["script"],
           Path("F:/Otro PRDRIVE.bat"))
+
+    reales_bloqueo = (messagebox.askokcancel, cifrado.bloqueo, cifrado.pedir_bloqueo)
+    with sandbox():
+        prefs.PREFS.unlink(missing_ok=True)
+        visto = {}
+        cortados = []
+        real_matar = uitk.store.matar_hijos
+        messagebox.askokcancel = lambda *a, **k: True
+        cifrado.bloqueo = lambda: "raiz-1"
+
+        def bloqueo_apuntado(uid) -> bool:
+            """Apunta a quién se le pide bloquear y qué había escrito al pedirlo."""
+            visto["uid"] = uid
+            visto["pairs"] = prefs.read_prefs().get("pairs")
+            visto["cortados"] = len(cortados)
+            return True
+
+        cifrado.pedir_bloqueo = bloqueo_apuntado
+        uitk.store.matar_hijos = lambda: cortados.append(1) or 0
+        try:
+            abrir(TRES, tras_marcar(lambda root: boton(root, "Bloquear").invoke()))
+        finally:
+            messagebox.askokcancel, cifrado.bloqueo, cifrado.pedir_bloqueo = reales_bloqueo
+            uitk.store.matar_hijos = real_matar
+        c("lo marcado se escribe antes de pedirle al agente que bloquee",
+          (visto["uid"], visto["pairs"]), ("raiz-1", ["a", "b"]))
+        c("  y antes se cortan las lecturas que queden", visto["cortados"], 1)
 finally:
     prefs.guardar_parejas = real_guardar
     uitk.output_window = REAL_OUTPUT
@@ -825,6 +900,70 @@ for texto in ("Expulsar", "Bloquear"):
           (visto.get("error"), visto["abierta"]), (True, True))
         c("  y vuelve a leer, porque cortó sus lecturas",
           (visto["lecturas"], visto["la última"]), (1, True))
+
+# 6k. al cerrar la pasada sigue ocupada hasta que llega la lectura nueva: no vuelve a
+# enseñar lo que se leyó antes de la pasada, y aplica la nueva una sola vez
+for lectura_nueva in ("bien", "falla"):
+    with sandbox():
+        encargos = []
+        cierres: list = []
+        aplicados: list = []
+        visto = {}
+        cuenta = {"n": 1}
+        real_aplicar, real_leer = tk_principal.VistaPrincipal.aplicar, instantanea.leer
+
+        def leer_con_cuenta(config, **k):
+            """La lectura de verdad con las cosas que revisar de `cuenta`; `None` falla."""
+            if cuenta["n"] is None:
+                raise OSError("la unidad no contesta")
+            return dataclasses.replace(real_leer(config, **k), cuenta=cuenta["n"])
+
+        def apuntando(funcion):
+            """Como `sin_terminar`, y apunta cada encargo."""
+            encargos.append(segundo_plano.Encargo(funcion))
+            return encargos[-1]
+
+        def aplicar_apuntando(self, e):
+            """Apunta cada estado que se aplica."""
+            aplicados.append((e.en_curso, e.chip[0], e.reparacion))
+            return real_aplicar(self, e)
+
+        def pasada_que_arregla(root, lectura_nueva=lectura_nueva) -> None:
+            """Una pasada que arregla lo que había que revisar, y su cierre."""
+            root.update_idletasks()
+            encargos[0].correr()
+            hasta(root, lambda: root.instantanea_lista)
+            visto["antes"] = "Hay 1 cosa que revisar." in textos(root)
+            boton(root, "Sincronizar ahora").invoke()
+            hasta(root, lambda: cierres)
+            cuenta["n"] = 0 if lectura_nueva == "bien" else None
+            aplicados.clear()
+            cierres[0](0)                                # se cierra la ventana de la pasada
+            root.update()
+            visto["al cerrar"] = (
+                activo(root, "Sincronizar ahora"), "sincronizando…" in textos(root),
+                "1 que revisar" in textos(root), "Hay 1 cosa que revisar." in textos(root),
+                len(encargos), list(aplicados))
+            encargos[-1].correr()
+            visto["llega"] = hasta(root, lambda: root.instantanea_lista)
+            visto["después"] = (activo(root, "Sincronizar ahora"), "al día" in textos(root),
+                                "Hay 1 cosa que revisar." in textos(root), list(aplicados))
+
+        tk_principal.VistaPrincipal.aplicar = aplicar_apuntando
+        instantanea.leer = leer_con_cuenta
+        uitk.output_window = lambda titulo, cmd, **k: cierres.append(k["al_cerrar"])
+        try:
+            abrir(TRES, pasada_que_arregla, lanzar=apuntando)
+        finally:
+            tk_principal.VistaPrincipal.aplicar, instantanea.leer = real_aplicar, real_leer
+            uitk.output_window = REAL_OUTPUT
+        c(f"lectura que va {lectura_nueva}: antes de la pasada había 1 cosa que revisar",
+          visto["antes"], True)
+        c("  al cerrar la pasada sigue ocupada, sin volver a enseñar lo de antes, y lee",
+          visto["al cerrar"], (False, True, False, False, 2, []))
+        c("  al llegar la lectura queda libre, al día, y se aplica una vez",
+          (visto["llega"], visto["después"]),
+          (True, (True, True, False, [(False, "al día", 0)])))
 
 raiz.destroy()
 sys.exit(c.report())

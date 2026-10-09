@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """La configuración del servicio (`ui/prefs.py`).
 
-Qué recuerda, qué olvida y qué no llega a escribir.
+Qué recuerda, qué olvida y qué no llega a escribir. Y, aparte, el ancho que
+recuerda la ventana principal (`state/ventana.json`).
 """
 
 import json
@@ -9,7 +10,7 @@ import sys
 import time
 from pathlib import Path
 
-from _harness import Checks, mkcfg, tmpdir
+from _harness import Checks, mkcfg, sandbox, tmpdir
 
 from ui import prefs
 
@@ -284,5 +285,84 @@ sel.poner(CFG, lista)
 lista.append("docs")
 sel.volcar()
 c("la selección apuntada es una copia", prefs.startup_defaults(CFG)[0], ["upload"])
+
+# Desmarcarlas todas seguidas deja escrita la última selección que tenía alguna,
+# como cuando cada clic escribía: [upload, docs] y [docs] se escribían y la vacía
+# no. Sin nada pendiente, una vacía no se escribe y queda lo guardado.
+llamadas = []
+prefs.guardar_parejas = lambda config, pairs: llamadas.append(list(pairs)) or True
+try:
+    sel.poner(CFG, ["upload", "docs"])
+    sel.poner(CFG, ["docs"])
+    sel.poner(CFG, [])
+    c("desmarcar todas seguidas vuelca la última con alguna marcada",
+      (sel.pendiente, sel.volcar(), llamadas), (True, True, [["docs"]]))
+    sel.poner(CFG, ["upload"])
+    sel.poner(CFG, [])
+    sel.poner(CFG, ["claves"])
+    c("  y volver a marcar después manda", (sel.volcar(), llamadas[-1]), (True, ["claves"]))
+finally:
+    prefs.guardar_parejas = guardar_real
+sel.poner(CFG, [])
+c("  sin nada pendiente, la vacía no escribe y queda lo de antes",
+  (sel.volcar(), prefs.startup_defaults(CFG)[0]), (False, ["upload"]))
+
+# El ancho de la ventana principal va en `state/ventana.json`, no en `ui_prefs.json`:
+# el agente recarga su servicio con cualquier cambio de ese fichero. La ruta se mira
+# al llamar, porque los tests (y `sandbox()`) mueven `STATE_DIR`.
+from common import model  # noqa: E402
+
+with sandbox():
+    ruta = model.STATE_DIR / "ventana.json"
+    c("el ancho va en state/ventana.json, mirado al llamar", prefs.ruta_ventana(), ruta)
+    clave = prefs.clave_ancho("9.0", 4 / 3)
+    otra = prefs.clave_ancho("9.0", 2.0)
+    c("la clave: el sistema, la versión de Tk y la escala de Tk",
+      (clave, otra), (f"{sys.platform}:9.0:1.333", f"{sys.platform}:9.0:2.000"))
+    c("  y otra versión de Tk es otra clave", prefs.clave_ancho("8.6", 4 / 3) != clave, True)
+    c("sin fichero no hay ancho recordado", prefs.ancho_recordado(clave), None)
+
+    anotadas = []
+
+    def anotar_escritura(destino, datos):
+        """Escribe de verdad y apunta qué fichero."""
+        anotadas.append(Path(destino).name)
+        return escribir_real(destino, datos)
+
+    store.write_json = anotar_escritura
+    try:
+        c("recordar un ancho lo escribe", (prefs.recordar_ancho(clave, 587), anotadas),
+          (True, ["ventana.json"]))
+        c("  y se lee con su clave", prefs.ancho_recordado(clave), 587)
+        c("  con otra no", prefs.ancho_recordado(otra), None)
+        c("  en la forma {\"ancho\": {clave: px}}",
+          json.loads(ruta.read_text(encoding="utf-8")), {"ancho": {clave: 587}})
+        c("el mismo ancho otra vez no escribe nada",
+          (prefs.recordar_ancho(clave, 587), len(anotadas)), (True, 1))
+        prefs.recordar_ancho(otra, 900)
+        prefs.recordar_ancho(clave, 560)
+        c("cada clave guarda el suyo, y cambiar uno conserva los otros",
+          (json.loads(ruta.read_text(encoding="utf-8")), len(anotadas)),
+          ({"ancho": {clave: 560, otra: 900}}, 3))
+        c("ui_prefs.json no se toca", "ui_prefs.json" in anotadas, False)
+
+        # Lo que no es un ancho no se reserva: un fichero a medias, tocado a mano o
+        # de otra versión vale como si no hubiera nada.
+        for contenido in ('{"ancho": {"%s": true}}' % clave, '{"ancho": {"%s": "587"}}' % clave,
+                          '{"ancho": {"%s": 0}}' % clave, '{"ancho": {"%s": -5}}' % clave,
+                          '{"ancho": {"%s": 5.5}}' % clave, '{"ancho": [587]}', '[587]',
+                          '{"ancho": ', ''):
+            ruta.write_text(contenido, encoding="utf-8")
+            c(f"  {contenido!r} no es un ancho", prefs.ancho_recordado(clave), None)
+        c("  y recordar sobre uno así lo rehace entero",
+          (prefs.recordar_ancho(clave, 587), json.loads(ruta.read_text(encoding="utf-8"))),
+          (True, {"ancho": {clave: 587}}))
+
+        # Un dispositivo de solo lectura (o ya extraído) no recuerda, y no pasa nada.
+        store.write_json = lambda destino, datos: False
+        c("si no se puede escribir: False, sin lanzar", prefs.recordar_ancho(clave, 600), False)
+        c("  y queda lo que había", prefs.ancho_recordado(clave), 587)
+    finally:
+        store.write_json = escribir_real
 
 sys.exit(c.report())

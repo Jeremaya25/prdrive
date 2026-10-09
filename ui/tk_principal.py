@@ -219,6 +219,8 @@ class VistaPrincipal:
         Un `Estado` igual al último no toca nada. Si no, cada bloque se compara
         con su trozo del último y solo se cambia el que difiere; los botones
         que se apagan o se encienden se ponen al final, de `principal.controles()`.
+        Si un bloque falla a medio pintar, la vista no se queda con ningún
+        `Estado`: el siguiente, aunque sea el mismo, se pinta entero.
 
         Returns:
             Si lo que pide la ventana puede haber cambiado de tamaño: un bloque
@@ -228,13 +230,18 @@ class VistaPrincipal:
         if e == self._e:
             return False
         antes, ctl = self._e, principal.controles(e)
+        # Ya el nuevo mientras se pinta: `contar()` lo lee.
         self._e = e
         tam = False
-        for paso in (self._pintar_cabecera, self._pintar_aviso, self._pintar_reparacion,
-                     self._pintar_version, self._pintar_componentes, self._pintar_lista,
-                     self._pintar_llavero, self._pintar_arranque, self._pintar_pie):
-            tam = paso(antes, e, ctl) or tam
-        self._poner_activos(ctl)
+        try:
+            for paso in (self._pintar_cabecera, self._pintar_aviso, self._pintar_reparacion,
+                         self._pintar_version, self._pintar_componentes, self._pintar_lista,
+                         self._pintar_llavero, self._pintar_arranque, self._pintar_pie):
+                tam = paso(antes, e, ctl) or tam
+            self._poner_activos(ctl)
+        except BaseException:
+            self._e = None
+            raise
         return tam
 
     def contar(self) -> None:
@@ -677,5 +684,7 @@ class VistaPrincipal:
                       ctl["llavero"].activo)
         self._activar(getattr(self._bloques.get("componentes"), "boton", None),
                       ctl["componentes"].activo)
+        self._activar(getattr(self._bloques.get("version"), "boton", None),
+                      ctl["version"].activo)
         for clave in ("expulsar", "bloquear"):
             self._activar(self._bloques.get(clave), ctl["pie"].activo)
