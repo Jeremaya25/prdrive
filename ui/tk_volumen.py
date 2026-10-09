@@ -21,6 +21,12 @@ su `autorun.inf`, la raíz física del contenedor, que en Windows recorre las
 letras de unidad) se lee en un hilo (`segundo_plano`) mientras la pantalla ya
 está entera, con una línea de espera; el campo del nombre, los iconos y
 «Guardar» se quedan apagados hasta que llega, y entonces se rellenan.
+
+**La lectura sale antes que el primer widget.** Dibujar la pantalla lleva más
+que leer la unidad, así que casi siempre la lectura ya está hecha al acabar y
+se recoge en el acto: la línea de espera no se llega a colocar y nada cambia de
+sitio después de enseñarse, igual que cuando se leía antes de dibujar. Solo si
+la unidad tarda sale la línea (en su fila) y se va al llegar la lectura.
 """
 
 from __future__ import annotations
@@ -52,8 +58,11 @@ def construir(panel: Panel) -> None:
 
     Se pinta entera sin saber qué tiene puesto la unidad: lo que depende de
     ello (el campo del nombre, los iconos, «Guardar») queda apagado y vacío
-    hasta que llega la lectura, y entonces se rellena y se enciende.
+    hasta que llega la lectura, y entonces se rellena y se enciende. La
+    lectura se lanza lo primero, antes de dibujar, y se entrega al `Sondeo` al
+    final: si ya está hecha, la pantalla sale entera y sin línea de espera.
     """
+    encargo = segundo_plano.lanzar_sin_repetir("volumen", None, volumen.leer)
     import tkinter as tk
     from tkinter import filedialog, messagebox, ttk
 
@@ -63,6 +72,18 @@ def construir(panel: Panel) -> None:
     sondeo = panel.sondeo()
     indicador = panel.indicador(marco, ancho=560)
     dlg.indicador, dlg.sondeo = indicador, sondeo   # como `visor`: los tests los miran
+
+    def decir(texto: str, esperando: bool, tono: str = "Pista.") -> None:
+        """Dice algo en la línea de espera, colocándola en su fila si hace falta.
+
+        La línea no se coloca al dibujar: con la lectura ya hecha no llega a
+        verse, y colocarla y quitarla sería mover lo que cuelga de ella.
+        """
+        if texto or esperando:
+            indicador.marco.grid(row=1, column=0, columnspan=2, sticky="w",
+                                 pady=(theme.E3, 0))
+        indicador.poner(texto, esperando, tono)
+
     leido: dict = {"estado": None}
     dependientes: list = []
 
@@ -72,7 +93,6 @@ def construir(panel: Panel) -> None:
              "se sincroniza.",
              ancho=560, estilo="Dialogo.TLabel").grid(row=0, column=0, columnspan=2,
                                                       sticky="w")
-    indicador.marco.grid(row=1, column=0, columnspan=2, sticky="w", pady=(theme.E3, 0))
 
     def etiqueta(texto: str, fila: int, arriba: bool = False) -> None:
         """Pone la etiqueta de un campo en la columna de la izquierda."""
@@ -187,21 +207,23 @@ def construir(panel: Panel) -> None:
     def llegada(encargo) -> None:
         """Rellena la pantalla con lo que tiene la unidad y enciende lo que esperaba."""
         if encargo.error is not None:
-            indicador.poner(f"No se ha podido leer la unidad: {encargo.error}", False,
-                            "Aviso.")
+            decir(f"No se ha podido leer la unidad: {encargo.error}", False, "Aviso.")
             return
         estado = encargo.resultado
         leido["estado"] = estado
-        indicador.poner("", False)
+        decir("", False)
         nombre.set(estado.nombre)
         eleccion.set(estado.clave)
         pista.configure(text=volumen.pista_nombre(estado))
         elegido.configure(text="el que tiene ahora" if estado.clave == volumen.PROPIO
                           else "")
         if estado.clave == volumen.OTRO:
-            ttk.Radiobutton(otros, text=f"El que ya tiene ({corto(estado.icono, 40)})",
-                            value=volumen.OTRO, variable=eleccion).grid(
-                row=1, column=0, columnspan=3, sticky="w")
+            # Nace después de «Ninguno», pero el Tab sigue el orden de apilado: se
+            # baja justo debajo de él para que se llegue en el orden en que se ve.
+            otro = ttk.Radiobutton(otros, text=f"El que ya tiene ({corto(estado.icono, 40)})",
+                                   value=volumen.OTRO, variable=eleccion)
+            otro.grid(row=1, column=0, columnspan=3, sticky="w")
+            otro.lower(ninguno)
         inf = estado.raiz / autorun.FICHERO
         if estado.fuera is not None:
             donde = (f"Se guarda en {inf}, y el icono dentro de {estado.carpeta}: "
@@ -220,6 +242,6 @@ def construir(panel: Panel) -> None:
             control.state(["!disabled"])
         panel.ajustar()
 
-    indicador.poner(LEYENDO, True)
-    sondeo.esperar(segundo_plano.lanzar_sin_repetir("volumen", None, volumen.leer),
-                   llegada)
+    if not encargo.hecho:
+        decir(LEYENDO, True)
+    sondeo.esperar(encargo, llegada)

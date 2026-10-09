@@ -214,6 +214,7 @@ def construir(panel: Panel, config: Config) -> None:
             state="normal" if (local.disponible and local.total)
             or (remoto.disponible and remoto.total) else "disabled")
         abrir_btn.configure(state="normal" if local.total else "disabled")
+        panel.ajustar()                 # el motivo de un fallo puede ocupar más que la ruta
 
     def refrescar(*_) -> None:
         """Relee los dos lados de la pareja elegida; la pantalla ya está pintada.

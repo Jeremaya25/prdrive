@@ -24,9 +24,20 @@ hilo (`segundo_plano`) mientras la pantalla espera con su línea de espera. El
 diario y si penwatch está instalado son ficheros y se leen en el sitio. Si el
 sistema no contesta en `watch.TOPE_VIGILANTE_S`, la pantalla lo dice en vez de
 quedarse esperando, y si contesta después, lo suyo sustituye a la frase.
+
+**La lectura del estado sale antes que el primer widget.** Dibujar lleva su
+tiempo y la pregunta al sistema también: lanzarla lo primero deja que corran a
+la vez y, si ya ha contestado al acabar de dibujar, la pantalla sale con sus
+filas y sin línea de espera. Cada vez que llegan filas (o el aviso de que el
+sistema no contesta) la ventana crece lo que haga falta (`Panel.ajustar()`).
+Un apartado escondido de «Ajustes» no pinta nada a escondidas: su tope de
+tiempo se aparta mientras está escondido y, al volver, sigue contando desde que
+se lanzó la pregunta.
 """
 
 from __future__ import annotations
+
+import time
 
 from . import segundo_plano, theme, watch
 from .tk import (TITLE, Panel, cabecera, cuerpo_visible, dialogo, modal, mostrar,
@@ -81,8 +92,11 @@ def construir(panel: Panel) -> None:
 
     Se pinta entera antes de saber nada del sistema: la tarjeta queda vacía y
     una línea de espera dice que se le está preguntando. Qué hace cada lectura
-    está en el módulo.
+    está en el módulo. La del estado se lanza lo primero, antes de dibujar, y
+    se entrega al `Sondeo` al final.
     """
+    estado_pedido = segundo_plano.lanzar_sin_repetir("vigilante", None,
+                                                     watch.estado_vigilante)
     from tkinter import messagebox, ttk
 
     dlg, marco = panel.ventana, panel.marco
@@ -96,7 +110,6 @@ def construir(panel: Panel) -> None:
     cabecera(arriba, "Arranque automático",
              ancho=560, estilo="Dialogo.TLabel").grid(row=0, column=0, sticky="w")
     chip_estado = {"widget": None}
-    indicador.marco.grid(row=1, column=0, sticky="ew", pady=(theme.E3, 0))
 
     tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(theme.E4, theme.E1))
     tarjeta.grid(row=2, column=0, sticky="ew", pady=(theme.E4, 0))
@@ -169,7 +182,7 @@ def construir(panel: Panel) -> None:
         chip_estado["widget"].grid(row=0, column=1, sticky="ne", pady=(theme.E1, 0))
         instalar_btn.configure(text="Reinstalar…" if puesto else "Instalar…")
 
-    lectura: dict = {"plazo": None}
+    lectura: dict = {"plazo": None, "limite": 0.0, "en_pausa": False}
 
     def quitar_plazo() -> None:
         """Cancela el temporizador del tope de tiempo, si corre."""
@@ -179,6 +192,11 @@ def construir(panel: Panel) -> None:
             except Exception:                        # noqa: BLE001 — ya no está
                 pass
             lectura["plazo"] = None
+        lectura["en_pausa"] = False
+
+    def armar_plazo(restante: float) -> None:
+        """Programa el aviso de que el sistema no contesta para dentro de `restante` s."""
+        lectura["plazo"] = marco.after(max(0, int(restante * 1000)), sin_respuesta)
 
     def sin_respuesta() -> None:
         """Dice que el sistema no ha contestado y para la barra; la lectura sigue esperando."""
@@ -190,8 +208,26 @@ def construir(panel: Panel) -> None:
             return
         indicador.poner("", False)
         pintar_filas([("", SIN_RESPUESTA.format(segundos=watch.TOPE_VIGILANTE_S))])
+        panel.ajustar()
 
-    def preguntar(clave: str, funcion, llegada, espera: str, con_tope: bool) -> None:
+    def al_esconder() -> None:
+        """Aparta el tope de tiempo mientras el apartado está escondido."""
+        if lectura["plazo"] is not None:
+            quitar_plazo()
+            lectura["en_pausa"] = True
+
+    def al_volver() -> None:
+        """Retoma el tope apartado: cuenta desde que se lanzó la pregunta, no desde ahora."""
+        if lectura["en_pausa"]:
+            lectura["en_pausa"] = False
+            if sondeo.esperando:
+                armar_plazo(lectura["limite"] - time.monotonic())
+
+    panel.al_ocultar(al_esconder)
+    panel.al_mostrar(al_volver)
+
+    def preguntar(clave: str, funcion, llegada, espera: str, con_tope: bool,
+                  encargo=None) -> None:
         """Lanza una lectura aparte y llama a `llegada(encargo)` cuando llegue.
 
         Va por `lanzar_sin_repetir` con la clave de su lectura: pedir la misma
@@ -199,20 +235,29 @@ def construir(panel: Panel) -> None:
         lanzar otro. Un `Sondeo` espera un encargo cada vez, así que la lectura
         nueva deja sin respuesta a la anterior.
 
+        La línea de espera y el tope solo se ponen si la lectura sigue sin
+        hacer: con una lectura hecha, `esperar()` llama a `llegada` en el acto
+        y la pantalla no llega a enseñar que esperaba.
+
         Args:
             clave: Qué se lee; una por clase de lectura.
             funcion: La lectura, para el hilo.
             llegada: `llegada(encargo)`, llamada desde el hilo de Tk.
             espera: Lo que dice la línea de espera.
             con_tope: Si la lectura puede no contestar nunca (`TOPE_VIGILANTE_S`).
+            encargo: La lectura ya lanzada, si la hay; sin ella se lanza aquí.
         """
         quitar_plazo()
-        indicador.poner(espera, True)
-        encargo = segundo_plano.lanzar_sin_repetir(clave, None, funcion)
-        # El temporizador va antes de esperar: si el encargo ya está hecho,
-        # `esperar()` llama a `llegada` en el acto y es ella quien lo quita.
-        if con_tope:
-            lectura["plazo"] = marco.after(int(watch.TOPE_VIGILANTE_S * 1000), sin_respuesta)
+        if encargo is None:
+            encargo = segundo_plano.lanzar_sin_repetir(clave, None, funcion)
+        if not encargo.hecho:
+            indicador.marco.grid(row=1, column=0, sticky="ew", pady=(theme.E3, 0))
+            indicador.poner(espera, True)
+            # Si la lectura acaba justo ahora, `esperar()` llama a `llegada` en el
+            # acto y es ella quien quita el temporizador.
+            if con_tope:
+                lectura["limite"] = time.monotonic() + watch.TOPE_VIGILANTE_S
+                armar_plazo(watch.TOPE_VIGILANTE_S)
         sondeo.esperar(encargo, llegada)
 
     def estado_llegado(encargo) -> None:
@@ -226,6 +271,7 @@ def construir(panel: Panel) -> None:
         else:
             pintar_filas(encargo.resultado.filas)
             pintar_instalado(encargo.resultado.instalado)
+        panel.ajustar()
 
     def deteccion_llegada(encargo) -> None:
         """Pinta dónde se ha buscado el dispositivo."""
@@ -235,13 +281,18 @@ def construir(panel: Panel) -> None:
         else:
             pintar_filas(encargo.resultado)
         pintar_diario("Dónde se ha buscado el dispositivo", [])
+        panel.ajustar()
 
-    def ver_estado() -> None:
-        """Pinta lo que son ficheros (diario, si está instalado) y pregunta el resto."""
+    def ver_estado(encargo=None) -> None:
+        """Pinta lo que son ficheros (diario, si está instalado) y pregunta el resto.
+
+        Args:
+            encargo: La lectura del estado ya lanzada, si la hay; sin ella se lanza una.
+        """
         pintar_instalado(instalado_ahora())
         pintar_diario("Diario del vigilante", watch.log_tail())
         preguntar("vigilante", watch.estado_vigilante, estado_llegado,
-                  ESPERA_ESTADO, con_tope=True)
+                  ESPERA_ESTADO, con_tope=True, encargo=encargo)
 
     def ver_deteccion() -> None:
         """Busca el dispositivo en las raíces candidatas, aparte."""
@@ -290,7 +341,7 @@ def construir(panel: Panel) -> None:
     if not panel.incrustado:
         ttk.Button(botones, text="Cerrar", command=panel.cerrar).grid(row=0, column=5)
 
-    ver_estado()
+    ver_estado(estado_pedido)
 
 
 def formulario_instalacion(parent) -> dict | None:

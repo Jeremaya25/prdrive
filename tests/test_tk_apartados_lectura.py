@@ -22,6 +22,13 @@ hace falta, hilos de verdad, se comprueba:
   `working()` detrás de su plan y de su confirmación;
 - que `tk_llavero` y `tk_renombrar` piden su `Sondeo` y su `Indicador` al
   panel, para que un apartado escondido deje de mirar y de animar;
+- que lo que llega después de enseñarse hace sitio: sueltos y con hilos de
+  verdad, «Arranque automático» y «Versiones» crecen al llegar sus filas, sin
+  barra y con todo a la vista;
+- que «Nombre e icono» y «Arranque automático» lanzan su lectura antes de
+  dibujar nada y, si ya está hecha al acabar, salen sin la línea de espera y
+  sin que nada se mueva después; que «El que ya tiene» se alcanza con Tab antes
+  que «Ninguno»; y que el tope de tiempo del vigilante no corre escondido;
 - que el QR no se lee con `lanzar_sin_repetir` (su tabla de lecturas vivas
   guardaría la clave después de irse el apartado).
 
@@ -50,12 +57,13 @@ except Exception as e:                                   # sin entorno gráfico
     print(f"  (saltado) no hay entorno gráfico: {e}")
     sys.exit(c.report())
 
-from _vista import visibles  # noqa: E402
+from _vista import leer_vista, visibles  # noqa: E402
 
 from common import catalog, model, pairing, store  # noqa: E402
 from ui import (qr, segundo_plano, tk_llavero, tk_pairs, tk_qr, tk_renombrar,  # noqa: E402
                 tk_versions, tk_volumen, tk_watch, versions_editor, volumen, watch)
 from ui import tk as uitk  # noqa: E402
+from ui.principal import corto  # noqa: E402
 
 HILO_TK = threading.get_ident()
 """El hilo de Tk: el de este script."""
@@ -646,5 +654,396 @@ with sandbox():
         c("  al volver a enseñarse, mira y anima otra vez",
           (sondeo._id in pendientes(), en_marcha(barra)), (True, True))
         dlg.destroy()
+
+# ---------------------------------------------------------------------------
+# Lo que se lee después de pintar no deja la pantalla a medias ni la mueve
+# ---------------------------------------------------------------------------
+def descendientes(widget) -> list:
+    """Devuelve todo lo que cuelga de `widget`, en profundidad."""
+    todos: list = []
+    for hijo in widget.winfo_children():
+        todos.append(hijo)
+        todos += descendientes(hijo)
+    return todos
+
+
+def abrir_a_la_vista(modulo, llamada):
+    """Abre un apartado suelto de verdad —encajado, centrado y enseñado— sin esperar a que se cierre.
+
+    Es el `mostrar()` sin su `wait_window()`: lo que hace falta para medir qué
+    pasa con la ventana a la vista cuando llega una lectura.
+    """
+    gc.collect()
+    vistas: list = []
+
+    def mostrar_sin_esperar(dlg, parent=None):
+        """Encaja, centra y enseña el diálogo y vuelve."""
+        dlg.visor.encajar(dlg)
+        uitk.centrar(dlg, parent)
+        uitk.ensenar(dlg)
+        dlg.update()
+        vistas.append(dlg)
+
+    real = modulo.mostrar
+    modulo.mostrar = mostrar_sin_esperar
+    try:
+        llamada()
+    finally:
+        modulo.mostrar = real
+    return vistas[-1]
+
+
+def entero(dlg) -> bool:
+    """Indica si el contenido cabe en el recuadro de la ventana y no hay barra."""
+    visor = dlg.visor
+    return (not visor.vertical.grid_info()
+            and visor.lienzo.winfo_height() >= visor.interior.winfo_reqheight())
+
+
+def geometria(dlg) -> dict:
+    """Devuelve dónde está cada widget a la vista de la ventana: `(x, y, ancho, alto)`."""
+    return {str(w): (w.winfo_x(), w.winfo_y(), w.winfo_width(), w.winfo_height())
+            for w in descendientes(dlg) if w.winfo_ismapped()}
+
+
+def espiar_indicadores():
+    """Apunta qué se le hace a cada `Indicador` que pide un panel desde ahora.
+
+    Returns:
+        `(diarios, deshacer)`: un diario por indicador, con los `grid` de su
+        línea y los `poner` que recibió, y la función que deja el panel como estaba.
+    """
+    diarios: list = []
+    real = uitk.Panel.indicador
+
+    def espia(self, padre, ancho: int = 560):
+        """Pide el indicador de verdad y le apunta lo que se le hace."""
+        ind = real(self, padre, ancho)
+        diario: dict = {"grid": [], "poner": []}
+        grid_real, poner_real = ind.marco.grid, ind.poner
+        ind.marco.grid = lambda *a, **k: (diario["grid"].append(k), grid_real(*a, **k))[1]
+        ind.poner = lambda texto, esperando, tono="Pista.": (
+            diario["poner"].append((texto, esperando)), poner_real(texto, esperando, tono))[1]
+        diarios.append(diario)
+        return ind
+
+    uitk.Panel.indicador = espia
+    return diarios, lambda: setattr(uitk.Panel, "indicador", real)
+
+
+retenidos: list = []
+
+
+def retener(funcion):
+    """Un encargo que no corre solo: el test lo suelta con `retenidos[-1].correr()`."""
+    encargo = segundo_plano.Encargo(funcion)
+    retenidos.append(encargo)
+    return encargo
+
+
+nacimientos: list = []
+
+
+def lanzar_mirando(funcion):
+    """Un `lanzar` que apunta cuánto llevaba dibujado el último diálogo y corre en el acto."""
+    ventana = [w for w in raiz.winfo_children() if w.winfo_class() == "Toplevel"][-1]
+    nacimientos.append(len(descendientes(ventana)))
+    return segundo_plano.en_el_acto(funcion)
+
+
+# Lo que lleva un diálogo recién hecho, sin pantalla dentro: el suelo de `nacimientos`.
+vacio = uitk.modal(raiz, "vacío")
+uitk.cuerpo_visible(vacio)
+VACIO = len(descendientes(vacio))
+vacio.destroy()
+
+# --- «Arranque automático» crece al llegar sus filas (también sola, con hilos de verdad) ---
+FILAS_GRANDES = [("Directorio en el equipo", "/home/x/.local/share/prdrive-watch"),
+                 ("Registro en el sistema", "activo"),
+                 ("", "Sin configuración: este equipo no tiene el vigilante instalado."),
+                 ("Vigilante", "parado"), ("Último disparo", "(ninguno)"),
+                 ("Disparo armado", "sí"), ("Dispositivo ahora mismo", "no se ve")]
+RAICES = [(f"/media/usuario/PEN{i}", "sin PRDRIVE") for i in range(10)]
+SOLTAR_VIGILANTE = threading.Event()
+ajustes: list = []
+ajustar_real = uitk.Panel.ajustar
+uitk.Panel.ajustar = lambda self: (ajustes.append(1), ajustar_real(self))[1]
+
+with sandbox():
+    watch.log_tail = lambda lines=10: ["linea del diario"] * 8
+    watch.is_installed = lambda: True
+    watch.estado_vigilante = lambda: (SOLTAR_VIGILANTE.wait(5),
+                                      watch.EstadoVigilante(list(FILAS_GRANDES), True))[1]
+    watch.deteccion = lambda: list(RAICES)
+    SOLTAR_VIGILANTE.clear()
+    con_hilos()
+    dlg = abrir_a_la_vista(tk_watch, lambda: tk_watch.open_dialog(raiz))
+    antes = dlg.winfo_height()
+    c("«Arranque automático» suelta: abre con la tarjeta vacía y entera",
+      ("Registro en el sistema" in textos(dlg), entero(dlg)), (False, True))
+    SOLTAR_VIGILANTE.set()
+    llego = dar_vueltas(lambda: "Registro en el sistema" in textos(dlg))
+    cabe = dar_vueltas(lambda: entero(dlg))
+    c("  al llegar sus filas la ventana crece: sin barra y con todo a la vista",
+      (llego, cabe, dlg.winfo_height() > antes), (True, True, True))
+    antes = dlg.winfo_height()
+    boton(dlg, "Detectar el dispositivo").invoke()
+    llego = dar_vueltas(lambda: "/media/usuario/PEN9" in textos(dlg))
+    cabe = dar_vueltas(lambda: entero(dlg))
+    c("  «Detectar el dispositivo»: una fila por raíz, y la ventana crece para que quepan",
+      (llego, cabe, dlg.winfo_height() > antes), (True, True, True))
+    cerrar(dlg)
+
+    # Y el aviso de que el sistema no ha contestado también hace sitio.
+    tope_real = watch.TOPE_VIGILANTE_S
+    watch.TOPE_VIGILANTE_S = 0.05
+    try:
+        segundo_plano.lanzar = nunca
+        segundo_plano.olvidar_lecturas()
+        dlg = abrir(tk_watch, lambda: tk_watch.open_dialog(raiz))
+        ajustes.clear()
+        dar_vueltas(lambda: any("no ha contestado" in t for t in textos(dlg)))
+        c("  «no ha contestado» también ajusta la ventana", bool(ajustes), True)
+        cerrar(dlg)
+    finally:
+        watch.TOPE_VIGILANTE_S = tope_real
+
+    # Con la pantalla ya hecha al llegar la lectura (los tests de pantallas), lo
+    # mismo: ajustar antes de enseñarse no hace nada, pero se pide.
+    segundo_plano.lanzar = segundo_plano.en_el_acto
+    ajustes.clear()
+    dlg = abrir(tk_watch, lambda: tk_watch.open_dialog(raiz))
+    c("  con `en_el_acto` también pide ajustar (y ajustar antes de enseñarse no hace nada)",
+      bool(ajustes), True)
+    cerrar(dlg)
+
+# --- «Versiones»: lo que llega puede ser más largo que lo que sustituye ---
+SOLTAR_REMOTO = threading.Event()
+
+
+def remoto_largo(pair):
+    """Un remoto que contesta tarde con un motivo de varias líneas."""
+    SOLTAR_REMOTO.wait(5)
+    return versions_editor.Lado(versions_editor.REMOTO, pair.versions_path2, False,
+                                "no se ha podido leer: " + "el remoto no contesta " * 30)
+
+
+with sandbox():
+    cfg = model.parse_config(DOS)
+    versions_editor.leer_local = leer_local_falso
+    versions_editor.leer_remoto = remoto_largo
+    SOLTAR_REMOTO.clear()
+    con_hilos()
+    dlg = abrir_a_la_vista(tk_versions, lambda: tk_versions.open_dialog(raiz, cfg))
+    antes = dlg.winfo_height()
+    c("«Versiones» suelta: abre entera, esperando al remoto", entero(dlg), True)
+    SOLTAR_REMOTO.set()
+    llego = dar_vueltas(lambda: any("el remoto no contesta" in t for t in textos(dlg)))
+    cabe = dar_vueltas(lambda: entero(dlg))
+    c("  si lo que llega es más largo que lo que sustituye, la ventana crece para que quepa",
+      (llego, cabe, dlg.winfo_height() > antes), (True, True, True))
+    cerrar(dlg)
+    versions_editor.leer_remoto = leer_remoto_falso
+
+uitk.Panel.ajustar = ajustar_real
+
+# --- «Nombre e icono» y «Arranque automático»: la lectura sale antes de dibujar ---
+ESTADO_OTRO = volumen.Estado(Path(model.DEVICE_ROOT), None, "MI PEN", volumen.OTRO,
+                             "C:\\Iconos\\mio.ico", "Mi pen")
+OTRO_TEXTO = f"El que ya tiene ({corto(ESTADO_OTRO.icono, 40)})"
+
+with sandbox():
+    volumen.leer = lambda: ESTADO
+    watch.estado_vigilante = lambda: watch.EstadoVigilante(list(FILAS), True)
+    watch.log_tail = lambda lines=10: ["linea del diario"]
+    watch.is_installed = lambda: True
+    for nombre, modulo, abrir_pantalla in (
+            ("«Nombre e icono»", tk_volumen, lambda: tk_volumen.open_dialog(raiz)),
+            ("«Arranque automático»", tk_watch, lambda: tk_watch.open_dialog(raiz))):
+        nacimientos.clear()
+        segundo_plano.lanzar = lanzar_mirando
+        segundo_plano.olvidar_lecturas()
+        dlg = abrir(modulo, abrir_pantalla)
+        c(f"{nombre}: la lectura sale antes de dibujar nada", nacimientos, [VACIO])
+        cerrar(dlg)
+
+        # Si la lectura ya está al acabar de dibujar, la línea de espera no sale nunca.
+        diarios, deshacer = espiar_indicadores()
+        try:
+            dlg = abrir_a_la_vista(modulo, abrir_pantalla)
+        finally:
+            deshacer()
+        c("  con la lectura ya hecha no se coloca ni se pone la línea de espera",
+          (diarios[-1]["grid"], [p for p in diarios[-1]["poner"] if p[1]]), ([], []))
+        c("  y la pantalla sale entera: sin barras de espera",
+          (barras(dlg), entero(dlg)), ([], True))
+        quieta = geometria(dlg)
+        dar_vueltas(lambda: False, 0.3)
+        c("  nada cambia de sitio después de enseñarse", geometria(dlg) == quieta, True)
+        hecha = leer_vista(dlg)
+        cerrar(dlg)
+
+        # Lo mismo con un hilo de verdad: la lectura tarda 40 ms y dibujar la
+        # pantalla, 100 ms. Como la lectura sale la primera, acaba antes de que
+        # se entregue al sondeo; lanzada al final, llegaría con la pantalla ya a
+        # la vista y movería lo de debajo de la línea.
+        leer_antes, vigilante_antes = volumen.leer, watch.estado_vigilante
+        cabecera_real = modulo.cabecera
+        volumen.leer = lambda: (time.sleep(0.04), ESTADO)[1]
+        watch.estado_vigilante = lambda: (time.sleep(0.04),
+                                          watch.EstadoVigilante(list(FILAS), True))[1]
+        modulo.cabecera = lambda *a, **k: (time.sleep(0.1), cabecera_real(*a, **k))[1]
+        con_hilos()
+        diarios, deshacer = espiar_indicadores()
+        try:
+            dlg = abrir_a_la_vista(modulo, abrir_pantalla)
+        finally:
+            deshacer()
+            modulo.cabecera = cabecera_real
+            volumen.leer, watch.estado_vigilante = leer_antes, vigilante_antes
+        quieta = geometria(dlg)
+        dar_vueltas(lambda: False, 0.3)
+        c("  con una lectura de verdad que acaba mientras se dibuja: sin línea y nada se mueve",
+          (diarios[-1]["grid"], geometria(dlg) == quieta, barras(dlg)), ([], True, []))
+        cerrar(dlg)
+
+        # Con la lectura sin llegar, la línea sale en su fila, y al llegar se va.
+        retenidos.clear()
+        segundo_plano.lanzar = retener
+        segundo_plano.olvidar_lecturas()
+        diarios, deshacer = espiar_indicadores()
+        try:
+            dlg = abrir_a_la_vista(modulo, abrir_pantalla)
+        finally:
+            deshacer()
+        c("  con la lectura sin llegar sí: la línea sale en su fila, con su barra",
+          (diarios[-1]["grid"][0].get("row"), len(barras(dlg)), en_marcha(barras(dlg)[0])),
+          (1, 1, True))
+        retenidos[-1].correr()
+        dar_vueltas(lambda: not barras(dlg))
+        dar_vueltas(lambda: entero(dlg))
+        c("  y al llegar se va, y la pantalla queda como si la lectura ya estuviera",
+          (barras(dlg), leer_vista(dlg) == hecha), ([], True))
+        cerrar(dlg)
+
+    # Una lectura que ya falló al acabar de dibujar lo dice en la fila de la línea de espera.
+    volumen.leer = lambda: (_ for _ in ()).throw(OSError("unidad desaparecida"))
+    segundo_plano.lanzar = segundo_plano.en_el_acto
+    segundo_plano.olvidar_lecturas()
+    dlg = abrir(tk_volumen, lambda: tk_volumen.open_dialog(raiz))
+    aviso = next(w for w in visibles(dlg, "TLabel")
+                 if "unidad desaparecida" in str(w.cget("text")))
+    c("«Nombre e icono»: si la lectura ya había fallado, lo dice en la fila de la línea de espera",
+      (int(aviso.master.grid_info()["row"]), apagado(boton(dlg, "Guardar"))), (1, True))
+    cerrar(dlg)
+
+    # «El que ya tiene (…)» se lee en su sitio: entre «Elegir…» y «Ninguno».
+    volumen.leer = lambda: ESTADO_OTRO
+    segundo_plano.lanzar = segundo_plano.en_el_acto
+    segundo_plano.olvidar_lecturas()
+    dlg = abrir_a_la_vista(tk_volumen, lambda: tk_volumen.open_dialog(raiz))
+    cadena: list = []
+    w = boton(dlg, "Uno tuyo (.ico)")
+    for _ in range(4):
+        cadena.append(str(w.cget("text")) if w.winfo_class() in ("TButton", "TRadiobutton")
+                      else w.winfo_class())
+        w = w.tk_focusNext()
+    c("«Nombre e icono»: con un icono ajeno, Tab pasa por «El que ya tiene» antes que por «Ninguno»",
+      cadena, ["Uno tuyo (.ico)", "Elegir…", OTRO_TEXTO, "Ninguno: el de Windows"])
+    cerrar(dlg)
+
+    # Lo mismo cuando la unidad tarda: la lectura llega con la pantalla ya enseñada.
+    retenidos.clear()
+    segundo_plano.lanzar = retener
+    segundo_plano.olvidar_lecturas()
+    dlg = abrir_a_la_vista(tk_volumen, lambda: tk_volumen.open_dialog(raiz))
+    retenidos[-1].correr()
+    dar_vueltas(lambda: not barras(dlg))
+    cadena = []
+    w = boton(dlg, "Uno tuyo (.ico)")
+    for _ in range(4):
+        cadena.append(str(w.cget("text")) if w.winfo_class() in ("TButton", "TRadiobutton")
+                      else w.winfo_class())
+        w = w.tk_focusNext()
+    c("  y si la lectura llega después, también",
+      cadena[1:], ["Elegir…", OTRO_TEXTO, "Ninguno: el de Windows"])
+    cerrar(dlg)
+
+# --- El tope de tiempo del vigilante no corre mientras su apartado está escondido ---
+
+
+def topes() -> set:
+    """Los temporizadores del tope del vigilante que Tk tiene pendientes."""
+    return {a for a in pendientes() if "sin_respuesta" in str(raiz.tk.call("after", "info", a))}
+
+
+# Los que dejaron los casos anteriores al cerrar su ventana antes de cumplirse no cuentan.
+ANTERIORES = topes()
+
+
+def plazos() -> list:
+    """Los temporizadores del tope de este caso que Tk tiene pendientes."""
+    return sorted(topes() - ANTERIORES)
+
+
+with sandbox():
+    watch.estado_vigilante = lambda: watch.EstadoVigilante(list(FILAS), True)
+    watch.log_tail = lambda lines=10: []
+    watch.is_installed = lambda: True
+    tope_real = watch.TOPE_VIGILANTE_S
+    try:
+        watch.TOPE_VIGILANTE_S = 0.4
+        retenidos.clear()
+        segundo_plano.lanzar = retener
+        segundo_plano.olvidar_lecturas()
+        dlg, panel = panel_suelto("Arranque")
+        tk_watch.construir(panel)
+        c("«Arranque automático»: esperando al sistema corre su tope de tiempo", len(plazos()), 1)
+        panel.ocultado()
+        c("  escondido, el tope no corre", len(plazos()), 0)
+        panel.mostrado()
+        c("  al volver a enseñarse corre otra vez, por lo que le quedaba", len(plazos()), 1)
+        dar_vueltas(lambda: any("no ha contestado" in t for t in textos(dlg)))
+        c("  y si el sistema sigue sin contestar, lo dice entonces",
+          (any("no ha contestado" in t for t in textos(dlg)), plazos()), (True, []))
+        dlg.destroy()
+
+        # Escondido más de lo que dura el tope: nada se pinta a escondidas, y al
+        # volver, como el sistema lleva más de lo debido sin contestar, lo dice.
+        watch.TOPE_VIGILANTE_S = 0.1
+        retenidos.clear()
+        segundo_plano.olvidar_lecturas()
+        dlg, panel = panel_suelto("Arranque")
+        tk_watch.construir(panel)
+        panel.ocultado()
+        dar_vueltas(lambda: False, 0.3)
+        c("  escondido más que el tope, no pinta nada a escondidas",
+          any("no ha contestado" in t for t in textos(dlg)), False)
+        panel.mostrado()
+        dicho = dar_vueltas(lambda: any("no ha contestado" in t for t in textos(dlg)))
+        c("  al volver dice que no ha contestado, que ya lleva más que el tope", dicho, True)
+        dlg.destroy()
+
+        # Una lectura que llega mientras está escondido se recoge al volver y no
+        # deja ningún temporizador.
+        watch.TOPE_VIGILANTE_S = 0.1
+        retenidos.clear()
+        segundo_plano.olvidar_lecturas()
+        dlg, panel = panel_suelto("Arranque")
+        tk_watch.construir(panel)
+        panel.ocultado()
+        retenidos[-1].correr()
+        panel.mostrado()
+        dar_vueltas(lambda: "Registro en el sistema" in textos(dlg))
+        dar_vueltas(lambda: False, 0.3)
+        c("  una lectura que llegó escondido se recoge al volver, sin dejar tope ni frase",
+          ("Registro en el sistema" in textos(dlg),
+           any("no ha contestado" in t for t in textos(dlg)), plazos()), (True, False, []))
+        dlg.destroy()
+    finally:
+        watch.TOPE_VIGILANTE_S = tope_real
+        segundo_plano.lanzar = lanzar_real
+        segundo_plano.olvidar_lecturas()
+
 
 sys.exit(c.report())
