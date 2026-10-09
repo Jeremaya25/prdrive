@@ -41,10 +41,10 @@ Start from the audit's working prototype `/tmp/claude-0/-home-user-prdrive/03b34
 
 **Files:** `.github/workflows/rendimiento.yml`, `.github/workflows/tests.yml` (ONLY `on:`), `docs/agents/reference/commands-testing.md` (the `rendimiento.yml` paragraph).
 
-- [ ] `rendimiento.yml`: on `push`, 3 rounds; on `pull_request` and `workflow_dispatch`, 7 (today's): `RENDIMIENTO_RONDAS: ${{ inputs.rondas || (github.event_name == 'push' && '3' || '7') }}` where the job reads the rounds (find how `--rondas` is passed today); the push trigger gets the same `paths` list as the `pull_request` one.
+- [ ] `rendimiento.yml`: a **draft** PR gets 3 rounds, everything else 7 (a ready PR, `workflow_dispatch` without `rondas`, the TEMPORAL push): `RENDIMIENTO_RONDAS: ${{ inputs.rondas || (github.event.pull_request.draft && '3' || '7') }}`, read by the job where `--rondas` is passed; `pull_request` gains `types: [opened, synchronize, reopened, ready_for_review]`, so marking a draft ready measures again. The push trigger gets no `paths` (it is the temporary stage-branch one).
 - [ ] `tests.yml`: on `push` only, `paths-ignore: ["docs/superpowers/**", "docs/guia/**"]` (never `docs/agents/**`, `AGENTS.md`, `.claude/**`: tests read them); `pull_request` unchanged.
 - [ ] Do NOT remove the TEMPORAL push triggers yet (they go with the PR, by the director).
-- [ ] Docs: the paragraph says push = 3 rounds (a quick signal), the PR gate = 7. Commit «En cada push, la comprobación de tiempos da tres vueltas y la de un PR siete; un push que solo toca documentos no la lanza».
+- [ ] Docs: the paragraph says a draft PR runs 3 rounds (a quick signal) and a ready PR 7; the temporary push trigger line says which workflows a push runs. Commit «En un PR en borrador la comprobación de tiempos da tres vueltas y en uno listo siete; un push que solo toca documentos no pasa la suite».
 
 ---
 
@@ -54,6 +54,6 @@ Start from the audit's working prototype `/tmp/claude-0/-home-user-prdrive/03b34
 Only if the Windows test job is still the slowest: `run_all.py --shard i/n` (files split by the weight table, GUI files spread evenly), a Windows matrix of 3 shards (each runner has its own desktop, so GUI files run in parallel safely), and a gate job named `tests (windows-latest)` that needs the shards, so the check names stay. Planned when Phase 1's numbers are in.
 
 ## Decisions for the owner (default taken)
-1. **Push = 3 timing rounds, PR = 7.** A push gives a quicker, rougher timing signal; the PR keeps today's power.
-2. **Docs-only pushes run neither the tests nor the timing check** (`docs/superpowers/**`, `docs/guia/**`).
+1. **Draft PR = 3 timing rounds, ready PR = 7.** A draft gives a quicker, rougher timing signal while it is worked on; a ready PR keeps today's power. Pushes (the temporary stage-branch trigger) keep 7.
+2. **Docs-only pushes do not run the test suite** (`docs/superpowers/**`, `docs/guia/**`, a `paths-ignore` on `tests.yml`'s push). The timing check's push trigger has no path filter: on the stage branch it still measures a docs-only push, and that trigger goes with the PR.
 3. **Windows GUI tests stay in one lane in Phase 1**; parallel GUI on one desktop (or shards) is Phase 2.

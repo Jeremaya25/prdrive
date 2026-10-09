@@ -23,6 +23,7 @@ on:
     branches:
       - claude/adoring-pascal-5j258r
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - "ui/**"
       - "common/**"
@@ -73,7 +74,8 @@ jobs:
       RENDIMIENTO_PR: ${{ github.event.pull_request.head.sha || github.sha }}
       RENDIMIENTO_BASE: ${{ github.event.pull_request.base.sha || inputs.base || 'main' }}
       # Por el entorno y no pegado en la orden: lo escrito al lanzarlo a mano no es código.
-      RENDIMIENTO_RONDAS: ${{ inputs.rondas || 7 }}
+      # Un PR en borrador, 3 vueltas (señal rápida); listo, a mano sin «rondas» o el push temporal, 7.
+      RENDIMIENTO_RONDAS: ${{ inputs.rondas || (github.event.pull_request.draft && '3' || '7') }}
     steps:
       # El PR (su fusión con la base) en pr/ y la base en base/: dos carpetas, dos árboles.
       - uses: actions/checkout@v4
