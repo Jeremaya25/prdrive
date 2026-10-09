@@ -682,10 +682,10 @@ def probar_la_pantalla() -> None:
             dar_vueltas(lambda: not dlg.sondeo.esperando)
             dlg.lista.elegir("notas")
             visto["antes"] = (dict(dlg.editor.textos), dlg.editor.datos())
-            visto["cambios"] = dlg.estado["cargado"] != dlg.editor.datos()
+            visto["cambios"] = dlg.pantalla.cargado != dlg.editor.datos()
             pulsar(dlg, "Mostrar")
             visto["despues"] = (sorted(dlg.editor.textos), dlg.editor.datos())
-            visto["sin_cambios"] = dlg.estado["cargado"] == dlg.editor.datos()
+            visto["sin_cambios"] = dlg.pantalla.cargado == dlg.editor.datos()
 
         abrir(cfg, desplegar)
         c("«Avanzado» sin desplegar: sin cajas, y los patrones los trae `datos()`",
@@ -713,10 +713,10 @@ def probar_la_pantalla() -> None:
             model.CONFIG_FILE.write_text(config_file.dumps(a_mano), encoding="utf-8")
             pulsar(dlg, "Guardar aquí…")
             visto["planes"] = len(planes)
-            visto["cambiado"] = dlg.estado["cambiado"]
+            visto["cambiado"] = dlg.pantalla.cambiado
             visto["pie"] = [t for t in textos_a_la_vista(dlg) if "ha cambiado fuera" in t]
             visto["filas"] = list(dlg.lista.filas)
-            visto["raw"] = [p["name"] for p in dlg.estado["raw"]["pair"]]
+            visto["raw"] = [p["name"] for p in dlg.pantalla.raw["pair"]]
             visto["fichero"] = model.CONFIG_FILE.read_text(encoding="utf-8")
             visto["escrito"] = dlg.editor.campos["remote_path"].get()
             # y con el config ya releído, guardar sí hace su plan
@@ -895,8 +895,8 @@ def probar_la_pantalla() -> None:
         pulsar(usada, "Mostrar")
         usada.editor.campos["remote_path"].set("/R/escrito")
         usada.editor.textos["exclude"].insert("1.0", "*.tmp")
-        usada.estado["cambiado"] = True
-        usada.estado["cargado"] = None            # lo escrito se da por guardado o descartado
+        usada.pantalla.cambiado = True
+        usada.pantalla.cargado = None            # lo escrito se da por guardado o descartado
         pie = next(w for w in todos(usada) if isinstance(w, ttk.Label)
                    and str(w.cget("text")).startswith("Antes de guardar"))
         pie.configure(text="algo que se ha hecho")
@@ -906,7 +906,7 @@ def probar_la_pantalla() -> None:
         abrir(cfg, asentada, destruir=False)
         nueva = dlgs[1]
         c("aplicar(): la pantalla vuelve a este dispositivo y a su primera pareja",
-          (usada.estado["vista"], usada.lista.elegida, usada.estado["cambiado"]),
+          (usada.pantalla.vista_puesta, usada.lista.elegida, usada.pantalla.cambiado),
           (False, nueva.lista.elegida, False))
         def sin_hora(vista: list) -> list:
             """La vista sin la hora de lectura del catálogo, que es la de cada apertura."""
