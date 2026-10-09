@@ -16,6 +16,8 @@ el servicio los pagan aunque no los usen. Esto vigila que no vuelvan a subir:
 - Que el primer pintado de la ventana principal no carga lo que lee el
   dispositivo (averías, conflictos, componentes, penwatch): eso llega con la
   lectura que se lanza después, y entonces sí.
+- Que importar las pantallas del asistente de la instalación no carga
+  `ui.lecturas_asistente` ni `ui.segundo_plano`: cada paso los importa al pintarse.
 - Cómo se precarga: de uno en uno, con `after`, sin ventana, y en
   `tk_update` justo antes de aplicar (si hay entorno gráfico).
 """
@@ -77,6 +79,12 @@ def importados_arriba(ruta: str) -> set[str]:
 
 for ruta, prohibidos in ARRIBA.items():
     c(f"{ruta}: no los importa arriba", sorted(prohibidos & importados_arriba(ruta)), [])
+
+# El asistente de la instalación tampoco los carga al importarse: cada paso los importa
+# dentro de su función, al pintarse. Sin Tk: basta con importar sus pantallas.
+ASISTENTE = cargados("ui.tk_install", "ui.tk_equipo", "ui.tk_crypto")
+c("el asistente: al importar sus pantallas no carga lecturas_asistente ni segundo_plano",
+  sorted({"ui.lecturas_asistente", "ui.segundo_plano"} & ASISTENTE), [])
 
 # PRECARGA no deja fuera nada de lo que se importa tarde
 from ui import tk as uitk  # noqa: E402

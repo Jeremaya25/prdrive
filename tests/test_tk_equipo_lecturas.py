@@ -11,6 +11,8 @@ Lo que se comprueba es lo que cuida los datos de la persona:
   cuenta: ni enciende «Siguiente» ni deja crear un contenedor que se montaría
   sobre una carpeta con cosas.
 - «Verificación» comprueba en otro hilo, con su indicador.
+- En Windows, «Contenedor en» sale con la carpeta propuesta y sigue así cuando
+  llega el examen: su variable tiene que seguir viva, o Tk vacía la caja.
 - Ningún paso de «En este equipo» pasa de 40 widgets, salvo «Verificación», que
   crece 4 por fila.
 
@@ -745,6 +747,57 @@ finally:
     raiz_equipo.abrir_o_crear = real_abrir
     raiz_equipo.veracrypt_instalado = lambda: None
     segundo_plano.lanzar = LANZAR_REAL
+
+
+# 3b. «Carpeta» cifrada en Windows: «Contenedor en» sale propuesta y se queda así
+#
+# En Windows no hay caja «Se abre en»: la letra va en un Combobox y la única caja
+# del contenedor es «Contenedor en». Su texto está en una StringVar que tiene que
+# seguir viva: si nada la retiene al salir del paso, Python la libera y Tk vacía
+# la caja, aunque el examen ya haya fijado la ruta. Se fuerza la rama de Windows
+# de `_carpeta_cifrada` y se sustituye lo que solo existe allí: las letras libres,
+# los restos sin cifrar y la prueba de dispersos (que ya es `False` desde arriba).
+RUTA_WIN = tmpdir("prdrive-lecturas-win-") / "PRDRIVE"
+OTRA_WIN = tmpdir("prdrive-lecturas-win-otra-") / "OTRA-cifrado"
+antes_win = (install.IS_WIN, raiz_equipo.IS_WIN, raiz_equipo.letras_libres,
+             raiz_equipo.restos, raiz_equipo.veracrypt_instalado,
+             crypto.soporta_dispersos, segundo_plano.lanzar)
+
+
+def caja_del_contenedor(wiz):
+    """La caja «Contenedor en» del paso: la que lleva su examen diferido, o `None`."""
+    return next((e for e in widgets(wiz.cuerpo, ttk.Entry)
+                 if getattr(e, "diferido", None) is not None), None)
+
+
+try:
+    install.IS_WIN = True
+    raiz_equipo.IS_WIN = True
+    raiz_equipo.letras_libres = lambda preferida="P": ["P", "Q"]
+    raiz_equipo.restos = lambda carpeta: []
+    raiz_equipo.veracrypt_instalado = lambda: {"mount": "vc", "format": "vc"}
+    crypto.soporta_dispersos = lambda root: False
+    segundo_plano.lanzar = segundo_plano.en_el_acto
+    win = asistente_equipo(cifrado=True, ruta=RUTA_WIN)
+    esperada = str(raiz_equipo.fisica_por_defecto(RUTA_WIN))
+    en_paso(win, "Carpeta")
+    caja_win = caja_del_contenedor(win)
+    c("Windows: «Contenedor en» sale con la carpeta propuesta, «…-cifrado»",
+      caja_win.get() if caja_win is not None else "sin caja", esperada)
+    caja_win.diferido.ya()                               # el examen llega de nuevo
+    raiz.update()
+    c("  y sigue así cuando llega el examen, que es lo que se examina y lo que se ve",
+      (caja_win.get(), win.equipo_fisica), (esperada, esperada))
+    with Reloj() as reloj:
+        teclear(caja_win, str(OTRA_WIN))
+        reloj.disparar(ESPERA_REAL)
+    c("  al teclear otra, el examen va con lo escrito y «Crear y montar» se enciende",
+      (win.equipo_fisica, estado(boton(win.cuerpo, "Crear y montar"))),
+      (str(OTRA_WIN), "normal"))
+finally:
+    (install.IS_WIN, raiz_equipo.IS_WIN, raiz_equipo.letras_libres, raiz_equipo.restos,
+     raiz_equipo.veracrypt_instalado, crypto.soporta_dispersos,
+     segundo_plano.lanzar) = antes_win
 
 
 # 4. «Parejas» de este equipo: cada ruta, al dejar de teclear y fuera del hilo

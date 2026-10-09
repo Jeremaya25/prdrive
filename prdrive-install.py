@@ -457,8 +457,9 @@ MODULOS_ASISTENTE = (
     "common.vestibulo", "install", "install.agente", "install.crypto", "install.deploy",
     "install.device", "install.llavero", "install.raiz_equipo", "install.traveler",
     "install.veracrypt_bin", "penwatch", "shutil", "tkinter", "tkinter.filedialog",
-    "tkinter.messagebox", "tkinter.ttk", "ui.bandeja_linux", "ui.tk", "ui.tk_crypto",
-    "ui.tk_equipo", "ui.tk_install", "ui.tk_pairs")
+    "tkinter.messagebox", "tkinter.ttk", "ui.bandeja_linux", "ui.lecturas_asistente",
+    "ui.segundo_plano", "ui.tk", "ui.tk_crypto", "ui.tk_equipo", "ui.tk_install",
+    "ui.tk_pairs")
 """Lo que el asistente y sus pasos importan dentro de funciones.
 
 Es lo que el `.exe` tiene que llevar dentro aunque no se use al abrirlo: un

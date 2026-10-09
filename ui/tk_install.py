@@ -36,7 +36,7 @@ from install import InstallError, InstallState, __version__
 from install import (crypto, deploy, device, platforms, profile, raiz_equipo,
                      rclone_bin, remote, traveler, vestibulo)
 
-from . import icons, lecturas_asistente, segundo_plano, theme
+from . import icons, theme
 from .tk import (TITLE, Indicador, Resultado, Sondeo, Visor, centrar, ensenar,
                  output_window, separador_fila, tabla_estado, working)
 
@@ -390,6 +390,8 @@ def cerrar(wiz: Wizard) -> None:
     Args:
         wiz: El asistente, con su ventana ya destruida.
     """
+    from . import lecturas_asistente
+
     if wiz.conf is not None:
         wiz.conf.close()
     lecturas_asistente.esperar_sondas(wiz.state)
@@ -681,6 +683,8 @@ def _paso_comprobaciones(cuerpo, wiz) -> None:
     """Pinta el paso de las comprobaciones: rclone, el remoto y el catálogo."""
     from tkinter import ttk
 
+    from . import lecturas_asistente
+
     cuerpo.columnconfigure(0, weight=1)
     _texto(cuerpo, "Antes de tocar nada: que haya un rclone con el que trabajar, que "
                    "el remoto conteste y que su catálogo de parejas se entienda.", 0)
@@ -869,6 +873,8 @@ def _paso_destino(cuerpo, wiz) -> None:
     """
     import tkinter as tk
     from tkinter import ttk
+
+    from . import lecturas_asistente, segundo_plano
 
     cuerpo.columnconfigure(0, weight=1)
     _texto(cuerpo, "Se listan TODAS las unidades, no solo las que Windows declara "
@@ -1994,6 +2000,8 @@ def _paso_final(cuerpo, wiz) -> None:
     cancela, y volver a comprobar deja atrás la anterior.
     """
     from tkinter import ttk
+
+    from . import lecturas_asistente, segundo_plano
 
     cuerpo.columnconfigure(0, weight=1)
     _texto(cuerpo, "Lo que de verdad hace falta para que este dispositivo arranque en "

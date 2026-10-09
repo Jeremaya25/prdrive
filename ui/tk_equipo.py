@@ -36,7 +36,7 @@ from __future__ import annotations
 from functools import partial
 from pathlib import Path
 
-from . import lecturas_asistente, segundo_plano, theme, watch
+from . import theme, watch
 from .tk import Indicador, Resultado, Sondeo, bloque_aviso, tabla_estado, working
 
 ANCHO = 780
@@ -279,6 +279,8 @@ def paso_carpeta(cuerpo, wiz) -> None:
     pintar, en el acto; al teclear, al dejar de hacerlo. Mientras, la raíz no
     está fijada y «Siguiente» está apagado.
     """
+    from . import lecturas_asistente
+
     if cifrada(wiz):
         _carpeta_cifrada(cuerpo, wiz)
         return
@@ -403,6 +405,7 @@ def _carpeta_cifrada(cuerpo, wiz) -> None:
     from common import vestibulo
     from install import IS_WIN, crypto, raiz_equipo as re_
 
+    from . import lecturas_asistente
     from .tk import TITLE
 
     vc = re_.veracrypt_para_raiz()
@@ -422,6 +425,9 @@ def _carpeta_cifrada(cuerpo, wiz) -> None:
     ttk.Label(formulario, text="Contenedor en:").grid(row=0, column=0, sticky="w")
     fisica = tk.StringVar(value=wiz.equipo_fisica)
     caja = ttk.Entry(formulario, textvariable=fisica, style="Mono.TEntry")
+    # La caja sujeta su variable: si nadie más la nombra (en Windows no hay caja
+    # «Se abre en»), Python la liberaría al volver esta función y Tk vaciaría la caja.
+    caja.variable = fisica
     caja.grid(row=0, column=1, columnspan=2, sticky="ew", padx=theme.E2)
     examen = ttk.Label(formulario, justify="left", wraplength=theme.medida(ANCHO - 60),
                        text=MIRANDO, style="Pista.TLabel")
@@ -510,8 +516,13 @@ def _carpeta_cifrada(cuerpo, wiz) -> None:
     hecho.grid(row=0, column=1, padx=(theme.E3, 0))
 
     def clave() -> tuple[str, str, str]:
-        """Lo que se examina: dónde va el contenedor, dónde se abre y la forma."""
-        return (caja.get(), punto.get() if punto is not None else wiz.equipo_ruta,
+        """Lo que se examina: dónde va el contenedor, dónde se abre y la forma.
+
+        Lee la variable de «Contenedor en» y no la caja: al nombrarla, esta
+        función la retiene mientras viva el examen. Si nadie la nombrara al
+        salir de este paso, Python la liberaría y Tk vaciaría la caja.
+        """
+        return (fisica.get(), punto.get() if punto is not None else wiz.equipo_ruta,
                 wiz.equipo_forma)
 
     def pendiente() -> None:
@@ -736,6 +747,8 @@ def paso_parejas(cuerpo, wiz) -> None:
     from tkinter import ttk
 
     from install import InstallError, deploy, raiz_equipo
+
+    from . import lecturas_asistente
 
     donde = wiz.state.device_root
     _texto(cuerpo, (
@@ -1195,6 +1208,8 @@ def paso_final(cuerpo, wiz) -> None:
     aparece cuando llega.
     """
     from tkinter import ttk
+
+    from . import segundo_plano
 
     _texto(cuerpo, "Lo que ha quedado puesto en este equipo.", 0)
     tabla = ttk.Frame(cuerpo)

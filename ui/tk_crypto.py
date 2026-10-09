@@ -28,7 +28,7 @@ from pathlib import Path
 from common import pins
 from install import CONTAINER_NAME, IS_WIN, InstallError, crypto, veracrypt_bin
 
-from . import lecturas_asistente, theme
+from . import theme
 from .tk import TITLE, Sondeo, bloque_aviso, working
 
 AVISO_AUTOARRANQUE = (
@@ -133,6 +133,8 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
     """
     import tkinter as tk
     from tkinter import messagebox, ttk
+
+    from . import lecturas_asistente
 
     estado = wiz.state
     contenedor = Path(estado.device) / CONTAINER_NAME
