@@ -5,6 +5,7 @@ Etapa 1a hecha, revisada y medida: `docs/superpowers/pruebas/2026-10-08-etapa-1a
 Etapa 1b hecha, revisada y medida: `docs/superpowers/pruebas/2026-10-08-etapa-1b-resultados.md`.
 Etapa 2 hecha, revisada y medida: `docs/superpowers/pruebas/2026-10-09-etapa-2-resultados.md`
 (la llegada de la lectura a la principal en Windows, que quedó abierta, se arregló después: 908 → 69 ms con 50 parejas).
+Etapa 3 hecha, revisada y medida: `docs/superpowers/pruebas/2026-10-09-etapa-3-resultados.md`.
 Sustituye la forma de dibujar y de refrescar del rediseño de la 0.7.0. El aspecto se
 queda: es el del sistema «prdrive» de la 0.7.1. Las medidas que lo deciden están en
 `docs/superpowers/pruebas/2026-10-08-banco-interfaz-resultados.md`.
@@ -287,6 +288,8 @@ de 216.
 | Pasos del asistente | 7–71 | ≤ 40 |
 | Pregunta del agente | 16 | ≤ 11 |
 
+Medido al cerrar la etapa 3: «Dispositivos» queda en 44 widgets frente a ≤ 35 porque el mismo aspecto necesita los widgets fijos de su ficha, y llegar a 35 pide el bloque «Equipos» como dos etiquetas de varias líneas (decisión D1 del plan de la etapa 3). «Verificación» no llega a 40 mientras `tabla_estado()` siga en ttk (R3), y se acota en las pruebas a la parte fija más 4 por fila de comprobación menos 1 (parte fija ≤ 13 con una unidad, ≤ 7 en «En este equipo»; decisión D2).
+
 **R6. Entre un clic y su repintado, ni unidad ni procesos.**
 - **Marcar una pareja** repinta al momento.
   - `ui_prefs.json` se escribe agrupado (un `after` de ~250 ms).
@@ -469,7 +472,7 @@ Tomadas sin el dueño el 08/10/2026:
 3. **Una tabla sobre Canvas** para «Dispositivos», el editor de flags y la lista de «Parejas», si en Windows gana a filas ttk ligeras (§2 R3). El dueño descartó la interfaz entera sobre un Canvas; esto es un componente que se adopta por medida. Medido: se adopta (en Windows, «Parejas» con 20 filas se construye en 77 ms frente a 158 con filas ligeras y 1230 con las de hoy).
 4. **Ventanas que se esconden en vez de destruirse** (§2 R7), si en Windows gana. Medido: no se adopta en ninguna («Parejas» 0.05, «Ajustes» −0.86, la de la pasada 0.44, frente a 0.50).
 5. **`.pyc` precompilados en la unidad** al instalar y actualizar, en modo `checked-hash` (§3): unos MB más en la unidad.
-6. **El instalador con Python 3.14 y PyInstaller fijado**: el `.exe` deja Windows 8.1 (§4).
+6. **El instalador con Python 3.14 y PyInstaller fijado**: el `.exe` deja Windows 8.1 (§4). Verificado en la etapa 3: el `.exe` se compila con Python 3.14.8, Tk 9.0.4 y PyInstaller 6.22.3, pasa su `--autoprueba`, y la puerta de Tk 9 funciona, porque la instalación ligera rechaza el Python 3.11 del runner, que trae Tk 8.6.
 7. **La comprobación de tiempos falla un PR** por cuentas deterministas y por empeorar claramente frente a `main` en el mismo trabajo, no por los objetivos (§5).
 8. **La barra de espera da un paso cada 32 ms** y no cada 12 (etapa 1a): un tercio de los pasos a la misma velocidad. Se probó con 48, que gasta menos, pero a 21 pasos por segundo se veía a saltos.
 9. **«Parejas» conserva lo escrito al llegar el catálogo solo si esa pareja no ha cambiado** (etapa 1a). Si otro dispositivo la ha cambiado mientras tanto, el editor se recarga con la de ahora y el pie dice que lo escrito se ha descartado: guardarlo habría deshecho el cambio del otro sin decirlo. La otra opción era preguntar.
