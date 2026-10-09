@@ -98,7 +98,15 @@ def dar_vueltas(condicion, limite: float = 2.0) -> bool:
 
 
 def abrir(modulo, llamada):
-    """Abre un apartado suelto sin esperar a que se cierre y devuelve su ventana."""
+    """Abre un apartado suelto sin esperar a que se cierre y devuelve su ventana.
+
+    Antes recoge la basura en este hilo. Una `tkinter.Variable` de un apartado
+    anterior que el recolector suelte desde el hilo de una lectura llama a Tk
+    desde allí, y sin `mainloop()` (aquí el bucle se mueve con `update()`)
+    `_tkinter` espera 1 s a que entre antes de rendirse («main thread is not in
+    main loop»): la lectura llegaría tarde por eso y no por lenta.
+    """
+    gc.collect()
     vistas: list = []
     real = modulo.mostrar
     modulo.mostrar = lambda dlg, parent=None: vistas.append(dlg)
