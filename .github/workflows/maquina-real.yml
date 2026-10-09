@@ -116,6 +116,7 @@ jobs:
           name: f21-arbol
           path: ${{ runner.temp }}/f21-arbol
           include-hidden-files: true
+          if-no-files-found: error
 
   pyc-windows:
     name: F21 · .pyc (Windows, FAT32 y exFAT)

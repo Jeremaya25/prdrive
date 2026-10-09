@@ -12,9 +12,11 @@ exFAT, en un disco virtual de verdad:
    `# code object from '<fuente>'` sin esa línea es que el módulo se reconstruye.
 
 Se espera que todo `.pyc` de hash se reutilice sin reescribirse, y que el fuente
-cambiado y el control de hora se reconstruyan. Un módulo que no carga (`ui.bandeja_linux`
-es de Linux; `ui.tk_install` necesita `install/`, que no va al dispositivo) se apunta
-en el registro: su `.pyc` se valida igual, antes de ejecutarse.
+cambiado y el control de hora se reconstruyan. El control siempre se reconstruye: el
+desplazamiento de 7 h deja su hora distinta de la guardada en su `.pyc`, también con el
+redondeo de FAT32 (2 s), así que no hay caso «no aplicable». Un módulo que no carga
+(`ui.bandeja_linux` es de Linux; `ui.tk_install` necesita `install/`, que no va al
+dispositivo) se apunta en el registro: su `.pyc` se valida igual, antes de ejecutarse.
 """
 
 from __future__ import annotations
@@ -158,12 +160,6 @@ def probar_copia(p: comun.Prueba, tipo: str, raiz: Path, arbol: Path, python: st
     if mutado:
         p.ver(f"{tipo}: el fuente cambiado conserva tamaño y hora", mutado[1], True)
 
-    control = next(e for e in entradas if e["fuente"] == CONTROL)
-    cab = (destino / control["pyc"]).read_bytes()[:16]
-    guardada = (int.from_bytes(cab[8:12], "little"), int.from_bytes(cab[12:16], "little"))
-    ahora = (destino / CONTROL).stat()
-    aplicable = (int(ahora.st_mtime), ahora.st_size) != guardada
-
     antes = {e["pyc"]: _foto(destino / e["pyc"]) for e in entradas}
 
     script = comun.carpeta("importar") / "importar.py"
@@ -192,10 +188,9 @@ def probar_copia(p: comun.Prueba, tipo: str, raiz: Path, arbol: Path, python: st
     if mut is not None:
         p.ver(f"{tipo}: el fuente cambiado con el mismo tamaño y hora se reconstruye",
               clas[mut], RECONSTRUIDO)
-    if aplicable:
-        p.ver(f"{tipo}: el control de hora se reconstruye", clas[CONTROL], RECONSTRUIDO)
-    else:
-        p.nota(f"control no aplicable en {tipo}")
+    # Sin caso «no aplicable»: el desplazamiento ya deja su hora distinta de la guardada.
+    # Si el control no se hubiera desplazado, esto falla, en vez de anotarse y pasar.
+    p.ver(f"{tipo}: el control de hora se reconstruye", clas.get(CONTROL), RECONSTRUIDO)
 
 
 def probar(p: comun.Prueba) -> None:
