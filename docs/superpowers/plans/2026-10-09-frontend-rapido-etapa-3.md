@@ -467,6 +467,10 @@ An adversarial review checked this plan against the code at `992f108` (findings:
 - m16: no hover in `Tabla` (owner question).
 - n2: Step 2 asserts no `after` of the table is pending after the first `update_idletasks()` and its items are unchanged after one more `update()`; no timed wait.
 
+### Owner decision of 09/10: no fallback for the release
+
+If the first `Instalador` run (Python 3.14.8, Tk 9.0.4) is red, there is no release until it is fixed: the release job is never pointed back at a Tk 8.6 build. 6b still lands only after a green `Instalador` run.
+
 ### Owner decisions, as taken here
 
 - **D1:** keep the look, take the invisible trims (m17); report the miss. The «Equipos» alternative is asked.
