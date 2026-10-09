@@ -95,36 +95,42 @@ en `tests/rendimiento/presupuesto.toml`, con las tareas 2 y 3 de la etapa 3 ya e
   ya no dependen del número de parejas, pero en Windows siguen por encima; sin un perfil de
   Windows no se sabe qué parte es cada widget nativo y qué parte el tema. Etapa 4.
 
-## Lo que queda abierto: la llegada de la lectura en Windows
+## La llegada de la lectura en Windows: abierta al cerrar la etapa, arreglada después
 
-Cuando la lectura llega a la principal, Windows tarda **309 ms con 5 parejas y 908 con 50**
-(Linux: 17 y 40). En ese rato la ventana está a la vista y no responde. La llegada crea pocos
-widgets (45 → 50, 225 → 230: medido en local), así que lo que cuesta es mover y repintar lo que
-ya estaba: en Windows cada widget es una ventana nativa. Antes de la tarea 11b, que quitó el
-ensanche, eran 461 y 2574 ms.
+Al cerrar la etapa (`479fa13`), cuando la lectura llegaba a la principal Windows tardaba **309 ms
+con 5 parejas y 908 con 50** (Linux: 17 y 40), con la ventana a la vista y sin responder. Con 50
+parejas la ventana salía antes que en la 0.7.1 pero se completaba más tarde.
 
-Lo que se mueve, medido en local comparando dónde está cada widget antes y después **con el
-equipo falso de la comprobación**: solo aparece la línea del arranque automático, debajo de la
-lista; con 5 parejas se mueven 4 widgets (el pie) y la ventana crece 58 px, y con 50 no se mueve
-la lista. Así que en Windows el coste no es mover la lista, y sin medirlo allí no se sabe cuál
-es: la comprobación apunta desde ahora, con `llega-instantanea`, cuánto se va en cada paso y
-cuántos widgets se repintan (`commands-testing.md`).
+La comprobación de tiempos reparte ahora esa llegada (`fc25171`: `fases`, `expose`, `configure` y
+`geometria` de `llega-instantanea`, en el `crudo.jsonl` de cada pasada). En Windows
+([Rendimiento 37924103960](https://github.com/Jeremaya25/prdrive/actions/runs/37924103960)):
+aplicar el estado 3 ms, `encajar()` 38-49 ms y el `update()` que pinta 121 ms (5 parejas) y 430 ms
+(50), con un `<Expose>` en **todos** los widgets a la vista. En Windows cada cambio de tamaño de la
+ventana la repinta entera, y había dos:
 
-En otro equipo, en cambio, el mismo dispositivo trae además la línea de «Reparación…» («Hay 3
-cosas que revisar.»), **encima** de la lista, y entonces todo lo de debajo baja 51 px: 31
-widgets con 5 parejas, 210 con 50. Eso es lo que quita la tarea 11c (`f08cf55`): la ventana
-recuerda en `state/ventana.json` cuánto ocupa lo que va encima de la lista y lo reserva desde el
-primer pintado. La comprobación de tiempos no lo ve (su equipo no tiene nada que revisar): en su
-pasada por Windows con `f08cf55`, en una máquina más rápida (suelo de 119 ms), la llegada tardó
-226 y 719 ms, lo mismo que antes en proporción a la 0.7.1 medida en la misma máquina.
+- **Con 5 parejas, la ventana crecía**: la lectura trae la línea del arranque automático, debajo de
+  la lista, y el pie bajaba 58 px. Arreglo (`360dde3`): la ventana recuerda en
+  `state/ventana.json` lo que ocupa lo que va debajo de la lista y lo reserva desde el primer
+  pintado, como ya hacía con lo de encima (`f08cf55`, la línea de «Reparación…», que la
+  comprobación no ve porque su equipo no tiene nada que revisar).
+- **Con 50 parejas, `Visor.encajar()` estiraba la ventana y la encogía**: para medir lo que sobra
+  de la ventana ponía el recuadro al tamaño entero del contenido, más alto que la pantalla, y la
+  ventana lo seguía. Pasaba en **cada** ajuste de una ventana que no cabe, aunque nada cambiara.
+  Arreglo (`865a8f6`): mide primero con el recuadro como está y solo lo estira cuando no puede
+  saber el tamaño final de otra forma (el primer desbordamiento, casi siempre con la ventana sin
+  enseñar).
 
-La consecuencia con 50 parejas: la ventana sale antes que en la 0.7.1 (1238 frente a 1983 ms)
-pero se completa más tarde (1238 + 908, más la lectura misma, que la comprobación no cuenta) y se
-queda quieta casi un segundo. Con 5 parejas se completa antes (unos 913 ms frente a 1370).
+| Llegada de la lectura, Windows | Al cerrar la etapa | `360dde3` | `865a8f6` |
+|---|---|---|---|
+| 5 parejas | 309 ms | 58 ms | 79 ms |
+| 50 parejas | 908 ms | 490 ms | 69 ms |
+| Widgets repintados (5 / 50) | todos / todos los visibles | 7 / 100 | 7 / 2 |
 
-Lo siguiente es leer ese reparto en Windows y, con él, decidir: reservar también lo que va
-debajo de la lista, para que la ventana no cambie de tamaño al llegar la lectura, o llevar la
-lista de la principal a un lienzo, como la de «Parejas».
+Las máquinas de Windows varían mucho entre pasadas (suelo de 142, 93 y 132 ms en estas tres): lo
+que no depende de la máquina es cuántos widgets se repintan. Con `865a8f6` ya no se mueve ni cambia
+de tamaño ninguno; quedan los 6 que crea la lectura. De paso, «Sincronizar ahora» con 50 parejas
+pasa de 1040 a 165 ms hasta ver la ventana de la pasada: la principal ya no se repinta entera al
+ponerse ocupada.
 
 ## R3 y R7
 
