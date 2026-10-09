@@ -988,170 +988,112 @@ class FilaTabla(NamedTuple):
     tono: str = ""
 
 
-SUPERFICIE_FILA = {"": "Card.", "apagado": "Card.", "aviso": "NotaAmbar.",
-                   "propio": "NotaAzul."}
-"""La superficie de cada tono de fila de `Tabla`."""
-
-
 class Tabla:
     """Una tabla dibujada: cabecera en rótulos y una fila por elemento.
 
     Es la `Table` del diseño. No es una `ttk.Treeview` porque las celdas llevan
     chips e iconos y una lista de Tk no sabe pintar nada dentro de una celda:
-    son etiquetas en una rejilla sobre una tarjeta, como la lista de parejas.
-    Si se le da `al_elegir`, las filas se eligen con un clic o con las
-    flechas, y la elegida va en el azul suave del acento.
+    se dibuja en un solo lienzo (`tk_tabla.TablaLienzo`), con una tarjeta, los
+    rótulos de la cabecera y, por fila, rectángulos, textos e imágenes. En
+    Windows cada widget es una ventana del sistema que se crea, se coloca y se
+    pinta por su cuenta: con etiquetas y chips de ttk en una rejilla (de seis a
+    ocho por fila) las tablas de «Dispositivos» y del editor de flags crecían
+    con sus datos; así son un widget, lleve las filas que lleve.
+
+    Se ve igual que la rejilla de etiquetas que sustituye (mismas medidas,
+    huecos y colores; lo que lo asegura es `tests/test_tk_tabla.py`), con dos
+    diferencias respecto a la lista de «Parejas», que es la misma pieza: aquí
+    nada se corta con «…» (cada columna mide lo que su contenido más ancho; la
+    que estira se queda con lo que sobra) y la fila que tiene el ratón encima
+    no se tiñe. Si se le da `al_elegir`, las filas se eligen con un clic o con
+    las flechas, y la elegida va en el azul suave del acento; sin él no hay
+    nada que elegir ni toma el foco. La rueda no es suya: la recoge la
+    pantalla (el `Visor`).
 
     Args:
         parent: Dónde va.
         columnas: `(titulo, ancho, estira)` por columna; el ancho es el mínimo,
             en medidas del diseño.
-        al_elegir: Lo que se llama al elegir otra fila; sin él, no se elige.
+        al_elegir: Lo que se llama, sin argumentos, al elegir otra fila; sin
+            él, no se elige.
         vacio: Lo que se dice cuando no hay ninguna fila.
         alto_fila: El alto mínimo de cada fila, en medidas del diseño: 36 la
             de una lista, 30 la de una tabla larga que solo se lee.
+
+    Attributes:
+        marco: Lo que se coloca (`grid()`): el lienzo, que no tiene ningún
+            widget dentro.
+        filas: Por `iid`, el texto de cada celda de la fila (de un icono, lo
+            que dice para quien no lo ve).
+        orden: Los `iid`, de arriba abajo.
+        elegida: El `iid` de la fila elegida, o `None`.
+        cabeceras: Los títulos de las columnas.
+        n: Cuántas columnas tiene.
     """
 
     def __init__(self, parent, columnas, al_elegir=None, vacio: str = "",
                  alto_fila: int = 36):
-        from tkinter import ttk
-
-        from . import icons
-        self.al_elegir, self.vacio, self.alto_fila = al_elegir, vacio, alto_fila
+        from .tk_tabla import TablaLienzo
+        self.vacio, self.alto_fila = vacio, alto_fila
         self.n = len(columnas)
         self.cabeceras = [titulo for titulo, _ancho, _estira in columnas]
-        self.marco = ttk.Frame(parent, style="Card.TFrame", takefocus=bool(al_elegir),
-                               padding=icons.px(parent, 1))       # su borde
-        for col, (_titulo, ancho, estira) in enumerate(columnas):
-            self.marco.columnconfigure(col, minsize=icons.px(parent, ancho),
-                                       weight=1 if estira else 0)
-        cabeza = ttk.Frame(self.marco, style="Plano.TFrame")
-        cabeza.grid(row=0, column=0, columnspan=self.n, sticky="nsew")
-        cabeza.lower()
-        self._fijos = [cabeza]
-        for col, titulo in enumerate(self.cabeceras):
-            rotulo = ttk.Label(self.marco, text=theme.rotulo(titulo) if titulo else "",
-                               style="Rotulo.TLabel")
-            rotulo.grid(row=0, column=col, sticky="w", padx=self._lados(col),
-                        pady=theme.E1)
-            self._fijos.append(rotulo)
-        self.marco.rowconfigure(0, minsize=icons.px(self.marco, 28))
+        self._lienzo = TablaLienzo(parent, columnas, al_elegir=al_elegir, vacio=vacio,
+                                   alto_fila=alto_fila, rejilla=True, encima=False)
+        self.marco = self._lienzo.marco
         self.filas: dict[str, list[str]] = {}
-        self.orden: list[str] = []
-        self.elegida: str | None = None
-        self._pintadas: dict[str, dict] = {}
-        if al_elegir is not None:
-            self.marco.bind("<Up>", lambda _e: self._mover(-1))
-            self.marco.bind("<Down>", lambda _e: self._mover(1))
+        self._lienzo.poner([])      # sin filas aún, ya pide lo que ocupa su cabecera
+
+    @property
+    def al_elegir(self):
+        """Lo que se llama al elegir otra fila (se puede cambiar)."""
+        return self._lienzo.al_elegir
+
+    @al_elegir.setter
+    def al_elegir(self, funcion) -> None:
+        self._lienzo.al_elegir = funcion
+
+    @property
+    def orden(self) -> list[str]:
+        """Los `iid`, de arriba abajo."""
+        return self._lienzo.orden
+
+    @property
+    def elegida(self) -> str | None:
+        """El `iid` de la fila elegida, o `None`."""
+        return self._lienzo.elegida
 
     def grid(self, **opciones):
         """Coloca la tabla como un widget; devuelve la tabla."""
         self.marco.grid(**opciones)
         return self
 
-    def _lados(self, col: int):
-        """El hueco a los lados de una celda: el de la rejilla y el borde de la fila."""
-        return (theme.E3 if col == 0 else theme.E2, theme.E3 if col == self.n - 1 else 0)
+    def poner(self, filas) -> bool:
+        """Pinta estas filas (`FilaTabla`) en lugar de las de antes, tocando solo las que cambian.
 
-    def poner(self, filas) -> None:
-        """Pinta estas filas (`FilaTabla`) en lugar de las de antes."""
-        from functools import partial
-        from tkinter import ttk
+        Una fila igual a la de antes no se toca; una que cambia se dibuja de
+        nuevo, y solo ella. Lo dibuja la tabla en el acto, aunque la ventana
+        aún no se haya enseñado.
 
-        from . import icons
-        for hijo in self.marco.winfo_children():
-            if hijo not in self._fijos:
-                hijo.destroy()
-        for fila_tk in range(1, self.marco.grid_size()[1]):
-            self.marco.rowconfigure(fila_tk, minsize=0)   # las de antes no ocupan
-        self.filas, self.orden, self._pintadas = {}, [], {}
-        ttk.Separator(self.marco, style="Card.TSeparator").grid(
-            row=1, column=0, columnspan=self.n, sticky="ew")
-        fila_tk = 2
-        for i, fila in enumerate(filas):
-            if i:
-                separador_fila(self.marco, fila_tk, self.n)
-                fila_tk += 1
-            sup = SUPERFICIE_FILA.get(fila.tono, "Card.")
-            fondo = ttk.Frame(self.marco, style=f"Plano.{sup}TFrame")
-            fondo.grid(row=fila_tk, column=0, columnspan=self.n, sticky="nsew")
-            fondo.lower()
-            textos, celdas = [], []
-            for col, celda in enumerate(fila.celdas):
-                if isinstance(celda, CeldaChip):
-                    widget = theme.chip(self.marco, celda.texto, celda.tipo, celda.icono)
-                    textos.append(celda.texto)
-                    rol = None
-                elif isinstance(celda, CeldaIcono):
-                    widget = ttk.Label(self.marco)
-                    widget.nombre_icono = celda.nombre
-                    textos.append(celda.texto)
-                    rol = None
-                else:
-                    celda = celda if isinstance(celda, CeldaTexto) else CeldaTexto(str(celda))
-                    widget = ttk.Label(self.marco, text=celda.texto)
-                    textos.append(celda.texto)
-                    rol = celda.rol
-                    if fila.tono == "apagado":
-                        rol = "MonoPista." if rol.startswith("Mono") else "Pista."
-                widget.grid(row=fila_tk, column=col, sticky="w", padx=self._lados(col),
-                            pady=theme.E2 if self.alto_fila >= 36 else theme.E1)
-                celdas.append((widget, rol))
-                if self.al_elegir is not None:
-                    widget.bind("<Button-1>", partial(self._clic, fila.iid))
-            if self.al_elegir is not None:
-                fondo.bind("<Button-1>", partial(self._clic, fila.iid))
-            self.marco.rowconfigure(fila_tk, minsize=icons.px(self.marco, self.alto_fila))
-            self.filas[fila.iid] = textos
-            self.orden.append(fila.iid)
-            self._pintadas[fila.iid] = {"sup": sup, "fondo": fondo, "celdas": celdas}
-            fila_tk += 1
-        if not filas and self.vacio:
-            ttk.Label(self.marco, text=self.vacio, style="Card.Pista.TLabel").grid(
-                row=2, column=0, columnspan=self.n, pady=theme.E3)
-        if self.elegida not in self.filas:
-            self.elegida = None
-        self._pintar()
+        Returns:
+            Si lo que la tabla pide (su ancho y su alto) ha cambiado.
+        """
+        filas = list(filas)
+        cambio = self._lienzo.poner(filas)
+        self.filas = {fila.iid: [celda.texto if hasattr(celda, "texto") else str(celda)
+                                 for celda in fila.celdas] for fila in filas}
+        return cambio
 
-    def _pintar(self) -> None:
-        """Pone a cada fila su superficie; la elegida, la del acento."""
-        from . import icons
-        for iid, f in self._pintadas.items():
-            sup = "NotaAzul." if iid == self.elegida else f["sup"]
-            f["fondo"].configure(style=f"Plano.{sup}TFrame")
-            for widget, rol in f["celdas"]:
-                if rol is not None:
-                    widget.configure(style=f"{sup}{rol}TLabel")
-                elif hasattr(widget, "nombre_icono"):
-                    fondo = theme.fondo_de(sup)
-                    img = icons.get(self.marco, widget.nombre_icono, 16, theme.OK, fondo)
-                    widget.configure(style=f"{sup}TLabel")
-                    if img is not None:
-                        widget.configure(image=img)
-                        widget.image = img
+    def elegir(self, iid: str | None, avisar: bool = True) -> bool:
+        """Elige esa fila (o ninguna) y lo cuenta, si `avisar`.
 
-    def _clic(self, iid: str, _evento=None) -> None:
-        """Elige la fila pulsada y le da el foco a la tabla, para las flechas."""
-        self.marco.focus_set()
-        self.elegir(iid)
+        Returns:
+            Si la elección se ha hecho.
+        """
+        return self._lienzo.elegir(iid, avisar)
 
-    def _mover(self, paso: int) -> str:
-        """Elige la fila de arriba o la de abajo."""
-        if self.orden:
-            i = self.orden.index(self.elegida) + paso if self.elegida in self.orden else 0
-            self.elegir(self.orden[max(0, min(len(self.orden) - 1, i))])
-        return "break"
-
-    def elegir(self, iid: str | None, avisar: bool = True) -> None:
-        """Elige esa fila (o ninguna) y lo cuenta, si `avisar`."""
-        if iid is not None and iid not in self.filas:
-            iid = None
-        if iid == self.elegida:
-            return
-        self.elegida = iid
-        self._pintar()
-        if avisar and self.al_elegir is not None:
-            self.al_elegir()
+    def leer(self) -> list[tuple[str, ...]]:
+        """Devuelve lo que se dibuja, fila a fila: el texto de cada celda."""
+        return self._lienzo.leer()
 
 
 class Panel:

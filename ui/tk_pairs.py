@@ -2069,13 +2069,31 @@ def flags_form(parent, titulo: str, subtitulo: str, flags: dict, extra: list,
               text="Se funden en este orden: siempre → modo → [defaults] → esta "
                    "pareja.").grid(row=2, column=0, sticky="w", pady=(theme.E2, 0))
 
+    recuadro: dict = {}          # el aviso rojo: se hace la primera vez que hace falta
+
     def avisar(error: ConfigError | None) -> None:
-        """Enseña el motivo en el recuadro rojo, o lo vacía si no hay."""
-        for hijo in problema.winfo_children():
-            hijo.destroy()
-        if error is not None:
-            theme.aviso(problema, flags_editor.titulo_error(error), str(error),
-                        tono="Rojo.", ancho=300).grid(row=0, column=0, sticky="ew")
+        """Enseña el motivo en el recuadro rojo, o lo esconde si no hay.
+
+        El recuadro se hace la primera vez que lo escrito no vale y desde
+        entonces solo cambia su texto y se quita o se pone en la rejilla: ni se
+        destruye ni se rehace con cada error.
+        """
+        if error is None:
+            if "marco" in recuadro:
+                recuadro["marco"].grid_remove()
+            return
+        titulo_error, cuerpo = flags_editor.titulo_error(error), str(error)
+        if "marco" not in recuadro:
+            marco_aviso = theme.aviso(problema, titulo_error, cuerpo or " ", tono="Rojo.",
+                                      ancho=300)
+            # `theme.aviso` pone el título en su fila 0 y el cuerpo en la 1, ambos en la columna 1.
+            recuadro.update(marco=marco_aviso,
+                            titulo=marco_aviso.grid_slaves(row=0, column=1)[0],
+                            cuerpo=marco_aviso.grid_slaves(row=1, column=1)[0])
+        else:
+            recuadro["titulo"].configure(text=titulo_error)
+        recuadro["cuerpo"].configure(text=cuerpo)
+        recuadro["marco"].grid(row=0, column=0, sticky="ew")
 
     def leer() -> dict | None:
         """Devuelve lo escrito, ya validado; `None` si no vale (y ya se ha avisado)."""

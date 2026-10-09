@@ -4,8 +4,8 @@
 La ficha del elegido es un juego fijo de etiquetas (`tk_fleet.Ficha`) que se
 hace al abrir la ventana y se rellena al elegir. Lo que se comprueba:
 
-- los widgets de la ventana, sin los de la tabla, son los mismos con 3 y con 25
-  dispositivos, y elegir cada fila no crea ni destruye ninguno;
+- los widgets de la ventana, la tabla incluida (un lienzo), son los mismos con 3 y
+  con 25 dispositivos, y elegir cada fila no crea ni destruye ninguno;
 - la ficha de cada fila enseña, en las mismas celdas y con los mismos huecos,
   lo que una ventana recién abierta con solo ese dispositivo (`tests/_vista`);
 - las filas fluyen: «Estado» de una línea deja subir a «Equipos», y lo que no
@@ -195,7 +195,7 @@ c("la ficha tiene etiquetas de línea para cada uno de sus apartados",
 
 with sandbox():
     # -----------------------------------------------------------------------
-    # 1. Con 3 y con 25 dispositivos hay los mismos widgets, tabla aparte
+    # 1. Con 3 y con 25 dispositivos hay los mismos widgets, la tabla incluida
     # -----------------------------------------------------------------------
     cuentas = {}
     for n in (3, 25):
@@ -206,10 +206,10 @@ with sandbox():
         print(f"  (cuenta) {n} dispositivos: {total} widgets, de ellos {tabla} de la tabla "
               f"y {total - tabla} del resto; fechas: {len(dlg.ficha.fechas)}")
         cerrar(dlg)
-    c("los widgets de la ventana sin los de la tabla son los mismos con 3 y con 25",
-      cuentas[3][2], cuentas[25][2])
-    c("  y los de la tabla son los que crecen con los dispositivos",
-      cuentas[3][1] < cuentas[25][1], True)
+    c("los widgets de la ventana son los mismos con 3 y con 25 dispositivos",
+      cuentas[3][0], cuentas[25][0])
+    c("  la tabla es uno solo, el lienzo, con cualquier flota", (cuentas[3][1], cuentas[25][1]),
+      (1, 1))
 
     # -----------------------------------------------------------------------
     # 2. Elegir cada fila no crea ni destruye nada, y la ficha enseña lo que

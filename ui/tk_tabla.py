@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """Una tabla dibujada en un solo lienzo: la `Table` del diseño sin un widget por celda.
 
-Solo dibuja. Lo que enseña cada fila lo decide quien la llama, con las mismas
-filas que `tk.Tabla` (`FilaTabla` con celdas de texto, chip o icono, más
-`CeldaCasilla`). La diferencia es cómo: `tk.Tabla` pone etiquetas y chips de ttk
-en una rejilla, siete u ocho widgets por fila, y en Windows cada widget es una
-ventana del sistema que se crea, se coloca y se pinta por su cuenta; aquí todo
-son elementos de un `tk.Canvas` (rectángulos, textos e imágenes). Cincuenta
-parejas son un widget y no más de cuatrocientos.
+Solo dibuja. Lo que enseña cada fila lo decide quien la llama, con las filas de
+`tk.Tabla` (`FilaTabla` con celdas de texto, chip o icono, más `CeldaCasilla`).
+Antes `tk.Tabla` ponía etiquetas y chips de ttk en una rejilla, siete u ocho
+widgets por fila, y en Windows cada widget es una ventana del sistema que se
+crea, se coloca y se pinta por su cuenta; aquí todo son elementos de un
+`tk.Canvas` (rectángulos, textos e imágenes). Cincuenta parejas son un widget y
+no más de cuatrocientos. «Parejas» la usa tal cual y `tk.Tabla` («Dispositivos»,
+el editor de flags) la envuelve con las reglas de aquella rejilla (`rejilla`,
+`alto_fila`, `encima`).
 
 Se ve como la rejilla de etiquetas que sustituye:
 
@@ -194,9 +196,11 @@ class _Fila:
             cortan si su columna estira: `(elemento, columna, texto entero, rol
             del estilo, rol de la letra)`.
         leidos: Por columna, `(elemento de texto, lo que dice si es una imagen)`.
+        y: Dónde empieza (de arriba) la fila dibujada, en píxeles del lienzo.
+        h: Lo que mide la fila dibujada, en píxeles.
     """
 
-    __slots__ = ("fila", "clave", "pos", "anchos", "alto", "fondo", "textos", "leidos")
+    __slots__ = ("fila", "clave", "pos", "anchos", "alto", "fondo", "textos", "leidos", "y", "h")
 
     def __init__(self, fila: FilaTabla, clave: str) -> None:
         self.fila, self.clave = fila, clave
@@ -206,6 +210,7 @@ class _Fila:
         self.fondo: int | None = None
         self.textos: list[tuple[int, int, str, str, str]] = []
         self.leidos: list[tuple[int | None, str]] = []
+        self.y = self.h = 0
 
 
 class TablaLienzo:
@@ -223,6 +228,19 @@ class TablaLienzo:
         vacio: Lo que se dice cuando no hay ninguna fila.
         superficie: La superficie sobre la que va la tabla (`''`, el papel):
             es lo que asoma por fuera de sus esquinas redondeadas.
+        alto_fila: El alto mínimo de cada fila, en medidas del diseño: 36 la de
+            una lista y 30 la de una tabla larga que solo se lee (con 30 el
+            relleno de arriba y abajo es `theme.E1` y no `theme.E2`).
+        rejilla: Si la tabla se reparte como una rejilla de etiquetas de ttk
+            (`tk.Tabla`) y no como una lista de «Parejas». Con `True`: ninguna
+            celda se corta (la columna que estira mide lo que su contenido más
+            ancho y se queda con lo que sobra), el ancho mínimo de una columna
+            cuenta los huecos de sus lados (el `minsize` de `grid`) y cada fila
+            mide lo que la más alta de sus celdas. Con `False` la columna que
+            estira corta con «…» lo que no le cabe, su mínimo es el del
+            contenido y todas las filas miden lo de la más alta.
+        encima: Si la fila que tiene el ratón encima se tiñe hacia la tinta.
+            Solo cuenta con `al_elegir`: sin él, la tabla no mira el ratón.
 
     Attributes:
         marco: El `tk.Canvas`: lo que se coloca (`grid`), lo que recibe el foco y
@@ -236,9 +254,11 @@ class TablaLienzo:
     """
 
     def __init__(self, parent, columnas, al_elegir=None, puede_dejar=None,
-                 vacio: str = "", superficie: str = "") -> None:
+                 vacio: str = "", superficie: str = "", alto_fila: int = ALTO_FILA,
+                 rejilla: bool = False, encima: bool = True) -> None:
         import tkinter as tk
         self.al_elegir, self.puede_dejar, self._vacio = al_elegir, puede_dejar, vacio
+        self._rejilla, self._con_encima = rejilla, encima
         self._columnas = [(titulo, ancho, bool(estira)) for titulo, ancho, estira in columnas]
         self.cabeceras = [titulo for titulo, _ancho, _estira in self._columnas]
         self._elegible = al_elegir is not None
@@ -261,7 +281,11 @@ class TablaLienzo:
                                                                       theme.E3))
         self._alto_cabecera = max(icons.px(cv, ALTO_CABECERA),
                                   self._linea("rotulo") + 2 * HOLGURA + 2 * self._e1)
-        self._alto_fila = icons.px(cv, ALTO_FILA)
+        self._min_fila = icons.px(cv, alto_fila)
+        self._relleno = self._e2 if alto_fila >= ALTO_FILA else self._e1
+        self._alturas: list[int] = []
+        self._tops: list[int] = []
+        self._cuerpo = 0
         n = len(self._columnas)
         self._x = [0] * n
         self._anchos = [0] * n
@@ -280,8 +304,9 @@ class TablaLienzo:
             cv.bind("<Return>", self._activar)
             cv.bind("<KP_Enter>", self._activar)
             cv.bind("<Button-1>", self._clic)
-            cv.bind("<Motion>", lambda e: self._pasar(self._fila_en(e.y)))
-            cv.bind("<Leave>", lambda _e: self._pasar(None))
+            if encima:
+                cv.bind("<Motion>", lambda e: self._pasar(self._fila_en(e.y)))
+                cv.bind("<Leave>", lambda _e: self._pasar(None))
             cv.bind("<FocusIn>", lambda _e: self._foco(True))
             cv.bind("<FocusOut>", lambda _e: self._foco(False))
 
@@ -408,37 +433,45 @@ class TablaLienzo:
         return (self._e3 if col == 0 else self._e2,
                 self._e3 if col == len(self._columnas) - 1 else 0)
 
-    def _maquetar(self) -> tuple[list[int], int, int, int]:
+    def _maquetar(self, orden: list[str] | None = None) -> tuple[list[int], list[int], int, int]:
         """Calcula lo que pide la tabla con las filas que tiene.
 
+        Args:
+            orden: Los `iid` de arriba abajo; sin él, los de ahora.
+
         Returns:
-            `(anchos, alto de fila, ancho pedido, alto pedido)`: el ancho de cada
+            `(anchos, alturas, ancho pedido, alto pedido)`: el ancho de cada
             columna sin repartir lo que sobre (la que estira, solo su mínimo y su
-            rótulo) y los tamaños, en píxeles.
+            rótulo; en una rejilla, también lo que pida su contenido), lo que
+            mide cada fila (todas lo de la más alta, salvo en una rejilla) y los
+            tamaños, en píxeles.
         """
         cv = self.marco
+        orden = self.orden if orden is None else orden
         anchos = []
         for col, (titulo, minimo, estira) in enumerate(self._columnas):
-            ancho = max(icons.px(cv, minimo) if minimo else 0,
-                        self._medir("rotulo", theme.rotulo(titulo)) + 2 * HOLGURA if titulo
-                        else 0)
-            if not estira:
+            minimo = icons.px(cv, minimo) if minimo else 0
+            if self._rejilla:       # el `minsize` de una rejilla cuenta los huecos de los lados
+                minimo = max(0, minimo - sum(self._lados(col)))
+            ancho = max(minimo, self._medir("rotulo", theme.rotulo(titulo)) + 2 * HOLGURA
+                        if titulo else 0)
+            if not estira or self._rejilla:
                 ancho = max([ancho] + [f.anchos[col] for f in self._filas.values()
                                        if col < len(f.anchos)])
             anchos.append(ancho)
-        alto_fila = max([icons.px(cv, ALTO_FILA)]
-                        + [f.alto + 2 * self._e2 for f in self._filas.values()])
+        propias = [max(self._min_fila, self._filas[iid].alto + 2 * self._relleno)
+                   for iid in orden]
+        alturas = propias if self._rejilla else [max(propias, default=self._min_fila)] * len(orden)
         ancho = 2 * self._uno + sum(a + sum(self._lados(c)) for c, a in enumerate(anchos))
-        n = len(self._filas)
-        if n:
-            cuerpo = n * (alto_fila + 1) - 1
+        if orden:
+            cuerpo = sum(alturas) + len(orden) - 1
         elif self._vacio:
             cuerpo = self._linea("pista") + 2 * HOLGURA + 2 * self._e3
             ancho = max(ancho, 2 * self._uno + self._medir("pista", self._vacio) + 2 * HOLGURA)
         else:
             cuerpo = 0
         alto = 2 * self._uno + self._alto_cabecera + 1 + cuerpo
-        return anchos, alto_fila, ancho, alto
+        return anchos, alturas, ancho, alto
 
     def _repartir(self, anchos: list[int], pedido: int, ancho: int) -> list[int]:
         """Reparte entre las columnas que estiran lo que el lienzo tiene de más (o de menos)."""
@@ -452,10 +485,6 @@ class TablaLienzo:
             anchos[col] = max(0, anchos[col] + parte + (resto if i == len(estiran) - 1 else 0))
         return anchos
 
-    def _y(self, pos: int) -> int:
-        """Donde empieza la fila de esa posición."""
-        return self._uno + self._alto_cabecera + 1 + pos * (self._alto_fila + 1)
-
     def _ajustar(self, maqueta, ancho: int | None = None) -> None:
         """Lleva lo dibujado a esa maqueta y a ese ancho de lienzo.
 
@@ -464,7 +493,7 @@ class TablaLienzo:
         rehace la tarjeta si cambió de tamaño.
         """
         cv = self.marco
-        anchos, _alto_fila, pedido, alto = maqueta
+        anchos, _alturas, pedido, alto = maqueta
         if ancho is None:
             real = cv.winfo_width()
             ancho = real if real > 1 else pedido
@@ -477,14 +506,14 @@ class TablaLienzo:
         for col in range(len(self._columnas)):
             if x[col] != self._x[col]:
                 cv.move(f"c{col}", x[col] - self._x[col], 0)
-            if anchos[col] != self._anchos[col] and self._columnas[col][2]:
+            if (anchos[col] != self._anchos[col] and self._columnas[col][2]
+                    and not self._rejilla):
                 self._recortar(col, anchos[col])
         self._x, self._anchos = x, anchos
         if ancho != self._ancho:
             for f in self._filas.values():
                 if f.fondo is not None:
-                    y = self._y(f.pos)
-                    cv.coords(f.fondo, self._uno, y, ancho - self._uno, y + self._alto_fila)
+                    cv.coords(f.fondo, self._uno, f.y, ancho - self._uno, f.y + f.h)
         if (ancho, alto, bool(self.orden)) != self._tarjeta_hecha:
             self._ancho, self._alto = ancho, alto
             self._tarjeta()
@@ -543,7 +572,7 @@ class TablaLienzo:
                                 tags=etiqueta)
         abajo = uno + self._alto_cabecera
         cv.create_rectangle(uno, uno, ancho - uno, abajo, fill=theme.PAPEL, **rect)
-        cuerpo = len(self.orden) * (self._alto_fila + 1) - 1 if self.orden else 0
+        cuerpo = self._cuerpo if self.orden else 0
         cv.create_rectangle(uno, abajo, ancho - uno, abajo + 1 + max(0, cuerpo),
                             fill=theme.LINEA_SUAVE, **rect)
         if not self.orden and self._vacio:
@@ -569,7 +598,7 @@ class TablaLienzo:
     def _dibujar(self, iid: str) -> None:
         """Dibuja una fila en su sitio: su fondo y cada celda."""
         cv, f = self.marco, self._filas[iid]
-        y0, alto = self._y(f.pos), self._alto_fila
+        y0, alto = f.y, f.h = self._tops[f.pos], self._alturas[f.pos]
         superficie = self._superficie(iid)
         fila = ("fila", f.clave)
         f.fondo = cv.create_rectangle(self._uno, y0, self._ancho - self._uno, y0 + alto,
@@ -609,7 +638,7 @@ class TablaLienzo:
                 color, letra = theme.rol_texto(rol, superficie)
                 linea = self._linea(letra)
                 visto = (self._cortar(letra, entero, self._anchos[col] - 2 * HOLGURA)
-                         if self._columnas[col][2] else entero)
+                         if self._columnas[col][2] and not self._rejilla else entero)
                 texto = cv.create_text(x + HOLGURA, y0 + (alto - linea) // 2, text=visto,
                                        anchor="nw", font=self._fuente(letra), fill=color,
                                        tags=(*etiquetas, "texto"))
@@ -634,8 +663,8 @@ class TablaLienzo:
         if not self._con_foco:
             return
         if self.elegida in self._filas:
-            y0 = self._y(self._filas[self.elegida].pos)
-            caja = (self._uno, y0, self._ancho - self._uno, y0 + self._alto_fila)
+            f = self._filas[self.elegida]
+            caja = (self._uno, f.y, self._ancho - self._uno, f.y + f.h)
         else:
             caja = (self._uno, self._uno, self._ancho - self._uno, self._alto - self._uno)
         x0, y0, x1, y1 = caja
@@ -682,21 +711,25 @@ class TablaLienzo:
             self.elegida = None
         if self._encima not in nuevas:
             self._encima = None
-        maqueta = self._maquetar()
-        if maqueta[1] != self._alto_fila:
-            self._alto_fila = maqueta[1]
-            for iid, f in self._filas.items():
-                if f.fondo is not None:
+        orden = [fila.iid for fila in filas]
+        maqueta = self._maquetar(orden)
+        alturas, tops, y = maqueta[1], [], self._uno + self._alto_cabecera + 1
+        for alto in alturas:
+            tops.append(y)
+            y += alto + 1
+        for pos, iid in enumerate(orden):
+            f = self._filas[iid]
+            if f.fondo is not None:
+                if alturas[pos] != f.h:         # otra altura: se dibuja de nuevo
                     cv.delete(f.clave)
                     f.fondo = None
                     por_dibujar.append(iid)
-        orden = [fila.iid for fila in filas]
-        for pos, iid in enumerate(orden):
-            f = self._filas[iid]
-            if f.fondo is not None and f.pos != pos:
-                cv.move(f.clave, 0, (pos - f.pos) * (self._alto_fila + 1))
+                elif tops[pos] != f.y:          # la misma, en otro sitio: se desplaza
+                    cv.move(f.clave, 0, tops[pos] - f.y)
+                    f.y = tops[pos]
             f.pos = pos
-        self.orden = orden
+        self.orden, self._alturas, self._tops = orden, alturas, tops
+        self._cuerpo = sum(alturas) + len(alturas) - 1 if alturas else 0
         self._ajustar(maqueta)
         for iid in por_dibujar:
             self._dibujar(iid)
@@ -745,8 +778,8 @@ class TablaLienzo:
         f = self._filas.get(iid)
         if f is None:
             return None
-        y = self._y(f.pos)
-        return self._uno, y, self._ancho - self._uno, y + self._alto_fila
+        y = self._tops[f.pos]
+        return self._uno, y, self._ancho - self._uno, y + self._alturas[f.pos]
 
     def elementos(self, iid: str) -> tuple[int, ...]:
         """Devuelve los elementos del lienzo de esa fila (vacío si no está)."""
@@ -762,11 +795,10 @@ class TablaLienzo:
 
     def _fila_en(self, y: int) -> str | None:
         """La fila que hay a esa altura del lienzo (la línea de debajo cuenta como suya)."""
-        arriba = self._y(0)
-        if y < arriba or not self.orden:
+        if not self.orden or y < self._tops[0]:
             return None
-        pos = int((y - arriba) // (self._alto_fila + 1))
-        return self.orden[pos] if pos < len(self.orden) else None
+        pos = sum(1 for arriba in self._tops if arriba <= y) - 1      # la última que empieza antes
+        return self.orden[pos] if y < self._tops[pos] + self._alturas[pos] + 1 else None
 
     def _clic(self, evento) -> None:
         """Le da el foco a la tabla y elige la fila pulsada."""

@@ -53,9 +53,11 @@
 # «Dispositivos» y el editor de flags (etapa 3, tarea 1): lo que da el árbol al empezar la etapa 3
 # (09/10/2026, Python 3.14.8 con Tk 9.0.4) con la flota y el dispositivo de muestra de `driver.py`.
 # Medidos en Linux (no dependen de la máquina); si Windows da otro número, va en `[techo.windows]`.
-# Solo bajan, con las tareas que las rebajan.
-"widgets.dispositivos" = 134
-"widgets.flags" = 69
+# Solo bajan, con las tareas que las rebajan. Las dos tablas son un lienzo (etapa 3, tarea 7):
+# «Dispositivos» pasó de 134 a 44 widgets (con la flota de muestra; ya no crece con ella) y el
+# editor de flags de 69 a 26 (el recuadro rojo, que se hace con el primer error, suma 5 más).
+"widgets.dispositivos" = 44
+"widgets.flags" = 26
 "tema.abrir.dispositivos" = 0
 "tema.abrir.flags" = 0
 "estilos.dispositivos" = 0

@@ -721,10 +721,9 @@ with sandbox():
 
     def mirar_fichas(self, *_a, **_k):
         """Elige cada fila y apunta lo que dice la ficha."""
-        tabla = set(self.tabla.marco.winfo_children())
         for iid in ("otro", "yo"):
             elegir(self, iid)
-            fichas[iid] = [t for w, t in etiquetas(self) if w not in tabla]
+            fichas[iid] = [t for _w, t in etiquetas(self)]       # la tabla es un lienzo
 
     tk.Toplevel.wait_window = mirar_fichas
     tk_fleet.open_dialog(raiz, cfg, dict(BASE))
@@ -1008,6 +1007,88 @@ c("  bajo su título", flags_editor.TITULO_RESERVADO in quejas, True)
 
 datos, _, _ = flags_escritos("transfers = 8", boton="Cancelar")
 c("cancelar no devuelve nada", datos, None)
+
+# La tabla del editor es un lienzo y el recuadro rojo se hace una sola vez: los
+# widgets del diálogo no dependen de cuántos flags lleve la pareja ni de cuántas
+# veces se queje, y quejarse no destruye ni rehace nada.
+UNOS_DIEZ = {"transfers": 4, "checksum": True, "fast-list": True, "checkers": 8,
+             "order-by": "size", "tpslimit": 5, "retries": 3, "low-level-retries": 5,
+             "buffer-size": "32M", "stats": "10s"}
+
+
+def contar_flags(propios: dict, textos=()):
+    """Abre el editor con esos flags, escribe cada texto pulsando «Ver el efecto» y cuenta.
+
+    Returns:
+        `(cuentas, conjuntos, recuadros)`: los widgets del diálogo al abrir y tras
+        cada texto, el conjunto de nombres de Tk tras cada texto y, tras cada
+        uno, los recuadros rojos que hay con si están en la rejilla y las
+        etiquetas de cada uno.
+    """
+    cuentas, conjuntos, recuadros = [], [], []
+
+    def descendientes(raiz_):
+        """El widget y todo lo que cuelga de él."""
+        pila, salida = [raiz_], []
+        while pila:
+            w = pila.pop()
+            pila += list(w.winfo_children())
+            salida.append(w)
+        return salida
+
+    def _wait(self, *_a, **_k):
+        """Escribe cada texto en el cuadro de flags, pulsa «Ver el efecto» y mira."""
+        cajas = {int(w.grid_info()["row"]): w for w in descendientes(self)
+                 if isinstance(w, tk.Text)}
+        caja = cajas[min(cajas)]
+        botones = {w.cget("text"): w for w in descendientes(self) if isinstance(w, ttk.Button)}
+        self.update()
+        cuentas.append(len(descendientes(self)))
+        for texto in textos:
+            caja.delete("1.0", "end")
+            caja.insert("1.0", texto)
+            botones["Ver el efecto"].invoke()
+            self.update()
+            todos_ = descendientes(self)
+            cuentas.append(len(todos_))
+            conjuntos.append({str(w) for w in todos_})
+            recuadros.append([(bool(w.winfo_manager()),
+                               [str(e.cget("text")) for e in descendientes(w)
+                                if isinstance(e, ttk.Label) and str(e.cget("text"))])
+                              for w in todos_
+                              if isinstance(w, ttk.Frame)
+                              and str(w.cget("style")) == "NotaRojo.TFrame"])
+        botones["Cancelar"].invoke()
+
+    tk.Toplevel.wait_window = _wait
+    tk_pairs.flags_form(raiz, "Flags", "de prueba", propios, [], mode_name="bisync",
+                        defaults_flags=None)
+    return cuentas, conjuntos, recuadros
+
+
+abiertas = {n: contar_flags(dict(list(UNOS_DIEZ.items())[:n]))[0][0] for n in (0, 3, 10)}
+print(f"  (cuenta) widgets del editor de flags con 0, 3 y 10 flags: {abiertas}")
+c("el editor de flags tiene los mismos widgets con 0, 3 y 10 flags",
+  len(set(abiertas.values())), 1)
+c("  y son 34 o menos, tabla incluida", max(abiertas.values()) <= 34, True)
+cuentas, conjuntos, recuadros = contar_flags(
+    dict(list(UNOS_DIEZ.items())[:3]),
+    ["--transfers 8", 'workdir = "otro"', "transfers = 8", "--transfers 8"])
+print(f"  (cuenta) con el recuadro rojo: {cuentas}")
+c("el recuadro rojo se hace la primera vez que lo escrito no vale",
+  ([len(r) for r in recuadros], cuentas[0] < cuentas[1]), ([1, 1, 1, 1], True))
+c("  y desde entonces no se crea ni se destruye ningún widget, valga o no lo escrito",
+  conjuntos[1] == conjuntos[2] == conjuntos[3] and conjuntos[0] <= conjuntos[1], True)
+c("  con el recuadro, el editor sigue en 34 widgets o menos", max(cuentas) <= 34, True)
+c("  se ve mientras no vale y se quita cuando vale",
+  [r[0][0] for r in recuadros], [True, True, False, True])
+c("  y cambia su título y su motivo, no el recuadro",
+  (flags_editor.TITULO_NO_VALE in recuadros[0][0][1],
+   flags_editor.TITULO_RESERVADO in recuadros[1][0][1],
+   flags_editor.TITULO_RESERVADO in recuadros[1][0][1]
+   and flags_editor.TITULO_NO_VALE not in recuadros[1][0][1],
+   any("no se configura aquí" in t for t in recuadros[1][0][1])),
+  (True, True, True, True))
 
 
 # y el formulario de la pareja recoge lo que diga ese diálogo

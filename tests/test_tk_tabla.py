@@ -15,7 +15,14 @@ sola:
 - que un chip y una etiqueta miden lo que miden en ttk, a varias escalas, y que
   lo que asoma por las esquinas de un chip es el color de su fila: normal,
   elegida, ámbar y roja (el fallo de las esquinas de 0.7.0 no puede volver);
-- los dos temas.
+- los dos temas;
+- `tk.Tabla` (sección 8), la tabla de «Dispositivos» y del editor de flags: esta
+  misma pieza sin cortar nada ni teñir la fila del ratón. Pide y reparte lo que
+  la rejilla de etiquetas de ttk que era (que el test reconstruye), guarda y
+  dice lo mismo que ella (`filas`, `orden`, `leer()`), se elige con el teclado y
+  el clic llamando a `al_elegir()` sin argumentos, dibuja de una vez (nada se
+  recoloca ni queda un `after` tras enseñarla), deja la rueda al `Visor` y abrirla
+  no manda un `<<ThemeChanged>>` ni crea un estilo.
 
 Los ayudantes nuevos de `theme` (`mezcla`, `colores_chip`, `rol_texto`) se prueban
 sin pantalla; el resto se salta sin ella.
@@ -662,6 +669,358 @@ if icons.svg_disponible(raiz):
         icons.USAR_SVG = True
 else:
     print("  (saltado) este Tk no lee SVG: todo lo de arriba ya va con el pintor de Python")
+
+# ---------------------------------------------------------------------------
+# 8. `tk.Tabla`: esta misma pieza para «Dispositivos» y el editor de flags
+# ---------------------------------------------------------------------------
+# `tk.Tabla` era una rejilla de etiquetas y chips de ttk (seis a ocho widgets por
+# fila) y ahora es un lienzo: tiene que pedir y repartir lo mismo que aquella
+# rejilla, sin cortar nada con «…» y sin teñir la fila de debajo del ratón.
+from common import fleet  # noqa: E402
+from ui import flags_editor, segundo_plano, tk_fleet, tk_pairs  # noqa: E402
+
+
+def dispositivo(id_: str, nombre: str, resultado: str = "ok", equipos=(),
+                visto: str = "2099-01-02 10:00:00") -> fleet.Dispositivo:
+    """Un dispositivo de la flota con lo justo para su fila."""
+    return fleet.Dispositivo(id=id_, nombre=nombre, version="0.7.1", plataformas=("linux-x64",),
+                             last_seen=visto, last_result=resultado, equipos=tuple(equipos))
+
+
+FLOTA_T = [dispositivo("yo", "este"),
+           dispositivo("otro", "el del trabajo",
+                       equipos=[fleet.Equipo("OFICINA-07", "2099-01-02 10:00:00")]),
+           dispositivo("roto", "uno con un nombre bastante largo para su columna",
+                       "fallo en documentos, fotos, música y otras tantas carpetas"),
+           dispositivo("viejo", "el de hace años", visto="2020-01-01 08:00:00")]
+COLUMNAS_FLOTA = [(titulo, ancho, clave in ("nombre", "estado"))
+                  for clave, titulo, ancho in tk_fleet.COLUMNAS]
+FILAS_FLOTA = [tk_fleet.fila(d, "yo") for d in FLOTA_T]
+COLUMNAS_FLAGS = [("Flag", 260, True), ("Sale de", 120, False)]
+
+
+def filas_de_flags(propios: dict, extra=()) -> list[FilaTabla]:
+    """Las filas del editor de flags para esos flags de la pareja y esos argumentos extra."""
+    filas = []
+    for i, fila_ in enumerate(flags_editor.effective("bisync", None, propios)):
+        propio = fila_.origen == "esta pareja"
+        filas.append(FilaTabla(str(i), (
+            CeldaTexto(fila_.flag, "Mono."),
+            CeldaChip(fila_.origen, "Acento." if propio else "", "edit" if propio else None)),
+            "propio" if propio else ""))
+    for j, arg in enumerate(extra):
+        filas.append(FilaTabla(f"extra{j}", (CeldaTexto(arg, "Mono."), CeldaChip("extra"))))
+    return filas
+
+
+FILAS_FLAGS = filas_de_flags({"transfers": 8, "checksum": True}, ["--bwlimit", "8M"])
+
+
+def rejilla_antigua(padre, columnas, filas, alto_fila: int = 36, vacio: str = ""):
+    """La rejilla de etiquetas y chips de ttk que era `tk.Tabla` (sus medidas, no sus colores).
+
+    Es la vara de la tabla de un lienzo: una tarjeta con la cabecera en rótulos,
+    una raya entre fila y fila y cada celda una etiqueta, un chip o un icono en
+    una rejilla, con los huecos de entonces.
+    """
+    n = len(columnas)
+
+    def lados(col):
+        return (theme.E3 if col == 0 else theme.E2, theme.E3 if col == n - 1 else 0)
+
+    marco_ = ttk.Frame(padre, style="Card.TFrame", padding=icons.px(padre, 1))
+    for col, (_titulo, ancho, estira) in enumerate(columnas):
+        marco_.columnconfigure(col, minsize=icons.px(padre, ancho), weight=1 if estira else 0)
+    for col, (titulo, _ancho, _estira) in enumerate(columnas):
+        ttk.Label(marco_, text=theme.rotulo(titulo) if titulo else "",
+                  style="Rotulo.TLabel").grid(row=0, column=col, sticky="w", padx=lados(col),
+                                              pady=theme.E1)
+    marco_.rowconfigure(0, minsize=icons.px(marco_, 28))
+    ttk.Separator(marco_, style="Card.TSeparator").grid(row=1, column=0, columnspan=n,
+                                                        sticky="ew")
+    fila_tk = 2
+    for i, fila_ in enumerate(filas):
+        if i:
+            uitk.separador_fila(marco_, fila_tk, n)
+            fila_tk += 1
+        sup = tk_tabla.SUPERFICIE_FILA.get(fila_.tono, "Card.")
+        for col, celda in enumerate(fila_.celdas):
+            if isinstance(celda, CeldaChip):
+                widget = theme.chip(marco_, celda.texto, celda.tipo, celda.icono)
+            elif isinstance(celda, CeldaIcono):
+                widget = ttk.Label(marco_, style=f"{sup}TLabel")
+                img = icons.get(marco_, celda.nombre, 16, theme.OK, theme.fondo_de(sup))
+                if img is not None:
+                    widget.configure(image=img)
+                    widget.image = img
+            else:
+                celda = celda if isinstance(celda, CeldaTexto) else CeldaTexto(str(celda))
+                rol = celda.rol
+                if fila_.tono == "apagado":
+                    rol = "MonoPista." if rol.startswith("Mono") else "Pista."
+                widget = ttk.Label(marco_, text=celda.texto, style=f"{sup}{rol}TLabel")
+            widget.grid(row=fila_tk, column=col, sticky="w", padx=lados(col),
+                        pady=theme.E2 if alto_fila >= 36 else theme.E1)
+        marco_.rowconfigure(fila_tk, minsize=icons.px(marco_, alto_fila))
+        fila_tk += 1
+    if not filas and vacio:
+        ttk.Label(marco_, text=vacio, style="Card.Pista.TLabel").grid(
+            row=2, column=0, columnspan=n, pady=theme.E3)
+    return marco_
+
+
+def reparto(rejilla, tabla_) -> tuple:
+    """Lo que pide y cómo reparte cada una: `(pedido, columnas, cabecera, filas)` de las dos.
+
+    De la rejilla de ttk sale de su `grid_bbox`; de la tabla de un lienzo, de lo
+    que ella misma calculó para dibujar.
+    """
+    n = len(tabla_.cabeceras)
+    lienzo = tabla_._lienzo
+    vieja = ((rejilla.winfo_reqwidth(), rejilla.winfo_reqheight()),
+             [rejilla.grid_bbox(c, 0)[2] for c in range(n)], rejilla.grid_bbox(0, 0)[3],
+             [rejilla.grid_bbox(0, 2 + 2 * k)[3] for k in range(len(lienzo.orden))])
+    nueva = ((tabla_.marco.winfo_reqwidth(), tabla_.marco.winfo_reqheight()),
+             [lienzo._anchos[c] + sum(lienzo._lados(c)) for c in range(n)],
+             lienzo._alto_cabecera,
+             [lienzo.caja(i)[3] - lienzo.caja(i)[1] for i in lienzo.orden])
+    return vieja, nueva
+
+
+CASOS = (("«Dispositivos»", COLUMNAS_FLOTA, FILAS_FLOTA, 36, ""),
+         ("el editor de flags", COLUMNAS_FLAGS, FILAS_FLAGS, 30, ""),
+         ("el editor de flags sin filas", COLUMNAS_FLAGS, [], 30,
+          "Cuando lo escrito valga, aquí se verá el efecto."),
+         ("«Dispositivos» sin filas", COLUMNAS_FLOTA, [], 36, ""))
+for escala in (1.3333, 2.0, 2.6667):
+    r5 = tk.Tk()
+    anotar_errores(r5)
+    r5.withdraw()
+    r5.tk.call("tk", "scaling", escala)
+    theme.apply(r5)
+    p = f"al {round(escala / 1.3333 * 100)} %: "
+    for nombre_caso, columnas_, filas_, alto, vacio_ in CASOS:
+        dlg, marco_ = ventana(r5, 1400)
+        vieja = rejilla_antigua(marco_, columnas_, filas_, alto, vacio_)
+        vieja.grid(row=1, column=0, sticky="ew")
+        nueva = uitk.Tabla(marco_, columnas_, vacio=vacio_, alto_fila=alto)
+        nueva.grid(row=2, column=0, sticky="ew")
+        nueva.poner(filas_)
+        marco_.update_idletasks()
+        v, n_ = reparto(vieja, nueva)
+        c(p + nombre_caso + ": pide lo que pedía la rejilla de etiquetas (ancho y alto)",
+          n_[0], v[0])
+        enseñar(r5, dlg)
+        v, n_ = reparto(vieja, nueva)
+        c(p + "  y enseñada, cada columna, la cabecera y cada fila miden lo mismo",
+          n_[1:], v[1:])
+        c(p + "  y ocupa el ancho que le da la pantalla",
+          (nueva.marco.winfo_width(), vieja.winfo_width()),
+          (marco_.relleno.winfo_width(),) * 2)
+        dlg.destroy()
+    theme.olvidar(r5.tk)
+    icons.olvidar(r5.tk)
+    r5.destroy()
+
+# Sin ninguna fila todavía (la flota aún se lee), la tabla ya pide lo que su cabecera
+for nombre_caso, columnas_, alto in (("«Dispositivos»", COLUMNAS_FLOTA, 36),
+                                     ("el editor de flags", COLUMNAS_FLAGS, 30)):
+    dlg, marco_ = ventana(raiz, 1400)
+    vieja = rejilla_antigua(marco_, columnas_, [], alto)
+    vieja.grid(row=1, column=0, sticky="ew")
+    nueva = uitk.Tabla(marco_, columnas_, alto_fila=alto)
+    nueva.grid(row=2, column=0, sticky="ew")
+    marco_.update_idletasks()
+    c(nombre_caso + ": antes de ponerle ninguna fila, pide lo que la rejilla de etiquetas "
+      "vacía (su cabecera)",
+      (nueva.marco.winfo_reqwidth(), nueva.marco.winfo_reqheight()),
+      (vieja.winfo_reqwidth(), vieja.winfo_reqheight()))
+    dlg.destroy()
+
+# Qué guarda y qué dice, con celdas de las tres clases y un texto suelto
+HECHAS = [FilaTabla("a", (CeldaIcono("ok", "✓"), CeldaTexto("alfa", "Fuerte."),
+                          CeldaChip("bien", "Ok.", "ok"), "suelto")),
+          FilaTabla("b", ("", CeldaTexto("beta", "Mono."), CeldaChip("falla", "Aviso.", "warn"),
+                          CeldaTexto("x", "Pista.")), "aviso")]
+COLS_HECHAS = [("Este", 44, False), ("Nombre", 100, True), ("Estado", 0, False),
+               ("Otro", 0, False)]
+dlg, marco = ventana(raiz, 700)
+llamadas: list[tuple] = []
+t8 = uitk.Tabla(marco, COLS_HECHAS, al_elegir=lambda *a: llamadas.append(a))
+t8.grid(row=1, column=0, sticky="ew")
+c("sin filas, sin nada elegido ni dibujado", (t8.filas, t8.orden, t8.elegida, t8.leer()),
+  ({}, [], None, []))
+c("`marco` es el lienzo y no tiene ningún widget dentro",
+  (t8.marco.winfo_class(), t8.marco.winfo_children()), ("Canvas", []))
+c("`grid()` devuelve la tabla", t8.grid(row=1, column=0, sticky="ew") is t8, True)
+c("las cabeceras y el número de columnas son los que se dieron",
+  (t8.cabeceras, t8.n), (["Este", "Nombre", "Estado", "Otro"], 4))
+t8.poner(HECHAS)
+c("filas: el texto de cada celda, y de un icono lo que dice",
+  t8.filas, {"a": ["✓", "alfa", "bien", "suelto"], "b": ["", "beta", "falla", "x"]})
+c("  orden en el que se dieron", t8.orden, ["a", "b"])
+c("  y leer() es lo dibujado, en ese orden",
+  t8.leer(), [("✓", "alfa", "bien", "suelto"), ("", "beta", "falla", "x")])
+enseñar(raiz, dlg)
+c("  enseñada es lo mismo", t8.leer(), [tuple(t8.filas[i]) for i in t8.orden])
+
+# Las dos tablas de verdad: lo dibujado es lo de las celdas, sin cortar nada
+for nombre_caso, columnas_, filas_ in (("«Dispositivos»", COLUMNAS_FLOTA, FILAS_FLOTA),
+                                        ("el editor de flags", COLUMNAS_FLAGS, FILAS_FLAGS)):
+    dlg2, marco2 = ventana(raiz, 300)         # estrecha: no hay sitio para todo
+    t9 = uitk.Tabla(marco2, columnas_, alto_fila=36)
+    t9.grid(row=1, column=0, sticky="ew")
+    t9.poner(filas_)
+    enseñar(raiz, dlg2)
+    c(nombre_caso + ": filas, orden y cabeceras", (list(t9.filas), t9.orden, t9.cabeceras),
+      ([f.iid for f in filas_], [f.iid for f in filas_], [x[0] for x in columnas_]))
+    c("  lo dibujado es el texto de las celdas, sin nada cortado con «…»",
+      (t9.leer(), any("…" in x for fila_ in t9.leer() for x in fila_)),
+      ([tuple(t9.filas[i]) for i in t9.orden], False))
+    c("  y la tabla pide lo que ocupa el texto entero, aunque la pantalla sea más estrecha",
+      t9.marco.winfo_reqwidth() > marco2.relleno.winfo_width(), True)
+    dlg2.destroy()
+
+# poner() de lo mismo no toca nada; un chip que cambia (y no ensancha su columna) solo toca su fila
+dlg.update()
+antes = estado_elementos(t8)
+elementos_a = set(t8._lienzo.elementos("a"))
+todo_antes = sorted(t8.marco.find_all())
+cambio = t8.poner(list(HECHAS))
+c("poner() de las mismas filas deja los elementos del lienzo como estaban",
+  (sorted(t8.marco.find_all()), estado_elementos(t8)), (todo_antes, antes))
+c("  y dice que la tabla no pide otro tamaño", cambio, False)
+otra = HECHAS[0]._replace(celdas=HECHAS[0].celdas[:2] + (CeldaChip("bien", "Peligro.", "warn"),
+                                                          "suelto"))
+t8.poner([otra, HECHAS[1]])
+despues = estado_elementos(t8)
+tocados = {i for i in set(antes) | set(despues) if antes.get(i) != despues.get(i)}
+c("un chip que cambia solo cambia elementos de su fila",
+  [i for i in tocados if i in despues and i not in t8._lienzo.elementos("a")], [])
+c("  y la otra fila sigue con los mismos elementos",
+  all(antes[i] == despues[i] for i in t8._lienzo.elementos("b")), True)
+c("  y esa fila se ha dibujado de nuevo, con otros elementos",
+  set(t8._lienzo.elementos("a")).isdisjoint(elementos_a), True)
+t8.poner(HECHAS)
+
+# Elegir con el teclado y con el clic: al_elegir() se llama sin argumentos
+cv8 = t8.marco
+cv8.focus_force()
+dlg.update()
+llamadas.clear()
+for nombre_tecla in ("Down", "Down", "Up"):
+    cv8.event_generate(f"<{nombre_tecla}>")
+    dlg.update()
+c("↓ y ↑ mueven la fila elegida y cada cambio llama a al_elegir() una vez, sin argumentos",
+  (t8.elegida, llamadas), ("a", [(), (), ()]))
+llamadas.clear()
+y_b = t8._lienzo.caja("b")
+cv8.event_generate("<Button-1>", x=20, y=(y_b[1] + y_b[3]) // 2)
+dlg.update()
+c("un clic a la altura de una fila la elige y avisa una vez", (t8.elegida, llamadas),
+  ("b", [()]))
+c("  elegir(iid, avisar=False) no avisa", (t8.elegir("a", avisar=False), t8.elegida, llamadas),
+  (True, "a", [()]))
+c("  y elegir() de un iid que no hay deja la tabla sin elegida", (t8.elegir("no hay"),
+                                                                 t8.elegida), (True, None))
+c("no tiñe la fila del ratón: no mira el ratón", cv8.bind("<Motion>"), "")
+fondo_a = [i for i in t8._lienzo.elementos("a") if "fondo" in cv8.gettags(i)][0]
+antes_color = cv8.itemcget(fondo_a, "fill")
+cv8.event_generate("<Motion>", x=10, y=(t8._lienzo.caja("a")[1] + t8._lienzo.caja("a")[3]) // 2)
+c("  y el fondo no cambia con él encima", cv8.itemcget(fondo_a, "fill"), antes_color)
+dlg.destroy()
+
+dlg, marco = ventana(raiz, 700)
+sola8 = uitk.Tabla(marco, COLS_HECHAS)
+sola8.grid(row=1, column=0, sticky="ew")
+sola8.poner(HECHAS)
+dlg.update()
+c("sin al_elegir no toma el foco con Tab", str(sola8.marco.cget("takefocus")), "0")
+caja = sola8._lienzo.caja("b")
+sola8.marco.event_generate("<Button-1>", x=20, y=(caja[1] + caja[3]) // 2)
+sola8.marco.event_generate("<Down>")
+c("  ni un clic ni una flecha eligen nada", sola8.elegida, None)
+dlg.destroy()
+
+# El primer dibujo es el de la pantalla enseñada: nada se recoloca después
+dlg, marco = ventana(raiz, 900)
+tras_antes = set(raiz.tk.splitlist(raiz.tk.call("after", "info")))
+t10 = uitk.Tabla(marco, COLUMNAS_FLOTA, al_elegir=lambda: None)
+t10.grid(row=1, column=0, sticky="ew")
+t10.poner(FILAS_FLOTA)
+t10.elegir(FILAS_FLOTA[0].iid, avisar=False)
+dlg.update_idletasks()
+c("antes de enseñarla ya está dibujada", len(t10.leer()), len(FILAS_FLOTA))
+c("la tabla no deja ningún `after` pendiente, ni al ponerla ni tras el primer update_idletasks()",
+  set(raiz.tk.splitlist(raiz.tk.call("after", "info"))) - tras_antes, set())
+enseñar(raiz, dlg)
+primero = estado_elementos(t10)
+dlg.update()
+dlg.update()
+c("enseñada, una pasada más del bucle de eventos no mueve ni cambia un solo elemento",
+  estado_elementos(t10), primero)
+c("  ni deja un `after` pendiente",
+  set(raiz.tk.splitlist(raiz.tk.call("after", "info"))) - tras_antes, set())
+dlg.destroy()
+
+# La rueda sobre la tabla es del Visor, como en «Parejas»
+PANTALLA = uitk.pantalla_util
+uitk.pantalla_util = lambda _w: (1200, 420)
+try:
+    dlg = uitk.modal(raiz, "Rueda")
+    cuerpo = uitk.cuerpo_visible(dlg)
+    cuerpo.columnconfigure(0, weight=1)
+    larga8 = uitk.Tabla(cuerpo, COLUMNAS_FLAGS, alto_fila=30)
+    larga8.grid(row=0, column=0, sticky="ew")
+    larga8.poner([FilaTabla(str(i), (CeldaTexto(f"--flag-{i}", "Mono."), CeldaChip("modo bisync")))
+                  for i in range(60)])
+    enseñar(raiz, dlg)
+    dlg.visor.encajar(dlg)
+    dlg.update()
+    dlg.visor.lienzo.event_generate("<Enter>")
+    c("con 60 filas la pantalla no cabe y el Visor se desplaza",
+      dlg.visor.vertical.winfo_ismapped(), 1)
+    larga8.marco.event_generate("<MouseWheel>", delta=-120)
+    dlg.update()
+    c("la rueda sobre la tabla desplaza la pantalla", dlg.visor.desplazado()[1] > 0, True)
+    dlg.destroy()
+finally:
+    uitk.pantalla_util = PANTALLA
+
+# Abrir «Dispositivos» y el editor de flags con el programa abierto: ni un
+# <<ThemeChanged>> ni un estilo nuevo
+LEIDAS = (fleet.leer, fleet.device_id, fleet.equipo_actual, segundo_plano.lanzar,
+          tk_fleet.mostrar, tk_pairs.mostrar)
+cambios_tema: list = []
+
+
+def solo_enseñar(dlg_, parent=None) -> None:
+    """Sustituye a `mostrar()`: enseña la ventana, la deja pintar y la cierra."""
+    dlg_.deiconify()
+    dlg_.update()
+    dlg_.update()
+    dlg_.destroy()
+
+
+try:
+    fleet.leer = lambda raw=None: (list(FLOTA_T), None)
+    fleet.device_id = lambda app_dir=None: "yo"
+    fleet.equipo_actual = lambda: "PORTATIL"
+    segundo_plano.lanzar = segundo_plano.en_el_acto
+    tk_fleet.mostrar = tk_pairs.mostrar = solo_enseñar
+    estilos_antes = sorted(raiz.tk.splitlist(raiz.tk.call("ttk::style", "theme", "styles")))
+    raiz.bind_all("<<ThemeChanged>>", lambda e: cambios_tema.append(str(e.widget)), add="+")
+    tk_fleet.open_dialog(raiz, None, {"defaults": {"remote": "nas"}, "pair": []})
+    tk_pairs.flags_form(raiz, "Flags", "de prueba", {"transfers": 8}, [], mode_name="bisync",
+                        defaults_flags=None)
+    raiz.unbind_all("<<ThemeChanged>>")
+finally:
+    (fleet.leer, fleet.device_id, fleet.equipo_actual, segundo_plano.lanzar,
+     tk_fleet.mostrar, tk_pairs.mostrar) = LEIDAS
+c("abrir «Dispositivos» y el editor de flags no manda ningún <<ThemeChanged>>",
+  cambios_tema, [])
+c("  ni crea ni toca un estilo de ttk",
+  sorted(raiz.tk.splitlist(raiz.tk.call("ttk::style", "theme", "styles"))), estilos_antes)
 
 c("nada ha reventado", errores, [])
 sys.exit(c.report())

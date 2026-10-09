@@ -267,8 +267,12 @@ c("  el de los temas y los estilos tardíos, 0 (su meta)",
   {k: (0, 0) for k in CUENTAS_FLOTA if k.startswith(("tema", "estilos"))})
 c("  y la meta de los widgets, la del diseño (35 «Dispositivos», 34 el editor de flags)",
   (real["meta"]["widgets.dispositivos"], real["meta"]["widgets.flags"]), (35, 34))
-c("  con el techo por encima de la meta (se baja con la tarea que lo consigue)",
-  [k for k in ("widgets.dispositivos", "widgets.flags") if techo_linux[k] < real["meta"][k]], [])
+# El techo solo baja: parte de lo medido al empezar la etapa 3 (134 y 69) y lo rebaja la tarea que
+# consigue la rebaja, por debajo de la meta si la supera (el editor de flags, 26 de 34, con la tabla
+# en un lienzo); mientras la meta no se alcanza («Dispositivos», 35), sigue por encima de ella.
+c("  y su techo solo ha bajado desde lo que se medía al empezar la etapa 3, sin quedarse en cero",
+  [k for k, inicial in (("widgets.dispositivos", 134), ("widgets.flags", 69))
+   if not 0 < techo_linux[k] <= inicial], [])
 c("elegir otro dispositivo tiene la meta de elegir otra fila (16 ms)",
   real["meta_ms"].get("elegir-dispositivo"), 16)
 c("  y los demás momentos de la etapa 3 se informan sin meta de tiempo (el diseño no la tiene)",
