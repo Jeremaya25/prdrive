@@ -31,7 +31,10 @@ from __future__ import annotations
 
 import re
 import sys
+import time
 from pathlib import Path
+
+from . import perf_activo, perf_marca
 
 _densidad_declarada = False
 """Si ya se declaró la densidad de pantalla en este proceso."""
@@ -1620,7 +1623,32 @@ def relleno_control(widget, alto: int, rol: str = "texto", lados: int = 16):
     return (medida(lados), vertical)
 
 
+_apply_medido = False
+"""Si la primera llamada de `apply()` de este proceso ya se ha medido (`PRDRIVE_PERF`)."""
+
+
 def apply(widget) -> None:
+    """Pinta el tema en el intérprete de Tk al que pertenece `widget`.
+
+    Con `PRDRIVE_PERF`, la primera llamada del proceso anota su duración como
+    `apply-<quien>` (`ui.perf_quien`); las siguientes no se miden.
+    """
+    global _apply_medido
+    if _apply_medido or not perf_activo():
+        _pintar_tema(widget)
+        return
+    _apply_medido = True
+    from . import perf_quien
+    t0 = time.perf_counter()
+    try:
+        _pintar_tema(widget)
+    finally:
+        # Las ventanas de host (asistente, pregunta del agente) anotan en el diario del equipo.
+        perf_marca("apply-" + perf_quien, (time.perf_counter() - t0) * 1000,
+                   host=perf_quien != "main")
+
+
+def _pintar_tema(widget) -> None:
     """Pinta el tema en el intérprete de Tk al que pertenece `widget`.
 
     Se hace una sola vez por intérprete (los estilos son globales dentro de

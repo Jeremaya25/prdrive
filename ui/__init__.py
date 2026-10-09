@@ -23,6 +23,8 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Mapping, NamedTuple, Protocol
@@ -441,3 +443,253 @@ def fatal(msg: str) -> int:
         except Exception:
             pass
     return 1
+
+
+perf_quien = "main"
+"""Quién mide el `apply-*` de este proceso: `main`, `wizard` o `agente`.
+
+Lo fijan el asistente y la pregunta del agente antes de su primer `apply()`.
+"""
+
+_INICIOS: dict[str, float] = {}
+"""Cuándo empezó cada momento medido, por nombre (`perf_empezar()`)."""
+
+_PERF_COLA: list[tuple[bool, str]] = []
+"""Las líneas que esperan a escribirse, como `(host, línea)`."""
+
+_PERF_CUENTA: dict[str, int] = {}
+"""Cuántas veces ha marcado este proceso cada momento (el `vez=`)."""
+
+_PERF_LOCK = threading.Lock()
+"""Protege la cola y el contador: lo tocan el hilo de Tk y el volcado."""
+
+_PERF_VOLCADO = threading.Lock()
+"""Un solo volcado a la vez, y las rutas se resuelven dentro de él."""
+
+_PERF_HILO: threading.Thread | None = None
+"""El hilo que vuelca la cola cada segundo; nace con la primera marca."""
+
+
+def perf_activo() -> bool:
+    """Dice si se apuntan los tiempos de las ventanas (`PRDRIVE_PERF`).
+
+    Se lee en cada llamada, como `theme.elegir_tema()`. Vacía, `0` o sin definir
+    es apagada: entonces cada `perf_*` sale enseguida, sin fichero ni hilo.
+    """
+    return os.environ.get("PRDRIVE_PERF", "") not in ("", "0")
+
+
+def perf_empezar(momento: str) -> None:
+    """Anota ahora como inicio de `momento`, para que `perf_al_pintar()` lo cierre.
+
+    Args:
+        momento: El nombre del momento, como sale en `perf.log`.
+    """
+    if perf_activo():
+        _INICIOS[momento] = time.perf_counter()
+
+
+def perf_al_pintar(widget, momento: str, t0: float | None = None, *,
+                   host: bool = False, **detalle) -> None:
+    """Cierra un momento cuando la ventana acaba de pintarse y anota cuánto ha tardado.
+
+    La callback va en `after_idle` de la raíz de Tk (la que sobrevive a los
+    diálogos). Antes de medir hace `update()`: así el final cae donde acaba la
+    medida del chequeo de tiempos, después de los redibujados que provoca el
+    cambio. Sin ese `update()` un cambio que mueve 400 widgets se medía en 1 ms,
+    y en realidad tarda 47.
+
+    Args:
+        widget: Cualquier widget de la ventana; de él se saca la raíz.
+        momento: El nombre del momento. Si no se da `t0`, se usa el de `perf_empezar()`.
+        t0: El instante de inicio (`time.perf_counter()`); `None` para usar el de `perf_empezar()`.
+        host: Si la marca va al diario del equipo y no al del dispositivo.
+        **detalle: Datos extra de la línea: números o palabras fijas, nunca nombres ni rutas.
+
+    No hace nada si la medida está apagada o si no hay inicio que cerrar. Un fallo
+    de Tk no llega a quien pinta.
+    """
+    if not perf_activo():
+        return
+    if t0 is None:
+        t0 = _INICIOS.pop(momento, None)
+    if t0 is None:
+        return
+    try:
+        raiz = widget.nametowidget(".")
+
+        def al_pintar() -> None:
+            """Drena lo que el cambio dejó pendiente y anota la duración."""
+            try:
+                raiz.update()
+                perf_marca(momento, (time.perf_counter() - t0) * 1000, host=host, **detalle)
+            except Exception:                        # noqa: BLE001 — la medida no tumba la ventana
+                pass
+
+        raiz.after_idle(al_pintar)
+    except Exception:                                # noqa: BLE001 — la ventana ya no existe
+        pass
+
+
+def perf_marca(momento: str, ms: float | None, *, host: bool = False, **detalle) -> None:
+    """Anota una duración en el diario de tiempos, sin escribirla todavía.
+
+    Cada línea es `<fecha> <momento> <ms> ms vez=<N> <dato=valor …>`, donde `vez`
+    cuenta las veces que este proceso ha marcado ese momento, desde 1. La línea
+    queda en memoria: la escribe `perf_volcar()`, que el hilo llama cada segundo,
+    así que nunca toca el disco en el hilo de Tk.
+
+    Args:
+        momento: El nombre del momento (`start-main`, `open-parejas`…).
+        ms: La duración en milisegundos; `None` no anota nada.
+        host: Si va a `equipo/perf.log` (el agente o el asistente) y no a `logs/perf.log`.
+        **detalle: Datos de la línea: números o palabras fijas.
+    """
+    if ms is None or not perf_activo():
+        return
+    with _PERF_LOCK:
+        vez = _PERF_CUENTA[momento] = _PERF_CUENTA.get(momento, 0) + 1
+        datos = "".join(f" {k}={v}" for k, v in detalle.items())
+        _PERF_COLA.append((host, f"{store.stamp()} {momento} {ms:.1f} ms vez={vez}{datos}\n"))
+    _arrancar_hilo_perf()
+
+
+def _arrancar_hilo_perf() -> None:
+    """Arranca, una sola vez por proceso, el hilo que vuelca la cola cada segundo.
+
+    También registra el volcado final al salir del proceso.
+    """
+    global _PERF_HILO
+    if _PERF_HILO is not None:
+        return
+    with _PERF_LOCK:
+        if _PERF_HILO is not None:
+            return
+
+        def bucle() -> None:
+            """Vuelca cada segundo; un fallo no para el hilo."""
+            while True:
+                time.sleep(1.0)
+                try:
+                    perf_volcar()
+                except Exception:                    # noqa: BLE001
+                    pass
+
+        import atexit
+        _PERF_HILO = threading.Thread(target=bucle, daemon=True, name="perf-marcas")
+        _PERF_HILO.start()
+        atexit.register(_volcar_al_salir)
+
+
+def _volcar_al_salir() -> None:
+    """Vuelca lo pendiente al cerrar el proceso, sin lanzar nada.
+
+    `atexit` imprimiría cualquier excepción como traceback; el diario no es vital.
+    """
+    try:
+        perf_volcar()
+    except Exception:                                # noqa: BLE001
+        pass
+
+
+def perf_volcar() -> None:
+    """Escribe ya las marcas pendientes en sus diarios.
+
+    Lo llaman el hilo cada segundo, el cierre del proceso y los tests. Cada lote
+    recorta antes el diario si ha pasado de `store.DIARIO_TOPE`. Un fallo de
+    escritura (solo lectura, disco lleno o extraído) se calla: el diario no es vital,
+    y un lote que no puede resolver su ruta no hace perder los demás.
+    """
+    with _PERF_VOLCADO:
+        with _PERF_LOCK:
+            pendientes = _PERF_COLA[:]
+            _PERF_COLA.clear()
+        lotes: dict[bool, list[str]] = {}
+        for host, linea in pendientes:
+            lotes.setdefault(host, []).append(linea)
+        for host, lineas in lotes.items():
+            try:
+                _escribir_perf(_ruta_perf(host), lineas)
+            except Exception:                        # noqa: BLE001 — un lote fallido no para los demás
+                pass
+
+
+def _ruta_perf(host: bool) -> Path:
+    """Devuelve el diario de tiempos del dispositivo o del equipo, tal como está ahora."""
+    from common import model
+
+    if host:
+        from common import equipo
+        return equipo.DIR / "perf.log"
+    return model.LOG_DIR / "perf.log"
+
+
+def _escribir_perf(ruta: Path, lineas: list[str]) -> None:
+    """Añade un lote a un diario de tiempos, creando su carpeta si hace falta."""
+    try:
+        ruta.parent.mkdir(parents=True, exist_ok=True)
+        store.recortar_diario(ruta)
+        with open(ruta, "a", encoding="utf-8", errors="replace") as f:
+            f.writelines(lineas)
+    except (OSError, ValueError):
+        pass
+
+
+def perf_desde_inicio() -> float | None:
+    """Devuelve cuántos milisegundos lleva vivo este proceso, o `None` si no se sabe.
+
+    Es el inicio de los momentos `start-*`, medido desde que el sistema creó el
+    proceso y no desde que empieza `ui`: el mismo punto de partida que el
+    cronómetro del chequeo de tiempos, que arranca antes de lanzar el proceso.
+
+    Windows: `GetProcessTimes`, la hora de creación contra la de ahora. Linux: el
+    campo 22 de `/proc/self/stat` (el inicio, en ticks) contra `/proc/uptime`,
+    los dos desde el arranque del sistema, así que no hace falta pasar a la hora
+    de pared. `btime` de `/proc/stat` solo tiene segundos y se desfasaría hasta
+    uno. Otros sistemas: `None`.
+    """
+    try:
+        if os.name == "nt":
+            return _edad_windows()
+        if sys.platform.startswith("linux"):
+            return _edad_linux()
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
+def _edad_windows() -> float:
+    """Milisegundos desde la creación del proceso, con `GetProcessTimes` de kernel32.
+
+    Pendiente en real (Windows): en Linux no hay manera de probar la llamada.
+    Los tipos siguen a `common/model.py`: el HANDLE va como `c_void_p`, así que el
+    pseudo-handle `-1` de `GetCurrentProcess` no pasa por un `c_int`.
+    """
+    import ctypes
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.GetCurrentProcess.argtypes = []
+    k32.GetCurrentProcess.restype = ctypes.c_void_p
+    k32.GetProcessTimes.argtypes = [ctypes.c_void_p] + [ctypes.POINTER(ctypes.c_uint64)] * 4
+    k32.GetProcessTimes.restype = ctypes.c_int
+    creacion, salida, nucleo, usuario = (ctypes.c_uint64() for _ in range(4))
+    if not k32.GetProcessTimes(k32.GetCurrentProcess(), ctypes.byref(creacion),
+                               ctypes.byref(salida), ctypes.byref(nucleo),
+                               ctypes.byref(usuario)):
+        raise OSError("GetProcessTimes")
+    # FILETIME: unidades de 100 ns desde 1601-01-01; hasta la época Unix hay 11644473600 s.
+    inicio = creacion.value / 1e7 - 11644473600
+    return (time.time() - inicio) * 1000
+
+
+def _edad_linux() -> float:
+    """Milisegundos desde la creación del proceso, con `/proc/self/stat` y `/proc/uptime`."""
+    with open("/proc/self/stat", encoding="ascii") as f:
+        datos = f.read()
+    # El nombre del comando (campo 2) va entre paréntesis y puede llevar espacios:
+    # se cuenta desde el último paréntesis, y el primer campo que queda es el 3.
+    campos = datos[datos.rindex(")") + 2:].split()
+    inicio_ticks = int(campos[22 - 3])               # campo 22: starttime
+    with open("/proc/uptime", encoding="ascii") as f:
+        ahora = float(f.read().split()[0])
+    return (ahora - inicio_ticks / os.sysconf("SC_CLK_TCK")) * 1000

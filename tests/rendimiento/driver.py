@@ -1332,6 +1332,13 @@ for _espera in (ESTADO["catalogo"], ESTADO["flota"]):
     if _espera is not None:
         _espera.set()
 utiles.escribir("_notes", 0, NOTES)
+if os.environ.get("PRDRIVE_PERF"):
+    # `os._exit` no llama a `atexit`: lo que quede en la cola de marcas (`ui.perf_volcar`) se escribe aquí.
+    try:
+        import ui
+        ui.perf_volcar()
+    except Exception:                                    # noqa: BLE001 — la medida no tumba el driver
+        pass
 sys.stdout.flush()
 sys.stderr.flush()
 os._exit(0)   # sin esperar a hilos de la aplicación que quedaran vivos

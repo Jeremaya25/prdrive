@@ -31,7 +31,7 @@ from common import APP_NAME, model, progress, store
 from common.model import Config
 
 from . import (Choice, abrir, avisos_de_resync, cifrado, cuando_sello, icons, manual_args,
-               pair_status_notes, pair_times, prefs, theme)
+               pair_status_notes, pair_times, perf_al_pintar, prefs, theme)
 
 TITLE = APP_NAME
 """El nombre de la ventana, que sale de `common/`."""
@@ -613,6 +613,10 @@ def mostrar(dlg, parent=None) -> None:
         dlg.grab_set()
     except tk.TclError:
         pass
+    # Con PRDRIVE_PERF, el momento que declaró quien abrió el diálogo acaba aquí, en su pintado.
+    momento = getattr(dlg, "perf_momento", None)
+    if momento:
+        perf_al_pintar(dlg, momento)
     dlg.wait_window()
 
 

@@ -2,7 +2,7 @@
 """Mide la interfaz de dos árboles de código en el mismo trabajo y compara (CI: `rendimiento.yml`).
 
     python tests/rendimiento/correr.py --pr DIR --base DIR --trabajo DIR
-        [--python PY] [--rondas 7] [--salida DIR] [--capturas]
+        [--python PY] [--rondas 7] [--salida DIR] [--capturas] [--env CLAVE=VALOR]...
 
 `--pr` es el árbol que se prueba y `--base` el de la rama a la que irá (otro
 `checkout` en otra carpeta). Los dos se miden con el MISMO Python (el runtime
@@ -27,6 +27,12 @@ líneas), `resumen.md`, `resumen.json` y `registro.log`; con `--capturas`, un PN
 por pantalla del PR, que prueban que la máquina pinta de verdad. El resumen se
 añade a `$GITHUB_STEP_SUMMARY`. Sale con 1 si el PR falla (`informe.py`), con 2
 si no se pudo medir.
+
+`--env CLAVE=VALOR` (repetible) se añade al entorno de cada proceso que mide o
+sondea, como `--env PRDRIVE_PERF=1`. Con `PRDRIVE_PERF` encendido, cada pasada deja
+en `--salida` el diario de tiempos del dispositivo (`perf-<árbol>-<flujo>-<pares>-<ronda>.log`,
+con `-150` si va al 150 %) y el del equipo (el mismo nombre con `-equipo`): la
+ronda −1 es el calentamiento.
 """
 from __future__ import annotations
 
@@ -85,6 +91,8 @@ que va encima y lo que va debajo de la lista. Al acabar cada flujo se devuelve a
 plantilla, así que desde la vuelta de calentamiento cada pasada mide un dispositivo ya
 abierto antes; un árbol que no lo escribe (la 0.7.1) no cambia.
 """
+PERF_LOG = Path("logs") / "perf.log"
+"""Dónde escribe la aplicación sus tiempos (`ui.perf_volcar`), dentro de su carpeta de código."""
 
 
 def plataforma_local() -> str:
@@ -146,9 +154,13 @@ class Medidor:
         trabajo: Carpeta de trabajo (dispositivos, copias, ficheros temporales).
     """
 
-    def __init__(self, python: str, arboles: dict[str, Path], trabajo: Path):
+    def __init__(self, python: str, arboles: dict[str, Path], trabajo: Path,
+                 *, env_extra: dict | None = None, salida_perf: Path | None = None):
         self.py = python
         self.arboles = arboles
+        self.env_extra = dict(env_extra or {})          # `--env`: se suma al entorno de cada hijo
+        self.salida_perf = salida_perf                  # dónde van los diarios de tiempos, si los hay
+        self.ronda: int | str = "x"                     # la vuelta en curso, para su nombre
         self.trabajo = trabajo.resolve()
         self.trabajo.mkdir(parents=True, exist_ok=True)
         self.staging = self.trabajo / "driver"
@@ -294,15 +306,21 @@ class Medidor:
             dev = self.trabajo / f"dev-{arbol}-{pares}"
             copiar(self.trabajo / f"tpl-{arbol}-{pares}", dev)    # la ruta entra en el nombre de las bases
             cwd = dev
-        extra = {"BENCH_DEVICE": str(dev), "BENCH_FLOW": flujo, "BENCH_SCALE": "" if escala == "1.0" else escala}
+        extra = dict(self.env_extra)
+        extra.update({"BENCH_DEVICE": str(dev), "BENCH_FLOW": flujo, "BENCH_SCALE": "" if escala == "1.0" else escala})
         if solo_codigo:
             extra["BENCH_APP"] = str(cwd)
         if captura:
             extra["BENCH_CAPTURA"] = str(captura)
             extra["BENCH_NOMBRE"] = nombre
         env, base = self.entorno(extra, perfil=perfil)
+        app = cwd if solo_codigo else dev / ".prdrive"  # la carpeta de código que importa el driver
+        if self.con_perf():                            # un diario de otra pasada no se cuela en esta
+            (app / PERF_LOG).unlink(missing_ok=True)
         try:
             r = self.hijo([self.py, str(self.staging / "entrada.py"), "driver"], env, cwd)
+            if captura is None:
+                self.guardar_perf(app, base, arbol, flujo, pares, escala)
         finally:
             borrar(base)
         if not solo_codigo:
@@ -334,8 +352,37 @@ class Medidor:
             return [s for s in str(notas["error"]).strip().splitlines() if s.strip()][-1][:300]
         return f"sin resultado (rc={r['rc']})"
 
+    def con_perf(self) -> bool:
+        """Dice si `--env` pidió los tiempos de las ventanas, con `--salida` donde dejarlos."""
+        return (self.salida_perf is not None
+                and self.env_extra.get("PRDRIVE_PERF", "") not in ("", "0"))
+
+    def guardar_perf(self, app: Path, base: Path, arbol: str, flujo: str,
+                     pares: int | None, escala: str) -> None:
+        """Copia a `--salida` los diarios de tiempos de esta pasada, si se pidieron.
+
+        El de la aplicación es `PERF_LOG` de su carpeta de código (`app`: la copia del
+        dispositivo, o el árbol que corre el asistente, el agente y el log); el del
+        equipo es el `perf.log` que el host falso dejó en la carpeta del agente. El
+        nombre lleva el árbol, el flujo, las parejas, el 150 % si lo hay y la vuelta.
+        """
+        if not self.con_perf():
+            return
+        sufijo = "-150" if escala == "2.0" else ""
+        etiqueta = f"{arbol}-{flujo}-{pares or 'x'}{sufijo}-{self.ronda}"
+        equipo = next(base.rglob("perf.log"), None)
+        for origen, nombre in ((app / PERF_LOG, f"perf-{etiqueta}.log"),
+                               (equipo, f"perf-{etiqueta}-equipo.log")):
+            if origen is None or not origen.is_file():
+                continue
+            try:
+                self.salida_perf.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(origen, self.salida_perf / nombre)
+            except OSError as e:
+                log(f"no se pudo guardar {nombre}: {e}")
+
     def suelo(self) -> list[dict]:
-        env, base = self.entorno({"BENCH_FLOW": "suelo"})
+        env, base = self.entorno(dict(self.env_extra, BENCH_FLOW="suelo"))
         try:
             r = self.hijo([self.py, str(self.staging / "entrada.py"), "suelo"], env, self.staging)
         finally:
@@ -370,10 +417,19 @@ def main() -> int:
     ap.add_argument("--salida")
     ap.add_argument("--capturas", action="store_true")
     ap.add_argument("--plataforma", default=os.environ.get("RENDIMIENTO_PLATAFORMA", ""))
+    ap.add_argument("--env", action="append", default=[], metavar="CLAVE=VALOR",
+                    help="variable para el entorno de cada proceso (repetible), p. ej. PRDRIVE_PERF=1")
     a = ap.parse_args()
     if not a.python:
         print("falta --python (o PRDRIVE_PYTHON)", file=sys.stderr)
         return 2
+    extra_env: dict[str, str] = {}
+    for par in a.env:
+        clave, igual, valor = par.partition("=")
+        if not igual or not clave:
+            print(f"--env espera CLAVE=VALOR, no «{par}»", file=sys.stderr)
+            return 2
+        extra_env[clave] = valor
     arboles = {"base": Path(a.base).resolve(), "pr": Path(a.pr).resolve()}
     salida = Path(a.salida) if a.salida else Path(a.trabajo) / "salida"
     salida.mkdir(parents=True, exist_ok=True)
@@ -386,7 +442,7 @@ def main() -> int:
             for d in lineas:
                 f.write(json.dumps(dict(d, ronda=ronda), ensure_ascii=False) + "\n")
 
-    m = Medidor(a.python, arboles, Path(a.trabajo))
+    m = Medidor(a.python, arboles, Path(a.trabajo), env_extra=extra_env, salida_perf=salida)
     m.preparar_driver()
     for arbol in ("base", "pr"):
         log(f"preparando {arbol} ({arboles[arbol]})")
@@ -398,12 +454,14 @@ def main() -> int:
     for arbol in ("base", "pr"):                          # calentamiento: se tira (ronda -1), con perfil
         if arbol not in m.malos:
             log(f"calentamiento {arbol}")
+            m.ronda = -1
             anotar(m.pasada(arbol, perfil=True), -1)
     for i in range(a.rondas):
         orden = ("base", "pr") if i % 2 == 0 else ("pr", "base")
         for arbol in orden:
             if arbol not in m.malos:
                 log(f"vuelta {i + 1}/{a.rondas}: {arbol}")
+                m.ronda = i
                 anotar(m.pasada(arbol), i)
         anotar(m.suelo(), i)
     capturas = []
