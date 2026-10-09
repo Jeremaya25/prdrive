@@ -1464,7 +1464,7 @@ def _lista_plataformas(padre, wiz, raiz, al_cambiar):
     for i, (valor, texto) in enumerate((
             ("completa", "Completa: lleva su propio Python y funciona en equipos "
                          "sin nada instalado"),
-            ("ligera", "Ligera: usa el Python de cada equipo (3.11+ con Tkinter)"))):
+            ("ligera", "Ligera: usa el Python de cada equipo (3.11+ con Tk 9)"))):
         ttk.Radiobutton(marco, text=texto, value=valor, variable=modo,
                         command=cambiar_modo).grid(row=i, column=0, sticky="w")
 

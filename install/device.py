@@ -34,7 +34,7 @@ import uuid
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from common import autorun, model, vestibulo
+from common import autorun, model, store, vestibulo
 
 from . import CREATE_NO_WINDOW, DEVICE_LABEL, IS_WIN, InstallError
 from .rclone_bin import bin_subdir, exe_name
@@ -648,6 +648,8 @@ Contesta una línea JSON, `{"version": [3, 12, 1], "tk": 8.6}`, con `tk` nulo si
 no tiene tkinter. Solo se importa el módulo, sin crear ninguna ventana: es lo
 mismo que mira `runsync.pyw` para elegir entre la ventana y el menú de consola.
 """
+TOPE_RECOGER_S = 1.0  # segundos
+"""Lo que se espera a las tuberías de una pregunta ya cortada por pasarse de tiempo."""
 CODIGO_TIEMPO = 124
 """Código de una pregunta que no contesta a tiempo, el de `timeout(1)`."""
 CODIGO_SIN_LANZAR = 127
@@ -668,6 +670,13 @@ def preguntar_python(cmd: list[str]) -> subprocess.CompletedProcess:
     `site-packages` del usuario), sin entrada (compilado no hay consola de la
     que leer) y, en Windows, sin ventana de consola.
 
+    Al pasar `TOPE_PYTHON_S` se mata al ÁRBOL (`store.matar_arbol()`), no solo
+    al hijo directo: un lanzador (`py.exe`, un alias, un script) que deja un
+    nieto con las tuberías heredadas haría que `subprocess.run(timeout=)`
+    esperase sin límite a que se cerraran. Por eso es un `Popen` propio: en
+    POSIX con sesión nueva, para que el grupo exista y se pueda cortar, y con
+    un último `communicate()` acotado que no se espera si algo aún las tiene.
+
     Args:
         cmd: La orden del Python del equipo (`python_command()`).
 
@@ -677,17 +686,32 @@ def preguntar_python(cmd: list[str]) -> subprocess.CompletedProcess:
         No lanza nunca.
     """
     orden = [*cmd, "-I", "-c", SONDA_PYTHON]
-    kwargs: dict = {"stdin": subprocess.DEVNULL, "capture_output": True, "text": True,
-                    "encoding": "utf-8", "errors": "replace", "timeout": TOPE_PYTHON_S}
+    kwargs: dict = {"stdin": subprocess.DEVNULL, "stdout": subprocess.PIPE,
+                    "stderr": subprocess.PIPE, "text": True, "encoding": "utf-8",
+                    "errors": "replace"}
     if IS_WIN:
         kwargs["creationflags"] = CREATE_NO_WINDOW
+    else:
+        kwargs["start_new_session"] = True
     try:
-        return subprocess.run(orden, **kwargs)
-    except subprocess.TimeoutExpired:
-        return subprocess.CompletedProcess(orden, CODIGO_TIEMPO, "",
-                                           f"sin respuesta en {TOPE_PYTHON_S:g} s")
+        proceso = subprocess.Popen(orden, **kwargs)
     except (OSError, ValueError) as e:
         return subprocess.CompletedProcess(orden, CODIGO_SIN_LANZAR, "", str(e))
+    try:
+        salida, error = proceso.communicate(timeout=TOPE_PYTHON_S)
+    except subprocess.TimeoutExpired:
+        store.matar_arbol(proceso.pid)
+        proceso.kill()
+        try:
+            proceso.communicate(timeout=TOPE_RECOGER_S)
+        except (subprocess.TimeoutExpired, OSError, ValueError):
+            pass            # algo fuera del árbol aún tiene las tuberías: no se espera
+        return subprocess.CompletedProcess(orden, CODIGO_TIEMPO, "",
+                                           f"sin respuesta en {TOPE_PYTHON_S:g} s")
+    except BaseException:
+        proceso.kill()                  # incluida la interrupción de teclado
+        raise
+    return subprocess.CompletedProcess(orden, proceso.returncode, salida, error)
 
 
 def _respuesta(res: subprocess.CompletedProcess) -> tuple[tuple[int, ...], float | None] | None:
@@ -715,11 +739,18 @@ def _respuesta(res: subprocess.CompletedProcess) -> tuple[tuple[int, ...], float
 
 
 def _sin_respuesta(res: subprocess.CompletedProcess, orden: str) -> str:
-    """Dice por qué el Python del equipo no ha contestado, empezando por un verbo."""
-    if res.returncode == CODIGO_ALIAS_STORE or "windowsapps" in orden.lower():
+    """Dice por qué el Python del equipo no ha contestado, empezando por un verbo.
+
+    El alias de la Microsoft Store se reconoce por su código (9009) o, si falla
+    sin pasarse de tiempo, por vivir en `WindowsApps`: un Python de la Store de
+    verdad que se agota no es el alias, y se dice que no ha contestado.
+    """
+    if res.returncode == CODIGO_ALIAS_STORE:
         return "es el alias de la Microsoft Store, no un Python instalado"
     if res.returncode == CODIGO_TIEMPO:
         return f"no ha contestado en {TOPE_PYTHON_S:g} s"
+    if "windowsapps" in orden.lower():
+        return "parece el alias de la Microsoft Store, no un Python instalado"
     lineas = [linea.strip() for linea in (res.stderr or "").splitlines() if linea.strip()]
     if res.returncode == 0:
         motivo = "no ha contestado lo esperado"

@@ -39,10 +39,11 @@ en el dispositivo: ni él ni el instalador necesitan nada instalado.
 que se admite (el pintor SVG del asistente es de Tk 9). Por eso la compilación
 es estricta, en la CI y en local: sin el PyInstaller fijado (`PYINSTALLER`) y
 sin un Python con Tk 9 no compila, y el error dice cómo conseguirlos. Las
-releases se compilan con el Python fijado del dispositivo (python-build-standalone,
-Tk 9) y se prueban con `--autoprueba` antes de publicarlas
-(`.github/actions/compilar-instalador`); el instalador llave en mano se compila
-en la máquina de quien tiene el perfil, con la misma receta
+releases se compilarán con el Python fijado del dispositivo (python-build-standalone,
+Tk 9) y se probarán con `--autoprueba` antes de publicarlas
+(`.github/actions/compilar-instalador`; el workflow de la release la usa solo desde
+que `Instalador` sale en verde, y hasta entonces no compila); el instalador llave
+en mano se compila en la máquina de quien tiene el perfil, con la misma receta
 (`docs/guia/instalacion.md`).
 
 Si esa clave se filtra alguna vez, revócala en el servidor y genera otra: el

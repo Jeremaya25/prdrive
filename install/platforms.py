@@ -236,7 +236,8 @@ class Plan:
                           f"equipos no hace falta instalar nada.")
         elif not self.completa:
             lineas.append("Instalación ligera: sin Python propio. Cada equipo "
-                          "necesitará Python 3.11+ con Tkinter instalado.")
+                          "necesitará Python 3.11+ con Tk 9 instalado (el de python.org "
+                          "para Windows trae Tk 8.6 y no sirve).")
         if self.borrar:
             lineas.append(f"Se BORRARÁN del dispositivo rclone y Python de "
                           f"{nombres(self.borrar)}.")

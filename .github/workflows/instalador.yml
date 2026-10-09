@@ -7,7 +7,9 @@ name: Instalador
 #
 # Es lo que verifica que el PyInstaller fijado sabe meter en el .exe el Tcl/Tk 9 de ese Python. La
 # release (build-installer-release.yml) solo pasa a compilar con esta acción después de una
-# ejecución en verde de este workflow; hasta entonces sigue como estaba.
+# ejecución en verde de este workflow. Hasta entonces la release NO compila: su setup-python 3.11
+# de Windows trae Tk 8.6 y build_installer.py (estricto) lo rechaza, así que un cambio de VERSION
+# no publicaría nada (docs/agents/reference/updating.md, «VERSION»).
 #
 # En un PR que toca lo que compila, y a mano. Que lo lancen también los PR que tocan ui/ o common/
 # (otros 6-10 minutos de máquina Windows por PR) es una pregunta para el dueño.

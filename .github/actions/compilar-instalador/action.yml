@@ -7,7 +7,8 @@ description: >-
   máquinas Windows, con el repositorio en GITHUB_WORKSPACE.
 
 # Es una acción compuesta: sus pasos no admiten `timeout-minutes`, así que el tope va en el paso
-# que la usa (`instalador.yml`, `build-installer-release.yml`), y la autoprueba lleva el suyo.
+# que la usa (`instalador.yml`, y `build-installer-release.yml` cuando se conecte), y la
+# autoprueba lleva el suyo.
 
 outputs:
   exe:

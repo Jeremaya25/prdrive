@@ -126,7 +126,7 @@ echo   El dispositivo no lleva Python para Windows %PROCESSOR_ARCHITECTURE% y aq
 echo   no hay ninguno instalado.
 echo.
 echo   Para arreglarlo, vuelve a ejecutar el instalador de prdrive, elige este
-echo   dispositivo y pulsa «Añadir plataformas…». O instala Python 3.11+.
+echo   dispositivo y pulsa «Añadir plataformas…». O instala Python 3.11+ con Tk 9.
 echo.
 pause
 exit /b 1
@@ -181,7 +181,7 @@ if [ -z "$py" ]; then
     echo "prdrive no puede arrancar en este equipo: el dispositivo no lleva" >&2
     echo "Python para $(uname -s) $(uname -m) y aquí no hay python3 instalado." >&2
     echo "Vuelve a ejecutar el instalador de prdrive y pulsa «Añadir plataformas…»," >&2
-    echo "o instala Python 3.11+ con Tkinter." >&2
+    echo "o instala Python 3.11+ con Tk 9." >&2
     exit 1
 fi
 exec "$py" "$base/runsync.py" "$@"
@@ -1166,7 +1166,7 @@ def device_python(device_root: Path | str) -> list[str] | None:
 SIN_PYTHON = ("El dispositivo no lleva un Python que sirva en este equipo, y aquí "
               "tampoco hay ninguno instalado.\n\nVuelve al paso «Instalación» y "
               "elige la instalación completa con la plataforma de este equipo, o "
-              "instala Python 3.11+; el código ya instalado no se pierde.")
+              "instala Python 3.11+ con Tk 9; el código ya instalado no se pierde.")
 """Mensaje para cuando no hay con qué lanzar nada del dispositivo."""
 
 

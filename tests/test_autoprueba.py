@@ -108,6 +108,61 @@ c.contains("  y queda en el fichero, con lo que se llegó a ver", leido_roto.get
            "RuntimeError: se ha roto algo")
 c("  lo de antes del fallo también", leido_roto.get("python"), "3.x")
 
+# La puerta que decide si el .exe se publica (`_autoprueba_superada`) es pura: aquí
+# se prueba con informes sintéticos, también por el lado de «no se publica», que
+# con el Tk 9 de la CI, y sin pantalla, no se ejercería nunca. Si una rama de
+# fallo dejara pasar un .exe sin Tk 9, SVG, asistente, un módulo o un fichero,
+# saldría una release que no abre.
+def bueno() -> dict:
+    """Un informe de una autoprueba que sale bien."""
+    return {"tk9": True, "svg": True, "tema": True, "asistente": True,
+            "modulos": {"install": "ok", "ui.tk_install": "ok"},
+            "datos": {"sync.py": "ok", "ui": "ok"}}
+
+
+superada = instalador._autoprueba_superada
+c("un informe completo y bueno se publica", superada(bueno()), True)
+c("  aunque el Python del equipo o las unidades digan cualquier cosa",
+  superada({**bueno(), "python_equipo": "error: x", "unidades": "error: y"}), True)
+c("un informe vacío no se publica", superada({}), False)
+for clave in ("tk9", "svg", "tema", "asistente"):
+    sin = bueno()
+    del sin[clave]
+    c(f"sin la clave {clave} no se publica", superada(sin), False)
+    for valor in (False, "error: TclError: no display", None, "ok", 1):
+        mal = {**bueno(), clave: valor}
+        c(f"  con {clave} = {valor!r} tampoco", superada(mal), False)
+c("sin Tk 9 (el de 8.6) no se publica", superada({**bueno(), "tk9": False, "svg": False}), False)
+for clave in ("modulos", "datos"):
+    sin = bueno()
+    del sin[clave]
+    c(f"sin {clave} no se publica", superada(sin), False)
+    c(f"  con {clave} vacío tampoco", superada({**bueno(), clave: {}}), False)
+c("un módulo que no se importa no se publica",
+  superada({**bueno(), "modulos": {"install": "ok", "ui.tk_crypto":
+                                   "error: ModuleNotFoundError: No module named 'x'"}}), False)
+c("un fichero que falta no se publica",
+  superada({**bueno(), "datos": {"sync.py": "ok", "VERSION": "falta en C:/x"}}), False)
+c("una carpeta que falta tampoco",
+  superada({**bueno(), "datos": {"sync.py": "ok", "ui": "falta en C:/x"}}), False)
+
+# Y `cmd_autoprueba` lo traduce al código de salida y deja siempre el fichero.
+informe_falso = tmpdir() / "falso.json"
+real = instalador._autoprueba
+try:
+    for nombre, informe_dado, esperado in (
+            ("bueno", bueno(), 0),
+            ("sin SVG", {**bueno(), "svg": False}, 1),
+            ("con un fichero que falta", {**bueno(), "datos": {"sync.py": "falta en C:/x"}}, 1)):
+        instalador._autoprueba = lambda informe, d=informe_dado: informe.update(d)
+        informe_falso.unlink(missing_ok=True)
+        rc_falso = instalador.cmd_autoprueba(str(informe_falso))
+        c(f"cmd_autoprueba con un informe {nombre} acaba con {esperado}", rc_falso, esperado)
+        c("  y escribe el fichero con lo que vio",
+          json.loads(informe_falso.read_text(encoding="utf-8")).get("tk9"), informe_dado["tk9"])
+finally:
+    instalador._autoprueba = real
+
 # Lo de verdad: el .py con el Python de este test, en otro proceso.
 try:
     import ui  # noqa: F401  (antes que tkinter, como toda ventana)
