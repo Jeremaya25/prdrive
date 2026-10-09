@@ -308,6 +308,16 @@ def modificar(dlg, pareja: str) -> None:
     explorables.append(dlg.editor.explorable)
 
 
+def montar_catalogo(dlg) -> None:
+    """Deja creado el bloque del catálogo, que se crea al verlo, y vuelve a este dispositivo.
+
+    Sus botones («Releer», «Nueva pareja…»…) no existen hasta entonces: quien los lee
+    estando en la vista de este dispositivo los lee escondidos.
+    """
+    buscar(dlg, ttk.Radiobutton, "Catálogo").invoke()
+    buscar(dlg, ttk.Radiobutton, "Este dispositivo").invoke()
+
+
 # Remoto lento con copia local: se pinta la copia antes de que conteste.
 with sandbox():
     cfg = preparar()
@@ -318,6 +328,7 @@ with sandbox():
 
     def mirar(self, *_a, **_k):
         """Mira la pantalla con el remoto callado, lo suelta y la vuelve a mirar."""
+        montar_catalogo(self)
         vista["antes"] = foto(self)
         modificar(self, "notas")
         remoto.soltar.set()
@@ -393,10 +404,12 @@ def al_llegar_el_catalogo(teclear: bool, despues=None) -> dict:
 
         def conducir(self, *_a, **_k):
             """Escribe, suelta el remoto y mira la pantalla cuando ha llegado."""
+            montar_catalogo(self)
             self.lista.elegir("notas")
             vista["inicial"] = self.editor.datos()
             if teclear:
                 self.editor.campos["remote_path"].set("/R/notas-nueva")
+                pulsar_boton(self, "Mostrar")         # «Avanzado» se construye al verlo
                 self.editor.textos["exclude"].insert("1.0", "*.tmp")
             vista["antes"] = self.editor.datos()
             remoto.soltar.set()
@@ -494,6 +507,7 @@ def releer_escribiendo(otra: dict | None = None, rc: int = 0) -> dict:
             dar_vueltas(lambda: not self.sondeo.esperando)
             buscar(self, ttk.Radiobutton, "Catálogo").invoke()
             self.lista.elegir("notas")
+            pulsar_boton(self, "Mostrar")             # «Avanzado» se construye al verlo
             self.editor.textos["exclude"].insert("1.0", "*.tmp")
             vista["antes"] = self.editor.datos()
             remoto.texto = config_file.dumps(otra if otra is not None else CAT_REMOTO)
@@ -546,6 +560,7 @@ with sandbox():
 
     def mirar_caido(self, *_a, **_k):
         """Suelta un remoto que contesta que no y mira la pantalla."""
+        montar_catalogo(self)
         remoto.soltar.set()
         vista["llego"] = dar_vueltas(lambda: not self.sondeo.esperando)
         vista["foto"] = foto(self)
@@ -625,6 +640,7 @@ with sandbox():
 
     def releer_y_subir(self, *_a, **_k):
         """Relee con el remoto callado, y luego sube una pareja nueva."""
+        montar_catalogo(self)
         dar_vueltas(lambda: not self.sondeo.esperando)
         remoto.soltar = threading.Event()
         buscar(self, ttk.Button, "Releer").invoke()
@@ -712,6 +728,7 @@ with sandbox():
 
     def reabierta(self, *_a, **_k):
         """Mira la segunda pantalla con el mismo remoto callado, y lo suelta."""
+        montar_catalogo(self)
         vista["antes"] = foto(self)
         vista["pedidos_antes"] = len(remoto.pedidos)
         remoto.soltar.set()
@@ -745,6 +762,7 @@ with sandbox():
 
     def releer_forzado(self, *_a, **_k):
         """Pulsa «Releer» con la primera lectura todavía en el aire."""
+        montar_catalogo(self)
         boton = buscar(self, ttk.Button, "Releer")
         boton.configure(state="normal")
         boton.invoke()

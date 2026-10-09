@@ -92,6 +92,23 @@ def ver_catalogo(ventana) -> None:
             return
 
 
+def ver_dispositivo(ventana) -> None:
+    """Vuelve la pantalla de parejas a este dispositivo, con su botón."""
+    pila = [ventana]
+    while pila:
+        w = pila.pop()
+        pila += list(w.winfo_children())
+        if isinstance(w, ttk.Radiobutton) and str(w.cget("text")) == "Este dispositivo":
+            w.invoke()
+            return
+
+
+def montar_catalogo(ventana) -> None:
+    """Deja creado el bloque del catálogo (se crea al verlo) y vuelve a este dispositivo."""
+    ver_catalogo(ventana)
+    ver_dispositivo(ventana)
+
+
 def elegir_y_pulsar(texto, pareja=None, catalogo=False, cambiar=None):
     """Como pulsar(), pero eligiendo antes una fila de la lista.
 
@@ -280,6 +297,7 @@ with sandbox():
 
     def escribir_y_releer(self, *_a, **_k):
         """Escribe en el editor, pide el catálogo otra vez y mira lo que queda."""
+        montar_catalogo(self)          # «Releer» es del bloque del catálogo, que se crea al verlo
         self.lista.elegir("notas")
         self.editor.campos["remote_path"].set("/R/a-medias")
         next(b for b in botones_de_todos(self) if b.cget("text") == "Releer").invoke()
