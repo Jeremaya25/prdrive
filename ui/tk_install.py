@@ -83,7 +83,7 @@ def _posicion(ventana) -> tuple[int, int]:
     Son las de `wm geometry`, las que se usan para moverla, y no las de
     `winfo_x()`: con el marco del sistema alrededor pueden no coincidir, y
     moverla con unas leídas de las otras la desplazaría. Es lo que hace
-    `ui.tk.main_window()` con su propio `posicion()`.
+    `ui.tk.VentanaPrincipal.posicion()`.
 
     Args:
         ventana: La ventana a mirar.

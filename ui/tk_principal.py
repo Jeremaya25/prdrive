@@ -7,7 +7,7 @@ toca, uno que aparece se crea la primera vez que hace falta y después solo se
 enseña o se esconde (`grid`/`grid_remove`), y las filas de las parejas se
 emparejan por nombre. Aquí no se decide nada: qué se ve y qué se puede pulsar lo
 dice `principal.controles()`, y lo que hace cada botón, las `Acciones` que le da
-la ventana principal (`ui.tk.main_window`).
+la ventana principal (`ui.tk.VentanaPrincipal`).
 
 Se carga antes del primer pintado, así que sigue la regla de `ui/principal.py`:
 arriba no importa nada que lea el dispositivo (ni `ui.watch` ni
