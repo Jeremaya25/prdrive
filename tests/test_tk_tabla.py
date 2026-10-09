@@ -38,6 +38,7 @@ import subprocess
 import sys
 
 from _harness import Checks
+from _vista import estilos
 
 c = Checks("tabla de un lienzo: dibujo, cambios en su sitio, teclado y ratón")
 
@@ -1115,7 +1116,7 @@ try:
     fleet.equipo_actual = lambda: "PORTATIL"
     segundo_plano.lanzar = segundo_plano.en_el_acto
     tk_fleet.mostrar = tk_pairs.mostrar = solo_enseñar
-    estilos_antes = sorted(raiz.tk.splitlist(raiz.tk.call("ttk::style", "theme", "styles")))
+    estilos_antes = estilos(raiz.tk)
     raiz.bind_all("<<ThemeChanged>>", lambda e: cambios_tema.append(str(e.widget)), add="+")
     tk_fleet.open_dialog(raiz, None, {"defaults": {"remote": "nas"}, "pair": []})
     tk_pairs.flags_form(raiz, "Flags", "de prueba", {"transfers": 8}, [], mode_name="bisync",
@@ -1127,7 +1128,7 @@ finally:
 c("abrir «Dispositivos» y el editor de flags no manda ningún <<ThemeChanged>>",
   cambios_tema, [])
 c("  ni crea ni toca un estilo de ttk",
-  sorted(raiz.tk.splitlist(raiz.tk.call("ttk::style", "theme", "styles"))), estilos_antes)
+  estilos(raiz.tk), estilos_antes)
 
 # ---------------------------------------------------------------------------
 # 9. Lo de la revisión de «Parejas»: la lista igual que la rejilla de antes,

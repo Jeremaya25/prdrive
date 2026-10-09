@@ -1342,8 +1342,7 @@ def _arrancar_barra(barra) -> None:
 
     `ttk::progressbar start` acepta el salto como segundo argumento
     (`start ?intervalo? ?salto?`) y tkinter solo deja darle el intervalo, así que
-    se llama a Tcl directamente. Un Tk que solo admitiera el intervalo la
-    arranca igual, a saltos de 1: más despacio, pero va.
+    se llama a Tcl directamente.
     """
     import tkinter as tk
     try:

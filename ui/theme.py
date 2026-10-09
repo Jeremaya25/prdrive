@@ -62,8 +62,9 @@ def nitidez() -> None:
     a una pantalla con otro zoom. Con la del sistema, Windows estira la ventana
     en ese caso (borrosa, pero del tamaño que toca); con la de por monitor no
     la estiraría y la ventana saldría a la mitad de su tamaño físico, que es
-    peor que borrosa. Cuando el proyecto llegue a Tk 9, esta es la línea que
-    cambia.
+    peor que borrosa. Tk 9.0.4 tampoco redibuja al cambiar de pantalla
+    (`common/pins.py`, «Qué NO trae Tk 9.0.4»): la declaración es la misma en
+    los dos Tk.
 
     Tiene que correr **antes** del primer `Tk()`: Tk lee la densidad al
     arrancar su intérprete y no la vuelve a mirar. Es una propiedad del

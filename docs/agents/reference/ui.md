@@ -33,13 +33,30 @@ Two frontends implement the same four operations (`ask`, `approve_resync`, `info
 
 ## Which Tk
 
-**Tk 9 is the only supported Tk** (owner's decision, 09/10/2026): the pinned runtime's Tk 9.0.4 on Windows and Linux and, for the light install, a host Python that has Tk 9. The windows are tested only on it and CI has no Tk 8.6 leg (`commands-testing.md`). New code writes no Tk 8.6 workaround and no test for one. The code below still handles a Tk 8.6 and is **kept on purpose**: a device installed with the 3.13 runtime (Tk 8.6.15 on Windows) must open its window to reach «Actualizar…» (`provisioning.md`, `updating.md`). These are the **stage-4 cleanup candidates**, to remove together once no device is left on that runtime:
+**Tk 9 is the only supported Tk** (owner's decision, 09/10/2026): the pinned runtime's Tk 9.0.4 on Windows and Linux and, for the light install, a host Python that has Tk 9 (`install/device.py` refuses one that does not). The windows are tested only on it, and CI has no Tk 8.6 leg (`commands-testing.md`). New code writes no Tk 8.6 workaround and no test for one.
 
-- `ui/icons.py`: the Python rasteriser as the path of the windows (`USAR_SVG` / `PRDRIVE_SIN_SVG`, the «no» of `svg_disponible()`, the PNG fallback of `_foto()`/`_foto_svg()`). `_capas_rgba()` and the rest of the rasteriser stay: `.ico`, tray and dbusmenu icons never go through Tk.
-- `ui/theme.py`: `pista_etiqueta()` and the `TclError` branch of `pista_campo()` (Tk 8.6 has no `-placeholder`); `gripcount` beside `gripsize` in the scrollbar thumb; the `nitidez()` docstring, which says Tk 9 will change its line (Tk 9.0.4 does not redraw on a DPI change either: `provisioning.md`).
-- `ui/tk.py`: the Tk version inside the main window's saved-width key (`prefs.clave_ancho`), a data key, so only a candidate.
-- Tests: the `TkVersion < 9` branch of `tests/test_iconos_svg.py` and the Tk 8.6 `else` of `tests/test_controles.py`. Until then `tests/test_controles.py` keeps the two Tk 8.6 branches of the placeholder covered on a Tk 9 (`pista_etiqueta()` called directly, and `pista_campo()` falling back when `-placeholder` is refused).
-- `components.python_pendiente()` stays: it is how a 3.13 device reaches the update.
+Tk 8.6 still reaches three places, and the code for them stays on purpose:
+
+1. **A device installed with the 3.13 runtime** (Tk 8.6.15 on Windows). Its window must open to reach «Actualizar…» (`provisioning.md`, `updating.md`).
+2. **The agent's «¿Atender esta unidad?» window** (`pregunta.py`, `ui/tk_agente.py`). It runs on the agent's Python, a host `pythonw.exe` that can be a python.org Python with Tk 8.6, or an older runtime until the agent updates (`agent.md`).
+3. **The launchers' host-Python fallbacks**: step 3 of `runsync.bat` (a `pythonw` or `pyw` on PATH) and the light launcher, which runs the host Python. Neither checks Tk at launch; the Tk 9 gate of the light install runs at install time only (`install/device.py`).
+
+**Kept, with its hard need.** `theme.pista_campo()`'s `TclError` branch and `pista_etiqueta()`: Tk 8.6 refuses `Entry.configure(placeholder=…)`, and Ajustes (`ui/tk_doctor.py`) and Parejas (`ui/tk_pairs.py`) build their search box with it. Without the branch the window raises inside its click handler, Tkinter swallows the error, and the window does not open, so a 3.13 device cannot reach «Actualizar…». On Tk 9 `tests/test_controles.py` keeps this branch covered (`pista_etiqueta()` called directly, and `pista_campo()` falling back when `-placeholder` is refused).
+
+**Kept, for the look.** The painter's PNG path in `ui/icons.py` (the window branch of `_foto()`). Without it a Tk 8.6 window opens flat and without icons (`icons.get()` returns `None`, `theme._pieza()` falls back to clam), so the painter is needed for the look, not for opening the window.
+
+**Kept until a migration.** `ui/tk.py` passes the Tk version into the saved-width key (`prefs.clave_ancho`, which a 3.13 device stores as `win32:8.6:…`). It is a data key, so dropping the version needs a migration of the stored widths.
+
+**Shared, not Tk 8.6 code.** `theme.nitidez()` (the Windows DPI declaration both Tks need), `theme._pieza()`'s clam fallback, and `components.python_pendiente()`, which is how a 3.13 device is offered «Actualizar…».
+
+**Stage-4 removal list.** Precondition: no 3.13 device is left, AND no host window or launcher can still run on Tk 8.6 (the agent's question and the launchers' fallbacks gated to Tk 9). Then remove together:
+
+- `ui/theme.py`: `pista_etiqueta()` and the `TclError` branch of `pista_campo()` (which keeps `configure(placeholder=…)`); `gripcount=0` in the scrollbar thumb (`gripsize` stays; Tk 9 ignores `gripcount`).
+- `ui/icons.py`: the window branch of `_foto()` that draws PNG (`_capas_rgba()`, `_png()` and the file and tray functions stay: `.ico`, tray and dbusmenu icons never go through Tk); `USAR_SVG` and `PRDRIVE_SIN_SVG`, and the «no» path of `svg_disponible()`; `_SinSvg`, once the SVG describer is total or keeps a `None` return.
+- Their tests: `tests/test_iconos_svg.py` (the `TkVersion < 9` branch and the painter parity), `tests/test_controles.py` (the gripcount check and the forced `TclError` on the placeholder), the painter PNG checks of `tests/test_tk_tabla.py`, and the Tk 8.6 fallback in `estilos()` of `tests/_vista.py`. `PRDRIVE_SIN_SVG` is also read by `tests/test_autoprueba.py`.
+- With its migration only: the Tk version in `prefs.clave_ancho`.
+
+Tk 8.6 is not a CI leg. To check a change to a file above against it, run the suite by hand on a Python with Tk 8.6 under a virtual display: `xvfb-run -a -s "-screen 0 1920x1080x24" /usr/bin/python3.12 tests/run_all.py`.
 
 ## Main window and output
 

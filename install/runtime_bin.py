@@ -29,7 +29,7 @@ Qué se escribe al extraer, y qué no:
   el clásico agujero, y un archivo es contenido ajeno aunque venga comprobado.
 - No se crean enlaces simbólicos: exFAT no los tiene y el dispositivo casi
   siempre es exFAT. El único que hace falta (`bin/python3` en Linux, que en el
-  archivo es un enlace a `python3.13`) se materializa escribiendo su destino
+  archivo es un enlace a `python3.14`) se materializa escribiendo su destino
   con ese nombre, y no dos veces: son 30 MB.
 - Se poda lo que no hace falta para ejecutar prdrive: pip, ensurepip, idle, los
   tests, las cabeceras y bibliotecas de C y, en Linux, `share/` (terminfo, man)
@@ -84,7 +84,7 @@ RAIZ_ARCHIVO = "python"
 
 
 def _mm() -> str:
-    """Devuelve `3.13` a partir de `3.13.16`.
+    """Devuelve `3.14` a partir de `3.14.8`.
 
     El tramo que aparece en las rutas del runtime.
     """

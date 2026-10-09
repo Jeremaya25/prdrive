@@ -257,3 +257,28 @@ def leer_vista(raiz) -> list[tuple]:
     if not a_la_vista(raiz):
         return []
     return [_fila(profundidad, w) for profundidad, w in _recorrer(raiz)]
+
+
+def estilos(interprete) -> list:
+    """Devuelve lo que se sabe de los estilos de ttk, para ver si cambian.
+
+    `ttk::style theme styles` solo existe en Tk 9. En Tk 8.6 se compara lo que el
+    tema dice de los estilos de las barras, que es lo que se podría tocar, así
+    que un test de «no crea ni toca un estilo» corre en los dos Tk, aunque en
+    8.6 su comprobación es más estrecha.
+
+    Args:
+        interprete: El intérprete de Tcl, `raiz.tk`.
+
+    Returns:
+        Una lista de cadenas; dos llamadas que dan lo mismo quieren decir que
+        el tema no cambió entre ellas.
+    """
+    import tkinter as tk
+
+    try:
+        return sorted(interprete.splitlist(interprete.call("ttk::style", "theme", "styles")))
+    except tk.TclError:
+        return [str(interprete.call("ttk::style", orden, estilo))
+                for estilo in ("Horizontal.TScrollbar", "Vertical.TScrollbar")
+                for orden in ("layout", "configure")]

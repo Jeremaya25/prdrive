@@ -26,6 +26,7 @@ Las ventanas se crean sin entrar en el bucle de eventos.
 import sys
 
 from _harness import Checks
+from _vista import estilos
 
 c = Checks("el Visor crea su barra horizontal solo cuando hace falta")
 
@@ -58,20 +59,6 @@ def descendientes(widget):
     for hijo in widget.winfo_children():
         yield hijo
         yield from descendientes(hijo)
-
-
-def estilos(interprete) -> list:
-    """Devuelve lo que se sabe de los estilos de ttk, para ver si cambian.
-
-    `ttk::style theme styles` solo existe en Tk 9; en Tk 8.6 se compara lo que
-    el tema dice de los estilos de las barras, que es lo que se podría tocar.
-    """
-    try:
-        return sorted(interprete.splitlist(interprete.call("ttk::style", "theme", "styles")))
-    except tk.TclError:
-        return [str(interprete.call("ttk::style", orden, estilo))
-                for estilo in ("Horizontal.TScrollbar", "Vertical.TScrollbar")
-                for orden in ("layout", "configure")]
 
 
 def relleno(marco) -> tuple[int, ...]:

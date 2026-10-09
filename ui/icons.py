@@ -14,8 +14,8 @@ esas mismas primitivas:
   prueba de capacidad y no el número de versión). `_svg_capas()` describe las
   primitivas como SVG y Tk las pinta en C: unas décimas de milisegundo por
   imagen, igual a cualquier escala.
-- **El rasterizador de Python**, `_capas_rgba()`, para el resto (Tk 8.6, la
-  instalación ligera con el Python del equipo) y para todo lo que no pasa por Tk
+- **El rasterizador de Python**, `_capas_rgba()`, para el resto (el Tk 8.6 de un
+  equipo que aún tiene el runtime de 3.13) y para todo lo que no pasa por Tk
   (`.ico`, bandeja, dbusmenu). Mide, para cada píxel, la distancia a la tinta
   más cercana. Esa distancia da el suavizado gratis y a cualquier tamaño: no
   hay que redibujar el icono para 20 px, se pide con `size=20`.
