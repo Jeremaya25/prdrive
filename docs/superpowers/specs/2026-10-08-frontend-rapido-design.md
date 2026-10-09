@@ -6,6 +6,7 @@ Etapa 1b hecha, revisada y medida: `docs/superpowers/pruebas/2026-10-08-etapa-1b
 Etapa 2 hecha, revisada y medida: `docs/superpowers/pruebas/2026-10-09-etapa-2-resultados.md`
 (la llegada de la lectura a la principal en Windows, que quedó abierta, se arregló después: 908 → 69 ms con 50 parejas).
 Etapa 3 hecha, revisada y medida: `docs/superpowers/pruebas/2026-10-09-etapa-3-resultados.md`.
+Etapa 4 hecha, revisada y medida: `docs/superpowers/pruebas/2026-10-09-etapa-4-resultados.md`.
 Sustituye la forma de dibujar y de refrescar del rediseño de la 0.7.0. El aspecto se
 queda: es el del sistema «prdrive» de la 0.7.1. Las medidas que lo deciden están en
 `docs/superpowers/pruebas/2026-10-08-banco-interfaz-resultados.md`.
