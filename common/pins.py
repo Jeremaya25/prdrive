@@ -48,13 +48,13 @@ con otro zoom. Su DLL no usa ninguna función de densidad por monitor
 (`GetDpiForWindow`…) y su manifiesto declara la del sistema, la misma que pide
 `theme.nitidez()`. Sí trae `-placeholder` en `ttk::entry` y lectura de SVG.
 
-Cómo se mide: la suite normal corre con el Python del sistema (Tk 8.6), así que
-las pantallas se miden también con el intérprete del propio runtime:
-`xvfb-run -a <runtime>/bin/python3 tests/test_tk_medidas.py` (y
-`test_tk_servicio.py`, `test_tk_densidad.py`, `test_daemon_aviso.py`). Con Tk
-9.0.4 en Linux, el 03/10/2026: medidas y servicio pasan enteros; densidad falla
-un píxel de redondeo en Xvfb igual que con Tk 8.6; y la ventanita de fallo
-abortaba el proceso (`Tcl_Panic: epoll_ctl`) al abrir la segunda, porque Tk
+Cómo se mide: la suite entera corre con el intérprete del propio runtime (Tk 9.0.4
+es el único Tk que se admite): `xvfb-run -a <runtime>/bin/python3 tests/run_all.py`,
+o un solo script (`test_tk_medidas.py`, `test_tk_servicio.py`,
+`test_tk_densidad.py`, `test_daemon_aviso.py`). Con Tk 9.0.4 en Linux, el
+03/10/2026: medidas y servicio pasan enteros; densidad fallaba un píxel de
+redondeo en Xvfb (desde el 08/10/2026 la suite entera pasa con este runtime); y la
+ventanita de fallo abortaba el proceso (`Tcl_Panic: epoll_ctl`) al abrir la segunda, porque Tk
 9.0.4 no admite crear un intérprete en un hilo nuevo después de que otro
 hilo hubiera creado el suyo y acabado: `ui.avisar_fallo()` usa ahora un único
 hilo que no acaba. En Windows lo mide la fila F20 de `tests/maquina/` (una

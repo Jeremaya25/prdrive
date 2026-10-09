@@ -9,7 +9,7 @@ pregunta a `ui` qué se quiere hacer y lo hace; lo suyo es el servicio y la
 coordinación con él.
 
 El servicio solo se detiene en dos casos:
-- El dispositivo deja de estar conectado (se comprueba cada pocos segundos).
+- El dispositivo deja de estar conectado (se comprueba cada segundo).
 - Se vuelve a ejecutar runsync: el lanzador detecta el servicio anterior, le
   pide parar, espera y muestra la UI de nuevo.
 
@@ -87,7 +87,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 import ui  # noqa: E402
-from common import APP_NAME, keepassxc, llavero, model, prioridad, store, update  # noqa: E402
+from common import APP_NAME, model, prioridad, store  # noqa: E402
 from ui import prefs  # noqa: E402
 
 SELF = Path(__file__).resolve()
@@ -103,14 +103,23 @@ UI_LOCK = model.ui_lock()
 """Registro de la ventana abierta: quién la tiene."""
 
 POLL_SECONDS = 5.0
-"""Cada cuántos segundos mira el servicio si debe parar o si se fue el dispositivo.
+"""Cada cuántos segundos mira el servicio entre ciclos el registro y el llavero.
 
-También marca el ritmo del vigilante del llavero. Dos sondeos deben caber en
-`STOP_WAIT_SECONDS`, el plazo de 15 s que `stop_previous_daemon()` espera a que
-pare el servicio anterior.
+Es también el ritmo del vigilante del llavero (`vigilar_llavero()`). Lo que
+cuesta es la foto de procesos del llavero (`llavero.keepassxc_abierto()`), así
+que no baja de aquí.
+"""
+STOP_POLL_SECONDS = 1.0
+"""Cada cuántos segundos mira el servicio entre ciclos si debe parar.
+
+Mira `stop_requested()` y `pen_present()`: dos `stat`. Una ventana que se abre
+espera a que el servicio vea el `daemon.stop`, así que este es el ritmo que
+decide cuánto tarda en salir. Dos sondeos deben caber en `STOP_WAIT_SECONDS`.
 """
 STOP_WAIT_SECONDS = 15.0
 """Segundos que espera el lanzador a que pare el servicio anterior."""
+STOP_WAIT_STEP = 0.1
+"""Cada cuántos segundos mira el lanzador si el servicio anterior ya soltó su registro."""
 HOST = prefs.HOST
 
 CREATE_NO_WINDOW = model.CREATE_NO_WINDOW
@@ -160,6 +169,24 @@ def dlog(msg: str) -> None:
 
 ESPERA_REGISTRO = 1.0
 """Segundos que se dan a quien acaba de crear el registro para llenarlo."""
+ESPERA_PADRE = 3.0
+"""Segundos que espera `tomar_ui()` si el registro es del proceso que lanzó esta ventana.
+
+Al actualizar, la ventana vieja lanza la nueva (`ui/tk_update.py`) y se cierra
+después: la nueva puede llegar al registro antes de que la vieja lo suelte.
+"""
+PASO_PADRE = 0.05
+"""Cada cuántos segundos mira `tomar_ui()` si el padre ya soltó el registro."""
+
+
+def padre_pid() -> int:
+    """Devuelve el pid del proceso que lanzó este (`os.getppid()`, también en Windows).
+
+    En POSIX, si el padre murió, es el de `init` o del que adopte a los
+    huérfanos, que nunca tiene el registro de una ventana. Punto de
+    indirección: los tests la sustituyen.
+    """
+    return os.getppid()
 
 
 def _leer_ui() -> dict | None:
@@ -317,6 +344,22 @@ def ui_en_marcha() -> dict | None:
     return info
 
 
+def _soltado_por_el_padre(visto: dict) -> bool:
+    """Espera hasta `ESPERA_PADRE` a que el registro `visto` deje de estar vivo y ser ese.
+
+    Returns:
+        `True` si lo soltó (ya no está, es otro o su dueño murió); `False` si
+        sigue igual pasado el plazo.
+    """
+    limite = time.monotonic() + ESPERA_PADRE
+    while time.monotonic() < limite:
+        time.sleep(PASO_PADRE)
+        actual = _leer_ui()
+        if actual != visto or not _viva_aqui(actual):
+            return True
+    return False
+
+
 def tomar_ui() -> dict | None:
     """Apunta que esta ventana es la de este dispositivo, si nadie la tiene.
 
@@ -324,6 +367,11 @@ def tomar_ui() -> dict | None:
     (`_crear_exclusivo`). Como dos pasos, el 28/09/2026 dos ventanas lanzadas
     con 6 s de diferencia miraron las dos antes de que ninguna escribiera y se
     abrieron a la vez.
+
+    Si el registro vivo es del proceso que lanzó este (`padre_pid()`: la ventana
+    vieja que se cierra tras actualizar) se espera hasta `ESPERA_PADRE` a que lo
+    suelte, en vez de decir «Ya hay una ventana abierta». Esa espera no gasta
+    el reintento de abajo: si el padre murió sin soltarlo, lo suyo es un resto.
 
     Si hay un resto (pid muerto, otro equipo, ilegible) se retira y se
     reintenta una sola vez: si otra ventana se ha adelantado, manda esa.
@@ -338,17 +386,22 @@ def tomar_ui() -> dict | None:
     datos = json.dumps({"pid": os.getpid(), "host": HOST, "started": store.stamp(),
                         "arranque": store.arranque_del_sistema()},
                        ensure_ascii=False, indent=1).encode("utf-8")
-    for intento in range(2):
+    intento, esperado = 0, False
+    while intento < 2:
         creado = _crear_exclusivo(UI_LOCK, datos)
         if creado is not False:
             return None                 # tomado, o no se puede escribir
         otra = _leer_ui()
-        if otra is None:
-            continue                    # se soltó entre medias: otra vez
-        if _viva_aqui(otra):
+        if otra is not None and _viva_aqui(otra):
+            if esperado or otra.get("pid") != padre_pid():
+                return otra
+            esperado = True
+            if _soltado_por_el_padre(otra):
+                continue                # lo soltó o murió: otra vez, sin gastar el reintento
             return otra
-        if not intento:
+        if otra is not None and not intento:
             _retirar_ui(otra)
+        intento += 1                    # `None`: se soltó entre medias, otra vez
     return None
 
 
@@ -360,7 +413,7 @@ def soltar_ui() -> None:
     """
     info = store.read_json(UI_LOCK)
     if info.get("pid") == os.getpid() and info.get("host") == HOST:
-        UI_LOCK.unlink(missing_ok=True)
+        _borrar(UI_LOCK)                # la ventana nueva lo lee cada `PASO_PADRE`
 
 
 def vigilante_instalado() -> bool:
@@ -424,7 +477,7 @@ def stop_previous_daemon() -> str | None:
     if not _viva_aqui(info):
         # Rastro de otro equipo (dispositivo extraído sin más), de antes de
         # reiniciar, de un proceso ya muerto o de un pid ilegible.
-        LOCK.unlink(missing_ok=True)
+        _borrar(LOCK)
         STOP.unlink(missing_ok=True)
         return (f"Había un registro de un servicio ya inexistente "
                 f"(pid {pid}, host {info.get('host')}); limpiado.")
@@ -437,7 +490,7 @@ def stop_previous_daemon() -> str | None:
             if info.get("agente"):
                 return None
             return f"Servicio anterior (pid {pid}) detenido."
-        time.sleep(0.3)
+        time.sleep(STOP_WAIT_STEP)
 
     # No ha contestado a tiempo: probablemente está en mitad de una pareja. Se
     # le deja el `daemon.stop` (parará al terminarla). El lock del agente se
@@ -447,7 +500,7 @@ def stop_previous_daemon() -> str | None:
     if info.get("agente"):
         return (f"El agente de este equipo está a mitad de una pareja; deja de "
                 f"sincronizar {que} en cuanto la acabe.")
-    LOCK.unlink(missing_ok=True)
+    _borrar(LOCK)
     return (f"El servicio (pid {pid}) está ocupado (¿sincronización en curso?); "
             f"parará al terminar la pareja actual.")
 
@@ -519,6 +572,8 @@ def daemon_cycle(pairs: list[str], lock_data: dict) -> None:
         pairs: Las parejas a sincronizar.
         lock_data: El registro propio, que se reescribe con el resultado.
     """
+    from common import update
+
     previos = lock_data.get("last_results") or {}
     results = {}
     for name in pairs:
@@ -588,6 +643,8 @@ def pasada_llavero(v: llavero.Vigilancia, pareja: model.Pair, por: str) -> int:
     Returns:
         El código de `sync.py`.
     """
+    from common import llavero
+
     v.empieza_pasada(time.monotonic())
     t0 = time.monotonic()
     rc, salida = run_pair_quiet(model.LLAVERO)
@@ -607,6 +664,8 @@ def atender_llavero(v: llavero.Vigilancia, pareja: model.Pair) -> None:
 
     Lo usan la espera del servicio entre ciclos y el vigilante del llavero.
     """
+    from common import llavero
+
     ahora = time.monotonic()
     if v.toca_mirar(ahora):
         primera = v.foto is None
@@ -635,6 +694,8 @@ def vigilar_llavero() -> int:
     la pasada que quede pendiente. Corre fuera del dispositivo (cwd en el
     temporal), así que no retiene el volumen.
     """
+    from common import keepassxc, llavero
+
     os.chdir(tempfile.gettempdir())
     pareja = pareja_llavero()
     if pareja is None:
@@ -716,6 +777,8 @@ def cerrar_llavero(preguntar=input) -> int:
         return 0                            # sin config no hay llavero que cerrar
     if config.pareja_llavero is None:
         return 0
+    from common import keepassxc
+
     programas, _ = keepassxc.procesos_de_la_unidad()
     if programas:
         try:
@@ -749,6 +812,8 @@ def combinar_llavero(rest: list[str]) -> int:
     pid al empezar y su código al acabar, para quien espera
     (`keepassxc.esperar_codigo()`).
     """
+    from common import keepassxc
+
     sin_contrasena = "--sin-contrasena" in rest
     rest = [a for a in rest if a != "--sin-contrasena"]
     opciones: dict[str, Path] = {}
@@ -777,6 +842,8 @@ def convertir_llavero(rest: list[str]) -> int:
     donde `keepassxc-cli db-edit` pide la contraseña actual de la base. Igual que
     `combinar_llavero()` con `--codigo`.
     """
+    from common import keepassxc
+
     opciones: dict[str, Path] = {}
     while len(rest) >= 4 and rest[-2] in ("--actual", "--codigo") and rest[-2] not in opciones:
         opciones[rest[-2]], rest = Path(rest[-1]), rest[:-2]
@@ -867,8 +934,17 @@ def daemon_main(pairs: list[str], interval_min: float) -> int:
         return 0
     # Nadie mira sus pasadas: cede el equipo, y sus sync.py y rclone lo heredan.
     prioridad.bajar()
+    # El servicio dura días: si el programa se actualiza debajo de él, un import
+    # tardío leería ficheros nuevos junto a módulos viejos. Éstos son los que usa
+    # siempre: `update` en cada ciclo (`daemon_cycle()`) y `results` el aviso de
+    # fallo (`ui.avisar_fallo`, que lo importa fuera de su `try`); `llavero`,
+    # solo con `[keychain]`, abajo.
+    from common import results, update  # noqa: F401
     llave = pareja_llavero()
-    v = llavero.Vigilancia()
+    v = None
+    if llave is not None:
+        from common import llavero
+        v = llavero.Vigilancia()
     dlog(f"servicio iniciado: pid={os.getpid()} host={HOST} "
          f"parejas={','.join(pairs)} intervalo={interval_min:g}m"
          + (" y el llavero" if llave is not None else ""))
@@ -887,6 +963,7 @@ def daemon_main(pairs: list[str], interval_min: float) -> int:
                 pasada_llavero(v, llave, "ciclo del servicio")
             wake = time.monotonic() + interval_min * 60
             stop = False
+            lento = time.monotonic()    # la primera mirada lenta, ya
             while time.monotonic() < wake:
                 if not pen_present():
                     reason, stop = "dispositivo no conectado", True
@@ -894,17 +971,21 @@ def daemon_main(pairs: list[str], interval_min: float) -> int:
                 if stop_requested():
                     reason, stop = "parada solicitada por el lanzador", True
                     break
-                otro = read_lock()
-                if otro is not None and not _lock_mio(otro) and _viva_aqui(otro):
-                    # El lanzador se cansó de esperar, borró nuestro registro y
-                    # arrancó otro servicio (que borra el stop que iba para
-                    # nosotros): el que está ahí es el servicio, y dos a la vez
-                    # no puede ser.
-                    reason, stop = f"otro servicio (pid {otro.get('pid')}) tiene el registro", True
-                    break
-                if llave is not None:
-                    atender_llavero(v, llave)
-                time.sleep(POLL_SECONDS)
+                if time.monotonic() >= lento:
+                    # Lo lento, cada `POLL_SECONDS`: el registro y la foto de
+                    # procesos del llavero.
+                    lento = time.monotonic() + POLL_SECONDS
+                    otro = read_lock()
+                    if otro is not None and not _lock_mio(otro) and _viva_aqui(otro):
+                        # El lanzador se cansó de esperar, borró nuestro registro y
+                        # arrancó otro servicio (que borra el stop que iba para
+                        # nosotros): el que está ahí es el servicio, y dos a la vez
+                        # no puede ser.
+                        reason, stop = f"otro servicio (pid {otro.get('pid')}) tiene el registro", True
+                        break
+                    if llave is not None:
+                        atender_llavero(v, llave)
+                time.sleep(max(0.0, min(STOP_POLL_SECONDS, wake - time.monotonic())))
             if stop:
                 break
     finally:
@@ -913,7 +994,7 @@ def daemon_main(pairs: list[str], interval_min: float) -> int:
         # nuevo, su registro no se toca.
         info = read_lock()
         if info and info.get("pid") == os.getpid() and info.get("host") == HOST:
-            LOCK.unlink(missing_ok=True)
+            _borrar(LOCK)               # la ventana lo lee cada `STOP_WAIT_STEP`
         STOP.unlink(missing_ok=True)
     return 0
 

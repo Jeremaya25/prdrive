@@ -19,7 +19,10 @@ from pathlib import Path
 
 from _harness import Checks, sandbox, tmpdir
 
-from common import bisync, conflicts, historial, keepassxc, llavero, model, results, update
+from dataclasses import replace
+
+from common import (bisync, conflicts, historial, keepassxc, llavero, model, results,
+                    revision, update)
 
 c = Checks("«Reparación» y la ventana principal (cableado)")
 
@@ -33,7 +36,8 @@ except Exception as e:                                   # sin entorno gráfico
     sys.exit(0)
 
 import ui
-from ui import llavero_editor, prefs, tk_conflicts, tk_doctor, tk_pairs, tk_repair
+from ui import (instantanea, llavero_editor, prefs, tk_conflicts, tk_doctor, tk_pairs,
+               tk_repair)
 from ui import tk as uitk
 
 prefs.PREFS = tmpdir("prdrive-tkconf-") / "ui_prefs.json"
@@ -374,6 +378,167 @@ with sandbox():
       [("Informe del estado", ["--doctor"])])
 
 
+# «Reparación» pinta primero lo que ya leyó la ventana principal (`compartida`),
+# pero no actúa sobre ello sin volver a mirar: lo que se ve puede ser de antes.
+SUELTO = revision.Hallazgo("lock", "Bloqueos sueltos en «notas»", "Quedan restos de una "
+                           "pasada cortada.", "notas", revision.AVISO, ())
+
+
+def reparacion_con(cfg, conducir, compartida=None, marcadas=None):
+    """Abre «Reparación» con la lectura compartida de la principal y ejecuta `conducir(dlg)`."""
+    tk_repair.mostrar = lambda dlg, parent=None: conducir(dlg)
+    return tk_repair.open_dialog(raiz, cfg, lanzar_falso, marcadas, compartida=compartida)
+
+
+def compartiendo(cfg, **campos):
+    """Devuelve una `Compartida` con una lectura real de `cfg` cambiada en esos campos."""
+    inst = instantanea.leer(cfg)
+    comp = instantanea.Compartida()
+    comp.poner(replace(inst, **campos))
+    return comp
+
+
+class ContarRevisar:
+    """Cuenta cuántas veces se lee el dispositivo con `revision.revisar()`."""
+
+    def __init__(self):
+        self.llamadas = 0
+        self.real = revision.revisar
+
+    def __enter__(self):
+        def contando(config, **k):
+            self.llamadas += 1
+            return self.real(config, **k)
+        revision.revisar = contando
+        return self
+
+    def __exit__(self, *_a):
+        revision.revisar = self.real
+
+
+avisos: list[str] = []
+real_info = messagebox.showinfo
+messagebox.showinfo = lambda titulo=None, texto=None, **k: avisos.append(str(texto))
+
+with sandbox():
+    cfg, p = preparar()
+    comp = compartiendo(cfg, hallazgos=(SUELTO,), cuenta=1)
+    c("(la lectura compartida de partida vale para esta config)", comp.para(cfg) is not None, True)
+    vistos = {}
+    avisos.clear()
+    confirmaciones.clear()
+    desde_reparacion.clear()
+
+    def sobre_lo_visto(dlg):
+        """Apunta lo pintado, pulsa la avería que el dispositivo ya no tiene y apunta lo que pasa."""
+        vistos["antes"] = (textos(dlg), contar.llamadas)
+        botones(dlg)["Borrar los bloqueos…"].invoke()
+        vistos["despues"] = (textos(dlg), contar.llamadas)
+
+    with ContarRevisar() as contar:
+        reparacion_con(cfg, sobre_lo_visto, comp)
+    c("el primer pintado sale de la lectura de la ventana principal: no lee el dispositivo",
+      vistos["antes"][1], 0)
+    c("  y enseña la avería que esa lectura traía", SUELTO.titulo in vistos["antes"][0], True)
+    c("su botón vuelve a mirar el dispositivo antes de pensar nada", vistos["despues"][1] >= 1, True)
+    c("  dice que ya no está", [a for a in avisos if "Esto ya no está" in a] != [], True)
+    c("  nombra qué era", any(SUELTO.titulo in a for a in avisos), True)
+    c("  no pide confirmación", confirmaciones, [])
+    c("  y repinta con lo que hay ahora: la avería ya no sale",
+      (SUELTO.titulo in vistos["despues"][0],
+       any("No hay nada que revisar" in x for x in vistos["despues"][0])), (False, True))
+
+with sandbox():
+    # Lo mismo con el resync, que no es un plan de disco sino una pasada.
+    cfg, p = preparar()
+    resync = revision.Hallazgo("resync", "«notas» pide un resync", "Falta el baseline.",
+                               "notas", revision.AVISO, ())
+    comp = compartiendo(cfg, hallazgos=(resync,), cuenta=1)
+    confirmaciones.clear()
+    desde_reparacion.clear()
+    vivas = []
+
+    def resincronizar_lo_visto(dlg):
+        """Pulsa «Resincronizar…» sobre un resync que el dispositivo ya no pide."""
+        botones(dlg)["Resincronizar…"].invoke()
+        vivas.append(bool(dlg.winfo_exists()))
+
+    reparacion_con(cfg, resincronizar_lo_visto, comp)
+    c("un resync que ya no hace falta no se confirma ni se lanza",
+      (confirmaciones, desde_reparacion, vivas), ([], [], [True]))
+
+with sandbox():
+    # Y cuando la avería sigue ahí, el plan se hace con lo que hay AHORA.
+    cfg, p = preparar()
+    lock = escribir(p.workdir / "suelto.lck", "")
+    comp = compartiendo(cfg, hallazgos=(SUELTO,), cuenta=1)
+    confirmaciones.clear()
+    avisos.clear()
+    vistos = {}
+
+    def borrar_lo_visto(dlg):
+        """Pulsa «Borrar los bloqueos…» sobre una avería que sigue en el dispositivo."""
+        botones(dlg)["Borrar los bloqueos…"].invoke()
+        vistos["textos"] = textos(dlg)
+
+    with ContarRevisar() as contar:
+        reparacion_con(cfg, borrar_lo_visto, comp)
+    c("con la avería en el dispositivo, pasa por la confirmación de siempre",
+      confirmaciones, ["Borrar los bloqueos de «notas»"])
+    c("  y el bloqueo, que es el de ahora y no el que decía la lectura, se va",
+      lock.exists(), False)
+    c("  tras ejecutar, la lista sale de `revisar()` y no de la lectura compartida",
+      (SUELTO.titulo in vistos["textos"],
+       any("No hay nada que revisar" in x for x in vistos["textos"])), (False, True))
+    c("  (mirar antes de pensar el plan, y otra vez al repintar)", contar.llamadas, 2)
+    c("  y no dice que ya no esté", [a for a in avisos if "Esto ya no está" in a], [])
+
+with sandbox():
+    # Lo que no vale: una lectura con el campo fallido, una caducada, ninguna.
+    cfg, p = preparar()
+    fallida = compartiendo(cfg, hallazgos=(SUELTO,), cuenta=1,
+                           fallos={"hallazgos": "OSError()"})
+    caducada = compartiendo(cfg, hallazgos=(SUELTO,), cuenta=1)
+    escribir(p.workdir / "llego-despues.tmp", "x")
+    for nombre, comp in (("una lectura donde `hallazgos` falló", fallida),
+                         ("una lectura que el dispositivo ya cambió", caducada),
+                         ("sin lectura compartida", None)):
+        vistos = {}
+
+        def mirar_lo_pintado(dlg):
+            """Apunta lo que sale pintado al abrir."""
+            vistos["textos"] = textos(dlg)
+
+        with ContarRevisar() as contar:
+            reparacion_con(cfg, mirar_lo_pintado, comp)
+        c(f"{nombre}: lee el dispositivo una vez", contar.llamadas, 1)
+        c("  y no enseña lo que traía esa lectura", SUELTO.titulo in vistos["textos"], False)
+
+with sandbox():
+    # Si no se puede volver a mirar, no se hace ningún plan.
+    cfg, p = preparar()
+    lock = escribir(p.workdir / "suelto.lck", "")
+    errores.clear()
+    confirmaciones.clear()
+    real_revisar = revision.revisar
+
+    def sin_poder(dlg):
+        """Pulsa el botón de una avería cuando el dispositivo ya no se deja leer."""
+        def falla(config, **k):
+            raise OSError("el dispositivo no contesta")
+        revision.revisar = falla
+        try:
+            botones(dlg)["Borrar los bloqueos…"].invoke()
+        finally:
+            revision.revisar = real_revisar
+
+    reparacion_con(cfg, sin_poder, None)
+    c("sin poder volver a mirar, no se borra ni se pide confirmar",
+      (lock.exists(), confirmaciones), (True, []))
+    c("  y se dice por qué", any("el dispositivo no contesta" in e for e in errores), True)
+
+messagebox.showinfo = real_info
+
 # la ventana principal
 lanzadas: list[dict] = []
 
@@ -387,12 +552,47 @@ def salida_falsa(titulo, cmd, parent=None, subtitulo="", modal=True, al_cerrar=N
 
 SALIDA_REAL = uitk.output_window
 uitk.output_window = salida_falsa
+# La lectura del dispositivo que la principal hace tras pintarse, en el sitio:
+# llega con el primer `update_idletasks()`.
+from ui import segundo_plano  # noqa: E402
+
+segundo_plano.lanzar = segundo_plano.en_el_acto
+lecturas: list = []
+
+
+def botones_vistos(w) -> dict:
+    """Devuelve los botones a la vista de `w` por su texto.
+
+    La principal guarda escondidos los bloques que no enseña: no cuentan.
+    """
+    from _vista import visibles
+    return {b.cget("text"): b for b in visibles(w, "TButton")}
+
+
+def textos_vistos(w) -> list[str]:
+    """Devuelve los textos de las etiquetas a la vista de `w`."""
+    from _vista import visibles
+    return [str(x.cget("text")) for x in visibles(w, "TLabel")]
+
+
+def hasta(root, condicion) -> bool:
+    """Mueve el bucle de eventos hasta que se cumple `condicion`, como mucho 2 s."""
+    limite = time.monotonic() + 2.0
+    while not condicion() and time.monotonic() < limite:
+        root.update()
+        time.sleep(0.005)
+    return bool(condicion())
 
 
 def ventana_principal(cfg, conducir):
-    """Abre la principal y, en vez de su bucle de eventos, ejecuta `conducir`."""
+    """Abre la principal y, en vez de su bucle de eventos, ejecuta `conducir`.
+
+    Antes deja llegar la lectura del dispositivo y apunta qué no se pudo leer.
+    """
     def _mainloop(self):
         """Conduce la ventana en vez de entrar en el bucle de eventos."""
+        self.update_idletasks()
+        lecturas.append(dict(self.instantanea.resultado.fallos))
         conducir(self)
         try:
             # Lo que la ventana dejó programado (la versión, el escaneo) no se
@@ -420,12 +620,12 @@ with sandbox():
 
     def mirar_fallo(root):
         """Apunta lo que dice la ventana con un fallo y entra en «Reparación»."""
-        vistos["textos"] = textos(root)
-        vistos["botones"] = sorted(botones(root))
-        botones(root)["Reparación…"].invoke()
+        vistos["textos"] = textos_vistos(root)
+        vistos["botones"] = sorted(botones_vistos(root))
+        botones_vistos(root)["Reparación…"].invoke()
 
     real_reparacion = tk_repair.open_dialog
-    tk_repair.open_dialog = (lambda parent, config, lanzar, marcadas=None:
+    tk_repair.open_dialog = (lambda parent, config, lanzar, marcadas=None, **_k:
                              abiertas.append(marcadas) or False)
     try:
         ventana_principal(cfg, mirar_fallo)
@@ -471,14 +671,14 @@ with sandbox():
     conflicts.actualizar_pareja(p)
     abiertas = []
     real_reparacion = tk_repair.open_dialog
-    tk_repair.open_dialog = (lambda parent, config, lanzar, marcadas=None:
+    tk_repair.open_dialog = (lambda parent, config, lanzar, marcadas=None, **_k:
                              abiertas.append(config) or False)
     vistos = {}
 
     def mirar_conflicto(root):
         """Apunta lo que dice la ventana con un conflicto y entra en «Reparación»."""
-        vistos["textos"] = textos(root)
-        botones(root)["Reparación…"].invoke()
+        vistos["textos"] = textos_vistos(root)
+        botones_vistos(root)["Reparación…"].invoke()
 
     try:
         ventana_principal(cfg, mirar_conflicto)
@@ -501,19 +701,24 @@ with sandbox():
     servicio_antes = prefs.read_prefs()
 
     def sincronizar_y_volver(root):
-        """Pulsa «Sincronizar ahora» y apunta cómo queda la ventana."""
-        b = botones(root)
+        """Pulsa «Sincronizar ahora» y apunta cómo queda la ventana.
+
+        La salida se abre en el turno siguiente al clic: se mueve el bucle hasta
+        que llega.
+        """
+        b = botones_vistos(root)
         b["Sincronizar ahora"].invoke()
+        hasta(root, lambda: lanzadas)
         vistos["viva"] = bool(root.winfo_exists())
-        vistos["durante"] = {t: str(w.cget("state")) for t, w in botones(root).items()}
-        vistos["chip durante"] = "sincronizando…" in textos(root)
+        vistos["durante"] = {t: str(w.cget("state")) for t, w in botones_vistos(root).items()}
+        vistos["chip durante"] = "sincronizando…" in textos_vistos(root)
         # Lo que habría hecho sync.py: dejar un conflicto apuntado en state/.
         escribir(p.local_abs / "plan.md", "del remoto")
         escribir(p.local_abs / "plan.md.conflicto-dispositivo1", "de aquí")
         conflicts.actualizar_pareja(p)
         lanzadas[-1]["al_cerrar"](0)
-        vistos["despues"] = {t: str(w.cget("state")) for t, w in botones(root).items()}
-        vistos["textos"] = textos(root)
+        vistos["despues"] = {t: str(w.cget("state")) for t, w in botones_vistos(root).items()}
+        vistos["textos"] = textos_vistos(root)
         vistos["viva después"] = bool(root.winfo_exists())
 
     eleccion = ventana_principal(cfg, sincronizar_y_volver)
@@ -565,10 +770,10 @@ with sandbox():
 
     real_reparacion = tk_repair.construir
 
-    def construir_falso(panel, config, lanzar, marcadas=None):
+    def construir_falso(panel, config, lanzar, marcadas=None, **k):
         """Apunta que se ha dibujado «Reparación», y dentro de «Ajustes»."""
         abiertas.append(panel.incrustado)
-        real_reparacion(panel, config, lanzar, marcadas)
+        real_reparacion(panel, config, lanzar, marcadas, **k)
 
     tk_repair.construir = construir_falso
     tk_doctor.mostrar = lambda dlg, parent=None: dentro_de_ajustes(dlg)
@@ -712,9 +917,12 @@ with sandbox():
 
 with sandbox():
     cfg, _p = preparar()
-    eleccion = ventana_principal(cfg, lambda root: botones(root)["Iniciar servicio"].invoke())
+    eleccion = ventana_principal(
+        cfg, lambda root: botones_vistos(root)["Iniciar servicio"].invoke())
     c("el servicio sí sale de la ventana: lo arranca runsync",
       (eleccion.action, eleccion.pairs), ("daemon", ("notas",)))
+c("cada lectura de la ventana principal se hizo sin fallos",
+  [f for f in lecturas if f], [])
 
 
 # la ventana de salida sin bloquear, con un proceso de verdad

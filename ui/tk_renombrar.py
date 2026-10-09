@@ -21,8 +21,8 @@ from common import catalog, fleet
 from common.model import ConfigError
 
 from . import catalog_editor, segundo_plano, theme
-from .tk import (TITLE, Indicador, Panel, Sondeo, cabecera, dialogo, mostrar, pie,
-                 separador_fila, working)
+from .tk import (TITLE, Panel, cabecera, dialogo, mostrar, pie, separador_fila,
+                 working)
 from .tk_fleet import fecha
 
 TITULO = "Renombrar el catálogo"
@@ -51,14 +51,15 @@ def open_dialog(parent, raw: dict | None = None) -> None:
 def construir(panel: Panel, raw: dict | None = None) -> None:
     """Dibuja «Renombrar el catálogo» en `panel` (su diálogo o «Ajustes»).
 
-    La espera de la red cuelga del marco y no de la ventana: dentro de
-    «Ajustes», pasar a otro apartado destruye el marco y con él la espera.
+    La espera de la red y su línea de espera las pide al panel (`panel.sondeo()`,
+    `panel.indicador()`): cuelgan del marco y no de la ventana, así que destruir
+    el apartado las cancela, y esconderlo (`panel.ocultado()`) las pausa.
     """
     from tkinter import messagebox, ttk
 
     raw = catalog_editor.raw_del_dispositivo(raw)
     dlg, marco = panel.ventana, panel.marco
-    sondeo = Sondeo(marco)
+    sondeo = panel.sondeo()
     yo = fleet.device_id()
     sitio = catalog.sin_renombrar(raw)
     estado: dict = {"renombrado": None}
@@ -68,7 +69,7 @@ def construir(panel: Panel, raw: dict | None = None) -> None:
     if sitio is not None:
         ttk.Label(marco, text=sitio.carpeta, style="MonoPista.TLabel").grid(
             row=1, column=0, sticky="w", pady=(theme.E2, 0))
-    indicador = Indicador(marco, ancho=560)
+    indicador = panel.indicador(marco, ancho=560)
     indicador.marco.grid(row=2, column=0, sticky="ew", pady=(theme.E3, 0))
     dlg.indicador, dlg.sondeo = indicador, sondeo   # como `visor`: los tests los miran
 

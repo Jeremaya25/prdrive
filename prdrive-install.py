@@ -23,6 +23,8 @@ Sin argumentos abre el asistente. Los demás modos hacen una cosa y salen:
 - `--instalar-agente`: instala el agente residente en ESTE equipo.
 - `--desinstalar-agente`: lo quita (no toca ninguna unidad).
 - `--update-agente`: pone el agente instalado a esta versión.
+- `--autoprueba RUTA`: la prueba del `.exe` recién compilado, sin ventana, que
+  la CI lee antes de publicarlo (no sale en `--help`).
 
 `--update` es el otro extremo del aviso de versión nueva de la ventana: no
 aprovisiona nada, solo repite el paso 5 sobre un dispositivo que ya existe. Y
@@ -54,6 +56,7 @@ import sys
 import time
 import traceback
 from pathlib import Path
+from typing import Callable
 
 # Como .py, la raíz del proyecto va al path para importar `install`, `ui` y
 # `common`; compilado, PyInstaller ya los trae.
@@ -61,7 +64,7 @@ if not getattr(sys, "frozen", False):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from install import APP_NAME, InstallError, __version__  # noqa: E402
-from install import components, deploy, device, profile, rclone_bin, remote  # noqa: E402
+from install import components, deploy, device, platforms, profile, rclone_bin, remote  # noqa: E402
 from common.update import CODIGO_RELEVO  # noqa: E402
 
 DESCRIPCION = ("Aprovisiona un dispositivo prdrive nuevo a partir del catálogo "
@@ -196,7 +199,7 @@ def cmd_update(raiz: str) -> int:
             f"argumentos.")
 
     print(f"Actualizando {destino} a la versión {__version__}")
-    escrito = deploy.deploy_code(root)          # sin rclone: ya está puesto
+    escrito = deploy.deploy_code(root, progreso=print)   # sin rclone: ya está puesto
     guia = deploy.write_guide(root)
     if guia is not None:
         escrito.append(guia)
@@ -212,7 +215,8 @@ def cmd_update(raiz: str) -> int:
     return 0
 
 
-def cmd_update_components(raiz: str, relevo: int | None = None) -> int:
+def cmd_update_components(raiz: str, relevo: int | None = None,
+                          fase: Callable[[], None] | None = None) -> int:
     """Pone al día el rclone y el Python que lleva un dispositivo. Nada más.
 
     Es el hermano de `--update`: aquel cambia el CÓDIGO y deja los componentes;
@@ -229,9 +233,15 @@ def cmd_update_components(raiz: str, relevo: int | None = None) -> int:
     cuando la ventana se cierre (`components.preparar_relevo()`) y se sale con
     `update.CODIGO_RELEVO`, que le dice a la ventana que se cierre.
 
+    Si cambia el Python que usará este equipo, deja precompilado el programa con
+    el nuevo (`deploy.precompilar_dispositivo()`) antes de volver: el cambio
+    borra sus `.pyc`, y la ventana que se reabre no debe pagarlos.
+
     Args:
         raiz: La raíz del volumen.
         relevo: Pid de la ventana que lo ha lanzado, si la hay.
+        fase: Se llama justo antes de precompilar, para que quien enseña un
+            avance (la ventanita del relevo) lo diga.
 
     Returns:
         0 si ha ido bien, 1 si algo no se ha podido, `CODIGO_RELEVO` si el
@@ -259,6 +269,7 @@ def cmd_update_components(raiz: str, relevo: int | None = None) -> int:
     print(f"Componentes por poner al día en {destino}:")
     for p in pendientes:
         print(f"  {p.describe()}")
+    sello_antes = platforms.sello_del_equipo(root)
     res = components.aplicar(root, progreso=print,
                              pends=[p for p in pendientes if p != propio])
     for linea in res.hechos:
@@ -267,6 +278,10 @@ def cmd_update_components(raiz: str, relevo: int | None = None) -> int:
         print(f"  POSPUESTO  {linea}")
     for linea in res.fallidos:
         print(f"  FALLO      {linea}")
+    if platforms.sello_del_equipo(root) != sello_antes:
+        if fase is not None:
+            fase()
+        deploy.precompilar_dispositivo(root, progreso=print)
 
     if propio is not None:
         # Antes de cerrar nada: si algo más corre desde ese Python, cambiarlo
@@ -395,7 +410,7 @@ def cmd_relevo(raiz: str, esperar: list[int], reabrir: str | None) -> int:
                     return
                 estado["reabrir"] = True
                 avance.medir()
-                estado["rc"] = cmd_update_components(str(root))
+                estado["rc"] = cmd_update_components(str(root), fase=avance.precompilando)
             except InstallError as e:
                 print(e)
             except Exception:                        # noqa: BLE001
@@ -434,6 +449,166 @@ def cmd_relevo(raiz: str, esperar: list[int], reabrir: str | None) -> int:
             texto = ""
         report(["No se han podido poner al día todos los componentes.", ""]
                + texto.splitlines())
+    return rc
+
+
+MODULOS_ASISTENTE = (
+    "common.avisos", "common.cifrada", "common.dbus", "common.equipo", "common.pins",
+    "common.vestibulo", "install", "install.agente", "install.crypto", "install.deploy",
+    "install.device", "install.llavero", "install.raiz_equipo", "install.traveler",
+    "install.veracrypt_bin", "penwatch", "shutil", "tkinter", "tkinter.filedialog",
+    "tkinter.messagebox", "tkinter.ttk", "ui.bandeja_linux", "ui.lecturas_asistente",
+    "ui.segundo_plano", "ui.tk", "ui.tk_crypto", "ui.tk_equipo", "ui.tk_install",
+    "ui.tk_pairs", "unicodedata")
+"""Lo que el asistente y sus pasos importan dentro de funciones.
+
+Es lo que el `.exe` tiene que llevar dentro aunque no se use al abrirlo: un
+módulo que PyInstaller no recogiera fallaría en un paso del asistente, lejos
+de la compilación. `--autoprueba` los importa uno a uno. Sale de los imports de
+dentro de funciones de `ui/tk_install.py`, `ui/tk_crypto.py` y
+`ui/tk_equipo.py`, y `tests/test_autoprueba.py` falla si alguno no está.
+"""
+
+
+def _probar(informe: dict, clave: str, prueba: Callable[[], object]) -> object:
+    """Apunta en `informe[clave]` lo que da `prueba()`, o su error si falla.
+
+    Returns:
+        Lo que dio la prueba, o `None` si falló.
+    """
+    try:
+        valor = prueba()
+    except Exception as e:                           # noqa: BLE001
+        informe[clave] = f"error: {type(e).__name__}: {e}"
+        return None
+    informe[clave] = valor
+    return valor
+
+
+def _autoprueba(informe: dict) -> None:
+    """Hace la autoprueba y la apunta en `informe`, clave a clave, según avanza.
+
+    Las ventanas se crean escondidas y se destruyen sin enseñarse. El tema se
+    aplica en una raíz y el asistente se monta en otra (`tk_install.build()`
+    aplica el tema él mismo): así un fallo dice cuál de los dos ha sido.
+    """
+    import importlib
+    import platform
+
+    import install
+    from install import agente
+
+    informe["python"] = platform.python_version()
+    informe["congelado"] = install.is_frozen()
+    informe["prdrive"] = __version__
+
+    from ui import icons, theme
+    theme.nitidez()                     # como el asistente: antes del primer Tk()
+
+    def raiz():
+        import tkinter
+        r = tkinter.Tk()
+        r.withdraw()
+        return r
+
+    try:
+        primera = raiz()
+    except Exception as e:                           # noqa: BLE001
+        sin_tk = f"error: {type(e).__name__}: {e}"
+        for clave in ("tk", "tk9", "svg", "tema", "letra", "pintadas_python"):
+            informe[clave] = sin_tk
+    else:
+        import tkinter
+        try:
+            _probar(informe, "tk", lambda: str(primera.getvar("tk_patchLevel")))
+            _probar(informe, "tk9", lambda: tkinter.TkVersion >= 9)
+            _probar(informe, "svg", lambda: icons.svg_disponible(primera))
+            _probar(informe, "tema", lambda: theme.apply(primera) or True)
+            _probar(informe, "letra", lambda: theme.familia("texto"))
+            informe["pintadas_python"] = icons.PINTADAS["python"]
+        finally:
+            primera.destroy()
+
+    def asistente() -> bool:
+        from ui import tk_install
+        otra = raiz()
+        try:
+            wiz = tk_install.build(otra)
+            if wiz.conf is not None:
+                wiz.conf.close()
+        finally:
+            otra.destroy()
+        return True
+
+    _probar(informe, "asistente", asistente)
+
+    modulos: dict[str, str] = {}
+    for nombre in MODULOS_ASISTENTE:
+        _probar(modulos, nombre, lambda n=nombre: importlib.import_module(n) and "ok")
+    informe["modulos"] = modulos
+
+    base = install.bundle_dir()
+    datos: dict[str, str] = {}
+    for nombre in dict.fromkeys((*deploy.DEPLOY_FILES, *agente.CODIGO_FICHEROS,
+                                 deploy.GUIDE_SOURCE)):
+        datos[nombre] = "ok" if (base / nombre).is_file() else f"falta en {base}"
+    for nombre in deploy.DEPLOY_TREES:
+        datos[nombre] = "ok" if (base / nombre).is_dir() else f"falta en {base}"
+    informe["datos"] = datos
+
+    _probar(informe, "python_equipo", lambda: device.check_python().detalle)
+    _probar(informe, "unidades", lambda: len(device.list_volumes()))
+
+
+def _autoprueba_superada(informe: dict) -> bool:
+    """Indica si el `.exe` se puede publicar.
+
+    Hace falta Tk 9 con SVG, el tema, el asistente, cada módulo y cada fichero;
+    `python_equipo` y `unidades` solo se leen.
+    """
+    return (all(informe.get(clave) is True for clave in ("tk9", "svg", "tema", "asistente"))
+            and bool(informe.get("modulos")) and bool(informe.get("datos"))
+            and all(v == "ok" for v in informe["modulos"].values())
+            and all(v == "ok" for v in informe["datos"].values()))
+
+
+def cmd_autoprueba(ruta: str) -> int:
+    """Prueba, sin enseñar nada, que el `.exe` puede abrir el asistente, y lo apunta en `ruta`.
+
+    Es la puerta de la CI antes de publicar un instalador
+    (`.github/actions/compilar-instalador`). No usa `report()`: compilado con
+    `--windowed` no hay consola, y una ventana con `mainloop()` no acabaría
+    nunca. Lo que dice va a `ruta`, en JSON UTF-8: la versión de Python, si
+    está congelado, el Tk (`tk`, `tk9`), si pinta con SVG (`svg`), el tema
+    (`tema`, `letra`, `pintadas_python`), el asistente montado en una raíz
+    escondida (`asistente`), cada módulo de `MODULOS_ASISTENTE` (`modulos`),
+    cada fichero que despliega (`datos`) y, solo para leerlo, el Python del
+    equipo (`python_equipo`) y cuántas unidades ve (`unidades`). Un fallo
+    inesperado se apunta en `error`, con lo que se llegara a ver.
+
+    Args:
+        ruta: El fichero donde se escribe el informe; se crea su carpeta.
+
+    Returns:
+        0 si se puede publicar (`_autoprueba_superada()`); 1 si no, o si no se
+        ha podido escribir el informe.
+    """
+    import json
+
+    informe: dict = {}
+    try:
+        _autoprueba(informe)
+        rc = 0 if _autoprueba_superada(informe) else 1
+    except Exception as e:                           # noqa: BLE001
+        informe["error"] = f"{type(e).__name__}: {e}"
+        rc = 1
+    try:
+        destino = Path(ruta)
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        destino.write_text(json.dumps(informe, ensure_ascii=False, indent=2, default=str)
+                           + "\n", encoding="utf-8")
+    except OSError:
+        return 1
     return rc
 
 
@@ -492,6 +667,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--esperar", metavar="PID", type=int, action="append",
                         help=argparse.SUPPRESS)
     parser.add_argument("--reabrir", metavar="PYTHON", help=argparse.SUPPRESS)
+    # El de la CI, sobre el .exe recién compilado.
+    parser.add_argument("--autoprueba", metavar="RUTA", help=argparse.SUPPRESS)
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     return parser.parse_args(argv)
 
@@ -527,6 +704,8 @@ def main(argv: list[str] | None = None) -> int:
     remote.install_signal_handlers()
     _con_quien_pintar()
     try:
+        if args.autoprueba:
+            return cmd_autoprueba(args.autoprueba)
         if args.update_components and args.esperar:
             return cmd_relevo(args.update_components, args.esperar, args.reabrir)
         if args.update_components:

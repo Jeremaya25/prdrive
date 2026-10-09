@@ -18,6 +18,7 @@ from _harness import Checks, sandbox
 import runsync
 import ui
 from common import model, results, update
+from ui import theme
 
 c = Checks("el servicio avisa de los ciclos que fallan")
 
@@ -168,6 +169,8 @@ if hay_pantalla:
             c("  en el mismo hilo (Tk 9 aborta con uno nuevo tras acabar el anterior)",
               ui._aviso_abierto["hilo"] is primero, True)
             c("  y también acaba", esperar_a(lambda: not ui._aviso_abierto["activo"]), True)
+            c("  y las dos sueltan su letra en su hilo: no queda ficha de ningún intérprete",
+              theme._LETRA, {})
             c("  y con una ventana en curso no se abre otra",
               (ui._aviso_abierto.__setitem__("activo", True),
                ui.avisar_fallo(["notas"]))[1], True)

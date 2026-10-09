@@ -19,10 +19,11 @@ servicio es uno, se arranque a mano o al enchufar.
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from typing import NamedTuple
 
-from common import fleet, model
+from common import fleet, model, store
 
 MODES = ("ui", "daemon", "sync")
 """Los modos del vigilante, de lo que menos hace solo a lo que más.
@@ -123,6 +124,50 @@ class Linea(NamedTuple):
     boton: str
 
 
+CONSULTA_S = 8.0
+"""Segundos que se espera a `schtasks` o `systemctl` cuando solo se les pregunta."""
+CODIGO_TIEMPO = 124
+"""El código con que `consulta()` devuelve una orden que no contestó a tiempo.
+
+Es el de `timeout(1)`.
+"""
+
+
+def consulta(cmd: list[str], timeout: float = CONSULTA_S) -> subprocess.CompletedProcess:
+    """Hace una pregunta al sistema (`schtasks /Query`…) sin esperarla para siempre.
+
+    Es `penwatch.run_quiet()` con un tope de tiempo, y es solo para preguntar:
+    una orden que cambia el sistema (`schtasks /Create`, `systemctl enable`…) no
+    se corta a medias, que lo dejaría peor, y esas siguen por `run_quiet()`. Está
+    aquí y no en `penwatch.py` porque cambiar los bytes de ese fichero deja
+    «desfasado» a cada vigilante ya instalado (`penwatch.copia_al_dia()`).
+
+    Mientras corre, la pregunta está apuntada en `store`: `store.matar_hijos()`
+    la corta cuando se cierra la ventana, y quien esperaba recibe un código de
+    fallo.
+
+    Args:
+        cmd: La pregunta entera.
+        timeout: Segundos que se le dan.
+
+    Returns:
+        El resultado. Si pasa el tiempo, la orden se mata y el código es
+        `CODIGO_TIEMPO`; si no se puede lanzar, 127.
+    """
+    kwargs: dict = {"text": True, "errors": "replace"}
+    # El sistema de verdad y no `IS_WIN`, que los tests fuerzan: `creationflags`
+    # en un POSIX es un error.
+    if sys.platform == "win32":
+        kwargs["creationflags"] = model.CREATE_NO_WINDOW
+    try:
+        return store.correr_apuntado(cmd, timeout=timeout, **kwargs)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(cmd, CODIGO_TIEMPO, "",
+                                           f"sin respuesta en {timeout:g} s")
+    except OSError as e:
+        return subprocess.CompletedProcess(cmd, 127, "", str(e))
+
+
 def _penwatch():
     """Devuelve el módulo `penwatch`, importado aquí dentro y no arriba.
 
@@ -190,6 +235,60 @@ def installed_options() -> dict:
         "extra_roots": list(cfg.get("extra_roots") or []),
         "device_id": str(cfg.get("device_id") or ""),
     }
+
+
+TOPE_VIGILANTE_S = CONSULTA_S
+"""Segundos que la pantalla del vigilante espera a que el sistema conteste.
+
+`penwatch.status_rows()` le pregunta a `schtasks`/`systemctl` por
+`penwatch.run_quiet()`, que no tiene tope de tiempo y no puede tenerlo aquí
+(`penwatch.py` no cambia). La pantalla no espera más que esto: pasado el tiempo
+dice que el sistema no ha contestado. El hilo puede seguir vivo, y si contesta
+después, lo suyo sustituye a la frase.
+"""
+
+
+class EstadoVigilante(NamedTuple):
+    """Lo que la pantalla del vigilante enseña de penwatch, leído de una vez.
+
+    Args:
+        filas: Las filas de estado de penwatch, `(etiqueta, valor)`; una
+            etiqueta vacía es un aviso suelto.
+        instalado: Si penwatch está instalado en este equipo (`is_installed()`),
+            leído junto a las filas para que el chip y las filas cuenten lo
+            mismo.
+    """
+    filas: list[tuple[str, str]]
+    instalado: bool
+
+
+def estado_vigilante() -> EstadoVigilante:
+    """Lee el estado del vigilante: lo que tarda, `schtasks` o `systemctl`, va aquí.
+
+    Está hecha para correr en un hilo (`ui.segundo_plano`): la pantalla del
+    arranque automático se pinta antes y espera a esto. Nunca lanza: si penwatch
+    no se puede importar o falla, las filas son un único aviso que lo dice y
+    `instalado` es falso. Es un punto de indirección: los tests la sustituyen.
+    """
+    try:
+        filas = status_rows()
+    except Exception as e:                              # noqa: BLE001
+        filas = [("", f"No se ha podido leer el estado del vigilante: {e}")]
+    try:
+        instalado = is_installed()
+    except Exception:                                   # noqa: BLE001
+        instalado = False
+    return EstadoVigilante(filas, instalado)
+
+
+def deteccion() -> list[tuple[str, str]]:
+    """Devuelve dónde busca penwatch el dispositivo y qué encuentra en cada sitio.
+
+    Es `probe_rows()` como lectura aparte para la pantalla del arranque
+    automático: recorre las raíces candidatas (en Windows, las letras de
+    unidad), y eso no se hace en el hilo de Tk. Los tests la sustituyen.
+    """
+    return probe_rows()
 
 
 def resumen() -> Resumen:

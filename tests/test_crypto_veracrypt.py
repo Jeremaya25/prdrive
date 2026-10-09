@@ -774,6 +774,31 @@ try:
       crypto.size_to_bytes("max", 30 * GIB, TOPE, viajero=True), TOPE)
     c("y un tamaño escrito a mano no se toca",
       crypto.size_to_bytes("8G", 30 * GIB, viajero=True), 8 * GIB)
+    # 10. la sonda no hereda el temporal de una medida cortada
+    #
+    # Un `.prdrive-sonda.tmp` que quedó de una medida interrumpida (el asistente se
+    # cerró a mitad) se quita antes de escribir: la medida de ahora empieza sin él
+    # y, acabe como acabe, no deja nada en la raíz de la unidad de la persona.
+    real_medir = sondas["medir_escritura"]
+    unidad_sonda = tmpdir("prdrive-sonda-")
+    temporal_viejo = unidad_sonda / crypto.SONDA_NOMBRE
+    temporal_viejo.write_bytes(b"\0" * 4096)
+    existia_al_abrir = []
+
+    def abrir_espia(fichero, modo="r", *args, **kwargs):
+        """Apunta si el temporal viejo sigue ahí cuando la sonda abre el suyo."""
+        existia_al_abrir.append(temporal_viejo.exists())
+        return open(fichero, modo, *args, **kwargs)
+
+    crypto.open = abrir_espia
+    try:
+        velocidad = real_medir(unidad_sonda, muestra=1024 ** 2)
+    finally:
+        del crypto.open
+    c("con un temporal de una medida cortada, la sonda sigue midiendo",
+      velocidad is not None and velocidad > 0, True)
+    c("  y lo quita antes de escribir", existia_al_abrir, [False])
+    c("  y no deja ninguno al acabar", temporal_viejo.exists(), False)
 finally:
     crypto.IS_WIN = win_original
     crypto.Path = path_original

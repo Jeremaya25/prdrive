@@ -34,14 +34,15 @@ from __future__ import annotations
 
 from functools import partial
 
-from common import catalog, config_file, model
+from common import catalog, model
 from common.model import ConfigError
 
-from . import (catalog_editor, flags_editor, icons, pair_editor,
-               remote_picker, segundo_plano, theme)
+from . import (catalog_editor, flags_editor, icons, pair_editor, perf_al_pintar,
+               perf_empezar, remote_picker, segundo_plano, theme)
 from .tk import (TITLE, CeldaChip, CeldaTexto, FilaTabla, Indicador, Sondeo, Tabla,
                  bloque_aviso, cabecera, centrar, cuerpo_visible, modal, mostrar, orden_sync,
-                 output_window, separador_fila, working)
+                 output_window, working)
+from .tk_tabla import CeldaCasilla, TablaLienzo
 
 VISTAS = (("Este dispositivo", "dispositivo", "dispositivo"),
           ("Catálogo", "catalogo", "nas"))
@@ -53,7 +54,19 @@ ICONO_MODO = {"bisync": "both", "up": "up", "down": "down",
 
 TONOS_FILA = {"ok": ("Card.", "Ok."), "aviso": ("NotaAmbar.", "Aviso."),
               "peligro": ("Rojo.", "Peligro."), "apagado": ("Card.", "Apagado.")}
-"""La superficie de cada tono de fila y el tipo de su chip de estado."""
+"""La superficie de cada tono de fila y el tipo de su chip de estado.
+
+La superficie es la que `tk_tabla.SUPERFICIE_FILA` da al tono de la tabla (el de «ok»
+es `''`): la lista la apunta en `filas[nombre]["sup"]` y dibuja con el tono.
+"""
+
+ANCHO_RUTA = 240
+"""El ancho mínimo de «Local ↔ remoto» en la lista, en medidas del diseño.
+
+El resto del ancho de la pantalla también es suyo; lo que no quepa se corta con
+«…» (el editor enseña la ruta entera), así que una ruta larga no ensancha la
+pantalla.
+"""
 
 DEFAULTS_KEYS = ("remote", "device_remote", "catalog_path")
 """Los campos de texto del formulario de `[defaults]`.
@@ -68,17 +81,28 @@ NOTA_CATALOGO = "Se guardará una copia del catálogo (.bak) en el remoto"
 """Lo que se dice al confirmar un cambio del catálogo."""
 ANTES = "Antes de guardar se enseña qué va a pasar."
 """La frase del pie: nada se escribe sin enseñarlo antes."""
+AVISO_CAMBIADO = ("sync_config.toml ha cambiado fuera de esta pantalla: se ha vuelto a "
+                  "leer. Revisa y vuelve a guardar.")
+"""Lo que dice el pie cuando el config se ha editado por fuera y no se ha hecho lo pedido."""
+CAMPOS_DEL_EDITOR = ("original", "actual", "editable", "ayuda_modo", "ayudas")
+"""Lo que, al cambiar, obliga a recargar el editor; el resto de `que_cargar()` solo lo rodea."""
 
 
 class ListaParejas:
-    """La lista de parejas del diseño (`PairList`): una fila por pareja.
+    """La lista de parejas del diseño (`PairList`): una fila por pareja, en un solo lienzo.
 
-    No es una `ttk.Treeview` porque cada fila lleva chips (el modo y el estado)
-    y una lista de Tk no sabe pintar nada dentro de una celda. Son etiquetas en
-    una rejilla: la casilla de si se usa aquí, el nombre, «local ↔ remoto»,
-    el modo y el estado. El color de la fila es el de lo que hay que mirar de
-    ella (`pair_editor.row_status`) y la elegida va en el azul suave del
-    acento. Se elige con un clic o con las flechas.
+    Cada fila lleva la casilla de si se usa aquí, el nombre, «local ↔ remoto»,
+    el modo y el estado. La casilla solo dice: la cambian «Usar aquí» y
+    «Quitar…», no elegir la fila. El color de la fila es el de lo que hay que
+    mirar de ella (`pair_editor.row_status`) y la elegida va en el azul suave del
+    acento. Se elige con un clic o con el teclado (`tk_tabla`).
+
+    La dibuja una `tk_tabla.TablaLienzo`: un widget para toda la lista en lugar
+    de nueve por fila, que con 50 parejas eran más de 450 ventanas que Windows
+    crea, coloca y pinta una a una. Por eso abrir la pantalla ya no crece con
+    las parejas. La tabla compara por nombre: una fila que sigue igual no se
+    toca y elegir repinta dos. Una ruta que no cabe se corta con «…»: la lista
+    no ensancha la pantalla, y el editor la enseña entera.
 
     Args:
         parent: Dónde va.
@@ -86,141 +110,95 @@ class ListaParejas:
             (quedan cambios sin guardar y la persona no los quiere perder), la
             elección no se hace.
         al_elegir: Lo que se llama después de elegir otra.
+
+    Attributes:
+        marco: El lienzo de la lista: lo que se coloca.
+        tabla: La `TablaLienzo` que la dibuja.
+        filas: Por nombre, lo que se sabe de cada pareja: `fila` (la
+            `CatalogRow`), `tono` (`pair_editor.row_status`), `sup` (la
+            superficie de ese tono) y `apagada`.
     """
 
-    COLUMNAS = 5
+    COLUMNAS = (("", 0, False), ("Pareja", 0, False), ("Local ↔ remoto", ANCHO_RUTA, True),
+                ("Modo", 0, False), ("Estado", 0, False))
+    """Las columnas de la tabla: la casilla, el nombre, la ruta (la que estira), el modo y el estado."""
 
     def __init__(self, parent, puede_dejar, al_elegir):
-        from tkinter import ttk
-        self.puede_dejar, self.al_elegir = puede_dejar, al_elegir
-        self.marco = ttk.Frame(parent, style="Card.TFrame", takefocus=True,
-                               padding=icons.px(parent, 1))   # su borde
-        self.marco.columnconfigure(2, weight=1)
+        self.tabla = TablaLienzo(parent, self.COLUMNAS, al_elegir=al_elegir,
+                                 puede_dejar=puede_dejar, vacio="No hay ninguna pareja.")
+        self.tabla.momento_elegir = "elegir-pareja"
+        self.marco = self.tabla.marco
         self.filas: dict[str, dict] = {}
-        self.orden: list[str] = []
-        self.elegida: str | None = None
-        cabeza = ttk.Frame(self.marco, style="Plano.TFrame")
-        cabeza.grid(row=0, column=0, columnspan=self.COLUMNAS, sticky="nsew")
-        cabeza.lower()
-        self.cabecera = [cabeza]
-        for col, texto in ((1, "Pareja"), (2, "Local ↔ remoto"), (3, "Modo"),
-                           (4, "Estado")):
-            rotulo = ttk.Label(self.marco, text=theme.rotulo(texto), style="Rotulo.TLabel")
-            rotulo.grid(row=0, column=col, sticky="w", padx=self._lados(col),
-                        pady=theme.E1)
-            self.cabecera.append(rotulo)
-        self.marco.rowconfigure(0, minsize=icons.px(self.marco, 28))
-        self.marco.bind("<Up>", lambda _e: self._mover(-1))
-        self.marco.bind("<Down>", lambda _e: self._mover(1))
+
+    @property
+    def orden(self) -> list[str]:
+        """Los nombres, de arriba abajo."""
+        return self.tabla.orden
+
+    @property
+    def elegida(self) -> str | None:
+        """El nombre de la fila elegida, o `None`."""
+        return self.tabla.elegida
 
     @staticmethod
-    def _lados(col: int):
-        """El hueco a los lados de una celda: el de la rejilla y el borde de la fila."""
-        return (theme.E3 if col == 0 else theme.E2,
-                theme.E3 if col == ListaParejas.COLUMNAS - 1 else 0)
+    def fila_tabla(fila, tono: str, nota: str, del_catalogo: bool) -> FilaTabla:
+        """Dice cómo se dibuja una pareja: su `FilaTabla`.
 
-    def poner(self, filas, del_catalogo: bool = False) -> None:
-        """Pinta estas filas (`pair_editor.CatalogRow`) en lugar de las de antes."""
-        from tkinter import ttk
-        for hijo in self.marco.winfo_children():
-            if hijo not in self.cabecera:
-                hijo.destroy()
-        for fila_tk in range(1, self.marco.grid_size()[1]):
-            self.marco.rowconfigure(fila_tk, minsize=0)   # las de antes no ocupan
-        self.filas, self.orden = {}, []
-        ttk.Separator(self.marco, style="Card.TSeparator").grid(
-            row=1, column=0, columnspan=self.COLUMNAS, sticky="ew")
-        fila_tk = 2
-        for i, fila in enumerate(filas):
-            if i:
-                separador_fila(self.marco, fila_tk, self.COLUMNAS)
-                fila_tk += 1
-            tono, nota = pair_editor.row_status(fila, del_catalogo)
-            sup, tipo = TONOS_FILA[tono]
-            if del_catalogo:
-                tipo = "Ok."                      # el espejo lo dicen la fila y el modo
-            fondo = ttk.Frame(self.marco, style=f"Plano.{sup}TFrame")
-            fondo.grid(row=fila_tk, column=0, columnspan=self.COLUMNAS, sticky="nsew")
-            fondo.lower()
-            casilla = ttk.Label(self.marco)
-            img = icons.casilla(self.marco, "marcada" if fila.en_pen else "vacia",
-                                margen=0)
-            if img is not None:
-                casilla.configure(image=img)
-                casilla.image = img
-            apagada = tono == "apagado"
-            nombre = ttk.Label(self.marco, text=fila.name)
-            ruta = ttk.Label(self.marco, text=f"{fila.local} ↔ {fila.remote}")
-            espejo = fila.mode in pair_editor.MIRROR_MODES
-            modo = theme.chip(self.marco, fila.mode, "Peligro." if espejo else "",
-                              ICONO_MODO.get(fila.mode))
-            estado = theme.chip(self.marco, nota, tipo)
-            celdas = (casilla, nombre, ruta, modo, estado)
-            for col, celda in enumerate(celdas):
-                celda.grid(row=fila_tk, column=col, sticky="w", padx=self._lados(col),
-                           pady=theme.E2)
-                celda.bind("<Button-1>", partial(self._clic, fila.name))
-            fondo.bind("<Button-1>", partial(self._clic, fila.name))
-            self.marco.rowconfigure(fila_tk, minsize=icons.px(self.marco, 36))
-            self.filas[fila.name] = {"fila": fila, "sup": sup, "apagada": apagada,
-                                     "fondo": fondo, "casilla": casilla,
-                                     "nombre": nombre, "ruta": ruta}
-            self.orden.append(fila.name)
-            fila_tk += 1
-        if not filas:
-            ttk.Label(self.marco, text="No hay ninguna pareja.",
-                      style="Card.Pista.TLabel").grid(
-                row=2, column=0, columnspan=self.COLUMNAS, pady=theme.E3)
-        if self.elegida not in self.filas:
-            self.elegida = None
-        self._pintar()
+        Args:
+            fila: La `pair_editor.CatalogRow`.
+            tono: Su tono y `nota` lo que dice su chip de estado
+                (`pair_editor.row_status`).
+            del_catalogo: Si es la vista del catálogo: el chip de estado no
+                lleva el color de la fila (el espejo lo dicen la fila y el modo).
+        """
+        tipo = "Ok." if del_catalogo else TONOS_FILA[tono][1]
+        espejo = fila.mode in pair_editor.MIRROR_MODES
+        return FilaTabla(fila.name, (
+            CeldaCasilla(fila.en_pen),
+            CeldaTexto(fila.name, "Fuerte."),
+            CeldaTexto(f"{fila.local} ↔ {fila.remote}", "Mono."),
+            CeldaChip(fila.mode, "Peligro." if espejo else "", ICONO_MODO.get(fila.mode)),
+            CeldaChip(nota, tipo)), "" if tono == "ok" else tono)
 
-    def _pintar(self) -> None:
-        """Pone a cada fila su superficie; la elegida, la del acento."""
-        for name, f in self.filas.items():
-            sup = "NotaAzul." if name == self.elegida else f["sup"]
-            f["fondo"].configure(style=f"Plano.{sup}TFrame")
-            f["casilla"].configure(style=f"{sup}TLabel")
-            if f["apagada"]:
-                f["nombre"].configure(style=f"{sup}Pista.TLabel")
-                f["ruta"].configure(style=f"{sup}MonoPista.TLabel")
-            else:
-                f["nombre"].configure(style=f"{sup}Fuerte.TLabel")
-                f["ruta"].configure(style=f"{sup}Mono.TLabel")
+    def poner(self, filas, del_catalogo: bool = False) -> bool:
+        """Pone estas filas (`pair_editor.CatalogRow`); la tabla dibuja solo las que cambian.
 
-    def _clic(self, name: str, _evento=None) -> None:
-        """Elige la fila pulsada y le da el foco a la lista, para las flechas."""
-        self.marco.focus_set()
-        self.elegir(name)
-
-    def _mover(self, paso: int) -> str:
-        """Elige la fila de arriba o la de abajo."""
-        if self.orden:
-            i = self.orden.index(self.elegida) + paso if self.elegida in self.orden else 0
-            self.elegir(self.orden[max(0, min(len(self.orden) - 1, i))])
-        return "break"
-
-    def elegir(self, name: str | None, avisar: bool = True) -> bool:
-        """Elige esa pareja (o ninguna) y lo cuenta, si `avisar`.
+        Args:
+            filas: Las filas, de arriba abajo.
+            del_catalogo: Si es la vista del catálogo (el tono y el chip de
+                estado de cada fila cambian, `pair_editor.row_status`).
 
         Returns:
-            Si la elección se ha hecho: `al_elegir` puede negarse.
+            Si lo que pide la lista ha cambiado de tamaño: llega o se va una
+            fila, o un nombre o un chip más ancho cambia una columna.
         """
-        if name is not None and name not in self.filas:
-            name = None
-        if name == self.elegida:
-            return True
-        if avisar and not self.puede_dejar():
-            return False
-        self.elegida = name
-        self._pintar()
-        if avisar:
-            self.al_elegir()
-        return True
+        self.filas, dibujo = {}, []
+        for fila in filas:
+            tono, nota = pair_editor.row_status(fila, del_catalogo)
+            self.filas[fila.name] = {"fila": fila, "tono": tono, "sup": TONOS_FILA[tono][0],
+                                     "apagada": tono == "apagado"}
+            dibujo.append(self.fila_tabla(fila, tono, nota, del_catalogo))
+        return self.tabla.poner(dibujo)
+
+    def elegir(self, name: str | None, avisar: bool = True) -> bool:
+        """Elige esa pareja (o ninguna) y lo cuenta, si `avisar`; se repintan dos filas.
+
+        Returns:
+            Si la elección se ha hecho: `puede_dejar` puede negarse.
+        """
+        return self.tabla.elegir(name, avisar)
 
     def fila(self):
         """Devuelve la `CatalogRow` elegida, o `None`."""
         return self.filas[self.elegida]["fila"] if self.elegida in self.filas else None
+
+    def leer(self) -> list[tuple[str, ...]]:
+        """Devuelve lo que dibuja la lista, fila a fila: casilla, nombre, ruta, modo y estado.
+
+        La casilla es «☑» o «☐» y la ruta sale como se ve, cortada si no cabe
+        (`TablaLienzo.leer`).
+        """
+        return self.tabla.leer()
 
 
 class EditorPareja:
@@ -235,12 +213,18 @@ class EditorPareja:
     dice el catálogo, marcado con ✎ si difiere: es lo que convierte «guardar
     aquí» en una decisión informada.
 
+    «Avanzado» plegado no tiene widgets: el bloque (las dos cajas de patrones y la
+    línea de los flags) se construye la primera vez que se despliega, y hasta
+    entonces `cargar()` guarda los patrones y `datos()` los devuelve como los
+    devolvería la caja.
+
     Args:
         parent: Dónde va.
         dlg: La ventana de la que cuelgan sus diálogos.
         sup: La superficie donde cae (`'Card.'` o `''`).
         dos_columnas: Los campos y el modo, lado a lado.
-        plegable: «Avanzado» (incluir, excluir y flags) empieza plegado.
+        plegable: «Avanzado» (incluir, excluir y flags) empieza plegado y se
+            construye al desplegarlo; sin ello se construye de entrada.
     """
 
     def __init__(self, parent, dlg, sup: str = "Card.", dos_columnas: bool = True,
@@ -255,6 +239,7 @@ class EditorPareja:
         self.editable = True
         self.explorable = False
         self.ayuda_modo = ""
+        self.ayudas: dict | None = None
         self.avanzado = {"flags": {}, "extra_flags": []}
         self.marco = ttk.Frame(parent, style=f"Plano.{sup}TFrame" if sup else "TFrame")
         self.marco.columnconfigure(0, weight=1)
@@ -345,6 +330,8 @@ class EditorPareja:
         abajo.columnconfigure(0, weight=1)
         self.plegado = tk.BooleanVar(abajo, value=plegable)
         self.resumen = None
+        self._abajo, self._marco_sup, self._sup = abajo, marco_sup, sup
+        self._plegable = plegable
         if plegable:
             ttk.Separator(abajo, style=f"{sup}TSeparator" if sup == "Card." else
                           "TSeparator").grid(row=0, column=0, sticky="ew",
@@ -362,11 +349,29 @@ class EditorPareja:
             self.boton_plegar = ttk.Button(cabeza, text="Mostrar", style="Quiet.TButton",
                                            command=self.plegar)
             self.boton_plegar.grid(row=0, column=2, rowspan=2, sticky="e")
-        self.dentro = ttk.Frame(abajo, style=marco_sup)
+        # Lo que dicen los patrones mientras no hay cajas donde leerlo.
+        self.patrones: dict[str, list[str]] = {"include": [], "exclude": []}
+        self.dentro = None
+        self.textos: dict = {}
+        self.texto_flags = None
+        self.boton_flags = None
+        self._espejo_puesto: tuple[str, str] | None = None
+        if not plegable:
+            self._construir_avanzado()
+
+    def _construir_avanzado(self) -> None:
+        """Construye el bloque de «Avanzado»: incluir, excluir y los flags.
+
+        Se llama una sola vez: al crear el editor del alta, o al desplegar por
+        primera vez el de la pantalla. Las cajas salen con lo que dicen
+        `patrones` y el botón de los flags, con el estado del editor.
+        """
+        from tkinter import ttk
+        sup, marco_sup, plegable = self._sup, self._marco_sup, self._plegable
+        self.dentro = ttk.Frame(self._abajo, style=marco_sup)
         self.dentro.grid(row=2, column=0, sticky="ew",
                          pady=(theme.E3 if plegable else 0, 0))
         self.dentro.columnconfigure((0, 1), weight=1, uniform="patrones")
-        self.textos: dict = {}
         for col, (clave, titulo) in enumerate((("include", "Incluir"),
                                                ("exclude", "Excluir"))):
             ttk.Label(self.dentro, text=titulo, style=f"{sup}Fuerte.TLabel").grid(
@@ -394,8 +399,30 @@ class EditorPareja:
         self.texto_flags.grid(row=1, column=1, sticky="w")
         self.boton_flags = ttk.Button(flags, text="Editar flags…", command=self.editar_flags)
         self.boton_flags.grid(row=0, column=2, rowspan=2, sticky="e", padx=(theme.E3, 0))
-        if plegable:
-            self.dentro.grid_remove()
+        self._poner_cajas()
+        self.boton_flags.configure(state="normal" if self.editable else "disabled")
+        self._resumir()
+
+    def _poner_cajas(self) -> None:
+        """Escribe los patrones cargados en las cajas, apagadas si no se puede editar."""
+        for clave, caja in self.textos.items():
+            caja.configure(state="normal")
+            caja.delete("1.0", "end")
+            caja.insert("1.0", "\n".join(self.patrones[clave]))
+            caja.configure(state="normal" if self.editable else "disabled",
+                           foreground=theme.TINTA if self.editable else theme.TINTA3)
+
+    def _patrones(self, clave: str) -> list[str]:
+        """Devuelve las líneas de una caja de patrones, tal como las daría la caja.
+
+        Tk acaba el texto de una caja con un salto de línea que no es de nadie,
+        así que una caja vacía da `['']`; con el bloque sin construir se
+        reproduce, para que desplegar «Avanzado» no cambie lo que devuelve
+        `datos()` (y no cuente como «cambios sin guardar»).
+        """
+        if clave in self.textos:
+            return self.textos[clave].get("1.0", "end").splitlines()
+        return ("\n".join(self.patrones[clave]) + "\n").splitlines()
 
     # Cargar y leer.
 
@@ -419,37 +446,65 @@ class EditorPareja:
         """
         self.raw, self.actual, self.original = raw, dict(actual), original
         self.catalogo, self.editable, self.explorable = catalogo, editable, explorable
-        self.ayuda_modo = ayuda_modo
-        por_defecto = (raw.get("defaults") or {}).get("remote", model.DEFAULT_REMOTE)
-        ayuda = {"name": "Nombra también su carpeta en state/.",
-                 "local": "Relativa a la raíz del dispositivo.",
-                 "remote_path": "En el remoto, p. ej. /datos/notas.",
-                 "remote": f"Vacío = el de [defaults] ({por_defecto})."}
-        ayuda.update(ayudas or {})
+        self.ayuda_modo, self.ayudas = ayuda_modo, ayudas
         for clave, var in self.campos.items():
             var.set(str(actual.get(clave, "") or ""))
-            self.pistas[clave].configure(text=self._pista(clave, ayuda[clave]))
             self.entradas[clave].configure(state="normal" if editable else "readonly")
+        self._poner_pistas()
         self.examinar["local"].configure(state="normal" if editable else "disabled")
-        # El remoto solo se recorre con conexión; el disco de aquí, siempre.
-        self.examinar["remote_path"].configure(
-            state="normal" if editable and explorable else "disabled")
+        self.poner_explorable(explorable)
         self.modo.set(actual.get("mode", model.DEFAULT_MODE))
         for boton in self.grupo_modo.botones:
             boton.configure(state="normal" if editable else "disabled")
         self.versiones.set(bool(actual.get("versions", False)))
         self.vigilar.set(bool(actual.get("watch", False)))
-        for clave, caja in self.textos.items():
-            caja.configure(state="normal")
-            caja.delete("1.0", "end")
-            caja.insert("1.0", "\n".join(actual.get(clave, []) or []))
-            caja.configure(state="normal" if editable else "disabled",
-                           foreground=theme.TINTA if editable else theme.TINTA3)
+        self.patrones = {clave: list(actual.get(clave, []) or []) for clave in self.patrones}
+        if self.dentro is not None:
+            self._poner_cajas()
+            self.boton_flags.configure(state="normal" if editable else "disabled")
         self.avanzado = {"flags": dict(actual.get("flags") or {}),
                          "extra_flags": list(model._as_tuple(actual.get("extra_flags")))}
-        self.boton_flags.configure(state="normal" if editable else "disabled")
         self._resumir()
         self.modo_cambiado()
+
+    def poner_explorable(self, explorable: bool) -> None:
+        """Enciende o apaga «Examinar…» del remoto sin tocar lo escrito.
+
+        El remoto solo se recorre con conexión; el disco de aquí, siempre.
+        """
+        self.explorable = explorable
+        self.examinar["remote_path"].configure(
+            state="normal" if self.editable and explorable else "disabled")
+
+    def poner_alrededor(self, raw: dict, catalogo: dict | None, explorable: bool) -> None:
+        """Pone al día lo que rodea a los campos sin tocar lo escrito en ellos.
+
+        Es lo que cambia cuando llega el catálogo y el editor tiene cambios sin
+        guardar sobre una pareja que sigue igual: el remoto por defecto, la
+        pareja del catálogo con la que se compara (las pistas de debajo de cada
+        campo y del modo) y si se puede recorrer el remoto.
+        """
+        self.raw, self.catalogo = raw, catalogo
+        self._poner_pistas()
+        self._poner_pista_modo()
+        self.poner_explorable(explorable)
+
+    def _poner_pistas(self) -> None:
+        """Pone debajo de cada campo para qué es y lo que dice el catálogo."""
+        por_defecto = (self.raw.get("defaults") or {}).get("remote", model.DEFAULT_REMOTE)
+        ayuda = {"name": "Nombra también su carpeta en state/.",
+                 "local": "Relativa a la raíz del dispositivo.",
+                 "remote_path": "En el remoto, p. ej. /datos/notas.",
+                 "remote": f"Vacío = el de [defaults] ({por_defecto})."}
+        ayuda.update(self.ayudas or {})
+        for clave in self.campos:
+            self.pistas[clave].configure(text=self._pista(clave, ayuda[clave]))
+
+    def _poner_pista_modo(self) -> None:
+        """Pone lo que se dice debajo del modo, si se dice algo."""
+        pista = self.ayuda_modo or self._pista("mode", "")
+        self.pista_modo.configure(text=pista)
+        self.pista_modo.grid() if pista else self.pista_modo.grid_remove()
 
     def _pista(self, clave: str, ayuda: str) -> str:
         """Lo que va debajo de un campo: para qué es y lo que dice el catálogo."""
@@ -464,11 +519,12 @@ class EditorPareja:
         """Pone el resumen de los flags, y el de «Avanzado» si está plegado."""
         flags = flags_editor.summary(self.avanzado["flags"], self.avanzado["extra_flags"])
         # Plegado, la línea de los flags no tiene título encima: lo lleva ella.
-        self.texto_flags.configure(text=f"Flags de rclone: {flags}"
-                                   if self.resumen is not None else flags)
+        if self.texto_flags is not None:
+            self.texto_flags.configure(text=f"Flags de rclone: {flags}"
+                                       if self.resumen is not None else flags)
         if self.resumen is not None:
-            patrones = sum(1 for caja in self.textos.values()
-                           if caja.get("1.0", "end").strip())
+            patrones = sum(1 for clave in self.patrones
+                           if "\n".join(self._patrones(clave)).strip())
             self.resumen.configure(text=(
                 "Incluir, excluir y flags de rclone"
                 + (f" · {patrones} con patrones" if patrones else "")
@@ -481,7 +537,7 @@ class EditorPareja:
             "mode": self.modo.get(),
             "versions": bool(self.versiones.get()),
             "watch": bool(self.vigilar.get()),
-            **{k: caja.get("1.0", "end").splitlines() for k, caja in self.textos.items()},
+            **{clave: self._patrones(clave) for clave in self.patrones},
             "flags": dict(self.avanzado["flags"]),
             "extra_flags": list(self.avanzado["extra_flags"]),
         }
@@ -489,8 +545,10 @@ class EditorPareja:
     # Lo que pasa al tocarlo.
 
     def plegar(self) -> None:
-        """Pliega o despliega «Avanzado»."""
+        """Pliega o despliega «Avanzado»; la primera vez que se despliega, lo construye."""
         if self.plegado.get():
+            if self.dentro is None:
+                self._construir_avanzado()
             self.dentro.grid()
         else:
             self.dentro.grid_remove()
@@ -507,16 +565,17 @@ class EditorPareja:
         dejar guardar algo que luego no arranca.
         """
         modo = self.modo.get()
-        if self.espejo is not None:
-            self.espejo.destroy()
-            self.espejo = None
         aviso = pair_editor.aviso_espejo(modo)
-        if aviso is not None:
-            self.espejo = theme.aviso(self.hueco_espejo, *aviso, tono="Ambar.", ancho=380)
-            self.espejo.grid(row=0, column=0, sticky="ew", pady=(theme.E3, 0))
-        pista = self.ayuda_modo or self._pista("mode", "")
-        self.pista_modo.configure(text=pista)
-        self.pista_modo.grid() if pista else self.pista_modo.grid_remove()
+        if aviso != self._espejo_puesto:
+            if self.espejo is not None:
+                self.espejo.destroy()
+                self.espejo = None
+            if aviso is not None:
+                self.espejo = theme.aviso(self.hueco_espejo, *aviso, tono="Ambar.",
+                                          ancho=380)
+                self.espejo.grid(row=0, column=0, sticky="ew", pady=(theme.E3, 0))
+            self._espejo_puesto = aviso
+        self._poner_pista_modo()
         es_bisync = modo == "bisync"
         self.casilla_versiones.configure(
             state="normal" if es_bisync and self.editable else "disabled")
@@ -563,6 +622,7 @@ class EditorPareja:
 
     def editar_flags(self) -> None:
         """Abre el editor de flags y se queda con lo que devuelva."""
+        perf_empezar("open-flags")
         nombre = self.campos["name"].get().strip() or self.original or "la pareja nueva"
         datos = flags_form(self.dlg, f"Flags de rclone de '{nombre}'",
                            "Se guardan en [pair.flags].",
@@ -577,19 +637,59 @@ class EditorPareja:
         self._resumir()
 
 
-def open_dialog(parent, config) -> bool:
+def _pide_sitio(antes: tuple[str, ...] | None, ahora: tuple[str, ...]) -> bool:
+    """Dice si algún texto que se parte en líneas ha cambiado a uno que no es más corto.
+
+    Es la forma lógica de saber si la pantalla puede necesitar más sitio sin
+    pedírselo a Tk (que lo mediría con un `update_idletasks()` de toda la
+    ventana): un texto que mengua no pide nada, porque el recuadro de la
+    ventana solo crece.
+
+    Args:
+        antes: Los textos la última vez, o `None` si es la primera.
+        ahora: Los textos de ahora, en el mismo orden.
+    """
+    return antes is None or any(a != b and len(b) >= len(a) for a, b in zip(antes, ahora))
+
+
+def open_dialog(parent, config, compartida=None) -> bool:
     """Abre la pantalla y devuelve si se ha cambiado el config de este dispositivo.
 
     Se pinta con la copia local del catálogo (`catalog.cached()`) y el remoto
-    se lee en segundo plano; al llegar, la pantalla se repinta con él.
+    se lee en segundo plano; al llegar, la pantalla cambia solo lo que cambia:
+    ni la lista ni el editor ni la cabecera se rehacen para enseñar lo mismo.
+    Lo que solo hace falta para editar el catálogo (su lista, su barra de
+    acciones, su aviso) se crea la primera vez que se pasa a esa vista.
+
+    El config se relee en cada repintado (`pair_editor.LecturaConfig`: solo se
+    parsea si ha cambiado) y otra vez antes de cada plan y justo antes de
+    ejecutar uno de este dispositivo: si alguien lo ha editado a mano mientras
+    la pantalla estaba abierta, no se hace el plan, la pantalla se vuelve a
+    leer y el pie lo dice.
+
+    La pantalla trae `dlg.estado` (lo que sabe), `dlg.lista` (siempre la que
+    se ve), `dlg.editor`, `dlg.indicador`, `dlg.sondeo` y `dlg.aplicar()`, que
+    la deja como una recién abierta.
+
+    Args:
+        parent: La ventana de la que cuelga.
+        config: La configuración del dispositivo.
+        compartida: La lectura compartida de la ventana principal
+            (`ui.instantanea.Compartida`), o `None`. Al abrir, si vale para el
+            config que hay en disco, de ella salen el baseline y los filtros de
+            cada pareja; si no, se leen del disco una vez y se guardan mientras
+            la pantalla viva.
     """
     import tkinter as tk
     from tkinter import messagebox, ttk
 
     dlg = modal(parent, "Parejas")
-    raw = config_file.load_raw()
-    estado = {"raw": raw, "config": config, "cat": catalog.cached(), "aviso": None,
-              "leyendo": False, "cambiado": False, "cargado": None}
+    lector = pair_editor.LecturaConfig()
+    raw, config_leido = lector.leer()
+    estado = {"raw": raw, "config": config_leido, "cat": catalog.cached(), "aviso": None,
+              "leyendo": False, "cambiado": False, "cargado": None, "base": None,
+              "compartida": compartida, "estados": {}, "estados_de": None,
+              "vista": None, "envolventes": None, "indicador": None}
     sondeo = Sondeo(dlg)
     vista = tk.StringVar(dlg, value="dispositivo")
 
@@ -606,7 +706,7 @@ def open_dialog(parent, config) -> bool:
     donde = ttk.Frame(arriba)
     donde.grid(row=0, column=1, sticky="ne", padx=(theme.E4, 0))
     donde.columnconfigure(0, weight=1)
-    chip_cat = {"widget": None}
+    chip_cat = {"widget": None, "spec": None}
     endpoint = ttk.Label(donde, style="MonoPista.TLabel")
     endpoint.grid(row=1, column=0, sticky="e", pady=(theme.E2, 0))
     # Lo que se enseña mientras se lee el remoto, o por qué se quedó sin él.
@@ -621,11 +721,6 @@ def open_dialog(parent, config) -> bool:
         row=0, column=0, sticky="w", pady=(0, theme.E1))
     interruptor = theme.grupo_botones(que, VISTAS, vista, orden=lambda: cambiar_vista())
     interruptor.grid(row=1, column=0, sticky="w")
-    aviso_catalogo = theme.aviso(
-        marco, "Estás editando el catálogo",
-        "Afecta a TODOS los dispositivos. Cada uno tiene que volver al catálogo "
-        "para recibir el cambio.", tono="Ambar.", ancho=700)
-    aviso_catalogo.grid(row=2, column=0, sticky="ew", pady=(theme.E4, 0))
 
     # La franja de `[defaults]`: no es una pareja más, así que tiene su línea.
     fila_defaults = ttk.Frame(marco, style="Gris.TFrame", padding=(theme.E3, theme.E2))
@@ -633,15 +728,18 @@ def open_dialog(parent, config) -> bool:
     fila_defaults.columnconfigure(2, weight=1)
     ttk.Label(fila_defaults, text=theme.rotulo("[defaults]"),
               style="Gris.Rotulo.TLabel").grid(row=0, column=0, sticky="w")
-    origen_defaults = {"widget": None}
+    origen_defaults = {"widget": None, "spec": None}
     linea_defaults = ttk.Label(fila_defaults, style="Gris.Pista.TLabel",
                                wraplength=theme.medida(420), justify="left")
     linea_defaults.grid(row=0, column=2, sticky="w", padx=(theme.E2, 0))
 
-    # La lista, con lo que se sabe de cada pareja.
-    lista = ListaParejas(marco, lambda: seguir_sin_guardar(), lambda: cargar_editor())
-    lista.marco.grid(row=4, column=0, sticky="ew", pady=(theme.E4, 0))
-    dlg.indicador, dlg.sondeo, dlg.lista = indicador, sondeo, lista   # los tests
+    # La lista de este dispositivo, con lo que se sabe de cada pareja. La del
+    # catálogo es otra y se crea al verla (`montar_catalogo`).
+    lista_d = ListaParejas(marco, lambda: seguir_sin_guardar(), lambda: cargar_editor())
+    lista_d.marco.grid(row=4, column=0, sticky="ew", pady=(theme.E4, 0))
+    listas = {"dispositivo": lista_d, "catalogo": None}
+    dlg.indicador, dlg.sondeo, dlg.lista = indicador, sondeo, lista_d   # los tests
+    dlg.estado = estado
 
     # La pareja elegida, editable aquí mismo.
     titulo_eleg = ttk.Frame(marco)
@@ -649,7 +747,7 @@ def open_dialog(parent, config) -> bool:
     titulo_eleg.columnconfigure(0, weight=1)
     rotulo_eleg = ttk.Label(titulo_eleg, style="Rotulo.TLabel")
     rotulo_eleg.grid(row=0, column=0, sticky="w")
-    chip_eleg = {"widget": None}
+    chip_eleg = {"widget": None, "spec": None}
     tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(theme.E5, theme.E4))
     tarjeta.grid(row=6, column=0, sticky="ew")
     tarjeta.columnconfigure(0, weight=1)
@@ -659,11 +757,10 @@ def open_dialog(parent, config) -> bool:
 
     # Las acciones: unas por vista, porque no tocan lo mismo.
     acciones = {}
-    for nombre in ("dispositivo", "catalogo"):
-        barra = ttk.Frame(marco)
-        barra.grid(row=7, column=0, sticky="ew", pady=(theme.E4, 0))
-        barra.columnconfigure(10, weight=1)
-        acciones[nombre] = barra
+    barra_d = ttk.Frame(marco)
+    barra_d.grid(row=7, column=0, sticky="ew", pady=(theme.E4, 0))
+    barra_d.columnconfigure(10, weight=1)
+    acciones["dispositivo"] = barra_d
 
     cierre = ttk.Frame(marco)
     cierre.grid(row=8, column=0, sticky="ew", pady=(theme.E4, 0))
@@ -675,6 +772,7 @@ def open_dialog(parent, config) -> bool:
     pie_nota.grid(row=1, column=0, sticky="w")
 
     botones: dict[str, object] = {}
+    catalogo_montado: dict = {}
 
     def boton(barra, texto, accion, estilo="TButton", icono=None, col=0, clave=None):
         """Pone un botón de acción en su barra y lo apunta por su texto (o `clave`)."""
@@ -699,6 +797,23 @@ def open_dialog(parent, config) -> bool:
         """Lo que dice el pie mientras no haya pasado nada."""
         return f"{ANTES} {NOTA_CATALOGO if del_catalogo() else NOTA_PEN}"
 
+    def estados_actuales() -> dict:
+        """Devuelve el baseline y los filtros de las parejas bisync, leyéndolos una sola vez.
+
+        Al abrir se toman de la lectura compartida si vale para el config que se
+        acaba de leer. Después se guardan mientras la pantalla viva y solo se
+        leen las parejas que falten; si cambia el config (o se ejecuta un plan
+        de este dispositivo) se vuelve a empezar, ya sin la lectura compartida.
+        """
+        if estado["estados_de"] is not estado["config"]:
+            inst = estado["compartida"]
+            inst = inst.para(estado["config"]) if inst is not None else None
+            estado["estados"] = dict(inst.estados) if inst is not None else {}
+            estado["estados_de"] = estado["config"]
+            estado["compartida"] = None
+        estado["estados"] = pair_editor.estados_de(estado["config"], estado["estados"])
+        return estado["estados"]
+
     def filas():
         """Las filas de la vista de ahora."""
         if del_catalogo():
@@ -706,7 +821,8 @@ def open_dialog(parent, config) -> bool:
         # La ruta local como se escribe (relativa a la raíz), no adonde cae.
         locales = {p.get("name"): p.get("local") for p in estado["raw"].get("pair") or []}
         return [f._replace(local=locales.get(f.name) or f.local) for f in
-                pair_editor.catalog_rows(estado["config"], estado["raw"], estado["cat"])]
+                pair_editor.catalog_rows(estado["config"], estado["raw"], estado["cat"],
+                                         estados_actuales())]
 
     def entrada_de(name: str | None) -> tuple[dict, dict | None]:
         """La pareja que se edita y aquella con la que se compara.
@@ -723,9 +839,9 @@ def open_dialog(parent, config) -> bool:
             return dict(del_cat or {}), None
         return dict(local), del_cat
 
-    def cargar_editor() -> None:
-        """Pone en el editor la pareja elegida, con lo que se puede hacer con ella."""
-        fila = lista.fila()
+    def que_cargar() -> dict:
+        """Lo que `editor.cargar()` pone para la pareja elegida, como argumentos."""
+        fila = dlg.lista.fila()
         actual, comparar = entrada_de(fila.name if fila else None)
         lect = lectura()
         if del_catalogo():
@@ -738,45 +854,81 @@ def open_dialog(parent, config) -> bool:
         else:
             editable = fila is not None and fila.en_pen
             ayuda_modo, raw_de, ayudas = "", estado["raw"], None
-        editor.cargar(raw_de, actual, fila.name if fila else None, catalogo=comparar,
-                      editable=editable, explorable=lect.editable,
-                      ayuda_modo=ayuda_modo, ayudas=ayudas)
+        return {"raw": raw_de, "actual": actual, "original": fila.name if fila else None,
+                "catalogo": comparar, "editable": editable, "explorable": lect.editable,
+                "ayuda_modo": ayuda_modo, "ayudas": ayudas}
+
+    def cargar_editor(args: dict | None = None) -> None:
+        """Pone en el editor la pareja elegida, con lo que se puede hacer con ella."""
+        estado["base"] = args if args is not None else que_cargar()
+        editor.cargar(**estado["base"])
         estado["cargado"] = editor.datos()
-        rotulo_eleg.configure(text=theme.rotulo(
+        pintar_eleccion()
+
+    def conservar_lo_escrito() -> bool:
+        """Deja lo escrito en el editor si la pareja sobre la que se escribe sigue igual.
+
+        Lo escrito se guarda luego entero, campo a campo: si mientras tanto la
+        pareja ha cambiado (en el catálogo, otro dispositivo; aquí, el config),
+        conservarlo desharía ese cambio sin decirlo. Entonces el editor se
+        recarga y se devuelve `False`. Si sigue igual, solo se pone al día lo de
+        alrededor (con qué se compara, si se puede recorrer el remoto). Los
+        campos siguen editables aunque el catálogo no se pueda guardar ahora
+        (se está leyendo, o no hay conexión): lo escrito no se pierde y se
+        guarda cuando «Releer» lo vuelva a dejar; mientras, «Guardar en el
+        catálogo…» está apagado y la línea del catálogo dice por qué.
+        """
+        nueva, antes = que_cargar(), estado.get("base") or {}
+        if any(nueva[k] != antes.get(k) for k in ("original", "actual")):
+            cargar_editor(nueva)
+            return False
+        estado["base"] = nueva
+        editor.poner_alrededor(nueva["raw"], nueva["catalogo"], nueva["explorable"])
+        pintar_eleccion()
+        return True
+
+    def poner_al_dia_el_editor() -> None:
+        """Pone el editor al día con la pareja elegida cuando no hay nada escrito en él.
+
+        Lo que cambia los campos (la pareja, si se puede editar, lo que se dice
+        del modo) recarga el editor. Lo que solo los rodea (el catálogo con el
+        que se compara, si se puede recorrer el remoto) lo pone al día sin
+        tocarlos, y si nada ha cambiado solo se repinta lo de la elegida.
+        """
+        nueva, antes = que_cargar(), estado["base"] or {}
+        if any(nueva[k] != antes.get(k) for k in CAMPOS_DEL_EDITOR):
+            cargar_editor(nueva)
+            return
+        if any(nueva[k] != antes.get(k) for k in ("raw", "catalogo", "explorable")):
+            estado["base"] = nueva
+            editor.poner_alrededor(nueva["raw"], nueva["catalogo"], nueva["explorable"])
+        pintar_eleccion()
+
+    def pintar_eleccion() -> None:
+        """Pone el rótulo y el chip de la pareja elegida y enciende lo que vale para ella.
+
+        Es lo de `cargar_editor()` que no son los campos: se repinta también
+        cuando el editor conserva lo que se ha escrito en él.
+        """
+        fila = dlg.lista.fila()
+        poner_texto(rotulo_eleg, theme.rotulo(
             f"Pareja elegida · {fila.name}" if fila else "Ninguna pareja elegida"))
-        if chip_eleg["widget"] is not None:
-            chip_eleg["widget"].destroy()
-            chip_eleg["widget"] = None
+        spec = None
         if fila is not None and not del_catalogo():
-            tono, nota = pair_editor.row_status(fila)
             if not fila.en_pen:
-                chip_eleg["widget"] = theme.chip(titulo_eleg, "Úsala aquí para cambiarla",
-                                                 "Apagado.")
+                spec = ("Úsala aquí para cambiarla", "Apagado.", None)
             elif fila.difiere:
-                chip_eleg["widget"] = theme.chip(titulo_eleg, "Modificada aquí", "Aviso.",
-                                                 "warn")
-            if chip_eleg["widget"] is not None:
-                chip_eleg["widget"].grid(row=0, column=1, sticky="e")
+                spec = ("Modificada aquí", "Aviso.", "warn")
+        poner_chip(chip_eleg, titulo_eleg, spec, row=0, column=1, sticky="e")
         habilitar()
 
     def habilitar() -> None:
         """Enciende las acciones que valen para la pareja elegida."""
-        fila = lista.fila()
-        lect = lectura()
-        en_pen = fila is not None and fila.en_pen
-
-        def poner(texto, vale):
-            botones[texto].configure(state="normal" if vale else "disabled")
-        poner("Usar aquí", fila is not None and not en_pen)
-        for texto in ("Simular", "Quitar…", "Descartar", "Guardar aquí…"):
-            poner(texto, en_pen)
-        poner("Volver al catálogo", en_pen and bool(fila.difiere))
-        poner("Ajustes del catálogo…", lect.editable)
-        poner("Nueva pareja…", lect.editable)
-        for texto in ("Borrar del catálogo…", "Guardar en el catálogo…"):
-            poner(texto, lect.editable and fila is not None)
-        botones["Descartar del catálogo"].configure(state="normal" if fila else "disabled")
-        botones["Releer"].configure(state="disabled" if lect.leyendo else "normal")
+        for texto, vale in pair_editor.botones(dlg.lista.fila(), lectura()).items():
+            b = botones.get(texto)
+            quiero = "normal" if vale else "disabled"
+            if b is not None and str(b.cget("state")) != quiero:
+                b.configure(state=quiero)
 
     def hay_cambios() -> bool:
         """Si el editor tiene algo que no se ha guardado."""
@@ -796,70 +948,185 @@ def open_dialog(parent, config) -> bool:
         if not seguir_sin_guardar():
             vista.set("catalogo" if vista.get() == "dispositivo" else "dispositivo")
             return
+        estado["cargado"] = None              # lo escrito se ha descartado
+        estado["base"] = None                 # y el editor enseña la pareja de la otra vista
         pie_nota.configure(text=nota_inicial())
         refrescar()
 
+    def poner_chip(que: dict, padre, spec: tuple | None, **sitio) -> bool:
+        """Pone ese chip, `(texto, tipo, icono)`, sustituyendo el de antes solo si es otro.
+
+        Returns:
+            Si ha habido que cambiarlo.
+        """
+        if que["spec"] == spec:
+            return False
+        if que["widget"] is not None:
+            que["widget"].destroy()
+        que["widget"] = None if spec is None else theme.chip(padre, *spec)
+        if que["widget"] is not None:
+            que["widget"].grid(**sitio)
+        que["spec"] = spec
+        return True
+
+    def poner_texto(etiqueta, texto: str) -> None:
+        """Pone el texto de una etiqueta si es otro."""
+        if str(etiqueta.cget("text")) != texto:
+            etiqueta.configure(text=texto)
+
+    def montar_catalogo() -> None:
+        """Crea lo que solo hace falta para editar el catálogo, la primera vez que se ve.
+
+        Su aviso ámbar, su lista, su barra de acciones y el botón de sus
+        `[defaults]`. Nace a la vista: quien lo llama es `poner_vista()`.
+
+        Tk recorre con el Tab los hijos de un marco en su orden de apilado, que
+        es el de creación: hecho tarde, todo esto iría detrás de «Cerrar». Por
+        eso cada pieza se pone junto a la que ocupa su sitio en la otra vista
+        (`lift()`/`lower()`), y el Tab va de arriba abajo como se ve.
+        """
+        aviso = theme.aviso(
+            marco, "Estás editando el catálogo",
+            "Afecta a TODOS los dispositivos. Cada uno tiene que volver al catálogo "
+            "para recibir el cambio.", tono="Ambar.", ancho=700)
+        aviso.grid(row=2, column=0, sticky="ew", pady=(theme.E4, 0))
+        aviso.lower(fila_defaults)
+        catalogo_montado["aviso"] = aviso
+        lista_c = ListaParejas(marco, lambda: seguir_sin_guardar(), lambda: cargar_editor())
+        lista_c.marco.grid(row=4, column=0, sticky="ew", pady=(theme.E4, 0))
+        tk.Misc.lift(lista_c.marco, lista_d.marco)   # el `lift` de un lienzo sube elementos
+        listas["catalogo"] = lista_c
+        barra = ttk.Frame(marco)
+        barra.grid(row=7, column=0, sticky="ew", pady=(theme.E4, 0))
+        barra.lift(barra_d)
+        barra.columnconfigure(10, weight=1)
+        acciones["catalogo"] = barra
+        boton("catalogo", "Nueva pareja…", catalogo_nueva, "Tonal.TButton", "plus", col=0)
+        boton("catalogo", "Borrar del catálogo…", catalogo_borrar, "Danger.TButton",
+              "trash", col=1)
+        boton("catalogo", "Releer", lambda: leer_catalogo("Catálogo releído."),
+              "Quiet.TButton", "reload", col=2)
+        boton("catalogo", "Descartar", descartar, col=11, clave="Descartar del catálogo")
+        boton("catalogo", "Guardar en el catálogo…", catalogo_guardar, "Primary.TButton",
+              col=12)
+        b = ttk.Button(fila_defaults, text="Ajustes del catálogo…", style="GrisQuiet.TButton",
+                       command=catalogo_defaults)
+        b.grid(row=0, column=5, padx=(theme.E1, 0))
+        botones["Ajustes del catálogo…"] = b
+
+    def poner_vista(catalogo: bool) -> tuple[bool, "ListaParejas"]:
+        """Enseña lo de la vista que toca y esconde lo de la otra.
+
+        Es esconder y volver a poner: nada se destruye ni se rehace al pasar de
+        una vista a la otra. La lista de la vista que se deja queda como estaba
+        hasta que se vuelva a ver, y entonces `refrescar()` la pone al día.
+
+        Returns:
+            Si ha cambiado de vista, y la lista que se veía antes de llamar.
+        """
+        anterior = dlg.lista
+        if estado["vista"] == catalogo:
+            return False, anterior
+        if catalogo and listas["catalogo"] is None:
+            montar_catalogo()
+        nueva = listas["catalogo" if catalogo else "dispositivo"]
+        if nueva is not anterior:
+            anterior.marco.grid_remove()
+            nueva.marco.grid()
+            dlg.lista = nueva
+        aviso = catalogo_montado.get("aviso")
+        barra = acciones.get("catalogo")
+        a_dispositivo = ("Ajustes de este dispositivo…", "Volver a los del catálogo")
+        if catalogo:
+            aviso.grid()
+            acciones["dispositivo"].grid_remove()
+            barra.grid()
+            for texto in a_dispositivo:
+                botones[texto].grid_remove()
+            botones["Ajustes del catálogo…"].grid()
+        else:
+            if aviso is not None:
+                aviso.grid_remove()
+                barra.grid_remove()
+                botones["Ajustes del catálogo…"].grid_remove()
+            acciones["dispositivo"].grid()
+            for texto in a_dispositivo:
+                botones[texto].grid()
+        estado["vista"] = catalogo
+        return True, anterior
+
+    def envolventes() -> tuple[str, ...]:
+        """Los textos de la pantalla que se parten en líneas, que son los que la hacen más alta."""
+        return (str(indicador.texto.cget("text")), str(linea_defaults.cget("text")),
+                str(pie_nota.cget("text")), str(editor.pista_modo.cget("text")),
+                *(str(p.cget("text")) for p in editor.pistas.values()))
+
     def refrescar(nota: str | None = None) -> None:
-        """Relee el config y repinta la lista, el chip, la franja y el editor.
+        """Pone la pantalla al día con el config y el catálogo, tocando solo lo que cambia.
+
+        Relee el config (solo se parsea si el fichero ha cambiado) y repinta la
+        lista, el chip, la franja y el editor. La ventana solo se agranda y se
+        recoloca si ha llegado o se ha ido una fila, o algún texto de los que se
+        parten en líneas es otro y no más corto.
 
         Args:
             nota: Lo que se pone en el pie; `None` lo deja como esté.
         """
-        estado["raw"] = config_file.load_raw()
-        estado["config"] = model.parse_config(estado["raw"], equipo=model.es_equipo())
-        cat = estado["cat"]
+        estado["raw"], estado["config"] = lector.leer()
+        raw, cat = estado["raw"], estado["cat"]
         lect = lectura()
         catalogo = del_catalogo()
+        cambio_vista, anterior = poner_vista(catalogo)
 
-        sitio = cat.endpoint if cat else catalog.endpoint(estado["raw"])
-        if chip_cat["widget"] is not None:
-            chip_cat["widget"].destroy()
-        chip_cat["widget"] = theme.chip(donde, lect.chip, lect.tipo, lect.icono)
-        chip_cat["widget"].grid(row=0, column=0, sticky="e")
-        endpoint.configure(text=sitio)
-        indicador.poner(lect.linea, lect.leyendo, lect.tono)
-
-        if catalogo:
-            aviso_catalogo.grid()
-            acciones["dispositivo"].grid_remove()
-            acciones["catalogo"].grid()
-        else:
-            aviso_catalogo.grid_remove()
-            acciones["catalogo"].grid_remove()
-            acciones["dispositivo"].grid()
-        for texto in ("Ajustes de este dispositivo…", "Volver a los del catálogo"):
-            botones[texto].grid() if not catalogo else botones[texto].grid_remove()
-        (botones["Ajustes del catálogo…"].grid() if catalogo
-         else botones["Ajustes del catálogo…"].grid_remove())
+        sitio = cat.endpoint if cat else catalog.endpoint(raw)
+        poner_chip(chip_cat, donde, (lect.chip, lect.tipo, lect.icono),
+                   row=0, column=0, sticky="e")
+        poner_texto(endpoint, sitio)
+        if estado["indicador"] != (lect.linea, lect.leyendo, lect.tono):
+            estado["indicador"] = (lect.linea, lect.leyendo, lect.tono)
+            indicador.poner(lect.linea, lect.leyendo, lect.tono)
 
         if catalogo:
             origen, difiere = "Catálogo", ()
             resumen = _resumen_defaults(cat.raw if cat else {}, ())
         else:
-            origen, difiere = pair_editor.defaults_origin(estado["raw"], cat)
-            resumen = _resumen_defaults(estado["raw"], difiere)
-        if origen_defaults["widget"] is not None:
-            origen_defaults["widget"].destroy()
-        origen_defaults["widget"] = theme.chip(
-            fila_defaults, origen,
-            "Aviso." if difiere else ("Apagado." if origen == "—" else "Ok."))
-        origen_defaults["widget"].grid(row=0, column=1, sticky="w", padx=(theme.E2, 0))
-        linea_defaults.configure(text=resumen)
+            origen, difiere = pair_editor.defaults_origin(raw, cat)
+            resumen = _resumen_defaults(raw, difiere)
+        poner_chip(origen_defaults, fila_defaults,
+                   (origen, "Aviso." if difiere else ("Apagado." if origen == "—" else "Ok."),
+                    None), row=0, column=1, sticky="w", padx=(theme.E2, 0))
+        poner_texto(linea_defaults, resumen)
 
         # Lo elegido sobrevive al repintado: el catálogo del remoto puede llegar
         # con una fila ya elegida, y perderla sería editar luego otra.
-        elegida = lista.elegida
-        lista.poner(filas(), del_catalogo=catalogo)
+        lista = dlg.lista
+        elegida = anterior.elegida
+        escrito = hay_cambios() and editor.original == elegida
+        cambio = lista.poner(filas(), del_catalogo=catalogo)
         lista.elegir(elegida if elegida in lista.filas else
                      (lista.orden[0] if lista.orden else None), avisar=False)
-        cargar_editor()
+        # Y lo escrito en el editor, también: el catálogo llega mientras se
+        # teclea, y recargar el editor lo borraba y daba lo borrado por guardado.
+        if escrito and lista.elegida == elegida:
+            if not conservar_lo_escrito():
+                nota = (f"'{elegida}' ha cambiado mientras se editaba: se ha cargado "
+                        f"como está ahora y lo escrito se ha descartado.")
+        elif escrito:
+            cargar_editor()
+        else:
+            poner_al_dia_el_editor()
         if nota is not None:
             pie_nota.configure(text=nota)
         # Lo que llega del remoto puede traer una explicación más larga que la
         # de la espera: entonces el recuadro crece, en vez de meterla tras una
         # barra, y la ventana se recoloca (como el asistente) para que lo que
-        # ha crecido no quede por debajo del borde de la pantalla.
-        if dlg.winfo_ismapped() and dlg.visor.crecer(dlg):
+        # ha crecido no quede por debajo del borde de la pantalla. Medirlo
+        # cuesta un `update_idletasks()` de toda la ventana, así que solo se
+        # hace cuando algo ha podido pedir más sitio.
+        textos = envolventes()
+        pide = cambio or cambio_vista or _pide_sitio(estado["envolventes"], textos)
+        estado["envolventes"] = textos
+        if pide and dlg.winfo_ismapped() and dlg.visor.crecer(dlg):
             centrar(dlg, parent)
 
     def leer_catalogo(nota: str | None = None) -> None:
@@ -880,6 +1147,7 @@ def open_dialog(parent, config) -> bool:
 
         def llegado(encargo) -> None:
             """Se queda con lo que ha llegado y repinta."""
+            perf_empezar("catalogo-llega")
             estado["leyendo"] = False
             if encargo.error is not None:
                 estado["cat"] = catalog.cached()
@@ -888,6 +1156,7 @@ def open_dialog(parent, config) -> bool:
                 estado["cat"], estado["aviso"] = encargo.resultado
             contesto = estado["cat"] is not None and estado["cat"].editable
             refrescar(nota if contesto else None)
+            perf_al_pintar(dlg, "catalogo-llega")
 
         # Sin repetir: un hilo de una pantalla cerrada, o de esta misma, puede
         # seguir vivo, y dos `pull()` a la vez se pisan la copia local.
@@ -897,18 +1166,43 @@ def open_dialog(parent, config) -> bool:
 
     def fila_elegida():
         """Devuelve la fila elegida, o `None` (y lo dice)."""
-        fila = lista.fila()
+        fila = dlg.lista.fila()
         if fila is None:
             messagebox.showinfo(TITLE, "Elige antes una pareja de la lista.", parent=dlg)
         return fila
 
-    def aplicar(plan, en_catalogo: bool = False, titulo: str = "") -> None:
+    def releer_config_cambiado() -> bool:
+        """Dice si el config se ha cambiado por fuera desde que la pantalla lo enseñó.
+
+        Si es así lo vuelve a leer, lo dice en el pie y la pantalla se queda
+        como el config: quien llama no sigue con lo que iba a hacer. Si ya no
+        se puede ni leer (desapareció, o ya no es TOML), lo dice y para igual.
+        """
+        try:
+            lector.leer()
+        except ConfigError as e:
+            messagebox.showerror(TITLE, str(e), parent=dlg)
+            return True
+        if not lector.cambio:
+            return False
+        refrescar(AVISO_CAMBIADO)
+        return True
+
+    def aplicar(plan, en_catalogo: bool = False, titulo: str = "", base=None) -> None:
         """Confirma y ejecuta un plan; uno del catálogo no cambia este dispositivo.
 
         Uno del catálogo se sube por `working()`, que no se puede cortar a
         medias, y después se relee el remoto en segundo plano. Mientras llega
         se enseña lo recién subido, que `catalog.push()` deja en la copia
         local, con lo del catálogo apagado.
+
+        Uno de este dispositivo reescribe `sync_config.toml` a partir del config
+        con el que se hizo el plan (`base`): la confirmación puede tardar, y si
+        mientras tanto alguien lo ha editado a mano, ejecutarlo lo pisaría. Se
+        mira otra vez justo antes y, si ha cambiado, no se ejecuta nada.
+
+        Args:
+            base: El `raw` del que sale el plan, tal como lo enseñaba la pantalla.
         """
         if not confirmar_plan(dlg, plan, titulo or "Confirmar el cambio",
                               NOTA_CATALOGO if en_catalogo else NOTA_PEN):
@@ -926,22 +1220,34 @@ def open_dialog(parent, config) -> bool:
             leer_catalogo()
             return
         try:
+            actual, _ = lector.leer()
+        except ConfigError as e:
+            messagebox.showerror(TITLE, str(e), parent=dlg)
+            return
+        if actual is not base:
+            refrescar(AVISO_CAMBIADO)
+            return
+        try:
             hechos = plan.execute()
         except (ConfigError, OSError) as e:
             messagebox.showerror(TITLE, f"No se ha podido guardar:\n\n{e}", parent=dlg)
             return
         estado["cambiado"] = True
         estado["cargado"] = None
+        # Lo que se sabía del baseline y los filtros puede haber cambiado con el plan.
+        estado["estados_de"], estado["compartida"] = None, None
         refrescar("  ·  ".join(hechos))
 
     def plan_de(funcion, *args, en_catalogo=False, titulo=""):
         """Pide un plan y lo aplica; si no se puede ni pedir, dice por qué."""
+        if releer_config_cambiado():
+            return
         try:
             plan = funcion(*args)
         except ConfigError as e:
             messagebox.showerror(TITLE, str(e), parent=dlg)
             return
-        aplicar(plan, en_catalogo, titulo)
+        aplicar(plan, en_catalogo, titulo, base=estado["raw"])
 
     def descartar() -> None:
         """Devuelve el editor a lo que hay guardado."""
@@ -1068,14 +1374,15 @@ def open_dialog(parent, config) -> bool:
 
     def ver_flota() -> None:
         """Abre la ventana de los dispositivos."""
+        perf_empezar("open-dispositivos")
         from . import tk_fleet
         tk_fleet.open_dialog(dlg, estado["config"], estado["raw"])
 
-    # Los botones. La franja de `[defaults]` lleva los suyos, según la vista.
+    # Los botones de este dispositivo. La franja de `[defaults]` lleva los suyos,
+    # según la vista; los del catálogo se crean al verlo (`montar_catalogo`).
     for col, (texto, accion) in enumerate((
             ("Ajustes de este dispositivo…", defaults_del_pen),
-            ("Volver a los del catálogo", volver_defaults),
-            ("Ajustes del catálogo…", catalogo_defaults)), start=3):
+            ("Volver a los del catálogo", volver_defaults)), start=3):
         b = ttk.Button(fila_defaults, text=texto, style="GrisQuiet.TButton",
                        command=accion)
         b.grid(row=0, column=col, padx=(theme.E1, 0))
@@ -1087,14 +1394,6 @@ def open_dialog(parent, config) -> bool:
     boton("dispositivo", "Quitar…", quitar, "Danger.TButton", "trash", col=3)
     boton("dispositivo", "Descartar", descartar, col=11)
     boton("dispositivo", "Guardar aquí…", guardar_aqui, "Primary.TButton", col=12)
-    boton("catalogo", "Nueva pareja…", catalogo_nueva, "Tonal.TButton", "plus", col=0)
-    boton("catalogo", "Borrar del catálogo…", catalogo_borrar, "Danger.TButton",
-          "trash", col=1)
-    boton("catalogo", "Releer", lambda: leer_catalogo("Catálogo releído."),
-          "Quiet.TButton", "reload", col=2)
-    boton("catalogo", "Descartar", descartar, col=11, clave="Descartar del catálogo")
-    boton("catalogo", "Guardar en el catálogo…", catalogo_guardar, "Primary.TButton",
-          col=12)
 
     # La flota cuelga de aquí y no de la ventana principal: es de la misma
     # familia que el catálogo (lo que comparten todos los dispositivos) y no
@@ -1106,8 +1405,29 @@ def open_dialog(parent, config) -> bool:
     flota_btn.grid(row=1, column=1, padx=(theme.E3, theme.E2))
     ttk.Button(cierre, text="Cerrar", command=dlg.destroy).grid(row=1, column=2)
 
+    def reponer() -> None:
+        """Deja la pantalla como una recién abierta, para quien la enseñe otra vez.
+
+        Este dispositivo, la primera pareja, el editor recargado y «Avanzado»
+        plegado, el pie de antes de hacer nada y el catálogo leído de nuevo
+        (la copia local mientras llega). Lo que se ve es lo que se vería con
+        `open_dialog()`, sin construir nada de lo ya construido.
+        """
+        estado.update(cambiado=False, cargado=None, base=None, cat=catalog.cached(),
+                      aviso=None, compartida=compartida, estados_de=None)
+        vista.set("dispositivo")
+        if not editor.plegado.get():
+            editor.plegar()
+        for lista in listas.values():
+            if lista is not None:
+                lista.elegir(None, avisar=False)
+        pie_nota.configure(text=nota_inicial())
+        leer_catalogo()
+
+    dlg.aplicar = reponer
     pie_nota.configure(text=nota_inicial())
     leer_catalogo()
+    dlg.perf_momento = "open-parejas"
     try:
         mostrar(dlg, parent)
     finally:
@@ -1755,13 +2075,31 @@ def flags_form(parent, titulo: str, subtitulo: str, flags: dict, extra: list,
               text="Se funden en este orden: siempre → modo → [defaults] → esta "
                    "pareja.").grid(row=2, column=0, sticky="w", pady=(theme.E2, 0))
 
+    recuadro: dict = {}          # el aviso rojo: se hace la primera vez que hace falta
+
     def avisar(error: ConfigError | None) -> None:
-        """Enseña el motivo en el recuadro rojo, o lo vacía si no hay."""
-        for hijo in problema.winfo_children():
-            hijo.destroy()
-        if error is not None:
-            theme.aviso(problema, flags_editor.titulo_error(error), str(error),
-                        tono="Rojo.", ancho=300).grid(row=0, column=0, sticky="ew")
+        """Enseña el motivo en el recuadro rojo, o lo esconde si no hay.
+
+        El recuadro se hace la primera vez que lo escrito no vale y desde
+        entonces solo cambia su texto y se quita o se pone en la rejilla: ni se
+        destruye ni se rehace con cada error.
+        """
+        if error is None:
+            if "marco" in recuadro:
+                recuadro["marco"].grid_remove()
+            return
+        titulo_error, cuerpo = flags_editor.titulo_error(error), str(error)
+        if "marco" not in recuadro:
+            marco_aviso = theme.aviso(problema, titulo_error, cuerpo or " ", tono="Rojo.",
+                                      ancho=300)
+            # `theme.aviso` pone el título en su fila 0 y el cuerpo en la 1, ambos en la columna 1.
+            recuadro.update(marco=marco_aviso,
+                            titulo=marco_aviso.grid_slaves(row=0, column=1)[0],
+                            cuerpo=marco_aviso.grid_slaves(row=1, column=1)[0])
+        else:
+            recuadro["titulo"].configure(text=titulo_error)
+        recuadro["cuerpo"].configure(text=cuerpo)
+        recuadro["marco"].grid(row=0, column=0, sticky="ew")
 
     def leer() -> dict | None:
         """Devuelve lo escrito, ya validado; `None` si no vale (y ya se ha avisado)."""
@@ -1821,5 +2159,6 @@ def flags_form(parent, titulo: str, subtitulo: str, flags: dict, extra: list,
                command=aceptar).grid(row=0, column=2)
 
     repasar()
+    dlg.perf_momento = "open-flags"
     mostrar(dlg, parent)
     return resultado["datos"]

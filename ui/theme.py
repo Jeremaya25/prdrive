@@ -31,7 +31,10 @@ from __future__ import annotations
 
 import re
 import sys
+import time
 from pathlib import Path
+
+from . import perf_activo, perf_marca
 
 _densidad_declarada = False
 """Si ya se declaró la densidad de pantalla en este proceso."""
@@ -59,8 +62,9 @@ def nitidez() -> None:
     a una pantalla con otro zoom. Con la del sistema, Windows estira la ventana
     en ese caso (borrosa, pero del tamaño que toca); con la de por monitor no
     la estiraría y la ventana saldría a la mitad de su tamaño físico, que es
-    peor que borrosa. Cuando el proyecto llegue a Tk 9, esta es la línea que
-    cambia.
+    peor que borrosa. Tk 9.0.4 tampoco redibuja al cambiar de pantalla
+    (`common/pins.py`, «Qué NO trae Tk 9.0.4»): la declaración es la misma en
+    los dos Tk.
 
     Tiene que correr **antes** del primer `Tk()`: Tk lee la densidad al
     arrancar su intérprete y no la vuelve a mirar. Es una propiedad del
@@ -144,9 +148,16 @@ def cargar_fuentes() -> bool:
             hechos = [gdi.AddFontResourceExW(str(f), 0x10, None)  # FR_PRIVATE
                       for f in ficheros]
         elif sys.platform.startswith("linux"):
-            import ctypes.util
-            fc = ctypes.CDLL(ctypes.util.find_library("fontconfig")
-                             or "libfontconfig.so.1")
+            # Por su SONAME, que el cargador resuelve al instante (y es la
+            # biblioteca que ya tiene cargada el Tk con Xft). `find_library`
+            # lanza `ldconfig -p` (~5 ms antes de la primera ventana) y queda
+            # de respaldo.
+            try:
+                fc = ctypes.CDLL("libfontconfig.so.1")
+            except OSError:                         # otro nombre en este sistema
+                import ctypes.util
+                fc = ctypes.CDLL(ctypes.util.find_library("fontconfig")
+                                 or "libfontconfig.so.1")
             fc.FcConfigAppFontAddFile.argtypes = (ctypes.c_void_p, ctypes.c_char_p)
             hechos = [fc.FcConfigAppFontAddFile(None, bytes(f))
                       for f in ficheros]
@@ -424,6 +435,30 @@ en píxeles saldría todo diminuto en un portátil moderno.
 _elegidas: dict[str, str] = {}
 """La familia que se eligió para cada papel."""
 
+_instaladas: frozenset[str] | None = None
+"""Las familias que ve Tk, enumeradas una sola vez por proceso; `None` si aún no.
+
+Enumerarlas cuesta (en Windows, GDI entero) y son las mismas para todos los
+intérpretes del proceso, así que las tres familias de `_FAMILIAS` se eligen con
+una enumeración y no con tres.
+"""
+
+
+def _familias_instaladas() -> frozenset[str]:
+    """Devuelve las familias que ve Tk, preguntándoselo una sola vez.
+
+    Sin ningún `Tk()` todavía no se puede preguntar: entonces devuelve vacío y
+    NO lo apunta, para que la siguiente llamada, ya con Tk, lo vuelva a intentar.
+    """
+    global _instaladas
+    if _instaladas is None:
+        from tkinter import font
+        try:
+            _instaladas = frozenset(font.families())
+        except Exception:                       # sin Tk montado todavía
+            return frozenset()
+    return _instaladas
+
 
 def familia(cual: str) -> str:
     """Devuelve la primera familia instalada de las que valen para ese papel.
@@ -433,11 +468,7 @@ def familia(cual: str) -> str:
     («Noto Sans»), y sin embargo fontconfig la encuentra por el segundo.
     """
     if cual not in _elegidas:
-        from tkinter import font
-        try:
-            hay = set(font.families())
-        except Exception:                       # sin Tk montado todavía
-            hay = set()
+        hay = set(_familias_instaladas())
         if cargar_fuentes():
             hay.update(_FAMILIAS_PROPIAS)
         _elegidas[cual] = next((f for f in _FAMILIAS[cual] if f in hay),
@@ -483,6 +514,158 @@ def fuente_tcl(rol: str = "texto") -> str:
     return " ".join([familia_] + [str(x) for x in resto])
 
 
+class _Letra:
+    """Lo que `theme` recuerda de la letra de UN intérprete de Tk (ver `_letra()`).
+
+    Attributes:
+        interp: El intérprete. Guardarlo aquí impide que su `id` se reutilice
+            mientras la ficha siga viva (mismo criterio que `icons._CACHE`).
+        fuentes: `(escala, letra)` → la `tkfont.Font` de esa letra, hecha una
+            sola vez y sujeta por la ancla.
+        metricas: `(escala, letra)` → `(linespace, ascent, tamaño)`.
+        ancla: La ruta Tcl del lienzo oculto que sujeta las fuentes; `None` si
+            aún no se hizo y `""` si no se pudo (entonces se mide igual, pero
+            reabriendo la cara en cada medida).
+    """
+
+    __slots__ = ("interp", "fuentes", "metricas", "ancla")
+
+    def __init__(self, interp) -> None:
+        """Empieza una ficha vacía para este intérprete."""
+        self.interp = interp
+        self.fuentes: dict[tuple, object] = {}
+        self.metricas: dict[tuple, tuple[int, int, int]] = {}
+        self.ancla: str | None = None
+
+    def soltar(self) -> None:
+        """Destruye la ancla y olvida las fuentes y las medidas.
+
+        Tiene que correr en el hilo del intérprete: al soltarse las `Font`, su
+        `__del__` le habla a Tk. Si Tk ya se destruyó, esas llamadas fallan sin
+        ruido (las `Font` se tragan el error).
+        """
+        if self.ancla:
+            try:
+                self.interp.call("destroy", self.ancla)
+            except Exception:                       # noqa: BLE001
+                pass
+        self.ancla = None
+        self.fuentes.clear()
+        self.metricas.clear()
+
+
+_LETRA: dict[int, _Letra] = {}
+"""La letra de cada intérprete de Tk, por `id`: sus fuentes sujetas y su tabla de métricas.
+
+Con Xft, medir una fuente que ningún widget tiene puesta obliga a Tk a reabrir
+la cara: 0,55 ms por `metrics()`, `measure()` o `actual()` contra 2 µs si algo
+la sujeta. Por eso una letra se mide una vez por intérprete y escala
+(`_metricas()`), con una `tkfont.Font` que se queda sujeta (`_fuente_fija()`):
+`relleno_control()`, `icono_linea()` y, a través de ellas, `chip()`, `aviso()` y
+`boton_icono()` no crean una fuente por control. Es por intérprete y se suelta
+en `olvidar()`, desde el hilo que lo creó, por lo mismo que `_puestos` y
+`icons._CACHE`: el aviso de fallo del servicio abre intérpretes sucesivos en el
+mismo hilo y cada uno tiene la suya.
+"""
+
+ANCLA = ".prdrive-letra"
+"""El lienzo oculto que sujeta las fuentes, colgado de la raíz del intérprete.
+
+Se crea con Tcl a pelo y no con `tk.Canvas`: así no entra en `children` de la
+raíz, y `winfo_children()` (que recorren las pruebas y varias pantallas) no lo
+ve. Nunca se coloca: no se mapea ni se pinta.
+"""
+
+
+def _letra(widget) -> _Letra:
+    """Devuelve la ficha de letra del intérprete de `widget`, creándola si hace falta."""
+    interp = widget.tk
+    ficha = _LETRA.get(id(interp))
+    if ficha is None or ficha.interp is not interp:
+        ficha = _LETRA[id(interp)] = _Letra(interp)
+    return ficha
+
+
+def _clave_letra(widget, letra) -> tuple:
+    """Devuelve la clave de la tabla para esa letra a la escala actual de `widget`.
+
+    Es `(escala, partes)`. `tk scaling` forma parte de la clave porque los
+    puntos de una fuente se convierten a píxeles con ella y porque una fuente
+    sujeta se queda con los píxeles de la escala a la que se abrió: si la escala
+    cambia (las pruebas de densidad lo hacen) hay que abrir otra, no reusar la
+    vieja. Las partes son las de la lista de Tcl de la letra, en cadenas, así la
+    tupla de `fuente()` y la cadena que da un estilo (`Style.lookup`:
+    «{Noto Sans SemiBold} 10») son la misma letra y no se miden dos veces.
+    """
+    if not isinstance(letra, tuple):
+        letra = widget.tk.splitlist(str(letra))
+    escala = float(widget.tk.call("tk", "scaling"))
+    return (escala, tuple(str(parte) for parte in letra))
+
+
+def _fuente_fija(widget, letra, clave: tuple | None = None):
+    """Devuelve la `tkfont.Font` de esa letra en este intérprete, hecha y sujeta una sola vez.
+
+    Es la que mide la tabla y la que se da a quien mida texto (`fuente_tk()`).
+    Es una `tkfont.Font(root=widget, font=letra)` corriente, de modo que sus
+    medidas son las de Tk en cualquier sistema. La sujeta un elemento de texto
+    oculto del lienzo `ANCLA` (el truco que recomienda la documentación de
+    `Font.metrics`: «create a dummy widget using this font before calling this
+    method»); si no se puede hacer, queda suelta y funciona más despacio.
+    """
+    from tkinter import font as tkfont
+    ficha = _letra(widget)
+    clave = clave or _clave_letra(widget, letra)
+    fuente_ = ficha.fuentes.get(clave)
+    if fuente_ is None:
+        fuente_ = tkfont.Font(root=widget, font=letra)
+        if ficha.ancla is None:
+            try:
+                ficha.interp.call("canvas", ANCLA)
+                ficha.ancla = ANCLA
+            except Exception:                       # noqa: BLE001
+                ficha.ancla = ""
+        if ficha.ancla:
+            try:
+                ficha.interp.call(ficha.ancla, "create", "text", -50, -50,
+                                  "-text", "", "-font", fuente_.name,
+                                  "-state", "hidden")
+            except Exception:                       # noqa: BLE001
+                pass
+        ficha.fuentes[clave] = fuente_
+    return fuente_
+
+
+def fuente_tk(widget, rol: str = "texto"):
+    """Devuelve la `tkfont.Font` de un rol en el intérprete de `widget`, hecha una sola vez.
+
+    Para medir texto (`.measure()`) sin crear una fuente por medida ni pagar la
+    reapertura de la cara. Es compartida: no se cambia ni se borra.
+    """
+    return _fuente_fija(widget, fuente(rol))
+
+
+def _metricas(widget, letra) -> tuple[int, int, int]:
+    """Devuelve `(linespace, ascent, tamaño)` de esa letra, midiéndola solo la primera vez.
+
+    `tamaño` es `Font.actual("size")`: puntos si es positivo, píxeles si es
+    negativo. Lo mide la `Font` de `_fuente_fija()`, así que los números son los
+    de crear una `tkfont.Font` y preguntarle: solo se preguntan una vez.
+
+    Raises:
+        tkinter.TclError: Si Tk no puede abrir esa letra.
+    """
+    clave = _clave_letra(widget, letra)
+    ficha = _letra(widget)
+    medidas = ficha.metricas.get(clave)
+    if medidas is None:
+        fuente_ = _fuente_fija(widget, letra, clave)
+        m = fuente_.metrics()
+        medidas = ficha.metricas[clave] = (m["linespace"], m["ascent"],
+                                           fuente_.actual("size"))
+    return medidas
+
+
 def rotulo(texto: str) -> str:
     """Devuelve un rótulo de sección: mayúsculas y letras separadas.
 
@@ -508,9 +691,8 @@ def ancho_rotulo(widget, *textos: str) -> int:
     y entonces el canalón se queda en lo que pida la rejilla: un rótulo pegado
     a su fila de botones se lee, uno cortado no.
     """
-    from tkinter import font as tkfont
     try:
-        letra = tkfont.Font(root=widget, font=fuente("rotulo"))
+        letra = fuente_tk(widget, "rotulo")
         return max(letra.measure(rotulo(t)) for t in textos)
     except Exception:                                # noqa: BLE001
         return 0
@@ -544,6 +726,55 @@ def _roles() -> dict[str, tuple[str, str]]:
 def fondo_de(superficie: str) -> str:
     """Devuelve el color de fondo de una superficie (`'Card.'`, `'NotaAzul.'`…)."""
     return _superficies().get(superficie, _superficies()[""])[0]
+
+
+def rol_texto(rol: str = "", superficie: str = "") -> tuple[str, str]:
+    """Devuelve cómo va un texto de ese rol sobre esa superficie: `(color, rol de fuente)`.
+
+    Es lo que lleva la etiqueta `{superficie}{rol}TLabel`: el color del rol,
+    salvo en una superficie que manda el suyo (sobre `'Rojo.'`, todo en
+    `PELIGRO`), y el rol de `fuente()`/`fuente_tk()`. Lo usa quien pinta texto
+    sin etiqueta (un lienzo) para que se vea como el de una.
+
+    Args:
+        rol: `''`, `'Fuerte.'`, `'Pista.'`, `'Mono.'`, `'MonoPista.'`…; uno que
+            no existe es el texto corriente.
+        superficie: `''` (el papel), `'Card.'`, `'NotaAzul.'`…
+    """
+    color, letra = _roles().get(rol, _roles()[""])
+    manda = _superficies().get(superficie, _superficies()[""])[1]
+    return manda or color, letra
+
+
+def mezcla(a: str, b: str, t: float) -> str:
+    """Devuelve el color `a` llevado una fracción `t` hacia `b`.
+
+    Para un tono que no está en la paleta y sale de dos que sí (una fila bajo
+    el ratón: su fondo un poco hacia la tinta). Se calcula canal a canal y se
+    redondea.
+
+    Args:
+        a: El color de partida, «#RRGGBB».
+        b: Hacia dónde, «#RRGGBB».
+        t: Cuánto: 0 es `a` y 1 es `b`.
+
+    Returns:
+        El color, «#RRGGBB» en mayúsculas.
+
+    Raises:
+        ValueError: Si un color no es «#RRGGBB» o `t` no está entre 0 y 1.
+    """
+    if not 0 <= t <= 1:
+        raise ValueError(f"fracción fuera de [0, 1]: {t}")
+
+    def canales(color: str) -> list[int]:
+        """Los tres canales de un «#RRGGBB»."""
+        if len(color) != 7 or color[0] != "#":
+            raise ValueError(f"color que no es #RRGGBB: {color!r}")
+        return [int(color[i:i + 2], 16) for i in (1, 3, 5)]
+
+    return "#" + "".join(f"{round(x + (y - x) * t):02X}"
+                         for x, y in zip(canales(a), canales(b)))
 
 
 def _superficies() -> dict[str, tuple[str, str | None]]:
@@ -598,6 +829,32 @@ _GLIFO_CHIP = {"Ok.": "ok", "Aviso.": "alert", "Peligro.": "close",
                "Acento.": "sync", "Apagado.": "clock"}
 """El glifo del disco de un chip de estado al que no se le da icono."""
 
+
+def colores_chip(tipo: str = "", icono: str | None = None) -> tuple:
+    """Devuelve cómo se pinta un chip (no sólido) de ese tipo, el mismo que dibuja `chip()`.
+
+    Para quien lo pinta sin etiqueta (un lienzo): sale de la misma tabla
+    (`_chips()`) y con la misma regla del glifo que `chip()`, que la usa.
+
+    Args:
+        tipo: `''`, `'Ok.'`, `'Aviso.'`, `'Peligro.'`, `'Acento.'` o
+            `'Apagado.'`; uno que no existe es el neutro.
+        icono: El glifo que se pide; sin él, el de su tipo.
+
+    Returns:
+        `(fondo, borde, letra, disco, tinta, glifo)`: el relleno de la píldora
+        (el papel en el apagado, que es solo un aro), su borde, el color de la
+        palabra, el del disco (`None` en un chip neutro), el del glifo (la
+        letra que va sobre el disco, o la tinta suave del icono de un chip
+        neutro) y el glifo (`None` si un chip neutro no lleva icono).
+    """
+    fondo, borde, letra, disco = _chips().get(tipo, _chips()[""])
+    if disco is None:
+        return fondo, borde, letra, None, TINTA2, icono
+    glifo = "alert" if icono == "warn" else icono or _GLIFO_CHIP.get(tipo)
+    return fondo, borde, letra, disco, _sobre(disco), glifo
+
+
 _puestos: dict[int, object] = {}
 """Los intérpretes de Tk que ya tienen el tema, por `id`."""
 
@@ -612,7 +869,11 @@ def olvidar(interp) -> None:
     if _puestos.get(id(interp)) is interp:
         del _puestos[id(interp)]
         _imagenes.pop(id(interp), None)
-        _sobres.pop(id(interp), None)
+        _asientos.pop(id(interp), None)
+    ficha = _LETRA.get(id(interp))
+    if ficha is not None and ficha.interp is interp:
+        del _LETRA[id(interp)]
+        ficha.soltar()
 
 
 def _casilla_propia(widget, style) -> None:
@@ -681,11 +942,18 @@ def _filetes(widget, style) -> None:
 #
 # Las piezas son transparentes por fuera de la forma y ttk rellena el control
 # con su `background` antes de pintarlas, así que lo que asoma por las esquinas
-# es el `background` del estilo. Tiene que ser el color de la superficie donde
-# cae el control, y eso solo se sabe al ponerlo: lo hace `_asentar()`, que
-# mira el fondo del padre cuando el control aparece y, si no es el papel, le
-# pone una variante del estilo con ese fondo («Sobre<color>.<estilo>»). Nadie
-# tiene que acordarse de pedir el botón «de tarjeta».
+# es el `background` del control. Tiene que ser el color de la superficie donde
+# cae, y eso solo se sabe al ponerlo. Lo decide el ESTADO del control y no su
+# estilo: cada estilo redondeado lleva un `style.map(background=…)` con los tres
+# bits de estado que ttk deja libres (`user1`…`user3`), una combinación por
+# superficie, y `_asentar()` enciende la de la superficie del padre cuando el
+# control aparece. Nadie tiene que acordarse de pedir el botón «de tarjeta».
+#
+# Cambiar el estado de un widget no crea estilos ni repinta a los demás; crear
+# un estilo, configurarlo, mapearlo o cambiarle la disposición manda un
+# `<<ThemeChanged>>` a TODOS los widgets del intérprete, que se miden y se
+# pintan otra vez. Por eso `apply()` hace todo eso de una vez y, desde que hay
+# un widget, no se toca ningún estilo.
 # ---------------------------------------------------------------------------
 
 RADIO = 4
@@ -700,6 +968,10 @@ _REDONDOS: dict[str, bool] = {}
 
 Un `False` corta la búsqueda por sufijos de `_redondo()`: «Plano.Card.TFrame»
 termina como la tarjeta, pero es plano y no se asienta.
+
+El `background` de cada estilo redondeado es el papel: lo que se ve por las
+esquinas lo pone el mapa de bits de `_superficies_por_estado()`, y sin ningún
+bit encendido (el control aún no ha aparecido) manda el papel.
 """
 _CARA: dict[str, str] = {}
 """Los marcos con cara de imagen: el color que enseñan a sus hijos.
@@ -708,11 +980,45 @@ Su `background` es el de DEBAJO (asoma por las esquinas), así que no sirve
 para saber sobre qué color caen los controles de dentro.
 """
 
-_sobres: dict[int, set[str]] = {}
-"""Las variantes «Sobre…» ya creadas, por intérprete (ver `_asentar`)."""
+_BITS = (("user1",), ("user2",), ("user3",), ("user1", "user2"),
+         ("user1", "user3"), ("user2", "user3"), ("user1", "user2", "user3"))
+"""Las siete combinaciones de bits de estado libres de ttk que no son «ninguno»."""
+
+_SIN_BITS = ("!user1", "!user2", "!user3")
+"""Lo que `_asentar()` apaga antes de encender los bits de la superficie."""
 
 _SOBRE = re.compile(r"^Sobre[0-9A-F]{6}\.")
-"""El prefijo que pone `_asentar()`."""
+"""El prefijo de las variantes de `_variantes_sobre()`."""
+
+
+class _Asiento:
+    """Lo que `_asentar()` sabe de un intérprete, fijado por `apply()`.
+
+    Solo lleva cadenas: no retiene el intérprete, así que `olvidar()` no
+    tiene que soltar nada más que el diccionario.
+
+    Args:
+        papel: El color del papel, «#RRGGBB» en mayúsculas.
+        bits: Los bits de estado de cada superficie que no es el papel.
+
+    Attributes:
+        variantes: Los estilos «Sobre<color>.<estilo>» creados en `apply()`.
+        cercanas: Para cada color sin bits ni variante que ha caído bajo un
+            control, la superficie conocida que se le ha dado.
+    """
+
+    def __init__(self, papel: str, bits: dict[str, tuple[str, ...]]) -> None:
+        self.papel = papel
+        self.bits = bits
+        self.variantes: set[str] = set()
+        self.cercanas: dict[str, str] = {}
+
+
+_asientos: dict[int, _Asiento] = {}
+"""El asiento de cada intérprete de Tk con el tema, por `id`."""
+
+_avisadas: set[str] = set()
+"""Los colores sin superficie conocida de los que ya se ha avisado en este proceso."""
 
 
 def _redondo(estilo: str) -> bool:
@@ -735,7 +1041,13 @@ def _hex(widget, color: str) -> str | None:
 
 
 def _fondo_de(padre) -> str | None:
-    """Devuelve el color sobre el que caen los hijos de `padre`."""
+    """Devuelve el color sobre el que caen los hijos de `padre`.
+
+    Un padre redondeado ya asentado lleva su superficie en sus bits de estado y
+    no en su estilo (un botón silencioso sobre una tarjeta sigue siendo
+    «Quiet.TButton»): se pregunta con sus bits. Su `<Map>` llega antes de que
+    se mapeen sus hijos, así que ya los tiene cuando estos se asientan.
+    """
     from tkinter import TclError, ttk
     try:
         estilo = str(padre.cget("style")) or padre.winfo_class()
@@ -747,42 +1059,159 @@ def _fondo_de(padre) -> str | None:
     base = _SOBRE.sub("", estilo)
     if base in _CARA:
         return _CARA[base]
-    return _hex(padre, ttk.Style(padre).lookup(estilo, "background"))
+    try:
+        bits = [b for b in padre.state() if str(b).startswith("user")]
+    except TclError:
+        bits = []
+    return _hex(padre, ttk.Style(padre).lookup(estilo, "background", bits))
+
+
+def _bits_de_superficies(widget) -> dict[str, tuple[str, ...]]:
+    """Reparte los bits de estado entre las superficies del tema puesto.
+
+    Args:
+        widget: Cualquiera del intérprete (para normalizar los colores).
+
+    Returns:
+        Para cada superficie de `_superficies()` que no es el papel, y sin
+        repetir colores, sus bits. Si hubiera más de siete, las que sobran
+        quedan fuera y `_asentar()` las trata como desconocidas.
+    """
+    papel = _hex(widget, PAPEL)
+    bits: dict[str, tuple[str, ...]] = {}
+    for fondo, _letra in _superficies().values():
+        color = _hex(widget, fondo)
+        if color and color != papel and color not in bits and len(bits) < len(_BITS):
+            bits[color] = _BITS[len(bits)]
+    return bits
+
+
+def _superficies_por_estado(widget, style, asiento: _Asiento) -> None:
+    """Pone en cada estilo redondeado el mapa del `background` por bits de estado.
+
+    Un `style.map` por estilo base, y no un estilo nuevo por superficie. Los
+    estilos derivados por el nombre («Grande.Primary.TButton», «Mono.TEntry»)
+    no llevan mapa propio y heredan el del base: ttk busca el mapa de una
+    opción en el estilo más cercano que lo tenga, y solo después, y si ningún
+    estado encaja, el valor por defecto. Por eso un estilo con su propio
+    `background` (los `Sobre…`) solo manda mientras no haya bits encendidos.
+
+    La combinación con más bits va primero: ttk toma la primera de la lista
+    cuyos bits están todos encendidos.
+    """
+    mapa = [(*bits, color) for color, bits
+            in sorted(asiento.bits.items(), key=lambda kv: -len(kv[1]))]
+    for base, redondo in list(_REDONDOS.items()):
+        if redondo:
+            style.map(base, background=mapa)
+
+
+def _superficie_cercana(asiento: _Asiento, fondo: str) -> str:
+    """Devuelve la superficie conocida más parecida a un color que no lo es.
+
+    Los candidatos son el papel y las que tienen bits. La elección se apunta
+    en el asiento, así que se avisa una vez por color e intérprete.
+    """
+    cercana = asiento.cercanas.get(fondo)
+    if cercana is None:
+        def rgb(color: str) -> tuple[int, int, int]:
+            return int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
+
+        buscado = rgb(fondo)
+        cercana = min((asiento.papel, *asiento.bits),
+                      key=lambda c: sum((a - b) ** 2 for a, b in zip(rgb(c), buscado)))
+        asiento.cercanas[fondo] = cercana
+        _avisar_superficie(fondo, cercana)
+    return cercana
+
+
+def _avisar_superficie(fondo: str, cercana: str) -> None:
+    """Avisa, una vez por color y proceso, de un control sobre una superficie sin bits.
+
+    Es el punto de sustitución de las pruebas. No crea una variante del estilo
+    para ese color: sería un estilo nuevo con la ventana ya abierta, y cada
+    uno repinta todos los widgets. El control se asienta sobre `cercana`, así
+    que sus esquinas salen de otro tono. La salida es la de error, si hay.
+
+    Args:
+        fondo: El color del padre, «#RRGGBB».
+        cercana: El de la superficie que se le ha dado.
+    """
+    if fondo in _avisadas:
+        return
+    _avisadas.add(fondo)
+    if sys.stderr:
+        try:
+            print(f"tema: ningún control redondeado tiene la superficie {fondo}; "
+                  f"se asienta sobre {cercana}", file=sys.stderr)
+        except OSError:
+            pass
 
 
 def _asentar(evento) -> None:
-    """Le da a un control redondeado el fondo de la superficie donde ha caído.
+    """Le da a un control redondeado la superficie donde ha caído.
 
     Corre al aparecer cada control (`<Map>` de su clase) y solo toca los que
-    llevan piezas redondeadas. Si el fondo del padre es el del estilo, no hace
-    nada; si no, le pone «Sobre<color>.<estilo>», que hereda todo del estilo
-    por el nombre y solo cambia el `background`. Nada de aquí puede romper una
-    ventana: si algo falla, las esquinas se quedan del color del papel.
+    llevan piezas redondeadas: lee el color del padre y enciende en el control
+    los bits de estado de esa superficie (apagando antes los que tuviera, por
+    si cambia de padre). No crea, configura ni mapea ningún estilo ni cambia
+    ninguna disposición: no manda ningún `<<ThemeChanged>>`.
+
+    Dos casos no pasan por los bits. Una cara de botón fuera de la paleta
+    (`_CARA`: el acento, el peligro) tiene su variante «Sobre<color>.<estilo>»,
+    creada en `apply()`, y el control pasa a ella. Un color sin bits ni
+    variante cae sobre la superficie más parecida (`_superficie_cercana()`).
+    Nada de aquí puede romper una ventana: si algo falla, las esquinas se
+    quedan del color del papel.
     """
-    w = evento.widget
+    _asentar_en(evento.widget)
+
+
+def reasentar(widget) -> None:
+    """Vuelve a asentar `widget` y todo lo que lleva dentro, de fuera adentro.
+
+    `_asentar()` corre al aparecer cada control. Si después cambia la
+    superficie de su padre (la fila de una lista que se elige y pasa a azul, el
+    botón de la barra lateral que pasa a ser el elegido), sus hijos se quedan
+    con las esquinas de antes. Quien cambia el estilo del padre llama a esto
+    después: solo cambia bits de estado (o pasa a una variante ya creada), así
+    que no crea ningún estilo ni manda ningún `<<ThemeChanged>>`. Primero el
+    padre y luego los hijos, porque cada uno lee la superficie del suyo.
+    """
+    pila = [widget]
+    while pila:
+        w = pila.pop()
+        _asentar_en(w)
+        try:
+            pila.extend(reversed(w.winfo_children()))
+        except Exception:                           # noqa: BLE001 — ya no existe
+            pass
+
+
+def _asentar_en(w) -> None:
+    """Lo de `_asentar()` para un widget dado, sin evento."""
     if isinstance(w, str):                          # un widget que tkinter no creó
         return
     try:
-        from tkinter import ttk
         estilo = str(w.cget("style")) or w.winfo_class()
         base = _SOBRE.sub("", estilo)
         if not _redondo(base):
             return
         fondo = _fondo_de(w.master)
-        if fondo is None:
+        asiento = _asientos.get(id(w.tk))
+        if fondo is None or asiento is None:
             return
-        style = ttk.Style(w)
         nuevo = base
-        if _hex(w, style.lookup(base, "background")) != fondo:
-            nuevo = f"Sobre{fondo[1:]}.{base}"
-            # Una sola vez por intérprete: cada `style.configure` le dice a
-            # TODOS los widgets que el tema ha cambiado y se vuelven a medir.
-            # Hecho en cada `<Map>`, una ventana de cientos de controles
-            # tardaba más de un minuto en aparecer.
-            hechos = _sobres.setdefault(id(w.tk), set())
-            if nuevo not in hechos:
-                style.configure(nuevo, background=fondo)
-                hechos.add(nuevo)
+        bits = asiento.bits.get(fondo)
+        if bits is None:
+            variante = f"Sobre{fondo[1:]}.{base}"
+            if fondo == asiento.papel:
+                bits = ()
+            elif variante in asiento.variantes:
+                nuevo, bits = variante, ()
+            else:
+                bits = asiento.bits.get(_superficie_cercana(asiento, fondo), ())
+        w.state([*_SIN_BITS, *bits])
         if nuevo != estilo:
             w.configure(style=nuevo)
     except Exception:                               # noqa: BLE001
@@ -798,34 +1227,31 @@ entero, así que su variante es otra que la de «Primary.TButton».
 """
 
 
-def _variantes_sobre(widget, style) -> None:
-    """Crea ya todas las variantes «Sobre<color>.» que `_asentar()` puede pedir.
+def _variantes_sobre(widget, style, asiento: _Asiento) -> None:
+    """Crea las variantes «Sobre<color>.» de las caras que no caben en los bits.
 
-    Una por estilo redondeado y por superficie conocida (las de
-    `_superficies()` y las caras de `_CARA`). Crear un estilo le dice a TODOS
-    los widgets del intérprete que el tema ha cambiado y todos se vuelven a
-    medir y a pintar: hecho al aparecer el primer control sobre cada color,
-    abrir una pantalla costaba varias vueltas enteras de repintado. Aquí, al
-    poner el tema, todavía no hay widgets que repintar. Lo que no esté aquí lo
-    sigue creando `_asentar()` la primera vez que haga falta.
+    Los bits de estado alcanzan para las superficies de `_superficies()`. Las
+    caras de botón de `_CARA` que no son una de ellas (el acento de «Primary»,
+    el peligro de «DangerSolid») se quedan con la variante de siempre: una por
+    estilo redondeado, con los prefijos de `_PREFIJOS_SOBRE`, que hereda todo
+    del estilo por el nombre y solo cambia el `background`. Se crean aquí, al
+    poner el tema, cuando aún no hay widgets que repintar; `_asentar()` no crea
+    ninguna.
+
+    Las variantes creadas quedan en `asiento.variantes`.
     """
-    hechos = _sobres.setdefault(id(widget.tk), set())
-    fondos = {_hex(widget, c) for c in
-              [f for f, _ in _superficies().values()] + list(_CARA.values())}
-    fondos.discard(None)
+    fondos = {_hex(widget, c) for c in _CARA.values()}
+    fondos -= {None, asiento.papel, *asiento.bits}
     for base, redondo in list(_REDONDOS.items()):
         if not redondo:
             continue
         prefijos = [""] + [p for fin, ps in _PREFIJOS_SOBRE.items()
                            if base.endswith(fin) for p in ps]
         for prefijo in prefijos:
-            estilo = prefijo + base
-            propio = _hex(widget, style.lookup(estilo, "background"))
-            for fondo in fondos:
-                nuevo = f"Sobre{fondo[1:]}.{estilo}"
-                if fondo != propio and nuevo not in hechos:
-                    style.configure(nuevo, background=fondo)
-                    hechos.add(nuevo)
+            for fondo in sorted(fondos):
+                nuevo = f"Sobre{fondo[1:]}.{prefijo}{base}"
+                style.configure(nuevo, background=fondo)
+                asiento.variantes.add(nuevo)
 
 
 def _pieza(widget, style, nombre: str, estados, radio: float = RADIO,
@@ -934,9 +1360,10 @@ def _botones_propios(widget, style) -> None:
                 ("Button.padding", {"sticky": "nswe", "children": [
                     ("Button.label", {"sticky": "nswe"})]})]})])
             # El fondo ya no es la cara del botón: es lo que asoma por las
-            # esquinas. La cara la ponen las piezas, por estado.
-            if not estilo.endswith("Quiet.TButton"):
-                style.configure(estilo, background=PAPEL)
+            # esquinas. La cara la ponen las piezas, por estado. En los
+            # silenciosos, que no llevan pieza en reposo, el fondo sí se ve,
+            # y es el de la superficie donde caen (`_asentar`).
+            style.configure(estilo, background=PAPEL)
             if normal[0] is not None:
                 # Lo que se pone ENCIMA de un botón (el chip de una fila de
                 # la barra lateral) cae sobre su cara, no sobre su fondo.
@@ -1147,6 +1574,17 @@ def _barra_propia(widget, style) -> None:
         pass
 
 
+_IMPLICITOS = ("Plano.TFrame", "Horizontal.TSeparator", "Horizontal.Card.TSeparator",
+               "Treeview.Item", "Treeview.Cell", "Treeview.Row", "Treeview.Heading")
+"""Los estilos que ttk crea por su cuenta al aparecer el primer widget que los usa.
+
+Ningún estilo se crea con una ventana abierta. Estos no los configura nadie:
+ttk los hace al crear un separador, una lista o un marco «Plano.TFrame», sin
+mandar ningún `<<ThemeChanged>>`, pero el recuento de estilos tardíos de la
+comprobación de tiempos los vería. Preguntarles algo en `apply()` basta para que
+existan ya.
+"""
+
 _CLASES_ASENTADAS = ("TButton", "TRadiobutton", "TLabel", "TEntry", "TCombobox",
                      "TSpinbox", "TFrame", "TProgressbar")
 """Las clases de widget cuyos controles redondeados se asientan al aparecer."""
@@ -1177,18 +1615,41 @@ def relleno_control(widget, alto: int, rol: str = "texto", lados: int = 16):
     1 px de cada lado; el de los lados es un escalón de la escala. Si no hay
     métricas, el de una línea de 18 px.
     """
-    from tkinter import font as tkfont
-
     from . import icons
     try:
-        linea = tkfont.Font(root=widget, font=fuente(rol)).metrics("linespace")
+        linea = _metricas(widget, fuente(rol))[0]
     except Exception:                               # noqa: BLE001
         linea = icons.px(widget, 18)
     vertical = max(0, (icons.px(widget, alto) - linea - 2 * icons.px(widget, 1)) // 2)
     return (medida(lados), vertical)
 
 
+_apply_medido = False
+"""Si la primera llamada de `apply()` de este proceso ya se ha medido (`PRDRIVE_PERF`)."""
+
+
 def apply(widget) -> None:
+    """Pinta el tema en el intérprete de Tk al que pertenece `widget`.
+
+    Con `PRDRIVE_PERF`, la primera llamada del proceso anota su duración como
+    `apply-<quien>` (`ui.perf_quien`); las siguientes no se miden.
+    """
+    global _apply_medido
+    if _apply_medido or not perf_activo():
+        _pintar_tema(widget)
+        return
+    _apply_medido = True
+    from . import perf_quien
+    t0 = time.perf_counter()
+    try:
+        _pintar_tema(widget)
+    finally:
+        # Las ventanas de host (asistente, pregunta del agente) anotan en el diario del equipo.
+        perf_marca("apply-" + perf_quien, (time.perf_counter() - t0) * 1000,
+                   host=perf_quien != "main")
+
+
+def _pintar_tema(widget) -> None:
     """Pinta el tema en el intérprete de Tk al que pertenece `widget`.
 
     Se hace una sola vez por intérprete (los estilos son globales dentro de
@@ -1479,11 +1940,16 @@ def apply(widget) -> None:
                     font=fuente("rotulo"))
 
     _controles(widget, style)
-    _sobres[id(interp)] = set()         # un `id` puede ser de un intérprete ya muerto
-    try:
-        _variantes_sobre(widget, style)
-    except Exception:                               # noqa: BLE001
-        pass                            # las creará `_asentar()` cuando hagan falta
+    for implicito in _IMPLICITOS:
+        style.lookup(implicito, "background")
+    # Un `id` puede ser de un intérprete ya muerto: el asiento se hace de nuevo.
+    asiento = _asientos[id(interp)] = _Asiento(
+        _hex(widget, PAPEL) or "", _bits_de_superficies(widget))
+    for paso in (_superficies_por_estado, _variantes_sobre):
+        try:
+            paso(widget, style, asiento)
+        except Exception:                           # noqa: BLE001
+            pass                # los controles se quedan con las esquinas del papel
     _puestos[id(interp)] = interp
 
 
@@ -1511,17 +1977,15 @@ def chip(parent, texto: str, tipo: str = "", icono: str | None = None,
     solido = solido and tipo in _chips_solidos()
     estilo = f"{'Solido' if solido else ''}{tipo}Chip.TLabel"
     etiqueta = ttk.Label(parent, text=texto, style=estilo)
-    fondo, _borde, letra, disco = _chips().get(tipo, _chips()[""])
-    glifo = "alert" if icono == "warn" else icono or _GLIFO_CHIP.get(tipo)
+    fondo, _borde, letra, disco, tinta, glifo = colores_chip(tipo, icono)
     img = None
     if solido:
         fondo, letra = _chips_solidos()[tipo]
         img = icons.get(parent, glifo, 12, letra, fondo) if glifo else None
     elif disco is not None and glifo:
-        img = icons.disco(parent, glifo, disco, _sobre(disco), fondo,
-                          hueco=tipo == "Apagado.")
-    elif icono:
-        img = icons.get(parent, icono, 12, TINTA2, fondo)
+        img = icons.disco(parent, glifo, disco, tinta, fondo, hueco=tipo == "Apagado.")
+    elif glifo:
+        img = icons.get(parent, glifo, 12, tinta, fondo)
     if img is not None:
         etiqueta.configure(image=img, compound="left",
                            padding=(icons.px(parent, 2), icons.px(parent, 2),
@@ -1716,17 +2180,13 @@ def icono_linea(widget, nombre: str, color: str | None = None,
     alineado sin más, y dentro de un botón (`compound="left"`) no lo hace
     crecer. Devuelve `None` si no se puede pintar.
     """
-    from tkinter import font as tkfont
-
     from . import icons
     real, alto, bajar = icons.px(widget, size), None, 0.0
     try:
-        fuente_tk = tkfont.Font(root=widget, font=letra or fuente(rol))
-        m = fuente_tk.metrics()
-        tam = fuente_tk.actual("size")
+        linea, ascenso, tam = _metricas(widget, letra or fuente(rol))
         em = -tam if tam < 0 else tam * float(widget.tk.call("tk", "scaling"))
-        alto = max(m["linespace"], real + 1)
-        centro = m["ascent"] - ALTURA_MAYUSCULAS * em / 2
+        alto = max(linea, real + 1)
+        centro = ascenso - ALTURA_MAYUSCULAS * em / 2
         bajar = max(0.0, min(centro - real / 2, alto - real - 1))
     except Exception:                           # noqa: BLE001
         alto, bajar = None, 0.0                 # sin métricas: el icono suelto

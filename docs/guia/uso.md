@@ -8,8 +8,11 @@ Doble clic en `runsync.bat` en la raíz del dispositivo (`runsync.sh` en Linux).
 El `.bat` arranca con el Python del dispositivo —el de ARM64 en un equipo ARM64,
 si no el de x64, que un ARM64 ejecuta emulado— y, si no lleva ninguno que sirva,
 con el `pythonw.exe` del equipo; la consola parpadea un instante y se va. El `.sh`
-hace lo mismo con `runtime/linux-*/bin/python3` y `python3`. Los lanzadores se
-escriben al aprovisionar y **no se tocan al actualizar**.
+hace lo mismo con `runtime/linux-*/bin/python3` y `python3`. El Python del equipo
+solo da una ventana soportada si trae Tk 9 (ver [Plataformas: completa o
+ligera](instalacion.md#plataformas-completa-o-ligera)); para sincronizar basta
+Python 3.11+. Los lanzadores se escriben al aprovisionar y **no se tocan al
+actualizar**.
 
 Desde la línea de órdenes, dentro de `.prdrive/` (con `python` el del equipo, o el
 del dispositivo: `runtime\windows-x64\python.exe`, `runtime/linux-x64/bin/python3`):
@@ -130,6 +133,11 @@ python-build-standalone y una versión del VeraCrypt Portable, y esos pines
 viajan dentro del programa. Cuando el dispositivo lleva otros —porque se instaló
 hace meses, o porque una release nueva movió los pines—, la ventana lo dice en
 el mismo recuadro ámbar y el botón los sustituye.
+
+Un dispositivo con el Python 3.13 de antes (en Windows trae Tk 8.6) está en ese
+caso y ya no está soportado: Tk 9 es el único Tk que prdrive prueba y admite. Su
+ventana se sigue abriendo para que llegues a «Actualizar…» y pongas el Python al
+día.
 
 Cómo se sabe qué lleva: cada componente deja escrito de dónde salió, en
 `runtime/<plataforma>/PRDRIVE-RUNTIME`, en `bin/<arch>/<rclone>.PRDRIVE-RCLONE` y,

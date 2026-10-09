@@ -31,9 +31,20 @@ compilación falla: dejarlo por ahí sería justo el escape que se quiere evitar
 Está además en .gitignore, como segunda red, igual que `prdrive-profile.toml` y
 `keys/`.
 
-PyInstaller es dependencia SOLO de compilación (`pip install pyinstaller`). No
+PyInstaller es dependencia SOLO de compilación, y va fijado (`PYINSTALLER`). No
 rompe la regla de «sin dependencias» del proyecto, que es sobre lo que se ejecuta
 en el dispositivo: ni él ni el instalador necesitan nada instalado.
+
+**El `.exe` lleva el Python y el Tk de quien lo compila**, y Tk 9 es el único Tk
+que se admite (el pintor SVG del asistente es de Tk 9). Por eso la compilación
+es estricta, en la CI y en local: sin el PyInstaller fijado (`PYINSTALLER`) y
+sin un Python con Tk 9 no compila, y el error dice cómo conseguirlos. Las
+releases se compilan con el Python fijado del dispositivo (python-build-standalone,
+Tk 9) y se prueban con `--autoprueba` antes de publicarlas
+(`.github/actions/compilar-instalador`, la misma acción que usa `Instalador` y el
+workflow de la release); el instalador llave
+en mano se compila en la máquina de quien tiene el perfil, con la misma receta
+(`docs/guia/instalacion.md`).
 
 Si esa clave se filtra alguna vez, revócala en el servidor y genera otra: el
 instalador antiguo deja de servir, que es lo suyo.
@@ -44,6 +55,7 @@ from __future__ import annotations
 import argparse
 import base64
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -59,14 +71,30 @@ Lo genera `escribir_secreto()` y se borra siempre.
 ENTRADA = RAIZ / "prdrive-install.py"
 NOMBRE = "prdrive-install"
 
+PYINSTALLER = "6.22.3"
+"""La versión de PyInstaller con la que se compila el instalador.
+
+La especificación pide una 6.22 o posterior, fijada; la 6.22.3 (12/09/2026) es el
+último parche de esa rama. Que dé un `.exe` con el Tk 9 del Python fijado, capaz
+de abrir el asistente, lo comprueba el workflow `Instalador` con `--autoprueba`:
+las notas de versión no bastan para saberlo.
+"""
+TK_MINIMO = (9, 0)
+"""El Tk más viejo con el que se compila el instalador.
+
+Tk 9 es el único Tk que se admite: desde él los iconos se pintan con SVG
+(`ui.icons.svg_disponible()`). Con Tk 8.6 el asistente abriría por el pintor de
+Python, que nadie prueba.
+"""
+
 DATOS_FICHEROS = ("sync.py", "runsync.py", "penwatch.py", "VERSION",
-                  "device-readme.md", "agente.py")
+                  "device-readme.md", "agente.py", "pregunta.py")
 """Ficheros de la raíz que el instalador despliega.
 
 Tiene que coincidir con `install/deploy.py`: si aquí falta algo, el fallo
-aparece a mitad de una instalación de verdad y no al compilar. `agente.py` no
-va al dispositivo: lo copia `install/agente.py` al EQUIPO en la instalación «En
-este equipo».
+aparece a mitad de una instalación de verdad y no al compilar. `agente.py` y
+`pregunta.py` no van al dispositivo: los copia `install/agente.py` al EQUIPO en
+la instalación «En este equipo».
 """
 DATOS_ARBOLES = ("common", "ui")
 """Paquetes que se llevan enteros."""
@@ -145,18 +173,66 @@ def escribir_secreto() -> Path | None:
     return SECRET
 
 
-def comprobar_pyinstaller() -> None:
-    """Aborta si PyInstaller no está instalado.
+def _receta_python() -> str:
+    """Dice cómo conseguir el Python con el que se compila: el fijado, con Tk 9."""
+    from common import pins
+
+    return (f"El .exe lleva el Tk del Python que lo compila, y solo se admite Tk 9. Se "
+            f"compila con el Python fijado de los dispositivos (python-build-standalone "
+            f"{pins.PYTHON_VERSION}, Tk {pins.TK_XFT_VERSION}). En Windows: "
+            f"`python tests/_runtime_ci.py compilador windows-x64 DESTINO CACHE` lo baja, "
+            f"comprobado, entero y con pip; después, con ese Python, "
+            f"`python -m pip install pyinstaller=={PYINSTALLER}` y "
+            f"`python build_installer.py` (docs/guia/instalacion.md, «Un ejecutable»). "
+            f"En otro sistema, cualquier Python 3.11 o posterior con Tk 9.")
+
+
+def comprobar_pyinstaller() -> str:
+    """Comprueba que el PyInstaller de este Python sea el fijado (`PYINSTALLER`).
+
+    Returns:
+        La versión de PyInstaller que hay, que es la fijada.
 
     Raises:
-        SystemExit: Si falta; solo hace falta para compilar.
+        SystemExit: Si no está o es otra versión.
     """
+    remedio = f"python -m pip install pyinstaller=={PYINSTALLER}"
     try:
-        import PyInstaller  # noqa: F401
+        import PyInstaller
     except ImportError:
         raise SystemExit(
-            "Falta PyInstaller: pip install pyinstaller\n"
-            "Es dependencia solo de compilación; el dispositivo no la necesita.")
+            f"Falta PyInstaller: {remedio}\n"
+            f"Es dependencia solo de compilación; el dispositivo no la necesita.")
+    version = str(getattr(PyInstaller, "__version__", "") or "desconocido")
+    if version != PYINSTALLER:
+        raise SystemExit(f"PyInstaller {version} en vez del fijado {PYINSTALLER}.\n"
+                         f"Pon el fijado con: {remedio}")
+    return version
+
+
+def comprobar_tk() -> str:
+    """Comprueba que el Tk de este Python sea al menos `TK_MINIMO`.
+
+    Importa tkinter en este proceso a propósito: el Python que compila es el
+    que PyInstaller mete en el `.exe`, con su Tk.
+
+    Returns:
+        La versión de Tcl (`info patchlevel`), p. ej. `9.0.4`.
+
+    Raises:
+        SystemExit: Si este Python no carga Tk o trae uno anterior a `TK_MINIMO`.
+    """
+    try:
+        import tkinter
+        nivel = tkinter.Tcl().eval("info patchlevel")
+        version = tuple(int(p) for p in str(tkinter.TkVersion).split(".")[:2])
+    except Exception as e:                       # noqa: BLE001
+        raise SystemExit(f"Este Python no carga Tk ({type(e).__name__}: {e}): el .exe no "
+                         f"podría abrir el asistente.\n{_receta_python()}")
+    if version < TK_MINIMO:
+        raise SystemExit(f"Este Python trae Tk {nivel}, y el .exe necesita Tk "
+                         f"{TK_MINIMO[0]} o posterior.\n{_receta_python()}")
+    return nivel
 
 
 def escribir_icono() -> Path | None:
@@ -323,7 +399,10 @@ def main(argv: list[str] | None = None) -> int:
             print("Recuerda borrarlo cuando acabes: contiene la clave privada.")
         return 0
 
-    comprobar_pyinstaller()
+    version_pyinstaller = comprobar_pyinstaller()
+    nivel_tk = comprobar_tk()
+    print(f"Python {platform.python_version()} ({sys.executable}), "
+          f"Tk {nivel_tk}, PyInstaller {version_pyinstaller}.")
     con_secreto = False
     try:
         con_secreto = escribir_secreto() is not None

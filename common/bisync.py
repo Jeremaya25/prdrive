@@ -24,6 +24,7 @@ import os
 import posixpath
 import re
 import shutil
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import NamedTuple
@@ -207,11 +208,36 @@ def filters_content(pair: Pair) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _escribir_filtros(path: Path, content: str) -> None:
+    """Escribe el fichero de filtros de golpe: quien lo lee ve el anterior o el nuevo entero.
+
+    Lo regenera quien lo necesita primero: la pasada, o la ventana desde un hilo
+    mientras otra pantalla lo lee desde el de Tk. Un fichero a medias tiene otro
+    md5 y se leería como «los filtros han cambiado», así que se escribe en un
+    temporal con nombre propio (dos hilos no comparten el suyo) y se renombra
+    encima. Si el renombrado no se deja (Windows no sustituye un fichero que otro
+    tiene abierto) se escribe en el sitio: lo que falla de verdad sigue siendo un
+    error.
+    """
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    try:
+        tmp.write_text(content, encoding="utf-8", newline="\n")
+        os.replace(tmp, path)
+        return
+    except OSError:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+    path.write_text(content, encoding="utf-8", newline="\n")
+
+
 def filters_file_for(pair: Pair) -> Path | None:
     """Genera `filters/<pareja>.txt` si hace falta y devuelve su ruta.
 
     El contenido es determinista: si no cambia no se reescribe el fichero, para
-    no gastar ciclos del dispositivo ni invalidar el md5 sin motivo.
+    no gastar ciclos del dispositivo ni invalidar el md5 sin motivo. Cuando
+    cambia se escribe de golpe (`_escribir_filtros()`).
 
     Returns:
         La ruta, o `None` si la pareja no usa fichero de filtros.
@@ -223,7 +249,7 @@ def filters_file_for(pair: Pair) -> Path | None:
     model.FILTERS_DIR.mkdir(parents=True, exist_ok=True)
     path = model.FILTERS_DIR / f"{pair.name}.txt"
     if not path.exists() or path.read_text(encoding="utf-8") != content:
-        path.write_text(content, encoding="utf-8", newline="\n")
+        _escribir_filtros(path, content)
     return path
 
 

@@ -56,10 +56,12 @@ from . import (InstallError, bundle_dir, pintar, platforms, rclone_bin, runtime_
 
 IS_WIN = os.name == "nt"
 
-CODIGO_FICHEROS = ("agente.py", "penwatch.py", "VERSION")
-"""Ficheros sueltos que se copian al equipo.
+CODIGO_FICHEROS = ("pregunta.py", "agente.py", "penwatch.py", "VERSION")
+"""Ficheros sueltos que se copian al equipo, en este orden.
 
-El agente, penwatch (del que importa la detección) y la versión.
+La entrada de la ventanita de la pregunta (`pregunta.py`), que va antes que el
+agente que la lanza; el agente, penwatch (del que importa la detección) y la
+versión.
 
 `install/` no se copia: el agente no instala nada.
 """
@@ -154,6 +156,24 @@ def copiar_codigo(origen: Path | None = None) -> Path:
         raise InstallError(f"No he podido poner el agente en {destino}: {e}") from e
     shutil.rmtree(viejo, ignore_errors=True)
     return destino
+
+
+def calentar_codigo(codigo: Path, python: Path, progreso=None) -> bool:
+    """Deja hechos los `.pyc` que usarán los hijos del agente, a mejor esfuerzo.
+
+    Sus hijos corren con `PYTHONPYCACHEPREFIX = equipo.DIR/pycache`
+    (`agente._opciones_hijo()`), y con él Python busca TODOS los `.pyc` ahí, los
+    de la biblioteca también: este es el mismo prefijo, con el Python del
+    agente. Va después de poner la carpeta definitiva porque la ruta de la
+    fuente es parte del nombre en la caché. El código de cada raíz del equipo
+    se calienta en su primer uso.
+
+    Returns:
+        Lo que dice `deploy.precompilar()`.
+    """
+    from . import deploy
+    return deploy.precompilar(codigo, python, prefijo=equipo.DIR / "pycache",
+                              progreso=progreso)
 
 
 def conseguir_runtime(plat: Plataforma, progreso=None) -> Path:
@@ -359,6 +379,7 @@ def preparar(progreso=None, origen: Path | None = None,
     """
     codigo = copiar_codigo(origen)
     python, sello = poner_runtime(progreso)
+    calentar_codigo(codigo, python, progreso)
     rclone = poner_rclone(progreso)
     vc = poner_veracrypt(progreso) if quiere_veracrypt(cifrada) else None
     return Preparado(codigo, python, sello, rclone, vc)

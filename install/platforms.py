@@ -168,6 +168,22 @@ def device_interpreter(device_root: Path | str, anfitrion: Plataforma | None,
     return None
 
 
+def sello_del_equipo(device_root: Path | str) -> str | None:
+    """Devuelve el sello del Python del dispositivo que usaría este equipo.
+
+    Es el del primero de `candidates()` que lleve uno; sirve para saber si un
+    cambio de componentes ha tocado el runtime que de verdad se va a ejecutar.
+
+    Returns:
+        El sello, o `None` si el dispositivo no lleva ninguno para este equipo.
+    """
+    for plat in candidates(host()):
+        sello = runtime_stamp(device_root, plat)
+        if sello is not None:
+            return sello
+    return None
+
+
 @dataclass(frozen=True)
 class Fila:
     """Una fila de la lista del paso «Instalación».
@@ -220,7 +236,8 @@ class Plan:
                           f"equipos no hace falta instalar nada.")
         elif not self.completa:
             lineas.append("Instalación ligera: sin Python propio. Cada equipo "
-                          "necesitará Python 3.11+ con Tkinter instalado.")
+                          "necesitará Python 3.11+ con Tk 9 instalado (el de python.org "
+                          "para Windows trae Tk 8.6 y no sirve).")
         if self.borrar:
             lineas.append(f"Se BORRARÁN del dispositivo rclone y Python de "
                           f"{nombres(self.borrar)}.")

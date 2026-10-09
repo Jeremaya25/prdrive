@@ -224,10 +224,9 @@ def recortado(visor) -> bool:
     """Contenido fuera del recuadro sin barra que lo enseñe: lo que no puede pasar."""
     visor.interior.update_idletasks()
     ancho, alto = visor._medida()
-    return ((visor.interior.winfo_reqheight() > alto
-             and not visor.vertical.grid_info())
-            or (visor.interior.winfo_reqwidth() > ancho
-                and not visor.horizontal.grid_info()))
+    vertical, horizontal = visor.barras()
+    return ((visor.interior.winfo_reqheight() > alto and not vertical)
+            or (visor.interior.winfo_reqwidth() > ancho and not horizontal))
 
 
 def usar_conexion(wiz) -> None:
@@ -1033,8 +1032,7 @@ try:
                         recorrido["cortes"].append(recortado(visor))
                         recorrido["pide"].add((visor.interior.winfo_reqwidth(),
                                                visor.interior.winfo_reqheight()))
-                        recorrido["barras"].add((bool(visor.vertical.grid_info()),
-                                                 bool(visor.horizontal.grid_info())))
+                        recorrido["barras"].add(visor.barras())
 
                 previo = tk_fleet.mostrar
                 tk_fleet.mostrar = recorrer

@@ -487,4 +487,225 @@ c("la vista del catálogo: sus parejas, en su orden y como las dice él",
   [(f.name, f.mode, f.local, f.en_pen) for f in solo],
   [("a", "up", "A", False), ("b", "bisync", "B", True)])
 
+# ---------------------------------------------------------------------------
+# Leer el config solo cuando cambia
+# ---------------------------------------------------------------------------
+import os
+import types
+
+parseos = []
+parse_real = model.parse_config
+
+
+def parse_contando(raw, *a, **k):
+    """`parse_config` de verdad, apuntando cuántas veces se le llama."""
+    parseos.append(1)
+    return parse_real(raw, *a, **k)
+
+
+model.parse_config = parse_contando
+with sandbox():
+    preparar()
+    lect = pair_editor.LecturaConfig()
+    raw1, cfg1 = lect.leer()
+    c("la primera lectura parsea una vez y lo dice el config",
+      (len(parseos), cfg1.names, lect.cambio), (1, ["notas", "subida"], False))
+    raw2, cfg2 = lect.leer()
+    c("leer otra vez un fichero que no ha cambiado no parsea", len(parseos), 1)
+    c("  y devuelve lo mismo, los mismos objetos", (raw2 is raw1, cfg2 is cfg1), (True, True))
+    c("  y no dice que haya cambiado", lect.cambio, False)
+
+    mas = {"defaults": {"remote": "nas"}, "pair": [*BASE, {
+        "name": "fotos", "local": "sync-data/fotos", "remote_path": "/R/fotos",
+        "mode": "up"}]}
+    model.CONFIG_FILE.write_text(config_file.dumps(mas), encoding="utf-8")
+    raw3, cfg3 = lect.leer()
+    c("un fichero con otro tamaño se parsea otra vez",
+      (len(parseos), cfg3.names, lect.cambio), (2, ["notas", "subida", "fotos"], True))
+    lect.leer()
+    c("  y a la lectura siguiente ya no ha cambiado", (len(parseos), lect.cambio), (2, False))
+
+    # Mismo tamaño, otra hora: el aviso del que sabe que hay que mirar
+    texto = model.CONFIG_FILE.read_bytes()
+    marca = model.CONFIG_FILE.stat().st_mtime_ns
+    os.utime(model.CONFIG_FILE, ns=(marca + 5_000_000_000, marca + 5_000_000_000))
+    lect.leer()
+    c("la misma longitud con otra hora de modificación también se parsea",
+      (len(parseos), lect.cambio, model.CONFIG_FILE.read_bytes() == texto), (3, True, True))
+
+    model.CONFIG_FILE.write_text("esto = [no es toml", encoding="utf-8")
+    try:
+        lect.leer()
+        c("un TOML roto sigue siendo un ConfigError", "no lanzó", "ConfigError")
+    except ConfigError as e:
+        c("un TOML roto sigue siendo un ConfigError", "TOML" in str(e), True)
+    model.CONFIG_FILE.unlink()
+    try:
+        lect.leer()
+        c("un config que ya no está también", "no lanzó", "ConfigError")
+    except ConfigError as e:
+        c("un config que ya no está también", "No existe" in str(e), True)
+
+    # Con otra ruta, la lectura es de ese fichero
+    otra = model.CONFIG_FILE.with_name("otro.toml")
+    otra.write_text(config_file.dumps({"defaults": {"remote": "nas"},
+                                       "pair": [dict(BASE[0])]}), encoding="utf-8")
+    c("se puede leer otro fichero que el del dispositivo",
+      pair_editor.LecturaConfig(otra).leer()[1].names, ["notas"])
+model.parse_config = parse_real
+
+# ---------------------------------------------------------------------------
+# Qué botones valen para la fila elegida
+# ---------------------------------------------------------------------------
+TEXTOS_BOTONES = ("Usar aquí", "Simular", "Quitar…", "Descartar", "Guardar aquí…",
+                  "Volver al catálogo", "Ajustes del catálogo…", "Nueva pareja…",
+                  "Borrar del catálogo…", "Guardar en el catálogo…",
+                  "Descartar del catálogo", "Releer")
+
+
+def fila_de(en_pen: bool, difiere: tuple = ()) -> "pair_editor.CatalogRow":
+    """Una fila de la lista con lo que importa a los botones."""
+    return pair_editor.CatalogRow("x", "bisync", "L", "nas:/x", "ok", None, en_pen,
+                                  pair_editor.ORIGEN_LOCAL if difiere else
+                                  pair_editor.ORIGEN_CATALOGO, difiere)
+
+
+def lectura_de(editable: bool, leyendo: bool):
+    """Lo que `botones()` pregunta al catálogo: si se puede escribir y si se lee."""
+    return types.SimpleNamespace(editable=editable, leyendo=leyendo)
+
+
+def esperado_botones(fila, lect) -> dict:
+    """La regla escrita aparte, a mano, para compararla con `botones()`."""
+    en_pen = fila is not None and fila.en_pen
+    return {
+        "Usar aquí": fila is not None and not en_pen,
+        "Simular": en_pen, "Quitar…": en_pen, "Descartar": en_pen,
+        "Guardar aquí…": en_pen,
+        "Volver al catálogo": en_pen and bool(fila.difiere),
+        "Ajustes del catálogo…": lect.editable, "Nueva pareja…": lect.editable,
+        "Borrar del catálogo…": lect.editable and fila is not None,
+        "Guardar en el catálogo…": lect.editable and fila is not None,
+        "Descartar del catálogo": fila is not None,
+        "Releer": not lect.leyendo}
+
+
+malas = []
+for fila in (None, fila_de(False), fila_de(True), fila_de(True, ("remote_path",))):
+    for editable in (False, True):
+        for leyendo in (False, True):
+            lect = lectura_de(editable, leyendo)
+            visto = pair_editor.botones(fila, lect)
+            if visto != esperado_botones(fila, lect):
+                malas.append((fila, editable, leyendo, visto))
+c("los botones de cada combinación de fila y catálogo son los de la regla", malas, [])
+c("  y son justo los doce de la pantalla",
+  sorted(pair_editor.botones(None, lectura_de(True, False))), sorted(TEXTOS_BOTONES))
+c("  sin fila no hay nada que usar, guardar ni borrar",
+  [v for k, v in pair_editor.botones(None, lectura_de(True, False)).items()
+   if k not in ("Ajustes del catálogo…", "Nueva pareja…", "Releer")], [False] * 9)
+
+# ---------------------------------------------------------------------------
+# Los estados que ya se saben no se vuelven a leer
+# ---------------------------------------------------------------------------
+TRES = [
+    {"name": "notas", "local": "sync-data/notas", "remote_path": "/R/notas", "mode": "bisync"},
+    {"name": "fotos", "local": "sync-data/fotos", "remote_path": "/R/fotos", "mode": "bisync"},
+    {"name": "subida", "local": "sync-data/subida", "remote_path": "/R/subida", "mode": "up"},
+]
+
+
+def llamadas(nombre: str, lista: list):
+    """Sustituye `bisync.<nombre>` por una que apunta lo que se le pide y llama a la real."""
+    real = getattr(bisync, nombre)
+
+    def espia(*a, **k):
+        """Apunta el argumento y devuelve lo de verdad."""
+        lista.append(a[0])
+        return real(*a, **k)
+    setattr(bisync, nombre, espia)
+    return real
+
+
+with sandbox():
+    raw = preparar(pairs=TRES)
+    dar_baseline(raw, "notas")
+    cfg = model.parse_config(raw)
+    solas = pair_editor.rows(cfg)
+    c("sin estados dados, las filas se leen del disco como siempre",
+      [(f.name, f.estado, f.aviso) for f in solas],
+      [("notas", "ok", None), ("fotos", "fresh, filtros new", "requiere resync"),
+       ("subida", "—", None)])
+
+    dados = pair_editor.estados_de(cfg)
+    c("los estados de las parejas bisync, por nombre",
+      (sorted(dados), dados["notas"][0].status, dados["fotos"][0].status,
+       dados["notas"][1].status), (["fotos", "notas"], "ok", "fresh", "ok"))
+
+    pares, filtros = [], []
+    real_par = llamadas("pair_state", pares)
+    real_filtros = llamadas("filters_state", filtros)
+    try:
+        con = pair_editor.rows(cfg, dados)
+        c("con los estados dados no se mira ni el baseline ni los filtros",
+          (pares, filtros), ([], []))
+        c("  y las filas salen igual que leyéndolos", con, solas)
+
+        parcial = {"notas": dados["notas"]}
+        completas = pair_editor.rows(cfg, parcial)
+        c("solo se lee el que falta", [p.name for p in pares], ["fotos"])
+        c("  y las filas salen igual", completas, solas)
+        c("  sin tocar el dict que se dio", sorted(parcial), ["notas"])
+
+        pares.clear()
+        filtros.clear()
+        raw_cat = {"defaults": {"remote": "nas"}, "pair": [dict(p) for p in TRES]}
+        texto = config_file.dumps(raw_cat)
+        cat = catalog.Catalog(raw=tomllib.loads(texto), text=texto, source="remote",
+                              stamp="2026-01-01 00:00:00", endpoint="nas:/c/remote.toml")
+        filas_cat = pair_editor.catalog_rows(cfg, raw, cat, dados)
+        c("las filas del catálogo con los estados dados tampoco los leen",
+          (pares, filtros), ([], []))
+        c("  y son las mismas que leyéndolos",
+          filas_cat, pair_editor.catalog_rows(cfg, raw, cat))
+    finally:
+        bisync.pair_state, bisync.filters_state = real_par, real_filtros
+
+    # «requiere resync» sale de los estados dados, no de mirar los filtros otra vez:
+    # el mismo criterio que `bisync.resync_reasons()`
+    inventados = {
+        "notas": (bisync.PairState("ok", "x", "p"), bisync.FiltersState("changed", "y")),
+        "fotos": (bisync.PairState("broken", "x", None), bisync.FiltersState("ok", "y")),
+    }
+    con = {f.name: f for f in pair_editor.rows(cfg, inventados)}
+    c("filtros que han cambiado piden resync aunque haya baseline",
+      (con["notas"].aviso, con["notas"].estado), ("requiere resync", "ok, filtros changed"))
+    c("un baseline roto lo pide aunque los filtros estén bien",
+      (con["fotos"].aviso, con["fotos"].estado), ("requiere resync", "broken"))
+    c("un espejo se queda con el aviso del espejo",
+      pair_editor.rows(model.parse_config({**raw, "pair": [{**TRES[2], "mode": "up-mirror"}]}))[0].aviso,
+      pair_editor.mirror_warning("up-mirror"))
+
+    # Lo mismo que dice `bisync.resync_reasons()` para cada combinación
+    desacuerdos = []
+    pareja_notas = next(p for p in cfg.pairs if p.name == "notas")
+    for estado_par in (bisync.PairState("ok", "x", "p"), bisync.PairState("fresh", "x", None),
+                       bisync.PairState("broken", "x", None)):
+        for estado_fil in (bisync.FiltersState("ok", "y"), bisync.FiltersState("new", "y"),
+                           bisync.FiltersState("changed", "y")):
+            fila = pair_editor.rows(cfg, {"notas": (estado_par, estado_fil),
+                                          "fotos": dados["fotos"]})[0]
+            real = bisync.pair_state, bisync.filters_state
+            bisync.pair_state = lambda p, e=estado_par: e
+            bisync.filters_state = lambda f, e=estado_fil: e
+            try:
+                pide = bool(bisync.resync_reasons(pareja_notas, estado_par))
+            finally:
+                bisync.pair_state, bisync.filters_state = real
+            if (fila.aviso == "requiere resync") != pide:
+                desacuerdos.append((estado_par.status, estado_fil.status))
+    c("«requiere resync» coincide con `bisync.resync_reasons()` en las nueve combinaciones",
+      desacuerdos, [])
+
+
 sys.exit(c.report())

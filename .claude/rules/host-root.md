@@ -2,6 +2,7 @@
 paths:
   - "install/raiz_equipo.py"
   - "ui/tk_equipo.py"
+  - "ui/lecturas_asistente.py"
   - "tests/test_raiz_equipo.py"
   - "tests/test_agente_raiz.py"
   - "tests/test_agente_veracrypt.py"

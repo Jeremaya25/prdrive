@@ -14,8 +14,15 @@ y se comprueba:
   está, no se protege nada en vez de proteger la ventana equivocada.
 - Que la llamada real a user32 (`_afinidad_de_pantalla`) declara sus tipos y
   pasa lo que debe, contra un `ctypes.WinDLL` de mentira.
-- Que `tk_qr.open_dialog()` protege ANTES de `mostrar()`, con la ventana todavía
-  retirada, y que la línea que enseña depende de lo que se haya conseguido.
+- Que la protección se pone ANTES de que exista la imagen del código, y que la
+  línea que enseña depende de lo que se haya conseguido. El código se monta en
+  un hilo y llega por sondeo: la ventana se pinta sin él («Preparando el
+  código…») y, al llegar, se protege, se dibuja y se ponen las líneas, por ese
+  orden. Con el código en el sitio (`segundo_plano.en_el_acto`, como en los
+  demás tests de pantallas) la ventana sigue retirada y se protege antes de
+  `mostrar()`; con uno que llega tarde, la protección va antes de la imagen y,
+  si el apartado se deja antes, no se protege ni se dibuja nada. En «Ajustes»,
+  salir del apartado y volver protege dos veces y suelta una entre medias.
 
 Lo que solo se puede ver en Windows (que `wm frame` dé el envoltorio con la
 ventana retirada, y que las capturas de verdad no la recojan) está en
@@ -269,7 +276,12 @@ except Exception as e:                                   # sin entorno gráfico
 
 from common import pairing  # noqa: E402
 from common.model import ConfigError  # noqa: E402
-from ui import tk_qr  # noqa: E402
+from ui import segundo_plano, tk_qr  # noqa: E402
+
+# El código llega por sondeo desde un hilo y aquí no se entra en el bucle de
+# eventos: se calcula en el sitio y la ventana está entera antes de enseñarse.
+# Con hilos de verdad y un código que llega tarde, más abajo.
+segundo_plano.lanzar = segundo_plano.en_el_acto
 
 # La carga de una clave ed25519 de verdad, como en `test_tk_medidas`: nada de
 # esto toca el rclone.conf de nadie.
@@ -458,12 +470,21 @@ try:
         private_key=b"-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n"
                     b"-----END OPENSSH PRIVATE KEY-----\n")
     tk_qr.icons.matriz = lambda *a, **k: None
-    eventos, dlg = abrir(uitk.CAPTURA_EXCLUIDA)
-    c("si el código no se pudo dibujar: tampoco protege (no hay nada en pantalla)",
-      [e for e, _ in eventos], ["mostrar"])
+    sueltas: list = []
+    soltar_real = tk_qr.soltar_capturas
+    tk_qr.soltar_capturas = lambda dlg: sueltas.append(1)
+    try:
+        eventos, dlg = abrir(uitk.CAPTURA_EXCLUIDA)
+    finally:
+        tk_qr.soltar_capturas = soltar_real
+    c("si el código no se pudo dibujar: la protección iba antes, y se suelta "
+      "(no hay nada en pantalla)",
+      ([e for e, _ in eventos], sueltas), (["proteger", "mostrar"], [1]))
     c("  y lo dice con el estilo de pista de la tarjeta, que existe",
       [str(w.cget("text")) for w in buscar(dlg, "Card.Pista.TLabel")],
       ["No se ha podido dibujar el código."])
+    c("  sin ninguna línea de capturas: nada que prometer",
+      any("captura" in t.lower() for t in textos(dlg)), False)
     dlg.destroy()
     tk_qr.icons.matriz = matriz_real
 
@@ -479,10 +500,190 @@ try:
        any("captura" in t.lower() for t in textos(dlg))),
       (["mostrar"], False))
     dlg.destroy()
+
+    # d) el código que llega después de pintar la ventana
+    #
+    # Aquí el hilo es de mentira pero el retraso es de verdad: el encargo no
+    # corre hasta que el test lo suelta, y entre medias la ventana está pintada
+    # y no hay ni protección ni imagen.
+    import time
+    import tkinter as tk
+    from common.model import APP_DIR  # noqa: F401
+    from ui import tk_doctor
+    from _harness import mkcfg
+
+    pairing.construir = lambda raw=None, app_dir=None: pairing.dumps(
+        "nas", {"type": "sftp", "host": "nas.example.org", "port": "22",
+                "user": "pere"},
+        key_name="id_ed25519", catalog_path="/prdrive-catalog/pairs.toml",
+        private_key=(b"-----BEGIN OPENSSH PRIVATE KEY-----\n" + b"b3BlbnNza" * 40
+                     + b"\n-----END OPENSSH PRIVATE KEY-----\n"))
+    llegadas: list = []
+
+    def lanzar_tarde(funcion):
+        """Un encargo que no corre hasta que el test lo suelta."""
+        encargo = segundo_plano.Encargo(funcion)
+        llegadas.append(encargo)
+        return encargo
+
+    registro: list = []
+
+    def proteger_anotando(resultado):
+        """Un `proteger_de_capturas` que apunta cuándo lo llaman y devuelve `resultado`."""
+        def proteger_(dlg):
+            registro.append("proteger")
+            return resultado
+        return proteger_
+
+    def matriz_anotando(*a, **k):
+        """El `icons.matriz` de verdad, apuntando cuándo lo llaman."""
+        registro.append("matriz")
+        return matriz_real(*a, **k)
+
+    def dar_vueltas(condicion, limite: float = 2.0) -> bool:
+        """Mueve el bucle de Tk hasta que se cumpla la condición o pase el límite."""
+        fin = time.monotonic() + limite
+        while time.monotonic() < fin:
+            raiz.update()
+            if condicion():
+                return True
+            time.sleep(0.01)
+        return False
+
+    def ultima_ventana():
+        """Devuelve la última ventana de nivel superior que ha abierto el test."""
+        return [w for w in raiz.winfo_children() if isinstance(w, tk.Toplevel)][-1]
+
+    def lineas_de_captura(dlg) -> list[str]:
+        """Devuelve las frases de captura que dice la ventana."""
+        return [t for t in textos(dlg) if t in tk_qr.LINEA_CAPTURA.values()]
+
+    segundo_plano.lanzar = lanzar_tarde
+    tk_qr.icons.matriz = matriz_anotando
+    tk_qr.mostrar = lambda dlg, parent=None: None
+    try:
+        for protegida in (uitk.CAPTURA_EXCLUIDA, uitk.CAPTURA_EN_NEGRO):
+            registro.clear()
+            llegadas.clear()
+            tk_qr.proteger_de_capturas = proteger_anotando(protegida)
+            tk_qr.open_dialog(raiz, {})
+            dlg = ultima_ventana()
+            raiz.update()
+            c("el QR que llega después: antes de llegar no se protege ni se dibuja nada",
+              (registro, "Preparando el código…" in textos(dlg)), ([], True))
+            c("  ni hay imagen del código ni línea de capturas",
+              (len([w for w in buscar(dlg, "Card.TLabel") if str(w.cget("image"))]),
+               lineas_de_captura(dlg)), (0, []))
+            llegadas[-1].correr()
+            dar_vueltas(lambda: "matriz" in registro)
+            c("  al llegar: primero se protege y luego se dibuja",
+              registro, ["proteger", "matriz"])
+            c("  la línea bajo el aviso es la de la protección que quedó",
+              lineas_de_captura(dlg), [tk_qr.LINEA_CAPTURA[protegida]])
+            etiquetas = [w for w in buscar(dlg, "Pista.TLabel")
+                         if str(w.cget("text")) == tk_qr.LINEA_CAPTURA[protegida]]
+            c("  y va justo debajo del aviso ámbar",
+              (len(etiquetas), int(etiquetas[0].grid_info()["row"])
+               == int(buscar(dlg, "NotaAmbar.TFrame")[0].grid_info()["row"]) + 1),
+              (1, True))
+            c("  «Preparando el código…» se ha ido y hay imagen",
+              ("Preparando el código…" in textos(dlg),
+               len([w for w in buscar(dlg, "Card.TLabel") if str(w.cget("image"))])),
+              (False, 1))
+            dlg.destroy()
+
+        # sin protección en Windows: la frase del fallo, y aun así antes la protección
+        registro.clear()
+        llegadas.clear()
+        previo_win = uitk.IS_WIN
+        uitk.IS_WIN = True
+        try:
+            tk_qr.proteger_de_capturas = proteger_anotando(uitk.CAPTURA_NINGUNA)
+            tk_qr.open_dialog(raiz, {})
+            dlg = ultima_ventana()
+            llegadas[-1].correr()
+            dar_vueltas(lambda: "matriz" in registro)
+            c("  sin protección en Windows: la protección se intenta antes de dibujar y "
+              "se dice que no se ha podido", (registro,
+                                              tk_qr.LINEA_SIN_PROTECCION in textos(dlg)),
+              (["proteger", "matriz"], True))
+        finally:
+            uitk.IS_WIN = previo_win
+        dlg.destroy()
+
+        # e) salir del apartado antes de que llegue: no se protege ni se dibuja nada
+        tk_qr.proteger_de_capturas = proteger_anotando(uitk.CAPTURA_EXCLUIDA)
+        registro.clear()
+        llegadas.clear()
+        ventana = uitk.modal(raiz, "Ajustes de mentira")
+        marco_qr = uitk.cuerpo_visible(ventana, padding=(0, 0, 0, 0))
+        marco_qr.columnconfigure(0, weight=1)
+        tk_qr.construir(uitk.Panel(ventana, marco_qr, incrustado=True), {})
+        raiz.update()
+        marco_qr.destroy()
+        llegadas[-1].correr()
+        dar_vueltas(lambda: False, 0.4)
+        c("salir antes de que llegue: ni se protege ni se dibuja nada", registro, [])
+        c("  y la ventana, que sigue viva, no tiene ninguna imagen del código",
+          len([w for w in buscar(ventana, "Card.TLabel") if str(w.cget("image"))]), 0)
+        ventana.destroy()
+
+        # f) «Ajustes»: salir del QR y volver protege dos veces y suelta una entre medias
+        segundo_plano.lanzar = segundo_plano.en_el_acto
+        tk_qr.proteger_de_capturas = proteger_real
+        tk_qr.icons.matriz = matriz_real
+        pedidas = Afinidad(acepta=(0x11,))
+        previo = (uitk.IS_WIN, uitk._afinidad_de_pantalla, tk.Wm.wm_frame)
+        uitk.IS_WIN, uitk._afinidad_de_pantalla = True, pedidas
+        # En X11 sin gestor de ventanas `wm frame` es la propia ventana, y no se
+        # protegería nada; Windows da el envoltorio.
+        tk.Wm.wm_frame = lambda self: hex(int(self.winfo_id()) + 0x1000)
+        visto = {}
+
+        def barra_lateral(dlg) -> dict:
+            """Los botones de la barra lateral de «Ajustes» por su rótulo."""
+            pila, hallados = [dlg], {}
+            while pila:
+                w = pila.pop()
+                pila += list(w.winfo_children())
+                if isinstance(w, ttk.Button) and str(w.cget("style")) in (
+                        "Nav.TButton", "NavSel.TButton"):
+                    hallados[str(w.cget("text"))] = w
+            return hallados
+
+        def recorrido(dlg, parent=None) -> None:
+            """En «Ajustes»: el QR, «Configuración», el QR otra vez."""
+            visto["al_abrir"] = [v for _h, v in pedidas.pedidas]
+            barra_lateral(dlg)["Configuración"].invoke()
+            visto["al_salir"] = [v for _h, v in pedidas.pedidas]
+            barra_lateral(dlg)["Emparejar un móvil"].invoke()
+            visto["al_volver"] = [v for _h, v in pedidas.pedidas]
+            dlg.destroy()
+
+        real_doctor = tk_doctor.mostrar
+        tk_doctor.mostrar = recorrido
+        try:
+            with_sandbox = __import__("_harness").sandbox
+            with with_sandbox():
+                tk_doctor.open_dialog(raiz, mkcfg(["notas"]), lambda *a, **k: None,
+                                      raw_local={}, inicial="qr")
+        finally:
+            tk_doctor.mostrar = real_doctor
+            uitk.IS_WIN, uitk._afinidad_de_pantalla, tk.Wm.wm_frame = previo
+        c("«Ajustes»: el QR protege al abrirse", visto.get("al_abrir"), [0x11])
+        c("  al pasar a «Configuración» se suelta la protección",
+          visto.get("al_salir"), [0x11, 0x0])
+        c("  y al volver al QR se protege otra vez",
+          visto.get("al_volver"), [0x11, 0x0, 0x11])
+    finally:
+        segundo_plano.lanzar = segundo_plano.en_el_acto
+        tk_qr.icons.matriz = matriz_real
+        tk_qr.proteger_de_capturas, tk_qr.mostrar = proteger_real, mostrar_real
 finally:
     pairing.construir = construir_real
     tk_qr.icons.matriz = matriz_real
     tk_qr.proteger_de_capturas, tk_qr.mostrar = proteger_real, mostrar_real
-    raiz.destroy()
+    # Sin `raiz.destroy()`: «Ajustes» deja imágenes en la caché de `icons`, y
+    # soltarlas después de destruir el intérprete llena la salida de errores.
 
 sys.exit(c.report())

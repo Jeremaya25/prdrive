@@ -2,11 +2,14 @@
 """La ventana principal: el aviso de arranque se puede descartar, y solo ese.
 
 `main_window()` acaba en `mainloop()`, así que para conducirla se sustituye el
-bucle por una sonda: cuando Tk le cede el control, la sonda mira la ventana ya
-pintada, pulsa lo que tenga que pulsar y la cierra. Los `after(300, …)` que
-consultan GitHub y recorren carpetas quedan encolados y no llegan a ejecutarse
-nunca, que es justo lo que se quiere: aquí no se toca la red ni se recorre
-nada.
+bucle por una sonda: cuando Tk le cede el control, la sonda deja que llegue la
+lectura del dispositivo (que aquí se hace en el sitio, `segundo_plano.en_el_acto`,
+y la aplica el primer `update_idletasks()`), mira la ventana ya pintada, pulsa
+lo que tenga que pulsar y la cierra. Los `after(300, …)` que consultan GitHub y
+recorren carpetas quedan encolados y no llegan a ejecutarse nunca, que es justo
+lo que se quiere: aquí no se toca la red ni se recorre nada. Se mira solo lo que
+está a la vista (`_vista.visibles`): la ventana guarda escondidos los bloques
+que no enseña.
 
 Lo que se comprueba es la diferencia entre un aviso y un estado. El aviso de
 arranque («se ha parado el servicio que había») es algo que pasó y se lee una
@@ -33,7 +36,10 @@ except Exception as e:                                   # sin entorno gráfico
     print(f"  (saltado) no hay entorno gráfico: {e}")
     sys.exit(0)
 
-from ui import tk as uitk
+from _vista import visibles  # noqa: E402
+
+from ui import segundo_plano  # noqa: E402
+from ui import tk as uitk  # noqa: E402
 
 BASE = {"defaults": {"remote": "nas"},
         "pair": [{"name": "notas", "local": "sync-data/notas",
@@ -41,50 +47,51 @@ BASE = {"defaults": {"remote": "nas"},
 
 AVISO = "Servicio anterior (pid 4242) detenido."
 
-# Nada de red ni de recorrer el dispositivo: la ventana pregunta por estas cuatro
-# al primer pintado, y aquí se contesta lo mismo siempre.
+# Nada de red ni de recorrer el dispositivo: la lectura de la ventana pregunta por
+# estas cuatro, y aquí se contesta lo mismo siempre. Los sustitutos aceptan las
+# palabras clave que les pasa la lectura (`fisica=`).
 update.pending = lambda: None
 results.fallos = lambda cfg: []
 conflicts.cargar = lambda cfg: {}
 conflicts.contar = lambda cargados: {}
-components.pendientes = lambda: []
-
-
-def recorrer(widget):
-    """Recorre los widgets que cuelgan de `widget`, en profundidad."""
-    pila = [widget]
-    while pila:
-        w = pila.pop()
-        pila += list(w.winfo_children())
-        yield w
+components.pendientes = lambda **_k: []
 
 
 def botones(ventana, texto):
-    """Devuelve los botones de la ventana con ese texto."""
-    return [w for w in recorrer(ventana)
-            if isinstance(w, ttk.Button) and w.cget("text") == texto]
+    """Devuelve los botones a la vista de la ventana con ese texto."""
+    return [w for w in visibles(ventana, texto=texto) if isinstance(w, ttk.Button)]
 
 
 def textos(ventana):
-    """Todo lo que la ventana tiene escrito, para buscar el aviso dentro."""
-    salida = []
-    for w in recorrer(ventana):
-        try:
-            salida.append(str(w.cget("text")))
-        except Exception:                                # noqa: BLE001
-            pass
-    return salida
+    """Todo lo que la ventana tiene escrito a la vista, para buscar el aviso dentro."""
+    return [str(w.cget("text")) for w in visibles(ventana) if "text" in w.keys()]
+
+
+lecturas: list = []
 
 
 def conducir(sonda, aviso=AVISO):
-    """Abre la ventana principal con `sonda` en lugar del bucle de eventos."""
-    real = tk.Tk.mainloop
-    tk.Tk.mainloop = sonda
+    """Abre la ventana principal con `sonda` en lugar del bucle de eventos.
+
+    Antes de la sonda llega la lectura del dispositivo, y se apunta lo que no
+    se pudo leer: un sustituto que no acepta una palabra clave nueva fallaría
+    ahí sin ruido, y el campo se quedaría vacío.
+    """
+    real, real_lanzar = tk.Tk.mainloop, segundo_plano.lanzar
+
+    def con_lectura(self, *a, **k):
+        """Deja llegar la lectura y pasa a la sonda."""
+        self.update_idletasks()
+        lecturas.append(dict(self.instantanea.resultado.fallos))
+        sonda(self, *a, **k)
+
+    tk.Tk.mainloop = con_lectura
+    segundo_plano.lanzar = segundo_plano.en_el_acto
     try:
         model.CONFIG_FILE.write_text(config_file.dumps(BASE), encoding="utf-8")
         return uitk.main_window(model.parse_config(BASE), aviso)
     finally:
-        tk.Tk.mainloop = real
+        tk.Tk.mainloop, segundo_plano.lanzar = real, real_lanzar
 
 
 # el aviso sale con su botón, y al pulsarlo se va
@@ -168,11 +175,11 @@ try:
             sin_boton["n"] = len(botones(self, "Expulsar"))
             self.destroy()
 
-        cifrado.expulsion = lambda: None
+        cifrado.expulsion = lambda **_k: None
         conducir(sonda_sin_contenedor, aviso=None)
         c("sin contenedor no hay «Expulsar»", sin_boton["n"], 0)
 
-    cifrado.expulsion = lambda: SCRIPT
+    cifrado.expulsion = lambda **_k: SCRIPT
     cifrado.lanzar_expulsion = lambda script: lanzados.append(script)
 
     with sandbox():
@@ -223,7 +230,7 @@ errores: list = []
 UID = "c" * 32
 try:
     cifrado.bloqueo = lambda: UID
-    cifrado.expulsion = lambda: None
+    cifrado.expulsion = lambda **_k: None
     messagebox.askokcancel = lambda *a, **k: True
     messagebox.showerror = lambda *a, **k: errores.append(a)
 
@@ -267,4 +274,5 @@ finally:
      messagebox.showerror) = reales
     cifrado.expulsion = reales_expulsion
 
+c("cada lectura de la ventana se hizo sin fallos", [f for f in lecturas if f], [])
 sys.exit(c.report())

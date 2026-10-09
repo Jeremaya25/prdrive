@@ -49,11 +49,13 @@ que escribió la versión anterior sigue ahí. Contesta las que apliquen. -->
 
 ## Comprobado
 
-<!-- Aquí no hay CI que pase los tests: cuenta cómo se ha hecho. Los tests de Tk
-se saltan solos cuando no hay pantalla, así que un «todo verde» sin Tk no ha
-probado ninguna ventana. -->
+<!-- La CI pasa la suite con el Python del dispositivo (Tk 9) y una vez con Python 3.11
+sin pantalla; aquí cuenta cómo lo has comprobado tú. Los tests de Tk se saltan solos
+cuando no hay pantalla ni `tkinter`, así que un «todo verde» sin Tk no ha probado
+ninguna ventana. Solo cuenta un Tk 9: el Python fijado de `common/pins.py`, no el del
+sistema. -->
 
-- [ ] `python tests/run_all.py`: __ de __ ficheros · Tk: sí / no · sistema:
+- [ ] `python tests/run_all.py`: __ de __ ficheros · Tk 9: sí / no · sistema:
 - [ ] Tests nuevos o cambiados que fallan sin este cambio
 - [ ] Las pantallas nuevas, o las que crecen, están en la matriz de `tests/test_tk_medidas.py`
 - [ ] En un dispositivo de verdad (plataforma, cifrado, qué se ha hecho):

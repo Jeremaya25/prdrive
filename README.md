@@ -18,7 +18,7 @@ Sincroniza una **unidad extraíble** (pendrive, SSD, tarjeta…) con **cualquier
 
 Necesitas un **remote de rclone** al que puedas escribir. Se hace una vez por unidad:
 
-1. Descarga `prdrive-install.exe` de la [última release](https://github.com/Jeremaya25/prdrive/releases/latest) y ábrelo. En Linux, o si prefieres no usar el `.exe`: clona el repositorio y ejecuta `python prdrive-install.py` (Python 3.11+ con Tkinter).
+1. Descarga `prdrive-install.exe` de la [última release](https://github.com/Jeremaya25/prdrive/releases/latest) y ábrelo. En Linux, o si prefieres no usar el `.exe`: clona el repositorio y ejecuta `python prdrive-install.py` (Python 3.11+ con Tk 9: `python -c "import tkinter; print(tkinter.TkVersion)"` tiene que decir 9.0 o más).
 2. Elige **«En una unidad»** y sigue el asistente. Te pregunta qué unidad usar, si quieres **cifrarla**, cómo conectarte a tu remoto, qué carpetas sincronizar y para qué sistemas debe funcionar.
 3. Al terminar, la unidad está lista.
 

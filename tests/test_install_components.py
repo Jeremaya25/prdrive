@@ -717,6 +717,31 @@ try:
                        "«Actualizar…»")
             components.runtime_en_uso = lambda carpeta: False
 
+            # Si cambia el Python que usará ESTE equipo, el programa se deja
+            # precompilado con el nuevo antes de volver (el cambio se lleva por
+            # delante los .pyc de su biblioteca), y la ventanita lo dice.
+            precompiladas: list = []
+            fases: list = []
+            real_host, real_precompilar = platforms.host, deploy.precompilar
+            platforms.host = lambda: LIN
+            deploy.precompilar = lambda destino, python, **k: (
+                precompiladas.append((Path(destino), python)) or True)
+            try:
+                raiz = dispositivo()
+                with contextlib.redirect_stdout(io.StringIO()):
+                    rc = instalador.cmd_update_components(str(raiz),
+                                                          fase=lambda: fases.append(1))
+                c("al cambiar el Python de este equipo se precompila con el nuevo, una vez",
+                  (rc, precompiladas, fases),
+                  (0, [(deploy.app_dir(raiz),
+                        platforms.runtime_dir(raiz, LIN) / LIN.interprete_consola)], [1]))
+                precompiladas.clear()
+                with contextlib.redirect_stdout(io.StringIO()):
+                    rc = instalador.cmd_update_components(str(raiz))
+                c("  y con todo al día, no", (rc, precompiladas), (0, []))
+            finally:
+                platforms.host, deploy.precompilar = real_host, real_precompilar
+
             # el relevo en sí
             #
             # Se carga desde una copia en su carpeta, como en la vida real: el
@@ -854,9 +879,15 @@ try:
     while time.monotonic() < limite and avance.progreso() != esperado:
         time.sleep(0.1)
     c("mide lo copiado frente al runtime ya extraído", avance.progreso(), esperado)
+    # Colocado ya el Python (la copia desaparece), empieza a precompilar con el
+    # medidor vivo: sin el corte, su vuelta siguiente diría «Colocándolo…».
+    shutil.rmtree(nuevo)
+    avance.precompilando()
+    time.sleep(2.2)                 # dos vueltas del medidor
+    c("la fase de precompilar la dice y el medidor no la pisa", avance.progreso(),
+      (0.99, "Dejando listo el arranque rápido…"))
     avance.fin()
     c("y al final lo dice", avance.progreso(), (1.0, "Volviendo a abrir prdrive…"))
-    shutil.rmtree(nuevo)
 
     # la orden de consola
     #

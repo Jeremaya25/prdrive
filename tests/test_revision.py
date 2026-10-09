@@ -15,7 +15,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from _harness import Checks, mkcfg, sandbox
+from _harness import Checks, mkcfg, sandbox, tmpdir
 
 import sync
 import ui
@@ -402,5 +402,78 @@ with sandbox():
        preguntas[-1]), (["otra"], (["otra"], {})))
     c("la consola de menú no pregunta (sync.py lo hará): sigue siendo un no",
       ui.console.ConsoleFrontend().approve_resync(["todo"], {"todo": carpeta}), False)
+
+# `espacio` con la raíz física ya buscada (la lectura de la ventana la busca UNA vez)
+with sandbox():
+    from common import fleet, vestibulo
+    cfg = mkcfg(["notas"])
+    cfg.pairs[0].local_abs.mkdir(parents=True, exist_ok=True)
+    listados(cfg.pairs[0])
+    fisica = tmpdir()
+    (fisica / vestibulo.CONTENEDOR).write_bytes(b"\0")
+    busquedas = []
+    real_raiz, real_id, real_disperso, real_umbral = (
+        vestibulo.raiz_fisica, fleet.device_id, vestibulo.disperso, vestibulo.UMBRAL_LIBRE)
+    vestibulo.raiz_fisica = lambda ident: busquedas.append(ident) or None
+    fleet.device_id = lambda app_dir=None: busquedas.append("id") or "abc"
+    vestibulo.disperso = lambda contenedor: True
+    vestibulo.UMBRAL_LIBRE = 1 << 62
+    try:
+        con = revision.revisar(cfg, fisica=fisica)
+        c("con la raíz física dada, el contenedor sin sitio se avisa", uno(con, "espacio") is not None, True)
+        c("  sin buscarla ni preguntar el id", busquedas, [])
+        c("  y dice dónde", str(fisica) in uno(con, "espacio").detalle, True)
+        c("con `None` («no vive en un contenedor») no hay aviso y tampoco se busca",
+          (uno(revision.revisar(cfg, fisica=None), "espacio"), busquedas), (None, []))
+        revision.revisar(cfg)
+        c("sin ella se busca, como siempre: el id y la raíz", busquedas, ["id", "abc"])
+    finally:
+        vestibulo.raiz_fisica, fleet.device_id = real_raiz, real_id
+        vestibulo.disperso, vestibulo.UMBRAL_LIBRE = real_disperso, real_umbral
+
+# El fichero de filtros se regenera de golpe: quien lo lee desde otro hilo (la ventana
+# lee en un hilo mientras «Parejas» lee en el de Tk) no puede verlo a medias.
+with sandbox():
+    cfg = mkcfg(["notas"])
+    pair = cfg.pairs[0]
+    destino = model.FILTERS_DIR / "notas.txt"
+    cambios = []
+    real_replace = bisync.os.replace
+    bisync.os.replace = lambda origen, fin: (
+        cambios.append((Path(origen).name, Path(fin).name,
+                        Path(origen).read_bytes() == bisync.filters_content(pair).encode())),
+        real_replace(origen, fin))[1]
+    try:
+        bisync.filters_file_for(pair)
+        c("el fichero nuevo entra con un renombrado, ya entero",
+          [(fin, entero) for _, fin, entero in cambios], [("notas.txt", True)])
+        c("  desde un temporal con otro nombre", bool(cambios) and cambios[0][0] != "notas.txt", True)
+        c("  que no queda atrás",
+          sorted(p.name for p in model.FILTERS_DIR.iterdir()), ["notas.txt"])
+        c("  con LF y UTF-8, como siempre (el md5 de rclone no depende del sistema)",
+          destino.read_bytes(), bisync.filters_content(pair).encode("utf-8"))
+        cambios.clear()
+        bisync.filters_file_for(pair)
+        c("con el contenido al día no se toca", cambios, [])
+        destino.write_text("# a mano\n", encoding="utf-8")
+        bisync.filters_file_for(pair)
+        c("si ha cambiado, se regenera igual",
+          (len(cambios), destino.read_text(encoding="utf-8") == bisync.filters_content(pair)),
+          (1, True))
+
+        # si el renombrado no se deja (Windows con el fichero abierto), se escribe de
+        # frente como antes: lo que falla de verdad sigue siendo un error
+        def no_se_deja(origen, fin):
+            raise PermissionError("abierto por otro")
+
+        bisync.os.replace = no_se_deja
+        destino.write_text("# a mano otra vez\n", encoding="utf-8")
+        bisync.filters_file_for(pair)
+        c("  si el renombrado no se deja, se escribe de frente",
+          destino.read_text(encoding="utf-8") == bisync.filters_content(pair), True)
+        c("  y no deja el temporal", sorted(p.name for p in model.FILTERS_DIR.iterdir()),
+          ["notas.txt"])
+    finally:
+        bisync.os.replace = real_replace
 
 sys.exit(c.report())

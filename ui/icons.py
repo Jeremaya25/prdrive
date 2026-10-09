@@ -4,21 +4,31 @@
 El diseño pide iconos de trazo sobre rejilla de 16 y dice explícitamente «sin
 emoji»: un ✓ o un ⚠ salen con la fuente de emoji del sistema, en color, de un
 tamaño que no controlamos y distinto en cada equipo. Como el proyecto no tiene
-dependencias (nada de Pillow, nada de cairosvg), la única salida es pintarlos,
-y como Tk 8.6 no sabe leer SVG, se pintan a mano.
+dependencias (nada de Pillow, nada de cairosvg), los iconos se dibujan aquí.
 
 Cada icono es una lista de primitivas (segmentos, arcos, círculos, rectángulos)
-en el sistema de coordenadas del artboard, y `_capas_rgba()` las convierte en
-píxeles midiendo, para cada píxel, la distancia a la tinta más cercana. Esa
-distancia da el suavizado gratis y a cualquier tamaño: no hay que redibujar el
-icono para 20 px, se pide con `size=20`.
+en el sistema de coordenadas del artboard, y tiene DOS pintores que parten de
+esas mismas primitivas:
 
-**Todo lleva su alfa**: la imagen se le da a Tk como PNG (`_foto()`), que es
-la única forma de pasarle transparencia con matices, y Tk la compone contra lo
-que haya debajo. Así el mismo icono vale sobre el papel, sobre una tarjeta y
-sobre el gris de un botón al pasar por encima. Es también lo que hace posibles
-los controles redondeados del tema: sus piezas (`caja()`) son transparentes
-por fuera de la forma.
+- **SVG**, si el Tk del intérprete sabe leerlo (Tk 9: `svg_disponible()`, una
+  prueba de capacidad y no el número de versión). `_svg_capas()` describe las
+  primitivas como SVG y Tk las pinta en C: unas décimas de milisegundo por
+  imagen, igual a cualquier escala.
+- **El rasterizador de Python**, `_capas_rgba()`, para el resto (un Tk 8.6: el del
+  runtime de 3.13 que aún tenga un equipo, o el de un Python del equipo al que
+  caigan los lanzadores) y para todo lo que no pasa por Tk (`.ico`, bandeja,
+  dbusmenu). Mide, para cada píxel, la distancia a la tinta
+  más cercana. Esa distancia da el suavizado gratis y a cualquier tamaño: no
+  hay que redibujar el icono para 20 px, se pide con `size=20`.
+
+El aspecto es el mismo con los dos (`tests/test_iconos_svg.py` compara su alfa);
+cuál se usa solo se nota en lo que tarda `theme.apply()`.
+
+**Todo lleva su alfa**: la imagen se le da a Tk como SVG o como PNG
+(`_foto()`), y Tk la compone contra lo que haya debajo. Así el mismo icono vale
+sobre el papel, sobre una tarjeta y sobre el gris de un botón al pasar por
+encima. Es también lo que hace posibles los controles redondeados del tema: sus
+piezas (`caja()`) son transparentes por fuera de la forma.
 
 Nada de aquí puede tumbar la interfaz: `get()` devuelve `None` si algo falla y
 quien lo llama pinta el texto sin icono. Un adorno no puede impedir que se abra
@@ -28,6 +38,7 @@ la ventana.
 from __future__ import annotations
 
 import math
+import os
 
 TRAZO = 1.6
 """Anchura de trazo del diseño, en unidades de la rejilla de 16."""
@@ -455,6 +466,31 @@ además que `id()` se reutilice mientras la caché siga viva.
 """
 
 
+def guardada(widget, clave: tuple, hacer):
+    """Devuelve la imagen de `clave` en el intérprete de `widget`; `hacer()` la hace una vez.
+
+    Es la misma caché que la de los iconos: la imagen vive hasta que `olvidar()`
+    suelta ese intérprete, y entonces se va con las demás. Quien la usa (el lienzo
+    de las tablas) no guarda la suya.
+
+    Args:
+        widget: El widget cuyo intérprete es el dueño de la imagen.
+        clave: Lo que la distingue, con cosas que se puedan comparar y ser claves.
+        hacer: Sin argumentos; devuelve la `PhotoImage` la primera vez.
+
+    Returns:
+        La imagen guardada (o la recién hecha).
+    """
+    interp = widget.tk
+    ficha = (id(interp), "guardada", *clave)
+    guardado = _CACHE.get(ficha)
+    if guardado is not None and guardado[0] is interp:
+        return guardado[1]
+    img = hacer()
+    _CACHE[ficha] = (interp, img)
+    return img
+
+
 def olvidar(interp) -> None:
     """Suelta las imágenes de un intérprete de Tk que ya se ha cerrado.
 
@@ -462,9 +498,12 @@ def olvidar(interp) -> None:
     en el hilo principal. Sí importa en la ventanita del servicio, que vive en
     un hilo propio (`ui.avisar_fallo`): si sus imágenes siguieran aquí, las
     borraría el hilo principal al salir, y a Tk solo se le habla desde el suyo.
+    Se suelta también lo que se guardó con `guardada()`.
     """
     for ficha in [f for f, (dueno, _img) in _CACHE.items() if dueno is interp]:
         del _CACHE[ficha]
+    if _SVG.get(id(interp), (None,))[0] is interp:
+        del _SVG[id(interp)]
 
 
 def px(widget, medida: int) -> int:
@@ -483,42 +522,277 @@ def px(widget, medida: int) -> int:
     return max(1, round(medida * escala / 1.3333))
 
 
-def _foto(widget, clave: tuple, filas):
-    """Devuelve la imagen de clave `clave`, haciéndola con `filas()` solo si hace falta.
+USAR_SVG = os.environ.get("PRDRIVE_SIN_SVG", "") in ("", "0")
+"""Si se pintan con SVG las imágenes de los intérpretes que saben leerlo.
 
-    `filas` es una función que devuelve las filas `(r, g, b, a)`: solo se llama
-    si la imagen no está pintada ya en este proceso. La imagen se le da a Tk
-    como PNG porque es la única manera de pasarle un alfa con matices:
-    `PhotoImage.put()` escribe colores opacos y nada más.
+Es el interruptor que mueven las pruebas para forzar el pintor de Python en un
+Tk 9 (`tests/test_iconos_svg.py`), y `PRDRIVE_SIN_SVG=1` lo apaga desde fuera
+(para pasar todas las pruebas por el camino de Tk 8.6 con el Tk 9 puesto).
+Encendido no obliga a nada: sin soporte en el intérprete se pinta en Python.
+"""
+
+PINTADAS = {"svg": 0, "python": 0}
+"""Cuántas imágenes ha hecho este proceso por cada camino (para las pruebas y las mediciones)."""
+
+_SVG: dict[int, tuple] = {}
+"""Si cada intérprete de Tk sabe leer SVG: `id(interp) -> (interp, bool)`.
+
+Se guarda el intérprete como en `_CACHE`, para que un `id()` reutilizado no
+herede la respuesta de otro. `olvidar()` la suelta con el resto.
+"""
+
+_SVG_PRUEBA = ('<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2" '
+               'viewBox="0 0 2 2"><rect width="2" height="2" fill="#000000"/></svg>')
+"""El SVG mínimo con el que se prueba un intérprete."""
+
+
+def svg_disponible(widget) -> bool:
+    """Dice si las imágenes de este intérprete se pintan con SVG.
+
+    Es una prueba de capacidad y no una comparación de versiones: se le pide a
+    Tk una imagen de 2×2 con `format="svg"` y se mira si la da. La respuesta se
+    guarda por intérprete (`_SVG`), y `USAR_SVG` se mira cada vez, sin
+    guardarse, para que una prueba pueda cambiarlo con el intérprete ya probado.
+
+    Tk 8.6 contesta con un `TclError` («image format "svg" is not supported»);
+    el Tk 9 del dispositivo lleva nanosvg y la da.
+    """
+    if not USAR_SVG:
+        return False
+    interp = widget.tk
+    guardado = _SVG.get(id(interp))
+    if guardado is not None and guardado[0] is interp:
+        return guardado[1]
+    try:
+        import tkinter as tk
+        prueba = tk.PhotoImage(master=widget, data=_SVG_PRUEBA, format="svg")
+        listo = (prueba.width(), prueba.height()) == (2, 2)
+        del prueba
+    except Exception:                                   # noqa: BLE001
+        listo = False
+    _SVG[id(interp)] = (interp, listo)
+    return listo
+
+
+class _SinSvg(Exception):
+    """Esa imagen no se sabe describir en SVG: se pinta con el rasterizador de Python."""
+
+
+def _n(valor: float) -> str:
+    """Devuelve un número para un SVG: cuatro decimales como mucho y sin ceros de sobra."""
+    texto = ("%.4f" % valor).rstrip("0").rstrip(".")
+    return "0" if texto in ("", "-0") else texto
+
+
+def _svg_arco(cx: float, cy: float, r: float, a0: float, a1: float) -> str:
+    """Devuelve el trazado SVG de un arco de `a0` a `a1` grados (los que crecen en pantalla).
+
+    Los ángulos van como en `_dist_arco()`: 0° a la derecha, 90° abajo, y SVG
+    recorre el arco en ese mismo sentido con `sweep-flag=1`. Un arco de una
+    vuelta entera se parte en dos, porque SVG descarta el que acaba donde
+    empieza.
+    """
+    if a1 - a0 >= 360:
+        medio = (a0 + a1) / 2
+        return _svg_arco(cx, cy, r, a0, medio) + _svg_arco(cx, cy, r, medio, a1)
+
+    def punto(grados: float) -> str:
+        """Devuelve el punto del círculo a ese ángulo."""
+        rad = math.radians(grados)
+        return f"{_n(cx + r * math.cos(rad))} {_n(cy + r * math.sin(rad))}"
+
+    grande = 1 if (a1 - a0) % 360 > 180 else 0
+    return f"M{punto(a0)}A{_n(r)} {_n(r)} 0 {grande} 1 {punto(a1)}"
+
+
+def _svg_capa(color: str, trazo: float, prims: list[tuple]) -> str:
+    """Devuelve los elementos SVG de una capa: las mismas primitivas que pinta `_capas_rgba()`.
+
+    Cada clase de primitiva lleva el remate que le da `_sdf()`: los segmentos y
+    las polilíneas, extremos cuadrados e ingletes (`MITER_LIMITE`); los arcos y
+    los círculos, extremos redondos; el rectángulo de trazo, esquinas de fuera
+    redondas; el punto (`d`), un cuadrado del ancho del trazo, que como trazo de
+    largo cero no pintaría nada. Los trazos de un mismo estilo van en un solo
+    `<path>`, así que se unen como los pinta la distancia mínima y no se mezclan
+    por el borde. nanosvg no hace `<mask>` ni `<clipPath>`: ninguna primitiva
+    los necesita.
+
+    Raises:
+        _SinSvg: Si hay una primitiva que no se conoce.
+    """
+    semi = trazo / 2
+    cuadrado: list[str] = []
+    redondo: list[str] = []
+    rectangulo: list[str] = []
+    rellenos: list[str] = []
+    for prim in prims:
+        clase = prim[0]
+        if clase == "l":
+            cuadrado.append(f"M{_n(prim[1])} {_n(prim[2])}L{_n(prim[3])} {_n(prim[4])}")
+        elif clase == "p":
+            puntos = prim[1]
+            cerrada = puntos[0] == puntos[-1]
+            if cerrada:
+                puntos = puntos[:-1]
+            cuadrado.append("M" + "L".join(f"{_n(x)} {_n(y)}" for x, y in puntos)
+                            + ("Z" if cerrada else ""))
+        elif clase == "d":
+            rellenos.append(f'<rect fill="{color}" x="{_n(prim[1] - semi)}" '
+                            f'y="{_n(prim[2] - semi)}" width="{_n(trazo)}" '
+                            f'height="{_n(trazo)}"/>')
+        elif clase == "a":
+            redondo.append(_svg_arco(*prim[1:]))
+        elif clase == "c":
+            _, cx, cy, r = prim
+            if semi >= r:                  # un trazo tan grueso es un disco
+                rellenos.append(f'<circle fill="{color}" cx="{_n(cx)}" cy="{_n(cy)}" '
+                                f'r="{_n(r + semi)}"/>')
+            else:
+                redondo.append(_svg_arco(cx, cy, r, 0, 180) + _svg_arco(cx, cy, r, 180, 360))
+        elif clase == "r":
+            _, x, y, ancho, alto = prim
+            rectangulo.append(f"M{_n(x)} {_n(y)}h{_n(ancho)}v{_n(alto)}h{_n(-ancho)}Z")
+        elif clase == "fr":
+            rellenos.append(f'<rect fill="{color}" x="{_n(prim[1])}" y="{_n(prim[2])}" '
+                            f'width="{_n(prim[3])}" height="{_n(prim[4])}"/>')
+        elif clase == "rr":
+            rellenos.append(f'<rect fill="{color}" x="{_n(prim[1])}" y="{_n(prim[2])}" '
+                            f'width="{_n(prim[3])}" height="{_n(prim[4])}" '
+                            f'rx="{_n(prim[5])}"/>')
+        else:
+            raise _SinSvg(clase)
+    salida = list(rellenos)
+    for trazos, remate, union in ((cuadrado, "square", "miter"), (redondo, "round", "round"),
+                                  (rectangulo, "butt", "round")):
+        if trazos:
+            salida.append(f'<path fill="none" stroke="{color}" stroke-width="{_n(trazo)}" '
+                          f'stroke-linecap="{remate}" stroke-linejoin="{union}" '
+                          f'stroke-miterlimit="{_n(MITER_LIMITE)}" d="{"".join(trazos)}"/>')
+    return "".join(salida)
+
+
+def _svg_marco(cuerpo: str, ancho: int, alto: int, unidad: float) -> tuple[str, int, int]:
+    """Devuelve `(svg, ancho, alto)` de un cuerpo dibujado en unidades de la rejilla.
+
+    `ancho` y `alto` son los píxeles de la imagen y `unidad` lo que mide un
+    píxel en la rejilla. La imagen sale de ese tamaño exacto: sin `-scale`, que
+    redondea, ni `-scaletoheight`.
+    """
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{ancho}" height="{alto}" '
+            f'viewBox="0 0 {_n(ancho * unidad)} {_n(alto * unidad)}">{cuerpo}</svg>',
+            ancho, alto)
+
+
+def _svg_capas(capas, caja: float, size: int, ancho: int | None = None,
+               alto: int | None = None, bajar: float = 0.0,
+               recorte: str | None = None) -> tuple[str, int, int]:
+    """Devuelve el SVG de esas capas, con la misma geometría que `_capas_rgba()`.
+
+    `caja` y `size` son los de `_capas_rgba()`: la rejilla mide `caja` y el lado
+    ancho del dibujo `size` píxeles. `ancho` y `alto` son los de la imagen
+    (por omisión `size`); `bajar` baja el dibujo esos píxeles, con decimales.
+
+    Una capa de color `None` recorta lo de debajo, y nanosvg no hace `<mask>` ni
+    `<clipPath>`: se pinta del color `recorte`, el de lo que hay detrás de la
+    imagen. Sin él esas capas no se saben describir.
+
+    Returns:
+        El SVG y el tamaño exacto, en píxeles, de la imagen que dará Tk.
+
+    Raises:
+        _SinSvg: Si la imagen no se puede describir.
+    """
+    unidad = caja / size
+    cuerpo = ""
+    for color, trazo, prims in capas:
+        if color is None:
+            if recorte is None:
+                raise _SinSvg("recorte sin color de fondo")
+            color = recorte
+        cuerpo += _svg_capa(color, trazo, prims)
+    if bajar:
+        cuerpo = f'<g transform="translate(0 {_n(bajar * unidad)})">{cuerpo}</g>'
+    return _svg_marco(cuerpo, size if ancho is None else ancho,
+                      size if alto is None else alto, unidad)
+
+
+def _foto_svg(widget, svg):
+    """Devuelve la imagen que Tk pinta de ese SVG, o `None` si no se puede.
+
+    `svg` devuelve `(texto, ancho, alto)`. Si no se sabe describir (`_SinSvg`),
+    si Tk no lo lee o si la imagen sale de otro tamaño que el esperado, es
+    `None` y el llamador cae al rasterizador de Python: nada cambia de medida y
+    un adorno no tumba la ventana. `PINTADAS` dice cuántas veces pasa.
+    """
+    import tkinter as tk
+    try:
+        texto, ancho, alto = svg()
+        img = tk.PhotoImage(master=widget, data=texto, format="svg")
+    except Exception:                                   # noqa: BLE001
+        return None
+    if (img.width(), img.height()) != (ancho, alto):
+        return None
+    return img
+
+
+def _foto(widget, clave: tuple, filas, svg=None):
+    """Devuelve la imagen de clave `clave`, haciéndola solo si hace falta.
+
+    `filas` es una función que devuelve las filas `(r, g, b, a)` y `svg` otra que
+    devuelve `(texto SVG, ancho, alto)`: solo se llama la que toque, y solo si la
+    imagen no está pintada ya en este proceso. Si el intérprete sabe leer SVG
+    (`svg_disponible()`) se le da el SVG a Tk y la pinta él; si no, o si esa
+    imagen no se sabe describir, se rasterizan `filas` y se le dan como PNG,
+    que es la única manera de pasarle un alfa con matices: `PhotoImage.put()`
+    escribe colores opacos y nada más.
+
+    Es el único camino de las imágenes con alfa: la caché lleva en la clave el
+    pintor que se PIDIÓ, así que cambiar `USAR_SVG` no devuelve una imagen del
+    otro. Una imagen que se pidió en SVG y se cayó al rasterizador se guarda
+    también bajo «svg»: así no se vuelve a intentar cada vez, pero una consulta
+    que ya estaba en la caché no dice si fue SVG (`img.cget("format")` sí).
     """
     interp = widget.tk
-    ficha = (id(interp), *clave)
+    con_svg = svg is not None and svg_disponible(widget)
+    ficha = (id(interp), "svg" if con_svg else "png", *clave)
     guardado = _CACHE.get(ficha)
     if guardado is not None and guardado[0] is interp:
         return guardado[1]
-    datos = _PNGS.get(clave)
-    if datos is None:
-        import base64
-        datos = base64.b64encode(_png(filas())).decode("ascii")
-        _PNGS[clave] = datos
-    import tkinter as tk
-    img = tk.PhotoImage(master=widget, data=datos)
+    img = _foto_svg(widget, svg) if con_svg else None
+    if img is not None:
+        PINTADAS["svg"] += 1
+    else:
+        datos = _PNGS.get(clave)
+        if datos is None:
+            import base64
+            datos = base64.b64encode(_png(filas())).decode("ascii")
+            _PNGS[clave] = datos
+        import tkinter as tk
+        img = tk.PhotoImage(master=widget, data=datos)
+        PINTADAS["python"] += 1
     _CACHE[ficha] = (interp, img)
     return img
 
 
 def _dibujar(widget, clave: tuple, capas, caja: float, size: int, fondo: str = "",
-             bajar: int = 0, alto: int | None = None):
+             bajar: int = 0, alto: int | None = None, recorte: str | None = None):
     """Devuelve la imagen de esas capas sobre transparente, pintándola solo si hace falta.
 
     `fondo` ya no se usa: se acepta por las llamadas de antes, cuando el icono
     se aplanaba contra el color del sitio donde caía. Ahora lleva su alfa y Tk
     lo compone contra lo que haya debajo, sea papel, tarjeta o el gris de un
     botón al pasar por encima.
+
+    `recorte` es el color de lo que hay detrás, y solo lo necesita el SVG de una
+    imagen con una capa `None` (la pastilla de la bandeja se recorta del campo):
+    sin él esa imagen se pinta en Python.
     """
     return _foto(widget, (*clave, "@alfa"),
                  lambda: _con_hueco(_capas_rgba(capas, caja, size), size,
-                                    bajar, alto))
+                                    bajar, alto),
+                 lambda: _svg_capas(capas, caja, size, size,
+                                    size + bajar if alto is None else alto,
+                                    bajar, recorte))
 
 
 def get(widget, nombre: str, size: int = 16, color: str = "#3B362F",
@@ -548,9 +822,13 @@ def get(widget, nombre: str, size: int = 16, color: str = "#3B362F",
             prims = _mover(prims, 0, fraccion * 16.0 / real)
             filas = real + 1
         capas = [(color, TRAZO, prims)]
+        # En SVG las primitivas no se mueven: el dibujo baja `entero + fraccion` píxeles.
+        total = alto if alto is not None else entero + filas
         return _foto(widget, (nombre, real, color, entero, fraccion, alto, "@alfa"),
                      lambda: _con_hueco(_capas_rgba(capas, 16.0, real, filas), real,
-                                        entero, alto))
+                                        entero, alto),
+                     lambda: _svg_capas([(color, TRAZO, GLIFOS[nombre])], 16.0, real,
+                                        real, total, entero + fraccion))
     except Exception:
         return None
 
@@ -585,7 +863,7 @@ def casilla(widget, estado: str, size: int = 15, margen: int = 7):
     lado, hueco = px(widget, size), px(widget, margen)
     uno = 16 / lado                     # un píxel en la rejilla de 16
 
-    def filas():
+    def capas():
         """El cuadrado con su borde y, si va marcada, el visto."""
         fino, radio = uno * px(widget, 1), uno * px(widget, 2)
         capas = [(borde, 0.0, [("rr", 0, 0, 16, 16, radio)]),
@@ -593,10 +871,12 @@ def casilla(widget, estado: str, size: int = 15, margen: int = 7):
                                   max(0.0, radio - fino))])]
         if visto:
             capas.append((visto, 2.4, _VISTO))
-        return _con_hueco(_capas_rgba(capas, 16.0, lado), lado, derecha=hueco)
+        return capas
 
     return _foto(widget, ("@casilla", estado, lado, hueco, relleno, borde, visto),
-                 filas)
+                 lambda: _con_hueco(_capas_rgba(capas(), 16.0, lado), lado,
+                                    derecha=hueco),
+                 lambda: _svg_capas(capas(), 16.0, lado, lado + hueco, lado))
 
 
 def _radios() -> dict[str, tuple[str, str, str | None]]:
@@ -621,17 +901,19 @@ def opcion(widget, estado: str, size: int = 16, margen: int = 7):
     lado, hueco = px(widget, size), px(widget, margen)
     fino = 16 / lado * px(widget, 1)
 
-    def filas():
+    def capas():
         """El aro, su relleno y el punto."""
         capas = [(aro, 0.0, [("rr", 0, 0, 16, 16, 8)]),
                  (relleno, 0.0, [("rr", fino, fino, 16 - 2 * fino, 16 - 2 * fino,
                                   8 - fino)])]
         if punto:
             capas.append((punto, 0.0, [("rr", 4, 4, 8, 8, 4)]))
-        return _con_hueco(_capas_rgba(capas, 16.0, lado), lado, derecha=hueco)
+        return capas
 
     return _foto(widget, ("@opcion", estado, lado, hueco, relleno, aro, punto),
-                 filas)
+                 lambda: _con_hueco(_capas_rgba(capas(), 16.0, lado), lado,
+                                    derecha=hueco),
+                 lambda: _svg_capas(capas(), 16.0, lado, lado + hueco, lado))
 
 
 def _forma(x: float, y: float, w: float, h: float, radio: float,
@@ -671,6 +953,72 @@ def _ensanchar(filas, borde: int, ancho: int, alto: int) -> list[list[tuple]]:
     anchas = [fila[:borde] + [fila[medio_x]] * ancho + fila[-borde:] for fila in filas]
     medio_y = len(anchas) // 2
     return anchas[:borde] + [anchas[medio_y]] * alto + anchas[-borde:]
+
+
+def _camino_caja(izq: float, arr: float, der: float, aba: float, radio: float,
+                 esquinas: str) -> str:
+    """Devuelve el trazado SVG de la forma de `_forma()`, en píxeles.
+
+    `(izq, arr)` y `(der, aba)` son sus lados. Las esquinas rectas de `_forma()`
+    son un cuarto relleno encima del redondeado; aquí es un único contorno
+    cerrado, que es lo que hace falta para sacarle un hueco con
+    `fill-rule="evenodd"`.
+    """
+    radio = max(0.0, min(radio, (der - izq) / 2, (aba - arr) / 2))
+    ai, ad, bd, bi = (radio if marca == "1" else 0.0 for marca in esquinas)
+
+    def arco(radio_esquina: float, x: float, y: float) -> str:
+        """Devuelve el cuarto de círculo que acaba en `(x, y)`, o nada si la esquina es recta."""
+        r = _n(radio_esquina)
+        return f"A{r} {r} 0 0 1 {_n(x)} {_n(y)}" if radio_esquina else ""
+
+    return (f"M{_n(izq + ai)} {_n(arr)}H{_n(der - ad)}" + arco(ad, der, arr + ad)
+            + f"V{_n(aba - bd)}" + arco(bd, der - bd, aba)
+            + f"H{_n(izq + bi)}" + arco(bi, izq, aba - bi)
+            + f"V{_n(arr + ai)}" + arco(ai, izq + ai, arr) + "Z")
+
+
+def _svg_caja(reales: list[tuple], r: int, esquinas: str, borde: int) -> tuple[str, int, int]:
+    """Devuelve el SVG de la pieza de `caja()`, escrito en píxeles de la pantalla.
+
+    `reales` son los tonos como los deja `caja()` (el color y los cuatro
+    márgenes, ya en píxeles). La pieza lleva el centro ensanchado
+    (`CENTRO_ANCHO` × `CENTRO_ALTO`) como la del rasterizador, y se escribe a
+    su tamaño exacto y no a escala: el borde de 1 px de un control es 1 px
+    entero a cualquier densidad.
+
+    Un tono `None` recorta lo de debajo, y nanosvg no tiene recorte: el tono
+    anterior se pinta con un hueco de esa forma, con `fill-rule="evenodd"`. Eso
+    vale mientras el hueco quede dentro de la forma que recorta, que con
+    márgenes que solo crecen es siempre.
+
+    Raises:
+        _SinSvg: Si algún hueco se sale de la forma que recorta.
+    """
+    ancho, alto = 2 * borde + CENTRO_ANCHO, 2 * borde + CENTRO_ALTO
+    formas = []
+    for color, margenes in reales:
+        iz, ar, de, ab = margenes
+        formas.append((color, margenes,
+                       _camino_caja(iz, ar, ancho - de, alto - ab,
+                                    max(0, r - max(margenes)), esquinas)))
+    cuerpo = ""
+    for i, (color, margenes, camino) in enumerate(formas):
+        if color is None:
+            continue
+        huecos: list[tuple] = []
+        for color_j, margenes_j, camino_j in formas[i + 1:]:
+            if color_j is not None:
+                continue
+            if any(m < o for m, o in zip(margenes_j, margenes)):
+                raise _SinSvg("hueco fuera de su forma")
+            if any(all(m >= o for m, o in zip(margenes_j, hueco[0])) for hueco in huecos):
+                continue                   # dentro de otro hueco: ya está recortado
+            huecos.append((margenes_j, camino_j))
+        cuerpo += (f'<path fill="{color}"'
+                   + (' fill-rule="evenodd"' if huecos else "")
+                   + f' d="{camino}{"".join(c for _m, c in huecos)}"/>')
+    return _svg_marco(cuerpo, ancho, alto, 1.0)
 
 
 def caja(widget, tonos, radio: float = 4, esquinas: str = "1111"):
@@ -720,7 +1068,8 @@ def caja(widget, tonos, radio: float = 4, esquinas: str = "1111"):
                               CENTRO_ANCHO, CENTRO_ALTO)
 
         return _foto(widget, ("@caja", tuple(reales), r, esquinas, lado,
-                              CENTRO_ANCHO, CENTRO_ALTO), filas), borde
+                              CENTRO_ANCHO, CENTRO_ALTO), filas,
+                     lambda: _svg_caja(reales, r, esquinas, borde)), borde
     except Exception:
         return None, 0
 
@@ -938,15 +1287,33 @@ def _png(rgba, size: int | None = None) -> bytes:
     comprimidos con zlib, que está en la biblioteca estándar. Cada línea lleva
     delante un byte de filtro: 0, «ninguno». Filtrar mejoraría la compresión de
     una foto; de dos colores planos no tiene nada que sacar.
+
+    Las piezas de `caja()` tienen unos 8 colores distintos y repiten filas
+    enteras (el centro ensanchado de `_ensanchar()` es la MISMA lista una y otra
+    vez, y los huecos de `_con_hueco()` también), así que cada píxel se
+    convierte a bytes una sola vez por llamada y cada fila, por identidad, otra
+    sola vez. Lo que se comprime es el flujo de siempre, píxel a píxel; las filas
+    se reconocen por `id()`, que vale porque `rgba` las mantiene vivas hasta el
+    final.
     """
     import struct
     import zlib
 
+    pixeles: dict[tuple, bytes] = {}              # (r, g, b, a) -> sus 4 bytes
+    cuerpos: dict[int, bytes] = {}                # id(fila) -> el filtro y sus píxeles
     crudo = bytearray()
     for fila in rgba:                             # PNG sí va de arriba abajo
-        crudo.append(0)
-        for r, g, b, a in fila:
-            crudo += bytes((r, g, b, round(a * 255)))
+        cuerpo = cuerpos.get(id(fila))
+        if cuerpo is None:
+            partes = [b"\0"]                      # filtro 0: «ninguno»
+            for pixel in fila:
+                cuatro = pixeles.get(pixel)
+                if cuatro is None:
+                    r, g, b, a = pixel
+                    cuatro = pixeles[pixel] = bytes((r, g, b, round(a * 255)))
+                partes.append(cuatro)
+            cuerpo = cuerpos[id(fila)] = b"".join(partes)
+        crudo += cuerpo
 
     def trozo(nombre: bytes, datos: bytes) -> bytes:
         """Devuelve un trozo del PNG con su longitud, su nombre y su CRC."""
@@ -1102,7 +1469,7 @@ def marca_estado(widget, size: int, estado: str = BIEN, campo: str = CAMPO,
                      for i, (color, ancho, prims) in enumerate(capas)]
         real = px(widget, size)
         return _dibujar(widget, ("@marca-estado", real, estado, campo, fondo),
-                        capas, 64.0, real, fondo or campo)
+                        capas, 64.0, real, fondo or campo, recorte=fondo)
     except Exception:
         return None
 

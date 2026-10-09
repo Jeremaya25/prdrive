@@ -9,9 +9,11 @@ que sale precargada la ventana. Ese recuerdo manda sobre `[daemon]` del TOML,
 que a su vez manda sobre los valores de fábrica.
 
 Lo escriben tres sitios, cada uno con lo suyo:
-- Las casillas de la ventana (`guardar_parejas`): las parejas marcadas, en
-  cuanto se marcan o desmarcan. Conserva el intervalo guardado y no fija uno
-  si no lo hay.
+- Las casillas de la ventana (`guardar_parejas`): las parejas marcadas.
+  Conserva el intervalo guardado y no fija uno si no lo hay. Los clics no la
+  llaman uno a uno: `SeleccionPendiente` apunta la última selección y la
+  vuelca pasados `ESPERA_MS` sin más clics y siempre antes de lanzar una
+  pasada, de iniciar el servicio o de cerrar la ventana.
 - «Iniciar servicio» (`save_prefs`, desde `runsync`): las parejas marcadas y
   el intervalo con el que arranca, que es el que ya estaba guardado.
 - «Ajustes → Configuración» (`guardar_intervalo`): SOLO el intervalo. Si ya
@@ -24,12 +26,19 @@ automático nunca reescriba lo que se decidió a mano.
 
 El fichero conserva el nombre de cuando era «lo último que se eligió en la UI»:
 renombrarlo pediría una migración para cambiar una palabra.
+
+Aparte, en `state/ventana.json`, la ventana principal recuerda su ancho y lo
+que ocupan lo que va encima y lo que va debajo de la lista (`ancho_recordado`,
+`recordar_ancho`, `arriba_recordado`, `recordar_arriba`, `abajo_recordado`,
+`recordar_abajo`): no es cosa del servicio y no va en `ui_prefs.json`.
 """
 
 from __future__ import annotations
 
 import math
 import socket
+import sys
+from pathlib import Path
 from typing import Any, Mapping
 
 from common import model, store
@@ -39,6 +48,23 @@ PREFS = model.STATE_DIR / "ui_prefs.json"
 """El fichero con la elección del servicio, en `state/` del dispositivo."""
 HOST = socket.gethostname()
 """El nombre de este equipo, para anotar quién guardó la elección."""
+ESPERA_MS = 250
+"""Milisegundos que la ventana espera tras la última casilla antes de volcar la selección.
+
+Marcar varias seguidas escribe `ui_prefs.json` una vez (`SeleccionPendiente`),
+no una por clic.
+"""
+VENTANA = "ventana.json"
+"""El fichero de `state/` donde la ventana principal recuerda su tamaño.
+
+Es `{"ancho": {clave: px}, "arriba": {clave: px}, "abajo": {clave: px}}`: el ancho de
+su contenido y lo que ocupan lo que va encima y lo que va debajo de la lista de
+parejas, cada uno por clave (`clave_ancho()`).
+
+No es `ui_prefs.json` a propósito: el agente del equipo vigila la fecha de ese
+fichero y recarga su servicio con cualquier cambio (`agente.py`,
+`_cargar_servicio`), y el tamaño de una ventana no le dice nada al servicio.
+"""
 
 
 def read_prefs() -> dict:
@@ -124,10 +150,10 @@ def guardar_intervalo(config: Config, minutos: float) -> bool:
 def guardar_parejas(config: Config, pairs: list[str]) -> bool:
     """Guarda las parejas marcadas en la ventana, sin fijar el intervalo.
 
-    Es lo que escribe cada casilla al marcarse o desmarcarse. Conserva el
-    intervalo ya guardado («Configuración») y, si no lo hay, no escribe uno: el
-    del TOML sigue mandando. No guarda una selección vacía, que `elegir` leería
-    como si no hubiera recuerdo.
+    Es lo que guardan las casillas de la ventana (`SeleccionPendiente`).
+    Conserva el intervalo ya guardado («Configuración») y, si no lo hay, no
+    escribe uno: el del TOML sigue mandando. No guarda una selección vacía, que
+    `elegir` leería como si no hubiera recuerdo.
 
     Args:
         config: La configuración del dispositivo, para saber qué parejas hay.
@@ -149,6 +175,59 @@ def guardar_parejas(config: Config, pairs: list[str]) -> bool:
     if data == {k: v for k, v in old.items() if k not in ("host", "saved")}:
         return True  # ya estaba así: no se gasta escritura en el dispositivo
     return store.write_json(PREFS, {**data, "host": HOST, "saved": store.stamp()})
+
+
+class SeleccionPendiente:
+    """La última selección de casillas que aún no se ha escrito en `ui_prefs.json`.
+
+    Un clic en una casilla solo la apunta (`poner`); la ventana la escribe
+    (`volcar`) pasados `ESPERA_MS` sin más clics, y siempre antes de lanzar una
+    pasada, de iniciar el servicio o de cerrarse, que es cuando el servicio y
+    el agente pueden leerla. Se usa solo desde el hilo de Tk.
+    """
+
+    def __init__(self) -> None:
+        self._pendiente: tuple[Config, list[str]] | None = None
+
+    @property
+    def pendiente(self) -> bool:
+        """Indica si hay una selección apuntada sin escribir."""
+        return self._pendiente is not None
+
+    def poner(self, config: Config, pares: list[str]) -> None:
+        """Apunta la selección, sustituyendo a la anterior. No escribe nada.
+
+        Una selección vacía no sustituye a una pendiente con alguna pareja:
+        desmarcarlas todas seguidas deja escrita la última que tenía alguna,
+        como cuando cada clic escribía y la vacía no se guardaba.
+
+        Args:
+            config: La configuración del dispositivo, para saber qué parejas hay.
+            pares: Las parejas marcadas.
+        """
+        if not pares and self._pendiente is not None and self._pendiente[1]:
+            return
+        self._pendiente = (config, list(pares))
+
+    def volcar(self) -> bool | None:
+        """Escribe la última selección apuntada y se olvida de ella.
+
+        Nunca lanza: que el dispositivo no se deje escribir no es motivo para
+        que una pasada o el cierre de la ventana no sigan adelante.
+
+        Returns:
+            `None` si no había nada apuntado (y no se toca el fichero); si lo
+            había, lo que devuelve `guardar_parejas`: `False` si no se ha
+            podido escribir o la selección no tenía ninguna pareja.
+        """
+        if self._pendiente is None:
+            return None
+        config, pares = self._pendiente
+        self._pendiente = None
+        try:
+            return guardar_parejas(config, pares)
+        except Exception:                                # noqa: BLE001
+            return False
 
 
 def daemon_defaults(config: Config) -> tuple[list[str], float]:
@@ -246,3 +325,158 @@ def elegir(all_names: list[str], daemon: Mapping[str, Any],
         return d_pairs, d_interval, None
     return pairs, _minutos(prefs, d_interval), ("Parejas e intervalo del servicio"
                                                 + (f", elegidos el {when}" if when else ""))
+
+
+def ruta_ventana() -> Path:
+    """Devuelve el fichero donde la principal recuerda su ancho y sus altos.
+
+    Se calcula al llamar, no al importar: los tests mueven `model.STATE_DIR`.
+    """
+    return model.STATE_DIR / VENTANA
+
+
+def clave_ancho(version_tk: str, escala: float) -> str:
+    """Devuelve con qué clave se recuerda el ancho: lo que cambia cuánto mide el texto.
+
+    El sistema, la versión de Tk y su `tk scaling` (píxeles por punto). El
+    dispositivo viaja de un equipo a otro: un ancho medido al 150 % no vale al
+    100 %, ni uno de Windows en Linux.
+
+    Args:
+        version_tk: `tkinter.TkVersion`, en texto («9.0», «8.6»).
+        escala: `tk scaling` de la ventana.
+    """
+    return f"{sys.platform}:{version_tk}:{escala:.3f}"
+
+
+def ancho_recordado(clave: str) -> int | None:
+    """Devuelve el ancho que pidió el contenido de la principal la última vez, o `None`.
+
+    Es el de después de llegar su lectura del dispositivo, el que la ventana
+    reserva desde el primer pintado. Nunca lanza: un fichero que falta, está a
+    medias o no dice un ancho para esa clave es `None`.
+
+    Args:
+        clave: La de `clave_ancho()`.
+    """
+    return _recordado("ancho", clave, 1)
+
+
+def recordar_ancho(clave: str, ancho: int) -> bool:
+    """Guarda el ancho de la principal para esa clave, solo si ha cambiado.
+
+    Conserva los de otras claves y los altos de `recordar_arriba()` y
+    `recordar_abajo()`. Nunca lanza: un dispositivo de solo lectura, o ya
+    extraído, simplemente no lo recuerda.
+
+    Args:
+        clave: La de `clave_ancho()`.
+        ancho: Lo que pide el contenido de la ventana, en píxeles.
+
+    Returns:
+        True si se ha escrito o ya estaba así; False si no se ha podido escribir.
+    """
+    return _recordar("ancho", clave, ancho)
+
+
+def arriba_recordado(clave: str) -> int | None:
+    """Devuelve lo que ocupó la última vez lo que va encima de la lista, o `None`.
+
+    Es lo que ocupan, apiladas, las líneas que solo conoce la lectura del
+    dispositivo («Reparación…», el aviso de componentes) junto a las que ya
+    estaban en el primer pintado, con su margen, en píxeles. La ventana lo
+    reserva desde el primer pintado para que la lista no baje al llegar la
+    lectura. `0` es un valor: la última vez no había nada encima. Nunca lanza:
+    un fichero que falta, está a medias o no dice un alto para esa clave es
+    `None`.
+
+    Args:
+        clave: La de `clave_ancho()`.
+    """
+    return _recordado("arriba", clave, 0)
+
+
+def recordar_arriba(clave: str, alto: int) -> bool:
+    """Guarda lo que ocupa lo que va encima de la lista, solo si ha cambiado.
+
+    Conserva los de otras claves, el ancho de `recordar_ancho()` y el alto de
+    `recordar_abajo()`. Nunca lanza: un dispositivo de solo lectura, o ya
+    extraído, simplemente no lo recuerda.
+
+    Args:
+        clave: La de `clave_ancho()`.
+        alto: Lo que ocupan esas líneas con la lectura aplicada, en píxeles; 0
+            si no hay ninguna.
+
+    Returns:
+        True si se ha escrito o ya estaba así; False si no se ha podido escribir.
+    """
+    return _recordar("arriba", clave, alto)
+
+
+def abajo_recordado(clave: str) -> int | None:
+    """Devuelve lo que ocupó la última vez lo que va debajo de la lista, o `None`.
+
+    Es lo que ocupan, apiladas, las filas de entre la lista y el pie: la línea
+    del llavero, «Parejas…» y «Ajustes…», la del arranque automático y la frase
+    de la pausa, con su margen, en píxeles. Las del llavero, el arranque y la
+    pausa solo las conoce la lectura del dispositivo. La ventana lo reserva desde
+    el primer pintado para que el pie no baje, ni la ventana crezca, al llegar
+    la lectura. `0` es un valor, igual que en `arriba_recordado()`. Nunca lanza:
+    un fichero que falta, está a medias o no dice un alto para esa clave es
+    `None`.
+
+    Args:
+        clave: La de `clave_ancho()`.
+    """
+    return _recordado("abajo", clave, 0)
+
+
+def recordar_abajo(clave: str, alto: int) -> bool:
+    """Guarda lo que ocupa lo que va debajo de la lista, solo si ha cambiado.
+
+    Conserva los de otras claves, el ancho de `recordar_ancho()` y el alto de
+    `recordar_arriba()`. Nunca lanza: un dispositivo de solo lectura, o ya
+    extraído, simplemente no lo recuerda.
+
+    Args:
+        clave: La de `clave_ancho()`.
+        alto: Lo que ocupan esas filas con la lectura aplicada, en píxeles.
+
+    Returns:
+        True si se ha escrito o ya estaba así; False si no se ha podido escribir.
+    """
+    return _recordar("abajo", clave, alto)
+
+
+def _recordado(campo: str, clave: str, minimo: int) -> int | None:
+    """Lee de `ventana.json` el píxel recordado en `campo` para `clave`, o `None`.
+
+    Args:
+        campo: `"ancho"`, `"arriba"` o `"abajo"`.
+        clave: La de `clave_ancho()`.
+        minimo: El menor valor que vale; lo que no es un entero o es menor es
+            como si no hubiera nada.
+    """
+    valores = store.read_json(ruta_ventana()).get(campo)
+    valor = valores.get(clave) if isinstance(valores, dict) else None
+    # `type` y no `isinstance`: un `True` también es un `int`.
+    return valor if type(valor) is int and valor >= minimo else None
+
+
+def _recordar(campo: str, clave: str, valor: int) -> bool:
+    """Escribe en `ventana.json` el píxel de `campo` para `clave`, solo si cambia.
+
+    Conserva las demás claves de `campo` y todo lo que no sea `campo`.
+
+    Returns:
+        True si se ha escrito o ya estaba así; False si no se ha podido escribir.
+    """
+    ruta = ruta_ventana()
+    datos = store.read_json(ruta)
+    valores = datos.get(campo)
+    valores = dict(valores) if isinstance(valores, dict) else {}
+    if type(valores.get(clave)) is int and valores[clave] == valor:
+        return True  # ya estaba así: no se gasta escritura en el dispositivo
+    valores[clave] = valor
+    return store.write_json(ruta, {**datos, campo: valores})

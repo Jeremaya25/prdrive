@@ -94,11 +94,23 @@ VC_INSTALADO: list = [None]
 penwatch.installed_veracrypt = lambda: VC_INSTALADO[0]
 
 # preparar: código y Python
+from install import deploy  # noqa: E402
+
+calentados: list[tuple] = []
+deploy.precompilar = lambda destino, python, **k: (
+    calentados.append((Path(destino), python, k.get("prefijo"))) or True)
 prep = ia.preparar()
+c("calienta la caché de los hijos del agente con su Python, ya en la carpeta definitiva",
+  calentados, [(prep.codigo, prep.python, equipo.DIR / "pycache")])
 c("el código va a agente/<versión>/", prep.codigo, equipo.dir_codigo() / version())
-for nombre in ("agente.py", "penwatch.py", "VERSION", "common/planificador.py",
+for nombre in ("pregunta.py", "agente.py", "penwatch.py", "VERSION", "common/planificador.py",
                "common/equipo.py", "ui/tk_agente.py", "ui/prefs.py"):
     c(f"  con {nombre}", (prep.codigo / nombre).is_file(), True)
+c("  copiando pregunta.py antes que el agente.py que la lanza",
+  ia.CODIGO_FICHEROS.index("pregunta.py") < ia.CODIGO_FICHEROS.index("agente.py"), True)
+import build_installer  # noqa: E402
+c("  y el instalador lleva dentro todo lo que copia (si no, falla en una instalación de verdad)",
+  [n for n in ia.CODIGO_FICHEROS if n not in build_installer.DATOS_FICHEROS], [])
 c("  sin lo del instalador", (prep.codigo / "install").exists(), False)
 c("  ni cachés de bytecode", list(prep.codigo.rglob("__pycache__")), [])
 plat = platforms.host()

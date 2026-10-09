@@ -82,6 +82,13 @@ def working_directo(parent, titulo, funcion, mensaje="", progreso=None):
 
 
 tk_install.working = working_directo
+# Lo que un paso lee después de pintarse (la lista de unidades, la ruta a mano,
+# la verificación) llega en el sitio, como `working()`: sin bucle de eventos,
+# un resultado que llega por sondeo no llegaría nunca. Los hilos de verdad se
+# prueban en test_tk_asistente.
+from ui import segundo_plano  # noqa: E402
+
+segundo_plano.lanzar = segundo_plano.en_el_acto
 
 # Un rclone de mentira: el paso de instalación lo copia, no lo ejecuta.
 RCLONE_FALSO = tmpdir() / "rclone-de-mentira"
@@ -351,10 +358,13 @@ c("y ya se puede seguir", str(vacio.boton_siguiente.cget("state")), "normal")
 # más corta de lo que VeraCrypt recomienda. Ni VeraCrypt ni una unidad de
 # verdad: las sondas de `crypto` se sustituyen.
 from install import crypto, deploy  # noqa: E402
-from ui import tk_crypto  # noqa: E402
+from ui import segundo_plano, tk_crypto  # noqa: E402
 
-# El panel importa su propio `working`: el mismo cambio que arriba.
+# El panel importa su propio `working`: el mismo cambio que arriba. Y la sonda
+# de escritura va en otro hilo: aquí, en el sitio, para que su medida ya esté
+# cuando se mira el panel (sus esperas las prueba test_tk_equipo_lecturas).
 tk_crypto.working = tk_install.working
+segundo_plano.lanzar = segundo_plano.en_el_acto
 sondas_crypto = {n: getattr(crypto, n) for n in (
     "find_veracrypt", "soporta_dispersos", "sistema_de_ficheros",
     "medir_escritura", "create_container", "mount_container")}
@@ -520,9 +530,22 @@ c.contains("con el total de lo que ocupará",
            " ".join(str(w.cget("text")) for w in widgets(wiz.cuerpo, ttk.Label)),
            f"≈{ANFITRION.mb_rclone + ANFITRION.mb_python} MB")
 
+# Los .pyc son lo último que se escribe: en una unidad casi llena no le quitan
+# sitio a los lanzadores ni al fichero de control. Se apunta qué había ya escrito
+# cada vez que se precompila.
+from install import deploy, device                        # noqa: E402
+
+al_precompilar: list = []
+real_precompilar_dispositivo = deploy.precompilar_dispositivo
+deploy.precompilar_dispositivo = lambda raiz, progreso=None: al_precompilar.append(
+    ((Path(raiz) / "runsync.bat").is_file(), device.control_id(raiz) is not None))
 pedido.clear()
-boton(wiz.cuerpo, "Instalar el programa").invoke()
-from install import deploy                                # noqa: E402
+try:
+    boton(wiz.cuerpo, "Instalar el programa").invoke()
+finally:
+    deploy.precompilar_dispositivo = real_precompilar_dispositivo
+c("se precompila una vez, al final: con los lanzadores y el fichero de control ya puestos",
+  al_precompilar, [(True, True)])
 
 app = deploy.app_dir(limpio)
 c("el programa aterriza en la carpeta oculta", (app / "runsync.py").is_file(), True)
@@ -963,11 +986,18 @@ c("y se enciende al haber instalado de verdad",
 import penwatch  # noqa: E402
 from common import equipo  # noqa: E402
 from install import agente as ia  # noqa: E402
-from ui import tk_equipo  # noqa: E402
+from ui import lecturas_asistente, segundo_plano, tk_equipo, watch  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
 
 equipo.DIR = tmpdir("prdrive-asis-equipo-")
 penwatch.CONFIG_FILE = tmpdir("prdrive-asis-pw-") / "watch.json"
 tk_equipo.working = working_directo
+# Las carpetas se examinan al dejar de teclear y en otro hilo, y «Verificación»
+# comprueba en otro hilo: aquí todo en el sitio y sin esperar a la última tecla
+# (`escribir()` mueve el bucle de eventos). Las esperas de verdad las prueba
+# test_tk_equipo_lecturas.
+segundo_plano.lanzar = segundo_plano.en_el_acto
+lecturas_asistente.ESPERA_TECLA_MS = 0
 preparados, activados = [], []
 PREP = ia.Preparado(equipo.DIR / "agente" / "0.4.0", equipo.DIR / "runtime" / "x" / "py",
                     "sello")
@@ -1002,9 +1032,14 @@ def radios(wiz) -> dict[str, str]:
 
 
 def escribir(entrada, texto: str) -> None:
-    """Como teclearlo: borrar e insertar pasan por la validación de la caja."""
+    """Como teclearlo: borrar e insertar pasan por la validación de la caja.
+
+    Después se mueve el bucle de eventos: con `ESPERA_TECLA_MS = 0`, eso dispara
+    el examen de lo escrito, que con `en_el_acto` ya ha llegado al volver.
+    """
     entrada.delete(0, "end")
     entrada.insert(0, texto)
+    entrada.update()
 
 
 casa = nuevo_asistente(None)
@@ -1061,6 +1096,20 @@ filas = {e: ok for e, ok, _ in tk_equipo.comprobaciones()}
 c("  y dice lo que falta (aquí nada se instaló de verdad)",
   (filas["Agente instalado"], filas["penwatch"]), (False, True))
 c("  sin raíz, no hay filas de raíz", "Fichero de control" in filas, False)
+# En Windows «Arranca al iniciar sesión» pregunta a `schtasks`, con tope de tiempo
+real_win, real_consulta = ia.IS_WIN, watch.consulta
+ia.IS_WIN = True
+try:
+    for rc, esperado in ((0, (True, "registrado")),
+                         (1, (False, "no está registrado")),
+                         (watch.CODIGO_TIEMPO, (False, "el sistema no contesta"))):
+        watch.consulta = lambda cmd, timeout=watch.CONSULTA_S, rc=rc: SimpleNamespace(
+            returncode=rc)
+        fila = {e: (ok, d) for e, ok, d in tk_equipo.comprobaciones()}
+        c(f"  schtasks con código {rc}: {esperado[1]}",
+          fila["Arranca al iniciar sesión"], esperado)
+finally:
+    ia.IS_WIN, watch.consulta = real_win, real_consulta
 escritorio_real = tk_equipo.escritorio
 tk_equipo.escritorio = lambda: (True, False)
 filas = {e: (ok, d) for e, ok, d in tk_equipo.comprobaciones()}
@@ -1242,7 +1291,13 @@ c("  con la de la raíz elegida no se guarda",
 por_valor = {w.get(): w for w in cajas}
 escribir(por_valor["."], "copia")
 escribir(por_valor["sync-data/docs"], "Documentos/docs")
+c("  la línea de debajo dice dónde cae la ruta escrita",
+  str(RAIZ_EQUIPO / "Documentos" / "docs")
+  in [w.cget("text") for w in widgets(propia.cuerpo, ttk.Label)], True)
+esperas.clear()
 boton(propia.cuerpo, "Guardar el config y crear las carpetas").invoke()
+c("  la nota de la flota se apunta con la barra de working() («flota»)",
+  [t for t, _ in esperas], ["flota"])
 import tomllib  # noqa: E402
 escrito = tomllib.loads((RAIZ_EQUIPO / ".prdrive" / "sync_config.toml").read_text(
     encoding="utf-8"))
