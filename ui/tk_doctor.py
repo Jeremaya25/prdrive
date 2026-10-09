@@ -50,7 +50,7 @@ from dataclasses import dataclass
 from common import fleet, model, revision, update
 from common.model import Config
 
-from . import catalog_editor, icons, theme, watch
+from . import catalog_editor, icons, perf_al_pintar, perf_empezar, theme, watch
 from .tk import Panel, cuerpo_visible, modal, mostrar
 
 
@@ -640,6 +640,8 @@ def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None,
         antes = estado["clave"]
         if clave == antes:
             return
+        momento = f"pane-{clave}"
+        perf_empezar(momento)
         marcar(antes, clave)
         estado["clave"] = clave
         if antes in paneles:
@@ -652,6 +654,7 @@ def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None,
             ajustar(panel)
         else:
             dibujar(clave)
+        perf_al_pintar(dlg, momento)
 
     def aplicar() -> None:
         """Deja la ventana como al abrirla: sin búsqueda, sin apartados guardados y en el inicial."""
@@ -709,5 +712,6 @@ def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None,
     except Exception:                                # noqa: BLE001
         vivo = False
     if vivo:
+        dlg.perf_momento = "open-ajustes"              # lo cierra `mostrar`, al pintarse
         mostrar(dlg, parent)
     return resultados
