@@ -638,10 +638,9 @@ def medir(root) -> None:
     medida["cabe"] = (root.winfo_reqwidth() <= util_x
                       and root.winfo_reqheight() <= util_y)
     medida["expulsar"] = "Expulsar" in botones(root)
-    medida["recortado"] = ((visor.interior.winfo_reqheight() > alto
-                            and not visor.vertical.grid_info())
-                           or (visor.interior.winfo_reqwidth() > ancho
-                               and not visor.horizontal.grid_info()))
+    vertical, horizontal = visor.barras()
+    medida["recortado"] = ((visor.interior.winfo_reqheight() > alto and not vertical)
+                           or (visor.interior.winfo_reqwidth() > ancho and not horizontal))
 
 
 try:

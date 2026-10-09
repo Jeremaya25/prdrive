@@ -194,6 +194,17 @@ class Visor:
 
     Las barras tienen su hueco reservado siempre, aparezcan o no: si lo ganaran
     y lo perdieran, la ventana cambiaría de ancho al pasar de un paso a otro.
+    La barra horizontal, que casi ninguna pantalla necesita, se crea la primera
+    vez que el contenido desborda por la derecha una mirilla que ya está a su
+    tamaño (`_revisar()`); desde entonces se pone y se quita como la vertical.
+    Su franja está reservada igualmente desde el principio, con el grosor de la
+    vertical (en ttk son iguales), así que la ventana pide el mismo tamaño
+    tenga o no la barra. No se mira antes de que el recuadro se ajuste por
+    primera vez, cuando la mirilla es un tamaño de partida, ni mientras
+    `encajar`/`crecer` miden el contenido, que fuerzan el reparto de las
+    geometrías pendientes con la mirilla todavía a su tamaño de antes: en los
+    dos casos el contenido la desborda sin que falte ninguna barra, y se
+    crearía una en cada ventana cuyo contenido cambia.
 
     `lienzo` es un marco que hace de mirilla e `interior` va dentro colocado con
     `place`; desplazar es moverlo. No es un `Canvas` a propósito: un `Canvas`
@@ -209,10 +220,14 @@ class Visor:
         alto: El alto de partida y el mínimo, no un tope: el recuadro nunca es
             más pequeño que eso y crece con el contenido hasta donde llegue la
             pantalla.
+
+    Attributes:
+        horizontal: La barra horizontal, o `None` mientras el contenido no haya
+            sido más ancho que la mirilla.
     """
 
     def __init__(self, padre, ancho: int | None = None, alto: int | None = None):
-        """Crea el recuadro, su mirilla y sus barras, y engancha los eventos."""
+        """Crea el recuadro, su mirilla y la barra vertical, y engancha los eventos."""
         import tkinter as tk
         from tkinter import ttk
 
@@ -223,17 +238,19 @@ class Visor:
                                width=ancho or 200, height=alto or 150)
         self.vertical = ttk.Scrollbar(self.marco, orient="vertical",
                                       command=lambda *a: self._desplazar(1, *a))
-        self.horizontal = ttk.Scrollbar(self.marco, orient="horizontal",
-                                        command=lambda *a: self._desplazar(0, *a))
+        self.horizontal = None
         self.lienzo.grid(row=0, column=0, sticky="nsew")
         self.marco.columnconfigure(0, weight=1)
         self.marco.rowconfigure(0, weight=1)
-        self.marco.columnconfigure(1, minsize=self.vertical.winfo_reqwidth())
-        self.marco.rowconfigure(1, minsize=self.horizontal.winfo_reqheight())
+        grosor = self.vertical.winfo_reqwidth()     # el de la horizontal es igual
+        self.marco.columnconfigure(1, minsize=grosor)
+        self.marco.rowconfigure(1, minsize=grosor)
 
         self.interior = ttk.Frame(self.lienzo)
         self.interior.place(x=0, y=0)
         self._puesto = (0, 0)          # lo último que se le dijo a `place`
+        self._ajustado = False         # si `encajar`/`crecer` ya le dieron su tamaño
+        self._ajustando = 0            # cuántos `encajar`/`crecer` lo están midiendo ahora
         self._desde = [0, 0]           # cuánto está desplazado, en x y en y
         self.interior.bind("<Configure>", lambda _e: self._revisar())
         self.lienzo.bind("<Configure>", lambda _e: self._revisar())
@@ -280,6 +297,7 @@ class Visor:
         cambia = (ancho, alto) != self._medida()
         if cambia:
             self.lienzo.configure(width=ancho, height=alto)
+        self._ajustado = True
         self._revisar()
         return cambia
 
@@ -291,9 +309,13 @@ class Visor:
         """
         antes = self._medida()
         ventana = ventana or self.marco.winfo_toplevel()
-        ancho, alto = self._natural()
-        self._fijar(ancho, alto)
-        tope_x, tope_y = self._tope(ventana)
+        self._ajustando += 1
+        try:
+            ancho, alto = self._natural()
+            self._fijar(ancho, alto)
+            tope_x, tope_y = self._tope(ventana)
+        finally:
+            self._ajustando -= 1
         self._fijar(min(ancho, tope_x), min(alto, tope_y))
         return self._medida() != antes
 
@@ -306,9 +328,13 @@ class Visor:
         tiene que volver a colocarla.
         """
         ventana = ventana or self.marco.winfo_toplevel()
-        pide_x, pide_y = self._natural()
-        hay_x, hay_y = self._medida()
-        tope_x, tope_y = self._tope(ventana)
+        self._ajustando += 1
+        try:
+            pide_x, pide_y = self._natural()
+            hay_x, hay_y = self._medida()
+            tope_x, tope_y = self._tope(ventana)
+        finally:
+            self._ajustando -= 1
         return self._fijar(min(max(hay_x, pide_x), tope_x),
                            min(max(hay_y, pide_y), tope_y))
 
@@ -363,7 +389,7 @@ class Visor:
             self._desde[eje] = desde
             self.interior.place_configure(x=-self._desde[0], y=-self._desde[1])
         barra = self.vertical if eje else self.horizontal
-        if total > 0:
+        if barra is not None and total > 0:
             barra.set(desde / total, min(1.0, (desde + hueco) / total))
 
     def _desplazar(self, eje: int, *orden) -> None:
@@ -380,6 +406,15 @@ class Visor:
             paso = self._hueco()[eje] * (0.9 if orden[2].startswith("page") else 0.1)
             self._mover(eje, self._desde[eje] + int(orden[1]) * max(1, int(paso)))
 
+    def barras(self) -> tuple[bool, bool]:
+        """Indica qué barras están puestas: `(vertical, horizontal)`.
+
+        La horizontal cuenta como puesta solo si existe y está en la rejilla;
+        una que se quitó porque dejó de hacer falta sigue existiendo y no cuenta.
+        """
+        return (bool(self.vertical.grid_info()),
+                self.horizontal is not None and bool(self.horizontal.grid_info()))
+
     def _revisar(self) -> None:
         """Enseña cada barra solo si por ese lado sobra contenido.
 
@@ -387,6 +422,11 @@ class Visor:
         un formulario colocado con `sticky='ew'` siga ocupando todo el ancho; y
         solo se le habla cuando la medida cambia, porque redimensionarlo
         dispara otro `<Configure>` y con él se volvería aquí sin parar.
+
+        La barra horizontal se crea aquí, la primera vez que hace falta con la
+        mirilla ya a su tamaño, con la misma forma que si hubiera nacido con
+        el recuadro; su estilo ya lo dejó puesto `theme.apply()`, así que
+        crearla con la ventana enseñada no toca ningún estilo de ttk.
         """
         ancho, alto = self._hueco()
         pide_x = self.interior.winfo_reqwidth()
@@ -395,6 +435,11 @@ class Visor:
         if medida != self._puesto:
             self._puesto = medida
             self.interior.place_configure(width=medida[0], height=medida[1])
+        if (pide_x > ancho and self.horizontal is None
+                and self._ajustado and not self._ajustando):
+            from tkinter import ttk
+            self.horizontal = ttk.Scrollbar(self.marco, orient="horizontal",
+                                            command=lambda *a: self._desplazar(0, *a))
         for eje in (0, 1):                  # lo que sobraba puede haber menguado
             self._mover(eje, self._desde[eje])
         # Puesta o no en la rejilla, no `winfo_ismapped()`: una ventana todavía
@@ -403,6 +448,8 @@ class Visor:
         for barra, falta, sitio in (
                 (self.vertical, pide_y > alto, dict(row=0, column=1, sticky="ns")),
                 (self.horizontal, pide_x > ancho, dict(row=1, column=0, sticky="ew"))):
+            if barra is None:
+                continue
             puesta = bool(barra.grid_info())
             if falta and not puesta:
                 barra.grid(**sitio)
@@ -432,7 +479,7 @@ class Visor:
         return "break"
 
 
-def cuerpo_visible(ventana, **opciones):
+def cuerpo_visible(ventana, directo: bool = False, **opciones):
     """Devuelve el marco donde se dibuja una pantalla, ya dentro de un `Visor`.
 
     Sustituye al `ttk.Frame(ventana, padding=…)` + `.grid(sticky='nsew')` que
@@ -440,17 +487,32 @@ def cuerpo_visible(ventana, **opciones):
     pantalla es pequeña, el contenido se desplaza en vez de quedarse fuera. El
     visor queda colgado de la ventana para que `mostrar()` lo encaje al
     enseñarla, sin que cada diálogo tenga que acordarse.
+
+    Args:
+        ventana: La ventana donde se pone el `Visor`.
+        directo: Si se da, la pantalla se dibuja en el `interior` del `Visor` y
+            no en un marco más: las opciones van a `interior.configure()` y no
+            se le dan pesos a sus columnas ni a sus filas, que son de quien
+            dibuja (el marco de siempre sí estira su celda). Es un widget
+            menos para las ventanas que tienen pocos.
+        **opciones: Las del marco (`padding=…`).
+
+    Returns:
+        El marco, o el `interior` del `Visor` con `directo`.
     """
     from tkinter import ttk
     visor = Visor(ventana)
     visor.marco.grid(row=0, column=0, sticky="nsew")
     ventana.columnconfigure(0, weight=1)
     ventana.rowconfigure(0, weight=1)
+    ventana.visor = visor
+    if directo:
+        visor.interior.configure(**opciones)
+        return visor.interior
     visor.interior.columnconfigure(0, weight=1)
     visor.interior.rowconfigure(0, weight=1)
     marco = ttk.Frame(visor.interior, **opciones)
     marco.grid(row=0, column=0, sticky="nsew")
-    ventana.visor = visor
     return marco
 
 

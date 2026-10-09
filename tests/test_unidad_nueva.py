@@ -227,7 +227,7 @@ try:
 except Exception as e:                                  # noqa: BLE001
     print(f"  (saltado) sin entorno gráfico: {e}")
 else:
-    from ui import theme
+    from ui import icons, theme
     theme.apply(raiz_tk)
     raiz_tk.withdraw()
     dichas: list = []
@@ -237,6 +237,90 @@ else:
     c("los botones contestan lo que dicen", dichas, [tk_agente.ATENDER, tk_agente.AHORA_NO])
     c("y la nota enseña el plazo", piezas["nota"].cget("text"), tk_agente.cuenta(120))
     raiz_tk.destroy()
+
+    # 11 widgets, y cada pieza en su sitio, a dos escalas
+    def descendientes(widget):
+        """Devuelve cada widget que cuelga de `widget`, a cualquier profundidad."""
+        for hijo in widget.winfo_children():
+            yield hijo
+            yield from descendientes(hijo)
+
+    def pieza(marco, texto: str):
+        """Devuelve la etiqueta o el botón de `marco` cuyo texto empieza así."""
+        return next(w for w in descendientes(marco)
+                    if "text" in w.keys() and str(w.cget("text")).startswith(texto))
+
+    for escala in (1.0, 2.0):
+        raiz_tk = tk.Tk()
+        raiz_tk.tk.call("tk", "scaling", escala)
+        theme.apply(raiz_tk)
+        raiz_tk.withdraw()
+        try:
+            piezas = tk_agente.construir(raiz_tk, "PRDRIVE-2", 120, dichas.append)
+            raiz_tk.visor.encajar(raiz_tk)
+            raiz_tk.update_idletasks()
+            marco = piezas["marco"]
+            etiqueta = f"a escala {escala}"
+            c(f"la pregunta son 11 widgets ({etiqueta})",
+              len(list(descendientes(raiz_tk))), 11)
+            c("  y se dibuja en el interior del Visor, sin un marco más",
+              marco is raiz_tk.visor.interior, True)
+            titulo = pieza(marco, "Se ha conectado PRDRIVE-2")
+            texto = pieza(marco, "¿Atender esta unidad")
+            atender, ahora_no, nota = piezas["atender"], piezas["ahora_no"], piezas["nota"]
+            e1, e2, e5 = (raiz_tk.winfo_pixels(x) for x in (theme.E1, theme.E2, theme.E5))
+
+            def caja(w) -> tuple[int, int, int, int]:
+                """Devuelve `(izquierda, arriba, derecha, abajo)` respecto al contenido."""
+                x, y = w.winfo_rootx() - marco.winfo_rootx(), w.winfo_rooty() - marco.winfo_rooty()
+                return (x, y, x + w.winfo_width(), y + w.winfo_height())
+
+            marcas = [w for w in descendientes(marco)
+                      if w.winfo_class() == "TLabel" and str(w.cget("image"))]
+            if marcas:
+                c("  la marca queda a la altura del título", caja(marcas[0])[1],
+                  caja(titulo)[1])
+                c("  y a su izquierda", caja(marcas[0])[2] <= caja(titulo)[0], True)
+            else:
+                print("  (saltado) sin marca no hay qué alinear")
+            c("  la explicación empieza donde el título y justo debajo",
+              caja(texto)[:2], (caja(titulo)[0], caja(titulo)[3] + e1))
+            c("  «Atender» llega hasta el borde del contenido menos el relleno",
+              caja(atender)[2], marco.winfo_width() - e5)
+            c("  «Ahora no» está a su izquierda, a una separación de `E2`",
+              caja(atender)[0] - caja(ahora_no)[2], e2)
+            c("  los dos botones comparten fila", caja(ahora_no)[3], caja(atender)[3])
+            c("  y la nota del plazo empieza en el borde izquierdo, bajo la explicación",
+              (caja(nota)[0], caja(nota)[1] > caja(texto)[3]), (e5, True))
+
+            # Con una marca más alta que el texto, el título y la explicación
+            # siguen juntos y centrados frente a ella.
+            marca_real = icons.marca_estado
+            icons.marca_estado = lambda w, size, *a, **k: tk.PhotoImage(
+                master=w, width=400, height=400)
+            try:
+                alta = tk.Toplevel(raiz_tk)
+                alta.withdraw()
+                otras = tk_agente.construir(alta, "PRDRIVE-2", 120, dichas.append)
+            finally:
+                icons.marca_estado = marca_real
+            alta.visor.encajar(alta)
+            alta.update_idletasks()
+            marco = otras["marco"]
+            titulo = pieza(marco, "Se ha conectado PRDRIVE-2")
+            texto = pieza(marco, "¿Atender esta unidad")
+            marca = next(w for w in descendientes(marco)
+                         if w.winfo_class() == "TLabel" and str(w.cget("image")))
+            c("  con una marca más alta que el texto, entre ellos sigue habiendo `E1`",
+              caja(texto)[1] - caja(titulo)[3], e1)
+            c("  y el texto queda centrado frente a ella (a un píxel)",
+              abs((caja(titulo)[1] - caja(marca)[1]) - (caja(marca)[3] - caja(texto)[3])) <= 1,
+              True)
+        finally:
+            interp = raiz_tk.tk
+            raiz_tk.destroy()
+            theme.olvidar(interp)
+            icons.olvidar(interp)
     # de verdad, en su proceso: con un segundo de cuenta atrás sale con «Ahora no» (1)
     c("con pantalla, la cuenta atrás a cero sale con 1, igual por pregunta.py que por agente.py",
       (sale_con("pregunta.py", "--nombre", "A", "--segundos", "1"),

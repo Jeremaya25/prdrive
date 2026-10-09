@@ -58,7 +58,11 @@ def construir(root, nombre: str, segundos: int, responder,
               cambiada: bool = False) -> dict:
     """Pinta la pregunta dentro de `root` y devuelve sus piezas vivas.
 
-    Las piezas son para la cuenta atrás y para los tests.
+    Se dibuja con las once piezas justas (las cuatro del `Visor` y siete
+    más), directamente en el interior del `Visor` y en una sola rejilla: la
+    marca y el título, la explicación, las dos notas y los dos botones. Es la
+    ventana que más depende de abrir deprisa, y cada pieza de más se paga en
+    el primer pintado. Las piezas son para la cuenta atrás y para los tests.
 
     Args:
         root: Donde se pinta.
@@ -66,44 +70,49 @@ def construir(root, nombre: str, segundos: int, responder,
         segundos: La cuenta atrás.
         responder: `responder(código)` cierra con esa respuesta.
         cambiada: Si la unidad ya estaba en la lista pero con otro código.
+
+    Returns:
+        Las piezas: `marco` (el interior del `Visor`), `nota` (la de la cuenta
+        atrás), `atender` y `ahora_no`.
     """
     from tkinter import ttk
 
     from . import tk as tkui
 
-    marco = tkui.cuerpo_visible(root, padding=(theme.E5, theme.E5, theme.E5, theme.E4))
-    marco.columnconfigure(0, weight=1)
+    marco = tkui.cuerpo_visible(root, directo=True,
+                                padding=(theme.E5, theme.E5, theme.E5, theme.E4))
+    marco.columnconfigure(1, weight=1)
     titulo, explicacion = texto(cambiada)
     # La marca de la unidad delante del título: es de una unidad de lo que se
     # pregunta, no de un programa cualquiera.
-    arriba = ttk.Frame(marco)
-    arriba.grid(row=0, column=0, sticky="ew")
-    arriba.columnconfigure(1, weight=1)
-    img = icons.marca_estado(arriba, 40, fondo=theme.PAPEL)
+    # El título «sw» y la explicación «nw»: si la marca fuera más alta que el
+    # texto, los dos siguen juntos y centrados frente a ella.
+    img = icons.marca_estado(marco, 40, fondo=theme.PAPEL)
     if img is not None:
-        marca = ttk.Label(arriba, image=img)
+        marca = ttk.Label(marco, image=img)
         marca.image = img
-        marca.grid(row=0, column=0, sticky="nw", padx=(0, theme.E3))
-    tkui.cabecera(arriba, titulo.format(nombre=nombre), explicacion,
-                  ancho=400, estilo="Dialogo.TLabel").grid(row=0, column=1, sticky="w")
+        marca.grid(row=0, column=0, rowspan=2, sticky="nw", padx=(0, theme.E3))
+    ttk.Label(marco, text=titulo.format(nombre=nombre),
+              style="Dialogo.TLabel").grid(row=0, column=1, columnspan=3, sticky="sw")
+    ttk.Label(marco, text=explicacion, style="Pista.TLabel",
+              wraplength=theme.medida(400), justify="left").grid(
+        row=1, column=1, columnspan=3, sticky="nw", pady=(theme.E1, 0))
 
     nota = ttk.Label(marco, text=cuenta(segundos), style="Pista.TLabel",
                      wraplength=theme.medida(420), justify="left")
-    nota.grid(row=1, column=0, sticky="w", pady=(theme.E4, 0))
+    nota.grid(row=2, column=0, columnspan=4, sticky="w", pady=(theme.E4, 0))
     ttk.Label(marco, text="«Ahora no» vale para esta conexión: la próxima vez que la "
                           "enchufes se volverá a preguntar.",
               style="Pista.TLabel", wraplength=theme.medida(420),
-              justify="left").grid(row=2, column=0, sticky="w", pady=(theme.E2, 0))
+              justify="left").grid(row=3, column=0, columnspan=4, sticky="w",
+                                   pady=(theme.E2, 0))
 
-    pie = ttk.Frame(marco)
-    pie.grid(row=3, column=0, sticky="ew", pady=(theme.E5, 0))
-    pie.columnconfigure(0, weight=1)
-    ahora_no = ttk.Button(pie, text="Ahora no", style="Quiet.TButton",
+    ahora_no = ttk.Button(marco, text="Ahora no", style="Quiet.TButton",
                           command=lambda: responder(AHORA_NO))
-    ahora_no.grid(row=0, column=1, padx=(0, theme.E2))
-    atender = ttk.Button(pie, text="Atender", style="Primary.TButton",
+    ahora_no.grid(row=4, column=2, padx=(0, theme.E2), pady=(theme.E5, 0))
+    atender = ttk.Button(marco, text="Atender", style="Primary.TButton",
                          command=lambda: responder(ATENDER))
-    atender.grid(row=0, column=2)
+    atender.grid(row=4, column=3, pady=(theme.E5, 0))
     return {"marco": marco, "nota": nota, "atender": atender, "ahora_no": ahora_no}
 
 
