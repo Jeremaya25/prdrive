@@ -30,7 +30,6 @@ from __future__ import annotations
 import re
 import sys
 import time
-import unicodedata
 from functools import partial
 from pathlib import Path
 
@@ -140,6 +139,11 @@ def momento_del_paso(titulo: str) -> str:
     Args:
         titulo: El título del paso, como lo enseña la cabecera.
     """
+    # Solo la usa el modo de medida (`PRDRIVE_PERF`). Su import va aquí dentro: arriba
+    # contaría entre los módulos que el asistente carga antes de su primer pintado
+    # (`modulos.wizard` en tests/rendimiento/presupuesto.toml).
+    import unicodedata
+
     sin_tildes = unicodedata.normalize("NFKD", titulo).encode("ascii", "ignore").decode("ascii")
     return "paso-" + re.sub(r"[^a-z0-9]+", "-", sin_tildes.lower()).strip("-")
 
