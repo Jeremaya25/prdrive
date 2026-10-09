@@ -103,19 +103,28 @@ widgets (45 → 50, 225 → 230: medido en local), así que lo que cuesta es mov
 ya estaba: en Windows cada widget es una ventana nativa. Antes de la tarea 11b, que quitó el
 ensanche, eran 461 y 2574 ms.
 
-Lo que se mueve, medido en local comparando dónde está cada widget antes y después: con el
-dispositivo de muestra la lectura trae la línea de «Reparación…» («Hay 3 cosas que revisar.»),
-que va **encima** de la lista, y todo lo de debajo baja 51 px: 31 widgets con 5 parejas, 210 con
-50. Lo que aparece debajo de la lista (la línea del arranque automático) solo mueve el pie.
+Lo que se mueve, medido en local comparando dónde está cada widget antes y después **con el
+equipo falso de la comprobación**: solo aparece la línea del arranque automático, debajo de la
+lista; con 5 parejas se mueven 4 widgets (el pie) y la ventana crece 58 px, y con 50 no se mueve
+la lista. Así que en Windows el coste no es mover la lista, y sin medirlo allí no se sabe cuál
+es: la comprobación apunta desde ahora, con `llega-instantanea`, cuánto se va en cada paso y
+cuántos widgets se repintan (`commands-testing.md`).
+
+En otro equipo, en cambio, el mismo dispositivo trae además la línea de «Reparación…» («Hay 3
+cosas que revisar.»), **encima** de la lista, y entonces todo lo de debajo baja 51 px: 31
+widgets con 5 parejas, 210 con 50. Eso es lo que quita la tarea 11c (`f08cf55`): la ventana
+recuerda en `state/ventana.json` cuánto ocupa lo que va encima de la lista y lo reserva desde el
+primer pintado. La comprobación de tiempos no lo ve (su equipo no tiene nada que revisar): en su
+pasada por Windows con `f08cf55`, en una máquina más rápida (suelo de 119 ms), la llegada tardó
+226 y 719 ms, lo mismo que antes en proporción a la 0.7.1 medida en la misma máquina.
 
 La consecuencia con 50 parejas: la ventana sale antes que en la 0.7.1 (1238 frente a 1983 ms)
 pero se completa más tarde (1238 + 908, más la lectura misma, que la comprobación no cuenta) y se
 queda quieta casi un segundo. Con 5 parejas se completa antes (unos 913 ms frente a 1370).
 
-El arreglo sigue al del ancho: recordar en `state/ventana.json` cuánto ocupa lo que va encima de
-la lista y reservarlo desde el primer pintado, para que al llegar la lectura no se mueva nada si
-el dispositivo está como la última vez (tarea 11c). Si eso no basta en Windows, lo siguiente es
-la lista de la principal sobre un lienzo, como la de «Parejas».
+Lo siguiente es leer ese reparto en Windows y, con él, decidir: reservar también lo que va
+debajo de la lista, para que la ventana no cambie de tamaño al llegar la lectura, o llevar la
+lista de la principal a un lienzo, como la de «Parejas».
 
 ## R3 y R7
 

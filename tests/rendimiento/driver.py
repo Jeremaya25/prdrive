@@ -660,6 +660,14 @@ def llega_instantanea(root):
     su primer pintado, con todo su contenido. Solo el flujo `principal` apunta el momento.
 
     El árbol de la 0.7.1 no tiene `instantanea` ni `sondeo_instantanea`: no se hace nada.
+
+    En el flujo `principal` apunta además, para saber dónde se va el tiempo (solo se
+    informa, no falla nada): `fases` (lo que tardan `VistaPrincipal.aplicar()`, el
+    `encajar()` del visor, todo `_mirar()` y el `update()` que lo pinta), `expose` y
+    `configure` (cuántos `<Expose>` y `<Configure>` recibe cada clase de widget en ese
+    tramo: lo que se repinta y lo que cambia de sitio o de tamaño) y `geometria` (los
+    widgets que estaban y se movieron o cambiaron de tamaño, y los nuevos). Contarlos
+    cuesta unas decenas de microsegundos por suceso, dentro del tramo medido.
     """
     encargo = getattr(root, "instantanea", None)
     sondeo = getattr(root, "sondeo_instantanea", None)
@@ -668,13 +676,98 @@ def llega_instantanea(root):
     limite = time.time() + 5
     while not encargo.hecho and time.time() < limite:
         time.sleep(0.001)
+    mide = FLOW == "principal" and not CAPTURA
+    traza = _trazar_llegada(root) if mide else None
     t0 = time.perf_counter()
     sondeo._mirar()
+    t_mirar = time.perf_counter()
     root.update()
     t1 = time.perf_counter()
     sondeo.seguir()                # `probe()` lo pausó; las lecturas de después, solas
-    if FLOW == "principal" and not CAPTURA:
-        record("llega-instantanea", ms(t0, t1), **medir(root))
+    if mide:
+        detalle = medir(root)
+        detalle.update(traza(ms(t0, t_mirar), ms(t_mirar, t1)))
+        record("llega-instantanea", ms(t0, t1), **detalle)
+
+
+def _trazar_llegada(root):
+    """Prepara la traza de `llega-instantanea` y devuelve la función que la cierra.
+
+    Envuelve `VistaPrincipal.aplicar` y el `encajar` del visor de esta ventana para
+    cronometrarlos, cuenta los `<Expose>` y `<Configure>` por clase con un enlace en la
+    etiqueta `all` (la tienen todos los widgets), y fotografía la geometría de cada
+    widget. La función devuelta deshace todo eso y devuelve lo apuntado.
+    """
+    fases = {"aplicar": 0.0, "encajar": 0.0}
+    sucesos = {"<Expose>": {}, "<Configure>": {}}
+    deshacer = []
+
+    def cronometrar(nombre, funcion):
+        def envoltura(*a, **k):
+            t = time.perf_counter()
+            try:
+                return funcion(*a, **k)
+            finally:
+                fases[nombre] += (time.perf_counter() - t) * 1000
+        return envoltura
+
+    modulo = sys.modules.get("ui.tk_principal")
+    clase = getattr(modulo, "VistaPrincipal", None)
+    if clase is not None:
+        original = clase.aplicar
+        clase.aplicar = cronometrar("aplicar", original)
+        deshacer.append(lambda: setattr(clase, "aplicar", original))
+    visor = getattr(root, "visor", None)
+    if visor is not None and hasattr(visor, "encajar"):
+        visor.encajar = cronometrar("encajar", visor.encajar)
+        deshacer.append(lambda: delattr(visor, "encajar"))
+
+    def contador(secuencia):
+        cuenta = sucesos[secuencia]
+
+        def apuntar(e):
+            try:
+                clase_w = e.widget.winfo_class()
+            except Exception:                            # noqa: BLE001
+                clase_w = "?"
+            cuenta[clase_w] = cuenta.get(clase_w, 0) + 1
+        return apuntar
+
+    for secuencia in sucesos:
+        previo = root.tk.call("bind", "all", secuencia)
+        root.bind_all(secuencia, contador(secuencia), add="+")
+        deshacer.append(lambda s=secuencia, p=previo: root.tk.call("bind", "all", s, p))
+
+    def foto():
+        d = {}
+        for w in list(walk(root))[1:]:
+            try:
+                d[str(w)] = (w.winfo_x(), w.winfo_y(), w.winfo_width(), w.winfo_height())
+            except Exception:                            # noqa: BLE001
+                pass
+        return d
+
+    antes = foto()
+
+    def cerrar(ms_mirar, ms_update):
+        for paso in reversed(deshacer):
+            try:
+                paso()
+            except Exception:                            # noqa: BLE001
+                pass
+        despues = foto()
+        comunes = [k for k in despues if k in antes]
+        return {
+            "fases": {"aplicar": round(fases["aplicar"], 1), "encajar": round(fases["encajar"], 1),
+                      "mirar": ms_mirar, "update": ms_update},
+            "expose": dict(sorted(sucesos["<Expose>"].items(), key=lambda kv: -kv[1])),
+            "configure": dict(sorted(sucesos["<Configure>"].items(), key=lambda kv: -kv[1])),
+            "geometria": {
+                "movidos": sum(1 for k in comunes if antes[k][:2] != despues[k][:2]),
+                "redimensionados": sum(1 for k in comunes if antes[k][2:] != despues[k][2:]),
+                "nuevos": len(despues) - len(comunes)},
+        }
+    return cerrar
 
 
 def con_veredicto(ventana):
