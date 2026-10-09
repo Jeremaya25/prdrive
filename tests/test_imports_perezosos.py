@@ -8,11 +8,14 @@ el servicio los pagan aunque no los usen. Esto vigila que no vuelvan a subir:
 
 - Qué módulos quedan cargados al importar `ui`, `ui.tk`, `runsync`,
   `common.update` y `pregunta`, en un proceso limpio cada uno.
-- Que lo que `main_window()` importa tarde está en `PRECARGA`: la
-  lista que se importa a ratos tras el primer pintado y, entera, antes de
-  aplicar una actualización (a partir de ahí los ficheros cambian bajo el
-  proceso, y un módulo importado por primera vez se leería nuevo junto a los
-  viejos).
+- Que lo que `main_window()` (y la vista que dibuja, `ui/tk_principal.py`)
+  importa tarde está en `PRECARGA`: la lista que se importa a ratos tras el
+  primer pintado y, entera, antes de aplicar una actualización (a partir de ahí
+  los ficheros cambian bajo el proceso, y un módulo importado por primera vez
+  se leería nuevo junto a los viejos).
+- Que el primer pintado de la ventana principal no carga lo que lee el
+  dispositivo (averías, conflictos, componentes, penwatch): eso llega con la
+  lectura que se lanza después, y entonces sí.
 - Cómo se precarga: de uno en uno, con `after`, sin ventana, y en
   `tk_update` justo antes de aplicar (si hay entorno gráfico).
 """
@@ -79,28 +82,47 @@ for ruta, prohibidos in ARRIBA.items():
 from ui import tk as uitk  # noqa: E402
 
 
+def _importados_en(funcion: ast.AST, cabecera: set[int]) -> set[str]:
+    """Devuelve lo que se importa de `ui` o `common` dentro de `funcion`, salvo esos nodos."""
+    nombres: set[str] = set()
+    for nodo in ast.walk(funcion):
+        if not isinstance(nodo, ast.ImportFrom) or id(nodo) in cabecera:
+            continue
+        if nodo.level == 1 and not nodo.module:
+            nombres |= {f"ui.{a.name}" for a in nodo.names}
+        elif nodo.level == 1:
+            nombres.add(f"ui.{nodo.module}")
+        elif nodo.module == "common":
+            nombres |= {f"common.{a.name}" for a in nodo.names}
+    return nombres
+
+
 def importados_tarde() -> set[str]:
-    """Devuelve lo que `ui/tk.py` importa dentro de `main_window()`, salvo en su cabecera."""
+    """Devuelve lo que la principal importa después de pintarse.
+
+    Es lo de dentro de `main_window()` en `ui/tk.py`, salvo su cabecera (lo
+    que se importa antes del primer pintado), y lo de dentro de cualquier
+    función de `ui/tk_principal.py`, la vista que dibuja.
+    """
     arbol = ast.parse((REPO / "ui" / "tk.py").read_text(encoding="utf-8"))
     nombres: set[str] = set()
     for funcion in arbol.body:
-        if not (isinstance(funcion, ast.FunctionDef) and funcion.name == "main_window"):
-            continue
-        cabecera = {id(n) for n in funcion.body}
-        for nodo in ast.walk(funcion):
-            if not isinstance(nodo, ast.ImportFrom) or id(nodo) in cabecera:
-                continue
-            if nodo.level == 1 and not nodo.module:
-                nombres |= {f"ui.{a.name}" for a in nodo.names}
-            elif nodo.module == "common":
-                nombres |= {f"common.{a.name}" for a in nodo.names}
+        if isinstance(funcion, ast.FunctionDef) and funcion.name == "main_window":
+            nombres |= _importados_en(funcion, {id(n) for n in funcion.body})
+    vista = ast.parse((REPO / "ui" / "tk_principal.py").read_text(encoding="utf-8"))
+    for nodo in vista.body:
+        if isinstance(nodo, (ast.FunctionDef, ast.ClassDef)):
+            nombres |= _importados_en(nodo, set())
     return nombres
 
 
 YA_CARGADOS = cargados("ui.tk")
 """Lo que `import ui.tk` ya trae: no hace falta precargarlo."""
+TARDE = importados_tarde()
+c("se ven los imports tardíos de la principal y de su vista",
+  {"ui.instantanea", "ui.tk_pairs", "ui.watch"} <= TARDE, True)
 c("PRECARGA y PRECARGA_LLAVERO cubren todo lo que la principal importa tarde",
-  sorted(importados_tarde() - YA_CARGADOS - set(uitk.PRECARGA) - set(uitk.PRECARGA_LLAVERO)), [])
+  sorted(TARDE - YA_CARGADOS - set(uitk.PRECARGA) - set(uitk.PRECARGA_LLAVERO)), [])
 c("  y todo lo que listan existe",
   sorted(n for n in uitk.PRECARGA + uitk.PRECARGA_LLAVERO
          if not (REPO / (n.replace(".", "/") + ".py")).is_file()), [])
@@ -222,4 +244,71 @@ with sandbox():
               "relanzar"])
 
 raiz.destroy()
+
+# el primer pintado de la principal no lee el dispositivo: eso llega después
+#
+# En un proceso limpio, como un arranque de verdad. La sonda que sustituye al
+# bucle de eventos mira qué hay cargado ANTES de dejar que Tk haga lo que tiene
+# pendiente (la lectura del dispositivo, que con `en_el_acto` llega ahí mismo) y
+# DESPUÉS.
+PRIMER_PINTADO = r"""
+import json, shutil, sys, tempfile
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import ui
+import tkinter as tk
+from common import model, update
+from ui import prefs, segundo_plano
+from ui import tk as uitk
+
+# Sin `_harness`: importa el agente y el llavero, que traen lo que se vigila.
+raiz = Path(tempfile.mkdtemp(prefix="prdrive-imports-"))
+model.STATE_DIR, model.FILTERS_DIR, model.LOG_DIR = (raiz / "state", raiz / "filters",
+                                                     raiz / "logs")
+model.DEVICE_ROOT, model.CONFIG_FILE = raiz, raiz / "sync_config.toml"
+model.RCLONE_CONF = raiz / "rclone.conf"
+for carpeta in (model.STATE_DIR, model.FILTERS_DIR, model.LOG_DIR):
+    carpeta.mkdir()
+update.pending = lambda root=None: None
+update.check = lambda force=False: (None, None)
+prefs.PREFS = model.STATE_DIR / "ui_prefs.json"
+segundo_plano.lanzar = segundo_plano.en_el_acto
+VIGILADOS = ("common.revision", "common.conflicts", "common.components", "penwatch")
+visto = {}
+
+
+def sonda(self, *a, **k):
+    visto["antes"] = [m for m in VIGILADOS if m in sys.modules]
+    from common import equipo
+    equipo.instalado = lambda: False      # sin agente: el arranque es cosa de penwatch
+    self.update_idletasks()
+    visto["despues"] = [m for m in VIGILADOS if m in sys.modules]
+    visto["fallos"] = dict(self.instantanea.resultado.fallos)
+    for pendiente in self.tk.splitlist(self.tk.call("after", "info")):
+        self.after_cancel(pendiente)
+    self.destroy()
+
+
+tk.Tk.mainloop = sonda
+parejas = [{"name": n, "local": f"sync-data/{n}", "remote_path": f"/R/{n}"} for n in "ab"]
+try:
+    uitk.main_window(model.parse_config({"defaults": {"remote": "nas"}, "pair": parejas}),
+                     None)
+finally:
+    shutil.rmtree(raiz, ignore_errors=True)
+print(json.dumps(visto))
+"""
+hijo = subprocess.run([sys.executable, "-c", PRIMER_PINTADO, str(REPO)], cwd=str(REPO),
+                      capture_output=True, text=True, timeout=120)
+try:
+    pintado = json.loads(hijo.stdout.strip().splitlines()[-1])
+except (IndexError, ValueError):
+    pintado = {"error": hijo.stderr[-600:]}
+c("main_window: el primer pintado no carga revision, conflicts, components ni penwatch",
+  pintado.get("antes", pintado), [])
+c("  y con la lectura, que llega después, sí",
+  pintado.get("despues", pintado),
+  ["common.revision", "common.conflicts", "common.components", "penwatch"])
+c("  sin que fallara ningún lector", pintado.get("fallos", pintado), {})
+
 sys.exit(c.report())

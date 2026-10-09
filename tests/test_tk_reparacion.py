@@ -552,12 +552,47 @@ def salida_falsa(titulo, cmd, parent=None, subtitulo="", modal=True, al_cerrar=N
 
 SALIDA_REAL = uitk.output_window
 uitk.output_window = salida_falsa
+# La lectura del dispositivo que la principal hace tras pintarse, en el sitio:
+# llega con el primer `update_idletasks()`.
+from ui import segundo_plano  # noqa: E402
+
+segundo_plano.lanzar = segundo_plano.en_el_acto
+lecturas: list = []
+
+
+def botones_vistos(w) -> dict:
+    """Devuelve los botones a la vista de `w` por su texto.
+
+    La principal guarda escondidos los bloques que no enseña: no cuentan.
+    """
+    from _vista import visibles
+    return {b.cget("text"): b for b in visibles(w, "TButton")}
+
+
+def textos_vistos(w) -> list[str]:
+    """Devuelve los textos de las etiquetas a la vista de `w`."""
+    from _vista import visibles
+    return [str(x.cget("text")) for x in visibles(w, "TLabel")]
+
+
+def hasta(root, condicion) -> bool:
+    """Mueve el bucle de eventos hasta que se cumple `condicion`, como mucho 2 s."""
+    limite = time.monotonic() + 2.0
+    while not condicion() and time.monotonic() < limite:
+        root.update()
+        time.sleep(0.005)
+    return bool(condicion())
 
 
 def ventana_principal(cfg, conducir):
-    """Abre la principal y, en vez de su bucle de eventos, ejecuta `conducir`."""
+    """Abre la principal y, en vez de su bucle de eventos, ejecuta `conducir`.
+
+    Antes deja llegar la lectura del dispositivo y apunta qué no se pudo leer.
+    """
     def _mainloop(self):
         """Conduce la ventana en vez de entrar en el bucle de eventos."""
+        self.update_idletasks()
+        lecturas.append(dict(self.instantanea.resultado.fallos))
         conducir(self)
         try:
             # Lo que la ventana dejó programado (la versión, el escaneo) no se
@@ -585,12 +620,12 @@ with sandbox():
 
     def mirar_fallo(root):
         """Apunta lo que dice la ventana con un fallo y entra en «Reparación»."""
-        vistos["textos"] = textos(root)
-        vistos["botones"] = sorted(botones(root))
-        botones(root)["Reparación…"].invoke()
+        vistos["textos"] = textos_vistos(root)
+        vistos["botones"] = sorted(botones_vistos(root))
+        botones_vistos(root)["Reparación…"].invoke()
 
     real_reparacion = tk_repair.open_dialog
-    tk_repair.open_dialog = (lambda parent, config, lanzar, marcadas=None:
+    tk_repair.open_dialog = (lambda parent, config, lanzar, marcadas=None, **_k:
                              abiertas.append(marcadas) or False)
     try:
         ventana_principal(cfg, mirar_fallo)
@@ -636,14 +671,14 @@ with sandbox():
     conflicts.actualizar_pareja(p)
     abiertas = []
     real_reparacion = tk_repair.open_dialog
-    tk_repair.open_dialog = (lambda parent, config, lanzar, marcadas=None:
+    tk_repair.open_dialog = (lambda parent, config, lanzar, marcadas=None, **_k:
                              abiertas.append(config) or False)
     vistos = {}
 
     def mirar_conflicto(root):
         """Apunta lo que dice la ventana con un conflicto y entra en «Reparación»."""
-        vistos["textos"] = textos(root)
-        botones(root)["Reparación…"].invoke()
+        vistos["textos"] = textos_vistos(root)
+        botones_vistos(root)["Reparación…"].invoke()
 
     try:
         ventana_principal(cfg, mirar_conflicto)
@@ -666,19 +701,24 @@ with sandbox():
     servicio_antes = prefs.read_prefs()
 
     def sincronizar_y_volver(root):
-        """Pulsa «Sincronizar ahora» y apunta cómo queda la ventana."""
-        b = botones(root)
+        """Pulsa «Sincronizar ahora» y apunta cómo queda la ventana.
+
+        La salida se abre en el turno siguiente al clic: se mueve el bucle hasta
+        que llega.
+        """
+        b = botones_vistos(root)
         b["Sincronizar ahora"].invoke()
+        hasta(root, lambda: lanzadas)
         vistos["viva"] = bool(root.winfo_exists())
-        vistos["durante"] = {t: str(w.cget("state")) for t, w in botones(root).items()}
-        vistos["chip durante"] = "sincronizando…" in textos(root)
+        vistos["durante"] = {t: str(w.cget("state")) for t, w in botones_vistos(root).items()}
+        vistos["chip durante"] = "sincronizando…" in textos_vistos(root)
         # Lo que habría hecho sync.py: dejar un conflicto apuntado en state/.
         escribir(p.local_abs / "plan.md", "del remoto")
         escribir(p.local_abs / "plan.md.conflicto-dispositivo1", "de aquí")
         conflicts.actualizar_pareja(p)
         lanzadas[-1]["al_cerrar"](0)
-        vistos["despues"] = {t: str(w.cget("state")) for t, w in botones(root).items()}
-        vistos["textos"] = textos(root)
+        vistos["despues"] = {t: str(w.cget("state")) for t, w in botones_vistos(root).items()}
+        vistos["textos"] = textos_vistos(root)
         vistos["viva después"] = bool(root.winfo_exists())
 
     eleccion = ventana_principal(cfg, sincronizar_y_volver)
@@ -877,9 +917,12 @@ with sandbox():
 
 with sandbox():
     cfg, _p = preparar()
-    eleccion = ventana_principal(cfg, lambda root: botones(root)["Iniciar servicio"].invoke())
+    eleccion = ventana_principal(
+        cfg, lambda root: botones_vistos(root)["Iniciar servicio"].invoke())
     c("el servicio sí sale de la ventana: lo arranca runsync",
       (eleccion.action, eleccion.pairs), ("daemon", ("notas",)))
+c("cada lectura de la ventana principal se hizo sin fallos",
+  [f for f in lecturas if f], [])
 
 
 # la ventana de salida sin bloquear, con un proceso de verdad

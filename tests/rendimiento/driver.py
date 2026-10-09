@@ -565,6 +565,7 @@ def llega_instantanea(root):
     sondeo._mirar()
     root.update()
     t1 = time.perf_counter()
+    sondeo.seguir()                # `probe()` lo pausó; las lecturas de después, solas
     if FLOW == "principal" and not CAPTURA:
         record("llega-instantanea", ms(t0, t1), **medir(root))
 
@@ -665,6 +666,12 @@ def probe(self, n=0):
     # Antes del primer pintado: lo que la aplicación ha importado hasta aquí.
     ESTADO["modulos"] = len(sys.modules)
     ESTADO["modulos_lista"] = sorted(sys.modules)
+    # La lectura de la principal no se recoge dentro de este `update()`, según caiga
+    # el hilo: el primer pintado se cuenta sin ella, siempre, y la recoge
+    # `llega_instantanea`. El árbol de la 0.7.1 no tiene sondeo.
+    sondeo = getattr(root, "sondeo_instantanea", None)
+    if sondeo is not None:
+        sondeo.pausar()
     root.update()
     t = time.time()
     NOTES["start_main_ms"] = ms(T0, t)

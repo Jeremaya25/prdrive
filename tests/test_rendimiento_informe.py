@@ -179,8 +179,8 @@ c("el PR que ya no cuenta las escrituras al marcar, y la base sí: falla",
 
 # --- lo que dice el presupuesto de verdad y lo que pide el orquestador
 real = informe.cargar_presupuesto(REPO / "tests" / "rendimiento" / "presupuesto.toml")
-c("el techo de las escrituras al marcar es 1 (la 0.7.1 escribe en el clic) y su meta 0",
-  (informe.techos(real, "linux-x64").get("escrituras.marcar"), real["meta"].get("escrituras.marcar")), (1, 0))
+c("el techo de las escrituras al marcar ya es su meta, 0 (la 0.7.1 escribía 1 en el clic)",
+  (informe.techos(real, "linux-x64").get("escrituras.marcar"), real["meta"].get("escrituras.marcar")), (0, 0))
 c("las metas de tiempo de la ventana abierta, en milisegundos",
   {k: real["meta_ms"].get(k) for k in ("marcar", "elegir-fila", "elegir-pareja", "volver-ajustes",
                                         "volver-pasada", "sincronizar-ventana", "reabrir-parejas",

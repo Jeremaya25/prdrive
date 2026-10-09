@@ -12,6 +12,7 @@ paths:
   - "ui/tk_configuracion.py"
   - "ui/tk_pairs.py"
   - "ui/principal.py"
+  - "ui/tk_principal.py"
   - "ui/watch.py"
   - "ui/tk_watch.py"
   - "tests/test_tk_*.py"

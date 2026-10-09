@@ -32,6 +32,7 @@ from common import store, update
 c = Checks("la ventana de la pasada sale antes que el proceso")
 
 try:
+    import _tkinter
     import tkinter as tk
     from tkinter import filedialog, ttk
     raiz = tk.Tk()
@@ -332,14 +333,26 @@ try:
         return sincronizar_ahora(root).instate(["disabled"])
 
     def sincronizar(root):
-        """Pulsa «Sincronizar ahora» (cuando se deja) y devuelve la ventana de salida."""
+        """Pulsa «Sincronizar ahora» (cuando se deja) y devuelve la ventana de salida.
+
+        La principal abre la salida en el turno siguiente al clic: se mueve el
+        bucle de evento en evento hasta que aparece, para mirarla antes de que
+        arranque su proceso, que va en el turno de después.
+        """
         esperar_en(root, lambda: not ocupada(root))
         antes = set(root.winfo_children())
         registro.clear()               # la principal también se enseñó
         sincronizar_ahora(root).invoke()
-        nuevas = [w for w in root.winfo_children()
-                  if w not in antes and isinstance(w, tk.Toplevel)]
-        return nuevas[0] if nuevas else None
+
+        def nuevas():
+            return [w for w in root.winfo_children()
+                    if w not in antes and isinstance(w, tk.Toplevel)]
+
+        limite = time.monotonic() + ESPERA
+        while not nuevas() and time.monotonic() < limite:
+            if not root.tk.dooneevent(_tkinter.DONT_WAIT):
+                time.sleep(0.001)
+        return nuevas()[0] if nuevas() else None
 
     anotado = {}
 

@@ -28,7 +28,8 @@ from __future__ import annotations
 from common import autorun
 
 from . import icons, segundo_plano, theme, volumen
-from .tk import TITLE, Panel, cabecera, corto, dialogo, mostrar, pie, working
+from .principal import corto
+from .tk import TITLE, Panel, cabecera, dialogo, mostrar, pie, working
 
 MUESTRA = 32
 """El lado de las muestras de color, en medidas del diseño."""

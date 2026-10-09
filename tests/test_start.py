@@ -10,7 +10,7 @@ from _harness import Checks, mkcfg, tmpdir
 import ui
 import ui.console
 import ui.tk
-from ui import prefs
+from ui import cifrado, prefs, segundo_plano
 
 c = Checks("fachada ui.start()")
 prefs.PREFS = tmpdir("prdrive-start-") / "ui_prefs.json"
@@ -31,8 +31,15 @@ try:
 
     # «Iniciar servicio» es lo único que sale ya de la ventana: sincronizar y el
     # doctor corren dentro, en una salida hija, sin devolver ninguna elección.
+    # Se puede pulsar cuando ha llegado la lectura del dispositivo que la
+    # ventana hace tras pintarse: aquí, en el sitio y con el primer
+    # `update_idletasks()`.
+    segundo_plano.lanzar = segundo_plano.en_el_acto
+    cifrado.expulsion = lambda **_k: None
+
     def fake_mainloop(self):
-        """Bucle de mentira: pulsa «Iniciar servicio» y vuelve."""
+        """Bucle de mentira: deja llegar la lectura, pulsa «Iniciar servicio» y vuelve."""
+        self.update_idletasks()
         for w in walk(self):
             if isinstance(w, ttk.Button) and w.cget("text") == "Iniciar servicio":
                 w.invoke()
