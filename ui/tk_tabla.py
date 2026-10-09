@@ -53,9 +53,10 @@ debajo, para que la recoja el `Visor` de la pantalla.
 
 from __future__ import annotations
 
+import time
 from typing import NamedTuple
 
-from . import icons, theme
+from . import icons, perf_al_pintar, theme
 from .tk import CeldaChip, CeldaIcono, CeldaTexto, FilaTabla
 
 HOLGURA = 2
@@ -240,7 +241,12 @@ class TablaLienzo:
         orden: Los `iid`, de arriba abajo.
         elegida: El `iid` de la fila elegida, o `None`.
         cabeceras: Los títulos de las columnas.
+        momento_elegir: El nombre del momento de `PRDRIVE_PERF` que se anota al
+            elegir una fila con el ratón o el teclado (`elegir(avisar=True)`), o
+            `None`, que no anota nada.
     """
+
+    momento_elegir: str | None = None
 
     def __init__(self, parent, columnas, al_elegir=None, puede_dejar=None,
                  vacio: str = "", superficie: str = "", alto_fila: int = ALTO_FILA,
@@ -746,6 +752,8 @@ class TablaLienzo:
             return True
         if avisar and self.puede_dejar is not None and not self.puede_dejar():
             return False
+        medir = avisar and self.momento_elegir is not None
+        t0 = time.perf_counter() if medir else None
         antes, self.elegida = self.elegida, iid
         for cual in (antes, iid):
             if cual is not None:
@@ -753,6 +761,8 @@ class TablaLienzo:
         self._anillo()
         if avisar and self.al_elegir is not None:
             self.al_elegir()
+        if medir:
+            perf_al_pintar(self.marco, self.momento_elegir, t0)
         return True
 
     def leer(self) -> list[tuple[str, ...]]:

@@ -37,8 +37,8 @@ from functools import partial
 from common import catalog, model
 from common.model import ConfigError
 
-from . import (catalog_editor, flags_editor, icons, pair_editor,
-               remote_picker, segundo_plano, theme)
+from . import (catalog_editor, flags_editor, icons, pair_editor, perf_al_pintar,
+               perf_empezar, remote_picker, segundo_plano, theme)
 from .tk import (TITLE, CeldaChip, CeldaTexto, FilaTabla, Indicador, Sondeo, Tabla,
                  bloque_aviso, cabecera, centrar, cuerpo_visible, modal, mostrar, orden_sync,
                  output_window, working)
@@ -126,6 +126,7 @@ class ListaParejas:
     def __init__(self, parent, puede_dejar, al_elegir):
         self.tabla = TablaLienzo(parent, self.COLUMNAS, al_elegir=al_elegir,
                                  puede_dejar=puede_dejar, vacio="No hay ninguna pareja.")
+        self.tabla.momento_elegir = "elegir-pareja"
         self.marco = self.tabla.marco
         self.filas: dict[str, dict] = {}
 
@@ -621,6 +622,7 @@ class EditorPareja:
 
     def editar_flags(self) -> None:
         """Abre el editor de flags y se queda con lo que devuelva."""
+        perf_empezar("open-flags")
         nombre = self.campos["name"].get().strip() or self.original or "la pareja nueva"
         datos = flags_form(self.dlg, f"Flags de rclone de '{nombre}'",
                            "Se guardan en [pair.flags].",
@@ -1145,6 +1147,7 @@ def open_dialog(parent, config, compartida=None) -> bool:
 
         def llegado(encargo) -> None:
             """Se queda con lo que ha llegado y repinta."""
+            perf_empezar("catalogo-llega")
             estado["leyendo"] = False
             if encargo.error is not None:
                 estado["cat"] = catalog.cached()
@@ -1153,6 +1156,7 @@ def open_dialog(parent, config, compartida=None) -> bool:
                 estado["cat"], estado["aviso"] = encargo.resultado
             contesto = estado["cat"] is not None and estado["cat"].editable
             refrescar(nota if contesto else None)
+            perf_al_pintar(dlg, "catalogo-llega")
 
         # Sin repetir: un hilo de una pantalla cerrada, o de esta misma, puede
         # seguir vivo, y dos `pull()` a la vez se pisan la copia local.
@@ -1370,6 +1374,7 @@ def open_dialog(parent, config, compartida=None) -> bool:
 
     def ver_flota() -> None:
         """Abre la ventana de los dispositivos."""
+        perf_empezar("open-dispositivos")
         from . import tk_fleet
         tk_fleet.open_dialog(dlg, estado["config"], estado["raw"])
 
@@ -1422,6 +1427,7 @@ def open_dialog(parent, config, compartida=None) -> bool:
     dlg.aplicar = reponer
     pie_nota.configure(text=nota_inicial())
     leer_catalogo()
+    dlg.perf_momento = "open-parejas"
     try:
         mostrar(dlg, parent)
     finally:
@@ -2153,5 +2159,6 @@ def flags_form(parent, titulo: str, subtitulo: str, flags: dict, extra: list,
                command=aceptar).grid(row=0, column=2)
 
     repasar()
+    dlg.perf_momento = "open-flags"
     mostrar(dlg, parent)
     return resultado["datos"]
