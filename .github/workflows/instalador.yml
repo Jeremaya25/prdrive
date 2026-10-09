@@ -1,15 +1,14 @@
 name: Instalador
 
-# Compila el instalador como lo compilará la release (la acción .github/actions/compilar-instalador:
+# Compila el instalador como lo compila la release (la acción .github/actions/compilar-instalador:
 # el Python fijado del dispositivo, 3.14.8 con Tk 9.0.4, entero; PyInstaller fijado) y
 # lo prueba con --autoprueba. Sube el .exe y el informe de la autoprueba (autoprueba.json: Python,
 # Tk, SVG, letra, módulos y ficheros) para leerlos.
 #
 # Es lo que verifica que el PyInstaller fijado sabe meter en el .exe el Tcl/Tk 9 de ese Python. La
-# release (build-installer-release.yml) solo pasa a compilar con esta acción después de una
-# ejecución en verde de este workflow. Hasta entonces la release NO compila: su setup-python 3.11
-# de Windows trae Tk 8.6 y build_installer.py (estricto) lo rechaza, así que un cambio de VERSION
-# no publicaría nada (docs/agents/reference/updating.md, «VERSION»).
+# release (build-installer-release.yml) usa esta misma acción: si esto se rompe, la release no
+# publica nada (sin tag, sin release, sin oferta de actualización) y no hay fallback a Tk 8.6
+# (docs/agents/reference/updating.md, «VERSION»).
 #
 # En un PR que toca lo que compila, y a mano. Que lo lancen también los PR que tocan ui/ o common/
 # (otros 6-10 minutos de máquina Windows por PR) es una pregunta para el dueño.

@@ -41,12 +41,16 @@ concurrency:
 jobs:
   build-and-release:
     runs-on: windows-latest
+    timeout-minutes: 45
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # El token de este trabajo puede escribir en el repositorio, y aquí corre lo que instala
+          # pip: que no se quede en .git/config. Ni la comprobación del tag ni `gh` lo necesitan.
+          persist-credentials: false
 
       # El tag sale de VERSION, no se pide: si se pidiera, habría dos sitios
       # donde equivocarse y el aviso de actualización mentiría en las dos
@@ -79,35 +83,29 @@ jobs:
             Write-Host "Se publicará $tag"
           }
 
-      - name: Set up Python
+      # La misma acción que el workflow Instalador: el Python fijado del dispositivo (Tk 9),
+      # build_installer.py (estricto: PyInstaller fijado y Tk 9) y la autoprueba del .exe. Si la
+      # autoprueba falla, el trabajo para aquí: sin tag y sin release.
+      - name: Compilar y probar el instalador
+        id: instalador
         if: steps.version.outputs.publicar == 'true'
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
+        uses: ./.github/actions/compilar-instalador
+        timeout-minutes: 35
 
-      - name: Install build dependencies
-        if: steps.version.outputs.publicar == 'true'
-        shell: pwsh
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install pyinstaller
-
-      - name: Build installer executable
-        if: steps.version.outputs.publicar == 'true'
-        shell: pwsh
-        run: |
-          python build_installer.py
-
+      # El .exe es el que la acción ha compilado y probado (su salida `exe`), no el primero que
+      # aparezca en dist/.
       - name: Find built executable
         id: artifact
         if: steps.version.outputs.publicar == 'true'
         shell: pwsh
+        env:
+          EXE: ${{ steps.instalador.outputs.exe }}
         run: |
-          $exe = Get-ChildItem -Path dist -Filter *.exe -Recurse | Select-Object -First 1
-          if (-not $exe) {
-            Write-Error "No .exe found under dist/."
+          if ([string]::IsNullOrWhiteSpace($env:EXE) -or -not (Test-Path -LiteralPath $env:EXE -PathType Leaf)) {
+            Write-Error "La acción compilar-instalador no ha dado ningún .exe ('$env:EXE')."
             exit 1
           }
+          $exe = Get-Item -LiteralPath $env:EXE
           "path=$($exe.FullName)" >> $env:GITHUB_OUTPUT
           "name=$($exe.Name)" >> $env:GITHUB_OUTPUT
 
