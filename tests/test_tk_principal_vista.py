@@ -32,6 +32,7 @@ Y que un bloque que falla a medio pintar no deja la vista creyendo que pintó.
 """
 
 import dataclasses
+import gc
 import random
 import sys
 import time
@@ -60,6 +61,7 @@ from _vista import leer_vista, visibles  # noqa: E402
 from common import model, update  # noqa: E402
 from ui import (cifrado, instantanea, prefs, segundo_plano, tk_doctor,  # noqa: E402
                 tk_pairs, tk_principal, watch)
+from ui import icons  # noqa: E402
 from ui import tk as uitk  # noqa: E402
 from ui.principal import Estado, Fila, Linea  # noqa: E402
 
@@ -589,6 +591,10 @@ def textos(root) -> list[str]:
     return [str(w.cget("text")) for w in visibles(root, "TLabel")]
 
 
+VENTANAS: list = []
+"""La raíz de cada ventana que `abrir()` ha conducido: cada una tiene su intérprete de Tk."""
+
+
 def abrir(cfg, conducir, lanzar=segundo_plano.en_el_acto, aviso=None):
     """Abre la principal con `conducir` en lugar de su bucle de eventos.
 
@@ -597,6 +603,7 @@ def abrir(cfg, conducir, lanzar=segundo_plano.en_el_acto, aviso=None):
     """
     def _mainloop(self, n=0):
         """Conduce la ventana y la cierra."""
+        VENTANAS.append(self)
         try:
             conducir(self)
         finally:
@@ -1140,5 +1147,24 @@ for lectura_nueva in ("bien", "falla"):
           (visto["llega"], visto["después"]),
           (True, (True, True, False, [(False, "al día", 0)])))
 
+
+def soltar_caches(ventanas) -> None:
+    """Suelta lo que `icons` y `theme` guardan por intérprete de cada ventana."""
+    for ventana in ventanas:
+        theme.olvidar(ventana.tk)
+        icons.olvidar(ventana.tk)
+
+
+# Antes de salir, con `tkinter` entero: una imagen viva al salir se libera cuando ya
+# no quedan sus clases (`TclError` es None) y imprime un «Exception ignored». Los
+# nombres de abajo sostienen ventanas: se sueltan aquí, junto con las cachés de
+# `icons` y `theme`. Una prueba nueva que guarde una ventana en un nombre de módulo
+# tiene que soltarlo aquí también.
+del top, v, otra, fresca, top_linea, con, top_comp, completa, top_aviso, aviso
+del linea, casilla_a, top_arranque, top_todo, todo, dos, k
+del encargos, cierres, aplicados, errores, pasadas
+soltar_caches([raiz, *VENTANAS])
+VENTANAS.clear()
+gc.collect()
 raiz.destroy()
 sys.exit(c.report())
