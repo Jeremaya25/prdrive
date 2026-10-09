@@ -672,6 +672,12 @@ def abrir_a_la_vista(modulo, llamada):
 
     Es el `mostrar()` sin su `wait_window()`: lo que hace falta para medir qué
     pasa con la ventana a la vista cuando llega una lectura.
+
+    Mientras vive el diálogo, la raíz de la prueba se enseña fuera de la
+    pantalla: en Windows un `transient` de una raíz retirada no llega a verse
+    aunque se le haga `deiconify()` (`ui.tk.modal`), y sin verse ni crece ni
+    deja pasar el Tab. Y la pantalla útil es la de 1920×1080: que la ventana
+    quepa no puede depender de la pantalla del equipo que corre la prueba.
     """
     gc.collect()
     vistas: list = []
@@ -684,13 +690,26 @@ def abrir_a_la_vista(modulo, llamada):
         dlg.update()
         vistas.append(dlg)
 
+    util_real = uitk.pantalla_util
+    uitk.pantalla_util = lambda ventana: (1920, 1040)
+    raiz.geometry("1x1+-3000+-3000")
+    raiz.deiconify()
     real = modulo.mostrar
     modulo.mostrar = mostrar_sin_esperar
     try:
         llamada()
     finally:
         modulo.mostrar = real
-    return vistas[-1]
+    dlg = vistas[-1]
+
+    def al_cerrar(evento) -> None:
+        """Deja la raíz y la pantalla útil como estaban cuando se cierra el diálogo."""
+        if evento.widget is dlg:
+            uitk.pantalla_util = util_real
+            raiz.withdraw()
+
+    dlg.bind("<Destroy>", al_cerrar, add="+")
+    return dlg
 
 
 def entero(dlg) -> bool:
