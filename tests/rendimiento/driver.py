@@ -939,11 +939,15 @@ def en_dispositivos(fdlg, t, t_req):
     if not encargo.hecho:
         NOTES["error"] = "las notas de la flota no llegaron en 5 s"
         return
+    traza = _trazar(fdlg)
     t1 = time.perf_counter()
     sondeo._mirar()
+    t_mirar = time.perf_counter()
     fdlg.update()
     t2 = time.perf_counter()
-    record("llega-flota", ms(t1, t2), **medir(fdlg))
+    detalle = medir(fdlg)
+    detalle.update(traza({"mirar": ms(t1, t_mirar), "update": ms(t_mirar, t2)}))
+    record("llega-flota", ms(t1, t2), **detalle)
     shot("dispositivos-llena", fdlg)
     if not CAPTURA:
         elegir_dispositivo(fdlg)
