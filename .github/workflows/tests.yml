@@ -85,12 +85,13 @@ jobs:
 
       - name: Tests (Linux, con pantalla virtual)
         if: runner.os == 'Linux'
-        run: xvfb-run -a "$PRDRIVE_PYTHON" tests/run_all.py
+        run: |
+          "$PRDRIVE_PYTHON" tests/run_all.py -j auto --display xvfb
 
       - name: Tests (Windows)
         if: runner.os == 'Windows'
         run: |
-          & "$env:PRDRIVE_PYTHON" tests/run_all.py
+          & "$env:PRDRIVE_PYTHON" tests/run_all.py -j auto --gui-jobs 1
 
       # El pintor de iconos de Python sigue (un dispositivo con el runtime 3.13 lo
       # necesita para llegar a «Actualizar…»): sus tests corren también con él.
@@ -117,4 +118,4 @@ jobs:
           python-version: "3.11"
 
       - name: Tests (Python 3.11, sin pantalla)
-        run: python tests/run_all.py
+        run: python tests/run_all.py -j auto
