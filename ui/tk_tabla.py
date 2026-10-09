@@ -56,7 +56,7 @@ from __future__ import annotations
 import time
 from typing import NamedTuple
 
-from . import icons, perf_al_pintar, theme
+from . import icons, perf_activo, perf_al_pintar, theme
 from .tk import CeldaChip, CeldaIcono, CeldaTexto, FilaTabla
 
 HOLGURA = 2
@@ -752,7 +752,7 @@ class TablaLienzo:
             return True
         if avisar and self.puede_dejar is not None and not self.puede_dejar():
             return False
-        medir = avisar and self.momento_elegir is not None
+        medir = avisar and self.momento_elegir is not None and perf_activo()
         t0 = time.perf_counter() if medir else None
         antes, self.elegida = self.elegida, iid
         for cual in (antes, iid):

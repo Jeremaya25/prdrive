@@ -501,9 +501,7 @@ def open_dialog(parent, config: Config, raw: dict | None = None) -> None:
                   al_elegir=lambda: repasar())
     tabla.grid(row=1, column=0, sticky="ew", pady=(theme.E4, 0))
     dlg.tabla = tabla                                  # los tests la miran
-    # El momento de «elegir» lo marca el lienzo (`TablaLienzo.elegir`); `Tabla` no lo
-    # reenvía, así que se declara en el lienzo.
-    tabla._lienzo.momento_elegir = "elegir-dispositivo"
+    tabla.momento_elegir = "elegir-dispositivo"
 
     # El aviso de que aún no hay nadie apuntado se hace la primera vez que hace
     # falta: con notas no se llega a necesitar.

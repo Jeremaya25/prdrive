@@ -1065,6 +1065,15 @@ class Tabla:
         """El `iid` de la fila elegida, o `None`."""
         return self._lienzo.elegida
 
+    @property
+    def momento_elegir(self) -> str | None:
+        """Nombre del momento de `PRDRIVE_PERF` que se anota al elegir una fila; `None`, ninguno."""
+        return self._lienzo.momento_elegir
+
+    @momento_elegir.setter
+    def momento_elegir(self, momento: str | None) -> None:
+        self._lienzo.momento_elegir = momento
+
     def grid(self, **opciones):
         """Coloca la tabla como un widget; devuelve la tabla."""
         self.marco.grid(**opciones)

@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """«Dispositivos» apunta sus tiempos con `PRDRIVE_PERF=1` (`ui/tk_fleet.py`).
 
-Los tres momentos de la ventana, según la tabla de la etapa 4 (Wave 2):
+Los tres momentos de la ventana:
 
 - `open-dispositivos`: lo cierra `ui.tk.mostrar()` cuando el diálogo se pinta. Su
-  inicio lo pone `tk_pairs.ver_flota` (tarea 3); aquí se pone a mano, como lo
+  inicio lo pone `ui/tk_pairs.py` (`ver_flota`); aquí se pone a mano, como lo
   pondría ella.
 - `llega-flota`: cada vez que llega una lectura de la flota (al abrir, con
   «Releer» y con una lectura que falla), desde el principio de `llegada` hasta
   después de su pintado.
-- `elegir-dispositivo`: la tabla de la ventana lo declara en su lienzo
-  (`TablaLienzo.momento_elegir`); la marca la pone `TablaLienzo.elegir` (tarea 3),
-  así que aquí solo se comprueba la declaración.
+- `elegir-dispositivo`: la tabla de la ventana lo declara (`Tabla.momento_elegir`);
+  lo anota `TablaLienzo.elegir` en `ui/tk_tabla.py` cuando se elige otra fila con
+  el ratón o el teclado, y no al abrir.
 
 La ventana se abre de verdad: `tk_fleet.open_dialog()` y `ui.tk.mostrar()` sin
 sustituir nada. La flota llega en el sitio, como en `tests/test_tk_flota_vista.py`,
@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import re
 import sys
+import time
 from pathlib import Path
 
 from _harness import Checks, sandbox
@@ -86,9 +87,9 @@ def boton(dlg, texto: str):
 def abrir(accion=None) -> None:
     """Abre «Dispositivos» como lo hace la pantalla de parejas, y la cierra al terminar.
 
-    El inicio de `open-dispositivos` se pone aquí (lo pone `tk_pairs.ver_flota`, que
-    aún no está en esta rama). `accion(dlg)`, si se da, corre dentro del bucle de
-    `mostrar()`, con la ventana ya a la vista; la ventana se cierra después.
+    El inicio de `open-dispositivos` lo pone `tk_pairs.ver_flota`; este test abre el
+    diálogo directamente, así que lo pone aquí. `accion(dlg)`, si se da, corre dentro
+    del bucle de `mostrar()`, con la ventana ya a la vista; la ventana se cierra después.
     """
     ui.perf_empezar("open-dispositivos")
 
@@ -109,17 +110,44 @@ def abrir(accion=None) -> None:
 with sandbox() as raiz_tk:
     tmp = Path(raiz_tk)
 
-    # 1. Al abrir: el momento del diálogo y la primera llegada, una vez cada uno; la
-    #    tabla declara su momento de elegir.
+    # 1. Al abrir: el momento del diálogo y la primera llegada, una vez cada uno. Abrir
+    #    no elige nada; un clic en otra fila sí, y se anota una vez.
     LEIDA[:] = [dispositivo(i) for i in range(3)]
+    antes_del_clic: list[int] = []
+    elegida_tras_clic: list = []
+
+    def pulsar_otra(dlg) -> None:
+        """Mira que abrir no anotó ninguna elección y luego hace un clic en otra fila."""
+        _perf.vaciar()
+        antes_del_clic.append(len(_perf.lineas(t, "elegir-dispositivo")))
+        dlg.update()
+        x0, y0, x1, y1 = dlg.tabla._lienzo.caja("disp0001xxxxxxxx")
+        dlg.tabla.marco.event_generate("<Button-1>", x=(x0 + x1) // 2, y=(y0 + y1) // 2)
+        dlg.update()
+        elegida_tras_clic.append(dlg.tabla.elegida)
+
     with _perf.con_perf(tmp / "abrir") as t:
-        abrir()
+        abrir(accion=pulsar_otra)
         _perf.vaciar()
         c("al abrir: open-dispositivos y llega-flota, una línea cada uno",
           (len(_perf.lineas(t, "open-dispositivos")), len(_perf.lineas(t, "llega-flota"))),
           (1, 1))
-        c("la tabla declara «elegir-dispositivo» como su momento de elegir",
-          getattr(VENTANAS[-1].tabla._lienzo, "momento_elegir", None), "elegir-dispositivo")
+        c("al abrir no se anota «elegir-dispositivo»", antes_del_clic, [0])
+        c("el clic elige la otra fila", elegida_tras_clic, ["disp0001xxxxxxxx"])
+        c("un clic en otra fila anota «elegir-dispositivo» una vez",
+          len(_perf.lineas(t, "elegir-dispositivo")), 1)
+
+    # 1b. El intervalo abarca el pintado.
+    reservar = tk_fleet.Ficha.reservar
+    tk_fleet.Ficha.reservar = lambda self, *a, **k: (time.sleep(0.06), reservar(self, *a, **k))[1]
+    try:
+        with _perf.con_perf(tmp / "lento") as t:
+            abrir()
+            _perf.vaciar()
+            ms = float(_perf.lineas(t, "llega-flota")[0].split()[3])
+            c("llega-flota abarca el pintado", ms >= 50, True)
+    finally:
+        tk_fleet.Ficha.reservar = reservar
 
     # 2. «Releer» es otra llegada: la segunda vez de llega-flota; el diálogo sigue
     #    marcándose una sola vez.
